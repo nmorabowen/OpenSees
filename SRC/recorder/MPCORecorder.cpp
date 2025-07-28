@@ -3931,6 +3931,16 @@ namespace mpco {
 					int_type = ElementIntegrationRuleType::Triangle_GaussLegendre_1;
 				}
 				/*
+				6-node triangle with 3 gp
+				*/
+				else if (
+					// ./triangle
+					elem_class_tag == ELE_TAG_SixNodeTri
+					) {
+					geom_type = ElementGeometryType::Triangle_6N;
+					int_type = ElementIntegrationRuleType::Triangle_GaussLegendre_2;
+				}
+				/*
 				3-node triangle with 3 gp
 				*/
 				else if (
