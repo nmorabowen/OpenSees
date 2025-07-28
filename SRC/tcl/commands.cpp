@@ -226,6 +226,7 @@ extern void *OPS_AlphaOSGeneralized(void);
 extern void *OPS_AlphaOSGeneralized_TP(void);
 extern void *OPS_ExplicitDifference(void);
 extern void *OPS_CentralDifference(void);
+extern void *OPS_ExplicitBathe(void);
 extern void *OPS_CentralDifferenceAlternative(void);
 extern void *OPS_CentralDifferenceNoDamping(void);
 extern void *OPS_Collocation(void);
@@ -3014,20 +3015,42 @@ specifySOE(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
   // Diagonal SOE & SOLVER
   else if (strcmp(argv[1],"Diagonal") == 0) {
 #ifdef _PARALLEL_PROCESSING
+      bool lumpDiag = false;
+      if (argc > 2)
+      {
+        lumpDiag = (bool) atoi(argv[2]);
+      }
+      opserr << "MPIDiagonalSOE lumpDiag = " << lumpDiag << endln;
       DistributedDiagonalSolver    *theSolver = new DistributedDiagonalSolver();   
       theSOE = new DistributedDiagonalSOE(*theSolver);
 #else
+      bool lumpDiag = false;
+      if (argc > 2)
+      {
+        lumpDiag = (bool) atoi(argv[2]);
+      }
+      opserr << "DiagonalSOE lumpDiag = " << (lumpDiag? "true" : "false") << endln;
       DiagonalSolver    *theSolver = new DiagonalDirectSolver();   
-      theSOE = new DiagonalSOE(*theSolver);
+      theSOE = new DiagonalSOE(*theSolver, lumpDiag);
 #endif
+
 
 
   } 
   // Diagonal SOE & SOLVER
   else if (strcmp(argv[1],"MPIDiagonal") == 0) {
 #ifdef _PARALLEL_INTERPRETERS
+      bool lumpDiag = false;
+      if (argc > 2)
+      {
+        if (strcmp(argv[2],"-lumped") == 0)
+        {
+          lumpDiag = true;
+        }
+      }
+      opserr << "MPIDiagonal lumpDiag = " << (lumpDiag? "true" : "false") << endln;
       MPIDiagonalSolver    *theSolver = new MPIDiagonalSolver();   
-      theSOE = new MPIDiagonalSOE(*theSolver);
+      theSOE = new MPIDiagonalSOE(*theSolver, lumpDiag);
       setMPIDSOEFlag = true;
 #else
       DiagonalSolver    *theSolver = new DiagonalDirectSolver();   
@@ -5384,6 +5407,13 @@ specifyIntegrator(ClientData clientData, Tcl_Interp *interp, int argc,
   
   else if (strcmp(argv[1],"CentralDifferenceNoDamping") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_CentralDifferenceNoDamping();
+    
+    if (theTransientAnalysis != 0)
+      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+  }
+
+  else if (strcmp(argv[1],"ExplicitBathe") == 0) {
+    theTransientIntegrator = (TransientIntegrator *)OPS_ExplicitBathe();
     
     if (theTransientAnalysis != 0)
       theTransientAnalysis->setIntegrator(*theTransientIntegrator);
