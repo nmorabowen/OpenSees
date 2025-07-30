@@ -50,6 +50,17 @@ using DuncanChang_n = ModelParameterType<double, YoungsModulusName>;
 struct InternalFrictionAngleName { static constexpr const char* name = "InternalFrictionAngle";};
 using InternalFrictionAngle = ModelParameterType<double, InternalFrictionAngleName>;
 
+// Mohr-Coulomb
+struct MC_phi_Name { static constexpr const char* name = "MC_phi";};
+using MC_phi = ModelParameterType<double, MC_phi_Name>;
+struct MC_c_Name { static constexpr const char* name = "MC_c";};
+using MC_c = ModelParameterType<double, MC_c_Name>;
+struct MC_ds_Name { static constexpr const char* name = "MC_ds";};
+using MC_ds = ModelParameterType<double, MC_ds_Name>;
+using MC_c = ModelParameterType<double, MC_c_Name>;
+struct TC_min_stress_Name { static constexpr const char* name = "TC_min_stress";};
+using TC_min_stress = ModelParameterType<double, TC_min_stress_Name>;
+
 //RMC: Rounded-Mohr-Coulomb
 struct RMC_m_Name { static constexpr const char* name = "RMC_m";};
 using RMC_m = ModelParameterType<double, RMC_m_Name>;

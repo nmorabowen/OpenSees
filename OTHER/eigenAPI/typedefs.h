@@ -206,21 +206,91 @@ public:
 
 
 public:
-    Eigen::Vector3d principalStresses() const {
+    // Eigen::Vector3d principalStresses() const {
+    //     // Convert Voigt vector to a stress tensor.
+    //     Eigen::Matrix3d stress_tensor;
+    //     stress_tensor << v11(), v12(), v13(),
+    //                      v12(), v22(), v23(),
+    //                      v13(), v23(), v33();
+
+    //     // Compute the eigenvalues (principal stresses).
+    //     Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> eigen_solver(stress_tensor);
+    //     Eigen::Vector3d eigenvalues = eigen_solver.eigenvalues();
+
+    //     // Sort the eigenvalues in ascending order.
+    //     std::sort(eigenvalues.data(), eigenvalues.data() + eigenvalues.size());
+
+    //     return eigenvalues;
+    // }
+
+    std::tuple<double, double, double> principalStresses() const {
         // Convert Voigt vector to a stress tensor.
         Eigen::Matrix3d stress_tensor;
         stress_tensor << v11(), v12(), v13(),
-                      v12(), v22(), v23(),
-                      v13(), v23(), v33();
+                         v12(), v22(), v23(),
+                         v13(), v23(), v33();
 
         // Compute the eigenvalues (principal stresses).
         Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> eigen_solver(stress_tensor);
-        return eigen_solver.eigenvalues();
+        Eigen::Vector3d eigenvalues = eigen_solver.eigenvalues();
+
+        // Sort the eigenvalues in ascending order.
+        std::sort(eigenvalues.data(), eigenvalues.data() + eigenvalues.size());
+
+        double s1, s2, s3;
+        s1 = eigenvalues[0];
+        s2 = eigenvalues[1];
+        s3 = eigenvalues[2];
+
+        return std::make_tuple(s1,s2,s3);
     }
+
 
     double meanStress() const {
         return this->trace() / 3.0;
     }
+
+    double getI1() const
+    {
+         return this->trace();
+    }
+
+    // double J2_invariant() const {
+    //     VoigtVector deviator = this->deviator();
+    //     double J2 = 0.5 * (
+    //                     deviator.v11() * deviator.v11() + deviator.v22() * deviator.v22() + deviator.v33() * deviator.v33()
+    //                     - 2 * deviator.v11() * deviator.v22()
+    //                     - 2 * deviator.v22() * deviator.v33()
+    //                     - 2 * deviator.v33() * deviator.v11()
+    //                     + 6 * (deviator.v12() * deviator.v12() + deviator.v23() * deviator.v23() + deviator.v13() * deviator.v13())
+    //                 );
+    //     return J2;
+    // }
+
+    double getJ2() const {
+        VoigtVector deviator = this->deviator();
+        double J2 = 0.5 * (
+            deviator.v11() * deviator.v11() + 
+            deviator.v22() * deviator.v22() + 
+            deviator.v33() * deviator.v33()
+            + 2 * (deviator.v12() * deviator.v12() + 
+            	   deviator.v23() * deviator.v23() + 
+            	   deviator.v13() * deviator.v13())
+                  );
+        return J2;
+    }
+
+
+    double getJ3() const {
+        VoigtVector deviator = this->deviator();
+        double J3 = deviator.v11() * deviator.v22() * deviator.v33()
+                  - deviator.v11() * deviator.v23() * deviator.v23()
+                  - deviator.v22() * deviator.v13() * deviator.v13()
+                  - deviator.v33() * deviator.v12() * deviator.v12()
+                  + 2 * deviator.v12() * deviator.v23() * deviator.v13();
+        return J3;
+    }
+
 
     double stressDeviatorQ() const {
         VoigtVector deviator = this->deviator();
@@ -235,29 +305,138 @@ public:
         return std::sqrt(0.5 * J2);
     }
 
-    double lodeAngle() const {
-        Eigen::Vector3d principal_stresses = this->principalStresses();
-        double s1 = principal_stresses(0);
-        double s2 = principal_stresses(1);
-        double s3 = principal_stresses(2);
+    // double lodeAngle() const {
+    //     Eigen::Vector3d principal_stresses = this->principalStresses();
+    //     double s1 = principal_stresses(0);
+    //     double s2 = principal_stresses(1);
+    //     double s3 = principal_stresses(2);
 
-        double num = std::sqrt(3) * (s1 - s3) ;
-        double den = 2 * (s2 - s3) - (s1 - s3);
-        if (abs(den) < 1e-20 )
-        {
-            return 0;
+    //     double num = std::sqrt(3) * (s1 - s3) ;
+    //     double den = 2 * (s2 - s3) - (s1 - s3);
+    //     if (abs(den) < 1e-20 )
+    //     {
+    //         return 0;
+    //     }
+    //     else
+    //     {
+    //         return std::atan( num / den );
+    //     }
+    // }
+
+
+    // double lodeAngle() const {
+    //     Eigen::Vector3d principal_stresses = this->principalStresses();
+    //     double s1 = principal_stresses(0);
+    //     double s2 = principal_stresses(1);
+    //     double s3 = principal_stresses(2);
+
+    //     // Sort principal stresses to ensure s1 >= s2 >= s3
+    //     // if (s1 < s3) std::swap(s1, s3);
+    //     // if (s1 < s2) std::swap(s1, s2);
+    //     // if (s2 < s3) std::swap(s2, s3);
+
+    //     // Calculate the numerator and denominator for the Lode angle
+    //     double num = std::sqrt(3.0) * (s2 - s3);
+    //     double den = 2.0 * (s2 - s3) - (s1 - s3);
+
+    //     // Use atan2 for better numerical stability
+    //     double lode_angle = std::atan2(num, den);
+
+    //     return lode_angle;
+    // }
+
+    double lodeAngle() const {
+        // Eigen::Vector3d principal_stresses = this->principalStresses();
+        // double s1 = principal_stresses(0);
+        // double s2 = principal_stresses(1);
+        // double s3 = principal_stresses(2);
+        double J2 = this->getJ2();
+        double J3 = this->getJ3();
+
+        double rLodeAngle;
+
+        if (J2 > std::numeric_limits<double>::epsilon()) {
+            double sint3 = (-3.0 * std::sqrt(3.0) * J3) / (2.0 * J2 * std::sqrt(J2));
+            if (sint3 < -0.95)
+                sint3 = -1.0;
+            else if (sint3 > 0.95)
+                sint3 = 1.0;
+            rLodeAngle = std::asin(sint3) / 3.0;
+        } else {
+            rLodeAngle = 0.0;
         }
-        else
-        {
-            return std::atan( num / den );
-        }
+
+        return rLodeAngle;
     }
+
+
+
+    #include <cmath>
+
+    // double lodeAngle() const {
+    //     double J2 = this->getJ2();
+    //     double J3 = this->getJ3();
+
+    //     // Ensure J2 is positive to avoid division by zero
+    //     if (J2 < 0) {
+    //         return 0.0; // Handle special case
+    //     }
+
+    //     // Calculate the Lode angle
+    //     double sqrt_J2_3 = std::pow(J2, 1.5);  // J2 raised to 3/2
+    //     double lode_angle = std::asin((3 * std::sqrt(3) * J3) / (2 * sqrt_J2_3)) / 3.0;
+
+    //     return lode_angle;
+    // }
+
 
 };
 
 EIGEN_STRONG_INLINE VoigtVector kronecker_delta()
 {
     return VoigtVector(1.0, 1.0, 1.0, 0, 0, 0);
+}
+
+EIGEN_STRONG_INLINE VoigtVector calculate_first_vector()
+{
+    return VoigtVector(1.0, 1.0, 1.0, 0, 0, 0);
+}
+
+EIGEN_STRONG_INLINE VoigtVector calculate_second_vector(const VoigtVector& sigma)
+{
+    const double J2 = sigma.getJ2();
+    const double twosqrtJ2 = 2.0 * std::sqrt(J2);
+
+    VoigtVector rSecondVector;
+
+    if (twosqrtJ2 > 1e-20) {
+        rSecondVector = sigma.deviator() / (twosqrtJ2);
+
+        for (int i = 3; i < 6; ++i)
+            rSecondVector[i] *= 2.0;
+    } 
+
+    return rSecondVector;
+}
+
+
+EIGEN_STRONG_INLINE VoigtVector calculate_third_vector(const VoigtVector& sigma)
+{
+    const double J2 = sigma.getJ2();
+    const double twosqrtJ2 = 2.0 * std::sqrt(J2);
+    const double J2thirds = J2 / 3.0;
+
+    VoigtVector rThirdVector;
+    VoigtVector rDeviator = sigma.deviator();
+
+    rThirdVector[0] = rDeviator[1] * rDeviator[2] - rDeviator[4] * rDeviator[4] + J2thirds;
+    rThirdVector[1] = rDeviator[0] * rDeviator[2] - rDeviator[5] * rDeviator[5] + J2thirds;
+    rThirdVector[2] = rDeviator[0] * rDeviator[1] - rDeviator[3] * rDeviator[3] + J2thirds;
+    rThirdVector[3] = 2.0 * (rDeviator[4] * rDeviator[5] - rDeviator[3] * rDeviator[2]);
+    rThirdVector[4] = 2.0 * (rDeviator[3] * rDeviator[4] - rDeviator[1] * rDeviator[5]);
+    rThirdVector[5] = 2.0 * (rDeviator[5] * rDeviator[3] - rDeviator[0] * rDeviator[4]);
+
+    return rThirdVector;
 }
 
 
