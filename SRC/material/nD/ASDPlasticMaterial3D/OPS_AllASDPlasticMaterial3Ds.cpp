@@ -406,16 +406,18 @@ void populate_ASDPlasticMaterial3D(T* instance)
                         method = (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Forward_Euler;
                     else if (std::strcmp(method_name, "Forward_Euler_Subincrement") == 0)
                         method = (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Forward_Euler_Subincrement;
+                    else if (std::strcmp(method_name, "Modified_Euler_Error_Control") == 0)
+                        method = (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Modified_Euler_Error_Control;
                     else if (std::strcmp(method_name, "Runge_Kutta_45_Error_Control") == 0)
                         method = (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Runge_Kutta_45_Error_Control;
                     else
                     {
                         cout << "\n\nWARNING! Unrecognised ASDPlasticMaterial3D_Constitutive_Integration_Method name " << method_name << endl;
-                        cout << "Defaulting to Runge_Kutta_45_Error_Control\n\n" << endl;
-                        method = (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Runge_Kutta_45_Error_Control;
+                        cout << "Available methods: Forward_Euler, Forward_Euler_Subincrement, Modified_Euler_Error_Control, Runge_Kutta_45_Error_Control\n\n" << endl;
+                        cout << "Defaulting to Modified_Euler_Error_Control\n\n" << endl;
+                        method = (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Modified_Euler_Error_Control;
                     }
                     cout << "   Setting integration method = " << method_name << " method_int = " << method << endl;
-                    
                 }
 
                 if (std::strcmp(param_name, "tangent_type") == 0)

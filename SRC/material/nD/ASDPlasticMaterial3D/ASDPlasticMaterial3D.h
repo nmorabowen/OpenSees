@@ -269,9 +269,9 @@ public:
         // case ASDPlasticMaterial3D_Constitutive_Integration_Method::Multistep_Forward_Euler_Crisfield :
         //     exitflag = this->Multistep_Forward_Euler(strain_increment, true);
         //     break;
-        // case ASDPlasticMaterial3D_Constitutive_Integration_Method::Modified_Euler_Error_Control :
-        //     exitflag = this->Modified_Euler_Error_Control(strain_increment);
-        //     break;
+        case ASDPlasticMaterial3D_Constitutive_Integration_Method::Modified_Euler_Error_Control :
+            exitflag = this->Modified_Euler_Error_Control(strain_increment);
+            break;
         case ASDPlasticMaterial3D_Constitutive_Integration_Method::Runge_Kutta_45_Error_Control :
             exitflag = this->Runge_Kutta_45_Error_Control(strain_increment);;
             break;
@@ -507,7 +507,7 @@ public:
 
             if (yf_val_start < 0) {
                 // Find the intersection of the yield surface between the start and trial stress
-                double tol_yf = DOUBLE_OPT_f_absolute_tol[ASDP_TAG];
+                double tol_yf = DBL_OPT_f_absolute_tol[ASDP_TAG];
                 double intersection_factor = compute_yf_crossing(
                     local_stress, trial_stress, 0.0, 1.0, tol_yf);
                 
@@ -970,7 +970,7 @@ public:
         {
             INT_OPT_constitutive_integration_method[ASDP_TAG] = (ASDPlasticMaterial3D_Constitutive_Integration_Method) method ;
             INT_OPT_tangent_operator_type[ASDP_TAG] = (ASDPlasticMaterial3D_Tangent_Operator_Type) tangent ;
-            DOUBLE_OPT_f_absolute_tol[ASDP_TAG] = f_absolute_tol ;
+            DBL_OPT_f_absolute_tol[ASDP_TAG] = f_absolute_tol ;
             DBL_OPT_stress_absolute_tol[ASDP_TAG] = stress_absolute_tol ;
             INT_OPT_n_max_iterations[ASDP_TAG] = n_max_iterations ;
             INT_OPT_return_to_yield_surface[ASDP_TAG] = return_to_yield_surface ;
@@ -1091,7 +1091,7 @@ private:
             depsilon_elpl = depsilon;
             if (yf_val_start < 0)
             {
-                double tol_yf = DOUBLE_OPT_f_absolute_tol[ASDP_TAG];
+                double tol_yf = DBL_OPT_f_absolute_tol[ASDP_TAG];
                 double intersection_factor = compute_yf_crossing( start_stress, end_stress, 0.0, 1.0, tol_yf );
 
                 intersection_factor = intersection_factor < 0 ? 0 : intersection_factor;
@@ -1267,7 +1267,7 @@ private:
             depsilon_elpl = depsilon;
             if (yf_val_start < 0)
             {
-                double tol_yf = DOUBLE_OPT_f_absolute_tol[ASDP_TAG];
+                double tol_yf = DBL_OPT_f_absolute_tol[ASDP_TAG];
                 double intersection_factor = compute_yf_crossing( start_stress, end_stress, 0.0, 1.0, tol_yf );
 
                 intersection_factor = intersection_factor < 0 ? 0 : intersection_factor;
@@ -1423,7 +1423,7 @@ private:
         return std::make_pair(dLambda, m);
     }
 
-    int Runge_Kutta_45_Error_Control(const VoigtVector & strain_incr)
+    int Runge_Kutta_45_Error_Control_old(const VoigtVector & strain_incr)
     {
         // cout << "Runge_Kutta_45_Error_Control" << endl;
 
@@ -1467,7 +1467,7 @@ private:
             depsilon_elpl = depsilon;
             if (yf_val_start < 0)
             {
-                double tol_yf = DOUBLE_OPT_f_absolute_tol[ASDP_TAG];
+                double tol_yf = DBL_OPT_f_absolute_tol[ASDP_TAG];
                 double intersection_factor = compute_yf_crossing( start_stress, end_stress, 0.0, 1.0, tol_yf );
 
                 intersection_factor = intersection_factor < 0 ? 0 : intersection_factor;
@@ -1741,7 +1741,7 @@ private:
                 // Make surface the internal variables are already updated. And then, return to the yield surface.
                 double y0  = yf(TrialStress, iv_storage, parameters_storage) ;
                 int iter = 0;
-                double TOL = this->DOUBLE_OPT_f_absolute_tol[ASDP_TAG];
+                double TOL = this->DBL_OPT_f_absolute_tol[ASDP_TAG];
                 double NITER = this->INT_OPT_n_max_iterations[ASDP_TAG];
                 // do
                 if(y0 > 0 && iter < NITER)
@@ -1844,6 +1844,795 @@ private:
         return 0;
     }
 
+    // Modified Euler with Error Control - Following RK45 coding style
+    int Modified_Euler_Error_Control(const VoigtVector & strain_incr)
+    {
+        // Modified Euler coefficients (Heun's method)
+        constexpr double a21 = 1.0;  // For predictor step
+        constexpr double b1 = 0.5;   // Weight for corrector (average)
+        constexpr double b2 = 0.5;   // Weight for corrector (average)
+
+        int errorcode = -1;
+
+        static VoigtVector depsilon;
+        depsilon *= 0;
+        depsilon = strain_incr;
+
+        iv_storage.revert_all();
+
+        dsigma *= 0;
+        intersection_stress *= 0;
+        intersection_strain *= 0;
+
+        VoigtMatrix Eelastic = et(CommitStress, parameters_storage);
+        dsigma = Eelastic * depsilon;
+
+        TrialStress = CommitStress + dsigma;
+        TrialStrain = CommitStrain + depsilon;
+        TrialPlastic_Strain = CommitPlastic_Strain;
+
+        double yf_val_start = yf(CommitStress, iv_storage, parameters_storage);
+        double yf_val_end = yf(TrialStress, iv_storage, parameters_storage);
+
+        VoigtVector start_stress = CommitStress;
+        VoigtVector end_stress = TrialStress;
+
+        intersection_stress = start_stress;
+
+        if ((yf_val_start <= 0.0 && yf_val_end <= 0.0) || yf_val_start > yf_val_end) //Elasticity
+        {
+            Stiffness = Eelastic;
+            return 0;
+        }
+        else  //Plasticity
+        {
+            depsilon_elpl = depsilon;
+            if (yf_val_start < 0)
+            {
+                double tol_yf = DBL_OPT_f_absolute_tol[ASDP_TAG];
+                double intersection_factor = compute_yf_crossing( start_stress, end_stress, 0.0, 1.0, tol_yf );
+
+                intersection_factor = intersection_factor < 0 ? 0 : intersection_factor;
+                intersection_factor = intersection_factor > 1 ? 1 : intersection_factor;
+
+                intersection_stress = start_stress * (1 - intersection_factor) + end_stress * intersection_factor;
+                intersection_strain = CommitStrain  + depsilon * intersection_factor;
+                depsilon_elpl = (1 - intersection_factor) * depsilon;
+            }
+
+            TrialStress = intersection_stress;
+            double T = 0.0, dT = 1.0, dT_min = this->DBL_OPT_RK45_dT_min[ASDP_TAG], TolE = this->DBL_OPT_stress_absolute_tol[ASDP_TAG];
+            
+            // Adaptive step control parameters
+            const double safety_factor = 0.9;
+            const double min_scale = 0.25;
+            const double max_scale = 4.0;
+            const double beta = 0.04;  // PI controller parameter
+            double previous_error = TolE;
+
+            VoigtVector current_Sigma = TrialStress;
+            iv_storage_t current_iv_storage = iv_storage;
+            VoigtVector current_EpsilonPl = CommitPlastic_Strain;
+
+            // Storage for k values - stress derivatives
+            VoigtVector k1_sigma, k2_sigma;
+            // Storage for k values - plastic strain derivatives  
+            VoigtVector k1_pstrain, k2_pstrain;
+            // Storage for intermediate iv storages
+            iv_storage_t iv_k1 = iv_storage, iv_k2 = iv_storage;
+
+            // Storage for predictor and corrector solutions
+            VoigtVector predictor_sigma, corrector_sigma;
+            VoigtVector predictor_pstrain, corrector_pstrain;
+            iv_storage_t predictor_iv = iv_storage, corrector_iv = iv_storage;
+
+            int niter = 0;
+            double maxStepError = 0;
+            int max_iterations = this->INT_OPT_RK45_niter_max[ASDP_TAG];
+            
+            while (T < 1.0)
+            {
+                niter++;
+                
+                double effective_dT = std::min(dT, 1.0 - T);
+                VoigtVector dEPS = effective_dT * depsilon_elpl;
+                VoigtVector m;
+                double dLambda;
+
+                // Update elasticity matrix for current state
+                Eelastic = et(current_Sigma, parameters_storage);
+
+                // PREDICTOR STEP (Forward Euler)
+                // k1 = f(t, y)
+                std::tie(dLambda, m) = CalculateLambdaM(current_Sigma, dEPS, parameters_storage, current_iv_storage);
+                k1_sigma = Eelastic * (dEPS - dLambda * m);
+                k1_pstrain = dLambda * m;
+                iv_k1 = current_iv_storage;
+                iv_k1.apply([&m, &dLambda, &current_Sigma, &dEPS, this](auto & iv1)
+                {
+                    auto h = iv1.hardening_function(dEPS, m, current_Sigma, parameters_storage);
+                    iv1.trial_value = iv1.committed_value + dLambda * h;
+                });
+
+                // Predictor solution: y_pred = y_n + h*k1
+                predictor_sigma = current_Sigma + k1_sigma;
+                predictor_pstrain = current_EpsilonPl + k1_pstrain;
+                predictor_iv = current_iv_storage;
+                predictor_iv.apply([&iv_k1, &current_iv_storage](auto & pred_var)
+                {
+                    using VT = std::decay_t<decltype(pred_var)>;
+                    const VT &iv1_var = iv_k1.template get<VT>();
+                    const VT &current_var = current_iv_storage.template get<VT>();
+                    auto dk1 = iv1_var.trial_value - current_var.committed_value;
+                    pred_var.trial_value = current_var.committed_value + dk1;
+                });
+
+                // CORRECTOR STEP (Modified Euler)
+                // k2 = f(t + h, y_pred)
+                Eelastic = et(predictor_sigma, parameters_storage);
+                std::tie(dLambda, m) = CalculateLambdaM(predictor_sigma, dEPS, parameters_storage, predictor_iv);
+                k2_sigma = Eelastic * (dEPS - dLambda * m);
+                k2_pstrain = dLambda * m;
+                iv_k2 = current_iv_storage;
+                iv_k2.apply([&m, &dLambda, &predictor_sigma, &dEPS, this](auto & iv2)
+                {
+                    auto h = iv2.hardening_function(dEPS, m, predictor_sigma, parameters_storage);
+                    iv2.trial_value = iv2.committed_value + dLambda * h;
+                });
+
+                // Corrector solution: y_corr = y_n + h/2*(k1 + k2)
+                corrector_sigma = current_Sigma + b1 * k1_sigma + b2 * k2_sigma;
+                corrector_pstrain = current_EpsilonPl + b1 * k1_pstrain + b2 * k2_pstrain;
+                corrector_iv = current_iv_storage;
+                corrector_iv.apply([&iv_k1, &iv_k2, &current_iv_storage, b1, b2](auto & corr_var)
+                {
+                    using VT = std::decay_t<decltype(corr_var)>;
+                    const VT &iv1_var = iv_k1.template get<VT>();
+                    const VT &iv2_var = iv_k2.template get<VT>();
+                    const VT &current_var = current_iv_storage.template get<VT>();
+                    auto dk1 = iv1_var.trial_value - current_var.committed_value;
+                    auto dk2 = iv2_var.trial_value - current_var.committed_value;
+                    corr_var.trial_value = current_var.committed_value + b1 * dk1 + b2 * dk2;
+                });
+
+                // Error estimation: difference between predictor and corrector
+                VoigtVector sigma_error = corrector_sigma - predictor_sigma;
+                VoigtVector pstrain_error = corrector_pstrain - predictor_pstrain;
+                
+                double step_error = sigma_error.norm() + pstrain_error.norm();
+                
+                // Normalize error by solution magnitude
+                double solution_norm = corrector_sigma.norm() + corrector_pstrain.norm();
+                if (solution_norm > 0.1) {
+                    step_error /= solution_norm;
+                }
+
+                // Check for NaN
+                if (std::isnan(step_error) || std::isnan(corrector_sigma.norm()) || std::isnan(corrector_pstrain.norm()))
+                {
+                    cout << "ASDPlasticMaterial3D::Modified_Euler_Error_Control - NaN encountered, reducing step size" << endl;
+                    dT *= 0.5;
+                    if (dT < dT_min) {
+                        cout << "ASDPlasticMaterial3D::Modified_Euler_Error_Control - Minimum step size reached with NaN" << endl;
+                        return -1;
+                    }
+                    continue;
+                }
+
+                // Step size control with PI controller
+                double error_ratio = TolE / std::max(step_error, 1e-15);
+                double scale_factor = safety_factor * std::pow(error_ratio, 0.5) * std::pow(previous_error / step_error, beta);
+                scale_factor = std::max(min_scale, std::min(max_scale, scale_factor));
+
+                // Accept or reject step
+                if (step_error <= TolE || effective_dT <= dT_min) {
+                    // Accept step - use corrector solution
+                    current_Sigma = corrector_sigma;
+                    current_EpsilonPl = corrector_pstrain;
+                    current_iv_storage = corrector_iv;
+                    
+                    T += effective_dT;
+                    maxStepError = std::max(maxStepError, step_error);
+                    previous_error = step_error;
+                    
+                    // Validate yield function drift
+                    double yf_val = yf(current_Sigma, current_iv_storage, parameters_storage);
+                    if (yf_val > 10 * DBL_OPT_f_absolute_tol[ASDP_TAG]) {
+                        // cout << "Warning: Yield function drift detected: f = " << yf_val << endl;
+                    }
+                }
+
+                // Update step size for next iteration
+                double new_dT = scale_factor * effective_dT;
+                dT = std::max(dT_min, std::min(new_dT, 1.0 - T));
+
+                if (niter > max_iterations)
+                {
+                    cout << "ASDPlasticMaterial3D - tag = " << ASDP_TAG << " Modified Euler exceeded number of iterations. niter = " << niter << " niter_max = " << max_iterations << " T= " << T << " dT = " << dT << endl;
+                    return -1;
+                }
+            }
+
+            GLOBAL_INT_max_iter[ASDP_TAG] = std::max(GLOBAL_INT_max_iter[ASDP_TAG], niter);
+            GLOBAL_DBL_max_error[ASDP_TAG] = std::max(GLOBAL_DBL_max_error[ASDP_TAG], maxStepError);
+
+            TrialStress = current_Sigma;
+            TrialPlastic_Strain = current_EpsilonPl;
+            iv_storage = current_iv_storage;
+
+            //Return to Yield
+            if (INT_OPT_return_to_yield_surface[ASDP_TAG] == 1)  // Return to yield in one step
+            {
+                double yf_val_after_corrector = yf(TrialStress, iv_storage, parameters_storage);
+                if (yf_val_after_corrector > DBL_OPT_f_absolute_tol[ASDP_TAG]) {
+                    const VoigtVector& n_after_corrector = yf.df_dsigma_ij(TrialStress, iv_storage, parameters_storage);
+                    const VoigtVector& m_after_corrector = pf(depsilon_elpl, TrialStress, iv_storage, parameters_storage);
+                    double hardening_after_corrector = yf.hardening( depsilon_elpl, m_after_corrector,  TrialStress, iv_storage, parameters_storage);
+                    double denominator = n_after_corrector.transpose() * Eelastic * m_after_corrector - hardening_after_corrector;
+                    
+                    if (std::abs(denominator) > MACHINE_EPSILON) {
+                        double dLambda_after_corrector = yf_val_after_corrector / denominator;
+                        TrialStress = TrialStress - dLambda_after_corrector * Eelastic * m_after_corrector;
+                        TrialPlastic_Strain += dLambda_after_corrector * m_after_corrector;
+                        
+                        // Update internal variables
+                        iv_storage.apply([&m_after_corrector, &dLambda_after_corrector, this](auto& iv) {
+                            auto h = iv.hardening_function(depsilon_elpl, m_after_corrector, TrialStress, parameters_storage);
+                            iv.trial_value += dLambda_after_corrector * h;
+                        });
+                    }
+                }
+            }
+            else if (INT_OPT_return_to_yield_surface[ASDP_TAG] == 2)  // Return to yield with bisection
+            {
+                double y0 = yf(TrialStress, iv_storage, parameters_storage);
+                int iter = 0;
+                double TOL = this->DBL_OPT_f_absolute_tol[ASDP_TAG];
+                int NITER = this->INT_OPT_n_max_iterations[ASDP_TAG];
+                
+                if(y0 > TOL && iter < NITER)
+                {
+                    const VoigtVector& n_after_corrector = yf.df_dsigma_ij(TrialStress, iv_storage, parameters_storage);
+                    const VoigtVector& m_after_corrector = pf(depsilon_elpl, TrialStress, iv_storage, parameters_storage);
+                    double hardening_after_corrector = yf.hardening( depsilon_elpl, m_after_corrector,  TrialStress, iv_storage, parameters_storage);
+                    double denominator = n_after_corrector.transpose() * Eelastic * m_after_corrector - hardening_after_corrector;
+                    
+                    if (std::abs(denominator) > MACHINE_EPSILON) {
+                        double dL = y0 / denominator;
+                        VoigtVector TS = TrialStress - dL * Eelastic * m_after_corrector;
+                        double y1 = yf(TS, iv_storage, parameters_storage);
+
+                        // Try to bracket solution
+                        while( y1 > 0 && iter < NITER)
+                        {
+                            dL = dL * 1.1;
+                            TS = TrialStress - dL * Eelastic * m_after_corrector;
+                            y1 = yf(TS, iv_storage, parameters_storage);
+                            iter++;
+                        }
+
+                        iter = 0;
+
+                        // Once solution is bracketed, use bisection to get to YS
+                        if (y1 < 0)
+                        {
+                            double dL_min = 0;
+                            double dL_max = dL;
+                            double dL_mid = dL / 2;
+
+                            VoigtVector TS2 = TrialStress - dL_mid * Eelastic * m_after_corrector;
+                            double y_mid = yf(TS2, iv_storage, parameters_storage);
+                            
+                            while(std::abs(y_mid) > TOL && iter < NITER)
+                            {
+                                if (y_mid > 0) {
+                                    dL_min = dL_mid;
+                                } else {
+                                    dL_max = dL_mid;
+                                }
+                                dL_mid = 0.5*(dL_min + dL_max);
+                                TS2 = TrialStress - dL_mid * Eelastic * m_after_corrector;
+                                y_mid = yf(TS2, iv_storage, parameters_storage);
+                                iter++;
+                            }
+                            dL = dL_mid;
+                        }
+                        
+                        TrialStress = TrialStress - dL * Eelastic * m_after_corrector;
+                        TrialPlastic_Strain += dL * m_after_corrector;
+                        
+                        // Update internal variables
+                        iv_storage.apply([&m_after_corrector, &dL, this](auto& iv) {
+                            auto h = iv.hardening_function(depsilon_elpl, m_after_corrector, TrialStress, parameters_storage);
+                            iv.trial_value += dL * h;
+                        });
+                    }
+                }
+            }
+
+            // Final validation
+            double norm_trial_stress = TrialStress.transpose() * TrialStress;
+            if (norm_trial_stress != norm_trial_stress) //check for nan
+            {
+                cout << "ASDPlasticMaterial3D::Modified_Euler_Error_Control  Numeric error!\n";
+                printTensor1("TrialStress = " , TrialStress);
+                printTensor1("CommitStress = " , CommitStress);
+                printTensor1("depsilon = " , depsilon);
+                printTensor1("dsigma   = " , dsigma);
+                printTensor1("intersection_stress = " , intersection_stress);
+                printTensor2("Eelastic = " , Eelastic);
+                printTensor2("Stiffness = " , Stiffness);
+                cout << "yf_val_start = " << yf_val_start << endl;
+                cout << "yf_val_end = " << yf_val_end << endl;
+                printTensor1("n = " , yf.df_dsigma_ij(TrialStress, iv_storage, parameters_storage) );
+                printTensor1("m = " , pf(depsilon_elpl, TrialStress, iv_storage, parameters_storage) );
+                cout << "hardening  = " << yf.hardening( depsilon_elpl, pf(depsilon_elpl, TrialStress, iv_storage, parameters_storage),  TrialStress, iv_storage, parameters_storage) << endl;
+
+                return -1;
+            }
+
+            ComputeTangentStiffness();
+        }
+
+        return 0;
+    }
+
+
+
+    // Improved RK45
+    int Runge_Kutta_45_Error_Control(const VoigtVector & strain_incr)
+    {
+        // Dormand-Prince RK45 coefficients
+        constexpr double a21 = 1.0/5.0;
+        constexpr double a31 = 3.0/40.0, a32 = 9.0/40.0;
+        constexpr double a41 = 44.0/45.0, a42 = -56.0/15.0, a43 = 32.0/9.0;
+        constexpr double a51 = 19372.0/6561.0, a52 = -25360.0/2187.0, a53 = 64448.0/6561.0, a54 = -212.0/729.0;
+        constexpr double a61 = 9017.0/3168.0, a62 = -355.0/33.0, a63 = 46732.0/5247.0, a64 = 49.0/176.0, a65 = -5103.0/18656.0;
+        
+        // 5th order solution coefficients
+        constexpr double b1 = 35.0/384.0, b2 = 0.0, b3 = 500.0/1113.0, b4 = 125.0/192.0, b5 = -2187.0/6784.0, b6 = 11.0/84.0;
+        
+        // 4th order solution coefficients for error estimation
+        constexpr double bhat1 = 5179.0/57600.0, bhat2 = 0.0, bhat3 = 7571.0/16695.0, bhat4 = 393.0/640.0;
+        constexpr double bhat5 = -92097.0/339200.0, bhat6 = 187.0/2100.0, bhat7 = 1.0/40.0;
+
+        int errorcode = -1;
+
+        static VoigtVector depsilon;
+        depsilon *= 0;
+        depsilon = strain_incr;
+
+        iv_storage.revert_all();
+
+        dsigma *= 0;
+        intersection_stress *= 0;
+        intersection_strain *= 0;
+
+        VoigtMatrix Eelastic = et(CommitStress, parameters_storage);
+        dsigma = Eelastic * depsilon;
+
+        TrialStress = CommitStress + dsigma;
+        TrialStrain = CommitStrain + depsilon;
+        TrialPlastic_Strain = CommitPlastic_Strain;
+
+        double yf_val_start = yf(CommitStress, iv_storage, parameters_storage);
+        double yf_val_end = yf(TrialStress, iv_storage, parameters_storage);
+
+        VoigtVector start_stress = CommitStress;
+        VoigtVector end_stress = TrialStress;
+
+        intersection_stress = start_stress;
+
+        if ((yf_val_start <= 0.0 && yf_val_end <= 0.0) || yf_val_start > yf_val_end) //Elasticity
+        {
+            Stiffness = Eelastic;
+            return 0;
+        }
+        else  //Plasticity
+        {
+            depsilon_elpl = depsilon;
+            if (yf_val_start < 0)
+            {
+                double tol_yf = DBL_OPT_f_absolute_tol[ASDP_TAG];
+                double intersection_factor = compute_yf_crossing( start_stress, end_stress, 0.0, 1.0, tol_yf );
+
+                intersection_factor = intersection_factor < 0 ? 0 : intersection_factor;
+                intersection_factor = intersection_factor > 1 ? 1 : intersection_factor;
+
+                intersection_stress = start_stress * (1 - intersection_factor) + end_stress * intersection_factor;
+                intersection_strain = CommitStrain  + depsilon * intersection_factor;
+                depsilon_elpl = (1 - intersection_factor) * depsilon;
+            }
+
+            TrialStress = intersection_stress;
+            double T = 0.0, dT = 1.0, dT_min = this->DBL_OPT_RK45_dT_min[ASDP_TAG], TolE = this->DBL_OPT_stress_absolute_tol[ASDP_TAG];
+            
+            // Adaptive step control parameters
+            const double safety_factor = 0.9;
+            const double min_scale = 0.2;
+            const double max_scale = 5.0;
+            const double beta = 0.04;  // PI controller parameter
+            double previous_error = TolE;
+
+            VoigtVector current_Sigma = TrialStress;
+            iv_storage_t current_iv_storage = iv_storage;
+            VoigtVector current_EpsilonPl = CommitPlastic_Strain;
+
+            // Storage for k values - stress derivatives
+            VoigtVector k1_sigma, k2_sigma, k3_sigma, k4_sigma, k5_sigma, k6_sigma;
+            // Storage for k values - plastic strain derivatives  
+            VoigtVector k1_pstrain, k2_pstrain, k3_pstrain, k4_pstrain, k5_pstrain, k6_pstrain;
+            // Storage for intermediate iv storages
+            iv_storage_t iv_k1 = iv_storage, iv_k2 = iv_storage, iv_k3 = iv_storage, iv_k4 = iv_storage, iv_k5 = iv_storage;
+
+            int niter = 0;
+            double maxStepError = 0;
+            
+            while (T < 1.0)
+            {
+                niter++;
+                
+                double effective_dT = std::min(dT, 1.0 - T);
+                VoigtVector dEPS = effective_dT * depsilon_elpl;
+                VoigtVector m;
+                double dLambda;
+
+                // Update elasticity matrix for current state
+                Eelastic = et(current_Sigma, parameters_storage);
+
+                // k1 = f(t, y)
+                std::tie(dLambda, m) = CalculateLambdaM(current_Sigma, dEPS, parameters_storage, current_iv_storage);
+                k1_sigma = Eelastic * (dEPS - dLambda * m);
+                k1_pstrain = dLambda * m;
+                iv_k1 = current_iv_storage;
+                iv_k1.apply([&m, &dLambda, &current_Sigma, &dEPS, this](auto & iv1)
+                {
+                    auto h = iv1.hardening_function(dEPS, m, current_Sigma, parameters_storage);
+                    iv1.trial_value = iv1.committed_value + dLambda * h;
+                });
+
+                // k2 = f(t + c2*h, y + h*(a21*k1))
+                VoigtVector y2_sigma = current_Sigma + a21 * k1_sigma;
+                VoigtVector y2_pstrain = current_EpsilonPl + a21 * k1_pstrain;
+                iv_storage_t iv2 = current_iv_storage;
+                iv2.apply([&iv_k1, &current_iv_storage, a21](auto & iv2_var)
+                {
+                    using VT = std::decay_t<decltype(iv2_var)>;
+                    const VT &iv1_var = iv_k1.template get<VT>();
+                    const VT &current_var = current_iv_storage.template get<VT>();
+                    auto dk1 = iv1_var.trial_value - current_var.committed_value;
+                    iv2_var.trial_value = current_var.committed_value + a21 * dk1;
+                });
+                
+                Eelastic = et(y2_sigma, parameters_storage);
+                std::tie(dLambda, m) = CalculateLambdaM(y2_sigma, dEPS, parameters_storage, iv2);
+                k2_sigma = Eelastic * (dEPS - dLambda * m);
+                k2_pstrain = dLambda * m;
+                iv_k2 = current_iv_storage;
+                iv_k2.apply([&m, &dLambda, &y2_sigma, &dEPS, this](auto & iv2)
+                {
+                    auto h = iv2.hardening_function(dEPS, m, y2_sigma, parameters_storage);
+                    iv2.trial_value = iv2.committed_value + dLambda * h;
+                });
+
+                // k3 = f(t + c3*h, y + h*(a31*k1 + a32*k2))
+                VoigtVector y3_sigma = current_Sigma + a31 * k1_sigma + a32 * k2_sigma;
+                VoigtVector y3_pstrain = current_EpsilonPl + a31 * k1_pstrain + a32 * k2_pstrain;
+                iv_storage_t iv3 = current_iv_storage;
+                iv3.apply([&iv_k1, &iv_k2, &current_iv_storage, a31, a32](auto & iv3_var)
+                {
+                    using VT = std::decay_t<decltype(iv3_var)>;
+                    const VT &iv1_var = iv_k1.template get<VT>();
+                    const VT &iv2_var = iv_k2.template get<VT>();
+                    const VT &current_var = current_iv_storage.template get<VT>();
+                    auto dk1 = iv1_var.trial_value - current_var.committed_value;
+                    auto dk2 = iv2_var.trial_value - current_var.committed_value;
+                    iv3_var.trial_value = current_var.committed_value + a31 * dk1 + a32 * dk2;
+                });
+                
+                Eelastic = et(y3_sigma, parameters_storage);
+                std::tie(dLambda, m) = CalculateLambdaM(y3_sigma, dEPS, parameters_storage, iv3);
+                k3_sigma = Eelastic * (dEPS - dLambda * m);
+                k3_pstrain = dLambda * m;
+                iv_k3 = current_iv_storage;
+                iv_k3.apply([&m, &dLambda, &y3_sigma, &dEPS, this](auto & iv3)
+                {
+                    auto h = iv3.hardening_function(dEPS, m, y3_sigma, parameters_storage);
+                    iv3.trial_value = iv3.committed_value + dLambda * h;
+                });
+
+                // k4 = f(t + c4*h, y + h*(a41*k1 + a42*k2 + a43*k3))
+                VoigtVector y4_sigma = current_Sigma + a41 * k1_sigma + a42 * k2_sigma + a43 * k3_sigma;
+                VoigtVector y4_pstrain = current_EpsilonPl + a41 * k1_pstrain + a42 * k2_pstrain + a43 * k3_pstrain;
+                iv_storage_t iv4 = current_iv_storage;
+                iv4.apply([&iv_k1, &iv_k2, &iv_k3, &current_iv_storage, a41, a42, a43](auto & iv4_var)
+                {
+                    using VT = std::decay_t<decltype(iv4_var)>;
+                    const VT &iv1_var = iv_k1.template get<VT>();
+                    const VT &iv2_var = iv_k2.template get<VT>();
+                    const VT &iv3_var = iv_k3.template get<VT>();
+                    const VT &current_var = current_iv_storage.template get<VT>();
+                    auto dk1 = iv1_var.trial_value - current_var.committed_value;
+                    auto dk2 = iv2_var.trial_value - current_var.committed_value;
+                    auto dk3 = iv3_var.trial_value - current_var.committed_value;
+                    iv4_var.trial_value = current_var.committed_value + a41 * dk1 + a42 * dk2 + a43 * dk3;
+                });
+                
+                Eelastic = et(y4_sigma, parameters_storage);
+                std::tie(dLambda, m) = CalculateLambdaM(y4_sigma, dEPS, parameters_storage, iv4);
+                k4_sigma = Eelastic * (dEPS - dLambda * m);
+                k4_pstrain = dLambda * m;
+                iv_k4 = current_iv_storage;
+                iv_k4.apply([&m, &dLambda, &y4_sigma, &dEPS, this](auto & iv4)
+                {
+                    auto h = iv4.hardening_function(dEPS, m, y4_sigma, parameters_storage);
+                    iv4.trial_value = iv4.committed_value + dLambda * h;
+                });
+
+                // k5 = f(t + c5*h, y + h*(a51*k1 + a52*k2 + a53*k3 + a54*k4))
+                VoigtVector y5_sigma = current_Sigma + a51 * k1_sigma + a52 * k2_sigma + a53 * k3_sigma + a54 * k4_sigma;
+                VoigtVector y5_pstrain = current_EpsilonPl + a51 * k1_pstrain + a52 * k2_pstrain + a53 * k3_pstrain + a54 * k4_pstrain;
+                iv_storage_t iv5 = current_iv_storage;
+                iv5.apply([&iv_k1, &iv_k2, &iv_k3, &iv_k4, &current_iv_storage, a51, a52, a53, a54](auto & iv5_var)
+                {
+                    using VT = std::decay_t<decltype(iv5_var)>;
+                    const VT &iv1_var = iv_k1.template get<VT>();
+                    const VT &iv2_var = iv_k2.template get<VT>();
+                    const VT &iv3_var = iv_k3.template get<VT>();
+                    const VT &iv4_var = iv_k4.template get<VT>();
+                    const VT &current_var = current_iv_storage.template get<VT>();
+                    auto dk1 = iv1_var.trial_value - current_var.committed_value;
+                    auto dk2 = iv2_var.trial_value - current_var.committed_value;
+                    auto dk3 = iv3_var.trial_value - current_var.committed_value;
+                    auto dk4 = iv4_var.trial_value - current_var.committed_value;
+                    iv5_var.trial_value = current_var.committed_value + a51 * dk1 + a52 * dk2 + a53 * dk3 + a54 * dk4;
+                });
+                
+                Eelastic = et(y5_sigma, parameters_storage);
+                std::tie(dLambda, m) = CalculateLambdaM(y5_sigma, dEPS, parameters_storage, iv5);
+                k5_sigma = Eelastic * (dEPS - dLambda * m);
+                k5_pstrain = dLambda * m;
+                iv_k5 = current_iv_storage;
+                iv_k5.apply([&m, &dLambda, &y5_sigma, &dEPS, this](auto & iv5)
+                {
+                    auto h = iv5.hardening_function(dEPS, m, y5_sigma, parameters_storage);
+                    iv5.trial_value = iv5.committed_value + dLambda * h;
+                });
+
+                // k6 = f(t + h, y + h*(a61*k1 + a62*k2 + a63*k3 + a64*k4 + a65*k5))
+                VoigtVector y6_sigma = current_Sigma + a61 * k1_sigma + a62 * k2_sigma + a63 * k3_sigma + a64 * k4_sigma + a65 * k5_sigma;
+                VoigtVector y6_pstrain = current_EpsilonPl + a61 * k1_pstrain + a62 * k2_pstrain + a63 * k3_pstrain + a64 * k4_pstrain + a65 * k5_pstrain;
+                iv_storage_t iv6 = current_iv_storage;
+                iv6.apply([&iv_k1, &iv_k2, &iv_k3, &iv_k4, &iv_k5, &current_iv_storage, a61, a62, a63, a64, a65](auto & iv6_var)
+                {
+                    using VT = std::decay_t<decltype(iv6_var)>;
+                    const VT &iv1_var = iv_k1.template get<VT>();
+                    const VT &iv2_var = iv_k2.template get<VT>();
+                    const VT &iv3_var = iv_k3.template get<VT>();
+                    const VT &iv4_var = iv_k4.template get<VT>();
+                    const VT &iv5_var = iv_k5.template get<VT>();
+                    const VT &current_var = current_iv_storage.template get<VT>();
+                    auto dk1 = iv1_var.trial_value - current_var.committed_value;
+                    auto dk2 = iv2_var.trial_value - current_var.committed_value;
+                    auto dk3 = iv3_var.trial_value - current_var.committed_value;
+                    auto dk4 = iv4_var.trial_value - current_var.committed_value;
+                    auto dk5 = iv5_var.trial_value - current_var.committed_value;
+                    iv6_var.trial_value = current_var.committed_value + a61 * dk1 + a62 * dk2 + a63 * dk3 + a64 * dk4 + a65 * dk5;
+                });
+                
+                Eelastic = et(y6_sigma, parameters_storage);
+                std::tie(dLambda, m) = CalculateLambdaM(y6_sigma, dEPS, parameters_storage, iv6);
+                k6_sigma = Eelastic * (dEPS - dLambda * m);
+                k6_pstrain = dLambda * m;
+
+                // 5th order solution
+                VoigtVector next_Sigma_5th = current_Sigma + (b1 * k1_sigma + b2 * k2_sigma + b3 * k3_sigma + b4 * k4_sigma + b5 * k5_sigma + b6 * k6_sigma);
+                VoigtVector next_EpsilonPl_5th = current_EpsilonPl + (b1 * k1_pstrain + b2 * k2_pstrain + b3 * k3_pstrain + b4 * k4_pstrain + b5 * k5_pstrain + b6 * k6_pstrain);
+
+                // 4th order solution for error estimation
+                VoigtVector next_Sigma_4th = current_Sigma + (bhat1 * k1_sigma + bhat2 * k2_sigma + bhat3 * k3_sigma + bhat4 * k4_sigma + bhat5 * k5_sigma + bhat6 * k6_sigma);
+                VoigtVector next_EpsilonPl_4th = current_EpsilonPl + (bhat1 * k1_pstrain + bhat2 * k2_pstrain + bhat3 * k3_pstrain + bhat4 * k4_pstrain + bhat5 * k5_pstrain + bhat6 * k6_pstrain);
+
+                // Error estimation
+                VoigtVector sigma_error = next_Sigma_5th - next_Sigma_4th;
+                VoigtVector pstrain_error = next_EpsilonPl_5th - next_EpsilonPl_4th;
+                
+                double step_error = sigma_error.norm() + pstrain_error.norm();
+                
+                // Normalize error by solution magnitude
+                double solution_norm = next_Sigma_5th.norm() + next_EpsilonPl_5th.norm();
+                if (solution_norm > 0.1) {
+                    step_error /= solution_norm;
+                }
+
+                // Check for NaN
+                if (std::isnan(step_error) || std::isnan(next_Sigma_5th.norm()) || std::isnan(next_EpsilonPl_5th.norm()))
+                {
+                    cout << "ASDPlasticMaterial3D::RK45 - NaN encountered, reducing step size" << endl;
+                    dT *= 0.5;
+                    if (dT < dT_min) {
+                        cout << "ASDPlasticMaterial3D::RK45 - Minimum step size reached with NaN" << endl;
+                        return -1;
+                    }
+                    continue;
+                }
+
+                // Step size control with PI controller
+                double error_ratio = TolE / std::max(step_error, 1e-15);
+                double scale_factor = safety_factor * std::pow(error_ratio, 0.2) * std::pow(previous_error / step_error, beta);
+                scale_factor = std::max(min_scale, std::min(max_scale, scale_factor));
+
+                // Accept or reject step
+                if (step_error <= TolE || effective_dT <= dT_min) {
+                    // Accept step - use 5th order solution
+                    current_Sigma = next_Sigma_5th;
+                    current_EpsilonPl = next_EpsilonPl_5th;
+                    
+                    // Update internal variables using 5th order
+                    current_iv_storage.apply([&iv_k1, &iv_k2, &iv_k3, &iv_k4, &iv_k5, &current_iv_storage, b1, b2, b3, b4, b5, b6](auto & current_var)
+                    {
+                        using VT = std::decay_t<decltype(current_var)>;
+                        const VT &iv1_var = iv_k1.template get<VT>();
+                        const VT &iv2_var = iv_k2.template get<VT>();
+                        const VT &iv3_var = iv_k3.template get<VT>();
+                        const VT &iv4_var = iv_k4.template get<VT>();
+                        const VT &iv5_var = iv_k5.template get<VT>();
+                        
+                        auto dk1 = iv1_var.trial_value - current_var.committed_value;
+                        auto dk2 = iv2_var.trial_value - current_var.committed_value;
+                        auto dk3 = iv3_var.trial_value - current_var.committed_value;
+                        auto dk4 = iv4_var.trial_value - current_var.committed_value;
+                        auto dk5 = iv5_var.trial_value - current_var.committed_value;
+                        // k6 is computed implicitly as it has coefficient 0 in the 5th order solution
+                        
+                        current_var.trial_value = current_var.committed_value + b1 * dk1 + b2 * dk2 + b3 * dk3 + b4 * dk4 + b5 * dk5;
+                    });
+                    
+                    T += effective_dT;
+                    maxStepError = std::max(maxStepError, step_error);
+                    previous_error = step_error;
+                    
+                    // Validate yield function drift
+                    double yf_val = yf(current_Sigma, current_iv_storage, parameters_storage);
+                    if (yf_val > 10 * TolE) {
+                        // cout << "Warning: Yield function drift detected: f = " << yf_val << endl;
+                    }
+                }
+
+                // Update step size for next iteration
+                double new_dT = scale_factor * effective_dT;
+                dT = std::max(dT_min, std::min(new_dT, 1.0 - T));
+
+                if (niter > this->INT_OPT_RK45_niter_max[ASDP_TAG])
+                {
+                    cout << "ASDPlasticMaterial3D - tag = " << ASDP_TAG << " exceeded number of iterations. niter = " << niter << " niter_max = " <<this->INT_OPT_RK45_niter_max[ASDP_TAG] << " T= " << T << " dT = " << dT << endl;
+                    return -1;
+                }
+            }
+
+            GLOBAL_INT_max_iter[ASDP_TAG] = std::max(GLOBAL_INT_max_iter[ASDP_TAG], niter);
+            GLOBAL_DBL_max_error[ASDP_TAG] = std::max(GLOBAL_DBL_max_error[ASDP_TAG], maxStepError);
+
+            TrialStress = current_Sigma;
+            TrialPlastic_Strain = current_EpsilonPl;
+            iv_storage = current_iv_storage;
+
+            //Return to Yield
+            if (INT_OPT_return_to_yield_surface[ASDP_TAG] == 1)  // Return to yield in one step
+            {
+                double yf_val_after_corrector = yf(TrialStress, iv_storage, parameters_storage);
+                if (yf_val_after_corrector > DBL_OPT_f_absolute_tol[ASDP_TAG]) {
+                    const VoigtVector& n_after_corrector = yf.df_dsigma_ij(TrialStress, iv_storage, parameters_storage);
+                    const VoigtVector& m_after_corrector = pf(depsilon_elpl, TrialStress, iv_storage, parameters_storage);
+                    double hardening_after_corrector = yf.hardening( depsilon_elpl, m_after_corrector,  TrialStress, iv_storage, parameters_storage);
+                    double denominator = n_after_corrector.transpose() * Eelastic * m_after_corrector - hardening_after_corrector;
+                    
+                    if (std::abs(denominator) > MACHINE_EPSILON) {
+                        double dLambda_after_corrector = yf_val_after_corrector / denominator;
+                        TrialStress = TrialStress - dLambda_after_corrector * Eelastic * m_after_corrector;
+                        TrialPlastic_Strain += dLambda_after_corrector * m_after_corrector;
+                        
+                        // Update internal variables
+                        iv_storage.apply([&m_after_corrector, &dLambda_after_corrector, this](auto& iv) {
+                            auto h = iv.hardening_function(depsilon_elpl, m_after_corrector, TrialStress, parameters_storage);
+                            iv.trial_value += dLambda_after_corrector * h;
+                        });
+                    }
+                }
+            }
+            else if (INT_OPT_return_to_yield_surface[ASDP_TAG] == 2)  // Return to yield with bisection
+            {
+                double y0 = yf(TrialStress, iv_storage, parameters_storage);
+                int iter = 0;
+                double TOL = this->DBL_OPT_f_absolute_tol[ASDP_TAG];
+                int NITER = this->INT_OPT_n_max_iterations[ASDP_TAG];
+                
+                if(y0 > TOL && iter < NITER)
+                {
+                    const VoigtVector& n_after_corrector = yf.df_dsigma_ij(TrialStress, iv_storage, parameters_storage);
+                    const VoigtVector& m_after_corrector = pf(depsilon_elpl, TrialStress, iv_storage, parameters_storage);
+                    double hardening_after_corrector = yf.hardening( depsilon_elpl, m_after_corrector,  TrialStress, iv_storage, parameters_storage);
+                    double denominator = n_after_corrector.transpose() * Eelastic * m_after_corrector - hardening_after_corrector;
+                    
+                    if (std::abs(denominator) > MACHINE_EPSILON) {
+                        double dL = y0 / denominator;
+                        VoigtVector TS = TrialStress - dL * Eelastic * m_after_corrector;
+                        double y1 = yf(TS, iv_storage, parameters_storage);
+
+                        // Try to bracket solution
+                        while( y1 > 0 && iter < NITER)
+                        {
+                            dL = dL * 1.1;
+                            TS = TrialStress - dL * Eelastic * m_after_corrector;
+                            y1 = yf(TS, iv_storage, parameters_storage);
+                            iter++;
+                        }
+
+                        iter = 0;
+
+                        // Once solution is bracketed, use bisection to get to YS
+                        if (y1 < 0)
+                        {
+                            double dL_min = 0;
+                            double dL_max = dL;
+                            double dL_mid = dL / 2;
+
+                            VoigtVector TS2 = TrialStress - dL_mid * Eelastic * m_after_corrector;
+                            double y_mid = yf(TS2, iv_storage, parameters_storage);
+                            
+                            while(std::abs(y_mid) > TOL && iter < NITER)
+                            {
+                                if (y_mid > 0) {
+                                    dL_min = dL_mid;
+                                } else {
+                                    dL_max = dL_mid;
+                                }
+                                dL_mid = 0.5*(dL_min + dL_max);
+                                TS2 = TrialStress - dL_mid * Eelastic * m_after_corrector;
+                                y_mid = yf(TS2, iv_storage, parameters_storage);
+                                iter++;
+                            }
+                            dL = dL_mid;
+                        }
+                        
+                        TrialStress = TrialStress - dL * Eelastic * m_after_corrector;
+                        TrialPlastic_Strain += dL * m_after_corrector;
+                        
+                        // Update internal variables
+                        iv_storage.apply([&m_after_corrector, &dL,  this](auto& iv) {
+                            auto h = iv.hardening_function(depsilon_elpl, m_after_corrector, TrialStress, parameters_storage);
+                            iv.trial_value += dL * h;
+                        });
+                    }
+                }
+            }
+
+            // Final validation
+            double norm_trial_stress = TrialStress.transpose() * TrialStress;
+            if (norm_trial_stress != norm_trial_stress) //check for nan
+            {
+                cout << "ASDPlasticMaterial3D::Runge_Kutta_45_Error_Control  Numeric error!\n";
+                printTensor1("TrialStress = " , TrialStress);
+                printTensor1("CommitStress = " , CommitStress);
+                printTensor1("depsilon = " , depsilon);
+                printTensor1("dsigma   = " , dsigma);
+                printTensor1("intersection_stress = " , intersection_stress);
+                printTensor2("Eelastic = " , Eelastic);
+                printTensor2("Stiffness = " , Stiffness);
+                cout << "yf_val_start = " << yf_val_start << endl;
+                cout << "yf_val_end = " << yf_val_end << endl;
+                printTensor1("n = " , yf.df_dsigma_ij(TrialStress, iv_storage, parameters_storage) );
+                printTensor1("m = " , pf(depsilon_elpl, TrialStress, iv_storage, parameters_storage) );
+                cout << "hardening  = " << yf.hardening( depsilon_elpl, pf(depsilon_elpl, TrialStress, iv_storage, parameters_storage),  TrialStress, iv_storage, parameters_storage) << endl;
+
+                return -1;
+            }
+
+            ComputeTangentStiffness();
+        }
+
+        return 0;
+    }
 
     //Robust Brent algorithm
     double compute_yf_crossing(const VoigtVector & start_stress, const VoigtVector & end_stress, double x1, double x2, double tol) const
@@ -1993,7 +2782,7 @@ protected:
 
     static std::map<int, ASDPlasticMaterial3D_Constitutive_Integration_Method> INT_OPT_constitutive_integration_method;     //
     static std::map<int, ASDPlasticMaterial3D_Tangent_Operator_Type> INT_OPT_tangent_operator_type;     //
-    static std::map<int, double> DOUBLE_OPT_f_absolute_tol;
+    static std::map<int, double> DBL_OPT_f_absolute_tol;
     static std::map<int, double> DBL_OPT_stress_absolute_tol;
     static std::map<int, int> INT_OPT_n_max_iterations;
     static std::map<int, int> INT_OPT_return_to_yield_surface;
@@ -2019,7 +2808,7 @@ std::map<int, ASDPlasticMaterial3D_Constitutive_Integration_Method> ASDPlasticMa
 template < class E, class Y, class P, int tag>
 std::map<int, ASDPlasticMaterial3D_Tangent_Operator_Type> ASDPlasticMaterial3D< E,  Y,  P,  tag>::INT_OPT_tangent_operator_type;
 template < class E, class Y, class P, int tag>
-std::map<int, double> ASDPlasticMaterial3D< E,  Y,  P,  tag>::DOUBLE_OPT_f_absolute_tol;
+std::map<int, double> ASDPlasticMaterial3D< E,  Y,  P,  tag>::DBL_OPT_f_absolute_tol;
 template < class E, class Y, class P, int tag>
 std::map<int, double> ASDPlasticMaterial3D< E,  Y,  P,  tag>::DBL_OPT_stress_absolute_tol;
 template < class E, class Y, class P, int tag>
