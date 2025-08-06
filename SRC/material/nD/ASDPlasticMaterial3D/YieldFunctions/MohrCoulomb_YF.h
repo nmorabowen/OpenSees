@@ -66,18 +66,6 @@ public:
 
         double yf = rEquivalentStress - rThresh;
 
-        // cout << "\n\nCALL YF" << endl;
-        // cout << "    phi = " << phi << endl;
-        // cout << "    c = " << c << endl;
-        // cout << "    I1 = " << I1 << endl;
-        // cout << "    J2 = " << J2 << endl;
-        // cout << "    lode_angle = " << lode_angle << endl;
-        // cout << "    rEquivalentStress = " << rEquivalentStress << endl;
-        // cout << "    yf = " << yf << endl;
-        // cout << " MC YF sigma = " << sigma.transpose() << "  yf = " << yf << "  rEq = " << rEquivalentStress << " rThr = " << rThresh << " J2 = " << J2 << endl;
-        // cout << "    std::cos(lode_angle) =  " << std::cos(lode_angle) << "    std::sin(lode_angle) =  " << std::sin(lode_angle)  << endl;
-        // cout << "    phi =  " << phi << "    std::sin(phi) =  " << std::sin(phi)  << endl;
-
         return yf;
     }
 
@@ -89,26 +77,11 @@ public:
 
         using namespace std;
 
-        // VoigtVector geo_sigma = -sigma;
-
         double sigma_norm = sigma.norm();
 
-
-        // cout << "CaLL derivative"  << endl;
-        // cout << "    sigma = " << sigma.transpose() << endl;
-
-
-        // const double DL = 1e-8;
-        // ds = ds == 0 ? 1e-8 : ds;
+        // Perturbation to smooth the YF
         ds = std::max(ds, ds*sigma_norm);
-        // Define a small perturbation value for numerical differentiation
-        // double ds = DL*sigma_norm;
-        // double ds = DL*sigma_norm;
 
-        // Compute the yield function at the original stress state
-        // double yf0 = YF(sigma);
-        // cout << "  yf0  = " << yf0 << endl;
-        
         // If the perturbation is set greater than zero, use numerical differentiation to get normal to YF
         if (ds > 0)
         {
@@ -155,17 +128,8 @@ public:
                 c2 = 1.0;
                 c3 = 0.0;
             }
-            // VoigtVector n2 = c1 * first_vector + c2 * second_vector + c3 * third_vector;
-
-            // cout << "    c1 = " << c1 << endl;
-            // cout << "    c2 = " << c2 << endl;
-            // cout << "    c3 = " << c3 << endl;
-            // cout << "    checker = " << checker << endl;
-            // cout << "    n  = " << vv_out.transpose() << endl;
-            // cout << "    n2  = " << n2.transpose() << endl;
 
             vv_out = c1 * first_vector + c2 * second_vector + c3 * third_vector;
-
         }
 
         return vv_out;
