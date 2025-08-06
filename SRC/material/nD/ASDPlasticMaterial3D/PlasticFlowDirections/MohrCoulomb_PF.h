@@ -68,51 +68,85 @@ public:
         // Perturbation to smooth the PF
         ds = std::max(ds, ds*sigma_norm);
 
-        // If the perturbation is set greater than zero, use numerical differentiation to get plastic flow direction
-        if (ds > 0)
-        {
+        // Helper lambda for numerical differentiation of plastic potential
+        auto computeNumericalFlowDirection = [this, phi, &internal_variables_storage, &parameters_storage](const VoigtVector& sig, double perturbation) -> VoigtVector {
+            VoigtVector result;
             for (int i = 0; i < 6; ++i) {
-                VoigtVector SIG1 = sigma;
-                VoigtVector SIG2 = sigma;
+                VoigtVector SIG1 = sig;
+                VoigtVector SIG2 = sig;
                 
-                // Increment SIG at index i by a small amount for numerical differentiation
-                SIG1(i) += ds;
-                SIG2(i) -= ds;
+                SIG1(i) += perturbation;
+                SIG2(i) -= perturbation;
 
-                // Compute the plastic potential function at the perturbed state
                 double g1 = g(SIG1, phi);
                 double g2 = g(SIG2, phi);
 
-                // Calculate the derivative
-                vv_out(i) = (g1 - g2) / (2*ds);
+                result(i) = (g1 - g2) / (2*perturbation);
             }
-        } 
-        else // Use analytic solution (consistent with YF implementation)
-        {
-            VoigtVector first_vector = calculate_first_vector();
-            VoigtVector second_vector = calculate_second_vector(sigma);
-            VoigtVector third_vector = calculate_third_vector(sigma);
+            return result;
+        };
 
-            double J2 = sigma.getJ2();
-            double J3 = sigma.getJ3();
-            double lode_angle = sigma.lodeAngle();
+        // If perturbation is set, use numerical differentiation
+        if (ds > 0) {
+            vv_out = computeNumericalFlowDirection(sigma, ds);
+        }
+        else {
+            // Try analytical solution with fallback to numerical
+            bool useNumerical = false;
+            
+            try {
+                double J2 = sigma.getJ2();
+                
+                // Check for numerical issues - use simplified approach for hydrostatic states
+                if (J2 < 1e-15) {
+                    vv_out = std::sin(phi) / 3.0 * calculate_first_vector();
+                } else {
+                    VoigtVector first_vector = calculate_first_vector();
+                    VoigtVector second_vector = calculate_second_vector(sigma);
+                    VoigtVector third_vector = calculate_third_vector(sigma);
 
-            double c1, c3, c2;
-            double checker = std::abs(lode_angle * 180.0 / M_PI);
+                    double lode_angle = sigma.lodeAngle();
+                    double c1, c2, c3;
+                    double checker = std::abs(lode_angle * 180.0 / M_PI);
 
-            if (std::abs(checker) < 29.0) { // If it is not the edge
-                c1 = std::sin(phi) / 3.0;
-                c3 = (std::sqrt(3.0) * std::sin(lode_angle) + std::sin(phi) * std::cos(lode_angle)) /
-                    (2.0 * J2 * std::cos(3.0 * lode_angle));
-                c2 = 0.5 * std::cos(lode_angle)*(1.0 + std::tan(lode_angle) * std::sin(3.0 * lode_angle) +
-                    std::sin(phi) * (std::tan(3.0 * lode_angle) - std::tan(lode_angle)) / std::sqrt(3.0));
-            } else { // smoothing with drucker-prager
-                c1 = 3.0 * (2.0 * std::sin(phi) / (std::sqrt(3.0) * (3.0 - std::sin(phi))));
-                c2 = 1.0;
-                c3 = 0.0;
+                    if (std::abs(checker) < 29.0) { // Regular case
+                        c1 = std::sin(phi) / 3.0;
+                        
+                        double denominator = 2.0 * J2 * std::cos(3.0 * lode_angle);
+                        if (std::abs(denominator) < 1e-15) {
+                            useNumerical = true; // Division by zero risk
+                        } else {
+                            c3 = (std::sqrt(3.0) * std::sin(lode_angle) + std::sin(phi) * std::cos(lode_angle)) / denominator;
+                            c2 = 0.5 * std::cos(lode_angle)*(1.0 + std::tan(lode_angle) * std::sin(3.0 * lode_angle) +
+                                std::sin(phi) * (std::tan(3.0 * lode_angle) - std::tan(lode_angle)) / std::sqrt(3.0));
+                        }
+                    } else { // Edge smoothing with Drucker-Prager
+                        c1 = 3.0 * (2.0 * std::sin(phi) / (std::sqrt(3.0) * (3.0 - std::sin(phi))));
+                        c2 = 1.0;
+                        c3 = 0.0;
+                    }
+
+                    if (!useNumerical) {
+                        vv_out = c1 * first_vector + c2 * second_vector + c3 * third_vector;
+
+                        // Validate result - check for NaN/Inf
+                        for (int i = 0; i < 6; ++i) {
+                            if (!std::isfinite(vv_out(i))) {
+                                useNumerical = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            catch (...) {
+                useNumerical = true;
             }
 
-            vv_out = c1 * first_vector + c2 * second_vector + c3 * third_vector;
+            // Fallback to numerical if analytical failed
+            if (useNumerical) {
+                vv_out = computeNumericalFlowDirection(sigma, 1e-8);
+            }
         }
 
         // Apply dilatancy correction: modify the volumetric component
