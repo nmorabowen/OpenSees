@@ -36,6 +36,7 @@
 #include <Channel.h>
 #include <Information.h>
 #include <MaterialResponse.h>
+#include <Parameter.h>
 
 #include "ASDPlasticMaterial3DTraits.h"
 
@@ -805,6 +806,153 @@ public:
         }
         return 0;
     }
+
+
+    int setParameter(const char **argv, int argc, Parameter &param)
+    {
+
+        cout << "ASDPlasticMaterial3D::setParameter  argv = " << *argv << endl;
+
+        // if (argc < 2)
+        //     return -1;
+        
+        // int theMaterialTag;
+        // theMaterialTag = atoi(argv[1]);
+        
+        // if (theMaterialTag == this->getTag()) {
+        if (true) {
+            
+            // State variables (use specific response IDs)
+            if (strcmp(argv[0], "stress") == 0) {
+                return param.addObject(1, this);
+            }
+            else if (strcmp(argv[0], "strain") == 0) {
+                return param.addObject(2, this);
+            }
+            else if (strcmp(argv[0], "plasticStrain") == 0) {
+                return param.addObject(3, this);
+            }
+            else if (strcmp(argv[0], "trialStress") == 0) {
+                return param.addObject(4, this);
+            }
+            else if (strcmp(argv[0], "trialStrain") == 0) {
+                return param.addObject(5, this);
+            }
+            else if (strcmp(argv[0], "trialPlasticStrain") == 0) {
+                return param.addObject(6, this);
+            }
+            else if (strcmp(argv[0], "K02D") == 0) {
+                cout << "       ---->  K02D" << endl;
+                return param.addObject(7, this);
+            }
+            else if (strcmp(argv[0], "K03D") == 0) {
+                cout << "       ---->  K03D" << endl;
+                return param.addObject(8, this);
+            }
+            else {
+                // For all other parameter names, use the parameter system to pass the name
+                // Store the parameter name in the Parameter object (if supported)
+                // or use a generic response ID
+                current_parameter_name = argv[0]; // Store for use in updateParameter
+                return param.addObject(1000, this);
+            }
+        }
+        
+        return -1;
+    }
+
+    int updateParameter(int responseID, Information &info)
+    {
+
+        cout << "ASDPlasticMaterial3D::updateParameter  responseID = " << responseID << endl;
+
+
+        // State variables (committed values)
+        if (responseID == 1) { // stress
+            if (info.theType == VectorType) {
+                const Vector& newStress = *(info.theVector);
+                CommitStress = VoigtVector::fromStress(newStress);
+                TrialStress = CommitStress;
+            }
+            return 0;
+        }
+        else if (responseID == 2) { // strain
+            if (info.theType == VectorType) {
+                const Vector& newStrain = *(info.theVector);
+                CommitStrain = VoigtVector::fromStrain(newStrain);
+                TrialStrain = CommitStrain;
+            }
+            return 0;
+        }
+        else if (responseID == 3) { // plasticStrain
+            if (info.theType == VectorType) {
+                const Vector& newPlasticStrain = *(info.theVector);
+                CommitPlastic_Strain = VoigtVector::fromStrain(newPlasticStrain);
+                TrialPlastic_Strain = CommitPlastic_Strain;
+            }
+            return 0;
+        }
+        // Trial state variables
+        else if (responseID == 4) { // trialStress
+            if (info.theType == VectorType) {
+                const Vector& newTrialStress = *(info.theVector);
+                TrialStress = VoigtVector::fromStress(newTrialStress);
+            }
+            return 0;
+        }
+        else if (responseID == 5) { // trialStrain
+            if (info.theType == VectorType) {
+                const Vector& newTrialStrain = *(info.theVector);
+                TrialStrain = VoigtVector::fromStrain(newTrialStrain);
+            }
+            return 0;
+        }
+        else if (responseID == 6) { // trialPlasticStrain
+            if (info.theType == VectorType) {
+                const Vector& newTrialPlasticStrain = *(info.theVector);
+                TrialPlastic_Strain = VoigtVector::fromStrain(newTrialPlasticStrain);
+            }
+            return 0;
+        }
+        else if (responseID == 7) { // K02D - Use Sigma_Y
+            // cout << "responseID == 7 !! info.theType = " << info.theType << " DoubleType = " << DoubleType << endl;
+            // if (info.theType == DoubleType) {
+                const double& K02D = info.theDouble;
+                cout << "ASDPL @ tag = " << this->getTag() << " K02D  K0 = " << K02D << endl;
+                CommitStress(0) = K02D * CommitStress(1);
+                CommitStress(2) = K02D * CommitStress(1);
+            // }
+            return 0;
+        }
+        else if (responseID == 8) { // K03D - Use Sigma_Z
+            // if (info.theType == DoubleType) {
+                const double& K03D = info.theDouble;
+                cout << "ASDPL @ tag = " << this->getTag() << " K03D  K0 = " << K03D << endl;
+                CommitStress(0) = K03D * CommitStress(2);
+                CommitStress(1) = K03D * CommitStress(2);
+            // }
+            return 0;
+        }
+        // Generic parameter update (model parameters and internal variables)
+        else if (responseID == 1000) {
+            // Use the stored parameter name from the most recent setParameter call
+            const char* param_name = current_parameter_name.c_str();
+            double param_value = info.theDouble;
+            
+            // Try to set as model parameter first
+            // utuple_storage::setParameterByName handles non-existent parameters gracefully (does nothing)
+            parameters_storage.setParameterByName(param_name, param_value);
+            
+            // Also try to set as internal variable (for scalar internal variables)
+            // utuple_storage::setInternalVariableByName also handles non-existent variables gracefully
+            iv_storage.setInternalVariableByName(param_name, 1, &param_value);
+            
+            return 0;
+        }
+        
+        return -1;
+    }
+
 
 
     Response *setResponse (const char **argv, int argc,
@@ -2777,6 +2925,7 @@ protected:
     iv_storage_t iv_storage;
     parameters_storage_t parameters_storage;
 
+    std::string current_parameter_name; // Stores the most recent parameter name from setParameter
 
 protected:
 
