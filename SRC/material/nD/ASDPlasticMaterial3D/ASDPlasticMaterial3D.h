@@ -235,7 +235,6 @@ public:
 
 
         TrialStrain = VoigtVector::fromStrain(v);
-        cout << "ASDPL - setTrialStrain TrialStrain = " << TrialStrain << endl;
         return setTrialStrainIncr( TrialStrain - CommitStrain );
     }
 
@@ -276,6 +275,9 @@ public:
             break;
         case ASDPlasticMaterial3D_Constitutive_Integration_Method::Runge_Kutta_45_Error_Control :
             exitflag = this->Runge_Kutta_45_Error_Control(strain_increment);;
+            break;
+        case ASDPlasticMaterial3D_Constitutive_Integration_Method::Runge_Kutta_45_Error_Control_old :
+            exitflag = this->Runge_Kutta_45_Error_Control_old(strain_increment);;
             break;
         default:
             cerr << "ASDPlasticMaterial3D::setTrialStrainIncr - Integration method not available!\n" ;
@@ -1111,6 +1113,7 @@ public:
                 || method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Multistep_Forward_Euler_Crisfield
                 || method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Modified_Euler_Error_Control
                 || method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Runge_Kutta_45_Error_Control
+                || method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Runge_Kutta_45_Error_Control_old
                 || method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Backward_Euler
                 || method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Forward_Euler_Subincrement
                 || method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Backward_Euler_ddlambda
