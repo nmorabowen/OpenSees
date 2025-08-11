@@ -234,6 +234,7 @@ public:
 
 
         TrialStrain = VoigtVector::fromStrain(v);
+        cout << "ASDPL - setTrialStrain TrialStrain = " << TrialStrain << endl;
         return setTrialStrainIncr( TrialStrain - CommitStrain );
     }
 
