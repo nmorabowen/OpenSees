@@ -410,6 +410,8 @@ void populate_ASDPlasticMaterial3D(T* instance)
                         method = (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Modified_Euler_Error_Control;
                     else if (std::strcmp(method_name, "Runge_Kutta_45_Error_Control") == 0)
                         method = (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Runge_Kutta_45_Error_Control;
+                    else if (std::strcmp(method_name, "Backward_Euler") == 0)
+                        method = (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Backward_Euler;
                     else
                     {
                         cout << "\n\nWARNING! Unrecognised ASDPlasticMaterial3D_Constitutive_Integration_Method name " << method_name << endl;

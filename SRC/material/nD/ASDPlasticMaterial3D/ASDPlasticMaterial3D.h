@@ -36,6 +36,7 @@
 #include <Channel.h>
 #include <Information.h>
 #include <MaterialResponse.h>
+#include <Parameter.h>
 
 #include "ASDPlasticMaterial3DTraits.h"
 
@@ -255,9 +256,9 @@ public:
         case ASDPlasticMaterial3D_Constitutive_Integration_Method::Forward_Euler_Subincrement :
             exitflag = this->Forward_Euler_Subincrement(strain_increment);
             break;
-        // case ASDPlasticMaterial3D_Constitutive_Integration_Method::Backward_Euler :
-        //     exitflag = this->Backward_Euler(strain_increment);;
-        //     break;
+        case ASDPlasticMaterial3D_Constitutive_Integration_Method::Backward_Euler :
+            exitflag = this->Backward_Euler(strain_increment);;
+            break;
         // case ASDPlasticMaterial3D_Constitutive_Integration_Method::Backward_Euler_ddlambda :
         //     exitflag = this->Backward_Euler_ddlambda(strain_increment);;
         //     break;
@@ -806,6 +807,153 @@ public:
         }
         return 0;
     }
+
+
+    int setParameter(const char **argv, int argc, Parameter &param)
+    {
+
+        cout << "ASDPlasticMaterial3D::setParameter  argv = " << *argv << endl;
+
+        // if (argc < 2)
+        //     return -1;
+        
+        // int theMaterialTag;
+        // theMaterialTag = atoi(argv[1]);
+        
+        // if (theMaterialTag == this->getTag()) {
+        if (true) {
+            
+            // State variables (use specific response IDs)
+            if (strcmp(argv[0], "stress") == 0) {
+                return param.addObject(1, this);
+            }
+            else if (strcmp(argv[0], "strain") == 0) {
+                return param.addObject(2, this);
+            }
+            else if (strcmp(argv[0], "plasticStrain") == 0) {
+                return param.addObject(3, this);
+            }
+            else if (strcmp(argv[0], "trialStress") == 0) {
+                return param.addObject(4, this);
+            }
+            else if (strcmp(argv[0], "trialStrain") == 0) {
+                return param.addObject(5, this);
+            }
+            else if (strcmp(argv[0], "trialPlasticStrain") == 0) {
+                return param.addObject(6, this);
+            }
+            else if (strcmp(argv[0], "K02D") == 0) {
+                cout << "       ---->  K02D" << endl;
+                return param.addObject(7, this);
+            }
+            else if (strcmp(argv[0], "K03D") == 0) {
+                cout << "       ---->  K03D" << endl;
+                return param.addObject(8, this);
+            }
+            else {
+                // For all other parameter names, use the parameter system to pass the name
+                // Store the parameter name in the Parameter object (if supported)
+                // or use a generic response ID
+                current_parameter_name = argv[0]; // Store for use in updateParameter
+                return param.addObject(1000, this);
+            }
+        }
+        
+        return -1;
+    }
+
+    int updateParameter(int responseID, Information &info)
+    {
+
+        cout << "ASDPlasticMaterial3D::updateParameter  responseID = " << responseID << endl;
+
+
+        // State variables (committed values)
+        if (responseID == 1) { // stress
+            if (info.theType == VectorType) {
+                const Vector& newStress = *(info.theVector);
+                CommitStress = VoigtVector::fromStress(newStress);
+                TrialStress = CommitStress;
+            }
+            return 0;
+        }
+        else if (responseID == 2) { // strain
+            if (info.theType == VectorType) {
+                const Vector& newStrain = *(info.theVector);
+                CommitStrain = VoigtVector::fromStrain(newStrain);
+                TrialStrain = CommitStrain;
+            }
+            return 0;
+        }
+        else if (responseID == 3) { // plasticStrain
+            if (info.theType == VectorType) {
+                const Vector& newPlasticStrain = *(info.theVector);
+                CommitPlastic_Strain = VoigtVector::fromStrain(newPlasticStrain);
+                TrialPlastic_Strain = CommitPlastic_Strain;
+            }
+            return 0;
+        }
+        // Trial state variables
+        else if (responseID == 4) { // trialStress
+            if (info.theType == VectorType) {
+                const Vector& newTrialStress = *(info.theVector);
+                TrialStress = VoigtVector::fromStress(newTrialStress);
+            }
+            return 0;
+        }
+        else if (responseID == 5) { // trialStrain
+            if (info.theType == VectorType) {
+                const Vector& newTrialStrain = *(info.theVector);
+                TrialStrain = VoigtVector::fromStrain(newTrialStrain);
+            }
+            return 0;
+        }
+        else if (responseID == 6) { // trialPlasticStrain
+            if (info.theType == VectorType) {
+                const Vector& newTrialPlasticStrain = *(info.theVector);
+                TrialPlastic_Strain = VoigtVector::fromStrain(newTrialPlasticStrain);
+            }
+            return 0;
+        }
+        else if (responseID == 7) { // K02D - Use Sigma_Y
+            // cout << "responseID == 7 !! info.theType = " << info.theType << " DoubleType = " << DoubleType << endl;
+            // if (info.theType == DoubleType) {
+                const double& K02D = info.theDouble;
+                cout << "ASDPL @ tag = " << this->getTag() << " K02D  K0 = " << K02D << endl;
+                CommitStress(0) = K02D * CommitStress(1);
+                CommitStress(2) = K02D * CommitStress(1);
+            // }
+            return 0;
+        }
+        else if (responseID == 8) { // K03D - Use Sigma_Z
+            // if (info.theType == DoubleType) {
+                const double& K03D = info.theDouble;
+                cout << "ASDPL @ tag = " << this->getTag() << " K03D  K0 = " << K03D << endl;
+                CommitStress(0) = K03D * CommitStress(2);
+                CommitStress(1) = K03D * CommitStress(2);
+            // }
+            return 0;
+        }
+        // Generic parameter update (model parameters and internal variables)
+        else if (responseID == 1000) {
+            // Use the stored parameter name from the most recent setParameter call
+            const char* param_name = current_parameter_name.c_str();
+            double param_value = info.theDouble;
+            
+            // Try to set as model parameter first
+            // utuple_storage::setParameterByName handles non-existent parameters gracefully (does nothing)
+            parameters_storage.setParameterByName(param_name, param_value);
+            
+            // Also try to set as internal variable (for scalar internal variables)
+            // utuple_storage::setInternalVariableByName also handles non-existent variables gracefully
+            iv_storage.setInternalVariableByName(param_name, 1, &param_value);
+            
+            return 0;
+        }
+        
+        return -1;
+    }
+
 
 
     Response *setResponse (const char **argv, int argc,
@@ -1386,6 +1534,188 @@ private:
 
         return errorcode;
     }
+
+
+
+    int Backward_Euler(const VoigtVector & strain_incr)
+    {
+        using namespace ASDPlasticMaterial3DGlobals;
+
+        int errorcode = -1;
+
+        static VoigtVector depsilon;
+        depsilon *= 0;
+        depsilon = strain_incr;
+
+        const VoigtVector& sigma = CommitStress;
+        const VoigtVector& epsilon = CommitStrain;
+
+        iv_storage.revert_all();
+
+        dsigma *= 0;
+        intersection_stress *= 0;
+        intersection_strain *= 0;
+
+        VoigtMatrix Eelastic = et(sigma, parameters_storage);
+
+        // Initial elastic predictor
+        dsigma = Eelastic * depsilon;
+        TrialStress = sigma + dsigma;
+        TrialStrain = CommitStrain + depsilon;
+        TrialPlastic_Strain = CommitPlastic_Strain;
+
+        double yf_val_start = yf(sigma, iv_storage, parameters_storage);
+        double yf_val_end = yf(TrialStress, iv_storage, parameters_storage);
+
+        VoigtVector start_stress = CommitStress;
+        VoigtVector end_stress = TrialStress;
+
+        intersection_stress = start_stress;
+
+        if ((yf_val_start <= 0.0 && yf_val_end <= 0.0) || yf_val_start > yf_val_end) //Elasticity
+        {
+            Stiffness = Eelastic;
+            return 0;
+        }
+        else  //Plasticity - Backward Euler Implementation
+        {
+            depsilon_elpl = depsilon;
+            
+            // Find intersection with yield surface if starting inside
+            if (yf_val_start < 0)
+            {
+                double tol_yf = DBL_OPT_f_absolute_tol[ASDP_TAG];
+                double intersection_factor = compute_yf_crossing( start_stress, end_stress, 0.0, 1.0, tol_yf );
+
+                intersection_factor = intersection_factor < 0 ? 0 : intersection_factor;
+                intersection_factor = intersection_factor > 1 ? 1 : intersection_factor;
+
+                intersection_stress = start_stress * (1 - intersection_factor) + end_stress * intersection_factor;
+                intersection_strain = epsilon  + depsilon * intersection_factor;
+                depsilon_elpl = (1 - intersection_factor) * depsilon;
+            }
+
+            // Initialize backward Euler iteration variables
+            VoigtVector sigma_trial = intersection_stress;
+            VoigtVector sigma_n_plus_1 = sigma_trial + Eelastic * depsilon_elpl; // Initial guess
+            double dLambda = 0.0;
+            
+            // Newton-Raphson iteration for backward Euler
+            int max_iterations = INT_OPT_n_max_iterations[ASDP_TAG];
+            double f_tol = DBL_OPT_f_absolute_tol[ASDP_TAG];
+            double stress_tol = DBL_OPT_stress_absolute_tol[ASDP_TAG];
+            
+            for (int iter = 0; iter < max_iterations; iter++)
+            {
+                // Evaluate yield function at current stress state
+                double f_val = yf(sigma_n_plus_1, iv_storage, parameters_storage);
+                
+                // Check convergence on yield function
+                if (abs(f_val) <= f_tol)
+                {
+                    TrialStress = sigma_n_plus_1;
+                    TrialPlastic_Strain = CommitPlastic_Strain + dLambda * pf(depsilon_elpl, sigma_n_plus_1, iv_storage, parameters_storage);
+                    
+                    // Check for NaN
+                    double norm_trial_stress = TrialStress.transpose() * TrialStress;
+                    if (norm_trial_stress != norm_trial_stress)
+                    {
+                        return -1;
+                    }
+                    
+                    ComputeTangentStiffness();
+                    return 0;
+                }
+                
+                // Compute derivatives for Newton-Raphson
+                const VoigtVector& n = yf.df_dsigma_ij(sigma_n_plus_1, iv_storage, parameters_storage);
+                const VoigtVector& m = pf(depsilon_elpl, sigma_n_plus_1, iv_storage, parameters_storage);
+                double hardening = yf.hardening(depsilon_elpl, m, sigma_n_plus_1, iv_storage, parameters_storage);
+                
+                // Build residual vector and Jacobian for backward Euler
+                // Residual: R1 = sigma_n+1 - sigma_trial - E * (depsilon - dLambda * m)
+                //          R2 = f(sigma_n+1, alpha_n+1)
+                
+                VoigtVector R1 = sigma_n_plus_1 - sigma_trial - Eelastic * (depsilon_elpl - dLambda * m);
+                double R2 = f_val;
+                
+                // Check stress residual convergence
+                double stress_residual_norm = R1.norm();
+                if (stress_residual_norm <= stress_tol && abs(R2) <= f_tol)
+                {
+                    TrialStress = sigma_n_plus_1;
+                    TrialPlastic_Strain = CommitPlastic_Strain + dLambda * m;
+                    
+                    // Check for NaN
+                    double norm_trial_stress = TrialStress.transpose() * TrialStress;
+                    if (norm_trial_stress != norm_trial_stress)
+                    {
+                        return -1;
+                    }
+                    
+                    ComputeTangentStiffness();
+                    return 0;
+                }
+                
+                // Build Jacobian matrix for Newton-Raphson
+                // J11 = I + dLambda * E * dm/dsigma
+                // J12 = E * m
+                // J21 = df/dsigma
+                // J22 = -hardening
+                
+                VoigtMatrix I = VoigtMatrix::Identity();
+                VoigtMatrix J11 = I; // Simplified - could add dLambda * E * dm/dsigma for better convergence
+                VoigtVector J12 = Eelastic * m;
+                VoigtVector J21 = n;
+                double J22 = -hardening;
+                
+                // Solve Newton system using block elimination
+                // [J11  J12] [Δσ   ]   [R1]
+                // [J21  J22] [ΔdL  ] = [R2]
+                
+                // Eliminate to get: (J22 - J21 * J11^-1 * J12) * ΔdL = R2 - J21 * J11^-1 * R1
+                double den = J22 - J21.transpose() * J12;
+                
+                if (abs(den) < MACHINE_EPSILON)
+                {
+                    cout << "Backward Euler - Singular Jacobian, den = " << den << endl;
+                    return -1;
+                }
+                
+                double delta_dLambda = (R2 - J21.transpose() * R1) / den;
+                VoigtVector delta_sigma = -R1 - delta_dLambda * J12;
+                
+                // Update variables
+                sigma_n_plus_1 += delta_sigma;
+                dLambda += delta_dLambda;
+                
+                // Ensure plastic multiplier is non-negative
+                if (dLambda < 0)
+                {
+                    dLambda = 0;
+                }
+                
+                // Update internal variables based on current plastic multiplier
+                iv_storage.apply([&m, &dLambda, &sigma_n_plus_1,  this](auto & iv)
+                {
+                    auto h = iv.hardening_function(depsilon_elpl, m, sigma_n_plus_1, parameters_storage);
+                    iv.trial_value = iv.committed_value + dLambda * h;
+                });
+            }
+            
+            // If we reach here, Newton-Raphson did not converge
+            cout << "Backward Euler - Newton-Raphson did not converge after " << max_iterations << " iterations" << endl;
+            return -1;
+        }
+
+        return errorcode;
+    }
+
+
+
+
+
+
 
     std::pair<double, VoigtVector> CalculateLambdaM(
         const VoigtVector & thisSigma,
@@ -2178,9 +2508,7 @@ private:
         return 0;
     }
 
-
-
-    // Improved RK45
+    // Complete corrected RK45 implementation with proper internal variable handling
     int Runge_Kutta_45_Error_Control(const VoigtVector & strain_incr)
     {
         // Dormand-Prince RK45 coefficients
@@ -2203,7 +2531,10 @@ private:
         depsilon *= 0;
         depsilon = strain_incr;
 
-        iv_storage.revert_all();
+        // CRITICAL FIX: Initialize trial values from committed values at start
+        iv_storage.apply([](auto & iv) {
+            iv.trial_value = iv.committed_value;
+        });
 
         dsigma *= 0;
         intersection_stress *= 0;
@@ -2263,8 +2594,10 @@ private:
             VoigtVector k1_sigma, k2_sigma, k3_sigma, k4_sigma, k5_sigma, k6_sigma;
             // Storage for k values - plastic strain derivatives  
             VoigtVector k1_pstrain, k2_pstrain, k3_pstrain, k4_pstrain, k5_pstrain, k6_pstrain;
-            // Storage for intermediate iv storages
-            iv_storage_t iv_k1 = iv_storage, iv_k2 = iv_storage, iv_k3 = iv_storage, iv_k4 = iv_storage, iv_k5 = iv_storage;
+            
+            // CORRECTED: Storage for internal variable derivatives (not absolute states)
+            iv_storage_t iv_k1_derivatives, iv_k2_derivatives, iv_k3_derivatives;
+            iv_storage_t iv_k4_derivatives, iv_k5_derivatives, iv_k6_derivatives;
 
             int niter = 0;
             double maxStepError = 0;
@@ -2281,167 +2614,245 @@ private:
                 // Update elasticity matrix for current state
                 Eelastic = et(current_Sigma, parameters_storage);
 
-                // k1 = f(t, y)
+                // k1 = f(t, y) - compute derivatives at current state
                 std::tie(dLambda, m) = CalculateLambdaM(current_Sigma, dEPS, parameters_storage, current_iv_storage);
                 k1_sigma = Eelastic * (dEPS - dLambda * m);
                 k1_pstrain = dLambda * m;
-                iv_k1 = current_iv_storage;
-                iv_k1.apply([&m, &dLambda, &current_Sigma, &dEPS, this](auto & iv1)
+                
+                // CORRECTED: Store pure derivatives for internal variables
+                iv_k1_derivatives = current_iv_storage;  // Copy structure
+                iv_k1_derivatives.apply([&m, &dLambda, &current_Sigma, &dEPS, this](auto & iv_deriv)
                 {
-                    auto h = iv1.hardening_function(dEPS, m, current_Sigma, parameters_storage);
-                    iv1.trial_value = iv1.committed_value + dLambda * h;
+                    auto h = iv_deriv.hardening_function(dEPS, m, current_Sigma, parameters_storage);
+                    iv_deriv.trial_value = dLambda * h;  // Pure derivative
                 });
 
                 // k2 = f(t + c2*h, y + h*(a21*k1))
                 VoigtVector y2_sigma = current_Sigma + a21 * k1_sigma;
                 VoigtVector y2_pstrain = current_EpsilonPl + a21 * k1_pstrain;
-                iv_storage_t iv2 = current_iv_storage;
-                iv2.apply([&iv_k1, &current_iv_storage, a21](auto & iv2_var)
+                
+                // CORRECTED: Properly propagate internal variable state using RK formula
+                iv_storage_t iv2_state = current_iv_storage;
+                iv2_state.apply([&iv_k1_derivatives, &current_iv_storage, a21](auto & iv2_var)
                 {
                     using VT = std::decay_t<decltype(iv2_var)>;
-                    const VT &iv1_var = iv_k1.template get<VT>();
                     const VT &current_var = current_iv_storage.template get<VT>();
-                    auto dk1 = iv1_var.trial_value - current_var.committed_value;
-                    iv2_var.trial_value = current_var.committed_value + a21 * dk1;
+                    const VT &k1_deriv = iv_k1_derivatives.template get<VT>();
+                    iv2_var.trial_value = current_var.trial_value + a21 * k1_deriv.trial_value;
                 });
                 
                 Eelastic = et(y2_sigma, parameters_storage);
-                std::tie(dLambda, m) = CalculateLambdaM(y2_sigma, dEPS, parameters_storage, iv2);
+                std::tie(dLambda, m) = CalculateLambdaM(y2_sigma, dEPS, parameters_storage, iv2_state);
                 k2_sigma = Eelastic * (dEPS - dLambda * m);
                 k2_pstrain = dLambda * m;
-                iv_k2 = current_iv_storage;
-                iv_k2.apply([&m, &dLambda, &y2_sigma, &dEPS, this](auto & iv2)
+                
+                iv_k2_derivatives = current_iv_storage;
+                iv_k2_derivatives.apply([&m, &dLambda, &y2_sigma, &dEPS, this](auto & iv_deriv)
                 {
-                    auto h = iv2.hardening_function(dEPS, m, y2_sigma, parameters_storage);
-                    iv2.trial_value = iv2.committed_value + dLambda * h;
+                    auto h = iv_deriv.hardening_function(dEPS, m, y2_sigma, parameters_storage);
+                    iv_deriv.trial_value = dLambda * h;
                 });
 
                 // k3 = f(t + c3*h, y + h*(a31*k1 + a32*k2))
                 VoigtVector y3_sigma = current_Sigma + a31 * k1_sigma + a32 * k2_sigma;
                 VoigtVector y3_pstrain = current_EpsilonPl + a31 * k1_pstrain + a32 * k2_pstrain;
-                iv_storage_t iv3 = current_iv_storage;
-                iv3.apply([&iv_k1, &iv_k2, &current_iv_storage, a31, a32](auto & iv3_var)
+                
+                iv_storage_t iv3_state = current_iv_storage;
+                iv3_state.apply([&iv_k1_derivatives, &iv_k2_derivatives, &current_iv_storage, a31, a32](auto & iv3_var)
                 {
                     using VT = std::decay_t<decltype(iv3_var)>;
-                    const VT &iv1_var = iv_k1.template get<VT>();
-                    const VT &iv2_var = iv_k2.template get<VT>();
                     const VT &current_var = current_iv_storage.template get<VT>();
-                    auto dk1 = iv1_var.trial_value - current_var.committed_value;
-                    auto dk2 = iv2_var.trial_value - current_var.committed_value;
-                    iv3_var.trial_value = current_var.committed_value + a31 * dk1 + a32 * dk2;
+                    const VT &k1_deriv = iv_k1_derivatives.template get<VT>();
+                    const VT &k2_deriv = iv_k2_derivatives.template get<VT>();
+                    iv3_var.trial_value = current_var.trial_value + a31 * k1_deriv.trial_value + a32 * k2_deriv.trial_value;
                 });
                 
                 Eelastic = et(y3_sigma, parameters_storage);
-                std::tie(dLambda, m) = CalculateLambdaM(y3_sigma, dEPS, parameters_storage, iv3);
+                std::tie(dLambda, m) = CalculateLambdaM(y3_sigma, dEPS, parameters_storage, iv3_state);
                 k3_sigma = Eelastic * (dEPS - dLambda * m);
                 k3_pstrain = dLambda * m;
-                iv_k3 = current_iv_storage;
-                iv_k3.apply([&m, &dLambda, &y3_sigma, &dEPS, this](auto & iv3)
+                
+                iv_k3_derivatives = current_iv_storage;
+                iv_k3_derivatives.apply([&m, &dLambda, &y3_sigma, &dEPS, this](auto & iv_deriv)
                 {
-                    auto h = iv3.hardening_function(dEPS, m, y3_sigma, parameters_storage);
-                    iv3.trial_value = iv3.committed_value + dLambda * h;
+                    auto h = iv_deriv.hardening_function(dEPS, m, y3_sigma, parameters_storage);
+                    iv_deriv.trial_value = dLambda * h;
                 });
 
                 // k4 = f(t + c4*h, y + h*(a41*k1 + a42*k2 + a43*k3))
                 VoigtVector y4_sigma = current_Sigma + a41 * k1_sigma + a42 * k2_sigma + a43 * k3_sigma;
                 VoigtVector y4_pstrain = current_EpsilonPl + a41 * k1_pstrain + a42 * k2_pstrain + a43 * k3_pstrain;
-                iv_storage_t iv4 = current_iv_storage;
-                iv4.apply([&iv_k1, &iv_k2, &iv_k3, &current_iv_storage, a41, a42, a43](auto & iv4_var)
+                
+                iv_storage_t iv4_state = current_iv_storage;
+                iv4_state.apply([&iv_k1_derivatives, &iv_k2_derivatives, &iv_k3_derivatives, &current_iv_storage, 
+                               a41, a42, a43](auto & iv4_var)
                 {
                     using VT = std::decay_t<decltype(iv4_var)>;
-                    const VT &iv1_var = iv_k1.template get<VT>();
-                    const VT &iv2_var = iv_k2.template get<VT>();
-                    const VT &iv3_var = iv_k3.template get<VT>();
                     const VT &current_var = current_iv_storage.template get<VT>();
-                    auto dk1 = iv1_var.trial_value - current_var.committed_value;
-                    auto dk2 = iv2_var.trial_value - current_var.committed_value;
-                    auto dk3 = iv3_var.trial_value - current_var.committed_value;
-                    iv4_var.trial_value = current_var.committed_value + a41 * dk1 + a42 * dk2 + a43 * dk3;
+                    const VT &k1_deriv = iv_k1_derivatives.template get<VT>();
+                    const VT &k2_deriv = iv_k2_derivatives.template get<VT>();
+                    const VT &k3_deriv = iv_k3_derivatives.template get<VT>();
+                    iv4_var.trial_value = current_var.trial_value + a41 * k1_deriv.trial_value + 
+                                         a42 * k2_deriv.trial_value + a43 * k3_deriv.trial_value;
                 });
                 
                 Eelastic = et(y4_sigma, parameters_storage);
-                std::tie(dLambda, m) = CalculateLambdaM(y4_sigma, dEPS, parameters_storage, iv4);
+                std::tie(dLambda, m) = CalculateLambdaM(y4_sigma, dEPS, parameters_storage, iv4_state);
                 k4_sigma = Eelastic * (dEPS - dLambda * m);
                 k4_pstrain = dLambda * m;
-                iv_k4 = current_iv_storage;
-                iv_k4.apply([&m, &dLambda, &y4_sigma, &dEPS, this](auto & iv4)
+                
+                iv_k4_derivatives = current_iv_storage;
+                iv_k4_derivatives.apply([&m, &dLambda, &y4_sigma, &dEPS, this](auto & iv_deriv)
                 {
-                    auto h = iv4.hardening_function(dEPS, m, y4_sigma, parameters_storage);
-                    iv4.trial_value = iv4.committed_value + dLambda * h;
+                    auto h = iv_deriv.hardening_function(dEPS, m, y4_sigma, parameters_storage);
+                    iv_deriv.trial_value = dLambda * h;
                 });
 
                 // k5 = f(t + c5*h, y + h*(a51*k1 + a52*k2 + a53*k3 + a54*k4))
                 VoigtVector y5_sigma = current_Sigma + a51 * k1_sigma + a52 * k2_sigma + a53 * k3_sigma + a54 * k4_sigma;
-                VoigtVector y5_pstrain = current_EpsilonPl + a51 * k1_pstrain + a52 * k2_pstrain + a53 * k3_pstrain + a54 * k4_pstrain;
-                iv_storage_t iv5 = current_iv_storage;
-                iv5.apply([&iv_k1, &iv_k2, &iv_k3, &iv_k4, &current_iv_storage, a51, a52, a53, a54](auto & iv5_var)
+                VoigtVector y5_pstrain = current_EpsilonPl + a51 * k1_pstrain + a52 * k2_pstrain + 
+                                        a53 * k3_pstrain + a54 * k4_pstrain;
+                
+                iv_storage_t iv5_state = current_iv_storage;
+                iv5_state.apply([&iv_k1_derivatives, &iv_k2_derivatives, &iv_k3_derivatives, &iv_k4_derivatives, 
+                               &current_iv_storage, a51, a52, a53, a54](auto & iv5_var)
                 {
                     using VT = std::decay_t<decltype(iv5_var)>;
-                    const VT &iv1_var = iv_k1.template get<VT>();
-                    const VT &iv2_var = iv_k2.template get<VT>();
-                    const VT &iv3_var = iv_k3.template get<VT>();
-                    const VT &iv4_var = iv_k4.template get<VT>();
                     const VT &current_var = current_iv_storage.template get<VT>();
-                    auto dk1 = iv1_var.trial_value - current_var.committed_value;
-                    auto dk2 = iv2_var.trial_value - current_var.committed_value;
-                    auto dk3 = iv3_var.trial_value - current_var.committed_value;
-                    auto dk4 = iv4_var.trial_value - current_var.committed_value;
-                    iv5_var.trial_value = current_var.committed_value + a51 * dk1 + a52 * dk2 + a53 * dk3 + a54 * dk4;
+                    const VT &k1_deriv = iv_k1_derivatives.template get<VT>();
+                    const VT &k2_deriv = iv_k2_derivatives.template get<VT>();
+                    const VT &k3_deriv = iv_k3_derivatives.template get<VT>();
+                    const VT &k4_deriv = iv_k4_derivatives.template get<VT>();
+                    iv5_var.trial_value = current_var.trial_value + a51 * k1_deriv.trial_value + 
+                                         a52 * k2_deriv.trial_value + a53 * k3_deriv.trial_value + 
+                                         a54 * k4_deriv.trial_value;
                 });
                 
                 Eelastic = et(y5_sigma, parameters_storage);
-                std::tie(dLambda, m) = CalculateLambdaM(y5_sigma, dEPS, parameters_storage, iv5);
+                std::tie(dLambda, m) = CalculateLambdaM(y5_sigma, dEPS, parameters_storage, iv5_state);
                 k5_sigma = Eelastic * (dEPS - dLambda * m);
                 k5_pstrain = dLambda * m;
-                iv_k5 = current_iv_storage;
-                iv_k5.apply([&m, &dLambda, &y5_sigma, &dEPS, this](auto & iv5)
+                
+                iv_k5_derivatives = current_iv_storage;
+                iv_k5_derivatives.apply([&m, &dLambda, &y5_sigma, &dEPS, this](auto & iv_deriv)
                 {
-                    auto h = iv5.hardening_function(dEPS, m, y5_sigma, parameters_storage);
-                    iv5.trial_value = iv5.committed_value + dLambda * h;
+                    auto h = iv_deriv.hardening_function(dEPS, m, y5_sigma, parameters_storage);
+                    iv_deriv.trial_value = dLambda * h;
                 });
 
                 // k6 = f(t + h, y + h*(a61*k1 + a62*k2 + a63*k3 + a64*k4 + a65*k5))
-                VoigtVector y6_sigma = current_Sigma + a61 * k1_sigma + a62 * k2_sigma + a63 * k3_sigma + a64 * k4_sigma + a65 * k5_sigma;
-                VoigtVector y6_pstrain = current_EpsilonPl + a61 * k1_pstrain + a62 * k2_pstrain + a63 * k3_pstrain + a64 * k4_pstrain + a65 * k5_pstrain;
-                iv_storage_t iv6 = current_iv_storage;
-                iv6.apply([&iv_k1, &iv_k2, &iv_k3, &iv_k4, &iv_k5, &current_iv_storage, a61, a62, a63, a64, a65](auto & iv6_var)
+                VoigtVector y6_sigma = current_Sigma + a61 * k1_sigma + a62 * k2_sigma + a63 * k3_sigma + 
+                                      a64 * k4_sigma + a65 * k5_sigma;
+                VoigtVector y6_pstrain = current_EpsilonPl + a61 * k1_pstrain + a62 * k2_pstrain + 
+                                        a63 * k3_pstrain + a64 * k4_pstrain + a65 * k5_pstrain;
+                
+                iv_storage_t iv6_state = current_iv_storage;
+                iv6_state.apply([&iv_k1_derivatives, &iv_k2_derivatives, &iv_k3_derivatives, &iv_k4_derivatives, 
+                               &iv_k5_derivatives, &current_iv_storage, a61, a62, a63, a64, a65](auto & iv6_var)
                 {
                     using VT = std::decay_t<decltype(iv6_var)>;
-                    const VT &iv1_var = iv_k1.template get<VT>();
-                    const VT &iv2_var = iv_k2.template get<VT>();
-                    const VT &iv3_var = iv_k3.template get<VT>();
-                    const VT &iv4_var = iv_k4.template get<VT>();
-                    const VT &iv5_var = iv_k5.template get<VT>();
                     const VT &current_var = current_iv_storage.template get<VT>();
-                    auto dk1 = iv1_var.trial_value - current_var.committed_value;
-                    auto dk2 = iv2_var.trial_value - current_var.committed_value;
-                    auto dk3 = iv3_var.trial_value - current_var.committed_value;
-                    auto dk4 = iv4_var.trial_value - current_var.committed_value;
-                    auto dk5 = iv5_var.trial_value - current_var.committed_value;
-                    iv6_var.trial_value = current_var.committed_value + a61 * dk1 + a62 * dk2 + a63 * dk3 + a64 * dk4 + a65 * dk5;
+                    const VT &k1_deriv = iv_k1_derivatives.template get<VT>();
+                    const VT &k2_deriv = iv_k2_derivatives.template get<VT>();
+                    const VT &k3_deriv = iv_k3_derivatives.template get<VT>();
+                    const VT &k4_deriv = iv_k4_derivatives.template get<VT>();
+                    const VT &k5_deriv = iv_k5_derivatives.template get<VT>();
+                    iv6_var.trial_value = current_var.trial_value + a61 * k1_deriv.trial_value + 
+                                         a62 * k2_deriv.trial_value + a63 * k3_deriv.trial_value + 
+                                         a64 * k4_deriv.trial_value + a65 * k5_deriv.trial_value;
                 });
                 
                 Eelastic = et(y6_sigma, parameters_storage);
-                std::tie(dLambda, m) = CalculateLambdaM(y6_sigma, dEPS, parameters_storage, iv6);
+                std::tie(dLambda, m) = CalculateLambdaM(y6_sigma, dEPS, parameters_storage, iv6_state);
                 k6_sigma = Eelastic * (dEPS - dLambda * m);
                 k6_pstrain = dLambda * m;
+                
+                iv_k6_derivatives = current_iv_storage;
+                iv_k6_derivatives.apply([&m, &dLambda, &y6_sigma, &dEPS, this](auto & iv_deriv)
+                {
+                    auto h = iv_deriv.hardening_function(dEPS, m, y6_sigma, parameters_storage);
+                    iv_deriv.trial_value = dLambda * h;
+                });
 
                 // 5th order solution
-                VoigtVector next_Sigma_5th = current_Sigma + (b1 * k1_sigma + b2 * k2_sigma + b3 * k3_sigma + b4 * k4_sigma + b5 * k5_sigma + b6 * k6_sigma);
-                VoigtVector next_EpsilonPl_5th = current_EpsilonPl + (b1 * k1_pstrain + b2 * k2_pstrain + b3 * k3_pstrain + b4 * k4_pstrain + b5 * k5_pstrain + b6 * k6_pstrain);
+                VoigtVector next_Sigma_5th = current_Sigma + (b1 * k1_sigma + b2 * k2_sigma + b3 * k3_sigma + 
+                                                             b4 * k4_sigma + b5 * k5_sigma + b6 * k6_sigma);
+                VoigtVector next_EpsilonPl_5th = current_EpsilonPl + (b1 * k1_pstrain + b2 * k2_pstrain + 
+                                                                     b3 * k3_pstrain + b4 * k4_pstrain + 
+                                                                     b5 * k5_pstrain + b6 * k6_pstrain);
+
+                // CORRECTED: 5th order solution for internal variables including ALL terms
+                iv_storage_t next_iv_5th = current_iv_storage;
+                next_iv_5th.apply([&iv_k1_derivatives, &iv_k2_derivatives, &iv_k3_derivatives, &iv_k4_derivatives, 
+                                 &iv_k5_derivatives, &iv_k6_derivatives, &current_iv_storage, 
+                                 b1, b2, b3, b4, b5, b6](auto & next_var)
+                {
+                    using VT = std::decay_t<decltype(next_var)>;
+                    const VT &current_var = current_iv_storage.template get<VT>();
+                    const VT &k1_deriv = iv_k1_derivatives.template get<VT>();
+                    const VT &k2_deriv = iv_k2_derivatives.template get<VT>();
+                    const VT &k3_deriv = iv_k3_derivatives.template get<VT>();
+                    const VT &k4_deriv = iv_k4_derivatives.template get<VT>();
+                    const VT &k5_deriv = iv_k5_derivatives.template get<VT>();
+                    const VT &k6_deriv = iv_k6_derivatives.template get<VT>();
+                    
+                    next_var.trial_value = current_var.trial_value + 
+                        b1 * k1_deriv.trial_value + b2 * k2_deriv.trial_value + b3 * k3_deriv.trial_value + 
+                        b4 * k4_deriv.trial_value + b5 * k5_deriv.trial_value + b6 * k6_deriv.trial_value;
+                });
 
                 // 4th order solution for error estimation
-                VoigtVector next_Sigma_4th = current_Sigma + (bhat1 * k1_sigma + bhat2 * k2_sigma + bhat3 * k3_sigma + bhat4 * k4_sigma + bhat5 * k5_sigma + bhat6 * k6_sigma);
-                VoigtVector next_EpsilonPl_4th = current_EpsilonPl + (bhat1 * k1_pstrain + bhat2 * k2_pstrain + bhat3 * k3_pstrain + bhat4 * k4_pstrain + bhat5 * k5_pstrain + bhat6 * k6_pstrain);
+                VoigtVector next_Sigma_4th = current_Sigma + (bhat1 * k1_sigma + bhat2 * k2_sigma + bhat3 * k3_sigma + 
+                                                             bhat4 * k4_sigma + bhat5 * k5_sigma + bhat6 * k6_sigma);
+                VoigtVector next_EpsilonPl_4th = current_EpsilonPl + (bhat1 * k1_pstrain + bhat2 * k2_pstrain + 
+                                                                     bhat3 * k3_pstrain + bhat4 * k4_pstrain + 
+                                                                     bhat5 * k5_pstrain + bhat6 * k6_pstrain);
 
-                // Error estimation
+                // 4th order solution for internal variables (for error estimation)
+                iv_storage_t next_iv_4th = current_iv_storage;
+                next_iv_4th.apply([&iv_k1_derivatives, &iv_k2_derivatives, &iv_k3_derivatives, &iv_k4_derivatives, 
+                                 &iv_k5_derivatives, &iv_k6_derivatives, &current_iv_storage, 
+                                 bhat1, bhat2, bhat3, bhat4, bhat5, bhat6](auto & next_var_4th)
+                {
+                    using VT = std::decay_t<decltype(next_var_4th)>;
+                    const VT &current_var = current_iv_storage.template get<VT>();
+                    const VT &k1_deriv = iv_k1_derivatives.template get<VT>();
+                    const VT &k2_deriv = iv_k2_derivatives.template get<VT>();
+                    const VT &k3_deriv = iv_k3_derivatives.template get<VT>();
+                    const VT &k4_deriv = iv_k4_derivatives.template get<VT>();
+                    const VT &k5_deriv = iv_k5_derivatives.template get<VT>();
+                    const VT &k6_deriv = iv_k6_derivatives.template get<VT>();
+                    
+                    next_var_4th.trial_value = current_var.trial_value + 
+                        bhat1 * k1_deriv.trial_value + bhat2 * k2_deriv.trial_value + bhat3 * k3_deriv.trial_value + 
+                        bhat4 * k4_deriv.trial_value + bhat5 * k5_deriv.trial_value + bhat6 * k6_deriv.trial_value;
+                });
+
+                // Error estimation including internal variables
                 VoigtVector sigma_error = next_Sigma_5th - next_Sigma_4th;
                 VoigtVector pstrain_error = next_EpsilonPl_5th - next_EpsilonPl_4th;
                 
-                double step_error = sigma_error.norm() + pstrain_error.norm();
+                // ADDED: Include internal variable errors in step control
+                double iv_error = 0.0;
+                next_iv_5th.apply([&next_iv_4th, &iv_error](const auto & iv_5th)
+                {
+                    using VT = std::decay_t<decltype(iv_5th)>;
+                    const VT &iv_4th = next_iv_4th.template get<VT>();
+                    auto diff = iv_5th.trial_value - iv_4th.trial_value;
+                    iv_error += diff.norm();
+                });
+                
+                double step_error = sigma_error.norm() + pstrain_error.norm() + iv_error;
                 
                 // Normalize error by solution magnitude
                 double solution_norm = next_Sigma_5th.norm() + next_EpsilonPl_5th.norm();
+                double iv_norm = 0.0;
+                next_iv_5th.apply([&iv_norm](const auto & iv)
+                {
+                    iv_norm += iv.trial_value.norm();
+                });
+                solution_norm += iv_norm;
+                
                 if (solution_norm > 0.1) {
                     step_error /= solution_norm;
                 }
@@ -2468,26 +2879,7 @@ private:
                     // Accept step - use 5th order solution
                     current_Sigma = next_Sigma_5th;
                     current_EpsilonPl = next_EpsilonPl_5th;
-                    
-                    // Update internal variables using 5th order
-                    current_iv_storage.apply([&iv_k1, &iv_k2, &iv_k3, &iv_k4, &iv_k5, &current_iv_storage, b1, b2, b3, b4, b5, b6](auto & current_var)
-                    {
-                        using VT = std::decay_t<decltype(current_var)>;
-                        const VT &iv1_var = iv_k1.template get<VT>();
-                        const VT &iv2_var = iv_k2.template get<VT>();
-                        const VT &iv3_var = iv_k3.template get<VT>();
-                        const VT &iv4_var = iv_k4.template get<VT>();
-                        const VT &iv5_var = iv_k5.template get<VT>();
-                        
-                        auto dk1 = iv1_var.trial_value - current_var.committed_value;
-                        auto dk2 = iv2_var.trial_value - current_var.committed_value;
-                        auto dk3 = iv3_var.trial_value - current_var.committed_value;
-                        auto dk4 = iv4_var.trial_value - current_var.committed_value;
-                        auto dk5 = iv5_var.trial_value - current_var.committed_value;
-                        // k6 is computed implicitly as it has coefficient 0 in the 5th order solution
-                        
-                        current_var.trial_value = current_var.committed_value + b1 * dk1 + b2 * dk2 + b3 * dk3 + b4 * dk4 + b5 * dk5;
-                    });
+                    current_iv_storage = next_iv_5th;
                     
                     T += effective_dT;
                     maxStepError = std::max(maxStepError, step_error);
@@ -2496,6 +2888,7 @@ private:
                     // Validate yield function drift
                     double yf_val = yf(current_Sigma, current_iv_storage, parameters_storage);
                     if (yf_val > 10 * TolE) {
+                        // Optional: Add drift correction here
                         // cout << "Warning: Yield function drift detected: f = " << yf_val << endl;
                     }
                 }
@@ -2518,7 +2911,7 @@ private:
             TrialPlastic_Strain = current_EpsilonPl;
             iv_storage = current_iv_storage;
 
-            //Return to Yield
+            //Return to Yield Surface
             if (INT_OPT_return_to_yield_surface[ASDP_TAG] == 1)  // Return to yield in one step
             {
                 double yf_val_after_corrector = yf(TrialStress, iv_storage, parameters_storage);
@@ -2534,7 +2927,7 @@ private:
                         TrialPlastic_Strain += dLambda_after_corrector * m_after_corrector;
                         
                         // Update internal variables
-                        iv_storage.apply([&m_after_corrector, &dLambda_after_corrector, this](auto& iv) {
+                        iv_storage.apply([&m_after_corrector, &dLambda_after_corrector, &depsilon_elpl, this](auto& iv) {
                             auto h = iv.hardening_function(depsilon_elpl, m_after_corrector, TrialStress, parameters_storage);
                             iv.trial_value += dLambda_after_corrector * h;
                         });
@@ -2558,14 +2951,29 @@ private:
                     if (std::abs(denominator) > MACHINE_EPSILON) {
                         double dL = y0 / denominator;
                         VoigtVector TS = TrialStress - dL * Eelastic * m_after_corrector;
-                        double y1 = yf(TS, iv_storage, parameters_storage);
+                        
+                        // Create temporary iv storage for testing
+                        iv_storage_t temp_iv = iv_storage;
+                        temp_iv.apply([&m_after_corrector, &dL, &depsilon_elpl, this](auto& iv) {
+                            auto h = iv.hardening_function(depsilon_elpl, m_after_corrector, TrialStress, parameters_storage);
+                            iv.trial_value += dL * h;
+                        });
+                        
+                        double y1 = yf(TS, temp_iv, parameters_storage);
 
                         // Try to bracket solution
                         while( y1 > 0 && iter < NITER)
                         {
                             dL = dL * 1.1;
                             TS = TrialStress - dL * Eelastic * m_after_corrector;
-                            y1 = yf(TS, iv_storage, parameters_storage);
+                            
+                            temp_iv = iv_storage;
+                            temp_iv.apply([&m_after_corrector, &dL, &depsilon_elpl, this](auto& iv) {
+                                auto h = iv.hardening_function(depsilon_elpl, m_after_corrector, TrialStress, parameters_storage);
+                                iv.trial_value += dL * h;
+                            });
+                            
+                            y1 = yf(TS, temp_iv, parameters_storage);
                             iter++;
                         }
 
@@ -2579,7 +2987,14 @@ private:
                             double dL_mid = dL / 2;
 
                             VoigtVector TS2 = TrialStress - dL_mid * Eelastic * m_after_corrector;
-                            double y_mid = yf(TS2, iv_storage, parameters_storage);
+                            
+                            iv_storage_t mid_iv = iv_storage;
+                            mid_iv.apply([&m_after_corrector, &dL_mid, &depsilon_elpl, this](auto& iv) {
+                                auto h = iv.hardening_function(depsilon_elpl, m_after_corrector, TrialStress, parameters_storage);
+                                iv.trial_value += dL_mid * h;
+                            });
+                            
+                            double y_mid = yf(TS2, mid_iv, parameters_storage);
                             
                             while(std::abs(y_mid) > TOL && iter < NITER)
                             {
@@ -2590,7 +3005,14 @@ private:
                                 }
                                 dL_mid = 0.5*(dL_min + dL_max);
                                 TS2 = TrialStress - dL_mid * Eelastic * m_after_corrector;
-                                y_mid = yf(TS2, iv_storage, parameters_storage);
+                                
+                                mid_iv = iv_storage;
+                                mid_iv.apply([&m_after_corrector, &dL_mid, &depsilon_elpl, this](auto& iv) {
+                                    auto h = iv.hardening_function(depsilon_elpl, m_after_corrector, TrialStress, parameters_storage);
+                                    iv.trial_value += dL_mid * h;
+                                });
+                                
+                                y_mid = yf(TS2, mid_iv, parameters_storage);
                                 iter++;
                             }
                             dL = dL_mid;
@@ -2599,8 +3021,8 @@ private:
                         TrialStress = TrialStress - dL * Eelastic * m_after_corrector;
                         TrialPlastic_Strain += dL * m_after_corrector;
                         
-                        // Update internal variables
-                        iv_storage.apply([&m_after_corrector, &dL,  this](auto& iv) {
+                        // Update internal variables with final correction
+                        iv_storage.apply([&m_after_corrector, &dL, &depsilon_elpl, this](auto& iv) {
                             auto h = iv.hardening_function(depsilon_elpl, m_after_corrector, TrialStress, parameters_storage);
                             iv.trial_value += dL * h;
                         });
@@ -2629,11 +3051,24 @@ private:
                 return -1;
             }
 
+            // ADDED: Final consistency check for internal variables
+            #ifdef DEBUG_INTERNAL_VARIABLES
+            cout << "=== Final Internal Variable State ===" << endl;
+            iv_storage.apply([](const auto & iv) {
+                cout << iv.getName() << ": trial=" << iv.trial_value.transpose() 
+                     << ", committed=" << iv.committed_value.transpose() << endl;
+            });
+            
+            double final_yf = yf(TrialStress, iv_storage, parameters_storage);
+            cout << "Final yield function value: " << final_yf << endl;
+            #endif
+
             ComputeTangentStiffness();
         }
 
         return 0;
     }
+
 
     //Robust Brent algorithm
     double compute_yf_crossing(const VoigtVector & start_stress, const VoigtVector & end_stress, double x1, double x2, double tol) const
@@ -2778,6 +3213,7 @@ protected:
     iv_storage_t iv_storage;
     parameters_storage_t parameters_storage;
 
+    std::string current_parameter_name; // Stores the most recent parameter name from setParameter
 
 protected:
 
