@@ -89,6 +89,7 @@ void* OPS_MPCORecorder();
 void* OPS_VTKHDF_Recorder();
 #endif
 BackgroundMesh& OPS_getBgMesh();
+void* OPS_EnergyBalanceRecorder();
 
 void* OPS_DriftRecorder();
 void* OPS_EnvelopeDriftRecorder();
@@ -128,6 +129,7 @@ namespace {
 	recordersMap.insert(std::make_pair("mpco", &OPS_MPCORecorder));
     recordersMap.insert(std::make_pair("VTKHDF", &OPS_VTKHDF_Recorder));
 #endif
+    recordersMap.insert(std::make_pair("EnergyBalance", &OPS_EnergyBalanceRecorder));
         //recordersMap.insert(std::make_pair("Drift", &OPS_DriftRecorder));
         //recordersMap.insert(std::make_pair("Pattern", &OPS_PatternRecorder));
 
