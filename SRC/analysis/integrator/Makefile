@@ -62,7 +62,8 @@ OBJS       = AlphaOS.o \
 	WilsonTheta.o \
 	GimmeMCK.o \
 	ExplicitBathe.o \
-	HarmonicSteadyState.o
+	HarmonicSteadyState.o \
+	ExplcitBatheLNVD.o
 
 all:         $(OBJS)
 

@@ -443,8 +443,7 @@ public:
         {
             compute_numerical_tangent_secondorder(TrialStrain-CommitStrain, Stiffness);
         }
-        else if (INT_OPT_tangent_operator_type[ASDP_TAG] == ASDPlasticMaterial3D_Tangent_Operator_Type::
-            Continuum)
+        else if (INT_OPT_tangent_operator_type[ASDP_TAG] == ASDPlasticMaterial3D_Tangent_Operator_Type::Continuum)
         {
 
             VoigtMatrix Eelastic = et(TrialStress, parameters_storage);
@@ -746,11 +745,21 @@ public:
     int revertToLastCommit(void)
     {
 
-        TrialStress = CommitStress;
-        TrialStrain = CommitStrain;
-        TrialPlastic_Strain = CommitPlastic_Strain;
+        // cerr << "ASDPlasticMaterial3D::revertToLastCommit !!!\n" ;
 
-        iv_storage.revert_all();
+
+        // TrialStress = CommitStress;
+        // TrialStrain = CommitStrain;
+        // TrialPlastic_Strain = CommitPlastic_Strain;
+
+        // iv_storage.revert_all();
+
+        // if (GLOBAL_INT_max_iter[ASDP_TAG] > 0 || GLOBAL_DBL_max_error[ASDP_TAG] > 0.)
+        // {
+        //     // cout << "  () ASDP Integration Info. Tag = " << ASDP_TAG << " max_iter = " << GLOBAL_INT_max_iter[ASDP_TAG] << " max_error = " << GLOBAL_DBL_max_error[ASDP_TAG] << endl;
+        //     GLOBAL_INT_max_iter[ASDP_TAG] = 0;
+        //     GLOBAL_DBL_max_error[ASDP_TAG] = 0.;
+        // }
 
         return 0;
     }
@@ -1584,22 +1593,8 @@ private:
         {
             depsilon_elpl = depsilon;
             
-            // Find intersection with yield surface if starting inside
-            if (yf_val_start < 0)
-            {
-                double tol_yf = DBL_OPT_f_absolute_tol[ASDP_TAG];
-                double intersection_factor = compute_yf_crossing( start_stress, end_stress, 0.0, 1.0, tol_yf );
-
-                intersection_factor = intersection_factor < 0 ? 0 : intersection_factor;
-                intersection_factor = intersection_factor > 1 ? 1 : intersection_factor;
-
-                intersection_stress = start_stress * (1 - intersection_factor) + end_stress * intersection_factor;
-                intersection_strain = epsilon  + depsilon * intersection_factor;
-                depsilon_elpl = (1 - intersection_factor) * depsilon;
-            }
-
             // Initialize backward Euler iteration variables
-            VoigtVector sigma_trial = intersection_stress;
+            VoigtVector sigma_trial = TrialStress;
             VoigtVector sigma_n_plus_1 = sigma_trial + Eelastic * depsilon_elpl; // Initial guess
             double dLambda = 0.0;
             
@@ -2514,6 +2509,8 @@ private:
     // Complete corrected RK45 implementation with proper internal variable handling
     int Runge_Kutta_45_Error_Control(const VoigtVector & strain_incr)
     {
+        int RK45_EXIT_FLAG = 0;
+
         // Dormand-Prince RK45 coefficients
         constexpr double a21 = 1.0/5.0;
         constexpr double a31 = 3.0/40.0, a32 = 9.0/40.0;
@@ -2902,8 +2899,9 @@ private:
 
                 if (niter > this->INT_OPT_RK45_niter_max[ASDP_TAG])
                 {
-                    cout << "ASDPlasticMaterial3D - tag = " << ASDP_TAG << " exceeded number of iterations. niter = " << niter << " niter_max = " <<this->INT_OPT_RK45_niter_max[ASDP_TAG] << " T= " << T << " dT = " << dT << endl;
-                    return -1;
+                    cout << "ASDPlasticMaterial3D - tag = " << ASDP_TAG << " RK45 exceeded number of iterations. niter = " << niter << " niter_max = " <<this->INT_OPT_RK45_niter_max[ASDP_TAG] << " T= " << T << " dT = " << dT << endl;
+                    RK45_EXIT_FLAG = -1;
+                    break;
                 }
             }
 
@@ -2912,7 +2910,9 @@ private:
 
             TrialStress = current_Sigma;
             TrialPlastic_Strain = current_EpsilonPl;
-            iv_storage = current_iv_storage;
+            // iv_storage = current_iv_storage;
+            iv_storage.updateTrialValueFromOther(current_iv_storage);
+
 
             //Return to Yield Surface
             if (INT_OPT_return_to_yield_surface[ASDP_TAG] == 1)  // Return to yield in one step
@@ -2930,7 +2930,7 @@ private:
                         TrialPlastic_Strain += dLambda_after_corrector * m_after_corrector;
                         
                         // Update internal variables
-                        iv_storage.apply([&m_after_corrector, &dLambda_after_corrector, &depsilon_elpl, this](auto& iv) {
+                        iv_storage.apply([&m_after_corrector, &dLambda_after_corrector, this](auto& iv) {
                             auto h = iv.hardening_function(depsilon_elpl, m_after_corrector, TrialStress, parameters_storage);
                             iv.trial_value += dLambda_after_corrector * h;
                         });
@@ -2957,7 +2957,7 @@ private:
                         
                         // Create temporary iv storage for testing
                         iv_storage_t temp_iv = iv_storage;
-                        temp_iv.apply([&m_after_corrector, &dL, &depsilon_elpl, this](auto& iv) {
+                        temp_iv.apply([&m_after_corrector, &dL, this](auto& iv) {
                             auto h = iv.hardening_function(depsilon_elpl, m_after_corrector, TrialStress, parameters_storage);
                             iv.trial_value += dL * h;
                         });
@@ -2971,7 +2971,7 @@ private:
                             TS = TrialStress - dL * Eelastic * m_after_corrector;
                             
                             temp_iv = iv_storage;
-                            temp_iv.apply([&m_after_corrector, &dL, &depsilon_elpl, this](auto& iv) {
+                            temp_iv.apply([&m_after_corrector, &dL, this](auto& iv) {
                                 auto h = iv.hardening_function(depsilon_elpl, m_after_corrector, TrialStress, parameters_storage);
                                 iv.trial_value += dL * h;
                             });
@@ -2992,7 +2992,7 @@ private:
                             VoigtVector TS2 = TrialStress - dL_mid * Eelastic * m_after_corrector;
                             
                             iv_storage_t mid_iv = iv_storage;
-                            mid_iv.apply([&m_after_corrector, &dL_mid, &depsilon_elpl, this](auto& iv) {
+                            mid_iv.apply([&m_after_corrector, &dL_mid, this](auto& iv) {
                                 auto h = iv.hardening_function(depsilon_elpl, m_after_corrector, TrialStress, parameters_storage);
                                 iv.trial_value += dL_mid * h;
                             });
@@ -3010,7 +3010,7 @@ private:
                                 TS2 = TrialStress - dL_mid * Eelastic * m_after_corrector;
                                 
                                 mid_iv = iv_storage;
-                                mid_iv.apply([&m_after_corrector, &dL_mid, &depsilon_elpl, this](auto& iv) {
+                                mid_iv.apply([&m_after_corrector, &dL_mid, this](auto& iv) {
                                     auto h = iv.hardening_function(depsilon_elpl, m_after_corrector, TrialStress, parameters_storage);
                                     iv.trial_value += dL_mid * h;
                                 });
@@ -3025,7 +3025,7 @@ private:
                         TrialPlastic_Strain += dL * m_after_corrector;
                         
                         // Update internal variables with final correction
-                        iv_storage.apply([&m_after_corrector, &dL, &depsilon_elpl, this](auto& iv) {
+                        iv_storage.apply([&m_after_corrector, &dL, this](auto& iv) {
                             auto h = iv.hardening_function(depsilon_elpl, m_after_corrector, TrialStress, parameters_storage);
                             iv.trial_value += dL * h;
                         });
@@ -3069,7 +3069,7 @@ private:
             ComputeTangentStiffness();
         }
 
-        return 0;
+        return RK45_EXIT_FLAG;
     }
 
 

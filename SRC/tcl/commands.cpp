@@ -227,6 +227,7 @@ extern void *OPS_AlphaOSGeneralized_TP(void);
 extern void *OPS_ExplicitDifference(void);
 extern void *OPS_CentralDifference(void);
 extern void *OPS_ExplicitBathe(void);
+extern void *OPS_ExplicitBatheLNVD(void);
 extern void *OPS_CentralDifferenceAlternative(void);
 extern void *OPS_CentralDifferenceNoDamping(void);
 extern void *OPS_Collocation(void);
@@ -5414,6 +5415,13 @@ specifyIntegrator(ClientData clientData, Tcl_Interp *interp, int argc,
 
   else if (strcmp(argv[1],"ExplicitBathe") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_ExplicitBathe();
+    
+    if (theTransientAnalysis != 0)
+      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+  }
+
+  else if (strcmp(argv[1],"ExplicitBatheLNVD") == 0) {
+    theTransientIntegrator = (TransientIntegrator *)OPS_ExplicitBatheLNVD();
     
     if (theTransientAnalysis != 0)
       theTransientAnalysis->setIntegrator(*theTransientIntegrator);

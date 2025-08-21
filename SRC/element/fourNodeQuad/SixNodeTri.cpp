@@ -41,6 +41,8 @@
 #include <ElementalLoad.h>
 #include <elementAPI.h>
 
+#include <cmath>
+
 void* OPS_SixNodeTri()
 {
     int ndm = OPS_GetNDM();
@@ -549,6 +551,28 @@ SixNodeTri::getMass()
 			K(ia,ia) += Nrho;
 		}
 	}
+
+    // Fix negative masses  HRZ rescaling Hinton, E., Rock, T., and Zienkiewicz, O.C. (1976). "A note on mass lumping and related processes in the finite element method." Earthquake Engineering & Structural Dynamics, 4(3), 245-249.
+    double total_mass = 0.0;
+    double abs_sum = 0.0;
+    
+    // Calculate total mass and absolute sum
+    for (int i = 0; i < 2*nnodes; i += 2) {
+        total_mass += K(i,i);
+        abs_sum += fabs(K(i,i));
+    }
+    
+    // Redistribute to ensure positive masses
+    if (abs_sum > 0) {
+        for (int i = 0; i < 2*nnodes; i += 2) {
+            double new_mass = fabs(K(i,i)) * total_mass / abs_sum;
+            K(i,i) = new_mass;
+            K(i+1,i+1) = new_mass;  // same mass for y-direction
+        }
+    }
+    
+
+	opserr << "M = " << K << endln;
 
 	return K;
 }

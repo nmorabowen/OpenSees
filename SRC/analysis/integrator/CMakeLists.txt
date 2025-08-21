@@ -86,6 +86,7 @@ target_sources(OPS_Analysis
        StagedNewmark.cpp
        GimmeMCK.cpp                     # MHS
        ExplicitBathe.cpp                # JAA
+       ExplicitBatheLNVD.cpp                # JAA
     PUBLIC
        AlphaOS.h
        AlphaOS_TP.h
@@ -131,6 +132,7 @@ target_sources(OPS_Analysis
        StagedNewmark.h
        GimmeMCK.h
        ExplicitBathe.h
+       ExplicitBatheLNVD.h
 )
 
 target_sources(OPS_PFEM
