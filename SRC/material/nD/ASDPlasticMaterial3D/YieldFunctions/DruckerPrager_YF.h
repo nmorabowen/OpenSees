@@ -4,121 +4,136 @@
 #include "../YieldFunctionBase.h"
 #include <cmath>
 #include <iostream>
+#include "../AllASDModelParameterTypes.h"
 
-template<class AlphaHardeningType, class KHardeningType>
-class DruckerPrager_YF : public YieldFunctionBase<DruckerPrager_YF<AlphaHardeningType, KHardeningType>> // CRTP
+template<class AlphaHardeningType, class CohesionHardeningType>
+class DruckerPrager_YF : public YieldFunctionBase<DruckerPrager_YF<AlphaHardeningType, CohesionHardeningType>> // CRTP
 {
 public:
 
     static constexpr const char* NAME = "DruckerPrager_YF";
 
     DruckerPrager_YF():
-        YieldFunctionBase<DruckerPrager_YF<AlphaHardeningType, KHardeningType>>::YieldFunctionBase()
+        YieldFunctionBase<DruckerPrager_YF<AlphaHardeningType, CohesionHardeningType>>::YieldFunctionBase()
     {}
 
-    // Yield function
     YIELD_FUNCTION
     {
-        // p is positive in compression (soil mechanics sign convention)
-        double p = -sigma.meanStress();
         auto s = sigma.deviator();
-
+        double p = sigma.meanStress();  // mean stress (positive in compression in geomechanics convention)
+        
         auto alpha = GET_TRIAL_INTERNAL_VARIABLE(AlphaHardeningType);
-        auto k = GET_TRIAL_INTERNAL_VARIABLE(KHardeningType);
-
-        // Numerical guards
-        constexpr double eps_p = 1e-14;
-        constexpr double eps_k = 1e-14;
-
-        double p_safe = (std::abs(p) < eps_p) ? ( (p >= 0.0) ? eps_p : -eps_p ) : p;
-        double k_safe = (std::abs(k.value()) < eps_k) ? eps_k : k.value();
-
-        // Deviatoric measure with kinematic shift
-        VoigtVector s_shift = s - p_safe * alpha;
-
-        // Guard against small negative inside sqrt due to round-off
-        double tmp = s_shift.dot(s_shift);
-        if (tmp < 0.0 && tmp > -1e-16) tmp = 0.0;
-
-        double yf = std::sqrt(tmp) - (SQRT_2_over_3 * k_safe * p_safe);
-
-        return yf;
+        // auto eta = GET_TRIAL_INTERNAL_VARIABLE(CohesionHardeningType);
+        
+        // Get friction parameter (eta) and cohesion (c) from parameters
+        double xi_c = GET_PARAMETER_VALUE(DP_xi_c);      // cohesion
+        double eta = GET_PARAMETER_VALUE(DP_eta);      // friction slope
+        
+        double tmp = tensor_dot(s - alpha, s - alpha);
+        tmp = tmp > 0 ? tmp : 0;
+        double sqrt_J2 = std::sqrt(0.5*tmp);
+        
+        // Drucker-Prager yield function: sqrt(J2) + eta * p - (c + k)
+        // where:
+        // - 0.5*sqrt(J2) is the deviatoric stress magnitude
+        // - eta is the friction parameter 
+        // - p is the mean stress (positive in compression)
+        // - xi_c is the adjusted cohesion
+        return sqrt_J2 + eta * p - (xi_c);
     }
 
-    // df/dsigma
     YIELD_FUNCTION_STRESS_DERIVATIVE
-    {  
-        double p = -sigma.meanStress();
+    {
         auto s = sigma.deviator();
-
+        double p = sigma.meanStress();
         auto alpha = GET_TRIAL_INTERNAL_VARIABLE(AlphaHardeningType);
-        auto k = GET_TRIAL_INTERNAL_VARIABLE(KHardeningType);
 
-        constexpr double eps_p = 1e-14;
-        constexpr double eps_k = 1e-14;
+        double xi_c = GET_PARAMETER_VALUE(DP_xi_c);      // cohesion
+        double eta = GET_PARAMETER_VALUE(DP_eta);      // friction slope
 
-        double p_safe = (std::abs(p) < eps_p) ? ( (p >= 0.0) ? eps_p : -eps_p ) : p;
-        double k_safe = (std::abs(k.value()) < eps_k) ? eps_k : k.value();
-
-        // Stress ratio r = s/p
-        VoigtVector r = s / p_safe;
-
-        // Denominator for normalization
-        double den = (SQRT_2_over_3 * k_safe);
-
-        // n = (r - alpha) / den
-        auto n = (r - alpha) / den;
-
-        double nr = n.dot(r);
-
-        vv_out = n - nr * kronecker_delta() / 3.0;
-
+        // Derivative with respect to deviatoric stress
+        VoigtVector dev_part = s - alpha;
+        double den = sqrt(0.5*tensor_dot(dev_part, dev_part));
+        
+        if (abs(den) > 100*ASDPlasticMaterial3DGlobals::MACHINE_EPSILON)
+            dev_part = dev_part / den;
+        else
+            dev_part *= 0.0;  // Zero out if denominator too small
+            
+        // Add pressure-dependent part: eta * dp/dsigma = eta/3 * I
+        VoigtVector pressure_part;
+        pressure_part *= 0.0;  // Initialize to zero
+        pressure_part(0) = eta / 3.0;  // sigma_xx component
+        pressure_part(1) = eta / 3.0;  // sigma_yy component  
+        pressure_part(2) = eta / 3.0;  // sigma_zz component
+        // shear components remain zero
+        
+        vv_out = dev_part + pressure_part;
+        
         return vv_out;
     }
-
-    // Hardening term df/dq * dq/d(lambda)
+    
     YIELD_FUNCTION_HARDENING
     {
         double dbl_result = 0.0;
-
-        auto alpha = GET_TRIAL_INTERNAL_VARIABLE(AlphaHardeningType);
-        auto k = GET_TRIAL_INTERNAL_VARIABLE(KHardeningType);
         
-        double p = -sigma.meanStress();
+        auto alpha = GET_TRIAL_INTERNAL_VARIABLE(AlphaHardeningType);
+        auto eta = GET_TRIAL_INTERNAL_VARIABLE(CohesionHardeningType);
+        
         auto s = sigma.deviator();
-
-        constexpr double eps_p = 1e-14;
-        constexpr double eps_k = 1e-14;
-
-        double p_safe = (std::abs(p) < eps_p) ? ( (p >= 0.0) ? eps_p : -eps_p ) : p;
-        double k_safe = (std::abs(k.value()) < eps_k) ? eps_k : k.value();
-
-        double den = (SQRT_2_over_3 * k_safe);
-
-        // Isotropic hardening part (k)
-        double df_dk = -SQRT_2_over_3 * p_safe;
-        dbl_result += (df_dk * GET_INTERNAL_VARIABLE_HARDENING(KHardeningType)).value();
-
-        // Kinematic hardening part (alpha)
-        auto df_dalpha = (p_safe * alpha - s) / den;
-        dbl_result += df_dalpha.dot(GET_INTERNAL_VARIABLE_HARDENING(AlphaHardeningType));
-
+        
+        // Hardening contribution from eta (isotropic hardening)
+        double df_deta = -1.0;  // derivative of f with respect to eta
+        dbl_result += (df_deta * GET_INTERNAL_VARIABLE_HARDENING(CohesionHardeningType)).value();
+        
+        // Hardening contribution from alpha (kinematic hardening)
+        double den = sqrt(0.5*tensor_dot(s - alpha, s - alpha));
+        
+        if (abs(den) < sqrt(0.5*tensor_dot(s, s))*ASDPlasticMaterial3DGlobals::MACHINE_EPSILON)
+        {
+            return dbl_result;
+        }
+        
+        auto df_dalpha = -(s - alpha) / den;
+        VoigtVector hh = GET_INTERNAL_VARIABLE_HARDENING(AlphaHardeningType);
+        dbl_result += tensor_dot(df_dalpha, hh);
+        
         return dbl_result;
     }
 
-    using internal_variables_t = std::tuple<AlphaHardeningType, KHardeningType>;
-    using parameters_t         = std::tuple<>;
+
+    CHECK_APEX_REGION
+    {
+
+        // Implement!!! 
+
+        return false;
+    }
+
+    APEX_STRESS
+    {
+
+        // Implement!!! 
+        vv_out = VoigtVector(0,0,0,0,0,0);
+
+        return vv_out;
+
+    }
+
+
+    using internal_variables_t = std::tuple<AlphaHardeningType, CohesionHardeningType>;
+    using parameters_t         = std::tuple<DP_xi_c, DP_eta>;
 
 private:
     static VoigtVector vv_out; // For returning VoigtVectors
 };
 
 // Static member definition
-template <class AlphaHardeningType, class KHardeningType>
-VoigtVector DruckerPrager_YF<AlphaHardeningType, KHardeningType>::vv_out;
+template <class AlphaHardeningType, class CohesionHardeningType>
+VoigtVector DruckerPrager_YF<AlphaHardeningType, CohesionHardeningType>::vv_out;
 
 // Declares this YF as featuring an apex
-template<class AlphaHardeningType, class KHardeningType>
-struct yf_has_apex<DruckerPrager_YF<AlphaHardeningType, KHardeningType>> : std::true_type {};
+template<class AlphaHardeningType, class CohesionHardeningType>
+struct yf_has_apex<DruckerPrager_YF<AlphaHardeningType, CohesionHardeningType>> : std::true_type {};
 
 #endif

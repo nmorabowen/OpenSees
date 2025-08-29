@@ -42,9 +42,11 @@ public:
     MohrCoulomb_PF( ):
         PlasticFlowBase<MohrCoulomb_PF<NO_HARDENING>>::PlasticFlowBase()
                 { }
-
-    double g(const VoigtVector& sigma, double phi) const
+    double g(const VoigtVector& sigma, double phi, double c) const
     {
+        using namespace std;
+
+        double rThresh = c * cos(phi);
         double I1 = sigma.getI1();
         double J2 = sigma.getJ2();
         double lode_angle = sigma.lodeAngle();
@@ -52,14 +54,28 @@ public:
         double rEquivalentStress = (std::cos(lode_angle) - std::sin(lode_angle) * std::sin(phi) / std::sqrt(3.0))  * std::sqrt(J2) +
             I1 * std::sin(phi) / 3.0;
 
-        return rEquivalentStress;
+        double yf = rEquivalentStress - rThresh;
+
+        return yf;
     }
+
+    // {
+    //     double I1 = sigma.getI1();
+    //     double J2 = sigma.getJ2();
+    //     double lode_angle = sigma.lodeAngle();
+
+    //     double rEquivalentStress = (std::cos(lode_angle) - std::sin(lode_angle) * std::sin(phi) / std::sqrt(3.0))  * std::sqrt(J2) +
+    //         I1 * std::sin(phi) / 3.0;
+
+    //     return rEquivalentStress;
+    // }
 
     PLASTIC_FLOW_DIRECTION
     {
         double phi = GET_PARAMETER_VALUE(MC_phi)*M_PI/180;
         double ds = GET_PARAMETER_VALUE(MC_ds);
-        double D = GET_PARAMETER_VALUE(Dilatancy);
+        double psi = GET_PARAMETER_VALUE(MC_psi)*M_PI/180;
+        double c = GET_PARAMETER_VALUE(MC_c)*M_PI/180;
 
         using namespace std;
 
@@ -69,7 +85,7 @@ public:
         ds = std::max(ds, ds*sigma_norm);
 
         // Helper lambda for numerical differentiation of plastic potential
-        auto computeNumericalFlowDirection = [this, phi, &internal_variables_storage, &parameters_storage](const VoigtVector& sig, double perturbation) -> VoigtVector {
+        auto computeNumericalFlowDirection = [this, phi, c, &internal_variables_storage, &parameters_storage](const VoigtVector& sig, double perturbation) -> VoigtVector {
             VoigtVector result;
             for (int i = 0; i < 6; ++i) {
                 VoigtVector SIG1 = sig;
@@ -78,10 +94,18 @@ public:
                 SIG1(i) += perturbation;
                 SIG2(i) -= perturbation;
 
-                double g1 = g(SIG1, phi);
-                double g2 = g(SIG2, phi);
+                double g1 = g(SIG1, phi, c);
+                double g2 = g(SIG2, phi, c);
 
-                result(i) = (g1 - g2) / (2*perturbation);
+                if (i < 3)
+                {
+                    result(i) = (g1 - g2) / (2*perturbation);
+                }
+                else
+                {
+                    // result(i) = 2 * (g1 - g2) / (2*perturbation);   // Engineering strain
+                    result(i) = (g1 - g2) / (2*perturbation);   // Engineering strain
+                }
             }
             return result;
         };
@@ -145,7 +169,7 @@ public:
 
             // Fallback to numerical if analytical failed
             if (useNumerical) {
-                vv_out = computeNumericalFlowDirection(sigma, 1e-8);
+                vv_out = computeNumericalFlowDirection(sigma, 1e-6);
             }
         }
 
@@ -160,15 +184,16 @@ public:
         
         // Apply dilatancy modification to the volumetric component
         // For D=0: associated flow, D<sin(phi): non-associated flow with reduced dilation
-        double volumetric_multiplier = std::sin(phi) - D;
+        double volumetric_multiplier = std::sin(psi);
         vv_out = vv_out.deviator() + volumetric_multiplier * volumetric_part;
+
 
         return vv_out;
     }
 
     using internal_variables_t = std::tuple<NO_HARDENING>;
 
-    using parameters_t = std::tuple<MC_phi,MC_c,MC_ds,Dilatancy>;
+    using parameters_t = std::tuple<MC_phi,MC_c,MC_ds, MC_psi>;
 
 private:
 

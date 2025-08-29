@@ -155,7 +155,7 @@ public:
 
             // Fallback to numerical if analytical failed
             if (useNumerical) {
-                vv_out = computeNumericalDerivative(sigma, 1e-8);
+                vv_out = computeNumericalDerivative(sigma, 1e-6);
             }
         }
 
@@ -166,6 +166,33 @@ public:
     {
         // This model does not support hardening 
         return 0.0;
+    }
+
+
+    CHECK_APEX_REGION
+    {
+        double phi = GET_PARAMETER_VALUE(MC_phi)*M_PI/180;
+        double c = GET_PARAMETER_VALUE(MC_c);
+        double I1 = sigma.getI1();
+        double p = -I1 / 3;
+
+        if (p < - c / tan(phi))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    APEX_STRESS
+    {
+        double phi = GET_PARAMETER_VALUE(MC_phi)*M_PI/180;
+        double c = GET_PARAMETER_VALUE(MC_c);
+        double p_apex = c / tan(phi);
+
+        vv_out = VoigtVector(p_apex,p_apex,p_apex,0,0,0);
+
+        return vv_out;
     }
 
   

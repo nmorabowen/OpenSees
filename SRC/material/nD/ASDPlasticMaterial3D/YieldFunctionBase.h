@@ -72,6 +72,15 @@ struct yf_has_internal_variables_t<T, typename std::enable_if<!std::is_same<type
         const IVStorageType& internal_variables_storage,\
         const ParameterStorageType& parameters_storage) const
 
+#define CHECK_APEX_REGION template <typename IVStorageType, typename ParameterStorageType> \
+    bool check_apex_region( const VoigtVector& sigma, \
+        const IVStorageType& internal_variables_storage, \
+        const ParameterStorageType& parameters_storage) const 
+
+#define APEX_STRESS template <typename IVStorageType, typename ParameterStorageType> \
+    const VoigtVector& apex_stress(const IVStorageType& internal_variables_storage, \
+                        const ParameterStorageType& parameters_storage) const
+
 #define GET_INTERNAL_VARIABLE_HARDENING(type) \
     internal_variables_storage.template get<type> ().hardening_function(depsilon, m, sigma, parameters_storage)
 

@@ -98,6 +98,33 @@ public:
         return 0.0;
     }
 
+    CHECK_APEX_REGION
+    {
+        // double phi = GET_PARAMETER_VALUE(MC_phi)*M_PI/180;
+        // double c = GET_PARAMETER_VALUE(MC_c);
+        // double I1 = sigma.getI1();
+        // double p = -I1 / 3;
+
+        // if (p < - c / tan(phi))
+        // {
+        //     return true;
+        // }
+
+        // Implement!!! 
+
+        return false;
+    }
+
+    APEX_STRESS
+    {
+
+        // Implement!!! 
+        vv_out = VoigtVector(0,0,0,0,0,0);
+
+        return vv_out;
+
+    }
+
   
     using internal_variables_t = std::tuple<NO_HARDENING>;
 

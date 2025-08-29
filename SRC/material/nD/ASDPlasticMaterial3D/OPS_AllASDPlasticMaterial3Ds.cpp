@@ -197,7 +197,7 @@ NDMaterial*  ASDPlasticMaterial3DFactory(int instance_tag, const char * yf_type,
     std::list<NDMaterial*> instance_pointers;
 
 
-	#include "ASD_material_definitions.cpp"    
+    #include "ASD_material_definitions.cpp"    
 
     //Search for the valid pointer and return that one
     for(auto instance : instance_pointers)
@@ -413,7 +413,9 @@ void populate_ASDPlasticMaterial3D(T* instance)
                     else if (std::strcmp(method_name, "Runge_Kutta_45_Error_Control_old") == 0)
                         method = (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Runge_Kutta_45_Error_Control_old;
                     else if (std::strcmp(method_name, "Backward_Euler") == 0)
-                        method = (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Backward_Euler;
+                        method = (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Backward_Euler;                    
+                    else if (std::strcmp(method_name, "Backward_Euler_LineSearch") == 0)
+                        method = (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Backward_Euler_LineSearch;
                     else
                     {
                         cout << "\n\nWARNING! Unrecognised ASDPlasticMaterial3D_Constitutive_Integration_Method name " << method_name << endl;
