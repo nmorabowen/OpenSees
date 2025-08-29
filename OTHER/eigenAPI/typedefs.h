@@ -203,7 +203,16 @@ public:
         return *this - tr_over_3 * kronecker_delta();
     };
 
-
+    double maxAbs() const {
+        double m = 0.0;
+        m = std::max(m, std::abs(this->v11()));
+        m = std::max(m, std::abs(this->v22()));
+        m = std::max(m, std::abs(this->v33()));
+        m = std::max(m, std::abs(this->v12()));
+        m = std::max(m, std::abs(this->v23()));
+        m = std::max(m, std::abs(this->v13()));
+        return m;
+    }
 
 public:
     // Eigen::Vector3d principalStresses() const {
@@ -345,30 +354,42 @@ public:
     //     return lode_angle;
     // }
 
+    // double lodeAngle() const {
+    //     // Eigen::Vector3d principal_stresses = this->principalStresses();
+    //     // double s1 = principal_stresses(0);
+    //     // double s2 = principal_stresses(1);
+    //     // double s3 = principal_stresses(2);
+    //     double J2 = this->getJ2();
+    //     double J3 = this->getJ3();
+
+    //     double rLodeAngle;
+
+    //     if (J2 > std::numeric_limits<double>::epsilon()) {
+    //         double sint3 = (-3.0 * std::sqrt(3.0) * J3) / (2.0 * J2 * std::sqrt(J2));
+    //         if (sint3 < -0.95)
+    //             sint3 = -1.0;
+    //         else if (sint3 > 0.95)
+    //             sint3 = 1.0;
+    //         rLodeAngle = std::asin(sint3) / 3.0;
+    //     } else {
+    //         rLodeAngle = 0.0;
+    //     }
+
+    //     return rLodeAngle;
+    // }
+
     double lodeAngle() const {
-        // Eigen::Vector3d principal_stresses = this->principalStresses();
-        // double s1 = principal_stresses(0);
-        // double s2 = principal_stresses(1);
-        // double s3 = principal_stresses(2);
         double J2 = this->getJ2();
         double J3 = this->getJ3();
-
-        double rLodeAngle;
-
-        if (J2 > std::numeric_limits<double>::epsilon()) {
-            double sint3 = (-3.0 * std::sqrt(3.0) * J3) / (2.0 * J2 * std::sqrt(J2));
-            if (sint3 < -0.95)
-                sint3 = -1.0;
-            else if (sint3 > 0.95)
-                sint3 = 1.0;
-            rLodeAngle = std::asin(sint3) / 3.0;
-        } else {
-            rLodeAngle = 0.0;
+        if (J2 <= std::numeric_limits<double>::epsilon()) {
+            return 0.0;
         }
-
-        return rLodeAngle;
+        double x = (-3.0 * std::sqrt(3.0) * J3) / (2.0 * J2 * std::sqrt(J2));
+        // clamp 
+        if (x > 1.0) x = 1.0;
+        else if (x < -1.0) x = -1.0;
+        return std::asin(x) / 3.0;
     }
-
 
 
     #include <cmath>
@@ -391,6 +412,21 @@ public:
 
 
 };
+
+EIGEN_STRONG_INLINE double tensor_dot(const VoigtVector& a, const VoigtVector& b)
+{
+    double the_dot_product = 
+        a.v11() * b.v11() + 
+        a.v22() * b.v22() + 
+        a.v33() * b.v33()
+        + 2 * (a.v12() * b.v12() + 
+               a.v23() * b.v23() + 
+               a.v13() * b.v13());
+
+    return the_dot_product;
+}
+
+
 
 EIGEN_STRONG_INLINE VoigtVector kronecker_delta()
 {
@@ -438,6 +474,37 @@ EIGEN_STRONG_INLINE VoigtVector calculate_third_vector(const VoigtVector& sigma)
 
     return rThirdVector;
 }
+
+
+
+// class VoigtMatrix;
+
+
+// namespace Eigen {
+// namespace internal {
+// template<> struct traits<VoigtMatrix> : public traits<Eigen::Matrix<double,6,6>> {};
+// }}
+
+
+
+// class VoigtMatrix : public Eigen::Matrix<double,6,6> {
+// public:
+//     using Base = Eigen::Matrix<double,6,6>;
+//     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+//     EIGEN_DENSE_PUBLIC_INTERFACE(VoigtMatrix)  // o EIGEN_GENERIC_PUBLIC_INTERFACE(VoigtMatrix)
+//     using Base::Base; // hereda ctors de Eigen
+
+//     template<typename OtherDerived>
+//     VoigtMatrix& operator=(const Eigen::MatrixBase<OtherDerived>& other) {
+//         Base::operator=(other);
+//         return *this;
+//     }
+
+//     // Si de verdad quieres este ctor desde arreglo:
+//     // OJO: Eigen es column-major por defecto; si tu arreglo está en row-major, usa RowMajor en el Map.
+//     explicit VoigtMatrix(const double* values_row_major)
+//       : Base(Eigen::Map<const Eigen::Matrix<double,6,6,Eigen::RowMajor>>(values_row_major)) {}
+// };
 
 
 // inherit from matrix

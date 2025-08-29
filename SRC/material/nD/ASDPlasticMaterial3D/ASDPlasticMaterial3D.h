@@ -258,9 +258,9 @@ public:
         case ASDPlasticMaterial3D_Constitutive_Integration_Method::Backward_Euler :
             exitflag = this->Backward_Euler(strain_increment);;
             break;
-        // case ASDPlasticMaterial3D_Constitutive_Integration_Method::Backward_Euler_ddlambda :
-        //     exitflag = this->Backward_Euler_ddlambda(strain_increment);;
-        //     break;
+        case ASDPlasticMaterial3D_Constitutive_Integration_Method::Backward_Euler_LineSearch :
+            exitflag = this->Backward_Euler_LineSearch(strain_increment);;
+            break;
         // case ASDPlasticMaterial3D_Constitutive_Integration_Method::Backward_Euler_ddlambda_Subincrement :
         //     exitflag = this->Backward_Euler_ddlambda_Subincrement(strain_increment);;
         //     break;
@@ -1125,8 +1125,7 @@ public:
                 || method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Runge_Kutta_45_Error_Control_old
                 || method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Backward_Euler
                 || method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Forward_Euler_Subincrement
-                || method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Backward_Euler_ddlambda
-                || method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Backward_Euler_ddlambda_Subincrement
+                || method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Backward_Euler_LineSearch
                 || method == (int) ASDPlasticMaterial3D_Constitutive_Integration_Method::Full_Backward_Euler)
         {
             INT_OPT_constitutive_integration_method[ASDP_TAG] = (ASDPlasticMaterial3D_Constitutive_Integration_Method) method ;
@@ -1549,17 +1548,321 @@ private:
 
 
 
+    // int Backward_Euler(const VoigtVector & strain_incr)
+    // {
+    //     using namespace ASDPlasticMaterial3DGlobals;
+
+    //     int errorcode = -1;
+
+    //     static VoigtVector depsilon;
+    //     depsilon *= 0;
+    //     depsilon = strain_incr;
+
+    //     const VoigtVector& sigma = CommitStress;
+    //     const VoigtVector& epsilon = CommitStrain;
+
+    //     iv_storage.revert_all();
+
+    //     dsigma *= 0;
+    //     intersection_stress *= 0;
+    //     intersection_strain *= 0;
+
+    //     VoigtMatrix Eelastic = et(sigma, parameters_storage);
+
+    //     // Initial elastic predictor
+    //     dsigma = Eelastic * depsilon;
+    //     TrialStress = sigma + dsigma;
+    //     TrialStrain = CommitStrain + depsilon;
+    //     TrialPlastic_Strain = CommitPlastic_Strain;
+
+    //     double yf_val_start = yf(sigma, iv_storage, parameters_storage);
+    //     double yf_val_end = yf(TrialStress, iv_storage, parameters_storage);
+
+    //     VoigtVector start_stress = CommitStress;
+    //     VoigtVector end_stress = TrialStress;
+
+    //     intersection_stress = start_stress;
+
+    //     if ((yf_val_start <= 0.0 && yf_val_end <= 0.0) || yf_val_start > yf_val_end) //Elasticity
+    //     {
+    //         Stiffness = Eelastic;
+    //         return 0;
+    //     }
+    //     else  //Plasticity - Backward Euler Implementation
+    //     {
+    //         depsilon_elpl = depsilon;
+            
+    //         // Initialize backward Euler iteration variables
+    //         VoigtVector sigma_trial = TrialStress;
+    //         VoigtVector sigma_n_plus_1 = sigma_trial + Eelastic * depsilon_elpl; // Initial guess
+    //         double dLambda = 0.0;
+            
+    //         // Newton-Raphson iteration for backward Euler
+    //         int max_iterations = INT_OPT_n_max_iterations[ASDP_TAG];
+    //         double f_tol = DBL_OPT_f_absolute_tol[ASDP_TAG];
+    //         double stress_tol = DBL_OPT_stress_absolute_tol[ASDP_TAG];
+            
+    //         for (int iter = 0; iter < max_iterations; iter++)
+    //         {
+    //             // Evaluate yield function at current stress state
+    //             double f_val = yf(sigma_n_plus_1, iv_storage, parameters_storage);
+                
+    //             // Check convergence on yield function
+    //             if (abs(f_val) <= f_tol)
+    //             {
+    //                 TrialStress = sigma_n_plus_1;
+    //                 TrialPlastic_Strain = CommitPlastic_Strain + dLambda * pf(depsilon_elpl, sigma_n_plus_1, iv_storage, parameters_storage);
+                    
+    //                 // Check for NaN
+    //                 double norm_trial_stress = TrialStress.transpose() * TrialStress;
+    //                 if (norm_trial_stress != norm_trial_stress)
+    //                 {
+    //                     return -1;
+    //                 }
+                    
+    //                 ComputeTangentStiffness();
+    //                 return 0;
+    //             }
+                
+    //             // Compute derivatives for Newton-Raphson
+    //             const VoigtVector& n = yf.df_dsigma_ij(sigma_n_plus_1, iv_storage, parameters_storage);
+    //             const VoigtVector& m = pf(depsilon_elpl, sigma_n_plus_1, iv_storage, parameters_storage);
+    //             double hardening = yf.hardening(depsilon_elpl, m, sigma_n_plus_1, iv_storage, parameters_storage);
+                
+    //             // Build residual vector and Jacobian for backward Euler
+    //             // Residual: R1 = sigma_n+1 - sigma_trial - E * (depsilon - dLambda * m)
+    //             //          R2 = f(sigma_n+1, alpha_n+1)
+                
+    //             VoigtVector R1 = sigma_n_plus_1 - sigma_trial - Eelastic * (depsilon_elpl - dLambda * m);
+    //             double R2 = f_val;
+                
+    //             // Check stress residual convergence
+    //             double stress_residual_norm = R1.norm();
+    //             if (stress_residual_norm <= stress_tol && abs(R2) <= f_tol)
+    //             {
+    //                 TrialStress = sigma_n_plus_1;
+    //                 TrialPlastic_Strain = CommitPlastic_Strain + dLambda * m;
+                    
+    //                 // Check for NaN
+    //                 double norm_trial_stress = TrialStress.transpose() * TrialStress;
+    //                 if (norm_trial_stress != norm_trial_stress)
+    //                 {
+    //                     return -1;
+    //                 }
+                    
+    //                 ComputeTangentStiffness();
+    //                 return 0;
+    //             }
+                
+    //             // Build Jacobian matrix for Newton-Raphson
+    //             // J11 = I + dLambda * E * dm/dsigma
+    //             // J12 = E * m
+    //             // J21 = df/dsigma
+    //             // J22 = -hardening
+                
+    //             VoigtMatrix I = VoigtMatrix::Identity();
+    //             VoigtMatrix J11 = I; // Simplified - could add dLambda * E * dm/dsigma for better convergence
+    //             VoigtVector J12 = Eelastic * m;
+    //             VoigtVector J21 = n;
+    //             double J22 = -hardening;
+                
+    //             // Solve Newton system using block elimination
+    //             // [J11  J12] [Δσ   ]   [R1]
+    //             // [J21  J22] [ΔdL  ] = [R2]
+                
+    //             // Eliminate to get: (J22 - J21 * J11^-1 * J12) * ΔdL = R2 - J21 * J11^-1 * R1
+    //             double den = J22 - J21.transpose() * J12;
+                
+    //             if (abs(den) < MACHINE_EPSILON)
+    //             {
+    //                 cout << "Backward Euler - Singular Jacobian, den = " << den << endl;
+    //                 return -1;
+    //             }
+                
+    //             double delta_dLambda = (R2 - J21.transpose() * R1) / den;
+    //             VoigtVector delta_sigma = -R1 - delta_dLambda * J12;
+                
+    //             // Update variables
+    //             sigma_n_plus_1 += delta_sigma;
+    //             dLambda += delta_dLambda;
+                
+    //             // Ensure plastic multiplier is non-negative
+    //             if (dLambda < 0)
+    //             {
+    //                 dLambda = 0;
+    //             }
+                
+    //             // Update internal variables based on current plastic multiplier
+    //             iv_storage.apply([&m, &dLambda, &sigma_n_plus_1,  this](auto & iv)
+    //             {
+    //                 auto h = iv.hardening_function(depsilon_elpl, m, sigma_n_plus_1, parameters_storage);
+    //                 iv.trial_value = iv.committed_value + dLambda * h;
+    //             });
+    //         }
+            
+    //         // If we reach here, Newton-Raphson did not converge
+    //         cout << "Backward Euler - Newton-Raphson did not converge after " << max_iterations << " iterations" << endl;
+    //         return -1;
+    //     }
+
+    //     return errorcode;
+    // }
+
+
+// int Backward_Euler(const VoigtVector & strain_incr)
+// {
+//     using namespace ASDPlasticMaterial3DGlobals;
+
+//     int errorcode = -1;
+
+//     static VoigtVector depsilon;
+//     depsilon *= 0;
+//     depsilon = strain_incr;
+
+//     const VoigtVector& sigma   = CommitStress;
+//     const VoigtVector& epsilon = CommitStrain;
+
+//     iv_storage.revert_all();
+
+//     dsigma *= 0;
+//     intersection_stress *= 0;
+//     intersection_strain *= 0;
+
+//     // Elastic stiffness at committed state
+//     VoigtMatrix Eelastic = et(sigma, parameters_storage);
+
+//     // Elastic predictor
+//     dsigma      = Eelastic * depsilon;
+//     TrialStress = sigma + dsigma;
+//     TrialStrain = CommitStrain + depsilon;
+//     TrialPlastic_Strain = CommitPlastic_Strain;
+
+//     // Simple elastic check at committed internal vars
+//     const double f_tol     = DBL_OPT_f_absolute_tol[ASDP_TAG];
+//     const double stress_tol= DBL_OPT_stress_absolute_tol[ASDP_TAG];
+//     int max_iterations     = INT_OPT_n_max_iterations[ASDP_TAG];
+
+//     double f_trial = yf(TrialStress, iv_storage, parameters_storage);
+
+//     // Keep some of your existing bookkeeping
+//     intersection_stress = CommitStress;
+
+//     if (f_trial <= f_tol) {
+//         // Elastic step
+//         Stiffness = Eelastic;
+//         return 0;
+//     }
+
+//     // --- Plastic corrector (Backward Euler / return mapping) ---
+//     // Keep your depsilon_elpl usage to preserve pf()/hardening() signatures
+//     depsilon_elpl = depsilon;
+
+//     // Unknowns
+//     VoigtVector sigma_n1 = TrialStress; // start from trial
+//     double dLambda = 0.0;
+
+//     for (int iter = 0; iter < max_iterations; ++iter)
+//     {
+//         // Gradients at (sigma_n1, committed internal vars)
+//         const VoigtVector n = yf.df_dsigma_ij(sigma_n1, iv_storage, parameters_storage);               // ∂f/∂σ
+//         const VoigtVector m = pf(depsilon_elpl, sigma_n1, iv_storage, parameters_storage);             // ∂g/∂σ (flow)
+//         const double      H = yf.hardening(depsilon_elpl, m, sigma_n1, iv_storage, parameters_storage);// effective hardening slope (scalar)
+
+//         // Residuals:
+//         // R1 = σ_{n+1} - σ_trial + E * (dΛ m) = 0
+//         // R2 = f(σ_{n+1}, α_n) + H dΛ = 0
+//         const VoigtVector R1 = sigma_n1 - TrialStress + Eelastic * (dLambda * m);
+//         const double      f_sigma = yf(sigma_n1, iv_storage, parameters_storage);
+//         const double      R2 = f_sigma + H * dLambda;
+
+//         // Convergence check
+//         if (R1.norm() <= stress_tol && std::fabs(R2) <= f_tol) {
+//             // Finalize state
+//             const VoigtVector m_fin = pf(depsilon_elpl, sigma_n1, iv_storage, parameters_storage);
+//             const VoigtVector n_fin = yf.df_dsigma_ij(sigma_n1, iv_storage, parameters_storage);
+//             const double      H_fin = yf.hardening(depsilon_elpl, m_fin, sigma_n1, iv_storage, parameters_storage);
+
+//             TrialStress = sigma_n1;
+//             TrialStrain = CommitStrain + depsilon;
+//             TrialPlastic_Strain = CommitPlastic_Strain + dLambda * m_fin;
+
+//             // NaN guard (keep same style as your code)
+//             double norm_trial_stress = TrialStress.transpose() * TrialStress;
+//             if (norm_trial_stress != norm_trial_stress) {
+//                 return -1;
+//             }
+
+//             // Consistent algorithmic tangent (non-associative allowed)
+//             const VoigtVector Em = Eelastic * m_fin;
+//             const VoigtVector En = Eelastic * n_fin;
+//             double denom_tan = H_fin + n_fin.transpose() * Em;
+//             if (std::fabs(denom_tan) < MACHINE_EPSILON) {
+//                 Stiffness = Eelastic; // fallback
+//             } else {
+//                 // rank-1 update: C_ep = E - (E m) ⊗ (E n) / (H + n^T E m)
+//                 Stiffness = Eelastic - (Em * En.transpose()) / denom_tan;
+//             }
+
+//             // Update internal vars to trial values: α_{n+1} = α_n + dΛ h
+//             iv_storage.apply([&](auto & iv)
+//             {
+//                 auto h = iv.hardening_function(depsilon_elpl, m_fin, sigma_n1, parameters_storage);
+//                 iv.trial_value = iv.committed_value + dLambda * h;
+//             });
+
+//             // Maintain dsigma for downstream use
+//             dsigma = TrialStress - CommitStress;
+//             return 0;
+//         }
+
+//         // Newton step with J11 = I (neglecting dm/dσ for robustness)
+//         const VoigtVector Em = Eelastic * m;
+//         const double denom = H + n.transpose() * Em;  // Schur complement denominator
+
+//         if (std::fabs(denom) < MACHINE_EPSILON) {
+//             // singular / ill-conditioned -> fail gracefully
+//             return -1;
+//         }
+
+//         // ΔdΛ = (n^T R1 - R2) / (H + n^T E m)
+//         const double delta_dLambda = (n.transpose() * R1 - R2) / denom;
+
+//         // Project to dΛ >= 0
+//         double d_dLambda = delta_dLambda;
+//         if (dLambda + d_dLambda < 0.0) d_dLambda = -dLambda;
+
+//         // Δσ = -(R1 + E m ΔdΛ)
+//         const VoigtVector delta_sigma = -(R1 + Em * d_dLambda);
+
+//         // Update unknowns
+//         sigma_n1 += delta_sigma;
+//         dLambda  += d_dLambda;
+
+//         // Basic sanity
+//         double norm_s = sigma_n1.transpose() * sigma_n1;
+//         if (norm_s != norm_s) {
+//             return -1;
+//         }
+//     }
+
+//     // If we reach here, Newton failed to converge
+//     std::cout << "Backward Euler - Newton-Raphson did not converge after " << max_iterations << " iterations\n";
+//     return -1;
+// }
+
+
+
     int Backward_Euler(const VoigtVector & strain_incr)
     {
         using namespace ASDPlasticMaterial3DGlobals;
 
         int errorcode = -1;
 
+        // -------- setup
         static VoigtVector depsilon;
-        depsilon *= 0;
         depsilon = strain_incr;
 
-        const VoigtVector& sigma = CommitStress;
+        const VoigtVector& sigma   = CommitStress;
         const VoigtVector& epsilon = CommitStrain;
 
         iv_storage.revert_all();
@@ -1570,148 +1873,394 @@ private:
 
         VoigtMatrix Eelastic = et(sigma, parameters_storage);
 
-        // Initial elastic predictor
-        dsigma = Eelastic * depsilon;
+        // -------- elastic predictor
+        dsigma      = Eelastic * depsilon;
         TrialStress = sigma + dsigma;
-        TrialStrain = CommitStrain + depsilon;
+        TrialStrain = epsilon + depsilon;
         TrialPlastic_Strain = CommitPlastic_Strain;
 
-        double yf_val_start = yf(sigma, iv_storage, parameters_storage);
-        double yf_val_end = yf(TrialStress, iv_storage, parameters_storage);
+        const double yf_val_start = yf(sigma,        iv_storage, parameters_storage);
+        const double yf_val_end   = yf(TrialStress,  iv_storage, parameters_storage);
 
-        VoigtVector start_stress = CommitStress;
-        VoigtVector end_stress = TrialStress;
-
-        intersection_stress = start_stress;
-
-        if ((yf_val_start <= 0.0 && yf_val_end <= 0.0) || yf_val_start > yf_val_end) //Elasticity
-        {
+        // purely elastic or moving deeper inside the surface
+        if ( (yf_val_start <= 0.0 && yf_val_end <= 0.0) || (yf_val_start > yf_val_end) ) {
             Stiffness = Eelastic;
             return 0;
         }
-        else  //Plasticity - Backward Euler Implementation
+
+
+        // Deal with the APEX if needed
+        // -------- APEX return (one-shot projection) -------------------------------
+        if constexpr (yf_has_apex<YieldFunctionType>::value)
         {
-            depsilon_elpl = depsilon;
-            
-            // Initialize backward Euler iteration variables
-            VoigtVector sigma_trial = TrialStress;
-            VoigtVector sigma_n_plus_1 = sigma_trial + Eelastic * depsilon_elpl; // Initial guess
-            double dLambda = 0.0;
-            
-            // Newton-Raphson iteration for backward Euler
-            int max_iterations = INT_OPT_n_max_iterations[ASDP_TAG];
-            double f_tol = DBL_OPT_f_absolute_tol[ASDP_TAG];
-            double stress_tol = DBL_OPT_stress_absolute_tol[ASDP_TAG];
-            
-            for (int iter = 0; iter < max_iterations; iter++)
+            if (yf.check_apex_region(TrialStress, iv_storage, parameters_storage))
             {
-                // Evaluate yield function at current stress state
-                double f_val = yf(sigma_n_plus_1, iv_storage, parameters_storage);
+                // // 1) Target apex stress from YF (hydrostatic vector in Voigt form)
+                // const VoigtVector sigma_apex = yf.apex_stress(iv_storage, parameters_storage);
+
+                // // 2) Plastic strain increment needed to hit apex:
+                // //    Δε^p = S_elastic : (σ_trial − σ_apex)
+                // // const VoigtMatrix Selastic = se(CommitStress, parameters_storage); // compliance at commit
                 
-                // Check convergence on yield function
-                if (abs(f_val) <= f_tol)
-                {
-                    TrialStress = sigma_n_plus_1;
-                    TrialPlastic_Strain = CommitPlastic_Strain + dLambda * pf(depsilon_elpl, sigma_n_plus_1, iv_storage, parameters_storage);
-                    
-                    // Check for NaN
-                    double norm_trial_stress = TrialStress.transpose() * TrialStress;
-                    if (norm_trial_stress != norm_trial_stress)
-                    {
-                        return -1;
-                    }
-                    
-                    ComputeTangentStiffness();
-                    return 0;
-                }
-                
-                // Compute derivatives for Newton-Raphson
-                const VoigtVector& n = yf.df_dsigma_ij(sigma_n_plus_1, iv_storage, parameters_storage);
-                const VoigtVector& m = pf(depsilon_elpl, sigma_n_plus_1, iv_storage, parameters_storage);
-                double hardening = yf.hardening(depsilon_elpl, m, sigma_n_plus_1, iv_storage, parameters_storage);
-                
-                // Build residual vector and Jacobian for backward Euler
-                // Residual: R1 = sigma_n+1 - sigma_trial - E * (depsilon - dLambda * m)
-                //          R2 = f(sigma_n+1, alpha_n+1)
-                
-                VoigtVector R1 = sigma_n_plus_1 - sigma_trial - Eelastic * (depsilon_elpl - dLambda * m);
-                double R2 = f_val;
-                
-                // Check stress residual convergence
-                double stress_residual_norm = R1.norm();
-                if (stress_residual_norm <= stress_tol && abs(R2) <= f_tol)
-                {
-                    TrialStress = sigma_n_plus_1;
-                    TrialPlastic_Strain = CommitPlastic_Strain + dLambda * m;
-                    
-                    // Check for NaN
-                    double norm_trial_stress = TrialStress.transpose() * TrialStress;
-                    if (norm_trial_stress != norm_trial_stress)
-                    {
-                        return -1;
-                    }
-                    
-                    ComputeTangentStiffness();
-                    return 0;
-                }
-                
-                // Build Jacobian matrix for Newton-Raphson
-                // J11 = I + dLambda * E * dm/dsigma
-                // J12 = E * m
-                // J21 = df/dsigma
-                // J22 = -hardening
-                
-                VoigtMatrix I = VoigtMatrix::Identity();
-                VoigtMatrix J11 = I; // Simplified - could add dLambda * E * dm/dsigma for better convergence
-                VoigtVector J12 = Eelastic * m;
-                VoigtVector J21 = n;
-                double J22 = -hardening;
-                
-                // Solve Newton system using block elimination
-                // [J11  J12] [Δσ   ]   [R1]
-                // [J21  J22] [ΔdL  ] = [R2]
-                
-                // Eliminate to get: (J22 - J21 * J11^-1 * J12) * ΔdL = R2 - J21 * J11^-1 * R1
-                double den = J22 - J21.transpose() * J12;
-                
-                if (abs(den) < MACHINE_EPSILON)
-                {
-                    cout << "Backward Euler - Singular Jacobian, den = " << den << endl;
-                    return -1;
-                }
-                
-                double delta_dLambda = (R2 - J21.transpose() * R1) / den;
-                VoigtVector delta_sigma = -R1 - delta_dLambda * J12;
-                
-                // Update variables
-                sigma_n_plus_1 += delta_sigma;
-                dLambda += delta_dLambda;
-                
-                // Ensure plastic multiplier is non-negative
-                if (dLambda < 0)
-                {
-                    dLambda = 0;
-                }
-                
-                // Update internal variables based on current plastic multiplier
-                iv_storage.apply([&m, &dLambda, &sigma_n_plus_1,  this](auto & iv)
-                {
-                    auto h = iv.hardening_function(depsilon_elpl, m, sigma_n_plus_1, parameters_storage);
-                    iv.trial_value = iv.committed_value + dLambda * h;
-                });
+                // const VoigtVector rhs = TrialStress - sigma_apex;
+
+                // // const VoigtVector dep      = Selastic * (TrialStress - sigma_apex);
+                // // If Eelastic is SPD (usual for linear elasticity):
+                // // Eigen::LLT<VoigtMatrix> chol(et(CommitStress, parameters_storage));
+                // // VoigtVector dep;
+                // // if (chol.info() == Eigen::Success) {
+                // //     dep = chol.solve(rhs);
+                // // } else {
+                // //     // fallback if not strictly SPD
+                // //     dep = Eelastic.ldlt().solve(rhs);
+                // // }
+
+
+                // Eigen::Matrix<double,6,6> E_eig;        // copia desde Eelastic
+                // Eigen::Matrix<double,6,1> rhs_eig;      // copia desde rhs
+                // for (int i=0;i<6;++i) {
+                //     rhs_eig(i) = rhs(i);
+                //     for (int j=0;j<6;++j) E_eig(i,j) = Eelastic(i,j);
+                // }
+                // Eigen::Matrix<double,6,1> dep_eig;
+                // auto chol = E_eig.selfadjointView<Eigen::Lower>().llt();
+                // if (chol.info()==Eigen::Success) dep_eig = chol.solve(rhs_eig);
+                // else                             dep_eig = E_eig.ldlt().solve(rhs_eig);
+                // VoigtVector dep = dep_eig;  // asigna de vuelta
+
+                // // 3) Equivalent plastic multiplier using apex flow direction
+                // //    (least-squares projection of dep onto m_apex)
+                // // const VoigtVector m_apex   = pf.apex_flow_direction(sigma_apex, iv_storage, parameters_storage);
+                // const VoigtVector m_apex   = pf(depsilon, sigma_apex, iv_storage, parameters_storage);
+                // double m_dot_m             = tensor_dot(m_apex, m_apex);
+                // double dLambda_apex        = 0.0;
+                // double dLambda             = 0.0;
+                // if (m_dot_m > MACHINE_EPSILON) {
+                //     dLambda_apex = tensor_dot(m_apex, dep) / m_dot_m;
+                //     if (dLambda + dLambda_apex < 0.0) dLambda_apex = -dLambda; // keep λ ≥ 0
+                //     dLambda += dLambda_apex;
+                // }
+
+                // // 4) Update stress, plastic strain, internal variables
+                // TrialStress         = sigma_apex;
+                // TrialPlastic_Strain = TrialPlastic_Strain + dep;
+
+                // iv_storage.apply([&](auto & internal_variable)
+                // {
+                //     auto h = internal_variable.hardening_function(depsilon, m_apex, TrialStress, parameters_storage);
+                //     internal_variable.trial_value += dLambda_apex * h;
+                // });
+
+                // // 5) Tangent: simplest safe choice is elastic; or call your usual builder
+                // //    If you have a special apex-consistent tangent, compute it inside ComputeTangentStiffness()
+                // Stiffness = Eelastic;
+                // // ComputeTangentStiffness(); // (optional if it knows how to handle apex)
+                // return 0;
             }
-            
-            // If we reach here, Newton-Raphson did not converge
-            cout << "Backward Euler - Newton-Raphson did not converge after " << max_iterations << " iterations" << endl;
-            return -1;
         }
 
-        return errorcode;
+        // -------- plastic correction (Backward Euler)
+        int    max_iter = INT_OPT_n_max_iterations[ASDP_TAG];
+        double tol_yf   = DBL_OPT_f_absolute_tol[ASDP_TAG]; 
+
+        double dLambda = 0.0;
+
+        for (int iter = 0; iter < max_iter; ++iter)
+        {
+            // directions at current (trial) end state
+            const VoigtVector& n = yf.df_dsigma_ij(TrialStress, iv_storage, parameters_storage);
+
+            // use total step depsilon as proxy argument; no derivatives of m required
+            const VoigtVector& m = pf(depsilon, TrialStress, iv_storage, parameters_storage);
+
+            // hardening at end state
+            const double H = yf.hardening(depsilon, m, TrialStress, iv_storage, parameters_storage);
+
+            // consistency residual Φ(σ_{n+1}) = 0
+            const double Phi = yf(TrialStress, iv_storage, parameters_storage);
+
+            if (std::abs(Phi) < tol_yf) {
+                GLOBAL_INT_max_iter[ASDP_TAG] = std::max(GLOBAL_INT_max_iter[ASDP_TAG], iter);
+                GLOBAL_DBL_max_error[ASDP_TAG] = std::max(GLOBAL_DBL_max_error[ASDP_TAG], std::abs(Phi));
+                break; // converged
+            }
+
+            // dΦ/dλ ≈ - n^T E m + H
+            // const double dPhi_dLambda = - (n.transpose() * Eelastic * m) + H;
+            const double nEm = tensor_dot(n, Eelastic * m);
+            const double dPhi_dLambda = H - nEm;   // == - n^T E m + H
+
+            if (std::abs(dPhi_dLambda) < MACHINE_EPSILON) {
+                // singular local tangent
+                return -1;
+            }
+
+            const double deltaLambda = - Phi / dPhi_dLambda;
+
+            // keep λ >= 0
+            if (dLambda + deltaLambda < 0.0) {
+                // step cannot be plastic; fall back to elastic in this rare case
+                Stiffness = Eelastic;
+                return 0;
+            }
+
+            dLambda += deltaLambda;
+
+            // incremental updates (use delta to avoid re-summing from commit each iter)
+            TrialStress          = TrialStress - deltaLambda * (Eelastic * m);
+            TrialPlastic_Strain  = TrialPlastic_Strain + deltaLambda * m;
+
+            iv_storage.apply([&](auto & internal_variable)
+            {
+                auto h = internal_variable.hardening_function(depsilon, m, TrialStress, parameters_storage);
+                internal_variable.trial_value += deltaLambda * h;
+            });
+
+            // NaN guard
+            const double norm_trial_stress = TrialStress.transpose() * TrialStress;
+            if (!(norm_trial_stress == norm_trial_stress)) { // NaN check
+                return -1;
+            }
+        }
+
+        ComputeTangentStiffness();
+
+        return 0;
     }
 
+    int Backward_Euler_LineSearch(const VoigtVector & strain_incr)
+    {
+        using namespace ASDPlasticMaterial3DGlobals;
 
+        int errorcode = -1;
 
+        // ------------------ setup ------------------
+        static VoigtVector depsilon;
+        depsilon *= 0.0;
+        depsilon = strain_incr;
 
+        const VoigtVector& sigma   = CommitStress;
+        const VoigtVector& epsilon = CommitStrain;
+
+        iv_storage.revert_all();
+
+        dsigma *= 0.0;
+        intersection_stress *= 0.0;
+        intersection_strain *= 0.0;
+
+        VoigtMatrix Eelastic = et(sigma, parameters_storage);
+
+        // tolerancias
+        const double tol_abs = (DBL_OPT_f_absolute_tol[ASDP_TAG] > 0.0) ? DBL_OPT_f_absolute_tol[ASDP_TAG] : 1e-10;
+        const double tol_rel = 1e-8;
+        const int    max_iter = 30;
+
+        auto converged = [&](double Phi, double Phi_scale)->bool {
+            double tol = std::max(tol_abs, tol_rel * std::max(1.0, Phi_scale));
+            return std::abs(Phi) <= tol;
+        };
+
+        // ------------------ solver (un sub-paso Δε) ------------------
+        auto solve_increment = [&](const VoigtVector& dEps)->bool
+        {
+            // Predictor elástico desde el estado commit
+            TrialStrain = epsilon + dEps;
+            TrialPlastic_Strain = CommitPlastic_Strain;
+            TrialStress = sigma + Eelastic * dEps;
+
+            // Estado interno trial = commit
+            iv_storage.revert_all();
+
+            const double yf_start = yf(sigma,       iv_storage, parameters_storage);
+            const double yf_end   = yf(TrialStress, iv_storage, parameters_storage);
+
+            // Misma lógica que usabas: puramente elástico o moviéndose "hacia adentro"
+            if ( (yf_start <= 0.0 && yf_end <= 0.0) || (yf_start > yf_end) ) {
+                Stiffness = Eelastic;
+                return true;
+            }
+
+            // ---------- Newton escalar con backtracking ----------
+            double dLambda = 0.0;
+
+            // Arranque seguro (si el trial está fuera)
+            {
+                const VoigtVector& n0 = yf.df_dsigma_ij(TrialStress, iv_storage, parameters_storage);
+                const VoigtVector& m0 = pf(dEps,        TrialStress, iv_storage, parameters_storage);
+                const double       H0 = yf.hardening(dEps, m0,       TrialStress, iv_storage, parameters_storage);
+                const double       Phi0 = yf(TrialStress, iv_storage, parameters_storage);
+                const double       nEm0 = n0.dot(Eelastic * m0);
+                const double       denom0 = nEm0 - H0; // == -(H0 - nEm0) == -dPhi/dλ
+
+                if (denom0 > MACHINE_EPSILON && Phi0 > 0.0) {
+                    // dλ inicial ≥ 0
+                    double dL0 = Phi0 / denom0;
+                    // límite físico simple
+                    double dLmax = dEps.norm() / std::max(m0.norm(), 1e-16);
+                    dLambda = std::min(dL0, dLmax);
+
+                    // aplicar arranque
+                    TrialStress         = TrialStress - dLambda * (Eelastic * m0);
+                    TrialPlastic_Strain = TrialPlastic_Strain + dLambda * m0;
+                    iv_storage.apply([&](auto & iv){
+                        auto h = iv.hardening_function(dEps, m0, TrialStress, parameters_storage);
+                        iv.trial_value += dLambda * h;
+                    });
+                }
+            }
+
+            bool newton_ok = false;
+
+            for (int iter = 0; iter < max_iter; ++iter)
+            {
+                // (opcional) si E depende fuerte de σ, descomenta:
+                // Eelastic = et(TrialStress, parameters_storage);
+
+                const VoigtVector& n = yf.df_dsigma_ij(TrialStress, iv_storage, parameters_storage);
+                const VoigtVector& m = pf(dEps,        TrialStress, iv_storage, parameters_storage);
+                const double       H = yf.hardening(dEps, m,        TrialStress, iv_storage, parameters_storage);
+
+                const double Phi = yf(TrialStress, iv_storage, parameters_storage);
+                const double Phi_scale = std::abs(n.dot(TrialStress)) + 1.0;
+
+                if (converged(Phi, Phi_scale)) { newton_ok = true; break; }
+
+                const double nEm = n.dot(Eelastic * m);
+                const double dPhi_dLambda = H - nEm;  // total deriv. aprox
+
+                if (!std::isfinite(dPhi_dLambda) || std::abs(dPhi_dLambda) < 1e-20) {
+                    // Singular → deja que el substepping maneje
+                    newton_ok = false;
+                    break;
+                }
+
+                // Paso de Newton propuesto
+                double deltaLambda = - Phi / dPhi_dLambda;
+
+                // Limitar tamaño (previene runaway)
+                const double dLmax = dEps.norm() / std::max(m.norm(), 1e-16);
+                if (std::abs(deltaLambda) > dLmax)
+                    deltaLambda = (deltaLambda > 0.0 ? 1.0 : -1.0) * dLmax;
+
+                // Enforce λ ≥ 0
+                if (dLambda + deltaLambda < 0.0)
+                    deltaLambda = -dLambda * 0.5; // reduce para no cruzar a negativo
+
+                // -------- line search (backtracking) con Φ linealizado --------
+                double alpha = 1.0;
+                const double c = 1e-4;
+                double dl_accepted = 0.0;
+
+                for (int ls = 0; ls < 8; ++ls) {
+                    const double dl = alpha * deltaLambda;
+
+                    // Predicción lineal de Φ
+                    const double Phi_pred = Phi + dPhi_dLambda * dl;
+
+                    if (std::abs(Phi_pred) <= (1.0 - c*alpha) * std::abs(Phi)) {
+                        dl_accepted = dl;
+                        break;
+                    }
+                    alpha *= 0.5;
+                }
+
+                if (dl_accepted == 0.0) {
+                    // No se pudo aceptar un paso útil → dejar a substepping
+                    newton_ok = false;
+                    break;
+                }
+
+                // Aplicar actualización aceptada
+                const VoigtVector Em = Eelastic * m;
+
+                TrialStress         = TrialStress - dl_accepted * Em;
+                TrialPlastic_Strain = TrialPlastic_Strain + dl_accepted * m;
+
+                iv_storage.apply([&](auto & iv){
+                    auto h = iv.hardening_function(dEps, m, TrialStress, parameters_storage);
+                    iv.trial_value += dl_accepted * h;
+                });
+
+                dLambda += dl_accepted;
+
+                // Guard NaN
+                if (!std::isfinite(TrialStress.squaredNorm())) {
+                    newton_ok = false;
+                    break;
+                }
+            }
+
+            if (!newton_ok) return false;
+
+            // -------- Optional one-shot polish: return-to-surface --------
+            if (INT_OPT_return_to_yield_surface[ASDP_TAG]) {
+                const VoigtVector& n_corr = yf.df_dsigma_ij(TrialStress, iv_storage, parameters_storage);
+                const VoigtVector& m_corr = pf(dEps,        TrialStress, iv_storage, parameters_storage);
+                const double       H_corr = yf.hardening(dEps, m_corr,   TrialStress, iv_storage, parameters_storage);
+                const double       Phi_corr = yf(TrialStress, iv_storage, parameters_storage);
+
+                const VoigtVector Em_corr = Eelastic * m_corr;
+                const double nEm_corr = n_corr.dot(Em_corr);
+                const double denom_corr = nEm_corr - H_corr;
+
+                if (std::abs(Phi_corr) > tol_abs && std::abs(denom_corr) > MACHINE_EPSILON) {
+                    const double dLambda_corr =  Phi_corr / denom_corr;
+                    TrialStress         = TrialStress - dLambda_corr * Em_corr;
+                    TrialPlastic_Strain = TrialPlastic_Strain + dLambda_corr * m_corr;
+
+                    iv_storage.apply([&](auto & iv){
+                        auto h = iv.hardening_function(dEps, m_corr, TrialStress, parameters_storage);
+                        iv.trial_value += dLambda_corr * h;
+                    });
+                    dLambda += dLambda_corr;
+                }
+            }
+
+            // -------- Tangente algorítmica consistente --------
+            {
+                const VoigtVector& n = yf.df_dsigma_ij(TrialStress, iv_storage, parameters_storage);
+                const VoigtVector& m = pf(dEps,        TrialStress, iv_storage, parameters_storage);
+                const double       H = yf.hardening(dEps, m,        TrialStress, iv_storage, parameters_storage);
+
+                const VoigtVector Em = Eelastic * m;
+                const double nEm = n.dot(Em);
+                const double denom = nEm - H; // ojo: este es el de la fórmula de C_alg
+
+                if (std::abs(denom) > MACHINE_EPSILON) {
+                    // (6x6) = E - (6x1)*(1x6)/denom
+                    const auto row_nE = (n.transpose() * Eelastic); // 1x6
+                    Stiffness = Eelastic - (Em * row_nE) / denom;
+                } else {
+                    Stiffness = Eelastic; // fallback
+                }
+            }
+
+            return true;
+        };
+
+        // ------------------ substepping automático ------------------
+        VoigtVector dEps = depsilon;
+
+        // intenta paso completo; si falla, corta a la mitad repetidamente (hasta 1/32)
+        bool ok = false;
+        for (int split = 0; split <= 5; ++split)   // 0..5 → 1, 2, 4, 8, 16, 32 subpasos
+        {
+            // resetear a commit antes de intentar este tamaño de paso
+            TrialStress = sigma + Eelastic * dEps;   // predictor para flags de arriba
+            TrialStrain = epsilon + dEps;
+            TrialPlastic_Strain = CommitPlastic_Strain;
+            iv_storage.revert_all();
+
+            if (solve_increment(dEps)) { ok = true; break; }
+
+            // reducir paso y reintentar
+            dEps *= 0.5;
+        }
+
+        if (!ok) return -1;
+
+        return 0;
+    }
 
 
 
