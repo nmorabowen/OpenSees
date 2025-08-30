@@ -57,9 +57,9 @@ public:
         
         // Compute deviatoric part
         VoigtVector dev_part = s - alpha;
-        double den = sqrt(0.5*tensor_dot(dev_part, dev_part));
+        double den = sqrt(0.5*tensor_dot_stress_like(dev_part, dev_part));
         
-        if (abs(den) > sqrt(0.5*tensor_dot(s, s))*ASDPlasticMaterial3DGlobals::MACHINE_EPSILON)
+        if (abs(den) > sqrt(0.5*tensor_dot_stress_like(s, s))*ASDPlasticMaterial3DGlobals::MACHINE_EPSILON)
             dev_part = dev_part / den;
         else
             dev_part *= 0.0;  // Zero out if denominator too small

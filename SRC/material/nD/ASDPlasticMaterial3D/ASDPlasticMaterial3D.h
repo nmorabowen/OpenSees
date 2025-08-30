@@ -1932,11 +1932,11 @@ private:
                 // //    (least-squares projection of dep onto m_apex)
                 // // const VoigtVector m_apex   = pf.apex_flow_direction(sigma_apex, iv_storage, parameters_storage);
                 // const VoigtVector m_apex   = pf(depsilon, sigma_apex, iv_storage, parameters_storage);
-                // double m_dot_m             = tensor_dot(m_apex, m_apex);
+                // double m_dot_m             = tensor_dot_stress_like(m_apex, m_apex);
                 // double dLambda_apex        = 0.0;
                 // double dLambda             = 0.0;
                 // if (m_dot_m > MACHINE_EPSILON) {
-                //     dLambda_apex = tensor_dot(m_apex, dep) / m_dot_m;
+                //     dLambda_apex = tensor_dot_stress_like(m_apex, dep) / m_dot_m;
                 //     if (dLambda + dLambda_apex < 0.0) dLambda_apex = -dLambda; // keep λ ≥ 0
                 //     dLambda += dLambda_apex;
                 // }
@@ -1987,7 +1987,7 @@ private:
 
             // dΦ/dλ ≈ - n^T E m + H
             // const double dPhi_dLambda = - (n.transpose() * Eelastic * m) + H;
-            const double nEm = tensor_dot(n, Eelastic * m);
+            const double nEm = tensor_dot_stress_like(n, Eelastic * m);
             const double dPhi_dLambda = H - nEm;   // == - n^T E m + H
 
             if (std::abs(dPhi_dLambda) < MACHINE_EPSILON) {

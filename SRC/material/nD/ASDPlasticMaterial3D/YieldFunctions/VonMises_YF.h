@@ -56,7 +56,7 @@ public:
         auto alpha = GET_TRIAL_INTERNAL_VARIABLE(AlphaHardeningType);
         auto k = GET_TRIAL_INTERNAL_VARIABLE(KHardeningType);
 
-        double tmp = tensor_dot(s - alpha, s - alpha);  // J2 = 0.5 || s : s ||
+        double tmp = tensor_dot_stress_like(s - alpha, s - alpha);  // J2 = 0.5 || s : s ||
         tmp = tmp > 0 ? tmp : 0;
         return std::sqrt( tmp ) - SQRT_2_over_3 * k.value() ;  // This one assumes p positive in tension
         //        sqrt(   3  / 2 * s:s  )   -    sigma_y 
@@ -70,7 +70,7 @@ public:
 
         result = sigma.deviator() - alpha;
 
-        double den = sqrt(tensor_dot(result, result));
+        double den = sqrt(tensor_dot_stress_like(result, result));
         if (abs(den) > 100*ASDPlasticMaterial3DGlobals::MACHINE_EPSILON)
             result = result / den;
 
@@ -92,16 +92,16 @@ public:
         dbl_result +=  (df_dk * GET_INTERNAL_VARIABLE_HARDENING(KHardeningType)).value();
 
         //This is for the hardening of alpha
-        double den = sqrt(tensor_dot(s - alpha, s - alpha));
+        double den = sqrt(tensor_dot_stress_like(s - alpha, s - alpha));
 
-        if (abs(den) < sqrt(tensor_dot(s, s))*ASDPlasticMaterial3DGlobals::MACHINE_EPSILON)
+        if (abs(den) < sqrt(tensor_dot_stress_like(s, s))*ASDPlasticMaterial3DGlobals::MACHINE_EPSILON)
         {
             return dbl_result;
         }
 
         auto df_dalpha = -(s - alpha) / den;
         VoigtVector hh = GET_INTERNAL_VARIABLE_HARDENING(AlphaHardeningType);
-        dbl_result +=  tensor_dot(df_dalpha, hh);
+        dbl_result +=  tensor_dot_stress_like(df_dalpha, hh);
 
         return dbl_result;
     }

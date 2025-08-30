@@ -29,7 +29,7 @@ public:
         double xi_c = GET_PARAMETER_VALUE(DP_xi_c);      // cohesion
         double eta = GET_PARAMETER_VALUE(DP_eta);      // friction slope
         
-        double tmp = tensor_dot(s - alpha, s - alpha);
+        double tmp = tensor_dot_stress_like(s - alpha, s - alpha);
         tmp = tmp > 0 ? tmp : 0;
         double sqrt_J2 = std::sqrt(0.5*tmp);
         
@@ -53,7 +53,7 @@ public:
 
         // Derivative with respect to deviatoric stress
         VoigtVector dev_part = s - alpha;
-        double den = sqrt(0.5*tensor_dot(dev_part, dev_part));
+        double den = sqrt(0.5*tensor_dot_stress_like(dev_part, dev_part));
         
         if (abs(den) > 100*ASDPlasticMaterial3DGlobals::MACHINE_EPSILON)
             dev_part = dev_part / den;
@@ -87,16 +87,16 @@ public:
         dbl_result += (df_deta * GET_INTERNAL_VARIABLE_HARDENING(CohesionHardeningType)).value();
         
         // Hardening contribution from alpha (kinematic hardening)
-        double den = sqrt(0.5*tensor_dot(s - alpha, s - alpha));
+        double den = sqrt(0.5*tensor_dot_stress_like(s - alpha, s - alpha));
         
-        if (abs(den) < sqrt(0.5*tensor_dot(s, s))*ASDPlasticMaterial3DGlobals::MACHINE_EPSILON)
+        if (abs(den) < sqrt(0.5*tensor_dot_stress_like(s, s))*ASDPlasticMaterial3DGlobals::MACHINE_EPSILON)
         {
             return dbl_result;
         }
         
         auto df_dalpha = -(s - alpha) / den;
         VoigtVector hh = GET_INTERNAL_VARIABLE_HARDENING(AlphaHardeningType);
-        dbl_result += tensor_dot(df_dalpha, hh);
+        dbl_result += tensor_dot_stress_like(df_dalpha, hh);
         
         return dbl_result;
     }

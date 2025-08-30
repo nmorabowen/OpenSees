@@ -413,15 +413,39 @@ public:
 
 };
 
-EIGEN_STRONG_INLINE double tensor_dot(const VoigtVector& a, const VoigtVector& b)
+
+// Stress-like Frobenius norm 
+EIGEN_STRONG_INLINE double tensor_dot_stress_like(const VoigtVector& sigma1, const VoigtVector& sigma2)
 {
     double the_dot_product = 
-        a.v11() * b.v11() + 
-        a.v22() * b.v22() + 
-        a.v33() * b.v33()
-        + 2 * (a.v12() * b.v12() + 
-               a.v23() * b.v23() + 
-               a.v13() * b.v13());
+        sigma1.v11() * sigma2.v11() + 
+        sigma1.v22() * sigma2.v22() + 
+        sigma1.v33() * sigma2.v33()
+        + 2 * (sigma1.v12() * sigma2.v12() + 
+               sigma1.v23() * sigma2.v23() + 
+               sigma1.v13() * sigma2.v13());
+
+    return the_dot_product;
+}
+
+// Strain-like Frobenius norm 
+EIGEN_STRONG_INLINE double tensor_dot_strain_like(const VoigtVector& epsilon1, const VoigtVector& epsilon2)
+{
+    double the_dot_product = 
+        epsilon1.v11() * epsilon2.v11() + 
+        epsilon1.v22() * epsilon2.v22() + 
+        epsilon1.v33() * epsilon2.v33()
+        + 2 * (epsilon1.v12() * epsilon2.v12() + 
+               epsilon1.v23() * epsilon2.v23() + 
+               epsilon1.v13() * epsilon2.v13());
+
+    return the_dot_product;
+}
+
+// Energy-like Frobenius norm (regular dot product)
+EIGEN_STRONG_INLINE double tensor_dot_energy_like(const VoigtVector& sigma, const VoigtVector& epsilon)
+{
+    double the_dot_product = sigma.dot(epsilon);
 
     return the_dot_product;
 }

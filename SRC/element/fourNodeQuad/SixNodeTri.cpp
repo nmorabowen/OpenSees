@@ -563,16 +563,34 @@ SixNodeTri::getMass()
     }
     
     // Redistribute to ensure positive masses
-    if (abs_sum > 0) {
-        for (int i = 0; i < 2*nnodes; i += 2) {
-            double new_mass = fabs(K(i,i)) * total_mass / abs_sum;
-            K(i,i) = new_mass;
-            K(i+1,i+1) = new_mass;  // same mass for y-direction
-        }
-    }
+  //   if (abs_sum > 0) {
+  //       for (int i = 0; i < 2*nnodes; i += 2) {
+  //           double new_mass = fabs(K(i,i)) * total_mass / abs_sum;
+  //           K(i,i) = new_mass;
+  //           K(i+1,i+1) = new_mass;  // same mass for y-direction
+  //       }
+  //   }
+
+    // Abell mass distro
+
+    // Corner nodes get 1/12
+    K(0, 0) = total_mass / 12;
+    K(1, 1) = total_mass / 12;
+    K(2, 2) = total_mass / 12;
+    K(3, 3) = total_mass / 12;
+    K(4, 4) = total_mass / 12;
+    K(5, 5) = total_mass / 12;
+
+    // Mid nodes get 1/4
+    K(6, 6) = total_mass / 4;
+    K(7, 7) = total_mass / 4;
+    K(8, 8) = total_mass / 4;
+    K(9, 9) = total_mass / 4;
+    K(10, 10) = total_mass / 4;
+    K(11, 11) = total_mass / 4;
     
 
-	opserr << "M = " << K << endln;
+	// opserr << "M = " << K << endln;
 
 	return K;
 }
