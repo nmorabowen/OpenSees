@@ -105,9 +105,25 @@ void* OPS_SixNodeTri()
 	}
     }
 
+    int do_init_disp_int = 0;
+    bool do_init_disp = false;
+
+
+    while (OPS_GetNumRemainingInputArgs() > 0) 
+    {
+        const char* type = OPS_GetString(); // Fetch the next string from input
+        if (strcmp(type, "-doInitDisp") == 0) 
+        {
+            num = 1;
+            OPS_GetIntInput(&num, &do_init_disp_int); 
+        }
+    }
+
+    do_init_disp = (bool) do_init_disp_int; 
+ 
     return new SixNodeTri(idata[0],idata[1],idata[2],idata[3],idata[4],
 							idata[5],idata[6],
-			                *mat,type,thk,data[0],data[1],data[2],data[3]);
+			                *mat,type,thk,data[0],data[1],data[2],data[3],do_init_disp);
 }
 
 
@@ -121,10 +137,11 @@ double SixNodeTri::wts[nip];
 SixNodeTri::SixNodeTri(int tag, int nd1, int nd2, int nd3, int nd4,
 						   int nd5, int nd6,
 						   NDMaterial &m, const char *type, double t,
-						   double p, double r, double b1, double b2)
+						   double p, double r, double b1, double b2,
+               bool do_init_)
 :Element (tag, ELE_TAG_SixNodeTri),
   theMaterial(0), connectedExternalNodes(nnodes),
- Q(2*nnodes), applyLoad(0), pressureLoad(2*nnodes), thickness(t), pressure(p), rho(r), Ki(0)
+ Q(2*nnodes), applyLoad(0), pressureLoad(2*nnodes), thickness(t), pressure(p), rho(r), Ki(0), do_init_disp(do_init_)
 {
 	pts[0][0] = 0.666666666666666667;
 	pts[0][1] = 0.166666666666666667;
@@ -184,12 +201,18 @@ SixNodeTri::SixNodeTri(int tag, int nd1, int nd2, int nd3, int nd4,
 
     for (i=0; i<nnodes; i++)
       theNodes[i] = 0;
+
+    for (int i = 0; i < nnodes; ++i)
+    {
+        initDisp[i] = Vector(3);
+        initDisp[i].Zero();
+    }
 }
 
 SixNodeTri::SixNodeTri()
 :Element (0,ELE_TAG_SixNodeTri),
   theMaterial(0), connectedExternalNodes(nnodes),
- Q(2*nnodes), applyLoad(0), pressureLoad(2*nnodes), thickness(0.0), pressure(0.0), Ki(0)
+ Q(2*nnodes), applyLoad(0), pressureLoad(2*nnodes), thickness(0.0), pressure(0.0), Ki(0), do_init_disp(false)
 {
 	pts[0][0] = 0.666666666666666667;
 	pts[0][1] = 0.166666666666666667;
@@ -210,6 +233,12 @@ SixNodeTri::SixNodeTri()
 
     for (int i=0; i<nnodes; i++)
       theNodes[i] = 0;
+
+    for (int i = 0; i < nnodes; ++i)
+    {
+        initDisp[i] = Vector(3);
+        initDisp[i].Zero();
+    }
 }
 
 SixNodeTri::~SixNodeTri()
@@ -255,6 +284,7 @@ SixNodeTri::getNumDOF()
 void
 SixNodeTri::setDomain(Domain *theDomain)
 {
+
 	// Check Domain is not null - invoked when object removed from a domain
     if (theDomain == 0) {
 	theNodes[0] = 0;
@@ -297,10 +327,17 @@ SixNodeTri::setDomain(Domain *theDomain)
 
     if (dofNd1 != 2 || dofNd2 != 2 || dofNd3 != 2 || dofNd4 != 2 ||
 		dofNd5 != 2 || dofNd6 != 2) {
-	//opserr << "FATAL ERROR SixNodeTri (tag: %d), has differing number of DOFs at its nodes",
-	//	this->getTag());
 
 	return;
+    }
+    
+    //Handle initial displacements
+    if(do_init_disp)
+    {
+        for ( int i = 0; i < nnodes; i++ )
+        {
+            initDisp[i] = theNodes[i]->getDisp();
+        }
     }
     this->DomainComponent::setDomain(theDomain);
 
@@ -353,12 +390,12 @@ SixNodeTri::revertToStart()
 int
 SixNodeTri::update()
 {
-	const Vector &disp1 = theNodes[0]->getTrialDisp();
-	const Vector &disp2 = theNodes[1]->getTrialDisp();
-	const Vector &disp3 = theNodes[2]->getTrialDisp();
-	const Vector &disp4 = theNodes[3]->getTrialDisp();
-	const Vector &disp5 = theNodes[4]->getTrialDisp();
-	const Vector &disp6 = theNodes[5]->getTrialDisp();
+	const Vector &disp1 = theNodes[0]->getTrialDisp() - initDisp[0];
+	const Vector &disp2 = theNodes[1]->getTrialDisp() - initDisp[1];
+	const Vector &disp3 = theNodes[2]->getTrialDisp() - initDisp[2];
+	const Vector &disp4 = theNodes[3]->getTrialDisp() - initDisp[3];
+	const Vector &disp5 = theNodes[4]->getTrialDisp() - initDisp[4];
+	const Vector &disp6 = theNodes[5]->getTrialDisp() - initDisp[5];
 
 	static double u[2][nnodes];
 
