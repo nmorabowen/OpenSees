@@ -59,6 +59,8 @@ struct MC_ds_Name { static constexpr const char* name = "MC_ds";};     // relati
 using MC_ds = ModelParameterType<double, MC_ds_Name>;
 struct MC_psi_Name { static constexpr const char* name = "MC_psi";};   // dilatancy angle
 using MC_psi = ModelParameterType<double, MC_psi_Name>;
+struct MC_psi_cv_Name { static constexpr const char* name = "MC_psi_cv";};   // dilatancy angle
+using MC_psi_cv = ModelParameterType<double, MC_psi_cv_Name>;
 
 struct TC_min_stress_Name { static constexpr const char* name = "TC_min_stress";};
 using TC_min_stress = ModelParameterType<double, TC_min_stress_Name>;
