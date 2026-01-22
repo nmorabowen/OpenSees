@@ -1074,11 +1074,11 @@ TclModelBuilder_addSixNodeTri(ClientData clientData, Tcl_Interp *interp,
     opserr << "WARNING builder has been destroyed\n";    
     return TCL_ERROR;
   }
-
-	if (theTclBuilder->getNDM() != 2 || theTclBuilder->getNDF() != 2) {
-		opserr << "WARNING -- model dimensions and/or nodal DOF not compatible with quad element\n";
-		return TCL_ERROR;
-	}
+	//
+	// if (theTclBuilder->getNDM() != 2 || theTclBuilder->getNDF() != 2) {
+	// 	opserr << "WARNING -- model dimensions and/or nodal DOF not compatible with quad element\n";
+	// 	return TCL_ERROR;
+	// }
 
   // check the number of arguments is correct
   int argStart = 2;

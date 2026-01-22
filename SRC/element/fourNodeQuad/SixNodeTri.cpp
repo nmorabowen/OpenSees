@@ -45,14 +45,14 @@
 
 void* OPS_SixNodeTri()
 {
-    int ndm = OPS_GetNDM();
-    int ndf = OPS_GetNDF();
+    // int ndm = OPS_GetNDM();
+    // int ndf = OPS_GetNDF();
 
-    if (ndm != 2 || ndf != 2) {
-	opserr << "WARNING -- model dimensions and/or nodal DOF not compatible with quad element\n";
-	return 0;
-    }
-
+	//    if (ndm != 2 || ndf != 2) {
+	// opserr << "WARNING -- model dimensions and/or nodal DOF not compatible with quad element\n";
+	// return 0;
+	//    }
+	//
     if (OPS_GetNumRemainingInputArgs() < 10) {
 	opserr << "WARNING insufficient arguments\n";
 	opserr << "Want: element SixNodeTri eleTag? iNode? jNode? kNode? lNode? nNode5 mNode6 thk? type? matTag? <pressure? rho? b1? b2?>\n";

@@ -4042,7 +4042,8 @@ namespace mpco {
 				*/
 				else if (
 					// ./tetrahedron
-					elem_class_tag == ELE_TAG_TenNodeTetrahedron
+					elem_class_tag == ELE_TAG_TenNodeTetrahedron ||
+          elem_class_tag == ELE_TAG_TenNodeTetrahedronThermal
 					)
 				{
 					geom_type = ElementGeometryType::Tetrahedron_10N;
