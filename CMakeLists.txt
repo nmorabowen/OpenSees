@@ -48,6 +48,7 @@ find_package(MPI)
 # Compiler SPECIFIC
 #
 
+add_definitions(-DUSE_CXX11)
 
 
 if ("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang")

@@ -908,7 +908,7 @@
 #define ELE_TAG_PML3DVISCOUS               271 // Amin Pakzad
 #define ELE_TAG_TenNodeTetrahedronThermal        272 //by jaabell and j0selarenas (UANDES)
 #define ELE_TAG_SixNodeBoundryCondition        273 //by jaabell and j0selarenas (UANDES)
-
+#define ELE_TAG_SlidingHingeElement        274
 
 #define FRN_TAG_Coulomb            1
 #define FRN_TAG_VelDependent       2
