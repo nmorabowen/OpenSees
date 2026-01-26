@@ -218,7 +218,9 @@ NDMaterial*  ASDPlasticMaterial3DFactory(int instance_tag, const char * yf_type,
 
 template<typename EL, typename YF, typename PF>
 NDMaterial* createASDPlasticMaterial3D(int instance_tag, 
-        const char* yf_type, const char* pf_type, const char* el_type, const char* iv_type, std::list<NDMaterial*> &instance_pointers, std::list<model_spec_t> &available_models) {
+        const char* yf_type, const char* pf_type, const char* el_type, const char* iv_type, 
+        std::list<NDMaterial*> &instance_pointers, std::list<model_spec_t> &available_models) 
+{
     auto instance = new ASDPlasticMaterial3D<EL, YF, PF, ND_TAG_ASDPlasticMaterial3D>(instance_tag);
 
 
