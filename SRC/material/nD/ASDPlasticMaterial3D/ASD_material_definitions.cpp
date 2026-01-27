@@ -7,7 +7,7 @@
 
 createASDPlasticMaterial3D<
         StiffSoil_EL, 
-        StiffSoil_YF<
+        StiffSoilShear_YF<
             EpsQpShear
             >, 
         StiffSoilShear_PF<

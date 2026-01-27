@@ -24,8 +24,8 @@
 //
 // Fully general templated material class for plasticity modeling
 
-#ifndef StiffSoil_YF_H
-#define StiffSoil_YF_H
+#ifndef StiffSoilShear_YF_H
+#define StiffSoilShear_YF_H
 
 #include "../YieldFunctionBase.h"
 #include "cmath"
@@ -37,15 +37,15 @@ double cot(double th){ return std::cos(th) / std::sin(th);};
 
 
 template<class EpsQpShearType>
-class StiffSoil_YF : public YieldFunctionBase<StiffSoil_YF<EpsQpShearType>> // CRTP
+class StiffSoilShear_YF : public YieldFunctionBase<StiffSoilShear_YF<EpsQpShearType>> // CRTP
 {
 public:
 
-    static constexpr const char* NAME = "StiffSoil_YF";
+    static constexpr const char* NAME = "StiffSoilShear_YF";
 
 
-    StiffSoil_YF( ):
-        YieldFunctionBase<StiffSoil_YF<EpsQpShearType>>::YieldFunctionBase() 
+    StiffSoilShear_YF( ):
+        YieldFunctionBase<StiffSoilShear_YF<EpsQpShearType>>::YieldFunctionBase() 
         {}
 
     YIELD_FUNCTION 
@@ -142,7 +142,7 @@ private:
 };
 
 template <class EpsQpShearType>
-VoigtVector StiffSoil_YF<EpsQpShearType>::vv_out;
+VoigtVector StiffSoilShear_YF<EpsQpShearType>::vv_out;
 
 
 #endif
