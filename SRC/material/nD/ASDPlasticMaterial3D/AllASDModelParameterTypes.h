@@ -84,7 +84,7 @@ struct DP_etabar_Name { static constexpr const char* name = "DP_etabar";};   // 
 using DP_etabar = ModelParameterType<double, DP_etabar_Name>;
 
 //Stiffening soil model
-struct SS_E50_ref_Name { static constexpr const char* name = "SS_E50";};   
+struct SS_E50_ref_Name { static constexpr const char* name = "SS_E50_ref";};   
 using SS_E50_ref = ModelParameterType<double, SS_E50_ref_Name>;
 struct SS_Eur_ref_Name { static constexpr const char* name = "SS_Eur_ref";};
 using SS_Eur_ref = ModelParameterType<double, SS_Eur_ref_Name>;

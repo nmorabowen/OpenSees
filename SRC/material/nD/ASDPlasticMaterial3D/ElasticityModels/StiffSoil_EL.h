@@ -111,6 +111,12 @@ public:
         double lambda = (nu * E_ur) / ((1.0 + nu) * (1.0 - 2.0 * nu));
         double mu = E_ur / (2.0 * (1.0 + nu));
 
+        std::cout << "denominator = " << denominator << endl;
+        std::cout << "numerator = " << numerator << endl;
+        std::cout << "m = " << m << endl;
+        std::cout << "Eur_ref = " << Eur_ref << endl;
+        std::cout << "E_ur = " << E_ur << endl;
+        std::cout << "nu = " << nu << endl;
         std::cout << "lambda = " << lambda << endl;
         std::cout << "mu = " << mu << endl;
 
@@ -124,6 +130,8 @@ public:
         EE_MATRIX(3, 3) = mu;
         EE_MATRIX(4, 4) = mu;
         EE_MATRIX(5, 5) = mu;
+
+        cout << "EE_MATRIX" << EE_MATRIX << endl;
 
         return EE_MATRIX;
     }

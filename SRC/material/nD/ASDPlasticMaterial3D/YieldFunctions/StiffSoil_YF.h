@@ -60,9 +60,22 @@ public:
         double Eur_ref = GET_PARAMETER_VALUE(SS_Eur_ref);
         double m = GET_PARAMETER_VALUE(SS_m);
 
+        std::cout << "   phi = " << phi << endl;
+        std::cout << "   c = " << c << endl;
+        std::cout << "   E50_ref = " << E50_ref << endl;
+        std::cout << "   pref = " << pref << endl;
+        std::cout << "   Rf = " << Rf << endl;
+        std::cout << "   Eur_ref = " << Eur_ref << endl;
+
+
         VoigtVector sig_geo = -sigma;   // Geotech stress 
         double q = sig_geo.stressDeviatorQ();
         auto [sigma3,sigma2,sigma1] = sig_geo.principalStresses(); // ascending ordir in geotech conveniton
+
+        std::cout << "   sigma1 = " << sigma1 << endl;
+        std::cout << "   sigma2 = " << sigma2 << endl;
+        std::cout << "   sigma3 = " << sigma3 << endl;
+        std::cout << "   q = " << q << endl;
 
         auto eps_qp_shear = GET_TRIAL_INTERNAL_VARIABLE(EpsQpShearType);
 

@@ -302,15 +302,7 @@ public:
 
 
     double stressDeviatorQ() const {
-        VoigtVector deviator = this->deviator();
-        double J2 = 0.5 * (
-                        deviator.v11() * deviator.v11() + deviator.v22() * deviator.v22() + deviator.v33() * deviator.v33()
-                        - 2 * deviator.v11() * deviator.v22()
-                        - 2 * deviator.v22() * deviator.v33()
-                        - 2 * deviator.v33() * deviator.v11()
-                        + 6 * (deviator.v12() * deviator.v12() + deviator.v23() * deviator.v23() + deviator.v13() * deviator.v13())
-                    );
-
+        double J2 = this->getJ2(); 
         return std::sqrt(0.5 * J2);
     }
 

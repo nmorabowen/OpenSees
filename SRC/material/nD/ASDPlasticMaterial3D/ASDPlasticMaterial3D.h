@@ -1858,6 +1858,10 @@ private:
 
         int errorcode = -1;
 
+
+        cout << "BE call " << endl;
+
+
         // -------- setup
         static VoigtVector depsilon;
         depsilon = strain_incr;
@@ -1881,6 +1885,10 @@ private:
 
         const double yf_val_start = yf(sigma,        iv_storage, parameters_storage);
         const double yf_val_end   = yf(TrialStress,  iv_storage, parameters_storage);
+
+        cout << "TrialStress = " << TrialStress <<  endl;
+        cout << "yf_val_start = " << yf_val_start <<  endl;
+        cout << "yf_val_end = " << yf_val_end <<  endl;
 
         // purely elastic or moving deeper inside the surface
         if ( (yf_val_start <= 0.0 && yf_val_end <= 0.0) || (yf_val_start > yf_val_end) ) {
