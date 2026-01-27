@@ -111,6 +111,10 @@ public:
         double lambda = (nu * E_ur) / ((1.0 + nu) * (1.0 - 2.0 * nu));
         double mu = E_ur / (2.0 * (1.0 + nu));
 
+        std::cout << "lambda = " << lambda << endl;
+        std::cout << "mu = " << mu << endl;
+
+
         EE_MATRIX.setZero();
 
         EE_MATRIX(0, 0) = EE_MATRIX(1, 1) = EE_MATRIX(2, 2) = 2.0 * mu + lambda;

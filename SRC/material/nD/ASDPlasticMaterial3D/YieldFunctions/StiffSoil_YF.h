@@ -75,7 +75,7 @@ public:
         double E50  = E50_ref * pow((c*cos(phi) + sigma1*sin(phi)) / denom, m);
         
         double Ei = 2 * E50 / ( 2 - Rf);
-        double Fs = q / (Ei * (1 - q / qa)) - q / E_ur - eps_qp_shear;
+        double Fs = q / (Ei * (1 - q / qa)) - q / E_ur - eps_qp_shear.value();
 
         return Fs;
     }
