@@ -59,19 +59,21 @@ public:
         double Rf = GET_PARAMETER_VALUE(SS_Rf);
         double Eur_ref = GET_PARAMETER_VALUE(SS_Eur_ref);
         double m = GET_PARAMETER_VALUE(SS_m);
+        double p_lim = 0.1 * pref;
 
+        std::cout << "YF " << endl;
         std::cout << "   phi = " << phi << endl;
         std::cout << "   c = " << c << endl;
         std::cout << "   E50_ref = " << E50_ref << endl;
         std::cout << "   pref = " << pref << endl;
         std::cout << "   Rf = " << Rf << endl;
         std::cout << "   Eur_ref = " << Eur_ref << endl;
+        std::cout << "   m = " << m << endl;
 
 
         VoigtVector sig_geo = -sigma;   // Geotech stress 
         double q = sig_geo.stressDeviatorQ();
         auto [sigma3,sigma2,sigma1] = sig_geo.principalStresses(); // ascending ordir in geotech conveniton
-
         std::cout << "   sigma1 = " << sigma1 << endl;
         std::cout << "   sigma2 = " << sigma2 << endl;
         std::cout << "   sigma3 = " << sigma3 << endl;
@@ -81,16 +83,31 @@ public:
 
 
         double qf = (c * cot(phi) + sigma1) * 2 * sin(phi) / (1 - sin(phi));
+        std::cout << "    qf = " << qf << std::endl;
         double qa = qf / Rf;
-
+        std::cout << "    qa = " << qa << std::endl;
         double denom = (c*cos(phi) + pref*sin(phi));
+        std::cout << "    denom = " << denom << std::endl;
         double E_ur = Eur_ref * pow((c*cos(phi) + sigma3*sin(phi)) / denom, m);
+        std::cout << "    E_ur = " << E_ur << std::endl;
         double E50  = E50_ref * pow((c*cos(phi) + sigma1*sin(phi)) / denom, m);
+        std::cout << "    E50 = " << E50 << std::endl;
         
         double Ei = 2 * E50 / ( 2 - Rf);
+        std::cout << "    Ei = " << Ei << std::endl;
         double Fs = q / (Ei * (1 - q / qa)) - q / E_ur - eps_qp_shear.value();
+        std::cout << "--> Fs = " << Fs << std::endl;
+        double T = 0.0;
 
-        return Fs;
+        double Ft = T - sigma3;
+
+        if (sigma3 > T + 1e-10 && sigma1 > 1e-10) {
+          //pass
+        } else {
+          Fs = -1e10;
+        }
+        double F = std::max(Fs, Ft);
+        return F;
     }
 
     YIELD_FUNCTION_STRESS_DERIVATIVE

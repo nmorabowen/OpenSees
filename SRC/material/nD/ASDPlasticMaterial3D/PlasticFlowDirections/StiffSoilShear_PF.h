@@ -150,13 +150,13 @@ public:
         double sigma_norm = sigma.norm();
 
         // Perturbation scaled by stress magnitude
-        ds = std::max(ds, ds * sigma_norm);
+        ds = ds * std::max(1.0, sigma_norm);
 
         // Option: Use mobilized dilatancy (Rowe's theory) or constant dilatancy
         // For now, use constant dilatancy angle (simpler approach)
         // To enable Rowe's theory, uncomment the following line:
-        // double psi_m = computeMobilizedDilatancy(sigma, phi, psi, c);
-        double psi_m = psi;  // Constant dilatancy
+        double psi_m = computeMobilizedDilatancy(sigma, phi, psi, c);
+        // double psi_m = psi;  // Constant dilatancy
 
         // Helper lambda for numerical differentiation of plastic potential
         auto computeNumericalFlowDirection = [this, psi_m, c](const VoigtVector& sig, double perturbation) -> VoigtVector {
