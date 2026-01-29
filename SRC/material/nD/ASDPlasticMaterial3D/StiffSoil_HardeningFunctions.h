@@ -122,7 +122,7 @@ struct StiffSoilCapHardeningPolicy {
         
         // Volumetric part of plastic flow direction
         // tr(m) = m_11 + m_22 + m_33
-        double tr_m = m.trace();
+        double tr_m = m.trace();  // - due to geotech convention
         
         // For the cap, we want compression (tr(m) > 0 in geotechnical convention)
         // to increase p_c. The flow direction from StiffSoilCap_PF gives
@@ -135,7 +135,10 @@ struct StiffSoilCapHardeningPolicy {
         // We use |tr(m)| because the cap only hardens under compression
         double ratio = pc / pref;
         double h = (pref / beta) * pow(ratio, m_exp) * std::abs(tr_m);
-        
+       
+        cout << " PF --> tr_m = " << tr_m << endl;
+        cout << " PF --> h    = " << h << endl;
+
         // Cap should only expand (p_c increase) under compression
         // If tr(m) indicates tension/expansion, no hardening occurs
         // In mechanics convention (tension positive), tr(m) < 0 means compression

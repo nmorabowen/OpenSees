@@ -144,13 +144,14 @@ public:
                 double g1 = plasticPotential(SIG1, internal_variables_storage, parameters_storage);
                 double g2 = plasticPotential(SIG2, internal_variables_storage, parameters_storage);
 
-                result(i) = (g1 - g2) / (2.0 * perturbation);
+                result(i) =  (g1 - g2) / (2.0 * perturbation); //- is due to geotech convention
             }
             return result;
         };
 
         vv_out = computeNumericalFlowDirection(sigma, ds);
 
+        cout << "   CAP vv_out = " << vv_out.transpose() << endl;
         return vv_out;
     }
 

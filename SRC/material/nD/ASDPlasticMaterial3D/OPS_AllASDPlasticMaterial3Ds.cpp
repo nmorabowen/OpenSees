@@ -141,6 +141,7 @@ void *OPS_AllASDPlasticMaterial3Ds(void)
             
             if (std::strcmp(pf_type, model_yf_type.c_str())==0 || std::strcmp(pf_type, " X ")==0 )
             {
+                cout << "  YF = " << model_yf_type << endl;
                 cout << "  PF = " << model_pf_type << endl;
                 cout << "  EL = " << model_el_type << endl;
                 cout << "  IV = " << model_iv_type << endl << endln;

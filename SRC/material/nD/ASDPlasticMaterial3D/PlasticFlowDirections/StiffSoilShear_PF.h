@@ -171,7 +171,7 @@ public:
                 double g1 = plasticPotential(SIG1, psi_m, c);
                 double g2 = plasticPotential(SIG2, psi_m, c);
 
-                result(i) = (g1 - g2) / (2.0 * perturbation);
+                result(i) = -(g1 - g2) / (2.0 * perturbation); // - due to geotechnical convention
             }
             return result;
         };
