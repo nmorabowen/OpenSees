@@ -136,9 +136,6 @@ struct StiffSoilCapHardeningPolicy {
         double ratio = pc / pref;
         double h = (pref / beta) * pow(ratio, m_exp) * std::abs(tr_m);
        
-        cout << " PF --> tr_m = " << tr_m << endl;
-        cout << " PF --> h    = " << h << endl;
-
         // Cap should only expand (p_c increase) under compression
         // If tr(m) indicates tension/expansion, no hardening occurs
         // In mechanics convention (tension positive), tr(m) < 0 means compression
@@ -147,7 +144,10 @@ struct StiffSoilCapHardeningPolicy {
             // Tension/expansion in mechanics convention - no cap hardening
             h = 0.0;
         }
-        
+        cout << " PF --> pc = " << pc << endl;
+        cout << " PF --> tr_m = " << tr_m << endl;
+        cout << " PF --> h    = " << h << endl;       
+
         return h;
     }
     
