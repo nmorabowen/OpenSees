@@ -253,7 +253,54 @@ public:
 
         return std::make_tuple(s1,s2,s3);
     }
+        /**
+        * @brief Compute principal stresses and their corresponding directions
+        * 
+        * Returns eigenvalues in ascending order (s1 <= s2 <= s3) with matching eigenvectors.
+        * Each eigenvector is a unit vector stored as Eigen::Vector3d.
+        * 
+        * @return tuple of (eigenvalues, eigenvectors) where:
+        *         - eigenvalues: tuple<double,double,double> = (s1, s2, s3) ascending
+        *         - eigenvectors: tuple<Vector3d,Vector3d,Vector3d> = (n1, n2, n3) matching
+        */
+    std::tuple<std::tuple<double, double, double>, 
+              std::tuple<Eigen::Vector3d, Eigen::Vector3d, Eigen::Vector3d>> 
+    principalStressesAndDirections() const {
+        // Convert Voigt vector to a stress tensor
+        Eigen::Matrix3d stress_tensor;
+        stress_tensor << v11(), v12(), v13(),
+                        v12(), v22(), v23(),
+                        v13(), v23(), v33();
 
+        // Compute eigenvalues and eigenvectors
+        Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> eigen_solver(stress_tensor);
+        Eigen::Vector3d eigenvalues = eigen_solver.eigenvalues();
+        Eigen::Matrix3d eigenvectors = eigen_solver.eigenvectors();
+
+        // SelfAdjointEigenSolver returns eigenvalues in ascending order
+        // and eigenvectors as columns in the same order
+        // But we need to explicitly sort to handle potential numerical issues
+        
+        // Create index array for sorting
+        std::array<int, 3> idx = {0, 1, 2};
+        std::sort(idx.begin(), idx.end(), [&eigenvalues](int i, int j) {
+            return eigenvalues[i] < eigenvalues[j];
+        });
+
+        // Extract sorted eigenvalues and eigenvectors
+        double s1 = eigenvalues[idx[0]];
+        double s2 = eigenvalues[idx[1]];
+        double s3 = eigenvalues[idx[2]];
+
+        Eigen::Vector3d n1 = eigenvectors.col(idx[0]);
+        Eigen::Vector3d n2 = eigenvectors.col(idx[1]);
+        Eigen::Vector3d n3 = eigenvectors.col(idx[2]);
+
+        return std::make_tuple(
+            std::make_tuple(s1, s2, s3),
+            std::make_tuple(n1, n2, n3)
+        );
+    }
 
     double meanStress() const {
         return this->trace() / 3.0;
@@ -303,7 +350,8 @@ public:
 
     double stressDeviatorQ() const {
         double J2 = this->getJ2(); 
-        return std::sqrt(0.5 * J2);
+
+        return std::sqrt(3 * J2);
     }
 
     // double lodeAngle() const {
