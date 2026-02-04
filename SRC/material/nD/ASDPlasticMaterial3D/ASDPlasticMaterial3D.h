@@ -1858,9 +1858,8 @@ private:
 
         int errorcode = -1;
 
-
-        // cout << "BE call " << endl;
-
+        int    max_iter = INT_OPT_n_max_iterations[ASDP_TAG];
+        double tol_yf   = DBL_OPT_f_absolute_tol[ASDP_TAG]; 
 
         // -------- setup
         static VoigtVector depsilon;
@@ -1883,15 +1882,18 @@ private:
         TrialStrain = epsilon + depsilon;
         TrialPlastic_Strain = CommitPlastic_Strain;
 
+        // cout << "BE - TrialStress = " << TrialStress.transpose() <<  endl;
+        // cout << "BE - CommitStress = " << CommitStress.transpose() <<  endl;
+        
         const double yf_val_start = yf(sigma,        iv_storage, parameters_storage);
+        // cout << "----->  yf_val_start = " << yf_val_start <<  endl;
+        
         const double yf_val_end   = yf(TrialStress,  iv_storage, parameters_storage);
-
-        cout << "TrialStress = " << TrialStress.transpose() <<  endl;
-        cout << "  yf_val_start = " << yf_val_start <<  endl;
-        cout << "  yf_val_end = " << yf_val_end <<  endl;
+        // cout << "----->  yf_val_end = " << yf_val_end << " tol_yf = " << tol_yf <<  endl;
 
         // purely elastic or moving deeper inside the surface
-        if ( (yf_val_start <= 0.0 && yf_val_end <= 0.0) || (yf_val_start > yf_val_end) ) {
+        if ( (yf_val_start <= 0.0 && yf_val_end <= 0.0) || (yf_val_start - yf_val_end > tol_yf) ) {
+            // cout << "BE - ELASTIC!" << endl << endl;
             Stiffness = Eelastic;
             return 0;
         }
@@ -1968,10 +1970,11 @@ private:
         }
 
         // -------- plastic correction (Backward Euler)
-        int    max_iter = INT_OPT_n_max_iterations[ASDP_TAG];
-        double tol_yf   = DBL_OPT_f_absolute_tol[ASDP_TAG]; 
 
         double dLambda = 0.0;
+
+
+        // cout << "BE - Plastic! Begin iterations----------" << endl << endl;
 
         for (int iter = 0; iter < max_iter; ++iter)
         {
@@ -1990,6 +1993,10 @@ private:
             if (std::abs(Phi) < tol_yf) {
                 GLOBAL_INT_max_iter[ASDP_TAG] = std::max(GLOBAL_INT_max_iter[ASDP_TAG], iter);
                 GLOBAL_DBL_max_error[ASDP_TAG] = std::max(GLOBAL_DBL_max_error[ASDP_TAG], std::abs(Phi));
+
+                // cout << "  =>  n = " << n.transpose() << endl;
+                // cout << "  =>  m = " << m.transpose() << endl;
+                // cout << "  =>  H = " << H << endl;
                 break; // converged
             }
 
@@ -2000,28 +2007,46 @@ private:
 
             if (std::abs(dPhi_dLambda) < MACHINE_EPSILON) {
                 // singular local tangent
+                cout << " SINGULAR LOCAL TANGENT - FAILING!" << endl;
+                cout << "  =>  n = " << n.transpose() << endl;
+                cout << "  =>  m = " << m.transpose() << endl;
+                cout << "  =>  H = " << H << endl;
                 return -1;
             }
 
             const double deltaLambda = - Phi / dPhi_dLambda;
 
+            // cout << " ---- iter = " << iter << " / " << max_iter << endl;
+            // cout << "  =>  n = " << n.transpose() << endl;
+            // cout << "  =>  m = " << m.transpose() << endl;
+            // cout << "  =>  H = " << H << endl;
+            // cout << "  =>  nEm = " << nEm << endl;
+            // cout << "  =>  Phi = " << Phi << endl;
+            // cout << "  =>  dPhi_dLambda = H - nEm = " << dPhi_dLambda << endl;
+            // cout << "  =>  deltaLambda = -Phi / dPhi_dLambda = " << deltaLambda << endl;
+            // cout << "  =>  dLambda = " << dLambda << endl ;
+
             // keep λ >= 0
             if (dLambda + deltaLambda < 0.0) {
+                cout << " PLASTIC INCONSISTENCY - ELASTIC STEP! (dLambda + deltaLambda < 0.0)" << endl << endl;
                 // step cannot be plastic; fall back to elastic in this rare case
                 Stiffness = Eelastic;
                 return 0;
             }
 
-            dLambda += deltaLambda;
-
             // incremental updates (use delta to avoid re-summing from commit each iter)
+            dLambda += deltaLambda;
             TrialStress          = TrialStress - deltaLambda * (Eelastic * m);
             TrialPlastic_Strain  = TrialPlastic_Strain + deltaLambda * m;
-
+            // cout << "  =>  dLambda + deltaLambda = " << dLambda << endl;
+            // cout << "  =>  CommitStress = " << CommitStress.transpose() << endl;
+            // cout << "  =>  TrialStress = " << TrialStress.transpose() << endl;
+            // cout << "  =>  TrialPlastic_Strain = " << TrialPlastic_Strain.transpose() << endl;
             iv_storage.apply([&](auto & internal_variable)
             {
                 auto h = internal_variable.hardening_function(depsilon, m, TrialStress, parameters_storage);
                 internal_variable.trial_value += deltaLambda * h;
+                // cout << "  => " <<  internal_variable << endl;
             });
 
             // NaN guard
@@ -2031,8 +2056,8 @@ private:
                 return -1;
             }
         }
+        // cout << "BE - END iterations----------" << endl << endl;
 
-        cout << "  dLambda = " << dLambda << endl;
 
         ComputeTangentStiffness();
 
