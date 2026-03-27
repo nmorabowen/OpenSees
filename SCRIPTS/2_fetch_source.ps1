@@ -1,5 +1,5 @@
 #==============================================================================
-#  OpenSees Windows 11 — Step 2: Fetch Source & Build Harness
+#  OpenSees Windows 11 -- Step 2: Fetch Source & Build Harness
 #
 #  Clones an OpenSees source tree, the Windows build-harness files, vcpkg,
 #  and MUMPS, then copies the harness into the source tree so it is ready
@@ -81,10 +81,11 @@ function Invoke-Git {
 # --------------------------------------------------------------------------
 $SourceRoot  = Join-Path $WorkDir $SourceDirName
 $HarnessDir  = Join-Path $WorkDir "opensees_windows_compilation_files"
+$BundledMumpsDir = Join-Path $HarnessDir "third_party\mumps"
 $VcpkgDir    = Join-Path $SourceRoot "third_party\vcpkg"
 $MumpsDir    = Join-Path $SourceRoot "third_party\mumps"
 
-Write-Banner "OpenSees Windows 11 — Fetch Source & Build Harness"
+Write-Banner "OpenSees Windows 11 -- Fetch Source & Build Harness"
 Write-Host ""
 Write-Host "  OpenSees repo  : $OpenSeesRepo"
 Write-Host "  Branch/tag     : $(if ($OpenSeesBranch) { $OpenSeesBranch } else { '(default)' })"
@@ -94,7 +95,7 @@ Write-Host "  Harness repo   : $HarnessRepo"
 Write-Host ""
 
 if ($DryRun) {
-    Write-Host "  *** DRY RUN — nothing will be written to disk ***" -ForegroundColor Magenta
+    Write-Host "  *** DRY RUN -- nothing will be written to disk ***" -ForegroundColor Magenta
 }
 
 # --------------------------------------------------------------------------
@@ -110,7 +111,7 @@ if (-not $DryRun) {
 # --------------------------------------------------------------------------
 Write-Step "Cloning OpenSees source into $SourceRoot"
 if (Test-Path $SourceRoot) {
-    Write-Host "  Directory already exists — skipping clone."
+    Write-Host "  Directory already exists -- skipping clone."
 } else {
     $cloneArgs = @("clone", $OpenSeesRepo, $SourceRoot)
     if ($OpenSeesBranch) {
@@ -136,7 +137,7 @@ if ($OpenSeesBranch -and (Test-Path $SourceRoot) -and (-not $DryRun)) {
 # --------------------------------------------------------------------------
 Write-Step "Cloning vcpkg into $VcpkgDir"
 if (Test-Path $VcpkgDir) {
-    Write-Host "  Directory already exists — skipping clone."
+    Write-Host "  Directory already exists -- skipping clone."
 } else {
     if (-not $DryRun) {
         New-Item -ItemType Directory -Force -Path (Join-Path $SourceRoot "third_party") | Out-Null
@@ -145,29 +146,36 @@ if (Test-Path $VcpkgDir) {
 }
 
 # --------------------------------------------------------------------------
-# 4. Clone MUMPS (pinned commit)
-# --------------------------------------------------------------------------
-Write-Step "Cloning MUMPS into $MumpsDir (commit $MumpsCommit)"
-if (Test-Path $MumpsDir) {
-    Write-Host "  Directory already exists — skipping clone."
-} else {
-    Invoke-Git -Arguments @("clone", $MumpsRepo, $MumpsDir)
-    if ($MumpsCommit -and (-not $DryRun)) {
-        Invoke-Git -Arguments @("-C", $MumpsDir, "checkout", $MumpsCommit)
-    }
-}
-
-# --------------------------------------------------------------------------
-# 5. Clone the Windows build-harness repository
+# 4. Clone the Windows build-harness repository
 # --------------------------------------------------------------------------
 Write-Step "Cloning Windows build harness into $HarnessDir"
 if (Test-Path $HarnessDir) {
-    Write-Host "  Directory already exists — pulling latest."
+    Write-Host "  Directory already exists -- pulling latest."
     if (-not $DryRun) {
         Invoke-Git -Arguments @("-C", $HarnessDir, "pull", "--ff-only")
     }
 } else {
     Invoke-Git -Arguments @("clone", $HarnessRepo, $HarnessDir)
+}
+
+# --------------------------------------------------------------------------
+# 5. Provision MUMPS (prefer bundled source from harness repo)
+# --------------------------------------------------------------------------
+Write-Step "Provisioning MUMPS into $MumpsDir (commit $MumpsCommit)"
+if (Test-Path $MumpsDir) {
+    Write-Host "  Directory already exists -- skipping."
+} elseif (Test-Path $BundledMumpsDir) {
+    Write-Host "  Using bundled MUMPS from harness repo: $BundledMumpsDir"
+    if (-not $DryRun) {
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $MumpsDir) | Out-Null
+        Copy-Item -Path $BundledMumpsDir -Destination $MumpsDir -Recurse -Force
+    }
+} else {
+    Write-Host "  Bundled MUMPS not found -- cloning from $MumpsRepo"
+    Invoke-Git -Arguments @("clone", $MumpsRepo, $MumpsDir)
+    if ($MumpsCommit -and (-not $DryRun)) {
+        Invoke-Git -Arguments @("-C", $MumpsDir, "checkout", $MumpsCommit)
+    }
 }
 
 # --------------------------------------------------------------------------

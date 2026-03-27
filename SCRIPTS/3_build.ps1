@@ -1,13 +1,17 @@
 #==============================================================================
-#  OpenSees Windows 11 — Step 3: Build
+#  OpenSees Windows 11 -- Step 3: Build
 #
 #  Compiles OpenSees (serial + parallel + Python module) using the build
 #  harness that was copied into the source tree by Step 2.
 #
+#  This script automatically initializes the Visual Studio and Intel oneAPI
+#  environment if cl/ifx are not already available.  It does this by
+#  re-launching itself inside a cmd shell that first calls
+#  init_oneapi_windows11.cmd.
+#
 #  Usage (normal PowerShell from the OpenSees source root):
 #    powershell -NoProfile -ExecutionPolicy Bypass -File SCRIPTS\3_build.ps1
 #
-#  All parameters are forwarded to build_windows11_full.ps1.
 #  Common overrides:
 #    -SkipMumps          MUMPS already built from a previous run
 #    -SkipTests          Skip smoke tests after build
@@ -19,8 +23,8 @@
 param(
     [string]$BuildDir     = "build-win11",
     [string]$Triplet      = "x64-windows-static",
-    [string]$VcpkgRoot    = "",
-    [string]$MumpsRoot    = "",
+    [string]$VcpkgRoot    = "third_party\vcpkg",
+    [string]$MumpsRoot    = "third_party\mumps",
     [ValidateSet("quick", "full")][string]$SmokeMode = "quick",
     [int]$SmokeTimeoutSec = 600,
     [int]$Parallel        = 0,
@@ -36,32 +40,93 @@ $ErrorActionPreference = "Stop"
 # Resolve the repo root (one level above SCRIPTS/).
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $RepoRoot  = Split-Path -Parent $ScriptDir
-
-# Default vcpkg and MUMPS locations match Step 2 layout.
-if ([string]::IsNullOrWhiteSpace($VcpkgRoot)) {
-    $VcpkgRoot = Join-Path $RepoRoot "third_party\vcpkg"
-}
-if ([string]::IsNullOrWhiteSpace($MumpsRoot)) {
-    $MumpsRoot = Join-Path $RepoRoot "third_party\mumps"
-}
-
-# Build the forwarded argument list.
-$fwdArgs = @(
-    "-BuildDir",       $BuildDir,
-    "-Triplet",        $Triplet,
-    "-VcpkgRoot",      $VcpkgRoot,
-    "-MumpsRoot",      $MumpsRoot,
-    "-SmokeMode",      $SmokeMode,
-    "-SmokeTimeoutSec", $SmokeTimeoutSec
-)
-
-if ($Parallel -gt 0) { $fwdArgs += @("-Parallel", $Parallel) }
-if ($SkipMumps)      { $fwdArgs += "-SkipMumps" }
-if ($SkipBuild)      { $fwdArgs += "-SkipBuild" }
-if ($SkipTests)      { $fwdArgs += "-SkipTests" }
-if ($DryRun)         { $fwdArgs += "-DryRun" }
-
 $buildScript = Join-Path $ScriptDir "build_windows11_full.ps1"
+
+function Convert-ToPowerShellArgumentString {
+    param([System.Collections.IDictionary]$Parameters)
+
+    $parts = @()
+    foreach ($entry in $Parameters.GetEnumerator()) {
+        $key = [string]$entry.Key
+        $value = $entry.Value
+
+        if ($value -is [switch]) {
+            if ($value.IsPresent) {
+                $parts += "-$key"
+            }
+            continue
+        }
+
+        if ($value -is [bool]) {
+            if ($value) {
+                $parts += "-$key"
+            }
+            continue
+        }
+
+        if ($null -eq $value) {
+            continue
+        }
+
+        $escaped = [string]$value -replace '"', '\"'
+        $parts += "-$key `"$escaped`""
+    }
+
+    return ($parts -join " ")
+}
+
+# --------------------------------------------------------------------------
+# Check if the build environment (cl, ifx) is already available.
+# If not, re-launch this entire script inside a cmd shell that first
+# calls init_oneapi_windows11.cmd to set up VS + oneAPI.
+# --------------------------------------------------------------------------
+$clFound  = $null -ne (Get-Command cl  -ErrorAction SilentlyContinue)
+$ifxFound = $null -ne (Get-Command ifx -ErrorAction SilentlyContinue)
+
+if ((-not $clFound) -or (-not $ifxFound)) {
+    $initCmd = Join-Path $ScriptDir "init_oneapi_windows11.cmd"
+    if (-not (Test-Path $initCmd)) {
+        Write-Host "[FAIL] cl/ifx not in PATH and init_oneapi_windows11.cmd not found." -ForegroundColor Red
+        Write-Host "  Initialize your VS + oneAPI environment manually, then re-run." -ForegroundColor Yellow
+        exit 1
+    }
+
+    Write-Host "cl/ifx not found in PATH -- initializing VS + oneAPI environment..." -ForegroundColor Yellow
+    Write-Host ""
+
+    $thisScript = $MyInvocation.MyCommand.Definition
+    $fwdArgsStr = Convert-ToPowerShellArgumentString -Parameters $PSBoundParameters
+
+    # Launch: cmd -> init_oneapi -> powershell -> this script (with env loaded)
+    $cmdLine = if ([string]::IsNullOrWhiteSpace($fwdArgsStr)) {
+        "call `"$initCmd`" && powershell -NoProfile -ExecutionPolicy Bypass -File `"$thisScript`""
+    } else {
+        "call `"$initCmd`" && powershell -NoProfile -ExecutionPolicy Bypass -File `"$thisScript`" $fwdArgsStr"
+    }
+
+    if ($DryRun) {
+        Write-Host "[DRY RUN] Would execute:" -ForegroundColor Magenta
+        Write-Host "  cmd /d /s /c $cmdLine" -ForegroundColor Magenta
+        exit 0
+    }
+
+    cmd.exe /d /s /c $cmdLine
+    exit $LASTEXITCODE
+}
+
+# --------------------------------------------------------------------------
+# Environment is available -- proceed with the build.
+# --------------------------------------------------------------------------
+$fwdArgs = @{}
+if (-not $PSBoundParameters.ContainsKey("VcpkgRoot")) {
+    $fwdArgs["VcpkgRoot"] = $VcpkgRoot
+}
+if (-not $PSBoundParameters.ContainsKey("MumpsRoot")) {
+    $fwdArgs["MumpsRoot"] = $MumpsRoot
+}
+foreach ($entry in $PSBoundParameters.GetEnumerator()) {
+    $fwdArgs[$entry.Key] = $entry.Value
+}
 
 if (-not (Test-Path $buildScript)) {
     Write-Host "[FAIL] Build script not found: $buildScript" -ForegroundColor Red
@@ -71,9 +136,12 @@ if (-not (Test-Path $buildScript)) {
 
 Write-Host ""
 Write-Host "Launching build_windows11_full.ps1 with:" -ForegroundColor Cyan
-Write-Host "  VcpkgRoot  = $VcpkgRoot"
-Write-Host "  MumpsRoot  = $MumpsRoot"
 Write-Host "  BuildDir   = $BuildDir"
+Write-Host "  Triplet    = $Triplet"
+Write-Host "  VcpkgRoot  = $($fwdArgs['VcpkgRoot'])"
+Write-Host "  MumpsRoot  = $($fwdArgs['MumpsRoot'])"
+Write-Host "  SmokeMode  = $SmokeMode"
+Write-Host "  Parallel   = $Parallel"
 Write-Host ""
 
 & $buildScript @fwdArgs

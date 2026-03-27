@@ -1,5 +1,5 @@
 #==============================================================================
-#  OpenSees Windows 11 — Step 4: Package / Installer
+#  OpenSees Windows 11 -- Step 4: Package / Installer
 #
 #  Creates a portable zip and (optionally) a Windows installer from the
 #  compiled build output.
@@ -52,20 +52,20 @@ if (-not $DryRun) {
     }
 }
 
-# Build forwarded argument list.
-$fwdArgs = @(
-    "-BuildDir",  $BuildDir,
-    "-OutputDir", $OutputDir,
-    "-AppName",   $AppName,
-    "-Publisher",  $Publisher
-)
+# Build forwarded argument hashtable for splatting.
+$fwdArgs = @{
+    BuildDir  = $BuildDir
+    OutputDir = $OutputDir
+    AppName   = $AppName
+    Publisher = $Publisher
+}
 
-if ($AppVersion)         { $fwdArgs += @("-AppVersion", $AppVersion) }
-if ($IncludeExamples)    { $fwdArgs += "-IncludeExamples" }
-if ($IncludeAllExamples) { $fwdArgs += "-IncludeAllExamples" }
-if ($SkipZip)            { $fwdArgs += "-SkipZip" }
-if ($SkipInnoCompile)    { $fwdArgs += "-SkipInnoCompile" }
-if ($InnoCompilerPath)   { $fwdArgs += @("-InnoCompilerPath", $InnoCompilerPath) }
+if ($AppVersion)         { $fwdArgs["AppVersion"]         = $AppVersion }
+if ($IncludeExamples)    { $fwdArgs["IncludeExamples"]    = $true }
+if ($IncludeAllExamples) { $fwdArgs["IncludeAllExamples"] = $true }
+if ($SkipZip)            { $fwdArgs["SkipZip"]            = $true }
+if ($SkipInnoCompile)    { $fwdArgs["SkipInnoCompile"]    = $true }
+if ($InnoCompilerPath)   { $fwdArgs["InnoCompilerPath"]   = $InnoCompilerPath }
 
 Write-Host ""
 Write-Host "Launching create_el_ladruno_installer.ps1 with:" -ForegroundColor Cyan
@@ -73,6 +73,11 @@ Write-Host "  BuildDir  = $BuildDir"
 Write-Host "  OutputDir = $OutputDir"
 Write-Host "  AppName   = $AppName"
 Write-Host ""
+
+if ($DryRun) {
+    Write-Host "[DRY RUN] Packaging wrapper validation passed. Skipping installer execution." -ForegroundColor Magenta
+    exit 0
+}
 
 & $installerScript @fwdArgs
 $exitCode = $LASTEXITCODE

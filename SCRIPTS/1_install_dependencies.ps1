@@ -1,5 +1,5 @@
 #==============================================================================
-#  OpenSees Windows 11 — Step 1: Install Dependencies
+#  OpenSees Windows 11 -- Step 1: Install Dependencies
 #
 #  Run this script ONCE on a clean Windows 11 machine (elevated PowerShell).
 #  It installs every tool needed to compile OpenSees from source.
@@ -21,6 +21,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+$script:DryRun = $DryRun.IsPresent
 
 # --------------------------------------------------------------------------
 # Helpers
@@ -64,24 +65,24 @@ function Invoke-WingetInstall {
 
     Write-Step "Installing $DisplayName ($Id)"
 
-    if ($DryRun) {
+    if ($script:DryRun) {
         Write-Host "  [DRY RUN] winget install --id $Id"
-        if ($Override) { Write-Host "  [DRY RUN]   --override `"$Override`"" }
+        if ($Override) { Write-Host "  [DRY RUN]   --override: $Override" }
         return
     }
 
-    $args = @(
+    $wingetArgs = @(
         "install", "--id", $Id, "-e",
         "--accept-source-agreements", "--accept-package-agreements"
     )
     if ($Override) {
-        $args += "--override"
-        $args += $Override
+        $wingetArgs += "--override"
+        $wingetArgs += $Override
     }
 
-    & winget @args
+    & winget @wingetArgs
     if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne -1978335189) {
-        # -1978335189 = "already installed" — not an error
+        # -1978335189 = "already installed" -- not an error
         Write-Warn "$DisplayName install returned exit code $LASTEXITCODE (may already be installed)"
     }
 }
@@ -89,11 +90,11 @@ function Invoke-WingetInstall {
 # --------------------------------------------------------------------------
 # Pre-flight
 # --------------------------------------------------------------------------
-Write-Banner "OpenSees Windows 11 — Dependency Installer"
+Write-Banner "OpenSees Windows 11 -- Dependency Installer"
 
 if (-not (Test-Elevated)) {
     Write-Fail "This script must run in an elevated (Administrator) PowerShell."
-    Write-Host "  Right-click PowerShell -> 'Run as Administrator', then re-run." -ForegroundColor Yellow
+    Write-Host "  Right-click PowerShell -> Run as Administrator, then re-run." -ForegroundColor Yellow
     exit 1
 }
 
@@ -102,13 +103,13 @@ try {
     $null = Get-Command winget -ErrorAction Stop
 } catch {
     Write-Fail "winget is not available on this system."
-    Write-Host "  Install 'App Installer' from the Microsoft Store, or upgrade Windows." -ForegroundColor Yellow
+    Write-Host "  Install App Installer from the Microsoft Store, or upgrade Windows." -ForegroundColor Yellow
     exit 1
 }
 
 if ($DryRun) {
     Write-Host ""
-    Write-Host "  *** DRY RUN MODE — nothing will be installed ***" -ForegroundColor Magenta
+    Write-Host "  *** DRY RUN MODE -- nothing will be installed ***" -ForegroundColor Magenta
 }
 
 # --------------------------------------------------------------------------
@@ -145,12 +146,12 @@ Invoke-WingetInstall -Id "Kitware.CMake" -DisplayName "CMake"
 Invoke-WingetInstall -Id "Ninja-build.Ninja" -DisplayName "Ninja"
 
 # --------------------------------------------------------------------------
-# 7. Python 3.11 (x64) — pinned for OpenSeesPy ABI compatibility
+# 7. Python 3.11 (x64) -- pinned for OpenSeesPy ABI compatibility
 # --------------------------------------------------------------------------
 Invoke-WingetInstall -Id "Python.Python.3.11" -DisplayName "Python 3.11 (x64)"
 
 # --------------------------------------------------------------------------
-# 8. Inno Setup (optional — for installer packaging only)
+# 8. Inno Setup (optional -- for installer packaging only)
 # --------------------------------------------------------------------------
 if (-not $SkipInnoSetup) {
     Invoke-WingetInstall -Id "JRSoftware.InnoSetup" -DisplayName "Inno Setup 6 (optional, for installer)"
@@ -209,17 +210,25 @@ if ($SkipVerification -or $DryRun) {
         if ($vsPath) { Write-Host "  Found: $vsPath" }
         else         { Write-Fail "vswhere found but no VS installation detected"; $allOk = $false }
     } else {
-        Write-Fail "vswhere.exe not found — Visual Studio may not be installed"
+        Write-Fail "vswhere.exe not found -- Visual Studio may not be installed"
         $allOk = $false
     }
 
     # --- Intel oneAPI (ifx, MKL, mpiexec) ---
-    Write-Step "Checking Intel oneAPI (ifx, mpiexec, MKL)"
+    Write-Step "Checking Intel oneAPI (ifx and mpiexec)"
     $oneapiSetvars = "${env:ProgramFiles(x86)}\Intel\oneAPI\setvars.bat"
     if (Test-Path $oneapiSetvars) {
         Write-Host "  setvars.bat found: $oneapiSetvars"
-        # Try loading the environment and checking for ifx
-        $checkCmd = "call `"$oneapiSetvars`" intel64 >nul 2>&1 && where ifx && where mpiexec"
+        $checkCmdParts = @()
+        if ($vsPath) {
+            $checkCmdParts += "set `"VS2022INSTALLDIR=$($vsPath.Trim())`""
+        }
+        $checkCmdParts += @(
+            "call `"$oneapiSetvars`" intel64 >nul 2>&1",
+            "where ifx",
+            "where mpiexec"
+        )
+        $checkCmd = $checkCmdParts -join " && "
         $result = cmd /c $checkCmd 2>&1
         if ($LASTEXITCODE -eq 0) {
             Write-Host "  ifx and mpiexec found after oneAPI init"
@@ -245,7 +254,9 @@ if ($SkipVerification -or $DryRun) {
         foreach ($p in $isccPaths) {
             if (Test-Path $p) { Write-Host "  Found: $p"; $isccFound = $true; break }
         }
-        if (-not $isccFound) { Write-Warn "Inno Setup not found (optional — only needed for installer packaging)" }
+        if (-not $isccFound) {
+            Write-Warn "Inno Setup not found (optional, only needed for installer packaging)"
+        }
     }
 
     # --- Summary ---
@@ -253,7 +264,7 @@ if ($SkipVerification -or $DryRun) {
     if ($allOk) {
         Write-Banner "All mandatory dependencies verified successfully"
     } else {
-        Write-Banner "Some dependencies are missing — review the warnings above"
+        Write-Banner "Some dependencies are missing -- review the warnings above"
         Write-Host ""
         Write-Host "  If tools were just installed, try closing and reopening PowerShell," -ForegroundColor Yellow
         Write-Host "  or reboot, then re-run this script to verify." -ForegroundColor Yellow
