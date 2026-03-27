@@ -9,4 +9,4 @@ if not defined VS2022INSTALLDIR if exist "C:\Program Files\Microsoft Visual Stud
 if defined VS2022INSTALLDIR echo Using VS2022INSTALLDIR=%VS2022INSTALLDIR%
 if not defined VS2022INSTALLDIR echo WARNING: Visual Studio 2022 was not found. oneAPI will continue without MSVC setup.
 
-call "%ProgramFiles(x86)%\Intel\oneAPI\setvars.bat" intel64
+call "%ProgramFiles(x86)%\Intel\oneAPI\setvars.bat" --force intel64

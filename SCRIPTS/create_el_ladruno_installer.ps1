@@ -152,7 +152,7 @@ function New-InstalledLaunchers {
     if ($vsInstallDir) {
         $launcherHeader += "set `"VS2022INSTALLDIR=$vsInstallDir`""
     }
-    $launcherHeader += "if exist `"%ProgramFiles(x86)%\Intel\oneAPI\setvars.bat`" call `"%ProgramFiles(x86)%\Intel\oneAPI\setvars.bat`" intel64 >nul 2>&1"
+    $launcherHeader += "if exist `"%ProgramFiles(x86)%\Intel\oneAPI\setvars.bat`" call `"%ProgramFiles(x86)%\Intel\oneAPI\setvars.bat`" --force intel64 >nul 2>&1"
     if ($tclDir) {
         $launcherHeader += "set `"TCL_LIBRARY=%OPS_ROOT%lib\$($tclDir.Name)`""
     }
@@ -167,8 +167,8 @@ function New-InstalledLaunchers {
         $ladrunoHeader += "set `"VS2022INSTALLDIR=$vsInstallDir`""
     }
     $ladrunoHeader += @(
-        "if exist `"%OPS_ROOT%oneapi\setvars.bat`" call `"%OPS_ROOT%oneapi\setvars.bat`" intel64 >nul 2>&1",
-        "if exist `"%ProgramFiles(x86)%\Intel\oneAPI\setvars.bat`" call `"%ProgramFiles(x86)%\Intel\oneAPI\setvars.bat`" intel64 >nul 2>&1"
+        "if exist `"%OPS_ROOT%oneapi\setvars.bat`" call `"%OPS_ROOT%oneapi\setvars.bat`" --force intel64 >nul 2>&1",
+        "if exist `"%ProgramFiles(x86)%\Intel\oneAPI\setvars.bat`" call `"%ProgramFiles(x86)%\Intel\oneAPI\setvars.bat`" --force intel64 >nul 2>&1"
     )
     if ($tclDir) {
         $ladrunoHeader += "set `"TCL_LIBRARY=%OPS_ROOT%lib\$($tclDir.Name)`""
@@ -232,7 +232,7 @@ function New-InstalledLaunchers {
         "  endlocal & exit /b 0",
         ")",
         "echo ERROR: OpenSeesSP MPI launch failed. See %OPS_LOG%",
-        "echo Hint: open a oneAPI shell or run: call `"%ProgramFiles(x86)%\Intel\oneAPI\setvars.bat`" intel64",
+        "echo Hint: open a oneAPI shell or run: call `"%ProgramFiles(x86)%\Intel\oneAPI\setvars.bat`" --force intel64",
         "pause",
         "endlocal & exit /b %OPS_EXIT%"
     )
@@ -308,7 +308,7 @@ function New-InstalledLaunchers {
         "  endlocal & exit /b 0",
         ")",
         "echo ERROR: OpenSeesMP MPI launch failed. See %OPS_LOG%",
-        "echo Hint: open a oneAPI shell or run: call `"%ProgramFiles(x86)%\Intel\oneAPI\setvars.bat`" intel64",
+        "echo Hint: open a oneAPI shell or run: call `"%ProgramFiles(x86)%\Intel\oneAPI\setvars.bat`" --force intel64",
         "pause",
         "endlocal & exit /b %OPS_EXIT%"
     )

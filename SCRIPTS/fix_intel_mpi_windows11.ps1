@@ -97,7 +97,7 @@ Invoke-CmdChecked -Command "`"$hydraServiceExe`" -install"
 Invoke-CmdChecked -Command "`"$hydraServiceExe`" -start"
 
 Write-Log "Verifying MPI runtime with mpiexec."
-$mpiCheck = "call `"$setvarsBat`" intel64 >nul 2>&1 && mpiexec -n $Ranks hostname"
+$mpiCheck = "call `"$setvarsBat`" --force intel64 >nul 2>&1 && mpiexec -n $Ranks hostname"
 Invoke-CmdChecked -Command $mpiCheck
 
 Write-Log "Intel MPI bootstrap check passed. OpenSeesSP/OpenSeesMP should now be runnable." "INFO"

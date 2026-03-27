@@ -255,6 +255,9 @@ function Import-BatchEnvironment {
         if ($idx -gt 0) {
             $name = $line.Substring(0, $idx)
             $value = $line.Substring($idx + 1)
+            if ($name -in @("SETVARS_CALL", "SETVARS_COMPLETED")) {
+                continue
+            }
             Set-Item -Path "Env:$name" -Value $value
         }
     }
@@ -360,8 +363,8 @@ function New-LadrunoWrapperLines {
         "set `"OPS_ROOT=%~dp0`"",
         "set `"PATH=%OPS_ROOT%;%OPS_ROOT%opensees-bin;%OPS_ROOT%oneapi;%OPS_ROOT%plugins;%PATH%`"",
         "if defined VS2022INSTALLDIR set `"VS2022INSTALLDIR=%VS2022INSTALLDIR%`"",
-        "if exist `"%OPS_ROOT%oneapi\setvars.bat`" call `"%OPS_ROOT%oneapi\setvars.bat`" intel64 >nul 2>&1",
-        "if exist `"%ProgramFiles(x86)%\Intel\oneAPI\setvars.bat`" call `"%ProgramFiles(x86)%\Intel\oneAPI\setvars.bat`" intel64 >nul 2>&1",
+        "if exist `"%OPS_ROOT%oneapi\setvars.bat`" call `"%OPS_ROOT%oneapi\setvars.bat`" --force intel64 >nul 2>&1",
+        "if exist `"%ProgramFiles(x86)%\Intel\oneAPI\setvars.bat`" call `"%ProgramFiles(x86)%\Intel\oneAPI\setvars.bat`" --force intel64 >nul 2>&1",
         "if exist `"%OPS_ROOT%lib\tcl8.6\init.tcl`" set `"TCL_LIBRARY=%OPS_ROOT%lib\tcl8.6`"",
         "if not defined TCL_LIBRARY if exist `"%OPS_ROOT%lib\tcl9.0\init.tcl`" set `"TCL_LIBRARY=%OPS_ROOT%lib\tcl9.0`""
     )
@@ -571,7 +574,7 @@ try {
     $env:VS2022INSTALLDIR = $vsInstallPath
     $programFilesX86 = [Environment]::GetFolderPath("ProgramFilesX86")
     $setvarsPath = Join-Path $programFilesX86 "Intel\oneAPI\setvars.bat"
-    Import-BatchEnvironment -BatchPath $setvarsPath -Arguments "intel64"
+    Import-BatchEnvironment -BatchPath $setvarsPath -Arguments "--force intel64"
 
     $null = Get-Command ifx -ErrorAction Stop
     $null = Get-Command cl -ErrorAction Stop
@@ -967,7 +970,7 @@ try {
         $baseLauncherLines += "set `"VS2022INSTALLDIR=$launcherVsInstallDir`""
     }
     if ($setvarsBat) {
-        $baseLauncherLines += "if exist `"$setvarsBat`" call `"$setvarsBat`" intel64 >nul 2>&1"
+        $baseLauncherLines += "if exist `"$setvarsBat`" call `"$setvarsBat`" --force intel64 >nul 2>&1"
     }
     if ($tclTargetDir) {
         $baseLauncherLines += "set `"TCL_LIBRARY=$tclTargetDir`""

@@ -224,7 +224,7 @@ if ($SkipVerification -or $DryRun) {
             $checkCmdParts += "set `"VS2022INSTALLDIR=$($vsPath.Trim())`""
         }
         $checkCmdParts += @(
-            "call `"$oneapiSetvars`" intel64 >nul 2>&1",
+            "call `"$oneapiSetvars`" --force intel64 >nul 2>&1",
             "where ifx",
             "where mpiexec"
         )
