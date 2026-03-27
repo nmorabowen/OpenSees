@@ -17,21 +17,20 @@
 #include <TclModelBuilder.h>
 #include <elementAPI.h>
 #include <FileStream.h>
+#include <OPS_Globals.h>
 
 #include "Tcl_generateInterfacePoints.h"
-
-// Need the domain to get access to the elements
-#ifdef _PARALLEL_PROCESSING
-#include <PartitionedDomain.h>
-extern PartitionedDomain theDomain;
-#else
-extern Domain theDomain;
-#endif
 
 int
 TclCommand_GenerateInterfacePoints(ClientData clientData, Tcl_Interp *interp, int argc,
     TCL_Char **argv)
 {
+    if (ops_TheActiveDomain == 0) {
+        opserr << "WARNING no active domain is available." << endln;
+        return -1;
+    }
+    Domain& theDomain = *ops_TheActiveDomain;
+
     static int tagOffset = 0;
     // argument parsing variables
     int numArgsRemaining = argc - 1;
@@ -841,6 +840,12 @@ int
 TclCommand_GenerateToeInterfacePoints(ClientData clientData, Tcl_Interp *interp, int argc,
     TCL_Char **argv)
 {
+    if (ops_TheActiveDomain == 0) {
+        opserr << "WARNING no active domain is available." << endln;
+        return -1;
+    }
+    Domain& theDomain = *ops_TheActiveDomain;
+
     int numArgsRemaining = argc - 1;
     int curArgPos        = 1;
     int res              = 0;

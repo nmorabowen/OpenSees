@@ -25,6 +25,12 @@ https://OpenSees.github.io/OpenSeesDocumentation
 Steps to build OpenSees on Windows, Linux, and Mac:
 https://opensees.github.io/OpenSeesDocumentation/developer/build.html
 
+Local Windows 11 notes in this repository:
+- `WINDOWS11_BUILD_RUNBOOK.md` (this repo build/run flow)
+- `WINDOWS11_BUILD_ANY_OPENSEES_SOURCE.md` (portable guide for other OpenSees source trees, including copy-paste prerequisite install commands)
+- `WINDOWS11_INSTALLER_EL_LADRUNO.md` (installer packaging note)
+- Reproducible file pack mapping is documented in `WINDOWS11_BUILD_RUNBOOK.md` section `11) Reproducible File Pack (What To Share)`
+
 ## Modeling Questions
 Issues related to modeling questions will be closed. Instead, post your modeling questions on the OpenSees 
 message board or in the OpenSees Facebook group.

@@ -1,12 +1,18 @@
 #==============================================================================
-# 
+#
 #        OpenSees -- Open System For Earthquake Engineering Simulation
 #                Pacific Earthquake Engineering Research Center
 #
 #==============================================================================
 #                            External Libraries
+#
+# DEPRECATED: This file is superseded by OpenSeesDependencies.cmake
+# (unified cross-platform).  Kept for backward compatibility with
+# external build scripts that may include it directly.
 #==============================================================================
-
+message(AUTHOR_WARNING
+  "OpenSeesDependenciesUnix.cmake is deprecated.  "
+  "Use OpenSeesDependencies.cmake instead.")
 
 
 

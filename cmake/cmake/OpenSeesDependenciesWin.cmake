@@ -1,15 +1,29 @@
 #==============================================================================
-# 
+#
 #        OpenSees -- Open System For Earthquake Engineering Simulation
 #                Pacific Earthquake Engineering Research Center
 #
 #==============================================================================
 #                            External Libraries
+#
+# DEPRECATED: This file is superseded by OpenSeesDependencies.cmake
+# (unified cross-platform).  Kept for backward compatibility with
+# external build scripts that may include it directly.
 #==============================================================================
+message(AUTHOR_WARNING
+  "OpenSeesDependenciesWin.cmake is deprecated.  "
+  "Use OpenSeesDependencies.cmake instead.")
 
 
-
-find_package(TCL REQUIRED)
+if (NOT TCL_LIBRARY AND DEFINED TCL_LIBRARIES)
+  set(TCL_LIBRARY "${TCL_LIBRARIES}")
+endif()
+if (NOT TCL_INCLUDE_PATH AND DEFINED TCL_INCLUDE_DIR)
+  set(TCL_INCLUDE_PATH "${TCL_INCLUDE_DIR}")
+endif()
+if (NOT TCL_LIBRARY OR NOT TCL_INCLUDE_PATH)
+  find_package(TCL REQUIRED)
+endif()
 find_package(MySQL ) # Not required
 
 #

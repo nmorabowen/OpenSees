@@ -88,6 +88,27 @@ CThreeDimensional.h
 Concrete.h
 forumat.for
 build
+build-*/
 bin
 __pycache__
 *.dat
+
+# Windows build artifacts
+vcpkg_installed/
+vcpkg_installed_dyn/
+dist/
+lib/
+third_party/
+
+# Conan
+conanbuildinfo.cmake
+conan.lock
+graph_info.json
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+compile_commands.json
+
+# Logs
+*.log

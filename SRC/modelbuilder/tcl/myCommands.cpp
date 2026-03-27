@@ -36,6 +36,7 @@
 #include "TclUniaxialMaterialTester.h"
 #include "TclPlaneStressMaterialTester.h"
 #include "TclSectionTester.h"
+#include <OPS_Globals.h>
 
 #include <tcl.h>
 
@@ -44,13 +45,6 @@
 #include <string.h>
 
 extern ModelBuilder *theBuilder;
-
-#ifdef _PARALLEL_PROCESSING
-#include <PartitionedDomain.h>
-extern PartitionedDomain theDomain;
-#else
-extern Domain theDomain;
-#endif
 
 int
 specifyModelBuilder(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);
@@ -73,6 +67,12 @@ int myCommands(Tcl_Interp *interp) {
 int
 specifyModelBuilder(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
 {
+  if (ops_TheActiveDomain == 0) {
+    opserr << "WARNING no active domain is available\n";
+    return TCL_ERROR;
+  }
+  Domain &theDomain = *ops_TheActiveDomain;
+
   int cArg = 0;
 
   // make sure at least one other argument to contain model builder type given
@@ -225,7 +225,6 @@ specifyModelBuilder(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Cha
   
   return TCL_OK;
 }
-
 
 
 

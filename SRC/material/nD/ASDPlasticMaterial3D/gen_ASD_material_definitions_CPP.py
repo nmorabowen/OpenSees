@@ -114,7 +114,7 @@ STIFFSOIL_MODELS = [
     # Deviatoric (Shear) mechanism
     {
         "EL": "StiffSoil_EL",
-        "YF": "StiffSoil_YF",
+        "YF": "StiffSoilShear_YF",
         "PF": "StiffSoilShear_PF",
         "IV": "EpsQpShear"
     },

@@ -72,6 +72,7 @@ elseif ("${CMAKE_CXX_COMPILER_ID}" MATCHES "MSVC")
  set(CMAKE_FIND_LIBRARY_SUFFIXES ".lib")
  set(BUILD_SHARED_LIBS OFF)
  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded")
+ add_compile_definitions(_USE_MATH_DEFINES)
 else()
   MESSAGE("COMPILER: UKNOWN COMPILER ${CMAKE_CXX_COMPILER_ID}")
 endif()
@@ -90,15 +91,19 @@ add_library(OPS_OS_Specific_libs INTERFACE)
 
 MESSAGE("${CMAKE_BINARY_DIR}")
 
-if(EXISTS "${CMAKE_BINARY_DIR}/conanbuildinfo.cmake")
+set(OPS_CONAN_BUILDINFO_FILE "${CMAKE_BINARY_DIR}/conanbuildinfo.cmake")
+set(OPS_USING_CONAN FALSE)
+
+if(EXISTS "${OPS_CONAN_BUILDINFO_FILE}")
 
    MESSAGE("USING CONAN")
-   include("${CMAKE_BINARY_DIR}/conanbuildinfo.cmake")
+   include("${OPS_CONAN_BUILDINFO_FILE}")
    conan_basic_setup()
    set (Eigen3_FOUND TRUE)
    set (HDF5_FOUND TRUE)
    set (HDF5_LIBRARIES ${CONAN_LIBS_HDF5} ${CONAN_LIBS_ZLIB})
    set (HDF5_VERSION "1.12.0")
+   set(OPS_USING_CONAN TRUE)
    set(USING_CONAN TRUE)
    set(CMAKE_MODULE_PATH ${CMAKE_BINARY_DIR} ${CMAKE_MODULE_PATH})
    set(CMAKE_PREFIX_PATH ${CMAKE_BINARY_DIR} ${CMAKE_PREFIX_PATH})
@@ -108,17 +113,14 @@ if(EXISTS "${CMAKE_BINARY_DIR}/conanbuildinfo.cmake")
 else()
 
   MESSAGE("NOT USING CONAN")
-  include(OpenSeesFunctions)
-  set(NOT_USING_CONAN TRUE)
-  set (CONAN_LIBS )
+  set(CONAN_LIBS)
+
+  # Core dependencies resolved via vcpkg / system packages.
+  # TCL, HDF5, and MySQL are discovered in OpenSeesDependencies.cmake
+  # (included from the platform blocks below) to keep this block minimal.
   find_package(ZLIB REQUIRED)
-  find_package(libaec REQUIRED)
-  find_package(HDF5 REQUIRED)
-  find_package(TCL REQUIRED)
+  find_package(libaec)          # optional; needed by HDF5 on some platforms
   find_package(Eigen3 REQUIRED)
-  include_directories(${TCL_INCLUDE_DIR})
-  set(TCL_INCLUDE_PATH ${TCL_INCLUDE_DIR})
-  set(TCL_LIBRARY ${TCL_LIBRARIES})
 
 endif()
 
@@ -134,8 +136,8 @@ set_property(CACHE OPS_FINAL_TARGET PROPERTY STRINGS
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")
   add_compile_definitions(_LINUX _UNIX _TCL85)
-  if (NOT_USING_CONAN)
-    include(OpenSeesDependenciesUnix)
+  if(NOT OPS_USING_CONAN)
+    include(OpenSeesDependencies)
   endif()
 endif()
 
@@ -143,16 +145,17 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
   set(OPS_Use_Graphics_Option None)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")
   add_compile_definitions(_LINUX _UNIX _TCL85)
-  if (NOT_USING_CONAN)
-    include(OpenSeesDependenciesUnix)
+  if(NOT OPS_USING_CONAN)
+    include(OpenSeesDependencies)
   endif()
 endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
-    target_link_libraries(OPS_OS_Specific_libs INTERFACE wsock32 ws2_32)
+    target_link_libraries(OPS_OS_Specific_libs INTERFACE wsock32 ws2_32 netapi32)
     add_compile_definitions(_WIN32 _TCL85)
-  if (NOT_USING_CONAN)
-    include(OpenSeesDependenciesWin)
+  if(NOT OPS_USING_CONAN)
+    add_compile_definitions(STATIC_BUILD)
+    include(OpenSeesDependencies)
   endif()
 endif()
 
@@ -360,7 +363,7 @@ if(MPI_FOUND)
   else()
      set (MUMPS_FLAG -D_MUMPS)
      if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
-       set (MUMPS_LIBRARIES "${MUMPS_DIR}/dmumps;${MUMPS_DIR}/mumps_common;${MUMPS_DIR}/pord")
+       set (MUMPS_LIBRARIES "${MUMPS_DIR}/dmumps.lib;${MUMPS_DIR}/mumps_common.lib;${MUMPS_DIR}/pord.lib")
      else()
        set (MUMPS_LIBRARIES "${MUMPS_DIR}/libdmumps.a;${MUMPS_DIR}/libmumps_common.a;${MUMPS_DIR}/libpord.a")
      endif()
@@ -387,8 +390,16 @@ if(MKL_FOUND)
     else()
       message(FATAL_ERROR "MKL libraries not found in expected locations")
     endif()
+    set(_ops_mkl_iface "lp64")
+    if(DEFINED MKL_INTERFACE_FULL)
+      string(TOLOWER "${MKL_INTERFACE_FULL}" _ops_mkl_iface_full)
+      if(_ops_mkl_iface_full MATCHES "ilp64")
+        set(_ops_mkl_iface "ilp64")
+      endif()
+    endif()
 
-    set (SCALAPACK_LIBRARIES "${MKL_LPATH}/mkl_scalapack_ilp64.lib;${MKL_LPATH}/mkl_intel_ilp64.lib;${MKL_LPATH}/mkl_sequential.lib;${MKL_LPATH}/mkl_core.lib;${MKL_LPATH}/mkl_blacs_intelmpi_ilp64.lib")
+    set(SCALAPACK_LIBRARIES
+      "${MKL_LPATH}/mkl_scalapack_${_ops_mkl_iface}.lib;${MKL_LPATH}/mkl_intel_${_ops_mkl_iface}.lib;${MKL_LPATH}/mkl_sequential.lib;${MKL_LPATH}/mkl_core.lib;${MKL_LPATH}/mkl_blacs_intelmpi_${_ops_mkl_iface}.lib")
   endif()
 
 else()
@@ -472,7 +483,7 @@ add_library(OPS_PFEM               OBJECT EXCLUDE_FROM_ALL)
 add_library(OPS_InterpTcl          STATIC)
 
 target_compile_definitions(OPS_InterpTcl PUBLIC _TCL85)
-if(NOT EXISTS "${CMAKE_BINARY_DIR}/conanbuildinfo.cmake")
+if(NOT OPS_USING_CONAN)
   target_include_directories(OPS_InterpTcl PUBLIC ${TCL_INCLUDE_PATH})
   target_link_libraries(OPS_InterpTcl PRIVATE ${TCL_LIBRARIES})
 endif()
@@ -544,6 +555,69 @@ target_link_libraries(OpenSeesLIB
     OPS_Utilities
 )
 
+# Tcl runtime scripts are required at run time for OpenSees.
+set(OPS_TCL_RUNTIME_DIR "" CACHE PATH
+    "Path to Tcl runtime directory containing init.tcl (e.g. .../tcl8.6)")
+
+if(OPS_TCL_RUNTIME_DIR AND NOT EXISTS "${OPS_TCL_RUNTIME_DIR}/init.tcl")
+  message(FATAL_ERROR
+      "OPS_TCL_RUNTIME_DIR='${OPS_TCL_RUNTIME_DIR}' does not contain init.tcl")
+endif()
+
+set(_ops_tcl_runtime_candidates "")
+
+if(OPS_TCL_RUNTIME_DIR)
+  list(APPEND _ops_tcl_runtime_candidates "${OPS_TCL_RUNTIME_DIR}")
+endif()
+
+if(DEFINED CONAN_LIB_DIRS_TCL AND CONAN_LIB_DIRS_TCL)
+  list(APPEND _ops_tcl_runtime_candidates
+       "${CONAN_LIB_DIRS_TCL}/tcl8.6"
+       "${CONAN_LIB_DIRS_TCL}/tcl9.0")
+endif()
+
+if(TCL_LIBRARY)
+  list(GET TCL_LIBRARY 0 _ops_tcl_lib_entry)
+  get_filename_component(_ops_tcl_lib_dir "${_ops_tcl_lib_entry}" DIRECTORY)
+  list(APPEND _ops_tcl_runtime_candidates
+       "${_ops_tcl_lib_dir}/../lib/tcl8.6"
+       "${_ops_tcl_lib_dir}/../lib/tcl9.0"
+       "${_ops_tcl_lib_dir}/tcl8.6"
+       "${_ops_tcl_lib_dir}/tcl9.0")
+endif()
+
+if(TCL_INCLUDE_PATH)
+  list(APPEND _ops_tcl_runtime_candidates
+       "${TCL_INCLUDE_PATH}/../lib/tcl8.6"
+       "${TCL_INCLUDE_PATH}/../lib/tcl9.0")
+endif()
+
+set(OPS_TCL_RUNTIME_NAME "tcl8.6")
+if(TCL_LIBRARY)
+  list(GET TCL_LIBRARY 0 _ops_tcl_lib_entry)
+  get_filename_component(_ops_tcl_lib_name "${_ops_tcl_lib_entry}" NAME_WE)
+  if(_ops_tcl_lib_name MATCHES "tcl([0-9])([0-9])")
+    set(OPS_TCL_RUNTIME_NAME "tcl${CMAKE_MATCH_1}.${CMAKE_MATCH_2}")
+  endif()
+endif()
+set(TCL_INIT_FILE "")
+foreach(_ops_tcl_candidate IN LISTS _ops_tcl_runtime_candidates)
+  if(_ops_tcl_candidate AND EXISTS "${_ops_tcl_candidate}/init.tcl")
+    set(OPS_TCL_RUNTIME_DIR "${_ops_tcl_candidate}" CACHE PATH
+        "Path to Tcl runtime directory containing init.tcl" FORCE)
+    set(TCL_INIT_FILE "${OPS_TCL_RUNTIME_DIR}/init.tcl")
+    break()
+  endif()
+endforeach()
+
+if(TCL_INIT_FILE)
+  message(STATUS "Using Tcl runtime directory: ${OPS_TCL_RUNTIME_DIR}")
+else()
+  message(WARNING
+      "Could not detect Tcl runtime directory containing init.tcl. "
+      "Set -DOPS_TCL_RUNTIME_DIR=<path to tcl8.6/tcl9.0>.")
+endif()
+
 
 # ########################################################################
 #
@@ -566,22 +640,20 @@ add_executable(OpenSees EXCLUDE_FROM_ALL
   ${OPS_SRC_DIR}/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
 )
 
-if(NOT EXISTS "${CMAKE_BINARY_DIR}/conanbuildinfo.cmake")
+if(NOT OPS_USING_CONAN)
   target_include_directories(OpenSees PUBLIC ${TCL_INCLUDE_PATH})
+endif()
 
-  FILE(COPY ${CONAN_LIB_DIRS_TCL}/tcl8.6
-       DESTINATION ${PROJECT_BINARY_DIR}/lib/tcl8.6
-       FILES_MATCHING PATTERN .tcl)
-
-else ()
-     FILE(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/lib/tcl8.6)
-     add_custom_command(
-       TARGET OpenSees POST_BUILD
-       COMMENT("Copying init.tcl to ${CMAKE_CURRENT_BINARY_DIR}")
-       COMMAND ${CMAKE_COMMAND} -E copy
-       ${CONAN_LIB_DIRS_TCL}/tcl8.6/init.tcl
-       ${CMAKE_CURRENT_BINARY_DIR}/lib/tcl8.6
-     )
+if(TCL_INIT_FILE)
+  add_custom_command(
+    TARGET OpenSees POST_BUILD
+    COMMENT "Copying Tcl runtime '${OPS_TCL_RUNTIME_NAME}' to ${CMAKE_CURRENT_BINARY_DIR}/lib"
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+            "${CMAKE_CURRENT_BINARY_DIR}/lib/${OPS_TCL_RUNTIME_NAME}"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${OPS_TCL_RUNTIME_DIR}"
+            "${CMAKE_CURRENT_BINARY_DIR}/lib/${OPS_TCL_RUNTIME_NAME}"
+  )
 endif()
 
 
@@ -754,8 +826,14 @@ target_link_libraries(OpenSeesPy
 #
 
 install (TARGETS OpenSees DESTINATION bin)
-set (TCL_INIT_FILE "${TCL_INCLUDE_PATH}/../lib/tcl8.6/init.tcl")
-install(FILES ${TCL_INIT_FILE} DESTINATION lib/tcl8.6)
+if(TCL_INIT_FILE)
+  install(DIRECTORY "${OPS_TCL_RUNTIME_DIR}/"
+          DESTINATION "lib/${OPS_TCL_RUNTIME_NAME}"
+          FILES_MATCHING PATTERN "*.tcl")
+else()
+  message(WARNING
+      "Skipping Tcl runtime installation because init.tcl was not found.")
+endif()
 
 # Set selected executable to be built by default
 set_target_properties(${OPS_FINAL_TARGET} PROPERTIES EXCLUDE_FROM_ALL OFF)
@@ -864,8 +942,25 @@ endif()
 # Eigen3
 #----------------------------
 if(Eigen3_FOUND)
-   include_directories(${Eigen3_INCLUDE_DIR})
-   add_compile_definitions(_EIGEN3)
+   set(_ops_eigen_include_dirs "")
+   if (TARGET Eigen3::Eigen)
+      get_target_property(_ops_eigen_include_dirs Eigen3::Eigen INTERFACE_INCLUDE_DIRECTORIES)
+   endif()
+   if (NOT _ops_eigen_include_dirs)
+      if (DEFINED Eigen3_INCLUDE_DIRS)
+         set(_ops_eigen_include_dirs ${Eigen3_INCLUDE_DIRS})
+      elseif (DEFINED Eigen3_INCLUDE_DIR)
+         set(_ops_eigen_include_dirs ${Eigen3_INCLUDE_DIR})
+      elseif (DEFINED EIGEN3_INCLUDE_DIR)
+         set(_ops_eigen_include_dirs ${EIGEN3_INCLUDE_DIR})
+      endif()
+   endif()
+   if (_ops_eigen_include_dirs)
+      include_directories(${_ops_eigen_include_dirs})
+      add_compile_definitions(_EIGEN3)
+   else()
+      message(WARNING "Eigen3 was found but no include directory was resolved.")
+   endif()
 else()
    message(STATUS "OPS >>> Could not find Eigen3")
 endif()

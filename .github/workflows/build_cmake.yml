@@ -44,6 +44,7 @@ jobs:
         run: |
           git clone https://github.com/OpenSees/mumps.git
           cd mumps
+          git checkout ec5f340
           mkdir build
           cd build
           call "C:\Program Files (x86)\Intel\oneAPI\setvars.bat" intel64 mod
@@ -103,6 +104,7 @@ jobs:
         run: |
           git clone https://github.com/OpenSees/mumps.git
           cd mumps
+          git checkout ec5f340
           mkdir build
           cd build
           cmake .. -Darith=d
@@ -111,7 +113,7 @@ jobs:
         run: |
           mkdir build
           cd build
-          cmake .. -DMUMPS_DIR=$PWD/../../mumps/build -DCMAKE_PREFIX_PATH=/usr/local/Cellar/libaec/1.1.3/cmake
+          cmake .. -DMUMPS_DIR=$PWD/../../mumps/build -DCMAKE_PREFIX_PATH=$(brew --prefix libaec)/cmake
           cmake --build . --target OpenSees -j8
           cmake --build . --target OpenSeesPy -j8
           mv ./OpenSeesPy.dylib ./opensees.so
