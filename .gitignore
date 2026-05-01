@@ -91,3 +91,34 @@ build
 bin
 __pycache__
 *.dat
+
+# ---- Ladruno fork: build artifacts and ad-hoc scratch --------------------
+# These are produced by Ladruno_scripts/build.bat or are local-only test
+# fixtures. Source-of-truth is the upstream + Ladruno_scripts/ tree, not the
+# binaries dropped into dist/ or the venv.
+/dist/
+/install/
+/build/
+/mumps-archive/
+/mumps-build/
+/mumps-install/
+/mumps-src/
+/opensees_venv/
+/CMakeUserPresets.json
+
+# Local scratch tests at the fork root (not in test/ which is upstream)
+/test_*.tcl
+/test_*.py
+/test_*.mpco
+/test_out.*
+
+# Ladruno install artifacts (release outputs, not source)
+/Ladruno_files/install.exe
+/Ladruno_files/install.ps1
+/Ladruno_files/Ladruno_OpenSees_*.zip
+/Ladruno_files/Ladruno_OpenSees_*_setup.exe
+/Ladruno_files/wire_pyenv.log
+/Ladruno_files/patch_banner_backups/
+
+# Build-time artifact emitted by build_inno_installer.ps1
+/Ladruno_scripts/banner_ASCII_utf8bom.txt
