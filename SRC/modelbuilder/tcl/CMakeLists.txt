@@ -5,10 +5,10 @@
 #
 #==============================================================================
 
-target_sources(OPS_InterpTcl
-    PRIVATE
-        myCommands.cpp
-)
+# myCommands.cpp is added per-target (see OPS_INTERP_TCL_PER_TARGET_SOURCES
+# in the top-level CMakeLists.txt) because it declares `theDomain` as
+# either Domain or PartitionedDomain depending on _PARALLEL_PROCESSING /
+# _PARALLEL_INTERPRETERS, which only the consuming exe knows.
 
 target_sources(OPS_INTERPRETER
     PRIVATE

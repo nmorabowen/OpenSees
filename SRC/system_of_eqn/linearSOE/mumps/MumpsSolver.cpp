@@ -97,7 +97,7 @@ MumpsSolver::initializeMumps(void)
     if (init == false) {
       std::cerr << "MumpsSOlver - initMumps\n";
       id.sym = theMumpsSOE->matType;
-      id.job=-1; 
+      id.job=-1;
       dmumps_c(&id);
       init = true;
     }

@@ -341,7 +341,12 @@ include_directories(
   ${OPS_BUNDLED_DIR}/eigenAPI
 )
 
-# TODO: Temporary fix; include all directories with .h files through glob
+# TODO: Temporary fix; include all directories with .h files through glob.
+# The recursive glob produces ~200 directories, which makes the per-target
+# include flag list >18 KB. The cmd.exe /C wrapper that Ninja uses for the
+# Fortran preprocess rule has a hard ~8 KB command-line limit, so Fortran
+# builds explode. Fortran sources don't need any C/C++ headers, so we wrap
+# the include set in a generator expression that restricts it to C and CXX.
 file(GLOB_RECURSE ops_include_files CONFIGURE_DEPENDS
     ${OPS_SRC_DIR}/*.h
     ${OPS_BUNDLED_DIR}/*.h
@@ -353,7 +358,9 @@ foreach(filepath ${ops_include_files})
 endforeach()
 list(REMOVE_DUPLICATES OPS_INCLUDE_DIRS)
 
-include_directories(${OPS_INCLUDE_DIRS})
+foreach(_d IN LISTS OPS_INCLUDE_DIRS)
+    include_directories($<$<COMPILE_LANGUAGE:C,CXX>:${_d}>)
+endforeach()
 # end TODO
 
 # ##############################################################
@@ -402,6 +409,36 @@ endif()
 find_package(MPI)
 find_package(MKL)
 
+# --- Workaround: on Windows, MPI/MKL/compiler install under "C:\Program Files (x86)\..."
+# CMake's Ninja generator emits broken response-file quoting for paths with spaces+parens
+# when used as Fortran include flags. Convert MPI include dirs to 8.3 short names.
+if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    foreach(_var MPI_C_INCLUDE_DIRS MPI_CXX_INCLUDE_DIRS MPI_Fortran_INCLUDE_DIRS
+                 MPI_C_INCLUDE_PATH MPI_CXX_INCLUDE_PATH MPI_Fortran_INCLUDE_PATH)
+        if(DEFINED ${_var})
+            set(_short_list "")
+            foreach(_p IN LISTS ${_var})
+                if(EXISTS "${_p}")
+                    file(TO_NATIVE_PATH "${_p}" _native)
+                    execute_process(
+                        COMMAND cmd /c for %I in ("${_native}") do @echo %~sI
+                        OUTPUT_VARIABLE _short
+                        OUTPUT_STRIP_TRAILING_WHITESPACE)
+                    if(_short AND EXISTS "${_short}")
+                        file(TO_CMAKE_PATH "${_short}" _short)
+                        list(APPEND _short_list "${_short}")
+                    else()
+                        list(APPEND _short_list "${_p}")
+                    endif()
+                else()
+                    list(APPEND _short_list "${_p}")
+                endif()
+            endforeach()
+            set(${_var} "${_short_list}")
+        endif()
+    endforeach()
+endif()
+
 #set (LAPACK_FOUND FALSE)
 #set (BLAS_FOUND FALSE)
 
@@ -448,7 +485,7 @@ if(MPI_FOUND)
   else()
      set (MUMPS_FLAG -D_MUMPS)
      if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
-       set (MUMPS_LIBRARIES "${MUMPS_DIR}/dmumps;${MUMPS_DIR}/mumps_common;${MUMPS_DIR}/pord")
+       set (MUMPS_LIBRARIES "${MUMPS_DIR}/dmumps.lib;${MUMPS_DIR}/mumps_common.lib;${MUMPS_DIR}/pord.lib")
      else()
        set (MUMPS_LIBRARIES "${MUMPS_DIR}/libdmumps.a;${MUMPS_DIR}/libmumps_common.a;${MUMPS_DIR}/libpord.a")
      endif()
@@ -476,7 +513,11 @@ if(MKL_FOUND)
       message(FATAL_ERROR "MKL libraries not found in expected locations")
     endif()
 
-    set (SCALAPACK_LIBRARIES "${MKL_LPATH}/mkl_scalapack_ilp64.lib;${MKL_LPATH}/mkl_intel_ilp64.lib;${MKL_LPATH}/mkl_sequential.lib;${MKL_LPATH}/mkl_core.lib;${MKL_LPATH}/mkl_blacs_intelmpi_ilp64.lib")
+    # LP64 (32-bit MPI integers) to match a default-built MUMPS, which uses
+    # the standard 32-bit Fortran INTEGER and Intel MPI's default LP64 layer.
+    # If you rebuild MUMPS with -Dintsize64=ON, switch every "lp64" back to
+    # "ilp64" and ensure Intel MPI is in ILP64 mode.
+    set (SCALAPACK_LIBRARIES "${MKL_LPATH}/mkl_scalapack_lp64.lib;${MKL_LPATH}/mkl_intel_lp64.lib;${MKL_LPATH}/mkl_sequential.lib;${MKL_LPATH}/mkl_core.lib;${MKL_LPATH}/mkl_blacs_intelmpi_lp64.lib")
   endif()
 
 else()
@@ -558,7 +599,19 @@ add_library(OPS_PFEM               OBJECT EXCLUDE_FROM_ALL)
 # Tcl Interpreter Library & special include and link directives
 #
 
+# Two source files inside OPS_InterpTcl declare `theDomain` as either
+# `Domain` or `PartitionedDomain` depending on _PARALLEL_PROCESSING /
+# _PARALLEL_INTERPRETERS, and another file (commands.cpp) defines the
+# matching global. A single STATIC OPS_InterpTcl compiles them once with
+# the wrong type for SP/MP and produces unresolved-symbol link errors.
+# Solution: keep OPS_InterpTcl STATIC for everything else, but pull the
+# two parallel-sensitive sources out and let each exe compile them with
+# its own compile definitions (see OPS_INTERP_TCL_PER_TARGET_SOURCES).
 add_library(OPS_InterpTcl          STATIC)
+set(OPS_INTERP_TCL_PER_TARGET_SOURCES
+    ${OPS_SRC_DIR}/modelbuilder/tcl/myCommands.cpp
+    ${OPS_SRC_DIR}/element/UWelements/Tcl_generateInterfacePoints.cpp
+)
 
 target_compile_definitions(OPS_InterpTcl PUBLIC _TCL85)
 if(NOT EXISTS "${CMAKE_BINARY_DIR}/conanbuildinfo.cmake")
@@ -658,6 +711,7 @@ add_executable(OpenSees EXCLUDE_FROM_ALL
   ${OPS_SRC_DIR}/tcl/tclMain.cpp
   ${OPS_SRC_DIR}/tcl/commands.cpp
   ${OPS_SRC_DIR}/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+  ${OPS_INTERP_TCL_PER_TARGET_SOURCES}
 )
 
 if(TARGET TCL::TCL)
@@ -735,10 +789,15 @@ if(MPI_FOUND)
       ${OPS_SRC_DIR}/system_of_eqn/linearSOE/sparseGEN/DistributedSparseGenRowLinSOE.cpp
       ${OPS_SRC_DIR}/domain/subdomain/ActorSubdomain.cpp
       ${OPS_SRC_DIR}/domain/subdomain/ShadowSubdomain.cpp
+      ${OPS_INTERP_TCL_PER_TARGET_SOURCES}
     )
 
 
-    target_include_directories(OpenSeesSP PRIVATE ${MUMPS_DIR}/_deps/mumps-src/include ${MPI_CXX_INCLUDE_DIRS})
+    if(DEFINED MUMPS_INCLUDE_DIR)
+        target_include_directories(OpenSeesSP PRIVATE ${MUMPS_INCLUDE_DIR} ${MPI_CXX_INCLUDE_DIRS})
+    else()
+        target_include_directories(OpenSeesSP PRIVATE ${MUMPS_DIR}/_deps/mumps-src/include ${MPI_CXX_INCLUDE_DIRS})
+    endif()
     target_compile_options(OpenSeesSP PRIVATE ${MPI_CXX_COMPILE_FLAGS})
 
     if (DEFINED OPENMPI)
@@ -796,13 +855,18 @@ if(MPI_FOUND)
       ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/MumpsParallelSolver.cpp
       ${OPS_SRC_DIR}/domain/subdomain/ActorSubdomain.cpp
       ${OPS_SRC_DIR}/domain/subdomain/ShadowSubdomain.cpp
+      ${OPS_INTERP_TCL_PER_TARGET_SOURCES}
     )
 
-    target_include_directories(OpenSeesMP PRIVATE ${MUMPS_DIR}/_deps/mumps-src/include ${MPI_CXX_INCLUDE_DIRS})
+    if(DEFINED MUMPS_INCLUDE_DIR)
+        target_include_directories(OpenSeesMP PRIVATE ${MUMPS_INCLUDE_DIR} ${MPI_CXX_INCLUDE_DIRS})
+    else()
+        target_include_directories(OpenSeesMP PRIVATE ${MUMPS_DIR}/_deps/mumps-src/include ${MPI_CXX_INCLUDE_DIRS})
+    endif()
 
     target_compile_options(OpenSeesMP PRIVATE ${MPI_CXX_COMPILE_FLAGS})
 
-    if (NOT DEFINED MUMPS_DIR)
+    if (NOT DEFINED MUMPS_DIR AND TARGET mumps)
         add_dependencies(OpenSeesMP mumps)
     endif()
 

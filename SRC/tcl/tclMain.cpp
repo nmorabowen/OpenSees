@@ -81,6 +81,52 @@ EXTERN int  TclFormatInt _ANSI_ARGS_((char *buffer, long n));
 EXTERN int  TclObjCommandComplete _ANSI_ARGS_((Tcl_Obj *cmdPtr));
 }
 
+// Forward-declare the few CRT / Win32 entry points we need to avoid
+// pulling <io.h> or <windows.h> into this file — both fight with Tcl's
+// header definitions of vsnprintf / Offset under MSVC.
+#ifdef _WIN32
+extern "C" int __cdecl _isatty(int);
+extern "C" int __cdecl _fileno(FILE *);
+extern "C" int __stdcall SetConsoleOutputCP(unsigned int);
+#define ops_stderr_is_tty()    (_isatty(_fileno(stderr)) != 0)
+#define ops_set_utf8_console() ((void)SetConsoleOutputCP(65001))
+#else
+#define ops_stderr_is_tty()    (isatty(fileno(stderr)) != 0)
+#define ops_set_utf8_console() ((void)0)
+#endif
+
+// Ladruno splash banner.
+//
+// The banner string between BANNER-START / BANNER-END is auto-generated
+// by `Ladruno_scripts/patch_banner.py` from `Ladruno_scripts/banner_ASCII.txt`.
+// Hand-edit that .txt file then re-run the script — do not edit this block
+// directly or the next patch run will overwrite your changes.
+//
+// We skip the print when stderr is redirected (file/pipe) so headless runs,
+// `OpenSees < script.tcl`, and CI logs stay readable. On a narrow terminal
+// the art will visually wrap; the LADRUNO art used currently is ~80 cols
+// so a default cmd.exe handles it fine.
+static void OPS_PrintAsciiBanner(FILE *out)
+{
+    if (!ops_stderr_is_tty()) return;
+    ops_set_utf8_console();   // banner uses UTF-8 box-drawing chars
+
+    // BANNER-START
+    static const char *kBanner =
+" ▄█          ▄████████ ████████▄     ▄████████ ███    █▄  ███▄▄▄▄    ▄██████▄\n"
+"███         ███    ███ ███   ▀███   ███    ███ ███    ███ ███▀▀▀██▄ ███    ███\n"
+"███         ███    ███ ███    ███   ███    ███ ███    ███ ███   ███ ███    ███\n"
+"███         ███    ███ ███    ███  ▄███▄▄▄▄██▀ ███    ███ ███   ███ ███    ███\n"
+"███       ▀███████████ ███    ███ ▀▀███▀▀▀▀▀   ███    ███ ███   ███ ███    ███\n"
+"███         ███    ███ ███    ███ ▀███████████ ███    ███ ███   ███ ███    ███\n"
+"███▌    ▄   ███    ███ ███   ▄███   ███    ███ ███    ███ ███   ███ ███    ███\n"
+"█████▄▄██   ███    █▀  ████████▀    ███    ███ ████████▀   ▀█   █▀   ▀██████▀\n"
+"▀                                   ███    ███\n";
+    // BANNER-END
+
+    fputs(kBanner, out);
+}
+
 
 #ifdef _PARALLEL_INTERPRETERS
 #include <MachineBroker.h>
@@ -241,6 +287,7 @@ g3TclMain(int argc, char **argv, Tcl_AppInitProc * appInitProc, int rank, int np
 	/* fmk - beginning of modifications for OpenSees */
       if (OPS_showHeader) {
 	fprintf(stderr,"\n\n");
+	OPS_PrintAsciiBanner(stderr);
 	fprintf(stderr,"         OpenSees -- Open System For Earthquake Engineering Simulation\n");
 	fprintf(stderr,"                 Pacific Earthquake Engineering Research Center\n");
 #ifdef OPENSEES_VERSION	

@@ -11,7 +11,7 @@
 
 #target_sources(OPS_Tcl PRIVATE tclMain.cpp)
 
-target_sources(OPS_InterpTcl PRIVATE 
+target_sources(OPS_InterpTcl PRIVATE
     "${OPS_SRC_DIR}/coordTransformation/TclGeomTransfCommand.cpp"
     "${OPS_SRC_DIR}/damping/TclDampingCommand.cpp"
     "${OPS_SRC_DIR}/database/TclDatabaseCommands.cpp"
@@ -27,7 +27,8 @@ target_sources(OPS_InterpTcl PRIVATE
     "${OPS_SRC_DIR}/domain/region/TclRegionCommands.cpp"
     "${OPS_SRC_DIR}/element/TclElementCommands.cpp"
     "${OPS_SRC_DIR}/element/UP-ucsd/TclFourNodeQuadUPCommand.cpp"
-    "${OPS_SRC_DIR}/element/UWelements/Tcl_generateInterfacePoints.cpp"
+    # Tcl_generateInterfacePoints.cpp is added per-target — see
+    # OPS_INTERP_TCL_PER_TARGET_SOURCES in the top-level CMakeLists.txt.
     "${OPS_SRC_DIR}/element/adapter/TclActuatorCommand.cpp"
     "${OPS_SRC_DIR}/element/adapter/TclActuatorCorotCommand.cpp"
     "${OPS_SRC_DIR}/element/adapter/TclAdapterCommand.cpp"

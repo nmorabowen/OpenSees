@@ -98,7 +98,7 @@ MumpsParallelSolver::initializeMumps()
 #endif
     
     id.ICNTL(5) = 0; id.ICNTL(18) = 3;
-    
+
     dmumps_c(&id);
     
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
