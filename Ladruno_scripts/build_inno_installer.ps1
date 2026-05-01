@@ -17,7 +17,8 @@
     entry. Default: today's date in YYYYMMDD form.
 
 .PARAMETER Iscc
-    Path to iscc.exe. Default: C:\Program Files (x86)\Inno Setup 6\iscc.exe.
+    Path to iscc.exe. Default: probe per-machine then per-user install
+    locations (winget can install Inno Setup either way).
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File Ladruno_scripts\build_inno_installer.ps1
@@ -25,8 +26,18 @@
 #>
 param(
     [string]$Version = (Get-Date -Format "yyyyMMdd"),
-    [string]$Iscc    = "C:\Program Files (x86)\Inno Setup 6\iscc.exe"
+    [string]$Iscc
 )
+
+if (-not $Iscc) {
+    $candidates = @(
+        "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+        "C:\Program Files\Inno Setup 6\ISCC.exe",
+        (Join-Path $env:LOCALAPPDATA "Programs\Inno Setup 6\ISCC.exe")
+    )
+    $found = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+    $Iscc = if ($found) { $found } else { $candidates[0] }
+}
 
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
