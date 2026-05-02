@@ -28,7 +28,7 @@ AppName=Ladruno OpenSees
 AppVersion={#LadrunoVersion}
 AppPublisher=Ladruno
 AppPublisherURL=https://github.com/nmorabowen
-DefaultDirName={localappdata}\Ladruno\OpenSees
+DefaultDirName={autopf}\Ladruno\OpenSees
 DefaultGroupName=Ladruno OpenSees
 DisableProgramGroupPage=yes
 OutputDir={#LadrunoOut}
@@ -36,7 +36,10 @@ OutputBaseFilename=Ladruno_OpenSees_{#LadrunoVersion}_setup
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
-PrivilegesRequired=lowest
+; Default to a per-machine install (Program Files, requires admin/UAC).
+; PrivilegesRequiredOverridesAllowed=dialog lets the user downgrade to a
+; per-user install at runtime, in which case {autopf} -> %LOCALAPPDATA%\Programs.
+PrivilegesRequired=admin
 PrivilegesRequiredOverridesAllowed=dialog
 ArchitecturesInstallIn64BitMode=x64compatible
 ArchitecturesAllowed=x64compatible
@@ -138,9 +141,9 @@ begin
   Memo.Anchors := [akLeft, akTop, akRight, akBottom];
   Memo.ReadOnly := True;
   Memo.WordWrap := False;
-  Memo.ScrollBars := ssVertical;
+  Memo.ScrollBars := ssBoth;
   Memo.Font.Name := 'Consolas';
-  Memo.Font.Size := 9;
+  Memo.Font.Size := 8;
   Memo.Color := clBlack;
   Memo.Font.Color := clAqua;
   Memo.Text := BannerText + #13#10 + #13#10 +
@@ -165,10 +168,10 @@ begin
   // ---- existing venv path page -----------------------------------------
   VenvDirPage := CreateInputDirPage(VenvOptionPage.ID,
     'Existing virtualenv path',
-    'Pick the venv to wire OpenSeesPy into',
-    'A .pth file will be written to <venv>\Lib\site-packages\ladruno_opensees.pth pointing at {app}\bin.',
+    'Choose the venv root folder (NOT python.exe)',
+    'Point at the directory that contains "Scripts\python.exe" and "Lib\site-packages\" - e.g. C:\envs\myproject - not at python.exe itself. Setup writes a .pth file inside that venv so "import opensees" finds the binaries.',
     False, '');
-  VenvDirPage.Add('');
+  VenvDirPage.Add('Venv root folder');
 
   // ---- base python picker (only used when creating a new venv) ---------
   PythonPathPage := CreateInputFilePage(VenvOptionPage.ID,
