@@ -22,8 +22,27 @@ def main() -> int:
         print(f"site-packages not found: {site_packages}", file=sys.stderr)
         return 1
 
+    # Two-line .pth:
+    #   line 1: path entry — adds bin_dir to sys.path so `import opensees` finds opensees.pyd
+    #   line 2: executable hook — site.py runs any .pth line starting with `import` at
+    #           interpreter startup. We register our `opensees` module under the
+    #           `openseespy` and `openseespy.opensees` aliases so packages that hardcode
+    #           `import openseespy.opensees` (aprGmsh, openseespy-style helpers) get our
+    #           build (with MPCO/HDF5) instead of vanilla pip openseespy.
+    #
+    # The `opensees.opensees = opensees` self-attribute is required because
+    # `import openseespy.opensees as X` compiles to IMPORT_NAME + IMPORT_FROM,
+    # and IMPORT_FROM calls getattr(sys.modules['openseespy'], 'opensees')
+    # rather than reading sys.modules['openseespy.opensees']. Without the
+    # attribute, the binding step raises ImportError.
     pth = site_packages / "ladruno_opensees.pth"
-    pth.write_text(bin_dir + "\n", encoding="ascii")
+    alias_hook = (
+        "import sys, opensees; "
+        "sys.modules['openseespy'] = opensees; "
+        "sys.modules['openseespy.opensees'] = opensees; "
+        "opensees.opensees = opensees"
+    )
+    pth.write_text(bin_dir + "\n" + alias_hook + "\n", encoding="ascii")
     print(str(pth))
 
     if sys.version_info[:2] != (3, 12):

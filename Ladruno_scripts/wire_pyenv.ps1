@@ -95,13 +95,19 @@ $sitePackages = & $venvPython -c "import sysconfig; print(sysconfig.get_paths()[
 Write-Host "  site-pkg  : $sitePackages"
 
 # ---------- write the .pth file -------------------------------------------
-# A .pth file is read by site.py at interpreter startup; each non-blank
-# non-comment line is added to sys.path. We use a single-line pth so
-# `import opensees` finds opensees.pyd in dist/bin/.
+# A .pth file is read by site.py at interpreter startup. Two lines:
+#   1. Path entry — adds dist\bin\ to sys.path so `import opensees` finds opensees.pyd.
+#   2. Executable hook — site.py exec()'s any .pth line starting with `import`. We
+#      register our `opensees` module under the `openseespy` and `openseespy.opensees`
+#      aliases in sys.modules, so packages that hardcode `import openseespy.opensees`
+#      (aprGmsh, STKO helpers, openseespy-flavored examples) resolve to our build with
+#      MPCO/HDF5 instead of vanilla pip openseespy.
 $pthPath = Join-Path $sitePackages "ladruno_opensees.pth"
-Set-Content -Path $pthPath -Value $distBin -Encoding ASCII
+$aliasHook = "import sys, opensees; sys.modules['openseespy'] = opensees; sys.modules['openseespy.opensees'] = opensees; opensees.opensees = opensees"
+Set-Content -Path $pthPath -Value @($distBin, $aliasHook) -Encoding ASCII
 Write-Host "Wrote .pth file: $pthPath"
 Write-Host "                 -> $distBin"
+Write-Host "                 + openseespy/.opensees aliased to our opensees module"
 
 # ---------- smoke test ----------------------------------------------------
 Write-Host ""
