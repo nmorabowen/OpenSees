@@ -881,9 +881,10 @@ H5DRMLoadPattern::applyLoad(double time)
             if ( theNode == 0 )
                 continue;
 
-            load(0) = DRM_F(3 * local_pos + 0);
-            load(1) = DRM_F(3 * local_pos + 1);
-            load(2) = DRM_F(3 * local_pos + 2);
+            // cFactor was plumbed through the constructor but never applied here.
+            load(0) = cFactor * DRM_F(3 * local_pos + 0);
+            load(1) = cFactor * DRM_F(3 * local_pos + 1);
+            load(2) = cFactor * DRM_F(3 * local_pos + 2);
 
 
             if (DEBUG_WITH_GMSH)
