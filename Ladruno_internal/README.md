@@ -10,6 +10,8 @@ tags:
 
 Internal-only notes about the Ladruno OpenSees fork: how it was built, why specific patches exist, and the running history of changes we made on top of upstream OpenSees. Not meant for end users.
 
+> End user looking for the build procedure? See [BUILDING.md](../BUILDING.md) at the fork root — that's the *what to run, in what order* doc. The notes here are the *why behind the decisions*.
+
 ## Contents
 
 - [[01_compilation_journal]] — full record of the Windows build (toolchain, the eight CMakeLists patches, MUMPS LP64 saga, splash banner). Read this when something breaks and you need to remember *why* a patch is there.
