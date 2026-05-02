@@ -26,9 +26,9 @@ def main() -> int:
     pth.write_text(bin_dir + "\n", encoding="ascii")
     print(str(pth))
 
-    if sys.version_info[:2] != (3, 11):
+    if sys.version_info[:2] != (3, 12):
         v = f"{sys.version_info.major}.{sys.version_info.minor}"
-        print(f"WARNING: this venv is Python {v}; opensees.pyd is built for 3.11", file=sys.stderr)
+        print(f"WARNING: this venv is Python {v}; opensees.pyd is built for 3.12", file=sys.stderr)
         return 3
 
     return 0

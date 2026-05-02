@@ -6,7 +6,7 @@ REM
 REM  Prereqs (one-time, on this machine):
 REM    1. Visual Studio 2022 Community (with the C++ workload + Windows SDK)
 REM    2. Intel oneAPI Base + HPC toolkit (compiler, MKL, MPI)
-REM    3. CMake 3.23+, Ninja, Python 3.11, Git
+REM    3. CMake 3.23+, Ninja, Python 3.12, Git
 REM    4. Conan 2.x  (pip install --user conan)
 REM    5. MUMPS 5.5.1 source archive at mumps-archive\mumps_src.tar.gz
 REM       (downloaded once from https://mumps-solver.org/MUMPS_5.5.1.tar.gz)
@@ -30,13 +30,15 @@ pushd "%SCRIPT_DIR%\.."
 set "ROOT=%CD%"
 popd
 
-set "SRC=%ROOT%\OpenSees"
+REM After the fork-restructure, Ladruno_scripts/ lives inside OpenSees/, so
+REM ROOT itself is the OpenSees source root.
+set "SRC=%ROOT%"
 set "BUILD=%ROOT%\build"
 set "BUILD_DIR=%BUILD%\build\Release"
 set "INSTALL=%ROOT%\install"
 set "DIST=%ROOT%\dist"
 set "PROFILE=%SCRIPT_DIR%\opensees-msvc-static.profile"
-set "PYEXE=C:\Users\nmora\AppData\Local\Programs\Python\Python311\python.exe"
+set "PYEXE=C:\Users\nmora\AppData\Local\Python\pythoncore-3.12-64\python.exe"
 
 set "MUMPS_SRC=%ROOT%\mumps-src"
 set "MUMPS_BUILD=%ROOT%\mumps-build"

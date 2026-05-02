@@ -96,7 +96,7 @@ $installerContent = @"
     using -BasePython). If omitted, no venv wiring is done.
 .PARAMETER BasePython
     Python interpreter used to bootstrap the venv when it doesn't exist.
-    Must be Python 3.11. Default: 'python' on PATH.
+    Must be Python 3.12. Default: 'python' on PATH.
 .PARAMETER AddToPath
     Add <InstallPath>\bin to the user PATH.
 .PARAMETER Yes
@@ -219,9 +219,9 @@ if (`$venvTarget) {
     }
     if (Test-Path `$venvPython) {
         `$pyVer = & `$venvPython -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"
-        if (`$pyVer -ne '3.11') {
-            Write-Warning "Selected venv is Python `$pyVer; opensees.pyd was built for 3.11."
-            Write-Warning "It will fail to import. Recreate the venv with Python 3.11."
+        if (`$pyVer -ne '3.12') {
+            Write-Warning "Selected venv is Python `$pyVer; opensees.pyd was built for 3.12."
+            Write-Warning "It will fail to import. Recreate the venv with Python 3.12."
         }
         `$sitePackages = & `$venvPython -c "import sysconfig; print(sysconfig.get_paths()['purelib'])"
         `$pthFile = Join-Path `$sitePackages 'ladruno_opensees.pth'

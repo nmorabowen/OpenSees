@@ -149,7 +149,7 @@ begin
   Memo.Text := BannerText + #13#10 + #13#10 +
     'Ladruno OpenSees ' + ExpandConstant('{#LadrunoVersion}') + #13#10 +
     'Includes: OpenSees.exe, OpenSeesSP.exe, OpenSeesMP.exe,' + #13#10 +
-    '          opensees.pyd (Python 3.11), HDF5 + MPCO recorder,' + #13#10 +
+    '          opensees.pyd (Python 3.12), HDF5 + MPCO recorder,' + #13#10 +
     '          MUMPS sparse solver.' + #13#10 + #13#10 +
     'OpenSeesSP / OpenSeesMP need Intel MPI''s mpiexec on PATH' + #13#10 +
     '(Intel oneAPI install required separately).';
@@ -158,7 +158,7 @@ begin
   VenvOptionPage := CreateInputOptionPage(wpSelectDir,
     'Wire OpenSeesPy into a Python virtualenv',
     'Make ''import opensees'' work without sys.path fiddling',
-    'opensees.pyd is built for CPython 3.11. Choose what to do:',
+    'opensees.pyd is built for CPython 3.12. Choose what to do:',
     True, False);
   VenvOptionPage.Add('Skip - I''ll wire it up later');
   VenvOptionPage.Add('Create a new venv at <install-dir>\opensees_venv');
@@ -177,7 +177,7 @@ begin
   PythonPathPage := CreateInputFilePage(VenvOptionPage.ID,
     'Base Python (for new venv)',
     'Pick the python.exe used to bootstrap the new venv',
-    'Must be Python 3.11 - opensees.pyd is built against that exact ABI.');
+    'Must be Python 3.12 - opensees.pyd is built against that exact ABI.');
   PythonPathPage.Add('python.exe', 'Python interpreter|python.exe;py.exe', 'exe');
   PythonPathPage.Values[0] := 'python.exe';
 end;
@@ -227,7 +227,7 @@ begin
   begin
     case Code of
       0: LogToFile('  .pth wired ok via ' + VenvPython);
-      3: LogToFile('  WARNING: venv python is not 3.11 - opensees will fail to import');
+      3: LogToFile('  WARNING: venv python is not 3.12 - opensees will fail to import');
     else
       LogToFile('  WARNING: wire_venv_pth.py exited ' + IntToStr(Code));
     end;

@@ -19,7 +19,7 @@
     Where to create / find the venv. Default: <project-root>\opensees_venv
 
 .PARAMETER Python
-    Python interpreter to use as the venv base. Default: the Python 3.11
+    Python interpreter to use as the venv base. Default: the Python 3.12
     we built OpenSeesPy against. Mismatching this will produce
     `ImportError: DLL load failed` on import.
 
@@ -32,7 +32,7 @@
 #>
 param(
     [string]$VenvPath = "",
-    [string]$Python   = "C:\Users\nmora\AppData\Local\Programs\Python\Python311\python.exe",
+    [string]$Python   = "C:\Users\nmora\AppData\Local\Python\pythoncore-3.12-64\python.exe",
     [switch]$Force
 )
 
@@ -64,11 +64,11 @@ if (-not (Test-Path "$distBin\opensees.pyd")) {
     exit 1
 }
 
-# Make sure the chosen Python matches the .pyd's ABI (cpython 3.11 == cp311)
+# Make sure the chosen Python matches the .pyd's ABI (cpython 3.12 == cp312)
 $pyVersion = & $Python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"
-if ($pyVersion -ne "3.11") {
-    Write-Warning "Selected Python is $pyVersion; opensees.pyd was built for 3.11."
-    Write-Warning "It will likely fail to import. Pass -Python <path-to-python311.exe> to override."
+if ($pyVersion -ne "3.12") {
+    Write-Warning "Selected Python is $pyVersion; opensees.pyd was built for 3.12."
+    Write-Warning "It will likely fail to import. Pass -Python <path-to-python312.exe> to override."
 }
 
 # ---------- create / refresh venv -----------------------------------------
