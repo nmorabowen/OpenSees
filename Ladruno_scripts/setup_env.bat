@@ -46,8 +46,8 @@ if errorlevel 1 goto :err_mpi
 REM Intel MPI sometimes needs I_MPI_ROOT explicitly (some installers don't set it)
 if "%I_MPI_ROOT%"=="" set "I_MPI_ROOT=%ONEAPI_ROOT%\mpi\latest"
 
-REM ---- 5. Conan (installed via pip --user) -------------------------------
-set "CONAN_DIR=%APPDATA%\Python\Python311\Scripts"
+REM ---- 5. Conan (installed via `py -3.12 -m pip install --user conan`) --
+set "CONAN_DIR=%APPDATA%\Python\Python312\Scripts"
 if exist "%CONAN_DIR%\conan.exe" set "PATH=%CONAN_DIR%;%PATH%"
 
 REM ---- 6. Workaround: TCL 8.6.11's makefile.vc assumes that cmd will
