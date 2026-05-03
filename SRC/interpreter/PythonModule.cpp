@@ -546,6 +546,28 @@ initopensees(void)
 
     if (pymodule == NULL)
         INITERROR;
+
+    // Ladruno banner. Suppress with LADRUNO_OPENSEES_QUIET=1.
+    if (getenv("LADRUNO_OPENSEES_QUIET") == nullptr) {
+        static const char *ladrunoBanner =
+            "\n"
+            " ▄█          ▄████████ ████████▄     ▄████████ ███    █▄  ███▄▄▄▄    ▄██████▄\n"
+            "███         ███    ███ ███   ▀███   ███    ███ ███    ███ ███▀▀▀██▄ ███    ███\n"
+            "███         ███    ███ ███    ███   ███    ███ ███    ███ ███   ███ ███    ███\n"
+            "███         ███    ███ ███    ███  ▄███▄▄▄▄██▀ ███    ███ ███   ███ ███    ███\n"
+            "███       ▀███████████ ███    ███ ▀▀███▀▀▀▀▀   ███    ███ ███   ███ ███    ███\n"
+            "███         ███    ███ ███    ███ ▀███████████ ███    ███ ███   ███ ███    ███\n"
+            "███▌    ▄   ███    ███ ███   ▄███   ███    ███ ███    ███ ███   ███ ███    ███\n"
+            "█████▄▄██   ███    █▀  ████████▀    ███    ███ ████████▀   ▀█   █▀   ▀██████▀\n"
+            "▀                                   ███    ███\n"
+            "\n";
+        PySys_FormatStdout("%s", ladrunoBanner);
+#ifdef OPENSEES_VERSION
+        PySys_FormatStdout("Ladruno OpenSees build: %s\n", OPENSEES_VERSION);
+#endif
+        PySys_FormatStdout("Suppress this banner with LADRUNO_OPENSEES_QUIET=1\n\n");
+    }
+
     struct module_state *st = GETSTATE(pymodule);
 
     // add OpenSeesError
