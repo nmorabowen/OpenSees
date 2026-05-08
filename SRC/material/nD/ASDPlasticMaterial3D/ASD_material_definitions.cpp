@@ -310,10 +310,10 @@ createASDPlasticMaterial3D<
 // =========================================
 
 createASDPlasticMaterial3D<
-        StiffSoil_EL, 
-        StiffSoil_YF<
+        StiffSoil_EL,
+        StiffSoilShear_YF<
             EpsQpShear
-            >, 
+            >,
         StiffSoilShear_PF<
             EpsQpShear
             >
