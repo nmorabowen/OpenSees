@@ -108,31 +108,37 @@ createASDPlasticMaterial3D<
         > (instance_tag, yf_type, pf_type, el_type, iv_type, instance_pointers, available_models);
 """
 
-# Stiff Soil model configurations
-# Each entry is (Elasticity, YieldFunction, PlasticFlow, InternalVariable)
-STIFFSOIL_MODELS = [
-    # Deviatoric (Shear) mechanism
-    {
-        "EL": "StiffSoil_EL",
-        "YF": "StiffSoilShear_YF",
-        "PF": "StiffSoilShear_PF",
-        "IV": "EpsQpShear"
-    },
-    # Cap (Volumetric) mechanism
-    {
-        "EL": "StiffSoil_EL",
-        "YF": "StiffSoilCap_YF",
-        "PF": "StiffSoilCap_PF",
-        "IV": "CapPressure"
-    },
-    # Cap mechanism with linear hardening (alternative)
-    {
-        "EL": "StiffSoil_EL",
-        "YF": "StiffSoilCap_YF",
-        "PF": "StiffSoilCap_PF",
-        "IV": "CapPressureLinear"
-    },
-]
+# Stiff Soil (Hardening Soil Model) configurations — currently DISABLED on
+# this Ladruno fork. Re-enable by uncommenting this block and the matching
+# generated specializations in ASD_material_definitions.cpp. The IV-type
+# dispatch in OPS_AllASDPlasticMaterial3Ds.cpp wasn't matching `EpsQpShear`
+# at the time of integration, so users can't actually instantiate StiffSoil
+# from Tcl/Python yet. Keeping the source files (StiffSoilShear_YF.h etc.)
+# in the tree so the change is reversible without re-fetching from upstream.
+STIFFSOIL_MODELS = []
+# STIFFSOIL_MODELS = [
+#     # Deviatoric (Shear) mechanism
+#     {
+#         "EL": "StiffSoil_EL",
+#         "YF": "StiffSoilShear_YF",
+#         "PF": "StiffSoilShear_PF",
+#         "IV": "EpsQpShear"
+#     },
+#     # Cap (Volumetric) mechanism
+#     {
+#         "EL": "StiffSoil_EL",
+#         "YF": "StiffSoilCap_YF",
+#         "PF": "StiffSoilCap_PF",
+#         "IV": "CapPressure"
+#     },
+#     # Cap mechanism with linear hardening (alternative)
+#     {
+#         "EL": "StiffSoil_EL",
+#         "YF": "StiffSoilCap_YF",
+#         "PF": "StiffSoilCap_PF",
+#         "IV": "CapPressureLinear"
+#     },
+# ]
 
 
 # ============================================================================
