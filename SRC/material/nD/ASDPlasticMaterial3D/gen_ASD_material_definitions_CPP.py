@@ -16,6 +16,7 @@ YF = [
     "VonMises_YF",
     "DruckerPrager_YF",
     "MohrCoulomb_YF",
+    "HoekBrown_YF",
     # "TensionCutoff_YF",
 ]
 
@@ -26,7 +27,8 @@ PF = [
     "VonMises_PF",
     "DruckerPrager_PF",
     # "ConstantDilatancy_PF",
-    "MohrCoulomb_PF"
+    "MohrCoulomb_PF",
+    "HoekBrown_PF"
 ]
 
 # ============================================================================
@@ -45,6 +47,10 @@ IV_YF["DruckerPrager_YF"] = [
 ]
 
 IV_YF["MohrCoulomb_YF"] = [
+    "BackStress<NullHardeningTensorFunction>"
+]
+
+IV_YF["HoekBrown_YF"] = [
     "BackStress<NullHardeningTensorFunction>"
 ]
 
@@ -71,6 +77,10 @@ IV_PF = {
 IV_PF["ConstantDilatancy_PF"] = IV_PF["VonMises_PF"]
 
 IV_PF["MohrCoulomb_PF"] = [
+    "BackStress<NullHardeningTensorFunction>"
+]
+
+IV_PF["HoekBrown_PF"] = [
     "BackStress<NullHardeningTensorFunction>"
 ]
 
@@ -108,37 +118,31 @@ createASDPlasticMaterial3D<
         > (instance_tag, yf_type, pf_type, el_type, iv_type, instance_pointers, available_models);
 """
 
-# Stiff Soil (Hardening Soil Model) configurations — currently DISABLED on
-# this Ladruno fork. Re-enable by uncommenting this block and the matching
-# generated specializations in ASD_material_definitions.cpp. The IV-type
-# dispatch in OPS_AllASDPlasticMaterial3Ds.cpp wasn't matching `EpsQpShear`
-# at the time of integration, so users can't actually instantiate StiffSoil
-# from Tcl/Python yet. Keeping the source files (StiffSoilShear_YF.h etc.)
-# in the tree so the change is reversible without re-fetching from upstream.
-STIFFSOIL_MODELS = []
-# STIFFSOIL_MODELS = [
-#     # Deviatoric (Shear) mechanism
-#     {
-#         "EL": "StiffSoil_EL",
-#         "YF": "StiffSoilShear_YF",
-#         "PF": "StiffSoilShear_PF",
-#         "IV": "EpsQpShear"
-#     },
-#     # Cap (Volumetric) mechanism
-#     {
-#         "EL": "StiffSoil_EL",
-#         "YF": "StiffSoilCap_YF",
-#         "PF": "StiffSoilCap_PF",
-#         "IV": "CapPressure"
-#     },
-#     # Cap mechanism with linear hardening (alternative)
-#     {
-#         "EL": "StiffSoil_EL",
-#         "YF": "StiffSoilCap_YF",
-#         "PF": "StiffSoilCap_PF",
-#         "IV": "CapPressureLinear"
-#     },
-# ]
+# Stiff Soil model configurations
+# Each entry is (Elasticity, YieldFunction, PlasticFlow, InternalVariable)
+STIFFSOIL_MODELS = [
+    # Deviatoric (Shear) mechanism
+    {
+        "EL": "StiffSoil_EL",
+        "YF": "StiffSoilShear_YF",
+        "PF": "StiffSoilShear_PF",
+        "IV": "EpsQpShear"
+    },
+    # Cap (Volumetric) mechanism
+    {
+        "EL": "StiffSoil_EL",
+        "YF": "StiffSoilCap_YF",
+        "PF": "StiffSoilCap_PF",
+        "IV": "CapPressure"
+    },
+    # Cap mechanism with linear hardening (alternative)
+    {
+        "EL": "StiffSoil_EL",
+        "YF": "StiffSoilCap_YF",
+        "PF": "StiffSoilCap_PF",
+        "IV": "CapPressureLinear"
+    },
+]
 
 
 # ============================================================================
