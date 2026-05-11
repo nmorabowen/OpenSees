@@ -94,6 +94,12 @@ elseif ("${CMAKE_CXX_COMPILER_ID}" MATCHES "MSVC")
  set(CMAKE_FIND_LIBRARY_SUFFIXES ".lib")
  set(BUILD_SHARED_LIBS OFF)
  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded")
+ # ASDPlasticMaterial3D's OPS_AllASDPlasticMaterial3Ds.cpp instantiates a very
+ # large product of templated material specializations (every EL x YF x PF x
+ # hardening combo, including StiffSoil + HoekBrown). MSVC's COFF format caps
+ # sections at ~64K; this file overflows. /bigobj lifts it to ~4G. The flag is
+ # harmless for files that don't need it, so set it globally for MSVC.
+ add_compile_options(/bigobj)
 else()
   MESSAGE("COMPILER: UKNOWN COMPILER ${CMAKE_CXX_COMPILER_ID}")
 endif()
