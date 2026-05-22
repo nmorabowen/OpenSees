@@ -1965,7 +1965,23 @@ int OPS_setStartNodeTag() {
 }
 
 int OPS_partition() {
-#ifdef _PARALLEL_INTERPRETERS
+// Ladruno Patch 9: the openseespy `partition` command uses the METIS 5 API
+// (idx_t, METIS_SetDefaultOptions, METIS_PartMeshNodal, METIS_OPTION_*).
+// This fork bundles METIS 4.0.1 (OTHER/METIS) — the Tcl graph partitioner
+// uses its legacy idxtype API instead, and this function has never been
+// compiled before (it only exists under _PARALLEL_INTERPRETERS, which was
+// always compiled out of the seq OPS_INTERPRETER). Domain-partitioned MP is
+// not on the MP-first critical path (the _PARALLEL_INTERPRETERS model runs
+// one independent interpreter per rank; differentiate via getPID/getNP), so
+// by default emit an honest runtime error rather than silently dropping the
+// command. Define OPS_HAVE_METIS5 and link a METIS 5 (e.g. via Conan) to
+// restore the original implementation verbatim.
+#if defined(_PARALLEL_INTERPRETERS) && !defined(OPS_HAVE_METIS5)
+    opserr << "WARNING partition: requires METIS 5; this build bundles "
+              "METIS 4.0.1, so domain-partitioned MP is unsupported "
+              "(see Ladruno Patch 9 / 02_openseespymp.md).\n";
+    return -1;
+#elif defined(_PARALLEL_INTERPRETERS)
     // domain
     Domain* domain = OPS_GetDomain();
     if (domain ==0) {
