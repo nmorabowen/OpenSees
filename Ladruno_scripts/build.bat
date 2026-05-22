@@ -17,7 +17,8 @@ REM    Ladruno_scripts\build.bat              -> build everything
 REM    Ladruno_scripts\build.bat clean        -> wipe build/install/dist, rebuild
 REM    Ladruno_scripts\build.bat rebuild      -> wipe build/, rebuild
 REM    Ladruno_scripts\build.bat <target>     -> rebuild only that target
-REM                                              (OpenSees, OpenSeesSP, OpenSeesMP, OpenSeesPy)
+REM                                              (OpenSees, OpenSeesSP, OpenSeesMP,
+REM                                               OpenSeesPy, OpenSeesPyMP)
 REM
 REM  Incremental rebuilds after source edits in OpenSees\: just re-run this
 REM  script. CMake + Ninja handle dependency tracking.
@@ -48,6 +49,7 @@ set "MUMPS_ARCHIVE=%ROOT%\mumps-archive"
 set "MKL_BIN=C:\Program Files (x86)\Intel\oneAPI\mkl\latest\bin"
 set "ICOMP_BIN=C:\Program Files (x86)\Intel\oneAPI\compiler\latest\bin"
 set "IMPI_BIN=C:\Program Files (x86)\Intel\oneAPI\mpi\latest\bin"
+set "IMPI_LIBFABRIC=C:\Program Files (x86)\Intel\oneAPI\mpi\latest\opt\mpi\libfabric\bin"
 
 REM ----- Argument parsing --------------------------------------------------
 set "MODE=%1"
@@ -63,7 +65,7 @@ if /i "%MODE%"=="clean" (
     set "MODE="
 )
 
-set "TARGETS=OpenSees OpenSeesSP OpenSeesMP OpenSeesPy"
+set "TARGETS=OpenSees OpenSeesSP OpenSeesMP OpenSeesPy OpenSeesPyMP"
 if not "%MODE%"=="" set "TARGETS=%MODE%"
 
 REM ----- Load toolchain ----------------------------------------------------
@@ -143,8 +145,11 @@ echo === Step 4: Building targets: %TARGETS% ===
 for %%T in (%TARGETS%) do (
     echo.
     echo --- Building %%T ---
-    cmake --build "%BUILD_DIR%" --target %%T -j 8
-    if errorlevel 1 (echo Build of %%T failed & exit /b 1)
+    REM `|| (...)` reliably catches a non-zero exit of the immediately
+    REM preceding command. The old `if errorlevel 1 (...)` inside this
+    REM parenthesized for-body failed to trip on a cmake/ninja link failure
+    REM (openseesmp.dll LNK1120) and let Step 5 run on a non-built target.
+    cmake --build "%BUILD_DIR%" --target %%T -j 8 || (echo Build of %%T failed & exit /b 1)
 )
 
 REM ----- 5. Curate dist ----------------------------------------------------
@@ -166,6 +171,39 @@ if exist "%BUILD_DIR%\OpenSeesPy.dll" (
     copy /y "%BUILD_DIR%\OpenSeesPy.dll" "%DIST%\bin\opensees.pyd" >nul
 )
 
+REM ----- OpenSeesPyMP: self-contained MPI Python package ------------------
+REM Ladruno Patch 9. Built as openseesmp.dll (CMake OUTPUT_NAME); Python
+REM expects openseesmp.pyd. Shipped to a DEDICATED dir, NOT %DIST%\bin: a
+REM dist\bin-local impi.dll shadows the oneAPI one and breaks the co-located
+REM Tcl OpenSeesSP/MP.exe (MUMPS "Instance Error 1" under -n>1; see the note
+REM below). openseesmp.pyd links impi.dll at load time, so it gets a
+REM co-located, same-oneAPI-version Intel MPI runtime + Hydra launcher here.
+REM It imports as `openseesmp` (rename shim) so it never collides with the
+REM sequential `import opensees`. Launch with this dir's own mpiexec, e.g.
+REM   %DIST%\openseesmp\mpiexec -n 4 python driver.py
+if not exist "%BUILD_DIR%\openseesmp.dll" goto :no_openseesmp
+if not exist "%DIST%\openseesmp" mkdir "%DIST%\openseesmp"
+echo   copying openseesmp.dll -^> openseesmp\openseesmp.pyd
+copy /y "%BUILD_DIR%\openseesmp.dll" "%DIST%\openseesmp\openseesmp.pyd" >nul
+echo   bundling Intel MPI runtime + Hydra launcher into openseesmp\
+for %%M in (impi.dll mpiexec.exe hydra_bstrap_proxy.exe hydra_pmi_proxy.exe hydra_service.exe) do (
+    if exist "%IMPI_BIN%\%%M" copy /y "%IMPI_BIN%\%%M" "%DIST%\openseesmp\" >nul
+)
+if exist "%IMPI_LIBFABRIC%\libfabric.dll" copy /y "%IMPI_LIBFABRIC%\libfabric.dll" "%DIST%\openseesmp\" >nul
+echo   mirroring MKL runtime into openseesmp\ (self-contained off oneAPI shell)
+for %%D in (
+    mkl_intel_thread.2.dll mkl_core.2.dll mkl_def.2.dll
+    mkl_avx2.2.dll mkl_avx512.2.dll mkl_mc3.2.dll
+    mkl_scalapack_lp64.2.dll mkl_blacs_intelmpi_lp64.2.dll
+) do (
+    if exist "%MKL_BIN%\%%D" copy /y "%MKL_BIN%\%%D" "%DIST%\openseesmp\" >nul
+)
+if exist "%ICOMP_BIN%\libiomp5md.dll" copy /y "%ICOMP_BIN%\libiomp5md.dll" "%DIST%\openseesmp\" >nul
+:no_openseesmp
+
+REM (OpenSeesPySP packaging removed — Python has no SP subsystem; SP is
+REM  Tcl-only via OpenSeesSP.exe. See Ladruno Patch 9 docs.)
+
 REM Intel MKL runtime DLLs. mkl_intel_thread + mkl_core are link-time
 REM dependencies; mkl_def / mkl_avx* / mkl_mc3 are CPU kernel DLLs that MKL
 REM dlopens at runtime (FATAL "mkl_def.2.dll not found" otherwise).
@@ -180,12 +218,16 @@ for %%D in (
 )
 if exist "%ICOMP_BIN%\libiomp5md.dll" copy /y "%ICOMP_BIN%\libiomp5md.dll" "%DIST%\bin\" >nul
 
-REM Intel MPI runtime is NOT copied here. To launch OpenSeesSP / OpenSeesMP
-REM the user must run them via mpiexec, which only works after
-REM `setup_env.bat` has activated Intel oneAPI in the shell — that puts the
-REM oneAPI version of impi.dll on PATH. A dist copy would load first and
-REM subtly mismatch what mpiexec/MUMPS were built against (manifests as
-REM MUMPS "Instance Error 1" under -n>1).
+REM Intel MPI runtime is deliberately NOT copied into %DIST%\bin. To launch
+REM the Tcl OpenSeesSP / OpenSeesMP exes the user runs them via mpiexec,
+REM which only works after `setup_env.bat` has activated Intel oneAPI in the
+REM shell — that puts the oneAPI impi.dll on PATH. A dist\bin copy would
+REM load first and subtly mismatch what mpiexec/MUMPS were built against
+REM (manifests as MUMPS "Instance Error 1" under -n>1). The Python MP
+REM module does NOT reintroduce this hazard: its Intel MPI runtime lives in
+REM the separate, self-contained %DIST%\openseesmp\ (same oneAPI version as
+REM its bundled mpiexec, never on the Tcl exes' PATH) — see the OpenSeesPyMP
+REM block above.
 
 REM Tcl init.tcl (looked up relative to OpenSees.exe at runtime).
 REM `conan cache path tcl/8.6.11` returns the export folder, not the package
@@ -210,8 +252,16 @@ echo.
 echo === Done. Built artifacts ===
 dir /b "%DIST%\bin"
 echo.
+if exist "%DIST%\openseesmp\openseesmp.pyd" (
+    echo.
+    echo === openseesmp package ===
+    dir /b "%DIST%\openseesmp"
+)
+echo.
 echo To use:
 echo   set PATH=%DIST%\bin;%%PATH%%        (for OpenSees/SP/MP exe variants)
 echo   In Python:  sys.path.insert(0, r"%DIST%\bin"); import opensees
+echo   MPI Python:  set PATH=%DIST%\openseesmp;%%PATH%%
+echo                %DIST%\openseesmp\mpiexec -n 4 python driver.py   (import openseesmp)
 echo.
 endlocal

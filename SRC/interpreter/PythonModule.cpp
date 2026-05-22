@@ -47,6 +47,19 @@ UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 #include <cstring>
 #include <cctype>
 
+// Ladruno Patch 9: this translation unit is compiled once per Python target.
+// The sequential target imports as `opensees`; the parallel shim translation
+// units (PythonMPIModule.cpp / PythonSPModule.cpp) pre-#define these before
+// #include "PythonModule.cpp" so the same source emits `openseesmp` /
+// `openseessp` with distinct PyInit_* symbols. Defaults keep the sequential
+// build byte-identical.
+#ifndef OPS_PY_MODULE_NAME
+#define OPS_PY_MODULE_NAME "opensees"
+#endif
+#ifndef OPS_PY_INIT_FUNC
+#define OPS_PY_INIT_FUNC PyInit_opensees
+#endif
+
 // define opserr
 static PythonStream sserr;
 OPS_Stream *opserrPtr = &sserr;
@@ -515,7 +528,7 @@ static int opensees_clear(PyObject *m) {
 
 static struct PyModuleDef moduledef = {
         PyModuleDef_HEAD_INIT,
-        "opensees",
+        OPS_PY_MODULE_NAME,
         NULL,
         sizeof(struct module_state),
         getmethodsFunc(),
@@ -528,7 +541,7 @@ static struct PyModuleDef moduledef = {
 #define INITERROR return NULL
 
 PyMODINIT_FUNC
-PyInit_opensees(void)
+OPS_PY_INIT_FUNC(void)
 
 #else
 #define INITERROR return
@@ -541,7 +554,7 @@ initopensees(void)
 #if PY_MAJOR_VERSION >= 3
     PyObject *pymodule = PyModule_Create(&moduledef);
 #else
-    PyObject *pymodule = Py_InitModule("opensees", getmethodsFunc());
+    PyObject *pymodule = Py_InitModule(OPS_PY_MODULE_NAME, getmethodsFunc());
 #endif
 
     if (pymodule == NULL)
@@ -571,7 +584,7 @@ initopensees(void)
     struct module_state *st = GETSTATE(pymodule);
 
     // add OpenSeesError
-    st->error = PyErr_NewExceptionWithDoc("opensees.OpenSeesError", "Internal OpenSees errors.", NULL, NULL);
+    st->error = PyErr_NewExceptionWithDoc(OPS_PY_MODULE_NAME ".OpenSeesError", "Internal OpenSees errors.", NULL, NULL);
     if (st->error == NULL) {
         Py_DECREF(pymodule);
         INITERROR;

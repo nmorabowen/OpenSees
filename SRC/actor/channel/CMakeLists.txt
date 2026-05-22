@@ -34,6 +34,15 @@ target_sources(OpenSeesSP
       MPI_Channel.h
 )
 
+# Ladruno Patch 9: OpenSeesPyMP needs the same MPI channel as the Tcl
+# parallel exes (MPI_MachineBroker references MPI_Channel::MPI_Channel(int)).
+target_sources(OpenSeesPyMP
+    PRIVATE
+      MPI_Channel.cpp
+    PUBLIC
+      MPI_Channel.h
+)
+
 endif()
 
 
