@@ -31,7 +31,9 @@ When starting a new plan, copy [[_template]] and rename.
 
 ## Plans
 
-*(none yet — this folder was just created. Add a file per feature as you scope it.)*
+- [[03_mpco_ladruno]] — **MPCO_Ladruno**: modular recorder fork (sibling of the frozen MPCORecorder), apeGmsh-native `.ladruno` schema, global + envelope results. (ADR, draft)
+  - [[mpco_ladruno_schema_v1]] — the on-disk HDF5 schema spec (self-describing BASIS/QUADRATURE for Bézier + Belytschko). (draft)
+  - [[mpco_ladruno_element_contract]] — the element-side `setResponse` contract elements implement to be recorded. (draft)
 
 ## Companion folder
 

@@ -1,0 +1,1801 @@
+/* ********************************************************************** **
+**  MPCO_Ladruno recorder — MPCOL_ElementResults.h                        **
+**  The ELEMENT-results half of the recorder. The discovery engine        **
+**  (OutputDescriptor / OutputDescriptorStream / collections /            **
+**  ElementCollection) is ported VERBATIM from the frozen MPCORecorder    **
+**  (lines 2595-4277) into namespace mpcol — header-only/inline, exactly   **
+**  as the frozen classes are inline. It does NOT write HDF5 (sinks do);   **
+**  it discovers each element's setResponse output tree and flattens it.   **
+**  EVERY frozen workaround is preserved (SSPbrick, ForceBeamColumn3d,     **
+**  shell keyword swap, section-after-fiber, 1-based→0-based gp). The      **
+**  ElementResultSource adapter + basisInfo stub follow (Step 2/3).        **
+** ********************************************************************** */
+#ifndef MPCOL_ElementResults_h
+#define MPCOL_ElementResults_h
+
+#include "MPCOL_Types.h"
+#include "MPCOL_ResultIO.h"
+
+#include "Element.h"
+#include "ElementIter.h"
+#include "Domain.h"
+#include "Response.h"
+#include "Information.h"
+#include "CompositeResponse.h"
+#include "section/SectionForceDeformation.h"
+#include "Vector.h"
+#include "Matrix.h"
+#include "ID.h"
+#include "OPS_Stream.h"
+
+// Distinct OPS_Stream tag so the ported descriptor stream cannot collide with
+// the frozen recorder's (1001) when both link into the same binary.
+#define OPS_STREAM_TAGS_MPCOL_ElementOutputDescriptorStream 1002
+
+// Frozen-recorder helper macros the engine references but that live ABOVE the
+// ported range (MPCORecorder.cpp lines 52, 135-158). Ported verbatim. All
+// #ifndef-guarded so they never clash with the frozen TU's identical defs.
+#ifndef MPCO_MAX_TRIAL_NSEC
+#define MPCO_MAX_TRIAL_NSEC 100
+#endif
+#ifndef ELE_TAG_FourNodeQuadWithSensitivity
+#define ELE_TAG_FourNodeQuadWithSensitivity 100000011
+#endif
+#ifndef ELE_TAG_DispBeamColumn2dWithSensitivity
+#define ELE_TAG_DispBeamColumn2dWithSensitivity 102030
+#endif
+#ifndef ELE_TAG_DispBeamColumn3dWithSensitivity
+#define ELE_TAG_DispBeamColumn3dWithSensitivity 1110000
+#endif
+#ifndef ELE_TAG_BbarBrickWithSensitivity
+#define ELE_TAG_BbarBrickWithSensitivity 1984587234
+#endif
+#ifndef ELE_TAG_AC3D8HexWithSensitivity
+#define ELE_TAG_AC3D8HexWithSensitivity 100001
+#endif
+#ifndef Ele_TAG_Elastic2dGNL
+#define Ele_TAG_Elastic2dGNL -1
+#endif
+#ifndef TAG_InelasticYS2DGNL
+#define TAG_InelasticYS2DGNL -1
+#endif
+
+namespace mpcol {
+
+namespace mpco {
+
+	namespace element {
+
+		struct OutputDescriptorHeader
+		{
+			OutputDescriptorHeader()
+				: num_columns(0)
+				, num_components()
+				, gauss_id()
+				, components_path()
+				, components()
+				, multiplicity()
+			{}
+
+			inline bool operator == (const OutputDescriptorHeader &other) const {
+				if (this != &other) {
+					if (*this < other) return false;
+					if (*this > other) return false;
+					return true;
+				}
+				return true;
+			}
+
+			inline bool operator < (const OutputDescriptorHeader &other) const {
+				if (num_columns < other.num_columns) return true;
+				if (num_columns > other.num_columns) return false;
+				if (multiplicity.size() < other.multiplicity.size()) return true;
+				if (multiplicity.size() > other.multiplicity.size()) return false;
+				for (size_t i = 0; i < multiplicity.size(); i++) {
+					if (multiplicity[i] < other.multiplicity[i]) return true;
+					if (multiplicity[i] > other.multiplicity[i]) return false;
+				}
+				if (num_components.size() < other.num_components.size()) return true;
+				if (num_components.size() > other.num_components.size()) return false;
+				for (size_t i = 0; i < num_components.size(); i++) {
+					if (num_components[i] < other.num_components[i]) return true;
+					if (num_components[i] > other.num_components[i]) return false;
+				}
+				if (gauss_id.size() < other.gauss_id.size()) return true;
+				if (gauss_id.size() > other.gauss_id.size()) return false;
+				for (size_t i = 0; i < gauss_id.size(); i++) {
+					if (gauss_id[i] < other.gauss_id[i]) return true;
+					if (gauss_id[i] > other.gauss_id[i]) return false;
+				}
+				if (components_path.size() < other.components_path.size()) return true;
+				if (components_path.size() > other.components_path.size()) return false;
+				for (size_t i = 0; i < components_path.size(); i++) {
+					if (components_path[i] < other.components_path[i]) return true;
+					if (components_path[i] > other.components_path[i]) return false;
+				}
+				if (components.size() < other.components.size()) return true;
+				if (components.size() > other.components.size()) return false;
+				for (size_t i = 0; i < components.size(); i++) {
+					if (components[i] < other.components[i]) return true;
+					if (components[i] > other.components[i]) return false;
+				}
+				return false;
+			}
+
+			inline bool operator > (const OutputDescriptorHeader &other) const {
+				if (num_columns > other.num_columns) return true;
+				if (num_columns < other.num_columns) return false;
+				if (multiplicity.size() > other.multiplicity.size()) return true;
+				if (multiplicity.size() < other.multiplicity.size()) return false;
+				for (size_t i = 0; i > multiplicity.size(); i++) {
+					if (multiplicity[i] > other.multiplicity[i]) return true;
+					if (multiplicity[i] < other.multiplicity[i]) return false;
+				}
+				if (num_components.size() > other.num_components.size()) return true;
+				if (num_components.size() < other.num_components.size()) return false;
+				for (size_t i = 0; i > num_components.size(); i++) {
+					if (num_components[i] > other.num_components[i]) return true;
+					if (num_components[i] < other.num_components[i]) return false;
+				}
+				if (gauss_id.size() > other.gauss_id.size()) return true;
+				if (gauss_id.size() < other.gauss_id.size()) return false;
+				for (size_t i = 0; i > gauss_id.size(); i++) {
+					if (gauss_id[i] > other.gauss_id[i]) return true;
+					if (gauss_id[i] < other.gauss_id[i]) return false;
+				}
+				if (components_path.size() > other.components_path.size()) return true;
+				if (components_path.size() < other.components_path.size()) return false;
+				for (size_t i = 0; i > components_path.size(); i++) {
+					if (components_path[i] > other.components_path[i]) return true;
+					if (components_path[i] < other.components_path[i]) return false;
+				}
+				if (components.size() > other.components.size()) return true;
+				if (components.size() < other.components.size()) return false;
+				for (size_t i = 0; i > components.size(); i++) {
+					if (components[i] > other.components[i]) return true;
+					if (components[i] < other.components[i]) return false;
+				}
+				return false;
+			}
+
+			inline std::string toString()const {
+				std::stringstream ss;
+				ss << "MPCORecorder Element Output Descriptor Header:\n";
+				ss << "Columns: " << num_columns << "\n";
+				ss << "N. Components:\n";
+				for (size_t i = 0; i < num_components.size(); i++) {
+					ss << num_components[i] << "   ";
+				}
+				ss << "\n\nPaths:\n";
+				for (std::vector<std::vector<int> >::const_iterator
+					it1 = components_path.begin(); it1 != components_path.end(); ++it1) {
+					for (std::vector<int>::const_iterator
+						it2 = it1->begin(); it2 != it1->end(); ++it2) {
+						ss << mpco::ElementOutputDescriptorType::toString((mpco::ElementOutputDescriptorType::Enum)*it2) << ".";
+					}
+					ss << "\n";
+				}
+				ss << "\nComponents:\n";
+				for (std::vector<std::vector<std::string> >::const_iterator
+					it1 = components.begin(); it1 != components.end(); ++it1) {
+					for (std::vector<std::string>::const_iterator
+						it2 = it1->begin(); it2 != it1->end(); ++it2) {
+						ss << *it2 << "   ";
+					}
+					ss << "\n";
+				}
+				return ss.str();
+			}
+
+			void workaroundForSizeInconsistency(int data_size) {
+				/** WORKAROUND
+				ouch! in some cases (see some material models), the material in the setResponse method, gives a vector of size N
+				but without specifying the response type, that we use to get the components!. In those cases there will be
+				a mismatch between response->getInformation().getData().size() and header.num_components !!!
+				note: we can apply this workaround if and only if all items have zero components
+				*/
+				bool all_zero = true;
+				for (size_t i = 0; i < num_components.size(); i++) {
+					if (num_components[i] != 0) {
+						all_zero = false;
+						break;
+					}
+				}
+				if (all_zero && data_size > 0) {
+					if (num_components.size() == 0) { // empty
+						num_components.resize(1);
+						num_components[0] = data_size;
+						gauss_id.resize(1);
+						gauss_id[0] = -1;
+						components_path.resize(1);
+						components_path[0].push_back(mpco::ElementOutputDescriptorType::Element);
+						components.resize(1);
+						components[0].resize((size_t)data_size);
+						for (size_t i = 0; i < (size_t)data_size; i++) {
+							std::stringstream aux; aux << "C" << i + 1; components[0][i] = aux.str();
+						}
+						multiplicity.resize(1);
+						multiplicity[0] = 1;
+						num_columns = data_size;
+					}
+					else {
+						int num_items = (int)num_components.size();
+						/* only if we can equally divide the data size by the number of items,
+						i.e. we assume that each gauss point have the same components
+						*/
+						if (data_size % num_items == 0) {
+							int n_comp = data_size / num_items;
+							for (size_t i = 0; i < num_components.size(); i++) {
+								num_components[i] = n_comp;
+								multiplicity[i] = 1;
+								components[i].resize((size_t)n_comp);
+								for (int j = 0; j < n_comp; j++) {
+									std::stringstream aux; aux << "C" << j + 1; components[i][j] = aux.str();
+								}
+							}
+							// we leave gauss and comp paths as they are
+							num_columns = data_size;
+						}
+					}
+				}
+			}
+
+			void workaroundForDuplicatedComponents()
+			{
+				for (size_t i = 0; i < components.size(); i++) {
+					std::vector<std::string> &i_components = components[i];
+					if (i_components.size() > 0) {
+						std::map<std::string, int> aux;
+						for (size_t j = 0; j < i_components.size(); j++) {
+							int &dupl_counter = aux[i_components[j]];
+							if (dupl_counter > 0) {
+								std::stringstream ss;
+								ss << i_components[j] << "(" << dupl_counter << ")";
+								i_components[j] = ss.str();
+							}
+							dupl_counter++;
+						}
+					}
+				}
+			}
+
+			int num_columns;
+			std::vector<int> num_components;
+			std::vector<int> gauss_id; // note: 0-based
+			std::vector<std::vector<int> > components_path;
+			std::vector<std::vector<std::string> > components;
+			std::vector<int> multiplicity;
+		};
+
+		class OutputDescriptor
+		{
+		public:
+			OutputDescriptor()
+				: type(mpco::ElementOutputDescriptorType::Element)
+				, tag(0)
+				, dummy_section_flag(false)
+				, gp_number(0)
+				, gp_eta(0.0)
+				, gp_weight(0.0)
+				, fib_y(0.0)
+				, fib_z(0.0)
+				, fib_a(0.0)
+				, components()
+				, items()
+			{}
+
+			OutputDescriptor(const OutputDescriptor &other)
+				: type(other.type)
+				, tag(other.tag)
+				, dummy_section_flag(other.dummy_section_flag)
+				, gp_number(other.gp_number)
+				, gp_eta(other.gp_eta)
+				, gp_weight(other.gp_weight)
+				, fib_y(other.fib_y)
+				, fib_z(other.fib_z)
+				, fib_a(other.fib_a)
+				, components(other.components)
+				, items()
+			{
+				// make a deep copy of subitems
+				items.resize(other.items.size());
+				for (size_t i = 0; i < other.items.size(); i++)
+					items[i] = new OutputDescriptor(*other.items[i]);
+			}
+
+			~OutputDescriptor() {
+				for (size_t i = 0; i < items.size(); i++)
+					if (items[i])
+						delete items[i];
+			}
+
+			OutputDescriptor &operator = (const OutputDescriptor &other) {
+				if (this != &other) {
+					type = other.type;
+					tag = other.tag;
+					dummy_section_flag = other.dummy_section_flag;
+					gp_number = other.gp_number;
+					gp_eta = other.gp_eta;
+					gp_weight = other.gp_weight;
+					fib_y = other.fib_y;
+					fib_z = other.fib_z;
+					fib_a = other.fib_a;
+					components = other.components;
+					// make a deep copy of subitems
+					items.resize(other.items.size());
+					for (size_t i = 0; i < other.items.size(); i++)
+						items[i] = new OutputDescriptor(*other.items[i]);
+				}
+				return *this;
+			}
+
+		public:
+			// generic
+			mpco::ElementOutputDescriptorType::Enum type;
+			// for material or section
+			int tag;
+			bool dummy_section_flag;
+			// for gauss point
+			int gp_number;
+			double gp_eta; // use only eta (for 1D custom integration)
+			double gp_weight;
+			// for fibers
+			double fib_y;
+			double fib_z;
+			double fib_a;
+			// components (if items.size() == 0)
+			std::vector<std::string> components;
+			// subitems
+			std::vector<OutputDescriptor*> items;
+
+		public:
+			std::string toString()const {
+				std::stringstream ss;
+				/*
+				this prints a xml-like structure, just for debugging purposes
+				*/
+				ss << "----------------------------------------------------\n";
+				ss << "OutputDescriptor info\n";
+				ss << "----------------------------------------------------\n";
+				ss << "XML-like structure\n";
+				printInfo(0, ss);
+				ss << "----------------------------------------------------\n";
+				return ss.str();
+			}
+
+			void getGaussLocations(std::vector<double> &x) const {
+				x.clear();
+				appendGaussLocation(x);
+				if (x.size() == 1) {
+					x[0] = 0.0;
+				}
+				else {
+					double xmin = std::numeric_limits<double>::max();
+					double xmax = -xmin;
+					for (size_t i = 0; i < x.size(); i++) {
+						double ieta = x[i];
+						if (ieta < xmin)
+							xmin = ieta;
+						else if (ieta > xmax)
+							xmax = ieta;
+					}
+					double span = xmax - xmin;
+					if (span == 0.0) {
+						for (size_t i = 0; i < x.size(); i++)
+							x[i] = 0.0;
+					}
+					else {
+						for (size_t i = 0; i < x.size(); i++)
+							x[i] = 2.0*(x[i] - xmin) / span - 1.0;
+					}
+				}
+			}
+
+			void appendGaussLocation(std::vector<double>& x) const {
+				if (type == mpco::ElementOutputDescriptorType::Gauss)
+					x.push_back(gp_eta);
+				for (size_t i = 0; i < items.size(); i++)
+					items[i]->appendGaussLocation(x);
+			}
+
+			void appendGaussWeight(std::vector<double>& x) const {
+				if (type == mpco::ElementOutputDescriptorType::Gauss)
+					x.push_back(gp_weight);
+				for (size_t i = 0; i < items.size(); i++)
+					items[i]->appendGaussWeight(x);
+			}
+
+			void getFiberData(std::vector<mpco::element::FiberData> &data,
+				std::vector<int> &data_mat_id,
+				std::vector<int> &sec_id,
+				std::vector<int> &gp_id,
+				std::vector<bool> &dummy_sec_flags)const {
+				data.clear();
+				data_mat_id.clear();
+				sec_id.clear();
+				gp_id.clear();
+				int *temp_gp = 0;
+				int *temp_sec = 0;
+				bool *temp_dummy = 0;
+				appendFiberData(data, data_mat_id,
+					sec_id, gp_id, dummy_sec_flags, temp_sec, temp_gp, temp_dummy);
+				if (temp_gp)
+					delete temp_gp;
+				if (temp_sec)
+					delete temp_sec;
+				if (temp_dummy)
+					delete temp_dummy;
+			}
+
+			mpco::element::OutputDescriptorHeader makeHeader()const {
+				mpco::element::OutputDescriptorHeader header;
+				std::list<int> temp_path;
+				int temp_gp_id(-1);
+				makeHeaderInternal(header, temp_path, temp_gp_id);
+				return header;
+			}
+
+			void fixFloatingFiberOutput() {
+				/*
+				for some reason, some fiber-based cross section do not write the SectionOutput-tag before the FiberOutput-tag.
+				this make things complicated and not robust. this is a workaround to fix this problem.
+				*/
+				fixFloatingFiberOutputInternal();
+			}
+
+			void fixSectionAfterFiberDueToFiberOutputFail() {
+				/*
+				due to a recent commit, the SectionForceDeformation first checks for fibers.
+				If it fails when the fiber does not have the requested output, the SectionForceDeformation
+				falls back to its setResponse, thus opening a section tag after a fiber tag without giving any result.
+				This messes up everything!
+				*/
+				fixSectionAfterFiberDueToFiberOutputFailInternal();
+			}
+
+			int getNextGpTag() {
+				int next_gp_tag = -1;
+				getNextGpTagInternal(next_gp_tag);
+				return next_gp_tag + 1;
+			}
+
+			void purge() {
+				mergeGaussInternal();
+				mergeSecInternal();
+			}
+
+		private:
+			void printInfo(int level, std::stringstream &ss) const {
+				std::stringstream ss_indent;
+				for (int i = 0; i < level; i++) ss_indent << "\t";
+				std::string indent = ss_indent.str();
+				ss << indent << "<" << mpco::ElementOutputDescriptorType::toString(this->type);
+				if (this->type == mpco::ElementOutputDescriptorType::Gauss) {
+					ss << " number=\"" << this->gp_number << "\" eta=\"" << this->gp_eta << "\" weight=\"" << this->gp_weight << "\"";
+				}
+				else if (this->type == mpco::ElementOutputDescriptorType::Section) {
+					ss << " tag=\"" << this->tag << "\"";
+				}
+				else if (this->type == mpco::ElementOutputDescriptorType::Material) {
+					ss << " tag=\"" << this->tag << "\"";
+				}
+				ss << ">\n";
+				for (int i = 0; i < this->components.size(); i++) {
+					ss << indent << "\t" << components[i] << "\n";
+				}
+				for (int i = 0; i < items.size(); i++) {
+					items[i]->printInfo(level + 1, ss);
+				}
+				ss << indent << "</" << mpco::ElementOutputDescriptorType::toString(this->type) << ">\n";
+			}
+
+			void makeHeaderInternal(mpco::element::OutputDescriptorHeader &header, std::list<int> &temp_path, int &temp_gp_id) const {
+				if (type == mpco::ElementOutputDescriptorType::Gauss)
+					temp_gp_id = gp_number;
+				temp_path.push_back((int)type);
+				if (components.size() > 0 || items.size() == 0) {
+					header.num_columns += (int)components.size();
+					int next_num_components = (int)components.size();
+					int next_gauss_id = temp_gp_id;
+					std::vector<int> next_components_path(temp_path.begin(), temp_path.end());
+					if (header.multiplicity.size() == 0) {
+						header.num_components.push_back(next_num_components);
+						header.gauss_id.push_back(next_gauss_id);
+						header.components_path.push_back(next_components_path);
+						header.components.push_back(components);
+						header.multiplicity.push_back(1);
+					}
+					else {
+						bool equal_to_previous = false;
+						size_t last_index = header.multiplicity.size() - 1;
+						if (header.num_components[last_index] == next_num_components) {
+							if (header.gauss_id[last_index] == next_gauss_id) {
+								if (utils::misc::areVectorsEqual(header.components_path[last_index], next_components_path)) {
+									if (utils::misc::areVectorsEqual(header.components[last_index], components)) {
+										equal_to_previous = true;
+									}
+								}
+							}
+						}
+						if (equal_to_previous) {
+							header.multiplicity[last_index]++;
+						}
+						else {
+							header.num_components.push_back(next_num_components);
+							header.gauss_id.push_back(next_gauss_id);
+							header.components_path.push_back(next_components_path);
+							header.components.push_back(components);
+							header.multiplicity.push_back(1);
+						}
+					}
+				}
+				for (size_t i = 0; i < items.size(); i++)
+					items[i]->makeHeaderInternal(header, temp_path, temp_gp_id);
+				temp_path.pop_back();
+			}
+
+			void appendFiberData(std::vector<mpco::element::FiberData> &data, std::vector<int> &data_mat_id,
+				std::vector<int> &sec_id, std::vector<int> &gp_id, std::vector<bool> &dummy_sec_flags,
+				int* &temp_sec, int* &temp_gp, bool* &temp_dummy) const {
+				if (type == mpco::ElementOutputDescriptorType::Gauss) {
+					if (temp_gp == 0)
+						temp_gp = new int();
+					*temp_gp = gp_number;
+				}
+				else if (type == mpco::ElementOutputDescriptorType::Section) {
+					if (temp_sec == 0)
+						temp_sec = new int();
+					if (temp_dummy == 0)
+						temp_dummy = new bool();
+					*temp_sec = tag;
+					*temp_dummy = dummy_section_flag;
+				}
+				else if (type == mpco::ElementOutputDescriptorType::Fiber) {
+					data.push_back(mpco::element::FiberData(fib_y, fib_z, fib_a));
+					int fiber_mat_tag = -1;
+					if (items.size() == 1) {
+						if (items[0]->type == mpco::ElementOutputDescriptorType::Material) {
+							fiber_mat_tag = items[0]->tag;
+						}
+					}
+					data_mat_id.push_back(fiber_mat_tag);
+				}
+				if (type == mpco::ElementOutputDescriptorType::Fiber || items.size() == 0) {
+					if (temp_sec)
+						sec_id.push_back(*temp_sec);
+					if (temp_gp)
+						gp_id.push_back(*temp_gp);
+					if (temp_dummy)
+						dummy_sec_flags.push_back(*temp_dummy);
+					/** \bug-fixed note here we MUST exit, avoiding asking to sub-items.
+					for example if this item is a fiber, it may have sub-times like material!
+					*/
+					return;
+				}
+				// ask subitems
+				for (size_t i = 0; i < items.size(); i++) {
+					items[i]->appendFiberData(data, data_mat_id,
+						sec_id, gp_id, dummy_sec_flags, temp_sec, temp_gp, temp_dummy);
+				}
+			}
+
+			void fixFloatingFiberOutputInternal() {
+				if (items.size() > 0) {
+					if (type != mpco::ElementOutputDescriptorType::Section) {
+						if (items[0]->type == mpco::ElementOutputDescriptorType::Fiber) {
+							/* check only the first one. items are of the same type... */
+							OutputDescriptor *dummy_section_level = new OutputDescriptor();
+							dummy_section_level->type = mpco::ElementOutputDescriptorType::Section;
+							dummy_section_level->tag = -123456;
+							dummy_section_level->dummy_section_flag = true;
+							dummy_section_level->items = items;
+							items.clear();
+							items.push_back(dummy_section_level);
+						}
+					}
+					for (size_t i = 0; i < items.size(); i++)
+						items[i]->fixFloatingFiberOutputInternal();
+				}
+			}
+
+			void fixSectionAfterFiberDueToFiberOutputFailInternal() {
+				if (items.size() > 0) {
+					if (items[0]->type == mpco::ElementOutputDescriptorType::Fiber) {
+						/* check only the first one. items are of the same type...*/
+						if (items.size() > 1) {
+							if (items.back()->type != mpco::ElementOutputDescriptorType::Fiber) {
+								items.pop_back();
+							}
+						}
+					}
+					for (size_t i = 0; i < items.size(); i++)
+						items[i]->fixSectionAfterFiberDueToFiberOutputFailInternal();
+				}
+			}
+
+			void getNextGpTagInternal(int &next_gp_tag) {
+				if (type == mpco::ElementOutputDescriptorType::Gauss) {
+					if (next_gp_tag < gp_number)
+						next_gp_tag = gp_number;
+				}
+				else {
+					for (size_t i = 0; i < items.size(); i++)
+						items[i]->getNextGpTagInternal(next_gp_tag);
+				}
+			}
+
+			void mergeGaussInternal() {
+				/* if multiple gauss items with same id exist, merge their contents
+				\todo: check if the order of fibers is preserved..
+				note mandatory now, because when asking for multiple sections, duplicate gauss points are produced
+				but only the first one is filled
+				*/
+				if (items.size() > 0) {
+					if (items[0]->type == mpco::ElementOutputDescriptorType::Gauss) {
+						// all sub items are gauss descriptors, let's merge them
+						std::map<int, OutputDescriptor*> aux;
+						for (size_t i = 0; i < items.size(); i++) {
+							OutputDescriptor* curr_item = items[i];
+							std::map<int, OutputDescriptor*>::iterator it = aux.find(curr_item->gp_number);
+							if (it == aux.end()) { // non existing
+								aux[curr_item->gp_number] = curr_item;
+							}
+							else { // existing, move curr_item->items into existing_item->items
+								OutputDescriptor* existing_item = it->second;
+								for (size_t j = 0; j < curr_item->items.size(); j++)
+									existing_item->items.push_back(curr_item->items[j]);
+								curr_item->items.clear();
+							}
+						}
+						items.clear();
+						for (std::map<int, OutputDescriptor*>::iterator it = aux.begin(); it != aux.end(); ++it) {
+							items.push_back(it->second);
+						}
+					}
+					else {
+						for (size_t i = 0; i < items.size(); i++)
+							items[i]->mergeGaussInternal();
+					}
+				}
+			}
+
+			void mergeSecInternal() {
+				if (items.size() > 0) {
+					if (items[0]->type == mpco::ElementOutputDescriptorType::Section) {
+						// all sub items are section descriptors, let's merge them
+						std::map<int, OutputDescriptor*> aux;
+						for (size_t i = 0; i < items.size(); i++) {
+							OutputDescriptor* curr_item = items[i];
+							std::map<int, OutputDescriptor*>::iterator it = aux.find(curr_item->tag);
+							if (it == aux.end()) { // non existing
+								aux[curr_item->tag] = curr_item;
+							}
+							else { // existing, move curr_item->items into existing_item->items
+								OutputDescriptor* existing_item = it->second;
+								for (size_t j = 0; j < curr_item->items.size(); j++)
+									existing_item->items.push_back(curr_item->items[j]);
+								curr_item->items.clear();
+							}
+						}
+						items.clear();
+						for (std::map<int, OutputDescriptor*>::iterator it = aux.begin(); it != aux.end(); ++it) {
+							items.push_back(it->second);
+						}
+					}
+					else {
+						for (size_t i = 0; i < items.size(); i++)
+							items[i]->mergeSecInternal();
+					}
+				}
+			}
+		};
+
+		class OutputDescriptorStream : public OPS_Stream
+		{
+		public:
+			enum StreamErrorCode {
+				ERROR_CODE_OK = 0,
+				ERROR_CODE_SECTION_AFTER_FIBER,
+				ERROR_CODE_GENERIC
+			};
+		public:
+			OutputDescriptorStream(mpco::element::OutputDescriptor * _d)
+				: OPS_Stream(OPS_STREAM_TAGS_MPCOL_ElementOutputDescriptorStream)
+				, descr(_d)
+				, current_level(0)
+				, pending_close_tag(false)
+				, error_code(ERROR_CODE_OK)
+			{}
+			~OutputDescriptorStream() {}
+
+			int tag(const char *name) {
+				// get the element output descriptor at current level and id
+				mpco::element::OutputDescriptor *eo_curr_lev = descr;
+				for (int i = 1; i <= current_level; i++) {
+					if (eo_curr_lev->items.size() == 0) {
+						opserr << "MPCORecorder Error: cannot set attribute(name, int), empty item list.\n";
+						exit(-1);
+					}
+					eo_curr_lev = eo_curr_lev->items[eo_curr_lev->items.size() - 1];
+				}
+				if (current_level == 0) {
+					if (strcmp(name, "ElementOutput") == 0) {
+						/** nothing to do. this is the root of the result tree*/
+					}
+					/* gauss output is the first entry */
+					else if (strcmp(name, "GaussPoint") == 0 || strcmp(name, "GaussPointOutput") == 0) {
+						mpco::element::OutputDescriptor *eo_new_curr_lev = new mpco::element::OutputDescriptor();
+						eo_new_curr_lev->type = mpco::ElementOutputDescriptorType::Gauss;
+						ensureItemsOfUniformType(eo_curr_lev, eo_new_curr_lev);
+						eo_curr_lev->items.push_back(eo_new_curr_lev);
+						current_level++;
+					}
+					else {
+						/*opserr <<
+						"MPCORecorder Error: invalid tag at level 0:\n"
+						"expected \"GaussPoint\" or \"GaussPointOutput\", given \"" << name << "\"\n";
+						exit(-1);*/
+						/*
+						let's try a last workaround for an inconsistency problem found in SSPbrick:
+						in that element, in setResponse, the material's setResponse method is called without opening a GaussPoint tag...
+						*/
+						//simulate: tag("GaussPoint");
+						{
+							mpco::element::OutputDescriptor *eo_new_curr_lev = new mpco::element::OutputDescriptor();
+							eo_new_curr_lev->type = mpco::ElementOutputDescriptorType::Gauss;
+							ensureItemsOfUniformType(eo_curr_lev, eo_new_curr_lev);
+							eo_curr_lev->items.push_back(eo_new_curr_lev);
+							current_level++;
+						}
+						// create the attribute 
+						attr("number", descr->getNextGpTag());
+						/*
+						close the gauss tag. we cannot do it here. Just set the pending_close_tag to true, so that
+						when the 'real' tag gets closed, we automatically close the 'manual' gauss tag
+						*/
+						pending_close_tag = true;
+						// recursion: recall this request now inside a gauss point tag
+						tag(name);
+					}
+				}
+				else if (current_level > 0) {
+					if (strcmp(name, "NdMaterialOutput") == 0 || strcmp(name, "UniaxialMaterialOutput") == 0) {
+						// its parent can be anything but ElementOutput, ok if current_level > 1
+						mpco::element::OutputDescriptor *eo_new_curr_lev = new mpco::element::OutputDescriptor();
+						eo_new_curr_lev->type = mpco::ElementOutputDescriptorType::Material;
+						ensureItemsOfUniformType(eo_curr_lev, eo_new_curr_lev);
+						if (eo_curr_lev->items.size() > 0) {
+							// multiple materials cannot be children of same gauss/fiber point. this happens when
+							// an objects opens the tag, fails in getting response, and falls back to base class implementation,
+							// which opens again the same tag
+							for (mpco::element::OutputDescriptor* sub_item : eo_curr_lev->items)
+								delete sub_item;
+							eo_curr_lev->items.clear();
+						}
+						eo_curr_lev->items.push_back(eo_new_curr_lev);
+						current_level++;
+					}
+					else if (strcmp(name, "SectionOutput") == 0 || strcmp(name, "SectionForceDeformation") == 0) {
+						// its parent can be GaussOutput or another SectionOutput
+						if (!(eo_curr_lev->type == mpco::ElementOutputDescriptorType::Gauss || eo_curr_lev->type == mpco::ElementOutputDescriptorType::Section)) {
+							opserr <<
+								"MPCORecorder Error: invalid parent for \"" << name << "\" tag:\n"
+								"expected \"GaussOutput\" or \"GaussPointOutput\""
+								" or \"SectionOutput\" or \"SectionForceDeformation\", parent tag = \""
+								<< mpco::ElementOutputDescriptorType::toString(eo_curr_lev->type) << "\"\n";
+							exit(-1);
+						}
+						mpco::element::OutputDescriptor *eo_new_curr_lev = new mpco::element::OutputDescriptor();
+						eo_new_curr_lev->type = mpco::ElementOutputDescriptorType::Section;
+						ensureItemsOfUniformType(eo_curr_lev, eo_new_curr_lev);
+						if (error_code == ERROR_CODE_OK) {
+							if (eo_curr_lev->items.size() > 0) {
+								// multiple sections cannot be children of same gauss point. this happens when
+								// an objects opens the tag, fails in getting response, and falls back to base class implementation,
+								// which opens again the same tag
+								for (mpco::element::OutputDescriptor* sub_item : eo_curr_lev->items)
+									delete sub_item;
+								eo_curr_lev->items.clear();
+							}
+							// do the above check only if there is no inconsistency with previous items!
+						}
+						eo_curr_lev->items.push_back(eo_new_curr_lev);
+						current_level++;
+					}
+					else if (strcmp(name, "FiberOutput") == 0) {
+						// its parent can be only a SectionOutput
+						if (!(eo_curr_lev->type == mpco::ElementOutputDescriptorType::Section || eo_curr_lev->type == mpco::ElementOutputDescriptorType::Gauss)) {
+							opserr <<
+								"MPCORecorder Error: invalid parent for \"" << name << "\" tag:\n"
+								"expected \"GaussOutput\" or \"GaussPointOutput\""
+								" or \"SectionOutput\" or \"SectionForceDeformation\", parent tag = \""
+								<< mpco::ElementOutputDescriptorType::toString(eo_curr_lev->type) << "\"\n";
+							exit(-1);
+						}
+						mpco::element::OutputDescriptor *eo_new_curr_lev = new mpco::element::OutputDescriptor();
+						eo_new_curr_lev->type = mpco::ElementOutputDescriptorType::Fiber;
+						ensureItemsOfUniformType(eo_curr_lev, eo_new_curr_lev);
+						eo_curr_lev->items.push_back(eo_new_curr_lev);
+						current_level++;
+					}
+					else {
+						/*
+						let's try a last workaround for an inconsistency problem found in ForceBeamColumn3d:
+						in that element, in setResponse, if multiple sections are requested the GaussOutput tag is not
+						closed...
+						*/
+						if ((strcmp(name, "GaussPoint") == 0 || strcmp(name, "GaussPointOutput") == 0) && current_level == 1) {
+							endTag();
+							tag(name);
+						}
+						else {
+							opserr <<
+								"MPCORecorder Error: invalid tag at level " << current_level << ":\n"
+								"expected \"NdMaterialOutput\" or \"UniaxialMaterialOutput\""
+								" or \"SectionOutput\" or \"SectionForceDeformation\""
+								" or \"FiberOutput\""
+								", given \"" << name << "\"\n";
+							exit(-1);
+						}
+					}
+				}
+				return 0;
+			};
+
+			int tag(const char *name, const char *value) {
+				mpco::element::OutputDescriptor *eo_curr_lev = descr;
+				for (int i = 1; i <= current_level; i++) {
+					if (eo_curr_lev->items.size() == 0) {
+						opserr << "MPCORecorder Error: cannot set attribute(name, int), empty item list.\n";
+						exit(-1);
+					}
+					eo_curr_lev = eo_curr_lev->items[eo_curr_lev->items.size() - 1];
+				}
+				if (strcmp(name, "ResponseType") == 0)
+					eo_curr_lev->components.push_back(value);
+				return 0;
+			};
+
+			int endTag() {
+				if (current_level > 0) {
+					// decrement the current level
+					current_level--;
+				}
+				if (pending_close_tag) {
+					// once more...
+					if (current_level > 0) {
+						// decrement the current level
+						current_level--;
+					}
+					pending_close_tag = false;
+				}
+				return 0;
+			};
+
+			int attr(const char *name, int value) {
+				if (current_level > 0) {
+					mpco::element::OutputDescriptor *eo_curr_lev = descr;
+					for (int i = 1; i <= current_level; i++) {
+						if (eo_curr_lev->items.size() == 0) {
+							opserr << "MPCORecorder Error: cannot set attribute(name, int), empty item list.\n";
+							exit(-1);
+						}
+						eo_curr_lev = eo_curr_lev->items[eo_curr_lev->items.size() - 1];
+					}
+					if (eo_curr_lev->type == mpco::ElementOutputDescriptorType::Gauss) {
+						if (strcmp(name, "number") == 0)
+							eo_curr_lev->gp_number = value - 1; // note: make it 0-based
+					}
+					else if (eo_curr_lev->type == mpco::ElementOutputDescriptorType::Material) {
+						if (strcmp(name, "tag") == 0 || strcmp(name, "matTag") == 0)
+							eo_curr_lev->tag = value;
+					}
+					else if (eo_curr_lev->type == mpco::ElementOutputDescriptorType::Section) {
+						if (strcmp(name, "tag") == 0 || strcmp(name, "secTag") == 0)
+							eo_curr_lev->tag = value;
+					}
+				}
+				return 0;
+			};
+
+			int attr(const char *name, double value) {
+				if (current_level > 0) {
+					mpco::element::OutputDescriptor *eo_curr_lev = descr;
+					for (int i = 1; i <= current_level; i++) {
+						if (eo_curr_lev->items.size() == 0) {
+							opserr << "MPCORecorder Error: cannot set attribute(name, int), empty item list.\n";
+							exit(-1);
+						}
+						eo_curr_lev = eo_curr_lev->items[eo_curr_lev->items.size() - 1];
+					}
+					if (eo_curr_lev->type == mpco::ElementOutputDescriptorType::Gauss) {
+						if (strcmp(name, "eta") == 0)
+							eo_curr_lev->gp_eta = value;
+						if (strcmp(name, "weight") == 0)
+							eo_curr_lev->gp_weight = value;
+					}
+					else if (eo_curr_lev->type == mpco::ElementOutputDescriptorType::Fiber) {
+						if (strcmp(name, "yLoc") == 0)
+							eo_curr_lev->fib_y = value;
+						else if (strcmp(name, "zLoc") == 0)
+							eo_curr_lev->fib_z = value;
+						else if ((strcmp(name, "area") == 0) || (strcmp(name, "thickness") == 0))
+							eo_curr_lev->fib_a = value;
+					}
+				}
+				return 0;
+			};
+
+			int attr(const char *name, const char *value) { return 0; };
+			int write(Vector &data) { return 0; };
+
+			OPS_Stream& write(const char *s, int n) { return *this; };
+			OPS_Stream& write(const unsigned char *s, int n) { return *this; };
+			OPS_Stream& write(const signed char *s, int n) { return *this; };
+			OPS_Stream& write(const void *s, int n) { return *this; };
+			OPS_Stream& operator<<(char c) { return *this; };
+			OPS_Stream& operator<<(unsigned char c) { return *this; };
+			OPS_Stream& operator<<(signed char c) { return *this; };
+			OPS_Stream& operator<<(const char *s) { return *this; };
+			OPS_Stream& operator<<(const unsigned char *s) { return *this; };
+			OPS_Stream& operator<<(const signed char *s) { return *this; };
+			OPS_Stream& operator<<(const void *p) { return *this; };
+			OPS_Stream& operator<<(int n) { return *this; };
+			OPS_Stream& operator<<(unsigned int n) { return *this; };
+			OPS_Stream& operator<<(long n) { return *this; };
+			OPS_Stream& operator<<(unsigned long n) { return *this; };
+			OPS_Stream& operator<<(short n) { return *this; };
+			OPS_Stream& operator<<(unsigned short n) { return *this; };
+			OPS_Stream& operator<<(bool b) { return *this; };
+			OPS_Stream& operator<<(double n) { return *this; };
+			OPS_Stream& operator<<(float n) { return *this; };
+
+			int sendSelf(int commitTag, Channel &theChannel) { return 0; };
+			int recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &theBroker) { return 0; };
+
+		public:
+			void finalizeSetResponse() {
+				while (current_level > 0) {
+					endTag();
+				}
+				/*
+				this method was originally automatically called when a call to endTag determines
+				the end of an ElementOutput. Unfortunately we found out that some elements (ForceBeamColumn3d)
+				do not call endTag after a tag("GaussPointOutput") in case of output from multiple sections.
+				So we need to call it manually.
+				*/
+				/*
+				do some workaround...
+				*/
+				descr->fixFloatingFiberOutput();
+			}
+
+		private:
+			void ensureItemsOfUniformType(mpco::element::OutputDescriptor *parent, mpco::element::OutputDescriptor *child) {
+				if (parent->items.size() > 0) {
+					if (child->type != parent->items.back()->type) {
+						/*opserr << "MPCORecorder Error: (mpco::element::OutputDescriptor) "
+							"Responses at the same level of the response tree must be of the same type.\n"
+							"Expected: " << mpco::ElementOutputDescriptorType::toString(parent->items.back()->type)
+							<< ", given: " << mpco::ElementOutputDescriptorType::toString(child->type) << "\n";
+						exit(-1);*/
+						// M.Petracca - due to a recent commit (08/10/2021)
+						// this one can be converted from a fatal error to a silent-skip...
+						error_code = ERROR_CODE_GENERIC;
+						if ((child->type == mpco::ElementOutputDescriptorType::Section) &&
+							(parent->items.back()->type == mpco::ElementOutputDescriptorType::Fiber)) {
+							error_code = ERROR_CODE_SECTION_AFTER_FIBER;
+						}
+					}
+				}
+			}
+
+		public:
+			mpco::element::OutputDescriptor *descr;
+			int current_level;
+			bool pending_close_tag;
+			StreamErrorCode error_code;
+		};
+
+		class OutputResponse
+		{
+		public:
+			OutputResponse()
+				: response(0)
+				, element(0)
+			{}
+			OutputResponse(Element *_elem, Response *_resp)
+				: response(_resp)
+				, element(_elem)
+			{}
+			Response *response;
+			Element *element;
+		};
+
+		struct OutputResponseCollection
+		{
+			OutputResponseCollection()
+				: is_new(true)
+				, dir_name("")
+				, initialized(false)
+				, items() {}
+			bool is_new;
+			std::string dir_name;
+			bool initialized;
+			std::vector<OutputResponse> items;
+		};
+
+		struct OutputWithSameCustomIntRuleCollection
+		{
+			typedef std::map<OutputDescriptorHeader, OutputResponseCollection> collection_type;
+			collection_type items;
+		};
+
+		struct OutputWithSameIntRuleCollection
+		{
+			typedef std::map<int, OutputWithSameCustomIntRuleCollection> collection_type;
+			collection_type items;
+		};
+
+		struct OutputWithSameClassTagCollection
+		{
+			typedef std::map<ElementIntegrationRuleType::Enum, OutputWithSameIntRuleCollection> collection_type;
+			collection_type items;
+		};
+
+		struct ResultRecorder
+		{
+			typedef std::map<int, OutputWithSameClassTagCollection> collection_type;
+			ResultRecorder()
+				: initialized(false)
+				, result_request()
+				, response_map()
+			{}
+			bool initialized;
+			std::vector<std::string> result_request;
+			collection_type response_map;
+		};
+
+		typedef std::vector<ResultRecorder> ResultRecorderCollection;
+
+		/*************************************************************************************
+
+		utilities for element mapping based on:
+		class tag
+		integration rule
+		default or custom integration rule
+		<element group>
+
+		In this way all elements in <element group> share the same:
+		1) number of nodes, 2) number and location of integration points
+
+		**************************************************************************************/
+
+		struct ElementIntegrationRule
+		{
+			ElementIntegrationRule()
+				: int_rule_type(ElementIntegrationRuleType::CustomIntegrationRule)
+			{}
+			ElementIntegrationRule(ElementIntegrationRuleType::Enum _int_rule_type)
+				: int_rule_type(_int_rule_type)
+			{}
+			inline bool operator < (const ElementIntegrationRule &other) const {
+				const double rel_tol = 1.0e-5;
+				if (int_rule_type < other.int_rule_type) return true;
+				if (int_rule_type > other.int_rule_type) return false;
+				if (custom_rule_dimension < other.custom_rule_dimension) return true;
+				if (custom_rule_dimension > other.custom_rule_dimension) return false;
+				if (x.size() < other.x.size()) return true;
+				if (x.size() > other.x.size()) return false;
+				for (size_t i = 0; i < x.size(); i++) {
+					double tol = std::max(std::abs(x[i]), std::abs(other.x[i]))*rel_tol;
+					if (utils::misc::lessThanWithTol(x[i], other.x[i], rel_tol)) return true;
+					if (utils::misc::greaterThanWithTol(x[i], other.x[i], rel_tol)) return false;
+					// continue with the loop
+				}
+				return false; // everything is equal
+			}
+			inline bool operator > (const ElementIntegrationRule &other) const {
+				const double rel_tol = 1.0e-5;
+				if (int_rule_type > other.int_rule_type) return true;
+				if (int_rule_type < other.int_rule_type) return false;
+				if (custom_rule_dimension > other.custom_rule_dimension) return true;
+				if (custom_rule_dimension < other.custom_rule_dimension) return false;
+				if (x.size() > other.x.size()) return true;
+				if (x.size() < other.x.size()) return false;
+				for (size_t i = 0; i < x.size(); i++) {
+					double tol = std::max(std::abs(x[i]), std::abs(other.x[i]))*rel_tol;
+					if (utils::misc::greaterThanWithTol(x[i], other.x[i], rel_tol)) return true;
+					if (utils::misc::lessThanWithTol(x[i], other.x[i], rel_tol)) return false;
+					// continue with the loop
+				}
+				return false; // everything is equal
+			}
+			ElementIntegrationRuleType::Enum int_rule_type;
+			std::vector<double> x;
+			int custom_rule_dimension = 1;
+		};
+
+		struct ElementWithSameCustomIntRuleCollection
+		{
+			typedef std::vector<Element*> collection_type;
+
+			ElementWithSameCustomIntRuleCollection()
+				: is_new(true), custom_int_rule_index(0), name(""), items()
+			{}
+
+			bool is_new;
+			int custom_int_rule_index;
+			std::string name;
+			std::vector<Element*> items;
+		};
+
+		struct ElementWithSameIntRuleCollection
+		{
+			typedef std::map<int, ElementWithSameCustomIntRuleCollection> submap_type;
+
+			ElementWithSameIntRuleCollection()
+				: is_new(true), int_rule_type(ElementIntegrationRuleType::CustomIntegrationRule), items()
+			{}
+
+			bool is_new;
+			ElementIntegrationRuleType::Enum int_rule_type;
+			std::map<int, ElementWithSameCustomIntRuleCollection> items;
+		};
+
+		struct ElementWithSameClassTagCollection
+		{
+			typedef std::map<ElementIntegrationRuleType::Enum, ElementWithSameIntRuleCollection> submap_type;
+
+			ElementWithSameClassTagCollection()
+				: is_new(true), class_tag(0), class_name("unknown"), num_nodes(0), geom_type(ElementGeometryType::Custom), items() {}
+
+			bool is_new;
+			int class_tag;
+			std::string class_name;
+			int num_nodes;
+			ElementGeometryType::Enum geom_type;
+			std::map<mpco::ElementIntegrationRuleType::Enum, ElementWithSameIntRuleCollection> items;
+		};
+
+		struct ElementCollection
+		{
+			typedef std::map<int, ElementWithSameClassTagCollection> submap_type;
+
+			ElementCollection()
+				: registered_custom_rules(), items()
+			{}
+
+			void mapElements(Domain *d, bool has_region, const std::vector<int> &subset) {
+				/*
+				utilties
+				*/
+				auto lam_get_num_ext_nodes = [](Element* elem) {
+					switch (elem->getClassTag()) {
+					case ELE_TAG_SFI_MVLEM_3D: return 4;
+					default: return elem->getNumExternalNodes();
+					}
+				};
+				/*
+				clear previous mappings
+				*/
+				registered_custom_rules.clear();
+				items.clear();
+				/*
+				quick return
+				*/
+				if (d == 0) return;
+				/*
+				auxiliary map to register custom rules
+				*/
+				std::map<ElementIntegrationRule, int> aux_map_custom_rules;
+				/*
+				loop over all elements in the domain
+				*/
+				size_t subset_elem_counter(0);
+				ElementIter* element_iter = &(d->getElements());
+				Element* current_element = 0;
+				//while ((current_element = (*element_iter)()) != 0) {
+				while (true) {
+					/*
+					get next element
+					*/
+					if (has_region) {
+						if (subset_elem_counter == subset.size())
+							break;
+						current_element = d->getElement(subset[subset_elem_counter++]);
+						if (current_element == 0)
+							continue; // skip null and go to next iteration
+					}
+					else {
+						current_element = (*element_iter)();
+						if (current_element == 0) 
+							break; 
+					}
+					/*
+					get class tag, geometry and integration rule type
+					*/
+					int elem_type = current_element->getClassTag();
+					/*
+					skip element classes that we don't want to record
+					*/
+					if (elem_type == ELE_TAG_Subdomain ||
+						elem_type == ELE_TAG_ASDEmbeddedNodeElement)
+					{
+						continue;
+					}
+					ElementGeometryType::Enum geom_type;
+					ElementIntegrationRuleType::Enum int_rule_type;
+					int custom_rule_dimension;
+					getGeometryAndIntRuleByClassTag(elem_type, geom_type, int_rule_type, custom_rule_dimension);
+					/*
+					map by class tag
+					*/
+					ElementWithSameClassTagCollection &elem_coll_by_tag = items[elem_type];
+					if (elem_coll_by_tag.is_new) {
+						elem_coll_by_tag.class_tag = elem_type;
+						elem_coll_by_tag.class_name = current_element->getClassType();
+						elem_coll_by_tag.num_nodes = lam_get_num_ext_nodes(current_element);
+						elem_coll_by_tag.geom_type = geom_type;
+						elem_coll_by_tag.is_new = false;
+					}
+					/*
+					make sure that every element with the same tag have the same number of nodes
+					*/
+					if (lam_get_num_ext_nodes(current_element) != elem_coll_by_tag.num_nodes) {
+						opserr << "MPCORecorder Error while mapping elements: elements with different number of nodes "
+							"exist within the same class tag. This is not supported\n";
+						exit(-1);
+					}
+					/*
+					create the integration rule
+					*/
+					ElementIntegrationRule int_rule(int_rule_type);
+					if (int_rule_type == ElementIntegrationRuleType::CustomIntegrationRule) {
+						getCustomGaussPointLocations(current_element, int_rule);
+						int_rule.custom_rule_dimension = custom_rule_dimension;
+					}
+					/*
+					if this is a custom rule, register it
+					*/
+					int custom_int_rule_index = 0;
+					if (int_rule_type == ElementIntegrationRuleType::CustomIntegrationRule) {
+						std::map<ElementIntegrationRule, int>::iterator reg_int_rule_iter = aux_map_custom_rules.find(int_rule);
+						if (reg_int_rule_iter == aux_map_custom_rules.end()) {
+							// new rule, define a new index starting from 1
+							custom_int_rule_index = (int)aux_map_custom_rules.size() + 1;
+							aux_map_custom_rules[int_rule] = custom_int_rule_index;
+						}
+						else {
+							custom_int_rule_index = reg_int_rule_iter->second;
+						}
+					}
+					/*
+					map by integration rule
+					*/
+					ElementWithSameIntRuleCollection &elem_coll_by_rule = elem_coll_by_tag.items[int_rule_type];
+					if (elem_coll_by_rule.is_new) {
+						elem_coll_by_rule.int_rule_type = int_rule_type;
+						elem_coll_by_rule.is_new = false;
+					}
+					/*
+					map by custom integration rule index
+					*/
+					ElementWithSameCustomIntRuleCollection &elem_coll_by_custom_rule = elem_coll_by_rule.items[custom_int_rule_index];
+					if (elem_coll_by_custom_rule.is_new) {
+						elem_coll_by_custom_rule.custom_int_rule_index = custom_int_rule_index;
+						elem_coll_by_custom_rule.is_new = false;
+					}
+					/*
+					finally add this element
+					*/
+					elem_coll_by_custom_rule.items.push_back(current_element);
+				}
+				/*
+				now fill the custom integration rule map
+				*/
+				for (std::map<ElementIntegrationRule, int>::iterator it = aux_map_custom_rules.begin();
+					it != aux_map_custom_rules.end(); ++it) {
+					registered_custom_rules[it->second] = it->first;
+				}
+			}
+
+			void getGeometryAndIntRuleByClassTag(
+				int elem_class_tag,
+				ElementGeometryType::Enum &geom_type,
+				ElementIntegrationRuleType::Enum &int_type,
+				int &custom_rule_dimension) {
+				/*
+				set default values. custom geometry (i.e. point cloud)
+				and no integration rule
+				*/
+				geom_type = ElementGeometryType::Custom;
+				int_type = ElementIntegrationRuleType::NoIntegrationRule;
+				custom_rule_dimension = 1;
+				/*
+				2-node line with 1 gp
+				*/
+				if (
+					// ./adapter actuators
+					elem_class_tag == ELE_TAG_Actuator ||
+					elem_class_tag == ELE_TAG_ActuatorCorot ||
+					// ./absorbentBoundaries
+					elem_class_tag == ELE_TAG_FSIInterfaceElement2D ||
+					elem_class_tag == ELE_TAG_FSIFluidBoundaryElement2D ||
+					// ./truss
+					elem_class_tag == ELE_TAG_Truss ||
+					elem_class_tag == ELE_TAG_Truss2 ||
+					elem_class_tag == ELE_TAG_TrussSection ||
+					elem_class_tag == ELE_TAG_CorotTruss ||
+					elem_class_tag == ELE_TAG_CorotTruss2 ||
+					elem_class_tag == ELE_TAG_CorotTrussSection ||
+					elem_class_tag == ELE_TAG_InertiaTruss ||
+					// ./zeroLength
+					elem_class_tag == ELE_TAG_ZeroLength ||
+					elem_class_tag == ELE_TAG_ZeroLengthSection ||
+					elem_class_tag == ELE_TAG_ZeroLengthND ||
+					elem_class_tag == ELE_TAG_CoupledZeroLength ||
+					elem_class_tag == ELE_TAG_ZeroLengthRocking ||
+					elem_class_tag == ELE_TAG_ZeroLengthContact2D ||
+					elem_class_tag == ELE_TAG_ZeroLengthContact3D ||
+					elem_class_tag == ELE_TAG_ZeroLengthContactASDimplex ||
+					elem_class_tag == ELE_Tag_ZeroLengthImpact3D ||
+					// ./twoNodeLink
+					elem_class_tag == ELE_TAG_TwoNodeLinkSection ||
+					// ./elasticBeamColumn
+					elem_class_tag == ELE_TAG_ElasticBeam2d ||
+					elem_class_tag == ELE_TAG_ElasticBeam3d ||
+					elem_class_tag == ELE_TAG_ElasticTimoshenkoBeam2d ||
+					elem_class_tag == ELE_TAG_ElasticTimoshenkoBeam3d ||
+					elem_class_tag == ELE_TAG_ModElasticBeam2d ||
+					// .elastomericBearing
+					elem_class_tag == ELE_TAG_ElastomericBearingBoucWen2d ||
+					elem_class_tag == ELE_TAG_ElastomericBearingBoucWen3d ||
+					elem_class_tag == ELE_TAG_ElastomericBearingBoucWenMod3d ||
+					elem_class_tag == ELE_TAG_ElastomericBearingPlasticity2d ||
+					elem_class_tag == ELE_TAG_ElastomericBearingPlasticity3d ||
+					elem_class_tag == ELE_TAG_ElastomericBearingUFRP2d ||
+					elem_class_tag == ELE_TAG_ElastomericBearingUFRP3d ||
+					elem_class_tag == ELE_TAG_ElastomericX ||
+					elem_class_tag == ELE_TAG_HDR ||
+					elem_class_tag == ELE_TAG_LeadRubberX ||
+					// ./ulBeamColumn
+					/*warning: these two could go to the beam with custom integration rule, but they do not define everything properly! check in future versions */
+					elem_class_tag == Ele_TAG_Elastic2dGNL || /*warning: no integrationPoints, no resp for all sections, no section response*/
+					elem_class_tag == TAG_InelasticYS2DGNL /*warning: no integrationPoints, no resp for all sections, no section response*/
+														   // todo... others
+					) {
+					geom_type = ElementGeometryType::Line_2N;
+					int_type = ElementIntegrationRuleType::Line_GaussLegendre_1;
+				}
+				/*
+				2-node beams with custom number of gp
+				*/
+				else if (
+					// ./dispBeamColumn
+					elem_class_tag == ELE_TAG_DispBeamColumn2d || /*warning: no integrationPoints*/
+					elem_class_tag == ELE_TAG_DispBeamColumn3d || /*warning: no integrationPoints*/
+					elem_class_tag == ELE_TAG_DispBeamColumn2dWithSensitivity || /*warning: no integrationPoints, no resp for all sections*/
+					elem_class_tag == ELE_TAG_DispBeamColumn3dWithSensitivity || /*warning: no integrationPoints, no resp for all sections*/
+																				 // ./dispBeamColumnInt
+					elem_class_tag == ELE_TAG_DispBeamColumn2dInt || /*warning: no integrationPoints, no resp for all sections*/
+					elem_class_tag == ELE_TAG_DispBeamColumn2dThermal || /*warning: no integrationPoints, no resp for all sections*/
+																		 // ./forceBeamColumn
+					elem_class_tag == ELE_TAG_ElasticForceBeamColumn2d || /*warning: no resp for all sections*/
+					elem_class_tag == ELE_TAG_ElasticForceBeamColumn3d || /*warning: no resp for all sections*/
+					elem_class_tag == ELE_TAG_ElasticForceBeamColumnWarping2d || /*warning: no resp for all sections*/
+					elem_class_tag == ELE_TAG_ForceBeamColumn2d || /* <- OK! this one defines everything ! good job*/
+					elem_class_tag == ELE_TAG_ForceBeamColumn3d || /* <- OK! this one defines everything ! good job*/
+					elem_class_tag == ELE_TAG_ForceBeamColumnCBDI2d || /* <- OK! this one defines everything ! good job*/
+					elem_class_tag == ELE_TAG_ForceBeamColumnWarping2d || /* <- OK! this one defines everything ! good job*/
+					// ./mixedBeamColumn
+					elem_class_tag == ELE_TAG_MixedBeamColumn2d ||
+					elem_class_tag == ELE_TAG_MixedBeamColumn3d
+					) {
+					geom_type = ElementGeometryType::Line_2N;
+					int_type = ElementIntegrationRuleType::CustomIntegrationRule;
+				}
+				/*
+				3-node triangle with 1 gp
+				*/
+				else if (
+					// ./triangle
+					elem_class_tag == ELE_TAG_Tri31
+					) {
+					geom_type = ElementGeometryType::Triangle_3N;
+					int_type = ElementIntegrationRuleType::Triangle_GaussLegendre_1;
+				}
+				/*
+				3-node triangle with 3 gp
+				*/
+				else if (
+					// ./shell
+					elem_class_tag == ELE_TAG_ASDShellT3
+					) {
+					geom_type = ElementGeometryType::Triangle_3N;
+					int_type = ElementIntegrationRuleType::Triangle_GaussLegendre_2B;
+				}
+				/*
+				3-node triangle with 4 gp
+				*/
+				else if (
+					// ./shell
+					elem_class_tag == ELE_TAG_ShellDKGT ||
+					elem_class_tag == ELE_TAG_ShellNLDKGT
+					) {
+					geom_type = ElementGeometryType::Triangle_3N;
+					int_type = ElementIntegrationRuleType::Triangle_GaussLegendre_2C;
+				}
+				/*
+				4-node quadrilateral with 1 gp
+				*/
+				else if (
+					// ./UWelements
+					elem_class_tag == ELE_TAG_SSPquad ||
+					elem_class_tag == ELE_TAG_SSPquadUP ||
+					// ./absorbentBoundaries
+					elem_class_tag == ELE_TAG_ASDAbsorbingBoundary2D ||
+					elem_class_tag == ELE_TAG_FSIFluidElement2D
+					)
+				{
+					geom_type = ElementGeometryType::Quadrilateral_4N;
+					int_type = ElementIntegrationRuleType::Quadrilateral_GaussLegendre_1;
+				}
+				/*
+				4-node quadrilateral with 2x2 gp
+				*/
+				else if (
+					// ./quad
+					elem_class_tag == ELE_TAG_ConstantPressureVolumeQuad ||
+					elem_class_tag == ELE_TAG_EnhancedQuad ||
+					elem_class_tag == ELE_TAG_FourNodeQuad ||
+					elem_class_tag == ELE_TAG_FourNodeQuad3d ||
+					elem_class_tag == ELE_TAG_FourNodeQuadWithSensitivity ||
+					// ./shell
+					elem_class_tag == ELE_TAG_ShellDKGQ ||
+					elem_class_tag == ELE_TAG_ShellNLDKGQ ||
+					elem_class_tag == ELE_TAG_ShellMITC4 ||
+					elem_class_tag == ELE_TAG_ShellMITC4Thermal ||
+					elem_class_tag == ELE_TAG_ASDShellQ4 ||
+					// ./up
+					elem_class_tag == ELE_TAG_BBarFourNodeQuadUP ||
+					elem_class_tag == ELE_TAG_FourNodeQuadUP
+					) {
+					geom_type = ElementGeometryType::Quadrilateral_4N;
+					int_type = ElementIntegrationRuleType::Quadrilateral_GaussLegendre_2;
+				}
+				/*
+				4-node quadrilateral cohesive with custom rule
+				*/
+				else if (
+					// ./mvlem
+					elem_class_tag == ELE_TAG_MVLEM_3D ||
+					elem_class_tag == ELE_TAG_SFI_MVLEM_3D ||
+					elem_class_tag == ELE_TAG_E_SFI_MVLEM_3D
+					) {
+					geom_type = ElementGeometryType::Quadrilateral_CohesiveBand_4N;
+					int_type = ElementIntegrationRuleType::CustomIntegrationRule;
+					custom_rule_dimension = 2;
+				}
+				/*
+				9-node quadrilateral with 3x3 gp
+				*/
+				else if (
+					// ./quad
+					elem_class_tag == ELE_TAG_NineNodeMixedQuad ||
+					elem_class_tag == ELE_TAG_NineNodeQuad ||
+					// ./shell
+					elem_class_tag == ELE_TAG_ShellMITC9 ||
+					// ./up
+					elem_class_tag == ELE_TAG_Nine_Four_Node_QuadUP
+					) {
+					geom_type = ElementGeometryType::Quadrilateral_9N;
+					int_type = ElementIntegrationRuleType::Quadrilateral_GaussLegendre_3;
+				}
+				/*
+				4-node tetrahedron with 4 gp
+				*/
+				else if (
+					// ./tetrahedron
+					elem_class_tag == ELE_TAG_FourNodeTetrahedron
+					)
+				{
+					geom_type = ElementGeometryType::Tetrahedron_4N;
+					int_type = ElementIntegrationRuleType::Tetrahedron_GaussLegendre_1;
+				}
+				/*
+				10-node tetrahedron with 1x1x1 gp
+				*/
+				else if (
+					// ./tetrahedron
+					elem_class_tag == ELE_TAG_TenNodeTetrahedron
+					)
+				{
+					geom_type = ElementGeometryType::Tetrahedron_10N;
+					int_type = ElementIntegrationRuleType::Tetrahedron_GaussLegendre_2;
+				}
+				/*
+				8-node hexahedron with 1x1x1 gp
+				*/
+				else if (
+					// ./UWelements
+					elem_class_tag == ELE_TAG_SSPbrick ||
+					elem_class_tag == ELE_TAG_SSPbrickUP ||
+					// ./absorbentBoundaries
+					elem_class_tag == ELE_TAG_ASDAbsorbingBoundary3D
+					)
+				{
+					geom_type = ElementGeometryType::Hexahedron_8N;
+					int_type = ElementIntegrationRuleType::Hexahedron_GaussLegendre_1;
+				}
+				/*
+				8-node hexahedron with 2x2x2 gp
+				*/
+				else if (
+					// ./brick
+					elem_class_tag == ELE_TAG_BbarBrick ||
+					elem_class_tag == ELE_TAG_BbarBrickWithSensitivity ||
+					elem_class_tag == ELE_TAG_Brick ||
+					// ./up
+					elem_class_tag == ELE_TAG_BBarBrickUP ||
+					elem_class_tag == ELE_TAG_BrickUP ||
+					// ./XMUelements
+					elem_class_tag == ELE_TAG_AC3D8HexWithSensitivity
+					)
+				{
+					geom_type = ElementGeometryType::Hexahedron_8N;
+					int_type = ElementIntegrationRuleType::Hexahedron_GaussLegendre_2;
+				}
+				/*
+				20-node hexahedron with 3x3x3 gp
+				*/
+				else if (
+					// ./brick
+					elem_class_tag == ELE_TAG_Twenty_Node_Brick ||
+					// ./up
+					elem_class_tag == ELE_TAG_Twenty_Eight_Node_BrickUP
+					)
+				{
+					geom_type = ElementGeometryType::Hexahedron_20N;
+					int_type = ElementIntegrationRuleType::Hexahedron_GaussLegendre_3;
+				}
+			}
+
+			void getCustomGaussPointLocations(Element *elem, ElementIntegrationRule &rule) {
+				/*
+				clear any existing locations
+				*/
+				rule.x.clear();
+				/*
+				ask for integrationPoints ...
+				*/
+				{
+					//std::cout << "get custom gp: trying with \"integrationPoints\"...\n";
+					bool done = false;
+					std::string request = "integrationPoints";
+					int argc = 1;
+					const char **argv = new const char*[argc];
+					argv[0] = request.c_str();
+					OutputDescriptor eo_descriptor;
+					OutputDescriptorStream eo_stream(&eo_descriptor);
+					Response *eo_response = elem->setResponse(argv, argc, eo_stream);
+					eo_stream.finalizeSetResponse();
+					if (eo_response) {
+						eo_response->getResponse();
+						const Vector &data = eo_response->getInformation().getData();
+						if (data.Size() > 0) {
+							if (data.Size() == 1) {
+								rule.x.resize(1);
+								rule.x[0] = 0.0;
+							}
+							else {
+								double x_min = std::numeric_limits<double>::max();
+								double x_max = -x_min;
+								for (int i = 0; i < data.Size(); i++) {
+									double ieta = data[i];
+									if (ieta < x_min)
+										x_min = ieta;
+									else if (ieta > x_max)
+										x_max = ieta;
+								}
+								double span = x_max - x_min;
+								if (span == 0.0) {
+									rule.x.resize((size_t)data.Size(), 0.0);
+								}
+								else {
+									rule.x.resize((size_t)data.Size());
+									for (int i = 0; i < data.Size(); i++)
+										rule.x[(size_t)i] = 2.0*(data[i] - x_min) / span - 1.0;
+								}
+							}
+							done = true;
+						}
+						delete eo_response;
+					}
+					delete[] argv;
+					if (done)
+						return;
+				}
+				/*
+				..., otherwise, ask for a dummy response on all sections ...
+				*/
+				{
+					//std::cout << "get custom gp: trying with \"section(all)\"...\n";
+					bool done = false;
+					std::string request1 = "section";
+					std::string request2 = "dummy";
+					int argc = 2;
+					const char **argv = new const char*[argc];
+					argv[0] = request1.c_str();
+					argv[1] = request2.c_str();
+					OutputDescriptor eo_descriptor;
+					OutputDescriptorStream eo_stream(&eo_descriptor);
+					Response *eo_response = elem->setResponse(argv, argc, eo_stream);
+					eo_stream.finalizeSetResponse();
+					if (eo_response)
+						delete eo_response; // we don't need it now
+					eo_descriptor.getGaussLocations(rule.x);
+					if (rule.x.size() > 0)
+						done = true;
+					delete[] argv;
+					if (done)
+						return;
+				}
+				/*
+				..., otherwise, ask for a dummy response on all sections, finding out what is the number of gauss points
+				*/
+				{
+					//std::cout << "get custom gp: trying with \"section(1,2,..,N)\"...\n";
+					bool done = false;
+					std::string request1 = "section";
+					if (elem->getClassTag() == ELE_TAG_MVLEM_3D || 
+						elem->getClassTag() == ELE_TAG_SFI_MVLEM_3D ||
+						elem->getClassTag() == ELE_TAG_E_SFI_MVLEM_3D) {
+						request1 = "material";
+					}
+					std::string request3 = "dummy";
+					int argc = 3;
+					const char **argv = new const char*[argc];
+					argv[0] = request1.c_str();
+					argv[2] = request3.c_str();
+
+					int trial_num = 0;
+					double rule_weight_sum = 0.0;
+					while (true) {
+						trial_num++;
+						if (trial_num > MPCO_MAX_TRIAL_NSEC) {
+							// we should never get here, or at least we hope, anyway we need a limit!
+							//opserr << "MPCORecorder warning: iterative guess of ngp: reached maximum number of iteration, giving up...\n";
+							break;
+						}
+						std::stringstream ss_trial_num; ss_trial_num << trial_num;
+						std::string s_trial_num = ss_trial_num.str();
+						argv[1] = s_trial_num.c_str();
+						OutputDescriptor eo_descriptor;
+						OutputDescriptorStream eo_stream(&eo_descriptor);
+						Response *eo_response = elem->setResponse(argv, argc, eo_stream);
+						eo_stream.finalizeSetResponse();
+						if (eo_response)
+							delete eo_response; // we don't need it now
+						std::vector<double> trial_x;
+						std::vector<double> trial_w;
+						eo_descriptor.appendGaussLocation(trial_x);
+						eo_descriptor.appendGaussWeight(trial_w);
+						if (trial_x.size() > 0) {
+							if (trial_x.size() > 1) {
+								// we should never get here!
+								opserr << "MPCORecorder warning: iterative guess of ngp: expected 1 trial gauss location, given = "
+									<< (int)trial_x.size()
+									<< "\nonly the first one will be considered\n";
+							}
+							rule.x.push_back(trial_x[0]);
+							rule_weight_sum += trial_w[0];
+						}
+						else {
+							// we reached the maximum number of gauss points for this element
+							break;
+						}
+					}
+					if (rule.x.size() > 0) {
+						if (std::abs(rule_weight_sum - 2.0) > 1.0e-8) {
+							// don't do auto-normalization if the integration weight is explicitly given
+							// (only considered valid if the integration span is 2.0)
+							if (rule.x.size() == 1) {
+								rule.x[0] = 0.0;
+							}
+							else {
+								double x_min = std::numeric_limits<double>::max();
+								double x_max = -x_min;
+								for (size_t i = 0; i < rule.x.size(); i++) {
+									double ieta = rule.x[i];
+									if (ieta < x_min)
+										x_min = ieta;
+									else if (ieta > x_max)
+										x_max = ieta;
+								}
+								double span = x_max - x_min;
+								if (span == 0.0) {
+									for (size_t i = 0; i < rule.x.size(); i++)
+										rule.x[i] = 0.0;
+								}
+								else {
+									for (size_t i = 0; i < rule.x.size(); i++)
+										rule.x[i] = 2.0 * (rule.x[i] - x_min) / span - 1.0;
+								}
+							}
+						}
+						done = true;
+					}
+
+					delete[] argv;
+					if (done)
+						return;
+				}
+				/*
+				..., otherwise, sorry we did our best... try to implement all kinds of response in this element
+				to make things work smoothly
+				*/
+				opserr << "MPCORecorder warning: cannot get custom integration rule from element "
+					<< elem->getTag() << "[class = " << elem->getClassType() << "]\n";
+			}
+
+			std::map<int, ElementIntegrationRule> registered_custom_rules;
+			std::map<int, ElementWithSameClassTagCollection> items;
+		};
+	}
+
+}
+
+	/* ======================================================================
+	ElementResultSource — wraps an already-built (header, response-collection)
+	bucket as a mpcol::ResultSource. The bucket-building + per-step driving
+	lives in the orchestrator (Phase-3 port of initElementRecorders /
+	recordResultsOnElements); the methods below are implemented there.
+	====================================================================== */
+	class ElementResultSource : public ResultSource
+	{
+	public:
+		ElementResultSource(const std::vector<std::string>& request,
+			const mpco::element::OutputDescriptorHeader& header,
+			mpco::element::OutputResponseCollection& bucket);
+
+		const ResultSchema& schema() const override { return m_schema; }
+		const std::vector<int>& ids() const override { return m_ids; }
+		void evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer) override;
+		bool requiresPartitionReduction() const override { return false; }
+
+	private:
+		void buildSchema(const std::vector<std::string>& request);
+
+	private:
+		const mpco::element::OutputDescriptorHeader& m_header;
+		mpco::element::OutputResponseCollection& m_bucket;
+		ResultSchema m_schema;
+		std::vector<int> m_ids;
+	};
+
+	/* ======================================================================
+	BASIS/QUADRATURE capture hook — DOCUMENTED STUB (Step 3, schema §3.1).
+	The parity port (the engine above) lands first. These populate the new
+	BASIS/QUADRATURE descriptors by probing each element with the contract's
+	setResponse keywords, with the legacy getGeometryAndIntRuleByClassTag
+	table as the fallback. NONE implemented yet.
+	====================================================================== */
+	struct ElementBasisInfo
+	{
+		std::string topology;       // line|tri|quad|tet|hex|wedge|pyramid|custom
+		std::string family;         // lagrange|serendipity|bernstein|nurbs|custom
+		std::string param_domain;   // "[-1,1]" | "[0,1]" | "bary"
+		std::vector<int> order;     // polynomial order per parametric direction
+		int rational = 0;
+		int num_ctrl = 0;
+		int num_gp = 0;
+		bool frame_time_varying = false;
+		bool declared = false;      // false => element did not implement basisInfo
+	};
+	// TODO(Step 3): captureBasisInfo / captureIntegrationPoints /
+	//   captureIntegrationWeights / captureControlPointWeights / deriveLegacyBasis
+	//   (see mpco_ladruno_element_contract.md Part A + schema §3.1).
+
+} // namespace mpcol
+#endif // MPCOL_ElementResults_h
