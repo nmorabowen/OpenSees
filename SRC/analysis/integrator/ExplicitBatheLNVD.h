@@ -62,7 +62,8 @@ public:
     ExplicitBatheLNVD();
     ExplicitBatheLNVD(double p, double alpha_flac, int compute_critical_timestep_ = 0,
                       bool verbose = false, bool cflAbort = false,
-                      double divergenceFactor = 0.0);
+                      double divergenceFactor = 0.0,
+                      bool cflUseTangent = false, int cflRecomputeEvery = 0);
 
     // destructor
     ~ExplicitBatheLNVD();
@@ -139,6 +140,12 @@ private:
     double prevKE;
     bool firstStep;
     double lastUnbalanceNorm;       // |r|_inf at the most recent solve
+
+    // critical-time-step refresh policy (see ExplicitBathe)
+    bool cflUseTangent;
+    int cflRecomputeEvery;
+    int cflStepCount;
+    bool cflFirstComputation;
 };
 
 #endif

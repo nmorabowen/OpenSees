@@ -448,6 +448,7 @@ int OPS_solveCPU();
 int OPS_accelCPU();
 int OPS_numFact();
 int OPS_numIter();
+int OPS_criticalTimeStep();
 int* OPS_GetNumEigen();
 int OPS_systemSize();
 int OPS_domainCommitTag();

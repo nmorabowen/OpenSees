@@ -83,7 +83,8 @@ public:
 
     ExplicitBathe(double p, int compute_critical_timestep_ = 0,
                   bool verbose = false, bool cflAbort = false,
-                  double divergenceFactor = 0.0);
+                  double divergenceFactor = 0.0,
+                  bool cflUseTangent = false, int cflRecomputeEvery = 0);
 
     // Destructor
     ~ExplicitBathe();
@@ -171,6 +172,13 @@ private:
                               //     in one step (spurious-energy circuit breaker)
     double prevKE;            // previous-step kinetic-energy proxy (0.5*v.v)
     bool firstStep;           // first newStep() seeds prevKE / checks cold start
+
+    // critical-time-step refresh policy
+    bool cflUseTangent;       // use getTangentStiff() instead of getInitialStiff()
+    int cflRecomputeEvery;    // recompute dt_cr every N steps (0 = once); tracks
+                              // stiffness changes in nonlinear runs
+    int cflStepCount;         // step counter for periodic recompute
+    bool cflFirstComputation; // gate the detailed report to the first computation
 };
 
 #endif
