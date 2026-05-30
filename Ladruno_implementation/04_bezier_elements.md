@@ -189,7 +189,8 @@ Nothing here blocks using `BezierTri6` for straight-sided 2D continuum problems 
   Python harness covers the formulation until then.
 - 2026-05-30 — **Fork registration + build + smoke test DONE.** Landed the element in
   the `ladruno` fork: `SRC/element/bezierTriangle/{BezierTri6.{h,cpp},OPS_BezierTri6.cpp,
-  CMakeLists.txt}`, `ELE_TAG_BezierTri6 = 272` in `classTags.h`,
+  CMakeLists.txt}`, `ELE_TAG_BezierTri6 = 33000` in `classTags.h` (moved from 272 to the
+  ladruno private band >=33000 on 2026-05-30 — 272 collided one above upstream PML3DVISCOUS=271),
   `add_subdirectory(bezierTriangle)`, and the Python dispatch (`OPS_BezierTri6` fwd-decl +
   `functionMap` "BezierTri6"/"bezierTri6") in `OpenSeesElementCommands.cpp`. Linkage fix:
   `OPS_BezierTri6` must be plain C++ (not the `extern "C"` OPS_Export DLL style) to resolve
