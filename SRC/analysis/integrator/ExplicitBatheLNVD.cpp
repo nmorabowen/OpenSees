@@ -45,34 +45,46 @@ extern void computeCriticalTimestep(AnalysisModel *theModel,
 void *OPS_ExplicitBatheLNVD(void) {
     double p = 0.54;
     double alpha_flac = 0.8;          // classic FLAC default
-    int nPos = 0;
     int compute_critical_timestep = 0;
     bool verbose = false, cflAbort = false;
     double divergenceFactor = 0.0;
 
+    // p and alpha are the leading numeric positionals; read them with the typed
+    // getter (Tcl- and OpenSeesPy-safe). Flags follow.
+    int navail = OPS_GetNumRemainingInputArgs();
+    if (navail >= 2) {
+        int nd = 2; double vals[2];
+        if (OPS_GetDoubleInput(&nd, vals) < 0) {
+            opserr << "WARNING ExplicitBatheLNVD - could not read p and alpha "
+                      "(e.g. integrator ExplicitBatheLNVD 0.54 0.8)\n";
+            return 0;
+        }
+        p = vals[0]; alpha_flac = vals[1];
+    } else if (navail == 1) {
+        int nd = 1;
+        if (OPS_GetDoubleInput(&nd, &p) < 0) {
+            opserr << "WARNING ExplicitBatheLNVD - could not read p\n";
+            return 0;
+        }
+    }
     while (OPS_GetNumRemainingInputArgs() > 0) {
         const char *arg = OPS_GetString();
-        if (arg[0] == '-') {
-            if (strcmp(arg, "-verbose") == 0) {
-                verbose = true;
-            } else if (strcmp(arg, "-cflAbort") == 0) {
-                cflAbort = true;
-                compute_critical_timestep = 1;
-            } else if (strcmp(arg, "-cfl") == 0 ||
-                       strcmp(arg, "-criticalTimestep") == 0) {
-                compute_critical_timestep = 1;
-            } else if (strcmp(arg, "-divergence") == 0) {
-                if (OPS_GetNumRemainingInputArgs() > 0)
-                    divergenceFactor = atof(OPS_GetString());
-            } else {
-                opserr << "WARNING ExplicitBatheLNVD - unknown option " << arg
-                       << " (ignored)\n";
+        if (strcmp(arg, "-verbose") == 0) {
+            verbose = true;
+        } else if (strcmp(arg, "-cflAbort") == 0) {
+            cflAbort = true;
+            compute_critical_timestep = 1;
+        } else if (strcmp(arg, "-cfl") == 0 ||
+                   strcmp(arg, "-criticalTimestep") == 0) {
+            compute_critical_timestep = 1;
+        } else if (strcmp(arg, "-divergence") == 0) {
+            if (OPS_GetNumRemainingInputArgs() > 0) {
+                int nd = 1;
+                OPS_GetDoubleInput(&nd, &divergenceFactor);
             }
         } else {
-            if (nPos == 0)      p = atof(arg);
-            else if (nPos == 1) alpha_flac = atof(arg);
-            else if (nPos == 2) compute_critical_timestep = atoi(arg);
-            nPos++;
+            opserr << "WARNING ExplicitBatheLNVD - unknown option " << arg
+                   << " (ignored)\n";
         }
     }
 

@@ -64,34 +64,40 @@ extern "C" int dggev_(char *JOBVL, char *JOBVR, int *N, double *A, int *LDA,
 //                                      in one step (spurious-energy guard)
 void *OPS_ExplicitBathe(void) {
     double p = 0.54;            // default: good high-frequency dissipation
-    bool pSet = false;
     int compute_critical_timestep = 0;
     bool verbose = false;
     bool cflAbort = false;
     double divergenceFactor = 0.0;
 
+    // p is the leading numeric positional. Read it with the typed getter so it
+    // works under BOTH Tcl and OpenSeesPy (OPS_GetString mis-reads a numeric
+    // Python argument).
+    if (OPS_GetNumRemainingInputArgs() > 0) {
+        int nd = 1;
+        if (OPS_GetDoubleInput(&nd, &p) < 0) {
+            opserr << "WARNING ExplicitBathe - could not read p (give p first, "
+                      "e.g. integrator ExplicitBathe 0.54)\n";
+            return 0;
+        }
+    }
     while (OPS_GetNumRemainingInputArgs() > 0) {
         const char *arg = OPS_GetString();
-        if (arg[0] == '-') {
-            if (strcmp(arg, "-verbose") == 0) {
-                verbose = true;
-            } else if (strcmp(arg, "-cflAbort") == 0) {
-                cflAbort = true;
-                compute_critical_timestep = 1;
-            } else if (strcmp(arg, "-cfl") == 0 ||
-                       strcmp(arg, "-criticalTimestep") == 0) {
-                compute_critical_timestep = 1;
-            } else if (strcmp(arg, "-divergence") == 0) {
-                if (OPS_GetNumRemainingInputArgs() > 0)
-                    divergenceFactor = atof(OPS_GetString());
-            } else {
-                opserr << "WARNING ExplicitBathe - unknown option " << arg
-                       << " (ignored)\n";
+        if (strcmp(arg, "-verbose") == 0) {
+            verbose = true;
+        } else if (strcmp(arg, "-cflAbort") == 0) {
+            cflAbort = true;
+            compute_critical_timestep = 1;
+        } else if (strcmp(arg, "-cfl") == 0 ||
+                   strcmp(arg, "-criticalTimestep") == 0) {
+            compute_critical_timestep = 1;
+        } else if (strcmp(arg, "-divergence") == 0) {
+            if (OPS_GetNumRemainingInputArgs() > 0) {
+                int nd = 1;
+                OPS_GetDoubleInput(&nd, &divergenceFactor);
             }
         } else {
-            // positional: first non-flag token is p, second is the cfl flag
-            if (!pSet) { p = atof(arg); pSet = true; }
-            else       { compute_critical_timestep = atoi(arg); }
+            opserr << "WARNING ExplicitBathe - unknown option " << arg
+                   << " (ignored)\n";
         }
     }
 

@@ -460,7 +460,20 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
     // integrate the work rates (trapezoidal). The first record() only seeds
     // the previous rate so no increment is taken over the initial time jump.
     //
-    if (firstRecord == false) {
+    if (firstRecord) {
+        // first recorded step: integrate with the rectangle rule (there is no
+        // previous-step rate yet). Skipping it would drop one increment of work
+        // and leave a constant residual offset.
+        internal_energy      += g_internal_rate   * dT;
+        damping_work         += g_damping_rate    * dT;
+        unbalanced_load_work += g_unbalanced_rate * dT;
+        for (int r = 0; r < numRegions; ++r) {
+            region_internal_energy(r)      += step_region_internal_rate(r)   * dT;
+            region_damping_work(r)         += step_region_damping_rate(r)    * dT;
+            region_unbalanced_load_work(r) += step_region_unbalanced_rate(r) * dT;
+        }
+    } else {
+        // trapezoidal rule
         internal_energy      += 0.5 * (prev_internal_rate   + g_internal_rate)   * dT;
         damping_work         += 0.5 * (prev_damping_rate    + g_damping_rate)    * dT;
         unbalanced_load_work += 0.5 * (prev_unbalanced_rate + g_unbalanced_rate) * dT;
@@ -488,7 +501,10 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
     {
         const double sum = g_ke + internal_energy + damping_work;
         const double res = unbalanced_load_work - sum;
-        const double mag = (fabs(sum) > fabs(unbalanced_load_work)) ? fabs(sum) : fabs(unbalanced_load_work);
+        // energy scale = running max of summed component magnitudes (does not
+        // collapse to ~0 when KE and incremental IE cancel, e.g. free vibration)
+        const double mag = fabs(g_ke) + fabs(internal_energy) + fabs(damping_work)
+                         + fabs(unbalanced_load_work);
         if (mag > eref_global) eref_global = mag;
         const double err = (eref_global > 1.0e-16) ? 100.0 * res / eref_global : 0.0;
 
@@ -508,7 +524,7 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
         const double ulw = region_unbalanced_load_work(r);
         const double sum = ke + ie + dw;
         const double res = ulw - sum;
-        const double mag = (fabs(sum) > fabs(ulw)) ? fabs(sum) : fabs(ulw);
+        const double mag = fabs(ke) + fabs(ie) + fabs(dw) + fabs(ulw);
         if (mag > region_eref(r)) region_eref(r) = mag;
         const double err = (region_eref(r) > 1.0e-16) ? 100.0 * res / region_eref(r) : 0.0;
 
