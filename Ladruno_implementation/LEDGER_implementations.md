@@ -36,7 +36,7 @@ edits to *pre-existing* upstream files).
 | **Queryable critical time step** — query/recompute `dt_cr` (tangent/periodic); fixes mass-aliasing bug | Integrator API | — | (within explicit integrator TU) | shipped | [#3](https://github.com/nmorabowen/OpenSees/pull/3) |
 | **BezierTri6** — quadratic Bézier triangle element (Kadapa 2018) | Element | 272 | `SRC/element/bezierTriangle/BezierTri6.{cpp,h}` | shipped | [#6](https://github.com/nmorabowen/OpenSees/pull/6), [#10](https://github.com/nmorabowen/OpenSees/pull/10) |
 | **MPCO_Ladruno** — modular `.mpco` recorder fork (`mpcol`), node + element parity, multi-stage restaging | Recorder | 27 | `SRC/recorder/MPCORecorderLadruno.{cpp,h}`, `MPCOL_{Sinks,ResultIO,NodeResults,ElementResults}.{cpp,h}` | shipped | [#8](https://github.com/nmorabowen/OpenSees/pull/8), [#12](https://github.com/nmorabowen/OpenSees/pull/12), [#14](https://github.com/nmorabowen/OpenSees/pull/14) |
-| **CentralDifferenceLadruno** — robust central difference, selectable coupled/explicit damping | Integrator | 64 (planned) | (plan: `Ladruno_implementation/`) | draft | — |
+| **CentralDifferenceLadruno** — explicit leap-frog central difference done right (correct first-step starter, built-in `dt_cr`, clean full-step velocity, βK guard); coupled mode dropped → use `NewmarkExplicit 0.5` | Integrator | 64 | `SRC/analysis/integrator/CentralDifferenceLadruno.{cpp,h}` | per-TU compile-verified (full link pending MPCO_Ladruno blocker) | _(PR pending)_ |
 
 ## Documentation / ADR PRs (no source change)
 

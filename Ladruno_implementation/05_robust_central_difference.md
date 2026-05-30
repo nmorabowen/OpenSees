@@ -295,5 +295,41 @@ compression — an element/material concern; flagged so wave/shock users know th
 
 ## Implementation log
 
-*(empty — fill in once execution starts; move to
-`Ladruno_internal/implemented_robust_central_difference.md` when done)*
+**2026-05-30 — implemented as designed (explicit leap-frog only).** New sibling-fork
+class `CentralDifferenceLadruno` (classTag **64**), no upstream class touched.
+
+- **New files**: `SRC/analysis/integrator/CentralDifferenceLadruno.{h,cpp}`.
+- **Registration (8 sites, verified against `ExplicitBatheLNVD`)**: `classTags.h` (64);
+  `FEM_ObjectBrokerAllClasses.cpp` (+include +case); `runtime/runtime/TclPackageClassBroker.cpp`
+  (+include +case); `interpreter/OpenSeesCommands.{h,cpp}` (fwd-decl + string dispatch);
+  `tcl/commands.cpp` (extern + `integrator` branch); integrator `CMakeLists.txt` + `Makefile`.
+- **Scheme bookkeeping**: advance-then-solve (records `u_{n+1}` at `t_{n+1}`, like
+  `ExplicitDifference`, so N analyze steps → N records, no off-by-one). The clean
+  full-step output velocity is `v_{n+1} = v_{n+1/2} + ½ Δt a_{n+1}` (the centered
+  `(u_{n+2}-u_n)/2Δt` identity — available right after the solve, no future value
+  needed). `getVel()` returns the lagged half-step `Vhalf` used by the current solve.
+- **Starter (C3/B1)**: on the first `newStep()` (behind `firstStep`), the integrator
+  forms+factors its own tangent and does ONE extra solve at the committed config to get
+  `a₀ = M⁻¹(P₀−Cv₀−Fᵢₙₜ(u₀))`, then seeds `v₋½ = v₀ − ½Δt a₀` before the normal advance.
+  domainChanged() only allocates/seeds/runs the dt_cr eigensolve (no Δt, no factored SOE).
+- **dt_cr (C4)**: computed in `domainChanged()` UNCONDITIONALLY (so `criticalTimeStep()`
+  is valid before `analyze`); stability factor 1.0 (no Noh–Bathe 2×). Reports `damped_dt`
+  when damping reduces the step, else `undamped_dt`. `-recompute N`/`-tangent` refresh in
+  `newStep()`.
+- **βK guard (C6)**: data-driven — Domain exposes no Rayleigh getter, so we flag the trap
+  when `damped_dt < 0.9·undamped_dt` (βK collapses it at ω_max; αM barely moves it).
+- **Single-solve guard**: `updateCount > 1` (CD), not ExplicitDifference's `>2`.
+- **Options**: `-cfl -cflAbort -tangent -recompute N -lump rowsum|diagonal -verbose
+  -divergence f`. NO `-damping`, NO positional arg. Default lump = `diagonal`.
+- **Diagonal-mass requirement**: documented in the header / `Print` (recipe: `system
+  Diagonal`); no cheap runtime introspection of mass diagonality exists, so it is a
+  documented requirement rather than a hard error (noted for the PR).
+- **Build gate**: `CentralDifferenceLadruno.cpp` per-TU compile-verified standalone with
+  `cl.exe` (flags/includes lifted from the Ninja build, repointed at the worktree). Full
+  link still blocked by the MPCO_Ladruno link error — interim gate only, as planned.
+- **Tests**: `Ladruno_scripts/_verify_explicit.py` extended with the CDL-1..10 battery
+  (CDL-8 first-step / CDL-9 βK collapse are the differentiators; CDL-10 energy closure is
+  the MPCO-link-gated skip). They need a rebuilt `.pyd` that registers the class to run.
+
+*(Move to `Ladruno_internal/implemented_robust_central_difference.md` once the full link
+is unblocked and the runtime battery passes.)*
