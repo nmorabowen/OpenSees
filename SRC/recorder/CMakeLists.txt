@@ -12,6 +12,7 @@ target_sources(OPS_Recorder
       DriftRecorder.cpp
       ElementRecorder.cpp
       ElementRecorderRMS.cpp
+      EnergyBalanceRecorder.cpp
       EnvelopeDriftRecorder.cpp
       EnvelopeElementRecorder.cpp
       EnvelopeNodeRecorder.cpp
@@ -33,6 +34,7 @@ target_sources(OPS_Recorder
       DriftRecorder.h
       ElementRecorder.h
       ElementRecorderRMS.h
+      EnergyBalanceRecorder.h
       EnvelopeDriftRecorder.h
       EnvelopeElementRecorder.h
       EnvelopeNodeRecorder.h
