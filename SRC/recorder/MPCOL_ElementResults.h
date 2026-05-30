@@ -267,6 +267,25 @@ namespace mpco {
 			std::vector<int> multiplicity;
 		};
 
+		// ─── Self-described element basis (Element-contract Part A) ──────
+		// Filled from the OPTIONAL "basisInfo" probe. Lets a non-Lagrange
+		// element (e.g. BezierTri6 — family=bernstein, total degree 2)
+		// override the family/order/topology/... that would otherwise be
+		// *guessed* from the legacy (geometry, integration-rule) pair.
+		// Lagrange elements simply don't answer the probe ⇒ valid stays
+		// false ⇒ the geometry-derived defaults are kept.
+		struct BasisInfo
+		{
+			bool valid = false;
+			std::string family;        // "bernstein", "lagrange", ...
+			std::string topology;      // "tri", "quad", "hex", ...
+			std::string param_domain;  // "bary", "[-1,1]", ...
+			int order = -1;            // total polynomial degree (-1 = unset)
+			int num_ctrl = -1;         // number of control points (-1 = unset)
+			int num_gp = -1;           // number of result Gauss points (-1 = unset)
+			int rational = -1;         // 0/1 (-1 = unset)
+		};
+
 		class OutputDescriptor
 		{
 		public:
@@ -705,8 +724,14 @@ namespace mpco {
 				, current_level(0)
 				, pending_close_tag(false)
 				, error_code(ERROR_CODE_OK)
+				, in_basis(false)
 			{}
 			~OutputDescriptorStream() {}
+
+			// Self-description captured from an optional "basisInfo" probe.
+			// Stays default/invalid for the normal result-discovery path.
+			mpco::element::BasisInfo basis_info;
+			bool in_basis;
 
 			int tag(const char *name) {
 				// get the element output descriptor at current level and id
@@ -729,6 +754,14 @@ namespace mpco {
 						ensureItemsOfUniformType(eo_curr_lev, eo_new_curr_lev);
 						eo_curr_lev->items.push_back(eo_new_curr_lev);
 						current_level++;
+					}
+					/* self-describing basis probe (Element-contract Part A):
+					   capture the <ElementBasis> attributes WITHOUT opening a
+					   gauss level. Only emitted in response to a "basisInfo"
+					   request, never during normal result discovery. */
+					else if (strcmp(name, "ElementBasis") == 0) {
+						in_basis = true;
+						basis_info.valid = true;
 					}
 					else {
 						/*opserr <<
@@ -857,6 +890,11 @@ namespace mpco {
 			};
 
 			int endTag() {
+				if (in_basis) {
+					// closing <ElementBasis> — it never opened a level
+					in_basis = false;
+					return 0;
+				}
 				if (current_level > 0) {
 					// decrement the current level
 					current_level--;
@@ -873,6 +911,13 @@ namespace mpco {
 			};
 
 			int attr(const char *name, int value) {
+				if (in_basis) {
+					if (strcmp(name, "rational") == 0) basis_info.rational = value;
+					else if (strcmp(name, "numCtrl") == 0) basis_info.num_ctrl = value;
+					else if (strcmp(name, "numGP") == 0) basis_info.num_gp = value;
+					else if (strcmp(name, "orderU") == 0) basis_info.order = value;
+					return 0;
+				}
 				if (current_level > 0) {
 					mpco::element::OutputDescriptor *eo_curr_lev = descr;
 					for (int i = 1; i <= current_level; i++) {
@@ -926,7 +971,14 @@ namespace mpco {
 				return 0;
 			};
 
-			int attr(const char *name, const char *value) { return 0; };
+			int attr(const char *name, const char *value) {
+				if (in_basis) {
+					if (strcmp(name, "family") == 0) basis_info.family = value ? value : "";
+					else if (strcmp(name, "topology") == 0) basis_info.topology = value ? value : "";
+					else if (strcmp(name, "paramDomain") == 0) basis_info.param_domain = value ? value : "";
+				}
+				return 0;
+			};
 			int write(Vector &data) { return 0; };
 
 			OPS_Stream& write(const char *s, int n) { return *this; };
@@ -1114,6 +1166,14 @@ namespace mpco {
 			ElementIntegrationRuleType::Enum int_rule_type;
 			std::vector<double> x;
 			int custom_rule_dimension = 1;
+			// num_gp == 0  ⇒ legacy line rule: x holds 1 coord per point
+			//                (GP_PARAM written as [x.size() x 1]).
+			// num_gp >  0  ⇒ multi-dim parametric rule: x is row-major
+			//                [num_gp x (x.size()/num_gp)] (e.g. BezierTri6
+			//                barycentric). Excluded from operator</> below
+			//                because it is derivable from (x, dimension).
+			int num_gp = 0;
+			std::vector<double> w; // optional quadrature weights, one per gp
 		};
 
 		struct ElementWithSameCustomIntRuleCollection
@@ -1155,6 +1215,7 @@ namespace mpco {
 			std::string class_name;
 			int num_nodes;
 			ElementGeometryType::Enum geom_type;
+			BasisInfo basis_info; // from the optional "basisInfo" probe (one per class tag)
 			std::map<mpco::ElementIntegrationRuleType::Enum, ElementWithSameIntRuleCollection> items;
 		};
 
@@ -1237,6 +1298,7 @@ namespace mpco {
 						elem_coll_by_tag.class_name = current_element->getClassType();
 						elem_coll_by_tag.num_nodes = lam_get_num_ext_nodes(current_element);
 						elem_coll_by_tag.geom_type = geom_type;
+						elem_coll_by_tag.basis_info = getElementBasisInfo(current_element);
 						elem_coll_by_tag.is_new = false;
 					}
 					/*
@@ -1252,8 +1314,10 @@ namespace mpco {
 					*/
 					ElementIntegrationRule int_rule(int_rule_type);
 					if (int_rule_type == ElementIntegrationRuleType::CustomIntegrationRule) {
-						getCustomGaussPointLocations(current_element, int_rule);
+						// set the declared dimension FIRST so getCustomGaussPointLocations
+						// can pick the multi-dim (e.g. barycentric) extraction path.
 						int_rule.custom_rule_dimension = custom_rule_dimension;
+						getCustomGaussPointLocations(current_element, int_rule);
 					}
 					/*
 					if this is a custom rule, register it
@@ -1427,6 +1491,22 @@ namespace mpco {
 					int_type = ElementIntegrationRuleType::Triangle_GaussLegendre_2C;
 				}
 				/*
+				6-node Bezier triangle (BezierTri6) with a custom (barycentric)
+				rule. Modeled as a custom rule so the element's self-declared
+				Gauss-point area coords (via "integrationPoints") are written to
+				GP_X / GP_PARAM verbatim, and the viewer needs no built-in handler
+				for a Bernstein 6-node-tri standard rule. dimension = 2 (the two
+				free barycentric coords; xi3 = 1 - xi1 - xi2).
+				*/
+				else if (
+					// ./bezierTriangle
+					elem_class_tag == ELE_TAG_BezierTri6
+					) {
+					geom_type = ElementGeometryType::Triangle_6N;
+					int_type = ElementIntegrationRuleType::CustomIntegrationRule;
+					custom_rule_dimension = 2;
+				}
+				/*
 				4-node quadrilateral with 1 gp
 				*/
 				else if (
@@ -1561,11 +1641,99 @@ namespace mpco {
 				}
 			}
 
+			// Probe an element's OPTIONAL "basisInfo" self-description
+			// (Element-contract Part A). Lagrange elements don't answer, in
+			// which case the returned BasisInfo has valid == false and callers
+			// fall back to geometry-derived guesses.
+			BasisInfo getElementBasisInfo(Element *elem) {
+				BasisInfo info;
+				std::string request = "basisInfo";
+				int argc = 1;
+				const char **argv = new const char*[argc];
+				argv[0] = request.c_str();
+				OutputDescriptor eo_descriptor;
+				OutputDescriptorStream eo_stream(&eo_descriptor);
+				Response *eo_response = elem->setResponse(argv, argc, eo_stream);
+				eo_stream.finalizeSetResponse();
+				info = eo_stream.basis_info;
+				if (eo_response)
+					delete eo_response;
+				delete[] argv;
+				return info;
+			}
+
 			void getCustomGaussPointLocations(Element *elem, ElementIntegrationRule &rule) {
 				/*
 				clear any existing locations
 				*/
 				rule.x.clear();
+				rule.w.clear();
+				rule.num_gp = 0;
+				/*
+				Multi-dimensional parametric rules (custom_rule_dimension >= 2):
+				the element returns "integrationPoints" as a Matrix [nGP x dim]
+				of natural coordinates (e.g. BezierTri6: 3 GP x 2 barycentric
+				area coords). Store them verbatim, row-major, WITHOUT the 1D
+				[-1,1] line normalization applied to line elements below; also
+				grab matching "integrationWeights" if available. Elements that
+				don't answer with a Matrix (e.g. MVLEM) fall through to the
+				legacy 1D strategies, preserving their previous behavior.
+				*/
+				if (rule.custom_rule_dimension >= 2) {
+					bool done = false;
+					std::string request = "integrationPoints";
+					int argc = 1;
+					const char **argv = new const char*[argc];
+					argv[0] = request.c_str();
+					OutputDescriptor eo_descriptor;
+					OutputDescriptorStream eo_stream(&eo_descriptor);
+					Response *eo_response = elem->setResponse(argv, argc, eo_stream);
+					eo_stream.finalizeSetResponse();
+					if (eo_response) {
+						eo_response->getResponse();
+						Information &eo_info = eo_response->getInformation();
+						if (eo_info.theType == MatrixType && eo_info.theMatrix != 0) {
+							const Matrix &gp = *eo_info.theMatrix;
+							int ngp = gp.noRows();
+							int ncomp = gp.noCols();
+							if (ngp > 0 && ncomp > 0) {
+								rule.x.resize((size_t)ngp * (size_t)ncomp);
+								for (int i = 0; i < ngp; i++)
+									for (int j = 0; j < ncomp; j++)
+										rule.x[(size_t)i * (size_t)ncomp + (size_t)j] = gp(i, j);
+								rule.num_gp = ngp;
+								rule.custom_rule_dimension = ncomp;
+								done = true;
+							}
+						}
+						delete eo_response;
+					}
+					delete[] argv;
+					if (done) {
+						// optional matching quadrature weights (one per gp)
+						std::string wrequest = "integrationWeights";
+						int wargc = 1;
+						const char **wargv = new const char*[wargc];
+						wargv[0] = wrequest.c_str();
+						OutputDescriptor w_descriptor;
+						OutputDescriptorStream w_stream(&w_descriptor);
+						Response *w_response = elem->setResponse(wargv, wargc, w_stream);
+						w_stream.finalizeSetResponse();
+						if (w_response) {
+							w_response->getResponse();
+							const Vector &wv = w_response->getInformation().getData();
+							if (wv.Size() == rule.num_gp) {
+								rule.w.resize((size_t)wv.Size());
+								for (int i = 0; i < wv.Size(); i++)
+									rule.w[(size_t)i] = wv(i);
+							}
+							delete w_response;
+						}
+						delete[] wargv;
+						return;
+					}
+					/* else: fall through to the legacy 1D strategies below */
+				}
 				/*
 				ask for integrationPoints ...
 				*/
@@ -1775,27 +1943,20 @@ namespace mpco {
 	};
 
 	/* ======================================================================
-	BASIS/QUADRATURE capture hook — DOCUMENTED STUB (Step 3, schema §3.1).
-	The parity port (the engine above) lands first. These populate the new
-	BASIS/QUADRATURE descriptors by probing each element with the contract's
-	setResponse keywords, with the legacy getGeometryAndIntRuleByClassTag
-	table as the fallback. NONE implemented yet.
+	BASIS/QUADRATURE capture hook — IMPLEMENTED (Step 3, schema §3.1).
+	The capture the planned ElementBasisInfo stub once described is now live:
+	  - mpco::element::BasisInfo                  (the captured descriptor)
+	  - OutputDescriptorStream <ElementBasis> tag (captureBasisInfo)
+	  - ElementCollection::getElementBasisInfo()  (probes "basisInfo")
+	  - getCustomGaussPointLocations() multi-dim  (captureIntegrationPoints +
+	                                                captureIntegrationWeights)
+	  - getGeometryAndIntRuleByClassTag()         (deriveLegacyBasis fallback)
+	The MPCORecorderLadruno writer composes these: probe overrides the
+	legacy-derived FAMILY/ORDER/TOPOLOGY/PARAM_DOMAIN/RATIONAL/NUM_CTRL, and
+	GP_PARAM/GP_WEIGHT come from the captured rule. controlPointWeights
+	(rational bases) remains a follow-up — BezierTri6 is non-rational.
+	See mpco_ladruno_element_contract.md Part A + schema §3.1.
 	====================================================================== */
-	struct ElementBasisInfo
-	{
-		std::string topology;       // line|tri|quad|tet|hex|wedge|pyramid|custom
-		std::string family;         // lagrange|serendipity|bernstein|nurbs|custom
-		std::string param_domain;   // "[-1,1]" | "[0,1]" | "bary"
-		std::vector<int> order;     // polynomial order per parametric direction
-		int rational = 0;
-		int num_ctrl = 0;
-		int num_gp = 0;
-		bool frame_time_varying = false;
-		bool declared = false;      // false => element did not implement basisInfo
-	};
-	// TODO(Step 3): captureBasisInfo / captureIntegrationPoints /
-	//   captureIntegrationWeights / captureControlPointWeights / deriveLegacyBasis
-	//   (see mpco_ladruno_element_contract.md Part A + schema §3.1).
 
 } // namespace mpcol
 #endif // MPCOL_ElementResults_h

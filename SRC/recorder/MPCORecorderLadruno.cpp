@@ -518,9 +518,16 @@ int MPCORecorderLadruno::writeModelElements()
 						buffer[(size_t)j + 1 + offset] = elem->getExternalNodes()(j);
 					offset += (size_t)(1 + elem_by_tag.num_nodes);
 				}
-				hid_t dset_id = mpcolns::h5::dataset::createAndWrite(
-					h_gp_elements, elem_by_custom_rule.name.c_str(), buffer,
+				// Element group <name> is a GROUP (schema v1) holding CONNECTIVITY +
+				// BASIS attrs + (for custom rules) a QUADRATURE child. A dataset cannot
+				// parent the QUADRATURE group, which silently failed before this.
+				hid_t h_eg = mpcolns::h5::group::create(
+					h_gp_elements, elem_by_custom_rule.name.c_str(), H5P_DEFAULT,
+					info.h_group_proplist, H5P_DEFAULT);
+				hid_t d_conn = mpcolns::h5::dataset::createAndWrite(
+					h_eg, "CONNECTIVITY", buffer,
 					elem_by_custom_rule.items.size(), (size_t)(1 + elem_by_tag.num_nodes));
+				mpcolns::h5::dataset::close(d_conn);
 
 				// BASIS / QUADRATURE descriptors (schema §3) DERIVED from the
 				// legacy (geometry, integration rule) pair. We keep the legacy
@@ -528,8 +535,8 @@ int MPCORecorderLadruno::writeModelElements()
 				// AND add the derived self-describing descriptors.
 				mpcolns::mpco::ElementGeometryType::Enum geom = elem_by_tag.geom_type;
 				mpcolns::mpco::ElementIntegrationRuleType::Enum irule = elem_by_rule.int_rule_type;
-				mpcolns::h5::attribute::write(dset_id, "GEOMETRY", (int)geom);
-				mpcolns::h5::attribute::write(dset_id, "INTEGRATION_RULE", (int)irule);
+				mpcolns::h5::attribute::write(h_eg, "GEOMETRY", (int)geom);
+				mpcolns::h5::attribute::write(h_eg, "INTEGRATION_RULE", (int)irule);
 
 				// derive TOPOLOGY / FAMILY / ORDER / PARAM_DOMAIN / NUM_CTRL
 				std::string topology = "custom";
@@ -557,38 +564,80 @@ int MPCORecorderLadruno::writeModelElements()
 				default:
 					topology = "custom"; break;
 				}
-				mpcolns::h5::attribute::write(dset_id, "TOPOLOGY", topology);
-				mpcolns::h5::attribute::write(dset_id, "FAMILY", std::string("lagrange"));
+				// A self-describing element (Element-contract Part A) overrides the
+				// geometry-derived guesses above. Lagrange elements don't answer the
+				// "basisInfo" probe (basis_info.valid == false) so the derived defaults
+				// are kept; a Bernstein element (BezierTri6) instead records
+				// FAMILY=bernstein, ORDER=2.
+				const me::BasisInfo& binfo = elem_by_tag.basis_info;
+				std::string family = "lagrange";
+				int rational = 0;
+				int num_ctrl = elem_by_tag.num_nodes;
+				if (binfo.valid) {
+					if (!binfo.family.empty())       family = binfo.family;
+					if (!binfo.topology.empty())     topology = binfo.topology;
+					if (!binfo.param_domain.empty()) param_domain = binfo.param_domain;
+					if (binfo.rational >= 0)         rational = binfo.rational;
+					if (binfo.num_ctrl > 0)          num_ctrl = binfo.num_ctrl;
+					if (binfo.order > 0) {
+						order.clear();
+						// ORDER carries one entry per GP_PARAM column (the validator equates
+						// len(ORDER) with the parametric dimension). For a multi-dim custom
+						// rule (BezierTri6 barycentric: 2 free area coords) replicate the
+						// declared total degree across the parametric directions.
+						int ndir = 1;
+						if (irule == mpcolns::mpco::ElementIntegrationRuleType::CustomIntegrationRule
+							&& elem_by_custom_rule.custom_int_rule_index != 0) {
+							int d = m_data->elements.registered_custom_rules[
+								elem_by_custom_rule.custom_int_rule_index].custom_rule_dimension;
+							if (d > 1) ndir = d;
+						}
+						for (int k = 0; k < ndir; ++k) order.push_back(binfo.order);
+					}
+				}
+				mpcolns::h5::attribute::write(h_eg, "TOPOLOGY", topology);
+				mpcolns::h5::attribute::write(h_eg, "FAMILY", family);
 				if (order.size() > 0)
-					mpcolns::h5::attribute::write(dset_id, "ORDER", order);
-				mpcolns::h5::attribute::write(dset_id, "PARAM_DOMAIN", param_domain);
-				mpcolns::h5::attribute::write(dset_id, "RATIONAL", (int)0);
-				mpcolns::h5::attribute::write(dset_id, "NUM_CTRL", (int)elem_by_tag.num_nodes);
+					mpcolns::h5::attribute::write(h_eg, "ORDER", order);
+				mpcolns::h5::attribute::write(h_eg, "PARAM_DOMAIN", param_domain);
+				mpcolns::h5::attribute::write(h_eg, "RATIONAL", (int)rational);
+				mpcolns::h5::attribute::write(h_eg, "NUM_CTRL", (int)num_ctrl);
 
-				// Custom-rule quadrature: the natural GP coordinates are written as
-				// the GP_X attribute on the element dataset (legacy form, lossless).
-				//
-				// NOTE: schema v1's self-describing QUADRATURE *group* (GP_PARAM +
-				// GP_WEIGHT child datasets) is NOT written here. The element bucket is
-				// currently an HDF5 *dataset* (the CONNECTIVITY table), and a group
-				// cannot be created under a dataset — attempting it raised 3 non-fatal
-				// HDF5-DIAG errors per custom-rule (Lobatto/etc.) element with no data
-				// effect. The schema requires each bucket to be a GROUP holding
-				// CONNECTIVITY + QUADRATURE/{GP_PARAM,GP_WEIGHT}; that restructure (plus
-				// GP_WEIGHT, which the legacy custom rule does not carry) is part of the
-				// MODEL/ELEMENTS schema-completeness follow-up. Until then GP_X carries
-				// the quadrature coordinates and no QUADRATURE group is emitted.
+				// Custom-rule quadrature (schema v1): the element bucket <name> is a
+				// GROUP (see above), so the QUADRATURE child group below is valid. We
+				// write GP_PARAM [NUM_GP x ndir] + GP_WEIGHT [NUM_GP], and also keep the
+				// legacy GP_X attribute (flat coords) for tooling that still reads it.
+				// This resolves the deferred MODEL/ELEMENTS schema-completeness item and
+				// the prior HDF5-DIAG noise (a group cannot live under a dataset).
 				if (irule == mpcolns::mpco::ElementIntegrationRuleType::CustomIntegrationRule) {
-					mpcolns::h5::attribute::write(dset_id, "CUSTOM_INTEGRATION_RULE", elem_by_custom_rule.custom_int_rule_index);
+					mpcolns::h5::attribute::write(h_eg, "CUSTOM_INTEGRATION_RULE", elem_by_custom_rule.custom_int_rule_index);
 					if (elem_by_custom_rule.custom_int_rule_index != 0) {
 						me::ElementIntegrationRule& custom_rule =
 							m_data->elements.registered_custom_rules[elem_by_custom_rule.custom_int_rule_index];
-						mpcolns::h5::attribute::write(dset_id, "GP_X", custom_rule.x);
-						mpcolns::h5::attribute::write(dset_id, "CUSTOM_INTEGRATION_RULE_DIMENSION", custom_rule.custom_rule_dimension);
-						mpcolns::h5::attribute::write(dset_id, "NUM_GP", (int)custom_rule.x.size());
+						mpcolns::h5::attribute::write(h_eg, "GP_X", custom_rule.x);
+						mpcolns::h5::attribute::write(h_eg, "CUSTOM_INTEGRATION_RULE_DIMENSION", custom_rule.custom_rule_dimension);
+						// reshape: legacy line rules store 1 coord/point (num_gp==0 => cols=1);
+						// multi-dim parametric rules (e.g. BezierTri6 barycentric) store num_gp
+						// rows of (x.size()/num_gp) coords each.
+						int n_gp = custom_rule.num_gp > 0 ? custom_rule.num_gp : (int)custom_rule.x.size();
+						int n_col = (custom_rule.num_gp > 0 && custom_rule.num_gp <= (int)custom_rule.x.size())
+							? (int)custom_rule.x.size() / custom_rule.num_gp : 1;
+						mpcolns::h5::attribute::write(h_eg, "NUM_GP", n_gp);
+						// QUADRATURE child group: GP_PARAM (NUM_GP x n_col) + optional GP_WEIGHT.
+						hid_t h_q = mpcolns::h5::group::create(
+							h_eg, "QUADRATURE", H5P_DEFAULT, info.h_group_proplist, H5P_DEFAULT);
+						hid_t d_gpp = mpcolns::h5::dataset::createAndWrite(
+							h_q, "GP_PARAM", custom_rule.x, (size_t)n_gp, (size_t)n_col);
+						mpcolns::h5::dataset::close(d_gpp);
+						if (!custom_rule.w.empty()) {
+							hid_t d_gpw = mpcolns::h5::dataset::createAndWrite(
+								h_q, "GP_WEIGHT", custom_rule.w);  // 1-D [nGP] per schema v1
+							mpcolns::h5::dataset::close(d_gpw);
+						}
+						mpcolns::h5::group::close(h_q);
 					}
 				}
-				mpcolns::h5::dataset::close(dset_id);
+				mpcolns::h5::group::close(h_eg);
 			}
 		}
 	}
