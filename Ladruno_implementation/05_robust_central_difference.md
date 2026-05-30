@@ -1,9 +1,8 @@
 ---
-title: Robust central-difference integrator (CentralDifferenceLadruno)
+title: Robust explicit central-difference integrator (CentralDifferenceLadruno)
 project: Ladruno
 status: ready-to-implement
 priority: high
-owner: nmora
 tags:
   - implementation
   - integrator
@@ -11,395 +10,290 @@ tags:
   - central-difference
 ---
 
-# Robust central-difference integrator (`CentralDifferenceLadruno`)
+# Robust explicit central-difference integrator (`CentralDifferenceLadruno`)
 
-> **Design / ADR (pre-implementation).** Plan for a new, clean explicit
-> central-difference integrator that fixes the structural defects shared by the
-> five existing CD-family classes, reuses the `dt_cr` machinery built for the
-> Noh–Bathe work ([[04_explicit_dynamics_and_energy_balance]]), and supports
-> **two selectable viscous-damping treatments** (coupled-LHS and explicit-lagged).
-> Sits beside `ExplicitBathe` in the explicit core; the Noh–Bathe scheme stays the
-> recommended default, this is the textbook-CD reference/peer it never had.
-> **Status 2026-05-30: design approved** — all four review questions settled (see
-> Decisions); ready to implement on `ladruno` (via this worktree branch → PR).
+> **Design / ADR (pre-implementation).** A single, clean **explicit leap-frog
+> central-difference** integrator — a sibling-fork class (classTag 64) that delivers
+> the one combination *no* existing OpenSees class has: a **correct first step + a
+> built-in critical-timestep guard + clean full-step velocity output + energy-balance
+> discipline**, without modifying any upstream file.
+>
+> **Status 2026-05-30: design approved, then NARROWED after an adversarial sweep.**
+> The sweep (4 independent reviewers + targeted code verification) established that a
+> *coupled* (C-on-LHS) mode would have duplicated the existing `NewmarkExplicit(γ=½)`
+> — same effective tangent (`addCtoTang(c2); addMtoTang(c3)`), no starter defect,
+> consistent-mass capable. So the **coupled mode was dropped**: for the
+> implicit-damped / consistent-mass central-difference case, **use the existing
+> `integrator NewmarkExplicit 0.5`**. This class is the *explicit leap-frog* CD only —
+> the genuinely-missing, non-redundant piece. The numerical core was independently
+> re-derived and verified sound; the surviving fixes (starter location, leap-frog
+> state, registration list) are folded in below.
 
 ## What
 
-A new `TransientIntegrator` subclass `CentralDifferenceLadruno` (classTag **64**)
-implementing the standard second-order explicit **central-difference** scheme,
-done correctly:
+A new `TransientIntegrator` subclass `CentralDifferenceLadruno` (classTag **64**),
+the explicit **leap-frog** central-difference scheme done right:
 
-- **Correct first step.** Proper half-step starter `u₋₁ = u₀ − Δt·v₀ + ½Δt²·a₀`
-  with `a₀ = M⁻¹(P₀ − C v₀ − Fᵢₙₜ(u₀))`. No more `assuming Ut-1 = Ut` warning.
-- **First-class, selectable damping** (the decision below): `-damping coupled`
-  (C on the effective LHS — textbook robust CD) or `-damping explicit` (C in the
-  residual at the known half-step velocity — leap-frog/LS-DYNA style, keeps a pure
-  diagonal solve). Rayleigh via `setRayleighDampingFactors`; modal damping via the
-  `getVel()` hook.
-- **Lumped-mass discipline.** Detect a non-diagonal mass / non-`Diagonal` system
-  and warn (coupled mode still works with a consistent solver; explicit mode
-  requires diagonal M and says so).
+- **Single explicit scheme** (no mode switch): `M` alone on the LHS → a trivial
+  diagonal `M⁻¹` solve every step. Viscous damping enters the residual at the known
+  half-step velocity (the LS-DYNA-style genuinely-explicit form, same family as the
+  existing `ExplicitDifference`).
+- **Correct first step.** Half-step starter `v₋½ = v₀ − ½Δt·a₀` with
+  `a₀ = M⁻¹(P₀ − C v₀ − Fᵢₙₜ(u₀))`, computed on the **first step** (where Δt is set
+  and the SOE is formed — *not* in `domainChanged()`; see C3/B1). Kills the legacy
+  `assuming Ut-1 = Ut` error.
 - **`dt_cr` built in.** Reuse `CriticalTimeStep::computeCriticalTimeStep` verbatim;
-  report the CD limit `2/ω_max` with stability factor **1.0** (no Noh–Bathe 2×
-  bonus). Same `-cfl / -cflAbort / -tangent / -recompute N / -lump` surface as
-  `ExplicitBathe`, and the queryable `getCriticalTimeStep()`.
-- **Consistent full-step velocity output** `vₙ = (uₙ₊₁ − uₙ₋₁)/(2Δt)` so recorders
-  and the energy balance see a physical velocity (not an offset half-step value).
-- **Energy-balance ready.** Works with `EnergyBalanceRecorder` (classTag 26)
-  unchanged — the closure residual is the silent-wrong detector.
+  report the CD limit `2/ω_max` (stability factor **1.0**, no Noh–Bathe 2× bonus).
+  Implement the `getCriticalTimeStep()` override; the `criticalTimeStep()` Py/Tcl
+  command already exists and dispatches to it. Same `-cfl / -cflAbort / -tangent /
+  -recompute N / -lump` surface as `ExplicitBathe`.
+- **Two velocities, kept separate.** (a) **Node/recorder velocity** = full-step
+  `vₙ = ½(v₋½ + v₊½)` (≡ `(uₙ₊₁−uₙ₋₁)/2Δt`), pushed via `setVel()`/`setResponse()` —
+  fixes the legacy half-step/offset output. (b) **`getVel()`** = the modal-damping
+  hook (`IncrementalIntegrator::addModalDampingForce` → residual via `setB`), which
+  returns the half-step `v₋½` known at solve time.
+- **βK guard.** Warn (with the dt_cr-collapse explanation) when stiffness-proportional
+  Rayleigh (`betaK`/`betaKi`/`betaKc`≠0) is used, and report the damping-reduced
+  `damped_dt`. Mass-proportional `αM` is safe.
+- **Energy-balance ready.** Works with `EnergyBalanceRecorder` (classTag 26); the
+  damping-work term `DW` integrates against the same lagged `getVel()` velocity.
 
-**Not in scope** (deferred / roadmap-gated): mass scaling (roadmap §5.1, a separate
-decorator/integrator); sub-cycling inside the integrator (D5 — stays driver-level);
-batch/SoA dispatch (§5.2); touching any of the five existing CD classes (left frozen).
+**Explicitly NOT in scope:**
+- **Coupled / implicit-damped CD** (C on the LHS, consistent-mass with a real solve):
+  that scheme already ships as **`NewmarkExplicit(0.5)`** — use it; we do not rebuild it.
+- Mass scaling (roadmap §5.1); sub-cycling inside the integrator (Bathe-ADR D5 —
+  stays driver-level); batch/SoA dispatch (§5.2); **touching any upstream class**
+  (`ExplicitDifference`, `NewmarkExplicit`, the 4 other CD classes stay frozen — the
+  sibling-fork policy is the reason this is a new class and not an in-place patch).
 
 ## Why
 
-OpenSees today has **five** partial central-difference implementations and **none
-is robust**:
+The explicit CD landscape in OpenSees, *including* the one the original plan missed:
 
-| Class | tag | First step | Damping | dt_cr | Velocity out |
-|---|---|---|---|---|---|
-| `CentralDifference` | 5 | warns `Ut-1=Ut` (wrong) | Rayleigh flags **stored, never used** in stepping | none | full-step |
-| `CentralDifferenceAlternative` | 17 | V from committed vel | none | none | half-step (t−½) |
-| `CentralDifferenceNoDamping` | 18 | V from committed vel | none | none | half-step |
-| `ExplicitDifference` | 55 | warns `Ut-1=Ut` | Rayleigh via residual (lagged) | none | half-step→corrected |
-| `ExplicitDifferenceStatic` | 62 | — | FLAC local non-viscous | none | — |
+| Class | tag | First step | Damping | dt_cr | Velocity out | Mass |
+|---|---|---|---|---|---|---|
+| `CentralDifference` | 5 | warns `Ut-1=Ut` | Rayleigh flags stored, unused | none | full-step | lumped |
+| `CentralDifferenceAlternative` | 17 | V from committed | none | none | half-step | lumped |
+| `CentralDifferenceNoDamping` | 18 | V from committed | none | none | half-step | lumped |
+| `ExplicitDifference` | 55 | warns `Ut-1=Ut` | Rayleigh via residual (lagged) | none | half-step→crude reconstruct | lumped |
+| `ExplicitDifferenceStatic` | 62 | — | FLAC local | none | — | lumped |
+| **`NewmarkExplicit`** | **19** | **clean (2-level, no defect)** | **C on LHS (proper)** | **none** | **full-step** | **any** |
 
-Shared defects this integrator closes: (1) **wrong initial conditions** for any
-nonzero `v₀`/`a₀`; (2) damping that is either ignored, silently dead, or only
-lagged-explicit with no coupled option; (3) **no critical-timestep guard** — you
-learn `Δt` was too big only when it blows up; (4) inconsistent half-step velocity
-output that corrupts post-processing. The Noh–Bathe work already built the cure for
-(3) (`CriticalTimeStep`) and the detector for instability (`EnergyBalanceRecorder`);
-this integrator is the standard-CD peer that should have had them from the start —
-useful as the canonical verification baseline (CD is the textbook reference every
-explicit scheme is measured against) and for users who want plain CD with discipline.
+Honest delta: the *explicit leap-frog scheme itself* already exists (`ExplicitDifference`),
+and the *coupled/implicit-damped* scheme already exists and is robust on most axes
+(`NewmarkExplicit`). What is **missing from every one of them** is the combination:
+**(1) a correct explicit starter, (2) a `dt_cr` guard, (3) clean full-step velocity
+output, (4) energy-balance discipline.** The Noh–Bathe work already built the
+infrastructure for (2) and (4) (`CriticalTimeStep`, `EnergyBalanceRecorder`); this
+class brings the explicit leap-frog scheme up to that standard. Because the
+sibling-fork policy forbids patching the upstream `ExplicitDifference` in place (the
+reason "harden ExplicitDifference" was rejected), it lands as a new fork class.
 
-## Decisions (settled at review — 2026-05-30)
+For the coupled/implicit-damped case, the answer is documentation, not code:
+`integrator NewmarkExplicit 0.5`.
 
-> Four review questions resolved: **default = `coupled`**; **βK = warn-and-proceed**;
-> **`coupled` accepts consistent mass (slow-path warning)**; **`getVel()` is the
-> modal-damping hook → modal damping is lagged in both modes** (code-confirmed). See
-> the Risks section for the resolved-question detail. Numbering note: C1–C7 are grouped
-> by topic (C2/C7 are the damping pair), not strictly sequential.
+## Decisions (settled at review — 2026-05-30, post-sweep)
 
-| # | Decision | Rationale | Consequence |
-|---|----------|-----------|-------------|
-| C1 | **New clean class** `CentralDifferenceLadruno`, classTag 64; leave the 5 legacy CD classes untouched | Sibling-fork policy (same as MPCO_Ladruno); zero regression risk to existing models; smallest review surface | New entry in `classTags.h`, both brokers, command parsing. No diff to upstream-named files |
-| C2 | **Selectable damping**: `-damping coupled` (default) vs `-damping explicit` | Two textbook-distinct schemes (T1): **coupled** = C on the effective LHS (3-level u-form) → stability *independent of damping* (T3, Belytschko §6.6.7) but a real solve if C has K-structure; **explicit** = C lagged at the half-step → always diagonal/trivial but damping *reduces* `dt_cr` by `(√(1+ξ²)−ξ)` (T3, Eq. 6.6.43). Pick per the model | One enum + branch in `formEleTangent` (coupled adds C; explicit moves C·v to RHS) and the residual assembly; mode-specific `dt_cr` reporting (C7) |
-| C7 | **Mode-aware `dt_cr` + βK guard (from review, sharpened by T3).** In `explicit` mode report `CTSResult.damped_dt`; in `coupled` mode report the undamped `2/ω_max` (stability is damping-independent there). **Hard-warn when stiffness-proportional Rayleigh (`betaK`/`betaKi`/`betaKc`≠0) is used**, with mode-specific text: in `explicit` it *collapses* `dt_cr` (~`2/(βω²)`, T4); in `coupled` it *destroys diagonality* of `M_eff` (real solve, no longer truly explicit, T3). Recommend mass-proportional `alphaM` or modal damping | `αM` is safe in both modes: it keeps C ∝ diagonal M (coupled stays diagonal) and `ξ=α/2ω` *decreases* with frequency. `βK` is the trap LS-DYNA forbids in explicit (Vol I p.1935) | `CriticalTimeStep` already computes both `damped_dt`/`undamped_dt`; select by mode + add the warning. Document `αM`-safe / `βK`-dangerous in the help string |
-| C3 | **Correct half-step starter** in `domainChanged()`/first `newStep()` | The defining defect of the legacy CD classes; required for any nonzero IC | One extra mass solve at t=0 to get `a₀`; needs `P₀`, `Fᵢₙₜ(u₀)`, `C v₀` |
-| C4 | **Reuse `CriticalTimeStep` as-is**, stability factor **1.0** | Already hardened (DSYGV→DGGEV, lumping, MPI reduce, D8 aliasing-safe); CD limit is exactly `2/ω_max` | `#include <CriticalTimeStep.h>`; no `EB_NB_STABILITY_FACTOR` |
-| C5 | **Two velocities, kept separate** (resolved by code review). (a) **Node/recorder velocity** = full-step `vₙ=(uₙ₊₁−uₙ₋₁)/2Δt`, pushed via `theModel->setVel()`/`setResponse()` — fixes the legacy half-step output bug. (b) **`getVel()`** = the *modal-damping* hook (`IncrementalIntegrator::addModalDampingForce`, line 525 → residual via `setB`), so it returns the velocity known at solve time (lagged/half-step) | Modal damping is thus applied **explicitly/lagged in BOTH C-modes** — intrinsic, matches Bathe-ADR D2 | Store `uₙ₋₁`; set node vel to `vₙ`; `getVel()` returns lagged vel; `EnergyBalanceRecorder` `DW` must integrate against the *same* lagged velocity |
-| C6 | **Lumped-mass guard**: `-damping explicit` **requires** diagonal M (error if not). `-damping coupled` **accepts** a consistent (non-diagonal) M — does a real factor-once-per-Δt `M_eff` solve — but **warns it is not the fast path** (resolved at review) | Explicit mode's whole point is the trivial `M⁻¹`; coupled mode is mathematically sound with consistent mass and that capability distinguishes this class from the diagonal-only siblings | Diagonal-dominance / `system` check at `domainChanged()`: hard-error (explicit) vs warn (coupled) |
+| # | Decision | Rationale |
+|---|----------|-----------|
+| C1 | **New clean fork class**, `CentralDifferenceLadruno`, classTag 64; all upstream classes frozen | Sibling-fork policy (no upstream diffs); the reason this is new code, not an in-place patch |
+| C2 | **Single explicit leap-frog scheme** — no `-damping` mode switch | The sweep showed a coupled mode == `NewmarkExplicit(0.5)`; bundling two schemes under one classTag was rejected as a split-personality tool. One scheme, one behavior |
+| C3 | **Starter on the FIRST STEP, not `domainChanged()`** (B1 fix): `a₀ = M⁻¹(P₀−Cv₀−Fᵢₙₜ(u₀))` then `v₋½ = v₀ − ½Δt·a₀` | `domainChanged()` has no Δt set and no factorized SOE (this is exactly why legacy CD punts). `ExplicitBathe` precedent: defer the first acceleration solve to the first `update()` behind a `firstStep` flag. `dt_cr` *can* stay in `domainChanged()` (it does its own LAPACK eigensolve, not the global SOE) |
+| C4 | **Reuse `CriticalTimeStep`**, stability factor 1.0; **implement `getCriticalTimeStep()` override** | Base `TransientIntegrator::getCriticalTimeStep()` returns `-1.0` (verified `TransientIntegrator.h:71`); the `criticalTimeStep()` command (`OPS_criticalTimeStep`, wired in OpenSeesCommands/PythonWrapper/TclWrapper) already dispatches to it. CD limit is exactly `2/ω_max` |
+| C5 | **Two velocities**: node/recorder = full-step `vₙ` (via `setVel`); `getVel()` = half-step `v₋½` (modal-damping hook, lagged) | `addModalDampingForce` (IncrementalIntegrator.cpp:525→556) assembles into the residual via `setB`, so `getVel()` must return a solve-time-known (lagged) velocity. `EnergyBalanceRecorder` `DW` integrates against that same lagged velocity for closure |
+| C6 | **Diagonal/lumped mass required** (error otherwise); **βK = warn-and-proceed** + report `damped_dt` | Explicit's whole point is trivial `M⁻¹`. βK Rayleigh (`ξ=βω/2` grows with frequency) collapses `dt_cr` ~`2/(βω²)` (T4); warn, auto-pick `damped_dt`, let `-cflAbort` protect. `αM` is safe |
+| C7 | **Coupled/implicit-damped CD is OUT** — document `NewmarkExplicit 0.5` | It already exists and is robust; rebuilding it was the redundancy the sweep caught |
 
 ## Where
 
-- **New code**:
-  - `SRC/analysis/integrator/CentralDifferenceLadruno.{h,cpp}`
-- **Modify**:
-  - `SRC/classTags.h` — add `#define INTEGRATOR_TAGS_CentralDifferenceLadruno 64`
-  - `SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp` — include + `case`
-  - `SRC/tcl/TclPackageClassBroker.cpp` — same (parallel/restart)
-  - `SRC/interpreter/OpenSeesCommands.cpp` — string match `"CentralDifferenceLadruno"` → `OPS_CentralDifferenceLadruno()`
-  - Dir `CMakeLists.txt` + `Makefile` in `SRC/analysis/integrator/`
+(Footprint verified against the actual `ExplicitBatheLNVD` wiring — 12 files.)
+
+- **New code**: `SRC/analysis/integrator/CentralDifferenceLadruno.{h,cpp}`
+- **Modify (registration)**:
+  - `SRC/classTags.h` — `#define INTEGRATOR_TAGS_CentralDifferenceLadruno 64`
+  - `SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp` — `#include` + `case`
+  - `SRC/runtime/runtime/TclPackageClassBroker.cpp` — `#include` + `case`  *(corrected path — NOT `SRC/tcl/`)*
+  - `SRC/interpreter/OpenSeesCommands.cpp` — string dispatch → `OPS_CentralDifferenceLadruno()`
+  - `SRC/interpreter/OpenSeesCommands.h` — forward decl `void* OPS_CentralDifferenceLadruno();`  *(was missed)*
+  - `SRC/tcl/commands.cpp` — `extern` decl + Tcl `integrator` dispatch branch  *(was missed — without it the integrator is unreachable from Tcl)*
+  - `SRC/analysis/integrator/CMakeLists.txt` + `Makefile`
+  - *(PythonWrapper.cpp NOT needed — Python `integrator` dispatch is string-based)*
 - **Reference (copy patterns from)**:
-  - `SRC/analysis/integrator/ExplicitBathe.cpp` — `dt_cr` wiring, options parsing, `domainChanged()` state alloc, `getCriticalTimeStep()`, broker, the explicit recipe
-  - `SRC/analysis/integrator/CentralDifference.cpp` — the coupled-LHS `addMtoTang(c3)+addCtoTang(c2)` pattern (mode `coupled`)
-  - `SRC/analysis/integrator/ExplicitDifference.cpp` — the lagged-residual / M-only pattern + `getVel()` modal-damping hook (mode `explicit`)
-- **Build**: no new target or external dep. Full installer link still **blocked by
-  the [[04_explicit_dynamics_and_energy_balance]] / MPCO_Ladruno link error** —
-  per-TU `cl.exe` compile-verify is the interim gate, same as the Bathe work.
+  - `ExplicitDifference.cpp` — the leap-frog M-only scheme, lagged-Rayleigh residual, `getVel()` returning the half-step velocity. **The closest sibling; this class is essentially it + correct starter + dt_cr + clean velocity output + energy discipline.**
+  - `ExplicitBathe.{h,cpp}` — `dt_cr` wiring, `getCriticalTimeStep()`, the `firstStep`-gated first solve, options parsing, broker, the explicit recipe.
+  - `CentralDifference.cpp:284` — the single-`update()`-per-step guard (CD allows exactly **one** solve/step; use this guard, *not* ExplicitDifference's looser `>2`).
+- **Build**: no new target/dep. Full installer link still blocked by the MPCO_Ladruno
+  link error ([[04_explicit_dynamics_and_energy_balance]]); per-TU `cl.exe` compile-verify
+  is the interim gate.
 
 ## How
 
-### Algorithm
+### Algorithm (explicit leap-frog)
 
-State stored: `uₙ₋₁, uₙ, vₙ, aₙ` (+ work vectors). Coefficients `c2 = 1/(2Δt)`,
-`c3 = 1/Δt²`.
-
-**Central-difference kinematics** (3-level, full step):
+Primary state carried: `uₙ`, `v₋½` (half-step velocity), `aₙ`; plus `uₙ₋₁` only for the
+full-step output velocity. Coefficient `c3 = 1` (solve for acceleration; `M a = R`).
 
 ```
-vₙ = (uₙ₊₁ − uₙ₋₁) / (2Δt)         (= c2 (uₙ₊₁ − uₙ₋₁))
-aₙ = (uₙ₊₁ − 2uₙ + uₙ₋₁) / Δt²      (= c3 (uₙ₊₁ − 2uₙ + uₙ₋₁))
+aₙ      = M⁻¹ ( Pₙ − C·v_{n−½} − Fᵢₙₜ(uₙ) )      // damping lagged at known v_{n−½}
+v_{n+½} = v_{n−½} + Δt·aₙ
+uₙ₊₁    = uₙ + Δt·v_{n+½}
 ```
 
-EOM at step n:  `M aₙ + C vₙ + Fᵢₙₜ(uₙ) = Pₙ`.
+- `formEleTangent`: `zeroTangent(); addMtoTang();` → pure diagonal `M⁻¹` (matches
+  `ExplicitDifference.cpp:124-131`). Damping is **not** on the LHS (that would be the
+  coupled scheme = `NewmarkExplicit`); it is the residual term `−C·v_{n−½}`, formed
+  from the committed Rayleigh factors at the lagged half-step velocity.
+- Stability: `Δt_cr = (2/ω_max)(√(1+ξ²)−ξ)` — damping reduces the step (T3/T4).
 
-**Mode `coupled` (default — proper LHS treatment).** Substitute both relations and
-collect `uₙ₊₁`:
+### Initialization (B1 fix)
 
+`domainChanged()` does **only**: allocate state, seed `uₙ, v₋½(=v₀), aₙ` from committed
+disp/vel/accel, and run `CriticalTimeStep::computeCriticalTimeStep(model, useTangent,
+lumping)` (cache `dt_cr` so `getCriticalTimeStep()` is valid before the first `analyze`).
+It does **not** solve for `a₀` — Δt is unset and the SOE is unfactored there.
+
+On the **first `newStep`/`update`** (Δt set, SOE formed/factored), behind a `firstStep`
+flag:
 ```
-(M·c3 + C·c2) uₙ₊₁ = Pₙ − Fᵢₙₜ(uₙ) + M·c3·(2uₙ − uₙ₋₁) + C·c2·uₙ₋₁
-└──── M_eff ────┘
+a₀  = M⁻¹ ( P₀ − C·v₀ − Fᵢₙₜ(u₀) )       // the first ordinary explicit solve
+v₋½ = v₀ − ½Δt·a₀                         // back half-step starter (replaces v₀ seed)
 ```
-
-- `formEleTangent`: `zeroTangent(); addMtoTang(c3); addCtoTang(c2);` — exactly the
-  standard `CentralDifference` effective matrix, but now with a correct starter and
-  `dt_cr`. With lumped M **and** diagonal/Rayleigh-mass C, `M_eff` is diagonal →
-  trivial solve. With a consistent C it stays a real (cheap, constant-per-Δt) solve.
-- Damping is treated **implicitly** (C straddles step n via the central velocity, on
-  the LHS), so per Belytschko §6.6.7 (p. 403) the **stability limit is independent of
-  damping** — `dt_cr` stays the undamped `2/ω_max` (T3). The price: with C on the LHS
-  the scheme is "not truly explicit for a damped system" — `M_eff` is diagonal **only**
-  when C is diagonal-compatible (lumped M + mass-proportional `αM`). With `βK` Rayleigh,
-  C carries stiffness structure → `M_eff` is non-diagonal → a real (factor-once-per-Δt)
-  solve, losing the explicit advantage. So: choose `αM` to stay fast *and* unconditional.
-
-**Mode `explicit` (leap-frog / LS-DYNA style).** Keep `M` alone on the LHS, move the
-damping force to the residual using the known half-step velocity (lagged):
-
-```
-M·c3 · uₙ₊₁ = Pₙ − Fᵢₙₜ(uₙ) − C v_{n−½} + M·c3·(2uₙ − uₙ₋₁)
-```
-
-- `formEleTangent`: `zeroTangent(); addMtoTang(c3);` → pure diagonal `M⁻¹` (matches
-  `ExplicitDifference`/`CentralDifferenceNoDamping`).
-- Damping is explicit/conditionally-stable → **reduces `dt_cr`**; documented, and the
-  `-cfl` report should annotate the reduction. Requires diagonal M (C6).
-
-### Initialization (the robustness fix, C3)
-
-In `domainChanged()` (after state alloc, seeding `uₙ, vₙ, aₙ` from committed
-disp/vel/accel) compute the starter:
-
-```
-a₀ = M⁻¹ ( P₀ − C v₀ − Fᵢₙₜ(u₀) )          // one mass solve at t=0
-u₋₁ = u₀ − Δt v₀ + ½ Δt² a₀
-```
-
-Then run `CriticalTimeStep::computeCriticalTimeStep(model, useTangent, lumping)` and
-cache `dt_cr` so `getCriticalTimeStep()` is valid **before** the first `analyze`
-(same contract as `ExplicitBathe`, ADR item D6).
+Then proceed with the standard step. This mirrors `ExplicitBathe`'s deferred-first-solve
+pattern and is the correctness fix the legacy classes never made.
 
 ### Public API
 
 ```python
-# default: coupled damping, no dt_cr report
-ops.integrator('CentralDifferenceLadruno')
-
-# explicit-lagged damping (pure diagonal solve), with CFL guard
-ops.integrator('CentralDifferenceLadruno', '-damping', 'explicit',
-               '-cflAbort', '-lump', 'diagonal')
-
-# query the stable step (valid after domainChanged, i.e. after model build)
-dt_cr = ops.criticalTimeStep()          # reuses the existing command (D6)
-n = max(1, ceil(dt / (0.9 * dt_cr)))
-ops.analyze(n, dt/n)                     # driver-level adaptive sub-stepping (D5)
+ops.integrator('CentralDifferenceLadruno')                  # plain explicit CD
+ops.integrator('CentralDifferenceLadruno', '-cflAbort', '-lump', 'diagonal')
+dt_cr = ops.criticalTimeStep()                              # existing command (C4)
+n = max(1, ceil(dt / (0.9 * dt_cr)))                        # 0.9 = LS-DYNA TSSFAC
+ops.analyze(n, dt/n)                                        # driver-level sub-stepping
+# coupled / implicit-damped CD instead?  ->  ops.integrator('NewmarkExplicit', 0.5)
 ```
 
-Options (mirror `ExplicitBathe` where they overlap): `-damping <coupled|explicit>`,
-`-cfl`, `-cflAbort`, `-tangent`, `-recompute N`, `-lump <rowsum|diagonal>`,
-`-verbose`, `-divergence f`.
-
-Required recipe (explicit mode): lumped/element mass, `system Diagonal`,
-`algorithm Linear` (exactly one solve/step for CD), `dt < dt_cr`.
+Options (mirror `ExplicitBathe`): `-cfl`, `-cflAbort`, `-tangent`, `-recompute N`,
+`-lump <rowsum|diagonal>`, `-verbose`, `-divergence f`. **No `-damping` flag.**
+Required recipe: lumped/diagonal mass, `system Diagonal`, `algorithm Linear`
+(exactly one solve/step — guard at `updateCount>1`), `dt < dt_cr`.
 
 ### Testing / acceptance (extend `Ladruno_scripts/_verify_explicit.py`)
 
-Analytical references — CD must match these to pass:
-
-1. **Order of accuracy ≈ 2.0** (log–log slope of error vs Δt, SDOF free vibration).
-2. **Stability boundary**: stable for `ωΔt < 2.0`, unstable just above (vs Noh–Bathe ≈ 3.0).
-3. **Damped SDOF decay** matches the closed-form `e^{−ξωt}` envelope and damped
-   period — run in **both** damping modes; coupled should hold accuracy at larger
-   Δt than explicit, explicit should show the expected `dt_cr` reduction.
-4. **Coupled vs explicit vs Newmark** cross-check < a few % in the stable range.
+1. **Order of accuracy ≈ 2.0** (SDOF free vibration, log–log error slope).
+2. **Stability boundary (undamped)**: stable for `ωΔt < 2.0`, unstable just above
+   (strict `<`; at exactly 2.0 the undamped scheme is only marginally stable).
+3. **Damped SDOF decay**: matches `e^{−ξωt}` envelope + damped period; largest stable
+   step matches `(2/ω)(√(1+ξ²)−ξ)` across ξ = 0.02, 0.1, 0.5.
+4. **vs Newmark/CD cross-check** < a few % in the stable range.
 5. **1-D wave speed** exact `= √(E/ρ)`.
 6. **Rigid-body momentum** conserved exactly (zero stiffness).
 7. **`criticalTimeStep() = ℓ/c`** exact on a 1-element bar.
-8. **First-step correctness**: nonzero `v₀`/`a₀` SDOF reproduces the analytical
-   trajectory from step 1 (the test the legacy classes fail).
-9. **Energy closure ≈ 1%** via `EnergyBalanceRecorder` over a multi-DOF run.
-10. **Mode-dependent damped stability (T3)**: on a damped SDOF, sweep Δt to find the
-    stability boundary. `explicit` mode must match `(2/ω)(√(1+ξ²)−ξ)`; `coupled` mode
-    must stay at `≈2/ω` *independent of ξ* (verify across ξ = 0.02, 0.1, 0.5).
-11. **βK trap, both modes (T4)**: in `explicit` mode confirm the stable step drops
-    ~quadratically as `betaK` rises (tracks `2/(βω²)` at large βK); in `coupled` mode
-    confirm stability holds but `M_eff` becomes non-diagonal (solve required). Confirm
-    the C7 hard-warn fires for `betaK≠0`, and that `alphaM` is benign in both modes.
-12. **Mode equivalence (T1)**: with C=0, `coupled` and `explicit` produce bitwise-
-    close trajectories (they are the same scheme); they diverge only once damping ≠ 0.
+8. **First-step correctness (the key test)**: nonzero `v₀`/`a₀` SDOF reproduces the
+   analytical trajectory from step 1 — the test every legacy class fails.
+9. **βK trap + guard (T4)**: `getCriticalTimeStep()` drops ~quadratically as `betaK`
+   rises (→ `2/(βω²)`); the C6 warn fires for `betaK≠0`; `alphaM` stays benign.
+10. **Energy closure ≈ 1%** via `EnergyBalanceRecorder` (multi-DOF). *Gated by the
+    MPCO_Ladruno link blocker — runs once the full link is unblocked.*
 
-## Theory & cross-code review (hardening pass)
+## Theory & cross-code review (hardening + adversarial sweep)
 
-> Reviewed against first-principles CD theory (Newmark β=0, γ=½ spectral analysis;
-> Belytschko §6, Ibrahimbegovic §6, Hughes Ch. 9) and LS-DYNA's explicit solver
-> (Theory §§21–24, Vol I `*CONTROL_TIMESTEP` / `*DAMPING_*`). The two findings that
-> changed the plan are **T3** (damping always shrinks `dt_cr`) and **T4** (βK is a
-> trap). Citations are PDF pages.
+> Reviewed against CD theory (Belytschko *Nonlinear FE*, Ch. 6 — stability of the
+> damped central difference; Bathe *FE Procedures*, Ch. 9 — starter & amplification;
+> Ibrahimbegovic Ch. 6; Hughes *The FEM*, Ch. 9 — spectral analysis, period error)
+> and LS-DYNA (Theory §§21–24; `*CONTROL_TIMESTEP`/`*DAMPING_*`). An adversarial sweep
+> (numerical / C++ feasibility / consistency / red-team) then stress-tested the plan;
+> its outcomes are folded into the Decisions above and noted per-item here.
 
-**T1 — CD is Newmark(β=0, γ=½); the two modes are two algebraically-distinct schemes that coincide only when C=0.**
-The "coupled" mode is the **3-level displacement form**
+**T0 — Adversarial-sweep outcomes (2026-05-30).** *Scope:* coupled mode dropped
+(== `NewmarkExplicit(0.5)`, verified: default γ=0.5, `addCtoTang(c2);addMtoTang(c3)`,
+no `Utm1`/starter defect) → narrowed to explicit-only (C2/C7). *Feasibility:* the
+starter cannot live in `domainChanged()` (no Δt, no factorized SOE) → moved to the
+first step (C3). *False alarm:* `getCriticalTimeStep()` *is* a base virtual and
+`criticalTimeStep()` *is* a live command — the plan's reuse claim was correct.
+*Numerical core:* independently re-derived and **verified sound** (boundary, damped
+limit, starter, period error, βK collapse all confirmed).
 
-```
-vₙ = (uₙ₊₁−uₙ₋₁)/2Δt ,  aₙ = (uₙ₊₁−2uₙ+uₙ₋₁)/Δt²   (C straddles step n)
-```
+**T1 — This is the leap-frog explicit CD** (LS-DYNA Theory §24.2, Eqs. 24.7–24.12):
+`aₙ = M⁻¹(Pₙ − F − H); v_{n+½}=v_{n−½}+Δt·aₙ; uₙ₊₁=uₙ+Δt·v_{n+½}`. LS-DYNA stores
+velocity at half-steps by design — our `getVel()` returns that half-step value. The
+*coupled* (C-on-LHS, central-velocity) variant is `NewmarkExplicit(0.5)`, out of scope.
 
-The "explicit" mode is the **leap-frog half-step form** — exactly LS-DYNA's native
-scheme (Theory §24.2, Eqs. 24.7–24.12, PDF p. 501):
+**T2 — Cheap `dt_cr` fallback = LS-DYNA solid formula** (Theory §22.1):
+`Δt_e = L_e/√(Q+√(Q²+c²))`, `L_e(hex)=V_e/A_max^face`, dilatational
+`c=√(E(1−ν)/((1+ν)(1−2ν)ρ))`; global `Δt = 0.9·minₑΔt_e` (TSSFAC=0.9, matches our
+`0.9·dt_cr`). The shipped path uses the `K v=λMv` pencil; the `ℓ_e/c_e` estimate
+(dilatational speed) is the deferred cheap alternative.
 
-```
-aₙ = M⁻¹(Pₙ − C v_{n−½} − Fᵢₙₜ(uₙ));  v_{n+½} = v_{n−½} + Δt aₙ;  uₙ₊₁ = uₙ + Δt v_{n+½}
-```
+**T3 — Damping reduces `dt_cr` in this (explicit) scheme.** `Δt_cr=(2/ω_max)(√(1+ξ²)−ξ)`
+— LS-DYNA Eq. 24.29 ("damping reduces the critical time step size"); standard result
+in Belytschko Ch. 6 (damped central difference) and Hughes Ch. 9. Verified numerically
+to machine precision at ξ=0.02/0.1/0.5. Report `damped_dt` whenever damping is active.
 
-With **C = 0 both are identical**. With C ≠ 0 they differ: coupled uses the *central*
-velocity (C on LHS); leap-frog uses the *trailing half-step* velocity (C on RHS,
-fully explicit). This is precisely the `coupled`/`explicit` switch (C2). LS-DYNA
-stores velocity at half-steps by design — confirming our `explicit` mode is the
-"native" explicit scheme and motivating the C5 velocity-reconstruction care.
+**T4 — βK is a trap; αM is safe.** For `C=αM+βK`, `ξ_i = α/2ω_i + βω_i/2`. The βK term
+grows with frequency → at ω_max, `(√(1+ξ²)−ξ)→1/(2ξ)`, so `Δt_cr→2/(βω_max²)` —
+quadratic collapse. LS-DYNA declares classical βK "impractical" in explicit (Vol I
+`*DAMPING_PART_STIFFNESS`). αM (`ξ=α/2ω`) damps low frequencies and is safe. → C6 warn.
 
-**T2 — `dt_cr` cheap estimate (the deferred `ℓ_e/c_e`) is the LS-DYNA solid formula.**
-LS-DYNA Theory §22.1 (Eqs. 22.1–22.8, PDF pp. 489–490):
+**T5 — Lumped mass is doubly preferred.** Diagonal `M⁻¹` is trivial, and lumped *lowers*
+ω_max vs consistent (rod: `2c/ℓ` vs `2√3·c/ℓ`) → larger stable step. C6 requires it.
 
-```
-Δt_e = L_e / √(Q + √(Q²+c²)) ,   global Δt = TSSFAC · minₑ Δt_e ,   TSSFAC = 0.9 default
-L_e(hex) = V_e / A_max^face       (volume / largest-face area)
-c = √( E(1−ν) / ((1+ν)(1−2ν)ρ) )  (DILATATIONAL wave speed — note the (1−ν)/… factor)
-```
+**T6 — Zero algorithmic dissipation (γ=½).** 2nd-order accurate, **no** numerical
+damping, slight *period shortening* (≈ −Ω²/24, sign verified — opposite to trapezoidal
+elongation). Good for waves/energy conservation; bad for un-damped spurious high modes
+→ for controllable HF dissipation, reach for `ExplicitBathe`. State this in the header.
 
-Two takeaways: (a) our example's `0.9 * dt_cr` safety factor matches LS-DYNA's
-default TSSFAC exactly — keep it; (b) the deferred `ℓ_e/c_e` estimate (Bathe ADR
-item 2) should use the **dilatational** speed `√((λ+2μ)/ρ)`, not the shear speed,
-and `L_e = V/A_max` for hexes. This is the cheap fallback when the eigensolve is
-overkill.
-
-**T3 — damping's effect on `dt_cr` is MODE-DEPENDENT (the sharp, textbook-correct result).**
-This is the load-bearing finding. Belytschko (2nd ed.) treats the two cases separately:
-
-- **`explicit` mode (half-step-lagged C — genuinely explicit, LS-DYNA's scheme):**
-  damping *reduces* the step. Spectral/`z`-transform analysis gives
-  `Δt_cr = (2/ω_max)(√(1+ξ²) − ξ) ≤ 2/ω_max` — **Belytschko §6.6.6, Eq. (6.6.43),
-  p. 401** (and Box 6.2, p. 339); identical to **LS-DYNA Theory §24.3, Eq. 24.29,
-  pp. 502–503** ("damping reduces the critical time step size"). Belytschko states
-  verbatim that *the velocity lag* is what decreases the stable step, "both for
-  explicit damping by a linear law such as `C·v` and for any damping in a material law."
-
-- **`coupled` mode (C on the LHS, i.e. damping implicit — the 3-level u-form):**
-  the step is **INDEPENDENT of damping** — **Belytschko §6.6.7, p. 403**. The price:
-  with C on the LHS the scheme is "not truly explicit for a damped system" — `M_eff`
-  needs a real solve unless C is diagonal-compatible. (Bathe agrees qualitatively:
-  for small ξ, damping "does not change the overall stability characteristics,"
-  §9.4.2, p. 540.)
-
-**This corrects my own first correction.** The original draft's "coupled doesn't erode
-`dt_cr`" was actually *right for coupled mode* — what was wrong was generalising it.
-The accurate trade-off:
-
-| | `dt_cr` vs damping | solve cost | βK behaviour |
-|---|---|---|---|
-| `coupled` (C on LHS) | **independent of damping** | diagonal *only if* C diagonal (αM); real factor-once solve if C has K-structure (βK) | safe for `dt_cr`, but βK ⇒ non-diagonal `M_eff` ⇒ loses explicitness |
-| `explicit` (lagged C) | **reduced** by `(√(1+ξ²)−ξ)` | always diagonal/trivial | βK ⇒ ξ=βω/2 huge at ω_max ⇒ step **collapses** (T4) |
-
-**Design consequence**: report `CriticalTimeStep.damped_dt` in `explicit` mode (it
-already computes the damped pencil); in `coupled` mode the undamped `2/ω_max` is the
-honest bound. → this is what C7 now encodes.
-
-**T4 — stiffness-proportional Rayleigh (βK) is a trap in explicit; mass-proportional (αM) is safe.**
-For Rayleigh `C = αM + βK`, the modal damping is `ξ_i = α/(2ω_i) + βω_i/2`:
-
-- **αM term**: `ξ = α/2ω` *decreases* with frequency → damps rigid-body/low modes,
-  negligible effect on `ω_max` → **safe** (LS-DYNA `*DAMPING_GLOBAL`/`_PART_MASS`,
-  p. 1930–1932).
-- **βK term**: `ξ = βω/2` *grows* with frequency. At `ω_max`, plug into T3: for large
-  ξ, `√(1+ξ²)−ξ → 1/(2ξ)`, so `Δt_cr → 1/(ξω_max) = 2/(βω_max²)` — a **quadratic
-  collapse** of the stable step. LS-DYNA therefore declares true classical βK
-  *"impractical"* in explicit and substitutes a bounded per-element high-frequency
-  damping, requiring a manual TSSFAC cut otherwise (Vol I `*DAMPING_PART_STIFFNESS`,
-  p. 1934–1935). → drove the C7 hard-warn.
-
-**T5 — lumped mass is doubly preferred (confirms C6).** Lumped mass both (a) makes
-`M`/`M_eff` diagonal → trivial `M⁻¹`, and (b) *lowers* `ω_max` versus consistent mass
-(e.g. a 1-D bar: `ω_max^lumped = 2c/L` vs `ω_max^consistent = 2√3·c/L`), so lumped
-gives a **larger** stable step *and* a cheaper solve. Consistent mass is legal in
-`coupled` mode (real `M_eff` solve) but is the slow path and shrinks `dt_cr` by √3 —
-worth the C6 warning.
-
-**T6 — CD has zero algorithmic dissipation (γ=½); this is a feature and a footgun.**
-β=0, γ=½ gives second-order accuracy with **no** numerical damping and a slight
-*period shortening* (≈ −Ω²/24). Good: energy-conserving, clean for wave propagation.
-Bad: spurious high-frequency modes (from stiff/odd elements) never decay and can
-pollute the solution — which is exactly why Noh–Bathe (`p`) exists. **So the honest
-positioning is: `CentralDifferenceLadruno` = the accurate, dissipation-free CD
-baseline; reach for `ExplicitBathe` when you need controllable high-frequency
-dissipation.** State this in the class header.
-
-**T7 — bulk/artificial viscosity (out of scope, noted for completeness).** LS-DYNA
-adds a von Neumann–Richtmyer + Landshoff viscous pressure `q` (Theory §21, Q1=1.5,
-Q2=0.06) that smears shocks and *also* feeds `Q` in the timestep (Eq. 22.3), further
-shrinking `Δt_e` in compression. This is an element/material concern, not an
-integrator one — flagged only so wave/shock users know `dt_cr` from the pure
-`K v = λ M v` pencil is optimistic when bulk viscosity is active.
+**T7 — Bulk/artificial viscosity (out of scope).** LS-DYNA's von Neumann–Richtmyer +
+Landshoff `q` (Theory §21) feeds `Q` in the timestep and further shrinks `Δt_e` in
+compression — an element/material concern; flagged so wave/shock users know the pencil
+`dt_cr` is optimistic when bulk viscosity is active.
 
 ## Risks / open questions
 
-> [!done] Default damping mode — **RESOLVED: `coupled`** (2026-05-30).
-> Default is `coupled`; paired with `αM` it is *both* unconditional-in-damping (T3) *and*
-> diagonal — the genuine best case. `explicit` stays available via `-damping explicit`
-> for users who want the LS-DYNA-style pure-leapfrog scheme.
-
-> [!done] βK handling (C7) — **RESOLVED: warn-and-proceed** (2026-05-30).
-> Hard-warn (mode-specific text), auto-select `damped_dt` in `explicit` mode so
-> `-cflAbort` still protects the run; do **not** refuse. A future bounded per-element
-> high-frequency damping (LS-DYNA's substitute for βK) is a separate roadmap item.
-
-> [!done] Modal-damping velocity — **RESOLVED by code review** (2026-05-30).
-> `getVel()` is the modal-damping hook (`IncrementalIntegrator::addModalDampingForce`,
-> line 525): the force is assembled straight into the SOE residual via `setB`, so the
-> velocity must be one known at solve time → **lagged/half-step**. Modal damping is
-> therefore applied explicitly in *both* C-modes (intrinsic, not a defect; matches
-> Bathe-ADR D2). The full-step `vₙ` is the *node/recorder* velocity (set via
-> `setVel()`), kept separate — see C5. `EnergyBalanceRecorder` `DW` must integrate
-> against the same lagged velocity for closure.
-
-> [!done] Consistent mass in `coupled` mode — **RESOLVED: allow + warn** (2026-05-30).
-> `coupled` accepts a consistent (non-diagonal) M and does a real factor-once-per-Δt
-> `M_eff` solve, with a "not the fast path" warning. `explicit` still requires diagonal
-> M. See C6.
-
+- **Implementation traps from the sweep (must honor when coding):**
+  - The explicit-mode state must carry the half-step velocity `v_{n−½}` as primary
+    (like `ExplicitDifference`'s `Utdot`), **and** the first `v_{n−½}` must be the
+    back-half-step starter `v₀ − ½Δt·a₀`, *not* `v₀`. Mis-seeding it (or advancing it
+    with a stale accel) silently loses an order / double-counts damping.
+  - Single solve/step: guard `updateCount > 1` (CD), not ExplicitDifference's `>2`.
+  - `getVel()` is pure-virtual on the base → must be implemented or it won't compile.
 - **`dt_cr` caveats inherited** from `CriticalTimeStep`: ignores constraints/MP;
-  row-sum lumping non-conservative for rotational DOFs (use `-lump diagonal` for
-  beams/shells); pure nodal-mass models report `NOT_APPLICABLE`.
-- **D8 aliasing**: copy the element mass to a local before fetching stiffness/damping
-  from the same element (shared static `theMatrix`). Already handled inside
-  `CriticalTimeStep`; replicate the pattern in any starter/energy code here.
-- **Backwards compatibility**: none affected — new class, new tag, no edits to
-  existing integrators.
-- **Build**: link still gated by the MPCO_Ladruno error; compile-verify per TU.
+  row-sum lumping non-conservative for rotational DOFs (use `-lump diagonal`); pure
+  nodal-mass models report `NOT_APPLICABLE`.
+- **D8 aliasing**: copy element mass before fetching stiffness/damping from the same
+  element (shared static `theMatrix`) — handled inside `CriticalTimeStep`; replicate in
+  any starter/energy code.
+- **Energy test (#10) is link-blocked** by the MPCO_Ladruno error until the full link
+  is restored.
+- **Backwards compatibility**: none affected — new class, new tag, no upstream edits.
+
+> [!note] Resolved at review (no longer open)
+> Default damping mode, βK warn-vs-refuse, `getVel()` convention, consistent-mass — all
+> settled (see Decisions). The biggest resolution was *scope*: coupled mode dropped in
+> favor of the existing `NewmarkExplicit(0.5)`.
 
 ## References
 
-- **LS-DYNA Theory Manual** (`Dropbox/UANDES EC/Lit Review/Explicit/LS-DYNA/LS-DYNA Theory.pdf`):
-  §24.2 central-difference update / leap-frog (PDF p. 501); §24.3 stability incl. the
-  damped bound Eq. 24.29 (pp. 502–503); §22.1 solid-element `dt_cr` Eqs. 22.1–22.8
-  (pp. 489–490); §21 artificial bulk viscosity (pp. 483–488); §24.4 nodal/subcycling
-  timestep (pp. 504–505).
-- **LS-DYNA Keyword Vol I R16** (`…/LS-DYNA_Manual_Vol_I_R16.pdf`): `*CONTROL_TIMESTEP`
-  TSSFAC/DT2MS/IMSCL (pp. 1890–1897); `*DAMPING_*` — βK-vs-timestep warning on p. 1935,
-  mass-proportional on pp. 1930–1932.
-- **CD theory** (textbooks at `C:\Users\nmora\Desktop\FEM expert\books\`):
-  - **Belytschko et al., 2nd ed. (2014)** — the primary source. Box 6.1 p. 333 (CD
-    algorithm, leap-frog); Eq. (6.2.13) p. 335 (undamped `Δt_cr=2/ω_max`); §6.6.6
-    **Eq. (6.6.43) p. 401** (damped `(2/ω)(√(1+ξ²)−ξ)`, the half-step-lagged case);
-    **§6.6.7 p. 403** (damping-implicit ⇒ step independent of damping, "not truly
-    explicit"); §6.6.9 p. 405 + Table 6.1 (consistent mass shrinks `Δt_cr`: rod
-    `ω_max` = `2c/ℓ` lumped vs `2√3·c/ℓ` consistent); §6.2.4 p. 336 (2nd order).
-  - **Bathe, *FE Procedures* (1982)** — Table 9.1 **p. 502** (starter `u₋₁`, constants;
-    `a₃=Δt²/2`); Eq. (9.13) p. 503 / Ex. 9.12 p. 539 (`Δt_cr=Tₙ/π=2/ω_max`); p. 540
-    (damping doesn't change stability character for small ξ). *Note: scanned image PDF,
-    no text layer — render pages to read.*
-  - **Ibrahimbegovic (2009)** — §6.2.1 p. 405, Table 6.1 (CD ≡ Newmark β=0,γ=½;
-    lumped `h≤ℓ/(√2·c)` vs consistent `h≤ℓ/(√6·c)`).
-  - **Hughes, *The FEM: Linear Static & Dynamic* (1987), Ch. 9** — the canonical
-    time-integration reference; the definitive treatment of the amplification-matrix
-    spectral analysis, the damped stability bound, and **period elongation / amplitude
-    decay** (backs T6: CD has γ=½ ⇒ zero amplitude decay and slight period error).
-    Use to deepen T3/T6 once direct PDF reading is available (post-restart).
-- **In-repo**: [[04_explicit_dynamics_and_energy_balance]] (the `CriticalTimeStep` /
-  `EnergyBalanceRecorder` infrastructure reused here); `SRC/analysis/integrator/CriticalTimeStep.h`.
+- **LS-DYNA Theory** (`Dropbox/UANDES EC/Lit Review/Explicit/LS-DYNA/LS-DYNA Theory.pdf`):
+  §24.2 leap-frog update (p. 501); §24.3 damped stability Eq. 24.29 (pp. 502–503); §22.1
+  solid `dt_cr` (pp. 489–490); §21 bulk viscosity (pp. 483–488). **Vol I R16**:
+  `*CONTROL_TIMESTEP` TSSFAC (pp. 1890–1897); `*DAMPING_PART_STIFFNESS` βK warning (p. 1935).
+- **FEM texts** (`C:\Users\nmora\Desktop\FEM expert\books\`):
+  - **Belytschko et al., *Nonlinear FE*** — Ch. 6: CD algorithm (leap-frog box), undamped
+    `Δt_cr=2/ω_max`, **damped `(2/ω)(√(1+ξ²)−ξ)`**, consistent-vs-lumped (`2c/ℓ` vs
+    `2√3c/ℓ`), 2nd-order. *NOTE: the local PDF is the 1st ed. (2001); reconcile exact
+    §/Eq. numbers against it — the result, not the page number, is what's verified.*
+  - **Bathe, *FE Procedures* (1982)** — Ch. 9 / Table 9.1: starter `⁻¹U` (`a₃=Δt²/2`),
+    `Δt_cr=Tₙ/π=2/ω_max` (Ex. 9.12); damping doesn't change stability character for small ξ
+    (p. 540). *Scanned image PDF — render pages to read.*
+  - **Ibrahimbegovic (2009)** — Ch. 6: CD ≡ Newmark(β=0,γ=½); lumped `h≤ℓ/(√2c)` vs
+    consistent `h≤ℓ/(√6c)`.
+  - **Hughes, *The FEM: Linear Static & Dynamic* (1987), Ch. 9** — amplification-matrix
+    spectral analysis, damped stability, **period elongation/amplitude decay** (backs T6).
+- **In-repo**: `NewmarkExplicit.cpp` (the coupled-CD equivalent we point users to);
+  `ExplicitDifference.cpp` (closest leap-frog sibling); `CriticalTimeStep.{h,cpp}` +
+  `EnergyBalanceRecorder` ([[04_explicit_dynamics_and_energy_balance]]).
 
 ## Implementation log
 
-*(empty — fill in once the plan is approved and execution starts; move to
+*(empty — fill in once execution starts; move to
 `Ladruno_internal/implemented_robust_central_difference.md` when done)*
