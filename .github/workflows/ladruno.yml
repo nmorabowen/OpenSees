@@ -8,6 +8,8 @@ on:
     branches: [ladruno]
   pull_request:
     branches: [ladruno]
+    # include ready_for_review so marking a draft "ready" re-triggers the build
+    types: [opened, synchronize, reopened, ready_for_review]
   schedule:
     - cron: "0 6 * * *"   # nightly Zone-B / perf (self-hosted)
   workflow_dispatch:
@@ -34,7 +36,12 @@ jobs:
   # ---- Zone-A: build + pytest(zone_a) + gated Tcl suite ------------------
   zone-a-ubuntu:
     name: Zone-A (Ubuntu)
-    if: github.repository == 'nmorabowen/OpenSees'
+    # Skip the ~40-min Conan build on DRAFT PRs (drafts keep only the fast
+    # static-gates). Still runs on push to ladruno, the nightly schedule, and
+    # when a PR is taken out of draft (ready_for_review, wired in `on:` above).
+    if: >-
+      github.repository == 'nmorabowen/OpenSees' &&
+      (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
