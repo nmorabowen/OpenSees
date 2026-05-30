@@ -98,6 +98,35 @@ features:
       The canonical-doc 4-part battery (stability bracket / period elongation /
       energy drift via EnergyBalanceRecorder / LNVD->exact-static) is owed in Zone A.
 
+  - feature: CentralDifferenceLadruno
+    classtag: 33003          # INTEGRATOR family; new class (N. Mora-Bowen)
+    tag_symbol: INTEGRATOR_TAGS_CentralDifferenceLadruno
+    pr: 22
+    feature_class: integrator
+    required_tiers: [dynamics-battery]
+    pytest: tests/test_centralDifferenceLadruno_integrator.py   # PENDING (Zone-A port of the CDL battery)
+    tcl: WAIVED(integrator; Zone-B Ladruno_scripts/_verify_explicit.py CDL-1..10 until the Zone-A battery lands)
+    zone_b: [Ladruno_scripts/_verify_explicit.py]
+    core_files:                                    # registration sites (dispatch wiring)
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/runtime/runtime/TclPackageClassBroker.cpp
+      - SRC/interpreter/OpenSeesCommands.cpp
+      - SRC/interpreter/OpenSeesCommands.h
+      - SRC/tcl/commands.cpp
+    dispatch: {tcl: true, functionMap: true}
+    status: remediation
+    notes: >
+      NEW class (not band remediation) — explicit leap-frog central difference done
+      right: correct first-step starter (a0 = M^-1(P0 - C v0 - Fint(u0)), v_{-1/2} =
+      v0 - dt/2 a0 on the first newStep), built-in dt_cr (CriticalTimeStep, factor 1.0),
+      clean full-step velocity output, data-driven betaK guard. classTag 33003 in the
+      Ladruno band from the outset. Broker-dispatched (getNewTransientIntegrator, "must
+      recvSelf"). Coupled/implicit-damped CD deliberately dropped -> NewmarkExplicit(0.5).
+      Per-TU compile-verified (cl.exe); full link pending the MPCO_Ladruno blocker. The
+      CDL-1..10 battery currently lives in Zone-B _verify_explicit.py; the Zone-A pytest
+      port (CDL-8 first-step + CDL-9 betaK collapse are the differentiators) is owed.
+
   - feature: EnergyBalanceRecorder
     classtag: 33000          # RECORDER family; was 26
     tag_symbol: RECORDER_TAGS_EnergyBalanceRecorder

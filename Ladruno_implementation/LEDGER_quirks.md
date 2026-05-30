@@ -90,6 +90,39 @@ them. This is observation-only — fixes we actually applied are tracked in
 - **Status:** **handled** — check `info.theType == MatrixType` and read `*info.theMatrix`
   for multi-dim parametric rules ([#18](https://github.com/nmorabowen/OpenSees/pull/18)).
 
+### Gauss-point ordering is per-element, NOT a standard tensor order
+- **Bites:** there is no global "Gauss point #k → natural coords" convention across
+  OpenSees solid elements. Deriving GP coordinates from a `(geometry, rule)` table and
+  assuming the usual lexicographic tensor order silently mis-maps results (stress at
+  GP `k` paired with the wrong location) — invisible to nodal parity and to any
+  value-only check (the frozen MPCO recorder never writes GP coords; STKO holds a
+  hardcoded per-rule table reader-side).
+- **Why:** each element hardcodes its own integration-point loop. Verified from sources:
+  `FourNodeQuad` (4-pt 2×2) walks **counter-clockwise** `(−,−),(+,−),(+,+),(−,+)`
+  (FourNodeQuad.cpp:298-305) — *not* the lexicographic `(−,−),(+,−),(−,+),(+,+)`;
+  `Brick`/stdBrick (8-pt) walks nested `for i{for j{for k}}` ⇒ x-outer..z-inner
+  **lexicographic** (Brick.cpp:536-542); `NineNodeQuad` (9-pt) walks 4 CCW corners →
+  4 CCW edge-mids → center (NineNodeQuad.cpp:127-144), a serendipity-style order, not
+  a 3×3 tensor sweep. So even two "quad GL" elements need not share GP order.
+- **Status:** for `MPCO_Ladruno`, the standard-quadrature `GP_PARAM[k]` MUST equal the
+  element's own k-th GP natural coords (so it pairs with result `gauss_id k`); the
+  table is verified against each canonical element's source, and the belt-and-suspenders
+  `GLOBAL_GP_COORDS` round-trip oracle (`x(GP_PARAM[k])` vs the C++-computed global GP)
+  catches any ordering/basis mismatch at write time. Learned 2026-05-30 building the
+  standard-rule QUADRATURE table.
+
+### `FourNodeTetrahedron` has 1 Gauss point, not 4 (the recorder comment lies)
+- **Bites:** the recorder's `getGeometryAndIntRuleByClassTag` comment reads
+  "4-node tetrahedron with **4 gp**" and maps it to `Tetrahedron_GaussLegendre_1`; an
+  implementer trusting that would write 4 GP coordinates for a 1-GP element.
+- **Why:** `FourNodeTetrahedron.cpp` defines `sg[]={0.25}` (a single abscissa) and its
+  Gauss loop is collapsed: `i = j = k = 0; // Just one Gauss point in a tet`
+  (FourNodeTetrahedron.cpp:226,574). A linear tet integrates exactly with one centroid
+  point `(¼,¼,¼)` in barycentric coords; the "4 gp" comment is stale/wrong.
+- **Status:** table uses **1 GP** for the tet rule. Authoritative GP count comes from
+  the element source / the OutputDescriptor response walk, never the recorder comment.
+  Learned 2026-05-30.
+
 ### `openseessp` is an unbuilt subsystem (Python has no SP)
 - **Bites:** expecting an `import openseessp` analogous to `openseesmp`.
 - **Why:** the SP parallel engine exists only on the Tcl side; the Python engine
