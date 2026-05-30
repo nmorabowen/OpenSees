@@ -56,7 +56,7 @@ always reach (snap-through, near-singular tangents).
 
 | #  | Decision | Rationale | Consequence / extension point |
 |----|----------|-----------|-------------------------------|
-| D1 | Energy balance writes a **plain-text sidecar**; MPCO is **left frozen** | `MPCORecorder` is byte-identical to upstream (deferred even a crash fix to keep it so); MPCO has only `ON_NODES`/`ON_ELEMENTS`, no global/scalar bucket; STKO can't render a non-nodal/element result | Energy parsed with numpy/pandas, **not** STKO_to_python; not inside the `.mpco`. **Extend:** an `ON_REGIONS/ENERGY_BALANCE` group only if STKO/[[03_mpco_ladruno]] gains global-result support |
+| D1 | Energy balance writes a **plain-text sidecar**; MPCO is **left frozen** | `MPCORecorder` is byte-identical to upstream (deferred even a crash fix to keep it so); MPCO has only `ON_NODES`/`ON_ELEMENTS`, no global/scalar bucket; STKO can't render a non-nodal/element result | Energy parsed with numpy/pandas, **not** STKO_to_python; not inside the `.mpco`. **Extend:** an `ON_REGIONS/ENERGY_BALANCE` group only if STKO/[[03_mpco_ladruno]] gains global-result support. **REFRAME (2026-05-31):** the "STKO can't render globals" blocker is **void** — **apeGmsh is our own viewer** ([[project_apegmsh_viewer]]), so global/region/scalar energy is ours to render natively. The apeGmsh-native energy result schema (via the [[03_mpco_ladruno]] ResultSource/ResultSink) is a **dedicated cross-repo session**, folded into the MPCO_Ladruno ADR — not this doc. |
 | D2 | Energy = **incremental work integrals + closure residual** (`KE` instantaneous; `IE`/`DW`/`ULW` trapezoidally integrated; `RES`, `ERR%`); per-region + global | The residual is the actual engineering diagnostic; incremental `IE` makes `KE+IE` cancel correctly for free vibration; `ERR%` normalized by summed-component magnitudes so it doesn't blow up when terms cancel | **Coverage gaps (documented; residual exposes them):** modal damping (applied in the solve, not via `getDamp`) and element/distributed `eleLoad` loads are NOT captured. **Extend:** independent external-work-input channel from load patterns; elastic-vs-dissipated `IE` split |
 | D3 | Keep the tree's **refined `ExplicitBathe`**; **wire up LNVD's FLAC damping** (was commented-out dead code) | The in-tree base was more evolved than jaabell's; LNVD's entire reason to exist was disabled | LNVD applies the local damping **symmetrically to both sub-steps** via a virtual `formUnbalance()` override (the algorithm calls it for sub-step 1, `update()` for sub-step 2); reuses `ExplicitBathe`'s eigensolve |
 | D4 | `dt_cr` = **per-element generalized eigensolve** (`K v = λ M v`, DGGEV); report the **conservative central-difference limit `2/ω`** AND the **Noh–Bathe `~2×`** bound | Per-element avoids a global eigensolve (theorem: global `ω_max ≤ max element ω_max`); the CD limit is provably safe for Noh–Bathe | **Caveats:** ignores constraints/MP; row-sum lumping is non-conservative for rotational DOFs (beams/shells); needs **element** mass+stiffness (pure nodal-mass models → `dt_cr ≤ 0`). **Extend:** `DSYGV` (symmetric pencil, ~2× faster, no complex-eigenvalue fragility); a cheap `ℓ_e/c_e` per-element estimate; constraint-aware bound |
@@ -127,19 +127,33 @@ Ordered roughly by value; many are **roadmap-gated** (need element/integrator ho
    state model + the public `criticalTimeStep()` contract); make `-recompute` *enforce* —
    **already satisfied**: PR #3's `-cflAbort` aborts in `newStep` against the refreshed
    `dt_cr`.
-3. **Energy recorder additions.** External-work-input channel (independent check);
-   elastic-vs-dissipated `IE` split (needs a standardized element/material "recoverable
-   vs dissipated energy" response); hourglass / contact / added-mass energy columns
-   (need element/integrator hooks — roadmap §5.3/§5.7/§5.1). Reserve the response-string
-   contracts now so those subsystems emit them when built.
+3. **Energy recorder additions.** *Split into two tracks (2026-05-31):*
+   **(a) Accounting completeness — NEXT recorder PR (OpenSees-side, this repo, apeGmsh-
+   irrelevant).** These make RES actually close on realistic models: capture
+   **`eleLoad`/distributed external work** in ULW (today ULW is nodal `P_ext` only →
+   RES never closes under gravity-via-`-ele`/surface loads); capture **modal-damping
+   work** as a damping sink (applied in the solve, absent from `getDamp` → RES polluted
+   on any modal-damped model); **MPI reduce + shared-node ULW de-dup** for `openseesmp`
+   (the code already warns about both). Gated behind the [[03_mpco_ladruno]]
+   `MPCORecorderLadruno` build blocker for *runtime* verification.
+   **(b) Deferred:** external-work-input as a fully independent channel; elastic-vs-
+   dissipated `IE` split (needs a standardized material "recoverable vs dissipated"
+   response — a material-contract change); hourglass / contact / added-mass energy
+   columns (need element/integrator hooks — roadmap §5.3/§5.7/§5.1). Reserve the
+   response-string contracts now so those subsystems emit them when built; a "closed"
+   RES computed without an existing sink's channel is *falsely* reassuring.
 4. **Parallel correctness.** ~~Cross-rank `dt_cr` reduction~~ **code added (2026-05-30,
    guarded `MPI_Allreduce(MPI_MIN)`); NOT yet runtime-verified — confirm `OPS_Analysis`
    carries a parallel macro in the `openseesmp` build (the sequential build does not, so
    the reduce is inert there).** MPI reduce for a global energy balance still per-partition.
 5. **Sub-cycling integrator.** Only after the commit/recorder coupling (D5) is solved
    framework-side; otherwise stays driver-level.
-6. **MPCO/STKO energy visualization.** Blocked on STKO support for global/region results
-   (D1); revisit with [[03_mpco_ladruno]].
+6. **apeGmsh energy visualization.** ~~Blocked on STKO support for global/region results~~
+   **Not blocked (2026-05-31):** apeGmsh is our own viewer ([[project_apegmsh_viewer]]), so
+   rendering global/region (and future per-element) energy channels is ours to implement.
+   Now a **dedicated cross-repo session** (OpenSees output schema ↔ apeGmsh reader/
+   `ResultsViewer`), folded into the [[03_mpco_ladruno]] ADR as a result type — needs the
+   apeGmsh codebase in context, so not done here.
 
 ## Risks / open questions
 
