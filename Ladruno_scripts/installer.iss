@@ -149,16 +149,19 @@ begin
   Memo.Text := BannerText + #13#10 + #13#10 +
     'Ladruno OpenSees ' + ExpandConstant('{#LadrunoVersion}') + #13#10 +
     'Includes: OpenSees.exe, OpenSeesSP.exe, OpenSeesMP.exe,' + #13#10 +
-    '          opensees.pyd (Python 3.12), HDF5 + MPCO recorder,' + #13#10 +
-    '          MUMPS sparse solver.' + #13#10 + #13#10 +
-    'OpenSeesSP / OpenSeesMP need Intel MPI''s mpiexec on PATH' + #13#10 +
-    '(Intel oneAPI install required separately).';
+    '          opensees.pyd  (sequential Python, 3.12),' + #13#10 +
+    '          openseesmp.pyd (MPI-parallel Python, self-contained' + #13#10 +
+    '                          Intel MPI + mpiexec bundled),' + #13#10 +
+    '          HDF5 + MPCO recorder, MUMPS sparse solver.' + #13#10 + #13#10 +
+    'The Tcl OpenSeesSP / OpenSeesMP exes need Intel oneAPI''s' + #13#10 +
+    'mpiexec on PATH (installed separately); openseesmp ships' + #13#10 +
+    'its own matching mpiexec under <install>\openseesmp\.';
 
   // ---- venv option page (after wpSelectDir so {app} is final) ----------
   VenvOptionPage := CreateInputOptionPage(wpSelectDir,
     'Wire OpenSeesPy into a Python virtualenv',
-    'Make ''import opensees'' work without sys.path fiddling',
-    'opensees.pyd is built for CPython 3.12. Choose what to do:',
+    'Make ''import opensees'' AND ''import openseesmp'' work without sys.path fiddling',
+    'Both modules are built for CPython 3.12. Choose what to do:',
     True, False);
   VenvOptionPage.Add('Skip - I''ll wire it up later');
   VenvOptionPage.Add('Create a new venv at <install-dir>\opensees_venv');
@@ -169,7 +172,7 @@ begin
   VenvDirPage := CreateInputDirPage(VenvOptionPage.ID,
     'Existing virtualenv path',
     'Choose the venv root folder (NOT python.exe)',
-    'Point at the directory that contains "Scripts\python.exe" and "Lib\site-packages\" - e.g. C:\envs\myproject - not at python.exe itself. Setup writes a .pth file inside that venv so "import opensees" finds the binaries.',
+    'Point at the directory that contains "Scripts\python.exe" and "Lib\site-packages\" - e.g. C:\envs\myproject - not at python.exe itself. Setup writes a .pth file inside that venv so "import opensees" and "import openseesmp" find the binaries.',
     False, '');
   VenvDirPage.Add('Venv root folder');
 
@@ -214,7 +217,7 @@ begin
   end;
 end;
 
-procedure WirePth(const VenvPython, BinDir: String);
+procedure WirePth(const VenvPython, BinDir, MpDir: String);
 var
   HelperPy: String;
   Params:   String;
@@ -222,7 +225,7 @@ var
 begin
   ExtractTemporaryFile('wire_venv_pth.py');
   HelperPy := ExpandConstant('{tmp}\wire_venv_pth.py');
-  Params := AddQuotes(HelperPy) + ' ' + AddQuotes(BinDir);
+  Params := AddQuotes(HelperPy) + ' ' + AddQuotes(BinDir) + ' ' + AddQuotes(MpDir);
   if Exec(VenvPython, Params, '', SW_HIDE, ewWaitUntilTerminated, Code) then
   begin
     case Code of
@@ -236,7 +239,7 @@ begin
     LogToFile('  ERROR: failed to launch ' + VenvPython);
 end;
 
-procedure CreateAndWireVenv(const BasePython, VenvDir, BinDir: String);
+procedure CreateAndWireVenv(const BasePython, VenvDir, BinDir, MpDir: String);
 var
   Code: Integer;
   VenvPython: String;
@@ -260,23 +263,27 @@ begin
   end;
   VenvPython := AddBackslash(VenvDir) + 'Scripts\python.exe';
   if FileExists(VenvPython) then
-    WirePth(VenvPython, BinDir)
+    WirePth(VenvPython, BinDir, MpDir)
   else
     LogToFile('  ERROR: ' + VenvPython + ' not produced after -m venv');
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 var
-  BinDir, VenvDir, BasePython, VenvPython: String;
+  BinDir, MpDir, VenvDir, BasePython, VenvPython: String;
 begin
   if CurStep = ssPostInstall then
   begin
     BinDir := ExpandConstant('{app}\bin');
+    MpDir  := ExpandConstant('{app}\openseesmp');
+    if not DirExists(MpDir) then
+      MpDir := '';
     LogToFile('Ladruno OpenSees install log');
     LogToFile('  date       : ' + GetDateTimeString('yyyy-mm-dd hh:nn:ss', '-', ':'));
     LogToFile('  version    : ' + ExpandConstant('{#LadrunoVersion}'));
     LogToFile('  install dir: ' + ExpandConstant('{app}'));
     LogToFile('  bin dir    : ' + BinDir);
+    LogToFile('  openseesmp : ' + MpDir);
 
     case VenvOptionPage.SelectedValueIndex of
       0:
@@ -288,7 +295,7 @@ begin
           if BasePython = '' then BasePython := 'python';
           LogToFile('  venv option: create at ' + VenvDir);
           LogToFile('  base python: ' + BasePython);
-          CreateAndWireVenv(BasePython, VenvDir, BinDir);
+          CreateAndWireVenv(BasePython, VenvDir, BinDir, MpDir);
         end;
       2:
         begin
@@ -296,7 +303,7 @@ begin
           VenvPython := AddBackslash(VenvDir) + 'Scripts\python.exe';
           LogToFile('  venv option: existing at ' + VenvDir);
           if FileExists(VenvPython) then
-            WirePth(VenvPython, BinDir)
+            WirePth(VenvPython, BinDir, MpDir)
           else
             LogToFile('  ERROR: ' + VenvPython + ' missing');
         end;

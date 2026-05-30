@@ -42,6 +42,8 @@ $ErrorActionPreference = "Stop"
 $scriptDir = $PSScriptRoot
 $root      = Split-Path -Parent $scriptDir
 $distBin   = Join-Path $root "dist\bin"
+$distMp    = Join-Path $root "dist\openseesmp"
+$wirePy    = Join-Path $scriptDir "wire_venv_pth.py"
 $logDir    = Join-Path $root "Ladruno_files"
 
 if ([string]::IsNullOrWhiteSpace($VenvPath)) {
@@ -94,20 +96,33 @@ if (-not (Test-Path $venvPython)) {
 $sitePackages = & $venvPython -c "import sysconfig; print(sysconfig.get_paths()['purelib'])"
 Write-Host "  site-pkg  : $sitePackages"
 
-# ---------- write the .pth file -------------------------------------------
-# A .pth file is read by site.py at interpreter startup. Two lines:
-#   1. Path entry — adds dist\bin\ to sys.path so `import opensees` finds opensees.pyd.
-#   2. Executable hook — site.py exec()'s any .pth line starting with `import`. We
-#      register our `opensees` module under the `openseespy` and `openseespy.opensees`
-#      aliases in sys.modules, so packages that hardcode `import openseespy.opensees`
-#      (aprGmsh, STKO helpers, openseespy-flavored examples) resolve to our build with
-#      MPCO/HDF5 instead of vanilla pip openseespy.
+# ---------- write the .pth via the shared wirer ---------------------------
+# Delegate to wire_venv_pth.py (the SAME helper the Inno installer runs) so
+# the standalone and installer paths can never diverge. It drops a
+# _ladruno_opensees_boot.py + one-line .pth that put BOTH dist\bin and
+# dist\openseesmp on sys.path, register their bundled-DLL dirs via
+# os.add_dll_directory (process-local; no global PATH change), and alias
+# openseespy -> our sequential opensees (skipped under MPI).
+if (-not (Test-Path $wirePy)) {
+    Write-Error "wire_venv_pth.py not found at $wirePy"
+    exit 1
+}
+$mpArg = if (Test-Path "$distMp\openseesmp.pyd") { $distMp } else { "" }
+& $venvPython $wirePy $distBin $mpArg
+$wireExit = $LASTEXITCODE
 $pthPath = Join-Path $sitePackages "ladruno_opensees.pth"
-$aliasHook = "import sys, opensees; sys.modules['openseespy'] = opensees; sys.modules['openseespy.opensees'] = opensees; opensees.opensees = opensees"
-Set-Content -Path $pthPath -Value @($distBin, $aliasHook) -Encoding ASCII
-Write-Host "Wrote .pth file: $pthPath"
-Write-Host "                 -> $distBin"
-Write-Host "                 + openseespy/.opensees aliased to our opensees module"
+if ($wireExit -eq 0) {
+    Write-Host "Wrote .pth + _ladruno_opensees_boot.py in $sitePackages"
+    Write-Host "                 -> import opensees   from $distBin"
+    if ($mpArg) { Write-Host "                 -> import openseesmp from $distMp" }
+    else        { Write-Host "                 (openseesmp not built; run build.bat OpenSeesPyMP to add it)" }
+    Write-Host "                 + openseespy/.opensees aliased (skipped under MPI)"
+} elseif ($wireExit -eq 3) {
+    Write-Warning "venv Python is not 3.12; the .pyd modules will fail to import."
+} else {
+    Write-Error "wire_venv_pth.py exited $wireExit"
+    exit 1
+}
 
 # ---------- smoke test ----------------------------------------------------
 Write-Host ""
@@ -155,6 +170,10 @@ Write-Host "  cmd:        $VenvPath\Scripts\activate.bat"
 Write-Host "  powershell: & '$VenvPath\Scripts\Activate.ps1'"
 Write-Host ""
 Write-Host "Then in Python:"
-Write-Host "  import opensees as ops"
+Write-Host "  import opensees as ops          # sequential"
+Write-Host ""
+Write-Host "For MPI-parallel Python, launch with the bundled mpiexec:" -ForegroundColor Yellow
+Write-Host "  $distMp\mpiexec.exe -n 4 $venvPython your_script.py"
+Write-Host "  (your_script.py does:  import openseesmp as ops)"
 Write-Host ""
 Write-Host "Log: $log" -ForegroundColor DarkGray

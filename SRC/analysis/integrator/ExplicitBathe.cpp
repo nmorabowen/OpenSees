@@ -28,6 +28,8 @@
 #include <elementAPI.h>
 #include <cmath>
 #include <limits>
+#include <string.h>
+#include <stdlib.h>
 
 #include <Domain.h>
 #include <Element.h>
@@ -48,50 +50,83 @@ extern "C" int dggev_(char *JOBVL, char *JOBVR, int *N, double *A, int *LDA,
                       int *LDVR, double *WORK, int *LWORK, int *INFO);
 #endif
 
-// OPS interface function for creating ExplicitBathe integrator
+// OPS interface for creating the ExplicitBathe integrator
+//
+// Usage: integrator ExplicitBathe <p> <computeCriticalTimestep>
+//                                 <-verbose> <-cfl> <-cflAbort>
+//                                 <-divergence factor>
+//   p (optional, default 0.54)         sub-step parameter, 0<p<1
+//   computeCriticalTimestep (optional) 1 to estimate dt_cr (default 0)
+//   -cfl                               alias to enable dt_cr estimation
+//   -verbose                           per-step dt/energy reporting (default off)
+//   -cflAbort                          stop if dt exceeds the Noh-Bathe limit
+//   -divergence <f>                    stop if kinetic energy grows by factor f
+//                                      in one step (spurious-energy guard)
 void *OPS_ExplicitBathe(void) {
-    TransientIntegrator *theIntegrator = nullptr;
-
-    int numArgs = OPS_GetNumRemainingInputArgs();
-    if (numArgs < 1) {
-        opserr << "WARNING: Insufficient arguments for ExplicitBathe integrator.\n";
-        opserr << "Usage: integrator ExplicitBathe p <compute_critical_timestep>\n";
-        opserr << "  p = damping parameter (0 < p < 1, typically 0.5-0.95)\n";
-        opserr << "  compute_critical_timestep = optional flag (0 or 1)\n";
-        return nullptr;
-    }
-
-    // Read damping parameter p
-    double p;
-    numArgs = 1;
-    if (OPS_GetDoubleInput(&numArgs, &p) < 0) {
-        opserr << "WARNING: Invalid input for ExplicitBathe integrator. p parameter\n";
-        return nullptr;
-    }
-
-    // Validate p parameter
-    if (p <= 0.0 || p >= 1.0) {
-        opserr << "WARNING: ExplicitBathe parameter p must be in range (0, 1).\n";
-        opserr << "  Typical values: 0.5-0.95 (higher = more damping)\n";
-        return nullptr;
-    }
-
-    // Read optional critical timestep computation flag
+    double p = 0.54;            // default: good high-frequency dissipation
     int compute_critical_timestep = 0;
+    bool verbose = false;
+    bool cflAbort = false;
+    double divergenceFactor = 0.0;
+    bool cflUseTangent = false;
+    int cflRecomputeEvery = 0;
+
+    // p is the leading numeric positional. Read it with the typed getter so it
+    // works under BOTH Tcl and OpenSeesPy (OPS_GetString mis-reads a numeric
+    // Python argument).
     if (OPS_GetNumRemainingInputArgs() > 0) {
-        if (OPS_GetIntInput(&numArgs, &compute_critical_timestep) < 0) {
-            opserr << "WARNING: Invalid compute_critical_timestep parameter\n";
-            return nullptr;
+        int nd = 1;
+        if (OPS_GetDoubleInput(&nd, &p) < 0) {
+            opserr << "WARNING ExplicitBathe - could not read p (give p first, "
+                      "e.g. integrator ExplicitBathe 0.54)\n";
+            return 0;
+        }
+    }
+    while (OPS_GetNumRemainingInputArgs() > 0) {
+        const char *arg = OPS_GetString();
+        if (strcmp(arg, "-verbose") == 0) {
+            verbose = true;
+        } else if (strcmp(arg, "-cflAbort") == 0) {
+            cflAbort = true;
+            compute_critical_timestep = 1;
+        } else if (strcmp(arg, "-cfl") == 0 ||
+                   strcmp(arg, "-criticalTimestep") == 0) {
+            compute_critical_timestep = 1;
+        } else if (strcmp(arg, "-divergence") == 0) {
+            if (OPS_GetNumRemainingInputArgs() > 0) {
+                int nd = 1;
+                OPS_GetDoubleInput(&nd, &divergenceFactor);
+            }
+        } else if (strcmp(arg, "-tangent") == 0) {
+            cflUseTangent = true;
+            compute_critical_timestep = 1;
+        } else if (strcmp(arg, "-recompute") == 0) {
+            if (OPS_GetNumRemainingInputArgs() > 0) {
+                int nd = 1;
+                OPS_GetIntInput(&nd, &cflRecomputeEvery);
+            }
+            if (cflRecomputeEvery <= 0)
+                opserr << "WARNING ExplicitBathe -recompute expects a positive integer N "
+                          "(steps between dt_cr refreshes); dt_cr will be computed once\n";
+            cflUseTangent = true;            // recomputing K0 every N steps is pointless
+            compute_critical_timestep = 1;
+        } else {
+            opserr << "WARNING ExplicitBathe - unknown option " << arg
+                   << " (ignored)\n";
         }
     }
 
-    // Create integrator
-    theIntegrator = new ExplicitBathe(p, compute_critical_timestep);
-
-    if (theIntegrator == nullptr) {
-        opserr << "WARNING - out of memory creating ExplicitBathe integrator\n";
+    if (p <= 0.0 || p >= 1.0) {
+        opserr << "WARNING ExplicitBathe - p must be in (0,1); typical 0.50-0.95, "
+                  "recommended 0.54 (got " << p << ")\n";
+        return 0;
     }
-    
+
+    TransientIntegrator *theIntegrator =
+        new ExplicitBathe(p, compute_critical_timestep, verbose, cflAbort,
+                          divergenceFactor, cflUseTangent, cflRecomputeEvery);
+    if (theIntegrator == 0)
+        opserr << "WARNING - out of memory creating ExplicitBathe integrator\n";
     return theIntegrator;
 }
 
@@ -108,7 +143,11 @@ ExplicitBathe::ExplicitBathe()
       damped_minimum_critical_timestep(0.0),
       undamped_minimum_critical_timestep(0.0),
       damped_critical_element_tag(0),
-      undamped_critical_element_tag(0)
+      undamped_critical_element_tag(0),
+      verbose(false), cflAbort(false), divergenceFactor(0.0),
+      prevKE(0.0), firstStep(true),
+      cflUseTangent(false), cflRecomputeEvery(0), cflStepCount(0),
+      cflFirstComputation(true)
 {}
 
 // Main constructor with parameters
@@ -117,9 +156,11 @@ ExplicitBathe::ExplicitBathe()
 // q1 = (1 - 2p) / (2p(1-p))
 // q2 = 0.5 - p*q1
 // q0 = -q1 - q2 + 0.5
-ExplicitBathe::ExplicitBathe(double _p, int compute_critical_timestep_)
+ExplicitBathe::ExplicitBathe(double _p, int compute_critical_timestep_,
+                             bool verbose_, bool cflAbort_, double divergenceFactor_,
+                             bool cflUseTangent_, int cflRecomputeEvery_)
     : TransientIntegrator(INTEGRATOR_TAGS_ExplicitBathe),
-      deltaT(0.0), p(_p), q0(0.0), q1(0.0), q2(0.0), 
+      deltaT(0.0), p(_p), q0(0.0), q1(0.0), q2(0.0),
       U_t(0), V_t(0), A_t(0),
       U_tpdt(0), V_tpdt(0), V_fake(0), A_tpdt(0),
       U_tdt(0), V_tdt(0), A_tdt(0), R_tdt(0),
@@ -129,15 +170,20 @@ ExplicitBathe::ExplicitBathe(double _p, int compute_critical_timestep_)
       damped_minimum_critical_timestep(0.0),
       undamped_minimum_critical_timestep(0.0),
       damped_critical_element_tag(0),
-      undamped_critical_element_tag(0)
+      undamped_critical_element_tag(0),
+      verbose(verbose_), cflAbort(cflAbort_), divergenceFactor(divergenceFactor_),
+      prevKE(0.0), firstStep(true),
+      cflUseTangent(cflUseTangent_), cflRecomputeEvery(cflRecomputeEvery_),
+      cflStepCount(0), cflFirstComputation(true)
 {
     // Calculate integration coefficients from p parameter
     q1 = (1.0 - 2.0*p) / (2.0*p*(1.0 - p));
     q2 = 0.5 - p * q1;
     q0 = -q1 - q2 + 0.5;
 
-    opserr << "ExplicitBathe: p = " << p 
-           << ", compute_critical_timestep = " << compute_critical_timestep << endln;
+    if (verbose)
+        opserr << "ExplicitBathe: p = " << p
+               << ", compute_critical_timestep = " << compute_critical_timestep << endln;
 }
 
 // Destructor - clean up allocated memory
@@ -249,10 +295,13 @@ int ExplicitBathe::domainChanged() {
     damped_minimum_critical_timestep = std::numeric_limits<double>::infinity();
     undamped_minimum_critical_timestep = std::numeric_limits<double>::infinity();
 
-    // Reset computation flag if it was already computed
+    // Reset computation flag if it was already computed; also reset the
+    // periodic-recompute counter so the cadence restarts cleanly after a
+    // mesh change / staged construction.
     if (compute_critical_timestep == 2) {
         compute_critical_timestep = 1;
     }
+    cflStepCount = 0;
 
     return 0;
 }
@@ -264,19 +313,26 @@ int ExplicitBathe::domainChanged() {
 // 
 // The critical time step is then: dt_crit = 2/omega_max
 // For damped systems: dt_crit = 2/(omega_max * (sqrt(1 + xi^2) - xi))
-void computeCriticalTimestep(AnalysisModel *theModel, 
-                             double &damped_min_dt, 
+void computeCriticalTimestep(AnalysisModel *theModel,
+                             double &damped_min_dt,
                              double &undamped_min_dt,
                              int &damped_elem_tag,
-                             int &undamped_elem_tag)
+                             int &undamped_elem_tag,
+                             bool useTangent)
 {
     Domain* theDomain = theModel->getDomainPtr();
     Element *ele;
     ElementIter &elements = theDomain->getElements();
-    
+
     while ((ele = elements()) != 0) {
-        const Matrix &M = ele->getMass();
-        const Matrix &K = ele->getInitialStiff();
+        // COPY the mass: many elements return a reference to a shared static
+        // matrix from BOTH getMass() and getInitialStiff()/getTangentStiff(),
+        // so taking a reference here would be clobbered by the stiffness call
+        // below (yielding a zero lumped mass and dt_cr = inf).
+        Matrix M = ele->getMass();
+        // tangent stiffness tracks softening/stiffening for nonlinear runs;
+        // initial stiffness is the conservative default for monotone-softening.
+        const Matrix &K = useTangent ? ele->getTangentStiff() : ele->getInitialStiff();
 
         int n = M.noRows();
         if (n == 0 || K.noRows() != n) {
@@ -301,7 +357,7 @@ void computeCriticalTimestep(AnalysisModel *theModel,
         for (int i = 0; i < n; ++i) {
             for (int j = 0; j < n; ++j) {
                 K_data[j * n + i] = K(i, j);
-                M_data[j * n + i] = Mlumped(i, i == j ? i : 0);
+                M_data[j * n + i] = Mlumped(i, j);   // diagonal lumped mass
             }
         }
 
@@ -411,37 +467,82 @@ int ExplicitBathe::newStep(double _deltaT) {
         return -1;
     }
 
+    // Each step performs exactly two solves; reset here so a failed/retried
+    // step cannot poison the next step's update() counter (matches CentralDifference).
+    updateCount = 0;
+
     AnalysisModel *theModel = this->getAnalysisModel();
 
-    // Compute critical timestep if requested (only once)
+    // Cold-start diagnostic: an explicit scheme started from rest with zero
+    // committed initial acceleration produces no motion on the first step if a
+    // load is already applied. Warn once so the user runs an initial
+    // equilibrium step or supplies a consistent a0.
+    if (firstStep) {
+        firstStep = false;
+        if (A_t->pNorm(0) == 0.0 && V_t->pNorm(0) == 0.0)
+            opserr << "ExplicitBathe - NOTE starting from rest with zero initial "
+                      "acceleration; if a load is already applied, run one "
+                      "equilibrium step (or set the initial acceleration) so a0 is "
+                      "consistent.\n";
+    }
+
+    // Critical-time-step estimate (per-element generalized eigenproblem).
+    // damped_minimum_critical_timestep is the CONSERVATIVE central-difference
+    // limit; the Noh-Bathe scheme is stable up to ~EB_NB_STABILITY_FACTOR times it.
+    // With -recompute N it is refreshed every N steps from the tangent stiffness
+    // so it tracks softening/stiffening in nonlinear runs.
+    if (cflRecomputeEvery > 0 && compute_critical_timestep == 2) {
+        if (++cflStepCount >= cflRecomputeEvery) {
+            compute_critical_timestep = 1;
+            cflStepCount = 0;
+        }
+    }
     if (compute_critical_timestep == 1) {
-        computeCriticalTimestep(theModel, 
+        // reset before (re)computing so a now-softer model yields a larger dt_cr
+        damped_minimum_critical_timestep = std::numeric_limits<double>::infinity();
+        undamped_minimum_critical_timestep = std::numeric_limits<double>::infinity();
+        computeCriticalTimestep(theModel,
                                 damped_minimum_critical_timestep,
                                 undamped_minimum_critical_timestep,
                                 damped_critical_element_tag,
-                                undamped_critical_element_tag);
-        
-        compute_critical_timestep = 2;  // Mark as computed
-        
-        opserr << "ExplicitBathe: Critical timestep analysis\n";
-        opserr << "  UNDAMPED: dt_crit = " << undamped_minimum_critical_timestep 
-               << " @ element #" << undamped_critical_element_tag << "\n";
-        opserr << "  DAMPED:   dt_crit = " << damped_minimum_critical_timestep 
-               << " @ element #" << damped_critical_element_tag << "\n";
+                                undamped_critical_element_tag,
+                                cflUseTangent);
+        compute_critical_timestep = 2;  // mark as computed
+
+        const double dt_nb = EB_NB_STABILITY_FACTOR * damped_minimum_critical_timestep;
+        if (cflFirstComputation || verbose) {
+            opserr << "ExplicitBathe: critical time step estimate"
+                   << (cflUseTangent ? " (tangent)" : "") << "\n"
+                   << "  central-difference limit (conservative): "
+                   << damped_minimum_critical_timestep
+                   << " @ element #" << damped_critical_element_tag << "\n"
+                   << "  Noh-Bathe limit (~" << EB_NB_STABILITY_FACTOR << "x): " << dt_nb << "\n";
+            if (deltaT > dt_nb)
+                opserr << "  WARNING dt = " << deltaT
+                       << " exceeds the Noh-Bathe stability limit - expect INSTABILITY.\n";
+            else if (deltaT > damped_minimum_critical_timestep)
+                opserr << "  note: dt exceeds the conservative limit but is within the "
+                          "Noh-Bathe stable range.\n";
+        }
+        cflFirstComputation = false;
     }
 
-    // Report timestep stability factor
-    if (compute_critical_timestep > 0) {
-        double dT_factor = deltaT / damped_minimum_critical_timestep;
-        opserr << "ExplicitBathe::newStep() - dt = " << deltaT 
-               << ", dt_crit = " << damped_minimum_critical_timestep 
-               << ", factor = " << dT_factor;
-        if (dT_factor < 1.0) {
-            opserr << " [OK]";
-        } else {
-            opserr << " [WARNING: dt > dt_crit!]";
+    // Optional hard CFL guard.
+    if (cflAbort && damped_minimum_critical_timestep > 0.0) {
+        const double dt_nb = EB_NB_STABILITY_FACTOR * damped_minimum_critical_timestep;
+        if (deltaT > dt_nb) {
+            opserr << "ExplicitBathe::newStep() - ABORT: dt = " << deltaT
+                   << " > Noh-Bathe stability limit " << dt_nb << "\n";
+            return -2;
         }
-        opserr << endln;
+    }
+
+    // Optional per-step reporting (off by default).
+    if (verbose && damped_minimum_critical_timestep > 0.0) {
+        const double f = deltaT / damped_minimum_critical_timestep;
+        opserr << "ExplicitBathe::newStep() dt = " << deltaT
+               << " dt_cd = " << damped_minimum_critical_timestep
+               << " factor = " << f << (f < 1.0 ? " [OK]" : " [> CD limit]") << endln;
     }
 
     // Compute integration coefficients for this time step
@@ -487,8 +588,9 @@ int ExplicitBathe::newStep(double _deltaT) {
 int ExplicitBathe::update(const Vector &U) {
     updateCount++;
     if (updateCount > 2) {
-        opserr << "WARNING ExplicitBathe::update() - called more than twice\n";
-        opserr << "  ExplicitBathe requires exactly 2 updates per time step\n";
+        opserr << "WARNING ExplicitBathe::update() - called more than twice in a step.\n";
+        opserr << "  ExplicitBathe is an explicit scheme and requires 'algorithm Linear' "
+                  "(exactly 2 solves per step).\n";
         return -1;
     }
 
@@ -548,9 +650,29 @@ int ExplicitBathe::update(const Vector &U) {
     theLinSOE->solve();
     *A_tdt = theLinSOE->getX();
 
-    // Report maximum acceleration for monitoring
-    double A_max = A_tdt->pNorm(0);
-    opserr << "ExplicitBathe::update() - max acceleration = " << A_max << endln;
+    // Circuit breaker 1: catch a blown-up (NaN/Inf) acceleration before it
+    // silently propagates through the rest of the run.
+    const double A_max = A_tdt->pNorm(0);
+    if (A_max != A_max || A_max == std::numeric_limits<double>::infinity()) {
+        opserr << "ExplicitBathe::update() - ABORT: non-finite acceleration "
+                  "(NaN/Inf) - the integration has diverged (dt likely too large).\n";
+        return -5;
+    }
+
+    // Circuit breaker 2 (opt-in): abort on runaway kinetic energy growth.
+    if (divergenceFactor > 0.0) {
+        double ke = 0.5 * ((*V_tpdt) ^ (*V_tpdt));   // velocity-based KE proxy
+        if (prevKE > 0.0 && ke > divergenceFactor * prevKE) {
+            opserr << "ExplicitBathe::update() - ABORT: kinetic-energy proxy grew by "
+                   << (ke / prevKE) << "x in one step (> " << divergenceFactor
+                   << ") - spurious energy growth / instability.\n";
+            return -6;
+        }
+        if (ke > 0.0) prevKE = ke;
+    }
+
+    if (verbose)
+        opserr << "ExplicitBathe::update() max|a| = " << A_max << endln;
 
     // Final velocity update at t + dt using all three accelerations
     // v_{t+dt} = v_{t+p*dt} + q0*a_t*(1-p)*dt + (0.5+q1)*a_{t+p*dt}*(1-p)*dt + q2*a_{t+dt}*(1-p)*dt
@@ -608,6 +730,16 @@ int ExplicitBathe::commit() {
 // Get current velocity (for modal damping interface)
 const Vector &ExplicitBathe::getVel() {
     return *V_t;
+}
+
+// Conservative (central-difference) critical time step; valid once a step has
+// run with critical-time-step computation enabled. <=0 if not yet computed.
+double ExplicitBathe::getCriticalTimeStep(void) const {
+    if (compute_critical_timestep == 0)
+        return -1.0;
+    if (damped_minimum_critical_timestep == std::numeric_limits<double>::infinity())
+        return -1.0;
+    return damped_minimum_critical_timestep;
 }
 
 // Send object state for parallel processing

@@ -31,13 +31,39 @@
 // Unlike the CentralDifference class, this one only assembles the mass matrix 
 // on the right hand side, making it much easier to use with diagonal mass matrices. 
 //
-// The time-step required for stability is approximately twice that of 
-// standard explicit central difference schemes, making it more efficient for 
-// many applications.
+// The time-step required for stability is approximately twice that of
+// standard explicit central difference schemes, making it more efficient for
+// many applications. The optional critical-time-step computation below reports
+// the CONSERVATIVE central-difference limit dt_cd = 2/omega_max (a guaranteed-
+// safe lower bound for this scheme) together with the Noh-Bathe limit
+// EB_NB_STABILITY_FACTOR * dt_cd (the published ~2x advantage at the optimal p).
+//
+// Recommended configuration (explicit recipe):
+//   - lumped (diagonal) element mass, e.g. -lMass / "-mass" on elements
+//   - system Diagonal      (trivial M^{-1}; consistent mass + sparse solver is
+//                           wrong/pointless here)
+//   - algorithm Linear     (the scheme needs exactly 2 solves/step)
+//   - integrator ExplicitBathe 0.54
+// Pair with `recorder EnergyBalance ... -file energy.txt` to watch for spurious
+// energy growth (the instability signature of an over-large dt).
+//
+// Critical-time-step (-cfl / -tangent / -recompute / criticalTimeStep()) caveats:
+//   - It is a per-element estimate using row-sum-lumped element mass. This is
+//     exact/conservative for translational DOFs (bars, solids) but row-sum
+//     lumping can be non-conservative for ROTATIONAL DOFs (beams/shells); treat
+//     dt_cr as a guide there, not a guarantee.
+//   - It ignores constraints (equalDOF/rigid diaphragms/MP) and pure nodal mass,
+//     so a constrained or nodal-mass-only model may report a non-binding or
+//     <=0 (criticalTimeStep() returns <=0) value.
+//   - -recompute N / -tangent only UPDATE the reported dt_cr; they do NOT change
+//     the analysis dt. For stiffening/contact, either pair with -cflAbort or
+//     re-query criticalTimeStep() from the driver and sub-divide (see the
+//     adaptive_substep example). It is O(N_elements) DGGEV per refresh -- use a
+//     large N.
 //
 // Key features:
 // - Second-order accurate
-// - Conditionally stable (dt <= 2/omega_max for undamped systems)
+// - Conditionally stable (dt <= 2/omega_max central-difference reference)
 // - Built-in numerical damping (controlled by parameter p, p=0.54 is a good choice)
 // - Only mass matrix on RHS (no tangent matrix assembly required)
 // - Optional automatic critical time step calculation
@@ -54,6 +80,11 @@
 
 #include <TransientIntegrator.h>
 
+// Published Noh-Bathe stability advantage over central difference (~2x at the
+// optimal sub-step parameter). dt_cr_NB = EB_NB_STABILITY_FACTOR * (2/omega_max).
+// Reference: Noh & Bathe (2013), Computers & Structures 129, 178-193.
+#define EB_NB_STABILITY_FACTOR 2.0
+
 class DOF_Group;
 class FE_Element;
 class Vector;
@@ -63,11 +94,18 @@ class ExplicitBathe : public TransientIntegrator
 public:
     // Constructors
     ExplicitBathe();
-    
-    ExplicitBathe(double p, int compute_critical_timestep_ = 0);
-    
+
+    ExplicitBathe(double p, int compute_critical_timestep_ = 0,
+                  bool verbose = false, bool cflAbort = false,
+                  double divergenceFactor = 0.0,
+                  bool cflUseTangent = false, int cflRecomputeEvery = 0);
+
     // Destructor
     ~ExplicitBathe();
+
+    // Conservative (central-difference) critical time step, available after a
+    // step has run with compute_critical_timestep enabled; <=0 if not computed.
+    double getCriticalTimeStep(void) const override;
     
     // Methods which define what the FE_Element and DOF_Groups add
     // to the system of equation object
@@ -140,6 +178,21 @@ private:
     double undamped_minimum_critical_timestep;  // Minimum critical dt (undamped)
     int damped_critical_element_tag;            // Element with minimum damped dt
     int undamped_critical_element_tag;          // Element with minimum undamped dt
+
+    // Diagnostics / run control
+    bool verbose;             // gate the per-step opserr reporting (default off)
+    bool cflAbort;            // abort the step if dt exceeds the Noh-Bathe limit
+    double divergenceFactor;  // >0: abort if kinetic energy grows by this factor
+                              //     in one step (spurious-energy circuit breaker)
+    double prevKE;            // previous-step kinetic-energy proxy (0.5*v.v)
+    bool firstStep;           // first newStep() seeds prevKE / checks cold start
+
+    // critical-time-step refresh policy
+    bool cflUseTangent;       // use getTangentStiff() instead of getInitialStiff()
+    int cflRecomputeEvery;    // recompute dt_cr every N steps (0 = once); tracks
+                              // stiffness changes in nonlinear runs
+    int cflStepCount;         // step counter for periodic recompute
+    bool cflFirstComputation; // gate the detailed report to the first computation
 };
 
 #endif

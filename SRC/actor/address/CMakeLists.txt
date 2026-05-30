@@ -27,6 +27,15 @@ target_sources(OpenSeesSP
     MPI_ChannelAddress.h
 )
 
+# Ladruno Patch 9: OpenSeesPyMP needs the same MPI channel address as the
+# Tcl parallel exes (MPI_Channel pulls MPI_ChannelAddress).
+target_sources(OpenSeesPyMP
+  PRIVATE
+    MPI_ChannelAddress.cpp
+  PUBLIC
+    MPI_ChannelAddress.h
+)
+
 endif()
 
 target_include_directories(OPS_Actor PUBLIC ${CMAKE_CURRENT_LIST_DIR})

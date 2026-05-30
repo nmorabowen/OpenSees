@@ -448,6 +448,7 @@ int OPS_solveCPU();
 int OPS_accelCPU();
 int OPS_numFact();
 int OPS_numIter();
+int OPS_criticalTimeStep();
 int* OPS_GetNumEigen();
 int OPS_systemSize();
 int OPS_domainCommitTag();
@@ -575,6 +576,8 @@ void* OPS_CentralDifference();
 void* OPS_CentralDifferenceAlternative();
 void* OPS_CentralDifferenceNoDamping();
 void* OPS_ExplicitDifference();
+void* OPS_ExplicitBathe();
+void* OPS_ExplicitBatheLNVD();
 
 void* OPS_LinearAlgorithm();
 void* OPS_NewtonRaphsonAlgorithm();

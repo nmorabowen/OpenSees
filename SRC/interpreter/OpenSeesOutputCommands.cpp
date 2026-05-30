@@ -94,6 +94,7 @@ BackgroundMesh& OPS_getBgMesh();
 
 void* OPS_DriftRecorder();
 void* OPS_EnvelopeDriftRecorder();
+void* OPS_EnergyBalanceRecorder();
 
 int OPS_sectionLocation();
 int OPS_sectionWeight();
@@ -127,6 +128,7 @@ namespace {
 	recordersMap.insert(std::make_pair("Drift", &OPS_DriftRecorder));
 	recordersMap.insert(std::make_pair("EnvelopeDrift", &OPS_EnvelopeDriftRecorder));
 	recordersMap.insert(std::make_pair("gmsh", &OPS_GmshRecorder));
+	recordersMap.insert(std::make_pair("EnergyBalance", &OPS_EnergyBalanceRecorder));
 #ifdef _HDF5
 	recordersMap.insert(std::make_pair("mpco", &OPS_MPCORecorder));
 	recordersMap.insert(std::make_pair("mpcoLadruno", &OPS_MPCOLadrunoRecorder));

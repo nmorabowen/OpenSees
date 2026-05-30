@@ -906,6 +906,7 @@
 #define ELE_TAG_Pipe                      269
 #define ELE_TAG_CurvedPipe                      270
 #define ELE_TAG_PML3DVISCOUS               271 // Amin Pakzad
+#define ELE_TAG_BezierTri6                 272 // N. Mora-Bowen (Ladruno) — quadratic Bézier triangle (Kadapa 2018)
 
 
 #define FRN_TAG_Coulomb            1
@@ -1111,6 +1112,7 @@
 #define INTEGRATOR_TAGS_HarmonicSteadyState             60
 #define INTEGRATOR_TAGS_ExplicitBathe                   61
 #define INTEGRATOR_TAGS_ExplicitDifferenceStatic        62
+#define INTEGRATOR_TAGS_ExplicitBatheLNVD               63
 
 
 #define LinSOE_TAGS_FullGenLinSOE		1
@@ -1209,7 +1211,7 @@
 #define RECORDER_TAGS_NodeRecorderRMS               23
 #define RECORDER_TAGS_ElementRecorderRMS               24
 #define RECORDER_TAGS_VTKHDF_Recorder               25
-// 26 reserved for RECORDER_TAGS_EnergyBalanceRecorder (feature/energy-balance branch)
+#define RECORDER_TAGS_EnergyBalanceRecorder               26
 #define RECORDER_TAGS_MPCOLadrunoRecorder               27
 
 #define OPS_STREAM_TAGS_FileStream		1

@@ -29,6 +29,7 @@ target_sources(OPS_Utilities
 target_include_directories(OPS_Element PUBLIC ${CMAKE_CURRENT_LIST_DIR})
 
 add_subdirectory(fourNodeQuad)
+add_subdirectory(bezierTriangle)
 add_subdirectory(twoNodeLink)
 add_subdirectory(tetrahedron)
 add_subdirectory(triangle)

@@ -218,7 +218,7 @@ add_definitions(-DOPENSEES_VERSION="${GIT_VERSION}")
 #
 
 set_property(CACHE OPS_FINAL_TARGET PROPERTY STRINGS
-    G3 OpenSees OpenSeesMP OpenSeesSP OpenSeesPy)
+    G3 OpenSees OpenSeesMP OpenSeesSP OpenSeesPy OpenSeesPyMP)
 
 #
 # OS Configuration:
@@ -625,6 +625,72 @@ if(NOT EXISTS "${CMAKE_BINARY_DIR}/conanbuildinfo.cmake")
   target_link_libraries(OPS_InterpTcl PRIVATE ${TCL_LIBRARIES})
 endif()
 
+# ---------------------------------------------------------------------------
+# Ladruno Patch 9: per-define Python command-engine static libs
+#
+# OpenSeesCommands.cpp / OpenSeesMiscCommands.cpp are the ONLY sources in
+# SRC/interpreter carrying _PARALLEL_INTERPRETERS / _PARALLEL_PROCESSING
+# guards (MPI_MachineBroker construction, parallel SOE selection, the
+# getPID/getNP/barrier/send/recv commands). They normally live in the single
+# OPS_INTERPRETER OBJECT lib -- compiled once with NO parallel define and
+# folded into OpenSeesLIB -- so those parallel paths are compiled out of
+# every target. A define on a consuming target cannot retroactively
+# recompile a built OBJECT lib, and compiling these TUs both seq (shared)
+# and parallel (per-target) into one link would collide (LNK2005). So,
+# exactly as Patch 8 (OPS_INTERP_TCL_PER_TARGET_SOURCES) does for the Tcl
+# side, the two sources are removed from OPS_INTERPRETER (see
+# SRC/interpreter/CMakeLists.txt) and rebuilt here into two STATIC libs,
+# one per define. Each final target links exactly one:
+#   OPS_InterpPyCmds      no parallel define  -> Tcl OpenSees/SP/MP, G3,
+#                          sequential OpenSeesPy (byte-identical to before)
+#   OPS_InterpPyCmds_MP   _PARALLEL_INTERPRETERS -> OpenSeesPyMP
+#
+# A _PARALLEL_PROCESSING variant for a Python "openseessp" was prototyped
+# then REMOVED: the Python/DL command engine has no SP domain-decomposition
+# subsystem (SP is Tcl-only). See the definitive write-up in
+# Ladruno_implementation/02_openseespymp.md / compilation journal Patch 9.
+#
+# The Tcl SP/MP exes deliberately link the SEQ variant: they drive
+# parallelism through commands.cpp, never the Python command engine, and
+# must stay byte-identical (linking _MP/_SP would double the
+# MPI_MachineBroker setup). OpenSeesCommands.h declares theMachineBroker /
+# theChannels / numChannels UNCONDITIONALLY, so the class ABI is
+# define-independent -- OpenSeesLIB's seq-compiled TUs link cleanly against
+# the parallel-compiled OpenSeesCommands.o. These libs are intentionally
+# kept OUT of OpenSeesLIB so OpenSeesPyMP (which links OpenSeesLIB) does not
+# also pull the seq variant.
+set(OPS_INTERP_PY_PARALLEL_SOURCES
+    ${OPS_SRC_DIR}/interpreter/OpenSeesCommands.cpp
+    ${OPS_SRC_DIR}/interpreter/OpenSeesMiscCommands.cpp
+)
+
+add_library(OPS_InterpPyCmds STATIC ${OPS_INTERP_PY_PARALLEL_SOURCES})
+
+if(MPI_FOUND)
+    add_library(OPS_InterpPyCmds_MP STATIC ${OPS_INTERP_PY_PARALLEL_SOURCES})
+
+    foreach(_pylib OPS_InterpPyCmds_MP)
+        if(DEFINED MUMPS_INCLUDE_DIR)
+            target_include_directories(${_pylib} PRIVATE ${MUMPS_INCLUDE_DIR} ${MPI_CXX_INCLUDE_DIRS})
+        else()
+            target_include_directories(${_pylib} PRIVATE ${MUMPS_DIR}/_deps/mumps-src/include ${MPI_CXX_INCLUDE_DIRS})
+        endif()
+        target_compile_options(${_pylib} PRIVATE ${MPI_CXX_COMPILE_FLAGS})
+        # Under the parallel define OpenSeesMiscCommands.cpp #includes <metis.h>
+        # and OpenSeesCommands.cpp pulls the distributed SuperLU wrappers.
+        # PRIVATE-link the same targets the Tcl SP/MP exes do so their
+        # INTERFACE include dirs reach these TUs at compile time (consumers
+        # such as OpenSeesPyMP link METIS/SUPERLU_DIST in their own right).
+        target_link_libraries(${_pylib} PRIVATE METIS SUPERLU_DIST)
+    endforeach()
+
+    if (DEFINED OPENMPI)
+        target_compile_definitions(OPS_InterpPyCmds_MP PRIVATE _PARALLEL_INTERPRETERS ${MUMPS_FLAG} _OPENMPI)
+    else()
+        target_compile_definitions(OPS_InterpPyCmds_MP PRIVATE _PARALLEL_INTERPRETERS ${MUMPS_FLAG})
+    endif()
+endif()
+
 #
 # OpenSees G3 Library - a slimmed down OpenSees
 #
@@ -651,6 +717,7 @@ target_link_libraries(G3
     OPS_ObjectBroker
     OPS_Numerics
     OPS_INTERPRETER
+    OPS_InterpPyCmds   # Patch 9: parallel-sensitive Python cmds (seq variant)
 )
 
 #
@@ -754,6 +821,7 @@ endif()
 
 target_link_libraries(OpenSees
   OPS_InterpTcl
+  OPS_InterpPyCmds
   coordTransformation
   OpenSeesLIB
   OPS_Reliability
@@ -816,6 +884,7 @@ if(MPI_FOUND)
 
     target_link_libraries(OpenSeesSP
        OPS_InterpTcl
+       OPS_InterpPyCmds
        OpenSeesLIB
        OPS_Reliability
        OPS_ReliabilityTcl
@@ -886,6 +955,7 @@ if(MPI_FOUND)
 
     target_link_libraries(OpenSeesMP
        OPS_InterpTcl
+       OPS_InterpPyCmds
        OpenSeesLIB
        OPS_Reliability
        OPS_ReliabilityTcl
@@ -922,8 +992,9 @@ set_target_properties(OpenSeesPy PROPERTIES PREFIX "")
 target_include_directories(OpenSeesPy PUBLIC ${Python_INCLUDE_DIRS})
 
 target_link_libraries(OpenSeesPy
+   OPS_InterpPyCmds
    OpenSeesLIB
-   OPS_SysOfEqnPython   
+   OPS_SysOfEqnPython
    OPS_Reliability
    OPS_Recorder
    OPS_Numerics
@@ -932,6 +1003,92 @@ target_link_libraries(OpenSeesPy
    Eigen3::Eigen	
    ${Python_LIBRARIES}
 )
+
+
+#
+# OpenSeesPyMP Module (MPI-enabled Python module, imports as `openseesmp`)
+#
+# Ladruno Patch 9: the Python analogue of the Tcl OpenSeesMP exe. Same
+# parallel source set as OpenSeesMP (minus the Tcl mains/commands.cpp), the
+# Python entry trio added via SRC/interpreter/CMakeLists.txt, and the
+# parallel-compiled command engine supplied by OPS_InterpPyCmds_MP. NOT in
+# OpenSeesLIB's link set, so no seq/parallel OpenSeesCommands.o collision.
+#
+
+if(MPI_FOUND)
+
+add_library(OpenSeesPyMP SHARED EXCLUDE_FROM_ALL
+  ${OPS_SRC_DIR}/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+  ${OPS_SRC_DIR}/domain/domain/partitioned/PartitionedDomain.cpp
+  ${OPS_SRC_DIR}/domain/domain/partitioned/PartitionedDomainEleIter.cpp
+  ${OPS_SRC_DIR}/domain/domain/partitioned/PartitionedDomainSubIter.cpp
+  ${OPS_SRC_DIR}/actor/machineBroker/MPI_MachineBroker.cpp
+  ${OPS_SRC_DIR}/system_of_eqn/linearSOE/diagonal/MPIDiagonalSOE.cpp
+  ${OPS_SRC_DIR}/system_of_eqn/linearSOE/diagonal/MPIDiagonalSolver.cpp
+  ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/MumpsSOE.cpp
+  ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/MumpsSolver.cpp
+  ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/MumpsParallelSOE.cpp
+  ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/MumpsParallelSolver.cpp
+  ${OPS_SRC_DIR}/domain/subdomain/ActorSubdomain.cpp
+  ${OPS_SRC_DIR}/domain/subdomain/ShadowSubdomain.cpp
+)
+
+set_target_properties(OpenSeesPyMP PROPERTIES
+  PREFIX ""
+  OUTPUT_NAME "openseesmp")
+
+target_include_directories(OpenSeesPyMP PUBLIC ${Python_INCLUDE_DIRS})
+if(DEFINED MUMPS_INCLUDE_DIR)
+    target_include_directories(OpenSeesPyMP PRIVATE ${MUMPS_INCLUDE_DIR} ${MPI_CXX_INCLUDE_DIRS})
+else()
+    target_include_directories(OpenSeesPyMP PRIVATE ${MUMPS_DIR}/_deps/mumps-src/include ${MPI_CXX_INCLUDE_DIRS})
+endif()
+
+target_compile_options(OpenSeesPyMP PRIVATE ${MPI_CXX_COMPILE_FLAGS})
+
+if (NOT DEFINED MUMPS_DIR AND TARGET mumps)
+    add_dependencies(OpenSeesPyMP mumps)
+endif()
+
+if (DEFINED OPENMPI)
+    target_compile_definitions(OpenSeesPyMP
+    PUBLIC _PARALLEL_INTERPRETERS ${MUMPS_FLAG} _OPENMPI)
+else()
+    target_compile_definitions(OpenSeesPyMP
+    PUBLIC _PARALLEL_INTERPRETERS ${MUMPS_FLAG})
+endif()
+
+target_link_libraries(OpenSeesPyMP
+   OPS_InterpPyCmds_MP
+   OpenSeesLIB
+   OPS_SysOfEqnPython
+   OPS_Reliability
+   OPS_Recorder
+   OPS_Numerics
+   METIS
+   SUPERLU_DIST
+   ${MUMPS_LIBRARIES}
+   ${CMAKE_DL_LIBS}
+   HDF5::HDF5
+   ZLIB::ZLIB
+   Eigen3::Eigen
+   ${Python_LIBRARIES}
+   ${MPI_CXX_LIBRARIES}
+   ${SCALAPACK_LIBRARIES}
+   ${MPI_Fortran_LIBRARIES}
+   ${MPI_CXX_LINK_FLAGS}
+)
+
+endif()
+
+
+#
+# (A Python "openseessp" / OpenSeesPySP SHARED target was prototyped here
+#  and REMOVED. The Python/DL command engine has no _PARALLEL_PROCESSING
+#  domain-decomposition subsystem — SP is Tcl-only via OpenSeesSP.exe.
+#  Definitive analysis + decision: Ladruno_implementation/02_openseespymp.md
+#  and compilation journal Patch 9. For parallel Python use OpenSeesPyMP.)
+#
 
 
 #

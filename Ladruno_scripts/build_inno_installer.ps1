@@ -73,6 +73,14 @@ if (-not (Test-Path $dist)) {
     Write-Error "dist/ not found at $dist. Run Ladruno_scripts\build.bat first."
     exit 1
 }
+if (-not (Test-Path (Join-Path $dist "openseesmp\openseesmp.pyd"))) {
+    Write-Warning @"
+dist\openseesmp\openseesmp.pyd not found.
+The installer will NOT include the MPI-parallel Python module.
+Run a full `Ladruno_scripts\build.bat` (it builds OpenSeesPyMP and
+populates dist\openseesmp) before packaging if you want it bundled.
+"@
+}
 if (-not (Test-Path $iss)) {
     Write-Error "installer.iss not found at $iss"
     exit 1

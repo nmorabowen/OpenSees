@@ -1851,6 +1851,12 @@ int OPS_Integrator()
 	} else if (strcmp(type, "ExplicitDifference") == 0) {
     ti = (TransientIntegrator*)OPS_ExplicitDifference();
 
+    } else if (strcmp(type, "ExplicitBathe") == 0) {
+	ti = (TransientIntegrator*)OPS_ExplicitBathe();
+
+    } else if (strcmp(type, "ExplicitBatheLNVD") == 0) {
+	ti = (TransientIntegrator*)OPS_ExplicitBatheLNVD();
+
     } else {
 	opserr<<"WARNING unknown integrator type "<<type<<"\n";
     }
@@ -3667,6 +3673,26 @@ int OPS_numIter()
     }
 
     return value;
+}
+
+int OPS_criticalTimeStep()
+{
+    if (cmds == 0) return 0;
+    TransientIntegrator* ti = cmds->getTransientIntegrator();
+    if (ti == 0) {
+	opserr << "WARNING criticalTimeStep - no transient integrator is set\n";
+	return -1;
+    }
+    // <=0 for integrators that do not provide one (e.g. not an explicit
+    // scheme, or the critical step has not been computed yet -- use the
+    // integrator's '-cfl' option to enable computation)
+    double value = ti->getCriticalTimeStep();
+    int numdata = 1;
+    if (OPS_SetDoubleOutput(&numdata, &value, true) < 0) {
+	opserr << "WARNING criticalTimeStep - failed to set output\n";
+	return -1;
+    }
+    return 0;
 }
 
 int OPS_systemSize()

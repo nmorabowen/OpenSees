@@ -63,8 +63,12 @@ class TransientIntegrator : public IncrementalIntegrator
     virtual int formNodUnbalance(DOF_Group *theDof);    
 
     virtual const Vector& getVel(void) = 0; // For modal damping
-    
+
     virtual int initialize(void) {return 0;};
+
+    // Conservative critical time step for explicit integrators (<=0 if not
+    // applicable / not yet computed). Queried via the criticalTimeStep command.
+    virtual double getCriticalTimeStep(void) const {return -1.0;}
 
   protected:
     
