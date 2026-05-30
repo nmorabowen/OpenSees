@@ -57,6 +57,9 @@ if(HDF5_FOUND)
         PRIVATE
           MPCORecorder.cpp
           MPCORecorderLadruno.cpp
+          MPCOL_NodeResults.cpp
+          MPCOL_ElementResults.cpp
+          MPCOL_Sinks.cpp
           VTKHDF_Recorder.cpp
         PUBLIC
          MPCORecorder.h
@@ -64,6 +67,9 @@ if(HDF5_FOUND)
          MPCOL_Types.h
          MPCOL_Hdf5.h
          MPCOL_ResultIO.h
+         MPCOL_NodeResults.h
+         MPCOL_ElementResults.h
+         MPCOL_Sinks.h
          VTKHDF_Recorder.h
       )
    endif()

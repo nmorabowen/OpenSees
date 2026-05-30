@@ -35,6 +35,21 @@ public:
 private:
 	int initialize();
 	int writeModel();
+	int writeModelNodes();
+	int writeModelElements();
+	int writeSections();
+
+	int initNodeSources();
+	int initElementSources();
+	int recordResultsOnNodes();
+	int recordResultsOnElements();
+
+	// helpers (operate on the channel at the given index in m_data, so the
+	// header never has to name private_data's nested channel types)
+	void recordModeChannel(int node_channel_index);
+	void writeElementColumnMap(int elem_channel_index);
+
+	int clearSources();
 
 	class private_data;
 	private_data* m_data;
