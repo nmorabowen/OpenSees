@@ -565,7 +565,19 @@ int MPCORecorderLadruno::writeModelElements()
 				mpcolns::h5::attribute::write(dset_id, "RATIONAL", (int)0);
 				mpcolns::h5::attribute::write(dset_id, "NUM_CTRL", (int)elem_by_tag.num_nodes);
 
-				// QUADRATURE / GP_PARAM (+ legacy GP_X retained) for custom rules.
+				// Custom-rule quadrature: the natural GP coordinates are written as
+				// the GP_X attribute on the element dataset (legacy form, lossless).
+				//
+				// NOTE: schema v1's self-describing QUADRATURE *group* (GP_PARAM +
+				// GP_WEIGHT child datasets) is NOT written here. The element bucket is
+				// currently an HDF5 *dataset* (the CONNECTIVITY table), and a group
+				// cannot be created under a dataset — attempting it raised 3 non-fatal
+				// HDF5-DIAG errors per custom-rule (Lobatto/etc.) element with no data
+				// effect. The schema requires each bucket to be a GROUP holding
+				// CONNECTIVITY + QUADRATURE/{GP_PARAM,GP_WEIGHT}; that restructure (plus
+				// GP_WEIGHT, which the legacy custom rule does not carry) is part of the
+				// MODEL/ELEMENTS schema-completeness follow-up. Until then GP_X carries
+				// the quadrature coordinates and no QUADRATURE group is emitted.
 				if (irule == mpcolns::mpco::ElementIntegrationRuleType::CustomIntegrationRule) {
 					mpcolns::h5::attribute::write(dset_id, "CUSTOM_INTEGRATION_RULE", elem_by_custom_rule.custom_int_rule_index);
 					if (elem_by_custom_rule.custom_int_rule_index != 0) {
@@ -574,13 +586,6 @@ int MPCORecorderLadruno::writeModelElements()
 						mpcolns::h5::attribute::write(dset_id, "GP_X", custom_rule.x);
 						mpcolns::h5::attribute::write(dset_id, "CUSTOM_INTEGRATION_RULE_DIMENSION", custom_rule.custom_rule_dimension);
 						mpcolns::h5::attribute::write(dset_id, "NUM_GP", (int)custom_rule.x.size());
-						// QUADRATURE child group with GP_PARAM (NUM_GP x 1).
-						hid_t h_q = mpcolns::h5::group::create(
-							dset_id, "QUADRATURE", H5P_DEFAULT, info.h_group_proplist, H5P_DEFAULT);
-						hid_t d_gpp = mpcolns::h5::dataset::createAndWrite(
-							h_q, "GP_PARAM", custom_rule.x, custom_rule.x.size(), 1);
-						mpcolns::h5::dataset::close(d_gpp);
-						mpcolns::h5::group::close(h_q);
 					}
 				}
 				mpcolns::h5::dataset::close(dset_id);
