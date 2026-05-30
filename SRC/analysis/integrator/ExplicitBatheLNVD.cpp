@@ -27,13 +27,10 @@
 #include <string.h>
 #include <stdlib.h>
 
-// the per-element critical-time-step eigensolve lives in ExplicitBathe.cpp;
-// reuse it so the two integrators cannot drift out of sync.
-extern void computeCriticalTimestep(AnalysisModel *theModel,
-                                    double &damped_min_dt,
-                                    double &undamped_min_dt,
-                                    int &damped_elem_tag,
-                                    int &undamped_elem_tag);
+// The per-element critical-time-step eigensolve is shared with ExplicitBathe and
+// lives in CriticalTimeStep.cpp (pulled in via ExplicitBatheLNVD.h). This replaces
+// the former hand-copied `extern` declaration, which could silently drift out of
+// sync with the definition (ADR item 2).
 
 // OPS interface for creating the ExplicitBatheLNVD integrator
 //
@@ -42,12 +39,16 @@ extern void computeCriticalTimestep(AnalysisModel *theModel,
 //                                     <-divergence factor>
 //   p     (optional, default 0.54)  sub-step parameter, 0<p<1
 //   alpha (optional, default 0.80)  FLAC local damping, 0<=alpha<1
+//   -tangent / -recompute <N> / -lump <rowsum|diagonal>  see ExplicitBathe
 void *OPS_ExplicitBatheLNVD(void) {
     double p = 0.54;
     double alpha_flac = 0.8;          // classic FLAC default
     int compute_critical_timestep = 0;
     bool verbose = false, cflAbort = false;
     double divergenceFactor = 0.0;
+    bool useTangentForDtcr = false;
+    int  recomputeEvery = 0;
+    CTSLumping lumping = CTSLumping::RowSum;
 
     // p and alpha are the leading numeric positionals; read them with the typed
     // getter (Tcl- and OpenSeesPy-safe). Flags follow.
@@ -82,6 +83,29 @@ void *OPS_ExplicitBatheLNVD(void) {
                 int nd = 1;
                 OPS_GetDoubleInput(&nd, &divergenceFactor);
             }
+        } else if (strcmp(arg, "-tangent") == 0) {
+            useTangentForDtcr = true;
+            compute_critical_timestep = 1;
+        } else if (strcmp(arg, "-recompute") == 0) {
+            if (OPS_GetNumRemainingInputArgs() > 0) {
+                int ni = 1;
+                if (OPS_GetIntInput(&ni, &recomputeEvery) < 0 || recomputeEvery < 1) {
+                    opserr << "WARNING ExplicitBatheLNVD - -recompute needs a positive "
+                              "integer N (ignored)\n";
+                    recomputeEvery = 0;
+                } else {
+                    compute_critical_timestep = 1;
+                    useTangentForDtcr = true;
+                }
+            }
+        } else if (strcmp(arg, "-lump") == 0) {
+            if (OPS_GetNumRemainingInputArgs() > 0) {
+                const char *m = OPS_GetString();
+                if (strcmp(m, "diagonal") == 0)      lumping = CTSLumping::Diagonal;
+                else if (strcmp(m, "rowsum") == 0)   lumping = CTSLumping::RowSum;
+                else opserr << "WARNING ExplicitBatheLNVD - unknown -lump " << m
+                            << " (use rowsum|diagonal; keeping rowsum)\n";
+            }
         } else {
             opserr << "WARNING ExplicitBatheLNVD - unknown option " << arg
                    << " (ignored)\n";
@@ -101,7 +125,8 @@ void *OPS_ExplicitBatheLNVD(void) {
 
     TransientIntegrator *theIntegrator =
         new ExplicitBatheLNVD(p, alpha_flac, compute_critical_timestep,
-                              verbose, cflAbort, divergenceFactor);
+                              verbose, cflAbort, divergenceFactor,
+                              useTangentForDtcr, recomputeEvery, lumping);
     if (theIntegrator == 0)
         opserr << "WARNING - out of memory creating ExplicitBatheLNVD integrator\n";
     return theIntegrator;
@@ -115,11 +140,14 @@ ExplicitBatheLNVD::ExplicitBatheLNVD()
       U_tpdt(0), V_tpdt(0), V_fake(0), A_tpdt(0),
       U_tdt(0), V_tdt(0), A_tdt(0), updateCount(0),
       a0(0.), a1(0.), a2(0.), a3(0.), a4(0.), a5(0.), a6(0.), a7(0.),
-      compute_critical_timestep(0),
+      compute_critical_timestep(false),
+      dtcr_computed(false), dtcr_reported(false),
+      useTangentForDtcr(false), recomputeEvery(0), committedSteps(0),
+      lumping(CTSLumping::RowSum),
       damped_minimum_critical_timestep(0.0),
       undamped_minimum_critical_timestep(0.0),
-      damped_critical_element_tag(0),
-      undamped_critical_element_tag(0),
+      damped_critical_element_tag(-1),
+      undamped_critical_element_tag(-1),
       verbose(false), cflAbort(false), divergenceFactor(0.0),
       prevKE(0.0), firstStep(true), lastUnbalanceNorm(-1.0)
 {}
@@ -127,18 +155,23 @@ ExplicitBatheLNVD::ExplicitBatheLNVD()
 ExplicitBatheLNVD::ExplicitBatheLNVD(double _p, double _alpha_flac,
                                      int compute_critical_timestep_,
                                      bool verbose_, bool cflAbort_,
-                                     double divergenceFactor_)
+                                     double divergenceFactor_,
+                                     bool useTangentForDtcr_, int recomputeEvery_,
+                                     CTSLumping lumping_)
     : TransientIntegrator(INTEGRATOR_TAGS_ExplicitBatheLNVD),
       deltaT(0.0), p(_p), q0(0.0), q1(0.0), q2(0.0), alpha_flac(_alpha_flac),
       U_t(0), V_t(0), A_t(0),
       U_tpdt(0), V_tpdt(0), V_fake(0), A_tpdt(0),
       U_tdt(0), V_tdt(0), A_tdt(0), updateCount(0),
       a0(0.), a1(0.), a2(0.), a3(0.), a4(0.), a5(0.), a6(0.), a7(0.),
-      compute_critical_timestep(compute_critical_timestep_),
+      compute_critical_timestep(compute_critical_timestep_ != 0),
+      dtcr_computed(false), dtcr_reported(false),
+      useTangentForDtcr(useTangentForDtcr_), recomputeEvery(recomputeEvery_),
+      committedSteps(0), lumping(lumping_),
       damped_minimum_critical_timestep(0.0),
       undamped_minimum_critical_timestep(0.0),
-      damped_critical_element_tag(0),
-      undamped_critical_element_tag(0),
+      damped_critical_element_tag(-1),
+      undamped_critical_element_tag(-1),
       verbose(verbose_), cflAbort(cflAbort_), divergenceFactor(divergenceFactor_),
       prevKE(0.0), firstStep(true), lastUnbalanceNorm(-1.0)
 {
@@ -236,11 +269,21 @@ int ExplicitBatheLNVD::domainChanged() {
         }
     }
 
-    damped_minimum_critical_timestep = std::numeric_limits<double>::infinity();
+    // Critical-time-step estimate computed HERE (not in newStep) so
+    // criticalTimeStep() is valid before the first analyze - no priming step
+    // needed (ADR item 3). Re-runs on every domain change.
+    damped_minimum_critical_timestep   = std::numeric_limits<double>::infinity();
     undamped_minimum_critical_timestep = std::numeric_limits<double>::infinity();
-
-    if (compute_critical_timestep == 2)
-        compute_critical_timestep = 1;
+    dtcr_computed = false;
+    dtcr_reported = false;
+    if (compute_critical_timestep) {
+        CTSResult r = computeCriticalTimeStep(theModel, /*useTangent=*/false, lumping);
+        damped_minimum_critical_timestep   = r.damped_dt;
+        undamped_minimum_critical_timestep = r.undamped_dt;
+        damped_critical_element_tag        = r.damped_tag;
+        undamped_critical_element_tag      = r.undamped_tag;
+        dtcr_computed = true;
+    }
 
     return 0;
 }
@@ -264,24 +307,32 @@ int ExplicitBatheLNVD::newStep(double _deltaT) {
                       "acceleration.\n";
     }
 
-    // critical time step (conservative central-difference limit), computed once
-    if (compute_critical_timestep == 1) {
-        computeCriticalTimestep(theModel,
-                                damped_minimum_critical_timestep,
-                                undamped_minimum_critical_timestep,
-                                damped_critical_element_tag,
-                                undamped_critical_element_tag);
-        compute_critical_timestep = 2;
-
-        const double dt_nb = EB_NB_STABILITY_FACTOR * damped_minimum_critical_timestep;
-        opserr << "ExplicitBatheLNVD: critical time step estimate\n"
-               << "  central-difference limit (conservative): "
-               << damped_minimum_critical_timestep
-               << " @ element #" << damped_critical_element_tag << "\n"
-               << "  Noh-Bathe limit (~" << EB_NB_STABILITY_FACTOR << "x): " << dt_nb << "\n";
+    // critical time step computed in domainChanged(); report once here (dt known).
+    if (dtcr_computed && !dtcr_reported) {
+        dtcr_reported = true;
+        if (damped_minimum_critical_timestep
+                == std::numeric_limits<double>::infinity()) {
+            opserr << "ExplicitBatheLNVD: critical time step NOT APPLICABLE - no "
+                      "element provided a mass+stiffness pencil (pure nodal-mass "
+                      "model?).\n";
+        } else {
+            const double dt_nb =
+                EB_NB_STABILITY_FACTOR * damped_minimum_critical_timestep;
+            opserr << "ExplicitBatheLNVD: critical time step estimate\n"
+                   << "  central-difference limit (conservative): "
+                   << damped_minimum_critical_timestep
+                   << " @ element #" << damped_critical_element_tag << "\n"
+                   << "  Noh-Bathe limit (~" << EB_NB_STABILITY_FACTOR << "x): "
+                   << dt_nb << "\n";
+            if (deltaT > dt_nb)
+                opserr << "  WARNING dt = " << deltaT
+                       << " exceeds the Noh-Bathe stability limit - expect INSTABILITY.\n";
+        }
     }
 
-    if (cflAbort && damped_minimum_critical_timestep > 0.0) {
+    const bool dtcr_finite = dtcr_computed &&
+        damped_minimum_critical_timestep != std::numeric_limits<double>::infinity();
+    if (cflAbort && dtcr_finite) {
         const double dt_nb = EB_NB_STABILITY_FACTOR * damped_minimum_critical_timestep;
         if (deltaT > dt_nb) {
             opserr << "ExplicitBatheLNVD::newStep() - ABORT: dt = " << deltaT
@@ -481,6 +532,41 @@ int ExplicitBatheLNVD::commit() {
         opserr << "ExplicitBatheLNVD::commit() - no AnalysisModel set\n";
         return -1;
     }
+
+    // Periodic dt_cr refresh on the live tangent (see ExplicitBathe::commit). An
+    // explicit scheme cannot shrink dt mid-run (commit-per-step is mandatory for
+    // path-dependent state, ADR D5), so enforcement = ABORT under -cflAbort.
+    if (compute_critical_timestep && recomputeEvery > 0) {
+        committedSteps++;
+        if (committedSteps % recomputeEvery == 0) {
+            CTSResult r = computeCriticalTimeStep(theModel, useTangentForDtcr, lumping);
+            damped_minimum_critical_timestep   = r.damped_dt;
+            undamped_minimum_critical_timestep = r.undamped_dt;
+            damped_critical_element_tag        = r.damped_tag;
+            undamped_critical_element_tag      = r.undamped_tag;
+
+            if (damped_minimum_critical_timestep
+                    != std::numeric_limits<double>::infinity()) {
+                const double dt_nb =
+                    EB_NB_STABILITY_FACTOR * damped_minimum_critical_timestep;
+                if (deltaT > dt_nb) {
+                    if (cflAbort) {
+                        opserr << "ExplicitBatheLNVD::commit() - ABORT after recompute "
+                               << "at step " << committedSteps << ": dt = " << deltaT
+                               << " > Noh-Bathe limit " << dt_nb << " (governing element #"
+                               << damped_critical_element_tag
+                               << "); reduce dt and re-run.\n";
+                        return -7;
+                    }
+                    opserr << "ExplicitBatheLNVD::commit() - WARNING after recompute at "
+                           << "step " << committedSteps << ": dt = " << deltaT
+                           << " now exceeds the Noh-Bathe limit " << dt_nb
+                           << "; pass -cflAbort to enforce.\n";
+                }
+            }
+        }
+    }
+
     return theModel->commitDomain();
 }
 
@@ -489,10 +575,12 @@ const Vector &ExplicitBatheLNVD::getVel() {
 }
 
 double ExplicitBatheLNVD::getCriticalTimeStep(void) const {
-    if (compute_critical_timestep == 0)
-        return -1.0;
+    if (!compute_critical_timestep)
+        return CriticalTimeStep::DISABLED;
+    if (!dtcr_computed)
+        return CriticalTimeStep::NOT_COMPUTED;
     if (damped_minimum_critical_timestep == std::numeric_limits<double>::infinity())
-        return -1.0;
+        return CriticalTimeStep::NOT_APPLICABLE;
     return damped_minimum_critical_timestep;
 }
 
@@ -530,4 +618,13 @@ void ExplicitBatheLNVD::Print(OPS_Stream &stream, int flag) {
     stream << "  Time Step: " << deltaT << "\n";
     stream << "  p: " << p << ", q0: " << q0 << ", q1: " << q1 << ", q2: " << q2 << "\n";
     stream << "  alpha (FLAC local damping): " << alpha_flac << "\n";
+    if (compute_critical_timestep) {
+        stream << "  dt_cr (damped): " << damped_minimum_critical_timestep
+               << ", stiffness: " << (useTangentForDtcr ? "tangent" : "initial")
+               << ", lumping: " << (lumping == CTSLumping::Diagonal ? "diagonal" : "rowsum");
+        if (recomputeEvery > 0)
+            stream << ", recompute every " << recomputeEvery << " steps"
+                   << (cflAbort ? " (enforced)" : " (advisory)");
+        stream << "\n";
+    }
 }

@@ -50,6 +50,7 @@
 //   https://doi.org/10.1016/j.compstruc.2013.06.007.
 
 #include <TransientIntegrator.h>
+#include <CriticalTimeStep.h>   // CTSLumping, CriticalTimeStep:: sentinels
 
 class DOF_Group;
 class FE_Element;
@@ -62,7 +63,9 @@ public:
     ExplicitBatheLNVD();
     ExplicitBatheLNVD(double p, double alpha_flac, int compute_critical_timestep_ = 0,
                       bool verbose = false, bool cflAbort = false,
-                      double divergenceFactor = 0.0);
+                      double divergenceFactor = 0.0,
+                      bool useTangentForDtcr = false, int recomputeEvery = 0,
+                      CTSLumping lumping = CTSLumping::RowSum);
 
     // destructor
     ~ExplicitBatheLNVD();
@@ -82,7 +85,9 @@ public:
 
     const Vector &getVel(void);
 
-    // conservative (central-difference) critical time step; <=0 if not computed
+    // conservative (central-difference) critical time step; computed in
+    // domainChanged() (valid before analyze). Returns a CriticalTimeStep::
+    // sentinel (DISABLED / NOT_COMPUTED / NOT_APPLICABLE) when there is no value.
     double getCriticalTimeStep(void) const;
     // infinity-norm of the most recent unbalanced force (dynamic-relaxation
     // convergence indicator); <0 until the first solve
@@ -126,7 +131,13 @@ private:
 
     double a0, a1, a2, a3, a4, a5, a6, a7;
 
-    int compute_critical_timestep;
+    bool compute_critical_timestep;          // feature enabled (-cfl / -cflAbort)
+    bool dtcr_computed;                       // domainChanged() ran the eigensolve
+    bool dtcr_reported;                       // one-shot estimate printed
+    bool useTangentForDtcr;                   // -tangent
+    int  recomputeEvery;                      // -recompute N (0 = off)
+    int  committedSteps;                      // committed-step counter
+    CTSLumping lumping;                       // mass lumping for the pencil
     double damped_minimum_critical_timestep;
     double undamped_minimum_critical_timestep;
     int damped_critical_element_tag;

@@ -19,6 +19,20 @@ tags:
 > PR #2 (recorder + integrators) **merged to `ladruno` 2026-05-30**; PR #3 (queryable
 > `dt_cr` + tangent/periodic recompute + aliasing fix) **open**. Captures the settled
 > decisions and — importantly — the marked extension points for future work.
+>
+> **Update 2026-05-30 — integrator follow-ups (items 2–7 of "Future work"):** the
+> `dt_cr` machinery was hardened on a follow-up branch (compile-verified per-TU;
+> full link still blocked by [[03_mpco_ladruno]]). Done: the eigensolve is hoisted
+> to a shared `CriticalTimeStep.{h,cpp}` (no more hand-copied `extern`); it is run in
+> `domainChanged()` (no stepping side-effect); `getCriticalTimeStep()` returns
+> distinct sentinels (DISABLED/NOT_COMPUTED/NOT_APPLICABLE); `-tangent` + `-recompute N`
+> were added and **enforce** under `-cflAbort` (abort on a recomputed CFL violation);
+> the solver tries `DSYGV` (symmetric-definite, with a relative-β threshold) before
+> falling back to `DGGEV`; `-lump diagonal` adds diagonal-of-consistent lumping; and a
+> guarded `MPI_Allreduce(MPI_MIN)` reduces `dt_cr` across ranks. See the implementation
+> log. Still deferred: the `ℓ_e/c_e` per-element estimate, true mid-run stiffening
+> enforcement (needs the PR #3 `criticalTimeStep()` command to call `domainChanged()`
+> to fully drop the priming step), and runtime verification of the MPI path.
 
 ## What
 
@@ -68,7 +82,8 @@ always reach (snap-through, near-singular tangents).
 ## Where
 
 - New: `SRC/recorder/EnergyBalanceRecorder.{h,cpp}`,
-  `SRC/analysis/integrator/ExplicitBatheLNVD.{h,cpp}`
+  `SRC/analysis/integrator/ExplicitBatheLNVD.{h,cpp}`,
+  `SRC/analysis/integrator/CriticalTimeStep.{h,cpp}` (shared `dt_cr` eigensolve, 2026-05-30)
 - Modified: `SRC/analysis/integrator/ExplicitBathe.{h,cpp}`,
   `SRC/analysis/integrator/TransientIntegrator.h` (new virtual),
   `SRC/interpreter/{OpenSeesCommands.{h,cpp},PythonWrapper.cpp,TclWrapper.cpp}`
@@ -118,11 +133,15 @@ Ordered roughly by value; many are **roadmap-gated** (need element/integrator ho
    the added-mass monitor. Design seam: inflate the diagonal `M` for sub-target
    elements, feed the same lumped `M` the integrator reads, recompute `dt_cr` on the
    *scaled* mass, hard-warn >5% added mass. Roadmap §5.1. **Separate integrator/decorator.**
-2. **`dt_cr` correctness/robustness.** `DSYGV` for the symmetric pencil + relative-`β`
-   threshold (A3 from review); a `ℓ_e/c_e` per-element wave-speed estimate (cheaper +
-   handles rotational DOFs better than row-sum lumping); compute in `domainChanged()`
-   (drops the prime, D6); make `-recompute` *enforce* (couple to `dt`) for the
-   stiffening/contact case, not just report.
+2. **`dt_cr` correctness/robustness.** ~~`DSYGV` for the symmetric pencil + relative-`β`
+   threshold (A3 from review)~~ **done (2026-05-30, DGGEV fallback retained)**; a
+   `ℓ_e/c_e` per-element wave-speed estimate (cheaper; still **deferred**) — partly
+   mitigated by the new `-lump diagonal` (diagonal-of-consistent, positive for
+   rotational DOFs); ~~compute in `domainChanged()` (drops the prime, D6)~~ **done
+   integrator-side** (full prime-drop needs the PR #3 command to call `domainChanged()`);
+   ~~make `-recompute` *enforce* (couple to `dt`)~~ **done** — `-recompute N` + `-cflAbort`
+   now aborts mid-run on a recomputed violation (an explicit scheme can't shrink its own
+   `dt`, D5, so enforcement = abort for the driver to re-issue).
 3. **Energy recorder additions.** External-work-input channel (independent check);
    elastic-vs-dissipated `IE` split (needs a standardized element/material "recoverable
    vs dissipated energy" response); hourglass / contact / added-mass energy columns
@@ -146,9 +165,14 @@ Ordered roughly by value; many are **roadmap-gated** (need element/integrator ho
 > Should `-recompute`/`-tangent` *enforce* a smaller `dt` (sub-cycle or abort) rather than
 > only reporting? Today only `-cflAbort` enforces; everything else is advisory + driver-side.
 
-- The `extern computeCriticalTimestep` is shared between `ExplicitBathe.cpp` (definition)
-  and `ExplicitBatheLNVD.cpp` (hand-copied `extern`) — fragile; hoist to a small header.
-- `dt_cr` ignores constraints/MP and pure nodal mass; safe-but-non-binding there.
+- ~~The `extern computeCriticalTimestep` is shared between `ExplicitBathe.cpp` (definition)
+  and `ExplicitBatheLNVD.cpp` (hand-copied `extern`) — fragile; hoist to a small header.~~
+  **Resolved 2026-05-30:** hoisted to `SRC/analysis/integrator/CriticalTimeStep.{h,cpp}`,
+  both integrators `#include` the one declaration.
+- `dt_cr` ignores constraints/MP and pure nodal mass; safe-but-non-binding there. (Pure
+  nodal mass now reports the explicit `NOT_APPLICABLE` sentinel rather than a silent `inf`.)
+- Parallel `dt_cr` reduction is wired (`MPI_Allreduce`, `MPI_MIN`) but **not yet runtime-
+  verified** under `openseesmp`; confirm `OPS_Analysis` carries a parallel macro in that build.
 - Full build / installer still blocked by the [[03_mpco_ladruno]] link error.
 
 ## Implementation log
@@ -158,3 +182,14 @@ Ordered roughly by value; many are **roadmap-gated** (need element/integrator ho
   bug); **PR #2 merged**. Queryable `dt_cr` + tangent/recompute; runtime test caught the
   `dt_cr` mass-aliasing bug; **PR #3 open**. Pre-merge 3-agent review caught the same
   aliasing bug in `EnergyBalanceRecorder::addElementEnergy`; fixed + polish (PR #3, 9/9).
+- 2026-05-30 — **integrator hardening (Future-work items 2–7).** New shared
+  `SRC/analysis/integrator/CriticalTimeStep.{h,cpp}` (eigensolve hoisted out of
+  `ExplicitBathe.cpp`; the `extern` in `ExplicitBatheLNVD.cpp` removed). Both integrators:
+  `dt_cr` computed in `domainChanged()`; sentinels DISABLED/NOT_COMPUTED/NOT_APPLICABLE;
+  new `-tangent`, `-recompute N`, `-lump <rowsum|diagonal>` options; `-recompute`+`-cflAbort`
+  enforces (commit-time abort); `DSYGV`→`DGGEV` fallback with relative-β threshold; D8
+  mass-aliasing avoided by design (mass copied before stiffness fetched);
+  `MPI_Allreduce(MPI_MIN)` cross-rank reduction (guarded, sequential = no-op). Registered in
+  the dir `CMakeLists.txt`/`Makefile`. Each TU compile-verified standalone via `cl.exe`
+  (full link still blocked by [[03_mpco_ladruno]]). `_verify_explicit.py` extended with
+  tests 10–12 (sentinels, `-lump diagonal`, `-cflAbort`/`-recompute` enforcement).

@@ -65,6 +65,7 @@
 #define ExplicitBathe_h
 
 #include <TransientIntegrator.h>
+#include <CriticalTimeStep.h>   // CTSLumping, CriticalTimeStep:: sentinels
 
 // Published Noh-Bathe stability advantage over central difference (~2x at the
 // optimal sub-step parameter). dt_cr_NB = EB_NB_STABILITY_FACTOR * (2/omega_max).
@@ -83,13 +84,17 @@ public:
 
     ExplicitBathe(double p, int compute_critical_timestep_ = 0,
                   bool verbose = false, bool cflAbort = false,
-                  double divergenceFactor = 0.0);
+                  double divergenceFactor = 0.0,
+                  bool useTangentForDtcr = false, int recomputeEvery = 0,
+                  CTSLumping lumping = CTSLumping::RowSum);
 
     // Destructor
     ~ExplicitBathe();
 
-    // Conservative (central-difference) critical time step, available after a
-    // step has run with compute_critical_timestep enabled; <=0 if not computed.
+    // Conservative (central-difference) critical time step. Computed in
+    // domainChanged() (so it is valid BEFORE the first analyze, no priming step
+    // needed). Returns the governing dt, or a CriticalTimeStep:: sentinel
+    // (DISABLED / NOT_COMPUTED / NOT_APPLICABLE) explaining why there is none.
     double getCriticalTimeStep(void) const;
     
     // Methods which define what the FE_Element and DOF_Groups add
@@ -158,7 +163,13 @@ private:
     double a7;          // = q2 * a3
 
     // Critical time step computation
-    int compute_critical_timestep;          // Control flag for critical dt computation
+    bool compute_critical_timestep;         // feature enabled (-cfl / -cflAbort)
+    bool dtcr_computed;                      // domainChanged() has run the eigensolve
+    bool dtcr_reported;                      // the one-shot estimate has been printed
+    bool useTangentForDtcr;                  // -tangent: eigensolve on current tangent
+    int  recomputeEvery;                     // -recompute N: refresh every N steps (0=off)
+    int  committedSteps;                     // committed-step counter for -recompute
+    CTSLumping lumping;                      // mass lumping for the pencil
     double damped_minimum_critical_timestep;    // Minimum critical dt (damped)
     double undamped_minimum_critical_timestep;  // Minimum critical dt (undamped)
     int damped_critical_element_tag;            // Element with minimum damped dt
