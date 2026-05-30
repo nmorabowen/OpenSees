@@ -14,6 +14,12 @@ on:
     - cron: "0 6 * * *"   # nightly Zone-B / perf (self-hosted)
   workflow_dispatch:
 
+# Cancel an in-flight run when a newer commit lands on the same branch/PR, so
+# rapid pushes don't queue 40-min builds behind each other.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # ---- static gates: no build needed, fast, always run -------------------
   static-gates:
@@ -51,6 +57,22 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      # Restore prebuilt Conan deps (HDF5/TCL/…) so `conan install` is a cache
+      # hit instead of rebuilding every dependency from source each run.
+      - name: Cache Conan packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.conan2
+          key: conan2-${{ runner.os }}-${{ hashFiles('conanfile.py') }}
+          restore-keys: |
+            conan2-${{ runner.os }}-
+      # ccache caches compiled object files across runs: only changed TUs
+      # recompile, turning the cold ~20-40 min build into a few minutes warm.
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: zone-a-${{ runner.os }}
+          max-size: 2G
       - name: Install conan
         run: |
           pip install conan pytest pyyaml
@@ -58,7 +80,7 @@ jobs:
       - name: Build OpenSees + OpenSeesPy
         run: |
           conan install . --build=missing
-          cmake -S . -B build/Release -DCMAKE_TOOLCHAIN_FILE=build/Release/generators/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release
+          cmake -S . -B build/Release -DCMAKE_TOOLCHAIN_FILE=build/Release/generators/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           cd build/Release
           cmake --build . --target OpenSees -j8
           cmake --build . --target OpenSeesPy -j8
@@ -69,6 +91,10 @@ jobs:
           cd tests
           pytest -v -m "zone_a"
       - name: Tcl verification suite + ladruno tcl (gated, G1)
+        # Heavy suite: skip on iterative PR pushes (synchronize) so the dev loop
+        # is just build + Zone-A pytest. Still runs on PR open/reopen/ready, on
+        # push to ladruno, and on the nightly schedule.
+        if: github.event.action != 'synchronize'
         run: |
           BIN="$GITHUB_WORKSPACE/build/Release/OpenSees"
           cd EXAMPLES/verification
