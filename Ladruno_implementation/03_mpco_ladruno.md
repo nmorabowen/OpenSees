@@ -32,9 +32,9 @@ express:
 
 **In scope (this plan, v1):** the modular split at *semantic* parity with the
 current recorder, in a new apeGmsh-native HDF5 schema, with a value-level parity
-harness. **Out of scope (deferred):** the global/`ON_DOMAIN` channel (energy balance
-is being implemented separately — MPCO_Ladruno will *consume* it, not build it, so the
-whole `ON_DOMAIN` channel waits on that landing) and the envelope channel. The
+harness. **Out of scope (deferred):** the envelope channel. *(The global/`ON_DOMAIN`
+energy channel was deferred pending `EnergyBalanceRecorder`; that has now landed and the
+energy result type is **designed** below — D8 — for v2 implementation.)* The
 envelope work itself splits: **v3a** = zero-MPI envelopes for consistent quantities
 (no dependency on the energy work), **v3b** = reduced (reaction/global) envelopes,
 which share the per-step reduction plumbing with the energy/`ON_DOMAIN` channel and
@@ -74,6 +74,7 @@ price we accept: Layers 0/1/2/4 are **copied**, not shared.
 | **D5** | **Keep MPCO's per-partition parallel model** (`part-N.mpco`, reader stitches). No parallel HDF5. | Verified MPCO's record loop only communicates one int/step (stage-stamp `Allreduce`, line 4594); result data is never communicated. Parallel HDF5 (MPI-IO collective writes) is fragile on the MS-MPI/libfabric stack ([[project_openseespymp_plan]]) and fights SWMR. | Stitching is **apeGmsh-owned** (canonical reader). `sendSelf` keeps broadcasting only the spec. |
 | **D6** | **Envelope phasing: zero-MPI consistent quantities first (v3a), reduced quantities later (v3b).** | min/max commute with partition-reduction *only* for consistent quantities; kinematics + element results need **zero** new comm. Reaction-at-boundary + global envelopes need per-step reduction — same plumbing as the deferred energy/`ON_DOMAIN` channel. | v3a is shippable with no MPI risk. v3b lands with/after the energy work it shares machinery with. |
 | **D7** | **Envelope semantics: componentwise min/max/abs-max + `ARG_STEP`.** | Matches design-check needs (independent peak per component); `ARG_STEP` (step of each extreme) enables concurrent-state reconstruction without extra storage. | Per-`MODEL_STAGE` reset; periodic in-place rewrite for crash safety. |
+| **D8** (2026-05-31) | **Energy = a *shared kernel* feeding `ON_DOMAIN` (whole-model) + a new `ON_REGIONS` family (per-region).** `EnergyBalanceRecorder` has **no** public accessor and its math lives in an anonymous namespace (uncallable cross-TU), so it cannot be *consumed* live — instead **lift** the KE/IE/DW/ULW/RES/ERR kernel into a link-visible `EnergyBalanceKernel.h` that *both* `EnergyBalanceRecorder` and `mpcol::EnergyBalanceSource` call. | Single definition of the energy math → the two recorders can never diverge (a divergence would be a silent correctness bug). `EnergyBalanceRecorder` is a Ladruno addition, **not** the frozen `MPCORecorder`, so the D1 freeze does not apply — sharing the *math* is allowed (recorder *plumbing* stays separate). Whole-model→`ON_DOMAIN`, per-region→`OnRegions` maps 1:1 onto apeGmsh's `domain`/`regions` composites. | One shared header; one `ResultFamily` enum line (`OnRegions`); v2 ships serial-correct, parallel reduce = v3b. Resolves the first open-question block below. |
 
 ## Where
 
@@ -179,6 +180,67 @@ specified in [[mpco_ladruno_element_contract]]. It is the bridge between the Bé
 Belytschko element roadmaps and this recorder: an element honoring it is recorded with
 no recorder edits.
 
+### Energy result type (`ON_DOMAIN` / `ON_REGIONS`) — v2 design (D8)
+
+*Folds in the deferred energy/`ON_DOMAIN` channel now that `EnergyBalanceRecorder`
+(classTag 26) has landed on `ladruno`, and now that apeGmsh — **our own viewer**
+([[project_apegmsh_viewer]]) — renders global/region results natively. That voids the
+"STKO can't show globals" blocker which pushed energy to a plain-text sidecar in
+[[04_explicit_dynamics_and_energy_balance]] D1.*
+
+**Sourcing — lift, don't consume.** `EnergyBalanceRecorder` exposes no value accessor
+(it overrides only the `Recorder` virtuals; all energy state is private; the kernels
+`addElementEnergy`/`addNodeEnergy` are in an *anonymous* namespace in the `.cpp` →
+internal linkage, uncallable from another TU). A domain source therefore cannot hold a
+live recorder and read it. The energy math is instead **extracted into a shared,
+link-visible kernel** (`SRC/recorder/EnergyBalanceKernel.h`) that *both*
+`EnergyBalanceRecorder` and the new `mpcol::EnergyBalanceSource` call — one definition of
+KE/IE/DW/ULW/RES/ERR% so the two recorders can never disagree. Permitted because
+`EnergyBalanceRecorder` is a Ladruno addition, not the frozen `MPCORecorder` (D1 does not
+apply); energy *definitions* are shared, recorder *plumbing* stays separate.
+
+**The source.** `mpcol::EnergyBalanceSource : ResultSource` — `schema().name =
+"energyBalance"`, `components_csv = "KE,IE,DW,ULW,RES,ERR"` (reuse the recorder's own
+`comp[]` tokens so apeGmsh metadata self-describes), `data_type = Vectorial`,
+`requiresPartitionReduction() == true`. `evaluate()` calls the shared kernel for its
+region scope and fills 6 doubles: KE instantaneous (½vᵀM v over element+nodal mass);
+IE/DW/ULW trapezoidally-integrated power rates the source carries across steps;
+RES = ULW−(KE+IE+DW); ERR% = 100·RES/E_ref.
+
+**Whole-model vs regions — two families.** Whole-model → `RESULTS/ON_DOMAIN/energyBalance`
+(`ids()=={0}`, `[1×6]`/step — `ON_DOMAIN` is **already wired** in `MPCOL_Sinks`, so no sink
+change). Per-region → a **new `ResultFamily::OnRegions`** (one enum line; sinks are
+otherwise family-agnostic) → `RESULTS/ON_REGIONS/energyBalance` with `ids() = region tags`
+and `[nRegions×6]`/step. Chosen over a single wide `[1×6·(1+nR)]` row because it maps 1:1
+onto apeGmsh's recommended object model (a `domain` composite with no id + a `regions`
+composite keyed by region **name**), keeping each independently queryable. Region tags come
+from the same `MeshRegion` path the recorder uses (`-R`/`domain->getRegion(tag)`); the
+recorder **also writes `MODEL/SETS/SET_<tag>`** (specced but currently unwritten) so region
+identity is self-describing in the file.
+
+**ERR% & parallel.** Store all six channels as computed (apeGmsh plots them directly; a
+reader can re-derive RES as a tamper check). Under parallel (D5 per-partition), KE/IE/DW/ULW
+are **additive** but ERR% is **not** (it rides a running max that does not survive a naive
+sum). v2 ships **serial-correct / per-partition**, inheriting `EnergyBalanceRecorder`'s own
+documented MPI caveats (modal damping absent from DW, `eleLoad` absent from ULW, ULW
+double-counted on shared nodes). The per-step `Allreduce(SUM)` of KE/IE/DW/ULW followed by a
+**post-reduction** RES/ERR% recompute is the **v3b** deliverable — exactly the
+`requiresPartitionReduction()` plumbing the reduced-envelope path needs, so it co-lands there
+(the flag is set correctly now even though the reduction is still a stub).
+
+**Reserved future sinks.** `COMPONENTS` is a self-describing CSV attr, so energy-sink
+channels that don't exist yet — hourglass, bulk-viscosity, mass-scaling added-KE, contact
+penalty/friction, eroded-element energy — are added later as extra `ON_DOMAIN` result groups
+(e.g. `ON_DOMAIN/hourglassEnergy`) with **no format break**; reserve their canonical names
+now. ⚠️ Until a sink exists for an *active* dissipation channel, a "closed" RES is *falsely*
+reassuring — energy hidden in an unmonitored channel still balances the books, so adding the
+channel is mandatory when its physics lands.
+
+**Plain-text sidecar stays.** `EnergyBalanceRecorder` writes through an injected `OPS_Stream`
+(fully decoupled from its compute), so the human-readable / numpy sidecar is **kept as-is** as
+a debug fallback; the `.ladruno` `ON_DOMAIN`/`ON_REGIONS` path becomes the canonical apeGmsh
+route. Not either/or.
+
 ### Public API (command syntax)
 
 v1 mirrors `recorder mpco` exactly (parity), with the new verb:
@@ -192,7 +254,8 @@ recorder mpcoLadruno <file.mpco> -N displacement reactionForce \
 Forward-looking additions (reserved now, implemented v2/v3):
 
 ```
-  -G energy baseShear            # v2: global/domain scalars  -> ON_DOMAIN
+  -G energy <regionTag...>       # v2: energy balance -> ON_DOMAIN (whole model)
+                                 #     + ON_REGIONS (one [nReg x 6] row/step) if tags given
   -ENV -N displacement           # v3: wrap a request in an EnvelopeSink -> ENVELOPES
 ```
 
@@ -208,8 +271,10 @@ Keep MPCO's genuinely good ideas; fix its worst ergonomics.
     └── RESULTS
         ├── ON_NODES/<name>/{ID, DATA/STEP_k}
         ├── ON_ELEMENTS/<name>/{ID, META, DATA/STEP_k}
-        ├── ON_DOMAIN/<name>/{DATA/STEP_k}                 # NEW (v2), shape [1 × nComp]
-        └── ENVELOPES/ON_{NODES,ELEMENTS,DOMAIN}/<name>/   # NEW (v3)
+        ├── ON_DOMAIN/<name>/{ID={0}, DATA/STEP_k}         # NEW (v2), [1 × nComp]; e.g.
+        │       energyBalance  COMPONENTS="KE,IE,DW,ULW,RES,ERR"
+        ├── ON_REGIONS/<name>/{ID=[regionTags], DATA/STEP_k}  # NEW (v2), [nRegions × nComp]
+        └── ENVELOPES/ON_{NODES,ELEMENTS,DOMAIN,REGIONS}/<name>/  # NEW (v3)
                 {ID, MIN, MAX, ABSMAX, ARG_STEP}
 ```
 
@@ -235,6 +300,27 @@ clean read path, not a reverse-engineering exercise. Longer term, apeGmsh's
 exporters emit `recorder mpcoLadruno` as the default, making it the canonical
 output. `STKO_to_python` gets a parallel reader branch (same `FORMAT_VERSION` gate)
 so existing post-processing keeps working against the new files.
+
+**Energy on the apeGmsh side (our viewer, [[project_apegmsh_viewer]]).** apeGmsh today has
+**no** global/region result concept — its `ResultLevel` enum is the seven *spatial* levels
+(nodes/elements/gauss/fibers/layers/line-stations/springs) and every slab is keyed to a
+node/element id. The idiomatic, backend-agnostic extension mirrors the existing
+slab/protocol/reader/composite quartet: add `ResultLevel.DOMAIN` (+ `REGIONS`);
+`DomainScalarSlab(values:(T,))` and `RegionScalarSlab(values:(T,R), region_names)`;
+`read_domain`/`read_regions` on the reader `Protocol`; `results.domain.get(component=…)` and
+`results.regions.get(component=…, region=…)` composites (the regions composite keys by region
+**name**, *not* node/element ids — it must **not** mix in `_SelectionMixin`); and an `ENERGY`
+canonical tuple in `_vocabulary`. The `.mpco`/`.ladruno` reader (`from_mpco`; note there is
+**no** `from_ladruno` — `.ladruno` rides the MPCO reader gated on `GENERATOR`) reads
+`RESULTS/ON_DOMAIN` / `RESULTS/ON_REGIONS` mirroring its `RESULTS/ON_NODES` walk; the native
+writer + live `DomainCapture` gain matching `write_domain`/`write_regions` so the native
+`model.h5` path carries energy too. Rendering v1 is **matplotlib-only**:
+`results.plot.energy_balance(stage=, regions=)` — a `stackplot` of KE/IE/DW/ULW with RES/ERR%
+on a twin axis — plus a node-free `scalar_history`, and `results.energy(stage=)` sugar
+returning the 6-channel bundle. A non-spatial "time-chart" *diagram kind* inside the
+interactive 3-D viewer is the largest piece and is **deferred** (the viewer's catalog is
+entirely spatial; matplotlib-only suffices for v1). This apeGmsh work is a **separate PR in
+the apeGmsh repo**, co-versioned with the recorder's `FORMAT_VERSION`.
 
 ### Parallel model & envelopes
 
@@ -329,12 +415,17 @@ exists.
 
 ## Risks / open questions
 
-> [!question]
-> **Energy / `ON_DOMAIN` source of truth — DEFERRED.** Energy balance is being
-> implemented separately; MPCO_Ladruno will *consume* it. When that lands, confirm
-> whether `EnergyBalanceRecorder` (classTag 26) exposes its per-region computation in
-> a form the domain source can call directly, or whether we lift it. The `ON_DOMAIN`
-> channel and v3b reduced-envelopes wait on this.
+> [!done]
+> **Energy / `ON_DOMAIN` source of truth — RESOLVED 2026-05-31 (→ D8, see "Energy result
+> type" above).** `EnergyBalanceRecorder` (classTag 26) has landed on `ladruno`. It does
+> **not** expose its computation: no value accessor (only `Recorder` virtuals), private
+> state, math kernels in an anonymous namespace (uncallable cross-TU). So it cannot be
+> *consumed* live → we **lift** the kernel into a shared `EnergyBalanceKernel.h` both
+> recorders call (allowed: the recorder is a Ladruno addition, not the frozen
+> `MPCORecorder`). Whole-model→`ON_DOMAIN`, per-region→new `OnRegions` family. v2 ships
+> serial-correct; the per-step `Allreduce(SUM)` + post-reduction RES/ERR% recompute is the
+> v3b reduced-envelope plumbing it co-lands with. apeGmsh gains `DOMAIN`/`REGIONS` levels +
+> `results.plot.energy_balance` (separate apeGmsh-repo PR).
 
 > [!question]
 > **Element engine port fidelity.** The 2595–4279 region holds load-bearing
@@ -369,3 +460,13 @@ when v1 lands)*
   wrapping any source, phased zero-MPI-consistent (v3a) → reduced (v3b, co-lands with
   energy); componentwise absmax + `ARG_STEP`, per-stage reset, periodic rewrite.
   Energy/`ON_DOMAIN` deferred (built elsewhere; we consume).
+- 2026-05-31 — **Energy result type designed (D8)** after a 3-agent cross-repo recon
+  (apeGmsh viewer · `MPCOL_*` C++ contract · `EnergyBalanceRecorder`/this ADR). Key
+  findings: `ResultFamily::OnDomain` is already wired (no sink change); `EnergyBalanceRecorder`
+  has no public accessor + anon-namespace kernels (→ lift to a shared `EnergyBalanceKernel.h`,
+  not consume); apeGmsh has no global/region level (→ add `DOMAIN`/`REGIONS` levels +
+  `results.plot.energy_balance`). Decided: whole-model `ON_DOMAIN` + new `OnRegions` family;
+  store all 6 channels; v2 serial-correct, parallel reduce = v3b; plain-text sidecar kept;
+  reserve future-sink names (hourglass/bulk-viscosity/mass-scaling/contact/eroded). Resolved
+  the first open-question block. Design-only; implementation (C++ source + apeGmsh PR) is the
+  next step. No code in this change.
