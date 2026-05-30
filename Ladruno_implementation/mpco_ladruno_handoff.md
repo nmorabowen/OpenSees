@@ -1,8 +1,9 @@
 ---
-title: MPCO_Ladruno — session handoff
+title: MPCO_Ladruno — session handoff (cold-resume map)
 project: Ladruno
 status: in-progress
 owner: nmora
+updated: 2026-05-30
 tags:
   - handoff
   - recorder
@@ -10,86 +11,64 @@ tags:
 
 # MPCO_Ladruno — session handoff
 
-A working, adversarially-reviewed, **node-parity-verified** modular fork of the frozen
-MPCORecorder, built end-to-end in one session. This doc is the cold-resume map.
-Deep detail lives in the `.claude` memory `project_mpco_ladruno.md`; the design lives in
-[[03_mpco_ladruno]] (ADR), [[mpco_ladruno_schema_v1]] (on-disk format),
-[[mpco_ladruno_element_contract]] (element `setResponse` API).
+Cold-resume map for the `mpcoLadruno` recorder. Deep detail in the `.claude`
+memory `project_mpco_ladruno.md`; design in [[03_mpco_ladruno]] (orig ADR) +
+[[07_adr_post_review_storage]] (post-review decisions); on-disk format in
+[[mpco_ladruno_schema_v1]]; in-flight work in [[06_quadrature_global_gp_plan]];
+gotchas in [[LEDGER_quirks]].
 
 ## What it is
+A sibling recorder (`recorder mpcoLadruno` → `.ladruno` HDF5), apeGmsh-native,
+forked from the frozen `MPCORecorder` (untouched) and wrapped in `namespace mpcol`
+(ODR-clean). Splits `ResultSource` (what to compute) from `ResultSink` (how to
+persist). Value channels reproduce the frozen recorder to 1e-12.
 
-A sibling recorder (`recorder mpcoLadruno`) that reproduces the frozen MPCO recorder's
-results in a new, modular, apeGmsh-native HDF5 format (`.ladruno`). The frozen
-`MPCORecorder.cpp` is **untouched** (byte-identical). All new code is wrapped in
-`namespace mpcol` so the two link together with no ODR clash.
+## Merged on `ladruno` (done + verified)
+- Recorder Phases 1–3 (#8); multi-stage restaging fix C1/C2 (#12); element-result
+  parity gate (#14); HDF5-DIAG noise fix (#16); BezierTri6 wiring +
+  **bucket-as-GROUP + `basisInfo` self-declaration probe + QUADRATURE for custom
+  rules** (#18).
+- **Verified (fresh build):** nodal 80/80, multistage 108/108 (2 stages),
+  element quad 96/96 + beam 144/144, bezier 72/72, `SECTION_ASSIGNMENTS`
+  byte-identical to frozen, zero HDF5-DIAG. Harness pytest green.
 
-## State — DONE
+## Architecture review (done) → decisions
+6-lens adversarial review = **proceed-with-changes, do NOT pivot the format**
+(see [[07_adr_post_review_storage]]). Architect decisions locked:
+**D2** belt-and-suspenders `GLOBAL_GP_COORDS` (+ write-time oracle); **D3** chunked
+extensible `[T×nIds×nComp]` time-series replacing per-step `DATA/STEP_<k>` (do
+early); **D4** explicit `NDIR`; **D5** shared validator + hold `FORMAT_VERSION=1`.
 
-- **Phase 1** (`7e424735c`): skeleton — registers `recorder mpcoLadruno`, writes a
-  schema-valid file; compile + link + file gates passed.
-- **Phase 2** (`bf3394d27`): the five modules — `MPCOL_{Types,Hdf5,ResultIO}.h`,
-  `MPCOL_NodeResults.{h,cpp}` (26 node sources), `MPCOL_ElementResults.h` (the element
-  discovery engine, verbatim port), `MPCOL_Sinks.{h,cpp}` (streaming + envelope).
-- **Phase 3** (`f14ab097e`): integration — `-N/-NS/-E/-T/-R` parser, node-source
-  factory + per-step Source→Sink drive (reaction-flag / eigen / mode), the
-  `ElementResultSource` adapter, model writing. **Verified:**
-  - Full OpenSeesPy build **links clean** (no `LNK2005`; ODR holds).
-  - **Parity gate PASSES: 80/80 nodal values match the frozen recorder to 1e-12**
-    (5-truss frame, `-N displacement reactionForce`).
-  - **Red/blue adversarial review** (two independent agents, converged): core
-    value-parity surface byte-faithful; ODR clean.
+## In progress — branch `feature/mpco-quadrature-global-gp`
+**Step 2+3:** standard-rule `QUADRATURE` (close reader KeyError on quad/hex/tri/tet
+GL elements) + belt-and-suspenders `GLOBAL_GP_COORDS` + `NDIR`. Full higher-order
+scope. Plan + verified GP-ordering spec in [[06_quadrature_global_gp_plan]] and the
+memory. **Step A DONE:** `getStandardQuadrature(...)` in `MPCOL_ElementResults.h`
+(compiles+links clean). **Resume at Step B.**
 
-## State — TODO (ranked, from the red/blue review)
+## Resume (next session)
+`"continue Step B of MPCO_Ladruno standard-rule QUADRATURE"` —
+1. **Step B:** add `computeGlobalGP(...)` (linear quad/hex tensor in each element's
+   own node order + tri/tet bary + line) to `MPCOL_ElementResults.h`; rewire
+   `MPCORecorderLadruno.cpp::writeModelElements` (~606–639) to resolve
+   `(num_gp,ndir,gp_param,gp_weight)` via custom→`getStandardQuadrature`→none, write
+   `NDIR`/`NUM_GP`/`QUADRATURE` for **all** resolved rules, and compute+write
+   `GLOBAL_GP_COORDS[nElem×nGP*ndim]` (2-D, reshape doc'd; reuse the CONNECTIVITY
+   loop's `node->getCrds()`); incremental build; h5py-inspect a quad+brick+tri model.
+2. **Step C:** Python — `ladruno_basis.py` (bary/tri/tet), `ladruno_format.py`
+   (read `NDIR`; `GLOBAL_GP_COORDS` optional; **QUADRATURE tolerant — warn not
+   KeyError**); new `standard_quad_{model,check}.py` with the round-trip oracle.
+3. **Step D:** higher-order (9N/27N Lagrange + 20N serendipity, C++ + Python).
+4. **Step E:** fixture + harness self-tests + remaining rules (27N hex, tri 3/4-pt,
+   tet GL2 — read sources or rely on the tolerant reader).
+5. **Step F:** full regression gate (80/80·96/96·144/144·72/72) → merge PR → `ladruno`.
 
-1. **🔴 CRITICAL — C1/C2 multi-stage restaging.** `record()` never re-checks
-   `hasDomainChanged()` after init → multi-stage analyses write only the FIRST
-   `MODEL_STAGE`, and cached `Element*`/`Response*` go stale (UB/dangling-pointer).
-   Single-stage is unaffected (gate passes). **Fix:** port the frozen
-   `MPCORecorder.cpp::record()` domain-change block (lines ~4566–4641 —
-   `first_domain_changed_done`/`rebuild_model`) into `MPCORecorderLadruno::record()`;
-   on a stage change re-run model writing + rebuild node/element sources & sinks
-   (call each `StreamingSink::reset()`). Then re-gate single-stage **and** add a
-   2-stage test.
-2. **🟠 HIGH — LOCAL_AXES + SETS.** `MODEL/LOCAL_AXES` (frozen `writeModelLocalAxes`,
-   ~5228–5358) and `MODEL/SETS` (frozen `writeSets`) are not written. Port both for
-   full frozen-MODEL parity (LOCAL_AXES is also apeGmsh's #1 reader need).
-3. **🟡 MED — schema completeness.** `SECTION_MAP` + `GP_WEIGHT` not written;
-   `MODEL_STAGE/@KIND` hardcoded `"static"`; `COLUMN_MAP` `SECTION_TAG`/`FIBER_ID`
-   hardcoded `-1`; duplicate `-N` requests not collapsed (vector vs frozen enum-map).
-4. **⚪ LOW (deferred by design).** Explicit flush/close control; `EnvelopeSink`
-   unused (v3 envelopes); `sendSelf`/`recvSelf` no-op stubs (parallel); the whole
-   `ON_DOMAIN`/global-energy channel (waits on the separate energy-balance work).
-
-Then: **PR `feature/mpco-ladruno` → `main`.**
-
-## Branch / worktree layout
-
-```
-main                              single source of truth (= ladruno 288f6d0f1), LOCAL-ONLY
-├─ feature/mpco-ladruno  (worktree mpco-ladruno-wt)   3 commits — THIS work
-├─ feature/quad-ndmaterial-output (worktree quad-ndmat-wt)  complete standalone fix
-└─ feature/bezier-tri6            the BezierTri6 element (committed separately)
-```
-Nothing is pushed. The main `OpenSees/` tree is clean except 2 untracked
-`bezier_apegmsh_*.py` demos.
-
-## Build & test recipes (the two gotchas)
-
-- **Testing a fresh build needs the BUILD python, not the venv.** The venv has a boot
-  `.pth` (`_ladruno_opensees_boot.py`) that pre-imports `opensees` from
-  `C:\Program Files\Ladruno\OpenSees\bin` at startup, shadowing any fresh build. Run
-  models with `C:\Users\nmora\AppData\Local\Python\pythoncore-3.12-64\python.exe`,
-  `sys.path.insert(0, <dir with fresh opensees.pyd>)`, `os.add_dll_directory(<dist\bin
-  with MKL>)` (HDF5 is static-linked). Then validate/diff with the **venv** python
-  (it has h5py). See `parity_model.py` / `parity_check.py`.
-- **Fast standalone compile-check** (no full build): extract `DEFINES`/`FLAGS`/
-  `INCLUDES` from `build/build/Release/build.ninja` (the `Recorder.cpp.obj` block, drop
-  `OPENSEES_VERSION`), prepend `-I<worktree>\SRC` (so `classTags.h` tag 27 resolves),
-  then `cl /TP @rsp /c <file>` under `setup_env.bat`.
-- **Full worktree build:** `Ladruno_scripts\build.bat OpenSeesPy` (reuses the global
-  conan cache; copy `OpenSees\mumps-install` → worktree to skip the MUMPS rebuild).
-
-## Resume
-
-`"continue Phase 3.1 of MPCO_Ladruno"` — picks up at the C1/C2 fix. Full prompt in the
-session notes; read the `.claude` memory `project_mpco_ladruno.md` first.
+## Build / run recipe
+- Worktree build tree is warm. Incremental: `cmd /c "Ladruno_scripts\setup_env.bat
+  && cmake --build build\build\Release --target OpenSeesPy && copy /y
+  build\build\Release\OpenSeesPy.dll dist\bin\opensees.pyd"` via the **PowerShell
+  tool** (~2 min; NOT `build.bat` — its reconfigure forces a 1807-obj full rebuild).
+- Run models with BUILD python `…\pythoncore-3.12-64\python.exe` (script does
+  `add_dll_directory` + `sys.path`→`<wt>\dist\bin`); validate/oracle with venv python
+  (h5py). `LADRUNO_OPENSEES_QUIET=1`; `grep -a` (banner has binary bytes).
+- `gh pr create` needs `--repo nmorabowen/OpenSees` (else targets upstream).
