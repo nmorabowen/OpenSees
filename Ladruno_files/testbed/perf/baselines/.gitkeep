@@ -1,0 +1,2 @@
+# Per-machine perf baselines land here as <hostname>.json.
+# Re-baseline ONLY via an explicit `perf: re-baseline <reason>` commit.

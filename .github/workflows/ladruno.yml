@@ -1,0 +1,88 @@
+# Ladruno fork CI — Zone-A gate. Does NOT run on upstream (guarded by repo name)
+# so a PR back to OpenSees/OpenSees never drags this workflow along.
+# Upstream build_cmake.yml stays untouched and keeps gating master.
+name: Ladruno Zone-A
+
+on:
+  push:
+    branches: [ladruno]
+  pull_request:
+    branches: [ladruno]
+  schedule:
+    - cron: "0 6 * * *"   # nightly Zone-B / perf (self-hosted)
+  workflow_dispatch:
+
+jobs:
+  # ---- static gates: no build needed, fast, always run -------------------
+  static-gates:
+    name: classTag + manifest gates
+    if: github.repository == 'nmorabowen/OpenSees'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install pyyaml
+      - name: classTag collision + drift (Axis 1, G2)
+        run: python ci/check_classtags.py
+      - name: manifest ledger (G9)
+        run: python ci/check_manifest.py
+
+  # ---- Zone-A: build + pytest(zone_a) + gated Tcl suite ------------------
+  zone-a-ubuntu:
+    name: Zone-A (Ubuntu)
+    if: github.repository == 'nmorabowen/OpenSees'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install conan
+        run: |
+          pip install conan pytest pyyaml
+          conan profile detect --force
+      - name: Build OpenSees + OpenSeesPy
+        run: |
+          conan install . --build=missing
+          cmake -S . -B build/Release -DCMAKE_TOOLCHAIN_FILE=build/Release/generators/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release
+          cd build/Release
+          cmake --build . --target OpenSees -j8
+          cmake --build . --target OpenSeesPy -j8
+          mv OpenSeesPy.so opensees.so
+      - name: pytest Zone-A
+        run: |
+          cp build/Release/opensees.so tests/
+          cd tests
+          pytest -v -m "zone_a"
+      - name: Tcl verification suite + ladruno tcl (gated, G1)
+        run: |
+          BIN="$GITHUB_WORKSPACE/build/Release/OpenSees"
+          cd EXAMPLES/verification
+          "$BIN" runVerificationSuite.tcl || true
+          "$BIN" "$GITHUB_WORKSPACE/tests/tcl/forceBeamColumn_cantilever.tcl" || true
+          cd "$GITHUB_WORKSPACE"
+          python ci/check_tcl_results.py
+
+  # ---- Zone-B + perf: nightly, self-hosted oneAPI box -------------------
+  zone-b-nightly:
+    name: Zone-B + perf (self-hosted)
+    if: github.repository == 'nmorabowen/OpenSees' && github.event_name == 'schedule'
+    runs-on: [self-hosted, windows, ladruno-perf]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Zone-B (apeGmsh / LS-DYNA cross-checks)
+        shell: pwsh
+        run: |
+          $env:APEGMSH_SKIP_VIEWER = "1"
+          cd tests
+          pytest -v -m "zone_b"
+      - name: Perf micro-bench (state-determination ns/call)
+        shell: pwsh
+        run: python Ladruno_files/testbed/perf/runner.py --check

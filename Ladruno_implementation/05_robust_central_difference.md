@@ -13,7 +13,8 @@ tags:
 # Robust explicit central-difference integrator (`CentralDifferenceLadruno`)
 
 > **Design / ADR (pre-implementation).** A single, clean **explicit leap-frog
-> central-difference** integrator — a sibling-fork class (classTag 64) that delivers
+> central-difference** integrator — a sibling-fork class (classTag 33003, Ladruno
+> private band ≥33000) that delivers
 > the one combination *no* existing OpenSees class has: a **correct first step + a
 > built-in critical-timestep guard + clean full-step velocity output + energy-balance
 > discipline**, without modifying any upstream file.
@@ -31,7 +32,8 @@ tags:
 
 ## What
 
-A new `TransientIntegrator` subclass `CentralDifferenceLadruno` (classTag **64**),
+A new `TransientIntegrator` subclass `CentralDifferenceLadruno` (classTag **33003**,
+Ladruno private band ≥33000),
 the explicit **leap-frog** central-difference scheme done right:
 
 - **Single explicit scheme** (no mode switch): `M` alone on the LHS → a trivial
@@ -96,7 +98,7 @@ For the coupled/implicit-damped case, the answer is documentation, not code:
 
 | # | Decision | Rationale |
 |---|----------|-----------|
-| C1 | **New clean fork class**, `CentralDifferenceLadruno`, classTag 64; all upstream classes frozen | Sibling-fork policy (no upstream diffs); the reason this is new code, not an in-place patch |
+| C1 | **New clean fork class**, `CentralDifferenceLadruno`, classTag 33003 (Ladruno private band ≥33000); all upstream classes frozen | Sibling-fork policy (no upstream diffs); the reason this is new code, not an in-place patch |
 | C2 | **Single explicit leap-frog scheme** — no `-damping` mode switch | The sweep showed a coupled mode == `NewmarkExplicit(0.5)`; bundling two schemes under one classTag was rejected as a split-personality tool. One scheme, one behavior |
 | C3 | **Starter on the FIRST STEP, not `domainChanged()`** (B1 fix): `a₀ = M⁻¹(P₀−Cv₀−Fᵢₙₜ(u₀))` then `v₋½ = v₀ − ½Δt·a₀` | `domainChanged()` has no Δt set and no factorized SOE (this is exactly why legacy CD punts). `ExplicitBathe` precedent: defer the first acceleration solve to the first `update()` behind a `firstStep` flag. `dt_cr` *can* stay in `domainChanged()` (it does its own LAPACK eigensolve, not the global SOE) |
 | C4 | **Reuse `CriticalTimeStep`**, stability factor 1.0; **implement `getCriticalTimeStep()` override** | Base `TransientIntegrator::getCriticalTimeStep()` returns `-1.0` (verified `TransientIntegrator.h:71`); the `criticalTimeStep()` command (`OPS_criticalTimeStep`, wired in OpenSeesCommands/PythonWrapper/TclWrapper) already dispatches to it. CD limit is exactly `2/ω_max` |
@@ -110,7 +112,7 @@ For the coupled/implicit-damped case, the answer is documentation, not code:
 
 - **New code**: `SRC/analysis/integrator/CentralDifferenceLadruno.{h,cpp}`
 - **Modify (registration)**:
-  - `SRC/classTags.h` — `#define INTEGRATOR_TAGS_CentralDifferenceLadruno 64`
+  - `SRC/classTags.h` — `#define INTEGRATOR_TAGS_CentralDifferenceLadruno 33003`
   - `SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp` — `#include` + `case`
   - `SRC/runtime/runtime/TclPackageClassBroker.cpp` — `#include` + `case`  *(corrected path — NOT `SRC/tcl/`)*
   - `SRC/interpreter/OpenSeesCommands.cpp` — string dispatch → `OPS_CentralDifferenceLadruno()`
@@ -296,10 +298,11 @@ compression — an element/material concern; flagged so wave/shock users know th
 ## Implementation log
 
 **2026-05-30 — implemented as designed (explicit leap-frog only).** New sibling-fork
-class `CentralDifferenceLadruno` (classTag **64**), no upstream class touched.
+class `CentralDifferenceLadruno` (classTag **33003**, Ladruno private band ≥33000),
+no upstream class touched.
 
 - **New files**: `SRC/analysis/integrator/CentralDifferenceLadruno.{h,cpp}`.
-- **Registration (8 sites, verified against `ExplicitBatheLNVD`)**: `classTags.h` (64);
+- **Registration (8 sites, verified against `ExplicitBatheLNVD`)**: `classTags.h` (33003, Ladruno band ≥33000);
   `FEM_ObjectBrokerAllClasses.cpp` (+include +case); `runtime/runtime/TclPackageClassBroker.cpp`
   (+include +case); `interpreter/OpenSeesCommands.{h,cpp}` (fwd-decl + string dispatch);
   `tcl/commands.cpp` (extern + `integrator` branch); integrator `CMakeLists.txt` + `Makefile`.

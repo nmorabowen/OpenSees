@@ -1,0 +1,8 @@
+# forceBeamColumn end-loaded cantilever (2D). SINGLE source read by BOTH
+# tests/test_forceBeamColumn_cantilever.py and tests/tcl/forceBeamColumn_cantilever.tcl.
+# Edit here only — the two tests can never disagree on the physics.
+L 48.0
+E 29000.0
+A 20.0
+I 800.0
+P 10.0

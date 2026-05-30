@@ -62,6 +62,34 @@ them. This is observation-only — fixes we actually applied are tracked in
 - **Status:** guarded with a clear error message in `OpenSeesMiscCommands.cpp`
   ([#1](https://github.com/nmorabowen/OpenSees/pull/1)); `OPS_HAVE_METIS5` follow-up noted.
 
+### HDF5 won't create a group under a dataset — the "writeSections" red herring
+- **Bites:** `mpcoLadruno` emitted ~3 non-fatal `HDF5-DIAG` errors to stderr for
+  every custom-rule element (Lobatto beam, MVLEM, BezierTri6). The error
+  signature (`invalid location identifier` / `dset_id is not a dataset ID`) was
+  misattributed to `writeSections` for a while.
+- **Why:** `writeModelElements` made `MODEL/ELEMENTS/<name>` the CONNECTIVITY
+  **dataset**, then tried to `H5Gcreate` a `QUADRATURE` child **group** under it.
+  HDF5 datasets cannot parent groups, so the handle was invalid and the
+  `GP_PARAM`/`GP_WEIGHT` writes under it failed — silently losing the quadrature
+  group (data was otherwise intact; GP_X attr carried the coords). The opserr
+  buffering made the errors *look* like they came from `writeSections`, which is
+  clean. Reliably-ordered `fprintf(stderr)` pinned them to `writeModelElements`.
+- **Status:** **fixed.** [#16](https://github.com/nmorabowen/OpenSees/pull/16)
+  removed the broken block as a stopgap (GP_X-only); [#18](https://github.com/nmorabowen/OpenSees/pull/18)
+  did the real schema-v1 fix — `<name>` is now a GROUP holding `CONNECTIVITY` +
+  `QUADRATURE`/{`GP_PARAM`,`GP_WEIGHT`}. See [[LEDGER_implementations]] MPCO_Ladruno row.
+
+### `Response`/`Information` stores a Matrix and a Vector separately — `getData()` only returns the Vector
+- **Bites:** an element `setResponse` that returns a `Matrix` (via `setMatrix`,
+  e.g. BezierTri6 `integrationPoints` → `Matrix(nGP,2)`) is invisible to code
+  reading `response->getInformation().getData()` (that returns the **Vector**
+  slot, which is empty/unrelated). The recorder's legacy `getCustomGaussPointLocations`
+  read the Vector and silently missed the matrix-typed barycentric GP coords.
+- **Why:** `Information` is a tagged union (`theType` ∈ {…, VectorType, MatrixType}
+  with separate `theVector`/`theMatrix` pointers); `getData()` hardcodes the Vector.
+- **Status:** **handled** — check `info.theType == MatrixType` and read `*info.theMatrix`
+  for multi-dim parametric rules ([#18](https://github.com/nmorabowen/OpenSees/pull/18)).
+
 ### `openseessp` is an unbuilt subsystem (Python has no SP)
 - **Bites:** expecting an `import openseessp` analogous to `openseesmp`.
 - **Why:** the SP parallel engine exists only on the Tcl side; the Python engine

@@ -15,7 +15,8 @@
 // Written: nmb (UANDES), 05/2026
 //
 // Implementation of CentralDifferenceLadruno -- a single, clean explicit
-// leap-frog central-difference integrator (classTag 64). See the class header
+// leap-frog central-difference integrator (classTag 33003, Ladruno private band).
+// See the class header
 // and Ladruno_implementation/05_robust_central_difference.md for the full ADR.
 
 #include <CentralDifferenceLadruno.h>

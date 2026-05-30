@@ -1,0 +1,186 @@
+# Ladruno test-bed manifest — the enforced per-feature ledger.
+#
+# ci/check_manifest.py diffs SRC/classTags.h against the base ref, extracts new
+# ladruno #defines (those whose comment contains "Ladruno"), and asserts each
+# has a row here AND a tests/test_<feature>.py — or an explicit tcl: WAIVED.
+#
+# Required fields per feature:
+#   classtag   : int      the value in SRC/classTags.h (ladruno band >= 33000)
+#   tag_symbol : str      the #define name, e.g. ELE_TAG_BezierTri6
+#   pr         : int|null  PR number (null while in progress)
+#   feature_class : material | element | integrator | derivative
+#   required_tiers : list  the tiers the merge gate demands for this class
+#   pytest     : str       path to the Zone-A pytest file (relative to repo root)
+#   tcl        : str       path to the Zone-A tcl file, OR "WAIVED(<reason>)"
+#   zone_b     : list|[]    Zone-B artifact paths (apeGmsh/LS-DYNA/perf)
+#   core_files : list       upstream core files touched (must carry // LADRUNO:)
+#   dispatch   : {tcl: bool, functionMap: bool}  both registries wired?
+#   status     : active | remediation | planned
+
+features:
+
+  - feature: BezierTri6
+    classtag: 33000          # moved 272 -> 33000 (ladruno band) 2026-05-30
+    tag_symbol: ELE_TAG_BezierTri6
+    pr: null
+    feature_class: element
+    required_tiers: [T0, T1, T2a]
+    pytest: tests/test_bezierTri6_element.py     # T0 rank+patch+quadratic-completeness + T1 (green)
+    tcl: WAIVED(no Tcl command surface yet — Python/apeGmsh-driven only)
+    zone_b:
+      - Ladruno_files/testbed/bezierTri6/         # apeGmsh curved-geometry T2b/T3
+    core_files:                                    # actually-touched upstream files
+      - SRC/classTags.h
+      - SRC/interpreter/OpenSeesElementCommands.cpp
+    dispatch: {tcl: false, functionMap: true}
+    status: active
+    notes: >
+      classTag band remediation DONE 2026-05-30 (272 -> 33000; 272 collided one
+      above upstream PML3DVISCOUS=271 — the G2 example). Broker registration is
+      N/A in this fork: FEM_ObjectBrokerAllClasses::getNewElement is a stub here
+      (see Ladruno_implementation/04_bezier_elements.md), so no broker case is
+      touched. Element-class gate COMPLETE + GREEN against dist/bin 2026-05-30
+      (5 tests): T0 rank/zero-energy + constant-strain patch + quadratic-
+      completeness (Bernstein control-net + b=-div sigma, GP-strain err ~1e-19);
+      T1 uniaxial reaction + Poisson; T2a smooth-MMS convergence rate ~2.07
+      (>1.8). NOTE: Cook's membrane was REJECTED for the rate gate — its clamped-
+      corner singularity caps the displacement rate at ~1.3 (it is an accuracy
+      benchmark, not a rate test); a smooth manufactured solution is used instead.
+
+  # --- pre-test-bed ladruno features: classTag band remediation (follow-up to
+  #     BezierTri6). Tags moved into the >=33000 band, per-family, + Ladruno
+  #     markers added so check_classtags tracks them. Zone-A tests are a known
+  #     backlog item; current coverage is Zone-B Ladruno_scripts/_verify_explicit.py.
+  #     ExplicitBathe + ExplicitDifferenceStatic are jaabell's tags. ---
+
+  - feature: ExplicitBathe
+    classtag: 33000          # INTEGRATOR family; was 61 (J.A. Abell)
+    tag_symbol: INTEGRATOR_TAGS_ExplicitBathe
+    pr: null
+    feature_class: integrator
+    required_tiers: [dynamics-battery]
+    pytest: tests/test_explicitBathe_integrator.py    # PENDING (not yet authored)
+    tcl: WAIVED(integrator; Zone-B _verify_explicit.py until the Zone-A battery lands)
+    zone_b: [Ladruno_scripts/_verify_explicit.py]
+    core_files: [SRC/classTags.h]
+    dispatch: {tcl: true, functionMap: true}
+    status: remediation
+    notes: jaabell's tag. Band-remediated 61 -> 33000 (was one above frontier HarmonicSteadyState=60). Broker-dispatched (getNewTransientIntegrator, "must recvSelf") so collision risk was real. 4-part dynamics battery owed in Zone A.
+
+  - feature: ExplicitDifferenceStatic
+    classtag: 33001
+    tag_symbol: INTEGRATOR_TAGS_ExplicitDifferenceStatic
+    pr: null
+    feature_class: integrator
+    required_tiers: [dynamics-battery]
+    pytest: tests/test_explicitDifferenceStatic_integrator.py   # PENDING
+    tcl: WAIVED(integrator; Zone-A battery pending)
+    zone_b: []
+    core_files: [SRC/classTags.h]
+    dispatch: {tcl: true, functionMap: true}
+    status: remediation
+    notes: jaabell's tag. Band-remediated 62 -> 33001.
+
+  - feature: ExplicitBatheLNVD
+    classtag: 33002
+    tag_symbol: INTEGRATOR_TAGS_ExplicitBatheLNVD
+    pr: null
+    feature_class: integrator
+    required_tiers: [dynamics-battery]
+    pytest: tests/test_explicitBatheLNVD_integrator.py   # PENDING
+    tcl: WAIVED(integrator; Zone-A battery pending)
+    zone_b: [Ladruno_scripts/_verify_explicit.py]
+    core_files: [SRC/classTags.h]
+    dispatch: {tcl: true, functionMap: true}
+    status: remediation
+    notes: >
+      Noh-Bathe + FLAC local-non-viscous damping. Band-remediated 63 -> 33002.
+      The canonical-doc 4-part battery (stability bracket / period elongation /
+      energy drift via EnergyBalanceRecorder / LNVD->exact-static) is owed in Zone A.
+
+  - feature: CentralDifferenceLadruno
+    classtag: 33003          # INTEGRATOR family; new class (N. Mora-Bowen)
+    tag_symbol: INTEGRATOR_TAGS_CentralDifferenceLadruno
+    pr: 22
+    feature_class: integrator
+    required_tiers: [dynamics-battery]
+    pytest: tests/test_centralDifferenceLadruno_integrator.py   # PENDING (Zone-A port of the CDL battery)
+    tcl: WAIVED(integrator; Zone-B Ladruno_scripts/_verify_explicit.py CDL-1..10 until the Zone-A battery lands)
+    zone_b: [Ladruno_scripts/_verify_explicit.py]
+    core_files:                                    # registration sites (dispatch wiring)
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/runtime/runtime/TclPackageClassBroker.cpp
+      - SRC/interpreter/OpenSeesCommands.cpp
+      - SRC/interpreter/OpenSeesCommands.h
+      - SRC/tcl/commands.cpp
+    dispatch: {tcl: true, functionMap: true}
+    status: remediation
+    notes: >
+      NEW class (not band remediation) — explicit leap-frog central difference done
+      right: correct first-step starter (a0 = M^-1(P0 - C v0 - Fint(u0)), v_{-1/2} =
+      v0 - dt/2 a0 on the first newStep), built-in dt_cr (CriticalTimeStep, factor 1.0),
+      clean full-step velocity output, data-driven betaK guard. classTag 33003 in the
+      Ladruno band from the outset. Broker-dispatched (getNewTransientIntegrator, "must
+      recvSelf"). Coupled/implicit-damped CD deliberately dropped -> NewmarkExplicit(0.5).
+      Per-TU compile-verified (cl.exe); full link pending the MPCO_Ladruno blocker. The
+      CDL-1..10 battery currently lives in Zone-B _verify_explicit.py; the Zone-A pytest
+      port (CDL-8 first-step + CDL-9 betaK collapse are the differentiators) is owed.
+
+  - feature: EnergyBalanceRecorder
+    classtag: 33000          # RECORDER family; was 26
+    tag_symbol: RECORDER_TAGS_EnergyBalanceRecorder
+    pr: null
+    feature_class: derivative
+    required_tiers: [T1]
+    pytest: tests/test_energyBalanceRecorder.py   # PENDING
+    tcl: WAIVED(recorder; Zone-A check pending)
+    zone_b: []
+    core_files: [SRC/classTags.h]
+    dispatch: {tcl: true, functionMap: true}
+    status: remediation
+    notes: Band-remediated 26 -> 33000 (was above frontier VTKHDF=25). Not broker-registered (lower risk) but moved for per-family policy consistency.
+
+  - feature: MPCOLadrunoRecorder
+    classtag: 33001
+    tag_symbol: RECORDER_TAGS_MPCOLadrunoRecorder
+    pr: null
+    feature_class: derivative
+    required_tiers: [T1]
+    pytest: tests/test_mpcoLadrunoRecorder.py   # PENDING
+    tcl: WAIVED(recorder; Zone-A check pending)
+    zone_b: []
+    core_files: [SRC/classTags.h]
+    dispatch: {tcl: true, functionMap: true}
+    status: remediation
+    notes: Band-remediated 27 -> 33001. Broker-registered (getNewRecorder case), so collision risk was real.
+
+  # --- worked examples shipped with the scaffold (existing elements, no new C++) ---
+
+  - feature: forceBeamColumn_cantilever     # T1 worked example (existing element)
+    classtag: null
+    tag_symbol: null
+    pr: null
+    feature_class: derivative
+    required_tiers: [T1]
+    pytest: tests/test_forceBeamColumn_cantilever.py
+    tcl: tests/tcl/forceBeamColumn_cantilever.tcl
+    zone_b: []
+    core_files: []
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: Demonstrates the shared-params (D1) pytest+tcl pattern end to end.
+
+  - feature: fourNodeQuad_T0                 # T0 worked example (existing element)
+    classtag: null
+    tag_symbol: null
+    pr: null
+    feature_class: element
+    required_tiers: [T0]
+    pytest: tests/test_fourNodeQuad_T0.py
+    tcl: WAIVED(T0 rank/patch are Python-only; no new Tcl command)
+    zone_b: []
+    core_files: []
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: Demonstrates the T0 rank/zero-energy + constant-strain patch battery.
