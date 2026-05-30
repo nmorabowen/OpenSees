@@ -50,6 +50,7 @@
 //   https://doi.org/10.1016/j.compstruc.2013.06.007.
 
 #include <TransientIntegrator.h>
+#include <CriticalTimeStep.h>   // CTSLumping, CTSResult, computeCriticalTimeStep()
 
 class DOF_Group;
 class FE_Element;
@@ -63,7 +64,8 @@ public:
     ExplicitBatheLNVD(double p, double alpha_flac, int compute_critical_timestep_ = 0,
                       bool verbose = false, bool cflAbort = false,
                       double divergenceFactor = 0.0,
-                      bool cflUseTangent = false, int cflRecomputeEvery = 0);
+                      bool cflUseTangent = false, int cflRecomputeEvery = 0,
+                      CTSLumping lumping = CTSLumping::RowSum);
 
     // destructor
     ~ExplicitBatheLNVD();
@@ -146,6 +148,7 @@ private:
     int cflRecomputeEvery;
     int cflStepCount;
     bool cflFirstComputation;
+    CTSLumping lumping;       // element-mass lumping for the dt_cr pencil (-lump)
 };
 
 #endif

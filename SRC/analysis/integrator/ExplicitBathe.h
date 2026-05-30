@@ -79,6 +79,7 @@
 #define ExplicitBathe_h
 
 #include <TransientIntegrator.h>
+#include <CriticalTimeStep.h>   // CTSLumping, CTSResult, computeCriticalTimeStep()
 
 // Published Noh-Bathe stability advantage over central difference (~2x at the
 // optimal sub-step parameter). dt_cr_NB = EB_NB_STABILITY_FACTOR * (2/omega_max).
@@ -98,7 +99,8 @@ public:
     ExplicitBathe(double p, int compute_critical_timestep_ = 0,
                   bool verbose = false, bool cflAbort = false,
                   double divergenceFactor = 0.0,
-                  bool cflUseTangent = false, int cflRecomputeEvery = 0);
+                  bool cflUseTangent = false, int cflRecomputeEvery = 0,
+                  CTSLumping lumping = CTSLumping::RowSum);
 
     // Destructor
     ~ExplicitBathe();
@@ -193,6 +195,7 @@ private:
                               // stiffness changes in nonlinear runs
     int cflStepCount;         // step counter for periodic recompute
     bool cflFirstComputation; // gate the detailed report to the first computation
+    CTSLumping lumping;       // element-mass lumping for the dt_cr pencil (-lump)
 };
 
 #endif

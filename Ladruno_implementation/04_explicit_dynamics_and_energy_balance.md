@@ -118,18 +118,24 @@ Ordered roughly by value; many are **roadmap-gated** (need element/integrator ho
    the added-mass monitor. Design seam: inflate the diagonal `M` for sub-target
    elements, feed the same lumped `M` the integrator reads, recompute `dt_cr` on the
    *scaled* mass, hard-warn >5% added mass. Roadmap §5.1. **Separate integrator/decorator.**
-2. **`dt_cr` correctness/robustness.** `DSYGV` for the symmetric pencil + relative-`β`
-   threshold (A3 from review); a `ℓ_e/c_e` per-element wave-speed estimate (cheaper +
-   handles rotational DOFs better than row-sum lumping); compute in `domainChanged()`
-   (drops the prime, D6); make `-recompute` *enforce* (couple to `dt`) for the
-   stiffening/contact case, not just report.
+2. **`dt_cr` correctness/robustness.** ~~`DSYGV` for the symmetric pencil + relative-`β`
+   threshold (A3 from review)~~ **done (2026-05-30; DGGEV fallback retained; the β fix
+   corrected a silent `dt_cr→0` bug)**; ~~`-lump` for rotational DOFs~~ **partial — `-lump
+   diagonal` added (diagonal-of-consistent; a true mass-conserving HRZ is still TODO)**;
+   a `ℓ_e/c_e` per-element wave-speed estimate (cheaper; still **deferred**); compute in
+   `domainChanged()` (drops the prime, D6) — **deferred** (would rework PR #3's merged
+   state model + the public `criticalTimeStep()` contract); make `-recompute` *enforce* —
+   **already satisfied**: PR #3's `-cflAbort` aborts in `newStep` against the refreshed
+   `dt_cr`.
 3. **Energy recorder additions.** External-work-input channel (independent check);
    elastic-vs-dissipated `IE` split (needs a standardized element/material "recoverable
    vs dissipated energy" response); hourglass / contact / added-mass energy columns
    (need element/integrator hooks — roadmap §5.3/§5.7/§5.1). Reserve the response-string
    contracts now so those subsystems emit them when built.
-4. **Parallel correctness.** Cross-rank `dt_cr` reduction (currently per-partition);
-   MPI reduce for a global energy balance (currently per-partition, warned).
+4. **Parallel correctness.** ~~Cross-rank `dt_cr` reduction~~ **code added (2026-05-30,
+   guarded `MPI_Allreduce(MPI_MIN)`); NOT yet runtime-verified — confirm `OPS_Analysis`
+   carries a parallel macro in the `openseesmp` build (the sequential build does not, so
+   the reduce is inert there).** MPI reduce for a global energy balance still per-partition.
 5. **Sub-cycling integrator.** Only after the commit/recorder coupling (D5) is solved
    framework-side; otherwise stays driver-level.
 6. **MPCO/STKO energy visualization.** Blocked on STKO support for global/region results
@@ -146,8 +152,12 @@ Ordered roughly by value; many are **roadmap-gated** (need element/integrator ho
 > Should `-recompute`/`-tangent` *enforce* a smaller `dt` (sub-cycle or abort) rather than
 > only reporting? Today only `-cflAbort` enforces; everything else is advisory + driver-side.
 
-- The `extern computeCriticalTimestep` is shared between `ExplicitBathe.cpp` (definition)
-  and `ExplicitBatheLNVD.cpp` (hand-copied `extern`) — fragile; hoist to a small header.
+- ~~The `extern computeCriticalTimestep` is shared between `ExplicitBathe.cpp` and
+  `ExplicitBatheLNVD.cpp` (hand-copied) — fragile; hoist to a small header.~~ **Resolved
+  2026-05-30:** hoisted to `SRC/analysis/integrator/CriticalTimeStep.{h,cpp}`.
+- `-lump diagonal` (diagonal-of-consistent) avoids the row-sum rotational pathology but is
+  **NOT mass-conserving** — it can be non-conservative for translational DOFs. A true
+  mass-conserving **HRZ** lump is the proper follow-up.
 - `dt_cr` ignores constraints/MP and pure nodal mass; safe-but-non-binding there.
 - Full build / installer still blocked by the [[03_mpco_ladruno]] link error.
 
@@ -158,3 +168,20 @@ Ordered roughly by value; many are **roadmap-gated** (need element/integrator ho
   bug); **PR #2 merged**. Queryable `dt_cr` + tangent/recompute; runtime test caught the
   `dt_cr` mass-aliasing bug; **PR #3 open**. Pre-merge 3-agent review caught the same
   aliasing bug in `EnergyBalanceRecorder::addElementEnergy`; fixed + polish (PR #3, 9/9).
+- 2026-05-30 — **PR #3 + #4 merged to `ladruno`** (queryable `dt_cr`, advisory
+  `-tangent`/`-recompute`, `criticalTimeStep()` command + base virtual, recorder
+  aliasing fix, ADR docs).
+- 2026-05-30 — **`dt_cr` hardening reconciled on top of PR #3** (a follow-up branch was
+  started in parallel, before PR #3 landed; reconciled via reset-and-reapply, not rebase,
+  after a 3-agent overlap/design/mechanics analysis). Shipped: shared
+  `CriticalTimeStep.{h,cpp}` (hoist; kills the `extern`); **`DSYGV`→`DGGEV` fallback +
+  relative-β threshold** — this fixes a *silent* bug in the merged code where PR #3's
+  exact `beta != 0` test let a near-massless DOF drive `dt_cr → 0` and abort a stable run
+  under `-cflAbort`; `-lump rowsum|diagonal` (diagonal-of-consistent; non-conservative,
+  not true HRZ — see risks); guarded `MPI_Allreduce(MPI_MIN)` cross-rank reduction.
+  **Deliberately not changed** (PR #3's just-merged choices kept): enforcement stays in
+  `newStep` under `-cflAbort` (PR #3 already aborts there; our `commit()`/`-7` variant
+  dropped); single `<=0` sentinel kept (distinct sentinels deferred); compute stays in
+  `newStep` (domainChanged-compute deferred — it would rework the merged state model and
+  the public command's contract). Each TU compile-verified standalone via `cl.exe`;
+  `_verify_explicit.py` carries tests 8/10–12 (query, `<=0` contract, `-lump`, enforcement).
