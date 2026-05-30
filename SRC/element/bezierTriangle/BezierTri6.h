@@ -63,7 +63,7 @@ class Node;
 class NDMaterial;
 class Response;
 
-// Class tag ELE_TAG_BezierTri6 is defined in classTags.h (= 272).
+// Class tag ELE_TAG_BezierTri6 is defined in classTags.h (= 33000, ladruno band).
 
 class BezierTri6 : public Element
 {

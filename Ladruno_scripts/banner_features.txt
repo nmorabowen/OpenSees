@@ -1,0 +1,16 @@
+# Ladruno active-feature list — source of truth for the splash banner.
+#
+# One feature per line. Blank lines and '#' comments are ignored.
+# Each line becomes a bullet under "Ladruno fork — active features:".
+# Keep lines short (~70 display cols) so a default console does not wrap.
+# After editing, run:  python Ladruno_scripts/patch_banner.py
+#
+# Keep this in sync with Ladruno_implementation/LEDGER_implementations.md —
+# every shipped feature in that ledger should have a line here.
+
+OpenSeesPyMP — import openseesmp (MPI-parallel Python)
+EnergyBalance recorder (per-region energy sidecar)
+Explicit Noh–Bathe integrators (ExplicitBathe / LNVD)
+Queryable critical time step (dt_cr)
+BezierTri6 — quadratic Bézier triangle (Kadapa 2018)
+MPCO_Ladruno — modular .mpco recorder (namespace mpcol)

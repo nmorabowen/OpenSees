@@ -9,6 +9,33 @@ tags:
 
 # Ladruno implementation plans
 
+This folder holds two kinds of doc:
+
+1. **Ledgers** (`LEDGER_*.md`) — the always-current build-control record of what
+   the fork has changed. Update these as part of every feature PR.
+2. **Plans** — forward-looking design docs for functionality we want to add.
+
+## Build-control ledgers
+
+On a fast development track we keep three running ledgers so we never lose track
+of what diverged from upstream:
+
+- [[LEDGER_vanilla_files]] — every **upstream file we touched**, why, and the PR.
+  The rebase-onto-upstream checklist.
+- [[LEDGER_implementations]] — every **new feature/file we authored**, its class
+  tag, and the PR. Mirrors the splash-banner feature list.
+- [[LEDGER_quirks]] — **OpenSees gotchas** we learned the hard way.
+
+> [!important] Banner ↔ ledger sync
+> The splash banner prints the active-feature list. Its source of truth is
+> `Ladruno_scripts/banner_features.txt`; every `shipped` row in
+> [[LEDGER_implementations]] should have a matching line there. After editing,
+> run `python Ladruno_scripts/patch_banner.py` and rebuild — the script
+> regenerates the `FEATURES-START/END` blocks in `tclMain.cpp` (Tcl) and
+> `PythonModule.cpp` (openseespy/mp).
+
+## Plans
+
 Forward-looking planning docs for new functionality we want to add to this OpenSees fork. Each plan lives in its own file and walks through:
 
 - **What** — feature description, scope, non-goals
