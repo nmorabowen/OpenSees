@@ -19,6 +19,7 @@
 #include "MPCOL_ResultIO.h"
 #include "MPCOL_NodeResults.h"
 #include "MPCOL_ElementResults.h"
+#include "MPCOL_DomainResults.h"
 #include "MPCOL_Sinks.h"
 
 // OpenSees
@@ -71,8 +72,11 @@ public:
 		, info()
 		, output_freq()
 		, has_region(false)
+		, region_tag(0)
 		, node_set()
 		, elem_set()
+		, energy_requested(false)
+		, energy_region_tags()
 		, nodal_results_requests()
 		, sens_grad_indices()
 		, elemental_results_requests()
@@ -95,8 +99,13 @@ public:
 
 	// -R region restriction
 	bool has_region;
+	int region_tag;              // the -R region tag (0 if none); for MODEL/SETS
 	std::vector<int> node_set;
 	std::vector<int> elem_set;
+
+	// -G energy balance (ADR D8): whole-model and/or per-region energy.
+	bool energy_requested;               // -G energy   -> whole-model ON_DOMAIN
+	std::vector<int> energy_region_tags; // -G <tag...> -> per-region ON_REGIONS
 
 	// parsed requests
 	std::vector<mpcolns::mpco::NodalResultType::Enum> nodal_results_requests;
@@ -135,6 +144,14 @@ public:
 	// the per-request response-collection trees (own the OutputResponseCollection
 	// buckets referenced by ElementResultSource); kept alive for source lifetime.
 	mpcolns::mpco::element::ResultRecorderCollection elemental_recorders;
+
+	/* --- domain/region sources/sinks (ADR D8 energy balance) --- */
+	struct DomainChannel {
+		mpcolns::ResultSource* source;   // owned
+		mpcolns::StreamingSink* sink;    // owned
+		DomainChannel() : source(0), sink(0) {}
+	};
+	std::vector<DomainChannel> domain_channels;
 };
 
 /* ===================================================================== */
@@ -173,6 +190,11 @@ int MPCORecorderLadruno::clearSources()
 		delete m_data->elem_channels[i].sink;
 	}
 	m_data->elem_channels.clear();
+	for (size_t i = 0; i < m_data->domain_channels.size(); ++i) {
+		delete m_data->domain_channels[i].source;
+		delete m_data->domain_channels[i].sink;
+	}
+	m_data->domain_channels.clear();
 	// element responses are owned here (frozen clearElementRecorders)
 	for (size_t i = 0; i < m_data->elemental_responses.size(); ++i) {
 		if (m_data->elemental_responses[i])
@@ -266,6 +288,8 @@ int MPCORecorderLadruno::record(int commitTag, double timeStamp)
 	if (recordResultsOnNodes() != 0)
 		return -1;
 	if (recordResultsOnElements() != 0)
+		return -1;
+	if (recordResultsOnDomain() != 0)
 		return -1;
 
 	if (info.h_file_id != mpcolns::HID_INVALID)
@@ -378,6 +402,13 @@ int MPCORecorderLadruno::writeModel()
 	hid_t h_on_elems = mpcolns::h5::group::create(
 		h_results, "ON_ELEMENTS", H5P_DEFAULT, info.h_group_proplist, H5P_DEFAULT);
 	mpcolns::h5::group::close(h_on_elems);
+	// ON_DOMAIN / ON_REGIONS skeleton (ADR D8 energy balance lands here)
+	hid_t h_on_domain = mpcolns::h5::group::create(
+		h_results, "ON_DOMAIN", H5P_DEFAULT, info.h_group_proplist, H5P_DEFAULT);
+	mpcolns::h5::group::close(h_on_domain);
+	hid_t h_on_regions = mpcolns::h5::group::create(
+		h_results, "ON_REGIONS", H5P_DEFAULT, info.h_group_proplist, H5P_DEFAULT);
+	mpcolns::h5::group::close(h_on_regions);
 	mpcolns::h5::group::close(h_results);
 
 	mpcolns::h5::group::close(h_stage);
@@ -385,6 +416,8 @@ int MPCORecorderLadruno::writeModel()
 	if (writeModelNodes() != 0)
 		return -1;
 	if (writeModelElements() != 0)
+		return -1;
+	if (writeModelSets() != 0)
 		return -1;
 	if (writeSections() != 0)
 		return -1;
@@ -399,6 +432,8 @@ int MPCORecorderLadruno::writeModel()
 	if (initNodeSources() != 0)
 		return -1;
 	if (initElementSources() != 0)
+		return -1;
+	if (initDomainSources() != 0)
 		return -1;
 
 	return 0;
@@ -643,6 +678,81 @@ int MPCORecorderLadruno::writeModelElements()
 	}
 
 	mpcolns::h5::group::close(h_gp_elements);
+	return 0;
+}
+
+int MPCORecorderLadruno::writeModelSets()
+{
+	// MODEL/SETS — one SET_<tag> per region whose identity the file must be
+	// self-describing about (ADR D8 / H): the per-region energy tags plus the
+	// -R restriction region (if any). Each SET_<tag> carries NODES + ELEMENTS
+	// tag datasets and a TAG attr. If no region is referenced, the (empty) SETS
+	// group is still created for a consistent layout.
+	mpcolns::mpco::ProcessInfo& info = m_data->info;
+
+	// union of region tags to describe (preserve order, drop duplicates)
+	std::vector<int> set_tags;
+	{
+		std::set<int> seen;
+		if (m_data->has_region && m_data->region_tag != 0) {
+			if (seen.insert(m_data->region_tag).second)
+				set_tags.push_back(m_data->region_tag);
+		}
+		for (size_t i = 0; i < m_data->energy_region_tags.size(); ++i) {
+			int t = m_data->energy_region_tags[i];
+			if (seen.insert(t).second)
+				set_tags.push_back(t);
+		}
+	}
+
+	// Nothing to describe -> don't create an empty MODEL/SETS group (it adds
+	// benign HDF5 open-probe noise on region-free models for no benefit).
+	if (set_tags.empty())
+		return 0;
+
+	std::stringstream ss_sets;
+	ss_sets << "MODEL_STAGE[" << info.current_model_stage_id << "]/MODEL/SETS";
+	hid_t h_sets = mpcolns::h5::group::create(
+		info.h_file_id, ss_sets.str().c_str(), H5P_DEFAULT,
+		info.h_group_proplist, H5P_DEFAULT);
+
+	for (size_t i = 0; i < set_tags.size(); ++i) {
+		int tag = set_tags[i];
+		MeshRegion* reg = info.domain->getRegion(tag);
+		if (reg == 0) {
+			opserr << "MPCORecorderLadruno - WARNING region " << tag
+			       << " referenced by the recorder was not found; its MODEL/SETS "
+			          "entry is skipped\n";
+			continue;
+		}
+		std::stringstream ss;
+		ss << "MODEL_STAGE[" << info.current_model_stage_id
+		   << "]/MODEL/SETS/SET_" << tag;
+		hid_t h = mpcolns::h5::group::create(
+			info.h_file_id, ss.str().c_str(), H5P_DEFAULT,
+			info.h_group_proplist, H5P_DEFAULT);
+		mpcolns::h5::attribute::write(h, "TAG", tag);
+
+		const ID& rnodes = reg->getNodes();
+		std::vector<int> node_ids((size_t)rnodes.Size());
+		for (int k = 0; k < rnodes.Size(); ++k)
+			node_ids[(size_t)k] = rnodes(k);
+		const ID& relems = reg->getElements();
+		std::vector<int> elem_ids((size_t)relems.Size());
+		for (int k = 0; k < relems.Size(); ++k)
+			elem_ids[(size_t)k] = relems(k);
+
+		hid_t d_n = mpcolns::h5::dataset::createAndWrite(h, "NODES", node_ids);
+		if (d_n != mpcolns::HID_INVALID)
+			mpcolns::h5::dataset::close(d_n);
+		hid_t d_e = mpcolns::h5::dataset::createAndWrite(h, "ELEMENTS", elem_ids);
+		if (d_e != mpcolns::HID_INVALID)
+			mpcolns::h5::dataset::close(d_e);
+
+		mpcolns::h5::group::close(h);
+	}
+
+	mpcolns::h5::group::close(h_sets);
 	return 0;
 }
 
@@ -1365,6 +1475,46 @@ int MPCORecorderLadruno::recordResultsOnElements()
 	return 0;
 }
 
+/* ===================================================================== */
+/* domain / region sources (ADR D8 energy balance)                       */
+/* ===================================================================== */
+
+int MPCORecorderLadruno::initDomainSources()
+{
+	mpcolns::mpco::ProcessInfo& info = m_data->info;
+
+	// whole-model energy -> ON_DOMAIN/energyBalance
+	if (m_data->energy_requested) {
+		private_data::DomainChannel ch;
+		ch.source = new mpcolns::EnergyBalanceSource(info);
+		ch.sink = new mpcolns::StreamingSink(mpcolns::ResultFamily::OnDomain);
+		m_data->domain_channels.push_back(ch);
+	}
+
+	// per-region energy -> ON_REGIONS/energyBalance
+	if (!m_data->energy_region_tags.empty()) {
+		private_data::DomainChannel ch;
+		ch.source = new mpcolns::EnergyBalanceSource(info, m_data->energy_region_tags);
+		ch.sink = new mpcolns::StreamingSink(mpcolns::ResultFamily::OnRegions);
+		m_data->domain_channels.push_back(ch);
+	}
+
+	return 0;
+}
+
+int MPCORecorderLadruno::recordResultsOnDomain()
+{
+	mpcolns::mpco::ProcessInfo& info = m_data->info;
+
+	std::vector<double> buffer;
+	for (size_t i = 0; i < m_data->domain_channels.size(); ++i) {
+		private_data::DomainChannel& ch = m_data->domain_channels[i];
+		ch.source->evaluate(info, buffer);
+		ch.sink->accept(info, *ch.source, buffer);
+	}
+	return 0;
+}
+
 /* Write the COLUMN_MAP child group + SECTION_MAP under the element result group
    (schema §7.2). Called once, after the StreamingSink has created
    ON_ELEMENTS/<display>/<bucket>. */
@@ -1454,7 +1604,10 @@ void* OPS_MPCOLadrunoRecorder()
 {
 	int numdata = OPS_GetNumRemainingInputArgs();
 	if (numdata < 1) {
-		opserr << "MPCORecorderLadruno error: insufficient args; expected a filename\n";
+		opserr << "MPCORecorderLadruno error: insufficient args; expected a filename\n"
+		       << "  usage: recorder mpcoLadruno <file> [-N <res...>] [-NS <res...> <grad>] "
+		          "[-E <res...>] [-R <regionTag>] [-G energy <regionTag...>] "
+		          "[-T dt|nsteps <v>]\n";
 		return 0;
 	}
 
@@ -1475,8 +1628,11 @@ void* OPS_MPCOLadrunoRecorder()
 	std::vector<std::string> tokens;
 	mpcolns::mpco::OutputFrequency output_freq;
 	bool has_region = false;
+	int region_tag = 0;                  // -R region tag (for MODEL/SETS)
 	std::set<int> node_set;
 	std::set<int> elem_set;
+	bool energy_requested = false;       // -G energy
+	std::vector<int> energy_region_tags; // -G <regionTag...>
 	int one_item = 1;
 
 	while (numdata > 0) {
@@ -1498,14 +1654,14 @@ void* OPS_MPCOLadrunoRecorder()
 		else if (strcmp(data, "-R") == 0) {
 			curr_opt = mpcolns::utils::parsing::opt_region;
 			if (numdata > 0) {
-				int region_tag = 0;
-				if (OPS_GetInt(&one_item, &region_tag) != 0) {
+				int rtag = 0;
+				if (OPS_GetInt(&one_item, &rtag) != 0) {
 					opserr << "MPCORecorderLadruno error: option -R (region) requires an int region tag\n";
 					return 0;
 				}
-				MeshRegion* region = domain->getRegion(region_tag);
+				MeshRegion* region = domain->getRegion(rtag);
 				if (region == 0) {
-					opserr << "MPCORecorderLadruno error: region " << region_tag << " is null\n";
+					opserr << "MPCORecorderLadruno error: region " << rtag << " is null\n";
 					return 0;
 				}
 				const ID& node_ids = region->getNodes();
@@ -1515,6 +1671,7 @@ void* OPS_MPCOLadrunoRecorder()
 				for (int i = 0; i < elem_ids.Size(); ++i)
 					elem_set.insert(elem_ids(i));
 				has_region = true;
+				region_tag = rtag; // retained for MODEL/SETS self-description
 				numdata--;
 			}
 			else {
@@ -1522,6 +1679,47 @@ void* OPS_MPCOLadrunoRecorder()
 				return 0;
 			}
 			has_region = true;
+		}
+		else if (strcmp(data, "-G") == 0) {
+			// -G energy <regionTag...> : whole-model energy balance (ON_DOMAIN)
+			// + optional per-region balance (ON_REGIONS). ADR D8.
+			// Consume eagerly: the "energy" keyword is a real string arg, but the
+			// region tags are integers -> they MUST be read with OPS_GetIntInput,
+			// not OPS_GetString (which returns "" for a numeric OpenSeesPy arg,
+			// so atoi() would silently yield 0). Same idiom as -node.
+			curr_opt = mpcolns::utils::parsing::opt_global;
+			if (numdata > 0) {
+				const char* gkind = OPS_GetString();
+				numdata--;
+				if (strcmp(gkind, "energy") == 0) {
+					energy_requested = true;
+				}
+				else {
+					// tolerate a tag passed as a string (Tcl path)
+					int t = atoi(gkind);
+					if (t != 0 && domain->getRegion(t) != 0)
+						energy_region_tags.push_back(t);
+					else
+						opserr << "MPCORecorderLadruno warning: -G expects 'energy' "
+						          "[regionTag...]; ignoring token (" << gkind << ")\n";
+				}
+			}
+			// 0+ integer region tags follow; stop at the first non-int (an option
+			// like -T) and hand it back to the outer parse loop.
+			while (numdata > 0) {
+				int tag = 0; int n = 1;
+				if (OPS_GetIntInput(&n, &tag) < 0) {
+					OPS_ResetCurrentInputArg(-1);
+					break;
+				}
+				numdata--;
+				MeshRegion* gregion = domain->getRegion(tag);
+				if (gregion == 0)
+					opserr << "MPCORecorderLadruno warning: -G region " << tag
+					       << " not found in the domain; skipping its energy block\n";
+				else
+					energy_region_tags.push_back(tag);
+			}
 		}
 		else {
 			switch (curr_opt) {
@@ -1649,6 +1847,26 @@ void* OPS_MPCOLadrunoRecorder()
 				}
 				break;
 			}
+			case mpcolns::utils::parsing::opt_global: {
+				// -G energy           -> whole-model energy balance (ON_DOMAIN)
+				// -G energy <tag...>  -> additionally per-region (ON_REGIONS)
+				if (strcmp(data, "energy") == 0) {
+					energy_requested = true;
+				}
+				else {
+					// interpret as a region tag (same int-parse style as -R)
+					int tag = atoi(data);
+					MeshRegion* region = domain->getRegion(tag);
+					if (region == 0) {
+						opserr << "MPCORecorderLadruno warning: option -G region " << tag
+						       << " not found in the domain; skipping its energy block\n";
+					}
+					else {
+						energy_region_tags.push_back(tag);
+					}
+				}
+				break;
+			}
 			default: {
 				opserr << "MPCORecorderLadruno error: unknown arg with option none " << data << "\n";
 				return 0;
@@ -1664,9 +1882,12 @@ void* OPS_MPCOLadrunoRecorder()
 	recorder->m_data->sens_grad_indices.swap(sens_grad_indices);
 	recorder->m_data->elemental_results_requests.swap(elemental_results_requests);
 	recorder->m_data->has_region = has_region;
+	recorder->m_data->region_tag = region_tag;
 	for (std::set<int>::const_iterator it = node_set.begin(); it != node_set.end(); ++it)
 		recorder->m_data->node_set.push_back(*it);
 	for (std::set<int>::const_iterator it = elem_set.begin(); it != elem_set.end(); ++it)
 		recorder->m_data->elem_set.push_back(*it);
+	recorder->m_data->energy_requested = energy_requested;
+	recorder->m_data->energy_region_tags.swap(energy_region_tags);
 	return recorder;
 }

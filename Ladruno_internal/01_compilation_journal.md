@@ -276,3 +276,36 @@ All five passed as of the build documented here.
 - [build.bat](../build.bat) — full pipeline driver
 - [opensees-msvc-static.profile](../opensees-msvc-static.profile) — Conan profile (msvc 194, static MT runtime)
 - [opensees_banner.txt](../opensees_banner.txt) — raw ASCII banner
+
+## 2026-05-31 — Energy-balance result type (MPCO_Ladruno, ADR D8)
+
+Branch `feature/mpco-energy-balance` off `origin/ladruno`, PR #24. **STEP 0 finding:
+the "MPCORecorderLadruno link blocker" claimed in ADR 04 is FALSE** — current
+`ladruno` builds + links `OpenSeesPy.dll` clean (no LNK2005; only the pre-existing
+benign `LNK4006 ELMT05`).
+
+New/changed (all under the `_HDF5` guard): `SRC/recorder/EnergyBalanceKernel.h`
+(header-only `namespace ebkernel`, the single definition of KE/IE/DW/ULW/RES/ERR);
+`MPCOL_DomainResults.{h,cpp}` (`mpcol::EnergyBalanceSource`); edits to
+`EnergyBalanceRecorder.{h,cpp}` (call the kernel), `MPCOL_Sinks.{h,cpp}`
+(`ResultFamily::OnRegions`), `MPCOL_Types.h` (`opt_global`),
+`MPCORecorderLadruno.{h,cpp}` (drive loop + `-G energy` parser + `writeModelSets()`),
+`CMakeLists.txt`.
+
+Three issues that the standalone single-TU `cl` compile-check did NOT catch (only the
+full `cmake --build` + diffing the pre-refactor source did): (a) `opt_global` was never
+actually added to the `option_type` enum -> C2065 in the full build; (b) `-G <tag>` read
+the region tag with `OPS_GetString`+`atoi` (returns 0 for a numeric OpenSeesPy arg) ->
+ON_REGIONS/SETS silently empty; fixed to `OPS_GetIntInput`+`OPS_ResetCurrentInputArg`,
+the `-node`/`-R` idiom; (c) the lifted kernel had its first-record branch changed to
+seed-only -> reverted to the original rectangle rule. Build-discipline lessons:
+standalone-cl "compile-clean" != full build; test the FRESHLY built DLL (a stale DLL
+once made `-G` look like "unknown arg"); and a refactor's self-consistent cross-check
+(both recorders share the new kernel) does NOT prove fidelity to the original.
+
+Gates (worktree `dist/bin/opensees.pyd`, BUILD python pythoncore-3.12 for the model +
+venv h5py for the check, copying the FRESH DLL each run): nodal parity 80/80 @1e-12;
+element parity 96/96 @1e-12; multi-stage 2 stages (108 nodal values); energy closure
+settled-tail max|ERR%|=0.037%; kernel cross-check ON_DOMAIN vs text sidecar = 4.98e-9;
+MODEL/SETS self-describes regions. Harness: `Ladruno_scripts/ladruno_recorder_tests/
+energy_{model,check}.py`, `run_energy.bat`, `run_regression.bat`.

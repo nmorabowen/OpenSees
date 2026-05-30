@@ -470,3 +470,43 @@ when v1 lands)*
   reserve future-sink names (hourglass/bulk-viscosity/mass-scaling/contact/eroded). Resolved
   the first open-question block. Design-only; implementation (C++ source + apeGmsh PR) is the
   next step. No code in this change.
+
+- 2026-05-31 — **Energy result type IMPLEMENTED (D8, C++/OpenSees side).** Branch
+  `feature/mpco-energy-balance` off `origin/ladruno` (which already carries the C1/C2
+  multi-stage fix, PR #12 — so C1/C2 was not part of this change). PR #24. **STEP 0
+  verified the ADR-04 "MPCORecorderLadruno link blocker" is FALSE** — current `ladruno`
+  builds + links `OpenSeesPy.dll` clean (no LNK2005; only the pre-existing benign
+  `LNK4006 ELMT05`), so energy was runtime-verifiable. Delivered (15 files):
+  (1) **`SRC/recorder/EnergyBalanceKernel.h`** — `namespace ebkernel`, header-only/`inline`,
+  the SINGLE definition of KE/IE/DW/ULW/RES/ERR. `addElementEnergy`/`addNodeEnergy` lifted
+  verbatim from `EnergyBalanceRecorder`'s anon namespace (quirks preserved: mass-matrix copy
+  before getDamp, 0x0 skip, DOF zero-fill, F.v); `EnergyAccumulator` (trapezoidal; **first
+  record = rectangle rule, matching the original recorder exactly — verified by diffing the
+  pre-refactor source**; per-scope `eref` running-max; `>1e-16` ERR guard) + `sweepDomain`/
+  `sweepRegion`. (2) **`EnergyBalanceRecorder` refactored** to call the kernel (anon namespace
+  deleted, scalar+Vector members -> one `model_acc` + `std::vector<EnergyAccumulator>
+  region_acc`); `response` column layout + values byte-faithful. (3) **`mpcol::EnergyBalanceSource`**
+  (`MPCOL_DomainResults.{h,cpp}`) — whole-model `ids()=={0}` -> `ON_DOMAIN`; per-region
+  `ids()==tags` -> `ON_REGIONS`; carries cross-step accumulator state;
+  `requiresPartitionReduction()==true` (v3b stub). (4) **`ResultFamily::OnRegions`**
+  (`MPCOL_Sinks`); `StreamingSink` family-agnostic. (5) **Drive loop**: `initDomainSources()`
+  (from `writeModel()` after node/element, post-`clearSources()` -> multi-stage safe) +
+  `recordResultsOnDomain()` (from `record()`). (6) **Parser `-G energy <regionTag...>`**
+  (`opt_global`); region tags read with `OPS_GetIntInput` (+`OPS_ResetCurrentInputArg`), NOT
+  `OPS_GetString`+`atoi` (returns 0 for a numeric OpenSeesPy arg). (7) **`MODEL/SETS/SET_<tag>`
+  writer** (`writeModelSets()`) — dedup union of `-R` + `-G` tags; NODES/ELEMENTS datasets +
+  TAG attr. **Gates GREEN** (worktree, fresh DLL): full link clean; nodal parity 80/80 @1e-12;
+  element parity 96/96 @1e-12; multi-stage 2 stages (108 nodal values @1e-12); energy closure
+  settled-tail max|ERR%|=0.037% whole-model + region (the step-1 seeding transient is identical
+  in both recorders); **kernel cross-check ON_DOMAIN vs text sidecar = 4.98e-9** -> proves the
+  shared kernel; SETS self-describes regions (SET_1 NODES=[1,2] ELEMENTS=[1]). Tests:
+  `Ladruno_scripts/ladruno_recorder_tests/energy_{model,check}.py`, `run_energy.bat`,
+  `run_regression.bat`. Plain-text sidecar untouched. apeGmsh `DOMAIN`/`REGIONS` reader =
+  separate apeGmsh-repo PR. Process notes: the impl-agent's standalone single-TU `cl` compile
+  check missed two full-build breaks (`opt_global` not added to the enum; `-G` int parse via
+  OPS_GetString) — always run the real `cmake --build` gate; and a refactor's self-consistent
+  cross-check does NOT prove fidelity to the original (the lifted kernel briefly had a
+  seed-only first-record before being reverted to rectangle) — diff against the pre-refactor
+  source. **Future-work coupling:** energy ACCOUNTING completeness (eleLoad in ULW, modal
+  damping in DW, MPI reduce + shared-node ULW de-dup — 04 ADR #3a) now edits ONLY
+  `EnergyBalanceKernel.h`.

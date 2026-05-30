@@ -65,6 +65,7 @@
 #include <ID.h>
 #include <Vector.h>
 #include <TimeSeries.h>
+#include <EnergyBalanceKernel.h>   // ebkernel::EnergyAccumulator + per-entity math
 
 #include <vector>
 #include <unordered_map>
@@ -116,30 +117,15 @@ private:
 
     double time_last;
 
-    // ---- whole-model accumulators (work integrals) and closure helpers ----
-    double internal_energy;
-    double damping_work;
-    double unbalanced_load_work;
-    double prev_internal_rate;     // previous-step rates, for trapezoidal rule
-    double prev_damping_rate;
-    double prev_unbalanced_rate;
-    double eref_global;            // running max total energy, for ERR%
+    // ---- whole-model accumulator (work integrals + closure/ERR) ----
+    // The KE/IE/DW/ULW/RES/ERR math lives ONLY in ebkernel (one source of
+    // truth, ADR D8); the recorder owns the per-scope accumulator state.
+    ebkernel::EnergyAccumulator model_acc;
 
-    // ---- per-region accumulators (mirrors of the whole-model ones) ----
+    // ---- per-region accumulators ----
     ID regionTags;
     int numRegions;
-    Vector region_internal_energy;
-    Vector region_damping_work;
-    Vector region_unbalanced_load_work;
-    Vector prev_region_internal_rate;
-    Vector prev_region_damping_rate;
-    Vector prev_region_unbalanced_rate;
-    Vector region_eref;
-    // per-step scratch (sized numRegions), members to avoid per-step alloc
-    Vector step_region_ke;
-    Vector step_region_internal_rate;
-    Vector step_region_damping_rate;
-    Vector step_region_unbalanced_rate;
+    std::vector<ebkernel::EnergyAccumulator> region_acc;
 
     // ---- caching (rebuilt on domainChanged): region membership + scratch --
     bool cacheValid;

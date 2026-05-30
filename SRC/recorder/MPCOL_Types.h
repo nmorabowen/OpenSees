@@ -59,7 +59,8 @@ namespace utils {
 			opt_result_on_nodes_sens,
 			opt_result_on_elements,
 			opt_time,
-			opt_region
+			opt_region,
+			opt_global       // -G energy <regionTag...> : energy balance (ADR D8)
 		};
 
 	}

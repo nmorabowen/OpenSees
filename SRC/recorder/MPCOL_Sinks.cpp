@@ -28,6 +28,7 @@ namespace mpcol {
 		case ResultFamily::OnNodes:    return "ON_NODES";
 		case ResultFamily::OnElements: return "ON_ELEMENTS";
 		case ResultFamily::OnDomain:   return "ON_DOMAIN";
+		case ResultFamily::OnRegions:  return "ON_REGIONS";
 		default:                       return "ON_NODES";
 		}
 	}

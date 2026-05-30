@@ -35,9 +35,11 @@ namespace mpcol {
 		enum Enum {
 			OnNodes = 0,
 			OnElements,
-			OnDomain
+			OnDomain,
+			OnRegions
 		};
-		// schema group name: "ON_NODES" / "ON_ELEMENTS" / "ON_DOMAIN"
+		// schema group name: "ON_NODES" / "ON_ELEMENTS" / "ON_DOMAIN" /
+		// "ON_REGIONS"
 		static const char* groupName(Enum f);
 	};
 
