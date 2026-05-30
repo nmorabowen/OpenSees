@@ -907,6 +907,7 @@
 #define ELE_TAG_CurvedPipe                      270
 #define ELE_TAG_PML3DVISCOUS               271 // Amin Pakzad
 #define ELE_TAG_BezierTri6                 33000 // N. Mora-Bowen (Ladruno) — quadratic Bézier triangle (Kadapa 2018); ladruno private band >=33000 (was 272, collided one above upstream PML3DVISCOUS=271)
+#define ELE_TAG_BezierTet10                33001 // N. Mora-Bowen (Ladruno) — quadratic Bézier tetrahedron (Kadapa 2018); ladruno private band >=33000 (sibling of BezierTri6=33000)
 
 
 #define FRN_TAG_Coulomb            1

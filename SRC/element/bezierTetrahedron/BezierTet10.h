@@ -1,0 +1,214 @@
+/* ****************************************************************** **
+**    OpenSees - Open System for Earthquake Engineering Simulation    **
+**          Pacific Earthquake Engineering Research Center            **
+**                                                                    **
+** ****************************************************************** */
+
+// Authors: Nicolas Mora Bowen, Patricio Palacios, Jose Abell, Guppi (Ladruño)
+// Created: 05/2026
+//
+// Description: 10-node quadratic Bézier tetrahedral element for 3D analysis.
+//   The 3D sibling of BezierTri6 (ADR 06_bezier_tet10, deferred under 04 D10).
+//
+// Based on:
+//   Kadapa, C. "Novel quadratic Bézier triangular and tetrahedral elements
+//   using existing mesh generators: Applications to linear nearly
+//   incompressible elastostatics and implicit and explicit elastodynamics."
+//   International Journal for Numerical Methods in Engineering,
+//   2019; 117(5):543-573. doi:10.1002/nme.5967 (§5)
+//
+// Features:
+//   - Quadratic Bernstein polynomial shape functions (all nonnegative)
+//   - Pure displacement and B-bar formulations (Eq. 38 / 45, full 3D)
+//   - Consistent and lumped mass matrices (all-positive lumped mass ρVe/10, Eq. 57)
+//   - Lagrange-to-Bézier control point mapping (Eq. 11-13, edge-wise)
+//   - 4-point tetrahedral quadrature (K / F / B-bar average)
+//
+// Node order (matches OpenSees TenNodeTetrahedron, jaabell/Larenas shp3d):
+//   barycentric (L1,L2,L3,L4), L4 = 1-L1-L2-L3
+//     N1=L1²  N2=L2²  N3=L3²  N4=L4²                          (4 vertices)
+//     N5=2L1L2 (1-2)  N6=2L2L3 (2-3)  N7=2L1L3 (1-3)
+//     N8=2L1L4 (1-4)  N9=2L3L4 (3-4)  N10=2L2L4 (2-4)         (6 mid-edges)
+//
+// v1 limitation: validated for STRAIGHT-SIDED meshes only (mid-edge nodes at
+// edge midpoints ⇒ P = X). Curved elements emit a warning in setDomain.
+//
+// Integration uses |detJ| (not signed): BᵀDB / NᵀN / J⁻¹ are orientation-
+// independent, so K/M/F are correct for either vertex handedness — the hedge
+// for the open Gmsh-vs-node-order reconciliation (ADR O11).
+//
+// Element command:
+//   element BezierTet10 $tag $nd1 ... $nd10 $matTag
+//                       <-bbar> <-cMass> <-rho $r>
+//                       <-bodyForce $b1 $b2 $b3> <-pressure $p>
+//
+//   Mass: default is the all-positive lumped mass ρVe/10 (Kadapa Eq. 57) for
+//   explicit dynamics; pass -cMass for the consistent mass (implicit/eigen).
+//
+// Recorder responses:
+//   "forces"              → 30 resisting force components
+//   "stresses"            → σ_xx,yy,zz,xy,yz,zx at each GP (24 total)
+//   "strains"             → ε_xx,yy,zz,γ_xy,yz,zx at each GP (24 total)
+//   "gaussPoint"          → physical x,y,z of each GP (12 total)
+//   "material" $gp <args> → delegate to NDMaterial at GP
+//   "stiffness"           → 30×30 tangent stiffness
+
+#ifndef BezierTet10_h
+#define BezierTet10_h
+
+#include <Element.h>
+#include <Matrix.h>
+#include <Vector.h>
+#include <ID.h>
+
+class Node;
+class NDMaterial;
+class Response;
+
+// Class tag ELE_TAG_BezierTet10 is defined in classTags.h (= 33001, ladruno band).
+
+class BezierTet10 : public Element
+{
+  public:
+    // ─── Constructors and Destructor ───────────────────────────
+
+    // Full constructor
+    BezierTet10(int tag,
+                int nd1, int nd2, int nd3, int nd4, int nd5,
+                int nd6, int nd7, int nd8, int nd9, int nd10,
+                NDMaterial &m, double rho = 0.0,
+                double b1 = 0.0, double b2 = 0.0, double b3 = 0.0,
+                bool useBbar = false, bool cMass = false,
+                double pressure = 0.0);
+
+    // Null constructor (for parallel/database reconstruction)
+    BezierTet10();
+
+    // Destructor
+    ~BezierTet10();
+
+    // ─── Element Interface ────────────────────────────────────
+
+    const char *getClassType(void) const { return "BezierTet10"; }
+    int getNumExternalNodes(void) const;
+    const ID &getExternalNodes(void);
+    Node **getNodePtrs(void);
+    int getNumDOF(void);
+
+    void setDomain(Domain *theDomain);
+    int commitState(void);
+    int revertToLastCommit(void);
+    int revertToStart(void);
+    int update(void);
+
+    const Matrix &getTangentStiff(void);
+    const Matrix &getInitialStiff(void);
+    const Matrix &getMass(void);
+
+    void zeroLoad(void);
+    int addLoad(ElementalLoad *theLoad, double loadFactor);
+    int addInertiaLoadToUnbalance(const Vector &accel);
+
+    const Vector &getResistingForce(void);
+    const Vector &getResistingForceIncInertia(void);
+
+    int sendSelf(int commitTag, Channel &theChannel);
+    int recvSelf(int commitTag, Channel &theChannel,
+                 FEM_ObjectBroker &theBroker);
+
+    void Print(OPS_Stream &s, int flag = 0);
+
+    Response *setResponse(const char **argv, int argc, OPS_Stream &s);
+    int getResponse(int responseID, Information &eleInformation);
+
+    int displaySelf(Renderer &, int mode, float fact,
+                    const char **displayModes = 0, int numModes = 0);
+
+  protected:
+
+  private:
+    // ─── Constants ────────────────────────────────────────────
+    static constexpr int NEN = 10;     // Number of element nodes
+    static constexpr int NDOF = 3;     // DOFs per node
+    static constexpr int NELD = 30;    // Total element DOFs (10×3)
+    static constexpr int NSTRESS = 6;  // Stress/strain components (3D)
+    static constexpr int NGAUSS = 4;   // Gauss points (degree-2 tet rule)
+
+    // ─── Computational Methods ────────────────────────────────
+
+    // Shape functions and derivatives at barycentric (L1, L2, L3)
+    void shapeFunctions(double L1, double L2, double L3,
+                        double N[NEN]) const;
+
+    void shapeDerivatives(double L1, double L2, double L3,
+                          double dN[3][NEN]) const;
+
+    // Jacobian, its (signed) determinant, and physical derivatives
+    double computeJacobian(const double dN[3][NEN],
+                           double J[3][3],
+                           double dN_dx[3][NEN]) const;
+
+    // B and B-bar (strain-displacement) matrices
+    void computeBMatrix(const double dN_dx[3][NEN],
+                        double B[NSTRESS][NELD]) const;
+
+    void computeBBarMatrix(const double dN_dx[3][NEN],
+                           const double dN_avg[3][NEN],
+                           double Bbar[NSTRESS][NELD]) const;
+
+    // Volume-averaged derivatives for B-bar (Eq. 46)
+    void computeVolumeAveragedDerivatives(double dN_avg[3][NEN],
+                                          double &volume) const;
+
+    // Map Lagrange node positions to Bézier control points
+    void computeControlPoints();
+
+    // Element volume
+    double computeVolume() const;
+
+    // ─── Static Quadrature Data ───────────────────────────────
+    // 4-point rule (degree 2) for stiffness / force / B-bar average.
+    static const double GP4_L[][3];   // barycentric (L1,L2,L3), L4=1-ΣL
+    static const double GP4_w[];      // weights (sum = 1/6 = ref tet volume)
+
+    // 1D Gauss-Legendre (4-pt) on [0,1], collapsed (Duffy) into a 4×4×4
+    // (degree-7) tet rule for the consistent mass — the degree-4 NₐNᵦ
+    // integrand becomes degree 6 after the (1-a)² Duffy Jacobian (ADR O12).
+    static const double GL4_t[];      // nodes on [0,1]
+    static const double GL4_w[];      // weights on [0,1]
+
+    // Edge → (vertexA, vertexB), 0-based, for mid-edge nodes 5..10 (idx 4..9)
+    static const int edgeV[6][2];
+
+    // ─── Static Return Objects (Petracca/Abell pattern) ──────
+    static Matrix K_return;   // 30×30 stiffness return matrix
+    static Matrix M_return;   // 30×30 mass return matrix
+    static Vector P_return;   // 30×1 force return vector
+
+    // ─── Member Data ──────────────────────────────────────────
+    NDMaterial **theMaterial;   // Array of NGAUSS material pointers
+
+    ID connectedExternalNodes;  // 10 node tags
+    Node *theNodes[NEN];        // 10 node pointers
+
+    double controlPts[NEN][3];  // Bézier control points (P = X if straight)
+
+    double rho;                 // Mass density (0 = take from material)
+    double pressure;            // Applied "pressure" (volume hack, +z, as Tri6)
+    double b[3];                // Body force per unit volume {b1, b2, b3}
+
+    bool useBbar;               // B-bar for near-incompressibility
+    bool cMass;                 // true = consistent mass; false = lumped (ρVe/10)
+
+    Vector Q;                   // 30×1 applied load vector
+
+    double appliedB[3];         // current body force = loadFactor·data·b
+    int applyLoad;              // 1 once a SelfWeight load has been added
+
+    double Ki_data[NELD * NELD];
+    Matrix *Ki;                 // Cached initial stiffness (lazy)
+
+    static int numInstances;    // One-time print flag (Abell pattern)
+};
+
+#endif // BezierTet10_h
