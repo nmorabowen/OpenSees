@@ -1110,9 +1110,9 @@
 #define INTEGRATOR_TAGS_StagedLoadControl               58
 #define INTEGRATOR_TAGS_StagedNewmark                   59
 #define INTEGRATOR_TAGS_HarmonicSteadyState             60
-#define INTEGRATOR_TAGS_ExplicitBathe                   61
-#define INTEGRATOR_TAGS_ExplicitDifferenceStatic        62
-#define INTEGRATOR_TAGS_ExplicitBatheLNVD               63
+#define INTEGRATOR_TAGS_ExplicitBathe                   33000 // J.A. Abell (Ladruno) — explicit Bathe integrator; ladruno private band >=33000 (was 61, one above upstream frontier HarmonicSteadyState=60)
+#define INTEGRATOR_TAGS_ExplicitDifferenceStatic        33001 // J.A. Abell (Ladruno) — explicit static difference; ladruno private band >=33000 (was 62)
+#define INTEGRATOR_TAGS_ExplicitBatheLNVD               33002 // N. Mora-Bowen (Ladruno) — Noh-Bathe + LNVD damping; ladruno private band >=33000 (was 63)
 
 
 #define LinSOE_TAGS_FullGenLinSOE		1
@@ -1211,8 +1211,8 @@
 #define RECORDER_TAGS_NodeRecorderRMS               23
 #define RECORDER_TAGS_ElementRecorderRMS               24
 #define RECORDER_TAGS_VTKHDF_Recorder               25
-#define RECORDER_TAGS_EnergyBalanceRecorder               26
-#define RECORDER_TAGS_MPCOLadrunoRecorder               27
+#define RECORDER_TAGS_EnergyBalanceRecorder               33000 // N. Mora-Bowen (Ladruno) — energy balance recorder; ladruno private band >=33000 (was 26, above upstream frontier VTKHDF=25)
+#define RECORDER_TAGS_MPCOLadrunoRecorder               33001 // N. Mora-Bowen (Ladruno) — MPCO Ladruno recorder; ladruno private band >=33000 (was 27)
 
 #define OPS_STREAM_TAGS_FileStream		1
 #define OPS_STREAM_TAGS_StandardStream		2

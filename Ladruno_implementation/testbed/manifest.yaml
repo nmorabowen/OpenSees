@@ -47,6 +47,85 @@ features:
       corner singularity caps the displacement rate at ~1.3 (it is an accuracy
       benchmark, not a rate test); a smooth manufactured solution is used instead.
 
+  # --- pre-test-bed ladruno features: classTag band remediation (follow-up to
+  #     BezierTri6). Tags moved into the >=33000 band, per-family, + Ladruno
+  #     markers added so check_classtags tracks them. Zone-A tests are a known
+  #     backlog item; current coverage is Zone-B Ladruno_scripts/_verify_explicit.py.
+  #     ExplicitBathe + ExplicitDifferenceStatic are jaabell's tags. ---
+
+  - feature: ExplicitBathe
+    classtag: 33000          # INTEGRATOR family; was 61 (J.A. Abell)
+    tag_symbol: INTEGRATOR_TAGS_ExplicitBathe
+    pr: null
+    feature_class: integrator
+    required_tiers: [dynamics-battery]
+    pytest: tests/test_explicitBathe_integrator.py    # PENDING (not yet authored)
+    tcl: WAIVED(integrator; Zone-B _verify_explicit.py until the Zone-A battery lands)
+    zone_b: [Ladruno_scripts/_verify_explicit.py]
+    core_files: [SRC/classTags.h]
+    dispatch: {tcl: true, functionMap: true}
+    status: remediation
+    notes: jaabell's tag. Band-remediated 61 -> 33000 (was one above frontier HarmonicSteadyState=60). Broker-dispatched (getNewTransientIntegrator, "must recvSelf") so collision risk was real. 4-part dynamics battery owed in Zone A.
+
+  - feature: ExplicitDifferenceStatic
+    classtag: 33001
+    tag_symbol: INTEGRATOR_TAGS_ExplicitDifferenceStatic
+    pr: null
+    feature_class: integrator
+    required_tiers: [dynamics-battery]
+    pytest: tests/test_explicitDifferenceStatic_integrator.py   # PENDING
+    tcl: WAIVED(integrator; Zone-A battery pending)
+    zone_b: []
+    core_files: [SRC/classTags.h]
+    dispatch: {tcl: true, functionMap: true}
+    status: remediation
+    notes: jaabell's tag. Band-remediated 62 -> 33001.
+
+  - feature: ExplicitBatheLNVD
+    classtag: 33002
+    tag_symbol: INTEGRATOR_TAGS_ExplicitBatheLNVD
+    pr: null
+    feature_class: integrator
+    required_tiers: [dynamics-battery]
+    pytest: tests/test_explicitBatheLNVD_integrator.py   # PENDING
+    tcl: WAIVED(integrator; Zone-A battery pending)
+    zone_b: [Ladruno_scripts/_verify_explicit.py]
+    core_files: [SRC/classTags.h]
+    dispatch: {tcl: true, functionMap: true}
+    status: remediation
+    notes: >
+      Noh-Bathe + FLAC local-non-viscous damping. Band-remediated 63 -> 33002.
+      The canonical-doc 4-part battery (stability bracket / period elongation /
+      energy drift via EnergyBalanceRecorder / LNVD->exact-static) is owed in Zone A.
+
+  - feature: EnergyBalanceRecorder
+    classtag: 33000          # RECORDER family; was 26
+    tag_symbol: RECORDER_TAGS_EnergyBalanceRecorder
+    pr: null
+    feature_class: derivative
+    required_tiers: [T1]
+    pytest: tests/test_energyBalanceRecorder.py   # PENDING
+    tcl: WAIVED(recorder; Zone-A check pending)
+    zone_b: []
+    core_files: [SRC/classTags.h]
+    dispatch: {tcl: true, functionMap: true}
+    status: remediation
+    notes: Band-remediated 26 -> 33000 (was above frontier VTKHDF=25). Not broker-registered (lower risk) but moved for per-family policy consistency.
+
+  - feature: MPCOLadrunoRecorder
+    classtag: 33001
+    tag_symbol: RECORDER_TAGS_MPCOLadrunoRecorder
+    pr: null
+    feature_class: derivative
+    required_tiers: [T1]
+    pytest: tests/test_mpcoLadrunoRecorder.py   # PENDING
+    tcl: WAIVED(recorder; Zone-A check pending)
+    zone_b: []
+    core_files: [SRC/classTags.h]
+    dispatch: {tcl: true, functionMap: true}
+    status: remediation
+    notes: Band-remediated 27 -> 33001. Broker-registered (getNewRecorder case), so collision risk was real.
+
   # --- worked examples shipped with the scaffold (existing elements, no new C++) ---
 
   - feature: forceBeamColumn_cantilever     # T1 worked example (existing element)
