@@ -67,6 +67,7 @@ public:
 	private_data()
 		: filename()
 		, initialized(false)
+		, first_domain_changed_done(false)
 		, info()
 		, output_freq()
 		, has_region(false)
@@ -83,6 +84,10 @@ public:
 
 	std::string filename;
 	bool initialized;
+	// first_domain_changed_done — false until the first record() resolves the
+	// model-stage stamp; thereafter a stamp change triggers a model rebuild
+	// (frozen MPCORecorder::record() multi-stage block).
+	bool first_domain_changed_done;
 	mpcolns::mpco::ProcessInfo info;
 
 	// -T output frequency
@@ -233,6 +238,31 @@ int MPCORecorderLadruno::record(int commitTag, double timeStamp)
 		m_data->initialized = true;
 	}
 
+	// Multi-stage detection (frozen MPCORecorder::record() rebuild_model block).
+	// On the first record, and again whenever the domain-change stamp moves
+	// (a new MODEL_STAGE — wipeAnalysis + new elements/nodes, staged analysis),
+	// (re)write the model and rebuild every node/element source+sink. This is
+	// what re-acquires fresh Element*/Response* pointers; without it the cached
+	// pointers from the prior stage dangle and the new stage is never written.
+	// NOTE: the parallel per-process stamp Allreduce (frozen lambdaHasDomainChanged)
+	// is deferred with the rest of the parallel channel; this recorder is
+	// single-process / per-partition for now.
+	bool rebuild_model = false;
+	int new_stamp = info.domain->hasDomainChanged();
+	if (!m_data->first_domain_changed_done) {
+		info.current_model_stage_id = new_stamp;
+		m_data->first_domain_changed_done = true;
+		rebuild_model = true;
+	}
+	else if (new_stamp != info.current_model_stage_id) {
+		info.current_model_stage_id = new_stamp;
+		rebuild_model = true;
+	}
+	if (rebuild_model) {
+		if (writeModel() != 0)
+			return -1;
+	}
+
 	if (recordResultsOnNodes() != 0)
 		return -1;
 	if (recordResultsOnElements() != 0)
@@ -306,14 +336,10 @@ int MPCORecorderLadruno::initialize()
 	mpcolns::h5::group::close(h_prov);
 	mpcolns::h5::group::close(h_info);
 
-	if (writeModel() != 0)
-		return -1;
-
-	// build the source/sink channels now that the model + element maps exist
-	if (initNodeSources() != 0)
-		return -1;
-	if (initElementSources() != 0)
-		return -1;
+	// NOTE: model writing + source/sink building are NOT done here. They live in
+	// writeModel(), driven by record()'s multi-stage rebuild_model block, so they
+	// re-run on every MODEL_STAGE change (mirrors the frozen recorder, where
+	// initialize() only sets up the file and record() owns the model rebuild).
 
 	return 0;
 }
@@ -326,7 +352,9 @@ int MPCORecorderLadruno::writeModel()
 {
 	mpcolns::mpco::ProcessInfo& info = m_data->info;
 
-	info.current_model_stage_id = info.domain->hasDomainChanged();
+	// info.current_model_stage_id is set by record() before calling writeModel()
+	// (the multi-stage rebuild_model block), so the stamp is consistent across
+	// the MODEL_STAGE group and every result/source path resolved from it.
 
 	// MODEL_STAGE[<stamp>] + MODEL + RESULTS skeleton (mirror frozen writeModel)
 	std::stringstream ss_stage;
@@ -359,6 +387,18 @@ int MPCORecorderLadruno::writeModel()
 	if (writeModelElements() != 0)
 		return -1;
 	if (writeSections() != 0)
+		return -1;
+
+	// (Re)build the source/sink channels for this stage. clearSources() releases
+	// the prior stage's sources, sinks, and cached element Response* (which would
+	// otherwise dangle after the domain rebuild); the fresh sinks are not yet
+	// initialized, so they re-create their result groups under the new MODEL_STAGE.
+	// Mirrors frozen writeModel()'s trailing initNodeRecorders()/initElementRecorders().
+	if (clearSources() != 0)
+		return -1;
+	if (initNodeSources() != 0)
+		return -1;
+	if (initElementSources() != 0)
 		return -1;
 
 	return 0;
