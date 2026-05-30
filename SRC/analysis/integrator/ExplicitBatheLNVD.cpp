@@ -93,6 +93,9 @@ void *OPS_ExplicitBatheLNVD(void) {
                 int nd = 1;
                 OPS_GetIntInput(&nd, &cflRecomputeEvery);
             }
+            if (cflRecomputeEvery <= 0)
+                opserr << "WARNING ExplicitBatheLNVD -recompute expects a positive integer N "
+                          "(steps between dt_cr refreshes); dt_cr will be computed once\n";
             cflUseTangent = true;
             compute_critical_timestep = 1;
         } else {
@@ -260,6 +263,7 @@ int ExplicitBatheLNVD::domainChanged() {
 
     if (compute_critical_timestep == 2)
         compute_critical_timestep = 1;
+    cflStepCount = 0;   // restart periodic-recompute cadence after a mesh change
 
     return 0;
 }

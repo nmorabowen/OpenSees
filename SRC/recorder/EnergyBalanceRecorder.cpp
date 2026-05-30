@@ -260,7 +260,11 @@ static void addElementEnergy(Element *ele, Vector &vel,
                              double &internal_rate,
                              double &damping_rate)
 {
-    const Matrix &M = ele->getMass();
+    // COPY the mass: many elements return a reference to a shared static matrix
+    // from BOTH getMass() and getDamp() (and getDamp() internally calls getMass/
+    // getTangentStiff), so a reference here would be clobbered by getDamp() below
+    // and the kinetic energy would be computed from the damping matrix.
+    Matrix M = ele->getMass();
     const Matrix &C = ele->getDamp();
     const Vector &F = ele->getResistingForce();
     const int numExternalNodes = ele->getNumExternalNodes();

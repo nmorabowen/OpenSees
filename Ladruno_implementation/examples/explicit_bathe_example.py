@@ -118,8 +118,15 @@ def adaptive_substep_skeleton(dt_record, n_intervals, safety=0.9):
         else:
             n_sub = max(1, math.ceil(dt_record / (safety * dt_cr)))
         ops.analyze(n_sub, dt_record / n_sub)  # stable, fully-committed sub-steps
-        # with -recompute, dt_cr is refreshed as the model softens/stiffens,
-        # so n_sub adapts automatically over the run.
+        # Notes:
+        # - n_sub is re-queried EACH interval, so it adapts as the model softens
+        #   or stiffens -- but it is FIXED within an interval, lagged by the
+        #   -recompute period. A sudden mid-interval stiffening (e.g. contact
+        #   impact) is not caught until the next interval; pair with -cflAbort if
+        #   you need the run to stop rather than go unstable on such an event.
+        # - criticalTimeStep() returns the CONSERVATIVE central-difference limit
+        #   (2/omega). Noh-Bathe is stable to ~2x that, so safety=0.9 here is
+        #   ~2x extra-safe; if you trust the Noh-Bathe factor you can raise it.
 
 
 if __name__ == '__main__':

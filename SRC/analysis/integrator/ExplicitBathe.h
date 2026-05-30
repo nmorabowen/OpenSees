@@ -47,6 +47,20 @@
 // Pair with `recorder EnergyBalance ... -file energy.txt` to watch for spurious
 // energy growth (the instability signature of an over-large dt).
 //
+// Critical-time-step (-cfl / -tangent / -recompute / criticalTimeStep()) caveats:
+//   - It is a per-element estimate using row-sum-lumped element mass. This is
+//     exact/conservative for translational DOFs (bars, solids) but row-sum
+//     lumping can be non-conservative for ROTATIONAL DOFs (beams/shells); treat
+//     dt_cr as a guide there, not a guarantee.
+//   - It ignores constraints (equalDOF/rigid diaphragms/MP) and pure nodal mass,
+//     so a constrained or nodal-mass-only model may report a non-binding or
+//     <=0 (criticalTimeStep() returns <=0) value.
+//   - -recompute N / -tangent only UPDATE the reported dt_cr; they do NOT change
+//     the analysis dt. For stiffening/contact, either pair with -cflAbort or
+//     re-query criticalTimeStep() from the driver and sub-divide (see the
+//     adaptive_substep example). It is O(N_elements) DGGEV per refresh -- use a
+//     large N.
+//
 // Key features:
 // - Second-order accurate
 // - Conditionally stable (dt <= 2/omega_max central-difference reference)
@@ -91,7 +105,7 @@ public:
 
     // Conservative (central-difference) critical time step, available after a
     // step has run with compute_critical_timestep enabled; <=0 if not computed.
-    double getCriticalTimeStep(void) const;
+    double getCriticalTimeStep(void) const override;
     
     // Methods which define what the FE_Element and DOF_Groups add
     // to the system of equation object

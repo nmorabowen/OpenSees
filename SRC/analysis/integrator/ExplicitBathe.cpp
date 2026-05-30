@@ -105,6 +105,9 @@ void *OPS_ExplicitBathe(void) {
                 int nd = 1;
                 OPS_GetIntInput(&nd, &cflRecomputeEvery);
             }
+            if (cflRecomputeEvery <= 0)
+                opserr << "WARNING ExplicitBathe -recompute expects a positive integer N "
+                          "(steps between dt_cr refreshes); dt_cr will be computed once\n";
             cflUseTangent = true;            // recomputing K0 every N steps is pointless
             compute_critical_timestep = 1;
         } else {
@@ -292,10 +295,13 @@ int ExplicitBathe::domainChanged() {
     damped_minimum_critical_timestep = std::numeric_limits<double>::infinity();
     undamped_minimum_critical_timestep = std::numeric_limits<double>::infinity();
 
-    // Reset computation flag if it was already computed
+    // Reset computation flag if it was already computed; also reset the
+    // periodic-recompute counter so the cadence restarts cleanly after a
+    // mesh change / staged construction.
     if (compute_critical_timestep == 2) {
         compute_critical_timestep = 1;
     }
+    cflStepCount = 0;
 
     return 0;
 }

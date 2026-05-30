@@ -84,7 +84,7 @@ public:
     const Vector &getVel(void);
 
     // conservative (central-difference) critical time step; <=0 if not computed
-    double getCriticalTimeStep(void) const;
+    double getCriticalTimeStep(void) const override;
     // infinity-norm of the most recent unbalanced force (dynamic-relaxation
     // convergence indicator); <0 until the first solve
     double getUnbalanceNorm(void) const;
