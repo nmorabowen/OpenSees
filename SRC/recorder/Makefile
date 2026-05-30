@@ -10,6 +10,7 @@ OBJS       = Recorder.o \
 	DatastoreRecorder.o \
 	ElementRecorder.o \
 	ElementRecorderRMS.o \
+	EnergyBalanceRecorder.o \
 	NodeRecorder.o \
 	NodeRecorderRMS.o \
 	EnvelopeElementRecorder.o \
