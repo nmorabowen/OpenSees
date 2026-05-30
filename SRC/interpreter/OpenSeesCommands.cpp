@@ -1857,6 +1857,9 @@ int OPS_Integrator()
     } else if (strcmp(type, "ExplicitBatheLNVD") == 0) {
 	ti = (TransientIntegrator*)OPS_ExplicitBatheLNVD();
 
+    } else if (strcmp(type, "CentralDifferenceLadruno") == 0) {
+	ti = (TransientIntegrator*)OPS_CentralDifferenceLadruno();
+
     } else {
 	opserr<<"WARNING unknown integrator type "<<type<<"\n";
     }

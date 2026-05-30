@@ -13,7 +13,8 @@ tags:
 # Robust explicit central-difference integrator (`CentralDifferenceLadruno`)
 
 > **Design / ADR (pre-implementation).** A single, clean **explicit leap-frog
-> central-difference** integrator — a sibling-fork class (classTag 64) that delivers
+> central-difference** integrator — a sibling-fork class (classTag 33003, Ladruno
+> private band ≥33000) that delivers
 > the one combination *no* existing OpenSees class has: a **correct first step + a
 > built-in critical-timestep guard + clean full-step velocity output + energy-balance
 > discipline**, without modifying any upstream file.
@@ -31,7 +32,8 @@ tags:
 
 ## What
 
-A new `TransientIntegrator` subclass `CentralDifferenceLadruno` (classTag **64**),
+A new `TransientIntegrator` subclass `CentralDifferenceLadruno` (classTag **33003**,
+Ladruno private band ≥33000),
 the explicit **leap-frog** central-difference scheme done right:
 
 - **Single explicit scheme** (no mode switch): `M` alone on the LHS → a trivial
@@ -96,7 +98,7 @@ For the coupled/implicit-damped case, the answer is documentation, not code:
 
 | # | Decision | Rationale |
 |---|----------|-----------|
-| C1 | **New clean fork class**, `CentralDifferenceLadruno`, classTag 64; all upstream classes frozen | Sibling-fork policy (no upstream diffs); the reason this is new code, not an in-place patch |
+| C1 | **New clean fork class**, `CentralDifferenceLadruno`, classTag 33003 (Ladruno private band ≥33000); all upstream classes frozen | Sibling-fork policy (no upstream diffs); the reason this is new code, not an in-place patch |
 | C2 | **Single explicit leap-frog scheme** — no `-damping` mode switch | The sweep showed a coupled mode == `NewmarkExplicit(0.5)`; bundling two schemes under one classTag was rejected as a split-personality tool. One scheme, one behavior |
 | C3 | **Starter on the FIRST STEP, not `domainChanged()`** (B1 fix): `a₀ = M⁻¹(P₀−Cv₀−Fᵢₙₜ(u₀))` then `v₋½ = v₀ − ½Δt·a₀` | `domainChanged()` has no Δt set and no factorized SOE (this is exactly why legacy CD punts). `ExplicitBathe` precedent: defer the first acceleration solve to the first `update()` behind a `firstStep` flag. `dt_cr` *can* stay in `domainChanged()` (it does its own LAPACK eigensolve, not the global SOE) |
 | C4 | **Reuse `CriticalTimeStep`**, stability factor 1.0; **implement `getCriticalTimeStep()` override** | Base `TransientIntegrator::getCriticalTimeStep()` returns `-1.0` (verified `TransientIntegrator.h:71`); the `criticalTimeStep()` command (`OPS_criticalTimeStep`, wired in OpenSeesCommands/PythonWrapper/TclWrapper) already dispatches to it. CD limit is exactly `2/ω_max` |
@@ -110,7 +112,7 @@ For the coupled/implicit-damped case, the answer is documentation, not code:
 
 - **New code**: `SRC/analysis/integrator/CentralDifferenceLadruno.{h,cpp}`
 - **Modify (registration)**:
-  - `SRC/classTags.h` — `#define INTEGRATOR_TAGS_CentralDifferenceLadruno 64`
+  - `SRC/classTags.h` — `#define INTEGRATOR_TAGS_CentralDifferenceLadruno 33003`
   - `SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp` — `#include` + `case`
   - `SRC/runtime/runtime/TclPackageClassBroker.cpp` — `#include` + `case`  *(corrected path — NOT `SRC/tcl/`)*
   - `SRC/interpreter/OpenSeesCommands.cpp` — string dispatch → `OPS_CentralDifferenceLadruno()`
@@ -295,5 +297,42 @@ compression — an element/material concern; flagged so wave/shock users know th
 
 ## Implementation log
 
-*(empty — fill in once execution starts; move to
-`Ladruno_internal/implemented_robust_central_difference.md` when done)*
+**2026-05-30 — implemented as designed (explicit leap-frog only).** New sibling-fork
+class `CentralDifferenceLadruno` (classTag **33003**, Ladruno private band ≥33000),
+no upstream class touched.
+
+- **New files**: `SRC/analysis/integrator/CentralDifferenceLadruno.{h,cpp}`.
+- **Registration (8 sites, verified against `ExplicitBatheLNVD`)**: `classTags.h` (33003, Ladruno band ≥33000);
+  `FEM_ObjectBrokerAllClasses.cpp` (+include +case); `runtime/runtime/TclPackageClassBroker.cpp`
+  (+include +case); `interpreter/OpenSeesCommands.{h,cpp}` (fwd-decl + string dispatch);
+  `tcl/commands.cpp` (extern + `integrator` branch); integrator `CMakeLists.txt` + `Makefile`.
+- **Scheme bookkeeping**: advance-then-solve (records `u_{n+1}` at `t_{n+1}`, like
+  `ExplicitDifference`, so N analyze steps → N records, no off-by-one). The clean
+  full-step output velocity is `v_{n+1} = v_{n+1/2} + ½ Δt a_{n+1}` (the centered
+  `(u_{n+2}-u_n)/2Δt` identity — available right after the solve, no future value
+  needed). `getVel()` returns the lagged half-step `Vhalf` used by the current solve.
+- **Starter (C3/B1)**: on the first `newStep()` (behind `firstStep`), the integrator
+  forms+factors its own tangent and does ONE extra solve at the committed config to get
+  `a₀ = M⁻¹(P₀−Cv₀−Fᵢₙₜ(u₀))`, then seeds `v₋½ = v₀ − ½Δt a₀` before the normal advance.
+  domainChanged() only allocates/seeds/runs the dt_cr eigensolve (no Δt, no factored SOE).
+- **dt_cr (C4)**: computed in `domainChanged()` UNCONDITIONALLY (so `criticalTimeStep()`
+  is valid before `analyze`); stability factor 1.0 (no Noh–Bathe 2×). Reports `damped_dt`
+  when damping reduces the step, else `undamped_dt`. `-recompute N`/`-tangent` refresh in
+  `newStep()`.
+- **βK guard (C6)**: data-driven — Domain exposes no Rayleigh getter, so we flag the trap
+  when `damped_dt < 0.9·undamped_dt` (βK collapses it at ω_max; αM barely moves it).
+- **Single-solve guard**: `updateCount > 1` (CD), not ExplicitDifference's `>2`.
+- **Options**: `-cfl -cflAbort -tangent -recompute N -lump rowsum|diagonal -verbose
+  -divergence f`. NO `-damping`, NO positional arg. Default lump = `diagonal`.
+- **Diagonal-mass requirement**: documented in the header / `Print` (recipe: `system
+  Diagonal`); no cheap runtime introspection of mass diagonality exists, so it is a
+  documented requirement rather than a hard error (noted for the PR).
+- **Build gate**: `CentralDifferenceLadruno.cpp` per-TU compile-verified standalone with
+  `cl.exe` (flags/includes lifted from the Ninja build, repointed at the worktree). Full
+  link still blocked by the MPCO_Ladruno link error — interim gate only, as planned.
+- **Tests**: `Ladruno_scripts/_verify_explicit.py` extended with the CDL-1..10 battery
+  (CDL-8 first-step / CDL-9 βK collapse are the differentiators; CDL-10 energy closure is
+  the MPCO-link-gated skip). They need a rebuilt `.pyd` that registers the class to run.
+
+*(Move to `Ladruno_internal/implemented_robust_central_difference.md` once the full link
+is unblocked and the runtime battery passes.)*

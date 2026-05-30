@@ -1113,6 +1113,7 @@
 #define INTEGRATOR_TAGS_ExplicitBathe                   33000 // J.A. Abell (Ladruno) — explicit Bathe integrator; ladruno private band >=33000 (was 61, one above upstream frontier HarmonicSteadyState=60)
 #define INTEGRATOR_TAGS_ExplicitDifferenceStatic        33001 // J.A. Abell (Ladruno) — explicit static difference; ladruno private band >=33000 (was 62)
 #define INTEGRATOR_TAGS_ExplicitBatheLNVD               33002 // N. Mora-Bowen (Ladruno) — Noh-Bathe + LNVD damping; ladruno private band >=33000 (was 63)
+#define INTEGRATOR_TAGS_CentralDifferenceLadruno        33003 // N. Mora-Bowen (Ladruno) — explicit leap-frog central difference; ladruno private band >=33000 (was 64)
 
 
 #define LinSOE_TAGS_FullGenLinSOE		1

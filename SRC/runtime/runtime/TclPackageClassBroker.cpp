@@ -448,6 +448,7 @@ using namespace OpenSees::Hash::literals;
 #include "NewmarkExplicit.h"
 #include "ExplicitBathe.h"
 #include "ExplicitBatheLNVD.h"
+#include "CentralDifferenceLadruno.h"
 #include "NewmarkHSFixedNumIter.h"
 #include "NewmarkHSIncrLimit.h"
 #include "NewmarkHSIncrReduct.h"
@@ -1812,6 +1813,9 @@ TclPackageClassBroker::getNewTransientIntegrator(int classTag)
 
   case INTEGRATOR_TAGS_ExplicitBatheLNVD:
     return new ExplicitBatheLNVD(); // must recvSelf
+
+  case INTEGRATOR_TAGS_CentralDifferenceLadruno:
+    return new CentralDifferenceLadruno(); // must recvSelf
 
   case INTEGRATOR_TAGS_CentralDifferenceAlternative:
     return new CentralDifferenceAlternative(); // must recvSelf
