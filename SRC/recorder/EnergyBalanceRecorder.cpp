@@ -197,15 +197,9 @@ EnergyBalanceRecorder::EnergyBalanceRecorder()
       response(EBR_NUM_ENERGY_COMPONENTS),
       echoTimeFlag(true), initializationDone(false), firstRecord(true),
       time_last(0.),
-      internal_energy(0.), damping_work(0.), unbalanced_load_work(0.),
-      prev_internal_rate(0.), prev_damping_rate(0.), prev_unbalanced_rate(0.),
-      eref_global(0.),
+      model_acc(),
       regionTags(), numRegions(0),
-      region_internal_energy(), region_damping_work(), region_unbalanced_load_work(),
-      prev_region_internal_rate(), prev_region_damping_rate(), prev_region_unbalanced_rate(),
-      region_eref(),
-      step_region_ke(), step_region_internal_rate(),
-      step_region_damping_rate(), step_region_unbalanced_rate(),
+      region_acc(),
       cacheValid(false), maxNumDOF(0), velScratch()
 {
 
@@ -222,16 +216,9 @@ EnergyBalanceRecorder::EnergyBalanceRecorder(
       response((echoTimeFlag_ ? 1 : 0) + EBR_NUM_ENERGY_COMPONENTS * (1 + regions.Size())),
       echoTimeFlag(echoTimeFlag_), initializationDone(false), firstRecord(true),
       time_last(0.),
-      internal_energy(0.), damping_work(0.), unbalanced_load_work(0.),
-      prev_internal_rate(0.), prev_damping_rate(0.), prev_unbalanced_rate(0.),
-      eref_global(0.),
+      model_acc(),
       regionTags(regions), numRegions(regions.Size()),
-      region_internal_energy(regions.Size()), region_damping_work(regions.Size()),
-      region_unbalanced_load_work(regions.Size()),
-      prev_region_internal_rate(regions.Size()), prev_region_damping_rate(regions.Size()),
-      prev_region_unbalanced_rate(regions.Size()), region_eref(regions.Size()),
-      step_region_ke(regions.Size()), step_region_internal_rate(regions.Size()),
-      step_region_damping_rate(regions.Size()), step_region_unbalanced_rate(regions.Size()),
+      region_acc((size_t)regions.Size()),
       cacheValid(false), maxNumDOF(0), velScratch()
 {
     response.Zero();
@@ -248,89 +235,11 @@ EnergyBalanceRecorder::~EnergyBalanceRecorder()
 }
 
 
-namespace {
-
-// Accumulate the energy contributions of a single element. vel is a caller-
-// supplied scratch vector (>= numDOF) so the hot loop performs no allocation.
-//   kinetic       += 1/2 v^T M v   (instantaneous kinetic energy)
-//   internal_rate += F^T v         (internal power; caller integrates over dt)
-//   damping_rate  += v^T C v       (damping power;  caller integrates over dt)
-static void addElementEnergy(Element *ele, Vector &vel,
-                             double &kinetic,
-                             double &internal_rate,
-                             double &damping_rate)
-{
-    // COPY the mass: many elements return a reference to a shared static matrix
-    // from BOTH getMass() and getDamp() (and getDamp() internally calls getMass/
-    // getTangentStiff), so a reference here would be clobbered by getDamp() below
-    // and the kinetic energy would be computed from the damping matrix.
-    Matrix M = ele->getMass();
-    const Matrix &C = ele->getDamp();
-    const Vector &F = ele->getResistingForce();
-    const int numExternalNodes = ele->getNumExternalNodes();
-    const int numDOF = ele->getNumDOF();
-    Node **elenodes = ele->getNodePtrs();
-
-    int cnt = 0;
-    for (int i = 0; i < numExternalNodes && cnt < numDOF; ++i) {
-        const Vector &node_vel = elenodes[i]->getVel();
-        for (int j = 0; j < node_vel.Size() && cnt < numDOF; ++j)
-            vel(cnt++) = node_vel(j);
-    }
-    for (; cnt < numDOF; ++cnt)
-        vel(cnt) = 0.0;
-
-    // Some elements return an empty (0x0) mass or damping matrix when they
-    // carry none; only accumulate when the matrix is the expected size.
-    const bool haveMass = (M.noRows() == numDOF && M.noCols() == numDOF);
-    const bool haveDamp = (C.noRows() == numDOF && C.noCols() == numDOF);
-    if (haveMass)
-        for (int i = 0; i < numDOF; ++i)
-            for (int j = 0; j < numDOF; ++j)
-                kinetic += 0.5 * M(i, j) * vel(i) * vel(j);
-    if (haveDamp)
-        for (int i = 0; i < numDOF; ++i)
-            for (int j = 0; j < numDOF; ++j)
-                damping_rate += C(i, j) * vel(i) * vel(j);
-
-    if (F.Size() == numDOF) {
-        double dot = 0.0;
-        for (int i = 0; i < numDOF; ++i)
-            dot += F(i) * vel(i);
-        internal_rate += dot;
-    }
-}
-
-// Accumulate the nodal contributions: lumped-mass kinetic energy, nodal
-// Rayleigh damping (alphaM * nodalMass), and the work rate of the external
-// applied nodal load. M is fully consumed before getDamp() is called because
-// Node::getMass()/getDamp() can share the same scratch matrix when massless.
-static void addNodeEnergy(Node *node,
-                          double &kinetic,
-                          double &damping_rate,
-                          double &unbalanced_rate)
-{
-    const Vector &vel = node->getVel();
-    const int n = vel.Size();
-
-    const Matrix &M = node->getMass();
-    if (M.noRows() == n && M.noCols() == n)
-        for (int i = 0; i < n; ++i)
-            for (int j = 0; j < n; ++j)
-                kinetic += 0.5 * M(i, j) * vel(i) * vel(j);
-
-    const Matrix &C = node->getDamp();
-    if (C.noRows() == n && C.noCols() == n)
-        for (int i = 0; i < n; ++i)
-            for (int j = 0; j < n; ++j)
-                damping_rate += C(i, j) * vel(i) * vel(j);
-
-    const Vector &Pext = node->getUnbalancedLoad();
-    if (Pext.Size() == n)
-        unbalanced_rate += vel ^ Pext;
-}
-
-} // namespace
+// NOTE (ADR D8): the per-entity energy math (addElementEnergy / addNodeEnergy)
+// and the per-scope trapezoidal/closure arithmetic now live in ONE place,
+// ebkernel (EnergyBalanceKernel.h), shared with mpcol::EnergyBalanceSource.
+// This recorder calls ebkernel::addElementEnergy / addNodeEnergy in the sweep
+// below and ebkernel::EnergyAccumulator::step() for the integration + closure.
 
 
 void
@@ -407,21 +316,22 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
     }
 
     //
-    // single sweep: compute each element/node contribution once, accumulate
-    // into the whole-model total and bin into the regions it belongs to.
+    // single sweep: compute each element/node contribution once (via the shared
+    // ebkernel per-entity math), accumulate into the whole-model total and bin
+    // into the regions it belongs to.
     //
     double g_ke = 0., g_internal_rate = 0., g_damping_rate = 0., g_unbalanced_rate = 0.;
-    step_region_ke.Zero();
-    step_region_internal_rate.Zero();
-    step_region_damping_rate.Zero();
-    step_region_unbalanced_rate.Zero();
+    std::vector<double> step_region_ke((size_t)numRegions, 0.0);
+    std::vector<double> step_region_internal_rate((size_t)numRegions, 0.0);
+    std::vector<double> step_region_damping_rate((size_t)numRegions, 0.0);
+    std::vector<double> step_region_unbalanced_rate((size_t)numRegions, 0.0);
 
     {
         Element *ele;
         ElementIter &elements = theDomain->getElements();
         while ((ele = elements()) != 0) {
             double ke = 0., ie = 0., dw = 0.;
-            addElementEnergy(ele, velScratch, ke, ie, dw);
+            ebkernel::addElementEnergy(ele, velScratch, ke, ie, dw);
             g_ke += ke; g_internal_rate += ie; g_damping_rate += dw;
 
             if (numRegions > 0) {
@@ -430,9 +340,9 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
                 if (it != elemRegions.end())
                     for (size_t k = 0; k < it->second.size(); ++k) {
                         const int r = it->second[k];
-                        step_region_ke(r) += ke;
-                        step_region_internal_rate(r) += ie;
-                        step_region_damping_rate(r) += dw;
+                        step_region_ke[(size_t)r] += ke;
+                        step_region_internal_rate[(size_t)r] += ie;
+                        step_region_damping_rate[(size_t)r] += dw;
                     }
             }
         }
@@ -443,7 +353,7 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
         NodeIter &nodes = theDomain->getNodes();
         while ((node = nodes()) != 0) {
             double ke = 0., dw = 0., ulw = 0.;
-            addNodeEnergy(node, ke, dw, ulw);
+            ebkernel::addNodeEnergy(node, ke, dw, ulw);
             g_ke += ke; g_damping_rate += dw; g_unbalanced_rate += ulw;
 
             if (numRegions > 0) {
@@ -452,94 +362,42 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
                 if (it != nodeRegions.end())
                     for (size_t k = 0; k < it->second.size(); ++k) {
                         const int r = it->second[k];
-                        step_region_ke(r) += ke;
-                        step_region_damping_rate(r) += dw;
-                        step_region_unbalanced_rate(r) += ulw;
+                        step_region_ke[(size_t)r] += ke;
+                        step_region_damping_rate[(size_t)r] += dw;
+                        step_region_unbalanced_rate[(size_t)r] += ulw;
                     }
             }
         }
     }
 
     //
-    // integrate the work rates (trapezoidal). The first record() only seeds
-    // the previous rate so no increment is taken over the initial time jump.
-    //
-    if (firstRecord) {
-        // first recorded step: integrate with the rectangle rule (there is no
-        // previous-step rate yet). Skipping it would drop one increment of work
-        // and leave a constant residual offset.
-        internal_energy      += g_internal_rate   * dT;
-        damping_work         += g_damping_rate    * dT;
-        unbalanced_load_work += g_unbalanced_rate * dT;
-        for (int r = 0; r < numRegions; ++r) {
-            region_internal_energy(r)      += step_region_internal_rate(r)   * dT;
-            region_damping_work(r)         += step_region_damping_rate(r)    * dT;
-            region_unbalanced_load_work(r) += step_region_unbalanced_rate(r) * dT;
-        }
-    } else {
-        // trapezoidal rule
-        internal_energy      += 0.5 * (prev_internal_rate   + g_internal_rate)   * dT;
-        damping_work         += 0.5 * (prev_damping_rate    + g_damping_rate)    * dT;
-        unbalanced_load_work += 0.5 * (prev_unbalanced_rate + g_unbalanced_rate) * dT;
-        for (int r = 0; r < numRegions; ++r) {
-            region_internal_energy(r)      += 0.5 * (prev_region_internal_rate(r)   + step_region_internal_rate(r))   * dT;
-            region_damping_work(r)         += 0.5 * (prev_region_damping_rate(r)    + step_region_damping_rate(r))    * dT;
-            region_unbalanced_load_work(r) += 0.5 * (prev_region_unbalanced_rate(r) + step_region_unbalanced_rate(r)) * dT;
-        }
-    }
-    firstRecord = false;
-
-    prev_internal_rate   = g_internal_rate;
-    prev_damping_rate    = g_damping_rate;
-    prev_unbalanced_rate = g_unbalanced_rate;
-    for (int r = 0; r < numRegions; ++r) {
-        prev_region_internal_rate(r)   = step_region_internal_rate(r);
-        prev_region_damping_rate(r)    = step_region_damping_rate(r);
-        prev_region_unbalanced_rate(r) = step_region_unbalanced_rate(r);
-    }
-
-    //
-    // fill the response: whole-model block then one block per region.
-    // RES = ULW - (KE + IE + DW); ERR% = 100 * RES / running-max-total-energy.
+    // integrate the work rates + close the balance through the shared kernel
+    // accumulator (trapezoidal, first-record seeding, per-scope running-max ERR
+    // are all defined ONCE in ebkernel::EnergyAccumulator::step). Fill the
+    // response: whole-model block then one block per region.
     //
     {
-        const double sum = g_ke + internal_energy + damping_work;
-        const double res = unbalanced_load_work - sum;
-        // energy scale = running max of summed component magnitudes (does not
-        // collapse to ~0 when KE and incremental IE cancel, e.g. free vibration)
-        const double mag = fabs(g_ke) + fabs(internal_energy) + fabs(damping_work)
-                         + fabs(unbalanced_load_work);
-        if (mag > eref_global) eref_global = mag;
-        const double err = (eref_global > 1.0e-16) ? 100.0 * res / eref_global : 0.0;
-
+        double out[ebkernel::NUM_ENERGY_COMPONENTS];
+        model_acc.step(dT, firstRecord,
+                       g_ke, g_internal_rate, g_damping_rate, g_unbalanced_rate, out);
         int col = timeOffset;
-        response(col + 0) = g_ke;
-        response(col + 1) = internal_energy;
-        response(col + 2) = damping_work;
-        response(col + 3) = unbalanced_load_work;
-        response(col + 4) = res;
-        response(col + 5) = err;
+        for (int c = 0; c < EBR_NUM_ENERGY_COMPONENTS; ++c)
+            response(col + c) = out[c];
     }
 
     for (int r = 0; r < numRegions; ++r) {
-        const double ke  = step_region_ke(r);
-        const double ie  = region_internal_energy(r);
-        const double dw  = region_damping_work(r);
-        const double ulw = region_unbalanced_load_work(r);
-        const double sum = ke + ie + dw;
-        const double res = ulw - sum;
-        const double mag = fabs(ke) + fabs(ie) + fabs(dw) + fabs(ulw);
-        if (mag > region_eref(r)) region_eref(r) = mag;
-        const double err = (region_eref(r) > 1.0e-16) ? 100.0 * res / region_eref(r) : 0.0;
-
+        double out[ebkernel::NUM_ENERGY_COMPONENTS];
+        region_acc[(size_t)r].step(dT, firstRecord,
+                                   step_region_ke[(size_t)r],
+                                   step_region_internal_rate[(size_t)r],
+                                   step_region_damping_rate[(size_t)r],
+                                   step_region_unbalanced_rate[(size_t)r], out);
         const int col = timeOffset + EBR_NUM_ENERGY_COMPONENTS * (1 + r);
-        response(col + 0) = ke;
-        response(col + 1) = ie;
-        response(col + 2) = dw;
-        response(col + 3) = ulw;
-        response(col + 4) = res;
-        response(col + 5) = err;
+        for (int c = 0; c < EBR_NUM_ENERGY_COMPONENTS; ++c)
+            response(col + c) = out[c];
     }
+
+    firstRecord = false;
 
     theOutputHandler->write(response);
 
@@ -594,30 +452,13 @@ EnergyBalanceRecorder::initialize(void)
         return -1;
     }
 
-    // size and zero the response and all per-region accumulators
+    // size and zero the response and all per-scope accumulators
     const int timeOffset = (echoTimeFlag == true) ? 1 : 0;
     response.resize(timeOffset + EBR_NUM_ENERGY_COMPONENTS * (1 + numRegions));
     response.Zero();
 
-    region_internal_energy.resize(numRegions);
-    region_damping_work.resize(numRegions);
-    region_unbalanced_load_work.resize(numRegions);
-    prev_region_internal_rate.resize(numRegions);
-    prev_region_damping_rate.resize(numRegions);
-    prev_region_unbalanced_rate.resize(numRegions);
-    region_eref.resize(numRegions);
-    step_region_ke.resize(numRegions);
-    step_region_internal_rate.resize(numRegions);
-    step_region_damping_rate.resize(numRegions);
-    step_region_unbalanced_rate.resize(numRegions);
-
-    region_internal_energy.Zero();
-    region_damping_work.Zero();
-    region_unbalanced_load_work.Zero();
-    prev_region_internal_rate.Zero();
-    prev_region_damping_rate.Zero();
-    prev_region_unbalanced_rate.Zero();
-    region_eref.Zero();
+    model_acc.reset();
+    region_acc.assign((size_t)numRegions, ebkernel::EnergyAccumulator());
 
     // self-describing column metadata (consumed by XML/binary streams; text
     // streams ignore tags - the layout is echoed once below and documented

@@ -37,12 +37,15 @@ private:
 	int writeModel();
 	int writeModelNodes();
 	int writeModelElements();
+	int writeModelSets();
 	int writeSections();
 
 	int initNodeSources();
 	int initElementSources();
+	int initDomainSources();
 	int recordResultsOnNodes();
 	int recordResultsOnElements();
+	int recordResultsOnDomain();
 
 	// helpers (operate on the channel at the given index in m_data, so the
 	// header never has to name private_data's nested channel types)
