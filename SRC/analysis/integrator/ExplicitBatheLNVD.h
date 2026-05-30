@@ -62,7 +62,8 @@ public:
     ExplicitBatheLNVD();
     ExplicitBatheLNVD(double p, double alpha_flac, int compute_critical_timestep_ = 0,
                       bool verbose = false, bool cflAbort = false,
-                      double divergenceFactor = 0.0);
+                      double divergenceFactor = 0.0,
+                      bool cflUseTangent = false, int cflRecomputeEvery = 0);
 
     // destructor
     ~ExplicitBatheLNVD();
@@ -83,7 +84,7 @@ public:
     const Vector &getVel(void);
 
     // conservative (central-difference) critical time step; <=0 if not computed
-    double getCriticalTimeStep(void) const;
+    double getCriticalTimeStep(void) const override;
     // infinity-norm of the most recent unbalanced force (dynamic-relaxation
     // convergence indicator); <0 until the first solve
     double getUnbalanceNorm(void) const;
@@ -139,6 +140,12 @@ private:
     double prevKE;
     bool firstStep;
     double lastUnbalanceNorm;       // |r|_inf at the most recent solve
+
+    // critical-time-step refresh policy (see ExplicitBathe)
+    bool cflUseTangent;
+    int cflRecomputeEvery;
+    int cflStepCount;
+    bool cflFirstComputation;
 };
 
 #endif

@@ -33,7 +33,8 @@ extern void computeCriticalTimestep(AnalysisModel *theModel,
                                     double &damped_min_dt,
                                     double &undamped_min_dt,
                                     int &damped_elem_tag,
-                                    int &undamped_elem_tag);
+                                    int &undamped_elem_tag,
+                                    bool useTangent);
 
 // OPS interface for creating the ExplicitBatheLNVD integrator
 //
@@ -48,6 +49,8 @@ void *OPS_ExplicitBatheLNVD(void) {
     int compute_critical_timestep = 0;
     bool verbose = false, cflAbort = false;
     double divergenceFactor = 0.0;
+    bool cflUseTangent = false;
+    int cflRecomputeEvery = 0;
 
     // p and alpha are the leading numeric positionals; read them with the typed
     // getter (Tcl- and OpenSeesPy-safe). Flags follow.
@@ -82,6 +85,19 @@ void *OPS_ExplicitBatheLNVD(void) {
                 int nd = 1;
                 OPS_GetDoubleInput(&nd, &divergenceFactor);
             }
+        } else if (strcmp(arg, "-tangent") == 0) {
+            cflUseTangent = true;
+            compute_critical_timestep = 1;
+        } else if (strcmp(arg, "-recompute") == 0) {
+            if (OPS_GetNumRemainingInputArgs() > 0) {
+                int nd = 1;
+                OPS_GetIntInput(&nd, &cflRecomputeEvery);
+            }
+            if (cflRecomputeEvery <= 0)
+                opserr << "WARNING ExplicitBatheLNVD -recompute expects a positive integer N "
+                          "(steps between dt_cr refreshes); dt_cr will be computed once\n";
+            cflUseTangent = true;
+            compute_critical_timestep = 1;
         } else {
             opserr << "WARNING ExplicitBatheLNVD - unknown option " << arg
                    << " (ignored)\n";
@@ -101,7 +117,8 @@ void *OPS_ExplicitBatheLNVD(void) {
 
     TransientIntegrator *theIntegrator =
         new ExplicitBatheLNVD(p, alpha_flac, compute_critical_timestep,
-                              verbose, cflAbort, divergenceFactor);
+                              verbose, cflAbort, divergenceFactor,
+                              cflUseTangent, cflRecomputeEvery);
     if (theIntegrator == 0)
         opserr << "WARNING - out of memory creating ExplicitBatheLNVD integrator\n";
     return theIntegrator;
@@ -121,13 +138,16 @@ ExplicitBatheLNVD::ExplicitBatheLNVD()
       damped_critical_element_tag(0),
       undamped_critical_element_tag(0),
       verbose(false), cflAbort(false), divergenceFactor(0.0),
-      prevKE(0.0), firstStep(true), lastUnbalanceNorm(-1.0)
+      prevKE(0.0), firstStep(true), lastUnbalanceNorm(-1.0),
+      cflUseTangent(false), cflRecomputeEvery(0), cflStepCount(0),
+      cflFirstComputation(true)
 {}
 
 ExplicitBatheLNVD::ExplicitBatheLNVD(double _p, double _alpha_flac,
                                      int compute_critical_timestep_,
                                      bool verbose_, bool cflAbort_,
-                                     double divergenceFactor_)
+                                     double divergenceFactor_,
+                                     bool cflUseTangent_, int cflRecomputeEvery_)
     : TransientIntegrator(INTEGRATOR_TAGS_ExplicitBatheLNVD),
       deltaT(0.0), p(_p), q0(0.0), q1(0.0), q2(0.0), alpha_flac(_alpha_flac),
       U_t(0), V_t(0), A_t(0),
@@ -140,7 +160,9 @@ ExplicitBatheLNVD::ExplicitBatheLNVD(double _p, double _alpha_flac,
       damped_critical_element_tag(0),
       undamped_critical_element_tag(0),
       verbose(verbose_), cflAbort(cflAbort_), divergenceFactor(divergenceFactor_),
-      prevKE(0.0), firstStep(true), lastUnbalanceNorm(-1.0)
+      prevKE(0.0), firstStep(true), lastUnbalanceNorm(-1.0),
+      cflUseTangent(cflUseTangent_), cflRecomputeEvery(cflRecomputeEvery_),
+      cflStepCount(0), cflFirstComputation(true)
 {
     q1 = (1.0 - 2.0*p) / (2.0*p*(1.0 - p));
     q2 = 0.5 - p * q1;
@@ -241,6 +263,7 @@ int ExplicitBatheLNVD::domainChanged() {
 
     if (compute_critical_timestep == 2)
         compute_critical_timestep = 1;
+    cflStepCount = 0;   // restart periodic-recompute cadence after a mesh change
 
     return 0;
 }
@@ -264,21 +287,35 @@ int ExplicitBatheLNVD::newStep(double _deltaT) {
                       "acceleration.\n";
     }
 
-    // critical time step (conservative central-difference limit), computed once
+    // critical time step (conservative central-difference limit); with
+    // -recompute N it is refreshed every N steps from the tangent stiffness
+    if (cflRecomputeEvery > 0 && compute_critical_timestep == 2) {
+        if (++cflStepCount >= cflRecomputeEvery) {
+            compute_critical_timestep = 1;
+            cflStepCount = 0;
+        }
+    }
     if (compute_critical_timestep == 1) {
+        damped_minimum_critical_timestep = std::numeric_limits<double>::infinity();
+        undamped_minimum_critical_timestep = std::numeric_limits<double>::infinity();
         computeCriticalTimestep(theModel,
                                 damped_minimum_critical_timestep,
                                 undamped_minimum_critical_timestep,
                                 damped_critical_element_tag,
-                                undamped_critical_element_tag);
+                                undamped_critical_element_tag,
+                                cflUseTangent);
         compute_critical_timestep = 2;
 
         const double dt_nb = EB_NB_STABILITY_FACTOR * damped_minimum_critical_timestep;
-        opserr << "ExplicitBatheLNVD: critical time step estimate\n"
-               << "  central-difference limit (conservative): "
-               << damped_minimum_critical_timestep
-               << " @ element #" << damped_critical_element_tag << "\n"
-               << "  Noh-Bathe limit (~" << EB_NB_STABILITY_FACTOR << "x): " << dt_nb << "\n";
+        if (cflFirstComputation || verbose) {
+            opserr << "ExplicitBatheLNVD: critical time step estimate"
+                   << (cflUseTangent ? " (tangent)" : "") << "\n"
+                   << "  central-difference limit (conservative): "
+                   << damped_minimum_critical_timestep
+                   << " @ element #" << damped_critical_element_tag << "\n"
+                   << "  Noh-Bathe limit (~" << EB_NB_STABILITY_FACTOR << "x): " << dt_nb << "\n";
+        }
+        cflFirstComputation = false;
     }
 
     if (cflAbort && damped_minimum_critical_timestep > 0.0) {

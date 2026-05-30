@@ -96,6 +96,39 @@ def lnvd_dynamic_relaxation():
           (ops.nodeDisp(2, 1), P / k))
 
 
+# ---------------------------------------------------------------------------
+# 3) Adaptive sub-stepping for a time history.
+#    You keep YOUR dt (e.g. the ground-motion sampling step) for loads and
+#    output, but query the integrator's critical step and sub-divide each
+#    interval so every internal step is stable. Each sub-step is a real,
+#    fully-committed step (correct for nonlinear materials) -- this is the
+#    right way to "lower dt if it's below critical".
+# ---------------------------------------------------------------------------
+def adaptive_substep_skeleton(dt_record, n_intervals, safety=0.9):
+    # ... build model with distributed (element) mass, system Diagonal,
+    #     algorithm Linear, integrator ExplicitBathe with -cfl or -recompute ...
+    ops.integrator('ExplicitBathe', 0.54, '-recompute', 50)   # refresh dt_cr
+    ops.analysis('Transient')
+    ops.analyze(1, 1e-9)                       # prime: triggers the dt_cr compute
+    import math
+    for _ in range(n_intervals):
+        dt_cr = ops.criticalTimeStep()         # queryable (feature a)
+        if dt_cr <= 0:                         # nodal-mass-only model: no element limit
+            n_sub = 1
+        else:
+            n_sub = max(1, math.ceil(dt_record / (safety * dt_cr)))
+        ops.analyze(n_sub, dt_record / n_sub)  # stable, fully-committed sub-steps
+        # Notes:
+        # - n_sub is re-queried EACH interval, so it adapts as the model softens
+        #   or stiffens -- but it is FIXED within an interval, lagged by the
+        #   -recompute period. A sudden mid-interval stiffening (e.g. contact
+        #   impact) is not caught until the next interval; pair with -cflAbort if
+        #   you need the run to stop rather than go unstable on such an event.
+        # - criticalTimeStep() returns the CONSERVATIVE central-difference limit
+        #   (2/omega). Noh-Bathe is stable to ~2x that, so safety=0.9 here is
+        #   ~2x extra-safe; if you trust the Noh-Bathe factor you can raise it.
+
+
 if __name__ == '__main__':
     sdof_free_vibration()
     lnvd_dynamic_relaxation()
