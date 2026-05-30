@@ -1176,6 +1176,68 @@ namespace mpco {
 			std::vector<double> w; // optional quadrature weights, one per gp
 		};
 
+		/* ----------------------------------------------------------------- *
+		 * Standard (non-custom) Gauss rule -> parametric GP coords + weights *
+		 *                                                                     *
+		 * GP_PARAM is row-major [num_gp x ndir]. The row order MUST match the *
+		 * element's own integration-point loop (see LEDGER_quirks: GP order   *
+		 * is per-element, NOT a standard tensor sweep) so that GP_PARAM[k]     *
+		 * pairs with result gauss_id k. ndir = parametric dimension (decoupled *
+		 * from polynomial ORDER): line 1, quad/tri 2, hex/tet 3. tri/tet are   *
+		 * barycentric free-coords (first ndir; last = 1 - sum). Returns false  *
+		 * for rules not tabulated -> caller omits QUADRATURE for that bucket.  *
+		 * All abscissae/weights verified against the canonical element source. *
+		 * ----------------------------------------------------------------- */
+		inline bool getStandardQuadrature(
+			ElementIntegrationRuleType::Enum rule,
+			std::vector<double>& gp_param, std::vector<double>& gp_weight,
+			int& num_gp, int& ndir)
+		{
+			gp_param.clear(); gp_weight.clear(); num_gp = 0; ndir = 0;
+			const double a = 0.5773502691896258;   // 1/sqrt(3)      (2-pt GL)
+			const double b = 0.7745966692414834;   // sqrt(0.6)      (3-pt GL)
+			const double w5 = 5.0 / 9.0, w8 = 8.0 / 9.0;
+			switch (rule) {
+			// ---- line, domain [-1,1] -------------------------------------
+			case ElementIntegrationRuleType::Line_GaussLegendre_1:
+				ndir = 1; num_gp = 1; gp_param = { 0.0 }; gp_weight = { 2.0 }; return true;
+			case ElementIntegrationRuleType::Line_GaussLegendre_2:
+				ndir = 1; num_gp = 2; gp_param = { -a, a }; gp_weight = { 1.0, 1.0 }; return true;
+			case ElementIntegrationRuleType::Line_GaussLegendre_3:
+				ndir = 1; num_gp = 3; gp_param = { -b, 0.0, b }; gp_weight = { w5, w8, w5 }; return true;
+			// ---- quad, domain [-1,1]^2 -----------------------------------
+			case ElementIntegrationRuleType::Quadrilateral_GaussLegendre_1:
+				ndir = 2; num_gp = 1; gp_param = { 0.0, 0.0 }; gp_weight = { 4.0 }; return true;
+			case ElementIntegrationRuleType::Quadrilateral_GaussLegendre_2: // FourNodeQuad: CCW
+				ndir = 2; num_gp = 4;
+				gp_param = { -a,-a,  a,-a,  a, a,  -a, a };
+				gp_weight = { 1.0, 1.0, 1.0, 1.0 }; return true;
+			case ElementIntegrationRuleType::Quadrilateral_GaussLegendre_3: { // NineNodeQuad: corners,edges,center
+				ndir = 2; num_gp = 9;
+				gp_param = { -b,-b,  b,-b,  b, b,  -b, b,    // 4 CCW corners
+				              0,-b,  b, 0,  0, b,  -b, 0,    // 4 CCW edge midpoints
+				              0, 0 };                        // center
+				const double wc = w5 * w5, we = w8 * w5, w0 = w8 * w8;
+				gp_weight = { wc, wc, wc, wc,  we, we, we, we,  w0 }; return true; }
+			// ---- tri, barycentric (ndir=2) -------------------------------
+			case ElementIntegrationRuleType::Triangle_GaussLegendre_1: // Tri31
+				ndir = 2; num_gp = 1; gp_param = { 1.0 / 3.0, 1.0 / 3.0 }; gp_weight = { 0.5 }; return true;
+			// ---- tet, barycentric (ndir=3) -------------------------------
+			case ElementIntegrationRuleType::Tetrahedron_GaussLegendre_1: // FourNodeTetrahedron: 1 GP (not 4)
+				ndir = 3; num_gp = 1; gp_param = { 0.25, 0.25, 0.25 }; gp_weight = { 1.0 / 6.0 }; return true;
+			// ---- hex, domain [-1,1]^3 ------------------------------------
+			case ElementIntegrationRuleType::Hexahedron_GaussLegendre_1:
+				ndir = 3; num_gp = 1; gp_param = { 0.0, 0.0, 0.0 }; gp_weight = { 8.0 }; return true;
+			case ElementIntegrationRuleType::Hexahedron_GaussLegendre_2: { // Brick: i,j,k lexicographic (z fastest)
+				ndir = 3; num_gp = 8;
+				gp_param = { -a,-a,-a,  -a,-a, a,  -a, a,-a,  -a, a, a,
+				              a,-a,-a,   a,-a, a,   a, a,-a,   a, a, a };
+				gp_weight = { 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 }; return true; }
+			default:
+				return false; // Hex_GL_3 (27pt), Tri_GL_2/2B/2C, Tet_GL_2 not yet tabulated
+			}
+		}
+
 		struct ElementWithSameCustomIntRuleCollection
 		{
 			typedef std::vector<Element*> collection_type;
