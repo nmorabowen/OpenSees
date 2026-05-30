@@ -122,3 +122,12 @@ __pycache__
 
 # Build-time artifact emitted by build_inno_installer.ps1
 /Ladruno_scripts/banner_ASCII_utf8bom.txt
+
+# Ladruno test bed: OpenSees FE_Datastore artifacts from database round-trip
+# tests (database_roundtrip writes to a tmpdir, so these are only a safety net)
+# + a module copied into tests/ for a local pytest run (CI does the same).
+/tests/*.IDs.*
+/tests/*.VECs.*
+/tests/*.TIME.*
+/tests/opensees.so
+/tests/opensees.pyd
