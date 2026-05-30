@@ -219,3 +219,6 @@ Nothing here blocks using `BezierTri6` for straight-sided 2D continuum problems 
   `REGISTRATION_GUIDE.md` banner marks it superseded + records the two divergences
   (linkage, placeholder); transient log/JSON removed (test scripts kept at project root).
   (4) **Follow-ups parked** — see *Deferred follow-ups* table above. v1 complete.
+- 2026-05-30 — **MERGED to `ladruno`** via PR #6 (element + registration + this ADR;
+  `ELE_TAG_BezierTri6 = 272`). `ladruno` is the source of truth — the element is now in
+  the integration branch. This README-index + log entry complete the picture on ladruno.

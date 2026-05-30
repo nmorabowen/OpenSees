@@ -34,6 +34,8 @@ When starting a new plan, copy [[_template]] and rename.
 - [[03_mpco_ladruno]] — **MPCO_Ladruno**: modular recorder fork (sibling of the frozen MPCORecorder), apeGmsh-native `.ladruno` schema, global + envelope results. (ADR, draft)
   - [[mpco_ladruno_schema_v1]] — the on-disk HDF5 schema spec (self-describing BASIS/QUADRATURE for Bézier + Belytschko). (draft)
   - [[mpco_ladruno_element_contract]] — the element-side `setResponse` contract elements implement to be recorded. (draft)
+- [[04_bezier_elements]] — **BezierTri6**: 6-node quadratic Bézier triangle (Kadapa 2018) — non-negative lumped mass for explicit dynamics + consistent B-bar. v1 = straight-sided Tri6, **merged** (`ELE_TAG 272`, PR #6); implements the [[mpco_ladruno_element_contract]]. (ADR)
+  - [[bezier_apegmsh_integration]] — how apeGmsh meshes drive BezierTri6 (direct-drive today; typed-primitive deferred). Regression test: `Ladruno_scripts/bezier_tests/test_bezier_tri6.py`.
 
 ## Companion folder
 
