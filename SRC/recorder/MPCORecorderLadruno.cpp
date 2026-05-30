@@ -705,6 +705,11 @@ int MPCORecorderLadruno::writeModelSets()
 		}
 	}
 
+	// Nothing to describe -> don't create an empty MODEL/SETS group (it adds
+	// benign HDF5 open-probe noise on region-free models for no benefit).
+	if (set_tags.empty())
+		return 0;
+
 	std::stringstream ss_sets;
 	ss_sets << "MODEL_STAGE[" << info.current_model_stage_id << "]/MODEL/SETS";
 	hid_t h_sets = mpcolns::h5::group::create(
