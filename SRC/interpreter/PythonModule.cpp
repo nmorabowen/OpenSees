@@ -578,6 +578,21 @@ initopensees(void)
 #ifdef OPENSEES_VERSION
         PySys_FormatStdout("Ladruno OpenSees build: %s\n", OPENSEES_VERSION);
 #endif
+        // Ladruno feature list. Auto-generated between FEATURES-START/END by
+        // Ladruno_scripts/patch_banner.py from Ladruno_scripts/banner_features.txt.
+        // Edit that .txt then re-run the script — do not hand-edit between markers.
+        // FEATURES-START
+        static const char *kFeatures =
+"      Ladruno fork — active features:\n"
+"        • OpenSeesPyMP — import openseesmp (MPI-parallel Python)\n"
+"        • EnergyBalance recorder (per-region energy sidecar)\n"
+"        • Explicit Noh–Bathe integrators (ExplicitBathe / LNVD)\n"
+"        • Queryable critical time step (dt_cr)\n"
+"        • BezierTri6 — quadratic Bézier triangle (Kadapa 2018)\n"
+"        • MPCO_Ladruno — modular .mpco recorder (namespace mpcol)\n"
+"\n";
+        // FEATURES-END
+        PySys_FormatStdout("%s\n", kFeatures);
         PySys_FormatStdout("Suppress this banner with LADRUNO_OPENSEES_QUIET=1\n\n");
     }
 
