@@ -87,6 +87,7 @@ target_sources(OPS_Analysis
        GimmeMCK.cpp                     # MHS
        ExplicitBathe.cpp                # JAA
        ExplicitBatheLNVD.cpp            # JAA
+       CriticalTimeStep.cpp             # nmb - shared dt_cr eigensolve
        ExplicitDifferenceStatic.cpp     # JAA
     PUBLIC
        AlphaOS.h
@@ -134,6 +135,7 @@ target_sources(OPS_Analysis
        GimmeMCK.h
        ExplicitBathe.h
        ExplicitBatheLNVD.h
+       CriticalTimeStep.h
        ExplicitDifferenceStatic.h
 )
 

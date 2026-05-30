@@ -27,14 +27,10 @@
 #include <string.h>
 #include <stdlib.h>
 
-// the per-element critical-time-step eigensolve lives in ExplicitBathe.cpp;
-// reuse it so the two integrators cannot drift out of sync.
-extern void computeCriticalTimestep(AnalysisModel *theModel,
-                                    double &damped_min_dt,
-                                    double &undamped_min_dt,
-                                    int &damped_elem_tag,
-                                    int &undamped_elem_tag,
-                                    bool useTangent);
+// The per-element critical-time-step eigensolve is shared with ExplicitBathe and
+// lives in CriticalTimeStep.{h,cpp} (pulled in via ExplicitBatheLNVD.h). This
+// replaces the former hand-copied `extern`, which could silently drift from the
+// definition.
 
 // OPS interface for creating the ExplicitBatheLNVD integrator
 //
@@ -51,6 +47,7 @@ void *OPS_ExplicitBatheLNVD(void) {
     double divergenceFactor = 0.0;
     bool cflUseTangent = false;
     int cflRecomputeEvery = 0;
+    CTSLumping lumping = CTSLumping::RowSum;
 
     // p and alpha are the leading numeric positionals; read them with the typed
     // getter (Tcl- and OpenSeesPy-safe). Flags follow.
@@ -98,6 +95,14 @@ void *OPS_ExplicitBatheLNVD(void) {
                           "(steps between dt_cr refreshes); dt_cr will be computed once\n";
             cflUseTangent = true;
             compute_critical_timestep = 1;
+        } else if (strcmp(arg, "-lump") == 0) {
+            if (OPS_GetNumRemainingInputArgs() > 0) {
+                const char *m = OPS_GetString();
+                if (strcmp(m, "diagonal") == 0)      lumping = CTSLumping::Diagonal;
+                else if (strcmp(m, "rowsum") == 0)   lumping = CTSLumping::RowSum;
+                else opserr << "WARNING ExplicitBatheLNVD - unknown -lump " << m
+                            << " (use rowsum|diagonal; keeping rowsum)\n";
+            }
         } else {
             opserr << "WARNING ExplicitBatheLNVD - unknown option " << arg
                    << " (ignored)\n";
@@ -118,7 +123,7 @@ void *OPS_ExplicitBatheLNVD(void) {
     TransientIntegrator *theIntegrator =
         new ExplicitBatheLNVD(p, alpha_flac, compute_critical_timestep,
                               verbose, cflAbort, divergenceFactor,
-                              cflUseTangent, cflRecomputeEvery);
+                              cflUseTangent, cflRecomputeEvery, lumping);
     if (theIntegrator == 0)
         opserr << "WARNING - out of memory creating ExplicitBatheLNVD integrator\n";
     return theIntegrator;
@@ -140,14 +145,15 @@ ExplicitBatheLNVD::ExplicitBatheLNVD()
       verbose(false), cflAbort(false), divergenceFactor(0.0),
       prevKE(0.0), firstStep(true), lastUnbalanceNorm(-1.0),
       cflUseTangent(false), cflRecomputeEvery(0), cflStepCount(0),
-      cflFirstComputation(true)
+      cflFirstComputation(true), lumping(CTSLumping::RowSum)
 {}
 
 ExplicitBatheLNVD::ExplicitBatheLNVD(double _p, double _alpha_flac,
                                      int compute_critical_timestep_,
                                      bool verbose_, bool cflAbort_,
                                      double divergenceFactor_,
-                                     bool cflUseTangent_, int cflRecomputeEvery_)
+                                     bool cflUseTangent_, int cflRecomputeEvery_,
+                                     CTSLumping lumping_)
     : TransientIntegrator(INTEGRATOR_TAGS_ExplicitBatheLNVD),
       deltaT(0.0), p(_p), q0(0.0), q1(0.0), q2(0.0), alpha_flac(_alpha_flac),
       U_t(0), V_t(0), A_t(0),
@@ -162,7 +168,7 @@ ExplicitBatheLNVD::ExplicitBatheLNVD(double _p, double _alpha_flac,
       verbose(verbose_), cflAbort(cflAbort_), divergenceFactor(divergenceFactor_),
       prevKE(0.0), firstStep(true), lastUnbalanceNorm(-1.0),
       cflUseTangent(cflUseTangent_), cflRecomputeEvery(cflRecomputeEvery_),
-      cflStepCount(0), cflFirstComputation(true)
+      cflStepCount(0), cflFirstComputation(true), lumping(lumping_)
 {
     q1 = (1.0 - 2.0*p) / (2.0*p*(1.0 - p));
     q2 = 0.5 - p * q1;
@@ -296,14 +302,13 @@ int ExplicitBatheLNVD::newStep(double _deltaT) {
         }
     }
     if (compute_critical_timestep == 1) {
-        damped_minimum_critical_timestep = std::numeric_limits<double>::infinity();
-        undamped_minimum_critical_timestep = std::numeric_limits<double>::infinity();
-        computeCriticalTimestep(theModel,
-                                damped_minimum_critical_timestep,
-                                undamped_minimum_critical_timestep,
-                                damped_critical_element_tag,
-                                undamped_critical_element_tag,
-                                cflUseTangent);
+        // shared eigensolve (DSYGV/DGGEV, relative-beta, chosen lumping, MPI_MIN
+        // reduced across ranks). Fresh CTSResult, so no manual reset needed.
+        CTSResult r = computeCriticalTimeStep(theModel, cflUseTangent, lumping);
+        damped_minimum_critical_timestep   = r.damped_dt;
+        undamped_minimum_critical_timestep = r.undamped_dt;
+        damped_critical_element_tag        = r.damped_tag;
+        undamped_critical_element_tag      = r.undamped_tag;
         compute_critical_timestep = 2;
 
         const double dt_nb = EB_NB_STABILITY_FACTOR * damped_minimum_critical_timestep;
