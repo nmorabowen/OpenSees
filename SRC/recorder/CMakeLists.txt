@@ -56,9 +56,14 @@ if(HDF5_FOUND)
       target_sources(OPS_Recorder
         PRIVATE
           MPCORecorder.cpp
+          MPCORecorderLadruno.cpp
           VTKHDF_Recorder.cpp
         PUBLIC
          MPCORecorder.h
+         MPCORecorderLadruno.h
+         MPCOL_Types.h
+         MPCOL_Hdf5.h
+         MPCOL_ResultIO.h
          VTKHDF_Recorder.h
       )
    endif()

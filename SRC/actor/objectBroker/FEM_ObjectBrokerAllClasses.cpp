@@ -570,6 +570,7 @@
 #include "DriftRecorder.h"
 #ifdef _HDF5
 #include "MPCORecorder.h"
+#include "MPCORecorderLadruno.h"
 #include "VTKHDF_Recorder.h"
 #endif // _HDF5
 #include "VTK_Recorder.h"
@@ -2798,6 +2799,9 @@ FEM_ObjectBrokerAllClasses::getPtrNewRecorder(int classTag)
 #ifdef _HDF5
 	case RECORDER_TAGS_MPCORecorder:
 	  return new MPCORecorder();
+
+	case RECORDER_TAGS_MPCOLadrunoRecorder:
+	  return new MPCORecorderLadruno();
 
   case RECORDER_TAGS_VTKHDF_Recorder:
     return new VTKHDF_Recorder();
