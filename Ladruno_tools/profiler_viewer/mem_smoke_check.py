@@ -1,10 +1,9 @@
 """P4 memory-counter smoke -- checker (venv python, h5py).
 
 Reads mem_smoke.h5 via ProfilerResults.memory() and asserts the P4 per-type
-Matrix/Vector counters were populated and are self-consistent:
-  * matrix_live > 0 and vector_live > 0   (the analysis allocated both)
-  * peak_bytes  > 0 and >= max(matrix_live, vector_live)
-  * id_live == 0                           (ID counters deferred to a follow-up)
+Matrix/Vector/ID counters were populated and are self-consistent:
+  * matrix_live > 0, vector_live > 0, id_live > 0   (the analysis allocated all)
+  * peak_bytes  > 0 and >= max(matrix_live, vector_live, id_live)
 
     python mem_smoke_check.py <out_dir>
 """
@@ -39,13 +38,13 @@ def main() -> int:
 
     check(ml > 0, f"matrix_live > 0 (got {ml})")
     check(vl > 0, f"vector_live > 0 (got {vl})")
+    check(il > 0, f"id_live > 0 (got {il})")
     check(pk > 0, f"peak_bytes > 0 (got {pk})")
-    check(pk >= max(ml, vl), f"peak_bytes >= max(matrix_live, vector_live) ({pk} >= {max(ml, vl)})")
-    check(il == 0, f"id_live == 0 (ID counters deferred) (got {il})")
+    check(pk >= max(ml, vl, il), f"peak_bytes >= max(matrix,vector,id)_live ({pk} >= {max(ml, vl, il)})")
 
     print("\n" + "=" * 52)
     if problems == 0:
-        print("MEM_SMOKE_CHECK: ALL PASS (per-type Matrix/Vector counters populated)")
+        print("MEM_SMOKE_CHECK: ALL PASS (per-type Matrix/Vector/ID counters populated)")
         return 0
     print(f"MEM_SMOKE_CHECK: {problems} PROBLEM(S)")
     return 1
