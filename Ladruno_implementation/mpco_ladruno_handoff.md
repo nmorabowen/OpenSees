@@ -73,7 +73,7 @@ result + `STEP[T]`/`TIME[T]` axes (was per-step `DATA/STEP_<k>`). New
 `.ladruno` still diffs 1e-12 vs per-step `.mpco`. `make_synthetic.py` emits chunked.
 Full regression green.
 
-## KIND + LOCAL_AXES DONE — PR #37
+## KIND + LOCAL_AXES DONE — PR #38
 - **KIND**: `-kind transient|static|eigen` option (default static), auto-`eigen` when a
   modal result is requested. Written at `MODEL_STAGE/KIND`.
 - **LOCAL_AXES**: `writeModelLocalAxes()` writes per-class

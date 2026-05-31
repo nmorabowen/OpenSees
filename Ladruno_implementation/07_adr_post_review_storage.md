@@ -97,9 +97,9 @@ shared validator) — nothing external consumes v1 yet, so there is no break to 
 
 ## Remaining (tracked, not decided away)
 Done since this ADR: standard-rule QUADRATURE + GLOBAL_GP_COORDS (incl. higher-order),
-chunked layout (D3 ✅), **`KIND` ✅** (`-kind` + eigen auto, PR #37), **`LOCAL_AXES` ✅**
+chunked layout (D3 ✅), **`KIND` ✅** (`-kind` + eigen auto, PR #38), **`LOCAL_AXES` ✅**
 (per-class quaternion FRAME from the element `"localAxes"` response; ElasticBeam3d wired,
-PR #37). Still open: extend `"localAxes"` to the remaining beams (dispBeam/forceBeam/
+PR #38). Still open: extend `"localAxes"` to the remaining beams (dispBeam/forceBeam/
 ElasticBeam2d — identical `getLocalAxes` pattern); **shared validator + CI round-trip
 oracle (D5)** then **freeze `FORMAT_VERSION=1`**; per-class result column-naming still in
 the reader catalog (make `COLUMN_MAP/COMP_NAMES` authoritative); **parallel path**
