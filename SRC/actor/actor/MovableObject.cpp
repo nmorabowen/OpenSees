@@ -33,23 +33,24 @@
 
 #include <MovableObject.h>
 #include <OPS_Globals.h>
+#include <profiler/ProfilerMacros.h>   // Ladruno P4: TaggedObject live-component census
 
 MovableObject::MovableObject(int cTag, int dTag)
 :classTag(cTag), dbTag(dTag)
 {
-
+  OPS_PROFILE_CENSUS_BORN(classTag);   // Ladruno P4
 }
 
 
 MovableObject::MovableObject(int theTag)
 :classTag(theTag), dbTag(0)
 {
-
+  OPS_PROFILE_CENSUS_BORN(classTag);   // Ladruno P4
 }
 
 MovableObject::~MovableObject()
 {
-
+  OPS_PROFILE_CENSUS_DIED(classTag);   // Ladruno P4
 }
 
 

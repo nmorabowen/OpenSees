@@ -151,6 +151,13 @@ struct ThreadState {
     int64_t cumAllocs = 0;          // cumulative alloc events (never decremented)
     int64_t liveCount = 0;          // live alloc count (alloc++ / free--)
     int64_t liveBytesByType[NUM_ALLOC_TYPES] = {0, 0, 0};  // per-type live split
+
+    // P4 TaggedObject census: live MovableObject count keyed by classTag
+    // (born++ in the MovableObject ctor, died-- in the dtor). Thread-local like
+    // the byte counters; merged at report time. classTag is a plain member of
+    // MovableObject so it is valid through the dtor (TaggedObject::getClassTag is
+    // virtual and would be unsafe in a base ctor/dtor).
+    std::map<int, int64_t> componentLive;
 };
 
 // ===========================================================================
@@ -320,6 +327,18 @@ inline void countFree(int64_t bytes, int type) noexcept {
     ts.liveBytes -= bytes;
     --ts.liveCount;
     if (type >= 0 && type < NUM_ALLOC_TYPES) ts.liveBytesByType[type] -= bytes;
+}
+
+// TaggedObject census (P4): bump/decrement the live count for a classTag. Called
+// from the MovableObject ctor/dtor via OPS_PROFILE_CENSUS_BORN/DIED (which apply
+// the mem() gate). One std::map op on a profiling run; off-path cost is the gate.
+inline void countComponentBorn(int classTag) noexcept {
+    ThreadState& ts = theProfiler().threadState();
+    ++ts.componentLive[classTag];
+}
+inline void countComponentDied(int classTag) noexcept {
+    ThreadState& ts = theProfiler().threadState();
+    --ts.componentLive[classTag];
 }
 #endif // !OPS_PROFILE_DISABLE
 
