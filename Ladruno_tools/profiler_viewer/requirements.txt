@@ -1,0 +1,13 @@
+# Profiler viewer backend (Ladruno_tools/profiler_viewer)
+# Install:  python -m pip install -r requirements.txt
+
+# Data layer (ProfilerResults loader + schema + smokes)
+h5py>=3.10
+numpy>=1.24
+
+# HTTP backend (profiler_api.py, P7)
+fastapi>=0.115
+uvicorn[standard]>=0.30
+
+# Tests (FastAPI TestClient is backed by httpx)
+httpx>=0.27
