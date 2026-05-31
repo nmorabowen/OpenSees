@@ -65,16 +65,28 @@ Higher-order GLOBAL_GP_COORDS for all three source-verifiable elements:
 - Gate `standard_quad_{model,check}.py` covers quad4/tri3/hex8/quad9/tet10/hex20; all
   CONFORMANT; no regression (80/80·96/96·144/144·72/72·108/108·pytest 10/10).
 
-## Resume (next session) — finish Step E
-`"continue MPCO_Ladruno: importable basis oracle + synthetic fixture"` —
-1. **Importable oracle + fixtures.** Move the checker's inline basis into `ladruno_basis.py`
-   (bary/tri/tet + quad9/tet10/hex20), add `NDIR`+`GLOBAL_GP_COORDS`+a simplex group to
-   `make_synthetic.py`, extend pytest. (27N Lagrange hex: no element maps; 6N Lagrange
-   tri / 3N line: no standard-rule element — beams use the custom force-based path.)
-3. **Minor:** geom-derived `ORDER` for 9N/10N still reports linear `(1[,1])` (NDIR is
-   authoritative so non-load-bearing) — bump to real polynomial order if convenient.
-4. **Step F (D3, separate) — chunked time-series** `[T×nIds×nComp]` replacing per-step
-   `DATA/STEP_<k>`. Then KIND/LOCAL_AXES, shared validator, parallel.
+## D3 chunked time-series DONE — PR #35
+`StreamingSink` now writes one chunked+shuffle+deflate `DATA[T×nIds×nComp]` dataset per
+result + `STEP[T]`/`TIME[T]` axes (was per-step `DATA/STEP_<k>`). New
+`MPCOL_Hdf5.h` `createTimeSeries3d`/`appendSlab3d`/`appendDouble1d`/`appendInt1d`. Reader
+`ladruno_format.iter_step_slices` reads chunked-or-legacy transparently → chunked
+`.ladruno` still diffs 1e-12 vs per-step `.mpco`. `make_synthetic.py` emits chunked.
+Full regression green.
+
+## Resume (next session) — to finish the recorder (Tier 1 remaining)
+1. **`KIND` per stage** — hardcoded `"static"` (`MPCORecorderLadruno.cpp:391`); emit
+   `transient|static|eigen` from the analysis/stage type.
+2. **`LOCAL_AXES`** — still unwritten (apeGmsh's #1 gap). Derive beam frame from
+   `CrdTransf`/`vecxz` → quaternion (static) + opt-in per-step frame (chunked, §7.0 shape)
+   for co-rotational.
+3. **Shared validator + CI round-trip oracle (D5)** — importable module both readers gate
+   on; then **freeze `FORMAT_VERSION=1`**.
+4. **Step E cleanup** — move the checker's inline basis into `ladruno_basis.py`
+   (bary/tri/tet + quad9/tet10/hex20); add `NDIR`+`GLOBAL_GP_COORDS`+simplex to
+   `make_synthetic.py`; `COLUMN_MAP/COMP_NAMES` authoritative names.
+5. **Tier 2 — parallel** (`sendSelf`/`recvSelf` + `part-N` + `Allreduce`); **Tier 3 —
+   envelopes** (wire `EnvelopeSink`).
+- **Minor:** geom-derived `ORDER` for 9N/10N/20N reports linear (NDIR authoritative).
 
 ## Build / run recipe
 - Worktree build tree is warm. Incremental: `cmd /c "Ladruno_scripts\setup_env.bat

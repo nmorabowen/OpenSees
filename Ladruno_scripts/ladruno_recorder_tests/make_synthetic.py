@@ -23,6 +23,17 @@ def _s(g: h5py.Group, name: str, value: str) -> None:
     g.attrs[name] = np.bytes_(value.encode("utf-8"))
 
 
+def _chunked(g: h5py.Group, slabs, steps, times) -> None:
+    """Write the canonical chunked time-series layout (schema D3): a single
+    DATA[T×nIds×nComp] extensible dataset + STEP[T] + TIME[T] axes. `slabs` is a
+    list of [nIds×nComp] arrays, one per step."""
+    data = np.stack([np.atleast_2d(a) for a in slabs], axis=0)
+    g.create_dataset("DATA", data=data, maxshape=(None,) + data.shape[1:],
+                     chunks=True, shuffle=True, compression="gzip", compression_opts=4)
+    g.create_dataset("STEP", data=np.asarray(steps, dtype=np.int32), maxshape=(None,))
+    g.create_dataset("TIME", data=np.asarray(times, dtype=np.float64), maxshape=(None,))
+
+
 def build(path: str) -> None:
     with h5py.File(path, "w") as f:
         info = f.create_group("INFO")
@@ -124,12 +135,10 @@ def build(path: str) -> None:
         disp.attrs["TYPE"] = 0
         disp.attrs["DATA_TYPE"] = 1
         disp.create_dataset("ID", data=node_ids)
-        ddata = disp.create_group("DATA")
-        for k in (0, 1):
-            arr = (k + 1) * 1e-3 * np.arange(1, 11, dtype=np.float64).reshape(5, 2)
-            ds = ddata.create_dataset(f"STEP_{k}", data=arr)
-            ds.attrs["STEP"] = k
-            ds.attrs["TIME"] = float(k)
+        _chunked(
+            disp,
+            [(k + 1) * 1e-3 * np.arange(1, 11, dtype=np.float64).reshape(5, 2) for k in (0, 1)],
+            steps=[0, 1], times=[0.0, 1.0])
 
         # ON_ELEMENTS/stress (quad): 4 GP x 3 comps = 12 cols, multiplicity 1
         on_e = res.create_group("ON_ELEMENTS")
@@ -145,10 +154,7 @@ def build(path: str) -> None:
         _s(cm, "COMP_NAMES", "\n".join(["sigma_xx,sigma_yy,sigma_xy"] * 4))
         sb.create_dataset("SECTION_MAP", data=np.array([[-1, -1, -1, -1]], dtype=np.int64))
         sb.create_dataset("ID", data=np.array([10], dtype=np.int64))
-        sd = sb.create_group("DATA")
-        ds = sd.create_dataset("STEP_0", data=np.arange(12, dtype=np.float64).reshape(1, 12))
-        ds.attrs["STEP"] = 0
-        ds.attrs["TIME"] = 0.0
+        _chunked(sb, [np.arange(12, dtype=np.float64).reshape(1, 12)], steps=[0], times=[0.0])
 
         # ON_ELEMENTS/section.fiber.stress (beam): 2 GP x (1 sec x 3 fibers) x 1 comp = 6
         fb = on_e.create_group("section.fiber.stress").create_group("28-DispBeamColumn2d[1000:1:0]")
@@ -164,10 +170,7 @@ def build(path: str) -> None:
         _s(cmf, "COMP_NAMES", "sigma\nsigma")
         fb.create_dataset("SECTION_MAP", data=np.array([[1, 1]], dtype=np.int64))
         fb.create_dataset("ID", data=np.array([20], dtype=np.int64))
-        fd = fb.create_group("DATA")
-        ds = fd.create_dataset("STEP_0", data=np.arange(6, dtype=np.float64).reshape(1, 6) * 10.0)
-        ds.attrs["STEP"] = 0
-        ds.attrs["TIME"] = 0.0
+        _chunked(fb, [np.arange(6, dtype=np.float64).reshape(1, 6) * 10.0], steps=[0], times=[0.0])
 
 
 if __name__ == "__main__":

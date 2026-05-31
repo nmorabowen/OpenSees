@@ -45,12 +45,9 @@ def normalize_nodal_h5(path: str) -> dict[tuple, float]:
                 ids = np.asarray(grp["ID"][...]).reshape(-1)  # ID may be [nN] or [nN×1]
                 comps = [c for c in lf._attr(grp, "COMPONENTS").split(",") if c]
                 rkey = _norm(rname)
-                for sname in grp["DATA"]:
-                    ds = grp["DATA"][sname]
-                    if ds.ndim != 2:
-                        continue
-                    step = int(lf._attr(ds, "STEP"))
-                    arr = ds[...]
+                # handles both the chunked .ladruno DATA[T×nIds×nComp] layout and
+                # the per-step .mpco DATA/STEP_<k> layout.
+                for step, arr in lf.iter_step_slices(grp):
                     for r, tag in enumerate(ids):
                         for c, cn in enumerate(comps):
                             if c < arr.shape[1]:

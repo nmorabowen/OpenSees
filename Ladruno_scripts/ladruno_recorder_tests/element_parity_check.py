@@ -56,12 +56,8 @@ def normalize_element_h5(path: str) -> dict[tuple, float]:
                     if "ID" not in bgrp or "DATA" not in bgrp:
                         continue
                     ids = np.asarray(bgrp["ID"][...]).reshape(-1)
-                    for sname in bgrp["DATA"]:
-                        ds = bgrp["DATA"][sname]
-                        if ds.ndim != 2:
-                            continue
-                        step = int(lf._attr(ds, "STEP"))
-                        arr = ds[...]
+                    # chunked .ladruno DATA[T×nElem×nCol] or per-step .mpco DATA/STEP_<k>
+                    for step, arr in lf.iter_step_slices(bgrp):
                         for r, tag in enumerate(ids):
                             for j in range(arr.shape[1]):
                                 out[(int(tag), rkey, j, step)] = float(arr[r, j])

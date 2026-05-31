@@ -280,6 +280,103 @@ namespace h5 {
 			return HID_INVALID;
 		}
 
+		// ---- extensible (chunked) time-series datasets (schema D3) -----------
+		// One [T x nIds x nComp] dataset per result grows along the unlimited T
+		// (time/mode) axis; one slab is appended per committed step. Chunked +
+		// shuffle + deflate so the (compressible) time axis is compressed and a
+		// single time-history is an O(1) dataset open instead of O(T) per-step
+		// dataset opens. TIME[T] (double) / STEP[T] (int) are the matching
+		// extensible 1-D axes. Replaces the per-step DATA/STEP_<k> layout.
+
+		// choose how many T-slabs per chunk to land near ~256 KiB/chunk.
+		inline hsize_t chunkSlabsPerBlock(hsize_t slab_elems, hsize_t elem_bytes) {
+			const hsize_t target = 262144; // 256 KiB
+			hsize_t per = slab_elems * elem_bytes;
+			if (per == 0) return 1;
+			hsize_t n = target / per;
+			if (n < 1)    n = 1;
+			if (n > 1024) n = 1024;
+			return n;
+		}
+
+		// create a [0 x nIds x nComp] double dataset, maxdims [UNLIM, nIds, nComp].
+		inline hid_t createTimeSeries3d(hid_t obj, const char *name, hsize_t n_ids, hsize_t n_comp) {
+			hsize_t dims[3]    = { 0, n_ids, n_comp };
+			hsize_t maxdims[3] = { H5S_UNLIMITED, n_ids, n_comp };
+			hid_t space = H5Screate_simple(3, dims, maxdims);
+			hid_t dcpl = H5Pcreate(H5P_DATASET_CREATE);
+			hsize_t ct = chunkSlabsPerBlock(n_ids * n_comp, 8);
+			hsize_t chunk[3] = { ct, n_ids ? n_ids : 1, n_comp ? n_comp : 1 };
+			H5Pset_chunk(dcpl, 3, chunk);
+			H5Pset_shuffle(dcpl);
+			H5Pset_deflate(dcpl, 4);
+			hid_t dset = H5Dcreate(obj, name, H5T_IEEE_F64LE, space, H5P_DEFAULT, dcpl, H5P_DEFAULT);
+			H5Pclose(dcpl);
+			H5Sclose(space);
+			return dset;
+		}
+
+		// append one [1 x nIds x nComp] slab to a [T x nIds x nComp] dataset.
+		inline herr_t appendSlab3d(hid_t dset, const double *data, hsize_t n_ids, hsize_t n_comp) {
+			hid_t fspace = H5Dget_space(dset);
+			hsize_t cur[3];
+			H5Sget_simple_extent_dims(fspace, cur, NULL);
+			H5Sclose(fspace);
+			hsize_t t = cur[0];
+			hsize_t newdims[3] = { t + 1, n_ids, n_comp };
+			if (H5Dset_extent(dset, newdims) < 0) return -1;
+			fspace = H5Dget_space(dset);
+			hsize_t start[3] = { t, 0, 0 };
+			hsize_t count[3] = { 1, n_ids, n_comp };
+			H5Sselect_hyperslab(fspace, H5S_SELECT_SET, start, NULL, count, NULL);
+			hsize_t mdims[3] = { 1, n_ids, n_comp };
+			hid_t mspace = H5Screate_simple(3, mdims, NULL);
+			herr_t status = H5Dwrite(dset, H5T_NATIVE_DOUBLE, mspace, fspace, H5P_DEFAULT, data);
+			H5Sclose(mspace);
+			H5Sclose(fspace);
+			return status;
+		}
+
+		// create a [0] extensible 1-D axis of the given HDF5 file type.
+		inline hid_t createTimeAxis1d(hid_t obj, const char *name, hid_t h5type) {
+			hsize_t dims[1] = { 0 };
+			hsize_t maxdims[1] = { H5S_UNLIMITED };
+			hid_t space = H5Screate_simple(1, dims, maxdims);
+			hid_t dcpl = H5Pcreate(H5P_DATASET_CREATE);
+			hsize_t chunk[1] = { 1024 };
+			H5Pset_chunk(dcpl, 1, chunk);
+			hid_t dset = H5Dcreate(obj, name, h5type, space, H5P_DEFAULT, dcpl, H5P_DEFAULT);
+			H5Pclose(dcpl);
+			H5Sclose(space);
+			return dset;
+		}
+
+		// append one scalar to a [T] extensible axis (mem type from the caller).
+		inline herr_t appendScalar1d(hid_t dset, hid_t mem_type, const void *value) {
+			hid_t fspace = H5Dget_space(dset);
+			hsize_t cur[1];
+			H5Sget_simple_extent_dims(fspace, cur, NULL);
+			H5Sclose(fspace);
+			hsize_t t = cur[0];
+			hsize_t newdims[1] = { t + 1 };
+			if (H5Dset_extent(dset, newdims) < 0) return -1;
+			fspace = H5Dget_space(dset);
+			hsize_t start[1] = { t }, count[1] = { 1 };
+			H5Sselect_hyperslab(fspace, H5S_SELECT_SET, start, NULL, count, NULL);
+			hsize_t mdims[1] = { 1 };
+			hid_t mspace = H5Screate_simple(1, mdims, NULL);
+			herr_t status = H5Dwrite(dset, mem_type, mspace, fspace, H5P_DEFAULT, value);
+			H5Sclose(mspace);
+			H5Sclose(fspace);
+			return status;
+		}
+		inline herr_t appendDouble1d(hid_t dset, double value) {
+			return appendScalar1d(dset, H5T_NATIVE_DOUBLE, &value);
+		}
+		inline herr_t appendInt1d(hid_t dset, int value) {
+			return appendScalar1d(dset, H5T_NATIVE_INT, &value);
+		}
+
 	}
 
 	namespace file {

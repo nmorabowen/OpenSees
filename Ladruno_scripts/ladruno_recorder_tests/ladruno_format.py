@@ -208,6 +208,47 @@ def _has_fiber(levels: np.ndarray, i: int) -> bool:
     return LEVEL_FIBER in np.atleast_1d(row)
 
 
+def iter_step_slices(grp):
+    """Yield (step_id:int, arr2d[nIds×nComp]) for a result/bucket group, handling
+    BOTH layouts transparently:
+
+    * chunked (schema D3, .ladruno): DATA is a single [T×nIds×nComp] dataset with
+      a sibling STEP[T] axis giving each slab's commit/step id;
+    * legacy (frozen .mpco): DATA is a group of per-step STEP_<k> datasets, each
+      carrying a scalar STEP attribute.
+
+    This lets every reader/checker diff a chunked .ladruno against a per-step
+    .mpco with one code path."""
+    data = grp["DATA"]
+    if isinstance(data, h5py.Dataset):
+        full = np.asarray(data[...])
+        steps = (np.asarray(grp["STEP"][...]).reshape(-1) if "STEP" in grp
+                 else np.arange(full.shape[0]))
+        for t in range(full.shape[0]):
+            yield int(steps[t]), np.atleast_2d(full[t])
+    else:
+        for sname in data:
+            ds = data[sname]
+            yield int(_attr(ds, "STEP")), np.atleast_2d(ds[...])
+
+
+def _check_data_shape(grp, n_rows: int, n_cols: int, err, ctx: str) -> None:
+    """Validate the DATA payload shape for both layouts."""
+    data = grp["DATA"]
+    if isinstance(data, h5py.Dataset):
+        if data.ndim != 3 or tuple(data.shape[1:]) != (n_rows, n_cols):
+            err(f"{ctx}: DATA {data.shape} != (T, {n_rows}, {n_cols})")
+        T = data.shape[0]
+        for ax in ("STEP", "TIME"):
+            if ax in grp and np.asarray(grp[ax][...]).reshape(-1).shape[0] != T:
+                err(f"{ctx}: {ax} length != T={T}")
+    else:
+        for sn in data:
+            arr = data[sn]
+            if arr.shape != (n_rows, n_cols):
+                err(f"{ctx}/{sn}: {arr.shape} != ({n_rows}, {n_cols})")
+
+
 # ---------------------------------------------------------------------------
 # Canonical normalizers (for the L1 parity diff)
 # ---------------------------------------------------------------------------
@@ -222,12 +263,9 @@ def normalize_nodal(reader: LadrunoReader, stage: str) -> dict[tuple, float]:
     base = reader.f[base_path]
     for rname in base:
         grp = base[rname]
-        ids = grp["ID"][...]
+        ids = np.asarray(grp["ID"][...]).reshape(-1)
         comps = [c for c in _attr(grp, "COMPONENTS").split(",") if c]
-        data = grp["DATA"]
-        for step_name in data:
-            k = int(_attr(data[step_name], "STEP"))
-            arr = data[step_name][...]
+        for k, arr in iter_step_slices(grp):
             for r, tag in enumerate(ids):
                 for c, cn in enumerate(comps):
                     out[(int(tag), f"{rname}:{cn}", k)] = float(arr[r, c])
@@ -248,11 +286,8 @@ def normalize_element(reader: LadrunoReader, stage: str) -> dict[tuple, float]:
             if "COLUMN_MAP" not in bucket:  # e.g. LOCAL_AXES time series -> skip here
                 continue
             cols = decode_columns(bucket["COLUMN_MAP"])
-            ids = bucket["ID"][...]
-            data = bucket["DATA"]
-            for step_name in data:
-                k = int(_attr(data[step_name], "STEP"))
-                arr = data[step_name][...]
+            ids = np.asarray(bucket["ID"][...]).reshape(-1)
+            for k, arr in iter_step_slices(bucket):
                 for r, tag in enumerate(ids):
                     for cd in cols:
                         out[
@@ -377,11 +412,7 @@ def _validate_nodal_results(r: LadrunoReader, stage: str, err) -> None:
         grp = r.f[path][rname]
         ids = grp["ID"][...]
         ncomp = len([c for c in _attr(grp, "COMPONENTS").split(",") if c])
-        for sn in grp["DATA"]:
-            arr = grp["DATA"][sn]
-            if arr.shape != (ids.shape[0], ncomp):
-                err(f"{stage}/ON_NODES/{rname}/{sn}: {arr.shape} != (nNodes={ids.shape[0]}, "
-                    f"nComp={ncomp})")
+        _check_data_shape(grp, ids.shape[0], ncomp, err, f"{stage}/ON_NODES/{rname}")
 
 
 def _validate_element_results(r: LadrunoReader, stage: str, err) -> None:
@@ -410,11 +441,8 @@ def _validate_element_results(r: LadrunoReader, stage: str, err) -> None:
                 err(f"{stage}/ON_ELEMENTS/{rname}/{bname}: NUM_COLUMNS {num_cols} != "
                     f"sum(MULT*NUM_COMP) {expect}")
             ids = bucket["ID"][...]
-            for sn in bucket["DATA"]:
-                arr = bucket["DATA"][sn]
-                if arr.shape != (ids.shape[0], num_cols):
-                    err(f"{stage}/ON_ELEMENTS/{rname}/{bname}/{sn}: {arr.shape} != "
-                        f"(nElem={ids.shape[0]}, NUM_COLUMNS={num_cols})")
+            _check_data_shape(bucket, ids.shape[0], num_cols, err,
+                              f"{stage}/ON_ELEMENTS/{rname}/{bname}")
             if "SECTION_MAP" in bucket:
                 # SECTION_MAP is [nElem x NUM_GP]; resolve NUM_GP from the model group
                 sm = bucket["SECTION_MAP"][...]

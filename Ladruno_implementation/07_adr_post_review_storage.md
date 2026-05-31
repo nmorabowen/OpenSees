@@ -55,7 +55,7 @@ descriptor is retained for deformed-config reconstruction (co-rotational/large-s
 The reader treats `GLOBAL_GP_COORDS` as authoritative and falls back to `x(ξ)=ΣRᵢXᵢ`
 only when it is absent.
 
-### D3 — Chunked extensible time-series instead of one dataset per step
+### D3 — Chunked extensible time-series instead of one dataset per step  ✅ IMPLEMENTED
 Replace per-step `RESULTS/.../DATA/STEP_<k>` datasets with **one chunked, extensible
 `[T × nIds × nComp]` dataset per result** + `TIME[T]`/`STEP[T]` vectors, with
 chunk+shuffle+deflate. **Why:** per-step datasets explode the dataset count (≈10⁵–10⁶
@@ -66,6 +66,16 @@ smaller files + O(1) slice reads; localized to `StreamingSink::begin/accept` beh
 the sink seam; the apeGmsh reader co-versions its `STEP_<k>` loop to a hyperslab.
 **Do it now**, while only the in-repo parity harness + co-developed reader depend on
 `STEP_<k>` — the migration only gets more expensive once a consumer ships against it.
+
+> **Implemented (PR #35):** `MPCOL_Hdf5.h` gained `createTimeSeries3d`/`appendSlab3d`
+> + extensible 1-D `TIME`/`STEP` helpers; `StreamingSink::begin` creates the
+> `[0×nIds×nComp]` dataset + axes, `accept` appends one slab/step. All families flow
+> through the one sink seam. Reader (`ladruno_format.iter_step_slices`) reads chunked
+> *or* legacy per-step transparently, so a chunked `.ladruno` still diffs against the
+> per-step frozen `.mpco`. Verified: values byte-identical (parity 1e-12), full
+> regression green (80/80·96/96·144/144·72/72·108/108·standard_quad·pytest 10/10).
+> Deferred within D3: the opt-in per-step `LOCAL_AXES` frame series adopts the same
+> chunked shape when LOCAL_AXES lands.
 
 ### D4 — Explicit `NDIR` attribute, decoupled from `len(ORDER)`
 Each element group carries an `NDIR` int = number of `GP_PARAM` columns = parametric
