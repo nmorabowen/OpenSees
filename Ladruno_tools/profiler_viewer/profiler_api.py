@@ -126,6 +126,16 @@ def create_app(h5_path: str) -> FastAPI:
             _require_run(pr, cand)
             return {"base": base, "cand": cand, "rows": pr.diff(base, cand)}
 
+    # Serve the built React frontend (frontend/dist) at the site root, when it
+    # exists, so a single process hosts both the API and the UI (the one-click
+    # launcher builds dist/ then starts this). html=True makes "/" return
+    # index.html; SPA routing has no server routes so the API paths above win.
+    # When dist/ is absent (dev: use the Vite server on :5173) this is skipped.
+    dist = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend", "dist")
+    if os.path.isdir(dist):
+        from fastapi.staticfiles import StaticFiles
+        app.mount("/", StaticFiles(directory=dist, html=True), name="frontend")
+
     return app
 
 

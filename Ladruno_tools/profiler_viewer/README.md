@@ -21,8 +21,25 @@ this backend (P7) agree by construction. It runs today with only `h5py` + `numpy
 | `deep_smoke_{model,check}.py` | P3 deep per-element-type smoke (`elem_by_type` under `elem.tangent`/`elem.residual`). |
 | `requirements.txt` | Backend deps (`h5py`, `numpy`, `fastapi`, `uvicorn`, `httpx`). |
 | `frontend/` | **React + TS viewer (P8).** Run picker, SVG icicle/flame rollup (with `elem_by_type` drill-in), time-series, memory/census panel, run-diff, dt_cr/oversample badges. Pure client of the P7 API; see `frontend/README.md`. |
+| `Profiler_Viewer.bat` / `profiler_viewer.sh` | **One-click launchers** (Windows / Linux-macOS). Locate Python, then run `launch.py`. |
+| `launch.py` | Stdlib-only bootstrapper: provisions a private venv (`.viewer_venv`), installs backend deps, builds the UI if needed, then serves API+UI from one process and opens the browser. |
 
-## Quick start
+## One-click viewer (no setup)
+
+The simplest way to look at a `profile.h5`:
+
+- **Windows** — double-click **`Profiler_Viewer.bat`**, or drag a `profile.h5` onto it.
+- **Linux / macOS** — run **`./profiler_viewer.sh [profile.h5]`**.
+
+On first run it creates a private virtualenv, installs the backend deps, and
+builds the UI (needs Node 18+ once for the build), then opens the viewer in your
+browser at `http://127.0.0.1:8000/` — **one process serves both the UI and the
+API**. Subsequent launches are instant (it reuses the venv and the built UI).
+With no argument it serves `./profile.h5`; pass a path to view another file.
+Requires Python 3.10+ on PATH; if Node/npm is missing it falls back to the
+headless API and tells you how to get the UI.
+
+## Quick start (manual / dev)
 
 ```bash
 python -m pip install -r requirements.txt
