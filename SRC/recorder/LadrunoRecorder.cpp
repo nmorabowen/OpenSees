@@ -475,6 +475,11 @@ int LadrunoRecorder::initialize()
 	solver_version.push_back(1);
 	ladrunons::h5::attribute::write(h_info, "SOLVER_VERSION", solver_version);
 	ladrunons::h5::attribute::write(h_info, "SPATIAL_DIM", info.num_dimensions);
+	// On-disk precision of per-step result DATA: "f64" (default, lossless parity)
+	// or "f32" (opt-in `-precision f32` lossy mode). Readers MUST NOT diff an f32
+	// file against the f64 oracle at 1e-12 — see the bounded-error gate.
+	ladrunons::h5::attribute::write(h_info, "STORED_PRECISION",
+		std::string(info.store_data_f32 ? "f32" : "f64"));
 
 	// Partition manifest (parallel-output contract). Each ".part-N.ladruno" file
 	// self-declares its 0-based partition index + the total count so apeGmsh can
@@ -2100,6 +2105,7 @@ void* OPS_LadrunoRecorder()
 	std::vector<int> energy_region_tags; // -G <regionTag...>
 	std::string stage_kind_opt = "static"; // -kind <transient|static|eigen>
 	bool envelope_opt = false;             // -envelope flag
+	bool store_data_f32 = false;           // -precision f32 (lossy) | f64 (default)
 	int one_item = 1;
 
 	while (numdata > 0) {
@@ -2207,6 +2213,24 @@ void* OPS_LadrunoRecorder()
 			// ABSMAX + ARG_STEP under RESULTS/ENVELOPES, ADR D7) instead of the
 			// per-step time series. Does not change the active request mode.
 			envelope_opt = true;
+		}
+		else if (strcmp(data, "-precision") == 0) {
+			// -precision f32|f64 : on-disk element type for the per-step result
+			// DATA. f64 (default) is the lossless parity path; f32 is the opt-in
+			// lossy mode (~half the payload, ~7 significant digits). Anything else
+			// warns and keeps f64.
+			if (numdata > 0) {
+				const char* p = OPS_GetString();
+				numdata--;
+				std::string ps(p);
+				if (ps == "f32" || ps == "float32" || ps == "single")
+					store_data_f32 = true;
+				else if (ps == "f64" || ps == "float64" || ps == "double")
+					store_data_f32 = false;
+				else
+					opserr << "LadrunoRecorder warning: -precision expects f32|f64; got ("
+					       << p << "), keeping f64 (lossless)\n";
+			}
 		}
 		else {
 			switch (curr_opt) {
@@ -2378,5 +2402,8 @@ void* OPS_LadrunoRecorder()
 	recorder->m_data->energy_region_tags.swap(energy_region_tags);
 	recorder->m_data->stage_kind = stage_kind_opt;
 	recorder->m_data->envelope_mode = envelope_opt;
+	// -precision: carried on ProcessInfo (read by StreamingSink::begin and stamped
+	// into INFO/STORED_PRECISION at initialize()). setDomain() does not overwrite it.
+	recorder->m_data->info.store_data_f32 = store_data_f32;
 	return recorder;
 }

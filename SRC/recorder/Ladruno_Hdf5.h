@@ -299,18 +299,25 @@ namespace h5 {
 			return n;
 		}
 
-		// create a [0 x nIds x nComp] double dataset, maxdims [UNLIM, nIds, nComp].
-		inline hid_t createTimeSeries3d(hid_t obj, const char *name, hsize_t n_ids, hsize_t n_comp) {
+		// create a [0 x nIds x nComp] dataset, maxdims [UNLIM, nIds, nComp].
+		// disk_type selects the ON-DISK element type (default f64 = lossless parity
+		// path). Pass H5T_IEEE_F32LE for the opt-in `-precision f32` lossy mode:
+		// appendSlab3d still writes from an in-memory double array and HDF5 narrows
+		// f64->f32 on write, halving the payload at ~7 significant digits. The chunk
+		// byte budget uses the on-disk element size so chunks stay ~256 KiB either way.
+		inline hid_t createTimeSeries3d(hid_t obj, const char *name, hsize_t n_ids, hsize_t n_comp,
+		                                hid_t disk_type = H5T_IEEE_F64LE) {
 			hsize_t dims[3]    = { 0, n_ids, n_comp };
 			hsize_t maxdims[3] = { H5S_UNLIMITED, n_ids, n_comp };
 			hid_t space = H5Screate_simple(3, dims, maxdims);
 			hid_t dcpl = H5Pcreate(H5P_DATASET_CREATE);
-			hsize_t ct = chunkSlabsPerBlock(n_ids * n_comp, 8);
+			hsize_t elem_bytes = (H5Tequal(disk_type, H5T_IEEE_F32LE) > 0) ? 4 : 8;
+			hsize_t ct = chunkSlabsPerBlock(n_ids * n_comp, elem_bytes);
 			hsize_t chunk[3] = { ct, n_ids ? n_ids : 1, n_comp ? n_comp : 1 };
 			H5Pset_chunk(dcpl, 3, chunk);
 			H5Pset_shuffle(dcpl);
 			H5Pset_deflate(dcpl, 4);
-			hid_t dset = H5Dcreate(obj, name, H5T_IEEE_F64LE, space, H5P_DEFAULT, dcpl, H5P_DEFAULT);
+			hid_t dset = H5Dcreate(obj, name, disk_type, space, H5P_DEFAULT, dcpl, H5P_DEFAULT);
 			H5Pclose(dcpl);
 			H5Sclose(space);
 			return dset;
