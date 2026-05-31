@@ -33,42 +33,59 @@
 #include <mpi.h>
 #endif
 
-// LAPACK: general (DGGEV) and symmetric-definite (DSYGV) generalized eigensolvers.
-// The Windows OpenSees LAPACK exports uppercase, no-underscore names; the unix
-// reference build exports lowercase, trailing-underscore names.
+// LAPACK: general (DGGEV) and symmetric-definite expert (DSYGVX) generalized
+// eigensolvers. The Windows OpenSees LAPACK exports uppercase, no-underscore
+// names; the unix reference build exports lowercase, trailing-underscore names.
+//
+// NOTE (Ladruno): we use DSYGVX (the expert/range driver), NOT the simpler
+// DSYGV. The bundled OTHER/LAPACK reference library shipped with this fork (the
+// one the Unix/Ubuntu Zone-A build statically links) provides dsygvx.f but does
+// NOT provide dsygv.f, so calling dsygv_ produces an "undefined reference"
+// link error on Linux even though MKL resolves DSYGV on Windows. DSYGVX is
+// already used (and proven to link) by SymmGeneralizedEigenSolver.cpp. With
+// RANGE='I' and IL=IU=N it returns just the single largest eigenvalue, which is
+// exactly what the critical-time-step estimate needs.
 #ifdef _WIN32
 extern "C" int DGGEV(char *JOBVL, char *JOBVR, int *N, double *A, int *LDA,
                      double *B, int *LDB, double *ALPHAR, double *ALPHAI,
                      double *BETA, double *VL, int *LDVL, double *VR,
                      int *LDVR, double *WORK, int *LWORK, int *INFO);
-extern "C" int DSYGV(int *ITYPE, char *JOBZ, char *UPLO, int *N, double *A,
-                     int *LDA, double *B, int *LDB, double *W, double *WORK,
-                     int *LWORK, int *INFO);
+extern "C" int DSYGVX(int *ITYPE, char *JOBZ, char *RANGE, char *UPLO,
+                      int *N, double *A, int *LDA, double *B, int *LDB,
+                      double *VL, double *VU, int *IL, int *IU,
+                      double *ABSTOL, int *M, double *W, double *Z,
+                      int *LDZ, double *WORK, int *LWORK, int *IWORK,
+                      int *IFAIL, int *INFO);
 #define LAPACK_DGGEV DGGEV
-#define LAPACK_DSYGV DSYGV
+#define LAPACK_DSYGVX DSYGVX
 #else
 extern "C" int dggev_(char *JOBVL, char *JOBVR, int *N, double *A, int *LDA,
                       double *B, int *LDB, double *ALPHAR, double *ALPHAI,
                       double *BETA, double *VL, int *LDVL, double *VR,
                       int *LDVR, double *WORK, int *LWORK, int *INFO);
-extern "C" int dsygv_(int *ITYPE, char *JOBZ, char *UPLO, int *N, double *A,
-                      int *LDA, double *B, int *LDB, double *W, double *WORK,
-                      int *LWORK, int *INFO);
+extern "C" int dsygvx_(int *ITYPE, char *JOBZ, char *RANGE, char *UPLO,
+                       int *N, double *A, int *LDA, double *B, int *LDB,
+                       double *VL, double *VU, int *IL, int *IU,
+                       double *ABSTOL, int *M, double *W, double *Z,
+                       int *LDZ, double *WORK, int *LWORK, int *IWORK,
+                       int *IFAIL, int *INFO);
 #define LAPACK_DGGEV dggev_
-#define LAPACK_DSYGV dsygv_
+#define LAPACK_DSYGVX dsygvx_
 #endif
 
 // Largest generalized eigenvalue lambda_max of  K v = lambda M v, with M the
 // diagonal (lumped) mass already packed column-major in M_data (only the
 // diagonal is non-zero) and K packed column-major in K_data. Returns < 0 on
-// failure. Tries DSYGV (symmetric-definite, ~2x cheaper, no complex-eigenvalue
-// fragility); on failure (M not positive definite) falls back to DGGEV with a
-// relative-beta threshold to discard near-singular eigenpairs.
+// failure. Tries DSYGVX (symmetric-definite, ~2x cheaper, no complex-eigenvalue
+// fragility), requesting only the single largest eigenvalue; on failure (M not
+// positive definite) falls back to DGGEV with a relative-beta threshold to
+// discard near-singular eigenpairs.
 static double maxGeneralizedEigenvalue(int n, double *K_data, double *M_data)
 {
-    // --- attempt 1: DSYGV (needs M positive definite) ---------------------
-    // DSYGV overwrites its A/B arguments, so work on copies; K_data/M_data stay
-    // intact for the DGGEV fallback.
+    // --- attempt 1: DSYGVX (needs M positive definite) --------------------
+    // DSYGVX overwrites its A/B arguments, so work on copies; K_data/M_data
+    // stay intact for the DGGEV fallback. With RANGE='I' and IL=IU=n we ask
+    // only for the largest of the n ascending eigenvalues.
     bool mPositive = true;
     for (int i = 0; i < n; ++i)
         if (M_data[i * n + i] <= 0.0) { mPositive = false; break; }
@@ -76,30 +93,43 @@ static double maxGeneralizedEigenvalue(int n, double *K_data, double *M_data)
     if (mPositive) {
         double *A = new double[n * n];
         double *B = new double[n * n];
-        double *w = new double[n];
+        double *w = new double[n];        // found eigenvalues (need w[0] only)
+        double *z = new double[n];        // eigenvectors not requested (jobz='N')
+        int    *iwork = new int[5 * n];
+        int    *ifail = new int[n];
         for (int k = 0; k < n * n; ++k) { A[k] = K_data[k]; B[k] = M_data[k]; }
 
-        int itype = 1;     // A x = lambda B x
-        char jobz = 'N';   // eigenvalues only
+        int itype = 1;      // A x = lambda B x
+        char jobz = 'N';    // eigenvalues only
+        char range = 'I';   // eigenvalues selected by index
         char uplo = 'U';
-        int lda = n, ldb = n, info = 0;
+        int lda = n, ldb = n, ldz = n;
+        int il = n, iu = n; // largest eigenvalue only (1-based, ascending)
+        double vl = 0.0, vu = 0.0;  // unused when range = 'I'
+        double abstol = 0.0;        // use default tolerance
+        int m = 0, info = 0;
 
         int lwork = -1; double wkopt = 0.0;
-        LAPACK_DSYGV(&itype, &jobz, &uplo, &n, A, &lda, B, &ldb, w, &wkopt, &lwork, &info);
-        lwork = (info == 0) ? (int)wkopt : (3 * n);
-        if (lwork < 1) lwork = 1;
+        LAPACK_DSYGVX(&itype, &jobz, &range, &uplo, &n, A, &lda, B, &ldb,
+                      &vl, &vu, &il, &iu, &abstol, &m, w, z, &ldz,
+                      &wkopt, &lwork, iwork, ifail, &info);
+        lwork = (info == 0) ? (int)wkopt : (8 * n);
+        if (lwork < 8 * n) lwork = 8 * n;
         double *work = new double[lwork];
-        LAPACK_DSYGV(&itype, &jobz, &uplo, &n, A, &lda, B, &ldb, w, work, &lwork, &info);
+        LAPACK_DSYGVX(&itype, &jobz, &range, &uplo, &n, A, &lda, B, &ldb,
+                      &vl, &vu, &il, &iu, &abstol, &m, w, z, &ldz,
+                      work, &lwork, iwork, ifail, &info);
 
         double lambdaMax = -1.0;
-        if (info == 0) {
-            // w is ascending; eigenvalues of a real symmetric-definite pencil
-            // are real, so the largest is the relevant one.
-            lambdaMax = w[n - 1];
+        if (info == 0 && m >= 1) {
+            // the single requested (largest) eigenvalue lands in w[0]; the
+            // eigenvalues of a real symmetric-definite pencil are real.
+            lambdaMax = w[0];
         }
 
-        delete[] A; delete[] B; delete[] w; delete[] work;
-        if (info == 0)
+        delete[] A; delete[] B; delete[] w; delete[] z;
+        delete[] iwork; delete[] ifail; delete[] work;
+        if (info == 0 && m >= 1)
             return lambdaMax;
         // else: B was not positive definite after all -> fall through to DGGEV.
     }
