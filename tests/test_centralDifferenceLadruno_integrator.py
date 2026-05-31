@@ -316,6 +316,7 @@ def test_cdl_dtcr_bar():
     ops.algorithm("Linear")
     ops.integrator(CDL, "-cfl")
     ops.analysis("Transient")
+    ops.analyze(1, 0.1 * le / c)  # one priming step triggers the dt_cr compute
     dtcr = ops.criticalTimeStep()
     target = le / c  # single free DOF: omega_max = 2c/le -> dt_cr = le/c
     err = abs(dtcr - target) / target
@@ -362,7 +363,8 @@ def _bar_dtcr_cdl(extra_rayleigh):
     E = 1.0e6
     A = 1.0
     rho = 1.0
-    _build_bar(N, L, E, A, rho)
+    le = _build_bar(N, L, E, A, rho)
+    c = math.sqrt(E / rho)
     ops.constraints("Transformation")
     ops.numberer("Plain")
     ops.system("Diagonal")
@@ -372,6 +374,7 @@ def _bar_dtcr_cdl(extra_rayleigh):
         ops.rayleigh(*extra_rayleigh)
     ops.integrator(CDL, "-cfl")
     ops.analysis("Transient")
+    ops.analyze(1, 0.1 * le / c)  # one priming step triggers the dt_cr compute
     return ops.criticalTimeStep()
 
 
