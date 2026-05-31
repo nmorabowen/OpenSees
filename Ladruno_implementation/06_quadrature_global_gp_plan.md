@@ -54,6 +54,39 @@ which already has the BezierTri6 bucket-as-group + `basisInfo` probe via PR #18)
 8. Build (one-time full, then incremental) + re-run all gates (nodal 80/80, quad 96/96, beam 144/144,
    bezier 72/72).
 
+## Progress
+
+- **Step A DONE / merged (PR #23):** `getStandardQuadrature(...)` table in
+  `MPCOL_ElementResults.h` (line/quad/tri/tet/hex GL rules; dormant until Step B).
+- **Step B DONE (this branch `feature/mpco-step-b-global-gp`):**
+  - `computeGlobalGP(...)` added to `MPCOL_ElementResults.h` — write-side basis
+    evaluator `x(ξ)=ΣN_i(ξ)X_i` for line2/quad4/quad9/tri3/tet4/hex8, shape
+    functions verified against each element source (FourNodeQuad CCW, NineNodeQuad
+    biquadratic Lagrange, Brick/`shp3d` trilinear node order, Tri31 `N0=ξ,N1=η,N2=1-ξ-η`,
+    FourNodeTet `N0=r,N1=s,N2=t,N3=1-r-s-t`). Returns `false` (graceful skip) for
+    topologies whose basis isn't implemented yet.
+  - `writeModelElements` rewired: resolves `(num_gp,ndir,gp_param,gp_weight)` via
+    custom → `getStandardQuadrature` → none; writes `NDIR`+`NUM_GP`+`QUADRATURE` for
+    **all** resolved rules; writes `GLOBAL_GP_COORDS[nElem × (nGP·ndim)]` (2-D, R5
+    reshape) computed from `node->getCrds()`. Custom-rule `GP_X`/`CUSTOM_*` back-compat
+    preserved.
+  - Reader/validator (`ladruno_format.py`) made **QUADRATURE-tolerant** (warn, not
+    KeyError, when a group has no QUADRATURE), **NDIR-authoritative** (D4 — not
+    `len(ORDER)`; accepts `bary` ndir∈{2,3}), and **GLOBAL_GP_COORDS-aware** (optional,
+    shape-checked).
+  - New gate `standard_quad_{model,check}.py` — FourNodeQuad/Tri31/stdBrick on
+    axis-aligned unit cells + **write-time round-trip oracle** (independent Python basis
+    reconstructs `x(GP_PARAM[k])` from MODEL/NODES+CONNECTIVITY, compares to
+    `GLOBAL_GP_COORDS[k]`). **ALL PASS** (quad/tri max_err 0, brick 2.8e-17 ≤ 1e-12);
+    GP_PARAM confirmed CCW/centroid/lexicographic (R1).
+  - **No regression:** nodal 80/80, element quad 96/96 + beam 144/144, bezier 72/72,
+    multistage 108/108, pytest 10/10.
+- **Deferred to Step D/E** (needs source-verified node orderings + their currently
+  *untabulated* rules — Hex_GL_3 27pt, Tri_GL_2/2B/2C, Tet_GL_2 — so ungateable now):
+  higher-order GLOBAL_GP_COORDS (9N hex / 20N serendipity / 27N Lagrange / 10N tet /
+  6N Lagrange tri), the importable `ladruno_basis.py` bary/tri/tet/higher-order oracle,
+  and the `make_synthetic.py` NDIR/GLOBAL_GP_COORDS/simplex fixture additions.
+
 ## Open risks / sub-decisions for the architect
 - **R1 (highest) — GP ordering parity.** The standard-table GP row order MUST match the element engine's
   gauss-result index (the `gauss_id` in COLUMN_MAP). OpenSees quad/brick GP ordering is element-specific,

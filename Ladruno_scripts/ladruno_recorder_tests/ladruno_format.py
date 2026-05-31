@@ -16,6 +16,7 @@ this validates it immediately.
 
 from __future__ import annotations
 
+import sys
 from typing import Any
 
 import h5py
@@ -90,7 +91,14 @@ class LadrunoReader:
 
     def element_groups(self, stage: str) -> dict[str, dict]:
         """name -> {connectivity, topology, family, order, param_domain, rational,
-        num_ctrl, num_gp, gp_param, gp_weight, ctrl_weight?}."""
+        num_ctrl, ndir, num_gp, gp_param, gp_weight, ctrl_weight?, global_gp_coords?}.
+
+        QUADRATURE-TOLERANT: a group whose integration rule is not tabulated emits
+        no QUADRATURE child -- then gp_param/gp_weight/num_gp/ndir are None (the
+        caller warns, it is not an error). NDIR (schema-v1 D4) is authoritative for
+        the parametric dimension, decoupled from len(ORDER); it falls back to the
+        GP_PARAM column count for older files that predate the attribute.
+        GLOBAL_GP_COORDS (D2) is optional, stored 2-D [nElem x (NUM_GP*ndim)]."""
         out: dict[str, dict] = {}
         base = self.f[f"{stage}/MODEL/ELEMENTS"]
         for name in base:
@@ -99,16 +107,30 @@ class LadrunoReader:
                 "connectivity": grp["CONNECTIVITY"][...],
                 "topology": _attr(grp, "TOPOLOGY"),
                 "family": _attr(grp, "FAMILY"),
-                "order": tuple(int(x) for x in np.atleast_1d(_attr(grp, "ORDER"))),
+                "order": tuple(int(x) for x in np.atleast_1d(_attr(grp, "ORDER")))
+                if "ORDER" in grp.attrs else (),
                 "param_domain": _attr(grp, "PARAM_DOMAIN"),
                 "rational": int(_attr(grp, "RATIONAL")),
                 "num_ctrl": int(_attr(grp, "NUM_CTRL")),
-                "num_gp": int(_attr(grp, "NUM_GP")),
-                "gp_param": grp["QUADRATURE/GP_PARAM"][...],
-                "gp_weight": grp["QUADRATURE/GP_WEIGHT"][...],
             }
+            if "QUADRATURE/GP_PARAM" in grp:
+                gp_param = grp["QUADRATURE/GP_PARAM"][...]
+                d["gp_param"] = gp_param
+                d["num_gp"] = (int(_attr(grp, "NUM_GP")) if "NUM_GP" in grp.attrs
+                               else gp_param.shape[0])
+                d["ndir"] = (int(_attr(grp, "NDIR")) if "NDIR" in grp.attrs
+                             else gp_param.shape[1])
+                d["gp_weight"] = (grp["QUADRATURE/GP_WEIGHT"][...]
+                                  if "QUADRATURE/GP_WEIGHT" in grp else None)
+            else:
+                d["gp_param"] = None
+                d["num_gp"] = None
+                d["ndir"] = None
+                d["gp_weight"] = None
             if "CTRL_WEIGHT" in grp:
                 d["ctrl_weight"] = grp["CTRL_WEIGHT"][...]
+            if "GLOBAL_GP_COORDS" in grp:
+                d["global_gp_coords"] = grp["GLOBAL_GP_COORDS"][...]
             out[name] = d
         return out
 
@@ -286,15 +308,32 @@ def validate(path: str) -> list[str]:
             # element groups: BASIS + QUADRATURE invariants
             groups = r.element_groups(stage)
             for name, g in groups.items():
-                ndir = len(g["order"])
                 if g["connectivity"].shape[1] != 1 + g["num_ctrl"]:
                     err(f"{stage}/{name}: CONNECTIVITY cols {g['connectivity'].shape[1]} "
                         f"!= 1+NUM_CTRL ({1 + g['num_ctrl']})")
-                if g["gp_param"].shape != (g["num_gp"], ndir):
-                    err(f"{stage}/{name}: GP_PARAM {g['gp_param'].shape} != "
-                        f"(NUM_GP={g['num_gp']}, ndir={ndir})")
-                if g["gp_weight"].shape[0] != g["num_gp"]:
-                    err(f"{stage}/{name}: GP_WEIGHT len {g['gp_weight'].shape[0]} != NUM_GP")
+                if g["gp_param"] is None:
+                    # QUADRATURE-tolerant (schema-v1 decision): an untabulated rule
+                    # legitimately emits no QUADRATURE. Warn (stderr), do not fail.
+                    print(f"WARN {stage}/{name}: no QUADRATURE group (untabulated "
+                          f"rule); skipping GP checks", file=sys.stderr)
+                else:
+                    # NDIR is authoritative for the parametric dim (D4), NOT len(ORDER)
+                    # -- simplices have ndir 2/3 while ORDER stays total-degree.
+                    ndir = g["ndir"]
+                    if g["gp_param"].shape != (g["num_gp"], ndir):
+                        err(f"{stage}/{name}: GP_PARAM {g['gp_param'].shape} != "
+                            f"(NUM_GP={g['num_gp']}, NDIR={ndir})")
+                    if g["param_domain"] == "bary" and ndir not in (2, 3):
+                        err(f"{stage}/{name}: bary PARAM_DOMAIN needs NDIR in (2,3), got {ndir}")
+                    if g["gp_weight"] is not None and g["gp_weight"].shape[0] != g["num_gp"]:
+                        err(f"{stage}/{name}: GP_WEIGHT len {g['gp_weight'].shape[0]} != NUM_GP")
+                    # GLOBAL_GP_COORDS (D2) optional; if present, [nElem x NUM_GP*ndim].
+                    if "global_gp_coords" in g:
+                        nelem = g["connectivity"].shape[0]
+                        want = (nelem, g["num_gp"] * ndim)
+                        if g["global_gp_coords"].shape != want:
+                            err(f"{stage}/{name}: GLOBAL_GP_COORDS {g['global_gp_coords'].shape}"
+                                f" != (nElem, NUM_GP*ndim)={want}")
                 if g["topology"] not in (
                     "line", "tri", "quad", "tet", "hex", "wedge", "pyramid", "custom"
                 ):
