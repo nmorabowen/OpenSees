@@ -1,5 +1,6 @@
 @echo off
-rem Regression gates: nodal parity, element parity, multi-stage — all vs frozen mpco.
+rem Regression gates: nodal parity, element parity, multi-stage, bezier
+rem self-describing basis — all vs frozen mpco.
 setlocal
 set WT=C:\Users\nmora\Github\OpenSees_Compile\mpco-ladruno-wt
 set BUILDPY=C:\Users\nmora\AppData\Local\Python\pythoncore-3.12-64\python.exe
@@ -27,6 +28,12 @@ echo === MULTI-STAGE ===
 if errorlevel 1 (echo MS MODEL FAILED & exit /b 1)
 "%VENVPY%" "%TESTS%\multistage_check.py" "%TMP%\ms_ref.mpco" "%TMP%\ms_test.ladruno"
 if errorlevel 1 (echo MS CHECK FAILED & exit /b 1)
+
+echo === BEZIER (self-describing basis) ===
+"%BUILDPY%" "%TESTS%\bezier_model.py" "%TMP%" "%TMP%"
+if errorlevel 1 (echo BEZIER MODEL FAILED & exit /b 1)
+"%VENVPY%" "%TESTS%\bezier_check.py" "%TMP%"
+if errorlevel 1 (echo BEZIER CHECK FAILED & exit /b 1)
 
 echo === ALL REGRESSION GATES PASSED ===
 exit /b 0
