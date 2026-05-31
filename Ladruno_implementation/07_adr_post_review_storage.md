@@ -67,7 +67,7 @@ the sink seam; the apeGmsh reader co-versions its `STEP_<k>` loop to a hyperslab
 **Do it now**, while only the in-repo parity harness + co-developed reader depend on
 `STEP_<k>` — the migration only gets more expensive once a consumer ships against it.
 
-> **Implemented (PR #35):** `MPCOL_Hdf5.h` gained `createTimeSeries3d`/`appendSlab3d`
+> **Implemented (PR #36):** `MPCOL_Hdf5.h` gained `createTimeSeries3d`/`appendSlab3d`
 > + extensible 1-D `TIME`/`STEP` helpers; `StreamingSink::begin` creates the
 > `[0×nIds×nComp]` dataset + axes, `accept` appends one slab/step. All families flow
 > through the one sink seam. Reader (`ladruno_format.iter_step_slices`) reads chunked

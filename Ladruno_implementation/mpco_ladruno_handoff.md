@@ -65,7 +65,7 @@ Higher-order GLOBAL_GP_COORDS for all three source-verifiable elements:
 - Gate `standard_quad_{model,check}.py` covers quad4/tri3/hex8/quad9/tet10/hex20; all
   CONFORMANT; no regression (80/80·96/96·144/144·72/72·108/108·pytest 10/10).
 
-## D3 chunked time-series DONE — PR #35
+## D3 chunked time-series DONE — PR #36
 `StreamingSink` now writes one chunked+shuffle+deflate `DATA[T×nIds×nComp]` dataset per
 result + `STEP[T]`/`TIME[T]` axes (was per-step `DATA/STEP_<k>`). New
 `MPCOL_Hdf5.h` `createTimeSeries3d`/`appendSlab3d`/`appendDouble1d`/`appendInt1d`. Reader
