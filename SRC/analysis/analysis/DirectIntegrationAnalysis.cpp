@@ -263,6 +263,12 @@ DirectIntegrationAnalysis::analyzeStep(double dT)
   }
   }
 
+  // Ladruno P0#3: record the per-step series row (step/t/dt/iters) for this
+  // committed step. dt is the integrator time step; getCommitTag() is monotonic
+  // across the whole run (incremented by Domain::commit()).
+  OPS_PROFILE_STEP(the_Domain->getCommitTag(), the_Domain->getCurrentTime(), dT,
+                   theAlgorithm->getNumIterations());
+
   return result;
 }
 

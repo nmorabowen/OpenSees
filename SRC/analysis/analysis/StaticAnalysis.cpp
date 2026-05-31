@@ -224,6 +224,12 @@ StaticAnalysis::analyze(int numSteps, bool flush)
 	}
 	}
 	}
+
+	// Ladruno P0#3: record the per-step series row for this committed step.
+	// Static load-stepping has no time step, so dt is 0 (the pseudo-time is the
+	// load factor in `t`); getCommitTag() is monotonic across the whole run.
+	OPS_PROFILE_STEP(the_Domain->getCommitTag(), the_Domain->getCurrentTime(), 0.0,
+	                 theAlgorithm->getNumIterations());
     }
 
   if (the_Domain != 0 && flush) {
