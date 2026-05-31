@@ -94,6 +94,7 @@ public:
 		, energy_requested(false)
 		, energy_region_tags()
 		, stage_kind("static")
+		, envelope_mode(false)
 		, nodal_results_requests()
 		, sens_grad_indices()
 		, elemental_results_requests()
@@ -139,6 +140,12 @@ public:
 	// "eigen" at writeModel time when a modal (ModesOfVibration) channel is present.
 	std::string stage_kind;              // = "static" unless -kind overrides
 
+	// -envelope: record componentwise running extremes (ADR D7) instead of the
+	// per-step time series. Every non-modal node/element/domain channel uses an
+	// EnvelopeSink (MIN/MAX/ABSMAX + ARG_STEP under RESULTS/ENVELOPES) rather than a
+	// StreamingSink. Off by default (time-series output unchanged).
+	bool envelope_mode;
+
 	// parsed requests
 	std::vector<mpcolns::mpco::NodalResultType::Enum> nodal_results_requests;
 	std::vector<int> sens_grad_indices;
@@ -157,7 +164,7 @@ public:
 	/* --- node sources/sinks --- */
 	struct NodeChannel {
 		mpcolns::ResultSource* source;   // owned
-		mpcolns::StreamingSink* sink;    // owned
+		mpcolns::ResultSink* sink;       // owned (StreamingSink or, in -envelope mode, EnvelopeSink)
 		int reaction_flag;               // -1 if not a reaction source
 		bool is_modes;                   // ModesOfVibration(Rotational) special path
 		NodeChannel() : source(0), sink(0), reaction_flag(-1), is_modes(false) {}
@@ -167,7 +174,7 @@ public:
 	/* --- element sources/sinks --- */
 	struct ElemChannel {
 		mpcolns::ElementResultSource* source;             // owned
-		mpcolns::StreamingSink* sink;                     // owned
+		mpcolns::ResultSink* sink;                        // owned (Streaming or Envelope)
 		const mpcolns::mpco::element::OutputDescriptorHeader* header; // not owned
 		bool column_map_written;
 		ElemChannel() : source(0), sink(0), header(0), column_map_written(false) {}
@@ -180,7 +187,7 @@ public:
 	/* --- domain/region sources/sinks (ADR D8 energy balance) --- */
 	struct DomainChannel {
 		mpcolns::ResultSource* source;   // owned
-		mpcolns::StreamingSink* sink;    // owned
+		mpcolns::ResultSink* sink;       // owned (Streaming or Envelope)
 		DomainChannel() : source(0), sink(0) {}
 	};
 	std::vector<DomainChannel> domain_channels;
@@ -199,6 +206,11 @@ MPCORecorderLadruno::MPCORecorderLadruno()
 MPCORecorderLadruno::~MPCORecorderLadruno()
 {
 	if (m_data) {
+		// In envelope mode, write the final ENVELOPES datasets while the sinks +
+		// file are still alive (EnvelopeSink defers all output to finalize()).
+		if (m_data->envelope_mode && m_data->initialized &&
+		    m_data->info.h_file_id != mpcolns::HID_INVALID)
+			finalizeAllSinks();
 		clearSources();
 		if (m_data->initialized && m_data->info.h_file_id != mpcolns::HID_INVALID) {
 			mpcolns::h5::file::flush(m_data->info.h_file_id);
@@ -235,6 +247,20 @@ int MPCORecorderLadruno::clearSources()
 	m_data->elemental_responses.clear();
 	m_data->elemental_recorders.clear();
 	return 0;
+}
+
+void MPCORecorderLadruno::finalizeAllSinks()
+{
+	mpcolns::mpco::ProcessInfo& info = m_data->info;
+	for (size_t i = 0; i < m_data->node_channels.size(); ++i)
+		if (m_data->node_channels[i].sink)
+			m_data->node_channels[i].sink->finalize(info);
+	for (size_t i = 0; i < m_data->elem_channels.size(); ++i)
+		if (m_data->elem_channels[i].sink)
+			m_data->elem_channels[i].sink->finalize(info);
+	for (size_t i = 0; i < m_data->domain_channels.size(); ++i)
+		if (m_data->domain_channels[i].sink)
+			m_data->domain_channels[i].sink->finalize(info);
 }
 
 /* ===================================================================== */
@@ -326,6 +352,12 @@ int MPCORecorderLadruno::record(int commitTag, double timeStamp)
 		return -1;
 	if (recordResultsOnDomain() != 0)
 		return -1;
+
+	// Envelope mode defers all output to finalize(); rewrite the (small) ENVELOPES
+	// datasets in place every recorded step so the latest extremes are always on
+	// disk (periodic crash safety, ADR D7) before the file flush below.
+	if (m_data->envelope_mode)
+		finalizeAllSinks();
 
 	if (info.h_file_id != mpcolns::HID_INVALID)
 		mpcolns::h5::file::flush(info.h_file_id);
@@ -1302,7 +1334,13 @@ int MPCORecorderLadruno::initNodeSources()
 			continue;
 
 		ch.source = src;
-		ch.sink = new mpcolns::StreamingSink(mpcolns::ResultFamily::OnNodes);
+		// Envelope mode swaps the sink to an EnvelopeSink for ordinary results;
+		// ModesOfVibration (eigen) is never enveloped — it keeps the StreamingSink
+		// mode-loop path.
+		if (m_data->envelope_mode && !is_modes)
+			ch.sink = new mpcolns::EnvelopeSink(mpcolns::ResultFamily::OnNodes);
+		else
+			ch.sink = new mpcolns::StreamingSink(mpcolns::ResultFamily::OnNodes);
 		ch.reaction_flag = reac;
 		ch.is_modes = is_modes;
 		m_data->node_channels.push_back(ch);
@@ -1525,7 +1563,9 @@ int MPCORecorderLadruno::initElementSources()
 							continue;
 						private_data::ElemChannel ech;
 						ech.source = new mpcolns::ElementResultSource(request, header, bucket);
-						ech.sink = new mpcolns::StreamingSink(mpcolns::ResultFamily::OnElements);
+						ech.sink = m_data->envelope_mode
+							? (mpcolns::ResultSink*)new mpcolns::EnvelopeSink(mpcolns::ResultFamily::OnElements)
+							: (mpcolns::ResultSink*)new mpcolns::StreamingSink(mpcolns::ResultFamily::OnElements);
 						ech.header = &header;
 						ech.column_map_written = false;
 						m_data->elem_channels.push_back(ech);
@@ -1702,9 +1742,11 @@ int MPCORecorderLadruno::recordResultsOnElements()
 		private_data::ElemChannel& ech = m_data->elem_channels[i];
 		ech.source->evaluate(info, buffer);
 		ech.sink->accept(info, *ech.source, buffer);
-		// Write the COLUMN_MAP metadata once (after the sink created the result
-		// group on first accept()).
-		if (!ech.column_map_written) {
+		// Write the COLUMN_MAP metadata once (after the StreamingSink created the
+		// ON_ELEMENTS result group on first accept()). Skipped in envelope mode: the
+		// EnvelopeSink writes to RESULTS/ENVELOPES (not ON_ELEMENTS), so a COLUMN_MAP
+		// there would be orphaned — envelope component naming is a v1 follow-up.
+		if (!m_data->envelope_mode && !ech.column_map_written) {
 			writeElementColumnMap((int)i);
 			ech.column_map_written = true;
 		}
@@ -1724,7 +1766,9 @@ int MPCORecorderLadruno::initDomainSources()
 	if (m_data->energy_requested) {
 		private_data::DomainChannel ch;
 		ch.source = new mpcolns::EnergyBalanceSource(info);
-		ch.sink = new mpcolns::StreamingSink(mpcolns::ResultFamily::OnDomain);
+		ch.sink = m_data->envelope_mode
+			? (mpcolns::ResultSink*)new mpcolns::EnvelopeSink(mpcolns::ResultFamily::OnDomain)
+			: (mpcolns::ResultSink*)new mpcolns::StreamingSink(mpcolns::ResultFamily::OnDomain);
 		m_data->domain_channels.push_back(ch);
 	}
 
@@ -1732,7 +1776,9 @@ int MPCORecorderLadruno::initDomainSources()
 	if (!m_data->energy_region_tags.empty()) {
 		private_data::DomainChannel ch;
 		ch.source = new mpcolns::EnergyBalanceSource(info, m_data->energy_region_tags);
-		ch.sink = new mpcolns::StreamingSink(mpcolns::ResultFamily::OnRegions);
+		ch.sink = m_data->envelope_mode
+			? (mpcolns::ResultSink*)new mpcolns::EnvelopeSink(mpcolns::ResultFamily::OnRegions)
+			: (mpcolns::ResultSink*)new mpcolns::StreamingSink(mpcolns::ResultFamily::OnRegions);
 		m_data->domain_channels.push_back(ch);
 	}
 
@@ -2031,6 +2077,7 @@ void* OPS_MPCOLadrunoRecorder()
 	bool energy_requested = false;       // -G energy
 	std::vector<int> energy_region_tags; // -G <regionTag...>
 	std::string stage_kind_opt = "static"; // -kind <transient|static|eigen>
+	bool envelope_opt = false;             // -envelope flag
 	int one_item = 1;
 
 	while (numdata > 0) {
@@ -2132,6 +2179,12 @@ void* OPS_MPCOLadrunoRecorder()
 					          "transient|static|eigen; got (" << k << "), keeping "
 					       << stage_kind_opt.c_str() << "\n";
 			}
+		}
+		else if (strcmp(data, "-envelope") == 0) {
+			// flag (no argument): record componentwise running extremes (MIN/MAX/
+			// ABSMAX + ARG_STEP under RESULTS/ENVELOPES, ADR D7) instead of the
+			// per-step time series. Does not change the active request mode.
+			envelope_opt = true;
 		}
 		else {
 			switch (curr_opt) {
@@ -2302,5 +2355,6 @@ void* OPS_MPCOLadrunoRecorder()
 	recorder->m_data->energy_requested = energy_requested;
 	recorder->m_data->energy_region_tags.swap(energy_region_tags);
 	recorder->m_data->stage_kind = stage_kind_opt;
+	recorder->m_data->envelope_mode = envelope_opt;
 	return recorder;
 }
