@@ -61,6 +61,14 @@ def main() -> int:
         print("  [OK] envelope file conformant")
 
     ts = reduce_timeseries(ts_path)
+    # time-series component names per result (for the COMPONENTS round-trip check)
+    ts_comps = {}
+    with lf.LadrunoReader(r_path := ts_path) as r:
+        stage = r.stages()[0]
+        base = r.f[f"{stage}/RESULTS/ON_NODES"]
+        for rname in base:
+            ts_comps[rname] = [c for c in lf._attr(base[rname], "COMPONENTS").split(",") if c]
+
     with lf.LadrunoReader(env_path) as r:
         stage = r.stages()[0]
         env = r.envelopes(stage).get("ON_NODES", {})
@@ -84,10 +92,18 @@ def main() -> int:
                 print(f"  [FAIL] {rname}/{key}: envelope != time-series reduction")
                 ok = False
                 problems += 1
+        # COMPONENTS round-trip (finding (h)): the envelope group must carry the
+        # same authoritative component names as the time-series result.
+        env_comps = e.get("components")
+        if env_comps != ts_comps.get(rname):
+            print(f"  [FAIL] {rname}/COMPONENTS: envelope {env_comps} != "
+                  f"time-series {ts_comps.get(rname)}")
+            ok = False
+            problems += 1
         if ok:
             n = mn.size
-            print(f"  [OK] {rname}: MIN/MAX/ABSMAX/ARG_STEP match reduction "
-                  f"({n} values, range [{mn.min():.3e}, {mx.max():.3e}])")
+            print(f"  [OK] {rname}: MIN/MAX/ABSMAX/ARG_STEP match reduction + "
+                  f"COMPONENTS={env_comps} ({n} values, range [{mn.min():.3e}, {mx.max():.3e}])")
             total += n
 
     print("\n" + "=" * 56)

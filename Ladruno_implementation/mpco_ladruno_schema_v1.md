@@ -346,10 +346,13 @@ non-modal node/element/domain channel then uses an `EnvelopeSink` (running extre
 instead of the time-series `StreamingSink`; `ModesOfVibration` (eigen) is never
 enveloped. The accumulators are written only on `finalize()`, so the recorder
 rewrites them in place every recorded step (crash safety) and once at teardown.
-v3a covers consistent quantities (zero-MPI); v3b reduced (reaction/global) envelopes
-need the per-step Allreduce, which is compiled out of this shared sequential
-recorder TU (see `LEDGER_quirks.md`) — deferred. Element envelopes carry no
-`COLUMN_MAP` yet (component naming on `ENVELOPES` is a v1 follow-up).
+Each `ENVELOPES/<family>/<name>` group carries the **same self-describing attrs**
+as the time-series result group (`COMPONENTS`/`DISPLAY_NAME`/`DIMENSION`/…, §7.1) so
+the extremes are named in-file. v3a covers consistent quantities (zero-MPI); v3b
+reduced (reaction/global) envelopes need the per-step Allreduce, which is compiled
+out of this shared sequential recorder TU (see `LEDGER_quirks.md`) — deferred.
+Element envelopes carry the result-level `COMPONENTS` but not yet a per-column
+`COLUMN_MAP` (gauss/section/fiber structure on `ENVELOPES` is a follow-up).
 
 ```
 ENVELOPES/ON_NODES/<name>/
@@ -521,3 +524,20 @@ in STKO). Fiber section as today.
   (80/80,96/96,144/144,108/108, bezier, standard_quad, localaxes). Deferred: v3b
   reduced (reaction/global) envelopes need the Allreduce (dead code in this TU);
   element-envelope COLUMN_MAP component naming (a v1 follow-up, ties into finding (h)).
+- 2026-05-31 — **Finding (h) resolved — authoritative names in-file + self-describing
+  envelopes.** The adversarial review's finding (h) ("apeGmsh RESPONSE_CATALOG still
+  supplies canonical names/counts/GP-walk-order") is closed by the cumulative work: the
+  `.ladruno` format now carries everything the catalog supplied for MPCO — natural GP
+  coords (`GP_PARAM`+`GLOBAL_GP_COORDS`, Steps B/D), per-result component names
+  (node results' `COMPONENTS` attr e.g. `Ux,Uy,Uz`; element results' `COLUMN_MAP/
+  COMP_NAMES` e.g. `sigma11,sigma22,sigma12` from the element's own `ResponseType`
+  tags), component counts, and GP-walk-order (`COLUMN_MAP/GAUSS_ID` + GP_PARAM order).
+  The one gap — envelope output had bare arrays with no names — is fixed here:
+  `EnvelopeSink` now caches the source schema metadata and writes the **same
+  self-describing result-group attrs** (`COMPONENTS`/`DISPLAY_NAME`/`DIMENSION`/…) as
+  the time-series `StreamingSink`. The validator checks `COMPONENTS` count == nComp;
+  `envelope_check` verifies the names round-trip (envelope `COMPONENTS` == time-series
+  `COMPONENTS`). The catalog (≈2500 lines) is now **optional for `.ladruno`** (its MPCO
+  role was chiefly the GP coords MPCO omits). Remaining naming follow-up: a per-column
+  `COLUMN_MAP` on element ENVELOPES (gauss/section/fiber structure, not just result-
+  level COMPONENTS).
