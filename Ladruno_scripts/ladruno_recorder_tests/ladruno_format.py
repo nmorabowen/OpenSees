@@ -22,6 +22,8 @@ from typing import Any
 import h5py
 import numpy as np
 
+import ladruno_basis
+
 GENERATOR = "MPCO_Ladruno"
 FORMAT_VERSION = 1
 
@@ -401,6 +403,67 @@ def validate(path: str) -> list[str]:
             _validate_element_results(r, stage, err)
             _validate_nodal_results(r, stage, err)
 
+    return problems
+
+
+# ---------------------------------------------------------------------------
+# Round-trip ORACLE (D5) -- the write-time geometry self-check
+# ---------------------------------------------------------------------------
+
+
+def round_trip_oracle(path: str, tol: float = 1e-12) -> list[str]:
+    """Mandatory write->read->reconstruct geometry check (schema-v1 D5).
+
+    For every element group that carries BOTH a GP_PARAM table and the static
+    ``GLOBAL_GP_COORDS`` (the belt-and-suspenders D2 dataset), independently
+    reconstruct ``x(GP_PARAM[k]) = sum_i N_i(xi_k) X_i`` from the file's own
+    MODEL/NODES + CONNECTIVITY using ``ladruno_basis.shape_functions`` and compare
+    to ``GLOBAL_GP_COORDS[k]`` (<= ``tol``). This catches GP-ordering and basis
+    bugs *at write time*: if the recorder's C++ ``computeGlobalGP`` and this
+    independent Python basis disagree, one is wrong.
+
+    Groups with no GLOBAL_GP_COORDS or no QUADRATURE are skipped (nothing to
+    cross-check); a topology the oracle basis does not cover (e.g. a custom-rule
+    bernstein/IGA element whose own gate validates it) is warned and skipped, not
+    failed. Returns a list of problems; empty == oracle-clean.
+    """
+    problems: list[str] = []
+    with LadrunoReader(path) as r:
+        ndim = int(r.info().get("SPATIAL_DIM", 0))
+        for stage in r.stages():
+            nid, ncoord = r.nodes(stage)
+            nid = np.asarray(nid).reshape(-1)
+            coord_of = {int(t): np.asarray(ncoord[i], dtype=float) for i, t in enumerate(nid)}
+            for name, g in r.element_groups(stage).items():
+                if g.get("global_gp_coords") is None or g["gp_param"] is None:
+                    continue
+                topo = g["topology"]
+                conn = g["connectivity"]
+                num_gp = g["num_gp"]
+                nelem = conn.shape[0]
+                num_nodes = conn.shape[1] - 1
+                ggp = np.asarray(g["global_gp_coords"], dtype=float)
+                if ggp.size != nelem * num_gp * ndim:
+                    problems.append(
+                        f"{stage}/{name}: GLOBAL_GP_COORDS size {ggp.size} != "
+                        f"nElem*NUM_GP*ndim ({nelem}*{num_gp}*{ndim})")
+                    continue
+                ggp3 = ggp.reshape(nelem, num_gp, ndim)
+                max_err = 0.0
+                try:
+                    for e in range(nelem):
+                        X = np.array([coord_of[int(t)][:ndim] for t in conn[e, 1:]])
+                        for k in range(num_gp):
+                            N = ladruno_basis.shape_functions(topo, num_nodes, g["gp_param"][k])
+                            x_rec = N @ X
+                            max_err = max(max_err, float(np.max(np.abs(x_rec - ggp3[e, k]))))
+                except ValueError as exc:
+                    print(f"WARN {stage}/{name}: oracle skipped ({exc})", file=sys.stderr)
+                    continue
+                if max_err > tol:
+                    problems.append(
+                        f"{stage}/{name}: round-trip x(GP_PARAM) vs GLOBAL_GP_COORDS "
+                        f"max_err={max_err:.3e} > tol {tol:.0e}")
     return problems
 
 

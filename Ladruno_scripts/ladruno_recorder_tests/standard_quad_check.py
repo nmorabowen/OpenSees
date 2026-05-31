@@ -24,6 +24,8 @@ import sys
 import h5py
 import numpy as np
 
+from ladruno_basis import shape_functions  # shared GLOBAL_GP_COORDS oracle basis (Step E)
+
 TOL = 1e-12
 A = 1.0 / np.sqrt(3.0)            # 2-pt GL abscissa
 B = np.sqrt(0.6)                  # 3-pt GL abscissa
@@ -49,66 +51,9 @@ EXPECT_GP = {
         [0, -B, 0], [0, 0, -B], [0, 0, 0]]),                         # faces -s,-t, centroid
 }
 
-# 20-node serendipity node natural coords (corners then edge-mids), matching
-# computeGlobalGP / shp3dv brcshl node order.
-HEX20_NC = np.array([
-    [-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],
-    [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1],
-    [0, -1, -1], [1, 0, -1], [0, 1, -1], [-1, 0, -1],
-    [0, -1, 1], [1, 0, 1], [0, 1, 1], [-1, 0, 1],
-    [-1, -1, 0], [1, -1, 0], [1, 1, 0], [-1, 1, 0]], float)
-
-
-# --- independent shape-function reimplementation (mirrors computeGlobalGP) --- #
-def shape(topology: str, num_nodes: int, xi: np.ndarray) -> np.ndarray:
-    if topology == "line" and num_nodes >= 2:
-        s = xi[0]
-        return np.array([0.5 * (1 - s), 0.5 * (1 + s)])
-    if topology == "tri" and num_nodes >= 3:
-        x, e = xi[0], xi[1]
-        return np.array([x, e, 1 - x - e])
-    if topology == "quad" and num_nodes == 4:
-        s, t = xi[0], xi[1]
-        return 0.25 * np.array([(1 - s) * (1 - t), (1 + s) * (1 - t),
-                                (1 + s) * (1 + t), (1 - s) * (1 + t)])
-    if topology == "quad" and num_nodes == 9:
-        s, t = xi[0], xi[1]
-        return np.array([
-            (1 - s) * (1 - t) * s * t / 4, -(1 + s) * (1 - t) * s * t / 4,
-            (1 + s) * (1 + t) * s * t / 4, -(1 - s) * (1 + t) * s * t / 4,
-            -(1 - s * s) * (1 - t) * t / 2, (1 + s) * (1 - t * t) * s / 2,
-            (1 - s * s) * (1 + t) * t / 2, -(1 - s) * (1 - t * t) * s / 2,
-            (1 - s * s) * (1 - t * t)])
-    if topology == "tet" and num_nodes == 4:
-        r, s, u = xi[0], xi[1], xi[2]
-        return np.array([r, s, u, 1 - r - s - u])
-    if topology == "tet" and num_nodes == 10:
-        r, s, u = xi[0], xi[1], xi[2]
-        L4 = 1 - r - s - u
-        return np.array([
-            r * (2 * r - 1), s * (2 * s - 1), u * (2 * u - 1), L4 * (2 * L4 - 1),
-            4 * r * s, 4 * s * u, 4 * u * r, 4 * r * L4, 4 * u * L4, 4 * s * L4])
-    if topology == "hex" and num_nodes == 8:
-        r, s, u = xi[0], xi[1], xi[2]
-        sgn = np.array([[-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],
-                        [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]], float)
-        return 0.125 * np.prod(1 + sgn * np.array([r, s, u]), axis=1)
-    if topology == "hex" and num_nodes == 20:
-        xyz = np.array([xi[0], xi[1], xi[2]], float)
-        N = np.zeros(20)
-        for i, c in enumerate(HEX20_NC):
-            zeros = [d for d in range(3) if c[d] == 0.0]
-            if not zeros:  # corner
-                N[i] = 0.125 * np.prod(1 + xyz * c) * (xyz @ c - 2.0)
-            else:          # edge mid: (1-u^2) along the zero direction
-                zdir = zeros[0]
-                prod = 0.25 * (1.0 - xyz[zdir] ** 2)
-                for d in range(3):
-                    if d != zdir:
-                        prod *= (1.0 + xyz[d] * c[d])
-                N[i] = prod
-        return N
-    raise ValueError(f"no Python basis for topology={topology} num_nodes={num_nodes}")
+# The independent shape-function reimplementation that used to live here (mirrors
+# the C++ computeGlobalGP) now lives in ladruno_basis.shape_functions (Step E) so
+# the round-trip oracle has ONE basis implementation shared across every gate.
 
 
 def _attr(obj, key):
@@ -187,7 +132,7 @@ def check_file(path: str, expect_topo: str, expect_key: str) -> int:
                 node_tags = conn[e, 1:]
                 X = np.array([coord_of[int(t)][:ndim] for t in node_tags])
                 for k in range(num_gp):
-                    N = shape(topo, num_nodes, gp_param[k])
+                    N = shape_functions(topo, num_nodes, gp_param[k])
                     x_rec = N @ X
                     err = np.max(np.abs(x_rec - ggp3[e, k]))
                     max_err = max(max_err, err)
