@@ -95,15 +95,22 @@ which already has the BezierTri6 bucket-as-group + `basisInfo` probe via PR #18)
   - Gate `standard_quad_{model,check}.py` extended (quad9n + TenNodeTetrahedron unit
     cells; checker `shape()` + EXPECT_GP cover quad9/tet10). **ALL PASS**, both
     CONFORMANT; no regression (80/80·96/96·144/144·72/72·108/108·pytest 10/10).
-- **Still deferred:** **hex20 (Twenty_Node_Brick, Hex_GL_3 27pt)** — its 27-pt GP order
-  lives inside `brcshl`/`Jacobian3d`/`computeBasis` (UP-ucsd `shp3dv`), not directly
-  readable, and the round-trip oracle can't catch a GP↔result pairing error → needs a
-  full `brcshl` trace + a frozen-recorder `GP_X` cross-check before it's safe. 27N
-  Lagrange hex has no element mapping; 6N Lagrange tri / 3N line have no standard-rule
-  element (beams use the custom force-based path). Also pending: importable
+- **hex20 NOW DONE (branch `feature/mpco-hex20-gp`):** **Twenty_Node_Brick (Hex_GL_3
+  27pt)** — traced `shp3dv.cpp` `brcshl`: GP order is `GP[L]=b·(2·RA[L],2·SA[L],2·TA[L])`
+  (b=√0.6) over the serendipity node pattern (8 corners → 12 edge-mids → 6 face-centers →
+  centroid), which **is** the element's `materialPointers[L]` order, so GP_PARAM[L] pairs
+  with result gauss_id L by construction (same source-derivation standard as the others).
+  Added `Hexahedron_GaussLegendre_3` to `getStandardQuadrature` (27 GP + tensor `{5/9,8/9}`
+  weights) and the 20-node serendipity basis to `computeGlobalGP` (generic corner/edge
+  formula; exact for straight-sided bricks). Gate extended (`20NodeBrick` unit cell;
+  checker `shape()` hex20 + `EXPECT_GP["hex20"]`). Round-trip 2.2e-16, CONFORMANT, no
+  regression.
+- **Still deferred:** 27N Lagrange hex has no element mapping; 6N Lagrange tri / 3N line
+  have no standard-rule element (beams use the custom force-based path); Tri_GL_2/2B/2C
+  (shell tris) untabulated → reader tolerates (warns). Also pending: importable
   `ladruno_basis.py` higher-order oracle + `make_synthetic.py` NDIR/GLOBAL_GP_COORDS/
-  simplex fixture additions. Minor: geom-derived `ORDER` for 9N/10N still reports the
-  linear `(1[,1])` (NDIR is authoritative, so non-load-bearing).
+  simplex fixture additions. Minor: geom-derived `ORDER` for 9N/10N/20N still reports the
+  linear `(1[,1,1])` (NDIR is authoritative, so non-load-bearing).
 
 ## Open risks / sub-decisions for the architect
 - **R1 (highest) — GP ordering parity.** The standard-table GP row order MUST match the element engine's

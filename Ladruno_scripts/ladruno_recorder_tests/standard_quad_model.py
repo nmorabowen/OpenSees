@@ -221,6 +221,61 @@ ops.analysis("Static")
 ops.analyze(2)
 ops.wipe()
 
-for p in (q_new, t_new, b_new, q9_new, t10_new):
+# --------------------------------------------------------------------------- #
+# 6) Twenty_Node_Brick over [0,1]^3 (higher-order serendipity, Hex_GL_3 27-pt)
+#    node order: 8 corners, edge-mids 9-12 (lower 1-2,2-3,3-4,4-1),
+#    13-16 (upper), 17-20 (vertical 1-5,2-6,3-7,4-8) per shp3dv brcshl.
+# --------------------------------------------------------------------------- #
+h20_ref = os.path.join(OUT, "sq_hex20_ref.mpco")
+h20_new = os.path.join(OUT, "sq_hex20.ladruno")
+_fresh(h20_ref, h20_new)
+
+ops.wipe()
+ops.model("basic", "-ndm", 3, "-ndf", 3)
+# corners (1-8)
+ops.node(1, 0.0, 0.0, 0.0)
+ops.node(2, 1.0, 0.0, 0.0)
+ops.node(3, 1.0, 1.0, 0.0)
+ops.node(4, 0.0, 1.0, 0.0)
+ops.node(5, 0.0, 0.0, 1.0)
+ops.node(6, 1.0, 0.0, 1.0)
+ops.node(7, 1.0, 1.0, 1.0)
+ops.node(8, 0.0, 1.0, 1.0)
+# lower edge-mids (9-12): edges 1-2,2-3,3-4,4-1
+ops.node(9, 0.5, 0.0, 0.0)
+ops.node(10, 1.0, 0.5, 0.0)
+ops.node(11, 0.5, 1.0, 0.0)
+ops.node(12, 0.0, 0.5, 0.0)
+# upper edge-mids (13-16): edges 5-6,6-7,7-8,8-5
+ops.node(13, 0.5, 0.0, 1.0)
+ops.node(14, 1.0, 0.5, 1.0)
+ops.node(15, 0.5, 1.0, 1.0)
+ops.node(16, 0.0, 0.5, 1.0)
+# vertical edge-mids (17-20): edges 1-5,2-6,3-7,4-8
+ops.node(17, 0.0, 0.0, 0.5)
+ops.node(18, 1.0, 0.0, 0.5)
+ops.node(19, 1.0, 1.0, 0.5)
+ops.node(20, 0.0, 1.0, 0.5)
+for n in (1, 2, 3, 4, 9, 10, 11, 12):
+    ops.fix(n, 1, 1, 1)
+ops.nDMaterial("ElasticIsotropic", 3, 1000.0, 0.25)
+ops.element("20NodeBrick", 1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+            13, 14, 15, 16, 17, 18, 19, 20, 3)
+ops.recorder("mpco", h20_ref, "-N", "displacement", "-T", "dt", 0.0)
+ops.recorder("mpcoLadruno", h20_new, "-N", "displacement", "-T", "dt", 0.0)
+ops.timeSeries("Linear", 1)
+ops.pattern("Plain", 1, 1)
+for n in (5, 6, 7, 8):
+    ops.load(n, 0.0, 0.0, 1.0e2)
+ops.system("BandSPD")
+ops.numberer("RCM")
+ops.constraints("Plain")
+ops.integrator("LoadControl", 0.5)
+ops.algorithm("Linear")
+ops.analysis("Static")
+ops.analyze(2)
+ops.wipe()
+
+for p in (q_new, t_new, b_new, q9_new, t10_new, h20_new):
     print("NEW:", p, os.path.exists(p))
 print("STANDARD_QUAD_MODEL OK")

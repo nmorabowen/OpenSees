@@ -1242,8 +1242,32 @@ namespace mpco {
 				gp_param = { -a,-a,-a,  -a,-a, a,  -a, a,-a,  -a, a, a,
 				              a,-a,-a,   a,-a, a,   a, a,-a,   a, a, a };
 				gp_weight = { 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 }; return true; }
+			case ElementIntegrationRuleType::Hexahedron_GaussLegendre_3: { // Twenty_Node_Brick: 27-pt (brcshl)
+				// GP order follows the serendipity node pattern (NOT i,j,k tensor):
+				// GP[L] = b·(2·RA[L], 2·SA[L], 2·TA[L]) with the RA/SA/TA arrays from
+				// shp3dv.cpp brcshl — 8 corners, 12 edge-mids, 6 face-centers, centroid.
+				// This is the element's materialPointers[L] order, so GP_PARAM[L] pairs
+				// with result gauss_id L. Weights = tensor {5/9,8/9} products (Σ=8).
+				ndir = 3; num_gp = 27;
+				gp_param = {
+					-b,-b,-b,  b,-b,-b,  b, b,-b, -b, b,-b,    // 0-3  lower corners
+					-b,-b, b,  b,-b, b,  b, b, b, -b, b, b,    // 4-7  upper corners
+					 0,-b,-b,  b, 0,-b,  0, b,-b, -b, 0,-b,    // 8-11 lower edge mids
+					 0,-b, b,  b, 0, b,  0, b, b, -b, 0, b,    // 12-15 upper edge mids
+					-b,-b, 0,  b,-b, 0,  b, b, 0, -b, b, 0,    // 16-19 vertical edge mids
+					 b, 0, 0,  0, b, 0,  0, 0, b, -b, 0, 0,    // 20-23 faces +r,+s,+t,-r
+					 0,-b, 0,  0, 0,-b,  0, 0, 0 };            // 24-26 faces -s,-t, centroid
+				const double q5 = 5.0 / 9.0, q8 = 8.0 / 9.0;
+				const double wc = q5 * q5 * q5, we = q5 * q5 * q8;
+				const double wf = q5 * q8 * q8, w0 = q8 * q8 * q8;
+				gp_weight = {
+					wc, wc, wc, wc, wc, wc, wc, wc,            // 8 corners
+					we, we, we, we, we, we, we, we, we, we, we, we, // 12 edges
+					wf, wf, wf, wf, wf, wf,                    // 6 faces
+					w0 };                                      // centroid
+				return true; }
 			default:
-				return false; // Hex_GL_3 (27pt), Tri_GL_2/2B/2C, Tet_GL_2 not yet tabulated
+				return false; // Tri_GL_2/2B/2C not yet tabulated
 			}
 		}
 
@@ -1369,6 +1393,37 @@ namespace mpco {
 							N[i] = 0.125 * (1.0 + sgn[i][0] * r)
 							             * (1.0 + sgn[i][1] * s)
 							             * (1.0 + sgn[i][2] * u);
+						return true; }
+					// ---- hex, 20-node serendipity (Twenty_Node_Brick) -------
+					// node order: 8 corners, then edge-mids 8-11 (lower edges
+					// 1-2,2-3,3-4,4-1), 12-15 (upper), 16-19 (vertical 1-5..4-8)
+					// per shp3dv.cpp brcshl. Standard serendipity basis (exact for
+					// straight-sided bricks; reference-config GLOBAL_GP_COORDS).
+					case ElementGeometryType::Hexahedron_20N: {
+						if (nn < 20 || nd < 3) return false;
+						double xyz[3] = { natc[0], natc[1], natc[2] };
+						static const double nc[20][3] = {
+							{-1,-1,-1}, { 1,-1,-1}, { 1, 1,-1}, {-1, 1,-1},
+							{-1,-1, 1}, { 1,-1, 1}, { 1, 1, 1}, {-1, 1, 1},
+							{ 0,-1,-1}, { 1, 0,-1}, { 0, 1,-1}, {-1, 0,-1},
+							{ 0,-1, 1}, { 1, 0, 1}, { 0, 1, 1}, {-1, 0, 1},
+							{-1,-1, 0}, { 1,-1, 0}, { 1, 1, 0}, {-1, 1, 0} };
+						for (int i = 0; i < 20; ++i) {
+							const double* c = nc[i];
+							int zeros = 0, zdir = -1;
+							for (int d = 0; d < 3; ++d)
+								if (c[d] == 0.0) { ++zeros; zdir = d; }
+							if (zeros == 0) { // corner
+								double lin = xyz[0]*c[0] + xyz[1]*c[1] + xyz[2]*c[2] - 2.0;
+								N[i] = 0.125 * (1.0 + xyz[0]*c[0]) * (1.0 + xyz[1]*c[1])
+								             * (1.0 + xyz[2]*c[2]) * lin;
+							} else { // edge mid: (1-u^2) along the zero direction
+								double prod = 0.25 * (1.0 - xyz[zdir]*xyz[zdir]);
+								for (int d = 0; d < 3; ++d)
+									if (d != zdir) prod *= (1.0 + xyz[d]*c[d]);
+								N[i] = prod;
+							}
+						}
 						return true; }
 					default:
 						return false;
