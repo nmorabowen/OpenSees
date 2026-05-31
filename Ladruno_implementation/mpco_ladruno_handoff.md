@@ -53,7 +53,7 @@ branch `feature/mpco-step-b-global-gp` off current ladruno):**
 - New gate `standard_quad_{model,check}.py` with **write-time round-trip oracle**
   (ALL PASS ≤1e-12). No regression: 80/80·96/96·144/144·72/72·108/108·pytest 10/10.
 
-## Step D PARTIAL — PR #31 (branch `feature/mpco-step-de-higher-order`)
+## Step D PARTIAL — PR #32 (branch `feature/mpco-step-de-higher-order`)
 Higher-order GLOBAL_GP_COORDS for the two elements verifiable from source:
 - **quad9 (NineNodeQuad, Quad_GL_3)** — gated (rule+shape fn already shipped Steps A/B).
 - **tet10 (TenNodeTetrahedron, Tet_GL_2 4-pt α/β)** — NEW `Tet_GL_2` rule + tet10 shape
