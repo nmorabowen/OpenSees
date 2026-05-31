@@ -151,3 +151,92 @@ def reconstruct_global(
         w = np.asarray(control_weights, dtype=float)
         R = (w * R) / float(np.dot(w, R))  # rational: R_i = w_i B_i / sum_j w_j B_j
     return R @ np.asarray(control_coords, dtype=float)
+
+
+# ---------------------------------------------------------------------------
+# Topology + node-count shape functions (the GLOBAL_GP_COORDS oracle path)
+# ---------------------------------------------------------------------------
+#
+# ``shape_functions`` is the INDEPENDENT Python reimplementation of the C++
+# ``computeGlobalGP`` basis evaluator (MPCOL_ElementResults.h). It is keyed by
+# (topology, num_nodes) rather than the self-describing FAMILY/ORDER descriptor,
+# because the write-time round-trip oracle (ladruno_format.round_trip_oracle)
+# reconstructs x(GP_PARAM[k]) directly from the element's natural-coordinate GP
+# table + node coordinates and compares it to the recorder's static
+# GLOBAL_GP_COORDS. Node natural-coordinate orderings are pinned to each
+# element's getExternalNodes() convention (verified per source — see
+# LEDGER_quirks.md and the schema-v1 / Step B-D notes).
+
+# 20-node serendipity node natural coords (8 corners then 12 edge-mids), matching
+# computeGlobalGP / shp3dv brcshl node order.
+HEX20_NC = np.array([
+    [-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],
+    [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1],
+    [0, -1, -1], [1, 0, -1], [0, 1, -1], [-1, 0, -1],
+    [0, -1, 1], [1, 0, 1], [0, 1, 1], [-1, 0, 1],
+    [-1, -1, 0], [1, -1, 0], [1, 1, 0], [-1, 1, 0]], float)
+
+
+def shape_functions(topology: str, num_nodes: int, xi: np.ndarray) -> np.ndarray:
+    """Return (num_nodes,) shape-function values N_i(xi) for the supported
+    Lagrange/serendipity topologies, in each element's node order.
+
+    Covers line2, tri3/tri6(-bary), quad4/quad9, tet4/tet10(-bary), hex8/hex20 —
+    the set computeGlobalGP emits GLOBAL_GP_COORDS for. xi is the natural/parametric
+    coordinate as stored in GP_PARAM (bary coords for simplices use the first
+    ndir entries; the dependent coord is recovered as 1 - sum)."""
+    xi = np.asarray(xi, dtype=float).ravel()
+    if topology == "line" and num_nodes >= 2:
+        s = xi[0]
+        return np.array([0.5 * (1 - s), 0.5 * (1 + s)])
+    if topology == "tri" and num_nodes == 3:
+        x, e = xi[0], xi[1]
+        return np.array([x, e, 1 - x - e])
+    if topology == "tri" and num_nodes == 6:
+        x, e = xi[0], xi[1]
+        z = 1 - x - e
+        return np.array([
+            x * (2 * x - 1), e * (2 * e - 1), z * (2 * z - 1),
+            4 * x * e, 4 * e * z, 4 * z * x])
+    if topology == "quad" and num_nodes == 4:
+        s, t = xi[0], xi[1]
+        return 0.25 * np.array([(1 - s) * (1 - t), (1 + s) * (1 - t),
+                                (1 + s) * (1 + t), (1 - s) * (1 + t)])
+    if topology == "quad" and num_nodes == 9:
+        s, t = xi[0], xi[1]
+        return np.array([
+            (1 - s) * (1 - t) * s * t / 4, -(1 + s) * (1 - t) * s * t / 4,
+            (1 + s) * (1 + t) * s * t / 4, -(1 - s) * (1 + t) * s * t / 4,
+            -(1 - s * s) * (1 - t) * t / 2, (1 + s) * (1 - t * t) * s / 2,
+            (1 - s * s) * (1 + t) * t / 2, -(1 - s) * (1 - t * t) * s / 2,
+            (1 - s * s) * (1 - t * t)])
+    if topology == "tet" and num_nodes == 4:
+        r, s, u = xi[0], xi[1], xi[2]
+        return np.array([r, s, u, 1 - r - s - u])
+    if topology == "tet" and num_nodes == 10:
+        r, s, u = xi[0], xi[1], xi[2]
+        L4 = 1 - r - s - u
+        return np.array([
+            r * (2 * r - 1), s * (2 * s - 1), u * (2 * u - 1), L4 * (2 * L4 - 1),
+            4 * r * s, 4 * s * u, 4 * u * r, 4 * r * L4, 4 * u * L4, 4 * s * L4])
+    if topology == "hex" and num_nodes == 8:
+        r, s, u = xi[0], xi[1], xi[2]
+        sgn = np.array([[-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],
+                        [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]], float)
+        return 0.125 * np.prod(1 + sgn * np.array([r, s, u]), axis=1)
+    if topology == "hex" and num_nodes == 20:
+        xyz = np.array([xi[0], xi[1], xi[2]], float)
+        N = np.zeros(20)
+        for i, c in enumerate(HEX20_NC):
+            zeros = [d for d in range(3) if c[d] == 0.0]
+            if not zeros:  # corner
+                N[i] = 0.125 * np.prod(1 + xyz * c) * (xyz @ c - 2.0)
+            else:          # edge mid: (1-u^2) along the zero direction
+                zdir = zeros[0]
+                prod = 0.25 * (1.0 - xyz[zdir] ** 2)
+                for d in range(3):
+                    if d != zdir:
+                        prod *= (1.0 + xyz[d] * c[d])
+                N[i] = prod
+        return N
+    raise ValueError(f"no shape function for topology={topology} num_nodes={num_nodes}")

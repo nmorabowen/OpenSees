@@ -136,3 +136,60 @@ def test_reconstruct_bernstein_line_endpoints():
     x1 = lb.reconstruct_global(Xc, "bernstein", "line", (1,), "[0,1]", np.array([1.0]))
     assert np.allclose(x0, [0.0, 0.0])
     assert np.allclose(x1, [2.0, 0.0])
+
+
+# ---- Step E: shared shape_functions (the GLOBAL_GP_COORDS oracle basis) ------
+
+
+@pytest.mark.parametrize(
+    "topo,nn,xi",
+    [
+        ("line", 2, [0.3]),
+        ("tri", 3, [0.2, 0.5]),
+        ("tri", 6, [0.2, 0.5]),
+        ("quad", 4, [0.3, -0.4]),
+        ("quad", 9, [0.3, -0.4]),
+        ("tet", 4, [0.2, 0.3, 0.1]),
+        ("tet", 10, [0.2, 0.3, 0.1]),
+        ("hex", 8, [0.1, -0.2, 0.3]),
+        ("hex", 20, [0.1, -0.2, 0.3]),
+    ],
+)
+def test_shape_functions_partition_of_unity(topo, nn, xi):
+    """Every supported basis must form a partition of unity (sum N_i == 1) -- an
+    independent correctness check on the oracle basis, basis-by-basis."""
+    N = lb.shape_functions(topo, nn, np.array(xi))
+    assert N.shape == (nn,)
+    assert np.isclose(N.sum(), 1.0, atol=1e-12), f"{topo}{nn}: sum={N.sum()}"
+
+
+# ---- D5: round-trip oracle ---------------------------------------------------
+
+
+def test_round_trip_oracle_passes(synth):
+    """The synthetic fixture carries GLOBAL_GP_COORDS for the quad, beam, and tri
+    (bary) groups; the oracle must reconstruct them all to <=1e-12."""
+    problems = lf.round_trip_oracle(synth)
+    assert problems == [], f"oracle should be clean, got: {problems}"
+
+
+def test_round_trip_oracle_catches_corruption(synth):
+    """Perturb one GLOBAL_GP_COORDS entry -> the oracle must flag a mismatch."""
+    import h5py
+
+    with h5py.File(synth, "a") as f:
+        g = f["MODEL_STAGE[0]/MODEL/ELEMENTS/156-FourNodeQuad[0]/GLOBAL_GP_COORDS"]
+        g[0, 0] += 0.5  # move a Gauss point off its reconstructed location
+    problems = lf.round_trip_oracle(synth)
+    assert any("round-trip" in p and "FourNodeQuad" in p for p in problems), problems
+
+
+def test_validator_accepts_bary_simplex_ndir(synth):
+    """The tri group uses PARAM_DOMAIN='bary' with NDIR=2 decoupled from ORDER=(1,)
+    -- validate() must accept it (schema-v1 finding (f))."""
+    with lf.LadrunoReader(synth) as r:
+        g = r.element_groups("MODEL_STAGE[0]")["33-Tri31[0]"]
+    assert g["param_domain"] == "bary"
+    assert g["ndir"] == 2
+    assert g["order"] == (1,)
+    assert lf.validate(synth) == []

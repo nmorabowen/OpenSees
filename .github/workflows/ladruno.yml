@@ -38,6 +38,15 @@ jobs:
         run: python ci/check_classtags.py
       - name: manifest ledger (G9)
         run: python ci/check_manifest.py
+      # MPCO_Ladruno schema-v1 gate (D5): the validator is the executable spec and
+      # the round-trip oracle reconstructs x(GP_PARAM) vs GLOBAL_GP_COORDS at write
+      # time -- both run pure-Python on a synthetic fixture, no OpenSees build, so
+      # they gate every PR (incl. drafts) in seconds.
+      - name: MPCO_Ladruno validator + round-trip oracle (D5)
+        run: |
+          pip install h5py numpy pytest
+          cd Ladruno_scripts/ladruno_recorder_tests
+          pytest -q test_ladruno_harness.py
 
   # ---- Zone-A: build + pytest(zone_a) + gated Tcl suite ------------------
   zone-a-ubuntu:

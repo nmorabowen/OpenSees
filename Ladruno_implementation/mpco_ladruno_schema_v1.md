@@ -406,9 +406,17 @@ in STKO). Fiber section as today.
 
 ## 9. Versioning & compatibility
 
-- `FORMAT_VERSION=1` is this document. Additive changes (new optional groups) keep the
-  version; any change that breaks a v1 reader bumps it.
-- apeGmsh and `STKO_to_python` gate on `GENERATOR`/`FORMAT_VERSION`.
+- **`FORMAT_VERSION=1` is FROZEN (2026-05-30).** This document is the stable v1
+  contract. It is now machine-enforced: `ladruno_format.validate()` is the executable
+  spec (L2) and `ladruno_format.round_trip_oracle()` is a mandatory write-time geometry
+  check (D5) — both gate every PR in CI (`static-gates`, pure-Python, no build) against a
+  synthetic fixture, and run on real recorder output in the per-element gates. A
+  conformant writer/reader is whatever passes both.
+- Additive changes (new optional groups) keep the version; any change that breaks a v1
+  reader bumps it. New element families (Bézier/IGA/Belytschko) opt in via self-declaration
+  (`basisInfo`) without a version bump — that is the whole point of the inverted dispatch.
+- apeGmsh and `STKO_to_python` gate on `GENERATOR`/`FORMAT_VERSION` and SHOULD import
+  `ladruno_format` (validator + oracle) so both readers gate on one shared spec.
 - These files are **not** STKO-desktop readable by design (D2). The parity harness
   compares *values* against a sibling legacy `.mpco`, not bytes.
 
@@ -447,3 +455,15 @@ in STKO). Fiber section as today.
   write-time homogeneity enforcement; `INFO/PROVENANCE` lineage slot; deterministic
   close + periodic flush + explicit flush control (synced-FS / crash robustness);
   pinned `<stem>.part-<N>.ladruno` 0-based-contiguous partition naming.
+- 2026-05-30 — **D5 shared validator + round-trip oracle + v1 FREEZE.** `ladruno_basis`
+  gained an importable `shape_functions(topology, num_nodes, xi)` (the independent
+  reimplementation of C++ `computeGlobalGP`, moved out of `standard_quad_check`'s inline
+  copy — Step E). `ladruno_format` gained `round_trip_oracle(path)`: for every element
+  group with GP_PARAM + GLOBAL_GP_COORDS it reconstructs `x(GP_PARAM[k])` from
+  MODEL/NODES + CONNECTIVITY and compares to the recorder's static `GLOBAL_GP_COORDS`
+  (≤1e-12) — catching GP-ordering/basis bugs at write time. `make_synthetic` now emits
+  `NDIR` + `GLOBAL_GP_COORDS` on every group and a `bary`-domain simplex (tri, NDIR=2 vs
+  ORDER=(1,)) exercising finding (f). Both validator + oracle gate every PR in CI
+  (`ladruno.yml` `static-gates`, pure-Python, no build) and run on real recorder output
+  in `standard_quad_check`. Verified: harness 22/22; oracle clean on real
+  quad/tri/brick/quad9/tet10/hex20. `FORMAT_VERSION=1` declared **frozen** (§9).
