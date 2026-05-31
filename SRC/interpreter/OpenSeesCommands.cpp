@@ -43,6 +43,8 @@ UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 #include "OpenSeesCommands.h"
 #include <OPS_Globals.h>
 #include <elementAPI.h>
+#include <profiler/Profiler.h>           // Ladruno stack profiler (P5 command)
+#include <profiler/ProfilerHDF5Writer.h>
 #include <UniaxialMaterial.h>
 #include <NDMaterial.h>
 #include <SectionForceDeformation.h>
@@ -3213,6 +3215,93 @@ int OPS_stopTimer()
     theTimer->pause();
     opserr << *theTimer;
     return 0;
+}
+
+// Ladruno stack profiler (P5). Drives the process-global Profiler that the engine
+// hot-path OPS_PROFILE_SCOPE seams (P2) accumulate into, and emits the HDF5 the
+// Python backend reads. Subcommands:
+//   profiler start [-deep] [-memory] [-perStep]   begin a run (coarse always; -deep
+//                                                  adds per-element, -memory the
+//                                                  alloc counters, -perStep the series)
+//   profiler stop                                  end the run
+//   profiler reset                                 clear trees/series (config kept)
+//   profiler report <filename> [-run <id>]         append run <id> to the HDF5 dataset
+//   profiler memory                                -> peak bytes (int)
+int OPS_profiler()
+{
+    if (cmds == 0) return 0;
+    if (OPS_GetNumRemainingInputArgs() < 1) {
+        opserr << "WARNING profiler - expected subcommand: start|stop|reset|report|memory\n";
+        return -1;
+    }
+    const char* sub = OPS_GetString();
+    ops_profiler::Profiler& P = ops_profiler::theProfiler();
+
+    if (strcmp(sub, "start") == 0) {
+        bool deep = false, mem = false;
+        while (OPS_GetNumRemainingInputArgs() > 0) {
+            const char* opt = OPS_GetString();
+            if (strcmp(opt, "-deep") == 0)         deep = true;
+            else if (strcmp(opt, "-memory") == 0)  mem = true;
+            else if (strcmp(opt, "-perStep") == 0) P.config().perStep = true;
+        }
+        P.setDeep(deep);
+        P.setMem(mem);
+        P.start();
+        return 0;
+    }
+    if (strcmp(sub, "stop") == 0)  { P.stop();  return 0; }
+    if (strcmp(sub, "reset") == 0) { P.reset(); return 0; }
+
+    if (strcmp(sub, "report") == 0) {
+        if (OPS_GetNumRemainingInputArgs() < 1) {
+            opserr << "WARNING profiler report <filename> [-run <id>]\n";
+            return -1;
+        }
+        const char* fname = OPS_GetString();
+        const char* runid = "run0";
+        while (OPS_GetNumRemainingInputArgs() > 0) {
+            const char* opt = OPS_GetString();
+            if (strcmp(opt, "-run") == 0 && OPS_GetNumRemainingInputArgs() > 0)
+                runid = OPS_GetString();
+        }
+        const ops_profiler::ProfileNode& rollup = P.mergedRollup();
+        ops_profiler::RunMeta meta = P.buildMeta();
+        LinearSOE* theSOE = cmds->getSOE();                 // P0#2: nDOF normalizer
+        if (theSOE != 0) meta.nDOF = theSOE->getNumEqn();
+        ops_profiler::MemorySnapshot snap = P.buildMemorySnapshot();
+        const ops_profiler::Series& ser = P.series();
+
+        ops_profiler::ProfilerHDF5Writer w;
+        if (!w.open(fname)) {
+            opserr << "WARNING profiler report - could not open '" << fname << "'\n";
+            return -1;
+        }
+        bool ok = w.writeRun(runid, rollup, meta,
+                             (ser.nSteps() > 0 ? &ser : (const ops_profiler::Series*)0),
+                             snap);
+        w.close();
+        if (!ok) {
+            opserr << "WARNING profiler report - writeRun failed (run id '" << runid
+                   << "' may already exist in '" << fname << "')\n";
+            return -1;
+        }
+        return 0;
+    }
+
+    if (strcmp(sub, "memory") == 0) {
+        ops_profiler::MemorySnapshot snap = P.buildMemorySnapshot();
+        int value   = (int) snap.peak_bytes;                // v1: peak bytes as int
+        int numdata = 1;
+        if (OPS_SetIntOutput(&numdata, &value, true) < 0) {
+            opserr << "WARNING profiler memory - failed to set output\n";
+            return -1;
+        }
+        return 0;
+    }
+
+    opserr << "WARNING profiler - unknown subcommand '" << sub << "'\n";
+    return -1;
 }
 
 int OPS_modalDamping()

@@ -48,6 +48,7 @@
 #include <ConvergenceTest.h>
 #include <ID.h>
 #include <elementAPI.h>
+#include <profiler/ProfilerMacros.h>
 #include <string>
 
 
@@ -140,11 +141,13 @@ NewtonRaphson::solveCurrentStep(void)
 	return -5;
     }	
 
+    { OPS_PROFILE_SCOPE("formUnbalance");
     if (theIntegrator->formUnbalance() < 0) {
       opserr << "WARNING NewtonRaphson::solveCurrentStep() -";
-      opserr << "the Integrator failed in formUnbalance()\n";	
+      opserr << "the Integrator failed in formUnbalance()\n";
       return -2;
-    }	    
+    }
+    }
 
     // set itself as the ConvergenceTest objects EquiSolnAlgo
     theTest->setEquiSolnAlgo(*this);
@@ -159,6 +162,7 @@ NewtonRaphson::solveCurrentStep(void)
 
     do {
 
+      { OPS_PROFILE_SCOPE("formTangent");
       if (tangent == INITIAL_THEN_CURRENT_TANGENT) {
 	if (numIterations == 0) {
 	  SOLUTION_ALGORITHM_tangentFlag = INITIAL_TANGENT;
@@ -166,42 +170,49 @@ NewtonRaphson::solveCurrentStep(void)
 	    opserr << "WARNING NewtonRaphson::solveCurrentStep() -";
 	    opserr << "the Integrator failed in formTangent()\n";
 	    return -1;
-	  } 
+	  }
 	} else {
 	  SOLUTION_ALGORITHM_tangentFlag = CURRENT_TANGENT;
 	  if (theIntegrator->formTangent(CURRENT_TANGENT) < 0){
 	    opserr << "WARNING NewtonRaphson::solveCurrentStep() -";
 	    opserr << "the Integrator failed in formTangent()\n";
 	    return -1;
-	  } 
+	  }
 	}
       }	else {
-	
+
 	SOLUTION_ALGORITHM_tangentFlag = tangent;
 	if (theIntegrator->formTangent(tangent, iFactor, cFactor) < 0){
 	    opserr << "WARNING NewtonRaphson::solveCurrentStep() -";
 	    opserr << "the Integrator failed in formTangent()\n";
 	    return -1;
-	}		    
-      } 
+	}
+      }
+      }
+      { OPS_PROFILE_SCOPE("linearSolve");
       if (theSOE->solve() < 0) {
 	opserr << "WARNING NewtonRaphson::solveCurrentStep() -";
-	opserr << "the LinearSysOfEqn failed in solve()\n";	
+	opserr << "the LinearSysOfEqn failed in solve()\n";
 	return -3;
-      }	    
+      }
+      }
 
+      { OPS_PROFILE_SCOPE("update");
       if (theIntegrator->update(theSOE->getX()) < 0) {
 	opserr << "WARNING NewtonRaphson::solveCurrentStep() -";
-	opserr << "the Integrator failed in update()\n";	
+	opserr << "the Integrator failed in update()\n";
 	return -4;
-      }	        
+      }
+      }
+      { OPS_PROFILE_SCOPE("formUnbalance");
       if (theIntegrator->formUnbalance() < 0) {
 	opserr << "WARNING NewtonRaphson::solveCurrentStep() -";
-	opserr << "the Integrator failed in formUnbalance()\n";	
+	opserr << "the Integrator failed in formUnbalance()\n";
 	return -2;
-      }	
+      }
+      }
 
-      result = theTest->test();
+      { OPS_PROFILE_SCOPE("convTest"); result = theTest->test(); }
        numIterations++;
       this->record(numIterations);
 

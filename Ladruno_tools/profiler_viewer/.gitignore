@@ -1,0 +1,4 @@
+# Regenerable artifacts (python make_sample.py / test_contract.py)
+*.h5
+__pycache__/
+*.pyc

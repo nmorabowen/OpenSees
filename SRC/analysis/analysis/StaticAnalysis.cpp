@@ -48,6 +48,7 @@
 #include <Graph.h>
 //#include <Timer.h>
 #include <Integrator.h>//Abbas
+#include <profiler/ProfilerMacros.h>
 
 // Constructor
 //    sets theModel and theSysOFEqn to 0 and the Algorithm to the one supplied
@@ -130,6 +131,7 @@ StaticAnalysis::analyze(int numSteps, bool flush)
     Domain *the_Domain = this->getDomainPtr();
 
     for (int i=0; i<numSteps; i++) {
+	{ OPS_PROFILE_SCOPE("step");
 
 	result = theAnalysisModel->analysisStep();
 
@@ -160,6 +162,7 @@ StaticAnalysis::analyze(int numSteps, bool flush)
 	    }	
 	}
 
+	{ OPS_PROFILE_SCOPE("newStep");
 	result = theIntegrator->newStep();
 	if (result < 0) {
 	    opserr << "StaticAnalysis::analyze() - the Integrator failed";
@@ -168,20 +171,23 @@ StaticAnalysis::analyze(int numSteps, bool flush)
 	    the_Domain->revertToLastCommit();
 	    theIntegrator->revertToLastStep();
 
-	 
+
 	    return -2;
 	}
+	}
 
+	{ OPS_PROFILE_SCOPE("solveCurrentStep");
            result = theAlgorithm->solveCurrentStep();
 	if (result < 0) {
 	    opserr << "StaticAnalysis::analyze() - the Algorithm failed";
 	    opserr << " at step: " << i << " with domain at load factor ";
 	    opserr << the_Domain->getCurrentTime() << endln;
-	    the_Domain->revertToLastCommit();	    
+	    the_Domain->revertToLastCommit();
 	    theIntegrator->revertToLastStep();
 
 	    return -3;
-	}    
+	}
+	}
 
 // AddingSensitivity:BEGIN ////////////////////////////////////
 
@@ -204,17 +210,20 @@ StaticAnalysis::analyze(int numSteps, bool flush)
 
 // AddingSensitivity:END //////////////////////////////////////
 
+	{ OPS_PROFILE_SCOPE("commit");
 	result = theIntegrator->commit();
 	if (result < 0) {
 	    opserr << "StaticAnalysis::analyze() - ";
 	    opserr << "the Integrator failed to commit";
 	    opserr << " at step: " << i << " with domain at load factor ";
 	    opserr << the_Domain->getCurrentTime() << endln;
-	    the_Domain->revertToLastCommit();	    
+	    the_Domain->revertToLastCommit();
 	    theIntegrator->revertToLastStep();
 
 	    return -4;
-	}    	
+	}
+	}
+	}
     }
 
   if (the_Domain != 0 && flush) {

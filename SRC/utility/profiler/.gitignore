@@ -1,0 +1,4 @@
+# Standalone self-test build artifacts (the module is normally built via CMake)
+*.exe
+*.obj
+*.h5
