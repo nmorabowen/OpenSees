@@ -237,3 +237,78 @@ def test_validator_accepts_bary_simplex_ndir(synth):
     assert g["ndir"] == 2
     assert g["order"] == (1,)
     assert lf.validate(synth) == []
+
+
+def _add_element_envelope(f, ncol_block=(4, 3), name="stress/204-Quad[201:0:0]"):
+    """Build a nested element ENVELOPE leaf (ENVELOPES/ON_ELEMENTS/<display>/<bucket>)
+    with a structured per-column COLUMN_MAP, mirroring writeElementColumnMap +
+    EnvelopeSink output. Returns (mult, ncomp, num_cols)."""
+    import h5py
+
+    mult, ncomp = ncol_block
+    num_cols = mult * ncomp
+    nelem = 2
+    rng = np.arange(nelem * num_cols, dtype=float).reshape(nelem, num_cols)
+    mn = -rng - 1.0
+    mx = rng + 2.0
+    # leaf nests one level under ON_ELEMENTS -> create the <display> parent first
+    on_e = f["MODEL_STAGE[0]/RESULTS"].create_group("ENVELOPES").create_group("ON_ELEMENTS")
+    leaf = on_e.create_group(name)  # h5py creates the intermediate "<display>" group
+    leaf.attrs["COMPONENTS"] = ""   # element result-level COMPONENTS is empty
+    leaf.attrs["NUM_COLUMNS"] = num_cols
+    leaf.create_dataset("ID", data=np.array([[10], [11]], dtype=np.int64))
+    leaf.create_dataset("MIN", data=mn)
+    leaf.create_dataset("MAX", data=mx)
+    leaf.create_dataset("ABSMAX", data=np.maximum(np.abs(mn), np.abs(mx)))
+    leaf.create_dataset("ARG_STEP", data=np.zeros((nelem, num_cols), dtype=np.int32))
+    cm = leaf.create_group("COLUMN_MAP")
+    # one block: GAUSS_ID increments across MULTIPLICITY, each with ncomp components
+    cm.create_dataset("LEVELS", data=np.array([[lf.LEVEL_GAUSS]], dtype=np.int32))
+    cm.create_dataset("GAUSS_ID", data=np.array([[1]], dtype=np.int32))
+    cm.create_dataset("SECTION_TAG", data=np.array([[-1]], dtype=np.int32))
+    cm.create_dataset("FIBER_ID", data=np.array([[-1]], dtype=np.int32))
+    cm.create_dataset("NUM_COMP", data=np.array([[ncomp]], dtype=np.int32))
+    cm.create_dataset("MULTIPLICITY", data=np.array([[mult]], dtype=np.int32))
+    cm.attrs["COMP_NAMES"] = ",".join(f"s{j}" for j in range(ncomp))
+    return mult, ncomp, num_cols
+
+
+def test_reader_nested_element_envelope_with_column_map(synth):
+    """Element envelopes nest under ON_ELEMENTS/<display>/<bucket> and carry the
+    structured per-column COLUMN_MAP (item (1)). The reader must find the leaf and
+    decode the gauss/section/fiber columns; validate() must accept it."""
+    import h5py
+
+    with h5py.File(synth, "a") as f:
+        mult, ncomp, num_cols = _add_element_envelope(f)
+
+    assert lf.validate(synth) == []
+
+    with lf.LadrunoReader(synth) as r:
+        env = r.envelopes("MODEL_STAGE[0]")
+        assert "ON_ELEMENTS" in env
+        leaf = env["ON_ELEMENTS"]["stress/204-Quad[201:0:0]"]
+        assert leaf["min"].shape == (2, num_cols)
+        cols = leaf["columns"]
+        assert len(cols) == num_cols
+        # GAUSS_ID increments across the MULTIPLICITY block (1..mult); each GP has
+        # ncomp components named s0.. and no section/fiber level (-1).
+        assert [c["gauss_id"] for c in cols[:ncomp]] == [1] * ncomp
+        assert [c["gauss_id"] for c in cols[ncomp:2 * ncomp]] == [2] * ncomp
+        assert {c["section_tag"] for c in cols} == {-1}
+        assert {c["fiber_id"] for c in cols} == {-1}
+        assert cols[0]["comp"] == "s0"
+
+
+def test_validator_rejects_bad_element_envelope_column_map(synth):
+    """A COLUMN_MAP whose sum(MULT*NUM_COMP) does not span the envelope columns is
+    rejected (the element ENVELOPES COLUMN_MAP is validated like the time-series
+    ON_ELEMENTS path)."""
+    import h5py
+
+    with h5py.File(synth, "a") as f:
+        _add_element_envelope(f)
+        # corrupt: claim 5 comps/block while the data is 3 -> column total mismatch
+        cm = f["MODEL_STAGE[0]/RESULTS/ENVELOPES/ON_ELEMENTS/stress/204-Quad[201:0:0]/COLUMN_MAP"]
+        cm["NUM_COMP"][...] = 5
+    assert any("column total" in p or "NUM_COMP" in p for p in lf.validate(synth))
