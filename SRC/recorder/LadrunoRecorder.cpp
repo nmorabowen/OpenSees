@@ -1,7 +1,7 @@
 /* ********************************************************************** **
-**  MPCO_Ladruno recorder — Phase-3 integration.                          **
+**  Ladruno recorder — Phase-3 integration.                          **
 **                                                                        **
-**  Wires the namespace-mpcol Source/Sink modules into a working          **
+**  Wires the namespace-ladruno Source/Sink modules into a working          **
 **  recorder. Each -N / -NS request becomes a NodeResultSource +          **
 **  StreamingSink(OnNodes); each -E request becomes a set of              **
 **  ElementResultSource + StreamingSink(OnElements) buckets, discovered    **
@@ -12,15 +12,15 @@
 **  STRUCTURE, not the math (1e-12 parity gate vs frozen `recorder mpco`). **
 ** ********************************************************************** */
 
-#include "MPCORecorderLadruno.h"
+#include "LadrunoRecorder.h"
 
-// mpcol modules (all symbols namespaced to avoid ODR clash with the frozen file)
-#include "MPCOL_Hdf5.h"     // pulls MPCOL_Types.h
-#include "MPCOL_ResultIO.h"
-#include "MPCOL_NodeResults.h"
-#include "MPCOL_ElementResults.h"
-#include "MPCOL_DomainResults.h"
-#include "MPCOL_Sinks.h"
+// ladruno modules (all symbols namespaced to avoid ODR clash with the frozen file)
+#include "Ladruno_Hdf5.h"     // pulls Ladruno_Types.h
+#include "Ladruno_ResultIO.h"
+#include "Ladruno_NodeResults.h"
+#include "Ladruno_ElementResults.h"
+#include "Ladruno_DomainResults.h"
+#include "Ladruno_Sinks.h"
 
 // OpenSees
 #include <Domain.h>
@@ -65,18 +65,18 @@
 #include <cstring>
 #include <cstdlib>
 
-namespace mpcolns = mpcol; // local alias
+namespace ladrunons = ladruno; // local alias
 
 // max number of iterations to guess the number of fibers (frozen MPCO_MAX_TRIAL_NFIB)
-#ifndef MPCO_LADRUNO_MAX_TRIAL_NFIB
-#define MPCO_LADRUNO_MAX_TRIAL_NFIB 100000
+#ifndef LADRUNO_MAX_TRIAL_NFIB
+#define LADRUNO_MAX_TRIAL_NFIB 100000
 #endif
 
 /* ===================================================================== */
 /* private_data                                                          */
 /* ===================================================================== */
 
-class MPCORecorderLadruno::private_data
+class LadrunoRecorder::private_data
 {
 public:
 	private_data()
@@ -119,10 +119,10 @@ public:
 	// model-stage stamp; thereafter a stamp change triggers a model rebuild
 	// (frozen MPCORecorder::record() multi-stage block).
 	bool first_domain_changed_done;
-	mpcolns::mpco::ProcessInfo info;
+	ladrunons::detail::ProcessInfo info;
 
 	// -T output frequency
-	mpcolns::mpco::OutputFrequency output_freq;
+	ladrunons::detail::OutputFrequency output_freq;
 
 	// -R region restriction
 	bool has_region;
@@ -147,7 +147,7 @@ public:
 	bool envelope_mode;
 
 	// parsed requests
-	std::vector<mpcolns::mpco::NodalResultType::Enum> nodal_results_requests;
+	std::vector<ladrunons::detail::NodalResultType::Enum> nodal_results_requests;
 	std::vector<int> sens_grad_indices;
 	std::vector<std::vector<std::string> > elemental_results_requests;
 
@@ -155,7 +155,7 @@ public:
 	std::vector<Node*> nodes;
 
 	// element engine
-	mpcolns::mpco::element::ElementCollection elements;
+	ladrunons::detail::element::ElementCollection elements;
 	// for each element tag: per gauss point (fiber_base_index, num_fibers)
 	std::map<int, std::vector<std::pair<int, int> > > elem_ngauss_nfiber_info;
 	// all element responses, owned here (released in clearSources)
@@ -163,8 +163,8 @@ public:
 
 	/* --- node sources/sinks --- */
 	struct NodeChannel {
-		mpcolns::ResultSource* source;   // owned
-		mpcolns::ResultSink* sink;       // owned (StreamingSink or, in -envelope mode, EnvelopeSink)
+		ladrunons::ResultSource* source;   // owned
+		ladrunons::ResultSink* sink;       // owned (StreamingSink or, in -envelope mode, EnvelopeSink)
 		int reaction_flag;               // -1 if not a reaction source
 		bool is_modes;                   // ModesOfVibration(Rotational) special path
 		NodeChannel() : source(0), sink(0), reaction_flag(-1), is_modes(false) {}
@@ -173,21 +173,21 @@ public:
 
 	/* --- element sources/sinks --- */
 	struct ElemChannel {
-		mpcolns::ElementResultSource* source;             // owned
-		mpcolns::ResultSink* sink;                        // owned (Streaming or Envelope)
-		const mpcolns::mpco::element::OutputDescriptorHeader* header; // not owned
+		ladrunons::ElementResultSource* source;             // owned
+		ladrunons::ResultSink* sink;                        // owned (Streaming or Envelope)
+		const ladrunons::detail::element::OutputDescriptorHeader* header; // not owned
 		bool column_map_written;
 		ElemChannel() : source(0), sink(0), header(0), column_map_written(false) {}
 	};
 	std::vector<ElemChannel> elem_channels;
 	// the per-request response-collection trees (own the OutputResponseCollection
 	// buckets referenced by ElementResultSource); kept alive for source lifetime.
-	mpcolns::mpco::element::ResultRecorderCollection elemental_recorders;
+	ladrunons::detail::element::ResultRecorderCollection elemental_recorders;
 
 	/* --- domain/region sources/sinks (ADR D8 energy balance) --- */
 	struct DomainChannel {
-		mpcolns::ResultSource* source;   // owned
-		mpcolns::ResultSink* sink;       // owned (Streaming or Envelope)
+		ladrunons::ResultSource* source;   // owned
+		ladrunons::ResultSink* sink;       // owned (Streaming or Envelope)
 		DomainChannel() : source(0), sink(0) {}
 	};
 	std::vector<DomainChannel> domain_channels;
@@ -197,32 +197,32 @@ public:
 /* ctor / dtor                                                           */
 /* ===================================================================== */
 
-MPCORecorderLadruno::MPCORecorderLadruno()
-	: Recorder(RECORDER_TAGS_MPCOLadrunoRecorder)
+LadrunoRecorder::LadrunoRecorder()
+	: Recorder(RECORDER_TAGS_LadrunoRecorder)
 	, m_data(new private_data())
 {
 }
 
-MPCORecorderLadruno::~MPCORecorderLadruno()
+LadrunoRecorder::~LadrunoRecorder()
 {
 	if (m_data) {
 		// In envelope mode, write the final ENVELOPES datasets while the sinks +
 		// file are still alive (EnvelopeSink defers all output to finalize()).
 		if (m_data->envelope_mode && m_data->initialized &&
-		    m_data->info.h_file_id != mpcolns::HID_INVALID)
+		    m_data->info.h_file_id != ladrunons::HID_INVALID)
 			finalizeAllSinks();
 		clearSources();
-		if (m_data->initialized && m_data->info.h_file_id != mpcolns::HID_INVALID) {
-			mpcolns::h5::file::flush(m_data->info.h_file_id);
-			mpcolns::h5::file::close(m_data->info.h_file_id);
-			mpcolns::h5::plist::close(m_data->info.h_group_proplist);
-			mpcolns::h5::plist::close(m_data->info.h_file_proplist);
+		if (m_data->initialized && m_data->info.h_file_id != ladrunons::HID_INVALID) {
+			ladrunons::h5::file::flush(m_data->info.h_file_id);
+			ladrunons::h5::file::close(m_data->info.h_file_id);
+			ladrunons::h5::plist::close(m_data->info.h_group_proplist);
+			ladrunons::h5::plist::close(m_data->info.h_file_proplist);
 		}
 		delete m_data;
 	}
 }
 
-int MPCORecorderLadruno::clearSources()
+int LadrunoRecorder::clearSources()
 {
 	for (size_t i = 0; i < m_data->node_channels.size(); ++i) {
 		delete m_data->node_channels[i].source;
@@ -249,9 +249,9 @@ int MPCORecorderLadruno::clearSources()
 	return 0;
 }
 
-void MPCORecorderLadruno::finalizeAllSinks()
+void LadrunoRecorder::finalizeAllSinks()
 {
-	mpcolns::mpco::ProcessInfo& info = m_data->info;
+	ladrunons::detail::ProcessInfo& info = m_data->info;
 	for (size_t i = 0; i < m_data->node_channels.size(); ++i)
 		if (m_data->node_channels[i].sink)
 			m_data->node_channels[i].sink->finalize(info);
@@ -279,25 +279,25 @@ void MPCORecorderLadruno::finalizeAllSinks()
 /* lifecycle                                                             */
 /* ===================================================================== */
 
-int MPCORecorderLadruno::setDomain(Domain& theDomain)
+int LadrunoRecorder::setDomain(Domain& theDomain)
 {
 	m_data->info.domain = &theDomain;
 	return 0;
 }
 
-int MPCORecorderLadruno::restart(void)
+int LadrunoRecorder::restart(void)
 {
 	return 0;
 }
 
-int MPCORecorderLadruno::domainChanged(void)
+int LadrunoRecorder::domainChanged(void)
 {
 	return 0;
 }
 
-int MPCORecorderLadruno::record(int commitTag, double timeStamp)
+int LadrunoRecorder::record(int commitTag, double timeStamp)
 {
-	mpcolns::mpco::ProcessInfo& info = m_data->info;
+	ladrunons::detail::ProcessInfo& info = m_data->info;
 	info.current_time_step_id = commitTag;
 	info.current_time_step = timeStamp;
 
@@ -307,11 +307,11 @@ int MPCORecorderLadruno::record(int commitTag, double timeStamp)
 		do_record = true; // always record the first time
 	}
 	else {
-		if (m_data->output_freq.type == mpcolns::mpco::OutputFrequency::NumberOfSteps) {
+		if (m_data->output_freq.type == ladrunons::detail::OutputFrequency::NumberOfSteps) {
 			if ((info.current_time_step_id - m_data->output_freq.last_step) >= m_data->output_freq.nsteps)
 				do_record = true;
 		}
-		else if (m_data->output_freq.type == mpcolns::mpco::OutputFrequency::DeltaTime) {
+		else if (m_data->output_freq.type == ladrunons::detail::OutputFrequency::DeltaTime) {
 			if (std::abs(info.current_time_step - m_data->output_freq.last_time) >= m_data->output_freq.dt)
 				do_record = true;
 		}
@@ -371,8 +371,8 @@ int MPCORecorderLadruno::record(int commitTag, double timeStamp)
 	if (m_data->envelope_mode)
 		finalizeAllSinks();
 
-	if (info.h_file_id != mpcolns::HID_INVALID)
-		mpcolns::h5::file::flush(info.h_file_id);
+	if (info.h_file_id != ladrunons::HID_INVALID)
+		ladrunons::h5::file::flush(info.h_file_id);
 
 	return 0;
 }
@@ -381,12 +381,12 @@ int MPCORecorderLadruno::record(int commitTag, double timeStamp)
 /* file creation                                                         */
 /* ===================================================================== */
 
-int MPCORecorderLadruno::initialize()
+int LadrunoRecorder::initialize()
 {
-	mpcolns::mpco::ProcessInfo& info = m_data->info;
+	ladrunons::detail::ProcessInfo& info = m_data->info;
 
 	if (info.domain == 0) {
-		opserr << "MPCORecorderLadruno error: domain is not defined\n";
+		opserr << "LadrunoRecorder error: domain is not defined\n";
 		return -1;
 	}
 
@@ -399,18 +399,18 @@ int MPCORecorderLadruno::initialize()
 			break;
 		}
 		if (info.num_dimensions < 1 || info.num_dimensions > 3) {
-			opserr << "MPCORecorderLadruno error: invalid spatial dimension "
+			opserr << "LadrunoRecorder error: invalid spatial dimension "
 			       << info.num_dimensions << "\n";
 			return -1;
 		}
 	}
 
 	// property lists (link creation order tracked/indexed, as the frozen recorder)
-	info.h_file_proplist = mpcolns::h5::plist::crate(mpcolns::h5::plist::FileCreate);
-	mpcolns::h5::plist::setLinkCreationOrder(
+	info.h_file_proplist = ladrunons::h5::plist::crate(ladrunons::h5::plist::FileCreate);
+	ladrunons::h5::plist::setLinkCreationOrder(
 		info.h_file_proplist, H5P_CRT_ORDER_TRACKED | H5P_CRT_ORDER_INDEXED);
-	info.h_group_proplist = mpcolns::h5::plist::crate(mpcolns::h5::plist::GroupCreate);
-	mpcolns::h5::plist::setLinkCreationOrder(
+	info.h_group_proplist = ladrunons::h5::plist::crate(ladrunons::h5::plist::GroupCreate);
+	ladrunons::h5::plist::setLinkCreationOrder(
 		info.h_group_proplist, H5P_CRT_ORDER_TRACKED | H5P_CRT_ORDER_INDEXED);
 
 	// Resolve this process's partition identity for the parallel output contract
@@ -455,40 +455,40 @@ int MPCORecorderLadruno::initialize()
 	}
 
 	// create the file (Phase 1: no SWMR; H5P_DEFAULT file access)
-	info.h_file_id = mpcolns::h5::file::create(
+	info.h_file_id = ladrunons::h5::file::create(
 		the_filename.c_str(), info.h_file_proplist, H5P_DEFAULT);
-	if (info.h_file_id == mpcolns::HID_INVALID) {
-		opserr << "MPCORecorderLadruno error: cannot create file \""
+	if (info.h_file_id == ladrunons::HID_INVALID) {
+		opserr << "LadrunoRecorder error: cannot create file \""
 		       << the_filename.c_str() << "\"\n";
 		return -1;
 	}
 
 	// INFO group (schema v1 §2)
-	hid_t h_info = mpcolns::h5::group::create(
+	hid_t h_info = ladrunons::h5::group::create(
 		info.h_file_id, "INFO", H5P_DEFAULT, info.h_group_proplist, H5P_DEFAULT);
-	mpcolns::h5::attribute::write(h_info, "GENERATOR", std::string("MPCO_Ladruno"));
-	mpcolns::h5::attribute::write(h_info, "FORMAT_VERSION", (int)1);
-	mpcolns::h5::attribute::write(h_info, "SOLVER_NAME", std::string("OpenSees"));
+	ladrunons::h5::attribute::write(h_info, "GENERATOR", std::string("Ladruno"));
+	ladrunons::h5::attribute::write(h_info, "FORMAT_VERSION", (int)1);
+	ladrunons::h5::attribute::write(h_info, "SOLVER_NAME", std::string("OpenSees"));
 	std::vector<int> solver_version;
 	solver_version.push_back(3);
 	solver_version.push_back(5);
 	solver_version.push_back(1);
-	mpcolns::h5::attribute::write(h_info, "SOLVER_VERSION", solver_version);
-	mpcolns::h5::attribute::write(h_info, "SPATIAL_DIM", info.num_dimensions);
+	ladrunons::h5::attribute::write(h_info, "SOLVER_VERSION", solver_version);
+	ladrunons::h5::attribute::write(h_info, "SPATIAL_DIM", info.num_dimensions);
 
 	// Partition manifest (parallel-output contract). Each ".part-N.ladruno" file
 	// self-declares its 0-based partition index + the total count so apeGmsh can
 	// validate the contiguous-from-0 set it globs. PARTITIONED=0 marks an ordinary
 	// single-file (sequential) output — NUM_PARTITIONS then stays 1. Values resolved
 	// above (broadcast p_id for PartitionedDomain, MPI rank for interpreter-per-rank).
-	mpcolns::h5::attribute::write(h_info, "PARTITION_ID", part_id);
-	mpcolns::h5::attribute::write(h_info, "PARTITIONED", (int)(is_partitioned ? 1 : 0));
-	mpcolns::h5::attribute::write(h_info, "NUM_PARTITIONS", num_parts);
+	ladrunons::h5::attribute::write(h_info, "PARTITION_ID", part_id);
+	ladrunons::h5::attribute::write(h_info, "PARTITIONED", (int)(is_partitioned ? 1 : 0));
+	ladrunons::h5::attribute::write(h_info, "NUM_PARTITIONS", num_parts);
 
-	hid_t h_prov = mpcolns::h5::group::create(
+	hid_t h_prov = ladrunons::h5::group::create(
 		h_info, "PROVENANCE", H5P_DEFAULT, info.h_group_proplist, H5P_DEFAULT);
-	mpcolns::h5::group::close(h_prov);
-	mpcolns::h5::group::close(h_info);
+	ladrunons::h5::group::close(h_prov);
+	ladrunons::h5::group::close(h_info);
 
 	// NOTE: model writing + source/sink building are NOT done here. They live in
 	// writeModel(), driven by record()'s multi-stage rebuild_model block, so they
@@ -502,9 +502,9 @@ int MPCORecorderLadruno::initialize()
 /* model writing                                                         */
 /* ===================================================================== */
 
-int MPCORecorderLadruno::writeModel()
+int LadrunoRecorder::writeModel()
 {
-	mpcolns::mpco::ProcessInfo& info = m_data->info;
+	ladrunons::detail::ProcessInfo& info = m_data->info;
 
 	// info.current_model_stage_id is set by record() before calling writeModel()
 	// (the multi-stage rebuild_model block), so the stamp is consistent across
@@ -513,46 +513,46 @@ int MPCORecorderLadruno::writeModel()
 	// MODEL_STAGE[<stamp>] + MODEL + RESULTS skeleton (mirror frozen writeModel)
 	std::stringstream ss_stage;
 	ss_stage << "MODEL_STAGE[" << info.current_model_stage_id << "]";
-	hid_t h_stage = mpcolns::h5::group::create(
+	hid_t h_stage = ladrunons::h5::group::create(
 		info.h_file_id, ss_stage.str().c_str(), H5P_DEFAULT,
 		info.h_group_proplist, H5P_DEFAULT);
-	mpcolns::h5::attribute::write(h_stage, "STEP", info.current_time_step_id);
-	mpcolns::h5::attribute::write(h_stage, "TIME", info.current_time_step);
+	ladrunons::h5::attribute::write(h_stage, "STEP", info.current_time_step_id);
+	ladrunons::h5::attribute::write(h_stage, "TIME", info.current_time_step);
 	// KIND (schema): the -kind option (default "static"), auto-promoted to "eigen"
 	// when a modal result is requested (ModesOfVibration[Rotational]).
 	std::string stage_kind = m_data->stage_kind;
 	for (size_t i = 0; i < m_data->nodal_results_requests.size(); ++i) {
-		mpcolns::mpco::NodalResultType::Enum t = m_data->nodal_results_requests[i];
-		if (t == mpcolns::mpco::NodalResultType::ModesOfVibration ||
-		    t == mpcolns::mpco::NodalResultType::ModesOfVibrationRotational) {
+		ladrunons::detail::NodalResultType::Enum t = m_data->nodal_results_requests[i];
+		if (t == ladrunons::detail::NodalResultType::ModesOfVibration ||
+		    t == ladrunons::detail::NodalResultType::ModesOfVibrationRotational) {
 			stage_kind = "eigen";
 			break;
 		}
 	}
-	mpcolns::h5::attribute::write(h_stage, "KIND", stage_kind);
+	ladrunons::h5::attribute::write(h_stage, "KIND", stage_kind);
 
-	hid_t h_model = mpcolns::h5::group::create(
+	hid_t h_model = ladrunons::h5::group::create(
 		h_stage, "MODEL", H5P_DEFAULT, info.h_group_proplist, H5P_DEFAULT);
-	mpcolns::h5::group::close(h_model);
+	ladrunons::h5::group::close(h_model);
 
-	hid_t h_results = mpcolns::h5::group::create(
+	hid_t h_results = ladrunons::h5::group::create(
 		h_stage, "RESULTS", H5P_DEFAULT, info.h_group_proplist, H5P_DEFAULT);
-	hid_t h_on_nodes = mpcolns::h5::group::create(
+	hid_t h_on_nodes = ladrunons::h5::group::create(
 		h_results, "ON_NODES", H5P_DEFAULT, info.h_group_proplist, H5P_DEFAULT);
-	mpcolns::h5::group::close(h_on_nodes);
-	hid_t h_on_elems = mpcolns::h5::group::create(
+	ladrunons::h5::group::close(h_on_nodes);
+	hid_t h_on_elems = ladrunons::h5::group::create(
 		h_results, "ON_ELEMENTS", H5P_DEFAULT, info.h_group_proplist, H5P_DEFAULT);
-	mpcolns::h5::group::close(h_on_elems);
+	ladrunons::h5::group::close(h_on_elems);
 	// ON_DOMAIN / ON_REGIONS skeleton (ADR D8 energy balance lands here)
-	hid_t h_on_domain = mpcolns::h5::group::create(
+	hid_t h_on_domain = ladrunons::h5::group::create(
 		h_results, "ON_DOMAIN", H5P_DEFAULT, info.h_group_proplist, H5P_DEFAULT);
-	mpcolns::h5::group::close(h_on_domain);
-	hid_t h_on_regions = mpcolns::h5::group::create(
+	ladrunons::h5::group::close(h_on_domain);
+	hid_t h_on_regions = ladrunons::h5::group::create(
 		h_results, "ON_REGIONS", H5P_DEFAULT, info.h_group_proplist, H5P_DEFAULT);
-	mpcolns::h5::group::close(h_on_regions);
-	mpcolns::h5::group::close(h_results);
+	ladrunons::h5::group::close(h_on_regions);
+	ladrunons::h5::group::close(h_results);
 
-	mpcolns::h5::group::close(h_stage);
+	ladrunons::h5::group::close(h_stage);
 
 	if (writeModelNodes() != 0)
 		return -1;
@@ -582,9 +582,9 @@ int MPCORecorderLadruno::writeModel()
 	return 0;
 }
 
-int MPCORecorderLadruno::writeModelNodes()
+int LadrunoRecorder::writeModelNodes()
 {
-	mpcolns::mpco::ProcessInfo& info = m_data->info;
+	ladrunons::detail::ProcessInfo& info = m_data->info;
 	const int ndim = info.num_dimensions;
 
 	// gather the node set (skip pressure nodes), frozen writeModelNodes()
@@ -619,7 +619,7 @@ int MPCORecorderLadruno::writeModelNodes()
 
 	const size_t nnodes = m_data->nodes.size();
 	if (nnodes == 0) {
-		opserr << "MPCORecorderLadruno Error: no nodes to write\n";
+		opserr << "LadrunoRecorder Error: no nodes to write\n";
 		return -1;
 	}
 
@@ -640,33 +640,33 @@ int MPCORecorderLadruno::writeModelNodes()
 
 	std::stringstream ss_nodes;
 	ss_nodes << "MODEL_STAGE[" << info.current_model_stage_id << "]/MODEL/NODES";
-	hid_t h_nodes = mpcolns::h5::group::create(
+	hid_t h_nodes = ladrunons::h5::group::create(
 		info.h_file_id, ss_nodes.str().c_str(), H5P_DEFAULT,
 		info.h_group_proplist, H5P_DEFAULT);
-	hid_t d_id = mpcolns::h5::dataset::createAndWrite(h_nodes, "ID", node_ids);
-	mpcolns::h5::dataset::close(d_id);
-	hid_t d_coord = mpcolns::h5::dataset::createAndWrite(
+	hid_t d_id = ladrunons::h5::dataset::createAndWrite(h_nodes, "ID", node_ids);
+	ladrunons::h5::dataset::close(d_id);
+	hid_t d_coord = ladrunons::h5::dataset::createAndWrite(
 		h_nodes, "COORDINATES", node_coords, nnodes, (size_t)ndim);
-	mpcolns::h5::dataset::close(d_coord);
-	mpcolns::h5::group::close(h_nodes);
+	ladrunons::h5::dataset::close(d_coord);
+	ladrunons::h5::group::close(h_nodes);
 
 	return 0;
 }
 
-int MPCORecorderLadruno::writeModelElements()
+int LadrunoRecorder::writeModelElements()
 {
-	mpcolns::mpco::ProcessInfo& info = m_data->info;
+	ladrunons::detail::ProcessInfo& info = m_data->info;
 
 	std::stringstream ss_elems;
 	ss_elems << "MODEL_STAGE[" << info.current_model_stage_id << "]/MODEL/ELEMENTS";
-	hid_t h_gp_elements = mpcolns::h5::group::create(
+	hid_t h_gp_elements = ladrunons::h5::group::create(
 		info.h_file_id, ss_elems.str().c_str(), H5P_DEFAULT,
 		info.h_group_proplist, H5P_DEFAULT);
 
 	// map all elements (also populates registered custom rules)
 	m_data->elements.mapElements(info.domain, m_data->has_region, m_data->elem_set);
 
-	namespace me = mpcolns::mpco::element;
+	namespace me = ladrunons::detail::element;
 	for (me::ElementCollection::submap_type::iterator it1 = m_data->elements.items.begin();
 		it1 != m_data->elements.items.end(); ++it1) {
 		me::ElementWithSameClassTagCollection& elem_by_tag = it1->second;
@@ -699,45 +699,45 @@ int MPCORecorderLadruno::writeModelElements()
 				// Element group <name> is a GROUP (schema v1) holding CONNECTIVITY +
 				// BASIS attrs + (for custom rules) a QUADRATURE child. A dataset cannot
 				// parent the QUADRATURE group, which silently failed before this.
-				hid_t h_eg = mpcolns::h5::group::create(
+				hid_t h_eg = ladrunons::h5::group::create(
 					h_gp_elements, elem_by_custom_rule.name.c_str(), H5P_DEFAULT,
 					info.h_group_proplist, H5P_DEFAULT);
-				hid_t d_conn = mpcolns::h5::dataset::createAndWrite(
+				hid_t d_conn = ladrunons::h5::dataset::createAndWrite(
 					h_eg, "CONNECTIVITY", buffer,
 					elem_by_custom_rule.items.size(), (size_t)(1 + elem_by_tag.num_nodes));
-				mpcolns::h5::dataset::close(d_conn);
+				ladrunons::h5::dataset::close(d_conn);
 
 				// BASIS / QUADRATURE descriptors (schema §3) DERIVED from the
 				// legacy (geometry, integration rule) pair. We keep the legacy
 				// GEOMETRY/INTEGRATION_RULE attrs (for tooling that still reads them)
 				// AND add the derived self-describing descriptors.
-				mpcolns::mpco::ElementGeometryType::Enum geom = elem_by_tag.geom_type;
-				mpcolns::mpco::ElementIntegrationRuleType::Enum irule = elem_by_rule.int_rule_type;
-				mpcolns::h5::attribute::write(h_eg, "GEOMETRY", (int)geom);
-				mpcolns::h5::attribute::write(h_eg, "INTEGRATION_RULE", (int)irule);
+				ladrunons::detail::ElementGeometryType::Enum geom = elem_by_tag.geom_type;
+				ladrunons::detail::ElementIntegrationRuleType::Enum irule = elem_by_rule.int_rule_type;
+				ladrunons::h5::attribute::write(h_eg, "GEOMETRY", (int)geom);
+				ladrunons::h5::attribute::write(h_eg, "INTEGRATION_RULE", (int)irule);
 
 				// derive TOPOLOGY / FAMILY / ORDER / PARAM_DOMAIN / NUM_CTRL
 				std::string topology = "custom";
 				std::string param_domain = "[-1,1]";
 				std::vector<int> order;
 				switch (geom) {
-				case mpcolns::mpco::ElementGeometryType::Line_2N:
-				case mpcolns::mpco::ElementGeometryType::Line_3N:
+				case ladrunons::detail::ElementGeometryType::Line_2N:
+				case ladrunons::detail::ElementGeometryType::Line_3N:
 					topology = "line"; param_domain = "[-1,1]"; order.push_back(1); break;
-				case mpcolns::mpco::ElementGeometryType::Triangle_3N:
-				case mpcolns::mpco::ElementGeometryType::Triangle_6N:
+				case ladrunons::detail::ElementGeometryType::Triangle_3N:
+				case ladrunons::detail::ElementGeometryType::Triangle_6N:
 					topology = "tri"; param_domain = "bary"; order.push_back(1); break;
-				case mpcolns::mpco::ElementGeometryType::Quadrilateral_4N:
-				case mpcolns::mpco::ElementGeometryType::Quadrilateral_8N:
-				case mpcolns::mpco::ElementGeometryType::Quadrilateral_9N:
-				case mpcolns::mpco::ElementGeometryType::Quadrilateral_CohesiveBand_4N:
+				case ladrunons::detail::ElementGeometryType::Quadrilateral_4N:
+				case ladrunons::detail::ElementGeometryType::Quadrilateral_8N:
+				case ladrunons::detail::ElementGeometryType::Quadrilateral_9N:
+				case ladrunons::detail::ElementGeometryType::Quadrilateral_CohesiveBand_4N:
 					topology = "quad"; param_domain = "[-1,1]"; order.push_back(1); order.push_back(1); break;
-				case mpcolns::mpco::ElementGeometryType::Tetrahedron_4N:
-				case mpcolns::mpco::ElementGeometryType::Tetrahedron_10N:
+				case ladrunons::detail::ElementGeometryType::Tetrahedron_4N:
+				case ladrunons::detail::ElementGeometryType::Tetrahedron_10N:
 					topology = "tet"; param_domain = "bary"; order.push_back(1); break;
-				case mpcolns::mpco::ElementGeometryType::Hexahedron_8N:
-				case mpcolns::mpco::ElementGeometryType::Hexahedron_20N:
-				case mpcolns::mpco::ElementGeometryType::Hexahedron_27N:
+				case ladrunons::detail::ElementGeometryType::Hexahedron_8N:
+				case ladrunons::detail::ElementGeometryType::Hexahedron_20N:
+				case ladrunons::detail::ElementGeometryType::Hexahedron_27N:
 					topology = "hex"; param_domain = "[-1,1]"; order.push_back(1); order.push_back(1); order.push_back(1); break;
 				default:
 					topology = "custom"; break;
@@ -764,7 +764,7 @@ int MPCORecorderLadruno::writeModelElements()
 						// rule (BezierTri6 barycentric: 2 free area coords) replicate the
 						// declared total degree across the parametric directions.
 						int ndir = 1;
-						if (irule == mpcolns::mpco::ElementIntegrationRuleType::CustomIntegrationRule
+						if (irule == ladrunons::detail::ElementIntegrationRuleType::CustomIntegrationRule
 							&& elem_by_custom_rule.custom_int_rule_index != 0) {
 							int d = m_data->elements.registered_custom_rules[
 								elem_by_custom_rule.custom_int_rule_index].custom_rule_dimension;
@@ -773,13 +773,13 @@ int MPCORecorderLadruno::writeModelElements()
 						for (int k = 0; k < ndir; ++k) order.push_back(binfo.order);
 					}
 				}
-				mpcolns::h5::attribute::write(h_eg, "TOPOLOGY", topology);
-				mpcolns::h5::attribute::write(h_eg, "FAMILY", family);
+				ladrunons::h5::attribute::write(h_eg, "TOPOLOGY", topology);
+				ladrunons::h5::attribute::write(h_eg, "FAMILY", family);
 				if (order.size() > 0)
-					mpcolns::h5::attribute::write(h_eg, "ORDER", order);
-				mpcolns::h5::attribute::write(h_eg, "PARAM_DOMAIN", param_domain);
-				mpcolns::h5::attribute::write(h_eg, "RATIONAL", (int)rational);
-				mpcolns::h5::attribute::write(h_eg, "NUM_CTRL", (int)num_ctrl);
+					ladrunons::h5::attribute::write(h_eg, "ORDER", order);
+				ladrunons::h5::attribute::write(h_eg, "PARAM_DOMAIN", param_domain);
+				ladrunons::h5::attribute::write(h_eg, "RATIONAL", (int)rational);
+				ladrunons::h5::attribute::write(h_eg, "NUM_CTRL", (int)num_ctrl);
 
 				// ---- Resolve the quadrature rule: custom -> standard table -> none ----
 				// QUADRATURE/{GP_PARAM[NUM_GP x NDIR], GP_WEIGHT[NUM_GP]} + NDIR + NUM_GP
@@ -792,14 +792,14 @@ int MPCORecorderLadruno::writeModelElements()
 				std::vector<double> q_gp_param, q_gp_weight;
 				int q_num_gp = 0, q_ndir = 0;
 				bool have_rule = false;
-				if (irule == mpcolns::mpco::ElementIntegrationRuleType::CustomIntegrationRule) {
-					mpcolns::h5::attribute::write(h_eg, "CUSTOM_INTEGRATION_RULE", elem_by_custom_rule.custom_int_rule_index);
+				if (irule == ladrunons::detail::ElementIntegrationRuleType::CustomIntegrationRule) {
+					ladrunons::h5::attribute::write(h_eg, "CUSTOM_INTEGRATION_RULE", elem_by_custom_rule.custom_int_rule_index);
 					if (elem_by_custom_rule.custom_int_rule_index != 0) {
 						me::ElementIntegrationRule& custom_rule =
 							m_data->elements.registered_custom_rules[elem_by_custom_rule.custom_int_rule_index];
 						// legacy GP_X attribute (flat coords) kept for tooling that reads it.
-						mpcolns::h5::attribute::write(h_eg, "GP_X", custom_rule.x);
-						mpcolns::h5::attribute::write(h_eg, "CUSTOM_INTEGRATION_RULE_DIMENSION", custom_rule.custom_rule_dimension);
+						ladrunons::h5::attribute::write(h_eg, "GP_X", custom_rule.x);
+						ladrunons::h5::attribute::write(h_eg, "CUSTOM_INTEGRATION_RULE_DIMENSION", custom_rule.custom_rule_dimension);
 						// reshape: legacy line rules store 1 coord/point (num_gp==0 => cols=1);
 						// multi-dim parametric rules (e.g. BezierTri6 barycentric) store num_gp
 						// rows of (x.size()/num_gp) coords each.
@@ -818,25 +818,25 @@ int MPCORecorderLadruno::writeModelElements()
 				}
 
 				if (have_rule) {
-					mpcolns::h5::attribute::write(h_eg, "NDIR", q_ndir);
-					mpcolns::h5::attribute::write(h_eg, "NUM_GP", q_num_gp);
+					ladrunons::h5::attribute::write(h_eg, "NDIR", q_ndir);
+					ladrunons::h5::attribute::write(h_eg, "NUM_GP", q_num_gp);
 					// QUADRATURE child group: GP_PARAM (NUM_GP x NDIR) + optional GP_WEIGHT.
-					hid_t h_q = mpcolns::h5::group::create(
+					hid_t h_q = ladrunons::h5::group::create(
 						h_eg, "QUADRATURE", H5P_DEFAULT, info.h_group_proplist, H5P_DEFAULT);
-					hid_t d_gpp = mpcolns::h5::dataset::createAndWrite(
+					hid_t d_gpp = ladrunons::h5::dataset::createAndWrite(
 						h_q, "GP_PARAM", q_gp_param, (size_t)q_num_gp, (size_t)q_ndir);
-					mpcolns::h5::dataset::close(d_gpp);
+					ladrunons::h5::dataset::close(d_gpp);
 					if (!q_gp_weight.empty()) {
-						hid_t d_gpw = mpcolns::h5::dataset::createAndWrite(
+						hid_t d_gpw = ladrunons::h5::dataset::createAndWrite(
 							h_q, "GP_WEIGHT", q_gp_weight);  // 1-D [nGP] per schema v1
-						mpcolns::h5::dataset::close(d_gpw);
+						ladrunons::h5::dataset::close(d_gpw);
 					}
-					mpcolns::h5::group::close(h_q);
+					ladrunons::h5::group::close(h_q);
 
 					// ---- belt-and-suspenders GLOBAL_GP_COORDS (ADR D2) -------------
 					// Static, reference-config, C++-computed x(ξ_g)=ΣN_i(ξ_g)X_i per
 					// element via the write-side basis evaluator. Stored 2-D
-					// [nElem x (NUM_GP*ndim)] because MPCOL_Hdf5 has no rank-3 writer;
+					// [nElem x (NUM_GP*ndim)] because Ladruno_Hdf5 has no rank-3 writer;
 					// reader reshapes to [nElem, NUM_GP, ndim]. Skipped (graceful) when
 					// computeGlobalGP doesn't yet have the topology's basis. Reuses the
 					// CONNECTIVITY node access pattern (domain->getNode->getCrds).
@@ -872,30 +872,30 @@ int MPCORecorderLadruno::writeModelElements()
 							ggp.insert(ggp.end(), ex.begin(), ex.end());
 						}
 						if (ok && !ggp.empty()) {
-							hid_t d_g = mpcolns::h5::dataset::createAndWrite(
+							hid_t d_g = ladrunons::h5::dataset::createAndWrite(
 								h_eg, "GLOBAL_GP_COORDS", ggp,
 								nElem, (size_t)q_num_gp * (size_t)ndim);
-							mpcolns::h5::dataset::close(d_g);
+							ladrunons::h5::dataset::close(d_g);
 						}
 					}
 				}
-				mpcolns::h5::group::close(h_eg);
+				ladrunons::h5::group::close(h_eg);
 			}
 		}
 	}
 
-	mpcolns::h5::group::close(h_gp_elements);
+	ladrunons::h5::group::close(h_gp_elements);
 	return 0;
 }
 
-int MPCORecorderLadruno::writeModelSets()
+int LadrunoRecorder::writeModelSets()
 {
 	// MODEL/SETS — one SET_<tag> per region whose identity the file must be
 	// self-describing about (ADR D8 / H): the per-region energy tags plus the
 	// -R restriction region (if any). Each SET_<tag> carries NODES + ELEMENTS
 	// tag datasets and a TAG attr. If no region is referenced, the (empty) SETS
 	// group is still created for a consistent layout.
-	mpcolns::mpco::ProcessInfo& info = m_data->info;
+	ladrunons::detail::ProcessInfo& info = m_data->info;
 
 	// union of region tags to describe (preserve order, drop duplicates)
 	std::vector<int> set_tags;
@@ -919,7 +919,7 @@ int MPCORecorderLadruno::writeModelSets()
 
 	std::stringstream ss_sets;
 	ss_sets << "MODEL_STAGE[" << info.current_model_stage_id << "]/MODEL/SETS";
-	hid_t h_sets = mpcolns::h5::group::create(
+	hid_t h_sets = ladrunons::h5::group::create(
 		info.h_file_id, ss_sets.str().c_str(), H5P_DEFAULT,
 		info.h_group_proplist, H5P_DEFAULT);
 
@@ -927,7 +927,7 @@ int MPCORecorderLadruno::writeModelSets()
 		int tag = set_tags[i];
 		MeshRegion* reg = info.domain->getRegion(tag);
 		if (reg == 0) {
-			opserr << "MPCORecorderLadruno - WARNING region " << tag
+			opserr << "LadrunoRecorder - WARNING region " << tag
 			       << " referenced by the recorder was not found; its MODEL/SETS "
 			          "entry is skipped\n";
 			continue;
@@ -935,10 +935,10 @@ int MPCORecorderLadruno::writeModelSets()
 		std::stringstream ss;
 		ss << "MODEL_STAGE[" << info.current_model_stage_id
 		   << "]/MODEL/SETS/SET_" << tag;
-		hid_t h = mpcolns::h5::group::create(
+		hid_t h = ladrunons::h5::group::create(
 			info.h_file_id, ss.str().c_str(), H5P_DEFAULT,
 			info.h_group_proplist, H5P_DEFAULT);
-		mpcolns::h5::attribute::write(h, "TAG", tag);
+		ladrunons::h5::attribute::write(h, "TAG", tag);
 
 		const ID& rnodes = reg->getNodes();
 		std::vector<int> node_ids((size_t)rnodes.Size());
@@ -949,24 +949,24 @@ int MPCORecorderLadruno::writeModelSets()
 		for (int k = 0; k < relems.Size(); ++k)
 			elem_ids[(size_t)k] = relems(k);
 
-		hid_t d_n = mpcolns::h5::dataset::createAndWrite(h, "NODES", node_ids);
-		if (d_n != mpcolns::HID_INVALID)
-			mpcolns::h5::dataset::close(d_n);
-		hid_t d_e = mpcolns::h5::dataset::createAndWrite(h, "ELEMENTS", elem_ids);
-		if (d_e != mpcolns::HID_INVALID)
-			mpcolns::h5::dataset::close(d_e);
+		hid_t d_n = ladrunons::h5::dataset::createAndWrite(h, "NODES", node_ids);
+		if (d_n != ladrunons::HID_INVALID)
+			ladrunons::h5::dataset::close(d_n);
+		hid_t d_e = ladrunons::h5::dataset::createAndWrite(h, "ELEMENTS", elem_ids);
+		if (d_e != ladrunons::HID_INVALID)
+			ladrunons::h5::dataset::close(d_e);
 
-		mpcolns::h5::group::close(h);
+		ladrunons::h5::group::close(h);
 	}
 
-	mpcolns::h5::group::close(h_sets);
+	ladrunons::h5::group::close(h_sets);
 	return 0;
 }
 
-int MPCORecorderLadruno::writeModelLocalAxes()
+int LadrunoRecorder::writeModelLocalAxes()
 {
-	mpcolns::mpco::ProcessInfo& info = m_data->info;
-	namespace me = mpcolns::mpco::element;
+	ladrunons::detail::ProcessInfo& info = m_data->info;
+	namespace me = ladrunons::detail::element;
 
 	// Per-class MODEL/LOCAL_AXES/<classTag>-<ClassName>/{ID[E], FRAME[E×4]} (schema §5).
 	// The frame is sourced from the element's "localAxes" response (9 packed direction
@@ -974,14 +974,14 @@ int MPCORecorderLadruno::writeModelLocalAxes()
 	// that don't answer (most legacy elements today) are simply skipped — we NEVER emit a
 	// silent identity frame, which is the very fallback this dataset exists to remove.
 	const char* request[1] = { "localAxes" };
-	hid_t h_la_root = mpcolns::HID_INVALID; // created lazily on the first answering class group
+	hid_t h_la_root = ladrunons::HID_INVALID; // created lazily on the first answering class group
 
 	for (me::ElementCollection::submap_type::iterator it1 = m_data->elements.items.begin();
 		it1 != m_data->elements.items.end(); ++it1) {
 		me::ElementWithSameClassTagCollection& elem_by_tag = it1->second;
 
 		std::vector<int> ids;
-		std::vector<mpcolns::utils::locax::quaternion> frames;
+		std::vector<ladrunons::utils::locax::quaternion> frames;
 		Vector vx(3), vy(3), vz(3);
 
 		for (me::ElementWithSameClassTagCollection::submap_type::iterator it2 = elem_by_tag.items.begin();
@@ -1005,7 +1005,7 @@ int MPCORecorderLadruno::writeModelLocalAxes()
 							vx(i) = packed(i); vy(i) = packed(i + 3); vz(i) = packed(i + 6);
 						}
 						ids.push_back(elem->getTag());
-						frames.push_back(mpcolns::utils::locax::quatFromMat(vx, vy, vz));
+						frames.push_back(ladrunons::utils::locax::quatFromMat(vx, vy, vz));
 					}
 					delete resp;
 				}
@@ -1015,32 +1015,32 @@ int MPCORecorderLadruno::writeModelLocalAxes()
 		if (ids.empty())
 			continue;
 
-		if (h_la_root == mpcolns::HID_INVALID) {
+		if (h_la_root == ladrunons::HID_INVALID) {
 			std::stringstream ss_root;
 			ss_root << "MODEL_STAGE[" << info.current_model_stage_id << "]/MODEL/LOCAL_AXES";
-			h_la_root = mpcolns::h5::group::create(info.h_file_id, ss_root.str().c_str(),
+			h_la_root = ladrunons::h5::group::create(info.h_file_id, ss_root.str().c_str(),
 				H5P_DEFAULT, info.h_group_proplist, H5P_DEFAULT);
 		}
 		std::stringstream ss_name;
 		ss_name << elem_by_tag.class_tag << "-" << elem_by_tag.class_name;
-		hid_t h_grp = mpcolns::h5::group::create(h_la_root, ss_name.str().c_str(),
+		hid_t h_grp = ladrunons::h5::group::create(h_la_root, ss_name.str().c_str(),
 			H5P_DEFAULT, info.h_group_proplist, H5P_DEFAULT);
-		hid_t d_id = mpcolns::h5::dataset::createAndWrite(h_grp, "ID", ids);
-		mpcolns::h5::dataset::close(d_id);
-		hid_t d_fr = mpcolns::h5::dataset::createAndWrite(h_grp, "FRAME", frames); // [E × 4]
-		mpcolns::h5::dataset::close(d_fr);
-		mpcolns::h5::group::close(h_grp);
+		hid_t d_id = ladrunons::h5::dataset::createAndWrite(h_grp, "ID", ids);
+		ladrunons::h5::dataset::close(d_id);
+		hid_t d_fr = ladrunons::h5::dataset::createAndWrite(h_grp, "FRAME", frames); // [E × 4]
+		ladrunons::h5::dataset::close(d_fr);
+		ladrunons::h5::group::close(h_grp);
 	}
 
-	if (h_la_root != mpcolns::HID_INVALID)
-		mpcolns::h5::group::close(h_la_root);
+	if (h_la_root != ladrunons::HID_INVALID)
+		ladrunons::h5::group::close(h_la_root);
 	return 0;
 }
 
-int MPCORecorderLadruno::writeSections()
+int LadrunoRecorder::writeSections()
 {
-	mpcolns::mpco::ProcessInfo& info = m_data->info;
-	namespace me = mpcolns::mpco::element;
+	ladrunons::detail::ProcessInfo& info = m_data->info;
+	namespace me = ladrunons::detail::element;
 
 	std::map<int, me::SectionAssignment> sec_assignments;
 	std::map<me::FiberSectionData, me::SectionAssignment> aux_sec_assignments;
@@ -1049,7 +1049,7 @@ int MPCORecorderLadruno::writeSections()
 
 	std::stringstream ss_sec_dir;
 	ss_sec_dir << "MODEL_STAGE[" << info.current_model_stage_id << "]/MODEL/SECTION_ASSIGNMENTS";
-	hid_t h_gp_sec = mpcolns::h5::group::create(
+	hid_t h_gp_sec = ladrunons::h5::group::create(
 		info.h_file_id, ss_sec_dir.str().c_str(), H5P_DEFAULT,
 		info.h_group_proplist, H5P_DEFAULT);
 
@@ -1067,7 +1067,7 @@ int MPCORecorderLadruno::writeSections()
 					it4 != elem_by_custom_rule.items.end(); ++it4) {
 					Element* elem = *it4;
 
-					std::string request1 = mpcolns::utils::shell::isShellElementTag(elem->getClassTag()) ? "material" : "section";
+					std::string request1 = ladrunons::utils::shell::isShellElementTag(elem->getClassTag()) ? "material" : "section";
 					std::string request2 = "fiber";
 					std::string request3 = "stress";
 					int argc = 5;
@@ -1091,7 +1091,7 @@ int MPCORecorderLadruno::writeSections()
 					int trial_num_sec = 0;
 					while (true) {
 						trial_num_sec++;
-						if (trial_num_sec > MPCO_MAX_TRIAL_NSEC)
+						if (trial_num_sec > LADRUNO_MAX_TRIAL_NSEC)
 							break;
 						std::stringstream ss_ts; ss_ts << trial_num_sec;
 						std::string s_ts = ss_ts.str();
@@ -1104,7 +1104,7 @@ int MPCORecorderLadruno::writeSections()
 						bool do_workaround_for_aggregator = false;
 						while (true) {
 							trial_num_fib++;
-							if (trial_num_fib > MPCO_LADRUNO_MAX_TRIAL_NFIB)
+							if (trial_num_fib > LADRUNO_MAX_TRIAL_NFIB)
 								break;
 							std::stringstream ss_tf; ss_tf << trial_num_fib;
 							std::string s_tf = ss_tf.str();
@@ -1234,27 +1234,27 @@ int MPCORecorderLadruno::writeSections()
 			continue;
 		std::stringstream ss_name;
 		ss_name << "SECTION_" << it->first << "[" << sec_asn.name << "]";
-		hid_t h_isec = mpcolns::h5::group::create(
+		hid_t h_isec = ladrunons::h5::group::create(
 			h_gp_sec, ss_name.str().c_str(), H5P_DEFAULT, info.h_group_proplist, H5P_DEFAULT);
-		mpcolns::h5::attribute::write(h_isec, "ID", it->first);
-		mpcolns::h5::attribute::write(h_isec, "NAME", sec_asn.name);
-		mpcolns::h5::attribute::write(h_isec, "KIND", std::string("fiber"));
+		ladrunons::h5::attribute::write(h_isec, "ID", it->first);
+		ladrunons::h5::attribute::write(h_isec, "NAME", sec_asn.name);
+		ladrunons::h5::attribute::write(h_isec, "KIND", std::string("fiber"));
 		{
-			hid_t dset = mpcolns::h5::dataset::createAndWrite(h_isec, "ASSIGNMENT", sec_asn.assignments);
-			mpcolns::h5::dataset::close(dset);
+			hid_t dset = ladrunons::h5::dataset::createAndWrite(h_isec, "ASSIGNMENT", sec_asn.assignments);
+			ladrunons::h5::dataset::close(dset);
 		}
 		{
-			hid_t dset = mpcolns::h5::dataset::createAndWrite(h_isec, "FIBER_DATA", sec_asn.fiber_section_data.fibers);
-			mpcolns::h5::dataset::close(dset);
+			hid_t dset = ladrunons::h5::dataset::createAndWrite(h_isec, "FIBER_DATA", sec_asn.fiber_section_data.fibers);
+			ladrunons::h5::dataset::close(dset);
 		}
 		{
-			hid_t dset = mpcolns::h5::dataset::createAndWrite(h_isec, "FIBER_MATERIALS", sec_asn.fiber_section_data.materials);
-			mpcolns::h5::dataset::close(dset);
+			hid_t dset = ladrunons::h5::dataset::createAndWrite(h_isec, "FIBER_MATERIALS", sec_asn.fiber_section_data.materials);
+			ladrunons::h5::dataset::close(dset);
 		}
-		mpcolns::h5::group::close(h_isec);
+		ladrunons::h5::group::close(h_isec);
 	}
 
-	mpcolns::h5::group::close(h_gp_sec);
+	ladrunons::h5::group::close(h_gp_sec);
 	return 0;
 }
 
@@ -1262,10 +1262,10 @@ int MPCORecorderLadruno::writeSections()
 /* node sources                                                          */
 /* ===================================================================== */
 
-int MPCORecorderLadruno::initNodeSources()
+int LadrunoRecorder::initNodeSources()
 {
-	mpcolns::mpco::ProcessInfo& info = m_data->info;
-	namespace NR = mpcolns::mpco; // for NodalResultType
+	ladrunons::detail::ProcessInfo& info = m_data->info;
+	namespace NR = ladrunons::detail; // for NodalResultType
 
 	// node-tag set passed to each source (matches writeModelNodes order)
 	std::vector<int> node_ids(m_data->nodes.size());
@@ -1277,67 +1277,67 @@ int MPCORecorderLadruno::initNodeSources()
 		int grad = m_data->sens_grad_indices[i];
 
 		private_data::NodeChannel ch;
-		mpcolns::ResultSource* src = 0;
+		ladrunons::ResultSource* src = 0;
 		int reac = -1;
 		bool is_modes = false;
 
 		switch (rtype) {
 		case NR::NodalResultType::Displacement:
-			src = new mpcolns::DisplacementSource(info, node_ids); break;
+			src = new ladrunons::DisplacementSource(info, node_ids); break;
 		case NR::NodalResultType::Rotation:
-			src = new mpcolns::RotationSource(info, node_ids); break;
+			src = new ladrunons::RotationSource(info, node_ids); break;
 		case NR::NodalResultType::Velocity:
-			src = new mpcolns::VelocitySource(info, node_ids); break;
+			src = new ladrunons::VelocitySource(info, node_ids); break;
 		case NR::NodalResultType::AngularVelocity:
-			src = new mpcolns::AngularVelocitySource(info, node_ids); break;
+			src = new ladrunons::AngularVelocitySource(info, node_ids); break;
 		case NR::NodalResultType::Acceleration:
-			src = new mpcolns::AccelerationSource(info, node_ids); break;
+			src = new ladrunons::AccelerationSource(info, node_ids); break;
 		case NR::NodalResultType::AngularAcceleration:
-			src = new mpcolns::AngularAccelerationSource(info, node_ids); break;
+			src = new ladrunons::AngularAccelerationSource(info, node_ids); break;
 		case NR::NodalResultType::Pressure:
-			src = new mpcolns::PressureSource(info, node_ids); break;
+			src = new ladrunons::PressureSource(info, node_ids); break;
 		case NR::NodalResultType::ReactionForce: {
-			mpcolns::ReactionForceSource* s = new mpcolns::ReactionForceSource(info, node_ids);
+			ladrunons::ReactionForceSource* s = new ladrunons::ReactionForceSource(info, node_ids);
 			reac = s->reactionFlag(); src = s; break; }
 		case NR::NodalResultType::ReactionMoment: {
-			mpcolns::ReactionMomentSource* s = new mpcolns::ReactionMomentSource(info, node_ids);
+			ladrunons::ReactionMomentSource* s = new ladrunons::ReactionMomentSource(info, node_ids);
 			reac = s->reactionFlag(); src = s; break; }
 		case NR::NodalResultType::ReactionForceIncludingInertia: {
-			mpcolns::ReactionForceIncInertiaSource* s = new mpcolns::ReactionForceIncInertiaSource(info, node_ids);
+			ladrunons::ReactionForceIncInertiaSource* s = new ladrunons::ReactionForceIncInertiaSource(info, node_ids);
 			reac = s->reactionFlag(); src = s; break; }
 		case NR::NodalResultType::ReactionMomentIncludingInertia: {
-			mpcolns::ReactionMomentIncInertiaSource* s = new mpcolns::ReactionMomentIncInertiaSource(info, node_ids);
+			ladrunons::ReactionMomentIncInertiaSource* s = new ladrunons::ReactionMomentIncInertiaSource(info, node_ids);
 			reac = s->reactionFlag(); src = s; break; }
 		case NR::NodalResultType::RayleighForce: {
-			mpcolns::RayleighForceSource* s = new mpcolns::RayleighForceSource(info, node_ids);
+			ladrunons::RayleighForceSource* s = new ladrunons::RayleighForceSource(info, node_ids);
 			reac = s->reactionFlag(); src = s; break; }
 		case NR::NodalResultType::RayleighMoment: {
-			mpcolns::RayleighMomentSource* s = new mpcolns::RayleighMomentSource(info, node_ids);
+			ladrunons::RayleighMomentSource* s = new ladrunons::RayleighMomentSource(info, node_ids);
 			reac = s->reactionFlag(); src = s; break; }
 		case NR::NodalResultType::UnbalancedForce:
-			src = new mpcolns::UnbalancedForceSource(info, node_ids); break;
+			src = new ladrunons::UnbalancedForceSource(info, node_ids); break;
 		case NR::NodalResultType::UnbalancedMoment:
-			src = new mpcolns::UnbalancedMomentSource(info, node_ids); break;
+			src = new ladrunons::UnbalancedMomentSource(info, node_ids); break;
 		case NR::NodalResultType::UnbalancedForceIncludingInertia:
-			src = new mpcolns::UnbalancedForceIncInertiaSource(info, node_ids); break;
+			src = new ladrunons::UnbalancedForceIncInertiaSource(info, node_ids); break;
 		case NR::NodalResultType::UnbalancedMomentIncludingInertia:
-			src = new mpcolns::UnbalancedMomentIncInertiaSource(info, node_ids); break;
+			src = new ladrunons::UnbalancedMomentIncInertiaSource(info, node_ids); break;
 		case NR::NodalResultType::ModesOfVibration:
-			src = new mpcolns::ModesOfVibrationSource(info, node_ids); is_modes = true; break;
+			src = new ladrunons::ModesOfVibrationSource(info, node_ids); is_modes = true; break;
 		case NR::NodalResultType::ModesOfVibrationRotational:
-			src = new mpcolns::ModesOfVibrationRotationalSource(info, node_ids); is_modes = true; break;
+			src = new ladrunons::ModesOfVibrationRotationalSource(info, node_ids); is_modes = true; break;
 		case NR::NodalResultType::DisplacementSensitivity:
-			src = new mpcolns::DisplacementSensitivitySource(info, node_ids, grad); break;
+			src = new ladrunons::DisplacementSensitivitySource(info, node_ids, grad); break;
 		case NR::NodalResultType::RotationSensitivity:
-			src = new mpcolns::RotationSensitivitySource(info, node_ids, grad); break;
+			src = new ladrunons::RotationSensitivitySource(info, node_ids, grad); break;
 		case NR::NodalResultType::VelocitySensitivity:
-			src = new mpcolns::VelocitySensitivitySource(info, node_ids, grad); break;
+			src = new ladrunons::VelocitySensitivitySource(info, node_ids, grad); break;
 		case NR::NodalResultType::AngularVelocitySensitivity:
-			src = new mpcolns::AngularVelocitySensitivitySource(info, node_ids, grad); break;
+			src = new ladrunons::AngularVelocitySensitivitySource(info, node_ids, grad); break;
 		case NR::NodalResultType::AccelerationSensitivity:
-			src = new mpcolns::AccelerationSensitivitySource(info, node_ids, grad); break;
+			src = new ladrunons::AccelerationSensitivitySource(info, node_ids, grad); break;
 		case NR::NodalResultType::AngularAccelerationSensitivity:
-			src = new mpcolns::AngularAccelerationSensitivitySource(info, node_ids, grad); break;
+			src = new ladrunons::AngularAccelerationSensitivitySource(info, node_ids, grad); break;
 		default:
 			break;
 		}
@@ -1350,9 +1350,9 @@ int MPCORecorderLadruno::initNodeSources()
 		// ModesOfVibration (eigen) is never enveloped — it keeps the StreamingSink
 		// mode-loop path.
 		if (m_data->envelope_mode && !is_modes)
-			ch.sink = new mpcolns::EnvelopeSink(mpcolns::ResultFamily::OnNodes);
+			ch.sink = new ladrunons::EnvelopeSink(ladrunons::ResultFamily::OnNodes);
 		else
-			ch.sink = new mpcolns::StreamingSink(mpcolns::ResultFamily::OnNodes);
+			ch.sink = new ladrunons::StreamingSink(ladrunons::ResultFamily::OnNodes);
 		ch.reaction_flag = reac;
 		ch.is_modes = is_modes;
 		m_data->node_channels.push_back(ch);
@@ -1365,10 +1365,10 @@ int MPCORecorderLadruno::initNodeSources()
 /* element sources                                                       */
 /* ===================================================================== */
 
-int MPCORecorderLadruno::initElementSources()
+int LadrunoRecorder::initElementSources()
 {
-	mpcolns::mpco::ProcessInfo& info = m_data->info;
-	namespace me = mpcolns::mpco::element;
+	ladrunons::detail::ProcessInfo& info = m_data->info;
+	namespace me = ladrunons::detail::element;
 
 	if (m_data->elemental_results_requests.empty())
 		return 0;
@@ -1426,7 +1426,7 @@ int MPCORecorderLadruno::initElementSources()
 			me::OutputWithSameClassTagCollection& eo_by_tag = recorder.response_map[it1->first];
 
 			bool standard_section_keyword_modified = false;
-			if (do_all_sections && mpcolns::utils::shell::isShellElementTag(it1->first)) {
+			if (do_all_sections && ladrunons::utils::shell::isShellElementTag(it1->first)) {
 				argv[0] = aux_section_keyword_for_shells.c_str();
 				standard_section_keyword_modified = true;
 			}
@@ -1464,7 +1464,7 @@ int MPCORecorderLadruno::initElementSources()
 										int fiber_base_id = it_info->second[section_id].first;
 										int num_fibers = it_info->second[section_id].second;
 										for (int fiber_id = 0; fiber_id < num_fibers; ++fiber_id) {
-											std::string s_fid = mpcolns::utils::strings::to_string(fiber_id + fiber_base_id);
+											std::string s_fid = ladrunons::utils::strings::to_string(fiber_id + fiber_base_id);
 											argv[fiber_id_placeholder_index] = s_fid.c_str();
 											bool was_valid_before = (eo_stream.error_code == me::OutputDescriptorStream::ERROR_CODE_OK);
 											Response* fib_response = elem->setResponse(argv, argc, eo_stream);
@@ -1501,7 +1501,7 @@ int MPCORecorderLadruno::initElementSources()
 							int material_id = 0;
 							while (true) {
 								material_id++;
-								if (material_id > MPCO_MAX_TRIAL_NSEC)
+								if (material_id > LADRUNO_MAX_TRIAL_NSEC)
 									break;
 								std::stringstream ss_mid; ss_mid << material_id;
 								std::string s_mid = ss_mid.str();
@@ -1574,10 +1574,10 @@ int MPCORecorderLadruno::initElementSources()
 						if (bucket.items.empty())
 							continue;
 						private_data::ElemChannel ech;
-						ech.source = new mpcolns::ElementResultSource(request, header, bucket);
+						ech.source = new ladrunons::ElementResultSource(request, header, bucket);
 						ech.sink = m_data->envelope_mode
-							? (mpcolns::ResultSink*)new mpcolns::EnvelopeSink(mpcolns::ResultFamily::OnElements)
-							: (mpcolns::ResultSink*)new mpcolns::StreamingSink(mpcolns::ResultFamily::OnElements);
+							? (ladrunons::ResultSink*)new ladrunons::EnvelopeSink(ladrunons::ResultFamily::OnElements)
+							: (ladrunons::ResultSink*)new ladrunons::StreamingSink(ladrunons::ResultFamily::OnElements);
 						ech.header = &header;
 						ech.column_map_written = false;
 						m_data->elem_channels.push_back(ech);
@@ -1590,10 +1590,10 @@ int MPCORecorderLadruno::initElementSources()
 							ss_disp_grp << "MODEL_STAGE[" << info.current_model_stage_id
 								<< "]/RESULTS/ON_ELEMENTS/" << m_data->elem_channels.back().source->schema().display_name;
 							if (H5Lexists(info.h_file_id, ss_disp_grp.str().c_str(), H5P_DEFAULT) <= 0) {
-								hid_t h_disp = mpcolns::h5::group::create(
+								hid_t h_disp = ladrunons::h5::group::create(
 									info.h_file_id, ss_disp_grp.str().c_str(), H5P_DEFAULT,
 									info.h_group_proplist, H5P_DEFAULT);
-								mpcolns::h5::group::close(h_disp);
+								ladrunons::h5::group::close(h_disp);
 							}
 						}
 					}
@@ -1609,9 +1609,9 @@ int MPCORecorderLadruno::initElementSources()
 /* per-step recording                                                    */
 /* ===================================================================== */
 
-int MPCORecorderLadruno::recordResultsOnNodes()
+int LadrunoRecorder::recordResultsOnNodes()
 {
-	mpcolns::mpco::ProcessInfo& info = m_data->info;
+	ladrunons::detail::ProcessInfo& info = m_data->info;
 
 	if (m_data->nodes.empty() || m_data->node_channels.empty())
 		return 0;
@@ -1689,16 +1689,16 @@ int MPCORecorderLadruno::recordResultsOnNodes()
    ResultRecorderModesOfVibration::record(). The StreamingSink writes one DATA
    group per source; modes need a STEP group containing MODE_<k> datasets, so we
    write that structure directly through the h5 wrapper here. */
-void MPCORecorderLadruno::recordModeChannel(int node_channel_index)
+void LadrunoRecorder::recordModeChannel(int node_channel_index)
 {
-	mpcolns::mpco::ProcessInfo& info = m_data->info;
+	ladrunons::detail::ProcessInfo& info = m_data->info;
 	private_data::NodeChannel& ch = m_data->node_channels[(size_t)node_channel_index];
-	mpcolns::ModesOfVibrationSource* msrc =
-		dynamic_cast<mpcolns::ModesOfVibrationSource*>(ch.source);
+	ladrunons::ModesOfVibrationSource* msrc =
+		dynamic_cast<ladrunons::ModesOfVibrationSource*>(ch.source);
 	if (msrc == 0)
 		return;
 
-	const mpcolns::ResultSchema& schema = msrc->schema();
+	const ladrunons::ResultSchema& schema = msrc->schema();
 	if (schema.num_components < 1)
 		return;
 
@@ -1712,11 +1712,11 @@ void MPCORecorderLadruno::recordModeChannel(int node_channel_index)
 	// create the STEP group under DATA
 	std::stringstream ss_step;
 	ss_step << ss_data.str() << "/STEP_" << info.current_time_step_id;
-	hid_t h_gp_step = mpcolns::h5::group::create(
+	hid_t h_gp_step = ladrunons::h5::group::create(
 		info.h_file_id, ss_step.str().c_str(), H5P_DEFAULT,
 		info.h_group_proplist, H5P_DEFAULT);
-	mpcolns::h5::attribute::write(h_gp_step, "STEP", info.current_time_step_id);
-	mpcolns::h5::attribute::write(h_gp_step, "TIME", info.current_time_step);
+	ladrunons::h5::attribute::write(h_gp_step, "STEP", info.current_time_step_id);
+	ladrunons::h5::attribute::write(h_gp_step, "TIME", info.current_time_step);
 
 	const std::vector<int>& ids = msrc->ids();
 	const size_t n_ids = ids.size();
@@ -1730,22 +1730,22 @@ void MPCORecorderLadruno::recordModeChannel(int node_channel_index)
 		double lambda, omega, freq, period;
 		msrc->modeInfo(info, k, lambda, omega, freq, period);
 		std::stringstream ss_mode; ss_mode << "MODE_" << k;
-		hid_t h_dset = mpcolns::h5::dataset::createAndWrite(
+		hid_t h_dset = ladrunons::h5::dataset::createAndWrite(
 			h_gp_step, ss_mode.str().c_str(), buffer, n_ids, n_comp);
-		mpcolns::h5::attribute::write(h_dset, "MODE", k);
-		mpcolns::h5::attribute::write(h_dset, "LAMBDA", lambda);
-		mpcolns::h5::attribute::write(h_dset, "OMEGA", omega);
-		mpcolns::h5::attribute::write(h_dset, "FREQUENCY", freq);
-		mpcolns::h5::attribute::write(h_dset, "PERIOD", period);
-		mpcolns::h5::dataset::close(h_dset);
+		ladrunons::h5::attribute::write(h_dset, "MODE", k);
+		ladrunons::h5::attribute::write(h_dset, "LAMBDA", lambda);
+		ladrunons::h5::attribute::write(h_dset, "OMEGA", omega);
+		ladrunons::h5::attribute::write(h_dset, "FREQUENCY", freq);
+		ladrunons::h5::attribute::write(h_dset, "PERIOD", period);
+		ladrunons::h5::dataset::close(h_dset);
 	}
 
-	mpcolns::h5::group::close(h_gp_step);
+	ladrunons::h5::group::close(h_gp_step);
 }
 
-int MPCORecorderLadruno::recordResultsOnElements()
+int LadrunoRecorder::recordResultsOnElements()
 {
-	mpcolns::mpco::ProcessInfo& info = m_data->info;
+	ladrunons::detail::ProcessInfo& info = m_data->info;
 	if (m_data->elem_channels.empty())
 		return 0;
 
@@ -1772,36 +1772,36 @@ int MPCORecorderLadruno::recordResultsOnElements()
 /* domain / region sources (ADR D8 energy balance)                       */
 /* ===================================================================== */
 
-int MPCORecorderLadruno::initDomainSources()
+int LadrunoRecorder::initDomainSources()
 {
-	mpcolns::mpco::ProcessInfo& info = m_data->info;
+	ladrunons::detail::ProcessInfo& info = m_data->info;
 
 	// whole-model energy -> ON_DOMAIN/energyBalance
 	if (m_data->energy_requested) {
 		private_data::DomainChannel ch;
-		ch.source = new mpcolns::EnergyBalanceSource(info);
+		ch.source = new ladrunons::EnergyBalanceSource(info);
 		ch.sink = m_data->envelope_mode
-			? (mpcolns::ResultSink*)new mpcolns::EnvelopeSink(mpcolns::ResultFamily::OnDomain)
-			: (mpcolns::ResultSink*)new mpcolns::StreamingSink(mpcolns::ResultFamily::OnDomain);
+			? (ladrunons::ResultSink*)new ladrunons::EnvelopeSink(ladrunons::ResultFamily::OnDomain)
+			: (ladrunons::ResultSink*)new ladrunons::StreamingSink(ladrunons::ResultFamily::OnDomain);
 		m_data->domain_channels.push_back(ch);
 	}
 
 	// per-region energy -> ON_REGIONS/energyBalance
 	if (!m_data->energy_region_tags.empty()) {
 		private_data::DomainChannel ch;
-		ch.source = new mpcolns::EnergyBalanceSource(info, m_data->energy_region_tags);
+		ch.source = new ladrunons::EnergyBalanceSource(info, m_data->energy_region_tags);
 		ch.sink = m_data->envelope_mode
-			? (mpcolns::ResultSink*)new mpcolns::EnvelopeSink(mpcolns::ResultFamily::OnRegions)
-			: (mpcolns::ResultSink*)new mpcolns::StreamingSink(mpcolns::ResultFamily::OnRegions);
+			? (ladrunons::ResultSink*)new ladrunons::EnvelopeSink(ladrunons::ResultFamily::OnRegions)
+			: (ladrunons::ResultSink*)new ladrunons::StreamingSink(ladrunons::ResultFamily::OnRegions);
 		m_data->domain_channels.push_back(ch);
 	}
 
 	return 0;
 }
 
-int MPCORecorderLadruno::recordResultsOnDomain()
+int LadrunoRecorder::recordResultsOnDomain()
 {
-	mpcolns::mpco::ProcessInfo& info = m_data->info;
+	ladrunons::detail::ProcessInfo& info = m_data->info;
 
 	std::vector<double> buffer;
 	for (size_t i = 0; i < m_data->domain_channels.size(); ++i) {
@@ -1815,12 +1815,12 @@ int MPCORecorderLadruno::recordResultsOnDomain()
 /* Write the COLUMN_MAP child group + SECTION_MAP under the element result group
    (schema §7.2). Called once, after the StreamingSink has created
    ON_ELEMENTS/<display>/<bucket>. */
-void MPCORecorderLadruno::writeElementColumnMap(int elem_channel_index)
+void LadrunoRecorder::writeElementColumnMap(int elem_channel_index)
 {
-	mpcolns::mpco::ProcessInfo& info = m_data->info;
+	ladrunons::detail::ProcessInfo& info = m_data->info;
 	private_data::ElemChannel& ech = m_data->elem_channels[(size_t)elem_channel_index];
-	const mpcolns::mpco::element::OutputDescriptorHeader& header = *ech.header;
-	const mpcolns::ResultSchema& schema = ech.source->schema();
+	const ladrunons::detail::element::OutputDescriptorHeader& header = *ech.header;
+	const ladrunons::ResultSchema& schema = ech.source->schema();
 
 	// Open the bucket result group. In time-series mode that is
 	// ON_ELEMENTS/<display>/<bucket> (created by the StreamingSink); in envelope
@@ -1838,7 +1838,7 @@ void MPCORecorderLadruno::writeElementColumnMap(int elem_channel_index)
 	if (h_grp < 0)
 		return;
 
-	mpcolns::h5::attribute::write(h_grp, "NUM_COLUMNS", header.num_columns);
+	ladrunons::h5::attribute::write(h_grp, "NUM_COLUMNS", header.num_columns);
 
 	// COLUMN_MAP structured metadata (schema §7.2). One row per descriptor block.
 	const size_t k = header.num_components.size();
@@ -1869,21 +1869,21 @@ void MPCORecorderLadruno::writeElementColumnMap(int elem_channel_index)
 		}
 	}
 
-	hid_t h_cm = mpcolns::h5::group::create(
+	hid_t h_cm = ladrunons::h5::group::create(
 		h_grp, "COLUMN_MAP", H5P_DEFAULT, info.h_group_proplist, H5P_DEFAULT);
 	if (k > 0) {
 		hid_t d;
-		d = mpcolns::h5::dataset::createAndWrite(h_cm, "LEVELS", levels, k, 1); mpcolns::h5::dataset::close(d);
-		d = mpcolns::h5::dataset::createAndWrite(h_cm, "GAUSS_ID", gauss_id, k, 1); mpcolns::h5::dataset::close(d);
-		d = mpcolns::h5::dataset::createAndWrite(h_cm, "SECTION_TAG", section_tag, k, 1); mpcolns::h5::dataset::close(d);
-		d = mpcolns::h5::dataset::createAndWrite(h_cm, "FIBER_ID", fiber_id, k, 1); mpcolns::h5::dataset::close(d);
-		d = mpcolns::h5::dataset::createAndWrite(h_cm, "NUM_COMP", num_comp, k, 1); mpcolns::h5::dataset::close(d);
-		d = mpcolns::h5::dataset::createAndWrite(h_cm, "MULTIPLICITY", multiplicity, k, 1); mpcolns::h5::dataset::close(d);
+		d = ladrunons::h5::dataset::createAndWrite(h_cm, "LEVELS", levels, k, 1); ladrunons::h5::dataset::close(d);
+		d = ladrunons::h5::dataset::createAndWrite(h_cm, "GAUSS_ID", gauss_id, k, 1); ladrunons::h5::dataset::close(d);
+		d = ladrunons::h5::dataset::createAndWrite(h_cm, "SECTION_TAG", section_tag, k, 1); ladrunons::h5::dataset::close(d);
+		d = ladrunons::h5::dataset::createAndWrite(h_cm, "FIBER_ID", fiber_id, k, 1); ladrunons::h5::dataset::close(d);
+		d = ladrunons::h5::dataset::createAndWrite(h_cm, "NUM_COMP", num_comp, k, 1); ladrunons::h5::dataset::close(d);
+		d = ladrunons::h5::dataset::createAndWrite(h_cm, "MULTIPLICITY", multiplicity, k, 1); ladrunons::h5::dataset::close(d);
 	}
-	mpcolns::h5::attribute::write(h_cm, "COMP_NAMES", ss_comp_names.str());
-	mpcolns::h5::group::close(h_cm);
+	ladrunons::h5::attribute::write(h_cm, "COMP_NAMES", ss_comp_names.str());
+	ladrunons::h5::group::close(h_cm);
 
-	mpcolns::h5::group::close(h_grp);
+	ladrunons::h5::group::close(h_grp);
 }
 
 /* ===================================================================== */
@@ -1937,10 +1937,10 @@ struct LadDeser {
 };
 } // anonymous namespace
 
-int MPCORecorderLadruno::sendSelf(int commitTag, Channel& theChannel)
+int LadrunoRecorder::sendSelf(int commitTag, Channel& theChannel)
 {
 	if (theChannel.isDatastore() == 1) {
-		opserr << "MPCORecorderLadruno::sendSelf() - does not send data to a datastore\n";
+		opserr << "LadrunoRecorder::sendSelf() - does not send data to a datastore\n";
 		return -1;
 	}
 	m_data->send_self_count++;
@@ -1978,24 +1978,24 @@ int MPCORecorderLadruno::sendSelf(int commitTag, Channel& theChannel)
 	ID idata(1);
 	idata(0) = msg_data_size;
 	if (theChannel.sendID(0, commitTag, idata) < 0) {
-		opserr << "MPCORecorderLadruno::sendSelf() - failed to send message size\n";
+		opserr << "LadrunoRecorder::sendSelf() - failed to send message size\n";
 		return -1;
 	}
 	std::vector<char> msg_data(static_cast<size_t>(msg_data_size) + 1, '\0');
 	std::copy(ser.b.begin(), ser.b.end(), msg_data.begin());
 	Message msg(msg_data.data(), msg_data_size);
 	if (theChannel.sendMsg(0, commitTag, msg) < 0) {
-		opserr << "MPCORecorderLadruno::sendSelf() - failed to send message\n";
+		opserr << "LadrunoRecorder::sendSelf() - failed to send message\n";
 		return -1;
 	}
 	return 0;
 }
 
-int MPCORecorderLadruno::recvSelf(int commitTag, Channel& theChannel,
+int LadrunoRecorder::recvSelf(int commitTag, Channel& theChannel,
                                   FEM_ObjectBroker& /*theBroker*/)
 {
 	if (theChannel.isDatastore() == 1) {
-		opserr << "MPCORecorderLadruno::recvSelf() - does not recv data from a datastore\n";
+		opserr << "LadrunoRecorder::recvSelf() - does not recv data from a datastore\n";
 		return -1;
 	}
 
@@ -2009,14 +2009,14 @@ int MPCORecorderLadruno::recvSelf(int commitTag, Channel& theChannel,
 
 	ID idata(1);
 	if (theChannel.recvID(0, commitTag, idata) < 0) {
-		opserr << "MPCORecorderLadruno::recvSelf() - failed to recv message size\n";
+		opserr << "LadrunoRecorder::recvSelf() - failed to recv message size\n";
 		return -1;
 	}
 	int msg_data_size = idata(0);
 	std::vector<char> msg_data(static_cast<size_t>(msg_data_size) + 1, '\0');
 	Message msg(msg_data.data(), msg_data_size);
 	if (theChannel.recvMsg(0, commitTag, msg) < 0) {
-		opserr << "MPCORecorderLadruno::recvSelf() - failed to recv message\n";
+		opserr << "LadrunoRecorder::recvSelf() - failed to recv message\n";
 		return -1;
 	}
 
@@ -2025,7 +2025,7 @@ int MPCORecorderLadruno::recvSelf(int commitTag, Channel& theChannel,
 	m_data->p_id = de.get_i();             // P0's counter at send time -> partition idx
 	m_data->filename = de.get_s();
 	m_data->output_freq.type =
-		(mpcolns::mpco::OutputFrequency::IncrementType)de.get_i();
+		(ladrunons::detail::OutputFrequency::IncrementType)de.get_i();
 	m_data->output_freq.dt = de.get_d();
 	m_data->output_freq.nsteps = de.get_i();
 	m_data->has_region = de.get_i() != 0;
@@ -2040,7 +2040,7 @@ int MPCORecorderLadruno::recvSelf(int commitTag, Channel& theChannel,
 		m_data->nodal_results_requests.clear();
 		for (size_t k = 0; k < nr.size(); ++k)
 			m_data->nodal_results_requests.push_back(
-				(mpcolns::mpco::NodalResultType::Enum)nr[k]);
+				(ladrunons::detail::NodalResultType::Enum)nr[k]);
 	}
 	m_data->sens_grad_indices = de.get_vi();
 	{
@@ -2054,7 +2054,7 @@ int MPCORecorderLadruno::recvSelf(int commitTag, Channel& theChannel,
 		}
 	}
 	if (!de.ok) {
-		opserr << "MPCORecorderLadruno::recvSelf() - failed to de-serialize config\n";
+		opserr << "LadrunoRecorder::recvSelf() - failed to de-serialize config\n";
 		return -1;
 	}
 	this->setTag(my_tag);
@@ -2062,15 +2062,15 @@ int MPCORecorderLadruno::recvSelf(int commitTag, Channel& theChannel,
 }
 
 /* ===================================================================== */
-/* command parser  (recorder mpcoLadruno <file> ...)                     */
+/* command parser  (recorder ladruno <file> ...)                     */
 /* ===================================================================== */
 
-void* OPS_MPCOLadrunoRecorder()
+void* OPS_LadrunoRecorder()
 {
 	int numdata = OPS_GetNumRemainingInputArgs();
 	if (numdata < 1) {
-		opserr << "MPCORecorderLadruno error: insufficient args; expected a filename\n"
-		       << "  usage: recorder mpcoLadruno <file> [-N <res...>] [-NS <res...> <grad>] "
+		opserr << "LadrunoRecorder error: insufficient args; expected a filename\n"
+		       << "  usage: recorder ladruno <file> [-N <res...>] [-NS <res...> <grad>] "
 		          "[-E <res...>] [-R <regionTag>] [-G energy <regionTag...>] "
 		          "[-T dt|nsteps <v>]\n";
 		return 0;
@@ -2081,17 +2081,17 @@ void* OPS_MPCOLadrunoRecorder()
 
 	Domain* domain = OPS_GetDomain();
 	if (domain == 0) {
-		opserr << "MPCORecorderLadruno error: domain is not defined\n";
+		opserr << "LadrunoRecorder error: domain is not defined\n";
 		return 0;
 	}
 
 	// parse optional arguments (mirror frozen OPS_MPCORecorder)
-	mpcolns::utils::parsing::option_type curr_opt = mpcolns::utils::parsing::opt_none;
-	std::vector<mpcolns::mpco::NodalResultType::Enum> nodal_results_requests;
+	ladrunons::utils::parsing::option_type curr_opt = ladrunons::utils::parsing::opt_none;
+	std::vector<ladrunons::detail::NodalResultType::Enum> nodal_results_requests;
 	std::vector<int> sens_grad_indices;
 	std::vector<std::vector<std::string> > elemental_results_requests;
 	std::vector<std::string> tokens;
-	mpcolns::mpco::OutputFrequency output_freq;
+	ladrunons::detail::OutputFrequency output_freq;
 	bool has_region = false;
 	int region_tag = 0;                  // -R region tag (for MODEL/SETS)
 	std::set<int> node_set;
@@ -2106,29 +2106,29 @@ void* OPS_MPCOLadrunoRecorder()
 		const char* data = OPS_GetString();
 		numdata--;
 		if (strcmp(data, "-N") == 0) {
-			curr_opt = mpcolns::utils::parsing::opt_result_on_nodes;
+			curr_opt = ladrunons::utils::parsing::opt_result_on_nodes;
 		}
 		else if (strcmp(data, "-NS") == 0) {
-			curr_opt = mpcolns::utils::parsing::opt_result_on_nodes_sens;
+			curr_opt = ladrunons::utils::parsing::opt_result_on_nodes_sens;
 		}
 		else if (strcmp(data, "-E") == 0) {
-			curr_opt = mpcolns::utils::parsing::opt_result_on_elements;
+			curr_opt = ladrunons::utils::parsing::opt_result_on_elements;
 		}
 		else if (strcmp(data, "-T") == 0) {
-			curr_opt = mpcolns::utils::parsing::opt_time;
+			curr_opt = ladrunons::utils::parsing::opt_time;
 			output_freq.reset();
 		}
 		else if (strcmp(data, "-R") == 0) {
-			curr_opt = mpcolns::utils::parsing::opt_region;
+			curr_opt = ladrunons::utils::parsing::opt_region;
 			if (numdata > 0) {
 				int rtag = 0;
 				if (OPS_GetInt(&one_item, &rtag) != 0) {
-					opserr << "MPCORecorderLadruno error: option -R (region) requires an int region tag\n";
+					opserr << "LadrunoRecorder error: option -R (region) requires an int region tag\n";
 					return 0;
 				}
 				MeshRegion* region = domain->getRegion(rtag);
 				if (region == 0) {
-					opserr << "MPCORecorderLadruno error: region " << rtag << " is null\n";
+					opserr << "LadrunoRecorder error: region " << rtag << " is null\n";
 					return 0;
 				}
 				const ID& node_ids = region->getNodes();
@@ -2142,7 +2142,7 @@ void* OPS_MPCOLadrunoRecorder()
 				numdata--;
 			}
 			else {
-				opserr << "MPCORecorderLadruno error: option -R (region) requires an int region tag\n";
+				opserr << "LadrunoRecorder error: option -R (region) requires an int region tag\n";
 				return 0;
 			}
 			has_region = true;
@@ -2154,7 +2154,7 @@ void* OPS_MPCOLadrunoRecorder()
 			// region tags are integers -> they MUST be read with OPS_GetIntInput,
 			// not OPS_GetString (which returns "" for a numeric OpenSeesPy arg,
 			// so atoi() would silently yield 0). Same idiom as -node.
-			curr_opt = mpcolns::utils::parsing::opt_global;
+			curr_opt = ladrunons::utils::parsing::opt_global;
 			if (numdata > 0) {
 				const char* gkind = OPS_GetString();
 				numdata--;
@@ -2167,7 +2167,7 @@ void* OPS_MPCOLadrunoRecorder()
 					if (t != 0 && domain->getRegion(t) != 0)
 						energy_region_tags.push_back(t);
 					else
-						opserr << "MPCORecorderLadruno warning: -G expects 'energy' "
+						opserr << "LadrunoRecorder warning: -G expects 'energy' "
 						          "[regionTag...]; ignoring token (" << gkind << ")\n";
 				}
 			}
@@ -2182,7 +2182,7 @@ void* OPS_MPCOLadrunoRecorder()
 				numdata--;
 				MeshRegion* gregion = domain->getRegion(tag);
 				if (gregion == 0)
-					opserr << "MPCORecorderLadruno warning: -G region " << tag
+					opserr << "LadrunoRecorder warning: -G region " << tag
 					       << " not found in the domain; skipping its energy block\n";
 				else
 					energy_region_tags.push_back(tag);
@@ -2197,7 +2197,7 @@ void* OPS_MPCOLadrunoRecorder()
 				    strcmp(k, "eigen") == 0)
 					stage_kind_opt = k;
 				else
-					opserr << "MPCORecorderLadruno warning: -kind expects "
+					opserr << "LadrunoRecorder warning: -kind expects "
 					          "transient|static|eigen; got (" << k << "), keeping "
 					       << stage_kind_opt.c_str() << "\n";
 			}
@@ -2210,131 +2210,131 @@ void* OPS_MPCOLadrunoRecorder()
 		}
 		else {
 			switch (curr_opt) {
-			case mpcolns::utils::parsing::opt_result_on_nodes: {
+			case ladrunons::utils::parsing::opt_result_on_nodes: {
 				if (strcmp(data, "displacement") == 0)
-					nodal_results_requests.push_back(mpcolns::mpco::NodalResultType::Displacement);
+					nodal_results_requests.push_back(ladrunons::detail::NodalResultType::Displacement);
 				else if (strcmp(data, "rotation") == 0)
-					nodal_results_requests.push_back(mpcolns::mpco::NodalResultType::Rotation);
+					nodal_results_requests.push_back(ladrunons::detail::NodalResultType::Rotation);
 				else if (strcmp(data, "velocity") == 0)
-					nodal_results_requests.push_back(mpcolns::mpco::NodalResultType::Velocity);
+					nodal_results_requests.push_back(ladrunons::detail::NodalResultType::Velocity);
 				else if (strcmp(data, "angularVelocity") == 0)
-					nodal_results_requests.push_back(mpcolns::mpco::NodalResultType::AngularVelocity);
+					nodal_results_requests.push_back(ladrunons::detail::NodalResultType::AngularVelocity);
 				else if (strcmp(data, "acceleration") == 0)
-					nodal_results_requests.push_back(mpcolns::mpco::NodalResultType::Acceleration);
+					nodal_results_requests.push_back(ladrunons::detail::NodalResultType::Acceleration);
 				else if (strcmp(data, "angularAcceleration") == 0)
-					nodal_results_requests.push_back(mpcolns::mpco::NodalResultType::AngularAcceleration);
+					nodal_results_requests.push_back(ladrunons::detail::NodalResultType::AngularAcceleration);
 				else if (strcmp(data, "reactionForce") == 0)
-					nodal_results_requests.push_back(mpcolns::mpco::NodalResultType::ReactionForce);
+					nodal_results_requests.push_back(ladrunons::detail::NodalResultType::ReactionForce);
 				else if (strcmp(data, "reactionMoment") == 0)
-					nodal_results_requests.push_back(mpcolns::mpco::NodalResultType::ReactionMoment);
+					nodal_results_requests.push_back(ladrunons::detail::NodalResultType::ReactionMoment);
 				else if (strcmp(data, "reactionForceIncludingInertia") == 0)
-					nodal_results_requests.push_back(mpcolns::mpco::NodalResultType::ReactionForceIncludingInertia);
+					nodal_results_requests.push_back(ladrunons::detail::NodalResultType::ReactionForceIncludingInertia);
 				else if (strcmp(data, "reactionMomentIncludingInertia") == 0)
-					nodal_results_requests.push_back(mpcolns::mpco::NodalResultType::ReactionMomentIncludingInertia);
+					nodal_results_requests.push_back(ladrunons::detail::NodalResultType::ReactionMomentIncludingInertia);
 				else if (strcmp(data, "rayleighForce") == 0)
-					nodal_results_requests.push_back(mpcolns::mpco::NodalResultType::RayleighForce);
+					nodal_results_requests.push_back(ladrunons::detail::NodalResultType::RayleighForce);
 				else if (strcmp(data, "rayleighMoment") == 0)
-					nodal_results_requests.push_back(mpcolns::mpco::NodalResultType::RayleighMoment);
+					nodal_results_requests.push_back(ladrunons::detail::NodalResultType::RayleighMoment);
 				else if (strcmp(data, "unbalancedForce") == 0)
-					nodal_results_requests.push_back(mpcolns::mpco::NodalResultType::UnbalancedForce);
+					nodal_results_requests.push_back(ladrunons::detail::NodalResultType::UnbalancedForce);
 				else if (strcmp(data, "unbalancedMoment") == 0)
-					nodal_results_requests.push_back(mpcolns::mpco::NodalResultType::UnbalancedMoment);
+					nodal_results_requests.push_back(ladrunons::detail::NodalResultType::UnbalancedMoment);
 				else if (strcmp(data, "unbalancedForceIncludingInertia") == 0)
-					nodal_results_requests.push_back(mpcolns::mpco::NodalResultType::UnbalancedForceIncludingInertia);
+					nodal_results_requests.push_back(ladrunons::detail::NodalResultType::UnbalancedForceIncludingInertia);
 				else if (strcmp(data, "unbalancedMomentIncludingInertia") == 0)
-					nodal_results_requests.push_back(mpcolns::mpco::NodalResultType::UnbalancedMomentIncludingInertia);
+					nodal_results_requests.push_back(ladrunons::detail::NodalResultType::UnbalancedMomentIncludingInertia);
 				else if (strcmp(data, "pressure") == 0)
-					nodal_results_requests.push_back(mpcolns::mpco::NodalResultType::Pressure);
+					nodal_results_requests.push_back(ladrunons::detail::NodalResultType::Pressure);
 				else if (strcmp(data, "modesOfVibration") == 0)
-					nodal_results_requests.push_back(mpcolns::mpco::NodalResultType::ModesOfVibration);
+					nodal_results_requests.push_back(ladrunons::detail::NodalResultType::ModesOfVibration);
 				else if (strcmp(data, "modesOfVibrationRotational") == 0)
-					nodal_results_requests.push_back(mpcolns::mpco::NodalResultType::ModesOfVibrationRotational);
+					nodal_results_requests.push_back(ladrunons::detail::NodalResultType::ModesOfVibrationRotational);
 				else {
-					opserr << "MPCORecorderLadruno error: option -N with unknown result type (" << data << ")\n";
+					opserr << "LadrunoRecorder error: option -N with unknown result type (" << data << ")\n";
 					return 0;
 				}
 				sens_grad_indices.push_back(0); // placeholder
 				break;
 			}
-			case mpcolns::utils::parsing::opt_result_on_nodes_sens: {
+			case ladrunons::utils::parsing::opt_result_on_nodes_sens: {
 				if (strcmp(data, "displacementSensitivity") == 0)
-					nodal_results_requests.push_back(mpcolns::mpco::NodalResultType::DisplacementSensitivity);
+					nodal_results_requests.push_back(ladrunons::detail::NodalResultType::DisplacementSensitivity);
 				else if (strcmp(data, "rotationSensitivity") == 0)
-					nodal_results_requests.push_back(mpcolns::mpco::NodalResultType::RotationSensitivity);
+					nodal_results_requests.push_back(ladrunons::detail::NodalResultType::RotationSensitivity);
 				else if (strcmp(data, "velocitySensitivity") == 0)
-					nodal_results_requests.push_back(mpcolns::mpco::NodalResultType::VelocitySensitivity);
+					nodal_results_requests.push_back(ladrunons::detail::NodalResultType::VelocitySensitivity);
 				else if (strcmp(data, "angularVelocitySensitivity") == 0)
-					nodal_results_requests.push_back(mpcolns::mpco::NodalResultType::AngularVelocitySensitivity);
+					nodal_results_requests.push_back(ladrunons::detail::NodalResultType::AngularVelocitySensitivity);
 				else if (strcmp(data, "accelerationSensitivity") == 0)
-					nodal_results_requests.push_back(mpcolns::mpco::NodalResultType::AccelerationSensitivity);
+					nodal_results_requests.push_back(ladrunons::detail::NodalResultType::AccelerationSensitivity);
 				else if (strcmp(data, "angularAccelerationSensitivity") == 0)
-					nodal_results_requests.push_back(mpcolns::mpco::NodalResultType::AngularAccelerationSensitivity);
+					nodal_results_requests.push_back(ladrunons::detail::NodalResultType::AngularAccelerationSensitivity);
 				else {
-					opserr << "MPCORecorderLadruno error: option -NS with unknown result type (" << data << ")\n";
+					opserr << "LadrunoRecorder error: option -NS with unknown result type (" << data << ")\n";
 					return 0;
 				}
 				if (numdata > 0) {
 					int grad_index;
 					if (OPS_GetInt(&one_item, &grad_index) != 0) {
-						opserr << "MPCORecorderLadruno error: option -NS requires an int sensitivity parameter index\n";
+						opserr << "LadrunoRecorder error: option -NS requires an int sensitivity parameter index\n";
 						return 0;
 					}
 					numdata--;
 					sens_grad_indices.push_back(grad_index);
 				}
 				else {
-					opserr << "MPCORecorderLadruno error: option -NS requires a sensitivity parameter index\n";
+					opserr << "LadrunoRecorder error: option -NS requires a sensitivity parameter index\n";
 					return 0;
 				}
 				break;
 			}
-			case mpcolns::utils::parsing::opt_result_on_elements: {
+			case ladrunons::utils::parsing::opt_result_on_elements: {
 				std::string temp(data);
-				mpcolns::utils::strings::split(temp, '.', tokens, true);
+				ladrunons::utils::strings::split(temp, '.', tokens, true);
 				if (tokens.size() > 0)
 					elemental_results_requests.push_back(tokens);
 				break;
 			}
-			case mpcolns::utils::parsing::opt_time: {
+			case ladrunons::utils::parsing::opt_time: {
 				if (strcmp(data, "dt") == 0) {
-					output_freq.type = mpcolns::mpco::OutputFrequency::DeltaTime;
+					output_freq.type = ladrunons::detail::OutputFrequency::DeltaTime;
 					output_freq.nsteps = 1;
 					if (numdata > 0) {
 						if (OPS_GetDouble(&one_item, &output_freq.dt) != 0) {
-							opserr << "MPCORecorderLadruno error: invalid double argument for the delta time\n";
+							opserr << "LadrunoRecorder error: invalid double argument for the delta time\n";
 							return 0;
 						}
 						if (output_freq.dt < 0.0) output_freq.dt = 0.0;
 						numdata--;
 					}
 					else {
-						opserr << "MPCORecorderLadruno error: option -T dt requires a delta time argument\n";
+						opserr << "LadrunoRecorder error: option -T dt requires a delta time argument\n";
 						return 0;
 					}
 				}
 				else if (strcmp(data, "nsteps") == 0) {
-					output_freq.type = mpcolns::mpco::OutputFrequency::NumberOfSteps;
+					output_freq.type = ladrunons::detail::OutputFrequency::NumberOfSteps;
 					output_freq.dt = 0.0;
 					if (numdata > 0) {
 						if (OPS_GetInt(&one_item, &output_freq.nsteps) != 0) {
-							opserr << "MPCORecorderLadruno error: invalid int argument for the number of steps\n";
+							opserr << "LadrunoRecorder error: invalid int argument for the number of steps\n";
 							return 0;
 						}
 						if (output_freq.nsteps < 1) output_freq.nsteps = 1;
 						numdata--;
 					}
 					else {
-						opserr << "MPCORecorderLadruno error: option -T nsteps requires a number-of-steps argument\n";
+						opserr << "LadrunoRecorder error: option -T nsteps requires a number-of-steps argument\n";
 						return 0;
 					}
 				}
 				else {
-					opserr << "MPCORecorderLadruno error: option -T with unknown frequency type (" << data << ")\n";
+					opserr << "LadrunoRecorder error: option -T with unknown frequency type (" << data << ")\n";
 					return 0;
 				}
 				break;
 			}
-			case mpcolns::utils::parsing::opt_global: {
+			case ladrunons::utils::parsing::opt_global: {
 				// -G energy           -> whole-model energy balance (ON_DOMAIN)
 				// -G energy <tag...>  -> additionally per-region (ON_REGIONS)
 				if (strcmp(data, "energy") == 0) {
@@ -2345,7 +2345,7 @@ void* OPS_MPCOLadrunoRecorder()
 					int tag = atoi(data);
 					MeshRegion* region = domain->getRegion(tag);
 					if (region == 0) {
-						opserr << "MPCORecorderLadruno warning: option -G region " << tag
+						opserr << "LadrunoRecorder warning: option -G region " << tag
 						       << " not found in the domain; skipping its energy block\n";
 					}
 					else {
@@ -2355,14 +2355,14 @@ void* OPS_MPCOLadrunoRecorder()
 				break;
 			}
 			default: {
-				opserr << "MPCORecorderLadruno error: unknown arg with option none " << data << "\n";
+				opserr << "LadrunoRecorder error: unknown arg with option none " << data << "\n";
 				return 0;
 			}
 			}
 		}
 	}
 
-	MPCORecorderLadruno* recorder = new MPCORecorderLadruno();
+	LadrunoRecorder* recorder = new LadrunoRecorder();
 	recorder->m_data->filename = filename;
 	recorder->m_data->output_freq = output_freq;
 	recorder->m_data->nodal_results_requests.swap(nodal_results_requests);

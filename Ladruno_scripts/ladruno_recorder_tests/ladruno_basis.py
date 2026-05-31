@@ -1,4 +1,4 @@
-"""Basis-function reconstruction for MPCO_Ladruno (schema v1, §3.3).
+"""Basis-function reconstruction for Ladruno (schema v1, §3.3).
 
 The whole point of the apeGmsh-native schema is that a reader can map a Gauss point
 from parametric -> global coordinates for *any* element using only the self-describing
@@ -158,7 +158,7 @@ def reconstruct_global(
 # ---------------------------------------------------------------------------
 #
 # ``shape_functions`` is the INDEPENDENT Python reimplementation of the C++
-# ``computeGlobalGP`` basis evaluator (MPCOL_ElementResults.h). It is keyed by
+# ``computeGlobalGP`` basis evaluator (Ladruno_ElementResults.h). It is keyed by
 # (topology, num_nodes) rather than the self-describing FAMILY/ORDER descriptor,
 # because the write-time round-trip oracle (ladruno_format.round_trip_oracle)
 # reconstructs x(GP_PARAM[k]) directly from the element's natural-coordinate GP

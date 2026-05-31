@@ -1,5 +1,5 @@
 ---
-title: MPCO_Ladruno HDF5 schema v1
+title: Ladruno HDF5 schema v1
 project: Ladruno
 status: draft
 priority: high
@@ -11,11 +11,11 @@ tags:
   - spec
 ---
 
-# MPCO_Ladruno HDF5 schema v1
+# Ladruno HDF5 schema v1
 
-The on-disk contract for the `mpcoLadruno` recorder. apeGmsh is the **canonical
+The on-disk contract for the `ladruno` recorder. apeGmsh is the **canonical
 consumer** and co-owns this spec; `STKO_to_python` gets a parallel reader branch.
-Companion: the ADR [[03_mpco_ladruno]]. This file is the layout `mpcol::` writes and
+Companion: the ADR [[03_ladruno_recorder]]. This file is the layout `ladruno::` writes and
 apeGmsh reads.
 
 > **Why diverge from STKO's `.mpco`?** Two planned element families — *second-order /
@@ -49,7 +49,7 @@ apeGmsh reads.
    `setResponse` (generalizing the existing `integrationPoints` / IGA hooks). The
    recorder consults a legacy class-tag table **only as a fallback** for elements that
    predate the protocol. New elements never edit the recorder.
-3. **Versioned.** `INFO/GENERATOR="MPCO_Ladruno"` + `INFO/FORMAT_VERSION=1`. Readers
+3. **Versioned.** `INFO/GENERATOR="Ladruno"` + `INFO/FORMAT_VERSION=1`. Readers
    branch on these; the schema may evolve without silent misreads.
 4. **Parity by derivation.** For the ~60 legacy OpenSees elements, the recorder
    *derives* `BASIS`/`QUADRATURE` from the old `(GEOMETRY, INTEGRATION_RULE)` pair, so
@@ -66,7 +66,7 @@ apeGmsh reads.
 ```
 /
 ├── INFO
-│   ├── GENERATOR        (string)  "MPCO_Ladruno"
+│   ├── GENERATOR        (string)  "Ladruno"
 │   ├── FORMAT_VERSION   (int)     1
 │   ├── SOLVER_NAME      (string)  "OpenSees"
 │   ├── SOLVER_VERSION   (int[3])
@@ -93,7 +93,7 @@ apeGmsh reads.
 
 | Attribute | Type | Value | Notes |
 |---|---|---|---|
-| `GENERATOR` | string | `"MPCO_Ladruno"` | **reader branch key** — distinguishes from STKO `.mpco` |
+| `GENERATOR` | string | `"Ladruno"` | **reader branch key** — distinguishes from STKO `.mpco` |
 | `FORMAT_VERSION` | int | `1` | bump on any breaking layout change |
 | `SOLVER_NAME` | string | `"OpenSees"` | |
 | `SOLVER_VERSION` | int[3] | e.g. `[3,5,1]` | `OPS_VERSION` split on `.` |
@@ -102,7 +102,7 @@ apeGmsh reads.
 | `PARTITION_ID` | int | `N` | this file's 0-based partition index (0 if not partitioned) |
 | `NUM_PARTITIONS` | int | total | partition count of the set (1 if not partitioned) |
 
-A reader that doesn't find `GENERATOR=="MPCO_Ladruno"` must treat the file as a
+A reader that doesn't find `GENERATOR=="Ladruno"` must treat the file as a
 legacy STKO `.mpco` (or refuse it).
 
 **Partition manifest.** When the recorder runs under a parallel launcher it writes
@@ -147,7 +147,7 @@ is no reader-side per-class shape-function table.
 ### 3.1 The self-declaration protocol (D-schema-1)
 
 > The exact element-side `setResponse` signatures (attr names, response types, C++
-> skeletons) are specified in [[mpco_ladruno_element_contract]]. This section is the
+> skeletons) are specified in [[ladruno_element_contract]]. This section is the
 > recorder-side view of the same protocol.
 
 The recorder builds the descriptor for each element with this precedence:
@@ -214,7 +214,7 @@ in MPCO; pressure surfaces via the `PRESSURE` nodal result.
 > empty for disp/force/elastic beam-columns even with `-E … localAxes`), so apeGmsh
 > cannot orient line/section force diagrams from a `.mpco` file at all — it falls back
 > to an **identity quaternion that masks "rotation lost in export" as "no rotation"**,
-> or forces the native `model.h5` path. MPCO_Ladruno **must** write real per-element
+> or forces the native `model.h5` path. Ladruno **must** write real per-element
 > beam frames. The recorder derives the frame from the element's `CrdTransf`/`vecxz`
 > when the `localAxes` response is absent — never silently defaults to identity.
 
@@ -334,7 +334,7 @@ bespoke `;`/int-code decoder STKO required.
 
 Single `[1 × nComp]` row per step, stored per the §7.0 chunked layout (`DATA[T×1×nComp]`).
 Energy balance, base shear, total
-reaction. **Built only after the separate energy work lands** — MPCO_Ladruno will
+reaction. **Built only after the separate energy work lands** — Ladruno will
 *consume* `EnergyBalanceRecorder` ([[project_energy_balance_feature]]), not reinvent
 it. Spec stub here for forward compatibility.
 
@@ -384,7 +384,7 @@ source (the user's stated priority: performance + robustness on OpenSees first):
   (OneDrive/SeaDrive/Dropbox) native-crashes the kernel at `wipe()` — the deferred
   `H5Fclose` races the sync client and leaves the HDF5 write-flag stuck;
   `HDF5_USE_FILE_LOCKING=FALSE` does not fix it. Combined with the `exit(-1)`-leaves-
-  files-unflushed history ([[project_mpco_exit_crash]]), MPCO_Ladruno must: flush every
+  files-unflushed history ([[project_mpco_exit_crash]]), Ladruno must: flush every
   recorded step (as MPCO does), **rewrite envelope/aggregate datasets periodically**
   (§7.4), and provide an **explicit flush/close recorder control** so a user can force a
   clean close in the same cell before copying off local disk.

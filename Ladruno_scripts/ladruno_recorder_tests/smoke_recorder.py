@@ -1,4 +1,4 @@
-"""Phase-1 file-validity gate: drive the freshly built `recorder mpcoLadruno` on a
+"""Phase-1 file-validity gate: drive the freshly built `recorder ladruno` on a
 tiny model and assert the emitted .ladruno passes the schema validator.
 
 Run (under an oneAPI-activated shell, with the fresh OpenSeesPy.dll copied to <tmp>/opensees.pyd):
@@ -33,7 +33,7 @@ ops.fix(2, 0, 1)  # node 2 free in X, fixed Y -> stable 1-DOF axial system
 ops.uniaxialMaterial("Elastic", 1, 1000.0)
 ops.element("truss", 1, 1, 2, 1.0, 1)
 
-ops.recorder("mpcoLadruno", out)
+ops.recorder("ladruno", out)
 
 ops.timeSeries("Linear", 1)
 ops.pattern("Plain", 1, 1)

@@ -2,10 +2,10 @@
 
 Runs ONE canonical model with BOTH recorders, requesting ELEMENT results:
     recorder mpco        -> eref.mpco       (frozen value oracle)
-    recorder mpcoLadruno -> etest.ladruno   (the new recorder)
+    recorder ladruno -> etest.ladruno   (the new recorder)
 
 Element results are the ported-verbatim-but-value-unverified channel: the frozen
-recorder and mpcoLadruno share the same element engine and packing order, so the
+recorder and ladruno share the same element engine and packing order, so the
 per-element result row Vector must be identical -> the matrices diff to 1e-12.
 
 Model: a 2-element FourNodeQuad plane-stress strip (4 Gauss pts x 3 stress comps
@@ -59,7 +59,7 @@ ops.element("quad", 11, 2, 3, 6, 5, 1.0, "PlaneStress", 1)
 
 # BOTH recorders, identical element request. Record every step.
 ops.recorder("mpco", ref, "-E", "stress", "-T", "dt", 0.0)
-ops.recorder("mpcoLadruno", new, "-E", "stress", "-T", "dt", 0.0)
+ops.recorder("ladruno", new, "-E", "stress", "-T", "dt", 0.0)
 
 ops.timeSeries("Linear", 1)
 ops.pattern("Plain", 1, 1)
@@ -83,9 +83,9 @@ print("NEW:", new, os.path.exists(new))
 # case the schema was explicitly designed around (COLUMN_MAP multiplicity /
 # per-block GAUSS_ID). Needs ndf=3, so it runs as a separate model.
 #
-# KNOWN (separate, non-fatal): with a fiber section, mpcoLadruno::writeSections
+# KNOWN (separate, non-fatal): with a fiber section, ladruno::writeSections
 # emits ~3 HDF5-DIAG diagnostics to stderr while writing the SECTION_<n> fiber
-# datasets (MPCORecorderLadruno.cpp ~792-807). The frozen recorder does not. It
+# datasets (LadrunoRecorder.cpp ~792-807). The frozen recorder does not. It
 # does NOT corrupt data — SECTION_ASSIGNMENTS (ID/ASSIGNMENT/FIBER_DATA/
 # FIBER_MATERIALS) and all element values still match the oracle to 1e-12 (this
 # gate passes). Tracked as a writeSections follow-up bug.
@@ -113,7 +113,7 @@ ops.element("dispBeamColumn", 10, 1, 2, 1, 1)
 ops.element("dispBeamColumn", 11, 2, 3, 1, 1)
 
 ops.recorder("mpco", bref, "-E", "section.fiber.stress", "-T", "dt", 0.0)
-ops.recorder("mpcoLadruno", bnew, "-E", "section.fiber.stress", "-T", "dt", 0.0)
+ops.recorder("ladruno", bnew, "-E", "section.fiber.stress", "-T", "dt", 0.0)
 
 ops.timeSeries("Linear", 2)
 ops.pattern("Plain", 2, 2)

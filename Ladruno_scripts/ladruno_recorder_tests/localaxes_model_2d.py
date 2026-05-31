@@ -12,7 +12,7 @@ loudly. 2D CrdTransf::getLocalAxes returns full 3D direction cosines
 (vx=(cos,sin,0), vy=(-sin,cos,0), vz=(0,0,1)) so the same quaternion check works;
 the checker pads 2D node coordinates to 3D before comparing.
 
-    recorder mpcoLadruno -> localaxes_2d.ladruno
+    recorder ladruno -> localaxes_2d.ladruno
 
 Run with the BUILD python (no boot .pth):
     python localaxes_model_2d.py <dir_with_opensees_pyd> [out_dir]
@@ -62,7 +62,7 @@ ops.beamIntegration("Legendre", 1, 1, 3)
 ops.element("dispBeamColumn", 2, 3, 4, 1, 1)
 ops.element("forceBeamColumn", 3, 5, 6, 1, 1)
 
-ops.recorder("mpcoLadruno", new, "-N", "displacement", "-kind", "transient",
+ops.recorder("ladruno", new, "-N", "displacement", "-kind", "transient",
              "-T", "dt", 0.0)
 
 ops.timeSeries("Linear", 1)

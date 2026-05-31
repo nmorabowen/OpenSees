@@ -1,5 +1,5 @@
 ---
-title: MPCO_Ladruno element contract
+title: Ladruno element contract
 project: Ladruno
 status: draft
 priority: high
@@ -12,15 +12,15 @@ tags:
   - spec
 ---
 
-# MPCO_Ladruno element contract
+# Ladruno element contract
 
-The **element-side API** that `MPCORecorderLadruno` consumes. An element that honors
+The **element-side API** that `LadrunoRecorder` consumes. An element that honors
 this contract is recorded — including its geometry, quadrature, local frame, and
 results — with **zero edits to the recorder**. This is the bridge between the planned
 element work (second-order/Bézier, Belytschko beams) and the recorder.
 
-Companions: the schema [[mpco_ladruno_schema_v1]] (what lands on disk) and the ADR
-[[03_mpco_ladruno]] (why). Where the schema says "the element declares X via
+Companions: the schema [[ladruno_schema_v1]] (what lands on disk) and the ADR
+[[03_ladruno_recorder]] (why). Where the schema says "the element declares X via
 `setResponse`", **this** file is the exact signature.
 
 > **Design rule (from the ADR's inverted dispatch):** the recorder asks; the element

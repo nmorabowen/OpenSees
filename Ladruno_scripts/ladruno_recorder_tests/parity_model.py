@@ -2,7 +2,7 @@
 
 Runs ONE canonical model with BOTH recorders in a single process:
     recorder mpco        -> ref.mpco       (the frozen value oracle)
-    recorder mpcoLadruno -> test.ladruno   (the new recorder)
+    recorder ladruno -> test.ladruno   (the new recorder)
 
 so the emitted files can be value-diffed by parity_check.py to 1e-12.
 
@@ -50,7 +50,7 @@ ops.element("truss", 5, 3, 4, 1.0, 1)
 # BOTH recorders, identical requests
 NODE_REQ = ["-N", "displacement", "reactionForce"]
 ops.recorder("mpco", ref, *NODE_REQ, "-T", "dt", 0.0)
-ops.recorder("mpcoLadruno", new, *NODE_REQ, "-T", "dt", 0.0)
+ops.recorder("ladruno", new, *NODE_REQ, "-T", "dt", 0.0)
 
 ops.timeSeries("Linear", 1)
 ops.pattern("Plain", 1, 1)

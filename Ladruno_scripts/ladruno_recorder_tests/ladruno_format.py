@@ -1,6 +1,6 @@
-"""MPCO_Ladruno (.ladruno) reader + schema-v1 validator + canonical normalizers.
+"""Ladruno (.ladruno) reader + schema-v1 validator + canonical normalizers.
 
-This module is the **executable form of the schema spec** (mpco_ladruno_schema_v1.md).
+This module is the **executable form of the schema spec** (ladruno_schema_v1.md).
 Three jobs:
 
 1. ``LadrunoReader`` -- walk a .ladruno HDF5 file per schema v1.
@@ -24,7 +24,7 @@ import numpy as np
 
 import ladruno_basis
 
-GENERATOR = "MPCO_Ladruno"
+GENERATOR = "Ladruno"
 FORMAT_VERSION = 1
 
 # COLUMN_MAP/LEVELS path codes (schema §7.2)

@@ -1,6 +1,6 @@
 /* ********************************************************************** **
-**  MPCO_Ladruno recorder — modular sibling of MPCORecorder (frozen).     **
-**  MPCOL_DomainResults.h — DOMAIN / REGION ResultSource implementations.  **
+**  Ladruno recorder — modular sibling of MPCORecorder (frozen).     **
+**  Ladruno_DomainResults.h — DOMAIN / REGION ResultSource implementations.  **
 **                                                                        **
 **  EnergyBalanceSource (ADR D8): whole-model OR per-region structural-    **
 **  dynamics energy balance (KE/IE/DW/ULW/RES/ERR). The energy math is     **
@@ -10,11 +10,11 @@
 **  energyBalance (one row per region tag).                                **
 ** ********************************************************************** */
 
-#ifndef MPCOL_DomainResults_h
-#define MPCOL_DomainResults_h
+#ifndef Ladruno_DomainResults_h
+#define Ladruno_DomainResults_h
 
-#include "MPCOL_ResultIO.h"      // mpcol::ResultSource, mpcol::ResultSchema
-#include "MPCOL_Types.h"         // mpcol::mpco::ProcessInfo, enums
+#include "Ladruno_ResultIO.h"      // ladruno::ResultSource, ladruno::ResultSchema
+#include "Ladruno_Types.h"         // ladruno::detail::ProcessInfo, enums
 
 #include "EnergyBalanceKernel.h" // ebkernel::EnergyAccumulator + sweep helpers
 
@@ -23,7 +23,7 @@
 #include <string>
 #include <vector>
 
-namespace mpcol {
+namespace ladruno {
 
 	/*
 	EnergyBalanceSource — whole-model OR per-region energy balance.
@@ -43,9 +43,9 @@ namespace mpcol {
 	class EnergyBalanceSource : public ResultSource {
 	public:
 		// Whole-model (ON_DOMAIN). ids() == {0}.
-		explicit EnergyBalanceSource(const mpco::ProcessInfo& info);
+		explicit EnergyBalanceSource(const detail::ProcessInfo& info);
 		// Per-region (ON_REGIONS). ids() == region_tags.
-		EnergyBalanceSource(const mpco::ProcessInfo& info,
+		EnergyBalanceSource(const detail::ProcessInfo& info,
 		                    const std::vector<int>& region_tags);
 
 		~EnergyBalanceSource() override = default;
@@ -53,7 +53,7 @@ namespace mpcol {
 		const ResultSchema& schema() const override { return m_schema; }
 		const std::vector<int>& ids() const override { return m_ids; }
 
-		void evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer) override;
+		void evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer) override;
 
 		// ADR D6/D8: energy is an additive/global quantity that needs a per-step
 		// partition reduction (Allreduce) before a sink may accumulate it. v2
@@ -78,6 +78,6 @@ namespace mpcol {
 		Vector m_velScratch;               // caller-owned element-DOF scratch
 	};
 
-} // namespace mpcol
+} // namespace ladruno
 
-#endif // MPCOL_DomainResults_h
+#endif // Ladruno_DomainResults_h

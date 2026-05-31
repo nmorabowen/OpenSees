@@ -1,20 +1,20 @@
 /* ********************************************************************** **
-**  MPCO_Ladruno recorder — MPCOL_ElementResults.h                        **
+**  Ladruno recorder — Ladruno_ElementResults.h                        **
 **  The ELEMENT-results half of the recorder. The discovery engine        **
 **  (OutputDescriptor / OutputDescriptorStream / collections /            **
 **  ElementCollection) is ported VERBATIM from the frozen MPCORecorder    **
-**  (lines 2595-4277) into namespace mpcol — header-only/inline, exactly   **
+**  (lines 2595-4277) into namespace ladruno — header-only/inline, exactly   **
 **  as the frozen classes are inline. It does NOT write HDF5 (sinks do);   **
 **  it discovers each element's setResponse output tree and flattens it.   **
 **  EVERY frozen workaround is preserved (SSPbrick, ForceBeamColumn3d,     **
 **  shell keyword swap, section-after-fiber, 1-based→0-based gp). The      **
 **  ElementResultSource adapter + basisInfo stub follow (Step 2/3).        **
 ** ********************************************************************** */
-#ifndef MPCOL_ElementResults_h
-#define MPCOL_ElementResults_h
+#ifndef Ladruno_ElementResults_h
+#define Ladruno_ElementResults_h
 
-#include "MPCOL_Types.h"
-#include "MPCOL_ResultIO.h"
+#include "Ladruno_Types.h"
+#include "Ladruno_ResultIO.h"
 
 #include "Element.h"
 #include "ElementIter.h"
@@ -30,13 +30,13 @@
 
 // Distinct OPS_Stream tag so the ported descriptor stream cannot collide with
 // the frozen recorder's (1001) when both link into the same binary.
-#define OPS_STREAM_TAGS_MPCOL_ElementOutputDescriptorStream 1002
+#define OPS_STREAM_TAGS_Ladruno_ElementOutputDescriptorStream 1002
 
 // Frozen-recorder helper macros the engine references but that live ABOVE the
 // ported range (MPCORecorder.cpp lines 52, 135-158). Ported verbatim. All
 // #ifndef-guarded so they never clash with the frozen TU's identical defs.
-#ifndef MPCO_MAX_TRIAL_NSEC
-#define MPCO_MAX_TRIAL_NSEC 100
+#ifndef LADRUNO_MAX_TRIAL_NSEC
+#define LADRUNO_MAX_TRIAL_NSEC 100
 #endif
 #ifndef ELE_TAG_FourNodeQuadWithSensitivity
 #define ELE_TAG_FourNodeQuadWithSensitivity 100000011
@@ -60,9 +60,9 @@
 #define TAG_InelasticYS2DGNL -1
 #endif
 
-namespace mpcol {
+namespace ladruno {
 
-namespace mpco {
+namespace detail {
 
 	namespace element {
 
@@ -160,7 +160,7 @@ namespace mpco {
 
 			inline std::string toString()const {
 				std::stringstream ss;
-				ss << "MPCORecorder Element Output Descriptor Header:\n";
+				ss << "LadrunoRecorder Element Output Descriptor Header:\n";
 				ss << "Columns: " << num_columns << "\n";
 				ss << "N. Components:\n";
 				for (size_t i = 0; i < num_components.size(); i++) {
@@ -171,7 +171,7 @@ namespace mpco {
 					it1 = components_path.begin(); it1 != components_path.end(); ++it1) {
 					for (std::vector<int>::const_iterator
 						it2 = it1->begin(); it2 != it1->end(); ++it2) {
-						ss << mpco::ElementOutputDescriptorType::toString((mpco::ElementOutputDescriptorType::Enum)*it2) << ".";
+						ss << detail::ElementOutputDescriptorType::toString((detail::ElementOutputDescriptorType::Enum)*it2) << ".";
 					}
 					ss << "\n";
 				}
@@ -208,7 +208,7 @@ namespace mpco {
 						gauss_id.resize(1);
 						gauss_id[0] = -1;
 						components_path.resize(1);
-						components_path[0].push_back(mpco::ElementOutputDescriptorType::Element);
+						components_path[0].push_back(detail::ElementOutputDescriptorType::Element);
 						components.resize(1);
 						components[0].resize((size_t)data_size);
 						for (size_t i = 0; i < (size_t)data_size; i++) {
@@ -290,7 +290,7 @@ namespace mpco {
 		{
 		public:
 			OutputDescriptor()
-				: type(mpco::ElementOutputDescriptorType::Element)
+				: type(detail::ElementOutputDescriptorType::Element)
 				, tag(0)
 				, dummy_section_flag(false)
 				, gp_number(0)
@@ -350,7 +350,7 @@ namespace mpco {
 
 		public:
 			// generic
-			mpco::ElementOutputDescriptorType::Enum type;
+			detail::ElementOutputDescriptorType::Enum type;
 			// for material or section
 			int tag;
 			bool dummy_section_flag;
@@ -411,20 +411,20 @@ namespace mpco {
 			}
 
 			void appendGaussLocation(std::vector<double>& x) const {
-				if (type == mpco::ElementOutputDescriptorType::Gauss)
+				if (type == detail::ElementOutputDescriptorType::Gauss)
 					x.push_back(gp_eta);
 				for (size_t i = 0; i < items.size(); i++)
 					items[i]->appendGaussLocation(x);
 			}
 
 			void appendGaussWeight(std::vector<double>& x) const {
-				if (type == mpco::ElementOutputDescriptorType::Gauss)
+				if (type == detail::ElementOutputDescriptorType::Gauss)
 					x.push_back(gp_weight);
 				for (size_t i = 0; i < items.size(); i++)
 					items[i]->appendGaussWeight(x);
 			}
 
-			void getFiberData(std::vector<mpco::element::FiberData> &data,
+			void getFiberData(std::vector<detail::element::FiberData> &data,
 				std::vector<int> &data_mat_id,
 				std::vector<int> &sec_id,
 				std::vector<int> &gp_id,
@@ -446,8 +446,8 @@ namespace mpco {
 					delete temp_dummy;
 			}
 
-			mpco::element::OutputDescriptorHeader makeHeader()const {
-				mpco::element::OutputDescriptorHeader header;
+			detail::element::OutputDescriptorHeader makeHeader()const {
+				detail::element::OutputDescriptorHeader header;
 				std::list<int> temp_path;
 				int temp_gp_id(-1);
 				makeHeaderInternal(header, temp_path, temp_gp_id);
@@ -488,14 +488,14 @@ namespace mpco {
 				std::stringstream ss_indent;
 				for (int i = 0; i < level; i++) ss_indent << "\t";
 				std::string indent = ss_indent.str();
-				ss << indent << "<" << mpco::ElementOutputDescriptorType::toString(this->type);
-				if (this->type == mpco::ElementOutputDescriptorType::Gauss) {
+				ss << indent << "<" << detail::ElementOutputDescriptorType::toString(this->type);
+				if (this->type == detail::ElementOutputDescriptorType::Gauss) {
 					ss << " number=\"" << this->gp_number << "\" eta=\"" << this->gp_eta << "\" weight=\"" << this->gp_weight << "\"";
 				}
-				else if (this->type == mpco::ElementOutputDescriptorType::Section) {
+				else if (this->type == detail::ElementOutputDescriptorType::Section) {
 					ss << " tag=\"" << this->tag << "\"";
 				}
-				else if (this->type == mpco::ElementOutputDescriptorType::Material) {
+				else if (this->type == detail::ElementOutputDescriptorType::Material) {
 					ss << " tag=\"" << this->tag << "\"";
 				}
 				ss << ">\n";
@@ -505,11 +505,11 @@ namespace mpco {
 				for (int i = 0; i < items.size(); i++) {
 					items[i]->printInfo(level + 1, ss);
 				}
-				ss << indent << "</" << mpco::ElementOutputDescriptorType::toString(this->type) << ">\n";
+				ss << indent << "</" << detail::ElementOutputDescriptorType::toString(this->type) << ">\n";
 			}
 
-			void makeHeaderInternal(mpco::element::OutputDescriptorHeader &header, std::list<int> &temp_path, int &temp_gp_id) const {
-				if (type == mpco::ElementOutputDescriptorType::Gauss)
+			void makeHeaderInternal(detail::element::OutputDescriptorHeader &header, std::list<int> &temp_path, int &temp_gp_id) const {
+				if (type == detail::ElementOutputDescriptorType::Gauss)
 					temp_gp_id = gp_number;
 				temp_path.push_back((int)type);
 				if (components.size() > 0 || items.size() == 0) {
@@ -553,15 +553,15 @@ namespace mpco {
 				temp_path.pop_back();
 			}
 
-			void appendFiberData(std::vector<mpco::element::FiberData> &data, std::vector<int> &data_mat_id,
+			void appendFiberData(std::vector<detail::element::FiberData> &data, std::vector<int> &data_mat_id,
 				std::vector<int> &sec_id, std::vector<int> &gp_id, std::vector<bool> &dummy_sec_flags,
 				int* &temp_sec, int* &temp_gp, bool* &temp_dummy) const {
-				if (type == mpco::ElementOutputDescriptorType::Gauss) {
+				if (type == detail::ElementOutputDescriptorType::Gauss) {
 					if (temp_gp == 0)
 						temp_gp = new int();
 					*temp_gp = gp_number;
 				}
-				else if (type == mpco::ElementOutputDescriptorType::Section) {
+				else if (type == detail::ElementOutputDescriptorType::Section) {
 					if (temp_sec == 0)
 						temp_sec = new int();
 					if (temp_dummy == 0)
@@ -569,17 +569,17 @@ namespace mpco {
 					*temp_sec = tag;
 					*temp_dummy = dummy_section_flag;
 				}
-				else if (type == mpco::ElementOutputDescriptorType::Fiber) {
-					data.push_back(mpco::element::FiberData(fib_y, fib_z, fib_a));
+				else if (type == detail::ElementOutputDescriptorType::Fiber) {
+					data.push_back(detail::element::FiberData(fib_y, fib_z, fib_a));
 					int fiber_mat_tag = -1;
 					if (items.size() == 1) {
-						if (items[0]->type == mpco::ElementOutputDescriptorType::Material) {
+						if (items[0]->type == detail::ElementOutputDescriptorType::Material) {
 							fiber_mat_tag = items[0]->tag;
 						}
 					}
 					data_mat_id.push_back(fiber_mat_tag);
 				}
-				if (type == mpco::ElementOutputDescriptorType::Fiber || items.size() == 0) {
+				if (type == detail::ElementOutputDescriptorType::Fiber || items.size() == 0) {
 					if (temp_sec)
 						sec_id.push_back(*temp_sec);
 					if (temp_gp)
@@ -600,11 +600,11 @@ namespace mpco {
 
 			void fixFloatingFiberOutputInternal() {
 				if (items.size() > 0) {
-					if (type != mpco::ElementOutputDescriptorType::Section) {
-						if (items[0]->type == mpco::ElementOutputDescriptorType::Fiber) {
+					if (type != detail::ElementOutputDescriptorType::Section) {
+						if (items[0]->type == detail::ElementOutputDescriptorType::Fiber) {
 							/* check only the first one. items are of the same type... */
 							OutputDescriptor *dummy_section_level = new OutputDescriptor();
-							dummy_section_level->type = mpco::ElementOutputDescriptorType::Section;
+							dummy_section_level->type = detail::ElementOutputDescriptorType::Section;
 							dummy_section_level->tag = -123456;
 							dummy_section_level->dummy_section_flag = true;
 							dummy_section_level->items = items;
@@ -619,10 +619,10 @@ namespace mpco {
 
 			void fixSectionAfterFiberDueToFiberOutputFailInternal() {
 				if (items.size() > 0) {
-					if (items[0]->type == mpco::ElementOutputDescriptorType::Fiber) {
+					if (items[0]->type == detail::ElementOutputDescriptorType::Fiber) {
 						/* check only the first one. items are of the same type...*/
 						if (items.size() > 1) {
-							if (items.back()->type != mpco::ElementOutputDescriptorType::Fiber) {
+							if (items.back()->type != detail::ElementOutputDescriptorType::Fiber) {
 								items.pop_back();
 							}
 						}
@@ -633,7 +633,7 @@ namespace mpco {
 			}
 
 			void getNextGpTagInternal(int &next_gp_tag) {
-				if (type == mpco::ElementOutputDescriptorType::Gauss) {
+				if (type == detail::ElementOutputDescriptorType::Gauss) {
 					if (next_gp_tag < gp_number)
 						next_gp_tag = gp_number;
 				}
@@ -650,7 +650,7 @@ namespace mpco {
 				but only the first one is filled
 				*/
 				if (items.size() > 0) {
-					if (items[0]->type == mpco::ElementOutputDescriptorType::Gauss) {
+					if (items[0]->type == detail::ElementOutputDescriptorType::Gauss) {
 						// all sub items are gauss descriptors, let's merge them
 						std::map<int, OutputDescriptor*> aux;
 						for (size_t i = 0; i < items.size(); i++) {
@@ -680,7 +680,7 @@ namespace mpco {
 
 			void mergeSecInternal() {
 				if (items.size() > 0) {
-					if (items[0]->type == mpco::ElementOutputDescriptorType::Section) {
+					if (items[0]->type == detail::ElementOutputDescriptorType::Section) {
 						// all sub items are section descriptors, let's merge them
 						std::map<int, OutputDescriptor*> aux;
 						for (size_t i = 0; i < items.size(); i++) {
@@ -718,8 +718,8 @@ namespace mpco {
 				ERROR_CODE_GENERIC
 			};
 		public:
-			OutputDescriptorStream(mpco::element::OutputDescriptor * _d)
-				: OPS_Stream(OPS_STREAM_TAGS_MPCOL_ElementOutputDescriptorStream)
+			OutputDescriptorStream(detail::element::OutputDescriptor * _d)
+				: OPS_Stream(OPS_STREAM_TAGS_Ladruno_ElementOutputDescriptorStream)
 				, descr(_d)
 				, current_level(0)
 				, pending_close_tag(false)
@@ -730,15 +730,15 @@ namespace mpco {
 
 			// Self-description captured from an optional "basisInfo" probe.
 			// Stays default/invalid for the normal result-discovery path.
-			mpco::element::BasisInfo basis_info;
+			detail::element::BasisInfo basis_info;
 			bool in_basis;
 
 			int tag(const char *name) {
 				// get the element output descriptor at current level and id
-				mpco::element::OutputDescriptor *eo_curr_lev = descr;
+				detail::element::OutputDescriptor *eo_curr_lev = descr;
 				for (int i = 1; i <= current_level; i++) {
 					if (eo_curr_lev->items.size() == 0) {
-						opserr << "MPCORecorder Error: cannot set attribute(name, int), empty item list.\n";
+						opserr << "LadrunoRecorder Error: cannot set attribute(name, int), empty item list.\n";
 						exit(-1);
 					}
 					eo_curr_lev = eo_curr_lev->items[eo_curr_lev->items.size() - 1];
@@ -749,8 +749,8 @@ namespace mpco {
 					}
 					/* gauss output is the first entry */
 					else if (strcmp(name, "GaussPoint") == 0 || strcmp(name, "GaussPointOutput") == 0) {
-						mpco::element::OutputDescriptor *eo_new_curr_lev = new mpco::element::OutputDescriptor();
-						eo_new_curr_lev->type = mpco::ElementOutputDescriptorType::Gauss;
+						detail::element::OutputDescriptor *eo_new_curr_lev = new detail::element::OutputDescriptor();
+						eo_new_curr_lev->type = detail::ElementOutputDescriptorType::Gauss;
 						ensureItemsOfUniformType(eo_curr_lev, eo_new_curr_lev);
 						eo_curr_lev->items.push_back(eo_new_curr_lev);
 						current_level++;
@@ -765,7 +765,7 @@ namespace mpco {
 					}
 					else {
 						/*opserr <<
-						"MPCORecorder Error: invalid tag at level 0:\n"
+						"LadrunoRecorder Error: invalid tag at level 0:\n"
 						"expected \"GaussPoint\" or \"GaussPointOutput\", given \"" << name << "\"\n";
 						exit(-1);*/
 						/*
@@ -774,8 +774,8 @@ namespace mpco {
 						*/
 						//simulate: tag("GaussPoint");
 						{
-							mpco::element::OutputDescriptor *eo_new_curr_lev = new mpco::element::OutputDescriptor();
-							eo_new_curr_lev->type = mpco::ElementOutputDescriptorType::Gauss;
+							detail::element::OutputDescriptor *eo_new_curr_lev = new detail::element::OutputDescriptor();
+							eo_new_curr_lev->type = detail::ElementOutputDescriptorType::Gauss;
 							ensureItemsOfUniformType(eo_curr_lev, eo_new_curr_lev);
 							eo_curr_lev->items.push_back(eo_new_curr_lev);
 							current_level++;
@@ -794,14 +794,14 @@ namespace mpco {
 				else if (current_level > 0) {
 					if (strcmp(name, "NdMaterialOutput") == 0 || strcmp(name, "UniaxialMaterialOutput") == 0) {
 						// its parent can be anything but ElementOutput, ok if current_level > 1
-						mpco::element::OutputDescriptor *eo_new_curr_lev = new mpco::element::OutputDescriptor();
-						eo_new_curr_lev->type = mpco::ElementOutputDescriptorType::Material;
+						detail::element::OutputDescriptor *eo_new_curr_lev = new detail::element::OutputDescriptor();
+						eo_new_curr_lev->type = detail::ElementOutputDescriptorType::Material;
 						ensureItemsOfUniformType(eo_curr_lev, eo_new_curr_lev);
 						if (eo_curr_lev->items.size() > 0) {
 							// multiple materials cannot be children of same gauss/fiber point. this happens when
 							// an objects opens the tag, fails in getting response, and falls back to base class implementation,
 							// which opens again the same tag
-							for (mpco::element::OutputDescriptor* sub_item : eo_curr_lev->items)
+							for (detail::element::OutputDescriptor* sub_item : eo_curr_lev->items)
 								delete sub_item;
 							eo_curr_lev->items.clear();
 						}
@@ -810,23 +810,23 @@ namespace mpco {
 					}
 					else if (strcmp(name, "SectionOutput") == 0 || strcmp(name, "SectionForceDeformation") == 0) {
 						// its parent can be GaussOutput or another SectionOutput
-						if (!(eo_curr_lev->type == mpco::ElementOutputDescriptorType::Gauss || eo_curr_lev->type == mpco::ElementOutputDescriptorType::Section)) {
+						if (!(eo_curr_lev->type == detail::ElementOutputDescriptorType::Gauss || eo_curr_lev->type == detail::ElementOutputDescriptorType::Section)) {
 							opserr <<
-								"MPCORecorder Error: invalid parent for \"" << name << "\" tag:\n"
+								"LadrunoRecorder Error: invalid parent for \"" << name << "\" tag:\n"
 								"expected \"GaussOutput\" or \"GaussPointOutput\""
 								" or \"SectionOutput\" or \"SectionForceDeformation\", parent tag = \""
-								<< mpco::ElementOutputDescriptorType::toString(eo_curr_lev->type) << "\"\n";
+								<< detail::ElementOutputDescriptorType::toString(eo_curr_lev->type) << "\"\n";
 							exit(-1);
 						}
-						mpco::element::OutputDescriptor *eo_new_curr_lev = new mpco::element::OutputDescriptor();
-						eo_new_curr_lev->type = mpco::ElementOutputDescriptorType::Section;
+						detail::element::OutputDescriptor *eo_new_curr_lev = new detail::element::OutputDescriptor();
+						eo_new_curr_lev->type = detail::ElementOutputDescriptorType::Section;
 						ensureItemsOfUniformType(eo_curr_lev, eo_new_curr_lev);
 						if (error_code == ERROR_CODE_OK) {
 							if (eo_curr_lev->items.size() > 0) {
 								// multiple sections cannot be children of same gauss point. this happens when
 								// an objects opens the tag, fails in getting response, and falls back to base class implementation,
 								// which opens again the same tag
-								for (mpco::element::OutputDescriptor* sub_item : eo_curr_lev->items)
+								for (detail::element::OutputDescriptor* sub_item : eo_curr_lev->items)
 									delete sub_item;
 								eo_curr_lev->items.clear();
 							}
@@ -837,16 +837,16 @@ namespace mpco {
 					}
 					else if (strcmp(name, "FiberOutput") == 0) {
 						// its parent can be only a SectionOutput
-						if (!(eo_curr_lev->type == mpco::ElementOutputDescriptorType::Section || eo_curr_lev->type == mpco::ElementOutputDescriptorType::Gauss)) {
+						if (!(eo_curr_lev->type == detail::ElementOutputDescriptorType::Section || eo_curr_lev->type == detail::ElementOutputDescriptorType::Gauss)) {
 							opserr <<
-								"MPCORecorder Error: invalid parent for \"" << name << "\" tag:\n"
+								"LadrunoRecorder Error: invalid parent for \"" << name << "\" tag:\n"
 								"expected \"GaussOutput\" or \"GaussPointOutput\""
 								" or \"SectionOutput\" or \"SectionForceDeformation\", parent tag = \""
-								<< mpco::ElementOutputDescriptorType::toString(eo_curr_lev->type) << "\"\n";
+								<< detail::ElementOutputDescriptorType::toString(eo_curr_lev->type) << "\"\n";
 							exit(-1);
 						}
-						mpco::element::OutputDescriptor *eo_new_curr_lev = new mpco::element::OutputDescriptor();
-						eo_new_curr_lev->type = mpco::ElementOutputDescriptorType::Fiber;
+						detail::element::OutputDescriptor *eo_new_curr_lev = new detail::element::OutputDescriptor();
+						eo_new_curr_lev->type = detail::ElementOutputDescriptorType::Fiber;
 						ensureItemsOfUniformType(eo_curr_lev, eo_new_curr_lev);
 						eo_curr_lev->items.push_back(eo_new_curr_lev);
 						current_level++;
@@ -863,7 +863,7 @@ namespace mpco {
 						}
 						else {
 							opserr <<
-								"MPCORecorder Error: invalid tag at level " << current_level << ":\n"
+								"LadrunoRecorder Error: invalid tag at level " << current_level << ":\n"
 								"expected \"NdMaterialOutput\" or \"UniaxialMaterialOutput\""
 								" or \"SectionOutput\" or \"SectionForceDeformation\""
 								" or \"FiberOutput\""
@@ -876,10 +876,10 @@ namespace mpco {
 			};
 
 			int tag(const char *name, const char *value) {
-				mpco::element::OutputDescriptor *eo_curr_lev = descr;
+				detail::element::OutputDescriptor *eo_curr_lev = descr;
 				for (int i = 1; i <= current_level; i++) {
 					if (eo_curr_lev->items.size() == 0) {
-						opserr << "MPCORecorder Error: cannot set attribute(name, int), empty item list.\n";
+						opserr << "LadrunoRecorder Error: cannot set attribute(name, int), empty item list.\n";
 						exit(-1);
 					}
 					eo_curr_lev = eo_curr_lev->items[eo_curr_lev->items.size() - 1];
@@ -919,23 +919,23 @@ namespace mpco {
 					return 0;
 				}
 				if (current_level > 0) {
-					mpco::element::OutputDescriptor *eo_curr_lev = descr;
+					detail::element::OutputDescriptor *eo_curr_lev = descr;
 					for (int i = 1; i <= current_level; i++) {
 						if (eo_curr_lev->items.size() == 0) {
-							opserr << "MPCORecorder Error: cannot set attribute(name, int), empty item list.\n";
+							opserr << "LadrunoRecorder Error: cannot set attribute(name, int), empty item list.\n";
 							exit(-1);
 						}
 						eo_curr_lev = eo_curr_lev->items[eo_curr_lev->items.size() - 1];
 					}
-					if (eo_curr_lev->type == mpco::ElementOutputDescriptorType::Gauss) {
+					if (eo_curr_lev->type == detail::ElementOutputDescriptorType::Gauss) {
 						if (strcmp(name, "number") == 0)
 							eo_curr_lev->gp_number = value - 1; // note: make it 0-based
 					}
-					else if (eo_curr_lev->type == mpco::ElementOutputDescriptorType::Material) {
+					else if (eo_curr_lev->type == detail::ElementOutputDescriptorType::Material) {
 						if (strcmp(name, "tag") == 0 || strcmp(name, "matTag") == 0)
 							eo_curr_lev->tag = value;
 					}
-					else if (eo_curr_lev->type == mpco::ElementOutputDescriptorType::Section) {
+					else if (eo_curr_lev->type == detail::ElementOutputDescriptorType::Section) {
 						if (strcmp(name, "tag") == 0 || strcmp(name, "secTag") == 0)
 							eo_curr_lev->tag = value;
 					}
@@ -945,21 +945,21 @@ namespace mpco {
 
 			int attr(const char *name, double value) {
 				if (current_level > 0) {
-					mpco::element::OutputDescriptor *eo_curr_lev = descr;
+					detail::element::OutputDescriptor *eo_curr_lev = descr;
 					for (int i = 1; i <= current_level; i++) {
 						if (eo_curr_lev->items.size() == 0) {
-							opserr << "MPCORecorder Error: cannot set attribute(name, int), empty item list.\n";
+							opserr << "LadrunoRecorder Error: cannot set attribute(name, int), empty item list.\n";
 							exit(-1);
 						}
 						eo_curr_lev = eo_curr_lev->items[eo_curr_lev->items.size() - 1];
 					}
-					if (eo_curr_lev->type == mpco::ElementOutputDescriptorType::Gauss) {
+					if (eo_curr_lev->type == detail::ElementOutputDescriptorType::Gauss) {
 						if (strcmp(name, "eta") == 0)
 							eo_curr_lev->gp_eta = value;
 						if (strcmp(name, "weight") == 0)
 							eo_curr_lev->gp_weight = value;
 					}
-					else if (eo_curr_lev->type == mpco::ElementOutputDescriptorType::Fiber) {
+					else if (eo_curr_lev->type == detail::ElementOutputDescriptorType::Fiber) {
 						if (strcmp(name, "yLoc") == 0)
 							eo_curr_lev->fib_y = value;
 						else if (strcmp(name, "zLoc") == 0)
@@ -1023,19 +1023,19 @@ namespace mpco {
 			}
 
 		private:
-			void ensureItemsOfUniformType(mpco::element::OutputDescriptor *parent, mpco::element::OutputDescriptor *child) {
+			void ensureItemsOfUniformType(detail::element::OutputDescriptor *parent, detail::element::OutputDescriptor *child) {
 				if (parent->items.size() > 0) {
 					if (child->type != parent->items.back()->type) {
-						/*opserr << "MPCORecorder Error: (mpco::element::OutputDescriptor) "
+						/*opserr << "LadrunoRecorder Error: (detail::element::OutputDescriptor) "
 							"Responses at the same level of the response tree must be of the same type.\n"
-							"Expected: " << mpco::ElementOutputDescriptorType::toString(parent->items.back()->type)
-							<< ", given: " << mpco::ElementOutputDescriptorType::toString(child->type) << "\n";
+							"Expected: " << detail::ElementOutputDescriptorType::toString(parent->items.back()->type)
+							<< ", given: " << detail::ElementOutputDescriptorType::toString(child->type) << "\n";
 						exit(-1);*/
 						// M.Petracca - due to a recent commit (08/10/2021)
 						// this one can be converted from a fatal error to a silent-skip...
 						error_code = ERROR_CODE_GENERIC;
-						if ((child->type == mpco::ElementOutputDescriptorType::Section) &&
-							(parent->items.back()->type == mpco::ElementOutputDescriptorType::Fiber)) {
+						if ((child->type == detail::ElementOutputDescriptorType::Section) &&
+							(parent->items.back()->type == detail::ElementOutputDescriptorType::Fiber)) {
 							error_code = ERROR_CODE_SECTION_AFTER_FIBER;
 						}
 					}
@@ -1043,7 +1043,7 @@ namespace mpco {
 			}
 
 		public:
-			mpco::element::OutputDescriptor *descr;
+			detail::element::OutputDescriptor *descr;
 			int current_level;
 			bool pending_close_tag;
 			StreamErrorCode error_code;
@@ -1486,7 +1486,7 @@ namespace mpco {
 			int num_nodes;
 			ElementGeometryType::Enum geom_type;
 			BasisInfo basis_info; // from the optional "basisInfo" probe (one per class tag)
-			std::map<mpco::ElementIntegrationRuleType::Enum, ElementWithSameIntRuleCollection> items;
+			std::map<detail::ElementIntegrationRuleType::Enum, ElementWithSameIntRuleCollection> items;
 		};
 
 		struct ElementCollection
@@ -1575,7 +1575,7 @@ namespace mpco {
 					make sure that every element with the same tag have the same number of nodes
 					*/
 					if (lam_get_num_ext_nodes(current_element) != elem_coll_by_tag.num_nodes) {
-						opserr << "MPCORecorder Error while mapping elements: elements with different number of nodes "
+						opserr << "LadrunoRecorder Error while mapping elements: elements with different number of nodes "
 							"exist within the same class tag. This is not supported\n";
 						exit(-1);
 					}
@@ -2101,9 +2101,9 @@ namespace mpco {
 					double rule_weight_sum = 0.0;
 					while (true) {
 						trial_num++;
-						if (trial_num > MPCO_MAX_TRIAL_NSEC) {
+						if (trial_num > LADRUNO_MAX_TRIAL_NSEC) {
 							// we should never get here, or at least we hope, anyway we need a limit!
-							//opserr << "MPCORecorder warning: iterative guess of ngp: reached maximum number of iteration, giving up...\n";
+							//opserr << "LadrunoRecorder warning: iterative guess of ngp: reached maximum number of iteration, giving up...\n";
 							break;
 						}
 						std::stringstream ss_trial_num; ss_trial_num << trial_num;
@@ -2122,7 +2122,7 @@ namespace mpco {
 						if (trial_x.size() > 0) {
 							if (trial_x.size() > 1) {
 								// we should never get here!
-								opserr << "MPCORecorder warning: iterative guess of ngp: expected 1 trial gauss location, given = "
+								opserr << "LadrunoRecorder warning: iterative guess of ngp: expected 1 trial gauss location, given = "
 									<< (int)trial_x.size()
 									<< "\nonly the first one will be considered\n";
 							}
@@ -2173,7 +2173,7 @@ namespace mpco {
 				..., otherwise, sorry we did our best... try to implement all kinds of response in this element
 				to make things work smoothly
 				*/
-				opserr << "MPCORecorder warning: cannot get custom integration rule from element "
+				opserr << "LadrunoRecorder warning: cannot get custom integration rule from element "
 					<< elem->getTag() << "[class = " << elem->getClassType() << "]\n";
 			}
 
@@ -2186,7 +2186,7 @@ namespace mpco {
 
 	/* ======================================================================
 	ElementResultSource — wraps an already-built (header, response-collection)
-	bucket as a mpcol::ResultSource. The bucket-building + per-step driving
+	bucket as a ladruno::ResultSource. The bucket-building + per-step driving
 	lives in the orchestrator (Phase-3 port of initElementRecorders /
 	recordResultsOnElements); the methods below are implemented there.
 	====================================================================== */
@@ -2194,20 +2194,20 @@ namespace mpco {
 	{
 	public:
 		ElementResultSource(const std::vector<std::string>& request,
-			const mpco::element::OutputDescriptorHeader& header,
-			mpco::element::OutputResponseCollection& bucket);
+			const detail::element::OutputDescriptorHeader& header,
+			detail::element::OutputResponseCollection& bucket);
 
 		const ResultSchema& schema() const override { return m_schema; }
 		const std::vector<int>& ids() const override { return m_ids; }
-		void evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer) override;
+		void evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer) override;
 		bool requiresPartitionReduction() const override { return false; }
 
 	private:
 		void buildSchema(const std::vector<std::string>& request);
 
 	private:
-		const mpco::element::OutputDescriptorHeader& m_header;
-		mpco::element::OutputResponseCollection& m_bucket;
+		const detail::element::OutputDescriptorHeader& m_header;
+		detail::element::OutputResponseCollection& m_bucket;
 		ResultSchema m_schema;
 		std::vector<int> m_ids;
 	};
@@ -2215,18 +2215,18 @@ namespace mpco {
 	/* ======================================================================
 	BASIS/QUADRATURE capture hook — IMPLEMENTED (Step 3, schema §3.1).
 	The capture the planned ElementBasisInfo stub once described is now live:
-	  - mpco::element::BasisInfo                  (the captured descriptor)
+	  - detail::element::BasisInfo                  (the captured descriptor)
 	  - OutputDescriptorStream <ElementBasis> tag (captureBasisInfo)
 	  - ElementCollection::getElementBasisInfo()  (probes "basisInfo")
 	  - getCustomGaussPointLocations() multi-dim  (captureIntegrationPoints +
 	                                                captureIntegrationWeights)
 	  - getGeometryAndIntRuleByClassTag()         (deriveLegacyBasis fallback)
-	The MPCORecorderLadruno writer composes these: probe overrides the
+	The LadrunoRecorder writer composes these: probe overrides the
 	legacy-derived FAMILY/ORDER/TOPOLOGY/PARAM_DOMAIN/RATIONAL/NUM_CTRL, and
 	GP_PARAM/GP_WEIGHT come from the captured rule. controlPointWeights
 	(rational bases) remains a follow-up — BezierTri6 is non-rational.
-	See mpco_ladruno_element_contract.md Part A + schema §3.1.
+	See ladruno_element_contract.md Part A + schema §3.1.
 	====================================================================== */
 
-} // namespace mpcol
-#endif // MPCOL_ElementResults_h
+} // namespace ladruno
+#endif // Ladruno_ElementResults_h

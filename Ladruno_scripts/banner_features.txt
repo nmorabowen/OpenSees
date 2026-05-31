@@ -13,4 +13,4 @@ EnergyBalance recorder (per-region energy sidecar)
 Explicit Noh–Bathe integrators (ExplicitBathe / LNVD)
 Queryable critical time step (dt_cr)
 BezierTri6 — quadratic Bézier triangle (Kadapa 2018)
-MPCO_Ladruno — modular .mpco recorder (namespace mpcol)
+Ladruno — modular HDF5 .ladruno recorder

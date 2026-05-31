@@ -1,28 +1,28 @@
-#ifndef MPCOL_Hdf5_h
-#define MPCOL_Hdf5_h
+#ifndef Ladruno_Hdf5_h
+#define Ladruno_Hdf5_h
 
 /*************************************************************************************
 
-MPCOL_Hdf5.h
+Ladruno_Hdf5.h
 
 HDF5 interface layer (namespace h5) ported VERBATIM from MPCORecorder.cpp
 (frozen). Every function is made `inline` because, unlike the frozen .cpp where
 these are plain TU-local functions, here they live in a header included by
 multiple TUs and must avoid duplicate-symbol errors. Everything is wrapped in
-`namespace mpcol { ... }` to avoid ODR clashes with the frozen file's identical
+`namespace ladruno { ... }` to avoid ODR clashes with the frozen file's identical
 `namespace h5` symbols.
 
-Context: in this build the macro MPCO_HDF5_LOADED_AT_RUNTIME is NEVER defined,
+Context: in this build the macro LADRUNO_HDF5_LOADED_AT_RUNTIME is NEVER defined,
 so the real linked HDF5 C API is used directly (H5*). No runtime loader /
 ptr_H5* machinery is involved.
 
 **************************************************************************************/
 
-#include "MPCOL_Types.h"
+#include "Ladruno_Types.h"
 
-namespace mpcol {
+namespace ladruno {
 
-/*mpco - hdf5 interface utilities*/
+/*ladruno - hdf5 interface utilities*/
 namespace h5 {
 
 	namespace attribute {
@@ -265,14 +265,14 @@ namespace h5 {
 			}
 			return HID_INVALID;
 		}
-		inline hid_t createAndWrite(hid_t obj, const char *name, const std::vector<mpco::element::FiberData> &data)
+		inline hid_t createAndWrite(hid_t obj, const char *name, const std::vector<detail::element::FiberData> &data)
 		{
 			if (data.size() > 0) {
 				return createAndWrited2(obj, name, data[0].data(), data.size(), 3);
 			}
 			return HID_INVALID;
 		}
-		inline hid_t createAndWrite(hid_t obj, const char *name, const std::vector<mpco::element::ElemGaussPair> &data)
+		inline hid_t createAndWrite(hid_t obj, const char *name, const std::vector<detail::element::ElemGaussPair> &data)
 		{
 			if (data.size() > 0) {
 				return createAndWritei2(obj, name, data[0].data(), data.size(), 2);
@@ -392,11 +392,11 @@ namespace h5 {
 		inline hid_t create(const char *filename, hid_t create_plist, hid_t acc_plist) {
 			return H5Fcreate(filename, H5F_ACC_TRUNC, create_plist, acc_plist);
 		}
-#ifdef MPCO_USE_SWMR
+#ifdef LADRUNO_USE_SWMR
 		inline herr_t startSWMR(hid_t file_id) {
 			return H5Fstart_swmr_write(file_id);
 		}
-#endif // MPCO_USE_SWMR
+#endif // LADRUNO_USE_SWMR
 	}
 
 	namespace plist {
@@ -435,6 +435,6 @@ namespace h5 {
 
 }
 
-} // namespace mpcol
+} // namespace ladruno
 
-#endif // MPCOL_Hdf5_h
+#endif // Ladruno_Hdf5_h

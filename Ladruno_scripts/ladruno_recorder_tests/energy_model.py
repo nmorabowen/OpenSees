@@ -1,7 +1,7 @@
 """Energy-balance result type — model runner (D8 verification).
 
 Runs ONE dynamic model that emits the new ON_DOMAIN / ON_REGIONS energy channel
-from `recorder mpcoLadruno -G energy <regionTag>`, plus the plain-text
+from `recorder ladruno -G energy <regionTag>`, plus the plain-text
 `EnergyBalance` sidecar on the SAME model so the two can be cross-checked (they
 share EnergyBalanceKernel.h, so the whole-model values must agree).
 
@@ -63,7 +63,7 @@ ops.mass(2, m, m)                      # y mass is inert (dof fixed)
 ops.region(1, "-ele", 1)
 
 # new energy channel: whole-model (ON_DOMAIN) + region 1 (ON_REGIONS)
-ops.recorder("mpcoLadruno", out_ladruno, "-G", "energy", 1, "-T", "dt", 0.0)
+ops.recorder("ladruno", out_ladruno, "-G", "energy", 1, "-T", "dt", 0.0)
 # plain-text sidecar on the same model (shared-kernel cross-check)
 ops.recorder("EnergyBalance", "-file", out_sidecar, "-time", "-region", 1)
 

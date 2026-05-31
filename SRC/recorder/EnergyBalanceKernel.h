@@ -8,9 +8,9 @@
 
 // EnergyBalanceKernel.h — the ONE definition of the structural-dynamics
 // energy-balance math (ADR D8). Header-only / inline so both the global
-// EnergyBalanceRecorder and mpcol::EnergyBalanceSource link against a single
-// copy. Lives in namespace ebkernel (NOT mpcol) so it is usable from the
-// global-namespace recorder AND from mpcol code.
+// EnergyBalanceRecorder and ladruno::EnergyBalanceSource link against a single
+// copy. Lives in namespace ebkernel (NOT ladruno) so it is usable from the
+// global-namespace recorder AND from the ladruno recorder code.
 //
 // 6 components, in this order: KE, IE, DW, ULW, RES, ERR where
 //   KE  = 1/2 v^T M v              (instantaneous; element + nodal mass)

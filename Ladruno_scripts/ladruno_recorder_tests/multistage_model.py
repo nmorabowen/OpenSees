@@ -2,7 +2,7 @@
 
 Drives ONE process through TWO model stages with BOTH recorders:
     recorder mpco        -> ms_ref.mpco       (frozen value oracle)
-    recorder mpcoLadruno -> ms_test.ladruno   (the new recorder)
+    recorder ladruno -> ms_test.ladruno   (the new recorder)
 
 A topology change (a new node + truss element added between the two analysis
 runs) bumps Domain::hasDomainChanged(), so the second analyze() lands in a NEW
@@ -58,7 +58,7 @@ ops.element("truss", 5, 3, 4, 1.0, 1)
 # BOTH recorders, identical requests, record every step
 NODE_REQ = ["-N", "displacement", "reactionForce"]
 ops.recorder("mpco", ref, *NODE_REQ, "-T", "dt", 0.0)
-ops.recorder("mpcoLadruno", new, *NODE_REQ, "-T", "dt", 0.0)
+ops.recorder("ladruno", new, *NODE_REQ, "-T", "dt", 0.0)
 
 ops.timeSeries("Linear", 1)
 ops.pattern("Plain", 1, 1)

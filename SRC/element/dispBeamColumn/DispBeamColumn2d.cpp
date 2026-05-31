@@ -1716,7 +1716,7 @@ DispBeamColumn2d::setResponse(const char **argv, int argc,
     theResponse = new ElementResponse(this, 10, 0.0);
   }
   // Ladruno: expose the element local frame (from the CrdTransf) as 9 packed
-  // direction cosines so MPCO_Ladruno can record MODEL/LOCAL_AXES instead of
+  // direction cosines so the Ladruno recorder can record MODEL/LOCAL_AXES instead of
   // falling back to a silent identity quaternion (apeGmsh beam-orientation gap).
   else if (strcmp(argv[0],"localAxes") == 0) {
     theResponse = new ElementResponse(this, 30, Vector(9));

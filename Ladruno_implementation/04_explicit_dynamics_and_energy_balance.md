@@ -56,7 +56,7 @@ always reach (snap-through, near-singular tangents).
 
 | #  | Decision | Rationale | Consequence / extension point |
 |----|----------|-----------|-------------------------------|
-| D1 | Energy balance writes a **plain-text sidecar**; MPCO is **left frozen** | `MPCORecorder` is byte-identical to upstream (deferred even a crash fix to keep it so); MPCO has only `ON_NODES`/`ON_ELEMENTS`, no global/scalar bucket; STKO can't render a non-nodal/element result | Energy parsed with numpy/pandas, **not** STKO_to_python; not inside the `.mpco`. **Extend:** an `ON_REGIONS/ENERGY_BALANCE` group only if STKO/[[03_mpco_ladruno]] gains global-result support. **REFRAME (2026-05-31):** the "STKO can't render globals" blocker is **void** — **apeGmsh is our own viewer** ([[project_apegmsh_viewer]]), so global/region/scalar energy is ours to render natively. The apeGmsh-native energy result schema (via the [[03_mpco_ladruno]] ResultSource/ResultSink) is a **dedicated cross-repo session**, folded into the MPCO_Ladruno ADR — not this doc. |
+| D1 | Energy balance writes a **plain-text sidecar**; MPCO is **left frozen** | `MPCORecorder` is byte-identical to upstream (deferred even a crash fix to keep it so); MPCO has only `ON_NODES`/`ON_ELEMENTS`, no global/scalar bucket; STKO can't render a non-nodal/element result | Energy parsed with numpy/pandas, **not** STKO_to_python; not inside the `.mpco`. **Extend:** an `ON_REGIONS/ENERGY_BALANCE` group only if STKO/[[03_ladruno_recorder]] gains global-result support. **REFRAME (2026-05-31):** the "STKO can't render globals" blocker is **void** — **apeGmsh is our own viewer** ([[project_apegmsh_viewer]]), so global/region/scalar energy is ours to render natively. The apeGmsh-native energy result schema (via the [[03_ladruno_recorder]] ResultSource/ResultSink) is a **dedicated cross-repo session**, folded into the Ladruno ADR — not this doc. |
 | D2 | Energy = **incremental work integrals + closure residual** (`KE` instantaneous; `IE`/`DW`/`ULW` trapezoidally integrated; `RES`, `ERR%`); per-region + global | The residual is the actual engineering diagnostic; incremental `IE` makes `KE+IE` cancel correctly for free vibration; `ERR%` normalized by summed-component magnitudes so it doesn't blow up when terms cancel | **Coverage gaps (documented; residual exposes them):** modal damping (applied in the solve, not via `getDamp`) and element/distributed `eleLoad` loads are NOT captured. **Extend:** independent external-work-input channel from load patterns; elastic-vs-dissipated `IE` split |
 | D3 | Keep the tree's **refined `ExplicitBathe`**; **wire up LNVD's FLAC damping** (was commented-out dead code) | The in-tree base was more evolved than jaabell's; LNVD's entire reason to exist was disabled | LNVD applies the local damping **symmetrically to both sub-steps** via a virtual `formUnbalance()` override (the algorithm calls it for sub-step 1, `update()` for sub-step 2); reuses `ExplicitBathe`'s eigensolve |
 | D4 | `dt_cr` = **per-element generalized eigensolve** (`K v = λ M v`, DGGEV); report the **conservative central-difference limit `2/ω`** AND the **Noh–Bathe `~2×`** bound | Per-element avoids a global eigensolve (theorem: global `ω_max ≤ max element ω_max`); the CD limit is provably safe for Noh–Bathe | **Caveats:** ignores constraints/MP; row-sum lumping is non-conservative for rotational DOFs (beams/shells); needs **element** mass+stiffness (pure nodal-mass models → `dt_cr ≤ 0`). **Extend:** `DSYGV` (symmetric pencil, ~2× faster, no complex-eigenvalue fragility); a cheap `ℓ_e/c_e` per-element estimate; constraint-aware bound |
@@ -78,7 +78,7 @@ always reach (snap-through, near-singular tangents).
 - Reference patterns: `CentralDifference.cpp` (explicit contract), `NodeRecorder.cpp`
   (recorder/column metadata), `OPS_numIter`/`OPS_systemSize` (query command).
 - Build: no new target/dep. Full installer build still **blocked by the
-  [[03_mpco_ladruno]] `MPCORecorderLadruno` link error** — see [[../Ladruno_internal/01_compilation_journal]].
+  [[03_ladruno_recorder]] `LadrunoRecorder` link error** — see [[../Ladruno_internal/01_compilation_journal]].
 - Examples: `examples/explicit_bathe_example.py` (recipe + LNVD + adaptive sub-step),
   `Ladruno_scripts/_verify_explicit.py` (9-test numerical battery).
 
@@ -134,8 +134,8 @@ Ordered roughly by value; many are **roadmap-gated** (need element/integrator ho
    RES never closes under gravity-via-`-ele`/surface loads); capture **modal-damping
    work** as a damping sink (applied in the solve, absent from `getDamp` → RES polluted
    on any modal-damped model); **MPI reduce + shared-node ULW de-dup** for `openseesmp`
-   (the code already warns about both). Gated behind the [[03_mpco_ladruno]]
-   `MPCORecorderLadruno` build blocker for *runtime* verification.
+   (the code already warns about both). Gated behind the [[03_ladruno_recorder]]
+   `LadrunoRecorder` build blocker for *runtime* verification.
    **(b) Deferred:** external-work-input as a fully independent channel; elastic-vs-
    dissipated `IE` split (needs a standardized material "recoverable vs dissipated"
    response — a material-contract change); hourglass / contact / added-mass energy
@@ -152,7 +152,7 @@ Ordered roughly by value; many are **roadmap-gated** (need element/integrator ho
    **Not blocked (2026-05-31):** apeGmsh is our own viewer ([[project_apegmsh_viewer]]), so
    rendering global/region (and future per-element) energy channels is ours to implement.
    Now a **dedicated cross-repo session** (OpenSees output schema ↔ apeGmsh reader/
-   `ResultsViewer`), folded into the [[03_mpco_ladruno]] ADR as a result type — needs the
+   `ResultsViewer`), folded into the [[03_ladruno_recorder]] ADR as a result type — needs the
    apeGmsh codebase in context, so not done here.
 
 ## Risks / open questions
@@ -173,7 +173,7 @@ Ordered roughly by value; many are **roadmap-gated** (need element/integrator ho
   **NOT mass-conserving** — it can be non-conservative for translational DOFs. A true
   mass-conserving **HRZ** lump is the proper follow-up.
 - `dt_cr` ignores constraints/MP and pure nodal mass; safe-but-non-binding there.
-- Full build / installer still blocked by the [[03_mpco_ladruno]] link error.
+- Full build / installer still blocked by the [[03_ladruno_recorder]] link error.
 
 ## Implementation log
 

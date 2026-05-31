@@ -52,7 +52,7 @@ them. This is observation-only — fixes we actually applied are tracked in
 - **Why:** upstream uses `exit()` for error handling; no exception path. The file
   has been byte-identical to `master` and frozen ~4.5 years.
 - **Status:** diagnose-only as of 2026-05-18. A local `ladruno` patch is the only
-  fix; deferred. The `MPCO_Ladruno` rewrite (`mpcol`) avoids the pattern.
+  fix; deferred. The Ladruno recorder rewrite (`ladruno`) avoids the pattern.
 
 ### `patch_banner.py` path went stale after workspace consolidation
 - **Bites:** `patch_banner.py` computed `TARGET = ROOT/OpenSees/SRC/...`, assuming an
@@ -85,7 +85,7 @@ them. This is observation-only — fixes we actually applied are tracked in
   ([#1](https://github.com/nmorabowen/OpenSees/pull/1)); `OPS_HAVE_METIS5` follow-up noted.
 
 ### HDF5 won't create a group under a dataset — the "writeSections" red herring
-- **Bites:** `mpcoLadruno` emitted ~3 non-fatal `HDF5-DIAG` errors to stderr for
+- **Bites:** `ladruno` emitted ~3 non-fatal `HDF5-DIAG` errors to stderr for
   every custom-rule element (Lobatto beam, MVLEM, BezierTri6). The error
   signature (`invalid location identifier` / `dset_id is not a dataset ID`) was
   misattributed to `writeSections` for a while.
@@ -99,7 +99,7 @@ them. This is observation-only — fixes we actually applied are tracked in
 - **Status:** **fixed.** [#16](https://github.com/nmorabowen/OpenSees/pull/16)
   removed the broken block as a stopgap (GP_X-only); [#18](https://github.com/nmorabowen/OpenSees/pull/18)
   did the real schema-v1 fix — `<name>` is now a GROUP holding `CONNECTIVITY` +
-  `QUADRATURE`/{`GP_PARAM`,`GP_WEIGHT`}. See [[LEDGER_implementations]] MPCO_Ladruno row.
+  `QUADRATURE`/{`GP_PARAM`,`GP_WEIGHT`}. See [[LEDGER_implementations]] Ladruno row.
 
 ### `Response`/`Information` stores a Matrix and a Vector separately — `getData()` only returns the Vector
 - **Bites:** an element `setResponse` that returns a `Matrix` (via `setMatrix`,
@@ -126,7 +126,7 @@ them. This is observation-only — fixes we actually applied are tracked in
   **lexicographic** (Brick.cpp:536-542); `NineNodeQuad` (9-pt) walks 4 CCW corners →
   4 CCW edge-mids → center (NineNodeQuad.cpp:127-144), a serendipity-style order, not
   a 3×3 tensor sweep. So even two "quad GL" elements need not share GP order.
-- **Status:** for `MPCO_Ladruno`, the standard-quadrature `GP_PARAM[k]` MUST equal the
+- **Status:** for `Ladruno`, the standard-quadrature `GP_PARAM[k]` MUST equal the
   element's own k-th GP natural coords (so it pairs with result `gauss_id k`); the
   table is verified against each canonical element's source, and the belt-and-suspenders
   `GLOBAL_GP_COORDS` round-trip oracle (`x(GP_PARAM[k])` vs the C++-computed global GP)
@@ -179,7 +179,7 @@ bundled) and edits the upstream LAPACK source list.
 
 ## OPS_Recorder is compiled sequentially (no `_PARALLEL_PROCESSING`) for ALL targets
 
-`SRC/recorder/MPCORecorderLadruno.cpp` (and `MPCORecorder.cpp`) live in the shared
+`SRC/recorder/LadrunoRecorder.cpp` (and the frozen `MPCORecorder.cpp`) live in the shared
 `OPS_Recorder` static lib, which CMake compiles **once with the sequential define
 set** (no `-D_PARALLEL_PROCESSING`, no `-D_MUMPS`) and links into OpenSeesPy,
 OpenSeesMP **and** openseesmp alike. Consequence: any `#ifdef _PARALLEL_PROCESSING`
@@ -199,7 +199,7 @@ decomposition, the path that *would* exercise `sendSelf`) is **METIS-4-blocked**
 (`OPS_partition` returns an error; needs METIS 5 / `OPS_HAVE_METIS5`), so the
 broadcast path is not runtime-testable in this build.
 
-### MPCO_Ladruno nested result-group names need the `<display>` parent pre-created
+### Ladruno recorder nested result-group names need the `<display>` parent pre-created
 - **Bites:** writing an element result whose `schema.name` is nested
   (`"<display>/<bucket>"`, e.g. `stress/204-FourNodeQuad[201:0:0]`) under a parent
   that does NOT already contain the intermediate `<display>` group → the
@@ -243,7 +243,7 @@ broadcast path is not runtime-testable in this build.
 ### Parallel build OOM (`cl.exe` C1060 "out of heap") on the giant template TUs under RAM pressure
 - **Bites:** with low free RAM (~1–2 GB of 28), `cmake --build ... -j8`/`-j16` dies
   with `fatal error C1060: compiler is out of heap space` on the huge template TUs
-  (`OPS_AllASDPlasticMaterial3Ds.cpp`, `MPCORecorder.cpp`, `MPCORecorderLadruno.cpp`),
+  (`OPS_AllASDPlasticMaterial3Ds.cpp`, `MPCORecorder.cpp`, `LadrunoRecorder.cpp`),
   and even ordinary TUs get OS-killed (ninja `FAILED: [code=2]` with no compiler
   diagnostic = the process was killed, not a code error).
 - **Workaround:** compile the monsters **serially first** —
