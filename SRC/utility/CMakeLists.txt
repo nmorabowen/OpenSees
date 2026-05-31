@@ -21,3 +21,6 @@ target_sources(OPS_Utilities
 )
 
 target_include_directories(OPS_Utilities PUBLIC ${CMAKE_CURRENT_LIST_DIR})
+
+# Ladruno Stack Profiler (timing core always; HDF5 writer guarded inside).
+add_subdirectory(profiler)

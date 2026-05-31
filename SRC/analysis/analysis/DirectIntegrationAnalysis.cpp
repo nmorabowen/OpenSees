@@ -55,6 +55,7 @@
 #include <Matrix.h>
 #include <ID.h>
 #include <Graph.h>
+#include <profiler/ProfilerMacros.h>
 
 // Constructor
 //    sets theModel and theSysOFEqn to 0 and the Algorithm to the one supplied
@@ -190,6 +191,7 @@ DirectIntegrationAnalysis::analyze(int numSteps, double dT, bool flush)
 int 
 DirectIntegrationAnalysis::analyzeStep(double dT)
 {
+  OPS_PROFILE_SCOPE("step");
   int result = 0;
   Domain *the_Domain = this->getDomainPtr();
 
@@ -210,6 +212,7 @@ DirectIntegrationAnalysis::analyzeStep(double dT)
     }	
   }
   
+  { OPS_PROFILE_SCOPE("newStep");
   if (theIntegrator->newStep(dT) < 0) {
     opserr << "DirectIntegrationAnalysis::analyze() - the Integrator failed";
     opserr << " at time " << the_Domain->getCurrentTime() << endln;
@@ -217,16 +220,19 @@ DirectIntegrationAnalysis::analyzeStep(double dT)
     theIntegrator->revertToLastStep();
     return -2;
   }
-  
+  }
+
+  { OPS_PROFILE_SCOPE("solveCurrentStep");
   result = theAlgorithm->solveCurrentStep();
   if (result < 0) {
     opserr << "DirectIntegrationAnalysis::analyze() - the Algorithm failed";
     opserr << " at time " << the_Domain->getCurrentTime() << endln;
-    the_Domain->revertToLastCommit();	    
+    the_Domain->revertToLastCommit();
     theIntegrator->revertToLastStep();
     return -3;
-  }    
-  
+  }
+  }
+
   // AddingSensitivity:BEGIN ////////////////////////////////////
 #ifdef _RELIABILITY
 
@@ -245,16 +251,18 @@ DirectIntegrationAnalysis::analyzeStep(double dT)
 #endif
   // AddingSensitivity:END //////////////////////////////////////
   
+  { OPS_PROFILE_SCOPE("commit");
   result = theIntegrator->commit();
   if (result < 0) {
     opserr << "DirectIntegrationAnalysis::analyze() - ";
     opserr << "the Integrator failed to commit";
     opserr << " at time " << the_Domain->getCurrentTime() << endln;
-    the_Domain->revertToLastCommit();	    
+    the_Domain->revertToLastCommit();
     theIntegrator->revertToLastStep();
     return -4;
-  } 
-    
+  }
+  }
+
   return result;
 }
 

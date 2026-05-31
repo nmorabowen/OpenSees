@@ -1564,6 +1564,18 @@ static PyObject *Py_ops_stopTimer(PyObject *self, PyObject *args)
     return wrapper->getResults();
 }
 
+static PyObject *Py_ops_profiler(PyObject *self, PyObject *args)
+{
+    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
+
+    if (OPS_profiler() < 0) {
+	opserr<<(void*)0;
+	return NULL;
+    }
+
+    return wrapper->getResults();
+}
+
 static PyObject *Py_ops_modalDamping(PyObject *self, PyObject *args)
 {
     wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
@@ -3177,6 +3189,7 @@ PythonWrapper::addOpenSeesCommands()
     addCommand("nodeBounds", &Py_ops_nodeBounds);
     addCommand("start", &Py_ops_startTimer);
     addCommand("stop", &Py_ops_stopTimer);
+    addCommand("profiler", &Py_ops_profiler);
     addCommand("modalDamping", &Py_ops_modalDamping);
     addCommand("modalDampingQ", &Py_ops_modalDampingQ);
     addCommand("setElementRayleighDampingFactors", &Py_ops_setElementRayleighDampingFactors);

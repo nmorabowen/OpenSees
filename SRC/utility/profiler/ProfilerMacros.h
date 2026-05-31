@@ -1,0 +1,97 @@
+/* ****************************************************************** **
+**    OpenSees - Open System for Earthquake Engineering Simulation    **
+**          Pacific Earthquake Engineering Research Center            **
+**                                                                    **
+**                                                                    **
+** (C) Copyright 1999, The Regents of the University of California    **
+** All Rights Reserved.                                               **
+**                                                                    **
+** Commercial use of this program without express permission of the   **
+** University of California, Berkeley, is strictly prohibited.  See   **
+** file 'COPYRIGHT'  in main directory for information on usage and   **
+** redistribution,  and for a DISCLAIMER OF ALL WARRANTIES.           **
+**                                                                    **
+** ****************************************************************** */
+
+// Ladruno Stack Profiler — Phase P1 (instrumentation macros).
+//
+// File: SRC/utility/profiler/ProfilerMacros.h
+//
+// Written: Ladruno / nmora
+// Created: 2026-05
+//
+// Description: The instrumentation surface engine code uses. SINGLE-BINARY model
+//   (06_profiler.md, revised 2026-05-30): everything is compiled into one shipped
+//   binary and gated by RUNTIME flags, so the user controls all three layers per
+//   run without a special build. Cost when off is one predicted-not-taken branch.
+//
+//     OPS_PROFILE_SCOPE(name)         COARSE phase timing. Gated by enabled().
+//     OPS_PROFILE_SCOPE_DEEP(name)    DEEP per-element timing. Gated by
+//     OPS_PROFILE_SCOPE_DEEP_NAMED    enabled() && deep() — the extra runtime flag,
+//     OPS_PROFILE_ELEM(t, ...)        NOT a compile flag.
+//     OPS_PROFILE_COUNT_ALLOC(bytes)  ALLOC counters. Gated by mem(). The branch on
+//     OPS_PROFILE_COUNT_FREE(bytes)   mem() costs ~1ns against a heap new[] (~100ns).
+//
+//   The OPTIONAL build switch -DOPS_PROFILE_DISABLE compiles EVERY macro to
+//   `((void)0)` — no symbol reference, no theProfiler() call, literally zero (not
+//   even a branch). Use only for a benchmark/purist build; the default binary keeps
+//   the profiler in and runtime-gated.
+
+#ifndef ProfilerMacros_h
+#define ProfilerMacros_h
+
+#include "Profiler.h"   // ScopedTimerOpt, ScopedTimer, theProfiler, countAlloc/countFree
+
+// ---- token-paste helpers (unique per-line variable names) ----
+#define OPS_PROF_CAT_(a, b) a##b
+#define OPS_PROF_CAT(a, b)  OPS_PROF_CAT_(a, b)
+#define OPS_PROF_UNIQ(base) OPS_PROF_CAT(base, __LINE__)
+
+#ifndef OPS_PROFILE_DISABLE
+
+  // Coarse: the flag is checked BEFORE the timer is constructed — ScopedTimerOpt
+  // gets the name only when enabled, else nullptr, so a disabled run pays just the
+  // relaxed-atomic load + an empty optional. Uniquely-named local so two scopes in
+  // one function don't collide.
+  #define OPS_PROFILE_SCOPE(name)                                                 \
+      ::ops_profiler::ScopedTimerOpt OPS_PROF_UNIQ(_ops_prof_)(                    \
+          ::ops_profiler::theProfiler().enabled() ? (name) : nullptr)
+
+  // Deep per-element scope: gated by enabled() && deep(). Same ScopedTimerOpt
+  // wrapper (no-op when off), so the deep layer is a runtime toggle, not a rebuild.
+  #define OPS_PROFILE_SCOPE_DEEP(name)                                            \
+      ::ops_profiler::ScopedTimerOpt OPS_PROF_UNIQ(_ops_prof_deep_)(              \
+          (::ops_profiler::theProfiler().enabled() &&                             \
+           ::ops_profiler::theProfiler().deep()) ? (name) : nullptr)
+
+  // Named deep scope: yields a handle `tmr` usable with OPS_PROFILE_ELEM. Gated
+  // identically; when off `tmr` holds an empty optional and addElem is a no-op.
+  #define OPS_PROFILE_SCOPE_DEEP_NAMED(tmr, name)                                 \
+      ::ops_profiler::ScopedTimerOpt tmr(                                         \
+          (::ops_profiler::theProfiler().enabled() &&                             \
+           ::ops_profiler::theProfiler().deep()) ? (name) : nullptr)
+
+  // Per-element-class attribution onto a named deep-scope handle (P0#1).
+  #define OPS_PROFILE_ELEM(tmr, classTag, wall_ns, fb)                            \
+      do { (tmr).addElem((classTag), (wall_ns), (fb)); } while (0)
+
+  // Alloc counters (P4 wires Matrix/Vector/ID ctors/dtors). Runtime-gated on mem().
+  #define OPS_PROFILE_COUNT_ALLOC(bytes)                                          \
+      do { if (::ops_profiler::theProfiler().mem())                               \
+               ::ops_profiler::countAlloc(static_cast<int64_t>(bytes)); } while (0)
+  #define OPS_PROFILE_COUNT_FREE(bytes)                                           \
+      do { if (::ops_profiler::theProfiler().mem())                               \
+               ::ops_profiler::countFree(static_cast<int64_t>(bytes)); } while (0)
+
+#else // OPS_PROFILE_DISABLE -> the profiler is compiled fully out
+
+  #define OPS_PROFILE_SCOPE(name)                     ((void)0)
+  #define OPS_PROFILE_SCOPE_DEEP(name)                ((void)0)
+  #define OPS_PROFILE_SCOPE_DEEP_NAMED(tmr, name)     ((void)0)
+  #define OPS_PROFILE_ELEM(tmr, classTag, w, fb)      ((void)0)
+  #define OPS_PROFILE_COUNT_ALLOC(bytes)              ((void)0)
+  #define OPS_PROFILE_COUNT_FREE(bytes)               ((void)0)
+
+#endif // !OPS_PROFILE_DISABLE
+
+#endif // ProfilerMacros_h

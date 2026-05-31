@@ -50,6 +50,7 @@
 
 //#include <Timer.h>
 #include <elementAPI.h>
+#include <profiler/ProfilerMacros.h>
 #include <string>
 
 void* OPS_LinearAlgorithm()
@@ -105,6 +106,7 @@ Linear::solveCurrentStep(void)
 	return -5;
     }
 
+	{ OPS_PROFILE_SCOPE("formTangent");
 	if (factorOnce != 2) {
 		if (theIncIntegrator->formTangent(incrTangent) < 0) {
 		  opserr << "WARNING Linear::solveCurrentStep() -";
@@ -114,26 +116,33 @@ Linear::solveCurrentStep(void)
 		if (factorOnce == 1)
 			factorOnce = 2;
     }
+	}
 
-    
+
+    { OPS_PROFILE_SCOPE("formUnbalance");
     if (theIncIntegrator->formUnbalance() < 0) {
 	opserr << "WARNING Linear::solveCurrentStep() -";
-	opserr << "the Integrator failed in formUnbalance()\n";	
+	opserr << "the Integrator failed in formUnbalance()\n";
 	return -2;
     }
-
-    if (theSOE->solve() < 0) {
-	opserr << "WARNING Linear::solveCurrentStep() -";
-	opserr << "the LinearSOE failed in solve()\n";	
-	return -3;
     }
 
+    { OPS_PROFILE_SCOPE("linearSolve");
+    if (theSOE->solve() < 0) {
+	opserr << "WARNING Linear::solveCurrentStep() -";
+	opserr << "the LinearSOE failed in solve()\n";
+	return -3;
+    }
+    }
+
+    { OPS_PROFILE_SCOPE("update");
     const Vector &deltaU = theSOE->getX();
 
     if (theIncIntegrator->update(deltaU) < 0) {
 	opserr << "WARNING Linear::solveCurrentStep() -";
-	opserr << "the Integrator failed in update()\n";	
+	opserr << "the Integrator failed in update()\n";
 	return -4;
+    }
     }
 
     return 0;

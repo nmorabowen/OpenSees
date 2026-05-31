@@ -439,6 +439,7 @@ int OPS_save();
 int OPS_restore();
 int OPS_startTimer();
 int OPS_stopTimer();
+int OPS_profiler();
 int OPS_modalDamping();
 int OPS_modalDampingQ();
 int OPS_neesMetaData();
