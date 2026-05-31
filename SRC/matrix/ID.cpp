@@ -31,6 +31,7 @@
 // What: "@(#) ID.C, revA"
 
 #include "ID.h"
+#include <profiler/ProfilerMacros.h>   // Ladruno P4: memory alloc counters (runtime-gated)
 #include <stdlib.h>
 #include <map>
 #include <list>
@@ -68,7 +69,8 @@ ID::ID(int size)
   // create the space for the data & check space was available
   //  data = (int *)malloc(size*sizeof(int));
   if (size > 0) {
-    data = new (nothrow) int[size]; 
+    data = new (nothrow) int[size];
+    if (data != 0) OPS_PROFILE_COUNT_ALLOC(size * sizeof(int), ops_profiler::ALLOC_ID); // Ladruno P4
     if (data == 0) {
       opserr << "ID::ID(int): ran out of memory with size " << size << endln;
       exit(-1);
@@ -108,6 +110,7 @@ ID::ID(int size, int arraySz)
   // create the space
   //  data = (int *)malloc(arraySize*sizeof(int));
   data = new (nothrow) int[arraySize];
+  if (data != 0) OPS_PROFILE_COUNT_ALLOC(arraySize * sizeof(int), ops_profiler::ALLOC_ID); // Ladruno P4
   if (data == 0) {
     opserr << "ID::ID(int, int): ran out of memory with arraySize: " << arraySize << endln;
     exit(-1);
@@ -130,6 +133,7 @@ ID::ID(int *d, int size, bool cleanIt)
     // create the space
     if (arraySize != 0) {
       data = (int *)malloc(arraySize*sizeof(int));
+      if (data != 0) OPS_PROFILE_COUNT_ALLOC(arraySize * sizeof(int), ops_profiler::ALLOC_ID); // Ladruno P4
       if (data == 0) {
 	opserr << "ID::ID(int, int): ran out of memory with arraySize " << arraySize << endln;
 	exit(-1);
@@ -153,7 +157,8 @@ ID::ID(const ID &other)
 {
   // create the space
   //  data = (int *)malloc(arraySize*sizeof(int));
-  data = new (nothrow) int[arraySize]; 
+  data = new (nothrow) int[arraySize];
+  if (data != 0) OPS_PROFILE_COUNT_ALLOC(arraySize * sizeof(int), ops_profiler::ALLOC_ID); // Ladruno P4
   if (data == 0) {
     opserr << "ID::ID(ID): ran out of memory with arraySize " << arraySize << endln,
     exit(-1);
@@ -171,17 +176,21 @@ ID::ID(const ID &other)
 
 ID::~ID()
 {
-  if (data != 0 && fromFree == 0) 
+  if (data != 0 && fromFree == 0) {
     //    free((void *)data);
+    OPS_PROFILE_COUNT_FREE(arraySize * sizeof(int), ops_profiler::ALLOC_ID); // Ladruno P4
     delete [] data;
+  }
 }
 
 int 
 ID::setData(int *newData, int size, bool cleanIt){
-	
-  if (data != 0 && fromFree == 0) 
+
+  if (data != 0 && fromFree == 0) {
     //    free((void *)data);
+    OPS_PROFILE_COUNT_FREE(arraySize * sizeof(int), ops_profiler::ALLOC_ID); // Ladruno P4
     delete [] data;
+  }
 
   sz = size;
   data = newData;
@@ -279,9 +288,11 @@ ID::unique(void)
 
     sz = int(uniquesl.size());
     int* newdata = new (nothrow) int[sz];
+    if (newdata != 0) OPS_PROFILE_COUNT_ALLOC(sz * sizeof(int), ops_profiler::ALLOC_ID); // Ladruno P4
     for (std::list<int>::iterator pos=uniquesl.begin(); pos!=uniquesl.end(); pos++)
         newdata[count++] = *pos;
 
+    if (fromFree == 0) OPS_PROFILE_COUNT_FREE(arraySize * sizeof(int), ops_profiler::ALLOC_ID); // Ladruno P4
     delete [] data;
     arraySize = sz;
     data = newdata;
@@ -326,6 +337,7 @@ ID::operator[](int x)
       newArraySize = x+1;
     //    int *newData = (int *)malloc(newArraySize*sizeof(int));    
     int *newData = new (nothrow) int[newArraySize];
+    if (newData != 0) OPS_PROFILE_COUNT_ALLOC(newArraySize * sizeof(int), ops_profiler::ALLOC_ID); // Ladruno P4
 
     if (newData != 0) {
 
@@ -336,18 +348,20 @@ ID::operator[](int x)
       // zero the new
       for (int j=sz; j<newArraySize; j++)
 	newData[j] = 0;
-      
+
       sz = x+1;
 
       // release the memory held by the old
-      //      free((void *)data);	    
+      //      free((void *)data);
 
-      if (fromFree == 0 && data != 0)
+      if (fromFree == 0 && data != 0) {
+	OPS_PROFILE_COUNT_FREE(arraySize * sizeof(int), ops_profiler::ALLOC_ID); // Ladruno P4
 	delete [] data;
+      }
 
       data = newData;
       arraySize = newArraySize;
-      
+
       return newData[x];
     }
     else {
@@ -391,6 +405,7 @@ ID::resize(int newSize, int fill_value){
     // otherwise we go get more space
     
     int *newData = new (nothrow) int[newSize];
+    if (newData != 0) OPS_PROFILE_COUNT_ALLOC(newSize * sizeof(int), ops_profiler::ALLOC_ID); // Ladruno P4
     if (newData != 0) {
       // copy the old
       for (int i=0; i<sz; i++)
@@ -398,10 +413,11 @@ ID::resize(int newSize, int fill_value){
       // zero the new
       for (int j=sz; j<newSize; j++)
 	newData[j] = fill_value;
-      
+
       sz = newSize;
       // release the memory held by the old
-      //      free((void *)data);	    
+      //      free((void *)data);
+      if (fromFree == 0) OPS_PROFILE_COUNT_FREE(arraySize * sizeof(int), ops_profiler::ALLOC_ID); // Ladruno P4
       delete [] data;
       data = newData;
       arraySize = newSize;
@@ -441,12 +457,16 @@ ID::operator=(const ID &V)
 	// old and make room for new.
 	if (sz != V.sz) {
 	    if (arraySize < V.sz) {
+		const int oldArraySize_ = arraySize; // Ladruno P4: capture allocated size before overwrite
 		arraySize = V.sz;
-		if (data != 0)
+		if (data != 0) {
 		  //free((void *)data);
+		  if (fromFree == 0) OPS_PROFILE_COUNT_FREE(oldArraySize_ * sizeof(int), ops_profiler::ALLOC_ID); // Ladruno P4
 		  delete [] data;
-		//		data = (int *)malloc(arraySize*sizeof(int));		
+		}
+		//		data = (int *)malloc(arraySize*sizeof(int));
 		data = new (nothrow) int[arraySize];
+		if (data != 0) OPS_PROFILE_COUNT_ALLOC(arraySize * sizeof(int), ops_profiler::ALLOC_ID); // Ladruno P4
 		// check we got the memory requested
 		if (data == 0) {
 		    opserr << "WARNING ID::=(ID) - ran out of memory ";
@@ -626,8 +646,9 @@ ID::insert(int x)
   } else {
     int newArraySize = (sz+1) * 2;
     int *newData = new (nothrow) int[newArraySize];
+    if (newData != 0) OPS_PROFILE_COUNT_ALLOC(newArraySize * sizeof(int), ops_profiler::ALLOC_ID); // Ladruno P4
     if (newData != 0) {
-      
+
       // copy the old
       for (int ii=0; ii<middle; ii++)
 	newData[ii] = data[ii];
@@ -638,8 +659,10 @@ ID::insert(int x)
       
       sz++;
       
-      if (data != 0 && fromFree == 0)
+      if (data != 0 && fromFree == 0) {
+	OPS_PROFILE_COUNT_FREE(arraySize * sizeof(int), ops_profiler::ALLOC_ID); // Ladruno P4
 	delete [] data;
+      }
       data = newData;
       arraySize = newArraySize;
       
