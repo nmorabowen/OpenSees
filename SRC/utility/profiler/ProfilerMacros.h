@@ -75,6 +75,17 @@
   #define OPS_PROFILE_ELEM(tmr, classTag, wall_ns, fb)                            \
       do { (tmr).addElem((classTag), (wall_ns), (fb)); } while (0)
 
+  // RAII per-element timer around an FE_Element kernel call (P3). Expands in the
+  // caller's TU, where FE_Element/Element are complete. The `tmr.engaged()` guard
+  // short-circuits so `getElement()` (a non-inline call) is touched ONLY when the
+  // deep scope is live — an unprofiled run pays nothing. A constraint FE_Element
+  // (getElement()==0) yields classTag -1, which ElemScope treats as inert.
+  #define OPS_PROFILE_FE_ELEM_SCOPE(tmr, fe_elem)                                 \
+      ::ops_profiler::ElemScope OPS_PROF_UNIQ(_ops_elem_)(                         \
+          (tmr),                                                                  \
+          ((tmr).engaged() && (fe_elem)->getElement())                           \
+              ? (fe_elem)->getElement()->getClassTag() : -1)
+
   // Alloc counters (P4 wires Matrix/Vector/ID ctors/dtors). Runtime-gated on mem().
   // `type` is an ops_profiler::AllocType (ALLOC_MATRIX/ALLOC_VECTOR/ALLOC_ID) for
   // the per-type live split; an out-of-range value counts toward the aggregate only.
@@ -101,6 +112,7 @@
   #define OPS_PROFILE_SCOPE_DEEP(name)                ((void)0)
   #define OPS_PROFILE_SCOPE_DEEP_NAMED(tmr, name)     ((void)0)
   #define OPS_PROFILE_ELEM(tmr, classTag, w, fb)      ((void)0)
+  #define OPS_PROFILE_FE_ELEM_SCOPE(tmr, fe_elem)     ((void)0)
   #define OPS_PROFILE_COUNT_ALLOC(bytes, type)        ((void)0)
   #define OPS_PROFILE_COUNT_FREE(bytes, type)         ((void)0)
   #define OPS_PROFILE_CENSUS_BORN(classTag)           ((void)0)

@@ -40,6 +40,8 @@
 #include <DOF_GrpIter.h>
 #include <EigenSOE.h>
 #include <cmath>
+#include <Element.h>                  // Ladruno P3: getClassTag() on the assembled element
+#include <profiler/ProfilerMacros.h>  // Ladruno P3: deep per-element-type timing
 
 IncrementalIntegrator::IncrementalIntegrator(int clasTag)
 :Integrator(clasTag),
@@ -96,18 +98,30 @@ IncrementalIntegrator::formTangent(int statFlag)
     // zero the A matrix of the linearSOE
     theSOE->zeroA();
 
-    // the loops to form and add the tangents are broken into two for 
+    // the loops to form and add the tangents are broken into two for
     // efficiency when performing parallel computations - CHANGE
+
+    // Ladruno P3: deep per-element-type tangent timing. The named scope times the
+    // whole loop and hosts the elem_by_type buckets; OPS_PROFILE_FE_ELEM_SCOPE
+    // times each element's getTangent and folds it into its classTag bucket. Both
+    // are inert (no clock reads, no getElement() call) unless the deep gate is on.
+    OPS_PROFILE_SCOPE_DEEP_NAMED(_ops_elemTan, "elem.tangent");
 
     // loop through the FE_Elements adding their contributions to the tangent
     FE_Element *elePtr;
-    FE_EleIter &theEles2 = theAnalysisModel->getFEs();    
-    while((elePtr = theEles2()) != 0)     
-	if (theSOE->addA(elePtr->getTangent(this),elePtr->getID()) < 0) {
+    FE_EleIter &theEles2 = theAnalysisModel->getFEs();
+    while((elePtr = theEles2()) != 0) {
+	const Matrix *eleTangent;
+	{
+	    OPS_PROFILE_FE_ELEM_SCOPE(_ops_elemTan, elePtr);   // Ladruno P3
+	    eleTangent = &(elePtr->getTangent(this));
+	}
+	if (theSOE->addA(*eleTangent, elePtr->getID()) < 0) {
 	    opserr << "WARNING IncrementalIntegrator::formTangent -";
-	    opserr << " failed in addA for ID " << elePtr->getID();	    
+	    opserr << " failed in addA for ID " << elePtr->getID();
 	    result = -3;
 	}
+    }
 
     return result;
 }
@@ -269,19 +283,27 @@ IncrementalIntegrator::formElementResidual(void)
     // loop through the FE_Elements and add the residual
     FE_Element *elePtr;
 
-    int res = 0;    
+    int res = 0;
 
-    FE_EleIter &theEles2 = theAnalysisModel->getFEs();    
+    // Ladruno P3: deep per-element-type residual timing (mirrors formTangent).
+    OPS_PROFILE_SCOPE_DEEP_NAMED(_ops_elemRes, "elem.residual");
+
+    FE_EleIter &theEles2 = theAnalysisModel->getFEs();
     while((elePtr = theEles2()) != 0) {
 
-	if (theSOE->addB(elePtr->getResidual(this),elePtr->getID()) <0) {
+	const Vector *eleResidual;
+	{
+	    OPS_PROFILE_FE_ELEM_SCOPE(_ops_elemRes, elePtr);   // Ladruno P3
+	    eleResidual = &(elePtr->getResidual(this));
+	}
+	if (theSOE->addB(*eleResidual, elePtr->getID()) <0) {
 	    opserr << "WARNING IncrementalIntegrator::formElementResidual -";
 	    opserr << " failed in addB for ID " << elePtr->getID();
 	    res = -2;
 	}
     }
 
-    return res;	    
+    return res;
 }
 
 /*
