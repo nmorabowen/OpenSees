@@ -38,7 +38,25 @@ EXPECT_GP = {
     "hex8": np.array([[-A, -A, -A], [-A, -A, A], [-A, A, -A], [-A, A, A],   # i,j,k
                       [A, -A, -A], [A, -A, A], [A, A, -A], [A, A, A]]),
     "tet10": np.array([[AL, BE, BE], [BE, AL, BE], [BE, BE, AL], [BE, BE, BE]]),
+    # Twenty_Node_Brick 27-pt (shp3dv brcshl order): GP[L] = b·(2RA,2SA,2TA)
+    "hex20": np.array([
+        [-B, -B, -B], [B, -B, -B], [B, B, -B], [-B, B, -B],          # lower corners
+        [-B, -B, B], [B, -B, B], [B, B, B], [-B, B, B],              # upper corners
+        [0, -B, -B], [B, 0, -B], [0, B, -B], [-B, 0, -B],            # lower edge mids
+        [0, -B, B], [B, 0, B], [0, B, B], [-B, 0, B],                # upper edge mids
+        [-B, -B, 0], [B, -B, 0], [B, B, 0], [-B, B, 0],              # vertical edge mids
+        [B, 0, 0], [0, B, 0], [0, 0, B], [-B, 0, 0],                 # faces +r,+s,+t,-r
+        [0, -B, 0], [0, 0, -B], [0, 0, 0]]),                         # faces -s,-t, centroid
 }
+
+# 20-node serendipity node natural coords (corners then edge-mids), matching
+# computeGlobalGP / shp3dv brcshl node order.
+HEX20_NC = np.array([
+    [-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],
+    [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1],
+    [0, -1, -1], [1, 0, -1], [0, 1, -1], [-1, 0, -1],
+    [0, -1, 1], [1, 0, 1], [0, 1, 1], [-1, 0, 1],
+    [-1, -1, 0], [1, -1, 0], [1, 1, 0], [-1, 1, 0]], float)
 
 
 # --- independent shape-function reimplementation (mirrors computeGlobalGP) --- #
@@ -75,6 +93,21 @@ def shape(topology: str, num_nodes: int, xi: np.ndarray) -> np.ndarray:
         sgn = np.array([[-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],
                         [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]], float)
         return 0.125 * np.prod(1 + sgn * np.array([r, s, u]), axis=1)
+    if topology == "hex" and num_nodes == 20:
+        xyz = np.array([xi[0], xi[1], xi[2]], float)
+        N = np.zeros(20)
+        for i, c in enumerate(HEX20_NC):
+            zeros = [d for d in range(3) if c[d] == 0.0]
+            if not zeros:  # corner
+                N[i] = 0.125 * np.prod(1 + xyz * c) * (xyz @ c - 2.0)
+            else:          # edge mid: (1-u^2) along the zero direction
+                zdir = zeros[0]
+                prod = 0.25 * (1.0 - xyz[zdir] ** 2)
+                for d in range(3):
+                    if d != zdir:
+                        prod *= (1.0 + xyz[d] * c[d])
+                N[i] = prod
+        return N
     raise ValueError(f"no Python basis for topology={topology} num_nodes={num_nodes}")
 
 
@@ -175,6 +208,7 @@ def main() -> int:
     total += check_file(os.path.join(out, "sq_brick.ladruno"), "hex", "hex8")
     total += check_file(os.path.join(out, "sq_quad9.ladruno"), "quad", "quad9")
     total += check_file(os.path.join(out, "sq_tet10.ladruno"), "tet", "tet10")
+    total += check_file(os.path.join(out, "sq_hex20.ladruno"), "hex", "hex20")
     print("\n" + ("=" * 60))
     if total == 0:
         print("STANDARD_QUAD_CHECK: ALL PASS")
