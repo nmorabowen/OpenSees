@@ -164,7 +164,9 @@ def test_spectral():
 # ---------------------------------------------------------------------------
 # Bar model (chain of truss elements) shared by tests 5 and 6
 # ---------------------------------------------------------------------------
-def build_bar(N, L, E, A, rho):
+def build_bar(N, L, E, A, rho, cmass=0):
+    # cmass=0 -> lumped element mass (diagonal); cmass=1 -> consistent mass
+    # rho*A*Le/6*[[2,1],[1,2]] (needed for diagonal-vs-rowsum lumping to differ).
     ops.wipe()
     ops.model('basic', '-ndm', 2, '-ndf', 2)
     le = L/N
@@ -175,7 +177,7 @@ def build_bar(N, L, E, A, rho):
         ops.fix(i+1, 0, 1)
     ops.uniaxialMaterial('Elastic', 1, E)
     for i in range(N):
-        ops.element('Truss', i+1, i+1, i+2, A, 1, '-rho', rho)
+        ops.element('Truss', i+1, i+1, i+2, A, 1, '-rho', rho, '-cMass', cmass)
     return le
 
 
@@ -353,8 +355,10 @@ def test_no_value_contract():
 
 
 def _bar_dtcr(N, L, E, A, rho, extra):
-    """Build the distributed-mass bar, run one tiny step, return criticalTimeStep()."""
-    le = build_bar(N, L, E, A, rho); c = math.sqrt(E/rho)
+    """Build a CONSISTENT-mass bar, run one tiny step, return criticalTimeStep().
+    Consistent mass is required for diagonal-vs-rowsum lumping to differ — a
+    lumped Truss mass is already diagonal so the two lumpings tie at le/c."""
+    le = build_bar(N, L, E, A, rho, cmass=1); c = math.sqrt(E/rho)
     ops.timeSeries('Constant', 1); ops.pattern('Plain', 1, 1); ops.load(N+1, 1.0, 0.0)
     ops.constraints('Transformation'); ops.numberer('Plain'); ops.system('Diagonal')
     ops.test('NormDispIncr', 1e-12, 1); ops.algorithm('Linear')
