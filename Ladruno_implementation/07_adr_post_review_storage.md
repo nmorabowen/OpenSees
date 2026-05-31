@@ -96,9 +96,13 @@ remaining Phase-0 items land (standard-rule QUADRATURE, `KIND`, `LOCAL_AXES`, `N
 shared validator) — nothing external consumes v1 yet, so there is no break to manage.
 
 ## Remaining (tracked, not decided away)
-Standard-rule QUADRATURE gap (in progress, [[06_quadrature_global_gp_plan]]); `KIND`
-hardcoded "static"; `LOCAL_AXES` unwritten; parallel path unimplemented
-(`sendSelf`/`recvSelf` stubs → N ranks would race one file under MP); per-class result
-column-naming still lives in the reader catalog (BASIS only replaces geometry, not
-result names). Sequencing: standard QUADRATURE+GLOBAL_GP_COORDS → chunked layout (D3)
-→ KIND/LOCAL_AXES → shared validator (D5) → parallel.
+Done since this ADR: standard-rule QUADRATURE + GLOBAL_GP_COORDS (incl. higher-order),
+chunked layout (D3 ✅), **`KIND` ✅** (`-kind` + eigen auto, PR #37), **`LOCAL_AXES` ✅**
+(per-class quaternion FRAME from the element `"localAxes"` response; ElasticBeam3d wired,
+PR #37). Still open: extend `"localAxes"` to the remaining beams (dispBeam/forceBeam/
+ElasticBeam2d — identical `getLocalAxes` pattern); **shared validator + CI round-trip
+oracle (D5)** then **freeze `FORMAT_VERSION=1`**; per-class result column-naming still in
+the reader catalog (make `COLUMN_MAP/COMP_NAMES` authoritative); **parallel path**
+unimplemented (`sendSelf`/`recvSelf` stubs → N ranks would race one file under MP);
+envelopes (`EnvelopeSink` built, unused). Sequencing: → remaining-beam localAxes →
+shared validator (D5) + freeze v1 → parallel → envelopes.

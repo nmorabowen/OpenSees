@@ -73,18 +73,26 @@ result + `STEP[T]`/`TIME[T]` axes (was per-step `DATA/STEP_<k>`). New
 `.ladruno` still diffs 1e-12 vs per-step `.mpco`. `make_synthetic.py` emits chunked.
 Full regression green.
 
-## Resume (next session) — to finish the recorder (Tier 1 remaining)
-1. **`KIND` per stage** — hardcoded `"static"` (`MPCORecorderLadruno.cpp:391`); emit
-   `transient|static|eigen` from the analysis/stage type.
-2. **`LOCAL_AXES`** — still unwritten (apeGmsh's #1 gap). Derive beam frame from
-   `CrdTransf`/`vecxz` → quaternion (static) + opt-in per-step frame (chunked, §7.0 shape)
-   for co-rotational.
-3. **Shared validator + CI round-trip oracle (D5)** — importable module both readers gate
-   on; then **freeze `FORMAT_VERSION=1`**.
-4. **Step E cleanup** — move the checker's inline basis into `ladruno_basis.py`
-   (bary/tri/tet + quad9/tet10/hex20); add `NDIR`+`GLOBAL_GP_COORDS`+simplex to
-   `make_synthetic.py`; `COLUMN_MAP/COMP_NAMES` authoritative names.
-5. **Tier 2 — parallel** (`sendSelf`/`recvSelf` + `part-N` + `Allreduce`); **Tier 3 —
+## KIND + LOCAL_AXES DONE — PR #37
+- **KIND**: `-kind transient|static|eigen` option (default static), auto-`eigen` when a
+  modal result is requested. Written at `MODEL_STAGE/KIND`.
+- **LOCAL_AXES**: `writeModelLocalAxes()` writes per-class
+  `MODEL/LOCAL_AXES/<classTag>-<name>/{ID,FRAME[E×4 quaternion]}` from each element's
+  `"localAxes"` response (`quatFromMat`); never a silent identity. **ElasticBeam3d** wired
+  (new `"localAxes"` response id 30 → `theCoordTransf->getLocalAxes`). Gate
+  `localaxes_{model,check}.py` (diagonal beam → non-identity frame; quaternion→axes vs
+  element axis). NOTE: frozen `quatFromMat` stores the **transpose** convention → axes are
+  the ROWS of the reconstructed matrix (checker documents this).
+
+## Resume (next session) — finish the recorder
+1. **Remaining-beam localAxes** — replicate the ElasticBeam3d `"localAxes"` response (id →
+   `crdTransf->getLocalAxes`, 9 packed cosines) on ElasticBeam2d, DispBeamColumn2d/3d,
+   ForceBeamColumn2d/3d (identical pattern; 2D fills z=(0,0,1)). Each is a vanilla edit →
+   LEDGER_vanilla_files row.
+2. **Shared validator + CI round-trip oracle (D5)** → then **freeze `FORMAT_VERSION=1`**.
+3. **Step E cleanup** — importable `ladruno_basis.py` (bary/tri/tet + quad9/tet10/hex20);
+   `make_synthetic.py` NDIR/GLOBAL_GP_COORDS/simplex; `COLUMN_MAP/COMP_NAMES` authoritative.
+4. **Tier 2 — parallel** (`sendSelf`/`recvSelf` + `part-N` + `Allreduce`); **Tier 3 —
    envelopes** (wire `EnvelopeSink`).
 - **Minor:** geom-derived `ORDER` for 9N/10N/20N reports linear (NDIR authoritative).
 

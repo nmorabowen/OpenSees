@@ -77,6 +77,7 @@ public:
 		, elem_set()
 		, energy_requested(false)
 		, energy_region_tags()
+		, stage_kind("static")
 		, nodal_results_requests()
 		, sens_grad_indices()
 		, elemental_results_requests()
@@ -106,6 +107,12 @@ public:
 	// -G energy balance (ADR D8): whole-model and/or per-region energy.
 	bool energy_requested;               // -G energy   -> whole-model ON_DOMAIN
 	std::vector<int> energy_region_tags; // -G <tag...> -> per-region ON_REGIONS
+
+	// -kind <transient|static|eigen>: the MODEL_STAGE/KIND attr. apeGmsh knows the
+	// analysis type when it emits the recorder command (the domain can't be relied
+	// on to distinguish static from transient). Default "static"; auto-promoted to
+	// "eigen" at writeModel time when a modal (ModesOfVibration) channel is present.
+	std::string stage_kind;              // = "static" unless -kind overrides
 
 	// parsed requests
 	std::vector<mpcolns::mpco::NodalResultType::Enum> nodal_results_requests;
@@ -388,7 +395,18 @@ int MPCORecorderLadruno::writeModel()
 		info.h_group_proplist, H5P_DEFAULT);
 	mpcolns::h5::attribute::write(h_stage, "STEP", info.current_time_step_id);
 	mpcolns::h5::attribute::write(h_stage, "TIME", info.current_time_step);
-	mpcolns::h5::attribute::write(h_stage, "KIND", std::string("static"));
+	// KIND (schema): the -kind option (default "static"), auto-promoted to "eigen"
+	// when a modal result is requested (ModesOfVibration[Rotational]).
+	std::string stage_kind = m_data->stage_kind;
+	for (size_t i = 0; i < m_data->nodal_results_requests.size(); ++i) {
+		mpcolns::mpco::NodalResultType::Enum t = m_data->nodal_results_requests[i];
+		if (t == mpcolns::mpco::NodalResultType::ModesOfVibration ||
+		    t == mpcolns::mpco::NodalResultType::ModesOfVibrationRotational) {
+			stage_kind = "eigen";
+			break;
+		}
+	}
+	mpcolns::h5::attribute::write(h_stage, "KIND", stage_kind);
 
 	hid_t h_model = mpcolns::h5::group::create(
 		h_stage, "MODEL", H5P_DEFAULT, info.h_group_proplist, H5P_DEFAULT);
@@ -418,6 +436,8 @@ int MPCORecorderLadruno::writeModel()
 	if (writeModelElements() != 0)
 		return -1;
 	if (writeModelSets() != 0)
+		return -1;
+	if (writeModelLocalAxes() != 0)
 		return -1;
 	if (writeSections() != 0)
 		return -1;
@@ -817,6 +837,80 @@ int MPCORecorderLadruno::writeModelSets()
 	}
 
 	mpcolns::h5::group::close(h_sets);
+	return 0;
+}
+
+int MPCORecorderLadruno::writeModelLocalAxes()
+{
+	mpcolns::mpco::ProcessInfo& info = m_data->info;
+	namespace me = mpcolns::mpco::element;
+
+	// Per-class MODEL/LOCAL_AXES/<classTag>-<ClassName>/{ID[E], FRAME[E×4]} (schema §5).
+	// The frame is sourced from the element's "localAxes" response (9 packed direction
+	// cosines vx|vy|vz — element-contract Part B) and converted to a quaternion. Elements
+	// that don't answer (most legacy elements today) are simply skipped — we NEVER emit a
+	// silent identity frame, which is the very fallback this dataset exists to remove.
+	const char* request[1] = { "localAxes" };
+	hid_t h_la_root = mpcolns::HID_INVALID; // created lazily on the first answering class group
+
+	for (me::ElementCollection::submap_type::iterator it1 = m_data->elements.items.begin();
+		it1 != m_data->elements.items.end(); ++it1) {
+		me::ElementWithSameClassTagCollection& elem_by_tag = it1->second;
+
+		std::vector<int> ids;
+		std::vector<mpcolns::utils::locax::quaternion> frames;
+		Vector vx(3), vy(3), vz(3);
+
+		for (me::ElementWithSameClassTagCollection::submap_type::iterator it2 = elem_by_tag.items.begin();
+			it2 != elem_by_tag.items.end(); ++it2) {
+			me::ElementWithSameIntRuleCollection& elem_by_rule = it2->second;
+			for (me::ElementWithSameIntRuleCollection::submap_type::iterator it3 = elem_by_rule.items.begin();
+				it3 != elem_by_rule.items.end(); ++it3) {
+				me::ElementWithSameCustomIntRuleCollection& ebcr = it3->second;
+				for (std::vector<Element*>::iterator it4 = ebcr.items.begin();
+					it4 != ebcr.items.end(); ++it4) {
+					Element* elem = *it4;
+					me::OutputDescriptor desc;
+					me::OutputDescriptorStream stream(&desc);
+					Response* resp = elem->setResponse(request, 1, stream);
+					if (resp == 0)
+						continue;
+					resp->getResponse();
+					const Vector& packed = resp->getInformation().getData();
+					if (packed.Size() == 9) {
+						for (int i = 0; i < 3; ++i) {
+							vx(i) = packed(i); vy(i) = packed(i + 3); vz(i) = packed(i + 6);
+						}
+						ids.push_back(elem->getTag());
+						frames.push_back(mpcolns::utils::locax::quatFromMat(vx, vy, vz));
+					}
+					delete resp;
+				}
+			}
+		}
+
+		if (ids.empty())
+			continue;
+
+		if (h_la_root == mpcolns::HID_INVALID) {
+			std::stringstream ss_root;
+			ss_root << "MODEL_STAGE[" << info.current_model_stage_id << "]/MODEL/LOCAL_AXES";
+			h_la_root = mpcolns::h5::group::create(info.h_file_id, ss_root.str().c_str(),
+				H5P_DEFAULT, info.h_group_proplist, H5P_DEFAULT);
+		}
+		std::stringstream ss_name;
+		ss_name << elem_by_tag.class_tag << "-" << elem_by_tag.class_name;
+		hid_t h_grp = mpcolns::h5::group::create(h_la_root, ss_name.str().c_str(),
+			H5P_DEFAULT, info.h_group_proplist, H5P_DEFAULT);
+		hid_t d_id = mpcolns::h5::dataset::createAndWrite(h_grp, "ID", ids);
+		mpcolns::h5::dataset::close(d_id);
+		hid_t d_fr = mpcolns::h5::dataset::createAndWrite(h_grp, "FRAME", frames); // [E × 4]
+		mpcolns::h5::dataset::close(d_fr);
+		mpcolns::h5::group::close(h_grp);
+	}
+
+	if (h_la_root != mpcolns::HID_INVALID)
+		mpcolns::h5::group::close(h_la_root);
 	return 0;
 }
 
@@ -1697,6 +1791,7 @@ void* OPS_MPCOLadrunoRecorder()
 	std::set<int> elem_set;
 	bool energy_requested = false;       // -G energy
 	std::vector<int> energy_region_tags; // -G <regionTag...>
+	std::string stage_kind_opt = "static"; // -kind <transient|static|eigen>
 	int one_item = 1;
 
 	while (numdata > 0) {
@@ -1783,6 +1878,20 @@ void* OPS_MPCOLadrunoRecorder()
 					       << " not found in the domain; skipping its energy block\n";
 				else
 					energy_region_tags.push_back(tag);
+			}
+		}
+		else if (strcmp(data, "-kind") == 0) {
+			// -kind <transient|static|eigen> : the MODEL_STAGE/KIND attr.
+			if (numdata > 0) {
+				const char* k = OPS_GetString();
+				numdata--;
+				if (strcmp(k, "transient") == 0 || strcmp(k, "static") == 0 ||
+				    strcmp(k, "eigen") == 0)
+					stage_kind_opt = k;
+				else
+					opserr << "MPCORecorderLadruno warning: -kind expects "
+					          "transient|static|eigen; got (" << k << "), keeping "
+					       << stage_kind_opt.c_str() << "\n";
 			}
 		}
 		else {
@@ -1953,5 +2062,6 @@ void* OPS_MPCOLadrunoRecorder()
 		recorder->m_data->elem_set.push_back(*it);
 	recorder->m_data->energy_requested = energy_requested;
 	recorder->m_data->energy_region_tags.swap(energy_region_tags);
+	recorder->m_data->stage_kind = stage_kind_opt;
 	return recorder;
 }
