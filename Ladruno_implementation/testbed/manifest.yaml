@@ -166,13 +166,13 @@ features:
       documented -time column layout (time KE IE DW ULW RES ERR%). Recorder runs
       green on Zone-A CI (CDL-10 exercises the same KE/IE columns).
 
-  - feature: MPCOLadrunoRecorder
+  - feature: LadrunoRecorder
     classtag: 33001
-    tag_symbol: RECORDER_TAGS_MPCOLadrunoRecorder
+    tag_symbol: RECORDER_TAGS_LadrunoRecorder
     pr: null
     feature_class: derivative
     required_tiers: [T1]
-    pytest: tests/test_mpcoLadrunoRecorder.py   # PENDING
+    pytest: tests/test_ladrunoRecorder.py   # PENDING
     tcl: WAIVED(recorder; Zone-A check pending)
     zone_b: []
     core_files: [SRC/classTags.h]

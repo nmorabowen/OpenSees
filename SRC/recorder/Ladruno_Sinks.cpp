@@ -1,22 +1,22 @@
 /* ********************************************************************** **
-**  MPCO_Ladruno recorder — modular sibling of MPCORecorder (frozen).     **
-**  MPCOL_Sinks.cpp — StreamingSink + EnvelopeSink (Phase 2).             **
+**  Ladruno recorder — modular sibling of MPCORecorder (frozen).     **
+**  Ladruno_Sinks.cpp — StreamingSink + EnvelopeSink (Phase 2).             **
 **                                                                        **
 **  All HDF5 *writes* (group create, dataset create+write, attribute      **
-**  write) go through mpcol::h5::*. The only raw HDF5 C-API calls are      **
+**  write) go through ladruno::h5::*. The only raw HDF5 C-API calls are      **
 **  *navigation* — testing existence (H5Lexists) and opening an already-   **
 **  existing parent group (H5Gopen2) — and deleting a stale envelope       **
 **  dataset on in-place rewrite (H5Ldelete). Those are not result writes;  **
 **  they resolve where in the tree the wrapper writes.                     **
 ** ********************************************************************** */
 
-#include "MPCOL_Sinks.h"
-#include "MPCOL_Hdf5.h" // pulls MPCOL_Types.h; provides mpcol::h5::*
+#include "Ladruno_Sinks.h"
+#include "Ladruno_Hdf5.h" // pulls Ladruno_Types.h; provides ladruno::h5::*
 
 #include <sstream>
 #include <cmath>
 
-namespace mpcol {
+namespace ladruno {
 
 	/* ===================================================================== */
 	/* ResultFamily                                                          */
@@ -36,7 +36,7 @@ namespace mpcol {
 	/* ===================================================================== */
 	/* tree navigation helpers (local to this TU)                            */
 	/*                                                                       */
-	/* The recorder (MPCORecorderLadruno::writeModel) created the stage as   */
+	/* The recorder (LadrunoRecorder::writeModel) created the stage as   */
 	/* "MODEL_STAGE[<current_model_stage_id>]" off the file root and an      */
 	/* (empty) RESULTS child. The sinks resolve that same path here. We      */
 	/* open-or-create each link in the chain so a sink works whether the     */
@@ -46,8 +46,8 @@ namespace mpcol {
 
 	namespace {
 
-		// MODEL_STAGE group name, matching MPCORecorderLadruno::writeModel exactly.
-		std::string stageGroupName(const mpco::ProcessInfo& info)
+		// MODEL_STAGE group name, matching LadrunoRecorder::writeModel exactly.
+		std::string stageGroupName(const detail::ProcessInfo& info)
 		{
 			std::stringstream ss;
 			ss << "MODEL_STAGE[" << info.current_model_stage_id << "]";
@@ -67,7 +67,7 @@ namespace mpcol {
 
 		// Resolve MODEL_STAGE[..]/RESULTS/<family> and return its open handle.
 		// Caller closes it. Returns HID_INVALID on failure.
-		hid_t openFamilyGroup(mpco::ProcessInfo& info, ResultFamily::Enum family)
+		hid_t openFamilyGroup(detail::ProcessInfo& info, ResultFamily::Enum family)
 		{
 			hid_t h_stage = openOrCreateGroup(info.h_file_id,
 				stageGroupName(info).c_str(), info.h_group_proplist);
@@ -91,7 +91,7 @@ namespace mpcol {
 	/* StreamingSink                                                         */
 	/* ===================================================================== */
 
-	void StreamingSink::begin(mpco::ProcessInfo& info, const ResultSource& src)
+	void StreamingSink::begin(detail::ProcessInfo& info, const ResultSource& src)
 	{
 		const ResultSchema& schema = src.schema();
 		if (schema.num_components < 1)
@@ -135,7 +135,7 @@ namespace mpcol {
 		m_initialized = true;
 	}
 
-	void StreamingSink::accept(mpco::ProcessInfo& info, const ResultSource& src,
+	void StreamingSink::accept(detail::ProcessInfo& info, const ResultSource& src,
 	                           const std::vector<double>& buffer)
 	{
 		const ResultSchema& schema = src.schema();
@@ -188,7 +188,7 @@ namespace mpcol {
 		h5::group::close(h_family);
 	}
 
-	void StreamingSink::finalize(mpco::ProcessInfo& /*info*/)
+	void StreamingSink::finalize(detail::ProcessInfo& /*info*/)
 	{
 		// Streaming has no deferred state: every step is fully written in accept().
 		// Handles are opened/closed per call, so there is nothing to flush.
@@ -198,7 +198,7 @@ namespace mpcol {
 	/* EnvelopeSink                                                          */
 	/* ===================================================================== */
 
-	void EnvelopeSink::begin(mpco::ProcessInfo& /*info*/, const ResultSource& src)
+	void EnvelopeSink::begin(detail::ProcessInfo& /*info*/, const ResultSource& src)
 	{
 		// Cache identity from the source (stable for its lifetime). Accumulators
 		// are not allocated here — they are seeded on the first accept() so MIN/MAX
@@ -216,7 +216,7 @@ namespace mpcol {
 		m_n_ids = m_ids.size();
 	}
 
-	void EnvelopeSink::accept(mpco::ProcessInfo& info, const ResultSource& src,
+	void EnvelopeSink::accept(detail::ProcessInfo& info, const ResultSource& src,
 	                          const std::vector<double>& buffer)
 	{
 		const ResultSchema& schema = src.schema();
@@ -273,7 +273,7 @@ namespace mpcol {
 		}
 	}
 
-	void EnvelopeSink::writeEnvelope(mpco::ProcessInfo& info)
+	void EnvelopeSink::writeEnvelope(detail::ProcessInfo& info)
 	{
 		if (!m_seeded || m_name.empty() || m_n_ids == 0 || m_n_comp == 0)
 			return;
@@ -345,12 +345,12 @@ namespace mpcol {
 		h5::group::close(h_family);
 	}
 
-	void EnvelopeSink::flush(mpco::ProcessInfo& info)
+	void EnvelopeSink::flush(detail::ProcessInfo& info)
 	{
 		writeEnvelope(info);
 	}
 
-	void EnvelopeSink::finalize(mpco::ProcessInfo& info)
+	void EnvelopeSink::finalize(detail::ProcessInfo& info)
 	{
 		writeEnvelope(info);
 	}
@@ -368,4 +368,4 @@ namespace mpcol {
 		m_arg_step.clear();
 	}
 
-} // namespace mpcol
+} // namespace ladruno

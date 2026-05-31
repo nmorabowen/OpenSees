@@ -1,10 +1,10 @@
 /* ********************************************************************** **
-**  MPCO_Ladruno recorder — modular sibling of MPCORecorder (frozen).     **
-**  MPCOL_NodeResults.h — NODAL ResultSource implementations (Phase 2).   **
+**  Ladruno recorder — modular sibling of MPCORecorder (frozen).     **
+**  Ladruno_NodeResults.h — NODAL ResultSource implementations (Phase 2).   **
 **                                                                        **
-**  Each class here is a faithful port of one frozen `mpco::node`         **
+**  Each class here is a faithful port of one frozen `detail::node`         **
 **  ResultRecorder subclass (MPCORecorder.cpp lines 1478-2594) onto the   **
-**  mpcol::ResultSource contract (MPCOL_ResultIO.h):                      **
+**  ladruno::ResultSource contract (Ladruno_ResultIO.h):                      **
 **                                                                        **
 **    frozen ctor metadata        -> ResultSchema (schema())             **
 **    frozen node gather          -> ids()                               **
@@ -16,11 +16,11 @@
 **  touch the HDF5 layer; persistence is the sink's job (Agent C).        **
 ** ********************************************************************** */
 
-#ifndef MPCOL_NodeResults_h
-#define MPCOL_NodeResults_h
+#ifndef Ladruno_NodeResults_h
+#define Ladruno_NodeResults_h
 
-#include "MPCOL_ResultIO.h"  // mpcol::ResultSource, mpcol::ResultSchema
-#include "MPCOL_Types.h"     // mpcol::mpco::ProcessInfo, enums, utils
+#include "Ladruno_ResultIO.h"  // ladruno::ResultSource, ladruno::ResultSchema
+#include "Ladruno_Types.h"     // ladruno::detail::ProcessInfo, enums, utils
 
 // OpenSees (only what the node sources need; NO h5 layer here)
 #include "Node.h"
@@ -31,12 +31,12 @@
 #include <string>
 #include <vector>
 
-namespace mpcol {
+namespace ladruno {
 
 	/*
 	NodeResultSource — common base for all nodal sources.
 
-	Mirrors the frozen `mpco::node::ResultRecorder` base: it holds the schema and
+	Mirrors the frozen `detail::node::ResultRecorder` base: it holds the schema and
 	the spatial dimension (m_ndim), plus the row-identity vector of node tags.
 	The node set is gathered exactly like the frozen recorder's `record()` /
 	`writeModel()` paths (NodeIter over the ProcessInfo domain), either at
@@ -47,9 +47,9 @@ namespace mpcol {
 	class NodeResultSource : public ResultSource {
 	public:
 		// Gather all nodes from the domain (frozen recorder default node set).
-		explicit NodeResultSource(const mpco::ProcessInfo& info);
+		explicit NodeResultSource(const detail::ProcessInfo& info);
 		// Or accept an explicit node-tag set (mirrors a region-restricted recorder).
-		NodeResultSource(const mpco::ProcessInfo& info, const std::vector<int>& node_ids);
+		NodeResultSource(const detail::ProcessInfo& info, const std::vector<int>& node_ids);
 
 		virtual ~NodeResultSource() = default;
 
@@ -58,7 +58,7 @@ namespace mpcol {
 
 	protected:
 		// Resolve a node tag -> Node* via the domain held in `info`.
-		Node* getNode(const mpco::ProcessInfo& info, int tag) const;
+		Node* getNode(const detail::ProcessInfo& info, int tag) const;
 
 	protected:
 		int m_ndim;                 // info.num_dimensions, frozen m_ndim
@@ -72,63 +72,63 @@ namespace mpcol {
 
 	class DisplacementSource : public NodeResultSource {
 	public:
-		explicit DisplacementSource(const mpco::ProcessInfo& info);
-		DisplacementSource(const mpco::ProcessInfo& info, const std::vector<int>& ids);
-		void evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer) override;
+		explicit DisplacementSource(const detail::ProcessInfo& info);
+		DisplacementSource(const detail::ProcessInfo& info, const std::vector<int>& ids);
+		void evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer) override;
 	private:
 		void build();
 	};
 
 	class RotationSource : public NodeResultSource {
 	public:
-		explicit RotationSource(const mpco::ProcessInfo& info);
-		RotationSource(const mpco::ProcessInfo& info, const std::vector<int>& ids);
-		void evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer) override;
+		explicit RotationSource(const detail::ProcessInfo& info);
+		RotationSource(const detail::ProcessInfo& info, const std::vector<int>& ids);
+		void evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer) override;
 	private:
 		void build();
 	};
 
 	class VelocitySource : public NodeResultSource {
 	public:
-		explicit VelocitySource(const mpco::ProcessInfo& info);
-		VelocitySource(const mpco::ProcessInfo& info, const std::vector<int>& ids);
-		void evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer) override;
+		explicit VelocitySource(const detail::ProcessInfo& info);
+		VelocitySource(const detail::ProcessInfo& info, const std::vector<int>& ids);
+		void evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer) override;
 	private:
 		void build();
 	};
 
 	class AngularVelocitySource : public NodeResultSource {
 	public:
-		explicit AngularVelocitySource(const mpco::ProcessInfo& info);
-		AngularVelocitySource(const mpco::ProcessInfo& info, const std::vector<int>& ids);
-		void evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer) override;
+		explicit AngularVelocitySource(const detail::ProcessInfo& info);
+		AngularVelocitySource(const detail::ProcessInfo& info, const std::vector<int>& ids);
+		void evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer) override;
 	private:
 		void build();
 	};
 
 	class AccelerationSource : public NodeResultSource {
 	public:
-		explicit AccelerationSource(const mpco::ProcessInfo& info);
-		AccelerationSource(const mpco::ProcessInfo& info, const std::vector<int>& ids);
-		void evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer) override;
+		explicit AccelerationSource(const detail::ProcessInfo& info);
+		AccelerationSource(const detail::ProcessInfo& info, const std::vector<int>& ids);
+		void evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer) override;
 	private:
 		void build();
 	};
 
 	class AngularAccelerationSource : public NodeResultSource {
 	public:
-		explicit AngularAccelerationSource(const mpco::ProcessInfo& info);
-		AngularAccelerationSource(const mpco::ProcessInfo& info, const std::vector<int>& ids);
-		void evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer) override;
+		explicit AngularAccelerationSource(const detail::ProcessInfo& info);
+		AngularAccelerationSource(const detail::ProcessInfo& info, const std::vector<int>& ids);
+		void evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer) override;
 	private:
 		void build();
 	};
 
 	class PressureSource : public NodeResultSource {
 	public:
-		explicit PressureSource(const mpco::ProcessInfo& info);
-		PressureSource(const mpco::ProcessInfo& info, const std::vector<int>& ids);
-		void evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer) override;
+		explicit PressureSource(const detail::ProcessInfo& info);
+		PressureSource(const detail::ProcessInfo& info, const std::vector<int>& ids);
+		void evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer) override;
 	private:
 		void build();
 	};
@@ -147,9 +147,9 @@ namespace mpcol {
 
 	class ReactionForceSource : public NodeResultSource {
 	public:
-		explicit ReactionForceSource(const mpco::ProcessInfo& info);
-		ReactionForceSource(const mpco::ProcessInfo& info, const std::vector<int>& ids);
-		void evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer) override;
+		explicit ReactionForceSource(const detail::ProcessInfo& info);
+		ReactionForceSource(const detail::ProcessInfo& info, const std::vector<int>& ids);
+		void evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer) override;
 		// D6: reactions are additive across partition boundaries.
 		bool requiresPartitionReduction() const override { return true; }
 		// Frozen getReactionFlag(): 0=reaction, 1=incl. inertia, 2=Rayleigh.
@@ -160,9 +160,9 @@ namespace mpcol {
 
 	class ReactionMomentSource : public NodeResultSource {
 	public:
-		explicit ReactionMomentSource(const mpco::ProcessInfo& info);
-		ReactionMomentSource(const mpco::ProcessInfo& info, const std::vector<int>& ids);
-		void evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer) override;
+		explicit ReactionMomentSource(const detail::ProcessInfo& info);
+		ReactionMomentSource(const detail::ProcessInfo& info, const std::vector<int>& ids);
+		void evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer) override;
 		bool requiresPartitionReduction() const override { return true; }
 		virtual int reactionFlag() const { return 0; }
 	protected:
@@ -174,29 +174,29 @@ namespace mpcol {
 	// recorder driver primed via setReactionFlag-equivalent before record()).
 	class ReactionForceIncInertiaSource : public ReactionForceSource {
 	public:
-		explicit ReactionForceIncInertiaSource(const mpco::ProcessInfo& info);
-		ReactionForceIncInertiaSource(const mpco::ProcessInfo& info, const std::vector<int>& ids);
+		explicit ReactionForceIncInertiaSource(const detail::ProcessInfo& info);
+		ReactionForceIncInertiaSource(const detail::ProcessInfo& info, const std::vector<int>& ids);
 		int reactionFlag() const override { return 1; }
 	};
 
 	class ReactionMomentIncInertiaSource : public ReactionMomentSource {
 	public:
-		explicit ReactionMomentIncInertiaSource(const mpco::ProcessInfo& info);
-		ReactionMomentIncInertiaSource(const mpco::ProcessInfo& info, const std::vector<int>& ids);
+		explicit ReactionMomentIncInertiaSource(const detail::ProcessInfo& info);
+		ReactionMomentIncInertiaSource(const detail::ProcessInfo& info, const std::vector<int>& ids);
 		int reactionFlag() const override { return 1; }
 	};
 
 	class RayleighForceSource : public ReactionForceSource {
 	public:
-		explicit RayleighForceSource(const mpco::ProcessInfo& info);
-		RayleighForceSource(const mpco::ProcessInfo& info, const std::vector<int>& ids);
+		explicit RayleighForceSource(const detail::ProcessInfo& info);
+		RayleighForceSource(const detail::ProcessInfo& info, const std::vector<int>& ids);
 		int reactionFlag() const override { return 2; }
 	};
 
 	class RayleighMomentSource : public ReactionMomentSource {
 	public:
-		explicit RayleighMomentSource(const mpco::ProcessInfo& info);
-		RayleighMomentSource(const mpco::ProcessInfo& info, const std::vector<int>& ids);
+		explicit RayleighMomentSource(const detail::ProcessInfo& info);
+		RayleighMomentSource(const detail::ProcessInfo& info, const std::vector<int>& ids);
 		int reactionFlag() const override { return 2; }
 	};
 
@@ -207,9 +207,9 @@ namespace mpcol {
 
 	class UnbalancedForceSource : public NodeResultSource {
 	public:
-		explicit UnbalancedForceSource(const mpco::ProcessInfo& info);
-		UnbalancedForceSource(const mpco::ProcessInfo& info, const std::vector<int>& ids);
-		void evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer) override;
+		explicit UnbalancedForceSource(const detail::ProcessInfo& info);
+		UnbalancedForceSource(const detail::ProcessInfo& info, const std::vector<int>& ids);
+		void evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer) override;
 		// D6: unbalanced load is additive across partition boundaries.
 		bool requiresPartitionReduction() const override { return true; }
 	protected:
@@ -218,9 +218,9 @@ namespace mpcol {
 
 	class UnbalancedMomentSource : public NodeResultSource {
 	public:
-		explicit UnbalancedMomentSource(const mpco::ProcessInfo& info);
-		UnbalancedMomentSource(const mpco::ProcessInfo& info, const std::vector<int>& ids);
-		void evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer) override;
+		explicit UnbalancedMomentSource(const detail::ProcessInfo& info);
+		UnbalancedMomentSource(const detail::ProcessInfo& info, const std::vector<int>& ids);
+		void evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer) override;
 		bool requiresPartitionReduction() const override { return true; }
 	protected:
 		void build(const char* group, const char* display, const char* description);
@@ -229,16 +229,16 @@ namespace mpcol {
 	// IncInertia variants override evaluate() to use getUnbalancedLoadIncInertia().
 	class UnbalancedForceIncInertiaSource : public UnbalancedForceSource {
 	public:
-		explicit UnbalancedForceIncInertiaSource(const mpco::ProcessInfo& info);
-		UnbalancedForceIncInertiaSource(const mpco::ProcessInfo& info, const std::vector<int>& ids);
-		void evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer) override;
+		explicit UnbalancedForceIncInertiaSource(const detail::ProcessInfo& info);
+		UnbalancedForceIncInertiaSource(const detail::ProcessInfo& info, const std::vector<int>& ids);
+		void evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer) override;
 	};
 
 	class UnbalancedMomentIncInertiaSource : public UnbalancedMomentSource {
 	public:
-		explicit UnbalancedMomentIncInertiaSource(const mpco::ProcessInfo& info);
-		UnbalancedMomentIncInertiaSource(const mpco::ProcessInfo& info, const std::vector<int>& ids);
-		void evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer) override;
+		explicit UnbalancedMomentIncInertiaSource(const detail::ProcessInfo& info);
+		UnbalancedMomentIncInertiaSource(const detail::ProcessInfo& info, const std::vector<int>& ids);
+		void evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer) override;
 	};
 
 	/* ===================================================================== */
@@ -259,18 +259,18 @@ namespace mpcol {
 
 	class ModesOfVibrationSource : public NodeResultSource {
 	public:
-		explicit ModesOfVibrationSource(const mpco::ProcessInfo& info);
-		ModesOfVibrationSource(const mpco::ProcessInfo& info, const std::vector<int>& ids);
+		explicit ModesOfVibrationSource(const detail::ProcessInfo& info);
+		ModesOfVibrationSource(const detail::ProcessInfo& info, const std::vector<int>& ids);
 
 		// Fill buffer for the CURRENT mode (translational components).
-		void evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer) override;
+		void evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer) override;
 
 		// Mode-aware API for the mode-loop driver (StreamingSink).
-		int numModes(const mpco::ProcessInfo& info) const;  // *OPS_GetNumEigen()
+		int numModes(const detail::ProcessInfo& info) const;  // *OPS_GetNumEigen()
 		void setCurrentMode(int k) { m_current_mode = k; }
 		int currentMode() const { return m_current_mode; }
 		// Per-mode scalars (frozen ModesOfVibration::record math).
-		void modeInfo(const mpco::ProcessInfo& info, int k,
+		void modeInfo(const detail::ProcessInfo& info, int k,
 		              double& lambda, double& omega,
 		              double& freq, double& period) const;
 
@@ -281,9 +281,9 @@ namespace mpcol {
 
 	class ModesOfVibrationRotationalSource : public ModesOfVibrationSource {
 	public:
-		explicit ModesOfVibrationRotationalSource(const mpco::ProcessInfo& info);
-		ModesOfVibrationRotationalSource(const mpco::ProcessInfo& info, const std::vector<int>& ids);
-		void evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer) override;
+		explicit ModesOfVibrationRotationalSource(const detail::ProcessInfo& info);
+		ModesOfVibrationRotationalSource(const detail::ProcessInfo& info, const std::vector<int>& ids);
+		void evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer) override;
 	private:
 		void build();
 	};
@@ -296,9 +296,9 @@ namespace mpcol {
 
 	class DisplacementSensitivitySource : public NodeResultSource {
 	public:
-		DisplacementSensitivitySource(const mpco::ProcessInfo& info, int grad);
-		DisplacementSensitivitySource(const mpco::ProcessInfo& info, const std::vector<int>& ids, int grad);
-		void evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer) override;
+		DisplacementSensitivitySource(const detail::ProcessInfo& info, int grad);
+		DisplacementSensitivitySource(const detail::ProcessInfo& info, const std::vector<int>& ids, int grad);
+		void evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer) override;
 	private:
 		void build();
 		int m_grad;
@@ -306,9 +306,9 @@ namespace mpcol {
 
 	class RotationSensitivitySource : public NodeResultSource {
 	public:
-		RotationSensitivitySource(const mpco::ProcessInfo& info, int grad);
-		RotationSensitivitySource(const mpco::ProcessInfo& info, const std::vector<int>& ids, int grad);
-		void evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer) override;
+		RotationSensitivitySource(const detail::ProcessInfo& info, int grad);
+		RotationSensitivitySource(const detail::ProcessInfo& info, const std::vector<int>& ids, int grad);
+		void evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer) override;
 	private:
 		void build();
 		int m_grad;
@@ -316,9 +316,9 @@ namespace mpcol {
 
 	class VelocitySensitivitySource : public NodeResultSource {
 	public:
-		VelocitySensitivitySource(const mpco::ProcessInfo& info, int grad);
-		VelocitySensitivitySource(const mpco::ProcessInfo& info, const std::vector<int>& ids, int grad);
-		void evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer) override;
+		VelocitySensitivitySource(const detail::ProcessInfo& info, int grad);
+		VelocitySensitivitySource(const detail::ProcessInfo& info, const std::vector<int>& ids, int grad);
+		void evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer) override;
 	private:
 		void build();
 		int m_grad;
@@ -326,9 +326,9 @@ namespace mpcol {
 
 	class AngularVelocitySensitivitySource : public NodeResultSource {
 	public:
-		AngularVelocitySensitivitySource(const mpco::ProcessInfo& info, int grad);
-		AngularVelocitySensitivitySource(const mpco::ProcessInfo& info, const std::vector<int>& ids, int grad);
-		void evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer) override;
+		AngularVelocitySensitivitySource(const detail::ProcessInfo& info, int grad);
+		AngularVelocitySensitivitySource(const detail::ProcessInfo& info, const std::vector<int>& ids, int grad);
+		void evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer) override;
 	private:
 		void build();
 		int m_grad;
@@ -336,9 +336,9 @@ namespace mpcol {
 
 	class AccelerationSensitivitySource : public NodeResultSource {
 	public:
-		AccelerationSensitivitySource(const mpco::ProcessInfo& info, int grad);
-		AccelerationSensitivitySource(const mpco::ProcessInfo& info, const std::vector<int>& ids, int grad);
-		void evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer) override;
+		AccelerationSensitivitySource(const detail::ProcessInfo& info, int grad);
+		AccelerationSensitivitySource(const detail::ProcessInfo& info, const std::vector<int>& ids, int grad);
+		void evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer) override;
 	private:
 		void build();
 		int m_grad;
@@ -346,14 +346,14 @@ namespace mpcol {
 
 	class AngularAccelerationSensitivitySource : public NodeResultSource {
 	public:
-		AngularAccelerationSensitivitySource(const mpco::ProcessInfo& info, int grad);
-		AngularAccelerationSensitivitySource(const mpco::ProcessInfo& info, const std::vector<int>& ids, int grad);
-		void evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer) override;
+		AngularAccelerationSensitivitySource(const detail::ProcessInfo& info, int grad);
+		AngularAccelerationSensitivitySource(const detail::ProcessInfo& info, const std::vector<int>& ids, int grad);
+		void evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer) override;
 	private:
 		void build();
 		int m_grad;
 	};
 
-} // namespace mpcol
+} // namespace ladruno
 
-#endif // MPCOL_NodeResults_h
+#endif // Ladruno_NodeResults_h

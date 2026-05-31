@@ -124,7 +124,7 @@ For the coupled/implicit-damped case, the answer is documentation, not code:
   - `ExplicitDifference.cpp` — the leap-frog M-only scheme, lagged-Rayleigh residual, `getVel()` returning the half-step velocity. **The closest sibling; this class is essentially it + correct starter + dt_cr + clean velocity output + energy discipline.**
   - `ExplicitBathe.{h,cpp}` — `dt_cr` wiring, `getCriticalTimeStep()`, the `firstStep`-gated first solve, options parsing, broker, the explicit recipe.
   - `CentralDifference.cpp:284` — the single-`update()`-per-step guard (CD allows exactly **one** solve/step; use this guard, *not* ExplicitDifference's looser `>2`).
-- **Build**: no new target/dep. Full installer link still blocked by the MPCO_Ladruno
+- **Build**: no new target/dep. Full installer link still blocked by the Ladruno
   link error ([[04_explicit_dynamics_and_energy_balance]]); per-TU `cl.exe` compile-verify
   is the interim gate.
 
@@ -195,7 +195,7 @@ Required recipe: lumped/diagonal mass, `system Diagonal`, `algorithm Linear`
 9. **βK trap + guard (T4)**: `getCriticalTimeStep()` drops ~quadratically as `betaK`
    rises (→ `2/(βω²)`); the C6 warn fires for `betaK≠0`; `alphaM` stays benign.
 10. **Energy closure ≈ 1%** via `EnergyBalanceRecorder` (multi-DOF). *Gated by the
-    MPCO_Ladruno link blocker — runs once the full link is unblocked.*
+    Ladruno link blocker — runs once the full link is unblocked.*
 
 ## Theory & cross-code review (hardening + adversarial sweep)
 
@@ -264,7 +264,7 @@ compression — an element/material concern; flagged so wave/shock users know th
 - **D8 aliasing**: copy element mass before fetching stiffness/damping from the same
   element (shared static `theMatrix`) — handled inside `CriticalTimeStep`; replicate in
   any starter/energy code.
-- **Energy test (#10) is link-blocked** by the MPCO_Ladruno error until the full link
+- **Energy test (#10) is link-blocked** by the Ladruno error until the full link
   is restored.
 - **Backwards compatibility**: none affected — new class, new tag, no upstream edits.
 
@@ -329,7 +329,7 @@ no upstream class touched.
   documented requirement rather than a hard error (noted for the PR).
 - **Build gate**: `CentralDifferenceLadruno.cpp` per-TU compile-verified standalone with
   `cl.exe` (flags/includes lifted from the Ninja build, repointed at the worktree). Full
-  link still blocked by the MPCO_Ladruno link error — interim gate only, as planned.
+  link still blocked by the Ladruno link error — interim gate only, as planned.
 - **Tests**: `Ladruno_scripts/_verify_explicit.py` extended with the CDL-1..10 battery
   (CDL-8 first-step / CDL-9 βK collapse are the differentiators; CDL-10 energy closure is
   the MPCO-link-gated skip). They need a rebuilt `.pyd` that registers the class to run.

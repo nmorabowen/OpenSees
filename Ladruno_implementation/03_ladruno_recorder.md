@@ -1,5 +1,5 @@
 ---
-title: MPCO_Ladruno — modular recorder fork
+title: Ladruno — modular recorder fork
 project: Ladruno
 status: draft
 priority: high
@@ -10,18 +10,18 @@ tags:
   - adr
 ---
 
-# MPCO_Ladruno — modular recorder fork
+# Ladruno — modular recorder fork
 
 > **ADR** (Architecture Decision Record). Captures the four settled decisions of
 > 2026-05-29 plus the module/architecture plan they imply. Companion docs:
 > [[../Ladruno_internal/01_compilation_journal]] (build), and a future
-> `mpco_ladruno_schema_v1.md` (the on-disk HDF5 spec, co-designed with apeGmsh).
+> `ladruno_schema_v1.md` (the on-disk HDF5 spec, co-designed with apeGmsh).
 
 ## What
 
 A **sibling** HDF5 recorder forked from `SRC/recorder/MPCORecorder.cpp`, exposed as
-`recorder mpcoLadruno …`. It reorganizes the 6,901-line monolith into ~10 focused
-translation units (all under `namespace mpcol`), retains the full nodal + element
+`recorder ladruno …`. It reorganizes the 6,901-line monolith into ~10 focused
+translation units (all under `namespace ladruno`), retains the full nodal + element
 result functionality, and adds two genuinely new capabilities the original cannot
 express:
 
@@ -60,7 +60,7 @@ Four drivers, all confirmed:
 
 **Hard constraint:** `MPCORecorder.cpp` is *frozen* — byte-identical to upstream
 master, deliberately untouched for ~4.5 years so STKO read-compatibility never
-regresses (see [[project_mpco_exit_crash]]). MPCO_Ladruno must not edit it. The
+regresses (see [[project_mpco_exit_crash]]). Ladruno must not edit it. The
 price we accept: Layers 0/1/2/4 are **copied**, not shared.
 
 ## Decisions (settled 2026-05-29)
@@ -70,35 +70,35 @@ price we accept: Layers 0/1/2/4 are **copied**, not shared.
 | **D1** | **New sibling recorder**, not in-place refactor or shared lib. | Keeps the frozen file byte-identical; STKO + upstream diff untouched. | Layers 0/1/2/4 duplicated. Acceptable. |
 | **D2** | **apeGmsh-native schema** — diverge from STKO. | apeGmsh is the canonical consumer; freedom to fix MPCO's clunky parts (flattened `META` columns). | STKO desktop + current `STKO_to_python`/`Results.from_mpco` will **not** read v1 files until their readers are extended. Mitigated by a `GENERATOR`/`FORMAT_VERSION` tag so readers branch cleanly. |
 | **D3** | **v1 = refactor-to-parity** (semantic, not byte). Global=v2, Envelope=v3. | De-risk: prove the modular base reproduces every existing result value before adding features. | "Parity" is verified by a value-level harness (read both files, assert equality to 1e-12), since divergent schema rules out a byte diff. |
-| **D4** | **Wrap the whole module in `namespace mpcol`.** | Avoid ODR/duplicate-symbol collisions with the frozen TU (`LibraryLoader`, `libload::`, `h5::`, `H5*` macros all have external linkage). | A second HDF5 `LibraryLoader` singleton exists at runtime → a benign second `dlopen`/refcount of the HDF5 lib. Noted, accepted. |
+| **D4** | **Wrap the whole module in `namespace ladruno`.** | Avoid ODR/duplicate-symbol collisions with the frozen TU (`LibraryLoader`, `libload::`, `h5::`, `H5*` macros all have external linkage). | A second HDF5 `LibraryLoader` singleton exists at runtime → a benign second `dlopen`/refcount of the HDF5 lib. Noted, accepted. |
 | **D5** | **Keep MPCO's per-partition parallel model** (`part-N.mpco`, reader stitches). No parallel HDF5. | Verified MPCO's record loop only communicates one int/step (stage-stamp `Allreduce`, line 4594); result data is never communicated. Parallel HDF5 (MPI-IO collective writes) is fragile on the MS-MPI/libfabric stack ([[project_openseespymp_plan]]) and fights SWMR. | Stitching is **apeGmsh-owned** (canonical reader). `sendSelf` keeps broadcasting only the spec. |
 | **D6** | **Envelope phasing: zero-MPI consistent quantities first (v3a), reduced quantities later (v3b).** | min/max commute with partition-reduction *only* for consistent quantities; kinematics + element results need **zero** new comm. Reaction-at-boundary + global envelopes need per-step reduction — same plumbing as the deferred energy/`ON_DOMAIN` channel. | v3a is shippable with no MPI risk. v3b lands with/after the energy work it shares machinery with. |
 | **D7** | **Envelope semantics: componentwise min/max/abs-max + `ARG_STEP`.** | Matches design-check needs (independent peak per component); `ARG_STEP` (step of each extreme) enables concurrent-state reconstruction without extra storage. | Per-`MODEL_STAGE` reset; periodic in-place rewrite for crash safety. |
-| **D8** (2026-05-31) | **Energy = a *shared kernel* feeding `ON_DOMAIN` (whole-model) + a new `ON_REGIONS` family (per-region).** `EnergyBalanceRecorder` has **no** public accessor and its math lives in an anonymous namespace (uncallable cross-TU), so it cannot be *consumed* live — instead **lift** the KE/IE/DW/ULW/RES/ERR kernel into a link-visible `EnergyBalanceKernel.h` that *both* `EnergyBalanceRecorder` and `mpcol::EnergyBalanceSource` call. | Single definition of the energy math → the two recorders can never diverge (a divergence would be a silent correctness bug). `EnergyBalanceRecorder` is a Ladruno addition, **not** the frozen `MPCORecorder`, so the D1 freeze does not apply — sharing the *math* is allowed (recorder *plumbing* stays separate). Whole-model→`ON_DOMAIN`, per-region→`OnRegions` maps 1:1 onto apeGmsh's `domain`/`regions` composites. | One shared header; one `ResultFamily` enum line (`OnRegions`); v2 ships serial-correct, parallel reduce = v3b. Resolves the first open-question block below. |
+| **D8** (2026-05-31) | **Energy = a *shared kernel* feeding `ON_DOMAIN` (whole-model) + a new `ON_REGIONS` family (per-region).** `EnergyBalanceRecorder` has **no** public accessor and its math lives in an anonymous namespace (uncallable cross-TU), so it cannot be *consumed* live — instead **lift** the KE/IE/DW/ULW/RES/ERR kernel into a link-visible `EnergyBalanceKernel.h` that *both* `EnergyBalanceRecorder` and `ladruno::EnergyBalanceSource` call. | Single definition of the energy math → the two recorders can never diverge (a divergence would be a silent correctness bug). `EnergyBalanceRecorder` is a Ladruno addition, **not** the frozen `MPCORecorder`, so the D1 freeze does not apply — sharing the *math* is allowed (recorder *plumbing* stays separate). Whole-model→`ON_DOMAIN`, per-region→`OnRegions` maps 1:1 onto apeGmsh's `domain`/`regions` composites. | One shared header; one `ResultFamily` enum line (`OnRegions`); v2 ships serial-correct, parallel reduce = v3b. Resolves the first open-question block below. |
 
 ## Where
 
-New code (all under `SRC/recorder/mpco_ladruno/`, all in `namespace mpcol`):
+New code (all under `SRC/recorder/ladruno/`, all in `namespace ladruno`):
 
 | File | From monolith lines | Layer |
 |------|--------------------|-------|
-| `MPCOL_Hdf5Library.{h,cpp}` | 200–555 (`libload`, `LibraryLoader`) | 0 — platform / runtime HDF5 load |
-| `MPCOL_Hdf5.{h,cpp}` | 928–1243 (`h5`) | 1 — HDF5 C++ wrapper |
-| `MPCOL_Types.h` | 556–927, 1244–1477 (utils, structs, **enums**, `ProcessInfo`, `OutputFrequency`, `Timer`) | 2 — shared vocabulary |
-| `MPCOL_ResultIO.h` | *new* | 2 — `ResultSchema` / `ResultSource` / `ResultSink` interfaces |
-| `MPCOL_NodeResults.{h,cpp}` | 1478–2594 (`mpco::node`) | 3a — nodal sources |
-| `MPCOL_ElementResults.{h,cpp}` | 2595–4279 (`mpco::element`) | 3b — element source (the hard port) |
-| `MPCOL_DomainResults.{h,cpp}` | *new* (consumes EnergyBalance logic) | 3c — global/scalar sources (**v2**) |
-| `MPCOL_Sinks.{h,cpp}` | *new* (`StreamingSink`, `EnvelopeSink`) | 3d — persistence strategies (**v3** for envelope) |
-| `MPCOL_Serializer.h` | 4280–4401 | 4 — parallel send/recv |
-| `MPCORecorderLadruno.{h,cpp}` | 4410–6901 (`private_data`, lifecycle, `OPS_…`) | 5 — orchestration + command API |
+| `Ladruno_Hdf5Library.{h,cpp}` | 200–555 (`libload`, `LibraryLoader`) | 0 — platform / runtime HDF5 load |
+| `Ladruno_Hdf5.{h,cpp}` | 928–1243 (`h5`) | 1 — HDF5 C++ wrapper |
+| `Ladruno_Types.h` | 556–927, 1244–1477 (utils, structs, **enums**, `ProcessInfo`, `OutputFrequency`, `Timer`) | 2 — shared vocabulary |
+| `Ladruno_ResultIO.h` | *new* | 2 — `ResultSchema` / `ResultSource` / `ResultSink` interfaces |
+| `Ladruno_NodeResults.{h,cpp}` | 1478–2594 (`ladruno::detail::node`) | 3a — nodal sources |
+| `Ladruno_ElementResults.{h,cpp}` | 2595–4279 (`ladruno::detail::element`) | 3b — element source (the hard port) |
+| `Ladruno_DomainResults.{h,cpp}` | *new* (consumes EnergyBalance logic) | 3c — global/scalar sources (**v2**) |
+| `Ladruno_Sinks.{h,cpp}` | *new* (`StreamingSink`, `EnvelopeSink`) | 3d — persistence strategies (**v3** for envelope) |
+| `Ladruno_Serializer.h` | 4280–4401 | 4 — parallel send/recv |
+| `LadrunoRecorder.{h,cpp}` | 4410–6901 (`private_data`, lifecycle, `OPS_…`) | 5 — orchestration + command API |
 
 Modify (3 external touch-points — the entire upstream-diff surface, all additive,
 all under `#ifdef _HDF5`; record in [[../Ladruno_internal/01_compilation_journal]]):
 
 - `SRC/interpreter/OpenSeesOutputCommands.cpp:132` — add
-  `recordersMap.insert({"mpcoLadruno", &OPS_MPCOLadrunoRecorder});`
-- `SRC/classTags.h:1207` — add `RECORDER_TAGS_MPCOLadrunoRecorder` (next free value).
+  `recordersMap.insert({"ladruno", &OPS_LadrunoRecorder});`
+- `SRC/classTags.h:1207` — add `RECORDER_TAGS_LadrunoRecorder` (next free value).
 - `SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp:2799` — add broker case.
 - `SRC/recorder/CMakeLists.txt` — add the new sources under the `_HDF5` guard.
 
@@ -114,7 +114,7 @@ for the step, and write a `STEP_<k>` dataset. That fusion is exactly why envelop
 and globals don't fit. v1 breaks them apart:
 
 ```cpp
-namespace mpcol {
+namespace ladruno {
 
 struct ResultSchema {                 // self-describing column metadata
     std::string name, display_name, components_csv, dimension, description;
@@ -140,7 +140,7 @@ public:
     virtual void finalize(const ProcessInfo&) = 0;
 };
 
-} // namespace mpcol
+} // namespace ladruno
 ```
 
 - `StreamingSink::accept` → writes `STEP_<k>` (today's behavior, exact parity).
@@ -176,7 +176,7 @@ verbatim. At analysis end, `finalize()` lets envelope sinks flush.
 The element `setResponse` API the recorder consumes — `basisInfo` (geometry metadata),
 `integrationPoints`/`integrationWeights`/`controlPointWeights` (quadrature), `localAxes`
 (static + `frameTimeVarying` per-step), and the descriptor-tree result protocol — is
-specified in [[mpco_ladruno_element_contract]]. It is the bridge between the Bézier /
+specified in [[ladruno_element_contract]]. It is the bridge between the Bézier /
 Belytschko element roadmaps and this recorder: an element honoring it is recorded with
 no recorder edits.
 
@@ -194,12 +194,12 @@ no recorder edits.
 internal linkage, uncallable from another TU). A domain source therefore cannot hold a
 live recorder and read it. The energy math is instead **extracted into a shared,
 link-visible kernel** (`SRC/recorder/EnergyBalanceKernel.h`) that *both*
-`EnergyBalanceRecorder` and the new `mpcol::EnergyBalanceSource` call — one definition of
+`EnergyBalanceRecorder` and the new `ladruno::EnergyBalanceSource` call — one definition of
 KE/IE/DW/ULW/RES/ERR% so the two recorders can never disagree. Permitted because
 `EnergyBalanceRecorder` is a Ladruno addition, not the frozen `MPCORecorder` (D1 does not
 apply); energy *definitions* are shared, recorder *plumbing* stays separate.
 
-**The source.** `mpcol::EnergyBalanceSource : ResultSource` — `schema().name =
+**The source.** `ladruno::EnergyBalanceSource : ResultSource` — `schema().name =
 "energyBalance"`, `components_csv = "KE,IE,DW,ULW,RES,ERR"` (reuse the recorder's own
 `comp[]` tokens so apeGmsh metadata self-describes), `data_type = Vectorial`,
 `requiresPartitionReduction() == true`. `evaluate()` calls the shared kernel for its
@@ -208,7 +208,7 @@ IE/DW/ULW trapezoidally-integrated power rates the source carries across steps;
 RES = ULW−(KE+IE+DW); ERR% = 100·RES/E_ref.
 
 **Whole-model vs regions — two families.** Whole-model → `RESULTS/ON_DOMAIN/energyBalance`
-(`ids()=={0}`, `[1×6]`/step — `ON_DOMAIN` is **already wired** in `MPCOL_Sinks`, so no sink
+(`ids()=={0}`, `[1×6]`/step — `ON_DOMAIN` is **already wired** in `Ladruno_Sinks`, so no sink
 change). Per-region → a **new `ResultFamily::OnRegions`** (one enum line; sinks are
 otherwise family-agnostic) → `RESULTS/ON_REGIONS/energyBalance` with `ids() = region tags`
 and `[nRegions×6]`/step. Chosen over a single wide `[1×6·(1+nR)]` row because it maps 1:1
@@ -246,7 +246,7 @@ route. Not either/or.
 v1 mirrors `recorder mpco` exactly (parity), with the new verb:
 
 ```
-recorder mpcoLadruno <file.mpco> -N displacement reactionForce \
+recorder ladruno <file.mpco> -N displacement reactionForce \
                                  -E force section.fiber.stress \
                                  -T dt 0.0  -R <region?>
 ```
@@ -265,7 +265,7 @@ Keep MPCO's genuinely good ideas; fix its worst ergonomics.
 
 ```
 /
-├── INFO            attrs: GENERATOR="MPCO_Ladruno", FORMAT_VERSION=1, NDIM, UNITS, SOLVER
+├── INFO            attrs: GENERATOR="Ladruno", FORMAT_VERSION=1, NDIM, UNITS, SOLVER
 └── MODEL_STAGE[<stamp>]
     ├── MODEL       NODES, ELEMENTS, LOCAL_AXES, SECTION_ASSIGNMENTS, SETS   (≈ as today)
     └── RESULTS
@@ -285,7 +285,7 @@ string + `GAUSS_IDS`/`MULTIPLICITY`/`NUM_COMPONENTS` parallel arrays — MPCO's 
 reader ergonomics) with structured, attribute-rich per-result metadata that apeGmsh
 and `STKO_to_python` can parse without the bespoke decoder.
 
-> The concrete layout is specified in [[mpco_ladruno_schema_v1]] (drafted
+> The concrete layout is specified in [[ladruno_schema_v1]] (drafted
 > 2026-05-30), **co-designed with apeGmsh's reader**. Its centerpiece is a
 > self-describing `BASIS`/`QUADRATURE` descriptor per element group (replacing the two
 > closed enums) so second-order/Bézier elements and Belytschko co-rotational beams need
@@ -295,9 +295,9 @@ and `STKO_to_python` can parse without the bespoke decoder.
 ### apeGmsh integration
 
 apeGmsh's `Results.from_mpco`-equivalent gains a branch on
-`INFO/GENERATOR == "MPCO_Ladruno"`. Because apeGmsh co-designs the schema, this is a
+`INFO/GENERATOR == "Ladruno"`. Because apeGmsh co-designs the schema, this is a
 clean read path, not a reverse-engineering exercise. Longer term, apeGmsh's
-exporters emit `recorder mpcoLadruno` as the default, making it the canonical
+exporters emit `recorder ladruno` as the default, making it the canonical
 output. `STKO_to_python` gets a parallel reader branch (same `FORMAT_VERSION` gate)
 so existing post-processing keeps working against the new files.
 
@@ -397,10 +397,10 @@ narrow contract → wide fan-out → narrow integration. Phased **discrete agent
 build-gates run between phases** (not one autonomous workflow — compile-and-link is
 unforgiving and the gates depend on the slow build).
 
-1. **Phase 1 — narrow, sequential (linchpin).** `MPCOL_Types.h`, `MPCOL_ResultIO.h` (the
-   Source/Sink contract), Layers 0/1 in `namespace mpcol`, a trivial registering
+1. **Phase 1 — narrow, sequential (linchpin).** `Ladruno_Types.h`, `Ladruno_ResultIO.h` (the
+   Source/Sink contract), Layers 0/1 in `namespace ladruno`, a trivial registering
    recorder. **Gate: builds + links next to the frozen recorder** — proves the
-   `namespace mpcol` ODR fix (the biggest unknown). Nothing fans out before this.
+   `namespace ladruno` ODR fix (the biggest unknown). Nothing fans out before this.
 2. **Phase 2 — wide, parallel (worktrees, against frozen Phase-1 headers).** Agent B
    element-source adapter + `basisInfo` capture (long pole, start first, "evaluate don't
    transcribe" the workarounds; codex-rescue second opinion on the OutputDescriptor
@@ -439,7 +439,7 @@ exists.
 > assigned. Envelope state is per-rank; decide whether p0 reduces or each part writes
 > its own envelope (lean: per-part, reduce in the reader).
 
-- **ODR / linkage (D4):** resolved by `namespace mpcol`. Verify no leaked global
+- **ODR / linkage (D4):** resolved by `namespace ladruno`. Verify no leaked global
   symbols when both recorders are linked (`nm`/`dumpbin` spot-check post-build).
 - **Double HDF5 load:** two `LibraryLoader` singletons → benign second `dlopen`;
   confirm no double-free on shutdown.
@@ -450,18 +450,18 @@ exists.
 
 ## Implementation log
 
-*(filled in during execution; move to `Ladruno_internal/implemented_mpco_ladruno.md`
+*(filled in during execution; move to `Ladruno_internal/implemented_ladruno_recorder.md`
 when v1 lands)*
 
 - 2026-05-29 — ADR drafted. Monolith parsed (5-layer map). Four decisions settled:
-  sibling fork, apeGmsh-native schema, refactor-to-parity v1, `namespace mpcol`.
+  sibling fork, apeGmsh-native schema, refactor-to-parity v1, `namespace ladruno`.
 - 2026-05-30 — Parallel + envelope design settled (D5–D7): keep per-partition files
   (verified record-loop comm = one int/step, line 4594); envelopes via `EnvelopeSink`
   wrapping any source, phased zero-MPI-consistent (v3a) → reduced (v3b, co-lands with
   energy); componentwise absmax + `ARG_STEP`, per-stage reset, periodic rewrite.
   Energy/`ON_DOMAIN` deferred (built elsewhere; we consume).
 - 2026-05-31 — **Energy result type designed (D8)** after a 3-agent cross-repo recon
-  (apeGmsh viewer · `MPCOL_*` C++ contract · `EnergyBalanceRecorder`/this ADR). Key
+  (apeGmsh viewer · `Ladruno_*` C++ contract · `EnergyBalanceRecorder`/this ADR). Key
   findings: `ResultFamily::OnDomain` is already wired (no sink change); `EnergyBalanceRecorder`
   has no public accessor + anon-namespace kernels (→ lift to a shared `EnergyBalanceKernel.h`,
   not consume); apeGmsh has no global/region level (→ add `DOMAIN`/`REGIONS` levels +
@@ -474,7 +474,7 @@ when v1 lands)*
 - 2026-05-31 — **Energy result type IMPLEMENTED (D8, C++/OpenSees side).** Branch
   `feature/mpco-energy-balance` off `origin/ladruno` (which already carries the C1/C2
   multi-stage fix, PR #12 — so C1/C2 was not part of this change). PR #24. **STEP 0
-  verified the ADR-04 "MPCORecorderLadruno link blocker" is FALSE** — current `ladruno`
+  verified the ADR-04 "LadrunoRecorder link blocker" is FALSE** — current `ladruno`
   builds + links `OpenSeesPy.dll` clean (no LNK2005; only the pre-existing benign
   `LNK4006 ELMT05`), so energy was runtime-verifiable. Delivered (15 files):
   (1) **`SRC/recorder/EnergyBalanceKernel.h`** — `namespace ebkernel`, header-only/`inline`,
@@ -485,11 +485,11 @@ when v1 lands)*
   pre-refactor source**; per-scope `eref` running-max; `>1e-16` ERR guard) + `sweepDomain`/
   `sweepRegion`. (2) **`EnergyBalanceRecorder` refactored** to call the kernel (anon namespace
   deleted, scalar+Vector members -> one `model_acc` + `std::vector<EnergyAccumulator>
-  region_acc`); `response` column layout + values byte-faithful. (3) **`mpcol::EnergyBalanceSource`**
-  (`MPCOL_DomainResults.{h,cpp}`) — whole-model `ids()=={0}` -> `ON_DOMAIN`; per-region
+  region_acc`); `response` column layout + values byte-faithful. (3) **`ladruno::EnergyBalanceSource`**
+  (`Ladruno_DomainResults.{h,cpp}`) — whole-model `ids()=={0}` -> `ON_DOMAIN`; per-region
   `ids()==tags` -> `ON_REGIONS`; carries cross-step accumulator state;
   `requiresPartitionReduction()==true` (v3b stub). (4) **`ResultFamily::OnRegions`**
-  (`MPCOL_Sinks`); `StreamingSink` family-agnostic. (5) **Drive loop**: `initDomainSources()`
+  (`Ladruno_Sinks`); `StreamingSink` family-agnostic. (5) **Drive loop**: `initDomainSources()`
   (from `writeModel()` after node/element, post-`clearSources()` -> multi-stage safe) +
   `recordResultsOnDomain()` (from `record()`). (6) **Parser `-G energy <regionTag...>`**
   (`opt_global`); region tags read with `OPS_GetIntInput` (+`OPS_ResetCurrentInputArg`), NOT

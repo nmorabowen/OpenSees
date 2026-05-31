@@ -16,7 +16,7 @@ tags:
 > 2026-05-30 for porting the Kadapa (2018) quadratic Bézier triangle into the
 > `ladruno` fork. The draft implementation lives in the **separate** `bezierFEM`
 > repo (`opensees implementation/BezierTri6.{h,cpp}`, `OPS_BezierTri6.cpp`); this
-> ADR governs landing it in the fork. Companions: [[mpco_ladruno_element_contract]]
+> ADR governs landing it in the fork. Companions: [[ladruno_element_contract]]
 > (recorder side — already satisfied via `basisInfo`), [[Ladruno_explicit_roadmap]]
 > (the explicit integrator this element feeds), and [[project_bezier_element]] (the
 > ordering decision and repo layout).
@@ -93,7 +93,7 @@ No new external dependency; no `Ladruno_internal/01_compilation_journal` entry n
 | **D4** | **Lumped mass is the default**; consistent via `-cMass`. | The element's reason to exist (explicit dynamics); matches FourNodeQuad. | **Behavior change** vs the first draft (was consistent-only). `eigen`/dynamics results change unless `-cMass`. |
 | **D5** | **B-bar restricted to PlaneStrain/3D**; guarded off (warn) for PlaneStress. | Eq. 45 `/3` deviatoric split assumes an out-of-plane constraint; plane stress has no volumetric locking. | `-bbar` + `PlaneStress` silently disables B-bar with a warning. |
 | **D6** | **Loads via SelfWeight + constructor body force** (FourNodeQuad idiom). | Lets gravity ramp through a load pattern / time series. | `addLoad` supports only `LOAD_TAG_SelfWeight`; other `eleLoad` types return −1. |
-| **D7** | **Recorder integration via the element contract** (`basisInfo` family=bernstein, rational=0). | Self-declaring; zero recorder-side code (see [[mpco_ladruno_element_contract]]). | Recorder records correct GP coords; no Lagrange-fallback mis-placement. |
+| **D7** | **Recorder integration via the element contract** (`basisInfo` family=bernstein, rational=0). | Self-declaring; zero recorder-side code (see [[ladruno_element_contract]]). | Recorder records correct GP coords; no Lagrange-fallback mis-placement. |
 | **D8** | **Home = the `ladruno` fork** (not upstream PR, not standalone plugin). | First-class integration with the fork's recorder + explicit roadmap; no upstream review latency. | Fork-local `ELE_TAG`, namespace freedom; **no upstream-diff discipline** — revisit if/when upstreaming. |
 | **D9** | **v1 = straight-sided only** (P = X). | Eq. 14 Dirichlet mapping is trivial, 3-pt quadrature is exact, BCs are interpolatory — correct and simple now. | **Must guard:** warn/reject if a mid-edge node is not at the edge midpoint (a curved mesh v1 is not validated for). Curved geometry + Eq. 14 is a follow-up ADR. |
 | **D10** | **Tri6 only in this ADR.** | Land and validate the 2D triangle first; lowest risk. | Bézier **Tet10** (Kadapa §5), rational/NURBS, and higher order each get their own ADR built on this recipe. |

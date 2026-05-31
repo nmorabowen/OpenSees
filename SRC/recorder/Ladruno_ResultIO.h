@@ -1,8 +1,8 @@
 /* ********************************************************************** **
-**  MPCO_Ladruno recorder — modular sibling of MPCORecorder (frozen).     **
-**  MPCOL_ResultIO.h — the Source / Sink contract.                        **
+**  Ladruno recorder — modular sibling of MPCORecorder (frozen).     **
+**  Ladruno_ResultIO.h — the Source / Sink contract.                        **
 **                                                                        **
-**  The core abstraction of the Ladruno recorder (ADR 03_mpco_ladruno):   **
+**  The core abstraction of the Ladruno recorder (ADR 03_ladruno_recorder): **
 **  split *what to compute* (ResultSource) from *how to persist*          **
 **  (ResultSink). Node, element, and domain results all implement         **
 **  ResultSource; StreamingSink and EnvelopeSink are the two persistence  **
@@ -10,15 +10,15 @@
 **  all three families instead of being bolted on per-family.            **
 ** ********************************************************************** */
 
-#ifndef MPCOL_ResultIO_h
-#define MPCOL_ResultIO_h
+#ifndef Ladruno_ResultIO_h
+#define Ladruno_ResultIO_h
 
-#include "MPCOL_Types.h"
+#include "Ladruno_Types.h"
 
 #include <string>
 #include <vector>
 
-namespace mpcol {
+namespace ladruno {
 
 	// Self-describing column metadata for one result (schema v1 §7.1/§7.2).
 	struct ResultSchema {
@@ -28,8 +28,8 @@ namespace mpcol {
 		std::string dimension;       // "L", "F", "F*L", ...
 		std::string description;
 		int num_components = 0;
-		mpco::ResultType::Enum result_type = mpco::ResultType::Generic;
-		mpco::ResultDataType::Enum data_type = mpco::ResultDataType::Scalar;
+		detail::ResultType::Enum result_type = detail::ResultType::Generic;
+		detail::ResultDataType::Enum data_type = detail::ResultDataType::Scalar;
 	};
 
 	/*
@@ -51,7 +51,7 @@ namespace mpcol {
 
 		// Fill `buffer` (resized by the source) with this step's values,
 		// row-major over ids() x num_components.
-		virtual void evaluate(const mpco::ProcessInfo& info,
+		virtual void evaluate(const detail::ProcessInfo& info,
 		                      std::vector<double>& buffer) = 0;
 
 		// Parallel routing (ADR D6): true for additive/global quantities that need a
@@ -74,17 +74,17 @@ namespace mpcol {
 
 		// Create groups + the ID dataset for this source's result. Called once when
 		// the recorder first records, and again on a new MODEL_STAGE.
-		virtual void begin(mpco::ProcessInfo& info, const ResultSource& src) = 0;
+		virtual void begin(detail::ProcessInfo& info, const ResultSource& src) = 0;
 
 		// Persist one step's buffer (already partition-reduced if required).
-		virtual void accept(mpco::ProcessInfo& info, const ResultSource& src,
+		virtual void accept(detail::ProcessInfo& info, const ResultSource& src,
 		                    const std::vector<double>& buffer) = 0;
 
 		// Flush any deferred datasets (envelope writes its accumulators here).
 		// Called on stage change, periodically, and at recorder teardown.
-		virtual void finalize(mpco::ProcessInfo& info) = 0;
+		virtual void finalize(detail::ProcessInfo& info) = 0;
 	};
 
-} // namespace mpcol
+} // namespace ladruno
 
-#endif // MPCOL_ResultIO_h
+#endif // Ladruno_ResultIO_h

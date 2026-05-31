@@ -48,7 +48,7 @@ def _chunked(g: h5py.Group, slabs, steps, times) -> None:
 def build(path: str) -> None:
     with h5py.File(path, "w") as f:
         info = f.create_group("INFO")
-        _s(info, "GENERATOR", "MPCO_Ladruno")
+        _s(info, "GENERATOR", "Ladruno")
         info.attrs["FORMAT_VERSION"] = 1
         _s(info, "SOLVER_NAME", "OpenSees")
         info.attrs["SOLVER_VERSION"] = np.array([3, 5, 1], dtype=np.int32)

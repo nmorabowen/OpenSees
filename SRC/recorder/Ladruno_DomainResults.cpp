@@ -1,6 +1,6 @@
 /* ********************************************************************** **
-**  MPCO_Ladruno recorder — modular sibling of MPCORecorder (frozen).     **
-**  MPCOL_DomainResults.cpp — DOMAIN / REGION ResultSource impls (ADR D8). **
+**  Ladruno recorder — modular sibling of MPCORecorder (frozen).     **
+**  Ladruno_DomainResults.cpp — DOMAIN / REGION ResultSource impls (ADR D8). **
 **                                                                        **
 **  EnergyBalanceSource computes the energy balance through the shared     **
 **  ebkernel math (EnergyBalanceKernel.h), so its numerical output matches **
@@ -8,7 +8,7 @@
 **  the HDF5 layer; persistence is the sink's job (StreamingSink).         **
 ** ********************************************************************** */
 
-#include "MPCOL_DomainResults.h"
+#include "Ladruno_DomainResults.h"
 
 #include "EnergyBalanceKernel.h"
 
@@ -19,7 +19,7 @@
 
 #include <cstddef>
 
-namespace mpcol {
+namespace ladruno {
 
 	// Size a scratch vector to the largest element DOF count in the domain so
 	// the per-entity sweep performs no per-call allocation (mirrors the
@@ -44,7 +44,7 @@ namespace mpcol {
 	/* EnergyBalanceSource                                                   */
 	/* ===================================================================== */
 
-	EnergyBalanceSource::EnergyBalanceSource(const mpco::ProcessInfo& /*info*/)
+	EnergyBalanceSource::EnergyBalanceSource(const detail::ProcessInfo& /*info*/)
 		: m_per_region(false)
 		, m_ids()
 		, m_schema()
@@ -58,7 +58,7 @@ namespace mpcol {
 		buildSchema();
 	}
 
-	EnergyBalanceSource::EnergyBalanceSource(const mpco::ProcessInfo& /*info*/,
+	EnergyBalanceSource::EnergyBalanceSource(const detail::ProcessInfo& /*info*/,
 	                                         const std::vector<int>& region_tags)
 		: m_per_region(true)
 		, m_ids(region_tags)
@@ -81,11 +81,11 @@ namespace mpcol {
 		m_schema.dimension = "F*L";
 		m_schema.description = "Structural-dynamics energy balance "
 			"(kinetic/internal/damping/load-work + closure residual)";
-		m_schema.data_type = mpco::ResultDataType::Vectorial;
-		m_schema.result_type = mpco::ResultType::Generic;
+		m_schema.data_type = detail::ResultDataType::Vectorial;
+		m_schema.result_type = detail::ResultType::Generic;
 	}
 
-	void EnergyBalanceSource::evaluate(const mpco::ProcessInfo& info,
+	void EnergyBalanceSource::evaluate(const detail::ProcessInfo& info,
 	                                   std::vector<double>& buffer)
 	{
 		const size_t ncomp = (size_t)m_schema.num_components;
@@ -128,4 +128,4 @@ namespace mpcol {
 		m_prev_time = info.current_time_step;
 	}
 
-} // namespace mpcol
+} // namespace ladruno

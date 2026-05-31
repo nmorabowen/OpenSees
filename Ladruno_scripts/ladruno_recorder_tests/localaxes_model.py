@@ -12,7 +12,7 @@ now answers the Ladruno "localAxes" setResponse (id 30):
 
 With `-kind transient` we also exercise the KIND stage attribute.
 
-    recorder mpcoLadruno -> localaxes.ladruno
+    recorder ladruno -> localaxes.ladruno
 
 Run with the BUILD python (no boot .pth):
     python localaxes_model.py <dir_with_opensees_pyd> [out_dir]
@@ -67,7 +67,7 @@ ops.beamIntegration("Legendre", 1, 1, 3)
 ops.element("dispBeamColumn", 2, 3, 4, 1, 1)
 ops.element("forceBeamColumn", 3, 5, 6, 1, 1)
 
-ops.recorder("mpcoLadruno", new, "-N", "displacement", "-kind", "transient",
+ops.recorder("ladruno", new, "-N", "displacement", "-kind", "transient",
              "-T", "dt", 0.0)
 
 ops.timeSeries("Linear", 1)

@@ -58,22 +58,22 @@ if(HDF5_FOUND)
       target_sources(OPS_Recorder
         PRIVATE
           MPCORecorder.cpp
-          MPCORecorderLadruno.cpp
-          MPCOL_NodeResults.cpp
-          MPCOL_ElementResults.cpp
-          MPCOL_DomainResults.cpp
-          MPCOL_Sinks.cpp
+          LadrunoRecorder.cpp
+          Ladruno_NodeResults.cpp
+          Ladruno_ElementResults.cpp
+          Ladruno_DomainResults.cpp
+          Ladruno_Sinks.cpp
           VTKHDF_Recorder.cpp
         PUBLIC
          MPCORecorder.h
-         MPCORecorderLadruno.h
-         MPCOL_Types.h
-         MPCOL_Hdf5.h
-         MPCOL_ResultIO.h
-         MPCOL_NodeResults.h
-         MPCOL_ElementResults.h
-         MPCOL_DomainResults.h
-         MPCOL_Sinks.h
+         LadrunoRecorder.h
+         Ladruno_Types.h
+         Ladruno_Hdf5.h
+         Ladruno_ResultIO.h
+         Ladruno_NodeResults.h
+         Ladruno_ElementResults.h
+         Ladruno_DomainResults.h
+         Ladruno_Sinks.h
          EnergyBalanceKernel.h
          VTKHDF_Recorder.h
       )

@@ -1,4 +1,4 @@
-"""Parallel (openseesmp / interpreter-per-rank) MPCO_Ladruno output gate -- model.
+"""Parallel (openseesmp / interpreter-per-rank) Ladruno output gate -- model.
 
 Each MPI rank builds its own piece of a 3-truss frame (the canonical OpenSeesMP
 manual-partition example) and adds the SAME recorder command. The point of the
@@ -66,7 +66,7 @@ else:
     ops.element("Truss", 100 + pid, base * 10 + 2, 4, 5.0, 1)
 
 out = os.path.join(OUT, "mp_out.ladruno")
-ops.recorder("mpcoLadruno", out, "-N", "displacement", "-kind", "transient",
+ops.recorder("ladruno", out, "-N", "displacement", "-kind", "transient",
              "-T", "dt", 0.0)
 
 ops.constraints("Transformation")

@@ -1336,7 +1336,7 @@ Response *BezierTri6::setResponse(const char **argv, int argc,
     Response *theResponse = 0;
 
     // ═══════════════════════════════════════════════════════════════
-    //  MPCO_Ladruno geometry self-declaration (element contract Part A)
+    //  the Ladruno recorder geometry self-declaration (element contract Part A)
     //
     //  These probes are answered BEFORE the ElementOutput block so they
     //  emit top-level tags (ElementBasis), not nested under ElementOutput.
@@ -1613,7 +1613,7 @@ int BezierTri6::getResponse(int responseID, Information &eleInfo)
         return eleInfo.setVector(pressVec);
     }
 
-    // ─── MPCO_Ladruno geometry probes (element contract Part A) ──
+    // ─── the Ladruno recorder geometry probes (element contract Part A) ──
     case 101:
         // basisInfo sentinel — metadata was emitted via the stream in
         // setResponse; nothing to fill here.

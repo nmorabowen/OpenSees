@@ -1,16 +1,17 @@
-#ifndef MPCOL_Types_h
-#define MPCOL_Types_h
+#ifndef Ladruno_Types_h
+#define Ladruno_Types_h
 
 /*************************************************************************************
 
-MPCOL_Types.h
+Ladruno_Types.h
 
 Reusable type/utility layer ported VERBATIM from MPCORecorder.cpp (frozen).
-Every symbol is wrapped in `namespace mpcol { ... }` so this header can be
+Every symbol is wrapped in `namespace ladruno { ... }` so this header can be
 linked into the SAME binary as the frozen MPCORecorder.cpp without ODR /
-duplicate-symbol clashes against its identical `namespace utils`/`mpco` symbols.
+duplicate-symbol clashes against its identical `namespace utils`/`mpco` symbols
+(the frozen file's inner namespace; ours is `ladruno::detail`).
 
-Context: in this build the macro MPCO_HDF5_LOADED_AT_RUNTIME is NEVER defined,
+Context: in this build the macro LADRUNO_HDF5_LOADED_AT_RUNTIME is NEVER defined,
 so HDF5 is linked normally via #include "hdf5.h". The runtime-load machinery
 (LibraryLoader / ptr_H5*) was COMPILED OUT and is intentionally NOT ported.
 
@@ -36,11 +37,11 @@ so HDF5 is linked normally via #include "hdf5.h". The runtime-load machinery
 
 // opensees
 #include "OPS_Globals.h" // for opserr
-#include "Vector.h"      // used by utils::locax, utils::misc, mpco::ProcessInfo
-#include "Domain.h"      // used by mpco::ProcessInfo
+#include "Vector.h"      // used by utils::locax, utils::misc, detail::ProcessInfo
+#include "Domain.h"      // used by detail::ProcessInfo
 #include "classTags.h"   // ELE_TAG_* used by utils::shell::isShellElementTag
 
-namespace mpcol {
+namespace ladruno {
 
 	// replaces the original `#define HID_INVALID -1`
 	inline constexpr hid_t HID_INVALID = -1;
@@ -299,10 +300,10 @@ namespace utils {
 
 }
 
-#define MPCO_MAKE_STRING(X) (mpcol::utils::strings::concatenator() << X).ss.str()
+#define LADRUNO_MAKE_STRING(X) (ladruno::utils::strings::concatenator() << X).ss.str()
 
 /*utilities for element results. need to stay here before the h5 namespace*/
-namespace mpco {
+namespace detail {
 
 	namespace element {
 
@@ -355,8 +356,8 @@ namespace mpco {
 				if (fibers.size() < other.fibers.size()) return true;
 				if (fibers.size() > other.fibers.size()) return false;
 				for (size_t i = 0; i < fibers.size(); i++) {
-					const mpco::element::FiberData &a = fibers[i];
-					const mpco::element::FiberData &b = other.fibers[i];
+					const detail::element::FiberData &a = fibers[i];
+					const detail::element::FiberData &b = other.fibers[i];
 					if (a < b) return true;
 					if (a > b) return false;
 				}
@@ -374,8 +375,8 @@ namespace mpco {
 				if (fibers.size() > other.fibers.size()) return true;
 				if (fibers.size() < other.fibers.size()) return false;
 				for (size_t i = 0; i < fibers.size(); i++) {
-					const mpco::element::FiberData &a = fibers[i];
-					const mpco::element::FiberData &b = other.fibers[i];
+					const detail::element::FiberData &a = fibers[i];
+					const detail::element::FiberData &b = other.fibers[i];
 					if (a > b) return true;
 					if (a < b) return false;
 				}
@@ -418,8 +419,8 @@ namespace mpco {
 
 }
 
-/*mpco enums*/
-namespace mpco {
+/*ladruno enums*/
+namespace detail {
 
 	struct ResultType {
 		enum Enum {
@@ -539,13 +540,13 @@ namespace mpco {
 			Material
 		};
 
-		static const char* toString(mpco::ElementOutputDescriptorType::Enum _type) {
+		static const char* toString(detail::ElementOutputDescriptorType::Enum _type) {
 			switch (_type) {
-			case mpco::ElementOutputDescriptorType::Element: return "ELEMENT";
-			case mpco::ElementOutputDescriptorType::Gauss: return "GAUSS";
-			case mpco::ElementOutputDescriptorType::Section: return "SECTION";
-			case mpco::ElementOutputDescriptorType::Fiber: return "FIBER";
-			case mpco::ElementOutputDescriptorType::Material: return "MATERIAL";
+			case detail::ElementOutputDescriptorType::Element: return "ELEMENT";
+			case detail::ElementOutputDescriptorType::Gauss: return "GAUSS";
+			case detail::ElementOutputDescriptorType::Section: return "SECTION";
+			case detail::ElementOutputDescriptorType::Fiber: return "FIBER";
+			case detail::ElementOutputDescriptorType::Material: return "MATERIAL";
 			default:
 				return "UnknownOutput";
 			}
@@ -553,8 +554,8 @@ namespace mpco {
 	};
 }
 
-/*mpco utilities*/
-namespace mpco {
+/*ladruno utilities*/
+namespace detail {
 
 	/*
 	holds information for output frequency
@@ -593,7 +594,7 @@ namespace mpco {
 		}
 		inline void stop() {
 			m_t1 = clock();
-			std::cout << "          MPCORecorder. Task = \"" << m_task_name << "\". Elapsed time: " << double(m_t1 - m_t0) / double(CLOCKS_PER_SEC) << "\n";
+			std::cout << "          LadrunoRecorder. Task = \"" << m_task_name << "\". Elapsed time: " << double(m_t1 - m_t0) / double(CLOCKS_PER_SEC) << "\n";
 		}
 	private:
 		std::string m_task_name;
@@ -615,9 +616,9 @@ namespace mpco {
 			// some handles in the hdf5 file
 			, h_file_id(HID_INVALID)
 			, h_file_proplist(HID_INVALID)
-#ifdef MPCO_USE_SWMR
+#ifdef LADRUNO_USE_SWMR
 			, h_file_acc_proplist(HID_INVALID)
-#endif // MPCO_USE_SWMR
+#endif // LADRUNO_USE_SWMR
 			, h_group_proplist(HID_INVALID)
 			// time step info
 			, current_time_step_id(0)
@@ -636,9 +637,9 @@ namespace mpco {
 		// some handles in the hdf5 file
 		hid_t h_file_id;
 		hid_t h_file_proplist;
-#ifdef MPCO_USE_SWMR
+#ifdef LADRUNO_USE_SWMR
 		hid_t h_file_acc_proplist;
-#endif // MPCO_USE_SWMR
+#endif // LADRUNO_USE_SWMR
 		hid_t h_group_proplist;
 		// time step info
 		int current_time_step_id;
@@ -652,6 +653,6 @@ namespace mpco {
 
 }
 
-} // namespace mpcol
+} // namespace ladruno
 
-#endif // MPCOL_Types_h
+#endif // Ladruno_Types_h

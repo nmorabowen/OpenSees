@@ -237,7 +237,7 @@ EnergyBalanceRecorder::~EnergyBalanceRecorder()
 
 // NOTE (ADR D8): the per-entity energy math (addElementEnergy / addNodeEnergy)
 // and the per-scope trapezoidal/closure arithmetic now live in ONE place,
-// ebkernel (EnergyBalanceKernel.h), shared with mpcol::EnergyBalanceSource.
+// ebkernel (EnergyBalanceKernel.h), shared with ladruno::EnergyBalanceSource.
 // This recorder calls ebkernel::addElementEnergy / addNodeEnergy in the sweep
 // below and ebkernel::EnergyAccumulator::step() for the integration + closure.
 

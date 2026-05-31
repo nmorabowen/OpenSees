@@ -1,5 +1,5 @@
 ---
-title: MPCO_Ladruno — standard-rule QUADRATURE + GLOBAL_GP_COORDS + NDIR plan
+title: Ladruno — standard-rule QUADRATURE + GLOBAL_GP_COORDS + NDIR plan
 project: Ladruno
 status: plan
 owner: nmora
@@ -36,12 +36,12 @@ which already has the BezierTri6 bucket-as-group + `basisInfo` probe via PR #18)
 - NDIR = **introduce now**.
 
 ## Steps
-1. `MPCOL_ElementResults.h`: `getStandardQuadrature(rule, gp_param, gp_weight, num_gp, ndir)` — switch on
+1. `Ladruno_ElementResults.h`: `getStandardQuadrature(rule, gp_param, gp_weight, num_gp, ndir)` — switch on
    the rule enum returning hardcoded abscissae/weights. v1 coverage: line 1/2/3-pt, quad 1/4/9-pt,
    hex 1/8/27-pt, tri 1/3/4-pt, tet 4-pt.
-2. `MPCOL_ElementResults.h`: `computeGlobalGP(...)` — C++ mirror of `ladruno_basis.reconstruct_global`
+2. `Ladruno_ElementResults.h`: `computeGlobalGP(...)` — C++ mirror of `ladruno_basis.reconstruct_global`
    for v1 topologies (lagrange line/quad/hex tensor + tri/tet linear barycentric).
-3. `MPCORecorderLadruno.cpp::writeModelElements`: resolve `(num_gp,ndir,gp_param,gp_weight)` once (custom →
+3. `LadrunoRecorder.cpp::writeModelElements`: resolve `(num_gp,ndir,gp_param,gp_weight)` once (custom →
    standard → none); always write `NDIR`+`NUM_GP`+`QUADRATURE` when a rule resolves; compute+write
    `GLOBAL_GP_COORDS` (skip for topologies the evaluator can't do — see R3). No change to value channels.
 4. `ladruno_format.py`: reader reads `NDIR`, `GLOBAL_GP_COORDS` optional; validator uses `NDIR` not
@@ -57,9 +57,9 @@ which already has the BezierTri6 bucket-as-group + `basisInfo` probe via PR #18)
 ## Progress
 
 - **Step A DONE / merged (PR #23):** `getStandardQuadrature(...)` table in
-  `MPCOL_ElementResults.h` (line/quad/tri/tet/hex GL rules; dormant until Step B).
+  `Ladruno_ElementResults.h` (line/quad/tri/tet/hex GL rules; dormant until Step B).
 - **Step B DONE (this branch `feature/mpco-step-b-global-gp`):**
-  - `computeGlobalGP(...)` added to `MPCOL_ElementResults.h` — write-side basis
+  - `computeGlobalGP(...)` added to `Ladruno_ElementResults.h` — write-side basis
     evaluator `x(ξ)=ΣN_i(ξ)X_i` for line2/quad4/quad9/tri3/tet4/hex8, shape
     functions verified against each element source (FourNodeQuad CCW, NineNodeQuad
     biquadratic Lagrange, Brick/`shp3d` trilinear node order, Tri31 `N0=ξ,N1=η,N2=1-ξ-η`,
@@ -126,4 +126,4 @@ which already has the BezierTri6 bucket-as-group + `basisInfo` probe via PR #18)
   decoupled, decide whether tri/tet ORDER stays total-degree `[p]` (len 1) while NDIR carries dim. The
   landed `bezier_check.py` asserts `ORDER==(2,2)`; changing the convention touches that expectation.
 - R2 tri 4-pt negative centroid weight sign/scaling; R4 Tet10 rule (read TenNodeTetrahedron.cpp, likely
-  defer); R5 confirm `MPCOL_Hdf5.h` rank-3 support else store `[nElem×nGP*ndim]` 2-D + documented reshape.
+  defer); R5 confirm `Ladruno_Hdf5.h` rank-3 support else store `[nElem×nGP*ndim]` 2-D + documented reshape.

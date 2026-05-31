@@ -26,7 +26,7 @@ CentralDifferenceLadruno (classTag 64) battery (CDL-1..10):
   CDL-7  criticalTimeStep() = le/c on a 1-element bar
   CDL-8  first-step correctness with nonzero v0/a0 (the legacy-CD differentiator)
   CDL-9  betaK trap: dt_cr collapses ~quadratically; alphaM stays benign
-  CDL-10 energy closure ~1% (GATED by the MPCO_Ladruno link blocker)
+  CDL-10 energy closure ~1% (GATED by the Ladruno link blocker)
   (CDL-1..9 require a rebuilt .pyd that registers CentralDifferenceLadruno.)
 """
 import sys, os, math
@@ -412,7 +412,7 @@ def test_cfl_enforce():
 #     (Ladruno_implementation/05_robust_central_difference.md). Test CDL-8
 #     (first-step correctness) and CDL-9 (betaK collapse + guard) are the
 #     differentiators vs the legacy CD classes. Test CDL-10 (energy closure)
-#     is gated by the MPCO_Ladruno link blocker -> skipped here.
+#     is gated by the Ladruno link blocker -> skipped here.
 #  These require a rebuilt opensees.pyd that registers CentralDifferenceLadruno;
 #  until the full link is unblocked they will FAIL with "integrator not found".
 # ===========================================================================
@@ -630,10 +630,10 @@ def test_cdl_betak_trap():
 
 
 # CDL-10. Energy closure ~1% via EnergyBalanceRecorder (multi-DOF).
-#         GATED by the MPCO_Ladruno link blocker -> recorded as skipped.
+#         GATED by the Ladruno link blocker -> recorded as skipped.
 def test_cdl_energy_closure():
     results.append(("CDL-10. energy closure (EnergyBalanceRecorder)", True,
-                    "SKIPPED - gated by the MPCO_Ladruno link blocker; runs once "
+                    "SKIPPED - gated by the Ladruno link blocker; runs once "
                     "the full link is restored."))
 
 

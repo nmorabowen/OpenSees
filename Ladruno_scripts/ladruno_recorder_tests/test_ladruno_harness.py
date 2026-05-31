@@ -1,4 +1,4 @@
-"""Self-tests for the MPCO_Ladruno test harness (runs today, no OpenSees build).
+"""Self-tests for the Ladruno test harness (runs today, no OpenSees build).
 
 These validate the *harness itself* against a synthetic spec-conformant file:
   - L2 validator accepts a conformant file and rejects targeted corruptions
@@ -73,7 +73,7 @@ def test_validator_catches_gp_param_shape(synth):
 
 def test_reader_info_and_stage(synth):
     with lf.LadrunoReader(synth) as r:
-        assert r.info()["GENERATOR"] == "MPCO_Ladruno"
+        assert r.info()["GENERATOR"] == "Ladruno"
         assert r.stages() == ["MODEL_STAGE[0]"]
         assert r.stage_attrs("MODEL_STAGE[0]")["KIND"] == "static"
 

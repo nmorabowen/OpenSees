@@ -1,6 +1,6 @@
 /* ********************************************************************** **
-**  MPCO_Ladruno recorder — modular sibling of MPCORecorder (frozen).     **
-**  MPCOL_Sinks.h — the two persistence sinks (Phase 2).                  **
+**  Ladruno recorder — modular sibling of MPCORecorder (frozen).     **
+**  Ladruno_Sinks.h — the two persistence sinks (Phase 2).                  **
 **                                                                        **
 **  StreamingSink — parity behavior: writes RESULTS/<family>/<name>/      **
 **    DATA/STEP_<k> per step under the active MODEL_STAGE. Mirrors the    **
@@ -10,21 +10,21 @@
 **    ARG_STEP accumulators (ADR D7) and writes ENVELOPES/<family>/<name> **
 **    at finalize (and on periodic flush), per MODEL_STAGE (schema §7.4). **
 **                                                                        **
-**  Both write ONLY through mpcol::h5::* (group navigation — opening an    **
+**  Both write ONLY through ladruno::h5::* (group navigation — opening an    **
 **  existing parent — uses the linked HDF5 C API directly; all *writes*   **
 **  go through the wrapper).                                              **
 ** ********************************************************************** */
 
-#ifndef MPCOL_Sinks_h
-#define MPCOL_Sinks_h
+#ifndef Ladruno_Sinks_h
+#define Ladruno_Sinks_h
 
-#include "MPCOL_ResultIO.h"
-#include "MPCOL_Types.h"
+#include "Ladruno_ResultIO.h"
+#include "Ladruno_Types.h"
 
 #include <string>
 #include <vector>
 
-namespace mpcol {
+namespace ladruno {
 
 	/*
 	Which RESULTS sub-tree a sink writes into. Mirrors the schema families
@@ -63,10 +63,10 @@ namespace mpcol {
 			: m_family(family), m_initialized(false) {}
 		~StreamingSink() override = default;
 
-		void begin(mpco::ProcessInfo& info, const ResultSource& src) override;
-		void accept(mpco::ProcessInfo& info, const ResultSource& src,
+		void begin(detail::ProcessInfo& info, const ResultSource& src) override;
+		void accept(detail::ProcessInfo& info, const ResultSource& src,
 		            const std::vector<double>& buffer) override;
-		void finalize(mpco::ProcessInfo& info) override;
+		void finalize(detail::ProcessInfo& info) override;
 
 		// New MODEL_STAGE / re-begin: forget that the group was created.
 		void reset() { m_initialized = false; }
@@ -103,22 +103,22 @@ namespace mpcol {
 			  m_result_type(0), m_data_type(0) {}
 		~EnvelopeSink() override = default;
 
-		void begin(mpco::ProcessInfo& info, const ResultSource& src) override;
-		void accept(mpco::ProcessInfo& info, const ResultSource& src,
+		void begin(detail::ProcessInfo& info, const ResultSource& src) override;
+		void accept(detail::ProcessInfo& info, const ResultSource& src,
 		            const std::vector<double>& buffer) override;
-		void finalize(mpco::ProcessInfo& info) override;
+		void finalize(detail::ProcessInfo& info) override;
 
 		// Periodic crash-safety rewrite of the envelope datasets (schema §7.4 /
 		// §7b). Identical payload to finalize(); separated so the recorder can
 		// call it on its flush cadence without semantic meaning of "stage done".
-		void flush(mpco::ProcessInfo& info);
+		void flush(detail::ProcessInfo& info);
 
 		// Drop all accumulators for a new MODEL_STAGE. Cheap (vector clears).
 		void reset();
 
 	private:
 		// shared writer for flush()/finalize()
-		void writeEnvelope(mpco::ProcessInfo& info);
+		void writeEnvelope(detail::ProcessInfo& info);
 
 	private:
 		ResultFamily::Enum m_family;
@@ -138,6 +138,6 @@ namespace mpcol {
 		std::vector<int> m_arg_step; // per-component step index of the abs-extreme
 	};
 
-} // namespace mpcol
+} // namespace ladruno
 
-#endif // MPCOL_Sinks_h
+#endif // Ladruno_Sinks_h

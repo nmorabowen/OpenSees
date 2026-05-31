@@ -1,11 +1,11 @@
-# MPCO_Ladruno test harness (test-first)
+# Ladruno test harness (test-first)
 
 The **executable form** of the `.ladruno` schema spec, written *before* the C++ recorder
 so the spec is validated and the implementers have a concrete target. Pure Python
 (h5py + numpy) — no OpenSees build needed.
 
-Specs this implements: [`../../Ladruno_implementation/mpco_ladruno_schema_v1.md`](../../Ladruno_implementation/mpco_ladruno_schema_v1.md)
-(layout) and the test plan in [`../../Ladruno_implementation/03_mpco_ladruno.md`](../../Ladruno_implementation/03_mpco_ladruno.md)
+Specs this implements: [`../../Ladruno_implementation/ladruno_schema_v1.md`](../../Ladruno_implementation/ladruno_schema_v1.md)
+(layout) and the test plan in [`../../Ladruno_implementation/03_ladruno_recorder.md`](../../Ladruno_implementation/03_ladruno_recorder.md)
 (§ Testing).
 
 ## Files
@@ -32,7 +32,7 @@ Specs this implements: [`../../Ladruno_implementation/mpco_ladruno_schema_v1.md`
   the synthetic fixture. ✅ 10/10 passing.
 - **Phase 1 gate:** the C++ skeleton's first (empty) file must pass `validate()`.
 - **Phase 3 gate (L1 parity):** `test_parity.py` runs a canonical model with **both**
-  `recorder mpco` and `recorder mpcoLadruno`, normalizes each
+  `recorder mpco` and `recorder ladruno`, normalizes each
   (`normalize_nodal`/`normalize_element` here; `STKO_to_python` for the legacy side), and
   asserts value equality to 1e-12. A component-name alias map handles the renames
   (`localForce`→`axial_force`, …).

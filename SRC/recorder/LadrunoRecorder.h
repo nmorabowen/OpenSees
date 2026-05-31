@@ -1,15 +1,15 @@
 /* ********************************************************************** **
-**  MPCO_Ladruno recorder — modular sibling of MPCORecorder (frozen).     **
-**  Phase-1 skeleton: registers `recorder mpcoLadruno`, writes a          **
+**  Ladruno recorder — modular sibling of MPCORecorder (frozen).     **
+**  Phase-1 skeleton: registers `recorder ladruno`, writes a          **
 **  schema-v1-valid .ladruno (INFO + MODEL_STAGE + MODEL/NODES). Node,    **
 **  element, domain results + envelopes land in later phases.            **
 **                                                                        **
-**  All reusable machinery lives in namespace mpcol (MPCOL_*.h) to avoid  **
+**  All reusable machinery lives in namespace ladruno (Ladruno_*.h) to avoid  **
 **  ODR clashes with the frozen MPCORecorder translation unit.            **
 ** ********************************************************************** */
 
-#ifndef MPCORecorderLadruno_h
-#define MPCORecorderLadruno_h
+#ifndef LadrunoRecorder_h
+#define LadrunoRecorder_h
 
 #include <Recorder.h>
 
@@ -17,13 +17,13 @@ class Domain;
 class Channel;
 class FEM_ObjectBroker;
 
-class MPCORecorderLadruno : public Recorder
+class LadrunoRecorder : public Recorder
 {
-	friend void* OPS_MPCOLadrunoRecorder();
+	friend void* OPS_LadrunoRecorder();
 
 public:
-	MPCORecorderLadruno();
-	~MPCORecorderLadruno();
+	LadrunoRecorder();
+	~LadrunoRecorder();
 
 	int record(int commitTag, double timeStamp);
 	virtual int restart(void);
@@ -63,4 +63,4 @@ private:
 	private_data* m_data;
 };
 
-#endif // MPCORecorderLadruno_h
+#endif // LadrunoRecorder_h

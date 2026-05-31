@@ -1,4 +1,4 @@
-"""Parallel MPCO_Ladruno output gate -- checker (venv python, h5py).
+"""Parallel Ladruno output gate -- checker (venv python, h5py).
 
 Given the expected partition count N and the output dir, assert:
   1. exactly N files "mp_out.part-0.ladruno" .. "mp_out.part-(N-1).ladruno" exist

@@ -148,7 +148,7 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • Explicit Noh–Bathe integrators (ExplicitBathe / LNVD)\n"
 "        • Queryable critical time step (dt_cr)\n"
 "        • BezierTri6 — quadratic Bézier triangle (Kadapa 2018)\n"
-"        • MPCO_Ladruno — modular .mpco recorder (namespace mpcol)\n"
+"        • Ladruno — modular HDF5 .ladruno recorder\n"
 "\n";
     // FEATURES-END
 

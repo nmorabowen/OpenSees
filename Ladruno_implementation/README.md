@@ -58,12 +58,12 @@ When starting a new plan, copy [[_template]] and rename.
 
 ## Plans
 
-- [[03_mpco_ladruno]] — **MPCO_Ladruno**: modular recorder fork (sibling of the frozen MPCORecorder), apeGmsh-native `.ladruno` schema, global + envelope results. (ADR, draft)
-  - [[mpco_ladruno_schema_v1]] — the on-disk HDF5 schema spec (self-describing BASIS/QUADRATURE for Bézier + Belytschko). (draft)
-  - [[mpco_ladruno_element_contract]] — the element-side `setResponse` contract elements implement to be recorded. (draft)
-- [[04_bezier_elements]] — **BezierTri6**: 6-node quadratic Bézier triangle (Kadapa 2018) — non-negative lumped mass for explicit dynamics + consistent B-bar. v1 = straight-sided Tri6, **merged** (`ELE_TAG 272`, PR #6); implements the [[mpco_ladruno_element_contract]]. (ADR)
+- [[03_ladruno_recorder]] — **Ladruno**: modular recorder fork (sibling of the frozen MPCORecorder), apeGmsh-native `.ladruno` schema, global + envelope results. (ADR, draft)
+  - [[ladruno_schema_v1]] — the on-disk HDF5 schema spec (self-describing BASIS/QUADRATURE for Bézier + Belytschko). (draft)
+  - [[ladruno_element_contract]] — the element-side `setResponse` contract elements implement to be recorded. (draft)
+- [[04_bezier_elements]] — **BezierTri6**: 6-node quadratic Bézier triangle (Kadapa 2018) — non-negative lumped mass for explicit dynamics + consistent B-bar. v1 = straight-sided Tri6, **merged** (`ELE_TAG 272`, PR #6); implements the [[ladruno_element_contract]]. (ADR)
   - [[bezier_apegmsh_integration]] — how apeGmsh meshes drive BezierTri6 (direct-drive today; typed-primitive deferred). Regression test: `Ladruno_scripts/bezier_tests/test_bezier_tri6.py`.
-- **Ladruno brick element(s)** — our own higher-order hexahedral element(s), the solid-side sibling of BezierTri6 (planned). Will implement the [[mpco_ladruno_element_contract]] for zero-edit MPCO_Ladruno recording, with non-negative lumped mass for explicit dynamics and B-bar/assumed-strain against volumetric locking. Scope/order TBD — plan doc to be written. (draft, no plan file yet)
+- **Ladruno brick element(s)** — our own higher-order hexahedral element(s), the solid-side sibling of BezierTri6 (planned). Will implement the [[ladruno_element_contract]] for zero-edit Ladruno recording, with non-negative lumped mass for explicit dynamics and B-bar/assumed-strain against volumetric locking. Scope/order TBD — plan doc to be written. (draft, no plan file yet)
 - [[ladruno_apegmsh_contract]] — **apeGmsh feature reference**: the fork-only features apeGmsh emits/reads, with the canonical command and apeGmsh touch-points for each. The companion to [[LEDGER_implementations]] (which is authoritative for tags + PRs). (reference)
 
 ## Companion folder

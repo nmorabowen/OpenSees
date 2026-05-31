@@ -1,5 +1,5 @@
 ---
-title: MPCO_Ladruno — session handoff (cold-resume map)
+title: Ladruno — session handoff (cold-resume map)
 project: Ladruno
 status: in-progress
 owner: nmora
@@ -9,17 +9,17 @@ tags:
   - recorder
 ---
 
-# MPCO_Ladruno — session handoff
+# Ladruno — session handoff
 
-Cold-resume map for the `mpcoLadruno` recorder. Deep detail in the `.claude`
-memory `project_mpco_ladruno.md`; design in [[03_mpco_ladruno]] (orig ADR) +
+Cold-resume map for the `ladruno` recorder. Deep detail in the `.claude`
+memory `project_mpco_ladruno.md`; design in [[03_ladruno_recorder]] (orig ADR) +
 [[07_adr_post_review_storage]] (post-review decisions); on-disk format in
-[[mpco_ladruno_schema_v1]]; in-flight work in [[06_quadrature_global_gp_plan]];
+[[ladruno_schema_v1]]; in-flight work in [[06_quadrature_global_gp_plan]];
 gotchas in [[LEDGER_quirks]].
 
 ## What it is
-A sibling recorder (`recorder mpcoLadruno` → `.ladruno` HDF5), apeGmsh-native,
-forked from the frozen `MPCORecorder` (untouched) and wrapped in `namespace mpcol`
+A sibling recorder (`recorder ladruno` → `.ladruno` HDF5), apeGmsh-native,
+forked from the frozen `MPCORecorder` (untouched) and wrapped in `namespace ladruno`
 (ODR-clean). Splits `ResultSource` (what to compute) from `ResultSink` (how to
 persist). Value channels reproduce the frozen recorder to 1e-12.
 
@@ -41,10 +41,10 @@ early); **D4** explicit `NDIR`; **D5** shared validator + hold `FORMAT_VERSION=1
 
 ## DONE — Steps A + B (merged/PR'd)
 **Step A (PR #23, merged):** `getStandardQuadrature(...)` table in
-`MPCOL_ElementResults.h`. **Step B (PR [#29](https://github.com/nmorabowen/OpenSees/pull/29),
+`Ladruno_ElementResults.h`. **Step B (PR [#29](https://github.com/nmorabowen/OpenSees/pull/29),
 branch `feature/mpco-step-b-global-gp` off current ladruno):**
 - `computeGlobalGP(...)` write-side basis evaluator (line2/quad4/quad9/tri3/tet4/hex8,
-  node orders verified vs element sources) in `MPCOL_ElementResults.h`.
+  node orders verified vs element sources) in `Ladruno_ElementResults.h`.
 - `writeModelElements` rewired: custom→`getStandardQuadrature`→none; writes
   `NDIR`+`NUM_GP`+`QUADRATURE` for ALL resolved rules + `GLOBAL_GP_COORDS`
   `[nElem×nGP*ndim]` (2-D).
@@ -68,7 +68,7 @@ Higher-order GLOBAL_GP_COORDS for all three source-verifiable elements:
 ## D3 chunked time-series DONE — PR #36
 `StreamingSink` now writes one chunked+shuffle+deflate `DATA[T×nIds×nComp]` dataset per
 result + `STEP[T]`/`TIME[T]` axes (was per-step `DATA/STEP_<k>`). New
-`MPCOL_Hdf5.h` `createTimeSeries3d`/`appendSlab3d`/`appendDouble1d`/`appendInt1d`. Reader
+`Ladruno_Hdf5.h` `createTimeSeries3d`/`appendSlab3d`/`appendDouble1d`/`appendInt1d`. Reader
 `ladruno_format.iter_step_slices` reads chunked-or-legacy transparently → chunked
 `.ladruno` still diffs 1e-12 vs per-step `.mpco`. `make_synthetic.py` emits chunked.
 Full regression green.

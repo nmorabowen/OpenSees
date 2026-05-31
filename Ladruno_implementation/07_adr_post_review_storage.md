@@ -1,9 +1,9 @@
 ---
-title: ADR — MPCO_Ladruno storage architecture, post adversarial review
+title: ADR — Ladruno storage architecture, post adversarial review
 project: Ladruno
 status: accepted
 date: 2026-05-30
-supersedes-parts-of: 03_mpco_ladruno.md
+supersedes-parts-of: 03_ladruno_recorder.md
 tags:
   - adr
   - recorder
@@ -11,12 +11,12 @@ tags:
   - decision
 ---
 
-# ADR — MPCO_Ladruno storage architecture (post adversarial review)
+# ADR — Ladruno storage architecture (post adversarial review)
 
 ## Context
 
-The `mpcoLadruno` recorder (a bespoke HDF5 sibling of the frozen `MPCORecorder`,
-ADR [[03_mpco_ladruno]]) reached working node+element value parity (1e-12, single
+The `ladruno` recorder (a bespoke HDF5 sibling of the frozen `MPCORecorder`,
+ADR [[03_ladruno_recorder]]) reached working node+element value parity (1e-12, single
 and multi-stage). Before investing further we ran a **6-lens adversarial review**
 (schema/geometry, HDF5 perf, parallel/MPI, reader ergonomics, maintainability,
 steelman-the-alternative) + a synthesis judge.
@@ -67,7 +67,7 @@ the sink seam; the apeGmsh reader co-versions its `STEP_<k>` loop to a hyperslab
 **Do it now**, while only the in-repo parity harness + co-developed reader depend on
 `STEP_<k>` — the migration only gets more expensive once a consumer ships against it.
 
-> **Implemented (PR #36):** `MPCOL_Hdf5.h` gained `createTimeSeries3d`/`appendSlab3d`
+> **Implemented (PR #36):** `Ladruno_Hdf5.h` gained `createTimeSeries3d`/`appendSlab3d`
 > + extensible 1-D `TIME`/`STEP` helpers; `StreamingSink::begin` creates the
 > `[0×nIds×nComp]` dataset + axes, `accept` appends one slab/step. All families flow
 > through the one sink seam. Reader (`ladruno_format.iter_step_slices`) reads chunked

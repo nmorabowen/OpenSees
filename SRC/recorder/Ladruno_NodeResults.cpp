@@ -1,8 +1,8 @@
 /* ********************************************************************** **
-**  MPCO_Ladruno recorder — modular sibling of MPCORecorder (frozen).     **
-**  MPCOL_NodeResults.cpp — NODAL ResultSource implementations (Phase 2). **
+**  Ladruno recorder — modular sibling of MPCORecorder (frozen).     **
+**  Ladruno_NodeResults.cpp — NODAL ResultSource implementations (Phase 2). **
 **                                                                        **
-**  Faithful port of the frozen `mpco::node` ResultRecorder subclasses    **
+**  Faithful port of the frozen `detail::node` ResultRecorder subclasses    **
 **  (MPCORecorder.cpp lines 1478-2594). Every evaluate() reproduces the   **
 **  corresponding frozen bufferResponse() byte-for-byte (1e-12 parity);   **
 **  every schema() reproduces the frozen ctor metadata. The group name    **
@@ -10,7 +10,7 @@
 **  (MODEL_STAGE[<id>]/RESULTS/ON_NODES/<GROUP>).                          **
 ** ********************************************************************** */
 
-#include "MPCOL_NodeResults.h"
+#include "Ladruno_NodeResults.h"
 
 // OPS_GetNumEigen() lives in the element API (frozen recorder uses it directly).
 #include "elementAPI.h"
@@ -24,10 +24,10 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-namespace mpcol {
+namespace ladruno {
 
 	// Build the frozen result-group name: MODEL_STAGE[<id>]/RESULTS/ON_NODES/<group>
-	static std::string makeResultName(const mpco::ProcessInfo& info, const std::string& group)
+	static std::string makeResultName(const detail::ProcessInfo& info, const std::string& group)
 	{
 		std::stringstream ss;
 		ss << "MODEL_STAGE[" << info.current_model_stage_id << "]/RESULTS/ON_NODES/" << group;
@@ -38,11 +38,11 @@ namespace mpcol {
 	/* NodeResultSource base                                                 */
 	/* ===================================================================== */
 
-	NodeResultSource::NodeResultSource(const mpco::ProcessInfo& info)
+	NodeResultSource::NodeResultSource(const detail::ProcessInfo& info)
 		: m_ndim(info.num_dimensions)
 	{
 		// Gather all nodes from the domain (frozen recorder default node set,
-		// matching MPCORecorderLadruno::writeModel()'s NodeIter walk).
+		// matching LadrunoRecorder::writeModel()'s NodeIter walk).
 		if (info.domain != 0) {
 			NodeIter& nit = info.domain->getNodes();
 			Node* nptr = 0;
@@ -51,13 +51,13 @@ namespace mpcol {
 		}
 	}
 
-	NodeResultSource::NodeResultSource(const mpco::ProcessInfo& info, const std::vector<int>& node_ids)
+	NodeResultSource::NodeResultSource(const detail::ProcessInfo& info, const std::vector<int>& node_ids)
 		: m_ndim(info.num_dimensions)
 		, m_ids(node_ids)
 	{
 	}
 
-	Node* NodeResultSource::getNode(const mpco::ProcessInfo& info, int tag) const
+	Node* NodeResultSource::getNode(const detail::ProcessInfo& info, int tag) const
 	{
 		if (info.domain == 0)
 			return 0;
@@ -68,9 +68,9 @@ namespace mpcol {
 	/* DisplacementSource                                                    */
 	/* ===================================================================== */
 
-	DisplacementSource::DisplacementSource(const mpco::ProcessInfo& info)
+	DisplacementSource::DisplacementSource(const detail::ProcessInfo& info)
 		: NodeResultSource(info) { build(); }
-	DisplacementSource::DisplacementSource(const mpco::ProcessInfo& info, const std::vector<int>& ids)
+	DisplacementSource::DisplacementSource(const detail::ProcessInfo& info, const std::vector<int>& ids)
 		: NodeResultSource(info, ids) { build(); }
 
 	void DisplacementSource::build()
@@ -81,24 +81,24 @@ namespace mpcol {
 		if (m_ndim == 1) {
 			m_schema.components_csv = "Ux";
 			m_schema.num_components = 1;
-			m_schema.data_type = mpco::ResultDataType::Scalar;
+			m_schema.data_type = detail::ResultDataType::Scalar;
 		}
 		else if (m_ndim == 2) {
 			m_schema.components_csv = "Ux,Uy";
 			m_schema.num_components = 2;
-			m_schema.data_type = mpco::ResultDataType::Vectorial;
+			m_schema.data_type = detail::ResultDataType::Vectorial;
 		}
 		else if (m_ndim == 3) {
 			m_schema.components_csv = "Ux,Uy,Uz";
 			m_schema.num_components = 3;
-			m_schema.data_type = mpco::ResultDataType::Vectorial;
+			m_schema.data_type = detail::ResultDataType::Vectorial;
 		}
 		m_schema.dimension = "L";
 		m_schema.description = "Nodal displacement field";
-		m_schema.result_type = mpco::ResultType::Generic;
+		m_schema.result_type = detail::ResultType::Generic;
 	}
 
-	void DisplacementSource::evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer)
+	void DisplacementSource::evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer)
 	{
 		buffer.assign(m_ids.size() * m_schema.num_components, 0.0);
 		for (size_t i = 0; i < m_ids.size(); i++) {
@@ -111,9 +111,9 @@ namespace mpcol {
 	/* RotationSource                                                        */
 	/* ===================================================================== */
 
-	RotationSource::RotationSource(const mpco::ProcessInfo& info)
+	RotationSource::RotationSource(const detail::ProcessInfo& info)
 		: NodeResultSource(info) { build(); }
-	RotationSource::RotationSource(const mpco::ProcessInfo& info, const std::vector<int>& ids)
+	RotationSource::RotationSource(const detail::ProcessInfo& info, const std::vector<int>& ids)
 		: NodeResultSource(info, ids) { build(); }
 
 	void RotationSource::build()
@@ -124,19 +124,19 @@ namespace mpcol {
 		if (m_ndim == 2) {
 			m_schema.components_csv = "Rz";
 			m_schema.num_components = 1;
-			m_schema.data_type = mpco::ResultDataType::Scalar;
+			m_schema.data_type = detail::ResultDataType::Scalar;
 		}
 		else {
 			m_schema.components_csv = "Rx,Ry,Rz";
 			m_schema.num_components = 3;
-			m_schema.data_type = mpco::ResultDataType::Vectorial;
+			m_schema.data_type = detail::ResultDataType::Vectorial;
 		}
 		m_schema.dimension = "A";
 		m_schema.description = "Nodal rotation field";
-		m_schema.result_type = mpco::ResultType::Generic;
+		m_schema.result_type = detail::ResultType::Generic;
 	}
 
-	void RotationSource::evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer)
+	void RotationSource::evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer)
 	{
 		buffer.assign(m_ids.size() * m_schema.num_components, 0.0);
 		for (size_t i = 0; i < m_ids.size(); i++) {
@@ -149,9 +149,9 @@ namespace mpcol {
 	/* VelocitySource                                                        */
 	/* ===================================================================== */
 
-	VelocitySource::VelocitySource(const mpco::ProcessInfo& info)
+	VelocitySource::VelocitySource(const detail::ProcessInfo& info)
 		: NodeResultSource(info) { build(); }
-	VelocitySource::VelocitySource(const mpco::ProcessInfo& info, const std::vector<int>& ids)
+	VelocitySource::VelocitySource(const detail::ProcessInfo& info, const std::vector<int>& ids)
 		: NodeResultSource(info, ids) { build(); }
 
 	void VelocitySource::build()
@@ -162,24 +162,24 @@ namespace mpcol {
 		if (m_ndim == 1) {
 			m_schema.components_csv = "Vx";
 			m_schema.num_components = 1;
-			m_schema.data_type = mpco::ResultDataType::Scalar;
+			m_schema.data_type = detail::ResultDataType::Scalar;
 		}
 		else if (m_ndim == 2) {
 			m_schema.components_csv = "Vx,Vy";
 			m_schema.num_components = 2;
-			m_schema.data_type = mpco::ResultDataType::Vectorial;
+			m_schema.data_type = detail::ResultDataType::Vectorial;
 		}
 		else if (m_ndim == 3) {
 			m_schema.components_csv = "Vx,Vy,Vz";
 			m_schema.num_components = 3;
-			m_schema.data_type = mpco::ResultDataType::Vectorial;
+			m_schema.data_type = detail::ResultDataType::Vectorial;
 		}
 		m_schema.dimension = "L/t";
 		m_schema.description = "Nodal velocity field";
-		m_schema.result_type = mpco::ResultType::Generic;
+		m_schema.result_type = detail::ResultType::Generic;
 	}
 
-	void VelocitySource::evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer)
+	void VelocitySource::evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer)
 	{
 		buffer.assign(m_ids.size() * m_schema.num_components, 0.0);
 		for (size_t i = 0; i < m_ids.size(); i++) {
@@ -192,9 +192,9 @@ namespace mpcol {
 	/* AngularVelocitySource                                                 */
 	/* ===================================================================== */
 
-	AngularVelocitySource::AngularVelocitySource(const mpco::ProcessInfo& info)
+	AngularVelocitySource::AngularVelocitySource(const detail::ProcessInfo& info)
 		: NodeResultSource(info) { build(); }
-	AngularVelocitySource::AngularVelocitySource(const mpco::ProcessInfo& info, const std::vector<int>& ids)
+	AngularVelocitySource::AngularVelocitySource(const detail::ProcessInfo& info, const std::vector<int>& ids)
 		: NodeResultSource(info, ids) { build(); }
 
 	void AngularVelocitySource::build()
@@ -205,19 +205,19 @@ namespace mpcol {
 		if (m_ndim == 2) {
 			m_schema.components_csv = "RVz";
 			m_schema.num_components = 1;
-			m_schema.data_type = mpco::ResultDataType::Scalar;
+			m_schema.data_type = detail::ResultDataType::Scalar;
 		}
 		else {
 			m_schema.components_csv = "RVx,RVy,RVz";
 			m_schema.num_components = 3;
-			m_schema.data_type = mpco::ResultDataType::Vectorial;
+			m_schema.data_type = detail::ResultDataType::Vectorial;
 		}
 		m_schema.dimension = "L/t*A";
 		m_schema.description = "Nodal angular velocity field";
-		m_schema.result_type = mpco::ResultType::Generic;
+		m_schema.result_type = detail::ResultType::Generic;
 	}
 
-	void AngularVelocitySource::evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer)
+	void AngularVelocitySource::evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer)
 	{
 		buffer.assign(m_ids.size() * m_schema.num_components, 0.0);
 		for (size_t i = 0; i < m_ids.size(); i++) {
@@ -230,9 +230,9 @@ namespace mpcol {
 	/* AccelerationSource                                                    */
 	/* ===================================================================== */
 
-	AccelerationSource::AccelerationSource(const mpco::ProcessInfo& info)
+	AccelerationSource::AccelerationSource(const detail::ProcessInfo& info)
 		: NodeResultSource(info) { build(); }
-	AccelerationSource::AccelerationSource(const mpco::ProcessInfo& info, const std::vector<int>& ids)
+	AccelerationSource::AccelerationSource(const detail::ProcessInfo& info, const std::vector<int>& ids)
 		: NodeResultSource(info, ids) { build(); }
 
 	void AccelerationSource::build()
@@ -243,24 +243,24 @@ namespace mpcol {
 		if (m_ndim == 1) {
 			m_schema.components_csv = "Ax";
 			m_schema.num_components = 1;
-			m_schema.data_type = mpco::ResultDataType::Scalar;
+			m_schema.data_type = detail::ResultDataType::Scalar;
 		}
 		else if (m_ndim == 2) {
 			m_schema.components_csv = "Ax,Ay";
 			m_schema.num_components = 2;
-			m_schema.data_type = mpco::ResultDataType::Vectorial;
+			m_schema.data_type = detail::ResultDataType::Vectorial;
 		}
 		else if (m_ndim == 3) {
 			m_schema.components_csv = "Ax,Ay,Az";
 			m_schema.num_components = 3;
-			m_schema.data_type = mpco::ResultDataType::Vectorial;
+			m_schema.data_type = detail::ResultDataType::Vectorial;
 		}
 		m_schema.dimension = "L/t^2";
 		m_schema.description = "Nodal acceleration field";
-		m_schema.result_type = mpco::ResultType::Generic;
+		m_schema.result_type = detail::ResultType::Generic;
 	}
 
-	void AccelerationSource::evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer)
+	void AccelerationSource::evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer)
 	{
 		buffer.assign(m_ids.size() * m_schema.num_components, 0.0);
 		for (size_t i = 0; i < m_ids.size(); i++) {
@@ -273,9 +273,9 @@ namespace mpcol {
 	/* AngularAccelerationSource                                             */
 	/* ===================================================================== */
 
-	AngularAccelerationSource::AngularAccelerationSource(const mpco::ProcessInfo& info)
+	AngularAccelerationSource::AngularAccelerationSource(const detail::ProcessInfo& info)
 		: NodeResultSource(info) { build(); }
-	AngularAccelerationSource::AngularAccelerationSource(const mpco::ProcessInfo& info, const std::vector<int>& ids)
+	AngularAccelerationSource::AngularAccelerationSource(const detail::ProcessInfo& info, const std::vector<int>& ids)
 		: NodeResultSource(info, ids) { build(); }
 
 	void AngularAccelerationSource::build()
@@ -286,19 +286,19 @@ namespace mpcol {
 		if (m_ndim == 2) {
 			m_schema.components_csv = "RAz";
 			m_schema.num_components = 1;
-			m_schema.data_type = mpco::ResultDataType::Scalar;
+			m_schema.data_type = detail::ResultDataType::Scalar;
 		}
 		else {
 			m_schema.components_csv = "RAx,RAy,RAz";
 			m_schema.num_components = 3;
-			m_schema.data_type = mpco::ResultDataType::Vectorial;
+			m_schema.data_type = detail::ResultDataType::Vectorial;
 		}
 		m_schema.dimension = "L/t^2*A";
 		m_schema.description = "Nodal angular acceleration field";
-		m_schema.result_type = mpco::ResultType::Generic;
+		m_schema.result_type = detail::ResultType::Generic;
 	}
 
-	void AngularAccelerationSource::evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer)
+	void AngularAccelerationSource::evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer)
 	{
 		buffer.assign(m_ids.size() * m_schema.num_components, 0.0);
 		for (size_t i = 0; i < m_ids.size(); i++) {
@@ -311,9 +311,9 @@ namespace mpcol {
 	/* PressureSource                                                        */
 	/* ===================================================================== */
 
-	PressureSource::PressureSource(const mpco::ProcessInfo& info)
+	PressureSource::PressureSource(const detail::ProcessInfo& info)
 		: NodeResultSource(info) { build(); }
-	PressureSource::PressureSource(const mpco::ProcessInfo& info, const std::vector<int>& ids)
+	PressureSource::PressureSource(const detail::ProcessInfo& info, const std::vector<int>& ids)
 		: NodeResultSource(info, ids) { build(); }
 
 	void PressureSource::build()
@@ -322,13 +322,13 @@ namespace mpcol {
 		m_schema.display_name = "Pressure";
 		m_schema.components_csv = "p";
 		m_schema.num_components = 1;
-		m_schema.data_type = mpco::ResultDataType::Scalar;
+		m_schema.data_type = detail::ResultDataType::Scalar;
 		m_schema.dimension = "F/L^2";
 		m_schema.description = "Nodal pressure field";
-		m_schema.result_type = mpco::ResultType::Generic;
+		m_schema.result_type = detail::ResultType::Generic;
 	}
 
-	void PressureSource::evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer)
+	void PressureSource::evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer)
 	{
 		buffer.assign(m_ids.size() * m_schema.num_components, 0.0);
 		// Pressure is the extra velocity DOF: idx 2 (2D u-p) or idx 3 (3D u-p).
@@ -356,10 +356,10 @@ namespace mpcol {
 	/* ReactionForceSource (+ inertia/Rayleigh variants)                     */
 	/* ===================================================================== */
 
-	ReactionForceSource::ReactionForceSource(const mpco::ProcessInfo& info)
+	ReactionForceSource::ReactionForceSource(const detail::ProcessInfo& info)
 		: NodeResultSource(info)
 	{ build("REACTION_FORCE", "Reaction Force", "Nodal reaction force field"); }
-	ReactionForceSource::ReactionForceSource(const mpco::ProcessInfo& info, const std::vector<int>& ids)
+	ReactionForceSource::ReactionForceSource(const detail::ProcessInfo& info, const std::vector<int>& ids)
 		: NodeResultSource(info, ids)
 	{ build("REACTION_FORCE", "Reaction Force", "Nodal reaction force field"); }
 
@@ -371,24 +371,24 @@ namespace mpcol {
 		if (m_ndim == 1) {
 			m_schema.components_csv = "RFx";
 			m_schema.num_components = 1;
-			m_schema.data_type = mpco::ResultDataType::Scalar;
+			m_schema.data_type = detail::ResultDataType::Scalar;
 		}
 		else if (m_ndim == 2) {
 			m_schema.components_csv = "RFx,RFy";
 			m_schema.num_components = 2;
-			m_schema.data_type = mpco::ResultDataType::Vectorial;
+			m_schema.data_type = detail::ResultDataType::Vectorial;
 		}
 		else if (m_ndim == 3) {
 			m_schema.components_csv = "RFx,RFy,RFz";
 			m_schema.num_components = 3;
-			m_schema.data_type = mpco::ResultDataType::Vectorial;
+			m_schema.data_type = detail::ResultDataType::Vectorial;
 		}
 		m_schema.dimension = "F";
 		m_schema.description = description;
-		m_schema.result_type = mpco::ResultType::Generic;
+		m_schema.result_type = detail::ResultType::Generic;
 	}
 
-	void ReactionForceSource::evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer)
+	void ReactionForceSource::evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer)
 	{
 		buffer.assign(m_ids.size() * m_schema.num_components, 0.0);
 		for (size_t i = 0; i < m_ids.size(); i++) {
@@ -397,19 +397,19 @@ namespace mpcol {
 		}
 	}
 
-	ReactionForceIncInertiaSource::ReactionForceIncInertiaSource(const mpco::ProcessInfo& info)
+	ReactionForceIncInertiaSource::ReactionForceIncInertiaSource(const detail::ProcessInfo& info)
 		: ReactionForceSource(info)
 	{ build("REACTION_FORCE_INCLUDING_INERTIA", "Reaction Force Including Inertia",
 	        "Nodal reaction force field including inertia"); }
-	ReactionForceIncInertiaSource::ReactionForceIncInertiaSource(const mpco::ProcessInfo& info, const std::vector<int>& ids)
+	ReactionForceIncInertiaSource::ReactionForceIncInertiaSource(const detail::ProcessInfo& info, const std::vector<int>& ids)
 		: ReactionForceSource(info, ids)
 	{ build("REACTION_FORCE_INCLUDING_INERTIA", "Reaction Force Including Inertia",
 	        "Nodal reaction force field including inertia"); }
 
-	RayleighForceSource::RayleighForceSource(const mpco::ProcessInfo& info)
+	RayleighForceSource::RayleighForceSource(const detail::ProcessInfo& info)
 		: ReactionForceSource(info)
 	{ build("RAYLEIGH_FORCE", "Rayleigh Force", "Nodal Rayleigh force field"); }
-	RayleighForceSource::RayleighForceSource(const mpco::ProcessInfo& info, const std::vector<int>& ids)
+	RayleighForceSource::RayleighForceSource(const detail::ProcessInfo& info, const std::vector<int>& ids)
 		: ReactionForceSource(info, ids)
 	{ build("RAYLEIGH_FORCE", "Rayleigh Force", "Nodal Rayleigh force field"); }
 
@@ -417,10 +417,10 @@ namespace mpcol {
 	/* ReactionMomentSource (+ inertia/Rayleigh variants)                    */
 	/* ===================================================================== */
 
-	ReactionMomentSource::ReactionMomentSource(const mpco::ProcessInfo& info)
+	ReactionMomentSource::ReactionMomentSource(const detail::ProcessInfo& info)
 		: NodeResultSource(info)
 	{ build("REACTION_MOMENT", "Reaction Moment", "Nodal reaction moment field"); }
-	ReactionMomentSource::ReactionMomentSource(const mpco::ProcessInfo& info, const std::vector<int>& ids)
+	ReactionMomentSource::ReactionMomentSource(const detail::ProcessInfo& info, const std::vector<int>& ids)
 		: NodeResultSource(info, ids)
 	{ build("REACTION_MOMENT", "Reaction Moment", "Nodal reaction moment field"); }
 
@@ -432,19 +432,19 @@ namespace mpcol {
 		if (m_ndim == 2) {
 			m_schema.components_csv = "RMz";
 			m_schema.num_components = 1;
-			m_schema.data_type = mpco::ResultDataType::Scalar;
+			m_schema.data_type = detail::ResultDataType::Scalar;
 		}
 		else {
 			m_schema.components_csv = "RMx,RMy,RMz";
 			m_schema.num_components = 3;
-			m_schema.data_type = mpco::ResultDataType::Vectorial;
+			m_schema.data_type = detail::ResultDataType::Vectorial;
 		}
 		m_schema.dimension = "F*L";
 		m_schema.description = description;
-		m_schema.result_type = mpco::ResultType::Generic;
+		m_schema.result_type = detail::ResultType::Generic;
 	}
 
-	void ReactionMomentSource::evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer)
+	void ReactionMomentSource::evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer)
 	{
 		buffer.assign(m_ids.size() * m_schema.num_components, 0.0);
 		for (size_t i = 0; i < m_ids.size(); i++) {
@@ -453,19 +453,19 @@ namespace mpcol {
 		}
 	}
 
-	ReactionMomentIncInertiaSource::ReactionMomentIncInertiaSource(const mpco::ProcessInfo& info)
+	ReactionMomentIncInertiaSource::ReactionMomentIncInertiaSource(const detail::ProcessInfo& info)
 		: ReactionMomentSource(info)
 	{ build("REACTION_MOMENT_INCLUDING_INERTIA", "Reaction Moment Including Inertia",
 	        "Nodal reaction moment field including inertia"); }
-	ReactionMomentIncInertiaSource::ReactionMomentIncInertiaSource(const mpco::ProcessInfo& info, const std::vector<int>& ids)
+	ReactionMomentIncInertiaSource::ReactionMomentIncInertiaSource(const detail::ProcessInfo& info, const std::vector<int>& ids)
 		: ReactionMomentSource(info, ids)
 	{ build("REACTION_MOMENT_INCLUDING_INERTIA", "Reaction Moment Including Inertia",
 	        "Nodal reaction moment field including inertia"); }
 
-	RayleighMomentSource::RayleighMomentSource(const mpco::ProcessInfo& info)
+	RayleighMomentSource::RayleighMomentSource(const detail::ProcessInfo& info)
 		: ReactionMomentSource(info)
 	{ build("RAYLEIGH_MOMENT", "Rayleigh Moment", "Nodal Rayleigh moment field"); }
-	RayleighMomentSource::RayleighMomentSource(const mpco::ProcessInfo& info, const std::vector<int>& ids)
+	RayleighMomentSource::RayleighMomentSource(const detail::ProcessInfo& info, const std::vector<int>& ids)
 		: ReactionMomentSource(info, ids)
 	{ build("RAYLEIGH_MOMENT", "Rayleigh Moment", "Nodal Rayleigh moment field"); }
 
@@ -473,10 +473,10 @@ namespace mpcol {
 	/* UnbalancedForceSource (+ IncInertia variant)                          */
 	/* ===================================================================== */
 
-	UnbalancedForceSource::UnbalancedForceSource(const mpco::ProcessInfo& info)
+	UnbalancedForceSource::UnbalancedForceSource(const detail::ProcessInfo& info)
 		: NodeResultSource(info)
 	{ build("UNBALANCED_FORCE", "Unbalanced Force", "Nodal unbalanced force field"); }
-	UnbalancedForceSource::UnbalancedForceSource(const mpco::ProcessInfo& info, const std::vector<int>& ids)
+	UnbalancedForceSource::UnbalancedForceSource(const detail::ProcessInfo& info, const std::vector<int>& ids)
 		: NodeResultSource(info, ids)
 	{ build("UNBALANCED_FORCE", "Unbalanced Force", "Nodal unbalanced force field"); }
 
@@ -488,24 +488,24 @@ namespace mpcol {
 		if (m_ndim == 1) {
 			m_schema.components_csv = "Fx";
 			m_schema.num_components = 1;
-			m_schema.data_type = mpco::ResultDataType::Scalar;
+			m_schema.data_type = detail::ResultDataType::Scalar;
 		}
 		else if (m_ndim == 2) {
 			m_schema.components_csv = "Fx,Fy";
 			m_schema.num_components = 2;
-			m_schema.data_type = mpco::ResultDataType::Vectorial;
+			m_schema.data_type = detail::ResultDataType::Vectorial;
 		}
 		else if (m_ndim == 3) {
 			m_schema.components_csv = "Fx,Fy,Fz";
 			m_schema.num_components = 3;
-			m_schema.data_type = mpco::ResultDataType::Vectorial;
+			m_schema.data_type = detail::ResultDataType::Vectorial;
 		}
 		m_schema.dimension = "F";
 		m_schema.description = description;
-		m_schema.result_type = mpco::ResultType::Generic;
+		m_schema.result_type = detail::ResultType::Generic;
 	}
 
-	void UnbalancedForceSource::evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer)
+	void UnbalancedForceSource::evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer)
 	{
 		buffer.assign(m_ids.size() * m_schema.num_components, 0.0);
 		for (size_t i = 0; i < m_ids.size(); i++) {
@@ -514,16 +514,16 @@ namespace mpcol {
 		}
 	}
 
-	UnbalancedForceIncInertiaSource::UnbalancedForceIncInertiaSource(const mpco::ProcessInfo& info)
+	UnbalancedForceIncInertiaSource::UnbalancedForceIncInertiaSource(const detail::ProcessInfo& info)
 		: UnbalancedForceSource(info)
 	{ build("UNBALANCED_FORCE_INCLUDING_INERTIA", "Unbalanced Force Including Inertia",
 	        "Nodal unbalanced force field including inertia"); }
-	UnbalancedForceIncInertiaSource::UnbalancedForceIncInertiaSource(const mpco::ProcessInfo& info, const std::vector<int>& ids)
+	UnbalancedForceIncInertiaSource::UnbalancedForceIncInertiaSource(const detail::ProcessInfo& info, const std::vector<int>& ids)
 		: UnbalancedForceSource(info, ids)
 	{ build("UNBALANCED_FORCE_INCLUDING_INERTIA", "Unbalanced Force Including Inertia",
 	        "Nodal unbalanced force field including inertia"); }
 
-	void UnbalancedForceIncInertiaSource::evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer)
+	void UnbalancedForceIncInertiaSource::evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer)
 	{
 		buffer.assign(m_ids.size() * m_schema.num_components, 0.0);
 		for (size_t i = 0; i < m_ids.size(); i++) {
@@ -536,10 +536,10 @@ namespace mpcol {
 	/* UnbalancedMomentSource (+ IncInertia variant)                         */
 	/* ===================================================================== */
 
-	UnbalancedMomentSource::UnbalancedMomentSource(const mpco::ProcessInfo& info)
+	UnbalancedMomentSource::UnbalancedMomentSource(const detail::ProcessInfo& info)
 		: NodeResultSource(info)
 	{ build("UNBALANCED_MOMENT", "Unbalanced Moment", "Nodal unbalanced moment field"); }
-	UnbalancedMomentSource::UnbalancedMomentSource(const mpco::ProcessInfo& info, const std::vector<int>& ids)
+	UnbalancedMomentSource::UnbalancedMomentSource(const detail::ProcessInfo& info, const std::vector<int>& ids)
 		: NodeResultSource(info, ids)
 	{ build("UNBALANCED_MOMENT", "Unbalanced Moment", "Nodal unbalanced moment field"); }
 
@@ -551,19 +551,19 @@ namespace mpcol {
 		if (m_ndim == 2) {
 			m_schema.components_csv = "Mz";
 			m_schema.num_components = 1;
-			m_schema.data_type = mpco::ResultDataType::Scalar;
+			m_schema.data_type = detail::ResultDataType::Scalar;
 		}
 		else {
 			m_schema.components_csv = "Mx,My,Mz";
 			m_schema.num_components = 3;
-			m_schema.data_type = mpco::ResultDataType::Vectorial;
+			m_schema.data_type = detail::ResultDataType::Vectorial;
 		}
 		m_schema.dimension = "F*L";
 		m_schema.description = description;
-		m_schema.result_type = mpco::ResultType::Generic;
+		m_schema.result_type = detail::ResultType::Generic;
 	}
 
-	void UnbalancedMomentSource::evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer)
+	void UnbalancedMomentSource::evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer)
 	{
 		buffer.assign(m_ids.size() * m_schema.num_components, 0.0);
 		for (size_t i = 0; i < m_ids.size(); i++) {
@@ -572,16 +572,16 @@ namespace mpcol {
 		}
 	}
 
-	UnbalancedMomentIncInertiaSource::UnbalancedMomentIncInertiaSource(const mpco::ProcessInfo& info)
+	UnbalancedMomentIncInertiaSource::UnbalancedMomentIncInertiaSource(const detail::ProcessInfo& info)
 		: UnbalancedMomentSource(info)
 	{ build("UNBALANCED_MOMENT_INCLUDING_INERTIA", "Unbalanced Moment Including Inertia",
 	        "Nodal unbalanced moment field including inertia"); }
-	UnbalancedMomentIncInertiaSource::UnbalancedMomentIncInertiaSource(const mpco::ProcessInfo& info, const std::vector<int>& ids)
+	UnbalancedMomentIncInertiaSource::UnbalancedMomentIncInertiaSource(const detail::ProcessInfo& info, const std::vector<int>& ids)
 		: UnbalancedMomentSource(info, ids)
 	{ build("UNBALANCED_MOMENT_INCLUDING_INERTIA", "Unbalanced Moment Including Inertia",
 	        "Nodal unbalanced moment field including inertia"); }
 
-	void UnbalancedMomentIncInertiaSource::evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer)
+	void UnbalancedMomentIncInertiaSource::evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer)
 	{
 		buffer.assign(m_ids.size() * m_schema.num_components, 0.0);
 		for (size_t i = 0; i < m_ids.size(); i++) {
@@ -594,9 +594,9 @@ namespace mpcol {
 	/* ModesOfVibrationSource (translational) — SPECIAL multi-mode case.     */
 	/* ===================================================================== */
 
-	ModesOfVibrationSource::ModesOfVibrationSource(const mpco::ProcessInfo& info)
+	ModesOfVibrationSource::ModesOfVibrationSource(const detail::ProcessInfo& info)
 		: NodeResultSource(info), m_current_mode(0) { build(); }
-	ModesOfVibrationSource::ModesOfVibrationSource(const mpco::ProcessInfo& info, const std::vector<int>& ids)
+	ModesOfVibrationSource::ModesOfVibrationSource(const detail::ProcessInfo& info, const std::vector<int>& ids)
 		: NodeResultSource(info, ids), m_current_mode(0) { build(); }
 
 	void ModesOfVibrationSource::build()
@@ -607,29 +607,29 @@ namespace mpcol {
 		if (m_ndim == 1) {
 			m_schema.components_csv = "Ux";
 			m_schema.num_components = 1;
-			m_schema.data_type = mpco::ResultDataType::Scalar;
+			m_schema.data_type = detail::ResultDataType::Scalar;
 		}
 		else if (m_ndim == 2) {
 			m_schema.components_csv = "Ux,Uy";
 			m_schema.num_components = 2;
-			m_schema.data_type = mpco::ResultDataType::Vectorial;
+			m_schema.data_type = detail::ResultDataType::Vectorial;
 		}
 		else if (m_ndim == 3) {
 			m_schema.components_csv = "Ux,Uy,Uz";
 			m_schema.num_components = 3;
-			m_schema.data_type = mpco::ResultDataType::Vectorial;
+			m_schema.data_type = detail::ResultDataType::Vectorial;
 		}
 		m_schema.dimension = "";
 		m_schema.description = "Eigenvector (translational components)";
-		m_schema.result_type = mpco::ResultType::Modal;
+		m_schema.result_type = detail::ResultType::Modal;
 	}
 
-	int ModesOfVibrationSource::numModes(const mpco::ProcessInfo& /*info*/) const
+	int ModesOfVibrationSource::numModes(const detail::ProcessInfo& /*info*/) const
 	{
 		return *OPS_GetNumEigen();
 	}
 
-	void ModesOfVibrationSource::modeInfo(const mpco::ProcessInfo& info, int k,
+	void ModesOfVibrationSource::modeInfo(const detail::ProcessInfo& info, int k,
 	                                      double& lambda, double& omega,
 	                                      double& freq, double& period) const
 	{
@@ -640,7 +640,7 @@ namespace mpcol {
 		period = 1.0 / freq;
 	}
 
-	void ModesOfVibrationSource::evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer)
+	void ModesOfVibrationSource::evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer)
 	{
 		buffer.assign(m_ids.size() * m_schema.num_components, 0.0);
 		// Translational eigenvector components for the CURRENT mode.
@@ -663,9 +663,9 @@ namespace mpcol {
 	/* ModesOfVibrationRotationalSource                                      */
 	/* ===================================================================== */
 
-	ModesOfVibrationRotationalSource::ModesOfVibrationRotationalSource(const mpco::ProcessInfo& info)
+	ModesOfVibrationRotationalSource::ModesOfVibrationRotationalSource(const detail::ProcessInfo& info)
 		: ModesOfVibrationSource(info) { build(); }
-	ModesOfVibrationRotationalSource::ModesOfVibrationRotationalSource(const mpco::ProcessInfo& info, const std::vector<int>& ids)
+	ModesOfVibrationRotationalSource::ModesOfVibrationRotationalSource(const detail::ProcessInfo& info, const std::vector<int>& ids)
 		: ModesOfVibrationSource(info, ids) { build(); }
 
 	void ModesOfVibrationRotationalSource::build()
@@ -676,19 +676,19 @@ namespace mpcol {
 		if (m_ndim == 2) {
 			m_schema.components_csv = "Rz";
 			m_schema.num_components = 1;
-			m_schema.data_type = mpco::ResultDataType::Scalar;
+			m_schema.data_type = detail::ResultDataType::Scalar;
 		}
 		else {
 			m_schema.components_csv = "Rx,Ry,Rz";
 			m_schema.num_components = 3;
-			m_schema.data_type = mpco::ResultDataType::Vectorial;
+			m_schema.data_type = detail::ResultDataType::Vectorial;
 		}
 		m_schema.dimension = "";
 		m_schema.description = "Eigenvector (rotational components)";
-		m_schema.result_type = mpco::ResultType::Modal;
+		m_schema.result_type = detail::ResultType::Modal;
 	}
 
-	void ModesOfVibrationRotationalSource::evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer)
+	void ModesOfVibrationRotationalSource::evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer)
 	{
 		buffer.assign(m_ids.size() * m_schema.num_components, 0.0);
 		// Rotational eigenvector slice depends on the node's DOF count (rows>2 in
@@ -714,41 +714,41 @@ namespace mpcol {
 	/* Sensitivity sources                                                   */
 	/* ===================================================================== */
 
-	DisplacementSensitivitySource::DisplacementSensitivitySource(const mpco::ProcessInfo& info, int grad)
+	DisplacementSensitivitySource::DisplacementSensitivitySource(const detail::ProcessInfo& info, int grad)
 		: NodeResultSource(info), m_grad(grad) { build(); }
-	DisplacementSensitivitySource::DisplacementSensitivitySource(const mpco::ProcessInfo& info, const std::vector<int>& ids, int grad)
+	DisplacementSensitivitySource::DisplacementSensitivitySource(const detail::ProcessInfo& info, const std::vector<int>& ids, int grad)
 		: NodeResultSource(info, ids), m_grad(grad) { build(); }
 
 	void DisplacementSensitivitySource::build()
 	{
-		m_schema.name = MPCO_MAKE_STRING("DISPLACEMENT_SENSITIVITY_" << m_grad);
-		m_schema.display_name = MPCO_MAKE_STRING("Displacement Sensitivity d_U/d_q" << m_grad);
+		m_schema.name = LADRUNO_MAKE_STRING("DISPLACEMENT_SENSITIVITY_" << m_grad);
+		m_schema.display_name = LADRUNO_MAKE_STRING("Displacement Sensitivity d_U/d_q" << m_grad);
 		m_schema.num_components = 0;
 		if (m_ndim == 1) {
-			m_schema.components_csv = MPCO_MAKE_STRING("d_Ux/d_q" << m_grad);
+			m_schema.components_csv = LADRUNO_MAKE_STRING("d_Ux/d_q" << m_grad);
 			m_schema.num_components = 1;
-			m_schema.data_type = mpco::ResultDataType::Scalar;
+			m_schema.data_type = detail::ResultDataType::Scalar;
 		}
 		else if (m_ndim == 2) {
-			m_schema.components_csv = MPCO_MAKE_STRING("d_Ux/d_q" << m_grad << ",d_Uy/d_q" << m_grad);
+			m_schema.components_csv = LADRUNO_MAKE_STRING("d_Ux/d_q" << m_grad << ",d_Uy/d_q" << m_grad);
 			m_schema.num_components = 2;
-			m_schema.data_type = mpco::ResultDataType::Vectorial;
+			m_schema.data_type = detail::ResultDataType::Vectorial;
 		}
 		else if (m_ndim == 3) {
-			m_schema.components_csv = MPCO_MAKE_STRING("d_Ux/d_q" << m_grad << ",d_Uy/d_q" << m_grad << ",d_Uz/d_q" << m_grad);
+			m_schema.components_csv = LADRUNO_MAKE_STRING("d_Ux/d_q" << m_grad << ",d_Uy/d_q" << m_grad << ",d_Uz/d_q" << m_grad);
 			m_schema.num_components = 3;
-			m_schema.data_type = mpco::ResultDataType::Vectorial;
+			m_schema.data_type = detail::ResultDataType::Vectorial;
 		}
 		m_schema.dimension = "";
-		m_schema.description = MPCO_MAKE_STRING("Nodal displacement sensitivity field d_U/d_q" << m_grad);
-		m_schema.result_type = mpco::ResultType::Generic;
+		m_schema.description = LADRUNO_MAKE_STRING("Nodal displacement sensitivity field d_U/d_q" << m_grad);
+		m_schema.result_type = detail::ResultType::Generic;
 	}
 
-	void DisplacementSensitivitySource::evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer)
+	void DisplacementSensitivitySource::evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer)
 	{
 		buffer.assign(m_ids.size() * m_schema.num_components, 0.0);
 		if (m_grad < 1 || m_grad > info.domain->getNumParameters()) {
-			opserr << "MPCORecorder sensitivity parameter is out of range: grad index = " << m_grad << ", domain->getNumParameters() = " << info.domain->getNumParameters() << "\n";
+			opserr << "LadrunoRecorder sensitivity parameter is out of range: grad index = " << m_grad << ", domain->getNumParameters() = " << info.domain->getNumParameters() << "\n";
 			return;
 		}
 		for (size_t i = 0; i < m_ids.size(); i++) {
@@ -765,36 +765,36 @@ namespace mpcol {
 		}
 	}
 
-	RotationSensitivitySource::RotationSensitivitySource(const mpco::ProcessInfo& info, int grad)
+	RotationSensitivitySource::RotationSensitivitySource(const detail::ProcessInfo& info, int grad)
 		: NodeResultSource(info), m_grad(grad) { build(); }
-	RotationSensitivitySource::RotationSensitivitySource(const mpco::ProcessInfo& info, const std::vector<int>& ids, int grad)
+	RotationSensitivitySource::RotationSensitivitySource(const detail::ProcessInfo& info, const std::vector<int>& ids, int grad)
 		: NodeResultSource(info, ids), m_grad(grad) { build(); }
 
 	void RotationSensitivitySource::build()
 	{
-		m_schema.name = MPCO_MAKE_STRING("ROTATION_SENSITIVITY_" << m_grad);
-		m_schema.display_name = MPCO_MAKE_STRING("Rotation Sensitivity d_R/d_q" << m_grad);
+		m_schema.name = LADRUNO_MAKE_STRING("ROTATION_SENSITIVITY_" << m_grad);
+		m_schema.display_name = LADRUNO_MAKE_STRING("Rotation Sensitivity d_R/d_q" << m_grad);
 		m_schema.num_components = 0;
 		if (m_ndim == 2) {
-			m_schema.components_csv = MPCO_MAKE_STRING("d_Rz/d_q" << m_grad);
+			m_schema.components_csv = LADRUNO_MAKE_STRING("d_Rz/d_q" << m_grad);
 			m_schema.num_components = 1;
-			m_schema.data_type = mpco::ResultDataType::Scalar;
+			m_schema.data_type = detail::ResultDataType::Scalar;
 		}
 		else {
-			m_schema.components_csv = MPCO_MAKE_STRING("d_Rx/d_q" << m_grad << ",d_Ry/d_q" << m_grad << ",d_Rz/d_q" << m_grad);
+			m_schema.components_csv = LADRUNO_MAKE_STRING("d_Rx/d_q" << m_grad << ",d_Ry/d_q" << m_grad << ",d_Rz/d_q" << m_grad);
 			m_schema.num_components = 3;
-			m_schema.data_type = mpco::ResultDataType::Vectorial;
+			m_schema.data_type = detail::ResultDataType::Vectorial;
 		}
 		m_schema.dimension = "";
-		m_schema.description = MPCO_MAKE_STRING("Nodal rotation sensitivity field d_R/d_q" << m_grad);
-		m_schema.result_type = mpco::ResultType::Generic;
+		m_schema.description = LADRUNO_MAKE_STRING("Nodal rotation sensitivity field d_R/d_q" << m_grad);
+		m_schema.result_type = detail::ResultType::Generic;
 	}
 
-	void RotationSensitivitySource::evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer)
+	void RotationSensitivitySource::evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer)
 	{
 		buffer.assign(m_ids.size() * m_schema.num_components, 0.0);
 		if (m_grad < 1 || m_grad > info.domain->getNumParameters()) {
-			opserr << "MPCORecorder sensitivity parameter is out of range: grad index = " << m_grad << ", domain->getNumParameters() = " << info.domain->getNumParameters() << "\n";
+			opserr << "LadrunoRecorder sensitivity parameter is out of range: grad index = " << m_grad << ", domain->getNumParameters() = " << info.domain->getNumParameters() << "\n";
 			return;
 		}
 		for (size_t i = 0; i < m_ids.size(); i++) {
@@ -824,41 +824,41 @@ namespace mpcol {
 		}
 	}
 
-	VelocitySensitivitySource::VelocitySensitivitySource(const mpco::ProcessInfo& info, int grad)
+	VelocitySensitivitySource::VelocitySensitivitySource(const detail::ProcessInfo& info, int grad)
 		: NodeResultSource(info), m_grad(grad) { build(); }
-	VelocitySensitivitySource::VelocitySensitivitySource(const mpco::ProcessInfo& info, const std::vector<int>& ids, int grad)
+	VelocitySensitivitySource::VelocitySensitivitySource(const detail::ProcessInfo& info, const std::vector<int>& ids, int grad)
 		: NodeResultSource(info, ids), m_grad(grad) { build(); }
 
 	void VelocitySensitivitySource::build()
 	{
-		m_schema.name = MPCO_MAKE_STRING("VELOCITY_SENSITIVITY_" << m_grad);
-		m_schema.display_name = MPCO_MAKE_STRING("Velocity Sensitivity d_V/d_q" << m_grad);
+		m_schema.name = LADRUNO_MAKE_STRING("VELOCITY_SENSITIVITY_" << m_grad);
+		m_schema.display_name = LADRUNO_MAKE_STRING("Velocity Sensitivity d_V/d_q" << m_grad);
 		m_schema.num_components = 0;
 		if (m_ndim == 1) {
-			m_schema.components_csv = MPCO_MAKE_STRING("d_Vx/d_q" << m_grad);
+			m_schema.components_csv = LADRUNO_MAKE_STRING("d_Vx/d_q" << m_grad);
 			m_schema.num_components = 1;
-			m_schema.data_type = mpco::ResultDataType::Scalar;
+			m_schema.data_type = detail::ResultDataType::Scalar;
 		}
 		else if (m_ndim == 2) {
-			m_schema.components_csv = MPCO_MAKE_STRING("d_Vx/d_q" << m_grad << ",d_Vy/d_q" << m_grad);
+			m_schema.components_csv = LADRUNO_MAKE_STRING("d_Vx/d_q" << m_grad << ",d_Vy/d_q" << m_grad);
 			m_schema.num_components = 2;
-			m_schema.data_type = mpco::ResultDataType::Vectorial;
+			m_schema.data_type = detail::ResultDataType::Vectorial;
 		}
 		else if (m_ndim == 3) {
-			m_schema.components_csv = MPCO_MAKE_STRING("d_Vx/d_q" << m_grad << ",d_Vy/d_q" << m_grad << ",d_Vz/d_q" << m_grad);
+			m_schema.components_csv = LADRUNO_MAKE_STRING("d_Vx/d_q" << m_grad << ",d_Vy/d_q" << m_grad << ",d_Vz/d_q" << m_grad);
 			m_schema.num_components = 3;
-			m_schema.data_type = mpco::ResultDataType::Vectorial;
+			m_schema.data_type = detail::ResultDataType::Vectorial;
 		}
 		m_schema.dimension = "";
-		m_schema.description = MPCO_MAKE_STRING("Nodal velocity sensitivity field d_V/d_q" << m_grad);
-		m_schema.result_type = mpco::ResultType::Generic;
+		m_schema.description = LADRUNO_MAKE_STRING("Nodal velocity sensitivity field d_V/d_q" << m_grad);
+		m_schema.result_type = detail::ResultType::Generic;
 	}
 
-	void VelocitySensitivitySource::evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer)
+	void VelocitySensitivitySource::evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer)
 	{
 		buffer.assign(m_ids.size() * m_schema.num_components, 0.0);
 		if (m_grad < 1 || m_grad > info.domain->getNumParameters()) {
-			opserr << "MPCORecorder sensitivity parameter is out of range: grad index = " << m_grad << ", domain->getNumParameters() = " << info.domain->getNumParameters() << "\n";
+			opserr << "LadrunoRecorder sensitivity parameter is out of range: grad index = " << m_grad << ", domain->getNumParameters() = " << info.domain->getNumParameters() << "\n";
 			return;
 		}
 		for (size_t i = 0; i < m_ids.size(); i++) {
@@ -875,36 +875,36 @@ namespace mpcol {
 		}
 	}
 
-	AngularVelocitySensitivitySource::AngularVelocitySensitivitySource(const mpco::ProcessInfo& info, int grad)
+	AngularVelocitySensitivitySource::AngularVelocitySensitivitySource(const detail::ProcessInfo& info, int grad)
 		: NodeResultSource(info), m_grad(grad) { build(); }
-	AngularVelocitySensitivitySource::AngularVelocitySensitivitySource(const mpco::ProcessInfo& info, const std::vector<int>& ids, int grad)
+	AngularVelocitySensitivitySource::AngularVelocitySensitivitySource(const detail::ProcessInfo& info, const std::vector<int>& ids, int grad)
 		: NodeResultSource(info, ids), m_grad(grad) { build(); }
 
 	void AngularVelocitySensitivitySource::build()
 	{
-		m_schema.name = MPCO_MAKE_STRING("ANGULAR_VELOCITY_SENSITIVITY_" << m_grad);
-		m_schema.display_name = MPCO_MAKE_STRING("Angular Velocity Sensitivity d_RV/d_q" << m_grad);
+		m_schema.name = LADRUNO_MAKE_STRING("ANGULAR_VELOCITY_SENSITIVITY_" << m_grad);
+		m_schema.display_name = LADRUNO_MAKE_STRING("Angular Velocity Sensitivity d_RV/d_q" << m_grad);
 		m_schema.num_components = 0;
 		if (m_ndim == 2) {
-			m_schema.components_csv = MPCO_MAKE_STRING("d_RVz/d_q" << m_grad);
+			m_schema.components_csv = LADRUNO_MAKE_STRING("d_RVz/d_q" << m_grad);
 			m_schema.num_components = 1;
-			m_schema.data_type = mpco::ResultDataType::Scalar;
+			m_schema.data_type = detail::ResultDataType::Scalar;
 		}
 		else {
-			m_schema.components_csv = MPCO_MAKE_STRING("d_RVx/d_q" << m_grad << ",d_RVy/d_q" << m_grad << ",d_RVz/d_q" << m_grad);
+			m_schema.components_csv = LADRUNO_MAKE_STRING("d_RVx/d_q" << m_grad << ",d_RVy/d_q" << m_grad << ",d_RVz/d_q" << m_grad);
 			m_schema.num_components = 3;
-			m_schema.data_type = mpco::ResultDataType::Vectorial;
+			m_schema.data_type = detail::ResultDataType::Vectorial;
 		}
 		m_schema.dimension = "";
-		m_schema.description = MPCO_MAKE_STRING("Nodal angular velocity sensitivity field d_RV/d_q" << m_grad);
-		m_schema.result_type = mpco::ResultType::Generic;
+		m_schema.description = LADRUNO_MAKE_STRING("Nodal angular velocity sensitivity field d_RV/d_q" << m_grad);
+		m_schema.result_type = detail::ResultType::Generic;
 	}
 
-	void AngularVelocitySensitivitySource::evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer)
+	void AngularVelocitySensitivitySource::evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer)
 	{
 		buffer.assign(m_ids.size() * m_schema.num_components, 0.0);
 		if (m_grad < 1 || m_grad > info.domain->getNumParameters()) {
-			opserr << "MPCORecorder sensitivity parameter is out of range: grad index = " << m_grad << ", domain->getNumParameters() = " << info.domain->getNumParameters() << "\n";
+			opserr << "LadrunoRecorder sensitivity parameter is out of range: grad index = " << m_grad << ", domain->getNumParameters() = " << info.domain->getNumParameters() << "\n";
 			return;
 		}
 		for (size_t i = 0; i < m_ids.size(); i++) {
@@ -934,41 +934,41 @@ namespace mpcol {
 		}
 	}
 
-	AccelerationSensitivitySource::AccelerationSensitivitySource(const mpco::ProcessInfo& info, int grad)
+	AccelerationSensitivitySource::AccelerationSensitivitySource(const detail::ProcessInfo& info, int grad)
 		: NodeResultSource(info), m_grad(grad) { build(); }
-	AccelerationSensitivitySource::AccelerationSensitivitySource(const mpco::ProcessInfo& info, const std::vector<int>& ids, int grad)
+	AccelerationSensitivitySource::AccelerationSensitivitySource(const detail::ProcessInfo& info, const std::vector<int>& ids, int grad)
 		: NodeResultSource(info, ids), m_grad(grad) { build(); }
 
 	void AccelerationSensitivitySource::build()
 	{
-		m_schema.name = MPCO_MAKE_STRING("ACCELERATION_SENSITIVITY_" << m_grad);
-		m_schema.display_name = MPCO_MAKE_STRING("Acceleration Sensitivity d_A/d_q" << m_grad);
+		m_schema.name = LADRUNO_MAKE_STRING("ACCELERATION_SENSITIVITY_" << m_grad);
+		m_schema.display_name = LADRUNO_MAKE_STRING("Acceleration Sensitivity d_A/d_q" << m_grad);
 		m_schema.num_components = 0;
 		if (m_ndim == 1) {
-			m_schema.components_csv = MPCO_MAKE_STRING("d_Ax/d_q" << m_grad);
+			m_schema.components_csv = LADRUNO_MAKE_STRING("d_Ax/d_q" << m_grad);
 			m_schema.num_components = 1;
-			m_schema.data_type = mpco::ResultDataType::Scalar;
+			m_schema.data_type = detail::ResultDataType::Scalar;
 		}
 		else if (m_ndim == 2) {
-			m_schema.components_csv = MPCO_MAKE_STRING("d_Ax/d_q" << m_grad << ",d_Ay/d_q" << m_grad);
+			m_schema.components_csv = LADRUNO_MAKE_STRING("d_Ax/d_q" << m_grad << ",d_Ay/d_q" << m_grad);
 			m_schema.num_components = 2;
-			m_schema.data_type = mpco::ResultDataType::Vectorial;
+			m_schema.data_type = detail::ResultDataType::Vectorial;
 		}
 		else if (m_ndim == 3) {
-			m_schema.components_csv = MPCO_MAKE_STRING("d_Ax/d_q" << m_grad << ",d_Ay/d_q" << m_grad << ",d_Az/d_q" << m_grad);
+			m_schema.components_csv = LADRUNO_MAKE_STRING("d_Ax/d_q" << m_grad << ",d_Ay/d_q" << m_grad << ",d_Az/d_q" << m_grad);
 			m_schema.num_components = 3;
-			m_schema.data_type = mpco::ResultDataType::Vectorial;
+			m_schema.data_type = detail::ResultDataType::Vectorial;
 		}
 		m_schema.dimension = "";
-		m_schema.description = MPCO_MAKE_STRING("Nodal acceleration sensitivity field d_A/d_q" << m_grad);
-		m_schema.result_type = mpco::ResultType::Generic;
+		m_schema.description = LADRUNO_MAKE_STRING("Nodal acceleration sensitivity field d_A/d_q" << m_grad);
+		m_schema.result_type = detail::ResultType::Generic;
 	}
 
-	void AccelerationSensitivitySource::evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer)
+	void AccelerationSensitivitySource::evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer)
 	{
 		buffer.assign(m_ids.size() * m_schema.num_components, 0.0);
 		if (m_grad < 1 || m_grad > info.domain->getNumParameters()) {
-			opserr << "MPCORecorder sensitivity parameter is out of range: grad index = " << m_grad << ", domain->getNumParameters() = " << info.domain->getNumParameters() << "\n";
+			opserr << "LadrunoRecorder sensitivity parameter is out of range: grad index = " << m_grad << ", domain->getNumParameters() = " << info.domain->getNumParameters() << "\n";
 			return;
 		}
 		// NOTE: byte-faithful to frozen ResultRecorderAccelerationSensitivity —
@@ -988,36 +988,36 @@ namespace mpcol {
 		}
 	}
 
-	AngularAccelerationSensitivitySource::AngularAccelerationSensitivitySource(const mpco::ProcessInfo& info, int grad)
+	AngularAccelerationSensitivitySource::AngularAccelerationSensitivitySource(const detail::ProcessInfo& info, int grad)
 		: NodeResultSource(info), m_grad(grad) { build(); }
-	AngularAccelerationSensitivitySource::AngularAccelerationSensitivitySource(const mpco::ProcessInfo& info, const std::vector<int>& ids, int grad)
+	AngularAccelerationSensitivitySource::AngularAccelerationSensitivitySource(const detail::ProcessInfo& info, const std::vector<int>& ids, int grad)
 		: NodeResultSource(info, ids), m_grad(grad) { build(); }
 
 	void AngularAccelerationSensitivitySource::build()
 	{
-		m_schema.name = MPCO_MAKE_STRING("ANGULAR_ACCELERATION_SENSITIVITY_" << m_grad);
-		m_schema.display_name = MPCO_MAKE_STRING("Angular Acceleration Sensitivity d_RA/d_q" << m_grad);
+		m_schema.name = LADRUNO_MAKE_STRING("ANGULAR_ACCELERATION_SENSITIVITY_" << m_grad);
+		m_schema.display_name = LADRUNO_MAKE_STRING("Angular Acceleration Sensitivity d_RA/d_q" << m_grad);
 		m_schema.num_components = 0;
 		if (m_ndim == 2) {
-			m_schema.components_csv = MPCO_MAKE_STRING("d_RAz/d_q" << m_grad);
+			m_schema.components_csv = LADRUNO_MAKE_STRING("d_RAz/d_q" << m_grad);
 			m_schema.num_components = 1;
-			m_schema.data_type = mpco::ResultDataType::Scalar;
+			m_schema.data_type = detail::ResultDataType::Scalar;
 		}
 		else {
-			m_schema.components_csv = MPCO_MAKE_STRING("d_RAx/d_q" << m_grad << ",d_RAy/d_q" << m_grad << ",d_RAz/d_q" << m_grad);
+			m_schema.components_csv = LADRUNO_MAKE_STRING("d_RAx/d_q" << m_grad << ",d_RAy/d_q" << m_grad << ",d_RAz/d_q" << m_grad);
 			m_schema.num_components = 3;
-			m_schema.data_type = mpco::ResultDataType::Vectorial;
+			m_schema.data_type = detail::ResultDataType::Vectorial;
 		}
 		m_schema.dimension = "";
-		m_schema.description = MPCO_MAKE_STRING("Nodal angular acceleration sensitivity field dRA/d_q" << m_grad);
-		m_schema.result_type = mpco::ResultType::Generic;
+		m_schema.description = LADRUNO_MAKE_STRING("Nodal angular acceleration sensitivity field dRA/d_q" << m_grad);
+		m_schema.result_type = detail::ResultType::Generic;
 	}
 
-	void AngularAccelerationSensitivitySource::evaluate(const mpco::ProcessInfo& info, std::vector<double>& buffer)
+	void AngularAccelerationSensitivitySource::evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer)
 	{
 		buffer.assign(m_ids.size() * m_schema.num_components, 0.0);
 		if (m_grad < 1 || m_grad > info.domain->getNumParameters()) {
-			opserr << "MPCORecorder sensitivity parameter is out of range: grad index = " << m_grad << ", domain->getNumParameters() = " << info.domain->getNumParameters() << "\n";
+			opserr << "LadrunoRecorder sensitivity parameter is out of range: grad index = " << m_grad << ", domain->getNumParameters() = " << info.domain->getNumParameters() << "\n";
 			return;
 		}
 		// NOTE: byte-faithful to frozen ResultRecorderAngularAccelerationSensitivity
@@ -1049,4 +1049,4 @@ namespace mpcol {
 		}
 	}
 
-} // namespace mpcol
+} // namespace ladruno

@@ -6,7 +6,7 @@ every ELEMENT result value matches to 1e-12.
 Both formats store element results at the SAME structural location:
     MODEL_STAGE[*]/RESULTS/ON_ELEMENTS/<result>/<bucket>/{ID[nElem,1], DATA/STEP_k[nElem,nCol]}
 (.mpco adds a META/ subgroup, .ladruno a COLUMN_MAP/ subgroup — different metadata,
-identical DATA). Because mpcoLadruno's ElementResultSource::evaluate() is a
+identical DATA). Because ladruno's ElementResultSource::evaluate() is a
 byte-faithful port of the frozen recordResultsOnElements packing (same per-element
 Response getData() order), column j of element tag t at step s must be identical.
 

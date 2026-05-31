@@ -1,10 +1,10 @@
 /* ********************************************************************** **
-**  MPCO_Ladruno recorder — MPCOL_ElementResults.cpp                      **
+**  Ladruno recorder — Ladruno_ElementResults.cpp                      **
 **  ElementResultSource adapter implementation (Phase 3, Step 2/3).       **
 **                                                                        **
 **  Wraps one already-built (header, response-collection) bucket — the    **
 **  output of the orchestrator's initElementRecorders port — as a         **
-**  mpcol::ResultSource. evaluate() reproduces the frozen                  **
+**  ladruno::ResultSource. evaluate() reproduces the frozen                  **
 **  recordResultsOnElements per-step packing [nElems x NUM_COLUMNS]       **
 **  byte-for-byte (1e-12 parity gate). buildSchema() turns the            **
 **  OutputDescriptorHeader into the ResultSchema + carries the            **
@@ -12,15 +12,15 @@
 **  persist after the sink creates the result group.                       **
 ** ********************************************************************** */
 
-#include "MPCOL_ElementResults.h"
+#include "Ladruno_ElementResults.h"
 
 #include <sstream>
 
-namespace mpcol {
+namespace ladruno {
 
 	ElementResultSource::ElementResultSource(const std::vector<std::string>& request,
-		const mpco::element::OutputDescriptorHeader& header,
-		mpco::element::OutputResponseCollection& bucket)
+		const detail::element::OutputDescriptorHeader& header,
+		detail::element::OutputResponseCollection& bucket)
 		: m_header(header)
 		, m_bucket(bucket)
 	{
@@ -58,11 +58,11 @@ namespace mpcol {
 		m_schema.dimension = "";
 		m_schema.description = "";
 		m_schema.num_components = m_header.num_columns;
-		m_schema.result_type = mpco::ResultType::Generic;
-		m_schema.data_type = mpco::ResultDataType::Scalar;
+		m_schema.result_type = detail::ResultType::Generic;
+		m_schema.data_type = detail::ResultDataType::Scalar;
 	}
 
-	void ElementResultSource::evaluate(const mpco::ProcessInfo& /*info*/, std::vector<double>& buffer)
+	void ElementResultSource::evaluate(const detail::ProcessInfo& /*info*/, std::vector<double>& buffer)
 	{
 		// Byte-faithful port of the frozen recordResultsOnElements inner packing:
 		//   for each element response in the bucket: getResponse(); copy its
@@ -71,11 +71,11 @@ namespace mpcol {
 		const size_t num_rows = m_bucket.items.size();
 		buffer.assign(num_rows * (size_t)num_columns, 0.0);
 		for (size_t i = 0; i < num_rows; ++i) {
-			mpco::element::OutputResponse& current_response = m_bucket.items[i];
+			detail::element::OutputResponse& current_response = m_bucket.items[i];
 			current_response.response->getResponse();
 			const Vector& current_data = current_response.response->getInformation().getData();
 			if (current_data.Size() != num_columns) {
-				opserr << "MPCORecorderLadruno Error: invalid response data size\n";
+				opserr << "LadrunoRecorder Error: invalid response data size\n";
 				continue;
 			}
 			size_t offset = i * (size_t)num_columns;
@@ -84,4 +84,4 @@ namespace mpcol {
 		}
 	}
 
-} // namespace mpcol
+} // namespace ladruno

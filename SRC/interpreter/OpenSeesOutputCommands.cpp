@@ -86,7 +86,7 @@ void* OPS_AlgorithmRecorder();
 void* OPS_RemoveRecorder();
 #ifdef _HDF5
 void* OPS_MPCORecorder();
-void* OPS_MPCOLadrunoRecorder();
+void* OPS_LadrunoRecorder();
 void* OPS_VTKHDF_Recorder();
 #endif
 void* OPS_GmshRecorder();
@@ -131,7 +131,7 @@ namespace {
 	recordersMap.insert(std::make_pair("EnergyBalance", &OPS_EnergyBalanceRecorder));
 #ifdef _HDF5
 	recordersMap.insert(std::make_pair("mpco", &OPS_MPCORecorder));
-	recordersMap.insert(std::make_pair("mpcoLadruno", &OPS_MPCOLadrunoRecorder));
+	recordersMap.insert(std::make_pair("ladruno", &OPS_LadrunoRecorder));
     recordersMap.insert(std::make_pair("VTKHDF", &OPS_VTKHDF_Recorder));
 #endif
         //recordersMap.insert(std::make_pair("Drift", &OPS_DriftRecorder));

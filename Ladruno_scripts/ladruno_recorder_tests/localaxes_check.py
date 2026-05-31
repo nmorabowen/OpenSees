@@ -25,7 +25,7 @@ TOL = 1e-9
 def quat_to_R(q):
     """(w,x,y,z) unit quaternion -> 3x3 rotation matrix.
 
-    The frozen recorder's quatFromMat (MPCOL_Types.h) packs the matrix whose
+    The frozen recorder's quatFromMat (Ladruno_Types.h) packs the matrix whose
     COLUMNS are (vx,vy,vz) using the (R[0][1]-R[1][0]) off-diagonal sign — the
     transpose/conjugate of standard Shepperd — so the local axes come back as the
     ROWS of the matrix this standard formula reconstructs. The checker extracts

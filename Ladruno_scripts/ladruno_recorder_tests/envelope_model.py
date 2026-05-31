@@ -48,9 +48,9 @@ ops.element("Truss", 1, 1, 2, 1.0, 1)
 ops.element("Truss", 2, 2, 3, 1.0, 1)
 
 # both recorders on the same model -> identical commitTags
-ops.recorder("mpcoLadruno", ts_out, "-N", "displacement", "-kind", "transient",
+ops.recorder("ladruno", ts_out, "-N", "displacement", "-kind", "transient",
              "-T", "dt", 0.0)
-ops.recorder("mpcoLadruno", env_out, "-N", "displacement", "-kind", "transient",
+ops.recorder("ladruno", env_out, "-N", "displacement", "-kind", "transient",
              "-T", "dt", 0.0, "-envelope")
 
 ops.timeSeries("Trig", 1, 0.0, 100.0, 0.5)  # sine -> sign-changing displacement

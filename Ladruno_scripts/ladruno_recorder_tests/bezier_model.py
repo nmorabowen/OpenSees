@@ -10,7 +10,7 @@ diagonal edge and its mid-edge node (node 6). Plane stress, ElasticIsotropic.
 
 Runs BOTH recorders so the element-stress channel can be value-diffed:
     recorder mpco        -> bezier_ref.mpco      (frozen value oracle)
-    recorder mpcoLadruno -> bezier_test.ladruno  (the new recorder)
+    recorder ladruno -> bezier_test.ladruno  (the new recorder)
 
 Run with the BUILD python (no boot .pth), same recipe as element_parity_model:
     python bezier_model.py <dir_with_opensees_pyd> [out_dir]
@@ -67,7 +67,7 @@ ops.element("BezierTri6", 2, 2, 4, 3, 8, 9, 6, 1.0, "PlaneStress", 1)
 
 # BOTH recorders. Element stress (3 GP x 3 comps = 9 cols) + nodal disp.
 ops.recorder("mpco", ref, "-N", "displacement", "-E", "stress", "-T", "dt", 0.0)
-ops.recorder("mpcoLadruno", new, "-N", "displacement", "-E", "stress", "-T", "dt", 0.0)
+ops.recorder("ladruno", new, "-N", "displacement", "-E", "stress", "-T", "dt", 0.0)
 
 # Pull the x=2 edge (nodes 2,4,8) in +x.
 ops.timeSeries("Linear", 1)
