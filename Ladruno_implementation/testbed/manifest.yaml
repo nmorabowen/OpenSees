@@ -104,8 +104,8 @@ features:
     pr: 22
     feature_class: integrator
     required_tiers: [dynamics-battery]
-    pytest: tests/test_centralDifferenceLadruno_integrator.py   # PENDING (Zone-A port of the CDL battery)
-    tcl: WAIVED(integrator; Zone-B Ladruno_scripts/_verify_explicit.py CDL-1..10 until the Zone-A battery lands)
+    pytest: tests/test_centralDifferenceLadruno_integrator.py   # CDL-1..10 Zone-A battery (numpy-free)
+    tcl: WAIVED(integrator; Zone-B Ladruno_scripts/_verify_explicit.py CDL-1..10 mirrors the Zone-A battery)
     zone_b: [Ladruno_scripts/_verify_explicit.py]
     core_files:                                    # registration sites (dispatch wiring)
       - SRC/classTags.h
@@ -115,7 +115,7 @@ features:
       - SRC/interpreter/OpenSeesCommands.h
       - SRC/tcl/commands.cpp
     dispatch: {tcl: true, functionMap: true}
-    status: remediation
+    status: active
     notes: >
       NEW class (not band remediation) — explicit leap-frog central difference done
       right: correct first-step starter (a0 = M^-1(P0 - C v0 - Fint(u0)), v_{-1/2} =
@@ -123,9 +123,10 @@ features:
       clean full-step velocity output, data-driven betaK guard. classTag 33003 in the
       Ladruno band from the outset. Broker-dispatched (getNewTransientIntegrator, "must
       recvSelf"). Coupled/implicit-damped CD deliberately dropped -> NewmarkExplicit(0.5).
-      Per-TU compile-verified (cl.exe); full link pending the MPCO_Ladruno blocker. The
-      CDL-1..10 battery currently lives in Zone-B _verify_explicit.py; the Zone-A pytest
-      port (CDL-8 first-step + CDL-9 betaK collapse are the differentiators) is owed.
+      Full Linux link restored via PR #28 (dsygvx_ swap in CriticalTimeStep). Zone-A
+      battery tests/test_centralDifferenceLadruno_integrator.py authored: CDL-1..10,
+      numpy-free; CDL-10 energy closure un-skipped now that the link is restored.
+      CDL-8 first-step correctness + CDL-9 betaK collapse are the differentiators.
 
   - feature: EnergyBalanceRecorder
     classtag: 33000          # RECORDER family; was 26
