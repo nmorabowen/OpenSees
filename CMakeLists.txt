@@ -209,8 +209,13 @@ else()
     set(GIT_VERSION "unknown")
 endif()
 
-# Pass this to your code as a preprocessor definition
-add_definitions(-DOPENSEES_VERSION="${GIT_VERSION}")
+# Pass this to your code as a preprocessor definition.
+# Ladruno: scope to C/C++ ONLY. Passing the quoted 40-char git-SHA define to Fortran
+# (ifx /fpp) via a response file overruns an internal ifx buffer and crashes xfortcom
+# (error #10273, 0xC0000005 / 0xC0000409). Fortran never uses OPENSEES_VERSION. The
+# crash only surfaces when response files are forced (CMAKE_NINJA_FORCE_RESPONSE_FILE)
+# and/or long build paths inflate the rsp. See Ladruno_implementation/06_profiler.md.
+add_compile_definitions($<$<COMPILE_LANGUAGE:C,CXX>:OPENSEES_VERSION="${GIT_VERSION}">)
 
 
 #
