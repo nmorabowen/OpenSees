@@ -603,38 +603,102 @@ int MPCORecorderLadruno::writeModelElements()
 				mpcolns::h5::attribute::write(h_eg, "RATIONAL", (int)rational);
 				mpcolns::h5::attribute::write(h_eg, "NUM_CTRL", (int)num_ctrl);
 
-				// Custom-rule quadrature (schema v1): the element bucket <name> is a
-				// GROUP (see above), so the QUADRATURE child group below is valid. We
-				// write GP_PARAM [NUM_GP x ndir] + GP_WEIGHT [NUM_GP], and also keep the
-				// legacy GP_X attribute (flat coords) for tooling that still reads it.
-				// This resolves the deferred MODEL/ELEMENTS schema-completeness item and
-				// the prior HDF5-DIAG noise (a group cannot live under a dataset).
+				// ---- Resolve the quadrature rule: custom -> standard table -> none ----
+				// QUADRATURE/{GP_PARAM[NUM_GP x NDIR], GP_WEIGHT[NUM_GP]} + NDIR + NUM_GP
+				// are now written for BOTH custom-rule elements (BezierTri6 etc.) AND
+				// standard Gauss-Legendre elements (quad/hex/tri/tet/line). For standard
+				// rules the GP coords + weights come from the built-in getStandardQuadrature
+				// table ("parity by derivation" — STKO held this reader-side; we move it
+				// write-side so the reader never KeyErrors on a legacy element). The bucket
+				// <name> is a GROUP (see above), so the QUADRATURE child group is valid.
+				std::vector<double> q_gp_param, q_gp_weight;
+				int q_num_gp = 0, q_ndir = 0;
+				bool have_rule = false;
 				if (irule == mpcolns::mpco::ElementIntegrationRuleType::CustomIntegrationRule) {
 					mpcolns::h5::attribute::write(h_eg, "CUSTOM_INTEGRATION_RULE", elem_by_custom_rule.custom_int_rule_index);
 					if (elem_by_custom_rule.custom_int_rule_index != 0) {
 						me::ElementIntegrationRule& custom_rule =
 							m_data->elements.registered_custom_rules[elem_by_custom_rule.custom_int_rule_index];
+						// legacy GP_X attribute (flat coords) kept for tooling that reads it.
 						mpcolns::h5::attribute::write(h_eg, "GP_X", custom_rule.x);
 						mpcolns::h5::attribute::write(h_eg, "CUSTOM_INTEGRATION_RULE_DIMENSION", custom_rule.custom_rule_dimension);
 						// reshape: legacy line rules store 1 coord/point (num_gp==0 => cols=1);
 						// multi-dim parametric rules (e.g. BezierTri6 barycentric) store num_gp
 						// rows of (x.size()/num_gp) coords each.
-						int n_gp = custom_rule.num_gp > 0 ? custom_rule.num_gp : (int)custom_rule.x.size();
-						int n_col = (custom_rule.num_gp > 0 && custom_rule.num_gp <= (int)custom_rule.x.size())
+						q_num_gp = custom_rule.num_gp > 0 ? custom_rule.num_gp : (int)custom_rule.x.size();
+						q_ndir = (custom_rule.num_gp > 0 && custom_rule.num_gp <= (int)custom_rule.x.size())
 							? (int)custom_rule.x.size() / custom_rule.num_gp : 1;
-						mpcolns::h5::attribute::write(h_eg, "NUM_GP", n_gp);
-						// QUADRATURE child group: GP_PARAM (NUM_GP x n_col) + optional GP_WEIGHT.
-						hid_t h_q = mpcolns::h5::group::create(
-							h_eg, "QUADRATURE", H5P_DEFAULT, info.h_group_proplist, H5P_DEFAULT);
-						hid_t d_gpp = mpcolns::h5::dataset::createAndWrite(
-							h_q, "GP_PARAM", custom_rule.x, (size_t)n_gp, (size_t)n_col);
-						mpcolns::h5::dataset::close(d_gpp);
-						if (!custom_rule.w.empty()) {
-							hid_t d_gpw = mpcolns::h5::dataset::createAndWrite(
-								h_q, "GP_WEIGHT", custom_rule.w);  // 1-D [nGP] per schema v1
-							mpcolns::h5::dataset::close(d_gpw);
+						q_gp_param = custom_rule.x;
+						q_gp_weight = custom_rule.w;
+						have_rule = (q_num_gp > 0 && q_ndir > 0);
+					}
+				}
+				else {
+					// standard Gauss rule (returns false for untabulated rules ->
+					// no QUADRATURE written; the reader tolerates its absence).
+					have_rule = me::getStandardQuadrature(irule, q_gp_param, q_gp_weight, q_num_gp, q_ndir);
+				}
+
+				if (have_rule) {
+					mpcolns::h5::attribute::write(h_eg, "NDIR", q_ndir);
+					mpcolns::h5::attribute::write(h_eg, "NUM_GP", q_num_gp);
+					// QUADRATURE child group: GP_PARAM (NUM_GP x NDIR) + optional GP_WEIGHT.
+					hid_t h_q = mpcolns::h5::group::create(
+						h_eg, "QUADRATURE", H5P_DEFAULT, info.h_group_proplist, H5P_DEFAULT);
+					hid_t d_gpp = mpcolns::h5::dataset::createAndWrite(
+						h_q, "GP_PARAM", q_gp_param, (size_t)q_num_gp, (size_t)q_ndir);
+					mpcolns::h5::dataset::close(d_gpp);
+					if (!q_gp_weight.empty()) {
+						hid_t d_gpw = mpcolns::h5::dataset::createAndWrite(
+							h_q, "GP_WEIGHT", q_gp_weight);  // 1-D [nGP] per schema v1
+						mpcolns::h5::dataset::close(d_gpw);
+					}
+					mpcolns::h5::group::close(h_q);
+
+					// ---- belt-and-suspenders GLOBAL_GP_COORDS (ADR D2) -------------
+					// Static, reference-config, C++-computed x(ξ_g)=ΣN_i(ξ_g)X_i per
+					// element via the write-side basis evaluator. Stored 2-D
+					// [nElem x (NUM_GP*ndim)] because MPCOL_Hdf5 has no rank-3 writer;
+					// reader reshapes to [nElem, NUM_GP, ndim]. Skipped (graceful) when
+					// computeGlobalGP doesn't yet have the topology's basis. Reuses the
+					// CONNECTIVITY node access pattern (domain->getNode->getCrds).
+					int ndim = 0;
+					{
+						const ID& nd0 = elem_by_custom_rule.items.front()->getExternalNodes();
+						Node* n0 = (nd0.Size() > 0) ? info.domain->getNode(nd0(0)) : 0;
+						if (n0) ndim = n0->getCrds().Size();
+					}
+					if (ndim > 0) {
+						size_t nElem = elem_by_custom_rule.items.size();
+						std::vector<double> ggp;
+						ggp.reserve(nElem * (size_t)q_num_gp * (size_t)ndim);
+						bool ok = true;
+						for (me::ElementWithSameCustomIntRuleCollection::collection_type::iterator it5 = elem_by_custom_rule.items.begin();
+							it5 != elem_by_custom_rule.items.end() && ok; ++it5) {
+							Element* elem = *it5;
+							const ID& nd = elem->getExternalNodes();
+							int nn = elem_by_tag.num_nodes;
+							std::vector<std::vector<double> > node_xyz(
+								(size_t)nn, std::vector<double>((size_t)ndim, 0.0));
+							for (int j = 0; j < nn && ok; ++j) {
+								Node* nj = (j < nd.Size()) ? info.domain->getNode(nd(j)) : 0;
+								if (nj == 0) { ok = false; break; }
+								const Vector& c = nj->getCrds();
+								for (int d = 0; d < ndim && d < c.Size(); ++d)
+									node_xyz[(size_t)j][(size_t)d] = c(d);
+							}
+							if (!ok) break;
+							std::vector<double> ex;
+							if (!me::computeGlobalGP(geom, nn, node_xyz, ndim,
+								q_gp_param, q_num_gp, q_ndir, ex)) { ok = false; break; }
+							ggp.insert(ggp.end(), ex.begin(), ex.end());
 						}
-						mpcolns::h5::group::close(h_q);
+						if (ok && !ggp.empty()) {
+							hid_t d_g = mpcolns::h5::dataset::createAndWrite(
+								h_eg, "GLOBAL_GP_COORDS", ggp,
+								nElem, (size_t)q_num_gp * (size_t)ndim);
+							mpcolns::h5::dataset::close(d_g);
+						}
 					}
 				}
 				mpcolns::h5::group::close(h_eg);

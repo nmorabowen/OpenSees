@@ -1238,6 +1238,132 @@ namespace mpco {
 			}
 		}
 
+		/* ----------------------------------------------------------------- *
+		 * Write-side reference-config global Gauss-point coordinates for ONE *
+		 * element:   x(ξ_g) = Σ_i N_i(ξ_g) · X_i                              *
+		 *                                                                     *
+		 * The shape functions N_i are evaluated in the element's OWN node     *
+		 * order (getExternalNodes()) — every basis below was verified against *
+		 * its canonical element source (FourNodeQuad / NineNodeQuad / Brick + *
+		 * shp3d / Tri31 / FourNodeTetrahedron; see LEDGER_quirks). This is the *
+		 * belt-and-suspenders GLOBAL_GP_COORDS oracle (ADR D2): it both lets   *
+		 * legacy elements be consumed with zero reader-side basis math AND     *
+		 * catches GP-ordering/basis bugs at write time when paired with the    *
+		 * round-trip check x(GP_PARAM[k]) vs GLOBAL_GP_COORDS[k].              *
+		 *                                                                     *
+		 * Inputs:                                                             *
+		 *   geom      : element geometry enum (selects the basis)             *
+		 *   num_nodes : number of element nodes                               *
+		 *   node_xyz  : [num_nodes][ndim] reference node coords, in           *
+		 *               getExternalNodes() order                              *
+		 *   gp_param  : row-major [num_gp × ndir] natural coords (the rule,    *
+		 *               in the element's GP order)                            *
+		 *   ndim      : spatial dimension (1/2/3)                             *
+		 * Output (on success): out is row-major [num_gp × ndim].             *
+		 * Returns false for topologies whose write-side basis is not yet      *
+		 *   implemented (caller then omits GLOBAL_GP_COORDS for that bucket;   *
+		 *   the reader treats the dataset as optional). v1 coverage: line 2N, *
+		 *   quad 4N/9N, tri 3N, tet 4N, hex 8N. Higher-order Lagrange/         *
+		 *   serendipity (9N hex / 20N-27N hex / 10N tet / 6N tri) land with    *
+		 *   their quadrature rules in a later step.                           *
+		 * ----------------------------------------------------------------- */
+		inline bool computeGlobalGP(
+			ElementGeometryType::Enum geom, int num_nodes,
+			const std::vector<std::vector<double> >& node_xyz, int ndim,
+			const std::vector<double>& gp_param, int num_gp, int ndir,
+			std::vector<double>& out)
+		{
+			out.clear();
+			if (ndim <= 0 || num_gp <= 0 || ndir <= 0) return false;
+			if ((int)node_xyz.size() < num_nodes) return false;
+
+			// Evaluate the shape functions for ONE Gauss point into N[num_nodes].
+			// natc points at this point's ndir natural coords. Returns false if the
+			// (geom, num_nodes) pair is not a supported write-side basis.
+			struct ShapeEval {
+				static bool eval(ElementGeometryType::Enum g, int nn,
+					const double* natc, int nd, std::vector<double>& N)
+				{
+					N.assign(nn, 0.0);
+					switch (g) {
+					// ---- line, [-1,1] : 2-node linear -----------------------
+					case ElementGeometryType::Line_2N: {
+						if (nn < 2 || nd < 1) return false;
+						double xi = natc[0];
+						N[0] = 0.5 * (1.0 - xi);
+						N[1] = 0.5 * (1.0 + xi);
+						return true; }
+					// ---- tri, barycentric (Tri31: N0=ξ,N1=η,N2=1-ξ-η) -------
+					case ElementGeometryType::Triangle_3N: {
+						if (nn < 3 || nd < 2) return false;
+						double xi = natc[0], eta = natc[1];
+						N[0] = xi; N[1] = eta; N[2] = 1.0 - xi - eta;
+						return true; }
+					// ---- quad, [-1,1]^2 (FourNodeQuad CCW bilinear) ---------
+					case ElementGeometryType::Quadrilateral_4N: {
+						if (nn < 4 || nd < 2) return false;
+						double s = natc[0], t = natc[1];
+						N[0] = 0.25 * (1.0 - s) * (1.0 - t);
+						N[1] = 0.25 * (1.0 + s) * (1.0 - t);
+						N[2] = 0.25 * (1.0 + s) * (1.0 + t);
+						N[3] = 0.25 * (1.0 - s) * (1.0 + t);
+						return true; }
+					// ---- quad, [-1,1]^2 (NineNodeQuad biquadratic Lagrange) -
+					// node order: 4 CCW corners, 4 CCW edge-mids, center.
+					case ElementGeometryType::Quadrilateral_9N: {
+						if (nn < 9 || nd < 2) return false;
+						double s = natc[0], t = natc[1];
+						N[0] =  (1.0 - s) * (1.0 - t) * s * t / 4.0;
+						N[1] = -(1.0 + s) * (1.0 - t) * s * t / 4.0;
+						N[2] =  (1.0 + s) * (1.0 + t) * s * t / 4.0;
+						N[3] = -(1.0 - s) * (1.0 + t) * s * t / 4.0;
+						N[4] = -(1.0 - s * s) * (1.0 - t) * t / 2.0;
+						N[5] =  (1.0 + s) * (1.0 - t * t) * s / 2.0;
+						N[6] =  (1.0 - s * s) * (1.0 + t) * t / 2.0;
+						N[7] = -(1.0 - s) * (1.0 - t * t) * s / 2.0;
+						N[8] =  (1.0 - s * s) * (1.0 - t * t);
+						return true; }
+					// ---- tet, barycentric (N0=r,N1=s,N2=t,N3=1-r-s-t) -------
+					case ElementGeometryType::Tetrahedron_4N: {
+						if (nn < 4 || nd < 3) return false;
+						double r = natc[0], s = natc[1], u = natc[2];
+						N[0] = r; N[1] = s; N[2] = u; N[3] = 1.0 - r - s - u;
+						return true; }
+					// ---- hex, [-1,1]^3 (Brick/shp3d trilinear) --------------
+					// node order: bottom CCW (0:---,1:+--,2:++-,3:-+-),
+					//             top    CCW (4:--+,5:+-+,6:+++,7:-++).
+					case ElementGeometryType::Hexahedron_8N: {
+						if (nn < 8 || nd < 3) return false;
+						double r = natc[0], s = natc[1], u = natc[2];
+						static const double sgn[8][3] = {
+							{-1,-1,-1}, { 1,-1,-1}, { 1, 1,-1}, {-1, 1,-1},
+							{-1,-1, 1}, { 1,-1, 1}, { 1, 1, 1}, {-1, 1, 1} };
+						for (int i = 0; i < 8; ++i)
+							N[i] = 0.125 * (1.0 + sgn[i][0] * r)
+							             * (1.0 + sgn[i][1] * s)
+							             * (1.0 + sgn[i][2] * u);
+						return true; }
+					default:
+						return false;
+					}
+				}
+			};
+
+			out.assign((size_t)num_gp * (size_t)ndim, 0.0);
+			std::vector<double> N;
+			for (int g = 0; g < num_gp; ++g) {
+				if (!ShapeEval::eval(geom, num_nodes, &gp_param[(size_t)g * (size_t)ndir], ndir, N))
+					return false;
+				for (int i = 0; i < num_nodes; ++i) {
+					double Ni = N[(size_t)i];
+					const std::vector<double>& Xi = node_xyz[(size_t)i];
+					for (int d = 0; d < ndim; ++d)
+						out[(size_t)g * (size_t)ndim + (size_t)d] += Ni * Xi[(size_t)d];
+				}
+			}
+			return true;
+		}
+
 		struct ElementWithSameCustomIntRuleCollection
 		{
 			typedef std::vector<Element*> collection_type;
