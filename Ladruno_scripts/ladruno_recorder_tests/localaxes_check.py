@@ -39,7 +39,9 @@ def quat_to_R(q):
 
 def main() -> int:
     out = sys.argv[1] if len(sys.argv) > 1 else "."
-    path = os.path.join(out, "localaxes.ladruno")
+    fname = sys.argv[2] if len(sys.argv) > 2 else "localaxes.ladruno"
+    path = os.path.join(out, fname)
+    print(f"checking {path}")
     problems = 0
     with h5py.File(path, "r") as f:
         stage = [k for k in f if k.startswith("MODEL_STAGE")][0]
@@ -66,9 +68,13 @@ def main() -> int:
         for ename in f[f"{stage}/MODEL/ELEMENTS"]:
             conn = f[f"{stage}/MODEL/ELEMENTS/{ename}/CONNECTIVITY"][...]
             for row in conn:
-                a = coord[int(row[1])][:3]
-                b = coord[int(row[2])][:3]
-                v = np.array(b) - np.array(a)
+                # pad to 3D so 2D models (2-component coords) compare against the
+                # full 3D direction cosines the CrdTransf returns.
+                a = np.zeros(3); b = np.zeros(3)
+                ca = np.asarray(coord[int(row[1])], float).ravel()[:3]
+                cb = np.asarray(coord[int(row[2])], float).ravel()[:3]
+                a[:ca.size] = ca; b[:cb.size] = cb
+                v = b - a
                 elem_axis[int(row[0])] = v / np.linalg.norm(v)
 
         total_frames = 0

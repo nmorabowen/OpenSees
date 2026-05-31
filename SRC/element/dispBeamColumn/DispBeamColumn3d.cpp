@@ -1802,6 +1802,12 @@ DispBeamColumn3d::setResponse(const char **argv, int argc, OPS_Stream &output)
     else if (strcmp(argv[0], "energy") == 0) {
       theResponse = new ElementResponse(this, 13, 0.0);
     }
+    // Ladruno: expose the element local frame (from the CrdTransf) as 9 packed
+    // direction cosines so MPCO_Ladruno can record MODEL/LOCAL_AXES instead of
+    // falling back to a silent identity quaternion (apeGmsh beam-orientation gap).
+    else if (strcmp(argv[0],"localAxes") == 0) {
+      theResponse = new ElementResponse(this, 30, Vector(9));
+    }
     
     if (theResponse == 0)
       theResponse = crdTransf->setResponse(argv, argc, output);
@@ -1819,6 +1825,15 @@ DispBeamColumn3d::getResponse(int responseID, Information &eleInfo)
 
   if (responseID == 1)
     return eleInfo.setVector(this->getResistingForce());
+
+  // Ladruno: local axes (vx,vy,vz dir cosines) from the CrdTransf
+  else if (responseID == 30) {
+    static Vector la(9);
+    static Vector vx(3), vy(3), vz(3);
+    crdTransf->getLocalAxes(vx, vy, vz);
+    for (int i = 0; i < 3; i++) { la(i) = vx(i); la(i + 3) = vy(i); la(i + 6) = vz(i); }
+    return eleInfo.setVector(la);
+  }
 
   else if (responseID == 12)
     return eleInfo.setVector(this->getRayleighDampingForces());
