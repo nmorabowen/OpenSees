@@ -406,11 +406,23 @@ Profiler::buildMeta() const
     m.threads   = static_cast<int64_t>(threads_.size());
 
     // model / engine_sha / integrator / algorithm / solver / units and the
-    // size normalizers (nSteps/nDOF/nElem/nNode/nnz, dt_*, oversample_ratio) are
+    // size normalizers (nDOF/nElem/nNode/nnz, dt_cr, oversample_ratio) are
     // populated by the P5 command layer from the live SimulationInformation /
-    // SOE / census before handing meta to the writer. P1 leaves them defaulted.
-    if (config_.perStep)
+    // SOE / integrator before handing meta to the writer. P1 leaves them defaulted.
+    if (config_.perStep) {
         m.nSteps = static_cast<int64_t>(series_.nSteps());
+        // dt_min / dt_max from the recorded per-step series (P0#5 inputs; the
+        // command derives oversample_ratio = dt_cr / dt_max from these).
+        if (!series_.dt.empty()) {
+            double lo = series_.dt.front(), hi = series_.dt.front();
+            for (const double d : series_.dt) {
+                if (d < lo) lo = d;
+                if (d > hi) hi = d;
+            }
+            m.dt_min = lo;
+            m.dt_max = hi;
+        }
+    }
 
     return m;
 }
