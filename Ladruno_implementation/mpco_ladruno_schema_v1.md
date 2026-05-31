@@ -98,9 +98,21 @@ apeGmsh reads.
 | `SOLVER_NAME` | string | `"OpenSees"` | |
 | `SOLVER_VERSION` | int[3] | e.g. `[3,5,1]` | `OPS_VERSION` split on `.` |
 | `SPATIAL_DIM` | int | 1/2/3 | from first node, enforced uniform |
+| `PARTITIONED` | int | 0/1 | 1 if this is one `.part-N` of a partitioned run |
+| `PARTITION_ID` | int | `N` | this file's 0-based partition index (0 if not partitioned) |
+| `NUM_PARTITIONS` | int | total | partition count of the set (1 if not partitioned) |
 
 A reader that doesn't find `GENERATOR=="MPCO_Ladruno"` must treat the file as a
 legacy STKO `.mpco` (or refuse it).
+
+**Partition manifest.** When the recorder runs under a parallel launcher it writes
+`<stem>.part-<N>.ladruno` (one file per process) and stamps each with the three
+`PARTITION*` attributes so a reader can validate the contiguous-from-0 set it globs.
+The partition index `N` is resolved without MPI (the recorder is in the shared
+sequentially-compiled `OPS_Recorder` library): from the `sendSelf`/`recvSelf`
+broadcast counter in the PartitionedDomain/OpenSeesMP path, or from the launcher's
+`PMI_RANK`/`PMI_SIZE` env in the interpreter-per-rank `openseesmp` path. Single
+process → `PARTITIONED=0`, filename verbatim.
 
 ---
 
@@ -467,3 +479,22 @@ in STKO). Fiber section as today.
   (`ladruno.yml` `static-gates`, pure-Python, no build) and run on real recorder output
   in `standard_quad_check`. Verified: harness 22/22; oracle clean on real
   quad/tri/brick/quad9/tet10/hex20. `FORMAT_VERSION=1` declared **frozen** (§9).
+- 2026-05-31 — **Parallel per-partition output (review finding (c)).** The recorder
+  now writes `<stem>.part-<N>.ladruno` (one file per process) + an INFO partition
+  manifest (`PARTITIONED`/`PARTITION_ID`/`NUM_PARTITIONS`, §2), so N ranks no longer
+  race to write one file (the corruption hazard). Implemented `sendSelf`/`recvSelf`
+  (were bare `return 0`) to broadcast the recorder *config* P0->workers (filename,
+  requests, frequency, region/sets, kind) for the PartitionedDomain/OpenSeesMP path —
+  p_id carried as P0's send counter. The recorder lives in the shared sequentially-
+  compiled `OPS_Recorder` lib (no `_PARALLEL_PROCESSING`, no MPI link — the frozen
+  recorder's lone Allreduce is likewise compiled out here), so the partition index is
+  resolved WITHOUT MPI: from the broadcast counter, else from the launcher's
+  `PMI_RANK`/`PMI_SIZE` env (interpreter-per-rank `openseesmp`). **Verified on a real
+  4-rank `mpiexec` openseesmp run:** 4 contiguous `mp_out.part-0..3.ladruno`, zero
+  HDF5 lock errors (vs the pre-fix single-file collision), each schema-valid with
+  PARTITION_ID==rank / NUM_PARTITIONS==4. Sequential output unchanged (no PMI env ->
+  verbatim; 80/80,96/96,144/144,108/108, bezier, standard_quad, localaxes, pytest 23/23).
+  Documented limits: the PartitionedDomain `partition` command is METIS-4-blocked in
+  this build so that path is correct-by-construction (mirrors frozen) but not runtime-
+  tested here; cross-rank MODEL_STAGE stamp sync (frozen's Allreduce) is absent in this
+  shared-TU build (single-stage unaffected).

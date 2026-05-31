@@ -327,6 +327,15 @@ def validate(path: str) -> list[str]:
         if ndim not in (1, 2, 3):
             err(f"INFO/SPATIAL_DIM must be 1|2|3, got {ndim}")
 
+        # Partition manifest (parallel output). Only present/meaningful when this is
+        # one ".part-N.ladruno" of a partitioned set; PARTITION_ID must index into
+        # the 0-based-contiguous NUM_PARTITIONS the apeGmsh stitcher globs for.
+        if int(info.get("PARTITIONED", 0)):
+            pid = int(info.get("PARTITION_ID", -1))
+            nparts = int(info.get("NUM_PARTITIONS", 0))
+            if not (0 <= pid < nparts):
+                err(f"INFO: PARTITION_ID {pid} not in [0, NUM_PARTITIONS={nparts})")
+
         stages = r.stages()
         if not stages:
             err("no MODEL_STAGE[*] group present")
