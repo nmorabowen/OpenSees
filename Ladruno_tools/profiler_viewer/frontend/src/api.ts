@@ -2,11 +2,20 @@
 // The types mirror the JSON wire format documented in profiler_results.py, so
 // the contract is checked at compile time. The frontend never reads HDF5.
 
-// Backend base URL. Defaults to the backend's own default port; override with a
-// VITE_API_BASE env at build/dev time. The backend sets permissive CORS, so a
-// cross-origin fetch from the Vite dev server works without a proxy.
-export const API_BASE: string =
-  (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://127.0.0.1:8000'
+// Backend base URL. Resolution order:
+//   1. VITE_API_BASE env (explicit override at build/dev time), else
+//   2. same-origin '' when this bundle is served by the backend itself (the
+//      one-click launcher mounts the built dist/ on the API server), else
+//   3. the standalone backend's default port (Vite dev server -> :8000, CORS-allowed).
+// Same-origin is detected by NOT running on Vite's dev port (5173).
+function resolveApiBase(): string {
+  const env = import.meta.env.VITE_API_BASE as string | undefined
+  if (env !== undefined) return env
+  if (typeof window !== 'undefined' && window.location.port !== '5173') return ''
+  return 'http://127.0.0.1:8000'
+}
+
+export const API_BASE: string = resolveApiBase()
 
 export interface Health {
   status: string

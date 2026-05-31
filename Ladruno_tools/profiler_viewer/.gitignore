@@ -2,3 +2,6 @@
 *.h5
 __pycache__/
 *.pyc
+
+# One-click launcher: private venv it provisions (launch.py)
+.viewer_venv/
