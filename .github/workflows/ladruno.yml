@@ -75,7 +75,7 @@ jobs:
           max-size: 2G
       - name: Install conan
         run: |
-          pip install conan pytest pyyaml
+          pip install conan pytest pyyaml numpy
           conan profile detect --force
       - name: Build OpenSees + OpenSeesPy
         run: |
