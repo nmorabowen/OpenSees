@@ -32,8 +32,21 @@
 #include <Matrix.h>
 #include <ID.h>
 #include <Channel.h>
+#include <Message.h>
 #include <FEM_ObjectBroker.h>
 #include <OPS_Globals.h>
+
+// NOTE on parallel output: this TU is part of the shared (sequentially compiled)
+// OPS_Recorder library — it links into OpenSeesPy/OpenSeesMP/openseesmp alike and
+// is NOT compiled with _PARALLEL_PROCESSING, so it cannot call MPI directly (same
+// as the frozen MPCORecorder, whose only _PARALLEL_PROCESSING bit — an Allreduce —
+// is likewise compiled out here). The per-partition output contract is therefore
+// driven WITHOUT MPI, by two always-available signals (see initialize()):
+//   * PartitionedDomain / OpenSeesMP: the recorder is broadcast P0->workers via
+//     sendSelf/recvSelf, so send_self_count != 0 and p_id is the assigned index;
+//   * interpreter-per-rank / openseesmp: each rank builds its own recorder, so the
+//     partition index is read from the launcher's PMI_RANK/PMI_SIZE env (Intel
+//     MPI / MS-MPI set these per rank). Single process -> filename used verbatim.
 #include <elementAPI.h>
 #include <classTags.h>
 #include <Response.h>
@@ -50,6 +63,7 @@
 #include <sstream>
 #include <cmath>
 #include <cstring>
+#include <cstdlib>
 
 namespace mpcolns = mpcol; // local alias
 
@@ -67,6 +81,8 @@ class MPCORecorderLadruno::private_data
 public:
 	private_data()
 		: filename()
+		, send_self_count(0)
+		, p_id(0)
 		, initialized(false)
 		, first_domain_changed_done(false)
 		, info()
@@ -88,6 +104,15 @@ public:
 	{}
 
 	std::string filename;
+	// Parallel partition bookkeeping (frozen MPCORecorder convention):
+	//   send_self_count == 0  -> sequential (one process, no partitioning)
+	//   send_self_count  > 0  -> primary P0 (incremented once per worker channel)
+	//   send_self_count  < 0  -> a secondary/worker process (set in recvSelf)
+	// p_id is this process's partition index: 0 on P0, 1..N-1 on the workers
+	// (the value P0's counter held when it serialized to that worker). The output
+	// file becomes "<stem>.part-<p_id>.ladruno" whenever send_self_count != 0.
+	int send_self_count;
+	int p_id;
 	bool initialized;
 	// first_domain_changed_done — false until the first record() resolves the
 	// model-stage stamp; thereafter a stamp change triggers a model rebuild
@@ -273,9 +298,12 @@ int MPCORecorderLadruno::record(int commitTag, double timeStamp)
 	// (re)write the model and rebuild every node/element source+sink. This is
 	// what re-acquires fresh Element*/Response* pointers; without it the cached
 	// pointers from the prior stage dangle and the new stage is never written.
-	// NOTE: the parallel per-process stamp Allreduce (frozen lambdaHasDomainChanged)
-	// is deferred with the rest of the parallel channel; this recorder is
-	// single-process / per-partition for now.
+	// Multi-stage stamp (per-process). The frozen recorder max-reduces this across
+	// ranks via an MPI_Allreduce, but that is its only _PARALLEL_PROCESSING-gated
+	// code and is compiled out of this shared sequential TU — so we use the local
+	// domain stamp. Each partition writes its own part-N file, so cross-rank stamp
+	// sync only matters for aligning MODEL_STAGE ids across partitions in a staged
+	// analysis; that is a documented limitation here (single-stage is unaffected).
 	bool rebuild_model = false;
 	int new_stamp = info.domain->hasDomainChanged();
 	if (!m_data->first_domain_changed_done) {
@@ -341,12 +369,53 @@ int MPCORecorderLadruno::initialize()
 	mpcolns::h5::plist::setLinkCreationOrder(
 		info.h_group_proplist, H5P_CRT_ORDER_TRACKED | H5P_CRT_ORDER_INDEXED);
 
+	// Resolve this process's partition identity for the parallel output contract
+	// (no MPI — this TU is not _PARALLEL_PROCESSING; see the note near the includes).
+	//   * PartitionedDomain/OpenSeesMP: the recorder was broadcast from P0
+	//     (send_self_count != 0) and p_id is the assigned 0-based index;
+	//   * interpreter-per-rank/openseesmp: each rank built the recorder itself
+	//     (send_self_count == 0); the launcher (Intel MPI / MS-MPI) exports
+	//     PMI_RANK + PMI_SIZE per rank, so index by PMI_RANK.
+	// Single process (no PMI env, or PMI_SIZE <= 1) -> not partitioned -> verbatim.
+	int part_id = m_data->p_id;
+	bool is_partitioned = (m_data->send_self_count != 0);
+	int num_parts = 1;
+	{
+		const char* pmi_size = std::getenv("PMI_SIZE");
+		const char* pmi_rank = std::getenv("PMI_RANK");
+		int np_env = (pmi_size != 0) ? std::atoi(pmi_size) : 1;
+		if (np_env > 1) {
+			num_parts = np_env;
+			if (!is_partitioned) {   // interpreter-per-rank: index by the launcher rank
+				part_id = (pmi_rank != 0) ? std::atoi(pmi_rank) : 0;
+				is_partitioned = true;
+			}
+		}
+	}
+	m_data->p_id = part_id;
+
+	// Per-partition output filename: "<stem>.part-<part_id>.ladruno" when this is
+	// one rank of a partitioned run (so N processes never race to write one file —
+	// the corruption hazard), else the filename verbatim. apeGmsh stitches the set
+	// on read via ^(?P<stem>.+?)\.part-(?P<idx>\d+)\.ladruno$ (0-based, contiguous).
+	std::string the_filename = m_data->filename;
+	if (is_partitioned) {
+		std::string stem = m_data->filename;
+		const std::string ext = ".ladruno";
+		if (stem.size() >= ext.size() &&
+		    stem.compare(stem.size() - ext.size(), ext.size(), ext) == 0)
+			stem.erase(stem.size() - ext.size());
+		std::stringstream ss;
+		ss << stem << ".part-" << part_id << ".ladruno";
+		the_filename = ss.str();
+	}
+
 	// create the file (Phase 1: no SWMR; H5P_DEFAULT file access)
 	info.h_file_id = mpcolns::h5::file::create(
-		m_data->filename.c_str(), info.h_file_proplist, H5P_DEFAULT);
+		the_filename.c_str(), info.h_file_proplist, H5P_DEFAULT);
 	if (info.h_file_id == mpcolns::HID_INVALID) {
 		opserr << "MPCORecorderLadruno error: cannot create file \""
-		       << m_data->filename.c_str() << "\"\n";
+		       << the_filename.c_str() << "\"\n";
 		return -1;
 	}
 
@@ -362,6 +431,16 @@ int MPCORecorderLadruno::initialize()
 	solver_version.push_back(1);
 	mpcolns::h5::attribute::write(h_info, "SOLVER_VERSION", solver_version);
 	mpcolns::h5::attribute::write(h_info, "SPATIAL_DIM", info.num_dimensions);
+
+	// Partition manifest (parallel-output contract). Each ".part-N.ladruno" file
+	// self-declares its 0-based partition index + the total count so apeGmsh can
+	// validate the contiguous-from-0 set it globs. PARTITIONED=0 marks an ordinary
+	// single-file (sequential) output — NUM_PARTITIONS then stays 1. Values resolved
+	// above (broadcast p_id for PartitionedDomain, MPI rank for interpreter-per-rank).
+	mpcolns::h5::attribute::write(h_info, "PARTITION_ID", part_id);
+	mpcolns::h5::attribute::write(h_info, "PARTITIONED", (int)(is_partitioned ? 1 : 0));
+	mpcolns::h5::attribute::write(h_info, "NUM_PARTITIONS", num_parts);
+
 	hid_t h_prov = mpcolns::h5::group::create(
 		h_info, "PROVENANCE", H5P_DEFAULT, info.h_group_proplist, H5P_DEFAULT);
 	mpcolns::h5::group::close(h_prov);
@@ -1740,17 +1819,177 @@ void MPCORecorderLadruno::writeElementColumnMap(int elem_channel_index)
 }
 
 /* ===================================================================== */
-/* parallel (Phase-3 stubs; real send/recv deferred)                     */
+/* parallel: broadcast the recorder CONFIG (not results) to worker ranks */
 /* ===================================================================== */
+//
+// Under OpenSeesMP the recorder is created once (on P0) and shipped to each
+// worker via sendSelf/recvSelf. Only the lightweight config is serialized — the
+// requests, filename, frequency, region/sets, kind. Each worker then builds its
+// own sources from ITS partition of the domain and writes its own
+// "<stem>.part-<p_id>.ladruno" (result data is never communicated; this mirrors
+// the frozen MPCORecorder, whose per-step comm is just the one stage-stamp
+// Allreduce in record()). p_id is carried as P0's send_self_count at send time.
 
-int MPCORecorderLadruno::sendSelf(int /*commitTag*/, Channel& /*theChannel*/)
+namespace {
+// Minimal self-contained binary (de)serializer. Same-architecture transport
+// (the frozen recorder likewise ships raw Message bytes), so native layout is fine.
+struct LadSer {
+	std::string b;
+	void put_i(int v) { b.append(reinterpret_cast<const char*>(&v), sizeof(int)); }
+	void put_d(double v) { b.append(reinterpret_cast<const char*>(&v), sizeof(double)); }
+	void put_s(const std::string& v) { put_i(static_cast<int>(v.size())); b.append(v); }
+	void put_vi(const std::vector<int>& v) {
+		put_i(static_cast<int>(v.size()));
+		for (size_t k = 0; k < v.size(); ++k) put_i(v[k]);
+	}
+};
+struct LadDeser {
+	const char* p; const char* end; bool ok;
+	LadDeser(const char* data, int n) : p(data), end(data + n), ok(true) {}
+	int get_i() {
+		if (!ok || p + sizeof(int) > end) { ok = false; return 0; }
+		int v; std::memcpy(&v, p, sizeof(int)); p += sizeof(int); return v;
+	}
+	double get_d() {
+		if (!ok || p + sizeof(double) > end) { ok = false; return 0.0; }
+		double v; std::memcpy(&v, p, sizeof(double)); p += sizeof(double); return v;
+	}
+	std::string get_s() {
+		int n = get_i();
+		if (!ok || n < 0 || p + n > end) { ok = false; return std::string(); }
+		std::string v(p, n); p += n; return v;
+	}
+	std::vector<int> get_vi() {
+		int n = get_i(); std::vector<int> v;
+		if (!ok || n < 0) { ok = false; return v; }
+		v.reserve(n);
+		for (int k = 0; k < n && ok; ++k) v.push_back(get_i());
+		return v;
+	}
+};
+} // anonymous namespace
+
+int MPCORecorderLadruno::sendSelf(int commitTag, Channel& theChannel)
 {
+	if (theChannel.isDatastore() == 1) {
+		opserr << "MPCORecorderLadruno::sendSelf() - does not send data to a datastore\n";
+		return -1;
+	}
+	m_data->send_self_count++;
+
+	LadSer ser;
+	ser.put_i(this->getTag());
+	ser.put_i(m_data->send_self_count);   // becomes p_id in the receiver
+	ser.put_s(m_data->filename);
+	ser.put_i((int)m_data->output_freq.type);
+	ser.put_d(m_data->output_freq.dt);
+	ser.put_i(m_data->output_freq.nsteps);
+	ser.put_i(m_data->has_region ? 1 : 0);
+	ser.put_i(m_data->region_tag);
+	ser.put_vi(m_data->node_set);
+	ser.put_vi(m_data->elem_set);
+	ser.put_i(m_data->energy_requested ? 1 : 0);
+	ser.put_vi(m_data->energy_region_tags);
+	ser.put_s(m_data->stage_kind);
+	{
+		std::vector<int> nr;
+		nr.reserve(m_data->nodal_results_requests.size());
+		for (size_t k = 0; k < m_data->nodal_results_requests.size(); ++k)
+			nr.push_back((int)m_data->nodal_results_requests[k]);
+		ser.put_vi(nr);
+	}
+	ser.put_vi(m_data->sens_grad_indices);
+	ser.put_i((int)m_data->elemental_results_requests.size());
+	for (size_t k = 0; k < m_data->elemental_results_requests.size(); ++k) {
+		const std::vector<std::string>& req = m_data->elemental_results_requests[k];
+		ser.put_i((int)req.size());
+		for (size_t j = 0; j < req.size(); ++j) ser.put_s(req[j]);
+	}
+
+	int msg_data_size = (int)ser.b.size();
+	ID idata(1);
+	idata(0) = msg_data_size;
+	if (theChannel.sendID(0, commitTag, idata) < 0) {
+		opserr << "MPCORecorderLadruno::sendSelf() - failed to send message size\n";
+		return -1;
+	}
+	std::vector<char> msg_data(static_cast<size_t>(msg_data_size) + 1, '\0');
+	std::copy(ser.b.begin(), ser.b.end(), msg_data.begin());
+	Message msg(msg_data.data(), msg_data_size);
+	if (theChannel.sendMsg(0, commitTag, msg) < 0) {
+		opserr << "MPCORecorderLadruno::sendSelf() - failed to send message\n";
+		return -1;
+	}
 	return 0;
 }
 
-int MPCORecorderLadruno::recvSelf(int /*commitTag*/, Channel& /*theChannel*/,
+int MPCORecorderLadruno::recvSelf(int commitTag, Channel& theChannel,
                                   FEM_ObjectBroker& /*theBroker*/)
 {
+	if (theChannel.isDatastore() == 1) {
+		opserr << "MPCORecorderLadruno::recvSelf() - does not recv data from a datastore\n";
+		return -1;
+	}
+
+	// fresh state: this process is a secondary/worker (send_self_count < 0)
+	if (m_data) {
+		clearSources();
+		delete m_data;
+	}
+	m_data = new private_data();
+	m_data->send_self_count = -1;
+
+	ID idata(1);
+	if (theChannel.recvID(0, commitTag, idata) < 0) {
+		opserr << "MPCORecorderLadruno::recvSelf() - failed to recv message size\n";
+		return -1;
+	}
+	int msg_data_size = idata(0);
+	std::vector<char> msg_data(static_cast<size_t>(msg_data_size) + 1, '\0');
+	Message msg(msg_data.data(), msg_data_size);
+	if (theChannel.recvMsg(0, commitTag, msg) < 0) {
+		opserr << "MPCORecorderLadruno::recvSelf() - failed to recv message\n";
+		return -1;
+	}
+
+	LadDeser de(msg_data.data(), msg_data_size);
+	int my_tag = de.get_i();
+	m_data->p_id = de.get_i();             // P0's counter at send time -> partition idx
+	m_data->filename = de.get_s();
+	m_data->output_freq.type =
+		(mpcolns::mpco::OutputFrequency::IncrementType)de.get_i();
+	m_data->output_freq.dt = de.get_d();
+	m_data->output_freq.nsteps = de.get_i();
+	m_data->has_region = de.get_i() != 0;
+	m_data->region_tag = de.get_i();
+	m_data->node_set = de.get_vi();
+	m_data->elem_set = de.get_vi();
+	m_data->energy_requested = de.get_i() != 0;
+	m_data->energy_region_tags = de.get_vi();
+	m_data->stage_kind = de.get_s();
+	{
+		std::vector<int> nr = de.get_vi();
+		m_data->nodal_results_requests.clear();
+		for (size_t k = 0; k < nr.size(); ++k)
+			m_data->nodal_results_requests.push_back(
+				(mpcolns::mpco::NodalResultType::Enum)nr[k]);
+	}
+	m_data->sens_grad_indices = de.get_vi();
+	{
+		int n = de.get_i();
+		m_data->elemental_results_requests.clear();
+		for (int k = 0; k < n && de.ok; ++k) {
+			int m = de.get_i();
+			std::vector<std::string> req;
+			for (int j = 0; j < m && de.ok; ++j) req.push_back(de.get_s());
+			m_data->elemental_results_requests.push_back(req);
+		}
+	}
+	if (!de.ok) {
+		opserr << "MPCORecorderLadruno::recvSelf() - failed to de-serialize config\n";
+		return -1;
+	}
+	this->setTag(my_tag);
 	return 0;
 }
 

@@ -184,6 +184,23 @@ def test_round_trip_oracle_catches_corruption(synth):
     assert any("round-trip" in p and "FourNodeQuad" in p for p in problems), problems
 
 
+def test_validator_partition_manifest(synth):
+    """A ".part-N.ladruno" file declares INFO/PARTITIONED + PARTITION_ID +
+    NUM_PARTITIONS; the validator accepts a consistent manifest and rejects a
+    PARTITION_ID outside [0, NUM_PARTITIONS) (the contiguous-from-0 contract)."""
+    import h5py
+
+    with h5py.File(synth, "a") as f:
+        f["INFO"].attrs["PARTITIONED"] = 1
+        f["INFO"].attrs["PARTITION_ID"] = 2
+        f["INFO"].attrs["NUM_PARTITIONS"] = 4
+    assert lf.validate(synth) == []
+
+    with h5py.File(synth, "a") as f:
+        f["INFO"].attrs["PARTITION_ID"] = 4  # out of [0, 4)
+    assert any("PARTITION_ID" in p for p in lf.validate(synth))
+
+
 def test_validator_accepts_bary_simplex_ndir(synth):
     """The tri group uses PARAM_DOMAIN='bary' with NDIR=2 decoupled from ORDER=(1,)
     -- validate() must accept it (schema-v1 finding (f))."""
