@@ -1527,6 +1527,12 @@ ElasticBeam2d::setResponse(const char **argv, int argc, OPS_Stream &output)
 
     theResponse =  new ElementResponse(this, 5, Vector(3));
   }
+  // Ladruno: expose the element local frame (from the CrdTransf) as 9 packed
+  // direction cosines so MPCO_Ladruno can record MODEL/LOCAL_AXES instead of
+  // falling back to a silent identity quaternion (apeGmsh beam-orientation gap).
+  else if (strcmp(argv[0],"localAxes") == 0) {
+    theResponse = new ElementResponse(this, 30, Vector(9));
+  }
   output.endTag(); // ElementOutput
 
   if (theResponse == 0)
@@ -1551,6 +1557,14 @@ ElasticBeam2d::getResponse (int responseID, Information &eleInfo)
     
   case 2: // global forces
     return eleInfo.setVector(this->getResistingForce());
+
+  case 30: { // Ladruno: local axes (vx,vy,vz dir cosines) from the CrdTransf
+    static Vector la(9);
+    static Vector vx(3), vy(3), vz(3);
+    theCoordTransf->getLocalAxes(vx, vy, vz);
+    for (int i = 0; i < 3; i++) { la(i) = vx(i); la(i + 3) = vy(i); la(i + 6) = vz(i); }
+    return eleInfo.setVector(la);
+  }
     
   case 3: // local forces
     // Axial
