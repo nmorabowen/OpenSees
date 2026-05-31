@@ -71,8 +71,13 @@ def sdof(k, m, integrator_args, dt, nsteps, d0=0.0, v0=0.0):
     return np.array(t), np.array(u)
 
 
-def build_bar(N, L, E, A, rho):
-    """Fixed-free chain of N truss elements along x; returns element length."""
+def build_bar(N, L, E, A, rho, cmass=0):
+    """Fixed-free chain of N truss elements along x; returns element length.
+
+    cmass=0 (default) -> lumped element mass (0.5*rho*Le on the diagonal, zero
+    off-diagonals); cmass=1 -> consistent mass rho*A*Le/6 * [[2,1],[1,2]] (needed
+    to make diagonal-of-consistent vs row-sum lumping actually differ).
+    """
     ops.wipe()
     ops.model("basic", "-ndm", 2, "-ndf", 2)
     le = L / N
@@ -83,7 +88,7 @@ def build_bar(N, L, E, A, rho):
         ops.fix(i + 1, 0, 1)
     ops.uniaxialMaterial("Elastic", 1, E)
     for i in range(N):
-        ops.element("Truss", i + 1, i + 1, i + 2, A, 1, "-rho", rho)
+        ops.element("Truss", i + 1, i + 1, i + 2, A, 1, "-rho", rho, "-cMass", cmass)
     return le
 
 
@@ -104,8 +109,13 @@ def _peaks(u):
 
 
 def _bar_dtcr(N, L, E, A, rho, extra):
-    """Build the distributed-mass bar, run one tiny step, return criticalTimeStep()."""
-    le = build_bar(N, L, E, A, rho)
+    """Build a CONSISTENT-mass bar, run one tiny step, return criticalTimeStep().
+
+    Consistent mass (cmass=1) is required for diagonal-of-consistent vs row-sum
+    lumping to differ: a lumped Truss mass is already diagonal, so both lumpings
+    collapse to the same value (verified — they tie at le/c on a lumped bar).
+    """
+    le = build_bar(N, L, E, A, rho, cmass=1)
     c = math.sqrt(E / rho)
     ops.timeSeries("Constant", 1)
     ops.pattern("Plain", 1, 1)
@@ -362,7 +372,11 @@ def test_eb_no_value_contract():
 
 
 # ==========================================================================
-# 11. -lump diagonal vs rowsum: diagonal-of-consistent is stiffer -> smaller dt_cr
+# 11. -lump diagonal vs rowsum on a CONSISTENT-mass bar: diagonal-of-consistent
+#     (M_ii = rho*A*Le/3) is "stiffer" than row-sum (rho*A*Le/2) -> a smaller
+#     dt_cr by the factor sqrt((Le/3)/(Le/2)) = sqrt(2/3) ~ 0.816. The bar uses
+#     -cMass 1 deliberately: a lumped Truss mass is already diagonal, so the two
+#     lumpings would otherwise tie (both le/c) and the test would be vacuous.
 # ==========================================================================
 def test_eb_lump_diagonal():
     N = 40
@@ -377,8 +391,15 @@ def test_eb_lump_diagonal():
         "diagonal-of-consistent (stiffer) should give a smaller dt_cr "
         "(diagonal=%.5f vs rowsum=%.5f)" % (dt_diag, dt_rowsum)
     )
+    # row-sum of the consistent mass = rho*A*Le/2 = the lumped value -> dt ~ le/c
     assert abs(dt_rowsum - le / c) / (le / c) < 0.10, (
         "rowsum dt_cr=%.5f should be ~le/c=%.5f" % (dt_rowsum, le / c)
+    )
+    # diagonal-of-consistent should land near the sqrt(2/3) ratio (not exact —
+    # the bar is a chain, so the global pencil mixes adjacent element masses).
+    ratio = dt_diag / dt_rowsum
+    assert 0.70 < ratio < 0.95, (
+        "diagonal/rowsum dt_cr ratio %.3f should be near sqrt(2/3)=0.816" % ratio
     )
 
 
