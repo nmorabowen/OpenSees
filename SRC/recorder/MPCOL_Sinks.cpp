@@ -111,14 +111,23 @@ namespace mpcol {
 
 		// ID dataset [nIds x 1] (same shape as the frozen recorder).
 		const std::vector<int>& ids = src.ids();
+		const size_t n_ids = ids.size();
+		const size_t n_comp = (size_t)schema.num_components;
 		hid_t h_dset_id = h5::dataset::createAndWrite(
-			h_gp_result, "ID", ids, ids.size(), 1);
+			h_gp_result, "ID", ids, n_ids, 1);
 
-		// Empty DATA group; per-step datasets land under it in accept().
-		hid_t h_gp_data = h5::group::create(
-			h_gp_result, "DATA", H5P_DEFAULT, info.h_group_proplist, H5P_DEFAULT);
+		// Chunked time-series layout (schema D3): DATA is now a single
+		// [T x nIds x nComp] extensible dataset that grows one slab per step,
+		// with matching TIME[T] (double) / STEP[T] (int) axes — replacing the
+		// old DATA group of per-step STEP_<k> datasets. accept() appends.
+		hid_t h_data = h5::dataset::createTimeSeries3d(
+			h_gp_result, "DATA", (hsize_t)n_ids, (hsize_t)n_comp);
+		hid_t h_time = h5::dataset::createTimeAxis1d(h_gp_result, "TIME", H5T_IEEE_F64LE);
+		hid_t h_step = h5::dataset::createTimeAxis1d(h_gp_result, "STEP", H5T_STD_I32LE);
 
-		h5::group::close(h_gp_data);
+		h5::dataset::close(h_step);
+		h5::dataset::close(h_time);
+		h5::dataset::close(h_data);
 		h5::dataset::close(h_dset_id);
 		h5::group::close(h_gp_result);
 		h5::group::close(h_family);
@@ -147,30 +156,34 @@ namespace mpcol {
 		if (h_family == HID_INVALID)
 			return;
 
-		// Open the (already-created) result + DATA group; write STEP_<commitTag>.
+		// Open the (already-created) result group, then append this step's slab
+		// to DATA[T x nIds x nComp] and the matching TIME/STEP axes (schema D3).
 		hid_t h_gp_result = H5Gopen2(h_family, schema.name.c_str(), H5P_DEFAULT);
 		if (h_gp_result < 0) {
 			h5::group::close(h_family);
 			return;
 		}
-		hid_t h_gp_data = H5Gopen2(h_gp_result, "DATA", H5P_DEFAULT);
-		if (h_gp_data < 0) {
+		hid_t h_data = H5Dopen2(h_gp_result, "DATA", H5P_DEFAULT);
+		if (h_data < 0) {
 			h5::group::close(h_gp_result);
 			h5::group::close(h_family);
 			return;
 		}
+		if (buffer.size() >= n_ids * n_comp)
+			h5::dataset::appendSlab3d(h_data, &buffer[0], (hsize_t)n_ids, (hsize_t)n_comp);
+		h5::dataset::close(h_data);
 
-		std::stringstream ss_step;
-		ss_step << "STEP_" << info.current_time_step_id;
-		const std::string step_name = ss_step.str();
+		hid_t h_time = H5Dopen2(h_gp_result, "TIME", H5P_DEFAULT);
+		if (h_time >= 0) {
+			h5::dataset::appendDouble1d(h_time, info.current_time_step);
+			h5::dataset::close(h_time);
+		}
+		hid_t h_step = H5Dopen2(h_gp_result, "STEP", H5P_DEFAULT);
+		if (h_step >= 0) {
+			h5::dataset::appendInt1d(h_step, info.current_time_step_id);
+			h5::dataset::close(h_step);
+		}
 
-		hid_t h_dset_data = h5::dataset::createAndWrite(
-			h_gp_data, step_name.c_str(), buffer, n_ids, n_comp);
-		h5::attribute::write(h_dset_data, "STEP", info.current_time_step_id);
-		h5::attribute::write(h_dset_data, "TIME", info.current_time_step);
-		h5::dataset::close(h_dset_data);
-
-		h5::group::close(h_gp_data);
 		h5::group::close(h_gp_result);
 		h5::group::close(h_family);
 	}

@@ -32,7 +32,7 @@ import h5py
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from ladruno_format import LadrunoReader, validate  # noqa: E402
+from ladruno_format import LadrunoReader, iter_step_slices, validate  # noqa: E402
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "."
 LAD = os.path.join(OUT, "bezier_test.ladruno")
@@ -122,12 +122,8 @@ def read_elem_stress(path: str) -> dict[tuple, float]:
                 if "ID" not in bucket or "DATA" not in bucket:
                     continue
                 ids = bucket["ID"][...].reshape(-1)
-                for sn in bucket["DATA"]:
-                    arr = np.atleast_2d(bucket["DATA"][sn][...])
-                    try:
-                        k = int(np.atleast_1d(bucket["DATA"][sn].attrs["STEP"]).reshape(-1)[0])
-                    except KeyError:
-                        k = int(sn.split("_")[-1])
+                # chunked .ladruno DATA[T×nElem×nCol] or per-step .mpco DATA/STEP_<k>
+                for k, arr in iter_step_slices(bucket):
                     for row, tag in enumerate(ids):
                         for col in range(arr.shape[1]):
                             out[(int(tag), col, k)] = float(arr[row, col])

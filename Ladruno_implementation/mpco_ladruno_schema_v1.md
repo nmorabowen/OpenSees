@@ -249,11 +249,36 @@ Shell layered sections keep the 1-based→0-based fiber shift handling from MPCO
 
 ## 7. `RESULTS`
 
+### 7.0 Streaming time-series layout (D3 — replaces per-step `DATA/STEP_<k>`)
+
+**Implemented** (ADR [[07_adr_post_review_storage]] D3). Every streaming result group
+(node, element, domain, region) stores its history as **one chunked, extensible
+dataset** rather than a `DATA` *group* of per-step datasets:
+
+```
+<result-or-bucket>/
+   ID    [nIds × 1] int
+   DATA  [T × nIds × nComp] double   ← extensible on T, chunked + shuffle + deflate(4)
+   STEP  [T] int                     ← commit/step id per slab (was the STEP attr)
+   TIME  [T] double                  ← pseudo-time per slab (was the TIME attr)
+```
+
+One `[1 × nIds × nComp]` slab is appended per committed step (`H5Dset_extent` +
+hyperslab). **Why:** the old per-step layout exploded to 10⁵–10⁶ tiny datasets on long
+transients, defeated time-axis compression, and made a single time-history an O(T)
+dataset-open; the chunked form gives O(1) slice reads and compresses the (highly
+compressible) time axis. **Values are identical** to the per-step form — only the on-disk
+organization changed (parity harness verifies 1e-12 against the frozen per-step `.mpco`).
+The reader treats a `DATA` *dataset* (chunked) and a `DATA` *group* (legacy/`.mpco`)
+interchangeably (`ladruno_format.iter_step_slices`). The notation `DATA/STEP_<k>` below is
+the **superseded** per-step form, kept for cross-referencing the frozen recorder.
+
 ### 7.1 `ON_NODES/<RESULT>`
 
 As MPCO, retained: group attrs `DISPLAY_NAME, COMPONENTS, DIMENSION, DESCRIPTION,
-TYPE, DATA_TYPE`; `ID[nN×1]`; `DATA/STEP_<k> [nN×nComp]` with `STEP`,`TIME`. Modes of
-vibration keep the `STEP_<k>` *group* → `MODE_<i>` with `LAMBDA/OMEGA/FREQUENCY/PERIOD`.
+TYPE, DATA_TYPE`; `ID[nN×1]`; results stored per the **§7.0 chunked layout** (`DATA
+[T×nN×nComp]` + `STEP`/`TIME` axes). Modes of vibration keep the `STEP_<k>` *group* →
+`MODE_<i>` with `LAMBDA/OMEGA/FREQUENCY/PERIOD`.
 
 ### 7.2 `ON_ELEMENTS/<result>` — structured column map (replaces the `;`-string)
 
@@ -271,7 +296,7 @@ ON_ELEMENTS/<result>/<classTag>-<ClassName>[<g>:<h>]
                                                 of component names (one line per block)
    SECTION_MAP   [nElem × NUM_GP] int   section tag per (elem, gp); -1 if none   ← NEW
    ID            [nElem × 1] int
-   DATA/STEP_<k> [nElem × NUM_COLUMNS] double   attrs STEP, TIME
+   DATA          [T × nElem × NUM_COLUMNS] double + STEP[T] + TIME[T]   ← §7.0 chunked
 ```
 
 `<g>` = element/basis group; `<h>` = response-shape (header) bucket — two same-class
@@ -295,7 +320,8 @@ bespoke `;`/int-code decoder STKO required.
 
 ### 7.3 `ON_DOMAIN/<scalar>` — global results **(DEFERRED)**
 
-Single `[1 × nComp]` row per step (`DATA/STEP_<k>`). Energy balance, base shear, total
+Single `[1 × nComp]` row per step, stored per the §7.0 chunked layout (`DATA[T×1×nComp]`).
+Energy balance, base shear, total
 reaction. **Built only after the separate energy work lands** — MPCO_Ladruno will
 *consume* `EnergyBalanceRecorder` ([[project_energy_balance_feature]]), not reinvent
 it. Spec stub here for forward compatibility.
