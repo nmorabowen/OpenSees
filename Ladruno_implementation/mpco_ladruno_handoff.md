@@ -53,21 +53,29 @@ branch `feature/mpco-step-b-global-gp` off current ladruno):**
 - New gate `standard_quad_{model,check}.py` with **write-time round-trip oracle**
   (ALL PASS ≤1e-12). No regression: 80/80·96/96·144/144·72/72·108/108·pytest 10/10.
 
-## Resume (next session) — Step D/E
-`"continue Step D of MPCO_Ladruno: higher-order GLOBAL_GP_COORDS"` —
-1. **Step D — higher-order.** Add 9N quad / 20N serendipity / 27N Lagrange hex,
-   10N tet, 6N Lagrange tri shape functions to BOTH `computeGlobalGP` (C++) and an
-   importable `ladruno_basis.py` oracle (bary/tri/tet + order-2/serendipity). Node
-   orderings MUST be read from each element source (Twenty_Node_Brick uses external
-   `shp3d.h`/`shp3dv.h`). These are ungateable until their rules are tabulated (Step E),
-   so land D+E together.
-2. **Step E — remaining rules + fixtures.** Tabulate Hex_GL_3 (27pt — which 27-node
-   brick? none currently maps), Tri_GL_2/2B/2C (shells, e.g. ShellDKGT), Tet_GL_2
-   (read TenNodeTetrahedron.cpp) in `getStandardQuadrature`; add `NDIR`+`GLOBAL_GP_COORDS`
-   +a simplex group to `make_synthetic.py`; extend the pytest harness.
-3. **Step F (D3, separate later step) — chunked time-series** `[T×nIds×nComp]`
-   replacing per-step `DATA/STEP_<k>` (ADR D3). Then KIND/LOCAL_AXES, shared validator,
-   parallel.
+## Step D PARTIAL — PR #31 (branch `feature/mpco-step-de-higher-order`)
+Higher-order GLOBAL_GP_COORDS for the two elements verifiable from source:
+- **quad9 (NineNodeQuad, Quad_GL_3)** — gated (rule+shape fn already shipped Steps A/B).
+- **tet10 (TenNodeTetrahedron, Tet_GL_2 4-pt α/β)** — NEW `Tet_GL_2` rule + tet10 shape
+  fn (node-8/9 swap) in `computeGlobalGP`. Round-trip 1.1e-16, no regression.
+- Gate `standard_quad_{model,check}.py` extended; both CONFORMANT.
+
+## Resume (next session) — finish Step D/E
+`"continue MPCO_Ladruno: hex20 GLOBAL_GP_COORDS"` —
+1. **hex20 (Twenty_Node_Brick, Hex_GL_3 27pt) — DEFERRED, do next.** Its 27-pt GP order
+   lives in `brcshl`/`Jacobian3d`/`computeBasis` (UP-ucsd `shp3dv.{h,cpp}`), not directly
+   readable; the round-trip oracle CANNOT catch a GP↔result-id pairing error. Trace
+   `brcshl` for the 27-pt order + 20N serendipity node order, then **cross-check GP_PARAM
+   against the FROZEN recorder's `GP_X` for a 20-node brick** before locking. Tabulate
+   `Hexahedron_GaussLegendre_3` + add hex20 serendipity to `computeGlobalGP`.
+2. **Importable oracle + fixtures.** Move the checker's inline basis into `ladruno_basis.py`
+   (bary/tri/tet + quad9/tet10/hex20), add `NDIR`+`GLOBAL_GP_COORDS`+a simplex group to
+   `make_synthetic.py`, extend pytest. (27N Lagrange hex: no element maps; 6N Lagrange
+   tri / 3N line: no standard-rule element — beams use the custom force-based path.)
+3. **Minor:** geom-derived `ORDER` for 9N/10N still reports linear `(1[,1])` (NDIR is
+   authoritative so non-load-bearing) — bump to real polynomial order if convenient.
+4. **Step F (D3, separate) — chunked time-series** `[T×nIds×nComp]` replacing per-step
+   `DATA/STEP_<k>`. Then KIND/LOCAL_AXES, shared validator, parallel.
 
 ## Build / run recipe
 - Worktree build tree is warm. Incremental: `cmd /c "Ladruno_scripts\setup_env.bat

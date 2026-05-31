@@ -26,12 +26,18 @@ import numpy as np
 
 TOL = 1e-12
 A = 1.0 / np.sqrt(3.0)            # 2-pt GL abscissa
-# expected GP_PARAM tables (must match getStandardQuadrature, element GP order)
+B = np.sqrt(0.6)                  # 3-pt GL abscissa
+AL = (5.0 + 3.0 * np.sqrt(5.0)) / 20.0   # tet 4-pt alpha
+BE = (5.0 - np.sqrt(5.0)) / 20.0         # tet 4-pt beta
+# expected GP_PARAM tables (must match getStandardQuadrature + element GP order)
 EXPECT_GP = {
-    "quad": np.array([[-A, -A], [A, -A], [A, A], [-A, A]]),                 # CCW
-    "tri": np.array([[1.0 / 3.0, 1.0 / 3.0]]),                              # centroid
-    "hex": np.array([[-A, -A, -A], [-A, -A, A], [-A, A, -A], [-A, A, A],    # i,j,k
-                     [A, -A, -A], [A, -A, A], [A, A, -A], [A, A, A]]),
+    "quad4": np.array([[-A, -A], [A, -A], [A, A], [-A, A]]),                # CCW
+    "quad9": np.array([[-B, -B], [B, -B], [B, B], [-B, B],                  # 4 corners
+                       [0, -B], [B, 0], [0, B], [-B, 0], [0, 0]]),          # mids, center
+    "tri3": np.array([[1.0 / 3.0, 1.0 / 3.0]]),                            # centroid
+    "hex8": np.array([[-A, -A, -A], [-A, -A, A], [-A, A, -A], [-A, A, A],   # i,j,k
+                      [A, -A, -A], [A, -A, A], [A, A, -A], [A, A, A]]),
+    "tet10": np.array([[AL, BE, BE], [BE, AL, BE], [BE, BE, AL], [BE, BE, BE]]),
 }
 
 
@@ -55,9 +61,15 @@ def shape(topology: str, num_nodes: int, xi: np.ndarray) -> np.ndarray:
             -(1 - s * s) * (1 - t) * t / 2, (1 + s) * (1 - t * t) * s / 2,
             (1 - s * s) * (1 + t) * t / 2, -(1 - s) * (1 - t * t) * s / 2,
             (1 - s * s) * (1 - t * t)])
-    if topology == "tet" and num_nodes >= 4:
+    if topology == "tet" and num_nodes == 4:
         r, s, u = xi[0], xi[1], xi[2]
         return np.array([r, s, u, 1 - r - s - u])
+    if topology == "tet" and num_nodes == 10:
+        r, s, u = xi[0], xi[1], xi[2]
+        L4 = 1 - r - s - u
+        return np.array([
+            r * (2 * r - 1), s * (2 * s - 1), u * (2 * u - 1), L4 * (2 * L4 - 1),
+            4 * r * s, 4 * s * u, 4 * u * r, 4 * r * L4, 4 * u * L4, 4 * s * L4])
     if topology == "hex" and num_nodes == 8:
         r, s, u = xi[0], xi[1], xi[2]
         sgn = np.array([[-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],
@@ -72,9 +84,9 @@ def _attr(obj, key):
     return a[0] if a.size == 1 else a
 
 
-def check_file(path: str, expect_topo: str) -> int:
+def check_file(path: str, expect_topo: str, expect_key: str) -> int:
     problems = 0
-    print(f"\n=== {os.path.basename(path)} (expect topology={expect_topo}) ===")
+    print(f"\n=== {os.path.basename(path)} (expect topology={expect_topo}, rule={expect_key}) ===")
     with h5py.File(path, "r") as f:
         stages = [k for k in f if k.startswith("MODEL_STAGE")]
         stage = stages[0]
@@ -115,13 +127,13 @@ def check_file(path: str, expect_topo: str) -> int:
                 print(f"    [FAIL] NUM_GP={num_gp} != GP_PARAM rows {gp_param.shape[0]}"); problems += 1
 
             # (b) GP_PARAM matches the verified ordering table
-            if topo in EXPECT_GP:
-                exp = EXPECT_GP[topo]
+            if expect_key in EXPECT_GP:
+                exp = EXPECT_GP[expect_key]
                 if gp_param.shape != exp.shape or not np.allclose(gp_param, exp, atol=1e-9):
-                    print(f"    [FAIL] GP_PARAM != expected {topo} ordering\n      expected\n{exp}")
+                    print(f"    [FAIL] GP_PARAM != expected {expect_key} ordering\n      expected\n{exp}")
                     problems += 1
                 else:
-                    print(f"    [OK] GP_PARAM matches verified {topo} ordering")
+                    print(f"    [OK] GP_PARAM matches verified {expect_key} ordering")
 
             # (c) GLOBAL_GP_COORDS landed + round-trip oracle
             if "GLOBAL_GP_COORDS" not in grp:
@@ -158,9 +170,11 @@ def check_file(path: str, expect_topo: str) -> int:
 def main() -> int:
     out = sys.argv[1] if len(sys.argv) > 1 else "."
     total = 0
-    total += check_file(os.path.join(out, "sq_quad.ladruno"), "quad")
-    total += check_file(os.path.join(out, "sq_tri.ladruno"), "tri")
-    total += check_file(os.path.join(out, "sq_brick.ladruno"), "hex")
+    total += check_file(os.path.join(out, "sq_quad.ladruno"), "quad", "quad4")
+    total += check_file(os.path.join(out, "sq_tri.ladruno"), "tri", "tri3")
+    total += check_file(os.path.join(out, "sq_brick.ladruno"), "hex", "hex8")
+    total += check_file(os.path.join(out, "sq_quad9.ladruno"), "quad", "quad9")
+    total += check_file(os.path.join(out, "sq_tet10.ladruno"), "tet", "tet10")
     print("\n" + ("=" * 60))
     if total == 0:
         print("STANDARD_QUAD_CHECK: ALL PASS")

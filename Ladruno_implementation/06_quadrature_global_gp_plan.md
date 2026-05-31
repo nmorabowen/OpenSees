@@ -81,11 +81,29 @@ which already has the BezierTri6 bucket-as-group + `basisInfo` probe via PR #18)
     GP_PARAM confirmed CCW/centroid/lexicographic (R1).
   - **No regression:** nodal 80/80, element quad 96/96 + beam 144/144, bezier 72/72,
     multistage 108/108, pytest 10/10.
-- **Deferred to Step D/E** (needs source-verified node orderings + their currently
-  *untabulated* rules — Hex_GL_3 27pt, Tri_GL_2/2B/2C, Tet_GL_2 — so ungateable now):
-  higher-order GLOBAL_GP_COORDS (9N hex / 20N serendipity / 27N Lagrange / 10N tet /
-  6N Lagrange tri), the importable `ladruno_basis.py` bary/tri/tet/higher-order oracle,
-  and the `make_synthetic.py` NDIR/GLOBAL_GP_COORDS/simplex fixture additions.
+- **Step D PARTIAL DONE (branch `feature/mpco-step-de-higher-order`):** the two
+  higher-order elements whose GP order + node order are *directly verifiable from
+  source* now have full QUADRATURE + GLOBAL_GP_COORDS:
+  - **NineNodeQuad (quad9, Quad_GL_3 9-pt)** — rule already tabulated (Step A), shape
+    fn already in `computeGlobalGP` (Step B); this step just gates it. GP_PARAM matches
+    the 9-pt corners/edges/center rule; round-trip 1.1e-16.
+  - **TenNodeTetrahedron (tet10, Tet_GL_2 4-pt)** — NEW `Tet_GL_2` in
+    `getStandardQuadrature` (α=(5+3√5)/20, β=(5−√5)/20; element's (α,β,β)→(β,β,β)
+    cycle, w=1/24); NEW tet10 quadratic shape fn in `computeGlobalGP` (with the
+    element's node-8/9 edge swap, verified vs `TenNodeTetrahedron::shp3d`). Round-trip
+    1.1e-16.
+  - Gate `standard_quad_{model,check}.py` extended (quad9n + TenNodeTetrahedron unit
+    cells; checker `shape()` + EXPECT_GP cover quad9/tet10). **ALL PASS**, both
+    CONFORMANT; no regression (80/80·96/96·144/144·72/72·108/108·pytest 10/10).
+- **Still deferred:** **hex20 (Twenty_Node_Brick, Hex_GL_3 27pt)** — its 27-pt GP order
+  lives inside `brcshl`/`Jacobian3d`/`computeBasis` (UP-ucsd `shp3dv`), not directly
+  readable, and the round-trip oracle can't catch a GP↔result pairing error → needs a
+  full `brcshl` trace + a frozen-recorder `GP_X` cross-check before it's safe. 27N
+  Lagrange hex has no element mapping; 6N Lagrange tri / 3N line have no standard-rule
+  element (beams use the custom force-based path). Also pending: importable
+  `ladruno_basis.py` higher-order oracle + `make_synthetic.py` NDIR/GLOBAL_GP_COORDS/
+  simplex fixture additions. Minor: geom-derived `ORDER` for 9N/10N still reports the
+  linear `(1[,1])` (NDIR is authoritative, so non-load-bearing).
 
 ## Open risks / sub-decisions for the architect
 - **R1 (highest) — GP ordering parity.** The standard-table GP row order MUST match the element engine's
