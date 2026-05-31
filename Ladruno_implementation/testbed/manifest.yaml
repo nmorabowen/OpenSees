@@ -59,13 +59,23 @@ features:
     pr: null
     feature_class: integrator
     required_tiers: [dynamics-battery]
-    pytest: tests/test_explicitBathe_integrator.py    # PENDING (not yet authored)
-    tcl: WAIVED(integrator; Zone-B _verify_explicit.py until the Zone-A battery lands)
+    pytest: tests/test_explicitBathe_integrator.py    # Zone-A battery (order/stability/crosscheck/spectral/wave/rigid-body/dt_cr/lump/cflAbort)
+    tcl: WAIVED(integrator; Zone-B _verify_explicit.py mirrors the Zone-A battery)
     zone_b: [Ladruno_scripts/_verify_explicit.py]
     core_files: [SRC/classTags.h]
     dispatch: {tcl: true, functionMap: true}
-    status: remediation
-    notes: jaabell's tag. Band-remediated 61 -> 33000 (was one above frontier HarmonicSteadyState=60). Broker-dispatched (getNewTransientIntegrator, "must recvSelf") so collision risk was real. 4-part dynamics battery owed in Zone A.
+    status: active
+    notes: >
+      jaabell's tag. Band-remediated 61 -> 33000 (was one above frontier
+      HarmonicSteadyState=60). Broker-dispatched (getNewTransientIntegrator,
+      "must recvSelf") so collision risk was real. Zone-A battery
+      tests/test_explicitBathe_integrator.py authored (numpy, 1:1 port of the
+      pure-ExplicitBathe checks in _verify_explicit.py): order of accuracy ~2,
+      stability beats CD's 2/omega, cross-check vs Newmark/CD, spectral
+      damping/period vs Omega, 1-D wave speed, rigid-body momentum, queryable
+      dt_cr + sub-step + -recompute, dt_cr<=0 no-value contract, -lump
+      diagonal-vs-rowsum, -cflAbort enforcement. dt_cr machinery links on Linux
+      via the CriticalTimeStep dsygvx_ swap (PR #28).
 
   - feature: ExplicitDifferenceStatic
     classtag: 33001
@@ -87,16 +97,22 @@ features:
     pr: null
     feature_class: integrator
     required_tiers: [dynamics-battery]
-    pytest: tests/test_explicitBatheLNVD_integrator.py   # PENDING
-    tcl: WAIVED(integrator; Zone-A battery pending)
+    pytest: tests/test_explicitBatheLNVD_integrator.py   # Zone-A: LNVD dynamic relaxation -> static (parametrized over load)
+    tcl: WAIVED(integrator; Zone-B _verify_explicit.py mirrors the Zone-A check)
     zone_b: [Ladruno_scripts/_verify_explicit.py]
     core_files: [SRC/classTags.h]
     dispatch: {tcl: true, functionMap: true}
-    status: remediation
+    status: active
     notes: >
       Noh-Bathe + FLAC local-non-viscous damping. Band-remediated 63 -> 33002.
-      The canonical-doc 4-part battery (stability bracket / period elongation /
-      energy drift via EnergyBalanceRecorder / LNVD->exact-static) is owed in Zone A.
+      Zone-A battery tests/test_explicitBatheLNVD_integrator.py authored (numpy,
+      1:1 port of the LNVD check in _verify_explicit.py): the defining
+      dynamic-relaxation test — LNVD damps the transient out to the LoadControl/
+      Newton static equilibrium and the closed-form tip PL/EA, within 2% on both
+      field and tip, parametrized over load magnitude (linear-elastic, so the
+      relaxation dynamics are load-independent and each case self-validates). The
+      broader canonical battery (period elongation / energy drift) remains future
+      work beyond the source script's single LNVD check.
 
   - feature: CentralDifferenceLadruno
     classtag: 33003          # INTEGRATOR family; new class (N. Mora-Bowen)
@@ -134,13 +150,21 @@ features:
     pr: null
     feature_class: derivative
     required_tiers: [T1]
-    pytest: tests/test_energyBalanceRecorder.py   # PENDING
-    tcl: WAIVED(recorder; Zone-A check pending)
+    pytest: tests/test_energyBalanceRecorder.py   # Zone-A T1: element-mass KE aliasing-fix regression + -time column layout
+    tcl: WAIVED(recorder; Python recorder surface, no new Tcl command)
     zone_b: []
     core_files: [SRC/classTags.h]
     dispatch: {tcl: true, functionMap: true}
-    status: remediation
-    notes: Band-remediated 26 -> 33000 (was above frontier VTKHDF=25). Not broker-registered (lower risk) but moved for per-family policy consistency.
+    status: active
+    notes: >
+      Band-remediated 26 -> 33000 (was above frontier VTKHDF=25). Not
+      broker-registered (lower risk) but moved for per-family policy consistency.
+      Zone-A check tests/test_energyBalanceRecorder.py authored (numpy, port of
+      the EnergyBalance check in _verify_explicit.py): the getMass()/getDamp()
+      shared-theMatrix aliasing-fix regression (element-mass KE must read from the
+      MASS matrix, not the zeroed damping matrix — was ~0 before the fix) plus the
+      documented -time column layout (time KE IE DW ULW RES ERR%). Recorder runs
+      green on Zone-A CI (CDL-10 exercises the same KE/IE columns).
 
   - feature: MPCOLadrunoRecorder
     classtag: 33001
