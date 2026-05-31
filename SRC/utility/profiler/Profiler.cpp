@@ -298,6 +298,8 @@ Profiler::reset()
             ts->peakBytes = 0;
             ts->cumAllocs = 0;
             ts->liveCount = 0;
+            for (int t = 0; t < NUM_ALLOC_TYPES; ++t)
+                ts->liveBytesByType[t] = 0;
         }
     }
     mergedLive_.reset();
@@ -418,21 +420,25 @@ Profiler::buildMemorySnapshot() const
     // Always returns a valid struct (the writer always writes /memory). Sum the
     // per-thread live/peak byte counters (P4 fills these; zero in P1).
     MemorySnapshot snap;
-    int64_t live = 0;
     int64_t peak = 0;
+    int64_t byType[NUM_ALLOC_TYPES] = {0, 0, 0};
     {
         std::lock_guard<std::mutex> lock(
             const_cast<std::mutex&>(registryMtx_));   // read-only fold; mutex guards threads_
         for (const ThreadState* ts : threads_) {
-            live += ts->liveBytes;
             peak += ts->peakBytes;
+            for (int t = 0; t < NUM_ALLOC_TYPES; ++t)
+                byType[t] += ts->liveBytesByType[t];
         }
     }
-    // matrix_live / vector_live / id_live are per-type splits the P4 counters
-    // fill; in P1 we surface only the aggregate via peak_bytes and leave the
-    // per-type attrs at zero. components_live stays empty (P4 census fills it).
+    // Per-type live splits (P4 alloc counters in Matrix/Vector/ID); peak_bytes is
+    // the high-water mark of the aggregate live bytes. components_live stays empty
+    // (the TaggedObject census is a separate follow-up; the writer always emits an
+    // empty dataset for it).
+    snap.matrix_live = byType[ALLOC_MATRIX];
+    snap.vector_live = byType[ALLOC_VECTOR];
+    snap.id_live     = byType[ALLOC_ID];
     snap.peak_bytes  = peak;
-    (void)live;      // aggregate live is folded into the per-type attrs in P4.
     return snap;
 }
 

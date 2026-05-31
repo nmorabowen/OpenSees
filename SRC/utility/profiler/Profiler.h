@@ -132,6 +132,12 @@ private:
 // Per-thread state
 // ===========================================================================
 
+// Numeric-buffer allocation classes the P4 counters attribute bytes to. The
+// values index ThreadState::liveBytesByType[] and lower into the snapshot's
+// matrix_live / vector_live / id_live fields. Any out-of-range value (an
+// uncategorised alloc) is folded into the aggregate liveBytes only.
+enum AllocType { ALLOC_MATRIX = 0, ALLOC_VECTOR = 1, ALLOC_ID = 2, NUM_ALLOC_TYPES = 3 };
+
 // One per worker thread. The cursor `current` is the only per-scope mutable
 // state and it is thread-local, so push/pop never touches another thread's
 // memory. Memory counters (P4) live here too — summed at report time, no atomics.
@@ -140,10 +146,11 @@ struct ThreadState {
     ProfileNodeLive*                 current = nullptr; // nesting cursor (== root.get() at rest)
 
     // P4 thread-local memory counters (no global atomic; P1#9 fix).
-    int64_t liveBytes = 0;
-    int64_t peakBytes = 0;
-    int64_t cumAllocs = 0;
-    int64_t liveCount = 0;
+    int64_t liveBytes = 0;          // aggregate live across all types
+    int64_t peakBytes = 0;          // high-water mark of aggregate liveBytes
+    int64_t cumAllocs = 0;          // cumulative alloc events (never decremented)
+    int64_t liveCount = 0;          // live alloc count (alloc++ / free--)
+    int64_t liveBytesByType[NUM_ALLOC_TYPES] = {0, 0, 0};  // per-type live split
 };
 
 // ===========================================================================
@@ -300,17 +307,19 @@ inline Profiler& theProfiler() { return Profiler::instance(); }
 // theProfiler().mem()); only -DOPS_PROFILE_DISABLE removes the macros entirely.
 // ===========================================================================
 #ifndef OPS_PROFILE_DISABLE
-inline void countAlloc(int64_t bytes) noexcept {
+inline void countAlloc(int64_t bytes, int type) noexcept {
     ThreadState& ts = theProfiler().threadState();
     ts.liveBytes += bytes;
     ts.cumAllocs += 1;
     ++ts.liveCount;
+    if (type >= 0 && type < NUM_ALLOC_TYPES) ts.liveBytesByType[type] += bytes;
     if (ts.liveBytes > ts.peakBytes) ts.peakBytes = ts.liveBytes;
 }
-inline void countFree(int64_t bytes) noexcept {
+inline void countFree(int64_t bytes, int type) noexcept {
     ThreadState& ts = theProfiler().threadState();
     ts.liveBytes -= bytes;
     --ts.liveCount;
+    if (type >= 0 && type < NUM_ALLOC_TYPES) ts.liveBytesByType[type] -= bytes;
 }
 #endif // !OPS_PROFILE_DISABLE
 

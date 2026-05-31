@@ -34,6 +34,7 @@
 #include "Matrix.h"
 #include "Vector.h"
 #include "ID.h"
+#include <profiler/ProfilerMacros.h>   // Ladruno P4: memory alloc counters (runtime-gated)
 
 #include <stdlib.h>
 #include <iostream>
@@ -102,6 +103,7 @@ Matrix::Matrix(int nRows,int nCols)
 
     if (dataSize > 0) {
       data = new (nothrow) double[dataSize];
+      if (data != 0) OPS_PROFILE_COUNT_ALLOC(dataSize * sizeof(double), ops_profiler::ALLOC_MATRIX); // Ladruno P4
       //data = (double *)malloc(dataSize*sizeof(double));
       if (data == 0) {
 	opserr << "WARNING:Matrix::Matrix(int,int): Ran out of memory on init ";
@@ -164,6 +166,7 @@ Matrix::Matrix(const Matrix &other)
 
     if (dataSize != 0) {
       data = new (nothrow) double[dataSize];
+      if (data != 0) OPS_PROFILE_COUNT_ALLOC(dataSize * sizeof(double), ops_profiler::ALLOC_MATRIX); // Ladruno P4
       // data = (double *)malloc(dataSize*sizeof(double));
       if (data == 0) {
 	opserr << "WARNING:Matrix::Matrix(Matrix &): ";
@@ -200,7 +203,8 @@ Matrix::~Matrix()
 {
   if (data != 0 ) {
     if (fromFree == 0 && dataSize > 0){
-      delete [] data; 
+      OPS_PROFILE_COUNT_FREE(dataSize * sizeof(double), ops_profiler::ALLOC_MATRIX); // Ladruno P4
+      delete [] data;
       data = 0;
     }
   }
@@ -216,10 +220,11 @@ int
 Matrix::setData(double *theData, int row, int col) 
 {
   // delete the old if allocated
-  if (data != 0) 
+  if (data != 0)
     if (fromFree == 0)
     {
-      delete [] data; 
+      OPS_PROFILE_COUNT_FREE(dataSize * sizeof(double), ops_profiler::ALLOC_MATRIX); // Ladruno P4
+      delete [] data;
       data = 0;
     }
   numRows = row;
@@ -268,9 +273,10 @@ Matrix::resize(int rows, int cols) {
   else if (newSize > dataSize) {
 
     // free the old space
-    if (data != 0) 
+    if (data != 0)
       if (fromFree == 0){
-	delete [] data; 
+	OPS_PROFILE_COUNT_FREE(dataSize * sizeof(double), ops_profiler::ALLOC_MATRIX); // Ladruno P4
+	delete [] data;
         data = 0;
       }
     //  if (data != 0) free((void *) data);
@@ -278,6 +284,7 @@ Matrix::resize(int rows, int cols) {
     fromFree = 0;
     // create new space
     data = new (nothrow) double[newSize];
+    if (data != 0) OPS_PROFILE_COUNT_ALLOC(newSize * sizeof(double), ops_profiler::ALLOC_MATRIX); // Ladruno P4
     // data = (double *)malloc(dataSize*sizeof(double));
     if (data == 0) {
       opserr << "Matrix::resize(" << rows << "," << cols << ") - out of memory\n";
@@ -1179,14 +1186,16 @@ Matrix::operator=(const Matrix &other)
 
       if (this->data != 0)
       {
+	  if (fromFree == 0) OPS_PROFILE_COUNT_FREE(dataSize * sizeof(double), ops_profiler::ALLOC_MATRIX); // Ladruno P4
 	  delete [] this->data;
           this->data = 0;
       }
-      
+
       int theSize = other.numCols*other.numRows;
-      
+
       data = new (nothrow) double[theSize];
-      
+      if (data != 0) OPS_PROFILE_COUNT_ALLOC(theSize * sizeof(double), ops_profiler::ALLOC_MATRIX); // Ladruno P4
+
       this->dataSize = theSize;
       this->numCols = other.numCols;
       this->numRows = other.numRows;
@@ -1215,10 +1224,11 @@ Matrix::operator=( Matrix &&other)
 
 
   if (this->data != 0 && fromFree == 0){
+    OPS_PROFILE_COUNT_FREE(dataSize * sizeof(double), ops_profiler::ALLOC_MATRIX); // Ladruno P4
     delete [] this->data;
     this->data = 0;
   }
-        
+
   this->data = other.data;
   this->dataSize = other.numCols*other.numRows;
   this->numCols = other.numCols;

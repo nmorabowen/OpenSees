@@ -34,6 +34,7 @@
 #include "Vector.h"
 #include "Matrix.h"
 #include "ID.h"
+#include <profiler/ProfilerMacros.h>   // Ladruno P4: memory alloc counters (runtime-gated)
 #include <iostream>
 using std::nothrow;
 
@@ -67,6 +68,7 @@ Vector::Vector(int size)
   //  theData = (double *)malloc(size*sizeof(double));
   if (size > 0) {
     theData = new (nothrow) double [size];
+    if (theData != 0) OPS_PROFILE_COUNT_ALLOC(size * sizeof(double), ops_profiler::ALLOC_VECTOR); // Ladruno P4
 
     if (theData == 0) {
       opserr << "Vector::Vector(int) - out of memory creating vector of size " << size << endln;
@@ -102,8 +104,9 @@ Vector::Vector(const Vector &other)
 : sz(other.sz),theData(0),fromFree(0)
 {
   if (sz != 0) {
-    theData = new (nothrow) double [other.sz];    
-    
+    theData = new (nothrow) double [other.sz];
+    if (theData != 0) OPS_PROFILE_COUNT_ALLOC(other.sz * sizeof(double), ops_profiler::ALLOC_VECTOR); // Ladruno P4
+
     if (theData == 0) {
       opserr << "Vector::Vector(int) - out of memory creating vector of size " << sz << endln;
     }
@@ -135,8 +138,10 @@ Vector::Vector(Vector &&other)
 
 Vector::~Vector()
 {
-  if (theData != 0 && fromFree == 0) 
+  if (theData != 0 && fromFree == 0) {
+    OPS_PROFILE_COUNT_FREE(sz * sizeof(double), ops_profiler::ALLOC_VECTOR); // Ladruno P4
     delete [] theData;
+  }
   theData = 0;
 }
 
@@ -144,7 +149,8 @@ Vector::~Vector()
 int 
 Vector::setData(double *newData, int size){
   if (theData != 0 && fromFree == 0) {
-    delete [] theData;      
+    OPS_PROFILE_COUNT_FREE(sz * sizeof(double), ops_profiler::ALLOC_VECTOR); // Ladruno P4
+    delete [] theData;
     theData = 0;
   }
   sz = size;
@@ -175,15 +181,17 @@ Vector::resize(int newSize){
 
     // delete the old array
     if (theData != 0 && fromFree == 0) {
+	OPS_PROFILE_COUNT_FREE(sz * sizeof(double), ops_profiler::ALLOC_VECTOR); // Ladruno P4
 	delete [] theData;
   theData = 0;
 }
     sz = 0;
     fromFree = 0;
-    
+
     // create new memory
-    // theData = (double *)malloc(newSize*sizeof(double));    
+    // theData = (double *)malloc(newSize*sizeof(double));
     theData = new (nothrow) double[newSize];
+    if (theData != 0) OPS_PROFILE_COUNT_ALLOC(newSize * sizeof(double), ops_profiler::ALLOC_VECTOR); // Ladruno P4
     if (theData == 0) {
       opserr << "Vector::resize() - out of memory for size " << newSize << endln;
       sz = 0;
@@ -650,13 +658,15 @@ Vector::operator[](int x)
   
   if (x >= sz) {
     double *dataNew = new (nothrow) double[x+1];
+    if (dataNew != 0) OPS_PROFILE_COUNT_ALLOC((x+1) * sizeof(double), ops_profiler::ALLOC_VECTOR); // Ladruno P4
     for (int i=0; i<sz; i++)
       dataNew[i] = theData[i];
     for (int j=sz; j<x; j++)
       dataNew[j] = 0.0;
-    
+
     if (fromFree == 0)
       if (theData != 0){
+	OPS_PROFILE_COUNT_FREE(sz * sizeof(double), ops_profiler::ALLOC_VECTOR); // Ladruno P4
 	delete [] theData;
   theData = 0;
 }
@@ -739,6 +749,7 @@ Vector::operator=(const Vector &V)
 
 	  // Check that we are not deleting an empty Vector
 	  if (this->theData != 0){
+      if (fromFree == 0) OPS_PROFILE_COUNT_FREE(sz * sizeof(double), ops_profiler::ALLOC_VECTOR); // Ladruno P4
       delete [] this->theData;
       this->theData = 0;
     }
@@ -746,6 +757,7 @@ Vector::operator=(const Vector &V)
 	  
 	  // Check that we are not creating an empty Vector
 	  theData = (sz != 0) ? new (nothrow) double[sz] : 0;
+      if (theData != 0) OPS_PROFILE_COUNT_ALLOC(sz * sizeof(double), ops_profiler::ALLOC_VECTOR); // Ladruno P4
       }
 
 
@@ -766,6 +778,7 @@ Vector::operator=(Vector &&V)
   if (this != &V) {
     // opserr << "move assign!\n";
     if (this->theData != 0){ 
+      if (fromFree == 0) OPS_PROFILE_COUNT_FREE(sz * sizeof(double), ops_profiler::ALLOC_VECTOR); // Ladruno P4
       delete [] this->theData;
       this->theData = 0;
     }
