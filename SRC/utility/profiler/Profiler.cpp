@@ -300,6 +300,7 @@ Profiler::reset()
             ts->liveCount = 0;
             for (int t = 0; t < NUM_ALLOC_TYPES; ++t)
                 ts->liveBytesByType[t] = 0;
+            ts->componentLive.clear();
         }
     }
     mergedLive_.reset();
@@ -422,6 +423,7 @@ Profiler::buildMemorySnapshot() const
     MemorySnapshot snap;
     int64_t peak = 0;
     int64_t byType[NUM_ALLOC_TYPES] = {0, 0, 0};
+    std::map<int, int64_t> census;   // merged per-classTag live counts (P4 census)
     {
         std::lock_guard<std::mutex> lock(
             const_cast<std::mutex&>(registryMtx_));   // read-only fold; mutex guards threads_
@@ -429,16 +431,25 @@ Profiler::buildMemorySnapshot() const
             peak += ts->peakBytes;
             for (int t = 0; t < NUM_ALLOC_TYPES; ++t)
                 byType[t] += ts->liveBytesByType[t];
+            for (const auto& kv : ts->componentLive)
+                census[kv.first] += kv.second;
         }
     }
     // Per-type live splits (P4 alloc counters in Matrix/Vector/ID); peak_bytes is
-    // the high-water mark of the aggregate live bytes. components_live stays empty
-    // (the TaggedObject census is a separate follow-up; the writer always emits an
-    // empty dataset for it).
+    // the high-water mark of the aggregate live bytes.
     snap.matrix_live = byType[ALLOC_MATRIX];
     snap.vector_live = byType[ALLOC_VECTOR];
     snap.id_live     = byType[ALLOC_ID];
     snap.peak_bytes  = peak;
+
+    // TaggedObject census (P4): one ComponentLive row per classTag with a non-zero
+    // live count. std::map iterates in ascending classTag order, giving a
+    // deterministic dataset ordering. Zero (and net-negative) counts are skipped.
+    for (const auto& kv : census) {
+        if (kv.second > 0)
+            snap.components_live.push_back(ComponentLive{
+                static_cast<int32_t>(kv.first), kv.second});
+    }
     return snap;
 }
 

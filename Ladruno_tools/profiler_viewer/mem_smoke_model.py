@@ -29,6 +29,13 @@ if os.path.exists(out_h5):
 ops.wipe()
 ops.model("basic", "-ndm", 2, "-ndf", 2)
 
+# Arm the memory counters BEFORE building the domain. The Matrix/Vector/ID byte
+# counters fire on allocations during analyze() either way, but the TaggedObject
+# census (MovableObject ctor/dtor) only counts components BORN while mem() is on,
+# so the Node/Truss/ElasticMaterial objects must be constructed under the armed
+# window for components_live to be non-empty at report time.
+ops.profiler("start", "-memory")
+
 N = 20  # chain of N trusses -> a real K/residual to allocate
 for i in range(N + 1):
     ops.node(i + 1, float(i), 0.0)
@@ -50,8 +57,6 @@ ops.test("NormDispIncr", 1e-8, 10, 0)
 ops.algorithm("Newton")
 ops.analysis("Static")
 
-# arm the memory counters BEFORE the analysis so the alloc hooks fire
-ops.profiler("start", "-memory")
 ops.analyze(10)
 peak = ops.profiler("memory")        # -> peak bytes (int)
 ops.profiler("stop")

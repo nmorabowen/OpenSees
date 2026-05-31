@@ -85,6 +85,16 @@
       do { if (::ops_profiler::theProfiler().mem())                               \
                ::ops_profiler::countFree(static_cast<int64_t>(bytes), (type)); } while (0)
 
+  // TaggedObject census (P4): one live-object count per classTag, bumped in the
+  // MovableObject ctor and decremented in its dtor. Runtime-gated on mem() like
+  // the byte counters; off-path cost is one predicted branch on a hot path.
+  #define OPS_PROFILE_CENSUS_BORN(classTag)                                       \
+      do { if (::ops_profiler::theProfiler().mem())                               \
+               ::ops_profiler::countComponentBorn((classTag)); } while (0)
+  #define OPS_PROFILE_CENSUS_DIED(classTag)                                       \
+      do { if (::ops_profiler::theProfiler().mem())                               \
+               ::ops_profiler::countComponentDied((classTag)); } while (0)
+
 #else // OPS_PROFILE_DISABLE -> the profiler is compiled fully out
 
   #define OPS_PROFILE_SCOPE(name)                     ((void)0)
@@ -93,6 +103,8 @@
   #define OPS_PROFILE_ELEM(tmr, classTag, w, fb)      ((void)0)
   #define OPS_PROFILE_COUNT_ALLOC(bytes, type)        ((void)0)
   #define OPS_PROFILE_COUNT_FREE(bytes, type)         ((void)0)
+  #define OPS_PROFILE_CENSUS_BORN(classTag)           ((void)0)
+  #define OPS_PROFILE_CENSUS_DIED(classTag)           ((void)0)
 
 #endif // !OPS_PROFILE_DISABLE
 
