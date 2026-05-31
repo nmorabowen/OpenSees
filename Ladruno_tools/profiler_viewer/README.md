@@ -81,7 +81,6 @@ C++ engine ──write_run()──► profile.h5 ──ProfilerResults──► 
 ## Not yet built
 
 - Steady-state windowing / `min`-statistic comparison surfaced in the diff (P1#8).
-- Frontend polish: cross-run series overlay, leak badge (census diff across runs).
 
 (P7 — the FastAPI wrapper — is done: `profiler_api.py` + `test_api.py`.
 P8 — the React viewer — is done: `frontend/`.)
