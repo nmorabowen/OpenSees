@@ -297,8 +297,27 @@ namespace mpcol {
 		if (h_family == HID_INVALID || h_family < 0)
 			return;
 
+		// Element result names are nested ("<display>/<bucket>", e.g.
+		// "stress/204-FourNodeQuad[201:0:0]"); node/domain names are flat. The group
+		// proplist carries no create-intermediate-group link property, so H5Gcreate
+		// (in createResultGroup below) will NOT auto-create the "<display>" parent —
+		// pre-create each ancestor prefix once. The delete-recreate just below only
+		// removes the leaf link, so these intermediates persist across flushes.
+		for (size_t slash = m_name.find('/'); slash != std::string::npos;
+		     slash = m_name.find('/', slash + 1)) {
+			std::string prefix = m_name.substr(0, slash);
+			if (H5Lexists(h_family, prefix.c_str(), H5P_DEFAULT) <= 0) {
+				hid_t h_mid = h5::group::create(h_family, prefix.c_str(),
+					H5P_DEFAULT, info.h_group_proplist, H5P_DEFAULT);
+				if (h_mid >= 0)
+					h5::group::close(h_mid);
+			}
+		}
+
 		// Delete a stale <name> group from a prior flush (in-place rewrite), then
-		// recreate it fresh. Delete-and-recreate keeps the writer trivial.
+		// recreate it fresh. Delete-and-recreate keeps the writer trivial. For a
+		// nested name H5Ldelete removes only the final ("<bucket>") link, leaving the
+		// "<display>" parent created above intact.
 		if (H5Lexists(h_family, m_name.c_str(), H5P_DEFAULT) > 0)
 			H5Ldelete(h_family, m_name.c_str(), H5P_DEFAULT);
 

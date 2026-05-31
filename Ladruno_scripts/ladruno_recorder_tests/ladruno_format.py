@@ -147,8 +147,16 @@ class LadrunoReader:
         return out
 
     def envelopes(self, stage: str) -> dict[str, dict]:
-        """family -> {name -> {id, min, max, absmax, arg_step}} for RESULTS/ENVELOPES
-        (ADR D7). Empty when the recorder ran in time-series (non-envelope) mode."""
+        """family -> {name -> {id, min, max, absmax, arg_step[, components, columns]}}
+        for RESULTS/ENVELOPES (ADR D7). Empty when the recorder ran in time-series
+        (non-envelope) mode.
+
+        Node/domain envelopes are flat (ENVELOPES/<fam>/<name>); element envelopes
+        nest under the result display group (ENVELOPES/ON_ELEMENTS/<display>/<bucket>),
+        so leaves are found by walking to groups that carry the MIN accumulator. The
+        returned name is the family-relative path ("<display>/<bucket>" for elements).
+        Element leaves also carry the structured per-column COLUMN_MAP (decoded into
+        `columns`); the result-level COMPONENTS attr is empty for element results."""
         out: dict[str, dict] = {}
         path = f"{stage}/RESULTS/ENVELOPES"
         if path not in self.f:
@@ -156,14 +164,15 @@ class LadrunoReader:
         for fam in self.f[path]:
             fam_grp = self.f[path][fam]
             out[fam] = {}
-            for name in fam_grp:
-                g = fam_grp[name]
+            for name, g in _iter_envelope_leaves(fam_grp):
                 d = {
                     "id": g["ID"][...], "min": g["MIN"][...], "max": g["MAX"][...],
                     "absmax": g["ABSMAX"][...], "arg_step": g["ARG_STEP"][...],
                 }
                 if "COMPONENTS" in g.attrs:
                     d["components"] = [c for c in _attr(g, "COMPONENTS").split(",") if c]
+                if "COLUMN_MAP" in g:
+                    d["columns"] = decode_columns(g["COLUMN_MAP"])
                 out[fam][name] = d
         return out
 
@@ -195,11 +204,15 @@ def decode_columns(cmap_grp: h5py.Group) -> list[dict]:
     GAUSS_ID if no fiber level) each with NUM_COMP[i] components named in COMP_NAMES[i].
     """
     levels = cmap_grp["LEVELS"][...]
-    gauss = cmap_grp["GAUSS_ID"][...]
-    sect = cmap_grp["SECTION_TAG"][...]
-    fiber = cmap_grp["FIBER_ID"][...]
-    ncomp = cmap_grp["NUM_COMP"][...]
-    mult = cmap_grp["MULTIPLICITY"][...]
+    # The real recorder writes these per-block scalar arrays as 2-D [k x 1]
+    # (createAndWrite(vec, k, 1)); make_synthetic writes them 1-D [k]. Coerce to 1-D
+    # so int(...) works under numpy 2.x for both. (LEVELS may legitimately be 2-D
+    # [k x ncodes]; it is consumed via np.atleast_1d below, so leave it as-is.)
+    gauss = np.asarray(cmap_grp["GAUSS_ID"][...]).reshape(-1)
+    sect = np.asarray(cmap_grp["SECTION_TAG"][...]).reshape(-1)
+    fiber = np.asarray(cmap_grp["FIBER_ID"][...]).reshape(-1)
+    ncomp = np.asarray(cmap_grp["NUM_COMP"][...]).reshape(-1)
+    mult = np.asarray(cmap_grp["MULTIPLICITY"][...]).reshape(-1)
     names = _decode_lines(_attr(cmap_grp, "COMP_NAMES"))
 
     cols: list[dict] = []
@@ -229,6 +242,22 @@ def decode_columns(cmap_grp: h5py.Group) -> list[dict]:
 def _has_fiber(levels: np.ndarray, i: int) -> bool:
     row = levels[i]
     return LEVEL_FIBER in np.atleast_1d(row)
+
+
+def _iter_envelope_leaves(grp, prefix: str = ""):
+    """Yield (family_relative_name, leaf_group) for every envelope leaf under a
+    family group. A leaf is a group that carries the MIN accumulator; element
+    envelopes nest one level (ENVELOPES/ON_ELEMENTS/<display>/<bucket>) while
+    node/domain envelopes are flat, so recurse through intermediate groups."""
+    for name in grp:
+        child = grp[name]
+        if not isinstance(child, h5py.Group):
+            continue
+        rel = f"{prefix}{name}"
+        if "MIN" in child:
+            yield rel, child
+        else:
+            yield from _iter_envelope_leaves(child, f"{rel}/")
 
 
 def iter_step_slices(grp):
@@ -446,8 +475,7 @@ def _validate_envelopes(r: LadrunoReader, stage: str, err) -> None:
     if path not in r.f:
         return
     for fam in r.f[path]:
-        for name in r.f[path][fam]:
-            g = r.f[path][fam][name]
+        for name, g in _iter_envelope_leaves(r.f[path][fam]):
             ctx = f"{stage}/ENVELOPES/{fam}/{name}"
             missing = [d for d in ("ID", "MIN", "MAX", "ABSMAX", "ARG_STEP") if d not in g]
             if missing:
@@ -470,6 +498,12 @@ def _validate_envelopes(r: LadrunoReader, stage: str, err) -> None:
                 comps = [c for c in _attr(g, "COMPONENTS").split(",") if c]
                 if comps and len(comps) != mn.shape[1]:
                     err(f"{ctx}: COMPONENTS count {len(comps)} != nComp {mn.shape[1]}")
+            # Element envelopes carry the structured per-column COLUMN_MAP (the
+            # authoritative gauss/section/fiber column map, since COMPONENTS is empty
+            # for element results). Validate it the same way the time-series
+            # ON_ELEMENTS path is validated, and that it spans every column.
+            if "COLUMN_MAP" in g and mn.ndim == 2:
+                _validate_column_map(g["COLUMN_MAP"], mn.shape[1], ctx, err)
 
 
 # ---------------------------------------------------------------------------
@@ -544,6 +578,24 @@ def _validate_nodal_results(r: LadrunoReader, stage: str, err) -> None:
         _check_data_shape(grp, ids.shape[0], ncomp, err, f"{stage}/ON_NODES/{rname}")
 
 
+def _validate_column_map(cm, num_cols: int, ctx: str, err) -> None:
+    """Validate a COLUMN_MAP group (schema §7.2), shared by the time-series
+    ON_ELEMENTS path and the element ENVELOPES path: every per-block array has the
+    same length k, COMP_NAMES carries k lines, and sum(MULTIPLICITY*NUM_COMP) spans
+    exactly num_cols (the result's flat column count)."""
+    mult = cm["MULTIPLICITY"][...]
+    ncomp = cm["NUM_COMP"][...]
+    k = len(ncomp)
+    for arr_name in ("LEVELS", "GAUSS_ID", "SECTION_TAG", "FIBER_ID", "MULTIPLICITY"):
+        if len(cm[arr_name][...]) != k:
+            err(f"{ctx}: COLUMN_MAP/{arr_name} len != {k}")
+    if len(_decode_lines(_attr(cm, "COMP_NAMES"))) != k:
+        err(f"{ctx}: COMP_NAMES lines != {k} blocks")
+    expect = int(np.sum(mult * ncomp))
+    if expect != num_cols:
+        err(f"{ctx}: NUM_COLUMNS {num_cols} != sum(MULT*NUM_COMP) {expect}")
+
+
 def _validate_element_results(r: LadrunoReader, stage: str, err) -> None:
     path = f"{stage}/RESULTS/ON_ELEMENTS"
     if path not in r.f:
@@ -555,20 +607,8 @@ def _validate_element_results(r: LadrunoReader, stage: str, err) -> None:
             if "COLUMN_MAP" not in bucket:
                 continue
             num_cols = int(_attr(bucket, "NUM_COLUMNS"))
-            cm = bucket["COLUMN_MAP"]
-            mult = cm["MULTIPLICITY"][...]
-            ncomp = cm["NUM_COMP"][...]
-            k = len(ncomp)
-            for arr_name in ("LEVELS", "GAUSS_ID", "SECTION_TAG", "FIBER_ID", "MULTIPLICITY"):
-                if len(cm[arr_name][...]) != k:
-                    err(f"{stage}/ON_ELEMENTS/{rname}/{bname}: COLUMN_MAP/{arr_name} len "
-                        f"!= {k}")
-            if len(_decode_lines(_attr(cm, "COMP_NAMES"))) != k:
-                err(f"{stage}/ON_ELEMENTS/{rname}/{bname}: COMP_NAMES lines != {k} blocks")
-            expect = int(np.sum(mult * ncomp))
-            if expect != num_cols:
-                err(f"{stage}/ON_ELEMENTS/{rname}/{bname}: NUM_COLUMNS {num_cols} != "
-                    f"sum(MULT*NUM_COMP) {expect}")
+            ctx = f"{stage}/ON_ELEMENTS/{rname}/{bname}"
+            _validate_column_map(bucket["COLUMN_MAP"], num_cols, ctx, err)
             ids = bucket["ID"][...]
             _check_data_shape(bucket, ids.shape[0], num_cols, err,
                               f"{stage}/ON_ELEMENTS/{rname}/{bname}")

@@ -351,14 +351,26 @@ as the time-series result group (`COMPONENTS`/`DISPLAY_NAME`/`DIMENSION`/…, §
 the extremes are named in-file. v3a covers consistent quantities (zero-MPI); v3b
 reduced (reaction/global) envelopes need the per-step Allreduce, which is compiled
 out of this shared sequential recorder TU (see `LEDGER_quirks.md`) — deferred.
-Element envelopes carry the result-level `COMPONENTS` but not yet a per-column
-`COLUMN_MAP` (gauss/section/fiber structure on `ENVELOPES` is a follow-up).
+**Element envelopes** nest one level (`ENVELOPES/ON_ELEMENTS/<display>/<bucket>`, like
+the time-series tree) and carry the **same structured per-column `COLUMN_MAP`** as the
+time-series `ON_ELEMENTS` path (§7.2): `LEVELS`/`GAUSS_ID`/`SECTION_TAG`/`FIBER_ID`/
+`NUM_COMP`/`MULTIPLICITY` + `COMP_NAMES` + the `NUM_COLUMNS` attr. This is the
+authoritative gauss/section/fiber column structure — element results have an *empty*
+result-level `COMPONENTS` attr, so the `COLUMN_MAP` is how an envelope column is named
+and located. The `EnvelopeSink` delete-recreates its leaf group on every in-place flush,
+so the recorder re-stamps the `COLUMN_MAP` after each `finalize()`.
 
 ```
-ENVELOPES/ON_NODES/<name>/
+ENVELOPES/ON_NODES/<name>/                          (node/domain: flat)
    ID      [nN×1] int
    MIN     [nN×nComp]   MAX [nN×nComp]   ABSMAX [nN×nComp]   double
    ARG_STEP[nN×nComp]   int     step index of each extreme (commitTag, global across ranks)
+
+ENVELOPES/ON_ELEMENTS/<display>/<bucket>/           (element: nested + COLUMN_MAP)
+   ID      [nE×1] int
+   MIN/MAX/ABSMAX [nE×NUM_COLUMNS] double   ARG_STEP [nE×NUM_COLUMNS] int
+   COLUMN_MAP/  { LEVELS, GAUSS_ID, SECTION_TAG, FIBER_ID, NUM_COMP, MULTIPLICITY,
+                  COMP_NAMES (ATTR) }                ← §7.2, identical structure
 ```
 
 ---

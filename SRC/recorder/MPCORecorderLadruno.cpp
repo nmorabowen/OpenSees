@@ -261,6 +261,18 @@ void MPCORecorderLadruno::finalizeAllSinks()
 	for (size_t i = 0; i < m_data->domain_channels.size(); ++i)
 		if (m_data->domain_channels[i].sink)
 			m_data->domain_channels[i].sink->finalize(info);
+
+	// Element ENVELOPES carry the same structured per-column COLUMN_MAP as the
+	// time-series ON_ELEMENTS path (gauss/section/fiber column structure, beyond
+	// the result-level COMPONENTS — which is empty for element results). The
+	// EnvelopeSink delete-recreates each leaf group on every flush, so the
+	// COLUMN_MAP must be (re)written AFTER the element sinks finalize. finalizeAllSinks
+	// is only ever called in envelope mode; the envelope_mode guard keeps it correct
+	// if that ever changes.
+	if (m_data->envelope_mode) {
+		for (size_t i = 0; i < m_data->elem_channels.size(); ++i)
+			writeElementColumnMap((int)i);
+	}
 }
 
 /* ===================================================================== */
@@ -1742,10 +1754,12 @@ int MPCORecorderLadruno::recordResultsOnElements()
 		private_data::ElemChannel& ech = m_data->elem_channels[i];
 		ech.source->evaluate(info, buffer);
 		ech.sink->accept(info, *ech.source, buffer);
-		// Write the COLUMN_MAP metadata once (after the StreamingSink created the
-		// ON_ELEMENTS result group on first accept()). Skipped in envelope mode: the
-		// EnvelopeSink writes to RESULTS/ENVELOPES (not ON_ELEMENTS), so a COLUMN_MAP
-		// there would be orphaned — envelope component naming is a v1 follow-up.
+		// Time-series mode: write the COLUMN_MAP metadata once, after the
+		// StreamingSink created the ON_ELEMENTS result group on first accept().
+		// In envelope mode the EnvelopeSink defers all output to finalize() and
+		// delete-recreates its leaf group each flush, so the COLUMN_MAP is written
+		// (and re-stamped) from finalizeAllSinks() under ENVELOPES/ON_ELEMENTS
+		// instead — see writeElementColumnMap().
 		if (!m_data->envelope_mode && !ech.column_map_written) {
 			writeElementColumnMap((int)i);
 			ech.column_map_written = true;
@@ -1808,10 +1822,18 @@ void MPCORecorderLadruno::writeElementColumnMap(int elem_channel_index)
 	const mpcolns::mpco::element::OutputDescriptorHeader& header = *ech.header;
 	const mpcolns::ResultSchema& schema = ech.source->schema();
 
-	// Open the bucket result group: ON_ELEMENTS/<display>/<bucket>
+	// Open the bucket result group. In time-series mode that is
+	// ON_ELEMENTS/<display>/<bucket> (created by the StreamingSink); in envelope
+	// mode the EnvelopeSink writes the bucket under ENVELOPES/ON_ELEMENTS/<...>
+	// instead, so the per-column structure must land there too (the result-level
+	// COMPONENTS attr is empty for elements — COLUMN_MAP is the authoritative
+	// gauss/section/fiber column map).
 	std::stringstream ss_grp;
-	ss_grp << "MODEL_STAGE[" << info.current_model_stage_id
-		<< "]/RESULTS/ON_ELEMENTS/" << schema.name;
+	ss_grp << "MODEL_STAGE[" << info.current_model_stage_id << "]/RESULTS/";
+	if (m_data->envelope_mode)
+		ss_grp << "ENVELOPES/ON_ELEMENTS/" << schema.name;
+	else
+		ss_grp << "ON_ELEMENTS/" << schema.name;
 	hid_t h_grp = H5Gopen2(info.h_file_id, ss_grp.str().c_str(), H5P_DEFAULT);
 	if (h_grp < 0)
 		return;

@@ -198,3 +198,56 @@ independent interpreter per rank, manual `getPID`/`getNP` partition — see
 decomposition, the path that *would* exercise `sendSelf`) is **METIS-4-blocked**
 (`OPS_partition` returns an error; needs METIS 5 / `OPS_HAVE_METIS5`), so the
 broadcast path is not runtime-testable in this build.
+
+### MPCO_Ladruno nested result-group names need the `<display>` parent pre-created
+- **Bites:** writing an element result whose `schema.name` is nested
+  (`"<display>/<bucket>"`, e.g. `stress/204-FourNodeQuad[201:0:0]`) under a parent
+  that does NOT already contain the intermediate `<display>` group → the
+  `H5Gcreate` in `createResultGroup` returns an invalid handle and the datasets
+  underneath silently fail (HDF5-DIAG noise / missing data).
+- **Why:** the recorder's group-creation property list (`h_group_proplist`) is a
+  GCPL with `CRT_ORDER_TRACKED|INDEXED` but carries **no create-intermediate-group
+  LINK property**, and `createResultGroup` passes `lcpl=H5P_DEFAULT`. `H5Gcreate`
+  only creates the *final* path component; any intermediate must already exist.
+- **Status/workaround:** the time-series `StreamingSink` path is safe because the
+  recorder pre-creates `ON_ELEMENTS/<display>` at init. The `EnvelopeSink` is
+  self-contained, so it pre-creates each prefix segment of `m_name` inside
+  `writeEnvelope` (the per-flush `H5Ldelete` only deletes the leaf link, so the
+  intermediate persists). This is why element envelopes were latently broken until
+  PR #45 — only flat node/domain names had ever been written. Learned 2026-05-31.
+
+### `decode_columns` in `ladruno_format.py` must flatten COLUMN_MAP arrays — the recorder writes them 2-D `[k×1]`
+- **Bites:** `int(mult[i])` (and the other per-block scalars) in `decode_columns`
+  throws `TypeError: only 0-dimensional arrays can be converted to Python scalars`
+  under numpy 2.x when reading a **real recorder** `.ladruno`.
+- **Why:** the C++ writer stores each per-block COLUMN_MAP array via
+  `createAndWrite(vec, k, 1)` → **2-D `[k×1]`**, so `arr[i]` is a `(1,)`-array, not
+  a scalar. `make_synthetic.py` writes them 1-D `[k]`, which masked it; and the
+  element-**parity** gate keys results by flat column index and never calls
+  `decode_columns`, so no test exercised it on real 2-D output until PR #45's
+  element-envelope checker.
+- **Status:** fixed (PR #45) — `decode_columns` `.reshape(-1)`s GAUSS_ID/SECTION_TAG/
+  FIBER_ID/NUM_COMP/MULTIPLICITY (LEVELS is consumed via `np.atleast_1d`, left as-is).
+  Learned 2026-05-31.
+
+### h5py reads of a freshly-written `.mpco`/`.ladruno` HANG on HDF5 file locking
+- **Bites:** a venv-python checker calling `h5py.File(path, "r")` on a file the
+  build-python just wrote (in the same gate run) **hangs indefinitely** — no error,
+  just blocks (e.g. `parity_check.py` stuck forever).
+- **Why:** HDF5's default file locking; the writer's lock/superblock state isn't
+  cleared promptly on a synced/Temp FS, so the reader blocks acquiring the lock.
+- **Workaround:** set `HDF5_USE_FILE_LOCKING=FALSE` in the checker's environment
+  (`$env:HDF5_USE_FILE_LOCKING="FALSE"`) → opens instantly (parity 80/80). Apply to
+  ALL `.ladruno`/`.mpco` read steps after a recorder run. Learned 2026-05-31.
+
+### Parallel build OOM (`cl.exe` C1060 "out of heap") on the giant template TUs under RAM pressure
+- **Bites:** with low free RAM (~1–2 GB of 28), `cmake --build ... -j8`/`-j16` dies
+  with `fatal error C1060: compiler is out of heap space` on the huge template TUs
+  (`OPS_AllASDPlasticMaterial3Ds.cpp`, `MPCORecorder.cpp`, `MPCORecorderLadruno.cpp`),
+  and even ordinary TUs get OS-killed (ninja `FAILED: [code=2]` with no compiler
+  diagnostic = the process was killed, not a code error).
+- **Workaround:** compile the monsters **serially first** —
+  `ninja -j1 CMakeFiles/OPS_Material.dir/SRC/material/nD/ASDPlasticMaterial3D/OPS_AllASDPlasticMaterial3Ds.cpp.obj`
+  (and the two MPCO recorder objs) — then `cmake --build build\build\Release
+  --target OpenSeesPy -j2` for the rest (ninja resumes cached objs). Don't assume a
+  `code=2` with no error text is a code bug; check free RAM first. Learned 2026-05-31.
