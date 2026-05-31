@@ -20,6 +20,7 @@ this backend (P7) agree by construction. It runs today with only `h5py` + `numpy
 | `mem_smoke_{model,check}.py` | P4 memory-counter + census smoke (build python runs the model, venv python checks the `.h5`). |
 | `deep_smoke_{model,check}.py` | P3 deep per-element-type smoke (`elem_by_type` under `elem.tangent`/`elem.residual`). |
 | `requirements.txt` | Backend deps (`h5py`, `numpy`, `fastapi`, `uvicorn`, `httpx`). |
+| `frontend/` | **React + TS viewer (P8).** Run picker, SVG icicle/flame rollup (with `elem_by_type` drill-in), time-series, memory/census panel, run-diff, dt_cr/oversample badges. Pure client of the P7 API; see `frontend/README.md`. |
 
 ## Quick start
 
@@ -57,7 +58,7 @@ python profiler_api.py --file profile_sample.h5 --port 8000
 
 ```
 C++ engine ──write_run()──► profile.h5 ──ProfilerResults──► JSON ──► React frontend
-            (HDF5 at rest, one group per run)        (this package)   (P8, not yet built)
+            (HDF5 at rest, one group per run)   (loader + FastAPI, P7)   (frontend/, P8)
 ```
 
 ## What the C++ writer (P1) must honor
@@ -79,7 +80,8 @@ C++ engine ──write_run()──► profile.h5 ──ProfilerResults──► 
 
 ## Not yet built
 
-- React frontend: flame/icicle, time-series, run-comparison, dt_cr/leak badges (P8).
 - Steady-state windowing / `min`-statistic comparison surfaced in the diff (P1#8).
+- Frontend polish: cross-run series overlay, leak badge (census diff across runs).
 
-(P7 — the FastAPI wrapper — is done: see `profiler_api.py` + `test_api.py`.)
+(P7 — the FastAPI wrapper — is done: `profiler_api.py` + `test_api.py`.
+P8 — the React viewer — is done: `frontend/`.)
