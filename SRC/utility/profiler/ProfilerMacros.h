@@ -76,12 +76,14 @@
       do { (tmr).addElem((classTag), (wall_ns), (fb)); } while (0)
 
   // Alloc counters (P4 wires Matrix/Vector/ID ctors/dtors). Runtime-gated on mem().
-  #define OPS_PROFILE_COUNT_ALLOC(bytes)                                          \
+  // `type` is an ops_profiler::AllocType (ALLOC_MATRIX/ALLOC_VECTOR/ALLOC_ID) for
+  // the per-type live split; an out-of-range value counts toward the aggregate only.
+  #define OPS_PROFILE_COUNT_ALLOC(bytes, type)                                    \
       do { if (::ops_profiler::theProfiler().mem())                               \
-               ::ops_profiler::countAlloc(static_cast<int64_t>(bytes)); } while (0)
-  #define OPS_PROFILE_COUNT_FREE(bytes)                                           \
+               ::ops_profiler::countAlloc(static_cast<int64_t>(bytes), (type)); } while (0)
+  #define OPS_PROFILE_COUNT_FREE(bytes, type)                                     \
       do { if (::ops_profiler::theProfiler().mem())                               \
-               ::ops_profiler::countFree(static_cast<int64_t>(bytes)); } while (0)
+               ::ops_profiler::countFree(static_cast<int64_t>(bytes), (type)); } while (0)
 
 #else // OPS_PROFILE_DISABLE -> the profiler is compiled fully out
 
@@ -89,8 +91,8 @@
   #define OPS_PROFILE_SCOPE_DEEP(name)                ((void)0)
   #define OPS_PROFILE_SCOPE_DEEP_NAMED(tmr, name)     ((void)0)
   #define OPS_PROFILE_ELEM(tmr, classTag, w, fb)      ((void)0)
-  #define OPS_PROFILE_COUNT_ALLOC(bytes)              ((void)0)
-  #define OPS_PROFILE_COUNT_FREE(bytes)               ((void)0)
+  #define OPS_PROFILE_COUNT_ALLOC(bytes, type)        ((void)0)
+  #define OPS_PROFILE_COUNT_FREE(bytes, type)         ((void)0)
 
 #endif // !OPS_PROFILE_DISABLE
 
