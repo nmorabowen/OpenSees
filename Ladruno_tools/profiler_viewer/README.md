@@ -13,15 +13,26 @@ this backend (P7) agree by construction. It runs today with only `h5py` + `numpy
 |------|------|
 | `profiler_schema.py` | **The contract.** HDF5 layout, dtypes, attr names, and the reference `write_run()`. The C++ writer must mirror this exactly. |
 | `profiler_results.py` | Backend loader `ProfilerResults`: manifest, normalized rollup, series, memory, and `diff(base, cand)`. Returns the JSON wire format the React frontend consumes. |
+| `profiler_api.py` | **FastAPI backend (P7).** Thin HTTP layer over `ProfilerResults` — `/runs`, `/runs/{id}/rollup`, `/series`, `/memory`, `/diff`, `/health`. Owns no logic; forwards to the loader. Opens the HDF5 per request (no long-lived lock). |
 | `make_sample.py` | Synthesizes `profile_sample.h5` (3 runs) and prints manifest + diff. Frontend dev fixture before the C++ writer exists. |
 | `test_contract.py` | Plain-assert guard: round-trip, run immutability, normalizers, `elem_by_type`, diff. |
+| `test_api.py` | Plain-assert guard for the FastAPI backend (every endpoint via Starlette `TestClient`; no live server). |
+| `mem_smoke_{model,check}.py` | P4 memory-counter + census smoke (build python runs the model, venv python checks the `.h5`). |
+| `deep_smoke_{model,check}.py` | P3 deep per-element-type smoke (`elem_by_type` under `elem.tangent`/`elem.residual`). |
+| `requirements.txt` | Backend deps (`h5py`, `numpy`, `fastapi`, `uvicorn`, `httpx`). |
+| `frontend/` | **React + TS viewer (P8).** Run picker, SVG icicle/flame rollup (with `elem_by_type` drill-in), time-series, memory/census panel, run-diff, dt_cr/oversample badges. Pure client of the P7 API; see `frontend/README.md`. |
 
 ## Quick start
 
 ```bash
+python -m pip install -r requirements.txt
+
 python make_sample.py     # writes profile_sample.h5, prints manifest + a full→modified-Newton diff
-python test_contract.py   # asserts the contract holds
+python test_contract.py   # asserts the data-layer contract holds
+python test_api.py        # asserts the FastAPI backend serves it
 ```
+
+Headless analysis (no server):
 
 ```python
 from profiler_results import ProfilerResults
@@ -32,11 +43,22 @@ with ProfilerResults("profile_sample.h5") as pr:
     pr.diff("caseA", "caseB")  # prove a fix  (GET /diff?base=&cand=)
 ```
 
+Serve it over HTTP (P7) — point the server at any `profile.h5`:
+
+```bash
+python profiler_api.py --file profile_sample.h5 --port 8000
+#   or:  PROFILER_H5=profile_sample.h5 uvicorn profiler_api:app --reload
+# then open http://127.0.0.1:8000/docs  (live Swagger UI), e.g.:
+#   GET /runs                         manifest rows
+#   GET /runs/caseA/rollup            flame graph
+#   GET /diff?base=caseA&cand=caseB   prove a fix
+```
+
 ## Data flow
 
 ```
 C++ engine ──write_run()──► profile.h5 ──ProfilerResults──► JSON ──► React frontend
-            (HDF5 at rest, one group per run)        (this package)   (P8, not yet built)
+            (HDF5 at rest, one group per run)   (loader + FastAPI, P7)   (frontend/, P8)
 ```
 
 ## What the C++ writer (P1) must honor
@@ -58,6 +80,8 @@ C++ engine ──write_run()──► profile.h5 ──ProfilerResults──► 
 
 ## Not yet built
 
-- FastAPI wrapper exposing the `ProfilerResults` methods as HTTP endpoints (P7).
-- React frontend: flame/icicle, time-series, run-comparison, dt_cr/leak badges (P8).
 - Steady-state windowing / `min`-statistic comparison surfaced in the diff (P1#8).
+- Frontend polish: cross-run series overlay, leak badge (census diff across runs).
+
+(P7 — the FastAPI wrapper — is done: `profiler_api.py` + `test_api.py`.
+P8 — the React viewer — is done: `frontend/`.)

@@ -113,6 +113,15 @@ public:
     EquiSolnAlgo* getAlgorithm() {return theAlgorithm;}
     EquiSolnAlgo** getAlgorithmPointer() {return &theAlgorithm;}
 
+    // Ladruno: profiler run-header labels — the type strings the user typed at
+    // command time (getClassType() returns "UnknownMovableObject" for these).
+    void setAlgorithmName(const char* n)  { theAlgorithmName  = (n ? n : ""); }
+    void setIntegratorName(const char* n) { theIntegratorName = (n ? n : ""); }
+    void setSolverName(const char* n)     { theSolverName     = (n ? n : ""); }
+    const char* getAlgorithmName()  const { return theAlgorithmName.c_str(); }
+    const char* getIntegratorName() const { return theIntegratorName.c_str(); }
+    const char* getSolverName()     const { return theSolverName.c_str(); }
+
     void setCTest(ConvergenceTest* test);
     ConvergenceTest* getCTest() {return theTest;}
     ConvergenceTest** getCTestPointer() { return &theTest; }
@@ -173,6 +182,7 @@ private:
     StaticIntegrator *theStaticIntegrator;
     TransientIntegrator *theTransientIntegrator;
     EquiSolnAlgo *theAlgorithm;
+    std::string theAlgorithmName, theIntegratorName, theSolverName;  // Ladruno: profiler run-header labels
     StaticAnalysis* theStaticAnalysis;
     DirectIntegrationAnalysis* theTransientAnalysis;
     PFEMAnalysis* thePFEMAnalysis;

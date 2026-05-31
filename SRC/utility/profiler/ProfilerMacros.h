@@ -96,6 +96,15 @@
       do { if (::ops_profiler::theProfiler().mem())                               \
                ::ops_profiler::countFree(static_cast<int64_t>(bytes), (type)); } while (0)
 
+  // Per-step series hook (P0#3): record one row of the per-step time history
+  // (step index, pseudo-time, dt, iteration count) from the analysis driver.
+  // Gated on enabled() so the argument expressions (getCommitTag / getCurrentTime
+  // / getNumIterations) are evaluated ONLY when a run is active; recordStep itself
+  // additionally early-returns unless the run armed -perStep. Negligible vs a step.
+  #define OPS_PROFILE_STEP(step, t, dt, iters)                                    \
+      do { if (::ops_profiler::theProfiler().enabled())                          \
+               ::ops_profiler::theProfiler().recordStep((step), (t), (dt), (iters)); } while (0)
+
   // TaggedObject census (P4): one live-object count per classTag, bumped in the
   // MovableObject ctor and decremented in its dtor. Runtime-gated on mem() like
   // the byte counters; off-path cost is one predicted branch on a hot path.
@@ -115,6 +124,7 @@
   #define OPS_PROFILE_FE_ELEM_SCOPE(tmr, fe_elem)     ((void)0)
   #define OPS_PROFILE_COUNT_ALLOC(bytes, type)        ((void)0)
   #define OPS_PROFILE_COUNT_FREE(bytes, type)         ((void)0)
+  #define OPS_PROFILE_STEP(step, t, dt, iters)        ((void)0)
   #define OPS_PROFILE_CENSUS_BORN(classTag)           ((void)0)
   #define OPS_PROFILE_CENSUS_DIED(classTag)           ((void)0)
 

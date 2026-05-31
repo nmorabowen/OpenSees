@@ -87,7 +87,7 @@ UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 #include <LoadControl.h>
 #include <CTestPFEM.h>
 #include <PFEMIntegrator.h>
-#include <TransientIntegrator.h>
+#include <TransientIntegrator.h>      // Ladruno: profiler dt_cr (getCriticalTimeStep)
 #include <PFEMSolver.h>
 #include <PFEMLinSOE.h>
 #include <SparsePythonFactory.h>
@@ -1416,6 +1416,7 @@ int OPS_System()
     }
 
     const char* type = OPS_GetString();
+    cmds->setSolverName(type);   // Ladruno: profiler run-header solver name
 
     // create soe
     LinearSOE* theSOE = 0;
@@ -1696,6 +1697,7 @@ int OPS_Integrator()
     }
 
     const char* type = OPS_GetString();
+    cmds->setIntegratorName(type);   // Ladruno: profiler run-header integrator name
 
     // create integrator
     StaticIntegrator* si = 0;
@@ -1888,6 +1890,7 @@ int OPS_Algorithm()
     }
 
     const char* type = OPS_GetString();
+    cmds->setAlgorithmName(type);   // Ladruno: profiler run-header algorithm name
 
     // create algorithm
     EquiSolnAlgo* theAlgo = 0;
@@ -3269,6 +3272,30 @@ int OPS_profiler()
         ops_profiler::RunMeta meta = P.buildMeta();
         LinearSOE* theSOE = cmds->getSOE();                 // P0#2: nDOF normalizer
         if (theSOE != 0) meta.nDOF = theSOE->getNumEqn();
+
+        // Ladruno: populate the run-header identity (algorithm / integrator /
+        // solver names) + the explicit-dynamics dt_cr lever (P0#5). The names are
+        // the type strings the user typed, captured at command time (getClassType()
+        // returns "UnknownMovableObject" for these analysis classes), so a diff is
+        // interpretable. dt_cr drives the "could raise dt" oversample badge.
+        meta.algorithm  = cmds->getAlgorithmName();
+        meta.solver     = cmds->getSolverName();
+        meta.integrator = cmds->getIntegratorName();
+        // getCriticalTimeStep() is virtual (base returns -1.0); the explicit
+        // integrators (CentralDifferenceLadruno / ExplicitBatheLNVD) override it.
+        // Left 0 when no transient integrator reports one (implicit / static runs).
+        TransientIntegrator* theTI = cmds->getTransientIntegrator();
+        if (theTI != 0) {
+            const double dtcr = theTI->getCriticalTimeStep();
+            if (dtcr > 0.0) {
+                meta.dt_cr = dtcr;
+                // oversample = dt_cr / dt: >1 means the step is finer than critical.
+                // dt_max comes from the per-step series (buildMeta); 0 without -perStep.
+                if (meta.dt_max > 0.0)
+                    meta.oversample_ratio = dtcr / meta.dt_max;
+            }
+        }
+
         ops_profiler::MemorySnapshot snap = P.buildMemorySnapshot();
         const ops_profiler::Series& ser = P.series();
 
