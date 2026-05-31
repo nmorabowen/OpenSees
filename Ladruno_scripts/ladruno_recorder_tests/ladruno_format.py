@@ -158,10 +158,13 @@ class LadrunoReader:
             out[fam] = {}
             for name in fam_grp:
                 g = fam_grp[name]
-                out[fam][name] = {
+                d = {
                     "id": g["ID"][...], "min": g["MIN"][...], "max": g["MAX"][...],
                     "absmax": g["ABSMAX"][...], "arg_step": g["ARG_STEP"][...],
                 }
+                if "COMPONENTS" in g.attrs:
+                    d["components"] = [c for c in _attr(g, "COMPONENTS").split(",") if c]
+                out[fam][name] = d
         return out
 
     def section_assignments(self, stage: str) -> dict[str, dict]:
@@ -461,6 +464,12 @@ def _validate_envelopes(r: LadrunoReader, stage: str, err) -> None:
                     err(f"{ctx}: MIN > MAX somewhere")
                 if not np.allclose(am, np.maximum(np.abs(mn), np.abs(mx)), atol=1e-9):
                     err(f"{ctx}: ABSMAX != max(|MIN|,|MAX|)")
+            # self-describing component names (finding (h)): if present, COMPONENTS
+            # count must equal the number of columns (nComp).
+            if "COMPONENTS" in g.attrs and mn.ndim == 2:
+                comps = [c for c in _attr(g, "COMPONENTS").split(",") if c]
+                if comps and len(comps) != mn.shape[1]:
+                    err(f"{ctx}: COMPONENTS count {len(comps)} != nComp {mn.shape[1]}")
 
 
 # ---------------------------------------------------------------------------

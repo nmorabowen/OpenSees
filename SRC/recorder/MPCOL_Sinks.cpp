@@ -205,6 +205,12 @@ namespace mpcol {
 		// begin at the real first sample rather than +/-inf sentinels.
 		const ResultSchema& schema = src.schema();
 		m_name = schema.name;
+		m_display_name = schema.display_name;
+		m_components_csv = schema.components_csv;
+		m_dimension = schema.dimension;
+		m_description = schema.description;
+		m_result_type = (int)schema.result_type;
+		m_data_type = (int)schema.data_type;
 		m_n_comp = (size_t)(schema.num_components < 0 ? 0 : schema.num_components);
 		m_ids = src.ids();
 		m_n_ids = m_ids.size();
@@ -217,9 +223,17 @@ namespace mpcol {
 		if (schema.num_components < 1)
 			return;
 
-		// Ensure identity is cached even if begin() was skipped.
-		if (m_name.empty())
+		// Ensure identity + self-describing metadata are cached even if begin() was
+		// skipped (the recorder drives accept() directly, no begin() call).
+		if (m_name.empty()) {
 			m_name = schema.name;
+			m_display_name = schema.display_name;
+			m_components_csv = schema.components_csv;
+			m_dimension = schema.dimension;
+			m_description = schema.description;
+			m_result_type = (int)schema.result_type;
+			m_data_type = (int)schema.data_type;
+		}
 		m_n_comp = (size_t)schema.num_components;
 		if (m_ids.empty()) {
 			m_ids = src.ids();
@@ -288,8 +302,13 @@ namespace mpcol {
 		if (H5Lexists(h_family, m_name.c_str(), H5P_DEFAULT) > 0)
 			H5Ldelete(h_family, m_name.c_str(), H5P_DEFAULT);
 
-		hid_t h_name = h5::group::create(
-			h_family, m_name.c_str(), H5P_DEFAULT, info.h_group_proplist, H5P_DEFAULT);
+		// Self-describing result group (same COMPONENTS/DISPLAY_NAME/DIMENSION attrs
+		// as the time-series StreamingSink writes) so envelope output carries
+		// authoritative component names in-file (finding (h)), not just bare arrays.
+		hid_t h_name = h5::group::createResultGroup(
+			h_family, info.h_group_proplist, m_name, m_display_name,
+			m_components_csv, (int)m_n_comp, m_dimension, m_description,
+			m_result_type, m_data_type);
 
 		// ID [nIds x 1], and the four [nIds x nComp] accumulators (schema §7.4).
 		hid_t d_id  = h5::dataset::createAndWrite(h_name, "ID", m_ids, m_n_ids, 1);

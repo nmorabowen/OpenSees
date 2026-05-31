@@ -99,7 +99,8 @@ namespace mpcol {
 	class EnvelopeSink : public ResultSink {
 	public:
 		explicit EnvelopeSink(ResultFamily::Enum family)
-			: m_family(family), m_seeded(false), m_n_ids(0), m_n_comp(0) {}
+			: m_family(family), m_seeded(false), m_n_ids(0), m_n_comp(0),
+			  m_result_type(0), m_data_type(0) {}
 		~EnvelopeSink() override = default;
 
 		void begin(mpco::ProcessInfo& info, const ResultSource& src) override;
@@ -125,6 +126,11 @@ namespace mpcol {
 		size_t m_n_ids;
 		size_t m_n_comp;
 		std::string m_name;       // result name (schema().name); cached at begin/first accept
+		// Self-describing result-group metadata (schema §7.1), cached so the
+		// ENVELOPES/<name> group carries the same COMPONENTS/DISPLAY_NAME/DIMENSION
+		// as the time-series result group (finding (h): authoritative names in-file).
+		std::string m_display_name, m_components_csv, m_dimension, m_description;
+		int m_result_type, m_data_type;
 		std::vector<int> m_ids;   // cached ids() snapshot for the ID dataset
 		std::vector<double> m_min;
 		std::vector<double> m_max;
