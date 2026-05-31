@@ -1225,6 +1225,15 @@ namespace mpco {
 			// ---- tet, barycentric (ndir=3) -------------------------------
 			case ElementIntegrationRuleType::Tetrahedron_GaussLegendre_1: // FourNodeTetrahedron: 1 GP (not 4)
 				ndir = 3; num_gp = 1; gp_param = { 0.25, 0.25, 0.25 }; gp_weight = { 1.0 / 6.0 }; return true;
+			case ElementIntegrationRuleType::Tetrahedron_GaussLegendre_2: { // TenNodeTetrahedron: 4-pt rule
+				// alpha=(5+3√5)/20, beta=(5−√5)/20; element GP order (ζ0,ζ1,ζ2) is
+				// the (α,β,β),(β,α,β),(β,β,α),(β,β,β) cycle (TenNodeTetrahedron.cpp
+				// gaussPoint[d]=sg[abs(d-k)] loop). w=1/24 each.
+				const double al = 0.5854101966249685, be = 0.1381966011250105;
+				ndir = 3; num_gp = 4;
+				gp_param = { al, be, be,  be, al, be,  be, be, al,  be, be, be };
+				const double tw = 1.0 / 24.0;
+				gp_weight = { tw, tw, tw, tw }; return true; }
 			// ---- hex, domain [-1,1]^3 ------------------------------------
 			case ElementIntegrationRuleType::Hexahedron_GaussLegendre_1:
 				ndir = 3; num_gp = 1; gp_param = { 0.0, 0.0, 0.0 }; gp_weight = { 8.0 }; return true;
@@ -1328,6 +1337,24 @@ namespace mpco {
 						if (nn < 4 || nd < 3) return false;
 						double r = natc[0], s = natc[1], u = natc[2];
 						N[0] = r; N[1] = s; N[2] = u; N[3] = 1.0 - r - s - u;
+						return true; }
+					// ---- tet, quadratic (TenNodeTetrahedron, node 8/9 swapped) ---
+					// ζ=(r,s,u); L4=1-r-s-u. Edge nodes: 4:0-1, 5:1-2, 6:2-0,
+					// 7:0-3, 8:2-3, 9:1-3 (TenNodeTetrahedron.cpp shp3d).
+					case ElementGeometryType::Tetrahedron_10N: {
+						if (nn < 10 || nd < 3) return false;
+						double r = natc[0], s = natc[1], u = natc[2];
+						double L4 = 1.0 - r - s - u;
+						N[0] = r * (2.0 * r - 1.0);
+						N[1] = s * (2.0 * s - 1.0);
+						N[2] = u * (2.0 * u - 1.0);
+						N[3] = L4 * (2.0 * L4 - 1.0);
+						N[4] = 4.0 * r * s;
+						N[5] = 4.0 * s * u;
+						N[6] = 4.0 * u * r;
+						N[7] = 4.0 * r * L4;
+						N[8] = 4.0 * u * L4;
+						N[9] = 4.0 * s * L4;
 						return true; }
 					// ---- hex, [-1,1]^3 (Brick/shp3d trilinear) --------------
 					// node order: bottom CCW (0:---,1:+--,2:++-,3:-+-),

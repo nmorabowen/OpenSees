@@ -139,6 +139,88 @@ ops.analysis("Static")
 ops.analyze(2)
 ops.wipe()
 
-for p in (q_new, t_new, b_new):
+# --------------------------------------------------------------------------- #
+# 4) NineNodeQuad over [0,1]^2  (higher-order: biquadratic Lagrange, Quad_GL_3)
+#    node order: 4 CCW corners, 4 CCW edge-mids (bottom,right,top,left), center
+# --------------------------------------------------------------------------- #
+q9_ref = os.path.join(OUT, "sq_quad9_ref.mpco")
+q9_new = os.path.join(OUT, "sq_quad9.ladruno")
+_fresh(q9_ref, q9_new)
+
+ops.wipe()
+ops.model("basic", "-ndm", 2, "-ndf", 2)
+ops.node(1, 0.0, 0.0)   # corner --
+ops.node(2, 1.0, 0.0)   # corner +-
+ops.node(3, 1.0, 1.0)   # corner ++
+ops.node(4, 0.0, 1.0)   # corner -+
+ops.node(5, 0.5, 0.0)   # edge-mid bottom
+ops.node(6, 1.0, 0.5)   # edge-mid right
+ops.node(7, 0.5, 1.0)   # edge-mid top
+ops.node(8, 0.0, 0.5)   # edge-mid left
+ops.node(9, 0.5, 0.5)   # center
+ops.fix(1, 1, 1)
+ops.fix(4, 1, 1)
+ops.fix(8, 1, 1)
+ops.nDMaterial("ElasticIsotropic", 1, 1000.0, 0.25)
+ops.element("quad9n", 1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 1.0, "PlaneStress", 1)
+ops.recorder("mpco", q9_ref, "-N", "displacement", "-T", "dt", 0.0)
+ops.recorder("mpcoLadruno", q9_new, "-N", "displacement", "-T", "dt", 0.0)
+ops.timeSeries("Linear", 1)
+ops.pattern("Plain", 1, 1)
+ops.load(2, 1.0e2, 0.0)
+ops.load(3, 1.0e2, 0.0)
+ops.load(6, 1.0e2, 0.0)
+ops.system("BandSPD")
+ops.numberer("RCM")
+ops.constraints("Plain")
+ops.integrator("LoadControl", 0.5)
+ops.algorithm("Linear")
+ops.analysis("Static")
+ops.analyze(2)
+ops.wipe()
+
+# --------------------------------------------------------------------------- #
+# 5) TenNodeTetrahedron (higher-order: quadratic tet, Tet_GL_2 4-pt rule)
+#    node order: corners 0:ζ0 1:ζ1 2:ζ2 3:ζ4, edge-mids 4:0-1 5:1-2 6:2-0
+#                7:0-3 8:2-3 9:1-3 (with the element's 8<->9 swap)
+# --------------------------------------------------------------------------- #
+t10_ref = os.path.join(OUT, "sq_tet10_ref.mpco")
+t10_new = os.path.join(OUT, "sq_tet10.ladruno")
+_fresh(t10_ref, t10_new)
+
+ops.wipe()
+ops.model("basic", "-ndm", 3, "-ndf", 3)
+ops.node(1, 0.0, 0.0, 0.0)   # corner ζ0
+ops.node(2, 1.0, 0.0, 0.0)   # corner ζ1
+ops.node(3, 0.0, 1.0, 0.0)   # corner ζ2
+ops.node(4, 0.0, 0.0, 1.0)   # corner ζ4
+ops.node(5, 0.5, 0.0, 0.0)   # edge 0-1
+ops.node(6, 0.5, 0.5, 0.0)   # edge 1-2
+ops.node(7, 0.0, 0.5, 0.0)   # edge 2-0
+ops.node(8, 0.0, 0.0, 0.5)   # edge 0-3
+ops.node(9, 0.0, 0.5, 0.5)   # edge 2-3
+ops.node(10, 0.5, 0.0, 0.5)  # edge 1-3
+for n in (1, 2, 3, 5, 7):
+    ops.fix(n, 1, 1, 1)
+ops.nDMaterial("ElasticIsotropic", 2, 1000.0, 0.25)
+ops.element("TenNodeTetrahedron", 1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 2)
+ops.recorder("mpco", t10_ref, "-N", "displacement", "-T", "dt", 0.0)
+ops.recorder("mpcoLadruno", t10_new, "-N", "displacement", "-T", "dt", 0.0)
+ops.timeSeries("Linear", 1)
+ops.pattern("Plain", 1, 1)
+ops.load(4, 0.0, 0.0, 1.0e2)
+ops.load(8, 0.0, 0.0, 1.0e2)
+ops.load(9, 0.0, 0.0, 1.0e2)
+ops.load(10, 0.0, 0.0, 1.0e2)
+ops.system("BandSPD")
+ops.numberer("RCM")
+ops.constraints("Plain")
+ops.integrator("LoadControl", 0.5)
+ops.algorithm("Linear")
+ops.analysis("Static")
+ops.analyze(2)
+ops.wipe()
+
+for p in (q_new, t_new, b_new, q9_new, t10_new):
     print("NEW:", p, os.path.exists(p))
 print("STANDARD_QUAD_MODEL OK")
