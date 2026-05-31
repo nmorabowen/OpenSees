@@ -338,11 +338,18 @@ reaction. **Built only after the separate energy work lands** — MPCO_Ladruno w
 *consume* `EnergyBalanceRecorder` ([[project_energy_balance_feature]]), not reinvent
 it. Spec stub here for forward compatibility.
 
-### 7.4 `ENVELOPES/ON_{NODES,ELEMENTS,DOMAIN}/<name>` — (v3)
+### 7.4 `ENVELOPES/ON_{NODES,ELEMENTS,DOMAIN,REGIONS}/<name>` — (v3a, IMPLEMENTED)
 
 Per the ADR (D6/D7): componentwise `MIN`/`MAX`/`ABSMAX` + `ARG_STEP`, per-`MODEL_STAGE`,
-periodic in-place rewrite. v3a covers consistent quantities (zero-MPI); v3b adds
-reduced (reaction/global) envelopes alongside the energy work.
+periodic in-place rewrite. **Opt in with the `-envelope` recorder flag** — every
+non-modal node/element/domain channel then uses an `EnvelopeSink` (running extremes)
+instead of the time-series `StreamingSink`; `ModesOfVibration` (eigen) is never
+enveloped. The accumulators are written only on `finalize()`, so the recorder
+rewrites them in place every recorded step (crash safety) and once at teardown.
+v3a covers consistent quantities (zero-MPI); v3b reduced (reaction/global) envelopes
+need the per-step Allreduce, which is compiled out of this shared sequential
+recorder TU (see `LEDGER_quirks.md`) — deferred. Element envelopes carry no
+`COLUMN_MAP` yet (component naming on `ENVELOPES` is a v1 follow-up).
 
 ```
 ENVELOPES/ON_NODES/<name>/
@@ -498,3 +505,19 @@ in STKO). Fiber section as today.
   this build so that path is correct-by-construction (mirrors frozen) but not runtime-
   tested here; cross-rank MODEL_STAGE stamp sync (frozen's Allreduce) is absent in this
   shared-TU build (single-stage unaffected).
+- 2026-05-31 — **Envelopes wired (v3a, ADR D7) — `-envelope` flag.** The built-but-
+  unused `EnvelopeSink` is now reachable: the channel `sink` fields became
+  `ResultSink*` and, under `-envelope`, every non-modal node/element/domain channel
+  is built as an `EnvelopeSink` (componentwise MIN/MAX/ABSMAX + ARG_STEP under
+  `RESULTS/ENVELOPES/<family>/<name>`, §7.4) instead of a `StreamingSink`. A
+  `finalizeAllSinks()` runs each recorded step (periodic in-place rewrite for crash
+  safety) and at teardown (EnvelopeSink defers all output to `finalize()`).
+  `ladruno_format` gained a `envelopes()` reader + `_validate_envelopes` (shape +
+  `MIN<=MAX` + `ABSMAX==max(|MIN|,|MAX|)`). **Gate (`envelope_{model,check}`):** one
+  transient with BOTH a time-series and an `-envelope` recorder on the same model
+  (identical commitTags); the checker reduces the time series to componentwise
+  extremes and matches the ENVELOPES datasets — **ALL PASS (MIN/MAX/ABSMAX/ARG_STEP
+  to 1e-9)**. Pytest 24/24. No regression in time-series mode
+  (80/80,96/96,144/144,108/108, bezier, standard_quad, localaxes). Deferred: v3b
+  reduced (reaction/global) envelopes need the Allreduce (dead code in this TU);
+  element-envelope COLUMN_MAP component naming (a v1 follow-up, ties into finding (h)).

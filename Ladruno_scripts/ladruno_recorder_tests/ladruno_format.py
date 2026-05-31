@@ -146,6 +146,24 @@ class LadrunoReader:
             out[name] = {"id": grp["ID"][...], "frame": grp["FRAME"][...]}
         return out
 
+    def envelopes(self, stage: str) -> dict[str, dict]:
+        """family -> {name -> {id, min, max, absmax, arg_step}} for RESULTS/ENVELOPES
+        (ADR D7). Empty when the recorder ran in time-series (non-envelope) mode."""
+        out: dict[str, dict] = {}
+        path = f"{stage}/RESULTS/ENVELOPES"
+        if path not in self.f:
+            return out
+        for fam in self.f[path]:
+            fam_grp = self.f[path][fam]
+            out[fam] = {}
+            for name in fam_grp:
+                g = fam_grp[name]
+                out[fam][name] = {
+                    "id": g["ID"][...], "min": g["MIN"][...], "max": g["MAX"][...],
+                    "absmax": g["ABSMAX"][...], "arg_step": g["ARG_STEP"][...],
+                }
+        return out
+
     def section_assignments(self, stage: str) -> dict[str, dict]:
         out: dict[str, dict] = {}
         path = f"{stage}/MODEL/SECTION_ASSIGNMENTS"
@@ -411,8 +429,38 @@ def validate(path: str) -> list[str]:
 
             _validate_element_results(r, stage, err)
             _validate_nodal_results(r, stage, err)
+            _validate_envelopes(r, stage, err)
 
     return problems
+
+
+def _validate_envelopes(r: LadrunoReader, stage: str, err) -> None:
+    """ENVELOPES/<family>/<name>/{ID,MIN,MAX,ABSMAX,ARG_STEP} (ADR D7): the four
+    accumulators are [nIds x nComp], and componentwise MIN<=MAX with
+    ABSMAX==max(|MIN|,|MAX|) (the abs-extreme over time equals the larger magnitude
+    of the running min/max)."""
+    path = f"{stage}/RESULTS/ENVELOPES"
+    if path not in r.f:
+        return
+    for fam in r.f[path]:
+        for name in r.f[path][fam]:
+            g = r.f[path][fam][name]
+            ctx = f"{stage}/ENVELOPES/{fam}/{name}"
+            missing = [d for d in ("ID", "MIN", "MAX", "ABSMAX", "ARG_STEP") if d not in g]
+            if missing:
+                err(f"{ctx}: missing {missing}")
+                continue
+            n = g["ID"].shape[0]
+            mn, mx, am = g["MIN"][...], g["MAX"][...], g["ABSMAX"][...]
+            for dname, arr in (("MIN", mn), ("MAX", mx), ("ABSMAX", am),
+                               ("ARG_STEP", g["ARG_STEP"][...])):
+                if arr.ndim != 2 or arr.shape[0] != n:
+                    err(f"{ctx}/{dname}: shape {arr.shape} rows != nIds {n}")
+            if mn.shape == mx.shape == am.shape:
+                if np.any(mn > mx + 1e-12):
+                    err(f"{ctx}: MIN > MAX somewhere")
+                if not np.allclose(am, np.maximum(np.abs(mn), np.abs(mx)), atol=1e-9):
+                    err(f"{ctx}: ABSMAX != max(|MIN|,|MAX|)")
 
 
 # ---------------------------------------------------------------------------

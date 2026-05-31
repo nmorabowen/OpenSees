@@ -54,6 +54,10 @@ private:
 	void writeElementColumnMap(int elem_channel_index);
 
 	int clearSources();
+	// Write the deferred ENVELOPES datasets for every channel (EnvelopeSink::finalize;
+	// a no-op for StreamingSink). Called each recorded step in envelope mode (periodic
+	// in-place rewrite, ADR D7) and once more at teardown.
+	void finalizeAllSinks();
 
 	class private_data;
 	private_data* m_data;

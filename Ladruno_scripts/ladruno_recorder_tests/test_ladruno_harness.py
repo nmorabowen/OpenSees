@@ -201,6 +201,33 @@ def test_validator_partition_manifest(synth):
     assert any("PARTITION_ID" in p for p in lf.validate(synth))
 
 
+def test_validator_envelopes(synth):
+    """ENVELOPES/<family>/<name>/{ID,MIN,MAX,ABSMAX,ARG_STEP} (ADR D7): validator
+    accepts a consistent envelope (ABSMAX==max(|MIN|,|MAX|), MIN<=MAX) and the
+    reader.envelopes() returns it; a broken ABSMAX is rejected."""
+    import h5py
+
+    mn = np.array([[-2.0, -1.0], [0.0, -3.0]])
+    mx = np.array([[1.0, 4.0], [5.0, 2.0]])
+    with h5py.File(synth, "a") as f:
+        env = (f["MODEL_STAGE[0]/RESULTS"].create_group("ENVELOPES")
+               .create_group("ON_NODES").create_group("DISPLACEMENT"))
+        env.create_dataset("ID", data=np.array([[1], [2]], dtype=np.int64))
+        env.create_dataset("MIN", data=mn)
+        env.create_dataset("MAX", data=mx)
+        env.create_dataset("ABSMAX", data=np.maximum(np.abs(mn), np.abs(mx)))
+        env.create_dataset("ARG_STEP", data=np.zeros((2, 2), dtype=np.int32))
+    assert lf.validate(synth) == []
+
+    with lf.LadrunoReader(synth) as r:
+        env = r.envelopes("MODEL_STAGE[0]")
+        assert "ON_NODES" in env and "DISPLACEMENT" in env["ON_NODES"]
+
+    with h5py.File(synth, "a") as f:
+        f["MODEL_STAGE[0]/RESULTS/ENVELOPES/ON_NODES/DISPLACEMENT/ABSMAX"][0, 0] = 99.0
+    assert any("ABSMAX" in p for p in lf.validate(synth))
+
+
 def test_validator_accepts_bary_simplex_ndir(synth):
     """The tri group uses PARAM_DOMAIN='bary' with NDIR=2 decoupled from ORDER=(1,)
     -- validate() must accept it (schema-v1 finding (f))."""
