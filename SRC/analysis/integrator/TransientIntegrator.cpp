@@ -44,6 +44,8 @@
 #include <DOF_Group.h>
 #include <FE_EleIter.h>
 #include <DOF_GrpIter.h>
+#include <Element.h>                  // Ladruno P3: getClassTag() on the assembled element
+#include <profiler/ProfilerMacros.h>  // Ladruno P3: deep per-element-type timing
 
 TransientIntegrator::TransientIntegrator(int clasTag)
 :IncrementalIntegrator(clasTag)
@@ -104,11 +106,19 @@ TransientIntegrator::formTangent(int statFlag)
 	}
     }    
 
-    // loop through the FE_Elements getting them to add the tangent    
-    FE_EleIter &theEles2 = theModel->getFEs();    
-    FE_Element *elePtr;    
+    // loop through the FE_Elements getting them to add the tangent
+    // Ladruno P3: deep per-element-type tangent timing (transient path; the DOF_Group
+    // mass/damping loop above is not element-keyed and is left untimed here).
+    OPS_PROFILE_SCOPE_DEEP_NAMED(_ops_elemTan, "elem.tangent");
+    FE_EleIter &theEles2 = theModel->getFEs();
+    FE_Element *elePtr;
     while((elePtr = theEles2()) != 0)     {
-	if (theLinSOE->addA(elePtr->getTangent(this),elePtr->getID()) < 0) {
+	const Matrix *eleTangent;
+	{
+	    OPS_PROFILE_FE_ELEM_SCOPE(_ops_elemTan, elePtr);   // Ladruno P3
+	    eleTangent = &(elePtr->getTangent(this));
+	}
+	if (theLinSOE->addA(*eleTangent, elePtr->getID()) < 0) {
 	    opserr << "TransientIntegrator::formTangent() - failed to addA:ele\n";
 	    result = -2;
 	}

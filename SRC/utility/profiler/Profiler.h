@@ -224,8 +224,68 @@ public:
     void addElem(int classTag, uint64_t wall, uint8_t fbCoupled) noexcept {
         if (t_) t_->addElem(classTag, wall, fbCoupled);
     }
+    // True when the deep gate was on at construction (the timer is live). Callers
+    // use this to short-circuit the per-element classTag lookup so an unprofiled
+    // run never touches FE_Element::getElement() (P3 hot-path guard).
+    bool engaged() const noexcept { return t_.has_value(); }
 private:
     std::optional<ScopedTimer> t_;
+};
+
+// Best-effort force-based (flexibility-formulation) element classification for
+// the elem_by_type fb_coupled tag (P0#1 / P3). Force-based beam-columns form
+// their tangent from an internal coupled state-determination, so their
+// tangent-vs-residual split is an artifact the viewer flags. This is a classTag
+// whitelist of the standard force-based families (values mirror SRC/classTags.h);
+// custom/unknown elements default to displacement-based (0), which is correct for
+// the overwhelming majority. Kept here as a heuristic rather than a virtual on
+// Element to avoid a broad vanilla footprint.
+inline uint8_t isForceBasedClassTag(int classTag) noexcept {
+    switch (classTag) {
+        case 28:  case 29:                       // NLBeamColumn2d/3d
+        case 34:  case 35:                       // BeamWithHinges2d/3d
+        case 73:  case 731: case 74:             // ForceBeamColumn2d/Warping2d/3d
+        case 75:  case 751: case 76:             // ElasticForceBeamColumn2d/Warping2d/3d
+        case 77:  case 78:                       // ForceBeamColumnCBDI2d/3d
+        case 171: case 172:                      // ForceBeamColumn2d/3dThermal
+        case 192: case 193:                      // GradientInelasticBeamColumn2d/3d
+        case 30765: case 30766: case 30767:      // MixedBeamColumn3d/2d/Asym3d
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+// RAII per-element timer (P3): times one element kernel call and folds the wall
+// into a named deep scope's per-classTag bucket (elem_by_type). Entirely inert —
+// NO clock read, NO bucket touch — when the deep scope is off (tmr not engaged) or
+// the classTag is negative (a constraint FE_Element with no underlying Element).
+// The fb_coupled tag is derived from the classTag. Non-copyable/movable: exactly
+// one ctor must pair with one dtor.
+class ElemScope {
+public:
+    ElemScope(ScopedTimerOpt& tmr, int classTag) noexcept
+        : tmr_(tmr), classTag_(classTag), startW_(0), active_(false) {
+        if (classTag >= 0 && tmr.engaged()) {
+            startW_ = static_cast<uint64_t>(PerfClock::wall_ns());
+            active_ = true;
+        }
+    }
+    ~ElemScope() noexcept {
+        if (!active_) return;
+        const uint64_t endW = static_cast<uint64_t>(PerfClock::wall_ns());
+        const uint64_t dW   = (endW >= startW_) ? (endW - startW_) : 0;
+        tmr_.addElem(classTag_, dW, isForceBasedClassTag(classTag_));
+    }
+    ElemScope(const ElemScope&)            = delete;
+    ElemScope& operator=(const ElemScope&) = delete;
+    ElemScope(ElemScope&&)                 = delete;
+    ElemScope& operator=(ElemScope&&)      = delete;
+private:
+    ScopedTimerOpt& tmr_;
+    int      classTag_;
+    uint64_t startW_;
+    bool     active_;
 };
 
 // ===========================================================================
