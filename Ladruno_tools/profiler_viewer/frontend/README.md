@@ -11,9 +11,10 @@ HDF5 itself; every panel renders the JSON the backend serves.
 - **Rollup** — hand-rolled SVG icicle/flame graph of the phase tree. Click a frame
   to inspect its metrics and, in deep runs, its per-element-class breakdown
   (`elem_by_type`, with the force-based / disp-based tag).
-- **Series** — per-step time history: per-phase wall time, iterations/step, dt/step.
+- **Series** — per-step time history: per-phase wall time, iterations/step, dt/step. With a *vs* run selected, that run's curves overlay dashed/faded for comparison.
 - **Memory** — per-type live byte counters + peak, and the TaggedObject
-  live-component census (classTag → count).
+  live-component census (classTag → count). With a *vs* run selected, a leak
+  badge + Δ column flag classTags with more live objects than the baseline.
 - **Diff** — per-node wall-time delta along the stable rollup path (green = the
   viewed run is faster than the baseline).
 - **Badges** — scheme / size / `dt vs dt_cr` / oversample, with a hint when the

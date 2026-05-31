@@ -4,6 +4,8 @@ export interface LineSeries {
   label: string
   color: string
   y: number[]
+  x?: number[]    // own x axis; defaults to the chart's shared x (for overlaying a run of different length)
+  dashed?: boolean // render dashed + faded (used for the baseline run in an overlay)
 }
 
 interface Props {
@@ -48,14 +50,19 @@ export function LineChart({ title, x, series, height = 200, yFormat, xLabel }: P
     return () => ro.disconnect()
   }, [])
 
-  const n = x.length
-  const stride = n > MAX_POINTS ? Math.ceil(n / MAX_POINTS) : 1
-
-  const xMin = x.length ? x[0] : 0
-  const xMax = x.length ? x[n - 1] : 1
+  // x-domain spans every series' own x (each may differ in length / range).
+  let xMin = x.length ? x[0] : 0
+  let xMax = x.length ? x[x.length - 1] : 1
   let yMin = 0
   let yMax = 0
-  for (const s of series) for (const v of s.y) if (v > yMax) yMax = v
+  for (const s of series) {
+    const sx = s.x ?? x
+    if (sx.length) {
+      if (sx[0] < xMin) xMin = sx[0]
+      if (sx[sx.length - 1] > xMax) xMax = sx[sx.length - 1]
+    }
+    for (const v of s.y) if (v > yMax) yMax = v
+  }
   if (yMax === yMin) yMax = 1
 
   const pw = Math.max(10, width - M.left - M.right)
@@ -68,9 +75,12 @@ export function LineChart({ title, x, series, height = 200, yFormat, xLabel }: P
   const xTicks = niceTicks(xMin, xMax, 6)
 
   const pathFor = (s: LineSeries): string => {
+    const xs = s.x ?? x
+    const n = Math.min(xs.length, s.y.length)
+    const stride = n > MAX_POINTS ? Math.ceil(n / MAX_POINTS) : 1
     let d = ''
     for (let i = 0; i < n; i += stride) {
-      d += `${d ? 'L' : 'M'}${sx(x[i]).toFixed(1)} ${sy(s.y[i] ?? 0).toFixed(1)}`
+      d += `${d ? 'L' : 'M'}${sx(xs[i]).toFixed(1)} ${sy(s.y[i] ?? 0).toFixed(1)}`
     }
     return d
   }
@@ -93,14 +103,16 @@ export function LineChart({ title, x, series, height = 200, yFormat, xLabel }: P
           </text>
         ))}
         {xLabel && <text x={(M.left + width - M.right) / 2} y={height} className="axis-cap mid-anchor">{xLabel}</text>}
-        {/* series */}
+        {/* series (dashed + faded = baseline overlay) */}
         {series.map((s) => (
-          <path key={s.label} d={pathFor(s)} fill="none" stroke={s.color} strokeWidth={1.4} />
+          <path key={s.label} d={pathFor(s)} fill="none" stroke={s.color}
+                strokeWidth={1.4} strokeDasharray={s.dashed ? '4 3' : undefined}
+                opacity={s.dashed ? 0.55 : 1} />
         ))}
       </svg>
       <div className="legend">
         {series.map((s) => (
-          <span key={s.label} className="legend-item">
+          <span key={s.label} className="legend-item" style={{ opacity: s.dashed ? 0.7 : 1 }}>
             <span className="swatch" style={{ background: s.color }} />
             {s.label}
           </span>

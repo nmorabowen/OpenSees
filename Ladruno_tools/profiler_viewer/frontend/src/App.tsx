@@ -27,6 +27,8 @@ export default function App() {
   const [memory, setMemory] = useState<MemorySnapshot | null>(null)
   const [selected, setSelected] = useState<RollupNode | null>(null)
   const [diff, setDiff] = useState<DiffResponse | null>(null)
+  const [baseSeries, setBaseSeries] = useState<Series | null>(null)
+  const [baseMemory, setBaseMemory] = useState<MemorySnapshot | null>(null)
 
   // -- load the run list (and backend health) ---------------------------------
   const loadRuns = useCallback(async () => {
@@ -78,6 +80,33 @@ export default function App() {
       cancelled = true
     }
   }, [primary])
+
+  // -- load the baseline run's series + memory for overlay / leak check -------
+  useEffect(() => {
+    if (!base || base === primary) {
+      setBaseSeries(null)
+      setBaseMemory(null)
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      try {
+        const mem = await api.memory(base)
+        if (!cancelled) setBaseMemory(mem)
+      } catch {
+        if (!cancelled) setBaseMemory(null)
+      }
+      try {
+        const s = await api.series(base)
+        if (!cancelled) setBaseSeries(s)
+      } catch {
+        if (!cancelled) setBaseSeries(null)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [base, primary])
 
   // -- load the diff when both runs are chosen and the diff tab is active -----
   useEffect(() => {
@@ -154,14 +183,20 @@ export default function App() {
 
         {tab === 'series' &&
           (series ? (
-            <TimeSeries series={series} />
+            <TimeSeries series={series}
+                        base={base && base !== primary ? baseSeries : null}
+                        baseLabel={base ?? undefined} />
           ) : (
             <div className="muted pad">
               No per-step series for this run — re-run with <code>profiler('start','-perStep')</code>.
             </div>
           ))}
 
-        {tab === 'memory' && memory && <MemoryPanel mem={memory} />}
+        {tab === 'memory' && memory && (
+          <MemoryPanel mem={memory}
+                       base={base && base !== primary ? baseMemory : null}
+                       baseLabel={base ?? undefined} />
+        )}
 
         {tab === 'diff' &&
           (diff ? (
