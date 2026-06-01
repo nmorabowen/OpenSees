@@ -38,23 +38,25 @@
 //     (γ_ij = 2 ε_ij). The element assembles the SPATIAL internal force
 //     ∫ bᵀ σ dv on the current configuration.
 //
-//   * getTangent() returns the spatial CONSTITUTIVE modulus c = (1/2J)[D:L:B]
-//     (6×6) — the MATERIAL part only of the eq.(14.99) spatial tangent, NOT a
-//     material/reference (PK2-based) tangent. The formulation is spatial
-//     multiplicative, NOT total-Lagrangian.
+//   * The spatial CONSTITUTIVE modulus is c_ijkl = (1/2J)[D:L:B] — the MATERIAL
+//     part only of the eq.(14.99) spatial tangent (NOT a PK2/reference tangent;
+//     the formulation is spatial multiplicative, NOT total-Lagrangian).
 //
-//     SEAM-3 TANGENT CONTRACT (LOCKED 2026-06-01, element + material teams):
-//     the geometric / initial-stress term (−σ_il δ_jk in eq.14.99) is NOT
-//     included here — it is the ELEMENT's responsibility. The element forms its
-//     consistent tangent as
-//          K = ∫ Bᵀ c B dv  +  ∫ Gᵀ Σ G dv
-//     where the second integral is the geometric stiffness built from the
-//     Cauchy stress σ and the element's own shape-function gradients G (which
-//     the material cannot know). A finite-strain material must therefore return
-//     the constitutive modulus only; the element must add K_geo. This keeps the
-//     adaptor element-agnostic and matches the conventional updated-Lagrangian
-//     split (Bonet & Wood; dSNPO §14.5 with the geometric term carried by the
-//     element). The arbiter is the element's finite-difference tangent test.
+//     SEAM-3 TANGENT CONTRACT (revised 2026-06-01 after the element FD-tangent
+//     gate; supersedes the earlier "∫BᵀcB + ∫GᵀΣG" wording):
+//       - c is NOT minor-symmetric in (k,l) (the factor B, eq.14.102, is not
+//         k↔l symmetric), so it does NOT fit a 6×6 Voigt matrix. getTangent()
+//         (6×6) is therefore the LOSSY minor-symmetric projection — usable for
+//         output, NOT for a consistent element tangent.
+//       - The element gets the FULL tensor via getSpatialTangentTensor(c), forms
+//         the consistent spatial tangent  a_ijkl = c_ijkl − σ_il δ_jk  (the
+//         −σ_il δ_jk geometric/initial-stress term is element-owned, built from
+//         the Cauchy stress σ), and assembles
+//             K_{(a,i)(b,k)} = ∫ (∂Nₐ/∂x_j) a_ijkl (∂N_b/∂x_l) dv  (full gradients).
+//         a_ijkl yields a SYMMETRIC K only when the FULL non-symmetric c and the
+//         FULL −σδ are both kept (they cancel) — collapsing c to 6×6 breaks it.
+//       - The element still owns the geometric term; the material owns the
+//         constitutive tensor. The arbiter is the element's FD-tangent test.
 //
 //   * getType() must report "ThreeDimensional"; getOrder() must return 6.
 //
@@ -112,9 +114,23 @@ class FiniteStrainNDMaterial : public NDMaterial
 
   // CAUCHY stress σ (6-vector, Voigt {00,11,22,01,12,20}, engineering shear).
   virtual const Vector &getStress(void) = 0;
-  // SPATIAL CONSTITUTIVE modulus c = (1/2J)[D:L:B] (6×6) — material part only;
-  // the element adds the geometric K_geo. See the SEAM-3 TANGENT CONTRACT above.
+  // SPATIAL CONSTITUTIVE modulus c = (1/2J)[D:L:B] as a 6×6. WARNING: c is NOT
+  // minor-symmetric in its second index pair (k,l), so this 6×6 is the LOSSY
+  // minor-symmetric projection — it CANNOT carry the full modulus. Kept for
+  // small-strain-style consumers/output only. A finite-strain ELEMENT building a
+  // consistent tangent MUST use getSpatialTangentTensor() below.  // Ladruno
   virtual const Matrix &getTangent(void) = 0;
+
+  // FULL 4th-order spatial constitutive modulus c_ijkl = (1/2J)[D:L:B], all 81
+  // components (NOT minor-symmetric in (k,l) — see above). This is the element's
+  // tangent channel: the element forms the consistent spatial tangent
+  //     a_ijkl = c_ijkl − σ_il δ_jk
+  // (the −σ_il δ_jk is the element-owned geometric/initial-stress term) and
+  // assembles K_{(a,i)(b,k)} = ∫ (∂Nₐ/∂x_j) a_ijkl (∂N_b/∂x_l) dv. Returns 0 on
+  // success; the default −1 means "unsupported" so element misuse fails loudly.
+  // (The 6×6 getTangent() above is insufficient because it loses the (k,l)
+  // antisymmetric content on which the K-symmetric cancellation with −σδ relies.)
+  virtual int getSpatialTangentTensor(double c[3][3][3][3]) { return -1; }
 
   // Current Jacobian J = det F (> 0). τ = J·σ recovers Kirchhoff if needed.
   virtual double getJ(void) const = 0;

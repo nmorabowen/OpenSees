@@ -1,6 +1,7 @@
 include ../../../Makefile.def
 
-OBJS       = SolidTransformationLinear.o
+OBJS       = SolidTransformationLinear.o \
+	SolidTransformationFinite.o
 
 all:         $(OBJS)
 

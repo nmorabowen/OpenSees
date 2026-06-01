@@ -65,7 +65,8 @@ class LadrunoBrick : public Element {
                int massType = 0,
                Hourglass hgType = Hourglass::PHYSICAL,
                double hgCoeff = 0.0,
-               Damping *theDamping = 0);
+               Damping *theDamping = 0,
+               int geomMethodID = 0);   // 0=linear, 2=finite (SolidTransformation method id)
 
   virtual ~LadrunoBrick();
 
@@ -159,6 +160,17 @@ class LadrunoBrick : public Element {
   void formInertiaTerms(int tangFlag);
   void formResidAndTangent(int tang_flag);
   void computeBasis(void);
+
+  // -geom finite (v3, updated-Lagrangian). isFinite() is true when theGeom
+  // reports a DeformationGradient strain measure: the element computes the full
+  // F per GP, drives the material via setTrialF(F), and assembles the spatial
+  // internal force + material tangent + geometric (initial-stress) stiffness.  // Ladruno
+  bool isFinite(void) const;
+  int  updateFinite(void);                       // per GP: F = I + Σ uⱼ⊗∇ₓNⱼ → setTrialF
+  void formResidAndTangentFinite(int tang_flag); // ∫Bᵀσ dv + ∫BᵀcB dv + ∫GᵀΣG dv
+  // deformation gradient F (row-major [9]) and det at GP `gp` from reference
+  // shape gradients shpRef[0..2][a] = ∂Nₐ/∂Xᵢ and the nodal trial displacements.
+  double deformationGradient(const double shpRef[4][8], double F[9]);
 
   // Seam 0+2: refresh theGeom from current geometry (reference + current nodal
   // coords) and return the localized (core-frame) 24-dof trial displacement.

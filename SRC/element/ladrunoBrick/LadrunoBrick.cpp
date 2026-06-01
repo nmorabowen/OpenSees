@@ -26,6 +26,7 @@
 #include <LadrunoBrick.h>
 #include <SolidTransformation.h>          // Ladruno — geometry-method seam (2/3)
 #include <SolidTransformationLinear.h>    // Ladruno — v1 identity method
+#include <FiniteStrainNDMaterial.h>       // Ladruno — v3 finite: setTrialF(F) seam
 #include <shp3d.h>
 #include <Renderer.h>
 #include <ElementResponse.h>
@@ -114,15 +115,21 @@ LadrunoBrick::LadrunoBrick(int tag,
                            double b1, double b2, double b3,
                            int matype,
                            Hourglass hgType, double hgCoeff,
-                           Damping *damping)
+                           Damping *damping,
+                           int geomMethodID)
   :Element(tag, ELE_TAG_LadrunoBrick),
    connectedExternalNodes(8),
    formulation(form),
    hourglassType(hgType), hourglassCoeff(hgCoeff),
    applyLoad(0), load(0), Ki(0), massType(matype),
-   theGeom(new SolidTransformationLinear()),  // Ladruno — v1 identity geometry
+   theGeom(0),                                // Ladruno — set below from geomMethodID
    easBnot(0), easKstab(0), easVol(0.0)       // Ladruno — eas (built in setDomain)
 {
+  // Ladruno — geometry-method layer: linear (default, identity) / finite (UL).
+  theGeom = SolidTransformation::create(geomMethodID);
+  if (theGeom == 0)
+    theGeom = new SolidTransformationLinear();   // safe fallback (unknown id)
+
   B.Zero();
 
   connectedExternalNodes(0) = node1;
@@ -602,6 +609,9 @@ void   LadrunoBrick::formInertiaTerms(int tangFlag)
 int
 LadrunoBrick::update(void)
 {
+  if (this->isFinite())          // -geom finite (v3): F-driven, updated-Lagrangian
+    return this->updateFinite();
+
   if (formulation == Formulation::EAS) {
     if (easBnot == 0) buildEAS();   // safety (normally built in setDomain)
     computeBasis();
@@ -736,6 +746,11 @@ LadrunoBrick::update(void)
 //form residual and tangent
 void  LadrunoBrick::formResidAndTangent(int tang_flag)
 {
+  if (this->isFinite()) {        // -geom finite (v3): updated-Lagrangian assembly
+    this->formResidAndTangentFinite(tang_flag);
+    return;
+  }
+
   if (formulation == Formulation::URI) {
     if (hourglassType == Hourglass::PHYSICAL)
       formPhysical(tang_flag, false);
@@ -904,6 +919,198 @@ LadrunoBrick::computeLocalDisp(void)
   theGeom->update(8, refCrds, curCrds);
   theGeom->localizeDisp(uGlobal, uCore);
   return uCore;
+}
+
+//======================================================================
+// -geom finite (v3): updated-Lagrangian finite-strain path.
+//
+// The material is a FiniteStrainNDMaterial driven by setTrialF(F): it returns
+// the Cauchy stress σ (getStress) and the spatial CONSTITUTIVE modulus c
+// (getTangent). Per the LOCKED seam-3 contract the element owns the geometric
+// stiffness, so the element forms the FULL consistent tangent on the current
+// configuration:
+//     f = ∫ Bᵀ σ dv ,   K = ∫ Bᵀ c B dv + ∫ Gᵀ Σ G dv ,   dv = J dV
+// with spatial gradients ∂Nₐ/∂xⱼ = Σ_k (∂Nₐ/∂X_k)(F⁻¹)_kj and the geometric
+// (initial-stress) term Σ built from σ.
+//======================================================================
+bool
+LadrunoBrick::isFinite(void) const
+{
+  return theGeom != 0 &&
+         theGeom->getStrainMeasure() ==
+           SolidTransformation::StrainMeasure::DeformationGradient;
+}
+
+// F (row-major [9]) from reference shape gradients shpRef[i][a]=∂Nₐ/∂Xᵢ and the
+// nodal trial displacements: F_iJ = δ_iJ + Σ_a u_a[i] ∂N_a/∂X_J. Returns det F.
+double
+LadrunoBrick::deformationGradient(const double shpRef[4][8], double F[9])
+{
+  for (int i = 0; i < 9; i++) F[i] = 0.0;
+  F[0] = F[4] = F[8] = 1.0;
+  for (int a = 0; a < 8; a++) {
+    const Vector &ua = nodePointers[a]->getTrialDisp();
+    for (int i = 0; i < 3; i++)
+      for (int J = 0; J < 3; J++)
+        F[3 * i + J] += ua(i) * shpRef[J][a];
+  }
+  return F[0]*(F[4]*F[8]-F[5]*F[7]) - F[1]*(F[3]*F[8]-F[5]*F[6])
+       + F[2]*(F[3]*F[7]-F[4]*F[6]);
+}
+
+// update — finite: per GP compute F and drive the material via setTrialF(F).
+int
+LadrunoBrick::updateFinite(void)
+{
+  computeBasis();                          // xl = reference nodal coordinates
+
+  static double shp[4][8];
+  static Matrix Fm(3, 3);
+  double detJ0;
+
+  int gp = 0;
+  for (int i = 0; i < 2; i++)
+    for (int j = 0; j < 2; j++)
+      for (int k = 0; k < 2; k++) {
+        double pt[3] = { sg[i], sg[j], sg[k] };
+        shp3d(pt, detJ0, shp, xl);         // shp[0..2][a] = ∂Nₐ/∂X
+        double F[9];
+        deformationGradient(shp, F);
+        for (int r = 0; r < 3; r++)
+          for (int c = 0; c < 3; c++)
+            Fm(r, c) = F[3 * r + c];
+
+        FiniteStrainNDMaterial *fsm =
+          dynamic_cast<FiniteStrainNDMaterial *>(materialPointers[gp]);
+        if (fsm == 0) {
+          opserr << "LadrunoBrick::updateFinite - material at GP " << gp
+                 << " is not a FiniteStrainNDMaterial (element " << this->getTag()
+                 << ")\n";
+          return -1;
+        }
+        if (fsm->setTrialF(Fm) < 0) {
+          opserr << "LadrunoBrick::updateFinite - setTrialF failed at GP " << gp
+                 << " (element " << this->getTag() << ", det F<=0?)\n";
+          return -1;
+        }
+        gp++;
+      }
+  return 0;
+}
+
+// formResidAndTangentFinite — updated-Lagrangian assembly.
+//
+//   f_{a,i} = ∫ σ_ij ∂Nₐ/∂x_j dv                         (current config, dv=J dV)
+//   K_{(a,i)(b,k)} = ∫ (∂Nₐ/∂x_j) a_ijkl (∂N_b/∂x_l) dv
+//
+// with the FULL 4th-order spatial consistent tangent (dSNPO eq.14.99)
+//   a_ijkl = c_ijkl − σ_il δ_jk ,
+// where c_ijkl = (1/2J)[D:L:B]_ijkl is the material's getTangent() (returned as
+// the minor-symmetric 6×6 we expand via ladrunoVI) and the −σ_il δ_jk term is
+// the element-owned geometric/initial-stress contribution (the LOCKED seam-3
+// contract). The geometric term is NON-minor-symmetric, so it must enter the
+// full-gradient contraction above — it is NOT the conventional ∫ Gᵀ Σ G alone,
+// and using c without it gives a non-symmetric, wrong tangent.
+void
+LadrunoBrick::formResidAndTangentFinite(int tang_flag)
+{
+  static const int numberNodes = 8;
+
+  stiff.Zero();
+  resid.Zero();
+  computeBasis();                          // reference coordinates
+
+  static double shpRef[4][8];              // [0..2]=∂Nₐ/∂X, [3]=Nₐ
+  static double g[3][8];                   // spatial gradients ∂Nₐ/∂x_j
+  static Vector stress(6);
+
+  int gp = 0;
+  for (int gi = 0; gi < 2; gi++)
+   for (int gj = 0; gj < 2; gj++)
+    for (int gk = 0; gk < 2; gk++) {
+      double pt[3] = { sg[gi], sg[gj], sg[gk] };
+      double detJ0;
+      shp3d(pt, detJ0, shpRef, xl);
+
+      double F[9];
+      double J = deformationGradient(shpRef, F);
+
+      double id = (J != 0.0) ? 1.0 / J : 0.0;     // F^-1 (row-major)
+      double Fi[9];
+      Fi[0] =  (F[4]*F[8]-F[5]*F[7])*id;  Fi[1] = -(F[1]*F[8]-F[2]*F[7])*id;
+      Fi[2] =  (F[1]*F[5]-F[2]*F[4])*id;  Fi[3] = -(F[3]*F[8]-F[5]*F[6])*id;
+      Fi[4] =  (F[0]*F[8]-F[2]*F[6])*id;  Fi[5] = -(F[0]*F[5]-F[2]*F[3])*id;
+      Fi[6] =  (F[3]*F[7]-F[4]*F[6])*id;  Fi[7] = -(F[0]*F[7]-F[1]*F[6])*id;
+      Fi[8] =  (F[0]*F[4]-F[1]*F[3])*id;
+
+      for (int a = 0; a < numberNodes; a++)
+        for (int j = 0; j < 3; j++) {
+          double s = 0.0;
+          for (int k = 0; k < 3; k++)
+            s += shpRef[k][a] * Fi[3 * k + j];      // ∂Nₐ/∂x_j
+          g[j][a] = s;
+        }
+
+      double dv = J * detJ0;                         // current volume (wg = 1)
+
+      stress = materialPointers[gp]->getStress();    // Cauchy σ (set via setTrialF)
+      double sig[3][3];
+      sig[0][0]=stress(0); sig[1][1]=stress(1); sig[2][2]=stress(2);
+      sig[0][1]=sig[1][0]=stress(3);
+      sig[1][2]=sig[2][1]=stress(4);
+      sig[2][0]=sig[0][2]=stress(5);
+
+      // residual: f_{a,i} = ∫ σ_ij ∂Nₐ/∂x_j dv  (− body force). Body force uses
+      // the REFERENCE volume detJ0 (dead load per reference volume), consistent
+      // with the reference-config mass in formInertiaTerms.
+      for (int a = 0; a < numberNodes; a++)
+        for (int i = 0; i < 3; i++) {
+          double fi = 0.0;
+          for (int j = 0; j < 3; j++)
+            fi += sig[i][j] * g[j][a];
+          resid(3 * a + i) += fi * dv;
+          if (applyLoad == 0)
+            resid(3 * a + i) -= detJ0 * b[i] * shpRef[3][a];
+          else
+            resid(3 * a + i) -= detJ0 * appliedB[i] * shpRef[3][a];
+        }
+
+      if (tang_flag == 1) {
+        // FULL 4th-order spatial constitutive modulus c_ijkl (the material's 6×6
+        // getTangent is lossy in (k,l); the consistent tangent needs the full
+        // tensor — see FiniteStrainNDMaterial.h). Then a_ijkl = c_ijkl − σ_il δ_jk
+        // (the −σδ is the element-owned geometric term), contracted with the full
+        // nodal gradients.  // Ladruno
+        FiniteStrainNDMaterial *fsm =
+          dynamic_cast<FiniteStrainNDMaterial *>(materialPointers[gp]);
+        static double cmat[3][3][3][3];
+        if (fsm == 0 || fsm->getSpatialTangentTensor(cmat) != 0) {
+          opserr << "LadrunoBrick::formResidAndTangentFinite - material at GP " << gp
+                 << " did not provide a full spatial tangent (getSpatialTangentTensor); "
+                    "element " << this->getTag() << "\n";
+          return;
+        }
+        double a4[3][3][3][3];
+        for (int i = 0; i < 3; i++)
+          for (int j = 0; j < 3; j++)
+            for (int k = 0; k < 3; k++)
+              for (int l = 0; l < 3; l++)
+                a4[i][j][k][l] = cmat[i][j][k][l]
+                               - sig[i][l] * (j == k ? 1.0 : 0.0);
+
+        for (int a = 0; a < numberNodes; a++)
+          for (int bn = 0; bn < numberNodes; bn++)
+            for (int i = 0; i < 3; i++)
+              for (int k = 0; k < 3; k++) {
+                double s = 0.0;
+                for (int j = 0; j < 3; j++)
+                  for (int l = 0; l < 3; l++)
+                    s += g[j][a] * a4[i][j][k][l] * g[l][bn];
+                stiff(3 * a + i, 3 * bn + k) += s * dv;
+              }
+      }
+      gp++;
+    }
 }
 
 //compute the standard small-strain B at a node (std / uri / shear rows of bbar)
@@ -2215,6 +2422,10 @@ LadrunoBrick::setResponse(const char **argv, int argc, OPS_Stream &output)
       sprintf(outputData, "P3_%d", i); output.tag("ResponseType", outputData);
     }
     theResponse = new ElementResponse(this, 1, resid);
+
+  } else if (strcmp(argv[0], "stiff") == 0 || strcmp(argv[0], "stiffness") == 0) {
+    // full 24x24 tangent — used by the FD-tangent verification (and handy generally).
+    theResponse = new ElementResponse(this, 2, Matrix(24, 24));
 
   } else if (strcmp(argv[0], "material") == 0 || strcmp(argv[0], "integrPoint") == 0) {
     int pointNum = atoi(argv[1]);

@@ -229,6 +229,61 @@ features:
       decimation all green). Owes a Zone-A Ubuntu pytest + classic-Tcl dispatch
       wiring. See 08_analysis_monitor.md.
 
+  # --- solid element + finite-strain material (geometry-method axis) ---
+
+  - feature: LadrunoBrick
+    classtag: 33002          # ELE_TAG family; unified 8-node hex (N. Mora-Bowen)
+    tag_symbol: ELE_TAG_LadrunoBrick
+    pr: 71
+    feature_class: element
+    required_tiers: [T0, T1]
+    pytest: tests/test_ladrunoBrick_element.py    # std==Brick, bbar==bbarBrick, uri rank/hourglass/locking, patch (green)
+    tcl: WAIVED(no Tcl command surface yet — Python/apeGmsh-driven; OPS factory only)
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesElementCommands.cpp
+      - SRC/element/CMakeLists.txt
+    dispatch: {tcl: false, functionMap: true}
+    status: active
+    notes: >
+      Unified 8-node hexahedron with a single -formulation {std|bbar|uri|eas}
+      selector (#65/#69/#71/#72/#75) plus the orthogonal -geom {linear|corot|finite}
+      geometry-method axis (SolidTransformation layer). std/bbar reproduce upstream
+      Brick/bbarBrick to ~1e-12; uri = 1-pt reduced + Flanagan-Belytschko/physical
+      hourglass; eas = SSP bbar+condensed-EAS (#75). -geom finite (v3, #76) =
+      updated-Lagrangian, drives a FiniteStrainNDMaterial via setTrialF and assembles
+      the consistent spatial tangent (tests/test_ladrunoBrick_finite.py: FD-tangent +
+      symmetry + homogeneous patch + objectivity, 6/6 green). Element-class gate green
+      against dist/bin (test_ladrunoBrick_element.py 14/14).
+
+  - feature: LogStrainNDMaterial
+    classtag: 33010          # ND_TAG family; Hencky finite-strain adaptor (seam 3)
+    tag_symbol: ND_TAG_LogStrainNDMaterial
+    pr: 70
+    feature_class: material
+    required_tiers: [T0m]
+    pytest: tests/test_logstrain_reference.py    # numpy oracle, 21 cases (spectral, A.52/A.53 degeneracy, J2 return-map, 14.99 tangent vs FD)
+    tcl: WAIVED(nDMaterial LogStrain $tag $innerTag; verified by the numpy oracle + C++-kernel-vs-oracle, no separate Tcl battery)
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesNDMaterialCommands.cpp
+      - SRC/material/nD/CMakeLists.txt
+    dispatch: {tcl: false, functionMap: true}
+    status: active
+    notes: >
+      Logarithmic (Hencky) strain-space finite-strain adaptor (spatial multiplicative
+      MATISU, dSNPO Box 14.3) lifting a small-strain 3D NDMaterial to finite strain
+      (#68 contract / #70 impl / #73 broker+contract-lock). Verified WITHOUT building
+      OpenSees: numpy oracle test_logstrain_reference.py (21) + C++-kernel-vs-oracle
+      test_logstrain_kernel_cpp.py + test_logstrain_tangent_and_j2.py. v1 elastic-exact;
+      plastic inner = follow-up. Exposes the FULL 4th-order spatial tangent via
+      getSpatialTangentTensor (#76) since c=(1/2J)[D:L:B] is non-minor-symmetric and the
+      6x6 getTangent is a lossy projection. Driven end-to-end by LadrunoBrick -geom finite.
+
   # --- worked examples shipped with the scaffold (existing elements, no new C++) ---
 
   - feature: forceBeamColumn_cantilever     # T1 worked example (existing element)
