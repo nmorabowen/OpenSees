@@ -244,9 +244,9 @@ def test_eas_formulation_refused():
     assert _refused("-formulation", "eas"), "-formulation eas should be reserved (->v2)"
 
 
-@pytest.mark.parametrize("hg", ["physical", "viscous"])
-def test_uri_nonstiffness_hourglass_refused(hg):
-    # uri ships with FB 'stiffness' hourglass only for now.
+@pytest.mark.parametrize("hg", ["viscous"])
+def test_uri_viscous_hourglass_refused(hg):
+    # uri ships with 'stiffness' (FB) and 'physical' (assumed-strain); viscous next.
     assert _refused("-formulation", "uri", "-hourglass", hg), (
         f"-formulation uri -hourglass {hg} should be refused in this build"
     )

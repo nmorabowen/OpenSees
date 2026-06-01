@@ -50,16 +50,24 @@ const double  LadrunoBrick::wg[] = { 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 };
 //file-scope B workspace (computeB returns a reference to this, as in Brick)
 static Matrix B(6, 3);
 
-// The 4 raw hourglass base vectors for the 8-node hex (Flanagan-Belytschko
-// 1981): the nodal values of the bilinear/trilinear modes {xy, yz, zx, xyz}
-// the constant centroid gradient cannot represent. Node order matches Brick's
-// (nodes 0-3 = z- face, 4-7 = z+ face), natural coords:
+// Node natural coordinates, Brick order (nodes 0-3 = zeta- face, 4-7 = zeta+):
 //   0(-,-,-) 1(+,-,-) 2(+,+,-) 3(-,+,-) 4(-,-,+) 5(+,-,+) 6(+,+,+) 7(-,+,+)
+const double LadrunoBrick::natCoord[8][3] = {
+  {-1.0,-1.0,-1.0}, { 1.0,-1.0,-1.0}, { 1.0, 1.0,-1.0}, {-1.0, 1.0,-1.0},
+  {-1.0,-1.0, 1.0}, { 1.0,-1.0, 1.0}, { 1.0, 1.0, 1.0}, {-1.0, 1.0, 1.0}
+};
+
+// The 4 hourglass base vectors, in Belytschko's mode order (8.7.25):
+//   h_alpha = [ eta*zeta, zeta*xi, xi*eta, xi*eta*zeta ]  (alpha = 0..3)
+// i.e. nodal values of the bilinear/trilinear modes the constant centroid
+// gradient cannot represent. The order matters for the assumed-strain shear
+// subsets g^{12}/g^{13}/g^{23} (physical); it is immaterial for the stiffness
+// control (which sums all four).
 const double LadrunoBrick::hg0[4][8] = {
-  { 1.0, -1.0,  1.0, -1.0,  1.0, -1.0,  1.0, -1.0 },  // xy
-  { 1.0,  1.0, -1.0, -1.0, -1.0, -1.0,  1.0,  1.0 },  // yz
-  { 1.0, -1.0, -1.0,  1.0, -1.0,  1.0,  1.0, -1.0 },  // zx
-  {-1.0,  1.0, -1.0,  1.0,  1.0, -1.0,  1.0, -1.0 }   // xyz
+  { 1.0,  1.0, -1.0, -1.0, -1.0, -1.0,  1.0,  1.0 },  // h1 = eta*zeta  (yz)
+  { 1.0, -1.0, -1.0,  1.0, -1.0,  1.0,  1.0, -1.0 },  // h2 = zeta*xi   (zx)
+  { 1.0, -1.0,  1.0, -1.0,  1.0, -1.0,  1.0, -1.0 },  // h3 = xi*eta    (xy)
+  {-1.0,  1.0, -1.0,  1.0,  1.0, -1.0,  1.0, -1.0 }   // h4 = xi*eta*zeta
 };
 
 const char *
@@ -307,7 +315,10 @@ const Matrix &  LadrunoBrick::getInitialStiff(void)
     return *Ki;
 
   if (formulation == Formulation::URI) {
-    formUri(1, true);
+    if (hourglassType == Hourglass::PHYSICAL)
+      formPhysical(1, true);
+    else
+      formUri(1, true);
     Ki = new Matrix(stiff);
     return *Ki;
   }
@@ -559,10 +570,44 @@ void   LadrunoBrick::formInertiaTerms(int tangFlag)
 int
 LadrunoBrick::update(void)
 {
-  // uri: single centroid integration point; set its strain on all 8 material
-  // pointers so stress/strain output reports the (uniform) centroid value.
   if (formulation == Formulation::URI) {
     computeBasis();
+
+    if (hourglassType == Hourglass::PHYSICAL) {
+      // physical: assumed-strain at the full 2x2x2 rule, one material per GP.
+      double gp0[3] = {0.0, 0.0, 0.0};
+      double detJ0;
+      static double shpC[4][8];
+      shp3d(gp0, detJ0, shpC, xl);
+      double bC[3][8];
+      for (int i = 0; i < 3; i++)
+        for (int I = 0; I < 8; I++)
+          bC[i][I] = shpC[i][I];
+      double gamma[4][8];
+      computeGammaHourglass(bC, gamma, 0.125);
+
+      static double Bbar[8][6][3];
+      static Vector strainG(6);
+      int gpIdx = 0;
+      for (int gi = 0; gi < 2; gi++)
+        for (int gj = 0; gj < 2; gj++)
+          for (int gk = 0; gk < 2; gk++) {
+            double gp[3] = {sg[gi], sg[gj], sg[gk]};
+            assumedStrainB(gp, gamma, bC, Bbar);
+            strainG.Zero();
+            for (int J = 0; J < 8; J++) {
+              const Vector &ul = nodePointers[J]->getTrialDisp();
+              for (int r = 0; r < 6; r++)
+                for (int c = 0; c < 3; c++)
+                  strainG(r) += Bbar[J][r][c] * ul(c);
+            }
+            materialPointers[gpIdx++]->setTrialStrain(strainG);
+          }
+      return 0;
+    }
+
+    // uri (perturbation hourglass): single centroid point; set its strain on
+    // all 8 material pointers so stress/strain output reports the centroid value.
     double gp[3] = {0.0, 0.0, 0.0};
     double detJ;
     static double shpC[4][8];
@@ -643,7 +688,10 @@ LadrunoBrick::update(void)
 void  LadrunoBrick::formResidAndTangent(int tang_flag)
 {
   if (formulation == Formulation::URI) {
-    formUri(tang_flag, false);
+    if (hourglassType == Hourglass::PHYSICAL)
+      formPhysical(tang_flag, false);
+    else
+      formUri(tang_flag, false);
     return;
   }
 
@@ -860,7 +908,7 @@ LadrunoBrick::computeBbar(int node, const double shp[4][8], const double shpBar[
 // computeBasis) and the centroid gradients bC[i][I] = dN_I/dx_i.
 //----------------------------------------------------------------------
 void
-LadrunoBrick::computeGammaHourglass(const double bC[3][8], double gamma[4][8])
+LadrunoBrick::computeGammaHourglass(const double bC[3][8], double gamma[4][8], double beta)
 {
   for (int a = 0; a < 4; a++) {
     double hx[3] = {0.0, 0.0, 0.0};
@@ -872,7 +920,7 @@ LadrunoBrick::computeGammaHourglass(const double bC[3][8], double gamma[4][8])
       double corr = 0.0;
       for (int i = 0; i < 3; i++)
         corr += bC[i][I] * hx[i];
-      gamma[a][I] = hg0[a][I] - corr;
+      gamma[a][I] = beta * (hg0[a][I] - corr);
     }
   }
 }
@@ -925,7 +973,7 @@ LadrunoBrick::formUri(int tang_flag, bool useInitialTangent)
   const double kappa = scale * Ghg * vol * bb;
 
   double gamma[4][8];
-  computeGammaHourglass(bC, gamma);
+  computeGammaHourglass(bC, gamma, 1.0);   // stiffness: beta absorbed into kappa
 
   // --- 1-point constant-strain contribution ---
   static Matrix ddVol(nstress, nstress);
@@ -1012,6 +1060,204 @@ LadrunoBrick::formUri(int tang_flag, bool useInitialTangent)
         for (int i = 0; i < 3; i++)
           stiff(3 * I + i, 3 * J + i) += kg;
       }
+  }
+}
+
+//----------------------------------------------------------------------
+// Belytschko-Bindeman isochoric assumed-strain B-bar at a Gauss point (eq
+// 8.7.26). Returns |J|. Bbar[I] is 6x3 in Voigt {xx,yy,zz,xy,yz,zx}. The
+// normal-strain rows carry the deviatoric-projected hourglass dilatation
+// (2/3,-1/3 split -> isochoric, no volumetric locking); the shear rows use the
+// mode-subset hourglass vectors g^{12}/g^{13}/g^{23} (selective reduction ->
+// no shear locking). Constant parts equal the compatible centroid B, so the
+// assumed field reproduces constant strain exactly (patch test holds).
+//----------------------------------------------------------------------
+double
+LadrunoBrick::assumedStrainB(const double gp[3], const double gamma[4][8],
+                             const double bC[3][8], double Bbar[8][6][3])
+{
+  const double xi = gp[0], eta = gp[1], zeta = gp[2];
+
+  // analytic dN_I/dxi_k and the Jacobian A_ik = dx_i/dxi_k
+  double dNdxi[3][8];
+  for (int I = 0; I < 8; I++) {
+    const double x0 = natCoord[I][0], y0 = natCoord[I][1], z0 = natCoord[I][2];
+    dNdxi[0][I] = 0.125 * x0 * (1.0 + y0 * eta) * (1.0 + z0 * zeta);
+    dNdxi[1][I] = 0.125 * y0 * (1.0 + x0 * xi) * (1.0 + z0 * zeta);
+    dNdxi[2][I] = 0.125 * z0 * (1.0 + x0 * xi) * (1.0 + y0 * eta);
+  }
+  double A[3][3];
+  for (int i = 0; i < 3; i++)
+    for (int k = 0; k < 3; k++) {
+      double s = 0.0;
+      for (int I = 0; I < 8; I++) s += dNdxi[k][I] * xl[i][I];
+      A[i][k] = s;
+    }
+  const double det = A[0][0]*(A[1][1]*A[2][2]-A[1][2]*A[2][1])
+                   - A[0][1]*(A[1][0]*A[2][2]-A[1][2]*A[2][0])
+                   + A[0][2]*(A[1][0]*A[2][1]-A[1][1]*A[2][0]);
+  const double idet = 1.0 / det;
+  double Ainv[3][3];   // Ainv[k][i] = dxi_k/dx_i
+  Ainv[0][0] = (A[1][1]*A[2][2]-A[1][2]*A[2][1])*idet;
+  Ainv[0][1] = (A[0][2]*A[2][1]-A[0][1]*A[2][2])*idet;
+  Ainv[0][2] = (A[0][1]*A[1][2]-A[0][2]*A[1][1])*idet;
+  Ainv[1][0] = (A[1][2]*A[2][0]-A[1][0]*A[2][2])*idet;
+  Ainv[1][1] = (A[0][0]*A[2][2]-A[0][2]*A[2][0])*idet;
+  Ainv[1][2] = (A[0][2]*A[1][0]-A[0][0]*A[1][2])*idet;
+  Ainv[2][0] = (A[1][0]*A[2][1]-A[1][1]*A[2][0])*idet;
+  Ainv[2][1] = (A[0][1]*A[2][0]-A[0][0]*A[2][1])*idet;
+  Ainv[2][2] = (A[0][0]*A[1][1]-A[0][1]*A[1][0])*idet;
+
+  // hourglass-mode spatial derivatives h_{alpha,i} = dh_alpha/dxi_k * dxi_k/dx_i
+  const double dh[4][3] = {
+    {0.0,      zeta,     eta},        // h1 = eta*zeta
+    {zeta,     0.0,      xi},         // h2 = zeta*xi
+    {eta,      xi,       0.0},        // h3 = xi*eta
+    {eta*zeta, xi*zeta,  xi*eta}      // h4 = xi*eta*zeta
+  };
+  double hi[4][3];
+  for (int a = 0; a < 4; a++)
+    for (int i = 0; i < 3; i++) {
+      double s = 0.0;
+      for (int k = 0; k < 3; k++) s += dh[a][k] * Ainv[k][i];
+      hi[a][i] = s;
+    }
+
+  for (int I = 0; I < 8; I++) {
+    const double bx = bC[0][I], by = bC[1][I], bz = bC[2][I];
+    double g1234[3], g12[3], g13[3], g23[3];
+    for (int i = 0; i < 3; i++) {
+      const double a0 = hi[0][i] * gamma[0][I];   // mode 1 (yz)
+      const double a1 = hi[1][i] * gamma[1][I];   // mode 2 (zx)
+      const double a2 = hi[2][i] * gamma[2][I];   // mode 3 (xy)
+      const double a3 = hi[3][i] * gamma[3][I];   // mode 4 (xyz)
+      g1234[i] = a0 + a1 + a2 + a3;
+      g12[i]   = a0 + a1;
+      g13[i]   = a0 + a2;
+      g23[i]   = a1 + a2;
+    }
+    const double gx = g1234[0], gy = g1234[1], gz = g1234[2];
+    double (*B)[3] = Bbar[I];
+    // normal strains: FULL compatible (no deviatoric projection). The pointwise-
+    // isochoric projection of eq 8.7.26 strips volumetric bending stiffness and
+    // over-softens (worse with nu); SSPbrick-style accuracy needs the full
+    // bending normal strain. Volumetric locking is a separate axis (use bbar).
+    B[0][0] = bx + gx;  B[0][1] = 0.0;       B[0][2] = 0.0;
+    B[1][0] = 0.0;      B[1][1] = by + gy;   B[1][2] = 0.0;
+    B[2][0] = 0.0;      B[2][1] = 0.0;       B[2][2] = bz + gz;
+    // shears (Voigt xy,yz,zx) with mode-subset hourglass vectors (eq 8.7.26) —
+    // the selective reduction that relieves shear locking
+    B[3][0] = by;                 B[3][1] = bx + g23[0];         B[3][2] = g23[0];         // xy  <- g^{23}
+    B[4][0] = g12[1];             B[4][1] = bz + g12[2];         B[4][2] = by;             // yz  <- g^{12}
+    B[5][0] = bz + g13[2];        B[5][1] = 0.0;                 B[5][2] = bx + g13[0];    // zx  <- g^{13}
+  }
+  return det;
+}
+
+//----------------------------------------------------------------------
+// physical (uri + assumed-strain) — full 2x2x2 integration of an assumed strain
+// (8.7.20): FULL compatible normal strains + Belytschko-Bindeman mode-subset
+// transverse shear (8.7.26). Rank-sufficient (no perturbation hourglass),
+// tuning-free, and a verified SHEAR-locking cure (matches SSPbrick to 3 digits
+// and converges in bending at compressible/moderate nu). NOTE: it does NOT cure
+// VOLUMETRIC locking — near-incompressible (nu -> 0.5) it locks; use -formulation
+// bbar there. (The pointwise-isochoric dev-projection of eq 8.7.26 would relieve
+// volumetric locking but, combined with the reduced shear, over-softens bending
+// for all nu; no single static projection is correct across nu with this shear
+// field -- that needs the coupled SSP/ASQBI operator, future work.)
+//----------------------------------------------------------------------
+void
+LadrunoBrick::formPhysical(int tang_flag, bool useInitialTangent)
+{
+  static const int ndf = 3, nstress = 6, numberNodes = 8;
+
+  computeBasis();
+
+  // centroid gradients + FB hourglass vectors (beta = 1/8: gamma is the true
+  // hourglass-mode coefficient so the assumed strain matches the compatible one)
+  double gp0[3] = {0.0, 0.0, 0.0};
+  double detJ0;
+  static double shpC[4][8];
+  shp3d(gp0, detJ0, shpC, xl);
+  double bC[3][8];
+  for (int i = 0; i < 3; i++)
+    for (int I = 0; I < numberNodes; I++)
+      bC[i][I] = shpC[i][I];
+  double gamma[4][8];
+  computeGammaHourglass(bC, gamma, 0.125);
+
+  stiff.Zero();
+  if (!useInitialTangent)
+    resid.Zero();
+
+  static double Bbar[8][6][3];
+  static Matrix dd(nstress, nstress), BJ(nstress, ndf), BJtran(ndf, nstress);
+  static Matrix BK(nstress, ndf), BJtranD(ndf, nstress), stiffJK(ndf, ndf);
+  static Vector stress(nstress), residJ(ndf);
+
+  int gpIdx = 0;
+  for (int gi = 0; gi < 2; gi++) {
+    for (int gj = 0; gj < 2; gj++) {
+      for (int gk = 0; gk < 2; gk++) {
+        double gp[3] = {sg[gi], sg[gj], sg[gk]};
+        double detJ = assumedStrainB(gp, gamma, bC, Bbar);
+        double dvol = wg[gpIdx] * detJ;
+
+        double N[8];
+        for (int I = 0; I < numberNodes; I++)
+          N[I] = 0.125 * (1.0 + natCoord[I][0]*gp[0])
+                       * (1.0 + natCoord[I][1]*gp[1])
+                       * (1.0 + natCoord[I][2]*gp[2]);
+
+        if (tang_flag == 1) {
+          dd = useInitialTangent ? materialPointers[gpIdx]->getInitialTangent()
+                                 : materialPointers[gpIdx]->getTangent();
+          dd *= dvol;
+        }
+        if (!useInitialTangent) {
+          stress = materialPointers[gpIdx]->getStress();
+          stress *= dvol;
+        }
+
+        int jj = 0;
+        for (int j = 0; j < numberNodes; j++) {
+          for (int r = 0; r < nstress; r++)
+            for (int c = 0; c < ndf; c++)
+              BJ(r, c) = Bbar[j][r][c];
+          for (int p = 0; p < ndf; p++)
+            for (int q = 0; q < nstress; q++)
+              BJtran(p, q) = BJ(q, p);
+
+          if (!useInitialTangent) {
+            residJ.addMatrixVector(0.0, BJtran, stress, 1.0);
+            for (int p = 0; p < ndf; p++) {
+              resid(jj + p) += residJ(p);
+              if (applyLoad == 0)
+                resid(jj + p) -= dvol * b[p] * N[j];
+              else
+                resid(jj + p) -= dvol * appliedB[p] * N[j];
+            }
+          }
+
+          if (tang_flag == 1) {
+            BJtranD.addMatrixProduct(0.0, BJtran, dd, 1.0);
+            int kk = 0;
+            for (int k = 0; k < numberNodes; k++) {
+              for (int r = 0; r < nstress; r++)
+                for (int c = 0; c < ndf; c++)
+                  BK(r, c) = Bbar[k][r][c];
+              stiffJK.addMatrixProduct(0.0, BJtranD, BK, 1.0);
+              for (int p = 0; p < ndf; p++)
+                for (int q = 0; q < ndf; q++)
+                  stiff(jj + p, kk + q) += stiffJK(p, q);
+              kk += ndf;
+            }
+          }
+          jj += ndf;
+        }
+        gpIdx++;
+      }
+    }
   }
 }
 

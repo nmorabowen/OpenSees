@@ -139,13 +139,13 @@ void *OPS_LadrunoBrick()
               "use std|bbar|uri)\n";
     return 0;
   }
-  // uri ships with Flanagan-Belytschko 'stiffness' hourglass control; the
-  // 'physical' (assumed-strain) and 'viscous' flavours land next.
+  // uri ships with Flanagan-Belytschko 'stiffness' and Belytschko-Bindeman
+  // assumed-strain 'physical' hourglass control; 'viscous' (rate form) lands next.
   if (formulation == LadrunoBrick::Formulation::URI &&
-      hgType != LadrunoBrick::Hourglass::STIFFNESS) {
+      hgType == LadrunoBrick::Hourglass::VISCOUS) {
     opserr << "WARNING LadrunoBrick " << idata[0]
-           << ": only '-hourglass stiffness' is implemented for -formulation uri "
-              "in this build ('physical'/'viscous' coming next)\n";
+           << ": '-hourglass viscous' is not yet implemented (use stiffness or "
+              "physical); viscous (rate-form) is the next increment\n";
     return 0;
   }
 
