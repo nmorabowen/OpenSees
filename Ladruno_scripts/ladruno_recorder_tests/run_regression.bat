@@ -65,6 +65,7 @@ call :checkonly "FRAME3D NODAL"   parity_check.py          fref.mpco       ftest
 call :gate2 "SHELL forces"        shell_model.py           element_parity_check.py  shref.mpco      shtest.ladruno
 call :checkonly "SHELL NODAL"     parity_check.py          shref.mpco      shtest.ladruno
 call :gate2 "EIGEN modes"         eigen_model.py           eigen_check.py           eig_ref.mpco    eig_test.ladruno
+call :gateA "PRECISION f32"       precision_model.py       precision_check.py       "%OUT%\prec_f64.ladruno" "%OUT%\prec_f32.ladruno"
 
 echo ==========================================================
 if %FAILS% GTR 0 (
