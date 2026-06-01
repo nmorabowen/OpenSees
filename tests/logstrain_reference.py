@@ -220,3 +220,109 @@ def cauchy_from_F_elastic(F: np.ndarray, K: float, G: float,
     J = float(np.linalg.det(F))
     sigma = tau / J                              # Box 14.3 (iv)
     return sigma, tau, J, eps
+
+
+# --------------------------------------------------------------------------- #
+#  Small-strain consistent tangents (∂τ/∂εᵉᵗʳ) — the "D" of eq. (14.100)      #
+# --------------------------------------------------------------------------- #
+_I_DEV = _IS - (1.0 / 3.0) * _IxI       # deviatoric projector (4th order)
+
+
+def elastic_tangent_D(K: float, G: float) -> np.ndarray:
+    """Isotropic elastic consistent tangent ∂τ/∂εᵉ = K I⊗I + 2G I_dev."""
+    return K * _IxI + 2.0 * G * _I_DEV
+
+
+def j2_return_map(eps_tr: np.ndarray, alpha_n: float,
+                  K: float, G: float, sig_y0: float, H: float):
+    """Small-strain von-Mises (J2) radial return with linear isotropic hardening.
+
+    Box 14.4 form: the *trial elastic* Hencky strain goes in, the updated elastic
+    strain comes out (the elastic strain IS the state — no separate εᵖ stored).
+
+    Returns (tau, eps_e, alpha, D, plastic):
+      tau     Kirchhoff stress (3×3)
+      eps_e   updated elastic Hencky strain (3×3)
+      alpha   updated accumulated plastic strain
+      D       consistent tangent ∂τ/∂εᵉᵗʳ (3,3,3,3)
+      plastic bool
+    Yield: Φ = ‖s‖ − √(2/3)(σ_y0 + H·α);  flow N = s/‖s‖;  Δεᵖ = Δγ N (deviatoric).
+    """
+    tr = np.trace(eps_tr)
+    eps_dev = eps_tr - (tr / 3.0) * _I
+    s_tr = 2.0 * G * eps_dev
+    q = float(np.sqrt(np.tensordot(s_tr, s_tr)))      # Frobenius ‖s_tr‖
+    sqrt23 = np.sqrt(2.0 / 3.0)
+    f_tr = q - sqrt23 * (sig_y0 + H * alpha_n)
+
+    if f_tr <= 0.0 or q == 0.0:                        # elastic step
+        tau = K * tr * _I + s_tr
+        return tau, eps_tr.copy(), alpha_n, elastic_tangent_D(K, G), False
+
+    dgamma = f_tr / (2.0 * G + (2.0 / 3.0) * H)
+    N = s_tr / q
+    s = s_tr - 2.0 * G * dgamma * N
+    tau = K * tr * _I + s
+    eps_e = eps_tr - dgamma * N                        # deviatoric ⇒ tr unchanged
+    alpha = alpha_n + sqrt23 * dgamma
+
+    # consistent elastoplastic tangent (Simo & Hughes; dSNPO §7.4.2)
+    theta = 1.0 - 2.0 * G * dgamma / q
+    theta_bar = 1.0 / (1.0 + H / (3.0 * G)) - (1.0 - theta)
+    D = (K * _IxI
+         + 2.0 * G * theta * _I_DEV
+         - 2.0 * G * theta_bar * _dyad(N, N))
+    return tau, eps_e, alpha, D, True
+
+
+# --------------------------------------------------------------------------- #
+#  Consistent SPATIAL tangent  a  (§14.5, eqs 14.99–14.102)                   #
+# --------------------------------------------------------------------------- #
+def log_derivative_L(Be: np.ndarray, rtol: float = 1e-9) -> np.ndarray:
+    """L = ∂ln[Bᵉᵗʳ]/∂Bᵉᵗʳ  (eq. 14.101) = 2·∂(½ln)/∂Bᵉᵗʳ."""
+    return 2.0 * dHencky_dBe(Be, rtol)
+
+
+def B_tensor(Be: np.ndarray) -> np.ndarray:
+    """B_ijkl = δ_ik (Bᵉᵗʳ)_jl + δ_jk (Bᵉᵗʳ)_il   (eq. 14.102)."""
+    d = _I
+    return np.einsum("ik,jl->ijkl", d, Be) + np.einsum("jk,il->ijkl", d, Be)
+
+
+def spatial_tangent_a(D: np.ndarray, Be_tr: np.ndarray,
+                      sigma: np.ndarray, J: float) -> np.ndarray:
+    """Closed-form spatial consistent tangent, eq. (14.99):
+        a_ijkl = (1/2J) [D : L : B]_ijkl − σ_il δ_jk
+    D = ∂τ/∂εᵉᵗʳ (small-strain), L = ∂ln Bᵉᵗʳ/∂Bᵉᵗʳ, B from (14.102)."""
+    L = log_derivative_L(Be_tr)
+    Bt = B_tensor(Be_tr)
+    DLB = np.einsum("ijpq,pqrs,rskl->ijkl", D, L, Bt)
+    geo = np.einsum("il,jk->ijkl", sigma, _I)          # − σ_il δ_jk
+    return DLB / (2.0 * J) - geo
+
+
+# --------------------------------------------------------------------------- #
+#  Full MATISU step with spatial tangent (elastic or J2 inner material)       #
+# --------------------------------------------------------------------------- #
+def matisu_step(F: np.ndarray, Be_n: np.ndarray, F_n: np.ndarray,
+                material: str = "elastic", *, alpha_n: float = 0.0, **mat):
+    """One spatial-multiplicative step. Returns a dict with σ, τ, J, spatial
+    tangent a, and the updated state (Bᵉ, α).  `material` ∈ {'elastic','j2'}."""
+    F_delta = F @ np.linalg.inv(F_n)
+    Be_tr = F_delta @ Be_n @ F_delta.T
+    eps_tr = hencky_strain(Be_tr)
+    if material == "elastic":
+        tau = isotropic_elastic_kirchhoff(eps_tr, mat["K"], mat["G"])
+        eps_e, alpha, D = eps_tr.copy(), alpha_n, elastic_tangent_D(mat["K"], mat["G"])
+        plastic = False
+    elif material == "j2":
+        tau, eps_e, alpha, D, plastic = j2_return_map(
+            eps_tr, alpha_n, mat["K"], mat["G"], mat["sig_y0"], mat["H"])
+    else:
+        raise ValueError(material)
+    J = float(np.linalg.det(F))
+    sigma = tau / J
+    a = spatial_tangent_a(D, Be_tr, sigma, J)
+    Be_new = iso_function(2.0 * eps_e, np.exp)         # Bᵉ = exp[2 εᵉ]
+    return dict(sigma=sigma, tau=tau, J=J, a=a, D=D, Be=Be_new, alpha=alpha,
+                eps_tr=eps_tr, eps_e=eps_e, plastic=plastic)
