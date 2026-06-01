@@ -47,7 +47,20 @@ them. This is observation-only — fixes we actually applied are tracked in
   hex, ~1.0 across all nu). `tests/test_ladrunoBrick_bending.py`.
 - **Status (2026-06-01):** shipped `physical` as the FULL-normals + reduced-shear
   **shear-locking cure** (verified vs SSPbrick); documented that near-incompressible
-  needs `-formulation bbar`. A coupled general-nu operator (SSP/ASQBI) is future work.
+  needs `-formulation bbar`. A coupled general-nu operator is future work.
+- **The definitive difference vs SSPbrick (read its source).** `SSPbrick.cpp` is an
+  **EAS element = bbar + statically-condensed enhanced strain**. (1) Volumetric:
+  its constant `Bnot` uses `dNmod` = mean-dilatation (B-bar) modified gradients
+  (`SSPbrick.cpp:1254,1266`). (2) Shear/bending: 9 internal **enhanced-strain
+  modes** `Fe`, condensed out — `interior = FCF − K_uα·K_αα⁻¹·K_αu`
+  (`SSPbrick.cpp:1968`), then `Kstab = Mbenᵀ·interior·Mben`. The **static
+  condensation** is why SSP works for ALL nu: the internal modes *adapt to C*. My
+  `physical` is a single FIXED assumed-strain B (no internal DOFs/condensation) →
+  can cure shear OR volumetric, never both across nu. **Upshot: a general-nu
+  "physical" = our reserved `eas` formulation (v2), and SSPbrick is the production
+  blueprint (bbar constant part + condensed EAS).** See `SSPbrick.cpp:1053`
+  (`GetStab`), `:1243` (G/gamma), `:1647` (enhanced-strain block), `:1968`
+  (condensation).
 
 ### `BbarBrick` has no `update()` — a bare `eleResponse("stresses")` reads the *predictor* (u=0) state
 - **Bites:** after a static/linear solve, `ops.eleResponse(tag, "stresses")` on an
