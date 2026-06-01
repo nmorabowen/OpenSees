@@ -104,6 +104,7 @@ __pycache__
 /mumps-install/
 /mumps-src/
 /opensees_venv/
+/monitor_venv/
 /CMakeUserPresets.json
 
 # Local scratch tests at the fork root (not in test/ which is upstream)

@@ -1214,6 +1214,7 @@
 #define RECORDER_TAGS_VTKHDF_Recorder               25
 #define RECORDER_TAGS_EnergyBalanceRecorder               33000 // N. Mora-Bowen (Ladruno) — energy balance recorder; ladruno private band >=33000 (was 26, above upstream frontier VTKHDF=25)
 #define RECORDER_TAGS_LadrunoRecorder               33001 // N. Mora-Bowen (Ladruno) — MPCO Ladruno recorder; ladruno private band >=33000 (was 27)
+#define RECORDER_TAGS_LadrunoMonitorRecorder        33002 // N. Mora-Bowen (Ladruno) — live analysis-monitor recorder (SWMR-HDF5 streaming); ladruno private band >=33000
 
 #define OPS_STREAM_TAGS_FileStream		1
 #define OPS_STREAM_TAGS_StandardStream		2
