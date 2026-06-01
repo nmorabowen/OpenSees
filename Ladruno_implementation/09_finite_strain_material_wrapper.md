@@ -491,4 +491,28 @@ under repeats; **their** finite T0/T1 battery is the external net for this bug.
 
 ## Implementation log
 
-*(filled in during execution; move to `Ladruno_internal/implemented_finite_strain_wrapper.md` when shipped)*
+- **2026-06-01 — seam-3 contract shipped (PR #68, merged).** `FiniteStrainNDMaterial.h`
+  abstract base on `ladruno`: `setTrialF(F)`, Cauchy σ / spatial-tangent accessors,
+  `setTrialStrain` disabled. Plan PR #67 merged.
+- **2026-06-01 — numpy reference oracle (branch `guppi/logstrain-material`, 21/21).**
+  `tests/logstrain_reference.py` + 2 test files. Box A.5 spectral, (A.51) iso
+  function, (A.52/A.53) derivative with all three eigenvalue branches (D3 net vs
+  FD), J2 radial-return + consistent tangent, spatial tangent a (14.99) vs the FD
+  definition (14.95) — elastic + plastic, exact plastic incompressibility, simple-
+  shear no-Jaumann-oscillation. The oracle the C++ must match.
+- **2026-06-01 — C++ `LogStrainNDMaterial` (elastic v1) written + wired.**
+  `SRC/material/nD/LogStrainNDMaterial.{h,cpp}`; Jacobi 3×3 spectral, A.52/A.53
+  degeneracy-safe tensor-log derivative, spatial MATERIAL tangent `(1/2J)[D:L:B]`
+  (geometric term = element K_geo — **contract clarification to propagate to the
+  companion**: `getTangent()` is the symmetric material part, not the full
+  non-minor-symmetric `a`). Owns committed `bᵉ_n`+`F_n`; wraps inner state.
+  classTag `ND_TAG_LogStrainNDMaterial 33010`; `nDMaterial LogStrain $tag $inner`;
+  CMake. **g++ 15.2 `-fsyntax-only` clean** (concrete class ⇒ all pure virtuals
+  implemented). v1 correct for ELASTIC inner; plastic-inner state protocol = next
+  decision (avoid εᵖ double-count when reusing a stateful return map).
+- **NEXT:** full Intel build of the worktree, then the openseespy acceptance test
+  (drive `nDMaterial LogStrain` over `ElasticIsotropicThreeDimensional` with
+  prescribed `F`, assert match to the oracle ~1e-10), then open the PR. Then the
+  plastic-inner protocol.
+
+*(move to `Ladruno_internal/implemented_finite_strain_wrapper.md` when shipped)*
