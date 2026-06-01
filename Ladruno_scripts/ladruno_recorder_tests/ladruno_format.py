@@ -78,6 +78,13 @@ class LadrunoReader:
         out = {k: _attr(g, k) for k in g.attrs}
         return out
 
+    def stored_precision(self) -> str:
+        """On-disk precision of the per-step result DATA: "f64" (lossless, the
+        default — and what older files implicitly are) or "f32" (opt-in
+        `-precision f32` lossy mode). Consumers MUST NOT diff an "f32" file
+        against an f64 oracle at 1e-12 — use a bounded-error check instead."""
+        return str(self.info().get("STORED_PRECISION", "f64"))
+
     # -- stages --
     def stages(self) -> list[str]:
         return [k for k in self.f if k.startswith("MODEL_STAGE")]

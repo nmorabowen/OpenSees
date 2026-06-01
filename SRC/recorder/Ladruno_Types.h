@@ -628,6 +628,7 @@ namespace detail {
 			, record_eigen_on_this_step(false)
 			, eigen_last_time_set(0.0)
 			, eigen_last_values()
+			, store_data_f32(false)
 		{}
 	public:
 		// domain and model information
@@ -649,6 +650,11 @@ namespace detail {
 		bool record_eigen_on_this_step;
 		double eigen_last_time_set;
 		Vector eigen_last_values;
+		// Opt-in `-precision f32` lossy mode: StreamingSink writes per-step result
+		// DATA as on-disk float32 (HDF5 narrows from the in-memory double slab),
+		// ~half the payload at ~7 significant digits. Default false = lossless f64
+		// parity path. Coords / TIME / STEP / envelope datasets stay f64/int.
+		bool store_data_f32;
 	};
 
 }
