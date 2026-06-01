@@ -190,6 +190,7 @@ void* OPS_NineNodeQuad();
 void* OPS_EightNodeQuad();
 void* OPS_SixNodeTri();
 void* OPS_BezierTri6();
+void* OPS_BezierTet10();
 void* OPS_FourNodeQuadUP();
 void* OPS_BrickUP();
 void* OPS_NineFourNodeQuadUP();
@@ -676,6 +677,8 @@ namespace {
 	functionMap.insert(std::make_pair("tri6n", &OPS_SixNodeTri));
 	functionMap.insert(std::make_pair("BezierTri6", &OPS_BezierTri6));
 	functionMap.insert(std::make_pair("bezierTri6", &OPS_BezierTri6));
+	functionMap.insert(std::make_pair("BezierTet10", &OPS_BezierTet10));
+	functionMap.insert(std::make_pair("bezierTet10", &OPS_BezierTet10));
 	functionMap.insert(std::make_pair("dispBeamColumnWithSensitivity", &OPS_DispBeamColumnWithSensitivity));
 	functionMap.insert(std::make_pair("elasticForceBeamColumn", &OPS_ElasticForceBeamColumn));
 	functionMap.insert(std::make_pair("dispBeamColumnThermal", &OPS_DispBeamColumnThermal));

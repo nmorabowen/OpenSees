@@ -47,6 +47,36 @@ features:
       corner singularity caps the displacement rate at ~1.3 (it is an accuracy
       benchmark, not a rate test); a smooth manufactured solution is used instead.
 
+  - feature: BezierTet10
+    classtag: 33001          # ladruno band; 3D sibling of BezierTri6=33000
+    tag_symbol: ELE_TAG_BezierTet10
+    pr: 61
+    feature_class: element
+    required_tiers: [T0, T1]
+    pytest: tests/test_bezierTet10_element.py    # T0 rank+patch+quadratic-completeness + T1 (green)
+    tcl: WAIVED(no Tcl command surface yet — Python/apeGmsh-driven only)
+    zone_b:
+      - Ladruno_files/testbed/bezierTet10/        # apeGmsh tet10 order==D2' check (O11), deferred
+    core_files:                                    # actually-touched upstream files
+      - SRC/classTags.h
+      - SRC/interpreter/OpenSeesElementCommands.cpp
+      - SRC/element/CMakeLists.txt
+      - SRC/recorder/Ladruno_ElementResults.h
+    dispatch: {tcl: false, functionMap: true}
+    status: active
+    notes: >
+      3D sibling of BezierTri6 (ADR 06_bezier_tet10, deferred under 04 D10).
+      Broker registration N/A (getNewElement stub, as for BezierTri6). Element-
+      class gate GREEN against dist/bin 2026-05-31 (4 tests): T0 rank/6 rigid-body
+      modes + constant-strain patch (4-tet central-node) + quadratic completeness
+      (3D Bernstein control-net blossom + b=-div sigma); T1 uniaxial reaction +
+      Poisson (Kuhn 6-tet box). Recorder: one-block inverted-dispatch registration
+      in Ladruno_ElementResults.h (Tetrahedron_10N + CustomIntegrationRule, dim=3);
+      round-trip 14/14 (FAMILY=bernstein, bucket-as-group). T2a deferred: a curved
+      convergence benchmark is geometry-limited for v1 straight-sided tets (Kadapa
+      uses curved elements; see ADR O5/O11) — Python oracle 23/23 + §6.2 sphere
+      convergence + locking study cover the formulation meanwhile.
+
   # --- pre-test-bed ladruno features: classTag band remediation (follow-up to
   #     BezierTri6). Tags moved into the >=33000 band, per-family, + Ladruno
   #     markers added so check_classtags tracks them. Zone-A tests are a known
