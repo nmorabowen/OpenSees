@@ -53,7 +53,7 @@ void *OPS_LadrunoBrick()
   }
 
   LadrunoBrick::Formulation formulation = LadrunoBrick::Formulation::STD;
-  LadrunoBrick::Hourglass   hgType = LadrunoBrick::Hourglass::PHYSICAL;
+  LadrunoBrick::Hourglass   hgType = LadrunoBrick::Hourglass::STIFFNESS;  // default for uri
   double hgCoeff = 0.0;
   double bf[3] = { 0.0, 0.0, 0.0 };
   int massType = 0;
@@ -132,12 +132,20 @@ void *OPS_LadrunoBrick()
     }
   }
 
-  // v1 implements std + bbar only; uri/eas are reserved.
-  if (formulation == LadrunoBrick::Formulation::URI ||
-      formulation == LadrunoBrick::Formulation::EAS) {
+  // eas is reserved (-> v2).
+  if (formulation == LadrunoBrick::Formulation::EAS) {
     opserr << "WARNING LadrunoBrick " << idata[0]
-           << ": -formulation 'uri'/'eas' is reserved and not yet implemented "
-              "in this build (v1 supports std|bbar)\n";
+           << ": -formulation 'eas' is reserved and not yet implemented (-> v2; "
+              "use std|bbar|uri)\n";
+    return 0;
+  }
+  // uri ships with Flanagan-Belytschko 'stiffness' hourglass control; the
+  // 'physical' (assumed-strain) and 'viscous' flavours land next.
+  if (formulation == LadrunoBrick::Formulation::URI &&
+      hgType != LadrunoBrick::Hourglass::STIFFNESS) {
+    opserr << "WARNING LadrunoBrick " << idata[0]
+           << ": only '-hourglass stiffness' is implemented for -formulation uri "
+              "in this build ('physical'/'viscous' coming next)\n";
     return 0;
   }
 

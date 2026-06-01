@@ -162,6 +162,16 @@ class LadrunoBrick : public Element {
   void computeShapeBar(double shpBar[4][8], double Shape[4][8][8],
                        const double dvol[8], double volume);
 
+  // uri (1-point reduced integration + hourglass control) helpers.
+  // formUri assembles stiff (+ resid when !useInitialTangent) at the centroid
+  // plus Flanagan-Belytschko stiffness hourglass control.
+  void formUri(int tang_flag, bool useInitialTangent);
+  // FB-corrected hourglass vectors (orthogonal to the linear field => the
+  // hourglass control is consistent: zero for any constant-strain/rigid state).
+  void computeGammaHourglass(const double b[3][8], double gamma[4][8]);
+  // the 4 raw hourglass base vectors (nodal values of {xy, yz, zx, xyz}).
+  static const double hg0[4][8];
+
   Matrix transpose(int dim1, int dim2, const Matrix &M);
 
   // string <-> enum helpers (shared by OPS factory + Print + sendSelf)

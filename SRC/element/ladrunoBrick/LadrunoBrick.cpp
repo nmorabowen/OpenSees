@@ -50,6 +50,18 @@ const double  LadrunoBrick::wg[] = { 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 };
 //file-scope B workspace (computeB returns a reference to this, as in Brick)
 static Matrix B(6, 3);
 
+// The 4 raw hourglass base vectors for the 8-node hex (Flanagan-Belytschko
+// 1981): the nodal values of the bilinear/trilinear modes {xy, yz, zx, xyz}
+// the constant centroid gradient cannot represent. Node order matches Brick's
+// (nodes 0-3 = z- face, 4-7 = z+ face), natural coords:
+//   0(-,-,-) 1(+,-,-) 2(+,+,-) 3(-,+,-) 4(-,-,+) 5(+,-,+) 6(+,+,+) 7(-,+,+)
+const double LadrunoBrick::hg0[4][8] = {
+  { 1.0, -1.0,  1.0, -1.0,  1.0, -1.0,  1.0, -1.0 },  // xy
+  { 1.0,  1.0, -1.0, -1.0, -1.0, -1.0,  1.0,  1.0 },  // yz
+  { 1.0, -1.0, -1.0,  1.0, -1.0,  1.0,  1.0, -1.0 },  // zx
+  {-1.0,  1.0, -1.0,  1.0,  1.0, -1.0,  1.0, -1.0 }   // xyz
+};
+
 const char *
 LadrunoBrick::formulationName(Formulation f)
 {
@@ -293,6 +305,12 @@ const Matrix &  LadrunoBrick::getInitialStiff(void)
 {
   if (Ki != 0)
     return *Ki;
+
+  if (formulation == Formulation::URI) {
+    formUri(1, true);
+    Ki = new Matrix(stiff);
+    return *Ki;
+  }
 
   static const int ndf = 3;
   static const int nstress = 6;
@@ -541,6 +559,28 @@ void   LadrunoBrick::formInertiaTerms(int tangFlag)
 int
 LadrunoBrick::update(void)
 {
+  // uri: single centroid integration point; set its strain on all 8 material
+  // pointers so stress/strain output reports the (uniform) centroid value.
+  if (formulation == Formulation::URI) {
+    computeBasis();
+    double gp[3] = {0.0, 0.0, 0.0};
+    double detJ;
+    static double shpC[4][8];
+    shp3d(gp, detJ, shpC, xl);
+
+    static Vector strainC(6);
+    static Matrix Bc(6, 3);
+    strainC.Zero();
+    for (int J = 0; J < 8; J++) {
+      Bc = computeB(J, shpC);
+      const Vector &ul = nodePointers[J]->getTrialDisp();
+      strainC.addMatrixVector(1.0, Bc, ul, 1.0);
+    }
+    for (int i = 0; i < 8; i++)
+      materialPointers[i]->setTrialStrain(strainC);
+    return 0;
+  }
+
   static const int ndf = 3;
   static const int nstress = 6;
   static const int numberNodes = 8;
@@ -602,6 +642,11 @@ LadrunoBrick::update(void)
 //form residual and tangent
 void  LadrunoBrick::formResidAndTangent(int tang_flag)
 {
+  if (formulation == Formulation::URI) {
+    formUri(tang_flag, false);
+    return;
+  }
+
   static const int ndf = 3;
   static const int nstress = 6;
   static const int numberNodes = 8;
@@ -806,6 +851,171 @@ LadrunoBrick::computeBbar(int node, const double shp[4][8], const double shpBar[
 
   return Bbar;
 }
+
+//----------------------------------------------------------------------
+// Flanagan-Belytschko corrected hourglass vectors. gamma is orthogonal to the
+// linear displacement field, so hourglass control is consistent (adds exactly
+// zero force/stiffness to any rigid-body or constant-strain state -> the patch
+// test passes for any kappa). Uses the current nodal coords xl (set by
+// computeBasis) and the centroid gradients bC[i][I] = dN_I/dx_i.
+//----------------------------------------------------------------------
+void
+LadrunoBrick::computeGammaHourglass(const double bC[3][8], double gamma[4][8])
+{
+  for (int a = 0; a < 4; a++) {
+    double hx[3] = {0.0, 0.0, 0.0};
+    for (int i = 0; i < 3; i++)
+      for (int J = 0; J < 8; J++)
+        hx[i] += hg0[a][J] * xl[i][J];
+
+    for (int I = 0; I < 8; I++) {
+      double corr = 0.0;
+      for (int i = 0; i < 3; i++)
+        corr += bC[i][I] * hx[i];
+      gamma[a][I] = hg0[a][I] - corr;
+    }
+  }
+}
+
+//----------------------------------------------------------------------
+// uri: 1-point (centroid) reduced integration + Flanagan-Belytschko stiffness
+// hourglass control. Assembles stiff (tang_flag==1) and, when
+// !useInitialTangent, resid. The single integration point captures the 6
+// constant-strain modes; hourglass control restores stiffness to the 12
+// otherwise-zero-energy modes.
+//----------------------------------------------------------------------
+void
+LadrunoBrick::formUri(int tang_flag, bool useInitialTangent)
+{
+  static const int ndf = 3;
+  static const int nstress = 6;
+  static const int numberNodes = 8;
+
+  computeBasis();
+
+  // centroid shape functions & gradients (the single integration point)
+  double gp[3] = {0.0, 0.0, 0.0};
+  double detJ;
+  static double shpC[4][8];
+  shp3d(gp, detJ, shpC, xl);
+  const double vol = 8.0 * detJ;   // 1-point Gauss weight (2^3) x |J| at centroid
+
+  double bC[3][8];                 // centroid gradients dN_I/dx_i
+  for (int i = 0; i < 3; i++)
+    for (int I = 0; I < numberNodes; I++)
+      bC[i][I] = shpC[i][I];
+
+  stiff.Zero();
+  if (!useInitialTangent)
+    resid.Zero();
+
+  // material tangent at the centroid (drives K and the hourglass modulus)
+  static Matrix dd(nstress, nstress);
+  dd = useInitialTangent ? materialPointers[0]->getInitialTangent()
+                         : materialPointers[0]->getTangent();
+
+  // hourglass stiffness coefficient (FB "stiffness" form):
+  //   kappa = scale * G * vol * sum_iI bC_iI^2 ,  G ~ dd(3,3) (shear row)
+  double bb = 0.0;
+  for (int i = 0; i < 3; i++)
+    for (int I = 0; I < numberNodes; I++)
+      bb += bC[i][I] * bC[i][I];
+  const double Ghg = dd(3, 3);
+  const double scale = (hourglassCoeff > 0.0) ? hourglassCoeff : 0.05;
+  const double kappa = scale * Ghg * vol * bb;
+
+  double gamma[4][8];
+  computeGammaHourglass(bC, gamma);
+
+  // --- 1-point constant-strain contribution ---
+  static Matrix ddVol(nstress, nstress);
+  if (tang_flag == 1) {
+    ddVol = dd;
+    ddVol *= vol;
+  }
+
+  static Vector stress0(nstress);
+  if (!useInitialTangent) {
+    stress0 = materialPointers[0]->getStress();
+    stress0 *= vol;
+  }
+
+  static Matrix BJ(nstress, ndf), BK(nstress, ndf);
+  static Matrix BJtran(ndf, nstress), BJtranD(ndf, nstress);
+  static Matrix stiffJK(ndf, ndf);
+  static Vector residJ(ndf);
+
+  int jj = 0;
+  for (int j = 0; j < numberNodes; j++) {
+    BJ = computeB(j, shpC);
+    for (int p = 0; p < ndf; p++)
+      for (int q = 0; q < nstress; q++)
+        BJtran(p, q) = BJ(q, p);
+
+    if (!useInitialTangent) {
+      residJ.addMatrixVector(0.0, BJtran, stress0, 1.0);
+      for (int p = 0; p < ndf; p++) {
+        resid(jj + p) += residJ(p);
+        if (applyLoad == 0)
+          resid(jj + p) -= vol * b[p] * shpC[3][j];      // b = member body force; Nc = shpC[3][j]
+        else
+          resid(jj + p) -= vol * appliedB[p] * shpC[3][j];
+      }
+    }
+
+    if (tang_flag == 1) {
+      BJtranD.addMatrixProduct(0.0, BJtran, ddVol, 1.0);
+      int kk = 0;
+      for (int k = 0; k < numberNodes; k++) {
+        BK = computeB(k, shpC);
+        stiffJK.addMatrixProduct(0.0, BJtranD, BK, 1.0);
+        for (int p = 0; p < ndf; p++)
+          for (int q = 0; q < ndf; q++)
+            stiff(jj + p, kk + q) += stiffJK(p, q);
+        kk += ndf;
+      }
+    }
+    jj += ndf;
+  }
+
+  // --- Flanagan-Belytschko stiffness hourglass control ---
+  if (!useInitialTangent) {
+    // generalized hourglass strains q_ai = sum_J gamma_aJ u_iJ
+    double q[4][3];
+    for (int a = 0; a < 4; a++)
+      for (int i = 0; i < 3; i++)
+        q[a][i] = 0.0;
+    for (int J = 0; J < numberNodes; J++) {
+      const Vector &ul = nodePointers[J]->getTrialDisp();
+      for (int a = 0; a < 4; a++)
+        for (int i = 0; i < 3; i++)
+          q[a][i] += gamma[a][J] * ul(i);
+    }
+    // hourglass nodal forces f_iI = kappa * sum_a gamma_aI q_ai
+    for (int I = 0; I < numberNodes; I++)
+      for (int i = 0; i < 3; i++) {
+        double f = 0.0;
+        for (int a = 0; a < 4; a++)
+          f += gamma[a][I] * q[a][i];
+        resid(3 * I + i) += kappa * f;
+      }
+  }
+
+  if (tang_flag == 1) {
+    // hourglass stiffness K_(iI)(jJ) = delta_ij * kappa * sum_a gamma_aI gamma_aJ
+    for (int I = 0; I < numberNodes; I++)
+      for (int J = 0; J < numberNodes; J++) {
+        double g = 0.0;
+        for (int a = 0; a < 4; a++)
+          g += gamma[a][I] * gamma[a][J];
+        const double kg = kappa * g;
+        for (int i = 0; i < 3; i++)
+          stiff(3 * I + i, 3 * J + i) += kg;
+      }
+  }
+}
+
+//----------------------------------------------------------------------
 
 Matrix  LadrunoBrick::transpose(int dim1, int dim2, const Matrix &M)
 {

@@ -136,14 +136,77 @@ def test_default_formulation_is_std():
 # --------------------------------------------------------------------------
 # rank / zero-energy (no spurious mechanisms for std/bbar)
 # --------------------------------------------------------------------------
-@pytest.mark.parametrize("formulation", ["std", "bbar"])
+@pytest.mark.parametrize("formulation", ["std", "bbar", "uri"])
 def test_free_element_has_six_rigid_body_modes(formulation):
+    # For uri this is also the hourglass-stabilization gate: 1-pt integration
+    # alone leaves 6 rigid + 12 hourglass = 18 zero-energy modes; correct
+    # Flanagan-Belytschko hourglass control restores stiffness to the 12 so
+    # only the 6 rigid-body modes remain at zero energy.
     _build_common(E=1000.0, nu=0.3)
     ops.element("LadrunoBrick", 1, *_CONN, 1, "-formulation", formulation)
     count, eigs = zero_energy_mode_count(_CONN, ndf=3)
     assert count == n_rigid_body_modes(3), (
         f"{formulation}: {count} zero-energy modes (want 6); eigs={eigs}"
     )
+
+
+def test_uri_relieves_volumetric_locking():
+    """1-pt reduced integration removes the over-constraint of incompressibility,
+    so uri (like bbar) is more flexible than std near nu=0.5 — visible even in a
+    single element (volumetric locking is a constant-mode effect)."""
+    nu = 0.4999
+    std = _solve_hex("LadrunoBrick", ["-formulation", "std"], nu=nu)
+    uri = _solve_hex("LadrunoBrick", ["-formulation", "uri"], nu=nu)
+    std_mag = math.sqrt(sum(u * u for u in std[0]))
+    uri_mag = math.sqrt(sum(u * u for u in uri[0]))
+    assert uri_mag > std_mag, (
+        f"uri (|u|={uri_mag:.3e}) should be more flexible than std "
+        f"(|u|={std_mag:.3e}) at nu={nu}"
+    )
+
+
+@pytest.mark.parametrize("formulation", ["std", "bbar", "uri"])
+def test_uniaxial_stress_patch(formulation):
+    """Patch test: a unit cube under uniform x-tractions with statically-
+    determinate (6 rigid-mode) restraints develops uniform uniaxial stress
+    sigma_xx = sig0 (others zero). Every formulation must reproduce it exactly.
+    For uri this confirms the FB hourglass control adds exactly zero to a
+    constant-strain state (gamma is orthogonal to the linear field)."""
+    E, nu, sig0 = 1000.0, 0.3, 2.0
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    cube = {1: (0, 0, 0), 2: (1, 0, 0), 3: (1, 1, 0), 4: (0, 1, 0),
+            5: (0, 0, 1), 6: (1, 0, 1), 7: (1, 1, 1), 8: (0, 1, 1)}
+    for t, c in cube.items():
+        ops.node(t, *c)
+    ops.nDMaterial("ElasticIsotropic", 1, E, nu)
+    # 1/8-symmetry restraints, all consistent with the exact field
+    # u=((sig0/E)x, -nu(sig0/E)y, -nu(sig0/E)z): each min-face pinned in its normal,
+    # so x=0 reacts the tension and lateral contraction stays free.
+    ops.fix(1, 1, 1, 1)   # (0,0,0): x0,y0,z0
+    ops.fix(2, 0, 1, 1)   # (1,0,0): y0,z0
+    ops.fix(3, 0, 0, 1)   # (1,1,0): z0
+    ops.fix(4, 1, 0, 1)   # (0,1,0): x0,z0
+    ops.fix(5, 1, 1, 0)   # (0,0,1): x0,y0
+    ops.fix(6, 0, 1, 0)   # (1,0,1): y0
+    ops.fix(8, 1, 0, 0)   # (0,1,1): x0
+    ops.element("LadrunoBrick", 1, 1, 2, 3, 4, 5, 6, 7, 8, 1, "-formulation", formulation)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    for n in (2, 3, 6, 7):            # uniform traction sig0 on the unit x=1 face
+        ops.load(n, sig0 / 4.0, 0.0, 0.0)
+    ops.system("FullGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.integrator("LoadControl", 1.0)
+    ops.algorithm("Linear")
+    ops.analysis("Static")
+    assert ops.analyze(1) == 0
+
+    ops.eleResponse(1, "forces")                      # ensure strain is set (lazy elements)
+    sig = list(ops.eleResponse(1, "stresses"))[0:6]   # centroid (Gauss point 1)
+    sig_exact = [sig0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    _assert_close(sig, sig_exact, f"patch[{formulation}]", rtol=1e-7, atol=1e-7)
 
 
 # --------------------------------------------------------------------------
@@ -163,16 +226,27 @@ def test_bbar_relieves_volumetric_locking():
 
 
 # --------------------------------------------------------------------------
-# reserved formulations refused in v1
+# reserved formulations / hourglass flavours refused in this build
 # --------------------------------------------------------------------------
-@pytest.mark.parametrize("formulation", ["uri", "eas"])
-def test_reserved_formulations_refused(formulation):
+def _refused(*extra):
     _build_common(E=1000.0, nu=0.3)
     try:
-        ops.element("LadrunoBrick", 1, *_CONN, 1, "-formulation", formulation)
+        ops.element("LadrunoBrick", 1, *_CONN, 1, *extra)
     except Exception:
         pass  # raising is an acceptable refusal
     tags = ops.getEleTags() or []
     if isinstance(tags, int):
         tags = [tags]
-    assert 1 not in tags, f"-formulation {formulation} should be refused in v1"
+    return 1 not in tags
+
+
+def test_eas_formulation_refused():
+    assert _refused("-formulation", "eas"), "-formulation eas should be reserved (->v2)"
+
+
+@pytest.mark.parametrize("hg", ["physical", "viscous"])
+def test_uri_nonstiffness_hourglass_refused(hg):
+    # uri ships with FB 'stiffness' hourglass only for now.
+    assert _refused("-formulation", "uri", "-hourglass", hg), (
+        f"-formulation uri -hourglass {hg} should be refused in this build"
+    )
