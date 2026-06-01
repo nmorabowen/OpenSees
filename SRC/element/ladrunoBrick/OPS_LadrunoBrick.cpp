@@ -15,8 +15,11 @@
 //           [, '-b', bx, by, bz]
 //           [, '-damp', dampTag])
 //
-// std + bbar + uri(stiffness|physical) + eas are all implemented. Only
-// uri -hourglass viscous remains refused at construction (rate-form, explicit).
+// std + bbar + uri(stiffness|physical|viscous) + eas are all implemented and
+// accepted at construction. NOTE: uri -hourglass viscous is rate-form damping
+// and EXPLICIT-ONLY — it adds no hourglass stiffness, so the element tangent is
+// rank-deficient under an implicit/eigen solver (use stiffness or physical
+// there). -damp is only honoured by the std/bbar kernel (see the guard below).
 
 #include "LadrunoBrick.h"
 
@@ -96,17 +99,20 @@ void *OPS_LadrunoBrick()
                << idata[0] << " (use viscous|stiffness|physical)\n";
         return 0;
       }
-      // optional numeric coefficient. Only consume the next token if it is a
-      // number — otherwise it is the next option (e.g. -lumped), so push it
-      // back for the option loop. (Avoids swallowing flags after -hourglass.)
+      // optional numeric coefficient. Read it as a NUMBER (OPS_GetDoubleInput
+      // accepts Python numeric args AND Tcl numeric strings — OPS_GetString
+      // would return "Invalid String Input!" for a Python float and silently
+      // drop the coeff). If the next token is not a number it is the next
+      // option (e.g. -lumped): GetDoubleInput advances the cursor even on
+      // failure, so ResetCurrentInputArg(-1) un-gets exactly that one token
+      // and the option loop re-reads it.
       if (OPS_GetNumRemainingInputArgs() > 0) {
-        const char *peek = OPS_GetString();
-        char *endp = 0;
-        double val = strtod(peek, &endp);
-        if (endp != peek && *endp == '\0')
-          hgCoeff = val;
+        int n1 = 1;
+        double tmp = 0.0;
+        if (OPS_GetDoubleInput(&n1, &tmp) == 0)
+          hgCoeff = tmp;
         else
-          OPS_ResetCurrentInputArg(-1);   // not numeric -> leave it for the loop
+          OPS_ResetCurrentInputArg(-1);
       }
     }
     else if (strcmp(opt, "-lumped") == 0 || strcmp(opt, "-lump") == 0) {
@@ -135,6 +141,19 @@ void *OPS_LadrunoBrick()
     else {
       opserr << "WARNING unknown option '" << opt << "' for LadrunoBrick " << idata[0] << endln;
     }
+  }
+
+  // -damp is only wired through the std/bbar kernel; the uri/physical/eas
+  // condensed single-point kernels do not apply element-level Damping. Drop it
+  // with a clear diagnostic for those formulations rather than silently
+  // allocating a no-op damping object that is committed every step.
+  if (theDamping != 0 &&
+      formulation != LadrunoBrick::Formulation::STD &&
+      formulation != LadrunoBrick::Formulation::BBAR) {
+    opserr << "WARNING LadrunoBrick " << idata[0]
+           << ": -damp is only supported with -formulation std|bbar; ignoring "
+              "the damping object for this formulation\n";
+    theDamping = 0;
   }
 
   return new LadrunoBrick(idata[0],

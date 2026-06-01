@@ -305,3 +305,21 @@ batteries):
   coeff (broke `-hourglass <type> -lumped`); now only consumes a numeric token,
   else `OPS_ResetCurrentInputArg(-1)`. Banner line added; `eas` refusal removed.
   **All four formulations + three hourglass flavours now ship.**
+- 2026-06-01 — **Adversarial sweep (pre-merge), fixes folded into PR #75.** A
+  multi-agent review (6 dimensions × verify) confirmed the eas port is line-for-
+  line faithful to `SSPbrick::GetStab` and refuted a "64× gamma" false alarm
+  (β=1.0 is correct for the FB rate form per LS-DYNA theory). Real findings fixed:
+  (1) **the first parser fix was openseespy-broken** — `OPS_GetString`+`strtod`
+  can't read a Python numeric coeff (`OPS_GetString` returns `"Invalid String
+  Input!"` for a `PyFloat`), so a numeric `-hourglass` coeff was silently dropped.
+  Switched to `OPS_GetDoubleInput`+`OPS_ResetCurrentInputArg(-1)` (number-aware on
+  both backends). See [[LEDGER_quirks]]. (2) `-damp` is only wired through the
+  std/bbar kernel; the uri/physical/eas condensed kernels ignore it — the factory
+  now warns + drops `-damp` for those formulations instead of silently allocating
+  a no-op. (3) viscous gives a rank-deficient (explicit-only) tangent — documented
+  in the factory header + usage. Tests strengthened: the viscous test is now
+  **differential** (more damping ⇒ strictly smaller peak, catches a dropped coeff
+  or wrong sign); `test_hourglass_coefficient_reaches_kernel` locks the parser
+  regression; `test_eas_matches_sspbrick_distorted_hex` cross-checks eas↔SSPbrick
+  component-wise on the **distorted** hex (exercises the J[4..19] distortion terms
+  the axis-aligned oracle can't reach). Zone-A 30/30.
