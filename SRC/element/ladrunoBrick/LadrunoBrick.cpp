@@ -91,7 +91,8 @@ LadrunoBrick::LadrunoBrick()
    formulation(Formulation::STD),
    hourglassType(Hourglass::PHYSICAL), hourglassCoeff(0.0),
    applyLoad(0), load(0), Ki(0), massType(0),
-   theGeom(new SolidTransformationLinear())   // Ladruno — v1 identity geometry
+   theGeom(new SolidTransformationLinear()),  // Ladruno — v1 identity geometry
+   easBnot(0), easKstab(0), easVol(0.0)       // Ladruno — eas (built in setDomain)
 {
   B.Zero();
 
@@ -119,7 +120,8 @@ LadrunoBrick::LadrunoBrick(int tag,
    formulation(form),
    hourglassType(hgType), hourglassCoeff(hgCoeff),
    applyLoad(0), load(0), Ki(0), massType(matype),
-   theGeom(new SolidTransformationLinear())   // Ladruno — v1 identity geometry
+   theGeom(new SolidTransformationLinear()),  // Ladruno — v1 identity geometry
+   easBnot(0), easKstab(0), easVol(0.0)       // Ladruno — eas (built in setDomain)
 {
   B.Zero();
 
@@ -171,6 +173,9 @@ LadrunoBrick::~LadrunoBrick()
   }
 
   if (theGeom) delete theGeom;   // Ladruno — geometry-method layer
+
+  if (easBnot)  delete easBnot;  // Ladruno — eas
+  if (easKstab) delete easKstab;
 }
 
 //set domain
@@ -184,6 +189,16 @@ void  LadrunoBrick::setDomain(Domain *theDomain)
       opserr << "LadrunoBrick::setDomain -- Error initializing damping\n";
       return;
     }
+  }
+
+  // eas: condense the enhanced-strain stabilization once, from geometry + the
+  // initial material tangent (SSP-style). Deterministic, so the receive side
+  // rebuilds it here after recvSelf — nothing extra travels in sendSelf.  // Ladruno
+  if (formulation == Formulation::EAS) {
+    bool haveNodes = true;
+    for (int i = 0; i < 8; i++)
+      if (nodePointers[i] == 0) haveNodes = false;
+    if (haveNodes) buildEAS();
   }
 
   this->DomainComponent::setDomain(theDomain);
@@ -325,6 +340,12 @@ const Matrix &  LadrunoBrick::getInitialStiff(void)
       formPhysical(1, true);
     else
       formUri(1, true);
+    Ki = new Matrix(stiff);
+    return *Ki;
+  }
+
+  if (formulation == Formulation::EAS) {
+    formEAS(1, true);
     Ki = new Matrix(stiff);
     return *Ki;
   }
@@ -581,6 +602,19 @@ void   LadrunoBrick::formInertiaTerms(int tangFlag)
 int
 LadrunoBrick::update(void)
 {
+  if (formulation == Formulation::EAS) {
+    if (easBnot == 0) buildEAS();   // safety (normally built in setDomain)
+    computeBasis();
+    const Vector &uCore = this->computeLocalDisp();   // identity for linear
+    static Vector strainE(6);
+    strainE.addMatrixVector(0.0, *easBnot, uCore, 1.0);   // strain = Bnot * u
+    // single integration point: report the same (centroid) strain on all 8
+    // material slots so the per-GP stress/strain response tree stays populated.
+    for (int i = 0; i < 8; i++)
+      materialPointers[i]->setTrialStrain(strainE);
+    return 0;
+  }
+
   if (formulation == Formulation::URI) {
     computeBasis();
     const Vector &uCore = this->computeLocalDisp();   // seam 0+2 (identity for linear)
@@ -707,6 +741,11 @@ void  LadrunoBrick::formResidAndTangent(int tang_flag)
       formPhysical(tang_flag, false);
     else
       formUri(tang_flag, false);
+    return;
+  }
+
+  if (formulation == Formulation::EAS) {
+    formEAS(tang_flag, false);
     return;
   }
 
@@ -1076,40 +1115,77 @@ LadrunoBrick::formUri(int tang_flag, bool useInitialTangent)
     jj += ndf;
   }
 
-  // --- Flanagan-Belytschko stiffness hourglass control ---
-  if (!useInitialTangent) {
-    // generalized hourglass strains q_ai = sum_J gamma_aJ u_iJ
-    double q[4][3];
-    for (int a = 0; a < 4; a++)
-      for (int i = 0; i < 3; i++)
-        q[a][i] = 0.0;
-    for (int J = 0; J < numberNodes; J++) {
-      const Vector &ul = nodePointers[J]->getTrialDisp();
+  if (hourglassType == Hourglass::VISCOUS) {
+    // --- Flanagan-Belytschko VISCOUS hourglass control (rate form, explicit) ---
+    // A damping force resisting the hourglass *velocity* (Belytschko 8.7.10).
+    // It adds NO stiffness (velocity-dependent), so the tangent keeps the 12
+    // hourglass modes at zero energy — fine for explicit dynamics (they are
+    // damped, and dt_cr depends only on the populated max eigenvalue). Vanishes
+    // in statics (v=0). Coefficient c_visc = eps * rho * c_d * V^(2/3), with the
+    // dilatational wave speed c_d = sqrt((lambda+2mu)/rho) ~ sqrt(dd(0,0)/rho).
+    if (!useInitialTangent) {
+      double rho = materialPointers[0]->getRho();
+      if (rho > 0.0) {
+        const double cd = sqrt(dd(0, 0) / rho);
+        const double epsV = (hourglassCoeff > 0.0) ? hourglassCoeff : 0.1;
+        const double cVisc = epsV * rho * cd * pow(vol, 2.0 / 3.0);
+        // generalized hourglass velocities qdot_ai = sum_J gamma_aJ v_iJ
+        double qd[4][3];
+        for (int a = 0; a < 4; a++)
+          for (int i = 0; i < 3; i++)
+            qd[a][i] = 0.0;
+        for (int J = 0; J < numberNodes; J++) {
+          const Vector &vl = nodePointers[J]->getTrialVel();
+          for (int a = 0; a < 4; a++)
+            for (int i = 0; i < 3; i++)
+              qd[a][i] += gamma[a][J] * vl(i);
+        }
+        // hourglass damping force f_iI = c_visc * sum_a gamma_aI qdot_ai
+        for (int I = 0; I < numberNodes; I++)
+          for (int i = 0; i < 3; i++) {
+            double f = 0.0;
+            for (int a = 0; a < 4; a++)
+              f += gamma[a][I] * qd[a][i];
+            resid(3 * I + i) += cVisc * f;
+          }
+      }
+    }
+  } else {
+    // --- Flanagan-Belytschko STIFFNESS hourglass control (default) ---
+    if (!useInitialTangent) {
+      // generalized hourglass strains q_ai = sum_J gamma_aJ u_iJ
+      double q[4][3];
       for (int a = 0; a < 4; a++)
         for (int i = 0; i < 3; i++)
-          q[a][i] += gamma[a][J] * ul(i);
-    }
-    // hourglass nodal forces f_iI = kappa * sum_a gamma_aI q_ai
-    for (int I = 0; I < numberNodes; I++)
-      for (int i = 0; i < 3; i++) {
-        double f = 0.0;
-        for (int a = 0; a < 4; a++)
-          f += gamma[a][I] * q[a][i];
-        resid(3 * I + i) += kappa * f;
-      }
-  }
-
-  if (tang_flag == 1) {
-    // hourglass stiffness K_(iI)(jJ) = delta_ij * kappa * sum_a gamma_aI gamma_aJ
-    for (int I = 0; I < numberNodes; I++)
+          q[a][i] = 0.0;
       for (int J = 0; J < numberNodes; J++) {
-        double g = 0.0;
+        const Vector &ul = nodePointers[J]->getTrialDisp();
         for (int a = 0; a < 4; a++)
-          g += gamma[a][I] * gamma[a][J];
-        const double kg = kappa * g;
-        for (int i = 0; i < 3; i++)
-          stiff(3 * I + i, 3 * J + i) += kg;
+          for (int i = 0; i < 3; i++)
+            q[a][i] += gamma[a][J] * ul(i);
       }
+      // hourglass nodal forces f_iI = kappa * sum_a gamma_aI q_ai
+      for (int I = 0; I < numberNodes; I++)
+        for (int i = 0; i < 3; i++) {
+          double f = 0.0;
+          for (int a = 0; a < 4; a++)
+            f += gamma[a][I] * q[a][i];
+          resid(3 * I + i) += kappa * f;
+        }
+    }
+
+    if (tang_flag == 1) {
+      // hourglass stiffness K_(iI)(jJ) = delta_ij * kappa * sum_a gamma_aI gamma_aJ
+      for (int I = 0; I < numberNodes; I++)
+        for (int J = 0; J < numberNodes; J++) {
+          double g = 0.0;
+          for (int a = 0; a < 4; a++)
+            g += gamma[a][I] * gamma[a][J];
+          const double kg = kappa * g;
+          for (int i = 0; i < 3; i++)
+            stiff(3 * I + i, 3 * J + i) += kg;
+        }
+    }
   }
 
   // seam 3: globalize the core-frame f/K back to global DOFs, adding K_geo.
@@ -1319,6 +1395,557 @@ LadrunoBrick::formPhysical(int tang_flag, bool useInitialTangent)
       }
     }
   }
+}
+
+//----------------------------------------------------------------------
+// eas (Stabilized Single-Point, SSPbrick port) — cross product helper.
+static Vector
+ladrunoCross(const Vector &v1, const Vector &v2)
+{
+  Vector r(3);
+  r(0) = v1(1) * v2(2) - v1(2) * v2(1);
+  r(1) = v1(2) * v2(0) - v1(0) * v2(2);
+  r(2) = v1(0) * v2(1) - v1(1) * v2(0);
+  return r;
+}
+
+//----------------------------------------------------------------------
+// buildEAS — compute the constant mean-dilatation B (easBnot), element volume
+// (easVol) and the statically-condensed enhanced-strain stabilization
+// (easKstab). Ported verbatim from UWelements/SSPbrick::GetStab + the nodal
+// pattern setup in SSPbrick::setDomain. The 9 enhanced-strain modes are
+// condensed using the INITIAL material tangent, so the result is constant — it
+// adapts to C(0) (curing both shear and volumetric locking across all nu) but
+// carries no per-step internal state. Called once from setDomain.  // Ladruno
+//----------------------------------------------------------------------
+void
+LadrunoBrick::buildEAS(void)
+{
+  // nodal coordinate matrix (3 x 8)
+  Matrix mNodeCrd(3, 8);
+  for (int n = 0; n < 8; n++) {
+    const Vector &crd = nodePointers[n]->getCrds();
+    mNodeCrd(0, n) = crd(0);
+    mNodeCrd(1, n) = crd(1);
+    mNodeCrd(2, n) = crd(2);
+  }
+
+  // nodal pattern vectors (Brick node order; SSPbrick scaling 0.125)
+  Vector xi(8), et(8), ze(8), hut(8), hus(8), hst(8), hstu(8);
+  xi(0)=-0.125; xi(1)= 0.125; xi(2)= 0.125; xi(3)=-0.125; xi(4)=-0.125; xi(5)= 0.125; xi(6)= 0.125; xi(7)=-0.125;
+  et(0)=-0.125; et(1)=-0.125; et(2)= 0.125; et(3)= 0.125; et(4)=-0.125; et(5)=-0.125; et(6)= 0.125; et(7)= 0.125;
+  ze(0)=-0.125; ze(1)=-0.125; ze(2)=-0.125; ze(3)=-0.125; ze(4)= 0.125; ze(5)= 0.125; ze(6)= 0.125; ze(7)= 0.125;
+  hst(0)= 0.125; hst(1)=-0.125; hst(2)= 0.125; hst(3)=-0.125; hst(4)= 0.125; hst(5)=-0.125; hst(6)= 0.125; hst(7)=-0.125;
+  hut(0)= 0.125; hut(1)= 0.125; hut(2)=-0.125; hut(3)=-0.125; hut(4)=-0.125; hut(5)=-0.125; hut(6)= 0.125; hut(7)= 0.125;
+  hus(0)= 0.125; hus(1)=-0.125; hus(2)=-0.125; hus(3)= 0.125; hus(4)=-0.125; hus(5)= 0.125; hus(6)= 0.125; hus(7)=-0.125;
+  hstu(0)=-0.125; hstu(1)= 0.125; hstu(2)=-0.125; hstu(3)= 0.125; hstu(4)= 0.125; hstu(5)=-0.125; hstu(6)= 0.125; hstu(7)=-0.125;
+
+  // shape-function derivatives (local crd) at the element center
+  Matrix dNloc(8, 3);
+  dNloc(0,0)=-0.125; dNloc(1,0)= 0.125; dNloc(2,0)= 0.125; dNloc(3,0)=-0.125;
+  dNloc(4,0)=-0.125; dNloc(5,0)= 0.125; dNloc(6,0)= 0.125; dNloc(7,0)=-0.125;
+  dNloc(0,1)=-0.125; dNloc(1,1)=-0.125; dNloc(2,1)= 0.125; dNloc(3,1)= 0.125;
+  dNloc(4,1)=-0.125; dNloc(5,1)=-0.125; dNloc(6,1)= 0.125; dNloc(7,1)= 0.125;
+  dNloc(0,2)=-0.125; dNloc(1,2)=-0.125; dNloc(2,2)=-0.125; dNloc(3,2)=-0.125;
+  dNloc(4,2)= 0.125; dNloc(5,2)= 0.125; dNloc(6,2)= 0.125; dNloc(7,2)= 0.125;
+
+  // jacobian (center) and its inverse
+  Matrix Jmat(3, 3), Jinv(3, 3);
+  Jmat = mNodeCrd * dNloc;
+  Jmat.Invert(Jinv);
+
+  // nodal coordinate vectors
+  Vector x(8), y(8), z(8);
+  for (int n = 0; n < 8; n++) { x(n) = mNodeCrd(0, n); y(n) = mNodeCrd(1, n); z(n) = mNodeCrd(2, n); }
+
+  // jacobian-determinant coefficient terms
+  double a1=x^xi, a2=x^et, a3=x^ze, a4=x^hut, a5=x^hus, a6=x^hst, a7=x^hstu;
+  double b1=y^xi, b2=y^et, b3=y^ze, b4=y^hut, b5=y^hus, b6=y^hst, b7=y^hstu;
+  double c1=z^xi, c2=z^et, c3=z^ze, c4=z^hut, c5=z^hus, c6=z^hst, c7=z^hstu;
+
+  Vector e1(3), e2(3), e3(3), e4(3), e5(3), e6(3), e7(3);
+  e1(0)=a1; e1(1)=b1; e1(2)=c1;
+  e2(0)=a2; e2(1)=b2; e2(2)=c2;
+  e3(0)=a3; e3(1)=b3; e3(2)=c3;
+  e4(0)=a4; e4(1)=b4; e4(2)=c4;
+  e5(0)=a5; e5(1)=b5; e5(2)=c5;
+  e6(0)=a6; e6(1)=b6; e6(2)=c6;
+  e7(0)=a7; e7(1)=b7; e7(2)=c7;
+
+  double J[20];
+  J[0] = e1^(ladrunoCross(e2,e3));
+  J[1] = 0.0;   // (SSPbrick zeroes J[1..3] after computing them)
+  J[2] = 0.0;
+  J[3] = 0.0;
+  J[4] = (e7^(ladrunoCross(e2,e3))) + (e4^(ladrunoCross(e5,e2))) + (e4^(ladrunoCross(e3,e6)));
+  J[5] = (e1^(ladrunoCross(e7,e3))) + (e4^(ladrunoCross(e5,e1))) + (e3^(ladrunoCross(e5,e6)));
+  J[6] = (e1^(ladrunoCross(e2,e7))) + (e4^(ladrunoCross(e1,e6))) + (e2^(ladrunoCross(e5,e6)));
+  J[7] = -1.0*e1^(ladrunoCross(e5,e6));
+  J[8] = -1.0*e4^(ladrunoCross(e2,e6));
+  J[9] = -1.0*e4^(ladrunoCross(e5,e3));
+  J[10] = e2^(ladrunoCross(e4,e7));
+  J[11] = -1.0*e3^(ladrunoCross(e4,e7));
+  J[12] = e3^(ladrunoCross(e5,e7));
+  J[13] = -1.0*e1^(ladrunoCross(e5,e7));
+  J[14] = e1^(ladrunoCross(e6,e7));
+  J[15] = -1.0*e2^(ladrunoCross(e6,e7));
+  J[16] = 2.0*e4^(ladrunoCross(e5,e6));
+  J[17] = e7^(ladrunoCross(e5,e6));
+  J[18] = e4^(ladrunoCross(e7,e6));
+  J[19] = e4^(ladrunoCross(e5,e7));
+
+  double J0789  = 8.0*(J[0]/3.0 + J[7]/5.0 + J[8]/9.0 + J[9]/9.0);
+  double J0879  = 8.0*(J[0]/3.0 + J[8]/5.0 + J[7]/9.0 + J[9]/9.0);
+  double J0978  = 8.0*(J[0]/3.0 + J[9]/5.0 + J[7]/9.0 + J[8]/9.0);
+  double J417   = 8.0*(J[4]/9.0 + J[17]/27.0);
+  double J518   = 8.0*(J[5]/9.0 + J[18]/27.0);
+  double J619   = 8.0*(J[6]/9.0 + J[19]/27.0);
+  double J11215 = 8.0*(J[1]/9.0 + J[12]/15.0 + J[15]/27.0);
+  double J11512 = 8.0*(J[1]/9.0 + J[15]/15.0 + J[12]/27.0);
+  double J21114 = 8.0*(J[2]/9.0 + J[11]/15.0 + J[14]/27.0);
+  double J21411 = 8.0*(J[2]/9.0 + J[14]/15.0 + J[11]/27.0);
+  double J31013 = 8.0*(J[3]/9.0 + J[10]/15.0 + J[13]/27.0);
+  double J31310 = 8.0*(J[3]/9.0 + J[13]/15.0 + J[10]/27.0);
+  double J789   = 8.0*(J[0]/9.0 + J[7]/15.0 + J[8]/15.0 + J[9]/27.0);
+  double J897   = 8.0*(J[0]/9.0 + J[8]/15.0 + J[9]/15.0 + J[7]/27.0);
+  double J798   = 8.0*(J[0]/9.0 + J[7]/15.0 + J[9]/15.0 + J[8]/27.0);
+  double J174   = 8.0*(J[4]/27.0 + 64.0*J[17]/45.0);
+  double J185   = 8.0*(J[5]/27.0 + 64.0*J[18]/45.0);
+  double J196   = 8.0*(J[6]/27.0 + 64.0*J[19]/45.0);
+  double J16    = 8.0*J[16]/27.0;
+
+  // element volume
+  double mVol = 8.0*(J[0] + (J[7] + J[8] + J[9])/3.0);
+
+  // kinematic (mean-dilatation, B-bar) shape gradients
+  Vector bx(8), by(8), bz(8);
+  bx = (8.0*((b2*c3-c2*b3)*xi + (b3*c1-c3*b1)*et + (b1*c2-c1*b2)*ze) + (8.0/3.0)*((b6*c5-c6*b5)*xi + (b4*c6-c4*b6)*et + (b5*c4-c5*b4)*ze
+       + (b5*c1-c5*b1 + b2*c4-c2*b4)*hst + (b6*c2-c6*b2 + b3*c5-c3*b5)*hut + (b1*c6-c1*b6 + b4*c3-c4*b3)*hus))/mVol;
+  by = (8.0*((c2*a3-a2*c3)*xi + (c3*a1-a3*c1)*et + (c1*a2-a1*c2)*ze) + (8.0/3.0)*((c6*a5-a6*c5)*xi + (c4*a6-a4*c6)*et + (c5*a4-a5*c4)*ze
+       + (c5*a1-a5*c1 + c2*a4-a2*c4)*hst + (c6*a2-a6*c2 + c3*a5-a3*c5)*hut + (c1*a6-a1*c6 + c4*a3-a4*c3)*hus))/mVol;
+  bz = (8.0*((a2*b3-b2*a3)*xi + (a3*b1-b3*a1)*et + (a1*b2-b1*a2)*ze) + (8.0/3.0)*((a6*b5-b6*a5)*xi + (a4*b6-b4*a6)*et + (a5*b4-b5*a4)*ze
+       + (a5*b1-b5*a1 + a2*b4-b2*a4)*hst + (a6*b2-b6*a2 + a3*b5-b3*a5)*hut + (a1*b6-b1*a6 + a4*b3-b4*a3)*hus))/mVol;
+
+  Matrix dNmod(8, 3);
+  for (int i = 0; i < 8; i++) { dNmod(i,0) = bx(i); dNmod(i,1) = by(i); dNmod(i,2) = bz(i); }
+
+  // hourglass transformation matrix G = I - dNmod * X, and gamma vectors
+  Matrix I8(8, 8);
+  for (int i = 0; i < 8; i++) I8(i, i) = 1.0;
+  Matrix G(8, 8);
+  G = I8 - dNmod * mNodeCrd;
+  Vector gst  = G * hst;
+  Vector gut  = G * hut;
+  Vector gus  = G * hus;
+  Vector gstu = G * hstu;
+
+  // mean-dilatation B (membrane modes) and Mben (hourglass mapping)
+  Matrix Bnot(6, 24), Mben(12, 24);
+  Bnot.Zero();
+  Mben.Zero();
+  for (int i = 0; i < 8; i++) {
+    Bnot(0,3*i)   = dNmod(i,0);
+    Bnot(1,3*i+1) = dNmod(i,1);
+    Bnot(2,3*i+2) = dNmod(i,2);
+    Bnot(3,3*i)   = dNmod(i,1);
+    Bnot(3,3*i+1) = dNmod(i,0);
+    Bnot(4,3*i+1) = dNmod(i,2);
+    Bnot(4,3*i+2) = dNmod(i,1);
+    Bnot(5,3*i)   = dNmod(i,2);
+    Bnot(5,3*i+2) = dNmod(i,0);
+
+    Mben(0,3*i)    = gst(i);
+    Mben(1,3*i+1)  = gst(i);
+    Mben(2,3*i+2)  = gst(i);
+    Mben(3,3*i)    = gut(i);
+    Mben(4,3*i+1)  = gut(i);
+    Mben(5,3*i+2)  = gut(i);
+    Mben(6,3*i)    = gus(i);
+    Mben(7,3*i+1)  = gus(i);
+    Mben(8,3*i+2)  = gus(i);
+    Mben(9,3*i)    = gstu(i);
+    Mben(10,3*i+1) = gstu(i);
+    Mben(11,3*i+2) = gstu(i);
+  }
+
+  // FCF terms (12x12)
+  double HstXX = J0879*Jinv(0,0)*Jinv(0,0) + J0789*Jinv(1,0)*Jinv(1,0) + J619*(Jinv(0,0)*Jinv(1,0) + Jinv(1,0)*Jinv(0,0));
+  double HstXY = J0879*Jinv(0,0)*Jinv(0,1) + J0789*Jinv(1,0)*Jinv(1,1) + J619*(Jinv(0,0)*Jinv(1,1) + Jinv(1,0)*Jinv(0,1));
+  double HstXZ = J0879*Jinv(0,0)*Jinv(0,2) + J0789*Jinv(1,0)*Jinv(1,2) + J619*(Jinv(0,0)*Jinv(1,2) + Jinv(1,0)*Jinv(0,2));
+  double HstYY = J0879*Jinv(0,1)*Jinv(0,1) + J0789*Jinv(1,1)*Jinv(1,1) + J619*(Jinv(0,1)*Jinv(1,1) + Jinv(1,1)*Jinv(0,1));
+  double HstYZ = J0879*Jinv(0,1)*Jinv(0,2) + J0789*Jinv(1,1)*Jinv(1,2) + J619*(Jinv(0,1)*Jinv(1,2) + Jinv(1,1)*Jinv(0,2));
+  double HstZZ = J0879*Jinv(0,2)*Jinv(0,2) + J0789*Jinv(1,2)*Jinv(1,2) + J619*(Jinv(0,2)*Jinv(1,2) + Jinv(1,2)*Jinv(0,2));
+
+  double HutXX = J0978*Jinv(1,0)*Jinv(1,0) + J0879*Jinv(2,0)*Jinv(2,0) + J417*(Jinv(1,0)*Jinv(2,0) + Jinv(2,0)*Jinv(1,0));
+  double HutXY = J0978*Jinv(1,0)*Jinv(1,1) + J0879*Jinv(2,0)*Jinv(2,1) + J417*(Jinv(1,0)*Jinv(2,1) + Jinv(2,0)*Jinv(1,1));
+  double HutXZ = J0978*Jinv(1,0)*Jinv(1,2) + J0879*Jinv(2,0)*Jinv(2,2) + J417*(Jinv(1,0)*Jinv(2,2) + Jinv(2,0)*Jinv(1,2));
+  double HutYY = J0978*Jinv(1,1)*Jinv(1,1) + J0879*Jinv(2,1)*Jinv(2,1) + J417*(Jinv(1,1)*Jinv(2,1) + Jinv(2,1)*Jinv(1,1));
+  double HutYZ = J0978*Jinv(1,1)*Jinv(1,2) + J0879*Jinv(2,1)*Jinv(2,2) + J417*(Jinv(1,1)*Jinv(2,2) + Jinv(2,1)*Jinv(1,2));
+  double HutZZ = J0978*Jinv(1,2)*Jinv(1,2) + J0879*Jinv(2,2)*Jinv(2,2) + J417*(Jinv(1,2)*Jinv(2,2) + Jinv(2,2)*Jinv(1,2));
+
+  double HusXX = J0978*Jinv(0,0)*Jinv(0,0) + J0789*Jinv(2,0)*Jinv(2,0) + J518*(Jinv(0,0)*Jinv(2,0) + Jinv(2,0)*Jinv(0,0));
+  double HusXY = J0978*Jinv(0,0)*Jinv(0,1) + J0789*Jinv(2,0)*Jinv(2,1) + J518*(Jinv(0,0)*Jinv(2,1) + Jinv(2,0)*Jinv(0,1));
+  double HusXZ = J0978*Jinv(0,0)*Jinv(0,2) + J0789*Jinv(2,0)*Jinv(2,2) + J518*(Jinv(0,0)*Jinv(2,2) + Jinv(2,0)*Jinv(0,2));
+  double HusYY = J0978*Jinv(0,1)*Jinv(0,1) + J0789*Jinv(2,1)*Jinv(2,1) + J518*(Jinv(0,1)*Jinv(2,1) + Jinv(2,1)*Jinv(0,1));
+  double HusYZ = J0978*Jinv(0,1)*Jinv(0,2) + J0789*Jinv(2,1)*Jinv(2,2) + J518*(Jinv(0,1)*Jinv(2,2) + Jinv(2,1)*Jinv(0,2));
+  double HusZZ = J0978*Jinv(0,2)*Jinv(0,2) + J0789*Jinv(2,2)*Jinv(2,2) + J518*(Jinv(0,2)*Jinv(2,2) + Jinv(2,2)*Jinv(0,2));
+
+  double HstuXX = J897*Jinv(0,0)*Jinv(0,0) + J798*Jinv(1,0)*Jinv(1,0) + J789*Jinv(2,0)*Jinv(2,0) + J185*(Jinv(0,0)*Jinv(2,0) + Jinv(2,0)*Jinv(0,0))
+                  + J196*(Jinv(0,0)*Jinv(1,0) + Jinv(1,0)*Jinv(0,0)) + J174*(Jinv(1,0)*Jinv(2,0) + Jinv(2,0)*Jinv(1,0));
+  double HstuXY = J897*Jinv(0,0)*Jinv(0,1) + J798*Jinv(1,0)*Jinv(1,1) + J789*Jinv(2,0)*Jinv(2,1) + J185*(Jinv(0,0)*Jinv(2,1) + Jinv(2,0)*Jinv(0,1))
+                  + J196*(Jinv(0,0)*Jinv(1,1) + Jinv(1,0)*Jinv(0,1)) + J174*(Jinv(1,0)*Jinv(2,1) + Jinv(2,0)*Jinv(1,1));
+  double HstuXZ = J897*Jinv(0,0)*Jinv(0,2) + J798*Jinv(1,0)*Jinv(1,2) + J789*Jinv(2,0)*Jinv(2,2) + J185*(Jinv(0,0)*Jinv(2,2) + Jinv(2,0)*Jinv(0,2))
+                  + J196*(Jinv(0,0)*Jinv(1,2) + Jinv(1,0)*Jinv(0,2)) + J174*(Jinv(1,0)*Jinv(2,2) + Jinv(2,0)*Jinv(1,2));
+  double HstuYY = J897*Jinv(0,1)*Jinv(0,1) + J798*Jinv(1,1)*Jinv(1,1) + J789*Jinv(2,1)*Jinv(2,1) + J185*(Jinv(0,1)*Jinv(2,1) + Jinv(2,1)*Jinv(0,1))
+                  + J196*(Jinv(0,1)*Jinv(1,1) + Jinv(1,1)*Jinv(0,1)) + J174*(Jinv(1,1)*Jinv(2,1) + Jinv(2,1)*Jinv(1,1));
+  double HstuYZ = J897*Jinv(0,1)*Jinv(0,2) + J798*Jinv(1,1)*Jinv(1,2) + J789*Jinv(2,1)*Jinv(2,2) + J185*(Jinv(0,1)*Jinv(2,2) + Jinv(2,1)*Jinv(0,2))
+                  + J196*(Jinv(0,1)*Jinv(1,2) + Jinv(1,1)*Jinv(0,2)) + J174*(Jinv(1,1)*Jinv(2,2) + Jinv(2,1)*Jinv(1,2));
+  double HstuZZ = J897*Jinv(0,2)*Jinv(0,2) + J798*Jinv(1,2)*Jinv(1,2) + J789*Jinv(2,2)*Jinv(2,2) + J185*(Jinv(0,2)*Jinv(2,2) + Jinv(2,2)*Jinv(0,2))
+                  + J196*(Jinv(0,2)*Jinv(1,2) + Jinv(1,2)*Jinv(0,2)) + J174*(Jinv(1,2)*Jinv(2,2) + Jinv(2,2)*Jinv(1,2));
+
+  double IttXX = J0879*Jinv(0,0)*Jinv(2,0) + J417*Jinv(0,0)*Jinv(1,0) + J518*Jinv(1,0)*Jinv(1,0) + J619*Jinv(1,0)*Jinv(2,0);
+  double IttXY = J0879*Jinv(0,0)*Jinv(2,1) + J417*Jinv(0,0)*Jinv(1,1) + J518*Jinv(1,0)*Jinv(1,1) + J619*Jinv(1,0)*Jinv(2,1);
+  double IttXZ = J0879*Jinv(0,0)*Jinv(2,2) + J417*Jinv(0,0)*Jinv(1,2) + J518*Jinv(1,0)*Jinv(1,2) + J619*Jinv(1,0)*Jinv(2,2);
+  double IttYX = J0879*Jinv(0,1)*Jinv(2,0) + J417*Jinv(0,1)*Jinv(1,0) + J518*Jinv(1,1)*Jinv(1,0) + J619*Jinv(1,1)*Jinv(2,0);
+  double IttYY = J0879*Jinv(0,1)*Jinv(2,1) + J417*Jinv(0,1)*Jinv(1,1) + J518*Jinv(1,1)*Jinv(1,1) + J619*Jinv(1,1)*Jinv(2,1);
+  double IttYZ = J0879*Jinv(0,1)*Jinv(2,2) + J417*Jinv(0,1)*Jinv(1,2) + J518*Jinv(1,1)*Jinv(1,2) + J619*Jinv(1,1)*Jinv(2,2);
+  double IttZX = J0879*Jinv(0,2)*Jinv(2,0) + J417*Jinv(0,2)*Jinv(1,0) + J518*Jinv(1,2)*Jinv(1,0) + J619*Jinv(1,2)*Jinv(2,0);
+  double IttZY = J0879*Jinv(0,2)*Jinv(2,1) + J417*Jinv(0,2)*Jinv(1,1) + J518*Jinv(1,2)*Jinv(1,1) + J619*Jinv(1,2)*Jinv(2,1);
+  double IttZZ = J0879*Jinv(0,2)*Jinv(2,2) + J417*Jinv(0,2)*Jinv(1,2) + J518*Jinv(1,2)*Jinv(1,2) + J619*Jinv(1,2)*Jinv(2,2);
+
+  double IssXX = J0789*Jinv(1,0)*Jinv(2,0) + J417*Jinv(0,0)*Jinv(0,0) + J518*Jinv(1,0)*Jinv(0,0) + J619*Jinv(0,0)*Jinv(2,0);
+  double IssXY = J0789*Jinv(1,0)*Jinv(2,1) + J417*Jinv(0,0)*Jinv(0,1) + J518*Jinv(1,0)*Jinv(0,1) + J619*Jinv(0,0)*Jinv(2,1);
+  double IssXZ = J0789*Jinv(1,0)*Jinv(2,2) + J417*Jinv(0,0)*Jinv(0,2) + J518*Jinv(1,0)*Jinv(0,2) + J619*Jinv(0,0)*Jinv(2,2);
+  double IssYX = J0789*Jinv(1,1)*Jinv(2,0) + J417*Jinv(0,1)*Jinv(0,0) + J518*Jinv(1,1)*Jinv(0,0) + J619*Jinv(0,1)*Jinv(2,0);
+  double IssYY = J0789*Jinv(1,1)*Jinv(2,1) + J417*Jinv(0,1)*Jinv(0,1) + J518*Jinv(1,1)*Jinv(0,1) + J619*Jinv(0,1)*Jinv(2,1);
+  double IssYZ = J0789*Jinv(1,1)*Jinv(2,2) + J417*Jinv(0,1)*Jinv(0,2) + J518*Jinv(1,1)*Jinv(0,2) + J619*Jinv(0,1)*Jinv(2,2);
+  double IssZX = J0789*Jinv(1,2)*Jinv(2,0) + J417*Jinv(0,2)*Jinv(0,0) + J518*Jinv(1,2)*Jinv(0,0) + J619*Jinv(0,2)*Jinv(2,0);
+  double IssZY = J0789*Jinv(1,2)*Jinv(2,1) + J417*Jinv(0,2)*Jinv(0,1) + J518*Jinv(1,2)*Jinv(0,1) + J619*Jinv(0,2)*Jinv(2,1);
+  double IssZZ = J0789*Jinv(1,2)*Jinv(2,2) + J417*Jinv(0,2)*Jinv(0,2) + J518*Jinv(1,2)*Jinv(0,2) + J619*Jinv(0,2)*Jinv(2,2);
+
+  double IuuXX = J0978*Jinv(1,0)*Jinv(0,0) + J417*Jinv(2,0)*Jinv(0,0) + J518*Jinv(1,0)*Jinv(2,0) + J619*Jinv(2,0)*Jinv(2,0);
+  double IuuXY = J0978*Jinv(1,0)*Jinv(0,1) + J417*Jinv(2,0)*Jinv(0,1) + J518*Jinv(1,0)*Jinv(2,1) + J619*Jinv(2,0)*Jinv(2,1);
+  double IuuXZ = J0978*Jinv(1,0)*Jinv(0,2) + J417*Jinv(2,0)*Jinv(0,2) + J518*Jinv(1,0)*Jinv(2,2) + J619*Jinv(2,0)*Jinv(2,2);
+  double IuuYX = J0978*Jinv(1,1)*Jinv(0,0) + J417*Jinv(2,1)*Jinv(0,0) + J518*Jinv(1,1)*Jinv(2,0) + J619*Jinv(2,1)*Jinv(2,0);
+  double IuuYY = J0978*Jinv(1,1)*Jinv(0,1) + J417*Jinv(2,1)*Jinv(0,1) + J518*Jinv(1,1)*Jinv(2,1) + J619*Jinv(2,1)*Jinv(2,1);
+  double IuuYZ = J0978*Jinv(1,1)*Jinv(0,2) + J417*Jinv(2,1)*Jinv(0,2) + J518*Jinv(1,1)*Jinv(2,2) + J619*Jinv(2,1)*Jinv(2,2);
+  double IuuZX = J0978*Jinv(1,2)*Jinv(0,0) + J417*Jinv(2,2)*Jinv(0,0) + J518*Jinv(1,2)*Jinv(2,0) + J619*Jinv(2,2)*Jinv(2,0);
+  double IuuZY = J0978*Jinv(1,2)*Jinv(0,1) + J417*Jinv(2,2)*Jinv(0,1) + J518*Jinv(1,2)*Jinv(2,1) + J619*Jinv(2,2)*Jinv(2,1);
+  double IuuZZ = J0978*Jinv(1,2)*Jinv(0,2) + J417*Jinv(2,2)*Jinv(0,2) + J518*Jinv(1,2)*Jinv(2,2) + J619*Jinv(2,2)*Jinv(2,2);
+
+  double IstXX = J31013*Jinv(0,0)*Jinv(0,0) + J31310*Jinv(1,0)*Jinv(1,0) + J21411*Jinv(2,0)*Jinv(1,0) + J11512*Jinv(2,0)*Jinv(0,0) + J16*(Jinv(0,0)*Jinv(1,0) + Jinv(1,0)*Jinv(0,0));
+  double IstXY = J31013*Jinv(0,0)*Jinv(0,1) + J31310*Jinv(1,0)*Jinv(1,1) + J21411*Jinv(2,0)*Jinv(1,1) + J11512*Jinv(2,0)*Jinv(0,1) + J16*(Jinv(0,0)*Jinv(1,1) + Jinv(1,0)*Jinv(0,1));
+  double IstXZ = J31013*Jinv(0,0)*Jinv(0,2) + J31310*Jinv(1,0)*Jinv(1,2) + J21411*Jinv(2,0)*Jinv(1,2) + J11512*Jinv(2,0)*Jinv(0,2) + J16*(Jinv(0,0)*Jinv(1,2) + Jinv(1,0)*Jinv(0,2));
+  double IstYX = J31013*Jinv(0,1)*Jinv(0,0) + J31310*Jinv(1,1)*Jinv(1,0) + J21411*Jinv(2,1)*Jinv(1,0) + J11512*Jinv(2,1)*Jinv(0,0) + J16*(Jinv(0,1)*Jinv(1,0) + Jinv(1,1)*Jinv(0,0));
+  double IstYY = J31013*Jinv(0,1)*Jinv(0,1) + J31310*Jinv(1,1)*Jinv(1,1) + J21411*Jinv(2,1)*Jinv(1,1) + J11512*Jinv(2,1)*Jinv(0,1) + J16*(Jinv(0,1)*Jinv(1,1) + Jinv(1,1)*Jinv(0,1));
+  double IstYZ = J31013*Jinv(0,1)*Jinv(0,2) + J31310*Jinv(1,1)*Jinv(1,2) + J21411*Jinv(2,1)*Jinv(1,2) + J11512*Jinv(2,1)*Jinv(0,2) + J16*(Jinv(0,1)*Jinv(1,2) + Jinv(1,1)*Jinv(0,2));
+  double IstZX = J31013*Jinv(0,2)*Jinv(0,0) + J31310*Jinv(1,2)*Jinv(1,0) + J21411*Jinv(2,2)*Jinv(1,0) + J11512*Jinv(2,2)*Jinv(0,0) + J16*(Jinv(0,2)*Jinv(1,0) + Jinv(1,2)*Jinv(0,0));
+  double IstZY = J31013*Jinv(0,2)*Jinv(0,1) + J31310*Jinv(1,2)*Jinv(1,1) + J21411*Jinv(2,2)*Jinv(1,1) + J11512*Jinv(2,2)*Jinv(0,1) + J16*(Jinv(0,2)*Jinv(1,1) + Jinv(1,2)*Jinv(0,1));
+  double IstZZ = J31013*Jinv(0,2)*Jinv(0,2) + J31310*Jinv(1,2)*Jinv(1,2) + J21411*Jinv(2,2)*Jinv(1,2) + J11512*Jinv(2,2)*Jinv(0,2) + J16*(Jinv(0,2)*Jinv(1,2) + Jinv(1,2)*Jinv(0,2));
+
+  double IutXX = J21114*Jinv(0,0)*Jinv(1,0) + J31013*Jinv(0,0)*Jinv(2,0) + J11215*Jinv(1,0)*Jinv(1,0) + J11512*Jinv(2,0)*Jinv(2,0) + J16*(Jinv(1,0)*Jinv(2,0) + Jinv(2,0)*Jinv(1,0));
+  double IutXY = J21114*Jinv(0,0)*Jinv(1,1) + J31013*Jinv(0,0)*Jinv(2,1) + J11215*Jinv(1,0)*Jinv(1,1) + J11512*Jinv(2,0)*Jinv(2,1) + J16*(Jinv(1,0)*Jinv(2,1) + Jinv(2,0)*Jinv(1,1));
+  double IutXZ = J21114*Jinv(0,0)*Jinv(1,2) + J31013*Jinv(0,0)*Jinv(2,2) + J11215*Jinv(1,0)*Jinv(1,2) + J11512*Jinv(2,0)*Jinv(2,2) + J16*(Jinv(1,0)*Jinv(2,2) + Jinv(2,0)*Jinv(1,2));
+  double IutYX = J21114*Jinv(0,1)*Jinv(1,0) + J31013*Jinv(0,1)*Jinv(2,0) + J11215*Jinv(1,1)*Jinv(1,0) + J11512*Jinv(2,1)*Jinv(2,0) + J16*(Jinv(1,1)*Jinv(2,0) + Jinv(2,1)*Jinv(1,0));
+  double IutYY = J21114*Jinv(0,1)*Jinv(1,1) + J31013*Jinv(0,1)*Jinv(2,1) + J11215*Jinv(1,1)*Jinv(1,1) + J11512*Jinv(2,1)*Jinv(2,1) + J16*(Jinv(1,1)*Jinv(2,1) + Jinv(2,1)*Jinv(1,1));
+  double IutYZ = J21114*Jinv(0,1)*Jinv(1,2) + J31013*Jinv(0,1)*Jinv(2,2) + J11215*Jinv(1,1)*Jinv(1,2) + J11512*Jinv(2,1)*Jinv(2,2) + J16*(Jinv(1,1)*Jinv(2,2) + Jinv(2,1)*Jinv(1,2));
+  double IutZX = J21114*Jinv(0,2)*Jinv(1,0) + J31013*Jinv(0,2)*Jinv(2,0) + J11215*Jinv(1,2)*Jinv(1,0) + J11512*Jinv(2,2)*Jinv(2,0) + J16*(Jinv(1,2)*Jinv(2,0) + Jinv(2,2)*Jinv(1,0));
+  double IutZY = J21114*Jinv(0,2)*Jinv(1,1) + J31013*Jinv(0,2)*Jinv(2,1) + J11215*Jinv(1,2)*Jinv(1,1) + J11512*Jinv(2,2)*Jinv(2,1) + J16*(Jinv(1,2)*Jinv(2,1) + Jinv(2,2)*Jinv(1,1));
+  double IutZZ = J21114*Jinv(0,2)*Jinv(1,2) + J31013*Jinv(0,2)*Jinv(2,2) + J11215*Jinv(1,2)*Jinv(1,2) + J11512*Jinv(2,2)*Jinv(2,2) + J16*(Jinv(1,2)*Jinv(2,2) + Jinv(2,2)*Jinv(1,2));
+
+  double IusXX = J21114*Jinv(0,0)*Jinv(0,0) + J11215*Jinv(1,0)*Jinv(0,0) + J31310*Jinv(1,0)*Jinv(2,0) + J21411*Jinv(2,0)*Jinv(2,0) + J16*(Jinv(0,0)*Jinv(2,0) + Jinv(2,0)*Jinv(0,0));
+  double IusXY = J21114*Jinv(0,0)*Jinv(0,1) + J11215*Jinv(1,0)*Jinv(0,1) + J31310*Jinv(1,0)*Jinv(2,1) + J21411*Jinv(2,0)*Jinv(2,1) + J16*(Jinv(0,0)*Jinv(2,1) + Jinv(2,0)*Jinv(0,1));
+  double IusXZ = J21114*Jinv(0,0)*Jinv(0,2) + J11215*Jinv(1,0)*Jinv(0,2) + J31310*Jinv(1,0)*Jinv(2,2) + J21411*Jinv(2,0)*Jinv(2,2) + J16*(Jinv(0,0)*Jinv(2,2) + Jinv(2,0)*Jinv(0,2));
+  double IusYX = J21114*Jinv(0,1)*Jinv(0,0) + J11215*Jinv(1,1)*Jinv(0,0) + J31310*Jinv(1,1)*Jinv(2,0) + J21411*Jinv(2,1)*Jinv(2,0) + J16*(Jinv(0,1)*Jinv(2,0) + Jinv(2,1)*Jinv(0,0));
+  double IusYY = J21114*Jinv(0,1)*Jinv(0,1) + J11215*Jinv(1,1)*Jinv(0,1) + J31310*Jinv(1,1)*Jinv(2,1) + J21411*Jinv(2,1)*Jinv(2,1) + J16*(Jinv(0,1)*Jinv(2,1) + Jinv(2,1)*Jinv(0,1));
+  double IusYZ = J21114*Jinv(0,1)*Jinv(0,2) + J11215*Jinv(1,1)*Jinv(0,2) + J31310*Jinv(1,1)*Jinv(2,2) + J21411*Jinv(2,1)*Jinv(2,2) + J16*(Jinv(0,1)*Jinv(2,2) + Jinv(2,1)*Jinv(0,2));
+  double IusZX = J21114*Jinv(0,2)*Jinv(0,0) + J11215*Jinv(1,2)*Jinv(0,0) + J31310*Jinv(1,2)*Jinv(2,0) + J21411*Jinv(2,2)*Jinv(2,0) + J16*(Jinv(0,2)*Jinv(2,0) + Jinv(2,2)*Jinv(0,0));
+  double IusZY = J21114*Jinv(0,2)*Jinv(0,1) + J11215*Jinv(1,2)*Jinv(0,1) + J31310*Jinv(1,2)*Jinv(2,1) + J21411*Jinv(2,2)*Jinv(2,1) + J16*(Jinv(0,2)*Jinv(2,1) + Jinv(2,2)*Jinv(0,1));
+  double IusZZ = J21114*Jinv(0,2)*Jinv(0,2) + J11215*Jinv(1,2)*Jinv(0,2) + J31310*Jinv(1,2)*Jinv(2,2) + J21411*Jinv(2,2)*Jinv(2,2) + J16*(Jinv(0,2)*Jinv(2,2) + Jinv(2,2)*Jinv(0,2));
+
+  // constitutive constants from the INITIAL tangent (=> constant stabilization)
+  const Matrix &CmatI = materialPointers[0]->getInitialTangent();
+  double C1 = CmatI(0,0);
+  double C2 = CmatI(0,1);
+  double C3 = CmatI(3,3);
+  double C4 = C2 + C3;
+
+  Matrix FCF(12, 12);
+  // block11
+  FCF(0,0) = C1*HstXX + C3*(HstYY + HstZZ);
+  FCF(0,1) = C4*HstXY;  FCF(0,2) = C4*HstXZ;
+  FCF(1,0) = FCF(0,1);  FCF(1,1) = C1*HstYY + C3*(HstXX + HstZZ);  FCF(1,2) = C4*HstYZ;
+  FCF(2,0) = FCF(0,2);  FCF(2,1) = FCF(1,2);  FCF(2,2) = C1*HstZZ + C3*(HstYY + HstXX);
+  // block12
+  FCF(0,3) = C1*IttXX + C3*(IttYY + IttZZ);  FCF(0,4) = C2*IttXY + C3*IttYX;  FCF(0,5) = C2*IttXZ + C3*IttZX;
+  FCF(1,3) = C2*IttYX + C3*IttXY;  FCF(1,4) = C1*IttYY + C3*(IttXX + IttZZ);  FCF(1,5) = C2*IttYZ + C3*IttZY;
+  FCF(2,3) = C2*IttZX + C3*IttXZ;  FCF(2,4) = C2*IttZY + C3*IttYZ;  FCF(2,5) = C1*IttZZ + C3*(IttYY + IttXX);
+  // block13
+  FCF(0,6) = C1*IssXX + C3*(IssYY + IssZZ);  FCF(0,7) = C2*IssXY + C3*IssYX;  FCF(0,8) = C2*IssXZ + C3*IssZX;
+  FCF(1,6) = C2*IssYX + C3*IssXY;  FCF(1,7) = C1*IssYY + C3*(IssXX + IssZZ);  FCF(1,8) = C2*IssYZ + C3*IssZY;
+  FCF(2,6) = C2*IssZX + C3*IssXZ;  FCF(2,7) = C2*IssZY + C3*IssYZ;  FCF(2,8) = C1*IssZZ + C3*(IssYY + IssXX);
+  // block14
+  FCF(0,9)  = C3*(IstYY + IstZZ);  FCF(0,10) = C3*IstXY;  FCF(0,11) = C3*IstXZ;
+  FCF(1,9)  = C3*IstYX;  FCF(1,10) = C3*(IstXX + IstZZ);  FCF(1,11) = C3*IstYZ;
+  FCF(2,9)  = C3*IstZX;  FCF(2,10) = C3*IstZY;  FCF(2,11) = C3*(IstYY + IstXX);
+  // block21
+  FCF(3,0) = C1*IttXX + C3*(IttYY + IttZZ);  FCF(3,1) = C2*IttYX + C3*IttXY;  FCF(3,2) = C2*IttZX + C3*IttXZ;
+  FCF(4,0) = C2*IttXY + C3*IttYX;  FCF(4,1) = C1*IttYY + C3*(IttXX + IttZZ);  FCF(4,2) = C2*IttZY + C3*IttYZ;
+  FCF(5,0) = C2*IttXZ + C3*IttZX;  FCF(5,1) = C2*IttYZ + C3*IttZY;  FCF(5,2) = C1*IttZZ + C3*(IttYY + IttXX);
+  // block22
+  FCF(3,3) = C1*HutXX + C3*(HutYY + HutZZ);  FCF(3,4) = C4*HutXY;  FCF(3,5) = C4*HutXZ;
+  FCF(4,3) = FCF(3,4);  FCF(4,4) = C1*HutYY + C3*(HutXX + HutZZ);  FCF(4,5) = C4*HutYZ;
+  FCF(5,3) = FCF(3,5);  FCF(5,4) = FCF(4,5);  FCF(5,5) = C1*HutZZ + C3*(HutYY + HutXX);
+  // block23
+  FCF(3,6) = C1*IuuXX + C3*(IuuYY + IuuZZ);  FCF(3,7) = C2*IuuXY + C3*IuuYX;  FCF(3,8) = C2*IuuXZ + C3*IuuZX;
+  FCF(4,6) = C2*IuuYX + C3*IuuXY;  FCF(4,7) = C1*IuuYY + C3*(IuuXX + IuuZZ);  FCF(4,8) = C2*IuuYZ + C3*IuuZY;
+  FCF(5,6) = C2*IuuZX + C3*IuuXZ;  FCF(5,7) = C2*IuuZY + C3*IuuYZ;  FCF(5,8) = C1*IuuZZ + C3*(IuuYY + IuuXX);
+  // block24
+  FCF(3,9)  = C3*(IutYY + IutZZ);  FCF(3,10) = C3*IutXY;  FCF(3,11) = C3*IutXZ;
+  FCF(4,9)  = C3*IutYX;  FCF(4,10) = C3*(IutXX + IutZZ);  FCF(4,11) = C3*IutYZ;
+  FCF(5,9)  = C3*IutZX;  FCF(5,10) = C3*IutZY;  FCF(5,11) = C3*(IutYY + IutXX);
+  // block31
+  FCF(6,0) = C1*IssXX + C3*(IssYY + IssZZ);  FCF(6,1) = C2*IssYX + C3*IssXY;  FCF(6,2) = C2*IssZX + C3*IssXZ;
+  FCF(7,0) = C2*IssXY + C3*IssYX;  FCF(7,1) = C1*IssYY + C3*(IssXX + IssZZ);  FCF(7,2) = C2*IssZY + C3*IssYZ;
+  FCF(8,0) = C2*IssXZ + C3*IssZX;  FCF(8,1) = C2*IssYZ + C3*IssZY;  FCF(8,2) = C1*IssZZ + C3*(IssYY + IssXX);
+  // block32
+  FCF(6,3) = C1*IuuXX + C3*(IuuYY + IuuZZ);  FCF(6,4) = C2*IuuYX + C3*IuuXY;  FCF(6,5) = C2*IuuZX + C3*IuuXZ;
+  FCF(7,3) = C2*IuuXY + C3*IuuYX;  FCF(7,4) = C1*IuuYY + C3*(IuuXX + IuuZZ);  FCF(7,5) = C2*IuuZY + C3*IuuYZ;
+  FCF(8,3) = C2*IuuXZ + C3*IuuZX;  FCF(8,4) = C2*IuuYZ + C3*IuuZY;  FCF(8,5) = C1*IuuZZ + C3*(IuuYY + IuuXX);
+  // block33
+  FCF(6,6) = C1*HusXX + C3*(HusYY + HusZZ);  FCF(6,7) = C4*HusXY;  FCF(6,8) = C4*HusXZ;
+  FCF(7,6) = FCF(6,7);  FCF(7,7) = C1*HusYY + C3*(HusXX + HusZZ);  FCF(7,8) = C4*HusYZ;
+  FCF(8,6) = FCF(6,8);  FCF(8,7) = FCF(7,8);  FCF(8,8) = C1*HusZZ + C3*(HusYY + HusXX);
+  // block34
+  FCF(6,9)  = C3*(IusYY + IusZZ);  FCF(6,10) = C3*IusXY;  FCF(6,11) = C3*IusXZ;
+  FCF(7,9)  = C3*IusYX;  FCF(7,10) = C3*(IusXX + IusZZ);  FCF(7,11) = C3*IusYZ;
+  FCF(8,9)  = C3*IusZX;  FCF(8,10) = C3*IusZY;  FCF(8,11) = C3*(IusYY + IusXX);
+  // block41
+  FCF(9,0)  = C3*(IstYY + IstZZ);  FCF(9,1)  = C3*IstYX;  FCF(9,2)  = C3*IstZX;
+  FCF(10,0) = C3*IstXY;  FCF(10,1) = C3*(IstXX + IstZZ);  FCF(10,2) = C3*IstZY;
+  FCF(11,0) = C3*IstXZ;  FCF(11,1) = C3*IstYZ;  FCF(11,2) = C3*(IstYY + IstXX);
+  // block42
+  FCF(9,3)  = C3*(IutYY + IutZZ);  FCF(9,4)  = C3*IutYX;  FCF(9,5)  = C3*IutZX;
+  FCF(10,3) = C3*IutXY;  FCF(10,4) = C3*(IutXX + IutZZ);  FCF(10,5) = C3*IutZY;
+  FCF(11,3) = C3*IutXZ;  FCF(11,4) = C3*IutYZ;  FCF(11,5) = C3*(IutYY + IutXX);
+  // block43
+  FCF(9,6)  = C3*(IusYY + IusZZ);  FCF(9,7)  = C3*IusYX;  FCF(9,8)  = C3*IusZX;
+  FCF(10,6) = C3*IusXY;  FCF(10,7) = C3*(IusXX + IusZZ);  FCF(10,8) = C3*IusZY;
+  FCF(11,6) = C3*IusXZ;  FCF(11,7) = C3*IusYZ;  FCF(11,8) = C3*(IusYY + IusXX);
+  // block44
+  FCF(9,9)   = C3*(HstuYY + HstuZZ);  FCF(9,10)  = C3*HstuXY;  FCF(9,11)  = C3*HstuXZ;
+  FCF(10,9)  = FCF(9,10);  FCF(10,10) = C3*(HstuXX + HstuZZ);  FCF(10,11) = C3*HstuYZ;
+  FCF(11,9)  = FCF(9,11);  FCF(11,10) = FCF(10,11);  FCF(11,11) = C3*(HstuYY + HstuXX);
+
+  // enhanced-strain constitutive coefficients
+  double CssXX = C1*Jinv(0,0)*Jinv(0,0) + C3*(Jinv(0,1)*Jinv(0,1) + Jinv(0,2)*Jinv(0,2));
+  double CssXY = C4*Jinv(0,0)*Jinv(0,1);
+  double CssXZ = C4*Jinv(0,0)*Jinv(0,2);
+  double CssYY = C1*Jinv(0,1)*Jinv(0,1) + C3*(Jinv(0,0)*Jinv(0,0) + Jinv(0,2)*Jinv(0,2));
+  double CssYZ = C4*Jinv(0,1)*Jinv(0,2);
+  double CssZZ = C1*Jinv(0,2)*Jinv(0,2) + C3*(Jinv(0,0)*Jinv(0,0) + Jinv(0,1)*Jinv(0,1));
+
+  double CttXX = C1*Jinv(1,0)*Jinv(1,0) + C3*(Jinv(1,1)*Jinv(1,1) + Jinv(1,2)*Jinv(1,2));
+  double CttXY = C4*Jinv(1,0)*Jinv(1,1);
+  double CttXZ = C4*Jinv(1,0)*Jinv(1,2);
+  double CttYY = C1*Jinv(1,1)*Jinv(1,1) + C3*(Jinv(1,0)*Jinv(1,0) + Jinv(1,2)*Jinv(1,2));
+  double CttYZ = C4*Jinv(1,1)*Jinv(1,2);
+  double CttZZ = C1*Jinv(1,2)*Jinv(1,2) + C3*(Jinv(1,0)*Jinv(1,0) + Jinv(1,1)*Jinv(1,1));
+
+  double CuuXX = C1*Jinv(2,0)*Jinv(2,0) + C3*(Jinv(2,1)*Jinv(2,1) + Jinv(2,2)*Jinv(2,2));
+  double CuuXY = C4*Jinv(2,0)*Jinv(2,1);
+  double CuuXZ = C4*Jinv(2,0)*Jinv(2,2);
+  double CuuYY = C1*Jinv(2,1)*Jinv(2,1) + C3*(Jinv(2,0)*Jinv(2,0) + Jinv(2,2)*Jinv(2,2));
+  double CuuYZ = C4*Jinv(2,1)*Jinv(2,2);
+  double CuuZZ = C1*Jinv(2,2)*Jinv(2,2) + C3*(Jinv(2,0)*Jinv(2,0) + Jinv(2,1)*Jinv(2,1));
+
+  double CstXX = C1*Jinv(0,0)*Jinv(1,0) + C3*(Jinv(0,1)*Jinv(1,1) + Jinv(0,2)*Jinv(1,2));
+  double CstXY = C2*Jinv(0,0)*Jinv(1,1) + C3*Jinv(0,1)*Jinv(1,0);
+  double CstXZ = C2*Jinv(0,0)*Jinv(1,2) + C3*Jinv(0,2)*Jinv(1,0);
+  double CstYX = C2*Jinv(0,1)*Jinv(1,0) + C3*Jinv(0,0)*Jinv(1,1);
+  double CstYY = C1*Jinv(0,1)*Jinv(1,1) + C3*(Jinv(0,0)*Jinv(1,0) + Jinv(0,2)*Jinv(1,2));
+  double CstYZ = C2*Jinv(0,1)*Jinv(1,2) + C3*Jinv(0,2)*Jinv(1,1);
+  double CstZX = C2*Jinv(0,2)*Jinv(1,0) + C3*Jinv(0,0)*Jinv(1,2);
+  double CstZY = C2*Jinv(0,2)*Jinv(1,1) + C3*Jinv(0,1)*Jinv(1,2);
+  double CstZZ = C1*Jinv(0,2)*Jinv(1,2) + C3*(Jinv(0,0)*Jinv(1,0) + Jinv(0,1)*Jinv(1,1));
+
+  double CsuXX = C1*Jinv(0,0)*Jinv(2,0) + C3*(Jinv(0,1)*Jinv(2,1) + Jinv(0,2)*Jinv(2,2));
+  double CsuXY = C2*Jinv(0,0)*Jinv(2,1) + C3*Jinv(0,1)*Jinv(2,0);
+  double CsuXZ = C2*Jinv(0,0)*Jinv(2,2) + C3*Jinv(0,2)*Jinv(2,0);
+  double CsuYX = C2*Jinv(0,1)*Jinv(2,0) + C3*Jinv(0,0)*Jinv(2,1);
+  double CsuYY = C1*Jinv(0,1)*Jinv(2,1) + C3*(Jinv(0,0)*Jinv(2,0) + Jinv(0,2)*Jinv(2,2));
+  double CsuYZ = C2*Jinv(0,1)*Jinv(2,2) + C3*Jinv(0,2)*Jinv(2,1);
+  double CsuZX = C2*Jinv(0,2)*Jinv(2,0) + C3*Jinv(0,0)*Jinv(2,2);
+  double CsuZY = C2*Jinv(0,2)*Jinv(2,1) + C3*Jinv(0,1)*Jinv(2,2);
+  double CsuZZ = C1*Jinv(0,2)*Jinv(2,2) + C3*(Jinv(0,0)*Jinv(2,0) + Jinv(0,1)*Jinv(2,1));
+
+  double CtuXX = C1*Jinv(1,0)*Jinv(2,0) + C3*(Jinv(1,1)*Jinv(2,1) + Jinv(1,2)*Jinv(2,2));
+  double CtuXY = C2*Jinv(1,0)*Jinv(2,1) + C3*Jinv(1,1)*Jinv(2,0);
+  double CtuXZ = C2*Jinv(1,0)*Jinv(2,2) + C3*Jinv(1,2)*Jinv(2,0);
+  double CtuYX = C2*Jinv(1,1)*Jinv(2,0) + C3*Jinv(1,0)*Jinv(2,1);
+  double CtuYY = C1*Jinv(1,1)*Jinv(2,1) + C3*(Jinv(1,0)*Jinv(2,0) + Jinv(1,2)*Jinv(2,2));
+  double CtuYZ = C2*Jinv(1,1)*Jinv(2,2) + C3*Jinv(1,2)*Jinv(2,1);
+  double CtuZX = C2*Jinv(1,2)*Jinv(2,0) + C3*Jinv(1,0)*Jinv(2,2);
+  double CtuZY = C2*Jinv(1,2)*Jinv(2,1) + C3*Jinv(1,1)*Jinv(2,2);
+  double CtuZZ = C1*Jinv(1,2)*Jinv(2,2) + C3*(Jinv(1,0)*Jinv(2,0) + Jinv(1,1)*Jinv(2,1));
+
+  Matrix FeCFe(9, 9), FeCFeInv(9, 9);
+  // block11
+  FeCFe(0,0) = CssXX*J0789;  FeCFe(0,1) = CssXY*J0789;  FeCFe(0,2) = CssXZ*J0789;
+  FeCFe(1,0) = FeCFe(0,1);   FeCFe(1,1) = CssYY*J0789;  FeCFe(1,2) = CssYZ*J0789;
+  FeCFe(2,0) = FeCFe(0,2);   FeCFe(2,1) = FeCFe(1,2);   FeCFe(2,2) = CssZZ*J0789;
+  // block12
+  FeCFe(0,3) = CstXX*J619;  FeCFe(0,4) = CstXY*J619;  FeCFe(0,5) = CstXZ*J619;
+  FeCFe(1,3) = CstYX*J619;  FeCFe(1,4) = CstYY*J619;  FeCFe(1,5) = CstYZ*J619;
+  FeCFe(2,3) = CstZX*J619;  FeCFe(2,4) = CstZY*J619;  FeCFe(2,5) = CstZZ*J619;
+  // block13
+  FeCFe(0,6) = CsuXX*J518;  FeCFe(0,7) = CsuXY*J518;  FeCFe(0,8) = CsuXZ*J518;
+  FeCFe(1,6) = CsuYX*J518;  FeCFe(1,7) = CsuYY*J518;  FeCFe(1,8) = CsuYZ*J518;
+  FeCFe(2,6) = CsuZX*J518;  FeCFe(2,7) = CsuZY*J518;  FeCFe(2,8) = CsuZZ*J518;
+  // block21
+  FeCFe(3,0) = CstXX*J619;  FeCFe(3,1) = CstYX*J619;  FeCFe(3,2) = CstZX*J619;
+  FeCFe(4,0) = CstXY*J619;  FeCFe(4,1) = CstYY*J619;  FeCFe(4,2) = CstZY*J619;
+  FeCFe(5,0) = CstXZ*J619;  FeCFe(5,1) = CstYZ*J619;  FeCFe(5,2) = CstZZ*J619;
+  // block22
+  FeCFe(3,3) = CttXX*J0879;  FeCFe(3,4) = CttXY*J0879;  FeCFe(3,5) = CttXZ*J0879;
+  FeCFe(4,3) = FeCFe(3,4);   FeCFe(4,4) = CttYY*J0879;  FeCFe(4,5) = CttYZ*J0879;
+  FeCFe(5,3) = FeCFe(3,5);   FeCFe(5,4) = FeCFe(4,5);   FeCFe(5,5) = CttZZ*J0879;
+  // block23
+  FeCFe(3,6) = CtuXX*J417;  FeCFe(3,7) = CtuXY*J417;  FeCFe(3,8) = CtuXZ*J417;
+  FeCFe(4,6) = CtuYX*J417;  FeCFe(4,7) = CtuYY*J417;  FeCFe(4,8) = CtuYZ*J417;
+  FeCFe(5,6) = CtuZX*J417;  FeCFe(5,7) = CtuZY*J417;  FeCFe(5,8) = CtuZZ*J417;
+  // block31
+  FeCFe(6,0) = CsuXX*J518;  FeCFe(6,1) = CsuYX*J518;  FeCFe(6,2) = CsuZX*J518;
+  FeCFe(7,0) = CsuXY*J518;  FeCFe(7,1) = CsuYY*J518;  FeCFe(7,2) = CsuZY*J518;
+  FeCFe(8,0) = CsuXZ*J518;  FeCFe(8,1) = CsuYZ*J518;  FeCFe(8,2) = CsuZZ*J518;
+  // block32
+  FeCFe(6,3) = CtuXX*J417;  FeCFe(6,4) = CtuYX*J417;  FeCFe(6,5) = CtuZX*J417;
+  FeCFe(7,3) = CtuXY*J417;  FeCFe(7,4) = CtuYY*J417;  FeCFe(7,5) = CtuZY*J417;
+  FeCFe(8,3) = CtuXZ*J417;  FeCFe(8,4) = CtuYZ*J417;  FeCFe(8,5) = CtuZZ*J417;
+  // block33
+  FeCFe(6,6) = CuuXX*J0978;  FeCFe(6,7) = CuuXY*J0978;  FeCFe(6,8) = CuuXZ*J0978;
+  FeCFe(7,6) = FeCFe(6,7);   FeCFe(7,7) = CuuYY*J0978;  FeCFe(7,8) = CuuYZ*J0978;
+  FeCFe(8,6) = FeCFe(6,8);   FeCFe(8,7) = FeCFe(7,8);   FeCFe(8,8) = CuuZZ*J0978;
+
+  FeCFe.Invert(FeCFeInv);
+
+  Matrix FeCFhg(9, 12);
+  FeCFhg.Zero();
+  // block11
+  FeCFhg(0,0) = CstXX*J0789 + CssXX*J619;  FeCFhg(0,1) = CstXY*J0789 + CssXY*J619;  FeCFhg(0,2) = CstXZ*J0789 + CssXZ*J619;
+  FeCFhg(1,0) = CstYX*J0789 + CssXY*J619;  FeCFhg(1,1) = CstYY*J0789 + CssYY*J619;  FeCFhg(1,2) = CstYZ*J0789 + CssYZ*J619;
+  FeCFhg(2,0) = CstZX*J0789 + CssXZ*J619;  FeCFhg(2,1) = CstZY*J0789 + CssYZ*J619;  FeCFhg(2,2) = CstZZ*J0789 + CssZZ*J619;
+  // block12
+  FeCFhg(0,3) = CsuXX*J619 + CstXX*J518;  FeCFhg(0,4) = CsuXY*J619 + CstXY*J518;  FeCFhg(0,5) = CsuXZ*J619 + CstXZ*J518;
+  FeCFhg(1,3) = CsuYX*J619 + CstYX*J518;  FeCFhg(1,4) = CsuYY*J619 + CstYY*J518;  FeCFhg(1,5) = CsuYZ*J619 + CstYZ*J518;
+  FeCFhg(2,3) = CsuZX*J619 + CstZX*J518;  FeCFhg(2,4) = CsuZY*J619 + CstZY*J518;  FeCFhg(2,5) = CsuZZ*J619 + CstZZ*J518;
+  // block13
+  FeCFhg(0,6) = CsuXX*J0789 + CssXX*J518;  FeCFhg(0,7) = CsuXY*J0789 + CssXY*J518;  FeCFhg(0,8) = CsuXZ*J0789 + CssXZ*J518;
+  FeCFhg(1,6) = CsuYX*J0789 + CssXY*J518;  FeCFhg(1,7) = CsuYY*J0789 + CssYY*J518;  FeCFhg(1,8) = CsuYZ*J0789 + CssYZ*J518;
+  FeCFhg(2,6) = CsuZX*J0789 + CssXZ*J518;  FeCFhg(2,7) = CsuZY*J0789 + CssYZ*J518;  FeCFhg(2,8) = CsuZZ*J0789 + CssZZ*J518;
+  // block21
+  FeCFhg(3,0) = CstXX*J0879 + CttXX*J619;  FeCFhg(3,1) = CstYX*J0879 + CttXY*J619;  FeCFhg(3,2) = CstZX*J0879 + CttXZ*J619;
+  FeCFhg(4,0) = CstXY*J0879 + CttXY*J619;  FeCFhg(4,1) = CstYY*J0879 + CttYY*J619;  FeCFhg(4,2) = CstZY*J0879 + CttYZ*J619;
+  FeCFhg(5,0) = CstXZ*J0879 + CttXZ*J619;  FeCFhg(5,1) = CstYZ*J0879 + CttYZ*J619;  FeCFhg(5,2) = CstZZ*J0879 + CttZZ*J619;
+  // block22
+  FeCFhg(3,3) = CtuXX*J0879 + CttXX*J417;  FeCFhg(3,4) = CtuXY*J0879 + CttXY*J417;  FeCFhg(3,5) = CtuXZ*J0879 + CttXZ*J417;
+  FeCFhg(4,3) = CtuYX*J0879 + CttXY*J417;  FeCFhg(4,4) = CtuYY*J0879 + CttYY*J417;  FeCFhg(4,5) = CtuYZ*J0879 + CttYZ*J417;
+  FeCFhg(5,3) = CtuZX*J0879 + CttXZ*J417;  FeCFhg(5,4) = CtuZY*J0879 + CttYZ*J417;  FeCFhg(5,5) = CtuZZ*J0879 + CttZZ*J417;
+  // block23
+  FeCFhg(3,6) = CtuXX*J619 + CstXX*J417;  FeCFhg(3,7) = CtuXY*J619 + CstYX*J417;  FeCFhg(3,8) = CtuXZ*J619 + CstZX*J417;
+  FeCFhg(4,6) = CtuYX*J619 + CstXY*J417;  FeCFhg(4,7) = CtuYY*J619 + CstYY*J417;  FeCFhg(4,8) = CtuYZ*J619 + CstZY*J417;
+  FeCFhg(5,6) = CtuZX*J619 + CstXZ*J417;  FeCFhg(5,7) = CtuZY*J619 + CstYZ*J417;  FeCFhg(5,8) = CtuZZ*J619 + CstZZ*J417;
+  // block31
+  FeCFhg(6,0) = CtuXX*J518 + CsuXX*J417;  FeCFhg(6,1) = CtuYX*J518 + CsuYX*J417;  FeCFhg(6,2) = CtuZX*J518 + CsuZX*J417;
+  FeCFhg(7,0) = CtuXY*J518 + CsuXY*J417;  FeCFhg(7,1) = CtuYY*J518 + CsuYY*J417;  FeCFhg(7,2) = CtuZY*J518 + CsuZY*J417;
+  FeCFhg(8,0) = CtuXZ*J518 + CsuXZ*J417;  FeCFhg(8,1) = CtuYZ*J518 + CsuYZ*J417;  FeCFhg(8,2) = CtuZZ*J518 + CsuZZ*J417;
+  // block32
+  FeCFhg(6,3) = CtuXX*J0978 + CuuXX*J417;  FeCFhg(6,4) = CtuYX*J0978 + CuuXY*J417;  FeCFhg(6,5) = CtuZX*J0978 + CuuXZ*J417;
+  FeCFhg(7,3) = CtuXY*J0978 + CuuXY*J417;  FeCFhg(7,4) = CtuYY*J0978 + CuuYY*J417;  FeCFhg(7,5) = CtuZY*J0978 + CuuYZ*J417;
+  FeCFhg(8,3) = CtuXZ*J0978 + CuuXZ*J417;  FeCFhg(8,4) = CtuYZ*J0978 + CuuYZ*J417;  FeCFhg(8,5) = CtuZZ*J0978 + CuuZZ*J417;
+  // block33
+  FeCFhg(6,6) = CsuXX*J0978 + CuuXX*J518;  FeCFhg(6,7) = CsuYX*J0978 + CuuXY*J518;  FeCFhg(6,8) = CsuZX*J0978 + CuuXZ*J518;
+  FeCFhg(7,6) = CsuXY*J0978 + CuuXY*J518;  FeCFhg(7,7) = CsuYY*J0978 + CuuYY*J518;  FeCFhg(7,8) = CsuZY*J0978 + CuuYZ*J518;
+  FeCFhg(8,6) = CsuXZ*J0978 + CuuXZ*J518;  FeCFhg(8,7) = CsuYZ*J0978 + CuuYZ*J518;  FeCFhg(8,8) = CsuZZ*J0978 + CuuZZ*J518;
+
+  Matrix KuT(12, 9);
+  KuT = transpose(9, 12, FeCFhg);
+
+  Matrix interior(12, 12);
+  interior = FCF - KuT * FeCFeInv * FeCFhg;
+
+  Matrix Kstab(24, 24);
+  Kstab.Zero();
+  Kstab.addMatrixTripleProduct(1.0, Mben, interior, 1.0);
+
+  // persist the constant operators
+  if (easBnot == 0)  easBnot  = new Matrix(6, 24);
+  if (easKstab == 0) easKstab = new Matrix(24, 24);
+  *easBnot  = Bnot;
+  *easKstab = Kstab;
+  easVol    = mVol;
+}
+
+//----------------------------------------------------------------------
+// formEAS — assemble the eas tangent / residual from the constant operators:
+//   K = Kstab + V * Bnot^T C Bnot          (C = current centroid tangent)
+//   f = Kstab * u + V * Bnot^T * sigma - f_body
+// The centroid material (materialPointers[0]) drives the constitutive update;
+// strain was set in update() as Bnot*u. Body force uses the 2x2x2 N integral
+// (consistent with the std/bbar paths).  // Ladruno
+//----------------------------------------------------------------------
+void
+LadrunoBrick::formEAS(int tang_flag, bool useInitialTangent)
+{
+  if (easKstab == 0) buildEAS();   // safety (normally built in setDomain)
+
+  computeBasis();
+  const Vector &uCore = this->computeLocalDisp();   // identity for linear
+
+  stiff.Zero();
+  resid.Zero();
+
+  if (tang_flag == 1) {
+    const Matrix &C = useInitialTangent ? materialPointers[0]->getInitialTangent()
+                                        : materialPointers[0]->getTangent();
+    stiff = *easKstab;
+    stiff.addMatrixTripleProduct(1.0, *easBnot, C, easVol);
+  }
+
+  if (!useInitialTangent) {
+    // stabilization + membrane internal force
+    resid.addMatrixVector(0.0, *easKstab, uCore, 1.0);
+    const Vector &stress = materialPointers[0]->getStress();
+    resid.addMatrixTransposeVector(1.0, *easBnot, stress, easVol);
+
+    // body force: 2x2x2 Gauss integral of b * N_I (matches std/bbar)
+    double xsj;
+    static double shpBF[4][8];
+    int cnt = 0;
+    for (int gi = 0; gi < 2; gi++)
+      for (int gj = 0; gj < 2; gj++)
+        for (int gk = 0; gk < 2; gk++) {
+          double gp[3] = {sg[gi], sg[gj], sg[gk]};
+          shp3d(gp, xsj, shpBF, xl);
+          double dvolBF = wg[cnt] * xsj;
+          for (int j = 0; j < 8; j++)
+            for (int p = 0; p < 3; p++) {
+              if (applyLoad == 0)
+                resid(3 * j + p) -= dvolBF * b[p] * shpBF[3][j];
+              else
+                resid(3 * j + p) -= dvolBF * appliedB[p] * shpBF[3][j];
+            }
+          cnt++;
+        }
+  }
+
+  // seam 3: globalize core-frame f/K to global DOFs (identity for -geom linear)
+  static Vector zeroF(24);
+  const Vector &fCore = useInitialTangent ? zeroF : resid;
+  if (tang_flag == 1)
+    theGeom->globalizeStiff(stiff, fCore, stiff);
+  if (!useInitialTangent)
+    theGeom->globalizeForce(resid, resid);
 }
 
 //----------------------------------------------------------------------

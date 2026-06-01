@@ -278,3 +278,48 @@ batteries):
   [[LEDGER_quirks]]. Composes with the `SolidTransformation` seam (#71): physical
   routes its strain through `computeLocalDisp()` (uCore). Reserved still: `eas`,
   `uri`+`viscous`. Banner line still pending (ships when merged).
+- 2026-06-01 — **SHIPPED v2: `eas` + `uri -hourglass viscous`** (this PR). `eas`
+  is a verbatim port of `UWelements/SSPbrick::GetStab` (bbar mean-dilatation
+  `Bnot` + 9 enhanced-strain modes statically condensed,
+  `interior = FCF − Kuαᵀ·Kαα⁻¹·Kuα`, `Kstab = Mbenᵀ·interior·Mben`). **Key
+  simplification confirmed by reading SSPbrick:** the condensation uses the
+  **initial** tangent, so `Bnot`/`Kstab` are CONSTANT — there is **no per-step α
+  internal state** to commit. So `commitState`/`revertTo*` need nothing new, and
+  `sendSelf` carries nothing extra: the operators are deterministic from
+  geometry + initial tangent, rebuilt in `setDomain` on the receive side
+  (`buildEAS()`; gated on `formulation==EAS` and all node pointers present).
+  `formEAS`: `K = Kstab + V·Bnotᵀ C Bnot`, `f = Kstab·u + V·Bnotᵀ·σ − f_body`;
+  the centroid material (`materialPointers[0]`) drives the constitutive update,
+  strain set in `update()` as `Bnot·u` (mirrored onto all 8 slots for the per-GP
+  response tree). **Validation (the assumed-strain oracle): `eas` matches
+  `SSPbrick` tip deflection to ~1e-6 across ν ∈ {0, 0.3, 0.45, 0.499}** — for a
+  linear-elastic material the assembled stiffness is *identical* to SSPbrick, so
+  the agreement is essentially exact. `eas` cures BOTH shear and volumetric
+  locking (>0.9 at ν=0.499 where `physical` locks <0.5) — the general-ν element.
+  `viscous` = Flanagan-Belytschko rate-form hourglass damping (8.7.10):
+  `f = c_visc·Σ γ·q̇` from `getTrialVel()`, `c_visc = ε·ρ·c_d·V^(2/3)`,
+  `c_d=√(dd₀₀/ρ)`; explicit-only (adds no stiffness → tangent keeps 12 hg modes
+  at zero energy, fine for explicit; vanishes in statics), validated by a
+  `CentralDifferenceLadruno` stability run. Also fixed a latent factory parser
+  bug: `-hourglass <type>` unconditionally consumed the next token as a numeric
+  coeff (broke `-hourglass <type> -lumped`); now only consumes a numeric token,
+  else `OPS_ResetCurrentInputArg(-1)`. Banner line added; `eas` refusal removed.
+  **All four formulations + three hourglass flavours now ship.**
+- 2026-06-01 — **Adversarial sweep (pre-merge), fixes folded into PR #75.** A
+  multi-agent review (6 dimensions × verify) confirmed the eas port is line-for-
+  line faithful to `SSPbrick::GetStab` and refuted a "64× gamma" false alarm
+  (β=1.0 is correct for the FB rate form per LS-DYNA theory). Real findings fixed:
+  (1) **the first parser fix was openseespy-broken** — `OPS_GetString`+`strtod`
+  can't read a Python numeric coeff (`OPS_GetString` returns `"Invalid String
+  Input!"` for a `PyFloat`), so a numeric `-hourglass` coeff was silently dropped.
+  Switched to `OPS_GetDoubleInput`+`OPS_ResetCurrentInputArg(-1)` (number-aware on
+  both backends). See [[LEDGER_quirks]]. (2) `-damp` is only wired through the
+  std/bbar kernel; the uri/physical/eas condensed kernels ignore it — the factory
+  now warns + drops `-damp` for those formulations instead of silently allocating
+  a no-op. (3) viscous gives a rank-deficient (explicit-only) tangent — documented
+  in the factory header + usage. Tests strengthened: the viscous test is now
+  **differential** (more damping ⇒ strictly smaller peak, catches a dropped coeff
+  or wrong sign); `test_hourglass_coefficient_reaches_kernel` locks the parser
+  regression; `test_eas_matches_sspbrick_distorted_hex` cross-checks eas↔SSPbrick
+  component-wise on the **distorted** hex (exercises the J[4..19] distortion terms
+  the axis-aligned oracle can't reach). Zone-A 30/30.

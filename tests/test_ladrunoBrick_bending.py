@@ -134,3 +134,44 @@ def test_physical_volumetric_locking_is_a_known_limitation():
     ref = _cantilever_tip([], 8, nu=nu, elem="SSPbrick") / ANALYTIC
     assert phys < 0.5, f"physical is expected to volumetrically lock at nu={nu} (got {phys:.3f})"
     assert ref > 0.9, f"SSPbrick (general) should not lock at nu={nu} (got {ref:.3f})"
+
+
+# --------------------------------------------------------------------------
+# eas (v2) — bbar + statically-condensed enhanced strain (SSPbrick port).
+# The GENERAL-nu element: cures BOTH shear and volumetric locking. This is the
+# validating gate the patch/rank tests cannot provide.
+# --------------------------------------------------------------------------
+def test_eas_converges_in_bending():
+    """eas relieves shear locking like physical: near-exact bending even on a
+    coarse mesh, accurate (not overshooting) under refinement at nu=0."""
+    for nx in (4, 8, 16):
+        r = _ratio(["-formulation", "eas"], nx)
+        assert 0.80 < r < 1.15, f"eas nx={nx} ratio {r:.3f} out of [0.80,1.15]"
+
+
+@pytest.mark.parametrize("nu", [0.0, 0.3, 0.45, 0.499])
+def test_eas_matches_sspbrick_across_all_nu(nu):
+    """THE validating gate. LadrunoBrick eas is a port of SSPbrick's bbar +
+    statically-condensed enhanced-strain structure, with the enhanced modes
+    condensed from the INITIAL tangent. For a linear-elastic material that makes
+    the assembled stiffness *identical* to SSPbrick, so the tip deflection must
+    agree to near machine precision — across the FULL nu range, including the
+    near-incompressible regime where the fixed-assumed-strain `physical`
+    formulation volumetrically locks."""
+    eas = _cantilever_tip(["-formulation", "eas"], 8, nu=nu)
+    ref = _cantilever_tip([], 8, nu=nu, elem="SSPbrick")
+    assert abs(eas - ref) <= 1e-6 * abs(ref) + 1e-9, (
+        f"eas tip {eas:.8f} should match SSPbrick {ref:.8f} at nu={nu} "
+        f"(|d|={abs(eas-ref):.2e})"
+    )
+
+
+def test_eas_cures_volumetric_locking_where_physical_fails():
+    """The headline reason eas exists: at nu->0.5 the `physical` shear-cure
+    volumetrically locks (<0.5) but eas stays accurate (>0.9), matching the
+    proven general element SSPbrick. eas wins on the exact axis physical loses."""
+    nu = 0.499
+    eas = _cantilever_tip(["-formulation", "eas"], 8, nu=nu) / ANALYTIC
+    phys = _cantilever_tip(["-formulation", "uri", "-hourglass", "physical"], 8, nu=nu) / ANALYTIC
+    assert eas > 0.9, f"eas should NOT volumetrically lock at nu={nu} (got {eas:.3f})"
+    assert phys < 0.5, f"physical is expected to lock at nu={nu} (got {phys:.3f})"
