@@ -459,6 +459,7 @@
 #include "shell/ASDShellT3.h" // Massimo Petracca
 #include "brick/Brick.h"
 #include "brick/BbarBrick.h"
+#include "ladrunoBrick/LadrunoBrick.h"	// N. Mora-Bowen (Ladruno)
 #include "joint/Joint2D.h"		// Arash
 #include "joint/Inno3DPnPJoint.h" // Cristian Miculas
 #include "twoNodeLink/TwoNodeLink.h"
@@ -1029,7 +1030,10 @@ FEM_ObjectBrokerAllClasses::getNewElement(int classTag)
       
     case ELE_TAG_Brick:
       return new Brick();
-      
+
+    case ELE_TAG_LadrunoBrick:		// N. Mora-Bowen (Ladruno)
+      return new LadrunoBrick();
+
     case ELE_TAG_SSPquad:          
       return new SSPquad();
       

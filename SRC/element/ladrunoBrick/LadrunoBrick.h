@@ -1,0 +1,181 @@
+/* ****************************************************************** **
+**    OpenSees - Open System for Earthquake Engineering Simulation    **
+**          Pacific Earthquake Engineering Research Center            **
+** ****************************************************************** */
+
+// LadrunoBrick — unified 8-node hexahedral solid element (Ladruno fork).
+//
+// One element class, one classTag (ELE_TAG_LadrunoBrick = 33002), with the
+// anti-locking formulation chosen at construction via a single selector:
+//
+//   element('LadrunoBrick', tag, n1..n8, matTag, '-formulation', <std|bbar|uri|eas>)
+//
+// v1 (small strain, geometrically linear):
+//   std  — full 2x2x2 Gauss displacement  (reproduces upstream Brick)
+//   bbar — mean-dilatation B-bar          (reproduces upstream bbarBrick)
+//   uri  — 1-pt reduced + hourglass        (cheap explicit hex; new)
+//   eas  — reserved -> v2 (enhanced assumed strain)
+//
+// The kernel is carved into three seams (kinematics ledger / geometry method /
+// material adaptor) so corotational (v2) and finite-strain (v3) drop in without
+// a rewrite — see Ladruno_implementation/09_ladruno_brick.md and
+// solid_transformation_wrapper.md.
+//
+// Baseline (std/bbar kernels) adapted from Ed Love's Brick / BbarBrick. The
+// upstream Brick::setParameter damping loop bug (i<4 over an 8-entry array) is
+// fixed here.  // Ladruno
+
+#ifndef LadrunoBrick_h
+#define LadrunoBrick_h
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+
+#include <ID.h>
+#include <Vector.h>
+#include <Matrix.h>
+#include <Element.h>
+#include <Node.h>
+#include <NDMaterial.h>
+#include <Damping.h>
+
+class LadrunoBrick : public Element {
+
+ public:
+
+  // Formulation selector (the single -formulation axis).
+  enum class Formulation { STD, BBAR, URI, EAS };
+
+  // Hourglass stabilization flavour (uri only).
+  enum class Hourglass { VISCOUS, STIFFNESS, PHYSICAL };
+
+  // null constructor (broker)
+  LadrunoBrick();
+
+  // full constructor
+  LadrunoBrick(int tag,
+               int node1, int node2, int node3, int node4,
+               int node5, int node6, int node7, int node8,
+               NDMaterial &theMaterial,
+               Formulation formulation = Formulation::STD,
+               double b1 = 0.0, double b2 = 0.0, double b3 = 0.0,
+               int massType = 0,
+               Hourglass hgType = Hourglass::PHYSICAL,
+               double hgCoeff = 0.0,
+               Damping *theDamping = 0);
+
+  virtual ~LadrunoBrick();
+
+  const char *getClassType(void) const { return "LadrunoBrick"; };
+
+  // domain
+  void setDomain(Domain *theDomain);
+  int  setDamping(Domain *theDomain, Damping *theDamping);
+
+  // topology
+  int getNumExternalNodes(void) const;
+  const ID &getExternalNodes(void);
+  Node **getNodePtrs(void);
+  int getNumDOF(void);
+
+  // state
+  int commitState(void);
+  int revertToLastCommit(void);
+  int revertToStart(void);
+  int update(void);
+
+  void Print(OPS_Stream &s, int flag);
+
+  // matrices / vectors
+  const Matrix &getTangentStiff(void);
+  const Matrix &getInitialStiff(void);
+  const Matrix &getMass(void);
+
+  void zeroLoad(void);
+  int addLoad(ElementalLoad *theLoad, double loadFactor);
+  int addInertiaLoadToUnbalance(const Vector &accel);
+
+  const Vector &getResistingForce(void);
+  const Vector &getResistingForceIncInertia(void);
+
+  // parallel / database
+  int sendSelf(int commitTag, Channel &theChannel);
+  int recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &theBroker);
+
+  // output
+  Response *setResponse(const char **argv, int argc, OPS_Stream &s);
+  int getResponse(int responseID, Information &eleInformation);
+  int setParameter(const char **argv, int argc, Parameter &param);
+  int updateParameter(int parameterID, Information &info);
+
+  // plotting
+  int displaySelf(Renderer &, int mode, float fact, const char **displayModes = 0, int numModes = 0);
+
+ private:
+
+  // -------- private attributes --------
+  ID connectedExternalNodes;          // 8 node numbers
+  Node *nodePointers[8];              // pointers to 8 nodes
+  NDMaterial *materialPointers[8];    // pointers to 8 materials (one per Gauss point)
+
+  Formulation formulation;            // the -formulation selector
+  Hourglass hourglassType;            // uri only
+  double hourglassCoeff;              // uri only
+
+  double b[3];                        // body forces
+  double appliedB[3];                 // body forces applied with load
+  int applyLoad;
+
+  Vector *load;
+  Matrix *Ki;
+  int massType;                       // 0 consistent, 1 lumped
+
+  Damping *theDamping[8];
+
+  // -------- static workspace --------
+  static Matrix stiff;
+  static Vector resid;
+  static Matrix mass;
+
+  // quadrature data (full 2x2x2)
+  static const double root3;
+  static const double one_over_root3;
+  static const double sg[2];
+  static const double wg[8];
+
+  // local nodal coordinates
+  static double xl[3][8];
+
+  // -------- private methods --------
+  void formInertiaTerms(int tangFlag);
+  void formResidAndTangent(int tang_flag);
+  void computeBasis(void);
+
+  // Seam 1 (kinematics ledger) + core formulation B selection.
+  // computeB: the linear small-strain B at a node (std / uri / shear rows of bbar).
+  const Matrix &computeB(int node, const double shp[4][8]);
+  // computeBbar: the mean-dilatation B-bar (bbar formulation).
+  const Matrix &computeBbar(int node, const double shp[4][8], const double shpBar[4][8]);
+
+  // bbar helper: element-averaged shape-function gradients (mean dilatation).
+  void computeShapeBar(double shpBar[4][8], double Shape[4][8][8],
+                       const double dvol[8], double volume);
+
+  // uri (1-point reduced integration + hourglass control) helpers.
+  // formUri assembles stiff (+ resid when !useInitialTangent) at the centroid
+  // plus Flanagan-Belytschko stiffness hourglass control.
+  void formUri(int tang_flag, bool useInitialTangent);
+  // FB-corrected hourglass vectors (orthogonal to the linear field => the
+  // hourglass control is consistent: zero for any constant-strain/rigid state).
+  void computeGammaHourglass(const double b[3][8], double gamma[4][8]);
+  // the 4 raw hourglass base vectors (nodal values of {xy, yz, zx, xyz}).
+  static const double hg0[4][8];
+
+  Matrix transpose(int dim1, int dim2, const Matrix &M);
+
+  // string <-> enum helpers (shared by OPS factory + Print + sendSelf)
+  static const char *formulationName(Formulation f);
+};
+
+#endif
