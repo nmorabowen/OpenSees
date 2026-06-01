@@ -283,6 +283,20 @@ inline void spatial_tangent_full(const double Betr[9], const double D6[36],
   }
 }
 
+// Reconstruct the elastic left Cauchy–Green tensor from an elastic Hencky strain
+// given in engineering-shear Voigt:  bᵉ = exp[2 εᵉ]  (eq. 14.93). Used by the
+// plastic-inner state protocol to update the committed bᵉ from the recovered
+// εᵉ_{n+1} = Cᵉ:τ.
+inline double _expd(double x) { return exp(x); }
+inline void be_from_hencky_voigt(const double e6[6], double Be[9]) {
+  double two_eps[9];
+  two_eps[0] = 2.0*e6[0];      two_eps[4] = 2.0*e6[1];      two_eps[8] = 2.0*e6[2];
+  two_eps[1] = two_eps[3] = e6[3];   // 2·(½ γ) = γ = e6[3]   (engineering→tensor·2)
+  two_eps[5] = two_eps[7] = e6[4];
+  two_eps[2] = two_eps[6] = e6[5];
+  isoFunction(two_eps, _expd, Be);
+}
+
 } // namespace logstrain_kernel
 
 #endif
