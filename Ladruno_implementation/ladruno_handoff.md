@@ -3,19 +3,76 @@ title: Ladruno — session handoff (cold-resume map)
 project: Ladruno
 status: in-progress
 owner: nmora
-updated: 2026-05-30
+updated: 2026-06-01
 tags:
   - handoff
   - recorder
+  - element
+  - finite-strain
 ---
 
 # Ladruno — session handoff
 
-Cold-resume map for the `ladruno` recorder. Deep detail in the `.claude`
-memory `project_mpco_ladruno.md`; design in [[03_ladruno_recorder]] (orig ADR) +
-[[07_adr_post_review_storage]] (post-review decisions); on-disk format in
-[[ladruno_schema_v1]]; in-flight work in [[06_quadrature_global_gp_plan]];
-gotchas in [[LEDGER_quirks]].
+Cold-resume map. Two tracks below: the **`ladruno` recorder** (original) and the
+**solid element / finite-strain stack** (LadrunoBrick + SolidTransformation +
+LogStrain). Recorder deep detail in the `.claude` memory `project_mpco_ladruno.md`;
+design in [[03_ladruno_recorder]] (orig ADR) + [[07_adr_post_review_storage]]
+(post-review decisions); on-disk format in [[ladruno_schema_v1]]; in-flight work in
+[[06_quadrature_global_gp_plan]]; gotchas in [[LEDGER_quirks]].
+
+---
+
+# Track 2 — Solid element / finite strain (DONE, merged + CI-green 2026-06-01)
+
+Deep detail in `.claude` memory `project_solid_transformation_wrapper.md` +
+`project_finite_strain_wrapper.md`; plans [[09_ladruno_brick]],
+[[solid_transformation_wrapper]], [[09_finite_strain_material_wrapper]].
+
+## Shipped (all merged to `ladruno`, Zone-A + manifest gates green)
+- **LadrunoBrick** (`ELE_TAG 33002`) — unified 8-node hex, `-formulation {std|bbar|uri|eas}`
+  + `-hourglass {stiffness|physical|viscous}` (#69/#72/#75). std/bbar reproduce upstream
+  `Brick`/`bbarBrick`; eas = SSPbrick bbar+condensed-EAS.
+- **SolidTransformation** geometry-method layer — `-geom {linear|finite}` axis, orthogonal
+  to `-formulation`. v1 linear (identity, #71) + **v3 finite (updated-Lagrangian, #76)**.
+- **LogStrainNDMaterial** (`ND_TAG 33010`) — Hencky finite-strain adaptor (#70), broker +
+  contract-lock (#73).
+
+## The load-bearing fact (don't re-derive — it cost a 2nd build + an adversarial sweep)
+The spatial constitutive modulus `c = (1/2J)[D:L:B]` is **NOT minor-symmetric in (k,l)**
+(factor B eq.14.102 isn't k↔l symmetric), so it **cannot pass through a 6×6 Voigt
+matrix** — `NDMaterial::getTangent()` (6×6) is a LOSSY projection. The finite element
+gets the **full 4th-order tensor** via `FiniteStrainNDMaterial::getSpatialTangentTensor(double
+c[3][3][3][3])` (+ kernel `logstrain_kernel::spatial_tangent_full`), then forms
+`a_ijkl = c_ijkl − σ_il δ_jk` (the −σδ geometric term is element-owned) and assembles
+`K_{(a,i)(b,k)} = ∫ (∂Nₐ/∂xⱼ) a_ijkl (∂N_b/∂xₗ) dv` with the FULL nodal gradients. This is
+the ONLY split that yields a symmetric, FD-consistent tangent. Arbiter:
+`tests/test_ladrunoBrick_finite.py` (FD-tangent + symmetry + homogeneous patch + objectivity
++ reduce-to-linear, 6/6).
+
+## Resume (next session) — finite follow-ups (all fresh work, no loose ends)
+- **corot (v2):** `SolidTransformationCorot` (Higham polar R + EICR K_geo + rigid-rotation
+  patch test). Will need dedicated core buffers (the v1 in-place identity `globalize` aliasing
+  won't survive Tᵀ K T).
+- **plastic inner materials** through `-geom finite` (seam-3 state protocol; v3 LogStrain is
+  elastic-exact only).
+- **bbar+finite = F-bar**, and **`-geom finite` + damping** (currently rejected at the factory).
+- **Banner:** `Ladruno_scripts/banner_features.txt` still lacks a `-geom finite` / LogStrain
+  line (CLAUDE.md banner-sync rule) — a small follow-up PR (edit + `patch_banner.py` + rebuild).
+
+## Process lessons from the v3 saga (avoid repeating)
+- After resolving a merge, **PUSH it** and verify `git merge-base --is-ancestor origin/ladruno
+  origin/<branch>` — a locally-resolved-but-unpushed merge left #76 showing CONFLICTING for two
+  sessions.
+- GitHub paused **auto-triggered** Actions runs (manual `workflow_dispatch` still worked) —
+  likely an account Actions usage cap; check billing if PR checks stop populating.
+- `ladruno` has **no branch protection** → a red/missing CI badge does NOT block merge; a real
+  merge conflict does.
+
+---
+
+# Track 1 — `ladruno` recorder
+
+Cold-resume map for the `ladruno` recorder (the original subject of this doc).
 
 ## What it is
 A sibling recorder (`recorder ladruno` → `.ladruno` HDF5), apeGmsh-native,
