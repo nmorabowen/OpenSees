@@ -570,6 +570,7 @@
 
 #define ND_TAG_InitStrainNDMaterial 7020 // Massimo Petracca ASDEA Software
 #define ND_TAG_ASDPlasticMaterial3D 10000 // For ASDPlasticity-class material
+#define ND_TAG_LogStrainNDMaterial 33010 // N. Mora-Bowen (Ladruno) — logarithmic/Hencky finite-strain adaptor (seam 3); ladruno private ND band >=33010
 
 
 #define FIBER_TAG_Uniaxial2d	1
