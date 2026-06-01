@@ -14,13 +14,23 @@
 //
 //     bᵉᵗʳ = F_Δ bᵉ_n F_Δᵀ  → εᵉᵗʳ = ½ ln bᵉᵗʳ  → inner small-strain law
 //        → Kirchhoff τ  → Cauchy σ = J⁻¹ τ                     (Box 14.3 iv)
-//        → spatial consistent tangent a = (1/2J)[D:L:B] − σ_il δ_jk  (§14.5)
+//        → spatial CONSTITUTIVE modulus c = (1/2J)[D:L:B]      (§14.5)
 //
 // Implements the FiniteStrainNDMaterial contract: the element calls setTrialF(F)
 // with the TOTAL deformation gradient; getStress() returns Cauchy σ and
-// getTangent() the SPATIAL tangent a. The adaptor owns the committed elastic
-// left Cauchy–Green tensor bᵉ_n (and committed F_n) per Gauss point and wraps
-// the inner material's commit / revert / sendSelf / recvSelf.
+// getTangent() returns the spatial CONSTITUTIVE modulus c = (1/2J)[D:L:B].
+//
+// SEAM-3 TANGENT CONTRACT (LOCKED 2026-06-01): getTangent() is the MATERIAL part
+// only of the eq.(14.99) spatial tangent — the geometric / initial-stress term
+// (−σ_il δ_jk) is NOT included; it is the ELEMENT's K_geo (∫ Gᵀ Σ G dv, built
+// from the Cauchy stress and the element's shape-function gradients, which the
+// material cannot know). The element forms K = ∫ Bᵀ c B dv + ∫ Gᵀ Σ G dv. This
+// keeps the adaptor element-agnostic; see FiniteStrainNDMaterial.h for the full
+// contract.
+//
+// The adaptor owns the committed elastic left Cauchy–Green tensor bᵉ_n (and
+// committed F_n) per Gauss point and wraps the inner material's commit / revert
+// / sendSelf / recvSelf.
 //
 // v1 SCOPE: correct for ELASTIC inner materials (→ a genuine Hencky hyperelastic
 // finite-strain law). Plastic inner materials require the seam-3 state protocol

@@ -239,6 +239,22 @@ spectrally decompose `Bᵉᵗʳ = Σᵢ bᵢ eᵢ⊗eᵢ` (14.103), take princip
   - **B** (14.102), `B_ijkl = δ_ik (Bᵉᵗʳ)_jl + δ_jk (Bᵉᵗʳ)_il`.
   - `−σ_il δ_jk` is the geometric (initial-stress) term.
 
+> [!important] **Seam-3 tangent contract — LOCKED 2026-06-01 (element + material teams agreed).**
+> The split of eq.(14.99) across the seam is now fixed: **the material returns the
+> CONSTITUTIVE part only**, `c = (1/2J)[D:L:B]`, and **the element owns the
+> geometric/initial-stress term** `−σ_il δ_jk`. Concretely the element forms
+> `K = ∫ Bᵀ c B dv + ∫ Gᵀ Σ G dv`, where `∫ Gᵀ Σ G dv` is the geometric stiffness
+> built from the Cauchy stress `σ` and the element's own shape-function gradients
+> `G`. Rationale: the geometric stiffness depends on the element interpolation
+> (which the material cannot know), so this keeps `LogStrainNDMaterial`
+> element-agnostic and reusable, and matches the conventional updated-Lagrangian
+> split (Bonet & Wood). It deviates from dSNPO's "all-in-one `a`" element recipe,
+> which is fine: the two are equivalent. `LogStrainNDMaterial::getTangent()`
+> therefore returns `c` (NOT the full `a`); `FiniteStrainNDMaterial.h` and the
+> kernel comment say so. **Arbiter:** the companion element's finite-difference
+> tangent patch test on a single rotated+stretched element. The chosen convention
+> was option A in the 2026-06-01 review of [#70](https://github.com/nmorabowen/OpenSees/pull/70).
+
 > **The one-line summary (Remark 14.5):** with the Hencky elastic law, *all*
 > small-strain integration **and** tangent subroutines are reused without
 > modification; only the kinematic pre/post-processing of Box 14.3 (i),(ii),(iv)

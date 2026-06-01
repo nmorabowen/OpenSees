@@ -38,9 +38,23 @@
 //     (γ_ij = 2 ε_ij). The element assembles the SPATIAL internal force
 //     ∫ bᵀ σ dv on the current configuration.
 //
-//   * getTangent() returns the SPATIAL, algorithmically-consistent tangent a
-//     (6×6), eq. (14.99) — NOT a material/reference (PK2-based) tangent. The
-//     formulation is spatial multiplicative, NOT total-Lagrangian.
+//   * getTangent() returns the spatial CONSTITUTIVE modulus c = (1/2J)[D:L:B]
+//     (6×6) — the MATERIAL part only of the eq.(14.99) spatial tangent, NOT a
+//     material/reference (PK2-based) tangent. The formulation is spatial
+//     multiplicative, NOT total-Lagrangian.
+//
+//     SEAM-3 TANGENT CONTRACT (LOCKED 2026-06-01, element + material teams):
+//     the geometric / initial-stress term (−σ_il δ_jk in eq.14.99) is NOT
+//     included here — it is the ELEMENT's responsibility. The element forms its
+//     consistent tangent as
+//          K = ∫ Bᵀ c B dv  +  ∫ Gᵀ Σ G dv
+//     where the second integral is the geometric stiffness built from the
+//     Cauchy stress σ and the element's own shape-function gradients G (which
+//     the material cannot know). A finite-strain material must therefore return
+//     the constitutive modulus only; the element must add K_geo. This keeps the
+//     adaptor element-agnostic and matches the conventional updated-Lagrangian
+//     split (Bonet & Wood; dSNPO §14.5 with the geometric term carried by the
+//     element). The arbiter is the element's finite-difference tangent test.
 //
 //   * getType() must report "ThreeDimensional"; getOrder() must return 6.
 //
@@ -98,7 +112,8 @@ class FiniteStrainNDMaterial : public NDMaterial
 
   // CAUCHY stress σ (6-vector, Voigt {00,11,22,01,12,20}, engineering shear).
   virtual const Vector &getStress(void) = 0;
-  // SPATIAL consistent tangent a (6×6), eq. (14.99).
+  // SPATIAL CONSTITUTIVE modulus c = (1/2J)[D:L:B] (6×6) — material part only;
+  // the element adds the geometric K_geo. See the SEAM-3 TANGENT CONTRACT above.
   virtual const Matrix &getTangent(void) = 0;
 
   // Current Jacobian J = det F (> 0). τ = J·σ recovers Kirchhoff if needed.

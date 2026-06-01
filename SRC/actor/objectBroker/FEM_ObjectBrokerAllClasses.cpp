@@ -244,6 +244,7 @@
 #include "ElasticIsotropicBeamFiber2d.h"
 #include "ElasticIsotropicAxiSymm.h"
 #include "ElasticIsotropicThreeDimensional.h"
+#include "LogStrainNDMaterial.h"   // Ladruno — Hencky finite-strain adaptor (seam 3)
 #include "ElasticOrthotropicThreeDimensional.h"
 #include "ElasticOrthotropicPlaneStress.h"
 #include "J2PlaneStrain.h"
@@ -2281,6 +2282,9 @@ FEM_ObjectBrokerAllClasses::getNewNDMaterial(int classTag)
     
   case ND_TAG_ElasticIsotropicThreeDimensional:
     return new ElasticIsotropicThreeDimensional();
+
+  case ND_TAG_LogStrainNDMaterial:               // Ladruno — Hencky finite-strain adaptor (seam 3)
+    return new LogStrainNDMaterial();
 
   case ND_TAG_ElasticOrthotropicThreeDimensional:
     return new ElasticOrthotropicThreeDimensional();
