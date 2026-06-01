@@ -40,6 +40,8 @@
 #include <NDMaterial.h>
 #include <Damping.h>
 
+class SolidTransformation;   // seam 2/3: geometry-method layer (linear/corot/finite)
+
 class LadrunoBrick : public Element {
 
  public:
@@ -133,6 +135,12 @@ class LadrunoBrick : public Element {
 
   Damping *theDamping[8];
 
+  // Geometry-method layer (seam 2/3). v1 = SolidTransformationLinear (identity):
+  // localizeDisp / globalizeForce / globalizeStiff are pass-throughs, so routing
+  // through it changes nothing. corot (v2) / finite (v3) override on this same
+  // interface. Owned by the element; rebuilt in recvSelf from a method id.  // Ladruno
+  SolidTransformation *theGeom;
+
   // -------- static workspace --------
   static Matrix stiff;
   static Vector resid;
@@ -151,6 +159,11 @@ class LadrunoBrick : public Element {
   void formInertiaTerms(int tangFlag);
   void formResidAndTangent(int tang_flag);
   void computeBasis(void);
+
+  // Seam 0+2: refresh theGeom from current geometry (reference + current nodal
+  // coords) and return the localized (core-frame) 24-dof trial displacement.
+  // For -geom linear this equals the global trial displacement.  // Ladruno
+  const Vector &computeLocalDisp(void);
 
   // Seam 1 (kinematics ledger) + core formulation B selection.
   // computeB: the linear small-strain B at a node (std / uri / shear rows of bbar).
