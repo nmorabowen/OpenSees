@@ -227,6 +227,16 @@ class LadrunoBrick : public Element {
 
   Matrix transpose(int dim1, int dim2, const Matrix &M);
 
+  // Recoverable elastic hourglass / stabilization energy at the current trial
+  // state (the GLSTAT spurious-mode diagnostic): for uri 'stiffness' it is the
+  // FB perturbation energy ½κ·Σ q_aι², for eas it is the condensed-stabilization
+  // energy ½·u_core·Kstab·u_core. Zero for std/bbar (fully integrated, no
+  // hourglass) and for physical (assumed strain folded into the strain energy).
+  // Stateless; reported via the "hourglassEnergy" response. NOTE: uri 'viscous'
+  // DISSIPATES rather than stores energy, so this returns 0 for it — cumulative
+  // viscous hourglass dissipation needs a committed accumulator (follow-up).  // Ladruno
+  double hourglassEnergy(void);
+
   // string <-> enum helpers (shared by OPS factory + Print + sendSelf)
   static const char *formulationName(Formulation f);
 };

@@ -2401,6 +2401,73 @@ LadrunoBrick::displaySelf(Renderer &theViewer, int displayMode, float fact,
 }
 
 //----------------------------------------------------------------------
+// Recoverable elastic hourglass / stabilization energy at the current trial
+// state. uri 'stiffness': ½κ·Σ q_aι² (the FB perturbation energy; q from the
+// trial displacement, mirrors formUri exactly). eas: ½·u_core·Kstab·u_core.
+// 0 for std/bbar (full integration), physical (assumed strain folded into the
+// strain energy), and uri 'viscous' (dissipative, not stored).  // Ladruno
+//----------------------------------------------------------------------
+double
+LadrunoBrick::hourglassEnergy(void)
+{
+  static const int numberNodes = 8;
+
+  if (formulation == Formulation::EAS) {
+    if (easKstab == 0) buildEAS();
+    const Vector &uCore = this->computeLocalDisp();   // identity for linear
+    static Vector Ku(24);
+    Ku.addMatrixVector(0.0, *easKstab, uCore, 1.0);
+    double e = 0.0;
+    for (int i = 0; i < 24; i++) e += uCore(i) * Ku(i);
+    return 0.5 * e;
+  }
+
+  if (formulation == Formulation::URI && hourglassType == Hourglass::STIFFNESS) {
+    computeBasis();
+    double gp[3] = {0.0, 0.0, 0.0};
+    double detJ;
+    static double shpC[4][8];
+    shp3d(gp, detJ, shpC, xl);
+    const double vol = 8.0 * detJ;
+
+    double bC[3][8];
+    for (int i = 0; i < 3; i++)
+      for (int I = 0; I < numberNodes; I++)
+        bC[i][I] = shpC[i][I];
+
+    double bb = 0.0;
+    for (int i = 0; i < 3; i++)
+      for (int I = 0; I < numberNodes; I++)
+        bb += bC[i][I] * bC[i][I];
+    const double Ghg = materialPointers[0]->getTangent()(3, 3);
+    const double scale = (hourglassCoeff > 0.0) ? hourglassCoeff : 0.05;
+    const double kappa = scale * Ghg * vol * bb;
+
+    double gamma[4][8];
+    computeGammaHourglass(bC, gamma, 1.0);
+
+    // generalized hourglass strains q_aι = Σ_J γ_aJ u_iJ (trial displacement)
+    double q[4][3];
+    for (int a = 0; a < 4; a++)
+      for (int i = 0; i < 3; i++)
+        q[a][i] = 0.0;
+    for (int J = 0; J < numberNodes; J++) {
+      const Vector &ul = nodePointers[J]->getTrialDisp();
+      for (int a = 0; a < 4; a++)
+        for (int i = 0; i < 3; i++)
+          q[a][i] += gamma[a][J] * ul(i);
+    }
+    double e = 0.0;
+    for (int a = 0; a < 4; a++)
+      for (int i = 0; i < 3; i++)
+        e += q[a][i] * q[a][i];
+    return 0.5 * kappa * e;
+  }
+
+  return 0.0;   // std / bbar / physical / uri-viscous
+}
+
+//----------------------------------------------------------------------
 Response *
 LadrunoBrick::setResponse(const char **argv, int argc, OPS_Stream &output)
 {
@@ -2503,6 +2570,12 @@ LadrunoBrick::setResponse(const char **argv, int argc, OPS_Stream &output)
     output.endTag();
     output.endTag();
     theResponse = new ElementResponse(this, 7, Vector(6));
+
+  } else if (strcmp(argv[0], "hourglassEnergy") == 0 ||
+             strcmp(argv[0], "hgEnergy") == 0 ||
+             strcmp(argv[0], "hourglassWork") == 0) {
+    output.tag("ResponseType", "Ehg");
+    theResponse = new ElementResponse(this, 8, Vector(1));
   }
 
   output.endTag(); // ElementOutput
@@ -2552,6 +2625,11 @@ LadrunoBrick::getResponse(int responseID, Information &eleInfo)
     }
     tmpStrain /= 8.0;
     return eleInfo.setVector(tmpStrain);
+
+  } else if (responseID == 8) {
+    static Vector ehg(1);
+    ehg(0) = this->hourglassEnergy();
+    return eleInfo.setVector(ehg);
   }
 
   return -1;
