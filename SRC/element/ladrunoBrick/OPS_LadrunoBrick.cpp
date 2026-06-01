@@ -131,12 +131,9 @@ void *OPS_LadrunoBrick()
         geomMethodID = SolidTransformation::METHOD_LINEAR;
       else if (strcmp(g, "finite") == 0)
         geomMethodID = SolidTransformation::METHOD_FINITE;
-      else if (strcmp(g, "corot") == 0 || strcmp(g, "corotational") == 0) {
-        opserr << "WARNING LadrunoBrick " << idata[0]
-               << ": -geom 'corot' is reserved and not yet implemented (-> v2; "
-                  "use linear|finite)\n";
-        return 0;
-      } else {
+      else if (strcmp(g, "corot") == 0 || strcmp(g, "corotational") == 0)
+        geomMethodID = SolidTransformation::METHOD_COROT;
+      else {
         opserr << "WARNING unknown -geom '" << g << "' for LadrunoBrick "
                << idata[0] << " (use linear|corot|finite)\n";
         return 0;
