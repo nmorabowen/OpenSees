@@ -1707,16 +1707,43 @@ void LadrunoRecorder::recordModeChannel(int node_channel_index)
 	if (schema.num_components < 1)
 		return;
 
-	// Ensure the result group + ID + DATA exist (StreamingSink::begin path).
-	ch.sink->begin(info, *msrc);
+	// Modal layout mirrors the frozen ResultRecorderModesOfVibration::record:
+	//   <stage>/RESULTS/ON_NODES/<name>/{ID, DATA/STEP_<step>/MODE_<k>}
+	// DATA here is a GROUP (one MODE_<k> dataset per mode per step), NOT the chunked
+	// time-series DATA *dataset* that StreamingSink::begin would create — those two
+	// collide on the name "DATA" (you cannot create the DATA/STEP_<step> group under
+	// an existing dataset, which silently dropped all modal data). So modal channels
+	// do NOT use the streaming sink: create the result group + ID + DATA group here,
+	// once per stage (idempotent via H5Lexists, re-created when the stage path moves).
+	std::stringstream ss_result;
+	ss_result << "MODEL_STAGE[" << info.current_model_stage_id
+		<< "]/RESULTS/ON_NODES/" << schema.name;
+	if (H5Lexists(info.h_file_id, ss_result.str().c_str(), H5P_DEFAULT) <= 0) {
+		std::stringstream ss_family;
+		ss_family << "MODEL_STAGE[" << info.current_model_stage_id << "]/RESULTS/ON_NODES";
+		hid_t h_family = H5Gopen2(info.h_file_id, ss_family.str().c_str(), H5P_DEFAULT);
+		if (h_family >= 0) {
+			hid_t h_gp_result = ladrunons::h5::group::createResultGroup(
+				h_family, info.h_group_proplist,
+				schema.name, schema.display_name,
+				schema.components_csv, schema.num_components,
+				schema.dimension, schema.description,
+				(int)schema.result_type, (int)schema.data_type);
+			const std::vector<int>& mode_ids = msrc->ids();
+			hid_t h_dset_id = ladrunons::h5::dataset::createAndWrite(
+				h_gp_result, "ID", mode_ids, mode_ids.size(), (size_t)1);
+			ladrunons::h5::dataset::close(h_dset_id);
+			hid_t h_data_grp = ladrunons::h5::group::create(
+				h_gp_result, "DATA", H5P_DEFAULT, info.h_group_proplist, H5P_DEFAULT);
+			ladrunons::h5::group::close(h_data_grp);
+			ladrunons::h5::group::close(h_gp_result);
+			ladrunons::h5::group::close(h_family);
+		}
+	}
 
-	// Resolve the result + DATA group: MODEL_STAGE/RESULTS/ON_NODES/<name>/DATA
-	std::stringstream ss_data;
-	ss_data << "MODEL_STAGE[" << info.current_model_stage_id
-		<< "]/RESULTS/ON_NODES/" << schema.name << "/DATA";
-	// create the STEP group under DATA
+	// create the per-step group under DATA: <name>/DATA/STEP_<step>
 	std::stringstream ss_step;
-	ss_step << ss_data.str() << "/STEP_" << info.current_time_step_id;
+	ss_step << ss_result.str() << "/DATA/STEP_" << info.current_time_step_id;
 	hid_t h_gp_step = ladrunons::h5::group::create(
 		info.h_file_id, ss_step.str().c_str(), H5P_DEFAULT,
 		info.h_group_proplist, H5P_DEFAULT);

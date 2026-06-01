@@ -303,9 +303,16 @@ def _check_data_shape(grp, n_rows: int, n_cols: int, err, ctx: str) -> None:
                 err(f"{ctx}: {ax} length != T={T}")
     else:
         for sn in data:
-            arr = data[sn]
-            if arr.shape != (n_rows, n_cols):
-                err(f"{ctx}/{sn}: {arr.shape} != ({n_rows}, {n_cols})")
+            item = data[sn]
+            if isinstance(item, h5py.Group):
+                # modal layout (modesOfVibration): DATA/STEP_<step>/MODE_<k>, each
+                # MODE_<k> a [n_rows x n_cols] eigenvector dataset (mirrors frozen MPCO).
+                for mn in item:
+                    md = item[mn]
+                    if isinstance(md, h5py.Dataset) and md.shape != (n_rows, n_cols):
+                        err(f"{ctx}/{sn}/{mn}: {md.shape} != ({n_rows}, {n_cols})")
+            elif item.shape != (n_rows, n_cols):
+                err(f"{ctx}/{sn}: {item.shape} != ({n_rows}, {n_cols})")
 
 
 # ---------------------------------------------------------------------------
