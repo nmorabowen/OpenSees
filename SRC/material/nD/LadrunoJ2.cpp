@@ -239,7 +239,14 @@ void LadrunoJ2::integrate(void)
   double sy0   = yieldStress(ebarP_n);
   double f_tr  = normM - root23*sy0;
 
-  const double tolY = 1.0e-12 * (sig0 > 0.0 ? sig0 : 1.0);
+  // Tolerances scaled to the operative stress magnitude (unit-aware; never
+  // collapses to a fixed absolute when sig0 == 0, e.g. kinematic-only). The
+  // normFloor guards the 1/||M|| divisions below — the relative-stress norm
+  // ||M(dG)|| can collapse toward zero at a sharp reversal with backstress
+  // (J2Plasticity guards the analogous norm_tau division; we restore that).
+  const double stressScale = fmax(normM, root23*sy0);
+  const double tolY      = 1.0e-12 * fmax(stressScale, 1.0e-300);
+  const double normFloor = 1.0e-10 * fmax(stressScale, 1.0e-300);
 
   if (f_tr <= tolY) {
     // ---- elastic step: state frozen ----
@@ -254,7 +261,7 @@ void LadrunoJ2::integrate(void)
   double dG = 0.0;
   double Dk[MAXBACK];
   double Mp[6];            // d M / d dG
-  double theta = 0.0, dtheta = 0.0, normMp_dot = 0.0, R = 1.0;
+  double theta = 0.0, dtheta = 0.0, R = 1.0;
   int iter = 0;
   const int maxIter = 50;
 
@@ -287,8 +294,8 @@ void LadrunoJ2::integrate(void)
     double pbar   = ebarP_n + root23*dG;
     R = xiNorm - root23*yieldStress(pbar);
 
-    // dR/ddG = (M:Mp)/||M|| - dtheta - (2/3) sig_y'
-    double dnormM = dotT(M, Mp)/normM;
+    // dR/ddG = (M:Mp)/||M|| - dtheta - (2/3) sig_y'   (guard 1/||M||)
+    double dnormM = (normM > normFloor) ? dotT(M, Mp)/normM : 0.0;
     double dR = dnormM - dtheta - (2.0/3.0)*yieldSlope(pbar);
 
     if (fabs(R) <= tolY) break;
@@ -316,6 +323,17 @@ void LadrunoJ2::integrate(void)
     }
   }
   normM = sqrt(dotT(M, M));
+  if (normM <= normFloor) {
+    // Degenerate relative-stress direction (||M|| -> 0): no well-defined
+    // plastic flow (a converged root needs ||M|| = theta + sqrt(2/3) sig_y > 0,
+    // so this means no admissible plastic solution was found). Fall back to the
+    // elastic predictor at the committed state rather than dividing by ~0.
+    this->setStateToCommitted();
+    for (int i = 0; i < 6; i++) stress6[i] = s_tr[i];
+    for (int i = 0; i < 3; i++) stress6[i] += K*tr;
+    this->buildElasticTangent(Dtan);
+    return;
+  }
   double n[6];
   for (int i = 0; i < 6; i++) n[i] = M[i]/normM;
   double pbar = ebarP_n + root23*dG;
@@ -563,6 +581,12 @@ int LadrunoJ2::updateParameter(int parameterID, Information& info)
     case 7: bIso  = info.theDouble; return 0;
     default: return -1;
   }
+}
+
+int LadrunoJ2::activateParameter(int paramID)
+{
+  parameterID = paramID;
+  return 0;
 }
 
 void LadrunoJ2::Print(OPS_Stream& s, int flag)

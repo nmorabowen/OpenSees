@@ -205,3 +205,61 @@ def test_af_monotonic_saturation():
     s_sat = sig0 + C / gamma             # = 10.0
     assert s_end == pytest.approx(s_sat, rel=0.01), (
         f"AF saturation sigma {s_end} != sig0+C/gamma {s_sat}")
+
+
+# --------------------------------------------------------------------------
+# 3D mixed (shear-inclusive) reduce-to-J2Plasticity — exercises the tensor
+# machinery the uniaxial tests never touch: dotT's factor-2, the IIDEV6 shear
+# block, and the n(x)n shear slots; validates the consistent tangent
+# indirectly (Newton must converge on a full 3D plastic BVP).
+# --------------------------------------------------------------------------
+_NODES3D = {1: (0, 0, 0), 2: (1, 0.1, 0), 3: (1.1, 1, 0.1), 4: (0.05, 0.95, 0),
+            5: (0, 0.05, 1), 6: (1, 0, 1.05), 7: (1.05, 1, 1.1), 8: (0, 1, 0.95)}
+_TOPLOADS = {5: (8.0, -3.0, 4.0), 6: (-5.0, 6.0, -2.0),
+             7: (3.0, 4.0, 7.0), 8: (-4.0, 5.0, -6.0)}   # mixed -> 3D stress w/ shear
+
+
+def _solve_hex_plastic(mat_fn, nsteps=40, scale=0.9):
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for t, c in _NODES3D.items():
+        ops.node(t, *c)
+    mat_fn(1)
+    for n in (1, 2, 3, 4):
+        ops.fix(n, 1, 1, 1)
+    ops.element("stdBrick", 1, 1, 2, 3, 4, 5, 6, 7, 8, 1)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    for n, (fx, fy, fz) in _TOPLOADS.items():
+        ops.load(n, fx * scale, fy * scale, fz * scale)
+    ops.system("FullGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.test("NormDispIncr", 1.0e-10, 100, 0)
+    ops.algorithm("Newton")
+    ops.integrator("LoadControl", 1.0 / nsteps)
+    ops.analysis("Static")
+    assert ops.analyze(nsteps) == 0, "3D plastic solve did not converge"
+    ops.eleResponse(1, "forces")
+    stresses = list(ops.eleResponse(1, "stresses"))[0:6]   # full 6-comp at GP1
+    disps = [ops.nodeDisp(n, d) for n in (5, 6, 7, 8) for d in (1, 2, 3)]
+    return disps, stresses
+
+
+@pytest.mark.t1
+def test_reduce_to_J2Plasticity_3D_mixed_shear():
+    K, G = _kg(1000.0, 0.3)
+    sig0, Qinf, b, Hiso = 5.0, 4.0, 30.0, 10.0
+
+    lad = _solve_hex_plastic(lambda t: ops.nDMaterial(
+        "LadrunoJ2", t, K, G, "-iso", "voce", sig0, Qinf, b, Hiso, "-kin", 0))
+    ref = _solve_hex_plastic(lambda t: ops.nDMaterial(
+        "J2Plasticity", t, K, G, sig0, sig0 + Qinf, b, Hiso, 0.0))
+
+    # guard against a vacuous test: the state must actually carry shear stress
+    assert any(abs(s) > 1e-3 for s in lad[1][3:6]), "expected nonzero shear stress"
+    # all 6 stress components (incl. shear) and all nodal disps must match J2Plasticity
+    for a, c in zip(lad[1], ref[1]):
+        assert a == pytest.approx(c, rel=2e-6, abs=2e-6), f"stress {a} vs {c}"
+    for a, c in zip(lad[0], ref[0]):
+        assert a == pytest.approx(c, rel=2e-6, abs=2e-6), f"disp {a} vs {c}"

@@ -67,6 +67,7 @@ class LadrunoJ2 : public NDMaterial {
 
   int setParameter(const char** argv, int argc, Parameter& param);
   int updateParameter(int parameterID, Information& info);
+  int activateParameter(int paramID);
 
  private:
   // material parameters
