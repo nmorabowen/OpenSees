@@ -151,6 +151,68 @@ them. This is observation-only — fixes we actually applied are tracked in
   never had an SP build. Its build trace was fully removed from the fork.
 - **Status:** by design — use `openseesmp`. Rationale in `02_openseespymp.md`.
 
+### A `fix`/`sp` added mid-analysis snaps the node to the REFERENCE frame, not the current deformed shape
+- **Bites:** in a staged analysis (deform under stage 1, hold load, then constrain
+  part of the model), calling `fix nodeTag dof` on a node that has already displaced
+  by `d` drives that DOF back toward `u = 0` on the next `analyze`, dragging the node
+  to its **original undeformed location** and dumping spurious strains/forces into the
+  attached elements. People expect the new support to "catch" the structure at its
+  current deformed shape; it does the opposite.
+- **Why — the conceptual trap:** an SP constraint prescribes the **total value of the
+  displacement DOF**, `u = value` (`fix` ⇒ `u = 0`), and `u` is *always* measured from
+  the original mesh at t=0. There is **only one displacement frame and it never
+  re-zeros** — not at a stage boundary, not ever. Since `position = X_ref + u`, the
+  statements "fix the deformation to zero" and "send the node back to its original
+  position" are *identical* (`u=0 ⟺ position = X_ref`). The constraint is an algebraic
+  equation on absolute `u`, not an incremental/ratchet condition on the change-from-now,
+  so adding it later does **not** rebase `u` to the current state. "Constraints fix
+  deformation, not position" is true but misleading — it's deformation *measured from
+  the undeformed configuration*.
+- **Source mechanics (this build):** the current displacement at constraint-add time
+  *is* captured — `SP_Constraint::setDomain()` records `initialValue = U(dofNumber)`
+  (SP_Constraint.cpp:380) — and all three handlers are wired to subtract it (Penalty
+  `resid = alpha*(constraint - (nodeDisp - initialValue))`, PenaltySP_FE.cpp:139;
+  Lagrange LagrangeSP_FE.cpp:143; Transformation under `#define TRANSF_INCREMENTAL_SP`
+  in TransformationDOF_Group.h:44 → TransformationDOF_Group.cpp:1055). BUT that
+  "stay-in-place" path only fires when `retZeroInitValue == false`, and
+  `getInitialValue()` returns `0` whenever it's `true` (SP_Constraint.cpp:317).
+  **`fix` and `sp` both default `retZeroInitValue = true`**, and the `sp -subtractInit`
+  flag *also* just sets it `true` (OpenSeesPatternCommands.cpp:1065) — so the
+  incremental/stay-in-place branch is compiled in but **not cleanly reachable from
+  script**. Default behavior across all handlers = snap to reference.
+- **Workaround:** to install a support that holds the *current* deformed position with
+  zero initial force, prescribe the current displacement explicitly rather than `fix`:
+  `d = ops.nodeDisp(n, dof); ops.sp(n, dof, d, '-const')` (needs an active pattern or
+  `-pattern N`). To genuinely return the DOF to its t=0 position, `fix` is correct and
+  the forces are physical. In dynamics, any sudden BC change also injects an impulse;
+  ramp the prescribed value via a timeSeries. Learned 2026-05-31.
+
+### …but `equalDOF`/MP constraints are the OPPOSITE — added mid-stage they PRESERVE the offset (no snap)
+- **The asymmetry (this is the surprising part):** unlike SP, an MP constraint
+  (`equalDOF`, `rigidLink`, `rigidDiaphragm`) added after a node has displaced does
+  **not** snap the constrained node onto the retained one. It ties their *future
+  increments* together while **preserving the relative offset that existed at tie-time**,
+  with **zero initial constraint force**. This is the "install at the current deformed
+  state" behavior you'd *wish* `fix` had — and for MP it's the default, no flag needed.
+- **Why:** `MP_Constraint::setDomain()` captures BOTH nodes' current disps at add-time
+  — `Uc0` (constrained), `Ur0` (retained) (MP_Constraint.cpp:294-313) — and every
+  MP-capable handler enforces the relation on the **offset-removed** displacements,
+  *unconditionally* (no `retZeroInitValue` equivalent): Penalty/Lagrange build the
+  residual from `Uc - Uc0` and `Ur - Ur0` (PenaltyMP_FE.cpp:230-238 → equilibrium is
+  `(Uc - Uc0) = C·(Ur - Ur0)`, not `Uc = C·Ur`); the Transformation handler under
+  `TRANSF_INCREMENTAL_MP` transforms only the **increment** (`modUnbalance -=
+  modTrialDispOld`, TransformationDOF_Group.cpp:525) and applies it via `incrTrialDisp`
+  (line 560), so the standing offset is never overwritten. At tie-time `Uc=Uc0`,
+  `Ur=Ur0` ⇒ constraint satisfied with zero force and zero jump.
+- **Net rule:** SP (`fix`/`sp`) defaults to enforcing the **absolute** value → snaps to
+  reference; MP (`equalDOF`/rigid) defaults to enforcing the **increment** → preserves
+  the current offset. Same "capture init disp at add-time" machinery underneath,
+  **opposite defaults** (MP was hardened for staged construction; SP kept its legacy
+  absolute-value default and never exposed the incremental toggle to a command flag).
+  Caveat: holds for the MP-capable handlers (Transformation / Penalty / Lagrange); the
+  Plain handler isn't the one to use for nontrivial MP staged ties. Learned 2026-05-31.
+  Full write-up with source trail: [[constraints_reference_position]].
+
 ## Quirk: bundled `OTHER/LAPACK` ships `dsygvx` but NOT `dsygv` (Linux link break)
 
 The fork's in-tree reference LAPACK (`OTHER/LAPACK/`, statically linked by the
@@ -251,6 +313,17 @@ broadcast path is not runtime-testable in this build.
   (and the two MPCO recorder objs) — then `cmake --build build\build\Release
   --target OpenSeesPy -j2` for the rest (ninja resumes cached objs). Don't assume a
   `code=2` with no error text is a code bug; check free RAM first. Learned 2026-05-31.
+
+### `getCommitTag()` is a GLOBAL monotonic counter — it does NOT reset on `wipe()`
+- **Bites:** any per-step recorder/series that uses `Domain::getCommitTag()` as its
+  step axis (the analysis monitor's `STEP`, the profiler per-step series). Across
+  several `analyze()` runs in one interpreter session — even with `wipe()` between
+  them — the commitTag keeps climbing (run 1 → 0..199, run 2 → 200..399, ...). It is
+  NOT a within-analysis 0-based step index.
+- **Implication:** don't assert absolute step values or compare step arrays across
+  runs by value; compare the *stride* (`np.diff(step) == every`) instead. For a live
+  viewer, treat `STEP` as a monotonic id, not "step N of this analysis."
+- Learned 2026-05-31 building the analysis monitor (`08_analysis_monitor.md`).
 
 ### `recorder ladruno` is NOT wired into the classic Tcl `OpenSees.exe` (was; now fixed)
 - **Bites:** `recorder ladruno ...` works from OpenSeesPy/openseesmp and the
