@@ -245,10 +245,57 @@ batteries):
 - **v2:** `eas` (enhanced assumed strain, internal `α` + static condensation);
   `corot` geometry method via [[solid_transformation_wrapper]] (large rotation,
   reuses every v1 formulation + the full small-strain material library).
+  **`eas` blueprint = OpenSees `SSPbrick`** (`SRC/element/UWelements/SSPbrick.cpp`):
+  it is exactly `bbar` (constant part via mean-dilatation `dNmod`, `:1266`) **+
+  statically-condensed EAS** (9 enhanced modes, `interior = FCF − K_uα K_αα⁻¹ K_αu`,
+  `:1968`). That condensation is what makes it accurate for **all ν** — a fixed
+  assumed strain (our `physical`) cannot. Cross-validate v2 against `SSPbrick`.
 - **v3 (if geotech large-deformation / base-isolation drives it):** `finite`
   (total-Lagrangian) geometry + the log-strain **material adaptor**, which
   promotes the existing small-strain soil/metal materials to large strain.
   Possibly higher-order (20N serendipity / 27N Lagrange) siblings.
+
+## Validation status — proven vs untested (future work)
+
+As of PR #75 (2026-06-01) the element is **correctness-verified and adversarially
+hardened for linear-elastic small strain**, but NOT yet "battle-tested" for
+production nonlinear / dynamic / parallel use. Be precise about the line.
+
+**Proven (Zone-A 30/30 + adversarial sweep):**
+- Bit-for-bit anchors: `std`↔`Brick`, `bbar`↔`bbarBrick` to ~1e-9 (distorted hex,
+  mixed loads, disp+stress+force).
+- `eas`↔`SSPbrick` to ~1e-6 across ν∈{0,0.3,0.45,0.499} AND component-wise on the
+  distorted hex (the assumed-strain oracle; patch/rank can't validate it).
+- Patch test (constant strain) + rank/6-RBM, all formulations.
+- Locking: volumetric relief (bbar/uri/eas), shear cure (physical/eas), physical's
+  ν→0.5 limitation pinned.
+- Viscous: differential damping (more coeff ⇒ smaller peak) + explicit stability +
+  numeric-coeff-reaches-kernel.
+- Port fidelity independently re-verified line-by-line vs `SSPbrick::GetStab`.
+
+**NOT yet exercised — the remaining validation rungs (highest-value first):**
+1. **Nonlinear materials.** Every test uses `ElasticIsotropic`. No J2/plasticity/
+   path-dependent material has touched any formulation. Open question for `eas`:
+   `Kstab` is frozen at the *initial* tangent (faithful SSP design) — fine for
+   elastic, unverified for strongly inelastic response (convergence, accuracy).
+   Add a J2 / DruckerPrager nonlinear suite.
+2. **Real explicit dynamics.** `viscous` has only a small differential bar test —
+   no Cook's-membrane / wave-propagation / impact run under
+   `CentralDifferenceLadruno` with `-formulation uri -lumped`, checking no
+   hourglass growth + energy balance. Same for `dt_cr` sanity of the element.
+3. **Parallel `sendSelf`/`recvSelf` round-trip.** The eas rebuild-in-`setDomain`
+   path on the receive side is reasoned but never exercised by a real partitioned
+   run (METIS-blocked in this repo generally). Verify Bnot/Kstab reconstruct
+   identically across a partition boundary.
+4. **Recorder round-trip.** Record `stresses`/`strains`/`stress3D6` via the
+   Ladruno recorder, read back, assert shape/values (the contract §C tree).
+5. **Body force / self-weight** (`-b`, `SelfWeight`) for `eas` (2×2×2 N-integral
+   path) and **consistent vs lumped mass** values — implemented, not asserted.
+6. **Platform/CI.** Verified only on the Windows worktree build; confirm the
+   Linux Zone-A CI is green on these tests.
+7. **Geometry seam.** corot/finite are identity-only in v1 (by design) — large
+   rotation/strain validation belongs to [[solid_transformation_wrapper]] /
+   [[09_finite_strain_material_wrapper]] when those land.
 
 ## Implementation log
 
@@ -260,3 +307,61 @@ batteries):
   large-strain are additive. classTag 33002 reserved. Headline gate: reproduce
   upstream `Brick`/`bbarBrick` to ~1e-12. Noted the upstream `setParameter`
   damping `i<4`-over-8 bug we will not inherit.
+- 2026-06-01 — **SHIPPED v1: std + bbar + uri (stiffness + physical hourglass).**
+  std↔`Brick` / bbar↔`bbarBrick` to ~1e-9 (PR #69, merged). uri = 1-pt + FB
+  `stiffness` hourglass (PR #69). `physical` = full-normal assumed strain +
+  Belytschko 8.7.26 mode-subset shear, validated by a bending-convergence
+  benchmark cross-checked vs `SSPbrick` (PR #72). **physical is a SHEAR-locking
+  cure only** (matches SSPbrick at ν=0, converges 0.94→1.005) — it **volumetric-
+  locks at ν→0.5** (use `bbar`). Finding: the eq-8.7.26 isochoric dev-projection
+  over-softens bending (worse with ν); no fixed assumed strain cures both
+  shear+volumetric across ν. The general-ν element needs **EAS** (`eas` v2) —
+  and `SSPbrick` is the blueprint (bbar + condensed EAS, `:1968`). See
+  [[LEDGER_quirks]]. Composes with the `SolidTransformation` seam (#71): physical
+  routes its strain through `computeLocalDisp()` (uCore). Reserved still: `eas`,
+  `uri`+`viscous`. Banner line still pending (ships when merged).
+- 2026-06-01 — **SHIPPED v2: `eas` + `uri -hourglass viscous`** (this PR). `eas`
+  is a verbatim port of `UWelements/SSPbrick::GetStab` (bbar mean-dilatation
+  `Bnot` + 9 enhanced-strain modes statically condensed,
+  `interior = FCF − Kuαᵀ·Kαα⁻¹·Kuα`, `Kstab = Mbenᵀ·interior·Mben`). **Key
+  simplification confirmed by reading SSPbrick:** the condensation uses the
+  **initial** tangent, so `Bnot`/`Kstab` are CONSTANT — there is **no per-step α
+  internal state** to commit. So `commitState`/`revertTo*` need nothing new, and
+  `sendSelf` carries nothing extra: the operators are deterministic from
+  geometry + initial tangent, rebuilt in `setDomain` on the receive side
+  (`buildEAS()`; gated on `formulation==EAS` and all node pointers present).
+  `formEAS`: `K = Kstab + V·Bnotᵀ C Bnot`, `f = Kstab·u + V·Bnotᵀ·σ − f_body`;
+  the centroid material (`materialPointers[0]`) drives the constitutive update,
+  strain set in `update()` as `Bnot·u` (mirrored onto all 8 slots for the per-GP
+  response tree). **Validation (the assumed-strain oracle): `eas` matches
+  `SSPbrick` tip deflection to ~1e-6 across ν ∈ {0, 0.3, 0.45, 0.499}** — for a
+  linear-elastic material the assembled stiffness is *identical* to SSPbrick, so
+  the agreement is essentially exact. `eas` cures BOTH shear and volumetric
+  locking (>0.9 at ν=0.499 where `physical` locks <0.5) — the general-ν element.
+  `viscous` = Flanagan-Belytschko rate-form hourglass damping (8.7.10):
+  `f = c_visc·Σ γ·q̇` from `getTrialVel()`, `c_visc = ε·ρ·c_d·V^(2/3)`,
+  `c_d=√(dd₀₀/ρ)`; explicit-only (adds no stiffness → tangent keeps 12 hg modes
+  at zero energy, fine for explicit; vanishes in statics), validated by a
+  `CentralDifferenceLadruno` stability run. Also fixed a latent factory parser
+  bug: `-hourglass <type>` unconditionally consumed the next token as a numeric
+  coeff (broke `-hourglass <type> -lumped`); now only consumes a numeric token,
+  else `OPS_ResetCurrentInputArg(-1)`. Banner line added; `eas` refusal removed.
+  **All four formulations + three hourglass flavours now ship.**
+- 2026-06-01 — **Adversarial sweep (pre-merge), fixes folded into PR #75.** A
+  multi-agent review (6 dimensions × verify) confirmed the eas port is line-for-
+  line faithful to `SSPbrick::GetStab` and refuted a "64× gamma" false alarm
+  (β=1.0 is correct for the FB rate form per LS-DYNA theory). Real findings fixed:
+  (1) **the first parser fix was openseespy-broken** — `OPS_GetString`+`strtod`
+  can't read a Python numeric coeff (`OPS_GetString` returns `"Invalid String
+  Input!"` for a `PyFloat`), so a numeric `-hourglass` coeff was silently dropped.
+  Switched to `OPS_GetDoubleInput`+`OPS_ResetCurrentInputArg(-1)` (number-aware on
+  both backends). See [[LEDGER_quirks]]. (2) `-damp` is only wired through the
+  std/bbar kernel; the uri/physical/eas condensed kernels ignore it — the factory
+  now warns + drops `-damp` for those formulations instead of silently allocating
+  a no-op. (3) viscous gives a rank-deficient (explicit-only) tangent — documented
+  in the factory header + usage. Tests strengthened: the viscous test is now
+  **differential** (more damping ⇒ strictly smaller peak, catches a dropped coeff
+  or wrong sign); `test_hourglass_coefficient_reaches_kernel` locks the parser
+  regression; `test_eas_matches_sspbrick_distorted_hex` cross-checks eas↔SSPbrick
+  component-wise on the **distorted** hex (exercises the J[4..19] distortion terms
+  the axis-aligned oracle can't reach). Zone-A 30/30.

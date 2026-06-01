@@ -47,7 +47,34 @@ them. This is observation-only — fixes we actually applied are tracked in
   hex, ~1.0 across all nu). `tests/test_ladrunoBrick_bending.py`.
 - **Status (2026-06-01):** shipped `physical` as the FULL-normals + reduced-shear
   **shear-locking cure** (verified vs SSPbrick); documented that near-incompressible
-  needs `-formulation bbar`. A coupled general-nu operator (SSP/ASQBI) is future work.
+  needs `-formulation bbar`. A coupled general-nu operator is future work.
+- **The definitive difference vs SSPbrick (read its source).** `SSPbrick.cpp` is an
+  **EAS element = bbar + statically-condensed enhanced strain**. (1) Volumetric:
+  its constant `Bnot` uses `dNmod` = mean-dilatation (B-bar) modified gradients
+  (`SSPbrick.cpp:1254,1266`). (2) Shear/bending: 9 internal **enhanced-strain
+  modes** `Fe`, condensed out — `interior = FCF − K_uα·K_αα⁻¹·K_αu`
+  (`SSPbrick.cpp:1968`), then `Kstab = Mbenᵀ·interior·Mben`. The **static
+  condensation** is why SSP works for ALL nu: the internal modes *adapt to C*. My
+  `physical` is a single FIXED assumed-strain B (no internal DOFs/condensation) →
+  can cure shear OR volumetric, never both across nu. **Upshot: a general-nu
+  "physical" = our reserved `eas` formulation (v2), and SSPbrick is the production
+  blueprint (bbar constant part + condensed EAS).** See `SSPbrick.cpp:1053`
+  (`GetStab`), `:1243` (G/gamma), `:1647` (enhanced-strain block), `:1968`
+  (condensation).
+- **SHIPPED (2026-06-01): `LadrunoBrick -formulation eas` is the SSPbrick port.**
+  Confirmed while porting: SSPbrick condenses the enhanced modes with the
+  **initial** tangent (`GetStab` is called once in `setDomain`), so `Bnot`/`Kstab`
+  are **constant** — there is **no per-step α internal state**, contrary to the
+  general textbook EAS picture. That collapses the "heavy bit" (no
+  `commitState`/`sendSelf` of α): the operators are deterministic from geometry +
+  C(0), so the parallel receive side just rebuilds them in `setDomain` and
+  `sendSelf` ships nothing extra. Validation gate: for a linear-elastic material
+  the assembled `eas` stiffness is *identical* to `SSPbrick`, so the bending-
+  benchmark tip matches SSPbrick to ~1e-6 across ν∈{0,0.3,0.45,0.499} (where
+  `physical` vol-locks). One caveat: SSPbrick itself sends `Bnot`/`Kstab`/`J[]`
+  over `sendSelf` (its null-ctor sets `mInitialize=false` → skips `GetStab` on
+  recv); LadrunoBrick instead always rebuilds in `setDomain` — simpler, same
+  result, smaller stream.
 
 ### `BbarBrick` has no `update()` — a bare `eleResponse("stresses")` reads the *predictor* (u=0) state
 - **Bites:** after a static/linear solve, `ops.eleResponse(tag, "stresses")` on an
@@ -71,6 +98,30 @@ them. This is observation-only — fixes we actually applied are tracked in
   (LadrunoBrick `bbar`↔`bbarBrick` regression, PR [#65](https://github.com/nmorabowen/OpenSees/pull/65)).
   Displacements matched to 1e-9 (kernel-equivalent); only the stress readback timing
   differed. Date learned: 2026-06-01.
+
+### `OPS_GetString` returns the literal `"Invalid String Input!"` for a Python NUMERIC arg — never use it to peek an optional numeric token
+- **Bites:** a factory that peeks an optional trailing numeric arg by calling
+  `OPS_GetString()` and parsing it (e.g. `strtod`) works under Tcl (args arrive as
+  strings, `"0.05"` parses) but **silently drops the value under openseespy**. For a
+  Python number (`ops.element(..., '-hourglass','viscous', 0.05)`), `0.05` is a
+  `PyFloat`, not a `PyUnicode`. `PythonModule::getString()` (`PyUnicode_Check` fails)
+  returns NULL → `OPS_GetString` (`OpenSeesCommands.cpp`) substitutes the literal
+  string `"Invalid String Input!"`. Your `strtod` then fails, you push the token
+  back, the option loop re-reads it (NULL again → unknown-option WARNING), and the
+  coefficient is **consumed-and-discarded** — the element silently falls back to the
+  default coeff. Tcl path is unaffected, so it hides from Tcl-only testing.
+- **Why:** `OPS_GetString` is for *string* options; `OPS_GetDoubleInput` /
+  `OPS_GetIntInput` are the number-aware readers (their Python backends accept
+  `PyFloat`/`PyLong`/`PyBool`). 
+- **Fix / idiom for an OPTIONAL trailing numeric arg that may instead be the next
+  flag:** read it with `OPS_GetDoubleInput(&n1,&tmp)`; on success use it, on failure
+  `OPS_ResetCurrentInputArg(-1)` to un-get it for the option loop. `OPS_GetDoubleInput`
+  advances the arg cursor by one even when the conversion fails, so the single
+  `-1` reset un-gets exactly that token — works on **both** Tcl and Python.
+- **How it surfaced:** adversarial review of LadrunoBrick PR [#75](https://github.com/nmorabowen/OpenSees/pull/75)
+  (eas + viscous). The first `-hourglass <type> -lumped` fix used `OPS_GetString`+`strtod`;
+  caught before merge by adding `test_hourglass_coefficient_reaches_kernel` (a numeric
+  Python-float coeff must change the response). Date learned: 2026-06-01.
 
 ### `Truss` (and most elements) default to a LUMPED mass — `-lump diagonal` ≡ `-lump rowsum` on them
 - **Bites:** the ExplicitBathe / CriticalTimeStep `-lump <rowsum|diagonal>` option

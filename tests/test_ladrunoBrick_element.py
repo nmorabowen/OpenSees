@@ -136,7 +136,7 @@ def test_default_formulation_is_std():
 # --------------------------------------------------------------------------
 # rank / zero-energy (no spurious mechanisms for std/bbar)
 # --------------------------------------------------------------------------
-@pytest.mark.parametrize("formulation", ["std", "bbar", "uri"])
+@pytest.mark.parametrize("formulation", ["std", "bbar", "uri", "eas"])
 def test_free_element_has_six_rigid_body_modes(formulation):
     # For uri this is also the hourglass-stabilization gate: 1-pt integration
     # alone leaves 6 rigid + 12 hourglass = 18 zero-energy modes; correct
@@ -165,7 +165,7 @@ def test_uri_relieves_volumetric_locking():
     )
 
 
-@pytest.mark.parametrize("formulation", ["std", "bbar", "uri"])
+@pytest.mark.parametrize("formulation", ["std", "bbar", "uri", "eas"])
 def test_uniaxial_stress_patch(formulation):
     """Patch test: a unit cube under uniform x-tractions with statically-
     determinate (6 rigid-mode) restraints develops uniform uniaxial stress
@@ -240,13 +240,142 @@ def _refused(*extra):
     return 1 not in tags
 
 
-def test_eas_formulation_refused():
-    assert _refused("-formulation", "eas"), "-formulation eas should be reserved (->v2)"
-
-
-@pytest.mark.parametrize("hg", ["viscous"])
-def test_uri_viscous_hourglass_refused(hg):
-    # uri ships with 'stiffness' (FB) and 'physical' (assumed-strain); viscous next.
-    assert _refused("-formulation", "uri", "-hourglass", hg), (
-        f"-formulation uri -hourglass {hg} should be refused in this build"
+def test_eas_relieves_volumetric_locking():
+    """eas (bbar + statically-condensed enhanced strain) is the general-nu
+    element: like bbar/uri it removes the incompressibility over-constraint, so
+    it is strictly more flexible than std near nu=0.5. (Bending/all-nu accuracy
+    vs SSPbrick is gated in test_ladrunoBrick_bending.py.)"""
+    nu = 0.4999
+    std = _solve_hex("LadrunoBrick", ["-formulation", "std"], nu=nu)
+    eas = _solve_hex("LadrunoBrick", ["-formulation", "eas"], nu=nu)
+    std_mag = math.sqrt(sum(u * u for u in std[0]))
+    eas_mag = math.sqrt(sum(u * u for u in eas[0]))
+    assert eas_mag > std_mag, (
+        f"eas (|u|={eas_mag:.3e}) should be more flexible than std "
+        f"(|u|={std_mag:.3e}) at nu={nu}"
     )
+
+
+# --------------------------------------------------------------------------
+# uri -hourglass viscous: rate-form damping, explicit-only. Patch/rank cannot
+# see it (it is velocity-dependent and adds no stiffness); an explicit dynamic
+# run can — it must accept the option and stay stable (no hourglass blow-up).
+# --------------------------------------------------------------------------
+def test_uri_viscous_hourglass_accepted():
+    """The factory now builds -hourglass viscous (was refused in v1)."""
+    _build_common(E=1000.0, nu=0.3)
+    ops.element("LadrunoBrick", 1, *_CONN, 1, "-formulation", "uri",
+                "-hourglass", "viscous", "-lumped")
+    tags = ops.getEleTags() or []
+    if isinstance(tags, int):
+        tags = [tags]
+    assert 1 in tags, "uri -hourglass viscous should be accepted"
+
+
+def _viscous_bar_max_tip(hg_coeff, nsteps=400, dt=1.0e-4):
+    """Explicit run of a clamped 4x1x1 uri bar under a sustained transverse tip
+    load, -hourglass viscous with the given coefficient. Returns the peak |tip-z|
+    over the run. In viscous mode there is NO hourglass stiffness, so the
+    transverse (bending) motion of a one-element-deep bar is a damped zero-
+    stiffness mode: it ramps toward a terminal velocity set by the viscous
+    coefficient, so a LARGER coefficient ⇒ MORE damping ⇒ SMALLER peak tip-z. A
+    wrong sign (anti-damping) would instead blow up. This makes the coefficient
+    observable in the response — unlike a bare finiteness check."""
+    nx, L = 4, 4.0
+    E, nu, rho = 1000.0, 0.3, 1.0
+    dx = L / nx
+
+    def nt(i, j, k):
+        return 1 + i + (nx + 1) * j + (nx + 1) * 2 * k
+
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for k in range(2):
+        for j in range(2):
+            for i in range(nx + 1):
+                ops.node(nt(i, j, k), i * dx, j * 1.0, k * 1.0)
+    ops.nDMaterial("ElasticIsotropic", 1, E, nu, rho)
+
+    e = 1
+    for i in range(nx):
+        ops.element("LadrunoBrick", e,
+                    nt(i, 0, 0), nt(i + 1, 0, 0), nt(i + 1, 1, 0), nt(i, 1, 0),
+                    nt(i, 0, 1), nt(i + 1, 0, 1), nt(i + 1, 1, 1), nt(i, 1, 1),
+                    1, "-formulation", "uri", "-hourglass", "viscous", hg_coeff,
+                    "-lumped")
+        e += 1
+
+    for k in range(2):                          # clamp the x=0 face
+        for j in range(2):
+            ops.fix(nt(0, j, k), 1, 1, 1)
+
+    ops.timeSeries("Constant", 1)
+    ops.pattern("Plain", 1, 1)
+    tip = [nt(nx, j, k) for k in range(2) for j in range(2)]
+    for n in tip:
+        ops.load(n, 0.0, 0.0, 1.0 / len(tip))   # transverse tip load (excites bending=hg)
+
+    ops.constraints("Plain")
+    ops.numberer("RCM")
+    ops.system("FullGeneral")
+    ops.algorithm("Linear")
+    ops.integrator("CentralDifferenceLadruno")
+    ops.analysis("Transient")
+
+    maxd = 0.0
+    for _ in range(nsteps):
+        assert ops.analyze(1, dt) == 0
+        d = ops.nodeDisp(tip[0])[2]
+        assert math.isfinite(d), "viscous explicit run produced a non-finite disp"
+        maxd = max(maxd, abs(d))
+    return maxd
+
+
+def test_uri_viscous_hourglass_damps_and_is_stable():
+    """Differential gate (NOT just does-not-crash): a larger viscous coefficient
+    must produce a strictly smaller peak hourglass response, and both runs stay
+    bounded. This fails if the coefficient never reaches the kernel (parser
+    regression), if the damping sign is wrong (would blow up), or if the viscous
+    branch is inert."""
+    low = _viscous_bar_max_tip(0.05)
+    high = _viscous_bar_max_tip(2.0)
+    assert math.isfinite(low) and math.isfinite(high)
+    assert low < 1.0e3 and high < 1.0e3, f"explicit run blew up (low={low:.3e}, high={high:.3e})"
+    assert high < low, (
+        f"more viscous damping should reduce the peak hourglass tip-z, but "
+        f"coeff=2.0 gave {high:.3e} >= coeff=0.05 gave {low:.3e} "
+        f"(coefficient not reaching the kernel, or wrong damping sign)"
+    )
+
+
+def test_hourglass_coefficient_reaches_kernel():
+    """Regression for the factory coeff parse: a NUMERIC -hourglass coefficient
+    (passed as a Python number, the idiomatic openseespy call) must actually
+    reach the kernel. A larger FB `stiffness` hourglass coefficient stiffens the
+    hourglass modes, so the static response under the mixed loads must be
+    strictly smaller. If the coeff were dropped (e.g. OPS_GetString/strtod can't
+    read a Python float), both runs would use the same default and tie."""
+    soft = _solve_hex("LadrunoBrick", ["-formulation", "uri", "-hourglass", "stiffness", 0.02])
+    stiff = _solve_hex("LadrunoBrick", ["-formulation", "uri", "-hourglass", "stiffness", 5.0])
+    soft_mag = math.sqrt(sum(u * u for u in soft[0]))
+    stiff_mag = math.sqrt(sum(u * u for u in stiff[0]))
+    assert stiff_mag < soft_mag, (
+        f"a larger hourglass coeff should stiffen the response, but "
+        f"coeff=5.0 |u|={stiff_mag:.4e} >= coeff=0.02 |u|={soft_mag:.4e} "
+        f"(numeric -hourglass coefficient not reaching the kernel)"
+    )
+
+
+@pytest.mark.parametrize("nu", [0.3, 0.499])
+def test_eas_matches_sspbrick_distorted_hex(nu):
+    """eas vs SSPbrick on the deliberately DISTORTED hex, component-by-component
+    (disp + element force), at compressible and near-incompressible nu. Exercises
+    the J[4..19] distortion terms of the SSPbrick port that the axis-aligned
+    cantilever oracle (test_ladrunoBrick_bending.py) cannot reach — a regular
+    grid has a diagonal Jacobian, zeroing every off-diagonal cross-block. eas
+    condenses from the initial tangent, so for an elastic material the assembled
+    stiffness equals SSPbrick's and the solved state must agree to ~1e-6."""
+    ref = _solve_hex("SSPbrick", [], nu=nu)
+    eas = _solve_hex("LadrunoBrick", ["-formulation", "eas"], nu=nu)
+    _assert_close(eas[0], ref[0], f"disp[nu={nu}]", rtol=1e-6, atol=1e-8)
+    _assert_close(eas[2], ref[2], f"force[nu={nu}]", rtol=1e-6, atol=1e-8)

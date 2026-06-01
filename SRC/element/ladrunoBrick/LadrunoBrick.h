@@ -204,6 +204,19 @@ class LadrunoBrick : public Element {
   // sec 8.7.6/8.7.8) integrated at the full 2x2x2 rule (8.7.20). Assembles
   // stiff (+ resid when !useInitialTangent) with the assumed-strain B-bar.
   void formPhysical(int tang_flag, bool useInitialTangent);
+
+  // eas (v2) — Stabilized Single-Point: bbar (mean-dilatation Bnot) + statically
+  // condensed enhanced assumed strain. Ported from UWelements/SSPbrick. The
+  // enhanced modes are condensed analytically at element setup using the INITIAL
+  // material tangent, so easBnot/easKstab are CONSTANT (no per-step alpha state)
+  // and cure both shear AND volumetric locking across all nu. buildEAS computes
+  // them once (setDomain); formEAS assembles K = Kstab + V*Bnot^T C Bnot and
+  // f = Kstab*u + V*Bnot^T*sigma - bodyForce.  // Ladruno
+  void buildEAS(void);
+  void formEAS(int tang_flag, bool useInitialTangent);
+  Matrix *easBnot;     // 6x24 mean-dilatation B (constant; strain = Bnot*u)
+  Matrix *easKstab;    // 24x24 condensed enhanced-strain stabilization (constant)
+  double  easVol;      // element volume (8*Jo + higher-order terms)
   // Fill the assumed-strain B (Bbar[node][6][3], Voigt {xx,yy,zz,xy,yz,zx}) at a
   // Gauss point; returns |J|. gamma/bC are the (precomputed) hourglass vectors
   // and centroid gradients. Implements eq 8.7.26.

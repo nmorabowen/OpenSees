@@ -15,8 +15,11 @@
 //           [, '-b', bx, by, bz]
 //           [, '-damp', dampTag])
 //
-// v1 implements std + bbar.  uri/eas are accepted by the parser but refused at
-// construction (reserved -> v2) so the public API is stable.
+// std + bbar + uri(stiffness|physical|viscous) + eas are all implemented and
+// accepted at construction. NOTE: uri -hourglass viscous is rate-form damping
+// and EXPLICIT-ONLY — it adds no hourglass stiffness, so the element tangent is
+// rank-deficient under an implicit/eigen solver (use stiffness or physical
+// there). -damp is only honoured by the std/bbar kernel (see the guard below).
 
 #include "LadrunoBrick.h"
 
@@ -99,12 +102,20 @@ void *OPS_LadrunoBrick()
                << idata[0] << " (use viscous|stiffness|physical)\n";
         return 0;
       }
+      // optional numeric coefficient. Read it as a NUMBER (OPS_GetDoubleInput
+      // accepts Python numeric args AND Tcl numeric strings — OPS_GetString
+      // would return "Invalid String Input!" for a Python float and silently
+      // drop the coeff). If the next token is not a number it is the next
+      // option (e.g. -lumped): GetDoubleInput advances the cursor even on
+      // failure, so ResetCurrentInputArg(-1) un-gets exactly that one token
+      // and the option loop re-reads it.
       if (OPS_GetNumRemainingInputArgs() > 0) {
         int n1 = 1;
-        if (OPS_GetDoubleInput(&n1, &hgCoeff) < 0) {
-          opserr << "WARNING invalid -hourglass coeff for LadrunoBrick " << idata[0] << endln;
-          return 0;
-        }
+        double tmp = 0.0;
+        if (OPS_GetDoubleInput(&n1, &tmp) == 0)
+          hgCoeff = tmp;
+        else
+          OPS_ResetCurrentInputArg(-1);
       }
     }
     else if (strcmp(opt, "-lumped") == 0 || strcmp(opt, "-lump") == 0) {
@@ -156,21 +167,17 @@ void *OPS_LadrunoBrick()
     }
   }
 
-  // eas is reserved (-> v2).
-  if (formulation == LadrunoBrick::Formulation::EAS) {
+  // -damp is only wired through the std/bbar kernel; the uri/physical/eas
+  // condensed single-point kernels do not apply element-level Damping. Drop it
+  // with a clear diagnostic for those formulations rather than silently
+  // allocating a no-op damping object that is committed every step.
+  if (theDamping != 0 &&
+      formulation != LadrunoBrick::Formulation::STD &&
+      formulation != LadrunoBrick::Formulation::BBAR) {
     opserr << "WARNING LadrunoBrick " << idata[0]
-           << ": -formulation 'eas' is reserved and not yet implemented (-> v2; "
-              "use std|bbar|uri)\n";
-    return 0;
-  }
-  // uri ships with Flanagan-Belytschko 'stiffness' and Belytschko-Bindeman
-  // assumed-strain 'physical' hourglass control; 'viscous' (rate form) lands next.
-  if (formulation == LadrunoBrick::Formulation::URI &&
-      hgType == LadrunoBrick::Hourglass::VISCOUS) {
-    opserr << "WARNING LadrunoBrick " << idata[0]
-           << ": '-hourglass viscous' is not yet implemented (use stiffness or "
-              "physical); viscous (rate-form) is the next increment\n";
-    return 0;
+           << ": -damp is only supported with -formulation std|bbar; ignoring "
+              "the damping object for this formulation\n";
+    theDamping = 0;
   }
 
   // -geom finite (v3): updated-Lagrangian. v3 supports the std formulation only

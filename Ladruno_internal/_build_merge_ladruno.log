@@ -1,0 +1,361 @@
+=== Loading toolchain ===
+**********************************************************************
+** Visual Studio 2022 Developer Command Prompt v17.14.28
+** Copyright (c) 2025 Microsoft Corporation
+**********************************************************************
+[vcvarsall.bat] Environment initialized for: 'x64'
+
+=== Toolchain loaded ===
+  [OK]      cl.exe
+  [OK]      ifx.exe
+  [OK]      mpiexec.exe
+  [OK]      cmake.exe
+  [OK]      ninja.exe
+  [OK]      conan.exe
+
+MKL_ROOT=C:\Program Files (x86)\Intel\oneAPI\mkl\latest
+I_MPI_ROOT=C:\Program Files (x86)\Intel\oneAPI\mpi\latest\env\\..
+
+-- The C compiler identification is MSVC 19.44.35224.0
+-- The Fortran compiler identification is IntelLLVM 2025.1.1 with MSVC-like command-line
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/cl.exe - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Detecting Fortran compiler ABI info
+-- Detecting Fortran compiler ABI info - done
+-- Check for working Fortran compiler: C:/Program Files (x86)/Intel/oneAPI/compiler/latest/bin/ifx.exe - skipped
+-- MUMPS 5.5.1.5  CMake 4.3.0  Toolchain 
+-- checking that C and Fortran compilers can link
+-- checking that C and Fortran compilers can link - OK
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Failed
+-- Looking for pthread_create in pthreads
+-- Looking for pthread_create in pthreads - not found
+-- Looking for pthread_create in pthread
+-- Looking for pthread_create in pthread - not found
+-- Found Threads: TRUE
+-- Performing Test LAPACK_s_FOUND
+-- Performing Test LAPACK_s_FOUND - Success
+-- Performing Test LAPACK_d_FOUND
+-- Performing Test LAPACK_d_FOUND - Success
+-- Found LAPACK: C:/Program Files (x86)/Intel/oneAPI/mkl/latest/lib/mkl_intel_lp64.lib;C:/Program Files (x86)/Intel/oneAPI/mkl/latest/lib/mkl_sequential.lib;C:/Program Files (x86)/Intel/oneAPI/mkl/latest/lib/mkl_core.lib  found components: MKL
+-- Found MPI_C: C:/Program Files (x86)/Intel/oneAPI/mpi/latest/lib/impi.lib (found version "3.1")
+-- Found MPI_Fortran: C:/Program Files (x86)/Intel/oneAPI/mpi/latest/lib/impi.lib (found version "3.1")
+-- Found MPI: TRUE (found version "3.1") found components: C Fortran
+-- Performing Test SCALAPACK_d_FOUND
+-- Performing Test SCALAPACK_d_FOUND - Success
+-- Performing Test SCALAPACK_s_FOUND
+-- Performing Test SCALAPACK_s_FOUND - Success
+-- Found SCALAPACK: C:/Program Files (x86)/Intel/oneAPI/mkl/latest/lib/mkl_scalapack_lp64.lib  found components: MKL
+-- mumps_src: using source archive C:/Users/nmora/Github/OpenSees_Compile/OpenSees/.claude/worktrees/relaxed-mclean-4c4a14/mumps-archive/mumps_src.tar.gz
+CMake Warning (dev) at C:/Program Files/CMake/share/cmake-4.3/Modules/FetchContent.cmake:1966 (message):
+  Calling FetchContent_Populate(MUMPS) is deprecated, call
+  FetchContent_MakeAvailable(MUMPS) instead.  Policy CMP0169 can be set to
+  OLD to allow FetchContent_Populate(MUMPS) to be called directly for now,
+  but the ability to call it with declared details will be removed completely
+  in a future version.
+Call Stack (most recent call first):
+  cmake/mumps_src.cmake:74 (FetchContent_Populate)
+  CMakeLists.txt:94 (include)
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+-- The following features have been enabled:
+
+ * Parallel, parallel MUMPS (using MPI and Scalapack)
+
+-- The following features have been disabled:
+
+ * 64-bit-integer, use 64-bit integers in C and Fortran
+ * Scotch, Scotch graph partitioning https://www.labri.fr/perso/pelegrin/scotch/
+ * Openmp, OpenMP API https://www.openmp.org/
+
+-- Configuring done (37.1s)
+-- Generating done (0.2s)
+-- Build files have been written to: C:/Users/nmora/Github/OpenSees_Compile/OpenSees/.claude/worktrees/relaxed-mclean-4c4a14/mumps-build
+[1/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\mumps_common.dir\double_linked_list.F-pp.f
+[2/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\mumps_common.dir\ana_omp_m.F-pp.f
+[3/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\mumps_common.dir\fac_ibct_data_m.F-pp.f
+[4/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\mumps_common.dir\fac_asm_build_sort_index_m.F-pp.f
+[5/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\mumps_common.dir\fac_descband_data_m.F-pp.f
+[6/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\mumps_common.dir\fac_asm_build_sort_index_ELT_m.F-pp.f
+[7/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\mumps_common.dir\fac_future_niv2_mod.F-pp.f
+[8/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\mumps_common.dir\fac_maprow_data_m.F-pp.f
+[9/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\mumps_common.dir\mumps_comm_ibcast.F-pp.f
+[10/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\mumps_common.dir\front_data_mgt_m.F-pp.f
+[11/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\mumps_common.dir\omp_tps_common_m.F-pp.f
+[12/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\mumps_common.dir\mumps_l0_omp_m.F-pp.f
+[13/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\mumps_common.dir\ana_orderings_wrappers_m.F-pp.f
+[14/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\mumps_common.dir\lr_common.F-pp.f
+[15/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\mumps_common.dir\mumps_memory_mod.F-pp.f
+[16/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\mumps_common.dir\mumps_mpitoomp_m.F-pp.f
+[17/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\mumps_common.dir\ana_blk_m.F-pp.f
+[18/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\mumps_common.dir\mumps_ooc_common.F-pp.f
+[19/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\mumps_common.dir\ana_AMDMF.F-pp.f
+[20/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\mumps_common.dir\ana_set_ordering.F-pp.f
+[21/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\mumps_common.dir\mumps_static_mapping.F-pp.f
+[22/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\mumps_common.dir\bcast_errors.F-pp.f
+[23/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\mumps_common.dir\estim_flops.F-pp.f
+[24/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\mumps_common.dir\ana_orderings.F-pp.f
+[25/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\mumps_common.dir\mumps_type_size.F-pp.f
+[26/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\mumps_common.dir\mumps_print_defined.F-pp.f
+[27/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\mumps_common.dir\mumps_version.F-pp.f
+[28/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\mumps_common.dir\mumps_type2_blocking.F-pp.f
+[29/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\mumps_common.dir\sol_common.F-pp.f
+[30/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\mumps_common.dir\tools_common.F-pp.f
+[31/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\mumps_common.dir\ana_blk.F-pp.f
+[32/288] Building C object _deps\mumps-build\pord\lib\CMakeFiles\pord.dir\graph.c.obj
+[33/288] Building C object _deps\mumps-build\pord\lib\CMakeFiles\pord.dir\gbipart.c.obj
+[34/288] Building C object _deps\mumps-build\pord\lib\CMakeFiles\pord.dir\gbisect.c.obj
+[35/288] Building C object _deps\mumps-build\pord\lib\CMakeFiles\pord.dir\multisector.c.obj
+[36/288] Building C object _deps\mumps-build\pord\lib\CMakeFiles\pord.dir\nestdiss.c.obj
+[37/288] Building C object _deps\mumps-build\pord\lib\CMakeFiles\pord.dir\gelim.c.obj
+[38/288] Building C object _deps\mumps-build\pord\lib\CMakeFiles\pord.dir\ddcreate.c.obj
+[39/288] Building C object _deps\mumps-build\pord\lib\CMakeFiles\pord.dir\ddbisect.c.obj
+[40/288] Building C object _deps\mumps-build\pord\lib\CMakeFiles\pord.dir\bucket.c.obj
+[41/288] Building C object _deps\mumps-build\pord\lib\CMakeFiles\pord.dir\interface.c.obj
+[42/288] Building C object _deps\mumps-build\pord\lib\CMakeFiles\pord.dir\symbfac.c.obj
+[43/288] Building C object _deps\mumps-build\pord\lib\CMakeFiles\pord.dir\tree.c.obj
+[44/288] Building C object _deps\mumps-build\pord\lib\CMakeFiles\pord.dir\sort.c.obj
+[45/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dana_aux.F-pp.f
+[46/288] Building C object _deps\mumps-build\pord\lib\CMakeFiles\pord.dir\minpriority.c.obj
+[47/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dana_aux_par.F-pp.f
+[48/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dana_lr.F-pp.f
+[49/288] Generating Fortran dyndep file _deps\mumps-build\src\CMakeFiles\mumps_common.dir\Fortran.dd
+[50/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_asm_master_m.F-pp.f
+[51/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_asm_master_ELT_m.F-pp.f
+[52/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_front_aux.F-pp.f
+[53/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_front_LU_type1.F-pp.f
+[54/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_front_LU_type2.F-pp.f
+[55/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_front_LDLT_type1.F-pp.f
+[56/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_front_LDLT_type2.F-pp.f
+[57/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_omp_m.F-pp.f
+[58/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_front_type2_aux.F-pp.f
+[59/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_lr.F-pp.f
+[60/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_par_m.F-pp.f
+[61/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dlr_core.F-pp.f
+[62/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dmumps_lr_data_m.F-pp.f
+[63/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\domp_tps_m.F-pp.f
+[64/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dstatic_ptr_m.F-pp.f
+[65/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dlr_type.F-pp.f
+[66/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dlr_stats.F-pp.f
+[67/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dmumps_config_file.F-pp.f
+[68/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dmumps_save_restore_files.F-pp.f
+[69/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dmumps_save_restore.F-pp.f
+[70/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_mem_dynamic.F-pp.f
+[71/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dmumps_sol_es.F-pp.f
+[72/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dsol_lr.F-pp.f
+[73/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_sol_l0omp_m.F-pp.f
+[74/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_sispointers_m.F-pp.f
+[75/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dsol_omp_m.F-pp.f
+[76/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dmumps_load.F-pp.f
+[77/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dmumps_comm_buffer.F-pp.f
+[78/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dmumps_ooc_buffer.F-pp.f
+[79/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dmumps_ooc.F-pp.f
+[80/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dini_driver.F-pp.f
+[81/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dmumps_struc_def.F-pp.f
+[82/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dana_driver.F-pp.f
+[83/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_driver.F-pp.f
+[84/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dsol_distrhs.F-pp.f
+[85/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dsol_driver.F-pp.f
+[86/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dana_aux_ELT.F-pp.f
+[87/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dend_driver.F-pp.f
+[88/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dana_dist_m.F-pp.f
+[89/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dana_LDLT_preprocess.F-pp.f
+[90/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dana_reordertree.F-pp.f
+[91/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\darrowheads.F-pp.f
+[92/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dbcast_int.F-pp.f
+[93/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_asm_ELT.F-pp.f
+[94/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_asm.F-pp.f
+[95/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_distrib_distentry.F-pp.f
+[96/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_distrib_ELT.F-pp.f
+[97/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_b.F-pp.f
+[98/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_lastrtnelind.F-pp.f
+[99/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_mem_alloc_cb.F-pp.f
+[100/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_mem_compress_cb.F-pp.f
+[101/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_mem_free_block_cb.F-pp.f
+[102/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_process_band.F-pp.f
+[103/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_mem_stack_aux.F-pp.f
+[104/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_mem_stack.F-pp.f
+[105/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_process_blfac_slave.F-pp.f
+[106/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_process_blocfacto_LDLT.F-pp.f
+[107/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_process_blocfacto.F-pp.f
+[108/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_process_bf.F-pp.f
+[109/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_process_end_facto_slave.F-pp.f
+[110/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_process_contrib_type1.F-pp.f
+[111/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_process_contrib_type3.F-pp.f
+[112/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_process_contrib_type2.F-pp.f
+[113/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_process_maprow.F-pp.f
+[114/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_process_master2.F-pp.f
+[115/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_process_message.F-pp.f
+[116/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_process_root2slave.F-pp.f
+[117/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_process_rtnelind.F-pp.f
+[118/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_root_parallel.F-pp.f
+[119/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_determinant.F-pp.f
+[120/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_scalings.F-pp.f
+[121/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_process_root2son.F-pp.f
+[122/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_scalings_simScaleAbs.F-pp.f
+[123/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_scalings_simScale_util.F-pp.f
+[124/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_sol_pool.F-pp.f
+[125/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_type3_symmetrize.F-pp.f
+[126/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dmumps_iXamax.F-pp.f
+[127/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dmumps_driver.F-pp.f
+[128/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dmumps_f77.F-pp.f
+[129/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dini_defaults.F-pp.f
+[130/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dana_mtrans.F-pp.f
+[131/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dooc_panel_piv.F-pp.f
+[132/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\drank_revealing.F-pp.f
+[133/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dsol_aux.F-pp.f
+[134/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dsol_fwd_aux.F-pp.f
+[135/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dsol_bwd.F-pp.f
+[136/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dsol_c.F-pp.f
+[137/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dsol_bwd_aux.F-pp.f
+[138/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dsol_matvec.F-pp.f
+[139/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dsol_fwd.F-pp.f
+[140/288] Linking C static library pord.lib
+[141/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dsol_root_parallel.F-pp.f
+[142/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dtools.F-pp.f
+[143/288] Building Fortran preprocessed _deps\mumps-build\src\CMakeFiles\dmumps.dir\dtype3_root.F-pp.f
+[144/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\fac_ibct_data_m.F.obj
+[145/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\fac_future_niv2_mod.F.obj
+[146/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\mumps_comm_ibcast.F.obj
+[147/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\mumps_l0_omp_m.F.obj
+[148/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\omp_tps_common_m.F.obj
+[149/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\lr_common.F.obj
+[150/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\double_linked_list.F.obj
+[151/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\mumps_mpitoomp_m.F.obj
+[152/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\ana_blk_m.F.obj
+[153/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\ana_orderings_wrappers_m.F.obj
+[154/288] Building C object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\mumps_size.c.obj
+[155/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\mumps_ooc_common.F.obj
+[156/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\front_data_mgt_m.F.obj
+[157/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\mumps_memory_mod.F.obj
+[158/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\ana_set_ordering.F.obj
+[159/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\fac_descband_data_m.F.obj
+[160/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\fac_asm_build_sort_index_ELT_m.F.obj
+[161/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\fac_maprow_data_m.F.obj
+[162/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\fac_asm_build_sort_index_m.F.obj
+[163/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\bcast_errors.F.obj
+[164/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\ana_omp_m.F.obj
+[165/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\estim_flops.F.obj
+[166/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\mumps_type_size.F.obj
+[167/288] Building C object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\mumps_numa.c.obj
+[168/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\mumps_print_defined.F.obj
+[169/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\mumps_version.F.obj
+[170/288] Building C object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\mumps_pord.c.obj
+[171/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\mumps_type2_blocking.F.obj
+[172/288] Building C object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\mumps_save_restore_C.c.obj
+[173/288] Building C object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\mumps_thread_affinity.c.obj
+[174/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\ana_AMDMF.F.obj
+[175/288] Building C object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\mumps_config_file_C.c.obj
+[176/288] Building C object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\mumps_register_thread.c.obj
+[177/288] Building C object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\mumps_common.c.obj
+[178/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\sol_common.F.obj
+[179/288] Building C object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\mumps_io_basic.c.obj
+[180/288] Building C object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\mumps_io_thread.c.obj
+[181/288] Building C object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\mumps_io_err.c.obj
+[182/288] Building C object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\mumps_io.c.obj
+[183/288] Building C object _deps\mumps-build\src\CMakeFiles\dmumps.dir\mumps_c.c.obj
+[184/288] Building C object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dmumps_gpu.c.obj
+[185/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\tools_common.F.obj
+[186/288] Building C object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\mumps_thread.c.obj
+[187/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\ana_blk.F.obj
+[188/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\ana_orderings.F.obj
+[189/288] Generating Fortran dyndep file _deps\mumps-build\src\CMakeFiles\dmumps.dir\Fortran.dd
+[190/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dstatic_ptr_m.F.obj
+[191/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\domp_tps_m.F.obj
+[192/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dlr_type.F.obj
+[193/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_sispointers_m.F.obj
+[194/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dmumps_config_file.F.obj
+[195/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dmumps_struc_def.F.obj
+[196/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_process_bf.F.obj
+[197/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dmumps_ooc_buffer.F.obj
+[198/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_mem_stack_aux.F.obj
+[199/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dmumps_save_restore_files.F.obj
+[200/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dlr_stats.F.obj
+[201/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_sol_l0omp_m.F.obj
+[202/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dana_aux_ELT.F.obj
+[203/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dsol_omp_m.F.obj
+[204/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\mumps_common.dir\mumps_static_mapping.F.obj
+[205/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dana_reordertree.F.obj
+[206/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dsol_distrhs.F.obj
+[207/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dana_LDLT_preprocess.F.obj
+[208/288] Linking Fortran static library mumps_common.lib
+ifx: command line warning #10006: ignoring unknown option '/machine:x64'
+[209/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\darrowheads.F.obj
+[210/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_root_parallel.F.obj
+[211/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_process_root2son.F.obj
+[212/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dana_aux_par.F.obj
+[213/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_distrib_distentry.F.obj
+[214/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_distrib_ELT.F.obj
+[215/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_scalings.F.obj
+[216/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_scalings_simScaleAbs.F.obj
+[217/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dmumps_lr_data_m.F.obj
+[218/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dini_defaults.F.obj
+[219/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_type3_symmetrize.F.obj
+[220/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dmumps_iXamax.F.obj
+[221/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dmumps_ooc.F.obj
+[222/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dmumps_f77.F.obj
+[223/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\drank_revealing.F.obj
+[224/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_scalings_simScale_util.F.obj
+[225/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dooc_panel_piv.F.obj
+[226/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dana_mtrans.F.obj
+[227/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dmumps_sol_es.F.obj
+[228/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dsol_bwd.F.obj
+[229/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dsol_fwd.F.obj
+[230/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dsol_root_parallel.F.obj
+[231/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dsol_matvec.F.obj
+[232/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dana_aux.F.obj
+[233/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_front_aux.F.obj
+[234/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dsol_aux.F.obj
+[235/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_determinant.F.obj
+[236/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dlr_core.F.obj
+[237/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dsol_c.F.obj
+[238/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dsol_lr.F.obj
+[239/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dana_dist_m.F.obj
+[240/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_lr.F.obj
+[241/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dana_lr.F.obj
+[242/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dmumps_comm_buffer.F.obj
+[243/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dbcast_int.F.obj
+[244/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dini_driver.F.obj
+[245/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_lastrtnelind.F.obj
+[246/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dend_driver.F.obj
+[247/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_front_LU_type1.F.obj
+[248/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_front_LDLT_type1.F.obj
+[249/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dsol_fwd_aux.F.obj
+[250/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dsol_bwd_aux.F.obj
+[251/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dmumps_load.F.obj
+[252/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_mem_free_block_cb.F.obj
+[253/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_mem_dynamic.F.obj
+[254/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_mem_alloc_cb.F.obj
+[255/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_mem_stack.F.obj
+[256/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_process_band.F.obj
+[257/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_front_type2_aux.F.obj
+[258/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_asm_ELT.F.obj
+[259/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_front_LU_type2.F.obj
+[260/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_asm.F.obj
+[261/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_front_LDLT_type2.F.obj
+[262/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_asm_master_m.F.obj
+[263/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_asm_master_ELT_m.F.obj
+[264/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_mem_compress_cb.F.obj
+[265/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_process_blfac_slave.F.obj
+[266/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_process_end_facto_slave.F.obj
+[267/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_driver.F.obj
+[268/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_par_m.F.obj
+[269/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_process_blocfacto.F.obj
+[270/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_process_contrib_type1.F.obj
+[271/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_process_blocfacto_LDLT.F.obj
+[272/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_process_contrib_type3.F.obj
+[273/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_process_contrib_type2.F.obj
+[274/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_process_master2.F.obj
+[275/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_omp_m.F.obj
+[276/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_process_rtnelind.F.obj
+[277/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_process_message.F.obj
+[278/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_process_root2slave.F.obj
+[279/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_sol_pool.F.obj
+[280/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_b.F.obj
+[281/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dfac_process_maprow.F.obj
+[282/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dtools.F.obj
+[283/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dtype3_root.F.obj
+[284/288] Building Fortran object _deps\mumps-build\src\CMakeFiles\dmumps.dir\dana_driver.F.obj
