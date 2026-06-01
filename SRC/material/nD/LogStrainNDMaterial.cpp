@@ -75,7 +75,9 @@ LogStrainNDMaterial::LogStrainNDMaterial(int tag, NDMaterial &inner)
   setIdentity(Fn);
   setIdentity(Be_n);
   setIdentity(Ftrial9);
+  setIdentity(BeTrial9);
   setIdentity(Be_trialUpd);
+  for (int k = 0; k < 6; k++) { epsFeed_n[k] = 0.0; epsFeedTrial[k] = 0.0; }
   sigmaCauchy.Zero();
   henckyStrain.Zero();
   aTangent.Zero();
@@ -88,7 +90,9 @@ LogStrainNDMaterial::LogStrainNDMaterial()
   setIdentity(Fn);
   setIdentity(Be_n);
   setIdentity(Ftrial9);
+  setIdentity(BeTrial9);
   setIdentity(Be_trialUpd);
+  for (int k = 0; k < 6; k++) { epsFeed_n[k] = 0.0; epsFeedTrial[k] = 0.0; }
 }
 
 LogStrainNDMaterial::~LogStrainNDMaterial()
@@ -104,25 +108,31 @@ int LogStrainNDMaterial::setTrialF(const Matrix &F)
   for (int i = 0; i < 3; i++)
     for (int j = 0; j < 3; j++) Ftrial9[3*i+j] = F(i, j);
 
-  // (i)+(ii) trial elastic left Cauchy–Green and Hencky strain
+  // (i)+(ii) trial elastic left Cauchy–Green Bᵉᵗʳ and trial Hencky strain εᵉᵗʳ
   double Betr[9];
   trial_Be(Ftrial9, Fn, Be_n, Betr);
-  double eps6[6];
-  hencky_voigt(Betr, eps6);
-  static Vector epsV(6);
-  for (int k = 0; k < 6; k++) epsV(k) = eps6[k];
-  henckyStrain = epsV;
+  for (int i = 0; i < 9; i++) BeTrial9[i] = Betr[i];   // kept for the §14.5 tangent
+  double epsTr6[6], epsN6[6];
+  hencky_voigt(Betr, epsTr6);                          // εᵉᵗʳ = ½ ln Bᵉᵗʳ
+  hencky_voigt(Be_n, epsN6);                           // εᵉ_n  = ½ ln Bᵉ_n
+  for (int k = 0; k < 6; k++) henckyStrain(k) = epsTr6[k];
 
-  // (iii) drive the UNCHANGED small-strain material with εᵉᵗʳ
-  theMaterial->setTrialStrain(epsV);
+  // (iii) PLASTIC-INNER PROTOCOL — neutralise the inner's stored εᵖ subtraction.
+  // Feed ε_feed = ε_feed_n + (εᵉᵗʳ − εᵉ_n); the inner computes ε_feed − εᵖ_inner
+  // = εᵉᵗʳ exactly (the invariant εᵖ_inner = ε_feed_n − εᵉ_n is maintained on
+  // commit). Reduces to ε_feed = εᵉᵗʳ for an elastic inner (εᵖ_inner ≡ 0).
+  static Vector epsFeedV(6);
+  for (int k = 0; k < 6; k++) epsFeedV(k) = epsFeed_n[k] + (epsTr6[k] - epsN6[k]);
+
+  theMaterial->setTrialStrain(epsFeedV);
   const Vector &tauV = theMaterial->getStress();   // Kirchhoff τ (6)
-  const Matrix &D6m  = theMaterial->getTangent();  // ∂τ/∂εᵉ (6×6)
+  const Matrix &D6m  = theMaterial->getTangent();  // ∂τ/∂εᵉ (6×6, elastoplastic)
   double tau6[6], D6[36];
   for (int k = 0; k < 6; k++) tau6[k] = tauV(k);
   for (int I = 0; I < 6; I++)
     for (int J = 0; J < 6; J++) D6[6*I+J] = D6m(I, J);
 
-  // (iv) Cauchy σ = τ/J and material spatial tangent c = (1/2J)[D:L:B]
+  // (iv) Cauchy σ = τ/J and material spatial tangent c = (1/2J)[D:L:B] at Bᵉᵗʳ
   Jdet = mat3_det(Ftrial9);
   double sig6[6], c6[36];
   assemble_material(Betr, D6, tau6, Jdet, sig6, c6);
@@ -130,9 +140,23 @@ int LogStrainNDMaterial::setTrialF(const Matrix &F)
   for (int I = 0; I < 6; I++)
     for (int J = 0; J < 6; J++) aTangent(I, J) = c6[6*I+J];
 
-  // bᵉ to commit: elastic inner ⇒ εᵉ = εᵉᵗʳ ⇒ bᵉ = Bᵉᵗʳ (plastic inner: the
-  // seam-3 state protocol is a documented follow-up; see the header).
-  for (int i = 0; i < 9; i++) Be_trialUpd[i] = Betr[i];
+  // recover the updated elastic strain εᵉ_{n+1} = Cᵉ : τ (Cᵉ = inner elastic
+  // compliance = inv of its initial tangent — exact for a linear elastic inner,
+  // for both elastic and plastic steps since τ = Dᵉ:εᵉ always holds), then the
+  // committed bᵉ = exp[2 εᵉ_{n+1}]. (v1 assumes a linear-elastic inner law.)
+  static Matrix Ce(6, 6);
+  Matrix D0(theMaterial->getInitialTangent());
+  if (D0.Invert(Ce) < 0) {
+    opserr << "LogStrainNDMaterial::setTrialF - inner initial tangent not invertible\n";
+    return -1;
+  }
+  static Vector epsEnp1(6);
+  epsEnp1.addMatrixVector(0.0, Ce, tauV, 1.0);     // εᵉ_{n+1} = Cᵉ τ (eng. Voigt)
+  double epsEnp16[6];
+  for (int k = 0; k < 6; k++) epsEnp16[k] = epsEnp1(k);
+  be_from_hencky_voigt(epsEnp16, Be_trialUpd);     // bᵉ to commit
+
+  for (int k = 0; k < 6; k++) epsFeedTrial[k] = epsFeedV(k);  // stage feed
   return 0;
 }
 
@@ -144,16 +168,17 @@ const Matrix &LogStrainNDMaterial::getTangent(void) { return aTangent; }
 
 // FULL 4th-order spatial constitutive modulus c_ijkl = (1/2J)[D:L:B] — the
 // element's consistent-tangent channel (the 6×6 getTangent above is lossy in the
-// (k,l) pair). Evaluated at the current trial elastic left Cauchy–Green Bᵉᵗʳ
-// (= Be_trialUpd for an elastic inner law), the inner small-strain tangent D, and
-// J — all set by the most recent setTrialF(). See FiniteStrainNDMaterial.h.
+// (k,l) pair). Evaluated at the TRIAL elastic left Cauchy–Green Bᵉᵗʳ (§14.5 uses
+// the trial, NOT the returned bᵉ — they differ once plastic), the inner
+// small-strain tangent D, and J — all from the most recent setTrialF(). See
+// FiniteStrainNDMaterial.h.
 int LogStrainNDMaterial::getSpatialTangentTensor(double c[3][3][3][3])
 {
   const Matrix &D6m = theMaterial->getTangent();   // ∂τ/∂εᵉ (6×6, minor-sym)
   double D6[36];
   for (int I = 0; I < 6; I++)
     for (int J = 0; J < 6; J++) D6[6 * I + J] = D6m(I, J);
-  spatial_tangent_full(Be_trialUpd, D6, Jdet, c);
+  spatial_tangent_full(BeTrial9, D6, Jdet, c);
   return 0;
 }
 
@@ -171,6 +196,7 @@ const Matrix &LogStrainNDMaterial::getInitialTangent(void)
 int LogStrainNDMaterial::commitState(void)
 {
   for (int i = 0; i < 9; i++) { Fn[i] = Ftrial9[i]; Be_n[i] = Be_trialUpd[i]; }
+  for (int k = 0; k < 6; k++) epsFeed_n[k] = epsFeedTrial[k];   // protocol state
   return theMaterial->commitState();
 }
 
@@ -184,7 +210,9 @@ int LogStrainNDMaterial::revertToStart(void)
   setIdentity(Fn);
   setIdentity(Be_n);
   setIdentity(Ftrial9);
+  setIdentity(BeTrial9);
   setIdentity(Be_trialUpd);
+  for (int k = 0; k < 6; k++) { epsFeed_n[k] = 0.0; epsFeedTrial[k] = 0.0; }
   sigmaCauchy.Zero();
   henckyStrain.Zero();
   aTangent.Zero();
@@ -199,6 +227,7 @@ NDMaterial *LogStrainNDMaterial::getCopy(void)
 {
   LogStrainNDMaterial *c = new LogStrainNDMaterial(this->getTag(), *theMaterial);
   for (int i = 0; i < 9; i++) { c->Fn[i] = Fn[i]; c->Be_n[i] = Be_n[i]; }
+  for (int k = 0; k < 6; k++) c->epsFeed_n[k] = epsFeed_n[k];
   return c;
 }
 
@@ -226,8 +255,9 @@ int LogStrainNDMaterial::sendSelf(int cTag, Channel &theChannel)
   dataID(2) = matDbTag;
   if (theChannel.sendID(dbTag, cTag, dataID) < 0) return -1;
 
-  static Vector dataVec(18);
+  static Vector dataVec(24);
   for (int i = 0; i < 9; i++) { dataVec(i) = Fn[i]; dataVec(9+i) = Be_n[i]; }
+  for (int k = 0; k < 6; k++) dataVec(18+k) = epsFeed_n[k];
   if (theChannel.sendVector(dbTag, cTag, dataVec) < 0) return -2;
 
   if (theMaterial->sendSelf(cTag, theChannel) < 0) return -3;
@@ -252,9 +282,10 @@ int LogStrainNDMaterial::recvSelf(int cTag, Channel &theChannel,
   }
   theMaterial->setDbTag(dataID(2));
 
-  static Vector dataVec(18);
+  static Vector dataVec(24);
   if (theChannel.recvVector(dbTag, cTag, dataVec) < 0) return -3;
   for (int i = 0; i < 9; i++) { Fn[i] = dataVec(i); Be_n[i] = dataVec(9+i); }
+  for (int k = 0; k < 6; k++) epsFeed_n[k] = dataVec(18+k);
 
   if (theMaterial->recvSelf(cTag, theChannel, theBroker) < 0) return -4;
   return 0;

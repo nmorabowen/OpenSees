@@ -28,19 +28,24 @@
 // keeps the adaptor element-agnostic; see FiniteStrainNDMaterial.h for the full
 // contract.
 //
-// The adaptor owns the committed elastic left Cauchy–Green tensor bᵉ_n (and
-// committed F_n) per Gauss point and wraps the inner material's commit / revert
-// / sendSelf / recvSelf.
+// The adaptor owns the committed elastic left Cauchy–Green tensor bᵉ_n, the
+// committed F_n, and the committed fed strain ε_feed_n per Gauss point, and wraps
+// the inner material's commit / revert / sendSelf / recvSelf.
 //
-// v1 SCOPE: correct for ELASTIC inner materials (→ a genuine Hencky hyperelastic
-// finite-strain law). Plastic inner materials require the seam-3 state protocol
-// (how to reuse a stateful return map without double-counting plastic strain) —
-// a deliberate follow-up coordinated with the element team; see
-// Ladruno_implementation/09_finite_strain_material_wrapper.md (D2/state ownership).
-// The spatial-tangent ASSEMBLY (14.99) is already material-agnostic (plastic-ready).
+// PLASTIC-INNER STATE PROTOCOL: a stock small-strain plastic NDMaterial treats
+// setTrialStrain() input as TOTAL strain and subtracts its OWN committed εᵖ.
+// Since the adaptor already carries the elastic history in bᵉ_n, feeding it the
+// trial elastic strain directly would double-count εᵖ. The adaptor therefore
+// feeds  ε_feed = ε_feed_n + (εᵉᵗʳ − εᵉ_n)  so the inner's subtraction yields
+// exactly εᵉᵗʳ (invariant εᵖ_inner = ε_feed_n − εᵉ_n, maintained on commit), then
+// recovers εᵉ_{n+1} = Cᵉ:τ (inner elastic compliance) to update bᵉ. This reuses an
+// UNCHANGED stateful inner for BOTH elastic and rate-independent plastic laws
+// (J2, Drucker–Prager, …) and reproduces de Souza Neto Box 14.3/14.4 exactly;
+// hardening persists naturally inside the inner. v1 assumes a LINEAR-elastic inner
+// law (so Cᵉ = inv(initial tangent) is constant and the εᵉ recovery is exact).
 //
-// Reference algorithm verified against the numpy oracle in
-// tests/logstrain_reference.py (21/21).
+// Reference algorithm + protocol verified against the numpy oracle in
+// tests/logstrain_reference.py and tests/test_logstrain_plastic_protocol.py.
 
 #ifndef LogStrainNDMaterial_h
 #define LogStrainNDMaterial_h
@@ -92,10 +97,14 @@ class LogStrainNDMaterial : public FiniteStrainNDMaterial
   // committed state (per Gauss point)
   double Fn[9];                // committed total deformation gradient (row-major)
   double Be_n[9];              // committed elastic left Cauchy–Green tensor bᵉ_n
+  double epsFeed_n[6];         // committed strain last fed to the inner material
+                               // (plastic-inner protocol; engineering-shear Voigt)
 
   // trial state staged for commit
   double Ftrial9[9];           // trial F
+  double BeTrial9[9];          // trial Bᵉᵗʳ (used for the §14.5 spatial tangent)
   double Be_trialUpd[9];       // bᵉ to become bᵉ_n on commit = exp[2 εᵉ_{n+1}]
+  double epsFeedTrial[6];      // trial fed strain, staged for commit
 
   // cached trial outputs
   Vector sigmaCauchy;          // Cauchy stress (6)
