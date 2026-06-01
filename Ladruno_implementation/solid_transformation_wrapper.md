@@ -27,7 +27,12 @@ linear (identity) is the third.
 Companion docs: the element that consumes it [[09_ladruno_brick]]; the recorder
 frame contract [[ladruno_element_contract]] §B (per-step `localAxes`); the
 **material-side log-strain adaptor** (owned by the parallel material-wrapper
-work — referenced here as *seam 3*, see *The boundary with the material wrapper*).
+work — referenced here as *seam 3*, see *The boundary with the material wrapper*);
+and the **staged-activation hook** [[staged_deformation_gradiend]] — a capture of a
+per-GP birth deformation gradient `F₀` on top of the `finite` ledger here, so an
+element appended mid-stage is born stress-free at the deformed geometry (`F_rel =
+F·F₀⁻¹`). Orthogonal to the linear/corot/finite *method* axis; see also the SP/MP/
+element reference-frame trichotomy in [[constraints_reference_position]].
 
 > **The one idea.** An element that knows its reference nodal positions **X** and
 > its nodal field **u** already has everything needed to compute *any* strain

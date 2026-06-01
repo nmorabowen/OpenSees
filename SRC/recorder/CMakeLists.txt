@@ -59,6 +59,8 @@ if(HDF5_FOUND)
         PRIVATE
           MPCORecorder.cpp
           LadrunoRecorder.cpp
+          LadrunoMonitorRecorder.cpp
+          LadrunoMonitorSink.cpp
           Ladruno_NodeResults.cpp
           Ladruno_ElementResults.cpp
           Ladruno_DomainResults.cpp
@@ -67,6 +69,8 @@ if(HDF5_FOUND)
         PUBLIC
          MPCORecorder.h
          LadrunoRecorder.h
+         LadrunoMonitorRecorder.h
+         LadrunoMonitorSink.h
          Ladruno_Types.h
          Ladruno_Hdf5.h
          Ladruno_ResultIO.h
