@@ -255,6 +255,48 @@ batteries):
   promotes the existing small-strain soil/metal materials to large strain.
   Possibly higher-order (20N serendipity / 27N Lagrange) siblings.
 
+## Validation status — proven vs untested (future work)
+
+As of PR #75 (2026-06-01) the element is **correctness-verified and adversarially
+hardened for linear-elastic small strain**, but NOT yet "battle-tested" for
+production nonlinear / dynamic / parallel use. Be precise about the line.
+
+**Proven (Zone-A 30/30 + adversarial sweep):**
+- Bit-for-bit anchors: `std`↔`Brick`, `bbar`↔`bbarBrick` to ~1e-9 (distorted hex,
+  mixed loads, disp+stress+force).
+- `eas`↔`SSPbrick` to ~1e-6 across ν∈{0,0.3,0.45,0.499} AND component-wise on the
+  distorted hex (the assumed-strain oracle; patch/rank can't validate it).
+- Patch test (constant strain) + rank/6-RBM, all formulations.
+- Locking: volumetric relief (bbar/uri/eas), shear cure (physical/eas), physical's
+  ν→0.5 limitation pinned.
+- Viscous: differential damping (more coeff ⇒ smaller peak) + explicit stability +
+  numeric-coeff-reaches-kernel.
+- Port fidelity independently re-verified line-by-line vs `SSPbrick::GetStab`.
+
+**NOT yet exercised — the remaining validation rungs (highest-value first):**
+1. **Nonlinear materials.** Every test uses `ElasticIsotropic`. No J2/plasticity/
+   path-dependent material has touched any formulation. Open question for `eas`:
+   `Kstab` is frozen at the *initial* tangent (faithful SSP design) — fine for
+   elastic, unverified for strongly inelastic response (convergence, accuracy).
+   Add a J2 / DruckerPrager nonlinear suite.
+2. **Real explicit dynamics.** `viscous` has only a small differential bar test —
+   no Cook's-membrane / wave-propagation / impact run under
+   `CentralDifferenceLadruno` with `-formulation uri -lumped`, checking no
+   hourglass growth + energy balance. Same for `dt_cr` sanity of the element.
+3. **Parallel `sendSelf`/`recvSelf` round-trip.** The eas rebuild-in-`setDomain`
+   path on the receive side is reasoned but never exercised by a real partitioned
+   run (METIS-blocked in this repo generally). Verify Bnot/Kstab reconstruct
+   identically across a partition boundary.
+4. **Recorder round-trip.** Record `stresses`/`strains`/`stress3D6` via the
+   Ladruno recorder, read back, assert shape/values (the contract §C tree).
+5. **Body force / self-weight** (`-b`, `SelfWeight`) for `eas` (2×2×2 N-integral
+   path) and **consistent vs lumped mass** values — implemented, not asserted.
+6. **Platform/CI.** Verified only on the Windows worktree build; confirm the
+   Linux Zone-A CI is green on these tests.
+7. **Geometry seam.** corot/finite are identity-only in v1 (by design) — large
+   rotation/strain validation belongs to [[solid_transformation_wrapper]] /
+   [[09_finite_strain_material_wrapper]] when those land.
+
 ## Implementation log
 
 - 2026-05-31 — Plan drafted. Single `-formulation {std|bbar|uri|eas}` selector
