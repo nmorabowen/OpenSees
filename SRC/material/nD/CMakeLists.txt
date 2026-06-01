@@ -137,6 +137,7 @@ target_sources(OPS_Material
     InitStrainNDMaterial.h
     MinMaxNDMaterial.h
     LogStrainNDMaterial.h
+    LogStrainKernel.h
     FiniteStrainNDMaterial.h
     IncrementalElasticIsotropicThreeDimensional.h
     ConcreteMcftNonLinear5.h
