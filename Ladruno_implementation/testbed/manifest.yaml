@@ -210,6 +210,25 @@ features:
     status: remediation
     notes: Band-remediated 27 -> 33001. Broker-registered (getNewRecorder case), so collision risk was real.
 
+  - feature: LadrunoMonitorRecorder
+    classtag: 33002          # RECORDER family; coexists with ELE_TAG LadrunoBrick=33002 (different tag namespace)
+    tag_symbol: RECORDER_TAGS_LadrunoMonitorRecorder
+    pr: 64
+    feature_class: derivative
+    required_tiers: [T1]
+    pytest: tests/test_ladrunoMonitorRecorder.py   # PENDING (Zone-A Ubuntu); Windows smoke+parity+overhead in Ladruno_scripts/test_monitor_smoke.py (green)
+    tcl: WAIVED(recorder; registered via `recorder Monitor` in the shared recordersMap, no new Tcl command)
+    zone_b: []
+    core_files: [SRC/classTags.h, SRC/interpreter/OpenSeesOutputCommands.cpp, SRC/recorder/CMakeLists.txt]
+    dispatch: {tcl: false, functionMap: true}   # shared recordersMap (Py/interpreter-Tcl); classic Tcl TclRecorderCommands.cpp wiring is a follow-up
+    status: remediation
+    notes: >-
+      Live SWMR-HDF5 analysis monitor (`recorder Monitor`), tag 33002. v1 = nodal
+      scalar time-histories (disp/vel/accel/reaction), sequential. Built + tested on
+      Windows (smoke / parity 5.55e-17 vs NodeRecorder / SWMR reopen / -every
+      decimation all green). Owes a Zone-A Ubuntu pytest + classic-Tcl dispatch
+      wiring. See 08_analysis_monitor.md.
+
   # --- worked examples shipped with the scaffold (existing elements, no new C++) ---
 
   - feature: forceBeamColumn_cantilever     # T1 worked example (existing element)
