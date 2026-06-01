@@ -51,11 +51,15 @@ def _gather(path: str) -> dict:
                 if (isinstance(obj, h5py.Group) and "DATA" in obj
                         and isinstance(obj["DATA"], h5py.Dataset)):
                     key = f"{stage}/{name}"
-                    for step, arr in lf.iter_step_slices(obj):
+                    # Align by slab ORDINAL, not the absolute STEP value: the two
+                    # runs are the identical deterministic model, but OpenSees'
+                    # commit tag accumulates across the two analyze() calls in one
+                    # process, so the f64 and f32 files carry different STEP ids for
+                    # the same physics. The k-th recorded slab corresponds 1:1.
+                    for ordinal, (_step, arr) in enumerate(lf.iter_step_slices(obj)):
                         flat = np.asarray(arr).reshape(-1)
-                        s = int(step)
                         for idx, val in enumerate(flat):
-                            out[(key, idx, s)] = float(val)
+                            out[(key, idx, ordinal)] = float(val)
 
             res.visititems(visit)
     return out
