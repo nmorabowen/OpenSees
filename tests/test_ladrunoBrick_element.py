@@ -136,7 +136,7 @@ def test_default_formulation_is_std():
 # --------------------------------------------------------------------------
 # rank / zero-energy (no spurious mechanisms for std/bbar)
 # --------------------------------------------------------------------------
-@pytest.mark.parametrize("formulation", ["std", "bbar", "uri"])
+@pytest.mark.parametrize("formulation", ["std", "bbar", "uri", "eas"])
 def test_free_element_has_six_rigid_body_modes(formulation):
     # For uri this is also the hourglass-stabilization gate: 1-pt integration
     # alone leaves 6 rigid + 12 hourglass = 18 zero-energy modes; correct
@@ -165,7 +165,7 @@ def test_uri_relieves_volumetric_locking():
     )
 
 
-@pytest.mark.parametrize("formulation", ["std", "bbar", "uri"])
+@pytest.mark.parametrize("formulation", ["std", "bbar", "uri", "eas"])
 def test_uniaxial_stress_patch(formulation):
     """Patch test: a unit cube under uniform x-tractions with statically-
     determinate (6 rigid-mode) restraints develops uniform uniaxial stress
@@ -240,13 +240,88 @@ def _refused(*extra):
     return 1 not in tags
 
 
-def test_eas_formulation_refused():
-    assert _refused("-formulation", "eas"), "-formulation eas should be reserved (->v2)"
-
-
-@pytest.mark.parametrize("hg", ["viscous"])
-def test_uri_viscous_hourglass_refused(hg):
-    # uri ships with 'stiffness' (FB) and 'physical' (assumed-strain); viscous next.
-    assert _refused("-formulation", "uri", "-hourglass", hg), (
-        f"-formulation uri -hourglass {hg} should be refused in this build"
+def test_eas_relieves_volumetric_locking():
+    """eas (bbar + statically-condensed enhanced strain) is the general-nu
+    element: like bbar/uri it removes the incompressibility over-constraint, so
+    it is strictly more flexible than std near nu=0.5. (Bending/all-nu accuracy
+    vs SSPbrick is gated in test_ladrunoBrick_bending.py.)"""
+    nu = 0.4999
+    std = _solve_hex("LadrunoBrick", ["-formulation", "std"], nu=nu)
+    eas = _solve_hex("LadrunoBrick", ["-formulation", "eas"], nu=nu)
+    std_mag = math.sqrt(sum(u * u for u in std[0]))
+    eas_mag = math.sqrt(sum(u * u for u in eas[0]))
+    assert eas_mag > std_mag, (
+        f"eas (|u|={eas_mag:.3e}) should be more flexible than std "
+        f"(|u|={std_mag:.3e}) at nu={nu}"
     )
+
+
+# --------------------------------------------------------------------------
+# uri -hourglass viscous: rate-form damping, explicit-only. Patch/rank cannot
+# see it (it is velocity-dependent and adds no stiffness); an explicit dynamic
+# run can — it must accept the option and stay stable (no hourglass blow-up).
+# --------------------------------------------------------------------------
+def test_uri_viscous_hourglass_accepted():
+    """The factory now builds -hourglass viscous (was refused in v1)."""
+    _build_common(E=1000.0, nu=0.3)
+    ops.element("LadrunoBrick", 1, *_CONN, 1, "-formulation", "uri",
+                "-hourglass", "viscous", "-lumped")
+    tags = ops.getEleTags() or []
+    if isinstance(tags, int):
+        tags = [tags]
+    assert 1 in tags, "uri -hourglass viscous should be accepted"
+
+
+def test_uri_viscous_hourglass_explicit_stable():
+    """A reduced-integration bar under the fork's explicit integrator
+    (CentralDifferenceLadruno) with -hourglass viscous must run stably and keep
+    the response bounded — the viscous rate form damps hourglass motion rather
+    than letting the zero-energy modes grow."""
+    nx, L = 4, 4.0
+    E, nu, rho = 1000.0, 0.3, 1.0
+    dx = L / nx
+
+    def nt(i, j, k):
+        return 1 + i + (nx + 1) * j + (nx + 1) * 2 * k
+
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for k in range(2):
+        for j in range(2):
+            for i in range(nx + 1):
+                ops.node(nt(i, j, k), i * dx, j * 1.0, k * 1.0)
+    ops.nDMaterial("ElasticIsotropic", 1, E, nu, rho)
+
+    e = 1
+    for i in range(nx):
+        ops.element("LadrunoBrick", e,
+                    nt(i, 0, 0), nt(i + 1, 0, 0), nt(i + 1, 1, 0), nt(i, 1, 0),
+                    nt(i, 0, 1), nt(i + 1, 0, 1), nt(i + 1, 1, 1), nt(i, 1, 1),
+                    1, "-formulation", "uri", "-hourglass", "viscous", "-lumped")
+        e += 1
+
+    for k in range(2):                          # clamp the x=0 face
+        for j in range(2):
+            ops.fix(nt(0, j, k), 1, 1, 1)
+
+    ops.timeSeries("Constant", 1)
+    ops.pattern("Plain", 1, 1)
+    tip = [nt(nx, j, k) for k in range(2) for j in range(2)]
+    for n in tip:
+        ops.load(n, 0.0, 0.0, 1.0 / len(tip))   # transverse tip load (excites bending+hg)
+
+    ops.constraints("Plain")
+    ops.numberer("RCM")
+    ops.system("FullGeneral")
+    ops.algorithm("Linear")
+    ops.integrator("CentralDifferenceLadruno")
+    ops.analysis("Transient")
+
+    dt = 1.0e-4                                  # well below dt_cr (~3e-2 here)
+    maxd = 0.0
+    for _ in range(300):
+        assert ops.analyze(1, dt) == 0
+        d = ops.nodeDisp(tip[0])[2]
+        assert math.isfinite(d), "viscous explicit run produced a non-finite disp"
+        maxd = max(maxd, abs(d))
+    assert maxd < 1.0e3, f"explicit run blew up (max |tip-z|={maxd:.3e})"

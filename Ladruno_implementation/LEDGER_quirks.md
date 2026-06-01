@@ -61,6 +61,20 @@ them. This is observation-only — fixes we actually applied are tracked in
   blueprint (bbar constant part + condensed EAS).** See `SSPbrick.cpp:1053`
   (`GetStab`), `:1243` (G/gamma), `:1647` (enhanced-strain block), `:1968`
   (condensation).
+- **SHIPPED (2026-06-01): `LadrunoBrick -formulation eas` is the SSPbrick port.**
+  Confirmed while porting: SSPbrick condenses the enhanced modes with the
+  **initial** tangent (`GetStab` is called once in `setDomain`), so `Bnot`/`Kstab`
+  are **constant** — there is **no per-step α internal state**, contrary to the
+  general textbook EAS picture. That collapses the "heavy bit" (no
+  `commitState`/`sendSelf` of α): the operators are deterministic from geometry +
+  C(0), so the parallel receive side just rebuilds them in `setDomain` and
+  `sendSelf` ships nothing extra. Validation gate: for a linear-elastic material
+  the assembled `eas` stiffness is *identical* to `SSPbrick`, so the bending-
+  benchmark tip matches SSPbrick to ~1e-6 across ν∈{0,0.3,0.45,0.499} (where
+  `physical` vol-locks). One caveat: SSPbrick itself sends `Bnot`/`Kstab`/`J[]`
+  over `sendSelf` (its null-ctor sets `mInitialize=false` → skips `GetStab` on
+  recv); LadrunoBrick instead always rebuilds in `setDomain` — simpler, same
+  result, smaller stream.
 
 ### `BbarBrick` has no `update()` — a bare `eleResponse("stresses")` reads the *predictor* (u=0) state
 - **Bites:** after a static/linear solve, `ops.eleResponse(tag, "stresses")` on an

@@ -15,8 +15,8 @@
 //           [, '-b', bx, by, bz]
 //           [, '-damp', dampTag])
 //
-// v1 implements std + bbar.  uri/eas are accepted by the parser but refused at
-// construction (reserved -> v2) so the public API is stable.
+// std + bbar + uri(stiffness|physical) + eas are all implemented. Only
+// uri -hourglass viscous remains refused at construction (rate-form, explicit).
 
 #include "LadrunoBrick.h"
 
@@ -96,12 +96,17 @@ void *OPS_LadrunoBrick()
                << idata[0] << " (use viscous|stiffness|physical)\n";
         return 0;
       }
+      // optional numeric coefficient. Only consume the next token if it is a
+      // number — otherwise it is the next option (e.g. -lumped), so push it
+      // back for the option loop. (Avoids swallowing flags after -hourglass.)
       if (OPS_GetNumRemainingInputArgs() > 0) {
-        int n1 = 1;
-        if (OPS_GetDoubleInput(&n1, &hgCoeff) < 0) {
-          opserr << "WARNING invalid -hourglass coeff for LadrunoBrick " << idata[0] << endln;
-          return 0;
-        }
+        const char *peek = OPS_GetString();
+        char *endp = 0;
+        double val = strtod(peek, &endp);
+        if (endp != peek && *endp == '\0')
+          hgCoeff = val;
+        else
+          OPS_ResetCurrentInputArg(-1);   // not numeric -> leave it for the loop
       }
     }
     else if (strcmp(opt, "-lumped") == 0 || strcmp(opt, "-lump") == 0) {
@@ -130,23 +135,6 @@ void *OPS_LadrunoBrick()
     else {
       opserr << "WARNING unknown option '" << opt << "' for LadrunoBrick " << idata[0] << endln;
     }
-  }
-
-  // eas is reserved (-> v2).
-  if (formulation == LadrunoBrick::Formulation::EAS) {
-    opserr << "WARNING LadrunoBrick " << idata[0]
-           << ": -formulation 'eas' is reserved and not yet implemented (-> v2; "
-              "use std|bbar|uri)\n";
-    return 0;
-  }
-  // uri ships with Flanagan-Belytschko 'stiffness' and Belytschko-Bindeman
-  // assumed-strain 'physical' hourglass control; 'viscous' (rate form) lands next.
-  if (formulation == LadrunoBrick::Formulation::URI &&
-      hgType == LadrunoBrick::Hourglass::VISCOUS) {
-    opserr << "WARNING LadrunoBrick " << idata[0]
-           << ": '-hourglass viscous' is not yet implemented (use stiffness or "
-              "physical); viscous (rate-form) is the next increment\n";
-    return 0;
   }
 
   return new LadrunoBrick(idata[0],

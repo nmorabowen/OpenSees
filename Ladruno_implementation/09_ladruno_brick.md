@@ -278,3 +278,30 @@ batteries):
   [[LEDGER_quirks]]. Composes with the `SolidTransformation` seam (#71): physical
   routes its strain through `computeLocalDisp()` (uCore). Reserved still: `eas`,
   `uri`+`viscous`. Banner line still pending (ships when merged).
+- 2026-06-01 — **SHIPPED v2: `eas` + `uri -hourglass viscous`** (this PR). `eas`
+  is a verbatim port of `UWelements/SSPbrick::GetStab` (bbar mean-dilatation
+  `Bnot` + 9 enhanced-strain modes statically condensed,
+  `interior = FCF − Kuαᵀ·Kαα⁻¹·Kuα`, `Kstab = Mbenᵀ·interior·Mben`). **Key
+  simplification confirmed by reading SSPbrick:** the condensation uses the
+  **initial** tangent, so `Bnot`/`Kstab` are CONSTANT — there is **no per-step α
+  internal state** to commit. So `commitState`/`revertTo*` need nothing new, and
+  `sendSelf` carries nothing extra: the operators are deterministic from
+  geometry + initial tangent, rebuilt in `setDomain` on the receive side
+  (`buildEAS()`; gated on `formulation==EAS` and all node pointers present).
+  `formEAS`: `K = Kstab + V·Bnotᵀ C Bnot`, `f = Kstab·u + V·Bnotᵀ·σ − f_body`;
+  the centroid material (`materialPointers[0]`) drives the constitutive update,
+  strain set in `update()` as `Bnot·u` (mirrored onto all 8 slots for the per-GP
+  response tree). **Validation (the assumed-strain oracle): `eas` matches
+  `SSPbrick` tip deflection to ~1e-6 across ν ∈ {0, 0.3, 0.45, 0.499}** — for a
+  linear-elastic material the assembled stiffness is *identical* to SSPbrick, so
+  the agreement is essentially exact. `eas` cures BOTH shear and volumetric
+  locking (>0.9 at ν=0.499 where `physical` locks <0.5) — the general-ν element.
+  `viscous` = Flanagan-Belytschko rate-form hourglass damping (8.7.10):
+  `f = c_visc·Σ γ·q̇` from `getTrialVel()`, `c_visc = ε·ρ·c_d·V^(2/3)`,
+  `c_d=√(dd₀₀/ρ)`; explicit-only (adds no stiffness → tangent keeps 12 hg modes
+  at zero energy, fine for explicit; vanishes in statics), validated by a
+  `CentralDifferenceLadruno` stability run. Also fixed a latent factory parser
+  bug: `-hourglass <type>` unconditionally consumed the next token as a numeric
+  coeff (broke `-hourglass <type> -lumped`); now only consumes a numeric token,
+  else `OPS_ResetCurrentInputArg(-1)`. Banner line added; `eas` refusal removed.
+  **All four formulations + three hourglass flavours now ship.**
