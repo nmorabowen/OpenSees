@@ -245,6 +245,11 @@ batteries):
 - **v2:** `eas` (enhanced assumed strain, internal `α` + static condensation);
   `corot` geometry method via [[solid_transformation_wrapper]] (large rotation,
   reuses every v1 formulation + the full small-strain material library).
+  **`eas` blueprint = OpenSees `SSPbrick`** (`SRC/element/UWelements/SSPbrick.cpp`):
+  it is exactly `bbar` (constant part via mean-dilatation `dNmod`, `:1266`) **+
+  statically-condensed EAS** (9 enhanced modes, `interior = FCF − K_uα K_αα⁻¹ K_αu`,
+  `:1968`). That condensation is what makes it accurate for **all ν** — a fixed
+  assumed strain (our `physical`) cannot. Cross-validate v2 against `SSPbrick`.
 - **v3 (if geotech large-deformation / base-isolation drives it):** `finite`
   (total-Lagrangian) geometry + the log-strain **material adaptor**, which
   promotes the existing small-strain soil/metal materials to large strain.
@@ -260,3 +265,16 @@ batteries):
   large-strain are additive. classTag 33002 reserved. Headline gate: reproduce
   upstream `Brick`/`bbarBrick` to ~1e-12. Noted the upstream `setParameter`
   damping `i<4`-over-8 bug we will not inherit.
+- 2026-06-01 — **SHIPPED v1: std + bbar + uri (stiffness + physical hourglass).**
+  std↔`Brick` / bbar↔`bbarBrick` to ~1e-9 (PR #69, merged). uri = 1-pt + FB
+  `stiffness` hourglass (PR #69). `physical` = full-normal assumed strain +
+  Belytschko 8.7.26 mode-subset shear, validated by a bending-convergence
+  benchmark cross-checked vs `SSPbrick` (PR #72). **physical is a SHEAR-locking
+  cure only** (matches SSPbrick at ν=0, converges 0.94→1.005) — it **volumetric-
+  locks at ν→0.5** (use `bbar`). Finding: the eq-8.7.26 isochoric dev-projection
+  over-softens bending (worse with ν); no fixed assumed strain cures both
+  shear+volumetric across ν. The general-ν element needs **EAS** (`eas` v2) —
+  and `SSPbrick` is the blueprint (bbar + condensed EAS, `:1968`). See
+  [[LEDGER_quirks]]. Composes with the `SolidTransformation` seam (#71): physical
+  routes its strain through `computeLocalDisp()` (uCore). Reserved still: `eas`,
+  `uri`+`viscous`. Banner line still pending (ships when merged).
