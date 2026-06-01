@@ -474,3 +474,29 @@ broadcast path is not runtime-testable in this build.
   checks already use; tolerates both chunked and legacy `DATA/STEP_k` layouts).
   After the fix the energy kernel matches the EnergyBalance text sidecar to ~5e-9.
   Learned 2026-05-31.
+
+### uri `viscous` hourglass: explicit run goes silently unstable at large eps + dt (CDL doesn't trap it)
+- **Bites:** `LadrunoBrick -hourglass viscous` adds a velocity-proportional damping
+  force but NO hourglass stiffness. Under CentralDifferenceLadruno the viscous term
+  has its own explicit stability bound; at `eps≈0.5` with `dt = 0.1·le/c` the
+  hourglass mode blew up to `nodeDisp ~ 1e+99` — yet `analyze()` still returned 0
+  (CDL does not check for NaN/Inf), so the run *looks* like it completed. Smaller
+  eps tolerates the larger dt; large eps needs a smaller dt.
+- **Fix / rule:** for viscous-hourglass explicit runs use a conservative step
+  (`dt ≈ 0.02–0.03·le/c`) and modest `eps` (≤0.1). Don't trust a clean `analyze()`
+  return alone — assert `isfinite(nodeDisp)`. (Element-level: the viscous tangent
+  is rank-deficient ⇒ statics is singular; it is explicit-only by construction.)
+  Learned 2026-06-01.
+
+### Viscous dissipation reported via the discrete work integral `∫f·du` is a DIAGNOSTIC, not an exact energy balance
+- **Bites:** `LadrunoBrick::hourglassEnergy()` for uri-viscous returns a committed
+  accumulator `hgDissipated += c_visc·Σ q̇·Δq` (work against the FB rate damper).
+  For LIGHT damping this tracks the true dissipated energy well (≈82% of the
+  hourglass KE recovered over a long run); for STRONG damping the per-step velocity
+  collapse in the leapfrog stagger makes `f·Δu` UNDER-count, so "more damping ⇒
+  more reported dissipation" is FALSE as measured (it is non-monotone in eps).
+- **Rule:** treat it as a monotone, energy-bounded spurious-mode diagnostic
+  (GLSTAT-style), and write tests around the robust properties — non-decreasing,
+  positive under hourglass excitation, `0 < E ≤ KE_imparted` across eps, exactly 0
+  for a rigid/constant-strain velocity (γ⟂linear) — NOT exact energy convergence.
+  Learned 2026-06-01.

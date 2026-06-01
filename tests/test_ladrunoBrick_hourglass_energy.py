@@ -10,7 +10,10 @@ Gates:
   * constant strain / rigid body  ->  Ehg = 0 (γ is orthogonal to the linear and
     rigid fields), for uri-stiffness AND eas;
   * a genuinely hourglassing (bending) state -> Ehg > 0;
-  * std / bbar / physical / uri-viscous -> Ehg = 0 (no stored hourglass energy);
+  * std / bbar / physical -> Ehg = 0 (no stored hourglass energy);
+  * uri-viscous stores nothing either — in a static solve (no velocity) it reports
+    0; under dynamics it instead reports its CUMULATIVE dissipation (covered in
+    test_ladrunoBrick_viscous_dissipation.py);
   * Ehg >= 0 always, and on a single element Ehg <= the external work (it is a
     part of the strain energy, so it cannot exceed it).
 """
@@ -129,7 +132,8 @@ def test_bending_has_positive_hourglass_energy(form_args):
 def test_fully_integrated_and_viscous_report_zero(form_args):
     """std/bbar (full integration) and physical (assumed strain folded into the
     strain energy) store no separable hourglass energy; uri-viscous dissipates
-    rather than stores. All report exactly 0."""
+    rather than stores and accumulates nothing in this STATIC solve (no velocity).
+    All report exactly 0 here."""
     _, Ehg = _cantilever_hg(form_args)
     assert Ehg == 0.0, f"{form_args}: expected 0 hourglass energy, got {Ehg:.3e}"
 
