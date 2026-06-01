@@ -30,6 +30,12 @@ snap-back, or a member born pre-stressed.
 
 All file/line references below are into this fork's `SRC/` tree.
 
+> **Empirically verified.** The runtime behaviors in §2–§4 (SP snap-to-reference,
+> `sp`-at-current no-jump, MP offset-preservation with zero initial force, `Truss`
+> stress-free birth vs. `-useInitialDisp 0`, and continuum-quad strain inheritance)
+> were each checked against the fork build `5e913fd1` and all passed — they are
+> runtime-confirmed, not only source-read.
+
 ---
 
 ## 1. The one displacement frame
