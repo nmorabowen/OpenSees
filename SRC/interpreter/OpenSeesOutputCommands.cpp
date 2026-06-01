@@ -87,6 +87,7 @@ void* OPS_RemoveRecorder();
 #ifdef _HDF5
 void* OPS_MPCORecorder();
 void* OPS_LadrunoRecorder();
+void* OPS_LadrunoMonitorRecorder();   // Ladruno: live analysis-monitor recorder
 void* OPS_VTKHDF_Recorder();
 #endif
 void* OPS_GmshRecorder();
@@ -132,6 +133,7 @@ namespace {
 #ifdef _HDF5
 	recordersMap.insert(std::make_pair("mpco", &OPS_MPCORecorder));
 	recordersMap.insert(std::make_pair("ladruno", &OPS_LadrunoRecorder));
+	recordersMap.insert(std::make_pair("Monitor", &OPS_LadrunoMonitorRecorder)); // Ladruno live monitor
     recordersMap.insert(std::make_pair("VTKHDF", &OPS_VTKHDF_Recorder));
 #endif
         //recordersMap.insert(std::make_pair("Drift", &OPS_DriftRecorder));

@@ -48,6 +48,7 @@ habit as the ledgers, no tooling.
 | **CentralDifferenceLadruno** | `integrator CentralDifferenceLadruno [...]` (options mirror the explicit Bathe integrators; correct first-step starter, built-in `dt_cr`, βK guard) | integrator emit. **Coupled mode dropped** → for that case use `NewmarkExplicit 0.5`. | shipped (per-TU verified; full link pending the Ladruno blocker) |
 | **EnergyBalance recorder** | `recorder EnergyBalance -file f [-time] [-region tag ...] [-csv\|-xml\|-binary\|-tcp addr port] [-precision N] [-scientific] [-closeOnWrite]` | recorder emit; per-region columns `KE IE DW ULW RES ERR`. **Text sidecar**, *not* MPCO — route to a text reader. The same energy math now also lands inside `.ladruno` (see MPCO row, ADR D8), so prefer that when MPCO is already on. | shipped |
 | **Ladruno** | `recorder ladruno file -N <nodal...> -E <element...> [-G energy <regionTag...>] -T dt -R region` | `_response_catalog` `IntRule` enum **must match** `ladruno::detail::ElementIntegrationRuleType`; `Results.from_ladruno` reader keyed on `.ladruno` `FORMAT_VERSION`; partition discovery regex `^(?P<stem>.+?)\.part-(?P<idx>\d+)\.ladruno$`; consumes `basisInfo`/`QUADRATURE` self-declaration (new conforming elements need *no* recorder edit). See the schema notes below. | shipped (schema actively evolving — pin to `FORMAT_VERSION`) |
+| **Analysis monitor** (live) | `recorder Monitor -node <n…> -dof <d…> -resp disp\|vel\|accel\|reaction -sink file.h5 [-every K] [-hz H] [-region tag]` → SWMR-HDF5 stream tailable *while the run is live*; stop via `remove recorder $tag` | **apeGmsh must implement a consumer** — a typed `ops.recorder.Monitor(…)` emitter + a live tailing reader (open `swmr=True`, `ds.id.refresh()`) feeding the viewer's live plots. File is self-describing (`COLUMNS` var-strings, `STEP`/`TIME`/`FRAMES`), `FORMAT="ladruno-monitor"` `FORMAT_VERSION=1`. Also a valid at-rest file (read post-run like any results h5). class tag `RECORDER_TAGS_LadrunoMonitorRecorder`=33002. | **shipped (v1, sequential, nodal scalars)** — see [[08_analysis_monitor]] | 
 | **Ladruno brick element(s)** | TBD — higher-order hex, sibling to BezierTri6 on the solid side; will self-declare via the element contract | not yet — heads-up for the apeGmsh element registry. | draft (no plan file yet) |
 | **OpenSeesPyMP** | `import openseesmp` (per-rank MPI Python module) | affects which engine `Results.run()` drives (`openseespy` vs `openseesmp`). | shipped |
 
@@ -196,6 +197,43 @@ Partitions: `stem.part-N.ladruno` (0-based).
   `ladruno::detail::ElementIntegrationRuleType`) — don't hardcode. Pin the reader to
   `FORMAT_VERSION` and treat the schema as actively evolving.
 
+### Analysis monitor (live `recorder Monitor`)  — **TO IMPLEMENT on apeGmsh side**
+
+**OpenSees side.** A live streaming recorder (`08_analysis_monitor.md`). You pick
+nodes/dofs/response, call `analyze(N)` once, and it streams selected nodal scalars
+(disp/vel/accel/reaction) to a **SWMR-HDF5** file a separate process can tail *while
+the analysis is still running* (Shape B — the engine pushes from `record()` at each
+commit). Two rate gates bound the cost so it never perturbs the solve: `-every K`
+(step decimation) + `-hz H` (wall-clock throttle). The append is fire-and-forget —
+a slow/absent reader can never stall `analyze()`. Self-describing layout: root attrs
+`FORMAT="ladruno-monitor"`/`FORMAT_VERSION=1`/`GENERATOR="Ladruno"`; `COLUMNS`
+(variable-length strings, e.g. `node5.disp.dof1`); chunked/unlimited `STEP[T]`,
+`TIME[T]`, `FRAMES[T×nCols]`. **One file, two lifetimes** — the live sink is also a
+valid at-rest results file. v1 = nodal scalar time-histories, sequential; element/
+region channels, a profiler-telemetry tee, and the parallel path are follow-ups.
+
+> **`STEP` is a global monotonic id, not a 0-based per-analysis step.** OpenSees'
+> `getCommitTag()` does not reset on `wipe()` — treat `STEP` as a monotonically
+> increasing id, key plots off `TIME`/array index, and never assume `STEP[0]==0`.
+
+**Recommended apeGmsh approach (this is the deliverable — the monitor is shipped,
+apeGmsh's consumer is not).**
+- **Emitter:** a typed `ops.recorder.Monitor(nodes=…, dof=…, resp=…, sink=…,
+  every=…, hz=…)` (sibling of `ops.recorder.MPCO`/`.Ladruno`) that emits the
+  `recorder Monitor …` line; gate at point-of-use with a "requires the Ladruno fork
+  build" error on stock openseespy.
+- **Live reader / viewer:** this is the actual UX — a tailing consumer that opens the
+  sink `h5py.File(path, 'r', swmr=True)`, calls `ds.id.refresh()` on a timer (set
+  `HDF5_USE_FILE_LOCKING=FALSE`), and pushes new `FRAMES` rows into the live plot for
+  the picked channels. The eventual OpenSees-side path is a FastAPI `/live` SSE
+  sidecar (Ladruno P1) → apeGmsh can either consume that SSE or tail the file
+  directly; tailing the file directly is the simplest first cut.
+- **At-rest reuse:** because the sink is a normal results h5, a post-run
+  `Results.from_monitor(path)` (or fold into the existing reader) gives the same
+  channels as a plain time-history — free, no live machinery.
+- **Selection ↔ picker:** the `COLUMNS` labels are authoritative and self-describing;
+  drive the viewer's channel picker straight off them (no per-feature shim).
+
 ## Related docs (the normative detail)
 
 This is a quick reference; the deep specs live next door:
@@ -226,3 +264,7 @@ This is a quick reference; the deep specs live next door:
   recommend apeGmsh do, grounded in the apegmsh-helper skill's seams. Added the
   `GENERATOR="Ladruno"` reader note. (These rode in after PR #27 merged + the
   recorder rename swept the doc; re-landed here against the renamed base.)
+- 2026-05-31 — Added the **Analysis monitor** (live `recorder Monitor`, SWMR-HDF5,
+  tag 33002) — shipped v1 on the OpenSees side, but its apeGmsh consumer (typed
+  emitter + live tailing reader/viewer + at-rest `from_monitor`) is **not yet
+  implemented and must be**. See [[08_analysis_monitor]].
