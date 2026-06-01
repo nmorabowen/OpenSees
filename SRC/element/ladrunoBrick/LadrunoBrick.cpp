@@ -24,6 +24,8 @@
 #include <Domain.h>
 #include <ErrorHandler.h>
 #include <LadrunoBrick.h>
+#include <SolidTransformation.h>          // Ladruno — geometry-method seam (2/3)
+#include <SolidTransformationLinear.h>    // Ladruno — v1 identity method
 #include <shp3d.h>
 #include <Renderer.h>
 #include <ElementResponse.h>
@@ -88,7 +90,8 @@ LadrunoBrick::LadrunoBrick()
    connectedExternalNodes(8),
    formulation(Formulation::STD),
    hourglassType(Hourglass::PHYSICAL), hourglassCoeff(0.0),
-   applyLoad(0), load(0), Ki(0), massType(0)
+   applyLoad(0), load(0), Ki(0), massType(0),
+   theGeom(new SolidTransformationLinear())   // Ladruno — v1 identity geometry
 {
   B.Zero();
 
@@ -115,7 +118,8 @@ LadrunoBrick::LadrunoBrick(int tag,
    connectedExternalNodes(8),
    formulation(form),
    hourglassType(hgType), hourglassCoeff(hgCoeff),
-   applyLoad(0), load(0), Ki(0), massType(matype)
+   applyLoad(0), load(0), Ki(0), massType(matype),
+   theGeom(new SolidTransformationLinear())   // Ladruno — v1 identity geometry
 {
   B.Zero();
 
@@ -165,6 +169,8 @@ LadrunoBrick::~LadrunoBrick()
       theDamping[i] = 0;
     }
   }
+
+  if (theGeom) delete theGeom;   // Ladruno — geometry-method layer
 }
 
 //set domain
@@ -399,6 +405,11 @@ const Matrix &  LadrunoBrick::getInitialStiff(void)
     }
   }
 
+  // seam 3: globalize the initial stiffness (zero stress => no K_geo).
+  // identity for -geom linear.  // Ladruno
+  static Vector zeroF(24);
+  theGeom->globalizeStiff(stiff, zeroF, stiff);
+
   Ki = new Matrix(stiff);
   return stiff;
 }
@@ -572,6 +583,7 @@ LadrunoBrick::update(void)
 {
   if (formulation == Formulation::URI) {
     computeBasis();
+    const Vector &uCore = this->computeLocalDisp();   // seam 0+2 (identity for linear)
 
     if (hourglassType == Hourglass::PHYSICAL) {
       // physical: assumed-strain at the full 2x2x2 rule, one material per GP.
@@ -595,11 +607,10 @@ LadrunoBrick::update(void)
             double gp[3] = {sg[gi], sg[gj], sg[gk]};
             assumedStrainB(gp, gamma, bC, Bbar);
             strainG.Zero();
-            for (int J = 0; J < 8; J++) {
-              const Vector &ul = nodePointers[J]->getTrialDisp();
+            for (int J = 0; J < 8; J++) {        // uCore = localized (core-frame) disp
               for (int r = 0; r < 6; r++)
                 for (int c = 0; c < 3; c++)
-                  strainG(r) += Bbar[J][r][c] * ul(c);
+                  strainG(r) += Bbar[J][r][c] * uCore(3 * J + c);
             }
             materialPointers[gpIdx++]->setTrialStrain(strainG);
           }
@@ -615,11 +626,12 @@ LadrunoBrick::update(void)
 
     static Vector strainC(6);
     static Matrix Bc(6, 3);
+    static Vector ulj(3);
     strainC.Zero();
     for (int J = 0; J < 8; J++) {
       Bc = computeB(J, shpC);
-      const Vector &ul = nodePointers[J]->getTrialDisp();
-      strainC.addMatrixVector(1.0, Bc, ul, 1.0);
+      ulj(0) = uCore(3 * J); ulj(1) = uCore(3 * J + 1); ulj(2) = uCore(3 * J + 2);
+      strainC.addMatrixVector(1.0, Bc, ulj, 1.0);
     }
     for (int i = 0; i < 8; i++)
       materialPointers[i]->setTrialStrain(strainC);
@@ -665,6 +677,9 @@ LadrunoBrick::update(void)
   if (useBbar)
     computeShapeBar(shpBar, Shape, dvol, volume);
 
+  const Vector &uCore = this->computeLocalDisp();   // seam 0+2 (identity for linear)
+  static Vector ulj(3);
+
   for (int i = 0; i < numberGauss; i++) {
     for (int p = 0; p < nShape; p++)
       for (int q = 0; q < numberNodes; q++)
@@ -674,8 +689,8 @@ LadrunoBrick::update(void)
 
     for (int j = 0; j < numberNodes; j++) {
       BJ = useBbar ? computeBbar(j, shp, shpBar) : computeB(j, shp);
-      const Vector &ul = nodePointers[j]->getTrialDisp();
-      strain.addMatrixVector(1.0, BJ, ul, 1.0);
+      ulj(0) = uCore(3 * j); ulj(1) = uCore(3 * j + 1); ulj(2) = uCore(3 * j + 2);
+      strain.addMatrixVector(1.0, BJ, ulj, 1.0);
     }
 
     materialPointers[i]->setTrialStrain(strain);
@@ -804,6 +819,12 @@ void  LadrunoBrick::formResidAndTangent(int tang_flag)
       jj += ndf;
     }
   }
+
+  // seam 3: globalize the core-frame f/K back to global DOFs, adding K_geo.
+  // identity for -geom linear (fGlobal=fCore, kGlobal=kCore, K_geo=0).  // Ladruno
+  if (tang_flag == 1)
+    theGeom->globalizeStiff(stiff, resid, stiff);
+  theGeom->globalizeForce(resid, resid);
 }
 
 //compute local nodal coordinates
@@ -815,6 +836,35 @@ void   LadrunoBrick::computeBasis(void)
     xl[1][i] = coorI(1);
     xl[2][i] = coorI(2);
   }
+}
+
+//----------------------------------------------------------------------
+// Seam 0+2 (geometry method): refresh theGeom from the current geometry and
+// return the localized (core-frame) 24-dof trial displacement.
+//   * theGeom->update() is the one-shot per-evaluation refresh (linear: no-op;
+//     corot/finite: build the frame / deformation gradient from ref+cur coords).
+//   * theGeom->localizeDisp() strips the rigid rotation (linear: identity, so
+//     uCore == uGlobal and the strain below is bit-for-bit the direct kernel).
+//----------------------------------------------------------------------
+const Vector &
+LadrunoBrick::computeLocalDisp(void)
+{
+  static Matrix refCrds(8, 3), curCrds(8, 3);
+  static Vector uGlobal(24), uCore(24);
+
+  for (int i = 0; i < 8; i++) {
+    const Vector &X = nodePointers[i]->getCrds();
+    const Vector &u = nodePointers[i]->getTrialDisp();
+    for (int d = 0; d < 3; d++) {
+      refCrds(i, d) = X(d);
+      curCrds(i, d) = X(d) + u(d);
+      uGlobal(3 * i + d) = u(d);
+    }
+  }
+
+  theGeom->update(8, refCrds, curCrds);
+  theGeom->localizeDisp(uGlobal, uCore);
+  return uCore;
 }
 
 //compute the standard small-strain B at a node (std / uri / shear rows of bbar)
@@ -1061,6 +1111,16 @@ LadrunoBrick::formUri(int tang_flag, bool useInitialTangent)
           stiff(3 * I + i, 3 * J + i) += kg;
       }
   }
+
+  // seam 3: globalize the core-frame f/K back to global DOFs, adding K_geo.
+  // identity for -geom linear. resid is assembled only when !useInitialTangent;
+  // the initial-stiffness call uses zero internal force (zero stress => no K_geo).
+  static Vector zeroF(24);                                                  // Ladruno
+  const Vector &fCore = useInitialTangent ? zeroF : resid;
+  if (tang_flag == 1)
+    theGeom->globalizeStiff(stiff, fCore, stiff);
+  if (!useInitialTangent)
+    theGeom->globalizeForce(resid, resid);
 }
 
 //----------------------------------------------------------------------
@@ -1317,10 +1377,13 @@ int  LadrunoBrick::sendSelf(int commitTag, Channel &theChannel)
     idData(27) = dbTag;
   }
 
-  // formulation + massType + hourglass type packed into one int slot
+  // formulation + massType + hourglass type + geometry method packed into one
+  // int slot. geometry method id is x1000; Linear=0 => byte-identical to a
+  // pre-seam stream.  // Ladruno
   idData(28) = static_cast<int>(formulation)
              + 10 * massType
-             + 100 * static_cast<int>(hourglassType);
+             + 100 * static_cast<int>(hourglassType)
+             + 1000 * theGeom->getMethodID();
 
   res += theChannel.sendID(dataTag, commitTag, idData);
   if (res < 0) {
@@ -1399,6 +1462,13 @@ int  LadrunoBrick::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker
   formulation   = static_cast<Formulation>(packed % 10);
   massType      = (packed / 10) % 10;
   hourglassType = static_cast<Hourglass>((packed / 100) % 10);
+
+  // rebuild the geometry-method layer from its serialized method id.  // Ladruno
+  int geomID = (packed / 1000) % 10;
+  if (theGeom) delete theGeom;
+  theGeom = SolidTransformation::create(geomID);
+  if (theGeom == 0)
+    theGeom = new SolidTransformationLinear();   // safe fallback (unknown id)
 
   if (materialPointers[0] == 0) {
     for (int i = 0; i < 8; i++) {
