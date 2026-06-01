@@ -202,6 +202,20 @@ void *OPS_LadrunoBrick()
     }
   }
 
+  // -geom corot (v2): EICR small-strain corotational. v2 ships std + bbar only.
+  // uri/eas under corot are a deferred follow-up (ADR 10 §6/§7): EAS condensation
+  // in the corotated frame is unvalidated, and uri's PHYSICAL-hourglass path does
+  // not route through the globalize seams at all (frame-inconsistent). Reject the
+  // unsupported combos at parse time, mirroring the -geom finite guard.  // Ladruno (sweep #1)
+  if (geomMethodID == SolidTransformation::METHOD_COROT &&
+      formulation != LadrunoBrick::Formulation::STD &&
+      formulation != LadrunoBrick::Formulation::BBAR) {
+    opserr << "WARNING LadrunoBrick " << idata[0]
+           << ": -geom corot currently supports only -formulation std|bbar "
+              "(uri/eas under corot are a deferred follow-up)\n";
+    return 0;
+  }
+
   return new LadrunoBrick(idata[0],
                           idata[1], idata[2], idata[3], idata[4],
                           idata[5], idata[6], idata[7], idata[8],

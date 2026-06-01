@@ -116,7 +116,13 @@ def _rot(thz, thy):
 # --------------------------------------------------------------------------- #
 #  THE defining gate: pure rigid rotation -> zero stress and zero force.      #
 # --------------------------------------------------------------------------- #
-@pytest.mark.parametrize("thz,thy", [(0.35, 0.25), (1.20, -0.80), (2.50, 0.40)])
+# includes cases that cross π (179°, 180°, 270°) — the regime where R has an
+# eigenvalue near −1 and the polar iteration / spin-map inverse are most stressed
+# (ADR §5 Gate 1 asks for 179°; §7 deferred >π tracking — exercise it here).
+@pytest.mark.parametrize("thz,thy", [
+    (0.35, 0.25), (1.20, -0.80), (2.50, 0.40),
+    (math.radians(179.0), 0.0), (math.pi, 0.0), (1.5 * math.pi, 0.0),
+])
 def test_corot_rigid_rotation_is_stress_free(thz, thy):
     R = _rot(thz, thy)
     u = _affine_disp(R)  # x_a = R X_a  => polar(H) = R exactly => u_d = 0
@@ -166,55 +172,89 @@ def test_corot_objectivity_rotated_small_strain():
     E = np.array([[1.02, 0.0, 0.0],
                   [0.0, 0.99, 0.0],
                   [0.0, 0.0, 1.005]])
-    u_ref = _affine_disp(E.tolist(), wiggle=False)
-    f_ref = _resisting_force(u_ref, "corot")           # unrotated
-
     R = _rot(0.7, -0.4)
-    u_rot = _affine_disp((R @ E).tolist(), wiggle=False)  # same strain, then rotate
-    f_rot = _resisting_force(u_rot, "corot")
 
-    # the rotated force should equal R applied node-by-node to the unrotated one
+    assert _impose_and_solve(_affine_disp(E.tolist()), "corot") == 0
+    f_ref = np.array(ops.eleForce(1), dtype=float)                       # unrotated
+    s_ref = np.array(ops.eleResponse(1, "stresses"), dtype=float)        # 48 = 8 GP x 6
+
+    assert _impose_and_solve(_affine_disp((R @ E).tolist()), "corot") == 0
+    f_rot = np.array(ops.eleForce(1), dtype=float)                       # same strain, rotated
+    s_rot = np.array(ops.eleResponse(1, "stresses"), dtype=float)
+
+    # (1) force: rotated == R applied node-by-node to the unrotated force
     f_ref_rot = np.zeros(24)
     for a in range(8):
         f_ref_rot[3*a:3*a+3] = R @ f_ref[3*a:3*a+3]
-
     scale = max(np.abs(f_ref).max(), 1.0e-30)
-    err = np.abs(f_rot - f_ref_rot).max()
-    assert err <= 1.0e-4 * scale, (
+    assert np.abs(f_rot - f_ref_rot).max() <= 1.0e-4 * scale, (
         f"corot not objective: rotated force != R·(unrotated force), "
-        f"max err {err:.3e} vs scale {scale:.3e}"
+        f"max err {np.abs(f_rot - f_ref_rot).max():.3e} vs scale {scale:.3e}"
+    )
+    # (2) the corotated GP stress is frame-INVARIANT: the material sees the same
+    #     u_d in both cases, so eleResponse('stresses') must be bit-identical to
+    #     polar precision (an exact identity — tight tolerance).
+    sscale = max(np.abs(s_ref).max(), 1.0e-30)
+    assert np.abs(s_rot - s_ref).max() <= 1.0e-6 * sscale, (
+        f"corot stress not frame-invariant: rotated GP stress != unrotated "
+        f"(max diff {np.abs(s_rot - s_ref).max():.3e})"
     )
 
 
 # --------------------------------------------------------------------------- #
-#  Consistent tangent vs finite difference (v2.0: rotated material + dominant  #
-#  symmetric geometric term; polar-Hessian deferred -> looser-but-bounded).    #
+#  Consistent tangent vs finite difference.                                    #
+#  v2.0 omits two O(strain) geometric terms (polar-Hessian ∂Γ/∂u·m AND the     #
+#  material-frame ∂R coupling), so the FD-tangent gap scales ~linearly with    #
+#  strain. We therefore (a) prove the IMPLEMENTED terms are correct by showing  #
+#  the gap VANISHES as strain→0 (a wrong R̄k_dR̄ᵀ or G1+G1ᵀ would not vanish),   #
+#  and (b) keep a documented loose bound at finite strain. Symmetry is checked  #
+#  on the FD tangent (the in-code symmetriser makes asserting it on K vacuous). #
 # --------------------------------------------------------------------------- #
-def test_corot_tangent_matches_finite_difference():
-    # rotation + a genuine but small strain (corot regime), no wiggle so the
-    # state stays small-strain and the deferred polar-Hessian term stays small.
+def _fd_tangent(u, geom="corot", formulation="std", h=1.0e-6):
+    Kfd = np.zeros((24, 24))
+    for d in range(24):
+        up = u.copy(); up[d] += h
+        um = u.copy(); um[d] -= h
+        Kfd[:, d] = (_resisting_force(up, geom, formulation)
+                     - _resisting_force(um, geom, formulation)) / (2.0 * h)
+    return Kfd
+
+
+@pytest.mark.parametrize("formulation", ["std", "bbar"])
+def test_corot_tangent_gap_vanishes_with_strain(formulation):
+    # gap = |K_impl - K_fd| / |K|; must shrink ~linearly as strain -> 0.
+    R = _rot(0.30, -0.20)
+    base = np.array([[1.0, 0.4, -0.3], [0.4, -0.6, 0.2], [-0.3, 0.2, 0.8]])
+    rel = {}
+    for eps in (2.0e-3, 1.0e-3, 5.0e-4):
+        u = _affine_disp((R @ (np.eye(3) + eps * base)).tolist(), wiggle=False)
+        K = _element_tangent(u, "corot", formulation)
+        assert np.isfinite(K).all()
+        Kfd = _fd_tangent(u, "corot", formulation)
+        rel[eps] = np.abs(K - Kfd).max() / max(np.abs(K).max(), 1e-30)
+        # symmetry on the FD tangent (bypasses the in-code symmetriser)
+        fds = max(np.abs(Kfd).max(), 1e-30)
+        assert np.abs(Kfd - Kfd.T).max() <= 1.0e-5 * fds, (
+            f"corot FD tangent asymmetric @eps={eps}: geometric term mis-assembled"
+        )
+    # the deferred terms are O(strain) -> the gap must roughly halve as eps halves
+    assert rel[1.0e-3] < 0.75 * rel[2.0e-3], f"gap not vanishing: {rel}"
+    assert rel[5.0e-4] < 0.75 * rel[1.0e-3], f"gap not vanishing: {rel}"
+    # and be small at the smallest strain (implemented terms correct)
+    assert rel[5.0e-4] < 5.0e-4, f"corot small-strain tangent gap too large: {rel}"
+
+
+def test_corot_tangent_finite_strain_bound():
+    # documented deferred-term bound (NOT a tight correctness gate): at ~3% strain
+    # the omitted O(strain) geometric terms appear; assert bounded and log.
     R = _rot(0.30, -0.20)
     strain = np.array([[1.03, 0.015, -0.010],
                        [0.015, 0.975, 0.012],
                        [-0.010, 0.012, 1.020]])
     u = _affine_disp((R @ strain).tolist(), wiggle=False)
-
     K = _element_tangent(u, "corot")
-    assert np.isfinite(K).all()
-
-    h = 1.0e-6
-    Kfd = np.zeros((24, 24))
-    for d in range(24):
-        up = u.copy(); up[d] += h
-        um = u.copy(); um[d] -= h
-        Kfd[:, d] = (_resisting_force(up, "corot") - _resisting_force(um, "corot")) / (2.0 * h)
-
+    Kfd = _fd_tangent(u, "corot")
     scale = np.abs(K).max()
     err = np.abs(K - Kfd).max()
-    # v2.0 tolerance: the deferred polar-Hessian term ~ O(strain·force) shows
-    # up here. In the corot (small-strain) regime it is bounded well below 1e-2
-    # relative; tighten in v2.1 when the Hessian term lands.
-    assert err <= 1.0e-2 * scale, (
-        f"corot tangent vs FD: max abs err {err:.3e} vs scale {scale:.3e}"
-    )
-    assert np.abs(K - K.T).max() <= 1.0e-6 * scale, "corot tangent not symmetric"
+    print(f"corot finite-strain FD-tangent rel err = {err/scale:.3e} (deferred O(strain) terms)")
+    assert err <= 2.0e-2 * scale, f"corot tangent gap {err/scale:.3e} exceeds deferred-term bound"

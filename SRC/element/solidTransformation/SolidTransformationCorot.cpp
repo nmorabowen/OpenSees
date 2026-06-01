@@ -174,9 +174,9 @@ int
 SolidTransformationCorot::update(int nn, const Matrix &refCrds,
                                  const Matrix &curCrds)
 {
-  if (nn > MAX_NODES) {
+  if (nn < 1 || nn > MAX_NODES) {
     opserr << "SolidTransformationCorot::update - numNodes " << nn
-           << " exceeds MAX_NODES " << (int)MAX_NODES << "\n";
+           << " out of range [1, " << (int)MAX_NODES << "]\n";
     return -1;
   }
   numNodes = nn;
@@ -229,7 +229,12 @@ SolidTransformationCorot::update(int nn, const Matrix &refCrds,
   double ASinv[9];
   if (inv3(AS, ASinv) == 0.0) {
     opserr << "SolidTransformationCorot::update - (tr(S) I - S) singular\n";
-    // R is valid; drop the geometric coupling (Γ=0) rather than use garbage.
+    // degrade to a MATCHED identity gradient/Hessian pair (R=I, Γ=0): with
+    // Γ=0 the force loses its −Γᵀm term, so to keep f and K a consistent pair
+    // we also drop R (mirrors the polar-failure branch). Practically
+    // unreachable once det(H)>0 passed, but keeps Newton from chasing a
+    // non-gradient force.  // Ladruno (sweep #13)
+    mat3_iden(Rmat);
     for (int i = 0; i < 3; i++)
       for (int j = 0; j < MAX_DOF; j++) Gamma[i][j] = 0.0;
     return -1;
@@ -278,7 +283,12 @@ SolidTransformationCorot::localizeDisp(const Vector & /*uGlobal*/,
 
 // --------------------------------------------------------------------------- //
 // (seam 3) internal force to global (exact gradient of the corotated energy):
-//   f_global,b = R f_d,b − Γ_{:,b}ᵀ m ,  m = Σ_a (x_a − x_c) × (R f_d,a).
+//   f_global,b = R f_d,b − (1/n) R Σ_a f_d,a − Γ_{:,b}ᵀ m ,
+//   m = Σ_a (x_a − x_c) × (R f_d,a).
+// The −(1/n)RΣf_d centroid back-reaction is the gradient of u_d's centroid
+// dependence; it vanishes for the pure internal force (Σ B ᵀσ = 0, self-
+// equilibrated) but is NON-zero once the brick folds a body/applied load into
+// fCore before this call — so keep it (sweep #9).
 // fGlobal MAY alias fCore — read the core force into a local buffer first.
 // --------------------------------------------------------------------------- //
 int
@@ -286,25 +296,33 @@ SolidTransformationCorot::globalizeForce(const Vector &fCore,
                                          Vector &fGlobal) const
 {
   const int n = numNodes;
+  if (n == 0) {                       // queried before first update(): identity
+    if (&fGlobal != &fCore) fGlobal = fCore;
+    return 0;
+  }
 
-  // local copy of the core nodal forces, and the rotated forces R f_d,a
+  // local copy of the core nodal forces, the rotated forces R f_d,a, the
+  // moment m, and the net rotated force fSum (for the centroid term)
   double Rf[MAX_NODES][3];
   double m[3] = {0,0,0};
+  double fSum[3] = {0,0,0};
   for (int a = 0; a < n; a++) {
     double fd[3] = { fCore(3*a), fCore(3*a+1), fCore(3*a+2) };
     matvec3(Rmat, fd, Rf[a]);                       // R f_d,a
+    for (int d = 0; d < 3; d++) fSum[d] += Rf[a][d];
     // m += x_a⁰ × (R f_d,a)
     m[0] += xrel[a][1]*Rf[a][2] - xrel[a][2]*Rf[a][1];
     m[1] += xrel[a][2]*Rf[a][0] - xrel[a][0]*Rf[a][2];
     m[2] += xrel[a][0]*Rf[a][1] - xrel[a][1]*Rf[a][0];
   }
 
-  // f_global,b = R f_d,b − Γ_{:,b}ᵀ m
+  // f_global,b = R f_d,b − (1/n) Σ R f_d,a − Γ_{:,b}ᵀ m
+  const double invn = 1.0 / n;
   for (int b = 0; b < n; b++)
     for (int d = 0; d < 3; d++) {
       double gtm = Gamma[0][3*b+d]*m[0] + Gamma[1][3*b+d]*m[1]
                  + Gamma[2][3*b+d]*m[2];
-      fGlobal(3*b + d) = Rf[b][d] - gtm;
+      fGlobal(3*b + d) = Rf[b][d] - invn*fSum[d] - gtm;
     }
   return 0;
 }
@@ -323,13 +341,15 @@ SolidTransformationCorot::globalizeStiff(const Matrix &kCore,
                                          Matrix &kGlobal) const
 {
   const int n    = numNodes;
+  if (n == 0) {                       // queried before first update(): identity
+    if (&kGlobal != &kCore) kGlobal = kCore;
+    return 0;
+  }
   const int ndof = 3 * n;
 
-  // scratch (aliasing-safe). static to avoid per-call allocation, matching the
-  // brick's static buffers; NOT thread-safe under a parallel element loop.
-  static Matrix K(MAX_DOF, MAX_DOF);
-  K.resize(ndof, ndof);
-  K.Zero();
+  // scratch (aliasing-safe). Stack-local so the seam is reentrant / thread-safe
+  // (ndof ≤ 24, allocation is cheap); the ctor zero-initialises.
+  Matrix K(ndof, ndof);
 
   // (1) rotated material stiffness  K(a,b) = R k_d(a,b) Rᵀ , block by block.
   double Rt[9]; transpose3(Rmat, Rt);
@@ -351,8 +371,10 @@ SolidTransformationCorot::globalizeStiff(const Matrix &kCore,
   //     dominant geometric stiffness is its symmetric pair G1 + G1ᵀ (the G2
   //     lever-arm term equals G1ᵀ at equilibrium). Assemble BOTH halves so the
   //     full magnitude survives — assembling only G1 and then averaging would
-  //     halve it (review finding C1). The polar-Hessian term (∂Γ/∂u·m) is the
-  //     remaining deferred piece; the FD-tangent gate measures it.  // Ladruno
+  //     halve it (review finding C1). TWO higher-order pieces remain deferred:
+  //     the polar-Hessian ∂Γ/∂u·m AND the material-frame coupling
+  //     R k_d (∂Rᵀ/∂u)x⁰; both are O(strain·force) and are what the FD-tangent
+  //     gate tolerates (add both for quadratic Newton in v2.1).  // Ladruno (sweep #10)
   for (int b = 0; b < n; b++) {
     double fd[3] = { fCore(3*b), fCore(3*b+1), fCore(3*b+2) };
     double Rfb[3]; matvec3(Rmat, fd, Rfb);

@@ -435,6 +435,17 @@ const Matrix &  LadrunoBrick::getInitialStiff(void)
 
   // seam 3: globalize the initial stiffness (zero stress => no K_geo).
   // identity for -geom linear.  // Ladruno
+  // Refresh the geometry frame to the REFERENCE configuration (cur == ref ⇒
+  // R = I) so the initial stiffness is the un-rotated core tangent regardless
+  // of when it is queried — never a stale current-frame R (sweep #7).  // Ladruno
+  {
+    static Matrix refC(8, 3), curC(8, 3);
+    for (int i = 0; i < 8; i++) {
+      const Vector &X = nodePointers[i]->getCrds();
+      for (int d = 0; d < 3; d++) { refC(i, d) = X(d); curC(i, d) = X(d); }
+    }
+    theGeom->update(8, refC, curC);
+  }
   static Vector zeroF(24);
   theGeom->globalizeStiff(stiff, zeroF, stiff);
 

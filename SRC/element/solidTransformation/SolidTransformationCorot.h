@@ -48,15 +48,23 @@
 //     terms in the wrong frame.)
 //
 //   * Internal force (EXACT gradient of the corotated energy):
-//         f_global,b = R f_d,b − Γ_{:,b}ᵀ m ,   m = Σ_a (x_a−x_c) × (R f_d,a).
+//         f_global,b = R f_d,b − (1/n) R Σ_a f_d,a − Γ_{:,b}ᵀ m ,
+//         m = Σ_a (x_a−x_c) × (R f_d,a).
+//     The −(1/n)RΣf_d centroid back-reaction vanishes for the self-equilibrated
+//     internal force but is kept for the body/applied-load case.
 //
 //   * Tangent (v2.0): K = R̄ k_d R̄ᵀ + K_geo , R̄ = blockdiag(R), and the
-//     dominant geometric / load term K_geo[3b+i, c] = −[spin(R f_d,b) Γ]_{i,c},
-//     symmetrized. The higher-order polar-Hessian term ∂Γ/∂u·m and the
-//     lever-arm term are DEFERRED — they vanish at small deformation; the
-//     FD-tangent gate quantifies the residual gap. Because the RESIDUAL is the
-//     exact gradient, Newton still converges to the correct equilibrium; only
-//     the asymptotic convergence rate is affected. See the ADR §5/§7.
+//     geometric term assembled symmetrically as G1 + G1ᵀ with G1[3b+i,c] =
+//     −[spin(R f_d,b) Γ]_{i,c} (the G2 lever-arm term equals G1ᵀ at equilibrium,
+//     so it is INCLUDED). TWO higher-order geometric pieces remain DEFERRED:
+//       (a) the polar-Hessian   ∂Γ/∂u · m  (curvature of the rotation map), and
+//       (b) the material-frame coupling  R k_d (∂Rᵀ/∂u) x⁰  (the k_d-bearing
+//           part of ∂f_d/∂u through u_d = Rᵀx⁰ − X⁰).
+//     Both are O(strain·force)/O(∂Γ·force) — they vanish at small deformation
+//     and are exactly what the (looser) FD-tangent gate tolerates; both must be
+//     added to reach quadratic Newton in v2.1. Because the RESIDUAL is the exact
+//     gradient, Newton converges to the correct equilibrium regardless — only
+//     the asymptotic rate is affected. See the ADR §5/§7.
 //
 // STATELESS. R is a pure function of the current nodal positions (continuum
 // nodes carry no rotational DOFs, so there is no committed triad to advance —
