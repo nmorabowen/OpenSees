@@ -141,6 +141,22 @@ int LogStrainNDMaterial::setTrialF(const Matrix &F)
 // =========================================================================== //
 const Vector &LogStrainNDMaterial::getStress(void)  { return sigmaCauchy; }
 const Matrix &LogStrainNDMaterial::getTangent(void) { return aTangent; }
+
+// FULL 4th-order spatial constitutive modulus c_ijkl = (1/2J)[D:L:B] — the
+// element's consistent-tangent channel (the 6×6 getTangent above is lossy in the
+// (k,l) pair). Evaluated at the current trial elastic left Cauchy–Green Bᵉᵗʳ
+// (= Be_trialUpd for an elastic inner law), the inner small-strain tangent D, and
+// J — all set by the most recent setTrialF(). See FiniteStrainNDMaterial.h.
+int LogStrainNDMaterial::getSpatialTangentTensor(double c[3][3][3][3])
+{
+  const Matrix &D6m = theMaterial->getTangent();   // ∂τ/∂εᵉ (6×6, minor-sym)
+  double D6[36];
+  for (int I = 0; I < 6; I++)
+    for (int J = 0; J < 6; J++) D6[6 * I + J] = D6m(I, J);
+  spatial_tangent_full(Be_trialUpd, D6, Jdet, c);
+  return 0;
+}
+
 const Vector &LogStrainNDMaterial::getStrain(void)  { return henckyStrain; }
 double        LogStrainNDMaterial::getRho(void)     { return theMaterial->getRho(); }
 

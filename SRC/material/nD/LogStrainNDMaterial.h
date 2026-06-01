@@ -61,7 +61,8 @@ class LogStrainNDMaterial : public FiniteStrainNDMaterial
   // --- the finite-strain seam (FiniteStrainNDMaterial contract) ---
   int setTrialF(const Matrix &F);          // total deformation gradient in
   const Vector &getStress(void);           // Cauchy σ (6-vector)
-  const Matrix &getTangent(void);          // spatial tangent a (6×6)
+  const Matrix &getTangent(void);          // spatial constitutive c (6×6, lossy proj.)
+  int getSpatialTangentTensor(double c[3][3][3][3]);  // FULL c_ijkl (element channel)
   const Matrix &getInitialTangent(void);
   double getJ(void) const { return Jdet; }
 

@@ -23,6 +23,8 @@
 #include <elementAPI.h>
 #include <OPS_Globals.h>
 #include <NDMaterial.h>
+#include <FiniteStrainNDMaterial.h>   // -geom finite requires a finite-strain material
+#include <SolidTransformation.h>      // geometry-method ids (linear/corot/finite)
 #include <Damping.h>
 
 #include <string.h>
@@ -58,6 +60,7 @@ void *OPS_LadrunoBrick()
   double bf[3] = { 0.0, 0.0, 0.0 };
   int massType = 0;
   Damping *theDamping = 0;
+  int geomMethodID = SolidTransformation::METHOD_LINEAR;   // -geom (default linear)
 
   while (OPS_GetNumRemainingInputArgs() > 0) {
     const char *opt = OPS_GetString();
@@ -107,6 +110,27 @@ void *OPS_LadrunoBrick()
     else if (strcmp(opt, "-lumped") == 0 || strcmp(opt, "-lump") == 0) {
       massType = 1;
     }
+    else if (strcmp(opt, "-geom") == 0 || strcmp(opt, "-geometry") == 0) {
+      if (OPS_GetNumRemainingInputArgs() < 1) {
+        opserr << "WARNING -geom needs a value for LadrunoBrick " << idata[0] << endln;
+        return 0;
+      }
+      const char *g = OPS_GetString();
+      if (strcmp(g, "linear") == 0)
+        geomMethodID = SolidTransformation::METHOD_LINEAR;
+      else if (strcmp(g, "finite") == 0)
+        geomMethodID = SolidTransformation::METHOD_FINITE;
+      else if (strcmp(g, "corot") == 0 || strcmp(g, "corotational") == 0) {
+        opserr << "WARNING LadrunoBrick " << idata[0]
+               << ": -geom 'corot' is reserved and not yet implemented (-> v2; "
+                  "use linear|finite)\n";
+        return 0;
+      } else {
+        opserr << "WARNING unknown -geom '" << g << "' for LadrunoBrick "
+               << idata[0] << " (use linear|corot|finite)\n";
+        return 0;
+      }
+    }
     else if (strcmp(opt, "-b") == 0 || strcmp(opt, "-bodyForce") == 0) {
       int n3 = 3;
       if (OPS_GetNumRemainingInputArgs() < 3 || OPS_GetDoubleInput(&n3, bf) < 0) {
@@ -149,9 +173,34 @@ void *OPS_LadrunoBrick()
     return 0;
   }
 
+  // -geom finite (v3): updated-Lagrangian. v3 supports the std formulation only
+  // (bbar+finite = F-bar and uri/eas+finite are reserved), and requires a
+  // finite-strain material (driven by setTrialF(F), e.g. nDMaterial LogStrain).
+  if (geomMethodID == SolidTransformation::METHOD_FINITE) {
+    if (formulation != LadrunoBrick::Formulation::STD) {
+      opserr << "WARNING LadrunoBrick " << idata[0]
+             << ": -geom finite currently supports only -formulation std "
+                "(bbar+finite = F-bar, uri/eas+finite are reserved)\n";
+      return 0;
+    }
+    if (dynamic_cast<FiniteStrainNDMaterial *>(mat) == 0) {
+      opserr << "WARNING LadrunoBrick " << idata[0]
+             << ": -geom finite requires a finite-strain NDMaterial driven by "
+                "setTrialF(F) (e.g. nDMaterial LogStrain); material " << idata[9]
+             << " is not one\n";
+      return 0;
+    }
+    if (theDamping != 0) {
+      opserr << "WARNING LadrunoBrick " << idata[0]
+             << ": -damp is not yet supported with -geom finite (the finite "
+                "assembly does not apply element damping); reserved follow-up\n";
+      return 0;
+    }
+  }
+
   return new LadrunoBrick(idata[0],
                           idata[1], idata[2], idata[3], idata[4],
                           idata[5], idata[6], idata[7], idata[8],
                           *mat, formulation, bf[0], bf[1], bf[2],
-                          massType, hgType, hgCoeff, theDamping);
+                          massType, hgType, hgCoeff, theDamping, geomMethodID);
 }

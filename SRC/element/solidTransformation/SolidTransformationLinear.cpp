@@ -10,6 +10,7 @@
 // SolidTransformationLinear — identity geometry method (v1). See the header.
 
 #include <SolidTransformationLinear.h>
+#include <SolidTransformationFinite.h>   // for the create() factory (v3)
 #include <Matrix.h>
 #include <Vector.h>
 
@@ -88,8 +89,9 @@ SolidTransformation::create(int methodID)
   switch (methodID) {
   case METHOD_LINEAR:
     return new SolidTransformationLinear();
+  case METHOD_FINITE:
+    return new SolidTransformationFinite();
   // case METHOD_COROT:  return new SolidTransformationCorot();   // v2
-  // case METHOD_FINITE: return new SolidTransformationFinite();  // v3
   default:
     return 0;
   }

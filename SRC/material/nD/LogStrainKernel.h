@@ -249,6 +249,40 @@ inline void assemble_material(const double Betr[9], const double D6[36],
   }
 }
 
+// FULL 4th-order spatial constitutive modulus c_ijkl = (1/2J)[D:L:B] for ALL 81
+// components (NO Voigt collapse). The (k,l) pair of c is NOT minor-symmetric (B,
+// eq.14.102, is not k<->l symmetric), so the 6×6 form above is LOSSY in (k,l); a
+// finite-strain ELEMENT that needs the consistent tangent must use this full
+// tensor (it then forms a_ijkl = c_ijkl − σ_il δ_jk and contracts with the full
+// nodal gradients). geometric term still excluded — it is the element's K_geo.
+inline void spatial_tangent_full(const double Betr[9], const double D6[36],
+                                 double J, double c[3][3][3][3]) {
+  double invJ = (J != 0.0) ? 1.0/J : 0.0;
+
+  double L[3][3][3][3];
+  isoFunctionDeriv(Betr, halfLog, halfLogPrime, L);   // ∂(½ln)/∂B
+  for (int i=0;i<3;i++) for(int j=0;j<3;j++) for(int k=0;k<3;k++) for(int l=0;l<3;l++)
+    L[i][j][k][l] *= 2.0;                              // ∂lnB/∂B
+
+  double Bt[3][3][3][3], Dt[3][3][3][3];
+  for (int i=0;i<3;i++) for(int j=0;j<3;j++) for(int k=0;k<3;k++) for(int l=0;l<3;l++) {
+    double dik=(i==k), djk=(j==k);
+    Bt[i][j][k][l] = dik*Betr[3*j+l] + djk*Betr[3*i+l];
+    Dt[i][j][k][l] = D6[6*VI(i,j) + VI(k,l)];
+  }
+  double DL[3][3][3][3];
+  for (int i=0;i<3;i++) for(int j=0;j<3;j++) for(int r=0;r<3;r++) for(int s=0;s<3;s++) {
+    double acc = 0.0;
+    for (int p=0;p<3;p++) for(int q=0;q<3;q++) acc += Dt[i][j][p][q]*L[p][q][r][s];
+    DL[i][j][r][s] = acc;
+  }
+  for (int i=0;i<3;i++) for(int j=0;j<3;j++) for(int k=0;k<3;k++) for(int l=0;l<3;l++) {
+    double acc = 0.0;
+    for (int r=0;r<3;r++) for(int s=0;s<3;s++) acc += DL[i][j][r][s]*Bt[r][s][k][l];
+    c[i][j][k][l] = invJ * 0.5 * acc;
+  }
+}
+
 } // namespace logstrain_kernel
 
 #endif
