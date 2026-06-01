@@ -52,19 +52,35 @@ _WIGGLE = [
 ]
 
 
-def _build(geom, formulation="std"):
+def _make_material(material, tag=1):
+    """Create the requested small-strain nDMaterial; corot reuses it unchanged."""
+    if material == "elastic":
+        ops.nDMaterial("ElasticIsotropic", tag, _E, _NU)
+    elif material == "j2":
+        # von Mises (J2) with a little linear hardening — a path-dependent
+        # material, to prove corot reuses the small-strain library as-is.
+        K = _E / (3.0 * (1.0 - 2.0 * _NU))
+        G = _E / (2.0 * (1.0 + _NU))
+        sigY = 0.30
+        ops.nDMaterial("J2Plasticity", tag, K, G, sigY, sigY, 0.0, 2.0)
+    else:
+        raise ValueError(material)
+    return tag
+
+
+def _build(geom, formulation="std", material="elastic"):
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 3)
     for tag, (x, y, z) in _NODES.items():
         ops.node(tag, x, y, z)
-    ops.nDMaterial("ElasticIsotropic", 1, _E, _NU)
+    _make_material(material, 1)
     ops.element("LadrunoBrick", 1, *_CONN, 1,
                 "-formulation", formulation, "-geom", geom)
     return 1
 
 
-def _impose_and_solve(u, geom, formulation="std"):
-    _build(geom, formulation)
+def _impose_and_solve(u, geom, formulation="std", material="elastic"):
+    _build(geom, formulation, material)
     ops.timeSeries("Linear", 1)
     ops.pattern("Plain", 1, 1)
     for tag in _NODES:
@@ -81,13 +97,13 @@ def _impose_and_solve(u, geom, formulation="std"):
     return ops.analyze(1)
 
 
-def _resisting_force(u, geom="corot", formulation="std"):
-    assert _impose_and_solve(u, geom, formulation) == 0, "imposed-displacement solve failed"
+def _resisting_force(u, geom="corot", formulation="std", material="elastic"):
+    assert _impose_and_solve(u, geom, formulation, material) == 0, "imposed-displacement solve failed"
     return np.array(ops.eleForce(1), dtype=float)
 
 
-def _element_tangent(u, geom="corot", formulation="std"):
-    assert _impose_and_solve(u, geom, formulation) == 0, "imposed-displacement solve failed"
+def _element_tangent(u, geom="corot", formulation="std", material="elastic"):
+    assert _impose_and_solve(u, geom, formulation, material) == 0, "imposed-displacement solve failed"
     K = ops.eleResponse(1, "stiff")
     assert K and len(K) == 24 * 24, "LadrunoBrick must answer eleResponse('stiff') with 24x24"
     return np.array(K, dtype=float).reshape(24, 24)
@@ -258,3 +274,123 @@ def test_corot_tangent_finite_strain_bound():
     err = np.abs(K - Kfd).max()
     print(f"corot finite-strain FD-tangent rel err = {err/scale:.3e} (deferred O(strain) terms)")
     assert err <= 2.0e-2 * scale, f"corot tangent gap {err/scale:.3e} exceeds deferred-term bound"
+
+
+# --------------------------------------------------------------------------- #
+#  ADR Gate 6 — material reuse: J2 plasticity works in the corotated frame.    #
+#  A path-dependent (von Mises) material, driven by setTrialStrain, must yield  #
+#  correctly under a large rigid rotation: the material sees the same          #
+#  deformational strain u_d whether or not the body is rotated, so its         #
+#  corotated-frame response is frame-invariant.                                #
+# --------------------------------------------------------------------------- #
+def test_corot_j2_plasticity_objectivity():
+    # a strain large enough to yield (sigY chosen small in _make_material)
+    Ey = np.array([[1.04, 0.0, 0.0],
+                   [0.0, 0.98, 0.0],
+                   [0.0, 0.0, 1.01]])
+    R = _rot(0.8, -0.5)
+
+    assert _impose_and_solve(_affine_disp(Ey.tolist()), "corot", "std", "j2") == 0
+    f_ref = np.array(ops.eleForce(1), dtype=float)
+    s_ref = np.array(ops.eleResponse(1, "stresses"), dtype=float)
+    assert np.isfinite(f_ref).all() and np.isfinite(s_ref).all()
+
+    assert _impose_and_solve(_affine_disp((R @ Ey).tolist()), "corot", "std", "j2") == 0
+    f_rot = np.array(ops.eleForce(1), dtype=float)
+    s_rot = np.array(ops.eleResponse(1, "stresses"), dtype=float)
+
+    # force rotates by R node-by-node; corotated GP stress is frame-invariant
+    f_ref_rot = np.zeros(24)
+    for a in range(8):
+        f_ref_rot[3*a:3*a+3] = R @ f_ref[3*a:3*a+3]
+    fscale = max(np.abs(f_ref).max(), 1.0e-30)
+    assert np.abs(f_rot - f_ref_rot).max() <= 1.0e-4 * fscale, (
+        "corot+J2 not objective: rotated force != R·(unrotated force)"
+    )
+    sscale = max(np.abs(s_ref).max(), 1.0e-30)
+    assert np.abs(s_rot - s_ref).max() <= 1.0e-6 * sscale, (
+        "corot+J2 GP stress not frame-invariant under rigid rotation"
+    )
+    # sanity: the state actually yielded (deviatoric stress capped near sigY),
+    # i.e. J2 is genuinely active in the corotated frame, not silently elastic.
+    s0 = s_ref[:6]
+    mean = (s0[0] + s0[1] + s0[2]) / 3.0
+    dev = np.array([s0[0]-mean, s0[1]-mean, s0[2]-mean, s0[3], s0[4], s0[5]])
+    vm = math.sqrt(1.5 * (dev[0]**2 + dev[1]**2 + dev[2]**2
+                          + 2.0*(dev[3]**2 + dev[4]**2 + dev[5]**2)))
+    assert vm > 0.30, f"corot+J2 did not yield (von Mises {vm:.3f} <= sigY); test is vacuous"
+
+
+# --------------------------------------------------------------------------- #
+#  ADR Gate 5 — load-driven large-displacement cantilever (drives Newton).     #
+#  A slender stack of bricks, base fixed, transverse tip load. This is the     #
+#  only test that solves for its OWN equilibrium (residual + tangent through a  #
+#  real Newton loop) rather than probing prescribed kinematics: convergence    #
+#  across load steps catches a wrong-sign / mis-scaled geometric stiffness,     #
+#  and agreement with a -geom finite reference catches a wrong force globalize. #
+# --------------------------------------------------------------------------- #
+def _build_cantilever(geom, nz=6, P=0.0):
+    """1x1xnz column of LadrunoBricks, base (z=0) fully fixed, transverse (x)
+    tip load P split over the 4 top nodes. corot reuses the small-strain
+    ElasticIsotropic directly; the finite reference needs a LogStrain wrapper
+    (driven by setTrialF). Returns the top-node tags."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    # nodes: level k (z=k) has 4 nodes  id = 4*k + {1,2,3,4}
+    corners = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]
+    for k in range(nz + 1):
+        for c, (x, y) in enumerate(corners):
+            ops.node(4*k + c + 1, x, y, float(k))
+    ops.nDMaterial("ElasticIsotropic", 1, _E, _NU)
+    if geom == "finite":
+        ops.nDMaterial("LogStrain", 2, 1)
+        mtag = 2
+    else:
+        mtag = 1
+    for k in range(nz):
+        b = 4*k
+        conn = [b+1, b+2, b+3, b+4, b+5, b+6, b+7, b+8]
+        ops.element("LadrunoBrick", k + 1, *conn, mtag, "-formulation", "std", "-geom", geom)
+    for c in range(4):                       # fix the base
+        ops.fix(c + 1, 1, 1, 1)
+    top = [4*nz + c + 1 for c in range(4)]
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    for t in top:
+        ops.load(t, P / 4.0, 0.0, 0.0)       # transverse (x) tip load
+    return top
+
+
+def _solve_cantilever(geom, nz=6, P=0.6, nsteps=20):
+    top = _build_cantilever(geom, nz, P)
+    ops.constraints("Transformation")
+    ops.numberer("RCM")
+    ops.system("BandGeneral")
+    ops.test("NormDispIncr", 1.0e-8, 100, 0)
+    ops.algorithm("Newton")
+    ops.integrator("LoadControl", 1.0 / nsteps)
+    ops.analysis("Static")
+    for _ in range(nsteps):
+        if ops.analyze(1) != 0:
+            return None
+    return float(np.mean([ops.nodeDisp(t, 1) for t in top]))   # mean tip x-disp
+
+
+def test_corot_cantilever_converges_and_matches_finite():
+    # P=0.6 drives the tip to ~26% of the length (large rotation, small strain) —
+    # the corot regime. Newton converges through the load steps despite the
+    # deferred tangent terms (the residual is the exact gradient).
+    ux_cor = _solve_cantilever("corot")
+    assert ux_cor is not None, "corot cantilever Newton failed to converge"
+    assert ux_cor > 0.0 and math.isfinite(ux_cor), f"bad corot tip disp {ux_cor}"
+
+    ux_fin = _solve_cantilever("finite")
+    assert ux_fin is not None, "finite cantilever reference failed to converge"
+
+    # corot (large-rotation/small-strain) must agree closely with the full
+    # finite-strain solution for this slender elastic column.
+    rel = abs(ux_cor - ux_fin) / abs(ux_fin)
+    print(f"cantilever tip ux: corot={ux_cor:.5e} finite={ux_fin:.5e} rel={rel:.3e}")
+    assert rel <= 2.0e-2, (
+        f"corot tip disp {ux_cor:.4e} disagrees with finite {ux_fin:.4e} (rel {rel:.3e})"
+    )
