@@ -24,6 +24,31 @@ them. This is observation-only — fixes we actually applied are tracked in
 
 ## Quirks
 
+### Assumed-strain hourglass: the dev-projection vs reduced-shear interaction is nu-coupled
+- **Bites:** building the LadrunoBrick `physical` hourglass straight from Belytschko
+  eq 8.7.26 (pointwise-*isochoric* assumed strain: 2/3,-1/3 dev-projection on the
+  normal hourglass strains + mode-subset reduced shear) gave an element that was
+  ~75% **too soft** in bending and got *worse* with nu (ratio 1.73 @nu=0 -> 2.59
+  @nu=0.499 vs the analytic 1.0). Patch test + rank were exact, so the bug hid
+  from the usual gates.
+- **Why:** the dev-projection IS the proper B-bar mean-dilatation treatment for
+  the hourglass normals (the algebra collapses to the same 2/3,-1/3). On its own
+  (with full shear) it's fine; combined with the **reduced** assumed shear it
+  removes too much energy -> over-soft, and the error scales with lambda(nu).
+  Dropping the dev-projection (FULL compatible normal strains + reduced shear)
+  gives a **correct shear-locking cure** — matches OpenSees `SSPbrick` to 3 digits
+  and converges (0.94->1.005, nx=2..32) at nu=0 — but then VOLUMETRIC-locks at
+  nu->0.5. There is **no single static projection** correct across nu with this
+  shear field; a general all-nu element needs the coupled SSP/ASQBI operator
+  (Belytschko sec 8.7.8 explicitly: 3D assumed-strain structure "not fully developed").
+- **The validating oracle:** patch + rank CANNOT validate an assumed-strain
+  element (gamma-orthogonality makes any variant pass). Use a **bending-convergence
+  benchmark** and cross-check against `SSPbrick` (a proven OpenSees assumed-strain
+  hex, ~1.0 across all nu). `tests/test_ladrunoBrick_bending.py`.
+- **Status (2026-06-01):** shipped `physical` as the FULL-normals + reduced-shear
+  **shear-locking cure** (verified vs SSPbrick); documented that near-incompressible
+  needs `-formulation bbar`. A coupled general-nu operator (SSP/ASQBI) is future work.
+
 ### `BbarBrick` has no `update()` — a bare `eleResponse("stresses")` reads the *predictor* (u=0) state
 - **Bites:** after a static/linear solve, `ops.eleResponse(tag, "stresses")` on an
   upstream `bbarBrick` returns **all zeros** even though the displacements are

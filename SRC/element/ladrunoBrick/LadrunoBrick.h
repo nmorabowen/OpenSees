@@ -181,9 +181,24 @@ class LadrunoBrick : public Element {
   void formUri(int tang_flag, bool useInitialTangent);
   // FB-corrected hourglass vectors (orthogonal to the linear field => the
   // hourglass control is consistent: zero for any constant-strain/rigid state).
-  void computeGammaHourglass(const double b[3][8], double gamma[4][8]);
-  // the 4 raw hourglass base vectors (nodal values of {xy, yz, zx, xyz}).
+  // beta is the normalization (1.0 for stiffness scaling; 1/8 for the physical
+  // assumed strain, where gamma must equal the true hourglass-mode coefficient).
+  void computeGammaHourglass(const double b[3][8], double gamma[4][8], double beta);
+  // the 4 raw hourglass base vectors (nodal values of {yz, zx, xy, xyz} per
+  // Belytschko h_alpha = [eta*zeta, zeta*xi, xi*eta, xi*eta*zeta], 8.7.25).
   static const double hg0[4][8];
+
+  // physical (uri + Belytschko-Bindeman isochoric assumed-strain hourglass,
+  // sec 8.7.6/8.7.8) integrated at the full 2x2x2 rule (8.7.20). Assembles
+  // stiff (+ resid when !useInitialTangent) with the assumed-strain B-bar.
+  void formPhysical(int tang_flag, bool useInitialTangent);
+  // Fill the assumed-strain B (Bbar[node][6][3], Voigt {xx,yy,zz,xy,yz,zx}) at a
+  // Gauss point; returns |J|. gamma/bC are the (precomputed) hourglass vectors
+  // and centroid gradients. Implements eq 8.7.26.
+  double assumedStrainB(const double gp[3], const double gamma[4][8],
+                        const double bC[3][8], double Bbar[8][6][3]);
+  // node natural coordinates (Brick order), for analytic dN/dxi and dh/dxi.
+  static const double natCoord[8][3];
 
   Matrix transpose(int dim1, int dim2, const Matrix &M);
 
