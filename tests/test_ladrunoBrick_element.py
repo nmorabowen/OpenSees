@@ -84,8 +84,15 @@ def _solve_hex(ele_name, extra_args, E=1000.0, nu=0.3):
     disps = []
     for n in _CONN:
         disps.extend(ops.nodeDisp(n))
-    stresses = list(ops.eleResponse(1, "stresses"))
+    # Read "forces" BEFORE "stresses": upstream bbarBrick has no update() and
+    # sets the material trial strain only inside formResidAndTangent, so a bare
+    # "stresses" read reflects the predictor (u=0) state. getResistingForce
+    # ("forces") triggers that strain evaluation at the committed displacement,
+    # after which "stresses" reflects the solved state for lazy-strain elements
+    # too. (LadrunoBrick/Brick implement update(), so order is immaterial for
+    # them.) See LEDGER_quirks: bbarBrick lazy-strain readback.
     forces = list(ops.eleResponse(1, "forces"))
+    stresses = list(ops.eleResponse(1, "stresses"))
     return disps, stresses, forces
 
 
