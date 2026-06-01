@@ -589,6 +589,7 @@ initopensees(void)
 "        • Explicit Noh–Bathe integrators (ExplicitBathe / LNVD)\n"
 "        • Queryable critical time step (dt_cr)\n"
 "        • BezierTri6 — quadratic Bézier triangle (Kadapa 2018)\n"
+"        • BezierTet10 — quadratic Bézier tetrahedron (Kadapa 2018)\n"
 "        • Ladruno — modular HDF5 .ladruno recorder\n"
 "\n";
         // FEATURES-END

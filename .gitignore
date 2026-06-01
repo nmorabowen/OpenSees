@@ -132,3 +132,6 @@ __pycache__
 /tests/*.TIME.*
 /tests/opensees.so
 /tests/opensees.pyd
+
+# Claude Code session scratch (never commit)
+.claude/

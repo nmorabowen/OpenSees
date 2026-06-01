@@ -78,6 +78,13 @@ class LadrunoReader:
         out = {k: _attr(g, k) for k in g.attrs}
         return out
 
+    def stored_precision(self) -> str:
+        """On-disk precision of the per-step result DATA: "f64" (lossless, the
+        default — and what older files implicitly are) or "f32" (opt-in
+        `-precision f32` lossy mode). Consumers MUST NOT diff an "f32" file
+        against an f64 oracle at 1e-12 — use a bounded-error check instead."""
+        return str(self.info().get("STORED_PRECISION", "f64"))
+
     # -- stages --
     def stages(self) -> list[str]:
         return [k for k in self.f if k.startswith("MODEL_STAGE")]
@@ -296,9 +303,16 @@ def _check_data_shape(grp, n_rows: int, n_cols: int, err, ctx: str) -> None:
                 err(f"{ctx}: {ax} length != T={T}")
     else:
         for sn in data:
-            arr = data[sn]
-            if arr.shape != (n_rows, n_cols):
-                err(f"{ctx}/{sn}: {arr.shape} != ({n_rows}, {n_cols})")
+            item = data[sn]
+            if isinstance(item, h5py.Group):
+                # modal layout (modesOfVibration): DATA/STEP_<step>/MODE_<k>, each
+                # MODE_<k> a [n_rows x n_cols] eigenvector dataset (mirrors frozen MPCO).
+                for mn in item:
+                    md = item[mn]
+                    if isinstance(md, h5py.Dataset) and md.shape != (n_rows, n_cols):
+                        err(f"{ctx}/{sn}/{mn}: {md.shape} != ({n_rows}, {n_cols})")
+            elif item.shape != (n_rows, n_cols):
+                err(f"{ctx}/{sn}: {item.shape} != ({n_rows}, {n_cols})")
 
 
 # ---------------------------------------------------------------------------

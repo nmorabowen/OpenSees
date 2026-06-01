@@ -120,8 +120,11 @@ namespace ladruno {
 		// [T x nIds x nComp] extensible dataset that grows one slab per step,
 		// with matching TIME[T] (double) / STEP[T] (int) axes — replacing the
 		// old DATA group of per-step STEP_<k> datasets. accept() appends.
+		// On-disk DATA type is f64 (default, lossless) or f32 (opt-in
+		// `-precision f32` lossy mode); TIME/STEP stay f64/int either way.
+		hid_t data_disk_type = info.store_data_f32 ? H5T_IEEE_F32LE : H5T_IEEE_F64LE;
 		hid_t h_data = h5::dataset::createTimeSeries3d(
-			h_gp_result, "DATA", (hsize_t)n_ids, (hsize_t)n_comp);
+			h_gp_result, "DATA", (hsize_t)n_ids, (hsize_t)n_comp, data_disk_type);
 		hid_t h_time = h5::dataset::createTimeAxis1d(h_gp_result, "TIME", H5T_IEEE_F64LE);
 		hid_t h_step = h5::dataset::createTimeAxis1d(h_gp_result, "STEP", H5T_STD_I32LE);
 

@@ -475,6 +475,11 @@ int LadrunoRecorder::initialize()
 	solver_version.push_back(1);
 	ladrunons::h5::attribute::write(h_info, "SOLVER_VERSION", solver_version);
 	ladrunons::h5::attribute::write(h_info, "SPATIAL_DIM", info.num_dimensions);
+	// On-disk precision of per-step result DATA: "f64" (default, lossless parity)
+	// or "f32" (opt-in `-precision f32` lossy mode). Readers MUST NOT diff an f32
+	// file against the f64 oracle at 1e-12 — see the bounded-error gate.
+	ladrunons::h5::attribute::write(h_info, "STORED_PRECISION",
+		std::string(info.store_data_f32 ? "f32" : "f64"));
 
 	// Partition manifest (parallel-output contract). Each ".part-N.ladruno" file
 	// self-declares its 0-based partition index + the total count so apeGmsh can
@@ -1702,16 +1707,43 @@ void LadrunoRecorder::recordModeChannel(int node_channel_index)
 	if (schema.num_components < 1)
 		return;
 
-	// Ensure the result group + ID + DATA exist (StreamingSink::begin path).
-	ch.sink->begin(info, *msrc);
+	// Modal layout mirrors the frozen ResultRecorderModesOfVibration::record:
+	//   <stage>/RESULTS/ON_NODES/<name>/{ID, DATA/STEP_<step>/MODE_<k>}
+	// DATA here is a GROUP (one MODE_<k> dataset per mode per step), NOT the chunked
+	// time-series DATA *dataset* that StreamingSink::begin would create — those two
+	// collide on the name "DATA" (you cannot create the DATA/STEP_<step> group under
+	// an existing dataset, which silently dropped all modal data). So modal channels
+	// do NOT use the streaming sink: create the result group + ID + DATA group here,
+	// once per stage (idempotent via H5Lexists, re-created when the stage path moves).
+	std::stringstream ss_result;
+	ss_result << "MODEL_STAGE[" << info.current_model_stage_id
+		<< "]/RESULTS/ON_NODES/" << schema.name;
+	if (H5Lexists(info.h_file_id, ss_result.str().c_str(), H5P_DEFAULT) <= 0) {
+		std::stringstream ss_family;
+		ss_family << "MODEL_STAGE[" << info.current_model_stage_id << "]/RESULTS/ON_NODES";
+		hid_t h_family = H5Gopen2(info.h_file_id, ss_family.str().c_str(), H5P_DEFAULT);
+		if (h_family >= 0) {
+			hid_t h_gp_result = ladrunons::h5::group::createResultGroup(
+				h_family, info.h_group_proplist,
+				schema.name, schema.display_name,
+				schema.components_csv, schema.num_components,
+				schema.dimension, schema.description,
+				(int)schema.result_type, (int)schema.data_type);
+			const std::vector<int>& mode_ids = msrc->ids();
+			hid_t h_dset_id = ladrunons::h5::dataset::createAndWrite(
+				h_gp_result, "ID", mode_ids, mode_ids.size(), (size_t)1);
+			ladrunons::h5::dataset::close(h_dset_id);
+			hid_t h_data_grp = ladrunons::h5::group::create(
+				h_gp_result, "DATA", H5P_DEFAULT, info.h_group_proplist, H5P_DEFAULT);
+			ladrunons::h5::group::close(h_data_grp);
+			ladrunons::h5::group::close(h_gp_result);
+			ladrunons::h5::group::close(h_family);
+		}
+	}
 
-	// Resolve the result + DATA group: MODEL_STAGE/RESULTS/ON_NODES/<name>/DATA
-	std::stringstream ss_data;
-	ss_data << "MODEL_STAGE[" << info.current_model_stage_id
-		<< "]/RESULTS/ON_NODES/" << schema.name << "/DATA";
-	// create the STEP group under DATA
+	// create the per-step group under DATA: <name>/DATA/STEP_<step>
 	std::stringstream ss_step;
-	ss_step << ss_data.str() << "/STEP_" << info.current_time_step_id;
+	ss_step << ss_result.str() << "/DATA/STEP_" << info.current_time_step_id;
 	hid_t h_gp_step = ladrunons::h5::group::create(
 		info.h_file_id, ss_step.str().c_str(), H5P_DEFAULT,
 		info.h_group_proplist, H5P_DEFAULT);
@@ -2100,6 +2132,7 @@ void* OPS_LadrunoRecorder()
 	std::vector<int> energy_region_tags; // -G <regionTag...>
 	std::string stage_kind_opt = "static"; // -kind <transient|static|eigen>
 	bool envelope_opt = false;             // -envelope flag
+	bool store_data_f32 = false;           // -precision f32 (lossy) | f64 (default)
 	int one_item = 1;
 
 	while (numdata > 0) {
@@ -2207,6 +2240,24 @@ void* OPS_LadrunoRecorder()
 			// ABSMAX + ARG_STEP under RESULTS/ENVELOPES, ADR D7) instead of the
 			// per-step time series. Does not change the active request mode.
 			envelope_opt = true;
+		}
+		else if (strcmp(data, "-precision") == 0) {
+			// -precision f32|f64 : on-disk element type for the per-step result
+			// DATA. f64 (default) is the lossless parity path; f32 is the opt-in
+			// lossy mode (~half the payload, ~7 significant digits). Anything else
+			// warns and keeps f64.
+			if (numdata > 0) {
+				const char* p = OPS_GetString();
+				numdata--;
+				std::string ps(p);
+				if (ps == "f32" || ps == "float32" || ps == "single")
+					store_data_f32 = true;
+				else if (ps == "f64" || ps == "float64" || ps == "double")
+					store_data_f32 = false;
+				else
+					opserr << "LadrunoRecorder warning: -precision expects f32|f64; got ("
+					       << p << "), keeping f64 (lossless)\n";
+			}
 		}
 		else {
 			switch (curr_opt) {
@@ -2378,5 +2429,8 @@ void* OPS_LadrunoRecorder()
 	recorder->m_data->energy_region_tags.swap(energy_region_tags);
 	recorder->m_data->stage_kind = stage_kind_opt;
 	recorder->m_data->envelope_mode = envelope_opt;
+	// -precision: carried on ProcessInfo (read by StreamingSink::begin and stamped
+	// into INFO/STORED_PRECISION at initialize()). setDomain() does not overwrite it.
+	recorder->m_data->info.store_data_f32 = store_data_f32;
 	return recorder;
 }

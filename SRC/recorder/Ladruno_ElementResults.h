@@ -1777,6 +1777,21 @@ namespace detail {
 					custom_rule_dimension = 2;
 				}
 				/*
+				10-node Bezier tetrahedron (BezierTet10) — 3D sibling of BezierTri6.
+				Custom (barycentric) rule: the element's self-declared GP area coords
+				(via "integrationPoints", a [4 x 3] Matrix) are written to GP_PARAM
+				verbatim, FAMILY refined to bernstein via the basisInfo probe.
+				dimension = 3 (the three free barycentric coords; xi4 = 1-xi1-xi2-xi3).
+				*/
+				else if (
+					// ./bezierTetrahedron
+					elem_class_tag == ELE_TAG_BezierTet10
+					) {
+					geom_type = ElementGeometryType::Tetrahedron_10N;
+					int_type = ElementIntegrationRuleType::CustomIntegrationRule;
+					custom_rule_dimension = 3;
+				}
+				/*
 				4-node quadrilateral with 1 gp
 				*/
 				else if (
