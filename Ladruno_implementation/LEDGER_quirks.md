@@ -251,3 +251,54 @@ broadcast path is not runtime-testable in this build.
   (and the two MPCO recorder objs) — then `cmake --build build\build\Release
   --target OpenSeesPy -j2` for the rest (ninja resumes cached objs). Don't assume a
   `code=2` with no error text is a code bug; check free RAM first. Learned 2026-05-31.
+
+### `recorder ladruno` is NOT wired into the classic Tcl `OpenSees.exe` (was; now fixed)
+- **Bites:** `recorder ladruno ...` works from OpenSeesPy/openseesmp and the
+  interpreter-based Tcl (`TclWrapper`→`OPS_Recorder`, the shared map in
+  `OpenSeesOutputCommands.cpp`), but the **classic** Tcl `OpenSees.exe`
+  (`commands.cpp`→`addRecorder`→`TclAddRecorder` in `TclRecorderCommands.cpp`)
+  hardcodes its recorder dispatch in a *separate* file that the rename PR never
+  touched — it had `mpco`/`vtkhdf`/`gmsh`/`EnergyBalance` but no `ladruno`. So
+  `recorder ladruno` raised "recorder type ladruno is unknown" only in `OpenSees.exe`.
+- **Fix:** added the `else if (strcmp(argv[1],"ladruno")==0)` branch (+ extern
+  `OPS_LadrunoRecorder`) mirroring the `mpco` block in `TclRecorderCommands.cpp`.
+  Lesson: there are TWO recorder-dispatch tables (shared `OPS_Recorder` map for
+  Py/interpreter-Tcl; hardcoded `TclAddRecorder` for classic Tcl) — wire new
+  recorders into BOTH. Learned 2026-05-31.
+
+### Ladruno recorder `modesOfVibration` (eigen) output writes no data — modal `DATA` group/dataset collision
+- **Bites:** `recorder ladruno -N modesOfVibration` after `ops.eigen(n)` creates the
+  `MODEL_STAGE[*]/RESULTS/ON_NODES/MODES_OF_VIBRATION(U)` group with a valid schema
+  (ID, COMPONENTS) but `DATA` stays empty `(0, nNodes, nComp)` and no `MODE_k`
+  datasets appear; HDF5-DIAG "can't synchronously write data / Write failed" errors
+  fire. Happens for ANY model (reproduced with a bare elasticBeamColumn portal —
+  NOT the known fiber-section `writeSections` noise), under both `ops.record()` and
+  an `analyze()` step.
+- **Why:** `LadrunoRecorder::recordModeChannel` (LadrunoRecorder.cpp ~1692) calls
+  `ch.sink->begin()`, which (StreamingSink) creates `.../MODES_OF_VIBRATION(U)/DATA`
+  as a **chunked dataset** (normal time-series layout), then tries to
+  `h5::group::create` a **group** at `DATA/STEP_<step>` with `MODE_k` datasets
+  under it (the MPCO modal layout). A group cannot be created beneath an existing
+  dataset → the HDF5 calls fail, no modal data is written.
+- **Status:** **FIXED 2026-05-31.** `recordModeChannel` no longer calls the StreamingSink
+  `begin()`. It now owns the modal init, mirroring frozen `ResultRecorderModesOfVibration::record`:
+  once per stage (idempotent via `H5Lexists`) it creates the result group
+  (`h5::group::createResultGroup`) + `ID` dataset + `DATA` **group**, then per step writes
+  `DATA/STEP_<step>/MODE_<k>` datasets with MODE/LAMBDA/OMEGA/FREQUENCY/PERIOD attrs. The
+  validator `ladruno_format.py::_check_data_shape` was taught the modal layout (DATA = group
+  of STEP_<step> groups of MODE_<k> datasets). **Modal eigenvectors now match frozen mpco to
+  1e-12**; the EIGEN gate is promoted into the counted regression battery and `eigen_check.py`
+  does a real modal value-parity diff vs the ref `.mpco`. Files: `SRC/recorder/LadrunoRecorder.cpp`,
+  `ladruno_format.py`, `eigen_check.py`, `run_regression.bat`. Found + fixed 2026-05-31 by the
+  new eigen coverage gate (the test scheme catching, then confirming the fix of, a real bug).
+
+### Energy-balance check script `energy_check.py` was stale vs the chunked `DATA` layout (fixed)
+- **Bites:** `energy_check.py` failed with `TypeError: Only 1D arrays allowed for
+  fancy indexing` — its `_read_result` iterated `grp["DATA"]` as a per-step *group*,
+  but the recorder writes `ON_DOMAIN/ON_REGIONS energyBalance DATA` as a chunked
+  `[T×nrows×ncomp]` **dataset** (the standardized streaming layout; recorder output
+  is correct).
+- **Fix:** read via `lf.iter_step_slices(grp)` (the canonical slicer the parity
+  checks already use; tolerates both chunked and legacy `DATA/STEP_k` layouts).
+  After the fix the energy kernel matches the EnergyBalance text sidecar to ~5e-9.
+  Learned 2026-05-31.

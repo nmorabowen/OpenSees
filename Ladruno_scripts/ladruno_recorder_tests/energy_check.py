@@ -51,11 +51,11 @@ def _read_result(path, family, name):
                 continue
             ids = np.asarray(grp["ID"][...]).reshape(-1)
             comps = [c for c in lf._attr(grp, "COMPONENTS").split(",") if c]
+            # DATA is the standardized chunked dataset [T x nrows x ncomp]; iterate
+            # it via the canonical slicer (also tolerates the legacy DATA/STEP_k group).
             data = {}
-            for sname in grp["DATA"]:
-                ds = grp["DATA"][sname]
-                step = int(lf._attr(ds, "STEP"))
-                data[step] = np.atleast_2d(ds[...])
+            for step, arr in lf.iter_step_slices(grp):
+                data[step] = np.atleast_2d(arr)
             return ids, comps, data
     return None, None, None
 
