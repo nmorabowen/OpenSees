@@ -126,6 +126,18 @@ class LadrunoBrick : public Element {
   Hourglass hourglassType;            // uri only
   double hourglassCoeff;              // uri only
 
+  // Cumulative viscous-hourglass dissipation (uri + Hourglass::VISCOUS only).
+  // The FB viscous hourglass force damps the spurious modes and stores NO energy,
+  // so hourglassEnergy() cannot report it instantaneously. Instead we integrate
+  // the work done against that damping force over committed steps:
+  //   ΔE = c_visc·Σ_{a,i} q̇_aι·Δq_aι   (q̇ from getTrialVel, Δq from Δu).
+  // hgDissipated accumulates it (committed, serialized); uPrevCommit holds the
+  // last committed nodal displacement (the work baseline); hgPrevValid guards the
+  // first commit / a post-recv reseed so no spurious increment is booked.  // Ladruno
+  double hgDissipated;                // cumulative dissipated viscous-hourglass energy
+  double uPrevCommit[24];             // last committed nodal displacement (work baseline)
+  bool   hgPrevValid;                 // false until uPrevCommit is first seeded
+
   double b[3];                        // body forces
   double appliedB[3];                 // body forces applied with load
   int applyLoad;
@@ -233,9 +245,16 @@ class LadrunoBrick : public Element {
   // energy ½·u_core·Kstab·u_core. Zero for std/bbar (fully integrated, no
   // hourglass) and for physical (assumed strain folded into the strain energy).
   // Stateless; reported via the "hourglassEnergy" response. NOTE: uri 'viscous'
-  // DISSIPATES rather than stores energy, so this returns 0 for it — cumulative
-  // viscous hourglass dissipation needs a committed accumulator (follow-up).  // Ladruno
+  // DISSIPATES rather than stores energy — for that flavour hourglassEnergy()
+  // returns the committed accumulator hgDissipated instead of an instantaneous
+  // stored value.  // Ladruno
   double hourglassEnergy(void);
+
+  // Work done against the FB viscous-hourglass damping force over the step now
+  // being committed (uri + Hourglass::VISCOUS only): ΔE = c_visc·Σ q̇_aι·Δq_aι,
+  // clamped ≥ 0. Mirrors the force assembled in formResidAndTangent's viscous
+  // branch; accumulated into hgDissipated by commitState.  // Ladruno
+  double viscousHourglassIncrement(void);
 
   // string <-> enum helpers (shared by OPS factory + Print + sendSelf)
   static const char *formulationName(Formulation f);
