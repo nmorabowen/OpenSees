@@ -54,17 +54,18 @@ _WIGGLE = [
 ]
 
 
-def _build(geom, form="std"):
+def _build(geom, form="std", nu=_NU):
     """Build the single-element model. Returns the element/material tags.
 
     finite -> LogStrain(ElasticIsotropic);  linear -> ElasticIsotropic directly.
     form selects the formulation axis ("std" or, for finite, "bbar" = F-bar).
+    nu lets a test exercise the near-incompressible regime (where F-bar matters).
     """
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 3)
     for tag, (x, y, z) in _NODES.items():
         ops.node(tag, x, y, z)
-    ops.nDMaterial("ElasticIsotropic", 1, _E, _NU)
+    ops.nDMaterial("ElasticIsotropic", 1, _E, nu)
     if geom == "finite":
         ops.nDMaterial("LogStrain", 2, 1)
         mtag = 2
@@ -74,14 +75,14 @@ def _build(geom, form="std"):
     return mtag
 
 
-def _impose_and_solve(u, geom, form="std"):
+def _impose_and_solve(u, geom, form="std", nu=_NU):
     """Impose the full 24-dof nodal displacement vector u via single-point
     constraints and solve one step, leaving the element committed at that state.
     The Lagrange handler keeps the DOFs and adds multiplier equations (so the
     system is non-empty — a fully sp-constrained element gives 0 free DOFs, which
     the Transformation handler cannot solve) while imposing u exactly.
     Returns the analyze() return code."""
-    _build(geom, form)
+    _build(geom, form, nu)
     ops.timeSeries("Linear", 1)
     ops.pattern("Plain", 1, 1)
     for tag in _NODES:
@@ -98,13 +99,13 @@ def _impose_and_solve(u, geom, form="std"):
     return ops.analyze(1)
 
 
-def _resisting_force(u, geom="finite", form="std"):
-    assert _impose_and_solve(u, geom, form) == 0, "imposed-displacement solve failed"
+def _resisting_force(u, geom="finite", form="std", nu=_NU):
+    assert _impose_and_solve(u, geom, form, nu) == 0, "imposed-displacement solve failed"
     return np.array(ops.eleForce(1), dtype=float)
 
 
-def _element_tangent(u, geom="finite", form="std"):
-    assert _impose_and_solve(u, geom, form) == 0, "imposed-displacement solve failed"
+def _element_tangent(u, geom="finite", form="std", nu=_NU):
+    assert _impose_and_solve(u, geom, form, nu) == 0, "imposed-displacement solve failed"
     K = ops.eleResponse(1, "stiff")
     assert K and len(K) == 24 * 24, "LadrunoBrick must answer eleResponse('stiff') with 24x24"
     return np.array(K, dtype=float).reshape(24, 24)
@@ -324,6 +325,37 @@ def test_fbar_consistent_tangent_matches_finite_difference():
     assert asym > 1.0e-6 * scale, (
         "F-bar tangent came out symmetric on a non-affine state — the eq 15.10 "
         "coupling term is not being exercised (G0 == G?)"
+    )
+
+
+def test_fbar_consistent_tangent_matches_fd_near_incompressible():
+    # Defense-in-depth on the eq 15.11 coupling q = (1/3)a:(I⊗I) − (2/3)σ⊗I. The
+    # easily-dropped −(2/3)σ⊗I term feeds the volumetric block (1/3)a:(I⊗I), whose
+    # magnitude blows up as ν→1/2 (bulk modulus ~ E/(3(1−2ν))). Re-running the FD
+    # gate at ν=0.499 makes it directly guard that term where it matters most: a
+    # regression to the "(1/3)c" spatial-shortcut coefficient would be glaring here.
+    nu = 0.499
+    Fbar = [[1.15, 0.08, -0.05],
+            [0.04, 0.92, 0.06],
+            [-0.03, 0.05, 1.10]]
+    u = _affine_disp(Fbar, wiggle=True)
+
+    K = _element_tangent(u, "finite", "bbar", nu)
+    assert np.isfinite(K).all()
+
+    h = 1.0e-6
+    Kfd = np.zeros((24, 24))
+    for d in range(24):
+        up = u.copy(); up[d] += h
+        um = u.copy(); um[d] -= h
+        Kfd[:, d] = (_resisting_force(up, "finite", "bbar", nu)
+                     - _resisting_force(um, "finite", "bbar", nu)) / (2.0 * h)
+
+    scale = np.abs(K).max()
+    err = np.abs(K - Kfd).max()
+    assert err <= 1.0e-4 * scale, (
+        f"near-incompressible F-bar tangent != FD: max abs err {err:.3e} vs scale "
+        f"{scale:.3e} (the −(2/3)σ⊗I term in eq 15.11 is most consequential at ν→1/2)"
     )
 
 
