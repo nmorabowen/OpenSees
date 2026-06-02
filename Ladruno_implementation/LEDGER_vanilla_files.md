@@ -72,6 +72,11 @@ and re-verify.
 | `SRC/material/uniaxial/TclModelBuilderUniaxialMaterialCommand.cpp` | `// Ladruno`: extern `OPS_LadrunoUniaxialJ2()` + `strcmp(argv[1],"LadrunoUniaxialJ2")` dispatch block (classic-Tcl `OpenSees.exe` path) | [#99](https://github.com/nmorabowen/OpenSees/pull/99) |
 | `SRC/material/uniaxial/CMakeLists.txt` | Add `LadrunoUniaxialJ2.cpp` to `OPS_Material` sources + `LadrunoUniaxialJ2.h` to headers | [#99](https://github.com/nmorabowen/OpenSees/pull/99) |
 | `SRC/material/nD/CMakeLists.txt` | Add header-only `LadrunoHardening.h` (shared isotropic law, consumed by both `LadrunoJ2` and uniaxial `LadrunoUniaxialJ2` — the oracle contract) to `OPS_Material` PUBLIC headers | [#99](https://github.com/nmorabowen/OpenSees/pull/99) |
+| `SRC/classTags.h` | Register `MAT_TAG_LadrunoRebarBuckling`=33001 (Dhakal–Maekawa rebar-buckling wrapper; uniaxial band after LadrunoUniaxialJ2=33000) | _pending (LadrunoRebarBuckling)_ |
+| `SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp` | `// Ladruno`: `#include "LadrunoRebarBuckling.h"` + `case MAT_TAG_LadrunoRebarBuckling: return new LadrunoRebarBuckling();` (nested-material `recvSelf` reconstruction) | _pending (LadrunoRebarBuckling)_ |
+| `SRC/interpreter/OpenSeesUniaxialMaterialCommands.cpp` | `// Ladruno`: fwd-decl `OPS_LadrunoRebarBuckling()` + `uniaxialMaterialsMap["LadrunoRebarBuckling"]` | _pending (LadrunoRebarBuckling)_ |
+| `SRC/material/uniaxial/TclModelBuilderUniaxialMaterialCommand.cpp` | `// Ladruno`: extern `OPS_LadrunoRebarBuckling()` + `strcmp(argv[1],"LadrunoRebarBuckling")` dispatch block | _pending (LadrunoRebarBuckling)_ |
+| `SRC/material/uniaxial/CMakeLists.txt` | Add `LadrunoRebarBuckling.cpp` + `.h` to `OPS_Material` | _pending (LadrunoRebarBuckling)_ |
 
 > [!note] Upstreamable bugfixes
 > Some PRs fix genuine upstream bugs (not fork-only features) and are candidates

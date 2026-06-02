@@ -344,6 +344,37 @@ features:
       flag, weld/HAZ -- all deferred). Plan/ADR:
       Ladruno_implementation/13_ladruno_uniaxial_j2_adr.md (shipped via #95).
 
+  - feature: LadrunoRebarBuckling
+    classtag: 33001          # MAT_TAG (uniaxial) family; next after LadrunoUniaxialJ2=33000
+    tag_symbol: MAT_TAG_LadrunoRebarBuckling
+    pr: null                 # impl PR (fill on open)
+    feature_class: material
+    required_tiers: [T0m, T1]
+    pytest: tests/test_ladrunoRebarBuckling_material.py   # identity(-lsr 0); buckling reduces compression; residual+slenderness trend; consistent-tangent FD; Fatigue.Buckling.J2 composition
+    tcl: WAIVED(uniaxialMaterial LadrunoRebarBuckling ...; shared OpenSeesUniaxialMaterialCommands registry serves Tcl + Python, plus classic-Tcl TclModelBuilderUniaxialMaterialCommand dispatch; verified via the Zone-A pytest battery)
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesUniaxialMaterialCommands.cpp
+      - SRC/material/uniaxial/TclModelBuilderUniaxialMaterialCommand.cpp
+      - SRC/material/uniaxial/CMakeLists.txt
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      Dhakal-Maekawa (2002) reinforcing-bar buckling WRAPPER over any bare-bar
+      UniaxialMaterial (LadrunoUniaxialJ2/Steel02/Steel4). Compression-side
+      buckled-average reduction sigma_buckled = r(eps,lsr)*sigma_bare (post-hoc
+      modification of the live bare stress; mirrors
+      ReinforcingSteel::Buckled_stress_Dhakal) so the wrapped material stays a
+      pure oracle. Departs the bare curve at a slenderness-dependent onset and
+      softens toward a ~0.2 fy residual; analytic consistent tangent (upstream
+      finite-differences it). v1 = monotonic compression buckling (tensile-strain
+      anchor e_cross); full cyclic re-straightening transitions + the
+      Gomes-Appleton (-model ga) law are deferred follow-ups. Composes
+      Fatigue.Buckling.J2. Scope = rebar only (plate buckling -> IMK / continuum;
+      global buckling -> corotational element). Plan/ADR:
+      Ladruno_implementation/14_ladruno_rebar_buckling_adr.md.
+
   # --- worked examples shipped with the scaffold (existing elements, no new C++) ---
 
   - feature: forceBeamColumn_cantilever     # T1 worked example (existing element)

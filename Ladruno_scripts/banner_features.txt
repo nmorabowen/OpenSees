@@ -18,4 +18,5 @@ LadrunoBrick — unified hex (std/bbar/uri/eas + hourglass)
 Solid geometry methods — -geom linear/corot/finite
 LadrunoJ2 — combined iso + Chaboche AF kinematic J2
 LadrunoUniaxialJ2 — uniaxial Chaboche AF J2 fiber/truss
+LadrunoRebarBuckling — Dhakal-Maekawa rebar-buckling wrapper
 Ladruno — modular HDF5 .ladruno recorder
