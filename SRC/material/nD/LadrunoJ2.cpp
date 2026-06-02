@@ -37,6 +37,8 @@
 #include <Information.h>
 #include <Parameter.h>
 #include <MaterialResponse.h>
+#include <Element.h>            // ops_TheActiveElement->getCharacteristicLength() for -autoRegularization
+#include <OPS_Globals.h>
 #include <string.h>
 #include <math.h>
 #include <elementAPI.h>
@@ -75,11 +77,15 @@ void* OPS_LadrunoJ2(void)
   }
   double K = KG[0], G = KG[1];
 
-  // defaults: perfectly plastic, no kinematic hardening
+  // defaults: perfectly plastic, no kinematic hardening, no damage
   double s0 = 0.0, Qinf = 0.0, bIso = 0.0, Hiso = 0.0, rho = 0.0;
   int nBack = 0;
   double C[LadrunoJ2::MAXBACK], gam[LadrunoJ2::MAXBACK];
   for (int i = 0; i < LadrunoJ2::MAXBACK; i++) { C[i] = 0.0; gam[i] = 0.0; }
+  bool dmgOn = false;
+  double dmgR = 0.0, dmgS = 1.0, dmgPD = 0.0, dmgDc = 1.0;
+  bool dmgRegOn = false;
+  double dmgLchRef = 1.0;
 
   while (OPS_GetNumRemainingInputArgs() > 0) {
     const char* flag = OPS_GetString();
@@ -127,13 +133,45 @@ void* OPS_LadrunoJ2(void)
         return 0;
       }
     }
+    else if (strcmp(flag, "-damage") == 0) {
+      const char* law = OPS_GetString();
+      if (strcmp(law, "lemaitre") == 0 || strcmp(law, "Lemaitre") == 0) {
+        double d[4];
+        numData = 4;
+        if (OPS_GetDoubleInput(&numData, d) < 0) {
+          opserr << "WARNING LadrunoJ2: -damage lemaitre wants r s pD Dc\n";
+          return 0;
+        }
+        dmgOn = true; dmgR = d[0]; dmgS = d[1]; dmgPD = d[2]; dmgDc = d[3];
+        if (dmgR <= 0.0 || dmgDc <= 0.0 || dmgDc > 1.0) {
+          opserr << "WARNING LadrunoJ2: -damage lemaitre needs r>0, 0<Dc<=1\n";
+          return 0;
+        }
+      } else if (strcmp(law, "none") == 0) {
+        dmgOn = false;
+      } else {
+        opserr << "WARNING LadrunoJ2: unknown -damage law '" << law
+               << "' (only 'lemaitre' in v1)\n";
+        return 0;
+      }
+    }
+    else if (strcmp(flag, "-autoRegularization") == 0 || strcmp(flag, "-lchRef") == 0) {
+      numData = 1;
+      if (OPS_GetDoubleInput(&numData, &dmgLchRef) < 0 || dmgLchRef <= 0.0) {
+        opserr << "WARNING LadrunoJ2: -autoRegularization wants lch_ref > 0\n";
+        return 0;
+      }
+      dmgRegOn = true;
+    }
     else {
       opserr << "WARNING LadrunoJ2: unknown option '" << flag << "'\n";
       return 0;
     }
   }
 
-  NDMaterial* mat = new LadrunoJ2(tag, K, G, s0, Qinf, bIso, Hiso, nBack, C, gam, rho);
+  NDMaterial* mat = new LadrunoJ2(tag, K, G, s0, Qinf, bIso, Hiso, nBack, C, gam, rho,
+                                  LadrunoJ2::DIM_3D, dmgOn, dmgR, dmgS, dmgPD, dmgDc,
+                                  dmgRegOn, dmgLchRef);
   if (mat == 0) {
     opserr << "WARNING LadrunoJ2: failed to allocate material\n";
     return 0;
@@ -147,8 +185,11 @@ void* OPS_LadrunoJ2(void)
 LadrunoJ2::LadrunoJ2()
   : NDMaterial(0, ND_TAG_LadrunoJ2),
     bulk(0.0), shear(0.0), sig0(0.0), Qinf(0.0), bIso(0.0), Hiso(0.0), rho(0.0),
-    nBack(0), dim(DIM_3D), ncomp(6), condense(false), cEps22(0.0),
-    dGamma_n(0.0), ebarP_n(0.0), ebarP(0.0), dGammaTrial(0.0), parameterID(0)
+    nBack(0), dmgOn(false), dmgR(0.0), dmgS(1.0), dmgPD(0.0), dmgDc(1.0),
+    dmgRegOn(false), dmgLchRef(1.0),
+    dim(DIM_3D), ncomp(6), condense(false), cEps22(0.0),
+    dGamma_n(0.0), D_n(0.0), ebarP_n(0.0), ebarP(0.0), dGammaTrial(0.0), Dtrial(0.0),
+    parameterID(0)
 {
   for (int k = 0; k < MAXBACK; k++) { Ckin[k] = 0.0; gKin[k] = 0.0; }
   this->setupDim();
@@ -157,11 +198,16 @@ LadrunoJ2::LadrunoJ2()
 
 LadrunoJ2::LadrunoJ2(int tag, double K, double G,
                      double s0, double Qi, double b, double Hi,
-                     int nb, const double* C, const double* gam, double r, int dimMode)
+                     int nb, const double* C, const double* gam, double r, int dimMode,
+                     bool dOn, double dR, double dS, double dPD, double dDc,
+                     bool dRegOn, double dLchRef)
   : NDMaterial(tag, ND_TAG_LadrunoJ2),
     bulk(K), shear(G), sig0(s0), Qinf(Qi), bIso(b), Hiso(Hi), rho(r),
-    nBack(nb), dim(dimMode), ncomp(6), condense(false), cEps22(0.0),
-    dGamma_n(0.0), ebarP_n(0.0), ebarP(0.0), dGammaTrial(0.0), parameterID(0)
+    nBack(nb), dmgOn(dOn), dmgR(dR), dmgS(dS), dmgPD(dPD), dmgDc(dDc),
+    dmgRegOn(dRegOn), dmgLchRef(dLchRef),
+    dim(dimMode), ncomp(6), condense(false), cEps22(0.0),
+    dGamma_n(0.0), D_n(0.0), ebarP_n(0.0), ebarP(0.0), dGammaTrial(0.0), Dtrial(0.0),
+    parameterID(0)
 {
   for (int k = 0; k < MAXBACK; k++) {
     Ckin[k] = (k < nb) ? C[k]   : 0.0;
@@ -210,7 +256,9 @@ LadrunoJ2::~LadrunoJ2() {}
 // ===========================================================================
 static void fillParams(Params& p, double bulk, double shear,
                        double sig0, double Qinf, double bIso, double Hiso,
-                       int nBack, const double* Ckin, const double* gKin)
+                       int nBack, const double* Ckin, const double* gKin,
+                       bool dmgOn = false, double dmgR = 0.0, double dmgS = 1.0,
+                       double dmgPD = 0.0, double dmgDc = 1.0, double lchScale = 1.0)
 {
   p.K = bulk; p.G = shear;
   p.sig0 = sig0; p.Qinf = Qinf; p.bIso = bIso; p.Hiso = Hiso;
@@ -219,6 +267,8 @@ static void fillParams(Params& p, double bulk, double shear,
     p.C[k]   = Ckin[k];
     p.gam[k] = gKin[k];
   }
+  p.dmg.on = dmgOn; p.dmg.r = dmgR; p.dmg.s = dmgS;
+  p.dmg.pD = dmgPD; p.dmg.Dc = dmgDc; p.dmg.lchScale = lchScale;
 }
 
 // ===========================================================================
@@ -292,13 +342,23 @@ int LadrunoJ2::setTrialStrainIncr(const Vector& v, const Vector&) { return this-
 // ===========================================================================
 void LadrunoJ2::integrate(void)
 {
+  // crack-band regularization: scale the damage increment by lch/lch_ref so the
+  // dissipated fracture energy is mesh-objective (lch from the active element).
+  double lchScale = 1.0;
+  if (dmgOn && dmgRegOn && dmgLchRef > 0.0) {
+    double lch = (ops_TheActiveElement != 0)
+               ? ops_TheActiveElement->getCharacteristicLength() : dmgLchRef;
+    if (lch > 0.0) lchScale = lch / dmgLchRef;
+  }
+
   Params p;
-  fillParams(p, bulk, shear, sig0, Qinf, bIso, Hiso, nBack, Ckin, gKin);
+  fillParams(p, bulk, shear, sig0, Qinf, bIso, Hiso, nBack, Ckin, gKin,
+             dmgOn, dmgR, dmgS, dmgPD, dmgDc, lchScale);
 
   double resid = 0.0;
-  int status = ladruno_j2_kernel::returnMap(
-      p, strain6, epsP_n, ebarP_n, alpha_n,
-      stress6, Dtan, epsP, ebarP, alpha, dGammaTrial, &resid);
+  int status = ladruno_j2_kernel::returnMapDamaged(
+      p, strain6, epsP_n, ebarP_n, alpha_n, D_n,
+      stress6, Dtan, epsP, ebarP, alpha, dGammaTrial, Dtrial, &resid);
 
   if (status == ladruno_j2_kernel::STATUS_SINGULAR)
     opserr << "WARNING LadrunoJ2: singular local Jacobian (tag "
@@ -320,6 +380,7 @@ void LadrunoJ2::setStateToCommitted(void)
   for (int i = 0; i < 6; i++) epsP[i] = epsP_n[i];
   ebarP = ebarP_n;
   dGammaTrial = 0.0;
+  Dtrial = D_n;
   for (int k = 0; k < nBack; k++)
     for (int i = 0; i < 6; i++) alpha[k][i] = alpha_n[k][i];
 }
@@ -381,6 +442,7 @@ int LadrunoJ2::commitState(void)
   for (int i = 0; i < 6; i++) epsP_n[i] = epsP[i];
   ebarP_n  = ebarP;
   dGamma_n = dGammaTrial;
+  D_n      = Dtrial;
   for (int k = 0; k < nBack; k++)
     for (int i = 0; i < 6; i++) alpha_n[k][i] = alpha[k][i];
   cEps22 = strain6[2];   // converged out-of-plane strain (condensed modes)
@@ -404,6 +466,7 @@ int LadrunoJ2::revertToStart(void)
   }
   ebarP_n = 0.0; ebarP = 0.0;
   dGamma_n = 0.0; dGammaTrial = 0.0;
+  D_n = 0.0; Dtrial = 0.0;
   cEps22 = 0.0;
   for (int k = 0; k < MAXBACK; k++)
     for (int i = 0; i < 6; i++) { alpha_n[k][i] = 0.0; alpha[k][i] = 0.0; }
@@ -417,7 +480,8 @@ int LadrunoJ2::revertToStart(void)
 NDMaterial* LadrunoJ2::getCopy(void)
 {
   return new LadrunoJ2(this->getTag(), bulk, shear, sig0, Qinf, bIso, Hiso,
-                       nBack, Ckin, gKin, rho, dim);
+                       nBack, Ckin, gKin, rho, dim,
+                       dmgOn, dmgR, dmgS, dmgPD, dmgDc, dmgRegOn, dmgLchRef);
 }
 
 NDMaterial* LadrunoJ2::getCopy(const char* type)
@@ -433,7 +497,8 @@ NDMaterial* LadrunoJ2::getCopy(const char* type)
     return NDMaterial::getCopy(type);   // let the base report the unsupported type
 
   return new LadrunoJ2(this->getTag(), bulk, shear, sig0, Qinf, bIso, Hiso,
-                       nBack, Ckin, gKin, rho, d);
+                       nBack, Ckin, gKin, rho, d,
+                       dmgOn, dmgR, dmgS, dmgPD, dmgDc, dmgRegOn, dmgLchRef);
 }
 
 // ===========================================================================
@@ -441,9 +506,9 @@ NDMaterial* LadrunoJ2::getCopy(const char* type)
 // ===========================================================================
 int LadrunoJ2::sendSelf(int commitTag, Channel& theChannel)
 {
-  // tag + 7 params + nBack + dim + 2*MAXBACK (C,gamma) + epsP(6) + ebarP(1)
-  //     + alpha(MAXBACK*6) + dGamma(1) + cEps22(1)
-  static Vector data(1 + 7 + 1 + 1 + 2*MAXBACK + 6 + 1 + MAXBACK*6 + 1 + 1);
+  // tag + 7 params + nBack + dim + 7 damage params + 2*MAXBACK (C,gamma)
+  //     + epsP(6) + ebarP(1) + alpha(MAXBACK*6) + dGamma(1) + D_n(1) + cEps22(1)
+  static Vector data(1 + 7 + 1 + 1 + 7 + 2*MAXBACK + 6 + 1 + MAXBACK*6 + 1 + 1 + 1);
   int c = 0;
   data(c++) = this->getTag();
   data(c++) = bulk;
@@ -455,6 +520,13 @@ int LadrunoJ2::sendSelf(int commitTag, Channel& theChannel)
   data(c++) = rho;
   data(c++) = nBack;
   data(c++) = dim;
+  data(c++) = dmgOn ? 1.0 : 0.0;
+  data(c++) = dmgR;
+  data(c++) = dmgS;
+  data(c++) = dmgPD;
+  data(c++) = dmgDc;
+  data(c++) = dmgRegOn ? 1.0 : 0.0;
+  data(c++) = dmgLchRef;
   for (int k = 0; k < MAXBACK; k++) data(c++) = Ckin[k];
   for (int k = 0; k < MAXBACK; k++) data(c++) = gKin[k];
   for (int i = 0; i < 6; i++) data(c++) = epsP_n[i];
@@ -462,6 +534,7 @@ int LadrunoJ2::sendSelf(int commitTag, Channel& theChannel)
   for (int k = 0; k < MAXBACK; k++)
     for (int i = 0; i < 6; i++) data(c++) = alpha_n[k][i];
   data(c++) = dGamma_n;
+  data(c++) = D_n;
   data(c++) = cEps22;
 
   if (theChannel.sendVector(this->getDbTag(), commitTag, data) < 0) {
@@ -473,7 +546,7 @@ int LadrunoJ2::sendSelf(int commitTag, Channel& theChannel)
 
 int LadrunoJ2::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker& theBroker)
 {
-  static Vector data(1 + 7 + 1 + 1 + 2*MAXBACK + 6 + 1 + MAXBACK*6 + 1 + 1);
+  static Vector data(1 + 7 + 1 + 1 + 7 + 2*MAXBACK + 6 + 1 + MAXBACK*6 + 1 + 1 + 1);
   if (theChannel.recvVector(this->getDbTag(), commitTag, data) < 0) {
     opserr << "LadrunoJ2::recvSelf - failed to recv vector\n";
     return -1;
@@ -489,6 +562,13 @@ int LadrunoJ2::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker& th
   rho   = data(c++);
   nBack = (int)data(c++);
   dim   = (int)data(c++);
+  dmgOn = (data(c++) != 0.0);
+  dmgR  = data(c++);
+  dmgS  = data(c++);
+  dmgPD = data(c++);
+  dmgDc = data(c++);
+  dmgRegOn = (data(c++) != 0.0);
+  dmgLchRef = data(c++);
   for (int k = 0; k < MAXBACK; k++) Ckin[k] = data(c++);
   for (int k = 0; k < MAXBACK; k++) gKin[k] = data(c++);
   for (int i = 0; i < 6; i++) epsP_n[i] = data(c++);
@@ -496,6 +576,7 @@ int LadrunoJ2::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker& th
   for (int k = 0; k < MAXBACK; k++)
     for (int i = 0; i < 6; i++) alpha_n[k][i] = data(c++);
   dGamma_n = data(c++);
+  D_n      = data(c++);
   cEps22   = data(c++);
 
   this->setupDim();             // rebuild vmap/ncomp/condense + resize buffers
@@ -553,6 +634,9 @@ void LadrunoJ2::Print(OPS_Stream& s, int flag)
   s << "  nBack  : " << nBack << endln;
   for (int k = 0; k < nBack; k++)
     s << "    term " << k+1 << ": C=" << Ckin[k] << " gamma=" << gKin[k] << endln;
+  if (dmgOn)
+    s << "  damage : Lemaitre r=" << dmgR << " s=" << dmgS
+      << " pD=" << dmgPD << " Dc=" << dmgDc << "  (D=" << D_n << ")" << endln;
   s << "  rho    : " << rho << endln;
 }
 
@@ -577,6 +661,12 @@ Response* LadrunoJ2::setResponse(const char** argv, int argc, OPS_Stream& s)
   if (strcmp(a, "equivalentPlasticStrain") == 0 || strcmp(a, "plasticStrainEq") == 0 ||
       strcmp(a, "ebarP") == 0)
     return new MaterialResponse(this, 6, Vector(1));
+  if (strcmp(a, "damage") == 0 || strcmp(a, "D") == 0)
+    return new MaterialResponse(this, 7, Vector(1));
+  if (strcmp(a, "failed") == 0 || strcmp(a, "rupture") == 0)
+    return new MaterialResponse(this, 8, Vector(1));
+  if (strcmp(a, "Y") == 0 || strcmp(a, "energyReleaseRate") == 0)
+    return new MaterialResponse(this, 9, Vector(1));
 
   return NDMaterial::setResponse(argv, argc, s);
 }
@@ -614,6 +704,27 @@ int LadrunoJ2::getResponse(int responseID, Information& matInfo)
       return 0;
     case 6:                                   // equivalent (accumulated) plastic strain
       if (matInfo.theVector) (*(matInfo.theVector))(0) = ebarP;
+      return 0;
+    case 7:                                   // Lemaitre damage D
+      if (matInfo.theVector) (*(matInfo.theVector))(0) = Dtrial;
+      return 0;
+    case 8:                                   // failed flag (D >= Dc)
+      if (matInfo.theVector) (*(matInfo.theVector))(0) = (dmgOn && Dtrial >= dmgDc) ? 1.0 : 0.0;
+      return 0;
+    case 9:                                   // damage energy release rate Y (effective)
+      if (matInfo.theVector) {
+        double omd = 1.0 - Dtrial;
+        double sH = (stress6[0] + stress6[1] + stress6[2]) / 3.0;
+        double sd[6];
+        for (int i = 0; i < 6; i++) sd[i] = stress6[i];
+        for (int i = 0; i < 3; i++) sd[i] -= sH;
+        double q2 = 1.5 * ladruno_j2_kernel::dotT(sd, sd);
+        double qEff = (omd > 1.0e-12) ? sqrt(q2)/omd : 0.0;
+        double sHeff = (omd > 1.0e-12) ? sH/omd : 0.0;
+        double E  = Ladruno::youngsFromKG(bulk, shear);
+        double nu = Ladruno::poissonFromKG(bulk, shear);
+        (*(matInfo.theVector))(0) = Ladruno::damageReleaseRate(qEff, sHeff, nu, E);
+      }
       return 0;
     default:
       return -1;

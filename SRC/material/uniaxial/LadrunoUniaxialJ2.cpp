@@ -32,6 +32,7 @@
 
 #include <LadrunoUniaxialJ2.h>
 #include <LadrunoHardening.h>     // shared sig_y(pbar) -- oracle contract w/ LadrunoJ2
+#include <LadrunoDamage.h>        // shared Lemaitre damage law -- oracle contract w/ LadrunoJ2
 #include <Vector.h>
 #include <Channel.h>
 #include <Information.h>
@@ -70,11 +71,13 @@ void* OPS_LadrunoUniaxialJ2(void)
     return 0;
   }
 
-  // defaults: perfectly plastic, no kinematic hardening
+  // defaults: perfectly plastic, no kinematic hardening, no damage
   double s0 = 0.0, Qinf = 0.0, bIso = 0.0, Hiso = 0.0;
   int nBack = 0;
   double C[LadrunoUniaxialJ2::MAXBACK], gam[LadrunoUniaxialJ2::MAXBACK];
   for (int i = 0; i < LadrunoUniaxialJ2::MAXBACK; i++) { C[i] = 0.0; gam[i] = 0.0; }
+  bool dmgOn = false;
+  double dmgR = 0.0, dmgS = 1.0, dmgPD = 0.0, dmgDc = 1.0;
 
   while (OPS_GetNumRemainingInputArgs() > 0) {
     const char* flag = OPS_GetString();
@@ -116,6 +119,28 @@ void* OPS_LadrunoUniaxialJ2(void)
         C[k] = cg[0]; gam[k] = cg[1];
       }
     }
+    else if (strcmp(flag, "-damage") == 0) {
+      const char* law = OPS_GetString();
+      if (strcmp(law, "lemaitre") == 0 || strcmp(law, "Lemaitre") == 0) {
+        double d[4];
+        numData = 4;
+        if (OPS_GetDoubleInput(&numData, d) < 0) {
+          opserr << "WARNING LadrunoUniaxialJ2: -damage lemaitre wants r s pD Dc\n";
+          return 0;
+        }
+        dmgOn = true; dmgR = d[0]; dmgS = d[1]; dmgPD = d[2]; dmgDc = d[3];
+        if (dmgR <= 0.0 || dmgDc <= 0.0 || dmgDc > 1.0) {
+          opserr << "WARNING LadrunoUniaxialJ2: -damage lemaitre needs r>0, 0<Dc<=1\n";
+          return 0;
+        }
+      } else if (strcmp(law, "none") == 0) {
+        dmgOn = false;
+      } else {
+        opserr << "WARNING LadrunoUniaxialJ2: unknown -damage law '" << law
+               << "' (only 'lemaitre' in v1)\n";
+        return 0;
+      }
+    }
     else {
       opserr << "WARNING LadrunoUniaxialJ2: unknown option '" << flag << "'\n";
       return 0;
@@ -123,7 +148,8 @@ void* OPS_LadrunoUniaxialJ2(void)
   }
 
   UniaxialMaterial* mat =
-    new LadrunoUniaxialJ2(tag, E, s0, Qinf, bIso, Hiso, nBack, C, gam);
+    new LadrunoUniaxialJ2(tag, E, s0, Qinf, bIso, Hiso, nBack, C, gam,
+                          dmgOn, dmgR, dmgS, dmgPD, dmgDc);
   if (mat == 0) {
     opserr << "WARNING LadrunoUniaxialJ2: failed to allocate material\n";
     return 0;
@@ -136,9 +162,11 @@ void* OPS_LadrunoUniaxialJ2(void)
 // ===========================================================================
 LadrunoUniaxialJ2::LadrunoUniaxialJ2(int tag, double e,
                                      double s0, double Qi, double b, double Hi,
-                                     int nb, const double* C, const double* gam)
+                                     int nb, const double* C, const double* gam,
+                                     bool dOn, double dR, double dS, double dPD, double dDc)
   : UniaxialMaterial(tag, MAT_TAG_LadrunoUniaxialJ2),
-    E(e), sig0(s0), Qinf(Qi), bIso(b), Hiso(Hi), nBack(nb), parameterID(0)
+    E(e), sig0(s0), Qinf(Qi), bIso(b), Hiso(Hi), nBack(nb),
+    dmgOn(dOn), dmgR(dR), dmgS(dS), dmgPD(dPD), dmgDc(dDc), parameterID(0)
 {
   for (int k = 0; k < MAXBACK; k++) {
     Ckin[k] = (k < nb) ? C[k]   : 0.0;
@@ -149,7 +177,8 @@ LadrunoUniaxialJ2::LadrunoUniaxialJ2(int tag, double e,
 
 LadrunoUniaxialJ2::LadrunoUniaxialJ2()
   : UniaxialMaterial(0, MAT_TAG_LadrunoUniaxialJ2),
-    E(0.0), sig0(0.0), Qinf(0.0), bIso(0.0), Hiso(0.0), nBack(0), parameterID(0)
+    E(0.0), sig0(0.0), Qinf(0.0), bIso(0.0), Hiso(0.0), nBack(0),
+    dmgOn(false), dmgR(0.0), dmgS(1.0), dmgPD(0.0), dmgDc(1.0), parameterID(0)
 {
   for (int k = 0; k < MAXBACK; k++) { Ckin[k] = 0.0; gKin[k] = 0.0; }
   this->revertToStart();
@@ -204,6 +233,12 @@ int LadrunoUniaxialJ2::setTrialStrain(double strain, double)
     for (int k = 0; k < nBack; k++) TX[k] = CX[k];
     Tstress = sigTr;
     Ttangent = E;
+    TD = CD;                                   // no new damage on an elastic step
+    if (dmgOn && CD > 0.0) {                    // but prior damage still degrades sigma/tangent
+      double omd = 1.0 - CD;
+      Tstress  *= omd;
+      Ttangent *= omd;
+    }
     return 0;
   }
 
@@ -268,6 +303,39 @@ int LadrunoUniaxialJ2::setTrialStrain(double strain, double)
   }
   Ttangent = E*h/(E + h);
 
+  // ---- Lemaitre coupled ductile damage (uniaxial: triaxiality 1/3 => R_v == 1,
+  //      so Y = sigma~^2/(2E)). The effective return above is D-independent; D is
+  //      recovered from the converged effective stress and the (dp,D) coupling
+  //      enters the CONSISTENT TANGENT: E_nom = (1-D)E_alg - sigma~ dD/deps.
+  //      This is the exact 1D reduction of the 3D returnMapDamaged (the V4 oracle).
+  TD = CD;
+  if (dmgOn) {
+    const double sigEff  = Tstress;            // effective stress (pre-degradation)
+    const double EalgEff = Ttangent;           // effective consistent tangent
+    Ladruno::DamageParams dpar;
+    dpar.on = dmgOn; dpar.r = dmgR; dpar.s = dmgS; dpar.pD = dmgPD; dpar.Dc = dmgDc;
+    const double Y = (E > 0.0) ? sigEff*sigEff/(2.0*E) : 0.0;
+    const double dDraw = Ladruno::damageIncrement(Y, Cebarp, pbar, dpar);
+    double Dnew = CD + dDraw;
+    bool capped = false;
+    if (Dnew >= dmgDc) { Dnew = dmgDc; capped = true; }
+    if (Dnew < 0.0) Dnew = 0.0;
+    TD = Dnew;
+    const double omd = 1.0 - Dnew;
+
+    double dDdeps = 0.0;
+    if (!capped && dDraw > 0.0) {
+      // d(pbar)/deps = s E/(E+h) ; dY/deps = (sigma~/E) E_alg ; partials of dD
+      double ddD_dY, ddD_dp;
+      Ladruno::damageIncrementPartials(Y, Cebarp, pbar, dpar, ddD_dY, ddD_dp);
+      const double dpbar_deps = s*E/(E + h);
+      const double dY_deps    = (sigEff/E)*EalgEff;
+      dDdeps = ddD_dp*dpbar_deps + ddD_dY*dY_deps;
+    }
+    Tstress  = omd*sigEff;
+    Ttangent = omd*EalgEff - sigEff*dDdeps;
+  }
+
   return 0;
 }
 
@@ -280,6 +348,7 @@ int LadrunoUniaxialJ2::commitState(void)
   Cebarp = Tebarp;
   CdGamma = TdGamma;
   Cwp = Twp;
+  CD = TD;
   for (int k = 0; k < nBack; k++) CX[k] = TX[k];
   return 0;
 }
@@ -290,14 +359,15 @@ int LadrunoUniaxialJ2::revertToLastCommit(void)
   Tebarp = Cebarp;
   TdGamma = CdGamma;
   Twp = Cwp;
+  TD = CD;
   for (int k = 0; k < nBack; k++) TX[k] = CX[k];
   return 0;
 }
 
 int LadrunoUniaxialJ2::revertToStart(void)
 {
-  CplasticStrain = 0.0; Cebarp = 0.0; CdGamma = 0.0; Cwp = 0.0;
-  TplasticStrain = 0.0; Tebarp = 0.0; TdGamma = 0.0; Twp = 0.0;
+  CplasticStrain = 0.0; Cebarp = 0.0; CdGamma = 0.0; Cwp = 0.0; CD = 0.0;
+  TplasticStrain = 0.0; Tebarp = 0.0; TdGamma = 0.0; Twp = 0.0; TD = 0.0;
   for (int k = 0; k < MAXBACK; k++) { CX[k] = 0.0; TX[k] = 0.0; }
   Tstrain = 0.0;
   Tstress = 0.0;
@@ -312,16 +382,18 @@ UniaxialMaterial* LadrunoUniaxialJ2::getCopy(void)
 {
   LadrunoUniaxialJ2* theCopy =
     new LadrunoUniaxialJ2(this->getTag(), E, sig0, Qinf, bIso, Hiso,
-                          nBack, Ckin, gKin);
+                          nBack, Ckin, gKin, dmgOn, dmgR, dmgS, dmgPD, dmgDc);
 
   theCopy->CplasticStrain = CplasticStrain;
   theCopy->Cebarp = Cebarp;
   theCopy->CdGamma = CdGamma;
   theCopy->Cwp = Cwp;
+  theCopy->CD = CD;
   theCopy->TplasticStrain = TplasticStrain;
   theCopy->Tebarp = Tebarp;
   theCopy->TdGamma = TdGamma;
   theCopy->Twp = Twp;
+  theCopy->TD = TD;
   for (int k = 0; k < MAXBACK; k++) { theCopy->CX[k] = CX[k]; theCopy->TX[k] = TX[k]; }
   theCopy->Tstrain = Tstrain;
   theCopy->Tstress = Tstress;
@@ -336,9 +408,9 @@ UniaxialMaterial* LadrunoUniaxialJ2::getCopy(void)
 // ===========================================================================
 int LadrunoUniaxialJ2::sendSelf(int cTag, Channel& theChannel)
 {
-  // tag + 5 params + nBack + 2*MAXBACK (C,gamma) + committed history
-  //   (CplasticStrain, Cebarp, CdGamma, Cwp + MAXBACK CX) + Tstrain
-  static Vector data(1 + 5 + 1 + 2*MAXBACK + 4 + MAXBACK + 1);
+  // tag + 5 params + nBack + 5 damage params + 2*MAXBACK (C,gamma) + committed
+  //   history (CplasticStrain, Cebarp, CdGamma, Cwp, CD + MAXBACK CX) + Tstrain
+  static Vector data(1 + 5 + 1 + 5 + 2*MAXBACK + 4 + 1 + MAXBACK + 1);
   int c = 0;
   data(c++) = this->getTag();
   data(c++) = E;
@@ -347,12 +419,18 @@ int LadrunoUniaxialJ2::sendSelf(int cTag, Channel& theChannel)
   data(c++) = bIso;
   data(c++) = Hiso;
   data(c++) = nBack;
+  data(c++) = dmgOn ? 1.0 : 0.0;
+  data(c++) = dmgR;
+  data(c++) = dmgS;
+  data(c++) = dmgPD;
+  data(c++) = dmgDc;
   for (int k = 0; k < MAXBACK; k++) data(c++) = Ckin[k];
   for (int k = 0; k < MAXBACK; k++) data(c++) = gKin[k];
   data(c++) = CplasticStrain;
   data(c++) = Cebarp;
   data(c++) = CdGamma;
   data(c++) = Cwp;
+  data(c++) = CD;
   for (int k = 0; k < MAXBACK; k++) data(c++) = CX[k];
   data(c++) = Tstrain;
 
@@ -365,7 +443,7 @@ int LadrunoUniaxialJ2::sendSelf(int cTag, Channel& theChannel)
 
 int LadrunoUniaxialJ2::recvSelf(int cTag, Channel& theChannel, FEM_ObjectBroker&)
 {
-  static Vector data(1 + 5 + 1 + 2*MAXBACK + 4 + MAXBACK + 1);
+  static Vector data(1 + 5 + 1 + 5 + 2*MAXBACK + 4 + 1 + MAXBACK + 1);
   if (theChannel.recvVector(this->getDbTag(), cTag, data) < 0) {
     opserr << "LadrunoUniaxialJ2::recvSelf - failed to recv vector\n";
     return -1;
@@ -378,12 +456,18 @@ int LadrunoUniaxialJ2::recvSelf(int cTag, Channel& theChannel, FEM_ObjectBroker&
   bIso = data(c++);
   Hiso = data(c++);
   nBack = (int)data(c++);
+  dmgOn = (data(c++) != 0.0);
+  dmgR  = data(c++);
+  dmgS  = data(c++);
+  dmgPD = data(c++);
+  dmgDc = data(c++);
   for (int k = 0; k < MAXBACK; k++) Ckin[k] = data(c++);
   for (int k = 0; k < MAXBACK; k++) gKin[k] = data(c++);
   CplasticStrain = data(c++);
   Cebarp = data(c++);
   CdGamma = data(c++);
   Cwp = data(c++);
+  CD = data(c++);
   for (int k = 0; k < MAXBACK; k++) CX[k] = data(c++);
   Tstrain = data(c++);
 
@@ -450,6 +534,9 @@ void LadrunoUniaxialJ2::Print(OPS_Stream& s, int flag)
   s << "  nBack  : " << nBack << endln;
   for (int k = 0; k < nBack; k++)
     s << "    term " << k+1 << ": C=" << Ckin[k] << " gamma=" << gKin[k] << endln;
+  if (dmgOn)
+    s << "  damage : Lemaitre r=" << dmgR << " s=" << dmgS
+      << " pD=" << dmgPD << " Dc=" << dmgDc << "  (D=" << CD << ")" << endln;
 }
 
 // ===========================================================================
@@ -469,6 +556,12 @@ Response* LadrunoUniaxialJ2::setResponse(const char** argv, int argc, OPS_Stream
     return new MaterialResponse(this, 102, 0.0);
   if (strcmp(a, "plasticWork") == 0 || strcmp(a, "plasticEnergy") == 0)
     return new MaterialResponse(this, 103, 0.0);
+  if (strcmp(a, "damage") == 0 || strcmp(a, "D") == 0)
+    return new MaterialResponse(this, 104, 0.0);
+  if (strcmp(a, "failed") == 0 || strcmp(a, "rupture") == 0)
+    return new MaterialResponse(this, 105, 0.0);
+  if (strcmp(a, "Y") == 0 || strcmp(a, "energyReleaseRate") == 0)
+    return new MaterialResponse(this, 106, 0.0);
 
   return UniaxialMaterial::setResponse(argv, argc, s);
 }
@@ -485,6 +578,14 @@ int LadrunoUniaxialJ2::getResponse(int responseID, Information& matInfo)
     case 101: matInfo.theDouble = TplasticStrain; return 0;
     case 102: matInfo.theDouble = Tebarp;         return 0;
     case 103: matInfo.theDouble = Twp;            return 0;
+    case 104: matInfo.theDouble = TD;             return 0;   // Lemaitre damage
+    case 105: matInfo.theDouble = (dmgOn && TD >= dmgDc) ? 1.0 : 0.0; return 0; // failed
+    case 106: {                                                // damage energy release rate Y
+      double omd = 1.0 - TD;
+      double sigEff = (omd > 1.0e-12) ? Tstress/omd : 0.0;
+      matInfo.theDouble = (E > 0.0) ? sigEff*sigEff/(2.0*E) : 0.0;  // R_v = 1 at uniaxial
+      return 0;
+    }
     default:
       return UniaxialMaterial::getResponse(responseID, matInfo);
   }

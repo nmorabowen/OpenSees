@@ -62,6 +62,7 @@
 
 #include <math.h>
 #include <LadrunoHardening.h>   // shared Voce+linear sig_y (oracle contract w/ LadrunoUniaxialJ2)
+#include <LadrunoDamage.h>      // shared Lemaitre ductile-damage law (oracle contract w/ LadrunoUniaxialJ2)
 
 namespace ladruno_j2_kernel {
 
@@ -99,6 +100,9 @@ struct Params {
   int    nBack;   // number of backstress terms
   double C[MAXBACK];    // AF kinematic moduli C_k
   double gam[MAXBACK];  // AF recall constants gamma_k
+  // Lemaitre coupled ductile damage (default-constructed OFF; existing aggregate
+  // initializers that stop at gam leave this off => returnMap is byte-identical).
+  Ladruno::DamageParams dmg;
 };
 
 // ---- hardening law (delegated to the SHARED Ladruno::* backbone) ------------ //
@@ -322,6 +326,139 @@ inline int returnMap(const Params& p,
                  + betaNN*n[I]*n[J]
                  + betaMpN*Mperp[I]*n[J];
     }
+
+  return status;
+}
+
+// ===========================================================================
+//  Lemaitre coupled ductile damage layer over the (undamaged) effective return
+//  map above.  dSNPO 2008 Ch.12 sec 12.3/12.4.
+//
+//  KEY STRUCTURE: with strain-equivalence + effective-stress von Mises, the
+//  effective trial stress s~_tr = 2G(e - e^p_n) carries NO damage, so the plastic
+//  multiplier is solved on the UNDAMAGED effective problem (returnMap, verbatim)
+//  and D is recovered from the converged effective state -- EXACT, not an
+//  operator-split approximation. The state update decouples; the (Delta-gamma, D)
+//  coupling lives entirely in the CONSISTENT TANGENT:
+//
+//      sigma = (1 - D) sigma~                                       (nominal stress)
+//      dsigma/deps = (1 - D) dsigma~/deps  -  sigma~ (x) dD/deps    (consistent)
+//
+//  with dD/deps = ddD_dp * d(pbar)/deps + ddD_dY * dY/deps, assembled here from the
+//  flow direction n, hardening modulus h (recomputed at the converged dGamma), and
+//  the effective algorithmic tangent dsigma~/deps returned by returnMap.
+//
+//  Extra args:  D_n   committed damage (in)
+//               D     updated damage (out, clamped to [0, Dc])
+//  When p.dmg.on == false this is a pure pass-through of returnMap (D = 0), so a
+//  damage-OFF material is byte-identical to the undamaged LadrunoJ2 (regression V0).
+// ===========================================================================
+inline int returnMapDamaged(const Params& p,
+                            const double strain6[6],
+                            const double epsP_n[6], double ebarP_n,
+                            const double alpha_n[][6], double D_n,
+                            double stress6[6], double Dtan[6][6],
+                            double epsP[6], double& ebarP,
+                            double alpha[][6], double& dGamma, double& D,
+                            double* outResidual = 0)
+{
+  // 1) effective (undamaged) return map -- the proven kernel, untouched
+  int status = returnMap(p, strain6, epsP_n, ebarP_n, alpha_n,
+                         stress6, Dtan, epsP, ebarP, alpha, dGamma, outResidual);
+
+  if (!p.dmg.on) { D = 0.0; return status; }   // pure pass-through (bit-identical)
+
+  const double G = p.G;
+  const int nBack = p.nBack;
+  const double root23 = sqrt(2.0/3.0);
+
+  // 2) effective deviatoric stress s~ and hydrostatic stress from stress6 (effective)
+  double sigEff[6];
+  for (int i = 0; i < 6; i++) sigEff[i] = stress6[i];
+  const double sigH = (sigEff[0] + sigEff[1] + sigEff[2]) / 3.0;   // effective pressure
+  double sdev[6];
+  for (int i = 0; i < 6; i++) sdev[i] = sigEff[i];
+  for (int i = 0; i < 3; i++) sdev[i] -= sigH;
+  const double qEff = sqrt(1.5 * dotT(sdev, sdev));                // effective von Mises
+
+  // 3) damage energy release rate + backward-Euler damage update
+  const double E  = Ladruno::youngsFromKG(p.K, p.G);
+  const double nu = Ladruno::poissonFromKG(p.K, p.G);
+  const double Y  = Ladruno::damageReleaseRate(qEff, sigH, nu, E);
+  const double dDraw = Ladruno::damageIncrement(Y, ebarP_n, ebarP, p.dmg);
+
+  double Dnew = D_n + dDraw;
+  bool capped = false;
+  if (Dnew >= p.dmg.Dc) { Dnew = p.dmg.Dc; capped = true; }
+  if (Dnew < 0.0) Dnew = 0.0;
+  D = Dnew;
+  const double omd = 1.0 - Dnew;
+
+  // 4) dD/deps for the consistent tangent (only where damage is actively growing)
+  double dDdeps[6] = {0,0,0,0,0,0};
+  if (!capped && dDraw > 0.0 && dGamma > 0.0) {
+    // recompute the converged flow direction n and hardening modulus h (the
+    // quantities returnMap consumes internally but does not return)
+    double tr = strain6[0] + strain6[1] + strain6[2];
+    double edev[6];
+    for (int i = 0; i < 6; i++) edev[i] = strain6[i];
+    for (int i = 0; i < 3; i++) edev[i] -= tr/3.0;
+    double s_tr[6];
+    for (int i = 0; i < 6; i++) s_tr[i] = 2.0*G*(edev[i] - epsP_n[i]);
+
+    double Dk[MAXBACK];
+    for (int k = 0; k < nBack; k++) Dk[k] = 1.0 + root23*p.gam[k]*dGamma;
+    double M[6], Mp[6];
+    for (int i = 0; i < 6; i++) {
+      M[i] = s_tr[i]; Mp[i] = 0.0;
+      for (int k = 0; k < nBack; k++) {
+        double inv = 1.0/Dk[k];
+        M[i]  -= alpha_n[k][i]*inv;
+        Mp[i] += alpha_n[k][i]*root23*p.gam[k]*inv*inv;
+      }
+    }
+    double normM = sqrt(dotT(M, M));
+    const double normFloor = 1.0e-10 * fmax(fmax(normM, root23*yieldStress(p, ebarP)), 1.0e-300);
+    if (normM > normFloor) {
+      double n[6];
+      for (int i = 0; i < 6; i++) n[i] = M[i]/normM;
+      double dtheta = 2.0*G;
+      for (int k = 0; k < nBack; k++) { double inv = 1.0/Dk[k]; dtheta += (2.0/3.0)*p.C[k]*inv*inv; }
+      double h = dtheta + (2.0/3.0)*yieldSlope(p, ebarP) - dotT(n, Mp);   // = -df/ddG > 0
+
+      // d(pbar)/deps : pbar = ebarP_n + sqrt(2/3) dGamma ; d(dGamma)/deps_eng = (2G/h) n w
+      //   (w = 1 normal, 1/2 shear: tensor->engineering strain on the differentiation var)
+      // dY/deps : Y(sigma~) contracted with the effective algorithmic tangent Dtan
+      const double a = (2.0/3.0)*(1.0 + nu);
+      const double b = 3.0*(1.0 - 2.0*nu);
+      double gY[6];                                   // grad_Y in dotT convention
+      for (int i = 0; i < 6; i++) {
+        double base = 3.0*a*sdev[i];
+        if (i < 3) base += (2.0*b/3.0)*sigH;
+        gY[i] = base/(2.0*E);
+      }
+      double ddD_dY, ddD_dp;
+      Ladruno::damageIncrementPartials(Y, ebarP_n, ebarP, p.dmg, ddD_dY, ddD_dp);
+
+      const double wt[6] = {1,1,1,2,2,2};             // dotT weights (off-diagonal pairs)
+      for (int j = 0; j < 6; j++) {
+        // dY/deps_eng,j = sum_I wt_I gY_I Dtan[I][j]   (Dtan already eng-convention)
+        double dY_dej = 0.0;
+        for (int I = 0; I < 6; I++) dY_dej += wt[I]*gY[I]*Dtan[I][j];
+        // d(pbar)/deps_eng,j = sqrt(2/3) (2G/h) n_j.  d||M||/dM carries the dotT weight
+        // wt_j (2 on shear); the tensor->engineering strain factor is 1/wt_j, so they
+        // cancel and the engineering derivative is just n_j (no shear factor).
+        double dpbar_dej = root23*(2.0*G/h)*n[j];
+        dDdeps[j] = ddD_dp*dpbar_dej + ddD_dY*dY_dej;
+      }
+    }
+  }
+
+  // 5) degrade stress and assemble the consistent tangent
+  for (int I = 0; I < 6; I++)
+    for (int J = 0; J < 6; J++)
+      Dtan[I][J] = omd*Dtan[I][J] - sigEff[I]*dDdeps[J];
+  for (int i = 0; i < 6; i++) stress6[i] = omd*sigEff[i];
 
   return status;
 }
