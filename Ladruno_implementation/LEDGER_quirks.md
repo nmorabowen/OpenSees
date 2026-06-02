@@ -586,3 +586,28 @@ broadcast path is not runtime-testable in this build.
   positive under hourglass excitation, `0 < E ≤ KE_imparted` across eps, exactly 0
   for a rigid/constant-strain velocity (γ⟂linear) — NOT exact energy convergence.
   Learned 2026-06-01.
+
+### `ZeroLengthSection` requires `-ndf 3` (2D) / `-ndf 6` (3D) — silently absent otherwise
+- **Bites:** building a `zeroLengthSection` in a reduced-DOF model (e.g. an axial
+  SDOF on `-ndf 2`) prints *"ZeroLengthSection::setDomain() -- element only works
+  for 3 (2d) or 6 (3d) dof per node"* ([ZeroLengthSection.cpp:247]) and then the
+  element is **not added** — but `analyze()` still runs, on a model with no spring,
+  so the response looks like an undamped/zero-stiffness free body (constant disp,
+  no oscillation). Plain `ZeroLength`/`TwoNodeLink` have no such restriction.
+- **Why:** ZeroLengthSection maps the full section response set (P, Vy, Mz, …) onto
+  the element DOFs and assumes the complete 3-/6-dof node layout.
+- **Rule:** use `-ndf 3`/`-ndf 6` and fix the unused DOFs; never `-ndf 2`. Caught
+  by `tests/test_spring_damping_claims.py`. Learned 2026-06-02.
+
+### Prescribing ALL of a node's DOFs via `sp` with the Transformation handler ⇒ 0 free equations ⇒ process terminates
+- **Bites:** a static test that imposes both DOFs of the only free node via `ops.sp`
+  (with the other node fully `fix`ed) leaves the system with **zero unknowns**.
+  Under `constraints('Transformation')` the solve does not return an error code —
+  it **terminates the process** mid-`analyze()` (no Python traceback, exit 0),
+  which under pytest aborts the whole run with no summary (looks like a hang).
+- **Why:** the Transformation handler condenses out the constrained DOFs; with none
+  left the assembled system is degenerate and the path hits a hard exit rather than
+  a graceful failure (same family as the MPCO `exit(-1)` kernel-kill pattern).
+- **Workaround:** use `constraints('Penalty', 1e14, 1e14)` for fully-prescribed
+  configurations (DOFs are retained and penalised, so ≥1 equation remains), and
+  read element force via `eleForce` rather than `nodeReaction`. Learned 2026-06-02.
