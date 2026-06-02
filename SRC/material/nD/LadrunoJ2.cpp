@@ -14,6 +14,7 @@
 #include <FEM_ObjectBroker.h>
 #include <Information.h>
 #include <Parameter.h>
+#include <MaterialResponse.h>
 #include <string.h>
 #include <math.h>
 #include <elementAPI.h>
@@ -686,4 +687,68 @@ void LadrunoJ2::Print(OPS_Stream& s, int flag)
   for (int k = 0; k < nBack; k++)
     s << "    term " << k+1 << ": C=" << Ckin[k] << " gamma=" << gKin[k] << endln;
   s << "  rho    : " << rho << endln;
+}
+
+// ===========================================================================
+//  recordable responses (stress/strain/tangent + internal state)
+// ===========================================================================
+Response* LadrunoJ2::setResponse(const char** argv, int argc, OPS_Stream& s)
+{
+  if (argc < 1) return NDMaterial::setResponse(argv, argc, s);
+  const char* a = argv[0];
+
+  if (strcmp(a, "stress") == 0 || strcmp(a, "stresses") == 0)
+    return new MaterialResponse(this, 1, this->getStress());
+  if (strcmp(a, "strain") == 0 || strcmp(a, "strains") == 0)
+    return new MaterialResponse(this, 2, this->getStrain());
+  if (strcmp(a, "tangent") == 0 || strcmp(a, "Tangent") == 0)
+    return new MaterialResponse(this, 3, this->getTangent());
+  if (strcmp(a, "backStress") == 0 || strcmp(a, "backstress") == 0 || strcmp(a, "alpha") == 0)
+    return new MaterialResponse(this, 4, Vector(ncomp));
+  if (strcmp(a, "plasticStrain") == 0 || strcmp(a, "plasticStrains") == 0)
+    return new MaterialResponse(this, 5, Vector(ncomp));
+  if (strcmp(a, "equivalentPlasticStrain") == 0 || strcmp(a, "plasticStrainEq") == 0 ||
+      strcmp(a, "ebarP") == 0)
+    return new MaterialResponse(this, 6, Vector(1));
+
+  return NDMaterial::setResponse(argv, argc, s);
+}
+
+int LadrunoJ2::getResponse(int responseID, Information& matInfo)
+{
+  switch (responseID) {
+    case 1:
+      if (matInfo.theVector) *(matInfo.theVector) = this->getStress();
+      return 0;
+    case 2:
+      if (matInfo.theVector) *(matInfo.theVector) = this->getStrain();
+      return 0;
+    case 3:
+      if (matInfo.theMatrix) *(matInfo.theMatrix) = this->getTangent();
+      return 0;
+    case 4:                                   // total backstress, reduced view (stress convention)
+      if (matInfo.theVector) {
+        Vector& v = *(matInfo.theVector);
+        for (int a = 0; a < ncomp; a++) {
+          double tot = 0.0;
+          for (int k = 0; k < nBack; k++) tot += alpha[k][vmap[a]];
+          v(a) = tot;
+        }
+      }
+      return 0;
+    case 5:                                   // plastic strain, reduced view (engineering shear)
+      if (matInfo.theVector) {
+        Vector& v = *(matInfo.theVector);
+        for (int a = 0; a < ncomp; a++) {
+          int full = vmap[a];
+          v(a) = (full >= 3) ? 2.0*epsP[full] : epsP[full];
+        }
+      }
+      return 0;
+    case 6:                                   // equivalent (accumulated) plastic strain
+      if (matInfo.theVector) (*(matInfo.theVector))(0) = ebarP;
+      return 0;
+    default:
+      return -1;
+  }
 }

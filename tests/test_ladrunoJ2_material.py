@@ -208,6 +208,34 @@ def test_af_monotonic_saturation():
 
 
 # --------------------------------------------------------------------------
+# setResponse / getResponse: the internal state (backstress, equivalent
+# plastic strain) must be recordable via the element's material response.
+# --------------------------------------------------------------------------
+@pytest.mark.t1
+def test_state_recording():
+    K, G = _kg(1000.0, 0.3)
+    sig0, C, gamma = 5.0, 400.0, 80.0    # single AF; X_sat(stress)=C/gamma=5
+
+    def mat(t):
+        ops.nDMaterial("LadrunoJ2", t, K, G,
+                       "-iso", "voce", sig0, 0.0, 0.0, 0.0, "-kin", 1, C, gamma)
+
+    _run(mat, [(0.15, 200)])             # push to near AF saturation (single stdBrick)
+
+    ebar = list(ops.eleResponse(1, "material", 1, "equivalentPlasticStrain"))
+    back = list(ops.eleResponse(1, "material", 1, "backStress"))
+    assert len(ebar) == 1 and len(back) == 6, "responses not wired through the element"
+
+    # accumulated plastic strain should be ~ (total axial strain - elastic)
+    assert ebar[0] > 0.1, f"equivalentPlasticStrain {ebar[0]} not accumulated"
+    # backstress is deviatoric (trace ~ 0)
+    assert abs(back[0] + back[1] + back[2]) < 1e-6 * max(abs(back[0]), 1.0), "backstress not deviatoric"
+    # axial backstress saturates to (2/3)(C/gamma)  (sigma_back=(3/2)alpha_axial=C/gamma)
+    assert back[0] == pytest.approx((2.0/3.0) * (C / gamma), rel=0.03), (
+        f"axial backstress {back[0]} != (2/3)(C/gamma) {(2.0/3.0)*(C/gamma)}")
+
+
+# --------------------------------------------------------------------------
 # 3D mixed (shear-inclusive) reduce-to-J2Plasticity — exercises the tensor
 # machinery the uniaxial tests never touch: dotT's factor-2, the IIDEV6 shear
 # block, and the n(x)n shear slots; validates the consistent tangent
