@@ -26,19 +26,21 @@
 
 // Author: N. Mora-Bowen (Ladruno), 06/2026
 //
-// LadrunoIMKBeam: 3D concentrated-plasticity beam-column macro element.
-// Elastic interior in series with UNCOUPLED moment-rotation rotational hinges
-// at the ends (one independent uniaxial law per bending axis, per end). No P-M
-// and no biaxial My-Mz interaction -> immune to rigid-diaphragm spurious axial
-// force. Displacement-driven stiffness formulation: basic 6x6, exact series
-// F = F_elastic + F_hinge (no n-factor), per-axis 2x2 internal Newton on hinge
-// rotations. Column-face offset and geometric nonlinearity are delegated to the
-// CrdTransf3d (use geomTransf -jntOffset for the rigid offset to the hinge).
+// LadrunoIMKBeam2d: 2D concentrated-plasticity beam-column macro element.
+// Planar counterpart of LadrunoIMKBeam (3D). Elastic interior in series with
+// UNCOUPLED moment-rotation rotational hinges at the ends (one independent
+// uniaxial law per end, strong-axis Mz only). No P-M interaction -> immune to
+// rigid-diaphragm spurious axial force. Displacement-driven stiffness
+// formulation: basic 3x3, exact series F = F_elastic + F_hinge (no n-factor),
+// 2x2 internal Newton on the hinge rotations. Column-face offset and geometric
+// nonlinearity are delegated to the CrdTransf2d (use geomTransf -jntOffset for
+// the rigid offset to the hinge). The per-axis hinge kernel is shared with the
+// 3D element via LadrunoIMKHinge.h.
 //
 // See Ladruno_implementation/14_ladruno_imk_beam.md.
 
-#ifndef LadrunoIMKBeam_h
-#define LadrunoIMKBeam_h
+#ifndef LadrunoIMKBeam2d_h
+#define LadrunoIMKBeam2d_h
 
 #include <Element.h>
 #include <Matrix.h>
@@ -53,19 +55,18 @@ class CrdTransf;
 class UniaxialMaterial;
 class FEM_ObjectBroker;
 
-class LadrunoIMKBeam : public Element
+class LadrunoIMKBeam2d : public Element
 {
  public:
-  LadrunoIMKBeam();
-  LadrunoIMKBeam(int tag, int Nd1, int Nd2,
-                 double A, double E, double G, double Jx, double Iy, double Iz,
-                 CrdTransf &theTransf,
-                 UniaxialMaterial *mZi, UniaxialMaterial *mZj,
-                 UniaxialMaterial *mYi, UniaxialMaterial *mYj,
-                 double rho = 0.0);
-  ~LadrunoIMKBeam();
+  LadrunoIMKBeam2d();
+  LadrunoIMKBeam2d(int tag, int Nd1, int Nd2,
+                   double A, double E, double Iz,
+                   CrdTransf &theTransf,
+                   UniaxialMaterial *mZi, UniaxialMaterial *mZj,
+                   double rho = 0.0);
+  ~LadrunoIMKBeam2d();
 
-  const char *getClassType(void) const { return "LadrunoIMKBeam"; }
+  const char *getClassType(void) const { return "LadrunoIMKBeam2d"; }
 
   int getNumExternalNodes(void) const;
   const ID &getExternalNodes(void);
@@ -99,30 +100,29 @@ class LadrunoIMKBeam : public Element
 
  private:
   // --- geometry / elastic properties of the member ---
-  double A, E, G, Jx, Iy, Iz;
+  double A, E, Iz;
   double rho;
 
-  // --- hinge materials: [0]=Mz@i, [1]=Mz@j, [2]=My@i, [3]=My@j ---
-  //     a NULL entry means that end/axis is elastic (no hinge).
-  UniaxialMaterial *theMat[4];
-  double thetaH[4];        // trial hinge rotations
-  double thetaHcommit[4];  // committed hinge rotations
+  // --- hinge materials: [0]=Mz@i, [1]=Mz@j ---
+  //     a NULL entry means that end is elastic (no hinge).
+  UniaxialMaterial *theMat[2];
+  double thetaH[2];        // trial hinge rotations
+  double thetaHcommit[2];  // committed hinge rotations
 
   // --- cached basic-system state, set in update() ---
-  Vector q;   // basic forces  [N, Mz_i, Mz_j, My_i, My_j, T]
-  Matrix kb;  // basic tangent (6x6)
-  Vector Q;   // 12-dof element load (inertia unbalance only in v1)
+  Vector q;   // basic forces  [N, Mz_i, Mz_j]
+  Matrix kb;  // basic tangent (3x3)
+  Vector Q;   // 6-dof element load (inertia unbalance only in v1)
 
   Node *theNodes[2];
   ID connectedExternalNodes;
   CrdTransf *theCoordTransf;
 
-  static Matrix K;  // 12x12 work matrix (mass / inertia)
-  static Vector P;  // 12 work vector
+  static Matrix K;  // 6x6 work matrix (mass / inertia)
+  static Vector P;  // 6 work vector
 
-  // per-axis state determination is delegated to the shared, dimension-agnostic
-  // kernel in LadrunoIMKHinge.h (ladrunoIMKSolveAxis / ladrunoIMKInitBlock),
-  // also used by LadrunoIMKBeam2d.
+  // per-axis state determination delegated to the shared, dimension-agnostic
+  // kernel in LadrunoIMKHinge.h (ladrunoIMKSolveAxis / ladrunoIMKInitBlock).
 };
 
 #endif

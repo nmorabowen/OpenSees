@@ -468,6 +468,7 @@
 #include "bezierTriangle/BezierTri6.h"		// Ladruno (broker reconstruction)
 #include "bezierTetrahedron/BezierTet10.h"	// Ladruno (broker reconstruction)
 #include "ladrunoIMKBeam/LadrunoIMKBeam.h"	// N. Mora-Bowen (Ladruno)
+#include "ladrunoIMKBeam/LadrunoIMKBeam2d.h"	// N. Mora-Bowen (Ladruno)
 #include "joint/Joint2D.h"		// Arash
 #include "joint/Inno3DPnPJoint.h" // Cristian Miculas
 #include "twoNodeLink/TwoNodeLink.h"
@@ -1051,7 +1052,10 @@ FEM_ObjectBrokerAllClasses::getNewElement(int classTag)
     case ELE_TAG_LadrunoIMKBeam:	// N. Mora-Bowen (Ladruno)
       return new LadrunoIMKBeam();
 
-    case ELE_TAG_SSPquad:          
+    case ELE_TAG_LadrunoIMKBeam2d:	// N. Mora-Bowen (Ladruno)
+      return new LadrunoIMKBeam2d();
+
+    case ELE_TAG_SSPquad:
       return new SSPquad();
       
     case ELE_TAG_SSPquadUP:     

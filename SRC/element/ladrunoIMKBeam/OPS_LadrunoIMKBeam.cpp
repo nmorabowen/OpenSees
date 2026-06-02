@@ -89,12 +89,24 @@ static UniaxialMaterial *getMatArg(const char *flag)
   return m;
 }
 
+// Planar builder (LadrunoIMKBeam2d), defined in OPS_LadrunoIMKBeam2d.cpp. The
+// single 'LadrunoIMKBeam' command dispatches here to the 2D class when the model
+// is planar (ndm==2, ndf==3).
+extern void *OPS_LadrunoIMKBeam2d();
+
 void *OPS_LadrunoIMKBeam()
 {
   int ndm = OPS_GetNDM();
   int ndf = OPS_GetNDF();
+
+  // ndm-dispatch: one user-facing command, planar or spatial class chosen from
+  // the model dimension (same UX as elasticBeamColumn).
+  if (ndm == 2 && ndf == 3)
+    return OPS_LadrunoIMKBeam2d();
+
   if (ndm != 3 || ndf != 6) {
-    opserr << "WARNING LadrunoIMKBeam -- ndm must be 3 and ndf must be 6\n";
+    opserr << "WARNING LadrunoIMKBeam -- model must be ndm 3/ndf 6 (3D) "
+              "or ndm 2/ndf 3 (2D)\n";
     return 0;
   }
 
