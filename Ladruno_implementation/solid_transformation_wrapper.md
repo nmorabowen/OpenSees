@@ -389,3 +389,36 @@ before either side hardens.
   derives F_Δ/J and returns Cauchy σ (`getStress`) + spatial tangent **a**
   (`getTangent`). Updated the interface sketch, element loop, `finite` steps 1–2,
   and the seam-3 boundary block to match. v1 code starting now.
+- 2026-06-02 — **F-bar (`bbar` + `finite`) IMPLEMENTED + locked against the primary
+  source.** Coupling 1 (above) realized: F-bar lives in the element kinematics
+  ledger, not the transformation. `SolidTransformationFinite` stays a pure
+  identity; `LadrunoBrick` branches on `formulation==BBAR` inside the finite path.
+  Locked spec (de Souza Neto, Perić & Owen 2008 Ch.15 §15.1, read directly — the
+  book is on `Desktop\FEM expert\books\`):
+  - **Modified gradient (eq 15.5):** `F̄ = (det F₀/det F)^(1/3) F`, F₀ = deformation
+    gradient at the element centroid (ξ=0). `det F̄ = J₀`, isochoric part = the GP's
+    (Remark 15.1). New per-element work: one extra `shp3d` at the centroid for J₀
+    (and G₀ for the tangent) — `LadrunoBrick::centroidFbar()`.
+  - **Residual (eq 15.9 / Remark 15.2):** UNCHANGED — standard B on the *actual*
+    configuration, `dv = J dV` with the **actual** J (not J₀); only the stress input
+    changes (material driven by F̄ ⇒ σ̄). So `formResidAndTangentFinite`'s residual
+    code needed no edit; `updateFinite` just scales F→F̄ before `setTrialF`.
+  - **Tangent (Prop 15.1, eq 15.10/15.11):**
+    `K = ∫Gᵀ a|_{F̄} G dv + ∫Gᵀ q (G₀−G) dv`, `q = (1/3) a:(I⊗I) − (2/3)(σ̄⊗I)`,
+    with `a` the **full** spatial tangent (= `c − σ̄δ`, the FD-verified modulus the
+    std term already uses). In code: `M_ij = (1/3)Σₚ a4_ijpp − (2/3)σ̄_ij`, then
+    `K_{(a,i)(b,k)} += (Σⱼ g_{a,j} M_ij)(G₀_{b,k} − g_{b,k}) dv`.
+  - **The coefficient was the trap.** A 3-derivation adversarial workflow (blind,
+    multi-lens) + my own first pass all produced `q_ij = (1/3) c_ijmm` via the
+    spatial shortcut `dσ̄ = c̄:sym(L̄)` — **missing the `−(2/3)σ⊗I`**. The shortcut
+    omits the J-factor / reference-config terms the book's full derivation
+    (eq 15.12–15.17, via P̂ and the `(detF₀/detF)^(−2/3)` factor) captures. The
+    workflow's own FD "confirmation" left a ~0.03 residual it wrote off as a crude-c̄
+    artifact — that residual *was* the missing term. Resolved by the primary source;
+    the OpenSees FD-tangent test (LogStrain's analytic tangent) is the clean arbiter.
+  - **UNSYMMETRIC** in general (book, after eq 15.10) ⇒ `system FullGeneral`; the
+    F-bar test does not assert symmetry. Logged in [[LEDGER_quirks]].
+  - Parser: `-geom finite -formulation bbar` now accepted (was rejected); uri/eas +
+    finite still reserved. Tests: `tests/test_ladrunoBrick_finite.py` adds an
+    unsymmetric-aware FD-tangent gate, reduce-to-std-on-homogeneous-F, and the **T4**
+    volumetric-locking cantilever (std locks as ν→0.5, F-bar stays compliant).

@@ -468,6 +468,17 @@ const Matrix &  LadrunoBrick::getInitialStiff(void)
     return *Ki;
   }
 
+  // -geom finite (incl. F-bar) reaches the small-strain assembly below ON
+  // PURPOSE. The initial stiffness is the tangent at the REFERENCE state
+  // (u = 0 ⇒ F = I ⇒ σ = 0, no geometric term, material modulus = initial
+  // tangent), so for std the small-strain Bᵀ D_init B with reference gradients
+  // IS that finite tangent. We deliberately do NOT assemble the F-bar centroid
+  // coupling here: getInitialStiff feeds Rayleigh βK0, -initial / Krylov seeding
+  // and eigen analysis, which want a SYMMETRIC, well-conditioned seed — not the
+  // generally-UNSYMMETRIC F-bar tangent (the bbar branch below gives the
+  // mean-dilatation B-bar seed). The consistent (F-bar) tangent that drives the
+  // converged solution comes from getTangentStiff → formResidAndTangentFinite.  // Ladruno
+
   static const int ndf = 3;
   static const int nstress = 6;
   static const int numberNodes = 8;
@@ -1094,7 +1105,57 @@ LadrunoBrick::deformationGradient(const double shpRef[4][8], double F[9])
        + F[2]*(F[3]*F[7]-F[4]*F[6]);
 }
 
+// Inverse of a row-major 3×3 via adjugate/det. Returns det F; fills Finv (row-
+// major), zero-filled if |det| underflows to 0. Shared by the finite/F-bar GP
+// and centroid spatial-gradient pushes (one source of truth for the 9-term
+// adjugate, which is exactly the kind of formula that drifts under copy-paste).
+static double
+invert3x3(const double F[9], double Finv[9])
+{
+  double det = F[0]*(F[4]*F[8]-F[5]*F[7]) - F[1]*(F[3]*F[8]-F[5]*F[6])
+             + F[2]*(F[3]*F[7]-F[4]*F[6]);
+  double id = (det != 0.0) ? 1.0 / det : 0.0;
+  Finv[0] =  (F[4]*F[8]-F[5]*F[7])*id;  Finv[1] = -(F[1]*F[8]-F[2]*F[7])*id;
+  Finv[2] =  (F[1]*F[5]-F[2]*F[4])*id;  Finv[3] = -(F[3]*F[8]-F[5]*F[6])*id;
+  Finv[4] =  (F[0]*F[8]-F[2]*F[6])*id;  Finv[5] = -(F[0]*F[5]-F[2]*F[3])*id;
+  Finv[6] =  (F[3]*F[7]-F[4]*F[6])*id;  Finv[7] = -(F[0]*F[7]-F[1]*F[6])*id;
+  Finv[8] =  (F[0]*F[4]-F[1]*F[3])*id;
+  return det;
+}
+
+// F-bar centroid data (bbar + finite). Assumes computeBasis() has set xl.
+// Returns J0 = det F0, F0 = deformation gradient at the element centroid
+// (ξ=0), per dSNPO eq 15.5. If G0 != 0, also fills the centroid spatial gradient
+// operator G0[k][b] = ∂N_b/∂x_k|_centroid (from F0⁻¹) for the eq 15.10 coupling.
+double
+LadrunoBrick::centroidFbar(double (*G0)[8])
+{
+  static double shp0[4][8];
+  double detJ0c;
+  double pt0[3] = { 0.0, 0.0, 0.0 };
+  shp3d(pt0, detJ0c, shp0, xl);            // shp0[0..2][a] = ∂Nₐ/∂X at the centroid
+
+  double F0[9];
+  double J0 = deformationGradient(shp0, F0);
+
+  if (G0 != 0) {
+    double Fi[9];
+    invert3x3(F0, Fi);                       // F0⁻¹ (row-major)
+    for (int b = 0; b < 8; b++)
+      for (int kk = 0; kk < 3; kk++) {
+        double s = 0.0;
+        for (int m = 0; m < 3; m++)
+          s += shp0[m][b] * Fi[3 * m + kk];      // ∂N_b/∂x_kk at the centroid
+        G0[kk][b] = s;
+      }
+  }
+  return J0;
+}
+
 // update — finite: per GP compute F and drive the material via setTrialF(F).
+// bbar + finite = F-bar: drive the material with Fbar = (J0/J)^(1/3) F (dSNPO
+// eq 15.5) so every GP shares the centroid dilatation J0 (volumetric-locking
+// cure); std finite uses F directly.
 int
 LadrunoBrick::updateFinite(void)
 {
@@ -1104,6 +1165,17 @@ LadrunoBrick::updateFinite(void)
   static Matrix Fm(3, 3);
   double detJ0;
 
+  const bool useFbar = (formulation == Formulation::BBAR);
+  double J0 = 1.0;
+  if (useFbar) {
+    J0 = this->centroidFbar();             // det F0 at the centroid
+    if (J0 <= 0.0) {
+      opserr << "LadrunoBrick::updateFinite - non-positive centroid det F0 = "
+             << J0 << " (element " << this->getTag() << ", F-bar)\n";
+      return -1;
+    }
+  }
+
   int gp = 0;
   for (int i = 0; i < 2; i++)
     for (int j = 0; j < 2; j++)
@@ -1111,7 +1183,17 @@ LadrunoBrick::updateFinite(void)
         double pt[3] = { sg[i], sg[j], sg[k] };
         shp3d(pt, detJ0, shp, xl);         // shp[0..2][a] = ∂Nₐ/∂X
         double F[9];
-        deformationGradient(shp, F);
+        double J = deformationGradient(shp, F);
+        if (useFbar) {
+          if (J <= 0.0) {
+            opserr << "LadrunoBrick::updateFinite - non-positive det F = " << J
+                   << " at GP " << gp << " (element " << this->getTag()
+                   << ", F-bar)\n";
+            return -1;
+          }
+          double s = pow(J0 / J, 1.0 / 3.0);     // Fbar = (J0/J)^(1/3) F
+          for (int n = 0; n < 9; n++) F[n] *= s;
+        }
         for (int r = 0; r < 3; r++)
           for (int c = 0; c < 3; c++)
             Fm(r, c) = F[3 * r + c];
@@ -1160,6 +1242,15 @@ LadrunoBrick::formResidAndTangentFinite(int tang_flag)
   static double g[3][8];                   // spatial gradients ∂Nₐ/∂x_j
   static Vector stress(6);
 
+  // F-bar (bbar + finite): the eq 15.10 tangent gains a (generally UNSYMMETRIC)
+  // coupling to the element-centroid gradient operator G0. The residual is
+  // unchanged — F-bar enters it only through σ̄ (set in updateFinite, eq 15.9 /
+  // Remark 15.2). G0 is element-wide; compute it once.  // Ladruno
+  const bool useFbar = (formulation == Formulation::BBAR);
+  static double G0[3][8];
+  if (useFbar && tang_flag == 1)
+    this->centroidFbar(G0);
+
   int gp = 0;
   for (int gi = 0; gi < 2; gi++)
    for (int gj = 0; gj < 2; gj++)
@@ -1171,13 +1262,8 @@ LadrunoBrick::formResidAndTangentFinite(int tang_flag)
       double F[9];
       double J = deformationGradient(shpRef, F);
 
-      double id = (J != 0.0) ? 1.0 / J : 0.0;     // F^-1 (row-major)
       double Fi[9];
-      Fi[0] =  (F[4]*F[8]-F[5]*F[7])*id;  Fi[1] = -(F[1]*F[8]-F[2]*F[7])*id;
-      Fi[2] =  (F[1]*F[5]-F[2]*F[4])*id;  Fi[3] = -(F[3]*F[8]-F[5]*F[6])*id;
-      Fi[4] =  (F[0]*F[8]-F[2]*F[6])*id;  Fi[5] = -(F[0]*F[5]-F[2]*F[3])*id;
-      Fi[6] =  (F[3]*F[7]-F[4]*F[6])*id;  Fi[7] = -(F[0]*F[7]-F[1]*F[6])*id;
-      Fi[8] =  (F[0]*F[4]-F[1]*F[3])*id;
+      invert3x3(F, Fi);                           // F⁻¹ (row-major)
 
       for (int a = 0; a < numberNodes; a++)
         for (int j = 0; j < 3; j++) {
@@ -1244,6 +1330,36 @@ LadrunoBrick::formResidAndTangentFinite(int tang_flag)
                     s += g[j][a] * a4[i][j][k][l] * g[l][bn];
                 stiff(3 * a + i, 3 * bn + k) += s * dv;
               }
+
+        // F-bar additional (generally UNSYMMETRIC) stiffness, dSNPO eq 15.10:
+        //   K_{(a,i)(b,k)} += ∫ (Σ_j g[j][a] q_ij)(G0[k][b] − g[k][b]) dv,
+        // with q the matrix form of the eq 15.11 tensor evaluated at F=F̄,
+        //   q_ij = (1/3) a_ijpp − (2/3) σ̄_ij ,
+        // using the SAME a4 = c̄ − σ̄δ modulus as the standard term above (NOT the
+        // material part c̄ alone). (G0 − g) is the centroid-minus-GP gradient: the
+        // term vanishes when G0 = g, collapsing F-bar to the plain-F tangent.  // Ladruno
+        if (useFbar) {
+          double M[3][3];
+          for (int i = 0; i < 3; i++)
+            for (int j = 0; j < 3; j++)
+              M[i][j] = (a4[i][j][0][0] + a4[i][j][1][1] + a4[i][j][2][2]) / 3.0
+                      - (2.0 / 3.0) * sig[i][j];
+
+          static double Lfac[8][3];        // Lfac[a][i] = Σ_j g[j][a] q_ij
+          for (int a = 0; a < numberNodes; a++)
+            for (int i = 0; i < 3; i++) {
+              double s = 0.0;
+              for (int j = 0; j < 3; j++) s += g[j][a] * M[i][j];
+              Lfac[a][i] = s;
+            }
+
+          for (int a = 0; a < numberNodes; a++)
+            for (int i = 0; i < 3; i++)
+              for (int bn = 0; bn < numberNodes; bn++)
+                for (int kk = 0; kk < 3; kk++)
+                  stiff(3 * a + i, 3 * bn + kk)
+                    += Lfac[a][i] * (G0[kk][bn] - g[kk][bn]) * dv;
+        }
       }
       gp++;
     }
