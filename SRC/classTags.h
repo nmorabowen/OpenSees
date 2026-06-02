@@ -329,6 +329,7 @@
 #define MAT_TAG_GNG 7001
 #define MAT_TAG_Ratchet 7002
 #define MAT_TAG_LadrunoUniaxialJ2 33000 // N. Mora-Bowen (Ladruno) — uniaxial combined iso (Voce+linear) + Chaboche AF kinematic J2 (twin of nDMaterial LadrunoJ2); ladruno private uniaxial band >=33000
+#define MAT_TAG_LadrunoRebarBuckling 33001 // N. Mora-Bowen (Ladruno) — rebar-buckling wrapper (Dhakal-Maekawa) over any UniaxialMaterial; ladruno private uniaxial band >=33000 (sibling of LadrunoUniaxialJ2=33000)
 
 #define SEC_TAG_Elastic2d                        3
 #define SEC_TAG_Elastic3d                        4
