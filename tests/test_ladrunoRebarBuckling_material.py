@@ -394,3 +394,240 @@ def test_B7_database_roundtrip_dm():
 @pytest.mark.t1
 def test_B7_database_roundtrip_ga():
     database_roundtrip(_b7_build(_wrap_ga(8.0)), probe_nodes=[2], ndf=2)
+
+
+# ==========================================================================
+#  v2 CYCLIC re-straightening (B4 battery) -- residual-gap memory.
+#
+#  Model (h-convention): sigma = sigma_bare + g, with the RAISE g >= 0 (buckling
+#  reduces the compressive magnitude => raises sigma toward 0). v1 monotonic is
+#  exactly g == g_law = sigma_v1 - sigma_bare. On a tension reload the raise is
+#  HELD on the compression side then decayed to 0 over L_rs (smoothstep) on the
+#  tension side, rejoining bare. The RESTRAIGHTEN->BUCKLING re-entry is
+#  C0-continuous (residual-gap carry).  See ADR 14 §9.
+# ==========================================================================
+def _wrap_rs(lsr, mode="lambda", c=1.0, alpha=1.0, Fy=_FY, E=_E):
+    """DM wrapper with an explicit -restraighten span mode."""
+    def f(tag):
+        _bar(tag + 100)
+        args = ["LadrunoRebarBuckling", tag, tag + 100,
+                "-lsr", lsr, "-alpha", alpha, "-fy", Fy, "-E", E]
+        if mode == "lambda":
+            args += ["-restraighten", "lambda"]
+        else:
+            args += ["-restraighten", "c", c]
+        ops.uniaxialMaterial(*args)
+    return f
+
+
+def _wrap_ga_rs(lsr, mode="lambda", c=1.0, reduction=0.0, ff=0.5, E=_E):
+    def f(tag):
+        _bar(tag + 100)
+        args = ["LadrunoRebarBuckling", tag, tag + 100, "-model", "ga",
+                "-lsr", lsr, "-reduction", reduction, "-fsufrac", ff, "-E", E]
+        if mode == "lambda":
+            args += ["-restraighten", "lambda"]
+        else:
+            args += ["-restraighten", "c", c]
+        ops.uniaxialMaterial(*args)
+    return f
+
+
+def _Lrs_lambda(lsr, Fy=_FY, E=_E):
+    eY = Fy / E
+    f = 0.5 + 0.10 * max(0.0, lsr - 5.0)
+    f = min(6.0, max(0.5, f))
+    return f * eY
+
+
+# B4a -- reduce-to-v1: pure monotonic compression reproduces the v1 DM/GA law
+#        (the new state machine, with no reversal, is the v1 law verbatim).
+@pytest.mark.t1
+def test_B4a_reduce_to_v1():
+    eY = _FY / _E
+    lsr = 8.0
+    fStarL = _oneshot(_bar_fn, _eStar(lsr))
+    strains = [(-0.25 * i) * eY for i in range(0, 121)]   # 0 -> -30 eY
+    wrap = _drive(_wrap_rs(lsr, "lambda"), strains)
+    bare = _drive(_bar_fn, strains)
+    for (sw, _), (sb, _b), eps in zip(wrap, bare, strains):
+        ref = _dm_ref(eps, sb, fStarL, lsr)
+        assert sw == pytest.approx(ref, rel=1e-6, abs=1e-3), (
+            f"B4a monotonic != v1 DM at eps={eps}: {sw} vs {ref}")
+    # GA leg
+    wrapg = _drive(_wrap_ga_rs(lsr, "lambda"), strains)
+    bareg = _drive(_bar_fn, strains)
+    for (sw, _), (sb, _b), eps in zip(wrapg, bareg, strains):
+        ref = _ga_ref(eps, sb, lsr)
+        assert sw == pytest.approx(ref, rel=1e-6, abs=1e-3), (
+            f"B4a monotonic != v1 GA at eps={eps}: {sw} vs {ref}")
+
+
+# B4b -- compression -> full tension reload rejoins the bare curve (PASS).
+@pytest.mark.t1
+def test_B4b_full_reload_rejoins_bare():
+    eY = _FY / _E
+    lsr = 8.0
+    down = [(-0.5 * i) * eY for i in range(0, 51)]          # 0 -> -25 eY (buckled)
+    up = [(-25.0 + 0.5 * i) * eY for i in range(1, 57)]     # -25 eY -> +3 eY
+    strains = down + up
+    wrap = _drive(_wrap_rs(lsr, "lambda"), strains)
+    bare = _drive(_bar_fn, strains)
+    # buckled at the reversal (raise above bare)
+    sw_rev, sb_rev = wrap[len(down) - 1][0], bare[len(down) - 1][0]
+    assert sw_rev > sb_rev + 1.0, f"not buckled at reversal: {sw_rev} vs {sb_rev}"
+    # past e_cross_rs(=0) + L_rs the wrapper has rejoined bare
+    assert wrap[-1][0] == pytest.approx(bare[-1][0], rel=1e-6, abs=1e-2)
+    assert wrap[-1][1] == pytest.approx(bare[-1][1], rel=1e-4, abs=1e-1)
+
+
+# B4c -- Phase 1 (compression-side reload) holds the raise parallel to bare:
+#        the raise g = sigma_wrap - sigma_bare stays ~constant; tangent ~ bare.
+@pytest.mark.t1
+def test_B4c_phase1_holds_raise():
+    eY = _FY / _E
+    lsr = 8.0
+    down = [(-0.5 * i) * eY for i in range(0, 51)]          # -25 eY
+    up = [(-25.0 + 0.5 * i) * eY for i in range(1, 46)]     # -25 -> -2.5 eY (Phase 1, e_cross_rs=0)
+    strains = down + up
+    wrap = _drive(_wrap_rs(lsr, "lambda"), strains)
+    bare = _drive(_bar_fn, strains)
+    n = len(down)
+    g_rev = wrap[n - 1][0] - bare[n - 1][0]
+    assert g_rev > 1.0
+    for i in range(n, len(strains)):
+        g = wrap[i][0] - bare[i][0]
+        assert g == pytest.approx(g_rev, rel=0.05, abs=1.0), (
+            f"Phase-1 raise drifted at eps={strains[i]}: {g} vs {g_rev}")
+
+
+# B4d -- Phase 2 bracket: strictly between bare and the held-raise line.
+@pytest.mark.t1
+def test_B4d_phase2_bracket():
+    eY = _FY / _E
+    lsr = 8.0
+    L = _Lrs_lambda(lsr)
+    down = [(-0.5 * i) * eY for i in range(0, 51)]          # -25 eY
+    up = []
+    e = -25.0
+    while e < 1.5:                                          # fine reload through Phase 2
+        e += 0.05
+        up.append(e * eY)
+    strains = down + up
+    wrap = _drive(_wrap_rs(lsr, "lambda"), strains)
+    bare = _drive(_bar_fn, strains)
+    g_rev = wrap[len(down) - 1][0] - bare[len(down) - 1][0]
+    found = 0
+    for (sw, _), (sb, _b), eps in zip(wrap, bare, strains):
+        if 1e-9 < eps < L - 1e-9:                          # strictly inside Phase 2 (e_cross_rs=0)
+            assert sw > sb + 1e-6, f"not above bare at {eps}: {sw} vs {sb}"
+            assert sw < sb + g_rev + 1e-3, f"not below held-raise at {eps}"
+            found += 1
+    assert found > 0, "no Phase-2 samples found"
+
+
+# B4f -- partial reload then re-compress: the raise g is C0-continuous across
+#        the RESTRAIGHTEN->BUCKLING re-entry (no stress jump), then re-buckles.
+@pytest.mark.t1
+def test_B4f_recompress_c0_continuous():
+    eY = _FY / _E
+    lsr = 8.0
+    L = _Lrs_lambda(lsr)
+    down = [(-0.5 * i) * eY for i in range(0, 51)]          # -25 eY
+    # reload partway INTO Phase 2 (to ~0.5*L past the crossing), then re-compress
+    mid = 0.5 * L / eY
+    up = [(-25.0 + 0.5 * i) * eY for i in range(1, int((25.0 + mid) / 0.5) + 1)]
+    redown = [up[-1] + (-0.1 * i) * eY for i in range(1, 121)]   # re-compress to deep
+    strains = down + up + redown
+    wrap = _drive(_wrap_rs(lsr, "lambda"), strains)
+    bare = _drive(_bar_fn, strains)
+    g = [w[0] - b[0] for w, b in zip(wrap, bare)]
+    k_re = len(down) + len(up)                              # first re-compress step index
+    g_rev = g[len(down) - 1]
+    # C0 of the raise across the re-entry: no jump
+    for i in range(k_re, k_re + 3):
+        assert abs(g[i] - g[i - 1]) < 0.10 * g_rev + 1.0, (
+            f"raise jumped at re-entry step {i}: {g[i-1]} -> {g[i]}")
+    # genuinely re-buckles deeper (raise grows back above bare)
+    assert g[-1] > 1.0, f"did not re-buckle on re-compression: g={g[-1]}"
+    # nothing pathological
+    for sw, _ in wrap:
+        assert abs(sw) < 1e4 and sw == sw, "NaN / blow-up in re-compress cycle"
+
+
+# B4-GA -- the law-agnostic RESTRAIGHTEN: GA buckle -> reload rejoins bare too.
+@pytest.mark.t1
+def test_B4_ga_cyclic_rejoins_bare():
+    eY = _FY / _E
+    lsr = 8.0
+    down = [(-0.5 * i) * eY for i in range(0, 51)]          # -25 eY (GA buckles past e_cross=0)
+    up = [(-25.0 + 0.5 * i) * eY for i in range(1, 57)]     # -> +3 eY
+    strains = down + up
+    wrap = _drive(_wrap_ga_rs(lsr, "lambda"), strains)
+    bare = _drive(_bar_fn, strains)
+    assert wrap[len(down) - 1][0] > bare[len(down) - 1][0] + 1.0   # buckled raise
+    assert wrap[-1][0] == pytest.approx(bare[-1][0], rel=1e-6, abs=1e-2)  # rejoined
+
+
+# B4i -- L_rs floor: a tiny c clamps the span to eY (NOT c*|e_rev-e_cross_rs|),
+#        so the recovery is finite/bounded and rejoins ~one yield strain past the
+#        crossing, not instantly. Guards against D0/L_rs blow-up.
+@pytest.mark.t1
+def test_B4i_lrs_floor():
+    eY = _FY / _E
+    lsr = 8.0
+    # buckle, then reload with fine steps; c=0.01 -> raw span 0.25eY would be tiny,
+    # but the eY floor makes L_rs = eY (rejoin ~+1 eY past e_cross_rs = 0).
+    down = [(-0.5 * i) * eY for i in range(0, 51)]          # 0 -> -25 eY
+    up = [(-25.0 + 0.25 * i) * eY for i in range(1, 117)]   # -> +4 eY (0.25 eY steps)
+    strains = down + up
+    wrap = _drive(_wrap_rs(lsr, mode="c", c=0.01), strains)
+    bare = _drive(_bar_fn, strains)
+    for (sw, kt), eps in zip(wrap, strains):
+        assert sw == sw and abs(sw) < 1e4, f"blow-up at {eps}: {sw}"
+        assert abs(kt) < 1e3 * _E, f"tangent blow-up at {eps}: {kt}"
+
+    def at(target):
+        j = min(range(len(strains)), key=lambda k: abs(strains[k] - target * eY))
+        return wrap[j][0], bare[j][0]
+
+    # floor binds at eY: still raised at +0.5 eY (q<1), rejoined by +2 eY (q>1).
+    sw_half, sb_half = at(0.5)
+    assert sw_half > sb_half + 1e-3, "floor too small: already rejoined at +0.5 eY"
+    sw_two, sb_two = at(2.0)
+    assert sw_two == pytest.approx(sb_two, rel=1e-6, abs=1e-1), "did not rejoin by +2 eY"
+
+
+# B4h -- v2 serialization round-trip from a committed RESTRAIGHTEN state.
+def _b7_build_cyclic(mat_fn, n_into_restraighten=8):
+    """Compress into buckling then partial-reload so the committed branch is
+    RESTRAIGHTEN, then hand off to the datastore round-trip."""
+    def f():
+        ops.wipe()
+        ops.model("basic", "-ndm", 2, "-ndf", 2)
+        ops.node(1, 0.0, 0.0)
+        ops.node(2, 1.0, 0.0)
+        mat_fn(1)
+        ops.fix(1, 1, 1)
+        ops.fix(2, 0, 1)
+        ops.element("Truss", 1, 1, 2, 1.0, 1)
+        ops.timeSeries("Linear", 1)
+        ops.pattern("Plain", 1, 1)
+        ops.load(2, 1.0, 0.0)
+        ops.system("FullGeneral")
+        ops.numberer("Plain")
+        ops.constraints("Plain")
+        ops.test("NormDispIncr", 1.0e-10, 100, 0)
+        ops.algorithm("Newton")
+        ops.integrator("DisplacementControl", 2, 1, -0.001)   # compress (buckle)
+        ops.analysis("Static")
+        ops.analyze(30)
+        ops.integrator("DisplacementControl", 2, 1, +0.001)   # partial reload -> RESTRAIGHTEN
+        ops.analyze(n_into_restraighten)
+    return f
+
+
+@pytest.mark.t1
+def test_B4h_serialization_roundtrip_restraighten():
+    database_roundtrip(_b7_build_cyclic(_wrap_rs(8.0, "lambda")),
+                       probe_nodes=[2], ndf=2)
