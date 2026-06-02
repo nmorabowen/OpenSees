@@ -45,6 +45,7 @@
 //   "material" $gp <args> → delegate to NDMaterial at GP
 //   "stiffness"           → 12×12 tangent stiffness
 //   "pressure"            → pressure force vector
+//   "charLength"          → element characteristic length lch (crack-band)
 //
 // Example recorders (Python):
 //   ops.recorder('Element', '-file', 'stress.txt', '-ele', 1, 'stresses')
@@ -92,6 +93,11 @@ class BezierTri6 : public Element
     const ID &getExternalNodes(void);
     Node **getNodePtrs(void);
     int getNumDOF(void);
+
+    // Element-size characteristic length for crack-band regularization
+    // (e.g. ASDConcrete). Overrides Element's min-inter-node-distance default,
+    // which on a quadratic element collapses to ~½ the edge length. See .cpp.
+    double getCharacteristicLength(void);
 
     // Lifecycle methods
     void setDomain(Domain *theDomain);

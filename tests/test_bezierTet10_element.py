@@ -306,3 +306,39 @@ def test_uniaxial_reaction_and_poisson():
     # global equilibrium closes (no external x-load: end reactions balance)
     assert_equilibrium(list(m.coord), n_force_dofs=3,
                        applied_total=[0.0, 0.0, 0.0], atol=1e-6)
+
+
+# ─────────────────────────────────────── T0: characteristic length
+#
+# Crack-band materials (ASDConcrete3D) regularize by
+# ops_TheActiveElement->getCharacteristicLength(), read once on the first
+# setTrialStrain. BezierTet10 OVERRIDES Element's min-inter-node-distance
+# default (which on a quadratic element collapses to ~½ the edge length:
+# corner-to-mid-edge) with a volume-based element size lch = cbrt(6·V).
+#
+# For a right-corner tetrahedron with three mutually perpendicular legs of
+# length L, V = L³/6, so the override returns lch = cbrt(6·L³/6) = L exactly.
+# The inherited default would return the min node spacing L/2 — so this test
+# pins the formula AND fails loudly if the override is reverted (½× regression).
+
+@pytest.mark.t0
+@pytest.mark.parametrize("L", [1.0, 2.5, 0.3])
+def test_characteristic_length(L):
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    ops.nDMaterial("ElasticIsotropic", 1, E, NU)
+    m = _Mesh()
+    # right-corner tet: legs along +x,+y,+z from the origin
+    v = [m.vertex((0.0, 0.0, 0.0)), m.vertex((L, 0.0, 0.0)),
+         m.vertex((0.0, L, 0.0)), m.vertex((0.0, 0.0, L))]
+    conn = m.tet(v)
+    m.define()
+    ops.element("BezierTet10", 1, *conn, 1)
+
+    lch = ops.eleResponse(1, "charLength")
+    assert lch, "BezierTet10 missing 'charLength' response"
+    lch = lch[0]
+    # volume-based override: lch = cbrt(6·V) = L for the right-corner tet
+    assert abs(lch - L) <= 1e-12 * L + 1e-14, f"lch={lch}, expected {L}"
+    # regression guard: must NOT be the inherited min-distance default (L/2)
+    assert lch > 0.75 * L, f"lch={lch} looks like the ½-edge min-distance default"

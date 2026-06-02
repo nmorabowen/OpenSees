@@ -944,6 +944,37 @@ double BezierTet10::computeVolume() const
 
 
 // ═══════════════════════════════════════════════════════════════════
+//  CHARACTERISTIC LENGTH  (crack-band regularization, e.g. ASDConcrete)
+// ═══════════════════════════════════════════════════════════════════
+//
+//  Crack-band materials (ASDConcrete3D, etc.) call
+//  ops_TheActiveElement->getCharacteristicLength() exactly once — on the
+//  first setTrialStrain — to regularize the softening branch by element size.
+//
+//  Element's base default returns the MINIMUM inter-node distance. On a
+//  quadratic element that distance is corner-to-mid-edge ≈ ½ the true edge
+//  length, which under-estimates the band width and over-softens the response.
+//
+//  We instead return an element-size equivalent from the integrated volume:
+//  the leg of a right tetrahedron (three mutually perpendicular legs) of
+//  equal volume,
+//
+//      lch = cbrt(6 · V),
+//
+//  the 3D analogue of BezierTri6's sqrt(2·A). It recovers the true edge length
+//  for a right-corner tet and is geometry-true for distorted straight-sided
+//  elements; curved Bézier edges shift the factor only in the safe
+//  (under-estimating) direction.
+double BezierTet10::getCharacteristicLength(void)
+{
+    double V = this->computeVolume();
+    if (V <= 0.0)
+        return Element::getCharacteristicLength();  // degenerate: fall back
+    return cbrt(6.0 * V);
+}
+
+
+// ═══════════════════════════════════════════════════════════════════
 //  SERIALIZATION (sendSelf / recvSelf)
 // ═══════════════════════════════════════════════════════════════════
 
@@ -1271,6 +1302,16 @@ Response *BezierTet10::setResponse(const char **argv, int argc,
         theResponse = new ElementResponse(this, 6, Vector(NELD));
     }
 
+    // ─── Characteristic length ────────────────────────────────
+    // Element-size lch used by crack-band materials (ASDConcrete). Lets the
+    // user inspect the value the material regularizes with. See
+    // getCharacteristicLength().
+    else if (strcmp(argv[0], "charLength") == 0 ||
+             strcmp(argv[0], "characteristicLength") == 0) {
+        output.tag("ResponseType", "lch");
+        theResponse = new ElementResponse(this, 7, Vector(1));
+    }
+
     output.endTag();  // ElementOutput
     return theResponse;
 }
@@ -1347,6 +1388,14 @@ int BezierTet10::getResponse(int responseID, Information &eleInfo)
             }
         }
         return eleInfo.setVector(pressVec);
+    }
+
+    case 7: {
+        // ─── Characteristic length ─────────────────────────────
+        // The element-size lch crack-band materials regularize with.
+        static Vector lchVec(1);
+        lchVec(0) = this->getCharacteristicLength();
+        return eleInfo.setVector(lchVec);
     }
 
     // ─── MPCO_Ladruno geometry probes (contract Part A) ──────────
