@@ -20,6 +20,7 @@ void* OPS_InitStrainNDMaterial();
 void* OPS_MinMaxNDMaterial();
 void* OPS_LogStrainNDMaterial();  // Ladruno — Hencky finite-strain adaptor
 void* OPS_LadrunoJ2();            // Ladruno — combined iso + Chaboche AF kinematic J2
+void* OPS_LadrunoJ2Finite();      // Ladruno — finite-strain-native combined-hardening J2 (co-rotating backstress)
 void* OPS_J2BeamFiber2dMaterial();
 void* OPS_J2BeamFiber3dMaterial();
 void* OPS_J2PlateFibreMaterial();
@@ -128,6 +129,7 @@ namespace {
 	nDMaterialsMap.insert(std::make_pair("LogStrain", &OPS_LogStrainNDMaterial));        // Ladruno — Hencky finite-strain adaptor
 	nDMaterialsMap.insert(std::make_pair("LogStrainNDMaterial", &OPS_LogStrainNDMaterial));
 	nDMaterialsMap.insert(std::make_pair("LadrunoJ2", &OPS_LadrunoJ2));                    // Ladruno — combined iso + Chaboche AF kinematic J2
+	nDMaterialsMap.insert(std::make_pair("LadrunoJ2Finite", &OPS_LadrunoJ2Finite));        // Ladruno — finite-strain-native combined-hardening J2 (co-rotating backstress)
 	nDMaterialsMap.insert(std::make_pair("J2BeamFiber", &J2BeamFiber2Dor3D));
 	nDMaterialsMap.insert(std::make_pair("J2PlateFibre", &OPS_J2PlateFibreMaterial));
 	nDMaterialsMap.insert(std::make_pair("FAReinforcedConcretePlaneStress", &OPS_FAReinforcedConcretePlaneStressMaterial));

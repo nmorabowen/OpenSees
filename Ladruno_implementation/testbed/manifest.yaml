@@ -333,6 +333,35 @@ features:
       tabulated iso / prager_nl oracle / PlaneStress / IMPL-EX deferred. Plan:
       Ladruno_implementation/10_ladruno_j2_plasticity.md.
 
+  - feature: LadrunoJ2Finite
+    classtag: 33012          # ND_TAG family; finite-strain-native combined-hardening J2 (co-rotating backstress)
+    tag_symbol: ND_TAG_LadrunoJ2Finite
+    pr: 0
+    feature_class: material
+    required_tiers: [T0m, T1]
+    pytest: tests/test_ladrunoJ2_finite_native_tangent.py   # channel-A+B tangent recipe exact-to-FD; channel-B small-but-present; channel-B objective (numpy oracle)
+    tcl: WAIVED(nDMaterial LadrunoJ2Finite ...; shared OpenSeesNDMaterialCommands registry serves Tcl + Python; verified via the Zone-A pytest battery + element acceptance)
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesNDMaterialCommands.cpp
+      - SRC/material/nD/CMakeLists.txt
+    dispatch: {tcl: false, functionMap: true}
+    status: active
+    notes: >
+      Finite-strain-native combined-hardening J2 (FiniteStrainNDMaterial subclass,
+      setTrialF(F)) crossing the dSNPO 14.11 v2 boundary the v1 LogStrain-over-LadrunoJ2
+      path cannot: owns the backstresses alpha_{n,k} as SPATIAL tensors and co-rotates
+      them by R_Delta = polar(f_Delta) each step before the SHARED return map
+      (LadrunoJ2Kernel.h, reused verbatim) so combined hardening is frame-indifferent
+      under large rotation. Consistent tangent = analytic channel A (log-strain
+      (1/2J)[D:L:B], LogStrainKernel.h) + numeric channel B (the backstress co-rotation
+      d(alpha-tilde)/dF, ~1e-4..2e-3 rel, recovered exactly-to-FD by perturbing only R,
+      plastic steps only; mapped into cmat via Fdot=LF). Verified: numpy oracle objective
+      ~1e-12 + tangent recipe exact-to-FD ~1e-14; g++ composition vs oracle 1e-9; element
+      acceptance via LadrunoBrick -geom finite. NON-goals v1: plane-stress finite, IMPL-EX
+      code, tabulated iso. Plan: Ladruno_implementation/16_finite_native_j2_adr.md.
+
   - feature: LadrunoUniaxialJ2
     classtag: 33000          # MAT_TAG (uniaxial) family; per-registry band, no collision w/ ELE/ND/INTEGRATOR/RECORDER 33000
     tag_symbol: MAT_TAG_LadrunoUniaxialJ2

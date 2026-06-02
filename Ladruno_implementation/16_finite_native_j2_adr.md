@@ -1,7 +1,7 @@
 ---
 title: ADR — Finite-strain-NATIVE combined-hardening J2 with a co-rotating backstress (§14.11 "v2")
 project: Ladruno
-status: proposed
+status: accepted
 priority: medium
 owner: nmora
 tags:
@@ -21,8 +21,19 @@ tags:
 
 ## Status
 
-**Proposed.** The numerical algorithm is **prototyped and verified in numpy**
+**Accepted.** The numerical algorithm is **prototyped and verified in numpy**
 (`tests/ladrunoj2_finite_native_reference.py`, 5/5 green) — no C++ yet.
+
+**Locked (2026-06-02 scoping review):**
+- **Class name `LadrunoJ2Finite`**, **classTag `ND_TAG_LadrunoJ2Finite = 33012`**
+  (next free ND tag after `LadrunoJ2 = 33011`).
+- **Minimal scope** — one focused PR that lands the native material, co-rotation,
+  registration, the **consistent tangent (incl. the co-rotation term, see below)**,
+  and **flips the strict xfail**. No backlog bundling (IMPL-EX, `LadrunoJ21D`,
+  tabulated iso stay out).
+- Review confirmed all C++ reuse dependencies exist on disk: `LadrunoJ2Kernel.h`,
+  `LogStrainKernel.h`, `LadrunoHardening.h`, `FiniteStrainNDMaterial`,
+  `LadrunoBrick -geom finite`, and a polar primitive in `SolidTransformationCorot`.
 
 ## Context — the §14.11 boundary v1 cannot cross
 
@@ -124,16 +135,19 @@ objectivity) and the correct small-strain reduction, to ~1e-12.
 
 ## Where (files, when built)
 
-- `SRC/material/nD/LadrunoFiniteJ2.{h,cpp}` (or `LogStrainCombinedJ2`) — the
-  `FiniteStrainNDMaterial` subclass; classTag in the 3301x band (next free after
-  `LadrunoJ2=33011` — reserve in `classTags.h`).
+- `SRC/material/nD/LadrunoJ2Finite.{h,cpp}` — the `FiniteStrainNDMaterial`
+  subclass; `#define ND_TAG_LadrunoJ2Finite 33012` in `classTags.h` (next free ND
+  tag after `LadrunoJ2 = 33011`).
 - Reuse `LadrunoJ2Kernel.h`, `LogStrainKernel.h`, `LadrunoHardening.h` (the same
   shared σ_y), the polar primitive.
 - `FEM_ObjectBroker` registration, the `nDMaterial` command, `CMakeLists.txt`,
   banner line, stamp-headers glob.
-- Tests: the numpy oracle (`ladrunoj2_finite_native_reference.py` — already written)
-  is the target; add a g++ kernel-level check and a built `LadrunoBrick -geom finite`
-  acceptance (necking-with-reversal), and **flip the v1 strict-xfail's positive twin**.
+- Tests: the numpy oracle (`ladrunoj2_finite_native_reference.py` — written, now
+  also carries the consistent-tangent helpers) is the target; the tangent recipe is
+  pinned by `tests/test_ladrunoJ2_finite_native_tangent.py` (3 tests: A+B recipe
+  exact-to-FD, channel-B small-but-present, channel-B objective). Add a g++
+  kernel-level check and a built `LadrunoBrick -geom finite` acceptance
+  (necking-with-reversal), and **flip the v1 strict-xfail's positive twin**.
 
 ## Validation plan / definition of done
 
@@ -142,8 +156,11 @@ objectivity) and the correct small-strain reduction, to ~1e-12.
 2. Matches the numpy oracle step-for-step along the rotating+stretching plastic path
    (~1e-9), and reduces to the v1 / small-strain result with no rotation.
 3. Element-level: `LadrunoBrick -geom finite` over the native material — consistent
-   tangent vs FD, a finite-rotation **cyclic** load (buckling-brace-like) showing a
-   correct Bauschinger loop, plus the existing finite battery.
+   tangent vs FD (with channel B wired, this must hold at **tight** tolerance even in
+   a saturated-backstress state, not just near-symmetric `F`), a finite-rotation
+   **cyclic** load (buckling-brace-like) showing a correct Bauschinger loop, plus the
+   existing finite battery. Material-level tangent (incl. the co-rotation term) is
+   pre-pinned in numpy per the section above.
 4. The `…_is_v2` strict xfail in `test_ladrunoJ2_finite.py` gets a passing native twin.
 
 ## Scope / non-goals
@@ -153,14 +170,80 @@ objectivity) and the correct small-strain reduction, to ~1e-12.
 - **Out (v2.x):** plane-stress finite (the §14.7 nested route), the IMPL-EX hook,
   tabulated iso (gated on the small-strain tabulated mode), thermomechanical coupling.
 
-## Open question (low risk)
+## Consistent tangent — the co-rotation term (RESOLVED with data, 2026-06-02)
 
-The polar-incremental push `R_Δ = polar(f_Δ)` is verified **objective + small-strain
-exact** to ~1e-12. dSNPO §14.11 presents the transport tied to the exponential-map
-integrator; the two agree for objectivity and the small-strain limit. The one thing
-the objectivity tests do **not** pin is the *magnitude* convergence of the AF
-evolution under simultaneous large rotation **and** large stretch — verify by
-step-refinement against a fine-increment reference when building, and if a
-discrepancy appears adopt the exact §14.11 exp-map transport. (Expected to be a
-non-issue: the AF evolution itself runs in the correctly-rotated frame via the
-unchanged return map, exactly as the isotropic part does.)
+The Cauchy stress depends on the trial `F` through **two** channels:
+- **(A)** the trial elastic strain `εᵉᵗʳ = ½ ln(f_Δ bᵉ_n f_Δᵀ)` — the standard
+  log-strain dependence, captured by the **already-shipped** spatial tangent
+  (`LogStrainKernel::spatial_tangent_full` / numpy `spatial_tangent_a`).
+- **(B)** the **co-rotated backstress** `α̃ = R(f_Δ) α_n R(f_Δ)ᵀ` — `α̃` depends on
+  `F` through `R = polar(f_Δ)`. This channel is **new** to the native material and
+  is what a naive "reuse the log-strain tangent" would omit.
+
+**Is it needed? — measured in numpy** (`tests/test_ladrunoJ2_finite_native_tangent.py`,
+helpers on the oracle: `NativeFiniteJ2.tangent_dsigma_dF`, `.channelB_dsigma_dF`):
+
+| property | finding |
+|---|---|
+| channel-B size `‖∂σ/∂F_full − ∂σ/∂F_(A only)‖ / ‖∂σ/∂F‖` | **~1e-4** (stiff metals, `G≫σ_y`) up to **~2e-3** (soft elasticity / strong kinematic) |
+| vs. the existing tangent-FD gate (rtol **2e-4**) | **straddles it** ⇒ exact tangent needs B |
+| effect on Newton robustness | none (≪1% off ⇒ still ~quadratic) |
+| frame-objectivity of the tangent | channel-B fraction is **rotation-invariant** (objective) |
+| channel B is non-zero only when | the step is **plastic** (elastic predictor is α-independent) |
+
+**Verdict: include channel B** (it crosses the tangent-test tolerance), but it does
+**not** justify the heavy machinery of a fully-analytic `∂R/∂F` (Sylvester) plus a
+kernel extension for `∂τ/∂α̃`.
+
+**The recipe (validated to ~1e-14 vs full FD):** keep channel A **analytic** (the
+shipped spatial tangent) and add channel B **numerically by perturbing only `R`** —
+hold `εᵉᵗʳ` and `J` at the base point, perturb `F → R(f_Δ)` in the 6 (sym) / 9
+directions, and finite-difference the extra Cauchy-stress response through the
+**unchanged** return map (≈9 cheap scalar-Newton solves, only when plastic). This
+adds ~15 lines, needs **no** kernel re-derivation, and is exact-to-FD. Proven clean
+and additive: `∂σ/∂F_full = ∂σ/∂F_(A, R-frozen) + ∂σ/∂F_(B, R-only)` to machine
+precision across stiff/soft × first-yield/saturated × no-rot/large-rot.
+
+(Residual open item, low risk — unchanged: the objectivity tests don't pin the
+*magnitude* convergence of AF evolution under simultaneous large rotation **and**
+large stretch; verify by step-refinement against a fine-increment reference when
+building, and only if a discrepancy appears adopt the exact §14.11 exp-map
+transport. Expected non-issue — the AF evolution runs in the correctly-rotated
+frame via the unchanged return map, exactly as the isotropic part does.)
+
+## Status — SHIPPED-ready + adversarial review (2026-06-02)
+
+Implemented as `SRC/material/nD/LadrunoJ2Finite.{h,cpp}` (classTag 33012); built
+(OpenSeesPy, exit 0); full J2 battery green (34 passed / 1 xfailed — the v1
+LogStrain-wrapper non-objectivity test correctly *stays* xfail, with its passing
+native twin `test_native_objective_under_superposed_rotation`).
+
+**34-agent adversarial review (7 dimensions, each finding refuted-or-confirmed by an
+independent skeptic): NO confirmed correctness bug.** Re-derived correct and cleared:
+the polar decomposition `R = f_Δ U⁻¹`, the `α̃ = R α Rᵀ` push-forward (tensor-Voigt,
+loss-free symmetrisation), the elastic-trial feed (`epsP_n=0`) + `εᵉ`/`bᵉ` recovery,
+the engineering↔tensor shear bridging, the channel-B `Ḟ=LF` map
+`cmatB_ijkl = Σ_m (∂σ_ij/∂F_km) F_lm`, and frame-indifference. The one real (medium)
+item was a **test-coverage gap**: the C++ channel-B tangent path was executed but not
+numerically gated. Fixes applied this PR:
+- **Closed the gap** — `tests/ladrunoj2_finite_native_tangentB_check.cpp` +
+  `tests/test_ladrunoJ2_finite_native_tangentB_cpp.py`: the C++ channel-B tensor is
+  compared (rel-Frobenius <1e-3) to the numpy oracle's `channelB_dsigma_dF` mapped
+  through the identical `Σ_m·F_lm` transform — channel B is purely constitutive (no
+  geometric term), so this is a clean, commit-semantics-free gate that catches any
+  F→L index/factor/sign error.
+- **Serialization** now tested — `test_native_finite_database_roundtrip` (FE_Datastore
+  round-trip of a committed plastic finite state; skips without DB) + the false
+  "database restore" docstring removed.
+- **Hardening:** per-instance `K0init` (was a process-shared function-static `Matrix`
+  in `getInitialTangent`); `polarRotation` eigenvalue clamp (no rank-deficient/NaN `R`
+  on a near-singular channel-B perturbation); `override` on all contract methods
+  (signature-drift → compile error, not a silent base-default fallback); backstress
+  slot-5 `(0,2)==(2,0)` convention comment.
+
+Element-level FD-of-K is intentionally **not** gated: channel B scales with the
+committed backstress, but `eleResponse("stiff")` re-forms post-commit (α≠0) while a
+from-virgin force-FD carries α=0 — different committed bases, and an FE_Datastore
+replay fights OpenSees commit/sp semantics. Channel B is therefore gated off-element
+(material-level exact-to-FD + the g++ tensor check above); the element side is covered
+by the v1 assembly gate + Newton convergence on the rotated-plastic objectivity path.
