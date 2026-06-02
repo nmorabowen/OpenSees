@@ -24,6 +24,7 @@ import math
 import pytest
 
 from _testbed import ops
+from _testbed.roundtrip import database_roundtrip
 
 pytestmark = [pytest.mark.zone_a]
 
@@ -321,3 +322,75 @@ def test_GA5_consistent_tangent_fd():
         kfd = (sp - sm) / (2.0 * d)
         assert k == pytest.approx(kfd, rel=1e-3, abs=1e-2), (
             f"GA consistent tangent {k} != FD {kfd} at eps={eps0}")
+
+
+# ==========================================================================
+#  B6 -- composition  Fatigue ∘ RebarBuckling ∘ bar  builds, runs, and the
+#        buckling reduction propagates through the outer Fatigue layer; the
+#        Fatigue rupture still triggers on the buckled response.
+# ==========================================================================
+def _fatigue_buck(lsr):
+    """Fatigue(tag) wraps RebarBuckling(tag+50) wraps Steel02(tag+100). The
+    Fatigue -min/-max bounds give a DETERMINISTIC rupture for the test."""
+    def f(tag):
+        _bar(tag + 100)
+        ops.uniaxialMaterial("LadrunoRebarBuckling", tag + 50, tag + 100,
+                             "-lsr", lsr, "-fy", _FY, "-E", _E)
+        ops.uniaxialMaterial("Fatigue", tag, tag + 50, "-min", -0.01, "-max", 0.01)
+    return f
+
+
+@pytest.mark.t1
+def test_B6_composition_fatigue_buckling():
+    # ... -0.008 is buckled but within the Fatigue -min; -0.02 trips Fatigue.
+    strains = [0.0, -0.002, -0.004, -0.006, -0.008, -0.012, -0.02]
+    runA = _drive(_fatigue_buck(8.0), strains)    # with buckling
+    runB = _drive(_fatigue_buck(0.0), strains)    # identity gate (no buckling)
+
+    # buckling shows through the Fatigue wrapper at the deep-but-unfailed point
+    sA8, sB8 = runA[4][0], runB[4][0]             # eps = -0.008
+    assert abs(sA8) < abs(sB8), (
+        f"buckling did not propagate through Fatigue: {sA8} vs {sB8}")
+
+    # Fatigue rupture still triggers on the buckled response (stress collapses)
+    assert abs(runA[-1][0]) < 1.0, f"Fatigue did not rupture the buckled mat: {runA[-1][0]}"
+    assert abs(runB[-1][0]) < 1.0
+
+
+# ==========================================================================
+#  B7 -- sendSelf/recvSelf + broker round-trip (nested material), via the
+#        FE_Datastore. Covers the serialization defect class (D4) incl. GA's
+#        extra (gaReduction, gaFsuFrac) fields. Skips if the build lacks a DB.
+# ==========================================================================
+def _b7_build(mat_fn):
+    def f():
+        ops.wipe()
+        ops.model("basic", "-ndm", 2, "-ndf", 2)
+        ops.node(1, 0.0, 0.0)
+        ops.node(2, 1.0, 0.0)
+        mat_fn(1)
+        ops.fix(1, 1, 1)
+        ops.fix(2, 0, 1)
+        ops.element("Truss", 1, 1, 2, 1.0, 1)
+        ops.timeSeries("Linear", 1)
+        ops.pattern("Plain", 1, 1)
+        ops.load(2, 1.0, 0.0)
+        ops.system("FullGeneral")
+        ops.numberer("Plain")
+        ops.constraints("Plain")
+        ops.test("NormDispIncr", 1.0e-12, 100, 0)
+        ops.algorithm("Newton")
+        ops.integrator("DisplacementControl", 2, 1, -0.01)   # one step into buckling
+        ops.analysis("Static")
+        ops.analyze(1)
+    return f
+
+
+@pytest.mark.t1
+def test_B7_database_roundtrip_dm():
+    database_roundtrip(_b7_build(_wrap_fn(8.0)), probe_nodes=[2], ndf=2)
+
+
+@pytest.mark.t1
+def test_B7_database_roundtrip_ga():
+    database_roundtrip(_b7_build(_wrap_ga(8.0)), probe_nodes=[2], ndf=2)

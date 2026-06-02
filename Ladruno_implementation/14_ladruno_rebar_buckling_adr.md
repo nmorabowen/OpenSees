@@ -312,9 +312,13 @@ uniaxialMaterial Fatigue              12  11                 ;# Chaboche ∘ buc
 | GA5 | consistent-tangent FD (smooth region, off the `fs_buck≈1` knee) | hybrid analytic `ρ·k + (∂σ/∂factor)·factor'` vs central FD |
 
 Smoke (L0): single truss / 1-fiber RC section push-pull-cycle, Zone-A pytest.
-**Implemented (this PR):** B0/B1/B2/B2b/B3/B5 (DM) + GA0/GA1/GA2/GA3/GA5 (GA),
-all green; `LadrunoUniaxialJ2` regression unchanged. (B4 cyclic, B6 composition,
-B7 send/recv remain for follow-ups.)
+**Implemented:** B0/B1/B2/B2b/B3/B5 (DM) + GA0/GA1/GA2/GA3/GA5 (GA) + **B6
+composition** (`Fatigue ∘ RebarBuckling ∘ Steel02`: buckling propagates through
+the outer Fatigue layer, and Fatigue's `-min` rupture still triggers on the
+buckled response) + **B7 `sendSelf`/`recvSelf` round-trip** (via `FE_Datastore`
+`database_roundtrip`, both DM and GA incl. the GA `gaReduction`/`gaFsuFrac`
+fields) — all green; `LadrunoUniaxialJ2` regression unchanged. (Only **B4
+cyclic** remains for a follow-up.)
 
 ---
 
