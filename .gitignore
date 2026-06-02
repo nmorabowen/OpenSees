@@ -120,6 +120,7 @@ __pycache__
 /Ladruno_files/Ladruno_OpenSees_*_setup.exe
 /Ladruno_files/wire_pyenv.log
 /Ladruno_files/patch_banner_backups/
+/Ladruno_scripts/patch_banner_backups/
 
 # Build-time artifact emitted by build_inno_installer.ps1
 /Ladruno_scripts/banner_ASCII_utf8bom.txt
