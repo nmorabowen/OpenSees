@@ -18,8 +18,10 @@ what the element owes the material. This records what we verified in the source
 and the resulting work list. Companion of [[10_ladruno_j2_plasticity]] (the
 non-softening flagship material).
 
-> Status: **analysis only** — no code changed yet. Three candidate changes
-> (a/b/c) are scoped at the bottom; pick after reading.
+> Status: **(a)+(b)+(c) SHIPPED.** (b) single-point material-eval fix = PR #94;
+> (a) Tier-A damage-scaled `Kstab` + (c) Zone-A validation
+> (`tests/test_ladrunoBrick_asdconcrete.py`) = this branch. Remaining: the meshed
+> Zone-B cases (notched 3-pt bend convergence + hourglass-band monitor). See §6.
 
 ## TL;DR
 
@@ -150,10 +152,17 @@ material that reports a scalar/Vector damage via `getResponse`) so LadrunoBrick
 isn't hard-coupled to ASDConcrete3D — if a material doesn't report damage, fall
 back to the current constant elastic `Kstab`.
 
-> Not urgent: initial-tangent `Kstab` is validated for elastic/J2 (PR #78). Tier A
-> matters once `eas`/`uri` is actually run with ASDConcrete3D. For *implicit*
-> quasi-static concrete, `std`/`bbar` (full integration) sidesteps the whole
-> `Kstab` question — 8 independent damage points, no hourglass — at 8× material cost.
+> **SHIPPED (a), 2026-06-02.** Tier A is implemented exactly as recommended:
+> `Kstab ← max(floor, 1−max(dₜ,d_c))·Kstab_elastic`, `floor = 1%`
+> (`HG_DAMAGE_FLOOR` in `LadrunoBrick.cpp`), in `formEAS` + `formUri` STIFFNESS.
+> Damage is read generically via a cached `materialPointers[0]->setResponse(
+> "damage", …)` Response (built in `setDomain`); a material with no `"damage"`
+> channel falls back to the constant elastic `Kstab` (`s=1`) — so elastic/J2 are
+> bit-unchanged. NB for `uri+stiffness` the elastic base is the *initial* shear
+> (not the current secant), otherwise the secant would drive `κ→0` and the floor
+> would be meaningless. For *implicit* quasi-static concrete, `std`/`bbar` (full
+> integration) still sidesteps the whole `Kstab` question — 8 independent damage
+> points, no hourglass — at 8× material cost.
 
 ## 4. Cost gotcha — 8 redundant return-maps per element (eas) — ✅ FIXED
 
@@ -210,12 +219,33 @@ The hourglass-energy / viscous-dissipation report (PR #86, `"hourglassEnergy"` /
 - ~~**(b) Fix the 8× redundant ASDConcrete3D eval**~~ **DONE (2026-06-02)** —
   single-point paths do 1 eval; output mirrored from slot 0;
   `tests/test_ladrunoBrick_singlepoint_output.py`; suite 90/90.
-- **(a) Prototype Tier-A `max(floor, 1−max(dₜ,d_c))`-scaled `Kstab`** in `formEAS` (+ floor). Needs
-  a clean way to read `d_avg` from the material (via `getResponse`/`getAvgDamage`)
-  without coupling LadrunoBrick to ASDConcrete3D specifically — design the query
-  generically (any material that reports a scalar damage).
-- **(c) Concrete validation tests** (§5) — single-element + notched-beam, Zone-A
-  if numpy-free / Zone-B if it needs apeGmsh meshing.
+- ~~**(a) Tier-A `max(floor, 1−max(dₜ,d_c))`-scaled `Kstab`**~~ **DONE (this branch,
+  2026-06-02).** Implemented in `formEAS` (scales `easKstab` in both stiffness and
+  the internal stabilization force) **and** `formUri` STIFFNESS branch (for a
+  softening material rebases `κ` on the *initial* elastic shear, then ×`s`, so the
+  floor actually protects — using the current secant shear would let `κ→0` at full
+  damage and defeat the floor). `floor = 1%` (`HG_DAMAGE_FLOOR`). Damage read
+  **generically** via a cached `materialPointers[0]->setResponse("damage", …)`
+  Response built in `setDomain` (rebuilt on the receive side; **no NDMaterial base
+  change**); `damageScale()` returns `max(floor, 1−max(d_i))`, or **1.0** when the
+  material has no `"damage"` channel ⇒ elastic/J2 behave **exactly** as before
+  (192 Zone-A tests, incl. the full LadrunoBrick suite, unchanged). uri+viscous is
+  damping (not stiffness) so it is deliberately **not** degraded. The
+  `"hourglassEnergy"` report carries the same scale (the §5 tuning instrument).
+- ~~**(c) Concrete validation tests**~~ **DONE (Zone-A, `tests/test_ladrunoBrick_asdconcrete.py`).**
+  (1) **lch handshake / mesh-objectivity** — a cube pulled to failure at L and 2L
+  dissipates energy in the ratio **≈4** (∝ crack AREA = `G_f·A`), decisively not 8
+  (∝ volume); at L=lch_ref the absolute dissipation equals the backbone specific
+  energy × volume. Proves the regularization consumes the element `lch`.
+  (2) **Tier-A** — for an identical prescribed deformation the stabilization-energy
+  ratio between an ASDConcrete3D element and an elastic one (same E,ν) equals
+  **exactly** `max(floor, 1−max(dₜ,d_c))` at every step, from intact (≈1) down to
+  the floor (0.01) — never zero. **Remaining for Zone-B (needs apeGmsh meshing):**
+  the **notched 3-point bend** with 2–3 mesh refinements (load–CMOD convergence)
+  and the **hourglass-energy-fraction-in-a-cracked-band** monitor (`<5–10%` of
+  internal energy) — the multi-element localization study was too solver-fragile
+  to ship as a deterministic Zone-A test (snap-back / non-convergence at fine
+  meshes), so it is deferred to a meshed Zone-B case.
 
 Cross-element follow-up: ~~override `getCharacteristicLength()` in BezierTri6 /
 BezierTet10~~ **DONE on ladruno** (§2) — both now supply a corner-node element
@@ -366,7 +396,7 @@ ops.eleResponse(tag, 'hourglassEnergy')   # Vector(1)
 
 ## H.7 Limitations today (read before trusting `uri`/`eas` for concrete)
 
-1. **`Kstab` is constant elastic, not damage-scaled** — `eas`/`uri` over-stiffen cracked zones; the crack may not localize. Tier-A fix (a) designed, **not implemented**. *Mitigation: use `bbar`/`std` for implicit concrete.*
+1. ~~**`Kstab` is constant elastic, not damage-scaled**~~ **FIXED (a)** — `eas` and `uri+stiffness` now degrade `Kstab` by `max(floor, 1−max(dₜ,d_c))` (floor 1%), so cracked zones soften and can localize while keeping residual hourglass control; the `"hourglassEnergy"` report reflects the degraded value. `uri+viscous` is damping (unchanged). Materials without a `"damage"` channel are unaffected. *Full integration (`bbar`/`std`) remains the most robust choice for implicit softening (8 independent damage points, no hourglass at all).*
 2. ~~**8× redundant material eval**~~ **FIXED (b)** — single-point formulations now do 1 material eval (§4); slots 1–7 are output mirrors. (7 phantom material *instances* still allocated — memory-only optimization remains.)
 3. **Geometry for concrete:** `-geom corot` (large-rotation/small-strain, std/bbar only, shipped on ladruno PR #88) works with a small-strain concrete material as long as strains stay small; **finite strain** concrete is unsupported (`-geom finite` needs a `FiniteStrainNDMaterial`, which ASDConcrete3D is not).
 
