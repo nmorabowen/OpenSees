@@ -288,3 +288,99 @@ def test_state_recording():
     assert back[0] == pytest.approx(C / gamma, rel=0.02), (
         f"backstress {back[0]} != C/gamma {C/gamma}")
     assert wp[0] > 0.0, f"plasticWork {wp[0]} should be positive (dissipation)"
+
+
+# --------------------------------------------------------------------------
+# V6: consistent (algorithmic) tangent — central finite-difference dσ/dε vs the
+# reported getTangent(). The material-level harness (testUniaxialMaterial/
+# setStrain) COMMITS on every setStrain, so a single central difference would
+# straddle the elastic-unload branch ((E+E_alg)/2). Instead we probe each point
+# as an INDEPENDENT one-step return from a fresh (zero-committed) material — the
+# central difference of that one-step map IS the consistent tangent (to O(d^2)).
+# --------------------------------------------------------------------------
+def _one_step(mat_fn, eps, want):
+    ops.wipe()
+    ops.model("basic", "-ndm", 1, "-ndf", 1)
+    mat_fn(1)
+    ops.testUniaxialMaterial(1)
+    ops.setStrain(float(eps))
+    return ops.getStress() if want == "stress" else ops.getTangent()
+
+
+@pytest.mark.t0m
+def test_consistent_tangent_fd():
+    E, sig0, Qinf, b, Hiso, C, gamma = 1000.0, 5.0, 3.0, 25.0, 8.0, 200.0, 50.0
+
+    def mat(tag):
+        ops.uniaxialMaterial("LadrunoUniaxialJ2", tag, E,
+                             "-iso", "voce", sig0, Qinf, b, Hiso, "-kin", 1, C, gamma)
+
+    d = 1.0e-7
+    # yield strain = sig0/E = 0.005; 0.002 elastic, the rest plastic.
+    for eps0 in (0.002, 0.01, 0.03, 0.06):
+        k = _one_step(mat, eps0, "tangent")
+        sp = _one_step(mat, eps0 + d, "stress")
+        sm = _one_step(mat, eps0 - d, "stress")
+        kfd = (sp - sm) / (2.0 * d)
+        assert k == pytest.approx(kfd, rel=1e-5, abs=1e-4), (
+            f"consistent tangent {k} != FD {kfd} at eps={eps0}")
+
+    # elastic tangent is exactly E; deep-plastic tangent is strictly below E
+    assert _one_step(mat, 0.002, "tangent") == pytest.approx(E, rel=1e-9)
+    kpl = _one_step(mat, 0.06, "tangent")
+    assert 0.0 < kpl < E, f"plastic tangent {kpl} not in (0, E)"
+
+
+# --------------------------------------------------------------------------
+# V5: stress-controlled ratcheting — the headline differentiator vs Steel02
+# (Menegotto-Pinto cannot ratchet). Under ASYMMETRIC stress cycles (nonzero
+# mean) a single Armstrong-Frederick backstress accumulates net plastic strain
+# each cycle. Load-controlled truss; assert the tension-peak strain grows
+# monotonically cycle over cycle.
+# --------------------------------------------------------------------------
+def _run_1d_load(mat_fn, segments):
+    """segments=[(stress_target, nsteps),...]; A=1 so the load factor == applied
+    stress and getTime() reads it back. Returns [(applied_stress, strain),...]."""
+    _build_1d(mat_fn)
+    ops.test("NormDispIncr", 1.0e-10, 200, 0)
+    out = []
+    for s_target, nsteps in segments:
+        dlam = (s_target - ops.getTime()) / nsteps
+        ops.integrator("LoadControl", dlam)
+        for _ in range(nsteps):
+            assert ops.analyze(1) == 0, f"load step failed heading to sigma={s_target}"
+            out.append((ops.getTime(), ops.nodeDisp(2, 1)))
+    return out
+
+
+@pytest.mark.t1
+def test_ratcheting_stress_controlled():
+    # single AF, X_sat = C/gamma = 10 -> tensile capacity sig0+X_sat = 15 > s_hi.
+    E, sig0, C, gamma = 1000.0, 5.0, 400.0, 40.0
+
+    def mat(tag):
+        ops.uniaxialMaterial("LadrunoUniaxialJ2", tag, E,
+                             "-iso", "voce", sig0, 0.0, 0.0, 0.0, "-kin", 1, C, gamma)
+
+    # asymmetric cycles with BOTH extremes plastic (|s|>sig0): mean = +2 > 0.
+    s_hi, s_lo, ncyc = 12.0, -8.0, 6
+    segs = [(s_hi, 40)]
+    for _ in range(ncyc):
+        segs += [(s_lo, 60), (s_hi, 60)]
+    res = _run_1d_load(mat, segs)
+
+    # strain at each tension peak (the segment ends where getTime() == s_hi)
+    peaks = [eps for (s, eps) in res if abs(s - s_hi) < 1e-4]
+    assert len(peaks) >= ncyc, f"expected >= {ncyc} tension peaks, got {len(peaks)}"
+
+    # ratcheting: net plastic strain accumulates in the loading direction every cycle
+    incr = [b - a for a, b in zip(peaks, peaks[1:])]
+    for di in incr:
+        assert di > 1e-3, f"no ratcheting: per-cycle increment {di} not positive"
+    # accumulation is significant (many yield strains over the cycles)
+    assert peaks[-1] - peaks[0] > 10.0 * sig0 / E, (
+        f"ratcheting accumulation {peaks[-1] - peaks[0]:.4g} too small")
+    # single-AF signature: the ratcheting rate does NOT decay -> near-constant
+    # per-cycle increment (the documented over-prediction vs real steel / multi-AF)
+    assert max(incr) < 1.15 * min(incr), (
+        f"single-AF ratcheting rate should be ~constant, got increments {incr}")
