@@ -14,7 +14,7 @@
 //   std  — full 2x2x2 Gauss displacement  (reproduces upstream Brick)
 //   bbar — mean-dilatation B-bar          (reproduces upstream bbarBrick)
 //   uri  — 1-pt reduced + hourglass        (cheap explicit hex; new)
-//   eas  — reserved -> v2 (enhanced assumed strain)
+//   eas  — bbar + statically-condensed enhanced assumed strain (SSPbrick port)
 //
 // The kernel is carved into three seams (kinematics ledger / geometry method /
 // material adaptor) so corotational (v2) and finite-strain (v3) drop in without
@@ -178,6 +178,15 @@ class LadrunoBrick : public Element {
   // F per GP, drives the material via setTrialF(F), and assembles the spatial
   // internal force + material tangent + geometric (initial-stress) stiffness.  // Ladruno
   bool isFinite(void) const;
+
+  // True for the single-integration-point formulations (eas, uri with stiffness
+  // or viscous hourglass): the constitutive response is evaluated ONCE at the
+  // centroid (material slot 0) and the other 7 slots are output mirrors — so we
+  // skip 7 redundant (and, for materials like ASDConcrete3D, expensive) return
+  // maps in update() and mirror slot 0 in the per-GP output. std/bbar/uri-physical
+  // and -geom finite genuinely use all 8 Gauss points, so this is false.  // Ladruno
+  bool isSinglePoint(void) const;
+
   int  updateFinite(void);                       // per GP: F = I + Σ uⱼ⊗∇ₓNⱼ → setTrialF
   void formResidAndTangentFinite(int tang_flag); // ∫Bᵀσ dv + ∫BᵀcB dv + ∫GᵀΣG dv
   // deformation gradient F (row-major [9]) and det at GP `gp` from reference

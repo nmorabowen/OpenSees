@@ -648,6 +648,18 @@ void   LadrunoBrick::formInertiaTerms(int tangFlag)
   }
 }
 
+// True for the centroid-only formulations (eas, uri+stiffness, uri+viscous):
+// the constitutive update runs once on material slot 0; slots 1-7 are output
+// mirrors. std/bbar/uri-physical and -geom finite use all 8 GPs.  // Ladruno
+bool
+LadrunoBrick::isSinglePoint(void) const
+{
+  if (this->isFinite()) return false;
+  if (formulation == Formulation::EAS) return true;
+  if (formulation == Formulation::URI && hourglassType != Hourglass::PHYSICAL) return true;
+  return false;
+}
+
 //update — seam 1 (kinematics ledger): set the material trial strain
 int
 LadrunoBrick::update(void)
@@ -661,10 +673,12 @@ LadrunoBrick::update(void)
     const Vector &uCore = this->computeLocalDisp();   // identity for linear
     static Vector strainE(6);
     strainE.addMatrixVector(0.0, *easBnot, uCore, 1.0);   // strain = Bnot * u
-    // single integration point: report the same (centroid) strain on all 8
-    // material slots so the per-GP stress/strain response tree stays populated.
-    for (int i = 0; i < 8; i++)
-      materialPointers[i]->setTrialStrain(strainE);
+    // Single integration point: evaluate ONLY material slot 0 (the centroid).
+    // formEAS reads only slot 0; slots 1-7 are output mirrors (getResponse /
+    // setResponse map per-GP queries to slot 0 via isSinglePoint()) so we avoid
+    // 7 redundant return maps per element — material cost matters for e.g.
+    // ASDConcrete3D. See LEDGER/11_brick_asdconcrete_integration §4.  // Ladruno
+    materialPointers[0]->setTrialStrain(strainE);
     return 0;
   }
 
@@ -704,8 +718,9 @@ LadrunoBrick::update(void)
       return 0;
     }
 
-    // uri (perturbation hourglass): single centroid point; set its strain on
-    // all 8 material pointers so stress/strain output reports the centroid value.
+    // uri (perturbation hourglass): single centroid integration point. Evaluate
+    // ONLY material slot 0; formUri reads only slot 0 and slots 1-7 are output
+    // mirrors (isSinglePoint()) — avoids 7 redundant return maps.  // Ladruno
     double gp[3] = {0.0, 0.0, 0.0};
     double detJ;
     static double shpC[4][8];
@@ -720,8 +735,7 @@ LadrunoBrick::update(void)
       ulj(0) = uCore(3 * J); ulj(1) = uCore(3 * J + 1); ulj(2) = uCore(3 * J + 2);
       strainC.addMatrixVector(1.0, Bc, ulj, 1.0);
     }
-    for (int i = 0; i < 8; i++)
-      materialPointers[i]->setTrialStrain(strainC);
+    materialPointers[0]->setTrialStrain(strainC);
     return 0;
   }
 
@@ -2438,8 +2452,9 @@ LadrunoBrick::displaySelf(Renderer &theViewer, int displayMode, float fact,
 
   if (displayMode < 3 && displayMode > 0) {
     int index = displayMode - 1;
+    const bool sp = this->isSinglePoint();   // single-point: mirror slot 0
     for (int n = 0; n < 8; n++) {
-      const Vector &stressN = materialPointers[n]->getStress();
+      const Vector &stressN = materialPointers[sp ? 0 : n]->getStress();
       values(n) = stressN(index);
     }
   } else if (displayMode < 0) {
@@ -2619,9 +2634,11 @@ LadrunoBrick::setResponse(const char **argv, int argc, OPS_Stream &output)
   } else if (strcmp(argv[0], "material") == 0 || strcmp(argv[0], "integrPoint") == 0) {
     int pointNum = atoi(argv[1]);
     if (pointNum > 0 && pointNum <= 8) {
+      // single-point formulations: every GP query resolves to the live slot 0
+      int slot = this->isSinglePoint() ? 0 : pointNum - 1;
       output.tag("GaussPoint");
       output.attr("number", pointNum);
-      theResponse = materialPointers[pointNum - 1]->setResponse(&argv[2], argc - 2, output);
+      theResponse = materialPointers[slot]->setResponse(&argv[2], argc - 2, output);
       output.endTag();
     }
 
@@ -2720,36 +2737,47 @@ LadrunoBrick::getResponse(int responseID, Information &eleInfo)
     return eleInfo.setMatrix(this->getTangentStiff());
 
   else if (responseID == 3) {
+    // single-point formulations: only slot 0 is live → mirror it to all 8 GPs
+    const bool sp = this->isSinglePoint();
     int cnt = 0;
     for (int i = 0; i < 8; i++) {
-      const Vector &sigma = materialPointers[i]->getStress();
+      const Vector &sigma = materialPointers[sp ? 0 : i]->getStress();
       for (int j = 0; j < 6; j++) stresses(cnt++) = sigma(j);
     }
     return eleInfo.setVector(stresses);
 
   } else if (responseID == 4) {
+    const bool sp = this->isSinglePoint();
     int cnt = 0;
     for (int i = 0; i < 8; i++) {
-      const Vector &eps = materialPointers[i]->getStrain();
+      const Vector &eps = materialPointers[sp ? 0 : i]->getStrain();
       for (int j = 0; j < 6; j++) stresses(cnt++) = eps(j);
     }
     return eleInfo.setVector(stresses);
 
   } else if (responseID == 6) {
     Vector tmpStress(6);
-    for (int i = 0; i < 8; i++) {
-      const Vector &sigma = materialPointers[i]->getStress();
-      for (int j = 0; j < 6; j++) tmpStress(j) += sigma(j) * 0.125;
+    if (this->isSinglePoint()) {           // uniform: average == centroid (slot 0)
+      tmpStress = materialPointers[0]->getStress();
+    } else {
+      for (int i = 0; i < 8; i++) {
+        const Vector &sigma = materialPointers[i]->getStress();
+        for (int j = 0; j < 6; j++) tmpStress(j) += sigma(j) * 0.125;
+      }
     }
     return eleInfo.setVector(tmpStress);
 
   } else if (responseID == 7) {
     Vector tmpStrain(6);
-    for (int i = 0; i < 8; i++) {
-      const Vector &eps = materialPointers[i]->getStrain();
-      for (int j = 0; j < 6; j++) tmpStrain(j) += eps(j);
+    if (this->isSinglePoint()) {
+      tmpStrain = materialPointers[0]->getStrain();
+    } else {
+      for (int i = 0; i < 8; i++) {
+        const Vector &eps = materialPointers[i]->getStrain();
+        for (int j = 0; j < 6; j++) tmpStrain(j) += eps(j);
+      }
+      tmpStrain /= 8.0;
     }
-    tmpStrain /= 8.0;
     return eleInfo.setVector(tmpStrain);
 
   } else if (responseID == 8) {
@@ -2784,9 +2812,10 @@ LadrunoBrick::setParameter(const char **argv, int argc, Parameter &param)
   if (strstr(argv[0], "material") != 0) {
     if (argc < 3) return -1;
     int pointNum = atoi(argv[1]);
-    if (pointNum > 0 && pointNum <= 8)
-      return materialPointers[pointNum - 1]->setParameter(&argv[2], argc - 2, param);
-    else
+    if (pointNum > 0 && pointNum <= 8) {
+      int slot = this->isSinglePoint() ? 0 : pointNum - 1;   // single-point: live slot 0
+      return materialPointers[slot]->setParameter(&argv[2], argc - 2, param);
+    } else
       return -1;
   }
 
