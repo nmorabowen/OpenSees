@@ -105,6 +105,7 @@ extern void *OPS_ModElasticBeam2d(void);
 extern void *OPS_ModElasticBeam3d(void);
 extern void *OPS_ElasticBeam2d(const ID &info);
 extern void *OPS_ElasticBeam3d(void);
+extern void *OPS_LadrunoIMKBeam(void); // N. Mora-Bowen (Ladruno)
 extern void *OPS_ElasticTimoshenkoBeam2d(void);
 extern void *OPS_ElasticTimoshenkoBeam3d(void);
 extern void *OPS_TPB1D(void);
@@ -559,6 +560,15 @@ TclModelBuilderElementCommand(ClientData clientData, Tcl_Interp *interp,
       opserr << "TclElementCommand -- unable to create element of type : " << argv[1] << endln;
       return TCL_ERROR;
     }
+  } else if ((strcmp(argv[1],"LadrunoIMKBeam") == 0) || (strcmp(argv[1],"ladrunoIMKBeam")) == 0) {
+    Element *theEle = (Element *)OPS_LadrunoIMKBeam(); // N. Mora-Bowen (Ladruno)
+    if (theEle != 0)
+      theElement = theEle;
+    else {
+      opserr << "TclElementCommand -- unable to create element of type : " << argv[1] << endln;
+      return TCL_ERROR;
+    }
+
   } else if ((strcmp(argv[1],"PML2D_3") == 0) || (strcmp(argv[1],"pml2d_3")) == 0) {
     Element *theEle = (Element *)OPS_PML2D_3();
     if (theEle != 0) 
