@@ -66,6 +66,18 @@
 //       element's cmat via Ḟ = L F:  cmatB_ijkl = Σ_m (∂σ_ij/∂F_km) F_lm. No
 //       kernel re-derivation. (Validated in tests/test_ladrunoJ2_finite_native_tangent.py.)
 //
+// IMPL-EX (`-implex`, Oliver–Huespe–Cante): an optional EXPLICIT reporting path. The
+// implicit return map still runs and is COMMITTED (committed history identical to the
+// fully-implicit run); only the stress/tangent fed to the solver are replaced by
+// freezing the extrapolated multiplier Δγ̃ = Δγ_n (uniform step) and the committed
+// log-strain flow direction N_n co-rotated by the SAME R_Δ = polar(f_Δ) as the
+// backstress: εᵉ̃ = εᵉᵗʳ − Δγ̃·Ñ_n, τ̃ = elastic-D : εᵉ̃, σ̃ = τ̃/J. The backstress
+// drops out of σ̃ ⇒ the reported tangent is the CONSTANT SPD elastic operator (no
+// plastic h, no co-rotation channel B); the cost is an O(Δt) consistency error and a
+// one-step lag at first yield. Default off ⇒ bit-identical to the implicit material.
+// Mirrors the LadrunoJ2 damage IMPL-EX (frozen extrapolated D~ ⇒ SPD tangent); here
+// the frozen quantity is the plastic multiplier. (Oracle: tests/ladrunoj2_finite_implex_reference.py.)
+//
 // State (per Gauss point): F_n, bᵉ_n, ε̄ᵖ_n, α_{n,k} (SPATIAL). Reuses
 // LadrunoJ2Kernel.h (return map), LogStrainKernel.h (Hencky kinematics + spatial
 // tangent + eigenvalue-degeneracy branches), LadrunoHardening.h (shared σ_y).
@@ -87,7 +99,8 @@ class LadrunoJ2Finite : public FiniteStrainNDMaterial
 
   LadrunoJ2Finite(int tag, double K, double G,
                   double sig0, double Qinf, double bIso, double Hiso,
-                  int nBack, const double *C, const double *gam, double rho = 0.0);
+                  int nBack, const double *C, const double *gam, double rho = 0.0,
+                  bool implex = false);
   LadrunoJ2Finite();
   ~LadrunoJ2Finite();
 
@@ -134,12 +147,18 @@ class LadrunoJ2Finite : public FiniteStrainNDMaterial
   double rho;                         // mass density
   int nBack;                          // number of Chaboche backstress terms
   double Ckin[MAXBACK], gKin[MAXBACK];
+  bool useImplex;                     // IMPL-EX (Δγ-extrapolation) reporting path
 
   // committed finite-strain state (per Gauss point)
   double Fn[9];                       // committed total deformation gradient (row-major)
   double Be_n[9];                     // committed elastic left Cauchy–Green bᵉ_n
   double ebarP_n;                     // committed accumulated equiv. plastic strain
   double alpha_n[MAXBACK][6];         // committed SPATIAL backstress (tensor comps)
+  // IMPL-EX extrapolation history (committed): the last implicit multiplier increment
+  // Δγ_n and the committed SPATIAL log-strain flow direction N_n (unit deviatoric,
+  // tensor comps {00,11,22,01,12,02}); both zero when the last step was elastic.
+  double dGamma_n;
+  double Nflow_n[6];
 
   // trial state staged for commit
   double Ftrial9[9];                  // trial F
@@ -148,6 +167,7 @@ class LadrunoJ2Finite : public FiniteStrainNDMaterial
   double ebarP_trial;
   double alpha_trial[MAXBACK][6];    // updated backstress (current frame), staged
   double dGammaTrial;                // plastic multiplier increment (record / plastic flag)
+  double Nflow_trial[6];             // recovered flow direction (current frame), staged
 
   // cached trial outputs
   Vector sigmaCauchy;                // Cauchy stress (6)

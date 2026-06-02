@@ -161,6 +161,7 @@ void *OPS_LadrunoJ2Finite(void)
 
   double s0 = 0.0, Qinf = 0.0, bIso = 0.0, Hiso = 0.0, rho = 0.0;
   int nBack = 0;
+  bool useImplex = false;
   double C[LadrunoJ2Finite::MAXBACK], gam[LadrunoJ2Finite::MAXBACK];
   for (int i = 0; i < LadrunoJ2Finite::MAXBACK; i++) { C[i] = 0.0; gam[i] = 0.0; }
 
@@ -202,12 +203,16 @@ void *OPS_LadrunoJ2Finite(void)
         opserr << "WARNING LadrunoJ2Finite: -rho wants rho\n"; return 0;
       }
     }
+    else if (strcmp(flag, "-implex") == 0) {
+      useImplex = true;
+    }
     else {
       opserr << "WARNING LadrunoJ2Finite: unknown option '" << flag << "'\n"; return 0;
     }
   }
 
-  NDMaterial *mat = new LadrunoJ2Finite(tag, K, G, s0, Qinf, bIso, Hiso, nBack, C, gam, rho);
+  NDMaterial *mat = new LadrunoJ2Finite(tag, K, G, s0, Qinf, bIso, Hiso, nBack, C, gam, rho,
+                                        useImplex);
   if (mat == 0) { opserr << "WARNING LadrunoJ2Finite: allocation failed\n"; return 0; }
   return mat;
 }
@@ -223,10 +228,12 @@ void LadrunoJ2Finite::setIdentity(double M[9])
 
 LadrunoJ2Finite::LadrunoJ2Finite(int tag, double K, double G,
                                  double s0, double Qi, double b, double Hi,
-                                 int nb, const double *C, const double *gam, double r)
+                                 int nb, const double *C, const double *gam, double r,
+                                 bool implex)
   : FiniteStrainNDMaterial(tag, ND_TAG_LadrunoJ2Finite),
     bulk(K), shear(G), sig0(s0), Qinf(Qi), bIso(b), Hiso(Hi), rho(r),
-    nBack(nb), ebarP_n(0.0), ebarP_trial(0.0), dGammaTrial(0.0),
+    nBack(nb), useImplex(implex), ebarP_n(0.0), dGamma_n(0.0),
+    ebarP_trial(0.0), dGammaTrial(0.0),
     sigmaCauchy(6), henckyStrain(6), aTangent(6, 6), K0init(6, 6), Jdet(1.0)
 {
   for (int k = 0; k < MAXBACK; k++) {
@@ -239,7 +246,8 @@ LadrunoJ2Finite::LadrunoJ2Finite(int tag, double K, double G,
 LadrunoJ2Finite::LadrunoJ2Finite()
   : FiniteStrainNDMaterial(0, ND_TAG_LadrunoJ2Finite),
     bulk(0.0), shear(0.0), sig0(0.0), Qinf(0.0), bIso(0.0), Hiso(0.0), rho(0.0),
-    nBack(0), ebarP_n(0.0), ebarP_trial(0.0), dGammaTrial(0.0),
+    nBack(0), useImplex(false), ebarP_n(0.0), dGamma_n(0.0),
+    ebarP_trial(0.0), dGammaTrial(0.0),
     sigmaCauchy(6), henckyStrain(6), aTangent(6, 6), K0init(6, 6), Jdet(1.0)
 {
   for (int k = 0; k < MAXBACK; k++) { Ckin[k] = 0.0; gKin[k] = 0.0; }
@@ -294,7 +302,42 @@ int LadrunoJ2Finite::setTrialF(const Matrix &F)
     opserr << "WARNING LadrunoJ2Finite: local Newton did not converge (tag "
            << this->getTag() << ", |R|=" << resid << ")\n";
 
-  // Cauchy σ = τ/J (kernel stress6 is the Kirchhoff τ in this log-strain feed)
+  // Recover the trial log-strain flow direction N = Δεᵖ/Δγ (current frame, unit
+  // deviatoric, tensor comps) for the IMPL-EX extrapolation history. epsP is the
+  // tensor plastic increment dG·n, so n = epsP/dG. Zero on an elastic step.
+  if (dGammaTrial > 0.0) {
+    double inv = 1.0 / dGammaTrial;
+    for (int k = 0; k < 6; k++) Nflow_trial[k] = epsP[k] * inv;
+  } else {
+    for (int k = 0; k < 6; k++) Nflow_trial[k] = 0.0;
+  }
+
+  // ----- IMPL-EX (Oliver–Huespe–Cante): override the REPORTED stress + tangent ----
+  // The implicit return map above stays the committed truth (epsP, alpha_trial,
+  // ebarP_trial, Be below are untouched). Only the stress fed to the solver and the
+  // reported tangent are replaced: freeze the extrapolated multiplier Δγ̃ = Δγ_n
+  // (uniform step) and the committed flow direction N_n co-rotated to the current
+  // frame, so the plastic strain εᵖ̃ = Δγ̃·Ñ_n is a pure history quantity and the
+  // stress is a linear-elastic evaluation ⇒ the tangent is the constant SPD elastic
+  // operator (no plastic h, no backstress co-rotation channel B). One-step lag at
+  // first yield (Δγ_n = 0). See Ladruno_implementation/16_finite_native_j2_adr.md and
+  // tests/ladrunoj2_finite_implex_reference.py.
+  if (useImplex) {
+    double Nflow_pf[6]; rotateSym6(R, Nflow_n, Nflow_pf);   // co-rotate committed N_n
+    const double lam = bulk - 2.0 * shear / 3.0;
+    double ee[6];                                           // εᵉᵗʳ − Δγ̃·Ñ_n (tensor)
+    for (int k = 0; k < 6; k++) ee[k] = strain6_t[k] - dGamma_n * Nflow_pf[k];
+    double tre = ee[0] + ee[1] + ee[2];
+    s6[0] = lam*tre + 2.0*shear*ee[0];
+    s6[1] = lam*tre + 2.0*shear*ee[1];
+    s6[2] = lam*tre + 2.0*shear*ee[2];
+    s6[3] = 2.0*shear*ee[3];
+    s6[4] = 2.0*shear*ee[4];
+    s6[5] = 2.0*shear*ee[5];
+    ladruno_j2_kernel::elasticTangent(p, DtanTrial);        // constant SPD reported tangent
+  }
+
+  // Cauchy σ = τ/J (s6 is the Kirchhoff τ — implicit, or the IMPL-EX explicit τ̃)
   double invJ = 1.0 / Jdet;
   for (int k = 0; k < 6; k++) sigmaCauchy(k) = s6[k] * invJ;
 
@@ -346,6 +389,10 @@ int LadrunoJ2Finite::getSpatialTangentTensor(double c[3][3][3][3])
   for (int I = 0; I < 6; I++) for (int J = 0; J < 6; J++) D6flat[6*I+J] = DtanTrial[I][J];
   spatial_tangent_full(BeTrial9, D6flat, Jdet, c);           // channel A
 
+  // IMPL-EX reports the constant SPD elastic tangent (DtanTrial set elastic in
+  // setTrialF): channel A with the elastic D IS the whole tangent — no co-rotation
+  // channel B (the backstress drops out of the explicit stress).
+  if (useImplex) return 0;
   if (dGammaTrial <= 0.0) return 0;                          // elastic ⇒ no channel B
 
   // channel B: ∂σ/∂F by perturbing ONLY R = polar(f_Δ) (hold εᵉᵗʳ and J at base),
@@ -394,6 +441,10 @@ int LadrunoJ2Finite::commitState(void)
   ebarP_n = ebarP_trial;
   for (int k = 0; k < nBack; k++)
     for (int i = 0; i < 6; i++) alpha_n[k][i] = alpha_trial[k][i];
+  // IMPL-EX extrapolation history: commit the implicit multiplier increment + the
+  // recovered flow direction (becomes N_n, co-rotated next step).
+  dGamma_n = dGammaTrial;
+  for (int i = 0; i < 6; i++) Nflow_n[i] = Nflow_trial[i];
   return 0;
 }
 
@@ -406,9 +457,10 @@ int LadrunoJ2Finite::revertToStart(void)
 {
   setIdentity(Fn); setIdentity(Be_n);
   setIdentity(Ftrial9); setIdentity(BeTrial9); setIdentity(Be_trialUpd);
-  ebarP_n = 0.0; ebarP_trial = 0.0; dGammaTrial = 0.0; Jdet = 1.0;
+  ebarP_n = 0.0; ebarP_trial = 0.0; dGammaTrial = 0.0; dGamma_n = 0.0; Jdet = 1.0;
   for (int k = 0; k < MAXBACK; k++)
     for (int i = 0; i < 6; i++) { alpha_n[k][i] = 0.0; alpha_trial[k][i] = 0.0; }
+  for (int i = 0; i < 6; i++) { Nflow_n[i] = 0.0; Nflow_trial[i] = 0.0; }
   sigmaCauchy.Zero();
   henckyStrain.Zero();
   aTangent.Zero();
@@ -423,11 +475,13 @@ int LadrunoJ2Finite::revertToStart(void)
 NDMaterial *LadrunoJ2Finite::getCopy(void)
 {
   LadrunoJ2Finite *c = new LadrunoJ2Finite(this->getTag(), bulk, shear, sig0, Qinf,
-                                           bIso, Hiso, nBack, Ckin, gKin, rho);
+                                           bIso, Hiso, nBack, Ckin, gKin, rho, useImplex);
   for (int i = 0; i < 9; i++) { c->Fn[i] = Fn[i]; c->Be_n[i] = Be_n[i]; }
   c->ebarP_n = ebarP_n;
   for (int k = 0; k < MAXBACK; k++)
     for (int i = 0; i < 6; i++) c->alpha_n[k][i] = alpha_n[k][i];
+  c->dGamma_n = dGamma_n;
+  for (int i = 0; i < 6; i++) c->Nflow_n[i] = Nflow_n[i];
   return c;
 }
 
@@ -445,7 +499,8 @@ NDMaterial *LadrunoJ2Finite::getCopy(const char *type)
 int LadrunoJ2Finite::sendSelf(int commitTag, Channel &theChannel)
 {
   // tag + 7 params + nBack + 2*MAXBACK + Fn(9) + Be_n(9) + ebarP_n(1) + alpha_n(MAXBACK*6)
-  static Vector data(1 + 7 + 1 + 2*MAXBACK + 9 + 9 + 1 + MAXBACK*6);
+  // + useImplex(1) + dGamma_n(1) + Nflow_n(6)
+  static Vector data(1 + 7 + 1 + 2*MAXBACK + 9 + 9 + 1 + MAXBACK*6 + 1 + 1 + 6);
   int c = 0;
   data(c++) = this->getTag();
   data(c++) = bulk; data(c++) = shear;
@@ -458,6 +513,9 @@ int LadrunoJ2Finite::sendSelf(int commitTag, Channel &theChannel)
   for (int i = 0; i < 9; i++) data(c++) = Be_n[i];
   data(c++) = ebarP_n;
   for (int k = 0; k < MAXBACK; k++) for (int i = 0; i < 6; i++) data(c++) = alpha_n[k][i];
+  data(c++) = useImplex ? 1.0 : 0.0;
+  data(c++) = dGamma_n;
+  for (int i = 0; i < 6; i++) data(c++) = Nflow_n[i];
 
   if (theChannel.sendVector(this->getDbTag(), commitTag, data) < 0) {
     opserr << "LadrunoJ2Finite::sendSelf - failed to send vector\n"; return -1;
@@ -467,7 +525,7 @@ int LadrunoJ2Finite::sendSelf(int commitTag, Channel &theChannel)
 
 int LadrunoJ2Finite::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
 {
-  static Vector data(1 + 7 + 1 + 2*MAXBACK + 9 + 9 + 1 + MAXBACK*6);
+  static Vector data(1 + 7 + 1 + 2*MAXBACK + 9 + 9 + 1 + MAXBACK*6 + 1 + 1 + 6);
   if (theChannel.recvVector(this->getDbTag(), commitTag, data) < 0) {
     opserr << "LadrunoJ2Finite::recvSelf - failed to recv vector\n"; return -1;
   }
@@ -483,11 +541,15 @@ int LadrunoJ2Finite::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBrok
   for (int i = 0; i < 9; i++) Be_n[i] = data(c++);
   ebarP_n = data(c++);
   for (int k = 0; k < MAXBACK; k++) for (int i = 0; i < 6; i++) alpha_n[k][i] = data(c++);
+  useImplex = (data(c++) != 0.0);
+  dGamma_n = data(c++);
+  for (int i = 0; i < 6; i++) Nflow_n[i] = data(c++);
 
   // sync trial to committed
   for (int i = 0; i < 9; i++) { Ftrial9[i] = Fn[i]; BeTrial9[i] = Be_n[i]; Be_trialUpd[i] = Be_n[i]; }
   ebarP_trial = ebarP_n; dGammaTrial = 0.0;
   for (int k = 0; k < MAXBACK; k++) for (int i = 0; i < 6; i++) alpha_trial[k][i] = alpha_n[k][i];
+  for (int i = 0; i < 6; i++) Nflow_trial[i] = Nflow_n[i];
   Params p; fillParams(p, bulk, shear, sig0, Qinf, bIso, Hiso, nBack, Ckin, gKin);
   ladruno_j2_kernel::elasticTangent(p, DtanTrial);
   return 0;
@@ -501,7 +563,8 @@ void LadrunoJ2Finite::Print(OPS_Stream &s, int flag)
   if (flag == OPS_PRINT_PRINTMODEL_JSON) {
     s << "\t\t\t{";
     s << "\"name\": \"" << this->getTag() << "\", ";
-    s << "\"type\": \"LadrunoJ2Finite\"";
+    s << "\"type\": \"LadrunoJ2Finite\", ";
+    s << "\"implex\": " << (useImplex ? "true" : "false");
     s << "}";
   } else {
     s << endln;
@@ -513,6 +576,7 @@ void LadrunoJ2Finite::Print(OPS_Stream &s, int flag)
     for (int k = 0; k < nBack; k++)
       s << "    term " << k+1 << ": C=" << Ckin[k] << " gamma=" << gKin[k] << endln;
     s << "  rho    : " << rho << endln;
+    s << "  implex : " << (useImplex ? "on (Delta-gamma extrapolation)" : "off") << endln;
   }
 }
 
