@@ -410,6 +410,17 @@ const Matrix &  LadrunoBrick::getInitialStiff(void)
     return *Ki;
   }
 
+  // -geom finite (incl. F-bar) reaches the small-strain assembly below ON
+  // PURPOSE. The initial stiffness is the tangent at the REFERENCE state
+  // (u = 0 ⇒ F = I ⇒ σ = 0, no geometric term, material modulus = initial
+  // tangent), so for std the small-strain Bᵀ D_init B with reference gradients
+  // IS that finite tangent. We deliberately do NOT assemble the F-bar centroid
+  // coupling here: getInitialStiff feeds Rayleigh βK0, -initial / Krylov seeding
+  // and eigen analysis, which want a SYMMETRIC, well-conditioned seed — not the
+  // generally-UNSYMMETRIC F-bar tangent (the bbar branch below gives the
+  // mean-dilatation B-bar seed). The consistent (F-bar) tangent that drives the
+  // converged solution comes from getTangentStiff → formResidAndTangentFinite.  // Ladruno
+
   static const int ndf = 3;
   static const int nstress = 6;
   static const int numberNodes = 8;
@@ -1036,6 +1047,24 @@ LadrunoBrick::deformationGradient(const double shpRef[4][8], double F[9])
        + F[2]*(F[3]*F[7]-F[4]*F[6]);
 }
 
+// Inverse of a row-major 3×3 via adjugate/det. Returns det F; fills Finv (row-
+// major), zero-filled if |det| underflows to 0. Shared by the finite/F-bar GP
+// and centroid spatial-gradient pushes (one source of truth for the 9-term
+// adjugate, which is exactly the kind of formula that drifts under copy-paste).
+static double
+invert3x3(const double F[9], double Finv[9])
+{
+  double det = F[0]*(F[4]*F[8]-F[5]*F[7]) - F[1]*(F[3]*F[8]-F[5]*F[6])
+             + F[2]*(F[3]*F[7]-F[4]*F[6]);
+  double id = (det != 0.0) ? 1.0 / det : 0.0;
+  Finv[0] =  (F[4]*F[8]-F[5]*F[7])*id;  Finv[1] = -(F[1]*F[8]-F[2]*F[7])*id;
+  Finv[2] =  (F[1]*F[5]-F[2]*F[4])*id;  Finv[3] = -(F[3]*F[8]-F[5]*F[6])*id;
+  Finv[4] =  (F[0]*F[8]-F[2]*F[6])*id;  Finv[5] = -(F[0]*F[5]-F[2]*F[3])*id;
+  Finv[6] =  (F[3]*F[7]-F[4]*F[6])*id;  Finv[7] = -(F[0]*F[7]-F[1]*F[6])*id;
+  Finv[8] =  (F[0]*F[4]-F[1]*F[3])*id;
+  return det;
+}
+
 // F-bar centroid data (bbar + finite). Assumes computeBasis() has set xl.
 // Returns J0 = det F0, F0 = deformation gradient at the element centroid
 // (ξ=0), per dSNPO eq 15.5. If G0 != 0, also fills the centroid spatial gradient
@@ -1052,13 +1081,8 @@ LadrunoBrick::centroidFbar(double (*G0)[8])
   double J0 = deformationGradient(shp0, F0);
 
   if (G0 != 0) {
-    double id = (J0 != 0.0) ? 1.0 / J0 : 0.0;    // F0⁻¹ (row-major)
     double Fi[9];
-    Fi[0] =  (F0[4]*F0[8]-F0[5]*F0[7])*id;  Fi[1] = -(F0[1]*F0[8]-F0[2]*F0[7])*id;
-    Fi[2] =  (F0[1]*F0[5]-F0[2]*F0[4])*id;  Fi[3] = -(F0[3]*F0[8]-F0[5]*F0[6])*id;
-    Fi[4] =  (F0[0]*F0[8]-F0[2]*F0[6])*id;  Fi[5] = -(F0[0]*F0[5]-F0[2]*F0[3])*id;
-    Fi[6] =  (F0[3]*F0[7]-F0[4]*F0[6])*id;  Fi[7] = -(F0[0]*F0[7]-F0[1]*F0[6])*id;
-    Fi[8] =  (F0[0]*F0[4]-F0[1]*F0[3])*id;
+    invert3x3(F0, Fi);                       // F0⁻¹ (row-major)
     for (int b = 0; b < 8; b++)
       for (int kk = 0; kk < 3; kk++) {
         double s = 0.0;
@@ -1180,13 +1204,8 @@ LadrunoBrick::formResidAndTangentFinite(int tang_flag)
       double F[9];
       double J = deformationGradient(shpRef, F);
 
-      double id = (J != 0.0) ? 1.0 / J : 0.0;     // F^-1 (row-major)
       double Fi[9];
-      Fi[0] =  (F[4]*F[8]-F[5]*F[7])*id;  Fi[1] = -(F[1]*F[8]-F[2]*F[7])*id;
-      Fi[2] =  (F[1]*F[5]-F[2]*F[4])*id;  Fi[3] = -(F[3]*F[8]-F[5]*F[6])*id;
-      Fi[4] =  (F[0]*F[8]-F[2]*F[6])*id;  Fi[5] = -(F[0]*F[5]-F[2]*F[3])*id;
-      Fi[6] =  (F[3]*F[7]-F[4]*F[6])*id;  Fi[7] = -(F[0]*F[7]-F[1]*F[6])*id;
-      Fi[8] =  (F[0]*F[4]-F[1]*F[3])*id;
+      invert3x3(F, Fi);                           // F⁻¹ (row-major)
 
       for (int a = 0; a < numberNodes; a++)
         for (int j = 0; j < 3; j++) {
