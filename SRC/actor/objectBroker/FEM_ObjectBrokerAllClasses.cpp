@@ -110,6 +110,7 @@
 #include "FatigueMaterial.h"
 #include "ReinforcingSteel.h"
 #include "HardeningMaterial.h"
+#include "LadrunoUniaxialJ2.h"   // Ladruno — uniaxial combined iso + Chaboche AF kinematic J2
 #include "HystereticMaterial.h"
 #include "HystereticSMMaterial.h"
 #include "OOHystereticMaterial.h"
@@ -1867,6 +1868,9 @@ FEM_ObjectBrokerAllClasses::getNewUniaxialMaterial(int classTag)
 
 	case MAT_TAG_Hardening:
 		return new HardeningMaterial();
+
+	case MAT_TAG_LadrunoUniaxialJ2:               // Ladruno
+		return new LadrunoUniaxialJ2();
 
 	case MAT_TAG_PySimple1:
 		return new PySimple1();

@@ -31,6 +31,7 @@
 // Written: N. Mora-Bowen (Ladruno), 2026.
 
 #include <LadrunoJ2.h>
+#include <LadrunoHardening.h>   // Ladruno: shared isotropic law (oracle contract w/ LadrunoUniaxialJ2)
 #include <Channel.h>
 #include <FEM_ObjectBroker.h>
 #include <Information.h>
@@ -222,13 +223,15 @@ LadrunoJ2::~LadrunoJ2() {}
 // ===========================================================================
 double LadrunoJ2::yieldStress(double p) const
 {
-  // Voce saturation + linear; reduces to perfect (Qinf=Hiso=0) or linear (Qinf=0)
-  return sig0 + Qinf*(1.0 - exp(-bIso*p)) + Hiso*p;
+  // Voce saturation + linear; reduces to perfect (Qinf=Hiso=0) or linear (Qinf=0).
+  // Delegated to the shared Ladruno::* law so the uniaxial LadrunoUniaxialJ2 uses
+  // byte-identical sig_y (the V7 1e-12 oracle contract).
+  return Ladruno::yieldStressVoceLinear(p, sig0, Qinf, bIso, Hiso);
 }
 
 double LadrunoJ2::yieldSlope(double p) const
 {
-  return Qinf*bIso*exp(-bIso*p) + Hiso;
+  return Ladruno::yieldSlopeVoceLinear(p, sig0, Qinf, bIso, Hiso);
 }
 
 // ===========================================================================
