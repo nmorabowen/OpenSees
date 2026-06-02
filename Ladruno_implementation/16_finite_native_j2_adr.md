@@ -204,12 +204,18 @@ adds ~15 lines, needs **no** kernel re-derivation, and is exact-to-FD. Proven cl
 and additive: `∂σ/∂F_full = ∂σ/∂F_(A, R-frozen) + ∂σ/∂F_(B, R-only)` to machine
 precision across stiff/soft × first-yield/saturated × no-rot/large-rot.
 
-(Residual open item, low risk — unchanged: the objectivity tests don't pin the
-*magnitude* convergence of AF evolution under simultaneous large rotation **and**
-large stretch; verify by step-refinement against a fine-increment reference when
-building, and only if a discrepancy appears adopt the exact §14.11 exp-map
-transport. Expected non-issue — the AF evolution runs in the correctly-rotated
-frame via the unchanged return map, exactly as the isotropic part does.)
+(Residual open item — **RESOLVED 2026-06-02 by step-refinement, no swap needed.** See
+the P1 entry under "Follow-ups" below: a numpy step-refinement study along a severe
+non-coaxial path — `F(s)=exp(s·(D+W))`, 114° rotation + ~19% isochoric stretch with
+stretch-rate `D` and spin `W` deliberately not coaxial — shows (i) the shipped polar
+scheme converges at order ≈1 to a well-defined AF magnitude, and (ii) the polar(f_Δ)
+vs exact continuous-spin (exp-map) transport difference is *second order* in the step
+(≈O(Δs²)), 3–4 orders of magnitude below the first-order discretization error. The two
+transports share the same limit, so the exact exp-map transport cannot meaningfully
+improve accuracy. Confirms the expectation — the AF evolution runs in the correctly-
+rotated frame via the unchanged return map, exactly as the isotropic part does.
+Tests: `tests/test_ladrunoJ2_finite_native_steprefine.py` (5) +
+`tests/ladrunoj2_finite_native_steprefine_reference.py`.)
 
 ## Status — MERGED (PR #127, 2026-06-02) + adversarial review
 
@@ -256,15 +262,29 @@ v1 (PR #127) is complete for its scope (3D, full Voce+Chaboche, co-rotated backs
 channel-A+B consistent tangent, serialization). Remaining work, prioritized — a future
 session can start straight from here:
 
-**P1 — physics caveat to close (mild correctness flavor, cheap):**
-- **AF magnitude under *simultaneous* large rotation AND large stretch.** Objectivity is
-  proven, but the objectivity tests don't pin the *accuracy* of the Armstrong–Frederick
-  evolution when a step has both large spin and large stretch (`R_Δ=polar(f_Δ)` transport
-  vs the exact §14.11 exponential-map transport differ at higher order there). **Verify by
-  step-refinement** against a fine-increment reference (numpy oracle is enough); only if a
-  discrepancy appears, swap the incremental polar transport for the exact exp-map transport.
-  Expected a non-issue (the AF evolution runs in the correctly-rotated frame). See the
-  "Residual open item" above.
+**P1 — physics caveat to close (mild correctness flavor, cheap): ✅ RESOLVED 2026-06-02 — no swap.**
+- **AF magnitude under *simultaneous* large rotation AND large stretch.** Objectivity was
+  proven; this was the one un-pinned *accuracy* question (`R_Δ=polar(f_Δ)` transport vs the
+  exact §14.11 exponential-map transport differ at higher order). **Verified by step-refinement**
+  (numpy oracle, no build needed): driver `tests/ladrunoj2_finite_native_steprefine_reference.py`
+  drives the SAME return map + Hencky kinematics the C++ uses along `F(s)=exp(s·(D+W))` with a
+  **non-coaxial** stretch-rate `D` and spin `W` (114° rotation + ~19% isochoric stretch) — the
+  regime where the transport choice actually matters (a fixed-axis stretch is degenerate: all
+  `U(s)` commute ⇒ every transport coincides). Test `tests/test_ladrunoJ2_finite_native_steprefine.py`
+  (5 cases, all green) establishes:
+  - the `polar` driver is **bit-identical** to the shipped `NativeFiniteJ2` along the path
+    (it is the same logic, not a re-model);
+  - the shipped polar scheme **converges at observed order ≈1** to a well-defined AF magnitude
+    (no O(1) inconsistency);
+  - polar(f_Δ) and the **exact** continuous-spin transport (composed micro-polars → exp-map of
+    the vorticity, M→∞) **share the same limit**, their gap shrinking at **order ≈1.9** (second
+    order in the step);
+  - at every coarse resolution the polar-vs-exact *transport-choice* difference is **3–4 orders
+    of magnitude below** the step-discretization error (e.g. N=12: ~3e-4 of it) — i.e. dominated
+    by the unavoidable first-order return-map discretization.
+
+  **Verdict: keep the incremental polar transport. The exact §14.11 exp-map transport would not
+  measurably improve accuracy.** The caveat is closed; no code change.
 
 **P2 — deferred features (each its own PR; the "Out (v2.x)" non-goals):**
 - **Plane-stress / dimensional finite views** (§14.7 nested route). `LadrunoJ2Finite` is
