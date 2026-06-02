@@ -66,7 +66,8 @@ class LadrunoJ2 : public NDMaterial {
             int nBack, const double* C, const double* gam,
             double rho = 0.0, int dimMode = DIM_3D,
             bool dmgOn = false, double dmgR = 0.0, double dmgS = 1.0,
-            double dmgPD = 0.0, double dmgDc = 1.0);
+            double dmgPD = 0.0, double dmgDc = 1.0,
+            bool dmgRegOn = false, double dmgLchRef = 1.0);
   ~LadrunoJ2();
 
   const char* getClassType(void) const { return "LadrunoJ2"; }
@@ -122,6 +123,8 @@ class LadrunoJ2 : public NDMaterial {
   double dmgS;                  // exponent
   double dmgPD;                 // accumulated-plastic-strain damage threshold
   double dmgDc;                 // critical (rupture) damage
+  bool   dmgRegOn;              // -autoRegularization (crack-band lch scaling)
+  double dmgLchRef;             // reference characteristic length lch_ref
 
   // dimensional view
   int    dim;                   // DIM_*

@@ -54,6 +54,12 @@ struct DamageParams {
   double s    = 1.0;     // exponent
   double pD   = 0.0;     // accumulated-plastic-strain damage threshold
   double Dc   = 1.0;     // critical (rupture) damage
+  // Crack-band (characteristic-length) regularization factor. Scaling the energy
+  // denominator r by (lch_ref/lch)^(1/s) is identically a linear scale lch/lch_ref
+  // on the damage increment dD; we carry the latter directly. 1.0 = no
+  // regularization (local model). Set per-step by the material from the active
+  // element's getCharacteristicLength() when -autoRegularization is given.
+  double lchScale = 1.0; // = lch / lch_ref
 };
 
 // Recover (E, nu) from the kernel's (K, G) pair so the same damage law serves a
@@ -93,7 +99,7 @@ inline double damageIncrement(double Y, double pN, double pNp1,
   const double pStart = (pN > dp.pD) ? pN : dp.pD;   // max(pN, pD)
   const double dpDmg  = pNp1 - pStart;
   if (dpDmg <= 0.0) return 0.0;
-  return pow(Y/dp.r, dp.s) * dpDmg;
+  return dp.lchScale * pow(Y/dp.r, dp.s) * dpDmg;
 }
 
 // Partial derivatives of the (unclamped) damage increment for the consistent
@@ -111,9 +117,9 @@ inline void damageIncrementPartials(double Y, double pN, double pNp1,
   const double pStart = (pN > dp.pD) ? pN : dp.pD;
   const double dpDmg  = pNp1 - pStart;
   if (dpDmg <= 0.0) return;
-  const double g = pow(Y/dp.r, dp.s);                // (Y/r)^s
+  const double g = dp.lchScale * pow(Y/dp.r, dp.s);  // lchScale (Y/r)^s
   ddD_dp = g;
-  ddD_dY = dp.s * g / Y * dpDmg;                     // s (Y/r)^(s-1) (1/r) dp_dmg
+  ddD_dY = dp.s * g / Y * dpDmg;                     // lchScale s (Y/r)^(s-1)(1/r) dp_dmg
 }
 
 } // namespace Ladruno

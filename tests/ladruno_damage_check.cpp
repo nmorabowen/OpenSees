@@ -160,6 +160,24 @@ int main()
     check(worst2<1e-5, "uniaxial tangent, s=2 exponent", worst2, 1e-5);
   }
 
+  // ---- lch regularization: lchScale linearly scales the damage increment ----
+  printf("lch regularization (lchScale scales dD, tangent still consistent):\n");
+  {
+    Params p1{K,G,5.0,3.0,25.0,8.0,1,{400},{80}};
+    p1.dmg.on=true; p1.dmg.r=3.0; p1.dmg.s=1.0; p1.dmg.pD=0.0; p1.dmg.Dc=0.99;
+    Params p2 = p1; p2.dmg.lchScale = 2.0;        // double the band scale
+    State a; zero(a); State b; zero(b);
+    double eps[6]={0.03,0,0,0,0,0};
+    // single step from virgin state: dD(lchScale=2) == 2*dD(lchScale=1)
+    double s1[6],D1[6][6],eP[6],eb,al[MAXBACK][6],dg,Da,Db;
+    returnMapDamaged(p1, eps, a.epsP, a.ebarP, a.alpha, a.D, s1,D1,eP,eb,al,dg,Da);
+    returnMapDamaged(p2, eps, b.epsP, b.ebarP, b.alpha, b.D, s1,D1,eP,eb,al,dg,Db);
+    check(fabs(Db - 2.0*Da) <= 1e-12*(Da+1.0), "lchScale=2 doubles dD", Db, 2.0*Da);
+    // tangent stays FD-consistent under regularization
+    double e2 = maxTangErr(p2, eps, b);
+    check(e2 < 1e-5, "regularized tangent FD-consistent", e2, 1e-5);
+  }
+
   // ---- triaxiality (R_v) signature: confined state damages faster ----
   printf("triaxiality R_v signature:\n");
   {
