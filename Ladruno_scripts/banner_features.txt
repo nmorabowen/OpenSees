@@ -21,5 +21,5 @@ LadrunoJ2Finite — finite-strain J2, co-rotating backstress
 LadrunoUniaxialJ2 — uniaxial Chaboche AF J2 fiber/truss
 Lemaitre ductile damage (-damage lemaitre, +lch, +IMPL-EX)
 LadrunoIMKBeam — concentrated-plasticity IMK beam hinges
-LadrunoRebarBuckling — Dhakal–Maekawa rebar buckling wrapper
+LadrunoRebarBuckling — rebar buckling wrapper (Dhakal–Maekawa / Gomes–Appleton, cyclic re-straightening)
 Ladruno — modular HDF5 .ladruno recorder
