@@ -62,6 +62,7 @@
 #include <Damping.h>
 
 class SolidTransformation;   // seam 2/3: geometry-method layer (linear/corot/finite)
+class Response;              // Ladruno — cached material "damage" query (Tier-A Kstab)
 
 class LadrunoBrick : public Element {
 
@@ -168,6 +169,18 @@ class LadrunoBrick : public Element {
   int massType;                       // 0 consistent, 1 lumped
 
   Damping *theDamping[8];
+
+  // Tier-A damage-scaled hourglass stabilization (softening support). For the
+  // single-point STIFFNESS-stabilized formulations (eas, uri+stiffness) the
+  // constant elastic Kstab over-stiffens a cracked element and blocks crack
+  // localization under a softening material (ASDConcrete3D). damageResponse is a
+  // cached query of materialPointers[0]'s "damage" channel (built in setDomain,
+  // for ASDConcrete3D = getAvgDamage() = [d_tension, d_compression]); damageScale()
+  // reads it and returns max(floor, 1 - max(d_i)) to degrade Kstab. 0 (null) when
+  // the material has no "damage" channel => damageScale() falls back to 1.0 (the
+  // original constant elastic Kstab). Not serialized — rebuilt in setDomain on the
+  // receive side.  // Ladruno
+  Response *damageResponse;
 
   // Geometry-method layer (seam 2/3). v1 = SolidTransformationLinear (identity):
   // localizeDisp / globalizeForce / globalizeStiff are pass-throughs, so routing
@@ -286,6 +299,15 @@ class LadrunoBrick : public Element {
   // returns the committed accumulator hgDissipated instead of an instantaneous
   // stored value.  // Ladruno
   double hourglassEnergy(void);
+
+  // Tier-A multiplier degrading the constant elastic hourglass stabilization
+  // (formEAS / formUri stiffness) with the material's current damage:
+  //   s = max(floor, 1 - max(d_i)),  d_i = the material's "damage" response
+  // (ASDConcrete3D: [d_tension, d_compression]). Returns 1.0 when the material
+  // reports no "damage" channel (damageResponse == 0) => the original elastic
+  // Kstab. ASDConcrete3D returns the secant by default (+IMPLEX) so d_i is
+  // positive & monotone and s stays in [floor, 1] — never negative.  // Ladruno
+  double damageScale(void);
 
   // Work done against the FB viscous-hourglass damping force over the step now
   // being committed (uri + Hourglass::VISCOUS only): ΔE = c_visc·Σ q̇_aι·Δq_aι,

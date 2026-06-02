@@ -311,6 +311,39 @@ features:
       tabulated iso / prager_nl oracle / PlaneStress / IMPL-EX deferred. Plan:
       Ladruno_implementation/10_ladruno_j2_plasticity.md.
 
+  - feature: LadrunoUniaxialJ2
+    classtag: 33000          # MAT_TAG (uniaxial) family; per-registry band, no collision w/ ELE/ND/INTEGRATOR/RECORDER 33000
+    tag_symbol: MAT_TAG_LadrunoUniaxialJ2
+    pr: 99
+    feature_class: material
+    required_tiers: [T0m, T1]
+    pytest: tests/test_ladrunoUniaxialJ2_material.py   # elastic; reduce-to-HardeningMaterial 1e-9; monotonic kin==iso; Bauschinger; AF saturation; V7 reduce-to-3D-LadrunoJ2 1e-7 oracle; state recording; stress-controlled ratcheting (single-AF constant rate); consistent-tangent FD (9/9)
+    tcl: WAIVED(uniaxialMaterial LadrunoUniaxialJ2 ...; shared OpenSeesUniaxialMaterialCommands registry serves Tcl + Python, plus classic-Tcl TclModelBuilderUniaxialMaterialCommand dispatch; verified via the Zone-A pytest battery)
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesUniaxialMaterialCommands.cpp
+      - SRC/material/uniaxial/TclModelBuilderUniaxialMaterialCommand.cpp
+      - SRC/material/uniaxial/CMakeLists.txt
+      - SRC/material/nD/CMakeLists.txt
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      Uniaxial twin of LadrunoJ2 (UniaxialMaterial; fibers/truss/zeroLength).
+      sigma=E(eps-eps^p), |sigma-X|-sig_y(pbar), Voce+linear isotropic (shared
+      verbatim with the 3D class via SRC/material/nD/LadrunoHardening.h -- the
+      oracle contract) + Chaboche superposed Armstrong-Frederick kinematic
+      (X=sum_k X_k, N<=8; gamma_k=0 => linear Prager, saturation C_k/gamma_k).
+      Return map = fixed direction s=sign(sigma_tr-X_n) (no M(dGamma) tensor
+      solve like the 3D kernel) + scalar Newton on dpbar; analytic tangent
+      E_alg=E h/(E+h). Real getInitialTangent=E (fixes the SimplifiedJ2 modal
+      bug), no exit(). Oracle (V7): reduces to the 3D LadrunoJ2 under uniaxial
+      stress to 1e-7 with identical (C_k,gamma_k,iso) -- pins the 3D Chaboche
+      calibration. NOT a Steel02/Steel4 replacement: oracle + multi-AF ratcheting
+      fiber + the core for the steel roadmap (fracture/LCF wrapper, local-buckling
+      flag, weld/HAZ -- all deferred). Plan/ADR:
+      Ladruno_implementation/13_ladruno_uniaxial_j2_adr.md (shipped via #95).
+
   # --- worked examples shipped with the scaffold (existing elements, no new C++) ---
 
   - feature: forceBeamColumn_cantilever     # T1 worked example (existing element)

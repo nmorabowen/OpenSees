@@ -607,3 +607,90 @@ broadcast path is not runtime-testable in this build.
   (`dσ̄ = c̄:sym(L̄)`) drops the `−(2/3)σ⊗I` and gives a subtly wrong tangent that
   still "looks right" under a crude FD check — the element FD-tangent test against an
   *analytic* material tangent is what catches it. Learned 2026-06-02 (F-bar impl).
+### Wrapping a KINEMATIC-hardening material in `LogStrain` (finite strain) is NOT objective under large rotation — backstress doesn't co-rotate
+- **Bites:** `nDMaterial LogStrain $t $j2` over a combined-hardening `LadrunoJ2`
+  (or any backstress material) gives finite-strain J2 that is **exact for the
+  isotropic part but loses frame-indifference for the kinematic part under a large
+  rotation**: superpose a finite rotation `Q` on a plastically-loaded state and the
+  Cauchy stress does NOT come back as `Q σ Qᵀ` (principal stresses change).
+- **Why:** the log-strain (MATISU) wrapper co-rotates only the elastic state it owns,
+  `Bᵉᵗʳ = F_Δ Bᵉ_n F_Δᵀ`. Isotropic yield sees only `‖s‖,ε̄ᵖ` (rotation-invariant), so
+  it is objective. The **backstress `α` lives inside the UNCHANGED small-strain inner
+  in a FIXED frame** — the wrapper never rotates it — so `‖M‖=‖s−α‖` is not
+  rotation-invariant once `α≠0`. It is a framework limit, not a bug: the direct
+  Box-14.4 chain shows the identical behaviour. This is exactly the
+  kinematic-hardening-at-finite-strain case dSNPO defers to **§14.11**.
+- **Rule:** the simple `LogStrain`-wrap of a backstress material is correct only for
+  **no / small rotation** (or pure isotropic hardening). For exact large-rotation
+  combined hardening you need a finite-strain-NATIVE material that co-rotates `α`
+  every step (push `α` forward by the incremental rotation) — which is why the J2
+  return map was extracted into the OpenSees-free `LadrunoJ2Kernel.h`: a future
+  `FiniteStrainNDMaterial`-subclass J2 can reuse the verified map and add the `α`
+  push-forward. Pin the boundary with a **strict xfail** so v2 flips it green
+  (`tests/test_ladrunoJ2_finite.py`). Learned 2026-06-02.
+
+### LadrunoJ2 consistent-tangent denominator `h` assumes NON-softening hardening
+- **Bites:** the analytic consistent tangent in `LadrunoJ2Kernel.h` divides by
+  `h = dtheta + (2/3)·sig_y'(pbar) − n:Mp` (commented `= −df/ddG > 0`) to form
+  `betaNN` and `betaMpN`. For standard hardening (`Hiso,Qinf,Cₖ,γₖ ≥ 0`) `h>0`
+  always. But the material accepts arbitrary user params: a **negative `Hiso`
+  (linear softening) or `Qinf<0`** makes `sig_y'` negative and can drive `h→0` or
+  `h<0` ⇒ an `inf`/`NaN` or a sign-flipped (non-physical) tangent that poisons the
+  global Newton with no diagnostic. The local scalar-Newton residual `dR` has the
+  same exposure.
+- **Why it's not "fixed":** this is **pre-existing** behaviour inherited verbatim
+  from the original `integrate()` (the 2026-06-02 kernel extraction was deliberately
+  bit-identical, so it was preserved, not introduced). The model is designed for
+  hardening/perfect plasticity; softening is out of its intended envelope.
+- **Rule:** do not feed `LadrunoJ2` softening hardening params. If softening is ever
+  wanted, the right fix is **parameter validation at construction** (reject/warn on
+  `Hiso<0`/`Qinf<0` that can violate `h>0`) plus a kernel guard
+  (`if (fabs(h) < eps·stressScale)` → fall back to the elastic-predictor tangent,
+  mirroring the existing `‖M‖→0` `normFloor` treatment) — a separate PR, not a
+  bit-identical-extraction change. Surfaced by the PR #97 adversarial review,
+  2026-06-02.
+
+### `ZeroLengthSection` requires `-ndf 3` (2D) / `-ndf 6` (3D) — silently absent otherwise
+- **Bites:** building a `zeroLengthSection` in a reduced-DOF model (e.g. an axial
+  SDOF on `-ndf 2`) prints *"ZeroLengthSection::setDomain() -- element only works
+  for 3 (2d) or 6 (3d) dof per node"* ([ZeroLengthSection.cpp:247]) and then the
+  element is **not added** — but `analyze()` still runs, on a model with no spring,
+  so the response looks like an undamped/zero-stiffness free body (constant disp,
+  no oscillation). Plain `ZeroLength`/`TwoNodeLink` have no such restriction.
+- **Why:** ZeroLengthSection maps the full section response set (P, Vy, Mz, …) onto
+  the element DOFs and assumes the complete 3-/6-dof node layout.
+- **Rule:** use `-ndf 3`/`-ndf 6` and fix the unused DOFs; never `-ndf 2`. Caught
+  by `tests/test_spring_damping_claims.py`. Learned 2026-06-02.
+
+### Prescribing ALL of a node's DOFs via `sp` with the Transformation handler ⇒ 0 free equations ⇒ process terminates
+- **Bites:** a static test that imposes both DOFs of the only free node via `ops.sp`
+  (with the other node fully `fix`ed) leaves the system with **zero unknowns**.
+  Under `constraints('Transformation')` the solve does not return an error code —
+  it **terminates the process** mid-`analyze()` (no Python traceback, exit 0),
+  which under pytest aborts the whole run with no summary (looks like a hang).
+- **Why:** the Transformation handler condenses out the constrained DOFs; with none
+  left the assembled system is degenerate and the path hits a hard exit rather than
+  a graceful failure (same family as the MPCO `exit(-1)` kernel-kill pattern).
+- **Workaround:** use `constraints('Penalty', 1e14, 1e14)` for fully-prescribed
+  configurations (DOFs are retained and penalised, so ≥1 equation remains), and
+  read element force via `eleForce` rather than `nodeReaction`. Learned 2026-06-02.
+
+## `setStrain` (testUniaxialMaterial) COMMITS — central FD tangent is invalid for plasticity
+
+The Python `setStrain(eps)` command (`SRC/interpreter/OpenSeesCommandsPython.cpp`,
+`ops_setStrain`) calls **both** `setTrialStrain(eps)` **and** `commitState()`. So
+the `_testbed.fem_checks.uniaxial_tangent_fd` central difference — which probes
+`strain0-d`, `strain0`, `strain0+d` expecting all three from one committed state —
+straddles an **elastic unload** on the minus side for any path-dependent (plastic)
+material, returning ~`(E + E_alg)/2` instead of the consistent tangent (caught on
+LadrunoUniaxialJ2: analytic 176.7 vs the broken FD 597 ≈ (1000+176)/2). The helper
+is only valid for nonlinear-elastic materials.
+
+- **Rule:** to FD a *plasticity* consistent tangent, probe each point as an
+  INDEPENDENT one-step return from a FRESH material (`wipe` → redefine →
+  `testUniaxialMaterial` → `setStrain`), so all probes are one-step-from-zero; the
+  central difference of that one-step map IS the algorithmic tangent (O(d²)). See
+  `test_consistent_tangent_fd` (V6) in `tests/test_ladrunoUniaxialJ2_material.py`.
+  Also note `testUniaxialMaterial(tag)` returns the SAME object (not a copy), so it
+  does not reset committed state — you must rebuild the material to get a clean one.
+  Learned 2026-06-02 (LadrunoUniaxialJ2 polish).

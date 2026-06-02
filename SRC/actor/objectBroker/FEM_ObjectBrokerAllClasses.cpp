@@ -110,6 +110,7 @@
 #include "FatigueMaterial.h"
 #include "ReinforcingSteel.h"
 #include "HardeningMaterial.h"
+#include "LadrunoUniaxialJ2.h"   // Ladruno — uniaxial combined iso + Chaboche AF kinematic J2
 #include "HystereticMaterial.h"
 #include "HystereticSMMaterial.h"
 #include "OOHystereticMaterial.h"
@@ -462,6 +463,7 @@
 #include "brick/Brick.h"
 #include "brick/BbarBrick.h"
 #include "ladrunoBrick/LadrunoBrick.h"	// N. Mora-Bowen (Ladruno)
+#include "ladrunoIMKBeam/LadrunoIMKBeam.h"	// N. Mora-Bowen (Ladruno)
 #include "joint/Joint2D.h"		// Arash
 #include "joint/Inno3DPnPJoint.h" // Cristian Miculas
 #include "twoNodeLink/TwoNodeLink.h"
@@ -1035,6 +1037,9 @@ FEM_ObjectBrokerAllClasses::getNewElement(int classTag)
 
     case ELE_TAG_LadrunoBrick:		// N. Mora-Bowen (Ladruno)
       return new LadrunoBrick();
+
+    case ELE_TAG_LadrunoIMKBeam:	// N. Mora-Bowen (Ladruno)
+      return new LadrunoIMKBeam();
 
     case ELE_TAG_SSPquad:          
       return new SSPquad();
@@ -1867,6 +1872,9 @@ FEM_ObjectBrokerAllClasses::getNewUniaxialMaterial(int classTag)
 
 	case MAT_TAG_Hardening:
 		return new HardeningMaterial();
+
+	case MAT_TAG_LadrunoUniaxialJ2:               // Ladruno
+		return new LadrunoUniaxialJ2();
 
 	case MAT_TAG_PySimple1:
 		return new PySimple1();

@@ -37,11 +37,14 @@ RULE = "// " + "=" * 74
 # Whole directories that are entirely ours, plus specific files in shared dirs.
 GLOBS = [
     "SRC/element/ladrunoBrick/*.cpp", "SRC/element/ladrunoBrick/*.h",
+    "SRC/element/ladrunoIMKBeam/*.cpp", "SRC/element/ladrunoIMKBeam/*.h",
     "SRC/element/bezierTriangle/*.cpp", "SRC/element/bezierTriangle/*.h",
     "SRC/element/bezierTetrahedron/*.cpp", "SRC/element/bezierTetrahedron/*.h",
     "SRC/element/solidTransformation/*.cpp", "SRC/element/solidTransformation/*.h",
     "SRC/utility/profiler/*.cpp", "SRC/utility/profiler/*.h",
-    "SRC/material/nD/LadrunoJ2.*",
+    "SRC/material/nD/LadrunoJ2.*", "SRC/material/nD/LadrunoJ2Kernel.h",
+    "SRC/material/nD/LadrunoHardening.h",
+    "SRC/material/uniaxial/LadrunoUniaxialJ2.*",
     "SRC/material/nD/LogStrainNDMaterial.*", "SRC/material/nD/LogStrainKernel.h",
     "SRC/material/nD/FiniteStrainNDMaterial.h",
     "SRC/analysis/integrator/CentralDifferenceLadruno.*",
