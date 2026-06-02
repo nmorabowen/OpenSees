@@ -3,6 +3,27 @@
 **          Pacific Earthquake Engineering Research Center            **
 ** ****************************************************************** */
 
+// LADRUNO-HEADER-START
+// ==========================================================================
+//
+//   ▄█          ▄████████ ████████▄     ▄████████ ███    █▄  ███▄▄▄▄    ▄██████▄
+//  ███         ███    ███ ███   ▀███   ███    ███ ███    ███ ███▀▀▀██▄ ███    ███
+//  ███         ███    ███ ███    ███   ███    ███ ███    ███ ███   ███ ███    ███
+//  ███         ███    ███ ███    ███  ▄███▄▄▄▄██▀ ███    ███ ███   ███ ███    ███
+//  ███       ▀███████████ ███    ███ ▀▀███▀▀▀▀▀   ███    ███ ███   ███ ███    ███
+//  ███         ███    ███ ███    ███ ▀███████████ ███    ███ ███   ███ ███    ███
+//  ███▌    ▄   ███    ███ ███   ▄███   ███    ███ ███    ███ ███   ███ ███    ███
+//  █████▄▄██   ███    █▀  ████████▀    ███    ███ ████████▀   ▀█   █▀   ▀██████▀
+//  ▀                                   ███    ███
+//
+//  Ladruno — a research fork of OpenSees
+//  Created by:  Nicolas Mora Bowen  ·  Patricio Palacios  ·  José Abell  ·  Guppi
+//
+// Header auto-stamped by Ladruno_scripts/stamp_headers.py (art: banner_ASCII.txt).
+// Do not hand-edit between the markers; edit the script/art and re-run instead.
+// ==========================================================================
+// LADRUNO-HEADER-END
+
 // Ladruno: combined-hardening von Mises (J2) nDMaterial.
 //   - Isotropic: Voce saturation + linear   sig_y(p) = s0 + Qinf(1-e^{-b p}) + Hiso*p
 //   - Kinematic: Chaboche superposed Armstrong-Frederick, alpha = sum_k alpha_k
@@ -117,8 +138,6 @@ class LadrunoJ2 : public NDMaterial {
   double Dtan[6][6];            // algorithmic tangent (engineering 6x6, J2-3D convention)
 
   // helpers
-  double yieldStress(double pbar) const;   // sig_y(pbar)
-  double yieldSlope(double pbar) const;     // d sig_y / d pbar
   void   integrate(void);                   // 3D return map + tangent (dim-agnostic)
   void   buildElasticTangent(double Kt[6][6]) const;
   void   setStateToCommitted(void);

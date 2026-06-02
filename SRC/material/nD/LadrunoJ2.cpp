@@ -3,6 +3,27 @@
 **          Pacific Earthquake Engineering Research Center            **
 ** ****************************************************************** */
 
+// LADRUNO-HEADER-START
+// ==========================================================================
+//
+//   ▄█          ▄████████ ████████▄     ▄████████ ███    █▄  ███▄▄▄▄    ▄██████▄
+//  ███         ███    ███ ███   ▀███   ███    ███ ███    ███ ███▀▀▀██▄ ███    ███
+//  ███         ███    ███ ███    ███   ███    ███ ███    ███ ███   ███ ███    ███
+//  ███         ███    ███ ███    ███  ▄███▄▄▄▄██▀ ███    ███ ███   ███ ███    ███
+//  ███       ▀███████████ ███    ███ ▀▀███▀▀▀▀▀   ███    ███ ███   ███ ███    ███
+//  ███         ███    ███ ███    ███ ▀███████████ ███    ███ ███   ███ ███    ███
+//  ███▌    ▄   ███    ███ ███   ▄███   ███    ███ ███    ███ ███   ███ ███    ███
+//  █████▄▄██   ███    █▀  ████████▀    ███    ███ ████████▀   ▀█   █▀   ▀██████▀
+//  ▀                                   ███    ███
+//
+//  Ladruno — a research fork of OpenSees
+//  Created by:  Nicolas Mora Bowen  ·  Patricio Palacios  ·  José Abell  ·  Guppi
+//
+// Header auto-stamped by Ladruno_scripts/stamp_headers.py (art: banner_ASCII.txt).
+// Do not hand-edit between the markers; edit the script/art and re-run instead.
+// ==========================================================================
+// LADRUNO-HEADER-END
+
 // Ladruno: combined isotropic (Voce+linear) + Chaboche Armstrong-Frederick
 // kinematic von Mises (J2) nDMaterial. See LadrunoJ2.h and
 // Ladruno_implementation/10_ladruno_j2_plasticity.md for the full derivation.
@@ -10,6 +31,7 @@
 // Written: N. Mora-Bowen (Ladruno), 2026.
 
 #include <LadrunoJ2.h>
+#include <LadrunoJ2Kernel.h>    // the return map (which consumes LadrunoHardening.h)
 #include <Channel.h>
 #include <FEM_ObjectBroker.h>
 #include <Information.h>
@@ -19,24 +41,11 @@
 #include <math.h>
 #include <elementAPI.h>
 
-// ---- symmetric-tensor helpers (6 tensor components {00,11,22,01,12,02}) ----
-// Double contraction A:B with the factor-2 weights on the off-diagonal pairs.
-static inline double dotT(const double* a, const double* b)
-{
-  return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]
-       + 2.0*(a[3]*b[3] + a[4]*b[4] + a[5]*b[5]);
-}
-
-// 6x6 deviatoric projector (Belytschko IIdev) in the J2ThreeDimensional mapping:
-// normal block (2/3,-1/3,...), shear-diagonal 0.5.
-static const double IIDEV6[6][6] = {
-  { 2.0/3.0, -1.0/3.0, -1.0/3.0, 0.0, 0.0, 0.0 },
-  {-1.0/3.0,  2.0/3.0, -1.0/3.0, 0.0, 0.0, 0.0 },
-  {-1.0/3.0, -1.0/3.0,  2.0/3.0, 0.0, 0.0, 0.0 },
-  { 0.0, 0.0, 0.0, 0.5, 0.0, 0.0 },
-  { 0.0, 0.0, 0.0, 0.0, 0.5, 0.0 },
-  { 0.0, 0.0, 0.0, 0.0, 0.0, 0.5 }
-};
+// The combined-hardening von Mises return map and the elastic tangent live in the
+// header-only, OpenSees-free LadrunoJ2Kernel.h so the SAME verified map serves
+// both this small-strain material AND the finite-strain path (LadrunoJ2 wrapped
+// by LogStrainNDMaterial). See LadrunoJ2Kernel.h.
+using ladruno_j2_kernel::Params;
 
 // ===========================================================================
 //  OPS parser
@@ -197,17 +206,19 @@ void LadrunoJ2::condenseTangent(void)
 LadrunoJ2::~LadrunoJ2() {}
 
 // ===========================================================================
-//  hardening
+//  kernel parameter pack (copy the instance's material constants)
 // ===========================================================================
-double LadrunoJ2::yieldStress(double p) const
+static void fillParams(Params& p, double bulk, double shear,
+                       double sig0, double Qinf, double bIso, double Hiso,
+                       int nBack, const double* Ckin, const double* gKin)
 {
-  // Voce saturation + linear; reduces to perfect (Qinf=Hiso=0) or linear (Qinf=0)
-  return sig0 + Qinf*(1.0 - exp(-bIso*p)) + Hiso*p;
-}
-
-double LadrunoJ2::yieldSlope(double p) const
-{
-  return Qinf*bIso*exp(-bIso*p) + Hiso;
+  p.K = bulk; p.G = shear;
+  p.sig0 = sig0; p.Qinf = Qinf; p.bIso = bIso; p.Hiso = Hiso;
+  p.nBack = nBack;
+  for (int k = 0; k < ladruno_j2_kernel::MAXBACK; k++) {
+    p.C[k]   = Ckin[k];
+    p.gam[k] = gKin[k];
+  }
 }
 
 // ===========================================================================
@@ -273,179 +284,35 @@ int LadrunoJ2::setTrialStrainIncr(const Vector& v, const Vector&) { return this-
 
 // ===========================================================================
 //  the return map (scalar Newton, Kobayashi-Ohno) + consistent tangent
+//
+//  Thin wrapper: pack the instance's parameters + committed history, run the
+//  header-only kernel (LadrunoJ2Kernel.h — the SINGLE source of the return map,
+//  shared with the finite-strain path via LogStrainNDMaterial), then surface its
+//  diagnostics as the warnings the inline version used to print.
 // ===========================================================================
 void LadrunoJ2::integrate(void)
 {
-  const double G = shear, K = bulk;
-  const double root23 = sqrt(2.0/3.0);
+  Params p;
+  fillParams(p, bulk, shear, sig0, Qinf, bIso, Hiso, nBack, Ckin, gKin);
 
-  // deviatoric strain (tensor comps)
-  double tr = strain6[0] + strain6[1] + strain6[2];
-  double edev[6];
-  for (int i = 0; i < 6; i++) edev[i] = strain6[i];
-  for (int i = 0; i < 3; i++) edev[i] -= tr/3.0;
+  double resid = 0.0;
+  int status = ladruno_j2_kernel::returnMap(
+      p, strain6, epsP_n, ebarP_n, alpha_n,
+      stress6, Dtan, epsP, ebarP, alpha, dGammaTrial, &resid);
 
-  // trial deviatoric stress: s_tr = 2G (edev - epsP_n)
-  double s_tr[6];
-  for (int i = 0; i < 6; i++) s_tr[i] = 2.0*G*(edev[i] - epsP_n[i]);
-
-  // trial relative stress M_tr = s_tr - sum_k alpha_k,n  (dG = 0 => denominators 1)
-  double M[6];
-  for (int i = 0; i < 6; i++) {
-    M[i] = s_tr[i];
-    for (int k = 0; k < nBack; k++) M[i] -= alpha_n[k][i];
-  }
-  double normM = sqrt(dotT(M, M));
-  double sy0   = yieldStress(ebarP_n);
-  double f_tr  = normM - root23*sy0;
-
-  // Tolerances scaled to the operative stress magnitude (unit-aware; never
-  // collapses to a fixed absolute when sig0 == 0, e.g. kinematic-only). The
-  // normFloor guards the 1/||M|| divisions below — the relative-stress norm
-  // ||M(dG)|| can collapse toward zero at a sharp reversal with backstress
-  // (J2Plasticity guards the analogous norm_tau division; we restore that).
-  const double stressScale = fmax(normM, root23*sy0);
-  const double tolY      = 1.0e-12 * fmax(stressScale, 1.0e-300);
-  const double normFloor = 1.0e-10 * fmax(stressScale, 1.0e-300);
-
-  if (f_tr <= tolY) {
-    // ---- elastic step: state frozen ----
-    this->setStateToCommitted();
-    for (int i = 0; i < 6; i++) stress6[i] = s_tr[i];
-    for (int i = 0; i < 3; i++) stress6[i] += K*tr;
-    this->buildElasticTangent(Dtan);
-    return;
-  }
-
-  // ---- plastic corrector: scalar Newton on dG ----
-  double dG = 0.0;
-  double Dk[MAXBACK];
-  double Mp[6];            // d M / d dG
-  double theta = 0.0, dtheta = 0.0, R = 1.0;
-  int iter = 0;
-  const int maxIter = 50;
-
-  while (iter < maxIter) {
-    // denominators
-    for (int k = 0; k < nBack; k++) Dk[k] = 1.0 + root23*gKin[k]*dG;
-
-    // M(dG) and its derivative wrt dG
-    for (int i = 0; i < 6; i++) {
-      M[i]  = s_tr[i];
-      Mp[i] = 0.0;
-      for (int k = 0; k < nBack; k++) {
-        double inv = 1.0/Dk[k];
-        M[i]  -= alpha_n[k][i]*inv;
-        Mp[i] += alpha_n[k][i]*root23*gKin[k]*inv*inv;
-      }
-    }
-    normM = sqrt(dotT(M, M));
-
-    // theta(dG) = 2G dG + sum_k (2/3) C_k dG / Dk ; dtheta/ddG
-    theta = 2.0*G*dG;
-    dtheta = 2.0*G;
-    for (int k = 0; k < nBack; k++) {
-      double inv = 1.0/Dk[k];
-      theta  += (2.0/3.0)*Ckin[k]*dG*inv;
-      dtheta += (2.0/3.0)*Ckin[k]*inv*inv;   // d(dG/Dk)/ddG = 1/Dk^2
-    }
-
-    double xiNorm = normM - theta;                      // ||xi_{n+1}||
-    double pbar   = ebarP_n + root23*dG;
-    R = xiNorm - root23*yieldStress(pbar);
-
-    // dR/ddG = (M:Mp)/||M|| - dtheta - (2/3) sig_y'   (guard 1/||M||)
-    double dnormM = (normM > normFloor) ? dotT(M, Mp)/normM : 0.0;
-    double dR = dnormM - dtheta - (2.0/3.0)*yieldSlope(pbar);
-
-    if (fabs(R) <= tolY) break;
-    if (dR == 0.0) {
-      opserr << "WARNING LadrunoJ2: singular local Jacobian (tag " << this->getTag() << ")\n";
-      break;
-    }
-    dG -= R/dR;
-    if (dG < 0.0) dG = 0.0;   // keep admissible
-    iter++;
-  }
-  if (iter >= maxIter)
+  if (status == ladruno_j2_kernel::STATUS_SINGULAR)
+    opserr << "WARNING LadrunoJ2: singular local Jacobian (tag "
+           << this->getTag() << ")\n";
+  else if (status == ladruno_j2_kernel::STATUS_NO_CONVERGE)
     opserr << "WARNING LadrunoJ2: local Newton did not converge (tag "
-           << this->getTag() << ", |R|=" << fabs(R) << ")\n";
-
-  // recompute final quantities at converged dG
-  for (int k = 0; k < nBack; k++) Dk[k] = 1.0 + root23*gKin[k]*dG;
-  for (int i = 0; i < 6; i++) {
-    M[i]  = s_tr[i];
-    Mp[i] = 0.0;
-    for (int k = 0; k < nBack; k++) {
-      double inv = 1.0/Dk[k];
-      M[i]  -= alpha_n[k][i]*inv;
-      Mp[i] += alpha_n[k][i]*root23*gKin[k]*inv*inv;
-    }
-  }
-  normM = sqrt(dotT(M, M));
-  if (normM <= normFloor) {
-    // Degenerate relative-stress direction (||M|| -> 0): no well-defined
-    // plastic flow (a converged root needs ||M|| = theta + sqrt(2/3) sig_y > 0,
-    // so this means no admissible plastic solution was found). Fall back to the
-    // elastic predictor at the committed state rather than dividing by ~0.
-    this->setStateToCommitted();
-    for (int i = 0; i < 6; i++) stress6[i] = s_tr[i];
-    for (int i = 0; i < 3; i++) stress6[i] += K*tr;
-    this->buildElasticTangent(Dtan);
-    return;
-  }
-  double n[6];
-  for (int i = 0; i < 6; i++) n[i] = M[i]/normM;
-  double pbar = ebarP_n + root23*dG;
-
-  // ---- state update ----
-  ebarP = pbar;
-  dGammaTrial = dG;
-  for (int i = 0; i < 6; i++) epsP[i] = epsP_n[i] + dG*n[i];
-  for (int k = 0; k < nBack; k++)
-    for (int i = 0; i < 6; i++)
-      alpha[k][i] = (alpha_n[k][i] + (2.0/3.0)*Ckin[k]*dG*n[i]) / Dk[k];
-
-  // ---- stress ----
-  for (int i = 0; i < 6; i++) stress6[i] = s_tr[i] - 2.0*G*dG*n[i];
-  for (int i = 0; i < 3; i++) stress6[i] += K*tr;
-
-  // ---- consistent tangent (dSNPO 7.213 structure + AF dn term) ----
-  // dtheta currently holds d theta/d dG at converged dG (recompute to be safe)
-  dtheta = 2.0*G;
-  for (int k = 0; k < nBack; k++) {
-    double inv = 1.0/Dk[k];
-    dtheta += (2.0/3.0)*Ckin[k]*inv*inv;
-  }
-  double nMp = dotT(n, Mp);
-  double h   = dtheta + (2.0/3.0)*yieldSlope(pbar) - nMp;   // = -df/ddG > 0
-
-  double Mperp[6];
-  for (int i = 0; i < 6; i++) Mperp[i] = Mp[i] - nMp*n[i];
-
-  double G2 = G*G;
-  double beta1   = 1.0 - 2.0*G*dG/normM;          // coeff on 2G * IIdev
-  double betaNN  = 4.0*G2*dG/normM - 4.0*G2/h;    // coeff on n (x) n
-  double betaMpN = -4.0*G2*dG/(h*normM);          // coeff on Mperp (x) n
-
-  for (int I = 0; I < 6; I++)
-    for (int J = 0; J < 6; J++) {
-      double oneone = (I < 3 && J < 3) ? 1.0 : 0.0;
-      Dtan[I][J] = K*oneone
-                 + 2.0*G*beta1*IIDEV6[I][J]
-                 + betaNN*n[I]*n[J]
-                 + betaMpN*Mperp[I]*n[J];
-    }
+           << this->getTag() << ", |R|=" << resid << ")\n";
 }
 
 void LadrunoJ2::buildElasticTangent(double Kt[6][6]) const
 {
-  const double G = shear, K = bulk;
-  for (int I = 0; I < 6; I++)
-    for (int J = 0; J < 6; J++) {
-      double oneone = (I < 3 && J < 3) ? 1.0 : 0.0;
-      Kt[I][J] = K*oneone + 2.0*G*IIDEV6[I][J];
-    }
+  Params p;
+  fillParams(p, bulk, shear, sig0, Qinf, bIso, Hiso, nBack, Ckin, gKin);
+  ladruno_j2_kernel::elasticTangent(p, Kt);
 }
 
 void LadrunoJ2::setStateToCommitted(void)

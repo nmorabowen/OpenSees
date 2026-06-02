@@ -3,6 +3,27 @@
 **          Pacific Earthquake Engineering Research Center            **
 ** ****************************************************************** */
 
+// LADRUNO-HEADER-START
+// ==========================================================================
+//
+//   ▄█          ▄████████ ████████▄     ▄████████ ███    █▄  ███▄▄▄▄    ▄██████▄
+//  ███         ███    ███ ███   ▀███   ███    ███ ███    ███ ███▀▀▀██▄ ███    ███
+//  ███         ███    ███ ███    ███   ███    ███ ███    ███ ███   ███ ███    ███
+//  ███         ███    ███ ███    ███  ▄███▄▄▄▄██▀ ███    ███ ███   ███ ███    ███
+//  ███       ▀███████████ ███    ███ ▀▀███▀▀▀▀▀   ███    ███ ███   ███ ███    ███
+//  ███         ███    ███ ███    ███ ▀███████████ ███    ███ ███   ███ ███    ███
+//  ███▌    ▄   ███    ███ ███   ▄███   ███    ███ ███    ███ ███   ███ ███    ███
+//  █████▄▄██   ███    █▀  ████████▀    ███    ███ ████████▀   ▀█   █▀   ▀██████▀
+//  ▀                                   ███    ███
+//
+//  Ladruno — a research fork of OpenSees
+//  Created by:  Nicolas Mora Bowen  ·  Patricio Palacios  ·  José Abell  ·  Guppi
+//
+// Header auto-stamped by Ladruno_scripts/stamp_headers.py (art: banner_ASCII.txt).
+// Do not hand-edit between the markers; edit the script/art and re-run instead.
+// ==========================================================================
+// LADRUNO-HEADER-END
+
 // LadrunoBrick — unified 8-node hexahedral solid element (Ladruno fork).
 //
 // v1 implements the small-strain std + bbar formulations (uri/eas reserved).
@@ -36,6 +57,16 @@
 #include <Channel.h>
 #include <FEM_ObjectBroker.h>
 #include <elementAPI.h>
+#include <Response.h>        // Ladruno — cached material "damage" query (Tier-A Kstab)
+#include <Information.h>
+#include <DummyStream.h>
+
+// Ladruno — Tier-A damage-scaled hourglass stabilization: residual fraction of
+// the elastic Kstab kept in a fully-damaged element so it never goes completely
+// unstabilized (avoids spurious hourglassing in the cracked band). 1% per the
+// 1-5% range in Ladruno_implementation/11_brick_asdconcrete_integration.md §3;
+// tune against the "hourglassEnergy" report (§5).
+static const double HG_DAMAGE_FLOOR = 0.01;
 
 //static data
 double  LadrunoBrick::xl[3][8];
@@ -93,6 +124,7 @@ LadrunoBrick::LadrunoBrick()
    hourglassType(Hourglass::PHYSICAL), hourglassCoeff(0.0),
    applyLoad(0), load(0), Ki(0), massType(0),
    theGeom(new SolidTransformationLinear()),  // Ladruno — v1 identity geometry
+   damageResponse(0),                          // Ladruno — Tier-A Kstab (built in setDomain)
    easBnot(0), easKstab(0), easVol(0.0)       // Ladruno — eas (built in setDomain)
 {
   B.Zero();
@@ -128,6 +160,7 @@ LadrunoBrick::LadrunoBrick(int tag,
    hourglassType(hgType), hourglassCoeff(hgCoeff),
    applyLoad(0), load(0), Ki(0), massType(matype),
    theGeom(0),                                // Ladruno — set below from geomMethodID
+   damageResponse(0),                          // Ladruno — Tier-A Kstab (built in setDomain)
    easBnot(0), easKstab(0), easVol(0.0)       // Ladruno — eas (built in setDomain)
 {
   // Ladruno — geometry-method layer: linear (default, identity) / finite (UL).
@@ -193,6 +226,8 @@ LadrunoBrick::~LadrunoBrick()
 
   if (easBnot)  delete easBnot;  // Ladruno — eas
   if (easKstab) delete easKstab;
+
+  if (damageResponse) delete damageResponse;   // Ladruno — Tier-A Kstab
 }
 
 //set domain
@@ -218,7 +253,51 @@ void  LadrunoBrick::setDomain(Domain *theDomain)
     if (haveNodes) buildEAS();
   }
 
+  // Ladruno — Tier-A: cache the centroid material's "damage" query for the
+  // STIFFNESS-stabilized single-point formulations (eas, uri+stiffness), whose
+  // constant elastic Kstab must degrade with damage under softening. Rebuilt
+  // here so the receive side (recvSelf -> setDomain) re-caches against the freshly
+  // brokered material. Materials that report no "damage" channel return 0 here,
+  // and damageScale() falls back to the elastic Kstab. uri+viscous and the
+  // multi-point forms (std/bbar/uri+physical) need no scaling, so we skip them.
+  if (damageResponse) { delete damageResponse; damageResponse = 0; }
+  const bool stiffnessStabilized =
+      (formulation == Formulation::EAS) ||
+      (formulation == Formulation::URI && hourglassType == Hourglass::STIFFNESS);
+  if (stiffnessStabilized && materialPointers[0] != 0) {
+    DummyStream dmgStream;
+    const char *dmgArgv[1] = {"damage"};
+    damageResponse = materialPointers[0]->setResponse(dmgArgv, 1, dmgStream);
+  }
+
   this->DomainComponent::setDomain(theDomain);
+}
+
+//----------------------------------------------------------------------
+// Tier-A damage-scaled hourglass stabilization (softening support). Returns the
+// multiplier s in [floor,1] that degrades the constant elastic Kstab with the
+// material's current damage; 1.0 when the material reports no "damage" channel
+// (so std elastic/J2 behave exactly as before). See the header note + §3 of
+// Ladruno_implementation/11_brick_asdconcrete_integration.md.  // Ladruno
+//----------------------------------------------------------------------
+double
+LadrunoBrick::damageScale(void)
+{
+  if (damageResponse == 0)
+    return 1.0;                       // material has no "damage" channel -> elastic Kstab
+  if (damageResponse->getResponse() < 0)
+    return 1.0;
+  Information &info = damageResponse->getInformation();
+  const Vector *d = info.theVector;
+  if (d == 0)
+    return 1.0;
+  double dmax = 0.0;
+  for (int i = 0; i < d->Size(); i++)
+    if ((*d)(i) > dmax) dmax = (*d)(i);   // ASDConcrete3D: max(d_tension, d_compression)
+  double s = 1.0 - dmax;
+  if (s < HG_DAMAGE_FLOOR) s = HG_DAMAGE_FLOOR;
+  if (s > 1.0) s = 1.0;
+  return s;
 }
 
 int
@@ -1323,7 +1402,20 @@ LadrunoBrick::formUri(int tang_flag, bool useInitialTangent)
       bb += bC[i][I] * bC[i][I];
   const double Ghg = dd(3, 3);
   const double scale = (hourglassCoeff > 0.0) ? hourglassCoeff : 0.05;
-  const double kappa = scale * Ghg * vol * bb;
+  double kappa = scale * Ghg * vol * bb;
+
+  // Ladruno — Tier-A: for a softening material (a "damage" channel is present)
+  // base the STIFFNESS hourglass stiffness on the ELASTIC shear and degrade it
+  // explicitly by a floored damage scale, so a fully-cracked element keeps
+  // residual hourglass control (κ → floor·κ_elastic, not 0). Using the current
+  // secant shear (Ghg) here would let κ → 0 at full damage and defeat the floor.
+  // The VISCOUS flavour adds damping not stiffness, so it is NOT degraded (full
+  // hourglass control in the cracked band is desirable there). Non-softening
+  // materials (no damage channel) keep the existing current-tangent κ unchanged.
+  if (!useInitialTangent && hourglassType == Hourglass::STIFFNESS && damageResponse != 0) {
+    const double G0 = materialPointers[0]->getInitialTangent()(3, 3);
+    kappa = scale * G0 * vol * bb * this->damageScale();
+  }
 
   double gamma[4][8];
   computeGammaHourglass(bC, gamma, 1.0);   // stiffness: beta absorbed into kappa
@@ -2169,16 +2261,25 @@ LadrunoBrick::formEAS(int tang_flag, bool useInitialTangent)
   stiff.Zero();
   resid.Zero();
 
+  // Ladruno — Tier-A: degrade the constant elastic stabilization with damage
+  // (1.0 for non-softening materials). The membrane terms below are NOT scaled —
+  // they already carry the true (degraded) material C and stress; only the
+  // artificial enhanced-strain Kstab is softened so a cracked element can localize.
+  // The initial-tangent assembly keeps the full elastic Kstab (s=1) so the
+  // predictor stiffness stays well-conditioned.
+  const double sHg = useInitialTangent ? 1.0 : this->damageScale();
+
   if (tang_flag == 1) {
     const Matrix &C = useInitialTangent ? materialPointers[0]->getInitialTangent()
                                         : materialPointers[0]->getTangent();
     stiff = *easKstab;
+    stiff *= sHg;
     stiff.addMatrixTripleProduct(1.0, *easBnot, C, easVol);
   }
 
   if (!useInitialTangent) {
     // stabilization + membrane internal force
-    resid.addMatrixVector(0.0, *easKstab, uCore, 1.0);
+    resid.addMatrixVector(0.0, *easKstab, uCore, sHg);
     const Vector &stress = materialPointers[0]->getStress();
     resid.addMatrixTransposeVector(1.0, *easBnot, stress, easVol);
 
@@ -2332,6 +2433,12 @@ int  LadrunoBrick::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker
   }
 
   this->setTag(idData(24));
+
+  // Ladruno — Tier-A: drop any cached "damage" query before the materials below
+  // may be deleted/rebrokered. It holds a raw pointer to materialPointers[0], so a
+  // stale one would dangle on a material-class change; setDomain rebuilds it
+  // against the live material on the receive side.  // Ladruno
+  if (damageResponse) { delete damageResponse; damageResponse = 0; }
 
   static Vector dData(9);
   if (theChannel.recvVector(dataTag, commitTag, dData) < 0) {
@@ -2556,7 +2663,10 @@ LadrunoBrick::hourglassEnergy(void)
     Ku.addMatrixVector(0.0, *easKstab, uCore, 1.0);
     double e = 0.0;
     for (int i = 0; i < 24; i++) e += uCore(i) * Ku(i);
-    return 0.5 * e;
+    // Ladruno — report the ACTUALLY stored (damage-degraded) stabilization energy,
+    // consistent with the Kstab formEAS assembles; the instrument for tuning the
+    // floor against internal energy (§5). 1.0 for non-softening materials.
+    return 0.5 * e * this->damageScale();
   }
 
   if (formulation == Formulation::URI && hourglassType == Hourglass::STIFFNESS) {
@@ -2578,7 +2688,15 @@ LadrunoBrick::hourglassEnergy(void)
         bb += bC[i][I] * bC[i][I];
     const double Ghg = materialPointers[0]->getTangent()(3, 3);
     const double scale = (hourglassCoeff > 0.0) ? hourglassCoeff : 0.05;
-    const double kappa = scale * Ghg * vol * bb;
+    double kappa = scale * Ghg * vol * bb;
+    // Ladruno — mirror formUri's Tier-A κ exactly (elastic base × floored damage
+    // scale for a softening material) so the reported stored stabilization energy
+    // matches what the element actually assembles. Single application of the scale.
+    // (already inside the URI+STIFFNESS branch, so only the damage guard remains.)
+    if (damageResponse != 0) {
+      const double G0 = materialPointers[0]->getInitialTangent()(3, 3);
+      kappa = scale * G0 * vol * bb * this->damageScale();
+    }
 
     double gamma[4][8];
     computeGammaHourglass(bC, gamma, 1.0);
@@ -2598,7 +2716,7 @@ LadrunoBrick::hourglassEnergy(void)
     for (int a = 0; a < 4; a++)
       for (int i = 0; i < 3; i++)
         e += q[a][i] * q[a][i];
-    return 0.5 * kappa * e;
+    return 0.5 * kappa * e;   // kappa already carries the Tier-A damage scale
   }
 
   return 0.0;   // std / bbar / physical (uri-viscous handled above)
