@@ -336,7 +336,7 @@ features:
   - feature: LadrunoJ2Finite
     classtag: 33012          # ND_TAG family; finite-strain-native combined-hardening J2 (co-rotating backstress)
     tag_symbol: ND_TAG_LadrunoJ2Finite
-    pr: 0
+    pr: 127
     feature_class: material
     required_tiers: [T0m, T1]
     pytest: tests/test_ladrunoJ2_finite_native_tangent.py   # channel-A+B tangent recipe exact-to-FD; channel-B small-but-present; channel-B objective (numpy oracle)

@@ -5331,3 +5331,15 @@ Workshops/SimWorkshop/SmallMP/ReadRecord.tcl -text
 Workshops/SimWorkshop/SmallMP/analysis.tcl -text
 Workshops/SimWorkshop/SmallMP/model.tcl -text
 Workshops/SimWorkshop/SmallSP/Example.tcl -text
+
+# --- Ladruno: append-only bookkeeping files ---------------------------------
+# These are concatenation-style logs (one row/line appended per feature). Use the
+# `union` merge driver so concurrent feature branches that each add a line never
+# CONFLICT — git keeps BOTH sides instead of stopping for a manual resolve. Only
+# for append-only docs; NEVER apply union to source code (it would interleave and
+# produce garbage). See Ladruno_implementation/16_finite_native_j2_adr.md
+# (the #127 rebase incident) for why.
+Ladruno_implementation/LEDGER_vanilla_files.md     merge=union
+Ladruno_implementation/LEDGER_implementations.md   merge=union
+Ladruno_implementation/LEDGER_quirks.md            merge=union
+Ladruno_scripts/banner_features.txt                merge=union
