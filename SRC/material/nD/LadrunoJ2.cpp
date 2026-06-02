@@ -18,11 +18,6 @@
 #include <math.h>
 #include <elementAPI.h>
 
-// ---- static return buffers -------------------------------------------------
-Vector LadrunoJ2::stressV(6);
-Vector LadrunoJ2::strainV(6);
-Matrix LadrunoJ2::tangentM(6, 6);
-
 // ---- symmetric-tensor helpers (6 tensor components {00,11,22,01,12,02}) ----
 // Double contraction A:B with the factor-2 weights on the off-diagonal pairs.
 static inline double dotT(const double* a, const double* b)
@@ -142,26 +137,60 @@ void* OPS_LadrunoJ2(void)
 LadrunoJ2::LadrunoJ2()
   : NDMaterial(0, ND_TAG_LadrunoJ2),
     bulk(0.0), shear(0.0), sig0(0.0), Qinf(0.0), bIso(0.0), Hiso(0.0), rho(0.0),
-    nBack(0), dGamma_n(0.0), ebarP_n(0.0), ebarP(0.0), dGammaTrial(0.0),
-    parameterID(0)
+    nBack(0), dim(DIM_3D), ncomp(6), condense(false), cEps22(0.0),
+    dGamma_n(0.0), ebarP_n(0.0), ebarP(0.0), dGammaTrial(0.0), parameterID(0)
 {
   for (int k = 0; k < MAXBACK; k++) { Ckin[k] = 0.0; gKin[k] = 0.0; }
+  this->setupDim();
   this->revertToStart();
 }
 
 LadrunoJ2::LadrunoJ2(int tag, double K, double G,
                      double s0, double Qi, double b, double Hi,
-                     int nb, const double* C, const double* gam, double r)
+                     int nb, const double* C, const double* gam, double r, int dimMode)
   : NDMaterial(tag, ND_TAG_LadrunoJ2),
     bulk(K), shear(G), sig0(s0), Qinf(Qi), bIso(b), Hiso(Hi), rho(r),
-    nBack(nb), dGamma_n(0.0), ebarP_n(0.0), ebarP(0.0), dGammaTrial(0.0),
-    parameterID(0)
+    nBack(nb), dim(dimMode), ncomp(6), condense(false), cEps22(0.0),
+    dGamma_n(0.0), ebarP_n(0.0), ebarP(0.0), dGammaTrial(0.0), parameterID(0)
 {
   for (int k = 0; k < MAXBACK; k++) {
     Ckin[k] = (k < nb) ? C[k]   : 0.0;
     gKin[k] = (k < nb) ? gam[k] : 0.0;
   }
+  this->setupDim();
   this->revertToStart();
+}
+
+// ---------------------------------------------------------------------------
+//  dimensional view setup: reduced-vector order -> full 6-comp index map
+// ---------------------------------------------------------------------------
+void LadrunoJ2::setupDim(void)
+{
+  // full ordering: 0:00 1:11 2:22 3:01 4:12 5:02
+  switch (dim) {
+    case DIM_PSTRAIN:    ncomp = 3; { int m[3]={0,1,3};       for(int a=0;a<3;a++) vmap[a]=m[a]; } condense=false; break;
+    case DIM_AXISYM:     ncomp = 4; { int m[4]={0,1,2,3};     for(int a=0;a<4;a++) vmap[a]=m[a]; } condense=false; break;
+    case DIM_PLATEFIBER: ncomp = 5; { int m[5]={0,1,3,4,5};   for(int a=0;a<5;a++) vmap[a]=m[a]; } condense=true;  break;
+    case DIM_PSTRESS:    ncomp = 3; { int m[3]={0,1,3};       for(int a=0;a<3;a++) vmap[a]=m[a]; } condense=true;  break;
+    case DIM_3D:
+    default:             ncomp = 6; { int m[6]={0,1,2,3,4,5}; for(int a=0;a<6;a++) vmap[a]=m[a]; } condense=false; break;
+  }
+  stressOut.resize(ncomp);
+  strainOut.resize(ncomp);
+  tangentOut.resize(ncomp, ncomp);
+}
+
+// Static condensation of the out-of-plane (33, index 2) dof so sigma_22 = 0:
+//   Dtan[I][J] -= Dtan[I][2] Dtan[2][J] / Dtan[2][2].
+void LadrunoJ2::condenseTangent(void)
+{
+  double d22 = Dtan[2][2];
+  if (fabs(d22) < 1.0e-300) return;
+  double col[6], row[6];
+  for (int i = 0; i < 6; i++) { col[i] = Dtan[i][2]; row[i] = Dtan[2][i]; }
+  for (int I = 0; I < 6; I++)
+    for (int J = 0; J < 6; J++)
+      Dtan[I][J] -= col[I]*row[J]/d22;
 }
 
 LadrunoJ2::~LadrunoJ2() {}
@@ -185,13 +214,43 @@ double LadrunoJ2::yieldSlope(double p) const
 // ===========================================================================
 int LadrunoJ2::setTrialStrain(const Vector& e)
 {
-  strain6[0] = e(0);
-  strain6[1] = e(1);
-  strain6[2] = e(2);
-  strain6[3] = 0.5 * e(3);   // engineering -> tensor shear
-  strain6[4] = 0.5 * e(4);
-  strain6[5] = 0.5 * e(5);
-  this->integrate();
+  // map the element's reduced (engineering-shear) vector into the full
+  // 6-comp tensor strain. For condensed modes (PlaneStress/PlateFiber) the
+  // out-of-plane eps_22 (index 2) is an internal unknown — preserve its
+  // running value as the starting guess.
+  double eps22 = strain6[2];
+  for (int i = 0; i < 6; i++) strain6[i] = 0.0;
+  if (condense) strain6[2] = eps22;
+
+  for (int a = 0; a < ncomp; a++) {
+    int full = vmap[a];
+    double val = e(a);
+    if (full >= 3) val *= 0.5;     // engineering -> tensor shear
+    strain6[full] = val;
+  }
+
+  if (!condense) {
+    this->integrate();
+    return 0;
+  }
+
+  // enforce sigma_22 = 0: Newton on eps_22 (= strain6[2]); dSNPO sec 9.2.3.
+  const int maxIt = 25;
+  for (int it = 0; it < maxIt; it++) {
+    this->integrate();
+    double d22 = Dtan[2][2];
+    double smag = 0.0;
+    for (int i = 0; i < 6; i++) smag += stress6[i]*stress6[i];
+    smag = sqrt(smag);
+    double tol22 = 1.0e-10 * (smag > 1.0 ? smag : 1.0);
+    if (fabs(stress6[2]) <= tol22) break;
+    if (fabs(d22) < 1.0e-300) break;
+    strain6[2] -= stress6[2] / d22;
+    if (it == maxIt - 1)
+      opserr << "WARNING LadrunoJ2: sigma_22 condensation did not converge (tag "
+             << this->getTag() << ", |s22|=" << fabs(stress6[2]) << ")\n";
+  }
+  this->condenseTangent();
   return 0;
 }
 
@@ -199,13 +258,13 @@ int LadrunoJ2::setTrialStrain(const Vector& v, const Vector&) { return this->set
 
 int LadrunoJ2::setTrialStrainIncr(const Vector& v)
 {
-  static Vector ne(6);
-  ne(0) = strain6[0] + v(0);
-  ne(1) = strain6[1] + v(1);
-  ne(2) = strain6[2] + v(2);
-  ne(3) = 2.0*strain6[3] + v(3);
-  ne(4) = 2.0*strain6[4] + v(4);
-  ne(5) = 2.0*strain6[5] + v(5);
+  // current reduced strain + increment
+  Vector ne(ncomp);
+  for (int a = 0; a < ncomp; a++) {
+    int full = vmap[a];
+    double cur = (full >= 3) ? 2.0*strain6[full] : strain6[full];
+    ne(a) = cur + v(a);
+  }
   return this->setTrialStrain(ne);
 }
 
@@ -402,36 +461,49 @@ void LadrunoJ2::setStateToCommitted(void)
 // ===========================================================================
 const Vector& LadrunoJ2::getStress(void)
 {
-  for (int i = 0; i < 6; i++) stressV(i) = stress6[i];   // shear = true stress
-  return stressV;
+  for (int a = 0; a < ncomp; a++) stressOut(a) = stress6[vmap[a]];  // shear = true stress
+  return stressOut;
 }
 
 const Vector& LadrunoJ2::getStrain(void)
 {
-  strainV(0) = strain6[0];
-  strainV(1) = strain6[1];
-  strainV(2) = strain6[2];
-  strainV(3) = 2.0*strain6[3];   // tensor -> engineering shear
-  strainV(4) = 2.0*strain6[4];
-  strainV(5) = 2.0*strain6[5];
-  return strainV;
+  for (int a = 0; a < ncomp; a++) {
+    int full = vmap[a];
+    strainOut(a) = (full >= 3) ? 2.0*strain6[full] : strain6[full];  // tensor -> engineering
+  }
+  return strainOut;
 }
 
 const Matrix& LadrunoJ2::getTangent(void)
 {
-  for (int I = 0; I < 6; I++)
-    for (int J = 0; J < 6; J++) tangentM(I, J) = Dtan[I][J];
-  return tangentM;
+  for (int a = 0; a < ncomp; a++)
+    for (int b = 0; b < ncomp; b++) tangentOut(a, b) = Dtan[vmap[a]][vmap[b]];
+  return tangentOut;
 }
 
 const Matrix& LadrunoJ2::getInitialTangent(void)
 {
+  // elastic tangent mapped to the reduced view (uncondensed, matching the
+  // J2Plasticity specializations' getInitialTangent convention).
   double Kt[6][6];
   this->buildElasticTangent(Kt);
-  for (int I = 0; I < 6; I++)
-    for (int J = 0; J < 6; J++) tangentM(I, J) = Kt[I][J];
-  return tangentM;
+  for (int a = 0; a < ncomp; a++)
+    for (int b = 0; b < ncomp; b++) tangentOut(a, b) = Kt[vmap[a]][vmap[b]];
+  return tangentOut;
 }
+
+const char* LadrunoJ2::getType(void) const
+{
+  switch (dim) {
+    case DIM_PSTRAIN:    return "PlaneStrain";
+    case DIM_AXISYM:     return "AxiSymmetric";
+    case DIM_PLATEFIBER: return "PlateFiber";
+    case DIM_PSTRESS:    return "PlaneStress";
+    default:             return "ThreeDimensional";
+  }
+}
+
+int LadrunoJ2::getOrder(void) const { return ncomp; }
 
 // ===========================================================================
 //  state cycle
@@ -443,12 +515,14 @@ int LadrunoJ2::commitState(void)
   dGamma_n = dGammaTrial;
   for (int k = 0; k < nBack; k++)
     for (int i = 0; i < 6; i++) alpha_n[k][i] = alpha[k][i];
+  cEps22 = strain6[2];   // converged out-of-plane strain (condensed modes)
   return 0;
 }
 
 int LadrunoJ2::revertToLastCommit(void)
 {
   this->setStateToCommitted();
+  if (condense) strain6[2] = cEps22;
   return 0;
 }
 
@@ -462,6 +536,7 @@ int LadrunoJ2::revertToStart(void)
   }
   ebarP_n = 0.0; ebarP = 0.0;
   dGamma_n = 0.0; dGammaTrial = 0.0;
+  cEps22 = 0.0;
   for (int k = 0; k < MAXBACK; k++)
     for (int i = 0; i < 6; i++) { alpha_n[k][i] = 0.0; alpha[k][i] = 0.0; }
   this->buildElasticTangent(Dtan);
@@ -473,19 +548,24 @@ int LadrunoJ2::revertToStart(void)
 // ===========================================================================
 NDMaterial* LadrunoJ2::getCopy(void)
 {
-  LadrunoJ2* clone = new LadrunoJ2(this->getTag(), bulk, shear, sig0, Qinf, bIso, Hiso,
-                                   nBack, Ckin, gKin, rho);
-  return clone;
+  return new LadrunoJ2(this->getTag(), bulk, shear, sig0, Qinf, bIso, Hiso,
+                       nBack, Ckin, gKin, rho, dim);
 }
 
 NDMaterial* LadrunoJ2::getCopy(const char* type)
 {
-  if (strcmp(type, "ThreeDimensional") == 0 || strcmp(type, "3D") == 0)
-    return this->getCopy();
+  int d = -1;
+  if (strcmp(type, "ThreeDimensional") == 0 || strcmp(type, "3D") == 0) d = DIM_3D;
+  else if (strcmp(type, "PlaneStrain") == 0 || strcmp(type, "PlaneStrain2D") == 0) d = DIM_PSTRAIN;
+  else if (strcmp(type, "AxiSymmetric") == 0 || strcmp(type, "AxiSymmetric2D") == 0) d = DIM_AXISYM;
+  else if (strcmp(type, "PlateFiber") == 0) d = DIM_PLATEFIBER;
+  else if (strcmp(type, "PlaneStress") == 0 || strcmp(type, "PlaneStress2D") == 0) d = DIM_PSTRESS;
 
-  opserr << "LadrunoJ2::getCopy -- type '" << type
-         << "' not supported in v1 (ThreeDimensional only)\n";
-  return 0;
+  if (d < 0)
+    return NDMaterial::getCopy(type);   // let the base report the unsupported type
+
+  return new LadrunoJ2(this->getTag(), bulk, shear, sig0, Qinf, bIso, Hiso,
+                       nBack, Ckin, gKin, rho, d);
 }
 
 // ===========================================================================
@@ -493,9 +573,9 @@ NDMaterial* LadrunoJ2::getCopy(const char* type)
 // ===========================================================================
 int LadrunoJ2::sendSelf(int commitTag, Channel& theChannel)
 {
-  // tag + 7 params + nBack + 2*MAXBACK (C,gamma) + epsP(6) + ebarP(1)
-  //     + alpha(MAXBACK*6) + dGamma(1)
-  static Vector data(1 + 7 + 1 + 2*MAXBACK + 6 + 1 + MAXBACK*6 + 1);
+  // tag + 7 params + nBack + dim + 2*MAXBACK (C,gamma) + epsP(6) + ebarP(1)
+  //     + alpha(MAXBACK*6) + dGamma(1) + cEps22(1)
+  static Vector data(1 + 7 + 1 + 1 + 2*MAXBACK + 6 + 1 + MAXBACK*6 + 1 + 1);
   int c = 0;
   data(c++) = this->getTag();
   data(c++) = bulk;
@@ -506,6 +586,7 @@ int LadrunoJ2::sendSelf(int commitTag, Channel& theChannel)
   data(c++) = Hiso;
   data(c++) = rho;
   data(c++) = nBack;
+  data(c++) = dim;
   for (int k = 0; k < MAXBACK; k++) data(c++) = Ckin[k];
   for (int k = 0; k < MAXBACK; k++) data(c++) = gKin[k];
   for (int i = 0; i < 6; i++) data(c++) = epsP_n[i];
@@ -513,6 +594,7 @@ int LadrunoJ2::sendSelf(int commitTag, Channel& theChannel)
   for (int k = 0; k < MAXBACK; k++)
     for (int i = 0; i < 6; i++) data(c++) = alpha_n[k][i];
   data(c++) = dGamma_n;
+  data(c++) = cEps22;
 
   if (theChannel.sendVector(this->getDbTag(), commitTag, data) < 0) {
     opserr << "LadrunoJ2::sendSelf - failed to send vector\n";
@@ -523,7 +605,7 @@ int LadrunoJ2::sendSelf(int commitTag, Channel& theChannel)
 
 int LadrunoJ2::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker& theBroker)
 {
-  static Vector data(1 + 7 + 1 + 2*MAXBACK + 6 + 1 + MAXBACK*6 + 1);
+  static Vector data(1 + 7 + 1 + 1 + 2*MAXBACK + 6 + 1 + MAXBACK*6 + 1 + 1);
   if (theChannel.recvVector(this->getDbTag(), commitTag, data) < 0) {
     opserr << "LadrunoJ2::recvSelf - failed to recv vector\n";
     return -1;
@@ -538,6 +620,7 @@ int LadrunoJ2::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker& th
   Hiso  = data(c++);
   rho   = data(c++);
   nBack = (int)data(c++);
+  dim   = (int)data(c++);
   for (int k = 0; k < MAXBACK; k++) Ckin[k] = data(c++);
   for (int k = 0; k < MAXBACK; k++) gKin[k] = data(c++);
   for (int i = 0; i < 6; i++) epsP_n[i] = data(c++);
@@ -545,10 +628,13 @@ int LadrunoJ2::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker& th
   for (int k = 0; k < MAXBACK; k++)
     for (int i = 0; i < 6; i++) alpha_n[k][i] = data(c++);
   dGamma_n = data(c++);
+  cEps22   = data(c++);
 
+  this->setupDim();             // rebuild vmap/ncomp/condense + resize buffers
   // sync trial to committed
   this->setStateToCommitted();
   for (int i = 0; i < 6; i++) { strain6[i] = 0.0; stress6[i] = 0.0; }
+  if (condense) strain6[2] = cEps22;
   this->buildElasticTangent(Dtan);
   return 0;
 }
