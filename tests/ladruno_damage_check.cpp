@@ -203,6 +203,38 @@ int main()
     check(rateC > rateU, "higher triaxiality => faster damage", rateC, rateU);
   }
 
+  // ---- IMPL-EX: frozen-D~ degrade gives stress/tangent = (1-D~)*effective, SPD,
+  //      and D_out is the IMPLICIT value independent of the override ----
+  printf("IMPL-EX (dScaleOverride): SPD (1-D~)*effective, implicit D returned:\n");
+  {
+    Params pon{K,G,5.0,3.0,25.0,8.0,1,{400},{80}};
+    pon.dmg.on=true; pon.dmg.r=3.0; pon.dmg.s=1.0; pon.dmg.pD=0.0; pon.dmg.Dc=0.99;
+    Params poff = pon; poff.dmg.on=false;       // effective (D-independent) reference
+    State st; zero(st);
+    double eps[6]={0.04,0,0,0,0,0};
+    // effective stress + tangent (damage off)
+    double se[6],De[6][6],eP[6],eb,al[MAXBACK][6],dg,Doff;
+    returnMapDamaged(poff, eps, st.epsP, st.ebarP, st.alpha, st.D, se,De,eP,eb,al,dg,Doff);
+    // implicit-damage run (to read the implicit D)
+    double si[6],Di[6][6],Dimpl;
+    returnMapDamaged(pon, eps, st.epsP, st.ebarP, st.alpha, st.D, si,Di,eP,eb,al,dg,Dimpl,0,-1.0);
+    // IMPL-EX run with a frozen extrapolated D~ != Dimpl
+    double Dtilde = 0.5*Dimpl;                   // arbitrary frozen extrapolation
+    double sx[6],Dx[6][6],Dout_ix;
+    returnMapDamaged(pon, eps, st.epsP, st.ebarP, st.alpha, st.D, sx,Dx,eP,eb,al,dg,Dout_ix,0,Dtilde);
+    // D_out must be the IMPLICIT value, independent of the override
+    check(fabs(Dout_ix - Dimpl) <= 1e-14, "IMPL-EX returns implicit D", Dout_ix, Dimpl);
+    // stress == (1-D~)*effective ; tangent == (1-D~)*effective (SPD, no rank-one term)
+    double errS=0, errT=0, scaleT=0;
+    for (int i=0;i<6;i++) errS=fmax(errS, fabs(sx[i]-(1.0-Dtilde)*se[i]));
+    for (int I=0;I<6;I++) for(int J=0;J<6;J++){
+      scaleT=fmax(scaleT, fabs(De[I][J]));
+      errT=fmax(errT, fabs(Dx[I][J]-(1.0-Dtilde)*De[I][J]));
+    }
+    check(errS <= 1e-9*(fabs(se[0])+1.0), "IMPL-EX stress = (1-D~)*effective", errS, 0.0);
+    check(errT <= 1e-9*scaleT, "IMPL-EX tangent = (1-D~)*Dtan_eff (SPD)", errT, 0.0);
+  }
+
   printf("\n%s (%d failure%s)\n", fails? "FAILED":"ALL PASS", fails, fails==1?"":"s");
   return fails ? 1 : 0;
 }

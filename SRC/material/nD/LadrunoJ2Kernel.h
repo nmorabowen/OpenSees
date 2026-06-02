@@ -349,9 +349,19 @@ inline int returnMap(const Params& p,
 //  the effective algorithmic tangent dsigma~/deps returned by returnMap.
 //
 //  Extra args:  D_n   committed damage (in)
-//               D     updated damage (out, clamped to [0, Dc])
+//               D     updated damage (out, clamped to [0, Dc]) -- ALWAYS the
+//                     IMPLICIT value, so the caller commits a true backward-Euler D.
 //  When p.dmg.on == false this is a pure pass-through of returnMap (D = 0), so a
 //  damage-OFF material is byte-identical to the undamaged LadrunoJ2 (regression V0).
+//
+//  IMPL-EX (Oliver-Huespe-Cante 2008): pass dScaleOverride >= 0 to degrade the
+//  stress/tangent by a FROZEN extrapolated damage D~ instead of the implicit D.
+//  The plastic return stays implicit (it is hardening => SPD in effective space;
+//  ONLY damage softens), so freezing D~ gives a CONSTANT SPD tangent
+//  (1 - D~) Dtan_eff -- no -sigma~ (x) dD/deps softening term, hence no Newton
+//  stall on the indefinite implicit tangent. D (out) is still the implicit value,
+//  so the caller updates the extrapolation from a true backward-Euler history.
+//  dScaleOverride < 0 (default) = fully implicit (the consistent tangent above).
 // ===========================================================================
 inline int returnMapDamaged(const Params& p,
                             const double strain6[6],
@@ -360,7 +370,7 @@ inline int returnMapDamaged(const Params& p,
                             double stress6[6], double Dtan[6][6],
                             double epsP[6], double& ebarP,
                             double alpha[][6], double& dGamma, double& D,
-                            double* outResidual = 0)
+                            double* outResidual = 0, double dScaleOverride = -1.0)
 {
   // 1) effective (undamaged) return map -- the proven kernel, untouched
   int status = returnMap(p, strain6, epsP_n, ebarP_n, alpha_n,
@@ -391,12 +401,21 @@ inline int returnMapDamaged(const Params& p,
   bool capped = false;
   if (Dnew >= p.dmg.Dc) { Dnew = p.dmg.Dc; capped = true; }
   if (Dnew < 0.0) Dnew = 0.0;
-  D = Dnew;
-  const double omd = 1.0 - Dnew;
+  D = Dnew;                          // ALWAYS the implicit damage (for the caller to commit)
 
-  // 4) dD/deps for the consistent tangent (only where damage is actively growing)
+  // IMPL-EX: degrade by the frozen extrapolated D~ (SPD tangent) but still return
+  // the implicit D above. Fully-implicit (default) degrades by the implicit D.
+  const bool implex = (dScaleOverride >= 0.0);
+  double dScale = implex ? dScaleOverride : Dnew;
+  if (dScale >= p.dmg.Dc) dScale = p.dmg.Dc;
+  if (dScale < 0.0) dScale = 0.0;
+  const double omd = 1.0 - dScale;
+
+  // 4) dD/deps for the consistent tangent (only where damage is actively growing).
+  //    Skipped entirely in IMPL-EX: D~ is frozen => the rank-one softening term
+  //    vanishes => tangent (1 - D~) Dtan_eff is SPD.
   double dDdeps[6] = {0,0,0,0,0,0};
-  if (!capped && dDraw > 0.0 && dGamma > 0.0) {
+  if (!implex && !capped && dDraw > 0.0 && dGamma > 0.0) {
     // recompute the converged flow direction n and hardening modulus h (the
     // quantities returnMap consumes internally but does not return)
     double tr = strain6[0] + strain6[1] + strain6[2];

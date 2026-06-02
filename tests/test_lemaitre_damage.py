@@ -135,17 +135,21 @@ _ISO = ("-iso", "voce", 5.0, 4.0, 30.0, 10.0)
 _KIN = ("-kin", 1, 400.0, 80.0)
 
 
-def _mat3d(tag, dmg=None):
+def _mat3d(tag, dmg=None, implex=False):
     args = ["LadrunoJ2", tag, _K, _G, *_ISO, *_KIN]
     if dmg:
         args += ["-damage", "lemaitre", *dmg]
+        if implex:
+            args += ["-implex"]
     ops.nDMaterial(*args)
 
 
-def _mat1d(tag, dmg=None):
+def _mat1d(tag, dmg=None, implex=False):
     args = ["LadrunoUniaxialJ2", tag, _E, *_ISO, *_KIN]
     if dmg:
         args += ["-damage", "lemaitre", *dmg]
+        if implex:
+            args += ["-implex"]
     ops.uniaxialMaterial(*args)
 
 
@@ -274,3 +278,31 @@ def test_V8_tangent_degraded_by_damage_1d():
     et = ops.eleResponse(1, "material", 1, "tangent")
     # after appreciable damage the current tangent is well below the virgin E
     assert et and et[0] < _E, "tangent not degraded by damage"
+
+
+# ==========================================================================
+# V9 — IMPL-EX: runs without stalling (frozen-D~ SPD tangent), still produces
+#      damage, and refining the step size makes it converge to the implicit
+#      solution (the bounded-lag consistency property).
+# ==========================================================================
+def test_V9_implex_converges_to_implicit_1d():
+    dmg = [1.5, 1.0, 0.01, 0.95]
+    implicit = _run_truss(lambda t: _mat1d(t, dmg=dmg), 0.10, 120)
+    ix_coarse = _run_truss(lambda t: _mat1d(t, dmg=dmg, implex=True), 0.10, 30)
+    ix_fine = _run_truss(lambda t: _mat1d(t, dmg=dmg, implex=True), 0.10, 120)
+    # IMPL-EX ran every step to convergence (SPD tangent, no Newton stall) and damaged
+    assert len(ix_fine) == 120, "IMPL-EX failed to complete all steps"
+    assert ix_fine[-1][2] > 1e-3, "IMPL-EX produced no damage"
+    # refining the step -> IMPL-EX final stress approaches the implicit final stress
+    si = implicit[-1][1]
+    e_coarse = abs(ix_coarse[-1][1] - si)
+    e_fine = abs(ix_fine[-1][1] - si)
+    assert e_fine <= e_coarse + 1e-9, \
+        f"IMPL-EX not converging under refinement: fine {e_fine} vs coarse {e_coarse}"
+
+
+def test_V9_implex_3d_smoke():
+    # 3D IMPL-EX completes a softening push and accumulates damage with the SPD tangent
+    res = _run_brick(lambda t: _mat3d(t, dmg=[1.5, 1.0, 0.01, 0.95], implex=True), 0.10, 60)
+    assert len(res) == 60, "3D IMPL-EX failed to complete"
+    assert res[-1][2] > 1e-3, "3D IMPL-EX produced no damage"

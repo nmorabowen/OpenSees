@@ -86,6 +86,7 @@ void* OPS_LadrunoJ2(void)
   double dmgR = 0.0, dmgS = 1.0, dmgPD = 0.0, dmgDc = 1.0;
   bool dmgRegOn = false;
   double dmgLchRef = 1.0;
+  bool dmgImplex = false;
 
   while (OPS_GetNumRemainingInputArgs() > 0) {
     const char* flag = OPS_GetString();
@@ -163,6 +164,9 @@ void* OPS_LadrunoJ2(void)
       }
       dmgRegOn = true;
     }
+    else if (strcmp(flag, "-implex") == 0) {
+      dmgImplex = true;
+    }
     else {
       opserr << "WARNING LadrunoJ2: unknown option '" << flag << "'\n";
       return 0;
@@ -171,7 +175,7 @@ void* OPS_LadrunoJ2(void)
 
   NDMaterial* mat = new LadrunoJ2(tag, K, G, s0, Qinf, bIso, Hiso, nBack, C, gam, rho,
                                   LadrunoJ2::DIM_3D, dmgOn, dmgR, dmgS, dmgPD, dmgDc,
-                                  dmgRegOn, dmgLchRef);
+                                  dmgRegOn, dmgLchRef, dmgImplex);
   if (mat == 0) {
     opserr << "WARNING LadrunoJ2: failed to allocate material\n";
     return 0;
@@ -186,10 +190,10 @@ LadrunoJ2::LadrunoJ2()
   : NDMaterial(0, ND_TAG_LadrunoJ2),
     bulk(0.0), shear(0.0), sig0(0.0), Qinf(0.0), bIso(0.0), Hiso(0.0), rho(0.0),
     nBack(0), dmgOn(false), dmgR(0.0), dmgS(1.0), dmgPD(0.0), dmgDc(1.0),
-    dmgRegOn(false), dmgLchRef(1.0),
+    dmgRegOn(false), dmgLchRef(1.0), dmgImplex(false),
     dim(DIM_3D), ncomp(6), condense(false), cEps22(0.0),
-    dGamma_n(0.0), D_n(0.0), ebarP_n(0.0), ebarP(0.0), dGammaTrial(0.0), Dtrial(0.0),
-    parameterID(0)
+    dGamma_n(0.0), D_n(0.0), dD_n(0.0), ebarP_n(0.0), ebarP(0.0),
+    dGammaTrial(0.0), Dtrial(0.0), parameterID(0)
 {
   for (int k = 0; k < MAXBACK; k++) { Ckin[k] = 0.0; gKin[k] = 0.0; }
   this->setupDim();
@@ -200,14 +204,14 @@ LadrunoJ2::LadrunoJ2(int tag, double K, double G,
                      double s0, double Qi, double b, double Hi,
                      int nb, const double* C, const double* gam, double r, int dimMode,
                      bool dOn, double dR, double dS, double dPD, double dDc,
-                     bool dRegOn, double dLchRef)
+                     bool dRegOn, double dLchRef, bool dImplex)
   : NDMaterial(tag, ND_TAG_LadrunoJ2),
     bulk(K), shear(G), sig0(s0), Qinf(Qi), bIso(b), Hiso(Hi), rho(r),
     nBack(nb), dmgOn(dOn), dmgR(dR), dmgS(dS), dmgPD(dPD), dmgDc(dDc),
-    dmgRegOn(dRegOn), dmgLchRef(dLchRef),
+    dmgRegOn(dRegOn), dmgLchRef(dLchRef), dmgImplex(dImplex),
     dim(dimMode), ncomp(6), condense(false), cEps22(0.0),
-    dGamma_n(0.0), D_n(0.0), ebarP_n(0.0), ebarP(0.0), dGammaTrial(0.0), Dtrial(0.0),
-    parameterID(0)
+    dGamma_n(0.0), D_n(0.0), dD_n(0.0), ebarP_n(0.0), ebarP(0.0),
+    dGammaTrial(0.0), Dtrial(0.0), parameterID(0)
 {
   for (int k = 0; k < MAXBACK; k++) {
     Ckin[k] = (k < nb) ? C[k]   : 0.0;
@@ -355,10 +359,16 @@ void LadrunoJ2::integrate(void)
   fillParams(p, bulk, shear, sig0, Qinf, bIso, Hiso, nBack, Ckin, gKin,
              dmgOn, dmgR, dmgS, dmgPD, dmgDc, lchScale);
 
+  // IMPL-EX: degrade by the FROZEN extrapolated damage D~ = D_n + dD_n (constant
+  // SPD tangent, no Newton stall on softening). Dtrial still receives the IMPLICIT
+  // damage for commit. dScaleOverride < 0 => fully implicit.
+  double dScaleOverride = -1.0;
+  if (dmgOn && dmgImplex) dScaleOverride = D_n + dD_n;
+
   double resid = 0.0;
   int status = ladruno_j2_kernel::returnMapDamaged(
       p, strain6, epsP_n, ebarP_n, alpha_n, D_n,
-      stress6, Dtan, epsP, ebarP, alpha, dGammaTrial, Dtrial, &resid);
+      stress6, Dtan, epsP, ebarP, alpha, dGammaTrial, Dtrial, &resid, dScaleOverride);
 
   if (status == ladruno_j2_kernel::STATUS_SINGULAR)
     opserr << "WARNING LadrunoJ2: singular local Jacobian (tag "
@@ -442,6 +452,7 @@ int LadrunoJ2::commitState(void)
   for (int i = 0; i < 6; i++) epsP_n[i] = epsP[i];
   ebarP_n  = ebarP;
   dGamma_n = dGammaTrial;
+  dD_n     = Dtrial - D_n;       // implicit increment (for the next IMPL-EX extrapolation)
   D_n      = Dtrial;
   for (int k = 0; k < nBack; k++)
     for (int i = 0; i < 6; i++) alpha_n[k][i] = alpha[k][i];
@@ -466,7 +477,7 @@ int LadrunoJ2::revertToStart(void)
   }
   ebarP_n = 0.0; ebarP = 0.0;
   dGamma_n = 0.0; dGammaTrial = 0.0;
-  D_n = 0.0; Dtrial = 0.0;
+  D_n = 0.0; Dtrial = 0.0; dD_n = 0.0;
   cEps22 = 0.0;
   for (int k = 0; k < MAXBACK; k++)
     for (int i = 0; i < 6; i++) { alpha_n[k][i] = 0.0; alpha[k][i] = 0.0; }
@@ -481,7 +492,7 @@ NDMaterial* LadrunoJ2::getCopy(void)
 {
   return new LadrunoJ2(this->getTag(), bulk, shear, sig0, Qinf, bIso, Hiso,
                        nBack, Ckin, gKin, rho, dim,
-                       dmgOn, dmgR, dmgS, dmgPD, dmgDc, dmgRegOn, dmgLchRef);
+                       dmgOn, dmgR, dmgS, dmgPD, dmgDc, dmgRegOn, dmgLchRef, dmgImplex);
 }
 
 NDMaterial* LadrunoJ2::getCopy(const char* type)
@@ -498,7 +509,7 @@ NDMaterial* LadrunoJ2::getCopy(const char* type)
 
   return new LadrunoJ2(this->getTag(), bulk, shear, sig0, Qinf, bIso, Hiso,
                        nBack, Ckin, gKin, rho, d,
-                       dmgOn, dmgR, dmgS, dmgPD, dmgDc, dmgRegOn, dmgLchRef);
+                       dmgOn, dmgR, dmgS, dmgPD, dmgDc, dmgRegOn, dmgLchRef, dmgImplex);
 }
 
 // ===========================================================================
@@ -506,9 +517,9 @@ NDMaterial* LadrunoJ2::getCopy(const char* type)
 // ===========================================================================
 int LadrunoJ2::sendSelf(int commitTag, Channel& theChannel)
 {
-  // tag + 7 params + nBack + dim + 7 damage params + 2*MAXBACK (C,gamma)
-  //     + epsP(6) + ebarP(1) + alpha(MAXBACK*6) + dGamma(1) + D_n(1) + cEps22(1)
-  static Vector data(1 + 7 + 1 + 1 + 7 + 2*MAXBACK + 6 + 1 + MAXBACK*6 + 1 + 1 + 1);
+  // tag + 7 params + nBack + dim + 8 damage params + 2*MAXBACK (C,gamma)
+  //     + epsP(6) + ebarP(1) + alpha(MAXBACK*6) + dGamma(1) + D_n(1) + dD_n(1) + cEps22(1)
+  static Vector data(1 + 7 + 1 + 1 + 8 + 2*MAXBACK + 6 + 1 + MAXBACK*6 + 1 + 1 + 1 + 1);
   int c = 0;
   data(c++) = this->getTag();
   data(c++) = bulk;
@@ -527,6 +538,7 @@ int LadrunoJ2::sendSelf(int commitTag, Channel& theChannel)
   data(c++) = dmgDc;
   data(c++) = dmgRegOn ? 1.0 : 0.0;
   data(c++) = dmgLchRef;
+  data(c++) = dmgImplex ? 1.0 : 0.0;
   for (int k = 0; k < MAXBACK; k++) data(c++) = Ckin[k];
   for (int k = 0; k < MAXBACK; k++) data(c++) = gKin[k];
   for (int i = 0; i < 6; i++) data(c++) = epsP_n[i];
@@ -535,6 +547,7 @@ int LadrunoJ2::sendSelf(int commitTag, Channel& theChannel)
     for (int i = 0; i < 6; i++) data(c++) = alpha_n[k][i];
   data(c++) = dGamma_n;
   data(c++) = D_n;
+  data(c++) = dD_n;
   data(c++) = cEps22;
 
   if (theChannel.sendVector(this->getDbTag(), commitTag, data) < 0) {
@@ -546,7 +559,7 @@ int LadrunoJ2::sendSelf(int commitTag, Channel& theChannel)
 
 int LadrunoJ2::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker& theBroker)
 {
-  static Vector data(1 + 7 + 1 + 1 + 7 + 2*MAXBACK + 6 + 1 + MAXBACK*6 + 1 + 1 + 1);
+  static Vector data(1 + 7 + 1 + 1 + 8 + 2*MAXBACK + 6 + 1 + MAXBACK*6 + 1 + 1 + 1 + 1);
   if (theChannel.recvVector(this->getDbTag(), commitTag, data) < 0) {
     opserr << "LadrunoJ2::recvSelf - failed to recv vector\n";
     return -1;
@@ -569,6 +582,7 @@ int LadrunoJ2::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker& th
   dmgDc = data(c++);
   dmgRegOn = (data(c++) != 0.0);
   dmgLchRef = data(c++);
+  dmgImplex = (data(c++) != 0.0);
   for (int k = 0; k < MAXBACK; k++) Ckin[k] = data(c++);
   for (int k = 0; k < MAXBACK; k++) gKin[k] = data(c++);
   for (int i = 0; i < 6; i++) epsP_n[i] = data(c++);
@@ -577,6 +591,7 @@ int LadrunoJ2::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker& th
     for (int i = 0; i < 6; i++) alpha_n[k][i] = data(c++);
   dGamma_n = data(c++);
   D_n      = data(c++);
+  dD_n     = data(c++);
   cEps22   = data(c++);
 
   this->setupDim();             // rebuild vmap/ncomp/condense + resize buffers
