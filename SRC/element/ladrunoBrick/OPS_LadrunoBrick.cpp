@@ -31,10 +31,15 @@
 // Usage:
 //   element('LadrunoBrick', tag, n1..n8, matTag
 //           [, '-formulation', <std|bbar|uri|eas>]   # default std
+//           [, '-geom', <linear|corot|finite>]       # default linear
 //           [, '-hourglass', <viscous|stiffness|physical>, coeff]  # uri only
 //           [, '-lumped']
 //           [, '-b', bx, by, bz]
 //           [, '-damp', dampTag])
+//
+// -geom finite needs a finite-strain material (e.g. nDMaterial LogStrain). With
+// -geom finite, -formulation bbar selects the F-bar element (dSNPO eq 15.5), the
+// large-strain volumetric-locking cure; std uses the plain deformation gradient.
 //
 // std + bbar + uri(stiffness|physical|viscous) + eas are all implemented and
 // accepted at construction. NOTE: uri -hourglass viscous is rate-form damping
@@ -198,14 +203,16 @@ void *OPS_LadrunoBrick()
     theDamping = 0;
   }
 
-  // -geom finite (v3): updated-Lagrangian. v3 supports the std formulation only
-  // (bbar+finite = F-bar and uri/eas+finite are reserved), and requires a
-  // finite-strain material (driven by setTrialF(F), e.g. nDMaterial LogStrain).
+  // -geom finite (v3): updated-Lagrangian. std = plain F; bbar = F-bar (dSNPO
+  // eq 15.5, the volumetric-locking cure for near-incompressible response).
+  // uri/eas + finite are reserved. Requires a finite-strain material (driven by
+  // setTrialF(F), e.g. nDMaterial LogStrain).
   if (geomMethodID == SolidTransformation::METHOD_FINITE) {
-    if (formulation != LadrunoBrick::Formulation::STD) {
+    if (formulation != LadrunoBrick::Formulation::STD &&
+        formulation != LadrunoBrick::Formulation::BBAR) {
       opserr << "WARNING LadrunoBrick " << idata[0]
-             << ": -geom finite currently supports only -formulation std "
-                "(bbar+finite = F-bar, uri/eas+finite are reserved)\n";
+             << ": -geom finite supports -formulation std (plain F) or bbar "
+                "(F-bar); uri/eas + finite are reserved\n";
       return 0;
     }
     if (dynamic_cast<FiniteStrainNDMaterial *>(mat) == 0) {
@@ -220,6 +227,20 @@ void *OPS_LadrunoBrick()
              << ": -damp is not yet supported with -geom finite (the finite "
                 "assembly does not apply element damping); reserved follow-up\n";
       return 0;
+    }
+    // F-bar has a GENERALLY UNSYMMETRIC tangent (dSNPO eq 15.10); a symmetric
+    // solver silently drops the coupling and breaks Newton convergence. Advise
+    // once per process (not per element) to keep large meshes quiet.  // Ladruno
+    if (formulation == LadrunoBrick::Formulation::BBAR) {
+      static bool fbarSolverAdvised = false;
+      if (!fbarSolverAdvised) {
+        fbarSolverAdvised = true;
+        opserr << "LadrunoBrick: -geom finite -formulation bbar (F-bar) has a "
+                  "GENERALLY UNSYMMETRIC tangent (dSNPO eq 15.10) — use an "
+                  "unsymmetric solver (e.g. 'system FullGeneral', 'UmfPack', or "
+                  "'SparseGEN'); a symmetric system (BandSPD/ProfileSPD) drops the "
+                  "coupling term and may not converge.\n";
+      }
     }
   }
 

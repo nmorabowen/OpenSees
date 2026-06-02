@@ -258,6 +258,28 @@ features:
       symmetry + homogeneous patch + objectivity, 6/6 green). Element-class gate green
       against dist/bin (test_ladrunoBrick_element.py 14/14).
 
+  - feature: LadrunoIMKBeam
+    classtag: 33003          # ELE_TAG family; 3D concentrated-plasticity IMK beam (N. Mora-Bowen)
+    tag_symbol: ELE_TAG_LadrunoIMKBeam
+    pr: 111
+    feature_class: element
+    required_tiers: [T0, T1]
+    pytest: tests/test_ladrunoIMKBeam_element.py
+    tcl: WAIVED(no Tcl command surface yet — Python/apeGmsh-driven; OPS factory only)
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesElementCommands.cpp
+      - SRC/element/CMakeLists.txt
+    dispatch: {tcl: false, functionMap: true}
+    status: active
+    notes: >
+      3D concentrated-plasticity IMK beam macro (uncoupled moment-rotation hinges),
+      shipped in #111. Manifest row added during the BezierTet10-corot merge (#108):
+      #111 shipped the classTag/element/test but omitted this G9 manifest row, so the
+      gate failed on ladruno HEAD until backfilled here. See 14_ladruno_imk_beam.md.
+
   - feature: LogStrainNDMaterial
     classtag: 33010          # ND_TAG family; Hencky finite-strain adaptor (seam 3)
     tag_symbol: ND_TAG_LogStrainNDMaterial

@@ -369,7 +369,8 @@ SolidTransformationCorot::globalizeStiff(const Matrix &kCore,
   const int ndof = 3 * n;
 
   // scratch (aliasing-safe). Stack-local so the seam is reentrant / thread-safe
-  // (ndof ≤ 24, allocation is cheap); the ctor zero-initialises.
+  // (ndof ≤ 30 — 8-node hex = 24, 10-node tet = 30; allocation is cheap); the
+  // ctor zero-initialises.
   Matrix K(ndof, ndof);
 
   // (1) rotated material stiffness  K(a,b) = R k_d(a,b) Rᵀ , block by block.
