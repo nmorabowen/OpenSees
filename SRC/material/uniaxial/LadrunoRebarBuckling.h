@@ -44,9 +44,9 @@
 //   uniaxial steel (LadrunoUniaxialJ2) but composes over Steel02/Steel4 too,
 //   and is stackable: Fatigue ∘ RebarBuckling ∘ J2.
 //
-//   Model:    Dhakal-Maekawa (-model dm).  Oracle: the verbatim DM formula
-//             ported from ReinforcingSteel::Buckled_stress_Dhakal(ess, fss).
-//             (-model ga, Gomes-Appleton, reserved for a follow-up.)
+//   Model:    Dhakal-Maekawa (-model dm, default) or Gomes-Appleton (-model ga).
+//             Oracle: the verbatim formulae ported from
+//             ReinforcingSteel::Buckled_stress_Dhakal / _Gomes(ess, fss).
 //   Tangent:  analytic consistent tangent  dσ/dε = r·k_bare + σ_bare·(∂r/∂ε)
 //             (improves on ReinforcingSteel, which finite-differences it).
 //
@@ -68,6 +68,7 @@ class LadrunoRebarBuckling : public UniaxialMaterial
 
   LadrunoRebarBuckling(int tag, UniaxialMaterial& bar,
                        double lsr, double alpha,
+                       double gaReduction, double gaFsuFrac,
                        double fy, double E, int model);
   LadrunoRebarBuckling();
   ~LadrunoRebarBuckling();
@@ -106,6 +107,8 @@ class LadrunoRebarBuckling : public UniaxialMaterial
   int    model;                 // MODEL_DM | MODEL_GA
   double lsr;                   // slenderness s/d (LDratio); lsr<=0 => pass-through
   double alpha;                 // DM residual-shape factor (ReinforcingSteel beta, 0.75..1.0)
+  double gaReduction;           // GA blend r in [0,1] (0=full GA buckling, 1=none); == RS GABuck r
+  double gaFsuFrac;             // GA fsu_fraction (== RS GABuck gama); blends fsup anchor stress
   double fy;                    // yield stress  (for eY = fy/E and the -0.2 fy floor)
   double E;                     // Young's modulus (for eY and the deep-branch slope)
 
@@ -128,7 +131,9 @@ class LadrunoRebarBuckling : public UniaxialMaterial
   double Tr;                    // current reduction factor r (for the "reduction" response)
 
   // helpers
-  void   applyBuckling(double eps, double sBare, double kBare);  // sets Tstress/Ttangent/Tr
+  void   applyBucklingDM(double eps, double sBare, double kBare);  // Dhakal-Maekawa
+  void   applyBucklingGA(double eps, double sBare, double kBare);  // Gomes-Appleton
+  double gaFactor(double eps, double e_cross) const;              // closed-form GA factor(eps)
   double backboneStressAt(double engStrain);                     // committed-clone probe
 
   int parameterID;

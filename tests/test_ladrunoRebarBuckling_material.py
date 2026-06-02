@@ -224,3 +224,100 @@ def test_B5_consistent_tangent_fd():
         kfd = (sp - sm) / (2.0 * d)
         assert k == pytest.approx(kfd, rel=1e-4, abs=1e-2), (
             f"consistent tangent {k} != FD {kfd} at eps={eps0}")
+
+
+# ==========================================================================
+#  Gomes–Appleton  (-model ga)
+# ==========================================================================
+_GA_C = 9.42477796076938       # 3*pi (upstream constant)
+
+
+def _wrap_ga(lsr, reduction=0.0, ff=0.5):
+    """Wrapper with -model ga. GA needs E (e_cross) but not fy."""
+    def f(tag):
+        _bar(tag + 100)
+        ops.uniaxialMaterial("LadrunoRebarBuckling", tag, tag + 100,
+                             "-model", "ga", "-lsr", lsr,
+                             "-reduction", reduction, "-fsufrac", ff, "-E", _E)
+    return f
+
+
+def _ga_ref(eps, sBare, lsr, reduction=0.0, ff=0.5):
+    """Python port of ReinforcingSteel::Buckled_stress_Gomes for the
+    monotonic-from-virgin case (e_cross=0, fsup=0)."""
+    e_cross, fsup = 0.0, 0.0
+    if eps >= e_cross:
+        return sBare
+    fs_buck = math.sqrt(32.0 / (e_cross - eps)) / (_GA_C * lsr)
+    beta_loc, gama_loc, Dft = 1.0, 0.1, 0.25
+    sd = abs(fs_buck - 1.0)
+    if sd <= Dft:
+        beta_loc = 1.0 - gama_loc * (Dft - sd) / Dft
+    m = min(1.0, fs_buck)
+    factor = m * beta_loc * (1.0 - reduction) + reduction
+    return fsup * ff - (factor + ff) * (fsup * ff - sBare) / (1.0 + ff)
+
+
+# GA0 -- -lsr 0 identity gate (full push-pull == bare)
+@pytest.mark.t0m
+def test_GA0_identity_gate():
+    eY = _FY / _E
+    strains = [i * eY for i in [0, 2, 5, 2, 0, -3, -8, -15, -6, 0, 4]]
+    bare = _drive(_bar_fn, strains)
+    wrap = _drive(_wrap_ga(0.0), strains)
+    for (sb, tb), (sw, tw) in zip(bare, wrap):
+        assert sw == pytest.approx(sb, rel=1e-12, abs=1e-9)
+        assert tw == pytest.approx(tb, rel=1e-12, abs=1e-9)
+
+
+# GA1 -- tension pass-through (GA gate: eps >= e_cross == 0 from virgin)
+@pytest.mark.t0m
+def test_GA1_tension_passthrough():
+    eY = _FY / _E
+    tens = [i * eY for i in [0, 1, 3, 6, 10]]
+    assert _drive(_bar_fn, tens) == pytest.approx(_drive(_wrap_ga(8.0), tens))
+
+
+# GA2 -- buckled compression matches the ported Gomes formula
+@pytest.mark.t1
+@pytest.mark.parametrize("lsr,red", [(6.0, 0.0), (8.0, 0.0), (12.0, 0.0), (8.0, 0.3)])
+def test_GA2_gomes_formula(lsr, red):
+    eY = _FY / _E
+    for k in [-1, -3, -6, -10, -15, -22]:
+        eps = k * eY
+        sBare = _oneshot(_bar_fn, eps)
+        sBuck = _oneshot(_wrap_ga(lsr, reduction=red), eps)
+        ref = _ga_ref(eps, sBare, lsr, reduction=red)
+        assert sBuck == pytest.approx(ref, rel=1e-6, abs=1e-4), (
+            f"λ={lsr} r={red} eps={eps}: wrapper {sBuck} != GA ref {ref}")
+
+
+# GA3 -- reduction limits: r=1 => no buckling; r=0 => genuine knock-down;
+#        more slender => more knock-down
+@pytest.mark.t1
+def test_GA3_reduction_and_slenderness():
+    eY = _FY / _E
+    eps = -10.0 * eY
+    sbare = _oneshot(_bar_fn, eps)
+    # r = 1 is the GA "no buckling" value -> pass-through
+    assert _oneshot(_wrap_ga(8.0, reduction=1.0), eps) == pytest.approx(sbare, rel=1e-6)
+    # r = 0 (full) knocks the stress down, more so for a more slender bar
+    s6 = _oneshot(_wrap_ga(6.0), eps)
+    s8 = _oneshot(_wrap_ga(8.0), eps)
+    s12 = _oneshot(_wrap_ga(12.0), eps)
+    assert abs(s12) < abs(s8) < abs(s6) < abs(sbare)
+
+
+# GA5 -- consistent-tangent FD (smooth region, away from the fs_buck≈1 kink)
+@pytest.mark.t0m
+def test_GA5_consistent_tangent_fd():
+    eY = _FY / _E
+    lsr = 8.0
+    d = 1.0e-7
+    for eps0 in (-10.0 * eY, -25.0 * eY):
+        k = _oneshot(_wrap_ga(lsr), eps0, "tangent")
+        sp = _oneshot(_wrap_ga(lsr), eps0 + d, "stress")
+        sm = _oneshot(_wrap_ga(lsr), eps0 - d, "stress")
+        kfd = (sp - sm) / (2.0 * d)
+        assert k == pytest.approx(kfd, rel=1e-3, abs=1e-2), (
+            f"GA consistent tangent {k} != FD {kfd} at eps={eps0}")
