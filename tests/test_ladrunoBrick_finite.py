@@ -54,33 +54,35 @@ _WIGGLE = [
 ]
 
 
-def _build(geom, inner_small_strain=False):
+def _build(geom, form="std", nu=_NU):
     """Build the single-element model. Returns the element/material tags.
 
     finite -> LogStrain(ElasticIsotropic);  linear -> ElasticIsotropic directly.
+    form selects the formulation axis ("std" or, for finite, "bbar" = F-bar).
+    nu lets a test exercise the near-incompressible regime (where F-bar matters).
     """
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 3)
     for tag, (x, y, z) in _NODES.items():
         ops.node(tag, x, y, z)
-    ops.nDMaterial("ElasticIsotropic", 1, _E, _NU)
+    ops.nDMaterial("ElasticIsotropic", 1, _E, nu)
     if geom == "finite":
         ops.nDMaterial("LogStrain", 2, 1)
         mtag = 2
     else:
         mtag = 1
-    ops.element("LadrunoBrick", 1, *_CONN, mtag, "-formulation", "std", "-geom", geom)
+    ops.element("LadrunoBrick", 1, *_CONN, mtag, "-formulation", form, "-geom", geom)
     return mtag
 
 
-def _impose_and_solve(u, geom):
+def _impose_and_solve(u, geom, form="std", nu=_NU):
     """Impose the full 24-dof nodal displacement vector u via single-point
     constraints and solve one step, leaving the element committed at that state.
     The Lagrange handler keeps the DOFs and adds multiplier equations (so the
     system is non-empty — a fully sp-constrained element gives 0 free DOFs, which
     the Transformation handler cannot solve) while imposing u exactly.
     Returns the analyze() return code."""
-    _build(geom)
+    _build(geom, form, nu)
     ops.timeSeries("Linear", 1)
     ops.pattern("Plain", 1, 1)
     for tag in _NODES:
@@ -97,13 +99,13 @@ def _impose_and_solve(u, geom):
     return ops.analyze(1)
 
 
-def _resisting_force(u, geom="finite"):
-    assert _impose_and_solve(u, geom) == 0, "imposed-displacement solve failed"
+def _resisting_force(u, geom="finite", form="std", nu=_NU):
+    assert _impose_and_solve(u, geom, form, nu) == 0, "imposed-displacement solve failed"
     return np.array(ops.eleForce(1), dtype=float)
 
 
-def _element_tangent(u, geom="finite"):
-    assert _impose_and_solve(u, geom) == 0, "imposed-displacement solve failed"
+def _element_tangent(u, geom="finite", form="std", nu=_NU):
+    assert _impose_and_solve(u, geom, form, nu) == 0, "imposed-displacement solve failed"
     K = ops.eleResponse(1, "stiff")
     assert K and len(K) == 24 * 24, "LadrunoBrick must answer eleResponse('stiff') with 24x24"
     return np.array(K, dtype=float).reshape(24, 24)
@@ -263,13 +265,220 @@ def test_finite_requires_a_finite_strain_material():
     )
 
 
-def test_finite_only_with_std_formulation():
+def test_finite_accepts_std_and_bbar_rejects_uri_eas():
+    # std (plain F) and bbar (F-bar) are both valid with -geom finite; uri/eas
+    # finite are reserved and must be refused.
+    def _mk(form):
+        ops.wipe()
+        ops.model("basic", "-ndm", 3, "-ndf", 3)
+        for tag, (x, y, z) in _NODES.items():
+            ops.node(tag, x, y, z)
+        ops.nDMaterial("ElasticIsotropic", 1, _E, _NU)
+        ops.nDMaterial("LogStrain", 2, 1)
+        ops.element("LadrunoBrick", 1, *_CONN, 2, "-formulation", form, "-geom", "finite")
+
+    for form in ("std", "bbar"):
+        _mk(form)
+        tags = ops.getEleTags()
+        tags = [tags] if isinstance(tags, int) else (tags or [])
+        assert 1 in tags, f"-geom finite -formulation {form} should be accepted"
+
+    for form in ("uri", "eas"):
+        _ele_absent_after(lambda f=form: _mk(f))
+
+
+# --------------------------------------------------------------------------- #
+#  F-bar (bbar + finite): the headline gate — consistent tangent == FD of the  #
+#  resisting force. F-bar's tangent is GENERALLY UNSYMMETRIC (dSNPO eq 15.10),  #
+#  so this test does NOT assert symmetry; the FD match is the sole arbiter of   #
+#  the eq 15.11 coupling coefficient q = (1/3) a:(I⊗I) − (2/3) σ⊗I.             #
+# --------------------------------------------------------------------------- #
+def test_fbar_consistent_tangent_matches_finite_difference():
+    # Non-affine state (wiggle) so F varies across GPs => G0 != G and the F-bar
+    # coupling term is genuinely exercised (an affine state would zero it out).
+    Fbar = [[1.15, 0.08, -0.05],
+            [0.04, 0.92, 0.06],
+            [-0.03, 0.05, 1.10]]
+    u = _affine_disp(Fbar, wiggle=True)
+
+    K = _element_tangent(u, "finite", "bbar")
+    f0 = _resisting_force(u, "finite", "bbar")
+    assert np.isfinite(K).all() and np.isfinite(f0).all()
+
+    h = 1.0e-6
+    Kfd = np.zeros((24, 24))
+    for d in range(24):
+        up = u.copy(); up[d] += h
+        um = u.copy(); um[d] -= h
+        Kfd[:, d] = (_resisting_force(up, "finite", "bbar")
+                     - _resisting_force(um, "finite", "bbar")) / (2.0 * h)
+
+    scale = np.abs(K).max()
+    err = np.abs(K - Kfd).max()
+    assert err <= 1.0e-4 * scale, (
+        f"F-bar tangent != FD of resisting force: max abs err {err:.3e} vs scale "
+        f"{scale:.3e} (eq 15.11 coupling q_ij = (1/3)a_ijpp - (2/3)sigma_ij?)"
+    )
+    # F-bar carries a genuinely unsymmetric coupling on this non-affine state:
+    # confirm the test is actually exercising it (else it proves nothing).
+    asym = np.abs(K - K.T).max()
+    assert asym > 1.0e-6 * scale, (
+        "F-bar tangent came out symmetric on a non-affine state — the eq 15.10 "
+        "coupling term is not being exercised (G0 == G?)"
+    )
+
+
+def test_fbar_consistent_tangent_matches_fd_near_incompressible():
+    # Defense-in-depth on the eq 15.11 coupling q = (1/3)a:(I⊗I) − (2/3)σ⊗I. The
+    # easily-dropped −(2/3)σ⊗I term feeds the volumetric block (1/3)a:(I⊗I), whose
+    # magnitude blows up as ν→1/2 (bulk modulus ~ E/(3(1−2ν))). Re-running the FD
+    # gate at ν=0.499 makes it directly guard that term where it matters most: a
+    # regression to the "(1/3)c" spatial-shortcut coefficient would be glaring here.
+    nu = 0.499
+    Fbar = [[1.15, 0.08, -0.05],
+            [0.04, 0.92, 0.06],
+            [-0.03, 0.05, 1.10]]
+    u = _affine_disp(Fbar, wiggle=True)
+
+    K = _element_tangent(u, "finite", "bbar", nu)
+    assert np.isfinite(K).all()
+
+    h = 1.0e-6
+    Kfd = np.zeros((24, 24))
+    for d in range(24):
+        up = u.copy(); up[d] += h
+        um = u.copy(); um[d] -= h
+        Kfd[:, d] = (_resisting_force(up, "finite", "bbar", nu)
+                     - _resisting_force(um, "finite", "bbar", nu)) / (2.0 * h)
+
+    scale = np.abs(K).max()
+    err = np.abs(K - Kfd).max()
+    assert err <= 1.0e-4 * scale, (
+        f"near-incompressible F-bar tangent != FD: max abs err {err:.3e} vs scale "
+        f"{scale:.3e} (the −(2/3)σ⊗I term in eq 15.11 is most consequential at ν→1/2)"
+    )
+
+
+# --------------------------------------------------------------------------- #
+#  F-bar RESIDUAL matches std finite under HOMOGENEOUS deformation: F constant  #
+#  => J0 == J => Fbar = (J0/J)^(1/3) F == F at every GP => sigma_bar == sigma,  #
+#  and the residual carries no coupling term, so f_bar == f_std exactly.        #
+#                                                                               #
+#  NOTE the TANGENT does NOT reduce to std here. F-bar uses the element-CENTROID #
+#  dilatation gradient G0 (dSNPO eq 15.4), not the volume-average B-bar gradient #
+#  — so (G0 - g) != 0 per Gauss point even for an affine state on a distorted    #
+#  hex, and the eq 15.10 coupling term is genuinely nonzero. F-bar is a distinct #
+#  element (different volumetric stiffness), not std-with-F-replaced; its        #
+#  tangent is validated by the FD-tangent gate above, not by equality with std. #
+# --------------------------------------------------------------------------- #
+def test_fbar_residual_matches_std_on_homogeneous_deformation():
+    Fm = [[1.10, 0.05, -0.02],
+          [0.03, 0.96, 0.04],
+          [-0.01, 0.02, 1.07]]
+    u = _affine_disp(Fm, wiggle=False)            # affine => homogeneous F
+
+    f_std = _resisting_force(u, "finite", "std")
+    f_bar = _resisting_force(u, "finite", "bbar")
+    scale = max(np.abs(f_std).max(), 1.0e-30)
+    assert np.abs(f_bar - f_std).max() <= 1.0e-9 * scale, (
+        "F-bar residual did not reduce to std finite on a homogeneous deformation "
+        f"(Fbar should equal F): max force diff {np.abs(f_bar - f_std).max():.3e}"
+    )
+
+    # The F-bar tangent legitimately DIFFERS from std even here (centroid vs
+    # local dilatation): confirm the coupling is actually present (not a no-op).
+    K_std = _element_tangent(u, "finite", "std")
+    K_bar = _element_tangent(u, "finite", "bbar")
+    ks = np.abs(K_std).max()
+    assert np.abs(K_bar - K_std).max() > 1.0e-6 * ks, (
+        "F-bar tangent is identical to std on a distorted hex — the eq 15.10 "
+        "centroid coupling term appears to be missing"
+    )
+
+
+# --------------------------------------------------------------------------- #
+#  T4: F-bar relieves volumetric locking. A slender cantilever (one element     #
+#  through the thickness) bent under a tip shear locks for the standard hex as  #
+#  nu -> 1/2; F-bar stays compliant. Reference-free signature: compare the      #
+#  tip deflection of bbar vs std at nu=0.499 (F-bar must be much softer) and at  #
+#  nu=0.30 (both close, F-bar barely changes the compressible answer).          #
+# --------------------------------------------------------------------------- #
+def _cantilever_tip_disp(form, nu, nz=6, tip_force=0.02):
+    """Build a 1x1xnz column of LadrunoBricks (LogStrain/ElasticIsotropic at the
+    given nu), fix the base, apply a transverse (x) tip force split over the 4 top
+    nodes, solve, and return the mean tip x-displacement."""
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 3)
-    for tag, (x, y, z) in _NODES.items():
-        ops.node(tag, x, y, z)
-    ops.nDMaterial("ElasticIsotropic", 1, _E, _NU)
+
+    # node grid: (i,j) in {0,1}^2 across the section, k=0..nz up the column.
+    def nid(i, j, k):
+        return 1 + i + 2 * j + 4 * k
+
+    for k in range(nz + 1):
+        for j in range(2):
+            for i in range(2):
+                ops.node(nid(i, j, k), float(i), float(j), float(k))
+    # fix the base layer (k=0) fully
+    for j in range(2):
+        for i in range(2):
+            ops.fix(nid(i, j, 0), 1, 1, 1)
+
+    ops.nDMaterial("ElasticIsotropic", 1, _E, nu)
     ops.nDMaterial("LogStrain", 2, 1)
-    _ele_absent_after(
-        lambda: ops.element("LadrunoBrick", 1, *_CONN, 2, "-formulation", "bbar", "-geom", "finite")
+    for k in range(nz):
+        # bottom face (k) nodes 1-4, top face (k+1) nodes 5-8, hex node order
+        conn = [nid(0, 0, k), nid(1, 0, k), nid(1, 1, k), nid(0, 1, k),
+                nid(0, 0, k + 1), nid(1, 0, k + 1), nid(1, 1, k + 1), nid(0, 1, k + 1)]
+        ops.element("LadrunoBrick", k + 1, *conn, 2, "-formulation", form, "-geom", "finite")
+
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    for j in range(2):
+        for i in range(2):
+            ops.load(nid(i, j, nz), tip_force / 4.0, 0.0, 0.0)
+
+    ops.constraints("Transformation")
+    ops.numberer("RCM")
+    ops.system("FullGeneral")          # F-bar tangent is unsymmetric
+    ops.test("NormDispIncr", 1.0e-10, 50, 0)
+    ops.algorithm("Newton")
+    ops.integrator("LoadControl", 0.25)
+    ops.analysis("Static")
+    assert ops.analyze(4) == 0, f"cantilever solve failed (form={form}, nu={nu})"
+
+    return float(np.mean([ops.nodeDisp(nid(i, j, nz), 1)
+                          for j in range(2) for i in range(2)]))
+
+
+def test_fbar_relieves_volumetric_locking():
+    # Tip deflection at a moderate (nu=0.30) and a near-incompressible (nu=0.499)
+    # Poisson ratio, for std (plain F) and bbar (F-bar). The volumetric-locking
+    # signature is reference-free and lives in the CROSS-nu behaviour:
+    #   - std stiffens sharply (deflection collapses) as nu -> 1/2  => locks;
+    #   - F-bar deflection stays essentially constant                => no lock.
+    # (A 1-element-through-thickness bending mesh already locks partially at
+    #  nu=0.30, so F-bar is somewhat softer there too — that is expected and not
+    #  asserted; the discriminating evidence is the nu-trend below.)
+    d_std_c = _cantilever_tip_disp("std", 0.30)
+    d_bar_c = _cantilever_tip_disp("bbar", 0.30)
+    d_std_i = _cantilever_tip_disp("std", 0.499)
+    d_bar_i = _cantilever_tip_disp("bbar", 0.499)
+    assert min(d_std_c, d_bar_c, d_std_i, d_bar_i) > 0.0
+
+    # (1) standard hex LOCKS: tip deflection collapses going nu 0.30 -> 0.499.
+    std_lock = d_std_i / d_std_c
+    assert std_lock < 0.5, (
+        f"standard hex did not show volumetric locking: nu-ratio {std_lock:.3f} "
+        "(expected << 1 as the deflection collapses toward incompressibility)"
+    )
+    # (2) F-bar stays compliant: deflection barely changes with nu.
+    bar_lock = d_bar_i / d_bar_c
+    assert 0.7 < bar_lock < 1.5, (
+        f"F-bar deflection should be ~nu-insensitive; nu-ratio {bar_lock:.3f}"
+    )
+    # (3) and so at nu=0.499 F-bar is dramatically softer than the locked std hex.
+    unlock = d_bar_i / d_std_i
+    assert unlock > 3.0, (
+        f"F-bar did not relieve volumetric locking: bbar/std tip-deflection at "
+        f"nu=0.499 is only {unlock:.3f} (expected >> 1)"
     )
