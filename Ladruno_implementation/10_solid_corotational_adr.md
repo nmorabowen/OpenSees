@@ -238,4 +238,130 @@ commit complexity.
 
 **Deferred to follow-ups:** `uri`/`eas` under corot; per-GP rotation (only if a
 benchmark demands it); incremental-frame tracking (only if rotation >π ever
-misbehaves — unlikely with total-geometry polar).
+misbehaves — unlikely with total-geometry polar); the consistent-tangent
+completion (§8).
+
+> **STATUS UPDATE (2026-06-02): v2.0 SHIPPED — PR #88, merged to `ladruno`
+> (squash `13a15ea9`).** `SolidTransformationCorot` with the §2 design; 14
+> Zone-A tests green incl. ADR Gate 5 (load-driven cantilever, matches `-geom
+> finite` <1% at ~26% tip) and Gate 6 (J2-plasticity-in-rotated-frame). An
+> 8-lens adversarial-review sweep (33 confirmed findings; core math re-derived
+> & confirmed) hardened it. The v2.0 tangent is the reduced form described in
+> §2 — the completion is §8 below.
+
+---
+
+## 8. v2.1 — consistent-tangent completion (numerical-tangent entry point)
+
+**Problem.** The v2.0 tangent is `K = R̄ k_d R̄ᵀ + (G1 + G1ᵀ)`; it omits two
+O(strain) geometric terms — the **polar-Hessian** `∂Γ/∂u · m` and the
+**material-frame ∂R coupling** `R k_d (∂Rᵀ/∂u) x⁰`. Because the *residual* is the
+exact energy gradient, Newton still converges to the correct equilibrium, but at
+a **linear/super-linear rate** — large-rotation runs need load sub-stepping (the
+Gate-5 cantilever needs ~20 increments where `-geom finite`'s full tangent takes
+far fewer). v2.1 closes the gap.
+
+### 8.1 Decision — ship the *numerical* tangent first
+
+Rather than first derive the algebraically heavy, degeneracy-prone analytic
+polar-Hessian, the v2.1 entry point is an **element-level numerical (perturbation)
+tangent**, exposed as a debug/robustness flag. This is uniquely clean here because
+**the corot residual is the exact gradient**, so a finite difference of it *is* the
+full consistent tangent — including both deferred terms — with no new derivation.
+
+It serves three purposes at once:
+1. **Troubleshooting isolator.** Swap to it when an analysis converges badly:
+   converges well ⇒ the reduced analytic tangent was the cause (expected);
+   still struggles ⇒ the tangent is **not** the culprit — look at the residual,
+   conditioning, or the model. That separation is the headline debugging value.
+2. **Robustness escape hatch.** Delivers full-tangent (≈quadratic) convergence
+   *today*, at a compute cost, for stiff / strongly geometrically-nonlinear runs.
+3. **Validation oracle.** When the analytic polar-Hessian + material-∂R terms
+   eventually land (§8.4), they MUST match this numerical tangent — it is the
+   arbiter, reusing the existing FD-tangent gate machinery.
+
+### 8.2 Design / behaviour
+
+- **New element option `-tangent {analytic|numerical}`**, default `analytic`
+  (v2.0 behaviour, byte-unchanged). Parsed in `OPS_LadrunoBrick.cpp` alongside
+  `-geom`/`-formulation`. Primarily meaningful for `-geom corot`; for
+  `linear`/`finite` (already-consistent tangents) it is a debug cross-check only.
+- **Where it lives: `LadrunoBrick`, NOT the wrapper.** The seam `globalizeStiff`
+  only receives `k_d`/`f_d` and cannot re-evaluate the residual at perturbed
+  DOFs; the element can. Add `LadrunoBrick::formNumericalTangent()`:
+  ```
+  for each dof d in [0, 3·numNodes):
+      perturb node trial disp:  u_d ± h
+      K[:,d] = ( R(u+h e_d) − R(u−h e_d) ) / (2h)     // R(·) = global resisting force
+      restore u_d
+  optionally symmetrise
+  ```
+  where `R(·)` runs the element's **own** residual path (`computeLocalDisp` →
+  `theGeom->update` refreshes the corot frame → material `setTrialStrain` →
+  `globalizeForce`). Central difference. This captures **all** dependencies —
+  the rotation `R`, the spin map, and the material response — i.e. the true
+  consistent tangent.
+- **Perturbation size:** `h = h_rel · (1 + ‖u‖∞)`, `h_rel ≈ 1e-7…1e-6` (central
+  diff ⇒ O(h²) truncation balanced against round-off; the FD-tangent test already
+  uses `h=1e-6`).
+- **State hygiene (critical):** perturbation touches **trial** state only —
+  `setTrialStrain` is trial, `commitState` is never called inside the loop, and
+  each DOF is restored after its ±h pair. Committed material state (and the
+  stateless corot frame, recomputed each call) is left intact. For a
+  path-dependent inner material (J2) this yields the algorithmic/consistent
+  tangent, exactly as the material's own `getTangent` would.
+- **Serialization:** pack the tangent-mode int next to `formulation`/`geom`/
+  `mass`/`hourglass` in `idData(28)` (analytic = 0 ⇒ byte-identical stream), and
+  rebuild on `recvSelf`.
+- **Cost:** `2·(3·numNodes)` residual evals per tangent — **48 for the 8-node
+  hex**. Acceptable for debugging or a hard model; **not** a default.
+
+### 8.3 Diagnostics (complementary)
+
+- **`eleResponse(tag, "tangentGap")`** → `‖K_analytic − K_numerical‖ / ‖K‖` at
+  the current state — a developer probe to *measure* how far the reduced tangent
+  is from consistent (a regression watch as the analytic terms land).
+- **Help/doc note** on `-geom corot`: convergence trouble ⇒ try smaller load
+  steps, `-tangent numerical`, or `-geom finite`. (An auto-warning is impractical
+  — the element cannot observe Newton non-convergence; keep it in the docs +
+  the `tangentGap` probe.)
+
+### 8.4 Acceptance gates (Zone-A)
+
+1. **Correctness:** `-tangent numerical` gives the **same** converged Gate-5
+   cantilever tip displacement as `-tangent analytic` and as `-geom finite`
+   (the tangent must not change the answer — only the path there).
+2. **Robustness payoff:** the cantilever converges in **strictly fewer load
+   steps / total iterations** with `numerical` than with `analytic` (e.g.
+   converges at `nsteps` where `analytic` diverges, or far fewer Newton iters).
+3. **Consistency:** at small strain (where the v2.0 analytic tangent is already
+   exact) `numerical ≈ analytic` to ~1e-5 (sanity that both code paths agree).
+4. **State safety:** a committed multi-step run with `-tangent numerical` matches
+   `-tangent analytic` step-for-step (the perturbation loop leaves committed
+   material/plastic state uncorrupted) — exercised with the J2 material.
+
+### 8.5 Follow-up — the analytic terms (true v2.1)
+
+Once the numerical tangent is the validated oracle, derive and add the two
+deferred analytic terms in `SolidTransformationCorot::globalizeStiff`:
+- material-frame coupling `R k_d (∂Rᵀ/∂u) x⁰` (reuses the spin map Γ already
+  computed in `update()`), and
+- the polar-Hessian `∂Γ/∂u · m` (second derivative of the Procrustes polar; the
+  hard, degeneracy-prone piece — branch on stretch multiplicity).
+Gate: tighten the FD-tangent test from the documented bound to ~1e-6 at finite
+strain, and confirm the cantilever matches `numerical`'s step count. This makes
+quadratic Newton the default `analytic` behaviour at no per-tangent cost, and the
+`-tangent numerical` flag then survives purely as the debugging isolator (purpose
+1) and the oracle.
+
+### 8.6 Implementation plan
+
+1. `-tangent {analytic|numerical}` parse + serialize (default analytic, byte-safe).
+2. `LadrunoBrick::formNumericalTangent()` (perturb-restore central FD over the
+   residual path); route `getTangentStiff`/`formResidAndTangent` to it when the
+   mode is `numerical`.
+3. `eleResponse "tangentGap"` + doc note.
+4. Zone-A tests (§8.4): correctness, robustness payoff (step count), small-strain
+   consistency, committed-state safety with J2.
+5. Ledger row update + PR off `ladruno`.
+6. (Later) the analytic terms (§8.5) + tightened FD gate.
