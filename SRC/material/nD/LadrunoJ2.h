@@ -67,7 +67,8 @@ class LadrunoJ2 : public NDMaterial {
             double rho = 0.0, int dimMode = DIM_3D,
             bool dmgOn = false, double dmgR = 0.0, double dmgS = 1.0,
             double dmgPD = 0.0, double dmgDc = 1.0,
-            bool dmgRegOn = false, double dmgLchRef = 1.0);
+            bool dmgRegOn = false, double dmgLchRef = 1.0,
+            bool dmgImplex = false);
   ~LadrunoJ2();
 
   const char* getClassType(void) const { return "LadrunoJ2"; }
@@ -125,6 +126,7 @@ class LadrunoJ2 : public NDMaterial {
   double dmgDc;                 // critical (rupture) damage
   bool   dmgRegOn;              // -autoRegularization (crack-band lch scaling)
   double dmgLchRef;             // reference characteristic length lch_ref
+  bool   dmgImplex;             // -implex (IMPL-EX: SPD tangent via extrapolated D)
 
   // dimensional view
   int    dim;                   // DIM_*
@@ -139,7 +141,8 @@ class LadrunoJ2 : public NDMaterial {
   double ebarP_n;               // accumulated equivalent plastic strain
   double alpha_n[MAXBACK][6];   // backstress terms
   double dGamma_n;              // committed plastic multiplier increment (IMPL-EX hook)
-  double D_n;                   // committed Lemaitre damage
+  double D_n;                   // committed Lemaitre damage (implicit)
+  double dD_n;                  // committed implicit damage increment (IMPL-EX extrapolation)
 
   // trial state
   double strain6[6];            // total strain (tensor components)
