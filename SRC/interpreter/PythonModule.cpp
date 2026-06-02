@@ -591,7 +591,7 @@ initopensees(void)
 "        • BezierTri6 — quadratic Bézier triangle (Kadapa 2018)\n"
 "        • BezierTet10 — quadratic Bézier tetrahedron (Kadapa 2018)\n"
 "        • LadrunoBrick — unified hex (std/bbar/uri/eas + hourglass)\n"
-"        • Solid geometry methods — -geom linear/corot/finite\n"
+"        • Solid geometry methods — -geom linear/corot/finite (+ F-bar)\n"
 "        • LadrunoJ2 — combined iso + Chaboche AF kinematic J2\n"
 "        • Ladruno — modular HDF5 .ladruno recorder\n"
 "\n";

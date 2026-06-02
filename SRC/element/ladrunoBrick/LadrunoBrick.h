@@ -214,6 +214,13 @@ class LadrunoBrick : public Element {
   // shape gradients shpRef[0..2][a] = ∂Nₐ/∂Xᵢ and the nodal trial displacements.
   double deformationGradient(const double shpRef[4][8], double F[9]);
 
+  // F-bar (bbar + finite, dSNPO eq 15.5/15.10). Assumes computeBasis() has set
+  // xl. Returns J0 = det F0 with F0 the deformation gradient at the element
+  // centroid (natural coords 0,0,0). If G0 != 0, also fills the centroid spatial
+  // gradient operator G0[k][b] = ∂N_b/∂x_k|_centroid (from F0⁻¹) for the eq 15.10
+  // F-bar coupling term.  // Ladruno
+  double centroidFbar(double (*G0)[8] = 0);
+
   // Seam 0+2: refresh theGeom from current geometry (reference + current nodal
   // coords) and return the localized (core-frame) 24-dof trial displacement.
   // For -geom linear this equals the global trial displacement.  // Ladruno
