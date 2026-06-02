@@ -43,6 +43,7 @@ GLOBS = [
     "SRC/element/solidTransformation/*.cpp", "SRC/element/solidTransformation/*.h",
     "SRC/utility/profiler/*.cpp", "SRC/utility/profiler/*.h",
     "SRC/material/nD/LadrunoJ2.*", "SRC/material/nD/LadrunoJ2Kernel.h",
+    "SRC/material/nD/LadrunoJ2Finite.*",
     "SRC/material/nD/LadrunoHardening.h",
     "SRC/material/uniaxial/LadrunoUniaxialJ2.*",
     "SRC/material/uniaxial/LadrunoRebarBuckling.*",

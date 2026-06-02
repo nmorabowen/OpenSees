@@ -152,6 +152,7 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • LadrunoBrick — unified hex (std/bbar/uri/eas + hourglass)\n"
 "        • Solid geometry methods — -geom linear/corot/finite (+ F-bar)\n"
 "        • LadrunoJ2 — combined iso + Chaboche AF kinematic J2\n"
+"        • LadrunoJ2Finite — finite-strain J2, co-rotating backstress\n"
 "        • LadrunoUniaxialJ2 — uniaxial Chaboche AF J2 fiber/truss\n"
 "        • Lemaitre ductile damage (-damage lemaitre, +lch, +IMPL-EX)\n"
 "        • LadrunoIMKBeam — concentrated-plasticity IMK beam hinges\n"
