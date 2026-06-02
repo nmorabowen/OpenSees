@@ -1110,6 +1110,37 @@ double BezierTri6::computeArea() const
 
 
 // ═══════════════════════════════════════════════════════════════════
+//  CHARACTERISTIC LENGTH  (crack-band regularization, e.g. ASDConcrete)
+// ═══════════════════════════════════════════════════════════════════
+//
+//  Crack-band materials (ASDConcrete3D, etc.) call
+//  ops_TheActiveElement->getCharacteristicLength() exactly once — on the
+//  first setTrialStrain — to regularize the softening branch by element size.
+//
+//  Element's base default returns the MINIMUM inter-node distance. On a
+//  quadratic element that distance is corner-to-mid-edge ≈ ½ the true edge
+//  length, which under-estimates the band width and over-softens the response.
+//
+//  We instead return an element-size equivalent from the integrated area:
+//  the leg of a right-isosceles triangle of equal area,
+//
+//      lch = sqrt(2 · A),
+//
+//  which recovers the true edge length for the common right-triangle mesh
+//  (a split quad) and is geometry-true for distorted straight-sided elements.
+//  Curved Bézier edges shift the factor slightly, but always in the safe
+//  (under-estimating) direction. Area only — lch is an in-plane size, so the
+//  out-of-plane thickness is deliberately excluded.
+double BezierTri6::getCharacteristicLength(void)
+{
+    double A = this->computeArea();
+    if (A <= 0.0)
+        return Element::getCharacteristicLength();  // degenerate: fall back
+    return sqrt(2.0 * A);
+}
+
+
+// ═══════════════════════════════════════════════════════════════════
 //  SERIALIZATION (sendSelf / recvSelf)
 // ═══════════════════════════════════════════════════════════════════
 
@@ -1503,6 +1534,16 @@ Response *BezierTri6::setResponse(const char **argv, int argc,
         theResponse = new ElementResponse(this, 6, Vector(NELD));
     }
 
+    // ─── Characteristic length ────────────────────────────────
+    // Element-size lch used by crack-band materials (ASDConcrete). Lets the
+    // user inspect the value the material regularizes with. See
+    // getCharacteristicLength().
+    else if (strcmp(argv[0], "charLength") == 0 ||
+             strcmp(argv[0], "characteristicLength") == 0) {
+        output.tag("ResponseType", "lch");
+        theResponse = new ElementResponse(this, 7, Vector(1));
+    }
+
     output.endTag();  // ElementOutput
     return theResponse;
 }
@@ -1611,6 +1652,14 @@ int BezierTri6::getResponse(int responseID, Information &eleInfo)
             }
         }
         return eleInfo.setVector(pressVec);
+    }
+
+    case 7: {
+        // ─── Characteristic length ─────────────────────────────
+        // The element-size lch crack-band materials regularize with.
+        static Vector lchVec(1);
+        lchVec(0) = this->getCharacteristicLength();
+        return eleInfo.setVector(lchVec);
     }
 
     // ─── the Ladruno recorder geometry probes (element contract Part A) ──

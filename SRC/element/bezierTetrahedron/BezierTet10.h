@@ -52,6 +52,7 @@
 //   "gaussPoint"          → physical x,y,z of each GP (12 total)
 //   "material" $gp <args> → delegate to NDMaterial at GP
 //   "stiffness"           → 30×30 tangent stiffness
+//   "charLength"          → element characteristic length lch (crack-band)
 
 #ifndef BezierTet10_h
 #define BezierTet10_h
@@ -94,6 +95,11 @@ class BezierTet10 : public Element
     const ID &getExternalNodes(void);
     Node **getNodePtrs(void);
     int getNumDOF(void);
+
+    // Element-size characteristic length for crack-band regularization
+    // (e.g. ASDConcrete). Overrides Element's min-inter-node-distance default,
+    // which on a quadratic element collapses to ~½ the edge length. See .cpp.
+    double getCharacteristicLength(void);
 
     void setDomain(Domain *theDomain);
     int commitState(void);

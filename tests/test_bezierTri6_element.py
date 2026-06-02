@@ -347,3 +347,45 @@ def test_mms_convergence_rate():
     assert e[4] > e[8] > e[16], f"non-monotone convergence: {e}"
     rate = math.log(e[8] / e[16]) / math.log(2.0)
     assert rate > 1.8, f"convergence rate {rate:.2f} <= 1.8 (errors {e})"
+
+
+# ----------------------------------------------- T0: characteristic length
+#
+# Crack-band materials (ASDConcrete3D) regularize the softening branch by
+# ops_TheActiveElement->getCharacteristicLength(), read once on the first
+# setTrialStrain. BezierTri6 OVERRIDES Element's min-inter-node-distance
+# default (which on a quadratic element collapses to ~½ the edge length:
+# corner-to-mid-edge) with an area-based element size lch = sqrt(2·A).
+#
+# For a right-isosceles triangle with legs of length L, A = L²/2, so the
+# override returns lch = sqrt(2·L²/2) = L exactly. The inherited default
+# would instead return the min node spacing L/2 — so this test both pins the
+# formula AND fails loudly if anyone reverts the override (½× regression).
+
+def _make_right_triangle(L):
+    """Single BezierTri6, right-isosceles, legs L along +x and +y. Returns ele tag 1."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    c1, c2, c3 = (0.0, 0.0), (L, 0.0), (0.0, L)
+    coords = {
+        1: c1, 2: c2, 3: c3,
+        4: _mid(c1, c2), 5: _mid(c2, c3), 6: _mid(c3, c1),
+    }
+    for n, (x, y) in coords.items():
+        ops.node(n, x, y)
+    ops.nDMaterial("ElasticIsotropic", 1, E, NU)
+    ops.element("BezierTri6", 1, 1, 2, 3, 4, 5, 6, THK, "PlaneStress", 1)
+    return 1
+
+
+@pytest.mark.t0
+@pytest.mark.parametrize("L", [1.0, 3.0, 0.4])
+def test_characteristic_length(L):
+    ele = _make_right_triangle(L)
+    lch = ops.eleResponse(ele, "charLength")
+    assert lch, "BezierTri6 missing 'charLength' response"
+    lch = lch[0]
+    # area-based override: lch = sqrt(2·A) = L for the right-isosceles triangle
+    assert abs(lch - L) <= 1e-12 * L + 1e-14, f"lch={lch}, expected {L}"
+    # regression guard: must NOT be the inherited min-distance default (L/2)
+    assert lch > 0.75 * L, f"lch={lch} looks like the ½-edge min-distance default"
