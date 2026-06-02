@@ -295,22 +295,23 @@ dominant cost for ASDConcrete3D):
 
 The single-point formulations **now genuinely save ~8× material cost** (fix (b),
 §4) — relevant because ASDConcrete3D + IMPLEX is expensive. The tradeoff is
-**fidelity**: a single-point element resolves damage at ONE point, and — until
-Tier-A `Kstab` (a) lands — stabilizes its hourglass modes with a *constant
-elastic* `Kstab` that over-stiffens cracked zones. So the choice is now a real
-**cost vs. fidelity** decision, not cost-parity.
+**fidelity**: a single-point element resolves damage at ONE point. Its hourglass
+stabilization is no longer a *constant elastic* `Kstab` — **Tier-A damage-scaling
+(a) has landed**, so `Kstab` now degrades with the ASDConcrete3D damage and a
+cracked single-point element can localize (see §H.9). So the choice is a real
+**cost vs. fidelity** decision (1 damage point vs 8), not cost-parity.
 
 ## H.1 Formulation decision guide
 
 | Analysis | Use | Why |
 |---|---|---|
-| **Implicit quasi-static** (push-over, monotonic/cyclic capacity) | **`bbar`** (default), `std` if ν low & no bending | Full 2×2×2 → 8 independent damage points, **no hourglass modes**, best-conditioned tangent for Newton+arc-length, sidesteps the un-implemented damage-scaled `Kstab` entirely. `bbar` also cures volumetric locking as ν→0.5 / dilatant crushing. Costs 8 material evals — buy the robustness; drop to `eas` (1 eval) only if that cost bites *and* Tier-A `Kstab` has landed. |
-| **Implicit, near-incompressible (ν→0.5) or coarse bending pre-peak** | **`eas`** | Cures shear+volumetric across all ν; constant initial-tangent `Kstab` keeps the tangent well-conditioned. Verify on a coarse crushing case (constant `Kstab` can mildly over-stiffen a fully-cracked element). |
-| **Explicit dynamic** (impact/blast/fast crushing, or violent-snapback fallback) | **`eas`** (cheapest: 1 eval, cures locking) if you can accept 1 damage point + monitor hourglass; **`uri`+`physical`** (8 evals) when you need genuine per-GP damage + material-degrading stabilization | Real cost/fidelity split now (§H.0): `eas` is 1 material eval but smears damage to one point and uses a constant elastic `Kstab` (Tier-A pending); `physical` pays 8 evals for 8 damage points and stabilization that degrades with the material. Both need `-lumped`. |
-| **Avoid for softening** | `uri` + `stiffness` | Elastic `Kstab` does NOT degrade → over-stiffens cracked elements, props up the load, corrupts the crack-band energy. Only if the element never fully damages, and *monitor*. |
-| **Explicit-only, never implicit/eigen** | `uri` + `viscous` | Rank-deficient tangent (no hourglass stiffness) — singular under any static/eigen step. |
+| **Implicit quasi-static** (push-over, monotonic/cyclic capacity) | **`bbar`** (default), `std` if ν low & no bending | Full 2×2×2 → 8 independent damage points, **no hourglass modes**, best-conditioned tangent for Newton+arc-length. `bbar` also cures volumetric locking as ν→0.5 / dilatant crushing. Costs 8 material evals — buy the robustness; drop to `eas` (1 eval) only if that cost bites. (`eas`'s `Kstab` now damage-scales — §H.9 — so it is *usable* for softening, but full integration is still the most robust.) |
+| **Implicit, near-incompressible (ν→0.5) or coarse bending pre-peak** | **`eas`** | Cures shear+volumetric across all ν; the initial-tangent `Kstab` keeps the tangent well-conditioned and **now degrades with damage (§H.9)** so a cracked element no longer over-stiffens (floored at 1% → still hourglass-stable). |
+| **Explicit dynamic** (impact/blast/fast crushing, or violent-snapback fallback) | **`eas`** (cheapest: 1 eval, cures locking, **damage-scaled `Kstab`** §H.9) if you can accept 1 damage point + monitor hourglass; **`uri`+`physical`** (8 evals) when you need genuine per-GP damage | Real cost/fidelity split (§H.0): `eas` is 1 material eval but smears damage to one point (its `Kstab` now degrades with that one point's damage); `physical` pays 8 evals for 8 damage points and assumed-strain stabilization folded into the strain energy. Both need `-lumped`. |
+| **Softening with `uri`+`stiffness`** | usable, **monitor** | `Kstab` now degrades with damage (§H.9) instead of propping up the cracked load, so it no longer corrupts the crack-band energy — but it is still a 1-damage-point smear; prefer `bbar`/`std` (or `eas`) and watch `hourglassEnergy`. |
+| **Explicit-only, never implicit/eigen** | `uri` + `viscous` | Rank-deficient tangent (no hourglass stiffness) — singular under any static/eigen step. Damping is **not** damage-scaled (by design, §H.9). |
 
-**One-liner:** *Implicit → `bbar` (or `eas` for ν→0.5). Explicit → `uri+physical` (or `eas`). Never `uri+stiffness`/`viscous` under softening-implicit.*
+**One-liner:** *Implicit → `bbar` (or `eas` for ν→0.5). Explicit → `uri+physical` (or `eas`). The single-point `Kstab` now damage-scales (§H.9), so `eas`/`uri+stiffness` are usable under softening — but full integration stays the most robust.*
 
 ## H.2 Command syntax + worked examples
 
@@ -417,3 +418,74 @@ ops.integrator('CentralDifferenceLadruno')
 dt = 0.9 * ops.criticalTimeStep()
 # ... monitor eleResponse(eTag,'hourglassEnergy') < 5-10% of internal energy
 ```
+
+## H.9 Tier-A damage-scaled hourglass stabilization (active — nothing to enable)
+
+**What it is.** The single-point STIFFNESS-stabilized formulations (`eas` and
+`uri`+`stiffness`) hold the hourglass/bending modes up with a stabilization
+stiffness `Kstab`. Historically that `Kstab` was a *constant elastic* value — so a
+fully-cracked element kept its elastic bending stiffness while its bulk carried ~0
+stress, which **over-stiffens the cracked zone and stops the crack from
+localizing**. As of PR #101 `Kstab` **degrades with the material damage**:
+
+```
+Kstab  ←  max(floor, 1 − max(d_t, d_c)) · Kstab_elastic        floor = 1%
+```
+
+where `(d_t, d_c)` is ASDConcrete3D's `getAvgDamage()` = `[tension, compression]`
+damage. A cracked element therefore softens its stabilization in step with the
+material, but the **1% floor** keeps a sliver of hourglass control so a fully
+damaged element never goes completely unstabilized (no spurious hourglassing in
+the band).
+
+**You do not enable it — there is no flag.** It is automatic and material-driven:
+
+- **ASDConcrete3D (and any material exposing a `"damage"` response)** → `Kstab`
+  scales as above.
+- **A material with no `"damage"` channel** (ElasticIsotropic, J2Plasticity, …) →
+  the scale is exactly `1.0`, i.e. the *old* constant elastic `Kstab`. Elastic/J2
+  models are bit-for-bit unchanged.
+- **`uri`+`viscous`** is a damping force (not a stiffness), so it is deliberately
+  **not** degraded — keeping full hourglass damping in the cracked band is what you
+  want there.
+- **`std` / `bbar` / `uri`+`physical`** have no separable `Kstab` (full
+  integration / assumed strain), so this does not apply.
+
+**It only changes the cracked regime.** Pre-peak / intact, `max(d)=0` ⇒ `s=1` ⇒
+identical to before. The degradation engages exactly as the element damages.
+
+**How to see it / tune it.** The `"hourglassEnergy"` report carries the *degraded*
+stored stabilization energy, so it is the dial:
+
+```python
+ops.eleResponse(tag, 'hourglassEnergy')          # degraded ½·u·Kstab·u (eas / uri+stiffness)
+ops.eleResponse(tag, 'material', 1, 'damage')    # [d_t, d_c] at the centroid point
+```
+
+Same acceptance as §H.6 — keep hourglass energy **< ~5%** of internal energy in the
+cracked band (hard ceiling ~10%). Reading the two together tells you which way to
+move the floor:
+
+- **Hourglass energy spikes / checkerboard in the cracked band** → the floor is too
+  low (the element lost too much control as it cracked). The floor is the C++
+  constant `HG_DAMAGE_FLOOR` in `SRC/element/ladrunoBrick/LadrunoBrick.cpp` (raise
+  toward 5%); a rebuild is required to change it (it is not a command-line knob in
+  v1).
+- **Crack won't localize / load stays propped up while `damage`→1** → the floor is
+  too high (still over-stiffening); lower it toward 1%.
+
+**Caveat for `uri`+`stiffness`.** For a softening material the hourglass modulus is
+rebased on the *initial* elastic shear before scaling (not the current secant
+shear). This is intentional: the secant shear already collapses toward zero as the
+material cracks, so scaling *it* by the floor would still give ~0 — the floor would
+be meaningless. Rebasing on the elastic shear makes `floor·Kstab_elastic` a real,
+nonzero residual. (`eas` already condenses `Kstab` from the initial tangent, so it
+needs no special handling.)
+
+**Bottom line.** `eas` and `uri`+`stiffness` are now *usable* under softening
+concrete — the crack-band energy is no longer corrupted by a frozen elastic
+`Kstab`. For implicit quasi-static softening, full integration (`bbar`/`std`, 8
+independent damage points, no hourglass at all) is still the most robust choice;
+reach for the single-point forms when their ~8× material-eval saving matters
+(explicit dynamics, or very large ASDConcrete3D+IMPLEX models) and **monitor
+`hourglassEnergy`**.
