@@ -280,6 +280,28 @@ features:
       #111 shipped the classTag/element/test but omitted this G9 manifest row, so the
       gate failed on ladruno HEAD until backfilled here. See 14_ladruno_imk_beam.md.
 
+  - feature: LadrunoIMKBeam2d
+    classtag: 33004          # ELE_TAG family; 2D planar concentrated-plasticity IMK beam (N. Mora-Bowen)
+    tag_symbol: ELE_TAG_LadrunoIMKBeam2d
+    pr: 131
+    feature_class: element
+    required_tiers: [T0, T1]
+    pytest: tests/test_ladrunoIMKBeam2d_element.py
+    tcl: WAIVED(no Tcl command surface yet — Python/apeGmsh-driven; OPS factory only, shared ndm-dispatch under the LadrunoIMKBeam command)
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesElementCommands.cpp
+      - SRC/element/ladrunoIMKBeam/CMakeLists.txt
+    dispatch: {tcl: false, functionMap: true}
+    status: active
+    notes: >
+      2D planar concentrated-plasticity IMK beam macro — the ndm-dispatch counterpart
+      of the 3D LadrunoIMKBeam (33003), sharing the LadrunoIMKHinge kernel. Shipped in
+      #131, which omitted this G9 manifest row; backfilled here so the classTag+manifest
+      gate passes on ladruno HEAD. See 14_ladruno_imk_beam.md.
+
   - feature: LogStrainNDMaterial
     classtag: 33010          # ND_TAG family; Hencky finite-strain adaptor (seam 3)
     tag_symbol: ND_TAG_LogStrainNDMaterial
