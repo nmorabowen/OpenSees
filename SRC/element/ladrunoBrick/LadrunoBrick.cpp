@@ -925,6 +925,7 @@ void  LadrunoBrick::formResidAndTangent(int tang_flag)
   static double Shape[nShape][numberNodes][numberGauss];
   static double shpBar[nShape][numberNodes];
   static Vector residJ(ndf);
+  static Vector bodyForce(numberNodes * ndf);   // external (global-frame) body load
   static Matrix stiffJK(ndf, ndf);
   static Vector stress(nstress);
   static Vector dampingStress(nstress);
@@ -938,6 +939,7 @@ void  LadrunoBrick::formResidAndTangent(int tang_flag)
 
   stiff.Zero();
   resid.Zero();
+  bodyForce.Zero();
   computeBasis();
 
   int count = 0;
@@ -999,10 +1001,13 @@ void  LadrunoBrick::formResidAndTangent(int tang_flag)
 
       for (int p = 0; p < ndf; p++) {
         resid(jj + p) += residJ(p);
+        // external body/self-weight load is a GLOBAL-frame dead load: accumulate it
+        // OUT of the core force so globalizeForce (corot) rotates only the internal
+        // force. Added back unrotated, in the global frame, after globalize.  // Ladruno (COROT-1)
         if (applyLoad == 0)
-          resid(jj + p) -= dvol[i] * b[p] * shp[3][j];
+          bodyForce(jj + p) -= dvol[i] * b[p] * shp[3][j];
         else
-          resid(jj + p) -= dvol[i] * appliedB[p] * shp[3][j];
+          bodyForce(jj + p) -= dvol[i] * appliedB[p] * shp[3][j];
       }
 
       if (tang_flag == 1) {
@@ -1026,6 +1031,7 @@ void  LadrunoBrick::formResidAndTangent(int tang_flag)
   if (tang_flag == 1)
     theGeom->globalizeStiff(stiff, resid, stiff);
   theGeom->globalizeForce(resid, resid);
+  resid += bodyForce;            // global-frame body load, added AFTER globalize  // Ladruno (COROT-1)
 }
 
 //compute local nodal coordinates
@@ -1501,9 +1507,12 @@ LadrunoBrick::formUri(int tang_flag, bool useInitialTangent)
     for (int I = 0; I < numberNodes; I++)
       bC[i][I] = shpC[i][I];
 
+  static Vector bodyForce(numberNodes * ndf);   // external (global-frame) body load
   stiff.Zero();
-  if (!useInitialTangent)
+  if (!useInitialTangent) {
     resid.Zero();
+    bodyForce.Zero();
+  }
 
   // material tangent at the centroid (drives K and the hourglass modulus)
   static Matrix dd(nstress, nstress);
@@ -1565,10 +1574,11 @@ LadrunoBrick::formUri(int tang_flag, bool useInitialTangent)
       residJ.addMatrixVector(0.0, BJtran, stress0, 1.0);
       for (int p = 0; p < ndf; p++) {
         resid(jj + p) += residJ(p);
+        // global-frame body load kept out of the corotated core force  // Ladruno (COROT-1)
         if (applyLoad == 0)
-          resid(jj + p) -= vol * b[p] * shpC[3][j];      // b = member body force; Nc = shpC[3][j]
+          bodyForce(jj + p) -= vol * b[p] * shpC[3][j];      // b = member body force; Nc = shpC[3][j]
         else
-          resid(jj + p) -= vol * appliedB[p] * shpC[3][j];
+          bodyForce(jj + p) -= vol * appliedB[p] * shpC[3][j];
       }
     }
 
@@ -1667,8 +1677,10 @@ LadrunoBrick::formUri(int tang_flag, bool useInitialTangent)
   const Vector &fCore = useInitialTangent ? zeroF : resid;
   if (tang_flag == 1)
     theGeom->globalizeStiff(stiff, fCore, stiff);
-  if (!useInitialTangent)
+  if (!useInitialTangent) {
     theGeom->globalizeForce(resid, resid);
+    resid += bodyForce;          // global-frame body load, added AFTER globalize  // Ladruno (COROT-1)
+  }
 }
 
 //----------------------------------------------------------------------
@@ -2376,6 +2388,8 @@ LadrunoBrick::formEAS(int tang_flag, bool useInitialTangent)
 
   stiff.Zero();
   resid.Zero();
+  static Vector bodyForce(24);   // external (global-frame) body load  // Ladruno (COROT-1)
+  bodyForce.Zero();
 
   // Ladruno — Tier-A: degrade the constant elastic stabilization with damage
   // (1.0 for non-softening materials). The membrane terms below are NOT scaled —
@@ -2411,10 +2425,11 @@ LadrunoBrick::formEAS(int tang_flag, bool useInitialTangent)
           double dvolBF = wg[cnt] * xsj;
           for (int j = 0; j < 8; j++)
             for (int p = 0; p < 3; p++) {
+              // global-frame body load kept out of the corotated core force  // Ladruno (COROT-1)
               if (applyLoad == 0)
-                resid(3 * j + p) -= dvolBF * b[p] * shpBF[3][j];
+                bodyForce(3 * j + p) -= dvolBF * b[p] * shpBF[3][j];
               else
-                resid(3 * j + p) -= dvolBF * appliedB[p] * shpBF[3][j];
+                bodyForce(3 * j + p) -= dvolBF * appliedB[p] * shpBF[3][j];
             }
           cnt++;
         }
@@ -2425,8 +2440,10 @@ LadrunoBrick::formEAS(int tang_flag, bool useInitialTangent)
   const Vector &fCore = useInitialTangent ? zeroF : resid;
   if (tang_flag == 1)
     theGeom->globalizeStiff(stiff, fCore, stiff);
-  if (!useInitialTangent)
+  if (!useInitialTangent) {
     theGeom->globalizeForce(resid, resid);
+    resid += bodyForce;          // global-frame body load, added AFTER globalize  // Ladruno (COROT-1)
+  }
 }
 
 //----------------------------------------------------------------------

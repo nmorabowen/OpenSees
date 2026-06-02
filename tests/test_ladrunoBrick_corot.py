@@ -376,6 +376,121 @@ def _solve_cantilever(geom, nz=6, P=0.6, nsteps=20):
     return float(np.mean([ops.nodeDisp(t, 1) for t in top]))   # mean tip x-disp
 
 
+# --------------------------------------------------------------------------- #
+#  COROT-1 regression: a fixed-direction body/self-weight load must NOT         #
+#  co-rotate with the element. Under a pure rigid rotation u_d = 0 ⇒ internal   #
+#  force = 0, so eleForce is ENTIRELY the global-frame body load — and that must #
+#  be IDENTICAL whether or not the element is rigidly rotated. The pre-fix code  #
+#  folded the body load into the core force and rotated it by R (gravity tilted  #
+#  with the element).                                                            #
+# --------------------------------------------------------------------------- #
+def _corot_body_force(R, bvec):
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for tag, (x, y, z) in _NODES.items():
+        ops.node(tag, x, y, z)
+    _make_material("elastic", 1)
+    ops.element("LadrunoBrick", 1, *_CONN, 1,
+                "-formulation", "std", "-geom", "corot", "-b", *bvec)
+    u = _affine_disp(R)                       # rigid: x = R X ⇒ u_d = 0 ⇒ f_int = 0
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    for tag in _NODES:
+        base = (tag - 1) * 3
+        for d in range(3):
+            ops.sp(tag, d + 1, float(u[base + d]))
+    ops.constraints("Lagrange")
+    ops.numberer("Plain")
+    ops.system("FullGeneral")
+    ops.test("NormDispIncr", 1.0e-11, 30, 0)
+    ops.algorithm("Newton")
+    ops.integrator("LoadControl", 1.0)
+    ops.analysis("Static")
+    assert ops.analyze(1) == 0, "corot body-load solve failed"
+    return np.array(ops.eleForce(1), dtype=float)
+
+
+def test_corot_body_load_is_not_rotated():
+    bvec = (0.0, 0.0, -1000.0)                # global-frame body force (gravity-like)
+    f_norot = _corot_body_force(np.eye(3), bvec)
+    f_rot = _corot_body_force(_rot(1.1, -0.7), bvec)   # large rigid rotation
+
+    scale = max(np.abs(f_norot).max(), 1.0e-30)
+    assert scale > 1.0, "body load did not enter the resisting force — test is vacuous"
+    assert np.abs(f_rot - f_norot).max() <= 1.0e-3 * scale, (
+        "COROT-1: body load co-rotated with the element under -geom corot "
+        f"(max diff {np.abs(f_rot - f_norot).max():.3e} vs scale {scale:.3e}); a "
+        "fixed-direction dead load must stay in the global frame")
+
+
+# --------------------------------------------------------------------------- #
+#  HON-2: corot is OBJECTIVE for KINEMATIC-hardening materials.                  #
+#  A deep review flagged a possible §14.11-style non-objectivity (backstress    #
+#  frame). It does NOT occur: corot feeds the material u_d = Rᵀ x_rel − X_rel    #
+#  (reference frame) with reference-config gradients, so the material — and its  #
+#  backstress α — live in a FIXED reference frame across commits. Because        #
+#  polar(Q·H) = Q·polar(H) exactly for any rigid Q, u_d is rigid-rotation-       #
+#  INVARIANT, so a per-step-varying rigid rotation yields the SAME deformational #
+#  strain history ⇒ identical corotated GP stress. (Contrast LogStrain, where   #
+#  bᵉ_tr = f_Δ bᵉ_n f_Δᵀ co-rotates s while α stays fixed — that IS §14.11.)     #
+# --------------------------------------------------------------------------- #
+def _corot_kin_path(stretches, rots):
+    """Drive a committed multi-step plastic path on a corot + LadrunoJ2(-kin)
+    element; rots[k] superposes a (per-step varying) rigid rotation. Returns the
+    corotated GP-stress history (eleResponse 'stresses')."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for tag, (x, y, z) in _NODES.items():
+        ops.node(tag, x, y, z)
+    K = _E / (3.0 * (1.0 - 2.0 * _NU))
+    G = _E / (2.0 * (1.0 + _NU))
+    # small yield + two-term Chaboche kinematic hardening (backstress develops)
+    ops.nDMaterial("LadrunoJ2", 1, K, G, "-iso", "voce", 0.30, 0.10, 20.0, 5.0,
+                   "-kin", 2, 8.0, 50.0, 4.0, 20.0)
+    ops.element("LadrunoBrick", 1, *_CONN, 1, "-formulation", "std", "-geom", "corot")
+    ops.constraints("Lagrange")
+    ops.numberer("Plain")
+    ops.system("FullGeneral")
+    ops.test("NormDispIncr", 1.0e-10, 50, 0)
+    ops.algorithm("Newton")
+    ops.integrator("LoadControl", 1.0)
+    ops.analysis("Static")
+    ops.timeSeries("Constant", 1)             # factor ≡ 1 ⇒ sp is the absolute target
+    hist = []
+    for k, (U, Q) in enumerate(zip(stretches, rots)):
+        u = _affine_disp((Q @ U).tolist())
+        pat = 100 + k
+        ops.pattern("Plain", pat, 1)
+        for tag in _NODES:
+            base = (tag - 1) * 3
+            for d in range(3):
+                ops.sp(tag, d + 1, float(u[base + d]))
+        assert ops.analyze(1) == 0, f"corot+kin step {k} failed to converge"
+        hist.append(np.array(ops.eleResponse(1, "stresses"), dtype=float))
+        ops.remove("loadPattern", pat)        # committed material state persists
+    return hist
+
+
+def test_corot_kinematic_hardening_objectivity():
+    # increasing deviatoric (isochoric-ish) stretches, each deeper into yield
+    stretches = [np.diag([1.0 + a, 1.0 / math.sqrt(1.0 + a), 1.0 / math.sqrt(1.0 + a)])
+                 for a in (0.03, 0.06, 0.09)]
+    body = [np.eye(3), np.eye(3), np.eye(3)]
+    rotg = [np.eye(3), _rot(0.5, -0.3), _rot(1.0, 0.4)]   # frame CHANGES between commits
+
+    s_body = _corot_kin_path(stretches, body)
+    s_rot = _corot_kin_path(stretches, rotg)
+
+    scale = max(np.abs(np.concatenate(s_body)).max(), 1.0e-30)
+    # sanity: the path actually yielded with a developing backstress (else vacuous)
+    assert scale > 0.30, f"corot+kin path did not yield (max |σ| {scale:.3f}); vacuous"
+    for k in range(len(stretches)):
+        assert np.abs(s_rot[k] - s_body[k]).max() <= 1.0e-6 * scale, (
+            f"corot kinematic hardening NOT objective at step {k}: corotated GP "
+            f"stress changed under a rigid rotation (max diff "
+            f"{np.abs(s_rot[k] - s_body[k]).max():.3e} vs scale {scale:.3e})")
+
+
 def test_corot_cantilever_converges_and_matches_finite():
     # P=0.6 drives the tip to ~26% of the length (large rotation, small strain) —
     # the corot regime. Newton converges through the load steps despite the
