@@ -53,6 +53,8 @@
 #include <ElementResponse.h>
 #include <ElementalLoad.h>
 #include <Renderer.h>
+#include <SolidTransformation.h>         // Ladruno — geometry-method layer
+#include <SolidTransformationLinear.h>   // Ladruno — default/fallback (identity)
 
 #include <math.h>
 #include <string.h>
@@ -117,14 +119,21 @@ BezierTet10::BezierTet10(int tag,
                          int nd6, int nd7, int nd8, int nd9, int nd10,
                          NDMaterial &m, double r,
                          double bx, double by, double bz,
-                         bool bbar, bool cmass, double press)
+                         bool bbar, bool cmass, double press,
+                         int geomMethodID)
   : Element(tag, ELE_TAG_BezierTet10),
     theMaterial(0),
     connectedExternalNodes(NEN),
     rho(r), pressure(press),
     useBbar(bbar), cMass(cmass),
-    Q(NELD), applyLoad(0), Ki(0)
+    Q(NELD), applyLoad(0), Ki(0), theGeom(0)   // Ladruno — geometry method
 {
+    // Ladruno: geometry-method layer (linear default / corot). Linear is the
+    // identity wrapper so std/bbar run bit-for-bit unchanged.
+    theGeom = SolidTransformation::create(geomMethodID);
+    if (theGeom == 0)
+        theGeom = new SolidTransformationLinear();   // safe fallback (unknown id)
+
     // One-time attribution print (Abell pattern) — Ladruño banner + authors
     if (numInstances == 0) {
         numInstances++;
@@ -181,8 +190,12 @@ BezierTet10::BezierTet10()
     connectedExternalNodes(NEN),
     rho(0.0), pressure(0.0),
     useBbar(false), cMass(false),
-    Q(NELD), applyLoad(0), Ki(0)
+    Q(NELD), applyLoad(0), Ki(0), theGeom(0)   // Ladruno — geometry method
 {
+    // Ladruno: broker/database reconstruction path — recvSelf rebuilds the real
+    // method from the serialized id; default to the identity wrapper meanwhile.
+    theGeom = new SolidTransformationLinear();
+
     b[0] = b[1] = b[2] = 0.0;
     appliedB[0] = appliedB[1] = appliedB[2] = 0.0;
 
@@ -206,6 +219,8 @@ BezierTet10::~BezierTet10()
     }
     if (Ki != 0)
         delete Ki;
+    if (theGeom != 0)        // Ladruno — geometry-method layer
+        delete theGeom;
 }
 
 
@@ -283,6 +298,7 @@ int BezierTet10::commitState()
         opserr << "BezierTet10::commitState() - failed in base class\n";
     for (int i = 0; i < NGAUSS; i++)
         retVal += theMaterial[i]->commitState();
+    retVal += theGeom->commitState();   // Ladruno (corot is stateless: no-op)
     return retVal;
 }
 
@@ -292,6 +308,7 @@ int BezierTet10::revertToLastCommit()
     int retVal = 0;
     for (int i = 0; i < NGAUSS; i++)
         retVal += theMaterial[i]->revertToLastCommit();
+    retVal += theGeom->revertToLastCommit();   // Ladruno (corot stateless)
     return retVal;
 }
 
@@ -301,6 +318,7 @@ int BezierTet10::revertToStart()
     int retVal = 0;
     for (int i = 0; i < NGAUSS; i++)
         retVal += theMaterial[i]->revertToStart();
+    retVal += theGeom->revertToStart();   // Ladruno (corot stateless)
     if (theNodes[0] != 0)
         computeControlPoints();
     return retVal;
@@ -309,15 +327,12 @@ int BezierTet10::revertToStart()
 
 int BezierTet10::update()
 {
-    // Extract nodal displacements, compute strains ε = B·u (or B̄·u),
-    // push to the materials.
-    Vector u(NELD);
-    for (int i = 0; i < NEN; i++) {
-        const Vector &disp = theNodes[i]->getTrialDisp();
-        u(3*i)     = disp(0);
-        u(3*i + 1) = disp(1);
-        u(3*i + 2) = disp(2);
-    }
+    // Ladruno (seam 0+2): refresh the geometry method and localize the trial
+    // displacement into the core frame. For -geom linear this is the identity
+    // (uCore == uGlobal), so the strain below is bit-for-bit the direct kernel;
+    // for -geom corot it is the de-rotated (Rᵀ) displacement. Strains ε = B·uCore
+    // (or B̄·uCore) are then pushed to the materials.
+    const Vector &u = this->computeLocalDisp();
 
     int ret = 0;
 
@@ -327,23 +342,13 @@ int BezierTet10::update()
         computeVolumeAveragedDerivatives(dN_avg, volume);
 
     for (int gp = 0; gp < NGAUSS; gp++) {
-        double dN[3][NEN];
-        shapeDerivatives(GP4_L[gp][0], GP4_L[gp][1], GP4_L[gp][2], dN);
-
-        double J[3][3];
-        double dN_dx[3][NEN];
-        double detJ = computeJacobian(dN, J, dN_dx);
-
-        if (fabs(detJ) <= 0.0) {
-            opserr << "BezierTet10::update() - degenerate Jacobian\n";
+        double B[NSTRESS][NELD];
+        double factor = formBAtGauss(gp, dN_avg, B);
+        if (factor < 0.0) {
+            opserr << "BezierTet10::update() - degenerate Jacobian at GP " << gp
+                   << " (element " << this->getTag() << ")\n";
             return -1;
         }
-
-        double B[NSTRESS][NELD];
-        if (useBbar)
-            computeBBarMatrix(dN_dx, dN_avg, B);
-        else
-            computeBMatrix(dN_dx, B);
 
         Vector strain(NSTRESS);
         for (int i = 0; i < NSTRESS; i++) {
@@ -366,44 +371,21 @@ int BezierTet10::update()
 
 const Matrix &BezierTet10::getTangentStiff()
 {
-    // K = Σᵢ wᵢ |Jᵢ| · Bᵢᵀ Dᵢ Bᵢ   (B → B̄ for B-bar)
-    K_return.Zero();
+    // K = Σᵢ wᵢ |Jᵢ| · Bᵢᵀ Dᵢ Bᵢ   (B → B̄ for B-bar), assembled in the CORE
+    // frame in ONE pass that also yields the core internal force, then globalized
+    // (seam 3). Ladruno: refresh the geometry method so K and the fCore used for
+    // K_geo share one fresh R.
+    this->computeLocalDisp();
 
-    double dN_avg[3][NEN];
-    double volume;
-    if (useBbar)
-        computeVolumeAveragedDerivatives(dN_avg, volume);
+    // one Gauss pass → core K (into K_return) AND the core internal force fCore.
+    static Vector fCore(NELD);
+    this->formCore(1, fCore, &K_return);
 
-    for (int gp = 0; gp < NGAUSS; gp++) {
-        double w = GP4_w[gp];
-        double dN[3][NEN];
-        shapeDerivatives(GP4_L[gp][0], GP4_L[gp][1], GP4_L[gp][2], dN);
-
-        double J[3][3];
-        double dN_dx[3][NEN];
-        double detJ = computeJacobian(dN, J, dN_dx);
-
-        double B[NSTRESS][NELD];
-        if (useBbar)
-            computeBBarMatrix(dN_dx, dN_avg, B);
-        else
-            computeBMatrix(dN_dx, B);
-
-        const Matrix &D = theMaterial[gp]->getTangent();
-        double factor = w * fabs(detJ);
-
-        for (int I = 0; I < NELD; I++) {
-            for (int Jc = I; Jc < NELD; Jc++) {  // exploit symmetry
-                double sum = 0.0;
-                for (int k = 0; k < NSTRESS; k++)
-                    for (int l = 0; l < NSTRESS; l++)
-                        sum += B[k][I] * D(k, l) * B[l][Jc];
-                K_return(I, Jc) += factor * sum;
-                if (I != Jc)
-                    K_return(Jc, I) += factor * sum;
-            }
-        }
-    }
+    // seam 3: globalize the core-frame K and add the corotational geometric
+    // stiffness K_geo, which depends on fCore — the SAME force globalizeForce
+    // rotates in getResistingForce (both via formCore), so they match by
+    // construction. Identity (kGlobal=kCore, K_geo=0) for -geom linear.  // Ladruno
+    theGeom->globalizeStiff(K_return, fCore, K_return);
 
     return K_return;
 }
@@ -422,22 +404,15 @@ const Matrix &BezierTet10::getInitialStiff()
         computeVolumeAveragedDerivatives(dN_avg, volume);
 
     for (int gp = 0; gp < NGAUSS; gp++) {
-        double w = GP4_w[gp];
-        double dN[3][NEN];
-        shapeDerivatives(GP4_L[gp][0], GP4_L[gp][1], GP4_L[gp][2], dN);
-
-        double J[3][3];
-        double dN_dx[3][NEN];
-        double detJ = computeJacobian(dN, J, dN_dx);
-
         double B[NSTRESS][NELD];
-        if (useBbar)
-            computeBBarMatrix(dN_dx, dN_avg, B);
-        else
-            computeBMatrix(dN_dx, B);
+        double factor = formBAtGauss(gp, dN_avg, B);
+        if (factor < 0.0) {
+            opserr << "BezierTet10::getInitialStiff - degenerate Jacobian at GP "
+                   << gp << " (element " << this->getTag() << ")\n";
+            continue;
+        }
 
         const Matrix &D = theMaterial[gp]->getInitialTangent();
-        double factor = w * fabs(detJ);
 
         for (int I = 0; I < NELD; I++) {
             for (int Jc = I; Jc < NELD; Jc++) {
@@ -450,6 +425,24 @@ const Matrix &BezierTet10::getInitialStiff()
                     K_return(Jc, I) += factor * sum;
             }
         }
+    }
+
+    // seam 3 (reference config): pin the geometry frame to R = I by refreshing
+    // theGeom with cur == ref, THEN globalize with a zero core force. Without the
+    // update-to-reference, globalizeStiff would reuse a STALE current-config R if
+    // getInitialStiff is queried mid-analysis. R = I is deterministic, so caching
+    // Ki below stays valid. Identity for -geom linear.  // Ladruno
+    if (theNodes[0] != 0) {
+        static Matrix refC(NEN, 3);
+        for (int i = 0; i < NEN; i++) {
+            const Vector &X = theNodes[i]->getCrds();
+            for (int d = 0; d < 3; d++)
+                refC(i, d) = X(d);
+        }
+        theGeom->update(NEN, refC, refC);          // Rmat = I
+        static Vector zeroF(NELD);
+        zeroF.Zero();
+        theGeom->globalizeStiff(K_return, zeroF, K_return);
     }
 
     Ki = new Matrix(Ki_data, NELD, NELD);
@@ -592,8 +585,115 @@ int BezierTet10::addInertiaLoadToUnbalance(const Vector &accel)
 
 const Vector &BezierTet10::getResistingForce()
 {
-    // F^int = ∫_Ω Bᵀ σ dΩ, minus applied body force and pressure.
-    P_return.Zero();
+    // F = globalize(∫_Ω Bᵀσ dΩ)  −  body force  −  pressure  −  Q.
+    //
+    // Ladruno (corot load-frame contract): the INTERNAL force ∫Bᵀσ is assembled
+    // in the core frame and rotated to global by globalizeForce (seam 3). The
+    // fixed-direction EXTERNAL loads — body force (gravity), the +z pressure
+    // hack, and Q (applied / inertia) — are applied in the GLOBAL frame AFTER
+    // globalizeForce so the rotation R never co-rotates them. This keeps the
+    // fCore fed to globalizeStiff equal to pure ∫Bᵀσ (so K_geo carries no
+    // spurious external-load term) and makes the f/K paths trivially consistent.
+    // For -geom linear globalizeForce is the identity and this reproduces the
+    // direct kernel.
+    this->computeLocalDisp();                     // seam 0+2: refresh frame
+
+    static Vector fInt(NELD);
+    this->formCore(0, fInt, 0);                   // core-frame ∫Bᵀσ (no tangent)
+    theGeom->globalizeForce(fInt, fInt);          // seam 3: → global
+    P_return = fInt;
+
+    // fixed-direction external loads, GLOBAL frame
+    double bx = (applyLoad == 1) ? appliedB[0] : b[0];
+    double by = (applyLoad == 1) ? appliedB[1] : b[1];
+    double bz = (applyLoad == 1) ? appliedB[2] : b[2];
+    if (bx != 0.0 || by != 0.0 || bz != 0.0 || pressure != 0.0) {
+        for (int gp = 0; gp < NGAUSS; gp++) {
+            double w = GP4_w[gp];
+            double N[NEN];
+            shapeFunctions(GP4_L[gp][0], GP4_L[gp][1], GP4_L[gp][2], N);
+
+            double dN[3][NEN];
+            shapeDerivatives(GP4_L[gp][0], GP4_L[gp][1], GP4_L[gp][2], dN);
+
+            double J[3][3];
+            double dN_dx[3][NEN];
+            double detJ = computeJacobian(dN, J, dN_dx);
+            double factor = w * fabs(detJ);
+
+            for (int a = 0; a < NEN; a++) {
+                P_return(3*a)     -= factor * N[a] * bx;
+                P_return(3*a + 1) -= factor * N[a] * by;
+                P_return(3*a + 2) -= factor * N[a] * bz;
+                if (pressure != 0.0)   // +z volume hack (mirrors BezierTri6)
+                    P_return(3*a + 2) -= factor * N[a] * pressure;
+            }
+        }
+    }
+
+    P_return.addVector(1.0, Q, -1.0);
+    return P_return;
+}
+
+
+// ─── Geometry-method seam helpers (Ladruno) ───────────────────────────
+// computeLocalDisp: seam 0+2 — refresh theGeom from the current geometry and
+// return the localized (core-frame) trial displacement. Identity for -geom
+// linear (uCore == uGlobal). Mirrors LadrunoBrick::computeLocalDisp.
+const Vector &BezierTet10::computeLocalDisp(void)
+{
+    static Matrix refCrds(NEN, 3), curCrds(NEN, 3);
+    static Vector uGlobal(NELD), uCore(NELD);
+
+    for (int i = 0; i < NEN; i++) {
+        const Vector &X = theNodes[i]->getCrds();
+        const Vector &u = theNodes[i]->getTrialDisp();
+        for (int d = 0; d < 3; d++) {
+            refCrds(i, d)     = X(d);
+            curCrds(i, d)     = X(d) + u(d);
+            uGlobal(3 * i + d) = u(d);
+        }
+    }
+
+    theGeom->update(NEN, refCrds, curCrds);
+    theGeom->localizeDisp(uGlobal, uCore);
+    return uCore;
+}
+
+// formBAtGauss: the single guarded strain-displacement assembly shared by every
+// Gauss loop (update / formCore / getInitialStiff). Returns w·|detJ|, or −1 if
+// the element is degenerate (detJ == 0, where computeJacobian leaves dN_dx unset
+// — so the degenerate check MUST live here, not be duplicated/forgotten per loop).
+double BezierTet10::formBAtGauss(int gp, const double dN_avg[3][NEN],
+                                 double B[NSTRESS][NELD]) const
+{
+    double dN[3][NEN];
+    shapeDerivatives(GP4_L[gp][0], GP4_L[gp][1], GP4_L[gp][2], dN);
+
+    double J[3][3];
+    double dN_dx[3][NEN];
+    double detJ = computeJacobian(dN, J, dN_dx);
+    if (fabs(detJ) <= 0.0)
+        return -1.0;
+
+    if (useBbar)
+        computeBBarMatrix(dN_dx, dN_avg, B);
+    else
+        computeBMatrix(dN_dx, B);
+
+    return GP4_w[gp] * fabs(detJ);
+}
+
+// formCore: ONE Gauss pass → core-frame internal force fInt = ∫Bᵀσ dΩ (always)
+// and, when tangFlag, the core tangent K = ∫BᵀDB dΩ. NO body force / pressure /
+// Q. getResistingForce calls formCore(0,…) and getTangentStiff formCore(1,…), so
+// the fCore globalizeForce rotates equals the fCore globalizeStiff uses for K_geo
+// BY CONSTRUCTION — and the tangent path no longer runs a second Bᵀσ loop.
+void BezierTet10::formCore(int tangFlag, Vector &fInt, Matrix *K)
+{
+    fInt.Zero();
+    if (tangFlag && K != 0)
+        K->Zero();
 
     double dN_avg[3][NEN];
     double volume;
@@ -601,54 +701,37 @@ const Vector &BezierTet10::getResistingForce()
         computeVolumeAveragedDerivatives(dN_avg, volume);
 
     for (int gp = 0; gp < NGAUSS; gp++) {
-        double w = GP4_w[gp];
-        double N[NEN];
-        shapeFunctions(GP4_L[gp][0], GP4_L[gp][1], GP4_L[gp][2], N);
-
-        double dN[3][NEN];
-        shapeDerivatives(GP4_L[gp][0], GP4_L[gp][1], GP4_L[gp][2], dN);
-
-        double J[3][3];
-        double dN_dx[3][NEN];
-        double detJ = computeJacobian(dN, J, dN_dx);
-
         double B[NSTRESS][NELD];
-        if (useBbar)
-            computeBBarMatrix(dN_dx, dN_avg, B);
-        else
-            computeBMatrix(dN_dx, B);
+        double factor = formBAtGauss(gp, dN_avg, B);
+        if (factor < 0.0) {
+            opserr << "BezierTet10::formCore - degenerate Jacobian at GP " << gp
+                   << " (element " << this->getTag() << ")\n";
+            continue;
+        }
 
         const Vector &sigma = theMaterial[gp]->getStress();
-        double factor = w * fabs(detJ);
-
         for (int I = 0; I < NELD; I++) {
-            double sum = 0.0;
+            double s = 0.0;
             for (int k = 0; k < NSTRESS; k++)
-                sum += B[k][I] * sigma(k);
-            P_return(I) += factor * sum;
+                s += B[k][I] * sigma(k);
+            fInt(I) += factor * s;
         }
 
-        // Subtract body forces (rampable appliedB when SelfWeight active)
-        double bx = (applyLoad == 1) ? appliedB[0] : b[0];
-        double by = (applyLoad == 1) ? appliedB[1] : b[1];
-        double bz = (applyLoad == 1) ? appliedB[2] : b[2];
-        if (bx != 0.0 || by != 0.0 || bz != 0.0) {
-            for (int a = 0; a < NEN; a++) {
-                P_return(3*a)     -= factor * N[a] * bx;
-                P_return(3*a + 1) -= factor * N[a] * by;
-                P_return(3*a + 2) -= factor * N[a] * bz;
+        if (tangFlag && K != 0) {
+            const Matrix &D = theMaterial[gp]->getTangent();
+            for (int I = 0; I < NELD; I++) {
+                for (int Jc = I; Jc < NELD; Jc++) {   // symmetric
+                    double sum = 0.0;
+                    for (int k = 0; k < NSTRESS; k++)
+                        for (int l = 0; l < NSTRESS; l++)
+                            sum += B[k][I] * D(k, l) * B[l][Jc];
+                    (*K)(I, Jc) += factor * sum;
+                    if (I != Jc)
+                        (*K)(Jc, I) += factor * sum;
+                }
             }
         }
-
-        // Subtract "pressure" (volume hack acting in +z, mirrors BezierTri6)
-        if (pressure != 0.0) {
-            for (int a = 0; a < NEN; a++)
-                P_return(3*a + 2) -= factor * N[a] * pressure;
-        }
     }
-
-    P_return.addVector(1.0, Q, -1.0);
-    return P_return;
 }
 
 
@@ -982,8 +1065,10 @@ int BezierTet10::sendSelf(int commitTag, Channel &theChannel)
 {
     int res = 0;
 
-    // tag + 10 nodes + matClassTag + matDbTag + useBbar + cMass = 15
-    static ID iData(15);
+    // tag + 10 nodes + matClassTag + matDbTag + useBbar + cMass + geomID = 16
+    // Ladruno: a dedicated slot 15 carries the geometry-method id (the existing
+    // 15-slot buffer was full — no packed slot to reuse, so widen to 16).
+    static ID iData(16);
     iData(0) = this->getTag();
     for (int i = 0; i < NEN; i++)
         iData(i + 1) = connectedExternalNodes(i);
@@ -997,6 +1082,7 @@ int BezierTet10::sendSelf(int commitTag, Channel &theChannel)
     iData(12) = matDbTag;
     iData(13) = useBbar ? 1 : 0;
     iData(14) = cMass ? 1 : 0;
+    iData(15) = theGeom->getMethodID();   // Ladruno — geometry method
 
     res += theChannel.sendID(this->getDbTag(), commitTag, iData);
 
@@ -1022,7 +1108,7 @@ int BezierTet10::recvSelf(int commitTag, Channel &theChannel,
 {
     int res = 0;
 
-    static ID iData(15);
+    static ID iData(16);
     res += theChannel.recvID(this->getDbTag(), commitTag, iData);
 
     this->setTag(iData(0));
@@ -1032,6 +1118,15 @@ int BezierTet10::recvSelf(int commitTag, Channel &theChannel,
     int matDbTag = iData(12);
     useBbar = (iData(13) == 1);
     cMass = (iData(14) == 1);
+
+    // Ladruno: rebuild the geometry method from the serialized id (Linear
+    // fallback for an unknown/zero id) — else a parallel worker silently
+    // reverts -geom corot to linear.
+    if (theGeom != 0)
+        delete theGeom;
+    theGeom = SolidTransformation::create(iData(15));
+    if (theGeom == 0)
+        theGeom = new SolidTransformationLinear();
 
     static Vector dData(5);
     res += theChannel.recvVector(this->getDbTag(), commitTag, dData);

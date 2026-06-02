@@ -101,9 +101,13 @@ class SolidTransformationCorot : public SolidTransformation
   void getCurrentFrame(Matrix &R) const;
 
  private:
-  // -- maximum nodes supported (LadrunoBrick is an 8-node hex; the wrapper is
-  //    its only consumer). Guarded in update().
-  enum { MAX_NODES = 8, NDF = 3, MAX_DOF = MAX_NODES * NDF };
+  // -- maximum nodes supported. Consumers: LadrunoBrick (8-node hex) and
+  //    BezierTet10 (10-node quadratic tet). Guarded in update(). All corot
+  //    logic runs on the runtime numNodes/ndof; MAX_NODES only sizes the
+  //    fixed scratch arrays (Xrel/xrel, Gamma, the Rf buffer in
+  //    globalizeForce), so raising it is allocation-only — no logic change
+  //    and the existing 8-node consumer is unaffected.  // Ladruno (Tet10 corot)
+  enum { MAX_NODES = 10, NDF = 3, MAX_DOF = MAX_NODES * NDF };
 
   int numNodes;                 // set by update(); 0 until first update()
   double Rmat[9];               // current rotation R (row-major 3x3)

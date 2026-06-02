@@ -462,6 +462,8 @@
 #include "brick/Brick.h"
 #include "brick/BbarBrick.h"
 #include "ladrunoBrick/LadrunoBrick.h"	// N. Mora-Bowen (Ladruno)
+#include "bezierTriangle/BezierTri6.h"		// Ladruno (broker reconstruction)
+#include "bezierTetrahedron/BezierTet10.h"	// Ladruno (broker reconstruction)
 #include "joint/Joint2D.h"		// Arash
 #include "joint/Inno3DPnPJoint.h" // Cristian Miculas
 #include "twoNodeLink/TwoNodeLink.h"
@@ -1035,6 +1037,12 @@ FEM_ObjectBrokerAllClasses::getNewElement(int classTag)
 
     case ELE_TAG_LadrunoBrick:		// N. Mora-Bowen (Ladruno)
       return new LadrunoBrick();
+
+    case ELE_TAG_BezierTri6:		// Ladruno (broker reconstruction)
+      return new BezierTri6();
+
+    case ELE_TAG_BezierTet10:		// Ladruno (broker reconstruction)
+      return new BezierTet10();
 
     case ELE_TAG_SSPquad:          
       return new SSPquad();

@@ -15,6 +15,7 @@
 //                       $matTag
 //                       <-bbar> <-cMass> <-rho $r>
 //                       <-bodyForce $b1 $b2 $b3> <-pressure $p>
+//                       <-geom linear|corot>
 //
 // Required arguments:
 //   $tag        - unique element tag
@@ -28,6 +29,9 @@
 //   -rho $r             - mass density (else taken from the material)
 //   -bodyForce $b1..$b3 - body force per unit volume (rampable via SelfWeight)
 //   -pressure $p        - volume "pressure" hack acting in +z (as BezierTri6)
+//   -geom linear|corot  - geometry method (default linear = small strain;
+//                         corot = large rotation / small strain, EICR via the
+//                         SolidTransformation layer). finite is unsupported in v1.
 //
 // Example (Python):
 //   ops.nDMaterial('ElasticIsotropic', 1, 1000.0, 0.3)
@@ -38,6 +42,7 @@
 #include <elementAPI.h>
 #include <OPS_Globals.h>
 #include <NDMaterial.h>
+#include <SolidTransformation.h>   // Ladruno — geometry-method ids (linear/corot)
 
 #include <string.h>
 
@@ -87,6 +92,7 @@ void *OPS_BezierTet10()
     double b1 = 0.0, b2 = 0.0, b3 = 0.0;
     bool useBbar = false;
     bool cMass = false;
+    int geomMethodID = SolidTransformation::METHOD_LINEAR;   // -geom (Ladruno)
 
     while (OPS_GetNumRemainingInputArgs() > 0) {
         const char *option = OPS_GetString();
@@ -122,10 +128,46 @@ void *OPS_BezierTet10()
             b2 = bData[1];
             b3 = bData[2];
         }
+        else if (strcmp(option, "-geom") == 0 || strcmp(option, "-geometry") == 0) {
+            // Ladruno: geometry method. v1 supports linear (default) + corot.
+            // finite is a separate task (per-element updated-Lagrangian assembly
+            // + a FiniteStrainNDMaterial) — reject it, and any unknown value,
+            // explicitly rather than falling through to a warn-only path.
+            if (OPS_GetNumRemainingInputArgs() < 1) {
+                opserr << "WARNING -geom needs a value for BezierTet10 " << tag
+                       << " (use linear|corot)\n";
+                return 0;
+            }
+            const char *g = OPS_GetString();
+            if (strcmp(g, "linear") == 0)
+                geomMethodID = SolidTransformation::METHOD_LINEAR;
+            else if (strcmp(g, "corot") == 0 || strcmp(g, "corotational") == 0)
+                geomMethodID = SolidTransformation::METHOD_COROT;
+            else if (strcmp(g, "finite") == 0) {
+                opserr << "WARNING BezierTet10 " << tag
+                       << ": -geom finite is not implemented (no finite-strain "
+                          "updated-Lagrangian assembly yet); use linear|corot\n";
+                return 0;
+            }
+            else {
+                opserr << "WARNING unknown -geom '" << g << "' for BezierTet10 "
+                       << tag << " (use linear|corot)\n";
+                return 0;
+            }
+        }
         else {
             opserr << "WARNING unknown option '" << option
                    << "' for BezierTet10 " << tag << "\n";
         }
+    }
+
+    // Ladruno: v1 corot does not yet support the +z pressure hack (its
+    // fixed-direction-vs-co-rotating-load behaviour under large rotation is
+    // unvalidated). Reject the combination at parse time.
+    if (geomMethodID == SolidTransformation::METHOD_COROT && pressure != 0.0) {
+        opserr << "WARNING BezierTet10 " << tag
+               << ": -geom corot does not support -pressure in v1\n";
+        return 0;
     }
 
     // ─── Create element ───────────────────────────────────────
@@ -134,7 +176,7 @@ void *OPS_BezierTet10()
                                       iData[5], iData[6], iData[7], iData[8],
                                       iData[9], iData[10],
                                       *theMat, rho, b1, b2, b3,
-                                      useBbar, cMass, pressure);
+                                      useBbar, cMass, pressure, geomMethodID);
 
     if (theEle == 0) {
         opserr << "WARNING ran out of memory creating BezierTet10 " << tag << "\n";
