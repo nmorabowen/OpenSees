@@ -301,9 +301,21 @@ struct LadrunoJ2State { double epsP[6]; double ebarP; double alpha[3][6]; };  //
   (single FourNodeQuad, mixed in-plane load incl. shear, into the plastic regime;
   matches `J2Plasticity` on disps + all GP stresses → validates the reduced mapping
   AND the condensation against the proven upstream specializations).
-- **Still deferred**: tabulated isotropic; `prager_nl` oracle mode (dSNPO Box 7.5,
-  V9); IMPL-EX code path; `setResponse` for backstress/`ε̄ᵖ`; AxiSymm/PlateFiber
-  element-level tests (validated by construction — same machinery as PlaneStrain/Stress).
+### State recording shipped (2026-06-02, follow-up PR)
+- `setResponse`/`getResponse` expose **stress, strain, tangent, backStress** (total
+  `α=Σαₖ`, reduced view, stress convention), **plasticStrain** (`εᵖ`, engineering
+  shear), and **equivalentPlasticStrain** (`ε̄ᵖ`). Recordable through the element's
+  `material` response (e.g. `eleResponse(ele, "material", gp, "equivalentPlasticStrain")`).
+- Test `test_state_recording` (9/9): single-AF push to saturation → `ε̄ᵖ` accumulates,
+  total backstress is deviatoric (trace≈0), axial backstress → `(2/3)(C/γ)`
+  (`σ_back=(3/2)α_axial=C/γ`).
+
+- **Still deferred**: tabulated isotropic + **Bézier/Bernstein** hardening-curve
+  `-iso` mode (smooth, monotone, reuses the de Casteljau evaluator from the Bézier
+  elements); `prager_nl` oracle mode (dSNPO Box 7.5, V9); IMPL-EX code path;
+  finite-strain lift (kernel extraction → `LogStrainNDMaterial`); `LadrunoJ21D`
+  (native scalar `UniaxialMaterial`); plane-stress-projected route (dSNPO §9.4,
+  profile-first); AxiSymm/PlateFiber element-level tests (validated by construction).
 
 ### Decisions locked (2026-06-01, design session)
 - **Kinematic = Chaboche AF, design for arbitrary N, ship N=3** (`af` mode). Recovers

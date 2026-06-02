@@ -77,6 +77,9 @@ class LadrunoJ2 : public NDMaterial {
   int updateParameter(int parameterID, Information& info);
   int activateParameter(int paramID);
 
+  Response* setResponse(const char** argv, int argc, OPS_Stream& s);
+  int getResponse(int responseID, Information& matInfo);
+
  private:
   // material parameters
   double bulk;     // K
