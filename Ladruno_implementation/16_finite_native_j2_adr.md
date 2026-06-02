@@ -164,3 +164,60 @@ step-refinement against a fine-increment reference when building, and if a
 discrepancy appears adopt the exact §14.11 exp-map transport. (Expected to be a
 non-issue: the AF evolution itself runs in the correctly-rotated frame via the
 unchanged return map, exactly as the isotropic part does.)
+
+## Implementation effort & build plan
+
+**Difficulty: medium-LOW — lower-risk than `LadrunoJ2` or `LogStrain` were**, because the
+hard parts are already built and verified and the algorithm is already locked in numpy.
+Estimate **~2–3 focused days**, most of it mechanical (cloning existing patterns). This
+is a *transcribe-a-locked-algorithm-and-match-the-oracle* PR, the cheapest kind here.
+
+### Reused verbatim (zero new numerics)
+
+- **Return map** — `LadrunoJ2Kernel.h::returnMap` (already g++-checked vs oracle + FD tangent).
+- **Hencky machinery** — `LogStrainKernel.h`: `trial_Be`, `hencky_voigt`,
+  `be_from_hencky_voigt`, `spatial_tangent_full`, the degeneracy-safe spectral code
+  (verified to 1e-10).
+- **Hardening** — `LadrunoHardening.h`. **Polar** — the Higham/SVD primitive in
+  `SolidTransformationCorot`. **Base + element** — `FiniteStrainNDMaterial` +
+  `LadrunoBrick -geom finite` (zero element changes).
+- **Structural template** — `LogStrainNDMaterial.{cpp,h}` (clone ~90% of the shape).
+  **Parser** — `OPS_LadrunoJ2` (identical `-iso voce … -kin N …` syntax; clone).
+- **Oracle** — `tests/ladrunoj2_finite_native_reference.py` (5/5 green) is the spec.
+
+### Genuinely new (~30 lines of real logic)
+
+The material **owns** its state (`bᵉ_n, F_n, ε̄ᵖ_n, α_{n,k}` as spatial tensors) instead
+of wrapping a black box. In `setTrialF`: `bᵉ_tr,εᵉ_tr` (kernel) → `R_Δ=polar(f_Δ)` →
+**`α̃_k = R_Δ α_k R_Δᵀ`** (the new step) → `returnMap(εᵉ_tr, α̃, ε̄ᵖ_n)` → `σ=τ/J`,
+`bᵉ`, spatial tangent. **Notable: this is SIMPLER than `LogStrain`'s plastic-inner
+protocol** — the `eps_feed` neutralization + `Cᵉ:τ` recovery exist only to outsmart a
+black-box inner; owning the kernel makes them disappear (just read `Δεᵖ` back). Plus the
+mechanical bits: serialize `9+9+1+6N` doubles, `getCopy`, `revert`, `setResponse`
+(cloned from `LadrunoJ2`), registration / CMake / banner / stamp glob.
+
+### The two real risk spots (both have detection nets)
+
+1. **Voigt bookkeeping on the α rotation** — convert α between the kernel's tensor-comp
+   `{00,11,22,01,12,02}` layout and 3×3 for `R α Rᵀ` (classic factor-2 / transpose trap).
+   **Net:** the oracle's rotating-path test catches it exactly, and it can be checked by a
+   g++ standalone driver-vs-oracle **before any full build**.
+2. **Consistent-tangent completeness** — the push-forward adds a `∂(R α Rᵀ)/∂F` term to the
+   exact tangent. **Plan:** ship the material spatial tangent (reuse `spatial_tangent_full`)
+   first; run the element FD-tangent test; if the gap is the usual O(rotation-increment)
+   that vanishes as the step shrinks, **defer** the extra term (sub-stepping converges) —
+   exactly how the corot v2.1 Hessian terms were handled ([[10_solid_corotational_adr]]).
+   Add it only if the FD gate demands it.
+
+### Build order (de-risk before the slow build)
+
+1. Clone `LogStrain` + `LadrunoJ2` parser → new material with direct kernel drive + α
+   rotation (~1 day).
+2. **g++ driver-vs-oracle check, NO OpenSees build** — diff the new logic against
+   `ladrunoj2_finite_native_reference.py` to 1e-9 (~½ day; de-risks ~90%).
+3. Registration + CMake + full build (~30 min) + `LadrunoBrick -geom finite` element
+   acceptance; **the existing strict-xfail flips green** (~½ day).
+
+The only thing that could push past ~3 days is the FD-tangent gate demanding the
+`∂R/∂F` term immediately (turning a deferral into a derivation) — a known, bounded
+follow-up, not a surprise.
