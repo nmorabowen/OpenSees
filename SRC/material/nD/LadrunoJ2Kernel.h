@@ -4,6 +4,27 @@
 **                                                                    **
 ** ****************************************************************** */
 
+// LADRUNO-HEADER-START
+// ==========================================================================
+//
+//   ▄█          ▄████████ ████████▄     ▄████████ ███    █▄  ███▄▄▄▄    ▄██████▄
+//  ███         ███    ███ ███   ▀███   ███    ███ ███    ███ ███▀▀▀██▄ ███    ███
+//  ███         ███    ███ ███    ███   ███    ███ ███    ███ ███   ███ ███    ███
+//  ███         ███    ███ ███    ███  ▄███▄▄▄▄██▀ ███    ███ ███   ███ ███    ███
+//  ███       ▀███████████ ███    ███ ▀▀███▀▀▀▀▀   ███    ███ ███   ███ ███    ███
+//  ███         ███    ███ ███    ███ ▀███████████ ███    ███ ███   ███ ███    ███
+//  ███▌    ▄   ███    ███ ███   ▄███   ███    ███ ███    ███ ███   ███ ███    ███
+//  █████▄▄██   ███    █▀  ████████▀    ███    ███ ████████▀   ▀█   █▀   ▀██████▀
+//  ▀                                   ███    ███
+//
+//  Ladruno — a research fork of OpenSees
+//  Created by:  Nicolas Mora Bowen  ·  Patricio Palacios  ·  José Abell  ·  Guppi
+//
+// Header auto-stamped by Ladruno_scripts/stamp_headers.py (art: banner_ASCII.txt).
+// Do not hand-edit between the markers; edit the script/art and re-run instead.
+// ==========================================================================
+// LADRUNO-HEADER-END
+
 // Authors: Nicolas Mora Bowen, Guppi (Ladruño)
 // Created: 06/2026
 //
@@ -40,6 +61,7 @@
 #define LadrunoJ2Kernel_h
 
 #include <math.h>
+#include <LadrunoHardening.h>   // shared Voce+linear sig_y (oracle contract w/ LadrunoUniaxialJ2)
 
 namespace ladruno_j2_kernel {
 
@@ -79,16 +101,18 @@ struct Params {
   double gam[MAXBACK];  // AF recall constants gamma_k
 };
 
-// ---- hardening law ---------------------------------------------------------- //
+// ---- hardening law (delegated to the SHARED Ladruno::* backbone) ------------ //
+// Using LadrunoHardening.h keeps sig_y(pbar) byte-identical to the uniaxial
+// LadrunoUniaxialJ2 (the V7 1e-12 oracle contract) AND across the finite-strain
+// path that reuses this kernel.
 inline double yieldStress(const Params& p, double pbar)
 {
-  // Voce saturation + linear; reduces to perfect (Qinf=Hiso=0) or linear (Qinf=0)
-  return p.sig0 + p.Qinf*(1.0 - exp(-p.bIso*pbar)) + p.Hiso*pbar;
+  return Ladruno::yieldStressVoceLinear(pbar, p.sig0, p.Qinf, p.bIso, p.Hiso);
 }
 
 inline double yieldSlope(const Params& p, double pbar)
 {
-  return p.Qinf*p.bIso*exp(-p.bIso*pbar) + p.Hiso;
+  return Ladruno::yieldSlopeVoceLinear(pbar, p.sig0, p.Qinf, p.bIso, p.Hiso);
 }
 
 // ---- elastic tangent (engineering 6x6, J2-3D convention) -------------------- //
