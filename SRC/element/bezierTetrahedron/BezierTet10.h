@@ -62,6 +62,12 @@
 //   element BezierTet10 $tag $nd1 ... $nd10 $matTag
 //                       <-bbar> <-cMass> <-rho $r>
 //                       <-bodyForce $b1 $b2 $b3> <-pressure $p>
+//                       <-geom linear|corot>
+//
+//   Geometry method (Ladruno): default linear (small strain). -geom corot adds
+//   large-rotation / small-strain corotational kinematics via the shared
+//   SolidTransformation layer (std + bbar; pressure unsupported under corot in
+//   v1). finite strain is a separate, not-yet-implemented task.
 //
 //   Mass: default is the all-positive lumped mass ρVe/10 (Kadapa Eq. 57) for
 //   explicit dynamics; pass -cMass for the consistent mass (implicit/eigen).
@@ -86,6 +92,7 @@
 class Node;
 class NDMaterial;
 class Response;
+class SolidTransformation;   // Ladruno — geometry-method layer (linear/corot)
 
 // Class tag ELE_TAG_BezierTet10 is defined in classTags.h (= 33001, ladruno band).
 
@@ -101,7 +108,8 @@ class BezierTet10 : public Element
                 NDMaterial &m, double rho = 0.0,
                 double b1 = 0.0, double b2 = 0.0, double b3 = 0.0,
                 bool useBbar = false, bool cMass = false,
-                double pressure = 0.0);
+                double pressure = 0.0,
+                int geomMethodID = 0);   // Ladruno — 0 = SolidTransformation::METHOD_LINEAR
 
     // Null constructor (for parallel/database reconstruction)
     BezierTet10();
@@ -193,6 +201,27 @@ class BezierTet10 : public Element
     // Element volume
     double computeVolume() const;
 
+    // ─── Geometry-method (corot) seams ────────────────────────
+    // Ladruno: refresh theGeom from current geometry and return the localized
+    // (core-frame) 30-dof trial displacement. Identity for -geom linear.
+    const Vector &computeLocalDisp(void);
+
+    // Ladruno: build the strain-displacement matrix B (or B̄) at Gauss point gp
+    // and return the integration measure w·|detJ|, or a NEGATIVE value if the
+    // element is degenerate (detJ == 0). The single guarded B-assembly path
+    // shared by update / formCore / getInitialStiff so the degenerate check and
+    // the std-vs-bbar choice can never drift between them.
+    double formBAtGauss(int gp, const double dN_avg[3][NEN],
+                        double B[NSTRESS][NELD]) const;
+
+    // Ladruno: one Gauss pass building the CORE-frame internal force
+    // fInt = ∫ Bᵀσ dΩ (always) and, when tangFlag != 0, the core tangent
+    // K = ∫ BᵀDB dΩ — NO body force / pressure / Q. Used by BOTH getResistingForce
+    // (tangFlag 0) and getTangentStiff (tangFlag 1), so the fCore fed to
+    // globalizeStiff is byte-identical to the one globalizeForce rotates, by
+    // construction (not by comment). K may be null when tangFlag == 0.
+    void formCore(int tangFlag, Vector &fInt, Matrix *K);
+
     // ─── Static Quadrature Data ───────────────────────────────
     // 4-point rule (degree 2) for stiffness / force / B-bar average.
     static const double GP4_L[][3];   // barycentric (L1,L2,L3), L4=1-ΣL
@@ -234,6 +263,8 @@ class BezierTet10 : public Element
 
     double Ki_data[NELD * NELD];
     Matrix *Ki;                 // Cached initial stiffness (lazy)
+
+    SolidTransformation *theGeom;  // Ladruno — geometry method (linear/corot)
 
     static int numInstances;    // One-time print flag (Abell pattern)
 };
