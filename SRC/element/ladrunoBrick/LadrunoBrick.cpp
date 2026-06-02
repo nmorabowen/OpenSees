@@ -104,6 +104,11 @@ LadrunoBrick::LadrunoBrick()
   }
 
   b[0] = 0.0; b[1] = 0.0; b[2] = 0.0;
+
+  // Ladruno — viscous-hourglass dissipation accumulator
+  hgDissipated = 0.0;
+  hgPrevValid  = false;
+  for (int i = 0; i < 24; i++) uPrevCommit[i] = 0.0;
 }
 
 //full constructor
@@ -150,6 +155,11 @@ LadrunoBrick::LadrunoBrick(int tag,
   }
 
   b[0] = b1; b[1] = b2; b[2] = b3;
+
+  // Ladruno — viscous-hourglass dissipation accumulator
+  hgDissipated = 0.0;
+  hgPrevValid  = false;
+  for (int i = 0; i < 24; i++) uPrevCommit[i] = 0.0;
 
   if (damping) {
     for (int i = 0; i < 8; i++) {
@@ -250,6 +260,22 @@ int  LadrunoBrick::commitState(void)
   for (int i = 0; i < 8; i++)
     if (theDamping[i]) success += theDamping[i]->commitState();
 
+  // Ladruno — accumulate viscous-hourglass dissipation. The FB viscous force
+  // stores no energy, so we integrate the work done against it over committed
+  // steps. The first commit (or the first after a parallel recv) only seeds the
+  // baseline so no spurious increment is booked.
+  if (formulation == Formulation::URI && hourglassType == Hourglass::VISCOUS) {
+    if (hgPrevValid)
+      hgDissipated += this->viscousHourglassIncrement();
+    else
+      hgPrevValid = true;
+    for (int J = 0; J < 8; J++) {
+      const Vector &ul = nodePointers[J]->getTrialDisp();
+      for (int i = 0; i < 3; i++)
+        uPrevCommit[3 * J + i] = ul(i);
+    }
+  }
+
   return success;
 }
 
@@ -270,6 +296,12 @@ int  LadrunoBrick::revertToStart(void)
     success += materialPointers[i]->revertToStart();
   for (int i = 0; i < 8; i++)
     if (theDamping[i]) success += theDamping[i]->revertToStart();
+
+  // Ladruno — reset the viscous-hourglass dissipation accumulator
+  hgDissipated = 0.0;
+  hgPrevValid  = false;
+  for (int i = 0; i < 24; i++) uPrevCommit[i] = 0.0;
+
   return success;
 }
 
@@ -2236,7 +2268,7 @@ int  LadrunoBrick::sendSelf(int commitTag, Channel &theChannel)
     return res;
   }
 
-  static Vector dData(8);
+  static Vector dData(9);
   dData(0) = alphaM;
   dData(1) = betaK;
   dData(2) = betaK0;
@@ -2245,6 +2277,7 @@ int  LadrunoBrick::sendSelf(int commitTag, Channel &theChannel)
   dData(5) = b[1];
   dData(6) = b[2];
   dData(7) = hourglassCoeff;
+  dData(8) = hgDissipated;   // Ladruno — viscous-hourglass dissipation accumulator
 
   if (theChannel.sendVector(dataTag, commitTag, dData) < 0) {
     opserr << "LadrunoBrick::sendSelf() - failed to send double data\n";
@@ -2286,7 +2319,7 @@ int  LadrunoBrick::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker
 
   this->setTag(idData(24));
 
-  static Vector dData(8);
+  static Vector dData(9);
   if (theChannel.recvVector(dataTag, commitTag, dData) < 0) {
     opserr << "LadrunoBrick::recvSelf() - failed to recv double data\n";
     return -1;
@@ -2299,6 +2332,12 @@ int  LadrunoBrick::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker
   b[1]   = dData(5);
   b[2]   = dData(6);
   hourglassCoeff = dData(7);
+
+  // Ladruno — restore the dissipation total; the work baseline reseeds on the
+  // next commit (hgPrevValid=false), so no spurious increment is booked across
+  // the migration. uPrevCommit was zeroed by the null constructor.
+  hgDissipated = dData(8);
+  hgPrevValid  = false;
 
   for (int i = 0; i < 8; i++)
     connectedExternalNodes(i) = idData(16 + i);
@@ -2412,16 +2451,88 @@ LadrunoBrick::displaySelf(Renderer &theViewer, int displayMode, float fact,
 }
 
 //----------------------------------------------------------------------
+// Work done against the Flanagan-Belytschko VISCOUS hourglass damping force
+// over the step now being committed (uri + Hourglass::VISCOUS only). The
+// damping force stores no energy, so integrating its work is the only way to
+// report what the viscous hourglass control dissipated. Mirrors the force
+// assembled in formResidAndTangent's viscous branch:
+//   f_iI = c_visc·Σ_a γ_aI·q̇_ai ,  c_visc = epsV·ρ·c_d·V^(2/3), c_d=√(dd(0,0)/ρ)
+// and returns ΔE = Σ_iI f_iI·Δu_iI = c_visc·Σ_a,i q̇_ai·Δq_ai, with q̇ from the
+// trial velocity and Δq = Σ_J γ_aJ·(u_now−uPrevCommit)_iJ. Clamped ≥ 0
+// (dissipation is non-negative; drops sub-step numerical sign noise). Returns 0
+// when the force itself is 0 (no mass).  // Ladruno
+//----------------------------------------------------------------------
+double
+LadrunoBrick::viscousHourglassIncrement(void)
+{
+  static const int numberNodes = 8;
+
+  double rho = materialPointers[0]->getRho();
+  if (rho <= 0.0)
+    return 0.0;
+
+  computeBasis();
+  double gp[3] = {0.0, 0.0, 0.0};
+  double detJ;
+  static double shpC[4][8];
+  shp3d(gp, detJ, shpC, xl);
+  const double vol = 8.0 * detJ;
+
+  double bC[3][8];
+  for (int i = 0; i < 3; i++)
+    for (int I = 0; I < numberNodes; I++)
+      bC[i][I] = shpC[i][I];
+
+  const Matrix &dd = materialPointers[0]->getTangent();
+  const double cd = sqrt(dd(0, 0) / rho);
+  const double epsV = (hourglassCoeff > 0.0) ? hourglassCoeff : 0.1;
+  const double cVisc = epsV * rho * cd * pow(vol, 2.0 / 3.0);
+
+  double gamma[4][8];
+  computeGammaHourglass(bC, gamma, 1.0);
+
+  // generalized hourglass velocities q̇_ai and displacement increments Δq_ai
+  double qd[4][3], dq[4][3];
+  for (int a = 0; a < 4; a++)
+    for (int i = 0; i < 3; i++) {
+      qd[a][i] = 0.0;
+      dq[a][i] = 0.0;
+    }
+  for (int J = 0; J < numberNodes; J++) {
+    const Vector &vl = nodePointers[J]->getTrialVel();
+    const Vector &ul = nodePointers[J]->getTrialDisp();
+    for (int a = 0; a < 4; a++)
+      for (int i = 0; i < 3; i++) {
+        qd[a][i] += gamma[a][J] * vl(i);
+        dq[a][i] += gamma[a][J] * (ul(i) - uPrevCommit[3 * J + i]);
+      }
+  }
+
+  double dE = 0.0;
+  for (int a = 0; a < 4; a++)
+    for (int i = 0; i < 3; i++)
+      dE += qd[a][i] * dq[a][i];
+  dE *= cVisc;
+
+  return (dE > 0.0) ? dE : 0.0;
+}
+
+//----------------------------------------------------------------------
 // Recoverable elastic hourglass / stabilization energy at the current trial
 // state. uri 'stiffness': ½κ·Σ q_aι² (the FB perturbation energy; q from the
 // trial displacement, mirrors formUri exactly). eas: ½·u_core·Kstab·u_core.
-// 0 for std/bbar (full integration), physical (assumed strain folded into the
-// strain energy), and uri 'viscous' (dissipative, not stored).  // Ladruno
+// 0 for std/bbar (full integration) and physical (assumed strain folded into
+// the strain energy). For uri 'viscous' (dissipative, not stored) this returns
+// the CUMULATIVE committed dissipation hgDissipated instead.  // Ladruno
 //----------------------------------------------------------------------
 double
 LadrunoBrick::hourglassEnergy(void)
 {
   static const int numberNodes = 8;
+
+  // uri 'viscous' dissipates rather than stores: report the running total.
+  if (formulation == Formulation::URI && hourglassType == Hourglass::VISCOUS)
+    return hgDissipated;
 
   if (formulation == Formulation::EAS) {
     if (easKstab == 0) buildEAS();
@@ -2475,7 +2586,7 @@ LadrunoBrick::hourglassEnergy(void)
     return 0.5 * kappa * e;
   }
 
-  return 0.0;   // std / bbar / physical / uri-viscous
+  return 0.0;   // std / bbar / physical (uri-viscous handled above)
 }
 
 //----------------------------------------------------------------------
@@ -2584,7 +2695,11 @@ LadrunoBrick::setResponse(const char **argv, int argc, OPS_Stream &output)
 
   } else if (strcmp(argv[0], "hourglassEnergy") == 0 ||
              strcmp(argv[0], "hgEnergy") == 0 ||
-             strcmp(argv[0], "hourglassWork") == 0) {
+             strcmp(argv[0], "hourglassWork") == 0 ||
+             strcmp(argv[0], "hourglassDissipation") == 0 ||
+             strcmp(argv[0], "hgDissipation") == 0) {
+    // For uri 'stiffness'/eas this is the STORED stabilization energy; for uri
+    // 'viscous' it is the CUMULATIVE DISSIPATED energy (see hourglassEnergy()).
     output.tag("ResponseType", "Ehg");
     theResponse = new ElementResponse(this, 8, Vector(1));
   }

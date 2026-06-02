@@ -284,6 +284,33 @@ features:
       getSpatialTangentTensor (#76) since c=(1/2J)[D:L:B] is non-minor-symmetric and the
       6x6 getTangent is a lossy projection. Driven end-to-end by LadrunoBrick -geom finite.
 
+  - feature: LadrunoJ2
+    classtag: 33011          # ND_TAG family; combined iso + Chaboche AF kinematic von Mises J2
+    tag_symbol: ND_TAG_LadrunoJ2
+    pr: 87
+    feature_class: material
+    required_tiers: [T0m, T1]
+    pytest: tests/test_ladrunoJ2_material.py   # elastic; reduce-to-J2Plasticity; monotonic kin==iso; Bauschinger; AF saturation; 3D mixed-shear reduce-to-J2Plasticity (6/6)
+    tcl: WAIVED(nDMaterial LadrunoJ2 ...; shared OpenSeesNDMaterialCommands registry serves Tcl + Python; verified via the Zone-A pytest battery)
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesNDMaterialCommands.cpp
+      - SRC/material/nD/CMakeLists.txt
+    dispatch: {tcl: false, functionMap: true}
+    status: active
+    notes: >
+      Combined-hardening von Mises (J2): Voce+linear isotropic + Chaboche superposed
+      Armstrong-Frederick kinematic (alpha=sum_k alpha_k, ships N<=8; gamma_k=0 => linear
+      Prager, N=1 => single AF). Supersedes J2Plasticity (no kinematic) and SimplifiedJ2
+      (linear-only + defects). Scalar Newton return map (Kobayashi-Ohno), analytic
+      consistent tangent (dSNPO 7.213 + AF dn term) reducing term-by-term to J2Plasticity
+      at N=0. (2/3)C_k numerator => standard Chaboche C_k,gamma_k. Re-landed in #87 after
+      the impl was stranded on the docs-only merge of #82. Adversarial-review hardening:
+      ||M||->0 guard (restored from J2Plasticity), stress-scaled tolerance. v1 3D only;
+      tabulated iso / prager_nl oracle / PlaneStress / IMPL-EX deferred. Plan:
+      Ladruno_implementation/10_ladruno_j2_plasticity.md.
+
   # --- worked examples shipped with the scaffold (existing elements, no new C++) ---
 
   - feature: forceBeamColumn_cantilever     # T1 worked example (existing element)
