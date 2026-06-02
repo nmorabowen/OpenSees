@@ -211,9 +211,11 @@ building, and only if a discrepancy appears adopt the exact §14.11 exp-map
 transport. Expected non-issue — the AF evolution runs in the correctly-rotated
 frame via the unchanged return map, exactly as the isotropic part does.)
 
-## Status — SHIPPED-ready + adversarial review (2026-06-02)
+## Status — MERGED (PR #127, 2026-06-02) + adversarial review
 
-Implemented as `SRC/material/nD/LadrunoJ2Finite.{h,cpp}` (classTag 33012); built
+Shipped as `SRC/material/nD/LadrunoJ2Finite.{h,cpp}` (classTag 33012) via
+**[PR #127](https://github.com/nmorabowen/OpenSees/pull/127)** (rebased onto
+`ladruno` past the Lemaitre-damage merge; re-verified green post-rebase). Built
 (OpenSeesPy, exit 0); full J2 battery green (34 passed / 1 xfailed — the v1
 LogStrain-wrapper non-objectivity test correctly *stays* xfail, with its passing
 native twin `test_native_objective_under_superposed_rotation`).
@@ -247,3 +249,43 @@ from-virgin force-FD carries α=0 — different committed bases, and an FE_Datas
 replay fights OpenSees commit/sp semantics. Channel B is therefore gated off-element
 (material-level exact-to-FD + the g++ tensor check above); the element side is covered
 by the v1 assembly gate + Newton convergence on the rotated-plastic objectivity path.
+
+## Follow-ups (next session)
+
+v1 (PR #127) is complete for its scope (3D, full Voce+Chaboche, co-rotated backstress,
+channel-A+B consistent tangent, serialization). Remaining work, prioritized — a future
+session can start straight from here:
+
+**P1 — physics caveat to close (mild correctness flavor, cheap):**
+- **AF magnitude under *simultaneous* large rotation AND large stretch.** Objectivity is
+  proven, but the objectivity tests don't pin the *accuracy* of the Armstrong–Frederick
+  evolution when a step has both large spin and large stretch (`R_Δ=polar(f_Δ)` transport
+  vs the exact §14.11 exponential-map transport differ at higher order there). **Verify by
+  step-refinement** against a fine-increment reference (numpy oracle is enough); only if a
+  discrepancy appears, swap the incremental polar transport for the exact exp-map transport.
+  Expected a non-issue (the AF evolution runs in the correctly-rotated frame). See the
+  "Residual open item" above.
+
+**P2 — deferred features (each its own PR; the "Out (v2.x)" non-goals):**
+- **Plane-stress / dimensional finite views** (§14.7 nested route). `LadrunoJ2Finite` is
+  **3D-only** (`getType`=="ThreeDimensional"); `LadrunoJ2` already has 5 views. Finite
+  plane-stress needs the nested out-of-plane iteration.
+- **IMPL-EX** code path (the structure-only hook exists in the small-strain kernel; the
+  Lemaitre work added an `-implex` precedent on `LadrunoJ2` to mirror).
+- **Tabulated / Bézier isotropic curve** — gated on the small-strain `LadrunoJ2` tabulated
+  mode landing first (shared `LadrunoHardening.h`).
+- **Thermomechanical coupling.**
+
+**P3 — validation / perf (not code gaps; nice-to-haves):**
+- **Finite cyclic Bauschinger / buckling-brace element demonstrator** — v1 ships objectivity
+  + tangent but no explicit cyclic-loop element test (the validation-plan item §3 floated it).
+- **`-formulation bbar/uri/eas` coverage with the native material** — only `std` is tested;
+  the element drives `setTrialF` regardless of formulation, so these should work but aren't
+  gated (note: `bbar`+finite = F-bar, already shipped on the element side).
+- **Analytic channel B** (optional perf) — replace the ~18 numeric R-perturbation return-map
+  calls per GP-tangent with an analytic `∂R/∂F` (Sylvester) + `∂τ/∂α̃`. The review confirmed
+  the numeric path is correct, so this is pure optimization — do only if tangent assembly
+  shows up in profiling.
+
+NB the kernel-sharing is **nD↔finite-strain only**, not 1D — there is no `LadrunoJ2Finite`
+analogue for the uniaxial twin (a 1D backstress is a scalar with no frame to co-rotate).
