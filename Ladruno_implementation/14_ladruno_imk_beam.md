@@ -315,6 +315,51 @@ Zone-A pytest battery `tests/test_ladrunoIMKBeam_element.py`:
   `LEDGER_quirks.md`.
 - **Sensitivity** (`DDM`) — standard element plumbing, deferred.
 
+## 9. 2D variant — `LadrunoIMKBeam2d` (planar), shared hinge kernel
+
+The element ships in both dimensions. Following the dominant OpenSees idiom
+(every beam family is split 2d/3d: `ElasticBeam2d/3d`, `DispBeamColumn2d/3d`,
+`ForceBeamColumn2d/3d`), 2D is a **separate class** `LadrunoIMKBeam2d`
+(classTag **33004**) rather than an `ndm`-branching mega-class — the basic-system
+size (3 vs 6), the `CrdTransf2d`/`getCopy2d`, and the static work-matrix sizes
+(6×6/6 vs 12×12/12) all differ, and a separate class keeps the shipped/tested 3D
+path byte-for-byte untouched.
+
+**Planar reduction.** Basic system is 3×3 `[N, Mz_i, Mz_j]`; only the strong axis
+bends, so there is a single hinge pair (`theMat[2] = {Mz@i, Mz@j}`). Input drops
+the 3D-only properties and the weak axis: `element('LadrunoIMKBeam', tag, i, j,
+A, E, Iz, transfTag, <-hinge both|i|j>, <-matZ tag>, <-matZi/-matZj tag>,
+<-mass rho>)` — no `G/Jx/Iy`, no `-matY`. Node DOF must be 3, element DOF 6.
+
+**Shared kernel (no divergence).** The per-axis state determination — the 2×2
+internal Newton on the hinge rotations (§2.2) and the flexibility condensation
+(§2.3) — is dimension-agnostic: it operates on **one** bending axis (two end
+rotations, two materials, `L`, `EI`). It is extracted **verbatim** into a
+header-only, OpenSees-free `LadrunoIMKHinge.h` (`ladrunoIMKSolveAxis` /
+`ladrunoIMKInitBlock`, taking material pointers; `NULL` ⇒ that end is elastic).
+The 3D class calls it twice (Mz then My); the 2D class calls it once (Mz). This
+is the same kernel-extraction pattern as `LadrunoJ2Kernel.h` / `LadrunoHardening.h`,
+and the 3D refactor to call it is bit-identical (the shipped Zone-A battery stays
+green — verified as the Phase-0 checkpoint before the 2D class was added).
+
+**One command, `ndm`-dispatched.** There is no separate `LadrunoIMKBeam2d`
+command. `OPS_LadrunoIMKBeam()` reads `OPS_GetNDM()`/`OPS_GetNDF()` and dispatches
+— `ndm 2/ndf 3` → `OPS_LadrunoIMKBeam2d()` (the 2D class), `ndm 3/ndf 6` → the 3D
+class, anything else → a clear error. Same UX as `elasticBeamColumn`: the same
+`element('LadrunoIMKBeam', …)` "just works" in a 2D or 3D model.
+
+**2D non-goals** mirror 3D (no P-M, no element loads, lumped `-mass` only); there
+is of course no biaxial coupling to worry about in plane.
+
+**Validation** (`tests/test_ladrunoIMKBeam2d_element.py`, Zone-A): `ndm`-dispatch
++ elastic-degenerate ↔ 2D `elasticBeamColumn` (1e-9), no-material-is-elastic
+guard, single-hinge series vs the independent python `a(θ−thⱼ)=M(thⱼ)` predictor,
+**axial immunity** (an `equalDOF`-injected spurious axial leaves the
+moment-rotation response bit-identical — the planar analogue of the 3D
+rigid-diaphragm test), column-face offset `V·offset` via 2D `geomTransf
+-jntOffset`, asymmetric `-matZi/-matZj`, and the Lignos-Krawinkler cyclic `Bilin`
+hinge (series identity + bare-material delegation + real hysteresis).
+
 Related: [[10_ladruno_j2_plasticity]], [[13_ladruno_uniaxial_j2_adr]] (candidate
 fiber laws if a fiber-section hinge variant is ever wanted), and the
 ZeroLength/SectionAggregator reference in
