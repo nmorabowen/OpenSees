@@ -130,6 +130,7 @@ void* OPS_Bond_SP01();
 void* OPS_FatigueMaterial();
 void* OPS_HardeningMaterial();
 void* OPS_LadrunoUniaxialJ2();   // Ladruno — uniaxial combined iso + Chaboche AF kinematic J2
+void* OPS_LadrunoRebarBuckling();   // Ladruno — rebar-buckling wrapper (Dhakal-Maekawa)
 void* OPS_FlagShapeMaterial();
 void* OPS_ImpactMaterial();
 void* OPS_HyperbolicGapMaterial();
@@ -418,6 +419,8 @@ static int setUpUniaxialMaterials(void) {
       std::make_pair("Hardening", &OPS_HardeningMaterial));
   uniaxialMaterialsMap.insert(
       std::make_pair("LadrunoUniaxialJ2", &OPS_LadrunoUniaxialJ2));   // Ladruno
+  uniaxialMaterialsMap.insert(
+      std::make_pair("LadrunoRebarBuckling", &OPS_LadrunoRebarBuckling));   // Ladruno
   uniaxialMaterialsMap.insert(
       std::make_pair("FlagShape", &OPS_FlagShapeMaterial));
   uniaxialMaterialsMap.insert(

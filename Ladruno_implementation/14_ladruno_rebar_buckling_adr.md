@@ -15,10 +15,25 @@ tags:
 
 # ADR — Rebar-buckling wrapper (`LadrunoRebarBuckling`)
 
-**Status:** proposed (2026-06-02) · **Wraps:** any tension-compression
-`UniaxialMaterial` (designed for [[13_ladruno_uniaxial_j2_adr]] `LadrunoUniaxialJ2`,
-but composes over `Steel02`/`Steel4` too) · **Registry:** `UniaxialMaterial` ·
-**Oracle:** `ReinforcingSteel -DMBuck` (verbatim DM formula port).
+**Status:** implemented — v1 = monotonic Dhakal–Maekawa (2026-06-02) · **Wraps:**
+any tension-compression `UniaxialMaterial` (designed for
+[[13_ladruno_uniaxial_j2_adr]] `LadrunoUniaxialJ2`, but composes over
+`Steel02`/`Steel4` too) · **Registry:** `UniaxialMaterial` · **Oracle:** the
+`ReinforcingSteel::Buckled_stress_Dhakal` formula (ported; see the B2 caveat in
+§6 — a *tight-tolerance*, not literally bit-for-bit, match because
+`ReinforcingSteel` works in **log** strain on its own monolithic backbone while
+this wrapper works in **engineering** strain on a generic bar).
+
+> [!note] As-built scope (v1)
+> v1 implements the **monotonic** DM degradation only — the clean
+> `σ_buckled = r(e,λ)·σ_bare` branch (upstream's `TBranchNum%4 > 1` path). The
+> **cyclic re-straightening** branch (upstream's `TBranchNum%4 ≤ 1`,
+> backstress-anchored Menegotto-Pinto blend off `Tfa`/`BackStress`) is **NOT**
+> a stress-only modification of `σ_bare` and is **deferred to v2 (test B4)**;
+> the as-built state is the minimal `ε_max`/`σ_max` anchor + cached onset
+> backbone `fStarL` (no `Cbranch` flag — see §4). `-model ga` is parsed but
+> guarded off in v1. Where §3/§4 below describe richer cyclic behavior, read it
+> as the v2 target, not v1.
 
 > **Supersedes** the "core flag, NOT a wrapper" stance in
 > [[13_ladruno_uniaxial_j2_adr]] §6.2 **for the Dhakal–Maekawa case.** That note
@@ -82,6 +97,8 @@ average on top.** Benefits:
 2. **Law selectable** `-model dm|ga` — Dhakal–Maekawa (default) and
    Gomes–Appleton (the two rebar buckling laws OpenSees `ReinforcingSteel`
    offers). Both are `σ_buckled = f(σ_bare, ε, λ)` ⇒ both wrapper-shaped.
+   **v1 ships `dm` only; `-model ga` is parsed but returns a clean "not
+   implemented in v1" error (no silent DM substitution) — GA is a follow-up.**
 3. **classTag `MAT_TAG_LadrunoRebarBuckling = 33001`** (next free in the Ladruno
    *uniaxial* band after `LadrunoUniaxialJ2` = 33000).
 4. **Analytic consistent tangent** `dσ/dε = r·k_bare + σ_bare·(∂r/∂ε)` (product
@@ -118,12 +135,23 @@ Larger `λ` ⇒ `ε*` reached sooner (earlier, more severe buckling). `ε_y = f_
 the same strain; `e` = strain measured from the tensile-unload anchor):
 
 ```
-f*L = backbone(ε*)                          # bare stress at onset
-f*  = f*L · β · (1.1 − 0.016·√(f_y/E·2000)·λ),   floored at −0.2 f_y   # residual level
+f*L = backbone(ε*)                          # bare stress at the onset strain ε*
+                                            # (ε* treated as an ABSOLUTE backbone
+                                            #  strain, mirroring upstream
+                                            #  Backbone_f(eStar); == the onset's
+                                            #  true absolute strain when e_cross=0)
+f*  = f*L · β · (1.1 − 0.016·√(f_y/E·2000)·λ),   floored: if f* > −0.2 f_y ⇒ f* = −0.2 f_y
                                             # intermediate branch  −ε_y > e ≥ ε* :
 σ_buckled = σ_bare · [ 1 − (1 − f*/f*L)·(e+ε_y)/(ε*+ε_y) ]   = r(e,λ)·σ_bare
-                                            # deep branch  e < ε* : ramp to the −0.2 f_y floor
+                                            # deep branch  e < ε* :
+σ_buckled = σ_bare · ( f* − 0.02·E·(e − ε*) ) / f*L,   then floored: if σ_buckled > −0.2 f_y
+                                            #                              ⇒ σ_buckled = −0.2 f_y
+                                            # (C0-continuous at e=ε*: both branches give σ_bare·f*/f*L there)
 ```
+
+`β` here is the single DM residual-shape parameter (the `-alpha` flag /
+`ReinforcingSteel`'s `beta`, default 1.0) — there is no second independent
+shape constant.
 
 So in the operative branch `σ_buckled = r(e,λ)·σ_bare` — a **multiplicative
 reduction `r ∈ [resid, 1]` on the live bare stress**, gated by `e` and `λ`. This
@@ -139,11 +167,20 @@ dσ_buckled/dε = r·(dσ_bare/dε) + σ_bare·(∂r/∂ε) = r·k_bare + σ_bar
 the upstream `Buckled_mod_Dhakal` central-differences this; we do it analytically
 and the FD becomes a *test oracle* (V-tangent), not the shipping path.
 
-**Cyclic re-straightening.** On tension reload a bowed bar straightens and the
-response transitions back toward the bare curve. The wrapper tracks `ε_max` (the
-max tensile strain anchor `e_cross = ε_max − f_sup/E`) and the
-buckled/unbuckled branch, reproducing DM's path dependence — but with its **own**
-small state, not `ReinforcingSteel`'s `TBranchNum` machine.
+**Cyclic re-straightening (v2 — NOT in v1).** On tension reload a bowed bar
+straightens and the response transitions back toward the bare curve. In
+`ReinforcingSteel` this is the `TBranchNum%4 ≤ 1` path, which is **not** a
+stress-only modification of `σ_bare`: it computes the buckled stress off the
+branch-start anchor stress `Tfa` and a Menegotto-Pinto blend through
+`BackStress = MP_f(e_cross−ε_y)`. Because it depends on more than `(σ_bare, e,
+λ)`, the clean wrapper form does not express it; **v1 omits it** and applies the
+monotonic `r·σ_bare` form whenever `e < −ε_y`. v1 *does* track the `ε_max`/
+`σ_max` anchor (so `e_cross` and the onset shift with the last tensile
+excursion), but the re-straightening branch shape itself is **deferred to v2
+(test B4)**. NB the anchor `e_cross = ε_max − σ_max/E` uses the stress recorded
+at the max-strain sample as a proxy for upstream's reversal-point `f_sup`; these
+coincide for clean monotonic-tension-then-reverse histories and diverge under
+sub-step overshoot — a documented v1 approximation.
 
 **Gomes–Appleton (`-model ga`).** Alternative rebar law,
 `σ_buckled = f_buck(λ, e_cross−ε)·…` (mirrors `Buckled_stress_Gomes`); same
@@ -154,42 +191,50 @@ wrapper plumbing, different `r`.
 ## 4. Architecture — the wrapper
 
 ```cpp
+// As-built v1 (monotonic DM). The cyclic `Cbranch` flag / update_buckling_state
+// machinery sketched in earlier drafts is a v2 concern; v1 needs only the
+// ε_max/σ_max anchor + a cached onset backbone.
 class LadrunoRebarBuckling : public UniaxialMaterial {
   UniaxialMaterial* theBar;     // wrapped bare-bar (owns a getCopy)
-  int    model;                 // DM | GA
-  double lsr;                   // slenderness s/d   (lsr<=lsrMin => pass-through)
-  double alpha, beta, ...;      // DM/GA shape params (defaults per ReinforcingSteel)
-  double fy, E;                 // queried from the bar (or supplied) for eStar/eY
+  int    model;                 // MODEL_DM (MODEL_GA reserved, parse-guarded off)
+  double lsr;                   // slenderness s/d   (lsr<=0 => exact pass-through)
+  double alpha;                 // the single DM residual-shape factor (== RS beta)
+  double fy, E;                 // for eStar/eY and the deep-branch slope (E from -E or the bar)
   // committed cyclic state (the ONLY state the wrapper owns):
-  double CmaxTenStrain;         // ε_max anchor for e_cross / re-straightening
-  int    Cbranch;               // buckled / pre-onset / straightening flag
-  ...
+  double CmaxTenStrain, CmaxTenStress;   // ε_max / σ_max anchor -> e_cross
+  double CfStarL, CfStarLcross;          // cached onset backbone f*L + the e_cross it was computed for
+  // (+ trial twins T..., trial output Tstrain/Tstress/Ttangent/Tr)
 };
 
 int setTrialStrain(double eps, double rate) {
   theBar->setTrialStrain(eps, rate);            // core evolves on the TRUE strain
   double sBare = theBar->getStress();
   double kBare = theBar->getTangent();
-  if (lsr <= LSR_MIN || in_tension_or_pre_onset(eps)) {
-     Tstress = sBare;  Ttangent = kBare;        // pass-through (oracle preserved)
-  } else {
-     double r  = dm_reduction(eps, sBare, lsr, state);   // ∈ [resid,1]
-     double rp = dm_reduction_slope(eps, sBare, lsr, state);
-     Tstress  = r * sBare;
-     Ttangent = r * kBare + sBare * rp;          // analytic consistent tangent
+  // update the ε_max/σ_max anchor (invalidate the f*L cache if it moves)
+  if (eps > TmaxTenStrain) { TmaxTenStrain = eps; TmaxTenStress = sBare; invalidate_cache(); }
+  if (lsr <= 0.0 || fy <= 0.0 || E <= 0.0) {
+     Tstress = sBare;  Ttangent = kBare;        // identity gate (oracle preserved)
+     return 0;
   }
-  update_buckling_state(eps);                    // ε_max anchor, branch, re-straighten
+  applyBuckling(eps, sBare, kBare);             // e=eps−e_cross; if e<−ε_y: Tstress=r·sBare,
+                                                // Ttangent=r·kBare+sBare·r' (analytic); else pass-through
   return 0;
 }
 ```
 
 - **State hygiene:** the wrapper's `commitState`/`revertToLastCommit`/`revertToStart`
-  manage *only* `CmaxTenStrain`/`Cbranch`; the bar's plastic state is committed by
-  forwarding to `theBar->commitState()`. The bar is the real material state; the
-  wrapper is the geometric overlay.
-- **`sendSelf`/`recvSelf`:** serialize wrapper params + `(CmaxTenStrain, Cbranch)`
-  **and** the wrapped material (tag + class via the broker, the standard nested-
-  material idiom — see `FatigueMaterial`/`MinMaxMaterial`).
+  manage *only* `CmaxTenStrain`/`CmaxTenStress`/`CfStarL`/`CfStarLcross`; the
+  bar's plastic state is committed by forwarding to `theBar->commitState()`. The
+  bar is the real material state; the wrapper is the geometric overlay. **`getCopy`
+  must NOT route through a ctor that calls `revertToStart()`** — that would wipe
+  the state `bar.getCopy()` just preserved (the classic wrapper footgun;
+  `FatigueMaterial`/`MinMaxMaterial` avoid it the same way) — so the value ctor
+  initializes the wrapper doubles inline and `getCopy` restores `C*`/`T*` after.
+- **`sendSelf`/`recvSelf`:** serialize wrapper params + committed anchor/cache
+  `(CmaxTenStrain, CmaxTenStress, CfStarL, CfStarLcross)` **and** the wrapped
+  material (tag + class via the broker, the standard nested-material idiom — see
+  `FatigueMaterial`/`MinMaxMaterial`). Trial state is recomputed on the next
+  `setTrialStrain` (the `fStarL` cache rebuilds via the probe), so it is not sent.
 - **`getInitialTangent`** = `theBar->getInitialTangent()` (buckling does not change
   the elastic stiffness).
 - **Files / wiring** (mirrors `LadrunoUniaxialJ2`): new
@@ -212,9 +257,14 @@ uniaxialMaterial Fatigue              12  11                 ;# Chaboche ∘ buc
 # fiber section consumes tag 12
 ```
 
-- `-lsr` (slenderness `s/d`) is the only required buckling input; `-model dm`
-  (default) / `-model ga`; `-fy`/`-E` optional (queried from the bar if omitted).
-- `-lsr 0` (or ≤ `LSR_MIN`) ⇒ exact pass-through (the no-buckling identity gate).
+- `-lsr` (slenderness `s/d`) is the primary buckling input; `-model dm`
+  (default; `ga` reserved). When `-lsr > 0`, **`-fy` is required** — a generic
+  `UniaxialMaterial` exposes no yield-stress getter, so `f_y` cannot be inferred
+  (only `E` can, from `theBar->getInitialTangent()` when `-E` is omitted). `-E`
+  **should equal the wrapped bar's elastic modulus**: it sets `ε_y = f_y/E` and
+  the deep-branch slope `0.02·E`, so a mismatched `-E` desyncs the onset/floor
+  geometry from the bare curve.
+- `-lsr 0` (or `≤ 0`) ⇒ exact pass-through (the no-buckling identity gate).
 
 ---
 
@@ -224,7 +274,7 @@ uniaxialMaterial Fatigue              12  11                 ;# Chaboche ∘ buc
 |---|---|---|
 | B0 | `-lsr 0` pass-through ≡ bare material | identical σ/tangent to the wrapped `LadrunoUniaxialJ2` (the identity gate) |
 | B1 | tension + pre-onset compression ≡ bare | no modification before `ε*` |
-| **B2** | monotonic compression past onset, several `λ` | **bit-for-bit vs `ReinforcingSteel -DMBuck`** (same `Buckled_stress_Dhakal`) — the porting oracle |
+| **B2** | monotonic compression past onset, several `λ` | the ported `Buckled_stress_Dhakal` formula, fed the bare bar's own `σ_bare(ε)` + its onset backbone `f*L = σ_bare(ε*)` — a **tight-tolerance** match (rel ~1e-6), NOT literally bit-for-bit vs `ReinforcingSteel -DMBuck`: RS works in **log** strain on its **own** monolithic backbone, this wrapper in **engineering** strain on a **generic** bar, so the two materials cannot coincide to machine precision. Oracle = the formula port, verified self-consistently against the wrapped bar. |
 | B3 | larger `λ` ⇒ earlier onset + lower residual | monotone trend in `ε*`, residual → `−0.2 f_y` floor |
 | B4 | cyclic re-straightening | tension reload recovers toward bare; loop shape vs `ReinforcingSteel` |
 | B5 | consistent-tangent FD | analytic `r·k+σ·r'` vs one-step central FD (same fresh-material idiom as J2 V6) |

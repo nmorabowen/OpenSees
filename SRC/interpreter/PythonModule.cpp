@@ -595,6 +595,7 @@ initopensees(void)
 "        • LadrunoJ2 — combined iso + Chaboche AF kinematic J2\n"
 "        • LadrunoUniaxialJ2 — uniaxial Chaboche AF J2 fiber/truss\n"
 "        • LadrunoIMKBeam — concentrated-plasticity IMK beam hinges\n"
+"        • LadrunoRebarBuckling — Dhakal–Maekawa rebar buckling wrapper\n"
 "        • Ladruno — modular HDF5 .ladruno recorder\n"
 "\n";
         // FEATURES-END

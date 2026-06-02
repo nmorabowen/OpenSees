@@ -366,6 +366,42 @@ features:
       flag, weld/HAZ -- all deferred). Plan/ADR:
       Ladruno_implementation/13_ladruno_uniaxial_j2_adr.md (shipped via #95).
 
+  - feature: LadrunoRebarBuckling
+    classtag: 33001          # MAT_TAG (uniaxial) family; sibling of LadrunoUniaxialJ2=33000, per-registry band (no collision w/ ELE BezierTet10=33001)
+    tag_symbol: MAT_TAG_LadrunoRebarBuckling
+    pr: 119
+    feature_class: material
+    required_tiers: [T0m, T1]
+    pytest: tests/test_ladrunoRebarBuckling_material.py   # B0 -lsr 0 pass-through; B1 tension+pre-onset pass-through; B2 DM formula vs ported reference; B3 larger lambda => earlier onset + lower residual; B5 consistent-tangent FD
+    tcl: WAIVED(uniaxialMaterial LadrunoRebarBuckling ...; shared OpenSeesUniaxialMaterialCommands registry serves Tcl + Python, plus classic-Tcl TclModelBuilderUniaxialMaterialCommand dispatch; verified via the Zone-A pytest battery)
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesUniaxialMaterialCommands.cpp
+      - SRC/material/uniaxial/TclModelBuilderUniaxialMaterialCommand.cpp
+      - SRC/material/uniaxial/CMakeLists.txt
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      Rebar-buckling WRAPPER UniaxialMaterial over any tension-compression
+      bare-bar material (designed for LadrunoUniaxialJ2, composes over
+      Steel02/Steel4). In compression past a slenderness-dependent onset it
+      applies the Dhakal-Maekawa buckled-average degradation
+      sigma_buckled = r(e,lambda)*sigma_bare (r in [resid,1], lambda=s/d),
+      leaving the wrapped core byte-untouched -- a clean opt-in overlay,
+      stackable Fatigue o RebarBuckling o J2. Tension + pre-onset pass through
+      unchanged; -lsr 0 is the exact identity gate. Referenced to the
+      tensile-unload anchor e_cross=eps_max-sigma_max/E (own minimal cyclic
+      state: an eps_max anchor + cached onset backbone fStarL; NOT the
+      ReinforcingSteel TBranchNum machine). Analytic consistent tangent
+      dsigma/deps = r*k_bare + sigma_bare*(dr/deps) (improves on
+      ReinforcingSteel's central-difference Buckled_mod_Dhakal). DM formula
+      ported verbatim from ReinforcingSteel::Buckled_stress_Dhakal but in
+      engineering strain on a generic wrapped bar (RS works in log strain);
+      generic onset backbone via a committed-clone probe. v1 = DM monotonic;
+      deferred: full cyclic branch (B4) + -model ga (Gomes-Appleton). Plan/ADR:
+      Ladruno_implementation/14_ladruno_rebar_buckling_adr.md.
+
   # --- worked examples shipped with the scaffold (existing elements, no new C++) ---
 
   - feature: forceBeamColumn_cantilever     # T1 worked example (existing element)
