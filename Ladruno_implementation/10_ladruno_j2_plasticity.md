@@ -1,7 +1,7 @@
 ---
 title: LadrunoJ2 — combined isotropic + Chaboche kinematic J2 plasticity
 project: Ladruno
-status: draft
+status: v1 implemented (3D)
 priority: high
 owner: nmora
 tags:
@@ -211,7 +211,7 @@ correctly sends its single backstress; we extend to N. Hygiene fixes baked in: r
 | # | Test | Reference / oracle |
 |---|---|---|
 | V0 | elastic round-trip (`f<0`) | `D^alg == D^e`, σ = D^e:ε |
-| V1 | **reduce-to-J2Plasticity**: `N=0` (pure iso, Voce+linear) | **1e-12** vs `J2Plasticity` stress + tangent |
+| V1 | **reduce-to-J2Plasticity**: `N=0` (pure iso, Voce+linear) | stress+tangent reduce term-by-term; numeric ~**1e-7** (bounded by J2Plasticity's internal `γ*=(1−1e-8)` fudge, not 1e-12) |
 | V2 | reduce-to-SimplifiedJ2: `N=1, γ=0` (linear Prager) + linear iso | analytic / `SimplifiedJ2` cross-check |
 | V3 | uniaxial monotone | analytic Voce+linear backbone |
 | V4 | uniaxial reversed cycle | Bauschinger offset, single-AF saturation `2·αₛₐₜ` |
@@ -265,7 +265,27 @@ struct LadrunoJ2State { double epsP[6]; double ebarP; double alpha[3][6]; };  //
 
 ## Implementation log
 
-*(to be filled in once execution starts)*
+### v1 shipped (2026-06-01, PR #82) — ThreeDimensional
+- `SRC/material/nD/LadrunoJ2.{h,cpp}` + `OPS_LadrunoJ2` parser; classTag 33011;
+  wired into `classTags.h`, `material/nD/CMakeLists.txt`, `FEM_ObjectBrokerAllClasses`,
+  `OpenSeesNDMaterialCommands`. Banner line + 3 ledgers updated.
+- **Self-contained class** (does NOT inherit `J2Plasticity`); internal 3×3-symmetric
+  tensors as 6 tensor-components `{00,11,22,01,12,02}`; tangent assembled in the
+  `J2ThreeDimensional` rank-4→6×6 mapping (so the N=0 reduction is bit-faithful).
+- Return map exactly as designed: **scalar Newton on Δγ**, `n=M(Δγ)/‖M(Δγ)‖`.
+  AF backstress update `αₖ=(αₖⁿ+⅔CₖΔγ n)/(1+√⅔γₖΔγ)`.
+- **Verified analytically** that residual + tangent reduce term-by-term to
+  `J2Plasticity` at N=0 (the `2G·β1·IIdev + βNN·n⊗n` coeffs equal Ed Love's
+  `2G+c3` / `c2−c3`). Confirmed numerically (V1 ~1e-7, bounded by J2Plasticity's
+  internal `γ*=(1−1e-8)` fudge — NOT 1e-12 as the matrix optimistically said).
+- Build: full from-scratch OpenSeesPy build green; `LadrunoJ2.cpp` compiled clean.
+- Tests `tests/test_ladrunoJ2_material.py` (single stdBrick, 1/8-symmetry uniaxial,
+  displacement-controlled): **5/5 pass** — elastic; reduce-to-J2Plasticity;
+  monotonic linear-kin≡iso (pins the `(2/3)C` scaling); Bauschinger divergence;
+  AF saturation → `σ_y0+C/γ`. The `(2/3)Cₖ` numerator ⇒ standard Chaboche `Cₖ,γₖ`.
+- **Deferred** (follow-up PRs): tabulated isotropic; `prager_nl` oracle mode (dSNPO
+  Box 7.5 bit-for-bit, V9); PlaneStress (§9.4 projected) + PlaneStrain/AxiSymm/
+  PlateFiber `getCopy` views; IMPL-EX code path; `setResponse` for backstress/`ε̄ᵖ`.
 
 ### Decisions locked (2026-06-01, design session)
 - **Kinematic = Chaboche AF, design for arbitrary N, ship N=3** (`af` mode). Recovers

@@ -15,4 +15,5 @@ Queryable critical time step (dt_cr)
 BezierTri6 — quadratic Bézier triangle (Kadapa 2018)
 BezierTet10 — quadratic Bézier tetrahedron (Kadapa 2018)
 LadrunoBrick — unified hex (std/bbar/uri/eas + hourglass)
+LadrunoJ2 — combined iso + Chaboche AF kinematic J2
 Ladruno — modular HDF5 .ladruno recorder
