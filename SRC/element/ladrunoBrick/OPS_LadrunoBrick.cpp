@@ -258,6 +258,20 @@ void *OPS_LadrunoBrick()
     return 0;
   }
 
+  // Converse of the -geom finite guard: a finite-strain NDMaterial (e.g. LogStrain)
+  // is driven ONLY by setTrialF(F). Under -geom linear|corot the element uses the
+  // small-strain setTrialStrain() path, which a FiniteStrainNDMaterial disables
+  // (returns -1, sets no state) — leaving the element with identically-zero stress.
+  // Reject the misconfiguration at parse time instead of running a zero-stress
+  // phantom with per-evaluation warning spam.  // Ladruno (GEOM-1 / PLUMB-2)
+  if (geomMethodID != SolidTransformation::METHOD_FINITE &&
+      dynamic_cast<FiniteStrainNDMaterial *>(mat) != 0) {
+    opserr << "WARNING LadrunoBrick " << idata[0]
+           << ": a finite-strain NDMaterial (e.g. nDMaterial LogStrain) requires "
+              "-geom finite; it cannot be driven by -geom linear|corot\n";
+    return 0;
+  }
+
   return new LadrunoBrick(idata[0],
                           idata[1], idata[2], idata[3], idata[4],
                           idata[5], idata[6], idata[7], idata[8],

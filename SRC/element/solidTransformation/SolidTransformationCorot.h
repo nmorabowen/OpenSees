@@ -72,7 +72,10 @@
 //         f_global,b = R f_d,b − (1/n) R Σ_a f_d,a − Γ_{:,b}ᵀ m ,
 //         m = Σ_a (x_a−x_c) × (R f_d,a).
 //     The −(1/n)RΣf_d centroid back-reaction vanishes for the self-equilibrated
-//     internal force but is kept for the body/applied-load case.
+//     internal force (Σ Bᵀσ = 0). Only the INTERNAL force is globalized this way;
+//     a fixed-direction external dead load (gravity/self-weight) is a GLOBAL-frame
+//     quantity and must NOT be rotated by R — the element keeps it out of fCore and
+//     adds it back after globalize (see LadrunoBrick "// Ladruno (COROT-1)").
 //
 //   * Tangent (v2.0): K = R̄ k_d R̄ᵀ + K_geo , R̄ = blockdiag(R), and the
 //     geometric term assembled symmetrically as G1 + G1ᵀ with G1[3b+i,c] =
@@ -92,6 +95,16 @@
 // unlike CorotCrdTransf3d). commitState/revert*/serialization therefore need no
 // corot-specific state; the base no-ops suffice and the element rebuilds the
 // method from its id alone.
+//
+// KINEMATIC HARDENING UNDER ROTATION (why corot does NOT share the §14.11 LogStrain
+// limit). The material is fed the deformational displacement u_d = Rᵀ x_rel − X_rel,
+// expressed in the REFERENCE frame, and the strain B·u_d uses reference-config shape
+// gradients — so the small-strain material, AND its backstress α, live in a fixed
+// reference frame across all commits (the element's R changes, the material's frame
+// does not). Unlike the LogStrain path (bᵉ_tr = f_Δ bᵉ_n f_Δᵀ co-rotates s into the
+// current frame while α stays fixed ⇒ mismatch), corot never co-rotates the material
+// stress, so kinematic hardening stays frame-consistent. Validated by
+// tests/test_ladrunoBrick_corot.py::test_corot_kinematic_hardening_objectivity.
 
 #ifndef SolidTransformationCorot_h
 #define SolidTransformationCorot_h

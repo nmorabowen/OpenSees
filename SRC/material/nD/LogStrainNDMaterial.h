@@ -110,7 +110,12 @@ class LogStrainNDMaterial : public FiniteStrainNDMaterial
   void Print(OPS_Stream &s, int flag = 0);
 
   int setParameter(const char **argv, int argc, Parameter &param);
+  // Recorder seam: 'stress'/'strain'/'tangent' return the WRAPPER's finite-strain
+  // measures (Cauchy σ, Hencky ε, spatial c) — NOT the inner's Kirchhoff τ / fed
+  // strain / small-strain D, which differ by det F. Inner-specific channels
+  // (backStress, plasticStrain, equivalentPlasticStrain, damage, …) delegate.  // Ladruno (SEAM-1)
   Response *setResponse(const char **argv, int argc, OPS_Stream &output);
+  int getResponse(int responseID, Information &matInfo);
 
  private:
   NDMaterial *theMaterial;     // inner small-strain 3D material (deep-copied)

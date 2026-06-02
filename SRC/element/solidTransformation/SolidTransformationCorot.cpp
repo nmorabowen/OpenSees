@@ -308,8 +308,11 @@ SolidTransformationCorot::localizeDisp(const Vector & /*uGlobal*/,
 //   m = Σ_a (x_a − x_c) × (R f_d,a).
 // The −(1/n)RΣf_d centroid back-reaction is the gradient of u_d's centroid
 // dependence; it vanishes for the pure internal force (Σ B ᵀσ = 0, self-
-// equilibrated) but is NON-zero once the brick folds a body/applied load into
-// fCore before this call — so keep it (sweep #9).
+// equilibrated). fCore MUST be the internal force only: a fixed-direction external
+// dead load (gravity/self-weight) is a global-frame quantity that must NOT be
+// rotated by R, so the element keeps it OUT of fCore and adds it back after this
+// call (LadrunoBrick "// Ladruno (COROT-1)"). The centroid term is retained for
+// correctness (it is exactly zero for the self-equilibrated internal force).
 // fGlobal MAY alias fCore — read the core force into a local buffer first.
 // --------------------------------------------------------------------------- //
 int
