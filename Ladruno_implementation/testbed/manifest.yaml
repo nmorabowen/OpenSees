@@ -317,7 +317,7 @@ features:
     pr: 99
     feature_class: material
     required_tiers: [T0m, T1]
-    pytest: tests/test_ladrunoUniaxialJ2_material.py   # elastic; reduce-to-HardeningMaterial 1e-9; monotonic kin==iso; Bauschinger; AF saturation; V7 reduce-to-3D-LadrunoJ2 1e-7 oracle; state recording (7/7)
+    pytest: tests/test_ladrunoUniaxialJ2_material.py   # elastic; reduce-to-HardeningMaterial 1e-9; monotonic kin==iso; Bauschinger; AF saturation; V7 reduce-to-3D-LadrunoJ2 1e-7 oracle; state recording; stress-controlled ratcheting (single-AF constant rate); consistent-tangent FD (9/9)
     tcl: WAIVED(uniaxialMaterial LadrunoUniaxialJ2 ...; shared OpenSeesUniaxialMaterialCommands registry serves Tcl + Python, plus classic-Tcl TclModelBuilderUniaxialMaterialCommand dispatch; verified via the Zone-A pytest battery)
     core_files:
       - SRC/classTags.h
