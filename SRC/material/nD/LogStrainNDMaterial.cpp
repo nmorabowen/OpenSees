@@ -129,6 +129,18 @@ int LogStrainNDMaterial::setTrialF(const Matrix &F)
   for (int i = 0; i < 3; i++)
     for (int j = 0; j < 3; j++) Ftrial9[3*i+j] = F(i, j);
 
+  // Reject a non-positive Jacobian up front: a negative det F (an inverted /
+  // degenerate element under a large explicit step) would otherwise give a
+  // sign-flipped Cauchy σ = τ/J and a non-SPD Bᵉᵗʳ whose ½ln has -inf/NaN
+  // eigenvalues — silently wrong with no diagnostic. The element (LadrunoBrick
+  // -geom finite) treats a <0 return as "cut the step".
+  Jdet = mat3_det(Ftrial9);
+  if (Jdet <= 0.0) {
+    opserr << "LogStrainNDMaterial::setTrialF - non-positive det F (" << Jdet
+           << "); element inverted/degenerate\n";
+    return -1;
+  }
+
   // (i)+(ii) trial elastic left Cauchy–Green Bᵉᵗʳ and trial Hencky strain εᵉᵗʳ
   double Betr[9];
   trial_Be(Ftrial9, Fn, Be_n, Betr);
@@ -154,7 +166,7 @@ int LogStrainNDMaterial::setTrialF(const Matrix &F)
     for (int J = 0; J < 6; J++) D6[6*I+J] = D6m(I, J);
 
   // (iv) Cauchy σ = τ/J and material spatial tangent c = (1/2J)[D:L:B] at Bᵉᵗʳ
-  Jdet = mat3_det(Ftrial9);
+  // (Jdet was computed and checked > 0 at entry)
   double sig6[6], c6[36];
   assemble_material(Betr, D6, tau6, Jdet, sig6, c6);
   for (int k = 0; k < 6; k++) sigmaCauchy(k) = sig6[k];
