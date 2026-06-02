@@ -57,14 +57,16 @@ static const double LRB_INVALID = 1.0e30;   // "fStarL not yet computed" sentine
 // ===========================================================================
 //  OPS parser
 //   uniaxialMaterial LadrunoRebarBuckling tag matTag -lsr s/d
-//                    <-model dm|ga> <-alpha a> <-fy fy> <-E E>
+//                    <-model dm|ga> <-alpha a> <-reduction r> <-fsufrac g>
+//                    <-fy fy> <-E E>
 // ===========================================================================
 void* OPS_LadrunoRebarBuckling(void)
 {
   if (OPS_GetNumRemainingInputArgs() < 4) {
     opserr << "WARNING: insufficient args\n";
     opserr << "Want: uniaxialMaterial LadrunoRebarBuckling tag? matTag? -lsr s/d? "
-           << "<-model dm|ga> <-alpha a?> <-fy fy?> <-E E?>\n";
+           << "<-model dm|ga> <-alpha a?> <-reduction r?> <-fsufrac g?> "
+           << "<-fy fy?> <-E E?>\n";
     return 0;
   }
 
@@ -77,6 +79,8 @@ void* OPS_LadrunoRebarBuckling(void)
 
   double lsr   = 0.0;          // off by default (identity gate)
   double alpha = 1.0;          // DM residual-shape factor (ReinforcingSteel beta)
+  double gaReduction = 0.0;    // GA blend r: 0 = full GA buckling (wrapper default), 1 = none
+  double gaFsuFrac   = 0.5;    // GA fsu_fraction (ReinforcingSteel GABuck "gama" default)
   double fy    = 0.0;          // queried/required when lsr>0
   double E     = 0.0;          // <=0 => take theBar->getInitialTangent()
   int    model = LadrunoRebarBuckling::MODEL_DM;
@@ -94,6 +98,20 @@ void* OPS_LadrunoRebarBuckling(void)
       numData = 1;
       if (OPS_GetDoubleInput(&numData, &alpha) < 0) {
         opserr << "WARNING LadrunoRebarBuckling: -alpha wants a value\n";
+        return 0;
+      }
+    }
+    else if (strcmp(flag, "-reduction") == 0) {
+      numData = 1;
+      if (OPS_GetDoubleInput(&numData, &gaReduction) < 0) {
+        opserr << "WARNING LadrunoRebarBuckling: -reduction wants a value\n";
+        return 0;
+      }
+    }
+    else if (strcmp(flag, "-fsufrac") == 0) {
+      numData = 1;
+      if (OPS_GetDoubleInput(&numData, &gaFsuFrac) < 0) {
+        opserr << "WARNING LadrunoRebarBuckling: -fsufrac wants a value\n";
         return 0;
       }
     }
@@ -116,12 +134,10 @@ void* OPS_LadrunoRebarBuckling(void)
       if (strcmp(law, "dm") == 0 || strcmp(law, "DM") == 0) {
         model = LadrunoRebarBuckling::MODEL_DM;
       } else if (strcmp(law, "ga") == 0 || strcmp(law, "GA") == 0) {
-        opserr << "WARNING LadrunoRebarBuckling: -model ga (Gomes-Appleton) "
-               << "is not implemented in v1; use -model dm\n";
-        return 0;
+        model = LadrunoRebarBuckling::MODEL_GA;
       } else {
         opserr << "WARNING LadrunoRebarBuckling: unknown -model '" << law
-               << "' (only 'dm' in v1)\n";
+               << "' (dm or ga)\n";
         return 0;
       }
     }
@@ -141,15 +157,26 @@ void* OPS_LadrunoRebarBuckling(void)
   if (E <= 0.0)
     E = bar->getInitialTangent();
 
-  if (lsr > 0.0 && (fy <= 0.0 || E <= 0.0)) {
-    opserr << "WARNING LadrunoRebarBuckling: with -lsr>0 a positive -fy is "
-           << "required (and E from -E or the wrapped material's initial "
-           << "tangent must be >0); material " << idata[0] << "\n";
+  if (gaReduction < 0.0) gaReduction = 0.0;
+  if (gaReduction > 1.0) gaReduction = 1.0;
+
+  // DM needs fy (onset eStar/eY + the -0.2 fy floor); GA does not (it uses the
+  // fsup anchor stress + lsr + reduction/fsu_fraction). Both need E>0 (e_cross).
+  if (lsr > 0.0 && E <= 0.0) {
+    opserr << "WARNING LadrunoRebarBuckling: with -lsr>0 a positive E is required "
+           << "(via -E or the wrapped material's initial tangent); material "
+           << idata[0] << "\n";
+    return 0;
+  }
+  if (lsr > 0.0 && model == LadrunoRebarBuckling::MODEL_DM && fy <= 0.0) {
+    opserr << "WARNING LadrunoRebarBuckling: -model dm with -lsr>0 needs a "
+           << "positive -fy; material " << idata[0] << "\n";
     return 0;
   }
 
   UniaxialMaterial* theMat =
-    new LadrunoRebarBuckling(idata[0], *bar, lsr, alpha, fy, E, model);
+    new LadrunoRebarBuckling(idata[0], *bar, lsr, alpha,
+                             gaReduction, gaFsuFrac, fy, E, model);
   if (theMat == 0) {
     opserr << "WARNING LadrunoRebarBuckling: failed to allocate material\n";
     return 0;
@@ -162,9 +189,11 @@ void* OPS_LadrunoRebarBuckling(void)
 // ===========================================================================
 LadrunoRebarBuckling::LadrunoRebarBuckling(int tag, UniaxialMaterial& bar,
                                            double lsr_, double alpha_,
+                                           double gaReduction_, double gaFsuFrac_,
                                            double fy_, double E_, int model_)
   : UniaxialMaterial(tag, MAT_TAG_LadrunoRebarBuckling),
-    theBar(0), model(model_), lsr(lsr_), alpha(alpha_), fy(fy_), E(E_),
+    theBar(0), model(model_), lsr(lsr_), alpha(alpha_),
+    gaReduction(gaReduction_), gaFsuFrac(gaFsuFrac_), fy(fy_), E(E_),
     parameterID(0)
 {
   theBar = bar.getCopy();
@@ -186,7 +215,8 @@ LadrunoRebarBuckling::LadrunoRebarBuckling(int tag, UniaxialMaterial& bar,
 
 LadrunoRebarBuckling::LadrunoRebarBuckling()
   : UniaxialMaterial(0, MAT_TAG_LadrunoRebarBuckling),
-    theBar(0), model(MODEL_DM), lsr(0.0), alpha(1.0), fy(0.0), E(0.0),
+    theBar(0), model(MODEL_DM), lsr(0.0), alpha(1.0),
+    gaReduction(0.0), gaFsuFrac(0.5), fy(0.0), E(0.0),
     parameterID(0)
 {
   // theBar is built by recvSelf via the broker.
@@ -224,7 +254,7 @@ double LadrunoRebarBuckling::backboneStressAt(double engStrain)
 //  Ported from ReinforcingSteel::Buckled_stress_Dhakal(ess, fss); the clean
 //  r*sigma_bare branch (the monotonic / TBranchNum%4>1 form).
 // ===========================================================================
-void LadrunoRebarBuckling::applyBuckling(double eps, double sBare, double kBare)
+void LadrunoRebarBuckling::applyBucklingDM(double eps, double sBare, double kBare)
 {
   const double eY = fy / E;                        // yield strain
   const double e_cross = TmaxTenStrain - TmaxTenStress / E;   // tensile-unload anchor
@@ -283,6 +313,62 @@ void LadrunoRebarBuckling::applyBuckling(double eps, double sBare, double kBare)
 }
 
 // ===========================================================================
+//  Gomes-Appleton buckled-average overlay
+//  Ported from ReinforcingSteel::Buckled_stress_Gomes(ess, fss). The upstream
+//  stress function hardcodes its own beta=1, gama=0.1, Dft=0.25 (shadowing the
+//  user GABuck "beta"), so only lsr, reduction (GABuck r) and fsu_fraction
+//  (GABuck gama) plus the fsup anchor stress actually drive the result.
+// ===========================================================================
+double LadrunoRebarBuckling::gaFactor(double eps, double e_cross) const
+{
+  const double C = 9.42477796076938;               // 3*pi (upstream constant)
+  double denom = e_cross - eps;                     // > 0 in the buckled region
+  if (denom < 1.0e-300) denom = 1.0e-300;
+  const double fs_buck = sqrt(32.0 / denom) / (C * lsr);
+  double betaLoc = 1.0;
+  const double gamaLoc = 0.1, Dft = 0.25;
+  const double stress_diff = fabs(fs_buck - 1.0);
+  if (stress_diff <= Dft) betaLoc = 1.0 - gamaLoc * (Dft - stress_diff) / Dft;
+  const double m = (fs_buck < 1.0) ? fs_buck : 1.0;
+  return m * betaLoc * (1.0 - gaReduction) + gaReduction;
+}
+
+void LadrunoRebarBuckling::applyBucklingGA(double eps, double sBare, double kBare)
+{
+  const double e_cross = TmaxTenStrain - TmaxTenStress / E;   // tensile-unload anchor
+
+  // GA gate: pass-through unless compressed past the anchor crossing
+  if (eps >= e_cross) {
+    Tstress = sBare; Ttangent = kBare; Tr = 1.0;
+    return;
+  }
+
+  const double fsup = TmaxTenStress;               // peak tensile (anchor) stress
+  const double ff   = gaFsuFrac;                    // fsu_fraction
+  const double factor = this->gaFactor(eps, e_cross);
+
+  //   sigma = fsup*ff - (factor+ff)*(fsup*ff - sBare)/(1+ff)
+  Tstress = fsup * ff - (factor + ff) * (fsup * ff - sBare) / (1.0 + ff);
+  Tr = (sBare != 0.0) ? Tstress / sBare : 1.0;
+
+  // Consistent tangent dsigma/deps = rho*k_bare + (dsigma/dfactor)*dfactor/deps,
+  //   rho = dsigma/dsBare = (factor+ff)/(1+ff),
+  //   dsigma/dfactor = -(fsup*ff - sBare)/(1+ff),
+  //   dfactor/deps from a central FD of the closed-form scalar factor (cheap, no
+  // material probe). More accurate than ReinforcingSteel's Buckled_mod_Gomes,
+  // which FDs the whole stress with sBare frozen then adds k_bare (i.e. uses
+  // k_bare in place of rho*k_bare).
+  const double rho = (factor + ff) / (1.0 + ff);
+  const double dSig_dFactor = -(fsup * ff - sBare) / (1.0 + ff);
+  const double h = 1.0e-8;
+  double epsm = eps - h, epsp = eps + h;
+  if (epsp >= e_cross) epsp = eps;                 // stay inside the buckled region
+  const double dfac = (this->gaFactor(epsp, e_cross) - this->gaFactor(epsm, e_cross))
+                      / (epsp - epsm);
+  Ttangent = rho * kBare + dSig_dFactor * dfac;
+}
+
+// ===========================================================================
 //  state setting
 // ===========================================================================
 int LadrunoRebarBuckling::setTrialStrain(double strain, double strainRate)
@@ -302,13 +388,16 @@ int LadrunoRebarBuckling::setTrialStrain(double strain, double strainRate)
     TfStarLcross  = LRB_INVALID;
   }
 
-  if (lsr <= 0.0 || fy <= 0.0 || E <= 0.0) {
-    // identity gate (B0): exact pass-through
+  // identity gate (B0): exact pass-through. DM also needs fy>0; GA does not.
+  if (lsr <= 0.0 || E <= 0.0 || (model == MODEL_DM && fy <= 0.0)) {
     Tstress = sBare; Ttangent = kBare; Tr = 1.0;
     return res;
   }
 
-  this->applyBuckling(strain, sBare, kBare);
+  if (model == MODEL_GA)
+    this->applyBucklingGA(strain, sBare, kBare);
+  else
+    this->applyBucklingDM(strain, sBare, kBare);
   return res;
 }
 
@@ -356,7 +445,8 @@ int LadrunoRebarBuckling::revertToStart(void)
 UniaxialMaterial* LadrunoRebarBuckling::getCopy(void)
 {
   LadrunoRebarBuckling* theCopy =
-    new LadrunoRebarBuckling(this->getTag(), *theBar, lsr, alpha, fy, E, model);
+    new LadrunoRebarBuckling(this->getTag(), *theBar, lsr, alpha,
+                             gaReduction, gaFsuFrac, fy, E, model);
 
   theCopy->CmaxTenStrain = CmaxTenStrain;
   theCopy->CmaxTenStress = CmaxTenStress;
@@ -395,17 +485,18 @@ int LadrunoRebarBuckling::sendSelf(int cTag, Channel& theChannel)
     return -1;
   }
 
-  static Vector data(10);
-  data(0) = model;
-  data(1) = lsr;
-  data(2) = alpha;
-  data(3) = fy;
-  data(4) = E;
-  data(5) = CmaxTenStrain;
-  data(6) = CmaxTenStress;
-  data(7) = CfStarL;
-  data(8) = CfStarLcross;
-  data(9) = this->getTag();
+  static Vector data(11);
+  data(0)  = model;
+  data(1)  = lsr;
+  data(2)  = alpha;
+  data(3)  = fy;
+  data(4)  = E;
+  data(5)  = CmaxTenStrain;
+  data(6)  = CmaxTenStress;
+  data(7)  = CfStarL;
+  data(8)  = CfStarLcross;
+  data(9)  = gaReduction;
+  data(10) = gaFsuFrac;
   if (theChannel.sendVector(dbTag, cTag, data) < 0) {
     opserr << "LadrunoRebarBuckling::sendSelf - failed to send Vector\n";
     return -2;
@@ -441,7 +532,7 @@ int LadrunoRebarBuckling::recvSelf(int cTag, Channel& theChannel,
   }
   theBar->setDbTag(dataID(2));
 
-  static Vector data(10);
+  static Vector data(11);
   if (theChannel.recvVector(dbTag, cTag, data) < 0) {
     opserr << "LadrunoRebarBuckling::recvSelf - failed to recv Vector\n";
     return -3;
@@ -455,6 +546,8 @@ int LadrunoRebarBuckling::recvSelf(int cTag, Channel& theChannel,
   CmaxTenStress = data(6);
   CfStarL       = data(7);
   CfStarLcross  = data(8);
+  gaReduction   = data(9);
+  gaFsuFrac     = data(10);
   // trial = committed (recomputed on next setTrialStrain)
   TmaxTenStrain = CmaxTenStrain;
   TmaxTenStress = CmaxTenStress;
@@ -482,6 +575,8 @@ void LadrunoRebarBuckling::Print(OPS_Stream& s, int flag)
     s << "\"model\": \"" << (model == MODEL_DM ? "dm" : "ga") << "\", ";
     s << "\"lsr\": " << lsr << ", ";
     s << "\"alpha\": " << alpha << ", ";
+    s << "\"reduction\": " << gaReduction << ", ";
+    s << "\"fsufrac\": " << gaFsuFrac << ", ";
     s << "\"fy\": " << fy << ", ";
     s << "\"E\": " << E << "}";
     return;
@@ -490,8 +585,12 @@ void LadrunoRebarBuckling::Print(OPS_Stream& s, int flag)
   s << "LadrunoRebarBuckling, tag: " << this->getTag() << endln;
   s << "  wrapped material tag: " << theBar->getTag() << endln;
   s << "  model: " << (model == MODEL_DM ? "Dhakal-Maekawa" : "Gomes-Appleton") << endln;
-  s << "  lsr (s/d): " << lsr << "  alpha: " << alpha << "  fy: " << fy
-    << "  E: " << E << endln;
+  if (model == MODEL_DM)
+    s << "  lsr (s/d): " << lsr << "  alpha: " << alpha << "  fy: " << fy
+      << "  E: " << E << endln;
+  else
+    s << "  lsr (s/d): " << lsr << "  reduction: " << gaReduction
+      << "  fsufrac: " << gaFsuFrac << "  E: " << E << endln;
   s << "  wrapped material:" << endln;
   theBar->Print(s, flag);
 }

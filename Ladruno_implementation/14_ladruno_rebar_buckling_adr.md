@@ -24,16 +24,29 @@ any tension-compression `UniaxialMaterial` (designed for
 `ReinforcingSteel` works in **log** strain on its own monolithic backbone while
 this wrapper works in **engineering** strain on a generic bar).
 
-> [!note] As-built scope (v1)
-> v1 implements the **monotonic** DM degradation only — the clean
-> `σ_buckled = r(e,λ)·σ_bare` branch (upstream's `TBranchNum%4 > 1` path). The
-> **cyclic re-straightening** branch (upstream's `TBranchNum%4 ≤ 1`,
-> backstress-anchored Menegotto-Pinto blend off `Tfa`/`BackStress`) is **NOT**
-> a stress-only modification of `σ_bare` and is **deferred to v2 (test B4)**;
-> the as-built state is the minimal `ε_max`/`σ_max` anchor + cached onset
-> backbone `fStarL` (no `Cbranch` flag — see §4). `-model ga` is parsed but
-> guarded off in v1. Where §3/§4 below describe richer cyclic behavior, read it
-> as the v2 target, not v1.
+> [!note] As-built scope (v1 + GA)
+> Implements the **monotonic** degradation for **both** laws — the clean
+> `σ_buckled = r(e,λ)·σ_bare` form (DM's `TBranchNum%4 > 1` path; GA's
+> stress-only `Buckled_stress_Gomes`). **`-model dm`** (default) and **`-model
+> ga`** are both shipped. The DM **cyclic re-straightening** branch (upstream's
+> `TBranchNum%4 ≤ 1`, backstress-anchored Menegotto-Pinto blend off
+> `Tfa`/`BackStress`) is **NOT** a stress-only modification of `σ_bare` and is
+> **deferred to v2 (test B4)**; the as-built state is the minimal `ε_max`/`σ_max`
+> anchor + cached onset backbone `fStarL` (no `Cbranch` flag — see §4). Where
+> §3/§4 below describe richer cyclic behavior, read it as the v2 target.
+>
+> **GA specifics:** `-reduction r` (RS GABuck `r`, clamped [0,1]) and `-fsufrac g`
+> (RS GABuck `gama` = `fsu_fraction`) are the GA knobs; GA does **not** use `-fy`.
+> The wrapper defaults `-reduction 0.0` (full GA buckling when `lsr>0`) — this
+> **deviates from RS's `r=1` default** (which means *no* buckling), chosen so
+> `-model ga -lsr X` actually buckles, matching the wrapper's "lsr>0 ⇒ buckle"
+> contract. NB the upstream `Buckled_stress_Gomes` **shadows** its own
+> `beta`/`gama` locals (hardcoded 1.0 / 0.1), so the GABuck `beta` argument is
+> dead — faithfully reproduced. GA tangent: hybrid analytic — `ρ·k_bare +
+> (∂σ/∂factor)·(∂factor/∂ε)` with `∂factor/∂ε` from a cheap central FD of the
+> closed-form scalar `factor` (no material probe), strictly better than RS's
+> `Buckled_mod_Gomes` (which FDs the whole stress with `σ_bare` frozen, then adds
+> `k_bare` instead of `ρ·k_bare`).
 
 > **Supersedes** the "core flag, NOT a wrapper" stance in
 > [[13_ladruno_uniaxial_j2_adr]] §6.2 **for the Dhakal–Maekawa case.** That note
@@ -97,8 +110,8 @@ average on top.** Benefits:
 2. **Law selectable** `-model dm|ga` — Dhakal–Maekawa (default) and
    Gomes–Appleton (the two rebar buckling laws OpenSees `ReinforcingSteel`
    offers). Both are `σ_buckled = f(σ_bare, ε, λ)` ⇒ both wrapper-shaped.
-   **v1 ships `dm` only; `-model ga` is parsed but returns a clean "not
-   implemented in v1" error (no silent DM substitution) — GA is a follow-up.**
+   **Both shipped:** `dm` (default) and `ga`. GA adds `-reduction`/`-fsufrac`
+   knobs and does not use `-fy` (see the as-built note above).
 3. **classTag `MAT_TAG_LadrunoRebarBuckling = 33001`** (next free in the Ladruno
    *uniaxial* band after `LadrunoUniaxialJ2` = 33000).
 4. **Analytic consistent tangent** `dσ/dε = r·k_bare + σ_bare·(∂r/∂ε)` (product
@@ -182,9 +195,21 @@ at the max-strain sample as a proxy for upstream's reversal-point `f_sup`; these
 coincide for clean monotonic-tension-then-reverse histories and diverge under
 sub-step overshoot — a documented v1 approximation.
 
-**Gomes–Appleton (`-model ga`).** Alternative rebar law,
-`σ_buckled = f_buck(λ, e_cross−ε)·…` (mirrors `Buckled_stress_Gomes`); same
-wrapper plumbing, different `r`.
+**Gomes–Appleton (`-model ga`) — SHIPPED.** Alternative rebar law (mirrors
+`Buckled_stress_Gomes`), same wrapper plumbing. Gate: pass-through unless
+`ε < e_cross` (buckles for any compression past the anchor, unlike DM's
+`e < −ε_y`). With `fs_buck = √(32/(e_cross−ε)) / (3π·λ)`, `m = min(1, fs_buck)`,
+a local `β(stress_diff)` knee at `Dft=0.25`, and `factor = m·β·(1−r) + r`:
+
+```
+σ_buckled = f_sup·g − (factor + g)·(f_sup·g − σ_bare)/(1 + g)
+```
+
+where `f_sup = σ_max` (anchor stress), `g = fsu_fraction` (`-fsufrac`), `r =
+reduction` (`-reduction`). For monotonic-from-virgin (`f_sup=0`) this collapses
+to a clean `σ_bare·(factor+g)/(1+g)`. `r=1 ⇒ factor=1 ⇒` no buckling; `r=0 ⇒`
+full GA. **Faithful quirk:** upstream shadows its `beta`/`gama` with hardcoded
+locals (1.0 / 0.1), so the GABuck `beta` argument is dead — reproduced.
 
 ---
 
@@ -280,8 +305,16 @@ uniaxialMaterial Fatigue              12  11                 ;# Chaboche ∘ buc
 | B5 | consistent-tangent FD | analytic `r·k+σ·r'` vs one-step central FD (same fresh-material idiom as J2 V6) |
 | B6 | composition `Fatigue ∘ Buckling ∘ J2` builds + runs | rupture still triggers on the buckled response |
 | B7 | `sendSelf`/`recvSelf` round-trip (nested material) | state + wrapped bar reconstructed |
+| GA0 | `-model ga -lsr 0` pass-through ≡ bare (full push-pull) | identity gate for GA |
+| GA1 | tension pass-through (`ε ≥ e_cross`) | GA gate before the anchor crossing |
+| **GA2** | monotonic compression, several `λ` and `reduction` | the ported `Buckled_stress_Gomes` formula fed `σ_bare(ε)` + `f_sup` anchor (rel ~1e-6) |
+| GA3 | `reduction`=1 ⇒ no buckling; `reduction`=0 ⇒ knock-down; larger `λ` ⇒ more knock-down | the GA blend + slenderness trend |
+| GA5 | consistent-tangent FD (smooth region, off the `fs_buck≈1` knee) | hybrid analytic `ρ·k + (∂σ/∂factor)·factor'` vs central FD |
 
 Smoke (L0): single truss / 1-fiber RC section push-pull-cycle, Zone-A pytest.
+**Implemented (this PR):** B0/B1/B2/B2b/B3/B5 (DM) + GA0/GA1/GA2/GA3/GA5 (GA),
+all green; `LadrunoUniaxialJ2` regression unchanged. (B4 cyclic, B6 composition,
+B7 send/recv remain for follow-ups.)
 
 ---
 
@@ -320,8 +353,10 @@ Smoke (L0): single truss / 1-fiber RC section push-pull-cycle, Zone-A pytest.
 2. **DM monotonic compression** — port `Buckled_stress_Dhakal` (`ε*`, `f*`,
    `r(e,λ)`), analytic `r'` for the tangent. Gate **B2 bit-for-bit vs
    `ReinforcingSteel -DMBuck`** + B3 + B5 (tangent FD).
-3. **Cyclic re-straightening** — `ε_max` anchor + branch flag; gate B4.
-4. **GA law** (`-model ga`) — port `Buckled_stress_Gomes`; reuse the plumbing.
+3. **Cyclic re-straightening** — `ε_max` anchor + branch flag; gate B4. *(deferred)*
+4. ✅ **GA law** (`-model ga`) — ported `Buckled_stress_Gomes`; reused the
+   plumbing (PR #119 = DM; GA shipped in the follow-up PR). `-reduction`/`-fsufrac`
+   knobs; gates GA0/GA1/GA2/GA3/GA5.
 5. **Parser + registration + build** — classTag 33001, broker, Python/Tcl
    registries, CMake (mirror `LadrunoUniaxialJ2`); nested-material `sendSelf`/
    `recvSelf` (B7) + composition test (B6).
