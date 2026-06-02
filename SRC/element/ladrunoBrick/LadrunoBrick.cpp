@@ -2434,6 +2434,12 @@ int  LadrunoBrick::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker
 
   this->setTag(idData(24));
 
+  // Ladruno — Tier-A: drop any cached "damage" query before the materials below
+  // may be deleted/rebrokered. It holds a raw pointer to materialPointers[0], so a
+  // stale one would dangle on a material-class change; setDomain rebuilds it
+  // against the live material on the receive side.  // Ladruno
+  if (damageResponse) { delete damageResponse; damageResponse = 0; }
+
   static Vector dData(9);
   if (theChannel.recvVector(dataTag, commitTag, dData) < 0) {
     opserr << "LadrunoBrick::recvSelf() - failed to recv double data\n";
@@ -2686,7 +2692,8 @@ LadrunoBrick::hourglassEnergy(void)
     // Ladruno — mirror formUri's Tier-A κ exactly (elastic base × floored damage
     // scale for a softening material) so the reported stored stabilization energy
     // matches what the element actually assembles. Single application of the scale.
-    if (hourglassType == Hourglass::STIFFNESS && damageResponse != 0) {
+    // (already inside the URI+STIFFNESS branch, so only the damage guard remains.)
+    if (damageResponse != 0) {
       const double G0 = materialPointers[0]->getInitialTangent()(3, 3);
       kappa = scale * G0 * vol * bb * this->damageScale();
     }
