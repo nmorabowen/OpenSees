@@ -369,7 +369,7 @@ features:
   - feature: LadrunoRebarBuckling
     classtag: 33001          # MAT_TAG (uniaxial) family; sibling of LadrunoUniaxialJ2=33000, per-registry band (no collision w/ ELE BezierTet10=33001)
     tag_symbol: MAT_TAG_LadrunoRebarBuckling
-    pr: null                 # TODO: fill PR number on open
+    pr: 119
     feature_class: material
     required_tiers: [T0m, T1]
     pytest: tests/test_ladrunoRebarBuckling_material.py   # B0 -lsr 0 pass-through; B1 tension+pre-onset pass-through; B2 DM formula vs ported reference; B3 larger lambda => earlier onset + lower residual; B5 consistent-tangent FD
