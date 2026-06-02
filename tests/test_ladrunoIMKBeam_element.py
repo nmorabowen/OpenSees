@@ -491,3 +491,69 @@ def test_lignos_krawinkler_cyclic_matches_bare_material():
     for k in range(1, len(hist)):
         energy += 0.5 * (hist[k][2] + hist[k - 1][2]) * (hist[k][1] - hist[k - 1][1])
     assert energy > 0.1 * _cyc_My * thh_max     # substantial enclosed hysteresis area
+
+
+# ---------------------------------------------------------------------------
+# Test 7: asymmetric end laws -- -matZi / -matZj put an INDEPENDENT law at each
+#         end (the element already carries four separate hinge slots)
+# ---------------------------------------------------------------------------
+def test_asymmetric_end_laws_each_end_uses_its_own_material():
+    """With -matZi A -matZj B the strong-axis hinge at end i follows law A and the
+    hinge at end j follows law B. Both ends are driven into yield (different yield
+    moments), then each end's reported (hingeRotation, hingeMoment) is checked
+    against the bare material that should govern it -- a wrong slot mapping (e.g.
+    one law used at both ends) would fail one of the two checks."""
+    MyA, MyB, Ke, b = 800.0, 1600.0, 1.0e6, 0.02   # distinct yield moments
+
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 6)
+    ops.node(1, 0.0, 0.0, 0.0)
+    ops.node(2, _L, 0.0, 0.0)
+    ops.geomTransf("Linear", 1, 0.0, 0.0, 1.0)
+    ops.uniaxialMaterial("Steel01", 31, MyA, Ke, b)   # law A -> end i
+    ops.uniaxialMaterial("Steel01", 32, MyB, Ke, b)   # law B -> end j
+    # both ends: translations fixed, strong-axis rotation (rZ) free + moment-driven
+    ops.fix(1, 1, 1, 1, 1, 1, 0)
+    ops.fix(2, 1, 1, 1, 1, 1, 0)
+    # asymmetric: A at i, B at j (no -hinge / -matZ needed)
+    ops.element("LadrunoIMKBeam", 1, 1, 2, _A, _E, _G, _Jx, _Iy, _Iz, 1,
+                "-matZi", 31, "-matZj", 32)
+
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(1, 0, 0, 0, 0, 0, 1300.0)   # yields A (My=800)
+    ops.load(2, 0, 0, 0, 0, 0, 2400.0)   # yields B (My=1600)
+    ops.system("BandGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Transformation")
+    ops.integrator("LoadControl", 1.0 / 30.0)
+    ops.test("NormDispIncr", 1.0e-12, 50, 0)
+    ops.algorithm("Newton")
+    ops.analysis("Static")
+
+    thi_hist, thj_hist, Mi_hist, Mj_hist = [], [], [], []
+    for _ in range(30):
+        assert ops.analyze(1) == 0
+        hr = ops.eleResponse(1, "hingeRotation")   # [Zi, Zj, Yi, Yj]
+        hm = ops.eleResponse(1, "hingeMoment")
+        thi_hist.append(hr[0]); thj_hist.append(hr[1])
+        Mi_hist.append(hm[0]);  Mj_hist.append(hm[1])
+
+    # both ends must have yielded (so the distinct laws are actually exercised)
+    assert max(abs(t) for t in thi_hist) > 2.0 * (MyA / Ke)
+    assert max(abs(t) for t in thj_hist) > 2.0 * (MyB / Ke)
+    # and the two ends really carry different moments (distinct laws, not a copy)
+    assert abs(max(abs(m) for m in Mi_hist) - max(abs(m) for m in Mj_hist)) > 100.0
+
+    # end i must follow law A (tag 31); end j must follow law B (tag 32)
+    ops.wipe()
+    ops.uniaxialMaterial("Steel01", 31, MyA, Ke, b)
+    ops.uniaxialMaterial("Steel01", 32, MyB, Ke, b)
+    ops.testUniaxialMaterial(31)
+    for th, M in zip(thi_hist, Mi_hist):
+        ops.setStrain(th)
+        assert abs(M - ops.getStress()) <= 1.0e-6 * abs(MyB) + 1.0e-6, ("i", M)
+    ops.testUniaxialMaterial(32)
+    for th, M in zip(thj_hist, Mj_hist):
+        ops.setStrain(th)
+        assert abs(M - ops.getStress()) <= 1.0e-6 * abs(MyB) + 1.0e-6, ("j", M)
