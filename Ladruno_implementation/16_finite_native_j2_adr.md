@@ -287,7 +287,7 @@ session can start straight from here:
   measurably improve accuracy.** The caveat is closed; no code change.
 
 **P2 — deferred features (each its own PR; the "Out (v2.x)" non-goals):**
-- **IMPL-EX** `-implex` — ✅ **SHIPPED (PR §IMPLEX_PR§, 2026-06-02).** See the dedicated
+- **IMPL-EX** `-implex` — ✅ **SHIPPED (PR [#134](https://github.com/nmorabowen/OpenSees/pull/134), 2026-06-02).** See the dedicated
   section below.
 - **Plane-stress / dimensional finite views** (§14.7 nested route). `LadrunoJ2Finite` is
   **3D-only** (`getType`=="ThreeDimensional"); `LadrunoJ2` already has 5 views. Finite
@@ -301,7 +301,7 @@ session can start straight from here:
   mode landing first (shared `LadrunoHardening.h`).
 - **Thermomechanical coupling.**
 
-### IMPL-EX (`-implex`) — Δγ-extrapolation, SHIPPED PR §IMPLEX_PR§ (2026-06-02)
+### IMPL-EX (`-implex`) — Δγ-extrapolation, SHIPPED PR [#134](https://github.com/nmorabowen/OpenSees/pull/134) (2026-06-02)
 
 The classic Oliver–Huespe–Cante implicit/explicit split, on the **plastic multiplier**
 (not the damage variable — that is the small-strain `LadrunoJ2 -implex` Lemaitre path).

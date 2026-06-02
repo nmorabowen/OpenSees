@@ -360,7 +360,7 @@ features:
       plastic steps only; mapped into cmat via Fdot=LF). Verified: numpy oracle objective
       ~1e-12 + tangent recipe exact-to-FD ~1e-14; g++ composition vs oracle 1e-9; element
       acceptance via LadrunoBrick -geom finite. IMPL-EX (-implex, Oliver-Huespe-Cante;
-      PR §IMPLEX_PR§): Delta-gamma extrapolation + co-rotated frozen flow direction =>
+      PR #134): Delta-gamma extrapolation + co-rotated frozen flow direction =>
       constant SPD elastic reported tangent, implicit history committed (byte-identical);
       committed==implicit, explicit->implicit order~2, objective 7e-13 (oracles + g++ check
       + element acceptance). NON-goals v1: plane-stress finite (no consumer), tabulated iso.
