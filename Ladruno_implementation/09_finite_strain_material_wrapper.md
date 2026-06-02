@@ -531,4 +531,25 @@ under repeats; **their** finite T0/T1 battery is the external net for this bug.
   prescribed `F`, assert match to the oracle ~1e-10), then open the PR. Then the
   plastic-inner protocol.
 
+- **2026-06-02 — first GREEN PLASTIC inner wired + verified: `LadrunoJ2`.** The
+  plastic-inner protocol (PR #81) now has its flagship consumer. `LadrunoJ2`
+  (combined-hardening von Mises, classTag 33011) presents the exact
+  `J2ThreeDimensional` inner contract the protocol requires, so **`nDMaterial
+  LogStrain $t $j2`** lifts it to finite strain with **no change to
+  `LogStrainNDMaterial`**. To make the SAME return map serve both the small-strain
+  material and this finite path, the J2 return map was extracted verbatim into the
+  OpenSees-free **`SRC/material/nD/LadrunoJ2Kernel.h`** (`LadrunoJ2::integrate()` now
+  delegates; bit-identical). Proven WITHOUT a build: g++ kernel ↔ numpy oracle +
+  FD-tangent (`tests/test_ladrunoJ2_kernel_cpp.py`), and the LogStrain-over-LadrunoJ2
+  composition vs the direct Box-14.4 chain + exact incompressibility + exact
+  *isotropic* finite objectivity (`tests/test_ladrunoJ2_finite.py`). **§14.11
+  boundary surfaced:** the wrapper is exact for the isotropic spine but the kinematic
+  **backstress does not co-rotate** (it lives in the inner's fixed frame), so
+  combined hardening is NOT frame-indifferent under *large* rotation — pinned as a
+  strict-xfail; the v2 fix is a finite-strain-native J2 reusing the kernel with a
+  co-rotated `α` (the kernel extraction is the enabler). Element acceptance
+  (`LadrunoBrick -geom finite`, `tests/test_ladrunoJ2_finite_element.py`) is CI-gated.
+  This confirms the YELLOW-caveat for *kinematic*-hardening finite plasticity in the
+  material matrix above (§14.11, scoped v2). See [[10_ladruno_j2_plasticity]].
+
 *(move to `Ladruno_internal/implemented_finite_strain_wrapper.md` when shipped)*

@@ -140,6 +140,7 @@ target_sources(OPS_Material
     LogStrainNDMaterial.h
     LogStrainKernel.h
     LadrunoJ2.h
+    LadrunoJ2Kernel.h
     FiniteStrainNDMaterial.h
     IncrementalElasticIsotropicThreeDimensional.h
     ConcreteMcftNonLinear5.h

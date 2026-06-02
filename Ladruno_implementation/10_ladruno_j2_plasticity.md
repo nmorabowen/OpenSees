@@ -336,3 +336,55 @@ struct LadrunoJ2State { double epsP[6]; double ebarP; double alpha[3][6]; };  //
   dSNPO-style via 7.196 direct-curve trick; C¹ spline for tangent smoothness).
 - classTag **33011**; files under `SRC/material/nD/ladrunoJ2/`; kernel split for
   finite-strain reuse.
+
+### Finite-strain lift shipped (2026-06-02, this PR) — kernel extraction + LogStrain wrap
+
+The "kernel split for finite-strain reuse" decision is now realized.
+
+- **`SRC/material/nD/LadrunoJ2Kernel.h`** — the combined-hardening von Mises return
+  map (scalar Newton on Δγ, Kobayashi–Ohno; AF backstress recurrence; analytic
+  consistent tangent) and the elastic tangent / hardening law, extracted **verbatim**
+  into a header-only, **OpenSees-free** namespace `ladruno_j2_kernel` (plain
+  `double[]`, `<math.h>` only — mirrors `LogStrainKernel.h`). `returnMap()` is a pure
+  function (params + committed history → stress, `Dtan`, updated state) returning a
+  status code; `LadrunoJ2::integrate()` is now a thin **pack → call → warn** wrapper.
+  Behaviour is **bit-identical** (the moved code is unchanged; `integrate()`'s elastic
+  fast-path / ‖M‖→0 fallback / diagnostics all preserved via the status return).
+- **Why a kernel:** so the SAME verified map serves BOTH the small-strain material
+  AND the finite-strain path, with no second implementation to drift. The finite path
+  is **`nDMaterial LogStrain $t $j2`** over LadrunoJ2 — no change to `LogStrainNDMaterial`,
+  because LadrunoJ2 already presents the exact `J2ThreeDimensional` inner contract the
+  LogStrain plastic-inner state protocol needs (engineering-shear strain in / true
+  stress out, **linear** elastic so `Cᵉ=inv(initial tangent)` is constant, stateful
+  `εᵖ` subtraction, constant `getInitialTangent`). `LadrunoBrick -geom finite` then
+  drives it by `setTrialF(F)` (dSNPO Box 14.3 MATISU; the kinematic backstress/`εᵖ`
+  history lives inside the inner and persists across commits). See
+  [[09_finite_strain_material_wrapper]] and [[project_finite_strain_wrapper]].
+- **§14.11 boundary (important).** The lift is **EXACT** for the isotropic spine —
+  the elastic state co-rotates via `Bᵉᵗʳ=F_Δ Bᵉ_n F_Δᵀ` and isotropic yield depends
+  only on `‖s‖,ε̄ᵖ`, so a superposed finite rotation rotates the Cauchy stress rigidly
+  (proven to ~1e-9). **Combined hardening is NOT exactly objective under large
+  rotation**: the kinematic backstress `α` is stored in the inner's *fixed* frame and
+  does not co-rotate, so `‖M‖=‖s−α‖` is not rotation-invariant. This is a
+  *framework* limit (the direct Box-14.4 chain shows the same), exactly the
+  kinematic-hardening-at-finite-strain case dSNPO defers to §14.11. v1 ⇒ exact for
+  no/small rotation; **v2** = a finite-strain-NATIVE J2 (a `FiniteStrainNDMaterial`
+  subclass) that calls `LadrunoJ2Kernel.h` directly and co-rotates `α` each step —
+  the kernel extraction is precisely the enabler.
+- **Verification (no OpenSees build needed — g++ + numpy):**
+  - `tests/ladrunoj2_kernel_check.cpp` (includes only the kernel) ↔
+    `tests/ladrunoj2_reference.py` (independent 3×3-tensor oracle) +
+    `tests/test_ladrunoJ2_kernel_cpp.py`: stress, full internal state (`εᵖ,ε̄ᵖ,α,Δγ`)
+    and the algorithmic tangent (vs **independent FD** of the oracle stress) match
+    over 4 paths — isotropic Voce+linear, single-AF cyclic, three-term Chaboche
+    3D-with-shear, linear-kinematic cyclic. This is the proof the extraction is faithful.
+  - `tests/test_ladrunoJ2_finite.py`: the LogStrain-over-LadrunoJ2 composition vs the
+    direct Box-14.4 elastic-trial chain (combined hardening, finite path with
+    stretch+shear+rotation+unload) to 1e-9; exact plastic incompressibility
+    (`det bᵉ=J²`, `tr εᵉ=ln J`); **exact isotropic finite objectivity**; §14.11
+    combined-rotation boundary pinned as a strict-xfail (flips to PASS when v2 lands).
+  - `tests/test_ladrunoJ2_finite_element.py` (CI-gated, needs a build):
+    `LadrunoBrick -geom finite` + LogStrain over LadrunoJ2 — consistent-tangent vs FD
+    (combined hardening), uniaxial homogeneous finite stretch into plasticity matching
+    the numpy oracle, rigid-rotation stress-free, reduce-to-small-strain.
+  - `LadrunoJ2.cpp` g++ `-fsyntax-only` against the real OpenSees headers: clean.

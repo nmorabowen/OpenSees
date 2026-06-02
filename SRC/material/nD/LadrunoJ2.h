@@ -117,8 +117,6 @@ class LadrunoJ2 : public NDMaterial {
   double Dtan[6][6];            // algorithmic tangent (engineering 6x6, J2-3D convention)
 
   // helpers
-  double yieldStress(double pbar) const;   // sig_y(pbar)
-  double yieldSlope(double pbar) const;     // d sig_y / d pbar
   void   integrate(void);                   // 3D return map + tangent (dim-agnostic)
   void   buildElasticTangent(double Kt[6][6]) const;
   void   setStateToCommitted(void);
