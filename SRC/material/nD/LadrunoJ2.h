@@ -64,7 +64,9 @@ class LadrunoJ2 : public NDMaterial {
   LadrunoJ2(int tag, double K, double G,
             double sig0, double Qinf, double bIso, double Hiso,
             int nBack, const double* C, const double* gam,
-            double rho = 0.0, int dimMode = DIM_3D);
+            double rho = 0.0, int dimMode = DIM_3D,
+            bool dmgOn = false, double dmgR = 0.0, double dmgS = 1.0,
+            double dmgPD = 0.0, double dmgDc = 1.0);
   ~LadrunoJ2();
 
   const char* getClassType(void) const { return "LadrunoJ2"; }
@@ -114,6 +116,13 @@ class LadrunoJ2 : public NDMaterial {
   double Ckin[MAXBACK];         // AF kinematic moduli C_k
   double gKin[MAXBACK];         // AF recall constants gamma_k
 
+  // Lemaitre coupled ductile damage (default OFF -> exact undamaged behaviour)
+  bool   dmgOn;                 // -damage lemaitre master switch
+  double dmgR;                  // energy denominator (Lemaitre S)
+  double dmgS;                  // exponent
+  double dmgPD;                 // accumulated-plastic-strain damage threshold
+  double dmgDc;                 // critical (rupture) damage
+
   // dimensional view
   int    dim;                   // DIM_*
   int    ncomp;                 // element vector order (3..6)
@@ -127,6 +136,7 @@ class LadrunoJ2 : public NDMaterial {
   double ebarP_n;               // accumulated equivalent plastic strain
   double alpha_n[MAXBACK][6];   // backstress terms
   double dGamma_n;              // committed plastic multiplier increment (IMPL-EX hook)
+  double D_n;                   // committed Lemaitre damage
 
   // trial state
   double strain6[6];            // total strain (tensor components)
@@ -134,6 +144,7 @@ class LadrunoJ2 : public NDMaterial {
   double ebarP;
   double alpha[MAXBACK][6];
   double dGammaTrial;
+  double Dtrial;                // trial Lemaitre damage
   double stress6[6];            // stress (tensor comps; shear = true stress)
   double Dtan[6][6];            // algorithmic tangent (engineering 6x6, J2-3D convention)
 
