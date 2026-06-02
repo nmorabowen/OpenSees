@@ -283,9 +283,27 @@ struct LadrunoJ2State { double epsP[6]; double ebarP; double alpha[3][6]; };  //
   displacement-controlled): **5/5 pass** — elastic; reduce-to-J2Plasticity;
   monotonic linear-kin≡iso (pins the `(2/3)C` scaling); Bauschinger divergence;
   AF saturation → `σ_y0+C/γ`. The `(2/3)Cₖ` numerator ⇒ standard Chaboche `Cₖ,γₖ`.
-- **Deferred** (follow-up PRs): tabulated isotropic; `prager_nl` oracle mode (dSNPO
-  Box 7.5 bit-for-bit, V9); PlaneStress (§9.4 projected) + PlaneStrain/AxiSymm/
-  PlateFiber `getCopy` views; IMPL-EX code path; `setResponse` for backstress/`ε̄ᵖ`.
+- Re-landed after #82 stranding via **PR #87** (cherry-pick onto fresh `ladruno`);
+  + adversarial-review hardening (‖M‖→0 guard restored from J2Plasticity,
+  stress-scaled tolerance) + 3D mixed-shear test (battery → 6/6).
+
+### Dimensional views shipped (2026-06-01, follow-up PR)
+- **All five `getType()` views in one class** via a `dim` mode + `vmap[]` index
+  table into the 6-comp tensor; the verified 3D `integrate()` is unchanged.
+  PlaneStrain `{00,11,01}`, AxiSymmetric `{00,11,22,01}`, PlateFiber
+  `{00,11,01,12,20}`, PlaneStress `{00,11,01}`.
+- **PlaneStress / PlateFiber** enforce `σ₂₂=0` by a nested Newton on `eps₂₂`
+  (`strain6[2] -= σ₂₂/Dtan[2][2]`, dSNPO §9.2.3 route) then **static condensation
+  of the 33-dof done in `Dtan[6][6]`** (`Dtan[I][J] -= Dtan[I][2]Dtan[2][J]/Dtan[2][2]`),
+  mirroring `J2PlaneStress`/`J2PlateFiber`. Committed `eps₂₂` carried in
+  `sendSelf`/`revert*`. Member-sized return buffers replace the size-6 statics.
+- Tests: **8/8 pass** — added `PlaneStrain` + `PlaneStress` quad reduce-to-J2Plasticity
+  (single FourNodeQuad, mixed in-plane load incl. shear, into the plastic regime;
+  matches `J2Plasticity` on disps + all GP stresses → validates the reduced mapping
+  AND the condensation against the proven upstream specializations).
+- **Still deferred**: tabulated isotropic; `prager_nl` oracle mode (dSNPO Box 7.5,
+  V9); IMPL-EX code path; `setResponse` for backstress/`ε̄ᵖ`; AxiSymm/PlateFiber
+  element-level tests (validated by construction — same machinery as PlaneStrain/Stress).
 
 ### Decisions locked (2026-06-01, design session)
 - **Kinematic = Chaboche AF, design for arbitrary N, ship N=3** (`af` mode). Recovers

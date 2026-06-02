@@ -263,3 +263,57 @@ def test_reduce_to_J2Plasticity_3D_mixed_shear():
         assert a == pytest.approx(c, rel=2e-6, abs=2e-6), f"stress {a} vs {c}"
     for a, c in zip(lad[0], ref[0]):
         assert a == pytest.approx(c, rel=2e-6, abs=2e-6), f"disp {a} vs {c}"
+
+
+# --------------------------------------------------------------------------
+# dimensional views: a 2D quad reduce-to-J2Plasticity for PlaneStrain and
+# PlaneStress (the condensation path). The element calls getCopy(type), so this
+# exercises the reduced strain/stress mapping AND the sigma_22=0 nested solve.
+# --------------------------------------------------------------------------
+_QNODES = {1: (0.0, 0.0), 2: (1.0, 0.0), 3: (1.0, 1.0), 4: (0.0, 1.0)}
+
+
+def _solve_quad_plastic(mat_fn, qtype, nsteps=40, scale=0.8):
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    for t, (x, y) in _QNODES.items():
+        ops.node(t, x, y)
+    mat_fn(1)
+    ops.fix(1, 1, 1)
+    ops.fix(2, 0, 1)
+    ops.fix(4, 1, 0)
+    ops.element("quad", 1, 1, 2, 3, 4, 1.0, qtype, 1)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(2, 6.0 * scale, 0.0)
+    ops.load(3, 6.0 * scale, 4.0 * scale)     # mixed -> in-plane shear too
+    ops.system("FullGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.test("NormDispIncr", 1.0e-10, 100, 0)
+    ops.algorithm("Newton")
+    ops.integrator("LoadControl", 1.0 / nsteps)
+    ops.analysis("Static")
+    assert ops.analyze(nsteps) == 0, f"{qtype} quad solve did not converge"
+    disps = [ops.nodeDisp(n, d) for n in (2, 3, 4) for d in (1, 2)]
+    sig = list(ops.eleResponse(1, "stress"))     # all GPs
+    return disps, sig
+
+
+@pytest.mark.t1
+@pytest.mark.parametrize("qtype", ["PlaneStrain", "PlaneStress"])
+def test_dimensional_view_reduce_to_J2Plasticity(qtype):
+    K, G = _kg(1000.0, 0.3)
+    sig0, Qinf, b, Hiso = 5.0, 4.0, 30.0, 10.0
+
+    lad = _solve_quad_plastic(lambda t: ops.nDMaterial(
+        "LadrunoJ2", t, K, G, "-iso", "voce", sig0, Qinf, b, Hiso, "-kin", 0), qtype)
+    ref = _solve_quad_plastic(lambda t: ops.nDMaterial(
+        "J2Plasticity", t, K, G, sig0, sig0 + Qinf, b, Hiso, 0.0), qtype)
+
+    # must have actually yielded (guard against a vacuous elastic comparison)
+    assert any(abs(d) > sig0 / 1000.0 for d in lad[0]), "expected plastic deformation"
+    for a, c in zip(lad[0], ref[0]):
+        assert a == pytest.approx(c, rel=2e-6, abs=2e-6), f"{qtype} disp {a} vs {c}"
+    for a, c in zip(lad[1], ref[1]):
+        assert a == pytest.approx(c, rel=2e-6, abs=2e-6), f"{qtype} stress {a} vs {c}"
