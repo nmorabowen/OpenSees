@@ -63,7 +63,9 @@ class LadrunoUniaxialJ2 : public UniaxialMaterial
 
   LadrunoUniaxialJ2(int tag, double E,
                     double sig0, double Qinf, double bIso, double Hiso,
-                    int nBack, const double* C, const double* gam);
+                    int nBack, const double* C, const double* gam,
+                    bool dmgOn = false, double dmgR = 0.0, double dmgS = 1.0,
+                    double dmgPD = 0.0, double dmgDc = 1.0);
   LadrunoUniaxialJ2();
   ~LadrunoUniaxialJ2();
 
@@ -104,11 +106,20 @@ class LadrunoUniaxialJ2 : public UniaxialMaterial
   double Ckin[MAXBACK];         // AF kinematic moduli C_k
   double gKin[MAXBACK];         // AF recall constants gamma_k
 
+  // Lemaitre coupled ductile damage (default OFF -> exact undamaged behaviour;
+  // uniaxial triaxiality is fixed at 1/3 so R_v == 1 and Y = sigma~^2/(2E))
+  bool   dmgOn;                 // -damage lemaitre master switch
+  double dmgR;                  // energy denominator (Lemaitre S)
+  double dmgS;                  // exponent
+  double dmgPD;                 // accumulated-plastic-strain damage threshold
+  double dmgDc;                 // critical (rupture) damage
+
   // committed history
   double CplasticStrain;        // plastic strain eps^p
   double Cebarp;                // accumulated plastic strain pbar
   double CX[MAXBACK];           // backstresses X_k
   double CdGamma;               // last plastic-strain increment dp (IMPL-EX hook)
+  double CD;                    // committed Lemaitre damage
   double Cwp;                   // accumulated plastic work (fracture/LCF hook)
 
   // trial history
@@ -117,6 +128,7 @@ class LadrunoUniaxialJ2 : public UniaxialMaterial
   double TX[MAXBACK];
   double TdGamma;
   double Twp;
+  double TD;                    // trial Lemaitre damage
 
   // trial state
   double Tstrain;
