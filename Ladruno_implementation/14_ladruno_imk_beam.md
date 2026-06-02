@@ -289,6 +289,30 @@ Zone-A pytest battery `tests/test_ladrunoIMKBeam_element.py`:
   coupled moment-surface `nDMaterial`; the explicit v1 non-goal (§1.2).
 - **Axial/shear hinges** — the basic system has the slots (`N`, and shear via the
   transform); not exposed in v1.
+- **End-moment release (true pin, `M ≡ 0`)** — *distinct from "elastic."* An
+  **elastic** end (no material in that slot — §2.3) still carries moment with the
+  full elastic rotational stiffness; a **released** end carries **zero** moment
+  and frees the rotation, reducing the active end stiffness from `4EI/L` to
+  `3EI/L` (the far end statically condensed out). There is no `-release` flag yet;
+  it is a clean future addition (per-end-per-axis, exact condensation — a
+  released end is "the hinge whose moment is identically zero").
+
+  **Workaround available today (no code):** give that end a near-zero-stiffness
+  `Elastic` hinge material — the series flexibility `1/k → ∞` drives the end
+  moment to ~0. Use roughly `k_release ≈ 1e-5 · (4EI/L)` of the bending axis
+  (i.e. ~1e-5 of the member's elastic rotational stiffness):
+
+  ```python
+  # strong-axis pin at end j (Iz axis): elastic interior + a ~zero-stiffness hinge
+  ops.uniaxialMaterial('Elastic', 7, 1.0e-5 * (4.0*E*Iz/L))
+  ops.element('LadrunoIMKBeam', tag, i, j, A,E,G,Jx,Iy,Iz, transf, '-matZj', 7)
+  ```
+
+  Verified: this gives `k_i = 3EI/L` to ~5 figures and residual `M_j/M_i ≈ 7e-6`
+  — effectively a perfect pin. Stay above the element's `ktFloor` guard
+  (`1e-8·4EI/L`); a factor in `[1e-6, 1e-4]` is the sweet spot (smaller hurts
+  conditioning, larger leaves a non-negligible residual moment). See
+  `LEDGER_quirks.md`.
 - **Sensitivity** (`DDM`) — standard element plumbing, deferred.
 
 Related: [[10_ladruno_j2_plasticity]], [[13_ladruno_uniaxial_j2_adr]] (candidate

@@ -49,6 +49,14 @@
 // only one end. e.g. '-matZi', 5, '-matZj', 6 -> strong-axis hinges with laws
 // 5 at i and 6 at j; '-matZ', 5, '-matYj', 7 -> symmetric strong-axis law 5 at
 // both ends plus an extra weak-axis hinge (law 7) at j only.
+//
+// "Elastic end" vs "release": omitting an end's material leaves it ELASTIC (it
+// still carries moment, full 4EI/L stiffness) -- this is NOT a moment release.
+// There is no -release flag yet (deferred). To approximate a true pin (M==0) at
+// an end today, give it a near-zero-stiffness Elastic hinge, e.g.
+//   uniaxialMaterial Elastic 7 [expr 1e-5*4*$E*$Iz/$L];  ... -matZj 7
+// (residual M/M_other ~ 1e-5; keep k above ~1e-8*4EI/L). See
+// Ladruno_implementation/{14_ladruno_imk_beam.md sec.8, LEDGER_quirks.md}.
 
 #include "LadrunoIMKBeam.h"
 
