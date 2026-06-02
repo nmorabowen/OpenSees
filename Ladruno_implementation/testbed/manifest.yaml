@@ -372,7 +372,7 @@ features:
     pr: 119
     feature_class: material
     required_tiers: [T0m, T1]
-    pytest: tests/test_ladrunoRebarBuckling_material.py   # DM: B0 -lsr 0 pass-through; B1 tension+pre-onset; B2/B2b DM formula vs ported reference; B3 slenderness trend + floor; B5 consistent-tangent FD. GA: GA0 -lsr 0 pass-through; GA1 tension gate; GA2 Gomes formula vs ported reference; GA3 reduction(=1 off,=0 full)+slenderness; GA5 consistent-tangent FD
+    pytest: tests/test_ladrunoRebarBuckling_material.py   # DM: B0 -lsr 0 pass-through; B1 tension+pre-onset; B2/B2b DM formula vs ported reference; B3 slenderness trend + floor; B5 consistent-tangent FD. GA: GA0 -lsr 0 pass-through; GA1 tension gate; GA2 Gomes formula vs ported reference; GA3 reduction(=1 off,=0 full)+slenderness; GA5 consistent-tangent FD; B6 composition Fatigue.RebarBuckling.bar (rupture on buckled response); B7 sendSelf/recvSelf round-trip DM+GA via FE_Datastore
     tcl: WAIVED(uniaxialMaterial LadrunoRebarBuckling ...; shared OpenSeesUniaxialMaterialCommands registry serves Tcl + Python, plus classic-Tcl TclModelBuilderUniaxialMaterialCommand dispatch; verified via the Zone-A pytest battery)
     core_files:
       - SRC/classTags.h
@@ -400,8 +400,7 @@ features:
       engineering strain on a generic wrapped bar (RS works in log strain);
       generic onset backbone via a committed-clone probe. Both laws (monotonic)
       shipped: -model dm + -model ga (Gomes-Appleton; knobs -reduction/-fsufrac,
-      no -fy; hybrid analytic tangent). Deferred: DM cyclic re-straightening
-      branch (B4), composition (B6), send/recv round-trip (B7). Plan/ADR:
+      no -fy; hybrid analytic tangent). Deferred: DM cyclic re-straightening branch (B4). Plan/ADR:
       Ladruno_implementation/14_ladruno_rebar_buckling_adr.md.
 
   # --- worked examples shipped with the scaffold (existing elements, no new C++) ---
