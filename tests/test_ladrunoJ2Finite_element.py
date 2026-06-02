@@ -34,6 +34,7 @@ from _testbed import ops
 from _testbed.roundtrip import database_roundtrip
 import ladrunoj2_reference as lr
 import ladrunoj2_finite_native_reference as nat
+import ladrunoj2_finite_implex_reference as fx
 
 pytestmark = [pytest.mark.zone_a]
 
@@ -77,6 +78,12 @@ def _mat_small(tag):    # small-strain LadrunoJ2 (for the -geom linear reduction
     ops.nDMaterial("LadrunoJ2", tag, _K, _G, "-iso", "voce",
                    _ISO["sig0"], _ISO["Qinf"], _ISO["bIso"], _ISO["Hiso"],
                    "-kin", len(_KIN["C"]), *_kin_flat())
+
+
+def _mat_native_implex(tag):   # finite-strain native J2 with the IMPL-EX reporting path
+    ops.nDMaterial("LadrunoJ2Finite", tag, _K, _G, "-iso", "voce",
+                   _ISO["sig0"], _ISO["Qinf"], _ISO["bIso"], _ISO["Hiso"],
+                   "-kin", len(_KIN["C"]), *_kin_flat(), "-implex")
 
 
 def _build(mat_fn, geom="finite"):
@@ -245,5 +252,57 @@ def test_native_finite_database_roundtrip():
 
     def build():
         assert _solve_to(Fbar, _mat_native, "finite") == 0
+
+    database_roundtrip(build, probe_nodes=[7], ndf=3)
+
+
+# =========================================================================== #
+#  7. IMPL-EX (`-implex`): the EXPLICIT (Δγ-extrapolation) reporting path,      #
+#     driven through the real LadrunoBrick -geom finite element along the SAME  #
+#     rotated-plastic path as test 2, must match the IMPL-EX numpy oracle       #
+#     (ImplexNativeFiniteJ2) step for step — proving the element surfaces the    #
+#     frozen-multiplier / co-rotated-flow-direction explicit stress (and that    #
+#     the implicit return still commits the true history underneath).           #
+# =========================================================================== #
+def test_implex_finite_element_matches_oracle():
+    Ffin = _rotz(0.5) @ np.array([[1.18, 0.04, 0.0], [0.0, 0.93, 0.0], [0.0, 0.0, 0.95]])
+    N = 6
+    _build(_mat_native_implex, "finite")
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    for tag, (x, y, z) in _NODES.items():
+        d = (Ffin - _I) @ np.array([x, y, z])
+        base = (tag - 1) * 3
+        for j in range(3):
+            ops.sp(tag, j + 1, float(d[j]))
+    _setup_static()
+    ops.integrator("LoadControl", 1.0 / N)
+    ops.analysis("Static")
+
+    m = fx.ImplexNativeFiniteJ2(_params())
+    saw = False
+    for k in range(1, N + 1):
+        assert ops.analyze(1) == 0, f"IMPL-EX finite solve failed at step {k}"
+        Fk = _I + (k / N) * (Ffin - _I)                  # affine ⇒ F_k at every GP
+        sig = m.setTrialF(Fk); m.commit()                # implex (explicit) Cauchy
+        ref = np.array([sig[0, 0], sig[1, 1], sig[2, 2], sig[0, 1], sig[1, 2], sig[0, 2]])
+        s = np.array(ops.eleResponse(1, "stresses"), dtype=float).reshape(8, 6)[0]
+        tol = 1.0e-6 * max(np.abs(ref).max(), 1.0)
+        assert np.allclose(s, ref, rtol=1.0e-6, atol=tol), (
+            f"IMPL-EX finite element GP Cauchy != implex oracle at step {k}: {s} vs {ref}")
+        saw = saw or m._plastic
+    assert saw, "IMPL-EX rotating plastic path never yielded"
+
+
+# =========================================================================== #
+#  8. IMPL-EX SERIALIZATION: a committed plastic finite state with -implex must  #
+#     survive sendSelf/recvSelf + broker — exercises the EXTRA implex state      #
+#     (Δγ_n, N_n) added to the data vector. Skips if no database support.       #
+# =========================================================================== #
+def test_implex_finite_database_roundtrip():
+    Fbar = [[1.15, 0.02, 0.01], [0.02, 0.92, 0.01], [0.01, 0.01, 0.94]]
+
+    def build():
+        assert _solve_to(Fbar, _mat_native_implex, "finite") == 0
 
     database_roundtrip(build, probe_nodes=[7], ndf=3)
