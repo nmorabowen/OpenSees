@@ -388,3 +388,37 @@ The "kernel split for finite-strain reuse" decision is now realized.
     (combined hardening), uniaxial homogeneous finite stretch into plasticity matching
     the numpy oracle, rigid-rotation stress-free, reduce-to-small-strain.
   - `LadrunoJ2.cpp` g++ `-fsyntax-only` against the real OpenSees headers: clean.
+  - **Built CI (Zone-A Ubuntu) GREEN**: the element acceptance ran on a real build —
+    195 passed / 1 xfailed; `test_finite_j2_consistent_tangent_matches_fd`,
+    `…_uniaxial_patch_matches_oracle`, `…_rigid_rotation_is_stress_free`,
+    `…_reduces_to_small_strain` all PASS.
+
+### Adversarial review + hardening (2026-06-02, PR #97)
+
+A 7-dimension multi-agent adversarial review (33 agents) + per-finding skeptic
+verification was run. **No correctness bugs**: the consistent tangent was
+independently re-derived as exact, the N=0 reduction to `J2Plasticity` confirmed
+term-by-term, the kernel extraction confirmed bit-faithful vs `origin/ladruno`, and
+the §14.11 backstress-non-co-rotation confirmed a genuine framework boundary (not a
+fixable wiring bug). 18 findings, all test-coverage or defensive-robustness. Acted on:
+- **det F ≤ 0 guard** added early in `LogStrainNDMaterial::setTrialF` (a negative
+  Jacobian would otherwise give sign-flipped σ=τ/J and a non-SPD Bᵉᵗʳ whose ½ln is
+  NaN; the element treats the `<0` return as a step-cut). Also protects `halfLog`.
+- **Restored the `|R|=…` detail** in the no-convergence warning (the kernel now
+  surfaces the final scalar-Newton residual via an optional out-param).
+- **Independent closed-form kinematic leg** (`test_cpp_kernel_linear_kinematic_closed_form`):
+  for γ=0 the return map collapses to `Δγ = f_tr/(2G+⅔(Hiso+ΣCₖ))`, checked WITHOUT the
+  scalar-Newton oracle — validates the (2/3)C θ-term + AF backstress update for the
+  combined branch that reduce-to-J2Plasticity (isotropic-only) never touches.
+- **Non-proportional kernel path** (`chaboche_nonprop`, axial→shear): rotates the flow
+  direction off the accumulated backstress so the FD-tangent check exercises the
+  non-radial `βMpN·(Mperp⊗n)` cross-term (previously near-zero in all uniaxial paths).
+- **Multi-step committed finite element test** (`test_finite_j2_multistep_committed_matches_oracle`):
+  the only test through the COMPILED `commitState→setTrialF` chain (Bᵉ_n / εfeed_n
+  carry) across several committed plastic steps — vs the numpy direct chain.
+- **Rotating-plastic isotropic objectivity** (numpy, step-by-step) + **assert-yielded
+  guard** on the headline element tangent test (no vacuous elastic pass) +
+  **FE_Datastore serialization round-trip** of `LogStrain(LadrunoJ2)`.
+- **Documented (not changed):** the consistent-tangent denominator `h = dtheta +
+  ⅔σ_y' − n:Mp` is `>0` only for non-softening params; a user `Hiso<0`/`Qinf<0` can
+  drive `h→0` (pre-existing, inherited verbatim) — see LEDGER_quirks.

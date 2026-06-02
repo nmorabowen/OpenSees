@@ -274,16 +274,17 @@ void LadrunoJ2::integrate(void)
   Params p;
   fillParams(p, bulk, shear, sig0, Qinf, bIso, Hiso, nBack, Ckin, gKin);
 
+  double resid = 0.0;
   int status = ladruno_j2_kernel::returnMap(
       p, strain6, epsP_n, ebarP_n, alpha_n,
-      stress6, Dtan, epsP, ebarP, alpha, dGammaTrial);
+      stress6, Dtan, epsP, ebarP, alpha, dGammaTrial, &resid);
 
   if (status == ladruno_j2_kernel::STATUS_SINGULAR)
     opserr << "WARNING LadrunoJ2: singular local Jacobian (tag "
            << this->getTag() << ")\n";
   else if (status == ladruno_j2_kernel::STATUS_NO_CONVERGE)
     opserr << "WARNING LadrunoJ2: local Newton did not converge (tag "
-           << this->getTag() << ")\n";
+           << this->getTag() << ", |R|=" << resid << ")\n";
 }
 
 void LadrunoJ2::buildElasticTangent(double Kt[6][6]) const

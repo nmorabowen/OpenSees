@@ -31,6 +31,7 @@ import numpy as np
 import pytest
 
 from _testbed import ops
+from _testbed.roundtrip import database_roundtrip
 import ladrunoj2_reference as lr
 import logstrain_reference as ls
 
@@ -133,6 +134,10 @@ def test_finite_j2_consistent_tangent_matches_fd():
     u = _affine_disp(Fbar, wiggle=_WIGGLE)
 
     assert _impose_and_solve(u, "finite", _mat_combined) == 0
+    # guard against a vacuous test: the state MUST be plastic, else K==Kfd==elastic
+    # tangent and the combined-hardening elastoplastic tangent is never exercised.
+    ebar = list(ops.eleResponse(1, "material", 1, "equivalentPlasticStrain"))
+    assert ebar and ebar[0] > 0.0, "tangent test is vacuous — element did not yield"
     K = np.array(ops.eleResponse(1, "stiff"), dtype=float).reshape(24, 24)
     f0 = ops.eleForce(1)
     assert np.isfinite(K).all()
@@ -185,6 +190,64 @@ def test_finite_j2_uniaxial_patch_matches_oracle():
 
 
 # --------------------------------------------------------------------------- #
+#  MULTI-STEP committed finite-plastic path: the only test that exercises the   #
+#  COMPILED commitState -> next setTrialF round-trip (Be_n / epsFeed_n carry,    #
+#  be_from_hencky_voigt recovery) across several committed plastic steps. A      #
+#  sign/index slip that is identity on step 1 (Be_n=I) but bites on step 2+      #
+#  would pass every single-step gate but fail here.                             #
+# --------------------------------------------------------------------------- #
+def test_finite_j2_multistep_committed_matches_oracle():
+    # Symmetric F (polar R = I exactly) so combined hardening stays in the
+    # exactly-objective regime; imposed in N increments F_k = I + (k/N)(Ffinal-I)
+    # via LoadControl, committing each step. Compare every committed GP Cauchy
+    # stress to the numpy direct Box-14.4 chain stepped over the SAME F_k.
+    Ffinal = np.array([[1.18, 0.02, 0.01],
+                       [0.02, 0.93, 0.015],
+                       [0.01, 0.015, 0.95]])
+    N = 6
+    _build("finite", _mat_combined)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    I = np.eye(3)
+    for tag, (x, y, z) in _NODES.items():
+        d = (Ffinal - I) @ np.array([x, y, z])
+        base = (tag - 1) * 3
+        for j in range(3):
+            ops.sp(tag, j + 1, float(d[j]))
+    ops.constraints("Lagrange")
+    ops.numberer("Plain")
+    ops.system("FullGeneral")
+    ops.test("NormDispIncr", 1.0e-11, 50, 0)
+    ops.algorithm("Newton")
+    ops.integrator("LoadControl", 1.0 / N)
+    ops.analysis("Static")
+
+    P = lr.Params(_K, _G, **_ISO, **_KIN)
+    Be_n, Fn, ebarP, alpha = I.copy(), I.copy(), 0.0, [np.zeros((3, 3))] * P.nBack
+    saw_plastic = False
+    for k in range(1, N + 1):
+        assert ops.analyze(1) == 0, f"multistep finite solve failed at step {k}"
+        Fk = I + (k / N) * (Ffinal - I)             # affine => F_k at every GP
+        Fd = Fk @ np.linalg.inv(Fn)
+        eps_e_tr = ls.hencky_strain(Fd @ Be_n @ Fd.T)
+        res = lr.return_map(P, eps_e_tr, np.zeros((3, 3)), ebarP, alpha)
+        saw_plastic = saw_plastic or res["plastic"]
+        J = float(np.linalg.det(Fk))
+        sig = res["stress"] / J
+        sig_v = np.array([sig[0, 0], sig[1, 1], sig[2, 2],
+                          sig[0, 1], sig[1, 2], sig[2, 0]])
+        # advance the oracle's committed state exactly as the C++ adaptor does
+        Be_n = ls.iso_function(2.0 * (eps_e_tr - res["epsP"]), np.exp)
+        Fn, ebarP, alpha = Fk, res["ebarP"], res["alpha"]
+
+        s = np.array(ops.eleResponse(1, "stresses"), dtype=float).reshape(8, 6)[0]
+        tol = 1.0e-6 * max(np.abs(sig_v).max(), 1.0)
+        assert np.allclose(s, sig_v, rtol=1.0e-6, atol=tol), (
+            f"multistep finite step {k}: GP Cauchy {s} != oracle {sig_v}")
+    assert saw_plastic, "multistep finite path never yielded"
+
+
+# --------------------------------------------------------------------------- #
 #  Pure rigid rotation of the unloaded element → zero stress / force.          #
 # --------------------------------------------------------------------------- #
 def test_finite_j2_rigid_rotation_is_stress_free():
@@ -217,3 +280,22 @@ def test_finite_j2_reduces_to_small_strain():
     scale = max(np.abs(f_lin).max(), 1.0e-30)
     assert np.abs(f_fin - f_lin).max() <= 1.0e-3 * scale, (
         "finite J2 did not reduce to small-strain LadrunoJ2 at tiny strain")
+
+
+# --------------------------------------------------------------------------- #
+#  Serialization: LogStrain(LadrunoJ2) in a committed plastic finite state must #
+#  survive sendSelf/recvSelf (the new protocol state Fn/Be_n/epsFeed_n is       #
+#  serialized in LogStrainNDMaterial). This drives save->wipe->rebuild->restore #
+#  through the FE_Datastore, exercising the element + both materials' send/recv #
+#  and the broker reconstruction — guarding against a dropped or mis-sized      #
+#  field (the classic bolt-on-state regression). Skips if the build lacks DB.   #
+# --------------------------------------------------------------------------- #
+def test_finite_j2_database_roundtrip():
+    u = _affine_disp([[1.15, 0.02, 0.01],
+                      [0.02, 0.92, 0.01],
+                      [0.01, 0.01, 0.94]])
+
+    def build():
+        assert _impose_and_solve(u, "finite", _mat_combined) == 0
+
+    database_roundtrip(build, probe_nodes=[7], ndf=3)

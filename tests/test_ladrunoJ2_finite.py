@@ -160,6 +160,33 @@ def test_finite_isotropic_objectivity_is_exact():
         "isotropic finite-strain J2 is not objective (it must be)")
 
 
+def test_finite_isotropic_objectivity_through_rotating_plastic_path():
+    """Stronger than the single-Q check: accumulate plastic flow WHILE rotating,
+    step by step. For isotropic hardening the Cauchy stress along the rotating
+    path must equal the body-fixed (un-rotated) path's stress rotated by the
+    accumulated R at EVERY committed step — exact objectivity along history."""
+    rot = LogStrainAdaptor(lr.StatefulLadrunoJ2(PARAMS_ISO))   # driven by R@U
+    body = LogStrainAdaptor(lr.StatefulLadrunoJ2(PARAMS_ISO))  # driven by U only
+    saw_plastic = False
+    for k in range(1, 10):
+        s = 1.0 + 0.03 * k
+        g = 0.015 * k
+        U = np.array([[s, g, 0.0],
+                      [0.0, 1.0 / np.sqrt(s), 0.0],
+                      [0.0, 0.0, 1.0 / np.sqrt(s)]])
+        th = 0.07 * k
+        c, sn = np.cos(th), np.sin(th)
+        R = np.array([[c, -sn, 0.0], [sn, c, 0.0], [0.0, 0.0, 1.0]])
+        sig_rot, _, _ = rot.setTrialF(R @ U)
+        sig_body, _, _ = body.setTrialF(U)
+        if rot.inner._tr["plastic"]:
+            saw_plastic = True
+        assert np.allclose(sig_rot, R @ sig_body @ R.T, rtol=1e-9, atol=1e-9), (
+            f"isotropic objectivity broke at step {k} (rotating plastic path)")
+        rot.commitState(); body.commitState()
+    assert saw_plastic, "rotating path never yielded"
+
+
 @pytest.mark.xfail(strict=True, reason=(
     "Kinematic backstress does not co-rotate in the v1 log-strain wrapper: the "
     "inner material stores α in a fixed frame, so a large superposed rotation is "

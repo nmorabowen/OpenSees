@@ -127,13 +127,16 @@ inline void elasticTangent(const Params& p, double Kt[6][6])
 // ===========================================================================
 enum { STATUS_OK = 0, STATUS_SINGULAR = 1, STATUS_NO_CONVERGE = 2 };
 
+// outResidual (optional): on the plastic path, receives the final |R| of the
+// scalar Newton — lets the caller reprint the original "|R|=..." diagnostic.
 inline int returnMap(const Params& p,
                      const double strain6[6],
                      const double epsP_n[6], double ebarP_n,
                      const double alpha_n[][6],
                      double stress6[6], double Dtan[6][6],
                      double epsP[6], double& ebarP,
-                     double alpha[][6], double& dGamma)
+                     double alpha[][6], double& dGamma,
+                     double* outResidual = 0)
 {
   const double G = p.G, K = p.K;
   const int nBack = p.nBack;
@@ -231,6 +234,7 @@ inline int returnMap(const Params& p,
     if (dG < 0.0) dG = 0.0;   // keep admissible
     iter++;
   }
+  if (outResidual) *outResidual = fabs(R);   // final scalar-Newton residual
 
   // recompute final quantities at converged dG
   for (int k = 0; k < nBack; k++) Dk[k] = 1.0 + root23*p.gam[k]*dG;
