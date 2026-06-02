@@ -68,7 +68,7 @@ def test_constant_strain_zero_hourglass_energy(extra):
     assert ops.analyze(1) == 0
 
     Ehg = _hg()
-    assert abs(Ehg) < 1e-9, f"{form}: constant-strain hourglass energy {Ehg:.3e} should be ~0"
+    assert abs(Ehg) < 1e-9, f"{extra}: constant-strain hourglass energy {Ehg:.3e} should be ~0"
 
 
 # --------------------------------------------------------------------------
