@@ -596,6 +596,7 @@ initopensees(void)
 "        • LadrunoUniaxialJ2 — uniaxial Chaboche AF J2 fiber/truss\n"
 "        • Lemaitre ductile damage (-damage lemaitre, +lch, +IMPL-EX)\n"
 "        • LadrunoIMKBeam — concentrated-plasticity IMK beam hinges\n"
+"        • LadrunoRebarBuckling — Dhakal–Maekawa rebar buckling wrapper\n"
 "        • Ladruno — modular HDF5 .ladruno recorder\n"
 "\n";
         // FEATURES-END

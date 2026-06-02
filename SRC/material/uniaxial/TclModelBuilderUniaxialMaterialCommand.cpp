@@ -84,6 +84,7 @@ extern void *OPS_BackboneMaterial(void);
 extern void *OPS_FatigueMaterial(void);
 extern void *OPS_HardeningMaterial(void);
 extern void *OPS_LadrunoUniaxialJ2(void);   // Ladruno
+extern void *OPS_LadrunoRebarBuckling(void);   // Ladruno
 extern void *OPS_FlagShapeMaterial(void);
 extern void *OPS_UniaxialJ2Plasticity(void);
 extern void *OPS_SmoothPSConcrete(void);
@@ -1017,6 +1018,14 @@ TclModelBuilderUniaxialMaterialCommand (ClientData clientData, Tcl_Interp *inter
     if (strcmp(argv[1],"LadrunoUniaxialJ2") == 0) {   // Ladruno
 
       void *theMat = OPS_LadrunoUniaxialJ2();
+      if (theMat != 0)
+	theMaterial = (UniaxialMaterial *)theMat;
+      else
+	return TCL_ERROR;
+    }
+    if (strcmp(argv[1],"LadrunoRebarBuckling") == 0) {   // Ladruno
+
+      void *theMat = OPS_LadrunoRebarBuckling();
       if (theMat != 0)
 	theMaterial = (UniaxialMaterial *)theMat;
       else

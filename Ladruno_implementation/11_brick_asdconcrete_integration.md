@@ -18,10 +18,11 @@ what the element owes the material. This records what we verified in the source
 and the resulting work list. Companion of [[10_ladruno_j2_plasticity]] (the
 non-softening flagship material).
 
-> Status: **(a)+(b)+(c) SHIPPED.** (b) single-point material-eval fix = PR #94;
-> (a) Tier-A damage-scaled `Kstab` + (c) Zone-A validation
-> (`tests/test_ladrunoBrick_asdconcrete.py`) = this branch. Remaining: the meshed
-> Zone-B cases (notched 3-pt bend convergence + hourglass-band monitor). See §6.
+> Status: **(a)+(b)+(c) SHIPPED, incl. the Zone-B meshed cases.** (b) single-point
+> material-eval fix = PR #94; (a) Tier-A damage-scaled `Kstab` + §H.9 + (c) Zone-A
+> validation (`tests/test_ladrunoBrick_asdconcrete.py`) = PR #101. The gmsh-meshed
+> SENB Zone-B cases (notched 3-pt-bend mesh-objectivity + hourglass-band monitor,
+> `tests/test_ladrunoBrick_asdconcrete_bend.py`) = this branch. See §6.
 
 ## TL;DR
 
@@ -240,12 +241,20 @@ The hourglass-energy / viscous-dissipation report (PR #86, `"hourglassEnergy"` /
   (2) **Tier-A** — for an identical prescribed deformation the stabilization-energy
   ratio between an ASDConcrete3D element and an elastic one (same E,ν) equals
   **exactly** `max(floor, 1−max(dₜ,d_c))` at every step, from intact (≈1) down to
-  the floor (0.01) — never zero. **Remaining for Zone-B (needs apeGmsh meshing):**
-  the **notched 3-point bend** with 2–3 mesh refinements (load–CMOD convergence)
-  and the **hourglass-energy-fraction-in-a-cracked-band** monitor (`<5–10%` of
-  internal energy) — the multi-element localization study was too solver-fragile
-  to ship as a deterministic Zone-A test (snap-back / non-convergence at fine
-  meshes), so it is deferred to a meshed Zone-B case.
+  the floor (0.01) — never zero.
+- ~~**Zone-B meshed cases**~~ **DONE — `tests/test_ladrunoBrick_asdconcrete_bend.py`**
+  (gmsh-meshed single-edge-notched 3-point bend; raw gmsh, not apeGmsh; the
+  `conftest` `zone_b` gate was relaxed to require only `gmsh`). (1) **fracture-energy
+  / mesh objectivity** — the SENB beam cracked at two mesh densities (2× refine,
+  436 vs 1744 hexes) gives a mesh-objective response: load at a common deflection
+  agrees to **~1%** and dissipated energy to **~3%** (a broken `lch` handshake would
+  make the fine mesh brittle and the curves diverge). (2) **Tier-A hourglass-energy
+  fraction** — the same beam with `eas` keeps the damage-scaled stabilization energy
+  at **~3.7% < 10%** of internal energy through full crack formation (tip damage
+  >0.95), the §5 acceptance. Runs ~2.4 min (nightly). Practical learnings: a
+  load-point displacement-control solve through softening needs **adaptive
+  step-cutting** + a **gentle (ductile) regularized backbone** to avoid structural
+  snap-back; IMPLEX on; gmsh hex node order == OpenSees Brick order (direct map).
 
 Cross-element follow-up: ~~override `getCharacteristicLength()` in BezierTri6 /
 BezierTet10~~ **DONE on ladruno** (§2) — both now supply a corner-node element
