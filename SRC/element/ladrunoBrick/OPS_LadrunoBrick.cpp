@@ -131,12 +131,9 @@ void *OPS_LadrunoBrick()
         geomMethodID = SolidTransformation::METHOD_LINEAR;
       else if (strcmp(g, "finite") == 0)
         geomMethodID = SolidTransformation::METHOD_FINITE;
-      else if (strcmp(g, "corot") == 0 || strcmp(g, "corotational") == 0) {
-        opserr << "WARNING LadrunoBrick " << idata[0]
-               << ": -geom 'corot' is reserved and not yet implemented (-> v2; "
-                  "use linear|finite)\n";
-        return 0;
-      } else {
+      else if (strcmp(g, "corot") == 0 || strcmp(g, "corotational") == 0)
+        geomMethodID = SolidTransformation::METHOD_COROT;
+      else {
         opserr << "WARNING unknown -geom '" << g << "' for LadrunoBrick "
                << idata[0] << " (use linear|corot|finite)\n";
         return 0;
@@ -203,6 +200,20 @@ void *OPS_LadrunoBrick()
                 "assembly does not apply element damping); reserved follow-up\n";
       return 0;
     }
+  }
+
+  // -geom corot (v2): EICR small-strain corotational. v2 ships std + bbar only.
+  // uri/eas under corot are a deferred follow-up (ADR 10 §6/§7): EAS condensation
+  // in the corotated frame is unvalidated, and uri's PHYSICAL-hourglass path does
+  // not route through the globalize seams at all (frame-inconsistent). Reject the
+  // unsupported combos at parse time, mirroring the -geom finite guard.  // Ladruno (sweep #1)
+  if (geomMethodID == SolidTransformation::METHOD_COROT &&
+      formulation != LadrunoBrick::Formulation::STD &&
+      formulation != LadrunoBrick::Formulation::BBAR) {
+    opserr << "WARNING LadrunoBrick " << idata[0]
+           << ": -geom corot currently supports only -formulation std|bbar "
+              "(uri/eas under corot are a deferred follow-up)\n";
+    return 0;
   }
 
   return new LadrunoBrick(idata[0],

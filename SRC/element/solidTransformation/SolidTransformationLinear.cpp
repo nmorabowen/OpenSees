@@ -11,6 +11,7 @@
 
 #include <SolidTransformationLinear.h>
 #include <SolidTransformationFinite.h>   // for the create() factory (v3)
+#include <SolidTransformationCorot.h>    // for the create() factory (v2)
 #include <Matrix.h>
 #include <Vector.h>
 
@@ -91,7 +92,8 @@ SolidTransformation::create(int methodID)
     return new SolidTransformationLinear();
   case METHOD_FINITE:
     return new SolidTransformationFinite();
-  // case METHOD_COROT:  return new SolidTransformationCorot();   // v2
+  case METHOD_COROT:
+    return new SolidTransformationCorot();
   default:
     return 0;
   }
