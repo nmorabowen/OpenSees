@@ -26,9 +26,13 @@ def pytest_collection_modifyitems(config, items):
                 pytest.mark.skip(reason="test marked both zone_a and zone_b — pick one")
             )
             continue
-        if "zone_b" in zones and not (_has("gmsh") and _has("apeGmsh")):
+        # zone_b needs meshing (gmsh). A case that additionally needs apeGmsh /
+        # LS-DYNA / etc. guards itself with pytest.importorskip — we only gate on
+        # gmsh here so a gmsh-only case (e.g. the notched-bend crack-band study)
+        # runs on a box that has gmsh but not the apeGmsh wrapper.
+        if "zone_b" in zones and not _has("gmsh"):
             item.add_marker(
-                pytest.mark.skip(reason="zone_b deps (gmsh/apeGmsh) not installed")
+                pytest.mark.skip(reason="zone_b meshing dep (gmsh) not installed")
             )
 
 
