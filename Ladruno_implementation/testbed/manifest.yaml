@@ -582,6 +582,39 @@ features:
       slice of the RC-3D plan; the embedded element (33005) consumes it. Plan/ADR:
       Ladruno_implementation/20_ladruno_embedded_reinforcement_adr.md.
 
+  - feature: LadrunoEmbeddedRebar
+    classtag: 33005          # ELE_TAG (element) family; after LadrunoBrick=33002, IMKBeam=33003, IMKBeam2d=33004
+    tag_symbol: ELE_TAG_LadrunoEmbeddedRebar
+    pr: 170
+    feature_class: element
+    required_tiers: [T0, T1]
+    pytest: tests/test_ladrunoEmbeddedRebar_element.py   # perfect-bond axial spring (k*u); anisotropic transverse (kt not k); bond-slip axial follows tau(s); partition-of-unity force split to hosts by N_i + equilibrium; response probe
+    tcl: WAIVED(element LadrunoEmbeddedRebar ...; shared OpenSeesElementCommands functionMap serves Tcl + Python; verified via the Zone-A pytest battery)
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesElementCommands.cpp
+      - SRC/element/CMakeLists.txt
+      - SRC/element/ladrunoEmbeddedRebar/CMakeLists.txt
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      Embedded-reinforcement COUPLING element (ADR 20, v2 slice 2): ties one rebar
+      node to a host solid element's nodes via precomputed shape-function weights
+      N_i, so a rebar mesh embeds in a NON-matching concrete mesh. Pure coupling
+      (bond) -- the rebar's own axial stiffness lives on a separate corotTruss/beam
+      along the bar. Gap g = u_rebar - sum_i N_i u_host_i; decomposed along the bar
+      axis dir into axial slip s and transverse g_t; traction t = F_axial(s)*dir +
+      kt*g_t with F_axial = perfect (kAxial*s) or bond (LadrunoBondSlip stress *
+      bondScale, bondScale=perimeter*L_trib). Resisting force P = B^T t, tangent
+      K = B^T D B, D = (dF/ds) dir(x)dir + kt (I - dir(x)dir) (anisotropic, D6).
+      MODE P (penalty) -- implicit + explicit (adds stiffness only). MODE T
+      (transformation/DOF-elim) DEFERRED: needs a multi-retained constraint the
+      stock single-retained MP_Constraint cannot express. Host-agnostic (weights
+      precomputed by the generator); rebar element type (truss|beam, D6) is the
+      user's choice on the rebar mesh. Plan/ADR:
+      Ladruno_implementation/20_ladruno_embedded_reinforcement_adr.md.
+
   # --- worked examples shipped with the scaffold (existing elements, no new C++) ---
 
   - feature: forceBeamColumn_cantilever     # T1 worked example (existing element)

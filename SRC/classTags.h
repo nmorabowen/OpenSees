@@ -918,6 +918,7 @@
 #define ELE_TAG_LadrunoBrick               33002 // N. Mora-Bowen (Ladruno) — unified 8-node hex, -formulation {std|bbar|uri|ssp}; ladruno private band >=33000 (see Ladruno_implementation/09_ladruno_brick.md)
 #define ELE_TAG_LadrunoIMKBeam             33003 // N. Mora-Bowen (Ladruno) — 3D concentrated-plasticity IMK beam macro (uncoupled moment-rotation hinges); ladruno private band >=33000 (see Ladruno_implementation/14_ladruno_imk_beam.md)
 #define ELE_TAG_LadrunoIMKBeam2d           33004 // N. Mora-Bowen (Ladruno) — 2D concentrated-plasticity IMK beam macro (planar counterpart of 33003; shared hinge kernel); ladruno private band >=33000 (see Ladruno_implementation/14_ladruno_imk_beam.md)
+#define ELE_TAG_LadrunoEmbeddedRebar       33005 // N. Mora-Bowen (Ladruno) — embedded-reinforcement coupling element (rebar node <-> host solid via shape-fn weights; Mode P penalty + bond-slip); ladruno private band >=33000 (see Ladruno_implementation/20_ladruno_embedded_reinforcement_adr.md)
 
 
 #define FRN_TAG_Coulomb            1
