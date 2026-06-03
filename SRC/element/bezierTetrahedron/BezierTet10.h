@@ -71,8 +71,10 @@
 //   builds F = I + Σ uₐ⊗∂Nₐ/∂X from the reference Bernstein gradients and drives
 //   a FiniteStrainNDMaterial (e.g. nDMaterial LogStrain) via setTrialF(F),
 //   assembling ∫Bᵀσ dv (Cauchy σ) + the full a_ijkl = c_ijkl − σ_il δ_jk tangent.
-//   finite is STD only — bbar+finite (F-bar) is a step-2 follow-up and is
-//   rejected at parse time; pressure is also unsupported under finite in v1.
+//   -geom finite -bbar = F-bar (dSNPO §15.1): drives the material with
+//   F̄ = (J₀/J)^(1/3) F (J₀ at the centroid) to cure near-incompressible
+//   volumetric locking; its tangent is GENERALLY UNSYMMETRIC (use FullGeneral).
+//   pressure is unsupported under finite in v1.
 //
 //   Mass: default is the all-positive lumped mass ρVe/10 (Kadapa Eq. 57) for
 //   explicit dynamics; pass -cMass for the consistent mass (implicit/eigen).
@@ -252,7 +254,20 @@ class BezierTet10 : public Element
     // getTangent is LOSSY in (k,l); see FiniteStrainNDMaterial.h). NO body force /
     // pressure / Q (applied in the global frame in getResistingForce). One helper
     // feeds both force and tangent so f/K share a single Gauss pass.
+    //
+    // bbar + finite = F-bar (dSNPO §15.1): updateFinite drives the material with
+    // F̄ = (J₀/J)^(1/3) F so every GP shares the centroid dilatation J₀ (the
+    // volumetric-locking cure); the residual is unchanged (eq 15.9 — only σ̄
+    // changes), and the tangent gains the eq 15.10 coupling ∫ Gᵀ q (G₀−G) dv with
+    // q_ij = (1/3) a_ijpp − (2/3) σ̄_ij (eq 15.11, GENERALLY UNSYMMETRIC).
     void formResidAndTangentFinite(int tangFlag, Vector &fInt, Matrix *K);
+
+    // Ladruno: F-bar centroid data (bbar + finite). Returns J₀ = det F₀, F₀ the
+    // deformation gradient at the tet centroid (barycentric L=(¼,¼,¼); dSNPO
+    // eq 15.5). If G0 != 0, also fills the centroid spatial-gradient operator
+    // G0[k][b] = ∂N_b/∂x_k|_centroid (from F₀⁻¹) for the eq 15.10 coupling.
+    // Returns 0.0 on a degenerate centroid Jacobian so the caller's J₀≤0 guard fires.
+    double centroidFbar(double (*G0)[NEN] = 0) const;
 
     // ─── Static Quadrature Data ───────────────────────────────
     // 4-point rule (degree 2) for stiffness / force / B-bar average.

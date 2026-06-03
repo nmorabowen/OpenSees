@@ -55,8 +55,9 @@
 //                         SolidTransformation layer; finite = large-strain
 //                         updated-Lagrangian, requires a finite-strain material
 //                         driven by setTrialF(F), e.g. nDMaterial LogStrain).
-//                         finite is STD only — bbar+finite (F-bar) and pressure
-//                         are step-2 / unsupported and rejected at parse time.
+//                         -geom finite -bbar = F-bar (near-incompressible cure;
+//                         GENERALLY UNSYMMETRIC tangent → use system FullGeneral).
+//                         pressure is unsupported under finite (rejected at parse).
 //
 // Example (Python):
 //   ops.nDMaterial('ElasticIsotropic', 1, 1000.0, 0.3)
@@ -191,17 +192,11 @@ void *OPS_BezierTet10()
         return 0;
     }
 
-    // Ladruno: -geom finite (updated-Lagrangian) guards. finite is STD only —
-    // bbar+finite is F-bar (a step-2 follow-up); and the +z pressure hack is
-    // unvalidated under finite. It requires a finite-strain material driven by
-    // setTrialF(F) (e.g. nDMaterial LogStrain). Mirrors OPS_LadrunoBrick.cpp.
+    // Ladruno: -geom finite (updated-Lagrangian) guards. std (plain F) or bbar
+    // (F-bar, dSNPO §15.1) are both valid; the +z pressure hack is unvalidated
+    // under finite. It requires a finite-strain material driven by setTrialF(F)
+    // (e.g. nDMaterial LogStrain). Mirrors OPS_LadrunoBrick.cpp.
     if (geomMethodID == SolidTransformation::METHOD_FINITE) {
-        if (useBbar) {
-            opserr << "WARNING BezierTet10 " << tag
-                   << ": -geom finite is std only — bbar+finite (F-bar) is a "
-                      "step-2 follow-up; drop -bbar (use plain F)\n";
-            return 0;
-        }
         if (pressure != 0.0) {
             opserr << "WARNING BezierTet10 " << tag
                    << ": -geom finite does not support -pressure in v1\n";
@@ -213,6 +208,20 @@ void *OPS_BezierTet10()
                       "by setTrialF(F) (e.g. nDMaterial LogStrain); material "
                    << matTag << " is not one\n";
             return 0;
+        }
+        // F-bar (bbar + finite) has a GENERALLY UNSYMMETRIC tangent (dSNPO eq
+        // 15.10); a symmetric solver silently drops the coupling and breaks Newton.
+        // Advise once per process (not per element) to keep large meshes quiet.
+        if (useBbar) {
+            static bool fbarSolverAdvised = false;
+            if (!fbarSolverAdvised) {
+                fbarSolverAdvised = true;
+                opserr << "BezierTet10: -geom finite -bbar (F-bar) has a GENERALLY "
+                          "UNSYMMETRIC tangent (dSNPO eq 15.10) — use an unsymmetric "
+                          "solver (e.g. 'system FullGeneral', 'UmfPack', or "
+                          "'SparseGEN'); a symmetric system (BandSPD/ProfileSPD) drops "
+                          "the coupling term and may not converge.\n";
+            }
         }
     }
 

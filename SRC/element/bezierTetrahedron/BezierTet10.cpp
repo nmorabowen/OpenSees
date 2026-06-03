@@ -844,9 +844,53 @@ double BezierTet10::deformationGradient(const double dN_dX[3][NEN],
          + F[2]*(F[3]*F[7]-F[4]*F[6]);
 }
 
+// F-bar centroid data (bbar + finite). F₀ at the TET centroid — barycentric
+// L=(¼,¼,¼), NOT the brick's isoparametric (0,0,0). Returns J₀ = det F₀; fills
+// G0[k][b] = ∂N_b/∂x_k|_centroid (from F₀⁻¹) when requested. dSNPO eq 15.5.  // Ladruno
+double BezierTet10::centroidFbar(double (*G0)[NEN]) const
+{
+    double dN0[3][NEN];
+    shapeDerivatives(0.25, 0.25, 0.25, dN0);     // tet centroid
+
+    double J0m[3][3];
+    double dN0_dX[3][NEN];                        // reference ∂Nₐ/∂X at the centroid
+    double detJ0 = computeJacobian(dN0, J0m, dN0_dX);
+    if (fabs(detJ0) <= 0.0)
+        return 0.0;                               // degenerate; caller's J₀≤0 guard fires
+
+    double F0[9];
+    double J0 = deformationGradient(dN0_dX, F0);
+
+    if (G0 != 0) {
+        double Fi[9];
+        invert3x3(F0, Fi);                        // F₀⁻¹ (row-major)
+        for (int b = 0; b < NEN; b++)
+            for (int k = 0; k < 3; k++) {
+                double s = 0.0;
+                for (int m = 0; m < 3; m++)
+                    s += dN0_dX[m][b] * Fi[3*m + k];   // ∂N_b/∂x_k at the centroid
+                G0[k][b] = s;
+            }
+    }
+    return J0;
+}
+
 int BezierTet10::updateFinite(void)
 {
     static Matrix Fm(3, 3);
+
+    // bbar + finite = F-bar: every GP is driven by F̄ = (J₀/J)^(1/3) F so they
+    // share the centroid dilatation J₀ (volumetric-locking cure). std uses F.
+    const bool useFbar = useBbar;
+    double J0 = 1.0;
+    if (useFbar) {
+        J0 = this->centroidFbar();               // det F₀ at the centroid
+        if (J0 <= 0.0) {
+            opserr << "BezierTet10::updateFinite - non-positive centroid det F0 = "
+                   << J0 << " (element " << this->getTag() << ", F-bar)\n";
+            return -1;
+        }
+    }
 
     for (int gp = 0; gp < NGAUSS; gp++) {
         double dN[3][NEN];
@@ -867,6 +911,10 @@ int BezierTet10::updateFinite(void)
             opserr << "BezierTet10::updateFinite - non-positive det F = " << Jdet
                    << " at GP " << gp << " (element " << this->getTag() << ")\n";
             return -1;
+        }
+        if (useFbar) {
+            double s = pow(J0 / Jdet, 1.0 / 3.0);      // F̄ = (J₀/J)^(1/3) F (det F̄ = J₀ > 0)
+            for (int n = 0; n < 9; n++) F[n] *= s;
         }
         for (int r = 0; r < 3; r++)
             for (int c = 0; c < 3; c++)
@@ -894,6 +942,15 @@ void BezierTet10::formResidAndTangentFinite(int tangFlag, Vector &fInt, Matrix *
     fInt.Zero();
     if (tangFlag && K != 0)
         K->Zero();
+
+    // F-bar (bbar + finite): the eq 15.10 tangent gains a (generally UNSYMMETRIC)
+    // coupling to the element-centroid gradient operator G₀. The residual is
+    // unchanged — F-bar enters it only through σ̄ (set in updateFinite, eq 15.9).
+    // G₀ is element-wide; compute it once.  // Ladruno
+    const bool useFbar = useBbar;
+    double G0[3][NEN];
+    if (useFbar && tangFlag && K != 0)
+        this->centroidFbar(G0);
 
     for (int gp = 0; gp < NGAUSS; gp++) {
         double dN[3][NEN];
@@ -987,6 +1044,37 @@ void BezierTet10::formResidAndTangentFinite(int tangFlag, Vector &fInt, Matrix *
                                     s += g[j][a] * a4[i][j][k][l] * g[l][bn];
                             (*K)(3*a + i, 3*bn + k) += s * dv;
                         }
+
+            // F-bar additional (generally UNSYMMETRIC) stiffness, dSNPO eq 15.10:
+            //   K_{(a,i)(b,k)} += ∫ (Σ_j g[j][a] q_ij)(G₀[k][b] − g[k][b]) dv,
+            // with q the matrix form of the eq 15.11 tensor at F=F̄,
+            //   q_ij = (1/3) a_ijpp − (2/3) σ̄_ij ,
+            // using the SAME a4 = c̄ − σ̄δ modulus as the std term above (NOT the
+            // material part c̄ alone — the −(2/3)σ̄ is the spatial initial-stress
+            // part, NOT a (1/3)c shortcut). (G₀ − g) vanishes when G₀ = g,
+            // collapsing F-bar to the plain-F tangent.  // Ladruno
+            if (useFbar) {
+                double M[3][3];
+                for (int i = 0; i < 3; i++)
+                    for (int j = 0; j < 3; j++)
+                        M[i][j] = (a4[i][j][0][0] + a4[i][j][1][1] + a4[i][j][2][2]) / 3.0
+                                - (2.0 / 3.0) * sig[i][j];
+
+                double Lfac[NEN][3];             // Lfac[a][i] = Σ_j g[j][a] q_ij
+                for (int a = 0; a < NEN; a++)
+                    for (int i = 0; i < 3; i++) {
+                        double s = 0.0;
+                        for (int j = 0; j < 3; j++) s += g[j][a] * M[i][j];
+                        Lfac[a][i] = s;
+                    }
+
+                for (int a = 0; a < NEN; a++)
+                    for (int i = 0; i < 3; i++)
+                        for (int bn = 0; bn < NEN; bn++)
+                            for (int kk = 0; kk < 3; kk++)
+                                (*K)(3*a + i, 3*bn + kk)
+                                    += Lfac[a][i] * (G0[kk][bn] - g[kk][bn]) * dv;
+            }
         }
     }
 }

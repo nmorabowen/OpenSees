@@ -310,19 +310,15 @@ def test_finite_material_requires_geom_finite():
         )
 
 
-def test_finite_accepts_std_rejects_bbar():
-    # std (plain F) is accepted; bbar+finite (F-bar) is a step-2 follow-up and
-    # must be refused at parse time.
-    _nodes_only()
-    ops.element("BezierTet10", 1, *range(1, 11), 2, "-geom", "finite")
-    tags = ops.getEleTags()
-    tags = [tags] if isinstance(tags, int) else (tags or [])
-    assert 1 in tags, "-geom finite (std) should be accepted"
-
-    _nodes_only()
-    _ele_absent_after(
-        lambda: ops.element("BezierTet10", 1, *range(1, 11), 2, "-bbar", "-geom", "finite")
-    )
+def test_finite_accepts_std_and_bbar():
+    # Both std (plain F) and bbar (F-bar, shipped step 2) are valid under
+    # -geom finite. (Detailed F-bar coverage lives in test_bezierTet10_fbar.py.)
+    for extra in ([], ["-bbar"]):
+        _nodes_only()
+        ops.element("BezierTet10", 1, *range(1, 11), 2, *extra, "-geom", "finite")
+        tags = ops.getEleTags()
+        tags = [tags] if isinstance(tags, int) else (tags or [])
+        assert 1 in tags, f"-geom finite {extra} should be accepted"
 
 
 def test_finite_rejects_pressure():
