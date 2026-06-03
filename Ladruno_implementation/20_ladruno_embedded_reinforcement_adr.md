@@ -256,3 +256,39 @@ Mander), and conformal meshing already covers regular ≤8-bar members with **ze
 **Scope locked:** v1 = items 1–3 (no new C++ classes); v2 = item 4 (the two new classes).
 The embedded element ships only after the conformal path is in users' hands and a dense-cage
 case has demonstrably out-grown it.
+
+## 9. SHIPPED so far (2026-06-03) + the next refactor (own session)
+
+**Shipped & CI-green on `ladruno`:** `LadrunoBondSlip` (MAT 33002, PR #168) and
+`LadrunoEmbeddedRebar` (ELE 33005, PR #169 + test-fix #171). The element is **Mode P**
+(penalty coupling: perfect-bond-via-penalty + bond-slip); **Mode T deferred** (needs a
+multi-retained constraint the stock `MP_Constraint` can't express). Current parse:
+`element LadrunoEmbeddedRebar tag rebarNode nHost h1..hN -shape N1..NN -dir dx dy dz (-bond matTag [-bondScale bs] | -perfect kAxial) [-kt kt]`.
+
+**Next (deferred to a focused session — bigger than it looks, breaking API, CI-only build):**
+the user-supplied `-shape` weights should come from the host *object*, not be re-supplied.
+OpenSees has **no shape-fn API on `Element`** (verified) and the existing embedded elements
+hardcode host shapes per type — so the path is:
+
+- **Step 1 (parser-only, no class/vanilla change):** add a `-host eleTag` form. The PARSER
+  resolves the host's nodes via `OPS_GetDomain()->getElement(eleTag)->getExternalNodes()`
+  (the element's external-node list must be complete at CONSTRUCTION, before `setDomain`, so
+  this happens in the parser, not the element). Host must be defined before the rebar element.
+  KEEP the explicit `nHost h1..hN -shape` form too — the Zone-A unit tests need a fake host
+  (bare nodes) and arbitrary hosts need the escape hatch. `-shape` weights still user-supplied.
+- **Step 2 (the real reuse):** add `virtual int getInterpolationWeights(const Vector& xi, Vector& N)`
+  to **`Element.h`** (default `return -1`; ledger `LEDGER_vanilla_files` + `// Ladruno` marker —
+  it's a vanilla base-class edit, vtable change, recompile-all but additive). Override on the
+  fork hosts `LadrunoBrick` (shp3d trilinear) and `BezierTet10` (Bernstein). Element gains a
+  `-xi ξ...` form: with `-host`+`-xi` it queries the host for `N` (single source of truth);
+  falls back to `-shape` for hosts that return -1.
+- The **inverse-map** (global bar point → ξ) stays in the apeGmsh generator regardless — that
+  is the irreducible point-location step; the only question is whether it emits `N` or `ξ`.
+
+**CI/test discipline learned (apply next session):** ladruno auto-merge gates on the
+classTag+manifest check but **NOT** on Zone-A pytest — a red test CAN land (it did, #169),
+so watch the build and fix-forward. Run `ci/check_classtags.py` + `ci/check_manifest.py`
+locally (pure-Python) before pushing — a new classTag needs a `testbed/manifest.yaml` row or
+the fast gate fails. Element coupling tests must leave **≥1 free DOF** (don't fix-host AND
+sp-all-rebar — zero free DOFs aborts the linear solver, exit 255). New C++ verifies via the
+CI Zone-A build (the worktree isn't locally build-configured).
