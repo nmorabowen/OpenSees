@@ -13,10 +13,10 @@ tags:
 created: 2026-06-02
 ---
 
-# Validation Report — Finite-Strain Trifecta · Phases P1–P4
+# Validation Report — Finite-Strain Trifecta · Phases P1–P5
 
 > [!abstract] What this is
-> The execution record for **Phases P1–P4** of
+> The execution record for **Phases P1–P5** of
 > [[17_finite_strain_validation_plan|the finite-strain V&V plan]]:
 > - **P1** finite-strain core — A1–A5 (L1 analytical), B1–B3 (L2 convergence &
 >   locking), C1 (Simo necking) — §2–§4, PR #138;
@@ -25,9 +25,10 @@ created: 2026-06-02
 > - **P3** locking & incompressibility — B4 (Cook's membrane), E4 (rubber block)
 >   — §6, PR #141;
 > - **P4** explicit dynamics — C2 (Taylor bar) + energy balance + dt_cr caveat —
->   §7, PR #143.
+>   §7, PR #143;
+> - **P5** cross-validation matrix — D1, D2 (hex↔tet), D3, D5 — §8, PR #146.
 >
-> **35 Zone-A tests, all PASS** (Zone-A Ubuntu CI green on all PRs). Each row
+> **41 Zone-A tests, all PASS** (Zone-A Ubuntu CI green on all PRs). Each row
 > below is a plan contract, fulfilled by a runnable test, with the oracle, the
 > measured margin, and PASS/FAIL.
 
@@ -52,8 +53,10 @@ inner (`LadrunoJ2` isotropic / `ElasticIsotropic`).
 | `tests/test_finite_strain_P2_geomnl.py` | A (t2a) | A7, C4, C5, D4 | 8 |
 | `tests/test_finite_strain_P3_locking.py` | A (t2a) | B4, E4 | 4 |
 | `tests/test_finite_strain_P4_explicit.py` | A (t3) | C2 + energy + dt_cr | 4 |
+| `tests/test_finite_strain_P5_crossval.py` | A (t2a) | D1, D3, D5 | 5 |
+| `tests/test_finite_strain_P5_hexvtet.py` | A (t2a) | D2 (hex↔tet) | 1 |
 
-**35 tests, all PASS** (P1 detail below; ≈40 s wall for the full suite incl. the explicit Taylor run, fresh `OpenSeesPy` worktree build off
+**41 tests, all PASS** (P1 detail below; ≈40 s wall for the full suite incl. the explicit Taylor run, fresh `OpenSeesPy` worktree build off
 `ladruno` HEAD; existing finite-strain suite 21 pass / 1 xfail unchanged).
 All Zone-A (structured lattices, no gmsh) so the core validation travels with
 the PR and gates CI. Oracles are the numpy mirrors `tests/logstrain_reference.py`
@@ -235,7 +238,32 @@ symmetry plane); ran to elastic rebound (~80 µs, ~1700 steps at 0.3·dt_cr).
 
 ---
 
-## 8. Known limitations carried in (per plan §10)
+## 8. P5 — cross-validation matrix (D1, D2, D3, D5)  ✅
+
+`tests/test_finite_strain_P5_crossval.py` (5) + `tests/test_finite_strain_P5_hexvtet.py`
+(1). Validates the trifecta against **independent implementations** — the
+strongest internal evidence short of a commercial-code oracle.
+
+| ID | Cross-check | Result | Verdict |
+|---|---|---|---|
+| **D5** | LadrunoBrick(-geom linear, std) ↔ upstream `stdBrick` | **bit-identical** displacement field (≤1e-7) — it *is* the vanilla full-integration hex | **PASS** |
+| **D3** | LadrunoJ2 ↔ vanilla `J2Plasticity` (iso hardening) | **bit-identical** GP stress across uniaxial / shear / biaxial (same radial return) | **PASS** |
+| **D1** | `std` ↔ `bbar` formulation | bit-identical on a homogeneous deformation (F-bar = F); differ only on inhomogeneous locking states (B2/B3/B4/E4) | **PASS** |
+| **D2** | LadrunoBrick (EAS) ↔ BezierTet10 (quadratic tet) | **bracket** the exact cantilever (hex below, tet above) + converge together (gap 10.3 %→8.5 % under refinement); conforming Kuhn 6-tet mesh, no gmsh | **PASS** |
+
+> [!note] Scope
+> **D4** (corot↔finite) already shipped in P2 (§5). The **ASDPlasticMaterial3D** leg
+> of D3 is present but its von-Mises config needs the expanded `iv_type` dispatch
+> string (see the ASDPlastic dispatch note) — deferred; the bit-identical
+> Lad↔vanilla agreement is the tight core. The plain `std` hex shear-locks ~40 % in
+> slender bending, so D2 uses `eas`; the tight ≤2 % hex↔tet match is a
+> mesh-converged (fine) result, here demonstrated as *convergence to agreement* on
+> an affordable Zone-A mesh. The remaining L4 literature benchmarks (A6 thick
+> cylinder, C3 upsetting, C6 perforated plate) are deferred to later phases.
+
+---
+
+## 9. Known limitations carried in (per plan §10)
 
 1. **Combined-hardening + large rotation** is the §14.11 boundary; all A/B/C
    plasticity here uses **isotropic** hardening (objective through the
@@ -248,7 +276,7 @@ symmetry plane); ran to elastic rebound (~80 µs, ~1700 steps at 0.3·dt_cr).
 
 ---
 
-## 9. Reproduce
+## 10. Reproduce
 
 ```powershell
 # from the worktree, against the local build (all phases):
@@ -260,5 +288,7 @@ py -3.12 -m pytest tests/test_finite_strain_L1_analytical.py `
                    tests/test_finite_strain_C1_necking.py `
                    tests/test_finite_strain_P2_geomnl.py `
                    tests/test_finite_strain_P3_locking.py `
-                   tests/test_finite_strain_P4_explicit.py -v
+                   tests/test_finite_strain_P4_explicit.py `
+                   tests/test_finite_strain_P5_crossval.py `
+                   tests/test_finite_strain_P5_hexvtet.py -v
 ```

@@ -76,6 +76,7 @@
 #include <Renderer.h>
 #include <SolidTransformation.h>         // Ladruno — geometry-method layer
 #include <SolidTransformationLinear.h>   // Ladruno — default/fallback (identity)
+#include <FiniteStrainNDMaterial.h>      // Ladruno — -geom finite: setTrialF(F) seam
 
 #include <math.h>
 #include <string.h>
@@ -141,12 +142,12 @@ BezierTet10::BezierTet10(int tag,
                          NDMaterial &m, double r,
                          double bx, double by, double bz,
                          bool bbar, bool cmass, double press,
-                         int geomMethodID)
+                         int geomMethodID, int fbar)
   : Element(tag, ELE_TAG_BezierTet10),
     theMaterial(0),
     connectedExternalNodes(NEN),
     rho(r), pressure(press),
-    useBbar(bbar), cMass(cmass),
+    useBbar(bbar), cMass(cmass), fbarMode(fbar),   // Ladruno — F-bar variant
     Q(NELD), applyLoad(0), Ki(0), theGeom(0)   // Ladruno — geometry method
 {
     // Ladruno: geometry-method layer (linear default / corot). Linear is the
@@ -210,7 +211,7 @@ BezierTet10::BezierTet10()
     theMaterial(0),
     connectedExternalNodes(NEN),
     rho(0.0), pressure(0.0),
-    useBbar(false), cMass(false),
+    useBbar(false), cMass(false), fbarMode(FBAR_CENTROID),   // Ladruno — F-bar variant
     Q(NELD), applyLoad(0), Ki(0), theGeom(0)   // Ladruno — geometry method
 {
     // Ladruno: broker/database reconstruction path — recvSelf rebuilds the real
@@ -348,6 +349,11 @@ int BezierTet10::revertToStart()
 
 int BezierTet10::update()
 {
+    // Ladruno: -geom finite (updated-Lagrangian) drives the material via
+    // setTrialF(F) instead of the small-strain setTrialStrain path below.
+    if (this->isFinite())
+        return this->updateFinite();
+
     // Ladruno (seam 0+2): refresh the geometry method and localize the trial
     // displacement into the core frame. For -geom linear this is the identity
     // (uCore == uGlobal), so the strain below is bit-for-bit the direct kernel;
@@ -392,6 +398,15 @@ int BezierTet10::update()
 
 const Matrix &BezierTet10::getTangentStiff()
 {
+    // Ladruno: -geom finite — full updated-Lagrangian consistent tangent
+    // K = ∫ (∂Nₐ/∂x_j) a_ijkl (∂N_b/∂x_l) dv (geometric term already folded into
+    // a_ijkl = c − σδ). No globalize seam — identity for finite.
+    if (this->isFinite()) {
+        static Vector fScratch(NELD);
+        this->formResidAndTangentFinite(1, fScratch, &K_return);
+        return K_return;
+    }
+
     // K = Σᵢ wᵢ |Jᵢ| · Bᵢᵀ Dᵢ Bᵢ   (B → B̄ for B-bar), assembled in the CORE
     // frame in ONE pass that also yields the core internal force, then globalized
     // (seam 3). Ladruno: refresh the geometry method so K and the fCore used for
@@ -414,6 +429,14 @@ const Matrix &BezierTet10::getTangentStiff()
 
 const Matrix &BezierTet10::getInitialStiff()
 {
+    // Ladruno: NO isFinite() branch — and that is intentional (mirrors
+    // LadrunoBrick::getInitialStiff). At the undeformed reference state F = I,
+    // σ = 0, and the spatial modulus equals the material's initial tangent, so
+    // the finite tangent reduces EXACTLY to this small-strain ∫BᵀD₀B. The
+    // converged solution comes from getTangentStiff → formResidAndTangentFinite;
+    // Ki here only seeds initial-guess operators (algorithm('Initial'), Krylov,
+    // Rayleigh βK0, eigen-on-Ki), so the small-strain reference tangent is the
+    // correct "initial" stiffness and never enters the equilibrium path.
     if (Ki != 0)
         return *Ki;
 
@@ -617,12 +640,21 @@ const Vector &BezierTet10::getResistingForce()
     // spurious external-load term) and makes the f/K paths trivially consistent.
     // For -geom linear globalizeForce is the identity and this reproduces the
     // direct kernel.
-    this->computeLocalDisp();                     // seam 0+2: refresh frame
-
+    //
+    // Ladruno: -geom finite assembles ∫Bᵀσ dv directly on the current config
+    // (Cauchy σ; no localize/globalize — identity for finite). Both paths then
+    // share the fixed-direction external-load tail (body force / pressure / Q)
+    // applied in the GLOBAL frame below.
     static Vector fInt(NELD);
-    this->formCore(0, fInt, 0);                   // core-frame ∫Bᵀσ (no tangent)
-    theGeom->globalizeForce(fInt, fInt);          // seam 3: → global
-    P_return = fInt;
+    if (this->isFinite()) {
+        this->formResidAndTangentFinite(0, fInt, 0);   // current-config ∫Bᵀσ dv
+        P_return = fInt;
+    } else {
+        this->computeLocalDisp();                     // seam 0+2: refresh frame
+        this->formCore(0, fInt, 0);                   // core-frame ∫Bᵀσ (no tangent)
+        theGeom->globalizeForce(fInt, fInt);          // seam 3: → global
+        P_return = fInt;
+    }
 
     // fixed-direction external loads, GLOBAL frame
     double bx = (applyLoad == 1) ? appliedB[0] : b[0];
@@ -750,6 +782,358 @@ void BezierTet10::formCore(int tangFlag, Vector &fInt, Matrix *K)
                     if (I != Jc)
                         (*K)(Jc, I) += factor * sum;
                 }
+            }
+        }
+    }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════
+//  -geom finite (Ladruno): updated-Lagrangian finite-strain path
+// ═══════════════════════════════════════════════════════════════════
+//
+// The material is a FiniteStrainNDMaterial driven by setTrialF(F): it returns
+// the Cauchy stress σ (getStress) and the FULL 4th-order spatial constitutive
+// modulus c (getSpatialTangentTensor). Per the LOCKED seam-3 contract the
+// element owns the geometric stiffness, so it forms the consistent tangent on
+// the current configuration:
+//     f = ∫ Bᵀ σ dv ,   K = ∫ (∂Nₐ/∂x_j) a_ijkl (∂N_b/∂x_l) dv ,   dv = J dV
+// with a_ijkl = c_ijkl − σ_il δ_jk and spatial gradients
+// ∂Nₐ/∂xⱼ = Σ_k (∂Nₐ/∂X_k)(F⁻¹)_kj. F is built from the REFERENCE Bernstein
+// gradients (computeJacobian on controlPts); for straight-sided tets detJ_ref
+// is constant per element but det F varies (quadratic u → linear F). This is
+// the 10-node/4-GP analogue of LadrunoBrick's finite path — F-bar (bbar+finite)
+// is a step-2 follow-up, rejected at parse time.
+
+// Inverse of a row-major 3×3 via adjugate/det. Returns det F; fills Finv (row-
+// major), zero-filled if |det| underflows (one source of truth for the 9-term
+// adjugate, the kind of formula that drifts under copy-paste).
+static double
+invert3x3(const double F[9], double Finv[9])
+{
+    double det = F[0]*(F[4]*F[8]-F[5]*F[7]) - F[1]*(F[3]*F[8]-F[5]*F[6])
+               + F[2]*(F[3]*F[7]-F[4]*F[6]);
+    double id = (det != 0.0) ? 1.0 / det : 0.0;
+    Finv[0] =  (F[4]*F[8]-F[5]*F[7])*id;  Finv[1] = -(F[1]*F[8]-F[2]*F[7])*id;
+    Finv[2] =  (F[1]*F[5]-F[2]*F[4])*id;  Finv[3] = -(F[3]*F[8]-F[5]*F[6])*id;
+    Finv[4] =  (F[0]*F[8]-F[2]*F[6])*id;  Finv[5] = -(F[0]*F[5]-F[2]*F[3])*id;
+    Finv[6] =  (F[3]*F[7]-F[4]*F[6])*id;  Finv[7] = -(F[0]*F[7]-F[1]*F[6])*id;
+    Finv[8] =  (F[0]*F[4]-F[1]*F[3])*id;
+    return det;
+}
+
+bool BezierTet10::isFinite(void) const
+{
+    return theGeom != 0 &&
+           theGeom->getStrainMeasure() ==
+             SolidTransformation::StrainMeasure::DeformationGradient;
+}
+
+double BezierTet10::deformationGradient(const double dN_dX[3][NEN],
+                                        double F[9]) const
+{
+    for (int i = 0; i < 9; i++) F[i] = 0.0;
+    F[0] = F[4] = F[8] = 1.0;
+    for (int a = 0; a < NEN; a++) {
+        const Vector &ua = theNodes[a]->getTrialDisp();   // TOTAL trial disp
+        for (int i = 0; i < 3; i++)
+            for (int J = 0; J < 3; J++)
+                F[3*i + J] += ua(i) * dN_dX[J][a];
+    }
+    return F[0]*(F[4]*F[8]-F[5]*F[7]) - F[1]*(F[3]*F[8]-F[5]*F[6])
+         + F[2]*(F[3]*F[7]-F[4]*F[6]);
+}
+
+// F-bar centroid data (bbar + finite). F₀ at the TET centroid — barycentric
+// L=(¼,¼,¼), NOT the brick's isoparametric (0,0,0). Returns J₀ = det F₀; fills
+// G0[k][b] = ∂N_b/∂x_k|_centroid (from F₀⁻¹) when requested. dSNPO eq 15.5.  // Ladruno
+double BezierTet10::centroidFbar(double (*G0)[NEN]) const
+{
+    double dN0[3][NEN];
+    shapeDerivatives(0.25, 0.25, 0.25, dN0);     // tet centroid
+
+    double J0m[3][3];
+    double dN0_dX[3][NEN];                        // reference ∂Nₐ/∂X at the centroid
+    double detJ0 = computeJacobian(dN0, J0m, dN0_dX);
+    if (fabs(detJ0) <= 0.0)
+        return 0.0;                               // degenerate; caller's J₀≤0 guard fires
+
+    double F0[9];
+    double J0 = deformationGradient(dN0_dX, F0);
+
+    if (G0 != 0) {
+        double Fi[9];
+        invert3x3(F0, Fi);                        // F₀⁻¹ (row-major)
+        for (int b = 0; b < NEN; b++)
+            for (int k = 0; k < 3; k++) {
+                double s = 0.0;
+                for (int m = 0; m < 3; m++)
+                    s += dN0_dX[m][b] * Fi[3*m + k];   // ∂N_b/∂x_k at the centroid
+                G0[k][b] = s;
+            }
+    }
+    return J0;
+}
+
+// F-bar MEAN-DILATATION data — the consistent analogue of centroidFbar with the
+// single centroid point replaced by volume averages over the Gauss points:
+//   J̄    = (∫ J dV₀)/V₀                = (Σ_gp J_gp dV₀_gp)/(Σ_gp dV₀_gp)
+//   Ḡ_kb = (∫ ∂N_b/∂x_k dv)/v          = (Σ_gp g_kb,gp dv_gp)/(Σ_gp dv_gp)
+// with dV₀ = w·|detJ_ref| (reference) and dv = J·dV₀ (current). This is the
+// classic mean-dilatation (Nagtegaal–Parks–Rice / Simo–Taylor–Pister) variant;
+// at small strain it reduces to the element's volume-averaged small-strain bbar.
+// Returns J̄ (0.0 on a degenerate/inverted GP so the caller's J̄≤0 guard fires).  // Ladruno
+double BezierTet10::fbarMeanDilatation(double (*Gbar)[NEN]) const
+{
+    double sumJ_dV0 = 0.0, sum_dV0 = 0.0;        // Σ J dV₀ (= v), Σ dV₀ (= V₀)
+    double Gacc[3][NEN];
+    if (Gbar != 0)
+        for (int k = 0; k < 3; k++)
+            for (int b = 0; b < NEN; b++) Gacc[k][b] = 0.0;
+
+    for (int gp = 0; gp < NGAUSS; gp++) {
+        double dN[3][NEN];
+        shapeDerivatives(GP4_L[gp][0], GP4_L[gp][1], GP4_L[gp][2], dN);
+        double Jm[3][3], dN_dX[3][NEN];
+        double detJ = computeJacobian(dN, Jm, dN_dX);
+        if (fabs(detJ) <= 0.0)
+            return 0.0;                          // degenerate; caller's J̄≤0 guard fires
+
+        double F[9];
+        double Jgp = deformationGradient(dN_dX, F);
+        double dV0 = GP4_w[gp] * fabs(detJ);     // reference measure
+        sumJ_dV0 += Jgp * dV0;
+        sum_dV0  += dV0;
+
+        if (Gbar != 0) {
+            if (Jgp <= 0.0)
+                return 0.0;                      // can't push the gradient on an inverted GP
+            double Fi[9];
+            invert3x3(F, Fi);
+            double dv = Jgp * dV0;               // current measure
+            for (int b = 0; b < NEN; b++)
+                for (int k = 0; k < 3; k++) {
+                    double s = 0.0;
+                    for (int m = 0; m < 3; m++)
+                        s += dN_dX[m][b] * Fi[3*m + k];   // ∂N_b/∂x_k at this GP
+                    Gacc[k][b] += s * dv;
+                }
+        }
+    }
+    if (sum_dV0 <= 0.0)
+        return 0.0;
+    double Jbar = sumJ_dV0 / sum_dV0;            // = v/V₀
+    if (Gbar != 0 && sumJ_dV0 > 0.0)            // v = Σ dv = Σ J dV₀ = sumJ_dV0
+        for (int k = 0; k < 3; k++)
+            for (int b = 0; b < NEN; b++) Gbar[k][b] = Gacc[k][b] / sumJ_dV0;
+    return Jbar;
+}
+
+int BezierTet10::updateFinite(void)
+{
+    static Matrix Fm(3, 3);
+
+    // bbar + finite = F-bar: every GP is driven by F̄ = (Ĵ/J)^(1/3) F so they
+    // share one bar dilatation Ĵ (volumetric-locking cure). std uses F. Ĵ is the
+    // centroid J₀ (-fbar centroid) or the volume average J̄ (-fbar mean_dilatation).
+    const bool useFbar = useBbar;
+    double Jhat = 1.0;
+    if (useFbar) {
+        Jhat = (fbarMode == FBAR_MEAN) ? this->fbarMeanDilatation()
+                                       : this->centroidFbar();
+        if (Jhat <= 0.0) {
+            opserr << "BezierTet10::updateFinite - non-positive F-bar dilatation Ĵ = "
+                   << Jhat << " (element " << this->getTag() << ", -fbar "
+                   << (fbarMode == FBAR_MEAN ? "mean_dilatation" : "centroid") << ")\n";
+            return -1;
+        }
+    }
+
+    for (int gp = 0; gp < NGAUSS; gp++) {
+        double dN[3][NEN];
+        shapeDerivatives(GP4_L[gp][0], GP4_L[gp][1], GP4_L[gp][2], dN);
+
+        double J[3][3];
+        double dN_dx[3][NEN];                    // reference ∂Nₐ/∂X
+        double detJ = computeJacobian(dN, J, dN_dx);
+        if (fabs(detJ) <= 0.0) {
+            opserr << "BezierTet10::updateFinite - degenerate Jacobian at GP " << gp
+                   << " (element " << this->getTag() << ")\n";
+            return -1;
+        }
+
+        double F[9];
+        double Jdet = deformationGradient(dN_dx, F);   // TOTAL F; material derives F_Δ
+        if (Jdet <= 0.0) {
+            opserr << "BezierTet10::updateFinite - non-positive det F = " << Jdet
+                   << " at GP " << gp << " (element " << this->getTag() << ")\n";
+            return -1;
+        }
+        if (useFbar) {
+            double s = pow(Jhat / Jdet, 1.0 / 3.0);    // F̄ = (Ĵ/J)^(1/3) F (det F̄ = Ĵ > 0)
+            for (int n = 0; n < 9; n++) F[n] *= s;
+        }
+        for (int r = 0; r < 3; r++)
+            for (int c = 0; c < 3; c++)
+                Fm(r, c) = F[3*r + c];
+
+        FiniteStrainNDMaterial *fsm =
+            dynamic_cast<FiniteStrainNDMaterial *>(theMaterial[gp]);
+        if (fsm == 0) {
+            opserr << "BezierTet10::updateFinite - material at GP " << gp
+                   << " is not a FiniteStrainNDMaterial (element " << this->getTag()
+                   << ")\n";
+            return -1;
+        }
+        if (fsm->setTrialF(Fm) < 0) {
+            opserr << "BezierTet10::updateFinite - setTrialF failed at GP " << gp
+                   << " (element " << this->getTag() << ", det F<=0?)\n";
+            return -1;
+        }
+    }
+    return 0;
+}
+
+void BezierTet10::formResidAndTangentFinite(int tangFlag, Vector &fInt, Matrix *K)
+{
+    fInt.Zero();
+    if (tangFlag && K != 0)
+        K->Zero();
+
+    // F-bar (bbar + finite): the eq 15.10 tangent gains a (generally UNSYMMETRIC)
+    // coupling to an element-wide gradient operator Ĝ. The residual is unchanged —
+    // F-bar enters it only through σ̄ (set in updateFinite, eq 15.9). Ĝ is the
+    // centroid gradient G₀ (-fbar centroid) or the volume-averaged Ḡ (-fbar
+    // mean_dilatation); compute it once.  // Ladruno
+    const bool useFbar = useBbar;
+    double Ghat[3][NEN];
+    if (useFbar && tangFlag && K != 0) {
+        if (fbarMode == FBAR_MEAN) this->fbarMeanDilatation(Ghat);
+        else                       this->centroidFbar(Ghat);
+    }
+
+    for (int gp = 0; gp < NGAUSS; gp++) {
+        double dN[3][NEN];
+        shapeDerivatives(GP4_L[gp][0], GP4_L[gp][1], GP4_L[gp][2], dN);
+
+        double Jm[3][3];
+        double dN_dX[3][NEN];                    // reference ∂Nₐ/∂X
+        double detJ = computeJacobian(dN, Jm, dN_dX);
+        // Both degeneracy guards ABANDON the pass (return), not skip-GP (continue):
+        // a partially-assembled fInt/K is never correct, and for a straight-sided
+        // tet detJ_ref is constant so one bad GP means the element is degenerate
+        // everywhere. These paths are unreachable-by-construction in the normal
+        // Newton flow — update()→updateFinite() screens BOTH conditions first and
+        // returns -1 (step-cut) before any assembly — but the guards fail safe if
+        // an accessor is ever called on a degenerate trial state.  // Ladruno
+        if (fabs(detJ) <= 0.0) {
+            opserr << "BezierTet10::formResidAndTangentFinite - degenerate Jacobian "
+                      "at GP " << gp << " (element " << this->getTag() << ")\n";
+            return;
+        }
+
+        double F[9];
+        double J = deformationGradient(dN_dX, F);
+        if (J <= 0.0) {
+            opserr << "BezierTet10::formResidAndTangentFinite - non-positive det F = "
+                   << J << " at GP " << gp << " (element " << this->getTag() << ")\n";
+            return;
+        }
+
+        double Fi[9];
+        invert3x3(F, Fi);                         // F⁻¹ (row-major)
+
+        double g[3][NEN];                         // spatial gradients ∂Nₐ/∂x_j
+        for (int a = 0; a < NEN; a++)
+            for (int j = 0; j < 3; j++) {
+                double s = 0.0;
+                for (int k = 0; k < 3; k++)
+                    s += dN_dX[k][a] * Fi[3*k + j];
+                g[j][a] = s;
+            }
+
+        double dv = J * fabs(detJ) * GP4_w[gp];   // current-config measure (w·|detJ_ref|·J)
+
+        const Vector &stress = theMaterial[gp]->getStress();   // Cauchy σ (set via setTrialF)
+        double sig[3][3];
+        sig[0][0]=stress(0); sig[1][1]=stress(1); sig[2][2]=stress(2);
+        sig[0][1]=sig[1][0]=stress(3);
+        sig[1][2]=sig[2][1]=stress(4);
+        sig[2][0]=sig[0][2]=stress(5);
+
+        // residual f_{a,i} = ∫ σ_ij ∂Nₐ/∂x_j dv. NO body force here — it is applied
+        // in the global frame in getResistingForce (the small-strain contract).
+        for (int a = 0; a < NEN; a++)
+            for (int i = 0; i < 3; i++) {
+                double fi = 0.0;
+                for (int j = 0; j < 3; j++)
+                    fi += sig[i][j] * g[j][a];
+                fInt(3*a + i) += fi * dv;
+            }
+
+        if (tangFlag && K != 0) {
+            // FULL 4th-order spatial constitutive modulus c_ijkl. The material's
+            // 6×6 getTangent is LOSSY in (k,l) (c = (1/2J)[D:L:B] is not minor-
+            // symmetric); the consistent tangent needs the full tensor (see
+            // FiniteStrainNDMaterial.h). a_ijkl = c_ijkl − σ_il δ_jk folds in the
+            // element-owned geometric (initial-stress) term.  // Ladruno
+            FiniteStrainNDMaterial *fsm =
+                dynamic_cast<FiniteStrainNDMaterial *>(theMaterial[gp]);
+            static double cmat[3][3][3][3];
+            if (fsm == 0 || fsm->getSpatialTangentTensor(cmat) != 0) {
+                opserr << "BezierTet10::formResidAndTangentFinite - material at GP "
+                       << gp << " did not provide a full spatial tangent "
+                          "(getSpatialTangentTensor); element " << this->getTag() << "\n";
+                return;
+            }
+            double a4[3][3][3][3];
+            for (int i = 0; i < 3; i++)
+                for (int j = 0; j < 3; j++)
+                    for (int k = 0; k < 3; k++)
+                        for (int l = 0; l < 3; l++)
+                            a4[i][j][k][l] = cmat[i][j][k][l]
+                                           - sig[i][l] * (j == k ? 1.0 : 0.0);
+
+            for (int a = 0; a < NEN; a++)
+                for (int bn = 0; bn < NEN; bn++)
+                    for (int i = 0; i < 3; i++)
+                        for (int k = 0; k < 3; k++) {
+                            double s = 0.0;
+                            for (int j = 0; j < 3; j++)
+                                for (int l = 0; l < 3; l++)
+                                    s += g[j][a] * a4[i][j][k][l] * g[l][bn];
+                            (*K)(3*a + i, 3*bn + k) += s * dv;
+                        }
+
+            // F-bar additional (generally UNSYMMETRIC) stiffness, dSNPO eq 15.10:
+            //   K_{(a,i)(b,k)} += ∫ (Σ_j g[j][a] q_ij)(Ĝ[k][b] − g[k][b]) dv,
+            // with q the matrix form of the eq 15.11 tensor at F=F̄,
+            //   q_ij = (1/3) a_ijpp − (2/3) σ̄_ij ,
+            // using the SAME a4 = c̄ − σ̄δ modulus as the std term above (NOT the
+            // material part c̄ alone — the −(2/3)σ̄ is the spatial initial-stress
+            // part, NOT a (1/3)c shortcut). Ĝ is the centroid G₀ or the volume
+            // average Ḡ; (Ĝ − g) vanishes when Ĝ = g, collapsing to plain F.  // Ladruno
+            if (useFbar) {
+                double M[3][3];
+                for (int i = 0; i < 3; i++)
+                    for (int j = 0; j < 3; j++)
+                        M[i][j] = (a4[i][j][0][0] + a4[i][j][1][1] + a4[i][j][2][2]) / 3.0
+                                - (2.0 / 3.0) * sig[i][j];
+
+                double Lfac[NEN][3];             // Lfac[a][i] = Σ_j g[j][a] q_ij
+                for (int a = 0; a < NEN; a++)
+                    for (int i = 0; i < 3; i++) {
+                        double s = 0.0;
+                        for (int j = 0; j < 3; j++) s += g[j][a] * M[i][j];
+                        Lfac[a][i] = s;
+                    }
+
+                for (int a = 0; a < NEN; a++)
+                    for (int i = 0; i < 3; i++)
+                        for (int bn = 0; bn < NEN; bn++)
+                            for (int kk = 0; kk < 3; kk++)
+                                (*K)(3*a + i, 3*bn + kk)
+                                    += Lfac[a][i] * (Ghat[kk][bn] - g[kk][bn]) * dv;
             }
         }
     }
@@ -1086,10 +1470,9 @@ int BezierTet10::sendSelf(int commitTag, Channel &theChannel)
 {
     int res = 0;
 
-    // tag + 10 nodes + matClassTag + matDbTag + useBbar + cMass + geomID = 16
-    // Ladruno: a dedicated slot 15 carries the geometry-method id (the existing
-    // 15-slot buffer was full — no packed slot to reuse, so widen to 16).
-    static ID iData(16);
+    // tag + 10 nodes + matClassTag + matDbTag + useBbar + cMass + geomID + fbarMode = 17
+    // Ladruno: slot 15 carries the geometry-method id; slot 16 the F-bar variant.
+    static ID iData(17);
     iData(0) = this->getTag();
     for (int i = 0; i < NEN; i++)
         iData(i + 1) = connectedExternalNodes(i);
@@ -1104,6 +1487,7 @@ int BezierTet10::sendSelf(int commitTag, Channel &theChannel)
     iData(13) = useBbar ? 1 : 0;
     iData(14) = cMass ? 1 : 0;
     iData(15) = theGeom->getMethodID();   // Ladruno — geometry method
+    iData(16) = fbarMode;                 // Ladruno — F-bar variant
 
     res += theChannel.sendID(this->getDbTag(), commitTag, iData);
 
@@ -1129,7 +1513,7 @@ int BezierTet10::recvSelf(int commitTag, Channel &theChannel,
 {
     int res = 0;
 
-    static ID iData(16);
+    static ID iData(17);
     res += theChannel.recvID(this->getDbTag(), commitTag, iData);
 
     this->setTag(iData(0));
@@ -1139,6 +1523,7 @@ int BezierTet10::recvSelf(int commitTag, Channel &theChannel,
     int matDbTag = iData(12);
     useBbar = (iData(13) == 1);
     cMass = (iData(14) == 1);
+    fbarMode = iData(16);                 // Ladruno — F-bar variant
 
     // Ladruno: rebuild the geometry method from the serialized id (Linear
     // fallback for an unknown/zero id) — else a parallel worker silently

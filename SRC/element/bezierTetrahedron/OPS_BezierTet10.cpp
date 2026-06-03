@@ -36,7 +36,7 @@
 //                       $matTag
 //                       <-bbar> <-cMass> <-rho $r>
 //                       <-bodyForce $b1 $b2 $b3> <-pressure $p>
-//                       <-geom linear|corot>
+//                       <-geom linear|corot|finite>
 //
 // Required arguments:
 //   $tag        - unique element tag
@@ -50,9 +50,18 @@
 //   -rho $r             - mass density (else taken from the material)
 //   -bodyForce $b1..$b3 - body force per unit volume (rampable via SelfWeight)
 //   -pressure $p        - volume "pressure" hack acting in +z (as BezierTri6)
-//   -geom linear|corot  - geometry method (default linear = small strain;
+//   -geom linear|corot|finite - geometry method (default linear = small strain;
 //                         corot = large rotation / small strain, EICR via the
-//                         SolidTransformation layer). finite is unsupported in v1.
+//                         SolidTransformation layer; finite = large-strain
+//                         updated-Lagrangian, requires a finite-strain material
+//                         driven by setTrialF(F), e.g. nDMaterial LogStrain).
+//                         -geom finite -bbar = F-bar (near-incompressible cure;
+//                         GENERALLY UNSYMMETRIC tangent → use system FullGeneral).
+//                         pressure is unsupported under finite (rejected at parse).
+//   -fbar centroid|mean_dilatation - F-bar variant (default centroid). Only with
+//                         -bbar -geom finite. centroid = single centroid J₀ (dSNPO
+//                         eq 15.5); mean_dilatation = volume-averaged J̄ (reduces to
+//                         the small-strain mean-dilatation bbar).
 //
 // Example (Python):
 //   ops.nDMaterial('ElasticIsotropic', 1, 1000.0, 0.3)
@@ -63,7 +72,8 @@
 #include <elementAPI.h>
 #include <OPS_Globals.h>
 #include <NDMaterial.h>
-#include <SolidTransformation.h>   // Ladruno — geometry-method ids (linear/corot)
+#include <FiniteStrainNDMaterial.h>  // Ladruno — -geom finite material guards
+#include <SolidTransformation.h>   // Ladruno — geometry-method ids (linear/corot/finite)
 
 #include <string.h>
 
@@ -114,12 +124,32 @@ void *OPS_BezierTet10()
     bool useBbar = false;
     bool cMass = false;
     int geomMethodID = SolidTransformation::METHOD_LINEAR;   // -geom (Ladruno)
+    int fbarMode = BezierTet10::FBAR_CENTROID;               // -fbar (Ladruno)
 
     while (OPS_GetNumRemainingInputArgs() > 0) {
         const char *option = OPS_GetString();
 
         if (strcmp(option, "-bbar") == 0 || strcmp(option, "-Bbar") == 0) {
             useBbar = true;
+        }
+        else if (strcmp(option, "-fbar") == 0 || strcmp(option, "-fBar") == 0) {
+            // Ladruno: F-bar variant (only meaningful with -bbar -geom finite).
+            if (OPS_GetNumRemainingInputArgs() < 1) {
+                opserr << "WARNING -fbar needs a value for BezierTet10 " << tag
+                       << " (use centroid|mean_dilatation)\n";
+                return 0;
+            }
+            const char *fb = OPS_GetString();
+            if (strcmp(fb, "centroid") == 0)
+                fbarMode = BezierTet10::FBAR_CENTROID;
+            else if (strcmp(fb, "mean_dilatation") == 0 ||
+                     strcmp(fb, "mean") == 0 || strcmp(fb, "meandilatation") == 0)
+                fbarMode = BezierTet10::FBAR_MEAN;
+            else {
+                opserr << "WARNING unknown -fbar '" << fb << "' for BezierTet10 "
+                       << tag << " (use centroid|mean_dilatation)\n";
+                return 0;
+            }
         }
         else if (strcmp(option, "-cMass") == 0 || strcmp(option, "-cmass") == 0) {
             cMass = true;
@@ -150,13 +180,12 @@ void *OPS_BezierTet10()
             b3 = bData[2];
         }
         else if (strcmp(option, "-geom") == 0 || strcmp(option, "-geometry") == 0) {
-            // Ladruno: geometry method. v1 supports linear (default) + corot.
-            // finite is a separate task (per-element updated-Lagrangian assembly
-            // + a FiniteStrainNDMaterial) — reject it, and any unknown value,
-            // explicitly rather than falling through to a warn-only path.
+            // Ladruno: geometry method. linear (default), corot, or finite.
+            // finite = large-strain updated-Lagrangian; the material guards
+            // below enforce that it is paired with a FiniteStrainNDMaterial.
             if (OPS_GetNumRemainingInputArgs() < 1) {
                 opserr << "WARNING -geom needs a value for BezierTet10 " << tag
-                       << " (use linear|corot)\n";
+                       << " (use linear|corot|finite)\n";
                 return 0;
             }
             const char *g = OPS_GetString();
@@ -164,15 +193,11 @@ void *OPS_BezierTet10()
                 geomMethodID = SolidTransformation::METHOD_LINEAR;
             else if (strcmp(g, "corot") == 0 || strcmp(g, "corotational") == 0)
                 geomMethodID = SolidTransformation::METHOD_COROT;
-            else if (strcmp(g, "finite") == 0) {
-                opserr << "WARNING BezierTet10 " << tag
-                       << ": -geom finite is not implemented (no finite-strain "
-                          "updated-Lagrangian assembly yet); use linear|corot\n";
-                return 0;
-            }
+            else if (strcmp(g, "finite") == 0)
+                geomMethodID = SolidTransformation::METHOD_FINITE;
             else {
                 opserr << "WARNING unknown -geom '" << g << "' for BezierTet10 "
-                       << tag << " (use linear|corot)\n";
+                       << tag << " (use linear|corot|finite)\n";
                 return 0;
             }
         }
@@ -191,13 +216,65 @@ void *OPS_BezierTet10()
         return 0;
     }
 
+    // Ladruno: -geom finite (updated-Lagrangian) guards. std (plain F) or bbar
+    // (F-bar, dSNPO §15.1) are both valid; the +z pressure hack is unvalidated
+    // under finite. It requires a finite-strain material driven by setTrialF(F)
+    // (e.g. nDMaterial LogStrain). Mirrors OPS_LadrunoBrick.cpp.
+    if (geomMethodID == SolidTransformation::METHOD_FINITE) {
+        if (pressure != 0.0) {
+            opserr << "WARNING BezierTet10 " << tag
+                   << ": -geom finite does not support -pressure in v1\n";
+            return 0;
+        }
+        if (dynamic_cast<FiniteStrainNDMaterial *>(theMat) == 0) {
+            opserr << "WARNING BezierTet10 " << tag
+                   << ": -geom finite requires a finite-strain NDMaterial driven "
+                      "by setTrialF(F) (e.g. nDMaterial LogStrain); material "
+                   << matTag << " is not one\n";
+            return 0;
+        }
+        // F-bar (bbar + finite) has a GENERALLY UNSYMMETRIC tangent (dSNPO eq
+        // 15.10); a symmetric solver silently drops the coupling and breaks Newton.
+        // Advise once per process (not per element) to keep large meshes quiet.
+        if (useBbar) {
+            static bool fbarSolverAdvised = false;
+            if (!fbarSolverAdvised) {
+                fbarSolverAdvised = true;
+                opserr << "BezierTet10: -geom finite -bbar (F-bar) has a GENERALLY "
+                          "UNSYMMETRIC tangent (dSNPO eq 15.10) — use an unsymmetric "
+                          "solver (e.g. 'system FullGeneral', 'UmfPack', or "
+                          "'SparseGEN'); a symmetric system (BandSPD/ProfileSPD) drops "
+                          "the coupling term and may not converge.\n";
+            }
+        }
+        else if (fbarMode != BezierTet10::FBAR_CENTROID) {
+            // -fbar without -bbar is a no-op (F-bar is off); warn so it is not
+            // silently ignored.
+            opserr << "WARNING BezierTet10 " << tag
+                   << ": -fbar has no effect without -bbar (F-bar is off)\n";
+        }
+    }
+
+    // Ladruno: converse guard — a finite-strain NDMaterial (e.g. LogStrain) is
+    // driven ONLY by setTrialF(F). Under -geom linear|corot the element uses the
+    // small-strain setTrialStrain() path, which a FiniteStrainNDMaterial disables
+    // (returns -1, sets no state) — leaving a zero-stress phantom. Reject it.
+    if (geomMethodID != SolidTransformation::METHOD_FINITE &&
+        dynamic_cast<FiniteStrainNDMaterial *>(theMat) != 0) {
+        opserr << "WARNING BezierTet10 " << tag
+               << ": a finite-strain NDMaterial (e.g. nDMaterial LogStrain) "
+                  "requires -geom finite; it cannot be driven by -geom "
+                  "linear|corot\n";
+        return 0;
+    }
+
     // ─── Create element ───────────────────────────────────────
     Element *theEle = new BezierTet10(tag,
                                       iData[1], iData[2], iData[3], iData[4],
                                       iData[5], iData[6], iData[7], iData[8],
                                       iData[9], iData[10],
                                       *theMat, rho, b1, b2, b3,
-                                      useBbar, cMass, pressure, geomMethodID);
+                                      useBbar, cMass, pressure, geomMethodID, fbarMode);
 
     if (theEle == 0) {
         opserr << "WARNING ran out of memory creating BezierTet10 " << tag << "\n";
