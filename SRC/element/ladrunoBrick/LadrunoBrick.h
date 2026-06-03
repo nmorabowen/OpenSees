@@ -29,15 +29,18 @@
 // One element class, one classTag (ELE_TAG_LadrunoBrick = 33002), with the
 // anti-locking formulation chosen at construction via a single selector:
 //
-//   element('LadrunoBrick', tag, n1..n8, matTag, '-formulation', <std|bbar|uri|ssp>)
+//   element('LadrunoBrick', tag, n1..n8, matTag, '-formulation', <std|bbar|uri|ssp|eas>)
 //
 // v1 (small strain, geometrically linear):
 //   std  — full 2x2x2 Gauss displacement  (reproduces upstream Brick)
 //   bbar — mean-dilatation B-bar          (reproduces upstream bbarBrick)
 //   uri  — 1-pt reduced + hourglass        (cheap explicit hex; new)
 //   ssp  — stabilized single-point: bbar + statically-condensed stabilization
-//          (SSPbrick port). NB this is NOT enhanced assumed strain — true
-//          Simo-Rifai EAS is reserved for '-formulation eas' (ADR 19).
+//          (SSPbrick port). NB this is NOT enhanced assumed strain.
+//   eas  — true Simo-Rifai enhanced assumed strain (9 internal params, inner
+//          Newton + static condensation; full 2x2x2, 8 live GPs; ADR 19). Robust
+//          on smooth/homogeneous response; for notched/localization inelasticity
+//          use ssp/bbar (EAS stabilization is ADR 20).
 //
 // The kernel is carved into three seams (kinematics ledger / geometry method /
 // material adaptor) so corotational (v2) and finite-strain (v3) drop in without
