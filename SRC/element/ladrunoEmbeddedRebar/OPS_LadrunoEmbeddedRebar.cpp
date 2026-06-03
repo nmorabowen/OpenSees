@@ -92,7 +92,11 @@ void* OPS_LadrunoEmbeddedRebar(void)
     opserr << "WARNING LadrunoEmbeddedRebar: missing host spec (nHost.. or -host)\n";
     return 0;
   }
-  const char* hostTok = OPS_GetString();
+  // peek the host-spec token. Use OPS_GetStringFromAll (NOT OPS_GetString): in
+  // openseespy the explicit-form nHost arrives as a typed int and OPS_GetString
+  // rejects it ("Invalid String Input!"); GetStringFromAll stringifies any arg.
+  char hostTok[128];
+  OPS_GetStringFromAll(hostTok, sizeof(hostTok));
   if (strcmp(hostTok, "-host") == 0) {
     int eleTag; n = 1;
     if (OPS_GetIntInput(&n, &eleTag) < 0) {
@@ -201,7 +205,10 @@ void* OPS_LadrunoEmbeddedRebar(void)
         opserr << "WARNING LadrunoEmbeddedRebar: -kt wants a value or 'auto'\n";
         return 0;
       }
-      const char* ktTok = OPS_GetString();
+      // GetStringFromAll (not OPS_GetString): a numeric -kt arrives typed in
+      // openseespy and OPS_GetString would reject it.
+      char ktTok[64];
+      OPS_GetStringFromAll(ktTok, sizeof(ktTok));
       if (strcmp(ktTok, "auto") == 0) {
         ktAuto = true;
       } else {
