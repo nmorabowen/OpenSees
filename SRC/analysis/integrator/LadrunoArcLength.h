@@ -74,15 +74,25 @@ class Vector;
 class LadrunoArcLength : public StaticIntegrator
 {
   public:
+    // new args are all defaulted so the broker `new LadrunoArcLength(1.0)` survives.
     LadrunoArcLength(double arcLength, double alpha = 1.0,
                      bool adapt = false, int Jd = 5,
                      double ellMin = 0.0, double ellMax = 0.0,
-                     double pExp = 1.0);
+                     double pExp = 1.0,
+                     bool stabilize = false, double fTarget = 2.0e-4,
+                     bool adaptStab = false, int massMode = 0,
+                     double massScale = 1.0, double cVisc = 0.0,
+                     double dtPseudo = 1.0);
     ~LadrunoArcLength();
 
     int newStep(void);
     int update(const Vector &deltaU);
     int domainChanged(void);
+
+    // -stabilize seam: regularize K and inject the artificial viscous force.
+    int formTangent(int statusFlag = CURRENT_TANGENT);   // K (+ cOverDt*M* if stabilize)
+    int formUnbalance(void);                             // B (- f_v if stabilize)
+    int commit(void);                                    // watchdog + adaptStab + calibrate
 
     int sendSelf(int commitTag, Channel &theChannel);
     int recvSelf(int commitTag, Channel &theChannel,
@@ -93,6 +103,7 @@ class LadrunoArcLength : public StaticIntegrator
   protected:
 
   private:
+    int buildArtificialMass(void);     // integrator-owned diagonal M* (lifted from DR)
     // --- stock ArcLength state (verbatim) ---
     double arcLength2;                 // arc radius, SQUARED
     double alpha2;                     // load-factor scaling, squared
@@ -108,6 +119,25 @@ class LadrunoArcLength : public StaticIntegrator
     double ellMin, ellMax;             // radius clamp
     double pExp;                       // exponent (1 = LoadControl, 0.5 = Crisfield)
     int    numIncrLastStep;            // corrector-iteration counter (Jlast)
+
+    // --- -stabilize: Abaqus-STABILIZE-style viscous regularization ---
+    // MUTUALLY EXCLUSIVE with the arc-length quadratic: -stabilize => the class
+    // runs viscous-regularized incremental LOAD CONTROL (no constraint quadratic).
+    bool   stabilize;                  // master gate (false => identity preserved)
+    bool   adaptStab;                  // rescale cVisc each commit to hold f
+    double fTarget;                    // dissipated-energy fraction (default 2e-4)
+    double cVisc;                      // viscous factor (supplied via -cVisc, or calibrated)
+    double dtPseudo;                   // fictitious dt (folded into cOverDt)
+    double cOverDt;                    // = cVisc/dtPseudo, the one knob applied to the math
+    bool   cCalibrated;                // one-shot calibration latch
+    double Estrain0;                   // calibration baseline strain energy
+    double dissipVisc;                 // cumulative viscous work (watchdog)
+    double residualTrueNorm;           // ||lambda p - f_int|| WITHOUT f_v (watchdog)
+    double dLambda0;                   // load increment for the stabilized predictor
+    int    massMode;                   // 0 gershgorin (no dt^2/4) | 1 lumped | 2 unity
+    double massScale;                  // for -mass lumped
+    int    nEqn;                       // cached numEqn for the diagonal poke
+    Vector *Mstar;                     // integrator-owned artificial diagonal mass
 };
 
 #endif
