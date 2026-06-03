@@ -14,7 +14,7 @@ ASDConcrete3D (`SRC/material/nD/ASDConcrete3DMaterial.{h,cpp}`):
    the volume.
 
 2. **Tier-A damage-scaled hourglass stabilization** (item (a) / §3). The single-
-   point STIFFNESS-stabilized formulations (eas, uri+stiffness) degrade their
+   point STIFFNESS-stabilized formulations (ssp, uri+stiffness) degrade their
    constant elastic ``Kstab`` with the material damage:
    ``Kstab ← max(floor, 1 - max(d_t, d_c)) · Kstab_elastic`` (floor = 1%). The
    "hourglassEnergy" report carries that scale, so for an IDENTICAL prescribed
@@ -110,7 +110,7 @@ def _dissipation_uniaxial(L, form_args, nsteps=400):
 @pytest.mark.parametrize("form_args", [
     ["-formulation", "std"],
     ["-formulation", "bbar"],
-    ["-formulation", "eas"],
+    ["-formulation", "ssp"],
 ])
 def test_lch_handshake_mesh_objectivity(form_args):
     """Dissipated energy regularizes by lch: it scales with crack AREA (∝ L²),
@@ -188,7 +188,7 @@ def _prescribed_run(form_args, material, nsteps=120, eps_max=5.0e-3, beta=1.0e-3
 
 
 @pytest.mark.parametrize("form_args", [
-    ["-formulation", "eas"],
+    ["-formulation", "ssp"],
     ["-formulation", "uri", "-hourglass", "stiffness"],
 ])
 def test_tier_a_damage_scaled_kstab(form_args):

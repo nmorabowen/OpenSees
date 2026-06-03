@@ -26,7 +26,8 @@
 
 // LadrunoBrick — unified 8-node hexahedral solid element (Ladruno fork).
 //
-// v1 implements the small-strain std + bbar formulations (uri/eas reserved).
+// Implements the small-strain std + bbar + uri + ssp formulations. True
+// Simo-Rifai enhanced assumed strain ('-formulation eas') is reserved (ADR 19).
 // std/bbar kernels are adapted from Ed Love's Brick / BbarBrick so that
 //   -formulation std  reproduces upstream Brick     to ~1e-12
 //   -formulation bbar reproduces upstream bbarBrick  to ~1e-12
@@ -111,7 +112,7 @@ LadrunoBrick::formulationName(Formulation f)
   case Formulation::STD:  return "std";
   case Formulation::BBAR: return "bbar";
   case Formulation::URI:  return "uri";
-  case Formulation::EAS:  return "eas";
+  case Formulation::SSP:  return "ssp";
   }
   return "std";
 }
@@ -125,7 +126,7 @@ LadrunoBrick::LadrunoBrick()
    applyLoad(0), load(0), Ki(0), massType(0),
    theGeom(new SolidTransformationLinear()),  // Ladruno — v1 identity geometry
    damageResponse(0),                          // Ladruno — Tier-A Kstab (built in setDomain)
-   easBnot(0), easKstab(0), easVol(0.0)       // Ladruno — eas (built in setDomain)
+   sspBnot(0), sspKstab(0), sspVol(0.0)       // Ladruno — ssp (built in setDomain)
 {
   B.Zero();
 
@@ -161,7 +162,7 @@ LadrunoBrick::LadrunoBrick(int tag,
    applyLoad(0), load(0), Ki(0), massType(matype),
    theGeom(0),                                // Ladruno — set below from geomMethodID
    damageResponse(0),                          // Ladruno — Tier-A Kstab (built in setDomain)
-   easBnot(0), easKstab(0), easVol(0.0)       // Ladruno — eas (built in setDomain)
+   sspBnot(0), sspKstab(0), sspVol(0.0)       // Ladruno — ssp (built in setDomain)
 {
   // Ladruno — geometry-method layer: linear (default, identity) / finite (UL).
   theGeom = SolidTransformation::create(geomMethodID);
@@ -224,8 +225,8 @@ LadrunoBrick::~LadrunoBrick()
 
   if (theGeom) delete theGeom;   // Ladruno — geometry-method layer
 
-  if (easBnot)  delete easBnot;  // Ladruno — eas
-  if (easKstab) delete easKstab;
+  if (sspBnot)  delete sspBnot;  // Ladruno — ssp
+  if (sspKstab) delete sspKstab;
 
   if (damageResponse) delete damageResponse;   // Ladruno — Tier-A Kstab
 }
@@ -243,18 +244,18 @@ void  LadrunoBrick::setDomain(Domain *theDomain)
     }
   }
 
-  // eas: condense the enhanced-strain stabilization once, from geometry + the
+  // ssp: condense the single-point stabilization once, from geometry + the
   // initial material tangent (SSP-style). Deterministic, so the receive side
   // rebuilds it here after recvSelf — nothing extra travels in sendSelf.  // Ladruno
-  if (formulation == Formulation::EAS) {
+  if (formulation == Formulation::SSP) {
     bool haveNodes = true;
     for (int i = 0; i < 8; i++)
       if (nodePointers[i] == 0) haveNodes = false;
-    if (haveNodes) buildEAS();
+    if (haveNodes) buildSSP();
   }
 
   // Ladruno — Tier-A: cache the centroid material's "damage" query for the
-  // STIFFNESS-stabilized single-point formulations (eas, uri+stiffness), whose
+  // STIFFNESS-stabilized single-point formulations (ssp, uri+stiffness), whose
   // constant elastic Kstab must degrade with damage under softening. Rebuilt
   // here so the receive side (recvSelf -> setDomain) re-caches against the freshly
   // brokered material. Materials that report no "damage" channel return 0 here,
@@ -262,7 +263,7 @@ void  LadrunoBrick::setDomain(Domain *theDomain)
   // multi-point forms (std/bbar/uri+physical) need no scaling, so we skip them.
   if (damageResponse) { delete damageResponse; damageResponse = 0; }
   const bool stiffnessStabilized =
-      (formulation == Formulation::EAS) ||
+      (formulation == Formulation::SSP) ||
       (formulation == Formulation::URI && hourglassType == Hourglass::STIFFNESS);
   if (stiffnessStabilized && materialPointers[0] != 0) {
     DummyStream dmgStream;
@@ -462,8 +463,8 @@ const Matrix &  LadrunoBrick::getInitialStiff(void)
     return *Ki;
   }
 
-  if (formulation == Formulation::EAS) {
-    formEAS(1, true);
+  if (formulation == Formulation::SSP) {
+    formSSP(1, true);
     Ki = new Matrix(stiff);
     return *Ki;
   }
@@ -738,14 +739,14 @@ void   LadrunoBrick::formInertiaTerms(int tangFlag)
   }
 }
 
-// True for the centroid-only formulations (eas, uri+stiffness, uri+viscous):
+// True for the centroid-only formulations (ssp, uri+stiffness, uri+viscous):
 // the constitutive update runs once on material slot 0; slots 1-7 are output
 // mirrors. std/bbar/uri-physical and -geom finite use all 8 GPs.  // Ladruno
 bool
 LadrunoBrick::isSinglePoint(void) const
 {
   if (this->isFinite()) return false;
-  if (formulation == Formulation::EAS) return true;
+  if (formulation == Formulation::SSP) return true;
   if (formulation == Formulation::URI && hourglassType != Hourglass::PHYSICAL) return true;
   return false;
 }
@@ -757,14 +758,14 @@ LadrunoBrick::update(void)
   if (this->isFinite())          // -geom finite (v3): F-driven, updated-Lagrangian
     return this->updateFinite();
 
-  if (formulation == Formulation::EAS) {
-    if (easBnot == 0) buildEAS();   // safety (normally built in setDomain)
+  if (formulation == Formulation::SSP) {
+    if (sspBnot == 0) buildSSP();   // safety (normally built in setDomain)
     computeBasis();
     const Vector &uCore = this->computeLocalDisp();   // identity for linear
     static Vector strainE(6);
-    strainE.addMatrixVector(0.0, *easBnot, uCore, 1.0);   // strain = Bnot * u
+    strainE.addMatrixVector(0.0, *sspBnot, uCore, 1.0);   // strain = Bnot * u
     // Single integration point: evaluate ONLY material slot 0 (the centroid).
-    // formEAS reads only slot 0; slots 1-7 are output mirrors (getResponse /
+    // formSSP reads only slot 0; slots 1-7 are output mirrors (getResponse /
     // setResponse map per-GP queries to slot 0 via isSinglePoint()) so we avoid
     // 7 redundant return maps per element — material cost matters for e.g.
     // ASDConcrete3D. See LEDGER/11_brick_asdconcrete_integration §4.  // Ladruno
@@ -906,8 +907,8 @@ void  LadrunoBrick::formResidAndTangent(int tang_flag)
     return;
   }
 
-  if (formulation == Formulation::EAS) {
-    formEAS(tang_flag, false);
+  if (formulation == Formulation::SSP) {
+    formSSP(tang_flag, false);
     return;
   }
 
@@ -1882,7 +1883,7 @@ LadrunoBrick::formPhysical(int tang_flag, bool useInitialTangent)
 }
 
 //----------------------------------------------------------------------
-// eas (Stabilized Single-Point, SSPbrick port) — cross product helper.
+// ssp (Stabilized Single-Point, SSPbrick port) — cross product helper.
 static Vector
 ladrunoCross(const Vector &v1, const Vector &v2)
 {
@@ -1894,16 +1895,16 @@ ladrunoCross(const Vector &v1, const Vector &v2)
 }
 
 //----------------------------------------------------------------------
-// buildEAS — compute the constant mean-dilatation B (easBnot), element volume
-// (easVol) and the statically-condensed enhanced-strain stabilization
-// (easKstab). Ported verbatim from UWelements/SSPbrick::GetStab + the nodal
+// buildSSP — compute the constant mean-dilatation B (sspBnot), element volume
+// (sspVol) and the statically-condensed enhanced-strain stabilization
+// (sspKstab). Ported verbatim from UWelements/SSPbrick::GetStab + the nodal
 // pattern setup in SSPbrick::setDomain. The 9 enhanced-strain modes are
 // condensed using the INITIAL material tangent, so the result is constant — it
 // adapts to C(0) (curing both shear and volumetric locking across all nu) but
 // carries no per-step internal state. Called once from setDomain.  // Ladruno
 //----------------------------------------------------------------------
 void
-LadrunoBrick::buildEAS(void)
+LadrunoBrick::buildSSP(void)
 {
   // nodal coordinate matrix (3 x 8)
   Matrix mNodeCrd(3, 8);
@@ -2363,15 +2364,15 @@ LadrunoBrick::buildEAS(void)
   Kstab.addMatrixTripleProduct(1.0, Mben, interior, 1.0);
 
   // persist the constant operators
-  if (easBnot == 0)  easBnot  = new Matrix(6, 24);
-  if (easKstab == 0) easKstab = new Matrix(24, 24);
-  *easBnot  = Bnot;
-  *easKstab = Kstab;
-  easVol    = mVol;
+  if (sspBnot == 0)  sspBnot  = new Matrix(6, 24);
+  if (sspKstab == 0) sspKstab = new Matrix(24, 24);
+  *sspBnot  = Bnot;
+  *sspKstab = Kstab;
+  sspVol    = mVol;
 }
 
 //----------------------------------------------------------------------
-// formEAS — assemble the eas tangent / residual from the constant operators:
+// formSSP — assemble the ssp tangent / residual from the constant operators:
 //   K = Kstab + V * Bnot^T C Bnot          (C = current centroid tangent)
 //   f = Kstab * u + V * Bnot^T * sigma - f_body
 // The centroid material (materialPointers[0]) drives the constitutive update;
@@ -2379,9 +2380,9 @@ LadrunoBrick::buildEAS(void)
 // (consistent with the std/bbar paths).  // Ladruno
 //----------------------------------------------------------------------
 void
-LadrunoBrick::formEAS(int tang_flag, bool useInitialTangent)
+LadrunoBrick::formSSP(int tang_flag, bool useInitialTangent)
 {
-  if (easKstab == 0) buildEAS();   // safety (normally built in setDomain)
+  if (sspKstab == 0) buildSSP();   // safety (normally built in setDomain)
 
   computeBasis();
   const Vector &uCore = this->computeLocalDisp();   // identity for linear
@@ -2402,16 +2403,16 @@ LadrunoBrick::formEAS(int tang_flag, bool useInitialTangent)
   if (tang_flag == 1) {
     const Matrix &C = useInitialTangent ? materialPointers[0]->getInitialTangent()
                                         : materialPointers[0]->getTangent();
-    stiff = *easKstab;
+    stiff = *sspKstab;
     stiff *= sHg;
-    stiff.addMatrixTripleProduct(1.0, *easBnot, C, easVol);
+    stiff.addMatrixTripleProduct(1.0, *sspBnot, C, sspVol);
   }
 
   if (!useInitialTangent) {
     // stabilization + membrane internal force
-    resid.addMatrixVector(0.0, *easKstab, uCore, sHg);
+    resid.addMatrixVector(0.0, *sspKstab, uCore, sHg);
     const Vector &stress = materialPointers[0]->getStress();
-    resid.addMatrixTransposeVector(1.0, *easBnot, stress, easVol);
+    resid.addMatrixTransposeVector(1.0, *sspBnot, stress, sspVol);
 
     // body force: 2x2x2 Gauss integral of b * N_I (matches std/bbar)
     double xsj;
@@ -2775,7 +2776,7 @@ LadrunoBrick::viscousHourglassIncrement(void)
 //----------------------------------------------------------------------
 // Recoverable elastic hourglass / stabilization energy at the current trial
 // state. uri 'stiffness': ½κ·Σ q_aι² (the FB perturbation energy; q from the
-// trial displacement, mirrors formUri exactly). eas: ½·u_core·Kstab·u_core.
+// trial displacement, mirrors formUri exactly). ssp: ½·u_core·Kstab·u_core.
 // 0 for std/bbar (full integration) and physical (assumed strain folded into
 // the strain energy). For uri 'viscous' (dissipative, not stored) this returns
 // the CUMULATIVE committed dissipation hgDissipated instead.  // Ladruno
@@ -2789,15 +2790,15 @@ LadrunoBrick::hourglassEnergy(void)
   if (formulation == Formulation::URI && hourglassType == Hourglass::VISCOUS)
     return hgDissipated;
 
-  if (formulation == Formulation::EAS) {
-    if (easKstab == 0) buildEAS();
+  if (formulation == Formulation::SSP) {
+    if (sspKstab == 0) buildSSP();
     const Vector &uCore = this->computeLocalDisp();   // identity for linear
     static Vector Ku(24);
-    Ku.addMatrixVector(0.0, *easKstab, uCore, 1.0);
+    Ku.addMatrixVector(0.0, *sspKstab, uCore, 1.0);
     double e = 0.0;
     for (int i = 0; i < 24; i++) e += uCore(i) * Ku(i);
     // Ladruno — report the ACTUALLY stored (damage-degraded) stabilization energy,
-    // consistent with the Kstab formEAS assembles; the instrument for tuning the
+    // consistent with the Kstab formSSP assembles; the instrument for tuning the
     // floor against internal energy (§5). 1.0 for non-softening materials.
     return 0.5 * e * this->damageScale();
   }
@@ -2966,7 +2967,7 @@ LadrunoBrick::setResponse(const char **argv, int argc, OPS_Stream &output)
              strcmp(argv[0], "hourglassWork") == 0 ||
              strcmp(argv[0], "hourglassDissipation") == 0 ||
              strcmp(argv[0], "hgDissipation") == 0) {
-    // For uri 'stiffness'/eas this is the STORED stabilization energy; for uri
+    // For uri 'stiffness'/ssp this is the STORED stabilization energy; for uri
     // 'viscous' it is the CUMULATIVE DISSIPATED energy (see hourglassEnergy()).
     output.tag("ResponseType", "Ehg");
     theResponse = new ElementResponse(this, 8, Vector(1));

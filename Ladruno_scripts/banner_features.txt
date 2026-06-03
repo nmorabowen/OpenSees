@@ -14,7 +14,7 @@ Explicit Noh–Bathe integrators (ExplicitBathe / LNVD)
 Queryable critical time step (dt_cr)
 BezierTri6 — quadratic Bézier triangle (Kadapa 2018)
 BezierTet10 — quadratic Bézier tetrahedron (Kadapa 2018)
-LadrunoBrick — unified hex (std/bbar/uri/eas + hourglass)
+LadrunoBrick — unified hex (std/bbar/uri/ssp + hourglass)
 Solid geometry methods — -geom linear/corot/finite (+ F-bar)
 LadrunoJ2 — combined iso + Chaboche AF kinematic J2
 LadrunoJ2Finite — finite-strain J2, co-rotating backstress (+IMPL-EX)

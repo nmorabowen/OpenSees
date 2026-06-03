@@ -3,20 +3,20 @@
 The elastic gates (test_ladrunoBrick_element.py / _bending.py) prove the element
 is correct for linear-elastic small strain. They say nothing about path-dependent
 behaviour: the material trial-strain history, the per-step commit cycle, and — for
-`eas` — the stabilization built from the INITIAL tangent while the membrane block
+`ssp` — the stabilization built from the INITIAL tangent while the membrane block
 uses the CURRENT tangent. This file closes that gap the same rigorous way the
 elastic gates do: **element-vs-reference regression under a real J2 material.**
 
   * `std`  must track upstream `stdBrick`   step-for-step
   * `bbar` must track upstream `bbarBrick`
-  * `eas`  must track `SSPbrick` (the production assumed-strain hex we ported)
+  * `ssp`  must track `SSPbrick` (the production stabilized single-point hex we ported)
 
 These need NO analytic oracle — two elements driving the same J2 material through
 the same boundary-value problem must produce the same displacement history. The
-`eas`↔`SSPbrick` case specifically verifies that our frozen-initial-tangent
+`ssp`↔`SSPbrick` case specifically verifies that our frozen-initial-tangent
 stabilization reproduces the proven element in the inelastic regime, not just the
 elastic one. Plus: J2 plastic flow is isochoric, so developed plasticity drives
-the same volumetric over-constraint that `bbar`/`eas` exist to relieve — `std`
+the same volumetric over-constraint that `bbar`/`ssp` exist to relieve — `std`
 must lock relative to them.
 
 Material: J2Plasticity (q(xi) = sigma0 + H*xi with sigInf=sigma0, delta=0 -> linear
@@ -121,14 +121,14 @@ def test_bbar_matches_bbarBrick_J2():
     _assert_close(ours, ref, "bbar/J2 disp")
 
 
-def test_eas_matches_sspbrick_J2():
-    """THE inelastic gate for eas: our SSPbrick port must reproduce SSPbrick under
+def test_ssp_matches_sspbrick_J2():
+    """THE inelastic gate for ssp: our SSPbrick port must reproduce SSPbrick under
     a path-dependent material, not just elastically. Both freeze Kstab at the
     initial tangent and drive the membrane with the current J2 tangent, so the
     displacement history must agree closely."""
-    ours = _solve_hex_J2("LadrunoBrick", ["-formulation", "eas"], ftot=450.0)
+    ours = _solve_hex_J2("LadrunoBrick", ["-formulation", "ssp"], ftot=450.0)
     ref = _solve_hex_J2("SSPbrick", [], ftot=450.0)
-    _assert_close(ours, ref, "eas/J2 disp", rtol=2e-5, atol=1e-7)
+    _assert_close(ours, ref, "ssp/J2 disp", rtol=2e-5, atol=1e-7)
 
 
 # --------------------------------------------------------------------------
@@ -137,15 +137,15 @@ def test_eas_matches_sspbrick_J2():
 def test_plastic_incompressibility_std_locks():
     """J2 plastic flow is volume-preserving, so once the element yields it sees the
     same incompressibility over-constraint as elastic nu->0.5. Full integration
-    (std) locks; bbar and eas (mean-dilatation / condensed-EAS) relieve it. Push
-    well past yield and compare displacement magnitudes."""
+    (std) locks; bbar and ssp (mean-dilatation / condensed stabilization) relieve
+    it. Push well past yield and compare displacement magnitudes."""
     f = 600.0
     std = _solve_hex_J2("LadrunoBrick", ["-formulation", "std"], ftot=f)
     bbar = _solve_hex_J2("LadrunoBrick", ["-formulation", "bbar"], ftot=f)
-    eas = _solve_hex_J2("LadrunoBrick", ["-formulation", "eas"], ftot=f)
-    std_m, bbar_m, eas_m = _mag(std), _mag(bbar), _mag(eas)
+    ssp = _solve_hex_J2("LadrunoBrick", ["-formulation", "ssp"], ftot=f)
+    std_m, bbar_m, ssp_m = _mag(std), _mag(bbar), _mag(ssp)
     assert bbar_m > std_m, f"bbar |u|={bbar_m:.4e} should exceed std |u|={std_m:.4e} (std plastic-locks)"
-    assert eas_m > std_m, f"eas |u|={eas_m:.4e} should exceed std |u|={std_m:.4e} (std plastic-locks)"
+    assert ssp_m > std_m, f"ssp |u|={ssp_m:.4e} should exceed std |u|={std_m:.4e} (std plastic-locks)"
 
 
 def test_j2_actually_yields():

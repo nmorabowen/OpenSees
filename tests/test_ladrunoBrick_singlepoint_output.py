@@ -1,6 +1,6 @@
 """LadrunoBrick — single-point output mirror (the redundant-eval fix).
 
-The single-integration-point formulations (`eas`, `uri+stiffness`, `uri+viscous`)
+The single-integration-point formulations (`ssp`, `uri+stiffness`, `uri+viscous`)
 now evaluate the constitutive model ONCE at the centroid (material slot 0) instead
 of pushing the same centroid strain to all 8 material copies. Slots 1-7 are no
 longer strained; the per-Gauss-point output is *mirrored* from slot 0 in
@@ -54,7 +54,7 @@ def _uniaxial_cube(form_args, sig0=2.0, E=1000.0, nu=0.3):
 
 
 @pytest.mark.parametrize("form_args", [
-    ["-formulation", "eas"],
+    ["-formulation", "ssp"],
     ["-formulation", "uri", "-hourglass", "stiffness"],
     ["-formulation", "uri", "-hourglass", "viscous"],
 ])
@@ -79,7 +79,7 @@ def test_singlepoint_mirrors_all_gauss_points(form_args):
 
 
 @pytest.mark.parametrize("form_args", [
-    ["-formulation", "eas"],
+    ["-formulation", "ssp"],
     ["-formulation", "uri", "-hourglass", "stiffness"],
 ])
 def test_material_channel_routes_to_centroid(form_args):
