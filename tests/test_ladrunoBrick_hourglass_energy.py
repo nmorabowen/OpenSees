@@ -1,14 +1,14 @@
 """LadrunoBrick — hourglass / stabilization energy reporting.
 
 The element exposes a scalar `"hourglassEnergy"` response: the recoverable elastic
-hourglass energy (uri 'stiffness': ½κ·Σq²) or condensed-stabilization energy (eas:
+hourglass energy (uri 'stiffness': ½κ·Σq²) or condensed-stabilization energy (ssp:
 ½·u·Kstab·u). It is the GLSTAT-style spurious-mode diagnostic LS-DYNA reports in
 MATSUM/GLSTAT — letting an explicit run check that hourglass energy stays a small
 fraction of the internal energy.
 
 Gates:
   * constant strain / rigid body  ->  Ehg = 0 (γ is orthogonal to the linear and
-    rigid fields), for uri-stiffness AND eas;
+    rigid fields), for uri-stiffness AND ssp;
   * a genuinely hourglassing (bending) state -> Ehg > 0;
   * std / bbar / physical -> Ehg = 0 (no stored hourglass energy);
   * uri-viscous stores nothing either — in a static solve (no velocity) it reports
@@ -43,7 +43,7 @@ def _hg(tag=1):
     ["-formulation", "bbar"],
     ["-formulation", "uri", "-hourglass", "stiffness"],
     ["-formulation", "uri", "-hourglass", "viscous"],
-    ["-formulation", "eas"],
+    ["-formulation", "ssp"],
     ["-formulation", "uri", "-hourglass", "physical"],
 ])
 def test_constant_strain_zero_hourglass_energy(extra):
@@ -113,7 +113,7 @@ def _cantilever_hg(form_args, nx=4, L=10.0, E=1000.0, nu=0.0, P=1.0):
 
 @pytest.mark.parametrize("form_args", [
     ["-formulation", "uri", "-hourglass", "stiffness"],
-    ["-formulation", "eas"],
+    ["-formulation", "ssp"],
 ])
 def test_bending_has_positive_hourglass_energy(form_args):
     """In a bending-dominated state the controlled formulations store positive
@@ -143,7 +143,7 @@ def test_fully_integrated_and_viscous_report_zero(form_args):
 # --------------------------------------------------------------------------
 @pytest.mark.parametrize("form_args", [
     ["-formulation", "uri", "-hourglass", "stiffness"],
-    ["-formulation", "eas"],
+    ["-formulation", "ssp"],
 ])
 def test_hourglass_energy_bounded_by_external_work(form_args):
     """For a single element under a static load, the elastic strain energy equals

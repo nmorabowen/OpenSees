@@ -15,7 +15,8 @@ that:
     energy) for both std and bbar — no spurious mechanisms;
   * volumetric-locking relief: near-incompressible (nu=0.4999), bbar is strictly
     more flexible than std (std locks);
-  * the reserved formulations (uri/eas) are refused at the factory in v1.
+  * the reserved formulation `eas` (true Simo-Rifai EAS, ADR 19) is refused at
+    the factory and steers the user to `-formulation ssp`.
 
 Plan: Ladruno_implementation/09_ladruno_brick.md.
 """
@@ -136,7 +137,7 @@ def test_default_formulation_is_std():
 # --------------------------------------------------------------------------
 # rank / zero-energy (no spurious mechanisms for std/bbar)
 # --------------------------------------------------------------------------
-@pytest.mark.parametrize("formulation", ["std", "bbar", "uri", "eas"])
+@pytest.mark.parametrize("formulation", ["std", "bbar", "uri", "ssp"])
 def test_free_element_has_six_rigid_body_modes(formulation):
     # For uri this is also the hourglass-stabilization gate: 1-pt integration
     # alone leaves 6 rigid + 12 hourglass = 18 zero-energy modes; correct
@@ -165,7 +166,7 @@ def test_uri_relieves_volumetric_locking():
     )
 
 
-@pytest.mark.parametrize("formulation", ["std", "bbar", "uri", "eas"])
+@pytest.mark.parametrize("formulation", ["std", "bbar", "uri", "ssp"])
 def test_uniaxial_stress_patch(formulation):
     """Patch test: a unit cube under uniform x-tractions with statically-
     determinate (6 rigid-mode) restraints develops uniform uniaxial stress
@@ -240,18 +241,30 @@ def _refused(*extra):
     return 1 not in tags
 
 
-def test_eas_relieves_volumetric_locking():
-    """eas (bbar + statically-condensed enhanced strain) is the general-nu
-    element: like bbar/uri it removes the incompressibility over-constraint, so
-    it is strictly more flexible than std near nu=0.5. (Bending/all-nu accuracy
-    vs SSPbrick is gated in test_ladrunoBrick_bending.py.)"""
+def test_formulation_eas_is_deprecated_to_ssp():
+    """The legacy '-formulation eas' (a stabilized single-point SSPbrick port, NOT
+    enhanced assumed strain) was renamed to '-formulation ssp'. The name 'eas' is
+    now RESERVED for the upcoming true Simo-Rifai EAS (ADR 19) and is refused at
+    the factory so a model's intent stays explicit. NB PR-2 will repurpose 'eas'
+    for true EAS, at which point this test flips to asserting an element IS built."""
+    assert _refused("-formulation", "eas"), (
+        "'-formulation eas' must be refused after the ssp rename (the name is "
+        "reserved for true Simo-Rifai EAS); use -formulation ssp"
+    )
+
+
+def test_ssp_relieves_volumetric_locking():
+    """ssp (bbar + statically-condensed single-point stabilization) is the
+    general-nu element: like bbar/uri it removes the incompressibility
+    over-constraint, so it is strictly more flexible than std near nu=0.5.
+    (Bending/all-nu accuracy vs SSPbrick is gated in test_ladrunoBrick_bending.py.)"""
     nu = 0.4999
     std = _solve_hex("LadrunoBrick", ["-formulation", "std"], nu=nu)
-    eas = _solve_hex("LadrunoBrick", ["-formulation", "eas"], nu=nu)
+    ssp = _solve_hex("LadrunoBrick", ["-formulation", "ssp"], nu=nu)
     std_mag = math.sqrt(sum(u * u for u in std[0]))
-    eas_mag = math.sqrt(sum(u * u for u in eas[0]))
-    assert eas_mag > std_mag, (
-        f"eas (|u|={eas_mag:.3e}) should be more flexible than std "
+    ssp_mag = math.sqrt(sum(u * u for u in ssp[0]))
+    assert ssp_mag > std_mag, (
+        f"ssp (|u|={ssp_mag:.3e}) should be more flexible than std "
         f"(|u|={std_mag:.3e}) at nu={nu}"
     )
 
@@ -367,15 +380,15 @@ def test_hourglass_coefficient_reaches_kernel():
 
 
 @pytest.mark.parametrize("nu", [0.3, 0.499])
-def test_eas_matches_sspbrick_distorted_hex(nu):
-    """eas vs SSPbrick on the deliberately DISTORTED hex, component-by-component
+def test_ssp_matches_sspbrick_distorted_hex(nu):
+    """ssp vs SSPbrick on the deliberately DISTORTED hex, component-by-component
     (disp + element force), at compressible and near-incompressible nu. Exercises
     the J[4..19] distortion terms of the SSPbrick port that the axis-aligned
     cantilever oracle (test_ladrunoBrick_bending.py) cannot reach — a regular
-    grid has a diagonal Jacobian, zeroing every off-diagonal cross-block. eas
+    grid has a diagonal Jacobian, zeroing every off-diagonal cross-block. ssp
     condenses from the initial tangent, so for an elastic material the assembled
     stiffness equals SSPbrick's and the solved state must agree to ~1e-6."""
     ref = _solve_hex("SSPbrick", [], nu=nu)
-    eas = _solve_hex("LadrunoBrick", ["-formulation", "eas"], nu=nu)
-    _assert_close(eas[0], ref[0], f"disp[nu={nu}]", rtol=1e-6, atol=1e-8)
-    _assert_close(eas[2], ref[2], f"force[nu={nu}]", rtol=1e-6, atol=1e-8)
+    ssp = _solve_hex("LadrunoBrick", ["-formulation", "ssp"], nu=nu)
+    _assert_close(ssp[0], ref[0], f"disp[nu={nu}]", rtol=1e-6, atol=1e-8)
+    _assert_close(ssp[2], ref[2], f"force[nu={nu}]", rtol=1e-6, atol=1e-8)
