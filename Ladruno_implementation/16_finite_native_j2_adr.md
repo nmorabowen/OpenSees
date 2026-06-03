@@ -287,14 +287,61 @@ session can start straight from here:
   measurably improve accuracy.** The caveat is closed; no code change.
 
 **P2 — deferred features (each its own PR; the "Out (v2.x)" non-goals):**
+- **IMPL-EX** `-implex` — ✅ **SHIPPED (PR [#134](https://github.com/nmorabowen/OpenSees/pull/134), 2026-06-02).** See the dedicated
+  section below.
 - **Plane-stress / dimensional finite views** (§14.7 nested route). `LadrunoJ2Finite` is
   **3D-only** (`getType`=="ThreeDimensional"); `LadrunoJ2` already has 5 views. Finite
-  plane-stress needs the nested out-of-plane iteration.
-- **IMPL-EX** code path (the structure-only hook exists in the small-strain kernel; the
-  Lemaitre work added an `-implex` precedent on `LadrunoJ2` to mirror).
+  plane-stress needs the nested out-of-plane iteration. **DEFERRED — no consumer:** the only
+  element driving a `FiniteStrainNDMaterial` (via `setTrialF`) is the 3D `LadrunoBrick`; there
+  is no 2D finite element in the fork, and standard 2D continuum elements drive materials via
+  `setTrialStrain` (disabled here). So dimensional finite views are orphaned until a 2D
+  finite element exists (a plane-strain study can already be done with a 3D brick + fixed
+  out-of-plane DOFs). Confirmed 2026-06-02.
 - **Tabulated / Bézier isotropic curve** — gated on the small-strain `LadrunoJ2` tabulated
   mode landing first (shared `LadrunoHardening.h`).
 - **Thermomechanical coupling.**
+
+### IMPL-EX (`-implex`) — Δγ-extrapolation, SHIPPED PR [#134](https://github.com/nmorabowen/OpenSees/pull/134) (2026-06-02)
+
+The classic Oliver–Huespe–Cante implicit/explicit split, on the **plastic multiplier**
+(not the damage variable — that is the small-strain `LadrunoJ2 -implex` Lemaitre path).
+
+**Scheme.** Every step the implicit co-rotated return map runs and is **committed** — so the
+committed finite history (`bᵉ_n, ε̄ᵖ_n, α_{n,k}`) is byte-identical to a fully-implicit run.
+Only the stress/tangent *reported to the solver* are replaced, freezing two history quantities:
+the extrapolated multiplier `Δγ̃ = Δγ_n·(Δt_{n+1}/Δt_n)` (uniform step ⇒ `Δγ_n`) and the
+committed log-strain flow direction `N_n`, **co-rotated by the SAME `R_Δ = polar(f_Δ)`** as the
+backstress:
+
+    εᵉ̃ = εᵉᵗʳ − Δγ̃ · Ñ_n,   Ñ_n = R_Δ N_n R_Δᵀ;   τ̃ = ℂᵉ : εᵉ̃;   σ̃ = τ̃/J.
+
+Two consequences make it clean: (i) `Ñ_n` co-rotates ⇒ `σ̃` is **frame-indifferent** (objective
+to ~7e-13); (ii) the backstress **drops out** of `σ̃` (it appears only through the implicit
+`N_n`, already frozen) ⇒ the reported material tangent is the **constant SPD elastic operator**
+— no plastic `h`, and the co-rotation "channel B" vanishes. The price is an O(Δt) consistency
+error (the explicit stress → the implicit stress at **observed order ≈2** under step refinement
+for smooth flow) and a one-step lag at first yield (`Δγ_n = 0` ⇒ `σ̃` = elastic trial).
+
+**Why for the *finite* J2:** plain hardening J2 has an SPD implicit tangent already, so IMPL-EX
+is not a robustness cure on its own; its payoff is the factor-once constant SPD tangent for
+**explicit / quasi-static** use and as the SPD-tangent enabler when finite J2 is later paired
+with a **softening** law (finite Lemaitre). It mirrors the small-strain damage IMPL-EX (frozen
+extrapolated `D~ ⇒ (1−D~)Dtan_eff`); here the frozen quantity is `Δγ`.
+
+**Implementation:** entirely in `LadrunoJ2Finite.{h,cpp}` — **no kernel change**. The flow
+direction is recovered from the implicit return as `N = Δεᵖ/Δγ`; committed `Δγ_n, N_n` added to
+the state + sendSelf/recvSelf; default off ⇒ bit-identical to the implicit material.
+
+**Validation (oracle-first, no build needed for the constitutive proof):**
+- `tests/ladrunoj2_implex_reference.py` + `..._finite_implex_reference.py` (numpy oracles) +
+  `test_ladrunoJ2_implex_reference.py` (4) + `test_ladrunoJ2_finite_implex_reference.py` (5):
+  committed history == implicit (byte), explicit→implicit order≈2, objective 7e-13, constant
+  SPD elastic tangent, finite→small-strain reduction, documented yield-onset lag.
+- `tests/ladrunoj2_finite_implex_check.cpp` + `test_ladrunoJ2_finite_implex_cpp.py`: standalone
+  g++ mirror of the C++ `useImplex` math (Voigt conventions, flow-direction recovery,
+  co-rotation) vs the oracle to 1e-9 — the bridge the 3×3 oracle cannot catch.
+- Element acceptance: `test_ladrunoJ2Finite_element.py` (`LadrunoBrick -geom finite` with
+  `-implex`) — built-binary gate.
 
 **P3 — validation / perf (not code gaps; nice-to-haves):**
 - **Finite cyclic Bauschinger / buckling-brace element demonstrator** — v1 ships objectivity

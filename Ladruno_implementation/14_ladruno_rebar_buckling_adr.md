@@ -1,7 +1,7 @@
 ---
 title: ADR — Rebar-buckling wrapper (LadrunoRebarBuckling)
 project: Ladruno
-status: proposed
+status: v1 implemented; v2 cyclic design hardened
 priority: medium
 owner: nmora
 tags:
@@ -358,8 +358,9 @@ cyclic** remains for a follow-up.)
 2. **DM monotonic compression** — port `Buckled_stress_Dhakal` (`ε*`, `f*`,
    `r(e,λ)`), analytic `r'` for the tangent. Gate **B2 bit-for-bit vs
    `ReinforcingSteel -DMBuck`** + B3 + B5 (tangent FD).
-3. **Cyclic re-straightening** — `ε_max` anchor + branch flag; gate B4.
-   *(design locked in §9; code deferred)*
+3. **Cyclic re-straightening** — additive residual-gap memory (`σ = σ_bare − g`,
+   `g ∈ [0, g_law]`) + a `{PASS, BUCKLING, RESTRAIGHTEN}` branch machine; gate B4.
+   *(design hardened in §9 — multi-agent review + design panel; code deferred)*
 4. ✅ **GA law** (`-model ga`) — ported `Buckled_stress_Gomes`; reused the
    plumbing (PR #119 = DM; GA shipped in the follow-up PR). `-reduction`/`-fsufrac`
    knobs; gates GA0/GA1/GA2/GA3/GA5.
@@ -375,7 +376,19 @@ cyclic** remains for a follow-up.)
 
 ---
 
-## 9. v2 — Cyclic re-straightening (B4) — DESIGN (proposed, no code yet)
+## 9. v2 — Cyclic re-straightening — DESIGN (hardened; decisions locked, no code yet)
+
+> [!note] v2 status (2026-06-02)
+> This section was hardened by a multi-agent adversarial review (45 agents, 39
+> findings → 31 verified) and a 3-candidate design panel for the residual-gap
+> memory. **Four owner decisions are locked** and folded in below:
+> 1. **Smoothstep** closing factor (not linear) — C1-clean at both Phase-2 seams.
+> 2. **`k_rev = theBar->getInitialTangent()`** — the frozen reversal tangent.
+> 3. **Both `L_rs` forms** ship, selected by `-restraighten` (§9.4).
+> 4. **Residual-gap memory pulled forward** — the RESTRAIGHTEN→BUCKLING re-entry
+>    is **C0-continuous**; the earlier "v2-A break / v2-B fixes it later" split is
+>    **superseded** (there is no C0 break to defer). Read any remaining "v2-A/v2-B"
+>    phrasing elsewhere in this doc as historical.
 
 ### 9.1 The problem, and why RS can't be ported here
 
@@ -402,148 +415,343 @@ Menegotto–Pinto hysteresis state. The wrapper only ever sees the wrapped bar's
 `σ_bare`/`k_bare` and the buckled value *it itself* produced. So v2 **reformulates
 re-straightening generically** rather than porting RS's branch.
 
-### 9.2 Decision -- generic re-straightening (tension-side gap-close, wrapper-owned)
+### 9.2 Decision — generic re-straightening via an additive residual-gap memory
 
-> **Locked:** v2 does **not** reproduce RS's MP-anchored blend (its `Tfa`,
-> `BackStress = MP_f(...)`, `Cfa[]` are RS-internal MP state the wrapper cannot
-> see). It models the straightening lag as a **gap that closes on the TENSION
-> side** of the reversal, using only quantities the wrapper already owns. Core
-> stays a pure oracle; wrapper stays a geometry overlay. Calibrated to DM-cyclic
-> behavior -- **not** bit-equal to RS (RS works in log strain on its own MP
+> **Locked:** v2 does **not** reproduce RS's MP-anchored blend. It carries the
+> straightening lag in **one persistent committed scalar** — the **raise `g ≥ 0`
+> of the buckled stress ABOVE the bare curve** (buckling reduces the compressive
+> magnitude, i.e. raises σ toward 0) — using only quantities the wrapper already
+> owns. Core stays a pure oracle; wrapper stays a geometry overlay. Physically
+> motivated, **not** bit-equal to RS (RS works in log strain on its own MP
 > backbone; §6 B2 already abandoned bit-for-bit).
 
-**Two phases after a buckled reversal** (key correction from review: a bowed bar
-does NOT straighten during elastic unload -- straightening is a tension-side
-mechanism, gated at the unload->tension crossing `e_cross`):
-
-At the **reversal** (committed branch is BUCKLING and the strain increment turns
-tensile, §9.3), latch from the **committed** state (so the latch is idempotent
-under Newton sub-iteration -- see §9.3):
-- `e_rev = Cstrain`, `s_rev = Cstress` -- committed reversal strain / buckled
-  stress (continuity anchor),
-- `e_cross_rs = Cmax_ten_strain - Cmax_ten_stress/E` -- the anchor crossing,
-  **frozen for this episode** (so the live v1 anchor moving during reload cannot
-  corrupt it -- review [RISK]),
-- `L_rs` -- the tension-side re-straightening span (§9.4).
-
-Then, with `k_bare = theBar->getTangent()`, `sigma_bare = theBar->getStress()`:
+**The invariant (the whole design in one line).** The wrapper output is *always*
 
 ```
-# Phase 1 -- elastic unload (e_rev <= eps < e_cross_rs): no straightening yet,
-#            recover at the bare stiffness from the buckled reversal value.
-sigma  = s_rev + k_bare*(eps - e_rev)
-dsigma = k_bare
-
-# Phase 2 -- tension-side straightening (eps >= e_cross_rs): close the gap.
-q      = clamp((eps - e_cross_rs)/L_rs, 0, 1)
-D0     = sigma_bare(e_cross_rs) - [s_rev + k_bare*(e_cross_rs - e_rev)]   # gap at crossing
-sigma  = sigma_bare(eps) - (1 - q)*shape(q)*D0        # shape(0)=1, shape(1)=0
-dsigma = k_bare + D0 * d[(1-q)*shape(q)]/deps         # linear shape==1 => k_bare + D0/L_rs
+σ = σ_bare(ε) + g ,        with   g ∈ [0, g_law(ε)] ,
+g_law(ε) = σ_v1(ε) − σ_bare(ε)  ≥ 0          (the v1 monotonic buckling raise)
 ```
 
-C0 at the crossing: Phase-2 `q=0` gives `sigma = sigma_bare(e_cross_rs) - D0 =
-s_rev + k_bare*(e_cross_rs - e_rev)` = Phase-1 endpoint. C0 at completion: `q=1
-=> sigma = sigma_bare`, return to **PASS**. `D0` (and `sigma_bare(e_cross_rs)`)
-are latched once at the Phase-1->2 boundary, frozen within a step. **v2-A** ships
-the linear blend `shape(q)==1`; a **concave-toward-bare** `shape` (e.g.
-`shape(q)=(1-q)` -> `(1-q)^2`) is the calibration knob -- review [GAP]: the linear
-offset over-predicts early-reload stress and gives a tangent *stiffer* than bare,
-both softened by a concave shape. Acknowledged shape debt.
+where `σ_v1` is the v1 DM/GA result (`applyBucklingDM/GA`'s `Tstress`). **v1 is
+exactly the case `g == g_law`; full straightening is `g == 0`.** This single
+bracket is what makes every hard property fall out: reduce-to-v1 is bit-identical
+(no reload ⇒ `g = g_law`), energy cannot be injected (`g ≥ 0` ⇒ `|σ| ≤ |σ_bare|`
+in compression — the wrapper only ever *reduces* the carried load), and the raise
+is trapped in a compact interval that does not grow with cycle count (convergence
+— see below).
 
-### 9.3 State machine -- committed-latch / commit-time transition (path-independent)
+**Per-call setup** (all pure functions of committed state + the trial strain;
+computed once in `setTrialStrain` after `theBar->setTrialStrain(eps)`):
 
-Add (mirroring every v1 state as a **committed+trial pair**): an enum
-`branch in {PASS, BUCKLING, RESTRAIGHTEN}` and `e_rev, s_rev, e_cross_rs, L_rs`,
-**plus the missing `Cstrain`/`Cstress`** (v1 has only `Tstrain`/`Tstress` --
-review [BUG]: direction detection is uncomputable without a committed strain).
+```
+sBare = theBar->getStress();   kBare = theBar->getTangent();   eY = fy/E;
+e_cross_live = TmaxTenStrain - TmaxTenStress/E;   // live v1 onset anchor (.cpp:260); only ADVANCES
+```
+
+**Stress law per branch** (`σ = sBare + g`; `tangent = kBare + dg/dε`):
+
+```
+PASS  (onset not reached):
+    g = 0;   σ = sBare;   tangent = kBare.                     # exact v1 pass-through (.cpp:264-266)
+
+BUCKLING:
+    call applyBucklingDM/GA VERBATIM into scratch (σ_v1, k_v1);  g_law = max(0, σ_v1 − sBare)
+    if (no carry active):                                       # virgin / never-straightened
+        g = g_law;                                             # ⇒ σ = σ_v1 EXACTLY (BIT-IDENTICAL v1)
+    else:                                                       # carry from an interrupted straighten
+        if (eps ≤ Ce_bow):  g = g_law                          # at/below the deepest bow ⇒ pure v1
+        else:                                                   # STRAIN-based smoothstep re-merge:
+            ξ = clamp((Ce_reentry − eps)/(Ce_reentry − Ce_bow), 0, 1)   # 0 at re-entry, 1 at e_bow
+            g = Cg_reentry + (Cg_bow − Cg_reentry)·S(ξ),  S(ξ) = 3ξ²−2ξ³ (smoothstep)
+    σ = sBare + g
+    # NB the carry interpolates the raise in STRAIN (not in g_law): re-entry may
+    #   land on the tension side where g_law=0 but the bow raise Cg_reentry>0, so
+    #   a g_law-based blend would break C0. ξ=0 ⇒ g=Cg_reentry (C0 with RESTRAIGHTEN);
+    #   ξ=1 ⇒ g=Cg_bow=g_law(Ce_bow) (re-merged onto the v1 envelope).
+
+RESTRAIGHTEN  (episode latches Cs_rev=h_rev, Ce_cross_rs, CL_rs all frozen):
+    # The buckling RAISE g is HELD on the compression side (no straightening yet),
+    # then DECAYED to 0 over CL_rs on the tension side, tracking the LIVE σ_bare.
+    h_rev = Cs_rev                                             # raise at the reversal (= committed g)
+    if (eps < Ce_cross_rs):                                    # Phase 1 — hold the raise
+        g = h_rev;   tangent = kBare                           # σ = σ_bare(eps) + h_rev (yields with the bar)
+    else:                                                      # Phase 2 — decay the raise
+        q  = clamp((eps − Ce_cross_rs)/CL_rs, 0, 1)
+        B(q) = 1 − (3q² − 2q³)                                 # SMOOTHSTEP, B(0)=1, B(1)=0 (DECISION 1)
+        g = h_rev·B(q)
+    σ = sBare + g
+```
+
+**`B(q)` is smoothstep** (DECISION 1): `B(0)=1`, `B(1)=0`, `B'(0)=B'(1)=0`, so the
+Phase-2 entry (`q=0`) and the completion (`q=1`, rejoin bare) are both **C1-clean**
+— superseding the v2-A linear `(1−q)·shape(q)` form, which was C1-discontinuous at
+both ends by `h_rev/L_rs`.
+
+**Tracking the LIVE `σ_bare` (not an elastic unload line).** Earlier drafts had
+Phase 1 recover along an *elastic* line `s_rev + k_rev·(eps − e_rev)`; that
+massively overshoots once the bar re-yields in tension during a long reload (the
+line stays elastic for the whole span). Holding the raise on top of the **live**
+`σ_bare(eps)` instead makes the wrapper yield in parallel with the bar and removes
+the need for any crossing probe (`Cf_bare_cross`/`backboneStressAt`-at-reversal is
+**not** used — the only `backboneStressAt` use remains the DM onset `f*L` probe).
+`h_rev` is simply the committed raise `Cg` at the reversal, a pure function of
+committed state available from the first tensile trial (a single large tensile
+step that jumps past `Ce_cross_rs` is handled by the `q`-clamp).
+
+**Consistent tangent (signs verified by differentiating the stress law):**
+
+```
+PASS:            dσ/dε = kBare                                   (> 0)
+BUCKLING (no carry): dσ/dε = k_v1 — `g = g_law`, dg/dε = d(g_law)/dε = kBare − k_v1
+                 ⇒ kBare − (kBare − k_v1) = k_v1, the EXACT v1 analytic tangent
+                 (intermediate kBare·ratio+sBare·dratio .cpp:296; deep (kBare·num+sBare·(−0.02E))/fStarL
+                 .cpp:309; floored 0 .cpp:305).
+BUCKLING (carry): dσ/dε = kBare + dg/dε, dg/dε = (Cg_bow−Cg_reentry)·S'(ξ)·(−1/(Ce_reentry−Ce_bow)),
+                 S'(ξ) = 6ξ(1−ξ).  = kBare at ξ=0 (re-entry) and ξ=1 (e_bow), steeper between;
+                 beyond e_bow: g = g_law ⇒ dσ/dε = k_v1 (a mild record-depth tangent kink at e_bow).
+RESTRAIGHTEN P1: dσ/dε = kBare                                   (hold the raise, recover parallel to bare)
+RESTRAIGHTEN P2: dσ/dε = kBare + h_rev·B'(q)/CL_rs = kBare − h_rev·6q(1−q)/CL_rs.
+                 = kBare at q=0 and q=1 (B'=0, C1-clean); the bar sheds the raise in between.
+```
+
+> **Tangent (review must-fix):** with `σ = σ_bare + g` the tangent is `kBare +
+> dg/dε`. In RESTRAIGHTEN Phase 2 `g = h_rev·B(q)` so `dσ/dε = kBare + h_rev·B'(q)/CL_rs`
+> with `B'(q) = −6q(1−q) ≤ 0`; the smoothstep zeroes `B'` at both `q=0` and `q=1`,
+> giving C1-clean seams. (This supersedes the v2-A `(1−q)·shape(q)` form whose
+> sign error and seam jumps the review flagged.)
+
+**C0 at all five transitions** (stress matched across each):
+
+| # | transition | check |
+|---|---|---|
+| 1 | PASS→BUCKLING (onset) | at onset `g_law = 0` (v1 is C0 at onset, `.cpp:264`); no carry ⇒ `g=0` ⇒ `σ=sBare` both sides. |
+| 2 | BUCKLING→RESTRAIGHTEN (reversal) | Phase-1 at `eps=Ce_rev`: `g=h_rev=Cg` ⇒ `σ = σ_bare(Ce_rev)+Cg = Cs_rev` (committed buckled stress). (Tangent kink `k_v1→kBare` is an accepted reversal-class kink, like Steel02.) |
+| 3 | Phase 1→Phase 2 (crossing) | `q=0 ⇒ B(0)=1 ⇒ g=h_rev` = Phase-1 value (continuous); C1 (`B'(0)=0`). |
+| 4 | RESTRAIGHTEN→PASS (completion) | `q=1 ⇒ B(1)=0 ⇒ g=0 ⇒ σ=σ_bare`; **C1-clean** (`B'(1)=0`). |
+| 5 | RESTRAIGHTEN→BUCKLING (re-compress, **the crux**) | latch `Cg_reentry`=live raise, `Ce_reentry=Cstrain`. At `eps=Ce_reentry`: `ξ=0`, `S(0)=0` ⇒ `g = Cg_reentry` ⇒ `σ = sBare + Cg_reentry` = the RESTRAIGHTEN value. **No stress jump — the v2-A break is eliminated.** Re-merges to `g_law` at `Ce_bow` (`ξ=1`). |
+
+**Energy.** `g ∈ [0, g_law]` ⇒ the output is bracketed `[σ_bare, σ_v1]`: the
+wrapper can only *reduce* the carried load relative to bare, never increase it, so
+no spurious injection is possible. The clean compress→hold-raise→full-reload loop
+encloses positive area (the reload path sits the raise `g ≥ 0` above bare in the
+compression sense — i.e. carries *less* load — and sheds it to rejoin bare) ⇒
+dissipative.
+
+**Convergence.** `g` is clamped `0 ≤ g ≤ g_law(ε)` *every* step, and `g_law` is
+itself bounded (DM floors `σ` at `−0.2 f_y`, `.cpp:289/302-305`). `g` is **reset**
+to a law value or to 0 each episode, never integrated — there is no per-cycle
+accumulator, hence no ratchet/runaway. The deepest-buckle envelope `(Ce_bow,
+Cg_bow)` only ever *deepens monotonically*; re-buckling to the same depth gives
+the same gap (idempotent envelope).
+
+### 9.3 State machine — committed-latch / commit-time transition (path-independent)
+
+Add (mirroring every v1 state as a **committed+trial pair**) the following
+**new committed fields** (each gets a `T…` trial twin; `int` enums stored as
+`double`, exact cast on read like `model` at `.cpp:540`):
+
+| # | field | meaning | new? |
+|---|---|---|---|
+| 1 | `Cbranch` | `{PASS=0, BUCKLING=1, RESTRAIGHTEN=2}` regime of the converged step | new |
+| 2 | `Cstrain` | committed engineering strain (v1 has only `Tstrain`) — needed for `dEps` direction | new (review [BUG]) |
+| 3 | `Cstress` | committed wrapper output stress (the `s_rev` continuity-anchor source) | new (review [BUG]) |
+| 4 | `Cg` | **the residual buckling RAISE `g ≥ 0` above bare** (`σ = σ_bare + g`) — the single crux carrier | new |
+| 5 | `Ce_rev` | reversal-latched strain (`= Cstrain` at BUCKLING→RESTRAIGHTEN) — informational | new |
+| 6 | `Cs_rev` | reversal-latched **`h_rev`** = the raise `Cg` held at the reversal (NOT a stress) | new |
+| 7 | `Ce_cross_rs` | frozen straighten-start = the anchor crossing `CmaxTenStrain − CmaxTenStress/E` | new |
+| 8 | `Cf_bare_cross` | **reserved** slot (the elastic-line/crossing probe was removed; live `σ_bare` is tracked) | new |
+| 9 | `CL_rs` | re-straightening span (§9.4) | new |
+| 10 | `Ce_reentry` | strain at the RESTRAIGHTEN→BUCKLING re-compression (carry anchor) | new |
+| 11 | `Cg_reentry` | raise `g` at re-entry (the value the smoothstep carry starts from) | new |
+| 11b | `Cg_law_reentry` | `g_law(Ce_reentry)` — **reserved** serialization slot (unused by the strain-based carry) | new |
+| 12 | `Ce_bow` | deepest committed buckle strain (envelope bound) | new (optional) |
+| 13 | `Cg_bow` | `g_law(Ce_bow)` (envelope amplitude the offset re-merges to) | new (optional) |
+
+Kept from v1 unchanged (`.cpp:116-119`): `CmaxTenStrain`, `CmaxTenStress`,
+`CfStarL`, `CfStarLcross`. Fields 12-13 are **bounds, not stress-law carriers**:
+the `min(g, g_law)` clamp re-merges the offset onto the v1 envelope without them,
+so an implementer may drop them (10 new instead of 12) — but keeping them makes a
+mid-re-buckle serialized state reconstruct exactly, so **keeping them is
+recommended**. `k_rev` is **not** stored (recomputed `= getInitialTangent()`).
 
 **Idempotence rule (the path-dependence fix, review [BUG]):** `setTrialStrain`
 decides the *effective* branch for the current trial from the **committed**
-branch + committed latches + the current trial strain, and computes
-sigma/tangent -- **recomputed from scratch every call, never incrementally
-latched on the trial path**. The reversal latches (`e_rev=Cstrain`,
-`s_rev=Cstress`, `e_cross_rs`, `L_rs`) are all committed quantities, so
-re-evaluating from any trial iterate is identical. The *authoritative branch
-transition is persisted in `commitState`* from the converged `Tstrain` vs
-`Cstrain`.
+branch + committed latches + the current trial strain, and computes σ/tangent —
+**recomputed from scratch every call, never incrementally latched on the trial
+path**. Every quantity feeding the law is committed or a stateless re-call:
+`g_law` re-calls `applyBucklingDM/GA` (its `fStarL` cache keys on `e_cross`, a
+memoized pure function — not a path latch); the RESTRAIGHTEN raise reads only
+committed `{Cs_rev=h_rev, Ce_cross_rs, CL_rs}` + live `σ_bare`; the only trial-path
+writes are `Tstrain/Tstress/Ttangent/Tr`. The **authoritative branch+latch transition is
+persisted only in `commitState`** from the converged `Tstrain` vs `Cstrain`.
 
-Transitions (a `tol = 1e-12 + 1e-8*eY` dead-band guards `dEps~0`; `dEps = eps -
-Cstrain`):
+> **Scope of the idempotence claim (review precision):** it covers the new
+> RESTRAIGHTEN state and its committed latches. The **retained v1 anchor update**
+> (`TmaxTenStrain`/`TmaxTenStress`, `.cpp:384-389`) is a monotone trial-path
+> latch that is *intentionally* **not** re-seeded from committed on entry — the
+> PASS→BUCKLING onset gate and the v1 BUCKLING read the live trial anchor and are
+> path-dependent across Newton sub-iterates **exactly as in v1**. This is a
+> tolerated pre-existing property *required* to stay so by the v1-bit-identical
+> mandate (B2/B4a). The RESTRAIGHTEN blend is immune because `Ce_cross_rs` is
+> frozen from the committed anchor.
 
-| from | condition (per law) | to |
-|---|---|---|
-| PASS | DM: `e = eps-e_cross < -eY`;  GA: `eps < e_cross` (law-specific onset) | BUCKLING |
-| PASS | else | PASS |
-| BUCKLING | `dEps > +tol` (increment turns tensile) | RESTRAIGHTEN (latch from committed) |
-| BUCKLING | else (still compressing/holding) | BUCKLING (v1 monotonic `r*sigma_bare`) |
-| RESTRAIGHTEN | `q >= 1` (fully straightened) | PASS |
-| RESTRAIGHTEN | `dEps < -tol` before `q=1` (re-compress) | BUCKLING -- **v2-A re-enters at the live anchor (C0 break, see below); v2-B carries the residual gap** |
-| RESTRAIGHTEN | else | RESTRAIGHTEN (§9.2) |
+Transitions (`tol = 1e-12 + 1e-8·eY` dead-band; `dEps = eps − Cstrain`;
+`e_cross_live = CmaxTenStrain − CmaxTenStress/E`; **rows within a `from` group
+are first-match-wins, top to bottom**):
+
+| from | condition (per law) | to | latched at commit (all from committed state) |
+|---|---|---|---|
+| PASS | DM: `eps − e_cross_live < −eY`; GA: `eps < e_cross_live` | BUCKLING | — (`Cg` starts at `g_law` since `Cg=Cg_law_reentry=0`) |
+| PASS | else | PASS | — |
+| BUCKLING | `dEps ≤ −tol` or `|dEps|<tol` (compress/hold) | BUCKLING | if `eps<Ce_bow`: `Ce_bow=eps, Cg_bow=g_law(eps)` (monotone deepen) |
+| BUCKLING | `dEps > +tol` (turns tensile) | RESTRAIGHTEN | `Ce_rev=Cstrain`, `Cs_rev=Cstress`, `Ce_cross_rs=e_cross_live` (frozen), `Cf_bare_cross=backboneStressAt(Ce_cross_rs)`, `CL_rs` per §9.4 |
+| RESTRAIGHTEN | `q ≥ 1` (fully straightened) | PASS | `Cbranch=PASS`, `Cg=0`, clear episode + envelope latches (`Ce_bow/Cg_bow=0`) |
+| RESTRAIGHTEN | `dEps < −tol` before `q=1` (re-compress) | BUCKLING (carry) | `Cg_reentry`=live deficit, `Ce_reentry=Cstrain` — **C0-continuous**; carry clears when `eps ≤ Ce_bow` (re-merged) |
+| RESTRAIGHTEN | else | RESTRAIGHTEN | — (Phase 1/2 split on frozen `Ce_cross_rs`) |
 
 - **v1 BUCKLING math byte-untouched:** the new code only *dispatches* on the
-  branch; when `branch==BUCKLING` it calls the existing `applyBucklingDM/GA`
-  unchanged. The v1 anchor update + `fStarL` cache invalidation stay first in
-  `setTrialStrain`, exactly as now => B4a (no-reversal == v1) bit-identical by
-  construction.
-- **RESTRAIGHTEN is law-agnostic** (blends the wrapper's own `s_rev`/`D0`), so one
-  branch serves DM and GA; only the PASS->BUCKLING *onset* is law-specific.
-- **Anchor-moves-during-reload:** because `e_cross_rs` is frozen per episode, the
-  live v1 anchor advancing past `eps_max` during Phase 2 is harmless for the
-  active blend; on `q>=1`->PASS the live (grown) anchor governs the next onset. If
-  re-compression happens at `0<q<1` *after* the anchor moved, v2-A forces the
-  episode closed (re-enter BUCKLING at the live anchor); v2-B revisits this.
-- **Implementation checklist (call sites touched):** `commitState` (T->C incl.
-  `Cstrain=Tstrain`, `Cstress=Tstress`, branch+latches), `revertToLastCommit`
-  (C->T), `revertToStart` (zero all, `branch=PASS`), both ctors (inline-init;
-  value ctor still must NOT call `revertToStart`), `getCopy` (copy all new C/T
-  fields), `sendSelf`/`recvSelf` (§9.6).
+  branch; `BUCKLING` calls the existing `applyBucklingDM/GA` verbatim into scratch
+  (`σ_v1, k_v1`) and the reconciliation collapses to `g = g_law` whenever there
+  was no prior straightening. The v1 anchor update + `fStarL` cache invalidation
+  stay first in `setTrialStrain`, exactly as now ⇒ **B4a is bit-identical by
+  literal code reuse, not numerical coincidence** (do **not** add a separate PASS
+  early-return — route PASS/pre-onset through `applyBucklingDM/GA`, which already
+  passes through at `.cpp:264/341`).
+- **RESTRAIGHTEN is law-agnostic** (`g = h_rev·B(q)` over the wrapper's own
+  held raise `Cs_rev=h_rev`), so one branch serves DM and GA; only the PASS→BUCKLING *onset*
+  is law-specific. A GA-buckled C0 assertion at the crossing (B4-GA) is the only
+  thing that *proves* this rather than asserts it.
+- **Two crossings coexist by design:** the *live* `e_cross_live` drives the
+  BUCKLING onset; the *frozen* `Ce_cross_rs` drives the active RESTRAIGHTEN blend.
+  Correct, but a subtle invariant — document inline in the code.
+- **Implementation checklist — field-wiring table (every new field × every call
+  site).** A new committed field omitted from `getCopy` is the wrapper-state-loss
+  footgun one level deeper (silent, no compiler error; v1 `getCopy` hand-copies
+  12 members, `.cpp:451-462`). Each of the 13 fields above (+ trial twin) must be
+  wired through **all** of: value-ctor inline-init · no-arg-ctor inline-init ·
+  `getCopy` manual copy · `commitState` T→C · `revertToLastCommit` C→T ·
+  `revertToStart` zero (`Cbranch=PASS`, `Cg=0`) · `sendSelf`/`recvSelf` index
+  (§9.6). Additional call sites the v1 checklist omitted:
+  - **`Print`** (`.cpp:568-596`) — dump `branch` + latches in both text and JSON
+    so the path-dependent machine is inspectable.
+  - **`-restraighten` parser** (§9.4) — new flag in `OPS_LadrunoRebarBuckling` +
+    a `restraightenMode`/`restraightenC` member + optional `setParameter` id 3.
+  - **`Tr` on RESTRAIGHTEN** — define `Tr = (sBare≠0)? σ/sBare : 1.0` (documented
+    as *effective* reduction, since the branch is additive not multiplicative),
+    set every RESTRAIGHTEN trial; `Tr=1.0` on the Phase-1 sub-branch — so
+    `getResponse("reduction")` stays meaningful instead of reporting a stale `r`.
 
-### 9.4 Calibration of `L_rs` (the one real unknown)
+### 9.4 Calibration of `L_rs` — both forms ship (DECISION 3)
 
-Span scales with the plastic bow accumulated in compression, modulated by
-slenderness. Candidates, to fit against DM-cyclic / RS loops:
-1. `L_rs = c*|e_rev - e_cross_rs|` -- fraction of the compressive excursion;
-   `-restraighten c` knob, default `c=1.0`.
-2. `L_rs = f(lambda)*eY` -- slenderness-set span (bow depth scales with lambda).
+`L_rs` scales with the plastic bow accumulated in compression, modulated by
+slenderness. The **`-restraighten` flag selects the form**; both feed the *same*
+smoothstep Phase 2, only `CL_rs` differs. `CL_rs` is computed **once** at the
+BUCKLING→RESTRAIGHTEN latch and frozen for the episode.
 
-**Locked for v2-A:** option (1), default `c=1.0`, **with a floor**
-`L_rs = max(c*|e_rev - e_cross_rs|, eY)` (review [SUGGESTION]: a reversal just
-past onset gives `|e_rev-e_cross_rs|->0` => `D0/L_rs` blows up / `q` saturates
-instantly -- the floor caps the tangent). Option (2) is the calibration target.
+**Option (1) — `-restraighten c <value>` (default, `c=1.0`):**
+```
+CL_rs = max( c·|Ce_rev − Ce_cross_rs| , eY )
+```
+The `eY` floor prevents `h_rev/CL_rs` blow-up / instant `q`-saturation when the
+reversal is just past onset (`|Ce_rev−Ce_cross_rs| → 0`).
 
-### 9.5 Tests (B4 battery) -- loop-shape + limits + brackets, not bit-for-bit
+**Option (2) — `-restraighten lambda` (slenderness-set span):**
+```
+CL_rs = f(λ)·eY ,    f(λ) = 0.5 + 0.10·max(0, λ − 5) ,   clamped to [0.5, 6.0]
+```
+- **Monotone in λ** — bow depth (hence the straightening span) grows with
+  slenderness `λ = s/d`.
+- **Sane threshold:** at `λ ≈ 5` (where the onset magnitude saturates,
+  `eStarMag` floored at 7, `.cpp:271`) `f(5)=0.5` ⇒ `CL_rs = 0.5·eY`: a
+  barely-buckled bar straightens within half a yield strain.
+- **Slope tied to the DM onset family:** onset deepens by `~2.3·kfac·eY` per unit
+  `λ` (`kfac = √(fy/E·2000)`, `.cpp:269-270`); `0.10·eY` per unit `λ` is a
+  conservative `~2%` fraction of that excursion, `O(eY)`-scaled.
+- **Upper clamp 6.0** caps `CL_rs` at `6·eY` so a very slender bar does not give
+  an unphysically long, near-flat reload (which would under-predict dissipation).
 
-| # | Test | Oracle |
-|---|---|---|
-| B4a | **reduce-to-v1**: monotonic compression (no tensile reload) | **bit-identical** to v1 monotonic DM/GA (no-reversal identity; guards v1 regression) |
-| B4b | compression->full tension reload rejoins bare | at `q>=1`, sigma/tangent == bare (PASS restored); C0 at reversal, crossing, completion |
-| B4c | elastic-unload segment recovers at `k_bare` | Phase-1 tangent ~ `k_bare` (guards review [BUG]: no flat/zero-stiffness unload) |
-| B4d | re-straightening lag is **bracketed** | on the tension side, v2 `sigma` sits **below bare** AND **above v1 immediate-rejoin** across `[e_cross_rs, e_cross_rs+L_rs]` (distinguishes v2 from both bare and v1); per-cycle dissipation `>0` |
-| B4d' | RS overlay (informational, NOT asserted) | overlay a `ReinforcingSteel -DMBuck` cyclic loop; eyeball shape only |
-| B4e | consistent-tangent FD on RESTRAIGHTEN | analytic vs central FD, probed strictly **inside** Phase 2 (away from `q=0,1` and the Phase-1/2 seam) |
-| B4f | partial reload -> re-compress (RESTRAIGHTEN->BUCKLING) | **v2-A: assert NO crash + sensible re-buckle; document the C0 stress break** (only v2-B closes it) |
+> **Floor magnitude (review precision):** the `eY` floor caps the Phase-2 tangent
+> deviation at `h_rev·E/fy`. In a deep-buckled reversal the v1 stress sits at the
+> `−0.2 f_y` residual while `σ_bare ≈ −f_y`, so the raise `h_rev = σ_v1 − σ_bare`
+> can reach `~0.8 f_y` and the reload tangent magnitude `~ kBare + 0.8·E` — the
+> floor prevents blow-up but the smoothstep distributes this over the span (and
+> IMPL-EX mitigates implicit thrash). With the **`c`-mode** span
+> `c·|e_rev − e_cross_rs|` the floor binds only for small `c` or a small
+> excursion; the **`lambda`-mode** span is bounded by construction.
+
+The DM-2002 cyclic-companion fit of `f(λ)` (and of the smoothstep itself) is the
+deferred calibration target (§9.6); option (2) exists precisely so a user can fit
+it.
+
+### 9.5 Tests (B4 battery) — loop-shape + limits + brackets + structural Newton
+
+**Harness (locked):** all B4 cyclic rows use the **committing `_drive`** harness
+(`tests/...:49`) — the fresh-material `_oneshot` (`:62`) cannot express a reversal
+and never exercises `commitState`/branch dispatch, so it is **forbidden** for any
+B4 row. The existing `_dm_ref`/`_ga_ref` ports (`:93/:246`) are **virgin-only**
+(`e_cross=0`, `fsup=0`) and serve as the **v1 oracle** for the monotonic
+reduce-to-v1 leg; the cyclic legs assert **structural properties** (rejoin,
+held-raise constancy, the Phase-2 bracket, C0 continuity of the raise) against a
+parallel bare run rather than a full closed-form `_restraighten_ref` (the
+committing harness can't do a non-committing FD perturbation cleanly).
+
+| # | Test | Oracle | status |
+|---|---|---|---|
+| B4a | reduce-to-v1 (monotonic) | pure compression `0→−30 eY` reproduces the v1 **`_dm_ref`** AND **`_ga_ref`** law to `rel 1e-6` (the state machine with no reversal == v1 verbatim) | ✅ |
+| B4b | compression→full reload rejoins bare | buckled raise at the reversal; past `Ce_cross_rs+L_rs` σ **and** tangent == bare (PASS restored) | ✅ |
+| B4c | Phase 1 holds the raise | on the compression-side reload the raise `g = σ_wrap − σ_bare` stays `≈ const` (tracks bare in parallel; no drift) | ✅ |
+| B4d | Phase-2 bracket | strictly inside `(Ce_cross_rs, Ce_cross_rs+L_rs)`: `σ_bare < σ_wrap < σ_bare + h_rev` (above bare, below the held-raise line) | ✅ |
+| B4f | partial reload → re-compress | **C0 of the raise** at re-entry: `|Δg|` across the RESTRAIGHTEN→BUCKLING step is `≪ g_rev` (no jump); then genuinely re-buckles (`g` grows); no NaN/blow-up | ✅ |
+| B4-GA | GA-cyclic (law-agnostic) | GA buckle → reload rejoins bare (one RESTRAIGHTEN branch serves DM and GA) | ✅ |
+| B4h | v2 serialization round-trip | commit into RESTRAIGHTEN (`0<q<1`) then `FE_Datastore` round-trip; the continued response is reproduced (branch + latches survive `recvSelf`) | ✅ |
+| B4i | `L_rs` floor | tiny `c` ⇒ `CL_rs` clamps to `eY` (not the raw span): still raised at `+0.5 eY`, rejoined by `+2 eY`; finite tangent, no blow-up | ✅ |
+| B4e | consistent-tangent FD on RESTRAIGHTEN | analytic vs central FD strictly inside Phase 2 | deferred (needs non-committing trial probe) |
+| B4g | structural Newton across the seams | real `analyze()` through a reversal + seam-straddling DC steps | deferred |
+| B4d' | RS `-DMBuck` overlay (informational) | eyeball shape only | deferred |
+
+**Implemented: B4a/B4b/B4c/B4d/B4f/B4-GA/B4h/B4i — all green (27/27 with the v1
+B0–B7 + GA battery); J2 regression 46 passed / 1 xfail.** All cyclic rows use the
+committing `_drive` harness. B4e/B4g/B4d' are deferred (B4e needs a non-committing
+trial-strain probe the direct harness lacks; B4g/B4d' are follow-ups).
 
 ### 9.6 Compatibility / risk
 
 - **Default-off identity preserved**: v2 changes only the post-reversal branch;
   `-lsr 0` and monotonic paths are bit-identical to v1 (B4a guards it).
-- **Serialization (review [BUG] -- cross-version):** v1 streams a `Vector(11)`;
-  v2 grows it for `Cstrain, Cstress, branch, e_rev, s_rev, e_cross_rs, L_rs`. A v2
-  `recvSelf` reading 11-wide v1 data would misalign. **Locked:** put a schema
-  version in `data(0)` (v1 implicitly 1; v2 writes 2) and branch the read, OR --
-  acceptable for this research fork -- declare v2 restores only v2 streams and
-  **state it** (do not silently "grow the vector, bump nothing"). `int branch`
-  stored as `double` is exact (small enum; cast on read like `model`).
+- **Serialization version in the ID, NOT `data(0)` (review must-fix):** `data(0)`
+  already holds `model` (`.cpp:489`) — a version there would silently corrupt the
+  model selector. **Locked:** widen `dataID` from `Vector(3)` to `Vector(4)` and
+  write `dataID(3) = schemaVersion` (v1 implicitly 1; v2 writes 2). `recvID` is
+  read *before* `recvVector`, so `recvSelf` branches on `dataID(3)` to choose the
+  `Vector` width (11 for v1; `11 + N_new` for v2 — `Vector(24)` keeping all 13
+  new fields, or `Vector(22)` dropping `Ce_bow/Cg_bow`) and zero-inits the v2
+  fields when reading a v1 stream (`Cbranch=PASS`, `Cg=0`, …). A v2 `recvSelf`
+  that reads an unsupported version **hard-errors** (`opserr << "...unsupported
+  serialization version N (need 2)"; return -3`) rather than relying on a
+  channel-dependent width-mismatch. The `Vector` sits strictly between the ID send
+  and the trailing `theBar->sendSelf`, so growing it leaves the tag/classTag/dbTag
+  handshake and the nested `theBar` send/recv ordering untouched. `int branch`
+  stored as `double` is exact (cast on read like `model`).
 - **Both laws**: one law-agnostic RESTRAIGHTEN branch (DM + GA).
 - **Honest divergence**: physically-motivated reformulation, not an RS port; the
   RS overlay (B4d') stays informational, never asserted.
-- **Known v2-A debt** (documented, not silent): linear `shape(q)` over-predicts
-  early reload + gives a stiffer-than-bare reload tangent (concave `shape` fixes);
-  partial-reload-then-recompress has a C0 stress break (v2-B residual-gap memory
-  fixes); `L_rs`/`shape` want a fit to the DM-cyclic 2002 companion.
+- **Softening/localization (carried forward from §7):** the RESTRAIGHTEN branch
+  adds a second negative-then-stiff regime on top of the v1 post-buckling
+  softening — the same implicit-Newton stall and fiber-section localization
+  hazards apply; mitigation = **IMPL-EX** (structure-only hook) + step-cut, and
+  the crack-band/regularization caveat ([[project_bezier_charlen]]) applies
+  unchanged.
+- **Known calibration debt** (documented, not silent): the smoothstep `B(q)` and
+  both `L_rs` forms are physically-motivated and scale-consistent with the DM
+  onset coefficients but **not yet fit** to the DM-2002 cyclic companion;
+  `-restraighten` exposes both forms for that fit. The re-buckle re-merge shape
+  (`g` re-grows by the v1 increment, clamped onto `g_law`) is C0 and bounded but
+  uncalibrated — same shape-debt class. Deep multi-interrupt histories are
+  individually C0/bounded (proven) but the cumulative loop shape is validated only
+  by B4f/B4g — an acknowledged validation gap.
 
 ---
 
 **Deferred:** steel-profile plate-buckling law (route c — a *different* material,
 not this one); interaction-calibration guidance with corotational global buckling;
-DM-cyclic `L_rs`/blend-shape fit against the Dhakal–Maekawa 2002 cyclic companion.
+DM-cyclic `L_rs`/smoothstep fit against the Dhakal–Maekawa 2002 cyclic companion.

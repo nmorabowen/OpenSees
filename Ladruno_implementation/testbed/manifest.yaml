@@ -280,6 +280,28 @@ features:
       #111 shipped the classTag/element/test but omitted this G9 manifest row, so the
       gate failed on ladruno HEAD until backfilled here. See 14_ladruno_imk_beam.md.
 
+  - feature: LadrunoIMKBeam2d
+    classtag: 33004          # ELE_TAG family; 2D planar concentrated-plasticity IMK beam (N. Mora-Bowen)
+    tag_symbol: ELE_TAG_LadrunoIMKBeam2d
+    pr: 131
+    feature_class: element
+    required_tiers: [T0, T1]
+    pytest: tests/test_ladrunoIMKBeam2d_element.py
+    tcl: WAIVED(no Tcl command surface yet — Python/apeGmsh-driven; OPS factory only, shared ndm-dispatch under the LadrunoIMKBeam command)
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesElementCommands.cpp
+      - SRC/element/ladrunoIMKBeam/CMakeLists.txt
+    dispatch: {tcl: false, functionMap: true}
+    status: active
+    notes: >
+      2D planar concentrated-plasticity IMK beam macro — the ndm-dispatch counterpart
+      of the 3D LadrunoIMKBeam (33003), sharing the LadrunoIMKHinge kernel. Shipped in
+      #131, which omitted this G9 manifest row; backfilled here so the classTag+manifest
+      gate passes on ladruno HEAD. See 14_ladruno_imk_beam.md.
+
   - feature: LogStrainNDMaterial
     classtag: 33010          # ND_TAG family; Hencky finite-strain adaptor (seam 3)
     tag_symbol: ND_TAG_LogStrainNDMaterial
@@ -359,8 +381,12 @@ features:
       d(alpha-tilde)/dF, ~1e-4..2e-3 rel, recovered exactly-to-FD by perturbing only R,
       plastic steps only; mapped into cmat via Fdot=LF). Verified: numpy oracle objective
       ~1e-12 + tangent recipe exact-to-FD ~1e-14; g++ composition vs oracle 1e-9; element
-      acceptance via LadrunoBrick -geom finite. NON-goals v1: plane-stress finite, IMPL-EX
-      code, tabulated iso. Plan: Ladruno_implementation/16_finite_native_j2_adr.md.
+      acceptance via LadrunoBrick -geom finite. IMPL-EX (-implex, Oliver-Huespe-Cante;
+      PR #134): Delta-gamma extrapolation + co-rotated frozen flow direction =>
+      constant SPD elastic reported tangent, implicit history committed (byte-identical);
+      committed==implicit, explicit->implicit order~2, objective 7e-13 (oracles + g++ check
+      + element acceptance). NON-goals v1: plane-stress finite (no consumer), tabulated iso.
+      Plan: Ladruno_implementation/16_finite_native_j2_adr.md.
 
   - feature: LadrunoUniaxialJ2
     classtag: 33000          # MAT_TAG (uniaxial) family; per-registry band, no collision w/ ELE/ND/INTEGRATOR/RECORDER 33000
