@@ -3,18 +3,18 @@
 Validation plan: Ladruno_implementation/17_finite_strain_validation_plan.md, §5
 (L4 / D2) and §9 phase **P5**. Two *independent* fork solid elements consume the
 same `SolidTransformation` geometry layer and the same small-strain material:
-  * **LadrunoBrick** — 8-node hex (here `-formulation eas`, the shear-locking-cured
-    enhanced-assumed-strain form), and
+  * **LadrunoBrick** — 8-node hex (here `-formulation ssp`, the shear-locking-cured
+    stabilized single-point form), and
   * **[[14_bezier_tet10_corot|BezierTet10]]** — 10-node quadratic tetrahedron.
 Different topology *and* different order, on the SAME cantilever, must converge to
 the SAME displacement. Because no other OpenSees solid computes F, this hex↔tet
 agreement is the strongest internal evidence short of a commercial-code oracle.
 
-> [!note] Why EAS, and why a convergence band (not ≤1e-3)
+> [!note] Why ssp, and why a convergence band (not ≤1e-3)
 > The plain `std` hex shear-LOCKS in slender bending (it under-predicts the tip
 > deflection ~40 %), so std↔tet would disagree for a *hex* reason, not a real one.
-> `-formulation eas` cures shear locking and tracks the quadratic tet. The two
-> elements then **bracket** the exact solution (the EAS hex converges from below,
+> `-formulation ssp` cures shear locking and tracks the quadratic tet. The two
+> elements then **bracket** the exact solution (the ssp hex converges from below,
 > the tet from above) and the gap **shrinks** under refinement toward a common
 > limit — the honest statement of element agreement. The tight ≤2 % match is a
 > mesh-converged (fine) result; here we demonstrate the *convergence to agreement*
@@ -64,7 +64,7 @@ def _hex_eas_tip(nx, ny, nz):
             for i in range(nx):
                 conn = [nid(i, j, k), nid(i + 1, j, k), nid(i + 1, j + 1, k), nid(i, j + 1, k),
                         nid(i, j, k + 1), nid(i + 1, j, k + 1), nid(i + 1, j + 1, k + 1), nid(i, j + 1, k + 1)]
-                ops.element("LadrunoBrick", e, *conn, 1, "-formulation", "eas", "-geom", "linear")
+                ops.element("LadrunoBrick", e, *conn, 1, "-formulation", "ssp", "-geom", "linear")
                 e += 1
     return _solve_tip([nid(i, j, nz) for j in range(nyp) for i in range(nxp)])
 
