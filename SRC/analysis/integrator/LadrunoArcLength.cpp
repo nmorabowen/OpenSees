@@ -50,7 +50,12 @@
 #include <AnalysisModel.h>
 #include <LinearSOE.h>
 #include <Vector.h>
+#include <Matrix.h>
+#include <ID.h>
 #include <Channel.h>
+#include <FE_Element.h>
+#include <FE_EleIter.h>
+#include <Element.h>
 #include <math.h>
 #include <string.h>
 #include <elementAPI.h>
@@ -80,6 +85,9 @@ void* OPS_LadrunoArcLength()
     bool   adapt = false;
     int    Jd = 5;
     double ellMin = 0.0, ellMax = 0.0, pExp = 1.0;
+    bool   stabilize = false, adaptStab = false;
+    double fTarget = 2.0e-4, cVisc = 0.0, dtPseudo = 1.0, massScale = 1.0;
+    int    massMode = 0;
 
     while (OPS_GetNumRemainingInputArgs() > 0) {
         const char *opt = OPS_GetString();
@@ -114,18 +122,52 @@ void* OPS_LadrunoArcLength()
                 opserr << "WARNING integrator LadrunoArcLength -p failed to read exp\n";
                 return 0;
             }
+        } else if (strcmp(opt, "-stabilize") == 0) {
+            stabilize = true;
+            if (OPS_GetNumRemainingInputArgs() > 0) {   // optional trailing f fraction
+                int nd = 1; double f;
+                if (OPS_GetDoubleInput(&nd, &f) == 0) fTarget = f;
+            }
+        } else if (strcmp(opt, "-adaptStab") == 0) {
+            adaptStab = true;
+        } else if (strcmp(opt, "-cVisc") == 0) {
+            int nd = 1;
+            if (OPS_GetDoubleInput(&nd, &cVisc) < 0) {
+                opserr << "WARNING integrator LadrunoArcLength -cVisc failed to read value\n";
+                return 0;
+            }
+        } else if (strcmp(opt, "-mass") == 0) {
+            if (OPS_GetNumRemainingInputArgs() < 1) {
+                opserr << "WARNING integrator LadrunoArcLength -mass expects gershgorin|lumped|unity\n";
+                return 0;
+            }
+            const char *m = OPS_GetString();
+            if (strcmp(m, "gershgorin") == 0)      massMode = 0;
+            else if (strcmp(m, "lumped") == 0) {
+                massMode = 1;
+                if (OPS_GetNumRemainingInputArgs() > 0) {
+                    int nd = 1; if (OPS_GetDoubleInput(&nd, &massScale) < 0) massScale = 1.0;
+                }
+            } else if (strcmp(m, "unity") == 0)    massMode = 2;
+            else opserr << "WARNING integrator LadrunoArcLength - unknown -mass " << m
+                        << " (keeping gershgorin)\n";
         } else {
             opserr << "WARNING integrator LadrunoArcLength - unknown option " << opt
                    << " (ignored)\n";
         }
     }
 
-    return new LadrunoArcLength(arcLength, alpha, adapt, Jd, ellMin, ellMax, pExp);
+    return new LadrunoArcLength(arcLength, alpha, adapt, Jd, ellMin, ellMax, pExp,
+                                stabilize, fTarget, adaptStab, massMode, massScale,
+                                cVisc, dtPseudo);
 }
 
 LadrunoArcLength::LadrunoArcLength(double arcLength, double alpha,
                                    bool adapt_, int Jd_,
-                                   double ellMin_, double ellMax_, double pExp_)
+                                   double ellMin_, double ellMax_, double pExp_,
+                                   bool stabilize_, double fTarget_, bool adaptStab_,
+                                   int massMode_, double massScale_, double cVisc_,
+                                   double dtPseudo_)
  :StaticIntegrator(INTEGRATOR_TAGS_LadrunoArcLength),
   arcLength2(arcLength*arcLength), alpha2(alpha*alpha),
   a(0.0), b(0.0), c(0.0), b24ac(0.0),
@@ -135,7 +177,15 @@ LadrunoArcLength::LadrunoArcLength(double arcLength, double alpha,
   pExp(pExp_),
   // init Jlast = Jd so the FIRST step's factor (Jd/Jlast)^p == 1 (no jump),
   // mirroring LoadControl's numIncrLastStep = numIncr.
-  numIncrLastStep(Jd_ > 0 ? Jd_ : 1)
+  numIncrLastStep(Jd_ > 0 ? Jd_ : 1),
+  stabilize(stabilize_), adaptStab(adaptStab_), fTarget(fTarget_), cVisc(cVisc_),
+  dtPseudo(dtPseudo_ > 0.0 ? dtPseudo_ : 1.0),
+  cOverDt(cVisc_ / (dtPseudo_ > 0.0 ? dtPseudo_ : 1.0)),
+  // if cVisc supplied (-cVisc), latch calibration off (deterministic); else
+  // calibrate once from fTarget at the first stabilized commit.
+  cCalibrated(cVisc_ != 0.0), Estrain0(0.0), dissipVisc(0.0), residualTrueNorm(0.0),
+  dLambda0(sqrt(arcLength*arcLength)), massMode(massMode_), massScale(massScale_),
+  nEqn(0), Mstar(0)
 {
 
 }
@@ -147,6 +197,86 @@ LadrunoArcLength::~LadrunoArcLength()
     if (deltaUstep != 0) delete deltaUstep;
     if (deltaUbar  != 0) delete deltaUbar;
     if (phat       != 0) delete phat;
+    if (Mstar      != 0) delete Mstar;
+}
+
+// ---- integrator-owned artificial diagonal mass (lifted from
+// LadrunoDynamicRelaxation::buildFictitiousMass; NO dt^2/4 prefactor -- the scale
+// lives in cOverDt). Gershgorin row-sum of K, or lumped real mass, or unity.
+// NOT Element::getMass() (zero on zero-density models -- the ADR-20 BLOCKER).
+int
+LadrunoArcLength::buildArtificialMass(void)
+{
+    AnalysisModel *theModel = this->getAnalysisModel();
+    if (theModel == 0 || Mstar == 0) return -1;
+    Mstar->Zero();
+
+    if (massMode == 2) {                 // unity
+        for (int i = 0; i < nEqn; i++) (*Mstar)(i) = 1.0;
+        return 0;
+    }
+    FE_EleIter &theEles = theModel->getFEs();
+    FE_Element *elePtr;
+    while ((elePtr = theEles()) != 0) {
+        Element *e = elePtr->getElement();
+        if (e == 0) continue;
+        const ID &id = elePtr->getID();
+        const Matrix &Ke = (massMode == 1) ? e->getMass() : e->getTangentStiff();
+        int n = id.Size();
+        if (Ke.noRows() != n) continue;
+        for (int i = 0; i < n; i++) {
+            int loc = id(i);
+            if (loc < 0) continue;
+            double rs = 0.0;
+            for (int j = 0; j < n; j++) rs += fabs(Ke(i, j));
+            (*Mstar)(loc) += rs;
+        }
+    }
+    if (massMode == 1)
+        for (int i = 0; i < nEqn; i++) (*Mstar)(i) *= massScale;
+
+    double mmax = 0.0;
+    for (int i = 0; i < nEqn; i++) if ((*Mstar)(i) > mmax) mmax = (*Mstar)(i);
+    double fl = (mmax > 0.0) ? mmax * 1.0e-8 : 1.0;
+    for (int i = 0; i < nEqn; i++) if (!((*Mstar)(i) > 0.0)) (*Mstar)(i) = fl;
+    return 0;
+}
+
+// ---- regularize the tangent: K + cOverDt*M* on the diagonal (additive; the DR
+// diagonal-poke idiom). Identity when !stabilize.
+int
+LadrunoArcLength::formTangent(int statFlag)
+{
+    this->IncrementalIntegrator::formTangent(statFlag);   // assemble real K onto the SOE
+    if (stabilize && Mstar != 0) {
+        LinearSOE *soe = this->getLinearSOE();
+        static Matrix m1(1, 1);
+        static ID id1(1);
+        for (int i = 0; i < nEqn; i++) {
+            m1(0, 0) = cOverDt * (*Mstar)(i);
+            id1(0) = i;
+            soe->addA(m1, id1);
+        }
+    }
+    return 0;
+}
+
+// ---- inject the artificial viscous force: B <- (lambda p - f_int) - cOverDt*M**deltaUstep.
+// Records the TRUE static unbalance (without f_v) for the watchdog. Identity when !stabilize.
+int
+LadrunoArcLength::formUnbalance(void)
+{
+    this->IncrementalIntegrator::formUnbalance();         // B = lambda p - f_int
+    if (stabilize && Mstar != 0 && deltaUstep != 0) {
+        LinearSOE *soe = this->getLinearSOE();
+        const Vector &B = soe->getB();
+        residualTrueNorm = B.Norm();                      // true unbalance BEFORE f_v
+        Vector R(B);
+        for (int i = 0; i < nEqn; i++)
+            R(i) -= cOverDt * (*Mstar)(i) * (*deltaUstep)(i);
+        soe->setB(R);
+    }
+    return 0;
 }
 
 int
@@ -168,6 +298,30 @@ LadrunoArcLength::newStep(void)
         signLastDeltaLambdaStep = -1;
     else
         signLastDeltaLambdaStep = +1;
+
+    // ======== -stabilize: viscous-regularized incremental LOAD CONTROL ========
+    // Mutually exclusive with the arc-length quadratic (ADR-20 decision 3b): no
+    // predictor phat-solve, lambda is NOT a Newton unknown; the regularized K
+    // (formTangent) lets Newton clear the limit point. -adapt drives the LOAD
+    // increment dLambda0 here (not arcLength2).
+    if (stabilize) {
+        if (adapt) {
+            int jlast = numIncrLastStep > 0 ? numIncrLastStep : 1;
+            dLambda0 *= pow((double)Jd / (double)jlast, pExp);
+            if (dLambda0 < ellMin) dLambda0 = ellMin;
+            else if (ellMax > 0.0 && dLambda0 > ellMax) dLambda0 = ellMax;
+        }
+        numIncrLastStep = 0;
+        deltaUstep->Zero();            // per-step increment accumulator for f_v
+        deltaLambdaStep = signLastDeltaLambdaStep * dLambda0;
+        currentLambda += deltaLambdaStep;
+        theModel->applyLoadDomain(currentLambda);
+        if (theModel->updateDomain() < 0) {
+            opserr << "LadrunoArcLength::newStep() - model failed to update (stabilize)\n";
+            return -1;
+        }
+        return 0;
+    }
 
     // -------- Layer A: Ramm desired-iteration radius adaptation --------
     // arcLength <- clamp( arcLength * (Jd / Jlast)^p , ellMin, ellMax )
@@ -223,6 +377,23 @@ LadrunoArcLength::update(const Vector &dU)
         opserr << "WARNING LadrunoArcLength::update() - "
                   "No AnalysisModel or LinearSOE has been set\n";
         return -1;
+    }
+
+    // -stabilize: pure load-control corrector. lambda is fixed within the step; the
+    // regularized K (formTangent) + viscous residual (formUnbalance) make Newton
+    // converge. Accumulate the per-step increment deltaUstep that drives f_v.
+    if (stabilize) {
+        (*deltaU) = dU;
+        (*deltaUstep) += dU;
+        theModel->incrDisp(dU);
+        theModel->applyLoadDomain(currentLambda);
+        if (theModel->updateDomain() < 0) {
+            opserr << "LadrunoArcLength::update() - model failed to update (stabilize)\n";
+            return -1;
+        }
+        theLinSOE->setX(dU);
+        numIncrLastStep++;
+        return 0;
     }
 
     (*deltaUbar) = dU;   // have to do this as the SOE is gonna change
@@ -361,13 +532,51 @@ LadrunoArcLength::domainChanged(void)
         return -1;
     }
 
+    // -stabilize: build the artificial M* AFTER the phat probe (the formUnbalance
+    // override above is a no-op while Mstar==0, so phat stays uncorrupted).
+    nEqn = size;
+    if (stabilize) {
+        if (Mstar == 0 || Mstar->Size() != size) {
+            if (Mstar != 0) delete Mstar;
+            Mstar = new Vector(size);
+        }
+        this->buildArtificialMass();
+    }
+
     return 0;
+}
+
+int
+LadrunoArcLength::commit(void)
+{
+    if (stabilize && Mstar != 0 && deltaUstep != 0) {
+        // accumulate viscous work W_v = sum cOverDt*M*_i*deltaUstep_i^2 (watchdog)
+        double Wv = 0.0;
+        for (int i = 0; i < nEqn; i++)
+            Wv += cOverDt * (*Mstar)(i) * (*deltaUstep)(i) * (*deltaUstep)(i);
+        dissipVisc += Wv;
+
+        // one-shot calibration from the energy fraction f (skipped if -cVisc given)
+        if (!cCalibrated) {
+            Estrain0 = 0.5 * fabs((*deltaUstep) ^ (*phat)) * fabs(currentLambda);
+            double Wunit = 0.0;
+            for (int i = 0; i < nEqn; i++)
+                Wunit += (*Mstar)(i) * (*deltaUstep)(i) * (*deltaUstep)(i) / dtPseudo;
+            cVisc   = (Wunit > 0.0) ? fTarget * Estrain0 / Wunit : 0.0;
+            cOverDt = cVisc / dtPseudo;
+            cCalibrated = true;
+        } else if (adaptStab && Estrain0 > 0.0) {
+            double ratio = dissipVisc / Estrain0;
+            if (ratio > 0.0) { cVisc *= (fTarget / ratio); cOverDt = cVisc / dtPseudo; }
+        }
+    }
+    return this->StaticIntegrator::commit();
 }
 
 int
 LadrunoArcLength::sendSelf(int cTag, Channel &theChannel)
 {
-    Vector data(11);
+    Vector data(20);
     data(0) = arcLength2;
     data(1) = alpha2;
     data(2) = deltaLambdaStep;
@@ -379,6 +588,15 @@ LadrunoArcLength::sendSelf(int cTag, Channel &theChannel)
     data(8) = ellMax;
     data(9) = pExp;
     data(10) = (double)numIncrLastStep;
+    data(11) = stabilize ? 1.0 : 0.0;
+    data(12) = adaptStab ? 1.0 : 0.0;
+    data(13) = fTarget;
+    data(14) = cVisc;
+    data(15) = dtPseudo;
+    data(16) = cOverDt;
+    data(17) = cCalibrated ? 1.0 : 0.0;
+    data(18) = (double)massMode;
+    data(19) = massScale;
 
     if (theChannel.sendVector(this->getDbTag(), cTag, data) < 0) {
         opserr << "LadrunoArcLength::sendSelf() - failed to send the data\n";
@@ -390,7 +608,7 @@ LadrunoArcLength::sendSelf(int cTag, Channel &theChannel)
 int
 LadrunoArcLength::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
 {
-    Vector data(11);
+    Vector data(20);
     if (theChannel.recvVector(this->getDbTag(), cTag, data) < 0) {
         opserr << "LadrunoArcLength::recvSelf() - failed to receive the data\n";
         return -1;
@@ -406,6 +624,15 @@ LadrunoArcLength::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theB
     ellMax                  = data(8);
     pExp                    = data(9);
     numIncrLastStep         = (int)data(10);
+    stabilize               = data(11) != 0.0;
+    adaptStab               = data(12) != 0.0;
+    fTarget                 = data(13);
+    cVisc                   = data(14);
+    dtPseudo                = data(15);
+    cOverDt                 = data(16);
+    cCalibrated             = data(17) != 0.0;
+    massMode                = (int)data(18);
+    massScale               = data(19);
     return 0;
 }
 
@@ -420,6 +647,10 @@ LadrunoArcLength::Print(OPS_Stream &s, int flag)
         if (adapt)
             s << "  [adapt Jd=" << Jd << " ell=[" << ellMin << "," << ellMax
               << "] p=" << pExp << "]";
+        if (stabilize)
+            s << "  [stabilize f=" << fTarget << " c=" << cVisc
+              << " diss/E=" << (Estrain0 > 0.0 ? dissipVisc / Estrain0 : 0.0)
+              << " trueRes=" << residualTrueNorm << "]";
         s << endln;
     } else
         s << "\t LadrunoArcLength - no associated AnalysisModel\n";

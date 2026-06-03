@@ -123,6 +123,44 @@ def test_al3_adapt_reaches_target_in_fewer_steps():
     )
 
 
+_LIMIT = 3.80   # von Mises snap-through limit load
+
+
+# --------------------------------------------------------------------------
+# AL-5 : -stabilize clears the limit point where plain LoadControl fails
+# --------------------------------------------------------------------------
+def test_al5_stabilize_clears_limit_point():
+    # Stock LoadControl fails at lambda ~ 3.80 (no equilibrium on the near branch
+    # above the limit). -stabilize regularizes K_T (K + cOverDt*M*) so the
+    # load-incrementing Newton converges THROUGH the limit and the apex snaps to
+    # the far branch. dLambda0 = sqrt(arc^2) = arc (load increment per step).
+    arc, cV = 0.1, 0.01
+    _build_truss()
+    # load-incrementing snap-through needs a few more corrector iterations than the
+    # smooth-path default (the regularized jump near the limit is nonlinear).
+    ops.system("BandGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.test("NormDispIncr", 1.0e-8, 100, 0)
+    ops.algorithm("Newton")
+    ops.integrator(LAL, arc, 1.0, "-stabilize", 2.0e-4, "-cVisc", cV)
+    ops.analysis("Static")
+    lam_reached, uy_final, n = 0.0, 0.0, 0
+    for _ in range(200):
+        if ops.analyze(1) != 0:
+            break
+        lam_reached = ops.getTime()
+        uy_final = ops.nodeDisp(_APEX, 2)
+        n += 1
+    assert n > 0, "-stabilize produced no converged steps"
+    # cleared the limit: converged at load factors stock LoadControl cannot reach.
+    assert lam_reached > _LIMIT, (
+        f"-stabilize stalled at lambda={lam_reached:.3f} (<= limit {_LIMIT})"
+    )
+    # and the regularized path reached the far stable branch (snapped through).
+    assert uy_final < -2.0 * _H, f"apex did not reach the far branch: uy={uy_final:.4f}"
+
+
 # --------------------------------------------------------------------------
 # AL-S : parser smoke — all documented forms construct without error
 # --------------------------------------------------------------------------
@@ -130,6 +168,9 @@ def test_al3_adapt_reaches_target_in_fewer_steps():
     (LAL, 0.01, 1.0),                                   # identity form
     (LAL, 0.01, 0.1, "-adapt", 5, 1.0e-3, 1.0e-1),     # adaptive form
     (LAL, 0.01, 0.1, "-adapt", 5, 1.0e-3, 1.0e-1, "-p", 0.5),  # + Crisfield exp
+    (LAL, 0.1, 1.0, "-stabilize", 2.0e-4),             # viscous (auto c)
+    (LAL, 0.1, 1.0, "-stabilize", 2.0e-4, "-cVisc", 0.5),   # explicit c
+    (LAL, 0.1, 1.0, "-stabilize", 2.0e-4, "-mass", "gershgorin"),
 ])
 def test_als_parser_smoke(cmd):
     _build_truss()
