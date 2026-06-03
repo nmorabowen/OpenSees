@@ -47,6 +47,7 @@
 // Ladruno_implementation/20_ladruno_arclength_stabilized_adr.md.
 
 #include <LadrunoArcLength.h>
+#include <LadrunoFictitiousMass.h>
 #include <AnalysisModel.h>
 #include <LinearSOE.h>
 #include <Vector.h>
@@ -205,46 +206,20 @@ LadrunoArcLength::~LadrunoArcLength()
     if (cDeltaUstep != 0) delete cDeltaUstep;
 }
 
-// ---- integrator-owned artificial diagonal mass (lifted from
-// LadrunoDynamicRelaxation::buildFictitiousMass; NO dt^2/4 prefactor -- the scale
-// lives in cOverDt). Gershgorin row-sum of K, or lumped real mass, or unity.
-// NOT Element::getMass() (zero on zero-density models -- the ADR-20 BLOCKER).
+// ---- integrator-owned artificial diagonal mass (shared row-sum builder in
+// LadrunoFictitiousMass.h, also used by LadrunoDynamicRelaxation; NO dt^2/4
+// prefactor -- the scale lives in cOverDt). Gershgorin row-sum of K, or lumped
+// real mass, or unity. NOT Element::getMass() (zero on zero-density models --
+// the ADR-20 BLOCKER).
 int
 LadrunoArcLength::buildArtificialMass(void)
 {
     AnalysisModel *theModel = this->getAnalysisModel();
     if (theModel == 0 || Mstar == 0) return -1;
-    Mstar->Zero();
-
-    if (massMode == 2) {                 // unity
-        for (int i = 0; i < nEqn; i++) (*Mstar)(i) = 1.0;
-        return 0;
-    }
-    FE_EleIter &theEles = theModel->getFEs();
-    FE_Element *elePtr;
-    while ((elePtr = theEles()) != 0) {
-        Element *e = elePtr->getElement();
-        if (e == 0) continue;
-        const ID &id = elePtr->getID();
-        const Matrix &Ke = (massMode == 1) ? e->getMass() : e->getTangentStiff();
-        int n = id.Size();
-        if (Ke.noRows() != n) continue;
-        for (int i = 0; i < n; i++) {
-            int loc = id(i);
-            if (loc < 0) continue;
-            double rs = 0.0;
-            for (int j = 0; j < n; j++) rs += fabs(Ke(i, j));
-            (*Mstar)(loc) += rs;
-        }
-    }
-    if (massMode == 1)
-        for (int i = 0; i < nEqn; i++) (*Mstar)(i) *= massScale;
-
-    double mmax = 0.0;
-    for (int i = 0; i < nEqn; i++) if ((*Mstar)(i) > mmax) mmax = (*Mstar)(i);
-    double fl = (mmax > 0.0) ? mmax * 1.0e-8 : 1.0;
-    for (int i = 0; i < nEqn; i++) if (!((*Mstar)(i) > 0.0)) (*Mstar)(i) = fl;
-    return 0;
+    // NO dt^2/4 prefactor (dt2Quarter = 0 => raw row-sum) -- the scale lives in
+    // cOverDt; mode 0 gershgorin row-sum of K, 1 lumped real mass, 2 unity,
+    // + the mmax*1e-8 zero-floor. (Shared with LadrunoDynamicRelaxation.)
+    return Ladruno::buildGershgorinDiagonal(theModel, *Mstar, massMode, massScale, 0.0);
 }
 
 // ---- regularize the tangent: K + cOverDt*M* on the diagonal (additive; the DR
@@ -253,16 +228,11 @@ int
 LadrunoArcLength::formTangent(int statFlag)
 {
     this->IncrementalIntegrator::formTangent(statFlag);   // assemble real K onto the SOE
-    if (stabilize && Mstar != 0) {
-        LinearSOE *soe = this->getLinearSOE();
-        static Matrix m1(1, 1);
-        static ID id1(1);
-        for (int i = 0; i < nEqn; i++) {
-            m1(0, 0) = cOverDt * (*Mstar)(i);
-            id1(0) = i;
-            soe->addA(m1, id1);
-        }
-    }
+    if (stabilize && Mstar != 0)
+        // add cOverDt*M* to the diagonal (zeroFirst=false => regularizes the
+        // real K already assembled above).
+        Ladruno::addDiagonalToSOE(this->getLinearSOE(), *Mstar, nEqn, cOverDt,
+                                  /*zeroFirst=*/false);
     return 0;
 }
 
