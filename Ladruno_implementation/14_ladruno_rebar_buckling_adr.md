@@ -705,14 +705,14 @@ committing harness can't do a non-committing FD perturbation cleanly).
 | B4-GA | GA-cyclic (law-agnostic) | GA buckle → reload rejoins bare (one RESTRAIGHTEN branch serves DM and GA) | ✅ |
 | B4h | v2 serialization round-trip | commit into RESTRAIGHTEN (`0<q<1`) then `FE_Datastore` round-trip; the continued response is reproduced (branch + latches survive `recvSelf`) | ✅ |
 | B4i | `L_rs` floor | tiny `c` ⇒ `CL_rs` clamps to `eY` (not the raw span): still raised at `+0.5 eY`, rejoined by `+2 eY`; finite tangent, no blow-up | ✅ |
-| B4e | consistent-tangent FD on RESTRAIGHTEN | analytic vs central FD strictly inside Phase 2 | deferred (needs non-committing trial probe) |
-| B4g | structural Newton across the seams | real `analyze()` through a reversal + seam-straddling DC steps | deferred |
+| B4e | consistent-tangent FD on RESTRAIGHTEN | analytic vs central FD strictly inside Phase 2 (q=0.5), via **path-replay** (drive the identical committed path, then a single final step to `e0±d` from the same committed state) | ✅ |
+| B4g | structural Newton across the seams | real `Truss`+`DisplacementControl` through buckle→reversal→reload across `q=0` and `q=1`; `analyze()` converges every step, DM **and** GA | ✅ |
 | B4d' | RS `-DMBuck` overlay (informational) | eyeball shape only | deferred |
 
-**Implemented: B4a/B4b/B4c/B4d/B4f/B4-GA/B4h/B4i — all green (27/27 with the v1
-B0–B7 + GA battery); J2 regression 46 passed / 1 xfail.** All cyclic rows use the
-committing `_drive` harness. B4e/B4g/B4d' are deferred (B4e needs a non-committing
-trial-strain probe the direct harness lacks; B4g/B4d' are follow-ups).
+**Implemented: B4a/B4b/B4c/B4d/B4e/B4f/B4g/B4-GA/B4h/B4i — all green (29/29 with
+the v1 B0–B7 + GA battery); J2 regression 46 passed / 1 xfail.** All cyclic rows
+use the committing `_drive` harness; B4e gets its non-committing FD via path-replay.
+Only B4d' (informational RS overlay) remains deferred.
 
 ### 9.6 Compatibility / risk
 
