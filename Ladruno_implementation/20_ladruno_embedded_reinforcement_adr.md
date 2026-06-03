@@ -265,25 +265,35 @@ case has demonstrably out-grown it.
 multi-retained constraint the stock `MP_Constraint` can't express). Current parse:
 `element LadrunoEmbeddedRebar tag rebarNode nHost h1..hN -shape N1..NN -dir dx dy dz (-bond matTag [-bondScale bs] | -perfect kAxial) [-kt kt]`.
 
-**Next (deferred to a focused session — bigger than it looks, breaking API, CI-only build):**
-the user-supplied `-shape` weights should come from the host *object*, not be re-supplied.
-OpenSees has **no shape-fn API on `Element`** (verified) and the existing embedded elements
-hardcode host shapes per type — so the path is:
+**Shape-fn-from-host refactor — IMPLEMENTED (2026-06-03, PR [#175](https://github.com/nmorabowen/OpenSees/pull/175), CI-only build):**
+the user no longer has to re-supply host nodes or `-shape` weights — both can come from
+the host *object*. OpenSees had **no shape-fn API on `Element`** (verified), so we added one.
+Both steps landed entirely in the parser + base-class virtual; **`LadrunoEmbeddedRebar.{h,cpp}`
+itself is UNCHANGED** (it still just stores `Nshape` — the host query happens in the parser,
+keeping the element host-agnostic):
 
-- **Step 1 (parser-only, no class/vanilla change):** add a `-host eleTag` form. The PARSER
-  resolves the host's nodes via `OPS_GetDomain()->getElement(eleTag)->getExternalNodes()`
-  (the element's external-node list must be complete at CONSTRUCTION, before `setDomain`, so
-  this happens in the parser, not the element). Host must be defined before the rebar element.
-  KEEP the explicit `nHost h1..hN -shape` form too — the Zone-A unit tests need a fake host
-  (bare nodes) and arbitrary hosts need the escape hatch. `-shape` weights still user-supplied.
-- **Step 2 (the real reuse):** add `virtual int getInterpolationWeights(const Vector& xi, Vector& N)`
-  to **`Element.h`** (default `return -1`; ledger `LEDGER_vanilla_files` + `// Ladruno` marker —
-  it's a vanilla base-class edit, vtable change, recompile-all but additive). Override on the
-  fork hosts `LadrunoBrick` (shp3d trilinear) and `BezierTet10` (Bernstein). Element gains a
-  `-xi ξ...` form: with `-host`+`-xi` it queries the host for `N` (single source of truth);
-  falls back to `-shape` for hosts that return -1.
+- **Step 1 — `-host eleTag` form (parser-only).** The parser resolves the host's nodes via
+  `OPS_GetDomain()->getElement(eleTag)->getExternalNodes()` (the external-node list is complete
+  at CONSTRUCTION, before `setDomain`, so this is a parse-time copy). Host must be defined before
+  the rebar element. The explicit `nHost h1..hN` form is **kept** — Zone-A unit tests need a fake
+  host (bare nodes) and arbitrary hosts need the escape hatch. Disambiguated by peeking the token
+  after `rebarNode`: `-host` ⇒ host-element form, else `atoi` ⇒ explicit `nHost`.
+- **Step 2 — `getInterpolationWeights` + `-xi` form.** Added
+  `virtual int getInterpolationWeights(const Vector& xi, Vector& N)` to **`Element.{h,cpp}`**
+  (default `return -1`; ledgered in `LEDGER_vanilla_files` + `// Ladruno` markers — vanilla
+  base-class edit, vtable change, recompile-all but additive). Overridden on `LadrunoBrick`
+  (trilinear `0.125·∏(1+ξ_I ξ)`, N size 8) and `BezierTet10` (quadratic Bernstein via the
+  private `shapeFunctions`, N size 10). The parser's new `-xi x1..x_ndm` form (requires `-host`)
+  calls `hostEle->getInterpolationWeights(xi, Nshape)` — single source of truth; errors with a
+  "supply -shape" hint if the host returns −1. `-shape` still works for any host.
+- **Grammar now:** `element LadrunoEmbeddedRebar tag rebarNode {nHost h1..hN | -host eleTag}
+  {-shape N1..NN | -xi x1..x_ndm} -dir dx dy [dz] (-bond matTag [-bondScale bs] | -perfect kAxial) [-kt kt]`.
+- Zone-A tests added (`test_ladrunoEmbeddedRebar_element.py`): real unit-cube `LadrunoBrick`
+  host with `-host` (node auto-resolve), `-xi 0 0 0` (centroid → all 0.125), and an off-centroid
+  `-xi` whose corner force split matches the trilinear formula (proves N really comes from the host).
 - The **inverse-map** (global bar point → ξ) stays in the apeGmsh generator regardless — that
-  is the irreducible point-location step; the only question is whether it emits `N` or `ξ`.
+  is the irreducible point-location step; the only question is whether it emits `N` or `ξ`. With
+  `-xi` it can now emit `ξ` and let the host element own the shape evaluation.
 
 **CI/test discipline learned (apply next session):** ladruno auto-merge gates on the
 classTag+manifest check but **NOT** on Zone-A pytest — a red test CAN land (it did, #169),

@@ -119,3 +119,76 @@ def test_database_roundtrip():
     _push_rebar(0.8e-3, 0.0, 0.0)
     f_before = ops.eleResponse(1, "axialForce")[0]
     assert abs(f_before) > 0.0
+
+
+# --------------------------------------------- 5. -host / -xi forms (ADR 20 §9)
+# A real LadrunoBrick host (unit cube). The rebar node connects ONLY through the
+# embedded element (it is not a brick node), and all 8 brick corners are fixed,
+# so the gap g = u_rebar regardless of geometry — the penalty axial spring is
+# k*u and the reaction splits onto the corners by the host shape weights N_i.
+_CUBE = {  # unit-cube nodes in LadrunoBrick natCoord order ((c+1)/2 mapping)
+    11: (0.0, 0.0, 0.0), 12: (1.0, 0.0, 0.0), 13: (1.0, 1.0, 0.0), 14: (0.0, 1.0, 0.0),
+    15: (0.0, 0.0, 1.0), 16: (1.0, 0.0, 1.0), 17: (1.0, 1.0, 1.0), 18: (0.0, 1.0, 1.0),
+}
+_CUBE_NAT = [(-1, -1, -1), (1, -1, -1), (1, 1, -1), (-1, 1, -1),
+             (-1, -1, 1), (1, -1, 1), (1, 1, 1), (-1, 1, 1)]
+
+
+def _trilinear(xi):
+    """Reference 8-node hex weights at natural coord xi (matches LadrunoBrick)."""
+    return [0.125 * (1 + cx * xi[0]) * (1 + cy * xi[1]) * (1 + cz * xi[2])
+            for (cx, cy, cz) in _CUBE_NAT]
+
+
+def _cube_host_model(shape_args, perfect_k=1.0e5, kt=1.0e5):
+    """Single LadrunoBrick host (tag 100, nodes 11..18 all fixed) + a rebar node
+    (1) embedded via `shape_args` (e.g. ['-host', 100, '-xi', 0,0,0])."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for tag, (x, y, z) in _CUBE.items():
+        ops.node(tag, x, y, z)
+        ops.fix(tag, 1, 1, 1)
+    ops.node(1, 0.5, 0.5, 0.5)            # rebar node (position is irrelevant here)
+    ops.nDMaterial("ElasticIsotropic", 1, 1000.0, 0.3)
+    ops.element("LadrunoBrick", 100, 11, 12, 13, 14, 15, 16, 17, 18, 1)
+    args = (["LadrunoEmbeddedRebar", 1, 1] + list(shape_args)
+            + ["-dir", 1.0, 0.0, 0.0, "-perfect", perfect_k, "-kt", kt])
+    ops.element(*args)
+
+
+def _assert_split(fr, weights):
+    """Each host corner's x-reaction must equal N_i * (-fr)."""
+    ops.reactions()
+    for tag, Ni in zip(_CUBE, weights):
+        assert ops.nodeReaction(tag)[0] == pytest.approx(Ni * (-fr), rel=1e-6)
+
+
+def test_host_form_resolves_nodes_from_element():
+    """`-host eleTag` pulls the 8 host nodes off the LadrunoBrick automatically
+    (no hand-typed node list); behaves exactly like the explicit form."""
+    k = 1.0e5
+    _cube_host_model(["-host", 100, "-shape", *([0.125] * 8)], perfect_k=k)
+    R = _push_rebar(2.0e-3, 0.0, 0.0)
+    assert abs(R[0]) == pytest.approx(k * 2.0e-3, rel=1e-6)
+    _assert_split(R[0], [0.125] * 8)
+
+
+def test_xi_queries_host_shape_at_centroid():
+    """`-xi 0 0 0` asks the host for its trilinear weights at the centroid; all 8
+    come back 0.125 (single source of truth — no -shape supplied)."""
+    k = 1.0e5
+    _cube_host_model(["-host", 100, "-xi", 0.0, 0.0, 0.0], perfect_k=k)
+    R = _push_rebar(2.0e-3, 0.0, 0.0)
+    assert abs(R[0]) == pytest.approx(k * 2.0e-3, rel=1e-6)
+    _assert_split(R[0], [0.125] * 8)
+
+
+def test_xi_offcentroid_matches_trilinear():
+    """`-xi` at a non-centroid coord reproduces the host's trilinear formula, so
+    the corner force split equals N_i(xi) — proves the weights really come from
+    the host element, not a constant."""
+    k = 1.0e5
+    xi = (0.5, -0.25, 0.0)
+    _cube_host_model(["-host", 100, "-xi", *xi], perfect_k=k)
+    R = _push_rebar(1.0e-3, 0.0, 0.0)
+    _assert_split(R[0], _trilinear(xi))
