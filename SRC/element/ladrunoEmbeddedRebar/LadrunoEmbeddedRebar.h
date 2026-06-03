@@ -73,6 +73,7 @@ class Node;
 class UniaxialMaterial;
 class Channel;
 class FEM_ObjectBroker;
+class Response;
 
 class LadrunoEmbeddedRebar : public Element
 {
@@ -80,7 +81,9 @@ class LadrunoEmbeddedRebar : public Element
   LadrunoEmbeddedRebar(int tag, int ndm, int rebarNode, const ID& hostNodes,
                        const Vector& shape, const Vector& dir,
                        double kt, double bondScale,
-                       UniaxialMaterial* bondMat, double kAxialPerfect);
+                       UniaxialMaterial* bondMat, double kAxialPerfect,
+                       int hostEleTag = -1, bool ktAuto = false,
+                       double ktAlpha = 0.0);
   LadrunoEmbeddedRebar();
   ~LadrunoEmbeddedRebar();
 
@@ -122,15 +125,28 @@ class LadrunoEmbeddedRebar : public Element
   ID connectedNodes;        // [rebar, host_1..host_M]
   Vector Nshape;            // host shape-function weights N_i (size M)
   Vector dir;               // unit bar-axis direction (size ndm)
-  double kt;                // transverse penalty stiffness
+  double kt;                // transverse penalty stiffness (resolved value)
   double bondScale;         // perimeter * L_trib (tau -> axial force)
   double kAxialPerfect;     // perfect-bond axial penalty (used when bondMat==0)
   UniaxialMaterial* bondMat;// optional axial bond-slip law (owns a getCopy)
+
+  // ADR 20 §10.2a — auto-scaled transverse penalty. With `-kt auto`, kt is
+  // resolved (lazily, on first stiffness/force assembly) from the host's own
+  // initial stiffness so conditioning is mesh/material-independent:
+  //     kt = ktAlpha * max_i |K_host(i,i)|   ( ~ ktAlpha * E_host * lch ).
+  // Lazy (not at setDomain) to dodge element setDomain-ordering: by first
+  // assembly the host has setDomain'd and getInitialStiff() is valid.
+  int hostEleTag;           // -host element tag (>=0) for auto-kt; -1 if none
+  bool ktAuto;              // -kt auto: resolve kt from the host stiffness
+  double ktAlpha;           // dimensionless multiplier for the auto kt
+  bool ktResolved;          // transient: auto kt already resolved this run
+  void resolveAutoKt(void); // resolve kt from the host element if needed
 
   Node** theNodes;          // size 1 + M
   Matrix* K;                // nDOF x nDOF
   Vector* P;                // nDOF
   Matrix* M0;               // zero mass (nDOF x nDOF)
+  Response* bondEnergyResp; // cached bondMat "energy" sub-response (ADR §10.2b)
 
   // committed/trial scalar slip is held by bondMat; nothing else is path-dep.
   void formBandTraction(Vector& g, double& s, Vector& gt,

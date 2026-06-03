@@ -192,3 +192,80 @@ def test_xi_offcentroid_matches_trilinear():
     _cube_host_model(["-host", 100, "-xi", *xi], perfect_k=k)
     R = _push_rebar(1.0e-3, 0.0, 0.0)
     _assert_split(R[0], _trilinear(xi))
+
+
+# ---------------------- 6. Mode-P quick-wins (ADR 20 §10.2) ----------------------
+# Auto-scaled transverse penalty (-kt auto) + energy/diagnostic responses.
+def _cube_auto_model(alpha, perfect_k=1.0e5):
+    """Unit-cube LadrunoBrick host + rebar embedded with `-kt auto -ktAlpha alpha`.
+    Returns the resolved transverse penalty (eleResponse 'kt'); leaves the model built."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for tag, (x, y, z) in _CUBE.items():
+        ops.node(tag, x, y, z)
+        ops.fix(tag, 1, 1, 1)
+    ops.node(1, 0.5, 0.5, 0.5)
+    ops.nDMaterial("ElasticIsotropic", 1, 1000.0, 0.3)
+    ops.element("LadrunoBrick", 100, 11, 12, 13, 14, 15, 16, 17, 18, 1)
+    ops.element("LadrunoEmbeddedRebar", 1, 1, "-host", 100, "-xi", 0.0, 0.0, 0.0,
+                "-dir", 1.0, 0.0, 0.0, "-perfect", perfect_k, "-kt", "auto",
+                "-ktAlpha", alpha)
+    return ops.eleResponse(1, "kt")[0]
+
+
+def test_kt_auto_scales_linearly_with_alpha():
+    """`-kt auto` resolves kt = ktAlpha * (host stiffness scale); doubling ktAlpha
+    doubles the resolved kt (same host)."""
+    kt500 = _cube_auto_model(500.0)
+    kt1000 = _cube_auto_model(1000.0)
+    assert kt500 > 0.0
+    assert kt1000 == pytest.approx(2.0 * kt500, rel=1e-9)
+
+
+def test_kt_auto_drives_transverse_force():
+    """The auto-resolved kt is the one the coupling actually uses: a transverse
+    push gives reaction = kt_resolved * u."""
+    ktr = _cube_auto_model(1000.0)
+    R = _push_rebar(0.0, 1.0e-4, 0.0)
+    assert abs(R[1]) == pytest.approx(ktr * 1.0e-4, rel=1e-6)
+
+
+def test_penalty_energy_is_half_kt_gt2():
+    """penaltyEnergy = 1/2 kt |gt|^2 (artificial transverse spring energy); a pure
+    transverse push has zero axial slip so only the kt term contributes."""
+    kt = 3.0e5
+    _cube_host_model(["-host", 100, "-shape", *([0.125] * 8)], perfect_k=1.0e5, kt=kt)
+    u = 1.0e-4
+    _push_rebar(0.0, u, 0.0)
+    E = ops.eleResponse(1, "penaltyEnergy")[0]
+    assert E == pytest.approx(0.5 * kt * u * u, rel=1e-6)
+
+
+def test_constraint_violation_is_transverse_gap():
+    """constraintViolation = |gt|, the transverse perfect-bond violation."""
+    _cube_host_model(["-host", 100, "-shape", *([0.125] * 8)], perfect_k=1.0e5, kt=1.0e5)
+    u = 2.0e-4
+    _push_rebar(0.0, u, 0.0)
+    cv = ops.eleResponse(1, "constraintViolation")[0]
+    assert cv == pytest.approx(u, rel=1e-6)
+
+
+def test_bond_energy_matches_triangle_in_linear_segment():
+    """Element bondEnergy = perimeter*L_trib * integral(tau ds), single-sourced from
+    the bond law. In the initial LINEAR segment (s < s0) the area is the triangle
+    1/2 tau s (bondScale = 1)."""
+    _single_host_model(bond=True)            # dir = x, bondScale = 1
+    s = 5.0e-5                                # < s0 = 0.1*s1 = 1e-4
+    _push_rebar(s, 0.0, 0.0)
+    tau = ops.eleResponse(1, "bondStress")[0]
+    W = ops.eleResponse(1, "bondEnergy")[0]
+    assert W == pytest.approx(0.5 * tau * s, rel=1e-5)
+
+
+def test_perfect_bond_has_no_bond_energy():
+    """With perfect bond (no tau-s law) the axial energy is artificial, so bondEnergy
+    is zero — the axial part shows up in penaltyEnergy instead."""
+    k = 1.0e5
+    _single_host_model(perfect_k=k)
+    _push_rebar(1.0e-3, 0.0, 0.0)
+    assert ops.eleResponse(1, "bondEnergy")[0] == pytest.approx(0.0, abs=1e-12)

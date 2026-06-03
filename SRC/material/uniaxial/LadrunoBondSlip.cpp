@@ -111,8 +111,8 @@ LadrunoBondSlip::LadrunoBondSlip(int tag, double tau_max_, double s1_, double s2
   : UniaxialMaterial(tag, MAT_TAG_LadrunoBondSlip),
     tau_max(tau_max_), s1(s1_), s2(s2_), s3(s3_), tau_f(tau_f_), alpha(alpha_),
     Gf(Gf_), s0(s0_), k0(0.0),
-    Cslip(0.0), Cstress(0.0), CslipMaxAbs(0.0),
-    Tslip(0.0), Tstress(0.0), Ttangent(0.0), TslipMaxAbs(0.0)
+    Cslip(0.0), Cstress(0.0), CslipMaxAbs(0.0), Cwork(0.0),
+    Tslip(0.0), Tstress(0.0), Ttangent(0.0), TslipMaxAbs(0.0), Twork(0.0)
 {
   setDerived();
   Ttangent = k0;
@@ -122,8 +122,8 @@ LadrunoBondSlip::LadrunoBondSlip()
   : UniaxialMaterial(0, MAT_TAG_LadrunoBondSlip),
     tau_max(0.0), s1(1.0), s2(1.0), s3(1.0), tau_f(0.0), alpha(1.0),
     Gf(0.0), s0(0.0), k0(0.0),
-    Cslip(0.0), Cstress(0.0), CslipMaxAbs(0.0),
-    Tslip(0.0), Tstress(0.0), Ttangent(0.0), TslipMaxAbs(0.0)
+    Cslip(0.0), Cstress(0.0), CslipMaxAbs(0.0), Cwork(0.0),
+    Tslip(0.0), Tstress(0.0), Ttangent(0.0), TslipMaxAbs(0.0), Twork(0.0)
 {
 }
 
@@ -191,6 +191,11 @@ int LadrunoBondSlip::setTrialStrain(double strain, double)
     Tstress  = tauPeak - k0 * (sgnMax * CslipMaxAbs - Tslip);
     Ttangent = k0;
   }
+  // cumulative bond work per unit interface area, W = ∫ tau ds, accumulated
+  // from the committed point by the trapezoidal rule (ADR 20 §10.2b — the
+  // PHYSICAL bond energy the embedded element nets against the artificial
+  // penalty energy). Path-dependent: committed in commitState.
+  Twork = Cwork + 0.5 * (Cstress + Tstress) * (Tslip - Cslip);
   return 0;
 }
 
@@ -202,6 +207,7 @@ int LadrunoBondSlip::commitState(void)
   Cslip = Tslip;
   Cstress = Tstress;
   CslipMaxAbs = TslipMaxAbs;
+  Cwork = Twork;
   return 0;
 }
 
@@ -210,14 +216,15 @@ int LadrunoBondSlip::revertToLastCommit(void)
   Tslip = Cslip;
   Tstress = Cstress;
   TslipMaxAbs = CslipMaxAbs;
+  Twork = Cwork;
   Ttangent = k0;
   return 0;
 }
 
 int LadrunoBondSlip::revertToStart(void)
 {
-  Cslip = Cstress = CslipMaxAbs = 0.0;
-  Tslip = Tstress = TslipMaxAbs = 0.0;
+  Cslip = Cstress = CslipMaxAbs = Cwork = 0.0;
+  Tslip = Tstress = TslipMaxAbs = Twork = 0.0;
   Ttangent = k0;
   return 0;
 }
@@ -229,19 +236,21 @@ UniaxialMaterial* LadrunoBondSlip::getCopy(void)
   c->Cslip = Cslip; c->Cstress = Cstress; c->CslipMaxAbs = CslipMaxAbs;
   c->Tslip = Tslip; c->Tstress = Tstress; c->TslipMaxAbs = TslipMaxAbs;
   c->Ttangent = Ttangent;
+  c->Cwork = Cwork; c->Twork = Twork;
   return c;
 }
 
 // ===========================================================================
-//  serialization:  8 params + 3 committed state = 11 doubles + tag
+//  serialization:  tag + 8 params + 4 committed state (incl. Cwork) = 13 doubles
 // ===========================================================================
 int LadrunoBondSlip::sendSelf(int commitTag, Channel& theChannel)
 {
-  static Vector data(12);
+  static Vector data(13);
   data(0)  = this->getTag();
   data(1)  = tau_max; data(2) = s1; data(3) = s2; data(4) = s3;
   data(5)  = tau_f;   data(6) = alpha; data(7) = Gf; data(8) = s0;
   data(9)  = Cslip;   data(10) = Cstress; data(11) = CslipMaxAbs;
+  data(12) = Cwork;
   if (theChannel.sendVector(this->getDbTag(), commitTag, data) < 0) {
     opserr << "LadrunoBondSlip::sendSelf - failed to send\n";
     return -1;
@@ -252,7 +261,7 @@ int LadrunoBondSlip::sendSelf(int commitTag, Channel& theChannel)
 int LadrunoBondSlip::recvSelf(int commitTag, Channel& theChannel,
                               FEM_ObjectBroker& theBroker)
 {
-  static Vector data(12);
+  static Vector data(13);
   if (theChannel.recvVector(this->getDbTag(), commitTag, data) < 0) {
     opserr << "LadrunoBondSlip::recvSelf - failed to recv\n";
     return -1;
@@ -262,7 +271,9 @@ int LadrunoBondSlip::recvSelf(int commitTag, Channel& theChannel,
   tau_f = data(5); alpha = data(6); Gf = data(7); s0 = data(8);
   setDerived();
   Cslip = data(9); Cstress = data(10); CslipMaxAbs = data(11);
+  Cwork = data(12);
   Tslip = Cslip; Tstress = Cstress; TslipMaxAbs = CslipMaxAbs;
+  Twork = Cwork;
   Ttangent = k0;
   return 0;
 }
@@ -287,6 +298,10 @@ Response* LadrunoBondSlip::setResponse(const char** argv, int argc, OPS_Stream& 
     return new MaterialResponse(this, 2, 0.0);
   if (strcmp(argv[0], "tangent") == 0)
     return new MaterialResponse(this, 3, 0.0);
+  // cumulative bond work per unit interface area, W = ∫ tau ds (ADR 20 §10.2b;
+  // the physical bond energy, the standard UniaxialMaterial "energy" channel).
+  if (strcmp(argv[0], "energy") == 0 || strcmp(argv[0], "dissipatedEnergy") == 0)
+    return new MaterialResponse(this, 4, 0.0);
   return this->UniaxialMaterial::setResponse(argv, argc, s);
 }
 
@@ -296,6 +311,7 @@ int LadrunoBondSlip::getResponse(int responseID, Information& matInfo)
   case 1: matInfo.setDouble(Tstress);  return 0;
   case 2: matInfo.setDouble(Tslip);    return 0;
   case 3: matInfo.setDouble(Ttangent); return 0;
+  case 4: matInfo.setDouble(Twork);    return 0;
   default: return -1;
   }
 }

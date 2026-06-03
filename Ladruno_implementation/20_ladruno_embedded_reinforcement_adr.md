@@ -552,12 +552,16 @@ the same γ-independence with *no* host-stress/∂N query.** *Effort: research-g
 
 ### 10.8 Sequenced build order
 
-1. **Quick-win — penalty hardening + auto-scale (§10.2a, §10.3).** Resolve `-kt auto = α·scale·lch`
-   at `setDomain` (store `hostEleTag`); expose the resolved-kt response. *No dependency.* Behavior-
-   change note: gate the new default so existing numeric-`kt` users are unaffected.
-2. **Quick-win — energy channels (§10.2b).** `LadrunoBondSlip` `dissipatedEnergy` response +
-   element `penaltyEnergy`/`bondEnergy`/`constraintViolation` + region-net post-processor.
-   *Depends on nothing; openseespy-native.*
+1. **Quick-win — penalty hardening + auto-scale (§10.2a, §10.3). ✅ SHIPPED (PR #177).**
+   `-kt auto [-ktAlpha α]` resolves `kt = α·max|K_host(i,i)|` (≈ α·E·lch) **lazily on first
+   assembly** (not `setDomain` — dodges element setDomain-ordering) from the §9 host pointer;
+   `eleResponse "kt"` exposes the resolved value. Default `α = 1e3`. Opt-in (numeric `-kt`
+   unchanged), so existing models are bit-identical.
+2. **Quick-win — energy channels (§10.2b). ✅ SHIPPED (PR #177).** `LadrunoBondSlip` `energy`
+   /`dissipatedEnergy` response (cumulative ∫τ ds, trapezoidal, committed + serialized);
+   element `penaltyEnergy` (artificial ½kt|gt|²[+½k s² perfect-bond]), `constraintViolation`
+   (|gt|), `bondEnergy` (= bondScale·material work, single-sourced + bond-law-agnostic via a
+   cached material sub-response). Region-net post-processor left to the user (openseespy-side).
 3. **Strategic — co-rotated `dir` (§10.2c/§10.5).** Two-ξ secant, default OFF. *Prerequisite for
    AL/Nitsche correctness under rotation.* Headline test: rigid-rotation objectivity (force
    invariant ON, drifts OFF — mirrors the J2 finite rigid-rotation test).

@@ -39,7 +39,12 @@
 //
 //   element LadrunoEmbeddedRebar tag rebarNode {nHost h1..hN | -host eleTag}
 //           {-shape N1..NN | -xi x1..x_ndm}  -dir dx dy [dz]
-//           ( -bond matTag [-bondScale bs] | -perfect kAxial )  [-kt kt]
+//           ( -bond matTag [-bondScale bs] | -perfect kAxial )
+//           [-kt {kt | auto}] [-ktAlpha a]
+//
+//   -kt auto (ADR 20 §10.2a): resolve the transverse penalty from the host
+//   element's own initial stiffness, kt = ktAlpha * max|K_host(i,i)| (default
+//   ktAlpha = 1e3) — mesh/material-independent conditioning. Requires -host.
 //
 // Written: N. Mora-Bowen (Ladruno), 2026.
 
@@ -81,12 +86,17 @@ void* OPS_LadrunoEmbeddedRebar(void)
   int nHost = 0;
   ID hostNodes;
   Element* hostEle = 0;            // set only in the -host form; needed for -xi
+  int hostEleTag = -1;             // -host tag, threaded to the element for -kt auto
 
   if (OPS_GetNumRemainingInputArgs() < 1) {
     opserr << "WARNING LadrunoEmbeddedRebar: missing host spec (nHost.. or -host)\n";
     return 0;
   }
-  const char* hostTok = OPS_GetString();
+  // peek the host-spec token. Use OPS_GetStringFromAll (NOT OPS_GetString): in
+  // openseespy the explicit-form nHost arrives as a typed int and OPS_GetString
+  // rejects it ("Invalid String Input!"); GetStringFromAll stringifies any arg.
+  char hostTok[128];
+  OPS_GetStringFromAll(hostTok, sizeof(hostTok));
   if (strcmp(hostTok, "-host") == 0) {
     int eleTag; n = 1;
     if (OPS_GetIntInput(&n, &eleTag) < 0) {
@@ -104,6 +114,7 @@ void* OPS_LadrunoEmbeddedRebar(void)
              << " not found (define the host solid before the rebar element)\n";
       return 0;
     }
+    hostEleTag = eleTag;                        // remember for -kt auto
     hostNodes = hostEle->getExternalNodes();   // ID copy
     nHost = hostNodes.Size();
     if (nHost < 1) {
@@ -133,7 +144,9 @@ void* OPS_LadrunoEmbeddedRebar(void)
 
   Vector Nshape(nHost), dir(ndm);
   bool haveShape = false, haveDir = false;
-  double kt = 1.0e12;              // default transverse penalty
+  double kt = 1.0e12;              // default transverse penalty (numeric form)
+  bool ktAuto = false;            // -kt auto: resolve kt from host stiffness
+  double ktAlpha = 1.0e3;         // -ktAlpha: multiplier for the auto kt
   double bondScale = 1.0;
   double kAxialPerfect = 0.0;
   int bondTag = -1;
@@ -186,9 +199,26 @@ void* OPS_LadrunoEmbeddedRebar(void)
       haveDir = true;
     }
     else if (strcmp(opt, "-kt") == 0) {
+      // numeric value, OR the sentinel 'auto' (resolve from host stiffness at
+      // first assembly: kt = ktAlpha * max|K_host(i,i)|, ADR 20 §10.2a).
+      if (OPS_GetNumRemainingInputArgs() < 1) {
+        opserr << "WARNING LadrunoEmbeddedRebar: -kt wants a value or 'auto'\n";
+        return 0;
+      }
+      // GetStringFromAll (not OPS_GetString): a numeric -kt arrives typed in
+      // openseespy and OPS_GetString would reject it.
+      char ktTok[64];
+      OPS_GetStringFromAll(ktTok, sizeof(ktTok));
+      if (strcmp(ktTok, "auto") == 0) {
+        ktAuto = true;
+      } else {
+        kt = atof(ktTok);
+      }
+    }
+    else if (strcmp(opt, "-ktAlpha") == 0) {
       n = 1;
-      if (OPS_GetDoubleInput(&n, &kt) < 0) {
-        opserr << "WARNING LadrunoEmbeddedRebar: -kt wants a value\n";
+      if (OPS_GetDoubleInput(&n, &ktAlpha) < 0) {
+        opserr << "WARNING LadrunoEmbeddedRebar: -ktAlpha wants a value\n";
         return 0;
       }
     }
@@ -233,6 +263,11 @@ void* OPS_LadrunoEmbeddedRebar(void)
     opserr << "WARNING LadrunoEmbeddedRebar: supply -bond matTag or -perfect kAxial\n";
     return 0;
   }
+  if (ktAuto && hostEleTag < 0) {
+    opserr << "WARNING LadrunoEmbeddedRebar: -kt auto requires the -host form "
+           << "(no host element to read the stiffness scale from)\n";
+    return 0;
+  }
 
   UniaxialMaterial* bondMat = 0;
   if (bondTag >= 0) {
@@ -245,7 +280,8 @@ void* OPS_LadrunoEmbeddedRebar(void)
   }
 
   Element* e = new LadrunoEmbeddedRebar(tag, ndm, rebarNode, hostNodes, Nshape,
-                                        dir, kt, bondScale, bondMat, kAxialPerfect);
+                                        dir, kt, bondScale, bondMat, kAxialPerfect,
+                                        hostEleTag, ktAuto, ktAlpha);
   if (e == 0) {
     opserr << "WARNING LadrunoEmbeddedRebar: could not create element\n";
     return 0;
