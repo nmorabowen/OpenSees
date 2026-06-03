@@ -538,6 +538,19 @@ E=2e5, J2 + `-damage lemaitre` + `-autoRegularization`). Findings:
     it; the real cure is a dedicated **EAS stabilization scheme** — scoped in
     **ADR 20** ([[20_ladruno_brick_eas_stabilization]]).
 
+  > [!warning] **RETRACTED (2026-06-03 — see [[20_ladruno_brick_eas_stabilization]]).**
+  > This "genuine instability of the enhanced modes" conclusion is **wrong**. The
+  > ADR 20 DEN-bar sweep showed bare `eas` traverses the notched bar to full
+  > elongation under any reasonable solver (small enough step), at every mesh/
+  > regularization. The observed stall was the **inner-Newton absolute-tolerance bug**
+  > (next bullet — fixed *this same PR*) plus **coarse stepping** (a Newton
+  > basin/solver issue), **not** an enhanced-mode instability. The rank/eigen evidence
+  > above already showed the element is rank-sufficient with no spurious mode; the
+  > "destabilizes under inelastic tangents" leap was unsupported. A scalar `β·Kαα⁰`
+  > stabilization was implemented and **refuted** (it has no stall to cure and
+  > degrades convergence). Use `eas` freely on these problems with a normal adaptive
+  > solver.
+
 - **Bug the comparison caught + fixed (this PR):** the inner-Newton convergence test
   used an **absolute** tol `1e-10` on `‖∫Mᵀσ‖` — scale-dependent (units force×length²),
   unreachable at steel scale ⇒ 300k+ spurious "did not converge" warnings. Replaced
@@ -545,15 +558,18 @@ E=2e5, J2 + `-damage lemaitre` + `-autoRegularization`). Findings:
   first-iteration residual; condense against the converged `Kaa`). The PR-2 unit
   tests only passed before because they used E≈1e3.
 
-**Guidance (recorded in the reference guide §7.3):** use `eas` for smooth /
-bending / near-incompressible **and homogeneous** elastoplastic-damage response,
-where its accuracy and 8-point damage resolution win; use **`ssp` or `bbar` for
-notched / localization-dominated softening**, where bare `eas` is not robust. **An
-EAS stabilization (Korelc–Wriggers / Reese–Wriggers) to make `eas` robust on
-inelastic-localization problems is scoped in ADR 20** —
-[[20_ladruno_brick_eas_stabilization]].
+**Guidance (UPDATED 2026-06-03 — supersedes the earlier "eas not robust on notched"
+claim):** `eas` is the most accurate member of the family on bending /
+near-incompressible response and is **also robust on notched / localization-dominated
+inelasticity** with a normal adaptive solver (step-cut + line search) — the DEN-bar
+sweep in ADR 20 confirmed it reaches full elongation where the earlier note claimed it
+stalled. `ssp`/`bbar` remain fine choices (and `ssp` is cheaper, single-point); but
+there is **no robustness reason to avoid `eas`** here. The previously-"scoped" EAS
+stabilization (ADR 20) was implemented and **rejected** — scalar `β·Kαα⁰` has no
+stall to cure and degrades convergence; see [[20_ladruno_brick_eas_stabilization]].
 
-**Still deferred (future PRs):** **EAS inelastic-localization stabilization**
-(ADR 20 — the comparison's headline gap); enhanced-`F` finite EAS (the §3 seam;
-Q1/E9 compressive hourglassing); richer mode sets E12/E21/E30 (§7); the §4
-oracle/Cook refinements and white-box responses.
+**Still deferred (future PRs):** enhanced-`F` finite EAS (the §3 seam; Q1/E9
+compressive hourglassing — the *one* place EAS genuinely needs a deformation-dependent
+Reese–Wriggers stabilization); richer mode sets E12/E21/E30 (§7); the §4 oracle/Cook
+refinements and white-box responses. *(EAS inelastic-localization stabilization is no
+longer a deferred item — it was tried and rejected, ADR 20.)*

@@ -575,15 +575,17 @@ distorted meshes** — the operative EAS gate.
 > `tests/test_ladrunoBrick_eas.py` (patch / reduce-to-`std` / bending / incompress /
 > $\boldsymbol\alpha$ state cycle).
 
-> [!warning] When NOT to use `eas`: notched / localization-dominated inelasticity
-> On a **notched, high-strain-gradient inelastic** problem (e.g. the Lemaitre
-> ductile-damage DEN bar of ADR 19) the bare E9 `eas` **stalls just past yield** —
-> a genuine instability of the enhanced modes under non-homogeneous plastic
-> tangents (NOT elastic hourglassing: a free `eas` element is rank-sufficient, 6
-> zero-energy modes, eigen-spectrum identical to `std`/`bbar`). On **homogeneous**
-> elastoplastic-damage `eas` is fine (matches `bbar`). **Use `bbar` or `ssp` for
-> notched/softening localization** until the EAS stabilization of
-> [[20_ladruno_brick_eas_stabilization|ADR 20]] lands.
+> [!note] `eas` on notched / localization-dominated inelasticity — it works
+> An earlier draft of this guide warned that `eas` "stalls just past yield" on a
+> notched inelastic problem (the Lemaitre ductile-damage DEN bar). That was
+> **wrong** and is corrected: the DEN-bar sweep in
+> [[20_ladruno_brick_eas_stabilization|ADR 20]] showed bare `eas` traverses to full
+> elongation with a normal **adaptive solver** (step-cut + line search), at every
+> mesh. The original "stall" was an inner-Newton tolerance bug (since fixed) plus
+> coarse stepping — a solver issue, not an enhanced-mode instability (the element is
+> rank-sufficient: 6 zero-energy modes, spectrum identical to `std`/`bbar`). Use
+> `eas` freely here; `ssp`/`bbar` remain fine, cheaper single-point alternatives.
+> (A scalar `-stab` stabilization was implemented and **rejected** — ADR 20.)
 
 ---
 
