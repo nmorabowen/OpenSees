@@ -662,6 +662,7 @@
 
 // integrator header files
 #include "ArcLength.h"
+#include "LadrunoArcLength.h"   // Ladruno
 #include "DisplacementControl.h"
 #ifdef _PARALLEL_PROCESSING
 #include "DistributedDisplacementControl.h"
@@ -3050,8 +3051,11 @@ FEM_ObjectBrokerAllClasses::getNewStaticIntegrator(int classTag)
 	     return new DistributedDisplacementControl(); // must recvSelf
 #endif	     
 	     
-	case INTEGRATOR_TAGS_ArcLength:  
+	case INTEGRATOR_TAGS_ArcLength:
 	     return new ArcLength(1.0);      // must recvSelf
+
+	case INTEGRATOR_TAGS_LadrunoArcLength:   // Ladruno
+	     return new LadrunoArcLength(1.0);    // must recvSelf
 
 	     
 	default:
@@ -3206,8 +3210,11 @@ FEM_ObjectBrokerAllClasses::getNewIncrementalIntegrator(int classTag)
 	     return new LoadControl(1.0,1,1.0,1.0); // must recvSelf
 	    
 	     
-	case INTEGRATOR_TAGS_ArcLength:  
+	case INTEGRATOR_TAGS_ArcLength:
 	     return new ArcLength(1.0);      // must recvSelf
+
+	case INTEGRATOR_TAGS_LadrunoArcLength:   // Ladruno
+	     return new LadrunoArcLength(1.0);    // must recvSelf
 	     	     
 	     
 	case INTEGRATOR_TAGS_Newmark:  

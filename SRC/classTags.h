@@ -1123,6 +1123,7 @@
 #define INTEGRATOR_TAGS_ExplicitDifferenceStatic        33001 // J.A. Abell (Ladruno) — explicit static difference; ladruno private band >=33000 (was 62)
 #define INTEGRATOR_TAGS_ExplicitBatheLNVD               33002 // N. Mora-Bowen (Ladruno) — Noh-Bathe + LNVD damping; ladruno private band >=33000 (was 63)
 #define INTEGRATOR_TAGS_CentralDifferenceLadruno        33003 // N. Mora-Bowen (Ladruno) — explicit leap-frog central difference; ladruno private band >=33000 (was 64)
+#define INTEGRATOR_TAGS_LadrunoArcLength                 33004 // N. Mora-Bowen (Ladruno) — adaptive (+ future viscous-stabilized) arc-length; ladruno integrator band >=33000. NB 33004 is independently reused in the ELE_TAG space (ELE_TAG_LadrunoIMKBeam2d=33004) — tag bands are PER-REGISTRY, no collision.
 
 
 #define LinSOE_TAGS_FullGenLinSOE		1
