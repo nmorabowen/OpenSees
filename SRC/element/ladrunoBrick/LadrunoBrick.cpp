@@ -3196,6 +3196,30 @@ LadrunoBrick::getCharacteristicLength(void)
 }
 
 //----------------------------------------------------------------------
+// getInterpolationWeights — trilinear 8-node hex shape weights at the natural
+// coordinate xi = (ξ,η,ζ). Same formula as the body-force / mass interpolation
+// used throughout this element (N_I = 0.125·∏(1+ξ_I·ξ_k), natCoord = nodal
+// corner signs). Lets LadrunoEmbeddedRebar embed a rebar node in this host
+// without re-supplying the weights (ADR 20 §9). N is resized to 8.  // Ladruno
+//----------------------------------------------------------------------
+int
+LadrunoBrick::getInterpolationWeights(const Vector &xi, Vector &N)
+{
+  if (xi.Size() < 3) {
+    opserr << "LadrunoBrick::getInterpolationWeights - xi needs 3 natural "
+              "coords (xi,eta,zeta)\n";
+    return -1;
+  }
+  if (N.Size() != numberNodes)
+    N.resize(numberNodes);
+  for (int I = 0; I < numberNodes; I++)
+    N(I) = 0.125 * (1.0 + natCoord[I][0]*xi(0))
+                 * (1.0 + natCoord[I][1]*xi(1))
+                 * (1.0 + natCoord[I][2]*xi(2));
+  return 0;
+}
+
+//----------------------------------------------------------------------
 // Recoverable elastic hourglass / stabilization energy at the current trial
 // state. uri 'stiffness': ½κ·Σ q_aι² (the FB perturbation energy; q from the
 // trial displacement, mirrors formUri exactly). ssp: ½·u_core·Kstab·u_core.

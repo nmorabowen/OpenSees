@@ -25,18 +25,33 @@
 // LADRUNO-HEADER-END
 
 // Ladruno: OPS parser for the embedded-reinforcement coupling element.
-//   element LadrunoEmbeddedRebar tag rebarNode nHost h1 ... hNhost
-//           -shape N1 ... NNhost  -dir dx dy [dz]
-//           ( -bond matTag [-bondScale bs] | -perfect kAxial )
-//           [-kt kt]
+//
+//   Host nodes — two forms (ADR 20 §9):
+//     explicit : ... tag rebarNode  nHost h1 ... hNhost  ...
+//     by host  : ... tag rebarNode  -host hostEleTag     ...   (host must already
+//                exist; its external-node list IS the host-node list)
+//
+//   Shape weights N_i — two forms:
+//     -shape N1 ... NNhost        (user-supplied; works for any host)
+//     -xi   x1 ... x_ndm          (queried from the host element — requires -host;
+//                                  the host must implement getInterpolationWeights,
+//                                  e.g. LadrunoBrick (ξ,η,ζ) / BezierTet10 (L1,L2,L3))
+//
+//   element LadrunoEmbeddedRebar tag rebarNode {nHost h1..hN | -host eleTag}
+//           {-shape N1..NN | -xi x1..x_ndm}  -dir dx dy [dz]
+//           ( -bond matTag [-bondScale bs] | -perfect kAxial )  [-kt kt]
+//
 // Written: N. Mora-Bowen (Ladruno), 2026.
 
 #include <LadrunoEmbeddedRebar.h>
 #include <ID.h>
 #include <Vector.h>
 #include <UniaxialMaterial.h>
+#include <Element.h>
+#include <Domain.h>
 #include <elementAPI.h>
 #include <string.h>
+#include <stdlib.h>   // atoi
 
 void* OPS_LadrunoEmbeddedRebar(void)
 {
@@ -46,34 +61,74 @@ void* OPS_LadrunoEmbeddedRebar(void)
     return 0;
   }
 
-  if (OPS_GetNumRemainingInputArgs() < 3) {
+  if (OPS_GetNumRemainingInputArgs() < 4) {
     opserr << "WARNING insufficient args\n"
-           << "Want: element LadrunoEmbeddedRebar tag rebarNode nHost h1..hNhost "
-           << "-shape N1..NNhost -dir dx dy [dz] "
-           << "(-bond matTag [-bondScale bs] | -perfect kAxial) [-kt kt]\n";
+           << "Want: element LadrunoEmbeddedRebar tag rebarNode "
+           << "{nHost h1..hN | -host eleTag} {-shape N1..NN | -xi x1..x_ndm} "
+           << "-dir dx dy [dz] (-bond matTag [-bondScale bs] | -perfect kAxial) [-kt kt]\n";
     return 0;
   }
 
-  int idata[3];                    // tag, rebarNode, nHost
-  int n = 3;
+  int idata[2];                    // tag, rebarNode
+  int n = 2;
   if (OPS_GetIntInput(&n, idata) < 0) {
-    opserr << "WARNING LadrunoEmbeddedRebar: invalid tag/rebarNode/nHost\n";
+    opserr << "WARNING LadrunoEmbeddedRebar: invalid tag/rebarNode\n";
     return 0;
   }
-  int tag = idata[0], rebarNode = idata[1], nHost = idata[2];
-  if (nHost < 1) {
-    opserr << "WARNING LadrunoEmbeddedRebar: nHost must be >= 1\n";
-    return 0;
-  }
+  int tag = idata[0], rebarNode = idata[1];
 
-  ID hostNodes(nHost);
-  for (int i = 0; i < nHost; i++) {
-    int h; n = 1;
-    if (OPS_GetIntInput(&n, &h) < 0) {
-      opserr << "WARNING LadrunoEmbeddedRebar: invalid host node " << i << "\n";
+  // --- host nodes: either an explicit count+list, or `-host eleTag` ----------
+  int nHost = 0;
+  ID hostNodes;
+  Element* hostEle = 0;            // set only in the -host form; needed for -xi
+
+  if (OPS_GetNumRemainingInputArgs() < 1) {
+    opserr << "WARNING LadrunoEmbeddedRebar: missing host spec (nHost.. or -host)\n";
+    return 0;
+  }
+  const char* hostTok = OPS_GetString();
+  if (strcmp(hostTok, "-host") == 0) {
+    int eleTag; n = 1;
+    if (OPS_GetIntInput(&n, &eleTag) < 0) {
+      opserr << "WARNING LadrunoEmbeddedRebar: -host wants a host element tag\n";
       return 0;
     }
-    hostNodes(i) = h;
+    Domain* theDomain = OPS_GetDomain();
+    if (theDomain == 0) {
+      opserr << "WARNING LadrunoEmbeddedRebar: no active domain for -host\n";
+      return 0;
+    }
+    hostEle = theDomain->getElement(eleTag);
+    if (hostEle == 0) {
+      opserr << "WARNING LadrunoEmbeddedRebar: -host element " << eleTag
+             << " not found (define the host solid before the rebar element)\n";
+      return 0;
+    }
+    hostNodes = hostEle->getExternalNodes();   // ID copy
+    nHost = hostNodes.Size();
+    if (nHost < 1) {
+      opserr << "WARNING LadrunoEmbeddedRebar: -host element " << eleTag
+             << " has no external nodes\n";
+      return 0;
+    }
+  }
+  else {
+    // explicit form: the peeked token is nHost
+    nHost = atoi(hostTok);
+    if (nHost < 1) {
+      opserr << "WARNING LadrunoEmbeddedRebar: nHost must be >= 1 "
+             << "(or use -host eleTag); got '" << hostTok << "'\n";
+      return 0;
+    }
+    hostNodes = ID(nHost);
+    for (int i = 0; i < nHost; i++) {
+      int h; n = 1;
+      if (OPS_GetIntInput(&n, &h) < 0) {
+        opserr << "WARNING LadrunoEmbeddedRebar: invalid host node " << i << "\n";
+        return 0;
+      }
+      hostNodes(i) = h;
+    }
   }
 
   Vector Nshape(nHost), dir(ndm);
@@ -90,6 +145,34 @@ void* OPS_LadrunoEmbeddedRebar(void)
       n = nHost;
       if (OPS_GetDoubleInput(&n, &Nshape(0)) < 0) {
         opserr << "WARNING LadrunoEmbeddedRebar: -shape wants " << nHost << " values\n";
+        return 0;
+      }
+      haveShape = true;
+    }
+    else if (strcmp(opt, "-xi") == 0) {
+      // query the host element for the shape-function weights at this natural
+      // coordinate (ADR 20 §9 single source of truth). Requires the -host form.
+      if (hostEle == 0) {
+        opserr << "WARNING LadrunoEmbeddedRebar: -xi requires the -host form "
+               << "(no host element to query); use -shape instead\n";
+        return 0;
+      }
+      Vector xi(ndm);
+      n = ndm;
+      if (OPS_GetDoubleInput(&n, &xi(0)) < 0) {
+        opserr << "WARNING LadrunoEmbeddedRebar: -xi wants " << ndm
+               << " natural coords\n";
+        return 0;
+      }
+      if (hostEle->getInterpolationWeights(xi, Nshape) < 0) {
+        opserr << "WARNING LadrunoEmbeddedRebar: host element "
+               << hostEle->getTag() << " (" << hostEle->getClassType()
+               << ") does not implement getInterpolationWeights; supply -shape\n";
+        return 0;
+      }
+      if (Nshape.Size() != nHost) {
+        opserr << "WARNING LadrunoEmbeddedRebar: host returned " << Nshape.Size()
+               << " weights but has " << nHost << " nodes\n";
         return 0;
       }
       haveShape = true;
@@ -137,8 +220,13 @@ void* OPS_LadrunoEmbeddedRebar(void)
     }
   }
 
-  if (!haveShape || !haveDir) {
-    opserr << "WARNING LadrunoEmbeddedRebar: -shape and -dir are required\n";
+  if (!haveShape) {
+    opserr << "WARNING LadrunoEmbeddedRebar: shape weights required "
+           << "(-shape N1..NN, or -xi x1..x_ndm with the -host form)\n";
+    return 0;
+  }
+  if (!haveDir) {
+    opserr << "WARNING LadrunoEmbeddedRebar: -dir is required\n";
     return 0;
   }
   if (bondTag < 0 && !perfect) {

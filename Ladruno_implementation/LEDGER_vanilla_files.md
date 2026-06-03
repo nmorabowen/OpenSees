@@ -82,6 +82,7 @@ and re-verify.
 | `SRC/interpreter/OpenSeesUniaxialMaterialCommands.cpp` | `// Ladruno`: fwd-decl `OPS_LadrunoRebarBuckling()` + `uniaxialMaterialsMap["LadrunoRebarBuckling"]` (shared OpenSeesPy/openseesmp/interpreter-Tcl registry) | [#119](https://github.com/nmorabowen/OpenSees/pull/119) |
 | `SRC/material/uniaxial/TclModelBuilderUniaxialMaterialCommand.cpp` | `// Ladruno`: extern `OPS_LadrunoRebarBuckling()` + `strcmp(argv[1],"LadrunoRebarBuckling")` dispatch block (classic-Tcl `OpenSees.exe` path) | [#119](https://github.com/nmorabowen/OpenSees/pull/119) |
 | `SRC/material/uniaxial/CMakeLists.txt` | Add `LadrunoRebarBuckling.cpp` to `OPS_Material` sources + `LadrunoRebarBuckling.h` to headers | [#119](https://github.com/nmorabowen/OpenSees/pull/119) |
+| `SRC/element/Element.{h,cpp}` | `// Ladruno` (ADR 20 §9): add `virtual int getInterpolationWeights(const Vector& xi, Vector& N)` to the `Element` base — default returns −1 (not implemented), host elements override. Single source of truth for nodal shape-function weights so `LadrunoEmbeddedRebar` can embed a rebar node via `-host eleTag -xi …` instead of re-supplied `-shape`. Additive base-class virtual (vtable change ⇒ recompile-all, but no existing behavior touched). Overridden by fork hosts `LadrunoBrick` (trilinear) + `BezierTet10` (Bernstein). | _pending (embedded-rebar §9)_ |
 
 > [!note] Upstreamable bugfixes
 > Some PRs fix genuine upstream bugs (not fork-only features) and are candidates

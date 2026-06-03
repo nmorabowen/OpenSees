@@ -123,6 +123,10 @@ class LadrunoBrick : public Element {
   // cbrt(6V) and BezierTri6's sqrt(2A)). Degenerate V<=0 falls back to base.  // Ladruno
   double getCharacteristicLength(void);
 
+  // Ladruno (ADR 20 §9): trilinear 8-node hex shape weights at natural coord
+  // xi = (ξ,η,ζ) ∈ [-1,1]³, for embedded-reinforcement coupling. N sized to 8.  // Ladruno
+  int getInterpolationWeights(const Vector &xi, Vector &N);
+
   // state
   int commitState(void);
   int revertToLastCommit(void);

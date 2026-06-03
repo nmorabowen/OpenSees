@@ -707,10 +707,20 @@ double Element::getCharacteristicLength(void)
   }
   return minSize;
 }
-      
+
+// Ladruno (ADR 20 §9): default = not implemented. Host elements that can be
+// embedment targets (LadrunoBrick, BezierTet10) override this and fill N with
+// their nodal shape-function weights at the natural coordinate xi. Returning -1
+// here lets LadrunoEmbeddedRebar fall back to user-supplied -shape weights for
+// hosts that do not implement it.
+int
+Element::getInterpolationWeights(const Vector &xi, Vector &N)
+{
+  return -1;
+}
 
 
-int 
+int
 Element::storePreviousK(int numK) {
 
   //
