@@ -55,6 +55,7 @@ GLOBS = [
     "SRC/analysis/integrator/CentralDifferenceLadruno.*",
     "SRC/analysis/integrator/LadrunoArcLength.*",
     "SRC/analysis/integrator/LadrunoDynamicRelaxation.*",
+    "SRC/analysis/integrator/LadrunoFictitiousMass.h",
     "SRC/analysis/integrator/ExplicitBathe.*",
     "SRC/analysis/integrator/ExplicitBatheLNVD.*",
     "SRC/recorder/LadrunoRecorder.*",
