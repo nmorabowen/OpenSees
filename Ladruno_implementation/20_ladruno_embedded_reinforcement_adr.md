@@ -39,8 +39,11 @@ implicit cyclic pushover on confined columns is a primary target, so R1/R7 must 
 - **Host-agnostic** (hex `LadrunoBrick` + tet `BezierTet10`); **v1 = straight-sided hosts**.
 - openseespy-native; set-to-set user API via apeGmsh.
 
-**Non-goals (v1, now explicit with encoded scope-limit tests):** dowel action / transverse
-bar shear (truss = axial only); distributed Gauss-point bond (node-lumped first, O(h²));
+**Non-goals (v1, now explicit with encoded scope-limit tests):** *quantitative* dowel
+action / transverse bar shear — the default `truss` is axial-only, and the opt-in `beam`
+rebar (D6) gives only an *approximate, mesh-limited* transverse contribution (true dowel =
+local bearing at ~few `d_b`, needs a fine near-crack mesh or a dowel interface law → v2);
+distributed Gauss-point bond (node-lumped first, O(h²));
 **cyclic bond-slip degradation (→ v2)**; **cover-controlled splitting bond failure (→ v1.1,
 xfail test)**; finite-strain tributary-length stretch correction (→ v2); multi-axial rebar;
 **Mode T under corot/finite hosts (→ use Mode P)**; smeared reinforcement.
@@ -127,20 +130,46 @@ Drives Mode P's axial slot.
 - **Primitive:** `element('LadrunoEmbeddedRebar', tag, rebarNode, hostEleTag, ξ, η, ζ, '-mode', 'T'|'P', '-bond', matTag, '-perimeter', p, '-ltrib', L, '-kt', kt)`.
 - **Generator (apeGmsh):** `g.reinforce(host=<set>, bars=<set>, bond='cebfip'|'perfect', mode='T'|'P')` — runs the guarded inverse-map at build time and emits primitives with an **explicit `-mode`** (apeGmsh knows the intended integrator). OpenSees elements cannot query the integrator at `setDomain`, so **no auto-detection**; instead `setDomain` adds a **consistency guard** that errors on integrator/mode mismatch (catches integrator swap + implicit↔explicit chaining). classTags 33005 / 33002 are collision-free (per-registry namespaces — objection refuted).
 
-### D6 — Rebar element = `corotTruss` (axial only); Mode P transverse handling specified
-Axial-only is the right v1 (dowel deferred). Confirmed mechanics must-fixes:
+### D6 — Rebar element is USER-SELECTABLE: `truss` (default) or `beam` (opt-in)
+The embedding couples **translations only** for both element types (`u_r = Σ N_i u_i^host`),
+so element choice is orthogonal to the embedding machinery — only the extra beam DOFs and a
+twist guard differ. This hands the axial-vs-flexural trade-off to the user (the Abaqus
+`*EMBEDDED ELEMENT` model: constrain translations, leave rotations to the element).
+
+- **`truss` (default) — `corotTruss`, axial-only.** Cheapest, explicit-clean, no rotational
+  DOF/inertia. Covers the bulk; the bar's transverse stiffness comes from the Mode P
+  penalty tie, not the element.
+- **`beam` (opt-in, advanced) — `dispBeamColumn`/`forceBeamColumn`, translations-coupled /
+  rotations-free.** Adds the bar's **distributed flexural/transverse stiffness** to the host
+  (an *approximate* dowel/confinement contribution). Two caveats, both recorded as
+  implementation requirements:
+  - **Quantitative dowel is mesh-limited (not free).** Real dowel is a local bearing
+    mechanism at ~3–6 `d_b`, far below typical solid mesh size; a beam slaved to a coarse
+    host smears it ⇒ you get *a* transverse stiffness, **not** the right dowel capacity
+    without a fine near-crack mesh or a dedicated dowel/bearing interface law (→ v2). Bending
+    rotations are well-posed (the beam self-stiffens given imposed end translations).
+  - **Bar-axis twist is a spurious zero-energy mode — MUST be stabilized.** The torsional
+    sub-block `[[GJ/L,−GJ/L],[−GJ/L,GJ/L]]` is singular and the host has no rotation field to
+    resist rigid twist about the bar axis ⇒ singular tangent. Fix: constrain the bar-axis
+    rotation (SP) or add a small drilling stiffness. (Bending/translation DOFs are fine.)
+  - **No double-count with bond-slip:** for `beam`, the embedding ties translations
+    (perfect-bond transverse) and bond-slip acts **axially only** — the beam already supplies
+    transverse stiffness; do not also apply a transverse bond spring.
+
+Mode P transverse handling (applies to `truss`; for `beam` the element supplies it):
 - Mode P transverse hold uses **volume-scaled** penalty (`k_t ≈ α·E_host·∛V`, mirror
   `ASDEmbeddedNodeElement`'s `iK·√V`) + the anisotropic `K` of D2 — a bare `corotTruss` is
   rank-1 (`EA/L·n⊗n`), so a bar parallel to a host face leaves a near-floating transverse
   DOF without this. Add a Zone-A **spurious-transverse-mode / tangent-rank** test.
 - **Mode T restricted to small-rotation / linear hosts** (R5 promoted to a decision): the
   frozen reference-config `N_i(ξ)` drifts under large host rotation; corot/finite hosts
-  **default to Mode P**. `setDomain` errors if Mode T meets a corot/finite host.
+  **default to Mode P**. `setDomain` errors if Mode T meets a corot/finite host. (A `beam`
+  rebar's own frame also goes stale under large host rotation — same restriction applies.)
 - finite-strain `L_trib *= λ` (stretch) deferred; v1 documents the small-strain (host axial
   strain ≲ 2%) bond assumption.
 
 ## 4. Reference-code alignment (confinement claim CORRECTED)
-- **Abaqus** `*EMBEDDED ELEMENT`: DOF-elim perfect bond, **no native bond-slip** → our Mode T + we add bond-slip.
+- **Abaqus** `*EMBEDDED ELEMENT`: DOF-elim perfect bond, translations-only constraint (rotations of an embedded beam left free) → our Mode T + the D6 `beam` option; **no native bond-slip** → we add it.
 - **LS-DYNA** `*CONSTRAINED_BEAM_IN_SOLID`: penalty + bond + mass scaling for explicit → our Mode P.
 - **DIANA** bond-slip reinforcement: own-DOF rebar + 1D τ–s (CEB-FIP) → our Mode P + D4.
 - **Confinement (corrected):** ASDConcrete3D *has* a Lubliner plastic-damage model with a Kc
