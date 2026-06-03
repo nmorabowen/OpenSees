@@ -584,6 +584,11 @@ the same γ-independence with *no* host-stress/∂N query.** *Effort: research-g
    axial untouched; `-enforce penalty` bit-identical to default. No analysis-core change
    (commitState is driver-called once per converged step). **This is the near-exact,
    well-conditioned, explicit-safe perfect-bond path** — the strategic payoff of the roadmap.
+   *Review fix:* for **bond-slip + `-corot` + `al`**, the transverse multiplier is re-projected
+   onto the current transverse plane each step so a rotating `dirCur` can't leak it into a
+   spurious axial force on the τ–s slot; perfect-bond keeps the full 3D multiplier. Open (→§10.9):
+   AL+corot is exact only to O(per-step rotation) like the dropped ∂dir/∂u term, and per-step
+   Uzawa under **cyclic** load is path-approximate (v1 is monotonic) — both want a v2 test leg.
 5. **Strategic — bipenalty `dt_cr` (§10.6).** Rebar-block lumped `m_p`, `-wcap β`, self-reported
    `dt_cr` response. Gated on `-enforce penalty`. *Independent of 3/4 but pairs naturally with
    explicit AL runs.* Correct the D2 framing in this ADR as part of the PR.

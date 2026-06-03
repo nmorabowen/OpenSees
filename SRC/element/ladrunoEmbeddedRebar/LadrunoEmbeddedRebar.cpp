@@ -191,12 +191,23 @@ int LadrunoEmbeddedRebar::commitState(void)
   // lambda is piecewise-constant per step (mutated only here), so within a solve
   // the tangent is exact and CTest sees a frozen multiplier.
   if (enforce == 1) {
+    this->resolveAutoKt();   // ensure an auto kt is resolved before the Uzawa step
     Vector g(ndm), gt(ndm);
     double s, Faxial, kAxial;
     this->formBandTraction(g, s, gt, Faxial, kAxial);   // converged; sets dirCur
     for (int k = 0; k < ndm; k++) lambda(k) += kt * gt(k);
-    if (bondMat == 0)
+    if (bondMat == 0) {
       for (int k = 0; k < ndm; k++) lambda(k) += kAxialPerfect * s * dirCur(k);
+    } else {
+      // bond-slip: the AL constraint is PURELY transverse (the axial τ–s force is
+      // physical). Re-project lambda onto the current transverse plane so that a
+      // rotating dirCur (-corot) cannot leak the accumulated transverse multiplier
+      // into a spurious axial force on the bond slot. No-op when dirCur is frozen
+      // (lambda already ⊥ dir). Review finding (AL + corot + bond-slip).
+      double la = 0.0;
+      for (int k = 0; k < ndm; k++) la += lambda(k) * dirCur(k);
+      for (int k = 0; k < ndm; k++) lambda(k) -= la * dirCur(k);
+    }
   }
   int ok = this->Element::commitState();
   if (bondMat != 0) ok += bondMat->commitState();
