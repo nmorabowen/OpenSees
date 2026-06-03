@@ -241,16 +241,17 @@ def _refused(*extra):
     return 1 not in tags
 
 
-def test_formulation_eas_is_deprecated_to_ssp():
-    """The legacy '-formulation eas' (a stabilized single-point SSPbrick port, NOT
-    enhanced assumed strain) was renamed to '-formulation ssp'. The name 'eas' is
-    now RESERVED for the upcoming true Simo-Rifai EAS (ADR 19) and is refused at
-    the factory so a model's intent stays explicit. NB PR-2 will repurpose 'eas'
-    for true EAS, at which point this test flips to asserting an element IS built."""
-    assert _refused("-formulation", "eas"), (
-        "'-formulation eas' must be refused after the ssp rename (the name is "
-        "reserved for true Simo-Rifai EAS); use -formulation ssp"
-    )
+def test_formulation_eas_builds_true_simo_rifai():
+    """PR-1 renamed the legacy single-point port `eas` -> `ssp` and reserved the
+    name `eas`; PR-2 (ADR 19) gives `eas` its true meaning — Simo-Rifai enhanced
+    assumed strain. The factory must now ACCEPT `-formulation eas` (full validation
+    of the EAS element is in test_ladrunoBrick_eas.py)."""
+    _build_common(E=1000.0, nu=0.3)
+    ops.element("LadrunoBrick", 1, *_CONN, 1, "-formulation", "eas")
+    tags = ops.getEleTags() or []
+    if isinstance(tags, int):
+        tags = [tags]
+    assert 1 in tags, "'-formulation eas' must build true Simo-Rifai EAS (PR-2)"
 
 
 def test_ssp_relieves_volumetric_locking():

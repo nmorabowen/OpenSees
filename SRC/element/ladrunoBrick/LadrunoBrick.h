@@ -74,8 +74,9 @@ class LadrunoBrick : public Element {
   // Ordinals are serialized (packed into idData(28) by sendSelf), so the order is
   // load-bearing for DB/parallel back-compat: SSP keeps ordinal 3 (the slot the
   // old single-point "EAS" used), so legacy streams reload as the same element.
-  // True Simo-Rifai EAS (ADR 19) will take a NEW ordinal 4 in a follow-up.  // Ladruno
-  enum class Formulation { STD, BBAR, URI, SSP };
+  // EAS is true Simo-Rifai enhanced assumed strain (ADR 19) and takes the NEW
+  // ordinal 4 — distinct from the renamed single-point SSP=3.  // Ladruno
+  enum class Formulation { STD, BBAR, URI, SSP, EAS };
 
   // Hourglass stabilization flavour (uri only).
   enum class Hourglass { VISCOUS, STIFFNESS, PHYSICAL };
@@ -287,6 +288,25 @@ class LadrunoBrick : public Element {
   Matrix *sspBnot;     // 6x24 mean-dilatation B (constant; strain = Bnot*u)
   Matrix *sspKstab;    // 24x24 condensed stabilization (constant)
   double  sspVol;      // element volume (8*Jo + higher-order terms)
+
+  // eas — TRUE Simo-Rifai enhanced assumed strain (ADR 19). Unlike ssp this is a
+  // mixed element: the compatible strain B*u is enriched by an enhanced field
+  // M(xi)*alpha with 9 element-internal parameters alpha, solved each form pass by
+  // an inner Newton enforcing int M^T sigma = 0, then statically condensed
+  // (K* = Kdd - Kda Kaa^-1 Kad). Full 2x2x2 integration (8 LIVE material points).
+  // Ported from the 2-D EnhancedQuad (Wilson incompatible-mode lineage):
+  //   M_i(xi) = sym[ (j0/j(xi)) J0^-T E_i(xi) ]   (ADR 19 eq E.8)
+  // = 3 natural-direction bubbles x 3 dofs. j0/J0inv are the centroid Jacobian
+  // det/inverse (cached in setDomain via buildEAStrue). alpha is committed state
+  // (alphaCommit); commit/revert/sendSelf carry it. v1 = small strain only
+  // (-geom corot/finite + eas are parser-reserved).  // Ladruno
+  void buildEAStrue(void);                                 // cache centroid J0inv/j0
+  void formEAStrue(int tang_flag, bool useInitialTangent); // inner-Newton + condensation
+  void computeMenh(const double gp[3], double jdet, Matrix &M);  // 6x9 enhanced operator
+  Vector alpha;        // 9 enhanced parameters (trial; solved each form pass)
+  Vector alphaCommit;  // committed enhanced parameters (serialized)
+  Matrix easJ0inv;     // 3x3 centroid Jacobian inverse (mode map; cached)
+  double easJ0det;     // centroid Jacobian determinant j0 (cached)
   // Fill the assumed-strain B (Bbar[node][6][3], Voigt {xx,yy,zz,xy,yz,zx}) at a
   // Gauss point; returns |J|. gamma/bC are the (precomputed) hourglass vectors
   // and centroid gradients. Implements eq 8.7.26.

@@ -1,7 +1,7 @@
 ---
 title: LadrunoBrick — true Simo–Rifai EAS (and the ssp/eas rename)
 project: Ladruno
-status: draft
+status: implemented
 priority: medium
 owner: nmora
 tags:
@@ -442,10 +442,63 @@ received`. Non-EAS streams are byte-identical to today.
 
 ## Implementation log
 
-*(filled in during execution; move to `Ladruno_internal/` when done)*
-
 - Sequencing: **PR-1 = rename `eas`→`ssp`** (mechanical + enum-ordinal back-compat
   §6.2 + retarget the 9 tests + banner/ledger) — lands green with zero behavior
-  change. **PR-2 = true EAS under `eas`** (state + `formEAStrue` + `condenseEAS` +
-  `computeBenh` per (E.8) + §4 validation). Splitting keeps the rename bisectable
+  change. **PR-2 = true EAS under `eas`** (state + `formEAStrue` + condensation +
+  `computeMenh` per (E.8) + §4 validation). Splitting keeps the rename bisectable
   and the new physics isolated.
+
+### PR-1 — DONE (2026-06-02, merged PR #150)
+
+Renamed `eas`→`ssp` across source/tests/banner/ledger/guide; enum `SSP=3` (old EAS
+ordinal) for serialized back-compat; `-formulation eas` errored with a migration
+hint (interim). Verified: build clean + 118 brick tests green. (Merge `ad19d65f3`.)
+
+### PR-2 — DONE (2026-06-03)
+
+True Simo–Rifai EAS shipped under `-formulation eas` (enum `EAS=4`). Built and
+green: `tests/test_ladrunoBrick_eas.py` **6/6** + full brick regression **124/124**.
+
+What landed, vs the plan above:
+- **Mode set / map:** implemented the authoritative **one-sided** map
+  `M_i = sym[(j0/j)·J0⁻ᵀ·E_i]` (§1.6 / E.8) as the **incompatible-modes (Wilson)
+  form** the 2-D `EnhancedQuad` actually uses — **E9 = 3 natural-direction bubbles
+  × 3 dofs** in `computeMenh` (6×9). The two-leg `T0` strain transform is NOT
+  shipped (the blocker the adversarial sweep caught). `easJ0inv`/`easJ0det` cached
+  in `buildEAStrue` (setDomain).
+- **Solve + condense:** `formEAStrue` runs the inner Newton on α
+  (`residE = −∫Mᵀσ`, `Kaa.Solve`, `alpha += dalpha`, ≥2 iters, tol 1e-10), then
+  `K* = Kdd − Kda·Kaa⁻¹·Kad`; the inner Newton drives `h→0` so `f* = ∫Bᵀσ` with no
+  explicit residual-condensation term (the `EnhancedQuad` contract — the plan's
+  `r̄ = r_u − K_uα K_αα⁻¹ h` term is exactly the dropped `h≈0`). Condensation reuses
+  the inner-loop `Kaa` (Solve preserves the matrix, as `EnhancedQuad` relies on).
+  `getInitialStiff` condenses the initial elastic tangent at α=0, no Newton.
+- **Deviation from plan — `update()` is NOT a no-op.** The plan (mirroring
+  `EnhancedQuad`) had `update()` do nothing and let the form pass strain the
+  materials. That commits **stale (zero) material state under `algorithm Linear`**,
+  where no force/tangent form runs at the final `u` before `commitState` (the
+  8-GP stress test caught all-zero stresses). Fix: `update()` for EAS calls
+  `formEAStrue(0,…)` to solve α + strain the 8 GPs — the standard `update()`
+  contract — so commit is correct under **any** algorithm. (`EnhancedQuad` has the
+  latent Linear-staleness; we don't.)
+- **State / serialization:** `alpha`/`alphaCommit(9)` exactly per §2/§6.2 — guarded
+  extra `Vector(9)` of `alphaCommit` sent only for `formulation==EAS`, gated on the
+  decoded ordinal in `recvSelf`; `idData(25)` (Rayleigh flag) untouched.
+- **Deprecation policy:** PR-1's interim hard-error on `-formulation eas` is now
+  replaced by EAS itself — `eas` builds true EAS (the §6.3 option-A end state). The
+  PR-1 deprecation test was flipped to assert `eas` builds.
+- **Validation (§4) — what was built vs deferred:** patch test (distorted 2×2×2,
+  free interior, `∫M dV=0`), reduce-to-`std` (α→0), bending-beats-`std`→Euler,
+  near-incompressible non-locking (nu=0.45 bending), 8-live-GP, α commit/revert with
+  J2 — all green. **Deferred (noted in the test file):** Cook's membrane band, the
+  `EnhancedQuad` 2-D plane-strain sub-block oracle (§4 item 2), and the white-box
+  `intMdV`/`alpha` `eleResponse` branches (no C++ response added — the distorted
+  patch test is the operative `∫M dV=0` gate).
+- **Test-harness lessons (not element bugs):** `ops.fix`+`ops.sp` on the same dof =
+  two competing Penalty terms → half the imposed value (use `sp` only); a free
+  uniaxial single cube is statically determinate so volumetric locking does NOT
+  manifest there (use bending at high ν).
+
+**Still deferred (future PRs):** enhanced-`F` finite EAS (the §3 seam; Q1/E9
+compressive hourglassing); richer mode sets E12/E21/E30 (§7); the §4 oracle/Cook
+refinements and white-box responses.
