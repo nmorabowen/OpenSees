@@ -47,6 +47,31 @@ contact with the source and are re-scoped below rather than buried.
 
 ---
 
+## Implementation status
+
+> [!note] Phase 1 BUILT + Zone-A 4/4 — PR #155 (2026-06-03).
+> Phase 1 (MCFT compression softening on the *existing* `ASDShellQ4` + `LayeredShellFiberSection`,
+> zero element/section edit) is implemented and green. **Naming refinement vs the D5 table:**
+> instead of three separate classes (`LadrunoRCPlaneStress`/`PlateFiber`/`FiniteStrain`, tags
+> 33013/14/15), Phase 1 ships **ONE multi-dim class `LadrunoRCConcrete` (classTag 33014)** with the
+> views selected via `dim`/`vmap` + `getType`/`getCopy` — the proven LadrunoJ2/ASDConcrete3D
+> pattern, far less duplication, and the 3D view is directly comparable to ASDConcrete3D for the
+> A2 reduce-to-baseline gate. (33013 turned out to be used by `InitDefGrad` on a sibling branch.)
+> The finite-strain view (phase 4) and any future native plane-stress class can still take their
+> own tags when built.
+>
+> The β-on-the-strength-axis gate (the blocking Phase-1 risk, D4) is proven **three** ways:
+> the numpy oracle `tests/_testbed/rc_shell_ref.py`, a standalone g++ build of `LadrunoRCKernel.h`
+> (both: `|σc|/fc' = β` exact to 1e-6, the forbidden abscissa-insertion misses), and end-to-end in
+> OpenSees (`tests/test_ladrunoRCConcrete_material.py`: reduce-to-ASDConcrete3D tension **and**
+> compression byte-match with β off; biaxial β-softening ratio == β(ε₁) exactly). Two spine-cloning
+> gotchas surfaced and are recorded in [[LEDGER_quirks]]: the equivalent-strain measure needs `/E`
+> (a β-ratio test can't catch its omission — only an absolute-stress test can), and the
+> effective-stress backbone `q` is E-consistent by construction (`buildBackbone` mirrors the
+> ASDConcrete3D `HardeningLaw` c-tor + `adjust()`), NOT `q=y/(1−d)` on raw points.
+
+---
+
 ## Background theory — the mechanics
 
 ### Generalized shell strain and the director-stack split

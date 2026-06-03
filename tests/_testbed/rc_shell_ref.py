@@ -265,9 +265,9 @@ def compute(P, st_committed, strain6, betaMode='strength'):
     xt_pl = plastic_strain(pt, E)
     xc_pl = plastic_strain(pc, E)
 
-    # trial measures
-    xt_meas = equiv_tensile(Si, P.fcft_ratio, P.Kc)
-    xc_meas = equiv_compressive(Si, P.fcft_ratio, P.Kc, k1_c)
+    # trial measures (/E converts the Lubliner STRESS measure to the strain abscissa, cpp:2509/2522)
+    xt_meas = equiv_tensile(Si, P.fcft_ratio, P.Kc) / E
+    xc_meas = equiv_compressive(Si, P.fcft_ratio, P.Kc, k1_c) / E
     # FORBIDDEN insertion (for discrimination only): scale the compressive abscissa
     if betaMode == 'abscissa' and P.beta_on:
         xc_meas = xc_meas * beta

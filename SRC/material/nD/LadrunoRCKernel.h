@@ -1,3 +1,24 @@
+// LADRUNO-HEADER-START
+// ==========================================================================
+//
+//   ▄█          ▄████████ ████████▄     ▄████████ ███    █▄  ███▄▄▄▄    ▄██████▄
+//  ███         ███    ███ ███   ▀███   ███    ███ ███    ███ ███▀▀▀██▄ ███    ███
+//  ███         ███    ███ ███    ███   ███    ███ ███    ███ ███   ███ ███    ███
+//  ███         ███    ███ ███    ███  ▄███▄▄▄▄██▀ ███    ███ ███   ███ ███    ███
+//  ███       ▀███████████ ███    ███ ▀▀███▀▀▀▀▀   ███    ███ ███   ███ ███    ███
+//  ███         ███    ███ ███    ███ ▀███████████ ███    ███ ███   ███ ███    ███
+//  ███▌    ▄   ███    ███ ███   ▄███   ███    ███ ███    ███ ███   ███ ███    ███
+//  █████▄▄██   ███    █▀  ████████▀    ███    ███ ████████▀   ▀█   █▀   ▀██████▀
+//  ▀                                   ███    ███
+//
+//  Ladruno — a research fork of OpenSees
+//  Created by:  Nicolas Mora Bowen  ·  Patricio Palacios  ·  José Abell  ·  Guppi
+//
+// Header auto-stamped by Ladruno_scripts/stamp_headers.py (art: banner_ASCII.txt).
+// Do not hand-edit between the markers; edit the script/art and re-run instead.
+// ==========================================================================
+// LADRUNO-HEADER-END
+
 #ifndef LadrunoRCKernel_h
 #define LadrunoRCKernel_h
 
@@ -90,6 +111,72 @@ inline double backboneMaxStress(const Backbone& b)
     double m = 0.0;
     for (int i = 0; i < b.n; ++i) if (b.y[i] > m) m = b.y[i];
     return m;
+}
+
+// Build the (x,y,q) backbone from user (strain, nominal-stress, damage) EXACTLY as
+// ASDConcrete3D::HardeningLaw c-tor + adjust() (cpp:869-939, 1134-1180): prepend (0,0,0)
+// if needed, force d[0]=0, force the first segment elastic (y[1]=E*x[1]), cap every
+// secant slope at E, enforce monotone plastic strain + non-decreasing damage, then
+// q = y/(1-d) on the ADJUSTED points. This is what makes the elastic branch E-consistent
+// (dc_plastic=0 until yield) and is required for byte-faithful reduce-to-ASDConcrete3D.
+inline void buildBackbone(Backbone& b, double E,
+                          const double* xin, const double* yin, const double* din, int nin)
+{
+    double x[MAXPTS], y[MAXPTS], d[MAXPTS];
+    int n = nin > MAXPTS ? MAXPTS : nin;
+    double xmax = 0.0, ymax = 0.0;
+    for (int i = 0; i < n; ++i) {
+        x[i] = fabs(xin[i]); y[i] = fabs(yin[i]);
+        d[i] = din[i] < 0.0 ? 0.0 : (din[i] > 1.0 ? 1.0 : din[i]);
+        if (x[i] > xmax) xmax = x[i];
+        if (y[i] > ymax) ymax = y[i];
+    }
+    // first-point handling
+    if (x[0] > 0.0) {
+        if (y[0] == 0.0) {
+            y[0] = E * x[0];
+        } else if (n < MAXPTS) {                 // insert (0,0,0) at front
+            for (int i = n; i >= 1; --i) { x[i] = x[i-1]; y[i] = y[i-1]; d[i] = d[i-1]; }
+            x[0] = 0.0; y[0] = 0.0; d[0] = 0.0; ++n;
+        }
+    } else {
+        y[0] = 0.0;
+    }
+    d[0] = 0.0;
+    if (n > 1) y[1] = E * x[1];                  // force elastic first segment
+    // tolerances
+    double dxmin = xmax, dymin = ymax;
+    for (int i = 1; i < n; ++i) {
+        double dx = fabs(x[i] - x[i-1]);
+        double dy = fabs(y[i] - y[i-1]);
+        if (dx > 0.0 && dx < dxmin) dxmin = dx;
+        if (dy > 0.0 && dy < dymin) dymin = dy;
+    }
+    double xtol = 1.0e-6 * dxmin, ytol = 1.0e-6 * dymin;
+    // adjust() — compute q on corrected points
+    double Eloc = (n > 1 && x[1] > 0.0) ? y[1] / x[1] : E;
+    b.x[0] = x[0]; b.y[0] = y[0];
+    b.q[0] = (d[0] < 1.0) ? y[0] / (1.0 - d[0]) : y[0];
+    for (int i = 1; i < n; ++i) {
+        double xi = x[i], xold = x[i-1], yi = y[i], yold = y[i-1], di = d[i], dold = d[i-1];
+        if (xi <= xold) xi += xtol;
+        if (yi < ytol) yi = ytol;
+        double Ei = (yi - yold) / (xi - xold);
+        if (Ei > Eloc) yi = yold + (xi - xold) * Eloc;
+        double eepd_old = dold < 1.0 ? xold - yold / ((1.0 - dold) * Eloc) : xold;
+        double eepd     = di   < 1.0 ? xi   - yi   / ((1.0 - di)   * Eloc) : -1.0;
+        if (eepd < eepd_old) {
+            double v = 1.0 - yi / Eloc / (xi - eepd_old);
+            di = v < 0.0 ? 0.0 : (v > 1.0 ? 1.0 : v);
+        }
+        if (di < dold) di = dold;
+        Ei = (yi - yold) / (xi - xold);
+        double Ed = (1.0 - di) * Eloc;
+        if (Ei > Ed) yi = Ed * (xi - eepd_old);
+        x[i] = xi; y[i] = yi; d[i] = di;
+        b.x[i] = xi; b.y[i] = yi; b.q[i] = yi / (1.0 - di);
+    }
+    b.n = n;
 }
 
 inline double macauley(double x) { return x > 0.0 ? x : 0.0; }
@@ -378,8 +465,9 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
     double rc1 = (P.eta > 0.0) ? P.eta / (P.eta + 1.0) : 0.0;
     double rc2 = 1.0 - rc1;
 
-    double xt_meas = equivTensile(D.Si, P.fcft_ratio, P.Kc);
-    double xc_meas = equivCompressive(D.Si, P.fcft_ratio, P.Kc, k1c);
+    // /E converts the Lubliner STRESS measure to the strain abscissa (cpp:2509/2522)
+    double xt_meas = equivTensile(D.Si, P.fcft_ratio, P.Kc) / E;
+    double xc_meas = equivCompressive(D.Si, P.fcft_ratio, P.Kc, k1c) / E;
     double xt_trial = xt_meas + xt_pl;
     double xc_trial = xc_meas + xc_pl;
 

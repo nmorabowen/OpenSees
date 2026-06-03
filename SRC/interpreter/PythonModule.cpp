@@ -598,6 +598,7 @@ initopensees(void)
 "        • Lemaitre ductile damage (-damage lemaitre, +lch, +IMPL-EX)\n"
 "        • LadrunoIMKBeam — concentrated-plasticity IMK beam hinges\n"
 "        • LadrunoRebarBuckling — rebar buckling wrapper (Dhakal–Maekawa / Gomes–Appleton, cyclic re-straightening)\n"
+"        • LadrunoRCConcrete — RC plastic-damage + MCFT compression softening (shell)\n"
 "        • Ladruno — modular HDF5 .ladruno recorder\n"
 "\n";
         // FEATURES-END

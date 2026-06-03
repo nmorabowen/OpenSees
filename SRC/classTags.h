@@ -575,6 +575,7 @@
 #define ND_TAG_LogStrainNDMaterial 33010 // N. Mora-Bowen (Ladruno) — logarithmic/Hencky finite-strain adaptor (seam 3); ladruno private ND band >=33010
 #define ND_TAG_LadrunoJ2 33011 // N. Mora-Bowen (Ladruno) — combined isotropic (Voce+linear) + Chaboche AF kinematic von Mises J2
 #define ND_TAG_LadrunoJ2Finite 33012 // N. Mora-Bowen (Ladruno) — finite-strain-native combined-hardening J2 with co-rotating backstress (dSNPO §14.11)
+#define ND_TAG_LadrunoRCConcrete 33014 // N. Mora-Bowen (Ladruno) — RC plastic-damage (ASDConcrete3D spine + MCFT compression softening); ONE multi-dim class (3D/PlaneStress/PlateFiber via getType/getCopy, LadrunoJ2 pattern); ADR 19. (33013 used by InitDefGrad on a sibling branch.)
 
 
 #define FIBER_TAG_Uniaxial2d	1
