@@ -127,11 +127,13 @@ LadrunoBrick::LadrunoBrick()
    theGeom(new SolidTransformationLinear()),  // Ladruno — v1 identity geometry
    damageResponse(0),                          // Ladruno — Tier-A Kstab (built in setDomain)
    sspBnot(0), sspKstab(0), sspVol(0.0),      // Ladruno — ssp (built in setDomain)
-   alpha(9), alphaCommit(9), easJ0inv(3, 3), easJ0det(0.0)   // Ladruno — eas state
+   alpha(9), alphaCommit(9), easJ0inv(3, 3), easJ0det(0.0), // Ladruno — eas state
+   easStabBeta(0.0), easKaa0(9, 9)            // Ladruno — ADR 20 eas tangent regularization
 {
   B.Zero();
   alpha.Zero();
   alphaCommit.Zero();
+  easKaa0.Zero();
 
   for (int i = 0; i < 8; i++) {
     materialPointers[i] = 0;
@@ -157,7 +159,8 @@ LadrunoBrick::LadrunoBrick(int tag,
                            int matype,
                            Hourglass hgType, double hgCoeff,
                            Damping *damping,
-                           int geomMethodID)
+                           int geomMethodID,
+                           double stabBeta)
   :Element(tag, ELE_TAG_LadrunoBrick),
    connectedExternalNodes(8),
    formulation(form),
@@ -166,10 +169,12 @@ LadrunoBrick::LadrunoBrick(int tag,
    theGeom(0),                                // Ladruno — set below from geomMethodID
    damageResponse(0),                          // Ladruno — Tier-A Kstab (built in setDomain)
    sspBnot(0), sspKstab(0), sspVol(0.0),      // Ladruno — ssp (built in setDomain)
-   alpha(9), alphaCommit(9), easJ0inv(3, 3), easJ0det(0.0)   // Ladruno — eas state
+   alpha(9), alphaCommit(9), easJ0inv(3, 3), easJ0det(0.0), // Ladruno — eas state
+   easStabBeta(stabBeta), easKaa0(9, 9)       // Ladruno — ADR 20 eas tangent regularization
 {
   alpha.Zero();
   alphaCommit.Zero();
+  easKaa0.Zero();
 
   // Ladruno — geometry-method layer: linear (default, identity) / finite (UL).
   theGeom = SolidTransformation::create(geomMethodID);
@@ -2531,6 +2536,32 @@ LadrunoBrick::buildEAStrue(void)
   easJ0det = J0(0,0) * (J0(1,1)*J0(2,2) - J0(1,2)*J0(2,1))
            - J0(0,1) * (J0(1,0)*J0(2,2) - J0(1,2)*J0(2,0))
            + J0(0,2) * (J0(1,0)*J0(2,1) - J0(1,1)*J0(2,0));
+
+  // ADR 20 — cache the elastic enhanced stiffness easKaa0 = int M^T C0 M dV for the
+  // optional -stab tangent regularization. Geometry + initial-tangent only, so it is
+  // constant in small strain and computed once here (rebuilt on the receive side).
+  // Always built (cheap; never touched when easStabBeta==0). Requires easJ0inv/det
+  // (just set above) and the material initial tangents (set in the constructor).
+  easKaa0.Zero();
+  if (materialPointers[0] != 0) {
+    computeBasis();                                  // sets xl from node coords
+    static Matrix Menh(6, 9), C0M(6, 9);
+    static double shpB[4][8];
+    int cnt = 0;
+    for (int gi = 0; gi < 2; gi++)
+      for (int gj = 0; gj < 2; gj++)
+        for (int gk = 0; gk < 2; gk++) {
+          double gp[3] = { sg[gi], sg[gj], sg[gk] };
+          double xsj;
+          shp3d(gp, xsj, shpB, xl);                  // xsj = |J| at this GP
+          computeMenh(gp, xsj, Menh);                // 6x9 enhanced operator
+          Matrix C0 = materialPointers[cnt]->getInitialTangent();
+          C0 *= wg[cnt] * xsj;                       // C0 * dvol
+          C0M.addMatrixProduct(0.0, C0, Menh, 1.0);  // C0M = (C0*dvol) M
+          easKaa0.addMatrixTransposeProduct(1.0, Menh, C0M, 1.0);  // += M^T C0 M dvol
+          cnt++;
+        }
+  }
 }
 
 //----------------------------------------------------------------------
@@ -2621,6 +2652,7 @@ LadrunoBrick::formEAStrue(int tang_flag, bool useInitialTangent)
   static Matrix B(6, 24), M(6, 9);
   static Matrix dd(6, 6), DB(6, 24), DM(6, 9);
   static Matrix Kaa(9, 9), Kda(24, 9), Kad(9, 24), KaaInvKad(9, 24);
+  static Matrix KaaStab(9, 9);   // ADR 20: Kaa + beta*easKaa0, used at the .Solve() sites
   static Vector residE(9), dalpha(9), strain(6), stress(6);
   static double shp[4][8];
 
@@ -2647,6 +2679,10 @@ LadrunoBrick::formEAStrue(int tang_flag, bool useInitialTangent)
       Kad.addMatrixTransposeProduct(1.0, M, DB, 1.0);     //     += M^T dd B
       Kaa.addMatrixTransposeProduct(1.0, M, DM, 1.0);     //     += M^T dd M
     }
+    // getInitialStiff stays UNregularized: the elastic tangent at alpha=0 is PD by
+    // construction (never the indefinite one), so -stab gives no robustness benefit
+    // here and a regularized K0 would needlessly perturb modal/eigen and initial-
+    // stiffness analyses. -stab touches only the nonlinear condensed tangent.  // ADR 20
     Kaa.Solve(Kad, KaaInvKad);
     stiff.addMatrixProduct(1.0, Kda, KaaInvKad, -1.0);    // K* = Kdd - Kda Kaa^-1 Kad
     static Vector zeroF(24);
@@ -2692,6 +2728,12 @@ LadrunoBrick::formEAStrue(int tang_flag, bool useInitialTangent)
       break;
     }
     dalpha.Zero();
+    // ADR 20: the inner Newton stays on the TRUE Kaa — regularizing the inner
+    // direction would damp it (the convex inner problem is linear; beta*Kaa0 damping
+    // makes a 1-step solve geometric, ~26 iters for beta=1 > maxIters), breaking the
+    // exact convergence of alpha. The -stab lever regularizes only the condensed
+    // tangent K* (mechanism (b), the stall driver), so the converged alpha — hence
+    // the element force — is EXACTLY beta-independent.  // Ladruno
     Kaa.Solve(residE, dalpha);     // dalpha = -Kaa^-1 h  (residE = -h)
     alpha += dalpha;
     count++;
@@ -2730,7 +2772,11 @@ LadrunoBrick::formEAStrue(int tang_flag, bool useInitialTangent)
   }
 
   if (tang_flag == 1) {
-    Kaa.Solve(Kad, KaaInvKad);                            // Kaa from the inner loop
+    if (easStabBeta != 0.0) {                             // ADR 20: regularize K*
+      KaaStab = Kaa; KaaStab.addMatrix(1.0, easKaa0, easStabBeta);
+      KaaStab.Solve(Kad, KaaInvKad);
+    } else
+      Kaa.Solve(Kad, KaaInvKad);                          // Kaa from the inner loop
     stiff.addMatrixProduct(1.0, Kda, KaaInvKad, -1.0);    // K* = Kdd - Kda Kaa^-1 Kad
   }
 
@@ -2827,13 +2873,18 @@ int  LadrunoBrick::sendSelf(int commitTag, Channel &theChannel)
     return -1;
   }
 
-  // Ladruno — eas: ship the committed enhanced parameters as an EXTRA guarded
-  // Vector(9), only for -formulation eas. std/bbar/uri/ssp send nothing here, so
-  // their stream stays byte-identical. (idData(25) is the Rayleigh-damping flag,
-  // NOT a version slot — the formulation ordinal in idData(28) gates the recv.)
+  // Ladruno — eas: ship the committed enhanced parameters + the ADR 20 -stab beta
+  // as an EXTRA guarded Vector(10) [alphaCommit(0..8), easStabBeta], only for
+  // -formulation eas. std/bbar/uri/ssp send nothing here, so their stream stays
+  // byte-identical. (idData(25) is the Rayleigh-damping flag, NOT a version slot —
+  // the formulation ordinal in idData(28) gates the recv.) easKaa0 is NOT sent; the
+  // receive side rebuilds it geometrically in buildEAStrue (setDomain).
   if (formulation == Formulation::EAS) {
-    if (theChannel.sendVector(dataTag, commitTag, alphaCommit) < 0) {
-      opserr << "LadrunoBrick::sendSelf() - failed to send eas alpha\n";
+    static Vector easData(10);
+    for (int i = 0; i < 9; i++) easData(i) = alphaCommit(i);
+    easData(9) = easStabBeta;
+    if (theChannel.sendVector(dataTag, commitTag, easData) < 0) {
+      opserr << "LadrunoBrick::sendSelf() - failed to send eas state\n";
       return -1;
     }
   }
@@ -2914,15 +2965,20 @@ int  LadrunoBrick::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker
   if (theGeom == 0)
     theGeom = new SolidTransformationLinear();   // safe fallback (unknown id)
 
-  // Ladruno — eas: receive the committed enhanced parameters (sent right after
-  // dData, before the materials — match that order here). Gated on the formulation
-  // ordinal just decoded; non-eas streams shipped nothing extra. alpha = alphaCommit
-  // = received (no trial state survives a migration; the next form pass re-solves).
+  // Ladruno — eas: receive the committed enhanced parameters + the ADR 20 -stab beta
+  // as Vector(10) (sent right after dData, before the materials — match that order
+  // here). Gated on the formulation ordinal just decoded; non-eas streams shipped
+  // nothing extra. alpha = alphaCommit = received (no trial state survives a
+  // migration; the next form pass re-solves). easKaa0 is rebuilt in buildEAStrue
+  // (called from setDomain on the receive side).
   if (formulation == Formulation::EAS) {
-    if (theChannel.recvVector(dataTag, commitTag, alphaCommit) < 0) {
-      opserr << "LadrunoBrick::recvSelf() - failed to recv eas alpha\n";
+    static Vector easData(10);
+    if (theChannel.recvVector(dataTag, commitTag, easData) < 0) {
+      opserr << "LadrunoBrick::recvSelf() - failed to recv eas state\n";
       return -1;
     }
+    for (int i = 0; i < 9; i++) alphaCommit(i) = easData(i);
+    easStabBeta = easData(9);
     alpha = alphaCommit;
   }
 

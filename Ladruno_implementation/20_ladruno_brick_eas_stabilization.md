@@ -325,3 +325,54 @@ against ADR 19's rank evidence. Net changes to the plan:
 **Start:** the scalar `β·K_αα⁰` experiment on the DEN bar, gated by the §Testing
 battery — run gate #2 (β=0 bit-identical) and gate #3 (β-independence to machine
 precision) *first* as a correctness firewall, then gate #1/#4 for the actual cure.
+
+### 2026-06-03 — scalar-β implementation (code landed, build/test in progress)
+
+Implemented the try-first scalar lever in `LadrunoBrick` (branch
+`guppi/eas-stab-impl`). What landed, vs the checklist above:
+
+- **State:** `easStabBeta` (default 0) + `easKaa0(9,9)` members; `easKaa0 =
+  Σ MᵀC₀M·dvol` accumulated once in `buildEAStrue` (getInitialTangent + the cached
+  centroid map), rebuilt on the receive side. `-stab β` parsed in
+  `OPS_LadrunoBrick.cpp` (eas-only — warned+ignored for other formulations; negative
+  β clamped). β shipped in the EAS-guarded extra vector, widened `Vector(9)→(10)`
+  (`alphaCommit` + β); non-eas streams still byte-identical.
+
+- **DEVIATION from the checklist — applied at the condensation site ONLY, not the
+  inner-Newton, not `getInitialStiff`.** The checklist (and the original §How "free
+  at the inner site too") said to use `Kaa+βKaa0` at *both* the inner-Newton update
+  and the condensation. Implementing it exposed a flaw in the "free" claim:
+
+  - **Inner Newton (reverted):** the convex inner sub-problem is *linear*, so the
+    true-`Kaa` Newton converges in **one** step. Damping the direction with
+    `βKaa0` turns that into a geometric iteration with ratio ≈ `β/(1+β)` — for β=1
+    that needs ~26 iters, exceeding `maxIters=12`, so α would **not** fully
+    converge and gate #3 (β-independence to machine precision) would *fail by
+    construction*. So the inner Newton stays on the **true `Kaa`** → α converges
+    exactly and fast → α (hence `f*`) is rigorously β-independent. The inner site is
+    **not** "free"; it is actively harmful in the convex regime. (Inner-solve
+    robustness for mechanism (a) — if ever needed — must come from a method that
+    doesn't slow convex convergence, e.g. an eigenvalue-gated floor, not a constant
+    `βKaa0`.)
+  - **`getInitialStiff` (left pure):** the elastic tangent at α=0 is PD by
+    construction (never the indefinite one), so regularizing it buys no robustness
+    and would needlessly perturb modal/eigen and initial-stiffness analyses with an
+    opt-in localization knob. `-stab` touches only the nonlinear condensed tangent.
+
+  Net: `K* = Kdd − Kda (Kaa+βKaa0)⁻¹ Kad` at the **final condensation only**
+  (`formEAStrue` tang path). This is the minimal lever that (i) keeps the converged
+  state exactly β-independent in the convex regime — the inner Newton owns α, the
+  condensation owns only the *tangent* handed to the global solver — and (ii) floors
+  K* toward Kdd to cure mechanism (b), the stall driver. `β·Kaa0` is formed as a
+  local `KaaStab` copy at the `.Solve()` so the accumulated `Kaa` is never mutated.
+
+- **β=0 fast path:** every site branches `if (easStabBeta != 0.0)`, so β=0 runs the
+  original code verbatim (gate #2 bit-identical).
+
+- **Tests:** `tests/test_ladrunoBrick_eas_stab.py` — parser/guard, β=0 bit-identical,
+  β-independence to machine precision (distorted patch + bending + hardening-J2 over
+  β∈{0,1e-3,1e-1,1}), all under `algorithm Newton` + tight residual test (the
+  theorem's convergence precondition). DEN-bar cure + plateau sweep deferred.
+
+*(Status: code complete; first worktree build + Zone-A run pending. The non-convex
+DEN-bar cure — the actual headline — is the next gate once the firewall is green.)*
