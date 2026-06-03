@@ -188,6 +188,52 @@ features:
       numpy-free; CDL-10 energy closure un-skipped now that the link is restored.
       CDL-8 first-step correctness + CDL-9 betaK collapse are the differentiators.
 
+  - feature: LadrunoArcLength
+    classtag: 33004          # INTEGRATOR family; per-registry band (coexists w/ ELE_TAG_LadrunoIMKBeam2d=33004)
+    tag_symbol: INTEGRATOR_TAGS_LadrunoArcLength
+    pr: null
+    feature_class: integrator
+    required_tiers: [dynamics-battery]
+    pytest: tests/test_ladrunoArcLength_integrator.py   # AL-1/AL-3/AL-S Zone-A (identity vs stock ArcLength + Ramm -adapt radius)
+    tcl: WAIVED(integrator; shared OpenSeesCommands registry serves Tcl + Python; verified via the Zone-A pytest battery)
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+    dispatch: {tcl: true, functionMap: true}
+    status: remediation
+    notes: >
+      Adaptive static arc-length integrator (PR-1 = stock-ArcLength identity +
+      Ramm desired-iteration radius adaptation -adapt; the Abaqus-STABILIZE viscous
+      mode + Layer-B reduceStep deferred to follow-up PRs). The classTag was added to
+      SRC/classTags.h on ladruno HEAD by the draft arc-length work but the G9 manifest
+      row was omitted, so the gate failed on ladruno HEAD until backfilled here (same
+      inherited-debt pattern as the IMKBeam rows). status=remediation until the PR-1
+      arc-length PR lands and the row owner flips it to active. See
+      Ladruno_implementation/20_ladruno_arclength_stabilized_adr.md.
+
+  - feature: LadrunoDynamicRelaxation
+    classtag: 33005          # INTEGRATOR family; quasi-static dynamic relaxation (after LadrunoArcLength=33004)
+    tag_symbol: INTEGRATOR_TAGS_LadrunoDynamicRelaxation
+    pr: null
+    feature_class: integrator
+    required_tiers: [dynamics-battery]
+    pytest: tests/test_ladrunoDynamicRelaxation_integrator.py
+    tcl: WAIVED(integrator; shared OpenSeesCommands registry serves Tcl + Python; verified via the Zone-A pytest battery)
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+    dispatch: {tcl: true, functionMap: true}
+    status: remediation
+    notes: >
+      Quasi-static dynamic relaxation (Gershgorin fictitious mass + Cundall kinetic
+      damping), a TransientIntegrator. Its classTag landed on ladruno HEAD without a
+      G9 manifest row (same inherited-debt pattern as LadrunoArcLength); backfilled
+      here so the classTag+manifest gate passes on ladruno HEAD. status=remediation
+      until the owning PR flips it to active. See
+      Ladruno_implementation/LEDGER_implementations.md and the dynrelax ADR.
+
   - feature: EnergyBalanceRecorder
     classtag: 33000          # RECORDER family; was 26
     tag_symbol: RECORDER_TAGS_EnergyBalanceRecorder
@@ -401,6 +447,39 @@ features:
       committed==implicit, explicit->implicit order~2, objective 7e-13 (oracles + g++ check
       + element acceptance). NON-goals v1: plane-stress finite (no consumer), tabulated iso.
       Plan: Ladruno_implementation/16_finite_native_j2_adr.md.
+
+  - feature: InitDefGradNDMaterial
+    classtag: 33013          # ND_TAG family; multiplicative staged-activation wrapper (after LadrunoJ2Finite=33012)
+    tag_symbol: ND_TAG_InitDefGradNDMaterial
+    pr: 163
+    feature_class: material
+    required_tiers: [T0m]
+    pytest: tests/test_initDefGrad_material.py   # -noInitF==bare; explicit-F0 stress-free birth; post-birth rotation objectivity; reduce-to-relative; wrapped consistent-tangent==FD; two-phase staged construction (6/6)
+    tcl: WAIVED(nDMaterial InitDefGrad $tag $innerTag; shared OpenSeesNDMaterialCommands registry serves Tcl + Python; verified via the Zone-A pytest battery through LadrunoBrick -geom finite)
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesNDMaterialCommands.cpp
+      - SRC/material/nD/CMakeLists.txt
+    dispatch: {tcl: false, functionMap: true}
+    status: active
+    notes: >
+      Multiplicative, finite-strain staged-activation wrapper -- the large-strain
+      sibling of InitStrainNDMaterial. Makes a finite-strain continuum element born
+      stress-free at the deformed geometry when appended mid-stage (staged
+      construction). Wraps an inner FiniteStrainNDMaterial (e.g. LogStrain) and IS-A
+      FiniteStrainNDMaterial, so LadrunoBrick -geom finite consumes it via its
+      existing dynamic_cast with ZERO element edits. Captures the birth deformation
+      gradient F0 (auto on the first setTrialF = birth, since addElement->setDomain->
+      update evaluates at the committed deformed state) and forwards the relative
+      gradient F_rel = F*F0^-1 (the split F = F_rel*F0). Objective where the additive
+      InitStrain offset is not: under a post-birth rigid rotation F->Q*F, F_rel->Q*F_rel
+      so C_rel is unchanged => zero spurious stress. The shipped spatial/Cauchy seam
+      subsumes the PK1 J0/push-back bookkeeping (F_delta = F*F_n^-1 is invariant to F0;
+      Cauchy stress is reference-independent). -noInitF pass-through; -F0 explicit birth;
+      setResponse("F0") reports it. Small strain stays InitStrain (two materials, Init*
+      family). Plan/ADR: Ladruno_implementation/staged_deformation_gradiend.md.
 
   - feature: LadrunoUniaxialJ2
     classtag: 33000          # MAT_TAG (uniaxial) family; per-registry band, no collision w/ ELE/ND/INTEGRATOR/RECORDER 33000
