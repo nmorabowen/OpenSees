@@ -50,6 +50,7 @@ GLOBS = [
     "SRC/material/nD/LogStrainNDMaterial.*", "SRC/material/nD/LogStrainKernel.h",
     "SRC/material/nD/FiniteStrainNDMaterial.h",
     "SRC/analysis/integrator/CentralDifferenceLadruno.*",
+    "SRC/analysis/integrator/LadrunoArcLength.*",
     "SRC/analysis/integrator/ExplicitBathe.*",
     "SRC/analysis/integrator/ExplicitBatheLNVD.*",
     "SRC/recorder/LadrunoRecorder.*",

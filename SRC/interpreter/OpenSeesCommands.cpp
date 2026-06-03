@@ -1717,6 +1717,9 @@ int OPS_Integrator()
     } else if (strcmp(type,"ArcLength") == 0) {
 	si = (StaticIntegrator*)OPS_ArcLength();
 
+    } else if (strcmp(type,"LadrunoArcLength") == 0) {   // Ladruno
+	si = (StaticIntegrator*)OPS_LadrunoArcLength();
+
     } else if (strcmp(type,"ArcLength1") == 0) {
 	si = (StaticIntegrator*)OPS_ArcLength1();
 
