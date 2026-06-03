@@ -24,8 +24,14 @@ silent-failure bugs (§ D3); none provide a **1D rebar bond-slip** law.
 
 ## 2. Goals / non-goals
 
-**Goals (v1) — BOTH implicit and explicit are in scope** (drives the dual-mode D2; the
-implicit cyclic pushover on confined columns is a primary v1 target, so R1/R7 must be
+**Scope note (post-gate, §8):** these goals describe the full RC-3D *capability*. After the
+gates, the **v1 deliverables are the conformal path** (recipe + bar-layout helper +
+adaptive-stepping wrapper + confinement note — *no new C++*); the dual-mode embedded
+element + bond-slip material below are the **v2** deliverables. "v1" in the goal line means
+the capability as a whole, not the first shippable increment.
+
+**Goals — BOTH implicit and explicit are in scope** (drives the dual-mode D2; the
+implicit cyclic pushover on confined columns is a primary target, so R1/R7 must be
 *measured*, not assumed):
 - Discrete rebar (truss) embedded in a non-matching solid mesh.
 - **Perfect-bond** mode AND **bond-slip** mode.
@@ -97,7 +103,10 @@ deferred** and must be added with its own convergence study.
 
 ### D4 — 1D bond-slip τ–s uniaxial material (`LadrunoBondSlip`, MAT_TAG 33002)
 **v1 = MC2010 monotonic backbone only** (cyclic → v2). τ vs slip s, exposing
-`τ_max, s1, s2, s3, τ_f, α` as inputs (do not hardcode the regime). Drives Mode P's axial slot.
+`τ_max, s1, s2, s3, τ_f, α` as inputs (do not hardcode the regime), **plus `G_F^bond`** for
+D4.3 regularization — a **7th explicit user input** (NOT derived from τ_max/s1, so the
+constructor contract is unambiguous; the post-peak slope is set to dissipate `G_F^bond/lch`).
+Drives Mode P's axial slot.
 - **D4.1 Initial-slip regularization (must-fix):** the power-law `τ = τ_max(s/s1)^α` has
   `dτ/ds → ∞` at s→0 → singular first-iteration tangent. Use a **linear segment for
   `s < s0` (≈0.1·s1)** or a tangent cap `K_max`.
@@ -186,7 +195,7 @@ Then, on the element:
 - **R6 (scope):** converted to Gate 1.
 - **R7 (dual-mode trap):** mitigated — explicit `-mode` (D5) + a loud API note when a mode is forced; the pre-build patch-test sweep decides single-vs-dual.
 - **R8 (confinement calibration) — RESOLVED by Gate 2 ([[21_rc3d_validation_gates]], 2026-06-03):** ASDConcrete3D *does* emerge confined `fcc` within **5% of Mander** for p/fc∈[0,0.20] (and the ductility gain), via the Lubliner Kc surface — the "can't confine" blocker is refuted. Residual caveat: no tunable dilation-angle input, so the amount is set by Kc + the compression backbone (validate, don't pre-inflate fc). v1 still has no bar-restraint DOFs / interface-damage coupling.
-- **Gates passed (see [[21_rc3d_validation_gates]]):** Gate 1 — conformal meshing (shared-node rebar, no new C++) is viable for regular **≤8-bar** members; bars=4·n locks bar count to the mesh, so the embedded element's v1 justification narrows to **dense cages (≥12 bars) + hoops + joints**. Build order: ship the conformal recipe + bar-layout helper first; build `LadrunoEmbeddedRebar` for what conformal can't mesh. Both gates needed KrylovNewton + step-halving ⇒ the adaptive-stepping wrapper is a confirmed prerequisite.
+- **Gates passed (see [[21_rc3d_validation_gates]]):** Gate 1 — conformal meshing (shared-node rebar, no new C++) is viable for **regular grid-aligned cages**; *measured* to converge at 4, 8 **and 12** longitudinal bars (pure count is not the wall). bars=4·n locks bars to mesh node-lines, so the embedded element's justification is **non-grid bar positions, ties/hoops, and the O(N²·nz) mesh-cost** — *inferred*, still wants a hoop/non-grid demonstration. Build order: ship the conformal recipe + bar-layout helper first; build `LadrunoEmbeddedRebar` for what conformal can't mesh. Both gates needed KrylovNewton + step-halving ⇒ the adaptive-stepping wrapper is a confirmed prerequisite.
 
 ---
 
@@ -208,7 +217,8 @@ Mander), and conformal meshing already covers regular ≤8-bar members with **ze
    is real via the Lubliner Kc surface (no fc inflation), but there is **no dilation-angle
    input** — calibrate Kc + the compression backbone; validate per the Gate-2 unit test.
 4. **v2 — `LadrunoEmbeddedRebar` (33005) + `LadrunoBondSlip` (33002)** for the cases
-   conformal can't mesh (dense cages ≥12 bars, hoops, beam-column joints), built to the
+   conformal can't mesh (non-grid bar positions, hoops/ties, beam-column joints — pure
+   longitudinal count is not the trigger; 12 grid-bars converge conformally), built to the
    D1–D6 decisions with every must-fix guard (D2 setDomain explicit/Transformation guard;
    D3 guarded inverse-map; D4 initial-slip regularization + disp-control/IMPLEX +
    fracture-energy regularization, cyclic→later, splitting xfail; D5 explicit `-mode`;

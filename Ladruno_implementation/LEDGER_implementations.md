@@ -23,6 +23,12 @@ edits to *pre-existing* upstream files).
   editing that file run `python Ladruno_scripts/patch_banner.py` and rebuild.
 - Class tags live in `SRC/classTags.h`; keep them recorded here so we never
   collide on a tag.
+- **Reserved tags:** a tag pre-allocated by an ADR but not yet implemented is
+  marked `— RESERVED, not yet built`; it is recorded here to prevent collisions
+  but does **not** appear in `SRC/classTags.h` until the implementation merges.
+  Class-tag bands are per-registry (Element / nDMaterial / uniaxial / Integrator /
+  Recorder each have their own 33000-space), so the same number in two registries
+  is not a collision.
 - When a forward-looking plan in this folder ships, move it to
   `Ladruno_internal/implemented_<name>.md` and add/flip its row here.
 

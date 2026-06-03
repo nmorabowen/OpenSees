@@ -12,18 +12,27 @@ its keep.
 What it does: square column (b x b x H), n x n x nz stdBrick concrete (ASDConcrete3D),
 vertical Steel02 truss rebar along every perimeter vertical node-line (shared nodes =
 perfect bond), constant axial load, then lateral displacement-control pushover. Reports
-convergence, peak base shear, and the DOF/element cost — for n = 1 (4 bars) and n = 2
-(8 bars), showing capacity rises with steel AND that bar count drags mesh size with it.
+convergence, peak base shear, and the DOF/element cost — for n = 1/2/3 (4/8/12 bars).
+NOTE: total steel is held CONSTANT (a_bar = RHO*B*B/nbar, so nbar*a_bar = RHO*B*B is the
+same for every n); this isolates the mesh/bar-placement effect, it does NOT vary steel.
 
 ACCEPTANCE (gate informational, not pass/fail): the conformal model converges and gives
-a sane monotonic-then-softening pushover. The TAKEAWAY is the cost-vs-bar-count coupling:
-N bars => n = N/4 elements per side => mesh grows O(N^2 * nz). Realistic 12-20 bar
-cages + hoops blow this up -> embedding (ADR 20) is the path for those; conformal is the
-v1 path for <= 8-bar regular members.
+a sane pushover. The TAKEAWAY is the cost coupling: with shared nodes a bar can only sit
+on a mesh node-line, so perimeter bars = 4*n and the concrete mesh grows O(N^2 * nz) with
+bar count. Pure longitudinal count is NOT the wall (12 grid-bars converge fine); conformal
+breaks on (a) bars at NON-grid positions / non-uniform spacing, (b) ties/hoops forcing
+combinatorial horizontal meshing, and (c) the O(N^2*nz) mesh-cost blow-up. Those are where
+the embedded element (ADR 20) earns its keep; conformal is the v1 path for regular,
+grid-aligned cages.
 
-RESULT 2026-06-03 (build f6700775): see the printed table; both meshes converge under
-implicit pushover; capacity increases with bar count. Explicit run is a documented
-follow-up (mass + dt_cr), not exercised here.
+RESULT 2026-06-03 (build f6700775), total steel = RHO*B*B = 0.00160 m^2 for all n:
+  n bars elems ndof  Vpeak[kN]
+  1   4    25    72    128.1
+  2   8    60   162    136.8
+  3  12   105   288    129.2
+All three converge under implicit pushover; Vpeak is ~flat (constant steel; the ~7% spread
+is mesh refinement + corner->perimeter bar redistribution, NOT more steel). Explicit run
+is a documented follow-up (mass + dt_cr), not exercised here.
 
 Run:  pythoncore-3.12-64/python.exe gate1_conformal_column.py
 """
@@ -153,19 +162,23 @@ def run(n):
 
 
 def main():
+    ts = RHO * B * B
     print(f"{'n':>2} {'bars':>4} {'elems':>6} {'ndof':>6} {'conv':>5} "
-          f"{'drift':>6} {'Vpeak[kN]':>10}")
-    for n in (1, 2):
+          f"{'drift':>6} {'Vpeak[kN]':>10} {'tot_steel':>10}")
+    for n in (1, 2, 3):
         r = run(n)
         if not r.get("ok"):
             print(f"{r['n']:>2} {r['nbar']:>4} {r['nele']:>6} {r['ndof']:>6}  "
                   f"diverged@{r.get('where','push')}")
             continue
         print(f"{r['n']:>2} {r['nbar']:>4} {r['nele']:>6} {r['ndof']:>6} "
-              f"{'yes':>5} {r['drift']:>6.4f} {r['Vpeak']:>10.1f}")
-    print("\nTAKEAWAY: bars = 4*n is locked to the cross-section mesh; an N-bar cage "
-          "forces n=N/4 -> mesh ~ O(N^2*nz). Conformal is fine for <=8-bar regular "
-          "members; dense cages + hoops -> embedding (ADR 20).")
+              f"{'yes':>5} {r['drift']:>6.4f} {r['Vpeak']:>10.1f} {ts:>10.5f}")
+    print("\nTAKEAWAY: total steel is CONSTANT (RHO*B*B); Vpeak is ~flat across n. With "
+          "shared nodes bars=4*n are locked to the mesh, so the concrete mesh grows "
+          "O(N^2*nz) with bar count (4->25, 8->60, 12->105 elems). Pure count is NOT the "
+          "wall (12 grid-bars converge); conformal breaks on non-grid bar positions, "
+          "ties/hoops, and mesh-cost blow-up -> embedding (ADR 20) for those. Conformal is "
+          "the v1 path for regular grid-aligned cages.")
     return 0
 
 
