@@ -575,6 +575,16 @@ distorted meshes** — the operative EAS gate.
 > `tests/test_ladrunoBrick_eas.py` (patch / reduce-to-`std` / bending / incompress /
 > $\boldsymbol\alpha$ state cycle).
 
+> [!warning] When NOT to use `eas`: notched / localization-dominated inelasticity
+> On a **notched, high-strain-gradient inelastic** problem (e.g. the Lemaitre
+> ductile-damage DEN bar of ADR 19) the bare E9 `eas` **stalls just past yield** —
+> a genuine instability of the enhanced modes under non-homogeneous plastic
+> tangents (NOT elastic hourglassing: a free `eas` element is rank-sufficient, 6
+> zero-energy modes, eigen-spectrum identical to `std`/`bbar`). On **homogeneous**
+> elastoplastic-damage `eas` is fine (matches `bbar`). **Use `bbar` or `ssp` for
+> notched/softening localization** until the EAS stabilization of
+> [[20_ladruno_brick_eas_stabilization|ADR 20]] lands.
+
 ---
 
 ## 8 · The geometry seam — `linear` / `corot` / `finite`

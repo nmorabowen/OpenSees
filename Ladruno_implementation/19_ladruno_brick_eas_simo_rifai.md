@@ -513,12 +513,30 @@ E=2e5, J2 + `-damage lemaitre` + `-autoRegularization`). Findings:
   damage point under-resolves it** (0.05–0.07) and over-stiffens (peak 32 kN vs
   bbar's 24 kN). Both are mesh-objective (W within 2–5% coarse↔fine).
 - **`eas` STALLS on the notched bar** (reaches only u≈0.17/1.5 coarse, 0.09 fine —
-  just past yield) — **small-strain EAS hourglassing** triggered by the notch
-  stress concentration, the documented EAS instability (the small-strain cousin of
-  the §3 finite-strain compressive hourglassing). Confirmed structural, NOT a local
-  bug: on a **homogeneous single steel element** (uniaxial, same J2+damage) `eas`
-  reaches full load with damage 0.48 — identical to `ssp`/`bbar`
-  (`test_eas_drives_j2_lemaitre_damage`).
+  just past yield onset at the notch, damage≈0).
+
+  **Mechanism — investigated, NOT elastic hourglassing (an earlier draft of this
+  note said "small-strain EAS hourglassing"; that is wrong and is corrected here):**
+  - *Rank test:* a free `eas` element has **exactly 6 zero-energy modes** (rigid
+    body) and its first deformation eigenvalue (1.2821e4) **matches `std`/`bbar`
+    exactly** — `eas` is rank-sufficient with **no spurious elastic mode**, as
+    small-strain EAS theory guarantees (Reddy & Simo 1995). So there is no elastic
+    hourglass.
+  - *Homogeneous nonlinearity is fine:* a single steel element (uniaxial, same
+    J2+damage) reaches full load with damage 0.48 — identical to `ssp`/`bbar`
+    (`test_eas_drives_j2_lemaitre_damage`). So plasticity+damage per se is not the
+    problem.
+  - *The failure is specific to NON-HOMOGENEOUS (high strain-gradient) PLASTIC
+    states* (the notch). The inner-Newton on `α` is fragile there (the spurious
+    warnings were concentrated at the notch). A **backtracking line search** on the
+    inner Newton was tested: it helped (reach 0.169→0.231, inner warnings 89k→28k)
+    but did **NOT** clear the stall, at ~13× unit-suite cost — so it was reverted.
+  - **Conclusion:** a genuine **instability of the enhanced modes under
+    non-homogeneous inelasticity** — EAS's stability guarantee is for the *elastic*
+    operator; under plastic/softening tangents in high-gradient regions the enhanced
+    sub-problem destabilizes. Inner-solve robustification only partially mitigates
+    it; the real cure is a dedicated **EAS stabilization scheme** — scoped in
+    **ADR 20** ([[20_ladruno_brick_eas_stabilization]]).
 
 - **Bug the comparison caught + fixed (this PR):** the inner-Newton convergence test
   used an **absolute** tol `1e-10` on `‖∫Mᵀσ‖` — scale-dependent (units force×length²),
@@ -530,12 +548,12 @@ E=2e5, J2 + `-damage lemaitre` + `-autoRegularization`). Findings:
 **Guidance (recorded in the reference guide §7.3):** use `eas` for smooth /
 bending / near-incompressible **and homogeneous** elastoplastic-damage response,
 where its accuracy and 8-point damage resolution win; use **`ssp` or `bbar` for
-notched / localization-dominated softening**, where `eas` hourglasses. **An EAS
-hourglass-stabilization (e.g. Reese–Wriggers / Korelc) to make `eas` robust on
-localization problems is a follow-up** — same family as the deferred finite-strain
-stabilization.
+notched / localization-dominated softening**, where bare `eas` is not robust. **An
+EAS stabilization (Korelc–Wriggers / Reese–Wriggers) to make `eas` robust on
+inelastic-localization problems is scoped in ADR 20** —
+[[20_ladruno_brick_eas_stabilization]].
 
-**Still deferred (future PRs):** **EAS hourglass stabilization for notched/softening
-robustness** (the comparison's headline gap); enhanced-`F` finite EAS (the §3 seam;
+**Still deferred (future PRs):** **EAS inelastic-localization stabilization**
+(ADR 20 — the comparison's headline gap); enhanced-`F` finite EAS (the §3 seam;
 Q1/E9 compressive hourglassing); richer mode sets E12/E21/E30 (§7); the §4
 oracle/Cook refinements and white-box responses.
