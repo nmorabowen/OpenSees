@@ -39,11 +39,15 @@ def _single_host_model(perfect_k=None, bond=False, kt=1.0e6, dirv=(1.0, 0.0, 0.0
 
 
 def _push_rebar(ux, uy, uz, nstep=1):
-    """Displacement-control the rebar node to (ux,uy,uz) and return its reaction
-    (= the coupling force the element applies)."""
+    """Prescribe the rebar node's x,y displacement (support-settlement via sp) and
+    return its reactions. NOTE: dof 3 (z) is deliberately LEFT FREE so the system
+    keeps >=1 free DOF (it springs to ~0 through the element's transverse kt) —
+    fixing every host DOF AND sp-ing all three rebar DOFs would leave zero free DOFs
+    and abort the linear solver. All tests here push only in x or y, so leaving z
+    free is harmless and the x/y reactions are still read at their sp'd DOFs."""
     ops.timeSeries("Linear", 1)
     ops.pattern("Plain", 1, 1)
-    ops.sp(1, 1, ux); ops.sp(1, 2, uy); ops.sp(1, 3, uz)
+    ops.sp(1, 1, ux); ops.sp(1, 2, uy)   # dof 3 free on purpose (>=1 free DOF)
     ops.constraints("Transformation"); ops.numberer("Plain"); ops.system("FullGeneral")
     ops.test("NormDispIncr", 1e-10, 20); ops.algorithm("Newton")
     ops.integrator("LoadControl", 1.0 / nstep); ops.analysis("Static")
