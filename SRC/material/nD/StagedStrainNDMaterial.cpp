@@ -70,20 +70,6 @@ void *OPS_StagedStrainNDMaterial(void)
            << " : inner nDMaterial " << iData[1] << " not found\n";
     return 0;
   }
-  // GRACEFUL validation (unlike InitStrain's exit(-1)): probe a copy before
-  // constructing, so a bad inner returns 0 (command fails) instead of killing the
-  // interpreter. We probe the "ThreeDimensional" view because the no-arg getCopy()
-  // is "subclass responsibility" (exit(-1)) for the generic material bases; a 3D
-  // copy then re-derives any 2D/axisym view via the inherited getCopy(type) switch
-  // (so dimension generality is preserved — see getCopy(const char*) below).  // Ladruno
-  NDMaterial *probe = inner->getCopy("ThreeDimensional");
-  if (probe == 0) {
-    opserr << "WARNING nDMaterial StagedStrain " << iData[0]
-           << " : inner nDMaterial " << iData[1] << " could not be copied\n";
-    return 0;
-  }
-  delete probe;
-
   bool   active = true;
   bool   haveEps0 = false;
   Vector eps0in;
@@ -117,34 +103,42 @@ void *OPS_StagedStrainNDMaterial(void)
     }
   }
 
-  return new StagedStrainNDMaterial(iData[0], *inner, active,
-                                    haveEps0 ? &eps0in : 0);
+  // Make the canonical "ThreeDimensional" template ONCE (AFTER option parsing, so an
+  // option error cannot leak it) and adopt it — the no-arg getCopy() is "subclass
+  // responsibility" / exit(-1) for the generic material bases, so we cannot use it;
+  // the 3D template re-derives any 2D/axisym view via the inherited getCopy(type)
+  // switch (see getCopy(const char*)). GRACEFUL: a bad inner makes isValid() false
+  // (no exit(-1)), so the command returns 0.  // Ladruno
+  NDMaterial *inner3D = inner->getCopy("ThreeDimensional");
+  if (inner3D == 0) {
+    opserr << "WARNING nDMaterial StagedStrain " << iData[0]
+           << " : inner nDMaterial " << iData[1]
+           << " has no ThreeDimensional view (StagedStrain needs a 3D-capable inner)\n";
+    return 0;
+  }
+  // adopt inner3D (no second copy); the ctor takes ownership.
+  StagedStrainNDMaterial *m =
+    new StagedStrainNDMaterial(iData[0], inner3D, active, haveEps0 ? &eps0in : 0);
+  if (m == 0 || !m->isValid()) { if (m) delete m; return 0; }   // graceful
+  return m;
 }
 
 // =========================================================================== //
 //  Construction (buffers are sized LAZILY at the first setTrialStrain, so the   //
 //  wrapper adapts to whatever order the element drives — 2D or 3D)             //
 // =========================================================================== //
-StagedStrainNDMaterial::StagedStrainNDMaterial(int tag, NDMaterial &inner,
+StagedStrainNDMaterial::StagedStrainNDMaterial(int tag, NDMaterial *innerOwned,
                                                bool active_, const Vector *eps0Given)
   : NDMaterial(tag, ND_TAG_StagedStrainNDMaterial),
-    theMaterial(0), active(active_), captured(false), eps0Explicit(false),
-    eps0(), relStrain(), totalStrain()
+    theMaterial(innerOwned), active(active_), captured(false), eps0Explicit(false),
+    eps0(), totalStrain()
 {
-  // Canonical template = the 3D view (the no-arg getCopy() is exit(-1) for the
-  // generic material bases). getCopy(const char*) below re-derives the element's
-  // actual view (PlaneStrain/PlaneStress/AxiSymm/3D) from this via the inner's
-  // inherited getCopy(type) switch, so one tag serves 2D and 3D elements.  // Ladruno
-  theMaterial = inner.getCopy("ThreeDimensional");
-  if (theMaterial == 0) {
-    opserr << "StagedStrainNDMaterial: failed to copy the inner material\n";
-    exit(-1);   // unreachable from script — the factory probes getCopy(3D) first
-  }
-  if (eps0Given != 0) {            // explicit birth strain: pre-capture
+  // ADOPT innerOwned (already a concrete typed copy — NO second getCopy). A null
+  // innerOwned leaves the object invalid (isValid()==false) so callers fail
+  // gracefully; we never exit(-1).  // Ladruno
+  if (theMaterial != 0 && eps0Given != 0) {   // explicit birth strain: pre-capture
     eps0 = *eps0Given;
-    relStrain.resize(eps0.Size());
-    totalStrain.resize(eps0.Size());
-    relStrain.Zero(); totalStrain.Zero();
+    totalStrain.resize(eps0.Size()); totalStrain.Zero();
     captured     = true;
     eps0Explicit = true;
   }
@@ -153,7 +147,7 @@ StagedStrainNDMaterial::StagedStrainNDMaterial(int tag, NDMaterial &inner,
 StagedStrainNDMaterial::StagedStrainNDMaterial()
   : NDMaterial(0, ND_TAG_StagedStrainNDMaterial),
     theMaterial(0), active(true), captured(false), eps0Explicit(false),
-    eps0(), relStrain(), totalStrain()
+    eps0(), totalStrain()
 {
 }
 
@@ -162,7 +156,7 @@ StagedStrainNDMaterial::~StagedStrainNDMaterial()
   if (theMaterial) delete theMaterial;
 }
 
-// size ε0/relStrain/totalStrain to a given order (preserve explicit ε0 if it fits)
+// size ε0/totalStrain to a given order (preserve explicit ε0 if it fits)
 void StagedStrainNDMaterial::sizeBuffers(int n)
 {
   if (eps0.Size() != n) {
@@ -170,68 +164,58 @@ void StagedStrainNDMaterial::sizeBuffers(int n)
     eps0.resize(n); eps0.Zero();
     if (eps0Explicit && keep.Size() == n) eps0 = keep;   // honor matching explicit ε0
   }
-  if (relStrain.Size()   != n) { relStrain.resize(n);   relStrain.Zero();   }
   if (totalStrain.Size() != n) { totalStrain.resize(n); totalStrain.Zero(); }
 }
 
 // =========================================================================== //
 //  The strain seam: capture ε0 at birth, forward ε − ε0                        //
 // =========================================================================== //
-int StagedStrainNDMaterial::setTrialStrain(const Vector &v)
+// Shared strain seam for both setTrialStrain overloads. Capture ε0 on the FIRST
+// call (= birth), then feed the inner ε_rel = ε − ε0. Capture timing: the first
+// evaluation of a freshly-appended element lands at the committed deformed state
+// (the integrator predictor does not move displacement), so ε0 = the birth strain,
+// mirroring Truss's initialDisp. (A pathological garbage first-trial that later
+// reverts would latch a wrong ε0 — the same first-touch assumption InitDefGrad
+// makes; revertToStart re-arms a full restart.)  // Ladruno
+int StagedStrainNDMaterial::forwardTrial(const Vector &v, const Vector *rate)
 {
   const int n = v.Size();
-  if (totalStrain.Size() != n) sizeBuffers(n);
+  // size eps0 AND totalStrain so the ε − ε0 subtraction below can never read OOB.
+  if (totalStrain.Size() != n || eps0.Size() != n) sizeBuffers(n);
   totalStrain = v;
 
   if (!active)                     // pass-through (-noInit)
-    return theMaterial->setTrialStrain(v);
+    return rate ? theMaterial->setTrialStrain(v, *rate)
+                : theMaterial->setTrialStrain(v);
 
-  if (!captured) {                 // auto-capture: first strain seen IS the birth strain
-    eps0 = v;
-    captured = true;
-  } else if (eps0Explicit && eps0.Size() != n) {
-    opserr << "StagedStrainNDMaterial::setTrialStrain - explicit -eps0 size "
-           << eps0.Size() << " != element strain order " << n
-           << "; re-capturing at birth instead\n";
-    eps0 = v;                      // graceful fallback
-  }
+  if (!captured) { eps0 = v; captured = true; }   // auto-capture the birth strain
 
-  relStrain = v;
-  relStrain.addVector(1.0, eps0, -1.0);   // ε_rel = ε − ε0
-  return theMaterial->setTrialStrain(relStrain);
+  Vector rel(v);                   // local scratch (ε); subtract the birth strain
+  rel.addVector(1.0, eps0, -1.0);  // ε_rel = ε − ε0
+  return rate ? theMaterial->setTrialStrain(rel, *rate)
+              : theMaterial->setTrialStrain(rel);
+}
+
+int StagedStrainNDMaterial::setTrialStrain(const Vector &v)
+{
+  return forwardTrial(v, 0);
 }
 
 int StagedStrainNDMaterial::setTrialStrain(const Vector &v, const Vector &rate)
 {
-  const int n = v.Size();
-  if (totalStrain.Size() != n) sizeBuffers(n);
-  totalStrain = v;
-
-  if (!active)
-    return theMaterial->setTrialStrain(v, rate);
-
-  if (!captured) { eps0 = v; captured = true; }
-  else if (eps0Explicit && eps0.Size() != n) { eps0 = v; }
-
-  relStrain = v;
-  relStrain.addVector(1.0, eps0, -1.0);
-  return theMaterial->setTrialStrain(relStrain, rate);
+  return forwardTrial(v, &rate);
 }
 
 int StagedStrainNDMaterial::setTrialStrainIncr(const Vector &v)
 {
-  // Reconstruct the total strain: the inner holds ε_rel = ε − ε0, so
-  // ε_current = inner.getStrain() + ε0, and ε_new = ε_current + Δε.
-  const int n = v.Size();
-  if (totalStrain.Size() != n) sizeBuffers(n);
-  Vector total(n);
-  if (captured) {
-    total = theMaterial->getStrain();   // ε_rel
-    total.addVector(1.0, eps0, 1.0);    // + ε0  → ε_current
-  } else {
-    total.Zero();
-  }
-  total.addVector(1.0, v, 1.0);         // + Δε → ε_new
+  // Reconstruct the absolute total from the inner's last strain (what we fed it):
+  //   active+captured: inner holds ε_rel = ε − ε0 ⇒ ε_current = ε_rel + ε0
+  //   inactive (-noInit): inner holds the absolute ε ⇒ ε_current = inner.getStrain()
+  // then ε_new = ε_current + Δε. This makes -noInit a faithful incremental
+  // pass-through (forwarding only Δε would drop the accumulated strain).  // Ladruno
+  Vector total(theMaterial->getStrain());      // ε_rel (active) or ε (inactive)
+  if (active && captured) total.addVector(1.0, eps0, 1.0);   // + ε0 → absolute
+  total.addVector(1.0, v, 1.0);                 // + Δε → ε_new
   return setTrialStrain(total);
 }
 
@@ -272,51 +256,57 @@ int StagedStrainNDMaterial::revertToStart(void)
 // =========================================================================== //
 //  Copies (getCopy(type) adapts the inner to the requested dimensional view)   //
 // =========================================================================== //
-// Both getCopy paths ADOPT an already-typed inner directly (via the empty ctor +
-// theMaterial assignment) rather than routing through the main ctor, which would
-// re-derive the inner to ThreeDimensional and break a 2D element's order.  // Ladruno
+// Shared copy path used by BOTH getCopy() and getCopy(type). ADOPTS an already-typed
+// innerCopy (does NOT re-derive it to 3D, which would feed a 2D element an order-6
+// material). ONE policy for carrying capture state: keep it when the order matches
+// (so cloning a LIVE captured wrapper preserves its birth reference identically),
+// re-arm on a genuine order mismatch (and warn if that drops an explicit ε0).
+NDMaterial *StagedStrainNDMaterial::adoptCopy(NDMaterial *innerCopy)
+{
+  if (innerCopy == 0) return 0;
+  const int order = innerCopy->getOrder();
+  // adopt via the ctor (takes ownership); start uncaptured, then carry state below.
+  StagedStrainNDMaterial *c =
+    new StagedStrainNDMaterial(this->getTag(), innerCopy, active, 0);
+  if (c == 0 || !c->isValid()) { if (c) delete c; return 0; }
+
+  if (captured && eps0.Size() == order) {           // preserve the birth reference
+    c->captured     = true;
+    c->eps0Explicit = eps0Explicit;
+    c->eps0         = eps0;
+    c->sizeBuffers(order);
+  } else if (eps0Explicit && eps0.Size() != order) {  // explicit ε0 cannot apply here
+    opserr << "StagedStrainNDMaterial::getCopy - explicit -eps0 size " << eps0.Size()
+           << " != requested order " << order
+           << "; ignoring it (the copy will auto-capture at birth)\n";
+  }
+  return c;   // else: uncaptured copy auto-captures at its own birth (the normal path)
+}
+
 NDMaterial *StagedStrainNDMaterial::getCopy(void)
 {
-  // theMaterial is always a concrete typed subclass here (the main ctor built it
-  // as ThreeDimensional), so its no-arg getCopy() is valid and preserves the type.
-  NDMaterial *innerCopy = theMaterial->getCopy();
-  if (innerCopy == 0) return 0;
-  StagedStrainNDMaterial *c = new StagedStrainNDMaterial();
-  c->setTag(this->getTag());
-  c->theMaterial   = innerCopy;     // adopt — keep the inner's actual type
-  c->active        = active;
-  c->captured      = captured;
-  c->eps0Explicit  = eps0Explicit;
-  if (eps0.Size() == innerCopy->getOrder() && eps0.Size() > 0) {
-    c->eps0 = eps0; c->sizeBuffers(eps0.Size());
-  } else {
-    c->captured = false;            // order mismatch ⇒ re-arm auto-capture
-  }
-  return c;
+  // theMaterial is a concrete typed subclass (the ctor adopted a 3D template), so
+  // its no-arg getCopy() is valid and preserves the type.
+  return adoptCopy(theMaterial->getCopy());
 }
 
 NDMaterial *StagedStrainNDMaterial::getCopy(const char *type)
 {
-  // Adapt the INNER to the element's requested view (PlaneStrain / PlaneStress /
-  // AxiSymmetric / ThreeDimensional / …) via the inner's inherited getCopy(type)
-  // switch, then ADOPT it directly so the wrapper carries the element's order.
+  // Re-derive the element's requested view (PlaneStrain/PlaneStress/AxiSymm/3D) via
+  // the inner's inherited getCopy(type) switch, then adopt it. NOTE: this assumes
+  // inner.getCopy("3D").getCopy(type) == inner.getCopy(type) — true for materials
+  // that route getCopy(type) through E/ν (ElasticIsotropic, J2Plasticity, …); a
+  // material that bakes different state into its 3D-vs-2D copy paths would violate
+  // it. Inners are validated only at the 3D view in the factory, so an inner that
+  // lacks the requested 2D view fails HERE (graceful return 0) rather than at
+  // registration.  // Ladruno
   NDMaterial *innerCopy = theMaterial->getCopy(type);
   if (innerCopy == 0) {
     opserr << "StagedStrainNDMaterial::getCopy - inner material does not support "
               "type '" << type << "'\n";
     return 0;                       // graceful — no exit(-1)
   }
-  StagedStrainNDMaterial *c = new StagedStrainNDMaterial();
-  c->setTag(this->getTag());
-  c->theMaterial = innerCopy;       // adopt the TYPED inner (do NOT re-derive to 3D)
-  c->active      = active;
-  // Carry an explicit ε0 only if it matches the requested order; auto-capture
-  // copies start uncaptured and snapshot at their own birth.
-  if (eps0Explicit && eps0.Size() == innerCopy->getOrder()) {
-    c->eps0 = eps0; c->eps0Explicit = true; c->captured = true;
-    c->sizeBuffers(eps0.Size());
-  }
-  return c;
+  return adoptCopy(innerCopy);
 }
 
 // =========================================================================== //
@@ -375,6 +365,10 @@ int StagedStrainNDMaterial::recvSelf(int cTag, Channel &theChannel,
   if (n > 0) { sizeBuffers(n); for (int i = 0; i < n; i++) eps0(i) = dataVec(3 + i); }
 
   if (theMaterial->recvSelf(cTag, theChannel, theBroker) < 0) return -4;
+  // Size the buffers to the inner order so a recorder querying "totalStrain" right
+  // after recv (before the next setTrialStrain) gets a correctly-shaped zero vector
+  // rather than an empty one.  // Ladruno
+  if (theMaterial->getOrder() > 0) sizeBuffers(theMaterial->getOrder());
   return 0;
 }
 
