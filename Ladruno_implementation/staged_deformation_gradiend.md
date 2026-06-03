@@ -327,6 +327,10 @@ unverified, which is precisely why finite prestrain is its own task, not a freeb
 
 ## See also
 
+- [[staged_activation_guide]] — the **user guide / reference** for the shipped family
+  (`StagedStrain` + `StagedDefGrad`/`InitDefGrad`): theory, architecture, command
+  syntax, recipes, recording, and limitations. This note is the design log; that is the
+  how-to.
 - [[constraints_reference_position]] — the SP / MP / element trichotomy and the
   small-vs-finite-strain caveat that leads here.
 - [[solid_transformation_wrapper]] — the `linear`/`corot`/`finite` kinematics layer
