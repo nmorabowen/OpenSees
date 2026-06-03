@@ -25,4 +25,6 @@ LadrunoIMKBeam — concentrated-plasticity IMK beam hinges
 LadrunoRebarBuckling — rebar buckling wrapper (Dhakal–Maekawa / Gomes–Appleton, cyclic re-straightening)
 LadrunoArcLength — adaptive arc-length radius (Ramm desired-iter)
 LadrunoDynamicRelaxation — quasi-static DR (Gershgorin mass + kinetic damping)
+LadrunoIndirectControl — indirect/CMOD control (snap-back tracking)
+LadrunoStabilizedUnbalance — true-equilibrium test for -stabilize
 Ladruno — modular HDF5 .ladruno recorder

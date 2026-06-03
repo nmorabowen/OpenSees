@@ -80,6 +80,7 @@
 #define CONVERGENCE_TEST_NormDispAndUnbalance               9
 #define CONVERGENCE_TEST_NormDispOrUnbalance               10
 #define CONVERGENCE_TEST_CTestPFEM                         11
+#define CONVERGENCE_TEST_LadrunoStabilizedUnbalance     33000 // N. Mora-Bowen (Ladruno) — true-equilibrium NormUnbalance for the viscous-stabilized LadrunoArcLength -stabilize mode (norms ‖λp−f_int‖, not the f_v-polluted SOE B); convergence-test registry, ladruno band >=33000.
 
 
 #define GRND_TAG_ElCentroGroundMotion                 1
@@ -1128,6 +1129,7 @@
 #define INTEGRATOR_TAGS_CentralDifferenceLadruno        33003 // N. Mora-Bowen (Ladruno) — explicit leap-frog central difference; ladruno private band >=33000 (was 64)
 #define INTEGRATOR_TAGS_LadrunoArcLength                 33004 // N. Mora-Bowen (Ladruno) — adaptive (+ future viscous-stabilized) arc-length; ladruno integrator band >=33000. NB 33004 is independently reused in the ELE_TAG space (ELE_TAG_LadrunoIMKBeam2d=33004) — tag bands are PER-REGISTRY, no collision.
 #define INTEGRATOR_TAGS_LadrunoDynamicRelaxation         33005 // N. Mora-Bowen (Ladruno) — quasi-static dynamic relaxation (Gershgorin fictitious mass + Cundall kinetic damping); TransientIntegrator, ladruno integrator band >=33000.
+#define INTEGRATOR_TAGS_LadrunoIndirectControl           33006 // N. Mora-Bowen (Ladruno) — indirect / CMOD displacement control (weighted multi-DOF control quantity c.U, monotone through snap-back); StaticIntegrator, ladruno integrator band >=33000.
 
 
 #define LinSOE_TAGS_FullGenLinSOE		1

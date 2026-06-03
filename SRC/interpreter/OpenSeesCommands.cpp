@@ -1658,6 +1658,9 @@ int OPS_CTest()
     } else if (strcmp(type,"NormUnbalance") == 0) {
 	theTest = (ConvergenceTest*)OPS_CTestNormUnbalance();
 
+    } else if (strcmp(type,"LadrunoStabilizedUnbalance") == 0) {   // Ladruno
+	theTest = (ConvergenceTest*)OPS_LadrunoStabilizedUnbalance();
+
     } else if (strcmp(type,"NormDispIncr") == 0) {
 	theTest = (ConvergenceTest*)OPS_CTestNormDispIncr();
 
@@ -1721,6 +1724,9 @@ int OPS_Integrator()
 
     } else if (strcmp(type,"LadrunoArcLength") == 0) {   // Ladruno
 	si = (StaticIntegrator*)OPS_LadrunoArcLength();
+
+    } else if (strcmp(type,"LadrunoIndirectControl") == 0) {   // Ladruno
+	si = (StaticIntegrator*)OPS_LadrunoIndirectControl();
 
     } else if (strcmp(type,"ArcLength1") == 0) {
 	si = (StaticIntegrator*)OPS_ArcLength1();
