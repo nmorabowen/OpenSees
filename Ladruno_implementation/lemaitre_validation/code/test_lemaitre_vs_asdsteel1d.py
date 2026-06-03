@@ -166,6 +166,74 @@ def test_D2_ductile_fracture_signature_parity():
 
 
 # ==========================================================================
+# D2b — rough CALIBRATION of Lemaitre (p_D, r) to ASDSteel1D -fracture
+# ==========================================================================
+def _energy(res):
+    """Area under the σ–ε curve (list of (eps, sigma, D|None))."""
+    W = 0.0
+    for (e0, s0, _), (e1, s1, _) in zip(res, res[1:]):
+        W += 0.5 * (s0 + s1) * (e1 - e0)
+    return W
+
+
+def calibrate_lemaitre_to_asd(E, sy, su, eu, C1, g1, C2, g2, eps_t=0.20, n=400):
+    """Fit Lemaitre (r,s,p_D,D_c) to ASDSteel1D `-fracture` on a monotone tension coupon:
+    p_D := eupl = eu - sy/E (shared necking ONSET); r bisected to match dissipated ENERGY.
+    The softening SHAPE still differs — that is the irreducible damage-law difference."""
+    hist = _ramp(eps_t, n)
+    asd = _truss(lambda t: ops.uniaxialMaterial("ASDSteel1D", t, E, sy, su, eu, "-fracture"),
+                 hist, dmg_key="Damage")
+    W_target = _energy(asd)
+    pD = round(eu - sy / E, 3)
+    s, Dc = 1.0, 0.95
+
+    def W_of(r):
+        l = _truss(lambda t: ops.uniaxialMaterial(
+            "LadrunoUniaxialJ2", t, E, "-iso", "voce", sy, 0, 0, 0,
+            "-kin", 2, C1, g1, C2, g2, "-damage", "lemaitre", r, s, pD, Dc), hist, dmg_key="damage")
+        return _energy(l)
+
+    lo, hi = 0.02, 0.6                        # larger r -> slower damage -> more energy
+    for _ in range(22):
+        r = 0.5 * (lo + hi)
+        if W_of(r) < W_target:
+            lo = r
+        else:
+            hi = r
+    return (round(0.5 * (lo + hi), 4), s, pD, Dc)
+
+
+def test_D2b_calibration_matches_onset_and_energy():
+    """A two-parameter rough calibration (p_D=eupl, r energy-matched) makes the Lemaitre
+    fracture coupon reproduce ASDSteel1D's PEAK and dissipated ENERGY — the residual is only
+    the softening-shape difference of the two damage laws (README §5). Quantitative backing
+    for the 'hysteresis aligns once calibrated' claim."""
+    C1, g1, C2, g2 = _asd_chaboche(_E, _SY, _SU, _EU)
+    r, s, pD, Dc = calibrate_lemaitre_to_asd(_E, _SY, _SU, _EU, C1, g1, C2, g2)
+    assert abs(pD - (_EU - _SY / _E)) < 1e-6, f"p_D should equal eupl, got {pD}"
+
+    hist = _ramp(0.20, 400)
+    asd = _truss(lambda t: ops.uniaxialMaterial("ASDSteel1D", t, _E, _SY, _SU, _EU, "-fracture"),
+                 hist, dmg_key="Damage")
+    cal = _truss(lambda t: ops.uniaxialMaterial(
+        "LadrunoUniaxialJ2", t, _E, "-iso", "voce", _SY, 0, 0, 0,
+        "-kin", 2, C1, g1, C2, g2, "-damage", "lemaitre", r, s, pD, Dc), hist, dmg_key="damage")
+
+    pk_a = max(x[1] for x in asd); pk_c = max(x[1] for x in cal)
+    W_a, W_c = _energy(asd), _energy(cal)
+    assert abs(pk_c - pk_a) / pk_a < 0.03, f"calibrated peak {pk_c:.0f} vs ASD {pk_a:.0f} (>3%)"
+    assert abs(W_c - W_a) / W_a < 0.05, f"calibrated energy {W_c:.1f} vs ASD {W_a:.1f} (>5%)"
+    # the uncalibrated default is visibly worse on the peak (it damages early) — proves the
+    # calibration is doing real work, not a no-op.
+    unc = _truss(lambda t: ops.uniaxialMaterial(
+        "LadrunoUniaxialJ2", t, _E, "-iso", "voce", _SY, 0, 0, 0,
+        "-kin", 2, C1, g1, C2, g2, "-damage", "lemaitre", 0.12, 1.0, 0.03, 0.95), hist, dmg_key="damage")
+    pk_u = max(x[1] for x in unc)
+    assert abs(pk_c - pk_a) < abs(pk_u - pk_a), \
+        f"calibration did not improve the peak match (cal {pk_c:.0f}, unc {pk_u:.0f}, ASD {pk_a:.0f})"
+
+
+# ==========================================================================
 # D3 — IMPL-EX completes a softening push-to-rupture for both models
 # ==========================================================================
 def test_D3_implex_completion_parity():

@@ -143,6 +143,56 @@ def _asd_chaboche(E, sy, su, eu):
     return (H1b * 0.9, g1, H1b * 5.0, g1 * 50.0)
 
 
+# Lemaitre damage params for the DAMAGED ASDSteel1D cross-exam.
+#   _LEM_UNCAL = the original, *uncalibrated* pick (just enough to reach rupture).
+#   _calibrate_lemaitre() = a ROUGH fit of (p_D, r) to ASDSteel1D's `-fracture`:
+#     * p_D := eupl = eu - sy/E       -> shares ASDSteel1D's necking/fracture ONSET
+#     * r   := bisected so the dissipated fracture ENERGY (∫σ dε to rupture) matches.
+#   The softening SHAPE still differs (Lemaitre's smooth energy-driven D vs ASDSteel1D's
+#   sharp exponential necking drop) — that is the irreducible law difference (§5).
+_LEM_UNCAL = (0.12, 1.0, 0.03, 0.95)        # (r, s, p_D, D_c)
+_LEM_CAL_CACHE = {}
+
+
+def _energy(res):
+    """Area under the σ–ε curve of a truss history (list of (eps, sigma, D|None))."""
+    W = 0.0
+    for (e0, s0, _), (e1, s1, _) in zip(res, res[1:]):
+        W += 0.5 * (s0 + s1) * (e1 - e0)
+    return W
+
+
+def _calibrate_lemaitre(E, sy, su, eu, C1, g1, C2, g2, eps_t=0.20, n=400):
+    """Return (r, s, p_D, D_c) fitting ASDSteel1D `-fracture` onset+energy on a monotone
+    tension coupon. p_D = eupl (shared onset); r bisected to match dissipated energy."""
+    key = (E, sy, su, eu)
+    if key in _LEM_CAL_CACHE:
+        return _LEM_CAL_CACHE[key]
+    hist = [eps_t * i / n for i in range(1, n + 1)]
+    asd = _truss_hist(lambda t: ops.uniaxialMaterial("ASDSteel1D", t, E, sy, su, eu, "-fracture"),
+                      hist, "Damage")
+    W_target = _energy(asd)
+    pD = round(eu - sy / E, 3)                    # eupl
+    s, Dc = 1.0, 0.95
+
+    def W_of(r):
+        l = _truss_hist(lambda t: ops.uniaxialMaterial(
+            "LadrunoUniaxialJ2", t, E, "-iso", "voce", sy, 0, 0, 0,
+            "-kin", 2, C1, g1, C2, g2, "-damage", "lemaitre", r, s, pD, Dc), hist, "damage")
+        return _energy(l)
+
+    lo, hi = 0.02, 0.6                            # larger r -> slower damage -> more energy
+    for _ in range(22):
+        r = 0.5 * (lo + hi)
+        if W_of(r) < W_target:
+            lo = r
+        else:
+            hi = r
+    out = (round(0.5 * (lo + hi), 4), s, pD, Dc)
+    _LEM_CAL_CACHE[key] = out
+    return out
+
+
 def _truss_hist(mat_fn, hist, dmg_key=None):
     ops.wipe(); ops.model("basic", "-ndm", 1, "-ndf", 1)
     ops.node(1, 0.0); ops.node(2, 1.0); mat_fn(1); ops.fix(1, 1)
@@ -181,13 +231,23 @@ def fig_D_cross():
     ns = [10, 20, 40, 80, 160, 320]
     errs = [err(n) for n in ns]
 
-    # fracture signatures
+    # fracture signatures — ASDSteel1D vs Lemaitre, both UNCALIBRATED and ROUGH-CALIBRATED
+    r_u, s_u, pD_u, Dc_u = _LEM_UNCAL
+    r_c, s_c, pD_c, Dc_c = _calibrate_lemaitre(E, sy, su, eu, C1, g1, C2, g2)
+
     def asd_fr(t): ops.uniaxialMaterial("ASDSteel1D", t, E, sy, su, eu, "-fracture")
 
-    def lad_fr(t): ops.uniaxialMaterial("LadrunoUniaxialJ2", t, E, "-iso", "voce", sy, 0, 0, 0,
-                                        "-kin", 2, C1, g1, C2, g2, "-damage", "lemaitre", 0.12, 1.0, 0.03, 0.95)
+    def lad_unc(t): ops.uniaxialMaterial("LadrunoUniaxialJ2", t, E, "-iso", "voce", sy, 0, 0, 0,
+                                         "-kin", 2, C1, g1, C2, g2, "-damage", "lemaitre", r_u, s_u, pD_u, Dc_u)
+
+    def lad_cal(t): ops.uniaxialMaterial("LadrunoUniaxialJ2", t, E, "-iso", "voce", sy, 0, 0, 0,
+                                         "-kin", 2, C1, g1, C2, g2, "-damage", "lemaitre", r_c, s_c, pD_c, Dc_c)
     hf = [0.20 * i / 200 for i in range(1, 201)]
-    af = _truss_hist(asd_fr, hf, "Damage"); lf = _truss_hist(lad_fr, hf, "damage")
+    af = _truss_hist(asd_fr, hf, "Damage")
+    lu = _truss_hist(lad_unc, hf, "damage")
+    lc = _truss_hist(lad_cal, hf, "damage")
+    pk_a = max(x[1] for x in af); pk_c = max(x[1] for x in lc)
+    W_a, W_c = _energy(af), _energy(lc)
 
     fig, ax = plt.subplots(1, 3, figsize=(13.5, 4.0))
     ax[0].plot([x[0] for x in a], [x[1] for x in a], "-", lw=2.5, color="#888", label="ASDSteel1D")
@@ -195,11 +255,21 @@ def fig_D_cross():
     ax[0].set(xlabel=r"$\varepsilon$", ylabel=r"$\sigma$", title="D1  undamaged backbone"); ax[0].legend(fontsize=8)
     ax[1].loglog(ns, errs, "o-", color="C0")
     ax[1].set(xlabel="steps (1/Δε)", ylabel="max rel. backbone error", title="D1  convergence under refinement")
-    ax[2].plot([x[0] for x in af], [x[1] for x in af], "-", lw=2, color="#888", label="ASDSteel1D -fracture")
-    ax[2].plot([x[0] for x in lf], [x[1] for x in lf], "-", lw=2, color="C3", label="Ladruno -damage lemaitre")
-    ax[2].set(xlabel=r"$\varepsilon$", ylabel=r"$\sigma$", title="D2  ductile-fracture signature"); ax[2].legend(fontsize=8)
+    ax[2].plot([x[0] for x in af], [x[1] for x in af], "-", lw=2.4, color="#888", label="ASDSteel1D -fracture")
+    ax[2].plot([x[0] for x in lu], [x[1] for x in lu], ":", lw=1.4, color="C0",
+               label=f"Lemaitre uncalibrated\n($p_D$={pD_u}, r={r_u})")
+    ax[2].plot([x[0] for x in lc], [x[1] for x in lc], "-", lw=1.8, color="C3",
+               label=f"Lemaitre calibrated\n($p_D$=eupl={pD_c}, r={r_c})")
+    ax[2].set(xlabel=r"$\varepsilon$", ylabel=r"$\sigma$", title="D2  ductile-fracture signature")
+    ax[2].legend(fontsize=7.5, loc="upper right")
+    ax[2].text(0.02, 0.04,
+               f"calib matches ONSET ($p_D$=eupl) + ENERGY (r bisected):\n"
+               f"peak {pk_c:.0f} vs {pk_a:.0f},  ∫σdε {W_c:.1f} vs {W_a:.1f}\n"
+               f"residual = softening SHAPE (smooth vs necking drop)",
+               transform=ax[2].transAxes, fontsize=6.8, va="bottom",
+               bbox=dict(boxstyle="round", fc="#fff7e6", ec="0.7", alpha=0.9))
     fig.tight_layout(); fig.savefig(os.path.join(FIGDIR, "lemaitre_D_cross_asdsteel1d.png")); plt.close(fig)
-    print("D done")
+    print(f"D done  calib(r,s,pD,Dc)={(r_c,s_c,pD_c,Dc_c)}  peak {pk_c:.0f}/{pk_a:.0f}  W {W_c:.1f}/{W_a:.1f}")
 
 
 # ---------------------------------------------------------------- Layer C
@@ -315,18 +385,33 @@ def fig_E_cyclic():
     amps = [0.04, 0.05, 0.06, 0.08, 0.10]
     Ns = [CY._run_to_damage(a, Dstop=0.5, maxcyc=200)[0] for a in amps]
 
-    # E3 — ASDSteel1D vs Ladruno cyclic loops (with damage)
+    # E3 — ASDSteel1D vs Ladruno cyclic loops, UNDAMAGED (overlay) and DAMAGED (diverge)
     C1, g1, C2, g2 = X._asd_chaboche(X._E, X._SY, X._SU, X._EU)
     hc = CY._cyclic(0.05, 5, 40)
+    r_c, s_c, pD_c, Dc_c = _calibrate_lemaitre(X._E, X._SY, X._SU, X._EU, C1, g1, C2, g2)
+    r_u, s_u, pD_u, Dc_u = _LEM_UNCAL
 
+    # --- undamaged loops: matched backstresses, NO damage => the loops COINCIDE ---
+    def asd_u(t): ops.uniaxialMaterial("ASDSteel1D", t, X._E, X._SY, X._SU, X._EU)  # no -fracture
+
+    def lad_u(t): ops.uniaxialMaterial("LadrunoUniaxialJ2", t, X._E, "-iso", "voce", X._SY, 0, 0, 0,
+                                       "-kin", 2, C1, g1, C2, g2)                    # no -damage
+    au = X._truss(asd_u, hc); lu = X._truss(lad_u, hc)
+    res_u = max(abs(sa - sl) / (abs(sa) + 1.0) for (_e, sa, _), (_e2, sl, _) in zip(au, lu))
+
+    # --- damaged loops: ASDSteel1D -fracture vs Lemaitre (uncalibrated + calibrated) ---
     def asd(t): ops.uniaxialMaterial("ASDSteel1D", t, X._E, X._SY, X._SU, X._EU, "-fracture")
 
-    def lad(t): ops.uniaxialMaterial("LadrunoUniaxialJ2", t, X._E, "-iso", "voce", X._SY, 0, 0, 0,
-                                     "-kin", 2, C1, g1, C2, g2, "-damage", "lemaitre", 0.12, 1.0, 0.03, 0.95)
-    la = X._truss(lad, hc, dmg_key="damage")
-    aa = X._truss(asd, hc, dmg_key="Damage")
+    def lad_unc(t): ops.uniaxialMaterial("LadrunoUniaxialJ2", t, X._E, "-iso", "voce", X._SY, 0, 0, 0,
+                                         "-kin", 2, C1, g1, C2, g2, "-damage", "lemaitre", r_u, s_u, pD_u, Dc_u)
 
-    fig, ax = plt.subplots(2, 2, figsize=(11, 8))
+    def lad_cal(t): ops.uniaxialMaterial("LadrunoUniaxialJ2", t, X._E, "-iso", "voce", X._SY, 0, 0, 0,
+                                         "-kin", 2, C1, g1, C2, g2, "-damage", "lemaitre", r_c, s_c, pD_c, Dc_c)
+    aa = X._truss(asd, hc, dmg_key="Damage")
+    lnc = X._truss(lad_unc, hc, dmg_key="damage")
+    lca = X._truss(lad_cal, hc, dmg_key="damage")
+
+    fig, ax = plt.subplots(2, 3, figsize=(15.5, 8.2))
     ax[0, 0].plot([c[0] for c in code], rs, "-", lw=3, color="#bbbbbb", label="reference")
     ax[0, 0].plot([c[0] for c in code], [c[1] for c in code], "--", lw=1.0, color="C3", label="LadrunoUniaxialJ2")
     ax[0, 0].set(xlabel=r"$\varepsilon$", ylabel=r"$\sigma$", title="E1  cyclic oracle hysteresis (<1e-8)")
@@ -334,15 +419,49 @@ def fig_E_cyclic():
     ax[0, 1].plot(range(1, len(Dcum) + 1), Dcum, "o-", ms=3, color="C0")
     ax[0, 1].set(xlabel="cycle number", ylabel="damage $D$",
                  title=r"E2  LCF damage accumulation ($\pm$0.05)")
-    ax[1, 0].loglog(amps, Ns, "s-", color="C2")
-    ax[1, 0].set(xlabel="strain amplitude", ylabel="cycles to $D=0.5$",
+    ax[0, 2].loglog(amps, Ns, "s-", color="C2")
+    ax[0, 2].set(xlabel="strain amplitude", ylabel="cycles to $D=0.5$",
                  title="E2  life vs amplitude (Coffin-Manson trend)")
-    ax[1, 1].plot([c[0] for c in aa], [c[1] for c in aa], "-", lw=1.0, color="#888", label="ASDSteel1D")
-    ax[1, 1].plot([c[0] for c in la], [c[1] for c in la], "-", lw=1.0, color="C3", label="Ladruno")
+    # NEW: undamaged overlay — the apples-to-apples cross-code check (loops coincide)
+    ax[1, 0].plot([c[0] for c in au], [c[1] for c in au], "-", lw=2.6, color="#888", label="ASDSteel1D")
+    ax[1, 0].plot([c[0] for c in lu], [c[1] for c in lu], "--", lw=1.2, color="C3", label="Ladruno (matched)")
+    ax[1, 0].set(xlabel=r"$\varepsilon$", ylabel=r"$\sigma$",
+                 title=f"E3a  UNDAMAGED loops — matched backbone\n(loops coincide, max resid {res_u:.1%})")
+    ax[1, 0].legend(fontsize=8)
+    # damaged loops — diverge by design; calibration narrows it
+    ax[1, 1].plot([c[0] for c in aa], [c[1] for c in aa], "-", lw=1.1, color="#888", label="ASDSteel1D -fracture")
+    ax[1, 1].plot([c[0] for c in lnc], [c[1] for c in lnc], ":", lw=1.0, color="C0", label="Lemaitre uncalib.")
+    ax[1, 1].plot([c[0] for c in lca], [c[1] for c in lca], "-", lw=1.0, color="C3", label="Lemaitre calibrated")
     ax[1, 1].set(xlabel=r"$\varepsilon$", ylabel=r"$\sigma$",
-                 title="E3  degrading cyclic loops (damage on)"); ax[1, 1].legend(fontsize=8)
+                 title="E3b  DAMAGED loops (damage on)\n(diverge by design — different damage laws)")
+    ax[1, 1].legend(fontsize=7.5)
+    # annotation panel — WHY they diverge
+    ax[1, 2].axis("off")
+    ax[1, 2].text(
+        0.0, 1.0,
+        "Why the damaged loops differ — by design, not a bug\n"
+        "─────────────────────────────────────────\n"
+        "Both couple damage the SAME way:  σ = (1−d)·σ̃,\n"
+        "C = (1−d)·C̃  (isotropic stiffness+strength degr.).\n\n"
+        "The EVOLUTION laws differ:\n"
+        "  • ASDSteel1D -fracture:  d = 1 − e^(−sy(eₚₗ−eupl)/G),\n"
+        "    keyed to plastic strain past a NECKING threshold\n"
+        "    eupl = eu − sy/E, with fracture energy G(eu).\n"
+        "    → sharp, necking-driven drop.\n"
+        "  • Lemaitre:  D = ∫(Y/r)ˢ dp, keyed to the energy\n"
+        "    release rate over ACCUMULATED p past p_D.\n"
+        "    → smooth, energy-driven softening.\n\n"
+        "E3a (undamaged) is the apples-to-apples cross-code\n"
+        "check — matched Chaboche backbone → loops coincide.\n"
+        "E3b is apples-to-oranges (two damage laws); the\n"
+        "rough calibration (p_D=eupl, r matched to ∫σdε)\n"
+        "aligns onset+energy; the residual is the softening\n"
+        "SHAPE, which the differing functional forms fix.",
+        transform=ax[1, 2].transAxes, fontsize=8.2, va="top", family="DejaVu Sans",
+        bbox=dict(boxstyle="round", fc="#f4f8ff", ec="0.7"))
     fig.tight_layout(); fig.savefig(os.path.join(FIGDIR, "lemaitre_E_cyclic.png")); plt.close(fig)
-    print("E done  life(amps)=", list(zip(amps, Ns)))
+    print(f"E done  undamaged-overlay resid={res_u:.2%}  calib(r,pD)=({r_c},{pD_c})  life(amps)=",
+          list(zip(amps, Ns)))
 
 
 # ---------------------------------------------------------------- Layer C geometry
