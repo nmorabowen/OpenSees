@@ -37,7 +37,7 @@
 // library (setTrialStrain) — no finite-strain material is involved.
 //
 //   getStrainMeasure() == SmallStrain   (like linear; the element runs its
-//                                        normal std/bbar/uri/eas B-matrix path
+//                                        normal std/bbar/uri/ssp B-matrix path
 //                                        on the de-rotated displacement)
 //
 // THEORY (see Ladruno_implementation/10_solid_corotational_adr.md and the two

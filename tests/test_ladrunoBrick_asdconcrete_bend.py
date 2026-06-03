@@ -14,7 +14,7 @@ Ladruno_implementation/11_brick_asdconcrete_integration.md that need real meshin
    would make the fine mesh markedly more brittle and the curves diverge.
 
 2. **Tier-A hourglass-energy fraction in the cracked band** — running the same beam
-   with the single-point `eas` formulation, the stored hourglass/stabilization
+   with the single-point `ssp` formulation, the stored hourglass/stabilization
    energy must stay a small fraction (< ~10%) of the internal energy even as the
    crack fully forms. This is the §5 acceptance dial for the damage-scaled `Kstab`:
    it confirms the degraded stabilization neither props the cracked load up nor
@@ -187,13 +187,13 @@ def test_notched_bend_mesh_objectivity():
 # 2. Tier-A: hourglass energy stays a small fraction of internal energy in the
 #    cracked band (the §5 acceptance dial for the damage-scaled Kstab)
 # ===========================================================================
-def test_eas_hourglass_energy_fraction_in_cracked_band():
-    """Same beam with the single-point `eas` formulation. As the crack forms, the
+def test_ssp_hourglass_energy_fraction_in_cracked_band():
+    """Same beam with the single-point `ssp` formulation. As the crack forms, the
     damage-scaled stabilization energy must stay a small fraction of the internal
     energy — confirming the degraded Kstab neither props the cracked load up nor
     lets spurious hourglass modes dominate."""
-    r = _solve(5.0, "eas", monitor_hg=True)
-    assert r["reached"] > 0.05, f"eas run only reached d={r['reached']:.3f}"
+    r = _solve(5.0, "ssp", monitor_hg=True)
+    assert r["reached"] > 0.05, f"ssp run only reached d={r['reached']:.3f}"
     assert r["tip_damage"] > 0.5, (
         f"notch-tip damage {r['tip_damage']:.2f} — not actually in the cracked regime")
     assert r["hg_frac_max"] > 0.0, "hourglass energy never sampled (bad probe)"
