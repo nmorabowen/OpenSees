@@ -3077,6 +3077,55 @@ LadrunoBrick::viscousHourglassIncrement(void)
 }
 
 //----------------------------------------------------------------------
+// Reference-config element volume: V = Σ_g wg·detJ over the 8 (2x2x2) Gauss
+// points, with detJ from shp3d at the reference nodal coordinates (computeBasis
+// sets xl = reference coords). Formulation-independent and available before
+// buildSSP, so getCharacteristicLength works for every -formulation and for
+// -geom finite (crack-band regularization wants the reference/material size).  // Ladruno
+//----------------------------------------------------------------------
+double
+LadrunoBrick::computeVolume(void)
+{
+  computeBasis();   // xl = reference nodal coordinates
+
+  double xsj;
+  static double shp[4][8];
+  double gp[3];
+  double V = 0.0;
+
+  int count = 0;
+  for (int i = 0; i < 2; i++) {
+    for (int j = 0; j < 2; j++) {
+      for (int k = 0; k < 2; k++) {
+        gp[0] = sg[i]; gp[1] = sg[j]; gp[2] = sg[k];
+        shp3d(gp, xsj, shp, xl);
+        V += wg[count] * xsj;          // wg[count] = 1 for the 2x2x2 rule
+        count++;
+      }
+    }
+  }
+  return V;
+}
+
+//----------------------------------------------------------------------
+// Characteristic length for crack-band / regularized-softening materials.
+// lch = cbrt(V), the edge of a cube of equal volume — recovers the true edge
+// for an undistorted hex and stays geometry-true for distorted ones. The base
+// default (min inter-node distance) under-sizes the band on a skewed/graded hex
+// and over-softens. The cbrt-of-volume convention matches BezierTet10 (cbrt(6V),
+// the factor being the reciprocal reference-element volume: tet = 1/6, hex = 1)
+// and BezierTri6 (sqrt(2A)). Degenerate (V<=0) falls back to the base.  // Ladruno
+//----------------------------------------------------------------------
+double
+LadrunoBrick::getCharacteristicLength(void)
+{
+  double V = this->computeVolume();
+  if (V <= 0.0)
+    return Element::getCharacteristicLength();   // degenerate: fall back
+  return cbrt(V);
+}
+
+//----------------------------------------------------------------------
 // Recoverable elastic hourglass / stabilization energy at the current trial
 // state. uri 'stiffness': ½κ·Σ q_aι² (the FB perturbation energy; q from the
 // trial displacement, mirrors formUri exactly). ssp: ½·u_core·Kstab·u_core.
@@ -3274,6 +3323,12 @@ LadrunoBrick::setResponse(const char **argv, int argc, OPS_Stream &output)
     // 'viscous' it is the CUMULATIVE DISSIPATED energy (see hourglassEnergy()).
     output.tag("ResponseType", "Ehg");
     theResponse = new ElementResponse(this, 8, Vector(1));
+
+  } else if (strcmp(argv[0], "charLength") == 0 ||
+             strcmp(argv[0], "characteristicLength") == 0) {
+    // Ladruno — the element size handed to crack-band materials (= cbrt(V)).
+    output.tag("ResponseType", "lch");
+    theResponse = new ElementResponse(this, 9, Vector(1));
   }
 
   output.endTag(); // ElementOutput
@@ -3339,6 +3394,11 @@ LadrunoBrick::getResponse(int responseID, Information &eleInfo)
     static Vector ehg(1);
     ehg(0) = this->hourglassEnergy();
     return eleInfo.setVector(ehg);
+
+  } else if (responseID == 9) {
+    static Vector lch(1);
+    lch(0) = this->getCharacteristicLength();
+    return eleInfo.setVector(lch);
   }
 
   return -1;
