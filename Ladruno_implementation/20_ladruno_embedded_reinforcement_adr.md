@@ -562,7 +562,7 @@ the same γ-independence with *no* host-stress/∂N query.** *Effort: research-g
    element `penaltyEnergy` (artificial ½kt|gt|²[+½k s² perfect-bond]), `constraintViolation`
    (|gt|), `bondEnergy` (= bondScale·material work, single-sourced + bond-law-agnostic via a
    cached material sub-response). Region-net post-processor left to the user (openseespy-side).
-3. **Strategic — co-rotated `dir` (§10.2c/§10.5). ✅ SHIPPED (PR #179).** `-corot` recomputes
+3. **Strategic — co-rotated `dir` (§10.2c/§10.5). ✅ SHIPPED (PR #180).** `-corot` recomputes
    the bar axis each step as the secant from the embed point to a point B along the bar
    (`-xiB`/`-shapeB`), using current host node positions, so the axial/transverse split stays
    frame-objective under large host rotation. Default OFF (frozen `-dir`, bit-identical).
