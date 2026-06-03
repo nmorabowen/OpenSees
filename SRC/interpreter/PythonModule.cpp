@@ -595,6 +595,7 @@ initopensees(void)
 "        • LadrunoJ2 — combined iso + Chaboche AF kinematic J2\n"
 "        • LadrunoJ2Finite — finite-strain J2, co-rotating backstress (+IMPL-EX)\n"
 "        • LadrunoUniaxialJ2 — uniaxial Chaboche AF J2 fiber/truss\n"
+"        • InitDefGrad — finite-strain stress-free staged activation (F_rel=F·F0⁻¹)\n"
 "        • Lemaitre ductile damage (-damage lemaitre, +lch, +IMPL-EX)\n"
 "        • LadrunoIMKBeam — concentrated-plasticity IMK beam hinges\n"
 "        • LadrunoRebarBuckling — rebar buckling wrapper (Dhakal–Maekawa / Gomes–Appleton, cyclic re-straightening)\n"

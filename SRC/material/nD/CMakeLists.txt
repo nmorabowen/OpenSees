@@ -59,6 +59,7 @@ target_sources(OPS_Material
     InitStrainNDMaterial.cpp
     MinMaxNDMaterial.cpp
     LogStrainNDMaterial.cpp
+    InitDefGradNDMaterial.cpp
     LadrunoJ2.cpp
     LadrunoJ2Finite.cpp
     IncrementalElasticIsotropicThreeDimensional.cpp
@@ -140,6 +141,7 @@ target_sources(OPS_Material
     MinMaxNDMaterial.h
     LogStrainNDMaterial.h
     LogStrainKernel.h
+    InitDefGradNDMaterial.h
     LadrunoJ2.h
     LadrunoJ2Finite.h
     LadrunoJ2Kernel.h
