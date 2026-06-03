@@ -110,6 +110,14 @@ class LadrunoBrick : public Element {
   Node **getNodePtrs(void);
   int getNumDOF(void);
 
+  // Reference-config element size for crack-band / regularized-softening
+  // materials (ASDConcrete3D, Lemaitre LCH_REF). The Element base default
+  // returns the MIN inter-node distance, which under-sizes the band on a
+  // distorted hex and over-softens. We return the edge of an equal-volume
+  // cube, lch = cbrt(V) — geometry-true (the hex analogue of BezierTet10's
+  // cbrt(6V) and BezierTri6's sqrt(2A)). Degenerate V<=0 falls back to base.  // Ladruno
+  double getCharacteristicLength(void);
+
   // state
   int commitState(void);
   int revertToLastCommit(void);
@@ -212,6 +220,12 @@ class LadrunoBrick : public Element {
   void formInertiaTerms(int tangFlag);
   void formResidAndTangent(int tang_flag);
   void computeBasis(void);
+
+  // Reference-config element volume by 2x2x2 Gauss integration of |J|
+  // (V = Σ wg·detJ over the 8 GPs). Formulation-independent — does NOT reuse
+  // sspVol, which only exists after buildSSP and only for ssp. Backs
+  // getCharacteristicLength().  // Ladruno
+  double computeVolume(void);
 
   // -geom finite (v3, updated-Lagrangian). isFinite() is true when theGeom
   // reports a DeformationGradient strain measure: the element computes the full
