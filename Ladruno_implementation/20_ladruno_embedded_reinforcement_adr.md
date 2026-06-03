@@ -265,7 +265,7 @@ case has demonstrably out-grown it.
 multi-retained constraint the stock `MP_Constraint` can't express). Current parse:
 `element LadrunoEmbeddedRebar tag rebarNode nHost h1..hN -shape N1..NN -dir dx dy dz (-bond matTag [-bondScale bs] | -perfect kAxial) [-kt kt]`.
 
-**Shape-fn-from-host refactor — IMPLEMENTED (2026-06-03, CI-only build pending):**
+**Shape-fn-from-host refactor — IMPLEMENTED (2026-06-03, PR [#175](https://github.com/nmorabowen/OpenSees/pull/175), CI-only build):**
 the user no longer has to re-supply host nodes or `-shape` weights — both can come from
 the host *object*. OpenSees had **no shape-fn API on `Element`** (verified), so we added one.
 Both steps landed entirely in the parser + base-class virtual; **`LadrunoEmbeddedRebar.{h,cpp}`
