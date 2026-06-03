@@ -76,11 +76,20 @@ features:
       convergence benchmark is geometry-limited for v1 straight-sided tets (Kadapa
       uses curved elements; see ADR O5/O11) — Python oracle 23/23 + §6.2 sphere
       convergence + locking study cover the formulation meanwhile.
-      -geom corot added (#108) and -geom finite added (3rd SolidTransformation
-      consumer; STD updated-Lagrangian, drives a FiniteStrainNDMaterial via
-      setTrialF(F); F-bar deferred to step 2) — finite Zone-A battery in
-      tests/test_bezierTet10_finite.py (FD-tangent gate + objectivity + patch vs
-      logstrain_reference oracle + det F guard + API guards + serialization).
+      -geom corot added (#108) and -geom finite added (#145; 3rd SolidTransformation
+      consumer; updated-Lagrangian, drives a FiniteStrainNDMaterial via setTrialF(F))
+      — finite Zone-A battery in tests/test_bezierTet10_finite.py (FD-tangent gate +
+      objectivity + patch vs logstrain_reference oracle + det F guard + API guards +
+      serialization + load-driven Newton). F-bar (bbar+finite, CENTROID form dSNPO
+      §15.1) shipped step 2 — tests/test_bezierTet10_fbar.py (FD-tangent unsymmetric +
+      ν=0.499 coefficient-trap guard, residual-reduces-to-std, uniform-GP-pressure,
+      oracle-leg centroid-J₀, rigid-rotation, load-driven). UNSYMMETRIC tangent ⇒
+      FullGeneral (parse advisory). No new classTag; std finite bit-identical.
+      -fbar {centroid|mean_dilatation} switch (default centroid); mean-dilatation
+      F̄=(J̄/J)^(1/3)F reduces to the small-strain volume-averaged bbar. F-bar battery
+      16/16 parametrized over both modes; the FD-tangent (ν=0.3 & 0.499) is the
+      arbiter for the mean-dilatation tangent (no prior validated baseline).
+      fbarMode serialized (iData 16→17, round-trip tested).
 
   # --- pre-test-bed ladruno features: classTag band remediation (follow-up to
   #     BezierTri6). Tags moved into the >=33000 band, per-family, + Ladruno

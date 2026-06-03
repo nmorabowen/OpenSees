@@ -71,8 +71,13 @@
 //   builds F = I + Σ uₐ⊗∂Nₐ/∂X from the reference Bernstein gradients and drives
 //   a FiniteStrainNDMaterial (e.g. nDMaterial LogStrain) via setTrialF(F),
 //   assembling ∫Bᵀσ dv (Cauchy σ) + the full a_ijkl = c_ijkl − σ_il δ_jk tangent.
-//   finite is STD only — bbar+finite (F-bar) is a step-2 follow-up and is
-//   rejected at parse time; pressure is also unsupported under finite in v1.
+//   -geom finite -bbar = F-bar (dSNPO §15.1): drives the material with
+//   F̄ = (Ĵ/J)^(1/3) F to cure near-incompressible volumetric locking; its
+//   tangent is GENERALLY UNSYMMETRIC (use FullGeneral). The bar dilatation Ĵ
+//   is selected by -fbar: centroid (default; Ĵ=J₀ at the tet centroid, the
+//   LadrunoBrick form) or mean_dilatation (Ĵ=J̄=(∫J dV₀)/V₀, which reduces to
+//   the element's mean-dilatation small-strain bbar). pressure is unsupported
+//   under finite in v1.
 //
 //   Mass: default is the all-positive lumped mass ρVe/10 (Kadapa Eq. 57) for
 //   explicit dynamics; pass -cMass for the consistent mass (implicit/eigen).
@@ -104,6 +109,13 @@ class SolidTransformation;   // Ladruno — geometry-method layer (linear/corot)
 class BezierTet10 : public Element
 {
   public:
+    // ─── F-bar variant ids (bbar + -geom finite) — public so the OPS factory
+    // can map the -fbar option. CENTROID = single centroid dilatation J₀ (dSNPO
+    // eq 15.5, the LadrunoBrick form). MEAN = volume-averaged J̄ = (∫J dV₀)/V₀
+    // (reduces to the element's mean-dilatation small-strain bbar).
+    static constexpr int FBAR_CENTROID = 0;
+    static constexpr int FBAR_MEAN     = 1;
+
     // ─── Constructors and Destructor ───────────────────────────
 
     // Full constructor
@@ -114,7 +126,8 @@ class BezierTet10 : public Element
                 double b1 = 0.0, double b2 = 0.0, double b3 = 0.0,
                 bool useBbar = false, bool cMass = false,
                 double pressure = 0.0,
-                int geomMethodID = 0);   // Ladruno — 0 = SolidTransformation::METHOD_LINEAR
+                int geomMethodID = 0,    // Ladruno — 0 = SolidTransformation::METHOD_LINEAR
+                int fbarMode = 0);       // Ladruno — F-bar variant: 0=centroid, 1=mean-dilatation
 
     // Null constructor (for parallel/database reconstruction)
     BezierTet10();
@@ -252,7 +265,28 @@ class BezierTet10 : public Element
     // getTangent is LOSSY in (k,l); see FiniteStrainNDMaterial.h). NO body force /
     // pressure / Q (applied in the global frame in getResistingForce). One helper
     // feeds both force and tangent so f/K share a single Gauss pass.
+    //
+    // bbar + finite = F-bar (dSNPO §15.1): updateFinite drives the material with
+    // F̄ = (J₀/J)^(1/3) F so every GP shares the centroid dilatation J₀ (the
+    // volumetric-locking cure); the residual is unchanged (eq 15.9 — only σ̄
+    // changes), and the tangent gains the eq 15.10 coupling ∫ Gᵀ q (G₀−G) dv with
+    // q_ij = (1/3) a_ijpp − (2/3) σ̄_ij (eq 15.11, GENERALLY UNSYMMETRIC).
     void formResidAndTangentFinite(int tangFlag, Vector &fInt, Matrix *K);
+
+    // Ladruno: F-bar centroid data (bbar + finite). Returns J₀ = det F₀, F₀ the
+    // deformation gradient at the tet centroid (barycentric L=(¼,¼,¼); dSNPO
+    // eq 15.5). If G0 != 0, also fills the centroid spatial-gradient operator
+    // G0[k][b] = ∂N_b/∂x_k|_centroid (from F₀⁻¹) for the eq 15.10 coupling.
+    // Returns 0.0 on a degenerate centroid Jacobian so the caller's J₀≤0 guard fires.
+    double centroidFbar(double (*G0)[NEN] = 0) const;
+
+    // Ladruno: F-bar MEAN-DILATATION data (the -fbar mean_dilatation variant).
+    // Returns J̄ = (∫ J dV₀)/V₀ (reference-volume average of det F over the GPs).
+    // If Gbar != 0, fills the volume-averaged spatial gradient operator
+    // Gbar[k][b] = (∫ ∂N_b/∂x_k dv)/v (current-volume average) for the eq 15.10
+    // coupling. Returns 0.0 on a degenerate/inverted GP so the J̄≤0 guard fires.
+    // This is the consistent analogue of centroidFbar with (J₀,G₀)→(J̄,Ḡ).
+    double fbarMeanDilatation(double (*Gbar)[NEN] = 0) const;
 
     // ─── Static Quadrature Data ───────────────────────────────
     // 4-point rule (degree 2) for stiffness / force / B-bar average.
@@ -287,6 +321,7 @@ class BezierTet10 : public Element
 
     bool useBbar;               // B-bar for near-incompressibility
     bool cMass;                 // true = consistent mass; false = lumped (ρVe/10)
+    int  fbarMode;              // Ladruno — F-bar variant (FBAR_CENTROID / FBAR_MEAN)
 
     Vector Q;                   // 30×1 applied load vector
 
