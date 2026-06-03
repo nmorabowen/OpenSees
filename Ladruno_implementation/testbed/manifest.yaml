@@ -551,6 +551,37 @@ features:
       no -fy; hybrid analytic tangent). Deferred: DM cyclic re-straightening branch (B4). Plan/ADR:
       Ladruno_implementation/14_ladruno_rebar_buckling_adr.md.
 
+  - feature: LadrunoBondSlip
+    classtag: 33002          # MAT_TAG (uniaxial) family; after LadrunoUniaxialJ2=33000, LadrunoRebarBuckling=33001; per-registry band
+    tag_symbol: MAT_TAG_LadrunoBondSlip
+    pr: 168
+    feature_class: material
+    required_tiers: [T0m, T1]
+    pytest: tests/test_ladrunoBondSlip_material.py   # backbone-vs-oracle (linear/power/plateau/softening/residual); D4.1 finite-k0 initial tangent; sign symmetry; D4.3 Gf-overrides-s3; elastic-k0 unload
+    tcl: WAIVED(uniaxialMaterial LadrunoBondSlip ...; shared OpenSeesUniaxialMaterialCommands registry serves Tcl + Python, plus classic-Tcl TclModelBuilderUniaxialMaterialCommand dispatch; verified via the Zone-A pytest battery)
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesUniaxialMaterialCommands.cpp
+      - SRC/material/uniaxial/TclModelBuilderUniaxialMaterialCommand.cpp
+      - SRC/material/uniaxial/CMakeLists.txt
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      1D bond-slip tau-s UniaxialMaterial (CEB-FIP Model Code 2010 backbone) for
+      the bar-axial slot of the embedded-rebar element (LadrunoEmbeddedRebar,
+      ADR 20 / D4). v1 = MONOTONIC backbone + elastic (k0) unload/reload,
+      sign-symmetric. Backbone with the D4 must-fix regularizations baked in:
+      D4.1 linear s<s0 initial segment (kills the power-law dtau/ds->inf at s->0;
+      s0 default 0.1*s1, k0 = tau_max*(s0/s1)^alpha/s0) -> ascending power law
+      tau_max*(s/s1)^alpha -> plateau tau_max -> softening to tau_f (NEGATIVE
+      tangent; D4.2 caller uses displacement/arc-length/IMPLEX control) ->
+      residual tau_f. D4.3 -Gf overrides s3 so the softening triangle dissipates
+      Gf per unit interface area (s3 = s2 + 2*Gf/(tau_max-tau_f)); the element
+      scales tau by perimeter*L_trib. getInitialTangent = k0 (finite). First v2
+      slice of the RC-3D plan; the embedded element (33005) consumes it. Plan/ADR:
+      Ladruno_implementation/20_ladruno_embedded_reinforcement_adr.md.
+
   # --- worked examples shipped with the scaffold (existing elements, no new C++) ---
 
   - feature: forceBeamColumn_cantilever     # T1 worked example (existing element)
