@@ -386,7 +386,7 @@ flowchart LR
 | **P2** ✅ | Geometric nonlinearity | A7, C4, C5, D4 | corot elastica/buckling vs analytical — **DONE** (PR #140; 8 tests: A7 elastica arc, C4 vs Mattiasson ≤2.3%, C5 Euler buckling Southwell, D4 corot↔finite) |
 | **P3** ✅ | Locking & incompressibility | B2, B4, E4 | F-bar cure demonstrated — **DONE** (PR #141; 4 tests: B4 Cook's membrane converges/std locks, E4 rubber block std/bbar ~9×; B2 already in P1) |
 | **P4** ✅ | Explicit dynamics | C2, energy balance | Taylor bar; `dt_cr` caveat documented — **DONE** (PR #143; 4 tests: C2 Taylor bar L_f/L₀=0.67 & mushroom 2.15× vs literature, energy balance, dt_cr reference-config caveat) |
-| **P5** | Cross-validation matrix | D1–D5, A6, C3, C6 | hex↔tet, Lad↔ASD↔vanilla agree |
+| **P5** ✅ | Cross-validation matrix | D1–D5, A6, C3, C6 | hex↔tet, Lad↔vanilla agree — **DONE** (PR #146; 6 tests: D5 LadrunoBrick≡stdBrick bit-identical, D3 LadrunoJ2≡vanilla J2 bit-identical, D1 std≡bbar off-locking, D2 hex↔tet bracket+converge; D4 in P2. ASDPlastic leg + A6/C3/C6 lit-benchmarks deferred) |
 | **P6** | Complex geometry | E1–E3 | apeGmsh capstones, mesh objectivity |
 
 > Recommended start: **P1** (it both closes the deep-review coverage gaps and lands
