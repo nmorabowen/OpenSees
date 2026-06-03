@@ -499,6 +499,43 @@ What landed, vs the plan above:
   uniaxial single cube is statically determinate so volumetric locking does NOT
   manifest there (use bending at high ν).
 
-**Still deferred (future PRs):** enhanced-`F` finite EAS (the §3 seam; Q1/E9
-compressive hourglassing); richer mode sets E12/E21/E30 (§7); the §4 oracle/Cook
-refinements and white-box responses.
+### PR-2 follow-up — EAS vs ssp/bbar/SSPbrick on Lemaitre ductile damage (2026-06-03)
+
+Compared `eas` against `ssp`, `bbar`, and upstream `SSPbrick` on the Lemaitre
+double-edge-notched (DEN) bar (`test_lemaitre_notched_bar.py` geometry; steel
+E=2e5, J2 + `-damage lemaitre` + `-autoRegularization`). Findings:
+
+- **`ssp` ≡ upstream `SSPbrick` under damage too.** Peak load 32055 N vs 32081 N
+  (0.08%), dissipated energy 44615 vs 44635 N·mm — our port reproduces SSPbrick on
+  a path-dependent + softening problem, not just elastically.
+- **`bbar` is the well-resolved reference:** 8 damage points capture the ligament
+  localization (damage 0.13–0.31 across the element); `ssp`'s **single centroid
+  damage point under-resolves it** (0.05–0.07) and over-stiffens (peak 32 kN vs
+  bbar's 24 kN). Both are mesh-objective (W within 2–5% coarse↔fine).
+- **`eas` STALLS on the notched bar** (reaches only u≈0.17/1.5 coarse, 0.09 fine —
+  just past yield) — **small-strain EAS hourglassing** triggered by the notch
+  stress concentration, the documented EAS instability (the small-strain cousin of
+  the §3 finite-strain compressive hourglassing). Confirmed structural, NOT a local
+  bug: on a **homogeneous single steel element** (uniaxial, same J2+damage) `eas`
+  reaches full load with damage 0.48 — identical to `ssp`/`bbar`
+  (`test_eas_drives_j2_lemaitre_damage`).
+
+- **Bug the comparison caught + fixed (this PR):** the inner-Newton convergence test
+  used an **absolute** tol `1e-10` on `‖∫Mᵀσ‖` — scale-dependent (units force×length²),
+  unreachable at steel scale ⇒ 300k+ spurious "did not converge" warnings. Replaced
+  with a **relative** criterion `‖∫Mᵀσ‖ ≤ tolRel·r0 + tolAbs` (tolRel 1e-8, r0 = the
+  first-iteration residual; condense against the converged `Kaa`). The PR-2 unit
+  tests only passed before because they used E≈1e3.
+
+**Guidance (recorded in the reference guide §7.3):** use `eas` for smooth /
+bending / near-incompressible **and homogeneous** elastoplastic-damage response,
+where its accuracy and 8-point damage resolution win; use **`ssp` or `bbar` for
+notched / localization-dominated softening**, where `eas` hourglasses. **An EAS
+hourglass-stabilization (e.g. Reese–Wriggers / Korelc) to make `eas` robust on
+localization problems is a follow-up** — same family as the deferred finite-strain
+stabilization.
+
+**Still deferred (future PRs):** **EAS hourglass stabilization for notched/softening
+robustness** (the comparison's headline gap); enhanced-`F` finite EAS (the §3 seam;
+Q1/E9 compressive hourglassing); richer mode sets E12/E21/E30 (§7); the §4
+oracle/Cook refinements and white-box responses.
