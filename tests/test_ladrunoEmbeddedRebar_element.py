@@ -19,7 +19,8 @@ from _testbed import ops
 pytestmark = [pytest.mark.zone_a]
 
 
-def _single_host_model(perfect_k=None, bond=False, kt=1.0e6, dirv=(1.0, 0.0, 0.0)):
+def _single_host_model(perfect_k=None, bond=False, kt=1.0e6, dirv=(1.0, 0.0, 0.0),
+                       enforce=None):
     """Rebar node 1 tied to a single host node 2 (N=[1.0]).  With one host node and
     N=1 the gap is simply g = u1 - u2, so the coupling is a 3D spring between them:
     axial (along dir) via perfect-k or the bond law, transverse via kt."""
@@ -37,6 +38,8 @@ def _single_host_model(perfect_k=None, bond=False, kt=1.0e6, dirv=(1.0, 0.0, 0.0
         args += ["-bond", 7, "-bondScale", 1.0]
     else:
         args += ["-perfect", perfect_k]
+    if enforce is not None:
+        args += ["-enforce", enforce]
     ops.element(*args)
 
 
@@ -392,3 +395,82 @@ def test_shapeB_matches_xiB():
     d = ops.eleResponse(1, "dir")
     assert d[0] == pytest.approx(math.cos(theta), abs=1e-4)
     assert d[1] == pytest.approx(math.sin(theta), abs=1e-4)
+
+
+# ---------------------- 8. -enforce flag + augmented Lagrangian (ADR 20 §10.1/§10.4) ----------
+def _al_transverse_gap(use_al, kt=1.0e4, P=10.0, holds=3):
+    """Single fixed host, FREE rebar, external transverse force P. Penalty leaves a
+    residual gap P/kt; AL's per-step Uzawa (one hold step suffices for this single-DOF
+    system) drives it to ~0 at the SAME moderate kt. Returns the transverse gap (= the
+    rebar y-disp, host fixed)."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    ops.node(1, 0.0, 0.0, 0.0)        # rebar (free)
+    ops.node(2, 0.0, 0.0, 0.0)        # host (fixed)
+    ops.fix(2, 1, 1, 1)
+    args = ["LadrunoEmbeddedRebar", 1, 1, 1, 2, "-shape", 1.0, "-dir", 1.0, 0.0, 0.0,
+            "-perfect", 1.0e4, "-kt", kt]
+    if use_al:
+        args += ["-enforce", "al"]
+    ops.element(*args)
+    ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
+    ops.load(1, 0.0, P, 0.0)          # transverse (y) force; dir = x
+    ops.constraints("Transformation"); ops.numberer("Plain"); ops.system("FullGeneral")
+    ops.test("NormDispIncr", 1e-12, 50); ops.algorithm("Newton")
+    ops.integrator("LoadControl", 1.0); ops.analysis("Static")
+    assert ops.analyze(1) == 0        # reach full load P
+    if use_al:
+        ops.integrator("LoadControl", 0.0)   # hold the load; iterate Uzawa
+        assert ops.analyze(holds) == 0
+    return ops.nodeDisp(1, 2)
+
+
+def test_al_drives_transverse_gap_to_zero():
+    """AL drives the perfect-bond gap to ~0 at MODERATE kt, where pure penalty leaves
+    the full P/kt residual."""
+    kt, P = 1.0e4, 10.0
+    g_pen = _al_transverse_gap(False, kt, P)
+    assert g_pen == pytest.approx(P / kt, rel=1e-6)     # penalty residual = P/kt
+    g_al = _al_transverse_gap(True, kt, P)
+    assert abs(g_al) < 1e-8                              # Uzawa drove it to ~0
+
+
+def test_al_multiplier_carries_the_load():
+    """After AL converges (gap ~0) the multiplier lambda carries the applied load:
+    the y-component of augLambda equals P."""
+    kt, P = 1.0e4, 10.0
+    _al_transverse_gap(True, kt, P)
+    lam = ops.eleResponse(1, "augLambda")
+    assert lam[1] == pytest.approx(P, rel=1e-6)
+    assert lam[0] == pytest.approx(0.0, abs=1e-6)        # no axial load
+
+
+def test_al_preserves_bond_slip_axial():
+    """AL augments only the (perfect-bond) constraint; with a bond law the axial τ–s
+    force is physical and untouched — same axial force as without AL."""
+    _single_host_model(bond=True, enforce="al")
+    s = 0.5e-3                                           # ascending power-law branch
+    R = _push_rebar(s, 0.0, 0.0)
+    tau = 10.0 * (s / 1.0e-3) ** 0.4
+    assert abs(R[0]) == pytest.approx(tau, rel=1e-4)
+
+
+def test_enforce_penalty_matches_default():
+    """Explicit `-enforce penalty` is bit-identical to the default (no flag)."""
+    _single_host_model(perfect_k=1.0e5)
+    R0 = _push_rebar(2.0e-3, 0.0, 0.0)[0]
+    _single_host_model(perfect_k=1.0e5, enforce="penalty")
+    R1 = _push_rebar(2.0e-3, 0.0, 0.0)[0]
+    assert R1 == pytest.approx(R0, rel=1e-12)
+
+
+@pytest.mark.parametrize("mode", ["nitsche", "transformation"])
+def test_enforce_rejects_unbuilt_modes(mode):
+    """nitsche (research-grade, not built) and transformation (deferred indefinitely)
+    are rejected at parse time."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    ops.node(1, 0.0, 0.0, 0.0); ops.node(2, 0.0, 0.0, 0.0); ops.fix(2, 1, 1, 1)
+    with pytest.raises(Exception):
+        ops.element("LadrunoEmbeddedRebar", 1, 1, 1, 2, "-shape", 1.0,
+                    "-dir", 1.0, 0.0, 0.0, "-perfect", 1.0e5, "-enforce", mode)
