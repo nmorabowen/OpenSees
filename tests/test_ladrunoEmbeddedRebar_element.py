@@ -10,6 +10,8 @@ we play the role of the "host" with explicit nodes whose displacements we prescr
 (fix them), so the gap g = u_rebar - sum N_i u_host is fully controlled and the
 element's force/stiffness can be checked against hand calculation.
 """
+import math
+
 import pytest
 
 from _testbed import ops
@@ -269,3 +271,124 @@ def test_perfect_bond_has_no_bond_energy():
     _single_host_model(perfect_k=k)
     _push_rebar(1.0e-3, 0.0, 0.0)
     assert ops.eleResponse(1, "bondEnergy")[0] == pytest.approx(0.0, abs=1e-12)
+
+
+# ---------------------- 7. co-rotated bar axis (ADR 20 §10.5) ----------------------
+# Under a rigid host rotation Q, the co-rotated axis must rotate to Q·dir0 (objective);
+# the frozen axis must stay put. The embed point (xi=0) and point B (xi=(.5,0,0)) lie
+# along +x, so dir0=(1,0,0); a rigid z-rotation by theta sends it to (cosθ, sinθ, 0).
+def _cube_rigid_rotation_dir(theta, corot):
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    c, s = math.cos(theta), math.sin(theta)
+    for tag, (x, y, z) in _CUBE.items():
+        ops.node(tag, x, y, z)
+    ops.node(1, 0.5, 0.5, 0.5)            # rebar at the cube centre (free)
+    ops.nDMaterial("ElasticIsotropic", 1, 1000.0, 0.3)
+    ops.element("LadrunoBrick", 100, 11, 12, 13, 14, 15, 16, 17, 18, 1)
+    args = ["LadrunoEmbeddedRebar", 1, 1, "-host", 100, "-xi", 0.0, 0.0, 0.0,
+            "-dir", 1.0, 0.0, 0.0, "-perfect", 1.0e5, "-kt", 1.0e5]
+    if corot:
+        args += ["-corot", "-xiB", 0.5, 0.0, 0.0]
+    ops.element(*args)
+    # prescribe a rigid z-rotation on every host node: u_i = Q X_i - X_i
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    for tag, (x, y, z) in _CUBE.items():
+        ops.sp(tag, 1, (c * x - s * y) - x)
+        ops.sp(tag, 2, (s * x + c * y) - y)
+        ops.sp(tag, 3, 0.0)
+    ops.constraints("Transformation"); ops.numberer("Plain"); ops.system("FullGeneral")
+    ops.test("NormDispIncr", 1e-10, 50); ops.algorithm("Newton")
+    ops.integrator("LoadControl", 1.0); ops.analysis("Static")
+    assert ops.analyze(1) == 0
+    return ops.eleResponse(1, "dir")
+
+
+def test_corot_axis_rotates_with_host():
+    """`-corot`: the reported bar axis follows the rigid host rotation (objective)."""
+    theta = 0.3
+    d = _cube_rigid_rotation_dir(theta, corot=True)
+    assert d[0] == pytest.approx(math.cos(theta), abs=1e-4)
+    assert d[1] == pytest.approx(math.sin(theta), abs=1e-4)
+    assert d[2] == pytest.approx(0.0, abs=1e-6)
+
+
+def test_frozen_axis_does_not_rotate():
+    """Without `-corot` the axis stays at the reference (1,0,0) — the documented
+    small-rotation limitation the corot path lifts."""
+    d = _cube_rigid_rotation_dir(0.3, corot=False)
+    assert d[0] == pytest.approx(1.0, abs=1e-9)
+    assert d[1] == pytest.approx(0.0, abs=1e-9)
+    assert d[2] == pytest.approx(0.0, abs=1e-9)
+
+
+def _corot_axial_force(theta, corot, delta=1.0e-4, k=1.0e5):
+    """Host rigidly rotated by theta; the rebar node is prescribed to follow the
+    rotated embed point PLUS an axial slip `delta` along the rotated axis (dof3 free).
+    Returns the element axialForce. With corot the slip is measured along the rotated
+    axis (-> k*delta); the frozen axis would mis-measure it as k*delta*cosθ."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    c, s = math.cos(theta), math.sin(theta)
+    for tag, (x, y, z) in _CUBE.items():
+        ops.node(tag, x, y, z)
+    ops.node(1, 0.5, 0.5, 0.5)
+    ops.nDMaterial("ElasticIsotropic", 1, 1000.0, 0.3)
+    ops.element("LadrunoBrick", 100, 11, 12, 13, 14, 15, 16, 17, 18, 1)
+    args = ["LadrunoEmbeddedRebar", 1, 1, "-host", 100, "-xi", 0.0, 0.0, 0.0,
+            "-dir", 1.0, 0.0, 0.0, "-perfect", k, "-kt", k]
+    if corot:
+        args += ["-corot", "-xiB", 0.5, 0.0, 0.0]
+    ops.element(*args)
+    ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
+    for tag, (x, y, z) in _CUBE.items():
+        ops.sp(tag, 1, (c * x - s * y) - x); ops.sp(tag, 2, (s * x + c * y) - y); ops.sp(tag, 3, 0.0)
+    # rebar = rotated embed point (0.5,0.5,0.5) + delta along the rotated axis (c,s,0)
+    ex = (c * 0.5 - s * 0.5) - 0.5
+    ey = (s * 0.5 + c * 0.5) - 0.5
+    ops.sp(1, 1, ex + delta * c); ops.sp(1, 2, ey + delta * s)   # dof 3 free
+    ops.constraints("Transformation"); ops.numberer("Plain"); ops.system("FullGeneral")
+    ops.test("NormDispIncr", 1e-10, 50); ops.algorithm("Newton")
+    ops.integrator("LoadControl", 1.0); ops.analysis("Static")
+    assert ops.analyze(1) == 0
+    return ops.eleResponse(1, "axialForce")[0]
+
+
+def test_corot_force_path_uses_rotated_axis():
+    """The FORCE path (not just the reported axis) honors the co-rotated axis: an
+    imposed axial slip delta along the rotated bar axis gives axialForce = k*delta.
+    The frozen axis mis-projects it to k*delta*cosθ — so this catches a regression
+    that used `dir` instead of `dirCur` in getResistingForce/formBandTraction."""
+    theta, delta, k = 0.4, 1.0e-4, 1.0e5
+    assert _corot_axial_force(theta, True, delta, k) == pytest.approx(k * delta, rel=1e-4)
+    assert _corot_axial_force(theta, False, delta, k) == pytest.approx(
+        k * delta * math.cos(theta), rel=1e-4)
+
+
+def test_shapeB_matches_xiB():
+    """The explicit -shapeB path yields the same co-rotated axis as -xiB (which queries
+    the host). B-weights are the cube's trilinear N at xi=(0.5,0,0): N_I=0.125(1+0.5·sx_I)."""
+    NB = [0.125 * (1 + 0.5 * cx) for (cx, cy, cz) in _CUBE_NAT]
+    theta = 0.3
+    c, s = math.cos(theta), math.sin(theta)
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for tag, (x, y, z) in _CUBE.items():
+        ops.node(tag, x, y, z)
+    ops.node(1, 0.5, 0.5, 0.5)
+    ops.nDMaterial("ElasticIsotropic", 1, 1000.0, 0.3)
+    ops.element("LadrunoBrick", 100, 11, 12, 13, 14, 15, 16, 17, 18, 1)
+    ops.element("LadrunoEmbeddedRebar", 1, 1, "-host", 100, "-shape", *([0.125] * 8),
+                "-dir", 1.0, 0.0, 0.0, "-perfect", 1.0e5, "-kt", 1.0e5,
+                "-corot", "-shapeB", *NB)
+    ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
+    for tag, (x, y, z) in _CUBE.items():
+        ops.sp(tag, 1, (c * x - s * y) - x); ops.sp(tag, 2, (s * x + c * y) - y); ops.sp(tag, 3, 0.0)
+    ops.constraints("Transformation"); ops.numberer("Plain"); ops.system("FullGeneral")
+    ops.test("NormDispIncr", 1e-10, 50); ops.algorithm("Newton")
+    ops.integrator("LoadControl", 1.0); ops.analysis("Static")
+    assert ops.analyze(1) == 0
+    d = ops.eleResponse(1, "dir")
+    assert d[0] == pytest.approx(math.cos(theta), abs=1e-4)
+    assert d[1] == pytest.approx(math.sin(theta), abs=1e-4)

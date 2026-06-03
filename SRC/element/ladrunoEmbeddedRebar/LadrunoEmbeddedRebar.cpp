@@ -48,10 +48,12 @@
 LadrunoEmbeddedRebar::LadrunoEmbeddedRebar(int tag, int ndm_, int rebarNode,
         const ID& hostNodes, const Vector& shape, const Vector& dir_,
         double kt_, double bondScale_, UniaxialMaterial* bm, double kAxialPerfect_,
-        int hostEleTag_, bool ktAuto_, double ktAlpha_)
+        int hostEleTag_, bool ktAuto_, double ktAlpha_, bool corot_,
+        const Vector* shapeB)
   : Element(tag, ELE_TAG_LadrunoEmbeddedRebar),
     ndm(ndm_), nHost(hostNodes.Size()), nDOF((1 + hostNodes.Size()) * ndm_),
     connectedNodes(1 + hostNodes.Size()), Nshape(shape), dir(ndm_),
+    corot(corot_), NshapeB(), dirCur(ndm_),
     kt(kt_), bondScale(bondScale_), kAxialPerfect(kAxialPerfect_),
     bondMat(0),
     hostEleTag(hostEleTag_), ktAuto(ktAuto_), ktAlpha(ktAlpha_), ktResolved(false),
@@ -66,6 +68,12 @@ LadrunoEmbeddedRebar::LadrunoEmbeddedRebar(int tag, int ndm_, int rebarNode,
   for (int k = 0; k < ndm; k++) nrm += dir_(k) * dir_(k);
   nrm = (nrm > 0.0) ? sqrt(nrm) : 1.0;
   for (int k = 0; k < ndm; k++) dir(k) = dir_(k) / nrm;
+  dirCur = dir;                       // reference until the first co-rotation
+
+  if (corot && shapeB != 0)
+    NshapeB = *shapeB;                // weights at point B along the bar
+  else
+    corot = false;                    // no B point => cannot co-rotate
 
   if (bm != 0)
     bondMat = bm->getCopy();
@@ -80,6 +88,7 @@ LadrunoEmbeddedRebar::LadrunoEmbeddedRebar(int tag, int ndm_, int rebarNode,
 LadrunoEmbeddedRebar::LadrunoEmbeddedRebar()
   : Element(0, ELE_TAG_LadrunoEmbeddedRebar),
     ndm(0), nHost(0), nDOF(0), connectedNodes(0), Nshape(), dir(),
+    corot(false), NshapeB(), dirCur(),
     kt(0.0), bondScale(1.0), kAxialPerfect(0.0),
     bondMat(0),
     hostEleTag(-1), ktAuto(false), ktAlpha(0.0), ktResolved(false),
@@ -188,10 +197,38 @@ int LadrunoEmbeddedRebar::revertToStart(void)
   return (bondMat != 0) ? bondMat->revertToStart() : 0;
 }
 
+// ADR 20 §10.5 — the working bar axis: the frozen reference `dir`, or (with
+// -corot) the CURRENT secant between the embed point and point B from current
+// host node positions, so the axial/transverse split co-rotates with the host.
+void LadrunoEmbeddedRebar::currentBarAxis(Vector& d)
+{
+  d.resize(ndm);
+  if (!corot || theNodes[0] == 0) { d = dir; return; }
+  Vector xA(ndm), xB(ndm); xA.Zero(); xB.Zero();
+  for (int i = 0; i < nHost; i++) {
+    Node* nd = theNodes[1 + i];
+    if (nd == 0) { d = dir; return; }
+    const Vector& X = nd->getCrds();
+    const Vector& u = nd->getTrialDisp();
+    for (int k = 0; k < ndm; k++) {
+      double xk = X(k) + u(k);
+      xA(k) += Nshape(i)  * xk;
+      xB(k) += NshapeB(i) * xk;
+    }
+  }
+  double nrm = 0.0;
+  for (int k = 0; k < ndm; k++) { double dk = xB(k) - xA(k); d(k) = dk; nrm += dk * dk; }
+  // threshold at unit-vector scale (|secant| > 1e-10), not the subnormal 1e-300:
+  // a near-coincident A/B would otherwise normalize numerical noise.
+  if (nrm > 1.0e-20) { nrm = sqrt(nrm); for (int k = 0; k < ndm; k++) d(k) /= nrm; }
+  else d = dir;                       // degenerate secant -> fall back to reference
+}
+
 // gap g, axial slip s, transverse gt, and the axial force/tangent
 void LadrunoEmbeddedRebar::formBandTraction(Vector& g, double& s, Vector& gt,
                                             double& Faxial, double& kAxial)
 {
+  this->currentBarAxis(dirCur);       // working axis (dir if not corot)
   g.resize(ndm); g.Zero();
   const Vector& uR = theNodes[0]->getTrialDisp();
   for (int k = 0; k < ndm; k++) g(k) = uR(k);
@@ -200,9 +237,9 @@ void LadrunoEmbeddedRebar::formBandTraction(Vector& g, double& s, Vector& gt,
     for (int k = 0; k < ndm; k++) g(k) -= Nshape(i) * uH(k);
   }
   s = 0.0;
-  for (int k = 0; k < ndm; k++) s += g(k) * dir(k);
+  for (int k = 0; k < ndm; k++) s += g(k) * dirCur(k);
   gt.resize(ndm);
-  for (int k = 0; k < ndm; k++) gt(k) = g(k) - s * dir(k);
+  for (int k = 0; k < ndm; k++) gt(k) = g(k) - s * dirCur(k);
 
   if (bondMat != 0) {
     bondMat->setTrialStrain(s);
@@ -234,9 +271,9 @@ const Vector& LadrunoEmbeddedRebar::getResistingForce(void)
   double s, Faxial, kAxial;
   this->formBandTraction(g, s, gt, Faxial, kAxial);
 
-  // traction t = Faxial*dir + kt*gt
+  // traction t = Faxial*dirCur + kt*gt  (dirCur set by formBandTraction above)
   Vector t(ndm);
-  for (int k = 0; k < ndm; k++) t(k) = Faxial * dir(k) + kt * gt(k);
+  for (int k = 0; k < ndm; k++) t(k) = Faxial * dirCur(k) + kt * gt(k);
 
   // block 0 (rebar): +t ; block (1+i): -N_i t
   for (int k = 0; k < ndm; k++) (*P)(k) = t(k);
@@ -260,11 +297,13 @@ const Matrix& LadrunoEmbeddedRebar::getTangentStiff(void)
   double s, Faxial, kAxial;
   this->formBandTraction(g, s, gt, Faxial, kAxial);
 
-  // D = kAxial dir(x)dir + kt (I - dir(x)dir)
+  // D = kAxial dirCur(x)dirCur + kt (I - dirCur(x)dirCur)  (dirCur from
+  // formBandTraction; co-rotated under -corot, the frozen dir otherwise).
+  // v1 omits the ∂dirCur/∂u geometric term (EICR: exact for explicit).
   Matrix D(ndm, ndm);
   for (int a = 0; a < ndm; a++)
     for (int b = 0; b < ndm; b++) {
-      double dd = dir(a) * dir(b);
+      double dd = dirCur(a) * dirCur(b);
       D(a, b) = kAxial * dd + kt * ((a == b ? 1.0 : 0.0) - dd);
     }
 
@@ -323,8 +362,8 @@ int LadrunoEmbeddedRebar::sendSelf(int commitTag, Channel& theChannel)
 {
   int dbTag = this->getDbTag();
   // header: tag, ndm, nHost, kt, bondScale, kAxialPerfect, hasBond, bondClassTag,
-  //         bondDbTag, hostEleTag, ktAuto, ktAlpha
-  static Vector hdr(12);
+  //         bondDbTag, hostEleTag, ktAuto, ktAlpha, corot
+  static Vector hdr(13);
   hdr(0) = this->getTag();
   hdr(1) = ndm;
   hdr(2) = nHost;
@@ -346,18 +385,22 @@ int LadrunoEmbeddedRebar::sendSelf(int commitTag, Channel& theChannel)
   hdr(9) = hostEleTag;
   hdr(10) = ktAuto ? 1.0 : 0.0;
   hdr(11) = ktAlpha;
+  hdr(12) = corot ? 1.0 : 0.0;
   if (theChannel.sendVector(dbTag, commitTag, hdr) < 0) {
     opserr << "LadrunoEmbeddedRebar::sendSelf - header failed\n";
     return -1;
   }
-  // payload: connectedNodes (1+nHost ints) via an ID, then Nshape + dir via a Vector
+  // payload: connectedNodes (1+nHost ints) via an ID, then Nshape + dir + NshapeB
+  // (the corot point-B weights; zeros when !corot) via a Vector.
   if (theChannel.sendID(dbTag, commitTag, connectedNodes) < 0) {
     opserr << "LadrunoEmbeddedRebar::sendSelf - ID failed\n";
     return -1;
   }
-  Vector payload(nHost + ndm);
+  Vector payload(2 * nHost + ndm);
   for (int i = 0; i < nHost; i++) payload(i) = Nshape(i);
   for (int k = 0; k < ndm; k++) payload(nHost + k) = dir(k);
+  for (int i = 0; i < nHost; i++)
+    payload(nHost + ndm + i) = (corot && NshapeB.Size() == nHost) ? NshapeB(i) : 0.0;
   if (theChannel.sendVector(dbTag, commitTag, payload) < 0) {
     opserr << "LadrunoEmbeddedRebar::sendSelf - payload failed\n";
     return -1;
@@ -373,7 +416,7 @@ int LadrunoEmbeddedRebar::recvSelf(int commitTag, Channel& theChannel,
                                    FEM_ObjectBroker& theBroker)
 {
   int dbTag = this->getDbTag();
-  static Vector hdr(12);
+  static Vector hdr(13);
   if (theChannel.recvVector(dbTag, commitTag, hdr) < 0) {
     opserr << "LadrunoEmbeddedRebar::recvSelf - header failed\n";
     return -1;
@@ -390,6 +433,7 @@ int LadrunoEmbeddedRebar::recvSelf(int commitTag, Channel& theChannel,
   hostEleTag = (int)hdr(9);
   ktAuto = (hdr(10) != 0.0);
   ktAlpha = hdr(11);
+  corot = (hdr(12) != 0.0);
   ktResolved = false;   // re-resolve against the host on first assembly
 
   nDOF = (1 + nHost) * ndm;
@@ -398,7 +442,7 @@ int LadrunoEmbeddedRebar::recvSelf(int commitTag, Channel& theChannel,
     opserr << "LadrunoEmbeddedRebar::recvSelf - ID failed\n";
     return -1;
   }
-  Vector payload(nHost + ndm);
+  Vector payload(2 * nHost + ndm);
   if (theChannel.recvVector(dbTag, commitTag, payload) < 0) {
     opserr << "LadrunoEmbeddedRebar::recvSelf - payload failed\n";
     return -1;
@@ -407,6 +451,13 @@ int LadrunoEmbeddedRebar::recvSelf(int commitTag, Channel& theChannel,
   for (int i = 0; i < nHost; i++) Nshape(i) = payload(i);
   dir.resize(ndm);
   for (int k = 0; k < ndm; k++) dir(k) = payload(nHost + k);
+  dirCur = dir;
+  if (corot) {
+    NshapeB.resize(nHost);
+    for (int i = 0; i < nHost; i++) NshapeB(i) = payload(nHost + ndm + i);
+  } else {
+    NshapeB = Vector();
+  }
 
   if (bondEnergyResp != 0) { delete bondEnergyResp; bondEnergyResp = 0; }
   if (bondMat != 0) { delete bondMat; bondMat = 0; }
@@ -478,6 +529,10 @@ Response* LadrunoEmbeddedRebar::setResponse(const char** argv, int argc, OPS_Str
     }
     return new ElementResponse(this, 8, 0.0);
   }
+  // current working bar axis (the co-rotated dirCur under -corot; the frozen
+  // reference dir otherwise) — ADR 20 §10.5.
+  if (strcmp(argv[0], "dir") == 0 || strcmp(argv[0], "barAxis") == 0)
+    return new ElementResponse(this, 9, Vector(ndm));
   return 0;
 }
 
@@ -494,7 +549,7 @@ int LadrunoEmbeddedRebar::getResponse(int responseID, Information& eleInfo)
   case 3: return eleInfo.setDouble(Faxial);
   case 4: {
     Vector t(ndm);
-    for (int k = 0; k < ndm; k++) t(k) = Faxial * dir(k) + kt * gt(k);
+    for (int k = 0; k < ndm; k++) t(k) = Faxial * dirCur(k) + kt * gt(k);
     return eleInfo.setVector(t);
   }
   case 5: {
@@ -521,6 +576,7 @@ int LadrunoEmbeddedRebar::getResponse(int responseID, Information& eleInfo)
     }
     return eleInfo.setDouble(bondScale * w);
   }
+  case 9: return eleInfo.setVector(dirCur);  // dirCur refreshed by formBandTraction above
   default: return -1;
   }
 }

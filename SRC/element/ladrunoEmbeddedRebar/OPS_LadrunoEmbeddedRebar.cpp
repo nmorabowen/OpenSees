@@ -41,6 +41,12 @@
 //           {-shape N1..NN | -xi x1..x_ndm}  -dir dx dy [dz]
 //           ( -bond matTag [-bondScale bs] | -perfect kAxial )
 //           [-kt {kt | auto}] [-ktAlpha a]
+//           [-corot {-xiB b1..b_ndm | -shapeB N1..NN}]
+//
+//   -corot (ADR 20 §10.5): co-rotate the bar axis each step from current host
+//   geometry (secant embed-point -> point B), so the axial/transverse split stays
+//   frame-objective under large host rotation. Needs a point B along the bar via
+//   -xiB (host query) or -shapeB (explicit weights). Default OFF (frozen -dir).
 //
 //   -kt auto (ADR 20 §10.2a): resolve the transverse penalty from the host
 //   element's own initial stiffness, kt = ktAlpha * max|K_host(i,i)| (default
@@ -147,6 +153,9 @@ void* OPS_LadrunoEmbeddedRebar(void)
   double kt = 1.0e12;              // default transverse penalty (numeric form)
   bool ktAuto = false;            // -kt auto: resolve kt from host stiffness
   double ktAlpha = 1.0e3;         // -ktAlpha: multiplier for the auto kt
+  bool corot = false;             // -corot: co-rotate the bar axis (ADR §10.5)
+  Vector NshapeB(nHost);          // weights at point B along the bar (corot)
+  bool haveB = false;
   double bondScale = 1.0;
   double kAxialPerfect = 0.0;
   int bondTag = -1;
@@ -189,6 +198,44 @@ void* OPS_LadrunoEmbeddedRebar(void)
         return 0;
       }
       haveShape = true;
+    }
+    else if (strcmp(opt, "-corot") == 0) {
+      corot = true;                 // co-rotate the bar axis each step (ADR §10.5)
+    }
+    else if (strcmp(opt, "-shapeB") == 0) {
+      // explicit weights at point B along the bar (the corot secant endpoint).
+      n = nHost;
+      if (OPS_GetDoubleInput(&n, &NshapeB(0)) < 0) {
+        opserr << "WARNING LadrunoEmbeddedRebar: -shapeB wants " << nHost << " values\n";
+        return 0;
+      }
+      haveB = true;
+    }
+    else if (strcmp(opt, "-xiB") == 0) {
+      // query the host for the point-B weights (corot secant). Requires -host.
+      if (hostEle == 0) {
+        opserr << "WARNING LadrunoEmbeddedRebar: -xiB requires the -host form; "
+               << "use -shapeB instead\n";
+        return 0;
+      }
+      Vector xiB(ndm);
+      n = ndm;
+      if (OPS_GetDoubleInput(&n, &xiB(0)) < 0) {
+        opserr << "WARNING LadrunoEmbeddedRebar: -xiB wants " << ndm
+               << " natural coords\n";
+        return 0;
+      }
+      if (hostEle->getInterpolationWeights(xiB, NshapeB) < 0) {
+        opserr << "WARNING LadrunoEmbeddedRebar: host element " << hostEle->getTag()
+               << " does not implement getInterpolationWeights; supply -shapeB\n";
+        return 0;
+      }
+      if (NshapeB.Size() != nHost) {
+        opserr << "WARNING LadrunoEmbeddedRebar: host returned " << NshapeB.Size()
+               << " B-weights but has " << nHost << " nodes\n";
+        return 0;
+      }
+      haveB = true;
     }
     else if (strcmp(opt, "-dir") == 0) {
       n = ndm;
@@ -268,6 +315,11 @@ void* OPS_LadrunoEmbeddedRebar(void)
            << "(no host element to read the stiffness scale from)\n";
     return 0;
   }
+  if (corot && !haveB) {
+    opserr << "WARNING LadrunoEmbeddedRebar: -corot requires a point-B along the "
+           << "bar (-xiB x1..x_ndm with -host, or -shapeB N1..NN)\n";
+    return 0;
+  }
 
   UniaxialMaterial* bondMat = 0;
   if (bondTag >= 0) {
@@ -281,7 +333,8 @@ void* OPS_LadrunoEmbeddedRebar(void)
 
   Element* e = new LadrunoEmbeddedRebar(tag, ndm, rebarNode, hostNodes, Nshape,
                                         dir, kt, bondScale, bondMat, kAxialPerfect,
-                                        hostEleTag, ktAuto, ktAlpha);
+                                        hostEleTag, ktAuto, ktAlpha,
+                                        corot, corot ? &NshapeB : 0);
   if (e == 0) {
     opserr << "WARNING LadrunoEmbeddedRebar: could not create element\n";
     return 0;

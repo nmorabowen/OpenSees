@@ -83,7 +83,8 @@ class LadrunoEmbeddedRebar : public Element
                        double kt, double bondScale,
                        UniaxialMaterial* bondMat, double kAxialPerfect,
                        int hostEleTag = -1, bool ktAuto = false,
-                       double ktAlpha = 0.0);
+                       double ktAlpha = 0.0, bool corot = false,
+                       const Vector* shapeB = 0);
   LadrunoEmbeddedRebar();
   ~LadrunoEmbeddedRebar();
 
@@ -124,7 +125,21 @@ class LadrunoEmbeddedRebar : public Element
   int nDOF;                 // (1 + M) * ndm
   ID connectedNodes;        // [rebar, host_1..host_M]
   Vector Nshape;            // host shape-function weights N_i (size M)
-  Vector dir;               // unit bar-axis direction (size ndm)
+  Vector dir;               // REFERENCE unit bar-axis direction (size ndm, frozen)
+
+  // ADR 20 §10.5 — co-rotated bar axis. With `-corot`, the axial/transverse split
+  // is taken against the CURRENT bar direction instead of the frozen reference
+  // `dir`, so the coupling traction stays frame-objective under large host
+  // rotation (the only true large-rotation defect — the gap g and the weights
+  // N_i(ξ) are already objective). Direction = secant between the embed point
+  // (weights Nshape) and a second point B along the bar (weights NshapeB), using
+  // CURRENT host node positions: dirCur = normalize(Σ NshapeB_i x_i − Σ Nshape_i x_i).
+  // v1 drops the ∂dir/∂u consistent-tangent term (EICR practice: exact for
+  // explicit, converges for moderate per-step rotation under step-halving).
+  bool corot;               // -corot: recompute the bar axis each step
+  Vector NshapeB;           // weights at point B along the bar (size M; corot only)
+  Vector dirCur;            // last co-rotated unit bar axis (reported by "dir")
+  void currentBarAxis(Vector& d);  // fill d with the working bar axis (dir or secant)
   double kt;                // transverse penalty stiffness (resolved value)
   double bondScale;         // perimeter * L_trib (tau -> axial force)
   double kAxialPerfect;     // perfect-bond axial penalty (used when bondMat==0)
