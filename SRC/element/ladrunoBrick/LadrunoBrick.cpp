@@ -2576,8 +2576,15 @@ LadrunoBrick::computeMenh(const double gp[3], double jdet, Matrix &M)
 void
 LadrunoBrick::formEAStrue(int tang_flag, bool useInitialTangent)
 {
-  static const int    maxIters = 10;
-  static const double tol      = 1.0e-10;   // ||int M^T sigma|| inner-Newton tol
+  static const int    maxIters = 12;
+  // RELATIVE inner-Newton tolerance: converge when ||int M^T sigma|| drops to
+  // tolRel of its first-iteration value (+ a tiny absolute floor for the case where
+  // alpha already satisfies it, e.g. a uniform-strain state where the first residual
+  // is ~0). An ABSOLUTE tol fails here — ||int M^T sigma|| has units of force×length²,
+  // so its converged (machine-relative) magnitude scales with E and the mesh size; a
+  // fixed 1e-10 is unreachable for steel-scale problems (spurious non-convergence).  // Ladruno
+  static const double tolRel = 1.0e-8;
+  static const double tolAbs = 1.0e-12;
 
   if (easJ0det == 0.0) buildEAStrue();       // safety (normally cached in setDomain)
 
@@ -2649,7 +2656,8 @@ LadrunoBrick::formEAStrue(int tang_flag, bool useInitialTangent)
 
   // -------- inner Newton: solve alpha s.t. int M^T sigma = 0 (d fixed) --------
   int count = 0;
-  do {
+  double r0 = -1.0;          // first-iteration ||residE|| (sets the relative scale)
+  while (true) {
     residE.Zero();
     Kaa.Zero();
     for (int g = 0; g < 8; g++) {
@@ -2671,17 +2679,23 @@ LadrunoBrick::formEAStrue(int tang_flag, bool useInitialTangent)
       DM.addMatrixProduct(0.0, dd, M, 1.0);
       Kaa.addMatrixTransposeProduct(1.0, M, DM, 1.0);          // Kaa += M^T dd M
     }
+    double r = residE.Norm();
+    if (count == 0) r0 = r;                          // scale from the first residual
+    // converged (after >=1 update): relative to r0, with a tiny absolute floor for
+    // the alpha-already-satisfies (uniform-strain) case where r0 itself is ~0.
+    if (count >= 1 && r <= tolRel * r0 + tolAbs)
+      break;
+    if (count >= maxIters) {
+      opserr << "LadrunoBrick::formEAStrue - element " << this->getTag()
+             << ": enhanced-strain Newton did not converge in " << maxIters
+             << " iters (||r||=" << r << ", r0=" << r0 << ")\n";
+      break;
+    }
     dalpha.Zero();
     Kaa.Solve(residE, dalpha);     // dalpha = -Kaa^-1 h  (residE = -h)
     alpha += dalpha;
     count++;
-    if (count > maxIters) {
-      opserr << "LadrunoBrick::formEAStrue - element " << this->getTag()
-             << ": enhanced-strain Newton did not converge in " << maxIters
-             << " iters (||r||=" << residE.Norm() << ")\n";
-      break;
-    }
-  } while (residE.Norm() > tol || count < 2);   // >=2 iters so the final state is sound
+  }
 
   // -------- final assembly at converged alpha (Kaa preserved from the loop) ------
   static Vector bodyForce(24);

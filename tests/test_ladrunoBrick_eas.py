@@ -307,3 +307,58 @@ def test_eas_alpha_commit_revert_reproducible():
         )
     # and the push genuinely activated the enhanced/plastic response (non-vacuous)
     assert abs(a_end[0]) > 1e-4, "the J2 push should produce a non-trivial displacement"
+
+
+# ===========================================================================
+# 7. EAS drives a path-dependent + SOFTENING material (J2 + Lemaitre damage)
+# ===========================================================================
+def _push_damage(form, umax=0.30, nsteps=120):
+    """Single steel hex pulled in uniaxial tension into J2 + Lemaitre ductile damage
+    via displacement control (so it traverses post-peak softening). Returns
+    (u_reached/umax, max damage)."""
+    E, nu = 200000.0, 0.3
+    K = E / (3.0 * (1.0 - 2.0 * nu)); G = E / (2.0 * (1.0 + nu))
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for t, c in _CUBE.items():
+        ops.node(t, *[float(x) for x in c])
+    ops.nDMaterial("LadrunoJ2", 1, K, G, "-iso", "voce", 400.0, 80.0, 40.0, 50.0,
+                   "-damage", "lemaitre", 0.35, 1.0, 0.01, 0.92)
+    ops.fix(1, 1, 1, 1); ops.fix(2, 0, 1, 1); ops.fix(3, 0, 0, 1); ops.fix(4, 1, 0, 1)
+    ops.fix(5, 1, 1, 0); ops.fix(6, 0, 1, 0); ops.fix(8, 1, 0, 0)
+    ops.element("LadrunoBrick", 1, *_CONN, 1, "-formulation", form)
+    ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
+    for n in (2, 3, 6, 7):
+        ops.sp(n, 1, umax)            # imposed x-disp on the +x face (ramped by the series)
+    ops.constraints("Transformation"); ops.numberer("Plain"); ops.system("UmfPack")
+    ops.test("NormDispIncr", 1e-8, 50, 0); ops.analysis("Static")
+    base, u = 1.0 / nsteps, 0.0
+    for _ in range(nsteps):
+        ok = -1
+        for cut, alg in ((1.0, "Newton"), (0.25, "Newton"), (0.1, "NewtonLineSearch")):
+            ops.integrator("LoadControl", base * cut); ops.algorithm(alg)
+            ok = ops.analyze(1)
+            if ok == 0:
+                break
+        if ok != 0:
+            break
+        u = ops.nodeDisp(2)[0]
+    ds = [max(ops.eleResponse(1, "material", gp, "damage")) for gp in range(1, 9)]
+    return u / umax, max(ds)
+
+
+def test_eas_drives_j2_lemaitre_damage():
+    """EAS must carry a path-dependent + SOFTENING constitutive law (LadrunoJ2 +
+    Lemaitre ductile damage) through the full displacement on a homogeneous element:
+    the inner-Newton alpha solve and the commit cycle have to cope with plasticity
+    AND damage. EAS reaches the full elongation and accumulates substantial damage,
+    matching the fully-integrated `bbar` (both 8 Gauss points). (This is the
+    homogeneous case; EAS is NOT robust on a notched localization problem — small-
+    strain hourglassing — where `ssp`/`bbar` are the right choice; see ADR 19.)"""
+    eas_frac, eas_d = _push_damage("eas")
+    bbar_frac, bbar_d = _push_damage("bbar")
+    assert eas_frac > 0.99, f"EAS only reached {eas_frac:.2f} of the imposed elongation"
+    assert eas_d > 0.2, f"EAS damage {eas_d:.3f} — material did not soften"
+    assert abs(eas_d - bbar_d) < 0.05, (
+        f"EAS damage {eas_d:.3f} should track bbar {bbar_d:.3f} on a homogeneous push"
+    )
