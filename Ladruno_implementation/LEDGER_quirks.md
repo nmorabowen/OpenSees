@@ -859,3 +859,22 @@ From the finite-strain validation Phase P4 (Taylor-bar impact, 2026-06-02,
   finite element returns). Candidate follow-up: audit
   `EnergyBalanceRecorder.cpp` internal-energy accumulation vs `LadrunoBrick`
   `getResistingForce` sign under `-geom finite`.
+
+- **`ASDConcrete3D` confines emergently, but there is NO dilation-angle input.**
+  Measured (RC-3D Gate 2, `Ladruno_implementation/rc3d_gates/gate2_concrete_confinement.py`):
+  a single brick under constant lateral pressure `p` + axial displacement control
+  develops a confined peak `fcc` within **~5 % of Mander** for `p/fc ∈ [0, 0.20]`
+  (unconfined recovers `fc` exactly), and the peak strain grows with `p` — so
+  confinement is a REAL emergent property of the Lubliner triaxial surface; do
+  **not** pre-inflate `fc` à la Mander in a 3D solid (that double-counts). BUT the
+  *amount* of confinement is governed by the **`Kc` triaxial-meridian parameter +
+  the compression hardening backbone**, NOT a dilation angle — `ASDConcrete3D`
+  exposes no dilatancy/flow-rule input (grep the header for `dilatan` → nothing).
+  So: validate `fcc(p)` against test data / Mander before trusting confined-member
+  results; the lever to tune is `Kc` + the `-Ce/-Cs/-Cd` curve. **Backbone calibration
+  gotcha:** the first compression point must be the *elastic limit* (`σ = E·ε`, so
+  `Cd = 0` there); putting the first point past the elastic line makes the model run
+  elastic up to that strain and the unconfined peak overshoots `fc` (≈2× in an early
+  Gate-2 draft). **Solver:** confined softening needs `KrylovNewton` (or the blessed
+  `Ladruno_scripts/ladruno_solve.py` adaptive driver) — plain Newton fixed-step
+  diverges past the peak.
