@@ -13,21 +13,23 @@ tags:
 created: 2026-06-02
 ---
 
-# Validation Report — Finite-Strain Trifecta · Phases P1–P3
+# Validation Report — Finite-Strain Trifecta · Phases P1–P4
 
 > [!abstract] What this is
-> The execution record for **Phases P1–P3** of
+> The execution record for **Phases P1–P4** of
 > [[17_finite_strain_validation_plan|the finite-strain V&V plan]]:
 > - **P1** finite-strain core — A1–A5 (L1 analytical), B1–B3 (L2 convergence &
 >   locking), C1 (Simo necking) — §2–§4, PR #138;
 > - **P2** geometric nonlinearity — A7, C4, C5, D4 (corot large rotation) — §5,
 >   PR #140;
 > - **P3** locking & incompressibility — B4 (Cook's membrane), E4 (rubber block)
->   — §6, PR #141.
+>   — §6, PR #141;
+> - **P4** explicit dynamics — C2 (Taylor bar) + energy balance + dt_cr caveat —
+>   §7, PR #143.
 >
-> **31 Zone-A tests, all PASS** (Zone-A Ubuntu CI green on all three PRs). Each
-> row below is a plan contract, fulfilled by a runnable test, with the oracle,
-> the measured margin, and PASS/FAIL.
+> **35 Zone-A tests, all PASS** (Zone-A Ubuntu CI green on all PRs). Each row
+> below is a plan contract, fulfilled by a runnable test, with the oracle, the
+> measured margin, and PASS/FAIL.
 
 Companion: [[17_finite_strain_validation_plan]], [[09_ladruno_brick]],
 [[10_solid_corotational_adr]], [[09_finite_strain_material_wrapper]],
@@ -49,8 +51,9 @@ inner (`LadrunoJ2` isotropic / `ElasticIsotropic`).
 | `tests/test_finite_strain_C1_necking.py` | A (t2a) | C1 | 4 |
 | `tests/test_finite_strain_P2_geomnl.py` | A (t2a) | A7, C4, C5, D4 | 8 |
 | `tests/test_finite_strain_P3_locking.py` | A (t2a) | B4, E4 | 4 |
+| `tests/test_finite_strain_P4_explicit.py` | A (t3) | C2 + energy + dt_cr | 4 |
 
-**31 tests, all PASS** (P1 detail below; ≈18 s wall for the full suite, fresh `OpenSeesPy` worktree build off
+**35 tests, all PASS** (P1 detail below; ≈40 s wall for the full suite incl. the explicit Taylor run, fresh `OpenSeesPy` worktree build off
 `ladruno` HEAD; existing finite-strain suite 21 pass / 1 xfail unchanged).
 All Zone-A (structured lattices, no gmsh) so the core validation travels with
 the PR and gates CI. Oracles are the numpy mirrors `tests/logstrain_reference.py`
@@ -196,7 +199,43 @@ B2/B3, the slender cantilever) to the two harder regimes the plan names.
 
 ---
 
-## 7. Known limitations carried in (per plan §10)
+## 7. P4 — explicit dynamics (Taylor bar)  ✅
+
+`tests/test_finite_strain_P4_explicit.py` (4 tests). The explicit counterpart of
+P1–P3: `LadrunoBrick -geom finite` (F-bar) + `LogStrain(LadrunoJ2)` under the
+fork's **`CentralDifferenceLadruno`** leap-frog integrator, lumped mass,
+`Diagonal` system. Copper cylinder (N–mm–tonne–s: E=117 GPa, ν=0.35, ρ=8.93e-9,
+σ_y=400 MPa, H=100 MPa; L₀=32.4, r₀=3.2 mm) at **v₀=227 m/s** into a frictionless
+rigid wall (squircle hex mesh n=4×nz=12, the impact face a uz=0 / lateral-free
+symmetry plane); ran to elastic rebound (~80 µs, ~1700 steps at 0.3·dt_cr).
+
+| QoI | Measured | Reference (Taylor 1948 / Kamoulakos) | Verdict |
+|---|---|---|---|
+| final length L_f/L₀ | **0.670** (21.7 mm) | ≈ 0.66 (21.4 mm) | **PASS** (~1.5 %) |
+| mushroom radius r_f/r₀ | **2.15** (6.9 mm) | ≈ 2.2 (7 mm) | **PASS** (~2 %) |
+| deformation localizes at impact | free-end r = r₀ exactly; r_impact > 1.5·r_free | only the wall end mushrooms | **PASS** |
+| energy balance | KE_final = **4.3 %** of KE₀ (rest plastic), small rebound; \|IE\| = \|ΔKE\| within 10 % | KE → internal (plastic) energy, conserved | **PASS** |
+| dt_cr caveat | `criticalTimeStep()` **bit-identical** before/after 33 % compression + 2× mushroom | reference-config (review GEOM-2) | **PASS** |
+
+> [!warning] Two findings logged to LEDGER_quirks
+> 1. **`criticalTimeStep()` is reference-config** — it does not shrink as elements
+>    compress, so explicit `-geom finite` must carry a safety factor < 1 (this run
+>    uses 0.3·dt_cr; 0.5 is fine for short transits but risks instability through
+>    full mushrooming). A future improvement would update dt_cr from the current
+>    configuration.
+> 2. **The `EnergyBalance` recorder reports IE with a flipped sign** for the
+>    finite-strain element (the KE column is correct; `RES`/`ERR%` read ~100 %
+>    spuriously). The test compares `|IE|` to the kinetic-energy change. Candidate
+>    follow-up: audit `EnergyBalanceRecorder.cpp` internal-energy accumulation vs
+>    `LadrunoBrick -geom finite` resisting-force sign.
+
+> [!note] Zone
+> C2 is gmsh-free and deterministic (squircle lattice), so it travels with the PR
+> as **Zone-A** (marked `t3`, the heavier deck) rather than Zone-B; ~22 s wall.
+
+---
+
+## 8. Known limitations carried in (per plan §10)
 
 1. **Combined-hardening + large rotation** is the §14.11 boundary; all A/B/C
    plasticity here uses **isotropic** hardening (objective through the
@@ -209,7 +248,7 @@ B2/B3, the slender cantilever) to the two harder regimes the plan names.
 
 ---
 
-## 8. Reproduce
+## 9. Reproduce
 
 ```powershell
 # from the worktree, against the local build (all phases):
@@ -220,5 +259,6 @@ py -3.12 -m pytest tests/test_finite_strain_L1_analytical.py `
                    tests/test_finite_strain_L2_convergence.py `
                    tests/test_finite_strain_C1_necking.py `
                    tests/test_finite_strain_P2_geomnl.py `
-                   tests/test_finite_strain_P3_locking.py -v
+                   tests/test_finite_strain_P3_locking.py `
+                   tests/test_finite_strain_P4_explicit.py -v
 ```
