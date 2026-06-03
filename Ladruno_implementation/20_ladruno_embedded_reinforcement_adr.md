@@ -571,10 +571,24 @@ the same γ-independence with *no* host-stress/∂N query.** *Effort: research-g
    without. **This lifts the small-ROTATION restriction for Mode P** (small-STRETCH `L_trib·=λ`
    still deferred). New LEDGER_quirk: anisotropic embedded coupling needs a co-rotated axis;
    ASD's isotropic penalty does not.
-4. **Strategic — `-enforce` flag + AL kernel (§10.1, §10.4).** Enum + parser map + `-enforce
-   transformation` hard error + per-step Uzawa in `commitState` + `λ` serialization. *Depends on
-   the co-rotated frame (3) so AL inherits objectivity.* Regression: `-enforce penalty`
-   bit-identical to current default.
+4. **Strategic — `-enforce` flag + AL kernel (§10.1, §10.4). ✅ SHIPPED (PR #181).**
+   `-enforce {penalty|al}` (default penalty); `nitsche` rejected (not built), `transformation`
+   rejected (deferred indefinitely). AL adds a per-element multiplier `lambda` to the traction
+   (`t = penalty/bond traction + lambda`) with the **tangent unchanged** (`K = BᵀDB`; lambda
+   constant within an inner solve) and a per-step Uzawa update `lambda += Δλ` in `commitState`
+   — `Δλ` = the PERFECT-BOND penalty traction only (transverse `kt·g_t` always; axial
+   `kAxialPerfect·s` only when there is no bond law), so bond-slip's physical τ–s axial is
+   never driven to zero. Inherits the co-rotated `dirCur` from item 3. Responses `augLambda`
+   /`gap`; `lambda` serialized. Tests green: AL drives the perfect-bond gap → 0 at moderate
+   `kt` (the multiplier carries the load) where penalty leaves `P/kt`; AL leaves bond-slip
+   axial untouched; `-enforce penalty` bit-identical to default. No analysis-core change
+   (commitState is driver-called once per converged step). **This is the near-exact,
+   well-conditioned, explicit-safe perfect-bond path** — the strategic payoff of the roadmap.
+   *Review fix:* for **bond-slip + `-corot` + `al`**, the transverse multiplier is re-projected
+   onto the current transverse plane each step so a rotating `dirCur` can't leak it into a
+   spurious axial force on the τ–s slot; perfect-bond keeps the full 3D multiplier. Open (→§10.9):
+   AL+corot is exact only to O(per-step rotation) like the dropped ∂dir/∂u term, and per-step
+   Uzawa under **cyclic** load is path-approximate (v1 is monotonic) — both want a v2 test leg.
 5. **Strategic — bipenalty `dt_cr` (§10.6).** Rebar-block lumped `m_p`, `-wcap β`, self-reported
    `dt_cr` response. Gated on `-enforce penalty`. *Independent of 3/4 but pairs naturally with
    explicit AL runs.* Correct the D2 framing in this ADR as part of the PR.

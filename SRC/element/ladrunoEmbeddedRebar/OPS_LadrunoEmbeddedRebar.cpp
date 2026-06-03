@@ -42,6 +42,12 @@
 //           ( -bond matTag [-bondScale bs] | -perfect kAxial )
 //           [-kt {kt | auto}] [-ktAlpha a]
 //           [-corot {-xiB b1..b_ndm | -shapeB N1..NN}]
+//           [-enforce {penalty | al}]
+//
+//   -enforce (ADR 20 §10.1): constraint treatment. penalty (default, Mode P) or
+//   al (augmented Lagrangian — per-step Uzawa drives the perfect-bond gap -> 0 at
+//   MODERATE kt; bond-slip axial untouched). nitsche is not built; transformation
+//   is deferred indefinitely (both rejected at parse time).
 //
 //   -corot (ADR 20 §10.5): co-rotate the bar axis each step from current host
 //   geometry (secant embed-point -> point B), so the axial/transverse split stays
@@ -156,6 +162,7 @@ void* OPS_LadrunoEmbeddedRebar(void)
   bool corot = false;             // -corot: co-rotate the bar axis (ADR §10.5)
   Vector NshapeB(nHost);          // weights at point B along the bar (corot)
   bool haveB = false;
+  int enforce = 0;                // -enforce: 0=penalty (default), 1=al (ADR §10.1)
   double bondScale = 1.0;
   double kAxialPerfect = 0.0;
   int bondTag = -1;
@@ -201,6 +208,33 @@ void* OPS_LadrunoEmbeddedRebar(void)
     }
     else if (strcmp(opt, "-corot") == 0) {
       corot = true;                 // co-rotate the bar axis each step (ADR §10.5)
+    }
+    else if (strcmp(opt, "-enforce") == 0) {
+      // constraint-enforcement strategy (ADR 20 §10.1). penalty (default) | al;
+      // nitsche not built; transformation deferred indefinitely.
+      if (OPS_GetNumRemainingInputArgs() < 1) {
+        opserr << "WARNING LadrunoEmbeddedRebar: -enforce wants penalty|al\n";
+        return 0;
+      }
+      const char* mode = OPS_GetString();
+      if (strcmp(mode, "penalty") == 0)      enforce = 0;
+      else if (strcmp(mode, "al") == 0)      enforce = 1;
+      else if (strcmp(mode, "nitsche") == 0) {
+        opserr << "WARNING LadrunoEmbeddedRebar: -enforce nitsche not implemented "
+               << "(ADR 20 §10.7, research-grade); use penalty|al\n";
+        return 0;
+      }
+      else if (strcmp(mode, "transformation") == 0) {
+        opserr << "WARNING LadrunoEmbeddedRebar: -enforce transformation is DEFERRED "
+               << "INDEFINITELY (ADR 20 §10.1 / D2 — needs a multi-retained MPC); "
+               << "use penalty|al\n";
+        return 0;
+      }
+      else {
+        opserr << "WARNING LadrunoEmbeddedRebar: unknown -enforce '" << mode
+               << "' (want penalty|al)\n";
+        return 0;
+      }
     }
     else if (strcmp(opt, "-shapeB") == 0) {
       // explicit weights at point B along the bar (the corot secant endpoint).
@@ -334,7 +368,7 @@ void* OPS_LadrunoEmbeddedRebar(void)
   Element* e = new LadrunoEmbeddedRebar(tag, ndm, rebarNode, hostNodes, Nshape,
                                         dir, kt, bondScale, bondMat, kAxialPerfect,
                                         hostEleTag, ktAuto, ktAlpha,
-                                        corot, corot ? &NshapeB : 0);
+                                        corot, corot ? &NshapeB : 0, enforce);
   if (e == 0) {
     opserr << "WARNING LadrunoEmbeddedRebar: could not create element\n";
     return 0;

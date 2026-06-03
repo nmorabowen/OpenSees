@@ -84,7 +84,7 @@ class LadrunoEmbeddedRebar : public Element
                        UniaxialMaterial* bondMat, double kAxialPerfect,
                        int hostEleTag = -1, bool ktAuto = false,
                        double ktAlpha = 0.0, bool corot = false,
-                       const Vector* shapeB = 0);
+                       const Vector* shapeB = 0, int enforce = 0);
   LadrunoEmbeddedRebar();
   ~LadrunoEmbeddedRebar();
 
@@ -144,6 +144,21 @@ class LadrunoEmbeddedRebar : public Element
   double bondScale;         // perimeter * L_trib (tau -> axial force)
   double kAxialPerfect;     // perfect-bond axial penalty (used when bondMat==0)
   UniaxialMaterial* bondMat;// optional axial bond-slip law (owns a getCopy)
+
+  // ADR 20 §10.1/§10.4 — constraint-enforcement strategy (the `-enforce` flag).
+  // 0 = penalty (Mode P, default); 1 = augmented Lagrangian (AL). nitsche /
+  // transformation are not built (parser rejects them). AL adds a per-element
+  // multiplier `lambda` to the traction (t = penalty/bond traction + lambda) with
+  // the SAME tangent K = BᵀDB (lambda is constant within an inner solve), and a
+  // per-step Uzawa update lambda += Δλ in commitState() — Δλ is the PERFECT-BOND
+  // penalty traction (transverse kt·g_t always; axial kAxialPerfect·s only when
+  // there is no bond law), so the physical τ–s bond slip is never driven to zero.
+  // Drives the constraint gap → 0 at MODERATE kt (no kt→∞), fixing conditioning
+  // and netting the artificial penalty energy → 0. No analysis-core change
+  // (commitState is driver-called once per converged step). EXPLICIT (E=PENALTY=0,
+  // E=AL=1).
+  int enforce;              // 0 = penalty, 1 = augmented Lagrangian
+  Vector lambda;            // AL multiplier (size ndm); committed, Uzawa-updated
 
   // ADR 20 §10.2a — auto-scaled transverse penalty. With `-kt auto`, kt is
   // resolved (lazily, on first stiffness/force assembly) from the host's own

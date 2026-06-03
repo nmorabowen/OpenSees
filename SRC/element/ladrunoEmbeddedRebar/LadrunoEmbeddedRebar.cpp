@@ -49,13 +49,14 @@ LadrunoEmbeddedRebar::LadrunoEmbeddedRebar(int tag, int ndm_, int rebarNode,
         const ID& hostNodes, const Vector& shape, const Vector& dir_,
         double kt_, double bondScale_, UniaxialMaterial* bm, double kAxialPerfect_,
         int hostEleTag_, bool ktAuto_, double ktAlpha_, bool corot_,
-        const Vector* shapeB)
+        const Vector* shapeB, int enforce_)
   : Element(tag, ELE_TAG_LadrunoEmbeddedRebar),
     ndm(ndm_), nHost(hostNodes.Size()), nDOF((1 + hostNodes.Size()) * ndm_),
     connectedNodes(1 + hostNodes.Size()), Nshape(shape), dir(ndm_),
     corot(corot_), NshapeB(), dirCur(ndm_),
     kt(kt_), bondScale(bondScale_), kAxialPerfect(kAxialPerfect_),
     bondMat(0),
+    enforce(enforce_), lambda(ndm_),
     hostEleTag(hostEleTag_), ktAuto(ktAuto_), ktAlpha(ktAlpha_), ktResolved(false),
     theNodes(0), K(0), P(0), M0(0), bondEnergyResp(0)
 {
@@ -91,6 +92,7 @@ LadrunoEmbeddedRebar::LadrunoEmbeddedRebar()
     corot(false), NshapeB(), dirCur(),
     kt(0.0), bondScale(1.0), kAxialPerfect(0.0),
     bondMat(0),
+    enforce(0), lambda(),
     hostEleTag(-1), ktAuto(false), ktAlpha(0.0), ktResolved(false),
     theNodes(0), K(0), P(0), M0(0), bondEnergyResp(0)
 {
@@ -182,6 +184,31 @@ void LadrunoEmbeddedRebar::resolveAutoKt(void)
 // ===========================================================================
 int LadrunoEmbeddedRebar::commitState(void)
 {
+  // Augmented-Lagrangian per-step Uzawa update (ADR 20 §10.4): at the converged
+  // state, accumulate the PERFECT-BOND penalty traction into the multiplier.
+  // Transverse (kt*g_t) always; axial (kAxialPerfect*s) ONLY for perfect bond —
+  // with a bond law the axial τ–s force is physical and must NOT be driven to 0.
+  // lambda is piecewise-constant per step (mutated only here), so within a solve
+  // the tangent is exact and CTest sees a frozen multiplier.
+  if (enforce == 1) {
+    this->resolveAutoKt();   // ensure an auto kt is resolved before the Uzawa step
+    Vector g(ndm), gt(ndm);
+    double s, Faxial, kAxial;
+    this->formBandTraction(g, s, gt, Faxial, kAxial);   // converged; sets dirCur
+    for (int k = 0; k < ndm; k++) lambda(k) += kt * gt(k);
+    if (bondMat == 0) {
+      for (int k = 0; k < ndm; k++) lambda(k) += kAxialPerfect * s * dirCur(k);
+    } else {
+      // bond-slip: the AL constraint is PURELY transverse (the axial τ–s force is
+      // physical). Re-project lambda onto the current transverse plane so that a
+      // rotating dirCur (-corot) cannot leak the accumulated transverse multiplier
+      // into a spurious axial force on the bond slot. No-op when dirCur is frozen
+      // (lambda already ⊥ dir). Review finding (AL + corot + bond-slip).
+      double la = 0.0;
+      for (int k = 0; k < ndm; k++) la += lambda(k) * dirCur(k);
+      for (int k = 0; k < ndm; k++) lambda(k) -= la * dirCur(k);
+    }
+  }
   int ok = this->Element::commitState();
   if (bondMat != 0) ok += bondMat->commitState();
   return ok;
@@ -194,6 +221,7 @@ int LadrunoEmbeddedRebar::revertToLastCommit(void)
 
 int LadrunoEmbeddedRebar::revertToStart(void)
 {
+  lambda.Zero();   // AL multiplier accumulates only via commitState's Uzawa step
   return (bondMat != 0) ? bondMat->revertToStart() : 0;
 }
 
@@ -271,9 +299,14 @@ const Vector& LadrunoEmbeddedRebar::getResistingForce(void)
   double s, Faxial, kAxial;
   this->formBandTraction(g, s, gt, Faxial, kAxial);
 
-  // traction t = Faxial*dirCur + kt*gt  (dirCur set by formBandTraction above)
+  // traction t = Faxial*dirCur + kt*gt  (dirCur set by formBandTraction above),
+  // plus the augmented-Lagrangian multiplier when enforce==AL (lambda is constant
+  // within an inner solve — updated only at commitState — so the tangent is
+  // unchanged). ADR 20 §10.4.
   Vector t(ndm);
   for (int k = 0; k < ndm; k++) t(k) = Faxial * dirCur(k) + kt * gt(k);
+  if (enforce == 1)
+    for (int k = 0; k < ndm; k++) t(k) += lambda(k);
 
   // block 0 (rebar): +t ; block (1+i): -N_i t
   for (int k = 0; k < ndm; k++) (*P)(k) = t(k);
@@ -362,8 +395,8 @@ int LadrunoEmbeddedRebar::sendSelf(int commitTag, Channel& theChannel)
 {
   int dbTag = this->getDbTag();
   // header: tag, ndm, nHost, kt, bondScale, kAxialPerfect, hasBond, bondClassTag,
-  //         bondDbTag, hostEleTag, ktAuto, ktAlpha, corot
-  static Vector hdr(13);
+  //         bondDbTag, hostEleTag, ktAuto, ktAlpha, corot, enforce
+  static Vector hdr(14);
   hdr(0) = this->getTag();
   hdr(1) = ndm;
   hdr(2) = nHost;
@@ -386,21 +419,24 @@ int LadrunoEmbeddedRebar::sendSelf(int commitTag, Channel& theChannel)
   hdr(10) = ktAuto ? 1.0 : 0.0;
   hdr(11) = ktAlpha;
   hdr(12) = corot ? 1.0 : 0.0;
+  hdr(13) = enforce;
   if (theChannel.sendVector(dbTag, commitTag, hdr) < 0) {
     opserr << "LadrunoEmbeddedRebar::sendSelf - header failed\n";
     return -1;
   }
   // payload: connectedNodes (1+nHost ints) via an ID, then Nshape + dir + NshapeB
-  // (the corot point-B weights; zeros when !corot) via a Vector.
+  // (corot point-B weights; zeros when !corot) + lambda (AL multiplier) via a Vector.
   if (theChannel.sendID(dbTag, commitTag, connectedNodes) < 0) {
     opserr << "LadrunoEmbeddedRebar::sendSelf - ID failed\n";
     return -1;
   }
-  Vector payload(2 * nHost + ndm);
+  Vector payload(2 * nHost + 2 * ndm);
   for (int i = 0; i < nHost; i++) payload(i) = Nshape(i);
   for (int k = 0; k < ndm; k++) payload(nHost + k) = dir(k);
   for (int i = 0; i < nHost; i++)
     payload(nHost + ndm + i) = (corot && NshapeB.Size() == nHost) ? NshapeB(i) : 0.0;
+  for (int k = 0; k < ndm; k++)
+    payload(2 * nHost + ndm + k) = (lambda.Size() == ndm) ? lambda(k) : 0.0;
   if (theChannel.sendVector(dbTag, commitTag, payload) < 0) {
     opserr << "LadrunoEmbeddedRebar::sendSelf - payload failed\n";
     return -1;
@@ -416,7 +452,7 @@ int LadrunoEmbeddedRebar::recvSelf(int commitTag, Channel& theChannel,
                                    FEM_ObjectBroker& theBroker)
 {
   int dbTag = this->getDbTag();
-  static Vector hdr(13);
+  static Vector hdr(14);
   if (theChannel.recvVector(dbTag, commitTag, hdr) < 0) {
     opserr << "LadrunoEmbeddedRebar::recvSelf - header failed\n";
     return -1;
@@ -434,6 +470,7 @@ int LadrunoEmbeddedRebar::recvSelf(int commitTag, Channel& theChannel,
   ktAuto = (hdr(10) != 0.0);
   ktAlpha = hdr(11);
   corot = (hdr(12) != 0.0);
+  enforce = (int)hdr(13);
   ktResolved = false;   // re-resolve against the host on first assembly
 
   nDOF = (1 + nHost) * ndm;
@@ -442,7 +479,7 @@ int LadrunoEmbeddedRebar::recvSelf(int commitTag, Channel& theChannel,
     opserr << "LadrunoEmbeddedRebar::recvSelf - ID failed\n";
     return -1;
   }
-  Vector payload(2 * nHost + ndm);
+  Vector payload(2 * nHost + 2 * ndm);
   if (theChannel.recvVector(dbTag, commitTag, payload) < 0) {
     opserr << "LadrunoEmbeddedRebar::recvSelf - payload failed\n";
     return -1;
@@ -458,6 +495,8 @@ int LadrunoEmbeddedRebar::recvSelf(int commitTag, Channel& theChannel,
   } else {
     NshapeB = Vector();
   }
+  lambda.resize(ndm);
+  for (int k = 0; k < ndm; k++) lambda(k) = payload(2 * nHost + ndm + k);
 
   if (bondEnergyResp != 0) { delete bondEnergyResp; bondEnergyResp = 0; }
   if (bondMat != 0) { delete bondMat; bondMat = 0; }
@@ -533,6 +572,11 @@ Response* LadrunoEmbeddedRebar::setResponse(const char** argv, int argc, OPS_Str
   // reference dir otherwise) — ADR 20 §10.5.
   if (strcmp(argv[0], "dir") == 0 || strcmp(argv[0], "barAxis") == 0)
     return new ElementResponse(this, 9, Vector(ndm));
+  // AL multiplier and the raw constraint gap (ADR 20 §10.4 diagnostics).
+  if (strcmp(argv[0], "augLambda") == 0 || strcmp(argv[0], "lambda") == 0)
+    return new ElementResponse(this, 10, Vector(ndm));
+  if (strcmp(argv[0], "gap") == 0)
+    return new ElementResponse(this, 11, Vector(ndm));
   return 0;
 }
 
@@ -577,6 +621,8 @@ int LadrunoEmbeddedRebar::getResponse(int responseID, Information& eleInfo)
     return eleInfo.setDouble(bondScale * w);
   }
   case 9: return eleInfo.setVector(dirCur);  // dirCur refreshed by formBandTraction above
+  case 10: return eleInfo.setVector(lambda);
+  case 11: return eleInfo.setVector(g);
   default: return -1;
   }
 }
