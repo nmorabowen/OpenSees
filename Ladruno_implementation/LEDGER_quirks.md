@@ -810,3 +810,32 @@ From the finite-strain validation Phase P1 (2026-06-02, [[18_finite_strain_valid
   a sub-stepped element solve does NOT equal a single-step return-map oracle for
   *non-proportional* loading (simple shear, equibiaxial). Drive ONE increment ref→F when
   comparing to a one-step oracle, or step the oracle incrementally over the same F_k.
+
+## Explicit `-geom finite`: `criticalTimeStep()` is reference-config (must margin dt), and the EnergyBalance recorder reports IE with a flipped sign
+
+From the finite-strain validation Phase P4 (Taylor-bar impact, 2026-06-02,
+[[18_finite_strain_validation_report]] §7; `tests/test_finite_strain_P4_explicit.py`).
+
+- **`ops.criticalTimeStep()` does NOT shrink as elements compress.** On the Taylor
+  bar the cylinder shortened ~33 % and the impact face mushroomed >2×, yet
+  `criticalTimeStep()` was *bit-identical* before and after (ratio 1.000). It is
+  computed from the **reference** configuration characteristic length (review
+  GEOM-2). So an explicit `-geom finite` run is only conservatively safe until
+  strong compression; past that the *true* stable dt is smaller than reported.
+  **Carry a safety factor < 1** — the Taylor bar uses `dt = 0.3·dt_cr` (0.5 is
+  stable for the early/short transit but risks instability through full
+  mushrooming). A future improvement would update dt_cr from the current config.
+- **`EnergyBalance` recorder reports IE (internal energy) with a flipped SIGN for
+  the finite-strain element.** On the Taylor bar `KE0=2.34e5`, `KE_final=1.0e4`
+  (4.3 %, the rest absorbed plastically), and `IE_final=−2.36e5` — the MAGNITUDE
+  equals the absorbed kinetic energy (≈ KE0−KE_final, within ~5 %) but the sign is
+  negative, so the recorder's `RES`/`ERR%` columns read ~100 % (spurious). The KE
+  column is correct (it's the validated getMass aliasing-fix path,
+  `test_energyBalanceRecorder.py`); only IE's sign is off for the
+  `LogStrain`/`LadrunoBrick -geom finite` path. **Work around it by comparing
+  `|IE|` to the kinetic-energy change**; do not trust `ERR%` for finite-strain
+  elements until the IE-increment sign convention is reconciled (likely the
+  recorder integrates fᵀΔu with the internal-force sign opposite to what the
+  finite element returns). Candidate follow-up: audit
+  `EnergyBalanceRecorder.cpp` internal-energy accumulation vs `LadrunoBrick`
+  `getResistingForce` sign under `-geom finite`.
