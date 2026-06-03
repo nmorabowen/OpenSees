@@ -47,6 +47,7 @@ GLOBS = [
     "SRC/material/nD/LadrunoHardening.h",
     "SRC/material/uniaxial/LadrunoUniaxialJ2.*",
     "SRC/material/uniaxial/LadrunoRebarBuckling.*",
+    "SRC/material/uniaxial/LadrunoBondSlip.*",
     "SRC/material/nD/LogStrainNDMaterial.*", "SRC/material/nD/LogStrainKernel.h",
     "SRC/material/nD/FiniteStrainNDMaterial.h",
     "SRC/material/nD/InitDefGradNDMaterial.*",
