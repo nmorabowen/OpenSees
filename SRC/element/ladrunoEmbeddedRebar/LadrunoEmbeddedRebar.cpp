@@ -218,7 +218,9 @@ void LadrunoEmbeddedRebar::currentBarAxis(Vector& d)
   }
   double nrm = 0.0;
   for (int k = 0; k < ndm; k++) { double dk = xB(k) - xA(k); d(k) = dk; nrm += dk * dk; }
-  if (nrm > 1.0e-300) { nrm = sqrt(nrm); for (int k = 0; k < ndm; k++) d(k) /= nrm; }
+  // threshold at unit-vector scale (|secant| > 1e-10), not the subnormal 1e-300:
+  // a near-coincident A/B would otherwise normalize numerical noise.
+  if (nrm > 1.0e-20) { nrm = sqrt(nrm); for (int k = 0; k < ndm; k++) d(k) /= nrm; }
   else d = dir;                       // degenerate secant -> fall back to reference
 }
 
