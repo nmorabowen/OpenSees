@@ -112,6 +112,7 @@
 #include "HardeningMaterial.h"
 #include "LadrunoUniaxialJ2.h"   // Ladruno — uniaxial combined iso + Chaboche AF kinematic J2
 #include "LadrunoRebarBuckling.h"   // Ladruno — rebar-buckling wrapper (Dhakal-Maekawa)
+#include "LadrunoBondSlip.h"   // Ladruno — 1D bond-slip tau-s (CEB-FIP MC2010)
 #include "HystereticMaterial.h"
 #include "HystereticSMMaterial.h"
 #include "OOHystereticMaterial.h"
@@ -1895,6 +1896,9 @@ FEM_ObjectBrokerAllClasses::getNewUniaxialMaterial(int classTag)
 
 	case MAT_TAG_LadrunoRebarBuckling:            // Ladruno
 		return new LadrunoRebarBuckling();
+
+	case MAT_TAG_LadrunoBondSlip:                 // Ladruno
+		return new LadrunoBondSlip();
 
 	case MAT_TAG_PySimple1:
 		return new PySimple1();
