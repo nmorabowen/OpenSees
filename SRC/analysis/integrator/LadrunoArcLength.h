@@ -57,8 +57,25 @@
 // Ladruno_implementation/20_ladruno_arclength_stabilized_adr.md.
 //
 // v1 deliberately omits the DDM sensitivity machinery of stock ArcLength
-// (sensitivity is out of scope here); the viscous -stabilize mode and the
-// Layer-B reduceStep/revert mutators are deferred to follow-up PRs.
+// (sensitivity is out of scope here).
+//
+// Layer B (script-driven cut-and-retry, ADR-20 §4.3): the scalar mutators
+//   reduceStep(f)  -> arcLength2 *= f*f   (ell >= floor guard)
+//   increaseStep(f)-> arcLength2 *= f*f   (ell <= ellMax ceiling if set)
+//   setArcLength(v)-> arcLength2  = v*v
+// let a *script* re-attempt a failed step from the last committed state without
+// reconstructing the integrator. The crux (review §2.10): stock ArcLength
+// overwrites deltaLambdaStep/deltaUstep in newStep() BEFORE its own b24ac<0
+// bail, so a failed step leaves them polluted -- "state preserved for free" is
+// FALSE. We therefore snapshot the converged step at commit() and the
+// revertToLastStep() OVERRIDE (which StaticAnalysis::analyze already calls on a
+// failed step) restores the four per-step items {deltaLambdaStep, deltaUstep,
+// currentLambda, signLastDeltaLambdaStep} (ADR-20 decision 4). The radius
+// (arcLength2) is snapshotted too but deliberately NOT restored on revert: it is
+// script-owned policy, and restoring it would wipe each reduceStep() so the
+// documented cut-and-retry loop could never shrink the step. The mutators are
+// exposed to Python/Tcl via the small `ladrunoArcLength <sub> <val>`
+// integrator-object command (OpenSeesCommands).
 
 #ifndef LadrunoArcLength_h
 #define LadrunoArcLength_h
@@ -92,7 +109,21 @@ class LadrunoArcLength : public StaticIntegrator
     // -stabilize seam: regularize K and inject the artificial viscous force.
     int formTangent(int statusFlag = CURRENT_TANGENT);   // K (+ cOverDt*M* if stabilize)
     int formUnbalance(void);                             // B (- f_v if stabilize)
-    int commit(void);                                    // watchdog + adaptStab + calibrate
+    int commit(void);                                    // watchdog + adaptStab + calibrate + Layer-B snapshot
+    int revertToLastStep(void);                          // Layer-B: restore the committed snapshot
+
+    // --- Layer B (script-driven cut-and-retry, ADR-20 §4.3) ---
+    // Pure scalar radius mutators (no reallocation); operate on the committed
+    // radius restored by revertToLastStep() after a failed step.
+    int    reduceStep(double f);                         // arcLength2 *= f*f  (floor-guarded)
+    int    increaseStep(double f);                       // arcLength2 *= f*f  (ellMax-capped)
+    int    setArcLength(double arcLength);               // arcLength2  = arcLength^2
+    // read-only accessors (drive the `ladrunoArcLength` query command / AL-9 test)
+    double getArcLength(void) const;                     // sqrt(arcLength2)
+    double getDeltaLambdaStep(void) const;
+    double getCurrentLambda(void) const;
+    int    getSignLastDeltaLambdaStep(void) const;
+    double getDeltaUstepNorm(void) const;
 
     int sendSelf(int commitTag, Channel &theChannel);
     int recvSelf(int commitTag, Channel &theChannel,
@@ -138,6 +169,17 @@ class LadrunoArcLength : public StaticIntegrator
     double massScale;                  // for -mass lumped
     int    nEqn;                       // cached numEqn for the diagonal poke
     Vector *Mstar;                     // integrator-owned artificial diagonal mass
+
+    // --- Layer B: committed per-step snapshot (ADR-20 §4.3 / review §2.10) ---
+    // Captured at commit(); restored by revertToLastStep() so a script can
+    // reduceStep()+retry from the last CONVERGED state (stock ArcLength pollutes
+    // deltaLambdaStep/deltaUstep before its own b24ac<0 bail).
+    double  cArcLength2;               // committed arc radius, squared
+    double  cDeltaLambdaStep;          // committed load-factor increment of the step
+    double  cCurrentLambda;            // committed load factor
+    int     cSign;                     // committed signLastDeltaLambdaStep
+    Vector *cDeltaUstep;               // committed per-step displacement increment
+    bool    haveSnapshot;             // false until the first commit()
 };
 
 #endif

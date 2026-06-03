@@ -3154,7 +3154,7 @@ LadrunoBrick::getInterpolationWeights(const Vector &xi, Vector &N)
               "coords (xi,eta,zeta)\n";
     return -1;
   }
-  static const int numberNodes = 8;   // 8-node hex (matches the per-method locals)
+  static const int numberNodes = 8;   // Ladruno: local const (method-scoped, as elsewhere in this TU)
   if (N.Size() != numberNodes)
     N.resize(numberNodes);
   for (int I = 0; I < numberNodes; I++)

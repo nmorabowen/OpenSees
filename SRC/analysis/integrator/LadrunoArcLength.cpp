@@ -185,7 +185,11 @@ LadrunoArcLength::LadrunoArcLength(double arcLength, double alpha,
   // calibrate once from fTarget at the first stabilized commit.
   cCalibrated(cVisc_ != 0.0), Estrain0(0.0), dissipVisc(0.0), residualTrueNorm(0.0),
   dLambda0(sqrt(arcLength*arcLength)), massMode(massMode_), massScale(massScale_),
-  nEqn(0), Mstar(0)
+  nEqn(0), Mstar(0),
+  // Layer-B snapshot: seed with the construction radius so a failure before the
+  // first commit() reverts to a sane state (haveSnapshot latches at commit()).
+  cArcLength2(arcLength*arcLength), cDeltaLambdaStep(0.0), cCurrentLambda(0.0),
+  cSign(1), cDeltaUstep(0), haveSnapshot(false)
 {
 
 }
@@ -198,6 +202,7 @@ LadrunoArcLength::~LadrunoArcLength()
     if (deltaUbar  != 0) delete deltaUbar;
     if (phat       != 0) delete phat;
     if (Mstar      != 0) delete Mstar;
+    if (cDeltaUstep != 0) delete cDeltaUstep;
 }
 
 // ---- integrator-owned artificial diagonal mass (lifted from
@@ -501,6 +506,11 @@ LadrunoArcLength::domainChanged(void)
         if (phat != 0) delete phat;
         phat = new Vector(size);
     }
+    // Layer-B committed snapshot of deltaUstep (sized with the others)
+    if (cDeltaUstep == 0 || cDeltaUstep->Size() != size) {
+        if (cDeltaUstep != 0) delete cDeltaUstep;
+        cDeltaUstep = new Vector(size);
+    }
     if (deltaUhat == 0 || deltaUbar == 0 || deltaU == 0 ||
         deltaUstep == 0 || phat == 0 ||
         deltaUhat->Size() != size || phat->Size() != size) {
@@ -543,6 +553,15 @@ LadrunoArcLength::domainChanged(void)
         this->buildArtificialMass();
     }
 
+    // Seed the Layer-B snapshot with the (committed) starting state so a failure
+    // before the first commit() reverts somewhere sane. haveSnapshot stays false
+    // until a real commit() captures a converged step.
+    cArcLength2      = arcLength2;
+    cDeltaLambdaStep = deltaLambdaStep;
+    cCurrentLambda   = currentLambda;
+    cSign            = signLastDeltaLambdaStep;
+    cDeltaUstep->Zero();
+
     return 0;
 }
 
@@ -570,13 +589,120 @@ LadrunoArcLength::commit(void)
             if (ratio > 0.0) { cVisc *= (fTarget / ratio); cOverDt = cVisc / dtPseudo; }
         }
     }
+
+    // -------- Layer B: snapshot the converged per-step state (ADR-20 §4.3) --------
+    // This is the state stock ArcLength pollutes in newStep()/update() BEFORE its
+    // b24ac<0 bail; revertToLastStep() restores exactly this on a failed retry.
+    cArcLength2      = arcLength2;
+    cDeltaLambdaStep = deltaLambdaStep;
+    cCurrentLambda   = currentLambda;
+    cSign            = signLastDeltaLambdaStep;
+    if (cDeltaUstep != 0 && deltaUstep != 0 &&
+        cDeltaUstep->Size() == deltaUstep->Size())
+        *cDeltaUstep = *deltaUstep;
+    haveSnapshot = true;
+
     return this->StaticIntegrator::commit();
+}
+
+int
+LadrunoArcLength::revertToLastStep(void)
+{
+    // Restore the committed per-step state captured at the last commit(). Stock
+    // ArcLength inherits a no-op revertToLastStep(); ours undoes the in-flight
+    // mutation of newStep()/update() so a script's reduceStep()+retry starts from
+    // the genuine last-converged state, not the polluted one.
+    //
+    // We restore ONLY the four per-step items of ADR-20 decision 4
+    // {deltaLambdaStep, deltaUstep, currentLambda, signLastDeltaLambdaStep} —
+    // deliberately NOT arcLength2 / dLambda0: the radius is SCRIPT-owned policy,
+    // and restoring it would wipe each reduceStep() so the documented
+    //   while ok!=0: reduceStep(0.5); analyze(1)
+    // cut-and-retry loop could never make progress (it would re-test the same
+    // 0.5x radius forever). -adapt re-derives the radius from numIncrLastStep in
+    // the next newStep() regardless, so leaving arcLength2 alone is safe there too.
+    //
+    // No-op until the first commit() so identity (no failure observed before any
+    // converged step) is unperturbed.
+    if (!haveSnapshot)
+        return 0;
+
+    deltaLambdaStep         = cDeltaLambdaStep;
+    currentLambda           = cCurrentLambda;
+    signLastDeltaLambdaStep = cSign;
+    if (deltaUstep != 0 && cDeltaUstep != 0 &&
+        deltaUstep->Size() == cDeltaUstep->Size())
+        *deltaUstep = *cDeltaUstep;
+    return 0;
+}
+
+// ---- Layer-B scalar mutators (ADR-20 §4.3). Pure scalar mutation of the arc
+// radius, no reallocation; a script drives the cut-and-retry loop:
+//   ok = analyze(1); while ok!=0: ladrunoArcLength reduceStep 0.5; ok = analyze(1)
+// StaticAnalysis::analyze already calls revertToLastStep() on a failed step, so
+// these operate on the restored committed radius.
+int
+LadrunoArcLength::reduceStep(double f)
+{
+    if (f <= 0.0) {
+        opserr << "WARNING LadrunoArcLength::reduceStep - factor must be > 0 "
+                  "(got " << f << "); ignored\n";
+        return -1;
+    }
+    double newAL2 = arcLength2 * f * f;
+    // ell >= floor guard: use ellMin if the user set one, else a tiny absolute
+    // floor so the radius cannot collapse to zero.
+    double floor2 = (ellMin > 0.0) ? ellMin * ellMin : 1.0e-30;
+    if (newAL2 < floor2) newAL2 = floor2;
+    arcLength2 = newAL2;
+    dLambda0  *= f;                       // keep the stabilize load-control predictor in sync
+    return 0;
+}
+
+int
+LadrunoArcLength::increaseStep(double f)
+{
+    if (f <= 0.0) {
+        opserr << "WARNING LadrunoArcLength::increaseStep - factor must be > 0 "
+                  "(got " << f << "); ignored\n";
+        return -1;
+    }
+    double newAL2 = arcLength2 * f * f;
+    if (ellMax > 0.0) {                   // ell <= ellMax ceiling (only if set)
+        double ceil2 = ellMax * ellMax;
+        if (newAL2 > ceil2) newAL2 = ceil2;
+    }
+    arcLength2 = newAL2;
+    dLambda0  *= f;
+    return 0;
+}
+
+int
+LadrunoArcLength::setArcLength(double arcLength)
+{
+    if (arcLength <= 0.0) {
+        opserr << "WARNING LadrunoArcLength::setArcLength - arcLength must be > 0 "
+                  "(got " << arcLength << "); ignored\n";
+        return -1;
+    }
+    arcLength2 = arcLength * arcLength;
+    dLambda0   = arcLength;
+    return 0;
+}
+
+double LadrunoArcLength::getArcLength(void) const           { return sqrt(arcLength2); }
+double LadrunoArcLength::getDeltaLambdaStep(void) const     { return deltaLambdaStep; }
+double LadrunoArcLength::getCurrentLambda(void) const       { return currentLambda; }
+int    LadrunoArcLength::getSignLastDeltaLambdaStep(void) const { return signLastDeltaLambdaStep; }
+double LadrunoArcLength::getDeltaUstepNorm(void) const
+{
+    return (deltaUstep != 0) ? deltaUstep->Norm() : 0.0;
 }
 
 int
 LadrunoArcLength::sendSelf(int cTag, Channel &theChannel)
 {
-    Vector data(20);
+    Vector data(27);
     data(0) = arcLength2;
     data(1) = alpha2;
     data(2) = deltaLambdaStep;
@@ -597,6 +723,15 @@ LadrunoArcLength::sendSelf(int cTag, Channel &theChannel)
     data(17) = cCalibrated ? 1.0 : 0.0;
     data(18) = (double)massMode;
     data(19) = massScale;
+    // Layer-B committed snapshot scalars (cDeltaUstep is rebuilt by domainChanged,
+    // matching stock ArcLength which never serializes its per-step vectors).
+    data(20) = dLambda0;
+    data(21) = cArcLength2;
+    data(22) = cDeltaLambdaStep;
+    data(23) = cCurrentLambda;
+    data(24) = (double)cSign;
+    data(25) = haveSnapshot ? 1.0 : 0.0;
+    data(26) = 0.0;   // reserved
 
     if (theChannel.sendVector(this->getDbTag(), cTag, data) < 0) {
         opserr << "LadrunoArcLength::sendSelf() - failed to send the data\n";
@@ -608,7 +743,7 @@ LadrunoArcLength::sendSelf(int cTag, Channel &theChannel)
 int
 LadrunoArcLength::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
 {
-    Vector data(20);
+    Vector data(27);
     if (theChannel.recvVector(this->getDbTag(), cTag, data) < 0) {
         opserr << "LadrunoArcLength::recvSelf() - failed to receive the data\n";
         return -1;
@@ -633,6 +768,12 @@ LadrunoArcLength::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theB
     cCalibrated             = data(17) != 0.0;
     massMode                = (int)data(18);
     massScale               = data(19);
+    dLambda0                = data(20);
+    cArcLength2             = data(21);
+    cDeltaLambdaStep        = data(22);
+    cCurrentLambda          = data(23);
+    cSign                   = (int)data(24);
+    haveSnapshot            = data(25) != 0.0;
     return 0;
 }
 

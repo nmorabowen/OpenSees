@@ -88,6 +88,8 @@ UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 #include <CTestPFEM.h>
 #include <PFEMIntegrator.h>
 #include <TransientIntegrator.h>      // Ladruno: profiler dt_cr (getCriticalTimeStep)
+#include <LadrunoArcLength.h>         // Ladruno: Layer-B reduceStep/revert runtime command
+#include <classTags.h>               // Ladruno: INTEGRATOR_TAGS_LadrunoArcLength guard
 #include <PFEMSolver.h>
 #include <PFEMLinSOE.h>
 #include <SparsePythonFactory.h>
@@ -3110,6 +3112,79 @@ int OPS_getCTestIter()
 
     opserr << "ERROR testIter - no convergence test!\n";
     return -1;
+}
+
+// Ladruno: runtime control of the active LadrunoArcLength static integrator
+// (Layer-B cut-and-retry, ADR-20 §4.3). Exposes the scalar radius mutators and
+// read-only state to a script so a failed step can be re-attempted without
+// reconstructing the integrator:
+//   ok = analyze(1)
+//   while ok != 0:
+//       ladrunoArcLength('reduceStep', 0.5);  ok = analyze(1)
+// Subcommands (value-taking): reduceStep f | increaseStep f | setArcLength v
+// Subcommands (query, return a scalar): arcLength | deltaLambdaStep |
+//   currentLambda | sign | deltaUstepNorm. With no subcommand returns arcLength.
+int OPS_LadrunoArcLengthCmd()
+{
+    if (cmds == 0) return 0;
+    StaticIntegrator *si = cmds->getStaticIntegrator();
+    if (si == 0 || si->getClassTag() != INTEGRATOR_TAGS_LadrunoArcLength) {
+        opserr << "WARNING ladrunoArcLength - the active static integrator is not "
+                  "a LadrunoArcLength (set `integrator LadrunoArcLength ...` first)\n";
+        return -1;
+    }
+    LadrunoArcLength *la = (LadrunoArcLength *)si;
+
+    // no subcommand => return the current arc length
+    if (OPS_GetNumRemainingInputArgs() < 1) {
+        double al = la->getArcLength();
+        int nd = 1;
+        OPS_SetDoubleOutput(&nd, &al, true);
+        return 0;
+    }
+
+    const char *sub = OPS_GetString();
+
+    // value-taking mutators
+    if (strcmp(sub, "reduceStep") == 0 || strcmp(sub, "increaseStep") == 0 ||
+        strcmp(sub, "setArcLength") == 0) {
+        if (OPS_GetNumRemainingInputArgs() < 1) {
+            opserr << "WARNING ladrunoArcLength " << sub << " - expects one value\n";
+            return -1;
+        }
+        int nd = 1;
+        double v = 0.0;
+        if (OPS_GetDoubleInput(&nd, &v) < 0) {
+            opserr << "WARNING ladrunoArcLength " << sub << " - failed to read value\n";
+            return -1;
+        }
+        int res = 0;
+        if (strcmp(sub, "reduceStep") == 0)        res = la->reduceStep(v);
+        else if (strcmp(sub, "increaseStep") == 0) res = la->increaseStep(v);
+        else                                       res = la->setArcLength(v);
+        if (res < 0) return -1;
+        double al = la->getArcLength();            // echo the resulting radius
+        int n = 1;
+        OPS_SetDoubleOutput(&n, &al, true);
+        return 0;
+    }
+
+    // read-only queries
+    double out = 0.0;
+    if      (strcmp(sub, "arcLength") == 0)       out = la->getArcLength();
+    else if (strcmp(sub, "deltaLambdaStep") == 0) out = la->getDeltaLambdaStep();
+    else if (strcmp(sub, "currentLambda") == 0)   out = la->getCurrentLambda();
+    else if (strcmp(sub, "sign") == 0)            out = (double)la->getSignLastDeltaLambdaStep();
+    else if (strcmp(sub, "deltaUstepNorm") == 0)  out = la->getDeltaUstepNorm();
+    else {
+        opserr << "WARNING ladrunoArcLength - unknown subcommand '" << sub
+               << "' (use reduceStep|increaseStep|setArcLength|arcLength|"
+                  "deltaLambdaStep|currentLambda|sign|deltaUstepNorm)\n";
+        return -1;
+    }
+    int n = 1;
+    OPS_SetDoubleOutput(&n, &out, true);
+    return 0;
 }
 
 int OPS_Database()
