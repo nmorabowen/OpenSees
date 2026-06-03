@@ -104,12 +104,18 @@
 class StagedStrainNDMaterial : public NDMaterial
 {
  public:
-  // active=false  -> pure pass-through (ε0 ≡ 0; the -noInit opt-out).
-  // eps0Given!=0  -> explicit birth strain (size must equal the inner order); skips
-  //                  the auto-capture. Otherwise ε0 is captured on the FIRST setTrialStrain.
-  StagedStrainNDMaterial(int tag, NDMaterial &inner, bool active = true,
+  // ADOPTING ctor: takes OWNERSHIP of innerOwned (already a concrete typed copy, e.g.
+  // from inner.getCopy("ThreeDimensional")); does NOT copy it again. innerOwned==0 is
+  // tolerated (leaves the object invalid, theMaterial==0) so callers fail gracefully
+  // instead of exit(-1) — the factory checks isValid() after construction.
+  //   active=false  -> pure pass-through (ε0 ≡ 0; the -noInit opt-out).
+  //   eps0Given!=0  -> explicit birth strain (size must equal the inner order); skips
+  //                    auto-capture. Otherwise ε0 is captured on the FIRST setTrialStrain.
+  StagedStrainNDMaterial(int tag, NDMaterial *innerOwned, bool active = true,
                          const Vector *eps0Given = 0);
   StagedStrainNDMaterial();
+
+  bool isValid(void) const { return theMaterial != 0; }   // construction succeeded?
   ~StagedStrainNDMaterial();
 
   const char *getClassType(void) const { return "StagedStrainNDMaterial"; }
@@ -156,11 +162,14 @@ class StagedStrainNDMaterial : public NDMaterial
   bool   captured;           // ε0 has been snapshot
   bool   eps0Explicit;       // ε0 supplied at construction (revertToStart keeps it)
   Vector eps0;               // birth strain (sized to inner order)
-
-  Vector relStrain;          // scratch: ε − ε0 forwarded to the inner
   Vector totalStrain;        // last total strain seen (for the totalStrain response)
 
-  void sizeBuffers(int n);   // size ε0/relStrain/totalStrain to a given order
+  void sizeBuffers(int n);   // size ε0/totalStrain to a given order
+  // shared strain-seam: capture ε0 at birth, forward ε − ε0 (rate optional).
+  int  forwardTrial(const Vector &v, const Vector *rate);
+  // shared copy path: adopt an already-typed inner, carry capture state when orders
+  // match (preserve a live birth reference), re-arm otherwise.
+  NDMaterial *adoptCopy(NDMaterial *innerCopy);
 };
 
 #endif

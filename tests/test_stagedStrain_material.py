@@ -314,3 +314,33 @@ def test_missing_inner_fails_gracefully():
     # The point is simply that we got here — the interpreter is alive.
     ops.node(1, 0.0, 0.0, 0.0)
     assert ops.nodeCoord(1) == [0.0, 0.0, 0.0]
+
+
+# --------------------------------------------------------------------------- #
+#  An explicit -eps0 whose size does not match the element's order is gracefully #
+#  dropped (with a warning) and the element falls back to AUTO-capture — so it   #
+#  is still born stress-free in a two-phase staged build, never crashing.       #
+#  (Review fix: getCopy warns instead of silently ignoring the prescribed eps0.) #
+# --------------------------------------------------------------------------- #
+def test_mismatched_explicit_eps0_falls_back_to_autocapture_2d():
+    Fdef = [[8.0e-4, 2.0e-4], [2.0e-4, -5.0e-4]]
+    u = _affine(2, Fdef)
+    _setup(2)
+    # Phase 1: bare PlaneStrain holder deforms + commits.
+    ops.nDMaterial("ElasticIsotropic", 111, _E, _NU)
+    ops.element("quad", 1, *_C2, 1.0, "PlaneStrain", 111)
+    assert _impose_solve(2, u) == 0
+    assert np.abs(np.array(ops.eleForce(1), float)).max() > 1.0e-6 * _E
+
+    # Phase 2: append a quad whose StagedStrain has a WRONG-size explicit -eps0
+    # (6 components for an order-3 PlaneStrain element). getCopy("PlaneStrain")
+    # drops it (warns) -> auto-capture at birth -> born stress-free.
+    ops.nDMaterial("ElasticIsotropic", 121, _E, _NU)
+    ops.nDMaterial("StagedStrain", 123, 121, "-eps0", 1e-3, 1e-3, 1e-3, 0.0, 0.0, 0.0)
+    ops.element("quad", 2, *_C2, 1.0, "PlaneStrain", 123)
+    ops.integrator("LoadControl", 0.0)
+    assert ops.analyze(1) == 0, "mismatched-eps0 staged append failed to solve"
+    f_new = np.array(ops.eleForce(2), float)
+    assert np.abs(f_new).max() <= 1.0e-7 * _E, (
+        f"mismatched-eps0 element not born stress-free: {np.abs(f_new).max():.3e}"
+    )
