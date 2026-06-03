@@ -283,6 +283,7 @@ int OPS_getLoadFactor();
 int OPS_printModelGID();
 int OPS_getCTestNorms();
 int OPS_getCTestIter();
+int OPS_LadrunoArcLengthCmd();   // Ladruno: Layer-B reduceStep/revert runtime command
 int OPS_Recorder();
 int OPS_eleForce();
 int OPS_eleDynamicalForce();

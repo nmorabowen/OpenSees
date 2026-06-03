@@ -13,6 +13,10 @@ fixture from tests/_proto_arch_snapthrough.py, promoted here.
   AL-1  LadrunoArcLength (no flags) reproduces stock ArcLength step-for-step.
   AL-3  -adapt grows the radius (desired-iteration rule) => reaches a target
         load in fewer steps than the same fixed radius.
+  AL-5  -stabilize clears the limit point where plain LoadControl fails.
+  AL-9  Layer-B reduceStep + revertToLastStep restores the COMMITTED per-step
+        state ({deltaLambdaStep, deltaUstep, sign, currentLambda, arcLength})
+        through a FAILED step, then the script-owned cut-and-retry recovers.
   AL-S  smoke: parser accepts the documented argument forms.
 
 Theory / design: Ladruno_implementation/20_ladruno_arclength_stabilized_adr.md.
@@ -159,6 +163,88 @@ def test_al5_stabilize_clears_limit_point():
     )
     # and the regularized path reached the far stable branch (snapped through).
     assert uy_final < -2.0 * _H, f"apex did not reach the far branch: uy={uy_final:.4f}"
+
+
+# --------------------------------------------------------------------------
+# AL-9 : Layer-B reduceStep + revertToLastStep restores the COMMITTED state
+#        through a failed step (ADR-20 §4.3 / review §2.10).
+# --------------------------------------------------------------------------
+def test_al9_layerb_reduce_revert_restores_committed_state():
+    # The crux: stock ArcLength overwrites deltaLambdaStep/deltaUstep in newStep()
+    # BEFORE its own b24ac<0 bail, so a failed step leaves them POLLUTED — "state
+    # preserved for free" is false. LadrunoArcLength snapshots the per-step state
+    # at commit() and an overridden revertToLastStep() (which StaticAnalysis::analyze
+    # already calls on a failed step) restores it. This test drives a few converged
+    # steps, forces a genuine failure with an oversized radius, and asserts the
+    # COMMITTED state is restored — then that reduceStep()+retry recovers.
+    arc, alpha = 0.05, 0.1
+    _build_truss()
+    _setup_solver()
+    ops.integrator(LAL, arc, alpha)
+    ops.analysis("Static")
+
+    # Climb the rising branch toward the limit point (~3.80). A fixed radius this
+    # large eventually fails to converge near the limit (Newton can't clear the
+    # over-long step) — that natural failure IS the failed step we test. Record
+    # the committed per-step state after every converged step.
+    committed = None
+    failed = False
+    for _ in range(2000):
+        ok = ops.analyze(1)
+        if ok != 0:
+            failed = True
+            break
+        committed = dict(
+            lam=ops.getTime(),
+            uy=ops.nodeDisp(_APEX, 2),
+            dlds=ops.ladrunoArcLength("deltaLambdaStep"),
+            sign=ops.ladrunoArcLength("sign"),
+            nrm=ops.ladrunoArcLength("deltaUstepNorm"),
+            al=ops.ladrunoArcLength("arcLength"),
+        )
+    assert failed, "fixed-radius arc-length never hit a failed step"
+    assert committed is not None, "no converged step before the failure"
+    assert committed["lam"] > 3.0, (
+        f"failed too early to be the limit point (lambda={committed['lam']:.3f})"
+    )
+    assert abs(committed["al"] - arc) <= 1e-12, "radius drifted with no -adapt flag"
+    assert abs(committed["nrm"]) > 0.0, "committed deltaUstep should be non-zero"
+
+    # After the FAILED step StaticAnalysis::analyze already called
+    # revertToLastCommit()+revertToLastStep(). The committed per-step state must be
+    # restored — NOT the in-flight values newStep()/update() left polluted before
+    # the bail (the ADR-20 §2.10 crux).
+    assert ops.getTime() == pytest.approx(committed["lam"]), "domain load factor not reverted"
+    assert ops.nodeDisp(_APEX, 2) == pytest.approx(committed["uy"]), "apex disp not reverted"
+    assert ops.ladrunoArcLength("deltaLambdaStep") == pytest.approx(committed["dlds"]), (
+        "deltaLambdaStep NOT restored — left polluted by the failed step"
+    )
+    assert ops.ladrunoArcLength("sign") == committed["sign"], (
+        "signLastDeltaLambdaStep NOT restored"
+    )
+    assert ops.ladrunoArcLength("deltaUstepNorm") == pytest.approx(committed["nrm"]), (
+        "deltaUstep NOT restored — left polluted by the failed step"
+    )
+
+    # Script-owned cut-and-retry (ADR-20 §4.3): shrink the radius and re-attempt
+    # until the step clears. Each failed retry reverts the per-step state again but
+    # leaves the (script-owned) radius alone, so reduceStep() accumulates.
+    recovered = False
+    for _ in range(14):
+        ops.ladrunoArcLength("reduceStep", 0.5)
+        if ops.analyze(1) == 0:
+            recovered = True
+            break
+    assert recovered, "reduceStep cut-and-retry never cleared the failed step"
+    # the radius genuinely shrank below the committed value (reduceStep accumulated)
+    assert ops.ladrunoArcLength("arcLength") < committed["al"], (
+        "reduceStep did not shrink the arc radius across the retry loop"
+    )
+    # and the recovered step advanced the path past the last committed state
+    advanced = (ops.getTime() != pytest.approx(committed["lam"])) or (
+        ops.nodeDisp(_APEX, 2) != pytest.approx(committed["uy"])
+    )
+    assert advanced, "retry converged but did not advance the path"
 
 
 # --------------------------------------------------------------------------
