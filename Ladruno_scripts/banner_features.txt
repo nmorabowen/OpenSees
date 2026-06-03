@@ -24,4 +24,5 @@ Lemaitre ductile damage (-damage lemaitre, +lch, +IMPL-EX)
 LadrunoIMKBeam — concentrated-plasticity IMK beam hinges
 LadrunoRebarBuckling — rebar buckling wrapper (Dhakal–Maekawa / Gomes–Appleton, cyclic re-straightening)
 LadrunoArcLength — adaptive arc-length radius (Ramm desired-iter)
+LadrunoDynamicRelaxation — quasi-static DR (Gershgorin mass + kinetic damping)
 Ladruno — modular HDF5 .ladruno recorder

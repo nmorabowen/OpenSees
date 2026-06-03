@@ -450,6 +450,7 @@ using namespace OpenSees::Hash::literals;
 #include "ExplicitBathe.h"
 #include "ExplicitBatheLNVD.h"
 #include "CentralDifferenceLadruno.h"
+#include "LadrunoDynamicRelaxation.h"   // Ladruno
 #include "NewmarkHSFixedNumIter.h"
 #include "NewmarkHSIncrLimit.h"
 #include "NewmarkHSIncrReduct.h"
@@ -1820,6 +1821,9 @@ TclPackageClassBroker::getNewTransientIntegrator(int classTag)
 
   case INTEGRATOR_TAGS_CentralDifferenceLadruno:
     return new CentralDifferenceLadruno(); // must recvSelf
+
+  case INTEGRATOR_TAGS_LadrunoDynamicRelaxation: // Ladruno
+    return new LadrunoDynamicRelaxation(); // must recvSelf
 
   case INTEGRATOR_TAGS_CentralDifferenceAlternative:
     return new CentralDifferenceAlternative(); // must recvSelf

@@ -52,6 +52,7 @@ GLOBS = [
     "SRC/material/nD/InitDefGradNDMaterial.*",
     "SRC/analysis/integrator/CentralDifferenceLadruno.*",
     "SRC/analysis/integrator/LadrunoArcLength.*",
+    "SRC/analysis/integrator/LadrunoDynamicRelaxation.*",
     "SRC/analysis/integrator/ExplicitBathe.*",
     "SRC/analysis/integrator/ExplicitBatheLNVD.*",
     "SRC/recorder/LadrunoRecorder.*",
