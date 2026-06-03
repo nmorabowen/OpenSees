@@ -349,7 +349,7 @@ the state + sendSelf/recvSelf; default off ⇒ bit-identical to the implicit mat
 - **`-formulation bbar/uri/eas` coverage with the native material** — only `std` is tested;
   the element drives `setTrialF` regardless of formulation, so these should work but aren't
   gated (note: `bbar`+finite = F-bar, already shipped on the element side).
-- **Analytic channel B** — ✅ **SHIPPED (PR §GUARD_PR§, 2026-06-02).** The numeric
+- **Analytic channel B** — ✅ **SHIPPED (PR [#139](https://github.com/nmorabowen/OpenSees/pull/139), 2026-06-02).** The numeric
   R-perturbation (~18 return-map calls per GP-tangent) is replaced by the analytic chain
   `∂R/∂F` (polar-rotation derivative: `Ω` skew solving `(tr U·I − U) ω = axial(A−Aᵀ)`,
   `A = Rᵀ df`) ∘ `∂α̃/∂R` ∘ `∂τ/∂α̃` (return-map backstress sensitivity:
@@ -360,7 +360,7 @@ the state + sendSelf/recvSelf; default off ⇒ bit-identical to the implicit mat
   polar-deriv vs FD ~1e-9, analytic vs numeric ~3e-8 stiff & soft, A+B = full-tangent,
   elastic⇒0) + g++ `test_ladrunoJ2_finite_channelB_cpp.py` (C++ analytic vs oracle ~1e-7).
 
-**Also shipped in PR §GUARD_PR§ (material robustness/docs):**
+**Also shipped in PR [#139](https://github.com/nmorabowen/OpenSees/pull/139) (material robustness/docs):**
 - **Softening-parameter guard** (the LEDGER_quirks `h>0` caveat): the OPS factory now warns
   when the minimum isotropic hardening slope `σ_y'_min = Hiso + min(0,Qinf)·b < 0` (the
   consistent tangent may become indefinite; below `−3G` it loses positive-definiteness),
