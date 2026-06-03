@@ -585,7 +585,7 @@ features:
   - feature: LadrunoEmbeddedRebar
     classtag: 33005          # ELE_TAG (element) family; after LadrunoBrick=33002, IMKBeam=33003, IMKBeam2d=33004
     tag_symbol: ELE_TAG_LadrunoEmbeddedRebar
-    pr: 170
+    pr: 169
     feature_class: element
     required_tiers: [T0, T1]
     pytest: tests/test_ladrunoEmbeddedRebar_element.py   # perfect-bond axial spring (k*u); anisotropic transverse (kt not k); bond-slip axial follows tau(s); partition-of-unity force split to hosts by N_i + equilibrium; response probe
