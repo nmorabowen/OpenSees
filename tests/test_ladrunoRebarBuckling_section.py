@@ -224,3 +224,76 @@ def test_B4k_rc_cantilever_cyclic_converges():
     # soft capacity check: at the largest drift the buckled column carries no MORE
     # base shear than the identity column (bar buckling can only reduce capacity).
     assert abs(wrap[-1][1]) <= abs(iden[-1][1]) * 1.02 + 1.0
+
+
+# ==========================================================================
+#  B4l -- multi-element RC column (distributed plasticity), cyclic pushover
+# ==========================================================================
+def _rc_column_multi(lsr, drifts, H=3000.0, nele=6, axial=-600.0e3, nsub=30):
+    """A cantilever RC column discretized into `nele` dispBeamColumn elements
+    (the realistic multi-element mesh). Returns (peaks, ok, kappa_base, kappa_top)
+    where the section curvatures are read at the largest drift."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 3)
+    nnode = nele + 1
+    for i in range(nnode):
+        ops.node(i + 1, 0.0, H * i / nele)
+    ops.fix(1, 1, 1, 1)
+    top = nnode
+
+    _bar_mat(1, 2, lsr)
+    _rc_section(1, 1)
+    ops.beamIntegration("Lobatto", 1, 1, 3)
+    ops.geomTransf("Linear", 1)
+    for e in range(nele):
+        ops.element("dispBeamColumn", e + 1, e + 1, e + 2, 1, 1)
+
+    ops.timeSeries("Constant", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(top, 0.0, axial, 0.0)
+    ops.system("BandGeneral")
+    ops.numberer("RCM")
+    ops.constraints("Plain")
+    ops.test("NormDispIncr", 1.0e-8, 60, 0)
+    ops.algorithm("Newton")
+    ops.integrator("LoadControl", 0.1)
+    ops.analysis("Static")
+    if ops.analyze(10) != 0:
+        return None, False, 0.0, 0.0
+
+    ops.timeSeries("Linear", 2)
+    ops.pattern("Plain", 2, 2)
+    ops.load(top, 1.0, 0.0, 0.0)
+    peaks = []
+    cur = 0.0
+    ok = True
+    for dr in drifts:
+        target = dr * H
+        if not _advance(top, 1, target - cur, nsub):
+            ok = False
+            break
+        cur = target
+        ops.reactions()
+        peaks.append((dr, ops.nodeReaction(1, 1)))
+
+    # section curvature at the base element vs the top element (localization)
+    def _kappa(eletag):
+        d = ops.eleResponse(eletag, "section", 1, "deformation")  # [eps, kappa]
+        return abs(d[1]) if d and len(d) > 1 else 0.0
+    return peaks, ok, _kappa(1), _kappa(nele)
+
+
+@pytest.mark.t1
+def test_B4l_rc_column_multielement_cyclic():
+    drifts = [0.005, -0.005, 0.015, -0.015, 0.025, -0.025]
+    wrap, ok_w, kb, kt = _rc_column_multi(20.0, drifts)
+    assert wrap is not None and ok_w and len(wrap) == len(drifts), (
+        "wrapped multi-element column: did not complete all drift cycles")
+
+    iden, ok_i, _, _ = _rc_column_multi(0.0, drifts)
+    assert iden is not None and ok_i and len(iden) == len(drifts)
+
+    # buckling degrades capacity at the largest drift
+    assert abs(wrap[-1][1]) <= abs(iden[-1][1]) * 1.02 + 1.0
+    # plastic demand localizes at the base (curvature there >> at the top)
+    assert kb > 2.0 * kt, f"hinge did not localize at the base (kb={kb:.3e}, kt={kt:.3e})"
