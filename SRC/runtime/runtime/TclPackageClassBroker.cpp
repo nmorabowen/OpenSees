@@ -40,6 +40,7 @@ using namespace OpenSees::Hash::literals;
 #include "domain/subdomain/ActorSubdomain.h"
 
 // Convergence tests
+#include <LadrunoStabilizedUnbalance.h>   // Ladruno (convergenceTest on global include path)
 #include "analysis/criteria/CTestNormUnbalance.h"
 #include "analysis/criteria/CTestRelativeNormUnbalance.h"
 #include "analysis/criteria/CTestNormDispIncr.h"
@@ -415,6 +416,7 @@ using namespace OpenSees::Hash::literals;
 // integrator header files
 #include "ArcLength.h"
 #include "LadrunoArcLength.h"   // Ladruno
+#include "LadrunoIndirectControl.h"   // Ladruno
 #include "DisplacementControl.h"
 #ifdef _PARALLEL_PROCESSING
 #include "DistributedDisplacementControl.h"
@@ -1421,6 +1423,9 @@ TclPackageClassBroker::getNewConvergenceTest(int classTag)
   case CONVERGENCE_TEST_CTestFixedNumIter:
     return new CTestFixedNumIter();
 
+  case CONVERGENCE_TEST_LadrunoStabilizedUnbalance: // Ladruno
+    return new LadrunoStabilizedUnbalance();
+
   default:
     opserr << "TclPackageClassBroker::getNewConvergenceTest - ";
     opserr << " - no ConvergenceTest type exists for class tag ";
@@ -1789,6 +1794,9 @@ TclPackageClassBroker::getNewStaticIntegrator(int classTag)
   case INTEGRATOR_TAGS_LadrunoArcLength: // Ladruno
     return new LadrunoArcLength(1.0); // must recvSelf
 
+  case INTEGRATOR_TAGS_LadrunoIndirectControl: // Ladruno
+    return new LadrunoIndirectControl(); // must recvSelf
+
   default:
     opserr << "TclPackageClassBroker::getNewStaticIntegrator - ";
     opserr << " - no StaticIntegrator type exists for class tag ";
@@ -1935,6 +1943,9 @@ TclPackageClassBroker::getNewIncrementalIntegrator(int classTag)
 
   case INTEGRATOR_TAGS_LadrunoArcLength: // Ladruno
     return new LadrunoArcLength(1.0); // must recvSelf
+
+  case INTEGRATOR_TAGS_LadrunoIndirectControl: // Ladruno
+    return new LadrunoIndirectControl(); // must recvSelf
 
   case INTEGRATOR_TAGS_Newmark:
     return new Newmark();

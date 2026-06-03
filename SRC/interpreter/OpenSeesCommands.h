@@ -528,6 +528,7 @@ void* OPS_TransformationConstraintHandler();
 void* OPS_AutoConstraintHandler();
 
 void* OPS_CTestNormUnbalance();
+void* OPS_LadrunoStabilizedUnbalance();   // Ladruno
 void* OPS_CTestNormDispIncr();
 void* OPS_CTestEnergyIncr();
 void* OPS_NormDispAndUnbalance();
@@ -547,6 +548,7 @@ void* OPS_HarmonicSteadyState();
 void* OPS_ArcLength();
 void* OPS_ArcLength1();
 void* OPS_LadrunoArcLength();   // Ladruno
+void* OPS_LadrunoIndirectControl();   // Ladruno
 void* OPS_HSConstraint();
 void* OPS_MinUnbalDispNorm();
 void* OPS_TRBDF2();

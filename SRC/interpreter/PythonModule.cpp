@@ -602,6 +602,8 @@ initopensees(void)
 "        • LadrunoRebarBuckling — rebar buckling wrapper (Dhakal–Maekawa / Gomes–Appleton, cyclic re-straightening)\n"
 "        • LadrunoArcLength — adaptive arc-length radius (Ramm desired-iter)\n"
 "        • LadrunoDynamicRelaxation — quasi-static DR (Gershgorin mass + kinetic damping)\n"
+"        • LadrunoIndirectControl — indirect/CMOD control (snap-back tracking)\n"
+"        • LadrunoStabilizedUnbalance — true-equilibrium test for -stabilize\n"
 "        • Ladruno — modular HDF5 .ladruno recorder\n"
 "\n";
         // FEATURES-END

@@ -48,6 +48,7 @@
 #include "convergenceTest/CTestEnergyIncr.h" 
 #include "convergenceTest/CTestRelativeEnergyIncr.h"
 #include "convergenceTest/CTestFixedNumIter.h"
+#include "convergenceTest/LadrunoStabilizedUnbalance.h"   // Ladruno
 
 // graph numbering schemes
 #include "graph/numberer/RCM.h"
@@ -667,6 +668,7 @@
 // integrator header files
 #include "ArcLength.h"
 #include "LadrunoArcLength.h"   // Ladruno
+#include "LadrunoIndirectControl.h"   // Ladruno
 #include "DisplacementControl.h"
 #ifdef _PARALLEL_PROCESSING
 #include "DistributedDisplacementControl.h"
@@ -2615,9 +2617,12 @@ FEM_ObjectBrokerAllClasses::getNewConvergenceTest(int classTag)
 	case CONVERGENCE_TEST_CTestRelativeEnergyIncr:  
 	     return new CTestRelativeEnergyIncr();
 	     
-	case CONVERGENCE_TEST_CTestFixedNumIter:  
+	case CONVERGENCE_TEST_CTestFixedNumIter:
 	     return new CTestFixedNumIter();
-	     
+
+	case CONVERGENCE_TEST_LadrunoStabilizedUnbalance:   // Ladruno
+	     return new LadrunoStabilizedUnbalance();
+
 	default:
 	     opserr << "FEM_ObjectBrokerAllClasses::getNewConvergenceTest - ";
 	     opserr << " - no ConvergenceTest type exists for class tag ";
@@ -3074,7 +3079,10 @@ FEM_ObjectBrokerAllClasses::getNewStaticIntegrator(int classTag)
 	case INTEGRATOR_TAGS_LadrunoArcLength:   // Ladruno
 	     return new LadrunoArcLength(1.0);    // must recvSelf
 
-	     
+	case INTEGRATOR_TAGS_LadrunoIndirectControl:   // Ladruno
+	     return new LadrunoIndirectControl();   // must recvSelf
+
+
 	default:
 	     opserr << "FEM_ObjectBrokerAllClasses::getNewStaticIntegrator - ";
 	     opserr << " - no StaticIntegrator type exists for class tag ";
@@ -3235,9 +3243,12 @@ FEM_ObjectBrokerAllClasses::getNewIncrementalIntegrator(int classTag)
 
 	case INTEGRATOR_TAGS_LadrunoArcLength:   // Ladruno
 	     return new LadrunoArcLength(1.0);    // must recvSelf
-	     	     
-	     
-	case INTEGRATOR_TAGS_Newmark:  
+
+	case INTEGRATOR_TAGS_LadrunoIndirectControl:   // Ladruno
+	     return new LadrunoIndirectControl();   // must recvSelf
+
+
+	case INTEGRATOR_TAGS_Newmark:
 	     return new Newmark();
 
 #ifdef _PARALLEL_PROCESSING	     

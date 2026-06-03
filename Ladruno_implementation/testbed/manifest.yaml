@@ -234,6 +234,53 @@ features:
       until the owning PR flips it to active. See
       Ladruno_implementation/LEDGER_implementations.md and the dynrelax ADR.
 
+  - feature: LadrunoIndirectControl
+    classtag: 33006          # INTEGRATOR family; indirect/CMOD control (after LadrunoDynamicRelaxation=33005)
+    tag_symbol: INTEGRATOR_TAGS_LadrunoIndirectControl
+    pr: null
+    feature_class: integrator
+    required_tiers: [dynamics-battery]
+    pytest: tests/test_ladrunoIndirectControl_integrator.py   # IC-1 reduce-to-DisplacementControl + IC-2/3 CMOD snap-back
+    tcl: WAIVED(integrator; shared OpenSeesCommands registry serves Tcl + Python; verified via the Zone-A pytest battery)
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      Indirect / CMOD displacement-control static integrator: generalizes stock
+      DisplacementControl (single DOF) to a weighted multi-DOF control quantity
+      c.U (e.g. crack-mouth-opening = u_A - u_B), which stays monotone through
+      snap-back where load and individual DOFs reverse (de Borst indirect control).
+      ADR-20 §8 follow-up #3. See
+      Ladruno_implementation/20_ladruno_arclength_stabilized_adr.md.
+
+  - feature: LadrunoStabilizedUnbalance
+    classtag: 33000          # CONVERGENCE_TEST family (per-registry band >=33000)
+    tag_symbol: CONVERGENCE_TEST_LadrunoStabilizedUnbalance
+    pr: null
+    feature_class: derivative
+    required_tiers: [dynamics-battery]
+    pytest: tests/test_ladrunoStabilizedUnbalance_test.py   # ST-1 graceful fallback + ST-2 true-vs-polluted residual under -stabilize
+    tcl: wired (classic-Tcl `test` via commands.cpp specifyCTest + Python/new-Tcl via OpenSeesCommands.cpp)
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+      - SRC/tcl/commands.cpp
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      True-equilibrium NormUnbalance convergence test for the viscous-stabilized
+      LadrunoArcLength -stabilize mode (ADR-20 §8 follow-up #4): norms the TRUE
+      static unbalance ‖λp − f_int‖ (via the integrator's getStabilizedTrueResidual)
+      instead of the f_v-polluted SOE ‖B‖, so a converged step is a genuine
+      equilibrium, not merely a regularized one. Degrades gracefully to the stock
+      SOE ‖B‖ for any non-stabilizing integrator (drop-in for NormUnbalance). Zero
+      analysis-core surgery: reaches the integrator via EquiSolnAlgo. See
+      Ladruno_implementation/20_ladruno_arclength_stabilized_adr.md.
+
   - feature: EnergyBalanceRecorder
     classtag: 33000          # RECORDER family; was 26
     tag_symbol: RECORDER_TAGS_EnergyBalanceRecorder

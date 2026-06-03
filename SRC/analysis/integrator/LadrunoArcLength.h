@@ -125,6 +125,18 @@ class LadrunoArcLength : public StaticIntegrator
     int    getSignLastDeltaLambdaStep(void) const;
     double getDeltaUstepNorm(void) const;
 
+    // --- true-equilibrium residual exposure (ADR-20 §8 follow-up #4) ---
+    // In -stabilize mode the SOE residual a stock ConvergenceTest norms is the
+    // f_v-POLLUTED `λp − f_int − f_v`, so Newton is satisfied while the true
+    // static unbalance is still nonzero by ‖f_v‖. residualTrueNorm holds the
+    // TRUE `‖λp − f_int‖` (recorded in formUnbalance before f_v is subtracted).
+    // Returns 0 and sets normOut when stabilizing; -1 otherwise (the caller —
+    // LadrunoStabilizedUnbalance — then falls back to the SOE ‖B‖).
+    int getStabilizedTrueResidual(double &normOut) const;
+    // the true-unbalance VECTOR (pre-f_v) for nType-aware norming; 0 if not
+    // stabilizing (caller falls back to the SOE B).
+    const Vector *getStabilizedTrueResidualVector(void) const;
+
     int sendSelf(int commitTag, Channel &theChannel);
     int recvSelf(int commitTag, Channel &theChannel,
                  FEM_ObjectBroker &theBroker);
@@ -163,7 +175,9 @@ class LadrunoArcLength : public StaticIntegrator
     bool   cCalibrated;                // one-shot calibration latch
     double Estrain0;                   // calibration baseline strain energy
     double dissipVisc;                 // cumulative viscous work (watchdog)
-    double residualTrueNorm;           // ||lambda p - f_int|| WITHOUT f_v (watchdog)
+    double residualTrueNorm;           // ||lambda p - f_int||_2 WITHOUT f_v (watchdog/Print)
+    Vector residualTrue;               // the TRUE unbalance VECTOR (pre-f_v), so a
+                                       // convergence test can norm it with ITS own nType
     double dLambda0;                   // load increment for the stabilized predictor
     int    massMode;                   // 0 gershgorin (no dt^2/4) | 1 lumped | 2 unity
     double massScale;                  // for -mass lumped
