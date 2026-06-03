@@ -1,7 +1,7 @@
 ---
 title: Validation Plan — Finite-Strain Trifecta (LadrunoBrick + SolidTransformation + LogStrain)
 project: Ladruno
-status: proposed
+status: P1-complete
 priority: high
 owner: nmora
 tags:
@@ -382,7 +382,7 @@ flowchart LR
 
 | Phase | Theme | Benchmarks | Gate |
 |---|---|---|---|
-| **P1** | Finite-strain core | A1–A5, B1–B3, **C1** | closes review gaps; necking matches Simo |
+| **P1** ✅ | Finite-strain core | A1–A5, B1–B3, **C1** | closes review gaps; necking matches Simo — **DONE**, see [[18_finite_strain_validation_report]] (19 Zone-A tests pass; C1 necking *physics* validated, quantitative ratio→Zone-B) |
 | **P2** | Geometric nonlinearity | A7, C4, C5, D4 | corot elastica/buckling vs analytical |
 | **P3** | Locking & incompressibility | B2, B4, E4 | bbar/eas/F-bar cure demonstrated |
 | **P4** | Explicit dynamics | C2, energy balance | Taylor bar; `dt_cr` caveat documented |
