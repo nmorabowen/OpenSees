@@ -111,7 +111,7 @@ the assembled stiffness of `std`/`bbar`/`ssp` is **provably identical** to
 
 ```python
 element('LadrunoBrick', eleTag, n1,n2,n3,n4,n5,n6,n7,n8, matTag
-        [, '-formulation', <std|bbar|uri|ssp>]     # default: std
+        [, '-formulation', <std|bbar|uri|ssp|eas>]  # default: std
         [, '-geom',        <linear|corot|finite>]  # default: linear
         [, '-hourglass',   <stiffness|physical|viscous> [, coeff]]  # uri only
         [, '-lumped']                              # diagonal mass (explicit)
@@ -126,17 +126,18 @@ Tcl mirror: `element LadrunoBrick $tag $n1 ... $n8 $matTag -formulation bbar ...
 
 | Axis | Keyword | Values | Controls |
 |---|---|---|---|
-| **Formulation** | `-formulation` | `std`, `bbar`, `uri`, `ssp` | strain interpolation / anti-locking treatment |
+| **Formulation** | `-formulation` | `std`, `bbar`, `uri`, `ssp`, `eas` | strain interpolation / anti-locking treatment |
 | **Geometry method** | `-geom` | `linear`, `corot`, `finite` | kinematic regime (small / large rotation / large strain) |
 
 > [!note] Supported combinations (parser-enforced)
-> - `linear` + any of `{std, bbar, uri, ssp}` ✅
-> - `corot` + `{std, bbar}` ✅ — `uri`/`ssp` under corot are a deferred follow-up.
+> - `linear` + any of `{std, bbar, uri, ssp, eas}` ✅
+> - `corot` + `{std, bbar}` ✅ — `uri`/`ssp`/`eas` under corot are a deferred follow-up.
 > - `finite` + `{std (plain F), bbar (F-bar)}` ✅ — requires a `FiniteStrainNDMaterial`
->   (e.g. `nDMaterial LogStrain`); `uri`/`ssp` + finite are reserved.
+>   (e.g. `nDMaterial LogStrain`); `uri`/`ssp`/`eas` + finite are reserved.
 >
-> The token `ssp` is **reserved** for the upcoming true Simo–Rifai EAS (ADR 19);
-> `-formulation eas` currently errors with a hint to use `ssp`.
+> `eas` is **true Simo–Rifai enhanced assumed strain** (small strain; ADR 19) —
+> distinct from the renamed single-point `ssp`. `eas`+corot/finite are reserved
+> (enhanced-`F` finite EAS is the deferred follow-up).
 >
 > Unsupported combos are rejected **at parse time** with a clear diagnostic
 > (`OPS_LadrunoBrick.cpp:206-259`).
@@ -453,15 +454,15 @@ which are single-point.
 
 ## 7 · Stabilized Single-Point (`ssp`)
 
-> [!warning] Naming (2026-06-02)
-> This formulation was **renamed `ssp` → `ssp`**. Despite its derivation from
-> `SSPbrick`'s enhanced-strain stabilization, it is **not** a true enhanced
+> [!warning] Naming (`eas` → `ssp`, 2026-06-02/03)
+> This formulation was **renamed `eas` → `ssp`** (PR-1). Despite its derivation
+> from `SSPbrick`'s enhanced-strain stabilization, it is **not** a true enhanced
 > assumed strain element — it has no per-step internal $\boldsymbol\alpha$ state
-> and freezes its stabilization against the *initial* tangent (§7.2). The name
-> `ssp` is now **reserved** for a true Simo–Rifai EAS element (live $\alpha$,
-> per-iteration condensation) specified in **ADR 19**; `-formulation eas` errors
-> with a hint to use `ssp` until that lands. §7.1 below is the variational
-> background the stabilization *derives from*, not what `ssp` fully implements.
+> and freezes its stabilization against the *initial* tangent (§7.2). The freed
+> name **`-formulation eas` now selects true Simo–Rifai EAS** — a genuine mixed
+> element with live $\boldsymbol\alpha$ and per-iteration static condensation
+> (PR-2, **ADR 19**; see §7.3). §7.1 below is the variational background that BOTH
+> the `ssp` stabilization derives from and the true `eas` element implements.
 
 ### 7.1 The variational idea (Hu–Washizu / Simo–Rifai)
 
@@ -531,6 +532,48 @@ where `physical` locks $<0.5$.
 > output mirrors (§10.7). So it has **1** damage point and **1** material eval per
 > element — $8\times$ cheaper than full integration for expensive materials, at
 > the cost of fidelity (one damage point).
+
+### 7.3 True Simo–Rifai EAS (`eas`) — the mixed element (PR-2, ADR 19)
+
+`-formulation eas` is the **variationally consistent** member of the family: full
+$2\times2\times2$ integration (**8 live** Gauss points, 8 damage points), with the
+compatible strain $\mathbf B\mathbf u$ enriched by an enhanced field
+$\tilde{\boldsymbol\varepsilon}=\mathbf M(\boldsymbol\xi)\,\boldsymbol\alpha$ whose
+**9 parameters $\boldsymbol\alpha$ are element-internal state**, solved each form
+pass and statically condensed:
+
+```
+inner Newton (d fixed):   solve  int M^T sigma dV = 0   ->  alpha
+condense:                 K* = Kdd - Kda Kaa^-1 Kad,   f* = int B^T sigma
+```
+
+The inner Newton drives the enhanced residual $h=\int\mathbf M^{\mathsf T}\boldsymbol\sigma$
+to zero, so the condensed force is just $\int\mathbf B^{\mathsf T}\boldsymbol\sigma$
+(the `EnhancedQuad` contract). The **E9** enhanced set = 3 natural-direction
+incompatible bubbles $\times$ 3 dofs (the Wilson lineage), mapped one-sidedly
+
+$$
+\mathbf M_i(\boldsymbol\xi)=\operatorname{sym}\!\big[(j_0/j)\,\mathbf J_0^{-\mathsf T}\mathbf E_i(\boldsymbol\xi)\big]
+\qquad\text{(ADR 19 eq. E.8 — NOT a two-leg }T_0\text{ strain transform).}
+$$
+
+with the centroid Jacobian $j_0,\mathbf J_0^{-1}$ cached at `setDomain`. The
+mean-zero property $\int_V\mathbf M\,dV=0$ (guaranteed by the $j_0/j$ scaling +
+centroid-only $\mathbf J_0$) is what passes the **constant-strain patch test on
+distorted meshes** — the operative EAS gate.
+
+> [!tip] How `eas` differs from `ssp`
+> Both descend from the same Simo–Rifai idea (§7.1), but `ssp` *freezes* a single
+> stabilization built from the **initial** tangent (no $\boldsymbol\alpha$ state,
+> 1 GP), whereas `eas` carries **live $\boldsymbol\alpha$** and re-condenses against
+> the **current** tangent at all 8 GPs every iteration. So `eas` tracks a nonlinear
+> material correctly and is the consistent choice; `ssp` is the cheap, robust
+> stabilization. **Use a Newton-family algorithm with `eas`** (as with any mixed
+> element); `update()` sets the converged trial state so committed stresses/recorders
+> are correct under `Linear` too. v1 is **small strain** (`eas`+corot/finite reserved
+> — enhanced-`F` finite EAS hourglasses in compression, ADR 19 §3). Validated in
+> `tests/test_ladrunoBrick_eas.py` (patch / reduce-to-`std` / bending / incompress /
+> $\boldsymbol\alpha$ state cycle).
 
 ---
 
