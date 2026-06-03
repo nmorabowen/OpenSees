@@ -58,6 +58,10 @@
 //                         -geom finite -bbar = F-bar (near-incompressible cure;
 //                         GENERALLY UNSYMMETRIC tangent → use system FullGeneral).
 //                         pressure is unsupported under finite (rejected at parse).
+//   -fbar centroid|mean_dilatation - F-bar variant (default centroid). Only with
+//                         -bbar -geom finite. centroid = single centroid J₀ (dSNPO
+//                         eq 15.5); mean_dilatation = volume-averaged J̄ (reduces to
+//                         the small-strain mean-dilatation bbar).
 //
 // Example (Python):
 //   ops.nDMaterial('ElasticIsotropic', 1, 1000.0, 0.3)
@@ -120,12 +124,32 @@ void *OPS_BezierTet10()
     bool useBbar = false;
     bool cMass = false;
     int geomMethodID = SolidTransformation::METHOD_LINEAR;   // -geom (Ladruno)
+    int fbarMode = BezierTet10::FBAR_CENTROID;               // -fbar (Ladruno)
 
     while (OPS_GetNumRemainingInputArgs() > 0) {
         const char *option = OPS_GetString();
 
         if (strcmp(option, "-bbar") == 0 || strcmp(option, "-Bbar") == 0) {
             useBbar = true;
+        }
+        else if (strcmp(option, "-fbar") == 0 || strcmp(option, "-fBar") == 0) {
+            // Ladruno: F-bar variant (only meaningful with -bbar -geom finite).
+            if (OPS_GetNumRemainingInputArgs() < 1) {
+                opserr << "WARNING -fbar needs a value for BezierTet10 " << tag
+                       << " (use centroid|mean_dilatation)\n";
+                return 0;
+            }
+            const char *fb = OPS_GetString();
+            if (strcmp(fb, "centroid") == 0)
+                fbarMode = BezierTet10::FBAR_CENTROID;
+            else if (strcmp(fb, "mean_dilatation") == 0 ||
+                     strcmp(fb, "mean") == 0 || strcmp(fb, "meandilatation") == 0)
+                fbarMode = BezierTet10::FBAR_MEAN;
+            else {
+                opserr << "WARNING unknown -fbar '" << fb << "' for BezierTet10 "
+                       << tag << " (use centroid|mean_dilatation)\n";
+                return 0;
+            }
         }
         else if (strcmp(option, "-cMass") == 0 || strcmp(option, "-cmass") == 0) {
             cMass = true;
@@ -223,6 +247,12 @@ void *OPS_BezierTet10()
                           "the coupling term and may not converge.\n";
             }
         }
+        else if (fbarMode != BezierTet10::FBAR_CENTROID) {
+            // -fbar without -bbar is a no-op (F-bar is off); warn so it is not
+            // silently ignored.
+            opserr << "WARNING BezierTet10 " << tag
+                   << ": -fbar has no effect without -bbar (F-bar is off)\n";
+        }
     }
 
     // Ladruno: converse guard — a finite-strain NDMaterial (e.g. LogStrain) is
@@ -244,7 +274,7 @@ void *OPS_BezierTet10()
                                       iData[5], iData[6], iData[7], iData[8],
                                       iData[9], iData[10],
                                       *theMat, rho, b1, b2, b3,
-                                      useBbar, cMass, pressure, geomMethodID);
+                                      useBbar, cMass, pressure, geomMethodID, fbarMode);
 
     if (theEle == 0) {
         opserr << "WARNING ran out of memory creating BezierTet10 " << tag << "\n";

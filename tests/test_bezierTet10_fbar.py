@@ -31,6 +31,7 @@ import numpy as np
 import pytest
 
 from _testbed import ops
+from _testbed.roundtrip import database_roundtrip
 
 pytestmark = [pytest.mark.zone_a]
 
@@ -68,7 +69,11 @@ def _tet_nodes():
 _COORD = _tet_nodes()
 
 
-def _build(bbar, nu=_NU):
+# the two F-bar variants (the -fbar switch); centroid is the default.
+_FBAR_MODES = ["centroid", "mean_dilatation"]
+
+
+def _build(bbar, nu=_NU, fbar="centroid"):
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 3)
     for tag, (x, y, z) in _COORD.items():
@@ -78,12 +83,13 @@ def _build(bbar, nu=_NU):
     args = ["BezierTet10", 1, *range(1, 11), 2]
     if bbar:
         args.append("-bbar")
+        args += ["-fbar", fbar]
     args += ["-geom", "finite"]
     ops.element(*args)
 
 
-def _impose_and_solve(u, bbar, nu=_NU):
-    _build(bbar, nu)
+def _impose_and_solve(u, bbar, nu=_NU, fbar="centroid"):
+    _build(bbar, nu, fbar)
     ops.timeSeries("Linear", 1)
     ops.pattern("Plain", 1, 1)
     for tag in _COORD:
@@ -100,13 +106,13 @@ def _impose_and_solve(u, bbar, nu=_NU):
     return ops.analyze(1)
 
 
-def _resisting_force(u, bbar, nu=_NU):
-    assert _impose_and_solve(u, bbar, nu) == 0, "imposed-displacement solve failed"
+def _resisting_force(u, bbar, nu=_NU, fbar="centroid"):
+    assert _impose_and_solve(u, bbar, nu, fbar) == 0, "imposed-displacement solve failed"
     return np.array(ops.eleForce(1), dtype=float)
 
 
-def _element_tangent(u, bbar, nu=_NU):
-    assert _impose_and_solve(u, bbar, nu) == 0, "imposed-displacement solve failed"
+def _element_tangent(u, bbar, nu=_NU, fbar="centroid"):
+    assert _impose_and_solve(u, bbar, nu, fbar) == 0, "imposed-displacement solve failed"
     K = ops.eleResponse(1, "stiff")
     assert K and len(K) == 30 * 30, "BezierTet10 must answer eleResponse('stiff') with 30x30"
     return np.array(K, dtype=float).reshape(30, 30)
@@ -169,16 +175,16 @@ def _F_at(u, L):
 # --------------------------------------------------------------------------- #
 #  Headline: consistent tangent == FD of the resisting force, UNSYMMETRIC.     #
 # --------------------------------------------------------------------------- #
-def _fd_tangent_gate(nu):
-    # Non-affine (wiggled) state so the centroid G₀ differs from the per-GP g and
-    # the eq 15.10 coupling is genuinely exercised.
+def _fd_tangent_gate(nu, fbar):
+    # Non-affine (wiggled) state so the bar gradient Ĝ differs from the per-GP g
+    # and the eq 15.10 coupling is genuinely exercised (for BOTH variants).
     Fbar = [[1.15, 0.08, -0.05],
             [0.04, 0.92, 0.06],
             [-0.03, 0.05, 1.10]]
     u = _affine_disp(Fbar, wiggle=True)
 
-    K = _element_tangent(u, True, nu)
-    f0 = _resisting_force(u, True, nu)
+    K = _element_tangent(u, True, nu, fbar)
+    f0 = _resisting_force(u, True, nu, fbar)
     assert np.isfinite(K).all() and np.isfinite(f0).all()
 
     h = 1.0e-6
@@ -186,37 +192,43 @@ def _fd_tangent_gate(nu):
     for d in range(30):
         up = u.copy(); up[d] += h
         um = u.copy(); um[d] -= h
-        Kfd[:, d] = (_resisting_force(up, True, nu) - _resisting_force(um, True, nu)) / (2.0 * h)
+        Kfd[:, d] = (_resisting_force(up, True, nu, fbar)
+                     - _resisting_force(um, True, nu, fbar)) / (2.0 * h)
 
     scale = np.abs(K).max()
     err = np.abs(K - Kfd).max()
     return K, scale, err
 
 
-def test_fbar_consistent_tangent_matches_finite_difference():
-    K, scale, err = _fd_tangent_gate(_NU)
-    # the FD match is the SOLE arbiter of the eq 15.11 q-coupling (incl. −(2/3)σ̄).
+@pytest.mark.parametrize("fbar", _FBAR_MODES)
+def test_fbar_consistent_tangent_matches_finite_difference(fbar):
+    # THE arbiter — for centroid AND mean_dilatation. The mean-dilatation tangent
+    # (Ĵ→J̄, Ĝ→Ḡ volume averages) has no prior validated baseline, so this FD match
+    # is the proof that the (J₀,G₀)→(J̄,Ḡ) derivation is the complete consistent
+    # tangent. The FD match is the SOLE arbiter of the eq 15.11 q-coupling.
+    K, scale, err = _fd_tangent_gate(_NU, fbar)
     assert err <= 1.0e-4 * scale, (
-        f"F-bar tangent != FD of resisting force: max abs err {err:.3e} vs scale "
-        f"{scale:.3e} (eq 15.11 coupling q_ij = (1/3)a_ijpp − (2/3)σ_ij?)"
+        f"F-bar[{fbar}] tangent != FD of resisting force: max abs err {err:.3e} vs "
+        f"scale {scale:.3e} (eq 15.11 coupling q_ij = (1/3)a_ijpp − (2/3)σ_ij?)"
     )
     # F-bar carries a genuinely unsymmetric coupling on this non-affine state:
     # confirm the test is actually exercising it (else it proves nothing).
     asym = np.abs(K - K.T).max()
     assert asym > 1.0e-6 * scale, (
-        "F-bar tangent came out symmetric on a non-affine state — the eq 15.10 "
-        "coupling term is not being exercised (G₀ == g?)"
+        f"F-bar[{fbar}] tangent came out symmetric on a non-affine state — the "
+        "eq 15.10 coupling term is not being exercised (Ĝ == g?)"
     )
 
 
-def test_fbar_consistent_tangent_matches_fd_near_incompressible():
+@pytest.mark.parametrize("fbar", _FBAR_MODES)
+def test_fbar_consistent_tangent_matches_fd_near_incompressible(fbar):
     # The −(2/3)σ̄ term feeds the volumetric block whose magnitude blows up as
     # ν→1/2 (bulk modulus ~ E/(3(1−2ν))). Re-running the FD gate at ν=0.499 guards
-    # that term where it matters most: a (1/3)c shortcut would be glaring here.
-    _, scale, err = _fd_tangent_gate(0.499)
+    # that term where it matters most — for both variants.
+    _, scale, err = _fd_tangent_gate(0.499, fbar)
     assert err <= 1.0e-4 * scale, (
-        f"near-incompressible F-bar tangent != FD: max abs err {err:.3e} vs scale "
-        f"{scale:.3e} (the −(2/3)σ̄ term in eq 15.11 is most consequential at ν→1/2)"
+        f"near-incompressible F-bar[{fbar}] tangent != FD: max abs err {err:.3e} vs "
+        f"scale {scale:.3e} (the −(2/3)σ̄ term in eq 15.11 is most consequential at ν→1/2)"
     )
 
 
@@ -224,28 +236,29 @@ def test_fbar_consistent_tangent_matches_fd_near_incompressible():
 #  Residual reduces to std finite under HOMOGENEOUS F (F̄ = F when J₀ = J),     #
 #  but the TANGENT does NOT (centroid G₀ ≠ per-GP g).                           #
 # --------------------------------------------------------------------------- #
-def test_fbar_residual_matches_std_on_homogeneous_deformation():
+@pytest.mark.parametrize("fbar", _FBAR_MODES)
+def test_fbar_residual_matches_std_on_homogeneous_deformation(fbar):
     Fm = [[1.10, 0.05, -0.02],
           [0.03, 0.96, 0.04],
           [-0.01, 0.02, 1.07]]
-    u = _affine_disp(Fm, wiggle=False)            # affine => homogeneous F
+    u = _affine_disp(Fm, wiggle=False)            # affine => homogeneous F (Ĵ = J)
 
-    f_bar = _resisting_force(u, True)
+    f_bar = _resisting_force(u, True, fbar=fbar)
     f_std = _resisting_force(u, False)
     scale = max(np.abs(f_std).max(), 1.0e-30)
     assert np.abs(f_bar - f_std).max() <= 1.0e-9 * scale, (
-        "F-bar residual did not reduce to std finite on a homogeneous deformation "
-        f"(F̄ should equal F): max force diff {np.abs(f_bar - f_std).max():.3e}"
+        f"F-bar[{fbar}] residual did not reduce to std finite on a homogeneous "
+        f"deformation (F̄ should equal F): max diff {np.abs(f_bar - f_std).max():.3e}"
     )
 
-    # The F-bar tangent legitimately DIFFERS even here (centroid vs local
-    # dilatation): confirm the coupling is present (not a silent no-op).
-    K_bar = _element_tangent(u, True)
+    # The F-bar tangent legitimately DIFFERS even here (bar gradient Ĝ ≠ per-GP g):
+    # confirm the coupling is present (not a silent no-op).
+    K_bar = _element_tangent(u, True, fbar=fbar)
     K_std = _element_tangent(u, False)
     ks = np.abs(K_std).max()
     assert np.abs(K_bar - K_std).max() > 1.0e-6 * ks, (
-        "F-bar tangent is identical to std on a distorted tet — the eq 15.10 "
-        "centroid coupling term appears to be missing"
+        f"F-bar[{fbar}] tangent is identical to std on a distorted tet — the "
+        "eq 15.10 coupling term appears to be missing"
     )
 
 
@@ -277,6 +290,31 @@ def test_fbar_parse_accept_and_pressure_still_rejected():
     tags = [tags] if isinstance(tags, int) else (tags or [])
     assert 1 in tags, "-geom finite -bbar (F-bar) should be accepted"
 
+    # -fbar centroid|mean_dilatation both accepted with -bbar -geom finite
+    for fb in _FBAR_MODES:
+        ops.wipe()
+        ops.model("basic", "-ndm", 3, "-ndf", 3)
+        for tag, (x, y, z) in _COORD.items():
+            ops.node(tag, x, y, z)
+        ops.nDMaterial("ElasticIsotropic", 1, _E, _NU)
+        ops.nDMaterial("LogStrain", 2, 1)
+        ops.element("BezierTet10", 1, *range(1, 11), 2, "-bbar", "-fbar", fb, "-geom", "finite")
+        tags = ops.getEleTags()
+        tags = [tags] if isinstance(tags, int) else (tags or [])
+        assert 1 in tags, f"-fbar {fb} should be accepted"
+
+    # an unknown -fbar value is rejected
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for tag, (x, y, z) in _COORD.items():
+        ops.node(tag, x, y, z)
+    ops.nDMaterial("ElasticIsotropic", 1, _E, _NU)
+    ops.nDMaterial("LogStrain", 2, 1)
+    _ele_absent_after(
+        lambda: ops.element("BezierTet10", 1, *range(1, 11), 2,
+                            "-bbar", "-fbar", "bogus", "-geom", "finite")
+    )
+
     # -pressure + finite (with or without -bbar) is still rejected
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 3)
@@ -299,7 +337,8 @@ def test_fbar_parse_accept_and_pressure_still_rejected():
 #  oscillation that is the very thing F-bar cures. Imposed (deterministic) non-  #
 #  homogeneous field at ν=0.499 — no solver, so std cannot just diverge.         #
 # --------------------------------------------------------------------------- #
-def test_fbar_pins_uniform_pressure_under_inhomogeneous_near_incompressible():
+@pytest.mark.parametrize("fbar", _FBAR_MODES)
+def test_fbar_pins_uniform_pressure_under_inhomogeneous_near_incompressible(fbar):
     nu = 0.499
     # affine stretch + per-node wiggle ⇒ a NON-homogeneous F (det J varies across
     # the 4 GPs). Moderate so det F stays well positive at every GP for std too.
@@ -308,13 +347,13 @@ def test_fbar_pins_uniform_pressure_under_inhomogeneous_near_incompressible():
             [-0.01, 0.02, 1.04]]
     u = _affine_disp(Fbar, wiggle=True)
 
-    def gp_pressures(bbar):
-        assert _impose_and_solve(u, bbar, nu) == 0, "imposed near-incompressible solve failed"
+    def gp_pressures(bbar, fb="centroid"):
+        assert _impose_and_solve(u, bbar, nu, fb) == 0, "imposed near-incompressible solve failed"
         s = np.array(ops.eleResponse(1, "stresses"), dtype=float).reshape(4, 6)
         return -(s[:, 0] + s[:, 1] + s[:, 2]) / 3.0       # hydrostatic pressure per GP
 
     p_std = gp_pressures(False)
-    p_bar = gp_pressures(True)
+    p_bar = gp_pressures(True, fbar)                       # both variants pin det F̄ uniform
     spread_std = float(p_std.max() - p_std.min())
     spread_bar = float(p_bar.max() - p_bar.min())
 
@@ -412,29 +451,34 @@ def test_fbar_load_driven_converges():
 
 
 # --------------------------------------------------------------------------- #
-#  Oracle leg: pin the CENTROID dilatation J₀ (and the (J₀/J)^(1/3) scaling)    #
-#  against an INDEPENDENT closed-form. The FD-of-self gates and the spread-only #
-#  / homogeneous-F gates structurally cannot catch a consistent wrong-centroid  #
-#  J₀ (it shifts σ̄ and the tangent together, and keeps det F̄ uniform). Here we  #
-#  reconstruct F̄ at GP 0 from scratch — J₀ at the tet centroid L=(¼,¼,¼), J at   #
-#  GP 0 — and check the element's GP-0 Cauchy stress against the LogStrain        #
-#  oracle. A wrong centroid location or J₀ value fails this.                     #
+#  Oracle leg: pin the bar dilatation Ĵ (and the (Ĵ/J)^(1/3) scaling) against    #
+#  an INDEPENDENT closed-form, for BOTH variants. The FD-of-self gates and the   #
+#  spread-only / homogeneous-F gates structurally cannot catch a consistent      #
+#  wrong-Ĵ (it shifts σ̄ and the tangent together, and keeps det F̄ uniform). We   #
+#  reconstruct F̄ at GP 0 from scratch — Ĵ = det F at the tet centroid (centroid  #
+#  variant) or the GP-mean of det F (mean_dilatation; the simple mean is exact   #
+#  for a straight-sided tet where detJ_ref is constant) — and check the GP-0      #
+#  Cauchy against the LogStrain oracle. A wrong centroid/J̄ value fails this.      #
 # --------------------------------------------------------------------------- #
-def test_fbar_centroid_dilatation_matches_oracle():
+@pytest.mark.parametrize("fbar", _FBAR_MODES)
+def test_fbar_dilatation_matches_oracle(fbar):
     import logstrain_reference as o
     nu = _NU
     Fimp = [[1.08, 0.05, -0.03],
             [0.02, 0.95, 0.04],
             [-0.02, 0.03, 1.06]]
-    u = _affine_disp(Fimp, wiggle=True)          # non-affine ⇒ J₀(centroid) ≠ J(GP)
-    assert _impose_and_solve(u, True, nu) == 0, "imposed F-bar solve failed"
+    u = _affine_disp(Fimp, wiggle=True)          # non-affine ⇒ Ĵ ≠ J(GP)
+    assert _impose_and_solve(u, True, nu, fbar) == 0, "imposed F-bar solve failed"
 
+    J_gp = np.array([float(np.linalg.det(_F_at(u, L))) for L in _GP4_L])
+    if fbar == "mean_dilatation":
+        Jhat = float(J_gp.mean())                # J̄ = mean det F (straight-sided tet)
+    else:
+        Jhat = float(np.linalg.det(_F_at(u, (0.25, 0.25, 0.25))))   # centroid J₀
     F_gp0 = _F_at(u, _GP4_L[0])
-    F_cen = _F_at(u, (0.25, 0.25, 0.25))
-    J0 = float(np.linalg.det(F_cen))             # centroid dilatation
-    Jg = float(np.linalg.det(F_gp0))
-    assert J0 > 0.0 and Jg > 0.0
-    Fbar0 = (J0 / Jg) ** (1.0 / 3.0) * F_gp0      # F̄ at GP 0 (det = J₀)
+    Jg = J_gp[0]
+    assert Jhat > 0.0 and Jg > 0.0
+    Fbar0 = (Jhat / Jg) ** (1.0 / 3.0) * F_gp0   # F̄ at GP 0 (det = Ĵ)
 
     Kbulk = _E / (3.0 * (1.0 - 2.0 * nu))
     G = _E / (2.0 * (1.0 + nu))
@@ -445,8 +489,8 @@ def test_fbar_centroid_dilatation_matches_oracle():
     s0 = np.array(ops.eleResponse(1, "stresses"), dtype=float).reshape(4, 6)[0]
     tol = 1.0e-6 * max(np.abs(sig_v).max(), 1.0)
     assert np.allclose(s0, sig_v, rtol=1.0e-6, atol=tol), (
-        f"F-bar GP-0 Cauchy {s0} != oracle from hand-built F̄ {sig_v} — the "
-        "centroid J₀ (L=¼,¼,¼) or the (J₀/J)^(1/3) scaling is wrong"
+        f"F-bar[{fbar}] GP-0 Cauchy {s0} != oracle from hand-built F̄ {sig_v} — "
+        "the bar dilatation Ĵ or the (Ĵ/J)^(1/3) scaling is wrong"
     )
 
 
@@ -464,3 +508,92 @@ def test_fbar_rigid_rotation_is_stress_free():
     assert max(abs(v) for v in s) <= 1.0e-7 * _E, "F-bar rigid rotation induced stress"
     f = np.array(ops.eleForce(1), dtype=float)
     assert np.abs(f).max() <= 1.0e-7 * _E, "F-bar rigid rotation induced force"
+
+
+# --------------------------------------------------------------------------- #
+#  The two variants are DISTINCT: under a non-homogeneous state the centroid     #
+#  gradient G₀ and the volume-averaged Ḡ differ, so their tangents differ. (If    #
+#  they were identical the -fbar switch would be a no-op.)                       #
+# --------------------------------------------------------------------------- #
+def test_fbar_centroid_and_mean_dilatation_differ():
+    Fimp = [[1.12, 0.06, -0.04],
+            [0.03, 0.93, 0.05],
+            [-0.02, 0.04, 1.08]]
+    u = _affine_disp(Fimp, wiggle=True)           # non-affine ⇒ G₀ ≠ Ḡ
+    K_cen = _element_tangent(u, True, fbar="centroid")
+    K_mean = _element_tangent(u, True, fbar="mean_dilatation")
+    scale = np.abs(K_cen).max()
+    assert np.abs(K_cen - K_mean).max() > 1.0e-6 * scale, (
+        "centroid and mean_dilatation F-bar tangents are identical on a "
+        "non-homogeneous state — the -fbar switch is not taking effect"
+    )
+
+
+# --------------------------------------------------------------------------- #
+#  Consistency payoff of mean_dilatation: at SMALL strain it reduces to the      #
+#  element's volume-averaged small-strain -bbar (-geom linear -bbar), which the   #
+#  CENTROID variant does NOT (centroid samples one point, not the volume mean).   #
+#  This is the reason mean_dilatation exists.                                     #
+# --------------------------------------------------------------------------- #
+def _linear_bbar_force(u, nu):
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for tag, (x, y, z) in _COORD.items():
+        ops.node(tag, x, y, z)
+    ops.nDMaterial("ElasticIsotropic", 1, _E, nu)   # small-strain mean-dilatation bbar
+    ops.element("BezierTet10", 1, *range(1, 11), 1, "-bbar", "-geom", "linear")
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    for tag in _COORD:
+        base = (tag - 1) * 3
+        for d in range(3):
+            ops.sp(tag, d + 1, float(u[base + d]))
+    ops.constraints("Lagrange")
+    ops.numberer("Plain")
+    ops.system("FullGeneral")
+    ops.test("NormDispIncr", 1.0e-11, 30, 0)
+    ops.algorithm("Newton")
+    ops.integrator("LoadControl", 1.0)
+    ops.analysis("Static")
+    assert ops.analyze(1) == 0, "linear -bbar solve failed"
+    return np.array(ops.eleForce(1), dtype=float)
+
+
+def test_fbar_mean_dilatation_reduces_to_linear_bbar_at_small_strain():
+    nu = _NU
+    eps = 1.0e-5
+    Fm = [[1.0 + eps, 0.5 * eps, 0.0],
+          [0.5 * eps, 1.0 - 0.3 * eps, 0.0],
+          [0.0, 0.0, 1.0 + 0.2 * eps]]
+    u = _affine_disp(Fm, wiggle=False)            # tiny pure strain (small-strain regime)
+
+    f_lin_bbar = _linear_bbar_force(u, nu)        # small-strain volume-averaged B-bar
+    f_mean = _resisting_force(u, True, nu, "mean_dilatation")
+    scale = max(np.abs(f_lin_bbar).max(), 1.0e-30)
+    # mean_dilatation finite ⇒ small-strain mean-dilatation B-bar as F→I (O(strain) gap)
+    assert np.abs(f_mean - f_lin_bbar).max() <= 1.0e-3 * scale, (
+        "mean_dilatation F-bar did not reduce to the small-strain -bbar at small "
+        f"strain: max diff {np.abs(f_mean - f_lin_bbar).max():.3e} vs scale {scale:.3e}"
+    )
+
+
+# --------------------------------------------------------------------------- #
+#  Serialization: the -fbar variant (iData slot 16) must survive recvSelf, or a  #
+#  parallel/DB worker silently reverts mean_dilatation → centroid. nodeDisp is   #
+#  sp-pinned and vacuous here, so we probe eleResponse('stiff') — the mean and   #
+#  centroid tangents differ, so a reverted fbarMode changes it.                  #
+# --------------------------------------------------------------------------- #
+def test_fbar_mode_serialization_roundtrip():
+    Fimp = [[1.10, 0.05, -0.03],
+            [0.02, 0.95, 0.04],
+            [-0.02, 0.03, 1.07]]
+    u = _affine_disp(Fimp, wiggle=True)
+
+    def build():
+        assert _impose_and_solve(u, True, _NU, "mean_dilatation") == 0, "roundtrip build failed"
+
+    build()
+    probe = list(_COORD)
+    assert max(abs(ops.nodeDisp(t, 1)) for t in probe) > 1.0e-6
+    database_roundtrip(build, probe, ndf=3,
+                       probe_fn=lambda: ops.eleResponse(1, "stiff"))

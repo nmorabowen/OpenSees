@@ -142,12 +142,12 @@ BezierTet10::BezierTet10(int tag,
                          NDMaterial &m, double r,
                          double bx, double by, double bz,
                          bool bbar, bool cmass, double press,
-                         int geomMethodID)
+                         int geomMethodID, int fbar)
   : Element(tag, ELE_TAG_BezierTet10),
     theMaterial(0),
     connectedExternalNodes(NEN),
     rho(r), pressure(press),
-    useBbar(bbar), cMass(cmass),
+    useBbar(bbar), cMass(cmass), fbarMode(fbar),   // Ladruno — F-bar variant
     Q(NELD), applyLoad(0), Ki(0), theGeom(0)   // Ladruno — geometry method
 {
     // Ladruno: geometry-method layer (linear default / corot). Linear is the
@@ -211,7 +211,7 @@ BezierTet10::BezierTet10()
     theMaterial(0),
     connectedExternalNodes(NEN),
     rho(0.0), pressure(0.0),
-    useBbar(false), cMass(false),
+    useBbar(false), cMass(false), fbarMode(FBAR_CENTROID),   // Ladruno — F-bar variant
     Q(NELD), applyLoad(0), Ki(0), theGeom(0)   // Ladruno — geometry method
 {
     // Ladruno: broker/database reconstruction path — recvSelf rebuilds the real
@@ -875,19 +875,76 @@ double BezierTet10::centroidFbar(double (*G0)[NEN]) const
     return J0;
 }
 
+// F-bar MEAN-DILATATION data — the consistent analogue of centroidFbar with the
+// single centroid point replaced by volume averages over the Gauss points:
+//   J̄    = (∫ J dV₀)/V₀                = (Σ_gp J_gp dV₀_gp)/(Σ_gp dV₀_gp)
+//   Ḡ_kb = (∫ ∂N_b/∂x_k dv)/v          = (Σ_gp g_kb,gp dv_gp)/(Σ_gp dv_gp)
+// with dV₀ = w·|detJ_ref| (reference) and dv = J·dV₀ (current). This is the
+// classic mean-dilatation (Nagtegaal–Parks–Rice / Simo–Taylor–Pister) variant;
+// at small strain it reduces to the element's volume-averaged small-strain bbar.
+// Returns J̄ (0.0 on a degenerate/inverted GP so the caller's J̄≤0 guard fires).  // Ladruno
+double BezierTet10::fbarMeanDilatation(double (*Gbar)[NEN]) const
+{
+    double sumJ_dV0 = 0.0, sum_dV0 = 0.0;        // Σ J dV₀ (= v), Σ dV₀ (= V₀)
+    double Gacc[3][NEN];
+    if (Gbar != 0)
+        for (int k = 0; k < 3; k++)
+            for (int b = 0; b < NEN; b++) Gacc[k][b] = 0.0;
+
+    for (int gp = 0; gp < NGAUSS; gp++) {
+        double dN[3][NEN];
+        shapeDerivatives(GP4_L[gp][0], GP4_L[gp][1], GP4_L[gp][2], dN);
+        double Jm[3][3], dN_dX[3][NEN];
+        double detJ = computeJacobian(dN, Jm, dN_dX);
+        if (fabs(detJ) <= 0.0)
+            return 0.0;                          // degenerate; caller's J̄≤0 guard fires
+
+        double F[9];
+        double Jgp = deformationGradient(dN_dX, F);
+        double dV0 = GP4_w[gp] * fabs(detJ);     // reference measure
+        sumJ_dV0 += Jgp * dV0;
+        sum_dV0  += dV0;
+
+        if (Gbar != 0) {
+            if (Jgp <= 0.0)
+                return 0.0;                      // can't push the gradient on an inverted GP
+            double Fi[9];
+            invert3x3(F, Fi);
+            double dv = Jgp * dV0;               // current measure
+            for (int b = 0; b < NEN; b++)
+                for (int k = 0; k < 3; k++) {
+                    double s = 0.0;
+                    for (int m = 0; m < 3; m++)
+                        s += dN_dX[m][b] * Fi[3*m + k];   // ∂N_b/∂x_k at this GP
+                    Gacc[k][b] += s * dv;
+                }
+        }
+    }
+    if (sum_dV0 <= 0.0)
+        return 0.0;
+    double Jbar = sumJ_dV0 / sum_dV0;            // = v/V₀
+    if (Gbar != 0 && sumJ_dV0 > 0.0)            // v = Σ dv = Σ J dV₀ = sumJ_dV0
+        for (int k = 0; k < 3; k++)
+            for (int b = 0; b < NEN; b++) Gbar[k][b] = Gacc[k][b] / sumJ_dV0;
+    return Jbar;
+}
+
 int BezierTet10::updateFinite(void)
 {
     static Matrix Fm(3, 3);
 
-    // bbar + finite = F-bar: every GP is driven by F̄ = (J₀/J)^(1/3) F so they
-    // share the centroid dilatation J₀ (volumetric-locking cure). std uses F.
+    // bbar + finite = F-bar: every GP is driven by F̄ = (Ĵ/J)^(1/3) F so they
+    // share one bar dilatation Ĵ (volumetric-locking cure). std uses F. Ĵ is the
+    // centroid J₀ (-fbar centroid) or the volume average J̄ (-fbar mean_dilatation).
     const bool useFbar = useBbar;
-    double J0 = 1.0;
+    double Jhat = 1.0;
     if (useFbar) {
-        J0 = this->centroidFbar();               // det F₀ at the centroid
-        if (J0 <= 0.0) {
-            opserr << "BezierTet10::updateFinite - non-positive centroid det F0 = "
-                   << J0 << " (element " << this->getTag() << ", F-bar)\n";
+        Jhat = (fbarMode == FBAR_MEAN) ? this->fbarMeanDilatation()
+                                       : this->centroidFbar();
+        if (Jhat <= 0.0) {
+            opserr << "BezierTet10::updateFinite - non-positive F-bar dilatation Ĵ = "
+                   << Jhat << " (element " << this->getTag() << ", -fbar "
+                   << (fbarMode == FBAR_MEAN ? "mean_dilatation" : "centroid") << ")\n";
             return -1;
         }
     }
@@ -913,7 +970,7 @@ int BezierTet10::updateFinite(void)
             return -1;
         }
         if (useFbar) {
-            double s = pow(J0 / Jdet, 1.0 / 3.0);      // F̄ = (J₀/J)^(1/3) F (det F̄ = J₀ > 0)
+            double s = pow(Jhat / Jdet, 1.0 / 3.0);    // F̄ = (Ĵ/J)^(1/3) F (det F̄ = Ĵ > 0)
             for (int n = 0; n < 9; n++) F[n] *= s;
         }
         for (int r = 0; r < 3; r++)
@@ -944,13 +1001,16 @@ void BezierTet10::formResidAndTangentFinite(int tangFlag, Vector &fInt, Matrix *
         K->Zero();
 
     // F-bar (bbar + finite): the eq 15.10 tangent gains a (generally UNSYMMETRIC)
-    // coupling to the element-centroid gradient operator G₀. The residual is
-    // unchanged — F-bar enters it only through σ̄ (set in updateFinite, eq 15.9).
-    // G₀ is element-wide; compute it once.  // Ladruno
+    // coupling to an element-wide gradient operator Ĝ. The residual is unchanged —
+    // F-bar enters it only through σ̄ (set in updateFinite, eq 15.9). Ĝ is the
+    // centroid gradient G₀ (-fbar centroid) or the volume-averaged Ḡ (-fbar
+    // mean_dilatation); compute it once.  // Ladruno
     const bool useFbar = useBbar;
-    double G0[3][NEN];
-    if (useFbar && tangFlag && K != 0)
-        this->centroidFbar(G0);
+    double Ghat[3][NEN];
+    if (useFbar && tangFlag && K != 0) {
+        if (fbarMode == FBAR_MEAN) this->fbarMeanDilatation(Ghat);
+        else                       this->centroidFbar(Ghat);
+    }
 
     for (int gp = 0; gp < NGAUSS; gp++) {
         double dN[3][NEN];
@@ -1046,13 +1106,13 @@ void BezierTet10::formResidAndTangentFinite(int tangFlag, Vector &fInt, Matrix *
                         }
 
             // F-bar additional (generally UNSYMMETRIC) stiffness, dSNPO eq 15.10:
-            //   K_{(a,i)(b,k)} += ∫ (Σ_j g[j][a] q_ij)(G₀[k][b] − g[k][b]) dv,
+            //   K_{(a,i)(b,k)} += ∫ (Σ_j g[j][a] q_ij)(Ĝ[k][b] − g[k][b]) dv,
             // with q the matrix form of the eq 15.11 tensor at F=F̄,
             //   q_ij = (1/3) a_ijpp − (2/3) σ̄_ij ,
             // using the SAME a4 = c̄ − σ̄δ modulus as the std term above (NOT the
             // material part c̄ alone — the −(2/3)σ̄ is the spatial initial-stress
-            // part, NOT a (1/3)c shortcut). (G₀ − g) vanishes when G₀ = g,
-            // collapsing F-bar to the plain-F tangent.  // Ladruno
+            // part, NOT a (1/3)c shortcut). Ĝ is the centroid G₀ or the volume
+            // average Ḡ; (Ĝ − g) vanishes when Ĝ = g, collapsing to plain F.  // Ladruno
             if (useFbar) {
                 double M[3][3];
                 for (int i = 0; i < 3; i++)
@@ -1073,7 +1133,7 @@ void BezierTet10::formResidAndTangentFinite(int tangFlag, Vector &fInt, Matrix *
                         for (int bn = 0; bn < NEN; bn++)
                             for (int kk = 0; kk < 3; kk++)
                                 (*K)(3*a + i, 3*bn + kk)
-                                    += Lfac[a][i] * (G0[kk][bn] - g[kk][bn]) * dv;
+                                    += Lfac[a][i] * (Ghat[kk][bn] - g[kk][bn]) * dv;
             }
         }
     }
@@ -1410,10 +1470,9 @@ int BezierTet10::sendSelf(int commitTag, Channel &theChannel)
 {
     int res = 0;
 
-    // tag + 10 nodes + matClassTag + matDbTag + useBbar + cMass + geomID = 16
-    // Ladruno: a dedicated slot 15 carries the geometry-method id (the existing
-    // 15-slot buffer was full — no packed slot to reuse, so widen to 16).
-    static ID iData(16);
+    // tag + 10 nodes + matClassTag + matDbTag + useBbar + cMass + geomID + fbarMode = 17
+    // Ladruno: slot 15 carries the geometry-method id; slot 16 the F-bar variant.
+    static ID iData(17);
     iData(0) = this->getTag();
     for (int i = 0; i < NEN; i++)
         iData(i + 1) = connectedExternalNodes(i);
@@ -1428,6 +1487,7 @@ int BezierTet10::sendSelf(int commitTag, Channel &theChannel)
     iData(13) = useBbar ? 1 : 0;
     iData(14) = cMass ? 1 : 0;
     iData(15) = theGeom->getMethodID();   // Ladruno — geometry method
+    iData(16) = fbarMode;                 // Ladruno — F-bar variant
 
     res += theChannel.sendID(this->getDbTag(), commitTag, iData);
 
@@ -1453,7 +1513,7 @@ int BezierTet10::recvSelf(int commitTag, Channel &theChannel,
 {
     int res = 0;
 
-    static ID iData(16);
+    static ID iData(17);
     res += theChannel.recvID(this->getDbTag(), commitTag, iData);
 
     this->setTag(iData(0));
@@ -1463,6 +1523,7 @@ int BezierTet10::recvSelf(int commitTag, Channel &theChannel,
     int matDbTag = iData(12);
     useBbar = (iData(13) == 1);
     cMass = (iData(14) == 1);
+    fbarMode = iData(16);                 // Ladruno — F-bar variant
 
     // Ladruno: rebuild the geometry method from the serialized id (Linear
     // fallback for an unknown/zero id) — else a parallel worker silently
