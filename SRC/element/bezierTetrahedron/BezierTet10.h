@@ -62,12 +62,17 @@
 //   element BezierTet10 $tag $nd1 ... $nd10 $matTag
 //                       <-bbar> <-cMass> <-rho $r>
 //                       <-bodyForce $b1 $b2 $b3> <-pressure $p>
-//                       <-geom linear|corot>
+//                       <-geom linear|corot|finite>
 //
 //   Geometry method (Ladruno): default linear (small strain). -geom corot adds
 //   large-rotation / small-strain corotational kinematics via the shared
 //   SolidTransformation layer (std + bbar; pressure unsupported under corot in
-//   v1). finite strain is a separate, not-yet-implemented task.
+//   v1). -geom finite is genuine large-strain updated-Lagrangian: per GP it
+//   builds F = I + Σ uₐ⊗∂Nₐ/∂X from the reference Bernstein gradients and drives
+//   a FiniteStrainNDMaterial (e.g. nDMaterial LogStrain) via setTrialF(F),
+//   assembling ∫Bᵀσ dv (Cauchy σ) + the full a_ijkl = c_ijkl − σ_il δ_jk tangent.
+//   finite is STD only — bbar+finite (F-bar) is a step-2 follow-up and is
+//   rejected at parse time; pressure is also unsupported under finite in v1.
 //
 //   Mass: default is the all-positive lumped mass ρVe/10 (Kadapa Eq. 57) for
 //   explicit dynamics; pass -cMass for the consistent mass (implicit/eigen).
@@ -221,6 +226,33 @@ class BezierTet10 : public Element
     // globalizeStiff is byte-identical to the one globalizeForce rotates, by
     // construction (not by comment). K may be null when tangFlag == 0.
     void formCore(int tangFlag, Vector &fInt, Matrix *K);
+
+    // ─── Geometry-method (finite, -geom finite) seams ─────────────
+    // Ladruno: true when theGeom reports a DeformationGradient strain measure
+    // (SolidTransformationFinite). The element then runs the updated-Lagrangian
+    // path below instead of the small-strain formCore/formBAtGauss path, and
+    // skips the localize/globalize seams (identity for finite).
+    bool isFinite(void) const;
+
+    // Ladruno: F (row-major [9]) = δ_iJ + Σₐ uₐ[i] ∂Nₐ/∂X_J from the nodal trial
+    // displacements and the REFERENCE Bernstein shape gradients dN_dX[J][a]
+    // (= computeJacobian's dN_dx, since controlPts are the reference nodes for
+    // straight-sided elements). Returns det F. Total F — the material derives F_Δ.
+    double deformationGradient(const double dN_dX[3][NEN], double F[9]) const;
+
+    // Ladruno: -geom finite update — per GP build F and drive the material via
+    // setTrialF(F). Returns < 0 on a degenerate Jacobian or det F ≤ 0 so the
+    // analysis step-cuts instead of assembling a negative-volume contribution.
+    int updateFinite(void);
+
+    // Ladruno: -geom finite assembly — ONE Gauss pass building the internal force
+    // fInt = ∫ σ_ij ∂Nₐ/∂x_j dv (always; current config, dv = J·|detJ_ref|·w) and,
+    // when tangFlag != 0, the consistent tangent K = ∫ (∂Nₐ/∂x_j) a_ijkl (∂N_b/∂x_l)
+    // dv with a_ijkl = c_ijkl − σ_il δ_jk (c via getSpatialTangentTensor — the 6×6
+    // getTangent is LOSSY in (k,l); see FiniteStrainNDMaterial.h). NO body force /
+    // pressure / Q (applied in the global frame in getResistingForce). One helper
+    // feeds both force and tangent so f/K share a single Gauss pass.
+    void formResidAndTangentFinite(int tangFlag, Vector &fInt, Matrix *K);
 
     // ─── Static Quadrature Data ───────────────────────────────
     // 4-point rule (degree 2) for stiffness / force / B-bar average.
