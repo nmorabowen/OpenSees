@@ -230,6 +230,7 @@ extern void *OPS_ExplicitBathe(void);
 extern void *OPS_ExplicitBatheLNVD(void);
 extern void *OPS_CentralDifferenceLadruno(void);
 extern void *OPS_LadrunoArcLength(void);   // Ladruno
+extern void *OPS_LadrunoDynamicRelaxation(void);   // Ladruno
 extern void *OPS_ExplicitDifferenceStatic(void);
 extern void *OPS_CentralDifferenceAlternative(void);
 extern void *OPS_CentralDifferenceNoDamping(void);
@@ -5502,6 +5503,13 @@ specifyIntegrator(ClientData clientData, Tcl_Interp *interp, int argc,
     theTransientIntegrator = (TransientIntegrator *)OPS_CentralDifferenceLadruno();
 
     if (theTransientAnalysis != 0)
+      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+  }
+
+  else if (strcmp(argv[1],"LadrunoDynamicRelaxation") == 0) {   // Ladruno
+    theTransientIntegrator = (TransientIntegrator *)OPS_LadrunoDynamicRelaxation();
+
+    if (theTransientIntegrator != 0 && theTransientAnalysis != 0)
       theTransientAnalysis->setIntegrator(*theTransientIntegrator);
   }
 

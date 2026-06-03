@@ -591,6 +591,7 @@ void* OPS_ExplicitDifference();
 void* OPS_ExplicitBathe();
 void* OPS_ExplicitBatheLNVD();
 void* OPS_CentralDifferenceLadruno();
+void* OPS_LadrunoDynamicRelaxation();   // Ladruno
 
 void* OPS_LinearAlgorithm();
 void* OPS_NewtonRaphsonAlgorithm();
