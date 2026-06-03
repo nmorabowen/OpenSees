@@ -577,6 +577,7 @@
 #define ND_TAG_LadrunoJ2 33011 // N. Mora-Bowen (Ladruno) — combined isotropic (Voce+linear) + Chaboche AF kinematic von Mises J2
 #define ND_TAG_LadrunoJ2Finite 33012 // N. Mora-Bowen (Ladruno) — finite-strain-native combined-hardening J2 with co-rotating backstress (dSNPO §14.11)
 #define ND_TAG_InitDefGradNDMaterial 33013 // N. Mora-Bowen (Ladruno) — multiplicative staged-activation wrapper (F_rel = F·F0⁻¹); stress-free birth of finite-strain continuum elements appended mid-stage
+#define ND_TAG_StagedStrainNDMaterial 33014 // N. Mora-Bowen (Ladruno) — small-strain, dimension-general (2D+3D) auto-capturing staged-activation wrapper (ε_rel = ε − ε0); stress-free birth of small-strain continuum elements appended mid-stage
 
 
 #define FIBER_TAG_Uniaxial2d	1
