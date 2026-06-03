@@ -391,7 +391,8 @@ def _kuhn_tets(n0, n1, n2, n3, n4, n5, n6, n7):
     ]
 
 
-def test_fbar_load_driven_converges():
+@pytest.mark.parametrize("fbar", _FBAR_MODES)
+def test_fbar_load_driven_converges(fbar):
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 3)
     nz, side, nu = 4, 0.5, _NU              # ν=0.3 — well-conditioned (proven setup)
@@ -421,7 +422,8 @@ def test_fbar_load_driven_converges():
             for (a, b) in _EDGE_V:
                 xm = 0.5 * (np.array(ops.nodeCoord(v[a])) + np.array(ops.nodeCoord(v[b])))
                 ops.node(nc, *[float(c) for c in xm]); mids.append(nc); nc += 1
-            ops.element("BezierTet10", etag, *v, *mids, 2, "-bbar", "-geom", "finite")
+            ops.element("BezierTet10", etag, *v, *mids, 2,
+                        "-bbar", "-fbar", fbar, "-geom", "finite")
             etag += 1
 
     top = [vid(i, j, nz) for j in range(2) for i in range(2)]
@@ -472,7 +474,13 @@ def test_fbar_dilatation_matches_oracle(fbar):
 
     J_gp = np.array([float(np.linalg.det(_F_at(u, L))) for L in _GP4_L])
     if fbar == "mean_dilatation":
-        Jhat = float(J_gp.mean())                # J̄ = mean det F (straight-sided tet)
+        # J̄ = (Σ J·dV₀)/(Σ dV₀), dV₀ = w·|detJ_ref|. Weight-aware so it stays exact
+        # even if a curved / unequal-|detJ_ref| fixture is ever used (here the tet is
+        # straight-sided so |detJ_ref| is constant and this equals the simple mean).
+        Xref = np.array([_COORD[a] for a in range(1, 11)])
+        wts = np.array([abs(float(np.linalg.det(_shape_derivs_bary(*L) @ Xref)))
+                        for L in _GP4_L])         # GP4_w all equal ⇒ cancels
+        Jhat = float((J_gp * wts).sum() / wts.sum())
     else:
         Jhat = float(np.linalg.det(_F_at(u, (0.25, 0.25, 0.25))))   # centroid J₀
     F_gp0 = _F_at(u, _GP4_L[0])
@@ -499,15 +507,16 @@ def test_fbar_dilatation_matches_oracle(fbar):
 #  (F=R ⇒ J=J₀=1 ⇒ F̄=F=R ⇒ σ̄=0 and the eq 15.10 coupling vanishes; this also    #
 #  confirms J₀=1 uniformly, i.e. the centroid evaluation is sane on a rotation.)  #
 # --------------------------------------------------------------------------- #
-def test_fbar_rigid_rotation_is_stress_free():
+@pytest.mark.parametrize("fbar", _FBAR_MODES)
+def test_fbar_rigid_rotation_is_stress_free(fbar):
     R = _rot(0.9, 0.5)
     u = _affine_disp(R)
-    assert _impose_and_solve(u, True) == 0
+    assert _impose_and_solve(u, True, fbar=fbar) == 0
     s = ops.eleResponse(1, "stresses")
     assert s and len(s) == 24
-    assert max(abs(v) for v in s) <= 1.0e-7 * _E, "F-bar rigid rotation induced stress"
+    assert max(abs(v) for v in s) <= 1.0e-7 * _E, f"F-bar[{fbar}] rigid rotation induced stress"
     f = np.array(ops.eleForce(1), dtype=float)
-    assert np.abs(f).max() <= 1.0e-7 * _E, "F-bar rigid rotation induced force"
+    assert np.abs(f).max() <= 1.0e-7 * _E, f"F-bar[{fbar}] rigid rotation induced force"
 
 
 # --------------------------------------------------------------------------- #
@@ -530,10 +539,18 @@ def test_fbar_centroid_and_mean_dilatation_differ():
 
 
 # --------------------------------------------------------------------------- #
-#  Consistency payoff of mean_dilatation: at SMALL strain it reduces to the      #
-#  element's volume-averaged small-strain -bbar (-geom linear -bbar), which the   #
-#  CENTROID variant does NOT (centroid samples one point, not the volume mean).   #
-#  This is the reason mean_dilatation exists.                                     #
+#  mean_dilatation reduces to the element's volume-averaged small-strain -bbar    #
+#  (-geom linear -bbar) at small strain. This pins the mean_dilatation finite     #
+#  path to the established small-strain B-bar.                                     #
+#                                                                                 #
+#  IMPORTANT — this is NOT a mean-vs-centroid discriminator. On the straight-     #
+#  sided tet this element supports, the volume-averaged gradient Ḡ ≈ the centroid #
+#  G₀ to high order (the small-strain volumetric strain is ~linear in the         #
+#  barycentric coords, so its volume mean ≈ its centroid value), so CENTROID also #
+#  ~reduces to the same small-strain bbar here and would pass this gate too. The  #
+#  genuine mean-vs-centroid distinction is small for straight-sided tets and is   #
+#  pinned (against the oracle) by test_fbar_dilatation_matches_oracle and shown    #
+#  nonzero by test_fbar_centroid_and_mean_dilatation_differ.                      #
 # --------------------------------------------------------------------------- #
 def _linear_bbar_force(u, nu):
     ops.wipe()
