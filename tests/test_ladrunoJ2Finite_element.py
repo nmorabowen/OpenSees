@@ -306,3 +306,29 @@ def test_implex_finite_database_roundtrip():
         assert _solve_to(Fbar, _mat_native_implex, "finite") == 0
 
     database_roundtrip(build, probe_nodes=[7], ndf=3)
+
+
+# =========================================================================== #
+#  9. Softening-parameter guard (#1): a softening isotropic law (Hiso < 0)      #
+#     CONSTRUCTS (the guard warns, it does not reject) and — the guard's        #
+#     recommended path — runs a plastic step STABLY under -implex (the constant  #
+#     SPD elastic tangent sidesteps the indefinite implicit tangent the warning  #
+#     is about).                                                                #
+# =========================================================================== #
+def _mat_softening(tag, implex):
+    args = ["LadrunoJ2Finite", tag, _K, _G, "-iso", "voce",
+            _ISO["sig0"], 0.0, 0.0, -200.0,           # Qinf=b=0, Hiso=-200 < 0 ⇒ softening
+            "-kin", 0]
+    if implex:
+        args.append("-implex")
+    ops.nDMaterial(*args)
+
+
+def test_softening_constructs_and_implex_runs_plastic():
+    # softening + -implex: a plastic imposed-F step converges (SPD elastic tangent)
+    Fpl = [[1.10, 0.0, 0.0], [0.0, 1.0/math.sqrt(1.10), 0.0], [0.0, 0.0, 1.0/math.sqrt(1.10)]]
+    assert _solve_to(Fpl, lambda t: _mat_softening(t, implex=True), "finite") == 0
+    # without -implex the material still CONSTRUCTS (guard warns, does not reject):
+    # a tiny sub-yield step is well-posed even with a softening backbone.
+    Fel = [[1.0 + 1e-5, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+    assert _solve_to(Fel, lambda t: _mat_softening(t, implex=False), "finite") == 0

@@ -783,3 +783,59 @@ Two corot-seam gotchas, from the finite-strain trifecta deep review (2026-06-02,
   LogStrain path differs precisely because `bᵉ_tr = f_Δ bᵉ_n f_Δᵀ` co-rotates the stress
   `s` into the current frame while α stays fixed — THAT is §14.11. Lesson: "the element's
   R rotates between commits" does NOT imply "the material's frame rotates."
+
+## Finite-strain elastoplastic bending/necking BVPs need KrylovNewton (plain Newton diverges); F-bar needs an unsymmetric solver
+
+From the finite-strain validation Phase P1 (2026-06-02, [[18_finite_strain_validation_report]]).
+
+- **`LogStrain(LadrunoJ2)` + `LadrunoBrick -geom finite` bending *into plasticity* does
+  NOT converge under `algorithm Newton` — nor under `NewtonLineSearch`.** The residual
+  grows from the very first increment (a `NormDispIncr`/`EnergyIncr` norm that climbs, not
+  shrinks). It is not a tangent bug (the consistent tangent passes the FD gate on
+  homogeneous states): bending+plasticity on a low-order hex is just a stiff, badly-scaled
+  Newton basin for a full step. **`algorithm KrylovNewton` (+ `test EnergyIncr 1e-6`) is
+  robust** and converges quadratically-ish; the necking bar (C1) and the isochoric-J2
+  locking cantilever (B3) both rely on it. Homogeneous single-element states and elastic
+  bending converge fine under plain Newton — the divergence is specific to *inhomogeneous
+  plastic* finite-strain BVPs.
+- **A 1-element-wide cross-section bends too poorly for stable plastic Newton.** A 1×1×nz
+  column under transverse displacement control diverges even with KrylovNewton; a ≥2×2
+  cross-section is needed. (Elastic load-control on the 1-wide column is fine — it just
+  locks.)
+- **F-bar (`-formulation bbar -geom finite`) has an UNSYMMETRIC tangent** (dSNPO eq 15.10)
+  ⇒ use `system FullGeneral` (dense) or, much faster for meshed studies, `system UmfPack`
+  (unsymmetric sparse). A symmetric solver silently mis-solves. `UmfPack` made the 128–576
+  hex necking runs tractable where `FullGeneral` would be dense-O(N³) per step.
+- **Plastic finite-strain stress paths are path-dependent** (obvious, but it bites tests):
+  a sub-stepped element solve does NOT equal a single-step return-map oracle for
+  *non-proportional* loading (simple shear, equibiaxial). Drive ONE increment ref→F when
+  comparing to a one-step oracle, or step the oracle incrementally over the same F_k.
+
+## Explicit `-geom finite`: `criticalTimeStep()` is reference-config (must margin dt), and the EnergyBalance recorder reports IE with a flipped sign
+
+From the finite-strain validation Phase P4 (Taylor-bar impact, 2026-06-02,
+[[18_finite_strain_validation_report]] §7; `tests/test_finite_strain_P4_explicit.py`).
+
+- **`ops.criticalTimeStep()` does NOT shrink as elements compress.** On the Taylor
+  bar the cylinder shortened ~33 % and the impact face mushroomed >2×, yet
+  `criticalTimeStep()` was *bit-identical* before and after (ratio 1.000). It is
+  computed from the **reference** configuration characteristic length (review
+  GEOM-2). So an explicit `-geom finite` run is only conservatively safe until
+  strong compression; past that the *true* stable dt is smaller than reported.
+  **Carry a safety factor < 1** — the Taylor bar uses `dt = 0.3·dt_cr` (0.5 is
+  stable for the early/short transit but risks instability through full
+  mushrooming). A future improvement would update dt_cr from the current config.
+- **`EnergyBalance` recorder reports IE (internal energy) with a flipped SIGN for
+  the finite-strain element.** On the Taylor bar `KE0=2.34e5`, `KE_final=1.0e4`
+  (4.3 %, the rest absorbed plastically), and `IE_final=−2.36e5` — the MAGNITUDE
+  equals the absorbed kinetic energy (≈ KE0−KE_final, within ~5 %) but the sign is
+  negative, so the recorder's `RES`/`ERR%` columns read ~100 % (spurious). The KE
+  column is correct (it's the validated getMass aliasing-fix path,
+  `test_energyBalanceRecorder.py`); only IE's sign is off for the
+  `LogStrain`/`LadrunoBrick -geom finite` path. **Work around it by comparing
+  `|IE|` to the kinetic-energy change**; do not trust `ERR%` for finite-strain
+  elements until the IE-increment sign convention is reconciled (likely the
+  recorder integrates fᵀΔu with the internal-force sign opposite to what the
+  finite element returns). Candidate follow-up: audit
+  `EnergyBalanceRecorder.cpp` internal-energy accumulation vs `LadrunoBrick`
+  `getResistingForce` sign under `-geom finite`.

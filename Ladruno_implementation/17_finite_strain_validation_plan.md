@@ -1,7 +1,7 @@
 ---
 title: Validation Plan — Finite-Strain Trifecta (LadrunoBrick + SolidTransformation + LogStrain)
 project: Ladruno
-status: proposed
+status: P1-complete
 priority: high
 owner: nmora
 tags:
@@ -382,10 +382,10 @@ flowchart LR
 
 | Phase | Theme | Benchmarks | Gate |
 |---|---|---|---|
-| **P1** | Finite-strain core | A1–A5, B1–B3, **C1** | closes review gaps; necking matches Simo |
-| **P2** | Geometric nonlinearity | A7, C4, C5, D4 | corot elastica/buckling vs analytical |
-| **P3** | Locking & incompressibility | B2, B4, E4 | bbar/eas/F-bar cure demonstrated |
-| **P4** | Explicit dynamics | C2, energy balance | Taylor bar; `dt_cr` caveat documented |
+| **P1** ✅ | Finite-strain core | A1–A5, B1–B3, **C1** | closes review gaps; necking matches Simo — **DONE**, see [[18_finite_strain_validation_report]] (19 Zone-A tests pass; C1 necking *physics* validated, quantitative ratio→Zone-B) |
+| **P2** ✅ | Geometric nonlinearity | A7, C4, C5, D4 | corot elastica/buckling vs analytical — **DONE** (PR #140; 8 tests: A7 elastica arc, C4 vs Mattiasson ≤2.3%, C5 Euler buckling Southwell, D4 corot↔finite) |
+| **P3** ✅ | Locking & incompressibility | B2, B4, E4 | F-bar cure demonstrated — **DONE** (PR #141; 4 tests: B4 Cook's membrane converges/std locks, E4 rubber block std/bbar ~9×; B2 already in P1) |
+| **P4** ✅ | Explicit dynamics | C2, energy balance | Taylor bar; `dt_cr` caveat documented — **DONE** (PR #143; 4 tests: C2 Taylor bar L_f/L₀=0.67 & mushroom 2.15× vs literature, energy balance, dt_cr reference-config caveat) |
 | **P5** | Cross-validation matrix | D1–D5, A6, C3, C6 | hex↔tet, Lad↔ASD↔vanilla agree |
 | **P6** | Complex geometry | E1–E3 | apeGmsh capstones, mesh objectivity |
 

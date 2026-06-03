@@ -631,3 +631,82 @@ def _b7_build_cyclic(mat_fn, n_into_restraighten=8):
 def test_B4h_serialization_roundtrip_restraighten():
     database_roundtrip(_b7_build_cyclic(_wrap_rs(8.0, "lambda")),
                        probe_nodes=[2], ndf=2)
+
+
+# B4e -- consistent-tangent FD on the RESTRAIGHTEN Phase-2 smoothstep branch.
+#        The direct harness commits every setStrain, so the FD is done by
+#        PATH-REPLAY: drive the identical committed path, then take the final
+#        single step to e0, e0+d, e0-d from the SAME committed state (the
+#        material is path-independent, so the committed pre-state is identical).
+@pytest.mark.t1
+def test_B4e_restraighten_tangent_fd():
+    eY = _FY / _E
+    lsr = 8.0
+    d = 1.0e-7
+    L = _Lrs_lambda(lsr)
+    e0 = 0.5 * L                                            # mid Phase-2 (q=0.5), e_cross_rs=0
+    down = [(-0.5 * i) * eY for i in range(0, 51)]          # 0 -> -25 eY (buckled)
+    reload_pts = []
+    e = -25.0 * eY
+    while e < e0 - 1e-12:
+        e = min(e + 0.25 * eY, e0)
+        reload_pts.append(e)
+    base = down + reload_pts                                # ends exactly at e0
+    pre = base[:-1]
+    s0 = _drive(_wrap_rs(lsr, "lambda"), base)[-1]
+    sp = _drive(_wrap_rs(lsr, "lambda"), pre + [e0 + d])[-1][0]
+    sm = _drive(_wrap_rs(lsr, "lambda"), pre + [e0 - d])[-1][0]
+    k = s0[1]
+    kfd = (sp - sm) / (2.0 * d)
+    assert k == pytest.approx(kfd, rel=1e-4, abs=1e-2), (
+        f"RESTRAIGHTEN Phase-2 tangent {k} != FD {kfd} at e0={e0}")
+    # sanity: this point is genuinely inside Phase 2 (raised above bare, q in (0,1))
+    sb0 = _drive(_bar_fn, base)[-1][0]
+    assert s0[0] > sb0 + 1e-6
+
+
+# B4g -- structural Newton across the reversal + the q=0/q=1 seams: a real Truss
+#        under DisplacementControl must converge through buckle -> reload.
+def _b4g_run(mat_fn, comp_steps, comp_dU, reload_steps, reload_dU):
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.node(1, 0.0, 0.0)
+    ops.node(2, 1.0, 0.0)
+    mat_fn(1)
+    ops.fix(1, 1, 1)
+    ops.fix(2, 0, 1)
+    ops.element("Truss", 1, 1, 2, 1.0, 1)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(2, 1.0, 0.0)
+    ops.system("FullGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.test("NormDispIncr", 1.0e-10, 50, 0)
+    ops.algorithm("Newton")
+    ops.analysis("Static")
+    fails = 0
+    ops.integrator("DisplacementControl", 2, 1, comp_dU)
+    for _ in range(comp_steps):
+        if ops.analyze(1) != 0:
+            fails += 1
+    ops.integrator("DisplacementControl", 2, 1, reload_dU)
+    for _ in range(reload_steps):
+        if ops.analyze(1) != 0:
+            fails += 1
+    return fails
+
+
+@pytest.mark.t1
+def test_B4g_structural_newton_seams():
+    eY = _FY / _E
+    # compress past onset into buckling, then reload through the crossing (0) and
+    # past e_cross_rs + L_rs (~0.8 eY) so both Phase-2 seams are crossed.
+    f_dm = _b4g_run(_wrap_rs(8.0, "lambda"),
+                    comp_steps=60, comp_dU=-0.001,      # -> ~ -28.6 eY
+                    reload_steps=80, reload_dU=+0.0005)  # -> ~ +0.4 eY ... +
+    assert f_dm == 0, f"DM: Newton failed to converge on {f_dm} step(s)"
+    f_ga = _b4g_run(_wrap_ga_rs(8.0, "lambda"),
+                    comp_steps=60, comp_dU=-0.001,
+                    reload_steps=80, reload_dU=+0.0005)
+    assert f_ga == 0, f"GA: Newton failed to converge on {f_ga} step(s)"
