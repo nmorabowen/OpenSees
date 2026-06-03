@@ -249,6 +249,7 @@
 #include "LogStrainNDMaterial.h"   // Ladruno — Hencky finite-strain adaptor (seam 3)
 #include "LadrunoJ2.h"             // Ladruno — combined iso + Chaboche AF kinematic J2
 #include "LadrunoJ2Finite.h"       // Ladruno — finite-strain-native combined-hardening J2 (co-rotating backstress)
+#include "InitDefGradNDMaterial.h" // Ladruno — multiplicative staged-activation wrapper (stress-free birth)
 #include "ElasticOrthotropicThreeDimensional.h"
 #include "ElasticOrthotropicPlaneStress.h"
 #include "J2PlaneStrain.h"
@@ -2318,6 +2319,9 @@ FEM_ObjectBrokerAllClasses::getNewNDMaterial(int classTag)
 
   case ND_TAG_LadrunoJ2Finite:                    // Ladruno — finite-strain-native combined-hardening J2 (co-rotating backstress)
     return new LadrunoJ2Finite();
+
+  case ND_TAG_InitDefGradNDMaterial:              // Ladruno — multiplicative staged-activation wrapper (stress-free birth)
+    return new InitDefGradNDMaterial();
 
   case ND_TAG_ElasticOrthotropicThreeDimensional:
     return new ElasticOrthotropicThreeDimensional();
