@@ -13,6 +13,14 @@ Benchmarks delivered here:
     curvature κ = M/EI. Pure bending ⇒ no transverse shear ⇒ the corot solid
     captures the constant-curvature shape essentially locking-free; the
     moment–curvature law M = EI/ρ converges under mesh refinement.
+  * **C4** — large-rotation cantilever under an end **transverse force**, vs the
+    exact **elastica** (Bisshopp–Drucker 1945 / Mattiasson 1981; the
+    Bathe–Bolourchi 1979 benchmark): tip deflection in the load direction and the
+    axis foreshortening match the tabulated `w/L`, `u/L` at load parameters
+    `α = PL²/EI` of 7 and 10 to ≤4 %.
+  * **C5** — **Euler buckling** of a corot cantilever column: an imperfect column
+    under ramped axial compression; a **Southwell plot** recovers the critical
+    load, converging to `P_cr = π²EI/(2L)²` under mesh refinement.
   * **D4** — geometry-method consistency: the SAME large-rotation cantilever
     driven by `-geom corot` and `-geom finite` (small material strain) gives the
     same tip displacement. No external oracle — a code-internal cross-check that
@@ -26,8 +34,6 @@ Benchmarks delivered here:
 > (≥2×2 through-thickness) to relieve the 1-element parasitic shear; the arc
 > SHAPE is locking-insensitive and tight even on coarse meshes.
 
-Remaining P2 (C4 Bathe–Bolourchi transverse-load cantilever, C5 Euler buckling)
-are tracked in the validation report as follow-ups within this phase.
 """
 import math
 
@@ -195,6 +201,78 @@ def test_A7_moment_curvature_converges_to_EI():
     assert errs[1] < 0.6 * errs[0] and errs[2] < 0.6 * errs[1], (
         f"M·ρ→EI convergence too slow to be credible: {errs}")
     assert errs[-1] < 0.10, f"M·ρ = EI not within engineering tol at finest mesh (err {errs[-1]:.3f})"
+
+
+# =========================================================================== #
+#  C4 — large-rotation cantilever vs the exact elastica (Mattiasson 1981)      #
+# =========================================================================== #
+# Tip deflection in the load direction (w/L) and axis foreshortening (u/L) for a
+# cantilever under an end transverse force, parameter α = PL²/EI. Exact elastica
+# (Bisshopp–Drucker 1945; tabulated to 5 figures by Mattiasson 1981) — the
+# Bathe–Bolourchi (1979) large-displacement cantilever benchmark.
+_MATTIASSON = {7: (0.76737, 0.47490), 10: (0.81061, 0.55500)}
+
+
+@pytest.mark.parametrize("alpha", [7, 10])
+def test_C4_elastica_cantilever_matches_mattiasson(alpha):
+    w_ref, u_ref = _MATTIASSON[alpha]
+    nz = 32                                  # ≤2.3% vs elastica at this refinement
+    P = alpha * _EI / _L ** 2
+    ux, uz = _tip_disp_transverse("corot", nz, P, nsteps=max(48, alpha * 8))
+    w = abs(ux) / _L                         # deflection in the load (x) direction
+    u = -uz / _L                             # axis (z) foreshortening
+    assert w == pytest.approx(w_ref, rel=0.04), (
+        f"C4 α={alpha}: w/L {w:.4f} != elastica {w_ref:.4f}")
+    assert u == pytest.approx(u_ref, rel=0.04), (
+        f"C4 α={alpha}: u/L {u:.4f} != elastica {u_ref:.4f}")
+
+
+# =========================================================================== #
+#  C5 — Euler buckling of a corot column (Southwell plot)                       #
+# =========================================================================== #
+def _southwell_Pcr(nz, Pmax, imp=0.001, nsteps=40):
+    """Imperfect cantilever column under ramped axial compression + a tiny
+    proportional transverse imperfection load. Returns the Southwell-plot
+    critical load (slope of δ/P vs δ over the pre-buckling range = 1/P_cr)."""
+    nid, base, nx, ny, nz = _build_beam("corot", nz, nx=2, ny=2)
+    tip = [nid(i, j, nz) for j in range(ny + 1) for i in range(nx + 1)]
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    for n in tip:
+        ops.load(n, imp * Pmax / len(tip), 0.0, -Pmax / len(tip))   # axial + imperfection
+    ops.constraints("Transformation")
+    ops.numberer("RCM")
+    ops.system("FullGeneral")
+    ops.test("EnergyIncr", 1.0e-10, 100, 0)
+    ops.algorithm("KrylovNewton")
+    ops.integrator("LoadControl", 1.0 / nsteps)
+    ops.analysis("Static")
+    Pcr_euler = math.pi ** 2 * _EI / (2.0 * _L) ** 2
+    xs, ys = [], []
+    for s in range(1, nsteps + 1):
+        if ops.analyze(1) != 0:
+            break
+        P = (s / nsteps) * Pmax
+        d = abs(np.mean([ops.nodeDisp(n, 1) for n in tip]))
+        if 0.25 * Pcr_euler < P < 0.85 * Pcr_euler and d > 0:
+            xs.append(d); ys.append(d / P)            # Southwell: δ/P vs δ
+    A = np.c_[np.array(xs), np.ones(len(xs))]
+    slope, _ = np.linalg.lstsq(A, np.array(ys), rcond=None)[0]
+    return 1.0 / slope, Pcr_euler
+
+
+def test_C5_euler_buckling_converges():
+    Pcr_euler = math.pi ** 2 * _EI / (2.0 * _L) ** 2
+    Pmax = 0.83 * Pcr_euler                  # ramp to just below the critical load
+    Pcr_24, _ = _southwell_Pcr(24, Pmax)
+    Pcr_32, _ = _southwell_Pcr(32, Pmax)
+    err_24 = abs(Pcr_24 - Pcr_euler) / Pcr_euler
+    err_32 = abs(Pcr_32 - Pcr_euler) / Pcr_euler
+    # the column buckles near the Euler load; the residual is shear-locking
+    # over-stiffness (P_cr biased HIGH), which shrinks under mesh refinement.
+    assert err_32 < err_24, f"P_cr not converging to Euler: err {err_24:.3f} → {err_32:.3f}"
+    assert 1.0 - 0.03 < Pcr_32 / Pcr_euler < 1.10, (
+        f"C5 buckling load off: Southwell P_cr {Pcr_32:.4f} vs Euler {Pcr_euler:.4f}")
 
 
 # =========================================================================== #
