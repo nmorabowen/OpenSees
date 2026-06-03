@@ -10,6 +10,8 @@ we play the role of the "host" with explicit nodes whose displacements we prescr
 (fix them), so the gap g = u_rebar - sum N_i u_host is fully controlled and the
 element's force/stiffness can be checked against hand calculation.
 """
+import math
+
 import pytest
 
 from _testbed import ops
@@ -269,3 +271,53 @@ def test_perfect_bond_has_no_bond_energy():
     _single_host_model(perfect_k=k)
     _push_rebar(1.0e-3, 0.0, 0.0)
     assert ops.eleResponse(1, "bondEnergy")[0] == pytest.approx(0.0, abs=1e-12)
+
+
+# ---------------------- 7. co-rotated bar axis (ADR 20 §10.5) ----------------------
+# Under a rigid host rotation Q, the co-rotated axis must rotate to Q·dir0 (objective);
+# the frozen axis must stay put. The embed point (xi=0) and point B (xi=(.5,0,0)) lie
+# along +x, so dir0=(1,0,0); a rigid z-rotation by theta sends it to (cosθ, sinθ, 0).
+def _cube_rigid_rotation_dir(theta, corot):
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    c, s = math.cos(theta), math.sin(theta)
+    for tag, (x, y, z) in _CUBE.items():
+        ops.node(tag, x, y, z)
+    ops.node(1, 0.5, 0.5, 0.5)            # rebar at the cube centre (free)
+    ops.nDMaterial("ElasticIsotropic", 1, 1000.0, 0.3)
+    ops.element("LadrunoBrick", 100, 11, 12, 13, 14, 15, 16, 17, 18, 1)
+    args = ["LadrunoEmbeddedRebar", 1, 1, "-host", 100, "-xi", 0.0, 0.0, 0.0,
+            "-dir", 1.0, 0.0, 0.0, "-perfect", 1.0e5, "-kt", 1.0e5]
+    if corot:
+        args += ["-corot", "-xiB", 0.5, 0.0, 0.0]
+    ops.element(*args)
+    # prescribe a rigid z-rotation on every host node: u_i = Q X_i - X_i
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    for tag, (x, y, z) in _CUBE.items():
+        ops.sp(tag, 1, (c * x - s * y) - x)
+        ops.sp(tag, 2, (s * x + c * y) - y)
+        ops.sp(tag, 3, 0.0)
+    ops.constraints("Transformation"); ops.numberer("Plain"); ops.system("FullGeneral")
+    ops.test("NormDispIncr", 1e-10, 50); ops.algorithm("Newton")
+    ops.integrator("LoadControl", 1.0); ops.analysis("Static")
+    assert ops.analyze(1) == 0
+    return ops.eleResponse(1, "dir")
+
+
+def test_corot_axis_rotates_with_host():
+    """`-corot`: the reported bar axis follows the rigid host rotation (objective)."""
+    theta = 0.3
+    d = _cube_rigid_rotation_dir(theta, corot=True)
+    assert d[0] == pytest.approx(math.cos(theta), abs=1e-4)
+    assert d[1] == pytest.approx(math.sin(theta), abs=1e-4)
+    assert d[2] == pytest.approx(0.0, abs=1e-6)
+
+
+def test_frozen_axis_does_not_rotate():
+    """Without `-corot` the axis stays at the reference (1,0,0) — the documented
+    small-rotation limitation the corot path lifts."""
+    d = _cube_rigid_rotation_dir(0.3, corot=False)
+    assert d[0] == pytest.approx(1.0, abs=1e-9)
+    assert d[1] == pytest.approx(0.0, abs=1e-9)
+    assert d[2] == pytest.approx(0.0, abs=1e-9)

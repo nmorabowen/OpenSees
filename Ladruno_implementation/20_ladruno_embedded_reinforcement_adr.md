@@ -562,9 +562,15 @@ the same γ-independence with *no* host-stress/∂N query.** *Effort: research-g
    element `penaltyEnergy` (artificial ½kt|gt|²[+½k s² perfect-bond]), `constraintViolation`
    (|gt|), `bondEnergy` (= bondScale·material work, single-sourced + bond-law-agnostic via a
    cached material sub-response). Region-net post-processor left to the user (openseespy-side).
-3. **Strategic — co-rotated `dir` (§10.2c/§10.5).** Two-ξ secant, default OFF. *Prerequisite for
-   AL/Nitsche correctness under rotation.* Headline test: rigid-rotation objectivity (force
-   invariant ON, drifts OFF — mirrors the J2 finite rigid-rotation test).
+3. **Strategic — co-rotated `dir` (§10.2c/§10.5). ✅ SHIPPED (PR #179).** `-corot` recomputes
+   the bar axis each step as the secant from the embed point to a point B along the bar
+   (`-xiB`/`-shapeB`), using current host node positions, so the axial/transverse split stays
+   frame-objective under large host rotation. Default OFF (frozen `-dir`, bit-identical).
+   `eleResponse "dir"` reports the working axis; v1 omits the `∂dir/∂u` tangent term (EICR).
+   Headline test green: rigid host z-rotation → axis follows `Q·dir0` with `-corot`, frozen
+   without. **This lifts the small-ROTATION restriction for Mode P** (small-STRETCH `L_trib·=λ`
+   still deferred). New LEDGER_quirk: anisotropic embedded coupling needs a co-rotated axis;
+   ASD's isotropic penalty does not.
 4. **Strategic — `-enforce` flag + AL kernel (§10.1, §10.4).** Enum + parser map + `-enforce
    transformation` hard error + per-step Uzawa in `commitState` + `λ` serialization. *Depends on
    the co-rotated frame (3) so AL inherits objectivity.* Regression: `-enforce penalty`
