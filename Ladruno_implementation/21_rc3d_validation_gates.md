@@ -20,21 +20,33 @@ nodes ⇒ perfect bond with **NO embedding element and NO new C++**. Constant ax
 shared nodes a bar can only sit on a mesh node-line, so **perimeter bars = 4·n** — bar
 count is locked to the cross-section mesh.
 
-**Result.**
+**Result** (total steel held CONSTANT at `ρ·B² = 0.00160 m²` for every n — `a_bar =
+ρB²/nbar` — so this isolates mesh/placement, it does **not** vary steel):
 
 | n | bars | elems | ndof | converged | drift | V_peak [kN] |
 |---|------|-------|------|-----------|-------|-------------|
 | 1 | 4 | 25 | 72 | yes | 0.020 | 128.1 |
 | 2 | 8 | 60 | 162 | yes | 0.020 | 136.8 |
+| 3 | 12 | 105 | 288 | yes | 0.020 | 129.2 |
 
-**Verdict — conformal is VIABLE for regular ≤8-bar members, zero new code.** Both meshes
-converge (implicit, KrylovNewton + step-halving) through a sane axial+pushover; capacity
-rises with steel. **Infeasibility boundary (quantified):** an N-bar cage forces `n = N/4`
-elements per side ⇒ mesh ~ `O(N²·nz)`; and **ties/hoops** force horizontal mesh planes +
-perimeter node rings the longitudinals must land on — that combinatorial meshing is where
-conformal breaks. **So:** conformal = the v1 path for regular ≤8-bar columns/beams/walls;
-the embedded element (ADR 20) earns its keep for **dense cages (≥12 bars) + hoops + joints**.
-Explicit conformal run is a documented follow-up (mass + `dt_cr`), not yet exercised.
+**Verdict — conformal is VIABLE for regular grid-aligned cages, zero new code.** All three
+meshes converge (implicit, KrylovNewton + step-halving) through a sane axial+pushover.
+`V_peak` is ~flat (≈128–137 kN); at constant steel the ~7% spread is mesh refinement +
+corner→perimeter bar redistribution, **not** more steel (an earlier draft wrongly said
+"capacity rises with steel" — corrected).
+
+**What is MEASURED vs INFERRED:**
+- *Measured:* conformal converges for 4, 8, **and 12** longitudinal bars on a regular grid.
+  Pure bar count is **not** the wall — 12 grid-bars work fine.
+- *Inferred (not yet run):* conformal breaks on (a) bars at **non-grid positions** /
+  non-uniform spacing (they must land on mesh node-lines), (b) **ties/hoops** forcing
+  combinatorial horizontal meshing, and (c) the **O(N²·nz) mesh-cost** blow-up
+  (4→25, 8→60, 12→105 concrete elems). These are reasoning, not measurement.
+
+**So:** conformal = the v1 path for regular grid-aligned columns/beams/walls; the embedded
+element (ADR 20) earns its keep for **non-grid cages, hoops, and beam-column joints** —
+which still wants a hoop/non-grid demonstration before it's a measured boundary. Explicit
+conformal run is also a documented follow-up (mass + `dt_cr`), not yet exercised.
 
 ## Gate 2 — does ASDConcrete3D produce EMERGENT confinement (no fc inflation)?
 
@@ -72,9 +84,10 @@ step-halving** — direct evidence for the blessed adaptive-stepping wrapper ([[
 1. **Confinement blocker → resolved (Gate 2 PASS).** R8 downgraded: emergent confinement is
    real to ~5% vs Mander; keep the "no dilation knob, validate Kc+backbone" caveat, drop the
    "must calibrate fc per member like Mander" framing. The §4 wording is corrected accordingly.
-2. **Scope sharpened (Gate 1).** Conformal covers regular ≤8-bar members with no new code, so
-   the embedded element's v1 justification narrows to **dense cages + hoops + beam-column
-   joints**. Build order: ship the conformal recipe + a bar-layout helper first; build
+2. **Scope sharpened (Gate 1).** Conformal covers regular grid-aligned cages with no new code
+   (*measured* to 12 bars), so the embedded element's justification narrows to **non-grid bar
+   positions, ties/hoops, and the O(N²·nz) mesh cost** (*inferred* — still wants a hoop/non-grid
+   demo). Build order: ship the conformal recipe + a bar-layout helper first; build
    `LadrunoEmbeddedRebar` for the cases conformal can't mesh.
 3. **Solver gate confirmed.** Both gates needed KrylovNewton + step-halving; the adaptive
    wrapper is a real prerequisite, not a nicety.
