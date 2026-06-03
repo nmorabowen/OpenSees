@@ -40,6 +40,7 @@
 // See Ladruno_implementation/21_ladruno_dynamic_relaxation_adr.md.
 
 #include <LadrunoDynamicRelaxation.h>
+#include <LadrunoFictitiousMass.h>
 #include <AnalysisModel.h>
 #include <LinearSOE.h>
 #include <Vector.h>
@@ -174,17 +175,8 @@ LadrunoDynamicRelaxation::formTangent(int statFlag)
         opserr << "WARNING LadrunoDynamicRelaxation::formTangent() - no SOE or M* not built\n";
         return -1;
     }
-    theSOE->zeroA();
-    static Matrix m1(1, 1);
-    static ID id1(1);
-    for (int i = 0; i < size; i++) {
-        m1(0, 0) = (*Mstar)(i);
-        id1(0) = i;
-        if (theSOE->addA(m1, id1) < 0) {
-            opserr << "WARNING LadrunoDynamicRelaxation::formTangent() - addA failed at " << i << endln;
-            return -1;
-        }
-    }
+    // poke M* onto the diagonal (zeroFirst => the solve degenerates to M*^{-1})
+    Ladruno::addDiagonalToSOE(theSOE, *Mstar, size, 1.0, /*zeroFirst=*/true);
     return 0;
 }
 
@@ -210,45 +202,20 @@ LadrunoDynamicRelaxation::buildFictitiousMass(void)
 {
     AnalysisModel *theModel = this->getAnalysisModel();
     if (theModel == 0 || Mstar == 0) return -1;
-    Mstar->Zero();
 
-    if (massMode == 2) {                 // unity
-        for (int i = 0; i < size; i++) (*Mstar)(i) = 1.0;
-        return 0;
+    // gershgorin prefactor (mode 0): f = dt^2/4, scale-free so omega*dt ~ 2 by
+    // construction. Viscous: grow M* so the DAMPED step stays stable. Critical
+    // viscous damping shrinks the explicit safe step by (sqrt(1+z^2)-z); grow M*
+    // by its inverse-square so omega*dt stays <= 2. (Passed as dt2Quarter; the
+    // shared builder applies it. lumped/unity ignore it.)
+    double f = 0.25 * dtPseudo * dtPseudo;
+    if (dampMode == 1) {
+        double s = sqrt(1.0 + zetaTarget * zetaTarget) - zetaTarget;
+        if (s > 0.0) f /= (s * s);
     }
-
-    // gershgorin / lumped: accumulate |row-sums| of the element K (or M) into the
-    // global diagonal at the element's equation numbers.
-    FE_EleIter &theEles = theModel->getFEs();
-    FE_Element *elePtr;
-    while ((elePtr = theEles()) != 0) {
-        Element *e = elePtr->getElement();
-        if (e == 0) continue;            // subdomain / no backing element
-        const ID &id = elePtr->getID();
-        const Matrix &Ke = (massMode == 1) ? e->getMass() : e->getTangentStiff();
-        int n = id.Size();
-        if (Ke.noRows() != n) continue;  // defensive
-        for (int i = 0; i < n; i++) {
-            int loc = id(i);
-            if (loc < 0) continue;
-            double rs = 0.0;
-            for (int j = 0; j < n; j++) rs += fabs(Ke(i, j));
-            (*Mstar)(loc) += rs;
-        }
-    }
-
-    if (massMode == 0) {                 // gershgorin stability scaling
-        double f = 0.25 * dtPseudo * dtPseudo;
-        if (dampMode == 1) {             // viscous: grow M* so the DAMPED step stays
-            // stable. Critical viscous damping shrinks the explicit safe step by
-            // (sqrt(1+z^2)-z); grow M* by its inverse-square so omega*dt stays <= 2.
-            double s = sqrt(1.0 + zetaTarget * zetaTarget) - zetaTarget;
-            if (s > 0.0) f /= (s * s);
-        }
-        for (int i = 0; i < size; i++) (*Mstar)(i) *= f;
-    } else {                             // lumped real mass * scale
-        for (int i = 0; i < size; i++) (*Mstar)(i) *= massScale;
-    }
+    // build M* (row-sum of K or real mass, or unity) + mmax*1e-8 zero-floor.
+    if (Ladruno::buildGershgorinDiagonal(theModel, *Mstar, massMode, massScale, f) < 0)
+        return -1;
 
     // viscous-critical coefficient C* = cVisc*M*. The M* rescale above grew M* by
     // 1/s^2 (s = sqrt(1+z^2)-z), so the RESCALED omega1*dt ~ 2s (not 2). Critical
@@ -260,13 +227,6 @@ LadrunoDynamicRelaxation::buildFictitiousMass(void)
         double s = sqrt(1.0 + zetaTarget * zetaTarget) - zetaTarget;
         cVisc = 4.0 * zetaTarget * s / dtPseudo;
     }
-
-    // floor any zero / non-positive diagonal (free DOF with no stiffness/mass)
-    double mmax = 0.0;
-    for (int i = 0; i < size; i++) if ((*Mstar)(i) > mmax) mmax = (*Mstar)(i);
-    double floor = (mmax > 0.0) ? mmax * 1.0e-8 : 1.0;
-    for (int i = 0; i < size; i++)
-        if (!((*Mstar)(i) > 0.0)) (*Mstar)(i) = floor;
 
     return 0;
 }
