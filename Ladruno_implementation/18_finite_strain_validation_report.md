@@ -1,5 +1,5 @@
 ---
-title: Validation Report — Finite-Strain Trifecta, Phase P1 (core)
+title: Validation Report — Finite-Strain Trifecta (Phases P1–P3)
 project: Ladruno
 status: complete
 priority: high
@@ -13,15 +13,21 @@ tags:
 created: 2026-06-02
 ---
 
-# Validation Report — Finite-Strain Trifecta · Phase P1
+# Validation Report — Finite-Strain Trifecta · Phases P1–P3
 
 > [!abstract] What this is
-> The execution record for **Phase P1** of
-> [[17_finite_strain_validation_plan|the finite-strain V&V plan]] — the
-> *finite-strain core*: benchmarks **A1–A5** (L1 analytical), **B1–B3**
-> (L2 convergence & locking) and **C1** (the Simo necking bar). Each row below is
-> a contract from the plan, now fulfilled by a runnable Zone-A test, with the
-> oracle, the measured margin, and PASS/FAIL.
+> The execution record for **Phases P1–P3** of
+> [[17_finite_strain_validation_plan|the finite-strain V&V plan]]:
+> - **P1** finite-strain core — A1–A5 (L1 analytical), B1–B3 (L2 convergence &
+>   locking), C1 (Simo necking) — §2–§4, PR #138;
+> - **P2** geometric nonlinearity — A7, C4, C5, D4 (corot large rotation) — §5,
+>   PR #140;
+> - **P3** locking & incompressibility — B4 (Cook's membrane), E4 (rubber block)
+>   — §6, PR #141.
+>
+> **31 Zone-A tests, all PASS** (Zone-A Ubuntu CI green on all three PRs). Each
+> row below is a plan contract, fulfilled by a runnable test, with the oracle,
+> the measured margin, and PASS/FAIL.
 
 Companion: [[17_finite_strain_validation_plan]], [[09_ladruno_brick]],
 [[10_solid_corotational_adr]], [[09_finite_strain_material_wrapper]],
@@ -41,8 +47,10 @@ inner (`LadrunoJ2` isotropic / `ElasticIsotropic`).
 | `tests/test_finite_strain_L1_analytical.py` | A (t1) | A1–A5 | 12 |
 | `tests/test_finite_strain_L2_convergence.py` | A (t2a) | B1–B3 | 3 |
 | `tests/test_finite_strain_C1_necking.py` | A (t2a) | C1 | 4 |
+| `tests/test_finite_strain_P2_geomnl.py` | A (t2a) | A7, C4, C5, D4 | 8 |
+| `tests/test_finite_strain_P3_locking.py` | A (t2a) | B4, E4 | 4 |
 
-**19 tests, all PASS** (≈12 s wall, fresh `OpenSeesPy` worktree build off
+**31 tests, all PASS** (P1 detail below; ≈18 s wall for the full suite, fresh `OpenSeesPy` worktree build off
 `ladruno` HEAD; existing finite-strain suite 21 pass / 1 xfail unchanged).
 All Zone-A (structured lattices, no gmsh) so the core validation travels with
 the PR and gates CI. Oracles are the numpy mirrors `tests/logstrain_reference.py`
@@ -147,7 +155,48 @@ line pinned; end pulled 2.8 mm (5.6 mm total) over 44 steps; `UmfPack` +
 
 ---
 
-## 5. Known limitations carried in (per plan §10)
+## 5. P2 — geometric nonlinearity (A7, C4, C5, D4)  ✅
+
+`tests/test_finite_strain_P2_geomnl.py` (8 tests). The **corotational** path
+`LadrunoBrick -geom corot` — large rotation, small material strain — validated
+against closed-form elastica/buckling and cross-checked against `-geom finite`.
+
+| ID | Problem | Oracle | Measured | Verdict |
+|---|---|---|---|---|
+| **A7** | end-moment cantilever rolls into a circle | Euler elastica (circular arc, κ=M/EI) | arc-fit residual < 1 % L; curvature spread < 10 %; M·ρ→EI (O(h)) | **PASS** |
+| **C4** | large-rotation cantilever, end transverse force | exact elastica, Mattiasson 1981 (Bathe–Bolourchi) | w/L, u/L at α=7,10 within **≤2.3 %** (nz=32) | **PASS** |
+| **C5** | Euler buckling of a corot column | `P_cr = π²EI/(2L)²` via Southwell plot | converges 9 %(nz24)→5 %(nz32), biased high | **PASS** |
+| **D4** | corot ↔ finite geometry consistency | each other (no external oracle) | tip disp agree ≤2 %; corot→Euler `PL³/3EI` in linear limit | **PASS** |
+
+> [!note] Formulation constraint (verified, logged to LEDGER_quirks)
+> Under `-geom corot|finite` only `std`/`bbar` exist — `uri`/`eas` (the
+> shear-locking cures) are `-geom linear` only. So corot bending accuracy comes
+> from mesh refinement, not a locking-free element. **A7 is essentially
+> locking-free** (pure bending ⇒ no transverse shear) and anchors its tight gates
+> on the arc shape; C4/C5 use a refined mesh (nz=32) and the residual is the O(h)
+> low-order-hex bending stiffness (C5's P_cr is biased *high* by it).
+
+## 6. P3 — locking & incompressibility (B4, E4)  ✅
+
+`tests/test_finite_strain_P3_locking.py` (4 tests). Extends the F-bar cure (P1
+B2/B3, the slender cantilever) to the two harder regimes the plan names.
+
+| ID | Problem | Discriminator | Measured | Verdict |
+|---|---|---|---|---|
+| **B4** | Cook's membrane (near-incompressible, ν=0.499) | F-bar converges, std locks | bbar mesh-independent (n16→24 < 4 %); **bbar/std > 1.3** at n=24; std crawls >3× faster than bbar under refinement | **PASS** |
+| **B4** | Cook's membrane (compressible, ν=1/3) | absolute scale | F-bar → **~22.5** tip disp (plane-strain reference band) | **PASS** |
+| **E4** | rubber block, bonded platens, 10 % compression (ν=0.499) | large constrained isochoric | **std/bbar reaction ≈ 9×** (std over-stiffens grossly) | **PASS** |
+
+> [!note] Honest scoping
+> The **isochoric-*plastic* Cook** row is intentionally not asserted: at the loads
+> that converge here std≈bbar (the plastic-locking separation is weak on this
+> geometry) — that cure is already covered by P1's **B3** cantilever. **ν=0.4999**
+> over-constrains the bonded rubber block past convergence, so E4 uses **ν=0.499**
+> — already a ~9× separation, so the cure is unmistakable.
+
+---
+
+## 7. Known limitations carried in (per plan §10)
 
 1. **Combined-hardening + large rotation** is the §14.11 boundary; all A/B/C
    plasticity here uses **isotropic** hardening (objective through the
@@ -160,14 +209,16 @@ line pinned; end pulled 2.8 mm (5.6 mm total) over 44 steps; `UmfPack` +
 
 ---
 
-## 6. Reproduce
+## 8. Reproduce
 
 ```powershell
-# from the worktree, against the local build:
+# from the worktree, against the local build (all phases):
 ./Ladruno_scripts/run_zone_a.ps1 -DistBin .\dist\bin -- -k "finite_strain"
 # or directly:
 $env:PYTHONPATH=".\dist\bin"; $env:PATH=".\dist\bin;$env:PATH"
 py -3.12 -m pytest tests/test_finite_strain_L1_analytical.py `
                    tests/test_finite_strain_L2_convergence.py `
-                   tests/test_finite_strain_C1_necking.py -v
+                   tests/test_finite_strain_C1_necking.py `
+                   tests/test_finite_strain_P2_geomnl.py `
+                   tests/test_finite_strain_P3_locking.py -v
 ```
