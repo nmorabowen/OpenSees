@@ -120,16 +120,9 @@ class LadrunoIMKBeam : public Element
   static Matrix K;  // 12x12 work matrix (mass / inertia)
   static Vector P;  // 12 work vector
 
-  // per-axis state determination: solves the 2x2 internal Newton for the two
-  // hinge rotations of one bending axis, returns the basic forces and the
-  // condensed 2x2 tangent block. mi/mj index into theMat[].
-  void solveAxis(double vi, double vj, int mi, int mj,
-                 double L, double EI,
-                 double &thi, double &thj,
-                 double &qi, double &qj, double k2[2][2]);
-
-  // initial (small-strain) 2x2 tangent block for one bending axis
-  void initBlock(int mi, int mj, double L, double EI, double k2[2][2]);
+  // per-axis state determination is delegated to the shared, dimension-agnostic
+  // kernel in LadrunoIMKHinge.h (ladrunoIMKSolveAxis / ladrunoIMKInitBlock),
+  // also used by LadrunoIMKBeam2d.
 };
 
 #endif

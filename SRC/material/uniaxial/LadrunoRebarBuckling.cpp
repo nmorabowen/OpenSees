@@ -84,6 +84,8 @@ void* OPS_LadrunoRebarBuckling(void)
   double fy    = 0.0;          // queried/required when lsr>0
   double E     = 0.0;          // <=0 => take theBar->getInitialTangent()
   int    model = LadrunoRebarBuckling::MODEL_DM;
+  int    restraightenMode = LadrunoRebarBuckling::RS_C;   // v2 cyclic span form (DECISION 3)
+  double restraightenC    = 1.0;                          // RS_C fraction of the compressive excursion
 
   while (OPS_GetNumRemainingInputArgs() > 0) {
     const char* flag = OPS_GetString();
@@ -141,6 +143,26 @@ void* OPS_LadrunoRebarBuckling(void)
         return 0;
       }
     }
+    else if (strcmp(flag, "-restraighten") == 0) {
+      // v2 cyclic re-straightening span (DECISION 3):
+      //   -restraighten lambda            -> L_rs = f(lambda)*eY
+      //   -restraighten c <value>         -> L_rs = max(value*|e_rev-e_cross_rs|, eY)
+      const char* mode = OPS_GetString();
+      if (strcmp(mode, "lambda") == 0 || strcmp(mode, "lsr") == 0) {
+        restraightenMode = LadrunoRebarBuckling::RS_LAMBDA;
+      } else if (strcmp(mode, "c") == 0) {
+        restraightenMode = LadrunoRebarBuckling::RS_C;
+        numData = 1;
+        if (OPS_GetDoubleInput(&numData, &restraightenC) < 0) {
+          opserr << "WARNING LadrunoRebarBuckling: -restraighten c wants a value\n";
+          return 0;
+        }
+      } else {
+        opserr << "WARNING LadrunoRebarBuckling: unknown -restraighten '" << mode
+               << "' (lambda or c <value>)\n";
+        return 0;
+      }
+    }
     else {
       opserr << "WARNING LadrunoRebarBuckling: unknown option '" << flag << "'\n";
       return 0;
@@ -176,7 +198,8 @@ void* OPS_LadrunoRebarBuckling(void)
 
   UniaxialMaterial* theMat =
     new LadrunoRebarBuckling(idata[0], *bar, lsr, alpha,
-                             gaReduction, gaFsuFrac, fy, E, model);
+                             gaReduction, gaFsuFrac, fy, E, model,
+                             restraightenMode, restraightenC);
   if (theMat == 0) {
     opserr << "WARNING LadrunoRebarBuckling: failed to allocate material\n";
     return 0;
@@ -187,13 +210,34 @@ void* OPS_LadrunoRebarBuckling(void)
 // ===========================================================================
 //  constructors / destructor
 // ===========================================================================
+// Initialize ALL cyclic state to the virgin PASS configuration. Inline (NOT via
+// revertToStart, which forwards to theBar and would wipe a getCopy-preserved
+// state -- the classic wrapper footgun; FatigueMaterial/MinMaxMaterial too).
+#define LRB_INIT_STATE()                                                        \
+  do {                                                                          \
+    CmaxTenStrain = CmaxTenStress = CfStarL = 0.0; CfStarLcross = LRB_INVALID;  \
+    TmaxTenStrain = TmaxTenStress = TfStarL = 0.0; TfStarLcross = LRB_INVALID;  \
+    Cbranch = Tbranch = BR_PASS;                                                \
+    Cstrain = Cstress = Cg = Cg_law = 0.0;                                      \
+    Ce_rev = Cs_rev = Ce_cross_rs = Cf_bare_cross = CL_rs = 0.0;                \
+    Ce_reentry = LRB_INVALID; Cg_law_reentry = Cg_reentry = 0.0;               \
+    Ce_bow = LRB_INVALID; Cg_bow = 0.0;                                         \
+    Tg = Tg_law = 0.0;                                                          \
+    Te_rev = Ts_rev = Te_cross_rs = Tf_bare_cross = TL_rs = 0.0;                \
+    Te_reentry = LRB_INVALID; Tg_law_reentry = Tg_reentry = 0.0;               \
+    Te_bow = LRB_INVALID; Tg_bow = 0.0;                                         \
+    Tstrain = Tstress = 0.0; Tr = 1.0;                                          \
+  } while (0)
+
 LadrunoRebarBuckling::LadrunoRebarBuckling(int tag, UniaxialMaterial& bar,
                                            double lsr_, double alpha_,
                                            double gaReduction_, double gaFsuFrac_,
-                                           double fy_, double E_, int model_)
+                                           double fy_, double E_, int model_,
+                                           int restraightenMode_, double restraightenC_)
   : UniaxialMaterial(tag, MAT_TAG_LadrunoRebarBuckling),
     theBar(0), model(model_), lsr(lsr_), alpha(alpha_),
     gaReduction(gaReduction_), gaFsuFrac(gaFsuFrac_), fy(fy_), E(E_),
+    restraightenMode(restraightenMode_), restraightenC(restraightenC_),
     parameterID(0)
 {
   theBar = bar.getCopy();
@@ -203,13 +247,7 @@ LadrunoRebarBuckling::LadrunoRebarBuckling(int tag, UniaxialMaterial& bar,
   }
   if (E <= 0.0 && theBar != 0)
     E = theBar->getInitialTangent();
-  // Initialize OUR state inline -- do NOT call revertToStart() here: it would
-  // forward to theBar->revertToStart() and wipe the state that bar.getCopy()
-  // just preserved (the classic wrapper getCopy footgun; FatigueMaterial /
-  // MinMaxMaterial avoid it the same way). getCopy() restores C*/T* afterward.
-  CmaxTenStrain = CmaxTenStress = CfStarL = 0.0; CfStarLcross = LRB_INVALID;
-  TmaxTenStrain = TmaxTenStress = TfStarL = 0.0; TfStarLcross = LRB_INVALID;
-  Tstrain = Tstress = 0.0; Tr = 1.0;
+  LRB_INIT_STATE();
   Ttangent = (theBar != 0) ? theBar->getInitialTangent() : E;
 }
 
@@ -217,12 +255,12 @@ LadrunoRebarBuckling::LadrunoRebarBuckling()
   : UniaxialMaterial(0, MAT_TAG_LadrunoRebarBuckling),
     theBar(0), model(MODEL_DM), lsr(0.0), alpha(1.0),
     gaReduction(0.0), gaFsuFrac(0.5), fy(0.0), E(0.0),
+    restraightenMode(RS_C), restraightenC(1.0),
     parameterID(0)
 {
   // theBar is built by recvSelf via the broker.
-  CmaxTenStrain = CmaxTenStress = CfStarL = 0.0; CfStarLcross = LRB_INVALID;
-  TmaxTenStrain = TmaxTenStress = TfStarL = 0.0; TfStarLcross = LRB_INVALID;
-  Tstrain = Tstress = Ttangent = 0.0; Tr = 1.0;
+  LRB_INIT_STATE();
+  Ttangent = 0.0;
 }
 
 LadrunoRebarBuckling::~LadrunoRebarBuckling()
@@ -254,7 +292,8 @@ double LadrunoRebarBuckling::backboneStressAt(double engStrain)
 //  Ported from ReinforcingSteel::Buckled_stress_Dhakal(ess, fss); the clean
 //  r*sigma_bare branch (the monotonic / TBranchNum%4>1 form).
 // ===========================================================================
-void LadrunoRebarBuckling::applyBucklingDM(double eps, double sBare, double kBare)
+void LadrunoRebarBuckling::applyBucklingDM(double eps, double sBare, double kBare,
+                                          double& sig, double& tan)
 {
   const double eY = fy / E;                        // yield strain
   const double e_cross = TmaxTenStrain - TmaxTenStress / E;   // tensile-unload anchor
@@ -262,7 +301,7 @@ void LadrunoRebarBuckling::applyBucklingDM(double eps, double sBare, double kBar
 
   // pre-onset (incl. tension): exact pass-through
   if (e >= -eY) {
-    Tstress = sBare; Ttangent = kBare; Tr = 1.0;
+    sig = sBare; tan = kBare;
     return;
   }
 
@@ -281,7 +320,7 @@ void LadrunoRebarBuckling::applyBucklingDM(double eps, double sBare, double kBar
   }
   const double fStarL = TfStarL;
   if (fabs(fStarL) < 1.0e-12) {                    // degenerate bare backbone => no overlay
-    Tstress = sBare; Ttangent = kBare; Tr = 1.0;
+    sig = sBare; tan = kBare;
     return;
   }
 
@@ -292,22 +331,19 @@ void LadrunoRebarBuckling::applyBucklingDM(double eps, double sBare, double kBar
     // intermediate branch:  -eY > e >= eStar
     const double ratio = 1.0 - (1.0 - fStar / fStarL) * (e + eY) / (eStar + eY);
     const double dratio = -(1.0 - fStar / fStarL) / (eStar + eY);   // d(ratio)/d(eps)
-    Tstress  = sBare * ratio;
-    Ttangent = kBare * ratio + sBare * dratio;
-    Tr = ratio;
+    sig = sBare * ratio;
+    tan = kBare * ratio + sBare * dratio;
   } else {
     // deep branch:  e < eStar  (ramp toward the -0.2 fy floor)
     const double num = fStar - 0.02 * E * (e - eStar);
     double ave = sBare * num / fStarL;
     if (ave > -0.2 * fy) {
       // floored: flat residual => (near) zero tangent
-      Tstress  = -0.2 * fy;
-      Ttangent = 0.0;
-      Tr = (sBare != 0.0) ? Tstress / sBare : 1.0;
+      sig = -0.2 * fy;
+      tan = 0.0;
     } else {
-      Tstress  = ave;
-      Ttangent = (kBare * num + sBare * (-0.02 * E)) / fStarL;
-      Tr = (sBare != 0.0) ? ave / sBare : 1.0;
+      sig = ave;
+      tan = (kBare * num + sBare * (-0.02 * E)) / fStarL;
     }
   }
 }
@@ -333,13 +369,14 @@ double LadrunoRebarBuckling::gaFactor(double eps, double e_cross) const
   return m * betaLoc * (1.0 - gaReduction) + gaReduction;
 }
 
-void LadrunoRebarBuckling::applyBucklingGA(double eps, double sBare, double kBare)
+void LadrunoRebarBuckling::applyBucklingGA(double eps, double sBare, double kBare,
+                                          double& sig, double& tan)
 {
   const double e_cross = TmaxTenStrain - TmaxTenStress / E;   // tensile-unload anchor
 
   // GA gate: pass-through unless compressed past the anchor crossing
   if (eps >= e_cross) {
-    Tstress = sBare; Ttangent = kBare; Tr = 1.0;
+    sig = sBare; tan = kBare;
     return;
   }
 
@@ -348,8 +385,7 @@ void LadrunoRebarBuckling::applyBucklingGA(double eps, double sBare, double kBar
   const double factor = this->gaFactor(eps, e_cross);
 
   //   sigma = fsup*ff - (factor+ff)*(fsup*ff - sBare)/(1+ff)
-  Tstress = fsup * ff - (factor + ff) * (fsup * ff - sBare) / (1.0 + ff);
-  Tr = (sBare != 0.0) ? Tstress / sBare : 1.0;
+  sig = fsup * ff - (factor + ff) * (fsup * ff - sBare) / (1.0 + ff);
 
   // Consistent tangent dsigma/deps = rho*k_bare + (dsigma/dfactor)*dfactor/deps,
   //   rho = dsigma/dsBare = (factor+ff)/(1+ff),
@@ -365,11 +401,164 @@ void LadrunoRebarBuckling::applyBucklingGA(double eps, double sBare, double kBar
   if (epsp >= e_cross) epsp = eps;                 // stay inside the buckled region
   const double dfac = (this->gaFactor(epsp, e_cross) - this->gaFactor(epsm, e_cross))
                       / (epsp - epsm);
-  Ttangent = rho * kBare + dSig_dFactor * dfac;
+  tan = rho * kBare + dSig_dFactor * dfac;
+}
+
+// ===========================================================================
+//  lawV1 -- the v1 monotonic buckling-law value (dispatch DM/GA), into (sig,tan).
+//  This is the "g_law" source: g_law = sBare - sig. For the identity/pre-onset
+//  region it returns (sBare,kBare) so g_law = 0. Mutates the fStarL cache only.
+// ===========================================================================
+void LadrunoRebarBuckling::lawV1(double eps, double sBare, double kBare,
+                                 double& sig, double& tan)
+{
+  if (model == MODEL_GA)
+    this->applyBucklingGA(eps, sBare, kBare, sig, tan);
+  else
+    this->applyBucklingDM(eps, sBare, kBare, sig, tan);
+}
+
+// ===========================================================================
+//  computeLrs -- the re-straightening span (DECISION 3, §9.4), mode-selected.
+// ===========================================================================
+double LadrunoRebarBuckling::computeLrs(double e_rev, double e_cross_rs) const
+{
+  const double eY = fy / E;
+  if (restraightenMode == RS_LAMBDA) {
+    // f(lambda) = 0.5 + 0.10*max(0, lambda-5), clamped to [0.5, 6.0]
+    double f = 0.5 + 0.10 * (lsr > 5.0 ? (lsr - 5.0) : 0.0);
+    if (f < 0.5) f = 0.5;
+    if (f > 6.0) f = 6.0;
+    return f * eY;
+  }
+  // RS_C: fraction of the compressive excursion, floored at eY
+  double span = restraightenC * fabs(e_rev - e_cross_rs);
+  return (span > eY) ? span : eY;
+}
+
+// ===========================================================================
+//  onsetReached -- the law-specific PASS->BUCKLING gate (live anchor crossing).
+// ===========================================================================
+bool LadrunoRebarBuckling::onsetReached(double eps, double e_cross_live) const
+{
+  const double eY = fy / E;
+  if (model == MODEL_GA)
+    return (eps < e_cross_live);                   // any compression past the anchor
+  return ((eps - e_cross_live) < -eY);             // DM: past the yield offset
 }
 
 // ===========================================================================
 //  state setting
+// ===========================================================================
+// ---------------------------------------------------------------------------
+//  copy the committed cyclic latches into their trial twins (steady-state
+//  default; the state machine overrides on a transition).
+// ---------------------------------------------------------------------------
+void LadrunoRebarBuckling::copyCommittedToTrial(void)
+{
+  Tbranch        = Cbranch;
+  Te_rev         = Ce_rev;        Ts_rev         = Cs_rev;
+  Te_cross_rs    = Ce_cross_rs;   Tf_bare_cross  = Cf_bare_cross;
+  TL_rs          = CL_rs;
+  Te_reentry     = Ce_reentry;    Tg_law_reentry = Cg_law_reentry;
+  Tg_reentry     = Cg_reentry;
+  Te_bow         = Ce_bow;        Tg_bow         = Cg_bow;
+}
+
+// ---------------------------------------------------------------------------
+//  BUCKLING branch:  sigma = sBare - g,  g in [0, g_law].
+//   no carry  : g = g_law  (=> sigma = sigma_v1, BIT-IDENTICAL v1, tangent k_v1)
+//   carry     : g = g_law - Delta*(1 - S(phi)),  Delta = Cg_law_reentry - Cg_reentry,
+//               phi = (g_law - Cg_law_reentry)/(Cg_bow - Cg_law_reentry), S = smoothstep,
+//               re-merging onto g_law at the deepest committed buckle e_bow (phi=1).
+// ---------------------------------------------------------------------------
+void LadrunoRebarBuckling::bucklingBranch(double eps, double sBare, double kBare,
+                                          double sigV1, double kV1)
+{
+  double g, tang;
+  const bool carry = (Te_reentry != LRB_INVALID);
+
+  if (!carry) {
+    g    = Tg_law;                                 // exact v1 (g == g_law)
+    tang = kV1;
+  } else if (Te_bow == LRB_INVALID || eps <= Te_bow) {
+    // re-compressed to / beyond the deepest prior bow: re-merged onto the v1
+    // envelope (and the envelope extends below). Clear the carry.
+    g = Tg_law; tang = kV1; Te_reentry = LRB_INVALID;
+  } else {
+    // Carry: smoothstep the deficit in STRAIN from the carried value Tg_reentry
+    // (at Te_reentry) to the deepest-bow gap Tg_bow (at Te_bow), then follow v1
+    // beyond e_bow. Strain-based (NOT g_law-based) so it is C0 even when
+    // re-entry happens on the tension side where g_law == 0 but the bow deficit
+    // Tg_reentry > 0.  xi = 0 at re-entry, 1 at e_bow.
+    const double span = Te_reentry - Te_bow;       // > 0 (e_bow is more compressive)
+    if (span <= 1.0e-12) {
+      g = Tg_law; tang = kV1; Te_reentry = LRB_INVALID;
+    } else {
+      double xi = (Te_reentry - eps) / span;
+      if (xi < 0.0) xi = 0.0;
+      if (xi > 1.0) xi = 1.0;
+      const double S  = xi * xi * (3.0 - 2.0 * xi);    // smoothstep 3xi^2 - 2xi^3
+      const double Sp = 6.0 * xi * (1.0 - xi);         // dS/dxi
+      g = Tg_reentry + (Tg_bow - Tg_reentry) * S;
+      const double dg_deps = (Tg_bow - Tg_reentry) * Sp * (-1.0 / span);
+      tang = kBare - dg_deps;
+    }
+  }
+
+  if (g < 0.0) g = 0.0;                             // raise above bare is non-negative
+  Tg       = g;
+  Tstress  = sBare + g;                             // sigma = sigma_bare + raise
+  Ttangent = tang;
+  Tr       = (sBare != 0.0) ? Tstress / sBare : 1.0;
+
+  // deepen the monotone bow envelope (the carry re-merge target)
+  if (Te_bow == LRB_INVALID || eps < Te_bow) {
+    Te_bow = eps;
+    Tg_bow = Tg_law;
+  }
+}
+
+// ---------------------------------------------------------------------------
+//  RESTRAIGHTEN branch:  Phase 1 (elastic unload at k_rev) then Phase 2
+//  (smoothstep gap-close).  Uses the TRIAL episode latches (Te_rev/Ts_rev/
+//  Te_cross_rs/Tf_bare_cross/TL_rs), which are committed-derived.
+// ---------------------------------------------------------------------------
+void LadrunoRebarBuckling::restraightenBranch(double eps, double sBare, double kBare)
+{
+  // Track the LIVE bare curve plus a buckling raise g that is HELD on the
+  // compression side (no straightening yet) and DECAYED to 0 over TL_rs on the
+  // tension side (eps >= Te_cross_rs). g_rev = Ts_rev is the raise at reversal.
+  //   sigma = sigma_bare(eps) + g,   g in [0, g_rev].
+  const double g_rev = Ts_rev;
+  double g, tang;
+
+  if (eps < Te_cross_rs) {
+    // Phase 1 -- hold the raise, recover parallel to bare (yields with the bar)
+    g    = g_rev;
+    tang = kBare;
+  } else {
+    // Phase 2 -- tension-side straightening (smoothstep decay of the raise)
+    double q = (TL_rs > 0.0) ? (eps - Te_cross_rs) / TL_rs : 1.0;
+    if (q < 0.0) q = 0.0;
+    if (q > 1.0) q = 1.0;
+    const double B  = 1.0 - q * q * (3.0 - 2.0 * q);   // 1 - smoothstep, B(0)=1, B(1)=0
+    const double Bp = -6.0 * q * (1.0 - q);            // dB/dq
+    g    = g_rev * B;
+    tang = kBare + g_rev * Bp / ((TL_rs > 0.0) ? TL_rs : 1.0);
+  }
+
+  if (g < 0.0) g = 0.0;
+  Tg       = g;
+  Tstress  = sBare + g;
+  Ttangent = tang;
+  Tr = (sBare != 0.0) ? Tstress / sBare : 1.0;
+}
+
+// ===========================================================================
+//  state setting -- the v2 cyclic state machine (committed-latch / idempotent).
+//  Output is recomputed from scratch every call as a pure function of the
+//  COMMITTED state + the trial strain; transitions persist only in commitState.
 // ===========================================================================
 int LadrunoRebarBuckling::setTrialStrain(double strain, double strainRate)
 {
@@ -381,23 +570,87 @@ int LadrunoRebarBuckling::setTrialStrain(double strain, double strainRate)
   double kBare = theBar->getTangent();
   Tstrain = strain;
 
-  // update the tensile-strain anchor (invalidate the fStarL cache if it moves)
+  // v1 tensile-strain anchor (live, path-dependent BY MANDATE -- keeps the
+  // PASS->BUCKLING onset + v1 BUCKLING bit-identical to v1). Invalidate the
+  // fStarL cache if the anchor moves.
   if (strain > TmaxTenStrain) {
     TmaxTenStrain = strain;
     TmaxTenStress = sBare;
     TfStarLcross  = LRB_INVALID;
   }
 
+  // seed the trial latches from committed (steady state); transitions override
+  this->copyCommittedToTrial();
+
   // identity gate (B0): exact pass-through. DM also needs fy>0; GA does not.
   if (lsr <= 0.0 || E <= 0.0 || (model == MODEL_DM && fy <= 0.0)) {
     Tstress = sBare; Ttangent = kBare; Tr = 1.0;
+    Tg = 0.0; Tg_law = 0.0; Tbranch = BR_PASS;
     return res;
   }
 
-  if (model == MODEL_GA)
-    this->applyBucklingGA(strain, sBare, kBare);
-  else
-    this->applyBucklingDM(strain, sBare, kBare);
+  const double eY   = fy / E;
+  const double tol  = 1.0e-12 + 1.0e-8 * eY;
+  const double dEps = strain - Cstrain;
+  const double e_cross_live = TmaxTenStrain - TmaxTenStress / E;
+
+  // v1 law value (g_law source), always evaluated. g is the RAISE of the
+  // buckled stress ABOVE bare: g = sigma - sigma_bare >= 0 (buckling reduces the
+  // compressive magnitude, i.e. raises sigma toward 0). So g_law = sigma_v1 - sBare.
+  double sigV1, kV1;
+  this->lawV1(strain, sBare, kBare, sigV1, kV1);
+  Tg_law = sigV1 - sBare;
+  if (Tg_law < 0.0) Tg_law = 0.0;
+
+  if (Cbranch == BR_PASS) {
+    if (this->onsetReached(strain, e_cross_live)) {
+      Tbranch = BR_BUCKLING;
+      Te_reentry = LRB_INVALID;                    // virgin buckle: no carry
+      this->bucklingBranch(strain, sBare, kBare, sigV1, kV1);
+    } else {
+      Tbranch = BR_PASS;
+      Tstress = sBare; Ttangent = kBare; Tr = 1.0; Tg = 0.0;
+    }
+  }
+  else if (Cbranch == BR_BUCKLING) {
+    if (dEps > tol) {
+      // reversal -> RESTRAIGHTEN: latch the episode from committed state.
+      // Ts_rev holds h_rev = the RAISE (sigma - sigma_bare) at the reversal,
+      // which is exactly the committed g (Cg). The straighten-start Te_cross_rs
+      // is the frozen tensile anchor crossing; the raise is held until then,
+      // then decayed to 0 over TL_rs. (No elastic-line probe is needed.)
+      Tbranch        = BR_RESTRAIGHTEN;
+      Te_rev         = Cstrain;
+      Ts_rev         = Cg;                         // h_rev = committed raise at reversal
+      Te_cross_rs    = CmaxTenStrain - CmaxTenStress / E;
+      TL_rs          = this->computeLrs(Te_rev, Te_cross_rs);
+      Tf_bare_cross  = 0.0;                        // reserved (elastic-line probe removed)
+      Te_reentry     = LRB_INVALID;                // leaving any carry
+      this->restraightenBranch(strain, sBare, kBare);
+    } else {
+      Tbranch = BR_BUCKLING;
+      this->bucklingBranch(strain, sBare, kBare, sigV1, kV1);
+    }
+  }
+  else { // Cbranch == BR_RESTRAIGHTEN
+    const double q = (CL_rs > 0.0) ? (strain - Ce_cross_rs) / CL_rs : 1.0;
+    if (q >= 1.0) {
+      // fully straightened -> PASS (bow gone: reset the episode + envelope)
+      Tbranch = BR_PASS;
+      Tstress = sBare; Ttangent = kBare; Tr = 1.0; Tg = 0.0;
+      Te_reentry = LRB_INVALID; Te_bow = LRB_INVALID; Tg_bow = 0.0;
+    } else if (dEps < -tol) {
+      // re-compress before completion -> BUCKLING with residual-gap carry
+      Tbranch        = BR_BUCKLING;
+      Te_reentry     = Cstrain;
+      Tg_law_reentry = Cg_law;
+      Tg_reentry     = Cg;
+      this->bucklingBranch(strain, sBare, kBare, sigV1, kV1);
+    } else {
+      Tbranch = BR_RESTRAIGHTEN;
+      this->restraightenBranch(strain, sBare, kBare);
+    }
+  }
   return res;
 }
 
@@ -416,10 +669,23 @@ double LadrunoRebarBuckling::getDampTangent(void)
 // ===========================================================================
 int LadrunoRebarBuckling::commitState(void)
 {
+  // v1 anchor + onset cache
   CmaxTenStrain = TmaxTenStrain;
   CmaxTenStress = TmaxTenStress;
   CfStarL       = TfStarL;
   CfStarLcross  = TfStarLcross;
+  // v2 cyclic state (the authoritative branch + latch transition persists here)
+  Cbranch       = Tbranch;
+  Cstrain       = Tstrain;
+  Cstress       = Tstress;
+  Cg            = Tg;
+  Cg_law        = Tg_law;
+  Ce_rev        = Te_rev;        Cs_rev         = Ts_rev;
+  Ce_cross_rs   = Te_cross_rs;   Cf_bare_cross  = Tf_bare_cross;
+  CL_rs         = TL_rs;
+  Ce_reentry    = Te_reentry;    Cg_law_reentry = Tg_law_reentry;
+  Cg_reentry    = Tg_reentry;
+  Ce_bow        = Te_bow;        Cg_bow         = Tg_bow;
   return (theBar != 0) ? theBar->commitState() : 0;
 }
 
@@ -429,14 +695,26 @@ int LadrunoRebarBuckling::revertToLastCommit(void)
   TmaxTenStress = CmaxTenStress;
   TfStarL       = CfStarL;
   TfStarLcross  = CfStarLcross;
+  Tbranch       = Cbranch;
+  Tstrain       = Cstrain;
+  Tstress       = Cstress;
+  Tg            = Cg;
+  Tg_law        = Cg_law;
+  Te_rev        = Ce_rev;        Ts_rev         = Cs_rev;
+  Te_cross_rs   = Ce_cross_rs;   Tf_bare_cross  = Cf_bare_cross;
+  TL_rs         = CL_rs;
+  Te_reentry    = Ce_reentry;    Tg_law_reentry = Cg_law_reentry;
+  Tg_reentry    = Cg_reentry;
+  Te_bow        = Ce_bow;        Tg_bow         = Cg_bow;
+  // Ttangent/Tr are recomputed on the next setTrialStrain.
   return (theBar != 0) ? theBar->revertToLastCommit() : 0;
 }
 
 int LadrunoRebarBuckling::revertToStart(void)
 {
-  CmaxTenStrain = CmaxTenStress = CfStarL = 0.0; CfStarLcross = LRB_INVALID;
-  TmaxTenStrain = TmaxTenStress = TfStarL = 0.0; TfStarLcross = LRB_INVALID;
-  Tstrain = Tstress = 0.0;
+  // Here a full reset (incl. the bar) IS intended -- this is NOT the getCopy
+  // footgun path, so forwarding to theBar->revertToStart() is correct.
+  LRB_INIT_STATE();
   Ttangent = (theBar != 0) ? theBar->getInitialTangent() : E;
   Tr = 1.0;
   return (theBar != 0) ? theBar->revertToStart() : 0;
@@ -446,20 +724,34 @@ UniaxialMaterial* LadrunoRebarBuckling::getCopy(void)
 {
   LadrunoRebarBuckling* theCopy =
     new LadrunoRebarBuckling(this->getTag(), *theBar, lsr, alpha,
-                             gaReduction, gaFsuFrac, fy, E, model);
+                             gaReduction, gaFsuFrac, fy, E, model,
+                             restraightenMode, restraightenC);
 
-  theCopy->CmaxTenStrain = CmaxTenStrain;
-  theCopy->CmaxTenStress = CmaxTenStress;
-  theCopy->CfStarL       = CfStarL;
-  theCopy->CfStarLcross  = CfStarLcross;
-  theCopy->TmaxTenStrain = TmaxTenStrain;
-  theCopy->TmaxTenStress = TmaxTenStress;
-  theCopy->TfStarL       = TfStarL;
-  theCopy->TfStarLcross  = TfStarLcross;
-  theCopy->Tstrain       = Tstrain;
-  theCopy->Tstress       = Tstress;
-  theCopy->Ttangent      = Ttangent;
-  theCopy->Tr            = Tr;
+  // committed (v1 anchor/cache + v2 cyclic)
+  theCopy->CmaxTenStrain = CmaxTenStrain;  theCopy->CmaxTenStress = CmaxTenStress;
+  theCopy->CfStarL       = CfStarL;        theCopy->CfStarLcross  = CfStarLcross;
+  theCopy->Cbranch       = Cbranch;
+  theCopy->Cstrain       = Cstrain;        theCopy->Cstress       = Cstress;
+  theCopy->Cg            = Cg;             theCopy->Cg_law        = Cg_law;
+  theCopy->Ce_rev        = Ce_rev;         theCopy->Cs_rev        = Cs_rev;
+  theCopy->Ce_cross_rs   = Ce_cross_rs;    theCopy->Cf_bare_cross = Cf_bare_cross;
+  theCopy->CL_rs         = CL_rs;
+  theCopy->Ce_reentry    = Ce_reentry;     theCopy->Cg_law_reentry= Cg_law_reentry;
+  theCopy->Cg_reentry    = Cg_reentry;
+  theCopy->Ce_bow        = Ce_bow;         theCopy->Cg_bow        = Cg_bow;
+  // trial twins
+  theCopy->TmaxTenStrain = TmaxTenStrain;  theCopy->TmaxTenStress = TmaxTenStress;
+  theCopy->TfStarL       = TfStarL;        theCopy->TfStarLcross  = TfStarLcross;
+  theCopy->Tbranch       = Tbranch;
+  theCopy->Tg            = Tg;             theCopy->Tg_law        = Tg_law;
+  theCopy->Te_rev        = Te_rev;         theCopy->Ts_rev        = Ts_rev;
+  theCopy->Te_cross_rs   = Te_cross_rs;    theCopy->Tf_bare_cross = Tf_bare_cross;
+  theCopy->TL_rs         = TL_rs;
+  theCopy->Te_reentry    = Te_reentry;     theCopy->Tg_law_reentry= Tg_law_reentry;
+  theCopy->Tg_reentry    = Tg_reentry;
+  theCopy->Te_bow        = Te_bow;         theCopy->Tg_bow        = Tg_bow;
+  theCopy->Tstrain       = Tstrain;        theCopy->Tstress       = Tstress;
+  theCopy->Ttangent      = Ttangent;       theCopy->Tr            = Tr;
 
   return theCopy;
 }
@@ -467,11 +759,16 @@ UniaxialMaterial* LadrunoRebarBuckling::getCopy(void)
 // ===========================================================================
 //  parallel
 // ===========================================================================
+// Serialization schema version (v1 was implicitly 1, 11-wide Vector + 3-wide ID;
+// v2 writes 2, with the version in dataID(3) -- NOT data(0), which holds model).
+static const int LRB_SCHEMA_VERSION = 2;
+static const int LRB_DATA_LEN       = 28;   // v2 Vector width
+
 int LadrunoRebarBuckling::sendSelf(int cTag, Channel& theChannel)
 {
   int dbTag = this->getDbTag();
 
-  static ID dataID(3);
+  static ID dataID(4);
   dataID(0) = this->getTag();
   dataID(1) = theBar->getClassTag();
   int matDbTag = theBar->getDbTag();
@@ -480,23 +777,27 @@ int LadrunoRebarBuckling::sendSelf(int cTag, Channel& theChannel)
     theBar->setDbTag(matDbTag);
   }
   dataID(2) = matDbTag;
+  dataID(3) = LRB_SCHEMA_VERSION;                 // schema version (read before the Vector)
   if (theChannel.sendID(dbTag, cTag, dataID) < 0) {
     opserr << "LadrunoRebarBuckling::sendSelf - failed to send ID\n";
     return -1;
   }
 
-  static Vector data(11);
-  data(0)  = model;
-  data(1)  = lsr;
-  data(2)  = alpha;
-  data(3)  = fy;
-  data(4)  = E;
-  data(5)  = CmaxTenStrain;
-  data(6)  = CmaxTenStress;
-  data(7)  = CfStarL;
-  data(8)  = CfStarLcross;
-  data(9)  = gaReduction;
-  data(10) = gaFsuFrac;
+  static Vector data(LRB_DATA_LEN);
+  // 0..10 : v1 layout, UNCHANGED
+  data(0)  = model;        data(1)  = lsr;          data(2)  = alpha;
+  data(3)  = fy;           data(4)  = E;
+  data(5)  = CmaxTenStrain; data(6) = CmaxTenStress;
+  data(7)  = CfStarL;      data(8)  = CfStarLcross;
+  data(9)  = gaReduction;  data(10) = gaFsuFrac;
+  // 11.. : v2 additions
+  data(11) = restraightenMode;  data(12) = restraightenC;
+  data(13) = Cbranch;      data(14) = Cstrain;      data(15) = Cstress;
+  data(16) = Cg;           data(17) = Cg_law;
+  data(18) = Ce_rev;       data(19) = Cs_rev;       data(20) = Ce_cross_rs;
+  data(21) = Cf_bare_cross; data(22) = CL_rs;
+  data(23) = Ce_reentry;   data(24) = Cg_law_reentry; data(25) = Cg_reentry;
+  data(26) = Ce_bow;       data(27) = Cg_bow;
   if (theChannel.sendVector(dbTag, cTag, data) < 0) {
     opserr << "LadrunoRebarBuckling::sendSelf - failed to send Vector\n";
     return -2;
@@ -514,12 +815,20 @@ int LadrunoRebarBuckling::recvSelf(int cTag, Channel& theChannel,
 {
   int dbTag = this->getDbTag();
 
-  static ID dataID(3);
+  static ID dataID(4);
   if (theChannel.recvID(dbTag, cTag, dataID) < 0) {
-    opserr << "LadrunoRebarBuckling::recvSelf - failed to recv ID\n";
+    opserr << "LadrunoRebarBuckling::recvSelf - failed to recv ID "
+           << "(a v1 3-wide stream is not readable by this v2 build)\n";
     return -1;
   }
   this->setTag(int(dataID(0)));
+
+  const int version = int(dataID(3));
+  if (version != LRB_SCHEMA_VERSION) {
+    opserr << "LadrunoRebarBuckling::recvSelf - unsupported serialization version "
+           << version << " (need " << LRB_SCHEMA_VERSION << ")\n";
+    return -3;
+  }
 
   if (theBar == 0) {
     int matClassTag = int(dataID(1));
@@ -532,32 +841,38 @@ int LadrunoRebarBuckling::recvSelf(int cTag, Channel& theChannel,
   }
   theBar->setDbTag(dataID(2));
 
-  static Vector data(11);
+  static Vector data(LRB_DATA_LEN);
   if (theChannel.recvVector(dbTag, cTag, data) < 0) {
     opserr << "LadrunoRebarBuckling::recvSelf - failed to recv Vector\n";
-    return -3;
+    return -4;
   }
-  model = int(data(0));
-  lsr   = data(1);
-  alpha = data(2);
-  fy    = data(3);
-  E     = data(4);
-  CmaxTenStrain = data(5);
-  CmaxTenStress = data(6);
-  CfStarL       = data(7);
-  CfStarLcross  = data(8);
-  gaReduction   = data(9);
-  gaFsuFrac     = data(10);
-  // trial = committed (recomputed on next setTrialStrain)
-  TmaxTenStrain = CmaxTenStrain;
-  TmaxTenStress = CmaxTenStress;
-  TfStarL       = CfStarL;
-  TfStarLcross  = CfStarLcross;
-  Tstrain = 0.0; Tstress = 0.0; Ttangent = E; Tr = 1.0;
+  model = int(data(0));    lsr   = data(1);          alpha = data(2);
+  fy    = data(3);         E     = data(4);
+  CmaxTenStrain = data(5); CmaxTenStress = data(6);
+  CfStarL       = data(7); CfStarLcross  = data(8);
+  gaReduction   = data(9); gaFsuFrac     = data(10);
+  restraightenMode = int(data(11)); restraightenC = data(12);
+  Cbranch = int(data(13)); Cstrain = data(14);       Cstress = data(15);
+  Cg      = data(16);      Cg_law  = data(17);
+  Ce_rev  = data(18);      Cs_rev  = data(19);        Ce_cross_rs = data(20);
+  Cf_bare_cross = data(21); CL_rs  = data(22);
+  Ce_reentry = data(23);   Cg_law_reentry = data(24); Cg_reentry = data(25);
+  Ce_bow  = data(26);      Cg_bow  = data(27);
+
+  // trial = committed (full state recomputed on next setTrialStrain)
+  TmaxTenStrain = CmaxTenStrain; TmaxTenStress = CmaxTenStress;
+  TfStarL = CfStarL;             TfStarLcross  = CfStarLcross;
+  Tbranch = Cbranch;
+  Tg = Cg;                       Tg_law = Cg_law;
+  Te_rev = Ce_rev;               Ts_rev = Cs_rev;
+  Te_cross_rs = Ce_cross_rs;     Tf_bare_cross = Cf_bare_cross;  TL_rs = CL_rs;
+  Te_reentry = Ce_reentry;       Tg_law_reentry = Cg_law_reentry; Tg_reentry = Cg_reentry;
+  Te_bow = Ce_bow;               Tg_bow = Cg_bow;
+  Tstrain = Cstrain; Tstress = Cstress; Ttangent = E; Tr = 1.0;
 
   if (theBar->recvSelf(cTag, theChannel, theBroker) < 0) {
     opserr << "LadrunoRebarBuckling::recvSelf - failed to recv the bar\n";
-    return -4;
+    return -5;
   }
   return 0;
 }
@@ -567,6 +882,10 @@ int LadrunoRebarBuckling::recvSelf(int cTag, Channel& theChannel,
 // ===========================================================================
 void LadrunoRebarBuckling::Print(OPS_Stream& s, int flag)
 {
+  const char* brName = (Cbranch == BR_BUCKLING) ? "BUCKLING"
+                     : (Cbranch == BR_RESTRAIGHTEN) ? "RESTRAIGHTEN" : "PASS";
+  const char* rsName = (restraightenMode == RS_LAMBDA) ? "lambda" : "c";
+
   if (flag == OPS_PRINT_PRINTMODEL_JSON) {
     s << "\t\t\t{";
     s << "\"name\": \"" << this->getTag() << "\", ";
@@ -578,7 +897,10 @@ void LadrunoRebarBuckling::Print(OPS_Stream& s, int flag)
     s << "\"reduction\": " << gaReduction << ", ";
     s << "\"fsufrac\": " << gaFsuFrac << ", ";
     s << "\"fy\": " << fy << ", ";
-    s << "\"E\": " << E << "}";
+    s << "\"E\": " << E << ", ";
+    s << "\"restraighten\": \"" << rsName << "\", ";
+    s << "\"restraightenC\": " << restraightenC << ", ";
+    s << "\"branch\": \"" << brName << "\"}";
     return;
   }
 
@@ -591,6 +913,14 @@ void LadrunoRebarBuckling::Print(OPS_Stream& s, int flag)
   else
     s << "  lsr (s/d): " << lsr << "  reduction: " << gaReduction
       << "  fsufrac: " << gaFsuFrac << "  E: " << E << endln;
+  s << "  restraighten: " << rsName;
+  if (restraightenMode == RS_C) s << " (c=" << restraightenC << ")";
+  s << "  branch: " << brName << endln;
+  if (Cbranch != BR_PASS)
+    s << "    g=" << Cg << "  g_law=" << Cg_law
+      << "  e_rev=" << Ce_rev << "  s_rev=" << Cs_rev
+      << "  e_cross_rs=" << Ce_cross_rs << "  L_rs=" << CL_rs
+      << "  e_bow=" << Ce_bow << endln;
   s << "  wrapped material:" << endln;
   theBar->Print(s, flag);
 }
@@ -611,6 +941,10 @@ int LadrunoRebarBuckling::setParameter(const char** argv, int argc, Parameter& p
     param.setValue(alpha);
     return param.addObject(2, this);
   }
+  if (strcmp(argv[0], "restraightenC") == 0) {
+    param.setValue(restraightenC);
+    return param.addObject(3, this);
+  }
   // forward everything else to the wrapped bar (so element setParameter
   // can still reach the core material's parameters)
   return (theBar != 0) ? theBar->setParameter(argv, argc, param) : -1;
@@ -619,8 +953,9 @@ int LadrunoRebarBuckling::setParameter(const char** argv, int argc, Parameter& p
 int LadrunoRebarBuckling::updateParameter(int parameterID, Information& info)
 {
   switch (parameterID) {
-  case 1: lsr   = info.theDouble; return 0;
-  case 2: alpha = info.theDouble; return 0;
+  case 1: lsr           = info.theDouble; return 0;
+  case 2: alpha         = info.theDouble; return 0;
+  case 3: restraightenC = info.theDouble; return 0;
   default: return -1;
   }
 }

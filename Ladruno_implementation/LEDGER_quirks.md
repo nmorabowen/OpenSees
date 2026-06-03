@@ -751,3 +751,111 @@ Lemaitre validation §4.6 + `tests/test_ladrunoBrick_element.py::test_eas_matche
   in a plastic/damage stress gradient (Jensen on the concave σ(ε); centroid under-samples) — but it
   shares this *exactly* with the validated `SSPbrick`, and it converges to `bbar` under refinement
   (gap 17.4%→3.7% to h=0.5). Use `bbar` for gradient/fracture fields, `eas`/`ssp` for smooth + cost.
+
+## Shared append-point files conflict on stale branches — append at END + `merge=union`
+
+Every new fork feature touches the same hotspot files (`SRC/classTags.h`, the
+broker `FEM_ObjectBrokerAllClasses.cpp`, the `OpenSees*Commands.cpp` registries,
+`*/CMakeLists.txt`, the banner `banner_features.txt`/`tclMain.cpp`/`PythonModule.cpp`,
+and the `LEDGER_*.md` / testbed `manifest.yaml` bookkeeping). When a feature branch
+falls behind `ladruno` (e.g. #127 was 48 commits stale), these are exactly where
+merge conflicts land — git auto-merges *additions at different lines*, but two edits
+to **adjacent** lines (a new row inserted next to a row another PR also edited) do
+NOT auto-merge.
+
+Prevention (all three, not just one):
+- **Reconcile with latest `ladruno` right before merging** (rebase or merge-from-base
+  — equivalent under squash-merge; rebase = linear + force-push, merge = no force-push).
+  This fixes staleness, but NOT contention.
+- **Append new entries at the END of a list/section, never interleaved.** A `classTags.h`
+  tag appended after the last one auto-merges; a `LEDGER_*.md` row inserted *mid-table*
+  next to a row another PR edits will conflict (the #127 case — its LadrunoJ2Finite row
+  sat above the UniaxialJ2 row that the Lemaitre PR was editing).
+- **`merge=union` driver** (set in `.gitattributes`) for the append-only logs
+  (`LEDGER_*.md`, `banner_features.txt`) — git keeps BOTH sides instead of conflicting.
+  NEVER apply `union` to source code (it interleaves → garbage). Learned 2026-06-02
+  (the #127 rebase past the Lemaitre-damage merge; [[16_finite_native_j2_adr]]).
+## Corot solid wrapper: external dead loads must NOT pass through `globalizeForce`; and corot IS objective for kinematic hardening
+
+Two corot-seam gotchas, from the finite-strain trifecta deep review (2026-06-02,
+[[10_solid_corotational_adr]]):
+
+- **External dead loads must stay in the global frame.** `SolidTransformationCorot::
+  globalizeForce` pushes the core force forward by R (`f_global = R f_d − …`). That is
+  correct ONLY for the *internal* force (`∫ Bᵀσ`, self-equilibrated). A fixed-direction
+  body/self-weight load (`-b`, `eleLoad -selfWeight`) is a GLOBAL-frame quantity — if it
+  is folded into the core force before `globalizeForce`, corot rotates gravity WITH the
+  element (wrong, non-conservative; was the COROT-1 bug). **Fix/pattern:** `LadrunoBrick`
+  accumulates the body load in a separate `bodyForce` vector and adds it back AFTER
+  `globalizeForce`/`globalizeStiff` (also keeps the spurious body-load term out of the
+  corot geometric stiffness). Behavior-neutral under `-geom linear` (identity globalize);
+  the `-geom finite` path was already correct (assembles in the spatial frame, no
+  globalize). Any new fold-then-globalize site must keep external loads out of the core.
+
+- **Corot is objective for KINEMATIC-hardening materials (unlike the LogStrain finite
+  path).** A natural worry is that corot shares the dSNPO §14.11 backstress-frame
+  non-objectivity. It does NOT: corot feeds the material `u_d = Rᵀ x_rel − X_rel`
+  (REFERENCE frame) with reference-config gradients, so the small-strain material — and
+  its backstress α — live in a FIXED reference frame across commits (the element's R
+  rotates; the material's frame does not). Since `polar(Q·H) = Q·polar(H)` exactly for
+  rigid Q, `u_d` is rigid-rotation-invariant ⇒ identical deformational-strain history ⇒
+  exact objectivity (verified, `test_corot_kinematic_hardening_objectivity`). The
+  LogStrain path differs precisely because `bᵉ_tr = f_Δ bᵉ_n f_Δᵀ` co-rotates the stress
+  `s` into the current frame while α stays fixed — THAT is §14.11. Lesson: "the element's
+  R rotates between commits" does NOT imply "the material's frame rotates."
+
+## Finite-strain elastoplastic bending/necking BVPs need KrylovNewton (plain Newton diverges); F-bar needs an unsymmetric solver
+
+From the finite-strain validation Phase P1 (2026-06-02, [[18_finite_strain_validation_report]]).
+
+- **`LogStrain(LadrunoJ2)` + `LadrunoBrick -geom finite` bending *into plasticity* does
+  NOT converge under `algorithm Newton` — nor under `NewtonLineSearch`.** The residual
+  grows from the very first increment (a `NormDispIncr`/`EnergyIncr` norm that climbs, not
+  shrinks). It is not a tangent bug (the consistent tangent passes the FD gate on
+  homogeneous states): bending+plasticity on a low-order hex is just a stiff, badly-scaled
+  Newton basin for a full step. **`algorithm KrylovNewton` (+ `test EnergyIncr 1e-6`) is
+  robust** and converges quadratically-ish; the necking bar (C1) and the isochoric-J2
+  locking cantilever (B3) both rely on it. Homogeneous single-element states and elastic
+  bending converge fine under plain Newton — the divergence is specific to *inhomogeneous
+  plastic* finite-strain BVPs.
+- **A 1-element-wide cross-section bends too poorly for stable plastic Newton.** A 1×1×nz
+  column under transverse displacement control diverges even with KrylovNewton; a ≥2×2
+  cross-section is needed. (Elastic load-control on the 1-wide column is fine — it just
+  locks.)
+- **F-bar (`-formulation bbar -geom finite`) has an UNSYMMETRIC tangent** (dSNPO eq 15.10)
+  ⇒ use `system FullGeneral` (dense) or, much faster for meshed studies, `system UmfPack`
+  (unsymmetric sparse). A symmetric solver silently mis-solves. `UmfPack` made the 128–576
+  hex necking runs tractable where `FullGeneral` would be dense-O(N³) per step.
+- **Plastic finite-strain stress paths are path-dependent** (obvious, but it bites tests):
+  a sub-stepped element solve does NOT equal a single-step return-map oracle for
+  *non-proportional* loading (simple shear, equibiaxial). Drive ONE increment ref→F when
+  comparing to a one-step oracle, or step the oracle incrementally over the same F_k.
+
+## Explicit `-geom finite`: `criticalTimeStep()` is reference-config (must margin dt), and the EnergyBalance recorder reports IE with a flipped sign
+
+From the finite-strain validation Phase P4 (Taylor-bar impact, 2026-06-02,
+[[18_finite_strain_validation_report]] §7; `tests/test_finite_strain_P4_explicit.py`).
+
+- **`ops.criticalTimeStep()` does NOT shrink as elements compress.** On the Taylor
+  bar the cylinder shortened ~33 % and the impact face mushroomed >2×, yet
+  `criticalTimeStep()` was *bit-identical* before and after (ratio 1.000). It is
+  computed from the **reference** configuration characteristic length (review
+  GEOM-2). So an explicit `-geom finite` run is only conservatively safe until
+  strong compression; past that the *true* stable dt is smaller than reported.
+  **Carry a safety factor < 1** — the Taylor bar uses `dt = 0.3·dt_cr` (0.5 is
+  stable for the early/short transit but risks instability through full
+  mushrooming). A future improvement would update dt_cr from the current config.
+- **`EnergyBalance` recorder reports IE (internal energy) with a flipped SIGN for
+  the finite-strain element.** On the Taylor bar `KE0=2.34e5`, `KE_final=1.0e4`
+  (4.3 %, the rest absorbed plastically), and `IE_final=−2.36e5` — the MAGNITUDE
+  equals the absorbed kinetic energy (≈ KE0−KE_final, within ~5 %) but the sign is
+  negative, so the recorder's `RES`/`ERR%` columns read ~100 % (spurious). The KE
+  column is correct (it's the validated getMass aliasing-fix path,
+  `test_energyBalanceRecorder.py`); only IE's sign is off for the
+  `LogStrain`/`LadrunoBrick -geom finite` path. **Work around it by comparing
+  `|IE|` to the kinetic-energy change**; do not trust `ERR%` for finite-strain
+  elements until the IE-increment sign convention is reconciled (likely the
+  recorder integrates fᵀΔu with the internal-force sign opposite to what the
+  finite element returns). Candidate follow-up: audit
+  `EnergyBalanceRecorder.cpp` internal-energy accumulation vs `LadrunoBrick`
+  `getResistingForce` sign under `-geom finite`.

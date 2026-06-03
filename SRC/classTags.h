@@ -574,6 +574,7 @@
 #define ND_TAG_ASDPlasticMaterial3D 10000 // For ASDPlasticity-class material
 #define ND_TAG_LogStrainNDMaterial 33010 // N. Mora-Bowen (Ladruno) — logarithmic/Hencky finite-strain adaptor (seam 3); ladruno private ND band >=33010
 #define ND_TAG_LadrunoJ2 33011 // N. Mora-Bowen (Ladruno) — combined isotropic (Voce+linear) + Chaboche AF kinematic von Mises J2
+#define ND_TAG_LadrunoJ2Finite 33012 // N. Mora-Bowen (Ladruno) — finite-strain-native combined-hardening J2 with co-rotating backstress (dSNPO §14.11)
 
 
 #define FIBER_TAG_Uniaxial2d	1
@@ -914,6 +915,7 @@
 #define ELE_TAG_BezierTet10                33001 // N. Mora-Bowen (Ladruno) — quadratic Bézier tetrahedron (Kadapa 2018); ladruno private band >=33000 (sibling of BezierTri6=33000)
 #define ELE_TAG_LadrunoBrick               33002 // N. Mora-Bowen (Ladruno) — unified 8-node hex, -formulation {std|bbar|uri|eas}; ladruno private band >=33000 (see Ladruno_implementation/09_ladruno_brick.md)
 #define ELE_TAG_LadrunoIMKBeam             33003 // N. Mora-Bowen (Ladruno) — 3D concentrated-plasticity IMK beam macro (uncoupled moment-rotation hinges); ladruno private band >=33000 (see Ladruno_implementation/14_ladruno_imk_beam.md)
+#define ELE_TAG_LadrunoIMKBeam2d           33004 // N. Mora-Bowen (Ladruno) — 2D concentrated-plasticity IMK beam macro (planar counterpart of 33003; shared hinge kernel); ladruno private band >=33000 (see Ladruno_implementation/14_ladruno_imk_beam.md)
 
 
 #define FRN_TAG_Coulomb            1

@@ -97,3 +97,61 @@ class NativeFiniteJ2:
 
     def commit(self):
         self.Be_n, self.alpha, self.ebarP, self.Fn = self._stage
+
+    # ------------------------------------------------------------------ #
+    #  Consistent material tangent  ∂σ/∂F  at the current committed state #
+    # ------------------------------------------------------------------ #
+    # The Cauchy stress depends on the trial F through TWO channels:
+    #   (A) the trial elastic strain  εᵉᵗʳ = ½ ln(f_Δ Be_n f_Δᵀ)
+    #   (B) the co-rotated backstress  α̃ = R(f_Δ) α_n R(f_Δ)ᵀ,  R = polar(f_Δ)
+    # The shipped log-strain spatial tangent (LogStrainKernel/spatial_tangent_a)
+    # captures only (A). Channel (B) is a PURE CONSTITUTIVE sensitivity (α̃→σ),
+    # small (~2–4e-4 relative) and frame-objective, but it sits at the tangent-FD
+    # test tolerance. The C++ material recovers it EXACTLY-to-FD by perturbing only
+    # R (≈9 extra scalar-Newton return-map calls) — NO kernel re-derivation. These
+    # helpers are the numpy target for that recipe.
+    def _cauchy_trial(self, F, R_override=None):
+        """Cauchy σ for a trial F at the current committed (n) state; no staging."""
+        fD = F @ np.linalg.inv(self.Fn)
+        Be_tr = fD @ self.Be_n @ fD.T
+        eps_tr = ls.hencky_strain(Be_tr)
+        R = polar_rotation(fD) if (R_override is None and self.corotate) else \
+            (R_override if R_override is not None else _I3)
+        alpha_pf = [R @ a @ R.T for a in self.alpha]
+        res = lr.return_map(self.p, eps_tr, np.zeros((3, 3)), self.ebarP, alpha_pf)
+        return res["stress"] / float(np.linalg.det(F))
+
+    def tangent_dsigma_dF(self, F, freeze_R=False, h=1e-7):
+        """Full consistent ∂σ_ij/∂F_kl by central FD. freeze_R=True holds the
+        backstress rotation fixed (= channel A only)."""
+        A = np.zeros((3, 3, 3, 3))
+        R_fix = polar_rotation(F @ np.linalg.inv(self.Fn)) if freeze_R else None
+        for k in range(3):
+            for l in range(3):
+                Fp = F.copy(); Fp[k, l] += h
+                Fm = F.copy(); Fm[k, l] -= h
+                A[:, :, k, l] = (self._cauchy_trial(Fp, R_fix)
+                                 - self._cauchy_trial(Fm, R_fix)) / (2.0 * h)
+        return A
+
+    def channelB_dsigma_dF(self, F, h=1e-7):
+        """Channel-B-only ∂σ/∂F: perturb R = polar(f_Δ) while holding εᵉᵗʳ and J
+        fixed at the base F (the term the C++ adds via R-perturbation)."""
+        fD0 = F @ np.linalg.inv(self.Fn)
+        eps0 = ls.hencky_strain(fD0 @ self.Be_n @ fD0.T)
+        J0 = float(np.linalg.det(F))
+
+        def sig(R):
+            res = lr.return_map(self.p, eps0, np.zeros((3, 3)), self.ebarP,
+                                [R @ a @ R.T for a in self.alpha])
+            return res["stress"] / J0
+
+        B = np.zeros((3, 3, 3, 3))
+        for k in range(3):
+            for l in range(3):
+                Fp = F.copy(); Fp[k, l] += h
+                Fm = F.copy(); Fm[k, l] -= h
+                B[:, :, k, l] = (sig(polar_rotation(Fp @ np.linalg.inv(self.Fn)))
+                                 - sig(polar_rotation(Fm @ np.linalg.inv(self.Fn)))) \
+                    / (2.0 * h)
+        return B

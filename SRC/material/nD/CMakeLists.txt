@@ -60,6 +60,7 @@ target_sources(OPS_Material
     MinMaxNDMaterial.cpp
     LogStrainNDMaterial.cpp
     LadrunoJ2.cpp
+    LadrunoJ2Finite.cpp
     IncrementalElasticIsotropicThreeDimensional.cpp
     ConcreteMcftNonLinear5.cpp
     ConcreteMcftNonLinear7.cpp
@@ -140,6 +141,7 @@ target_sources(OPS_Material
     LogStrainNDMaterial.h
     LogStrainKernel.h
     LadrunoJ2.h
+    LadrunoJ2Finite.h
     LadrunoJ2Kernel.h
     LadrunoHardening.h
     FiniteStrainNDMaterial.h

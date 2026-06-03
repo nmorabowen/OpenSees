@@ -248,6 +248,7 @@
 #include "ElasticIsotropicThreeDimensional.h"
 #include "LogStrainNDMaterial.h"   // Ladruno — Hencky finite-strain adaptor (seam 3)
 #include "LadrunoJ2.h"             // Ladruno — combined iso + Chaboche AF kinematic J2
+#include "LadrunoJ2Finite.h"       // Ladruno — finite-strain-native combined-hardening J2 (co-rotating backstress)
 #include "ElasticOrthotropicThreeDimensional.h"
 #include "ElasticOrthotropicPlaneStress.h"
 #include "J2PlaneStrain.h"
@@ -467,6 +468,7 @@
 #include "bezierTriangle/BezierTri6.h"		// Ladruno (broker reconstruction)
 #include "bezierTetrahedron/BezierTet10.h"	// Ladruno (broker reconstruction)
 #include "ladrunoIMKBeam/LadrunoIMKBeam.h"	// N. Mora-Bowen (Ladruno)
+#include "ladrunoIMKBeam/LadrunoIMKBeam2d.h"	// N. Mora-Bowen (Ladruno)
 #include "joint/Joint2D.h"		// Arash
 #include "joint/Inno3DPnPJoint.h" // Cristian Miculas
 #include "twoNodeLink/TwoNodeLink.h"
@@ -1050,7 +1052,10 @@ FEM_ObjectBrokerAllClasses::getNewElement(int classTag)
     case ELE_TAG_LadrunoIMKBeam:	// N. Mora-Bowen (Ladruno)
       return new LadrunoIMKBeam();
 
-    case ELE_TAG_SSPquad:          
+    case ELE_TAG_LadrunoIMKBeam2d:	// N. Mora-Bowen (Ladruno)
+      return new LadrunoIMKBeam2d();
+
+    case ELE_TAG_SSPquad:
       return new SSPquad();
       
     case ELE_TAG_SSPquadUP:     
@@ -2309,6 +2314,9 @@ FEM_ObjectBrokerAllClasses::getNewNDMaterial(int classTag)
 
   case ND_TAG_LadrunoJ2:                          // Ladruno — combined iso + Chaboche AF kinematic J2
     return new LadrunoJ2();
+
+  case ND_TAG_LadrunoJ2Finite:                    // Ladruno — finite-strain-native combined-hardening J2 (co-rotating backstress)
+    return new LadrunoJ2Finite();
 
   case ND_TAG_ElasticOrthotropicThreeDimensional:
     return new ElasticOrthotropicThreeDimensional();

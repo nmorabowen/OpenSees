@@ -41,6 +41,7 @@
 #include <Parameter.h>
 #include <Information.h>
 #include <Response.h>
+#include <MaterialResponse.h>
 #include <OPS_Globals.h>
 #include <elementAPI.h>
 #include <string.h>
@@ -69,6 +70,19 @@ void *OPS_LogStrainNDMaterial(void)
            << " : inner nDMaterial " << iData[1] << " not found\n";
     return 0;
   }
+  // Validate the inner can produce a 3D (order-6) copy BEFORE constructing, so bad
+  // user input fails the command gracefully (return 0) instead of reaching the
+  // constructor's hard exit(-1) and killing the interpreter/Python kernel.  // Ladruno (PLUMB-1)
+  NDMaterial *probe = (strncmp(inner->getType(), "ThreeDimensional", 80) == 0)
+                        ? inner->getCopy() : inner->getCopy("ThreeDimensional");
+  if (probe == 0 || probe->getOrder() != 6) {
+    opserr << "WARNING nDMaterial LogStrain " << iData[0]
+           << " : inner nDMaterial " << iData[1]
+           << " must be a 3D (order-6) material\n";
+    if (probe != 0) delete probe;
+    return 0;
+  }
+  delete probe;   // the constructor makes its own copy
   return new LogStrainNDMaterial(iData[0], *inner);
 }
 
@@ -347,7 +361,35 @@ int LogStrainNDMaterial::setParameter(const char **argv, int argc, Parameter &pa
   return theMaterial->setParameter(argv, argc, param);
 }
 
+// Recorder seam (SEAM-1): the wrapper's getStress()/getStrain()/getTangent() carry
+// the FINITE-STRAIN measures (Cauchy σ = τ/J, Hencky ε, spatial c). The inner
+// material, queried directly, would report Kirchhoff τ, the fed strain, and the
+// small-strain D — wrong by a factor det F under finite deformation. So intercept
+// the generic stress/strain/tangent channels here and delegate only the
+// inner-specific channels (backStress, plasticStrain, equivalentPlasticStrain,
+// damage, …) to the inner.  // Ladruno (SEAM-1)
 Response *LogStrainNDMaterial::setResponse(const char **argv, int argc, OPS_Stream &output)
 {
+  if (argc > 0) {
+    if (strcmp(argv[0], "stress")  == 0 || strcmp(argv[0], "stresses") == 0 ||
+        strcmp(argv[0], "Cauchy")  == 0 || strcmp(argv[0], "cauchy")   == 0)
+      return new MaterialResponse(this, 1, sigmaCauchy);    // Cauchy σ (6)
+
+    if (strcmp(argv[0], "strain")  == 0 || strcmp(argv[0], "strains")  == 0)
+      return new MaterialResponse(this, 2, henckyStrain);   // Hencky εᵉᵗʳ (6)
+
+    if (strcmp(argv[0], "tangent") == 0)
+      return new MaterialResponse(this, 3, aTangent);       // spatial c (6×6)
+  }
   return theMaterial->setResponse(argv, argc, output);
+}
+
+int LogStrainNDMaterial::getResponse(int responseID, Information &matInfo)
+{
+  switch (responseID) {
+  case 1: return matInfo.setVector(sigmaCauchy);
+  case 2: return matInfo.setVector(henckyStrain);
+  case 3: return matInfo.setMatrix(aTangent);
+  default: return theMaterial->getResponse(responseID, matInfo);
+  }
 }

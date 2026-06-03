@@ -42,6 +42,22 @@ material library* — `ElasticIsotropic3D`, `J2Plasticity`, Drucker-Prager, etc.
 all driven by `setTrialStrain(ε)`. It strips the (large) rigid-body rotation so
 the constitutive core only ever sees *small* strain in a co-rotating frame.
 
+> **Kinematic hardening under rotation — does corot share the §14.11 LogStrain
+> limit? NO (analyzed 2026-06-02, deep-review HON-2).** A deep review raised the
+> concern that corot might be non-objective for kinematic (backstress) hardening,
+> like the LogStrain finite path. On a careful mechanism check it does **not**: corot
+> feeds the material `u_d = Rᵀ x_rel − X_rel` (REFERENCE frame) and builds the strain
+> with reference-config gradients, so the small-strain material — *and its backstress
+> `α`* — live in a **fixed reference frame across all commits** (the element's `R`
+> rotates; the material's frame does not). The LogStrain path differs precisely
+> because `bᵉ_tr = f_Δ bᵉ_n f_Δᵀ` co-rotates the deviatoric stress `s` into the
+> *current* frame while `α` stays fixed ⇒ mismatch; corot never co-rotates the
+> material stress, so `‖s − α‖` stays frame-consistent. So `J2Plasticity` AND
+> `LadrunoJ2 -kin` reuse is sound under corot. Empirically confirmed by
+> `tests/test_ladrunoBrick_corot.py::test_corot_kinematic_hardening_objectivity`.
+> (Caveat that remains true: corot assumes *small deformational strain* in the
+> corotated frame — large material strain is the LogStrain/`-geom finite` regime.)
+
 > **Why not TL.** A Total-Lagrangian finite-strain element (Green-Lagrange `E`,
 > 2nd Piola-Kirchhoff `S`, `∂S/∂E`) was considered and rejected for this slot.
 > The user's framing settles it: *"What would be the sense of having corot for a

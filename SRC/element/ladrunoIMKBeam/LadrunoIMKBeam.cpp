@@ -30,6 +30,7 @@
 // Ladruno_implementation/14_ladruno_imk_beam.md for the formulation.
 
 #include "LadrunoIMKBeam.h"
+#include "LadrunoIMKHinge.h"
 
 #include <Domain.h>
 #include <Node.h>
@@ -199,133 +200,6 @@ int LadrunoIMKBeam::revertToStart(void)
 }
 
 // ---------------------------------------------------------------------------
-// per-axis internal state determination (2x2 Newton on hinge rotations)
-// ---------------------------------------------------------------------------
-void LadrunoIMKBeam::solveAxis(double vi, double vj, int mi, int mj,
-                               double L, double EI,
-                               double &thi, double &thj,
-                               double &qi, double &qj, double k2[2][2])
-{
-  const double a = 4.0 * EI / L;   // elastic stiffness block  K_el = [[a,b],[b,a]]
-  const double b = 2.0 * EI / L;
-  const double ktRef = a;          // stiffness scale for guards
-  const double ktFloor = 1.0e-8 * ktRef;
-
-  const bool hi = (theMat[mi] != 0);
-  const bool hj = (theMat[mj] != 0);
-
-  // warm-start from the incoming trial values; non-hinged ends stay at 0
-  double th_i = hi ? thi : 0.0;
-  double th_j = hj ? thj : 0.0;
-
-  double Mi = 0.0, Mj = 0.0, kti = 0.0, ktj = 0.0;
-
-  if (hi || hj) {
-    const int maxIter = 25;
-    for (int it = 0; it < maxIter; it++) {
-      if (hi) {
-        theMat[mi]->setTrialStrain(th_i);
-        Mi = theMat[mi]->getStress();
-        kti = theMat[mi]->getTangent();
-      }
-      if (hj) {
-        theMat[mj]->setTrialStrain(th_j);
-        Mj = theMat[mj]->getStress();
-        ktj = theMat[mj]->getTangent();
-      }
-
-      // basic forces from elastic interior: q = K_el (v - thetaH)
-      const double qi_ = a * (vi - th_i) + b * (vj - th_j);
-      const double qj_ = b * (vi - th_i) + a * (vj - th_j);
-
-      // residual: hinged-end basic force must equal the hinge moment
-      const double gi = hi ? (qi_ - Mi) : 0.0;
-      const double gj = hj ? (qj_ - Mj) : 0.0;
-
-      const double gnorm = sqrt(gi * gi + gj * gj);
-      const double ref = fabs(qi_) + fabs(qj_) + fabs(Mi) + fabs(Mj);
-      if (gnorm <= 1.0e-10 * ref + 1.0e-12)
-        break;
-
-      // guarded tangents for the Jacobian (force residual stays exact)
-      double ki = (fabs(kti) < ktFloor) ? (kti < 0 ? -ktFloor : ktFloor) : kti;
-      double kj = (fabs(ktj) < ktFloor) ? (ktj < 0 ? -ktFloor : ktFloor) : ktj;
-
-      if (hi && hj) {
-        // J = -(K_el_sub + diag(kt))
-        const double J11 = -a - ki, J12 = -b;
-        const double J21 = -b,       J22 = -a - kj;
-        double det = J11 * J22 - J12 * J21;
-        if (fabs(det) < 1.0e-30) det = (det < 0 ? -1.0e-30 : 1.0e-30);
-        // dth = -J^{-1} g
-        const double dthi = -(J22 * gi - J12 * gj) / det;
-        const double dthj = -(-J21 * gi + J11 * gj) / det;
-        th_i += dthi;
-        th_j += dthj;
-      } else if (hi) {
-        const double J11 = -a - ki;
-        th_i += -gi / J11;
-      } else { // hj only
-        const double J22 = -a - kj;
-        th_j += -gj / J22;
-      }
-    }
-  }
-
-  thi = th_i;
-  thj = th_j;
-
-  // exact basic forces at the converged hinge rotations
-  qi = a * (vi - th_i) + b * (vj - th_j);
-  qj = b * (vi - th_i) + a * (vj - th_j);
-
-  // condensed tangent block:  K = (F_el + F_h)^{-1}
-  const double f = L / (6.0 * EI);     // F_el = f * [[2,-1],[-1,2]]
-  double F11 = 2.0 * f, F12 = -f;
-  double F21 = -f,       F22 = 2.0 * f;
-  if (hi) {
-    double ki = (fabs(kti) < ktFloor) ? (kti < 0 ? -ktFloor : ktFloor) : kti;
-    F11 += 1.0 / ki;
-  }
-  if (hj) {
-    double kj = (fabs(ktj) < ktFloor) ? (ktj < 0 ? -ktFloor : ktFloor) : ktj;
-    F22 += 1.0 / kj;
-  }
-  double det = F11 * F22 - F12 * F21;
-  if (fabs(det) < 1.0e-30) det = (det < 0 ? -1.0e-30 : 1.0e-30);
-  k2[0][0] = F22 / det;
-  k2[0][1] = -F12 / det;
-  k2[1][0] = -F21 / det;
-  k2[1][1] = F11 / det;
-}
-
-void LadrunoIMKBeam::initBlock(int mi, int mj, double L, double EI, double k2[2][2])
-{
-  const double a = 4.0 * EI / L;
-  const double ktRef = a;
-  const double ktFloor = 1.0e-8 * ktRef;
-  const double f = L / (6.0 * EI);
-  double F11 = 2.0 * f, F12 = -f;
-  double F21 = -f,       F22 = 2.0 * f;
-  if (theMat[mi] != 0) {
-    double k0 = theMat[mi]->getInitialTangent();
-    if (fabs(k0) < ktFloor) k0 = (k0 < 0 ? -ktFloor : ktFloor);
-    F11 += 1.0 / k0;
-  }
-  if (theMat[mj] != 0) {
-    double k0 = theMat[mj]->getInitialTangent();
-    if (fabs(k0) < ktFloor) k0 = (k0 < 0 ? -ktFloor : ktFloor);
-    F22 += 1.0 / k0;
-  }
-  double det = F11 * F22 - F12 * F21;
-  if (fabs(det) < 1.0e-30) det = (det < 0 ? -1.0e-30 : 1.0e-30);
-  k2[0][0] = F22 / det;
-  k2[0][1] = -F12 / det;
-  k2[1][0] = -F21 / det;
-  k2[1][1] = F11 / det;
-}
-
-// ---------------------------------------------------------------------------
 // update: full basic-system state determination, caches q and kb
 // ---------------------------------------------------------------------------
 int LadrunoIMKBeam::update(void)
@@ -349,13 +223,15 @@ int LadrunoIMKBeam::update(void)
 
   // strong-axis bending: basic dofs 1,2 ; materials 0,1 ; EI = E*Iz
   double qi, qj;
-  solveAxis(v(1), v(2), 0, 1, L, E * Iz, thetaH[0], thetaH[1], qi, qj, k2);
+  ladrunoIMKSolveAxis(theMat[0], theMat[1], v(1), v(2), L, E * Iz,
+                      thetaH[0], thetaH[1], qi, qj, k2);
   q(1) = qi;  q(2) = qj;
   kb(1, 1) = k2[0][0];  kb(1, 2) = k2[0][1];
   kb(2, 1) = k2[1][0];  kb(2, 2) = k2[1][1];
 
   // weak-axis bending: basic dofs 3,4 ; materials 2,3 ; EI = E*Iy
-  solveAxis(v(3), v(4), 2, 3, L, E * Iy, thetaH[2], thetaH[3], qi, qj, k2);
+  ladrunoIMKSolveAxis(theMat[2], theMat[3], v(3), v(4), L, E * Iy,
+                      thetaH[2], thetaH[3], qi, qj, k2);
   q(3) = qi;  q(4) = qj;
   kb(3, 3) = k2[0][0];  kb(3, 4) = k2[0][1];
   kb(4, 3) = k2[1][0];  kb(4, 4) = k2[1][1];
@@ -379,10 +255,10 @@ const Matrix &LadrunoIMKBeam::getInitialStiff(void)
   kbi(5, 5) = G * Jx * oneOverL;
 
   double k2[2][2];
-  initBlock(0, 1, L, E * Iz, k2);
+  ladrunoIMKInitBlock(theMat[0], theMat[1], L, E * Iz, k2);
   kbi(1, 1) = k2[0][0];  kbi(1, 2) = k2[0][1];
   kbi(2, 1) = k2[1][0];  kbi(2, 2) = k2[1][1];
-  initBlock(2, 3, L, E * Iy, k2);
+  ladrunoIMKInitBlock(theMat[2], theMat[3], L, E * Iy, k2);
   kbi(3, 3) = k2[0][0];  kbi(3, 4) = k2[0][1];
   kbi(4, 3) = k2[1][0];  kbi(4, 4) = k2[1][1];
 

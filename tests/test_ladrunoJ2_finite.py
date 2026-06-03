@@ -193,8 +193,47 @@ def test_finite_isotropic_objectivity_through_rotating_plastic_path():
     "NOT frame-indifferent for combined hardening. This is the de Souza Neto §14.11 "
     "boundary — scoped to v2 (a finite-strain-NATIVE J2 reusing LadrunoJ2Kernel "
     "with a co-rotated backstress; the kernel extraction is what enables it). "
-    "Isotropic hardening and moderate rotations are unaffected. When v2 lands and "
-    "co-rotates α, this test flips to PASS and the strict-xfail flags it."))
+    "Isotropic hardening is exact at ANY rotation. For COMBINED (kinematic) "
+    "hardening the error is CONTINUOUS in rotation (≈1% at 5°, ≈3% at 10°, growing "
+    "monotonically) — there is NO threshold below which it is exact, so 'moderate' "
+    "rotations are small errors, not zero (see test_finite_combined_hardening_error_"
+    "grows_with_rotation). When v2 lands and co-rotates α, this test flips to PASS "
+    "and the strict-xfail flags it."))
 def test_finite_combined_hardening_large_rotation_objectivity_is_v2():
     sig_ref, Q, sig_rot = _load_then_superpose_rotation(PARAMS)
     assert np.allclose(sig_rot, Q @ sig_ref @ Q.T, rtol=1e-7, atol=1e-7)
+
+
+def _superposed_rotation_error(params, th):
+    """Relative Frobenius error of superposed-rotation frame-indifference at angle
+    `th` (rad): ‖σ_rot − Q σ_ref Qᵀ‖ / ‖σ_ref‖ for the v1 combined-hardening path."""
+    adaptor = LogStrainAdaptor(lr.StatefulLadrunoJ2(params))
+    F_def = np.array([[1.25, 0.10, 0.0], [0.0, 1.0 / np.sqrt(1.25), 0.0],
+                      [0.0, 0.0, 1.0 / np.sqrt(1.25)]])
+    sig_ref = None
+    for a in np.linspace(0.2, 1.0, 8):
+        Fa = I3 + a * (F_def - I3)
+        sig_ref, _, _ = adaptor.setTrialF(Fa)
+        adaptor.commitState()
+    c, s = np.cos(th), np.sin(th)
+    Q = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
+    sig_rot, _, _ = adaptor.setTrialF(Q @ F_def)
+    return np.linalg.norm(sig_rot - Q @ sig_ref @ Q.T) / np.linalg.norm(sig_ref)
+
+
+def test_finite_combined_hardening_error_grows_with_rotation():
+    """HON-1: the v1 combined-hardening non-objectivity has NO safe rotation
+    threshold — the frame-indifference error grows continuously and monotonically
+    from zero, so a 'moderate' rotation is a small error, not an exact regime.
+    Pins the boundary quantitatively (companion to the strict-xfail
+    test_finite_combined_hardening_large_rotation_objectivity_is_v2), so the docs
+    can never again claim moderate rotations are 'unaffected'."""
+    angles = [np.radians(d) for d in (1.0, 2.0, 5.0, 10.0, 20.0)]
+    errs = [_superposed_rotation_error(PARAMS, th) for th in angles]
+    # monotonically increasing with rotation angle
+    assert all(errs[i] < errs[i + 1] for i in range(len(errs) - 1)), errs
+    # already non-negligible at the "moderate" 5–10° the docs must not call safe
+    assert errs[2] > 1e-3, f"5° error unexpectedly tiny ({errs[2]:.2e})"    # ~1%
+    assert errs[3] > 1e-2, f"10° error unexpectedly tiny ({errs[3]:.2e})"   # ~3%
+    # ...yet vanishes as rotation → 0 (continuity: it is a threshold-free defect)
+    assert _superposed_rotation_error(PARAMS, np.radians(0.01)) < errs[0]
