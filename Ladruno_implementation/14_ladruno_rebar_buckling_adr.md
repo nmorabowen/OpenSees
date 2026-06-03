@@ -714,6 +714,18 @@ the v1 B0–B7 + GA battery); J2 regression 46 passed / 1 xfail.** All cyclic ro
 use the committing `_drive` harness; B4e gets its non-committing FD via path-replay.
 Only B4d' (informational RS overlay) remains deferred.
 
+**Structural integration (`tests/test_ladrunoRebarBuckling_section.py`, Zone-A, 2/2):**
+- **B4j** — `zeroLengthSection` moment–curvature: cyclic curvature drives the
+  extreme bar fibers past onset; the wrapped (`lsr>0`) section sheds moment on the
+  buckled half-cycles vs the identity (`lsr=0`) section (each buckled peak `<0.85×`,
+  smaller enclosed loop area), while the sub-yield response is unchanged — the
+  buckling/re-straightening seen *inside a fiber section* under a real Newton solve.
+- **B4k** — `forceBeamColumn` RC cantilever (Concrete02 + wrapped rebar layers),
+  axial + growing cyclic drift to ~3% with adaptive sub-stepping: the wrapped
+  column completes all cycles (integration robustness) and carries no more base
+  shear than the identity column. (The gmsh-meshed multi-element RC column remains
+  a future Zone-B follow-up.)
+
 ### 9.6 Compatibility / risk
 
 - **Default-off identity preserved**: v2 changes only the post-reversal branch;
