@@ -119,8 +119,9 @@ static void rotateSym6(const double R[9], const double a6[6], double out6[6])
   out6[5] = 0.5*(RAR[2] + RAR[6]);
 }
 
+#ifdef LADRUNO_J2FINITE_CHANNELB_NUMERIC
 // Cauchy σ (as a 3×3) for a given backstress rotation R, holding the trial elastic
-// strain and J fixed — the channel-B (R-only) probe for the consistent tangent.
+// strain and J fixed — the channel-B (R-only) probe for the NUMERIC tangent fallback.
 static void cauchyFromR(const Params &p, const double strain6_t[6], double ebarP_n,
                         const double alpha_n_sp[][6], int nBack,
                         const double R[9], double invJ, double sig3[3][3])
@@ -135,6 +136,103 @@ static void cauchyFromR(const Params &p, const double strain6_t[6], double ebarP
   sig3[1][2] = sig3[2][1] = s6[4]*invJ;
   sig3[0][2] = sig3[2][0] = s6[5]*invJ;
 }
+#endif  // LADRUNO_J2FINITE_CHANNELB_NUMERIC
+
+// --------------------------------------------------------------------------- //
+//  ANALYTIC channel B helpers (ADR-16 P3). Replace the numeric R-perturbation  //
+//  with the exact chain  ∂R/∂F (polar derivative) ∘ ∂α̃/∂R ∘ ∂τ/∂α̃ .          //
+//  Oracle: tests/ladrunoj2_finite_channelB_reference.py.                       //
+// --------------------------------------------------------------------------- //
+static inline double ddot3(const double A[9], const double B[9])  // Frobenius A:B
+{ double s = 0.0; for (int i = 0; i < 9; i++) s += A[i]*B[i]; return s; }
+
+// dR for f = R U (polar), perturbation df. Ω skew solves Ω U + U Ω = A − Aᵀ
+// (A = Rᵀ df); axial form (tr U·I − U) ω = axial(A−Aᵀ); dR = R Ω. R = polar(f) given.
+static void polarRotationDeriv(const double f[9], const double df[9],
+                               const double R[9], double dR[9])
+{
+  using namespace logstrain_kernel;
+  double RT[9]; mat3_transpose(R, RT);
+  double U[9];  mat3_mul(RT, f, U);                 // right stretch (SPD)
+  for (int i = 0; i < 3; i++)                       // symmetrise
+    for (int j = i+1; j < 3; j++) { double a = 0.5*(U[3*i+j]+U[3*j+i]); U[3*i+j]=U[3*j+i]=a; }
+  double A[9]; mat3_mul(RT, df, A);
+  double w[3] = { A[7]-A[5], A[2]-A[6], A[3]-A[1] }; // axial(A − Aᵀ)
+  double trU = U[0]+U[4]+U[8];
+  double K[9];                                       // trU·I − U  (SPD)
+  for (int i = 0; i < 9; i++) K[i] = -U[i];
+  K[0]+=trU; K[4]+=trU; K[8]+=trU;
+  double Kinv[9]; mat3_inv(K, Kinv);
+  double om[3];                                      // ω = K⁻¹ w
+  for (int i = 0; i < 3; i++) om[i] = Kinv[3*i+0]*w[0]+Kinv[3*i+1]*w[1]+Kinv[3*i+2]*w[2];
+  double Om[9] = {0.0,-om[2],om[1], om[2],0.0,-om[0], -om[1],om[0],0.0};  // skew(ω)
+  mat3_mul(R, Om, dR);
+}
+
+// Channel-B  dSdF[i][j][k][m] = ∂σ_ij/∂F_km  (through the co-rotated backstress only;
+// εᵉᵗʳ and J held fixed). aChi_p are the co-rotated backstresses α̃_p = R α_p Rᵀ as
+// 3×3; aRef_p are the committed α_p as 3×3 (so dα̃ = dR α_p Rᵀ + R α_p dRᵀ). dG is the
+// converged plastic multiplier (> 0 here). Mirrors ladrunoj2_finite_channelB_reference.
+static void channelBAnalytic(const Params &p, const double strain6_t[6], double ebarP_n,
+                             const double aRef[][9], int nBack, const double R[9],
+                             const double Fd[9], const double Fninv[9], double dG,
+                             double invJ, double dSdF[3][3][3][3])
+{
+  using namespace logstrain_kernel;
+  const double G = p.G, root23 = sqrt(2.0/3.0);
+
+  // co-rotated backstresses α̃_p (3×3) + aux at the converged state
+  double aChi[ladruno_j2_kernel::MAXBACK][9];
+  for (int q = 0; q < nBack; q++) {
+    double RA[9]; mat3_mul(R, aRef[q], RA);
+    double RT[9]; mat3_transpose(R, RT);
+    mat3_mul(RA, RT, aChi[q]);
+  }
+  double eps[9] = { strain6_t[0],strain6_t[3],strain6_t[5],
+                    strain6_t[3],strain6_t[1],strain6_t[4],
+                    strain6_t[5],strain6_t[4],strain6_t[2] };
+  double trE = eps[0]+eps[4]+eps[8];
+  double sTr[9]; for (int i=0;i<9;i++) sTr[i] = 2.0*G*eps[i];
+  sTr[0]-=2.0*G*trE/3.0; sTr[4]-=2.0*G*trE/3.0; sTr[8]-=2.0*G*trE/3.0;
+  double Dk[ladruno_j2_kernel::MAXBACK];
+  double M[9]; for (int i=0;i<9;i++) M[i]=sTr[i];
+  double Mp[9] = {0,0,0,0,0,0,0,0,0};
+  for (int q = 0; q < nBack; q++) {
+    Dk[q] = 1.0 + root23*p.gam[q]*dG;
+    for (int i=0;i<9;i++) { M[i]-=aChi[q][i]/Dk[q]; Mp[i]+=aChi[q][i]*root23*p.gam[q]/(Dk[q]*Dk[q]); }
+  }
+  double normM = sqrt(ddot3(M,M));
+  double n[9]; for (int i=0;i<9;i++) n[i]=M[i]/normM;
+  double dtheta = 2.0*G;
+  for (int q=0;q<nBack;q++) dtheta += (2.0/3.0)*p.C[q]/(Dk[q]*Dk[q]);
+  double pbar = ebarP_n + root23*dG;
+  double h = dtheta + (2.0/3.0)*ladruno_j2_kernel::yieldSlope(p, pbar) - ddot3(n, Mp);
+
+  for (int k = 0; k < 3; k++)
+    for (int mIdx = 0; mIdx < 3; mIdx++) {
+      double dFd[9] = {0,0,0,0,0,0,0,0,0};          // dFd = e_{k,mIdx} · Fn⁻¹ : row k = Fninv row mIdx
+      dFd[3*k+0]=Fninv[3*mIdx+0]; dFd[3*k+1]=Fninv[3*mIdx+1]; dFd[3*k+2]=Fninv[3*mIdx+2];
+      double dR[9]; polarRotationDeriv(Fd, dFd, R, dR);
+      double dRT[9]; mat3_transpose(dR, dRT);
+      double RT[9];  mat3_transpose(R, RT);
+      double ds[9] = {0,0,0,0,0,0,0,0,0};            // Σ_q ∂τ_dev/∂α̃_q : dα̃_q
+      for (int q = 0; q < nBack; q++) {
+        double t1[9], dA[9], t2[9];                  // dα̃_q = dR A_q Rᵀ + R A_q dRᵀ
+        mat3_mul(dR, aRef[q], t1); mat3_mul(t1, RT, dA);
+        mat3_mul(R, aRef[q], t1);  mat3_mul(t1, dRT, t2);
+        for (int i=0;i<9;i++) dA[i]+=t2[i];
+        double dGp = -ddot3(n, dA)/(h*Dk[q]);        // ∂Δγ/∂α̃_q : dα̃_q
+        double dM[9]; for (int i=0;i<9;i++) dM[i] = -dA[i]/Dk[q] + Mp[i]*dGp;
+        double ndM = ddot3(n, dM);
+        for (int i=0;i<9;i++) {
+          double dn = (dM[i] - n[i]*ndM)/normM;
+          ds[i] += -2.0*G*(dGp*n[i] + dG*dn);
+        }
+      }
+      // dσ_ij = ds_ij/J  (channel-B, deviatoric)
+      for (int i=0;i<3;i++) for (int j=0;j<3;j++) dSdF[i][j][k][mIdx] = ds[3*i+j]*invJ;
+    }
+}
 
 // =========================================================================== //
 //  Factory:  nDMaterial LadrunoJ2Finite tag K G -iso voce s0 Qinf b Hiso        //
@@ -145,7 +243,10 @@ void *OPS_LadrunoJ2Finite(void)
   if (OPS_GetNumRemainingInputArgs() < 3) {
     opserr << "WARNING: insufficient args\n";
     opserr << "Want: nDMaterial LadrunoJ2Finite tag? K? G? "
-           << "-iso voce s0? Qinf? b? Hiso? -kin N? C1? g1? ... <-rho rho?>\n";
+           << "-iso voce s0? Qinf? b? Hiso? -kin N? C1? g1? ... <-rho rho?> <-implex>\n";
+    opserr << "  -implex: explicit Delta-gamma-extrapolation tangent (constant SPD). "
+           << "ASSUMES UNIFORM TIME STEPS (the extrapolation is Delta-gamma~ = Delta-gamma_n, "
+           << "i.e. Delta-t ratio = 1); accuracy degrades under variable Delta-t.\n";
     return 0;
   }
 
@@ -208,6 +309,30 @@ void *OPS_LadrunoJ2Finite(void)
     }
     else {
       opserr << "WARNING LadrunoJ2Finite: unknown option '" << flag << "'\n"; return 0;
+    }
+  }
+
+  // Softening-parameter guard (LEDGER_quirks): the consistent-tangent denominator is
+  // h = 2G + (2/3)·σ_y'(p̄) + (kinematic ≥ 0) − dotT(n,Mp). The binding (pure-iso) floor
+  // is the MINIMUM isotropic hardening slope over p̄ ≥ 0:
+  //   σ_y'(p̄) = Qinf·b·exp(−b·p̄) + Hiso  ⇒  min = Hiso + (Qinf<0 ? Qinf·b : 0).
+  // If that drops below 0 the material softens and the implicit consistent tangent can
+  // become indefinite (Newton stall); below −3G it loses positive-definiteness outright.
+  // We WARN rather than reject: with -implex the reported tangent is the constant SPD
+  // elastic operator regardless, and crack-band regularization is a valid use too.
+  {
+    double slopeMin = Hiso + ((Qinf < 0.0) ? Qinf * bIso : 0.0);
+    if (slopeMin < 0.0 && !useImplex) {
+      opserr << "WARNING LadrunoJ2Finite (tag " << tag << "): isotropic hardening softens "
+             << "(min slope sig_y' = " << slopeMin << " < 0";
+      if (slopeMin <= -3.0 * G)
+        opserr << " <= -3G = " << (-3.0 * G)
+               << "; the consistent tangent LOSES positive-definiteness";
+      else
+        opserr << "; the consistent tangent may become indefinite";
+      opserr << "). Use -implex for a stable constant-SPD tangent, or add crack-band "
+             << "regularization. (Hardening params Hiso=" << Hiso << ", Qinf=" << Qinf
+             << ", b=" << bIso << ".)\n";
     }
   }
 
@@ -380,8 +505,11 @@ const Matrix &LadrunoJ2Finite::getInitialTangent(void)
 }
 
 // FULL 4th-order spatial constitutive modulus c_ijkl. Channel A (log-strain,
-// analytic) + channel B (backstress co-rotation, numeric R-perturbation, plastic
-// steps only). The element forms a_ijkl = c_ijkl − σ_il δ_jk. See the header.
+// analytic) + channel B (backstress co-rotation, plastic steps only). The element
+// forms a_ijkl = c_ijkl − σ_il δ_jk. See the header. Channel B is ANALYTIC by default
+// (∂R/∂F polar derivative ∘ ∂τ/∂α̃ return-map sensitivity); define
+// LADRUNO_J2FINITE_CHANNELB_NUMERIC to fall back to the numeric R-perturbation
+// (validation: both agree with tests/ladrunoj2_finite_channelB_reference.py).
 int LadrunoJ2Finite::getSpatialTangentTensor(double c[3][3][3][3])
 {
   using namespace logstrain_kernel;
@@ -395,32 +523,47 @@ int LadrunoJ2Finite::getSpatialTangentTensor(double c[3][3][3][3])
   if (useImplex) return 0;
   if (dGammaTrial <= 0.0) return 0;                          // elastic ⇒ no channel B
 
-  // channel B: ∂σ/∂F by perturbing ONLY R = polar(f_Δ) (hold εᵉᵗʳ and J at base),
-  // then map into cmat via Ḟ = L F:  cmatB_ijkl = Σ_m (∂σ_ij/∂F_km) F_lm.
+  // common setup: εᵉᵗʳ (tensor comps), f_Δ, R = polar(f_Δ), Fn⁻¹.
   Params p; fillParams(p, bulk, shear, sig0, Qinf, bIso, Hiso, nBack, Ckin, gKin);
   double epsEng[6]; hencky_voigt(BeTrial9, epsEng);
   double strain6_t[6];
   strain6_t[0] = epsEng[0]; strain6_t[1] = epsEng[1]; strain6_t[2] = epsEng[2];
   strain6_t[3] = 0.5*epsEng[3]; strain6_t[4] = 0.5*epsEng[4]; strain6_t[5] = 0.5*epsEng[5];
   double Fninv[9]; mat3_inv(Fn, Fninv);
+  double Fd[9];    mat3_mul(Ftrial9, Fninv, Fd);
+  double R[9];     polarRotation(Fd, R);
   double invJ = 1.0 / Jdet;
-  const double h = 1.0e-7;
+  double dSdF[3][3][3][3];                                   // ∂σ_ij/∂F_km (channel B)
 
-  double dSdF[3][3][3][3];                                   // ∂σ_ij/∂F_km
+#ifdef LADRUNO_J2FINITE_CHANNELB_NUMERIC
+  // numeric fallback: ∂σ/∂F by central-differencing R = polar(f_Δ) through the map.
+  const double hFD = 1.0e-7;
   for (int k = 0; k < 3; k++)
     for (int m = 0; m < 3; m++) {
       double Fp[9], Fm[9];
       for (int q = 0; q < 9; q++) { Fp[q] = Ftrial9[q]; Fm[q] = Ftrial9[q]; }
-      Fp[3*k+m] += h; Fm[3*k+m] -= h;
+      Fp[3*k+m] += hFD; Fm[3*k+m] -= hFD;
       double Fdp[9]; mat3_mul(Fp, Fninv, Fdp); double Rp[9]; polarRotation(Fdp, Rp);
       double Fdm[9]; mat3_mul(Fm, Fninv, Fdm); double Rm[9]; polarRotation(Fdm, Rm);
       double sp[3][3], sm[3][3];
       cauchyFromR(p, strain6_t, ebarP_n, alpha_n, nBack, Rp, invJ, sp);
       cauchyFromR(p, strain6_t, ebarP_n, alpha_n, nBack, Rm, invJ, sm);
       for (int i = 0; i < 3; i++)
-        for (int j = 0; j < 3; j++) dSdF[i][j][k][m] = (sp[i][j] - sm[i][j]) / (2.0*h);
+        for (int j = 0; j < 3; j++) dSdF[i][j][k][m] = (sp[i][j] - sm[i][j]) / (2.0*hFD);
     }
+#else
+  // analytic channel B (default): committed backstresses as 3×3, then the exact chain.
+  double aRef[ladruno_j2_kernel::MAXBACK][9];
+  for (int q = 0; q < nBack; q++) {
+    aRef[q][0]=alpha_n[q][0]; aRef[q][4]=alpha_n[q][1]; aRef[q][8]=alpha_n[q][2];
+    aRef[q][1]=aRef[q][3]=alpha_n[q][3];
+    aRef[q][5]=aRef[q][7]=alpha_n[q][4];
+    aRef[q][2]=aRef[q][6]=alpha_n[q][5];
+  }
+  channelBAnalytic(p, strain6_t, ebarP_n, aRef, nBack, R, Fd, Fninv, dGammaTrial, invJ, dSdF);
+#endif
 
+  // map into cmat via Ḟ = L F:  cmatB_ijkl = Σ_m (∂σ_ij/∂F_km) F_lm.
   for (int i = 0; i < 3; i++)
     for (int j = 0; j < 3; j++)
       for (int k = 0; k < 3; k++)
@@ -576,7 +719,8 @@ void LadrunoJ2Finite::Print(OPS_Stream &s, int flag)
     for (int k = 0; k < nBack; k++)
       s << "    term " << k+1 << ": C=" << Ckin[k] << " gamma=" << gKin[k] << endln;
     s << "  rho    : " << rho << endln;
-    s << "  implex : " << (useImplex ? "on (Delta-gamma extrapolation)" : "off") << endln;
+    s << "  implex : " << (useImplex ? "on (Delta-gamma extrapolation; assumes uniform dt)"
+                                     : "off") << endln;
   }
 }
 

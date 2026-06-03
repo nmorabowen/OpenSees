@@ -349,10 +349,26 @@ the state + sendSelf/recvSelf; default off ⇒ bit-identical to the implicit mat
 - **`-formulation bbar/uri/eas` coverage with the native material** — only `std` is tested;
   the element drives `setTrialF` regardless of formulation, so these should work but aren't
   gated (note: `bbar`+finite = F-bar, already shipped on the element side).
-- **Analytic channel B** (optional perf) — replace the ~18 numeric R-perturbation return-map
-  calls per GP-tangent with an analytic `∂R/∂F` (Sylvester) + `∂τ/∂α̃`. The review confirmed
-  the numeric path is correct, so this is pure optimization — do only if tangent assembly
-  shows up in profiling.
+- **Analytic channel B** — ✅ **SHIPPED (PR §GUARD_PR§, 2026-06-02).** The numeric
+  R-perturbation (~18 return-map calls per GP-tangent) is replaced by the analytic chain
+  `∂R/∂F` (polar-rotation derivative: `Ω` skew solving `(tr U·I − U) ω = axial(A−Aᵀ)`,
+  `A = Rᵀ df`) ∘ `∂α̃/∂R` ∘ `∂τ/∂α̃` (return-map backstress sensitivity:
+  `∂Δγ/∂α̃_m = −n/(h D_m)`, `dM = −dα̃_m/D_m + Mp·dΔγ`, `dn = (dM − n(n:dM))/‖M‖`,
+  `ds = −2G(dΔγ·n + Δγ·dn)`) — no return-map calls, no FD step. Default; the numeric path
+  is retained behind `-DLADRUNO_J2FINITE_CHANNELB_NUMERIC` for validation. Oracle
+  `tests/ladrunoj2_finite_channelB_reference.py` + `test_ladrunoJ2_finite_channelB.py` (5:
+  polar-deriv vs FD ~1e-9, analytic vs numeric ~3e-8 stiff & soft, A+B = full-tangent,
+  elastic⇒0) + g++ `test_ladrunoJ2_finite_channelB_cpp.py` (C++ analytic vs oracle ~1e-7).
+
+**Also shipped in PR §GUARD_PR§ (material robustness/docs):**
+- **Softening-parameter guard** (the LEDGER_quirks `h>0` caveat): the OPS factory now warns
+  when the minimum isotropic hardening slope `σ_y'_min = Hiso + min(0,Qinf)·b < 0` (the
+  consistent tangent may become indefinite; below `−3G` it loses positive-definiteness),
+  recommending `-implex` (constant SPD tangent) or crack-band regularization. Warn, not
+  reject — `-implex` makes softening well-posed.
+- **IMPL-EX uniform-Δt assumption documented** — `Δγ̃ = Δγ_n` bakes in `Δt_{n+1}/Δt_n = 1`;
+  flagged in the factory usage string + `Print` (accuracy degrades under variable Δt; wiring
+  the dt-ratio is future work, blocked on materials not cleanly receiving Δt).
 
 NB the kernel-sharing is **nD↔finite-strain only**, not 1D — there is no `LadrunoJ2Finite`
 analogue for the uniaxial twin (a 1D backstress is a scalar with no frame to co-rotate).
