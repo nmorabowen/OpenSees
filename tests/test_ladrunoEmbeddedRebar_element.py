@@ -474,3 +474,162 @@ def test_enforce_rejects_unbuilt_modes(mode):
     with pytest.raises(Exception):
         ops.element("LadrunoEmbeddedRebar", 1, 1, 1, 2, "-shape", 1.0,
                     "-dir", 1.0, 0.0, 0.0, "-perfect", 1.0e5, "-enforce", mode)
+
+
+# ---------------------- 9. bipenalty critical time step (ADR 20 §10.6) ----------------------
+# A stiffness-only penalty on a (near-)massless rebar coupling makes the spurious
+# constraint frequency — and hence the explicit dt_cr of the GLOBALLY assembled
+# system — collapse. Bipenalty pairs k_eff with a mass penalty m_p lumped on the
+# rebar node so the rebar has a CONTROLLED mass and the global explicit step is
+# bounded; the element reports it via eleResponse "dtcr". m_p is sized two ways:
+# -dtcr dt (m_p = k_eff·(dt/2)², no host) and -wcap β (m_p = k_eff/(β·ω_host)²,
+# ω_host from the host element).
+# NOTE (adversarial review): bipenalty does NOT make this coupling element visible
+# to the per-element CriticalTimeStep scan (that BC/host-mass-blind eigenproblem
+# sees it as λ_max=0 — the massless free host slaves out the constraint). So these
+# tests validate the GLOBAL stability (host fixed = heavy host) + the self-report,
+# NOT a per-element CriticalTimeStep assertion.
+def _bip_fakehost(dtcr=None, wcap=None, perfect_k=1.0e5, kt=1.0e6, enforce=None):
+    """Rebar node 1 tied to a single fixed host node 2 (N=1), with an optional
+    bipenalty budget. Leaves the model built; read eleResponse afterwards."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    ops.node(1, 0.0, 0.0, 0.0); ops.node(2, 0.0, 0.0, 0.0); ops.fix(2, 1, 1, 1)
+    args = ["LadrunoEmbeddedRebar", 1, 1, 1, 2, "-shape", 1.0, "-dir", 1.0, 0.0, 0.0,
+            "-perfect", perfect_k, "-kt", kt]
+    if enforce is not None:
+        args += ["-enforce", enforce]
+    if dtcr is not None:
+        args += ["-bipenalty", "-dtcr", dtcr]
+    if wcap is not None:
+        args += ["-bipenalty", "-wcap", wcap]
+    ops.element(*args)
+
+
+def test_bipenalty_off_has_zero_penalty():
+    """Default (no -bipenalty): m_p = 0 and the self-reported dt_cr = 0 — mass stays
+    zero, the element is bit-identical to before."""
+    _bip_fakehost(perfect_k=1.0e5, kt=1.0e5)
+    assert ops.eleResponse(1, "mpenalty")[0] == 0.0
+    assert ops.eleResponse(1, "dtcr")[0] == 0.0
+
+
+def test_dtcr_sizes_mass_penalty():
+    """-dtcr dt sets m_p = k_eff·(dt/2)² with k_eff = max(k_axial, kt), and the
+    element self-reports dt_cr = 2√(m_p/k_eff) = dt exactly (D-bp-1/D-bp-2)."""
+    k, kt, dt = 1.0e5, 1.0e6, 1.0e-3
+    _bip_fakehost(dtcr=dt, perfect_k=k, kt=kt)
+    keff = max(k, kt)                                   # = kt here
+    mp = ops.eleResponse(1, "mpenalty")[0]
+    assert mp == pytest.approx(keff * (dt / 2.0) ** 2, rel=1e-9)
+    assert ops.eleResponse(1, "dtcr")[0] == pytest.approx(dt, rel=1e-9)
+
+
+def _bip_brick(beta=None, dtcr=None, rho=2.0, perfect_k=1.0e5, kt=1.0e5):
+    """Unit-cube LadrunoBrick host (with mass density rho) + a rebar embedded with a
+    bipenalty budget. Returns (m_p, dt_cr) read back from the element."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for tag, (x, y, z) in _CUBE.items():
+        ops.node(tag, x, y, z); ops.fix(tag, 1, 1, 1)
+    ops.node(1, 0.5, 0.5, 0.5)
+    ops.nDMaterial("ElasticIsotropic", 1, 1000.0, 0.3, rho)   # 4th arg = density
+    ops.element("LadrunoBrick", 100, 11, 12, 13, 14, 15, 16, 17, 18, 1)
+    args = ["LadrunoEmbeddedRebar", 1, 1, "-host", 100, "-xi", 0.0, 0.0, 0.0,
+            "-dir", 1.0, 0.0, 0.0, "-perfect", perfect_k, "-kt", kt, "-bipenalty"]
+    if beta is not None:
+        args += ["-wcap", beta]
+    if dtcr is not None:
+        args += ["-dtcr", dtcr]
+    ops.element(*args)
+    return ops.eleResponse(1, "mpenalty")[0], ops.eleResponse(1, "dtcr")[0]
+
+
+def test_wcap_omega_host_scales_inverse_beta():
+    """-wcap β derives ω_host from the host element (√(‖K_host‖/‖M_host‖)). Doubling
+    β quarters m_p (m_p ∝ 1/β²) and halves the reported dt_cr (dt ∝ 1/β) — same host,
+    so ω_host cancels (D-bp-2 path B)."""
+    mp2, dt2 = _bip_brick(beta=2.0)
+    mp4, dt4 = _bip_brick(beta=4.0)
+    assert mp2 > 0.0 and dt2 > 0.0
+    assert mp4 == pytest.approx(mp2 / 4.0, rel=1e-9)
+    assert dt4 == pytest.approx(dt2 / 2.0, rel=1e-9)
+
+
+def test_wcap_requires_host_form():
+    """-wcap needs ω_host from a host element; the explicit -shape (no -host) form is
+    rejected at parse time (use -dtcr instead)."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    ops.node(1, 0.0, 0.0, 0.0); ops.node(2, 0.0, 0.0, 0.0); ops.fix(2, 1, 1, 1)
+    with pytest.raises(Exception):
+        ops.element("LadrunoEmbeddedRebar", 1, 1, 1, 2, "-shape", 1.0,
+                    "-dir", 1.0, 0.0, 0.0, "-perfect", 1.0e5,
+                    "-bipenalty", "-wcap", 2.0)
+
+
+def test_wcap_massless_host_gives_zero_penalty():
+    """A host with no mass (no density) cannot supply ω_host; -wcap warns and leaves
+    m_p = 0 rather than dividing by zero (D-bp-2 guard)."""
+    mp, dt = _bip_brick(beta=2.0, rho=0.0)
+    assert mp == 0.0
+    assert dt == 0.0
+
+
+def test_bipenalty_requires_a_budget():
+    """-bipenalty with neither -dtcr nor -wcap is a parse error."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    ops.node(1, 0.0, 0.0, 0.0); ops.node(2, 0.0, 0.0, 0.0); ops.fix(2, 1, 1, 1)
+    with pytest.raises(Exception):
+        ops.element("LadrunoEmbeddedRebar", 1, 1, 1, 2, "-shape", 1.0,
+                    "-dir", 1.0, 0.0, 0.0, "-perfect", 1.0e5, "-bipenalty")
+
+
+def test_bipenalty_ignored_with_al():
+    """AL drives the gap to zero via its multiplier — no stiff spurious mode to bound,
+    so -bipenalty is disabled under -enforce al (m_p stays 0, D-bp-2)."""
+    _bip_fakehost(dtcr=1.0e-3, perfect_k=1.0e5, kt=1.0e5, enforce="al")
+    assert ops.eleResponse(1, "mpenalty")[0] == 0.0
+
+
+def _bip_sdof(dt_run, dt_target=1.0e-3, k=1.0e4, nsteps=60, d0=1.0e-3):
+    """Free-vibration SDOF whose ONLY mass is the bipenalty m_p. The rebar node's x
+    DOF is tied to a fixed host by a perfect-bond penalty k (= k_eff, with kt = k);
+    its y,z are fixed. With -dtcr dt_target, m_p = k·(dt_target/2)² ⇒ ω = √(k/m_p) =
+    2/dt_target ⇒ the SDOF critical step is exactly dt_target. So dt_run < dt_target
+    is stable and dt_run > dt_target blows up — a deterministic check that m_p really
+    reaches the global mass (getMass) and the explicit solve. Returns (umax, d0)."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    ops.node(1, 0.0, 0.0, 0.0)              # rebar
+    ops.node(2, 0.0, 0.0, 0.0); ops.fix(2, 1, 1, 1)   # host fixed
+    ops.fix(1, 0, 1, 1)                     # rebar: only x (axial) free
+    ops.element("LadrunoEmbeddedRebar", 1, 1, 1, 2, "-shape", 1.0, "-dir", 1.0, 0.0, 0.0,
+                "-perfect", k, "-kt", k, "-bipenalty", "-dtcr", dt_target)
+    ops.setNodeDisp(1, 1, d0, "-commit")    # release from peak, v0 = 0
+    ops.constraints("Transformation"); ops.numberer("Plain"); ops.system("Diagonal")
+    ops.test("NormDispIncr", 1e-12, 1); ops.algorithm("Linear")
+    ops.integrator("CentralDifferenceLadruno"); ops.analysis("Transient")
+    umax = abs(d0)
+    for _ in range(nsteps):
+        if ops.analyze(1, dt_run) != 0:
+            break
+        umax = max(umax, abs(ops.nodeDisp(1, 1)))
+    return umax, d0
+
+
+def test_bipenalty_mass_makes_explicit_step_stable():
+    """Below the -dtcr target the bipenalty-massed SDOF free-vibration stays bounded
+    (~amplitude d0) — proving m_p enters the global diagonal mass and the leapfrog
+    solve runs."""
+    umax, d0 = _bip_sdof(0.9e-3)            # Ω = 1.8 < 2
+    assert umax < 5.0 * d0
+
+
+def test_above_dtcr_target_is_unstable():
+    """Above the -dtcr target the same SDOF is unstable and the response explodes —
+    confirming the -dtcr sizing is the real stability boundary (the false-safe is
+    now a true, tunable bound)."""
+    umax, d0 = _bip_sdof(1.1e-3)            # Ω = 2.2 > 2
+    assert math.isnan(umax) or umax > 100.0 * d0

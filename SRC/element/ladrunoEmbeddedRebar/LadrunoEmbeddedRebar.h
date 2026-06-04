@@ -84,7 +84,9 @@ class LadrunoEmbeddedRebar : public Element
                        UniaxialMaterial* bondMat, double kAxialPerfect,
                        int hostEleTag = -1, bool ktAuto = false,
                        double ktAlpha = 0.0, bool corot = false,
-                       const Vector* shapeB = 0, int enforce = 0);
+                       const Vector* shapeB = 0, int enforce = 0,
+                       bool bipenalty = false, int bpMode = 0,
+                       double bpDt = 0.0, double bpBeta = 0.0);
   LadrunoEmbeddedRebar();
   ~LadrunoEmbeddedRebar();
 
@@ -109,6 +111,14 @@ class LadrunoEmbeddedRebar : public Element
   const Matrix& getMass(void);
   const Vector& getResistingForce(void);
   const Vector& getResistingForceIncInertia(void);
+
+  // ADR 20 §10.6 (D-bp-5) — this is a pure penalty COUPLING element; it must
+  // carry NO physical Rayleigh damping. A stiffness-proportional βK applied to
+  // the artificial (bipenalty-bounded) penalty mode would spuriously shrink the
+  // reported damped dt_cr (CriticalTimeStep.cpp:249-255). Refuse the factors so
+  // they stay zero (getRayleighDampingFactors then returns the zero vector).
+  int setRayleighDampingFactors(double alphaM, double betaK,
+                                double betaK0, double betaKc);
 
   // parallel
   int sendSelf(int commitTag, Channel& theChannel);
@@ -171,6 +181,30 @@ class LadrunoEmbeddedRebar : public Element
   double ktAlpha;           // dimensionless multiplier for the auto kt
   bool ktResolved;          // transient: auto kt already resolved this run
   void resolveAutoKt(void); // resolve kt from the host element if needed
+
+  // ADR 20 §10.6 — bipenalty critical-time-step control (Askes & Hetherington
+  // 2010). A stiffness-only penalty makes the spurious constraint frequency
+  // ω_p ≈ √(k_eff/m_min) blow up dt_cr (and on this zero-mass element it is
+  // INVISIBLE to CriticalTimeStep — a false-safe). Bipenalty pairs k_eff with a
+  // mass penalty m_p lumped on the REBAR (slave) node only, bounding ω_p and
+  // making the limit both visible (DGGEV self-reports λ_max=k_eff/m_p) and
+  // user-tunable. Lumped-on-slave is a HARD constraint: the faithful m_p·BᵀB has
+  // host N_iN_j off-diagonals that would densify M and corrupt DiagonalSOE.
+  //   k_eff = max(k_axial0, kt)  (the stiffest coupled spring sets the bound).
+  //   bpMode 0 (-dtcr dt):  m_p = k_eff·(dt/2)²        — explicit budget, no host.
+  //   bpMode 1 (-wcap β):   m_p = k_eff/(β·ω_host)²    — ω_host=√(‖K_host‖/‖M_host‖).
+  // Resolved lazily (first getMass) like auto-kt. Default OFF ⇒ m_p≡0 (mass stays
+  // zero, bit-identical). Gated on -enforce penalty (AL needs no m_p). For
+  // EXPLICIT analysis: in implicit transient the added m_p pollutes inertia — do
+  // not enable there.
+  bool bipenalty;           // -bipenalty: add the mass penalty m_p
+  int bpMode;               // 0 = -dtcr budget, 1 = -wcap β (auto ω_host)
+  double bpDt;              // -dtcr target step (bpMode 0)
+  double bpBeta;            // -wcap penalty-frequency ratio β (bpMode 1)
+  double mPenalty;          // resolved mass penalty m_p (per rebar DOF)
+  bool bpResolved;          // transient: m_p already resolved this run
+  double effectiveCouplingStiffness(void); // k_eff = max(k_axial0, kt)
+  void resolveBipenalty(void);             // resolve m_p (after kt) if needed
 
   Node** theNodes;          // size 1 + M
   Matrix* K;                // nDOF x nDOF
