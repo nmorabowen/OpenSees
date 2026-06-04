@@ -522,9 +522,11 @@ be stated plainly: `-cfl` users can pick an unstable step today.
   > genuinely fixes:** in the **globally assembled** system the host nodes carry real mass from the
   > host element, so the coupled penalty frequency `ω²≈k_eff·(1/m_p+1/m_host)` is finite and
   > *bounded by `m_p`* — the global explicit step is stabilized at the chosen value. The bound is
-  > delivered by (a) that global stabilization and (b) the `"dtcr"` self-report; it is **not**
-  > auto-discovered by a `-cfl` per-element scan. Making `-cfl` respect it needs the §10.6.1 seam
-  > below.
+  > delivered by (a) that global stabilization and (b) the `"dtcr"` self-report. **§10.6.1 (SHIPPED)
+  > wires that self-report into `CriticalTimeStep`** via `Element::getExplicitCriticalTimeStep`, so
+  > an explicit integrator's `-cfl` reported `dt_cr` (`ops.criticalTimeStep`) and the `-cflAbort`
+  > guard now account for the embedded tie (CDL reports/guards against the user's `dt`; it does not
+  > auto-replace it).
 - **Localized mass scaling + γ audit (R1, the fallback).** Scale the *rebar element* mass to
   recover the step. Inferior to bipenalty: it pollutes *all* rebar modes (real axial-wave
   dynamics), needs the EnergyBalanceRecorder γ-column to certify added/true mass stays small,
@@ -551,7 +553,8 @@ can't see this element; bound delivered globally + via self-report), (iii) sum-n
 per the scoping decision to explore both), the grammar + responses are locked, and the Zone-A
 suite is enumerated. **No analysis-core change** in the shipped scope — everything lives on the
 element's `getMass`/`getResistingForceIncInertia`, `setRayleighDampingFactors`, parser, and
-`setResponse`. (Making `-cfl` honor the bound is the deferred §10.6.1 vanilla seam.)
+`setResponse`. (Making `-cfl` honor the bound is the §10.6.1 seam — **shipped**, a small vanilla
+`Element::getExplicitCriticalTimeStep` + `CriticalTimeStep` fold-in.)
 
 **Seam facts** (read from the file; the second is the adversarial-review correction):
 - `mPositive` is FALSE if **any** mass diagonal is ≤ 0 (`:89-91`). The bipenalty element's mass
@@ -564,8 +567,8 @@ element's `getMass`/`getResistingForceIncInertia`, `setRayleighDampingFactors`, 
   every finite generalized eigenvalue is **0**; `k_eff/m_p` lives only on the rejected `β≈0`
   modes. `maxGeneralizedEigenvalue` returns 0, the `lambdaMax>0` gate (`:246`) fails, and the
   element is non-contributing. So the dt bound is delivered by GLOBAL stabilization + the
-  closed-form `eleResponse "dtcr"`, **not** by the per-element eigensolve. (The §10.6.1 seam below
-  is what would make `-cfl` auto-stepping respect it.)
+  closed-form `eleResponse "dtcr"`, **not** by the per-element eigensolve. (**§10.6.1, SHIPPED,**
+  wires that self-report into `CriticalTimeStep` so `-cfl`/`-cflAbort` account for it.)
 - Rayleigh enters at `:249-255`: `ξ = ½(α_M/ω + β_K·ω)`, `damped_dt = (2/ω)(√(1+ξ²)−ξ)`. A
   `β_K` on the high penalty `ω` shrinks the damped step → audit (iv) is real (→ D-bp-5).
 - Both lumping modes (`:210-223`) reduce a purely-diagonal M to itself → `m_p` on the diagonal
@@ -601,8 +604,10 @@ finite generalized eigenvalue is **0** (host row ⇒ `v_1=v_0`, rebar row ⇒ `0
 scan returns `∞`/non-contributing, never `2√(m_p/k)`. This is the same degeneracy as the seam-fact
 correction above. The bound is instead validated by the **explicit SDOF stability test** (suite
 item 7), which exercises the GLOBAL assembled system (host fixed ⇒ infinite host mass ⇒ clean
-SDOF with the rebar's `m_p`): stable below the `-dtcr` target, unstable above. To make the
-per-element scan / `-cfl` auto-stepping honor the bound, see **§10.6.1** (deferred seam).
+SDOF with the rebar's `m_p`): stable below the `-dtcr` target, unstable above. **§10.6.1 (SHIPPED)**
+additionally wires the self-report into `CriticalTimeStep` so `ops.criticalTimeStep`/`-cflAbort`
+honor the bound — validated by `test_bipenalty_governs_cfl_critical_step` (the embedded bound, not
+the host brick's ~0.015, governs the reported `dt_cr`).
 
 **D-bp-4 — audit (iii), multiple embeds on one rebar node = SUM, not de-dup.** Under a **common
 β**, `Σ m_p,i = (Σ k_eff,i)/(β·ω_host)² = k_eff,tot/R` — i.e. the per-element summation is
@@ -639,20 +644,27 @@ value). Correct the D2/§3 lines 96-103 framing in the same PR.
    boundary. *(This is the GLOBAL-stability proof; there is deliberately no per-element
    `CriticalTimeStep` assertion — see the D-bp-3 correction.)*
 
-#### 10.6.1 — Deferred seam: make `-cfl` auto-stepping respect the bound (optional follow-up)
+#### 10.6.1 — Seam: `-cfl` honors the bound via a self-reported critical step. ✅ SHIPPED (2026-06-03)
 
-The per-element scan can't see this coupling element (above). To make `integrator -cfl` /
-ExplicitBathe auto-pick a safe `dt` for a model containing embedded penalty ties, add a small
-vanilla seam: `virtual double Element::getExplicitCriticalTimeStep(){return -1;}` (−1 = "no
-opinion"), have `computeCriticalTimeStep` fold a non-negative return into its running min, and
-override it on `LadrunoEmbeddedRebar` to return `2√(m_p/k_eff)` (bipenalty on) / `−1` (off). This
-is a `LEDGER_vanilla_files` Element.h edit (vtable change, recompile-all but additive). Until it
-lands, users **must SET `dt` explicitly** (read `eleResponse "dtcr"`, or use `-dtcr`); the
-`-cfl`/auto path silently ignores the embedded tie. *Effort: small.* **DECISION (2026-06-03): DEFERRED**
-— ship the diagnostic + global-stability scope first (the `CentralDifferenceLadruno` workflow takes
-an explicit `dt` anyway); build this seam only if `-cfl`/ExplicitBathe auto-stepping is needed on a
-model with embedded ties. (Note: the value it would report is still the heavy-host approximation,
-§10.9 leg (c).)
+The per-element scan can't see this coupling element (above), so the bound was originally only
+reachable via the `"dtcr"` diagnostic. **Shipped seam:** a small vanilla virtual
+`double Element::getExplicitCriticalTimeStep(){return -1;}` (−1 = "no opinion");
+`computeCriticalTimeStep` (`CriticalTimeStep.cpp`) queries it at the top of the per-element loop and,
+for a non-negative return, folds it into the running min (damped == undamped, since the reporting
+element refuses Rayleigh) and **skips the eigensolve** for that element; `LadrunoEmbeddedRebar`
+overrides it to return `2√(m_p/k_eff)` (bipenalty on) / `−1` (off). Net: an explicit integrator's
+`-cfl` reported `dt_cr` (`ops.criticalTimeStep`) and the `-cflAbort` stability guard now account for
+the embedded tie. *(CDL reports/guards against the user's `dt` — it does not auto-replace it; the
+seam makes the report and the abort guard correct.)*
+
+- **Vanilla footprint** (`LEDGER_vanilla_files`): `Element.{h,cpp}` (new virtual, default −1) +
+  `CriticalTimeStep.cpp` (the fold-in). `// Ladruno` markered, vtable change, additive.
+- **Test:** `test_bipenalty_governs_cfl_critical_step` — a fixed massive `LadrunoBrick` host
+  (per-element `dt_cr ≈ 0.015`) + an embedded `-dtcr 1e-3` tie; `ops.criticalTimeStep()` returns the
+  `1e-3` embedded bound (not the brick's `0.015`), matching `eleResponse "dtcr"`.
+- **Residual caveat (unchanged):** the reported value is still the heavy-host approximation — if a
+  host node is lighter than the rebar's `m_p`, the true coupled `dt_cr` is smaller (§10.9 leg (c));
+  but the host element's OWN per-element `dt_cr` then enters the same min independently. *Effort: small.*
 
 ### 10.7 Enforcement kernel — Nitsche (`-enforce nitsche`)
 
@@ -735,8 +747,9 @@ the same γ-independence with *no* host-stress/∂N query.** *Effort: research-g
    per-element scan sees this coupling element as `λ_max=0` (massless free host slaves out the
    constraint). The SDOF test validates the GLOBAL stability bound (not the per-element scan), and
    the `"dtcr"` self-report is a closed-form diagnostic. The planned D-bp-3 toy-pencil assertion
-   was dropped (it would itself give `λ=0`). Making `-cfl` honor the bound is the deferred
-   **§10.6.1** vanilla seam (`Element::getExplicitCriticalTimeStep`).
+   was dropped (it would itself give `λ=0`). **§10.6.1 (also shipped this pass):** a vanilla
+   `Element::getExplicitCriticalTimeStep` (default −1) folded into `CriticalTimeStep` makes
+   `ops.criticalTimeStep`/`-cflAbort` honor the embedded bound (`test_bipenalty_governs_cfl_critical_step`).
 6. **Research-grade — Nitsche (§10.7), separate PR.** Phase-0 `getInterpolationGradients` vanilla
    virtual (ledgered, mirrors §9) → Phase-1 host-stress query (cheap GP-sample first) → Phase-2
    kernel behind the flag, `xfail`/`skip` until the host-flux API lands. *Justify against AL on
@@ -757,8 +770,9 @@ the same γ-independence with *no* host-stress/∂N query.** *Effort: research-g
   de-dup** (D-bp-4); element zeroes own Rayleigh (D-bp-5). **(ii) CORRECTED:** the per-element
   `CriticalTimeStep` scan canNOT see this coupling element (`λ_max=0`, massless free host) — the
   bound is global + the `"dtcr"` self-report, not the per-element eigensolve; the toy-pencil
-  assertion was dropped. **Open legs:** (a) the §10.6.1 vanilla seam to make `-cfl` honor the
-  bound (deferred decision); (b) lumping-induced constraint-mode-shape error must not leak into
+  assertion was dropped. **Legs:** (a) §10.6.1 vanilla seam to make `-cfl`/`-cflAbort` honor the
+  bound — **SHIPPED** (`Element::getExplicitCriticalTimeStep` + `CriticalTimeStep` fold-in,
+  `test_bipenalty_governs_cfl_critical_step`); (b) lumping-induced constraint-mode-shape error must not leak into
   real low-frequency bar dynamics (a modal spot-check); (c) the self-report assumes the host is
   HEAVIER than `m_p` — if a host node is lighter than the rebar's `m_p`, the true coupled `dt_cr`
   is smaller than reported (RC concrete-host ≫ steel-bar makes this safe, but document it).

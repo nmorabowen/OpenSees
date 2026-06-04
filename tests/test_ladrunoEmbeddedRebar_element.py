@@ -485,10 +485,12 @@ def test_enforce_rejects_unbuilt_modes(mode):
 # -dtcr dt (m_p = k_eff·(dt/2)², no host) and -wcap β (m_p = k_eff/(β·ω_host)²,
 # ω_host from the host element).
 # NOTE (adversarial review): bipenalty does NOT make this coupling element visible
-# to the per-element CriticalTimeStep scan (that BC/host-mass-blind eigenproblem
-# sees it as λ_max=0 — the massless free host slaves out the constraint). So these
-# tests validate the GLOBAL stability (host fixed = heavy host) + the self-report,
-# NOT a per-element CriticalTimeStep assertion.
+# to the per-element CriticalTimeStep EIGENSOLVE (that BC/host-mass-blind problem
+# sees it as λ_max=0 — the massless free host slaves out the constraint). So most of
+# these tests validate the GLOBAL stability (host fixed = heavy host) + the self-
+# report. The §10.6.1 seam (getExplicitCriticalTimeStep) then wires that self-report
+# INTO CriticalTimeStep so ops.criticalTimeStep/-cflAbort honor it — checked by
+# test_bipenalty_governs_cfl_critical_step.
 def _bip_fakehost(dtcr=None, wcap=None, perfect_k=1.0e5, kt=1.0e6, enforce=None):
     """Rebar node 1 tied to a single fixed host node 2 (N=1), with an optional
     bipenalty budget. Leaves the model built; read eleResponse afterwards."""
@@ -633,3 +635,35 @@ def test_above_dtcr_target_is_unstable():
     now a true, tunable bound)."""
     umax, d0 = _bip_sdof(1.1e-3)            # Ω = 2.2 > 2
     assert math.isnan(umax) or umax > 100.0 * d0
+
+
+def test_bipenalty_governs_cfl_critical_step():
+    """ADR 20 §10.6.1 — the embedded element self-reports its bipenalty critical step
+    to CriticalTimeStep via getExplicitCriticalTimeStep(), so an explicit integrator's
+    -cfl dt_cr (ops.criticalTimeStep) reflects the embedded tie. The per-element
+    eigensolve alone sees this coupling element as λ_max=0 (massless free host slaves
+    out the constraint), so WITHOUT the seam the auto-scan would only see the much
+    larger host-brick dt_cr (~0.015). With the seam, the small embedded bound governs."""
+    dt_target = 1.0e-3
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for tag, (x, y, z) in _CUBE.items():
+        ops.node(tag, x, y, z); ops.fix(tag, 1, 1, 1)   # stiff, MASSIVE host (all fixed)
+    ops.node(1, 0.5, 0.5, 0.5)                            # rebar node (free)
+    ops.nDMaterial("ElasticIsotropic", 1, 1000.0, 0.3, 2.0)   # density → host has mass
+    ops.element("LadrunoBrick", 100, 11, 12, 13, 14, 15, 16, 17, 18, 1)
+    ops.element("LadrunoEmbeddedRebar", 1, 1, "-host", 100, "-xi", 0.0, 0.0, 0.0,
+                "-dir", 1.0, 0.0, 0.0, "-perfect", 1.0e5, "-kt", 1.0e5,
+                "-bipenalty", "-dtcr", dt_target)
+    embed_dtcr = ops.eleResponse(1, "dtcr")[0]
+    assert embed_dtcr == pytest.approx(dt_target, rel=1e-6)
+    ops.constraints("Transformation"); ops.numberer("Plain"); ops.system("Diagonal")
+    ops.test("NormDispIncr", 1e-12, 1); ops.algorithm("Linear")
+    ops.integrator("CentralDifferenceLadruno", "-cfl"); ops.analysis("Transient")
+    assert ops.analyze(1, 1.0e-4) == 0                   # one stable step triggers dt_cr compute
+    dtcr = ops.criticalTimeStep()
+    # the embedded bipenalty bound governs the reported critical step (the brick's own
+    # per-element dt_cr is ~0.015, far larger); without §10.6.1 the embedded element
+    # would be invisible and dt_cr would be the brick's value.
+    assert dtcr == pytest.approx(embed_dtcr, rel=1e-3)
+    assert dtcr < 1.0e-2                                 # governed by the tie, not the host

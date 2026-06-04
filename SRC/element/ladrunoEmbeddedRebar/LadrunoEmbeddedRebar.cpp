@@ -267,6 +267,20 @@ int LadrunoEmbeddedRebar::setRayleighDampingFactors(double, double, double, doub
   return 0;   // ignored on purpose
 }
 
+// ADR 20 §10.6.1 — self-reported explicit critical step. The per-element
+// CriticalTimeStep eigensolve sees this coupling element as λ_max=0 (the massless
+// free host slaves out the constraint), so the bipenalty bound is invisible to it.
+// Report it directly: dt = 2√(m_p/k_eff). Returns -1 ("no opinion") when bipenalty
+// is off (or unresolved), so the default eigensolve path is unchanged.
+double LadrunoEmbeddedRebar::getExplicitCriticalTimeStep(void)
+{
+  if (!bipenalty) return -1.0;
+  this->resolveBipenalty();
+  double kEff = this->effectiveCouplingStiffness();
+  if (mPenalty <= 0.0 || kEff <= 0.0) return -1.0;
+  return 2.0 * sqrt(mPenalty / kEff);
+}
+
 // ===========================================================================
 //  state
 // ===========================================================================
@@ -495,8 +509,10 @@ const Matrix& LadrunoEmbeddedRebar::getMass(void)
   // out the constraint (Schur complement on the rebar block = 0 ⇒ every finite
   // generalized eigenvalue is 0 ⇒ λ_max=0 ⇒ the element contributes nothing). The
   // bound is delivered by the GLOBAL stability above + the self-reported eleResponse
-  // "dtcr"; an explicit dt must be SET (e.g. via -dtcr), not auto-discovered from a
-  // per-element -cfl scan.
+  // "dtcr". §10.6.1: getExplicitCriticalTimeStep() feeds that self-report into
+  // CriticalTimeStep, so an explicit integrator's -cfl reported dt_cr and the
+  // -cflAbort stability guard now account for this tie (CDL still uses the user's
+  // dt — it reports/guards, it does not auto-replace it).
   if (bipenalty) {
     this->resolveBipenalty();
     for (int k = 0; k < ndm; k++) (*M0)(k, k) = mPenalty;
@@ -706,9 +722,9 @@ Response* LadrunoEmbeddedRebar::setResponse(const char** argv, int argc, OPS_Str
     return new ElementResponse(this, 11, Vector(ndm));
   // ADR 20 §10.6 bipenalty diagnostics: the resolved mass penalty m_p, and the
   // element's self-reported critical step dt = 2√(m_p/k_eff) (the bounded penalty
-  // mode — 0 when bipenalty is off). This is an independent closed-form report, NOT
-  // what the per-element CriticalTimeStep scan computes (which sees this coupling
-  // element as λ_max=0; see getMass). Use it to choose an explicit dt.
+  // mode — 0 when bipenalty is off). This closed-form report is also what
+  // getExplicitCriticalTimeStep() feeds into CriticalTimeStep (§10.6.1), since the
+  // per-element eigensolve alone sees this coupling element as λ_max=0 (see getMass).
   if (strcmp(argv[0], "mpenalty") == 0 || strcmp(argv[0], "massPenalty") == 0)
     return new ElementResponse(this, 12, 0.0);
   if (strcmp(argv[0], "dtcr") == 0 || strcmp(argv[0], "dtCritical") == 0)
@@ -761,10 +777,9 @@ int LadrunoEmbeddedRebar::getResponse(int responseID, Information& eleInfo)
   case 11: return eleInfo.setVector(g);
   case 12: { this->resolveBipenalty(); return eleInfo.setDouble(mPenalty); }
   case 13: {
-    this->resolveBipenalty();
-    double kEff = this->effectiveCouplingStiffness();
-    double dt = (mPenalty > 0.0 && kEff > 0.0) ? 2.0 * sqrt(mPenalty / kEff) : 0.0;
-    return eleInfo.setDouble(dt);
+    // same closed-form as getExplicitCriticalTimeStep (single source); 0 when off.
+    double dt = this->getExplicitCriticalTimeStep();
+    return eleInfo.setDouble(dt > 0.0 ? dt : 0.0);
   }
   default: return -1;
   }

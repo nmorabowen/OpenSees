@@ -120,6 +120,12 @@ class LadrunoEmbeddedRebar : public Element
   int setRayleighDampingFactors(double alphaM, double betaK,
                                 double betaK0, double betaKc);
 
+  // ADR 20 §10.6.1 — self-reported explicit critical step `2√(m_p/k_eff)` so a
+  // -cfl explicit integrator (CriticalTimeStep) honors the bipenalty bound, which
+  // the per-element eigensolve cannot see (λ_max=0; the massless free host slaves
+  // out the constraint). Returns -1 ("no opinion") when bipenalty is off.
+  double getExplicitCriticalTimeStep(void);
+
   // parallel
   int sendSelf(int commitTag, Channel& theChannel);
   int recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker& theBroker);
