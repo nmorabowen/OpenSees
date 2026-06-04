@@ -9,8 +9,10 @@ target_sources(OPS_Element
     PRIVATE
     LadrunoEmbeddedRebar.cpp
     OPS_LadrunoEmbeddedRebar.cpp
+    LadrunoEmbeddedKernel.cpp
     PUBLIC
     LadrunoEmbeddedRebar.h
+    LadrunoEmbeddedKernel.h
 )
 
 target_include_directories(OPS_Element PUBLIC ${CMAKE_CURRENT_LIST_DIR})
