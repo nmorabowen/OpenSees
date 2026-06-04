@@ -34,6 +34,17 @@ of what diverged from upstream:
 > regenerates the `FEATURES-START/END` blocks in `tclMain.cpp` (Tcl) and
 > `PythonModule.cpp` (openseespy/mp).
 
+## Element selection & usage
+
+- [[ladruno_continuum_elements_guide]] — **Continuum Elements — Modeling &
+  FE-Selection Guide**: the single decision desk for picking between
+  `BezierTri6` (2D), `BezierTet10` (3D tet) and `LadrunoBrick` (3D hex) —
+  selection axes, a decision procedure, per-element intended-use profiles, and
+  cross-cutting modeling guidance. Links down to the per-element references.
+  (reference)
+- [[LadrunoBrick_reference]] — the brick's living theory/implementation/usage
+  reference (the deep doc the selection guide points to). (reference)
+
 ## Plans
 
 Forward-looking planning docs for new functionality we want to add to this OpenSees fork. Each plan lives in its own file and walks through:
