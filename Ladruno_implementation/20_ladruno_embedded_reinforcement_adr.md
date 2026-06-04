@@ -607,7 +607,7 @@ item 7), which exercises the GLOBAL assembled system (host fixed ⇒ infinite ho
 SDOF with the rebar's `m_p`): stable below the `-dtcr` target, unstable above. **§10.6.1 (SHIPPED)**
 additionally wires the self-report into `CriticalTimeStep` so `ops.criticalTimeStep`/`-cflAbort`
 honor the bound — validated by `test_bipenalty_governs_cfl_critical_step` (the embedded bound, not
-the host brick's ~0.04, governs the reported `dt_cr`).
+the host brick's ~0.015, governs the reported `dt_cr`).
 
 **D-bp-4 — audit (iii), multiple embeds on one rebar node = SUM, not de-dup.** Under a **common
 β**, `Σ m_p,i = (Σ k_eff,i)/(β·ω_host)² = k_eff,tot/R` — i.e. the per-element summation is
@@ -660,8 +660,8 @@ seam makes the report and the abort guard correct.)*
 - **Vanilla footprint** (`LEDGER_vanilla_files`): `Element.{h,cpp}` (new virtual, default −1) +
   `CriticalTimeStep.cpp` (the fold-in). `// Ladruno` markered, vtable change, additive.
 - **Test:** `test_bipenalty_governs_cfl_critical_step` — a fixed massive `LadrunoBrick` host
-  (per-element `dt_cr ≈ 0.04`) + an embedded `-dtcr 1e-3` tie; `ops.criticalTimeStep()` returns the
-  `1e-3` embedded bound (not the brick's `0.04`), matching `eleResponse "dtcr"`.
+  (per-element `dt_cr ≈ 0.015`) + an embedded `-dtcr 1e-3` tie; `ops.criticalTimeStep()` returns the
+  `1e-3` embedded bound (not the brick's `0.015`), matching `eleResponse "dtcr"`.
 - **Residual caveat (unchanged):** the reported value is still the heavy-host approximation — if a
   host node is lighter than the rebar's `m_p`, the true coupled `dt_cr` is smaller (§10.9 leg (c));
   but the host element's OWN per-element `dt_cr` then enters the same min independently. *Effort: small.*

@@ -643,7 +643,7 @@ def test_bipenalty_governs_cfl_critical_step():
     -cfl dt_cr (ops.criticalTimeStep) reflects the embedded tie. The per-element
     eigensolve alone sees this coupling element as λ_max=0 (massless free host slaves
     out the constraint), so WITHOUT the seam the auto-scan would only see the much
-    larger host-brick dt_cr (~0.04). With the seam, the small embedded bound governs."""
+    larger host-brick dt_cr (~0.015). With the seam, the small embedded bound governs."""
     dt_target = 1.0e-3
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 3)
@@ -663,7 +663,7 @@ def test_bipenalty_governs_cfl_critical_step():
     assert ops.analyze(1, 1.0e-4) == 0                   # one stable step triggers dt_cr compute
     dtcr = ops.criticalTimeStep()
     # the embedded bipenalty bound governs the reported critical step (the brick's own
-    # per-element dt_cr is ~0.04, far larger); without §10.6.1 the embedded element
+    # per-element dt_cr is ~0.015, far larger); without §10.6.1 the embedded element
     # would be invisible and dt_cr would be the brick's value.
     assert dtcr == pytest.approx(embed_dtcr, rel=1e-3)
     assert dtcr < 1.0e-2                                 # governed by the tie, not the host

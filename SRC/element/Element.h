@@ -71,13 +71,19 @@ class Element : public DomainComponent
     virtual int getInterpolationWeights(const Vector &xi, Vector &N);
 
     // Ladruno (ADR 20 §10.6.1): an element's self-reported explicit critical time
-    // step (seconds). CriticalTimeStep folds a non-negative value into its running
-    // minimum and SKIPS the per-element K v = λ M v eigensolve for that element.
-    // Default -1 = "no opinion" (the eigensolve governs). Override only when an
-    // element's true stability bound is NOT captured by its per-element pencil —
-    // e.g. LadrunoEmbeddedRebar's bipenalty bound, which is invisible to the
-    // eigensolve because the host DOFs are massless in the per-element problem
-    // (they slave out the constraint → λ_max=0).
+    // step (seconds). A non-negative return FULLY REPLACES the per-element
+    // K v = λ M v eigensolve for this element — CriticalTimeStep folds the value
+    // into its running minimum and SKIPS the eigensolve (it does NOT take
+    // min(self, eigensolve)). Default -1 = "no opinion" (the eigensolve governs).
+    // CONTRACT: override (with a value > 0) ONLY when this element's per-element
+    // pencil would contribute nothing meaningful on its own — i.e. its real
+    // stability bound is invisible to the eigensolve. Returning > 0 while the
+    // element ALSO carries a genuine stiff/massive mode would silently drop that
+    // mode. The motivating case is LadrunoEmbeddedRebar's bipenalty bound: its host
+    // DOFs are massless in the per-element problem, so they slave out the
+    // constraint → λ_max=0 (the eigensolve sees no bound), and the self-report is
+    // the only signal. An element that sometimes has a real mode should return -1
+    // in that regime so the eigensolve governs.
     virtual double getExplicitCriticalTimeStep(void);
 
     // methods dealing with committed state and update
