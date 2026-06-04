@@ -2,7 +2,7 @@
 title: "ADR 23 — General LadrunoEmbeddedNode (node-to-host coupling)"
 project: Ladruno
 type: ADR + implementation plan
-status: proposed (scope locked: U + UP + UR, shared-kernel sibling of LadrunoEmbeddedRebar)
+status: proposed, revised after adversarial review (wf_bbe77ee8 — 1 blocker fixed, Phase 0 GO); scope U + UP + UR + D9 interface, shared compiled-helper-kernel sibling of LadrunoEmbeddedRebar
 element: element LadrunoEmbeddedNode
 classTag: 33006 (element) — reserved here, free in the ELE_TAG ladruno band
 related:
@@ -26,13 +26,17 @@ updated: 2026-06-03
 
 # ADR 23 — General `LadrunoEmbeddedNode` (node-to-host coupling)
 
-**Status:** proposed. **Scope locked** (session 2026-06-03): full ASD-parity DOF
+**Status:** proposed, **revised after adversarial review** (workflow `wf_bbe77ee8`, 33
+agents: 25/26 findings survived verification, 1 confirmed blocker; verdict
+**proceed-with-changes**, **Phase 0 = GO**). The must-fix list is folded in below; the
+review record is §13. **Scope locked** (session 2026-06-03): full ASD-parity DOF
 coupling — **translations U + pressure UP + rotation UR**, in **both 2D and 3D
 domains**, plus an opt-in **material-driven interface mode** (D9: per-direction uniaxial
 materials → cohesive / unilateral-contact / elastic / approximate-friction interfaces) —
 built as a **sibling** of [[20_ladruno_embedded_reinforcement_adr|LadrunoEmbeddedRebar]]
-over a **shared header-only coupling kernel**. Deliverable = this ADR + the phased
-implementation plan in §9.
+over a **shared compiled helper kernel** (`LadrunoEmbeddedKernel.{h,cpp}` taking framework
+handles as parameters — **not** a header-only OpenSees-free leaf; M3/KX-1). Deliverable =
+this ADR + the phased implementation plan in §9.
 
 **Companions:** [[20_ladruno_embedded_reinforcement_adr|ADR 20]] (the rebar element
 this generalizes), [[LadrunoEmbeddedRebar_guide]] (shipped machinery reused here),
@@ -96,9 +100,11 @@ machinery** for the general node case the rebar element's anisotropy doesn't ser
   **uniaxial material** instead of a bare penalty, turning the element into a node↔host
   *interface*: cohesive separation, unilateral contact/gap, elastic bedding, bond — the
   bond-slip slot generalized to all directions.
-- Inherit, for free, the rebar element's **penalty + AL** enforcement, **`-kt auto`**
-  host-scaling, **bipenalty + explicit `dt_cr`** governance, serialization, responses,
-  and energy accounting — via a **shared kernel** (no copy-paste).
+- Inherit, via the **shared compiled helper kernel** (no copy-paste), the rebar's
+  **penalty + AL** enforcement, **`-kt auto`** host-scaling (for the **translational `K_u`**
+  — UR/UP scaling needs *additional* host queries the rebar does not supply, see D3),
+  **bipenalty + explicit `dt_cr`** governance, responses, and energy accounting.
+  (Serialization is *not* inherited — each element keeps its own, D1.)
 - openseespy-native; set-to-set generation through apeGmsh's existing assembly path
   (it already emits `ASDEmbeddedNodeElement` for non-matching ties — this is the
   drop-in fork upgrade).
@@ -129,9 +135,12 @@ upstream UR path ([ASDEmbeddedNodeElement.cpp:1048-1173]):
 |-------|--------------------|--------------------|------|
 | **U** (translations) | `u_c = Σ N_i(ξ) u_i^host` | **weights `N_i`** (have it) | trivial — degenerate isotropic case of the rebar kernel |
 | **UP** (pressure) | `p_c = Σ N_i(ξ) p_i^host` (all nodes u-p) | **weights `N_i`** (have it) | cheap — one extra row, an ndf-compatibility check |
-| **UR** (rotation) | `θ_c = skew(∇u_host)\|_ξ` (continuum rotation) | **gradients `∂N_i/∂x`** — **NOT available today** | moderate — needs a new vanilla `Element` virtual |
+| **UR** (rotation) | `θ_c = skew(∇u_host)\|_ξ` (continuum rotation) | **gradients `∂N_i/∂x`** *in addition to* weights `N_i` — gradients **NOT available today** | moderate — needs a new vanilla `Element` virtual |
 
-**UR is the only one needing new infrastructure.** The host continuum rotation is the
+**UR is the only one needing new infrastructure.** Note it needs **both** queries: the
+UR `B`-matrix's *translational* rows still use the weights `N_i`
+([ASDEmbeddedNodeElement.cpp:1145-1148]), the *rotational* rows use `∂N_i/∂x`
+([:1155-1158]). Only the gradients are new. The host continuum rotation is the
 skew part of the displacement gradient — in the local triangle frame ASD builds it from
 the **cartesian shape-function derivatives** `dNdX` ([:1104-1106], [:1153-1162]):
 
@@ -139,11 +148,21 @@ $$\theta^{loc}_x = \sum_i \partial_Y N_i\,u^z_i,\quad
   \theta^{loc}_y = -\sum_i \partial_X N_i\,u^z_i,\quad
   \theta^{loc}_z = \tfrac12\sum_i(\partial_X N_i\,u^y_i - \partial_Y N_i\,u^x_i),$$
 
-then rotates to global with the host triangle's orientation `R`. **This requires the
-host's `∂N_i/∂x` at ξ, which `getInterpolationWeights` does not return** — it is exactly
+then rotates to global with the host triangle's orientation `R`. **The rotational rows
+require the host's `∂N_i/∂x` at ξ, which `getInterpolationWeights` does not return** (the
+translational rows still use `N_i` via `getInterpolationWeights`) — the gradients are exactly
 the `getInterpolationGradients` / `getDeformationGradient(ξ)` surface ADR 20 §10.5 flagged
 as "research-grade, re-opens the base-class surface." For straight-sided simplex hosts
 `∂N/∂x` is constant; for `LadrunoBrick`/`BezierTet10` it varies → must be evaluated at ξ.
+
+**UR sharpened caveat (UR-4):** on a **CST (3-node tri) / TET4 (4-node tet)** host `∂N/∂x`
+is element-wise *constant*, so the UR constraint reduces to a single **element-wide
+rigid-spin tie** — there is no intra-element rotational gradient and the moment couple's
+lever arm is the element size, unresolvable by refining the surrounding mesh. **Moment-critical
+embedments** (use case 2 — anchors, headed studs) therefore need a **higher-order host**
+(e.g. `BezierTet10`, where `∂N/∂x` varies with position) or conforming refinement at the
+connection. §8 item 5 reports the transmitted-moment error vs host *type and size*, not just
+the displacement gap.
 
 **2D collapses the rotation to a single drilling DOF** (`Rz`): the continuum rotation is
 the one in-plane curl `θ_z = ½(∂_x u_y − ∂_y u_x)` ([ASDEmbeddedNodeElement.cpp:858]
@@ -160,17 +179,31 @@ base-class — lands as its own reviewed slice.
 
 ## 4. Decisions
 
-### D1 — One new element, shared kernel with the rebar (no refactor of 33005)
+### D1 — One new element, shared compiled-helper kernel with the rebar (no refactor of 33005)
 Ship **`LadrunoEmbeddedNode`** (classTag **33006**, ELE band). Extract the
-constitutive-agnostic numerics shared with `LadrunoEmbeddedRebar` into a **header-only
-`LadrunoEmbeddedKernel.h`** (the proven [[project_ladruno_j2|LadrunoJ2Kernel]] pattern):
-the gap/`B`-matrix assembly, the penalty/AL traction-and-tangent update, the `-kt auto`
-formula, the bipenalty `m_p` and self-reported `dt_cr` formulas. Each element keeps its
-**own** DOF bookkeeping, `setDomain`, and serialization (they genuinely differ — the
-node element carries rotation/pressure DOFs on the constrained node; the rebar is
-translations-only with a `dir`). The shipped 33005 contract and serialization version are
-**untouched** — the kernel is additive; the rebar's call sites are refactored to route
-through it **bit-identically** (a no-op refactor, gated by its existing Zone-A battery).
+constitutive-agnostic numerics shared with `LadrunoEmbeddedRebar` into a **shared compiled
+helper translation unit `LadrunoEmbeddedKernel.{h,cpp}`**: the gap/`B`-matrix assembly, the
+penalty/AL traction-and-tangent update, the `-kt auto` formula, the bipenalty `m_p` and
+self-reported `dt_cr` formulas.
+
+> **M3/KX-1 — NOT a header-only OpenSees-free leaf.** The earlier framing called this "the
+> [[project_ladruno_j2|LadrunoJ2Kernel]] header-only pattern." The adversarial review
+> refuted that analogy: unlike `LadrunoJ2Kernel` (pure scalar/tensor math, no framework
+> types), this kernel's hot parts — `resolveAutoKt`, `resolveBipenalty`, `formBandTraction`
+> (with `-corot`), the bipenalty `dt_cr` path — **require live `Domain*` / `Element*` /
+> `Node**` handles** (it queries the host's `getInitialStiff`/`getCharacteristicLength` and
+> the current node positions). So the kernel is a **normal compiled `.h`+`.cpp`** whose
+> functions take those framework handles as **explicit parameters** — architecturally clean,
+> captures the genuine reuse, avoids copy-paste, but it is a compiled helper, **not** a
+> header-only leaf. (Only the truly handle-free scalar formulas — `k_eff`, `m_p`, `dt_cr` —
+> could live header-only; that is a small fraction, so the compiled-TU framing is the right
+> one.) The "~90%" below is a *reuse-vs-risk ratio* vs a full merge, not a code-fraction claim.
+
+Each element keeps its **own** DOF bookkeeping, `setDomain`, and serialization (they
+genuinely differ — the node element carries rotation/pressure DOFs on the constrained node;
+the rebar is translations-only with a `dir`). The shipped 33005 contract and serialization
+version are **untouched** — the kernel is additive; the rebar's call sites are refactored to
+route through it **bit-identically** (a no-op refactor, gated by its existing Zone-A battery).
 
 > **Why not** add an `-isotropic` mode to 33005 (rejected): bloats a shipped element,
 > mis-names a general mesh tie "EmbeddedRebar", and UR/UP do not belong on a rebar.
@@ -199,31 +232,74 @@ is written so each coupling direction's traction is `t_d = mat_d.stress(g·e_d)`
 rebar already uses for its axial slot (`LadrunoBondSlip` or perfect-bond penalty); D9 just
 exposes it on the general element's directions.
 
-### D3 — Auto-scaled penalties (host-stiffness matched, the rebar `-kt auto` generalized)
-Reuse the rebar's lazy host-stiffness auto-scale ([[LadrunoEmbeddedRebar_guide]] §4):
-`K_u = α_u · ‖K_host‖_∞ / lch · lch = α_u·‖K_host‖_∞`-class scaling via
-`host->getInitialStiff()` + `host->getCharacteristicLength()`. **Rotation needs its own
-dimensional scale** — `K_r ~ K_u·lch²` (so a unit rotation gap costs a comparable energy
-to a unit translation gap over the element length); expose `-krAlpha`. Pressure `K_p`
-scales to the host's pressure-block diagonal. Defaults: `α_u = 1e3` (the rebar default),
-`α_r`, `α_p` tuned in the §8 sweep. The ASD `1e18` raw value is the **anti-pattern** —
-documented loudly (porting users must not pass `1e18` as an `α`).
+### D3 — Auto-scaled penalties (host-stiffness matched)
+> **M2/HON-1/ES-2 — corrected against the shipped rebar.** The earlier
+> `K_u = α_u·‖K_host‖_∞/lch·lch` was algebraically vacuous (the `lch` cancel) and falsely
+> attributed a `getCharacteristicLength()` call to the rebar's `resolveAutoKt`, which in fact
+> reads `host->getInitialStiff()` **only** (max absolute diagonal; no `lch`).
+
+- **Translational `K_u` (inherited from the rebar `-kt auto`, [[LadrunoEmbeddedRebar_guide]] §4):**
+  `K_u = α_u · max_i |K_host(i,i)|` via `host->getInitialStiff()` (max-abs-diagonal — the
+  diagonal already carries `~E·lch` units). **No `getCharacteristicLength()` in this path.**
+- **Rotational `K_r` (NEW work, not inherited):** rotation needs a *moment/rotation* scale,
+  so `K_r = α_r · K_u · lch²` with `lch = host->getCharacteristicLength()` — this is the
+  **first** `getCharacteristicLength()` call in the embedded-element family (the rebar kernel
+  never makes it; it exists and is geometry-true on `LadrunoBrick`/`BezierTet10`/`BezierTri6`).
+  Dimensionally required so a unit rotation gap costs energy comparable to a unit translation
+  gap. Expose `-krAlpha`.
+- **Pressure `K_p` (NEW work):** scales to the host's pressure-block diagonal (a new
+  pressure-diagonal accessor / the u-p block of `getInitialStiff`); `-kpAlpha`.
+
+Defaults: `α_u = 1e3` (the rebar default), `α_r`, `α_p` tuned in the §8 sweep. **UR/UP
+auto-scaling is therefore NOT free** — it needs host queries beyond the rebar's `-kt auto`
+(budgeted into Phase 1/2). The ASD `1e18` raw value is the **anti-pattern** — documented
+loudly (porting users must not pass `1e18` as an `α`).
 
 ### D4 — Enforcement: penalty + augmented Lagrangian (`-enforce {penalty|al}`)
-Identical to the rebar's `-enforce` family (kernel-shared). AL adds a per-element
-multiplier `λ` (now spanning the active DOF classes — `ndm` + rot + p) with the **same
-tangent** and a per-step **Uzawa** update in `commitState`. Headline win unchanged:
-near-exact constraint at **moderate** `K` (no `K→∞`), fixing both conditioning and the
-explicit `dt_cr` blow-up. `nitsche`/`transformation` rejected at parse time.
+Same `-enforce` family as the rebar (kernel-shared *structure*). AL adds a per-element
+multiplier `λ` spanning the active DOF classes (`ndm` + rot + p) with the **same tangent**
+and a per-step **Uzawa** update in `commitState`. **Per-class increments (ES-3, spell out —
+do not "match the rebar's pattern" blindly):** `Δλ_u = K_u·g_u`, `Δλ_r = K_r·g_r`,
+`Δλ_p = K_p·g_p`. Headline win unchanged: near-exact constraint at **moderate** `K`
+(no `K→∞`), fixing both conditioning and the explicit `dt_cr` blow-up.
+`nitsche`/`transformation` rejected at parse time.
 
-### D5 — Explicit capability: bipenalty + `dt_cr` self-report (kernel-shared)
-Reuse the rebar's bipenalty (`-bipenalty {-dtcr dt | -wcap β}`): a mass penalty `m_p`
-lumped **on the constrained (slave) node only** (DiagonalSOE-safe), with
-`k_eff = max(K_u, K_r-scaled, K_p)`, the closed-form `eleResponse "dtcr" = 2√(m_p/k_eff)`,
-and the already-shipped `Element::getExplicitCriticalTimeStep` → `CriticalTimeStep`
-fold-in. Gated on `-enforce penalty`; off ⇒ `m_p≡0` ⇒ bit-identical, explicit-safe.
-**This is the single biggest gain over `ASDEmbeddedNodeElement`** — it makes a general
-node tie usable under `CentralDifferenceLadruno` / `ExplicitBathe`.
+> **ES-3 — the rebar's corot λ-reprojection does NOT generalize to the isotropic tie.**
+> The rebar re-projects `λ` onto the transverse plane each commit
+> ([LadrunoEmbeddedRebar.cpp:304-311]) precisely because a rotating bond axis could leak the
+> multiplier into the *axial material* slot. The **isotropic U/UP/UR penalty tie has no
+> preferred axis**, so this reprojection has **no analog** and must **not** be imported here
+> — `λ` accumulates without directional projection. (The one place it *does* return is the
+> **D9 material-direction** case — see D9.2/M4, where a co-rotating frame can again leak a
+> penalty multiplier onto a material axis.)
+
+### D5 — Explicit capability: bipenalty with PER-DOF-CLASS (stiffness, inertia) pairs
+> **M1/ES-1 (BLOCKER, the one the review caught) — a single scalar `k_eff`/`m_p` CANNOT
+> bound the rotation or pressure mode.** The rebar's bipenalty is dimensionally homogeneous
+> (everything translational): `getMass` lumps `m_p` only on DOFs `[0, ndm)`
+> ([LadrunoEmbeddedRebar.cpp:498-521]) and `effectiveCouplingStiffness` returns a bare
+> `max(k_axial, k_t)`. The node element carries **rotational/pressure DOFs whose penalty has
+> different units** (`K_r` is moment/rotation), so a translational-only mass leaves those
+> modes **unbounded** in explicit. Reusing the rebar's scalar pattern verbatim is wrong.
+
+`-bipenalty {-dtcr dt | -wcap β}` with **matched (stiffness, inertia) pairs per active DOF
+class**, each lumped on the constrained (slave) node only (DiagonalSOE-safe):
+- **Translational:** `(K_u, m_p)` on DOFs `[0, ndm)` → `dt_u = 2√(m_p/K_u)` (the rebar form).
+- **Rotational:** `(K_r, I_p)` with a **rotational inertia** `I_p = m_p·lch²` lumped on the
+  slave's rotation DOF indices `[ndm, ndm+n_rot)` → `dt_r = 2√(I_p/K_r)`. **Self-consistency:**
+  under D3's `K_r = K_u·lch²`, `dt_r = 2√(m_p·lch²/(K_u·lch²)) = 2√(m_p/K_u) = dt_u` — the
+  translational budget self-bounds the rotation mode **iff** `getMass` actually lumps
+  `I_p = m_p·lch²` on the rotation DOFs (not zero).
+- **Pressure:** `(K_p, m_pp)` on the pressure DOF, **or** omit pressure bipenalty and require
+  implicit enforcement for u-p hosts (decide in Phase 1).
+
+The `getMass` loop must therefore extend past `ndm` to the active rotation/pressure DOF
+indices. Report `dt_cr = min` over active classes of `2√(m_class/k_class)`; the
+`eleResponse "dtcr"` self-report and the already-shipped `Element::getExplicitCriticalTimeStep`
+→ `CriticalTimeStep` fold-in carry that min. Gated on `-enforce penalty`; off ⇒ all
+`m≡0` ⇒ bit-identical, explicit-safe. **This (corrected) is the single biggest gain over
+`ASDEmbeddedNodeElement`** — it makes a general node tie usable under
+`CentralDifferenceLadruno` / `ExplicitBathe`.
 
 ### D6 — Host-agnostic interpolation; UR adds a gradient virtual
 - **U / UP:** `getInterpolationWeights(ξ, N)` — already on `Element` (vanilla virtual,
@@ -248,10 +324,20 @@ Mirror [ASDEmbeddedNodeElement.cpp:370-413]: read the constrained node's `ndf` a
 `setDomain` and activate UR only if the node has rotational DOFs **and** the user set
 `-rot`; activate UP only if all nodes are u-p **and** the user set `-pressure`. Flags are
 **opt-in** (default = U only) so the common mesh-tie case stays minimal and bit-stable.
-Allowed ndf: **2D = {2, 3}**, **3D = {3, 4, 6}**, matching ASD's table. **The 2D `ndf=3`
-case is ambiguous — it is *either* `(u_x,u_y,R_z)` *or* `(u_x,u_y,p)`** — and is
-disambiguated **only** by which flag the user set (`-rot` ⇒ drilling, `-pressure` ⇒ u-p);
-this is a hard requirement (silent mis-binding otherwise), tested in §8.
+Allowed ndf: **2D = {2, 3}**, **3D = {3, 4, 6}**, matching ASD's table.
+
+**M5/D7-1 — the disambiguation is a PARSE-TIME guard, not setDomain precedence.** The 2D
+`ndf=3` case is ambiguous — *either* `(u_x,u_y,R_z)` *or* `(u_x,u_y,p)`. ASD resolves this by
+**rejecting `-rot` and `-pressure` together at parse time** ([ASDEmbeddedNodeElement.cpp:277],
+"Cannot use both -rot and -p"). We do the same: **mutual exclusion is enforced at parse time
+with a clear error** (primary mechanism); the `setDomain` `if/else if` ndf precedence is only
+a defensive backstop. Tested in §8 item 9 (passing both flags ⇒ parse error, not silent
+precedence). NB ASD's flag is `-p`; this element uses `-pressure` (the guard wording tracks
+the new name).
+
+**D8-1 — 3D is unambiguous (guard against a copy-paste bug):** in 3D `ndf=4` ⇒ UP and
+`ndf=6` ⇒ UR with no flag disambiguation needed, so the 2D flag-priority logic must **not**
+be applied in the 3D branch.
 
 ### D8 — Dimensionality (2D + 3D) is first-class and `ndm`-parametric
 The element runs in both `ndm=2` and `ndm=3`, resolved from the host/constrained-node
@@ -289,16 +375,40 @@ material-driven interface against an interpolated host point).
   user-supplied `-normal nx ny [nz]` (+ `-orient` tangents) **or** auto from the host face
   normal at ξ. The frame **co-rotates** through the existing `-corot` machinery (the normal
   follows the deformed host), which is *required* for a meaningful unilateral-contact normal.
-- **D9.2 Enforcement/explicit interplay.** AL (`-enforce al`) augments only penalty
-  directions — material directions carry physical force, untouched (mirrors the rebar's
-  "AL augments transverse only, bond axial untouched"). Bipenalty `k_eff` takes the max over
-  the **initial tangents** of all active directions (`mat_d.getInitialTangent()`), so a stiff
-  contact-normal penalty is bounded for explicit just like `k_t`. Softening interface
-  materials need DisplacementControl / IMPLEX (same caveat as bond, D4 of ADR 20).
-- **Energy.** Physical interface dissipation (cohesive/bond ∮f·dg) reports in
-  `bondEnergy`/`interfaceEnergy` (single-sourced from the material's own `energy` response);
-  penalty directions stay in `penaltyEnergy` — the artificial/physical split already built
-  for the rebar carries over verbatim.
+  **D9-5 — inherited tangent approximation:** the co-rotating frame inherits the rebar's
+  **dropped `∂e_d/∂u` consistent-tangent term** ([LadrunoEmbeddedRebar.h:152-154]): for a
+  stiff contact normal under large *per-step* host rotation the tangent is inexact in the same
+  way the rebar's is — **frame-objective for explicit** (EICR is exact there), **converges
+  under step-halving for implicit**, but may **slow Newton** for large-rotation contact steps.
+  Port that caveat verbatim into the guide (also R7).
+- **D9.2 Enforcement/explicit interplay.**
+  - **M4/D9-3 — AL must re-project the multiplier off material directions.** AL augments only
+    the penalty directions; the material directions carry physical force. But mirroring the
+    rebar ([LadrunoEmbeddedRebar.cpp:304-311], `la = λ·e_mat; λ −= la·e_mat`), at each commit
+    the accumulated `λ` must be **re-projected to subtract any component along each
+    material-driven direction `e_d`**. Under `-corot`, **frame rotation alone** can shift a
+    previously-transverse multiplier onto a material axis — so the purge is needed **even when
+    no Uzawa step fires on the material slot**. (This is the one place ES-3's "no reprojection"
+    does *not* apply — it returns precisely for the D9 material-direction case.) New Zone-A
+    item 11.
+  - **M6/ES-4/HON-2 — bipenalty `k_eff = max(initial tangents)` only for NON-STIFFENING
+    materials.** `mat_d.getInitialTangent()` is a safe `k_eff` upper bound **only** when the
+    material is monotone-non-stiffening (`ENT`, `ElasticPPGap` compression side, softening
+    cohesive, `ElasticPP`). A **stiffening** uniaxial (e.g. a gap material whose re-contact
+    tangent exceeds its initial/open tangent) silently breaks the closed-form `dt_cr` (the
+    once-and-latch resolve is safe for `LadrunoBondSlip` but not in general). **Prohibit
+    stiffening materials on any bipenalty direction** (parser error / guide), or require
+    `-dtcr` set from the closed-contact stiffness, or use `-enforce al` (no `dt_cr` concern).
+    NB the D9 grammar confines `-mat*` to *translational* normal/tangent directions, so the
+    ES-1 rotation-unit problem does **not** arise in the material slots.
+- **Energy (D9-4 — unit contract, not "verbatim").** Physical interface dissipation
+  (cohesive/bond `∮f·dg`) reports in `interfaceEnergy`/`bondEnergy` (single-sourced from the
+  material's own `energy` response); penalty directions stay in `penaltyEnergy`. The
+  artificial/physical split carries over **in structure**, but the **unit contract differs**:
+  a D9 `mat_d` is driven by the displacement gap `g·e_d` (metres) and **returns force**
+  (`stress()` in N, not N/m²), so `energy()` is already in Joules and needs **no**
+  `bondScale = perimeter·L_trib` converter — unlike the rebar, whose `bondMat` works in stress
+  units and the element applies `bondScale`.
 
 ### D9.x — Grammar (representative; firm at build time)
 ```
@@ -352,19 +462,25 @@ back to its penalty. `-matN` requires `-normal`.
 
 ## 7. Implementation sketch (Definition-of-Done registration checklist)
 - `SRC/element/ladrunoEmbeddedNode/{LadrunoEmbeddedNode.{cpp,h},OPS_LadrunoEmbeddedNode.cpp,CMakeLists.txt}`.
-- `SRC/element/ladrunoEmbeddedNode/LadrunoEmbeddedKernel.h` (header-only; **also** wired
-  into `LadrunoEmbeddedRebar` as a no-op refactor — or sited under a shared path if
+- `SRC/element/ladrunoEmbeddedNode/LadrunoEmbeddedKernel.{h,cpp}` (a **compiled helper TU**,
+  M3/KX-1 — its functions take `Domain*`/`Element*`/`Node**` handles as parameters; **also**
+  wired into `LadrunoEmbeddedRebar` as a no-op refactor — or sited under a shared path if
   preferred; decide at build time).
 - `SRC/classTags.h`: add `ELE_TAG_LadrunoEmbeddedNode 33006` (next free in the ladruno
-  ELE band; 33005 is the rebar).
+  ELE band — `classTags.h:924` is the last occupied ELE tag, `LadrunoEmbeddedRebar=33005`;
+  REG-2. Per-registry bands ⇒ no collision with INTEGRATOR `33006`).
 - `SRC/element/Element.{h,cpp}`: add `virtual int getInterpolationGradients(const Vector&,
   Matrix&)` (default −1) — **UR slice only**; `// Ladruno` markers + [[LEDGER_vanilla_files]]
   row (vtable change, additive, recompile-all).
 - Overrides: `getInterpolationGradients` on `LadrunoBrick` + `BezierTet10` (3D) and
   `BezierTri6` + `FourNodeQuad` (2D); the matching `getInterpolationWeights` overrides on
   the 2D hosts too (3D ones already exist) for the `-xi` convenience.
-- Register: forward-decl + `functionMap` in `OpenSeesElementCommands.cpp`; **broker**
-  `case 33006` in `FEM_ObjectBrokerAllClasses.cpp` + a serialization round-trip test.
+- Register (REG-1, both steps, per the rebar precedent): forward-decl + **both** PascalCase
+  **and** camelCase aliases in `functionMap` (`"LadrunoEmbeddedNode"` *and*
+  `"ladrunoEmbeddedNode"`, cf. `OpenSeesElementCommands.cpp:667-668`); **`add_subdirectory(ladrunoEmbeddedNode)`
+  in `SRC/element/CMakeLists.txt`** (the per-dir `CMakeLists.txt` is inert without it, cf.
+  line 37); **broker** `case 33006` in `FEM_ObjectBrokerAllClasses.cpp` + a serialization
+  round-trip test.
 - Ship-time obligations (CLAUDE.md): [[LEDGER_implementations]] row; `stamp_headers.py` on
   the new files (add the new dir to its GLOBS); `banner_features.txt` line +
   `patch_banner.py`; `testbed/manifest.yaml` row (the classTag fast-gate fails without it).
@@ -383,8 +499,9 @@ legs. **Every mechanics leg runs in both `ndm=2` and `ndm=3`** (parametrized fix
 5. **UR mechanics** — `getInterpolationGradients` recovers `∂N/∂x` on hex/tet (3D) **and
    quad/tri (2D)** (FD-checked); continuum-rotation tie reproduces `θ = skew(∇u)` (3D
    3-vector) and `θ_z = ½(∂_x u_y − ∂_y u_x)` (2D drilling) for a prescribed host
-   shear/bending field; **moment transmitted** from a constrained rotation into the host
-   force split (2D + 3D); UR auto-off when the node has no rotational DOFs.
+   shear/bending field; **transmitted-moment error reported vs host TYPE and SIZE** (UR-4 —
+   CST/TET4 give a single rigid-spin tie; quantify vs `BezierTet10`), not just the
+   displacement gap; UR auto-off when the node has no rotational DOFs.
 6. **`-enforce al`** — Uzawa drives the U/UR/UP gaps → 0 at moderate `K` (penalty leaves
    `P/K`); multiplier carries the load; `penalty` bit-identical.
 7. **`-bipenalty`** — off bit-identical; `-dtcr` formula + `dtcr=dt`; `-wcap` inverse-β;
@@ -397,18 +514,30 @@ legs. **Every mechanics leg runs in both `ndm=2` and `ndm=3`** (parametrized fix
    quad-block tie as the planar Zone-B analog.
 10. **D9 interface materials** — `-matN Elastic(K)` reproduces the penalty bit-identically;
     `ENT`/`ElasticPPGap` on the normal opens a gap in tension and holds in compression;
-    a softening uniaxial dissipates the right `∮f·dg` (reported in `interfaceEnergy`);
     `ElasticPP` tangential gives a fixed slip force (documented uncoupled-friction check);
-    local frame co-rotates under `-corot`; bipenalty `k_eff` picks up the material initial
-    tangents (2D + 3D).
+    local frame co-rotates under `-corot`. **Split legs (ES-5):** the *softening* leg
+    (`∮f·dg` in `interfaceEnergy`) runs under **DisplacementControl**; the *bipenalty-`k_eff`*
+    leg uses an **elastic/pre-peak** material only. **M6 gap sub-check:** `ElasticPPGap` on the
+    normal with `-bipenalty -dtcr` set from the *open* tangent — confirm the explicit SDOF
+    stays stable as the gap closes (or that the bound must be set from the closed-contact
+    stiffness). (2D + 3D.)
+11. **AL × material × corot (M4/D9-3)** — `-enforce al` + one penalty direction + one material
+    direction + `-corot`: after N commit steps under large frame rotation, the projection of
+    `λ` onto the material axis stays below tolerance (the reprojection purge works); without
+    the purge it leaks (negative control).
 
 ## 9. Phased build order (the implementation plan)
 
-**Phase 0 — kernel extraction (no behavior change).** Pull the rebar element's
-constitutive-agnostic numerics into `LadrunoEmbeddedKernel.h`; refactor
-`LadrunoEmbeddedRebar` to call it; prove **bit-identical** via its existing Zone-A battery
-(`tests/test_ladrunoEmbeddedRebar_element.py`). *Risk: low — pure refactor under a green
-test. Gate: rebar suite unchanged.*
+**Phase 0 — kernel extraction (no behavior change). GO (review-cleared).** Pull the rebar
+element's constitutive-agnostic numerics into a **compiled helper TU
+`LadrunoEmbeddedKernel.{h,cpp}` whose functions take `Domain*`/`Element*`/`Node**` handles as
+explicit parameters** (M3/KX-1 — bake this in from the outset; do **not** attempt a
+header-only OpenSees-free leaf, or `resolveAutoKt`/`resolveBipenalty`/`formBandTraction` will
+hit the wall that they cannot be made handle-free and force a mid-phase re-architecture).
+Refactor `LadrunoEmbeddedRebar` to call it; prove **bit-identical** via its existing Zone-A
+battery (`tests/test_ladrunoEmbeddedRebar_element.py`). *Risk: low — pure refactor under a
+green test; none of the M1–M6 blockers touch the rebar's behavior. Gate: rebar suite
+unchanged.*
 
 **Phase 1 — `LadrunoEmbeddedNode` U + UP, 2D + 3D (no new vanilla surface).** New element
 (33006) over the kernel: isotropic `K_u` (sized to `ndm`), optional `K_p`, `-enforce
@@ -441,6 +570,13 @@ parsing + the contact-friendly defaults. No new vanilla. Gate: Zone-A item 10.*
 Phase 3 = tooling + docs. UR (Phase 2) is the only phase touching vanilla beyond the
 already-shipped virtuals; Phase 2b adds no vanilla surface.
 
+> **Review gate (post-`wf_bbe77ee8`):** **Phase 0 = GO now.** **Hold Phase 1+ until M1–M6
+> (§13) are reflected in the code design** — in particular M1/ES-1 (per-class bipenalty
+> inertia) gates the Phase-1 `K_u`/bipenalty `getMass` and the Phase-2 `K_r`; M2/HON-1
+> (the corrected `K_u = α_u·max|K_host(i,i)|`, no `lch`) gates the Phase-1 auto-scale.
+> Building from the *pre-revision* D3/D5 text would ship a no-op `lch` cancel and an
+> unbounded rotation mode. (This ADR revision folds them in, so the text is now correct.)
+
 ## 10. Risks
 - **R1 (kernel extraction regresses 33005).** Mitigated: Phase 0 is gated bit-identical by
   the shipped rebar battery; the kernel is additive (no contract/serialization change).
@@ -453,14 +589,22 @@ already-shipped virtuals; Phase 2b adds no vanilla surface.
 - **R4 (rotation/pressure penalty conditioning).** Distinct `α_r`/`α_p` (D3) instead of
   ASD's single shared `m_K` — swept in Zone-A item 3; AL (D4) gives the moderate-`K`
   escape if penalty conditioning bites.
-- **R5 (explicit `dt_cr` for the rotation mode).** `k_eff` must include the
-  `lch²`-scaled `K_r` so bipenalty bounds the rotation mode too — covered by D5's
-  `max(...)` over active classes; tested in item 7 with `-rot` on.
+- **R5 (explicit `dt_cr` for the rotation/pressure modes) — the confirmed blocker (M1/ES-1).**
+  A single scalar `k_eff`/`m_p` lumped on translational DOFs **cannot** bound the
+  rotation/pressure modes (different units; `getMass` lumps only `[0,ndm)`). Resolved by D5's
+  **per-class (stiffness, inertia) pairs** — rotational `I_p = m_p·lch²` lumped on the rotation
+  DOFs (then `dt_r = dt_u` under `K_r = K_u·lch²`), pressure `(K_p, m_pp)` or implicit-only.
+  Tested item 7 with `-rot`/`-pressure` on. **Must be in the Phase-1 `getMass` from day one.**
 - **R6 (D9 friction is uncoupled — mis-use risk).** Users may reach for `-matT` expecting
   true Coulomb friction. Mitigated by (a) loud docs ("approximate, fixed slip force, not
   `μ·N`"), (b) pointing to the scoped `LadrunoContact` for coupled friction, (c) the §8
   item-10 test that pins the uncoupled behavior as *intended*. Cohesive/gap/elastic/bond
   uses are exact — the caveat is friction-specific.
+- **R7 (D9 co-rotated-frame tangent is inexact — D9-5).** The `-corot` interface normal drops
+  the `∂e_d/∂u` consistent-tangent term (inherited from the rebar): frame-objective for
+  explicit, converges under step-halving for implicit, but may **slow Newton** for large
+  per-step rotation in stiff-normal contact. Documented in D9.1 + the guide; not a
+  correctness defect (residual stays exact).
 
 ## 11. Ship-time obligations (CLAUDE.md, do in-PR)
 - [[LEDGER_implementations]]: `LadrunoEmbeddedNode` row (ELE 33006) + the
@@ -480,11 +624,43 @@ already-shipped virtuals; Phase 2b adds no vanilla surface.
   the §10 `-enforce`/bipenalty/`-cfl` machinery reused here).
 - **Precedent:** `ASDEmbeddedNodeElement` (Petracca/ASDEA) — tri/tet penalty with optional
   UR/UP; this ADR matches its DOF coverage and exceeds it on hosts/conditioning/explicit.
-- **Kernel pattern:** [[project_ladruno_j2|LadrunoJ2Kernel]] (header-only shared numerics
-  consumed by two element/material classes).
+- **Kernel pattern (with a caveat, M3/KX-1):** [[project_ladruno_j2|LadrunoJ2Kernel]] is the
+  *spirit* (one numeric core, two consumers) but **not** the literal model — J2Kernel is
+  header-only/OpenSees-free, whereas `LadrunoEmbeddedKernel` is a **compiled helper TU** taking
+  framework handles as parameters (its auto-kt/bipenalty/corot paths need `Domain*`/`Node**`).
 - **Interface materials (D9):** `zeroLength`/`zeroLengthContact` (uniaxials along local
   axes); `ENT`, `ElasticPPGap`, `ElasticPP` (OpenSees uniaxials); the scoped `LadrunoContact`
   element (memory `project_ladruno_contact`) for coupled frictional node-to-surface contact.
 - **Continuum rotation:** de Souza Neto et al. (2008) §3; Wriggers (2006) §6 (penalty/AL).
 - **Bipenalty / explicit:** Hetherington & Askes (2009); Belytschko et al. (2014) §6.7.
 - **RC-3D context:** [[19_rc3d_modeling_recipe]], [[22_rc3d_conformal_recipe]].
+
+## 13. Adversarial review record (workflow `wf_bbe77ee8`, 2026-06-03)
+6 reviewers (one per load-bearing claim) → each finding adversarially verified against source
+→ lead synthesis. **33 agents, 26 findings, 25 survived verification, 1 confirmed blocker.
+Verdict: proceed-with-changes; Phase 0 = GO.** Must-fixes folded into the text above:
+
+| ID | Sev | Status | Fix | Where |
+|----|-----|--------|-----|-------|
+| **ES-1 (M1)** | blocker | confirmed | per-DOF-class `(K, inertia)` pairs; rotational `I_p=m_p·lch²` lumped on rotation DOFs (scalar `k_eff`/`m_p` can't bound rotation/pressure) | D5, R5 |
+| **HON-1/ES-2/KX-3 (M2)** | major | confirmed/partial | `K_u = α_u·max\|K_host(i,i)\|` (getInitialStiff diagonal, **no `lch`** — the old formula cancels); `K_r = α_r·K_u·lch²` is NEW work (first `getCharacteristicLength()` call) | D3, Goals |
+| **KX-1 (M3)** | major | confirmed | kernel is a **compiled helper TU** taking framework handles, **not** a header-only J2Kernel leaf | Status, D1, §7, §9 P0, §12 |
+| **D9-3/ES-3 (M4)** | major | confirmed | AL must re-project `λ` off material directions (needed under `-corot` even with no Uzawa step); the *isotropic* tie keeps no such reprojection | D4, D9.2, item 11 |
+| **D7-1 (M5)** | major | confirmed | parse-time `-rot`/`-pressure` mutual-exclusion guard (primary, not setDomain precedence) | D7, item 9 |
+| **ES-4/HON-2 (M6)** | major | partial | bipenalty `k_eff=max(initial tangents)` only for non-stiffening materials; gap-material guard | D9.2, item 10 |
+| UR-1 | minor | confirmed | UR needs `∂N/∂x` **in addition to** `N_i` (translational rows still use weights) | §3 |
+| UR-4 | minor | partial | CST/TET4 `∂N/∂x` constant ⇒ single rigid-spin tie; moment-critical needs higher-order host | §3, item 5 |
+| D9-5 | minor | partial | port the rebar's dropped-`∂e_d/∂u` tangent caveat into D9.1 | D9.1, R7 |
+| D9-4 | minor | partial | D9 material returns **force** (no `bondScale`); energy split carries over "in structure" not verbatim | D9.2 |
+| KX-4 | minor | partial | serialization is per-element, not "inherited for free" | Goals |
+| D8-1 | minor | partial | 3D ndf mapping is unambiguous — don't apply 2D flag-priority in the 3D branch | D7 |
+| REG-1 | minor | confirmed | register PascalCase **+** camelCase aliases; `add_subdirectory` in parent CMake | §7 |
+| REG-2 | minor | confirmed | 33006 free (`classTags.h:924` = last ELE tag 33005) | §7 |
+| UR-2, UR-3, D9-1, D9-2, D9-6, D6-1 | minor | confirmed | **positive verifications** — core formulas/architecture sound, no change | — |
+
+Source cross-checks (worktree `great-chebyshev-643d1a`): `LadrunoEmbeddedRebar.cpp:150-185`
+(resolveAutoKt — getInitialStiff diagonal only), `:190-195` (scalar k_eff), `:304-311` (corot
+transverse λ-reprojection), `:498-521` (getMass lumps `[0,ndm)` only); `Element.h:62/71/87`
+(getCharacteristicLength/getInterpolationWeights/getExplicitCriticalTimeStep present,
+getInterpolationGradients absent); `ASDEmbeddedNodeElement.cpp:277` (parse-time `-rot`/`-p`
+guard); `classTags.h:924` (33005 last ELE tag, 33006 free).
