@@ -8,9 +8,9 @@ Two of the cheap remaining validation rungs from the plan's "Validation status":
 
   * BODY FORCE / SELF-WEIGHT — the ``-b`` body force and the ``eleLoad
     -selfWeight`` path must integrate to the exact total b*V for EVERY
-    formulation. For uri this is the 1-pt centroid integral; for eas it is the
-    2x2x2 N-integral added in formEAS (the ``appliedB`` branch), so this is the
-    first test that exercises eas body loading.
+    formulation. For uri this is the 1-pt centroid integral; for ssp it is the
+    2x2x2 N-integral added in formSSP (the ``appliedB`` branch), so this is the
+    first test that exercises ssp body loading.
 
 (The element MASS matrix is validated separately, dynamically, in
 test_ladrunoBrick_explicit.py — dt_cr scales like sqrt(rho) and the vibration
@@ -51,7 +51,7 @@ def _read_last_row(path):
 # --------------------------------------------------------------------------
 # 1. recorder round-trip: Element recorder must match the live eleResponse
 # --------------------------------------------------------------------------
-@pytest.mark.parametrize("formulation", ["std", "bbar", "uri", "eas"])
+@pytest.mark.parametrize("formulation", ["std", "bbar", "uri", "ssp"])
 @pytest.mark.parametrize("resp", ["stresses", "strains"])
 def test_element_recorder_roundtrip(formulation, resp):
     """Record `resp` (48 = 8 GP x 6) through an Element recorder; the flushed file
@@ -91,13 +91,13 @@ def test_element_recorder_roundtrip(formulation, resp):
 # --------------------------------------------------------------------------
 # 2. body force / self-weight integrates to b*V for every formulation
 # --------------------------------------------------------------------------
-@pytest.mark.parametrize("formulation", ["std", "bbar", "uri", "eas"])
+@pytest.mark.parametrize("formulation", ["std", "bbar", "uri", "ssp"])
 def test_self_weight_total_reaction(formulation):
     """eleLoad -selfWeight (scaling the construction -b) must produce a total base
     reaction equal to the exact body-force resultant b*V. V=1 for the unit cube,
     so the vertical base reaction must equal |bz| for ALL formulations — the
     body-force integral is exact (sum_I N_I = 1) regardless of the rule. This is
-    the first gate to exercise eas body loading (formEAS appliedB 2x2x2 loop)."""
+    the first gate to exercise ssp body loading (formSSP appliedB 2x2x2 loop)."""
     bz = -10.0                       # force per unit volume, downward
     _build_cube(formulation, extra=["-b", 0.0, 0.0, bz])
     for n in (1, 2, 3, 4):           # clamp the z- (base) face fully
@@ -140,7 +140,7 @@ def test_self_weight_total_is_formulation_independent():
         ops.reactions()
         return sum(ops.nodeReaction(n, 3) for n in (1, 2, 3, 4))
 
-    vals = [_Rz(f) for f in ("std", "bbar", "uri", "eas")]
+    vals = [_Rz(f) for f in ("std", "bbar", "uri", "ssp")]
     for v in vals:
         assert abs(abs(v) - 7.0) <= 1e-6 * 7.0 + 1e-9, f"weight {v} != 7"
     assert max(vals) - min(vals) <= 1e-6, f"weight resultant varies across formulations: {vals}"

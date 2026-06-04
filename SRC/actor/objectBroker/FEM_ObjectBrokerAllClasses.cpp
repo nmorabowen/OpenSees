@@ -48,6 +48,7 @@
 #include "convergenceTest/CTestEnergyIncr.h" 
 #include "convergenceTest/CTestRelativeEnergyIncr.h"
 #include "convergenceTest/CTestFixedNumIter.h"
+#include "convergenceTest/LadrunoStabilizedUnbalance.h"   // Ladruno
 
 // graph numbering schemes
 #include "graph/numberer/RCM.h"
@@ -110,6 +111,9 @@
 #include "FatigueMaterial.h"
 #include "ReinforcingSteel.h"
 #include "HardeningMaterial.h"
+#include "LadrunoUniaxialJ2.h"   // Ladruno — uniaxial combined iso + Chaboche AF kinematic J2
+#include "LadrunoRebarBuckling.h"   // Ladruno — rebar-buckling wrapper (Dhakal-Maekawa)
+#include "LadrunoBondSlip.h"   // Ladruno — 1D bond-slip tau-s (CEB-FIP MC2010)
 #include "HystereticMaterial.h"
 #include "HystereticSMMaterial.h"
 #include "OOHystereticMaterial.h"
@@ -245,6 +249,11 @@
 #include "ElasticIsotropicAxiSymm.h"
 #include "ElasticIsotropicThreeDimensional.h"
 #include "LogStrainNDMaterial.h"   // Ladruno — Hencky finite-strain adaptor (seam 3)
+#include "LadrunoJ2.h"             // Ladruno — combined iso + Chaboche AF kinematic J2
+#include "LadrunoJ2Finite.h"       // Ladruno — finite-strain-native combined-hardening J2 (co-rotating backstress)
+#include "InitDefGradNDMaterial.h" // Ladruno — multiplicative staged-activation wrapper (stress-free birth)
+#include "StagedStrainNDMaterial.h" // Ladruno — small-strain (2D+3D) auto-capturing staged-activation wrapper
+#include "LadrunoRCConcrete.h"     // Ladruno — RC plastic-damage + MCFT compression softening (ADR 19)
 #include "ElasticOrthotropicThreeDimensional.h"
 #include "ElasticOrthotropicPlaneStress.h"
 #include "J2PlaneStrain.h"
@@ -461,6 +470,11 @@
 #include "brick/Brick.h"
 #include "brick/BbarBrick.h"
 #include "ladrunoBrick/LadrunoBrick.h"	// N. Mora-Bowen (Ladruno)
+#include "bezierTriangle/BezierTri6.h"		// Ladruno (broker reconstruction)
+#include "bezierTetrahedron/BezierTet10.h"	// Ladruno (broker reconstruction)
+#include "ladrunoIMKBeam/LadrunoIMKBeam.h"	// N. Mora-Bowen (Ladruno)
+#include "ladrunoIMKBeam/LadrunoIMKBeam2d.h"	// N. Mora-Bowen (Ladruno)
+#include "ladrunoEmbeddedRebar/LadrunoEmbeddedRebar.h"	// N. Mora-Bowen (Ladruno)
 #include "joint/Joint2D.h"		// Arash
 #include "joint/Inno3DPnPJoint.h" // Cristian Miculas
 #include "twoNodeLink/TwoNodeLink.h"
@@ -654,6 +668,8 @@
 
 // integrator header files
 #include "ArcLength.h"
+#include "LadrunoArcLength.h"   // Ladruno
+#include "LadrunoIndirectControl.h"   // Ladruno
 #include "DisplacementControl.h"
 #ifdef _PARALLEL_PROCESSING
 #include "DistributedDisplacementControl.h"
@@ -695,6 +711,7 @@
 #include "ExplicitBathe.h"
 #include "ExplicitBatheLNVD.h"
 #include "CentralDifferenceLadruno.h"
+#include "LadrunoDynamicRelaxation.h"   // Ladruno
 #include "NewmarkHSFixedNumIter.h"
 #include "NewmarkHSIncrLimit.h"
 #include "NewmarkHSIncrReduct.h"
@@ -1035,7 +1052,22 @@ FEM_ObjectBrokerAllClasses::getNewElement(int classTag)
     case ELE_TAG_LadrunoBrick:		// N. Mora-Bowen (Ladruno)
       return new LadrunoBrick();
 
-    case ELE_TAG_SSPquad:          
+    case ELE_TAG_BezierTri6:		// Ladruno (broker reconstruction)
+      return new BezierTri6();
+
+    case ELE_TAG_BezierTet10:		// Ladruno (broker reconstruction)
+      return new BezierTet10();
+
+    case ELE_TAG_LadrunoIMKBeam:	// N. Mora-Bowen (Ladruno)
+      return new LadrunoIMKBeam();
+
+    case ELE_TAG_LadrunoIMKBeam2d:	// N. Mora-Bowen (Ladruno)
+      return new LadrunoIMKBeam2d();
+
+    case ELE_TAG_LadrunoEmbeddedRebar:	// N. Mora-Bowen (Ladruno)
+      return new LadrunoEmbeddedRebar();
+
+    case ELE_TAG_SSPquad:
       return new SSPquad();
       
     case ELE_TAG_SSPquadUP:     
@@ -1867,6 +1899,15 @@ FEM_ObjectBrokerAllClasses::getNewUniaxialMaterial(int classTag)
 	case MAT_TAG_Hardening:
 		return new HardeningMaterial();
 
+	case MAT_TAG_LadrunoUniaxialJ2:               // Ladruno
+		return new LadrunoUniaxialJ2();
+
+	case MAT_TAG_LadrunoRebarBuckling:            // Ladruno
+		return new LadrunoRebarBuckling();
+
+	case MAT_TAG_LadrunoBondSlip:                 // Ladruno
+		return new LadrunoBondSlip();
+
 	case MAT_TAG_PySimple1:
 		return new PySimple1();
 
@@ -2286,6 +2327,21 @@ FEM_ObjectBrokerAllClasses::getNewNDMaterial(int classTag)
   case ND_TAG_LogStrainNDMaterial:               // Ladruno — Hencky finite-strain adaptor (seam 3)
     return new LogStrainNDMaterial();
 
+  case ND_TAG_LadrunoJ2:                          // Ladruno — combined iso + Chaboche AF kinematic J2
+    return new LadrunoJ2();
+
+  case ND_TAG_LadrunoJ2Finite:                    // Ladruno — finite-strain-native combined-hardening J2 (co-rotating backstress)
+    return new LadrunoJ2Finite();
+
+  case ND_TAG_InitDefGradNDMaterial:              // Ladruno — multiplicative staged-activation wrapper (stress-free birth)
+    return new InitDefGradNDMaterial();
+
+  case ND_TAG_StagedStrainNDMaterial:             // Ladruno — small-strain (2D+3D) auto-capturing staged-activation wrapper
+    return new StagedStrainNDMaterial();
+
+  case ND_TAG_LadrunoRCConcrete:                  // Ladruno — RC plastic-damage + MCFT compression softening (ADR 19)
+    return new LadrunoRCConcrete();
+
   case ND_TAG_ElasticOrthotropicThreeDimensional:
     return new ElasticOrthotropicThreeDimensional();
 
@@ -2565,9 +2621,12 @@ FEM_ObjectBrokerAllClasses::getNewConvergenceTest(int classTag)
 	case CONVERGENCE_TEST_CTestRelativeEnergyIncr:  
 	     return new CTestRelativeEnergyIncr();
 	     
-	case CONVERGENCE_TEST_CTestFixedNumIter:  
+	case CONVERGENCE_TEST_CTestFixedNumIter:
 	     return new CTestFixedNumIter();
-	     
+
+	case CONVERGENCE_TEST_LadrunoStabilizedUnbalance:   // Ladruno
+	     return new LadrunoStabilizedUnbalance();
+
 	default:
 	     opserr << "FEM_ObjectBrokerAllClasses::getNewConvergenceTest - ";
 	     opserr << " - no ConvergenceTest type exists for class tag ";
@@ -3018,10 +3077,16 @@ FEM_ObjectBrokerAllClasses::getNewStaticIntegrator(int classTag)
 	     return new DistributedDisplacementControl(); // must recvSelf
 #endif	     
 	     
-	case INTEGRATOR_TAGS_ArcLength:  
+	case INTEGRATOR_TAGS_ArcLength:
 	     return new ArcLength(1.0);      // must recvSelf
 
-	     
+	case INTEGRATOR_TAGS_LadrunoArcLength:   // Ladruno
+	     return new LadrunoArcLength(1.0);    // must recvSelf
+
+	case INTEGRATOR_TAGS_LadrunoIndirectControl:   // Ladruno
+	     return new LadrunoIndirectControl();   // must recvSelf
+
+
 	default:
 	     opserr << "FEM_ObjectBrokerAllClasses::getNewStaticIntegrator - ";
 	     opserr << " - no StaticIntegrator type exists for class tag ";
@@ -3059,6 +3124,9 @@ FEM_ObjectBrokerAllClasses::getNewTransientIntegrator(int classTag)
 
 	case INTEGRATOR_TAGS_CentralDifferenceLadruno:
 	     return new CentralDifferenceLadruno();   // must recvSelf
+
+	case INTEGRATOR_TAGS_LadrunoDynamicRelaxation:   // Ladruno
+	     return new LadrunoDynamicRelaxation();       // must recvSelf
 
 	case INTEGRATOR_TAGS_CentralDifferenceAlternative:
 	     return new CentralDifferenceAlternative();      // must recvSelf
@@ -3174,11 +3242,17 @@ FEM_ObjectBrokerAllClasses::getNewIncrementalIntegrator(int classTag)
 	     return new LoadControl(1.0,1,1.0,1.0); // must recvSelf
 	    
 	     
-	case INTEGRATOR_TAGS_ArcLength:  
+	case INTEGRATOR_TAGS_ArcLength:
 	     return new ArcLength(1.0);      // must recvSelf
-	     	     
-	     
-	case INTEGRATOR_TAGS_Newmark:  
+
+	case INTEGRATOR_TAGS_LadrunoArcLength:   // Ladruno
+	     return new LadrunoArcLength(1.0);    // must recvSelf
+
+	case INTEGRATOR_TAGS_LadrunoIndirectControl:   // Ladruno
+	     return new LadrunoIndirectControl();   // must recvSelf
+
+
+	case INTEGRATOR_TAGS_Newmark:
 	     return new Newmark();
 
 #ifdef _PARALLEL_PROCESSING	     

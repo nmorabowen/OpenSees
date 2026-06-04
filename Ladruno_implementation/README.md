@@ -34,6 +34,17 @@ of what diverged from upstream:
 > regenerates the `FEATURES-START/END` blocks in `tclMain.cpp` (Tcl) and
 > `PythonModule.cpp` (openseespy/mp).
 
+## Element selection & usage
+
+- [[ladruno_continuum_elements_guide]] — **Continuum Elements — Modeling &
+  FE-Selection Guide**: the single decision desk for picking between
+  `BezierTri6` (2D), `BezierTet10` (3D tet) and `LadrunoBrick` (3D hex) —
+  selection axes, a decision procedure, per-element intended-use profiles, and
+  cross-cutting modeling guidance. Links down to the per-element references.
+  (reference)
+- [[LadrunoBrick_reference]] — the brick's living theory/implementation/usage
+  reference (the deep doc the selection guide points to). (reference)
+
 ## Plans
 
 Forward-looking planning docs for new functionality we want to add to this OpenSees fork. Each plan lives in its own file and walks through:
@@ -66,6 +77,36 @@ When starting a new plan, copy [[_template]] and rename.
 - [[06_bezier_tet10]] — **BezierTet10**: 10-node quadratic Bézier tetrahedron (Kadapa 2018 §5) — the 3D sibling of [[04_bezier_elements]] (deferred there under D10). Non-negative lumped mass `ρVe/10` (Eq. 57) for explicit 3D dynamics + 3D B-bar for near-incompressibility. v1 = straight-sided. (ADR, draft)
 - **Ladruno brick element(s)** — our own higher-order hexahedral element(s), the solid-side sibling of BezierTri6 (planned). Will implement the [[ladruno_element_contract]] for zero-edit Ladruno recording, with non-negative lumped mass for explicit dynamics and B-bar/assumed-strain against volumetric locking. Scope/order TBD — plan doc to be written. (draft, no plan file yet)
 - [[ladruno_apegmsh_contract]] — **apeGmsh feature reference**: the fork-only features apeGmsh emits/reads, with the canonical command and apeGmsh touch-points for each. The companion to [[LEDGER_implementations]] (which is authoritative for tags + PRs). (reference)
+- [[19_ladruno_rc_shell_adr]] — **Ladruno RC shell stack**: a header-only `LadrunoRCKernel.h` (cloning [[10_ladruno_j2_plasticity|LadrunoJ2Kernel]]'s "one core, many views" pattern) that adds MCFT compression softening + degrading aggregate-interlock shear + tension stiffening to `ASDConcrete3D`'s plastic-damage spine, delivered as an order-5 `PlateFiber` `nDMaterial` view that drops into the **unmodified** `ASDShellQ4` + `LayeredShellFiberSection` seam. 5-phase path; Phase 1 closes the squat-wall in-plane-shear gap with zero element/section edit. Designed via a 6-dimension design-panel + adversarial workflow (β-on-strength-axis is the blocking Phase-1 gate). (ADR, draft)
+
+## Reference guides (shipped features)
+
+User-facing, living reference docs for features already on `ladruno` (theory →
+architecture → OpenSees implementation → usage), distinct from the forward-looking
+plans above:
+
+- [[Ladruno_materials_guide]] — **the material catalog**: every fork-authored
+  constitutive material (the J2 plasticity core, the finite-strain & staged
+  wrappers, the steel/rebar overlays), organized by family with theory, OpenSees
+  command, and use case. The single entry point for materials; links the per-material
+  guides below.
+- [[finite_strain_trifecta_guide]] — **the large-deformation stack**: how the
+  element geometry layer (`-geom corot|finite`), the Hencky material wrapper
+  (`nDMaterial LogStrain`), and the constitutive law (`LadrunoJ2`) compose into
+  finite-strain elastoplasticity. The single entry point; links the three per-leg
+  guides below.
+- [[LadrunoBrick_reference]] — the unified hex element (formulations + geometry seams).
+- [[LadrunoJ2_guide]] — combined-hardening von Mises (J2) `nDMaterial`.
+- [[LadrunoUniaxialJ2_guide]] — the uniaxial J2 twin (fibers/truss/zeroLength).
+- [[LadrunoJ2Finite_guide]] — finite-strain-native combined J2 (co-rotating backstress).
+- [[LogStrain_guide]] — the Hencky log-strain finite-strain material adaptor.
+- [[LadrunoStaged_guide]] — the `Staged*` family (`InitDefGrad` finite / `StagedStrain` small).
+- [[LadrunoLemaitreDamage_guide]] — the Lemaitre ductile-damage mode on the J2 family.
+- [[LadrunoRebarBuckling_guide]] — reinforcing-bar buckling overlay `uniaxialMaterial`.
+- [[LadrunoBondSlip_guide]] — 1D bond-slip τ–s `uniaxialMaterial` for embedded rebar.
+- [[solid_transformation_wrapper]] — the solid geometry-method layer (linear/corot/finite).
+- [[09_finite_strain_material_wrapper]] — the log-strain (`LogStrain`) adaptor.
+- [[18_finite_strain_validation_report]] — the finite-strain V&V execution record.
 
 ## Companion folder
 

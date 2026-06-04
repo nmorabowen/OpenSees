@@ -12,6 +12,27 @@
 **  persist after the sink creates the result group.                       **
 ** ********************************************************************** */
 
+// LADRUNO-HEADER-START
+// ==========================================================================
+//
+//   ▄█          ▄████████ ████████▄     ▄████████ ███    █▄  ███▄▄▄▄    ▄██████▄
+//  ███         ███    ███ ███   ▀███   ███    ███ ███    ███ ███▀▀▀██▄ ███    ███
+//  ███         ███    ███ ███    ███   ███    ███ ███    ███ ███   ███ ███    ███
+//  ███         ███    ███ ███    ███  ▄███▄▄▄▄██▀ ███    ███ ███   ███ ███    ███
+//  ███       ▀███████████ ███    ███ ▀▀███▀▀▀▀▀   ███    ███ ███   ███ ███    ███
+//  ███         ███    ███ ███    ███ ▀███████████ ███    ███ ███   ███ ███    ███
+//  ███▌    ▄   ███    ███ ███   ▄███   ███    ███ ███    ███ ███   ███ ███    ███
+//  █████▄▄██   ███    █▀  ████████▀    ███    ███ ████████▀   ▀█   █▀   ▀██████▀
+//  ▀                                   ███    ███
+//
+//  Ladruno — a research fork of OpenSees
+//  Created by:  Nicolas Mora Bowen  ·  Patricio Palacios  ·  José Abell  ·  Guppi
+//
+// Header auto-stamped by Ladruno_scripts/stamp_headers.py (art: banner_ASCII.txt).
+// Do not hand-edit between the markers; edit the script/art and re-run instead.
+// ==========================================================================
+// LADRUNO-HEADER-END
+
 #include "Ladruno_ElementResults.h"
 
 #include <sstream>

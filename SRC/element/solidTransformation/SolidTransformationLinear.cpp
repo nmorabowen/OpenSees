@@ -4,6 +4,27 @@
 **                                                                    **
 ** ****************************************************************** */
 
+// LADRUNO-HEADER-START
+// ==========================================================================
+//
+//   ▄█          ▄████████ ████████▄     ▄████████ ███    █▄  ███▄▄▄▄    ▄██████▄
+//  ███         ███    ███ ███   ▀███   ███    ███ ███    ███ ███▀▀▀██▄ ███    ███
+//  ███         ███    ███ ███    ███   ███    ███ ███    ███ ███   ███ ███    ███
+//  ███         ███    ███ ███    ███  ▄███▄▄▄▄██▀ ███    ███ ███   ███ ███    ███
+//  ███       ▀███████████ ███    ███ ▀▀███▀▀▀▀▀   ███    ███ ███   ███ ███    ███
+//  ███         ███    ███ ███    ███ ▀███████████ ███    ███ ███   ███ ███    ███
+//  ███▌    ▄   ███    ███ ███   ▄███   ███    ███ ███    ███ ███   ███ ███    ███
+//  █████▄▄██   ███    █▀  ████████▀    ███    ███ ████████▀   ▀█   █▀   ▀██████▀
+//  ▀                                   ███    ███
+//
+//  Ladruno — a research fork of OpenSees
+//  Created by:  Nicolas Mora Bowen  ·  Patricio Palacios  ·  José Abell  ·  Guppi
+//
+// Header auto-stamped by Ladruno_scripts/stamp_headers.py (art: banner_ASCII.txt).
+// Do not hand-edit between the markers; edit the script/art and re-run instead.
+// ==========================================================================
+// LADRUNO-HEADER-END
+
 // Authors: Nicolas Mora Bowen, Guppi (Ladruño)
 // Created: 06/2026
 //
@@ -11,6 +32,7 @@
 
 #include <SolidTransformationLinear.h>
 #include <SolidTransformationFinite.h>   // for the create() factory (v3)
+#include <SolidTransformationCorot.h>    // for the create() factory (v2)
 #include <Matrix.h>
 #include <Vector.h>
 
@@ -91,7 +113,8 @@ SolidTransformation::create(int methodID)
     return new SolidTransformationLinear();
   case METHOD_FINITE:
     return new SolidTransformationFinite();
-  // case METHOD_COROT:  return new SolidTransformationCorot();   // v2
+  case METHOD_COROT:
+    return new SolidTransformationCorot();
   default:
     return 0;
   }

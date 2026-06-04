@@ -61,6 +61,31 @@ class Element : public DomainComponent
     virtual int getNumDOF(void) =0;
     virtual double getCharacteristicLength(void);
 
+    // Ladruno (ADR 20 §9): single source of truth for an element's shape-function
+    // weights at a natural coordinate. Given the element's natural coords `xi`
+    // (hex: (ξ,η,ζ)∈[-1,1]³; tet: barycentric (L1,L2,L3)), fill `N` with the nodal
+    // interpolation weights N_i so that  f(xi) = Σ_i N_i f_i  for any nodal field.
+    // Used by LadrunoEmbeddedRebar to embed a rebar node in a non-matching solid
+    // host without re-supplying the weights by hand. Default = not implemented
+    // (returns -1, leaves N untouched); host elements override and return 0.
+    virtual int getInterpolationWeights(const Vector &xi, Vector &N);
+
+    // Ladruno (ADR 20 §10.6.1): an element's self-reported explicit critical time
+    // step (seconds). A non-negative return FULLY REPLACES the per-element
+    // K v = λ M v eigensolve for this element — CriticalTimeStep folds the value
+    // into its running minimum and SKIPS the eigensolve (it does NOT take
+    // min(self, eigensolve)). Default -1 = "no opinion" (the eigensolve governs).
+    // CONTRACT: override (with a value > 0) ONLY when this element's per-element
+    // pencil would contribute nothing meaningful on its own — i.e. its real
+    // stability bound is invisible to the eigensolve. Returning > 0 while the
+    // element ALSO carries a genuine stiff/massive mode would silently drop that
+    // mode. The motivating case is LadrunoEmbeddedRebar's bipenalty bound: its host
+    // DOFs are massless in the per-element problem, so they slave out the
+    // constraint → λ_max=0 (the eigensolve sees no bound), and the self-report is
+    // the only signal. An element that sometimes has a real mode should return -1
+    // in that regime so the eigensolve governs.
+    virtual double getExplicitCriticalTimeStep(void);
+
     // methods dealing with committed state and update
     virtual int commitState(void);    
     virtual int revertToLastCommit(void) = 0;        

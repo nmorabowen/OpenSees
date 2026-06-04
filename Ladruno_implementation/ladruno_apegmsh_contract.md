@@ -49,6 +49,7 @@ habit as the ledgers, no tooling.
 | **EnergyBalance recorder** | `recorder EnergyBalance -file f [-time] [-region tag ...] [-csv\|-xml\|-binary\|-tcp addr port] [-precision N] [-scientific] [-closeOnWrite]` | recorder emit; per-region columns `KE IE DW ULW RES ERR`. **Text sidecar**, *not* MPCO — route to a text reader. The same energy math now also lands inside `.ladruno` (see MPCO row, ADR D8), so prefer that when MPCO is already on. | shipped |
 | **Ladruno** | `recorder ladruno file -N <nodal...> -E <element...> [-G energy <regionTag...>] -T dt -R region` | `_response_catalog` `IntRule` enum **must match** `ladruno::detail::ElementIntegrationRuleType`; `Results.from_ladruno` reader keyed on `.ladruno` `FORMAT_VERSION`; partition discovery regex `^(?P<stem>.+?)\.part-(?P<idx>\d+)\.ladruno$`; consumes `basisInfo`/`QUADRATURE` self-declaration (new conforming elements need *no* recorder edit). See the schema notes below. | shipped (schema actively evolving — pin to `FORMAT_VERSION`) |
 | **Analysis monitor** (live) | `recorder Monitor -node <n…> -dof <d…> -resp disp\|vel\|accel\|reaction -sink file.h5 [-every K] [-hz H] [-region tag]` → SWMR-HDF5 stream tailable *while the run is live*; stop via `remove recorder $tag` | **apeGmsh must implement a consumer** — a typed `ops.recorder.Monitor(…)` emitter + a live tailing reader (open `swmr=True`, `ds.id.refresh()`) feeding the viewer's live plots. File is self-describing (`COLUMNS` var-strings, `STEP`/`TIME`/`FRAMES`), `FORMAT="ladruno-monitor"` `FORMAT_VERSION=1`. Also a valid at-rest file (read post-run like any results h5). class tag `RECORDER_TAGS_LadrunoMonitorRecorder`=33002. | **shipped (v1, sequential, nodal scalars)** — see [[08_analysis_monitor]] | 
+| **Embedded reinforcement** (`LadrunoEmbeddedRebar` + `LadrunoBondSlip`) | `element LadrunoEmbeddedRebar tag rebarNode {nHost h… \| -host eleTag} {-shape N… \| -xi ξ…} -dir dx dy [dz] (-perfect kAxial \| -bond matTag [-bondScale πd·Ltrib]) [-kt {k\|auto} -ktAlpha a] [-corot -xiB ξ…] [-enforce penalty\|al] [-bipenalty {-dtcr dt \| -wcap β}]`; axial law `uniaxialMaterial LadrunoBondSlip tag τmax s1 s2 s3 τf α [-Gf Gf] [-s0 s0]` | **apeGmsh owns the inverse map** (global bar point → host ξ) and should ship a `g.reinforce(host=<set>, bars=<set>, bond=…, enforce=…, explicit=…)` generator: lay out `corotTruss`/beam rebar along bar paths, locate the host + inverse-map each rebar node to ξ, emit `-host -xi` primitives (host owns the weights via `getInterpolationWeights`). **`-xi` is 3D-only** (LadrunoBrick/BezierTet10 override it); 2D hosts need apeGmsh-computed `-shape`. ELE **33005** / MAT **33002** (read live). | **shipped (element + §10 roadmap); apeGmsh `g.reinforce` generator TO IMPLEMENT** — full grammar/theory in [[LadrunoEmbeddedRebar_guide]] |
 | **Ladruno brick element(s)** | TBD — higher-order hex, sibling to BezierTri6 on the solid side; will self-declare via the element contract | not yet — heads-up for the apeGmsh element registry. | draft (no plan file yet) |
 | **OpenSeesPyMP** | `import openseesmp` (per-rank MPI Python module) | affects which engine `Results.run()` drives (`openseespy` vs `openseesmp`). | shipped |
 
@@ -234,6 +235,51 @@ apeGmsh's consumer is not).**
 - **Selection ↔ picker:** the `COLUMNS` labels are authoritative and self-describing;
   drive the viewer's channel picker straight off them (no per-feature shim).
 
+### Embedded reinforcement (`LadrunoEmbeddedRebar` + `LadrunoBondSlip`) — **`g.reinforce` generator TO IMPLEMENT on apeGmsh side**
+
+**OpenSees side.** A penalty **coupling** element (ELE **33005**) that ties one
+discrete rebar node to a solid host element's nodes via shape-function weights, so
+a rebar mesh embeds in a **non-matching** concrete mesh. **Translations-only** tie
+(the bar's own axial stiffness lives on a separate `corotTruss`/beam). Axial law:
+perfect bond (`-perfect kAxial`) or a `LadrunoBondSlip` τ–s law (MAT **33002**,
+CEB-FIP/MC2010 backbone; `-bond matTag -bondScale πd·Ltrib`). Host-agnostic:
+`-host eleTag -xi ξ η ζ` lets the host own the weights via `getInterpolationWeights`
+(**3D hosts only today** — LadrunoBrick trilinear, BezierTet10 Bernstein), while
+`-shape N…` accepts apeGmsh-supplied weights for any host. Plus `-kt auto`
+(host-stiffness-scaled transverse penalty), `-corot` (objective under large host
+rotation), `-enforce penalty|al` (augmented Lagrangian → near-exact bond at
+moderate stiffness), and `-bipenalty -dtcr|-wcap` (explicit critical-time-step
+control). **Full grammar, theory, responses, and use cases: [[LadrunoEmbeddedRebar_guide]].**
+
+**Recommended apeGmsh approach (the deliverable — element shipped, generator not).**
+- **Ship a `g.reinforce(host=<set>, bars=<set>, bond=…, enforce=…, explicit=…)`
+  generator.** This is naturally apeGmsh-side: the irreducible step is **point
+  location / inverse map** (global bar point → host natural coord ξ), which apeGmsh
+  owns (it has the geometry + mesh). It should:
+  1. lay out longitudinal/transverse rebar as `corotTruss` (default) or beam
+     elements along the bar paths, carrying the steel material
+     ([[LadrunoUniaxialJ2_guide]] / [[LadrunoRebarBuckling_guide]]);
+  2. for each rebar node, find the containing host element and **inverse-map to ξ**
+     with a *guarded* Newton (relative tolerance, det/condition guard, explicit
+     out-of-bounds policy — ADR 20 D3);
+  3. emit `element LadrunoEmbeddedRebar … -host <hostEle> -xi ξ η ζ -dir … (-perfect …
+     | -bond <LadrunoBondSlip> -bondScale <πd_b·Ltrib>)` — prefer **`-xi`** (host owns
+     the weights, single source of truth) over emitting `-shape`;
+  4. for the `-bond` path, emit the `LadrunoBondSlip` material and compute
+     `bondScale = πd_b · L_trib` from the bar geometry.
+- **Explicit runs:** add `-bipenalty -dtcr <dt>` (or `-wcap β`) so the stiff penalty
+  tie doesn't collapse the explicit step, then wire `ops.criticalTimeStep()` (now
+  accounts for the ties via the §10.6.1 seam) into the same auto-dt helper as the
+  explicit integrators above.
+- **2D hosts:** no element implements `getInterpolationWeights` in 2D yet, so for a
+  2D quad/tri host apeGmsh must compute the **`-shape`** weights itself (bilinear /
+  area coords); 3D hosts (LadrunoBrick/BezierTet10) take `-xi`.
+- **Node-on-continuum ties (a frame on a 2D boundary, e.g. a tunnel lining):
+  route to the upstream `ASDEmbeddedNodeElement`, not this element.** ASD is
+  2D-native and does its own projection; `LadrunoEmbeddedRebar` is the
+  *bar-in-solid* tool (anisotropic axial bond + transverse penalty). Recorded so the
+  generator picks the right tie for each case.
+
 ## Related docs (the normative detail)
 
 This is a quick reference; the deep specs live next door:
@@ -243,6 +289,11 @@ This is a quick reference; the deep specs live next door:
 - [[ladruno_schema_v1]] — the on-disk `.ladruno` HDF5 layout.
 - [[bezier_apegmsh_integration]] — BezierTri6 direct-drive round-trip + the
   two-environment (py3.11 apeGmsh / py3.12 fork build) split.
+- [[LadrunoEmbeddedRebar_guide]] — embedded-reinforcement coupling element: full
+  grammar, theory (tie, anisotropic traction, penalty/AL, co-rot, bipenalty), and
+  the `g.reinforce` use cases.
+- [[20_ladruno_embedded_reinforcement_adr]] — embedded reinforcement ADR (D1–D6 +
+  the §10 Mode-P roadmap; the guarded inverse-map contract is D3).
 - [[LEDGER_implementations]] — authoritative class tags + shipping PRs.
 
 ## Maintenance log
@@ -268,3 +319,11 @@ This is a quick reference; the deep specs live next door:
   tag 33002) — shipped v1 on the OpenSees side, but its apeGmsh consumer (typed
   emitter + live tailing reader/viewer + at-rest `from_monitor`) is **not yet
   implemented and must be**. See [[08_analysis_monitor]].
+- 2026-06-04 — Added **Embedded reinforcement** (`LadrunoEmbeddedRebar` ELE 33005 +
+  `LadrunoBondSlip` MAT 33002): the element + bond-slip + full §10 roadmap (`-host`/
+  `-xi`, `-kt auto`, `-corot`, `-enforce penalty|al`, `-bipenalty` + the `-cfl`
+  seam) are **shipped**; the apeGmsh **`g.reinforce` generator** (inverse map → emit
+  `-host -xi` primitives, `LadrunoBondSlip` + `bondScale`, `-bipenalty` for explicit)
+  is **TO IMPLEMENT**. Full grammar/theory/use in the new [[LadrunoEmbeddedRebar_guide]].
+  Recorded the routing rule: node-on-continuum ties (frame on a 2D boundary) go to
+  upstream `ASDEmbeddedNodeElement`, not this bar-in-solid element.

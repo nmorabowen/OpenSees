@@ -74,7 +74,15 @@ def check_constant_stress(ele_tag, n_gauss, target_stress, E, strain_ref,
 
 def uniaxial_tangent_fd(mat_tag, strain0, dstrain=1e-7, rtol=TANGENT_FD_RTOL):
     """T0m: central finite-difference the consistent tangent of a uniaxial
-    material against getTangent() at strain0. Returns (k_analytic, k_fd)."""
+    material against getTangent() at strain0. Returns (k_analytic, k_fd).
+
+    WARNING — valid only for PATH-INDEPENDENT (nonlinear-elastic) materials.
+    OpenSees ``setStrain`` calls ``setTrialStrain`` + ``commitState`` (see
+    OpenSeesCommandsPython.cpp), so for a plasticity material the ``strain0-d``
+    probe UNLOADS elastically and the central difference returns ~(E+E_alg)/2,
+    not the consistent tangent. For path-dependent materials probe each point as
+    an independent one-step return from a fresh material instead (see the V6 test
+    in tests/test_ladrunoUniaxialJ2_material.py)."""
     ops.testUniaxialMaterial(int(mat_tag))
     ops.setStrain(strain0)
     k = ops.getTangent()

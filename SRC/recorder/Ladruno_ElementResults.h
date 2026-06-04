@@ -10,6 +10,27 @@
 **  shell keyword swap, section-after-fiber, 1-based→0-based gp). The      **
 **  ElementResultSource adapter + basisInfo stub follow (Step 2/3).        **
 ** ********************************************************************** */
+
+// LADRUNO-HEADER-START
+// ==========================================================================
+//
+//   ▄█          ▄████████ ████████▄     ▄████████ ███    █▄  ███▄▄▄▄    ▄██████▄
+//  ███         ███    ███ ███   ▀███   ███    ███ ███    ███ ███▀▀▀██▄ ███    ███
+//  ███         ███    ███ ███    ███   ███    ███ ███    ███ ███   ███ ███    ███
+//  ███         ███    ███ ███    ███  ▄███▄▄▄▄██▀ ███    ███ ███   ███ ███    ███
+//  ███       ▀███████████ ███    ███ ▀▀███▀▀▀▀▀   ███    ███ ███   ███ ███    ███
+//  ███         ███    ███ ███    ███ ▀███████████ ███    ███ ███   ███ ███    ███
+//  ███▌    ▄   ███    ███ ███   ▄███   ███    ███ ███    ███ ███   ███ ███    ███
+//  █████▄▄██   ███    █▀  ████████▀    ███    ███ ████████▀   ▀█   █▀   ▀██████▀
+//  ▀                                   ███    ███
+//
+//  Ladruno — a research fork of OpenSees
+//  Created by:  Nicolas Mora Bowen  ·  Patricio Palacios  ·  José Abell  ·  Guppi
+//
+// Header auto-stamped by Ladruno_scripts/stamp_headers.py (art: banner_ASCII.txt).
+// Do not hand-edit between the markers; edit the script/art and re-run instead.
+// ==========================================================================
+// LADRUNO-HEADER-END
 #ifndef Ladruno_ElementResults_h
 #define Ladruno_ElementResults_h
 

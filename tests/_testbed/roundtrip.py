@@ -32,12 +32,21 @@ def setresponse_smoke(ele_tag, responses):
         )
 
 
-def database_roundtrip(build_fn, probe_nodes, ndf, dbname="ladruno_rt", rtol=1e-10):
+def database_roundtrip(build_fn, probe_nodes, ndf, dbname="ladruno_rt", rtol=1e-10,
+                       probe_fn=None):
     """Build -> solve -> save to FE_Datastore -> wipe -> rebuild skeleton ->
     restore -> assert committed nodal disp is recovered bit-for-bit.
 
     build_fn() must construct the full model and run one analyze() step.
     Skips (does not fail) if this OpenSees build lacks database support.
+
+    probe_fn (optional): a 0-arg callable returning a list of floats describing
+    ELEMENT-OWNED state (e.g. lambda: ops.eleResponse(tag, 'stiff')). Captured
+    before save and after restore and asserted bit-for-bit. Unlike nodeDisp —
+    which is pinned by any sp-constraints and so survives a recvSelf that silently
+    reverted the element — this observes state that DEPENDS on the element being
+    reconstructed correctly (formulation / geometry-method / committed F), so it
+    is the part that actually proves sendSelf/recvSelf round-tripped the element.
 
     The FE_Datastore writes <dbname>.IDs.* / <dbname>.VECs.* files next to the
     datastore path, so we point it at a TemporaryDirectory — never the cwd /
@@ -51,6 +60,7 @@ def database_roundtrip(build_fn, probe_nodes, ndf, dbname="ladruno_rt", rtol=1e-
 
         build_fn()
         before = {int(n): ops.nodeDisp(int(n)) for n in probe_nodes}
+        ele_before = list(probe_fn()) if probe_fn is not None else None
 
         try:
             ops.database("File", dbpath)
@@ -66,6 +76,7 @@ def database_roundtrip(build_fn, probe_nodes, ndf, dbname="ladruno_rt", rtol=1e-
         ops.restore(1)
 
         after = {int(n): ops.nodeDisp(int(n)) for n in probe_nodes}
+        ele_after = list(probe_fn()) if probe_fn is not None else None
         ops.wipe()                  # release FE_Datastore file handles before cleanup
         for n in before:
             for d in range(ndf):
@@ -73,4 +84,15 @@ def database_roundtrip(build_fn, probe_nodes, ndf, dbname="ladruno_rt", rtol=1e-
                 assert abs(a - b) <= rtol * abs(b) + 1e-12, (
                     f"database round-trip changed node {n} dof {d}: {b} -> {a} "
                     "(sendSelf/recvSelf or broker mismatch?)"
+                )
+
+        if probe_fn is not None:
+            assert ele_before and ele_after and len(ele_before) == len(ele_after), (
+                "probe_fn returned empty / mismatched element state across the "
+                f"round-trip ({len(ele_before or [])} -> {len(ele_after or [])})"
+            )
+            for i, (b, a) in enumerate(zip(ele_before, ele_after)):
+                assert abs(a - b) <= rtol * abs(b) + 1e-9, (
+                    f"database round-trip changed element state[{i}]: {b} -> {a} "
+                    "(recvSelf reverted the formulation / geometry-method / committed F?)"
                 )

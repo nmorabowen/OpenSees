@@ -4,6 +4,27 @@
 **                                                                    **
 ** ****************************************************************** */
 
+// LADRUNO-HEADER-START
+// ==========================================================================
+//
+//   ▄█          ▄████████ ████████▄     ▄████████ ███    █▄  ███▄▄▄▄    ▄██████▄
+//  ███         ███    ███ ███   ▀███   ███    ███ ███    ███ ███▀▀▀██▄ ███    ███
+//  ███         ███    ███ ███    ███   ███    ███ ███    ███ ███   ███ ███    ███
+//  ███         ███    ███ ███    ███  ▄███▄▄▄▄██▀ ███    ███ ███   ███ ███    ███
+//  ███       ▀███████████ ███    ███ ▀▀███▀▀▀▀▀   ███    ███ ███   ███ ███    ███
+//  ███         ███    ███ ███    ███ ▀███████████ ███    ███ ███   ███ ███    ███
+//  ███▌    ▄   ███    ███ ███   ▄███   ███    ███ ███    ███ ███   ███ ███    ███
+//  █████▄▄██   ███    █▀  ████████▀    ███    ███ ████████▀   ▀█   █▀   ▀██████▀
+//  ▀                                   ███    ███
+//
+//  Ladruno — a research fork of OpenSees
+//  Created by:  Nicolas Mora Bowen  ·  Patricio Palacios  ·  José Abell  ·  Guppi
+//
+// Header auto-stamped by Ladruno_scripts/stamp_headers.py (art: banner_ASCII.txt).
+// Do not hand-edit between the markers; edit the script/art and re-run instead.
+// ==========================================================================
+// LADRUNO-HEADER-END
+
 // Authors: Nicolas Mora Bowen, Guppi (Ladruño)
 // Created: 06/2026
 //
@@ -20,6 +41,7 @@
 #include <Parameter.h>
 #include <Information.h>
 #include <Response.h>
+#include <MaterialResponse.h>
 #include <OPS_Globals.h>
 #include <elementAPI.h>
 #include <string.h>
@@ -48,6 +70,19 @@ void *OPS_LogStrainNDMaterial(void)
            << " : inner nDMaterial " << iData[1] << " not found\n";
     return 0;
   }
+  // Validate the inner can produce a 3D (order-6) copy BEFORE constructing, so bad
+  // user input fails the command gracefully (return 0) instead of reaching the
+  // constructor's hard exit(-1) and killing the interpreter/Python kernel.  // Ladruno (PLUMB-1)
+  NDMaterial *probe = (strncmp(inner->getType(), "ThreeDimensional", 80) == 0)
+                        ? inner->getCopy() : inner->getCopy("ThreeDimensional");
+  if (probe == 0 || probe->getOrder() != 6) {
+    opserr << "WARNING nDMaterial LogStrain " << iData[0]
+           << " : inner nDMaterial " << iData[1]
+           << " must be a 3D (order-6) material\n";
+    if (probe != 0) delete probe;
+    return 0;
+  }
+  delete probe;   // the constructor makes its own copy
   return new LogStrainNDMaterial(iData[0], *inner);
 }
 
@@ -108,6 +143,18 @@ int LogStrainNDMaterial::setTrialF(const Matrix &F)
   for (int i = 0; i < 3; i++)
     for (int j = 0; j < 3; j++) Ftrial9[3*i+j] = F(i, j);
 
+  // Reject a non-positive Jacobian up front: a negative det F (an inverted /
+  // degenerate element under a large explicit step) would otherwise give a
+  // sign-flipped Cauchy σ = τ/J and a non-SPD Bᵉᵗʳ whose ½ln has -inf/NaN
+  // eigenvalues — silently wrong with no diagnostic. The element (LadrunoBrick
+  // -geom finite) treats a <0 return as "cut the step".
+  Jdet = mat3_det(Ftrial9);
+  if (Jdet <= 0.0) {
+    opserr << "LogStrainNDMaterial::setTrialF - non-positive det F (" << Jdet
+           << "); element inverted/degenerate\n";
+    return -1;
+  }
+
   // (i)+(ii) trial elastic left Cauchy–Green Bᵉᵗʳ and trial Hencky strain εᵉᵗʳ
   double Betr[9];
   trial_Be(Ftrial9, Fn, Be_n, Betr);
@@ -133,7 +180,7 @@ int LogStrainNDMaterial::setTrialF(const Matrix &F)
     for (int J = 0; J < 6; J++) D6[6*I+J] = D6m(I, J);
 
   // (iv) Cauchy σ = τ/J and material spatial tangent c = (1/2J)[D:L:B] at Bᵉᵗʳ
-  Jdet = mat3_det(Ftrial9);
+  // (Jdet was computed and checked > 0 at entry)
   double sig6[6], c6[36];
   assemble_material(Betr, D6, tau6, Jdet, sig6, c6);
   for (int k = 0; k < 6; k++) sigmaCauchy(k) = sig6[k];
@@ -314,7 +361,35 @@ int LogStrainNDMaterial::setParameter(const char **argv, int argc, Parameter &pa
   return theMaterial->setParameter(argv, argc, param);
 }
 
+// Recorder seam (SEAM-1): the wrapper's getStress()/getStrain()/getTangent() carry
+// the FINITE-STRAIN measures (Cauchy σ = τ/J, Hencky ε, spatial c). The inner
+// material, queried directly, would report Kirchhoff τ, the fed strain, and the
+// small-strain D — wrong by a factor det F under finite deformation. So intercept
+// the generic stress/strain/tangent channels here and delegate only the
+// inner-specific channels (backStress, plasticStrain, equivalentPlasticStrain,
+// damage, …) to the inner.  // Ladruno (SEAM-1)
 Response *LogStrainNDMaterial::setResponse(const char **argv, int argc, OPS_Stream &output)
 {
+  if (argc > 0) {
+    if (strcmp(argv[0], "stress")  == 0 || strcmp(argv[0], "stresses") == 0 ||
+        strcmp(argv[0], "Cauchy")  == 0 || strcmp(argv[0], "cauchy")   == 0)
+      return new MaterialResponse(this, 1, sigmaCauchy);    // Cauchy σ (6)
+
+    if (strcmp(argv[0], "strain")  == 0 || strcmp(argv[0], "strains")  == 0)
+      return new MaterialResponse(this, 2, henckyStrain);   // Hencky εᵉᵗʳ (6)
+
+    if (strcmp(argv[0], "tangent") == 0)
+      return new MaterialResponse(this, 3, aTangent);       // spatial c (6×6)
+  }
   return theMaterial->setResponse(argv, argc, output);
+}
+
+int LogStrainNDMaterial::getResponse(int responseID, Information &matInfo)
+{
+  switch (responseID) {
+  case 1: return matInfo.setVector(sigmaCauchy);
+  case 2: return matInfo.setVector(henckyStrain);
+  case 3: return matInfo.setMatrix(aTangent);
+  default: return theMaterial->getResponse(responseID, matInfo);
+  }
 }

@@ -3,19 +3,46 @@
 **          Pacific Earthquake Engineering Research Center            **
 ** ****************************************************************** */
 
+// LADRUNO-HEADER-START
+// ==========================================================================
+//
+//   ▄█          ▄████████ ████████▄     ▄████████ ███    █▄  ███▄▄▄▄    ▄██████▄
+//  ███         ███    ███ ███   ▀███   ███    ███ ███    ███ ███▀▀▀██▄ ███    ███
+//  ███         ███    ███ ███    ███   ███    ███ ███    ███ ███   ███ ███    ███
+//  ███         ███    ███ ███    ███  ▄███▄▄▄▄██▀ ███    ███ ███   ███ ███    ███
+//  ███       ▀███████████ ███    ███ ▀▀███▀▀▀▀▀   ███    ███ ███   ███ ███    ███
+//  ███         ███    ███ ███    ███ ▀███████████ ███    ███ ███   ███ ███    ███
+//  ███▌    ▄   ███    ███ ███   ▄███   ███    ███ ███    ███ ███   ███ ███    ███
+//  █████▄▄██   ███    █▀  ████████▀    ███    ███ ████████▀   ▀█   █▀   ▀██████▀
+//  ▀                                   ███    ███
+//
+//  Ladruno — a research fork of OpenSees
+//  Created by:  Nicolas Mora Bowen  ·  Patricio Palacios  ·  José Abell  ·  Guppi
+//
+// Header auto-stamped by Ladruno_scripts/stamp_headers.py (art: banner_ASCII.txt).
+// Do not hand-edit between the markers; edit the script/art and re-run instead.
+// ==========================================================================
+// LADRUNO-HEADER-END
+
 // Author: N. Mora-Bowen (Ladruno), 05/2026
 //
 // Factory for the LadrunoBrick element (Tcl + Python).
 //
 // Usage:
 //   element('LadrunoBrick', tag, n1..n8, matTag
-//           [, '-formulation', <std|bbar|uri|eas>]   # default std
+//           [, '-formulation', <std|bbar|uri|ssp|eas>]   # default std
+//           [, '-geom', <linear|corot|finite>]       # default linear
 //           [, '-hourglass', <viscous|stiffness|physical>, coeff]  # uri only
 //           [, '-lumped']
 //           [, '-b', bx, by, bz]
 //           [, '-damp', dampTag])
 //
-// std + bbar + uri(stiffness|physical|viscous) + eas are all implemented and
+// -geom finite needs a finite-strain material (e.g. nDMaterial LogStrain). With
+// -geom finite, -formulation bbar selects the F-bar element (dSNPO eq 15.5), the
+// large-strain volumetric-locking cure; std uses the plain deformation gradient.
+//
+// std + bbar + uri(stiffness|physical|viscous) + ssp + eas (true Simo-Rifai
+// enhanced assumed strain, ADR 19) are all implemented and
 // accepted at construction. NOTE: uri -hourglass viscous is rate-form damping
 // and EXPLICIT-ONLY — it adds no hourglass stiffness, so the element tangent is
 // rank-deficient under an implicit/eigen solver (use stiffness or physical
@@ -37,7 +64,7 @@ void *OPS_LadrunoBrick()
   if (OPS_GetNumRemainingInputArgs() < 10) {
     opserr << "WARNING insufficient arguments\n";
     opserr << "Want: element LadrunoBrick eleTag? n1? ... n8? matTag? "
-              "<-formulation std|bbar|uri|eas> <-hourglass type coeff> "
+              "<-formulation std|bbar|uri|ssp|eas> <-hourglass type coeff> "
               "<-lumped> <-b bx by bz> <-damp dampTag>\n";
     return 0;
   }
@@ -80,11 +107,13 @@ void *OPS_LadrunoBrick()
         formulation = LadrunoBrick::Formulation::BBAR;
       else if (strcmp(f, "uri") == 0 || strcmp(f, "reduced") == 0)
         formulation = LadrunoBrick::Formulation::URI;
+      else if (strcmp(f, "ssp") == 0)
+        formulation = LadrunoBrick::Formulation::SSP;
       else if (strcmp(f, "eas") == 0)
-        formulation = LadrunoBrick::Formulation::EAS;
+        formulation = LadrunoBrick::Formulation::EAS;   // true Simo-Rifai EAS (ADR 19)
       else {
         opserr << "WARNING unknown -formulation '" << f << "' for LadrunoBrick "
-               << idata[0] << " (use std|bbar|uri|eas)\n";
+               << idata[0] << " (use std|bbar|uri|ssp|eas)\n";
         return 0;
       }
     }
@@ -131,12 +160,9 @@ void *OPS_LadrunoBrick()
         geomMethodID = SolidTransformation::METHOD_LINEAR;
       else if (strcmp(g, "finite") == 0)
         geomMethodID = SolidTransformation::METHOD_FINITE;
-      else if (strcmp(g, "corot") == 0 || strcmp(g, "corotational") == 0) {
-        opserr << "WARNING LadrunoBrick " << idata[0]
-               << ": -geom 'corot' is reserved and not yet implemented (-> v2; "
-                  "use linear|finite)\n";
-        return 0;
-      } else {
+      else if (strcmp(g, "corot") == 0 || strcmp(g, "corotational") == 0)
+        geomMethodID = SolidTransformation::METHOD_COROT;
+      else {
         opserr << "WARNING unknown -geom '" << g << "' for LadrunoBrick "
                << idata[0] << " (use linear|corot|finite)\n";
         return 0;
@@ -167,7 +193,7 @@ void *OPS_LadrunoBrick()
     }
   }
 
-  // -damp is only wired through the std/bbar kernel; the uri/physical/eas
+  // -damp is only wired through the std/bbar kernel; the uri/physical/ssp
   // condensed single-point kernels do not apply element-level Damping. Drop it
   // with a clear diagnostic for those formulations rather than silently
   // allocating a no-op damping object that is committed every step.
@@ -180,14 +206,17 @@ void *OPS_LadrunoBrick()
     theDamping = 0;
   }
 
-  // -geom finite (v3): updated-Lagrangian. v3 supports the std formulation only
-  // (bbar+finite = F-bar and uri/eas+finite are reserved), and requires a
-  // finite-strain material (driven by setTrialF(F), e.g. nDMaterial LogStrain).
+  // -geom finite (v3): updated-Lagrangian. std = plain F; bbar = F-bar (dSNPO
+  // eq 15.5, the volumetric-locking cure for near-incompressible response).
+  // uri/ssp/eas + finite are reserved (enhanced-F finite EAS is ADR 19's deferred
+  // follow-up). Requires a finite-strain material (driven by
+  // setTrialF(F), e.g. nDMaterial LogStrain).
   if (geomMethodID == SolidTransformation::METHOD_FINITE) {
-    if (formulation != LadrunoBrick::Formulation::STD) {
+    if (formulation != LadrunoBrick::Formulation::STD &&
+        formulation != LadrunoBrick::Formulation::BBAR) {
       opserr << "WARNING LadrunoBrick " << idata[0]
-             << ": -geom finite currently supports only -formulation std "
-                "(bbar+finite = F-bar, uri/eas+finite are reserved)\n";
+             << ": -geom finite supports -formulation std (plain F) or bbar "
+                "(F-bar); uri/ssp/eas + finite are reserved\n";
       return 0;
     }
     if (dynamic_cast<FiniteStrainNDMaterial *>(mat) == 0) {
@@ -203,6 +232,48 @@ void *OPS_LadrunoBrick()
                 "assembly does not apply element damping); reserved follow-up\n";
       return 0;
     }
+    // F-bar has a GENERALLY UNSYMMETRIC tangent (dSNPO eq 15.10); a symmetric
+    // solver silently drops the coupling and breaks Newton convergence. Advise
+    // once per process (not per element) to keep large meshes quiet.  // Ladruno
+    if (formulation == LadrunoBrick::Formulation::BBAR) {
+      static bool fbarSolverAdvised = false;
+      if (!fbarSolverAdvised) {
+        fbarSolverAdvised = true;
+        opserr << "LadrunoBrick: -geom finite -formulation bbar (F-bar) has a "
+                  "GENERALLY UNSYMMETRIC tangent (dSNPO eq 15.10) — use an "
+                  "unsymmetric solver (e.g. 'system FullGeneral', 'UmfPack', or "
+                  "'SparseGEN'); a symmetric system (BandSPD/ProfileSPD) drops the "
+                  "coupling term and may not converge.\n";
+      }
+    }
+  }
+
+  // -geom corot (v2): EICR small-strain corotational. v2 ships std + bbar only.
+  // uri/ssp/eas under corot are a deferred follow-up (ADR 10 §6/§7): the single-point
+  // stabilization in the corotated frame is unvalidated, and uri's PHYSICAL-hourglass path does
+  // not route through the globalize seams at all (frame-inconsistent). Reject the
+  // unsupported combos at parse time, mirroring the -geom finite guard.  // Ladruno (sweep #1)
+  if (geomMethodID == SolidTransformation::METHOD_COROT &&
+      formulation != LadrunoBrick::Formulation::STD &&
+      formulation != LadrunoBrick::Formulation::BBAR) {
+    opserr << "WARNING LadrunoBrick " << idata[0]
+           << ": -geom corot currently supports only -formulation std|bbar "
+              "(uri/ssp/eas under corot are a deferred follow-up)\n";
+    return 0;
+  }
+
+  // Converse of the -geom finite guard: a finite-strain NDMaterial (e.g. LogStrain)
+  // is driven ONLY by setTrialF(F). Under -geom linear|corot the element uses the
+  // small-strain setTrialStrain() path, which a FiniteStrainNDMaterial disables
+  // (returns -1, sets no state) — leaving the element with identically-zero stress.
+  // Reject the misconfiguration at parse time instead of running a zero-stress
+  // phantom with per-evaluation warning spam.  // Ladruno (GEOM-1 / PLUMB-2)
+  if (geomMethodID != SolidTransformation::METHOD_FINITE &&
+      dynamic_cast<FiniteStrainNDMaterial *>(mat) != 0) {
+    opserr << "WARNING LadrunoBrick " << idata[0]
+           << ": a finite-strain NDMaterial (e.g. nDMaterial LogStrain) requires "
+              "-geom finite; it cannot be driven by -geom linear|corot\n";
+    return 0;
   }
 
   return new LadrunoBrick(idata[0],

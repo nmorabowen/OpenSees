@@ -76,6 +76,20 @@ features:
       convergence benchmark is geometry-limited for v1 straight-sided tets (Kadapa
       uses curved elements; see ADR O5/O11) — Python oracle 23/23 + §6.2 sphere
       convergence + locking study cover the formulation meanwhile.
+      -geom corot added (#108) and -geom finite added (#145; 3rd SolidTransformation
+      consumer; updated-Lagrangian, drives a FiniteStrainNDMaterial via setTrialF(F))
+      — finite Zone-A battery in tests/test_bezierTet10_finite.py (FD-tangent gate +
+      objectivity + patch vs logstrain_reference oracle + det F guard + API guards +
+      serialization + load-driven Newton). F-bar (bbar+finite, CENTROID form dSNPO
+      §15.1) shipped step 2 — tests/test_bezierTet10_fbar.py (FD-tangent unsymmetric +
+      ν=0.499 coefficient-trap guard, residual-reduces-to-std, uniform-GP-pressure,
+      oracle-leg centroid-J₀, rigid-rotation, load-driven). UNSYMMETRIC tangent ⇒
+      FullGeneral (parse advisory). No new classTag; std finite bit-identical.
+      -fbar {centroid|mean_dilatation} switch (default centroid); mean-dilatation
+      F̄=(J̄/J)^(1/3)F reduces to the small-strain volume-averaged bbar. F-bar battery
+      16/16 parametrized over both modes; the FD-tangent (ν=0.3 & 0.499) is the
+      arbiter for the mean-dilatation tangent (no prior validated baseline).
+      fbarMode serialized (iData 16→17, round-trip tested).
 
   # --- pre-test-bed ladruno features: classTag band remediation (follow-up to
   #     BezierTri6). Tags moved into the >=33000 band, per-family, + Ladruno
@@ -174,6 +188,99 @@ features:
       numpy-free; CDL-10 energy closure un-skipped now that the link is restored.
       CDL-8 first-step correctness + CDL-9 betaK collapse are the differentiators.
 
+  - feature: LadrunoArcLength
+    classtag: 33004          # INTEGRATOR family; per-registry band (coexists w/ ELE_TAG_LadrunoIMKBeam2d=33004)
+    tag_symbol: INTEGRATOR_TAGS_LadrunoArcLength
+    pr: null
+    feature_class: integrator
+    required_tiers: [dynamics-battery]
+    pytest: tests/test_ladrunoArcLength_integrator.py   # AL-1/AL-3/AL-S Zone-A (identity vs stock ArcLength + Ramm -adapt radius)
+    tcl: WAIVED(integrator; shared OpenSeesCommands registry serves Tcl + Python; verified via the Zone-A pytest battery)
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+    dispatch: {tcl: true, functionMap: true}
+    status: remediation
+    notes: >
+      Adaptive static arc-length integrator (PR-1 = stock-ArcLength identity +
+      Ramm desired-iteration radius adaptation -adapt; the Abaqus-STABILIZE viscous
+      mode + Layer-B reduceStep deferred to follow-up PRs). The classTag was added to
+      SRC/classTags.h on ladruno HEAD by the draft arc-length work but the G9 manifest
+      row was omitted, so the gate failed on ladruno HEAD until backfilled here (same
+      inherited-debt pattern as the IMKBeam rows). status=remediation until the PR-1
+      arc-length PR lands and the row owner flips it to active. See
+      Ladruno_implementation/20_ladruno_arclength_stabilized_adr.md.
+
+  - feature: LadrunoDynamicRelaxation
+    classtag: 33005          # INTEGRATOR family; quasi-static dynamic relaxation (after LadrunoArcLength=33004)
+    tag_symbol: INTEGRATOR_TAGS_LadrunoDynamicRelaxation
+    pr: null
+    feature_class: integrator
+    required_tiers: [dynamics-battery]
+    pytest: tests/test_ladrunoDynamicRelaxation_integrator.py
+    tcl: WAIVED(integrator; shared OpenSeesCommands registry serves Tcl + Python; verified via the Zone-A pytest battery)
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+    dispatch: {tcl: true, functionMap: true}
+    status: remediation
+    notes: >
+      Quasi-static dynamic relaxation (Gershgorin fictitious mass + Cundall kinetic
+      damping), a TransientIntegrator. Its classTag landed on ladruno HEAD without a
+      G9 manifest row (same inherited-debt pattern as LadrunoArcLength); backfilled
+      here so the classTag+manifest gate passes on ladruno HEAD. status=remediation
+      until the owning PR flips it to active. See
+      Ladruno_implementation/LEDGER_implementations.md and the dynrelax ADR.
+
+  - feature: LadrunoIndirectControl
+    classtag: 33006          # INTEGRATOR family; indirect/CMOD control (after LadrunoDynamicRelaxation=33005)
+    tag_symbol: INTEGRATOR_TAGS_LadrunoIndirectControl
+    pr: null
+    feature_class: integrator
+    required_tiers: [dynamics-battery]
+    pytest: tests/test_ladrunoIndirectControl_integrator.py   # IC-1 reduce-to-DisplacementControl + IC-2/3 CMOD snap-back
+    tcl: WAIVED(integrator; shared OpenSeesCommands registry serves Tcl + Python; verified via the Zone-A pytest battery)
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      Indirect / CMOD displacement-control static integrator: generalizes stock
+      DisplacementControl (single DOF) to a weighted multi-DOF control quantity
+      c.U (e.g. crack-mouth-opening = u_A - u_B), which stays monotone through
+      snap-back where load and individual DOFs reverse (de Borst indirect control).
+      ADR-20 §8 follow-up #3. See
+      Ladruno_implementation/20_ladruno_arclength_stabilized_adr.md.
+
+  - feature: LadrunoStabilizedUnbalance
+    classtag: 33000          # CONVERGENCE_TEST family (per-registry band >=33000)
+    tag_symbol: CONVERGENCE_TEST_LadrunoStabilizedUnbalance
+    pr: null
+    feature_class: derivative
+    required_tiers: [dynamics-battery]
+    pytest: tests/test_ladrunoStabilizedUnbalance_test.py   # ST-1 graceful fallback + ST-2 true-vs-polluted residual under -stabilize
+    tcl: wired (classic-Tcl `test` via commands.cpp specifyCTest + Python/new-Tcl via OpenSeesCommands.cpp)
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+      - SRC/tcl/commands.cpp
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      True-equilibrium NormUnbalance convergence test for the viscous-stabilized
+      LadrunoArcLength -stabilize mode (ADR-20 §8 follow-up #4): norms the TRUE
+      static unbalance ‖λp − f_int‖ (via the integrator's getStabilizedTrueResidual)
+      instead of the f_v-polluted SOE ‖B‖, so a converged step is a genuine
+      equilibrium, not merely a regularized one. Degrades gracefully to the stock
+      SOE ‖B‖ for any non-stabilizing integrator (drop-in for NormUnbalance). Zero
+      analysis-core surgery: reaches the integrator via EquiSolnAlgo. See
+      Ladruno_implementation/20_ladruno_arclength_stabilized_adr.md.
+
   - feature: EnergyBalanceRecorder
     classtag: 33000          # RECORDER family; was 26
     tag_symbol: RECORDER_TAGS_EnergyBalanceRecorder
@@ -258,6 +365,50 @@ features:
       symmetry + homogeneous patch + objectivity, 6/6 green). Element-class gate green
       against dist/bin (test_ladrunoBrick_element.py 14/14).
 
+  - feature: LadrunoIMKBeam
+    classtag: 33003          # ELE_TAG family; 3D concentrated-plasticity IMK beam (N. Mora-Bowen)
+    tag_symbol: ELE_TAG_LadrunoIMKBeam
+    pr: 111
+    feature_class: element
+    required_tiers: [T0, T1]
+    pytest: tests/test_ladrunoIMKBeam_element.py
+    tcl: WAIVED(no Tcl command surface yet — Python/apeGmsh-driven; OPS factory only)
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesElementCommands.cpp
+      - SRC/element/CMakeLists.txt
+    dispatch: {tcl: false, functionMap: true}
+    status: active
+    notes: >
+      3D concentrated-plasticity IMK beam macro (uncoupled moment-rotation hinges),
+      shipped in #111. Manifest row added during the BezierTet10-corot merge (#108):
+      #111 shipped the classTag/element/test but omitted this G9 manifest row, so the
+      gate failed on ladruno HEAD until backfilled here. See 14_ladruno_imk_beam.md.
+
+  - feature: LadrunoIMKBeam2d
+    classtag: 33004          # ELE_TAG family; 2D planar concentrated-plasticity IMK beam (N. Mora-Bowen)
+    tag_symbol: ELE_TAG_LadrunoIMKBeam2d
+    pr: 131
+    feature_class: element
+    required_tiers: [T0, T1]
+    pytest: tests/test_ladrunoIMKBeam2d_element.py
+    tcl: WAIVED(no Tcl command surface yet — Python/apeGmsh-driven; OPS factory only, shared ndm-dispatch under the LadrunoIMKBeam command)
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesElementCommands.cpp
+      - SRC/element/ladrunoIMKBeam/CMakeLists.txt
+    dispatch: {tcl: false, functionMap: true}
+    status: active
+    notes: >
+      2D planar concentrated-plasticity IMK beam macro — the ndm-dispatch counterpart
+      of the 3D LadrunoIMKBeam (33003), sharing the LadrunoIMKHinge kernel. Shipped in
+      #131, which omitted this G9 manifest row; backfilled here so the classTag+manifest
+      gate passes on ladruno HEAD. See 14_ladruno_imk_beam.md.
+
   - feature: LogStrainNDMaterial
     classtag: 33010          # ND_TAG family; Hencky finite-strain adaptor (seam 3)
     tag_symbol: ND_TAG_LogStrainNDMaterial
@@ -283,6 +434,300 @@ features:
       plastic inner = follow-up. Exposes the FULL 4th-order spatial tangent via
       getSpatialTangentTensor (#76) since c=(1/2J)[D:L:B] is non-minor-symmetric and the
       6x6 getTangent is a lossy projection. Driven end-to-end by LadrunoBrick -geom finite.
+
+  - feature: LadrunoJ2
+    classtag: 33011          # ND_TAG family; combined iso + Chaboche AF kinematic von Mises J2
+    tag_symbol: ND_TAG_LadrunoJ2
+    pr: 87
+    feature_class: material
+    required_tiers: [T0m, T1]
+    pytest: tests/test_ladrunoJ2_material.py   # elastic; reduce-to-J2Plasticity; monotonic kin==iso; Bauschinger; AF saturation; 3D mixed-shear reduce-to-J2Plasticity (6/6)
+    tcl: WAIVED(nDMaterial LadrunoJ2 ...; shared OpenSeesNDMaterialCommands registry serves Tcl + Python; verified via the Zone-A pytest battery)
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesNDMaterialCommands.cpp
+      - SRC/material/nD/CMakeLists.txt
+    dispatch: {tcl: false, functionMap: true}
+    status: active
+    notes: >
+      Combined-hardening von Mises (J2): Voce+linear isotropic + Chaboche superposed
+      Armstrong-Frederick kinematic (alpha=sum_k alpha_k, ships N<=8; gamma_k=0 => linear
+      Prager, N=1 => single AF). Supersedes J2Plasticity (no kinematic) and SimplifiedJ2
+      (linear-only + defects). Scalar Newton return map (Kobayashi-Ohno), analytic
+      consistent tangent (dSNPO 7.213 + AF dn term) reducing term-by-term to J2Plasticity
+      at N=0. (2/3)C_k numerator => standard Chaboche C_k,gamma_k. Re-landed in #87 after
+      the impl was stranded on the docs-only merge of #82. Adversarial-review hardening:
+      ||M||->0 guard (restored from J2Plasticity), stress-scaled tolerance. v1 3D only;
+      tabulated iso / prager_nl oracle / PlaneStress / IMPL-EX deferred. Plan:
+      Ladruno_implementation/10_ladruno_j2_plasticity.md.
+
+  - feature: LadrunoJ2Finite
+    classtag: 33012          # ND_TAG family; finite-strain-native combined-hardening J2 (co-rotating backstress)
+    tag_symbol: ND_TAG_LadrunoJ2Finite
+    pr: 127
+    feature_class: material
+    required_tiers: [T0m, T1]
+    pytest: tests/test_ladrunoJ2_finite_native_tangent.py   # channel-A+B tangent recipe exact-to-FD; channel-B small-but-present; channel-B objective (numpy oracle)
+    tcl: WAIVED(nDMaterial LadrunoJ2Finite ...; shared OpenSeesNDMaterialCommands registry serves Tcl + Python; verified via the Zone-A pytest battery + element acceptance)
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesNDMaterialCommands.cpp
+      - SRC/material/nD/CMakeLists.txt
+    dispatch: {tcl: false, functionMap: true}
+    status: active
+    notes: >
+      Finite-strain-native combined-hardening J2 (FiniteStrainNDMaterial subclass,
+      setTrialF(F)) crossing the dSNPO 14.11 v2 boundary the v1 LogStrain-over-LadrunoJ2
+      path cannot: owns the backstresses alpha_{n,k} as SPATIAL tensors and co-rotates
+      them by R_Delta = polar(f_Delta) each step before the SHARED return map
+      (LadrunoJ2Kernel.h, reused verbatim) so combined hardening is frame-indifferent
+      under large rotation. Consistent tangent = analytic channel A (log-strain
+      (1/2J)[D:L:B], LogStrainKernel.h) + numeric channel B (the backstress co-rotation
+      d(alpha-tilde)/dF, ~1e-4..2e-3 rel, recovered exactly-to-FD by perturbing only R,
+      plastic steps only; mapped into cmat via Fdot=LF). Verified: numpy oracle objective
+      ~1e-12 + tangent recipe exact-to-FD ~1e-14; g++ composition vs oracle 1e-9; element
+      acceptance via LadrunoBrick -geom finite. IMPL-EX (-implex, Oliver-Huespe-Cante;
+      PR #134): Delta-gamma extrapolation + co-rotated frozen flow direction =>
+      constant SPD elastic reported tangent, implicit history committed (byte-identical);
+      committed==implicit, explicit->implicit order~2, objective 7e-13 (oracles + g++ check
+      + element acceptance). NON-goals v1: plane-stress finite (no consumer), tabulated iso.
+      Plan: Ladruno_implementation/16_finite_native_j2_adr.md.
+
+  - feature: InitDefGradNDMaterial
+    classtag: 33013          # ND_TAG family; multiplicative staged-activation wrapper (after LadrunoJ2Finite=33012)
+    tag_symbol: ND_TAG_InitDefGradNDMaterial
+    pr: 163
+    feature_class: material
+    required_tiers: [T0m]
+    pytest: tests/test_initDefGrad_material.py   # -noInitF==bare; explicit-F0 stress-free birth; post-birth rotation objectivity; reduce-to-relative; wrapped consistent-tangent==FD; two-phase staged construction (6/6)
+    tcl: WAIVED(nDMaterial InitDefGrad $tag $innerTag; shared OpenSeesNDMaterialCommands registry serves Tcl + Python; verified via the Zone-A pytest battery through LadrunoBrick -geom finite)
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesNDMaterialCommands.cpp
+      - SRC/material/nD/CMakeLists.txt
+    dispatch: {tcl: false, functionMap: true}
+    status: active
+    notes: >
+      Multiplicative, finite-strain staged-activation wrapper -- the large-strain
+      sibling of InitStrainNDMaterial. Makes a finite-strain continuum element born
+      stress-free at the deformed geometry when appended mid-stage (staged
+      construction). Wraps an inner FiniteStrainNDMaterial (e.g. LogStrain) and IS-A
+      FiniteStrainNDMaterial, so LadrunoBrick -geom finite consumes it via its
+      existing dynamic_cast with ZERO element edits. Captures the birth deformation
+      gradient F0 (auto on the first setTrialF = birth, since addElement->setDomain->
+      update evaluates at the committed deformed state) and forwards the relative
+      gradient F_rel = F*F0^-1 (the split F = F_rel*F0). Objective where the additive
+      InitStrain offset is not: under a post-birth rigid rotation F->Q*F, F_rel->Q*F_rel
+      so C_rel is unchanged => zero spurious stress. The shipped spatial/Cauchy seam
+      subsumes the PK1 J0/push-back bookkeeping (F_delta = F*F_n^-1 is invariant to F0;
+      Cauchy stress is reference-independent). -noInitF pass-through; -F0 explicit birth;
+      setResponse("F0") reports it. Small strain stays InitStrain (two materials, Init*
+      family). Plan/ADR: Ladruno_implementation/staged_deformation_gradiend.md.
+
+  - feature: StagedStrainNDMaterial
+    classtag: 33014          # ND_TAG family; small-strain (2D+3D) staged-activation wrapper (after InitDefGrad=33013)
+    tag_symbol: ND_TAG_StagedStrainNDMaterial
+    pr: null
+    feature_class: material
+    required_tiers: [T0m]
+    pytest: tests/test_stagedStrain_material.py   # 2D+3D: -noInit==bare; two-phase staged birth (quad+brick); dimensional sweep; reduce-to-relative; tangent==inner; J2 born-virgin; composition with InitStrain; graceful-fail; serialization
+    tcl: WAIVED(nDMaterial StagedStrain $tag $innerTag; shared OpenSeesNDMaterialCommands registry serves Tcl + Python; verified via the Zone-A pytest battery through FourNodeQuad/stdBrick)
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesNDMaterialCommands.cpp
+      - SRC/material/nD/CMakeLists.txt
+    dispatch: {tcl: false, functionMap: true}
+    status: active
+    notes: >
+      Small-strain, dimension-general (2D+3D), AUTO-CAPTURING staged-activation wrapper
+      -- the small-strain sibling of InitDefGrad (StagedDefGrad). Makes a small-strain
+      continuum element (FourNodeQuad, stdBrick, plane-strain/stress, axisymmetric)
+      born stress-free at the deformed geometry when appended mid-stage. Fixes the
+      three ways the upstream InitStrain bites staged use: (1) InitStrain is 3D-only
+      (getOrder hardcoded 6) and exit(-1)s on a non-3D inner -- StagedStrain is order-
+      general (eps0 sized to inner->getOrder(); getCopy(type) adapts the inner view)
+      and fails gracefully; (2) InitStrain's eps0 is fixed -- StagedStrain auto-captures
+      eps0 on the first setTrialStrain (= birth), so one tag births a whole lift, each
+      copy snapshotting its own birth strain; (3) InitStrain ADDS a prestrain --
+      StagedStrain SUBTRACTS the captured birth strain (eps_rel = eps - eps0) for
+      stress-free birth. Born GENUINELY virgin (zero stress AND zero plastic history);
+      tangent is an exact passthrough (eps0 constant => no FD gate). Additive => exact
+      for small strain only (finite uses StagedDefGrad/InitDefGrad). COMPOSES with the
+      upstream InitStrain for staged-birth-plus-prestrain by nesting StagedStrain
+      OUTERMOST: element -> StagedStrain(InitStrain(real, eps_pre)) => born carrying
+      sigma(eps_pre). -noInit pass-through; -eps0 explicit birth strain; setResponse
+      "eps0"/"totalStrain". Also registers the StagedDefGrad alias for InitDefGrad so
+      the Staged* family reads coherently. Plan/ADR:
+      Ladruno_implementation/staged_deformation_gradiend.md.
+
+  - feature: LadrunoRCConcrete
+    classtag: 33015          # ND_TAG family; RC plastic-damage (ASDConcrete3D spine + MCFT compression softening); multi-dim 3D/PlaneStress/PlateFiber (33013 InitDefGrad, 33014 StagedStrain)
+    tag_symbol: ND_TAG_LadrunoRCConcrete
+    pr: 192
+    feature_class: material
+    required_tiers: [T0m, T1]
+    pytest: tests/test_ladrunoRCConcrete_material.py   # elastic; reduce-to-ASDConcrete3D tension+compression byte-match (beta off); biaxial beta-softening ratio==beta (4/4)
+    tcl: WAIVED(nDMaterial LadrunoRCConcrete ...; shared OpenSeesNDMaterialCommands registry serves Tcl + Python; verified via the Zone-A pytest battery + reduce-to-ASDConcrete3D)
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesNDMaterialCommands.cpp
+      - SRC/material/nD/CMakeLists.txt
+    dispatch: {tcl: false, functionMap: true}
+    status: active
+    notes: >
+      Phase 1 of the RC shell stack (ADR 19). Header-only OpenSees-free LadrunoRCKernel.h
+      clones the ASDConcrete3D plastic-damage spine VERBATIM (spectral split, dual dt/dc
+      damage, Lubliner envelope, computePjj projectors, HardeningLaw + the E-consistent
+      buildBackbone c-tor/adjust) and adds MCFT compression softening on the STRENGTH axis
+      (sigma=(1-dt)ST+beta*(1-dc)SC, beta=1/(0.8+170 eps1), Derivation B). betaOn=false =>
+      byte-faithful to ASDConcrete3D. ONE multi-dim class (3D/PlaneStress/PlateFiber via
+      dim/vmap + getType/getCopy, the LadrunoJ2 pattern); the shell path is
+      LayeredShellFiberSection -> getCopy("PlateFiber"). Drops into the UNMODIFIED
+      ASDShellQ4 + LayeredShellFiberSection (zero element/section edit). beta-on-strength
+      gate proven 3x (numpy oracle + standalone g++ + OpenSees). Tag moved 33014->33015
+      after StagedStrain took 33014. Plan/ADR: Ladruno_implementation/19_ladruno_rc_shell_adr.md.
+
+  - feature: LadrunoUniaxialJ2
+    classtag: 33000          # MAT_TAG (uniaxial) family; per-registry band, no collision w/ ELE/ND/INTEGRATOR/RECORDER 33000
+    tag_symbol: MAT_TAG_LadrunoUniaxialJ2
+    pr: 99
+    feature_class: material
+    required_tiers: [T0m, T1]
+    pytest: tests/test_ladrunoUniaxialJ2_material.py   # elastic; reduce-to-HardeningMaterial 1e-9; monotonic kin==iso; Bauschinger; AF saturation; V7 reduce-to-3D-LadrunoJ2 1e-7 oracle; state recording; stress-controlled ratcheting (single-AF constant rate); consistent-tangent FD (9/9)
+    tcl: WAIVED(uniaxialMaterial LadrunoUniaxialJ2 ...; shared OpenSeesUniaxialMaterialCommands registry serves Tcl + Python, plus classic-Tcl TclModelBuilderUniaxialMaterialCommand dispatch; verified via the Zone-A pytest battery)
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesUniaxialMaterialCommands.cpp
+      - SRC/material/uniaxial/TclModelBuilderUniaxialMaterialCommand.cpp
+      - SRC/material/uniaxial/CMakeLists.txt
+      - SRC/material/nD/CMakeLists.txt
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      Uniaxial twin of LadrunoJ2 (UniaxialMaterial; fibers/truss/zeroLength).
+      sigma=E(eps-eps^p), |sigma-X|-sig_y(pbar), Voce+linear isotropic (shared
+      verbatim with the 3D class via SRC/material/nD/LadrunoHardening.h -- the
+      oracle contract) + Chaboche superposed Armstrong-Frederick kinematic
+      (X=sum_k X_k, N<=8; gamma_k=0 => linear Prager, saturation C_k/gamma_k).
+      Return map = fixed direction s=sign(sigma_tr-X_n) (no M(dGamma) tensor
+      solve like the 3D kernel) + scalar Newton on dpbar; analytic tangent
+      E_alg=E h/(E+h). Real getInitialTangent=E (fixes the SimplifiedJ2 modal
+      bug), no exit(). Oracle (V7): reduces to the 3D LadrunoJ2 under uniaxial
+      stress to 1e-7 with identical (C_k,gamma_k,iso) -- pins the 3D Chaboche
+      calibration. NOT a Steel02/Steel4 replacement: oracle + multi-AF ratcheting
+      fiber + the core for the steel roadmap (fracture/LCF wrapper, local-buckling
+      flag, weld/HAZ -- all deferred). Plan/ADR:
+      Ladruno_implementation/13_ladruno_uniaxial_j2_adr.md (shipped via #95).
+
+  - feature: LadrunoRebarBuckling
+    classtag: 33001          # MAT_TAG (uniaxial) family; sibling of LadrunoUniaxialJ2=33000, per-registry band (no collision w/ ELE BezierTet10=33001)
+    tag_symbol: MAT_TAG_LadrunoRebarBuckling
+    pr: 119
+    feature_class: material
+    required_tiers: [T0m, T1]
+    pytest: tests/test_ladrunoRebarBuckling_material.py   # DM: B0 -lsr 0 pass-through; B1 tension+pre-onset; B2/B2b DM formula vs ported reference; B3 slenderness trend + floor; B5 consistent-tangent FD. GA: GA0 -lsr 0 pass-through; GA1 tension gate; GA2 Gomes formula vs ported reference; GA3 reduction(=1 off,=0 full)+slenderness; GA5 consistent-tangent FD; B6 composition Fatigue.RebarBuckling.bar (rupture on buckled response); B7 sendSelf/recvSelf round-trip DM+GA via FE_Datastore
+    tcl: WAIVED(uniaxialMaterial LadrunoRebarBuckling ...; shared OpenSeesUniaxialMaterialCommands registry serves Tcl + Python, plus classic-Tcl TclModelBuilderUniaxialMaterialCommand dispatch; verified via the Zone-A pytest battery)
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesUniaxialMaterialCommands.cpp
+      - SRC/material/uniaxial/TclModelBuilderUniaxialMaterialCommand.cpp
+      - SRC/material/uniaxial/CMakeLists.txt
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      Rebar-buckling WRAPPER UniaxialMaterial over any tension-compression
+      bare-bar material (designed for LadrunoUniaxialJ2, composes over
+      Steel02/Steel4). In compression past a slenderness-dependent onset it
+      applies the Dhakal-Maekawa buckled-average degradation
+      sigma_buckled = r(e,lambda)*sigma_bare (r in [resid,1], lambda=s/d),
+      leaving the wrapped core byte-untouched -- a clean opt-in overlay,
+      stackable Fatigue o RebarBuckling o J2. Tension + pre-onset pass through
+      unchanged; -lsr 0 is the exact identity gate. Referenced to the
+      tensile-unload anchor e_cross=eps_max-sigma_max/E (own minimal cyclic
+      state: an eps_max anchor + cached onset backbone fStarL; NOT the
+      ReinforcingSteel TBranchNum machine). Analytic consistent tangent
+      dsigma/deps = r*k_bare + sigma_bare*(dr/deps) (improves on
+      ReinforcingSteel's central-difference Buckled_mod_Dhakal). DM formula
+      ported verbatim from ReinforcingSteel::Buckled_stress_Dhakal but in
+      engineering strain on a generic wrapped bar (RS works in log strain);
+      generic onset backbone via a committed-clone probe. Both laws (monotonic)
+      shipped: -model dm + -model ga (Gomes-Appleton; knobs -reduction/-fsufrac,
+      no -fy; hybrid analytic tangent). Deferred: DM cyclic re-straightening branch (B4). Plan/ADR:
+      Ladruno_implementation/14_ladruno_rebar_buckling_adr.md.
+
+  - feature: LadrunoBondSlip
+    classtag: 33002          # MAT_TAG (uniaxial) family; after LadrunoUniaxialJ2=33000, LadrunoRebarBuckling=33001; per-registry band
+    tag_symbol: MAT_TAG_LadrunoBondSlip
+    pr: 168
+    feature_class: material
+    required_tiers: [T0m, T1]
+    pytest: tests/test_ladrunoBondSlip_material.py   # backbone-vs-oracle (linear/power/plateau/softening/residual); D4.1 finite-k0 initial tangent; sign symmetry; D4.3 Gf-overrides-s3; elastic-k0 unload
+    tcl: WAIVED(uniaxialMaterial LadrunoBondSlip ...; shared OpenSeesUniaxialMaterialCommands registry serves Tcl + Python, plus classic-Tcl TclModelBuilderUniaxialMaterialCommand dispatch; verified via the Zone-A pytest battery)
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesUniaxialMaterialCommands.cpp
+      - SRC/material/uniaxial/TclModelBuilderUniaxialMaterialCommand.cpp
+      - SRC/material/uniaxial/CMakeLists.txt
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      1D bond-slip tau-s UniaxialMaterial (CEB-FIP Model Code 2010 backbone) for
+      the bar-axial slot of the embedded-rebar element (LadrunoEmbeddedRebar,
+      ADR 20 / D4). v1 = MONOTONIC backbone + elastic (k0) unload/reload,
+      sign-symmetric. Backbone with the D4 must-fix regularizations baked in:
+      D4.1 linear s<s0 initial segment (kills the power-law dtau/ds->inf at s->0;
+      s0 default 0.1*s1, k0 = tau_max*(s0/s1)^alpha/s0) -> ascending power law
+      tau_max*(s/s1)^alpha -> plateau tau_max -> softening to tau_f (NEGATIVE
+      tangent; D4.2 caller uses displacement/arc-length/IMPLEX control) ->
+      residual tau_f. D4.3 -Gf overrides s3 so the softening triangle dissipates
+      Gf per unit interface area (s3 = s2 + 2*Gf/(tau_max-tau_f)); the element
+      scales tau by perimeter*L_trib. getInitialTangent = k0 (finite). First v2
+      slice of the RC-3D plan; the embedded element (33005) consumes it. Plan/ADR:
+      Ladruno_implementation/20_ladruno_embedded_reinforcement_adr.md.
+
+  - feature: LadrunoEmbeddedRebar
+    classtag: 33005          # ELE_TAG (element) family; after LadrunoBrick=33002, IMKBeam=33003, IMKBeam2d=33004
+    tag_symbol: ELE_TAG_LadrunoEmbeddedRebar
+    pr: 169
+    feature_class: element
+    required_tiers: [T0, T1]
+    pytest: tests/test_ladrunoEmbeddedRebar_element.py   # perfect-bond axial spring (k*u); anisotropic transverse (kt not k); bond-slip axial follows tau(s); partition-of-unity force split to hosts by N_i + equilibrium; response probe
+    tcl: WAIVED(element LadrunoEmbeddedRebar ...; shared OpenSeesElementCommands functionMap serves Tcl + Python; verified via the Zone-A pytest battery)
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesElementCommands.cpp
+      - SRC/element/CMakeLists.txt
+      - SRC/element/ladrunoEmbeddedRebar/CMakeLists.txt
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      Embedded-reinforcement COUPLING element (ADR 20, v2 slice 2): ties one rebar
+      node to a host solid element's nodes via precomputed shape-function weights
+      N_i, so a rebar mesh embeds in a NON-matching concrete mesh. Pure coupling
+      (bond) -- the rebar's own axial stiffness lives on a separate corotTruss/beam
+      along the bar. Gap g = u_rebar - sum_i N_i u_host_i; decomposed along the bar
+      axis dir into axial slip s and transverse g_t; traction t = F_axial(s)*dir +
+      kt*g_t with F_axial = perfect (kAxial*s) or bond (LadrunoBondSlip stress *
+      bondScale, bondScale=perimeter*L_trib). Resisting force P = B^T t, tangent
+      K = B^T D B, D = (dF/ds) dir(x)dir + kt (I - dir(x)dir) (anisotropic, D6).
+      MODE P (penalty) -- implicit + explicit (adds stiffness only). MODE T
+      (transformation/DOF-elim) DEFERRED: needs a multi-retained constraint the
+      stock single-retained MP_Constraint cannot express. Host-agnostic (weights
+      precomputed by the generator); rebar element type (truss|beam, D6) is the
+      user's choice on the rebar mesh. Plan/ADR:
+      Ladruno_implementation/20_ladruno_embedded_reinforcement_adr.md.
 
   # --- worked examples shipped with the scaffold (existing elements, no new C++) ---
 

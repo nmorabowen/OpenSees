@@ -59,6 +59,11 @@ target_sources(OPS_Material
     InitStrainNDMaterial.cpp
     MinMaxNDMaterial.cpp
     LogStrainNDMaterial.cpp
+    InitDefGradNDMaterial.cpp
+    StagedStrainNDMaterial.cpp
+    LadrunoJ2.cpp
+    LadrunoJ2Finite.cpp
+    LadrunoRCConcrete.cpp
     IncrementalElasticIsotropicThreeDimensional.cpp
     ConcreteMcftNonLinear5.cpp
     ConcreteMcftNonLinear7.cpp
@@ -138,6 +143,14 @@ target_sources(OPS_Material
     MinMaxNDMaterial.h
     LogStrainNDMaterial.h
     LogStrainKernel.h
+    InitDefGradNDMaterial.h
+    StagedStrainNDMaterial.h
+    LadrunoJ2.h
+    LadrunoJ2Finite.h
+    LadrunoJ2Kernel.h
+    LadrunoRCConcrete.h
+    LadrunoRCKernel.h
+    LadrunoHardening.h
     FiniteStrainNDMaterial.h
     IncrementalElasticIsotropicThreeDimensional.h
     ConcreteMcftNonLinear5.h

@@ -1,7 +1,7 @@
 ---
 title: LadrunoJ2 — combined isotropic + Chaboche kinematic J2 plasticity
 project: Ladruno
-status: draft
+status: v1 implemented (3D)
 priority: high
 owner: nmora
 tags:
@@ -211,7 +211,7 @@ correctly sends its single backstress; we extend to N. Hygiene fixes baked in: r
 | # | Test | Reference / oracle |
 |---|---|---|
 | V0 | elastic round-trip (`f<0`) | `D^alg == D^e`, σ = D^e:ε |
-| V1 | **reduce-to-J2Plasticity**: `N=0` (pure iso, Voce+linear) | **1e-12** vs `J2Plasticity` stress + tangent |
+| V1 | **reduce-to-J2Plasticity**: `N=0` (pure iso, Voce+linear) | stress+tangent reduce term-by-term; numeric ~**1e-7** (bounded by J2Plasticity's internal `γ*=(1−1e-8)` fudge, not 1e-12) |
 | V2 | reduce-to-SimplifiedJ2: `N=1, γ=0` (linear Prager) + linear iso | analytic / `SimplifiedJ2` cross-check |
 | V3 | uniaxial monotone | analytic Voce+linear backbone |
 | V4 | uniaxial reversed cycle | Bauschinger offset, single-AF saturation `2·αₛₐₜ` |
@@ -265,7 +265,57 @@ struct LadrunoJ2State { double epsP[6]; double ebarP; double alpha[3][6]; };  //
 
 ## Implementation log
 
-*(to be filled in once execution starts)*
+### v1 shipped (2026-06-01, PR #82) — ThreeDimensional
+- `SRC/material/nD/LadrunoJ2.{h,cpp}` + `OPS_LadrunoJ2` parser; classTag 33011;
+  wired into `classTags.h`, `material/nD/CMakeLists.txt`, `FEM_ObjectBrokerAllClasses`,
+  `OpenSeesNDMaterialCommands`. Banner line + 3 ledgers updated.
+- **Self-contained class** (does NOT inherit `J2Plasticity`); internal 3×3-symmetric
+  tensors as 6 tensor-components `{00,11,22,01,12,02}`; tangent assembled in the
+  `J2ThreeDimensional` rank-4→6×6 mapping (so the N=0 reduction is bit-faithful).
+- Return map exactly as designed: **scalar Newton on Δγ**, `n=M(Δγ)/‖M(Δγ)‖`.
+  AF backstress update `αₖ=(αₖⁿ+⅔CₖΔγ n)/(1+√⅔γₖΔγ)`.
+- **Verified analytically** that residual + tangent reduce term-by-term to
+  `J2Plasticity` at N=0 (the `2G·β1·IIdev + βNN·n⊗n` coeffs equal Ed Love's
+  `2G+c3` / `c2−c3`). Confirmed numerically (V1 ~1e-7, bounded by J2Plasticity's
+  internal `γ*=(1−1e-8)` fudge — NOT 1e-12 as the matrix optimistically said).
+- Build: full from-scratch OpenSeesPy build green; `LadrunoJ2.cpp` compiled clean.
+- Tests `tests/test_ladrunoJ2_material.py` (single stdBrick, 1/8-symmetry uniaxial,
+  displacement-controlled): **5/5 pass** — elastic; reduce-to-J2Plasticity;
+  monotonic linear-kin≡iso (pins the `(2/3)C` scaling); Bauschinger divergence;
+  AF saturation → `σ_y0+C/γ`. The `(2/3)Cₖ` numerator ⇒ standard Chaboche `Cₖ,γₖ`.
+- Re-landed after #82 stranding via **PR #87** (cherry-pick onto fresh `ladruno`);
+  + adversarial-review hardening (‖M‖→0 guard restored from J2Plasticity,
+  stress-scaled tolerance) + 3D mixed-shear test (battery → 6/6).
+
+### Dimensional views shipped (2026-06-01, follow-up PR)
+- **All five `getType()` views in one class** via a `dim` mode + `vmap[]` index
+  table into the 6-comp tensor; the verified 3D `integrate()` is unchanged.
+  PlaneStrain `{00,11,01}`, AxiSymmetric `{00,11,22,01}`, PlateFiber
+  `{00,11,01,12,20}`, PlaneStress `{00,11,01}`.
+- **PlaneStress / PlateFiber** enforce `σ₂₂=0` by a nested Newton on `eps₂₂`
+  (`strain6[2] -= σ₂₂/Dtan[2][2]`, dSNPO §9.2.3 route) then **static condensation
+  of the 33-dof done in `Dtan[6][6]`** (`Dtan[I][J] -= Dtan[I][2]Dtan[2][J]/Dtan[2][2]`),
+  mirroring `J2PlaneStress`/`J2PlateFiber`. Committed `eps₂₂` carried in
+  `sendSelf`/`revert*`. Member-sized return buffers replace the size-6 statics.
+- Tests: **8/8 pass** — added `PlaneStrain` + `PlaneStress` quad reduce-to-J2Plasticity
+  (single FourNodeQuad, mixed in-plane load incl. shear, into the plastic regime;
+  matches `J2Plasticity` on disps + all GP stresses → validates the reduced mapping
+  AND the condensation against the proven upstream specializations).
+### State recording shipped (2026-06-02, follow-up PR)
+- `setResponse`/`getResponse` expose **stress, strain, tangent, backStress** (total
+  `α=Σαₖ`, reduced view, stress convention), **plasticStrain** (`εᵖ`, engineering
+  shear), and **equivalentPlasticStrain** (`ε̄ᵖ`). Recordable through the element's
+  `material` response (e.g. `eleResponse(ele, "material", gp, "equivalentPlasticStrain")`).
+- Test `test_state_recording` (9/9): single-AF push to saturation → `ε̄ᵖ` accumulates,
+  total backstress is deviatoric (trace≈0), axial backstress → `(2/3)(C/γ)`
+  (`σ_back=(3/2)α_axial=C/γ`).
+
+- **Still deferred**: tabulated isotropic + **Bézier/Bernstein** hardening-curve
+  `-iso` mode (smooth, monotone, reuses the de Casteljau evaluator from the Bézier
+  elements); `prager_nl` oracle mode (dSNPO Box 7.5, V9); IMPL-EX code path;
+  finite-strain lift (kernel extraction → `LogStrainNDMaterial`); `LadrunoJ21D`
+  (native scalar `UniaxialMaterial`); plane-stress-projected route (dSNPO §9.4,
+  profile-first); AxiSymm/PlateFiber element-level tests (validated by construction).
 
 ### Decisions locked (2026-06-01, design session)
 - **Kinematic = Chaboche AF, design for arbitrary N, ship N=3** (`af` mode). Recovers
@@ -286,3 +336,89 @@ struct LadrunoJ2State { double epsP[6]; double ebarP; double alpha[3][6]; };  //
   dSNPO-style via 7.196 direct-curve trick; C¹ spline for tangent smoothness).
 - classTag **33011**; files under `SRC/material/nD/ladrunoJ2/`; kernel split for
   finite-strain reuse.
+
+### Finite-strain lift shipped (2026-06-02, this PR) — kernel extraction + LogStrain wrap
+
+The "kernel split for finite-strain reuse" decision is now realized.
+
+- **`SRC/material/nD/LadrunoJ2Kernel.h`** — the combined-hardening von Mises return
+  map (scalar Newton on Δγ, Kobayashi–Ohno; AF backstress recurrence; analytic
+  consistent tangent) and the elastic tangent / hardening law, extracted **verbatim**
+  into a header-only, **OpenSees-free** namespace `ladruno_j2_kernel` (plain
+  `double[]`, `<math.h>` only — mirrors `LogStrainKernel.h`). `returnMap()` is a pure
+  function (params + committed history → stress, `Dtan`, updated state) returning a
+  status code; `LadrunoJ2::integrate()` is now a thin **pack → call → warn** wrapper.
+  Behaviour is **bit-identical** (the moved code is unchanged; `integrate()`'s elastic
+  fast-path / ‖M‖→0 fallback / diagnostics all preserved via the status return).
+- **Why a kernel:** so the SAME verified map serves BOTH the small-strain material
+  AND the finite-strain path, with no second implementation to drift. The finite path
+  is **`nDMaterial LogStrain $t $j2`** over LadrunoJ2 — no change to `LogStrainNDMaterial`,
+  because LadrunoJ2 already presents the exact `J2ThreeDimensional` inner contract the
+  LogStrain plastic-inner state protocol needs (engineering-shear strain in / true
+  stress out, **linear** elastic so `Cᵉ=inv(initial tangent)` is constant, stateful
+  `εᵖ` subtraction, constant `getInitialTangent`). `LadrunoBrick -geom finite` then
+  drives it by `setTrialF(F)` (dSNPO Box 14.3 MATISU; the kinematic backstress/`εᵖ`
+  history lives inside the inner and persists across commits). See
+  [[09_finite_strain_material_wrapper]] and [[project_finite_strain_wrapper]].
+- **§14.11 boundary (important).** The lift is **EXACT** for the isotropic spine —
+  the elastic state co-rotates via `Bᵉᵗʳ=F_Δ Bᵉ_n F_Δᵀ` and isotropic yield depends
+  only on `‖s‖,ε̄ᵖ`, so a superposed finite rotation rotates the Cauchy stress rigidly
+  (proven to ~1e-9). **Combined hardening is NOT exactly objective under large
+  rotation**: the kinematic backstress `α` is stored in the inner's *fixed* frame and
+  does not co-rotate, so `‖M‖=‖s−α‖` is not rotation-invariant. This is a
+  *framework* limit (the direct Box-14.4 chain shows the same), exactly the
+  kinematic-hardening-at-finite-strain case dSNPO defers to §14.11. v1 ⇒ exact for
+  no/small rotation; **v2** = a finite-strain-NATIVE J2 (a `FiniteStrainNDMaterial`
+  subclass) that calls `LadrunoJ2Kernel.h` directly and co-rotates `α` each step —
+  the kernel extraction is precisely the enabler.
+- **Verification (no OpenSees build needed — g++ + numpy):**
+  - `tests/ladrunoj2_kernel_check.cpp` (includes only the kernel) ↔
+    `tests/ladrunoj2_reference.py` (independent 3×3-tensor oracle) +
+    `tests/test_ladrunoJ2_kernel_cpp.py`: stress, full internal state (`εᵖ,ε̄ᵖ,α,Δγ`)
+    and the algorithmic tangent (vs **independent FD** of the oracle stress) match
+    over 4 paths — isotropic Voce+linear, single-AF cyclic, three-term Chaboche
+    3D-with-shear, linear-kinematic cyclic. This is the proof the extraction is faithful.
+  - `tests/test_ladrunoJ2_finite.py`: the LogStrain-over-LadrunoJ2 composition vs the
+    direct Box-14.4 elastic-trial chain (combined hardening, finite path with
+    stretch+shear+rotation+unload) to 1e-9; exact plastic incompressibility
+    (`det bᵉ=J²`, `tr εᵉ=ln J`); **exact isotropic finite objectivity**; §14.11
+    combined-rotation boundary pinned as a strict-xfail (flips to PASS when v2 lands).
+  - `tests/test_ladrunoJ2_finite_element.py` (CI-gated, needs a build):
+    `LadrunoBrick -geom finite` + LogStrain over LadrunoJ2 — consistent-tangent vs FD
+    (combined hardening), uniaxial homogeneous finite stretch into plasticity matching
+    the numpy oracle, rigid-rotation stress-free, reduce-to-small-strain.
+  - `LadrunoJ2.cpp` g++ `-fsyntax-only` against the real OpenSees headers: clean.
+  - **Built CI (Zone-A Ubuntu) GREEN**: the element acceptance ran on a real build —
+    195 passed / 1 xfailed; `test_finite_j2_consistent_tangent_matches_fd`,
+    `…_uniaxial_patch_matches_oracle`, `…_rigid_rotation_is_stress_free`,
+    `…_reduces_to_small_strain` all PASS.
+
+### Adversarial review + hardening (2026-06-02, PR #97)
+
+A 7-dimension multi-agent adversarial review (33 agents) + per-finding skeptic
+verification was run. **No correctness bugs**: the consistent tangent was
+independently re-derived as exact, the N=0 reduction to `J2Plasticity` confirmed
+term-by-term, the kernel extraction confirmed bit-faithful vs `origin/ladruno`, and
+the §14.11 backstress-non-co-rotation confirmed a genuine framework boundary (not a
+fixable wiring bug). 18 findings, all test-coverage or defensive-robustness. Acted on:
+- **det F ≤ 0 guard** added early in `LogStrainNDMaterial::setTrialF` (a negative
+  Jacobian would otherwise give sign-flipped σ=τ/J and a non-SPD Bᵉᵗʳ whose ½ln is
+  NaN; the element treats the `<0` return as a step-cut). Also protects `halfLog`.
+- **Restored the `|R|=…` detail** in the no-convergence warning (the kernel now
+  surfaces the final scalar-Newton residual via an optional out-param).
+- **Independent closed-form kinematic leg** (`test_cpp_kernel_linear_kinematic_closed_form`):
+  for γ=0 the return map collapses to `Δγ = f_tr/(2G+⅔(Hiso+ΣCₖ))`, checked WITHOUT the
+  scalar-Newton oracle — validates the (2/3)C θ-term + AF backstress update for the
+  combined branch that reduce-to-J2Plasticity (isotropic-only) never touches.
+- **Non-proportional kernel path** (`chaboche_nonprop`, axial→shear): rotates the flow
+  direction off the accumulated backstress so the FD-tangent check exercises the
+  non-radial `βMpN·(Mperp⊗n)` cross-term (previously near-zero in all uniaxial paths).
+- **Multi-step committed finite element test** (`test_finite_j2_multistep_committed_matches_oracle`):
+  the only test through the COMPILED `commitState→setTrialF` chain (Bᵉ_n / εfeed_n
+  carry) across several committed plastic steps — vs the numpy direct chain.
+- **Rotating-plastic isotropic objectivity** (numpy, step-by-step) + **assert-yielded
+  guard** on the headline element tangent test (no vacuous elastic pass) +
+  **FE_Datastore serialization round-trip** of `LogStrain(LadrunoJ2)`.
+- **Documented (not changed):** the consistent-tangent denominator `h = dtheta +
+  ⅔σ_y' − n:Mp` is `>0` only for non-softening params; a user `Hiso<0`/`Qinf<0` can
+  drive `h→0` (pre-existing, inherited verbatim) — see LEDGER_quirks.

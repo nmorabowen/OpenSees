@@ -125,6 +125,9 @@ target_sources(OPS_Material
       GNGMaterial.cpp
       HardeningMaterial.cpp
       #HardeningMaterial2.cpp
+      LadrunoUniaxialJ2.cpp
+      LadrunoRebarBuckling.cpp
+      LadrunoBondSlip.cpp
       Hertzdamp.cpp
       HookGap.cpp
       HyperbolicGapMaterial.cpp
@@ -254,6 +257,9 @@ target_sources(OPS_Material
       GMG_CyclicReinforcedConcrete.h
       HardeningMaterial.h
       #HardeningMaterial2.h
+      LadrunoUniaxialJ2.h
+      LadrunoRebarBuckling.h
+      LadrunoBondSlip.h
       Hertzdamp.h
       HookGap.h
       HyperbolicGapMaterial.h

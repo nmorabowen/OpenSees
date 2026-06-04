@@ -8,6 +8,8 @@ target_sources(OPS_Analysis
     PRIVATE
        ExplicitDifference.cpp
        ArcLength.cpp
+       LadrunoArcLength.cpp
+       LadrunoIndirectControl.cpp
        ArcLength1.cpp
        BackwardEuler.cpp
        CentralDifference.cpp
@@ -25,6 +27,8 @@ target_sources(OPS_Analysis
     PUBLIC
        ExplicitDifference.h
        ArcLength.h
+       LadrunoArcLength.h
+       LadrunoIndirectControl.h
        ArcLength1.h
        BackwardEuler.h
        CentralDifference.h
@@ -88,6 +92,7 @@ target_sources(OPS_Analysis
        ExplicitBathe.cpp                # JAA
        ExplicitBatheLNVD.cpp            # JAA
        CentralDifferenceLadruno.cpp     # nmb - explicit leap-frog CD + dt_cr
+       LadrunoDynamicRelaxation.cpp     # nmb - quasi-static dynamic relaxation
        CriticalTimeStep.cpp             # nmb - shared dt_cr eigensolve
        ExplicitDifferenceStatic.cpp     # JAA
     PUBLIC
@@ -137,6 +142,7 @@ target_sources(OPS_Analysis
        ExplicitBathe.h
        ExplicitBatheLNVD.h
        CentralDifferenceLadruno.h
+       LadrunoDynamicRelaxation.h
        CriticalTimeStep.h
        ExplicitDifferenceStatic.h
 )

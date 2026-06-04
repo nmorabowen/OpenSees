@@ -24,6 +24,99 @@ them. This is observation-only — fixes we actually applied are tracked in
 
 ## Quirks
 
+### Cloning the ASDConcrete3D plastic-damage spine: two silent-but-fatal requirements (`/E` measure + E-consistent backbone `q`)
+- **Bites:** re-implementing the `ASDConcrete3D` update (e.g. `LadrunoRCKernel.h`). Two omissions each yield a material that *compiles, runs, and even passes a β-ratio test* yet is physically wrong:
+  1. **The equivalent-strain measures must be divided by E.** `equivalentTensile/CompressiveStrainMeasure` return `lublinerCriterion(...) / E` (`ASDConcrete3DMaterial.cpp:2509,2522`) — the Lubliner criterion is a STRESS; `/E` converts it to the *strain* abscissa that indexes the hardening backbone. Omit it and the abscissa is ~E× too large → the lookup lands in deep softening → `dt̄/dc̄≈1` → nominal stress collapses to ~0 (looks like near-zero stiffness). A β-*ratio* test CANNOT catch this (the `/E` scaling cancels in the ratio); only an ABSOLUTE-stress test (σ=E·ε) does.
+  2. **The effective-stress backbone `q` is E-consistent BY CONSTRUCTION — it is NOT `q=y/(1−d)` on the raw user points.** `HardeningLaw` c-tor + `adjust()` (`ASDConcrete3DMaterial.cpp:869-939,1134-1180`) prepend `(0,0,0)`, force `d[0]=0`, force the first segment elastic (`y[1]=E·x[1]`), **cap every secant slope at E**, enforce monotone plastic strain + non-decreasing damage, and ONLY THEN set `q=y/(1−d)`. Compute `q=y/(1−d)` on the raw points and any segment with effective slope > E gives `q>E·x` ⇒ `dc_plastic=1−q/(E·Δx) < 0` ⇒ NEGATIVE damage ⇒ the *elastic* stress is amplified (we saw exactly 8/7× too stiff). The tension branch can pass by luck if its slope already equals E.
+- **Why:** the hardening abscissa is a strain; `q` is the undamaged (plastic-only) effective stress whose elastic branch must have slope exactly E so the damage split `d=1−y/q` starts at 0.
+- **Workaround/status:** both replicated in `LadrunoRCKernel.h` (`/E` at the measure call site; `buildBackbone()` mirrors the c-tor+`adjust()`); proven by the reduce-to-ASDConcrete3D Zone-A gate (tension **and** compression byte-match). Also: a single OpenSees brick with ALL 24 DOFs prescribed (homogeneous-strain probe) **segfaults the `Transformation` constraint handler** (0 free equations) — use `constraints Penalty 1e14 1e14` instead. Learned 2026-06-03 building [[19_ladruno_rc_shell_adr|LadrunoRCConcrete]] (PR #155).
+
+### Crack-band materials read element size via `ops_TheActiveElement->getCharacteristicLength()` — and the base default is wrong for high-order elements
+- **Bites:** `ASDConcrete3DMaterial` (and any crack-band/smeared-crack material) auto-
+  regularizes its softening branch by the element characteristic length `lch`,
+  read **once** on the first `setTrialStrain` via the global
+  `ops_TheActiveElement->getCharacteristicLength()`
+  (`ASDConcrete3DMaterial.cpp:1614`, guarded by `regularization_done`,
+  `ASDConcrete3DMaterial.h:386`). If your element doesn't override
+  `getCharacteristicLength()`, it inherits `Element::getCharacteristicLength()`
+  (`SRC/element/Element.cpp:682`), which returns the **minimum inter-node
+  distance**. On a quadratic element (BezierTri6, BezierTet10, TenNodeTetrahedron,
+  the quad/brick "...N" siblings) the closest node pair is corner-to-mid-edge,
+  i.e. ≈ **½** the true edge length → `lch` under-estimated ~2× → fracture energy
+  smeared over too small a band → **over-softening / spurious snap-back**.
+- **Why:** the global is set by the framework, not the element — `Domain::addElement`
+  (`Domain.cpp:447`) and, crucially, the `Domain::update()` loop
+  (`Domain.cpp:2263`) sets `ops_TheActiveElement = theEle` immediately before
+  `theEle->update()`. So as long as the element pushes strain **only inside
+  `update()`** (both Bézier elements do), the active pointer is correct when the
+  one-time regularization fires — no wrong-element window. The value is just
+  geometrically poor for the min-distance default on high-order elements.
+- **Also:** `getCharacteristicLength()` returns a **single element scalar**, read
+  once per material instance — so a true per-Gauss-point `lch = sqrt(detJ·w)` is
+  *not* expressible through this seam; every GP material on the element gets the
+  same value. Pick one representative element size.
+- **Workaround/status (2026-06-01):** override `getCharacteristicLength()` with an
+  element-size equivalent from the integrated area/volume — BezierTri6 returns
+  `sqrt(2·A)` (right-isosceles-triangle edge), BezierTet10 returns `cbrt(6·V)`
+  (right-tetrahedron leg); both recover the true edge length on right-simplex
+  meshes and err in the safe (under-estimating) direction on curved Bézier edges.
+  LadrunoBrick is exempt — its 8 corner nodes give the correct min-edge already,
+  and its only strain-push site is `update()` (verified read-only assembly).
+  Done in `BezierTri6.cpp` / `BezierTet10.cpp` `getCharacteristicLength()`.
+
+### zeroLength ignores stiffness-proportional Rayleigh unless `-doRayleigh 1`
+- **Bites:** a `zeroLength` / `zeroLengthSection` element contributes **zero**
+  stiffness-proportional Rayleigh damping (`betaK`, `betaKinit`/`betaK0`,
+  `betaKcomm`/`betaKc`) by default. You set `rayleigh 0 0 0.0159 0`, expect
+  ζ≈0.05, and measure ζ≈0. Mass-proportional `alphaM` (which lives on the node,
+  not the element) works regardless, which masks the problem.
+- **Why:** the element carries an internal `doRayleigh` flag, default **0**, that
+  gates whether `getDamp()`/`getResistingForceIncInertia()` include the element's
+  stiffness term. The `-doRayleigh` option flips it: `element zeroLength … -dir 1
+  -doRayleigh 1`. Most other elements default the flag on; zeroLength does not.
+- **Workaround/status (2026-06-01):** pass `-doRayleigh 1` whenever you want
+  stiffness-proportional Rayleigh on a zeroLength; or (better) model the damping
+  physically with a `Viscous`/`ViscousDamper` uniaxial material on the DOF — that
+  enters R(u̇) directly and is explicit-safe. Pinned by
+  `tests/test_damping_channels.py::test_zeroLength_doRayleigh_default_off`
+  (ζ≈0 with default) and `::test_betaK0_realises_target_zeta` (ζ=0.05 with flag).
+  Full map: [[12_damping_channels]].
+
+### `modalDampingQ` (force-only modal damping) applies damping with the WRONG SIGN
+- **Bites:** `modalDampingQ ζ` on a free-vibration SDOF/MDOF *amplifies* the
+  response instead of damping it — measured ζ comes out ≈ **−ζ_target**.
+  `modalDamping ζ` (the matrix form) is correct (+ζ).
+- **Why (evidence, not yet line-pinned):** the sign error is **Δt-independent** —
+  refining the step (steps/period 100→800) converges Q to −0.04996…→−0.04998 and
+  the matrix form to +0.05000. A lag/explicit-stability artifact would vanish on
+  refinement; this doesn't, so it's a **structural sign inconsistency**, not a
+  numerical one. The only live force routine is the M-weighted
+  `IncrementalIntegrator::addModalDampingForce` (`IncrementalIntegrator.cpp:502`,
+  `setB` at :556); the two earlier variants (:303, :349) are commented out. Both
+  `modalDamping` and `modalDampingQ` add that SAME `−Cv` force in `formUnbalance`
+  (`TransientIntegrator.cpp:135`); the ONLY difference is `modalDamping` also adds
+  `+c·C` to the tangent (`addModalDampingMatrix` :563, `formTangent` :88). So the
+  matrix term is somehow compensating a force that, alone, has the wrong net sign.
+- **PURE SIGN INVERSION — confirmed:** `modalDampingQ(-0.05)` damps correctly at
+  **+0.05003**. So the force-only path injects `+Cv` energy instead of dissipating
+  `-Cv`. The residual sign convention itself is fine (`FE_Element::addRIncInertia
+  ToResidual` does `theResidual += -1.0·getResistingForceIncInertia`,
+  `FE_Element.cpp:517`; the modal `-Cv` from `addModalDampingForce`/`setB` matches
+  it). So the inversion is NOT in the force expression — it's that a velocity-
+  proportional force applied through the *residual only* (no `+c·C` in the tangent,
+  the term `modalDamping` adds and `modalDampingQ` omits) is integrated by Newmark
+  with the opposite effective sign. i.e. `modalDampingQ` as a standalone force-only
+  mode appears to have never worked; only `modalDamping` (matrix + force together)
+  is correct.
+- **Workaround/status (2026-06-01):** **use `modalDamping`, never `modalDampingQ`.**
+  Reproduced under both `Newton` and `Linear`, Δt-independent. Pinned as a `strict`
+  xfail: `tests/test_damping_channels.py::test_modalDampingQ_force_only_matches_matrix`.
+  Genuine upstream bug. **DECISION (2026-06-01): DOCUMENT-ONLY** — not patched, not reported
+  upstream; `modalDamping` (matrix) covers the use case. The `strict` xfail auto-detects any
+  future upstream fix (would start XPASSing). A naive "flip the force sign" would break
+  `modalDamping` (shares the same force), so any fix must special-case the `inclMatrix==false`
+  path. Full map: [[12_damping_channels]].
+
 ### Assumed-strain hourglass: the dev-projection vs reduced-shear interaction is nu-coupled
 - **Bites:** building the LadrunoBrick `physical` hourglass straight from Belytschko
   eq 8.7.26 (pointwise-*isochoric* assumed strain: 2/3,-1/3 dev-projection on the
@@ -569,3 +662,356 @@ broadcast path is not runtime-testable in this build.
 - **Still open:** `domainChanged()`/`restart()`/`setDomain()` are no-ops, so the only
   source-rebuild trigger is the `hasDomainChanged()` stamp inside `record()` (cached
   `Element*`/`Response*` can dangle if a model edit doesn't move the stamp across a record).
+### uri `viscous` hourglass: explicit run goes silently unstable at large eps + dt (CDL doesn't trap it)
+- **Bites:** `LadrunoBrick -hourglass viscous` adds a velocity-proportional damping
+  force but NO hourglass stiffness. Under CentralDifferenceLadruno the viscous term
+  has its own explicit stability bound; at `eps≈0.5` with `dt = 0.1·le/c` the
+  hourglass mode blew up to `nodeDisp ~ 1e+99` — yet `analyze()` still returned 0
+  (CDL does not check for NaN/Inf), so the run *looks* like it completed. Smaller
+  eps tolerates the larger dt; large eps needs a smaller dt.
+- **Fix / rule:** for viscous-hourglass explicit runs use a conservative step
+  (`dt ≈ 0.02–0.03·le/c`) and modest `eps` (≤0.1). Don't trust a clean `analyze()`
+  return alone — assert `isfinite(nodeDisp)`. (Element-level: the viscous tangent
+  is rank-deficient ⇒ statics is singular; it is explicit-only by construction.)
+  Learned 2026-06-01.
+
+### Viscous dissipation reported via the discrete work integral `∫f·du` is a DIAGNOSTIC, not an exact energy balance
+- **Bites:** `LadrunoBrick::hourglassEnergy()` for uri-viscous returns a committed
+  accumulator `hgDissipated += c_visc·Σ q̇·Δq` (work against the FB rate damper).
+  For LIGHT damping this tracks the true dissipated energy well (≈82% of the
+  hourglass KE recovered over a long run); for STRONG damping the per-step velocity
+  collapse in the leapfrog stagger makes `f·Δu` UNDER-count, so "more damping ⇒
+  more reported dissipation" is FALSE as measured (it is non-monotone in eps).
+- **Rule:** treat it as a monotone, energy-bounded spurious-mode diagnostic
+  (GLSTAT-style), and write tests around the robust properties — non-decreasing,
+  positive under hourglass excitation, `0 < E ≤ KE_imparted` across eps, exactly 0
+  for a rigid/constant-strain velocity (γ⟂linear) — NOT exact energy convergence.
+  Learned 2026-06-01.
+
+### F-bar element tangent is GENERALLY UNSYMMETRIC (needs an unsymmetric solver)
+- **Bites:** `LadrunoBrick -geom finite -formulation bbar` (F-bar, dSNPO §15.1). The
+  consistent tangent (eq 15.10) is `K = ∫Gᵀa G dv + ∫Gᵀq(G₀−G) dv`; the second
+  (F-bar coupling) term is **not symmetric** in general — the book says so
+  explicitly (after eq 15.10): "the additional stiffness term … is generally
+  unsymmetric and, therefore, requires an unsymmetric solver." So `system BandSPD`
+  / `ProfileSPD` (symmetric storage) will silently use only the upper triangle and
+  **converge to the wrong answer or stall**. Use `system FullGeneral` (or any
+  unsymmetric solver). The symmetric storage path will *not* error — it just drops
+  the lower triangle, so this is a silent-wrong-answer trap.
+- **Why:** F̄ = (J₀/J)^(1/3)F couples every Gauss point's stress to the element
+  centroid dilatation; the linearization mixes the GP gradient G with the centroid
+  gradient G₀, and `q⊗(G₀−G)` is a non-symmetric outer product. (The plain
+  `-formulation std` finite tangent stays symmetric — the coupling term is absent.)
+- **Also:** the eq 15.11 coupling tensor is `q = (1/3)a:(I⊗I) − (2/3)σ⊗I` with `a`
+  the **full** spatial tangent (= `c − σδ`, the same modulus as the standard term),
+  **not** the material modulus `c` alone. A first-principles spatial shortcut
+  (`dσ̄ = c̄:sym(L̄)`) drops the `−(2/3)σ⊗I` and gives a subtly wrong tangent that
+  still "looks right" under a crude FD check — the element FD-tangent test against an
+  *analytic* material tangent is what catches it. Learned 2026-06-02 (F-bar impl).
+### Wrapping a KINEMATIC-hardening material in `LogStrain` (finite strain) is NOT objective under large rotation — backstress doesn't co-rotate
+- **Bites:** `nDMaterial LogStrain $t $j2` over a combined-hardening `LadrunoJ2`
+  (or any backstress material) gives finite-strain J2 that is **exact for the
+  isotropic part but loses frame-indifference for the kinematic part under a large
+  rotation**: superpose a finite rotation `Q` on a plastically-loaded state and the
+  Cauchy stress does NOT come back as `Q σ Qᵀ` (principal stresses change).
+- **Why:** the log-strain (MATISU) wrapper co-rotates only the elastic state it owns,
+  `Bᵉᵗʳ = F_Δ Bᵉ_n F_Δᵀ`. Isotropic yield sees only `‖s‖,ε̄ᵖ` (rotation-invariant), so
+  it is objective. The **backstress `α` lives inside the UNCHANGED small-strain inner
+  in a FIXED frame** — the wrapper never rotates it — so `‖M‖=‖s−α‖` is not
+  rotation-invariant once `α≠0`. It is a framework limit, not a bug: the direct
+  Box-14.4 chain shows the identical behaviour. This is exactly the
+  kinematic-hardening-at-finite-strain case dSNPO defers to **§14.11**.
+- **Rule:** the simple `LogStrain`-wrap of a backstress material is correct only for
+  **no / small rotation** (or pure isotropic hardening). For exact large-rotation
+  combined hardening you need a finite-strain-NATIVE material that co-rotates `α`
+  every step (push `α` forward by the incremental rotation) — which is why the J2
+  return map was extracted into the OpenSees-free `LadrunoJ2Kernel.h`: a future
+  `FiniteStrainNDMaterial`-subclass J2 can reuse the verified map and add the `α`
+  push-forward. Pin the boundary with a **strict xfail** so v2 flips it green
+  (`tests/test_ladrunoJ2_finite.py`). Learned 2026-06-02.
+
+### LadrunoJ2 consistent-tangent denominator `h` assumes NON-softening hardening
+- **Bites:** the analytic consistent tangent in `LadrunoJ2Kernel.h` divides by
+  `h = dtheta + (2/3)·sig_y'(pbar) − n:Mp` (commented `= −df/ddG > 0`) to form
+  `betaNN` and `betaMpN`. For standard hardening (`Hiso,Qinf,Cₖ,γₖ ≥ 0`) `h>0`
+  always. But the material accepts arbitrary user params: a **negative `Hiso`
+  (linear softening) or `Qinf<0`** makes `sig_y'` negative and can drive `h→0` or
+  `h<0` ⇒ an `inf`/`NaN` or a sign-flipped (non-physical) tangent that poisons the
+  global Newton with no diagnostic. The local scalar-Newton residual `dR` has the
+  same exposure.
+- **Why it's not "fixed":** this is **pre-existing** behaviour inherited verbatim
+  from the original `integrate()` (the 2026-06-02 kernel extraction was deliberately
+  bit-identical, so it was preserved, not introduced). The model is designed for
+  hardening/perfect plasticity; softening is out of its intended envelope.
+- **Rule:** do not feed `LadrunoJ2` softening hardening params. If softening is ever
+  wanted, the right fix is **parameter validation at construction** (reject/warn on
+  `Hiso<0`/`Qinf<0` that can violate `h>0`) plus a kernel guard
+  (`if (fabs(h) < eps·stressScale)` → fall back to the elastic-predictor tangent,
+  mirroring the existing `‖M‖→0` `normFloor` treatment) — a separate PR, not a
+  bit-identical-extraction change. Surfaced by the PR #97 adversarial review,
+  2026-06-02.
+
+### `ZeroLengthSection` requires `-ndf 3` (2D) / `-ndf 6` (3D) — silently absent otherwise
+- **Bites:** building a `zeroLengthSection` in a reduced-DOF model (e.g. an axial
+  SDOF on `-ndf 2`) prints *"ZeroLengthSection::setDomain() -- element only works
+  for 3 (2d) or 6 (3d) dof per node"* ([ZeroLengthSection.cpp:247]) and then the
+  element is **not added** — but `analyze()` still runs, on a model with no spring,
+  so the response looks like an undamped/zero-stiffness free body (constant disp,
+  no oscillation). Plain `ZeroLength`/`TwoNodeLink` have no such restriction.
+- **Why:** ZeroLengthSection maps the full section response set (P, Vy, Mz, …) onto
+  the element DOFs and assumes the complete 3-/6-dof node layout.
+- **Rule:** use `-ndf 3`/`-ndf 6` and fix the unused DOFs; never `-ndf 2`. Caught
+  by `tests/test_spring_damping_claims.py`. Learned 2026-06-02.
+
+### Prescribing ALL of a node's DOFs via `sp` with the Transformation handler ⇒ 0 free equations ⇒ process terminates
+- **Bites:** a static test that imposes both DOFs of the only free node via `ops.sp`
+  (with the other node fully `fix`ed) leaves the system with **zero unknowns**.
+  Under `constraints('Transformation')` the solve does not return an error code —
+  it **terminates the process** mid-`analyze()` (no Python traceback, exit 0),
+  which under pytest aborts the whole run with no summary (looks like a hang).
+- **Why:** the Transformation handler condenses out the constrained DOFs; with none
+  left the assembled system is degenerate and the path hits a hard exit rather than
+  a graceful failure (same family as the MPCO `exit(-1)` kernel-kill pattern).
+- **Workaround:** use `constraints('Penalty', 1e14, 1e14)` for fully-prescribed
+  configurations (DOFs are retained and penalised, so ≥1 equation remains), and
+  read element force via `eleForce` rather than `nodeReaction`. Learned 2026-06-02.
+
+## `setStrain` (testUniaxialMaterial) COMMITS — central FD tangent is invalid for plasticity
+
+The Python `setStrain(eps)` command (`SRC/interpreter/OpenSeesCommandsPython.cpp`,
+`ops_setStrain`) calls **both** `setTrialStrain(eps)` **and** `commitState()`. So
+the `_testbed.fem_checks.uniaxial_tangent_fd` central difference — which probes
+`strain0-d`, `strain0`, `strain0+d` expecting all three from one committed state —
+straddles an **elastic unload** on the minus side for any path-dependent (plastic)
+material, returning ~`(E + E_alg)/2` instead of the consistent tangent (caught on
+LadrunoUniaxialJ2: analytic 176.7 vs the broken FD 597 ≈ (1000+176)/2). The helper
+is only valid for nonlinear-elastic materials.
+
+- **Rule:** to FD a *plasticity* consistent tangent, probe each point as an
+  INDEPENDENT one-step return from a FRESH material (`wipe` → redefine →
+  `testUniaxialMaterial` → `setStrain`), so all probes are one-step-from-zero; the
+  central difference of that one-step map IS the algorithmic tangent (O(d²)). See
+  `test_consistent_tangent_fd` (V6) in `tests/test_ladrunoUniaxialJ2_material.py`.
+  Also note `testUniaxialMaterial(tag)` returns the SAME object (not a copy), so it
+  does not reset committed state — you must rebuild the material to get a clean one.
+  Learned 2026-06-02 (LadrunoUniaxialJ2 polish).
+
+## Lemaitre damage tangent: the `dotT` weight cancels the tensor↔engineering shear factor
+
+When assembling `∂D/∂ε` for the Lemaitre coupled-damage consistent tangent
+(`LadrunoJ2Kernel.h::returnMapDamaged`), the `∂(p̄)/∂ε` term goes through
+`∂‖M‖/∂M = wt·M/‖M‖` where `wt = (1,1,1,2,2,2)` are the `dotT` factor-2 weights on
+the off-diagonal (shear) pairs. The strain variable being differentiated is then
+converted tensor→engineering by `w = (1,1,1,½,½,½)`. **`wt_j · w_j = 1` for every
+component** (normal: 1·1; shear: 2·½), so the net engineering derivative is just
+`(2G/h)·n_j` with **NO shear half-factor**. The natural-but-wrong instinct is to
+carry the `w_j=½` on shear (mirroring the strain-mapping elsewhere in the file);
+that silently halves the shear columns of `∂p̄/∂ε` and breaks the tangent ONLY on
+shear-coupled (3D-mixed) states — uniaxial paths pass clean, so a uniaxial-only FD
+check misses it. Caught by the 3D-mixed FD case in `tests/ladruno_damage_check.cpp`
+(error was a fixed 1.5e-5 independent of the FD step ⇒ a real bug, not truncation).
+
+- **Rule:** for a `dotT`-norm gradient differentiated w.r.t. engineering strain, the
+  `dotT` weight and the tensor→engineering factor cancel — use the bare component.
+  Always FD-check the consistent tangent on a **shear-inclusive** state, not just
+  uniaxial. Learned 2026-06-02 (Lemaitre damage, [[15_lemaitre_ductile_damage_adr]]).
+
+## LadrunoIMKBeam: "elastic end" ≠ "released end" (pin); fake a release with a tiny Elastic hinge
+
+A `LadrunoIMKBeam` end with **no hinge material** in that slot is **elastic** — it
+still carries moment with the full elastic rotational stiffness (`4EI/L`,
+far-end-fixed). That is NOT a structural **release** (pin), where the end moment is
+identically zero and the rotation is free (the far end condenses out, dropping the
+active end stiffness to `3EI/L`). The element has no `-release` flag (deferred, see
+[[14_ladruno_imk_beam]] §8).
+
+- **Workaround:** put a near-zero-stiffness `Elastic` uniaxial in that end/axis
+  slot (e.g. `-matZj`). The series flexibility `1/k → ∞` zeroes the end moment.
+  Use `k ≈ 1e-5·(4EI/L)` of the bending axis (~1e-5 of the elastic rotational
+  stiffness): verified to give `k_i = 3EI/L` to ~5 figures and residual
+  `M_j/M_i ≈ 7e-6`. Stay above the element `ktFloor` guard (`1e-8·4EI/L`); a
+  factor in `[1e-6, 1e-4]` is the sweet spot (smaller hurts conditioning, larger
+  leaves a non-negligible residual moment). Learned 2026-06-02 (LadrunoIMKBeam).
+
+## LadrunoBrick `-formulation eas` is a misnomer (it's SSPbrick) → rename to `ssp` RECOMMENDED
+
+The `-formulation eas` single-point element is **never** a Simo–Rifai enhanced-assumed-strain
+element. It is a **verbatim port of `UWelements/SSPbrick::GetStab`** (McGann/Arduino) — B̄ +
+a statically-condensed assumed-strain hourglass `Kstab` baked once at `setDomain` on the
+*initial* tangent (no per-step α). Proven by source (`LadrunoBrick.cpp:1887`) and by
+byte-identity to `SSPbrick` (6 figs elastic, 4 figs plastic, 0.2% with damage — see the
+Lemaitre validation §4.6 + `tests/test_ladrunoBrick_element.py::test_eas_matches_sspbrick_distorted_hex`).
+
+- **RECOMMENDED rename (NOT yet in source):** call it `-formulation ssp`; keep `eas` as a
+  deprecated alias (warn → ssp) so the name `eas` is freed for a **true** Simo–Rifai EAS element.
+  Suggested impl: enum `Formulation::SSP` with `EAS = SSP` back-compat alias; parser branch in
+  `OPS_LadrunoBrick.cpp`; `formulationName→"ssp"`. The owner will land the C++ rename separately
+  (docs-only PR keeps the current `eas` name). Tests can use a runtime fallback (`ssp` if built,
+  else `eas`) to stay green across the rename.
+- **Consequence (why it's not a bug):** being a single-point element, `eas`/`ssp` over-predicts load
+  in a plastic/damage stress gradient (Jensen on the concave σ(ε); centroid under-samples) — but it
+  shares this *exactly* with the validated `SSPbrick`, and it converges to `bbar` under refinement
+  (gap 17.4%→3.7% to h=0.5). Use `bbar` for gradient/fracture fields, `eas`/`ssp` for smooth + cost.
+
+## Shared append-point files conflict on stale branches — append at END + `merge=union`
+
+Every new fork feature touches the same hotspot files (`SRC/classTags.h`, the
+broker `FEM_ObjectBrokerAllClasses.cpp`, the `OpenSees*Commands.cpp` registries,
+`*/CMakeLists.txt`, the banner `banner_features.txt`/`tclMain.cpp`/`PythonModule.cpp`,
+and the `LEDGER_*.md` / testbed `manifest.yaml` bookkeeping). When a feature branch
+falls behind `ladruno` (e.g. #127 was 48 commits stale), these are exactly where
+merge conflicts land — git auto-merges *additions at different lines*, but two edits
+to **adjacent** lines (a new row inserted next to a row another PR also edited) do
+NOT auto-merge.
+
+Prevention (all three, not just one):
+- **Reconcile with latest `ladruno` right before merging** (rebase or merge-from-base
+  — equivalent under squash-merge; rebase = linear + force-push, merge = no force-push).
+  This fixes staleness, but NOT contention.
+- **Append new entries at the END of a list/section, never interleaved.** A `classTags.h`
+  tag appended after the last one auto-merges; a `LEDGER_*.md` row inserted *mid-table*
+  next to a row another PR edits will conflict (the #127 case — its LadrunoJ2Finite row
+  sat above the UniaxialJ2 row that the Lemaitre PR was editing).
+- **`merge=union` driver** (set in `.gitattributes`) for the append-only logs
+  (`LEDGER_*.md`, `banner_features.txt`) — git keeps BOTH sides instead of conflicting.
+  NEVER apply `union` to source code (it interleaves → garbage). Learned 2026-06-02
+  (the #127 rebase past the Lemaitre-damage merge; [[16_finite_native_j2_adr]]).
+## Corot solid wrapper: external dead loads must NOT pass through `globalizeForce`; and corot IS objective for kinematic hardening
+
+Two corot-seam gotchas, from the finite-strain trifecta deep review (2026-06-02,
+[[10_solid_corotational_adr]]):
+
+- **External dead loads must stay in the global frame.** `SolidTransformationCorot::
+  globalizeForce` pushes the core force forward by R (`f_global = R f_d − …`). That is
+  correct ONLY for the *internal* force (`∫ Bᵀσ`, self-equilibrated). A fixed-direction
+  body/self-weight load (`-b`, `eleLoad -selfWeight`) is a GLOBAL-frame quantity — if it
+  is folded into the core force before `globalizeForce`, corot rotates gravity WITH the
+  element (wrong, non-conservative; was the COROT-1 bug). **Fix/pattern:** `LadrunoBrick`
+  accumulates the body load in a separate `bodyForce` vector and adds it back AFTER
+  `globalizeForce`/`globalizeStiff` (also keeps the spurious body-load term out of the
+  corot geometric stiffness). Behavior-neutral under `-geom linear` (identity globalize);
+  the `-geom finite` path was already correct (assembles in the spatial frame, no
+  globalize). Any new fold-then-globalize site must keep external loads out of the core.
+
+- **Corot is objective for KINEMATIC-hardening materials (unlike the LogStrain finite
+  path).** A natural worry is that corot shares the dSNPO §14.11 backstress-frame
+  non-objectivity. It does NOT: corot feeds the material `u_d = Rᵀ x_rel − X_rel`
+  (REFERENCE frame) with reference-config gradients, so the small-strain material — and
+  its backstress α — live in a FIXED reference frame across commits (the element's R
+  rotates; the material's frame does not). Since `polar(Q·H) = Q·polar(H)` exactly for
+  rigid Q, `u_d` is rigid-rotation-invariant ⇒ identical deformational-strain history ⇒
+  exact objectivity (verified, `test_corot_kinematic_hardening_objectivity`). The
+  LogStrain path differs precisely because `bᵉ_tr = f_Δ bᵉ_n f_Δᵀ` co-rotates the stress
+  `s` into the current frame while α stays fixed — THAT is §14.11. Lesson: "the element's
+  R rotates between commits" does NOT imply "the material's frame rotates."
+
+## Finite-strain elastoplastic bending/necking BVPs need KrylovNewton (plain Newton diverges); F-bar needs an unsymmetric solver
+
+From the finite-strain validation Phase P1 (2026-06-02, [[18_finite_strain_validation_report]]).
+
+- **`LogStrain(LadrunoJ2)` + `LadrunoBrick -geom finite` bending *into plasticity* does
+  NOT converge under `algorithm Newton` — nor under `NewtonLineSearch`.** The residual
+  grows from the very first increment (a `NormDispIncr`/`EnergyIncr` norm that climbs, not
+  shrinks). It is not a tangent bug (the consistent tangent passes the FD gate on
+  homogeneous states): bending+plasticity on a low-order hex is just a stiff, badly-scaled
+  Newton basin for a full step. **`algorithm KrylovNewton` (+ `test EnergyIncr 1e-6`) is
+  robust** and converges quadratically-ish; the necking bar (C1) and the isochoric-J2
+  locking cantilever (B3) both rely on it. Homogeneous single-element states and elastic
+  bending converge fine under plain Newton — the divergence is specific to *inhomogeneous
+  plastic* finite-strain BVPs.
+- **A 1-element-wide cross-section bends too poorly for stable plastic Newton.** A 1×1×nz
+  column under transverse displacement control diverges even with KrylovNewton; a ≥2×2
+  cross-section is needed. (Elastic load-control on the 1-wide column is fine — it just
+  locks.)
+- **F-bar (`-formulation bbar -geom finite`) has an UNSYMMETRIC tangent** (dSNPO eq 15.10)
+  ⇒ use `system FullGeneral` (dense) or, much faster for meshed studies, `system UmfPack`
+  (unsymmetric sparse). A symmetric solver silently mis-solves. `UmfPack` made the 128–576
+  hex necking runs tractable where `FullGeneral` would be dense-O(N³) per step.
+- **Plastic finite-strain stress paths are path-dependent** (obvious, but it bites tests):
+  a sub-stepped element solve does NOT equal a single-step return-map oracle for
+  *non-proportional* loading (simple shear, equibiaxial). Drive ONE increment ref→F when
+  comparing to a one-step oracle, or step the oracle incrementally over the same F_k.
+
+## Explicit `-geom finite`: `criticalTimeStep()` is reference-config (must margin dt), and the EnergyBalance recorder reports IE with a flipped sign
+
+From the finite-strain validation Phase P4 (Taylor-bar impact, 2026-06-02,
+[[18_finite_strain_validation_report]] §7; `tests/test_finite_strain_P4_explicit.py`).
+
+- **`ops.criticalTimeStep()` does NOT shrink as elements compress.** On the Taylor
+  bar the cylinder shortened ~33 % and the impact face mushroomed >2×, yet
+  `criticalTimeStep()` was *bit-identical* before and after (ratio 1.000). It is
+  computed from the **reference** configuration characteristic length (review
+  GEOM-2). So an explicit `-geom finite` run is only conservatively safe until
+  strong compression; past that the *true* stable dt is smaller than reported.
+  **Carry a safety factor < 1** — the Taylor bar uses `dt = 0.3·dt_cr` (0.5 is
+  stable for the early/short transit but risks instability through full
+  mushrooming). A future improvement would update dt_cr from the current config.
+- **`EnergyBalance` recorder reports IE (internal energy) with a flipped SIGN for
+  the finite-strain element.** On the Taylor bar `KE0=2.34e5`, `KE_final=1.0e4`
+  (4.3 %, the rest absorbed plastically), and `IE_final=−2.36e5` — the MAGNITUDE
+  equals the absorbed kinetic energy (≈ KE0−KE_final, within ~5 %) but the sign is
+  negative, so the recorder's `RES`/`ERR%` columns read ~100 % (spurious). The KE
+  column is correct (it's the validated getMass aliasing-fix path,
+  `test_energyBalanceRecorder.py`); only IE's sign is off for the
+  `LogStrain`/`LadrunoBrick -geom finite` path. **Work around it by comparing
+  `|IE|` to the kinetic-energy change**; do not trust `ERR%` for finite-strain
+  elements until the IE-increment sign convention is reconciled (likely the
+  recorder integrates fᵀΔu with the internal-force sign opposite to what the
+  finite element returns). Candidate follow-up: audit
+  `EnergyBalanceRecorder.cpp` internal-energy accumulation vs `LadrunoBrick`
+  `getResistingForce` sign under `-geom finite`.
+
+- **`ASDConcrete3D` confines emergently, but there is NO dilation-angle input.**
+  Measured (RC-3D Gate 2, `Ladruno_implementation/rc3d_gates/gate2_concrete_confinement.py`):
+  a single brick under constant lateral pressure `p` + axial displacement control
+  develops a confined peak `fcc` within **~5 % of Mander** for `p/fc ∈ [0, 0.20]`
+  (unconfined recovers `fc` exactly), and the peak strain grows with `p` — so
+  confinement is a REAL emergent property of the Lubliner triaxial surface; do
+  **not** pre-inflate `fc` à la Mander in a 3D solid (that double-counts). BUT the
+  *amount* of confinement is governed by the **`Kc` triaxial-meridian parameter +
+  the compression hardening backbone**, NOT a dilation angle — `ASDConcrete3D`
+  exposes no dilatancy/flow-rule input (grep the header for `dilatan` → nothing).
+  So: validate `fcc(p)` against test data / Mander before trusting confined-member
+  results; the lever to tune is `Kc` + the `-Ce/-Cs/-Cd` curve. **Backbone calibration
+  gotcha:** the first compression point must be the *elastic limit* (`σ = E·ε`, so
+  `Cd = 0` there); putting the first point past the elastic line makes the model run
+  elastic up to that strain and the unconfined peak overshoots `fc` (≈2× in an early
+  Gate-2 draft). **Solver:** confined softening needs `KrylovNewton` (or the blessed
+  `Ladruno_scripts/ladruno_solve.py` adaptive driver) — plain Newton fixed-step
+  diverges past the peak.
+
+- **openseespy parsers must peek a maybe-numeric arg with `OPS_GetStringFromAll`,
+  never `OPS_GetString`.** openseespy passes TYPED args; `OPS_GetString()` returns
+  the sentinel `"Invalid String Input!"` when the current arg is an int or float,
+  so any parser that peeks a position which could be a number (a positional count,
+  or a flag value that might be `auto`/numeric like `-kt`) blows up — while string
+  args at the same slot pass, making the failure look maddeningly selective. Use
+  `char buf[N]; OPS_GetStringFromAll(buf, N);` — it stringifies any arg (`%d` for
+  int, `%.20f` for double → exact `atof` round-trip) AND advances the cursor, then
+  `atoi`/`atof`/`strcmp`. Tcl is all-strings so it never reproduces there. Bit us on
+  `LadrunoEmbeddedRebar` (`-host` vs positional `nHost`, and `-kt auto` vs numeric
+  `-kt`) — PRs #175→#177; the bug was masked in #175 because that build was broken
+  (see the next quirk's CI note) so Zone-A pytest never ran.
+
+- **ladruno auto-merge gates ONLY on the classTag+manifest fast check — NOT the
+  Zone-A (Ubuntu) job at all (neither the build nor the pytest).** A PR that does
+  not even COMPILE can merge (PR #175 did: a `getInterpolationWeights` override used
+  `numberNodes`, a per-method `static const` local in `LadrunoBrick`, not a member).
+  A broken ladruno HEAD then makes EVERY later PR's Zone-A red, and since the build
+  dies the pytest phase never runs — masking test bugs until someone fixes the
+  compile. After pushing C++ to a fork PR, **watch the Zone-A job**
+  (`gh pr checks <n> --watch`): a fast (~1-2 min) fail = compile error, a slow
+  (~5-6 min) fail = test failure. Don't trust a green fast-gate.
+
+- **Anisotropic embedded coupling (`LadrunoEmbeddedRebar`) needs a CO-ROTATED bar
+  axis under large host rotation; isotropic node ties (`ASDEmbeddedNodeElement`) do
+  not.** The frozen reference `dir` is the *only* true large-rotation defect: the gap
+  `g` and the host weights `N_i(ξ)` are already frame-objective, but the axial/
+  transverse split `s = g·dir`, `g_t = g − s·dir` taken against a FROZEN `dir`
+  registers spurious axial slip under pure rigid rotation and yields a non-objective
+  traction. Fix (ADR 20 §10.5, `-corot`): recompute `dir` each step as the secant of
+  two embed points (embed point + a point B along the bar) from CURRENT host node
+  positions. This is why `ASDEmbeddedNodeElement` recomputes geometry from REFERENCE
+  coords yet stays objective — its `iK·BᵀB` penalty is isotropic, so there is no axis
+  to go stale. (v1 omits the `∂dir/∂u` consistent-tangent term — EICR practice: exact
+  for explicit, converges under step-halving for implicit.)

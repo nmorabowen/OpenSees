@@ -707,10 +707,31 @@ double Element::getCharacteristicLength(void)
   }
   return minSize;
 }
-      
+
+// Ladruno (ADR 20 §9): default = not implemented. Host elements that can be
+// embedment targets (LadrunoBrick, BezierTet10) override this and fill N with
+// their nodal shape-function weights at the natural coordinate xi. Returning -1
+// here lets LadrunoEmbeddedRebar fall back to user-supplied -shape weights for
+// hosts that do not implement it.
+int
+Element::getInterpolationWeights(const Vector &xi, Vector &N)
+{
+  return -1;
+}
+
+// Ladruno (ADR 20 §10.6.1): default = "no opinion" (-1) so the per-element
+// eigensolve in CriticalTimeStep governs this element. Elements whose explicit
+// stability bound the per-element K v = λ M v pencil cannot express (e.g. the
+// bipenalty coupling in LadrunoEmbeddedRebar) override this and return their
+// self-computed critical step in seconds.
+double
+Element::getExplicitCriticalTimeStep(void)
+{
+  return -1.0;
+}
 
 
-int 
+int
 Element::storePreviousK(int numK) {
 
   //
