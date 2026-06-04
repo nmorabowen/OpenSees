@@ -231,3 +231,94 @@ def test_bipenalty_dtcr_self_report():
                 "-bipenalty", "-dtcr", dt)
     assert ops.eleResponse(1, "mpenalty")[0] == pytest.approx(Ku * (dt / 2.0) ** 2, rel=1e-9)
     assert ops.eleResponse(1, "dtcr")[0] == pytest.approx(dt, rel=1e-9)
+
+
+# =================================================== Phase 1b — pressure tie (UP)
+def _up_host_node(ku=1.0e5, kp=2.0e5, ndm=3):
+    """cNode (1) tied to a single coincident u-p host node (2, all DOFs fixed). u-p
+    nodes carry ndf = ndm+1 with the pressure DOF at index ndm (3D: dof 4, 2D: dof 3)."""
+    ndf = ndm + 1
+    ops.wipe()
+    ops.model("basic", "-ndm", ndm, "-ndf", ndf)
+    ops.node(1, *([0.0] * ndm))
+    ops.node(2, *([0.0] * ndm))
+    ops.fix(2, *([1] * ndf))          # host fully fixed (u AND p)
+    ops.element("LadrunoEmbeddedNode", 1, 1, 1, 2, "-shape", 1.0, "-k", ku,
+                "-pressure", "-kp", kp)
+
+
+def _push_pressure(p_dof, p_val):
+    """Prescribe the cNode pressure DOF; translations stay free (spring to 0)."""
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.sp(1, p_dof, p_val)
+    ops.constraints("Transformation"); ops.numberer("Plain"); ops.system("FullGeneral")
+    ops.test("NormDispIncr", 1e-10, 20); ops.algorithm("Newton")
+    ops.integrator("LoadControl", 1.0); ops.analysis("Static")
+    assert ops.analyze(1) == 0
+    ops.reactions()
+
+
+def test_pressure_tie_3d():
+    """3D u-p (ndf=4): the pressure DOF (4) couples as t_p = K_p*(p_c - sum N_i p_host)."""
+    ku, kp = 1.0e5, 2.0e5
+    _up_host_node(ku=ku, kp=kp, ndm=3)
+    p_val = 3.0e-3
+    _push_pressure(4, p_val)                     # prescribe cNode pressure (dof 4)
+    assert abs(ops.nodeReaction(1)[3]) == pytest.approx(kp * p_val, rel=1e-6)
+    assert ops.eleResponse(1, "pgap")[0] == pytest.approx(p_val, rel=1e-6)
+    assert ops.eleResponse(1, "pforce")[0] == pytest.approx(kp * p_val, rel=1e-6)
+
+
+def test_pressure_tie_2d():
+    """2D u-p (ndf=3): -pressure disambiguates dof 3 as PRESSURE (not drilling Rz)."""
+    ku, kp = 1.0e5, 2.0e5
+    _up_host_node(ku=ku, kp=kp, ndm=2)
+    p_val = 3.0e-3
+    _push_pressure(3, p_val)                     # pressure DOF = index ndm = dof 3
+    assert abs(ops.nodeReaction(1)[2]) == pytest.approx(kp * p_val, rel=1e-6)
+    assert ops.eleResponse(1, "pgap")[0] == pytest.approx(p_val, rel=1e-6)
+
+
+def test_pressure_does_not_disturb_translations():
+    """The pressure tie is on a SEPARATE DOF (index ndm); the isotropic U coupling is
+    unchanged (the ndf>ndm scatter writes pressure/translation to disjoint slots)."""
+    ku, kp = 1.0e5, 2.0e5
+    _up_host_node(ku=ku, kp=kp, ndm=3)
+    R = _push1(1, 2.0e-3)                         # push x; y,z,p free -> 0
+    assert abs(R[0]) == pytest.approx(ku * 2.0e-3, rel=1e-6)
+    assert abs(R[1]) < 1e-3 and abs(R[2]) < 1e-3
+    assert abs(R[3]) < 1e-3                       # pressure DOF untouched by a U push
+
+
+def test_pressure_force_split_by_N():
+    """Partition of unity on the PRESSURE DOF: two u-p hosts, N=[0.4,0.6]."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 4)
+    for nd in (1, 2, 3):
+        ops.node(nd, 0.0, 0.0, 0.0)
+    for nd in (2, 3):
+        ops.fix(nd, 1, 1, 1, 1)
+    ops.element("LadrunoEmbeddedNode", 1, 1, 2, 2, 3, "-shape", 0.4, 0.6,
+                "-k", 1.0e5, "-pressure", "-kp", 2.0e5)
+    _push_pressure(4, 1.0e-3)
+    fr = ops.nodeReaction(1)[3]
+    f2 = ops.nodeReaction(2)[3]
+    f3 = ops.nodeReaction(3)[3]
+    assert (fr + f2 + f3) == pytest.approx(0.0, abs=1e-6 * abs(fr))
+    assert f2 == pytest.approx(0.4 * (-fr), rel=1e-6)
+    assert f3 == pytest.approx(0.6 * (-fr), rel=1e-6)
+
+
+def test_pressure_degrades_when_not_up():
+    """-pressure requested but nodes are NOT u-p (ndf=3 in 3D) -> degrade to U-only."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    ops.node(1, 0.0, 0.0, 0.0)
+    ops.node(2, 0.0, 0.0, 0.0)
+    ops.fix(2, 1, 1, 1)
+    ops.element("LadrunoEmbeddedNode", 1, 1, 1, 2, "-shape", 1.0, "-k", 1.0e5,
+                "-pressure", "-kp", 1.0e5)
+    R = _push1(1, 2.0e-3)
+    assert abs(R[0]) == pytest.approx(1.0e5 * 2.0e-3, rel=1e-6)   # still works as U
+    assert ops.eleResponse(1, "pgap")[0] == 0.0                   # UP inactive

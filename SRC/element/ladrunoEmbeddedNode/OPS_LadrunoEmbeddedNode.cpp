@@ -37,8 +37,14 @@
 //   element LadrunoEmbeddedNode tag cNode {nHost h1..hN | -host eleTag}
 //           {-shape N1..NN | -xi x1..x_ndm}
 //           [-k {Ku | auto}] [-kAlpha a]
+//           [-pressure [-kp Kp]]      # Phase 1b: also tie the pressure DOF (u-p nodes)
 //           [-enforce {penalty | al}]
 //           [-bipenalty {-dtcr dt | -wcap beta}]
+//
+//   -pressure (ADR 23 Phase 1b): also couple the constrained node's pressure DOF
+//   (index ndm) to the host's interpolated pressure, g_p = p_c - sum N_i p_host,i,
+//   t_p = K_p*g_p. Requires all coupled nodes to be u-p (ndf >= ndm+1); else U-only.
+//   K_p via -kp (default 1e12; host pressure-block auto-scale deferred).
 //
 //   -k auto (ADR 23 D3): resolve the isotropic translational penalty from the host's
 //   own initial stiffness, K_u = kAlpha * max|K_host(i,i)| (default kAlpha=1e3) —
@@ -150,6 +156,8 @@ void* OPS_LadrunoEmbeddedNode(void)
   int bpMode = 0;                // 0 = -dtcr, 1 = -wcap
   double bpDt = 0.0, bpBeta = 0.0;
   bool bpBudgetSet = false;
+  bool pressure = false;         // -pressure: opt-in UP (pressure) tie (Phase 1b)
+  double Kp = 1.0e12;            // -kp: pressure penalty (auto-scale deferred)
 
   while (OPS_GetNumRemainingInputArgs() > 0) {
     const char* opt = OPS_GetString();
@@ -228,6 +236,19 @@ void* OPS_LadrunoEmbeddedNode(void)
         return 0;
       }
     }
+    else if (strcmp(opt, "-pressure") == 0) {
+      // opt-in UP (pressure) tie (ADR 23 Phase 1b). Activated at setDomain only if all
+      // coupled nodes are u-p (ndf >= ndm+1); else degrades to U-only. NB the M5
+      // -rot/-pressure mutual-exclusion guard lands with -rot in Phase 2.
+      pressure = true;
+    }
+    else if (strcmp(opt, "-kp") == 0) {
+      n = 1;
+      if (OPS_GetDoubleInput(&n, &Kp) < 0) {
+        opserr << "WARNING LadrunoEmbeddedNode: -kp wants a value\n";
+        return 0;
+      }
+    }
     else if (strcmp(opt, "-bipenalty") == 0) {
       bipenalty = true;
     }
@@ -281,7 +302,8 @@ void* OPS_LadrunoEmbeddedNode(void)
 
   Element* e = new LadrunoEmbeddedNode(tag, ndm, cNode, hostNodes, Nshape, Ku,
                                        hostEleTag, ktAuto, ktAlpha, enforce,
-                                       bipenalty, bpMode, bpDt, bpBeta);
+                                       bipenalty, bpMode, bpDt, bpBeta,
+                                       pressure, Kp);
   if (e == 0) {
     opserr << "WARNING LadrunoEmbeddedNode: could not create element\n";
     return 0;

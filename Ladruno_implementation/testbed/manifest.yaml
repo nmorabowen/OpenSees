@@ -735,7 +735,7 @@ features:
     pr: null
     feature_class: element
     required_tiers: [T0, T1]
-    pytest: tests/test_ladrunoEmbeddedNode_element.py   # isotropic translational spring (K_u*g, 2D+3D); partition-of-unity force split to hosts by N_i + equilibrium; -host/-xi via a real LadrunoBrick (node auto-resolve + centroid/off-centroid trilinear weights); -k auto linear in kAlpha; AL drives gap->0; responses; bipenalty dtcr self-report
+    pytest: tests/test_ladrunoEmbeddedNode_element.py   # U (isotropic spring K_u*g, 2D+3D); partition-of-unity force split + equilibrium; -host/-xi via a real LadrunoBrick (node auto-resolve + centroid/off-centroid trilinear weights); -k auto linear in kAlpha; AL drives gap->0; responses; bipenalty dtcr self-report. UP (Phase 1b): pressure tie 2D+3D (g_p=p_c-sum N_i p_host), pressure force split, -pressure degrades to U-only on non-u-p nodes, U/P scatter disjoint
     tcl: WAIVED(element LadrunoEmbeddedNode ...; shared OpenSeesElementCommands functionMap serves Tcl + Python; verified via the Zone-A pytest battery)
     core_files:
       - SRC/classTags.h
@@ -755,9 +755,12 @@ features:
       split, no bond-slip; the isotropic tie is already frame-objective ⇒ no -corot).
       Gap g = u_c - sum_i N_i u_host,i (translational); t = K_u*g (+ lambda for AL);
       P = B^T t, K = B^T D_u B assembled compactly via the kernel and SCATTERED into the
-      full per-node-ndf layout (constrained/host nodes may carry more DOFs than ndm; only
-      the first ndm translational DOFs are coupled in Phase 1; UR/UP = ADR 23 Phase 2/1b).
-      Plan/ADR: Ladruno_implementation/23_ladruno_embedded_node_adr.md.
+      full per-node-ndf layout (constrained/host nodes may carry more DOFs than ndm).
+      Phase 1a = U (translations). Phase 1b = +UP (-pressure): also ties the pressure
+      DOF (index ndm) of u-p nodes, g_p = p_c - sum N_i p_host,i, t_p = K_p*g_p (scalar
+      coupling scattered to the pressure slots; activated only if all nodes are u-p, else
+      U-only). UR (rotation) = ADR 23 Phase 2. Plan/ADR:
+      Ladruno_implementation/23_ladruno_embedded_node_adr.md.
 
   # --- worked examples shipped with the scaffold (existing elements, no new C++) ---
 
