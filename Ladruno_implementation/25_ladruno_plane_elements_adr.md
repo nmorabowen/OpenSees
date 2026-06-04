@@ -35,7 +35,8 @@ element('LadrunoCST',  tag, n1,n2,n3,    matTag, '-geom', <linear|corot|finite>,
 ```
 
 - **`LadrunoQuad`** — 4-node bilinear quad. `ELE_TAG_LadrunoQuad = 33007` (next
-  in the element band after `LadrunoEmbeddedNode=33006`). Carries the full
+  in the element band after `LadrunoEmbeddedNode=33006`; a sibling PR took the
+  originally-reserved 33006, so the shipped tags are 33007/33008). Carries the full
   formulation × geometry menu, hourglass control, and the ASDConcrete crack-band
   `lch` handshake. This is where ~90% of the value lives.
 - **`LadrunoCST`** — 3-node constant-strain triangle. `ELE_TAG_LadrunoCST = 33008`.

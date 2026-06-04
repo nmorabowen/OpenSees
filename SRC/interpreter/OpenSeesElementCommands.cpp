@@ -203,6 +203,8 @@ void* OPS_LadrunoBrick(); // N. Mora-Bowen (Ladruno)
 void* OPS_LadrunoIMKBeam(); // N. Mora-Bowen (Ladruno)
 void* OPS_LadrunoEmbeddedRebar(); // N. Mora-Bowen (Ladruno)
 void* OPS_LadrunoEmbeddedNode(); // N. Mora-Bowen (Ladruno)
+void* OPS_LadrunoQuad(); // N. Mora-Bowen (Ladruno)
+void* OPS_LadrunoCST(); // N. Mora-Bowen (Ladruno)
 void* OPS_BbarBrick();
 void* OPS_BbarBrickWithSensitivity();
 void* OPS_ZeroLengthRocking();
@@ -669,6 +671,10 @@ namespace {
 	functionMap.insert(std::make_pair("ladrunoEmbeddedRebar", &OPS_LadrunoEmbeddedRebar));
 	functionMap.insert(std::make_pair("LadrunoEmbeddedNode", &OPS_LadrunoEmbeddedNode)); // N. Mora-Bowen (Ladruno)
 	functionMap.insert(std::make_pair("ladrunoEmbeddedNode", &OPS_LadrunoEmbeddedNode));
+	functionMap.insert(std::make_pair("LadrunoQuad", &OPS_LadrunoQuad)); // N. Mora-Bowen (Ladruno)
+	functionMap.insert(std::make_pair("ladrunoQuad", &OPS_LadrunoQuad));
+	functionMap.insert(std::make_pair("LadrunoCST", &OPS_LadrunoCST)); // N. Mora-Bowen (Ladruno)
+	functionMap.insert(std::make_pair("ladrunoCST", &OPS_LadrunoCST));
 	functionMap.insert(std::make_pair("bbarBrickUP", &OPS_BBarBrickUP));
 	functionMap.insert(std::make_pair("bbarQuadUP", &OPS_BBarFourNodeQuadUP));
 	functionMap.insert(std::make_pair("20NodeBrick", &OPS_Twenty_Node_Brick));
