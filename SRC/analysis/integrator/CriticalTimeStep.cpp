@@ -198,6 +198,23 @@ CTSResult computeCriticalTimeStep(AnalysisModel *theModel,
     ElementIter &elements = theDomain->getElements();
 
     while ((ele = elements()) != 0) {
+        // --- Ladruno (ADR 20 §10.6.1): element self-reported critical step --------
+        // An element may carry an explicit stability bound that its per-element
+        // K v = λ M v pencil cannot express — e.g. a bipenalty coupling whose host
+        // DOFs are massless in the per-element problem (they slave out the
+        // constraint → λ_max=0, so the eigensolve below would miss it). A
+        // non-negative self-report governs this element directly: fold it into the
+        // running minima and skip the eigensolve. The reporting element owns a clean
+        // bound (it refuses Rayleigh damping), so damped and undamped coincide.
+        double selfDt = ele->getExplicitCriticalTimeStep();
+        if (selfDt > 0.0) {
+            r.n_scanned++;
+            r.n_contributing++;
+            if (selfDt < r.undamped_dt) { r.undamped_dt = selfDt; r.undamped_tag = ele->getTag(); }
+            if (selfDt < r.damped_dt)   { r.damped_dt   = selfDt; r.damped_tag   = ele->getTag(); }
+            continue;
+        }
+
         // --- mass first, copied to a diagonal vector ----------------------
         // Read and lump the mass BEFORE fetching the stiffness: getMass() and
         // getInitialStiff()/getTangentStiff() may both return a reference to the

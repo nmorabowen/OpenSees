@@ -70,6 +70,16 @@ class Element : public DomainComponent
     // (returns -1, leaves N untouched); host elements override and return 0.
     virtual int getInterpolationWeights(const Vector &xi, Vector &N);
 
+    // Ladruno (ADR 20 §10.6.1): an element's self-reported explicit critical time
+    // step (seconds). CriticalTimeStep folds a non-negative value into its running
+    // minimum and SKIPS the per-element K v = λ M v eigensolve for that element.
+    // Default -1 = "no opinion" (the eigensolve governs). Override only when an
+    // element's true stability bound is NOT captured by its per-element pencil —
+    // e.g. LadrunoEmbeddedRebar's bipenalty bound, which is invisible to the
+    // eigensolve because the host DOFs are massless in the per-element problem
+    // (they slave out the constraint → λ_max=0).
+    virtual double getExplicitCriticalTimeStep(void);
+
     // methods dealing with committed state and update
     virtual int commitState(void);    
     virtual int revertToLastCommit(void) = 0;        
