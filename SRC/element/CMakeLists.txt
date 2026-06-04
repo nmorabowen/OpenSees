@@ -35,7 +35,8 @@ add_subdirectory(solidTransformation) # Ladruno — solid geometry-method layer 
 add_subdirectory(ladrunoBrick) # Ladruno — unified hex element (classTag 33002)
 add_subdirectory(ladrunoIMKBeam) # Ladruno — concentrated-plasticity IMK beam (classTag 33003)
 add_subdirectory(ladrunoEmbeddedRebar) # Ladruno — embedded-reinforcement coupling element (classTag 33005)
-add_subdirectory(ladrunoPlane) # Ladruno — unified 2D continuum elements: LadrunoQuad 33006 / LadrunoCST 33007
+add_subdirectory(ladrunoEmbeddedNode) # Ladruno — general node-to-host coupling element (classTag 33006)
+add_subdirectory(ladrunoPlane) # Ladruno — unified 2D continuum elements: LadrunoQuad 33007 / LadrunoCST 33008
 add_subdirectory(twoNodeLink)
 add_subdirectory(tetrahedron)
 add_subdirectory(triangle)

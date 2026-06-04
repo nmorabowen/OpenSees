@@ -150,6 +150,7 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • BezierTri6 — quadratic Bézier triangle (Kadapa 2018)\n"
 "        • BezierTet10 — quadratic Bézier tetrahedron (Kadapa 2018)\n"
 "        • LadrunoBrick — unified hex (std/bbar/uri/ssp/eas + hourglass)\n"
+"        • LadrunoQuad/LadrunoCST — unified 2D continuum (std/bbar, plane stress/strain)\n"
 "        • Solid geometry methods — -geom linear/corot/finite (+ F-bar)\n"
 "        • LadrunoJ2 — combined iso + Chaboche AF kinematic J2\n"
 "        • LadrunoJ2Finite — finite-strain J2, co-rotating backstress (+IMPL-EX)\n"
