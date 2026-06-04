@@ -24,6 +24,13 @@ them. This is observation-only — fixes we actually applied are tracked in
 
 ## Quirks
 
+### Cloning the ASDConcrete3D plastic-damage spine: two silent-but-fatal requirements (`/E` measure + E-consistent backbone `q`)
+- **Bites:** re-implementing the `ASDConcrete3D` update (e.g. `LadrunoRCKernel.h`). Two omissions each yield a material that *compiles, runs, and even passes a β-ratio test* yet is physically wrong:
+  1. **The equivalent-strain measures must be divided by E.** `equivalentTensile/CompressiveStrainMeasure` return `lublinerCriterion(...) / E` (`ASDConcrete3DMaterial.cpp:2509,2522`) — the Lubliner criterion is a STRESS; `/E` converts it to the *strain* abscissa that indexes the hardening backbone. Omit it and the abscissa is ~E× too large → the lookup lands in deep softening → `dt̄/dc̄≈1` → nominal stress collapses to ~0 (looks like near-zero stiffness). A β-*ratio* test CANNOT catch this (the `/E` scaling cancels in the ratio); only an ABSOLUTE-stress test (σ=E·ε) does.
+  2. **The effective-stress backbone `q` is E-consistent BY CONSTRUCTION — it is NOT `q=y/(1−d)` on the raw user points.** `HardeningLaw` c-tor + `adjust()` (`ASDConcrete3DMaterial.cpp:869-939,1134-1180`) prepend `(0,0,0)`, force `d[0]=0`, force the first segment elastic (`y[1]=E·x[1]`), **cap every secant slope at E**, enforce monotone plastic strain + non-decreasing damage, and ONLY THEN set `q=y/(1−d)`. Compute `q=y/(1−d)` on the raw points and any segment with effective slope > E gives `q>E·x` ⇒ `dc_plastic=1−q/(E·Δx) < 0` ⇒ NEGATIVE damage ⇒ the *elastic* stress is amplified (we saw exactly 8/7× too stiff). The tension branch can pass by luck if its slope already equals E.
+- **Why:** the hardening abscissa is a strain; `q` is the undamaged (plastic-only) effective stress whose elastic branch must have slope exactly E so the damage split `d=1−y/q` starts at 0.
+- **Workaround/status:** both replicated in `LadrunoRCKernel.h` (`/E` at the measure call site; `buildBackbone()` mirrors the c-tor+`adjust()`); proven by the reduce-to-ASDConcrete3D Zone-A gate (tension **and** compression byte-match). Also: a single OpenSees brick with ALL 24 DOFs prescribed (homogeneous-strain probe) **segfaults the `Transformation` constraint handler** (0 free equations) — use `constraints Penalty 1e14 1e14` instead. Learned 2026-06-03 building [[19_ladruno_rc_shell_adr|LadrunoRCConcrete]] (PR #155).
+
 ### Crack-band materials read element size via `ops_TheActiveElement->getCharacteristicLength()` — and the base default is wrong for high-order elements
 - **Bites:** `ASDConcrete3DMaterial` (and any crack-band/smeared-crack material) auto-
   regularizes its softening branch by the element characteristic length `lch`,

@@ -253,6 +253,7 @@
 #include "LadrunoJ2Finite.h"       // Ladruno — finite-strain-native combined-hardening J2 (co-rotating backstress)
 #include "InitDefGradNDMaterial.h" // Ladruno — multiplicative staged-activation wrapper (stress-free birth)
 #include "StagedStrainNDMaterial.h" // Ladruno — small-strain (2D+3D) auto-capturing staged-activation wrapper
+#include "LadrunoRCConcrete.h"     // Ladruno — RC plastic-damage + MCFT compression softening (ADR 19)
 #include "ElasticOrthotropicThreeDimensional.h"
 #include "ElasticOrthotropicPlaneStress.h"
 #include "J2PlaneStrain.h"
@@ -2337,6 +2338,9 @@ FEM_ObjectBrokerAllClasses::getNewNDMaterial(int classTag)
 
   case ND_TAG_StagedStrainNDMaterial:             // Ladruno — small-strain (2D+3D) auto-capturing staged-activation wrapper
     return new StagedStrainNDMaterial();
+
+  case ND_TAG_LadrunoRCConcrete:                  // Ladruno — RC plastic-damage + MCFT compression softening (ADR 19)
+    return new LadrunoRCConcrete();
 
   case ND_TAG_ElasticOrthotropicThreeDimensional:
     return new ElasticOrthotropicThreeDimensional();

@@ -159,6 +159,7 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • Lemaitre ductile damage (-damage lemaitre, +lch, +IMPL-EX)\n"
 "        • LadrunoIMKBeam — concentrated-plasticity IMK beam hinges\n"
 "        • LadrunoRebarBuckling — rebar buckling wrapper (Dhakal–Maekawa / Gomes–Appleton, cyclic re-straightening)\n"
+"        • LadrunoRCConcrete — RC plastic-damage + MCFT compression softening (shell)\n"
 "        • LadrunoArcLength — adaptive arc-length radius (Ramm desired-iter)\n"
 "        • LadrunoDynamicRelaxation — quasi-static DR (Gershgorin mass + kinetic damping)\n"
 "        • LadrunoIndirectControl — indirect/CMOD control (snap-back tracking)\n"

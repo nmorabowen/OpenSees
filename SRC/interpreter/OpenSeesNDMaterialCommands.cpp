@@ -23,6 +23,7 @@ void* OPS_LadrunoJ2();            // Ladruno — combined iso + Chaboche AF kine
 void* OPS_LadrunoJ2Finite();      // Ladruno — finite-strain-native combined-hardening J2 (co-rotating backstress)
 void* OPS_InitDefGradNDMaterial();// Ladruno — multiplicative staged-activation wrapper (stress-free birth); aliased as StagedDefGrad
 void* OPS_StagedStrainNDMaterial();// Ladruno — small-strain (2D+3D) auto-capturing staged-activation wrapper
+void* OPS_LadrunoRCConcrete();    // Ladruno — RC plastic-damage + MCFT compression softening (ADR 19)
 void* OPS_J2BeamFiber2dMaterial();
 void* OPS_J2BeamFiber3dMaterial();
 void* OPS_J2PlateFibreMaterial();
@@ -138,6 +139,7 @@ namespace {
 	nDMaterialsMap.insert(std::make_pair("StagedDefGradNDMaterial", &OPS_InitDefGradNDMaterial));
 	nDMaterialsMap.insert(std::make_pair("StagedStrain", &OPS_StagedStrainNDMaterial));      // Ladruno — small-strain (2D+3D) auto-capturing staged-activation wrapper
 	nDMaterialsMap.insert(std::make_pair("StagedStrainNDMaterial", &OPS_StagedStrainNDMaterial));
+	nDMaterialsMap.insert(std::make_pair("LadrunoRCConcrete", &OPS_LadrunoRCConcrete));     // Ladruno — RC plastic-damage + MCFT compression softening (ADR 19)
 	nDMaterialsMap.insert(std::make_pair("J2BeamFiber", &J2BeamFiber2Dor3D));
 	nDMaterialsMap.insert(std::make_pair("J2PlateFibre", &OPS_J2PlateFibreMaterial));
 	nDMaterialsMap.insert(std::make_pair("FAReinforcedConcretePlaneStress", &OPS_FAReinforcedConcretePlaneStressMaterial));
