@@ -245,7 +245,8 @@ LadrunoArcLength::formUnbalance(void)
     if (stabilize && Mstar != 0 && deltaUstep != 0) {
         LinearSOE *soe = this->getLinearSOE();
         const Vector &B = soe->getB();
-        residualTrueNorm = B.Norm();                      // true unbalance BEFORE f_v
+        residualTrueNorm = B.Norm();                      // true unbalance BEFORE f_v (L2)
+        residualTrue = B;                                 // keep the vector for nType-aware norming
         Vector R(B);
         for (int i = 0; i < nEqn; i++)
             R(i) -= cOverDt * (*Mstar)(i) * (*deltaUstep)(i);
@@ -667,6 +668,24 @@ int    LadrunoArcLength::getSignLastDeltaLambdaStep(void) const { return signLas
 double LadrunoArcLength::getDeltaUstepNorm(void) const
 {
     return (deltaUstep != 0) ? deltaUstep->Norm() : 0.0;
+}
+
+// ADR-20 §8 #4: expose the TRUE static unbalance ‖λp − f_int‖ (recorded in
+// formUnbalance before f_v is subtracted) so LadrunoStabilizedUnbalance can
+// converge on real equilibrium, not the f_v-polluted SOE residual. Only
+// meaningful in -stabilize mode (else the SOE residual already IS the true one).
+int
+LadrunoArcLength::getStabilizedTrueResidual(double &normOut) const
+{
+    if (!stabilize) return -1;
+    normOut = residualTrueNorm;
+    return 0;
+}
+
+const Vector *
+LadrunoArcLength::getStabilizedTrueResidualVector(void) const
+{
+    return stabilize ? &residualTrue : 0;
 }
 
 int

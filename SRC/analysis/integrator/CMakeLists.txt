@@ -9,6 +9,7 @@ target_sources(OPS_Analysis
        ExplicitDifference.cpp
        ArcLength.cpp
        LadrunoArcLength.cpp
+       LadrunoIndirectControl.cpp
        ArcLength1.cpp
        BackwardEuler.cpp
        CentralDifference.cpp
@@ -27,6 +28,7 @@ target_sources(OPS_Analysis
        ExplicitDifference.h
        ArcLength.h
        LadrunoArcLength.h
+       LadrunoIndirectControl.h
        ArcLength1.h
        BackwardEuler.h
        CentralDifference.h

@@ -80,6 +80,7 @@
 #define CONVERGENCE_TEST_NormDispAndUnbalance               9
 #define CONVERGENCE_TEST_NormDispOrUnbalance               10
 #define CONVERGENCE_TEST_CTestPFEM                         11
+#define CONVERGENCE_TEST_LadrunoStabilizedUnbalance     33000 // N. Mora-Bowen (Ladruno) — true-equilibrium NormUnbalance for the viscous-stabilized LadrunoArcLength -stabilize mode (norms ‖λp−f_int‖, not the f_v-polluted SOE B); convergence-test registry, ladruno band >=33000.
 
 
 #define GRND_TAG_ElCentroGroundMotion                 1
@@ -577,6 +578,7 @@
 #define ND_TAG_LadrunoJ2 33011 // N. Mora-Bowen (Ladruno) — combined isotropic (Voce+linear) + Chaboche AF kinematic von Mises J2
 #define ND_TAG_LadrunoJ2Finite 33012 // N. Mora-Bowen (Ladruno) — finite-strain-native combined-hardening J2 with co-rotating backstress (dSNPO §14.11)
 #define ND_TAG_InitDefGradNDMaterial 33013 // N. Mora-Bowen (Ladruno) — multiplicative staged-activation wrapper (F_rel = F·F0⁻¹); stress-free birth of finite-strain continuum elements appended mid-stage
+#define ND_TAG_StagedStrainNDMaterial 33014 // N. Mora-Bowen (Ladruno) — small-strain, dimension-general (2D+3D) auto-capturing staged-activation wrapper (ε_rel = ε − ε0); stress-free birth of small-strain continuum elements appended mid-stage
 
 
 #define FIBER_TAG_Uniaxial2d	1
@@ -1128,6 +1130,7 @@
 #define INTEGRATOR_TAGS_CentralDifferenceLadruno        33003 // N. Mora-Bowen (Ladruno) — explicit leap-frog central difference; ladruno private band >=33000 (was 64)
 #define INTEGRATOR_TAGS_LadrunoArcLength                 33004 // N. Mora-Bowen (Ladruno) — adaptive (+ future viscous-stabilized) arc-length; ladruno integrator band >=33000. NB 33004 is independently reused in the ELE_TAG space (ELE_TAG_LadrunoIMKBeam2d=33004) — tag bands are PER-REGISTRY, no collision.
 #define INTEGRATOR_TAGS_LadrunoDynamicRelaxation         33005 // N. Mora-Bowen (Ladruno) — quasi-static dynamic relaxation (Gershgorin fictitious mass + Cundall kinetic damping); TransientIntegrator, ladruno integrator band >=33000.
+#define INTEGRATOR_TAGS_LadrunoIndirectControl           33006 // N. Mora-Bowen (Ladruno) — indirect / CMOD displacement control (weighted multi-DOF control quantity c.U, monotone through snap-back); StaticIntegrator, ladruno integrator band >=33000.
 
 
 #define LinSOE_TAGS_FullGenLinSOE		1

@@ -52,16 +52,19 @@ GLOBS = [
     "SRC/material/nD/LogStrainNDMaterial.*", "SRC/material/nD/LogStrainKernel.h",
     "SRC/material/nD/FiniteStrainNDMaterial.h",
     "SRC/material/nD/InitDefGradNDMaterial.*",
+    "SRC/material/nD/StagedStrainNDMaterial.*",
     "SRC/analysis/integrator/CentralDifferenceLadruno.*",
     "SRC/analysis/integrator/LadrunoArcLength.*",
     "SRC/analysis/integrator/LadrunoDynamicRelaxation.*",
     "SRC/analysis/integrator/LadrunoFictitiousMass.h",
+    "SRC/analysis/integrator/LadrunoIndirectControl.*",
     "SRC/analysis/integrator/ExplicitBathe.*",
     "SRC/analysis/integrator/ExplicitBatheLNVD.*",
     "SRC/recorder/LadrunoRecorder.*",
     "SRC/recorder/Ladruno_*.cpp", "SRC/recorder/Ladruno_*.h",
     "SRC/recorder/LadrunoMonitor*.cpp", "SRC/recorder/LadrunoMonitor*.h",
     "SRC/recorder/EnergyBalanceRecorder.*", "SRC/recorder/EnergyBalanceKernel.h",
+    "SRC/convergenceTest/LadrunoStabilizedUnbalance.*",
 ]
 SUFFIXES = {".cpp", ".h", ".hpp", ".cc", ".cxx"}
 

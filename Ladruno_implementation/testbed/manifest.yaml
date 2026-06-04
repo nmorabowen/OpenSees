@@ -234,6 +234,53 @@ features:
       until the owning PR flips it to active. See
       Ladruno_implementation/LEDGER_implementations.md and the dynrelax ADR.
 
+  - feature: LadrunoIndirectControl
+    classtag: 33006          # INTEGRATOR family; indirect/CMOD control (after LadrunoDynamicRelaxation=33005)
+    tag_symbol: INTEGRATOR_TAGS_LadrunoIndirectControl
+    pr: null
+    feature_class: integrator
+    required_tiers: [dynamics-battery]
+    pytest: tests/test_ladrunoIndirectControl_integrator.py   # IC-1 reduce-to-DisplacementControl + IC-2/3 CMOD snap-back
+    tcl: WAIVED(integrator; shared OpenSeesCommands registry serves Tcl + Python; verified via the Zone-A pytest battery)
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      Indirect / CMOD displacement-control static integrator: generalizes stock
+      DisplacementControl (single DOF) to a weighted multi-DOF control quantity
+      c.U (e.g. crack-mouth-opening = u_A - u_B), which stays monotone through
+      snap-back where load and individual DOFs reverse (de Borst indirect control).
+      ADR-20 §8 follow-up #3. See
+      Ladruno_implementation/20_ladruno_arclength_stabilized_adr.md.
+
+  - feature: LadrunoStabilizedUnbalance
+    classtag: 33000          # CONVERGENCE_TEST family (per-registry band >=33000)
+    tag_symbol: CONVERGENCE_TEST_LadrunoStabilizedUnbalance
+    pr: null
+    feature_class: derivative
+    required_tiers: [dynamics-battery]
+    pytest: tests/test_ladrunoStabilizedUnbalance_test.py   # ST-1 graceful fallback + ST-2 true-vs-polluted residual under -stabilize
+    tcl: wired (classic-Tcl `test` via commands.cpp specifyCTest + Python/new-Tcl via OpenSeesCommands.cpp)
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+      - SRC/tcl/commands.cpp
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      True-equilibrium NormUnbalance convergence test for the viscous-stabilized
+      LadrunoArcLength -stabilize mode (ADR-20 §8 follow-up #4): norms the TRUE
+      static unbalance ‖λp − f_int‖ (via the integrator's getStabilizedTrueResidual)
+      instead of the f_v-polluted SOE ‖B‖, so a converged step is a genuine
+      equilibrium, not merely a regularized one. Degrades gracefully to the stock
+      SOE ‖B‖ for any non-stabilizing integrator (drop-in for NormUnbalance). Zero
+      analysis-core surgery: reaches the integrator via EquiSolnAlgo. See
+      Ladruno_implementation/20_ladruno_arclength_stabilized_adr.md.
+
   - feature: EnergyBalanceRecorder
     classtag: 33000          # RECORDER family; was 26
     tag_symbol: RECORDER_TAGS_EnergyBalanceRecorder
@@ -480,6 +527,44 @@ features:
       Cauchy stress is reference-independent). -noInitF pass-through; -F0 explicit birth;
       setResponse("F0") reports it. Small strain stays InitStrain (two materials, Init*
       family). Plan/ADR: Ladruno_implementation/staged_deformation_gradiend.md.
+
+  - feature: StagedStrainNDMaterial
+    classtag: 33014          # ND_TAG family; small-strain (2D+3D) staged-activation wrapper (after InitDefGrad=33013)
+    tag_symbol: ND_TAG_StagedStrainNDMaterial
+    pr: null
+    feature_class: material
+    required_tiers: [T0m]
+    pytest: tests/test_stagedStrain_material.py   # 2D+3D: -noInit==bare; two-phase staged birth (quad+brick); dimensional sweep; reduce-to-relative; tangent==inner; J2 born-virgin; composition with InitStrain; graceful-fail; serialization
+    tcl: WAIVED(nDMaterial StagedStrain $tag $innerTag; shared OpenSeesNDMaterialCommands registry serves Tcl + Python; verified via the Zone-A pytest battery through FourNodeQuad/stdBrick)
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesNDMaterialCommands.cpp
+      - SRC/material/nD/CMakeLists.txt
+    dispatch: {tcl: false, functionMap: true}
+    status: active
+    notes: >
+      Small-strain, dimension-general (2D+3D), AUTO-CAPTURING staged-activation wrapper
+      -- the small-strain sibling of InitDefGrad (StagedDefGrad). Makes a small-strain
+      continuum element (FourNodeQuad, stdBrick, plane-strain/stress, axisymmetric)
+      born stress-free at the deformed geometry when appended mid-stage. Fixes the
+      three ways the upstream InitStrain bites staged use: (1) InitStrain is 3D-only
+      (getOrder hardcoded 6) and exit(-1)s on a non-3D inner -- StagedStrain is order-
+      general (eps0 sized to inner->getOrder(); getCopy(type) adapts the inner view)
+      and fails gracefully; (2) InitStrain's eps0 is fixed -- StagedStrain auto-captures
+      eps0 on the first setTrialStrain (= birth), so one tag births a whole lift, each
+      copy snapshotting its own birth strain; (3) InitStrain ADDS a prestrain --
+      StagedStrain SUBTRACTS the captured birth strain (eps_rel = eps - eps0) for
+      stress-free birth. Born GENUINELY virgin (zero stress AND zero plastic history);
+      tangent is an exact passthrough (eps0 constant => no FD gate). Additive => exact
+      for small strain only (finite uses StagedDefGrad/InitDefGrad). COMPOSES with the
+      upstream InitStrain for staged-birth-plus-prestrain by nesting StagedStrain
+      OUTERMOST: element -> StagedStrain(InitStrain(real, eps_pre)) => born carrying
+      sigma(eps_pre). -noInit pass-through; -eps0 explicit birth strain; setResponse
+      "eps0"/"totalStrain". Also registers the StagedDefGrad alias for InitDefGrad so
+      the Staged* family reads coherently. Plan/ADR:
+      Ladruno_implementation/staged_deformation_gradiend.md.
 
   - feature: LadrunoUniaxialJ2
     classtag: 33000          # MAT_TAG (uniaxial) family; per-registry band, no collision w/ ELE/ND/INTEGRATOR/RECORDER 33000
