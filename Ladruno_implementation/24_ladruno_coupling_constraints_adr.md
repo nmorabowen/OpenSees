@@ -1,10 +1,11 @@
 ---
-title: "ADR 23 — Coupling constraints (RBE2 / RBE3 / linear equation), Abaqus + LS-DYNA aligned"
+title: "ADR 24 — Coupling constraints (RBE2 / RBE3 / linear equation), Abaqus + LS-DYNA aligned"
 project: Ladruno
 type: ADR / scoping (no code)
 status: scoped — no code; decision-capture for a coupling-constraint family
 related:
   - "[[20_ladruno_embedded_reinforcement_adr]]"
+  - "[[23_ladruno_embedded_node_adr]]"
   - "[[LadrunoEmbeddedRebar_guide]]"
   - "[[ladruno_integrators_guide]]"
   - "[[LEDGER_implementations]]"
@@ -21,7 +22,7 @@ tags:
 updated: 2026-06-04
 ---
 
-# ADR 23 — Coupling constraints: RBE2 / RBE3 / linear equation (Abaqus + LS-DYNA aligned)
+# ADR 24 — Coupling constraints: RBE2 / RBE3 / linear equation (Abaqus + LS-DYNA aligned)
 
 **Status:** scoped, **no code**. This is a decision-capture for a *family* of
 coupling constraints OpenSees lacks, grounded in how **Abaqus** and **LS-DYNA**
@@ -31,6 +32,20 @@ it fixes the design space and the enforcement strategy so that *when* a driver
 appears (explicit SSI, load redistribution, moment-transfer embedded members) the
 build is a focused extension of the [[20_ladruno_embedded_reinforcement_adr|LadrunoEmbeddedRebar]]
 kernel rather than a fresh design.
+
+> [!info] Sibling: node-into-host embedding vs node-set constraints
+> This ADR covers constraints **among node sets** (RBE3 weighted-average, RBE2
+> rigid, `Σcₖuₖ=0`) — **no host element**. Its sibling
+> [[23_ladruno_embedded_node_adr|ADR 23 — `LadrunoEmbeddedNode` (ELE 33006)]] covers
+> embedding a node **into a host element** (continuum) — isotropic position tie +
+> optional **rotation (UR)** / **pressure (UP)**, the ASD-superset. They share the
+> `LadrunoEmbeddedRebar` coupling kernel and were scoped in parallel (hence both were
+> first numbered "23"; this one is renumbered **24**). The **DOF-mismatch / frame-on-
+> continuum** interface is served by *both* — `LadrunoEmbeddedNode` via host-element
+> embedding **with rotation coupling**, RBE3 via **weighted node-set distribution**
+> (LS-DYNA's `*CONSTRAINED_INTERPOLATION` shell-brick/beam-brick path). The
+> **concrete node-embedding element is specified in ADR 23, not re-specified here**;
+> D2/D3 below reference it.
 
 ---
 
@@ -223,9 +238,12 @@ is driven by a node set through a *weighted average*, leaving the set free to de
 - **Frame / shell on a continuum (the DOF-mismatch interface)** — a beam or shell
   node connected to a solid face, transmitting force but free to rotate relative to
   the bulk: LS-DYNA's `*CONSTRAINED_INTERPOLATION` shell-brick / beam-brick case
-  (tunnel lining on soil, embedded plate, base-plate on concrete). *(For a single
-  translation-only tie where ASD suffices, see [[20_ladruno_embedded_reinforcement_adr|ADR 20]]
-  / the guide; RBE3 is for the weighted-set, moment-carrying version.)*
+  (tunnel lining on soil, embedded plate, base-plate on concrete). *(Two fork paths
+  serve this: **RBE3** here = the weighted node-set, moment-carrying distribution;
+  **[[23_ladruno_embedded_node_adr|`LadrunoEmbeddedNode` (ADR 23, ELE 33006)]]** = a
+  node embedded **into the host element** with optional **rotation coupling (UR)**.
+  For a single translation-only tie where ASD suffices, see
+  [[20_ladruno_embedded_reinforcement_adr|ADR 20]] / the guide.)*
 - **Pile head ↔ cap / reaction distribution** — spread pile-head reactions across a
   cap node set; introduce a column reaction into a mat.
 - **Sub-model load introduction (St. Venant)** — apply section resultants at a cut
