@@ -568,6 +568,100 @@ broadcast path is not runtime-testable in this build.
   After the fix the energy kernel matches the EnergyBalance text sidecar to ~5e-9.
   Learned 2026-05-31.
 
+### `CrdTransf::getLocalAxes` base default zeros the axes — wiring `localAxes` on an element whose transform doesn't override it emits a *degenerate* frame
+- **Bites:** when extending the Ladruno `"localAxes"` (response id 30) coverage to
+  more beam elements, `DispBeamColumn2dInt` *looks* trivially wireable — it owns a
+  `crdTransf` and the copy-paste pattern compiles. But its transform is
+  `LinearCrdTransf2dInt`, which does **not** implement `getLocalAxes`, so it falls
+  through to the base `CrdTransf::getLocalAxes` (`SRC/coordTransformation/CrdTransf.cpp:126`)
+  that simply `Zero()`s xAxis/yAxis/zAxis and returns 0.
+- **Why it matters:** the recorder's `writeModelLocalAxes` records *any* element that
+  answers `"localAxes"`. A non-null response carrying an all-zeros frame would be
+  written/quaternion-converted as a **degenerate** orientation — strictly worse than
+  the current behaviour, where a silent (no-response) element falls back to a clean
+  identity quaternion.
+- **Status/workaround:** `DispBeamColumn2dInt` is **deliberately left unwired**. To
+  wire it correctly, first give `LinearCrdTransf2dInt` a real `getLocalAxes` (mirror
+  `LinearCrdTransf2d::getLocalAxes`), then add the id-30 response. The standard-transform
+  beams (Elastic/Force/Disp/Mixed/GradientInelastic Beam(Column)2d/3d) are all safe —
+  their LinearCrdTransf2d/3d, PDelta*, and Corot* transforms all override `getLocalAxes`.
+  Learned 2026-06-03.
+
+### LadrunoRecorder shell per-layer stress: the verb is a DOTTED token, and `material.fiber.*` needed a fix
+- **Bites (1) — syntax:** the `-E` element verb is a single **dot-joined** token that the
+  recorder splits on `'.'` (`recorder('ladruno', f, '-E', 'section.fiber.stress')`), NOT
+  space-separated args. Passing `'-E','section','fiber','stress'` stores only `["section"]`
+  (the rest are parsed as later options), which then **segfaults** (see bite 3).
+- **Bites (2) — the real bug:** for a layered shell, the *obvious* per-layer verb
+  `material.fiber.stress` silently emitted **no element bucket**. Root cause: the request
+  builder only set `do_all_fibers` for `fiber` under `do_all_sections`, and the
+  `do_all_materials` path had no fiber-index expansion — so the fiber id was never
+  substituted and `setResponse` returned null for every element. `section.fiber.stress`
+  worked because the recorder swaps section->material for shells and runs the section
+  fiber-expansion. The section-level read itself was always fine
+  (`LayeredShellFiberSection`/`MembranePlateFiberSection` answer `fiber <i> <resp>` and tag
+  `FiberOutput`; `eleResponse(tag,'material','1','fiber','1','stress')` works directly).
+- **Fix:** extend the `fiber` trigger to `do_all_sections || do_all_materials` and give the
+  `do_all_materials` branch the same per-(gp,layer) expansion as `do_all_sections` (driven
+  by the shared `elem_ngauss_nfiber_info` discovery table). Now `material.fiber.stress`
+  emits the per-layer bucket **byte-identical** to `section.fiber.stress` (verified: 4 GP ×
+  3 layers × 5 comp = 60 cols, maxdiff 0.0). Regression gate `SHELL LAYER STRESS`
+  (`shell_layer_model.py`/`shell_layer_check.py`) in `run_regression.bat`.
+- **Bites (3) — latent crash (FIXED):** a bare `-E section` / `-E material` (the keyword
+  with NO sub-verb) segfaulted — `request_mod` was `["section",""]` (argc=2), so the element
+  was queried as `["section"/"material", <id>]` and forwarded a **zero-length** arg list
+  (`&argv[2]`, argc-2==0) to its section's `setResponse`, which derefs `argv[0]`. Affected
+  any shell or beam. **Fix:** guard both non-fiber `setResponse` call sites in
+  `initElementSources` — only call when `argc > (int)<keyword>_id_placeholder_index + 1`
+  (i.e. at least one sub-verb token follows the id). A bare verb now emits no bucket instead
+  of crashing. Regression gate `SHELL BARE VERB` (`shell_bare_verb_model.py` /
+  `shell_bare_verb_check.py`). Learned + fixed 2026-06-03.
+- **Known cosmetic limitation:** the shell per-layer COLUMN_MAP records `fiber_id=-1`,
+  `section_tag=-1`, and `UnknownStress` component names (layer identity is flattened into a
+  running `gauss_id`). This is IDENTICAL on the already-working `section.fiber.stress` path
+  (not introduced here) — a metadata refinement for later, the stress *values* are correct.
+  (Adversarial-review note: a reviewer claimed this *collapses* layers into one
+  `normalize_element` key and loses data — REFUTED: the 3 layers map to distinct `gauss_id`
+  0..11, so the parity dict has 4·12·5=240 distinct entries, no loss.)
+
+### LadrunoRecorder `sendSelf`/`recvSelf` config must stay in LOCKSTEP — two fields were missing (FIXED) + the rule
+- **Bites:** any recorder config field set by the OPS_ parser must be (a) `ser.put_*`'d in
+  `sendSelf` AND (b) `de.get_*`'d in `recvSelf` **in the same order**, or OpenSeesMP worker
+  ranks (built via `recvSelf`) silently diverge from P0 (built via the parser). Two fields
+  were configured but NOT transmitted: `m_data->envelope_mode` (`-envelope`) and
+  `m_data->info.store_data_f32` (`-precision f32`). Consequence: with `-envelope` or
+  `-precision f32` under MP, P0 wrote ENVELOPES/f32 while every worker wrote full
+  time-series/f64 → `.part-N` files with a *different schema* than `.part-0`, breaking the
+  apeGmsh stitch-on-read. **Fix:** append both to `sendSelf` (after the elemental-results
+  block) and `recvSelf` (after the same block), same order. **Rule for the next agent: when
+  you add ANY field to the recorder config, grep `sendSelf`/`recvSelf` and add it to both.**
+  (Found by the 2026-06-03 adversarial review. The MP round-trip itself was verified by
+  construction — symmetric put/get — not by a live 2-rank run, since the worktree had only
+  the OpenSeesPy build; the `mp_parallel` gate needs OpenSeesPyMP.)
+
+### LadrunoRecorder smaller robustness fixes from the adversarial review (2026-06-03)
+- **Mixed-dimension node OOB (FIXED):** `writeModelNodes` latched `ndim` from the *first*
+  node then read `crds[1]`/`crds[2]` unchecked for every node — a node carrying fewer coords
+  than `ndim` read past its `Vector`. Upstream MPCO guards this; the port had dropped it.
+  Fix: clamp each read to `crds.Size()` (pad 0.0), mirroring the GLOBAL_GP path.
+- **`eo_response` leak (FIXED):** in `initElementSources`, a `CompositeResponse` built but
+  then rejected because `eo_stream.error_code != OK` (e.g. `ERROR_CODE_GENERIC`) was owned by
+  nobody. Fix: `else if (eo_response) delete eo_response;` after the registration block.
+- **Recorder `exit(-1)` aborting the analysis (FIXED):** the `OutputDescriptorStream`
+  tag/attr parser and `mapElements` in `Ladruno_ElementResults.h` called `exit(-1)` on an
+  element output-tag nesting they didn't expect (invalid parent for SectionOutput/FiberOutput,
+  invalid tag at level, empty item-list at a walked level) or on two same-classTag elements
+  with differing `getNumExternalNodes()` — a *recorder* killing the whole run. **Fix:** the 7
+  stream sites now `error_code = ERROR_CODE_GENERIC; return -1;` (the offending element's bucket
+  is dropped by the existing `error_code != OK` gate — same mechanism `ensureItemsOfUniformType`
+  already used at line ~1036); `mapElements` now `continue;`s past the inconsistent element.
+  No live `exit(-1)` remains (two pre-existing commented-out ones at ~770/~1033 untouched).
+  Happy path unchanged (full recorder regression green). A runtime trigger needs a custom
+  element that emits an unsupported tag nesting (not reachable from standard openseespy), so
+  this is verified by the no-regression run + reuse of the already-proven GENERIC drop-path.
+- **Still open:** `domainChanged()`/`restart()`/`setDomain()` are no-ops, so the only
+  source-rebuild trigger is the `hasDomainChanged()` stamp inside `record()` (cached
+  `Element*`/`Response*` can dangle if a model edit doesn't move the stamp across a record).
 ### uri `viscous` hourglass: explicit run goes silently unstable at large eps + dt (CDL doesn't trap it)
 - **Bites:** `LadrunoBrick -hourglass viscous` adds a velocity-proportional damping
   force but NO hourglass stiffness. Under CentralDifferenceLadruno the viscous term
@@ -921,3 +1015,29 @@ From the finite-strain validation Phase P4 (Taylor-bar impact, 2026-06-02,
   coords yet stays objective — its `iK·BᵀB` penalty is isotropic, so there is no axis
   to go stale. (v1 omits the `∂dir/∂u` consistent-tangent term — EICR practice: exact
   for explicit, converges under step-halving for implicit.)
+
+### LadrunoRecorder `-precision f32` is ignored in `-envelope` mode — STORED_PRECISION now honest (FIXED)
+- **Bites:** `-precision f32` only changes the dtype of the streaming per-step DATA
+  datasets (`StreamingSink::createTimeSeries3d`, `Ladruno_Sinks.cpp` — `H5T_IEEE_F32LE`).
+  In `-envelope` mode there are no streaming DATA datasets; the only result datasets are
+  the EnvelopeSink MIN/MAX/ABSMAX, which are **always f64**. But `initialize()` stamped
+  `INFO/STORED_PRECISION` purely from the `store_data_f32` flag → an `-envelope -precision f32`
+  file claimed `f32` while every dataset in it was f64. A reader trusting the attribute to
+  pick its diff tolerance would be misled.
+- **Fix:** `STORED_PRECISION` is now `f32` only when `store_data_f32 && !envelope_mode`
+  (it must describe what is actually on disk); a one-time warning is emitted if `-precision f32`
+  is combined with `-envelope`. (Honoring f32 *inside* the envelope datasets is a separate,
+  judgment-dependent enhancement — not done; the label-honesty fix is unambiguous.) 2026-06-03.
+
+### LadrunoRecorder `domainChanged()`/`restart()`/`setDomain()` being no-ops is INTENTIONAL — do not "fix"
+- **Why it looks wrong:** an adversarial review flagged that these lifecycle hooks are inert,
+  so cached `Element*`/`Response*` could dangle after a model edit. **Verified NON-issue:**
+  the *only* source-rebuild trigger is the `domain->hasDomainChanged()` stamp checked inside
+  `record()` (the `rebuild_model` block) — and **every** structural edit (`addElement`/
+  `removeElement`/etc.) bumps the domain's geometry tag, so the stamp moves and the rebuild
+  fires, re-acquiring fresh pointers and (re)writing the MODEL_STAGE. This is the exact frozen
+  `MPCORecorder::record()` pattern (the code comment says so). Forcing a rebuild in
+  `domainChanged()` would be redundant with the stamp check and risk breaking the multi-stage
+  logic. **Leave them as no-ops.** (The only genuinely-real lifecycle gap is minor: the `-T`
+  frequency gate can stall if `commitTag` regresses across a second `analyze()` after
+  `wipeAnalysis` — a defensive guard, not yet added.) 2026-06-03.

@@ -29,6 +29,7 @@
 // Written: N. Mora-Bowen (Ladruno), 2026.
 
 #include <LadrunoEmbeddedRebar.h>
+#include <LadrunoEmbeddedKernel.h>   // ADR 23 §D1 — shared coupling-kernel (Phase 0)
 #include <Domain.h>
 #include <Node.h>
 #include <UniaxialMaterial.h>
@@ -166,13 +167,8 @@ void LadrunoEmbeddedRebar::resolveAutoKt(void)
     ktResolved = true;
     return;
   }
-  const Matrix& Kh = host->getInitialStiff();
-  int nh = Kh.noRows();
-  double scale = 0.0;                          // max abs diagonal ~ E_host*lch
-  for (int i = 0; i < nh; i++) {
-    double d = fabs(Kh(i, i));
-    if (d > scale) scale = d;
-  }
+  // max abs diagonal ~ E_host*lch (shared kernel, ADR 23 §D1).
+  double scale = LadrunoEmbedded::maxAbsDiagonal(host->getInitialStiff());
   if (scale <= 0.0) {
     opserr << "WARNING LadrunoEmbeddedRebar " << this->getTag()
            << ": -kt auto host " << hostEleTag
@@ -191,7 +187,7 @@ double LadrunoEmbeddedRebar::effectiveCouplingStiffness(void)
 {
   double kAxial0 = (bondMat != 0) ? fabs(bondMat->getInitialTangent() * bondScale)
                                   : fabs(kAxialPerfect);
-  return (kAxial0 > kt) ? kAxial0 : kt;
+  return LadrunoEmbedded::effectiveCouplingStiffness(kAxial0, kt);
 }
 
 // ADR 20 §10.6 — resolve the mass penalty m_p (lazily, after kt). Lumped on the
@@ -217,7 +213,7 @@ void LadrunoEmbeddedRebar::resolveBipenalty(void)
              << ": -dtcr needs a positive step; m_p=0\n";
       mPenalty = 0.0; bpResolved = true; return;
     }
-    mPenalty = kEff * 0.25 * bpDt * bpDt; // k_eff·(dt/2)²
+    mPenalty = LadrunoEmbedded::massPenaltyDtcr(kEff, bpDt); // k_eff·(dt/2)²
     bpResolved = true;
     return;
   }
@@ -237,17 +233,11 @@ void LadrunoEmbeddedRebar::resolveBipenalty(void)
     mPenalty = 0.0; bpResolved = true; return;
   }
   // Read the stiffness scale FULLY before fetching the host mass: getInitialStiff()
-  // and getMass() may return a reference to the same shared static buffer (D8), so
-  // don't hold both references at once.
-  double kScale = 0.0, mScale = 0.0;
-  {
-    const Matrix& Kh = host->getInitialStiff();
-    for (int i = 0; i < Kh.noRows(); i++) { double d = fabs(Kh(i, i)); if (d > kScale) kScale = d; }
-  }
-  {
-    const Matrix& Mh = host->getMass();
-    for (int i = 0; i < Mh.noRows(); i++) { double d = fabs(Mh(i, i)); if (d > mScale) mScale = d; }
-  }
+  // and getMass() may return a reference to the same shared static buffer (D8). Each
+  // maxAbsDiagonal() call consumes its reference and returns a double before the next
+  // is fetched, so the two reads can't alias.
+  double kScale = LadrunoEmbedded::maxAbsDiagonal(host->getInitialStiff());
+  double mScale = LadrunoEmbedded::maxAbsDiagonal(host->getMass());
   if (mScale <= 0.0 || kScale <= 0.0) {
     opserr << "WARNING LadrunoEmbeddedRebar " << this->getTag()
            << ": -wcap host " << hostEleTag << " has no mass (or no stiffness); "
@@ -256,7 +246,7 @@ void LadrunoEmbeddedRebar::resolveBipenalty(void)
   }
   double omega2_host = kScale / mScale;            // ω_host²
   if (bpBeta <= 0.0) bpBeta = 2.0;                 // safe default ratio
-  mPenalty = kEff / (bpBeta * bpBeta * omega2_host);
+  mPenalty = LadrunoEmbedded::massPenaltyWcap(kEff, bpBeta, omega2_host);
   bpResolved = true;
 }
 
@@ -277,8 +267,7 @@ double LadrunoEmbeddedRebar::getExplicitCriticalTimeStep(void)
   if (!bipenalty) return -1.0;
   this->resolveBipenalty();
   double kEff = this->effectiveCouplingStiffness();
-  if (mPenalty <= 0.0 || kEff <= 0.0) return -1.0;
-  return 2.0 * sqrt(mPenalty / kEff);
+  return LadrunoEmbedded::criticalTimeStep(mPenalty, kEff);
 }
 
 // ===========================================================================
@@ -359,13 +348,7 @@ void LadrunoEmbeddedRebar::formBandTraction(Vector& g, double& s, Vector& gt,
                                             double& Faxial, double& kAxial)
 {
   this->currentBarAxis(dirCur);       // working axis (dir if not corot)
-  g.resize(ndm); g.Zero();
-  const Vector& uR = theNodes[0]->getTrialDisp();
-  for (int k = 0; k < ndm; k++) g(k) = uR(k);
-  for (int i = 0; i < nHost; i++) {
-    const Vector& uH = theNodes[1 + i]->getTrialDisp();
-    for (int k = 0; k < ndm; k++) g(k) -= Nshape(i) * uH(k);
-  }
+  LadrunoEmbedded::computeGap(theNodes, Nshape, nHost, ndm, g);  // g = u_r − Σ N_i u_host,i
   s = 0.0;
   for (int k = 0; k < ndm; k++) s += g(k) * dirCur(k);
   gt.resize(ndm);
@@ -410,12 +393,8 @@ const Vector& LadrunoEmbeddedRebar::getResistingForce(void)
   if (enforce == 1)
     for (int k = 0; k < ndm; k++) t(k) += lambda(k);
 
-  // block 0 (rebar): +t ; block (1+i): -N_i t
-  for (int k = 0; k < ndm; k++) (*P)(k) = t(k);
-  for (int i = 0; i < nHost; i++) {
-    double c = -Nshape(i);
-    for (int k = 0; k < ndm; k++) (*P)((1 + i) * ndm + k) = c * t(k);
-  }
+  // P = Bᵀt: block 0 (rebar) +t, block (1+i) -N_i t (shared kernel, ADR 23 §D1).
+  LadrunoEmbedded::assembleResistingForce(*P, Nshape, t, ndm);
   return *P;
 }
 
@@ -453,19 +432,8 @@ const Matrix& LadrunoEmbeddedRebar::getTangentStiff(void)
       D(a, b) = kAxial * dd + kt * ((a == b ? 1.0 : 0.0) - dd);
     }
 
-  // c = [1, -N_1, ..., -N_M]; K block(p,q) = c_p c_q D
-  Vector c(1 + nHost);
-  c(0) = 1.0;
-  for (int i = 0; i < nHost; i++) c(1 + i) = -Nshape(i);
-
-  for (int p = 0; p < 1 + nHost; p++)
-    for (int q = 0; q < 1 + nHost; q++) {
-      double cc = c(p) * c(q);
-      if (cc == 0.0) continue;
-      for (int a = 0; a < ndm; a++)
-        for (int b = 0; b < ndm; b++)
-          (*K)(p * ndm + a, q * ndm + b) += cc * D(a, b);
-    }
+  // K = Bᵀ D B (shared kernel, ADR 23 §D1; c = [1, -N_1, ..., -N_M]).
+  LadrunoEmbedded::assembleTangent(*K, Nshape, D, ndm);
   return *K;
 }
 
@@ -481,17 +449,8 @@ const Matrix& LadrunoEmbeddedRebar::getInitialStiff(void)
       double dd = dir(a) * dir(b);
       D(a, b) = kAxial0 * dd + kt * ((a == b ? 1.0 : 0.0) - dd);
     }
-  Vector c(1 + nHost);
-  c(0) = 1.0;
-  for (int i = 0; i < nHost; i++) c(1 + i) = -Nshape(i);
-  for (int p = 0; p < 1 + nHost; p++)
-    for (int q = 0; q < 1 + nHost; q++) {
-      double cc = c(p) * c(q);
-      if (cc == 0.0) continue;
-      for (int a = 0; a < ndm; a++)
-        for (int b = 0; b < ndm; b++)
-          (*K)(p * ndm + a, q * ndm + b) += cc * D(a, b);
-    }
+  // K = Bᵀ D B against the REFERENCE axis (shared kernel, ADR 23 §D1).
+  LadrunoEmbedded::assembleTangent(*K, Nshape, D, ndm);
   return *K;
 }
 

@@ -73,8 +73,8 @@ New code (all under `SRC/element/bezierTriangle/` in the `ladruno` fork):
 | `CMakeLists.txt` | subdir build |
 
 Modify (fork-local):
-- `SRC/classTags.h` — add `ELE_TAG_BezierTri6` (real number; **verify unused** —
-  the placeholder is `99901`/`300`).
+- `SRC/classTags.h` — add `ELE_TAG_BezierTri6` (shipped as `33000` in the ladruno
+  private band ≥33000; the early sub-300 candidate `272` was dropped — see ship log below).
 - `SRC/interpreter/OpenSeesElementCommands.cpp` — dispatch `BezierTri6`.
 - `SRC/element/CMakeLists.txt` — `add_subdirectory(bezierTriangle)`.
 - `SRC/actor/objectBroker/FEM_ObjectBroker.cpp` — `case ELE_TAG_BezierTri6`.
@@ -221,5 +221,5 @@ Nothing here blocks using `BezierTri6` for straight-sided 2D continuum problems 
   (linkage, placeholder); transient log/JSON removed (test scripts kept at project root).
   (4) **Follow-ups parked** — see *Deferred follow-ups* table above. v1 complete.
 - 2026-05-30 — **MERGED to `ladruno`** via PR #6 (element + registration + this ADR;
-  `ELE_TAG_BezierTri6 = 272`). `ladruno` is the source of truth — the element is now in
+  `ELE_TAG_BezierTri6 = 33000`). `ladruno` is the source of truth — the element is now in
   the integration branch. This README-index + log entry complete the picture on ladruno.

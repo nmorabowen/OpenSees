@@ -64,6 +64,8 @@ call :gate2 "FRAME3D localForce"  frame3d_model.py         element_parity_check.
 call :checkonly "FRAME3D NODAL"   parity_check.py          fref.mpco       ftest.ladruno
 call :gate2 "SHELL forces"        shell_model.py           element_parity_check.py  shref.mpco      shtest.ladruno
 call :checkonly "SHELL NODAL"     parity_check.py          shref.mpco      shtest.ladruno
+call :gateA "SHELL LAYER STRESS"  shell_layer_model.py     shell_layer_check.py     "%OUT%\shlayer_material.ladruno" "%OUT%\shlayer_section.ladruno"
+call :gateA "SHELL BARE VERB"     shell_bare_verb_model.py shell_bare_verb_check.py "%OUT%\bare_section.ladruno" "%OUT%\bare_material.ladruno"
 call :gate2 "EIGEN modes"         eigen_model.py           eigen_check.py           eig_ref.mpco    eig_test.ladruno
 call :gateA "PRECISION f32"       precision_model.py       precision_check.py       "%OUT%\prec_f64.ladruno" "%OUT%\prec_f32.ladruno"
 

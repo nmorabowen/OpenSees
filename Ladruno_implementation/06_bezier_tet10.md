@@ -62,7 +62,7 @@ usable in explicit dynamics.
   (TETB10B) stays optimal independent of ν.
 - **Uses existing mesh generators.** apeGmsh/Gmsh already emit quadratic-Lagrange
   tets; the edge-wise map turns them into Bézier elements at negligible cost.
-- **The Tri6 recipe is proven.** v1 Tri6 is merged (`ELE_TAG 272`, PR #6), validated
+- **The Tri6 recipe is proven.** v1 Tri6 is merged (`ELE_TAG 33000`, PR #6), validated
   against the paper and on real apeGmsh meshes. Tet10 is the same machine in 3D.
 
 ## Where
@@ -77,8 +77,8 @@ a new sibling dir, paralleling `bezierTriangle/`):
 | `CMakeLists.txt` | subdir build |
 
 Modify (fork-local):
-- `SRC/classTags.h` — add `ELE_TAG_BezierTet10` (next free; **verify unused** —
-  Tri6 took `272`, so `273` is the candidate).
+- `SRC/classTags.h` — add `ELE_TAG_BezierTet10` (shipped as `33001` in the ladruno
+  private band ≥33000, next after Tri6's `33000`; the early sub-300 candidate `273` was dropped).
 - `SRC/interpreter/OpenSeesElementCommands.cpp` — dispatch `BezierTet10`/`bezierTet10`.
 - `SRC/element/CMakeLists.txt` — `add_subdirectory(bezierTetrahedron)`.
 
@@ -208,8 +208,8 @@ proven for Tri6). **First gate: confirm Gmsh native tet10 node order == D2′ or
 > integrator (O8, → [[Ladruno_explicit_roadmap]]); apeGmsh first-class typed primitive
 > (O9). All deferred *exactly as in Tri6* — do not implement piecemeal.
 
-- **Class-tag selection** — pick a real `ELE_TAG_BezierTet10` (candidate `273`) and
-  confirm unused in the fork's `classTags.h`.
+- **Class-tag selection** — shipped as `ELE_TAG_BezierTet10 = 33001` in the fork's
+  `classTags.h` (ladruno private band ≥33000; the early candidate `273` was dropped).
 - **Validation bar** — "done" gated by Kadapa §6.2: thick-sphere convergence, the
   TET4/TETB10/TETB10B locking study at ν=0.49999, lumped-mass positivity, plus the
   constant-stress patch test.
@@ -282,7 +282,7 @@ proven for Tri6). **First gate: confirm Gmsh native tet10 node order == D2′ or
   with **`fabs(detJ)`** (O11 hedge — `computeJacobian` returns signed detJ, computes J⁻¹ for either
   sign, callers use `|detJ|`); consistent mass uses the **4×4×4 collapsed-Duffy rule** built inline
   from a 1D 4-pt Gauss-Legendre table (O12). Voigt {xx,yy,zz,xy,yz,zx} == `TenNodeTetrahedron`.
-  Wiring (4 points): `classTags.h` `ELE_TAG_BezierTet10 = 273`; `add_subdirectory(bezierTetrahedron)`
+  Wiring (4 points): `classTags.h` `ELE_TAG_BezierTet10 = 33001`; `add_subdirectory(bezierTetrahedron)`
   in `SRC/element/CMakeLists.txt`; fwd-decl + `functionMap` "BezierTet10"/"bezierTet10" in
   `OpenSeesElementCommands.cpp`. `OPS_BezierTet10` is plain C++ linkage (not `extern "C"`).
   **Standalone `cl /c` compile-check of both new TUs = exit 0, zero warnings** (flags from the main
