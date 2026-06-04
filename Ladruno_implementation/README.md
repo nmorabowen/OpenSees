@@ -68,6 +68,30 @@ When starting a new plan, copy [[_template]] and rename.
 - [[ladruno_apegmsh_contract]] — **apeGmsh feature reference**: the fork-only features apeGmsh emits/reads, with the canonical command and apeGmsh touch-points for each. The companion to [[LEDGER_implementations]] (which is authoritative for tags + PRs). (reference)
 - [[19_ladruno_rc_shell_adr]] — **Ladruno RC shell stack**: a header-only `LadrunoRCKernel.h` (cloning [[10_ladruno_j2_plasticity|LadrunoJ2Kernel]]'s "one core, many views" pattern) that adds MCFT compression softening + degrading aggregate-interlock shear + tension stiffening to `ASDConcrete3D`'s plastic-damage spine, delivered as an order-5 `PlateFiber` `nDMaterial` view that drops into the **unmodified** `ASDShellQ4` + `LayeredShellFiberSection` seam. 5-phase path; Phase 1 closes the squat-wall in-plane-shear gap with zero element/section edit. Designed via a 6-dimension design-panel + adversarial workflow (β-on-strength-axis is the blocking Phase-1 gate). (ADR, draft)
 
+## Reference guides (shipped features)
+
+User-facing, living reference docs for features already on `ladruno` (theory →
+architecture → OpenSees implementation → usage), distinct from the forward-looking
+plans above:
+
+- [[Ladruno_materials_guide]] — **the material catalog**: every fork-authored
+  constitutive material (the J2 plasticity core, the finite-strain & staged
+  wrappers, the steel/rebar overlays), organized by family with theory, OpenSees
+  command, and use case. The single entry point for materials; links the per-material
+  guides below.
+- [[finite_strain_trifecta_guide]] — **the large-deformation stack**: how the
+  element geometry layer (`-geom corot|finite`), the Hencky material wrapper
+  (`nDMaterial LogStrain`), and the constitutive law (`LadrunoJ2`) compose into
+  finite-strain elastoplasticity. The single entry point; links the three per-leg
+  guides below.
+- [[LadrunoBrick_reference]] — the unified hex element (formulations + geometry seams).
+- [[LadrunoJ2_guide]] — combined-hardening von Mises (J2) `nDMaterial`.
+- [[LadrunoUniaxialJ2_guide]] — the uniaxial J2 twin (fibers/truss/zeroLength).
+- [[LadrunoRebarBuckling_guide]] — reinforcing-bar buckling overlay `uniaxialMaterial`.
+- [[solid_transformation_wrapper]] — the solid geometry-method layer (linear/corot/finite).
+- [[09_finite_strain_material_wrapper]] — the log-strain (`LogStrain`) adaptor.
+- [[18_finite_strain_validation_report]] — the finite-strain V&V execution record.
+
 ## Companion folder
 
 - [[../Ladruno_internal/README|Ladruno_internal]] — internal docs about the existing build and patches.
