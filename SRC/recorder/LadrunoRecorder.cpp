@@ -656,11 +656,12 @@ int LadrunoRecorder::writeModelNodes()
 		node_ids[i] = inode->getTag();
 		const Vector& crds = inode->getCrds();
 		size_t j = i * (size_t)ndim;
-		node_coords[j] = crds[0];
+		const int nc = crds.Size();  // Ladruno: a node may carry fewer coords than ndim -> clamp
+		node_coords[j] = (nc > 0) ? crds[0] : 0.0;
 		if (ndim > 1) {
-			node_coords[j + 1] = crds[1];
+			node_coords[j + 1] = (nc > 1) ? crds[1] : 0.0;
 			if (ndim > 2)
-				node_coords[j + 2] = crds[2];
+				node_coords[j + 2] = (nc > 2) ? crds[2] : 0.0;
 		}
 	}
 
@@ -1428,7 +1429,12 @@ int LadrunoRecorder::initElementSources()
 				}
 			}
 			else {
-				if (cr == "fiber" && do_all_sections) {
+				// Ladruno: a "fiber" sub-verb expands per-layer under BOTH a
+				// "section.fiber.*" and a "material.fiber.*" request. The latter is the
+				// natural per-layer verb for shells (whose layers are addressed through
+				// the "material" keyword); without this it never set do_all_fibers, so
+				// the fiber index was never substituted and the request emitted no bucket.
+				if (cr == "fiber" && (do_all_sections || do_all_materials)) {
 					request_mod.push_back("");
 					fiber_id_placeholder_index = request_mod.size() - 1;
 					do_all_fibers = true;
@@ -1509,7 +1515,10 @@ int LadrunoRecorder::initElementSources()
 										else
 											sec_response = fib_comp_response;
 									}
-									else {
+									// Ladruno: a bare "section" request (no sub-verb) would forward a zero-length
+									// arg list to the section's setResponse, which derefs argv[0] -> segfault.
+									// Skip it (emit no bucket) instead of crashing.
+									else if (argc > (int)section_id_placeholder_index + 1) {
 										sec_response = elem->setResponse(argv, argc, eo_stream);
 									}
 									if (sec_response)
@@ -1524,6 +1533,48 @@ int LadrunoRecorder::initElementSources()
 						else if (do_all_materials) {
 							CompositeResponse* mat_comp_response = new CompositeResponse();
 							int num_mat_responses = 0;
+							if (do_all_fibers) {
+								// Ladruno: "material.fiber.<resp>" per-layer expansion, mirroring the
+								// do_all_sections path. For shells the "material" id addresses the Gauss
+								// point and the "fiber" id the through-thickness layer; the per-(gp,layer)
+								// counts come from the same elem_ngauss_nfiber_info discovery table. Without
+								// this, do_all_materials never substituted the fiber index, so the natural
+								// "material.fiber.stress" shell verb silently emitted no bucket.
+								std::map<int, std::vector<std::pair<int, int> > >::const_iterator it_info =
+									m_data->elem_ngauss_nfiber_info.find(elem->getTag());
+								if (it_info != m_data->elem_ngauss_nfiber_info.end()) {
+									for (size_t mat_id = 0; mat_id < it_info->second.size(); ++mat_id) {
+										std::stringstream ss_mid; ss_mid << mat_id + 1;
+										std::string s_mid = ss_mid.str();
+										argv[material_id_placeholder_index] = s_mid.c_str();
+										CompositeResponse* fib_comp_response = new CompositeResponse();
+										int num_fib_responses = 0;
+										int fiber_base_id = it_info->second[mat_id].first;
+										int num_fibers = it_info->second[mat_id].second;
+										for (int fiber_id = 0; fiber_id < num_fibers; ++fiber_id) {
+											std::string s_fid = ladrunons::utils::strings::to_string(fiber_id + fiber_base_id);
+											argv[fiber_id_placeholder_index] = s_fid.c_str();
+											bool was_valid_before = (eo_stream.error_code == me::OutputDescriptorStream::ERROR_CODE_OK);
+											Response* fib_response = elem->setResponse(argv, argc, eo_stream);
+											if (fib_response) {
+												num_fib_responses = fib_comp_response->addResponse(fib_response);
+											}
+											else {
+												if (was_valid_before && (eo_stream.error_code == me::OutputDescriptorStream::ERROR_CODE_SECTION_AFTER_FIBER)) {
+													eo_descriptor.fixSectionAfterFiberDueToFiberOutputFail();
+													eo_stream.error_code = me::OutputDescriptorStream::ERROR_CODE_OK;
+												}
+											}
+										}
+										if (num_fib_responses == 0)
+											delete fib_comp_response;
+										else
+											num_mat_responses = mat_comp_response->addResponse(fib_comp_response);
+									}
+								}
+							}
+							// Ladruno: skip a bare "material" request (no sub-verb) -> no crash.
+							else if (argc > (int)material_id_placeholder_index + 1) {
 							int material_id = 0;
 							while (true) {
 								material_id++;
@@ -1537,6 +1588,7 @@ int LadrunoRecorder::initElementSources()
 									num_mat_responses = mat_comp_response->addResponse(mat_response);
 								else
 									break;
+							}
 							}
 							if (num_mat_responses == 0)
 								delete mat_comp_response;
@@ -1566,6 +1618,9 @@ int LadrunoRecorder::initElementSources()
 							}
 							eo_by_header.items.push_back(me::OutputResponse(elem, eo_response));
 							m_data->elemental_responses.push_back(eo_response);
+						}
+						else if (eo_response) {
+							delete eo_response;  // Ladruno: composite built but descriptor stream errored (e.g. GENERIC) -> owned by nobody
 						}
 					}
 				}
@@ -2027,6 +2082,8 @@ int LadrunoRecorder::sendSelf(int commitTag, Channel& theChannel)
 		for (size_t j = 0; j < req.size(); ++j) ser.put_s(req[j]);
 	}
 
+	ser.put_i(m_data->envelope_mode ? 1 : 0);    // Ladruno: MP/db config round-trip (lockstep with recvSelf)
+	ser.put_i(m_data->info.store_data_f32 ? 1 : 0);
 	int msg_data_size = (int)ser.b.size();
 	ID idata(1);
 	idata(0) = msg_data_size;
@@ -2106,6 +2163,8 @@ int LadrunoRecorder::recvSelf(int commitTag, Channel& theChannel,
 			m_data->elemental_results_requests.push_back(req);
 		}
 	}
+	m_data->envelope_mode = de.get_i() != 0;    // Ladruno: lockstep with sendSelf
+	m_data->info.store_data_f32 = de.get_i() != 0;
 	if (!de.ok) {
 		opserr << "LadrunoRecorder::recvSelf() - failed to de-serialize config\n";
 		return -1;

@@ -13,7 +13,7 @@ tags:
 # BezierTri6 — apeGmsh integration
 
 How [apeGmsh](https://github.com/nmorabowen/apeGmsh) consumes the
-[[04_bezier_elements|BezierTri6]] element (merged to `ladruno`, `ELE_TAG 272`).
+[[04_bezier_elements|BezierTri6]] element (merged to `ladruno`, `ELE_TAG 33000`).
 Companion: the **canonical apeGmsh-side implementation spec** lives in the apeGmsh
 repo at `docs/plans/bezier-tri6-element.md` (the 6 touch points to make
 `ops.element.BezierTri6()` a first-class typed primitive). This file is the
@@ -60,12 +60,12 @@ To get `ops.element.BezierTri6(pg=...)` (bridge emission + run) instead of
 direct-drive, apeGmsh needs a typed-primitive wrapper. Spec written:
 `apeGmsh/docs/plans/bezier-tri6-element.md` — 6 touch points modeled on the existing
 `SixNodeTri` (element dataclass, `__init__` export, namespace factory, capabilities,
-response catalog with `ELE_TAG 272`), plus the `-bbar`/`-cMass` flags. Caveats:
+response catalog with `ELE_TAG 33000`), plus the `-bbar`/`-cMass` flags. Caveats:
 
 - **Tcl/Py deck emission** (`ops.tcl/py`) works once the wrapper exists — the deck
   is just `element BezierTri6 …`, run with the fork's `OpenSees.exe` / `import opensees`.
 - **Live `run()`** needs the fork build to *be* the `openseespy` apeGmsh imports.
-- **Results parsing** keys on `cpp_class_name="BezierTri6"` + `ELE_TAG 272`, so the
+- **Results parsing** keys on `cpp_class_name="BezierTri6"` + `ELE_TAG 33000`, so the
   result round-trip works once the capability/response entries land.
 
 Until then, **direct-drive is the supported path** and needs no apeGmsh change.
