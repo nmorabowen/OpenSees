@@ -762,6 +762,53 @@ features:
       U-only). UR (rotation) = ADR 23 Phase 2. Plan/ADR:
       Ladruno_implementation/23_ladruno_embedded_node_adr.md.
 
+  - feature: LadrunoQuad
+    classtag: 33007          # ELE_TAG (element) family; after LadrunoEmbeddedNode=33006 (ADR-reserved 33006 taken by EmbeddedNode)
+    tag_symbol: ELE_TAG_LadrunoQuad
+    pr: null
+    feature_class: element
+    required_tiers: [T0, T1]
+    pytest: tests/test_ladrunoPlane_element.py   # std<->quad(FourNodeQuad) + CST<->Tri31 byte-reduce (PlaneStrain+PlaneStress), rank/3-rbm, bbar anti-locking @nu=0.4999, constant-stress patch (std+bbar), reserved-formulation guards
+    tcl: WAIVED(element LadrunoQuad ...; shared OpenSeesElementCommands functionMap serves Tcl + Python; verified via the Zone-A pytest battery)
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesElementCommands.cpp
+      - SRC/element/CMakeLists.txt
+      - SRC/element/ladrunoPlane/CMakeLists.txt
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      Unified 4-node bilinear plane (plane-stress/strain) continuum element, the 2D
+      port of LadrunoBrick (ADR 25). Phase 1 = small-strain -geom linear with
+      -formulation {std|bbar}; std reproduces upstream FourNodeQuad (command 'quad')
+      to ~1e-9, bbar = 2D mean-dilatation B-bar (dilatation factor 1/2, PlaneStrain
+      only). ssp/eas reserved at the factory (P2/P3); -geom corot/finite drop in via
+      the SolidTransformation layer in P4/P5. Plan: 25_ladruno_plane_elements_adr.md.
+
+  - feature: LadrunoCST
+    classtag: 33008          # ELE_TAG (element) family; after LadrunoQuad=33007
+    tag_symbol: ELE_TAG_LadrunoCST
+    pr: null
+    feature_class: element
+    required_tiers: [T0, T1]
+    pytest: tests/test_ladrunoPlane_element.py   # CST<->Tri31 byte-reduce, rank/3-rbm (covered in the shared plane battery)
+    tcl: WAIVED(element LadrunoCST ...; shared OpenSeesElementCommands functionMap serves Tcl + Python; verified via the Zone-A pytest battery)
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesElementCommands.cpp
+      - SRC/element/CMakeLists.txt
+      - SRC/element/ladrunoPlane/CMakeLists.txt
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      3-node constant-strain triangle, the thin 2D sibling of LadrunoQuad (ADR 25):
+      -formulation std only (a 1-pt triangle is rank-sufficient — no hourglass, and
+      bbar/ssp/eas have nothing to average). Reproduces upstream Tri31. Ships as the
+      baseline / triangular-mesh fallback / future E-FEM carrier. Plan:
+      25_ladruno_plane_elements_adr.md.
+
   # --- worked examples shipped with the scaffold (existing elements, no new C++) ---
 
   - feature: forceBeamColumn_cantilever     # T1 worked example (existing element)

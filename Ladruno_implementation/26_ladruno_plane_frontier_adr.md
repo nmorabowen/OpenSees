@@ -295,14 +295,16 @@ the staggered/monolithic solve decision, and the 2D benchmark battery.
 
 ## Reserved class tags (per [[LEDGER_implementations]] convention — RESERVED, not in classTags.h until built)
 
-Element registry (band ≥ 33000; 33000–33007 used incl. ADR 25):
+Element registry (band ≥ 33000; 33000–33008 used: …EmbeddedNode=33006,
+LadrunoQuad=33007, LadrunoCST=33008 — ADR 25 shipped at 33007/33008 after a
+sibling PR took the originally-reserved 33006 for LadrunoEmbeddedNode):
 
-- `ELE_TAG_LadrunoVEM     = 33008` — T3 polygonal VEM (RESERVED)
-- `ELE_TAG_LadrunoSBFEM   = 33009` — T4 scaled-boundary super-element (RESERVED)
+- `ELE_TAG_LadrunoVEM     = 33009` — T3 polygonal VEM (RESERVED)
+- `ELE_TAG_LadrunoSBFEM   = 33010` — T4 scaled-boundary super-element (RESERVED)
 - Coupled-field elements (T1/T2): decide at their ADRs whether they are **new
   element classes** (`ELE_TAG_LadrunoGradientQuad`, `…PhaseFieldQuad`) or a
   **coupled mode** of `LadrunoQuad` that raises ndf — the latter is cleaner but
-  the brick's serialization packs no ndf-switch today. Reserve `33010`–`33011`
+  the brick's serialization packs no ndf-switch today. Reserve `33011`–`33012`
   in the element registry for them.
 
 > Tags are per-registry; these element-registry numbers do not collide with the
