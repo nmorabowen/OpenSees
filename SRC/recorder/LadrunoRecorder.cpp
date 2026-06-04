@@ -499,8 +499,16 @@ int LadrunoRecorder::initialize()
 	// On-disk precision of per-step result DATA: "f64" (default, lossless parity)
 	// or "f32" (opt-in `-precision f32` lossy mode). Readers MUST NOT diff an f32
 	// file against the f64 oracle at 1e-12 — see the bounded-error gate.
+	// Ladruno: -precision f32 only affects the streaming per-step DATA datasets.
+	// Envelope-mode output (MIN/MAX/ABSMAX) is always f64, so STORED_PRECISION must
+	// honestly report f64 there — the attribute describes what is actually on disk,
+	// and a consumer relies on it to choose its diff tolerance.
+	bool effective_f32 = info.store_data_f32 && !m_data->envelope_mode;
+	if (info.store_data_f32 && m_data->envelope_mode)
+		opserr << "LadrunoRecorder warning: -precision f32 is ignored in -envelope mode "
+		          "(envelope datasets are always f64); recording STORED_PRECISION=f64\n";
 	ladrunons::h5::attribute::write(h_info, "STORED_PRECISION",
-		std::string(info.store_data_f32 ? "f32" : "f64"));
+		std::string(effective_f32 ? "f32" : "f64"));
 
 	// Partition manifest (parallel-output contract). Each ".part-N.ladruno" file
 	// self-declares its 0-based partition index + the total count so apeGmsh can

@@ -921,3 +921,29 @@ From the finite-strain validation Phase P4 (Taylor-bar impact, 2026-06-02,
   coords yet stays objective — its `iK·BᵀB` penalty is isotropic, so there is no axis
   to go stale. (v1 omits the `∂dir/∂u` consistent-tangent term — EICR practice: exact
   for explicit, converges under step-halving for implicit.)
+
+### LadrunoRecorder `-precision f32` is ignored in `-envelope` mode — STORED_PRECISION now honest (FIXED)
+- **Bites:** `-precision f32` only changes the dtype of the streaming per-step DATA
+  datasets (`StreamingSink::createTimeSeries3d`, `Ladruno_Sinks.cpp` — `H5T_IEEE_F32LE`).
+  In `-envelope` mode there are no streaming DATA datasets; the only result datasets are
+  the EnvelopeSink MIN/MAX/ABSMAX, which are **always f64**. But `initialize()` stamped
+  `INFO/STORED_PRECISION` purely from the `store_data_f32` flag → an `-envelope -precision f32`
+  file claimed `f32` while every dataset in it was f64. A reader trusting the attribute to
+  pick its diff tolerance would be misled.
+- **Fix:** `STORED_PRECISION` is now `f32` only when `store_data_f32 && !envelope_mode`
+  (it must describe what is actually on disk); a one-time warning is emitted if `-precision f32`
+  is combined with `-envelope`. (Honoring f32 *inside* the envelope datasets is a separate,
+  judgment-dependent enhancement — not done; the label-honesty fix is unambiguous.) 2026-06-03.
+
+### LadrunoRecorder `domainChanged()`/`restart()`/`setDomain()` being no-ops is INTENTIONAL — do not "fix"
+- **Why it looks wrong:** an adversarial review flagged that these lifecycle hooks are inert,
+  so cached `Element*`/`Response*` could dangle after a model edit. **Verified NON-issue:**
+  the *only* source-rebuild trigger is the `domain->hasDomainChanged()` stamp checked inside
+  `record()` (the `rebuild_model` block) — and **every** structural edit (`addElement`/
+  `removeElement`/etc.) bumps the domain's geometry tag, so the stamp moves and the rebuild
+  fires, re-acquiring fresh pointers and (re)writing the MODEL_STAGE. This is the exact frozen
+  `MPCORecorder::record()` pattern (the code comment says so). Forcing a rebuild in
+  `domainChanged()` would be redundant with the stamp check and risk breaking the multi-stage
+  logic. **Leave them as no-ops.** (The only genuinely-real lifecycle gap is minor: the `-T`
+  frequency gate can stall if `commitTag` regresses across a second `analyze()` after
+  `wipeAnalysis` — a defensive guard, not yet added.) 2026-06-03.
