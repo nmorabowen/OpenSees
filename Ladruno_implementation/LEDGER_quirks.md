@@ -1041,3 +1041,40 @@ From the finite-strain validation Phase P4 (Taylor-bar impact, 2026-06-02,
   logic. **Leave them as no-ops.** (The only genuinely-real lifecycle gap is minor: the `-T`
   frequency gate can stall if `commitTag` regresses across a second `analyze()` after
   `wipeAnalysis` — a defensive guard, not yet added.) 2026-06-03.
+
+### A node-embedding ROTATION tie needs the host's `∂N/∂x`, not its weights `N_i` (ADR 23 Phase 2 / UR)
+- **Why it bites:** the translational (U) and pressure (UP) ties only need the host
+  shape-function WEIGHTS `N_i(ξ)` (`getInterpolationWeights`, ADR 20). The rotation
+  (UR) tie ties the constrained node's rotations to the host CONTINUUM rotation
+  `θ = ½ curl(u) = skew(∇u)`, which is built from the host displacement GRADIENT — so
+  it needs `∂N_i/∂x` (cartesian shape derivatives), a DIFFERENT host query that
+  weights cannot supply. Hence the new vanilla `Element::getInterpolationGradients(ξ,dNdx)`
+  (default −1; overridden on `LadrunoBrick` via `shp3d`, `BezierTet10` via
+  `computeJacobian`). The translational rows of the UR `B`-matrix still use `N_i`; only
+  the rotation rows use `∂N/∂x`.
+- **Volume host ⇒ PURE `skew(∇u)`, not ASD's mixed convention.** `ASDEmbeddedNodeElement`
+  embeds into a planar tri/tet *surface*, so it builds a 2D local frame and uses the
+  surface SLOPE (factor 1) for the two bending rotations + `½ curl` (factor ½) only for
+  the drilling — a mixed convention forced by the missing out-of-plane derivative.
+  `LadrunoEmbeddedNode` embeds into a 3D VOLUME host (hex/tet) where all 9 gradient
+  components are available, so it uses the dimensionally-clean **pure continuum rotation**
+  `θ = ½ Σ_i (∇N_i × u_i)` (½ on all three, no local frame, frame-objective) — de Souza
+  Neto §3. The host operator block is `½·skew(∇N_i)`; the gradient virtual returns global
+  cartesian `∂N/∂x` directly, so NO `R`-rotation of the block is needed.
+- **UR is mesh-limited (UR-4):** on a CST (3-node tri) / TET4 (4-node tet) host `∂N/∂x`
+  is element-CONSTANT ⇒ the UR constraint collapses to a single element-wide RIGID-SPIN
+  tie (no intra-element rotational gradient). Moment-critical embeds (anchors, headed
+  studs) need a higher-order host (`BezierTet10`) where `∂N/∂x` varies with ξ. Document,
+  don't silently sell as exact. 2026-06-04.
+
+### Per-DOF-class bipenalty: a translational `m_p` CANNOT bound the rotation mode (ADR 23 M1/ES-1)
+- **Why it bites:** the bipenalty mass penalty `m_p` (lumped on the slave's translational
+  DOFs) bounds the explicit `dt_cr` of the TRANSLATIONAL coupling only. The rotation tie's
+  penalty `K_r` has different units (moment/rotation), so a translational-only `m_p` leaves
+  the rotation mode UNBOUNDED in explicit (`dt_cr → 0`). Fix: give the rotation class its
+  OWN inertia `I_p = K_r·(dt/2)²` (the SAME `-dtcr`/`-wcap` budget formula but with `K_r`),
+  lumped on the slave's ROTATION DOFs. Then `dt_r = 2√(I_p/K_r) = dt_u` and the `lch²` in
+  `K_r` cancels (it's also in `I_p`), so the rotation mode self-bounds at the SAME `dt`.
+  `getExplicitCriticalTimeStep` reports the MIN over active DOF classes. (The same pattern
+  generalizes to a pressure class if pressure bipenalty is ever added — pressure is
+  implicit-recommended for now.) 2026-06-04.

@@ -128,6 +128,11 @@ class LadrunoBrick : public Element {
   // xi = (ξ,η,ζ) ∈ [-1,1]³, for embedded-reinforcement coupling. N sized to 8.  // Ladruno
   int getInterpolationWeights(const Vector &xi, Vector &N);
 
+  // Ladruno (ADR 23 §3, Phase 2 UR): cartesian shape gradients dN_I/dx_j at natural
+  // coord xi (via shp3d at the reference config), for the node-embedding ROTATION
+  // tie. dNdx sized to 8x3, dNdx(I,j) = dN_I/dx_j.  // Ladruno
+  int getInterpolationGradients(const Vector &xi, Matrix &dNdx);
+
   // state
   int commitState(void);
   int revertToLastCommit(void);

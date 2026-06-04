@@ -77,7 +77,9 @@ class LadrunoEmbeddedNode : public Element
                       double ktAlpha = 0.0, int enforce = 0,
                       bool bipenalty = false, int bpMode = 0,
                       double bpDt = 0.0, double bpBeta = 0.0,
-                      bool pressure = false, double kp = 0.0);
+                      bool pressure = false, double kp = 0.0,
+                      bool rot = false, double kr = 0.0, bool krAuto = false,
+                      double krAlpha = 0.0, const Matrix* gradN = 0);
   LadrunoEmbeddedNode();
   ~LadrunoEmbeddedNode();
 
@@ -140,6 +142,31 @@ class LadrunoEmbeddedNode : public Element
   double lambda_p;          // AL pressure multiplier (scalar); committed, Uzawa-updated
   double computeGapP(void); // g_p = p_c − Σ N_i p_host,i (pressure DOF = index ndm)
 
+  // ADR 23 Phase 2 — rotation tie (UR). Opt-in via -rot (rflag). Ties the constrained
+  // node's ROTATION DOFs to the host's CONTINUUM rotation at the embedded point,
+  // θ_host = ½ curl(u) = skew(∇u)|_ξ, read from the host's cartesian shape gradients
+  // ∂N_i/∂x (gradN, supplied by -dNdx or queried via Element::getInterpolationGradients).
+  //   3D (nrot=3): θ_host = ½ Σ_i (∇N_i × u_host,i), rotation DOFs at indices ndm..ndm+2.
+  //   2D (nrot=1): θ_z   = ½ Σ_i (∂N_i/∂x·u_y − ∂N_i/∂y·u_x), drilling DOF at index ndm.
+  // gap g_r = θ_c − θ_host; traction t_r = K_r·g_r (+ λ_r for AL); D_r = K_r·I_{nrot}.
+  // Activated in setDomain only if -rot was set AND the cNode carries the rotation DOFs
+  // (ndf ≥ ndm+nrot); else degrade to no-UR (warn). UR is APPROXIMATE / mesh-limited:
+  // on a CST/TET4 host ∂N/∂x is element-constant ⇒ a single rigid-spin tie; moment-
+  // critical embedments need a higher-order host (BezierTet10) — ADR 23 §3 UR-4.
+  int rflag;                // 0 = no UR; 1 = -rot requested
+  int nrot;                 // rotation DOFs coupled: 3 (3D) or 1 (2D); set from ndm
+  bool rActive;             // resolved in setDomain: rflag && cNode has rotation DOFs
+  Matrix gradN;             // host cartesian gradients ∂N_i/∂x_j (nHost × ndm), for UR
+  double Kr;                // rotational penalty (resolved value)
+  bool krAuto;              // -kr auto: K_r = krAlpha·K_u·lch² (needs -host for lch)
+  double krAlpha;           // multiplier for the auto K_r (ADR 23 D3)
+  bool krResolved;          // transient: auto K_r already resolved this run
+  Vector lambda_r;          // AL rotation multiplier (size nrot); Uzawa-updated
+  void resolveKr(void);     // resolve auto K_r (after K_u; queries host lch)
+  void computeGapR(Vector& gr);  // g_r = θ_c − θ_host(ξ) (size nrot)
+  // host-rotation operator: row r, host-node i, local trans dof j → ∂θ_host_r/∂u_i,j.
+  double rotOper(int r, int i, int j) const;
+
   // ADR 23 D4 — constraint-enforcement strategy. 0 = penalty (default), 1 = AL.
   // AL adds a per-element multiplier λ (translational, size ndm) with the SAME
   // tangent K = BᵀD_uB; per-step Uzawa λ += K_u·g in commitState. The isotropic tie
@@ -166,8 +193,13 @@ class LadrunoEmbeddedNode : public Element
   double bpDt;              // -dtcr target step (bpMode 0)
   double bpBeta;            // -wcap penalty-frequency ratio β (bpMode 1)
   double mPenalty;          // resolved mass penalty m_p (per cNode translational DOF)
-  bool bpResolved;          // transient: m_p already resolved this run
-  double effectiveCouplingStiffness(void); // k_eff = K_u (U-only)
+  // ADR 23 D5 / M1·ES-1 — per-DOF-class (stiffness, inertia) pair for the ROTATION
+  // mode: a translational-only m_p cannot bound the rotation mode (different units).
+  // I_p is lumped on the cNode rotation DOFs (same -dtcr/-wcap budget formula but
+  // with K_r), so dt_r = 2√(I_p/K_r) = dt_u — the rotation mode self-bounds.
+  double iPenalty;          // resolved rotational mass penalty I_p (per cNode rot DOF)
+  bool bpResolved;          // transient: m_p / I_p already resolved this run
+  double effectiveCouplingStiffness(void); // k_eff = K_u (translational class)
   void resolveBipenalty(void);
 
   // per-node DOF bookkeeping (resolved in setDomain): the constrained / host nodes

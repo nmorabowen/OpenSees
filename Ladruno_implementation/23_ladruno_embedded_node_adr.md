@@ -547,13 +547,21 @@ before the 2D host overrides land). Ship the apeGmsh-tie use case. *Risk: low �
 config of proven math + the trivial pressure row; `ndm`-parametric. Gate: Zone-A items
 1–4, 6–7, 9 (all 2D + 3D).*
 
-**Phase 2 — UR (rotation) behind the new gradient virtual, 2D + 3D.** Add
-`Element::getInterpolationGradients` (vanilla, ledgered) + the host overrides
-(`LadrunoBrick`/`BezierTet10` for 3D, `BezierTri6`/`FourNodeQuad` for 2D); add the `-rot`
-path, the `R·dNdx` rotation `B`-block (3-rotation 3D / single-drilling 2D), and `-krAlpha`.
-*Risk: moderate — re-opens the base-class surface (vtable/recompile-all) and the
-continuum-rotation formulation. Gate: Zone-A item 5 (FD gradient check + moment-transmission,
-2D + 3D).*
+**Phase 2 — UR (rotation) behind the new gradient virtual, 2D + 3D. BUILT (2026-06-04).** Added
+`Element::getInterpolationGradients` (vanilla, ledgered) + the host overrides on the two 3D fork
+solids `LadrunoBrick` (`shp3d`) / `BezierTet10` (`computeJacobian`); the `-rot` path, the
+continuum-rotation `B`-block (3-rotation 3D `θ=½Σ(∇N_i×u_i)` / single-drilling 2D), `-kr {val|auto}` +
+`-krAlpha`, the M5 `-rot`/`-pressure` parse guard, and the M1/ES-1 per-DOF-class bipenalty
+(`I_p=K_r·(dt/2)²` on the rotation DOFs ⇒ `dt_r=dt_u`). Gradients reach the element via `-dNdx`
+(explicit, any host), `-gradXi ξ` (host query), or `-xi` auto-query on a gradient-capable host.
+**Decision vs the ADR §3 sketch:** for a 3D VOLUME host all 9 ∇u components are available, so the
+element uses the **pure continuum rotation `skew(∇u)`** (½ on all three, frame-objective, no local
+`R`) rather than ASD's planar-surface mixed convention (full-slope bending + ½ drilling). **2D host
+gradient overrides (`BezierTri6`/`FourNodeQuad`) DEFERRED** — 2D UR runs today via the explicit
+`-dNdx` form (the kernel is `ndm`-parametric; this is exactly how `-shape` already serves 2D weights),
+so 2D is not blocked. *Risk realized: moderate (vtable/recompile-all). Gate: Zone-A item 5 — FD/analytic
+continuum-rotation recovery (2D drilling + 3D, `-dNdx`), real LadrunoBrick + BezierTet10 shear-field
+moment transmission (`-xi`), M5 guard, UR auto-off, per-class bipenalty dt_cr, AL rotation gap→0.*
 
 **Phase 2b — D9 material-driven interface mode.** Add the local-frame plumbing
 (`-normal`/`-orient`, host-face-normal auto, co-rotation reuse) and the per-direction

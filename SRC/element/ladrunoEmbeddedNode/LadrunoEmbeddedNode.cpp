@@ -48,15 +48,19 @@ LadrunoEmbeddedNode::LadrunoEmbeddedNode(int tag, int ndm_, int cNode,
         const ID& hostNodes, const Vector& shape, double ku,
         int hostEleTag_, bool ktAuto_, double ktAlpha_, int enforce_,
         bool bipenalty_, int bpMode_, double bpDt_, double bpBeta_,
-        bool pressure_, double kp_)
+        bool pressure_, double kp_,
+        bool rot_, double kr_, bool krAuto_, double krAlpha_, const Matrix* gradN_)
   : Element(tag, ELE_TAG_LadrunoEmbeddedNode),
     ndm(ndm_), nHost(hostNodes.Size()),
     connectedNodes(1 + hostNodes.Size()), Nshape(shape),
     Ku(ku), Kp(kp_), upActive(false), lambda_p(0.0),
+    rflag(rot_ ? 1 : 0), nrot((ndm_ == 3) ? 3 : 1), rActive(false),
+    gradN(), Kr(kr_), krAuto(krAuto_), krAlpha(krAlpha_), krResolved(false),
+    lambda_r((ndm_ == 3) ? 3 : 1),
     enforce(enforce_), lambda(ndm_),
     hostEleTag(hostEleTag_), ktAuto(ktAuto_), ktAlpha(ktAlpha_), ktResolved(false),
     bipenalty(bipenalty_), bpMode(bpMode_), bpDt(bpDt_), bpBeta(bpBeta_),
-    mPenalty(0.0), bpResolved(false),
+    mPenalty(0.0), iPenalty(0.0), bpResolved(false),
     nDOF(0), nodeNdf(1 + hostNodes.Size()), dofOffset(1 + hostNodes.Size()),
     pflag(pressure_ ? 1 : 0),
     theNodes(0), K(0), P(0), M0(0)
@@ -65,6 +69,10 @@ LadrunoEmbeddedNode::LadrunoEmbeddedNode(int tag, int ndm_, int cNode,
   for (int i = 0; i < nHost; i++)
     connectedNodes(1 + i) = hostNodes(i);
   lambda.Zero();
+  lambda_r.Zero();
+  // host cartesian gradients ∂N_i/∂x_j (nHost × ndm) for the UR tie (-dNdx / -gradXi).
+  if (rflag == 1 && gradN_ != 0)
+    gradN = *gradN_;
 
   theNodes = new Node*[1 + nHost];
   for (int i = 0; i < 1 + nHost; i++) theNodes[i] = 0;
@@ -75,10 +83,12 @@ LadrunoEmbeddedNode::LadrunoEmbeddedNode()
   : Element(0, ELE_TAG_LadrunoEmbeddedNode),
     ndm(0), nHost(0), connectedNodes(0), Nshape(),
     Ku(0.0), Kp(0.0), upActive(false), lambda_p(0.0),
+    rflag(0), nrot(0), rActive(false),
+    gradN(), Kr(0.0), krAuto(false), krAlpha(0.0), krResolved(false), lambda_r(),
     enforce(0), lambda(),
     hostEleTag(-1), ktAuto(false), ktAlpha(0.0), ktResolved(false),
     bipenalty(false), bpMode(0), bpDt(0.0), bpBeta(0.0),
-    mPenalty(0.0), bpResolved(false),
+    mPenalty(0.0), iPenalty(0.0), bpResolved(false),
     nDOF(0), nodeNdf(), dofOffset(), pflag(0),
     theNodes(0), K(0), P(0), M0(0)
 {
@@ -155,6 +165,27 @@ void LadrunoEmbeddedNode::setDomain(Domain* theDomain)
     }
   }
 
+  // ADR 23 Phase 2 — resolve the rotation tie (UR). Activate only if -rot was set,
+  // the constrained node carries the rotation DOFs (ndf ≥ ndm+nrot: 3D needs 6, 2D
+  // needs 3), AND the host gradients gradN are present (nHost × ndm). Else degrade
+  // to no-UR with a warning. (Host nodes need only translations, already checked.)
+  rActive = false;
+  if (rflag == 1) {
+    if (nodeNdf(0) < ndm + nrot) {
+      opserr << "WARNING LadrunoEmbeddedNode " << this->getTag()
+             << ": -rot requested but the constrained node has " << nodeNdf(0)
+             << " DOFs (need ndf >= ndm+nrot=" << ndm + nrot
+             << " for rotations); coupling translations only\n";
+    } else if (gradN.noRows() != nHost || gradN.noCols() != ndm) {
+      opserr << "WARNING LadrunoEmbeddedNode " << this->getTag()
+             << ": -rot requested but host gradients (∂N/∂x) are missing/mis-sized "
+             << "(need " << nHost << "x" << ndm << ", got " << gradN.noRows() << "x"
+             << gradN.noCols() << "); supply -dNdx or -gradXi; coupling translations only\n";
+    } else {
+      rActive = true;
+    }
+  }
+
   this->allocate();
   this->DomainComponent::setDomain(theDomain);
 }
@@ -193,6 +224,75 @@ void LadrunoEmbeddedNode::resolveAutoKt(void)
   ktResolved = true;
 }
 
+// ADR 23 D3 — resolve the auto rotational penalty (after K_u). The rotation gap is
+// a ROTATION (rad), so it needs a moment/rotation scale: K_r = krAlpha·K_u·lch²
+// (lch from the host's getCharacteristicLength — the first such call in the embedded
+// family, M2/HON-1). Dimensionally required so a unit rotation gap costs energy
+// comparable to a unit translation gap. With krAuto off, K_r is the -kr numeric value.
+void LadrunoEmbeddedNode::resolveKr(void)
+{
+  if (!rActive || krResolved) return;
+  if (!krAuto) { krResolved = true; return; }   // numeric K_r already set
+  this->resolveAutoKt();                         // resolve K_u first (may be auto)
+  Domain* theDomain = this->getDomain();
+  Element* host = (theDomain != 0 && hostEleTag >= 0)
+                    ? theDomain->getElement(hostEleTag) : 0;
+  if (host == 0) {
+    opserr << "WARNING LadrunoEmbeddedNode " << this->getTag()
+           << ": -kr auto needs the -host form for lch; keeping K_r=" << Kr << "\n";
+    krResolved = true;
+    return;
+  }
+  double lch = host->getCharacteristicLength();
+  if (lch <= 0.0) {
+    opserr << "WARNING LadrunoEmbeddedNode " << this->getTag()
+           << ": -kr auto host " << hostEleTag << " gave lch=" << lch
+           << "; keeping K_r=" << Kr << "\n";
+    krResolved = true;
+    return;
+  }
+  Kr = krAlpha * Ku * lch * lch;
+  krResolved = true;
+}
+
+// host-rotation operator: ∂θ_host_r/∂u_i,j at the embedded point, from the host
+// cartesian gradients g_i = ∇N_i. The continuum rotation θ = ½ curl(u) = skew(∇u):
+//   3D: θ = ½ Σ_i (∇N_i × u_i)  ⇒  the block is ½·skew(∇N_i).
+//   2D: θ_z = ½ Σ_i (∂N_i/∂x·u_y − ∂N_i/∂y·u_x)  (the single drilling rotation).
+double LadrunoEmbeddedNode::rotOper(int r, int i, int j) const
+{
+  const double half = 0.5;
+  if (ndm == 3) {
+    double gx = gradN(i, 0), gy = gradN(i, 1), gz = gradN(i, 2);
+    switch (r) {
+    case 0: return (j == 1) ? -half * gz : (j == 2) ?  half * gy : 0.0;  // θ_x
+    case 1: return (j == 0) ?  half * gz : (j == 2) ? -half * gx : 0.0;  // θ_y
+    case 2: return (j == 0) ? -half * gy : (j == 1) ?  half * gx : 0.0;  // θ_z
+    default: return 0.0;
+    }
+  }
+  // 2D drilling
+  double gx = gradN(i, 0), gy = gradN(i, 1);
+  return (j == 0) ? -half * gy : (j == 1) ? half * gx : 0.0;
+}
+
+// g_r = θ_c − θ_host(ξ): the constrained node's rotation DOFs (indices ndm..ndm+nrot)
+// minus the host continuum rotation interpolated at the embedded point (size nrot).
+void LadrunoEmbeddedNode::computeGapR(Vector& gr)
+{
+  if (gr.Size() != nrot) gr.resize(nrot);
+  const Vector& uc = theNodes[0]->getTrialDisp();
+  for (int r = 0; r < nrot; r++) {
+    double th = 0.0;
+    for (int i = 0; i < nHost; i++) {
+      const Vector& uh = theNodes[1 + i]->getTrialDisp();
+      for (int j = 0; j < ndm; j++)
+        th += this->rotOper(r, i, j) * uh(j);
+    }
+    gr(r) = uc(ndm + r) - th;
+  }
+}
+
 // k_eff for the bipenalty bound. Phase 1 (U only) has a single translational spring,
 // so k_eff = K_u (the (stiffness,inertia) per-DOF-class generalization of M1/ES-1
 // arrives with UR/UP).
@@ -201,15 +301,20 @@ double LadrunoEmbeddedNode::effectiveCouplingStiffness(void)
   return LadrunoEmbedded::effectiveCouplingStiffness(fabs(Ku), 0.0);
 }
 
-// ADR 23 D5 / ADR 20 §10.6 — resolve the mass penalty m_p (lazily, after K_u).
-// Lumped on the cNode's first ndm (translational) diagonal entries (getMass), so
-// the global mass stays diagonal (DiagonalSOE-safe). Budgets:
-//   bpMode 0 (-dtcr dt): m_p = k_eff·(dt/2)².
-//   bpMode 1 (-wcap β):  m_p = k_eff/(β·ω_host)², ω_host² ≈ ‖K_host‖_∞/‖M_host‖_∞.
+// ADR 23 D5 / ADR 20 §10.6 — resolve the mass penalties (lazily, after K_u / K_r).
+// PER-DOF-CLASS (stiffness, inertia) pairs (M1/ES-1): a translational-only m_p
+// CANNOT bound the rotation mode (different units), so the rotation class gets its
+// OWN inertia I_p via the SAME budget formula but with K_r. Both lumped on the
+// constrained (slave) node only (getMass) ⇒ global mass stays diagonal. Budgets:
+//   bpMode 0 (-dtcr dt): m_p = k_eff·(dt/2)²,   I_p = K_r·(dt/2)²    ⇒ dt_r = dt_u = dt.
+//   bpMode 1 (-wcap β):  m_p = k_eff/(β·ω_host)², I_p = K_r/(β·ω_host)² ⇒ dt_r = dt_u.
+// (lch² cancels — I_p and K_r both carry it — so the rotation mode self-bounds.)
 void LadrunoEmbeddedNode::resolveBipenalty(void)
 {
   if (!bipenalty || bpResolved) return;
   this->resolveAutoKt();
+  if (rActive) this->resolveKr();
+  iPenalty = 0.0;
   double kEff = this->effectiveCouplingStiffness();
   if (kEff <= 0.0) {
     opserr << "WARNING LadrunoEmbeddedNode " << this->getTag()
@@ -223,6 +328,8 @@ void LadrunoEmbeddedNode::resolveBipenalty(void)
       mPenalty = 0.0; bpResolved = true; return;
     }
     mPenalty = LadrunoEmbedded::massPenaltyDtcr(kEff, bpDt);
+    if (rActive && Kr > 0.0)
+      iPenalty = LadrunoEmbedded::massPenaltyDtcr(Kr, bpDt);
     bpResolved = true;
     return;
   }
@@ -251,6 +358,8 @@ void LadrunoEmbeddedNode::resolveBipenalty(void)
   double omega2_host = kScale / mScale;
   if (bpBeta <= 0.0) bpBeta = 2.0;
   mPenalty = LadrunoEmbedded::massPenaltyWcap(kEff, bpBeta, omega2_host);
+  if (rActive && Kr > 0.0)
+    iPenalty = LadrunoEmbedded::massPenaltyWcap(Kr, bpBeta, omega2_host);
   bpResolved = true;
 }
 
@@ -263,8 +372,14 @@ double LadrunoEmbeddedNode::getExplicitCriticalTimeStep(void)
 {
   if (!bipenalty) return -1.0;
   this->resolveBipenalty();
-  double kEff = this->effectiveCouplingStiffness();
-  return LadrunoEmbedded::criticalTimeStep(mPenalty, kEff);
+  // min over active DOF classes of 2√(m_class/k_class) (ADR 23 D5 / M1·ES-1): the
+  // translational (m_p, k_eff) and, when UR is on, the rotational (I_p, K_r) pair.
+  double dt = LadrunoEmbedded::criticalTimeStep(mPenalty, this->effectiveCouplingStiffness());
+  if (rActive) {
+    double dtR = LadrunoEmbedded::criticalTimeStep(iPenalty, Kr);
+    if (dtR > 0.0 && (dt <= 0.0 || dtR < dt)) dt = dtR;
+  }
+  return dt;
 }
 
 // ===========================================================================
@@ -281,6 +396,12 @@ int LadrunoEmbeddedNode::commitState(void)
     this->computeGap(g);
     for (int k = 0; k < ndm; k++) lambda(k) += Ku * g(k);
     if (upActive) lambda_p += Kp * this->computeGapP();
+    if (rActive) {
+      this->resolveKr();
+      Vector gr(nrot);
+      this->computeGapR(gr);
+      for (int r = 0; r < nrot; r++) lambda_r(r) += Kr * gr(r);
+    }
   }
   return this->Element::commitState();
 }
@@ -291,6 +412,7 @@ int LadrunoEmbeddedNode::revertToStart(void)
 {
   lambda.Zero();   // AL multipliers accumulate only via commitState's Uzawa step
   lambda_p = 0.0;
+  lambda_r.Zero();
   return 0;
 }
 
@@ -312,6 +434,7 @@ double LadrunoEmbeddedNode::computeGapP(void)
 int LadrunoEmbeddedNode::update(void)
 {
   this->resolveAutoKt();
+  if (rActive) this->resolveKr();
   return 0;
 }
 
@@ -352,18 +475,47 @@ const Vector& LadrunoEmbeddedNode::getResistingForce(void)
     for (int p = 0; p < 1 + nHost; p++)
       (*P)(dofOffset(p) + ndm) = Pp(p);
   }
+
+  // ADR 23 Phase 2 — rotation tie (UR): t_r = K_r·g_r (+ λ_r for AL). P_r = B_rᵀ t_r
+  // with B_r: cNode rotations → +I, host translations → −∂θ_host/∂u (rotOper). The
+  // cNode rotation slots (ndm..ndm+nrot−1) are disjoint from U/UP (UR ⊥ UP by parse
+  // guard), so += writes a zeroed slot; host translation slots get the rotation
+  // contribution ON TOP of the U force.
+  if (rActive) {
+    this->resolveKr();
+    Vector gr(nrot);
+    this->computeGapR(gr);
+    Vector tr(nrot);
+    for (int r = 0; r < nrot; r++) {
+      tr(r) = Kr * gr(r);
+      if (enforce == 1) tr(r) += lambda_r(r);
+    }
+    for (int r = 0; r < nrot; r++)
+      (*P)(dofOffset(0) + ndm + r) += tr(r);          // cNode rotation DOFs
+    for (int i = 0; i < nHost; i++)
+      for (int j = 0; j < ndm; j++) {
+        double f = 0.0;
+        for (int r = 0; r < nrot; r++) f += this->rotOper(r, i, j) * tr(r);
+        (*P)(dofOffset(1 + i) + j) += -f;             // host translation DOFs
+      }
+  }
   return *P;
 }
 
 const Vector& LadrunoEmbeddedNode::getResistingForceIncInertia(void)
 {
   this->getResistingForce();
-  // ADR 23 D5 — bipenalty inertia m_p·a on the cNode translational DOFs only.
+  // ADR 23 D5 — bipenalty inertia on the cNode only: m_p·a on the translational DOFs,
+  // and (UR) I_p·α on the rotation DOFs (the per-DOF-class inertia, M1/ES-1).
   if (bipenalty) {
     this->resolveBipenalty();
-    if (mPenalty != 0.0 && theNodes[0] != 0) {
+    if (theNodes[0] != 0) {
       const Vector& aC = theNodes[0]->getTrialAccel();
-      for (int k = 0; k < ndm; k++) (*P)(dofOffset(0) + k) += mPenalty * aC(k);
+      if (mPenalty != 0.0)
+        for (int k = 0; k < ndm; k++) (*P)(dofOffset(0) + k) += mPenalty * aC(k);
+      if (rActive && iPenalty != 0.0)
+        for (int r = 0; r < nrot; r++)
+          (*P)(dofOffset(0) + ndm + r) += iPenalty * aC(ndm + r);
     }
   }
   return *P;
@@ -399,6 +551,37 @@ const Matrix& LadrunoEmbeddedNode::getTangentStiff(void)
       for (int q = 0; q < 1 + nHost; q++)
         (*K)(dofOffset(p) + ndm, dofOffset(q) + ndm) += Kp_c(p, q);
   }
+
+  // ADR 23 Phase 2 — rotation block (UR): K_r = B_rᵀ D_r B_r, D_r = K_r·I_{nrot}.
+  // cNode-rot/cNode-rot = K_r·I (diagonal); cNode-rot/host = −K_r·rotOper; host/host
+  // = K_r·Σ_r rotOper·rotOper. Rotation/translation slots are disjoint (UR ⊥ UP), so
+  // these ADD onto the (already-zeroed or U-populated) full layout. State-independent
+  // (K_r, rotOper constant) ⇒ getInitialStiff (=getTangentStiff) is exact for UR too.
+  if (rActive) {
+    this->resolveKr();
+    for (int r = 0; r < nrot; r++) {
+      int cr = dofOffset(0) + ndm + r;
+      (*K)(cr, cr) += Kr;                                       // cNode-rot diagonal
+      for (int i = 0; i < nHost; i++)
+        for (int j = 0; j < ndm; j++) {
+          int hj = dofOffset(1 + i) + j;
+          double v = -Kr * this->rotOper(r, i, j);             // cNode-rot × host
+          (*K)(cr, hj) += v;
+          (*K)(hj, cr) += v;
+        }
+    }
+    for (int i = 0; i < nHost; i++)                             // host × host
+      for (int j = 0; j < ndm; j++) {
+        int hj = dofOffset(1 + i) + j;
+        for (int i2 = 0; i2 < nHost; i2++)
+          for (int j2 = 0; j2 < ndm; j2++) {
+            double s = 0.0;
+            for (int r = 0; r < nrot; r++)
+              s += this->rotOper(r, i, j) * this->rotOper(r, i2, j2);
+            (*K)(hj, dofOffset(1 + i2) + j2) += Kr * s;
+          }
+      }
+  }
   return *K;
 }
 
@@ -416,6 +599,11 @@ const Matrix& LadrunoEmbeddedNode::getMass(void)
   if (bipenalty) {
     this->resolveBipenalty();
     for (int k = 0; k < ndm; k++) (*M0)(dofOffset(0) + k, dofOffset(0) + k) = mPenalty;
+    // (UR) rotational inertia I_p on the cNode rotation DOFs (M1/ES-1 — bounds the
+    // rotation mode, which the translational m_p cannot). Lumped on the slave only.
+    if (rActive)
+      for (int r = 0; r < nrot; r++)
+        (*M0)(dofOffset(0) + ndm + r, dofOffset(0) + ndm + r) = iPenalty;
   }
   return *M0;
 }
@@ -426,7 +614,7 @@ const Matrix& LadrunoEmbeddedNode::getMass(void)
 int LadrunoEmbeddedNode::sendSelf(int commitTag, Channel& theChannel)
 {
   int dbTag = this->getDbTag();
-  static Vector hdr(14);
+  static Vector hdr(18);
   hdr(0) = this->getTag();
   hdr(1) = ndm;
   hdr(2) = nHost;
@@ -441,6 +629,10 @@ int LadrunoEmbeddedNode::sendSelf(int commitTag, Channel& theChannel)
   hdr(11) = bpBeta;
   hdr(12) = pflag;
   hdr(13) = Kp;
+  hdr(14) = rflag;                    // ADR 23 Phase 2 — UR
+  hdr(15) = Kr;
+  hdr(16) = krAuto ? 1.0 : 0.0;
+  hdr(17) = krAlpha;
   if (theChannel.sendVector(dbTag, commitTag, hdr) < 0) {
     opserr << "LadrunoEmbeddedNode::sendSelf - header failed\n";
     return -1;
@@ -449,11 +641,23 @@ int LadrunoEmbeddedNode::sendSelf(int commitTag, Channel& theChannel)
     opserr << "LadrunoEmbeddedNode::sendSelf - ID failed\n";
     return -1;
   }
-  Vector payload(nHost + ndm + 1);
+  // payload: Nshape(nHost) + lambda(ndm) + lambda_p(1) [+ gradN(nHost·ndm) + lambda_r(nrot) if UR]
+  int extra = (rflag == 1) ? (nHost * ndm + nrot) : 0;
+  Vector payload(nHost + ndm + 1 + extra);
   for (int i = 0; i < nHost; i++) payload(i) = Nshape(i);
   for (int k = 0; k < ndm; k++)
     payload(nHost + k) = (lambda.Size() == ndm) ? lambda(k) : 0.0;
   payload(nHost + ndm) = lambda_p;
+  if (rflag == 1) {
+    int off = nHost + ndm + 1;
+    for (int i = 0; i < nHost; i++)
+      for (int j = 0; j < ndm; j++)
+        payload(off + i * ndm + j) =
+          (gradN.noRows() == nHost && gradN.noCols() == ndm) ? gradN(i, j) : 0.0;
+    off += nHost * ndm;
+    for (int r = 0; r < nrot; r++)
+      payload(off + r) = (lambda_r.Size() == nrot) ? lambda_r(r) : 0.0;
+  }
   if (theChannel.sendVector(dbTag, commitTag, payload) < 0) {
     opserr << "LadrunoEmbeddedNode::sendSelf - payload failed\n";
     return -1;
@@ -465,7 +669,7 @@ int LadrunoEmbeddedNode::recvSelf(int commitTag, Channel& theChannel,
                                   FEM_ObjectBroker& theBroker)
 {
   int dbTag = this->getDbTag();
-  static Vector hdr(14);
+  static Vector hdr(18);
   if (theChannel.recvVector(dbTag, commitTag, hdr) < 0) {
     opserr << "LadrunoEmbeddedNode::recvSelf - header failed\n";
     return -1;
@@ -484,10 +688,18 @@ int LadrunoEmbeddedNode::recvSelf(int commitTag, Channel& theChannel,
   bpBeta = hdr(11);
   pflag = (int)hdr(12);
   Kp = hdr(13);
+  rflag = (int)hdr(14);                  // ADR 23 Phase 2 — UR
+  Kr = hdr(15);
+  krAuto = (hdr(16) != 0.0);
+  krAlpha = hdr(17);
+  nrot = (ndm == 3) ? 3 : 1;
   ktResolved = false;
   bpResolved = false;
+  krResolved = false;
   mPenalty = 0.0;
+  iPenalty = 0.0;
   upActive = false;   // re-resolved in setDomain (needs the nodes' ndf)
+  rActive = false;    // re-resolved in setDomain
   nDOF = 0;           // recomputed in setDomain
 
   connectedNodes.resize(1 + nHost);
@@ -495,7 +707,8 @@ int LadrunoEmbeddedNode::recvSelf(int commitTag, Channel& theChannel,
     opserr << "LadrunoEmbeddedNode::recvSelf - ID failed\n";
     return -1;
   }
-  Vector payload(nHost + ndm + 1);
+  int extra = (rflag == 1) ? (nHost * ndm + nrot) : 0;
+  Vector payload(nHost + ndm + 1 + extra);
   if (theChannel.recvVector(dbTag, commitTag, payload) < 0) {
     opserr << "LadrunoEmbeddedNode::recvSelf - payload failed\n";
     return -1;
@@ -505,6 +718,16 @@ int LadrunoEmbeddedNode::recvSelf(int commitTag, Channel& theChannel,
   lambda.resize(ndm);
   for (int k = 0; k < ndm; k++) lambda(k) = payload(nHost + k);
   lambda_p = payload(nHost + ndm);
+  lambda_r.resize(nrot); lambda_r.Zero();
+  if (rflag == 1) {
+    int off = nHost + ndm + 1;
+    gradN.resize(nHost, ndm);
+    for (int i = 0; i < nHost; i++)
+      for (int j = 0; j < ndm; j++)
+        gradN(i, j) = payload(off + i * ndm + j);
+    off += nHost * ndm;
+    for (int r = 0; r < nrot; r++) lambda_r(r) = payload(off + r);
+  }
 
   nodeNdf.resize(1 + nHost);
   dofOffset.resize(1 + nHost);
@@ -522,6 +745,7 @@ void LadrunoEmbeddedNode::Print(OPS_Stream& s, int flag)
   for (int i = 0; i < nHost; i++) s << connectedNodes(1 + i) << " ";
   s << "\n  K_u: " << Ku << "  enforce: " << (enforce == 1 ? "al" : "penalty");
   if (pflag == 1) s << "  +pressure(K_p=" << Kp << (upActive ? ", active" : ", inactive") << ")";
+  if (rflag == 1) s << "  +rotation(K_r=" << Kr << (rActive ? ", active" : ", inactive") << ")";
   s << "\n";
 }
 
@@ -555,6 +779,15 @@ Response* LadrunoEmbeddedNode::setResponse(const char** argv, int argc, OPS_Stre
     return new ElementResponse(this, 10, 0.0);
   if (strcmp(argv[0], "plambda") == 0 || strcmp(argv[0], "augLambdaP") == 0)
     return new ElementResponse(this, 11, 0.0);
+  // ADR 23 Phase 2 — rotation-tie (UR) diagnostics (size nrot: 3 in 3D, 1 in 2D).
+  if (strcmp(argv[0], "rgap") == 0 || strcmp(argv[0], "rotationGap") == 0)
+    return new ElementResponse(this, 12, Vector(nrot > 0 ? nrot : 1));
+  if (strcmp(argv[0], "rforce") == 0 || strcmp(argv[0], "moment") == 0)
+    return new ElementResponse(this, 13, Vector(nrot > 0 ? nrot : 1));
+  if (strcmp(argv[0], "rlambda") == 0 || strcmp(argv[0], "augLambdaR") == 0)
+    return new ElementResponse(this, 14, Vector(nrot > 0 ? nrot : 1));
+  if (strcmp(argv[0], "kr") == 0 || strcmp(argv[0], "rotPenalty") == 0)
+    return new ElementResponse(this, 15, 0.0);
   return 0;
 }
 
@@ -597,6 +830,25 @@ int LadrunoEmbeddedNode::getResponse(int responseID, Information& eleInfo)
     return eleInfo.setDouble(tp);
   }
   case 11: return eleInfo.setDouble(lambda_p);
+  case 12: {   // rotation gap g_r = θ_c − θ_host (size nrot)
+    Vector gr(nrot);
+    if (rActive) this->computeGapR(gr); else gr.Zero();
+    return eleInfo.setVector(gr);
+  }
+  case 13: {   // rotation traction (moment) t_r = K_r·g_r (+ λ_r)
+    Vector tr(nrot); tr.Zero();
+    if (rActive) {
+      this->resolveKr();
+      Vector gr(nrot); this->computeGapR(gr);
+      for (int r = 0; r < nrot; r++) {
+        tr(r) = Kr * gr(r);
+        if (enforce == 1) tr(r) += lambda_r(r);
+      }
+    }
+    return eleInfo.setVector(tr);
+  }
+  case 14: return eleInfo.setVector(lambda_r);
+  case 15: { if (rActive) this->resolveKr(); return eleInfo.setDouble(Kr); }
   default: return -1;
   }
 }
