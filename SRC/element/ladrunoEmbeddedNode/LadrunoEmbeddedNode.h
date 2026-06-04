@@ -76,7 +76,8 @@ class LadrunoEmbeddedNode : public Element
                       int hostEleTag = -1, bool ktAuto = false,
                       double ktAlpha = 0.0, int enforce = 0,
                       bool bipenalty = false, int bpMode = 0,
-                      double bpDt = 0.0, double bpBeta = 0.0);
+                      double bpDt = 0.0, double bpBeta = 0.0,
+                      bool pressure = false, double kp = 0.0);
   LadrunoEmbeddedNode();
   ~LadrunoEmbeddedNode();
 
@@ -128,6 +129,17 @@ class LadrunoEmbeddedNode : public Element
 
   double Ku;                // isotropic translational penalty (resolved value)
 
+  // ADR 23 Phase 1b — pressure tie (UP). Opt-in via -pressure (pflag). Couples the
+  // constrained node's pressure DOF (index ndm, the u-p convention) to the host's
+  // interpolated pressure:  g_p = p_c − Σ N_i p_host,i;  t_p = K_p·g_p (+ λ_p for AL).
+  // Activated in setDomain only if all coupled nodes are u-p (ndf ≥ ndm+1); else the
+  // element degrades to U-only (warn). The pressure mode is NOT bipenalty-bounded —
+  // the pressure tie is implicit-recommended (ADR 23 D5 / M1 "pressure → implicit").
+  double Kp;                // pressure penalty (numeric; -kp). Auto-scale deferred.
+  bool upActive;            // resolved in setDomain: pflag && all nodes u-p
+  double lambda_p;          // AL pressure multiplier (scalar); committed, Uzawa-updated
+  double computeGapP(void); // g_p = p_c − Σ N_i p_host,i (pressure DOF = index ndm)
+
   // ADR 23 D4 — constraint-enforcement strategy. 0 = penalty (default), 1 = AL.
   // AL adds a per-element multiplier λ (translational, size ndm) with the SAME
   // tangent K = BᵀD_uB; per-step Uzawa λ += K_u·g in commitState. The isotropic tie
@@ -166,8 +178,9 @@ class LadrunoEmbeddedNode : public Element
   ID dofOffset;             // global element-DOF offset of each node (size 1+M)
   void allocate(void);      // (re)allocate K/P/M0 to nDOF (after setDomain)
 
-  // reserved for Phase 1b (UP) / Phase 2 (UR) so the serialization header is stable:
-  int pflag;                // 0 = U only (Phase 1); reserved for UP/UR activation
+  // DOF-class request flag: 0 = U only, 1 = U+P requested (-pressure). The UR (rotation)
+  // bit is reserved for Phase 2.
+  int pflag;                // 0 = U; 1 = -pressure requested (UP, Phase 1b)
 
   Node** theNodes;          // size 1 + M
   Matrix* K;                // nDOF x nDOF
