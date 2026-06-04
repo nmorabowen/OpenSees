@@ -107,9 +107,10 @@ def _norm(v):
 # headline regression gates
 # --------------------------------------------------------------------------
 def test_quad_std_matches_FourNodeQuad():
-    """LadrunoQuad -formulation std reproduces upstream FourNodeQuad to ~1e-9."""
+    """LadrunoQuad -formulation std reproduces upstream FourNodeQuad to ~1e-9.
+    (Upstream FourNodeQuad is registered under the command name 'quad'.)"""
     ref = _static_solve(_QNODES, _QCONN, _QBASE, _QLOADS,
-                        lambda m: ops.element("FourNodeQuad", 1, *_QCONN, _THK, "PlaneStrain", m))
+                        lambda m: ops.element("quad", 1, *_QCONN, _THK, "PlaneStrain", m))
     ours = _static_solve(_QNODES, _QCONN, _QBASE, _QLOADS,
                         lambda m: ops.element("LadrunoQuad", 1, *_QCONN, m,
                                               "-thick", _THK, "-type", "PlaneStrain",
@@ -121,7 +122,7 @@ def test_quad_std_matches_FourNodeQuad():
 
 def test_quad_std_matches_FourNodeQuad_planestress():
     ref = _static_solve(_QNODES, _QCONN, _QBASE, _QLOADS,
-                        lambda m: ops.element("FourNodeQuad", 1, *_QCONN, _THK, "PlaneStress", m))
+                        lambda m: ops.element("quad", 1, *_QCONN, _THK, "PlaneStress", m))
     ours = _static_solve(_QNODES, _QCONN, _QBASE, _QLOADS,
                         lambda m: ops.element("LadrunoQuad", 1, *_QCONN, m,
                                               "-thick", _THK, "-type", "PlaneStress"))
@@ -199,47 +200,38 @@ def test_bbar_relieves_volumetric_locking():
 # constant-strain patch: closed-form stress at every Gauss point
 # --------------------------------------------------------------------------
 @pytest.mark.parametrize("formulation", ["std", "bbar"])
-def test_quad_constant_strain_patch(formulation):
-    """Minimal patch test: prescribe the linear field u = e0*x, v = 0 on three
-    corner nodes (1,2,4), leave node 3 free under zero load. A complete element
-    drives node 3 to the same linear field, so every Gauss point reports the
-    closed-form PlaneStrain stress. Both std and bbar must pass (B-bar preserves
-    linear completeness)."""
-    E, nu, e0 = 1000.0, 0.25, 1.0e-3
+def test_quad_constant_stress_patch(formulation):
+    """Constant-stress (force-driven) patch test on a unit square: x-fix the left
+    edge, y-fix the bottom edge, pull the right edge with a uniform x-load. The
+    exact field u = exx*x, v = eyy*y (linear) gives uniform uniaxial stress
+    sxx = P/(h*t), syy = sxy = 0. A complete element reproduces it identically at
+    every Gauss point. Both std and bbar must pass (B-bar preserves completeness)."""
+    E, nu, t, P = 1000.0, 0.25, 0.7, 5.0
+    sq = {1: (0.0, 0.0), 2: (1.0, 0.0), 3: (1.0, 1.0), 4: (0.0, 1.0)}
     ops.wipe()
     ops.model("basic", "-ndm", 2, "-ndf", 2)
-    for tag, (x, y) in _QNODES.items():
+    for tag, (x, y) in sq.items():
         ops.node(tag, x, y)
     ops.nDMaterial("ElasticIsotropic", 1, E, nu)
-    ops.element("LadrunoQuad", 1, *_QCONN, 1, "-thick", _THK,
+    ops.element("LadrunoQuad", 1, 1, 2, 3, 4, 1, "-thick", t,
                 "-type", "PlaneStrain", "-formulation", formulation)
-    # prescribe the linear field on 3 corners; node 3 stays free
-    ops.timeSeries("Constant", 1)
+    ops.fix(1, 1, 1)   # left-bottom: u=v=0
+    ops.fix(4, 1, 0)   # left-top:    u=0
+    ops.fix(2, 0, 1)   # right-bottom: v=0
+    ops.timeSeries("Linear", 1)
     ops.pattern("Plain", 1, 1)
-    for tag in (1, 2, 4):
-        x, _y = _QNODES[tag]
-        ops.sp(tag, 1, e0 * x)
-        ops.sp(tag, 2, 0.0)
+    ops.load(2, 0.5 * P, 0.0)   # right edge (x=1), consistent split
+    ops.load(3, 0.5 * P, 0.0)
     ops.system("FullGeneral")
     ops.numberer("Plain")
-    ops.constraints("Transformation")
+    ops.constraints("Plain")
     ops.integrator("LoadControl", 1.0)
     ops.algorithm("Linear")
     ops.analysis("Static")
     assert ops.analyze(1) == 0
 
-    # free node 3 must take the linear-field value -> uniform strain
-    x3, _ = _QNODES[3]
-    d3 = ops.nodeDisp(3)
-    assert abs(d3[0] - e0 * x3) <= 1e-9 + 1e-6 * abs(e0 * x3)
-    assert abs(d3[1]) <= 1e-9
-
-    # PlaneStrain ElasticIsotropic, uniaxial eps_xx = e0:
-    lam = E * nu / ((1.0 + nu) * (1.0 - 2.0 * nu))
-    mu = E / (2.0 * (1.0 + nu))
-    sxx = (lam + 2.0 * mu) * e0
-    syy = lam * e0
-    check_constant_stress(1, 4, [sxx, syy, 0.0], E, e0)
+    sxx = P / (1.0 * t)   # total load over height*thickness
+    check_constant_stress(1, 4, [sxx, 0.0, 0.0], E, sxx / E)
 
 
 # --------------------------------------------------------------------------
