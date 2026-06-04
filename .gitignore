@@ -133,6 +133,11 @@ __pycache__
 /tests/opensees.so
 /tests/opensees.pyd
 
+# Ladruno recorder regression: generated HDF5 outputs + dev run dir (not source)
+/Ladruno_scripts/ladruno_recorder_tests/_devrun/
+/Ladruno_scripts/ladruno_recorder_tests/*.ladruno
+/Ladruno_scripts/ladruno_recorder_tests/*.mpco
+
 # Claude Code session scratch (never commit)
 .claude/
 _build_ladrunobrick.log

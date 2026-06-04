@@ -739,7 +739,7 @@ namespace detail {
 				for (int i = 1; i <= current_level; i++) {
 					if (eo_curr_lev->items.size() == 0) {
 						opserr << "LadrunoRecorder Error: cannot set attribute(name, int), empty item list.\n";
-						exit(-1);
+						error_code = ERROR_CODE_GENERIC; return -1;  // Ladruno: was exit(-1) - drop this bucket, never abort the run
 					}
 					eo_curr_lev = eo_curr_lev->items[eo_curr_lev->items.size() - 1];
 				}
@@ -816,7 +816,7 @@ namespace detail {
 								"expected \"GaussOutput\" or \"GaussPointOutput\""
 								" or \"SectionOutput\" or \"SectionForceDeformation\", parent tag = \""
 								<< detail::ElementOutputDescriptorType::toString(eo_curr_lev->type) << "\"\n";
-							exit(-1);
+							error_code = ERROR_CODE_GENERIC; return -1;  // Ladruno: was exit(-1) - drop this bucket, never abort the run
 						}
 						detail::element::OutputDescriptor *eo_new_curr_lev = new detail::element::OutputDescriptor();
 						eo_new_curr_lev->type = detail::ElementOutputDescriptorType::Section;
@@ -843,7 +843,7 @@ namespace detail {
 								"expected \"GaussOutput\" or \"GaussPointOutput\""
 								" or \"SectionOutput\" or \"SectionForceDeformation\", parent tag = \""
 								<< detail::ElementOutputDescriptorType::toString(eo_curr_lev->type) << "\"\n";
-							exit(-1);
+							error_code = ERROR_CODE_GENERIC; return -1;  // Ladruno: was exit(-1) - drop this bucket, never abort the run
 						}
 						detail::element::OutputDescriptor *eo_new_curr_lev = new detail::element::OutputDescriptor();
 						eo_new_curr_lev->type = detail::ElementOutputDescriptorType::Fiber;
@@ -868,7 +868,7 @@ namespace detail {
 								" or \"SectionOutput\" or \"SectionForceDeformation\""
 								" or \"FiberOutput\""
 								", given \"" << name << "\"\n";
-							exit(-1);
+							error_code = ERROR_CODE_GENERIC; return -1;  // Ladruno: was exit(-1) - drop this bucket, never abort the run
 						}
 					}
 				}
@@ -880,7 +880,7 @@ namespace detail {
 				for (int i = 1; i <= current_level; i++) {
 					if (eo_curr_lev->items.size() == 0) {
 						opserr << "LadrunoRecorder Error: cannot set attribute(name, int), empty item list.\n";
-						exit(-1);
+						error_code = ERROR_CODE_GENERIC; return -1;  // Ladruno: was exit(-1) - drop this bucket, never abort the run
 					}
 					eo_curr_lev = eo_curr_lev->items[eo_curr_lev->items.size() - 1];
 				}
@@ -923,7 +923,7 @@ namespace detail {
 					for (int i = 1; i <= current_level; i++) {
 						if (eo_curr_lev->items.size() == 0) {
 							opserr << "LadrunoRecorder Error: cannot set attribute(name, int), empty item list.\n";
-							exit(-1);
+							error_code = ERROR_CODE_GENERIC; return -1;  // Ladruno: was exit(-1) - drop this bucket, never abort the run
 						}
 						eo_curr_lev = eo_curr_lev->items[eo_curr_lev->items.size() - 1];
 					}
@@ -949,7 +949,7 @@ namespace detail {
 					for (int i = 1; i <= current_level; i++) {
 						if (eo_curr_lev->items.size() == 0) {
 							opserr << "LadrunoRecorder Error: cannot set attribute(name, int), empty item list.\n";
-							exit(-1);
+							error_code = ERROR_CODE_GENERIC; return -1;  // Ladruno: was exit(-1) - drop this bucket, never abort the run
 						}
 						eo_curr_lev = eo_curr_lev->items[eo_curr_lev->items.size() - 1];
 					}
@@ -1577,7 +1577,7 @@ namespace detail {
 					if (lam_get_num_ext_nodes(current_element) != elem_coll_by_tag.num_nodes) {
 						opserr << "LadrunoRecorder Error while mapping elements: elements with different number of nodes "
 							"exist within the same class tag. This is not supported\n";
-						exit(-1);
+						continue;  // Ladruno: was exit(-1) - skip the inconsistent element, never abort the run
 					}
 					/*
 					create the integration rule
