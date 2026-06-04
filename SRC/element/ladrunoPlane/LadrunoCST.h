@@ -66,6 +66,7 @@ class LadrunoCST : public Element
 
     int getNumDOF(void);
     void setDomain(Domain *theDomain);
+    double getCharacteristicLength(void);   // crack-band lch = sqrt(2*area)
 
     int commitState(void);
     int revertToLastCommit(void);

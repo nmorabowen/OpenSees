@@ -44,6 +44,7 @@
 #include <ElementResponse.h>
 #include <ElementalLoad.h>
 #include <elementAPI.h>
+#include <math.h>
 
 double LadrunoCST::matrixData[36];
 Matrix LadrunoCST::K(matrixData, 6, 6);
@@ -149,6 +150,17 @@ void LadrunoCST::setDomain(Domain *theDomain)
     }
   this->DomainComponent::setDomain(theDomain);
   this->setPressureLoadAtNodes();
+}
+
+double LadrunoCST::getCharacteristicLength(void)
+{
+  // crack-band size for a triangle = sqrt(2*area); area = detJ * wts (=0.5*detJ),
+  // so sqrt(2*area) = sqrt(detJ). Matches BezierTri6's sqrt(2*A) convention.
+  double detJ = this->shapeFunction(pts[0][0], pts[0][1]);
+  double A = detJ * wts[0];
+  if (A <= 0.0)
+    return this->Element::getCharacteristicLength();
+  return sqrt(2.0 * A);
 }
 
 int LadrunoCST::commitState(void)
@@ -521,6 +533,8 @@ Response *LadrunoCST::setResponse(const char **argv, int argc, OPS_Stream &outpu
     theResponse = new ElementResponse(this, 3, Vector(3));
   } else if (strcmp(argv[0], "strains") == 0 || strcmp(argv[0], "strain") == 0) {
     theResponse = new ElementResponse(this, 4, Vector(3));
+  } else if (strcmp(argv[0], "charLength") == 0 || strcmp(argv[0], "characteristicLength") == 0) {
+    theResponse = new ElementResponse(this, 5, 0.0);
   }
 
   output.endTag();
@@ -535,6 +549,8 @@ int LadrunoCST::getResponse(int responseID, Information &eleInfo)
     return eleInfo.setVector(theMaterial[0]->getStress());
   if (responseID == 4)
     return eleInfo.setVector(theMaterial[0]->getStrain());
+  if (responseID == 5)
+    return eleInfo.setDouble(this->getCharacteristicLength());
   return -1;
 }
 
