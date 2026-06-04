@@ -563,12 +563,22 @@ so 2D is not blocked. *Risk realized: moderate (vtable/recompile-all). Gate: Zon
 continuum-rotation recovery (2D drilling + 3D, `-dNdx`), real LadrunoBrick + BezierTet10 shear-field
 moment transmission (`-xi`), M5 guard, UR auto-off, per-class bipenalty dt_cr, AL rotation gap→0.*
 
-**Phase 2b — D9 material-driven interface mode.** Add the local-frame plumbing
-(`-normal`/`-orient`, host-face-normal auto, co-rotation reuse) and the per-direction
-`-matN`/`-matT*` slots over the kernel's `(e_d, mat_d)` abstraction; gap/cohesive/elastic
-interfaces + approximate friction. *Risk: low–moderate — the kernel already drives a
-uniaxial in the rebar axial slot; the new work is the general local frame + multi-slot
-parsing + the contact-friendly defaults. No new vanilla. Gate: Zone-A item 10.*
+**Phase 2b — D9 material-driven interface mode. BUILT v1 (2026-06-04).** Added the
+local-frame plumbing (`-normal`/`-orient` → orthonormal frame) and the per-direction
+`-matN`/`-matT1`/`-matT2` slots: each translational local direction carries a uniaxial
+material (penalty fallback K_u) — `t=Σ_d f_d(g·e_d) e_d`, `D=Σ_d k_d e_d⊗e_d` in FORCE
+units (D9-4, no bondScale). Full material lifecycle (getCopy/commit/revert/setTrialStrain)
++ broker serialization; AL re-projects λ off material directions (M4/D9-3); bipenalty
+`k_eff=max(K_u, init tangents)` with a stiffening-material warning (M6/ES-4). Models
+cohesive / unilateral-gap (ENT/ElasticPPGap) / elastic-bedding / bond; approximate
+friction (fixed ElasticPP slip). **DEFERRED to v2:** the `-corot` frame co-rotation
+(D9.1 — for a large-rotation contact normal; would reuse the Phase-2 continuum-rotation
+machinery to rotate the frame) and the auto host-face-normal. v1 uses the REFERENCE
+frame (small-rotation interfaces; large-rotation rigorous contact is the separate
+`LadrunoContact`). No new vanilla. *Gate: Zone-A item 10 (fixed-frame subset) — Elastic
+== penalty, ENT unilateral gap, ElasticPP fixed slip, AL reprojection, bipenalty k_eff,
+2D, -matN-requires-normal, local responses. Item 11 (AL×material×corot) deferred with
+the corot frame.*
 
 **Phase 3 — apeGmsh generator + Zone-B + docs.** Teach the apeGmsh assembly path to emit
 `LadrunoEmbeddedNode` (replacing/optioning `ASDEmbeddedNodeElement`); Zone-B items 8–9; the

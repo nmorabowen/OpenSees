@@ -67,6 +67,7 @@ class Node;
 class Channel;
 class FEM_ObjectBroker;
 class Response;
+class UniaxialMaterial;
 
 class LadrunoEmbeddedNode : public Element
 {
@@ -79,7 +80,11 @@ class LadrunoEmbeddedNode : public Element
                       double bpDt = 0.0, double bpBeta = 0.0,
                       bool pressure = false, double kp = 0.0,
                       bool rot = false, double kr = 0.0, bool krAuto = false,
-                      double krAlpha = 0.0, const Matrix* gradN = 0);
+                      double krAlpha = 0.0, const Matrix* gradN = 0,
+                      bool matMode = false, const Vector* normalDir = 0,
+                      const Vector* orientDir = 0,
+                      UniaxialMaterial* matN = 0, UniaxialMaterial* matT1 = 0,
+                      UniaxialMaterial* matT2 = 0);
   LadrunoEmbeddedNode();
   ~LadrunoEmbeddedNode();
 
@@ -166,6 +171,30 @@ class LadrunoEmbeddedNode : public Element
   void computeGapR(Vector& gr);  // g_r = θ_c − θ_host(ξ) (size nrot)
   // host-rotation operator: row r, host-node i, local trans dof j → ∂θ_host_r/∂u_i,j.
   double rotOper(int r, int i, int j) const;
+
+  // ADR 23 Phase 2b (D9) — material-driven interface mode (node ↔ interpolated host
+  // point). Opt-in by supplying any of -matN/-matT1/-matT2: the ISOTROPIC translational
+  // block D_u=K_u·I is replaced by a local frame {e_0=normal, e_1,e_2=tangents} where
+  // each direction carries a UNIAXIAL material (penalty fallback K_u where no material).
+  // Decompose the gap g into local comps g_d = g·e_d; t = Σ_d f_d(g_d)·e_d, D = Σ_d
+  // k_d·e_d⊗e_d with (f_d,k_d) = mat_d stress/tangent in FORCE units (D9-4 — the gap is
+  // in metres and the material returns force, so NO bondScale). Models: cohesive
+  // (softening uniaxial), unilateral gap (ENT/ElasticPPGap on the normal), elastic
+  // bedding (Elastic), bond. Coulomb friction is only APPROXIMATE (uncoupled per-
+  // direction — a fixed ElasticPP slip force, not μ·N; rigorous → LadrunoContact).
+  // v1 uses the REFERENCE frame (-normal/-orient); the -corot frame co-rotation (D9.1,
+  // for a large-rotation contact normal) is DEFERRED to v2. AL augments only the PENALTY
+  // directions and re-projects λ off the material directions each commit (M4/D9-3).
+  int matMode;                 // 0 = isotropic K_u·I; 1 = material-frame interface
+  Vector normalDir;            // -normal: unit frame normal e_0 (size ndm)
+  Vector orientDir;            // -orient: hint for the first tangent e_1 (size ndm; opt)
+  bool haveOrient;             // -orient supplied
+  Matrix frame;                // ndm×ndm orthonormal local frame (cols e_0..e_{ndm-1})
+  UniaxialMaterial* matDir[3]; // per-direction materials (null ⇒ penalty K_u); [0]=normal
+  bool hasMat[3];              // direction d is material-driven (true) vs penalty (false)
+  void buildFrame(void);       // construct the orthonormal frame from normalDir/orientDir
+  // translational traction+tangent: isotropic (matMode 0) or material-frame (matMode 1).
+  void formTransTraction(const Vector& g, Vector& t, Matrix& D);
 
   // ADR 23 D4 — constraint-enforcement strategy. 0 = penalty (default), 1 = AL.
   // AL adds a per-element multiplier λ (translational, size ndm) with the SAME

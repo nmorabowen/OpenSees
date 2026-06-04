@@ -36,6 +36,7 @@
 #include <FEM_ObjectBroker.h>
 #include <Information.h>
 #include <ElementResponse.h>
+#include <UniaxialMaterial.h>        // ADR 23 Phase 2b (D9) — interface materials
 #include <OPS_Globals.h>
 #include <elementAPI.h>
 #include <math.h>
@@ -49,7 +50,9 @@ LadrunoEmbeddedNode::LadrunoEmbeddedNode(int tag, int ndm_, int cNode,
         int hostEleTag_, bool ktAuto_, double ktAlpha_, int enforce_,
         bool bipenalty_, int bpMode_, double bpDt_, double bpBeta_,
         bool pressure_, double kp_,
-        bool rot_, double kr_, bool krAuto_, double krAlpha_, const Matrix* gradN_)
+        bool rot_, double kr_, bool krAuto_, double krAlpha_, const Matrix* gradN_,
+        bool matMode_, const Vector* normalDir_, const Vector* orientDir_,
+        UniaxialMaterial* matN_, UniaxialMaterial* matT1_, UniaxialMaterial* matT2_)
   : Element(tag, ELE_TAG_LadrunoEmbeddedNode),
     ndm(ndm_), nHost(hostNodes.Size()),
     connectedNodes(1 + hostNodes.Size()), Nshape(shape),
@@ -57,6 +60,7 @@ LadrunoEmbeddedNode::LadrunoEmbeddedNode(int tag, int ndm_, int cNode,
     rflag(rot_ ? 1 : 0), nrot((ndm_ == 3) ? 3 : 1), rActive(false),
     gradN(), Kr(kr_), krAuto(krAuto_), krAlpha(krAlpha_), krResolved(false),
     lambda_r((ndm_ == 3) ? 3 : 1),
+    matMode(matMode_ ? 1 : 0), normalDir(), orientDir(), haveOrient(false), frame(),
     enforce(enforce_), lambda(ndm_),
     hostEleTag(hostEleTag_), ktAuto(ktAuto_), ktAlpha(ktAlpha_), ktResolved(false),
     bipenalty(bipenalty_), bpMode(bpMode_), bpDt(bpDt_), bpBeta(bpBeta_),
@@ -74,6 +78,18 @@ LadrunoEmbeddedNode::LadrunoEmbeddedNode(int tag, int ndm_, int cNode,
   if (rflag == 1 && gradN_ != 0)
     gradN = *gradN_;
 
+  // ADR 23 Phase 2b (D9) — material-driven interface: clone each supplied uniaxial
+  // (the element OWNS its copies), record the local frame, and build it.
+  for (int d = 0; d < 3; d++) { matDir[d] = 0; hasMat[d] = false; }
+  if (matMode == 1) {
+    if (normalDir_ != 0) normalDir = *normalDir_;
+    if (orientDir_ != 0) { orientDir = *orientDir_; haveOrient = true; }
+    UniaxialMaterial* src[3] = { matN_, matT1_, matT2_ };
+    for (int d = 0; d < ndm; d++)
+      if (src[d] != 0) { matDir[d] = src[d]->getCopy(); hasMat[d] = (matDir[d] != 0); }
+    this->buildFrame();
+  }
+
   theNodes = new Node*[1 + nHost];
   for (int i = 0; i < 1 + nHost; i++) theNodes[i] = 0;
   // K/P/M0 are allocated in setDomain once the per-node ndf (⇒ nDOF) is known.
@@ -85,6 +101,7 @@ LadrunoEmbeddedNode::LadrunoEmbeddedNode()
     Ku(0.0), Kp(0.0), upActive(false), lambda_p(0.0),
     rflag(0), nrot(0), rActive(false),
     gradN(), Kr(0.0), krAuto(false), krAlpha(0.0), krResolved(false), lambda_r(),
+    matMode(0), normalDir(), orientDir(), haveOrient(false), frame(),
     enforce(0), lambda(),
     hostEleTag(-1), ktAuto(false), ktAlpha(0.0), ktResolved(false),
     bipenalty(false), bpMode(0), bpDt(0.0), bpBeta(0.0),
@@ -92,6 +109,7 @@ LadrunoEmbeddedNode::LadrunoEmbeddedNode()
     nDOF(0), nodeNdf(), dofOffset(), pflag(0),
     theNodes(0), K(0), P(0), M0(0)
 {
+  for (int d = 0; d < 3; d++) { matDir[d] = 0; hasMat[d] = false; }
 }
 
 LadrunoEmbeddedNode::~LadrunoEmbeddedNode()
@@ -100,6 +118,7 @@ LadrunoEmbeddedNode::~LadrunoEmbeddedNode()
   if (K != 0) delete K;
   if (P != 0) delete P;
   if (M0 != 0) delete M0;
+  for (int d = 0; d < 3; d++) if (matDir[d] != 0) delete matDir[d];   // D9 — owned copies
 }
 
 // ===========================================================================
@@ -293,12 +312,101 @@ void LadrunoEmbeddedNode::computeGapR(Vector& gr)
   }
 }
 
-// k_eff for the bipenalty bound. Phase 1 (U only) has a single translational spring,
-// so k_eff = K_u (the (stiffness,inertia) per-DOF-class generalization of M1/ES-1
-// arrives with UR/UP).
+// ADR 23 Phase 2b (D9) — build the orthonormal local frame from the supplied normal
+// (e_0) and the optional -orient hint (else an auto reference); columns of `frame` are
+// e_0 (normal), e_1, e_2 (tangents). 2D: e_1 = (−n_y, n_x). 3D: e_1 = Gram-Schmidt of
+// the orient/auto reference against n, e_2 = n × e_1.
+void LadrunoEmbeddedNode::buildFrame(void)
+{
+  frame.resize(ndm, ndm);
+  frame.Zero();
+  Vector n(ndm);
+  double nn = 0.0;
+  for (int k = 0; k < ndm; k++) {
+    n(k) = (normalDir.Size() == ndm) ? normalDir(k) : 0.0;
+    nn += n(k) * n(k);
+  }
+  if (nn <= 1.0e-20) { n.Zero(); n(0) = 1.0; nn = 1.0; }   // degenerate ⇒ global x
+  nn = sqrt(nn);
+  for (int k = 0; k < ndm; k++) { n(k) /= nn; frame(k, 0) = n(k); }
+
+  if (ndm == 2) {
+    frame(0, 1) = -n(1); frame(1, 1) = n(0);   // the one in-plane tangent
+    return;
+  }
+  // 3D — first tangent from -orient (or an auto axis least aligned with n)
+  Vector t1(3);
+  if (haveOrient && orientDir.Size() == 3) {
+    for (int k = 0; k < 3; k++) t1(k) = orientDir(k);
+  } else {
+    double ax = fabs(n(0)), ay = fabs(n(1)), az = fabs(n(2));
+    t1.Zero();
+    if (ax <= ay && ax <= az) t1(0) = 1.0; else if (ay <= az) t1(1) = 1.0; else t1(2) = 1.0;
+  }
+  double d = t1(0) * n(0) + t1(1) * n(1) + t1(2) * n(2);   // Gram-Schmidt ⟂ n
+  for (int k = 0; k < 3; k++) t1(k) -= d * n(k);
+  double t1n = sqrt(t1(0) * t1(0) + t1(1) * t1(1) + t1(2) * t1(2));
+  if (t1n <= 1.0e-12) {                                    // orient ∥ n ⇒ fall back
+    Vector ref(3); ref.Zero(); ref((fabs(n(0)) < 0.9) ? 0 : 1) = 1.0;
+    d = ref(0) * n(0) + ref(1) * n(1) + ref(2) * n(2);
+    for (int k = 0; k < 3; k++) t1(k) = ref(k) - d * n(k);
+    t1n = sqrt(t1(0) * t1(0) + t1(1) * t1(1) + t1(2) * t1(2));
+  }
+  for (int k = 0; k < 3; k++) t1(k) /= t1n;
+  Vector t2(3);                                            // t2 = n × t1
+  t2(0) = n(1) * t1(2) - n(2) * t1(1);
+  t2(1) = n(2) * t1(0) - n(0) * t1(2);
+  t2(2) = n(0) * t1(1) - n(1) * t1(0);
+  for (int k = 0; k < 3; k++) { frame(k, 1) = t1(k); frame(k, 2) = t2(k); }
+}
+
+// ADR 23 Phase 2b (D9) — translational traction t and tangent D for the gap g, either
+// the isotropic penalty (matMode 0: t=K_u·g, D=K_u·I) or the material-frame interface
+// (matMode 1): per local direction d, g_d=g·e_d, (t_d,k_d) from mat_d (FORCE units) or
+// the penalty K_u fallback; t=Σ t_d e_d, D=Σ k_d e_d⊗e_d. (Excludes the AL λ — added by
+// the caller.) Drives the materials' setTrialStrain (their state advances on commit).
+void LadrunoEmbeddedNode::formTransTraction(const Vector& g, Vector& t, Matrix& D)
+{
+  if (t.Size() != ndm) t.resize(ndm);
+  if (D.noRows() != ndm || D.noCols() != ndm) D.resize(ndm, ndm);
+  t.Zero();
+  D.Zero();
+  if (matMode == 0) {
+    for (int k = 0; k < ndm; k++) { t(k) = Ku * g(k); D(k, k) = Ku; }
+    return;
+  }
+  for (int dd = 0; dd < ndm; dd++) {
+    double gd = 0.0;
+    for (int k = 0; k < ndm; k++) gd += g(k) * frame(k, dd);
+    double td, kd;
+    if (matDir[dd] != 0) {
+      matDir[dd]->setTrialStrain(gd);
+      td = matDir[dd]->getStress();
+      kd = matDir[dd]->getTangent();
+    } else {
+      td = Ku * gd; kd = Ku;
+    }
+    for (int k = 0; k < ndm; k++) t(k) += td * frame(k, dd);
+    for (int a = 0; a < ndm; a++)
+      for (int b = 0; b < ndm; b++) D(a, b) += kd * frame(a, dd) * frame(b, dd);
+  }
+}
+
+// k_eff for the bipenalty bound. Translational class: K_u, or (D9 material mode) the
+// max over the active directions' INITIAL tangents (M6/ES-4 — a safe upper bound ONLY
+// for non-stiffening materials; a stiffening re-contact tangent breaks the closed-form
+// dt_cr, so stiffening materials on a bipenalty direction are unsupported — use -dtcr
+// from the closed-contact stiffness, or -enforce al).
 double LadrunoEmbeddedNode::effectiveCouplingStiffness(void)
 {
-  return LadrunoEmbedded::effectiveCouplingStiffness(fabs(Ku), 0.0);
+  double k = fabs(Ku);
+  if (matMode == 1)
+    for (int d = 0; d < ndm; d++)
+      if (matDir[d] != 0) {
+        double ki = fabs(matDir[d]->getInitialTangent());
+        if (ki > k) k = ki;
+      }
+  return LadrunoEmbedded::effectiveCouplingStiffness(k, 0.0);
 }
 
 // ADR 23 D5 / ADR 20 §10.6 — resolve the mass penalties (lazily, after K_u / K_r).
@@ -388,13 +496,31 @@ double LadrunoEmbeddedNode::getExplicitCriticalTimeStep(void)
 int LadrunoEmbeddedNode::commitState(void)
 {
   // Augmented-Lagrangian per-step Uzawa update (ADR 23 D4): at the converged state,
-  // accumulate the penalty traction into the multiplier. ISOTROPIC tie ⇒ NO
-  // directional re-projection of λ (no preferred axis; ES-3 / M4).
+  // accumulate the PENALTY traction into the multiplier.
   if (enforce == 1) {
     this->resolveAutoKt();
     Vector g(ndm);
     this->computeGap(g);
-    for (int k = 0; k < ndm; k++) lambda(k) += Ku * g(k);
+    if (matMode == 0) {
+      // ISOTROPIC tie ⇒ NO directional re-projection of λ (no preferred axis; ES-3).
+      for (int k = 0; k < ndm; k++) lambda(k) += Ku * g(k);
+    } else {
+      // D9 — Uzawa over the PENALTY directions only (material directions carry physical
+      // force, not λ); then M4/D9-3 re-project λ off every material direction so an AL
+      // step can never leak the multiplier onto a material axis.
+      for (int dd = 0; dd < ndm; dd++) {
+        if (hasMat[dd]) continue;
+        double gd = 0.0;
+        for (int k = 0; k < ndm; k++) gd += g(k) * frame(k, dd);
+        for (int k = 0; k < ndm; k++) lambda(k) += Ku * gd * frame(k, dd);
+      }
+      for (int dd = 0; dd < ndm; dd++) {
+        if (!hasMat[dd]) continue;
+        double la = 0.0;
+        for (int k = 0; k < ndm; k++) la += lambda(k) * frame(k, dd);
+        for (int k = 0; k < ndm; k++) lambda(k) -= la * frame(k, dd);
+      }
+    }
     if (upActive) lambda_p += Kp * this->computeGapP();
     if (rActive) {
       this->resolveKr();
@@ -403,17 +529,26 @@ int LadrunoEmbeddedNode::commitState(void)
       for (int r = 0; r < nrot; r++) lambda_r(r) += Kr * gr(r);
     }
   }
-  return this->Element::commitState();
+  int ok = this->Element::commitState();
+  for (int d = 0; d < 3; d++) if (matDir[d] != 0) ok += matDir[d]->commitState();   // D9
+  return ok;
 }
 
-int LadrunoEmbeddedNode::revertToLastCommit(void) { return 0; }
+int LadrunoEmbeddedNode::revertToLastCommit(void)
+{
+  int ok = 0;
+  for (int d = 0; d < 3; d++) if (matDir[d] != 0) ok += matDir[d]->revertToLastCommit();
+  return ok;
+}
 
 int LadrunoEmbeddedNode::revertToStart(void)
 {
   lambda.Zero();   // AL multipliers accumulate only via commitState's Uzawa step
   lambda_p = 0.0;
   lambda_r.Zero();
-  return 0;
+  int ok = 0;
+  for (int d = 0; d < 3; d++) if (matDir[d] != 0) ok += matDir[d]->revertToStart();
+  return ok;
 }
 
 void LadrunoEmbeddedNode::computeGap(Vector& g)
@@ -448,9 +583,11 @@ const Vector& LadrunoEmbeddedNode::getResistingForce(void)
   Vector g(ndm);
   this->computeGap(g);
 
-  // isotropic traction t = K_u·g (+ λ for AL — constant within an inner solve).
+  // translational traction: isotropic K_u·g, or (D9) the material-frame interface
+  // t = Σ_d f_d(g·e_d) e_d. (+ λ for AL — constant within an inner solve.)
   Vector t(ndm);
-  for (int k = 0; k < ndm; k++) t(k) = Ku * g(k);
+  Matrix Dscratch(ndm, ndm);
+  this->formTransTraction(g, t, Dscratch);
   if (enforce == 1)
     for (int k = 0; k < ndm; k++) t(k) += lambda(k);
 
@@ -525,10 +662,13 @@ const Matrix& LadrunoEmbeddedNode::getTangentStiff(void)
 {
   this->resolveAutoKt();
   K->Zero();
-  // isotropic D_u = K_u·I_{ndm}
+  // translational tangent D_u: isotropic K_u·I, or (D9) the material-frame
+  // D = Σ_d k_d e_d⊗e_d (state-dependent ⇒ needs the current gap).
+  Vector g(ndm);
+  this->computeGap(g);
+  Vector tscratch(ndm);
   Matrix Du(ndm, ndm);
-  Du.Zero();
-  for (int a = 0; a < ndm; a++) Du(a, a) = Ku;
+  this->formTransTraction(g, tscratch, Du);
   // compact K = Bᵀ D_u B over the (1+M)·ndm space, scattered to the full layout.
   int nc = (1 + nHost) * ndm;
   Matrix Kc(nc, nc);
@@ -614,7 +754,7 @@ const Matrix& LadrunoEmbeddedNode::getMass(void)
 int LadrunoEmbeddedNode::sendSelf(int commitTag, Channel& theChannel)
 {
   int dbTag = this->getDbTag();
-  static Vector hdr(18);
+  static Vector hdr(26);
   hdr(0) = this->getTag();
   hdr(1) = ndm;
   hdr(2) = nHost;
@@ -633,6 +773,18 @@ int LadrunoEmbeddedNode::sendSelf(int commitTag, Channel& theChannel)
   hdr(15) = Kr;
   hdr(16) = krAuto ? 1.0 : 0.0;
   hdr(17) = krAlpha;
+  hdr(18) = matMode;                  // ADR 23 Phase 2b — D9 material interface
+  hdr(19) = haveOrient ? 1.0 : 0.0;
+  for (int d = 0; d < 3; d++) {       // per-direction material classTag + dbTag
+    int ct = 0, dt = 0;
+    if (matDir[d] != 0) {
+      ct = matDir[d]->getClassTag();
+      dt = matDir[d]->getDbTag();
+      if (dt == 0) { dt = theChannel.getDbTag(); matDir[d]->setDbTag(dt); }
+    }
+    hdr(20 + d) = ct;
+    hdr(23 + d) = dt;
+  }
   if (theChannel.sendVector(dbTag, commitTag, hdr) < 0) {
     opserr << "LadrunoEmbeddedNode::sendSelf - header failed\n";
     return -1;
@@ -641,15 +793,17 @@ int LadrunoEmbeddedNode::sendSelf(int commitTag, Channel& theChannel)
     opserr << "LadrunoEmbeddedNode::sendSelf - ID failed\n";
     return -1;
   }
-  // payload: Nshape(nHost) + lambda(ndm) + lambda_p(1) [+ gradN(nHost·ndm) + lambda_r(nrot) if UR]
-  int extra = (rflag == 1) ? (nHost * ndm + nrot) : 0;
-  Vector payload(nHost + ndm + 1 + extra);
+  // payload: Nshape(nHost) + lambda(ndm) + lambda_p(1) [+ gradN(nHost·ndm)+lambda_r(nrot)
+  // if UR] [+ normalDir(ndm)+orientDir(ndm) if D9].
+  int extraR = (rflag == 1) ? (nHost * ndm + nrot) : 0;
+  int extraM = (matMode == 1) ? (2 * ndm) : 0;
+  Vector payload(nHost + ndm + 1 + extraR + extraM);
   for (int i = 0; i < nHost; i++) payload(i) = Nshape(i);
   for (int k = 0; k < ndm; k++)
     payload(nHost + k) = (lambda.Size() == ndm) ? lambda(k) : 0.0;
   payload(nHost + ndm) = lambda_p;
+  int off = nHost + ndm + 1;
   if (rflag == 1) {
-    int off = nHost + ndm + 1;
     for (int i = 0; i < nHost; i++)
       for (int j = 0; j < ndm; j++)
         payload(off + i * ndm + j) =
@@ -657,11 +811,24 @@ int LadrunoEmbeddedNode::sendSelf(int commitTag, Channel& theChannel)
     off += nHost * ndm;
     for (int r = 0; r < nrot; r++)
       payload(off + r) = (lambda_r.Size() == nrot) ? lambda_r(r) : 0.0;
+    off += nrot;
+  }
+  if (matMode == 1) {
+    for (int k = 0; k < ndm; k++)
+      payload(off + k) = (normalDir.Size() == ndm) ? normalDir(k) : 0.0;
+    for (int k = 0; k < ndm; k++)
+      payload(off + ndm + k) = (haveOrient && orientDir.Size() == ndm) ? orientDir(k) : 0.0;
   }
   if (theChannel.sendVector(dbTag, commitTag, payload) < 0) {
     opserr << "LadrunoEmbeddedNode::sendSelf - payload failed\n";
     return -1;
   }
+  // D9 — each interface material serializes itself after the element payload.
+  for (int d = 0; d < 3; d++)
+    if (matDir[d] != 0 && matDir[d]->sendSelf(commitTag, theChannel) < 0) {
+      opserr << "LadrunoEmbeddedNode::sendSelf - interface material " << d << " failed\n";
+      return -1;
+    }
   return 0;
 }
 
@@ -669,7 +836,7 @@ int LadrunoEmbeddedNode::recvSelf(int commitTag, Channel& theChannel,
                                   FEM_ObjectBroker& theBroker)
 {
   int dbTag = this->getDbTag();
-  static Vector hdr(18);
+  static Vector hdr(26);
   if (theChannel.recvVector(dbTag, commitTag, hdr) < 0) {
     opserr << "LadrunoEmbeddedNode::recvSelf - header failed\n";
     return -1;
@@ -692,6 +859,8 @@ int LadrunoEmbeddedNode::recvSelf(int commitTag, Channel& theChannel,
   Kr = hdr(15);
   krAuto = (hdr(16) != 0.0);
   krAlpha = hdr(17);
+  matMode = (int)hdr(18);                // ADR 23 Phase 2b — D9
+  haveOrient = (hdr(19) != 0.0);
   nrot = (ndm == 3) ? 3 : 1;
   ktResolved = false;
   bpResolved = false;
@@ -707,8 +876,9 @@ int LadrunoEmbeddedNode::recvSelf(int commitTag, Channel& theChannel,
     opserr << "LadrunoEmbeddedNode::recvSelf - ID failed\n";
     return -1;
   }
-  int extra = (rflag == 1) ? (nHost * ndm + nrot) : 0;
-  Vector payload(nHost + ndm + 1 + extra);
+  int extraR = (rflag == 1) ? (nHost * ndm + nrot) : 0;
+  int extraM = (matMode == 1) ? (2 * ndm) : 0;
+  Vector payload(nHost + ndm + 1 + extraR + extraM);
   if (theChannel.recvVector(dbTag, commitTag, payload) < 0) {
     opserr << "LadrunoEmbeddedNode::recvSelf - payload failed\n";
     return -1;
@@ -719,14 +889,43 @@ int LadrunoEmbeddedNode::recvSelf(int commitTag, Channel& theChannel,
   for (int k = 0; k < ndm; k++) lambda(k) = payload(nHost + k);
   lambda_p = payload(nHost + ndm);
   lambda_r.resize(nrot); lambda_r.Zero();
+  int off = nHost + ndm + 1;
   if (rflag == 1) {
-    int off = nHost + ndm + 1;
     gradN.resize(nHost, ndm);
     for (int i = 0; i < nHost; i++)
       for (int j = 0; j < ndm; j++)
         gradN(i, j) = payload(off + i * ndm + j);
     off += nHost * ndm;
     for (int r = 0; r < nrot; r++) lambda_r(r) = payload(off + r);
+    off += nrot;
+  }
+  // D9 — restore the local frame inputs + reconstruct each interface material via the
+  // broker, then rebuild the orthonormal frame.
+  for (int d = 0; d < 3; d++) { if (matDir[d] != 0) delete matDir[d]; matDir[d] = 0; hasMat[d] = false; }
+  if (matMode == 1) {
+    normalDir.resize(ndm);
+    for (int k = 0; k < ndm; k++) normalDir(k) = payload(off + k);
+    orientDir.resize(ndm);
+    for (int k = 0; k < ndm; k++) orientDir(k) = payload(off + ndm + k);
+    for (int d = 0; d < 3; d++) {
+      int ct = (int)hdr(20 + d), dt = (int)hdr(23 + d);
+      if (ct != 0) {
+        matDir[d] = theBroker.getNewUniaxialMaterial(ct);
+        if (matDir[d] == 0) {
+          opserr << "LadrunoEmbeddedNode::recvSelf - broker has no material classTag "
+                 << ct << " (dir " << d << ")\n";
+          return -1;
+        }
+        matDir[d]->setDbTag(dt);
+        if (matDir[d]->recvSelf(commitTag, theChannel, theBroker) < 0) {
+          opserr << "LadrunoEmbeddedNode::recvSelf - interface material " << d
+                 << " recv failed\n";
+          return -1;
+        }
+        hasMat[d] = true;
+      }
+    }
+    this->buildFrame();
   }
 
   nodeNdf.resize(1 + nHost);
@@ -746,6 +945,12 @@ void LadrunoEmbeddedNode::Print(OPS_Stream& s, int flag)
   s << "\n  K_u: " << Ku << "  enforce: " << (enforce == 1 ? "al" : "penalty");
   if (pflag == 1) s << "  +pressure(K_p=" << Kp << (upActive ? ", active" : ", inactive") << ")";
   if (rflag == 1) s << "  +rotation(K_r=" << Kr << (rActive ? ", active" : ", inactive") << ")";
+  if (matMode == 1) {
+    s << "  +material-interface(";
+    for (int d = 0; d < ndm; d++)
+      s << (matDir[d] != 0 ? "mat" : "penalty") << (d < ndm - 1 ? "/" : "");
+    s << ")";
+  }
   s << "\n";
 }
 
@@ -788,6 +993,14 @@ Response* LadrunoEmbeddedNode::setResponse(const char** argv, int argc, OPS_Stre
     return new ElementResponse(this, 14, Vector(nrot > 0 ? nrot : 1));
   if (strcmp(argv[0], "kr") == 0 || strcmp(argv[0], "rotPenalty") == 0)
     return new ElementResponse(this, 15, 0.0);
+  // ADR 23 Phase 2b — D9 material interface diagnostics (local-frame components).
+  if (strcmp(argv[0], "localGap") == 0 || strcmp(argv[0], "frameGap") == 0)
+    return new ElementResponse(this, 16, Vector(ndm));
+  if (strcmp(argv[0], "localForce") == 0 || strcmp(argv[0], "frameForce") == 0 ||
+      strcmp(argv[0], "interfaceForce") == 0)
+    return new ElementResponse(this, 17, Vector(ndm));
+  if (strcmp(argv[0], "normal") == 0)
+    return new ElementResponse(this, 18, Vector(ndm));
   return 0;
 }
 
@@ -799,7 +1012,8 @@ int LadrunoEmbeddedNode::getResponse(int responseID, Information& eleInfo)
   switch (responseID) {
   case 1: {
     Vector t(ndm);
-    for (int k = 0; k < ndm; k++) t(k) = Ku * g(k);
+    Matrix Dscr(ndm, ndm);
+    this->formTransTraction(g, t, Dscr);   // isotropic or D9 material-frame
     if (enforce == 1)
       for (int k = 0; k < ndm; k++) t(k) += lambda(k);
     return eleInfo.setVector(t);
@@ -849,6 +1063,34 @@ int LadrunoEmbeddedNode::getResponse(int responseID, Information& eleInfo)
   }
   case 14: return eleInfo.setVector(lambda_r);
   case 15: { if (rActive) this->resolveKr(); return eleInfo.setDouble(Kr); }
+  case 16: {   // D9 local-frame gap components g_d = g·e_d (global g if no frame)
+    Vector gl(ndm); gl.Zero();
+    if (matMode == 1)
+      for (int d = 0; d < ndm; d++)
+        for (int k = 0; k < ndm; k++) gl(d) += g(k) * frame(k, d);
+    else
+      gl = g;
+    return eleInfo.setVector(gl);
+  }
+  case 17: {   // D9 local-frame force components t_d (per direction)
+    Vector tl(ndm); tl.Zero();
+    if (matMode == 1) {
+      for (int d = 0; d < ndm; d++) {
+        double gd = 0.0;
+        for (int k = 0; k < ndm; k++) gd += g(k) * frame(k, d);
+        if (matDir[d] != 0) { matDir[d]->setTrialStrain(gd); tl(d) = matDir[d]->getStress(); }
+        else                  tl(d) = Ku * gd;
+      }
+    } else {
+      for (int k = 0; k < ndm; k++) tl(k) = Ku * g(k);
+    }
+    return eleInfo.setVector(tl);
+  }
+  case 18: {   // D9 frame normal e_0 (global components)
+    Vector nrm(ndm); nrm.Zero();
+    if (matMode == 1) for (int k = 0; k < ndm; k++) nrm(k) = frame(k, 0);
+    return eleInfo.setVector(nrm);
+  }
   default: return -1;
   }
 }

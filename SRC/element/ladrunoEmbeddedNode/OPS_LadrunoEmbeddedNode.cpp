@@ -40,8 +40,19 @@
 //           [-pressure [-kp Kp]]      # Phase 1b: also tie the pressure DOF (u-p nodes)
 //           [-rot [-kr {Kr|auto}] [-krAlpha a]            # Phase 2: also tie rotations
 //                 {-dNdx N1x N1y [N1z] .. | -gradXi x1..x_ndm}]
+//           [-normal nx ny [nz] [-orient ox oy oz]        # Phase 2b: material interface
+//            -matN tag | -matT1 tag | -matT2 tag ..]
 //           [-enforce {penalty | al}]
 //           [-bipenalty {-dtcr dt | -wcap beta}]
+//
+//   -matN/-matT1/-matT2 (ADR 23 Phase 2b, D9): turn the translational tie into a
+//   material-driven INTERFACE — each local direction (normal e_0, tangents e_1/e_2)
+//   carries a UNIAXIAL material instead of the bare penalty K_u (any direction without
+//   a -mat* keeps the K_u penalty). Needs -normal nx ny [nz] for the frame (+ optional
+//   -orient for the first tangent). Models: cohesive (softening uniaxial), unilateral
+//   gap (ENT/ElasticPPGap on the normal), elastic bedding, bond. Coulomb friction only
+//   APPROXIMATE (uncoupled per-direction; rigorous -> LadrunoContact). v1 = REFERENCE
+//   frame; -corot frame co-rotation is a v2 follow-up.
 //
 //   -pressure (ADR 23 Phase 1b): also couple the constrained node's pressure DOF
 //   (index ndm) to the host's interpolated pressure, g_p = p_c - sum N_i p_host,i,
@@ -76,6 +87,7 @@
 #include <Matrix.h>
 #include <Element.h>
 #include <Domain.h>
+#include <UniaxialMaterial.h>   // ADR 23 Phase 2b (D9) — interface materials
 #include <elementAPI.h>
 #include <string.h>
 #include <stdlib.h>   // atoi/atof
@@ -180,6 +192,12 @@ void* OPS_LadrunoEmbeddedNode(void)
   bool haveGrad = false;         // gradients supplied (-dNdx / -gradXi / -xi auto)
   Vector xiStored(ndm);          // ξ captured from -xi (reused for -rot auto gradients)
   bool haveXi = false;
+  // ADR 23 Phase 2b (D9) — material-driven interface
+  Vector normalDir(ndm);         // -normal: frame normal e_0
+  bool haveNormal = false;
+  Vector orientDir(ndm);         // -orient: first-tangent hint
+  bool haveOrient = false;
+  int matTag[3] = { -1, -1, -1 };  // -matN / -matT1 / -matT2 uniaxial tags
 
   while (OPS_GetNumRemainingInputArgs() > 0) {
     const char* opt = OPS_GetString();
@@ -339,6 +357,38 @@ void* OPS_LadrunoEmbeddedNode(void)
       }
       haveGrad = true;
     }
+    else if (strcmp(opt, "-normal") == 0) {
+      // D9 local-frame normal e_0 (ndm comps). Tangents are auto-built (or oriented
+      // by -orient). Required when any direction carries a material on the normal.
+      n = ndm;
+      if (OPS_GetDoubleInput(&n, &normalDir(0)) < 0) {
+        opserr << "WARNING LadrunoEmbeddedNode: -normal wants " << ndm << " comps\n";
+        return 0;
+      }
+      haveNormal = true;
+    }
+    else if (strcmp(opt, "-orient") == 0) {
+      n = ndm;
+      if (OPS_GetDoubleInput(&n, &orientDir(0)) < 0) {
+        opserr << "WARNING LadrunoEmbeddedNode: -orient wants " << ndm << " comps\n";
+        return 0;
+      }
+      haveOrient = true;
+    }
+    else if (strcmp(opt, "-matN") == 0 || strcmp(opt, "-matT1") == 0 ||
+             strcmp(opt, "-matT2") == 0) {
+      int slot = (strcmp(opt, "-matN") == 0) ? 0 : (strcmp(opt, "-matT1") == 0) ? 1 : 2;
+      if (slot >= ndm) {
+        opserr << "WARNING LadrunoEmbeddedNode: " << opt << " needs ndm=3 (no t2 in 2D)\n";
+        return 0;
+      }
+      int mt; n = 1;
+      if (OPS_GetIntInput(&n, &mt) < 0) {
+        opserr << "WARNING LadrunoEmbeddedNode: " << opt << " wants a uniaxial tag\n";
+        return 0;
+      }
+      matTag[slot] = mt;
+    }
     else if (strcmp(opt, "-bipenalty") == 0) {
       bipenalty = true;
     }
@@ -421,12 +471,46 @@ void* OPS_LadrunoEmbeddedNode(void)
     return 0;
   }
 
+  // ADR 23 Phase 2b (D9) — material-driven interface. matMode is on iff any -mat* was
+  // given. -matN (a material on the NORMAL) requires -normal so the frame is defined;
+  // a tangent material also needs the frame, so -normal is required for ANY -mat*.
+  bool matMode = (matTag[0] >= 0 || matTag[1] >= 0 || matTag[2] >= 0);
+  UniaxialMaterial* matN = 0;
+  UniaxialMaterial* matT1 = 0;
+  UniaxialMaterial* matT2 = 0;
+  if (matMode) {
+    if (!haveNormal) {
+      opserr << "WARNING LadrunoEmbeddedNode: -matN/-matT* (material interface) requires "
+             << "-normal nx ny [nz] to define the local frame\n";
+      return 0;
+    }
+    UniaxialMaterial** slot[3] = { &matN, &matT1, &matT2 };
+    for (int d = 0; d < ndm; d++) {
+      if (matTag[d] < 0) continue;
+      UniaxialMaterial* m = OPS_getUniaxialMaterial(matTag[d]);
+      if (m == 0) {
+        opserr << "WARNING LadrunoEmbeddedNode: interface material tag " << matTag[d]
+               << " (dir " << d << ") not found\n";
+        return 0;
+      }
+      *slot[d] = m;
+    }
+    if (bipenalty)
+      opserr << "INFO LadrunoEmbeddedNode " << tag << ": -bipenalty with a material "
+             << "interface uses k_eff = max(initial tangents); a STIFFENING material "
+             << "(e.g. a re-contacting gap) breaks the closed-form dt_cr — set -dtcr "
+             << "from the closed-contact stiffness or use -enforce al (ADR 23 M6).\n";
+  }
+
   Element* e = new LadrunoEmbeddedNode(tag, ndm, cNode, hostNodes, Nshape, Ku,
                                        hostEleTag, ktAuto, ktAlpha, enforce,
                                        bipenalty, bpMode, bpDt, bpBeta,
                                        pressure, Kp,
                                        rot, Kr, krAuto, krAlpha,
-                                       rot ? &gradN : 0);
+                                       rot ? &gradN : 0,
+                                       matMode, haveNormal ? &normalDir : 0,
+                                       haveOrient ? &orientDir : 0,
+                                       matN, matT1, matT2);
   if (e == 0) {
     opserr << "WARNING LadrunoEmbeddedNode: could not create element\n";
     return 0;

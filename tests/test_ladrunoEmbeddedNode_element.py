@@ -536,3 +536,140 @@ def test_enforce_al_drives_rotation_gap_to_zero():
     assert ops.analyze(8) == 0
     gap_al = abs(ops.nodeDisp(1, 6))
     assert gap_al < 0.05 * gap_pen
+
+
+# =============================================== Phase 2b — D9 material interface
+# Any local direction (normal e_0, tangents e_1/e_2) can carry a UNIAXIAL material
+# instead of the bare penalty K_u — turning the translational tie into a node↔host
+# INTERFACE: cohesive, unilateral gap, elastic bedding, bond. We pin the mechanics with
+# a single coincident fixed host (N=[1], host fixed ⇒ g = u_c) and an axis-aligned
+# -normal so the local frame coincides with the global axes (e_0=normal, e_1/e_2 the
+# tangents). v1 uses the REFERENCE frame (-corot deferred).
+
+def test_matN_elastic_reproduces_penalty():
+    """-matN Elastic(K) on the normal reproduces the bare penalty (force = K·g_n); a
+    direction with no -mat* keeps the K_u penalty (the tangents here)."""
+    ku, ke = 1.0e5, 2.0e5
+    def _build():
+        ops.wipe(); ops.model("basic", "-ndm", 3, "-ndf", 3)
+        ops.node(1, 0.0, 0.0, 0.0); ops.node(2, 0.0, 0.0, 0.0); ops.fix(2, 1, 1, 1)
+        ops.uniaxialMaterial("Elastic", 10, ke)
+        ops.element("LadrunoEmbeddedNode", 1, 1, 1, 2, "-shape", 1.0, "-k", ku,
+                    "-normal", 1.0, 0.0, 0.0, "-matN", 10)
+    _build(); R = _push1(1, 2.0e-3)                       # push x = normal (Elastic ke)
+    assert abs(R[0]) == pytest.approx(ke * 2.0e-3, rel=1e-6)
+    _build(); R = _push1(2, 1.5e-3)                       # push y = tangent (penalty ku)
+    assert abs(R[1]) == pytest.approx(ku * 1.5e-3, rel=1e-6)
+
+
+def test_matN_ent_unilateral_gap():
+    """ENT (elastic-no-tension) on the normal: opens (≈0 force) in tension/separation,
+    holds stiff in compression — the unilateral-contact/gap behaviour."""
+    ku, E = 1.0e5, 3.0e5
+    def _build():
+        ops.wipe(); ops.model("basic", "-ndm", 3, "-ndf", 3)
+        ops.node(1, 0.0, 0.0, 0.0); ops.node(2, 0.0, 0.0, 0.0); ops.fix(2, 1, 1, 1)
+        ops.uniaxialMaterial("ENT", 11, E)
+        ops.element("LadrunoEmbeddedNode", 1, 1, 1, 2, "-shape", 1.0, "-k", ku,
+                    "-normal", 1.0, 0.0, 0.0, "-matN", 11)
+    _build(); R = _push1(1, 2.0e-3)                       # +x tension -> gap opens
+    assert abs(R[0]) < 1.0
+    _build(); R = _push1(1, -2.0e-3)                      # -x compression -> holds
+    assert abs(R[0]) == pytest.approx(E * 2.0e-3, rel=1e-6)
+
+
+def test_matT_elasticpp_fixed_slip():
+    """ElasticPP on a tangent gives a FIXED slip force F_y past yield (the documented
+    UNCOUPLED approximate-friction behaviour — not μ·N; rigorous → LadrunoContact)."""
+    ku, E, epsy = 1.0e5, 1.0e6, 1.0e-3
+    Fy = E * epsy
+    ops.wipe(); ops.model("basic", "-ndm", 3, "-ndf", 3)
+    ops.node(1, 0.0, 0.0, 0.0); ops.node(2, 0.0, 0.0, 0.0); ops.fix(2, 1, 1, 1)
+    ops.uniaxialMaterial("ElasticPP", 12, E, epsy)
+    ops.element("LadrunoEmbeddedNode", 1, 1, 1, 2, "-shape", 1.0, "-k", ku,
+                "-normal", 1.0, 0.0, 0.0, "-matT1", 12)
+    R = _push1(2, 5.0e-3)                                 # push y (tangent e_1) past yield
+    assert abs(R[1]) == pytest.approx(Fy, rel=1e-4)
+
+
+def test_material_interface_local_responses():
+    """localGap / localForce / normal responses report the frame components."""
+    ku, ke = 1.0e5, 2.0e5
+    ops.wipe(); ops.model("basic", "-ndm", 3, "-ndf", 3)
+    ops.node(1, 0.0, 0.0, 0.0); ops.node(2, 0.0, 0.0, 0.0); ops.fix(2, 1, 1, 1)
+    ops.uniaxialMaterial("Elastic", 13, ke)
+    ops.element("LadrunoEmbeddedNode", 1, 1, 1, 2, "-shape", 1.0, "-k", ku,
+                "-normal", 1.0, 0.0, 0.0, "-matN", 13)
+    _push1(1, 2.0e-3)
+    assert ops.eleResponse(1, "localGap")[0] == pytest.approx(2.0e-3, rel=1e-6)
+    assert ops.eleResponse(1, "localForce")[0] == pytest.approx(ke * 2.0e-3, rel=1e-6)
+    assert ops.eleResponse(1, "normal")[0] == pytest.approx(1.0, rel=1e-9)
+
+
+def test_al_with_material_direction_reprojection():
+    """AL + one material direction (normal Elastic) + one penalty direction (a tangent
+    under load): AL drives the PENALTY gap → 0; the material direction carries physical
+    force and the multiplier is re-projected off it (M4/D9-3)."""
+    F, ku, ke = 50.0, 1.0e4, 2.0e5
+
+    def _build(enf):
+        ops.wipe(); ops.model("basic", "-ndm", 3, "-ndf", 3)
+        ops.node(1, 0.0, 0.0, 0.0); ops.node(2, 0.0, 0.0, 0.0); ops.fix(2, 1, 1, 1)
+        ops.fix(1, 0, 0, 1)                               # cNode free in x,y; z fixed
+        ops.uniaxialMaterial("Elastic", 14, ke)
+        ops.element("LadrunoEmbeddedNode", 1, 1, 1, 2, "-shape", 1.0, "-k", ku,
+                    "-normal", 0.0, 1.0, 0.0, "-matN", 14, "-enforce", enf)
+        ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
+        ops.load(1, F, 0.0, 0.0)                          # load along x = penalty tangent
+        ops.constraints("Transformation"); ops.numberer("Plain"); ops.system("FullGeneral")
+        ops.test("NormDispIncr", 1e-12, 30); ops.algorithm("Newton")
+        ops.integrator("LoadControl", 1.0); ops.analysis("Static")
+
+    _build("penalty")
+    assert ops.analyze(1) == 0
+    gap_pen = abs(ops.nodeDisp(1, 1))
+    assert gap_pen == pytest.approx(F / ku, rel=1e-3)
+    _build("al")
+    assert ops.analyze(1) == 0
+    ops.loadConst("-time", 0.0)
+    ops.integrator("LoadControl", 0.0)
+    assert ops.analyze(8) == 0
+    gap_al = abs(ops.nodeDisp(1, 1))
+    assert gap_al < 0.05 * gap_pen
+    assert abs(ops.nodeDisp(1, 2)) < 1e-6                 # material (y) dir stays put
+
+
+def test_material_bipenalty_keff_from_initial_tangents():
+    """D9 bipenalty k_eff = max(K_u, material initial tangents) (M6); m_p = k_eff·(dt/2)²."""
+    ku, ke, dt = 1.0e6, 4.0e6, 1.0e-3
+    ops.wipe(); ops.model("basic", "-ndm", 3, "-ndf", 3)
+    ops.node(1, 0.0, 0.0, 0.0); ops.node(2, 0.0, 0.0, 0.0); ops.fix(2, 1, 1, 1)
+    ops.uniaxialMaterial("Elastic", 15, ke)
+    ops.element("LadrunoEmbeddedNode", 1, 1, 1, 2, "-shape", 1.0, "-k", ku,
+                "-normal", 1.0, 0.0, 0.0, "-matN", 15, "-bipenalty", "-dtcr", dt)
+    assert ops.eleResponse(1, "mpenalty")[0] == pytest.approx(ke * (dt / 2.0) ** 2, rel=1e-9)
+
+
+def test_material_interface_2d():
+    """2D material interface: Elastic on the in-plane normal."""
+    ku, ke = 1.0e5, 2.0e5
+    ops.wipe(); ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.node(1, 0.0, 0.0); ops.node(2, 0.0, 0.0); ops.fix(2, 1, 1)
+    ops.uniaxialMaterial("Elastic", 16, ke)
+    ops.element("LadrunoEmbeddedNode", 1, 1, 1, 2, "-shape", 1.0, "-k", ku,
+                "-normal", 1.0, 0.0, "-matN", 16)
+    R = _push1(1, 2.0e-3)
+    assert abs(R[0]) == pytest.approx(ke * 2.0e-3, rel=1e-6)
+
+
+def test_matN_requires_normal():
+    """-matN without -normal is rejected at parse time (the frame is undefined)."""
+    ops.wipe(); ops.model("basic", "-ndm", 3, "-ndf", 3)
+    ops.node(1, 0.0, 0.0, 0.0); ops.node(2, 0.0, 0.0, 0.0)
+    ops.uniaxialMaterial("Elastic", 17, 1.0e5)
+    try:
+        ops.element("LadrunoEmbeddedNode", 1, 1, 1, 2, "-shape", 1.0, "-k", 1.0e5,
+                    "-matN", 17)
+    except Exception:
+        pass
+    assert 1 not in (ops.getEleTags() or [])
