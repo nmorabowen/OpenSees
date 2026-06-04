@@ -66,14 +66,54 @@ and the Ladruno-recorder row in [[LEDGER_implementations]] as authoritative, and
   chunked+deflate dataset per result with `STEP[T]`/`TIME[T]` axes, *replacing* the
   old per-step `DATA/STEP_<k>`. The reader must handle chunked **and** legacy.
 - **`MODEL/LOCAL_AXES` is now written** (per-class `{ID, FRAME[E×4 quaternion]}`
-  from the element `"localAxes"` response) — ElasticBeam3d wired, other beams to
-  follow. No silent identity fallback. (This was the old #1 gap; now landing.)
+  from the element `"localAxes"` response) — Elastic/Force/Disp **and**
+  Mixed/GradientInelastic beam-columns (2D+3D) are wired. No silent identity
+  fallback. (This was the old #1 gap; now landing.)
 - **Standard-rule `QUADRATURE` by derivation** + `GLOBAL_GP_COORDS` belt-and-
   suspenders, explicit `NDIR`; per-stage `KIND` (`-kind transient|static|eigen`);
   whole-model + per-region energy (`RESULTS/ON_DOMAIN/energyBalance`,
   `ON_REGIONS`, `MODEL/SETS/SET_<tag>`).
 - **Still single-stage-safe only where noted** — confirm multi-stage status in the
   recorder's schema/contract docs before relying on more than the first `MODEL_STAGE`.
+
+### 📣 2026-06 recorder hardening — what apeGmsh can rely on now
+
+A round of `LadrunoRecorder` fixes landed on `ladruno` (PRs **#200** + **#201**,
+both merged, CI-green). The apeGmsh-facing effects — **no command-grammar changes**,
+all additive/robustness:
+
+- **Shell per-layer stresses now record.** For a layered shell (`LayeredShell` /
+  `MembranePlateFiberSection`), `-E material.fiber.<resp>` (e.g.
+  `material.fiber.stress`) now emits a real per-layer `ON_ELEMENTS` bucket —
+  it previously produced **no bucket at all**. Output is byte-identical to
+  `section.fiber.<resp>` (the recorder swaps `section`→`material` for shells
+  internally; both verbs are equivalent for shells now). Reminder: the `-E` verb is
+  a **single dot-joined token**, never space-separated args.
+  - **Caveat (pre-existing, unchanged):** the shell-layer `COLUMN_MAP` encodes each
+    `(gauss-point, layer)` pair as a distinct running `GAUSS_ID`, with
+    `FIBER_ID = -1`, `SECTION_TAG = -1`, and component names that may read
+    `UnknownStress`. The **data is complete and correct** (`nGP × nLayer × nComp`
+    columns); only the per-column *layer label* is implicit. Decode layers as
+    `gp = GAUSS_ID // nLayer`, `layer = GAUSS_ID % nLayer`, or read `nLayer` from
+    `MODEL/SECTION_ASSIGNMENTS`. (A richer per-column locator is deferred — it would
+    perturb the frozen-MPCO parity oracle for marginal gain.)
+- **Partition schema is uniform again under OpenSeesMP.** With `-envelope` and/or
+  `-precision f32`, worker ranks now write the **same** schema/precision as rank 0
+  (the recorder serializes `envelope_mode` + the f32 flag across `sendSelf`/
+  `recvSelf`). Before this, `.part-0` could be ENVELOPES/f32 while `.part-N` were
+  time-series/f64 — breaking the stitch-on-read. The stitcher can again assume one
+  family + precision across the whole `.part-*` set.
+- **`STORED_PRECISION` is honest in envelope mode.** An `-envelope` file now reports
+  `f64` (envelope `MIN/MAX/ABSMAX` are always f64); `-precision f32` narrows only
+  the **time-series** `DATA` datasets. The reader can trust the attribute per file
+  to choose its diff tolerance.
+- **The recorder never aborts the analysis.** An element whose `setResponse` emits
+  an output-tag nesting the recorder doesn't recognize (or two same-classTag
+  elements with differing node counts) used to `exit(-1)` the whole run; it now
+  warns and **drops just that bucket**. Directly relevant to apeGmsh-driven runs
+  with Bézier / custom elements — an unmappable result degrades gracefully instead
+  of killing the job. A malformed bare `-E section` / `-E material` (keyword, no
+  sub-verb) is likewise a no-op now, not a segfault.
 
 ## Implementation notes & recommended apeGmsh approach (per feature)
 
