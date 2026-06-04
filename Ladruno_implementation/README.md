@@ -98,7 +98,12 @@ plans above:
 - [[LadrunoBrick_reference]] — the unified hex element (formulations + geometry seams).
 - [[LadrunoJ2_guide]] — combined-hardening von Mises (J2) `nDMaterial`.
 - [[LadrunoUniaxialJ2_guide]] — the uniaxial J2 twin (fibers/truss/zeroLength).
+- [[LadrunoJ2Finite_guide]] — finite-strain-native combined J2 (co-rotating backstress).
+- [[LogStrain_guide]] — the Hencky log-strain finite-strain material adaptor.
+- [[LadrunoStaged_guide]] — the `Staged*` family (`InitDefGrad` finite / `StagedStrain` small).
+- [[LadrunoLemaitreDamage_guide]] — the Lemaitre ductile-damage mode on the J2 family.
 - [[LadrunoRebarBuckling_guide]] — reinforcing-bar buckling overlay `uniaxialMaterial`.
+- [[LadrunoBondSlip_guide]] — 1D bond-slip τ–s `uniaxialMaterial` for embedded rebar.
 - [[solid_transformation_wrapper]] — the solid geometry-method layer (linear/corot/finite).
 - [[09_finite_strain_material_wrapper]] — the log-strain (`LogStrain`) adaptor.
 - [[18_finite_strain_validation_report]] — the finite-strain V&V execution record.

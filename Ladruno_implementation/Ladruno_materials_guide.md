@@ -63,12 +63,12 @@ you need.
 |---|---|---|---|---|
 | **`LadrunoJ2`** | nDMaterial | 33011 | combined-hardening (Voce+Chaboche) von Mises — the flagship 3D plastic law | [[LadrunoJ2_guide]] |
 | **`LadrunoUniaxialJ2`** | uniaxialMaterial | 33000 | uniaxial twin (fiber/truss/zeroLength); the calibration oracle | [[LadrunoUniaxialJ2_guide]] |
-| **`LadrunoJ2Finite`** | nDMaterial | 33012 | finite-strain-**native** combined J2 (co-rotating backstress) | [[16_finite_native_j2_adr]] |
-| **`LogStrain`** | nDMaterial (wrapper) | 33010 | Hencky log-strain lift: any GREEN 3D law → finite strain | [[finite_strain_trifecta_guide]], [[09_finite_strain_material_wrapper]] |
-| **`InitDefGrad`** (`StagedDefGrad`) | nDMaterial (wrapper) | 33013 | stress-free **finite** staged-construction birth (`F₀`) | [[staged_deformation_gradiend]] |
-| **`StagedStrain`** | nDMaterial (wrapper) | 33014 | stress-free **small-strain** staged birth (`ε₀`) | [[staged_deformation_gradiend]] |
+| **`LadrunoJ2Finite`** | nDMaterial | 33012 | finite-strain-**native** combined J2 (co-rotating backstress) | [[LadrunoJ2Finite_guide]] |
+| **`LogStrain`** | nDMaterial (wrapper) | 33010 | Hencky log-strain lift: any GREEN 3D law → finite strain | [[LogStrain_guide]], [[finite_strain_trifecta_guide]] |
+| **`InitDefGrad`** (`StagedDefGrad`) | nDMaterial (wrapper) | 33013 | stress-free **finite** staged-construction birth (`F₀`) | [[LadrunoStaged_guide]] |
+| **`StagedStrain`** | nDMaterial (wrapper) | 33014 | stress-free **small-strain** staged birth (`ε₀`) | [[LadrunoStaged_guide]] |
 | **`LadrunoRebarBuckling`** | uniaxialMaterial (wrapper) | 33001 | reinforcing-bar buckling-average degradation overlay | [[LadrunoRebarBuckling_guide]] |
-| **`LadrunoBondSlip`** | uniaxialMaterial | 33002 | 1D bond-slip τ–s (MC2010 backbone) for embedded rebar | [[20_ladruno_embedded_reinforcement_adr]] |
+| **`LadrunoBondSlip`** | uniaxialMaterial | 33002 | 1D bond-slip τ–s (MC2010 backbone) for embedded rebar | [[LadrunoBondSlip_guide]] |
 
 Plus the **Lemaitre ductile-damage mode** (`-damage lemaitre …`) — not a class, a
 mode on both J2 materials (§6). And three **shared header-only kernels** that are
@@ -390,15 +390,19 @@ bar buckling governs the compression response. **Full reference:
 ### 5.2 `LadrunoBondSlip` (uniaxialMaterial, 33002) — 1D bond-slip τ–s
 
 **What.** A 1-D **bond-slip** `UniaxialMaterial`: bond stress τ vs slip s, the axial
-constitutive slot for embedded-reinforcement modeling (drives `LadrunoEmbeddedRebar`
-Mode P). v1 = **MC2010 (Model Code 2010) monotonic backbone** (cyclic → v2).
+constitutive slot for embedded-reinforcement modeling (the `LadrunoEmbeddedRebar`
+bond-slip path, `-bond`). v1 = **MC2010 (Model Code 2010) monotonic backbone**
+(cyclic → v2).
 
 **Theory.** The classic four-regime CEB-FIP/MC2010 backbone with the ascending
 power-law $\tau=\tau_{\max}(s/s_1)^\alpha$, a plateau, a linear descent to the
 residual $\tau_f$, exposing $\{\tau_{\max}, s_1, s_2, s_3, \tau_f, \alpha\}$ as inputs
-(the regime is **not** hardcoded) plus a **7th explicit input** — the bond fracture
-energy $G_F^{\text{bond}}$ — for mesh-objective regularization. Unit contract:
-$F=\tau\cdot(\pi d)\cdot L_{\text{trib}}$ (perimeter × tributary length).
+(the regime is **not** hardcoded), with two optional flags: `-Gf` (a bond fracture
+energy that **overrides** $s_3$ as $s_3=s_2+2G_F/(\tau_{\max}-\tau_f)$ so the softening
+triangle dissipates $G_F$ per unit area — mesh-objective regularization) and `-s0`
+(the initial-slip linear-segment length, default $0.1 s_1$). The material returns a
+**bond stress**; the embedded-rebar element converts to force via $F=\tau\cdot(\pi
+d)\cdot L_{\text{trib}}$, folded into the element's `-bondScale` scalar.
 
 **Three must-fix subtleties (all handled in v1):**
 - **Initial-slip regularization.** $\tau=\tau_{\max}(s/s_1)^\alpha$ has
@@ -416,15 +420,17 @@ bond failure → v1.1 (a small-cover splice test is xfail'd, to avoid silently
 over-predicting bond). Exposes `dissipatedEnergy`/`energy` responses. classTags
 33005 (`LadrunoEmbeddedRebar`) / 33002 are collision-free (per-registry namespaces).
 
-**OpenSees.**
+**OpenSees** (signature verified against the shipped parser — the ADR's positional
+`$GFbond` is actually the optional `-Gf` flag):
 ```tcl
-uniaxialMaterial LadrunoBondSlip $tag $tauMax $s1 $s2 $s3 $tauf $alpha $GFbond
-# consumed by the embedded-rebar element's Mode P axial slot:
-element LadrunoEmbeddedRebar $et $rebarNode $hostEle $xi $eta $zeta -mode P -bond $tag -perimeter $p -ltrib $L
+uniaxialMaterial LadrunoBondSlip $tag $tauMax $s1 $s2 $s3 $tauf $alpha  <-Gf $Gf> <-s0 $s0>
+# consumed by the embedded-rebar element's bond-slip axial slot (-bond):
+element LadrunoEmbeddedRebar $et $rebarNode -host $hostEle -xi $x1 $x2 $x3 -dir $dx $dy $dz \
+        -bond $tag -bondScale $bs
 ```
 **Use case.** Embedded reinforcement with **explicit bond-slip** (own-DOF rebar + 1D
 τ–s, the DIANA-style model) — pull-out, development-length, anchorage studies.
-**ADR: [[20_ladruno_embedded_reinforcement_adr]] §D4.**
+**Full reference: [[LadrunoBondSlip_guide]]; ADR: [[20_ladruno_embedded_reinforcement_adr]] §D4.**
 
 ---
 
@@ -449,8 +455,8 @@ $\mathbf D=(1-D)\mathbf D^{\text{alg}}-\tilde{\boldsymbol\sigma}\otimes\partial 
 - **IMPL-EX (`-implex`):** committed extrapolated $\tilde D$ ⇒ SPD tangent for
   softening robustness.
 
-**Full theory + validation: [[15_lemaitre_ductile_damage_adr]]** and the validation
-bundle `lemaitre_validation/`.
+**Full reference: [[LadrunoLemaitreDamage_guide]];** theory + decisions:
+[[15_lemaitre_ductile_damage_adr]]; validation bundle `lemaitre_validation/`.
 
 ---
 
@@ -545,15 +551,22 @@ backstress has no `LadrunoJ2Finite` analogue — a scalar has no frame to co-rot
 
 ## 10 · References
 
-**Per-material deep-dives (in this repo)**
+**Per-material deep-dive guides (in this repo)**
 - [[LadrunoJ2_guide]] — `LadrunoJ2` full reference (theory, return map, tangent, views).
 - [[LadrunoUniaxialJ2_guide]] — the uniaxial twin.
+- [[LadrunoJ2Finite_guide]] — `LadrunoJ2Finite` (finite-strain-native, co-rotating backstress).
+- [[LogStrain_guide]] — `LogStrain` / `FiniteStrainNDMaterial` (the Hencky adaptor).
+- [[LadrunoStaged_guide]] — the `Staged*` family (`InitDefGrad` finite + `StagedStrain` small).
+- [[LadrunoLemaitreDamage_guide]] — the Lemaitre ductile-damage mode.
 - [[LadrunoRebarBuckling_guide]] — the buckling overlay (DM/GA, cyclic re-straightening).
-- [[finite_strain_trifecta_guide]] — `LogStrain` + the element/wrapper stack.
+- [[LadrunoBondSlip_guide]] — the 1D bond-slip τ–s material.
+- [[finite_strain_trifecta_guide]] — the whole large-deformation stack (element × wrapper × law).
+
+**Design ADRs / plans (the source records)**
 - [[09_finite_strain_material_wrapper]] — the Hencky adaptor design + GREEN/YELLOW/RED matrix.
-- [[16_finite_native_j2_adr]] — `LadrunoJ2Finite` (co-rotating backstress, channels A/B, IMPL-EX).
-- [[staged_deformation_gradiend]] — `InitDefGrad`/`StagedStrain` (staged stress-free birth).
-- [[15_lemaitre_ductile_damage_adr]] — the Lemaitre damage mode + validation bundle.
+- [[16_finite_native_j2_adr]] — the native finite J2 (channels A/B, IMPL-EX).
+- [[staged_deformation_gradiend]] — the staged stress-free birth design.
+- [[15_lemaitre_ductile_damage_adr]] — the Lemaitre damage decisions + validation bundle.
 - [[20_ladruno_embedded_reinforcement_adr]] — `LadrunoBondSlip` (§D4) + the embedded-rebar element.
 - [[LEDGER_implementations]] — authoritative class-tag + PR registry.
 
