@@ -475,6 +475,8 @@
 #include "ladrunoIMKBeam/LadrunoIMKBeam.h"	// N. Mora-Bowen (Ladruno)
 #include "ladrunoIMKBeam/LadrunoIMKBeam2d.h"	// N. Mora-Bowen (Ladruno)
 #include "ladrunoEmbeddedRebar/LadrunoEmbeddedRebar.h"	// N. Mora-Bowen (Ladruno)
+#include "ladrunoPlane/LadrunoQuad.h"	// N. Mora-Bowen (Ladruno)
+#include "ladrunoPlane/LadrunoCST.h"	// N. Mora-Bowen (Ladruno)
 #include "joint/Joint2D.h"		// Arash
 #include "joint/Inno3DPnPJoint.h" // Cristian Miculas
 #include "twoNodeLink/TwoNodeLink.h"
@@ -1066,6 +1068,12 @@ FEM_ObjectBrokerAllClasses::getNewElement(int classTag)
 
     case ELE_TAG_LadrunoEmbeddedRebar:	// N. Mora-Bowen (Ladruno)
       return new LadrunoEmbeddedRebar();
+
+    case ELE_TAG_LadrunoQuad:		// N. Mora-Bowen (Ladruno)
+      return new LadrunoQuad();
+
+    case ELE_TAG_LadrunoCST:		// N. Mora-Bowen (Ladruno)
+      return new LadrunoCST();
 
     case ELE_TAG_SSPquad:
       return new SSPquad();
