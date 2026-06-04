@@ -77,6 +77,7 @@ class LadrunoQuad : public Element
 
     int getNumDOF(void);
     void setDomain(Domain *theDomain);
+    double getCharacteristicLength(void);   // crack-band lch = sqrt(area)
 
     // state
     int commitState(void);
@@ -136,9 +137,18 @@ class LadrunoQuad : public Element
     static double pts[4][2];           // gauss points
     static double wts[4];              // gauss weights
 
+    // --- SSP (stabilized single-point) state (formulation == SSP) ---
+    Matrix Mmem;                       // 3x8 membrane strain-disp at centroid
+    Matrix Kstab;                      // 8x8 elastic stabilization stiffness
+    double J0, J1, J2;                 // jacobian terms (SSPquad convention)
+    Response *damageResponse;          // cached "damage" probe on slot-0 material (Tier-A)
+
     double shapeFunction(double xi, double eta);  // returns detJ, fills shp
     void computeShapeBar(void);                    // fills shpBar (B-bar)
     void formB(Matrix &B);                         // 3x8 strain-disp from shp/shpBar
+    void computeSSP(void);                         // fills J0/J1/J2, Mmem, Kstab (port of SSPquad::GetStab)
+    double damageScale(void);                      // Tier-A: max(floor, 1 - max(dt,dc)); 1 if no damage channel
+    bool isSinglePoint(void) const { return formulation == Formulation::SSP; }
     void setPressureLoadAtNodes(void);
     const char *typeString(void) const;
 

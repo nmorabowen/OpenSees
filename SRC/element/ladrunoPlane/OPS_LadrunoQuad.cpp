@@ -118,9 +118,9 @@ void *OPS_LadrunoQuad()
     }
   }
 
-  if (form == LadrunoQuad::Formulation::SSP || form == LadrunoQuad::Formulation::EAS) {
-    opserr << "WARNING LadrunoQuad -- formulation 'ssp'/'eas' is reserved but not "
-              "yet implemented (ADR 25 Phase 2/3); use std or bbar\n";
+  if (form == LadrunoQuad::Formulation::EAS) {
+    opserr << "WARNING LadrunoQuad -- formulation 'eas' is reserved but not yet "
+              "implemented (ADR 25 Phase 3); use std, bbar, or ssp\n";
     return 0;
   }
 

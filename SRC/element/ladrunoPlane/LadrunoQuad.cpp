@@ -47,7 +47,21 @@
 #include <FEM_ObjectBroker.h>
 #include <ElementResponse.h>
 #include <ElementalLoad.h>
+#include <Response.h>
+#include <DummyStream.h>
 #include <elementAPI.h>
+#include <math.h>
+
+// Tier-A damage-scaled hourglass: floor on the stabilization multiplier so a
+// fully-damaged element keeps a little hourglass control (mirrors LadrunoBrick).
+static const double HG_DAMAGE_FLOOR = 0.01;
+
+// 2x2 dyadic product helper (SSP base-vector second-moment tensor).
+static inline void dyad2(const Vector &a, const Vector &b, Matrix &out)
+{
+  out(0, 0) = a(0) * b(0); out(0, 1) = a(0) * b(1);
+  out(1, 0) = a(1) * b(0); out(1, 1) = a(1) * b(1);
+}
 
 double LadrunoQuad::matrixData[64];
 Matrix LadrunoQuad::K(matrixData, 8, 8);
@@ -64,7 +78,8 @@ LadrunoQuad::LadrunoQuad(int tag, int nd1, int nd2, int nd3, int nd4,
  :Element(tag, ELE_TAG_LadrunoQuad),
   theMaterial(0), connectedExternalNodes(4),
   Q(8), pressureLoad(8), thickness(t), pressure(p), rho(r),
-  formulation(form), planeType(1), Ki(0)
+  formulation(form), planeType(1),
+  Mmem(3, 8), Kstab(8, 8), J0(0.0), J1(0.0), J2(0.0), damageResponse(0), Ki(0)
 {
   pts[0][0] = -0.5773502691896258; pts[0][1] = -0.5773502691896258;
   pts[1][0] =  0.5773502691896258; pts[1][1] = -0.5773502691896258;
@@ -108,7 +123,8 @@ LadrunoQuad::LadrunoQuad()
  :Element(0, ELE_TAG_LadrunoQuad),
   theMaterial(0), connectedExternalNodes(4),
   Q(8), pressureLoad(8), thickness(0.0), pressure(0.0), rho(0.0),
-  formulation(Formulation::STD), planeType(1), Ki(0)
+  formulation(Formulation::STD), planeType(1),
+  Mmem(3, 8), Kstab(8, 8), J0(0.0), J1(0.0), J2(0.0), damageResponse(0), Ki(0)
 {
   pts[0][0] = -0.5773502691896258; pts[0][1] = -0.5773502691896258;
   pts[1][0] =  0.5773502691896258; pts[1][1] = -0.5773502691896258;
@@ -129,6 +145,7 @@ LadrunoQuad::~LadrunoQuad()
       if (theMaterial[i]) delete theMaterial[i];
     delete[] theMaterial;
   }
+  if (damageResponse) delete damageResponse;
   if (Ki) delete Ki;
 }
 
@@ -162,8 +179,132 @@ void LadrunoQuad::setDomain(Domain *theDomain)
       return;
     }
 
+  // SSP: build the (geometry-fixed) stabilization once; rebuilt on the receive
+  // side here too, so sendSelf carries nothing extra.
+  if (formulation == Formulation::SSP)
+    this->computeSSP();
+
+  // Tier-A: cache the centroid material's "damage" probe so the constant elastic
+  // Kstab can degrade under softening (ssp only). Materials with no "damage"
+  // channel return 0 -> damageScale() falls back to 1.0 (elastic/J2 unchanged).
+  if (damageResponse) { delete damageResponse; damageResponse = 0; }
+  if (formulation == Formulation::SSP && theMaterial[0] != 0) {
+    DummyStream dmgStream;
+    const char *dmgArgv[1] = {"damage"};
+    damageResponse = theMaterial[0]->setResponse(dmgArgv, 1, dmgStream);
+  }
+
   this->DomainComponent::setDomain(theDomain);
   this->setPressureLoadAtNodes();
+}
+
+double LadrunoQuad::getCharacteristicLength(void)
+{
+  // crack-band size = sqrt(area); area = integral of detJ over the element.
+  double A = 0.0;
+  for (int i = 0; i < 4; i++)
+    A += this->shapeFunction(pts[i][0], pts[i][1]) * wts[i];
+  if (A <= 0.0)
+    return this->Element::getCharacteristicLength();
+  return sqrt(A);
+}
+
+double LadrunoQuad::damageScale(void)
+{
+  if (damageResponse == 0)
+    return 1.0;
+  if (damageResponse->getResponse() < 0)
+    return 1.0;
+  Information &info = damageResponse->getInformation();
+  const Vector *d = info.theVector;
+  if (d == 0)
+    return 1.0;
+  double dmax = 0.0;
+  for (int i = 0; i < d->Size(); i++)
+    if ((*d)(i) > dmax) dmax = (*d)(i);   // max(d_tension, d_compression)
+  double s = 1.0 - dmax;
+  if (s < HG_DAMAGE_FLOOR) s = HG_DAMAGE_FLOOR;
+  if (s > 1.0) s = 1.0;
+  return s;
+}
+
+// Port of UWelements/SSPquad::GetStab — single-point membrane operator Mmem
+// (3x8) at the centroid + statically-condensed hourglass stabilization Kstab
+// (8x8) from the INITIAL material tangent. Geometry-fixed (small strain) so it
+// is computed once in setDomain.
+void LadrunoQuad::computeSSP(void)
+{
+  // node coordinate matrix (2x4)
+  static Matrix nodeCrd(2, 4);
+  for (int i = 0; i < 4; i++) {
+    const Vector &X = theNodes[i]->getCrds();
+    nodeCrd(0, i) = X(0);
+    nodeCrd(1, i) = X(1);
+  }
+
+  // jacobian terms (SSPquad convention)
+  J0 = ((nodeCrd(0,1)-nodeCrd(0,3))*(nodeCrd(1,2)-nodeCrd(1,0))+(nodeCrd(0,2)-nodeCrd(0,0))*(nodeCrd(1,3)-nodeCrd(1,1)))/8.0;
+  J1 = ((nodeCrd(0,1)-nodeCrd(0,0))*(nodeCrd(1,2)-nodeCrd(1,3))+(nodeCrd(0,2)-nodeCrd(0,3))*(nodeCrd(1,0)-nodeCrd(1,1)))/24.0;
+  J2 = ((nodeCrd(0,0)-nodeCrd(0,3))*(nodeCrd(1,2)-nodeCrd(1,1))+(nodeCrd(0,2)-nodeCrd(0,1))*(nodeCrd(1,3)-nodeCrd(1,0)))/24.0;
+
+  // shape-function derivatives (local crd) at center
+  static Matrix dNloc(4, 2);
+  dNloc(0,0) = -0.25; dNloc(1,0) =  0.25; dNloc(2,0) =  0.25; dNloc(3,0) = -0.25;
+  dNloc(0,1) = -0.25; dNloc(1,1) = -0.25; dNloc(2,1) =  0.25; dNloc(3,1) =  0.25;
+
+  static Matrix Jmat(2, 2), Jinv(2, 2), dN(4, 2);
+  Jmat = nodeCrd * dNloc;     // 2x2
+  Jmat.Invert(Jinv);
+  dN = dNloc * Jinv;          // 4x2 global gradients
+
+  // hourglass stabilization vector gamma = 0.25*(h - (h.x)bx - (h.y)by)
+  double hx = nodeCrd(0,0) - nodeCrd(0,1) + nodeCrd(0,2) - nodeCrd(0,3);
+  double hy = nodeCrd(1,0) - nodeCrd(1,1) + nodeCrd(1,2) - nodeCrd(1,3);
+  double gamma[4];
+  gamma[0] = 0.25*( 1.0 - hx*dN(0,0) - hy*dN(0,1));
+  gamma[1] = 0.25*(-1.0 - hx*dN(1,0) - hy*dN(1,1));
+  gamma[2] = 0.25*( 1.0 - hx*dN(2,0) - hy*dN(2,1));
+  gamma[3] = 0.25*(-1.0 - hx*dN(3,0) - hy*dN(3,1));
+
+  Mmem.Zero();
+  static Matrix Mben(2, 8);
+  Mben.Zero();
+  for (int i = 0; i < 4; i++) {
+    Mmem(0, 2*i)   = dN(i,0);
+    Mmem(1, 2*i+1) = dN(i,1);
+    Mmem(2, 2*i)   = dN(i,1);
+    Mmem(2, 2*i+1) = dN(i,0);
+    Mben(0, 2*i)   = gamma[i];
+    Mben(1, 2*i+1) = gamma[i];
+  }
+
+  // normalized base vectors
+  static Vector g1(2), g2(2);
+  g1(0) = Jmat(0,0); g1(1) = Jmat(1,0);
+  g2(0) = Jmat(0,1); g2(1) = Jmat(1,1);
+  g1.Normalize();
+  g2.Normalize();
+
+  // second moment of area tensor I = (4/3) t J0 (g1 (x) g1 + g2 (x) g2)
+  static Matrix I(2, 2), tmp(2, 2);
+  dyad2(g1, g1, I);
+  dyad2(g2, g2, tmp);
+  I += tmp;
+  I *= (4.0 / 3.0) * thickness * J0;
+
+  double Hss = (I(0,0)*Jinv(1,0)*Jinv(1,0) + I(0,1)*Jinv(0,0)*Jinv(1,0) + I(1,1)*Jinv(0,0)*Jinv(0,0))*0.25;
+  double Htt = (I(0,0)*Jinv(1,1)*Jinv(1,1) + I(0,1)*Jinv(0,1)*Jinv(1,1) + I(1,1)*Jinv(0,1)*Jinv(0,1))*0.25;
+  double Hst = (I(0,0)*Jinv(1,1)*Jinv(1,0) + I(0,1)*(Jinv(1,0)*Jinv(0,1) + Jinv(1,1)*Jinv(0,0)) + I(1,1)*Jinv(0,1)*Jinv(0,0))*0.25;
+
+  const Matrix &C = theMaterial[0]->getInitialTangent();
+  static Matrix FCF(2, 2);
+  FCF(0,0) = (C(0,0) - (C(0,1) + C(1,0)) + C(1,1))*Hss;
+  FCF(0,1) = (C(0,1) - (C(0,0) + C(1,1)) + C(1,0))*Hst;
+  FCF(1,0) = (C(1,0) - (C(0,0) + C(1,1)) + C(0,1))*Hst;
+  FCF(1,1) = (C(1,1) - (C(0,1) + C(1,0)) + C(0,0))*Htt;
+
+  Kstab.Zero();
+  Kstab.addMatrixTripleProduct(1.0, Mben, FCF, 1.0);
 }
 
 int LadrunoQuad::commitState(void)
@@ -245,11 +386,18 @@ int LadrunoQuad::update(void)
     u(2 * a + 1) = d(1);
   }
 
+  static Vector eps(3);
+
+  if (formulation == Formulation::SSP) {
+    // single material evaluation at the centroid: strain = Mmem * u
+    eps.addMatrixVector(0.0, Mmem, u, 1.0);
+    return theMaterial[0]->setTrialStrain(eps);
+  }
+
   if (formulation == Formulation::BBAR)
     this->computeShapeBar();
 
   static Matrix B(3, 8);
-  static Vector eps(3);
   int ret = 0;
   for (int i = 0; i < 4; i++) {
     this->shapeFunction(pts[i][0], pts[i][1]);
@@ -263,6 +411,15 @@ int LadrunoQuad::update(void)
 const Matrix &LadrunoQuad::getTangentStiff(void)
 {
   K.Zero();
+
+  if (formulation == Formulation::SSP) {
+    // K = s*Kstab + 4*J0*t * Mmem^T C Mmem  (s = Tier-A damage scale)
+    const Matrix &C = theMaterial[0]->getTangent();
+    K.addMatrix(0.0, Kstab, this->damageScale());
+    K.addMatrixTripleProduct(1.0, Mmem, C, 4.0 * J0 * thickness);
+    return K;
+  }
+
   if (formulation == Formulation::BBAR)
     this->computeShapeBar();
 
@@ -282,6 +439,15 @@ const Matrix &LadrunoQuad::getInitialStiff(void)
     return *Ki;
 
   K.Zero();
+
+  if (formulation == Formulation::SSP) {
+    const Matrix &C = theMaterial[0]->getInitialTangent();
+    K.addMatrix(0.0, Kstab, 1.0);   // initial state: undamaged
+    K.addMatrixTripleProduct(1.0, Mmem, C, 4.0 * J0 * thickness);
+    Ki = new Matrix(K);
+    return *Ki;
+  }
+
   if (formulation == Formulation::BBAR)
     this->computeShapeBar();
 
@@ -299,6 +465,20 @@ const Matrix &LadrunoQuad::getInitialStiff(void)
 const Matrix &LadrunoQuad::getMass(void)
 {
   K.Zero();
+
+  if (formulation == Formulation::SSP) {
+    double density = (rho == 0.0) ? theMaterial[0]->getRho() : rho;
+    if (density == 0.0)
+      return K;
+    const double xi[4]  = {-1.0,  1.0, 1.0, -1.0};
+    const double eta[4] = {-1.0, -1.0, 1.0,  1.0};
+    for (int i = 0; i < 4; i++) {
+      double m = density * thickness * (J0 + J1 * xi[i] + J2 * eta[i]);
+      K(2 * i,     2 * i)     += m;
+      K(2 * i + 1, 2 * i + 1) += m;
+    }
+    return K;
+  }
 
   static double rhoi[4];
   double sum = 0.0;
@@ -374,11 +554,39 @@ int LadrunoQuad::addInertiaLoadToUnbalance(const Vector &accel)
 const Vector &LadrunoQuad::getResistingForce(void)
 {
   P.Zero();
+  static Vector sigma(3);
+
+  if (formulation == Formulation::SSP) {
+    // fint = s*Kstab*d + 4*t*J0*Mmem^T*sigma - body - Q
+    static Vector d(8);
+    for (int a = 0; a < 4; a++) {
+      const Vector &di = theNodes[a]->getTrialDisp();
+      d(2 * a)     = di(0);
+      d(2 * a + 1) = di(1);
+    }
+    P.addMatrixVector(0.0, Kstab, d, this->damageScale());
+    sigma = theMaterial[0]->getStress();
+    P.addMatrixTransposeVector(1.0, Mmem, sigma, 4.0 * thickness * J0);
+
+    const double xi[4]  = {-1.0,  1.0, 1.0, -1.0};
+    const double eta[4] = {-1.0, -1.0, 1.0,  1.0};
+    double bx = (applyLoad == 0) ? b[0] : appliedB[0];
+    double by = (applyLoad == 0) ? b[1] : appliedB[1];
+    for (int i = 0; i < 4; i++) {
+      double w = thickness * (J0 + J1 * xi[i] + J2 * eta[i]);
+      P(2 * i)     -= bx * w;
+      P(2 * i + 1) -= by * w;
+    }
+    if (pressure != 0.0)
+      P.addVector(1.0, pressureLoad, -1.0);
+    P.addVector(1.0, Q, -1.0);
+    return P;
+  }
+
   if (formulation == Formulation::BBAR)
     this->computeShapeBar();
 
   static Matrix B(3, 8);
-  static Vector sigma(3);
   for (int i = 0; i < 4; i++) {
     double dvol = this->shapeFunction(pts[i][0], pts[i][1]) * thickness * wts[i];
     this->formB(B);
@@ -529,6 +737,10 @@ int LadrunoQuad::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
   connectedExternalNodes(2) = idData(10);
   connectedExternalNodes(3) = idData(11);
 
+  // the cached damage probe points into theMaterial[0], which is about to be
+  // re-brokered; drop it so it can't dangle (setDomain rebuilds it).
+  if (damageResponse) { delete damageResponse; damageResponse = 0; }
+
   if (theMaterial == 0) {
     theMaterial = new NDMaterial *[4];
     for (int i = 0; i < 4; i++) {
@@ -595,9 +807,10 @@ int LadrunoQuad::displaySelf(Renderer &theViewer, int displayMode, float fact,
     coords(3, i) = v4(i);
   }
   static Vector values(4);
+  const bool sp = this->isSinglePoint();
   if (displayMode < 4 && displayMode > 0)
     for (int i = 0; i < 4; i++)
-      values(i) = theMaterial[i]->getStress()(displayMode - 1);
+      values(i) = theMaterial[sp ? 0 : i]->getStress()(displayMode - 1);
   else
     for (int i = 0; i < 4; i++) values(i) = 0.0;
 
@@ -615,12 +828,16 @@ Response *LadrunoQuad::setResponse(const char **argv, int argc, OPS_Stream &outp
     theResponse = new ElementResponse(this, 1, P);
   } else if (strcmp(argv[0], "material") == 0 || strcmp(argv[0], "integrPoint") == 0) {
     int pointNum = atoi(argv[1]);
+    // SSP evaluates the material only at the centroid (slot 0).
+    int idx = this->isSinglePoint() ? 0 : (pointNum - 1);
     if (pointNum > 0 && pointNum <= 4)
-      theResponse = theMaterial[pointNum - 1]->setResponse(&argv[2], argc - 2, output);
+      theResponse = theMaterial[idx]->setResponse(&argv[2], argc - 2, output);
   } else if (strcmp(argv[0], "stresses") == 0 || strcmp(argv[0], "stress") == 0) {
     theResponse = new ElementResponse(this, 3, Vector(12));
   } else if (strcmp(argv[0], "strains") == 0 || strcmp(argv[0], "strain") == 0) {
     theResponse = new ElementResponse(this, 4, Vector(12));
+  } else if (strcmp(argv[0], "charLength") == 0 || strcmp(argv[0], "characteristicLength") == 0) {
+    theResponse = new ElementResponse(this, 5, 0.0);
   }
 
   output.endTag();
@@ -634,15 +851,21 @@ int LadrunoQuad::getResponse(int responseID, Information &eleInfo)
 
   if (responseID == 3 || responseID == 4) {
     static Vector v(12);
+    const bool sp = this->isSinglePoint();
     int cnt = 0;
     for (int i = 0; i < 4; i++) {
-      const Vector &s = (responseID == 3) ? theMaterial[i]->getStress()
-                                          : theMaterial[i]->getStrain();
+      int idx = sp ? 0 : i;   // SSP: mirror the single centroid material
+      const Vector &s = (responseID == 3) ? theMaterial[idx]->getStress()
+                                          : theMaterial[idx]->getStrain();
       v(cnt) = s(0); v(cnt + 1) = s(1); v(cnt + 2) = s(2);
       cnt += 3;
     }
     return eleInfo.setVector(v);
   }
+
+  if (responseID == 5)
+    return eleInfo.setDouble(this->getCharacteristicLength());
+
   return -1;
 }
 

@@ -253,8 +253,9 @@ def _quad_refused(*extra):
     return 1 not in tags
 
 
-def test_formulation_ssp_reserved():
-    assert _quad_refused("-formulation", "ssp"), "ssp must be refused (ADR 25 P2)"
+def test_formulation_ssp_builds():
+    # P2: ssp is now implemented (no longer refused)
+    assert not _quad_refused("-formulation", "ssp"), "ssp must build (ADR 25 P2)"
 
 
 def test_formulation_eas_reserved():
@@ -265,3 +266,74 @@ def test_bbar_planestress_refused():
     assert _quad_refused("-type", "PlaneStress", "-formulation", "bbar"), (
         "bbar is PlaneStrain-only"
     )
+
+
+# --------------------------------------------------------------------------
+# P2 — ssp (stabilized single-point) reduces to upstream SSPquad
+# --------------------------------------------------------------------------
+@pytest.mark.parametrize("nu", [0.0, 0.3, 0.45, 0.499])
+def test_quad_ssp_matches_SSPquad_planestrain(nu):
+    """LadrunoQuad -formulation ssp reproduces upstream SSPquad to ~1e-6 across
+    the full Poisson range (the stabilization is the validated quantity — patch/
+    rank cannot validate it; the SSPquad cross-check can)."""
+    ref = _static_solve(_QNODES, _QCONN, _QBASE, _QLOADS,
+                        lambda m: ops.element("SSPquad", 1, *_QCONN, m, "PlaneStrain", _THK), nu=nu)
+    ours = _static_solve(_QNODES, _QCONN, _QBASE, _QLOADS,
+                        lambda m: ops.element("LadrunoQuad", 1, *_QCONN, m,
+                                              "-thick", _THK, "-type", "PlaneStrain",
+                                              "-formulation", "ssp"), nu=nu)
+    _assert_close(ours[0], ref[0], "disp", rtol=1e-6, atol=1e-9)
+    _assert_close(ours[2], ref[2], "force", rtol=1e-6, atol=1e-8)
+
+
+def test_quad_ssp_matches_SSPquad_planestress():
+    ref = _static_solve(_QNODES, _QCONN, _QBASE, _QLOADS,
+                        lambda m: ops.element("SSPquad", 1, *_QCONN, m, "PlaneStress", _THK))
+    ours = _static_solve(_QNODES, _QCONN, _QBASE, _QLOADS,
+                        lambda m: ops.element("LadrunoQuad", 1, *_QCONN, m,
+                                              "-thick", _THK, "-type", "PlaneStress",
+                                              "-formulation", "ssp"))
+    _assert_close(ours[0], ref[0], "disp", rtol=1e-6, atol=1e-9)
+    _assert_close(ours[2], ref[2], "force", rtol=1e-6, atol=1e-8)
+
+
+def test_quad_ssp_no_spurious_modes():
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    for tag, (x, y) in _QNODES.items():
+        ops.node(tag, x, y)
+    ops.nDMaterial("ElasticIsotropic", 1, 1000.0, 0.3)
+    ops.element("LadrunoQuad", 1, *_QCONN, 1, "-thick", _THK,
+                "-type", "PlaneStrain", "-formulation", "ssp")
+    assert_zero_energy(list(_QNODES.keys()), ndf=2, ndm=2)
+
+
+# --------------------------------------------------------------------------
+# P2 — crack-band characteristic length
+# --------------------------------------------------------------------------
+def _charlen(place_fn, nodes):
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    for tag, (x, y) in nodes.items():
+        ops.node(tag, x, y)
+    ops.nDMaterial("ElasticIsotropic", 1, 1000.0, 0.3)
+    place_fn(1)
+    return ops.eleResponse(1, "charLength")[0]
+
+
+@pytest.mark.parametrize("formulation", ["std", "bbar", "ssp"])
+def test_quad_charlen_sqrt_area(formulation):
+    a, b = 2.0, 3.0
+    nodes = {1: (0, 0), 2: (a, 0), 3: (a, b), 4: (0, b)}
+    lch = _charlen(lambda m: ops.element("LadrunoQuad", 1, 1, 2, 3, 4, m,
+                                         "-thick", _THK, "-type", "PlaneStrain",
+                                         "-formulation", formulation), nodes)
+    assert abs(lch - math.sqrt(a * b)) <= 1e-9 + 1e-7 * math.sqrt(a * b)
+
+
+def test_cst_charlen_sqrt_2area():
+    p, q = 2.0, 3.0   # right triangle legs -> area = 0.5*p*q -> lch = sqrt(2*A) = sqrt(p*q)
+    nodes = {1: (0, 0), 2: (p, 0), 3: (0, q)}
+    lch = _charlen(lambda m: ops.element("LadrunoCST", 1, 1, 2, 3, m,
+                                         "-thick", _THK, "-type", "PlaneStrain"), nodes)
+    assert abs(lch - math.sqrt(p * q)) <= 1e-9 + 1e-7 * math.sqrt(p * q)
