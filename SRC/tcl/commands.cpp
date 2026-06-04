@@ -229,6 +229,8 @@ extern void *OPS_CentralDifference(void);
 extern void *OPS_ExplicitBathe(void);
 extern void *OPS_ExplicitBatheLNVD(void);
 extern void *OPS_CentralDifferenceLadruno(void);
+extern void *OPS_LadrunoArcLength(void);   // Ladruno
+extern void *OPS_LadrunoDynamicRelaxation(void);   // Ladruno
 extern void *OPS_ExplicitDifferenceStatic(void);
 extern void *OPS_CentralDifferenceAlternative(void);
 extern void *OPS_CentralDifferenceNoDamping(void);
@@ -4673,11 +4675,17 @@ specifyIntegrator(ClientData clientData, Tcl_Interp *interp, int argc,
 	return TCL_ERROR;	
       if (Tcl_GetDouble(interp, argv[3], &alpha) != TCL_OK)	
 	return TCL_ERROR;	
-      theStaticIntegrator = new ArcLength(arcLength,alpha);       
+      theStaticIntegrator = new ArcLength(arcLength,alpha);
 
   // if the analysis exists - we want to change the Integrator
   if (theStaticAnalysis != 0)
     theStaticAnalysis->setIntegrator(*theStaticIntegrator);
+  }
+
+  else if (strcmp(argv[1],"LadrunoArcLength") == 0) {   // Ladruno
+    theStaticIntegrator = (StaticIntegrator *)OPS_LadrunoArcLength();
+    if (theStaticIntegrator != 0 && theStaticAnalysis != 0)
+      theStaticAnalysis->setIntegrator(*theStaticIntegrator);
   }
 
   else if (strcmp(argv[1],"ArcLength1") == 0) {
@@ -5495,6 +5503,13 @@ specifyIntegrator(ClientData clientData, Tcl_Interp *interp, int argc,
     theTransientIntegrator = (TransientIntegrator *)OPS_CentralDifferenceLadruno();
 
     if (theTransientAnalysis != 0)
+      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+  }
+
+  else if (strcmp(argv[1],"LadrunoDynamicRelaxation") == 0) {   // Ladruno
+    theTransientIntegrator = (TransientIntegrator *)OPS_LadrunoDynamicRelaxation();
+
+    if (theTransientIntegrator != 0 && theTransientAnalysis != 0)
       theTransientAnalysis->setIntegrator(*theTransientIntegrator);
   }
 

@@ -30,9 +30,10 @@
 //
 // Usage:
 //   element('LadrunoBrick', tag, n1..n8, matTag
-//           [, '-formulation', <std|bbar|uri|eas>]   # default std
+//           [, '-formulation', <std|bbar|uri|ssp|eas>]   # default std
 //           [, '-geom', <linear|corot|finite>]       # default linear
 //           [, '-hourglass', <viscous|stiffness|physical>, coeff]  # uri only
+//           [, '-stab', beta]                          # eas only (ADR 20)
 //           [, '-lumped']
 //           [, '-b', bx, by, bz]
 //           [, '-damp', dampTag])
@@ -41,7 +42,8 @@
 // -geom finite, -formulation bbar selects the F-bar element (dSNPO eq 15.5), the
 // large-strain volumetric-locking cure; std uses the plain deformation gradient.
 //
-// std + bbar + uri(stiffness|physical|viscous) + eas are all implemented and
+// std + bbar + uri(stiffness|physical|viscous) + ssp + eas (true Simo-Rifai
+// enhanced assumed strain, ADR 19) are all implemented and
 // accepted at construction. NOTE: uri -hourglass viscous is rate-form damping
 // and EXPLICIT-ONLY — it adds no hourglass stiffness, so the element tangent is
 // rank-deficient under an implicit/eigen solver (use stiffness or physical
@@ -63,8 +65,8 @@ void *OPS_LadrunoBrick()
   if (OPS_GetNumRemainingInputArgs() < 10) {
     opserr << "WARNING insufficient arguments\n";
     opserr << "Want: element LadrunoBrick eleTag? n1? ... n8? matTag? "
-              "<-formulation std|bbar|uri|eas> <-hourglass type coeff> "
-              "<-lumped> <-b bx by bz> <-damp dampTag>\n";
+              "<-formulation std|bbar|uri|ssp|eas> <-hourglass type coeff> "
+              "<-stab beta> <-lumped> <-b bx by bz> <-damp dampTag>\n";
     return 0;
   }
 
@@ -90,6 +92,7 @@ void *OPS_LadrunoBrick()
   int massType = 0;
   Damping *theDamping = 0;
   int geomMethodID = SolidTransformation::METHOD_LINEAR;   // -geom (default linear)
+  double stabBeta = 0.0;   // -stab (ADR 20 eas tangent regularization; default 0)
 
   while (OPS_GetNumRemainingInputArgs() > 0) {
     const char *opt = OPS_GetString();
@@ -106,11 +109,13 @@ void *OPS_LadrunoBrick()
         formulation = LadrunoBrick::Formulation::BBAR;
       else if (strcmp(f, "uri") == 0 || strcmp(f, "reduced") == 0)
         formulation = LadrunoBrick::Formulation::URI;
+      else if (strcmp(f, "ssp") == 0)
+        formulation = LadrunoBrick::Formulation::SSP;
       else if (strcmp(f, "eas") == 0)
-        formulation = LadrunoBrick::Formulation::EAS;
+        formulation = LadrunoBrick::Formulation::EAS;   // true Simo-Rifai EAS (ADR 19)
       else {
         opserr << "WARNING unknown -formulation '" << f << "' for LadrunoBrick "
-               << idata[0] << " (use std|bbar|uri|eas)\n";
+               << idata[0] << " (use std|bbar|uri|ssp|eas)\n";
         return 0;
       }
     }
@@ -146,6 +151,27 @@ void *OPS_LadrunoBrick()
     }
     else if (strcmp(opt, "-lumped") == 0 || strcmp(opt, "-lump") == 0) {
       massType = 1;
+    }
+    else if (strcmp(opt, "-stab") == 0) {
+      // ADR 20: optional EAS tangent-regularization parameter beta. Floors the
+      // condensed tangent K* toward the displacement stiffness Kdd so the global
+      // Newton traverses inelastic localization (the bare eas notched-bar stall).
+      // The converged state is beta-independent in the convex regime (modified-
+      // Newton). Read as a number (Python float or Tcl numeric string).  // Ladruno
+      if (OPS_GetNumRemainingInputArgs() < 1) {
+        opserr << "WARNING -stab needs a beta value for LadrunoBrick " << idata[0] << endln;
+        return 0;
+      }
+      int n1 = 1;
+      if (OPS_GetDoubleInput(&n1, &stabBeta) < 0) {
+        opserr << "WARNING -stab beta must be a number for LadrunoBrick " << idata[0] << endln;
+        return 0;
+      }
+      if (stabBeta < 0.0) {
+        opserr << "WARNING LadrunoBrick " << idata[0]
+               << ": -stab beta must be >= 0 (got " << stabBeta << "); using 0\n";
+        stabBeta = 0.0;
+      }
     }
     else if (strcmp(opt, "-geom") == 0 || strcmp(opt, "-geometry") == 0) {
       if (OPS_GetNumRemainingInputArgs() < 1) {
@@ -190,7 +216,7 @@ void *OPS_LadrunoBrick()
     }
   }
 
-  // -damp is only wired through the std/bbar kernel; the uri/physical/eas
+  // -damp is only wired through the std/bbar kernel; the uri/physical/ssp
   // condensed single-point kernels do not apply element-level Damping. Drop it
   // with a clear diagnostic for those formulations rather than silently
   // allocating a no-op damping object that is committed every step.
@@ -203,16 +229,26 @@ void *OPS_LadrunoBrick()
     theDamping = 0;
   }
 
+  // -stab is an EAS-only lever (it regularizes the enhanced-strain condensation).
+  // Warn and drop it for any other formulation rather than silently ignoring.  // Ladruno
+  if (stabBeta != 0.0 && formulation != LadrunoBrick::Formulation::EAS) {
+    opserr << "WARNING LadrunoBrick " << idata[0]
+           << ": -stab is only meaningful with -formulation eas; ignoring it for this "
+              "formulation\n";
+    stabBeta = 0.0;
+  }
+
   // -geom finite (v3): updated-Lagrangian. std = plain F; bbar = F-bar (dSNPO
   // eq 15.5, the volumetric-locking cure for near-incompressible response).
-  // uri/eas + finite are reserved. Requires a finite-strain material (driven by
+  // uri/ssp/eas + finite are reserved (enhanced-F finite EAS is ADR 19's deferred
+  // follow-up). Requires a finite-strain material (driven by
   // setTrialF(F), e.g. nDMaterial LogStrain).
   if (geomMethodID == SolidTransformation::METHOD_FINITE) {
     if (formulation != LadrunoBrick::Formulation::STD &&
         formulation != LadrunoBrick::Formulation::BBAR) {
       opserr << "WARNING LadrunoBrick " << idata[0]
              << ": -geom finite supports -formulation std (plain F) or bbar "
-                "(F-bar); uri/eas + finite are reserved\n";
+                "(F-bar); uri/ssp/eas + finite are reserved\n";
       return 0;
     }
     if (dynamic_cast<FiniteStrainNDMaterial *>(mat) == 0) {
@@ -245,8 +281,8 @@ void *OPS_LadrunoBrick()
   }
 
   // -geom corot (v2): EICR small-strain corotational. v2 ships std + bbar only.
-  // uri/eas under corot are a deferred follow-up (ADR 10 §6/§7): EAS condensation
-  // in the corotated frame is unvalidated, and uri's PHYSICAL-hourglass path does
+  // uri/ssp/eas under corot are a deferred follow-up (ADR 10 §6/§7): the single-point
+  // stabilization in the corotated frame is unvalidated, and uri's PHYSICAL-hourglass path does
   // not route through the globalize seams at all (frame-inconsistent). Reject the
   // unsupported combos at parse time, mirroring the -geom finite guard.  // Ladruno (sweep #1)
   if (geomMethodID == SolidTransformation::METHOD_COROT &&
@@ -254,7 +290,7 @@ void *OPS_LadrunoBrick()
       formulation != LadrunoBrick::Formulation::BBAR) {
     opserr << "WARNING LadrunoBrick " << idata[0]
            << ": -geom corot currently supports only -formulation std|bbar "
-              "(uri/eas under corot are a deferred follow-up)\n";
+              "(uri/ssp/eas under corot are a deferred follow-up)\n";
     return 0;
   }
 
@@ -276,5 +312,6 @@ void *OPS_LadrunoBrick()
                           idata[1], idata[2], idata[3], idata[4],
                           idata[5], idata[6], idata[7], idata[8],
                           *mat, formulation, bf[0], bf[1], bf[2],
-                          massType, hgType, hgCoeff, theDamping, geomMethodID);
+                          massType, hgType, hgCoeff, theDamping, geomMethodID,
+                          stabBeta);
 }

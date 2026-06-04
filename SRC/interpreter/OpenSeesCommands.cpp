@@ -1717,6 +1717,9 @@ int OPS_Integrator()
     } else if (strcmp(type,"ArcLength") == 0) {
 	si = (StaticIntegrator*)OPS_ArcLength();
 
+    } else if (strcmp(type,"LadrunoArcLength") == 0) {   // Ladruno
+	si = (StaticIntegrator*)OPS_LadrunoArcLength();
+
     } else if (strcmp(type,"ArcLength1") == 0) {
 	si = (StaticIntegrator*)OPS_ArcLength1();
 
@@ -1863,6 +1866,9 @@ int OPS_Integrator()
 
     } else if (strcmp(type, "CentralDifferenceLadruno") == 0) {
 	ti = (TransientIntegrator*)OPS_CentralDifferenceLadruno();
+
+    } else if (strcmp(type, "LadrunoDynamicRelaxation") == 0) {   // Ladruno
+	ti = (TransientIntegrator*)OPS_LadrunoDynamicRelaxation();
 
     } else {
 	opserr<<"WARNING unknown integrator type "<<type<<"\n";

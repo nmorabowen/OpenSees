@@ -330,6 +330,7 @@
 #define MAT_TAG_Ratchet 7002
 #define MAT_TAG_LadrunoUniaxialJ2 33000 // N. Mora-Bowen (Ladruno) — uniaxial combined iso (Voce+linear) + Chaboche AF kinematic J2 (twin of nDMaterial LadrunoJ2); ladruno private uniaxial band >=33000
 #define MAT_TAG_LadrunoRebarBuckling 33001 // N. Mora-Bowen (Ladruno) — rebar-buckling wrapper (Dhakal-Maekawa) over any UniaxialMaterial; ladruno private uniaxial band >=33000 (sibling of LadrunoUniaxialJ2=33000)
+#define MAT_TAG_LadrunoBondSlip 33002 // N. Mora-Bowen (Ladruno) — 1D bond-slip tau-s (CEB-FIP MC2010) for the embedded-rebar element; ladruno private uniaxial band >=33000
 
 #define SEC_TAG_Elastic2d                        3
 #define SEC_TAG_Elastic3d                        4
@@ -575,7 +576,8 @@
 #define ND_TAG_LogStrainNDMaterial 33010 // N. Mora-Bowen (Ladruno) — logarithmic/Hencky finite-strain adaptor (seam 3); ladruno private ND band >=33010
 #define ND_TAG_LadrunoJ2 33011 // N. Mora-Bowen (Ladruno) — combined isotropic (Voce+linear) + Chaboche AF kinematic von Mises J2
 #define ND_TAG_LadrunoJ2Finite 33012 // N. Mora-Bowen (Ladruno) — finite-strain-native combined-hardening J2 with co-rotating backstress (dSNPO §14.11)
-#define ND_TAG_LadrunoRCConcrete 33014 // N. Mora-Bowen (Ladruno) — RC plastic-damage (ASDConcrete3D spine + MCFT compression softening); ONE multi-dim class (3D/PlaneStress/PlateFiber via getType/getCopy, LadrunoJ2 pattern); ADR 19. (33013 used by InitDefGrad on a sibling branch.)
+#define ND_TAG_InitDefGradNDMaterial 33013 // N. Mora-Bowen (Ladruno) — multiplicative staged-activation wrapper (F_rel = F·F0⁻¹); stress-free birth of finite-strain continuum elements appended mid-stage
+#define ND_TAG_LadrunoRCConcrete 33014 // N. Mora-Bowen (Ladruno) — RC plastic-damage (ASDConcrete3D spine + MCFT compression softening); ONE multi-dim class (3D/PlaneStress/PlateFiber via getType/getCopy, LadrunoJ2 pattern); ADR 19
 
 
 #define FIBER_TAG_Uniaxial2d	1
@@ -914,7 +916,7 @@
 #define ELE_TAG_PML3DVISCOUS               271 // Amin Pakzad
 #define ELE_TAG_BezierTri6                 33000 // N. Mora-Bowen (Ladruno) — quadratic Bézier triangle (Kadapa 2018); ladruno private band >=33000 (was 272, collided one above upstream PML3DVISCOUS=271)
 #define ELE_TAG_BezierTet10                33001 // N. Mora-Bowen (Ladruno) — quadratic Bézier tetrahedron (Kadapa 2018); ladruno private band >=33000 (sibling of BezierTri6=33000)
-#define ELE_TAG_LadrunoBrick               33002 // N. Mora-Bowen (Ladruno) — unified 8-node hex, -formulation {std|bbar|uri|eas}; ladruno private band >=33000 (see Ladruno_implementation/09_ladruno_brick.md)
+#define ELE_TAG_LadrunoBrick               33002 // N. Mora-Bowen (Ladruno) — unified 8-node hex, -formulation {std|bbar|uri|ssp}; ladruno private band >=33000 (see Ladruno_implementation/09_ladruno_brick.md)
 #define ELE_TAG_LadrunoIMKBeam             33003 // N. Mora-Bowen (Ladruno) — 3D concentrated-plasticity IMK beam macro (uncoupled moment-rotation hinges); ladruno private band >=33000 (see Ladruno_implementation/14_ladruno_imk_beam.md)
 #define ELE_TAG_LadrunoIMKBeam2d           33004 // N. Mora-Bowen (Ladruno) — 2D concentrated-plasticity IMK beam macro (planar counterpart of 33003; shared hinge kernel); ladruno private band >=33000 (see Ladruno_implementation/14_ladruno_imk_beam.md)
 
@@ -1124,6 +1126,8 @@
 #define INTEGRATOR_TAGS_ExplicitDifferenceStatic        33001 // J.A. Abell (Ladruno) — explicit static difference; ladruno private band >=33000 (was 62)
 #define INTEGRATOR_TAGS_ExplicitBatheLNVD               33002 // N. Mora-Bowen (Ladruno) — Noh-Bathe + LNVD damping; ladruno private band >=33000 (was 63)
 #define INTEGRATOR_TAGS_CentralDifferenceLadruno        33003 // N. Mora-Bowen (Ladruno) — explicit leap-frog central difference; ladruno private band >=33000 (was 64)
+#define INTEGRATOR_TAGS_LadrunoArcLength                 33004 // N. Mora-Bowen (Ladruno) — adaptive (+ future viscous-stabilized) arc-length; ladruno integrator band >=33000. NB 33004 is independently reused in the ELE_TAG space (ELE_TAG_LadrunoIMKBeam2d=33004) — tag bands are PER-REGISTRY, no collision.
+#define INTEGRATOR_TAGS_LadrunoDynamicRelaxation         33005 // N. Mora-Bowen (Ladruno) — quasi-static dynamic relaxation (Gershgorin fictitious mass + Cundall kinetic damping); TransientIntegrator, ladruno integrator band >=33000.
 
 
 #define LinSOE_TAGS_FullGenLinSOE		1

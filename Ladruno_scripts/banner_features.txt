@@ -14,13 +14,16 @@ Explicit Noh–Bathe integrators (ExplicitBathe / LNVD)
 Queryable critical time step (dt_cr)
 BezierTri6 — quadratic Bézier triangle (Kadapa 2018)
 BezierTet10 — quadratic Bézier tetrahedron (Kadapa 2018)
-LadrunoBrick — unified hex (std/bbar/uri/eas + hourglass)
+LadrunoBrick — unified hex (std/bbar/uri/ssp/eas + hourglass)
 Solid geometry methods — -geom linear/corot/finite (+ F-bar)
 LadrunoJ2 — combined iso + Chaboche AF kinematic J2
 LadrunoJ2Finite — finite-strain J2, co-rotating backstress (+IMPL-EX)
 LadrunoUniaxialJ2 — uniaxial Chaboche AF J2 fiber/truss
+InitDefGrad — finite-strain stress-free staged activation (F_rel=F·F0⁻¹)
 Lemaitre ductile damage (-damage lemaitre, +lch, +IMPL-EX)
 LadrunoIMKBeam — concentrated-plasticity IMK beam hinges
 LadrunoRebarBuckling — rebar buckling wrapper (Dhakal–Maekawa / Gomes–Appleton, cyclic re-straightening)
 LadrunoRCConcrete — RC plastic-damage + MCFT compression softening (shell)
+LadrunoArcLength — adaptive arc-length radius (Ramm desired-iter)
+LadrunoDynamicRelaxation — quasi-static DR (Gershgorin mass + kinetic damping)
 Ladruno — modular HDF5 .ladruno recorder

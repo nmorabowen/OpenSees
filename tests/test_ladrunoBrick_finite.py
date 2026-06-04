@@ -265,8 +265,8 @@ def test_finite_requires_a_finite_strain_material():
     )
 
 
-def test_finite_accepts_std_and_bbar_rejects_uri_eas():
-    # std (plain F) and bbar (F-bar) are both valid with -geom finite; uri/eas
+def test_finite_accepts_std_and_bbar_rejects_uri_ssp():
+    # std (plain F) and bbar (F-bar) are both valid with -geom finite; uri/ssp
     # finite are reserved and must be refused.
     def _mk(form):
         ops.wipe()
@@ -283,7 +283,7 @@ def test_finite_accepts_std_and_bbar_rejects_uri_eas():
         tags = [tags] if isinstance(tags, int) else (tags or [])
         assert 1 in tags, f"-geom finite -formulation {form} should be accepted"
 
-    for form in ("uri", "eas"):
+    for form in ("uri", "ssp"):
         _ele_absent_after(lambda f=form: _mk(f))
 
 

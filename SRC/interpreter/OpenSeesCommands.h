@@ -545,6 +545,7 @@ void* OPS_GimmeMCK();
 void* OPS_HarmonicSteadyState();
 void* OPS_ArcLength();
 void* OPS_ArcLength1();
+void* OPS_LadrunoArcLength();   // Ladruno
 void* OPS_HSConstraint();
 void* OPS_MinUnbalDispNorm();
 void* OPS_TRBDF2();
@@ -590,6 +591,7 @@ void* OPS_ExplicitDifference();
 void* OPS_ExplicitBathe();
 void* OPS_ExplicitBatheLNVD();
 void* OPS_CentralDifferenceLadruno();
+void* OPS_LadrunoDynamicRelaxation();   // Ladruno
 
 void* OPS_LinearAlgorithm();
 void* OPS_NewtonRaphsonAlgorithm();

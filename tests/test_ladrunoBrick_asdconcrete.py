@@ -6,7 +6,8 @@ ASDConcrete3D (`SRC/material/nD/ASDConcrete3DMaterial.{h,cpp}`):
 1. **Characteristic-length handshake / mesh-objectivity** (the lch handshake of
    Ladruno_implementation/11_brick_asdconcrete_integration.md §1). With
    ``-autoRegularization`` the fracture energy is regularized by the element's
-   characteristic length (LadrunoBrick = min edge), so the dissipated energy is
+   characteristic length (LadrunoBrick = cbrt(element volume), the geometry-true
+   hex size), so the dissipated energy is
    ``G_f/lch · V = G_f · A`` — i.e. it scales with crack AREA, not VOLUME. A
    single cube pulled to failure at sizes L and 2L must dissipate energy in the
    ratio ``(2L)²/L² = 4`` (area), NOT ``8`` (volume). At L = lch_ref the curve is
@@ -14,7 +15,7 @@ ASDConcrete3D (`SRC/material/nD/ASDConcrete3DMaterial.{h,cpp}`):
    the volume.
 
 2. **Tier-A damage-scaled hourglass stabilization** (item (a) / §3). The single-
-   point STIFFNESS-stabilized formulations (eas, uri+stiffness) degrade their
+   point STIFFNESS-stabilized formulations (ssp, uri+stiffness) degrade their
    constant elastic ``Kstab`` with the material damage:
    ``Kstab ← max(floor, 1 - max(d_t, d_c)) · Kstab_elastic`` (floor = 1%). The
    "hourglassEnergy" report carries that scale, so for an IDENTICAL prescribed
@@ -68,6 +69,55 @@ def _concrete(tag):
 
 
 # ===========================================================================
+# 0. charLength geometry — lch = cbrt(V), geometry-true on a distorted hex
+# ===========================================================================
+def _box(a, b, c):
+    """Axis-aligned a×b×c box in LadrunoBrick (Brick) node order."""
+    return {1: (0, 0, 0), 2: (a, 0, 0), 3: (a, b, 0), 4: (0, b, 0),
+            5: (0, 0, c), 6: (a, 0, c), 7: (a, b, c), 8: (0, b, c)}
+
+
+def _char_length(box, form_args):
+    """Build a single elastic box element and read back its charLength response."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for t, crd in box.items():
+        ops.node(t, *crd)
+    ops.nDMaterial("ElasticIsotropic", 1, E, NU)
+    ops.element("LadrunoBrick", 1, *_CONN, 1, *form_args)
+    return ops.eleResponse(1, "charLength")[0]
+
+
+@pytest.mark.parametrize("form_args", [
+    ["-formulation", "std"],
+    ["-formulation", "bbar"],
+    ["-formulation", "ssp"],
+])
+def test_char_length_is_cbrt_volume(form_args):
+    """charLength = cbrt(V). On a cube of side L it equals the edge L; on a
+    stretched a×b×c box it equals the geometric mean cbrt(a·b·c) — decisively NOT
+    the minimum edge min(a,b,c) that the Element base default would return. This
+    is the whole point: the regularization band auto-sizes geometry-true on a
+    distorted hex instead of collapsing onto the shortest edge."""
+    from math import isclose
+
+    # cube: lch == edge
+    L = 1.7
+    assert isclose(_char_length(_cube(L), form_args), L, rel_tol=1e-9), \
+        f"{form_args}: cube charLength != edge {L}"
+
+    # stretched box: lch == cbrt(a·b·c), NOT min(a,b,c)
+    a, b, c = 4.0, 1.0, 0.5
+    lch = _char_length(_box(a, b, c), form_args)
+    cbrt_v = (a * b * c) ** (1.0 / 3.0)
+    assert isclose(lch, cbrt_v, rel_tol=1e-9), \
+        f"{form_args}: charLength {lch:.6f} != cbrt(V) {cbrt_v:.6f}"
+    # and the fix is meaningful: geometric mean differs from the old min-edge
+    assert lch > min(a, b, c) + 0.1, \
+        f"{form_args}: charLength collapsed onto the min edge (base default not overridden)"
+
+
+# ===========================================================================
 # 1. lch handshake — dissipated energy scales with crack AREA (mesh-objective)
 # ===========================================================================
 def _dissipation_uniaxial(L, form_args, nsteps=400):
@@ -110,7 +160,7 @@ def _dissipation_uniaxial(L, form_args, nsteps=400):
 @pytest.mark.parametrize("form_args", [
     ["-formulation", "std"],
     ["-formulation", "bbar"],
-    ["-formulation", "eas"],
+    ["-formulation", "ssp"],
 ])
 def test_lch_handshake_mesh_objectivity(form_args):
     """Dissipated energy regularizes by lch: it scales with crack AREA (∝ L²),
@@ -188,7 +238,7 @@ def _prescribed_run(form_args, material, nsteps=120, eps_max=5.0e-3, beta=1.0e-3
 
 
 @pytest.mark.parametrize("form_args", [
-    ["-formulation", "eas"],
+    ["-formulation", "ssp"],
     ["-formulation", "uri", "-hourglass", "stiffness"],
 ])
 def test_tier_a_damage_scaled_kstab(form_args):

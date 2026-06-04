@@ -14,7 +14,7 @@ tags:
   - locking
   - hourglass
   - bbar
-  - eas
+  - ssp
   - reduced-integration
   - finite-strain
 aliases:
@@ -30,7 +30,7 @@ aliases:
 > solid element. Instead of forcing the analyst to pick a different element
 > **class** for each anti-locking trick, it exposes the formulation as a single
 > **`-formulation`** selector — `std` (full integration), `bbar` (mean-dilatation
-> B-bar), `uri` (1-point reduced integration + hourglass control), `eas`
+> B-bar), `uri` (1-point reduced integration + hourglass control), `ssp`
 > (enhanced assumed strain) — and an *orthogonal* **`-geom`** selector for the
 > kinematic regime — `linear`, `corot` (large rotation / small strain), `finite`
 > (large strain, updated-Lagrangian / F-bar). One class, one `classTag`
@@ -52,7 +52,7 @@ aliases:
 4. [[#4 · Volumetric locking and the B-bar cure (`bbar`)]]
 5. [[#5 · Reduced integration, hourglass modes and their control (`uri`)]]
 6. [[#6 · Assumed-strain stabilization — the `physical` hourglass]]
-7. [[#7 · Enhanced Assumed Strain (`eas`)]]
+7. [[#7 · Stabilized Single-Point (`ssp`)]]
 8. [[#8 · The geometry seam — `linear` / `corot` / `finite`]]
 9. [[#9 · Damage-scaled stabilization (softening support)]]
 10. [[#10 · OpenSees implementation]]
@@ -100,7 +100,7 @@ combinations are redundant or contradictory:
 - A selector makes invalid states unrepresentable.
 
 The reward for the bit-for-bit *reproduction* goal: because v1 is small-strain,
-the assembled stiffness of `std`/`bbar`/`eas` is **provably identical** to
+the assembled stiffness of `std`/`bbar`/`ssp` is **provably identical** to
 `Brick`/`bbarBrick`/`SSPbrick`. That overlap is the correctness anchor.
 
 ---
@@ -111,7 +111,7 @@ the assembled stiffness of `std`/`bbar`/`eas` is **provably identical** to
 
 ```python
 element('LadrunoBrick', eleTag, n1,n2,n3,n4,n5,n6,n7,n8, matTag
-        [, '-formulation', <std|bbar|uri|eas>]     # default: std
+        [, '-formulation', <std|bbar|uri|ssp|eas>]  # default: std
         [, '-geom',        <linear|corot|finite>]  # default: linear
         [, '-hourglass',   <stiffness|physical|viscous> [, coeff]]  # uri only
         [, '-lumped']                              # diagonal mass (explicit)
@@ -126,14 +126,18 @@ Tcl mirror: `element LadrunoBrick $tag $n1 ... $n8 $matTag -formulation bbar ...
 
 | Axis | Keyword | Values | Controls |
 |---|---|---|---|
-| **Formulation** | `-formulation` | `std`, `bbar`, `uri`, `eas` | strain interpolation / anti-locking treatment |
+| **Formulation** | `-formulation` | `std`, `bbar`, `uri`, `ssp`, `eas` | strain interpolation / anti-locking treatment |
 | **Geometry method** | `-geom` | `linear`, `corot`, `finite` | kinematic regime (small / large rotation / large strain) |
 
 > [!note] Supported combinations (parser-enforced)
-> - `linear` + any of `{std, bbar, uri, eas}` ✅
-> - `corot` + `{std, bbar}` ✅ — `uri`/`eas` under corot are a deferred follow-up.
+> - `linear` + any of `{std, bbar, uri, ssp, eas}` ✅
+> - `corot` + `{std, bbar}` ✅ — `uri`/`ssp`/`eas` under corot are a deferred follow-up.
 > - `finite` + `{std (plain F), bbar (F-bar)}` ✅ — requires a `FiniteStrainNDMaterial`
->   (e.g. `nDMaterial LogStrain`); `uri`/`eas` + finite are reserved.
+>   (e.g. `nDMaterial LogStrain`); `uri`/`ssp`/`eas` + finite are reserved.
+>
+> `eas` is **true Simo–Rifai enhanced assumed strain** (small strain; ADR 19) —
+> distinct from the renamed single-point `ssp`. `eas`+corot/finite are reserved
+> (enhanced-`F` finite EAS is the deferred follow-up).
 >
 > Unsupported combos are rejected **at parse time** with a clear diagnostic
 > (`OPS_LadrunoBrick.cpp:206-259`).
@@ -148,7 +152,7 @@ Tcl mirror: `element LadrunoBrick $tag $n1 ... $n8 $matTag -formulation bbar ...
 | Material | one `NDMaterial` (`"ThreeDimensional"`), copied 8× (one per Gauss point) |
 | Broker | `FEM_ObjectBrokerAllClasses.cpp`: `ELE_TAG_LadrunoBrick → new LadrunoBrick()` |
 | Command | `OpenSeesElementCommands.cpp`: `OPS_LadrunoBrick` |
-| Banner | `LadrunoBrick — unified hex (std/bbar/uri/eas + hourglass)` |
+| Banner | `LadrunoBrick — unified hex (std/bbar/uri/ssp + hourglass)` |
 
 ---
 
@@ -324,7 +328,7 @@ The shear rows (4–6) are the unmodified `computeB` rows. This is exactly the
 
 > [!note] What B-bar does **not** fix
 > B-bar cures **volumetric** locking only. It does nothing for **shear /
-> parasitic-bending** locking — for that you need `uri+physical` or `eas`.
+> parasitic-bending** locking — for that you need `uri+physical` or `ssp`.
 
 ---
 
@@ -440,15 +444,25 @@ $$
 > matching `SSPbrick` at $\nu=0$) but it **volumetric-locks as $\nu\to0.5$** — the
 > eq-8.7.26 isochoric dev-projection over-softens bending and there is *no fixed
 > assumed strain that cures both shear and volumetric across all $\nu$*. The
-> general-$\nu$ element is **`eas`** (§7). This finding is recorded in [[LEDGER_quirks]].
+> general-$\nu$ element is **`ssp`** (§7). This finding is recorded in [[LEDGER_quirks]].
 
 Because `physical` works at all 8 GPs with the *true* material at each, it gives
-**8 independent damage points** — unlike the other `uri` flavours and `eas`,
+**8 independent damage points** — unlike the other `uri` flavours and `ssp`,
 which are single-point.
 
 ---
 
-## 7 · Enhanced Assumed Strain (`eas`)
+## 7 · Stabilized Single-Point (`ssp`)
+
+> [!warning] Naming (`eas` → `ssp`, 2026-06-02/03)
+> This formulation was **renamed `eas` → `ssp`** (PR-1). Despite its derivation
+> from `SSPbrick`'s enhanced-strain stabilization, it is **not** a true enhanced
+> assumed strain element — it has no per-step internal $\boldsymbol\alpha$ state
+> and freezes its stabilization against the *initial* tangent (§7.2). The freed
+> name **`-formulation eas` now selects true Simo–Rifai EAS** — a genuine mixed
+> element with live $\boldsymbol\alpha$ and per-iteration static condensation
+> (PR-2, **ADR 19**; see §7.3). §7.1 below is the variational background that BOTH
+> the `ssp` stabilization derives from and the true `eas` element implements.
 
 ### 7.1 The variational idea (Hu–Washizu / Simo–Rifai)
 
@@ -482,21 +496,21 @@ $$
 
 ### 7.2 The Ladruno port — Stabilized Single-Point (SSPbrick)
 
-`LadrunoBrick`'s `eas` is a **verbatim port of `UWelements/SSPbrick::GetStab`**.
+`LadrunoBrick`'s `ssp` is a **verbatim port of `UWelements/SSPbrick::GetStab`**.
 It is `bbar` (mean-dilatation constant part `Bnot`) **plus** statically-condensed
-EAS (9 enhanced modes). The decisive simplification, confirmed by reading
+stabilization (9 enhanced-strain modes). The decisive simplification, confirmed by reading
 SSPbrick:
 
 > [!success] The condensation uses the **initial** tangent → `Kstab` is **constant**
 > Because the static condensation is built from the **initial elastic** material
-> tangent $\mathbf C_0$, the operators `easBnot` ($6\times24$, the mean-dilatation
-> $\mathbf B$) and `easKstab` ($24\times24$, the condensed stabilization) are
+> tangent $\mathbf C_0$, the operators `sspBnot` ($6\times24$, the mean-dilatation
+> $\mathbf B$) and `sspKstab` ($24\times24$, the condensed stabilization) are
 > **constant** — there is **no per-step $\boldsymbol\alpha$ internal state** to
 > commit. So `commitState`/`revertTo*` need nothing new, and `sendSelf` carries
 > nothing extra: the operators are deterministic from geometry + initial tangent,
-> rebuilt in `setDomain()` on the receive side (`buildEAS()`, `:1895`).
+> rebuilt in `setDomain()` on the receive side (`buildSSP()`, `:1895`).
 
-The assembled stiffness and force (`formEAS()`, `:2370`), with damage scale
+The assembled stiffness and force (`formSSP()`, `:2370`), with damage scale
 $s$ (= 1 for non-softening materials, §9):
 
 $$
@@ -508,16 +522,68 @@ The centroid material (`materialPointers[0]`) carries the constant-strain
 constitutive response ($\boldsymbol\varepsilon=\mathbf B_{\text{not}}\mathbf u$,
 set in `update()`); `Kstab` stabilizes only the higher-order (bending/dilatation)
 modes. **Validation:** for a linear-elastic material the assembled stiffness is
-*identical* to `SSPbrick`, so `eas` matches `SSPbrick` tip deflection to
+*identical* to `SSPbrick`, so `ssp` matches `SSPbrick` tip deflection to
 $\sim10^{-6}$ across $\nu\in\{0,0.3,0.45,0.499\}$ and component-wise on a
 distorted hex. It is the **general-$\nu$** element: $>0.9$ accuracy at $\nu=0.499$
 where `physical` locks $<0.5$.
 
-> [!note] `eas` is single-point for the constitutive response
+> [!note] `ssp` is single-point for the constitutive response
 > It evaluates the material **once** (centroid, slot 0); the other 7 slots are
 > output mirrors (§10.7). So it has **1** damage point and **1** material eval per
 > element — $8\times$ cheaper than full integration for expensive materials, at
 > the cost of fidelity (one damage point).
+
+### 7.3 True Simo–Rifai EAS (`eas`) — the mixed element (PR-2, ADR 19)
+
+`-formulation eas` is the **variationally consistent** member of the family: full
+$2\times2\times2$ integration (**8 live** Gauss points, 8 damage points), with the
+compatible strain $\mathbf B\mathbf u$ enriched by an enhanced field
+$\tilde{\boldsymbol\varepsilon}=\mathbf M(\boldsymbol\xi)\,\boldsymbol\alpha$ whose
+**9 parameters $\boldsymbol\alpha$ are element-internal state**, solved each form
+pass and statically condensed:
+
+```
+inner Newton (d fixed):   solve  int M^T sigma dV = 0   ->  alpha
+condense:                 K* = Kdd - Kda Kaa^-1 Kad,   f* = int B^T sigma
+```
+
+The inner Newton drives the enhanced residual $h=\int\mathbf M^{\mathsf T}\boldsymbol\sigma$
+to zero, so the condensed force is just $\int\mathbf B^{\mathsf T}\boldsymbol\sigma$
+(the `EnhancedQuad` contract). The **E9** enhanced set = 3 natural-direction
+incompatible bubbles $\times$ 3 dofs (the Wilson lineage), mapped one-sidedly
+
+$$
+\mathbf M_i(\boldsymbol\xi)=\operatorname{sym}\!\big[(j_0/j)\,\mathbf J_0^{-\mathsf T}\mathbf E_i(\boldsymbol\xi)\big]
+\qquad\text{(ADR 19 eq. E.8 — NOT a two-leg }T_0\text{ strain transform).}
+$$
+
+with the centroid Jacobian $j_0,\mathbf J_0^{-1}$ cached at `setDomain`. The
+mean-zero property $\int_V\mathbf M\,dV=0$ (guaranteed by the $j_0/j$ scaling +
+centroid-only $\mathbf J_0$) is what passes the **constant-strain patch test on
+distorted meshes** — the operative EAS gate.
+
+> [!tip] How `eas` differs from `ssp`
+> Both descend from the same Simo–Rifai idea (§7.1), but `ssp` *freezes* a single
+> stabilization built from the **initial** tangent (no $\boldsymbol\alpha$ state,
+> 1 GP), whereas `eas` carries **live $\boldsymbol\alpha$** and re-condenses against
+> the **current** tangent at all 8 GPs every iteration. So `eas` tracks a nonlinear
+> material correctly and is the consistent choice; `ssp` is the cheap, robust
+> stabilization. **Use a Newton-family algorithm with `eas`** (as with any mixed
+> element); `update()` sets the converged trial state so committed stresses/recorders
+> are correct under `Linear` too. v1 is **small strain** (`eas`+corot/finite reserved
+> — enhanced-`F` finite EAS hourglasses in compression, ADR 19 §3). Validated in
+> `tests/test_ladrunoBrick_eas.py` (patch / reduce-to-`std` / bending / incompress /
+> $\boldsymbol\alpha$ state cycle).
+
+> [!warning] When NOT to use `eas`: notched / localization-dominated inelasticity
+> On a **notched, high-strain-gradient inelastic** problem (e.g. the Lemaitre
+> ductile-damage DEN bar of ADR 19) the bare E9 `eas` **stalls just past yield** —
+> a genuine instability of the enhanced modes under non-homogeneous plastic
+> tangents (NOT elastic hourglassing: a free `eas` element is rank-sufficient, 6
+> zero-energy modes, eigen-spectrum identical to `std`/`bbar`). On **homogeneous**
+> elastoplastic-damage `eas` is fine (matches `bbar`). **Use `bbar` or `ssp` for
+> notched/softening localization** until the EAS stabilization of
+> [[20_ladruno_brick_eas_stabilization|ADR 20]] lands.
 
 ---
 
@@ -533,7 +599,7 @@ large-strain are *additive*, not a rewrite:
 | **2. Geometry method** | de-rotate-in / re-rotate-out around an oblivious kernel | identity (`linear`) | `corot` (EICR), `finite` (UL) |
 | **3. Material adaptor** | element ↔ material boundary | $\boldsymbol\varepsilon\to$`setTrialStrain` | $\mathbf F\to$`setTrialF` (log-strain adaptor) |
 
-The constitutive/integration **core** (the `bbar`/`uri`/`eas` logic) lives
+The constitutive/integration **core** (the `bbar`/`uri`/`ssp` logic) lives
 *inside* the seams — it never learns which geometry method wraps it. That
 orthogonality is why `-geom corot -formulation bbar` needs **no new kernel code**.
 The geometry layer is a separate class family
@@ -600,7 +666,7 @@ the geometric / initial-stress stiffness $\int \mathbf G^{\mathsf T}\boldsymbol\
 ## 9 · Damage-scaled stabilization (softening support)
 
 When the material **softens** (ASDConcrete3D: cracking/crushing), the constant
-elastic `Kstab` of the single-point stiffness-stabilized forms (`eas`,
+elastic `Kstab` of the single-point stiffness-stabilized forms (`ssp`,
 `uri+stiffness`) **over-stiffens a cracked element** and blocks crack
 localization — the bulk carries $\sim0$ stress but the hourglass/bending modes
 keep their elastic stiffness. **Tier-A** fix (PR #101): degrade `Kstab` with the
@@ -642,7 +708,7 @@ SRC/element/ladrunoBrick/
 ```
 
 `class LadrunoBrick : public Element`. Two enums:
-`Formulation{STD,BBAR,URI,EAS}` and `Hourglass{VISCOUS,STIFFNESS,PHYSICAL}`.
+`Formulation{STD,BBAR,URI,SSP}` and `Hourglass{VISCOUS,STIFFNESS,PHYSICAL}`.
 
 ### 10.2 Key data members (`LadrunoBrick.h:140-189`)
 
@@ -652,7 +718,7 @@ SRC/element/ladrunoBrick/
 | `materialPointers[8]` | one `NDMaterial` copy per GP (`getCopy("ThreeDimensional")`) |
 | `formulation`, `hourglassType`, `hourglassCoeff` | the selectors |
 | `theGeom` (`SolidTransformation*`) | seam 2/3; rebuilt from id in `recvSelf` |
-| `easBnot` (6×24), `easKstab` (24×24), `easVol` | `eas` constant operators (rebuilt in `setDomain`) |
+| `sspBnot` (6×24), `sspKstab` (24×24), `sspVol` | `ssp` constant operators (rebuilt in `setDomain`) |
 | `damageResponse` (`Response*`) | cached `"damage"` query for Tier-A (rebuilt in `setDomain`; not serialized) |
 | `hgDissipated`, `uPrevCommit[24]`, `hgPrevValid` | viscous-hourglass dissipation accumulator (committed, serialized) |
 | `massType`, `b[3]`, `theDamping[8]` | mass / body force / element damping |
@@ -661,7 +727,7 @@ SRC/element/ladrunoBrick/
 
 ```mermaid
 flowchart LR
-  A[setDomain] -->|EAS| B[buildEAS once]
+  A[setDomain] -->|SSP| B[buildSSP once]
   A -->|stiffness-stab + softening| C[build damageResponse]
   D[update] -->|push trial strain/F| E[material setTrialStrain / setTrialF]
   F[getTangentStiff / getResistingForce] --> G[formResidAndTangent dispatch]
@@ -669,14 +735,14 @@ flowchart LR
   H -->|uri+viscous| I[hgDissipated += work increment]
 ```
 
-- **`setDomain()`** (`:234`): cache nodes; `buildEAS()` if `eas`; build
+- **`setDomain()`** (`:234`): cache nodes; `buildSSP()` if `ssp`; build
   `damageResponse` for stiffness-stabilized + softening materials.
 - **`update()`** (`:755`): compute trial strain and push to the material. Routes
-  to `updateFinite()` (finite), the EAS `Bnot·u` path, the URI centroid/assumed
+  to `updateFinite()` (finite), the SSP `Bnot·u` path, the URI centroid/assumed
   path, or the std/bbar per-GP path. **`isSinglePoint()`** (`:744`) short-circuits
-  EAS/uri-stiffness/uri-viscous to evaluate slot 0 only.
+  ssp/uri-stiffness/uri-viscous to evaluate slot 0 only.
 - **`getTangentStiff()`/`getResistingForce()`** → `formResidAndTangent()` (`:894`)
-  dispatches to `formUri`/`formEAS`/`formResidAndTangentFinite`/`formPhysical` or
+  dispatches to `formUri`/`formSSP`/`formResidAndTangentFinite`/`formPhysical` or
   the local std/bbar kernel.
 - **`commitState()`** (`:329`): commit materials/damping; for `uri+viscous`
   accumulate `viscousHourglassIncrement()` into `hgDissipated` and reseed
@@ -690,12 +756,12 @@ flowchart LR
 | linear | `bbar` | local bbar kernel (`:941`) | 2×2×2 dev + mean-dilatation, `computeBbar` |
 | linear | `uri`+`stiffness`/`viscous` | `formUri` (`:1490`) | 1-pt + FB hourglass |
 | linear | `uri`+`physical` | `formPhysical` (`:1768`) | 2×2×2 assumed strain |
-| linear | `eas` | `formEAS` (`:2370`) | `Kstab + V·BnotᵀCBnot` |
+| linear | `ssp` | `formSSP` (`:2370`) | `Kstab + V·BnotᵀCBnot` |
 | finite | `std`/`bbar` | `formResidAndTangentFinite` (`:1233`) | 2×2×2 spatial + geometric K |
 
 ### 10.5 Single-point material-eval optimization
 
-`isSinglePoint()` is true for `eas`, `uri+stiffness`, `uri+viscous`. For those the
+`isSinglePoint()` is true for `ssp`, `uri+stiffness`, `uri+viscous`. For those the
 constitutive model is evaluated **once** at the centroid (slot 0); slots 1–7 are
 **output mirrors**. This turns the $8\times$ redundant return-maps (a serious cost
 for ASDConcrete3D+IMPLEX) into $1\times$. `std`/`bbar`/`uri+physical`/`finite`
@@ -712,7 +778,7 @@ genuinely use all 8 GPs. Verified by `test_ladrunoBrick_singlepoint_output.py`
 | `strains` | 4 | `Vector(48)` = 6 strain comp × 8 GP |
 | `stress3D6` | 6 | `Vector(6)` averaged stress (vtkhdf) |
 | `strain3D6` | 7 | `Vector(6)` averaged strain |
-| `hourglassEnergy`/`hgEnergy`/`hgDissipation` | 8 | `Vector(1)`: stored ($\tfrac12 u^{\mathsf T}K_{\text{stab}}u$ for eas/uri-stiffness) **or** committed dissipated (uri+viscous); `0` for std/bbar/physical |
+| `hourglassEnergy`/`hgEnergy`/`hgDissipation` | 8 | `Vector(1)`: stored ($\tfrac12 u^{\mathsf T}K_{\text{stab}}u$ for ssp/uri-stiffness) **or** committed dissipated (uri+viscous); `0` for std/bbar/physical |
 | `material`/`integrPoint` $N$ | — | delegates to `materialPointers[slot]` (slot $=N-1$, or 0 if single-point) |
 
 Single-point output mirrors slot 0 onto all 8 GP blocks; `material N` for any GP
@@ -725,7 +791,7 @@ damping tags, and a **packed selector word**
 `idData(28) = formulation + 10·massType + 100·hourglassType + 1000·geomMethodID`;
 `dData` carries the Rayleigh coefficients, `b[3]`, `hourglassCoeff`, and the
 `hgDissipated` accumulator. **Not serialized** (deterministically rebuilt in
-`setDomain` on the receive side): `easBnot`, `easKstab`, `damageResponse`,
+`setDomain` on the receive side): `sspBnot`, `sspKstab`, `damageResponse`,
 `theGeom` (rebuilt from the id in `recvSelf`).
 
 ### 10.8 The fixed damping bug
@@ -749,19 +815,19 @@ float reaches the kernel and `-hourglass stiffness -lumped` still parses.
 ## 11 · Intended use cases & decision guide
 
 > [!tip] One-liner
-> **Implicit → `bbar`** (or **`eas`** for $\nu\to0.5$ / coarse bending).
-> **Explicit → `uri+physical`** (8 damage points) **or `eas`** (cheapest).
-> Single-point `Kstab` now damage-scales, so `eas`/`uri+stiffness` are usable
+> **Implicit → `bbar`** (or **`ssp`** for $\nu\to0.5$ / coarse bending).
+> **Explicit → `uri+physical`** (8 damage points) **or `ssp`** (cheapest).
+> Single-point `Kstab` now damage-scales, so `ssp`/`uri+stiffness` are usable
 > under softening — but full integration stays the most robust.
 
 | Analysis | Recommended | Why |
 |---|---|---|
 | **Implicit quasi-static** (push-over, capacity) | **`bbar`** (default), `std` if low-$\nu$ & no bending | full 2×2×2 → 8 independent damage points, **no hourglass**, best-conditioned Newton tangent; `bbar` also cures volumetric locking |
-| **Near-incompressible** ($\nu\to0.5$, undrained soil, J2 at yield) or **coarse bending** | **`eas`** | cures shear + volumetric across all $\nu$; well-conditioned tangent; `Kstab` now damage-scales |
-| **Explicit dynamics** (impact/blast, snap-back fallback) | **`uri+physical`** (8 damage pts) or **`eas`** (1 eval, cheapest) | both need `-lumped`; `uri+viscous` is rate damping |
+| **Near-incompressible** ($\nu\to0.5$, undrained soil, J2 at yield) or **coarse bending** | **`ssp`** | cures shear + volumetric across all $\nu$; well-conditioned tangent; `Kstab` now damage-scales |
+| **Explicit dynamics** (impact/blast, snap-back fallback) | **`uri+physical`** (8 damage pts) or **`ssp`** (1 eval, cheapest) | both need `-lumped`; `uri+viscous` is rate damping |
 | **Large rotation, small strain** (rotating member) | `-geom corot` + `std`/`bbar` | EICR; small-strain material OK if strains stay small |
 | **Large strain** (forming, soft soil, hyperelastic) | `-geom finite` + `std` (plain F) / `bbar` (F-bar) | needs `FiniteStrainNDMaterial` (LogStrain); unsymmetric solver for F-bar |
-| **Concrete / softening** | see [[11_brick_asdconcrete_integration]] | `bbar`/`std` most robust; `eas`/`uri` usable (damage-scaled `Kstab`), **monitor `hourglassEnergy` < 5–10%** |
+| **Concrete / softening** | see [[11_brick_asdconcrete_integration]] | `bbar`/`std` most robust; `ssp`/`uri` usable (damage-scaled `Kstab`), **monitor `hourglassEnergy` < 5–10%** |
 
 **Worked starting recipes:**
 
@@ -770,7 +836,7 @@ float reaches the kernel and `-hourglass stiffness -lumped` still parses.
 ops.element('LadrunoBrick', 101, *nodes, matTag, '-formulation', 'bbar')
 
 # Near-incompressible / coarse bending
-ops.element('LadrunoBrick', 102, *nodes, matTag, '-formulation', 'eas')
+ops.element('LadrunoBrick', 102, *nodes, matTag, '-formulation', 'ssp')
 
 # Explicit dynamic
 ops.element('LadrunoBrick', 201, *nodes, matTag,
@@ -789,15 +855,15 @@ ops.element('LadrunoBrick', 301, *nodes, 9, '-formulation', 'bbar', '-geom', 'fi
 ## 12 · Validation status
 
 > [!success] Proven (Zone-A + adversarial sweep; 47 tests across 12 files)
-> - **Bit-for-bit anchors:** `std`↔`Brick`, `bbar`↔`bbarBrick`, `eas`↔`SSPbrick`
+> - **Bit-for-bit anchors:** `std`↔`Brick`, `bbar`↔`bbarBrick`, `ssp`↔`SSPbrick`
 >   to $\sim10^{-9}$/$10^{-6}$ (distorted hex; disp+stress+force), incl. **J2**
 >   step-for-step (`test_ladrunoBrick_nonlinear.py`).
 > - **Patch test** (constant strain) + **rank / 6-RBM** for all formulations;
 >   `uri` 12 hourglass modes stabilized back to rank 18 with **zero** spurious
 >   energy on linear fields.
-> - **Locking:** volumetric relief (`bbar`/`uri`/`eas`); shear cure
->   (`physical`/`eas`); `physical`'s $\nu\to0.5$ limitation pinned;
->   `eas`↔`SSPbrick` across $\nu\in\{0,0.3,0.45,0.499\}$.
+> - **Locking:** volumetric relief (`bbar`/`uri`/`ssp`); shear cure
+>   (`physical`/`ssp`); `physical`'s $\nu\to0.5$ limitation pinned;
+>   `ssp`↔`SSPbrick` across $\nu\in\{0,0.3,0.45,0.499\}$.
 > - **Hourglass energy** = 0 on constant strain; viscous dissipation monotone /
 >   bounded / exactly 0 for rigid & constant-velocity motion.
 > - **`corot`/`finite` seams:** rigid-rotation objectivity, FD-tangent match
@@ -810,24 +876,24 @@ ops.element('LadrunoBrick', 301, *nodes, 9, '-formulation', 'bbar', '-geom', 'fi
 > [!caution] Not yet exercised
 > - Real partitioned (`sendSelf`/`recvSelf`) run is reasoned but METIS-blocked in
 >   this repo.
-> - `uri`/`eas` under *strongly* inelastic response beyond the J2/concrete suites.
+> - `uri`/`ssp` under *strongly* inelastic response beyond the J2/concrete suites.
 > - Higher-order (20/27-node) siblings do not exist.
 
 ---
 
 ## 13 · Limitations & roadmap
 
-- **`physical` volumetric-locks** at $\nu\to0.5$ (use `bbar`/`eas`).
+- **`physical` volumetric-locks** at $\nu\to0.5$ (use `bbar`/`ssp`).
 - **`uri+viscous`** is **explicit-only** (rank-deficient tangent).
 - **F-bar** (`bbar`+`finite`) has an **unsymmetric** tangent — needs an
   unsymmetric solver.
 - **Finite-strain combined hardening** is non-objective under large rotation
   (dSNPO §14.11) — pinned xfail for `LadrunoJ2`-finite.
-- `uri`/`eas` under `corot`/`finite` are **reserved** (deferred follow-ups).
+- `uri`/`ssp` under `corot`/`finite` are **reserved** (deferred follow-ups).
 - 7 phantom material instances are still *allocated* for single-point forms
   (cheap state-rolls; a memory-only optimization remains).
 
-**Roadmap:** higher-order (20N serendipity / 27N Lagrange) siblings; `uri`/`eas`
+**Roadmap:** higher-order (20N serendipity / 27N Lagrange) siblings; `uri`/`ssp`
 under `corot`; the §14.11 backstress-corotation finite-J2 v2 ([[project_ladruno_j2]]).
 
 ---
@@ -835,7 +901,7 @@ under `corot`; the §14.11 backstress-corotation finite-J2 v2 ([[project_ladruno
 ## 14 · References
 
 **Code:** `SRC/element/ladrunoBrick/` · `SRC/element/brick/{Brick,BbarBrick,shp3d}.cpp`
-(baseline) · `SRC/element/UWelements/SSPbrick.cpp` (`eas` blueprint) ·
+(baseline) · `SRC/element/UWelements/SSPbrick.cpp` (`ssp` blueprint) ·
 `SRC/element/.../SolidTransformation*` (geometry layer) ·
 `SRC/classTags.h:915` (`33002`).
 

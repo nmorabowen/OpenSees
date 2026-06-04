@@ -1,7 +1,7 @@
 ---
 title: Staged deformation gradient — stress-free activation of large-deformation continuum elements
 project: Ladruno
-status: design note (forward-looking; implementation TBD)
+status: IMPLEMENTED v1 (InitDefGradNDMaterial, seam-2, classTag 33013)
 tags:
   - design
   - staged-analysis
@@ -17,9 +17,13 @@ related:
 
 # Staged deformation gradient (`F₀`)
 
-> **Status:** design note. No code yet — this captures the theory and the intended
-> shape of a future Ladruno feature. See [[constraints_reference_position]] §4 for the
-> context (what happens when you append elements mid-stage) that motivates it.
+> **Status:** IMPLEMENTED as `InitDefGradNDMaterial` (`nDMaterial InitDefGrad`,
+> classTag 33013) — the **seam-2** material-wrapper route below. This note keeps the
+> theory; the **Implementation (v1)** section at the bottom records what shipped and,
+> importantly, **reconciles the PK1 dialect of the "energy consistency" section with
+> the spatial seam that actually landed** (the `J₀`/push-back accounting is subsumed —
+> read that before re-deriving anything from §"The subtlety"). See
+> [[constraints_reference_position]] §4 for the motivating context.
 
 ## Problem
 
@@ -97,6 +101,15 @@ configuration" theory, not a hack.
 
 ## The subtlety that must be respected (energy consistency)
 
+> [!warning] PK1 dialect — superseded by the spatial seam in practice.
+> The accounting below is written in **first-PK / total-Lagrangian** terms
+> (`P = P_rel·F₀⁻ᵀ`, weight by `J₀`). The seam that actually shipped
+> (`FiniteStrainNDMaterial`: `setTrialF(F)` in, **Cauchy σ** out, element integrates
+> `∫bᵀσ dv` on the *current* config with its own `det F`) is **spatial**, and in that
+> dialect this bookkeeping **disappears** — see **Implementation (v1) → the spatial
+> reconciliation**. Keep this section for the PK1 intuition, but do **not** add a
+> `J₀` weight or an `F₀⁻ᵀ` push-back to the spatial code: it is already correct.
+
 The element still integrates over the **original reference volume** `V₀`, but the
 material's stress-free state is now the *birth* config. To keep the internal
 force/energy and the tangent consistent, push the stress back through `F₀` and scale
@@ -171,6 +184,78 @@ Seam 2 is the more reusable; it depends on whether the target elements expose an
   appended element so post-processing matches its physical state.
 - **Class tags / ledger.** New element or material ⇒ allocate a class tag and add rows
   to [[LEDGER_implementations]] when code lands.
+
+## Implementation (v1) — `InitDefGradNDMaterial`
+
+Shipped 2026-06-03 as the **seam-2** route (the reusable F-interface material
+wrapper), because the finite-strain seam it needed already exists in-tree.
+
+**What it is.** `nDMaterial InitDefGrad $tag $innerTag <-noInitF> <-F0 f11..f33>`
+(classTag `ND_TAG_InitDefGradNDMaterial = 33013`). A `FiniteStrainNDMaterial`
+subclass wrapping an inner `FiniteStrainNDMaterial` (e.g. `LogStrain`). Because it
+**IS-A** `FiniteStrainNDMaterial`, `LadrunoBrick -geom finite` consumes it through
+the same `dynamic_cast<FiniteStrainNDMaterial*>` it already does — **zero element
+edits**. On `setTrialF(F)`: capture `F₀` (first call), then forward
+`setTrialF(F·F₀⁻¹)` to the inner; `getStress`/`getTangent`/`getSpatialTangentTensor`/
+`getJ`/`getStrain`/commit/revert/sendSelf delegate down.
+
+**The spatial reconciliation (read this before re-deriving §"The subtlety").** The
+note above is PK1; the shipped seam is spatial, and two facts collapse the `F₀`
+bookkeeping to nothing:
+
+1. **The incremental gradient is invariant to `F₀`.**
+   `F_Δ = F_rel·F_rel,n⁻¹ = (F·F₀⁻¹)(F_n·F₀⁻¹)⁻¹ = F·F_n⁻¹`. So `F₀` changes **only**
+   the stress-free initial elastic state at birth; the step-to-step response (and
+   hence the inner's `bᵉ` evolution) is identical with or without it.
+2. **Cauchy stress is reference-independent.** The inner returns `σ = τ_rel/J_rel`,
+   which **is** the true physical Cauchy stress (Kirchhoff `τ_rel` is relative to
+   the birth config, `J_rel = det F_rel = det F/det F₀`). The element integrates
+   `∫bᵀσ dv` on the **current** configuration with its own `det F`. So there is **no
+   `P = P_rel·F₀⁻ᵀ` push-back** (a PK1 artifact) and **no `J₀` integration weight**
+   (the current-config integration already carries the right measure). The inner's
+   `getJ()` returns `J_rel`, which the element does **not** use for assembly.
+
+Net: the wrapper is a near pass-through. The one genuine consistency point — the
+`J_rel` inside the spatial tangent `c = (1/2J_rel)[D:L:B]` matching the element's
+`dv = det F · dV` — is enforced by the element's **FD-tangent gate**, the same
+arbiter that validated the base finite seam and F-bar.
+
+**Trigger = auto-capture on the first `setTrialF`.** That first call is the birth
+gradient: `Domain::addElement → setDomain → update` evaluates the element at the
+**committed** deformed state, so the wrapper's first `F` is `F_birth`. Each mid-stage
+append gets a fresh wrapper instance ⇒ **multi-lift staged construction falls out for
+free** with no `InitialStateAnalysis`-style global toggle. Degenerates to identity at
+`t = 0` (`F₀ = I`). Opt-out `-noInitF` (pass-through ≡ bare inner); explicit `-F0` for
+a known birth gradient (kept across `revertToStart`; auto-capture re-arms instead);
+`setResponse("F0")` reports the captured gradient.
+
+**Why seam-2 over seam-1 (element captures `F₀`).** The element already exposes the
+F-interface (`FiniteStrainNDMaterial::setTrialF`), so the wrapper needs no element
+change and is reusable across any future F-based solid. Seam-1 would have edited
+`LadrunoBrick`'s finite path for no gain.
+
+**Validation** (`tests/test_initDefGrad_material.py`, all through `LadrunoBrick
+-geom finite` since the material has no Python `setTrialF`): `-noInitF` pass-through ≡
+bare inner (stress + force); explicit `-F0=G`, impose `F=G` → stress-free birth;
+**post-birth rigid rotation** `F=Q·G` → zero stress (the additive-`InitStrain`
+failure mode); reduce-to-relative (`InitDefGrad(-F0=G)` at `F=M` Cauchy σ == bare
+inner at `F=M·G⁻¹`); **wrapped consistent tangent == FD of resisting force** (the
+wrapper preserves Newton); **genuine two-phase staged construction** (deform+commit a
+holder brick, append an auto-capture `InitDefGrad` brick on the same nodes → born with
+~zero force, holder unchanged, reported `F₀` == the deformed gradient).
+
+**Resolved open questions** (from the list below): *capture trigger* → auto-capture
+(no explicit command); *which elements first* → `LadrunoBrick -geom finite` via the
+material seam (element-agnostic); *strain measure / material API* → the inner's
+`FiniteStrainNDMaterial` contract (Cauchy σ + spatial tangent, no push-back);
+*recorder semantics* → default **relative** Hencky (the appended element's physical
+state) via the inner, with the birth `F₀` exposed; total-strain channel deferred.
+*class tags / ledger* → 33013, row added to [[LEDGER_implementations]].
+
+**Deferred (v2):** a `totalStrain` recorder channel (Hencky from `X_ref`); the small-
+strain additive companion is unchanged (`InitStrain` stays correct there); an explicit
+re-birth/deactivation command (out of scope — OpenSees has no stress-relieving element
+deactivation anyway, §7 of [[constraints_reference_position]]).
 
 ## See also
 
