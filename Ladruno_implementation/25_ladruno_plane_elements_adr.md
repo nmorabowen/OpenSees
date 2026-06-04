@@ -34,11 +34,11 @@ element('LadrunoCST',  tag, n1,n2,n3,    matTag, '-geom', <linear|corot|finite>,
         '-thick', t, '-type', <PlaneStrain|PlaneStress>)
 ```
 
-- **`LadrunoQuad`** — 4-node bilinear quad. `ELE_TAG_LadrunoQuad = 33006` (next
-  in the element band after `LadrunoEmbeddedRebar=33005`). Carries the full
+- **`LadrunoQuad`** — 4-node bilinear quad. `ELE_TAG_LadrunoQuad = 33007` (next
+  in the element band after `LadrunoEmbeddedNode=33006`). Carries the full
   formulation × geometry menu, hourglass control, and the ASDConcrete crack-band
   `lch` handshake. This is where ~90% of the value lives.
-- **`LadrunoCST`** — 3-node constant-strain triangle. `ELE_TAG_LadrunoCST = 33007`.
+- **`LadrunoCST`** — 3-node constant-strain triangle. `ELE_TAG_LadrunoCST = 33008`.
   Deliberately **thin**: `-formulation std` only (a 1-point triangle is
   rank-sufficient — no hourglass, and `bbar`/`ssp`/`eas` have nothing to average
   against), plus the geometry layer and material seam. It exists as the trivial
