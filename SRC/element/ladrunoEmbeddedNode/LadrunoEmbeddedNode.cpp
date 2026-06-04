@@ -47,17 +47,18 @@
 LadrunoEmbeddedNode::LadrunoEmbeddedNode(int tag, int ndm_, int cNode,
         const ID& hostNodes, const Vector& shape, double ku,
         int hostEleTag_, bool ktAuto_, double ktAlpha_, int enforce_,
-        bool bipenalty_, int bpMode_, double bpDt_, double bpBeta_)
+        bool bipenalty_, int bpMode_, double bpDt_, double bpBeta_,
+        bool pressure_, double kp_)
   : Element(tag, ELE_TAG_LadrunoEmbeddedNode),
     ndm(ndm_), nHost(hostNodes.Size()),
     connectedNodes(1 + hostNodes.Size()), Nshape(shape),
-    Ku(ku),
+    Ku(ku), Kp(kp_), upActive(false), lambda_p(0.0),
     enforce(enforce_), lambda(ndm_),
     hostEleTag(hostEleTag_), ktAuto(ktAuto_), ktAlpha(ktAlpha_), ktResolved(false),
     bipenalty(bipenalty_), bpMode(bpMode_), bpDt(bpDt_), bpBeta(bpBeta_),
     mPenalty(0.0), bpResolved(false),
     nDOF(0), nodeNdf(1 + hostNodes.Size()), dofOffset(1 + hostNodes.Size()),
-    pflag(0),
+    pflag(pressure_ ? 1 : 0),
     theNodes(0), K(0), P(0), M0(0)
 {
   connectedNodes(0) = cNode;
@@ -73,7 +74,7 @@ LadrunoEmbeddedNode::LadrunoEmbeddedNode(int tag, int ndm_, int cNode,
 LadrunoEmbeddedNode::LadrunoEmbeddedNode()
   : Element(0, ELE_TAG_LadrunoEmbeddedNode),
     ndm(0), nHost(0), connectedNodes(0), Nshape(),
-    Ku(0.0),
+    Ku(0.0), Kp(0.0), upActive(false), lambda_p(0.0),
     enforce(0), lambda(),
     hostEleTag(-1), ktAuto(false), ktAlpha(0.0), ktResolved(false),
     bipenalty(false), bpMode(0), bpDt(0.0), bpBeta(0.0),
@@ -136,6 +137,24 @@ void LadrunoEmbeddedNode::setDomain(Domain* theDomain)
     pos += ndf;
   }
   nDOF = pos;
+
+  // ADR 23 Phase 1b — resolve the pressure tie (UP). Activate only if -pressure was
+  // requested AND every coupled node carries a pressure DOF at index ndm (ndf >= ndm+1,
+  // the u-p convention); otherwise degrade to U-only with a warning.
+  upActive = false;
+  if (pflag == 1) {
+    bool allUP = true;
+    for (int i = 0; i < 1 + nHost; i++)
+      if (nodeNdf(i) < ndm + 1) { allUP = false; break; }
+    if (allUP) {
+      upActive = true;
+    } else {
+      opserr << "WARNING LadrunoEmbeddedNode " << this->getTag()
+             << ": -pressure requested but not all nodes are u-p (need ndf >= ndm+1="
+             << ndm + 1 << "); coupling translations (U) only\n";
+    }
+  }
+
   this->allocate();
   this->DomainComponent::setDomain(theDomain);
 }
@@ -261,6 +280,7 @@ int LadrunoEmbeddedNode::commitState(void)
     Vector g(ndm);
     this->computeGap(g);
     for (int k = 0; k < ndm; k++) lambda(k) += Ku * g(k);
+    if (upActive) lambda_p += Kp * this->computeGapP();
   }
   return this->Element::commitState();
 }
@@ -269,7 +289,8 @@ int LadrunoEmbeddedNode::revertToLastCommit(void) { return 0; }
 
 int LadrunoEmbeddedNode::revertToStart(void)
 {
-  lambda.Zero();   // AL multiplier accumulates only via commitState's Uzawa step
+  lambda.Zero();   // AL multipliers accumulate only via commitState's Uzawa step
+  lambda_p = 0.0;
   return 0;
 }
 
@@ -277,6 +298,15 @@ void LadrunoEmbeddedNode::computeGap(Vector& g)
 {
   // g = u_c − Σ N_i u_host,i (translational, the first ndm DOFs of each node).
   LadrunoEmbedded::computeGap(theNodes, Nshape, nHost, ndm, g);
+}
+
+double LadrunoEmbeddedNode::computeGapP(void)
+{
+  // g_p = p_c − Σ N_i p_host,i  (pressure DOF = index ndm, the u-p convention).
+  double gp = theNodes[0]->getTrialDisp()(ndm);
+  for (int i = 0; i < nHost; i++)
+    gp -= Nshape(i) * theNodes[1 + i]->getTrialDisp()(ndm);
+  return gp;
 }
 
 int LadrunoEmbeddedNode::update(void)
@@ -309,6 +339,19 @@ const Vector& LadrunoEmbeddedNode::getResistingForce(void)
   for (int p = 0; p < 1 + nHost; p++)
     for (int k = 0; k < ndm; k++)
       (*P)(dofOffset(p) + k) = Pc(p * ndm + k);
+
+  // ADR 23 Phase 1b — pressure tie (UP): a scalar coupling on the pressure DOF
+  // (index ndm). t_p = K_p·g_p (+ λ_p for AL); same Bᵀt structure with ndm=1,
+  // scattered to each node's pressure slot dofOffset(p)+ndm.
+  if (upActive) {
+    double tp = Kp * this->computeGapP();
+    if (enforce == 1) tp += lambda_p;
+    Vector tpv(1); tpv(0) = tp;
+    Vector Pp(1 + nHost);
+    LadrunoEmbedded::assembleResistingForce(Pp, Nshape, tpv, 1);
+    for (int p = 0; p < 1 + nHost; p++)
+      (*P)(dofOffset(p) + ndm) = Pp(p);
+  }
   return *P;
 }
 
@@ -344,6 +387,18 @@ const Matrix& LadrunoEmbeddedNode::getTangentStiff(void)
       for (int a = 0; a < ndm; a++)
         for (int b = 0; b < ndm; b++)
           (*K)(dofOffset(p) + a, dofOffset(q) + b) += Kc(p * ndm + a, q * ndm + b);
+
+  // ADR 23 Phase 1b — pressure block (UP): scalar D_p = K_p, assembled with ndm=1
+  // and scattered to the pressure DOF slots (dofOffset(p)+ndm). No overlap with the
+  // translational blocks (a,b < ndm).
+  if (upActive) {
+    Matrix Dp(1, 1); Dp(0, 0) = Kp;
+    Matrix Kp_c(1 + nHost, 1 + nHost); Kp_c.Zero();
+    LadrunoEmbedded::assembleTangent(Kp_c, Nshape, Dp, 1);
+    for (int p = 0; p < 1 + nHost; p++)
+      for (int q = 0; q < 1 + nHost; q++)
+        (*K)(dofOffset(p) + ndm, dofOffset(q) + ndm) += Kp_c(p, q);
+  }
   return *K;
 }
 
@@ -371,7 +426,7 @@ const Matrix& LadrunoEmbeddedNode::getMass(void)
 int LadrunoEmbeddedNode::sendSelf(int commitTag, Channel& theChannel)
 {
   int dbTag = this->getDbTag();
-  static Vector hdr(13);
+  static Vector hdr(14);
   hdr(0) = this->getTag();
   hdr(1) = ndm;
   hdr(2) = nHost;
@@ -385,6 +440,7 @@ int LadrunoEmbeddedNode::sendSelf(int commitTag, Channel& theChannel)
   hdr(10) = bpDt;
   hdr(11) = bpBeta;
   hdr(12) = pflag;
+  hdr(13) = Kp;
   if (theChannel.sendVector(dbTag, commitTag, hdr) < 0) {
     opserr << "LadrunoEmbeddedNode::sendSelf - header failed\n";
     return -1;
@@ -393,10 +449,11 @@ int LadrunoEmbeddedNode::sendSelf(int commitTag, Channel& theChannel)
     opserr << "LadrunoEmbeddedNode::sendSelf - ID failed\n";
     return -1;
   }
-  Vector payload(nHost + ndm);
+  Vector payload(nHost + ndm + 1);
   for (int i = 0; i < nHost; i++) payload(i) = Nshape(i);
   for (int k = 0; k < ndm; k++)
     payload(nHost + k) = (lambda.Size() == ndm) ? lambda(k) : 0.0;
+  payload(nHost + ndm) = lambda_p;
   if (theChannel.sendVector(dbTag, commitTag, payload) < 0) {
     opserr << "LadrunoEmbeddedNode::sendSelf - payload failed\n";
     return -1;
@@ -408,7 +465,7 @@ int LadrunoEmbeddedNode::recvSelf(int commitTag, Channel& theChannel,
                                   FEM_ObjectBroker& theBroker)
 {
   int dbTag = this->getDbTag();
-  static Vector hdr(13);
+  static Vector hdr(14);
   if (theChannel.recvVector(dbTag, commitTag, hdr) < 0) {
     opserr << "LadrunoEmbeddedNode::recvSelf - header failed\n";
     return -1;
@@ -426,17 +483,19 @@ int LadrunoEmbeddedNode::recvSelf(int commitTag, Channel& theChannel,
   bpDt = hdr(10);
   bpBeta = hdr(11);
   pflag = (int)hdr(12);
+  Kp = hdr(13);
   ktResolved = false;
   bpResolved = false;
   mPenalty = 0.0;
-  nDOF = 0;   // recomputed in setDomain (needs the nodes' ndf)
+  upActive = false;   // re-resolved in setDomain (needs the nodes' ndf)
+  nDOF = 0;           // recomputed in setDomain
 
   connectedNodes.resize(1 + nHost);
   if (theChannel.recvID(dbTag, commitTag, connectedNodes) < 0) {
     opserr << "LadrunoEmbeddedNode::recvSelf - ID failed\n";
     return -1;
   }
-  Vector payload(nHost + ndm);
+  Vector payload(nHost + ndm + 1);
   if (theChannel.recvVector(dbTag, commitTag, payload) < 0) {
     opserr << "LadrunoEmbeddedNode::recvSelf - payload failed\n";
     return -1;
@@ -445,6 +504,7 @@ int LadrunoEmbeddedNode::recvSelf(int commitTag, Channel& theChannel,
   for (int i = 0; i < nHost; i++) Nshape(i) = payload(i);
   lambda.resize(ndm);
   for (int k = 0; k < ndm; k++) lambda(k) = payload(nHost + k);
+  lambda_p = payload(nHost + ndm);
 
   nodeNdf.resize(1 + nHost);
   dofOffset.resize(1 + nHost);
@@ -460,7 +520,9 @@ void LadrunoEmbeddedNode::Print(OPS_Stream& s, int flag)
   s << "LadrunoEmbeddedNode, tag: " << this->getTag() << "\n";
   s << "  constrained node: " << connectedNodes(0) << "  host nodes: ";
   for (int i = 0; i < nHost; i++) s << connectedNodes(1 + i) << " ";
-  s << "\n  K_u: " << Ku << "  enforce: " << (enforce == 1 ? "al" : "penalty") << "\n";
+  s << "\n  K_u: " << Ku << "  enforce: " << (enforce == 1 ? "al" : "penalty");
+  if (pflag == 1) s << "  +pressure(K_p=" << Kp << (upActive ? ", active" : ", inactive") << ")";
+  s << "\n";
 }
 
 // ===========================================================================
@@ -486,6 +548,13 @@ Response* LadrunoEmbeddedNode::setResponse(const char** argv, int argc, OPS_Stre
     return new ElementResponse(this, 7, 0.0);
   if (strcmp(argv[0], "dtcr") == 0 || strcmp(argv[0], "dtCritical") == 0)
     return new ElementResponse(this, 8, 0.0);
+  // ADR 23 Phase 1b — pressure-tie (UP) diagnostics.
+  if (strcmp(argv[0], "pgap") == 0 || strcmp(argv[0], "pressureGap") == 0)
+    return new ElementResponse(this, 9, 0.0);
+  if (strcmp(argv[0], "pforce") == 0 || strcmp(argv[0], "pressureForce") == 0)
+    return new ElementResponse(this, 10, 0.0);
+  if (strcmp(argv[0], "plambda") == 0 || strcmp(argv[0], "augLambdaP") == 0)
+    return new ElementResponse(this, 11, 0.0);
   return 0;
 }
 
@@ -520,6 +589,14 @@ int LadrunoEmbeddedNode::getResponse(int responseID, Information& eleInfo)
     double dt = this->getExplicitCriticalTimeStep();
     return eleInfo.setDouble(dt > 0.0 ? dt : 0.0);
   }
+  case 9:  return eleInfo.setDouble(upActive ? this->computeGapP() : 0.0);
+  case 10: {
+    if (!upActive) return eleInfo.setDouble(0.0);
+    double tp = Kp * this->computeGapP();
+    if (enforce == 1) tp += lambda_p;
+    return eleInfo.setDouble(tp);
+  }
+  case 11: return eleInfo.setDouble(lambda_p);
   default: return -1;
   }
 }
