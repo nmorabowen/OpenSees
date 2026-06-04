@@ -105,12 +105,14 @@ class LadrunoBondSlip : public UniaxialMaterial
   double Cslip;              // committed slip
   double Cstress;            // committed bond stress
   double CslipMaxAbs;        // max |slip| reached on the envelope (damage memory)
+  double Cwork;              // committed cumulative bond work per area, ∫tau ds
 
   // --- trial state ---
   double Tslip;
   double Tstress;
   double Ttangent;
   double TslipMaxAbs;
+  double Twork;              // trial cumulative bond work (trapezoidal increment)
 };
 
 #endif

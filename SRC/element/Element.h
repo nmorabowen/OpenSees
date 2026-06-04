@@ -61,6 +61,15 @@ class Element : public DomainComponent
     virtual int getNumDOF(void) =0;
     virtual double getCharacteristicLength(void);
 
+    // Ladruno (ADR 20 §9): single source of truth for an element's shape-function
+    // weights at a natural coordinate. Given the element's natural coords `xi`
+    // (hex: (ξ,η,ζ)∈[-1,1]³; tet: barycentric (L1,L2,L3)), fill `N` with the nodal
+    // interpolation weights N_i so that  f(xi) = Σ_i N_i f_i  for any nodal field.
+    // Used by LadrunoEmbeddedRebar to embed a rebar node in a non-matching solid
+    // host without re-supplying the weights by hand. Default = not implemented
+    // (returns -1, leaves N untouched); host elements override and return 0.
+    virtual int getInterpolationWeights(const Vector &xi, Vector &N);
+
     // methods dealing with committed state and update
     virtual int commitState(void);    
     virtual int revertToLastCommit(void) = 0;        

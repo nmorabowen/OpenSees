@@ -60,6 +60,7 @@ target_sources(OPS_Material
     MinMaxNDMaterial.cpp
     LogStrainNDMaterial.cpp
     InitDefGradNDMaterial.cpp
+    StagedStrainNDMaterial.cpp
     LadrunoJ2.cpp
     LadrunoJ2Finite.cpp
     LadrunoRCConcrete.cpp
@@ -143,6 +144,7 @@ target_sources(OPS_Material
     LogStrainNDMaterial.h
     LogStrainKernel.h
     InitDefGradNDMaterial.h
+    StagedStrainNDMaterial.h
     LadrunoJ2.h
     LadrunoJ2Finite.h
     LadrunoJ2Kernel.h

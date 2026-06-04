@@ -885,3 +885,39 @@ From the finite-strain validation Phase P4 (Taylor-bar impact, 2026-06-02,
   Gate-2 draft). **Solver:** confined softening needs `KrylovNewton` (or the blessed
   `Ladruno_scripts/ladruno_solve.py` adaptive driver) — plain Newton fixed-step
   diverges past the peak.
+
+- **openseespy parsers must peek a maybe-numeric arg with `OPS_GetStringFromAll`,
+  never `OPS_GetString`.** openseespy passes TYPED args; `OPS_GetString()` returns
+  the sentinel `"Invalid String Input!"` when the current arg is an int or float,
+  so any parser that peeks a position which could be a number (a positional count,
+  or a flag value that might be `auto`/numeric like `-kt`) blows up — while string
+  args at the same slot pass, making the failure look maddeningly selective. Use
+  `char buf[N]; OPS_GetStringFromAll(buf, N);` — it stringifies any arg (`%d` for
+  int, `%.20f` for double → exact `atof` round-trip) AND advances the cursor, then
+  `atoi`/`atof`/`strcmp`. Tcl is all-strings so it never reproduces there. Bit us on
+  `LadrunoEmbeddedRebar` (`-host` vs positional `nHost`, and `-kt auto` vs numeric
+  `-kt`) — PRs #175→#177; the bug was masked in #175 because that build was broken
+  (see the next quirk's CI note) so Zone-A pytest never ran.
+
+- **ladruno auto-merge gates ONLY on the classTag+manifest fast check — NOT the
+  Zone-A (Ubuntu) job at all (neither the build nor the pytest).** A PR that does
+  not even COMPILE can merge (PR #175 did: a `getInterpolationWeights` override used
+  `numberNodes`, a per-method `static const` local in `LadrunoBrick`, not a member).
+  A broken ladruno HEAD then makes EVERY later PR's Zone-A red, and since the build
+  dies the pytest phase never runs — masking test bugs until someone fixes the
+  compile. After pushing C++ to a fork PR, **watch the Zone-A job**
+  (`gh pr checks <n> --watch`): a fast (~1-2 min) fail = compile error, a slow
+  (~5-6 min) fail = test failure. Don't trust a green fast-gate.
+
+- **Anisotropic embedded coupling (`LadrunoEmbeddedRebar`) needs a CO-ROTATED bar
+  axis under large host rotation; isotropic node ties (`ASDEmbeddedNodeElement`) do
+  not.** The frozen reference `dir` is the *only* true large-rotation defect: the gap
+  `g` and the host weights `N_i(ξ)` are already frame-objective, but the axial/
+  transverse split `s = g·dir`, `g_t = g − s·dir` taken against a FROZEN `dir`
+  registers spurious axial slip under pure rigid rotation and yields a non-objective
+  traction. Fix (ADR 20 §10.5, `-corot`): recompute `dir` each step as the secant of
+  two embed points (embed point + a point B along the bar) from CURRENT host node
+  positions. This is why `ASDEmbeddedNodeElement` recomputes geometry from REFERENCE
+  coords yet stays objective — its `iK·BᵀB` penalty is isotropic, so there is no axis
+  to go stale. (v1 omits the `∂dir/∂u` consistent-tangent term — EICR practice: exact
+  for explicit, converges under step-halving for implicit.)

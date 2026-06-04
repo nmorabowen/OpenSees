@@ -138,6 +138,7 @@ extern "C" int         OPS_ResetInputNoBuilder(ClientData clientData, Tcl_Interp
 
 // convergence tests
 #include <CTestNormUnbalance.h>
+#include <LadrunoStabilizedUnbalance.h>   // Ladruno
 #include <CTestNormDispIncr.h>
 #include <CTestEnergyIncr.h>
 #include <CTestRelativeNormUnbalance.h>
@@ -230,6 +231,7 @@ extern void *OPS_ExplicitBathe(void);
 extern void *OPS_ExplicitBatheLNVD(void);
 extern void *OPS_CentralDifferenceLadruno(void);
 extern void *OPS_LadrunoArcLength(void);   // Ladruno
+extern void *OPS_LadrunoIndirectControl(void);   // Ladruno
 extern void *OPS_LadrunoDynamicRelaxation(void);   // Ladruno
 extern void *OPS_ExplicitDifferenceStatic(void);
 extern void *OPS_CentralDifferenceAlternative(void);
@@ -4531,9 +4533,11 @@ specifyCTest(ClientData clientData, Tcl_Interp *interp, int argc,
       opserr << "ERROR: no tolerance specified in test command\n";
       return TCL_ERROR;
     }
-    if (strcmp(argv[1],"NormUnbalance") == 0) 
-      theNewTest = new CTestNormUnbalance(tol,numIter,printIt,normType,maxIncr, maxTol);       
-    else if (strcmp(argv[1],"NormDispIncr") == 0) 
+    if (strcmp(argv[1],"NormUnbalance") == 0)
+      theNewTest = new CTestNormUnbalance(tol,numIter,printIt,normType,maxIncr, maxTol);
+    else if (strcmp(argv[1],"LadrunoStabilizedUnbalance") == 0)   // Ladruno
+      theNewTest = new LadrunoStabilizedUnbalance(tol,numIter,printIt,normType,maxTol);
+    else if (strcmp(argv[1],"NormDispIncr") == 0)
       theNewTest = new CTestNormDispIncr(tol,numIter,printIt,normType, maxTol);             
     else if (strcmp(argv[1],"NormDispAndUnbalance") == 0) 
         theNewTest = new NormDispAndUnbalance(tol,tol2, numIter,printIt,normType,maxIncr);       
@@ -4684,6 +4688,12 @@ specifyIntegrator(ClientData clientData, Tcl_Interp *interp, int argc,
 
   else if (strcmp(argv[1],"LadrunoArcLength") == 0) {   // Ladruno
     theStaticIntegrator = (StaticIntegrator *)OPS_LadrunoArcLength();
+    if (theStaticIntegrator != 0 && theStaticAnalysis != 0)
+      theStaticAnalysis->setIntegrator(*theStaticIntegrator);
+  }
+
+  else if (strcmp(argv[1],"LadrunoIndirectControl") == 0) {   // Ladruno
+    theStaticIntegrator = (StaticIntegrator *)OPS_LadrunoIndirectControl();
     if (theStaticIntegrator != 0 && theStaticAnalysis != 0)
       theStaticAnalysis->setIntegrator(*theStaticIntegrator);
   }

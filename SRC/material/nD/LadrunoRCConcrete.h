@@ -38,7 +38,7 @@
 // Keeps ASDConcrete3D's plastic-damage spine; adds MCFT compression softening
 // on the STRENGTH axis (beta = 1/(0.8+170 eps_1)).  betaOn=false => byte-faithful
 // to ASDConcrete3D.  ENGINEERING-shear convention (matches ASDConcrete3D), so the
-// view does NO tensor<->engineering factor conversions.  classTag 33014.
+// view does NO tensor<->engineering factor conversions.  classTag 33015.
 // Written: N. Mora-Bowen (Ladruno), 2026.
 
 #ifndef LadrunoRCConcrete_h

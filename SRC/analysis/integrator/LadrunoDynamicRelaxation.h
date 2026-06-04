@@ -79,7 +79,9 @@ class LadrunoDynamicRelaxation : public TransientIntegrator
     LadrunoDynamicRelaxation(int massMode = 0, double dtPseudo = 1.0,
                              double massScale = 1.0, int recomputeEvery = 0,
                              bool interp = false, double divergenceFactor = 0.0,
-                             bool verbose = false);
+                             bool verbose = false,
+                             int dampMode = 0, double zetaTarget = 1.0,
+                             bool autoRefresh = true);
     ~LadrunoDynamicRelaxation();
 
     // TransientIntegrator contract
@@ -126,6 +128,12 @@ class LadrunoDynamicRelaxation : public TransientIntegrator
     double kineticEnergy;            // current 1/2 v^T M* v
     double residualNorm;             // current ||f_ext - f_int|| = ||M* . a||_inf
     double deltaT;
+
+    // --- v2: damping mode + auto-refresh ---
+    int    dampMode;                 // 0 = kinetic/Cundall (default) | 1 = viscous-critical
+    double zetaTarget;               // viscous damping ratio (default 1.0 = critical)
+    double cVisc;                    // realized mass-proportional coeff (C* = cVisc*M*)
+    bool   autoRefresh;              // rebuild M* at KE peaks (gershgorin) — knob-free snap-through
 };
 
 #endif

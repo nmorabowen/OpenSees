@@ -24,7 +24,7 @@
 // ==========================================================================
 // LADRUNO-HEADER-END
 
-// Ladruno RC plastic-damage nDMaterial — see LadrunoRCConcrete.h. classTag 33014.
+// Ladruno RC plastic-damage nDMaterial — see LadrunoRCConcrete.h. classTag 33015.
 
 #include "LadrunoRCConcrete.h"
 #include <elementAPI.h>

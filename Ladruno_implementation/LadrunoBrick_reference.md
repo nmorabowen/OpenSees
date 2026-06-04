@@ -41,6 +41,7 @@ aliases:
 
 **Source:** `SRC/element/ladrunoBrick/{LadrunoBrick.h, LadrunoBrick.cpp, OPS_LadrunoBrick.cpp, CMakeLists.txt}`
 **Design plan:** [[09_ladruno_brick]]  ·  **Concrete/softening guide:** [[11_brick_asdconcrete_integration]]  ·  **Geometry layer:** [[solid_transformation_wrapper]]  ·  **Finite-strain materials:** [[09_finite_strain_material_wrapper]]
+**Picking between this and the Bézier elements:** [[ladruno_continuum_elements_guide|Continuum Elements — Modeling & FE-Selection Guide]]
 
 ---
 
@@ -152,7 +153,7 @@ Tcl mirror: `element LadrunoBrick $tag $n1 ... $n8 $matTag -formulation bbar ...
 | Material | one `NDMaterial` (`"ThreeDimensional"`), copied 8× (one per Gauss point) |
 | Broker | `FEM_ObjectBrokerAllClasses.cpp`: `ELE_TAG_LadrunoBrick → new LadrunoBrick()` |
 | Command | `OpenSeesElementCommands.cpp`: `OPS_LadrunoBrick` |
-| Banner | `LadrunoBrick — unified hex (std/bbar/uri/ssp + hourglass)` |
+| Banner | `LadrunoBrick — unified hex (std/bbar/uri/ssp/eas + hourglass)` |
 
 ---
 
@@ -575,15 +576,17 @@ distorted meshes** — the operative EAS gate.
 > `tests/test_ladrunoBrick_eas.py` (patch / reduce-to-`std` / bending / incompress /
 > $\boldsymbol\alpha$ state cycle).
 
-> [!warning] When NOT to use `eas`: notched / localization-dominated inelasticity
-> On a **notched, high-strain-gradient inelastic** problem (e.g. the Lemaitre
-> ductile-damage DEN bar of ADR 19) the bare E9 `eas` **stalls just past yield** —
-> a genuine instability of the enhanced modes under non-homogeneous plastic
-> tangents (NOT elastic hourglassing: a free `eas` element is rank-sufficient, 6
-> zero-energy modes, eigen-spectrum identical to `std`/`bbar`). On **homogeneous**
-> elastoplastic-damage `eas` is fine (matches `bbar`). **Use `bbar` or `ssp` for
-> notched/softening localization** until the EAS stabilization of
-> [[20_ladruno_brick_eas_stabilization|ADR 20]] lands.
+> [!note] `eas` on notched / localization-dominated inelasticity — it works
+> An earlier draft of this guide warned that `eas` "stalls just past yield" on a
+> notched inelastic problem (the Lemaitre ductile-damage DEN bar). That was
+> **wrong** and is corrected: the DEN-bar sweep in
+> [[20_ladruno_brick_eas_stabilization|ADR 20]] showed bare `eas` traverses to full
+> elongation with a normal **adaptive solver** (step-cut + line search), at every
+> mesh. The original "stall" was an inner-Newton tolerance bug (since fixed) plus
+> coarse stepping — a solver issue, not an enhanced-mode instability (the element is
+> rank-sufficient: 6 zero-energy modes, spectrum identical to `std`/`bbar`). Use
+> `eas` freely here; `ssp`/`bbar` remain fine, cheaper single-point alternatives.
+> (A scalar `-stab` stabilization was implemented and **rejected** — ADR 20.)
 
 ---
 
@@ -708,7 +711,9 @@ SRC/element/ladrunoBrick/
 ```
 
 `class LadrunoBrick : public Element`. Two enums:
-`Formulation{STD,BBAR,URI,SSP}` and `Hourglass{VISCOUS,STIFFNESS,PHYSICAL}`.
+`Formulation{STD,BBAR,URI,SSP,EAS}` and `Hourglass{VISCOUS,STIFFNESS,PHYSICAL}`.
+(`EAS` is appended **last** so legacy serialized streams — whose packed selector
+predates true EAS — reload as the same element; see `LadrunoBrick.h:81-84`.)
 
 ### 10.2 Key data members (`LadrunoBrick.h:140-189`)
 
@@ -757,7 +762,12 @@ flowchart LR
 | linear | `uri`+`stiffness`/`viscous` | `formUri` (`:1490`) | 1-pt + FB hourglass |
 | linear | `uri`+`physical` | `formPhysical` (`:1768`) | 2×2×2 assumed strain |
 | linear | `ssp` | `formSSP` (`:2370`) | `Kstab + V·BnotᵀCBnot` |
+| linear | `eas` | `formEAStrue` (`:2577`) | 2×2×2 + inner-Newton on `α`, static condensation (Simo–Rifai) |
 | finite | `std`/`bbar` | `formResidAndTangentFinite` (`:1233`) | 2×2×2 spatial + geometric K |
+
+The `eas` path caches the centroid Jacobian in `buildEAStrue()` (`:2508`), then
+each evaluation solves the enhanced parameters `α` by an inner Newton and
+condenses them out (`formEAStrue`); `α` is committed element state.
 
 ### 10.5 Single-point material-eval optimization
 
@@ -824,6 +834,7 @@ float reaches the kernel and `-hourglass stiffness -lumped` still parses.
 |---|---|---|
 | **Implicit quasi-static** (push-over, capacity) | **`bbar`** (default), `std` if low-$\nu$ & no bending | full 2×2×2 → 8 independent damage points, **no hourglass**, best-conditioned Newton tangent; `bbar` also cures volumetric locking |
 | **Near-incompressible** ($\nu\to0.5$, undrained soil, J2 at yield) or **coarse bending** | **`ssp`** | cures shear + volumetric across all $\nu$; well-conditioned tangent; `Kstab` now damage-scales |
+| **Bending-dominated, coarse mesh** (parasitic shear locking, implicit) | **`eas`** | true Simo–Rifai enhanced assumed strain (ADR 19); adds incompatible bending modes, condensed per element; small strain, `linear` only |
 | **Explicit dynamics** (impact/blast, snap-back fallback) | **`uri+physical`** (8 damage pts) or **`ssp`** (1 eval, cheapest) | both need `-lumped`; `uri+viscous` is rate damping |
 | **Large rotation, small strain** (rotating member) | `-geom corot` + `std`/`bbar` | EICR; small-strain material OK if strains stay small |
 | **Large strain** (forming, soft soil, hyperelastic) | `-geom finite` + `std` (plain F) / `bbar` (F-bar) | needs `FiniteStrainNDMaterial` (LogStrain); unsymmetric solver for F-bar |
@@ -837,6 +848,9 @@ ops.element('LadrunoBrick', 101, *nodes, matTag, '-formulation', 'bbar')
 
 # Near-incompressible / coarse bending
 ops.element('LadrunoBrick', 102, *nodes, matTag, '-formulation', 'ssp')
+
+# Bending-dominated implicit (true Simo-Rifai EAS, small strain)
+ops.element('LadrunoBrick', 103, *nodes, matTag, '-formulation', 'eas')
 
 # Explicit dynamic
 ops.element('LadrunoBrick', 201, *nodes, matTag,

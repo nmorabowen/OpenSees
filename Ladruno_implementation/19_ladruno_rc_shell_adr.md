@@ -53,7 +53,8 @@ contact with the source and are re-scoped below rather than buried.
 > Phase 1 (MCFT compression softening on the *existing* `ASDShellQ4` + `LayeredShellFiberSection`,
 > zero element/section edit) is implemented and green. **Naming refinement vs the D5 table:**
 > instead of three separate classes (`LadrunoRCPlaneStress`/`PlateFiber`/`FiniteStrain`, tags
-> 33013/14/15), Phase 1 ships **ONE multi-dim class `LadrunoRCConcrete` (classTag 33014)** with the
+> 33013/14/15), Phase 1 ships **ONE multi-dim class `LadrunoRCConcrete` (classTag 33015 — 33013/33014 were
+> taken by InitDefGrad/StagedStrain before this landed)** with the
 > views selected via `dim`/`vmap` + `getType`/`getCopy` — the proven LadrunoJ2/ASDConcrete3D
 > pattern, far less duplication, and the 3D view is directly comparable to ASDConcrete3D for the
 > A2 reduce-to-baseline gate. (33013 turned out to be used by `InitDefGrad` on a sibling branch.)

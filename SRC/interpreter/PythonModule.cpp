@@ -595,13 +595,16 @@ initopensees(void)
 "        • LadrunoJ2 — combined iso + Chaboche AF kinematic J2\n"
 "        • LadrunoJ2Finite — finite-strain J2, co-rotating backstress (+IMPL-EX)\n"
 "        • LadrunoUniaxialJ2 — uniaxial Chaboche AF J2 fiber/truss\n"
-"        • InitDefGrad — finite-strain stress-free staged activation (F_rel=F·F0⁻¹)\n"
+"        • StagedDefGrad/InitDefGrad — finite-strain stress-free staged activation (F_rel=F·F0⁻¹)\n"
+"        • StagedStrain — small-strain (2D+3D) stress-free staged activation (ε_rel=ε−ε0)\n"
 "        • Lemaitre ductile damage (-damage lemaitre, +lch, +IMPL-EX)\n"
 "        • LadrunoIMKBeam — concentrated-plasticity IMK beam hinges\n"
 "        • LadrunoRebarBuckling — rebar buckling wrapper (Dhakal–Maekawa / Gomes–Appleton, cyclic re-straightening)\n"
 "        • LadrunoRCConcrete — RC plastic-damage + MCFT compression softening (shell)\n"
 "        • LadrunoArcLength — adaptive arc-length radius (Ramm desired-iter)\n"
 "        • LadrunoDynamicRelaxation — quasi-static DR (Gershgorin mass + kinetic damping)\n"
+"        • LadrunoIndirectControl — indirect/CMOD control (snap-back tracking)\n"
+"        • LadrunoStabilizedUnbalance — true-equilibrium test for -stabilize\n"
 "        • Ladruno — modular HDF5 .ladruno recorder\n"
 "\n";
         // FEATURES-END

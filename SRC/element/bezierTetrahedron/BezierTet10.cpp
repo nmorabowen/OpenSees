@@ -1463,6 +1463,32 @@ double BezierTet10::getCharacteristicLength(void)
 
 
 // ═══════════════════════════════════════════════════════════════════
+//  getInterpolationWeights (Ladruno, ADR 20 §9)
+//
+//  Quadratic Bernstein shape weights at the barycentric natural coordinate
+//  xi = (L1,L2,L3), with L4 = 1-L1-L2-L3 (same node order as the GP/mass
+//  interpolation, vertices N1..N4 then mid-edges N5..N10). Lets
+//  LadrunoEmbeddedRebar embed a rebar node in this host without re-supplying
+//  the weights by hand. N is resized to NEN (=10).
+// ═══════════════════════════════════════════════════════════════════
+int BezierTet10::getInterpolationWeights(const Vector &xi, Vector &N)
+{
+    if (xi.Size() < 3) {
+        opserr << "BezierTet10::getInterpolationWeights - xi needs 3 barycentric "
+                  "coords (L1,L2,L3)\n";
+        return -1;
+    }
+    if (N.Size() != NEN)
+        N.resize(NEN);
+    double Nloc[NEN];
+    this->shapeFunctions(xi(0), xi(1), xi(2), Nloc);
+    for (int i = 0; i < NEN; i++)
+        N(i) = Nloc[i];
+    return 0;
+}
+
+
+// ═══════════════════════════════════════════════════════════════════
 //  SERIALIZATION (sendSelf / recvSelf)
 // ═══════════════════════════════════════════════════════════════════
 

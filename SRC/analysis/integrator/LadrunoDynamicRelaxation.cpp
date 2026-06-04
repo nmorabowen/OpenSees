@@ -40,6 +40,7 @@
 // See Ladruno_implementation/21_ladruno_dynamic_relaxation_adr.md.
 
 #include <LadrunoDynamicRelaxation.h>
+#include <LadrunoFictitiousMass.h>
 #include <AnalysisModel.h>
 #include <LinearSOE.h>
 #include <Vector.h>
@@ -66,6 +67,9 @@ void *OPS_LadrunoDynamicRelaxation(void)
     double dtPseudo = 1.0, massScale = 1.0, divergenceFactor = 0.0;
     int    recomputeEvery = 0;
     bool   interp = false, verbose = false;
+    int    dampMode = 0;            // 0 kinetic (default) | 1 viscous-critical
+    double zetaTarget = 1.0;        // viscous damping ratio (1 = critical)
+    bool   autoRefresh = true;      // rebuild M* at KE peaks (gershgorin)
 
     while (OPS_GetNumRemainingInputArgs() > 0) {
         const char *opt = OPS_GetString();
@@ -97,6 +101,23 @@ void *OPS_LadrunoDynamicRelaxation(void)
                 opserr << "WARNING LadrunoDynamicRelaxation -recompute failed to read N\n";
                 return 0;
             }
+        } else if (strcmp(opt, "-damping") == 0) {
+            if (OPS_GetNumRemainingInputArgs() < 1) {
+                opserr << "WARNING LadrunoDynamicRelaxation -damping expects kinetic|viscous\n";
+                return 0;
+            }
+            const char *d = OPS_GetString();
+            if (strcmp(d, "kinetic") == 0)      dampMode = 0;
+            else if (strcmp(d, "viscous") == 0) {
+                dampMode = 1;
+                if (OPS_GetNumRemainingInputArgs() > 0) {   // optional trailing zeta
+                    int nd = 1; double z;
+                    if (OPS_GetDoubleInput(&nd, &z) == 0) zetaTarget = z;
+                }
+            } else opserr << "WARNING LadrunoDynamicRelaxation - unknown -damping " << d
+                          << " (keeping kinetic)\n";
+        } else if (strcmp(opt, "-noAutoRefresh") == 0) {
+            autoRefresh = false;
         } else if (strcmp(opt, "-interp") == 0) {
             interp = true;
         } else if (strcmp(opt, "-divergence") == 0) {
@@ -112,20 +133,22 @@ void *OPS_LadrunoDynamicRelaxation(void)
 
     return new LadrunoDynamicRelaxation(massMode, dtPseudo, massScale,
                                         recomputeEvery, interp, divergenceFactor,
-                                        verbose);
+                                        verbose, dampMode, zetaTarget, autoRefresh);
 }
 
 LadrunoDynamicRelaxation::LadrunoDynamicRelaxation(int massMode_, double dtPseudo_,
                                                    double massScale_, int recomputeEvery_,
                                                    bool interp_, double divergenceFactor_,
-                                                   bool verbose_)
+                                                   bool verbose_, int dampMode_,
+                                                   double zetaTarget_, bool autoRefresh_)
  :TransientIntegrator(INTEGRATOR_TAGS_LadrunoDynamicRelaxation),
   massMode(massMode_), dtPseudo(dtPseudo_), massScale(massScale_),
   recomputeEvery(recomputeEvery_), interp(interp_),
   divergenceFactor(divergenceFactor_), verbose(verbose_),
   Mstar(0), Ut(0), Vhalf(0), Aprev(0), Vfull(0), Azero(0),
   firstStep(true), updateCount(0), size(0), stepCount(0),
-  prevKE(0.0), kineticEnergy(0.0), residualNorm(0.0), deltaT(0.0)
+  prevKE(0.0), kineticEnergy(0.0), residualNorm(0.0), deltaT(0.0),
+  dampMode(dampMode_), zetaTarget(zetaTarget_), cVisc(0.0), autoRefresh(autoRefresh_)
 {
 
 }
@@ -152,17 +175,8 @@ LadrunoDynamicRelaxation::formTangent(int statFlag)
         opserr << "WARNING LadrunoDynamicRelaxation::formTangent() - no SOE or M* not built\n";
         return -1;
     }
-    theSOE->zeroA();
-    static Matrix m1(1, 1);
-    static ID id1(1);
-    for (int i = 0; i < size; i++) {
-        m1(0, 0) = (*Mstar)(i);
-        id1(0) = i;
-        if (theSOE->addA(m1, id1) < 0) {
-            opserr << "WARNING LadrunoDynamicRelaxation::formTangent() - addA failed at " << i << endln;
-            return -1;
-        }
-    }
+    // poke M* onto the diagonal (zeroFirst => the solve degenerates to M*^{-1})
+    Ladruno::addDiagonalToSOE(theSOE, *Mstar, size, 1.0, /*zeroFirst=*/true);
     return 0;
 }
 
@@ -188,46 +202,31 @@ LadrunoDynamicRelaxation::buildFictitiousMass(void)
 {
     AnalysisModel *theModel = this->getAnalysisModel();
     if (theModel == 0 || Mstar == 0) return -1;
-    Mstar->Zero();
 
-    if (massMode == 2) {                 // unity
-        for (int i = 0; i < size; i++) (*Mstar)(i) = 1.0;
-        return 0;
+    // gershgorin prefactor (mode 0): f = dt^2/4, scale-free so omega*dt ~ 2 by
+    // construction. Viscous: grow M* so the DAMPED step stays stable. Critical
+    // viscous damping shrinks the explicit safe step by (sqrt(1+z^2)-z); grow M*
+    // by its inverse-square so omega*dt stays <= 2. (Passed as dt2Quarter; the
+    // shared builder applies it. lumped/unity ignore it.)
+    double f = 0.25 * dtPseudo * dtPseudo;
+    if (dampMode == 1) {
+        double s = sqrt(1.0 + zetaTarget * zetaTarget) - zetaTarget;
+        if (s > 0.0) f /= (s * s);
     }
+    // build M* (row-sum of K or real mass, or unity) + mmax*1e-8 zero-floor.
+    if (Ladruno::buildGershgorinDiagonal(theModel, *Mstar, massMode, massScale, f) < 0)
+        return -1;
 
-    // gershgorin / lumped: accumulate |row-sums| of the element K (or M) into the
-    // global diagonal at the element's equation numbers.
-    FE_EleIter &theEles = theModel->getFEs();
-    FE_Element *elePtr;
-    while ((elePtr = theEles()) != 0) {
-        Element *e = elePtr->getElement();
-        if (e == 0) continue;            // subdomain / no backing element
-        const ID &id = elePtr->getID();
-        const Matrix &Ke = (massMode == 1) ? e->getMass() : e->getTangentStiff();
-        int n = id.Size();
-        if (Ke.noRows() != n) continue;  // defensive
-        for (int i = 0; i < n; i++) {
-            int loc = id(i);
-            if (loc < 0) continue;
-            double rs = 0.0;
-            for (int j = 0; j < n; j++) rs += fabs(Ke(i, j));
-            (*Mstar)(loc) += rs;
-        }
+    // viscous-critical coefficient C* = cVisc*M*. The M* rescale above grew M* by
+    // 1/s^2 (s = sqrt(1+z^2)-z), so the RESCALED omega1*dt ~ 2s (not 2). Critical
+    // damping for that omega is cVisc = 2*zeta*omega1 = 4*zeta*s/dtPseudo. Using the
+    // unrescaled 2/dt here overshoots (dt*cVisc = 4 > 2 => explicit-damping blowup);
+    // the s factor keeps dt*cVisc = 4*zeta*s < 2 (=1.66 at zeta=1). gershgorin is the
+    // recommended pairing (closed-form omega); unity/lumped is approximate.
+    if (dampMode == 1) {
+        double s = sqrt(1.0 + zetaTarget * zetaTarget) - zetaTarget;
+        cVisc = 4.0 * zetaTarget * s / dtPseudo;
     }
-
-    if (massMode == 0) {                 // gershgorin stability scaling
-        double f = 0.25 * dtPseudo * dtPseudo;
-        for (int i = 0; i < size; i++) (*Mstar)(i) *= f;
-    } else {                             // lumped real mass * scale
-        for (int i = 0; i < size; i++) (*Mstar)(i) *= massScale;
-    }
-
-    // floor any zero / non-positive diagonal (free DOF with no stiffness/mass)
-    double mmax = 0.0;
-    for (int i = 0; i < size; i++) if ((*Mstar)(i) > mmax) mmax = (*Mstar)(i);
-    double floor = (mmax > 0.0) ? mmax * 1.0e-8 : 1.0;
-    for (int i = 0; i < size; i++)
-        if (!((*Mstar)(i) > 0.0)) (*Mstar)(i) = floor;
 
     return 0;
 }
@@ -384,34 +383,54 @@ LadrunoDynamicRelaxation::update(const Vector &U)
         return -5;
     }
 
-    // full-step velocity v_{n+1} = v_{n+1/2} + dt/2 a_{n+1}
-    *Vfull = *Vhalf;
-    Vfull->addVector(1.0, U, 0.5 * deltaT);
-
-    // true static residual norm = ||f_ext - f_int||_inf = ||M* .* a||_inf
-    // kinetic energy KE = 1/2 v^T M* v   (mass-weighted, matches EnergyBalance)
+    // true static residual norm = ||f_ext - f_int||_inf = ||M* .* a||_inf, from the
+    // PRE-damping solved accel U -> the genuine static unbalance (no f_v pollution).
     residualNorm = 0.0;
+    for (int i = 0; i < size; i++) {
+        double r = fabs((*Mstar)(i) * U(i));
+        if (r > residualNorm) residualNorm = r;
+    }
+
+    // viscous-critical damping (dampMode 1): lag the damping force at the known
+    // half-step velocity so it stays fully explicit (LHS untouched):
+    //   a_work = a_static - cVisc * v_{n+1/2}   (f_v = -cVisc*M**Vhalf, /M* => -cVisc*Vhalf)
+    Vector aWork(U);
+    if (dampMode == 1)
+        for (int i = 0; i < size; i++) aWork(i) -= cVisc * (*Vhalf)(i);
+
+    // full-step velocity v_{n+1} = v_{n+1/2} + dt/2 a_work
+    *Vfull = *Vhalf;
+    Vfull->addVector(1.0, aWork, 0.5 * deltaT);
+
+    // kinetic energy KE = 1/2 v^T M* v   (mass-weighted, matches EnergyBalance)
     kineticEnergy = 0.0;
     for (int i = 0; i < size; i++) {
-        double mi = (*Mstar)(i);
-        double r = fabs(mi * U(i));
-        if (r > residualNorm) residualNorm = r;
         double vi = (*Vfull)(i);
-        kineticEnergy += mi * vi * vi;
+        kineticEnergy += (*Mstar)(i) * vi * vi;
     }
     kineticEnergy *= 0.5;
 
-    // ---- Cundall kinetic damping: zero ALL velocities at each KE peak --------
-    if (prevKE > 0.0 && kineticEnergy < prevKE) {
-        Vhalf->Zero();
-        Vfull->Zero();
-        prevKE = 0.0;            // restart the KE sawtooth from rest
+    if (dampMode == 0) {
+        // ---- Cundall kinetic damping: zero ALL velocities at each KE peak ----
+        if (prevKE > 0.0 && kineticEnergy < prevKE) {
+            Vhalf->Zero();
+            Vfull->Zero();
+            prevKE = 0.0;            // restart the KE sawtooth from rest
+            // auto-refresh: rebuild M* from the CURRENT (stiffened) tangent at this
+            // instant — velocities are zero so KE = 0 before & after => no energy
+            // injected. Tracks far-branch stiffening so snap-through is stable with
+            // NO manual -recompute (gershgorin only).
+            if (autoRefresh && massMode == 0)
+                this->buildFictitiousMass();
+        } else {
+            prevKE = kineticEnergy;
+        }
     } else {
-        prevKE = kineticEnergy;
+        prevKE = kineticEnergy;      // viscous: feed the watchdog, NEVER zero
     }
 
     // push the (possibly damped) full-step snapshot to the nodes
-    theModel->setResponse(*Ut, *Vfull, U);
+    theModel->setResponse(*Ut, *Vfull, aWork);
     if (theModel->updateDomain() < 0) {
         opserr << "LadrunoDynamicRelaxation::update() - failed to update domain\n";
         return -6;
@@ -428,7 +447,8 @@ LadrunoDynamicRelaxation::update(const Vector &U)
         opserr << "LadrunoDynamicRelaxation::update() max|a|=" << A_max
                << " RES=" << residualNorm << " KE=" << kineticEnergy << endln;
 
-    *Aprev = U;
+    // carry the (damped) accel so the next leap-frog half-step advance uses it
+    *Aprev = aWork;
     return 0;
 }
 
@@ -452,7 +472,7 @@ LadrunoDynamicRelaxation::getVel(void)
 int
 LadrunoDynamicRelaxation::sendSelf(int cTag, Channel &theChannel)
 {
-    Vector data(7);
+    Vector data(10);
     data(0) = (double)massMode;
     data(1) = dtPseudo;
     data(2) = massScale;
@@ -460,6 +480,9 @@ LadrunoDynamicRelaxation::sendSelf(int cTag, Channel &theChannel)
     data(4) = interp ? 1.0 : 0.0;
     data(5) = divergenceFactor;
     data(6) = verbose ? 1.0 : 0.0;
+    data(7) = (double)dampMode;
+    data(8) = zetaTarget;
+    data(9) = autoRefresh ? 1.0 : 0.0;
     if (theChannel.sendVector(this->getDbTag(), cTag, data) < 0) {
         opserr << "LadrunoDynamicRelaxation::sendSelf() - failed to send\n";
         return -1;
@@ -470,7 +493,7 @@ LadrunoDynamicRelaxation::sendSelf(int cTag, Channel &theChannel)
 int
 LadrunoDynamicRelaxation::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
 {
-    Vector data(7);
+    Vector data(10);
     if (theChannel.recvVector(this->getDbTag(), cTag, data) < 0) {
         opserr << "LadrunoDynamicRelaxation::recvSelf() - failed to receive\n";
         return -1;
@@ -482,6 +505,9 @@ LadrunoDynamicRelaxation::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBrok
     interp          = data(4) != 0.0;
     divergenceFactor = data(5);
     verbose         = data(6) != 0.0;
+    dampMode        = (int)data(7);
+    zetaTarget      = data(8);
+    autoRefresh     = data(9) != 0.0;
     return 0;
 }
 
@@ -490,6 +516,9 @@ LadrunoDynamicRelaxation::Print(OPS_Stream &s, int flag)
 {
     s << "LadrunoDynamicRelaxation - quasi-static dynamic relaxation\n";
     s << "\t mass mode: " << (massMode == 0 ? "gershgorin" : massMode == 1 ? "lumped" : "unity")
-      << "  dt: " << dtPseudo << "  recompute: " << recomputeEvery << endln;
+      << "  dt: " << dtPseudo << "  recompute: " << recomputeEvery
+      << "  autoRefresh: " << (autoRefresh ? "on" : "off") << endln;
+    s << "\t damping: " << (dampMode == 0 ? "kinetic" : "viscous")
+      << "  zeta: " << zetaTarget << "  cVisc: " << cVisc << endln;
     s << "\t last RES: " << residualNorm << "  KE: " << kineticEnergy << endln;
 }

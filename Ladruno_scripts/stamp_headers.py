@@ -38,6 +38,7 @@ RULE = "// " + "=" * 74
 GLOBS = [
     "SRC/element/ladrunoBrick/*.cpp", "SRC/element/ladrunoBrick/*.h",
     "SRC/element/ladrunoIMKBeam/*.cpp", "SRC/element/ladrunoIMKBeam/*.h",
+    "SRC/element/ladrunoEmbeddedRebar/*.cpp", "SRC/element/ladrunoEmbeddedRebar/*.h",
     "SRC/element/bezierTriangle/*.cpp", "SRC/element/bezierTriangle/*.h",
     "SRC/element/bezierTetrahedron/*.cpp", "SRC/element/bezierTetrahedron/*.h",
     "SRC/element/solidTransformation/*.cpp", "SRC/element/solidTransformation/*.h",
@@ -52,15 +53,19 @@ GLOBS = [
     "SRC/material/nD/LogStrainNDMaterial.*", "SRC/material/nD/LogStrainKernel.h",
     "SRC/material/nD/FiniteStrainNDMaterial.h",
     "SRC/material/nD/InitDefGradNDMaterial.*",
+    "SRC/material/nD/StagedStrainNDMaterial.*",
     "SRC/analysis/integrator/CentralDifferenceLadruno.*",
     "SRC/analysis/integrator/LadrunoArcLength.*",
     "SRC/analysis/integrator/LadrunoDynamicRelaxation.*",
+    "SRC/analysis/integrator/LadrunoFictitiousMass.h",
+    "SRC/analysis/integrator/LadrunoIndirectControl.*",
     "SRC/analysis/integrator/ExplicitBathe.*",
     "SRC/analysis/integrator/ExplicitBatheLNVD.*",
     "SRC/recorder/LadrunoRecorder.*",
     "SRC/recorder/Ladruno_*.cpp", "SRC/recorder/Ladruno_*.h",
     "SRC/recorder/LadrunoMonitor*.cpp", "SRC/recorder/LadrunoMonitor*.h",
     "SRC/recorder/EnergyBalanceRecorder.*", "SRC/recorder/EnergyBalanceKernel.h",
+    "SRC/convergenceTest/LadrunoStabilizedUnbalance.*",
 ]
 SUFFIXES = {".cpp", ".h", ".hpp", ".cc", ".cxx"}
 

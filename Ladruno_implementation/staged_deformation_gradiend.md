@@ -257,8 +257,80 @@ strain additive companion is unchanged (`InitStrain` stays correct there); an ex
 re-birth/deactivation command (out of scope — OpenSees has no stress-relieving element
 deactivation anyway, §7 of [[constraints_reference_position]]).
 
+## Small-strain companion — `StagedStrainNDMaterial` (`StagedStrain`)
+
+Shipped alongside the finite wrapper as the **small-strain** member of the `Staged*`
+family (`StagedStrain` small / `StagedDefGrad` = `InitDefGrad` finite). classTag
+`ND_TAG_StagedStrainNDMaterial = 33014`.
+
+**Why a new class rather than the upstream `InitStrain`.** `InitStrainNDMaterial`
+(Petracca 2024) is a fine *fixed, additive prestrain* but bites staged use three ways:
+(1) **3D-only** — `getOrder()` is hardcoded to 6 and it `exit(-1)`s (kernel kill) on a
+non-3D inner, so it is dead for `FourNodeQuad` / plane-strain / plane-stress /
+axisymmetric; (2) **fixed `ε0`** — no auto-capture, so one tag can't birth a field of
+elements with different birth strains; (3) it **adds** a prestrain rather than
+**subtracting** the captured birth strain. `StagedStrain` fixes all three: order-general
+(`ε0` sized to `inner->getOrder()`, `getCopy(type)` adapts the inner to the element's
+view), auto-capturing, and graceful. `InitStrain` is left untouched for prestrain.
+
+**Mechanic (additive — exact for small strain).** Capture `ε0` at the first
+`setTrialStrain` (= birth), then feed the inner `ε_rel = ε − ε0`. At birth `ε_rel = 0`
+⇒ born **genuinely virgin** (zero stress *and* zero plastic history). The tangent is an
+**exact passthrough** (`ε0` constant ⇒ `∂σ/∂ε = ∂σ/∂(ε−ε0)`), so — unlike the finite
+wrapper — **no FD-tangent gate is needed**. Additive ⇒ valid for small strain only;
+finite uses `StagedDefGrad`.
+
+**Composability (the load-bearing design choice).** `StagedStrain` and the upstream
+`InitStrain` compose by nesting, with **`StagedStrain` OUTERMOST** (element-facing):
+
+```
+element → StagedStrain( InitStrain( realMaterial, ε_pre ) )
+```
+
+At birth `StagedStrain` feeds `InitStrain` `ε_rel = 0`, `InitStrain` adds `ε_pre`, the
+real material sees `ε_pre` ⇒ born carrying **exactly the prestress `σ(ε_pre)`**, no
+inherited geometric stress. Nest the other way and the prestrain is captured into `ε0`
+and **cancels** — so the order is a hard rule. This is *why* the two stay separate
+composable wrappers instead of one `-prestrain`-mode class: staged-birth, prestrain, and
+any future offset (`InitStress`, thermal) all come from nesting.
+
+**Validation** (`tests/test_stagedStrain_material.py`, through `FourNodeQuad` 2D +
+`stdBrick` 3D, since the material has no Python `setTrialStrain`): `-noInit` ≡ bare
+(2D+3D); explicit-`eps0` reduce-to-relative; **two-phase staged stress-free birth in
+2D *and* 3D** (also the dimensional-generality proof — order-3 capture for the quad,
+order-6 for the brick); PlaneStress birth; **J2 inner born virgin** (no inherited
+plastic strain); **composition `StagedStrain∘InitStrain`** → born stress independent of
+the birth deformation and equal to `σ(ε_pre)`; **graceful failure** where `InitStrain`
+`exit(-1)`s.
+
+### Deferred — finite-strain prestrain (NOT in scope)
+
+Prestrain/prestress *composes for free in small strain* (`StagedStrain ∘ InitStrain`,
+both `setTrialStrain`-driven), but **there is no free path in finite strain**, because
+the finite chain is `setTrialF`-driven and `InitStress`/`InitStrain` are not
+`FiniteStrainNDMaterial`s — they cannot nest in the F-chain. A finite prestrain
+therefore needs a **dedicated F-driven wrapper** (future work), with a genuine design
+fork:
+
+1. **Pre-deformation `F_pre`** (recommended) — feed the inner `F_rel·F_pre`, so at
+   stress-free birth it sees `F_pre` → `σ(F_pre)`. The clean multiplicative analog of
+   `InitStrain`'s additive `ε_pre`; **objective by construction**; composes as
+   `StagedDefGrad(FinitePrestrain(...))`.
+2. **Initial Cauchy stress `σ_pre`** (the `InitStress` analog) — additive on stress, but
+   a *fixed* `σ_pre` does **not** co-rotate ⇒ **non-objective under large rotation**
+   (the exact failure mode that motivated `InitDefGrad`); a correct version must
+   co-rotate the prestress. Harder; only if a consumer needs it.
+
+(An unvetted partial path exists — `LogStrain(InitStress(real))`, the small-strain
+`InitStress` at the bottom of the Hencky stack — but its large-rotation objectivity is
+unverified, which is precisely why finite prestrain is its own task, not a freebie.)
+
 ## See also
 
+- [[staged_activation_guide]] — the **user guide / reference** for the shipped family
+  (`StagedStrain` + `StagedDefGrad`/`InitDefGrad`): theory, architecture, command
+  syntax, recipes, recording, and limitations. This note is the design log; that is the
+  how-to.
 - [[constraints_reference_position]] — the SP / MP / element trichotomy and the
   small-vs-finite-strain caveat that leads here.
 - [[solid_transformation_wrapper]] — the `linear`/`corot`/`finite` kinematics layer

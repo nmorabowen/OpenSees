@@ -128,6 +128,31 @@ def test_dr6_snap_through_far_branch():
 
 
 # --------------------------------------------------------------------------
+# DR-6b : snap-through with NO manual -recompute (v2 auto-refresh)
+# --------------------------------------------------------------------------
+def test_dr6b_snap_through_auto_refresh():
+    # v2: auto-refresh rebuilds M* at each KE peak (where velocities are zero, so
+    # no energy injected), tracking the far-branch stiffening -> snap-through is
+    # stable with NO -recompute knob.
+    P = 1.15 * _LIMIT
+    conv, uy, steps = _relax(P, (DR,), max_iter=800000)   # defaults => autoRefresh on
+    assert conv, f"auto-refresh DR did not settle (steps={steps}, uy={uy})"
+    assert uy < -2.0 * _H, f"auto-refresh DR did not snap through: uy={uy:.4f}"
+    assert abs(uy - (-0.217)) < 0.03, f"far-branch uy={uy:.4f} off oracle (-0.217)"
+
+
+# --------------------------------------------------------------------------
+# DR-V : viscous-critical damping mode relaxes a sub-critical load
+# --------------------------------------------------------------------------
+def test_drv_viscous_subcritical():
+    P = 3.0
+    ref_uy = _loadcontrol_uy(P)
+    conv, uy, steps = _relax(P, (DR, "-damping", "viscous"))
+    assert conv, f"viscous DR did not relax to rest (steps={steps}, uy={uy})"
+    assert abs(uy - ref_uy) < 1e-3, f"viscous DR uy={uy:.6f} != LoadControl {ref_uy:.6f}"
+
+
+# --------------------------------------------------------------------------
 # DR-8 : M* independence — massless truss still relaxes (Gershgorin, not getMass)
 # --------------------------------------------------------------------------
 def test_dr8_massless_relaxes_via_gershgorin():
@@ -148,6 +173,9 @@ def test_dr8_massless_relaxes_via_gershgorin():
     (DR, "-mass", "unity"),
     (DR, "-mass", "lumped", 1.0),
     (DR, "-dt", 1.0, "-recompute", 100),
+    (DR, "-damping", "viscous"),
+    (DR, "-damping", "viscous", 0.7),
+    (DR, "-noAutoRefresh"),
 ])
 def test_drs_parser_smoke(args):
     _build_geom()

@@ -1,7 +1,7 @@
 ---
 title: LadrunoBrick EAS — stabilization for inelastic localization
 project: Ladruno
-status: scoping
+status: rejected
 priority: low
 owner: nmora
 tags:
@@ -13,10 +13,19 @@ tags:
 
 # LadrunoBrick EAS — stabilization for inelastic localization
 
-> Scoping doc (no code yet). Follows the EAS-vs-ssp/bbar damage comparison in
-> [[19_ladruno_brick_eas_simo_rifai]] (PR-2 follow-up), which found the true-EAS
-> element (`-formulation eas`) **not robust on notched / high-strain-gradient
-> inelastic problems**. This ADR scopes the fix.
+> [!failure] **REJECTED (2026-06-03).** This ADR scoped, then implemented, then
+> *refuted* a scalar `β·Kαα⁰` tangent regularization for `-formulation eas`. The
+> DEN-bar gate showed there is no reproducible element-tangent stall to cure (bare
+> `eas` traverses with a reasonable solver) and that usable β degrades convergence.
+> The code was removed. See the **Implementation log** for the data, the surviving
+> **β-independence theorem**, and the **ADR 19 re-diagnosis**. The scoping/analysis
+> below is kept verbatim as the record of what was tried and why it seemed plausible.
+
+> Scoping doc. Followed the EAS-vs-ssp/bbar damage comparison in
+> [[19_ladruno_brick_eas_simo_rifai]] (PR-2 follow-up), which *reported* the true-EAS
+> element (`-formulation eas`) "not robust on notched inelastic problems" — a claim
+> the DEN-bar gate here **overturned** (it was a solver/tolerance artifact, not an
+> element instability; see the log).
 
 ## What
 
@@ -326,7 +335,17 @@ against ADR 19's rank evidence. Net changes to the plan:
 battery — run gate #2 (β=0 bit-identical) and gate #3 (β-independence to machine
 precision) *first* as a correctness firewall, then gate #1/#4 for the actual cure.
 
-### 2026-06-03 — scalar-β implementation (code landed, build/test in progress)
+### 2026-06-03 — scalar-β implemented, tested against the DEN bar, **REFUTED and REMOVED**
+
+> [!failure] **OUTCOME: scalar `β·Kαα⁰` does not work and was removed.** The lever
+> was fully implemented, unit-passed (β=0 bit-identical; β-independence to machine
+> precision), then tested on the actual ADR 19 DEN-bar gate — where it **failed**:
+> there is no reproducible element-tangent stall to cure, and usable β values
+> *degrade* convergence. The code (`-stab`, `easStabBeta`, `easKaa0`, the test) was
+> stripped back out. The β-independence theorem and the ADR 19 re-diagnosis below are
+> the surviving results. **Status flipped to `rejected`.**
+
+#### What was built (now reverted)
 
 Implemented the try-first scalar lever in `LadrunoBrick` (branch
 `guppi/eas-stab-impl`). What landed, vs the checklist above:
@@ -369,10 +388,72 @@ Implemented the try-first scalar lever in `LadrunoBrick` (branch
 - **β=0 fast path:** every site branches `if (easStabBeta != 0.0)`, so β=0 runs the
   original code verbatim (gate #2 bit-identical).
 
-- **Tests:** `tests/test_ladrunoBrick_eas_stab.py` — parser/guard, β=0 bit-identical,
-  β-independence to machine precision (distorted patch + bending + hardening-J2 over
-  β∈{0,1e-3,1e-1,1}), all under `algorithm Newton` + tight residual test (the
-  theorem's convergence precondition). DEN-bar cure + plateau sweep deferred.
+- **Unit tests (passed):** `tests/test_ladrunoBrick_eas_stab.py` — parser/guard, β=0
+  bit-identical, β-independence to machine precision (distorted patch + bending +
+  hardening-J2 over β∈{0,1e-3,1e-1,1}), all under `algorithm Newton` + tight residual
+  test. These confirmed the *correctness* of the lever (the β-independence theorem),
+  not its usefulness.
 
-*(Status: code complete; first worktree build + Zone-A run pending. The non-convex
-DEN-bar cure — the actual headline — is the next gate once the firewall is green.)*
+#### The DEN-bar gate — the refutation
+
+Ran the ADR 19 DEN-bar comparison (`test_lemaitre_notched_bar` geometry; steel J2 +
+Lemaitre + `-autoRegularization`) with `-formulation eas -stab β` over a β sweep, two
+solvers, and four difficulty configs. The headline tables (reached elongation of 1.5):
+
+```
+adaptive solver (step-cut + KrylovNewton/LineSearch), coarse mesh:
+  β:        0      1e-3    1e-2    1e-1    1       10
+  reached:  1.50   1.50    0.78    1.50    1.50    0.57     ← bbar ref = 1.50
+  peak[N]:  23916  23916   23916   23916   23916   23916    ← IDENTICAL (β-independent peak)
+
+plain Newton (fixed step), reached elongation by β:
+  config                  β=0    1e-2   1e-1   0.3    1      3
+  fine,   reg, small-step 1.50   1.50   1.50   0.23   0.06   0.06
+  fine, NOreg, small-step 1.50   1.50   1.46   0.20   0.06   0.06
+  coarse,NOreg, BIG-step  0.69   0.24   0.45   1.50   0.15   0.09   ← β=0.3 rescues...
+  fine,  NOreg, BIG-step  0.49   0.11   0.11   0.06   0.06   0.06   ← ...but here nothing helps
+```
+
+**Findings:**
+
+1. **No reproducible element-tangent stall.** Bare `eas` (β=0) traverses to full
+   elongation in *every small-step* config, any mesh, with or without regularization.
+   A stall appears only under **big steps** — a Newton basin-of-attraction / solver
+   issue, not an enhanced-mode instability. ADR 19's "stall at 0.17, damage≈0 (at
+   yield onset)" was the **inner-Newton absolute-tolerance bug** that ADR 19 PR-2
+   itself fixed (the relative criterion), plus coarse stepping — **not** the
+   "instability of the enhanced modes under non-homogeneous inelasticity" that ADR 19
+   §PR-2-follow-up (and this ADR's §Why) inferred. **That inference is now retracted.**
+
+2. **β is erratic and usually harmful.** The β-independence theorem holds beautifully
+   (peak load bit-identical across all β — the peak is convex-regime). But in the
+   *non-convex* softening regime β selects a branch, non-monotonically: the very same
+   β=0.3 that rescues `coarse-BIG-step` (0.69→1.50) **destroys** the two small-step
+   configs (1.50→0.23/0.20) and helps nothing in `fine-BIG-step`. There is **no β
+   that is universally safe**, and usable magnitudes (β≳0.3) typically convert a
+   converging run into a stall.
+
+3. **Why, by theory (the lesson):** Newton needs a tangent *consistent* with the
+   residual, **not** a positive-definite one. Regularizing `K* → Kdd` makes it
+   inconsistent with the exact (β-independent) `f*`, which *degrades* Newton — exactly
+   the observed β≳1 collapse. And `Kαα⁰` is *elastic*-scale, so flooring a genuinely
+   degraded `Kαα` needs β~O(1), at which point `β·Kαα⁰` dominates and the tangent is
+   fully inconsistent. There is **no β window** between "inert" and "dominant-and-
+   inconsistent." The "floor K* toward Kdd to help" intuition is backwards for a
+   Newton solver. The real cure for these big-step stalls is solver-side (line search,
+   arc-length/dissipation control, adaptive step-cutting) — already in OpenSees.
+
+#### Decision
+
+**Removed.** Scalar `β·Kαα⁰` tangent regularization is not a viable cure for EAS on
+inelastic localization. The `-stab` knob, `easStabBeta`/`easKaa0` state, the
+serialization widening, and `tests/test_ladrunoBrick_eas_stab.py` were reverted;
+`LadrunoBrick` is back to the bare-`eas` state. **Surviving results:** (a) the
+**β-independence theorem** (a clean statement of why `Kαα`-side modifications never
+perturb the converged answer in the convex regime); (b) the **ADR 19 re-diagnosis**
+(the notched-bar stall = the already-fixed inner-Newton tolerance bug + coarse
+stepping, **not** an enhanced-mode instability — `eas` is robust on this DEN bar with
+a reasonable solver). **Do not re-attempt scalar β.** The only EAS instability that
+genuinely needs a stabilization is **finite-strain compressive hourglassing** (a real
+zero-energy mode, de Souza Neto §15.2.5) — a *different* mechanism cured by a
+*deformation-dependent* Reese–Wriggers term, out of scope for small-strain `eas`.

@@ -148,6 +148,11 @@ class BezierTet10 : public Element
     // which on a quadratic element collapses to ~½ the edge length. See .cpp.
     double getCharacteristicLength(void);
 
+    // Ladruno (ADR 20 §9): quadratic Bernstein shape weights at barycentric
+    // natural coord xi = (L1,L2,L3), L4 = 1-L1-L2-L3, for embedded-reinforcement
+    // coupling. N sized to 10 (NEN).
+    int getInterpolationWeights(const Vector &xi, Vector &N);
+
     void setDomain(Domain *theDomain);
     int commitState(void);
     int revertToLastCommit(void);

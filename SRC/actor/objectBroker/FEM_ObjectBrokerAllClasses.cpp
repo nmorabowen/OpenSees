@@ -48,6 +48,7 @@
 #include "convergenceTest/CTestEnergyIncr.h" 
 #include "convergenceTest/CTestRelativeEnergyIncr.h"
 #include "convergenceTest/CTestFixedNumIter.h"
+#include "convergenceTest/LadrunoStabilizedUnbalance.h"   // Ladruno
 
 // graph numbering schemes
 #include "graph/numberer/RCM.h"
@@ -251,6 +252,7 @@
 #include "LadrunoJ2.h"             // Ladruno — combined iso + Chaboche AF kinematic J2
 #include "LadrunoJ2Finite.h"       // Ladruno — finite-strain-native combined-hardening J2 (co-rotating backstress)
 #include "InitDefGradNDMaterial.h" // Ladruno — multiplicative staged-activation wrapper (stress-free birth)
+#include "StagedStrainNDMaterial.h" // Ladruno — small-strain (2D+3D) auto-capturing staged-activation wrapper
 #include "LadrunoRCConcrete.h"     // Ladruno — RC plastic-damage + MCFT compression softening (ADR 19)
 #include "ElasticOrthotropicThreeDimensional.h"
 #include "ElasticOrthotropicPlaneStress.h"
@@ -472,6 +474,7 @@
 #include "bezierTetrahedron/BezierTet10.h"	// Ladruno (broker reconstruction)
 #include "ladrunoIMKBeam/LadrunoIMKBeam.h"	// N. Mora-Bowen (Ladruno)
 #include "ladrunoIMKBeam/LadrunoIMKBeam2d.h"	// N. Mora-Bowen (Ladruno)
+#include "ladrunoEmbeddedRebar/LadrunoEmbeddedRebar.h"	// N. Mora-Bowen (Ladruno)
 #include "joint/Joint2D.h"		// Arash
 #include "joint/Inno3DPnPJoint.h" // Cristian Miculas
 #include "twoNodeLink/TwoNodeLink.h"
@@ -666,6 +669,7 @@
 // integrator header files
 #include "ArcLength.h"
 #include "LadrunoArcLength.h"   // Ladruno
+#include "LadrunoIndirectControl.h"   // Ladruno
 #include "DisplacementControl.h"
 #ifdef _PARALLEL_PROCESSING
 #include "DistributedDisplacementControl.h"
@@ -1059,6 +1063,9 @@ FEM_ObjectBrokerAllClasses::getNewElement(int classTag)
 
     case ELE_TAG_LadrunoIMKBeam2d:	// N. Mora-Bowen (Ladruno)
       return new LadrunoIMKBeam2d();
+
+    case ELE_TAG_LadrunoEmbeddedRebar:	// N. Mora-Bowen (Ladruno)
+      return new LadrunoEmbeddedRebar();
 
     case ELE_TAG_SSPquad:
       return new SSPquad();
@@ -2329,6 +2336,9 @@ FEM_ObjectBrokerAllClasses::getNewNDMaterial(int classTag)
   case ND_TAG_InitDefGradNDMaterial:              // Ladruno — multiplicative staged-activation wrapper (stress-free birth)
     return new InitDefGradNDMaterial();
 
+  case ND_TAG_StagedStrainNDMaterial:             // Ladruno — small-strain (2D+3D) auto-capturing staged-activation wrapper
+    return new StagedStrainNDMaterial();
+
   case ND_TAG_LadrunoRCConcrete:                  // Ladruno — RC plastic-damage + MCFT compression softening (ADR 19)
     return new LadrunoRCConcrete();
 
@@ -2611,9 +2621,12 @@ FEM_ObjectBrokerAllClasses::getNewConvergenceTest(int classTag)
 	case CONVERGENCE_TEST_CTestRelativeEnergyIncr:  
 	     return new CTestRelativeEnergyIncr();
 	     
-	case CONVERGENCE_TEST_CTestFixedNumIter:  
+	case CONVERGENCE_TEST_CTestFixedNumIter:
 	     return new CTestFixedNumIter();
-	     
+
+	case CONVERGENCE_TEST_LadrunoStabilizedUnbalance:   // Ladruno
+	     return new LadrunoStabilizedUnbalance();
+
 	default:
 	     opserr << "FEM_ObjectBrokerAllClasses::getNewConvergenceTest - ";
 	     opserr << " - no ConvergenceTest type exists for class tag ";
@@ -3070,7 +3083,10 @@ FEM_ObjectBrokerAllClasses::getNewStaticIntegrator(int classTag)
 	case INTEGRATOR_TAGS_LadrunoArcLength:   // Ladruno
 	     return new LadrunoArcLength(1.0);    // must recvSelf
 
-	     
+	case INTEGRATOR_TAGS_LadrunoIndirectControl:   // Ladruno
+	     return new LadrunoIndirectControl();   // must recvSelf
+
+
 	default:
 	     opserr << "FEM_ObjectBrokerAllClasses::getNewStaticIntegrator - ";
 	     opserr << " - no StaticIntegrator type exists for class tag ";
@@ -3231,9 +3247,12 @@ FEM_ObjectBrokerAllClasses::getNewIncrementalIntegrator(int classTag)
 
 	case INTEGRATOR_TAGS_LadrunoArcLength:   // Ladruno
 	     return new LadrunoArcLength(1.0);    // must recvSelf
-	     	     
-	     
-	case INTEGRATOR_TAGS_Newmark:  
+
+	case INTEGRATOR_TAGS_LadrunoIndirectControl:   // Ladruno
+	     return new LadrunoIndirectControl();   // must recvSelf
+
+
+	case INTEGRATOR_TAGS_Newmark:
 	     return new Newmark();
 
 #ifdef _PARALLEL_PROCESSING	     

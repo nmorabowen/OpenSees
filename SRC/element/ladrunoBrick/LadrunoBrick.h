@@ -39,8 +39,10 @@
 //          (SSPbrick port). NB this is NOT enhanced assumed strain.
 //   eas  — true Simo-Rifai enhanced assumed strain (9 internal params, inner
 //          Newton + static condensation; full 2x2x2, 8 live GPs; ADR 19). Robust
-//          on smooth/homogeneous response; for notched/localization inelasticity
-//          use ssp/bbar (EAS stabilization is ADR 20).
+//          on smooth/homogeneous AND notched/localization inelasticity with a normal
+//          adaptive solver (the ADR 20 DEN-bar sweep refuted an earlier "stall"
+//          claim — it was a solver/tolerance artifact; a scalar -stab was tried and
+//          rejected, ADR 20).
 //
 // The kernel is carved into three seams (kinematics ledger / geometry method /
 // material adaptor) so corotational (v2) and finite-strain (v3) drop in without
@@ -98,8 +100,7 @@ class LadrunoBrick : public Element {
                Hourglass hgType = Hourglass::PHYSICAL,
                double hgCoeff = 0.0,
                Damping *theDamping = 0,
-               int geomMethodID = 0,   // 0=linear, 2=finite (SolidTransformation method id)
-               double stabBeta = 0.0); // Ladruno — ADR 20 eas tangent-regularization beta
+               int geomMethodID = 0);   // 0=linear, 2=finite (SolidTransformation method id)
 
   virtual ~LadrunoBrick();
 
@@ -122,6 +123,10 @@ class LadrunoBrick : public Element {
   // cube, lch = cbrt(V) — geometry-true (the hex analogue of BezierTet10's
   // cbrt(6V) and BezierTri6's sqrt(2A)). Degenerate V<=0 falls back to base.  // Ladruno
   double getCharacteristicLength(void);
+
+  // Ladruno (ADR 20 §9): trilinear 8-node hex shape weights at natural coord
+  // xi = (ξ,η,ζ) ∈ [-1,1]³, for embedded-reinforcement coupling. N sized to 8.  // Ladruno
+  int getInterpolationWeights(const Vector &xi, Vector &N);
 
   // state
   int commitState(void);
@@ -325,14 +330,6 @@ class LadrunoBrick : public Element {
   Vector alphaCommit;  // committed enhanced parameters (serialized)
   Matrix easJ0inv;     // 3x3 centroid Jacobian inverse (mode map; cached)
   double easJ0det;     // centroid Jacobian determinant j0 (cached)
-  // ADR 20 — optional Kaa tangent regularization for inelastic localization.
-  // Kaa_stab = Kaa + beta*easKaa0, applied ONLY at the .Solve() operator (never to
-  // the accumulated Kaa) so the residual int M^T sigma is untouched => the converged
-  // state is beta-independent in the convex regime (a modified-Newton, not a physics
-  // change). easKaa0 = int M^T C0 M dV is the elastic enhanced stiffness (geometry-
-  // only in small strain), cached once in buildEAStrue alongside easJ0inv.  // Ladruno
-  double easStabBeta;  // -stab beta (default 0 = bit-identical to bare eas)
-  Matrix easKaa0;      // 9x9 elastic enhanced stiffness int M^T C0 M dV (cached)
   // Fill the assumed-strain B (Bbar[node][6][3], Voigt {xx,yy,zz,xy,yz,zx}) at a
   // Gauss point; returns |J|. gamma/bC are the (precomputed) hourglass vectors
   // and centroid gradients. Implements eq 8.7.26.

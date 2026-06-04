@@ -19,11 +19,14 @@ Solid geometry methods — -geom linear/corot/finite (+ F-bar)
 LadrunoJ2 — combined iso + Chaboche AF kinematic J2
 LadrunoJ2Finite — finite-strain J2, co-rotating backstress (+IMPL-EX)
 LadrunoUniaxialJ2 — uniaxial Chaboche AF J2 fiber/truss
-InitDefGrad — finite-strain stress-free staged activation (F_rel=F·F0⁻¹)
+StagedDefGrad/InitDefGrad — finite-strain stress-free staged activation (F_rel=F·F0⁻¹)
+StagedStrain — small-strain (2D+3D) stress-free staged activation (ε_rel=ε−ε0)
 Lemaitre ductile damage (-damage lemaitre, +lch, +IMPL-EX)
 LadrunoIMKBeam — concentrated-plasticity IMK beam hinges
 LadrunoRebarBuckling — rebar buckling wrapper (Dhakal–Maekawa / Gomes–Appleton, cyclic re-straightening)
 LadrunoRCConcrete — RC plastic-damage + MCFT compression softening (shell)
 LadrunoArcLength — adaptive arc-length radius (Ramm desired-iter)
 LadrunoDynamicRelaxation — quasi-static DR (Gershgorin mass + kinetic damping)
+LadrunoIndirectControl — indirect/CMOD control (snap-back tracking)
+LadrunoStabilizedUnbalance — true-equilibrium test for -stabilize
 Ladruno — modular HDF5 .ladruno recorder
