@@ -49,7 +49,8 @@ LadrunoEmbeddedRebar::LadrunoEmbeddedRebar(int tag, int ndm_, int rebarNode,
         const ID& hostNodes, const Vector& shape, const Vector& dir_,
         double kt_, double bondScale_, UniaxialMaterial* bm, double kAxialPerfect_,
         int hostEleTag_, bool ktAuto_, double ktAlpha_, bool corot_,
-        const Vector* shapeB, int enforce_)
+        const Vector* shapeB, int enforce_,
+        bool bipenalty_, int bpMode_, double bpDt_, double bpBeta_)
   : Element(tag, ELE_TAG_LadrunoEmbeddedRebar),
     ndm(ndm_), nHost(hostNodes.Size()), nDOF((1 + hostNodes.Size()) * ndm_),
     connectedNodes(1 + hostNodes.Size()), Nshape(shape), dir(ndm_),
@@ -58,6 +59,8 @@ LadrunoEmbeddedRebar::LadrunoEmbeddedRebar(int tag, int ndm_, int rebarNode,
     bondMat(0),
     enforce(enforce_), lambda(ndm_),
     hostEleTag(hostEleTag_), ktAuto(ktAuto_), ktAlpha(ktAlpha_), ktResolved(false),
+    bipenalty(bipenalty_), bpMode(bpMode_), bpDt(bpDt_), bpBeta(bpBeta_),
+    mPenalty(0.0), bpResolved(false),
     theNodes(0), K(0), P(0), M0(0), bondEnergyResp(0)
 {
   connectedNodes(0) = rebarNode;
@@ -94,6 +97,8 @@ LadrunoEmbeddedRebar::LadrunoEmbeddedRebar()
     bondMat(0),
     enforce(0), lambda(),
     hostEleTag(-1), ktAuto(false), ktAlpha(0.0), ktResolved(false),
+    bipenalty(false), bpMode(0), bpDt(0.0), bpBeta(0.0),
+    mPenalty(0.0), bpResolved(false),
     theNodes(0), K(0), P(0), M0(0), bondEnergyResp(0)
 {
 }
@@ -177,6 +182,89 @@ void LadrunoEmbeddedRebar::resolveAutoKt(void)
   }
   kt = ktAlpha * scale;
   ktResolved = true;
+}
+
+// k_eff = max(k_axial0, kt): the stiffest coupled spring, which sets the bounded
+// bipenalty frequency. Axial uses the bond law's INITIAL tangent (representative,
+// stable pre-analysis) or the perfect-bond penalty. ADR 20 §10.6 (D-bp-1).
+double LadrunoEmbeddedRebar::effectiveCouplingStiffness(void)
+{
+  double kAxial0 = (bondMat != 0) ? fabs(bondMat->getInitialTangent() * bondScale)
+                                  : fabs(kAxialPerfect);
+  return (kAxial0 > kt) ? kAxial0 : kt;
+}
+
+// ADR 20 §10.6 — resolve the mass penalty m_p (lazily, after kt). Lumped on the
+// REBAR node only (getMass writes it onto the first ndm diagonal entries), so the
+// global mass stays diagonal (DiagonalSOE-safe). Two budgets:
+//   bpMode 0 (-dtcr dt): m_p = k_eff·(dt/2)²            — explicit, no host query.
+//   bpMode 1 (-wcap β):  m_p = k_eff/(β·ω_host)²,
+//                        ω_host² ≈ ‖K_host‖_∞ / ‖M_host‖_∞ (max abs diagonals).
+void LadrunoEmbeddedRebar::resolveBipenalty(void)
+{
+  if (!bipenalty || bpResolved) return;
+  this->resolveAutoKt();                 // m_p needs the final kt
+  double kEff = this->effectiveCouplingStiffness();
+  if (kEff <= 0.0) {
+    opserr << "WARNING LadrunoEmbeddedRebar " << this->getTag()
+           << ": -bipenalty got a zero coupling stiffness; m_p=0\n";
+    mPenalty = 0.0; bpResolved = true; return;
+  }
+
+  if (bpMode == 0) {                      // -dtcr explicit budget
+    if (bpDt <= 0.0) {
+      opserr << "WARNING LadrunoEmbeddedRebar " << this->getTag()
+             << ": -dtcr needs a positive step; m_p=0\n";
+      mPenalty = 0.0; bpResolved = true; return;
+    }
+    mPenalty = kEff * 0.25 * bpDt * bpDt; // k_eff·(dt/2)²
+    bpResolved = true;
+    return;
+  }
+
+  // bpMode 1 — -wcap β: derive ω_host from the host element (needs -host).
+  Domain* theDomain = this->getDomain();
+  if (theDomain == 0) return;            // not in a domain yet; retry on next call
+  if (hostEleTag < 0) {
+    opserr << "WARNING LadrunoEmbeddedRebar " << this->getTag()
+           << ": -wcap needs the -host form for ω_host; use -dtcr; m_p=0\n";
+    mPenalty = 0.0; bpResolved = true; return;
+  }
+  Element* host = theDomain->getElement(hostEleTag);
+  if (host == 0) {
+    opserr << "WARNING LadrunoEmbeddedRebar " << this->getTag()
+           << ": -wcap host element " << hostEleTag << " not found; m_p=0\n";
+    mPenalty = 0.0; bpResolved = true; return;
+  }
+  // Read the stiffness scale FULLY before fetching the host mass: getInitialStiff()
+  // and getMass() may return a reference to the same shared static buffer (D8), so
+  // don't hold both references at once.
+  double kScale = 0.0, mScale = 0.0;
+  {
+    const Matrix& Kh = host->getInitialStiff();
+    for (int i = 0; i < Kh.noRows(); i++) { double d = fabs(Kh(i, i)); if (d > kScale) kScale = d; }
+  }
+  {
+    const Matrix& Mh = host->getMass();
+    for (int i = 0; i < Mh.noRows(); i++) { double d = fabs(Mh(i, i)); if (d > mScale) mScale = d; }
+  }
+  if (mScale <= 0.0 || kScale <= 0.0) {
+    opserr << "WARNING LadrunoEmbeddedRebar " << this->getTag()
+           << ": -wcap host " << hostEleTag << " has no mass (or no stiffness); "
+           << "use -dtcr instead; m_p=0\n";
+    mPenalty = 0.0; bpResolved = true; return;
+  }
+  double omega2_host = kScale / mScale;            // ω_host²
+  if (bpBeta <= 0.0) bpBeta = 2.0;                 // safe default ratio
+  mPenalty = kEff / (bpBeta * bpBeta * omega2_host);
+  bpResolved = true;
+}
+
+// ADR 20 §10.6 (D-bp-5): a penalty coupling carries no physical Rayleigh damping
+// — refuse the factors so they stay zero and never shrink the reported dt_cr.
+int LadrunoEmbeddedRebar::setRayleighDampingFactors(double, double, double, double)
+{
+  return 0;   // ignored on purpose
 }
 
 // ===========================================================================
@@ -319,7 +407,18 @@ const Vector& LadrunoEmbeddedRebar::getResistingForce(void)
 
 const Vector& LadrunoEmbeddedRebar::getResistingForceIncInertia(void)
 {
-  return this->getResistingForce();   // no element mass / damping
+  this->getResistingForce();          // fills *P with the coupling force
+  // ADR 20 §10.6 — add the bipenalty inertia m_p·a on the rebar node only (the
+  // lumped mass lives on the first ndm DOFs). No Rayleigh term: the element
+  // refuses damping factors (D-bp-5). Zero-mass / no-bipenalty ⇒ unchanged.
+  if (bipenalty) {
+    this->resolveBipenalty();
+    if (mPenalty != 0.0 && theNodes[0] != 0) {
+      const Vector& aR = theNodes[0]->getTrialAccel();
+      for (int k = 0; k < ndm; k++) (*P)(k) += mPenalty * aR(k);
+    }
+  }
+  return *P;
 }
 
 const Matrix& LadrunoEmbeddedRebar::getTangentStiff(void)
@@ -385,6 +484,23 @@ const Matrix& LadrunoEmbeddedRebar::getInitialStiff(void)
 const Matrix& LadrunoEmbeddedRebar::getMass(void)
 {
   M0->Zero();
+  // ADR 20 §10.6 — bipenalty: lump the mass penalty m_p on the REBAR node only
+  // (the first ndm diagonal entries). Host blocks stay zero ⇒ M is diagonal and
+  // DiagonalSOE-safe. This gives the rebar node a CONTROLLED mass so the GLOBALLY
+  // ASSEMBLED explicit critical step — where the host nodes carry real mass from the
+  // host element — is bounded (≈ 2√(m_p/k_eff)) instead of collapsing on a near-
+  // massless rebar. NOTE (adversarial-review correction): this does NOT make the
+  // element visible to the PER-ELEMENT CriticalTimeStep scan. In that BC-blind,
+  // host-mass-blind eigenproblem the host DOFs are massless and free, so they slave
+  // out the constraint (Schur complement on the rebar block = 0 ⇒ every finite
+  // generalized eigenvalue is 0 ⇒ λ_max=0 ⇒ the element contributes nothing). The
+  // bound is delivered by the GLOBAL stability above + the self-reported eleResponse
+  // "dtcr"; an explicit dt must be SET (e.g. via -dtcr), not auto-discovered from a
+  // per-element -cfl scan.
+  if (bipenalty) {
+    this->resolveBipenalty();
+    for (int k = 0; k < ndm; k++) (*M0)(k, k) = mPenalty;
+  }
   return *M0;
 }
 
@@ -395,8 +511,9 @@ int LadrunoEmbeddedRebar::sendSelf(int commitTag, Channel& theChannel)
 {
   int dbTag = this->getDbTag();
   // header: tag, ndm, nHost, kt, bondScale, kAxialPerfect, hasBond, bondClassTag,
-  //         bondDbTag, hostEleTag, ktAuto, ktAlpha, corot, enforce
-  static Vector hdr(14);
+  //         bondDbTag, hostEleTag, ktAuto, ktAlpha, corot, enforce,
+  //         bipenalty, bpMode, bpDt, bpBeta
+  static Vector hdr(18);
   hdr(0) = this->getTag();
   hdr(1) = ndm;
   hdr(2) = nHost;
@@ -420,6 +537,10 @@ int LadrunoEmbeddedRebar::sendSelf(int commitTag, Channel& theChannel)
   hdr(11) = ktAlpha;
   hdr(12) = corot ? 1.0 : 0.0;
   hdr(13) = enforce;
+  hdr(14) = bipenalty ? 1.0 : 0.0;
+  hdr(15) = bpMode;
+  hdr(16) = bpDt;
+  hdr(17) = bpBeta;
   if (theChannel.sendVector(dbTag, commitTag, hdr) < 0) {
     opserr << "LadrunoEmbeddedRebar::sendSelf - header failed\n";
     return -1;
@@ -452,7 +573,7 @@ int LadrunoEmbeddedRebar::recvSelf(int commitTag, Channel& theChannel,
                                    FEM_ObjectBroker& theBroker)
 {
   int dbTag = this->getDbTag();
-  static Vector hdr(14);
+  static Vector hdr(18);
   if (theChannel.recvVector(dbTag, commitTag, hdr) < 0) {
     opserr << "LadrunoEmbeddedRebar::recvSelf - header failed\n";
     return -1;
@@ -471,6 +592,12 @@ int LadrunoEmbeddedRebar::recvSelf(int commitTag, Channel& theChannel,
   ktAlpha = hdr(11);
   corot = (hdr(12) != 0.0);
   enforce = (int)hdr(13);
+  bipenalty = (hdr(14) != 0.0);
+  bpMode = (int)hdr(15);
+  bpDt = hdr(16);
+  bpBeta = hdr(17);
+  mPenalty = 0.0;
+  bpResolved = false;   // re-resolve m_p against the host on first assembly
   ktResolved = false;   // re-resolve against the host on first assembly
 
   nDOF = (1 + nHost) * ndm;
@@ -577,6 +704,15 @@ Response* LadrunoEmbeddedRebar::setResponse(const char** argv, int argc, OPS_Str
     return new ElementResponse(this, 10, Vector(ndm));
   if (strcmp(argv[0], "gap") == 0)
     return new ElementResponse(this, 11, Vector(ndm));
+  // ADR 20 §10.6 bipenalty diagnostics: the resolved mass penalty m_p, and the
+  // element's self-reported critical step dt = 2√(m_p/k_eff) (the bounded penalty
+  // mode — 0 when bipenalty is off). This is an independent closed-form report, NOT
+  // what the per-element CriticalTimeStep scan computes (which sees this coupling
+  // element as λ_max=0; see getMass). Use it to choose an explicit dt.
+  if (strcmp(argv[0], "mpenalty") == 0 || strcmp(argv[0], "massPenalty") == 0)
+    return new ElementResponse(this, 12, 0.0);
+  if (strcmp(argv[0], "dtcr") == 0 || strcmp(argv[0], "dtCritical") == 0)
+    return new ElementResponse(this, 13, 0.0);
   return 0;
 }
 
@@ -623,6 +759,13 @@ int LadrunoEmbeddedRebar::getResponse(int responseID, Information& eleInfo)
   case 9: return eleInfo.setVector(dirCur);  // dirCur refreshed by formBandTraction above
   case 10: return eleInfo.setVector(lambda);
   case 11: return eleInfo.setVector(g);
+  case 12: { this->resolveBipenalty(); return eleInfo.setDouble(mPenalty); }
+  case 13: {
+    this->resolveBipenalty();
+    double kEff = this->effectiveCouplingStiffness();
+    double dt = (mPenalty > 0.0 && kEff > 0.0) ? 2.0 * sqrt(mPenalty / kEff) : 0.0;
+    return eleInfo.setDouble(dt);
+  }
   default: return -1;
   }
 }

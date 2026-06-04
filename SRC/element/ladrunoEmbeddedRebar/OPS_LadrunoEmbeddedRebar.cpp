@@ -43,6 +43,13 @@
 //           [-kt {kt | auto}] [-ktAlpha a]
 //           [-corot {-xiB b1..b_ndm | -shapeB N1..NN}]
 //           [-enforce {penalty | al}]
+//           [-bipenalty {-dtcr dt | -wcap beta}]
+//
+//   -bipenalty (ADR 20 §10.6): add a mass penalty m_p (lumped on the rebar node)
+//   so the explicit critical time step stays bounded and VISIBLE despite the
+//   stiff penalty coupling. Budget: -dtcr <dt> (m_p = k_eff·(dt/2)², no host) or
+//   -wcap <β> (m_p = k_eff/(β·ω_host)², ω_host from the host — requires -host).
+//   Gated on -enforce penalty (ignored with al). For EXPLICIT analysis only.
 //
 //   -enforce (ADR 20 §10.1): constraint treatment. penalty (default, Mode P) or
 //   al (augmented Lagrangian — per-step Uzawa drives the perfect-bond gap -> 0 at
@@ -163,6 +170,11 @@ void* OPS_LadrunoEmbeddedRebar(void)
   Vector NshapeB(nHost);          // weights at point B along the bar (corot)
   bool haveB = false;
   int enforce = 0;                // -enforce: 0=penalty (default), 1=al (ADR §10.1)
+  bool bipenalty = false;         // -bipenalty: add the mass penalty (ADR §10.6)
+  int bpMode = 0;                 // 0 = -dtcr budget, 1 = -wcap β
+  double bpDt = 0.0;              // -dtcr target step
+  double bpBeta = 0.0;            // -wcap penalty-frequency ratio β
+  bool bpBudgetSet = false;       // a budget (-dtcr or -wcap) was supplied
   double bondScale = 1.0;
   double kAxialPerfect = 0.0;
   int bondTag = -1;
@@ -235,6 +247,31 @@ void* OPS_LadrunoEmbeddedRebar(void)
                << "' (want penalty|al)\n";
         return 0;
       }
+    }
+    else if (strcmp(opt, "-bipenalty") == 0) {
+      // bipenalty mass-penalty control for explicit dt_cr (ADR 20 §10.6). Needs a
+      // budget: -dtcr <dt> (explicit) or -wcap <β> (auto ω_host, requires -host).
+      bipenalty = true;
+    }
+    else if (strcmp(opt, "-dtcr") == 0) {
+      // -dtcr <dt>: size m_p so the element's bounded penalty mode does not
+      // undercut this step (m_p = k_eff·(dt/2)²). No host query.
+      n = 1;
+      if (OPS_GetDoubleInput(&n, &bpDt) < 0) {
+        opserr << "WARNING LadrunoEmbeddedRebar: -dtcr wants a target step\n";
+        return 0;
+      }
+      bipenalty = true; bpMode = 0; bpBudgetSet = true;
+    }
+    else if (strcmp(opt, "-wcap") == 0) {
+      // -wcap <β>: bound the spurious penalty frequency to β·ω_host, with ω_host
+      // derived from the host (m_p = k_eff/(β·ω_host)²). Requires the -host form.
+      n = 1;
+      if (OPS_GetDoubleInput(&n, &bpBeta) < 0) {
+        opserr << "WARNING LadrunoEmbeddedRebar: -wcap wants a frequency ratio β\n";
+        return 0;
+      }
+      bipenalty = true; bpMode = 1; bpBudgetSet = true;
     }
     else if (strcmp(opt, "-shapeB") == 0) {
       // explicit weights at point B along the bar (the corot secant endpoint).
@@ -354,6 +391,25 @@ void* OPS_LadrunoEmbeddedRebar(void)
            << "bar (-xiB x1..x_ndm with -host, or -shapeB N1..NN)\n";
     return 0;
   }
+  // --- bipenalty validation (ADR 20 §10.6) -----------------------------------
+  if (bipenalty && !bpBudgetSet) {
+    opserr << "WARNING LadrunoEmbeddedRebar: -bipenalty needs a budget — "
+           << "-dtcr <dt> (explicit) or -wcap <β> (auto ω_host, with -host)\n";
+    return 0;
+  }
+  if (bipenalty && bpMode == 1 && hostEleTag < 0) {
+    opserr << "WARNING LadrunoEmbeddedRebar: -wcap requires the -host form "
+           << "(no host element to read ω_host from); use -dtcr instead\n";
+    return 0;
+  }
+  if (bipenalty && enforce == 1) {
+    // AL drives the gap to zero at moderate kt via its multiplier — there is no
+    // stiff spurious mode to bound, so m_p is unnecessary (and would pollute the
+    // inertia). Disable rather than error (ADR 20 §10.6 D-bp-2).
+    opserr << "WARNING LadrunoEmbeddedRebar: -bipenalty ignored with -enforce al "
+           << "(augmented Lagrangian needs no mass penalty)\n";
+    bipenalty = false; bpBudgetSet = false;
+  }
 
   UniaxialMaterial* bondMat = 0;
   if (bondTag >= 0) {
@@ -368,7 +424,8 @@ void* OPS_LadrunoEmbeddedRebar(void)
   Element* e = new LadrunoEmbeddedRebar(tag, ndm, rebarNode, hostNodes, Nshape,
                                         dir, kt, bondScale, bondMat, kAxialPerfect,
                                         hostEleTag, ktAuto, ktAlpha,
-                                        corot, corot ? &NshapeB : 0, enforce);
+                                        corot, corot ? &NshapeB : 0, enforce,
+                                        bipenalty, bpMode, bpDt, bpBeta);
   if (e == 0) {
     opserr << "WARNING LadrunoEmbeddedRebar: could not create element\n";
     return 0;
