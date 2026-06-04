@@ -1489,6 +1489,42 @@ int BezierTet10::getInterpolationWeights(const Vector &xi, Vector &N)
 
 
 // ═══════════════════════════════════════════════════════════════════
+//  getInterpolationGradients (Ladruno, ADR 23 §3, Phase 2 UR)
+//
+//  Cartesian shape-function gradients dN_a/dx_j at the barycentric natural
+//  coordinate xi = (L1,L2,L3), evaluated on the REFERENCE control points (the
+//  same geometry getInterpolationWeights uses): dN/dx = J^-1 dN/dL via
+//  computeJacobian. Used by LadrunoEmbeddedNode's rotation (UR) tie to read the
+//  host continuum rotation θ = ½ curl(u) = skew(∇u) at the embedded point. dNdx
+//  is resized to NEN(=10) x 3, dNdx(a,j) = ∂N_a/∂x_j. Returns -1 on a degenerate
+//  (det J == 0) host.
+// ═══════════════════════════════════════════════════════════════════
+int BezierTet10::getInterpolationGradients(const Vector &xi, Matrix &dNdx)
+{
+    if (xi.Size() < 3) {
+        opserr << "BezierTet10::getInterpolationGradients - xi needs 3 barycentric "
+                  "coords (L1,L2,L3)\n";
+        return -1;
+    }
+    if (dNdx.noRows() != NEN || dNdx.noCols() != 3)
+        dNdx.resize(NEN, 3);
+
+    double dN[3][NEN], J[3][3], dN_dx[3][NEN];
+    this->shapeDerivatives(xi(0), xi(1), xi(2), dN);
+    double detJ = this->computeJacobian(dN, J, dN_dx);
+    if (fabs(detJ) <= 0.0) {
+        opserr << "BezierTet10::getInterpolationGradients - degenerate Jacobian "
+                  "(detJ=" << detJ << ") at the requested natural coordinate\n";
+        return -1;
+    }
+    for (int a = 0; a < NEN; a++)
+        for (int j = 0; j < 3; j++)
+            dNdx(a, j) = dN_dx[j][a];   // dN_dx[0..2][a] = ∂N_a/∂x_j
+    return 0;
+}
+
+
+// ═══════════════════════════════════════════════════════════════════
 //  SERIALIZATION (sendSelf / recvSelf)
 // ═══════════════════════════════════════════════════════════════════
 

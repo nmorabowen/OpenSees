@@ -70,6 +70,17 @@ class Element : public DomainComponent
     // (returns -1, leaves N untouched); host elements override and return 0.
     virtual int getInterpolationWeights(const Vector &xi, Vector &N);
 
+    // Ladruno (ADR 23 §3, Phase 2 UR): companion of getInterpolationWeights — the
+    // CARTESIAN shape-function gradients at a natural coordinate. Fill `dNdx` (an
+    // nNodes x ndm matrix) with dNdx(i,j) = dN_i/dx_j (global coords) so that the
+    // displacement gradient at xi is  du_a/dx_j = Sum_i dNdx(i,j) u_i^a. Used by
+    // LadrunoEmbeddedNode to tie a constrained node's ROTATIONS to the host's
+    // continuum rotation theta = 1/2 curl(u) = skew(grad u) (weights alone cannot —
+    // the rotation needs dN/dx, not N). Default = not implemented (returns -1, leaves
+    // dNdx untouched); host elements override and return 0. For straight-sided
+    // simplex hosts dN/dx is element-constant; for hex/Bezier hosts it varies with xi.
+    virtual int getInterpolationGradients(const Vector &xi, Matrix &dNdx);
+
     // Ladruno (ADR 20 §10.6.1): an element's self-reported explicit critical time
     // step (seconds). A non-negative return FULLY REPLACES the per-element
     // K v = λ M v eigensolve for this element — CriticalTimeStep folds the value

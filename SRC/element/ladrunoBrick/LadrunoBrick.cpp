@@ -3165,6 +3165,43 @@ LadrunoBrick::getInterpolationWeights(const Vector &xi, Vector &N)
 }
 
 //----------------------------------------------------------------------
+// getInterpolationGradients — cartesian shape-function gradients dN_I/dx_j at the
+// natural coordinate xi = (ξ,η,ζ), in the REFERENCE configuration (computeBasis
+// sets xl = reference nodal coords; matches the geometry getInterpolationWeights /
+// getCharacteristicLength use). shp3d returns shp[0..2][I] = ∂N_I/∂x. Used by
+// LadrunoEmbeddedNode's rotation (UR) tie to read the host continuum rotation
+// θ = ½ curl(u) = skew(∇u) at the embedded point (ADR 23 §3). dNdx is resized to
+// 8x3, dNdx(I,j) = ∂N_I/∂x_j. Returns -1 on a degenerate (det J ≤ 0) host.  // Ladruno
+//----------------------------------------------------------------------
+int
+LadrunoBrick::getInterpolationGradients(const Vector &xi, Matrix &dNdx)
+{
+  if (xi.Size() < 3) {
+    opserr << "LadrunoBrick::getInterpolationGradients - xi needs 3 natural "
+              "coords (xi,eta,zeta)\n";
+    return -1;
+  }
+  static const int numberNodes = 8;
+  if (dNdx.noRows() != numberNodes || dNdx.noCols() != 3)
+    dNdx.resize(numberNodes, 3);
+
+  computeBasis();   // xl = reference nodal coordinates
+  double gp[3] = { xi(0), xi(1), xi(2) };
+  double detJ = 0.0;
+  static double shp[4][8];
+  shp3d(gp, detJ, shp, xl);
+  if (detJ <= 0.0) {
+    opserr << "LadrunoBrick::getInterpolationGradients - degenerate Jacobian "
+              "(detJ=" << detJ << ") at the requested natural coordinate\n";
+    return -1;
+  }
+  for (int I = 0; I < numberNodes; I++)
+    for (int j = 0; j < 3; j++)
+      dNdx(I, j) = shp[j][I];   // shp[0..2][I] = ∂N_I/∂x_j
+  return 0;
+}
+
+//----------------------------------------------------------------------
 // Recoverable elastic hourglass / stabilization energy at the current trial
 // state. uri 'stiffness': ½κ·Σ q_aι² (the FB perturbation energy; q from the
 // trial displacement, mirrors formUri exactly). ssp: ½·u_core·Kstab·u_core.

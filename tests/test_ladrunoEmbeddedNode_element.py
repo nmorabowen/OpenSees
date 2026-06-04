@@ -322,3 +322,217 @@ def test_pressure_degrades_when_not_up():
     R = _push1(1, 2.0e-3)
     assert abs(R[0]) == pytest.approx(1.0e5 * 2.0e-3, rel=1e-6)   # still works as U
     assert ops.eleResponse(1, "pgap")[0] == 0.0                   # UP inactive
+
+
+# =================================================== Phase 2 — rotation tie (UR)
+# UR ties the constrained node's ROTATIONS to the host CONTINUUM rotation
+# θ = ½ curl(u) = skew(∇u) at the embedded point, read from the host cartesian
+# gradients ∂N_i/∂x. As in Phase 1 we pin the MECHANICS without a host continuum by
+# supplying ∂N/∂x explicitly via -dNdx (the gradient analog of -shape) and prescribing
+# the host translations; the real-host legs use a LadrunoBrick / BezierTet10 + -xi.
+
+def _solve_static():
+    ops.constraints("Transformation"); ops.numberer("Plain"); ops.system("FullGeneral")
+    ops.test("NormDispIncr", 1e-11, 30); ops.algorithm("Newton")
+    ops.integrator("LoadControl", 1.0); ops.analysis("Static")
+    assert ops.analyze(1) == 0
+
+
+def test_rotation_2d_drilling_via_dNdx():
+    """2D drilling: θ_z = ½(∂N/∂x·u_y − ∂N/∂y·u_x). Host translation (a,b) and ∂N/∂x
+    are prescribed; the cNode drilling R_z is prescribed; check the moment reaction =
+    K_r·(R_z − θ_host) and the rgap response (signed)."""
+    ku, kr = 1.0e5, 1.0e6
+    gx, gy = 1.5, 2.5
+    a, b, rz = 0.02, 0.03, 0.05
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 3)
+    ops.node(1, 0.0, 0.0)        # cNode (u_x,u_y,R_z)
+    ops.node(2, 0.0, 0.0)        # host
+    ops.element("LadrunoEmbeddedNode", 1, 1, 1, 2, "-shape", 1.0, "-k", ku,
+                "-rot", "-kr", kr, "-dNdx", gx, gy)
+    ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
+    ops.sp(2, 1, a); ops.sp(2, 2, b); ops.sp(2, 3, 0.0)   # host fully prescribed
+    ops.sp(1, 3, rz)                                       # cNode drilling; u_x,u_y free
+    _solve_static()
+    ops.reactions()
+    thz = 0.5 * (gx * b - gy * a)
+    assert abs(ops.nodeReaction(1)[2]) == pytest.approx(kr * abs(rz - thz), rel=1e-6)
+    assert ops.eleResponse(1, "rgap")[0] == pytest.approx(rz - thz, rel=1e-6)
+
+
+def test_rotation_3d_continuum_via_dNdx():
+    """3D: θ_host = ½ Σ_i (∇N_i × u_i). One host node (N=1, ∇N=(gx,gy,gz)), host
+    translation (a,b,c); prescribe the three cNode rotations; check each moment
+    reaction = K_r·(θ_c − θ_host) and the 3-vector rgap (signed)."""
+    ku, kr = 1.0e5, 1.0e6
+    gx, gy, gz = 1.0, 2.0, 3.0
+    a, b, c = 0.01, 0.0, 0.0
+    rx, ry, rz = 0.1, 0.0, 0.0
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 6)
+    ops.node(1, 0.0, 0.0, 0.0)   # cNode (u + r)
+    ops.node(2, 0.0, 0.0, 0.0)   # host
+    ops.element("LadrunoEmbeddedNode", 1, 1, 1, 2, "-shape", 1.0, "-k", ku,
+                "-rot", "-kr", kr, "-dNdx", gx, gy, gz)
+    ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
+    for d, val in ((1, a), (2, b), (3, c), (4, 0.0), (5, 0.0), (6, 0.0)):
+        ops.sp(2, d, val)                      # host fully prescribed
+    ops.sp(1, 4, rx); ops.sp(1, 5, ry); ops.sp(1, 6, rz)   # cNode rotations; u free
+    _solve_static()
+    ops.reactions()
+    thx = 0.5 * (gy * c - gz * b)
+    thy = 0.5 * (gz * a - gx * c)
+    thz = 0.5 * (gx * b - gy * a)
+    R = ops.nodeReaction(1)
+    assert abs(R[3]) == pytest.approx(kr * abs(rx - thx), rel=1e-6, abs=1e-9)
+    assert abs(R[4]) == pytest.approx(kr * abs(ry - thy), rel=1e-6, abs=1e-9)
+    assert abs(R[5]) == pytest.approx(kr * abs(rz - thz), rel=1e-6, abs=1e-9)
+    rg = ops.eleResponse(1, "rgap")
+    assert rg[0] == pytest.approx(rx - thx, rel=1e-6, abs=1e-9)
+    assert rg[1] == pytest.approx(ry - thy, rel=1e-6, abs=1e-9)
+    assert rg[2] == pytest.approx(rz - thz, rel=1e-6, abs=1e-9)
+
+
+def test_rotation_3d_brick_shear_field():
+    """Real LadrunoBrick host (validates getInterpolationGradients + the -xi auto-
+    gradient path + mixed ndf): prescribe a shear field u_x = α·y on the 8 host nodes
+    ⇒ host continuum rotation θ = (0, 0, −α/2). The embedded node's rotations (free,
+    no applied moment) follow the host continuum rotation through the penalty."""
+    alpha, kr = 0.01, 1.0e6
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)            # 3-dof solid nodes
+    for tag, (x, y, z) in _CUBE.items():
+        ops.node(tag, x, y, z)
+    ops.nDMaterial("ElasticIsotropic", 1, 1000.0, 0.3)
+    ops.element("LadrunoBrick", 100, 11, 12, 13, 14, 15, 16, 17, 18, 1)
+    ops.model("basic", "-ndm", 3, "-ndf", 6)            # switch ndf (no wipe): 6-dof cNode
+    ops.node(1, 0.5, 0.5, 0.5)
+    ops.element("LadrunoEmbeddedNode", 1, 1, "-host", 100, "-xi", 0.0, 0.0, 0.0,
+                "-k", 1.0e5, "-rot", "-kr", kr)
+    ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
+    for tag, (x, y, z) in _CUBE.items():
+        ops.sp(tag, 1, alpha * y); ops.sp(tag, 2, 0.0); ops.sp(tag, 3, 0.0)
+    _solve_static()                                      # cNode 6 DOFs free
+    assert ops.nodeDisp(1, 4) == pytest.approx(0.0, abs=1e-6)        # θ_x
+    assert ops.nodeDisp(1, 5) == pytest.approx(0.0, abs=1e-6)        # θ_y
+    assert ops.nodeDisp(1, 6) == pytest.approx(-alpha / 2, rel=1e-4)  # θ_z = −α/2
+
+
+# straight-sided reference tet (vertices + edge midpoints, BezierTet10 node order)
+_TET_V = [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)]
+
+
+def _mid(a, b):
+    return tuple(0.5 * (a[k] + b[k]) for k in range(3))
+
+
+# N1..N4 vertices, N5 e(1-2), N6 e(2-3), N7 e(1-3), N8 e(1-4), N9 e(3-4), N10 e(2-4)
+_TET = {
+    21: _TET_V[0], 22: _TET_V[1], 23: _TET_V[2], 24: _TET_V[3],
+    25: _mid(_TET_V[0], _TET_V[1]), 26: _mid(_TET_V[1], _TET_V[2]),
+    27: _mid(_TET_V[0], _TET_V[2]), 28: _mid(_TET_V[0], _TET_V[3]),
+    29: _mid(_TET_V[2], _TET_V[3]), 30: _mid(_TET_V[1], _TET_V[3]),
+}
+
+
+def test_rotation_3d_bezierTet10_shear_field():
+    """Real BezierTet10 host (validates its getInterpolationGradients override): same
+    shear field u_x = α·y ⇒ θ_z = −α/2 at the centroid (L1=L2=L3=0.25). The embedded
+    node's drilling rotation follows the host continuum rotation."""
+    alpha, kr = 0.01, 1.0e6
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for tag, (x, y, z) in _TET.items():
+        ops.node(tag, x, y, z)
+    ops.nDMaterial("ElasticIsotropic", 1, 1000.0, 0.3)
+    ops.element("BezierTet10", 100, *_TET.keys(), 1)
+    ops.model("basic", "-ndm", 3, "-ndf", 6)
+    cen = tuple(sum(v[k] for v in _TET_V) / 4.0 for k in range(3))
+    ops.node(1, *cen)
+    ops.element("LadrunoEmbeddedNode", 1, 1, "-host", 100, "-xi", 0.25, 0.25, 0.25,
+                "-k", 1.0e5, "-rot", "-kr", kr)
+    ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
+    for tag, (x, y, z) in _TET.items():
+        ops.sp(tag, 1, alpha * y); ops.sp(tag, 2, 0.0); ops.sp(tag, 3, 0.0)
+    _solve_static()
+    assert ops.nodeDisp(1, 6) == pytest.approx(-alpha / 2, rel=1e-4)
+    assert ops.nodeDisp(1, 4) == pytest.approx(0.0, abs=1e-6)
+    assert ops.nodeDisp(1, 5) == pytest.approx(0.0, abs=1e-6)
+
+
+def test_rot_and_pressure_mutually_exclusive():
+    """ADR 23 M5/D7-1 — parse-time guard: -rot and -pressure together are rejected
+    (the extra DOF is rotation OR pressure, ambiguous in 2D ndf=3); the element is
+    NOT created."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 6)
+    ops.node(1, 0.0, 0.0, 0.0); ops.node(2, 0.0, 0.0, 0.0)
+    try:
+        ops.element("LadrunoEmbeddedNode", 1, 1, 1, 2, "-shape", 1.0, "-k", 1.0e5,
+                    "-rot", "-dNdx", 1.0, 0.0, 0.0, "-pressure")
+    except Exception:
+        pass
+    assert 1 not in (ops.getEleTags() or [])
+
+
+def test_rot_degrades_when_no_rotation_dofs():
+    """-rot but the cNode has no rotation DOFs (3D ndf=3) ⇒ degrade to U-only (warn);
+    the translational tie still works and rgap is inactive (zero)."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    ops.node(1, 0.0, 0.0, 0.0); ops.node(2, 0.0, 0.0, 0.0)
+    ops.fix(2, 1, 1, 1)
+    ops.element("LadrunoEmbeddedNode", 1, 1, 1, 2, "-shape", 1.0, "-k", 1.0e5,
+                "-rot", "-dNdx", 1.0, 0.0, 0.0)
+    R = _push1(1, 2.0e-3)
+    assert abs(R[0]) == pytest.approx(1.0e5 * 2.0e-3, rel=1e-6)   # U still works
+    assert ops.eleResponse(1, "rgap")[0] == 0.0                   # UR inactive
+
+
+def test_rotation_bipenalty_per_class_dtcr():
+    """ADR 23 D5 / M1·ES-1 — per-DOF-class (stiffness, inertia) pairs: m_p = K_u·(dt/2)²
+    (translation), I_p = K_r·(dt/2)² (rotation), so the self-reported dt_cr = min over
+    classes = dt (the rotation mode is bounded too, not left free)."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 6)
+    ops.node(1, 0.0, 0.0, 0.0); ops.node(2, 0.0, 0.0, 0.0)
+    ku, kr, dt = 1.0e6, 4.0e6, 1.0e-3
+    ops.element("LadrunoEmbeddedNode", 1, 1, 1, 2, "-shape", 1.0, "-k", ku,
+                "-rot", "-kr", kr, "-dNdx", 1.0, 0.0, 0.0, "-bipenalty", "-dtcr", dt)
+    assert ops.eleResponse(1, "mpenalty")[0] == pytest.approx(ku * (dt / 2.0) ** 2, rel=1e-9)
+    assert ops.eleResponse(1, "dtcr")[0] == pytest.approx(dt, rel=1e-9)
+
+
+def test_enforce_al_drives_rotation_gap_to_zero():
+    """AL on the rotation tie: cNode R_z FREE under an applied moment M, held by K_r to
+    a fixed host (θ_host=0). Penalty leaves a residual M/K_r; AL's per-step Uzawa drives
+    it ~0 at moderate K_r."""
+    M, Kr = 50.0, 1.0e4
+
+    def _build(enf):
+        ops.wipe()
+        ops.model("basic", "-ndm", 3, "-ndf", 6)
+        ops.node(1, 0.0, 0.0, 0.0); ops.node(2, 0.0, 0.0, 0.0)
+        ops.fix(2, 1, 1, 1, 1, 1, 1)            # host fully fixed ⇒ θ_host = 0
+        ops.fix(1, 1, 1, 1, 1, 1, 0)            # cNode free in R_z only
+        ops.element("LadrunoEmbeddedNode", 1, 1, 1, 2, "-shape", 1.0, "-k", 1.0e6,
+                    "-rot", "-kr", Kr, "-dNdx", 1.0, 0.0, 0.0, "-enforce", enf)
+        ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
+        ops.load(1, 0.0, 0.0, 0.0, 0.0, 0.0, M)
+        ops.constraints("Transformation"); ops.numberer("Plain"); ops.system("FullGeneral")
+        ops.test("NormDispIncr", 1e-12, 30); ops.algorithm("Newton")
+        ops.integrator("LoadControl", 1.0); ops.analysis("Static")
+
+    _build("penalty")
+    assert ops.analyze(1) == 0
+    gap_pen = abs(ops.nodeDisp(1, 6))
+    assert gap_pen == pytest.approx(M / Kr, rel=1e-3)
+
+    _build("al")
+    assert ops.analyze(1) == 0
+    ops.loadConst("-time", 0.0)
+    ops.integrator("LoadControl", 0.0)
+    assert ops.analyze(8) == 0
+    gap_al = abs(ops.nodeDisp(1, 6))
+    assert gap_al < 0.05 * gap_pen

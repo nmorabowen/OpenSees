@@ -719,6 +719,17 @@ Element::getInterpolationWeights(const Vector &xi, Vector &N)
   return -1;
 }
 
+// Ladruno (ADR 23 §3, Phase 2 UR): default = not implemented. Host elements that
+// can carry a ROTATION tie (LadrunoBrick, BezierTet10) override this and fill dNdx
+// with their cartesian shape-function gradients dN_i/dx_j at the natural coordinate
+// xi. Returning -1 lets LadrunoEmbeddedNode fall back to user-supplied -dNdx for
+// hosts that do not implement it (the gradient analog of -shape).
+int
+Element::getInterpolationGradients(const Vector &xi, Matrix &dNdx)
+{
+  return -1;
+}
+
 // Ladruno (ADR 20 §10.6.1): default = "no opinion" (-1) so the per-element
 // eigensolve in CriticalTimeStep governs this element. Elements whose explicit
 // stability bound the per-element K v = λ M v pencil cannot express (e.g. the

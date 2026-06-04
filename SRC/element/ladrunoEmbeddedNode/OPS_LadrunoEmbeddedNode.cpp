@@ -38,6 +38,8 @@
 //           {-shape N1..NN | -xi x1..x_ndm}
 //           [-k {Ku | auto}] [-kAlpha a]
 //           [-pressure [-kp Kp]]      # Phase 1b: also tie the pressure DOF (u-p nodes)
+//           [-rot [-kr {Kr|auto}] [-krAlpha a]            # Phase 2: also tie rotations
+//                 {-dNdx N1x N1y [N1z] .. | -gradXi x1..x_ndm}]
 //           [-enforce {penalty | al}]
 //           [-bipenalty {-dtcr dt | -wcap beta}]
 //
@@ -45,6 +47,17 @@
 //   (index ndm) to the host's interpolated pressure, g_p = p_c - sum N_i p_host,i,
 //   t_p = K_p*g_p. Requires all coupled nodes to be u-p (ndf >= ndm+1); else U-only.
 //   K_p via -kp (default 1e12; host pressure-block auto-scale deferred).
+//
+//   -rot (ADR 23 Phase 2): also tie the constrained node's ROTATION DOFs to the host
+//   CONTINUUM rotation theta = 1/2 curl(u) = skew(grad u) at the embedded point (3D:
+//   3 rotations; 2D: the single drilling R_z). Needs the host cartesian gradients
+//   dN_i/dx: supply them explicitly with -dNdx (nHost*ndm values, row order), query
+//   the host with -gradXi xi.. (needs -host), or let -xi auto-query a gradient-capable
+//   host (LadrunoBrick / BezierTet10). K_r via -kr (default 1e12) or -kr auto =
+//   krAlpha*K_u*lch^2 (needs -host for lch; default krAlpha=1e3). MUTUALLY EXCLUSIVE
+//   with -pressure (the extra DOF is rotation OR pressure — ambiguous in 2D ndf=3).
+//   UR is APPROXIMATE / mesh-limited (CST/TET4 host -> single rigid-spin tie; moment-
+//   critical embedments need a higher-order host like BezierTet10).
 //
 //   -k auto (ADR 23 D3): resolve the isotropic translational penalty from the host's
 //   own initial stiffness, K_u = kAlpha * max|K_host(i,i)| (default kAlpha=1e3) —
@@ -60,6 +73,7 @@
 #include <LadrunoEmbeddedNode.h>
 #include <ID.h>
 #include <Vector.h>
+#include <Matrix.h>
 #include <Element.h>
 #include <Domain.h>
 #include <elementAPI.h>
@@ -158,6 +172,14 @@ void* OPS_LadrunoEmbeddedNode(void)
   bool bpBudgetSet = false;
   bool pressure = false;         // -pressure: opt-in UP (pressure) tie (Phase 1b)
   double Kp = 1.0e12;            // -kp: pressure penalty (auto-scale deferred)
+  bool rot = false;              // -rot: opt-in UR (rotation) tie (Phase 2)
+  double Kr = 1.0e12;            // -kr: rotational penalty (numeric form)
+  bool krAuto = false;           // -kr auto: K_r = krAlpha·K_u·lch² (needs -host)
+  double krAlpha = 1.0e3;        // -krAlpha multiplier for the auto K_r
+  Matrix gradN;                  // host cartesian gradients ∂N_i/∂x_j (nHost × ndm)
+  bool haveGrad = false;         // gradients supplied (-dNdx / -gradXi / -xi auto)
+  Vector xiStored(ndm);          // ξ captured from -xi (reused for -rot auto gradients)
+  bool haveXi = false;
 
   while (OPS_GetNumRemainingInputArgs() > 0) {
     const char* opt = OPS_GetString();
@@ -194,6 +216,7 @@ void* OPS_LadrunoEmbeddedNode(void)
         return 0;
       }
       haveShape = true;
+      xiStored = xi; haveXi = true;   // reuse ξ for -rot auto gradients (Phase 2)
     }
     else if (strcmp(opt, "-k") == 0) {
       if (OPS_GetNumRemainingInputArgs() < 1) {
@@ -249,6 +272,73 @@ void* OPS_LadrunoEmbeddedNode(void)
         return 0;
       }
     }
+    else if (strcmp(opt, "-rot") == 0) {
+      // opt-in UR (rotation) tie (ADR 23 Phase 2). Activated at setDomain only if the
+      // constrained node carries the rotation DOFs AND host gradients are present.
+      rot = true;
+    }
+    else if (strcmp(opt, "-kr") == 0) {
+      if (OPS_GetNumRemainingInputArgs() < 1) {
+        opserr << "WARNING LadrunoEmbeddedNode: -kr wants a value or 'auto'\n";
+        return 0;
+      }
+      char krTok[64];
+      OPS_GetStringFromAll(krTok, sizeof(krTok));
+      if (strcmp(krTok, "auto") == 0) krAuto = true;
+      else                            Kr = atof(krTok);
+    }
+    else if (strcmp(opt, "-krAlpha") == 0) {
+      n = 1;
+      if (OPS_GetDoubleInput(&n, &krAlpha) < 0) {
+        opserr << "WARNING LadrunoEmbeddedNode: -krAlpha wants a value\n";
+        return 0;
+      }
+    }
+    else if (strcmp(opt, "-dNdx") == 0) {
+      // explicit host gradients ∂N_i/∂x_j (the rotation analog of -shape): nHost·ndm
+      // values in row order [node0: ∂/∂x ∂/∂y (∂/∂z); node1: …]. Works for ANY host.
+      Vector tmp(nHost * ndm);
+      n = nHost * ndm;
+      if (OPS_GetDoubleInput(&n, &tmp(0)) < 0) {
+        opserr << "WARNING LadrunoEmbeddedNode: -dNdx wants " << nHost * ndm
+               << " values (nHost x ndm gradients)\n";
+        return 0;
+      }
+      gradN.resize(nHost, ndm);
+      for (int i = 0; i < nHost; i++)
+        for (int j = 0; j < ndm; j++)
+          gradN(i, j) = tmp(i * ndm + j);
+      haveGrad = true;
+    }
+    else if (strcmp(opt, "-gradXi") == 0) {
+      // query the host for ∂N/∂x at a natural coordinate (needs -host). The gradient
+      // analog of -xi; uses Element::getInterpolationGradients.
+      if (hostEle == 0) {
+        opserr << "WARNING LadrunoEmbeddedNode: -gradXi requires the -host form; "
+               << "use -dNdx\n";
+        return 0;
+      }
+      Vector xg(ndm);
+      n = ndm;
+      if (OPS_GetDoubleInput(&n, &xg(0)) < 0) {
+        opserr << "WARNING LadrunoEmbeddedNode: -gradXi wants " << ndm
+               << " natural coords\n";
+        return 0;
+      }
+      gradN.resize(nHost, ndm);
+      if (hostEle->getInterpolationGradients(xg, gradN) < 0) {
+        opserr << "WARNING LadrunoEmbeddedNode: host element " << hostEle->getTag()
+               << " (" << hostEle->getClassType()
+               << ") does not implement getInterpolationGradients; supply -dNdx\n";
+        return 0;
+      }
+      if (gradN.noRows() != nHost) {
+        opserr << "WARNING LadrunoEmbeddedNode: host returned " << gradN.noRows()
+               << " gradient rows but has " << nHost << " nodes\n";
+        return 0;
+      }
+      haveGrad = true;
+    }
     else if (strcmp(opt, "-bipenalty") == 0) {
       bipenalty = true;
     }
@@ -300,10 +390,43 @@ void* OPS_LadrunoEmbeddedNode(void)
     bipenalty = false; bpBudgetSet = false;
   }
 
+  // ADR 23 M5/D7-1 — parse-time -rot / -pressure mutual-exclusion guard. The 2D
+  // ndf=3 case is ambiguous (u_x,u_y,R_z) vs (u_x,u_y,p); ASD rejects both flags
+  // together (ASDEmbeddedNodeElement.cpp:277) and so do we, as the PRIMARY mechanism
+  // (the setDomain ndf precedence is only a defensive backstop).
+  if (rot && pressure) {
+    opserr << "WARNING LadrunoEmbeddedNode: cannot use both -rot and -pressure "
+           << "(the constrained node's extra DOF is either rotation OR pressure, "
+           << "ambiguous in 2D ndf=3); pick one\n";
+    return 0;
+  }
+
+  // ADR 23 Phase 2 — resolve the rotation host gradients. If -rot was set without an
+  // explicit -dNdx/-gradXi but the host was given via -xi, query the host for ∂N/∂x
+  // at that ξ (the convenience path); otherwise -rot needs an explicit gradient.
+  if (rot && !haveGrad && haveXi && hostEle != 0) {
+    gradN.resize(nHost, ndm);
+    if (hostEle->getInterpolationGradients(xiStored, gradN) < 0) {
+      opserr << "WARNING LadrunoEmbeddedNode: -rot with -xi but host element "
+             << hostEle->getTag() << " (" << hostEle->getClassType()
+             << ") does not implement getInterpolationGradients; supply -dNdx\n";
+      return 0;
+    }
+    haveGrad = true;
+  }
+  if (rot && !haveGrad) {
+    opserr << "WARNING LadrunoEmbeddedNode: -rot needs host gradients ∂N/∂x — "
+           << "supply -dNdx N1x N1y [N1z] …, -gradXi ξ.. (with -host), or -xi with a "
+           << "gradient-capable -host\n";
+    return 0;
+  }
+
   Element* e = new LadrunoEmbeddedNode(tag, ndm, cNode, hostNodes, Nshape, Ku,
                                        hostEleTag, ktAuto, ktAlpha, enforce,
                                        bipenalty, bpMode, bpDt, bpBeta,
-                                       pressure, Kp);
+                                       pressure, Kp,
+                                       rot, Kr, krAuto, krAlpha,
+                                       rot ? &gradN : 0);
   if (e == 0) {
     opserr << "WARNING LadrunoEmbeddedNode: could not create element\n";
     return 0;

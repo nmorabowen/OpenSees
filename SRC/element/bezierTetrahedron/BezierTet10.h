@@ -153,6 +153,11 @@ class BezierTet10 : public Element
     // coupling. N sized to 10 (NEN).
     int getInterpolationWeights(const Vector &xi, Vector &N);
 
+    // Ladruno (ADR 23 §3, Phase 2 UR): cartesian shape gradients dN_a/dx_j at the
+    // barycentric natural coord xi = (L1,L2,L3) (reference control points), for the
+    // node-embedding ROTATION tie. dNdx sized to 10x3, dNdx(a,j) = dN_a/dx_j.
+    int getInterpolationGradients(const Vector &xi, Matrix &dNdx);
+
     void setDomain(Domain *theDomain);
     int commitState(void);
     int revertToLastCommit(void);
