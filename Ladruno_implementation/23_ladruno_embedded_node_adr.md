@@ -39,6 +39,16 @@ this generalizes), [[LadrunoEmbeddedRebar_guide]] (shipped machinery reused here
 [[09_ladruno_brick]] / [[06_bezier_tet10]] (fork solid hosts), [[22_rc3d_conformal_recipe]]
 (the non-element alternative). Memory: `project_rc3d_embedment_scoping`.
 
+> [!info] Sibling: [[24_ladruno_coupling_constraints_adr|ADR 24 — coupling constraints (RBE2/RBE3/linear equation)]]
+> This ADR embeds a node **into a host element** (continuum); ADR 24 constrains
+> **node sets** (RBE3 weighted-average, RBE2 rigid, `Σcₖuₖ=0`) — no host element.
+> They share this coupling kernel and were scoped in parallel (both first numbered
+> "23"; the coupling-constraints one is now **24**). The **frame-on-continuum /
+> DOF-mismatch** interface is served by both: here via host embedding **with rotation
+> coupling (UR)**, there via **weighted node-set distribution** (RBE3 /
+> `*CONSTRAINED_INTERPOLATION`). `LadrunoEmbeddedNode` (33006) is the concrete
+> node-embedding element; ADR 24 references it rather than re-specifying it.
+
 ---
 
 ## 1. Context & problem
