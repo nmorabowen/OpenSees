@@ -50,6 +50,7 @@ habit as the ledgers, no tooling.
 | **Ladruno** | `recorder ladruno file -N <nodal...> -E <element...> [-G energy <regionTag...>] -T dt -R region` | `_response_catalog` `IntRule` enum **must match** `ladruno::detail::ElementIntegrationRuleType`; `Results.from_ladruno` reader keyed on `.ladruno` `FORMAT_VERSION`; partition discovery regex `^(?P<stem>.+?)\.part-(?P<idx>\d+)\.ladruno$`; consumes `basisInfo`/`QUADRATURE` self-declaration (new conforming elements need *no* recorder edit). See the schema notes below. | shipped (schema actively evolving — pin to `FORMAT_VERSION`) |
 | **Analysis monitor** (live) | `recorder Monitor -node <n…> -dof <d…> -resp disp\|vel\|accel\|reaction -sink file.h5 [-every K] [-hz H] [-region tag]` → SWMR-HDF5 stream tailable *while the run is live*; stop via `remove recorder $tag` | **apeGmsh must implement a consumer** — a typed `ops.recorder.Monitor(…)` emitter + a live tailing reader (open `swmr=True`, `ds.id.refresh()`) feeding the viewer's live plots. File is self-describing (`COLUMNS` var-strings, `STEP`/`TIME`/`FRAMES`), `FORMAT="ladruno-monitor"` `FORMAT_VERSION=1`. Also a valid at-rest file (read post-run like any results h5). class tag `RECORDER_TAGS_LadrunoMonitorRecorder`=33002. | **shipped (v1, sequential, nodal scalars)** — see [[08_analysis_monitor]] | 
 | **Embedded reinforcement** (`LadrunoEmbeddedRebar` + `LadrunoBondSlip`) | `element LadrunoEmbeddedRebar tag rebarNode {nHost h… \| -host eleTag} {-shape N… \| -xi ξ…} -dir dx dy [dz] (-perfect kAxial \| -bond matTag [-bondScale πd·Ltrib]) [-kt {k\|auto} -ktAlpha a] [-corot -xiB ξ…] [-enforce penalty\|al] [-bipenalty {-dtcr dt \| -wcap β}]`; axial law `uniaxialMaterial LadrunoBondSlip tag τmax s1 s2 s3 τf α [-Gf Gf] [-s0 s0]` | **apeGmsh owns the inverse map** (global bar point → host ξ) and should ship a `g.reinforce(host=<set>, bars=<set>, bond=…, enforce=…, explicit=…)` generator: lay out `corotTruss`/beam rebar along bar paths, locate the host + inverse-map each rebar node to ξ, emit `-host -xi` primitives (host owns the weights via `getInterpolationWeights`). **`-xi` is 3D-only** (LadrunoBrick/BezierTet10 override it); 2D hosts need apeGmsh-computed `-shape`. ELE **33005** / MAT **33002** (read live). | **shipped (element + §10 roadmap); apeGmsh `g.reinforce` generator TO IMPLEMENT** — full grammar/theory in [[LadrunoEmbeddedRebar_guide]] |
+| **Absorbing boundaries** (`ASDAbsorbingBoundary2D/3D` + `LysmerTriangle`) | `element ASDAbsorbingBoundary2D tag n1..n4 G v rho thick btype [-fx tsx] [-fy tsy]`; `element ASDAbsorbingBoundary3D tag n1..n8 G v rho btype [-fx tsx] [-fy tsy] [-fz tsz]`; `element LysmerTriangle tag i j k rho Vp Vs [len] [stage]` | **apeGmsh owns the generator** — a `g.absorbing_boundary(faces=…, soil=…, rayleigh=…, base_input=…)` that extrudes a **conforming one-element-thick ghost layer** outward from the domain faces (inner face = existing soil nodes, outer face = new ghost nodes), emits **one** element per ghost brick with `btype` ORed from face membership (corners/edges combined → single element), sets `G,v,rho` (+`thick` 2D) from the adjacent soil, assigns **Rayleigh on the absorbing elements** (required — free-field column damping), and emits the staging hook `setParameter -val 1 -ele <tags> stage` between gravity and transient. Base input is a **velocity** TimeSeries (within/÷2 motion) on **bottom** elements only. Axis-aligned faces only. Upstream tags **185/219/220**. **No new results reader** (only scalar `eleResponse stage\|G\|v\|rho\|E`); read physics from adjacent soil nodes — just tag absorbers to exclude from contour plots. | **upstream shipped; apeGmsh `g.absorbing_boundary` generator + staging hook TO IMPLEMENT** — full theory/arch/contract in [[lysmer_asd_absorbing_boundaries_guide]] |
 | **Ladruno brick element(s)** | TBD — higher-order hex, sibling to BezierTri6 on the solid side; will self-declare via the element contract | not yet — heads-up for the apeGmsh element registry. | draft (no plan file yet) |
 | **OpenSeesPyMP** | `import openseesmp` (per-rank MPI Python module) | affects which engine `Results.run()` drives (`openseespy` vs `openseesmp`). | shipped |
 
@@ -320,6 +321,64 @@ control). **Full grammar, theory, responses, and use cases: [[LadrunoEmbeddedReb
   *bar-in-solid* tool (anisotropic axial bond + transverse penalty). Recorded so the
   generator picks the right tie for each case.
 
+### Absorbing boundaries (`ASDAbsorbingBoundary2D/3D` + `LysmerTriangle`) — **`g.absorbing_boundary` generator TO IMPLEMENT on apeGmsh side**
+
+**OpenSees side.** Three **upstream** elements (tags 185/219/220). The two ASD
+elements are a FLAC/PLAXIS-style **free-field boundary + compliant base**, *not* bare
+dashpots: each element straddles the truncation interface carrying a soil-side (SS)
+node column shared with the mesh and a free-field (FF) "ghost" column outside it.
+In the absorbing stage it superposes a 1-D **free-field column** (K/M/Rayleigh-C on
+the FF nodes), a **FF→soil traction** `σ·n` injecting the free-field motion, **Lysmer
+dashpots on the relative velocity `V_ff−V_ss`** (so only the scattered field is
+absorbed), and on bottom faces a **compliant base** `2ρV·v_incident`. It runs a
+**one-way stage machine** (`Stage_StaticConstraint=0` penalty roller/tie for gravity
+→ `setParameter stage=1` → `Stage_Absorbing`), saving the gravity reactions so the
+static stress survives the switch. `LysmerTriangle` is the bare dashpot (clean
+diagonal `C` → the explicit-friendly option). **Full theory/architecture/impl with
+`file:line` citations: [[lysmer_asd_absorbing_boundaries_guide]].**
+
+**Recommended apeGmsh approach (the deliverable — elements shipped, generator not).**
+- **Ship `g.absorbing_boundary(faces=…, soil=…, thickness=…, rayleigh=(aM,bK),
+  base_input={…})`.** The irreducible step is geometric and apeGmsh-native:
+  **extrude a conforming one-element-thick ghost layer** outward from the chosen
+  domain faces — inner face reuses the existing soil boundary nodes, outer face is
+  new ghost nodes (connected only to the absorbing elements), ghost width matched to
+  the adjacent soil element size (it sets the free-field column stiffness `∝ lx/ly`).
+- **One element per ghost brick**, node order free (the element self-sorts by
+  coordinate), `btype` ORed from which **domain** faces the brick abuts — **edges and
+  corners get the combined string and a single element** (`"BL"`, `"LF"`, `"BLF"`…);
+  the C++ does the tributary weighting, so never overlap two.
+- **Axis-aligned faces only** (3D `computeNmatrix` asserts vertical normals are ±X/±Y).
+  Set `G,v,rho` from the adjacent soil (`G=E/(2(1+v))`); 2D also needs `thickness`.
+- **Assign Rayleigh damping to the absorbing elements** (emit `region … -ele <absorb>
+  -rayleigh aM 0 bK 0`) — **required, not optional**: `addCff` reads the element's own
+  `alphaM/betaK`; without it the free-field column is undamped and resonates.
+- **Input is a *velocity* TimeSeries** (the within/÷2 motion) on `-fx/-fy/-fz` of the
+  **bottom** elements only; sides free-field automatically. Alternative: a DRM ring
+  just inside the layer (full 3-D field) — then no `-fx/-fy/-fz`. Not both.
+- **Layered / nonlinear soil — resolve props PER GHOST CELL.** The element is
+  **linear-elastic** (no constitutive model; the free-field column never yields), so:
+  give each cell the **small-strain `G₀`** of its local layer (`V_s=√(G₀/ρ)`), **not**
+  a global or secant value; for pressure-dependent soil (`PDMY`/`PM4Sand`) `G₀` is
+  **depth-graded** → `soil=` should accept a scalar, a per-layer table, **or a
+  callable `f(x,y,z)→(G0,v,rho)`** and resolve per cell. Keep nonlinearity in the
+  **interior** (place the boundary far enough out that boundary soil stays low-strain
+  — warn if a nonlinear/structure region is within ~1–2 wavelengths). The
+  gravity-before-`stage`-switch ordering is **mandatory** for pressure-dependent soil
+  (builds `K₀` confining stress under the stage-0 roller/tie). Tune the absorber
+  Rayleigh to the **small-strain** damping. Full rationale: §9.6 of the guide.
+- **Staging hook:** add an analysis-side `g.opensees.stage_absorbing()` that emits
+  `setParameter -val 1 -ele <absorb_tags> stage` **between** the gravity `Static`
+  solve (`loadConst`) and the `Transient` block. One-way; any other transition aborts.
+- **Results:** no new reader needed — these expose only scalar `eleResponse
+  stage|G|v|rho|E`. **Tag the absorbing elements** so they're excluded from
+  stress/contour plots (meaningless there); read boundary reactions/energy from the
+  adjacent soil nodes. A `stage` probe is a cheap "did the switch fire?" diagnostic.
+- **Solver hint to surface:** the ASD tangent is **non-symmetric** (one-way FF→soil)
+  and **penalty**-based; default the deck to `system UmfPack`/`FullGeneral` (not
+  `BandSPD`) when an absorbing layer is present, and avoid extra `fix`/`equalDOF` on
+  boundary DOFs.
+
 ## Related docs (the normative detail)
 
 This is a quick reference; the deep specs live next door:
@@ -334,9 +393,19 @@ This is a quick reference; the deep specs live next door:
   the `g.reinforce` use cases.
 - [[20_ladruno_embedded_reinforcement_adr]] — embedded reinforcement ADR (D1–D6 +
   the §10 Mode-P roadmap; the guarded inverse-map contract is D3).
+- [[lysmer_asd_absorbing_boundaries_guide]] — Lysmer/ASD free-field absorbing
+  boundaries: full theory, OpenSees architecture/implementation, and the §9
+  `g.absorbing_boundary` ghost-layer generator contract.
 - [[LEDGER_implementations]] — authoritative class tags + shipping PRs.
 
 ## Maintenance log
+
+- 2026-06-07 — Added **Absorbing boundaries** (`ASDAbsorbingBoundary2D/3D` +
+  `LysmerTriangle`, upstream tags 219/220/185). Elements are shipped upstream; the
+  apeGmsh **`g.absorbing_boundary` ghost-layer generator** + the `stage_absorbing()`
+  staging hook are **TO IMPLEMENT**. Full deep dive (free-field boundary + compliant
+  base, stage machine, 3D static condensation, ghost-layer contract) in the new
+  [[lysmer_asd_absorbing_boundaries_guide]].
 
 - 2026-05-30 — Created as a lean apeGmsh-facing reference. (An earlier draft
   proposed a machine-readable manifest + CI gate + a compiled `ladrunoCapabilities()`
