@@ -247,6 +247,7 @@ class LadrunoEmbeddedNode : public Element
   // with K_r), so dt_r = 2√(I_p/K_r) = dt_u — the rotation mode self-bounds.
   double iPenalty;          // resolved rotational mass penalty I_p (per cNode rot DOF)
   bool bpResolved;          // transient: m_p / I_p already resolved this run
+  bool bpHostWarned;        // transient: the massless-host dt_cr warning already emitted
   double effectiveCouplingStiffness(void); // k_eff = K_u (translational class)
   void resolveBipenalty(void);
 

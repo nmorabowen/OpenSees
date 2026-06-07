@@ -221,6 +221,43 @@ def test_responses():
 
 
 # --------------------------------------------------- 7. bipenalty (explicit dt_cr)
+def test_bipenalty_dtcr_host_reduced_mass():
+    """ADR review #2 — with a QUERYABLE host that carries mass, the self-reported dt_cr
+    tightens to the REDUCED-mass value 2√(μ/k_eff), μ = m_p·M_h/(m_p+M_h), BELOW the
+    slave-only 2√(m_p/k_eff): the penalty stiffness loads the (penalty-massless) host DOFs,
+    so the true relative-mode step is governed by the reduced mass, not m_p alone."""
+    ops.wipe(); ops.model("basic", "-ndm", 3, "-ndf", 3)
+    ops.node(1, 0.0, 0.0, 0.0); ops.node(2, 0.0, 0.0, 0.0); ops.node(3, 1.0, 0.0, 0.0)
+    ops.fix(2, 1, 1, 1); ops.fix(3, 1, 1, 1)
+    rho, A = 2.0, 0.5
+    ops.uniaxialMaterial("Elastic", 1, 1000.0)
+    ops.element("Truss", 100, 2, 3, A, 1, "-rho", rho)        # host element carrying mass
+    Ku, dt = 1.0e6, 1.0e-3
+    ops.element("LadrunoEmbeddedNode", 1, 1, "-host", 100, "-shape", 1.0, 0.0,
+                "-k", Ku, "-bipenalty", "-dtcr", dt)
+    m_p = Ku * (dt / 2.0) ** 2
+    slave_only = 2.0 * math.sqrt(m_p / Ku)                    # == dt (the old, unconservative report)
+    reported = ops.eleResponse(1, "dtcr")[0]
+    assert 0.0 < reported < slave_only                        # host mass tightens the bound
+    # Truss -rho is mass PER UNIT LENGTH, lumped ρ·L/2 per node ⇒ M_h = min positive host
+    # mass diagonal = ρ·L/2 (L = 1.0 here); A does not enter the Truss mass.
+    Mh = rho * 1.0 / 2.0
+    mu = m_p * Mh / (m_p + Mh)
+    assert reported == pytest.approx(2.0 * math.sqrt(mu / Ku), rel=1e-6)
+
+
+def test_k_nonnumeric_rejected():
+    """ADR review #4 — `-k` followed by a non-numeric token (a forgotten value) is rejected
+    at parse time, instead of atof silently setting Ku=0 (a disabled tie)."""
+    ops.wipe(); ops.model("basic", "-ndm", 3, "-ndf", 3)
+    ops.node(1, 0.0, 0.0, 0.0); ops.node(2, 0.0, 0.0, 0.0)
+    try:
+        ops.element("LadrunoEmbeddedNode", 1, 1, 1, 2, "-shape", 1.0, "-k", "-enforce", "penalty")
+    except Exception:
+        pass
+    assert 1 not in (ops.getEleTags() or [])
+
+
 def test_bipenalty_dtcr_self_report():
     """-bipenalty -dtcr dt: m_p = k_eff*(dt/2)^2 and the self-reported dt_cr == dt."""
     ops.wipe()

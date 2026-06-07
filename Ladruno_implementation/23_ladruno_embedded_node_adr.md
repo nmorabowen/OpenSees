@@ -823,6 +823,54 @@ Status-corrected against what has already shipped:
   fork — DB format is not externally stable, per `LEDGER_quirks`). Lower urgency than a
   correctness bug.
 
-These are tracked as code follow-ups; **this re-scope is docs-only** (ADR + validation plan +
-status markers). See [[27_ladruno_embedded_node_validation_plan]] for the battery that earns
-the world-class claim, and §9 for the build history of the (now experimental) UR/UP/D9 phases.
+- **(d) `bipenalty` `dt_cr` host-side reduced mass — FIXED (review #2, §15).** The
+  self-reported critical step lumped the penalty mass on the slave only and reported
+  `2√(m_p/k_eff)`, ignoring that the penalty stiffness also loads the host DOFs; it was
+  **unconservative** in `-dtcr` mode on a light/coarse host. Now tightened with the reduced
+  mass `μ = m_p·M_h/(m_p+M_h)` when the host element is queryable (warn on a massless host;
+  `-dtcr`-without-host is the documented user-asserts-dt contract). This is a **core** item
+  and the only review finding with real analysis consequence for the supported v1.
+
+The adversarial review **`wf_7e5f8152-dfe` (§15)** confirmed the core is sound (zero blockers,
+zero core mechanics bugs) and fixed the 4 **core** hardening items (#2/#3/#4/#15). Item (b)
+above (`getInitialStiff` in D9) was re-confirmed and remains the key **D9-promotion** gate;
+the other experimental findings are batched per §15. **This re-scope was docs-only** (ADR +
+validation plan + status markers); the core fixes landed as a follow-up code PR. See
+[[27_ladruno_embedded_node_validation_plan]] for the battery, §9 for the build history, and
+§15 for the full review record.
+
+---
+
+## 15. Adversarial review record (workflow `wf_7e5f8152-dfe`, 2026-06-07)
+
+8 review dimensions read the element + kernel source; **one adversarial verifier per finding
+tried to refute it** against the code; a lead synthesised. **27 agents, 18 findings, 17
+confirmed, 1 refuted, 0 uncertain.** Verdict: **the v1 SUPPORTED CORE (U tie + `g0` birth +
+penalty/AL/bipenalty) is SOUND and shippable — zero blockers, zero confirmed core *mechanics*
+bugs.** The experimental modes (UR/UP/D9/`-corot`) carry real issues but every one is gated
+behind a flag the core never sets (the clean `matMode==0` vs `matMode==1`/UR/UP separation is
+the element's saving grace). The review independently re-confirmed the §14.4(b) `getInitialStiff`
+must-fix.
+
+| # | Sev | Scope | Finding | Status |
+|---|-----|-------|---------|--------|
+| **#2** | major | **core** | `bipenalty` self-reported `dt_cr` ignored the host-side reduced mass (`μ = m_p·M_h/(m_p+M_h)`) — **unconservative** in `-dtcr` mode on a light/coarse host (penalty stiffness loads the penalty-massless host DOFs) | **FIXED** — tighten with `μ` when the host is queryable (`minPosDiagonal(host->getMass())`); warn on a massless host; `-dtcr`-without-host is the documented user-asserts-dt contract |
+| #3 | minor | core | `getExplicitCriticalTimeStep` could substitute the rotational `dt` when the translational class was active-but-unbounded (`m_p==0`, `k>0`), advertising a false bound | **FIXED** — return −1 (no certificate) when any active class is unbounded. *(Defensive: unreachable today — `resolveBipenalty` always zeroes `m_p` and `I_p` together via early return.)* |
+| #4 | minor | core | `-k`/`-kr` followed by a non-numeric token (a forgotten value, e.g. `-k -enforce`) → `atof`→0 → silently disabled tie | **FIXED** — `strtod` end-pointer guard, reject non-numeric (≠ `auto`) |
+| #15 | nit | core | `setDomain(0)` wrote through `theNodes` when null (default-constructed element, before `recvSelf` allocates) | **FIXED** — `if (theNodes != 0)` guard. *(Latent: not reached by the normal broker→recvSelf→setDomain lifecycle.)* |
+| #1 | major | exp | `getInitialStiff` aliases `getTangentStiff` in D9 → returns the current (softened/zero) interface tangent **and** mutates material trial state during a const K0 query (= §14.4(b)). #7/#8 share this root cause | open — gates D9 promotion (§14.4(b)) |
+| #6 | minor | exp | `-corot` frame has no activation baseline (`θ0`) — staged birth into a rotated host references absolute host spin | open — `-corot`/D9 only |
+| #7 | minor | exp | `-corot` drops the `∂e_d/∂u` tangent term (documented R7) — costs quadratic convergence only | open (documented) |
+| #8 | minor | exp | UP guard uses `ndf>=ndm+1` not `==`: a 3D `ndf=6` node binds a rotation DOF as "pressure" | open — UP only |
+| #9 | minor | exp | `-rot` on a 2D u-p node (`ndf=3`) binds the pressure DOF as drilling rotation (count-only guard, no semantics backstop) | open — UR only |
+| #5 | minor | exp | D9 `force`/`localForce` responses call `setTrialStrain` (mutate material trial state during a read) | open — D9 only |
+| #10 | minor | exp | `localForce` response string shadowed by the global-traction case (D9 local case unreachable under that name) | open — D9 only |
+| #11 | minor | exp | `-normal`/`-orient` silently ignored (consumed but dropped) when no `-mat*` given | open — D9 only |
+| #12 | nit | exp | UP scatter assumes ndf homogeneity across coupled nodes (no ASD-style check) | open — UP only |
+| #13 | nit | exp | `-corot`-without-material reports the gradient error before the clearer matMode-required error (diagnostic ordering) | open — cosmetic |
+| #14 | nit | tooling | `<4 args` usage string omits the Phase-1b/2/2b options | open — cosmetic |
+| — | — | — | (refuted ×1; one collateral inaccuracy in #15's "parent has this guard" rationale — the parent uses a `std::vector`, no such branch — noted, the underlying null write was still real) | — |
+
+**Action taken (this pass):** the 4 **core** items (#2, #3, #4, #15) were FIXED + a host-reduced-mass
+`dt_cr` regression test (`test_bipenalty_dtcr_host_reduced_mass`) and a `-k`-guard test added.
+The **experimental** items are batched for their modes' promotion (the D9 set gated on §14.4(b)).

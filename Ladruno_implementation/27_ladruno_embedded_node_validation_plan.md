@@ -136,9 +136,13 @@ with `CentralDifferenceLadruno` at `0.9×` and `1.1×` the reported `dt_cr`.
 **Tolerance:** `dt_cr` self-report matches the closed form to `1e-9`; the stable/unstable split
 brackets the bound. **Plus:** the `CriticalTimeStep` fold-in carries the embedded bound into
 `ops.criticalTimeStep` (the embedded `1e-3` governs over a stiff host's `~0.04`).
-**Status:** *partially covered* — `test_bipenalty_dtcr_self_report` checks the `m_p`/`dt_cr`
-formula; **gap to add:** the actual `0.9×`/`1.1×` explicit-SDOF stable/unstable run + the
-`criticalTimeStep` governance check (mirror the rebar's `test_bipenalty_governs_cfl_critical_step`).
+**Host-side reduced mass (review #2, §15):** on a queryable host the report tightens to
+`2√(μ/k_eff)`, `μ = m_p·M_h/(m_p+M_h)` — covered by `test_bipenalty_dtcr_host_reduced_mass`.
+The `-dtcr`-without-host form is the user-asserts-dt contract (slave-side bound, documented).
+**Status:** *partially covered* — `test_bipenalty_dtcr_self_report` (formula) +
+`test_bipenalty_dtcr_host_reduced_mass` (host-side μ); **gap to add:** the actual `0.9×`/`1.1×`
+explicit-SDOF stable/unstable run + the `criticalTimeStep` governance check (mirror the rebar's
+`test_bipenalty_governs_cfl_critical_step`).
 
 ### T6 — Cheap correctness adds (fold into the gate) · Tier 1 · Zone-A
 Three near-free oracles that harden the core claim:
