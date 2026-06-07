@@ -261,7 +261,18 @@ void* OPS_LadrunoEmbeddedNode(void)
       char kTok[64];
       OPS_GetStringFromAll(kTok, sizeof(kTok));
       if (strcmp(kTok, "auto") == 0) ktAuto = true;
-      else                           Ku = atof(kTok);
+      else {
+        // review #4 — reject a non-numeric token (e.g. a forgotten value: `-k -enforce`),
+        // which atof would silently turn into Ku=0 (a disabled tie). strtod end-pointer check.
+        char* endp = 0;
+        double kv = strtod(kTok, &endp);
+        if (endp == kTok || *endp != '\0') {
+          opserr << "WARNING LadrunoEmbeddedNode: -k wants a number or 'auto', got '"
+                 << kTok << "'\n";
+          return 0;
+        }
+        Ku = kv;
+      }
     }
     else if (strcmp(opt, "-kAlpha") == 0) {
       n = 1;
@@ -320,7 +331,16 @@ void* OPS_LadrunoEmbeddedNode(void)
       char krTok[64];
       OPS_GetStringFromAll(krTok, sizeof(krTok));
       if (strcmp(krTok, "auto") == 0) krAuto = true;
-      else                            Kr = atof(krTok);
+      else {
+        char* endp = 0;                          // review #4 — same non-numeric guard as -k
+        double krv = strtod(krTok, &endp);
+        if (endp == krTok || *endp != '\0') {
+          opserr << "WARNING LadrunoEmbeddedNode: -kr wants a number or 'auto', got '"
+                 << krTok << "'\n";
+          return 0;
+        }
+        Kr = krv;
+      }
     }
     else if (strcmp(opt, "-krAlpha") == 0) {
       n = 1;

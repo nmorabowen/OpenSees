@@ -42,6 +42,19 @@
 #include <math.h>
 #include <string.h>
 
+// smallest STRICTLY-POSITIVE diagonal entry of M (0.0 if none). Used for the conservative
+// host effective mass in the bipenalty reduced-mass dt_cr bound (ADR 23 review #2).
+static double minPosDiagonal(const Matrix& M)
+{
+  double m = 0.0; bool any = false;
+  int n = M.noRows();
+  for (int i = 0; i < n; i++) {
+    double d = M(i, i);
+    if (d > 0.0 && (!any || d < m)) { m = d; any = true; }
+  }
+  return any ? m : 0.0;
+}
+
 // ===========================================================================
 //  construction
 // ===========================================================================
@@ -66,7 +79,7 @@ LadrunoEmbeddedNode::LadrunoEmbeddedNode(int tag, int ndm_, int cNode,
     enforce(enforce_), lambda(ndm_),
     hostEleTag(hostEleTag_), ktAuto(ktAuto_), ktAlpha(ktAlpha_), ktResolved(false),
     bipenalty(bipenalty_), bpMode(bpMode_), bpDt(bpDt_), bpBeta(bpBeta_),
-    mPenalty(0.0), iPenalty(0.0), bpResolved(false),
+    mPenalty(0.0), iPenalty(0.0), bpResolved(false), bpHostWarned(false),
     nDOF(0), nodeNdf(1 + hostNodes.Size()), dofOffset(1 + hostNodes.Size()),
     pflag(pressure_ ? 1 : 0),
     theNodes(0), K(0), P(0), M0(0),
@@ -111,7 +124,7 @@ LadrunoEmbeddedNode::LadrunoEmbeddedNode()
     enforce(0), lambda(),
     hostEleTag(-1), ktAuto(false), ktAlpha(0.0), ktResolved(false),
     bipenalty(false), bpMode(0), bpDt(0.0), bpBeta(0.0),
-    mPenalty(0.0), iPenalty(0.0), bpResolved(false),
+    mPenalty(0.0), iPenalty(0.0), bpResolved(false), bpHostWarned(false),
     nDOF(0), nodeNdf(), dofOffset(), pflag(0),
     theNodes(0), K(0), P(0), M0(0),
     initGapCapture(true), g0Computed(false), g0(), gp0(0.0), gr0()
@@ -146,7 +159,10 @@ void LadrunoEmbeddedNode::allocate(void)
 void LadrunoEmbeddedNode::setDomain(Domain* theDomain)
 {
   if (theDomain == 0) {
-    for (int i = 0; i < 1 + nHost; i++) theNodes[i] = 0;
+    // review #15 — guard: a default-constructed element (before recvSelf allocates) has
+    // theNodes==0; an unguarded clear would write through a null pointer.
+    if (theNodes != 0)
+      for (int i = 0; i < 1 + nHost; i++) theNodes[i] = 0;
     return;
   }
   // resolve the nodes and lay out the per-node DOF offsets. The constrained / host
@@ -597,12 +613,42 @@ double LadrunoEmbeddedNode::getExplicitCriticalTimeStep(void)
 {
   if (!bipenalty) return -1.0;
   this->resolveBipenalty();
-  // min over active DOF classes of 2√(m_class/k_class) (ADR 23 D5 / M1·ES-1): the
-  // translational (m_p, k_eff) and, when UR is on, the rotational (I_p, K_r) pair.
-  double dt = LadrunoEmbedded::criticalTimeStep(mPenalty, this->effectiveCouplingStiffness());
-  if (rActive) {
+  double kEff = this->effectiveCouplingStiffness();
+
+  // Translational class. ADR 23 review #2 — the bipenalty mass m_p is lumped on the SLAVE
+  // only, but the coupling stiffness N_i²·k_eff also loads the (penalty-massless) host DOFs,
+  // so the true relative-mode step uses the REDUCED mass μ = m_p·M_h/(m_p+M_h), with M_h the
+  // host's effective mass. Reporting 2√(m_p/k_eff) assumes M_h→∞ and is UNCONSERVATIVE for a
+  // light/coarse host. When the host element is queryable we tighten with μ (M_h = smallest
+  // positive host mass diagonal — conservative); a massless host can't be bounded (warn).
+  // The explicit -dtcr-without-host form is a user-asserts-dt contract (documented, ADR D5).
+  double mTrans = mPenalty;
+  if (mPenalty > 0.0 && kEff > 0.0 && hostEleTag >= 0) {
+    Domain* theDomain = this->getDomain();
+    Element* host = (theDomain != 0) ? theDomain->getElement(hostEleTag) : 0;
+    if (host != 0) {
+      double Mh = minPosDiagonal(host->getMass());
+      if (Mh > 0.0)
+        mTrans = mPenalty * Mh / (mPenalty + Mh);   // reduced mass μ (host-bounded)
+      else if (!bpHostWarned) {
+        opserr << "WARNING LadrunoEmbeddedNode " << this->getTag()
+               << ": -bipenalty host element " << hostEleTag << " reports no mass; the "
+               << "self-reported dt_cr bounds only the slave inertia and is unconservative "
+               << "for a light host — verify host mass ≫ m_p (ADR 23 D5 / review #2)\n";
+        bpHostWarned = true;
+      }
+    }
+  }
+
+  // min over ACTIVE DOF classes of 2√(m/k) (ADR 23 D5 / M1·ES-1). review #3 — an active
+  // class with zero inertia (m==0 from a warned misconfig, k>0) is UNBOUNDED: return -1
+  // (no certificate) rather than substituting another class's dt and advertising a false bound.
+  double dt = LadrunoEmbedded::criticalTimeStep(mTrans, kEff);
+  if (kEff > 0.0 && dt <= 0.0) return -1.0;          // translational active but unbounded
+  if (rActive && Kr > 0.0) {
     double dtR = LadrunoEmbedded::criticalTimeStep(iPenalty, Kr);
-    if (dtR > 0.0 && (dt <= 0.0 || dtR < dt)) dt = dtR;
+    if (dtR <= 0.0) return -1.0;                      // rotational active but unbounded
+    if (dt <= 0.0 || dtR < dt) dt = dtR;
   }
   return dt;
 }
