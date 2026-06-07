@@ -41,7 +41,7 @@
 //           [-rot [-kr {Kr|auto}] [-krAlpha a]            # Phase 2: also tie rotations
 //                 {-dNdx N1x N1y [N1z] .. | -gradXi x1..x_ndm}]
 //           [-normal nx ny [nz] [-orient ox oy oz]        # Phase 2b: material interface
-//            -matN tag | -matT1 tag | -matT2 tag ..]
+//            -matN tag | -matT1 tag | -matT2 tag ..  [-corot]]
 //           [-enforce {penalty | al}]
 //           [-bipenalty {-dtcr dt | -wcap beta}]
 //
@@ -51,8 +51,15 @@
 //   a -mat* keeps the K_u penalty). Needs -normal nx ny [nz] for the frame (+ optional
 //   -orient for the first tangent). Models: cohesive (softening uniaxial), unilateral
 //   gap (ENT/ElasticPPGap on the normal), elastic bedding, bond. Coulomb friction only
-//   APPROXIMATE (uncoupled per-direction; rigorous -> LadrunoContact). v1 = REFERENCE
-//   frame; -corot frame co-rotation is a v2 follow-up.
+//   APPROXIMATE (uncoupled per-direction; rigorous -> LadrunoContact).
+//
+//   -corot (ADR 23 Phase 2b v2, D9.1): co-rotate the material frame with the host
+//   CONTINUUM rotation theta = skew(grad u) at the embedded point, so a contact normal
+//   follows the deformed host (frameCur = R(theta)*frame). Material mode only; needs the
+//   host gradients dN/dx (supply -dNdx/-gradXi, or -xi on a gradient-capable host — same
+//   surface as -rot). The dropped dframe/du tangent term keeps the residual exact but the
+//   tangent inexact (frame-objective for explicit, step-halving for implicit, may slow
+//   Newton on stiff-normal large-rotation contact). Default = the v1 REFERENCE frame.
 //
 //   -pressure (ADR 23 Phase 1b): also couple the constrained node's pressure DOF
 //   (index ndm) to the host's interpolated pressure, g_p = p_c - sum N_i p_host,i,
@@ -198,6 +205,7 @@ void* OPS_LadrunoEmbeddedNode(void)
   Vector orientDir(ndm);         // -orient: first-tangent hint
   bool haveOrient = false;
   int matTag[3] = { -1, -1, -1 };  // -matN / -matT1 / -matT2 uniaxial tags
+  bool corot = false;            // -corot (v2): co-rotate the material frame with the host
 
   while (OPS_GetNumRemainingInputArgs() > 0) {
     const char* opt = OPS_GetString();
@@ -375,6 +383,12 @@ void* OPS_LadrunoEmbeddedNode(void)
       }
       haveOrient = true;
     }
+    else if (strcmp(opt, "-corot") == 0) {
+      // D9 v2: co-rotate the material frame with the host continuum rotation at the
+      // embedded point. Material mode only (the isotropic/penalty tie is frame-free);
+      // needs host gradients ∂N/∂x (resolved below, like -rot).
+      corot = true;
+    }
     else if (strcmp(opt, "-matN") == 0 || strcmp(opt, "-matT1") == 0 ||
              strcmp(opt, "-matT2") == 0) {
       int slot = (strcmp(opt, "-matN") == 0) ? 0 : (strcmp(opt, "-matT1") == 0) ? 1 : 2;
@@ -451,21 +465,23 @@ void* OPS_LadrunoEmbeddedNode(void)
     return 0;
   }
 
-  // ADR 23 Phase 2 — resolve the rotation host gradients. If -rot was set without an
-  // explicit -dNdx/-gradXi but the host was given via -xi, query the host for ∂N/∂x
-  // at that ξ (the convenience path); otherwise -rot needs an explicit gradient.
-  if (rot && !haveGrad && haveXi && hostEle != 0) {
+  // ADR 23 Phase 2 / 2b v2 — resolve the host gradients ∂N/∂x needed by BOTH the UR tie
+  // (-rot) and the D9 frame co-rotation (-corot). If neither -dNdx nor -gradXi was given
+  // but the host was given via -xi, query the host at that ξ (the convenience path);
+  // otherwise an explicit gradient is required.
+  bool needGrad = (rot || corot);
+  if (needGrad && !haveGrad && haveXi && hostEle != 0) {
     gradN.resize(nHost, ndm);
     if (hostEle->getInterpolationGradients(xiStored, gradN) < 0) {
-      opserr << "WARNING LadrunoEmbeddedNode: -rot with -xi but host element "
+      opserr << "WARNING LadrunoEmbeddedNode: -rot/-corot with -xi but host element "
              << hostEle->getTag() << " (" << hostEle->getClassType()
              << ") does not implement getInterpolationGradients; supply -dNdx\n";
       return 0;
     }
     haveGrad = true;
   }
-  if (rot && !haveGrad) {
-    opserr << "WARNING LadrunoEmbeddedNode: -rot needs host gradients ∂N/∂x — "
+  if (needGrad && !haveGrad) {
+    opserr << "WARNING LadrunoEmbeddedNode: -rot/-corot needs host gradients ∂N/∂x — "
            << "supply -dNdx N1x N1y [N1z] …, -gradXi ξ.. (with -host), or -xi with a "
            << "gradient-capable -host\n";
     return 0;
@@ -475,6 +491,13 @@ void* OPS_LadrunoEmbeddedNode(void)
   // given. -matN (a material on the NORMAL) requires -normal so the frame is defined;
   // a tangent material also needs the frame, so -normal is required for ANY -mat*.
   bool matMode = (matTag[0] >= 0 || matTag[1] >= 0 || matTag[2] >= 0);
+  // ADR 23 Phase 2b v2 — -corot only applies to a material interface (the isotropic /
+  // penalty tie is already frame-objective). Reject -corot without any -mat* at parse time.
+  if (corot && !matMode) {
+    opserr << "WARNING LadrunoEmbeddedNode: -corot only applies to a material interface "
+           << "(supply -matN/-matT*); the isotropic/penalty tie is already frame-objective\n";
+    return 0;
+  }
   UniaxialMaterial* matN = 0;
   UniaxialMaterial* matT1 = 0;
   UniaxialMaterial* matT2 = 0;
@@ -507,8 +530,8 @@ void* OPS_LadrunoEmbeddedNode(void)
                                        bipenalty, bpMode, bpDt, bpBeta,
                                        pressure, Kp,
                                        rot, Kr, krAuto, krAlpha,
-                                       rot ? &gradN : 0,
-                                       matMode, haveNormal ? &normalDir : 0,
+                                       (rot || corot) ? &gradN : 0,
+                                       matMode, corot, haveNormal ? &normalDir : 0,
                                        haveOrient ? &orientDir : 0,
                                        matN, matT1, matT2);
   if (e == 0) {
