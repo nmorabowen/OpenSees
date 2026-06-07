@@ -597,14 +597,43 @@ vanilla. *Gate: Zone-A — frame normal = `R(θ_z)·n` under a prescribed-host d
 auto host-face-normal (ill-defined for an interior volume embedding — belongs to
 `LadrunoContact`'s surface projection); large-rotation rigorous contact remains `LadrunoContact`.
 
+**Phase 2c — initial-gap (offset) capture for stress-free staged activation. BUILT
+(2026-06-07).** v1 computed every gap as a pure **trial-displacement difference**
+(`g = u_c − Σ N_i u_host`, and likewise `g_p`/`g_r`), so the penalty enforced an **absolute**
+tie `u_c = Σ N_i u_host`. An element added **mid-analysis to an already-deformed host** (staged
+construction) therefore activated with `g = −N·u_host ≠ 0` and **yanked the slave** by the full
+accumulated host displacement (a spurious force spike) — the parent `ASDEmbeddedNodeElement`
+avoids this with its `m_U0` capture, which v1 dropped. **Decision D10 (capture ON by default;
+`-absolute` opts out):** at `setDomain` — after the DOF layout + `upActive`/`rActive` + host
+gradients are resolved — the element captures each **active** gap **once** (`g0`/`gp0`/`gr0`,
+guarded by `g0Computed`) and thereafter drives **all** traction from the **relative** gap
+`(g − g0)`. Implemented by subtracting the offset **inside** `computeGap`/`computeGapP`/
+`computeGapR`, so **every** consumer sees the relative gap: penalty force, tangent, AL Uzawa,
+the recorder `gap`/`pgap`/`rgap` probes, **and — the stress-free crux — the D9 material
+`setTrialStrain`**, so interface materials are born **unstrained** (a cohesive law at its origin,
+a gap material open, bond un-slipped), not merely the penalty zeroed. Composes with `-corot`:
+`g0` is a **global** vector subtracted **before** the frame projection `g·e_d`, so at activation
+`(g−g0)=0` ⇒ all material strains zero regardless of the (already-rotated) frame. **Force-free
+AND stress-free**, not just force-free. The capture is a **no-op at the undeformed state**
+(`g0=0`) ⇒ the entire v1 battery stays byte-identical. `-absolute` (alias `-noInitGap`) keeps the
+legacy absolute tie (e.g. a deliberate snap-to-host). UR is linearized, so `gr0` subtraction is
+**exact for small inter-stage rotation, approximate for large** (consistent with UR's
+mesh-limited scope, R2). Serialization adds `initGapCapture`/`g0Computed` + `g0`/`gp0`/`gr0`
+(hdr→29; `g0Computed` restored so `recvSelf` does **not** re-capture). New `initGap`/`offset`
+diagnostic response. **No new vanilla.** *Gate: Zone-A — staged born-stress-free on a deformed
+`LadrunoBrick` (zero force + zero relative gap at activation; offset = −host-centroid-disp; slave
+not yanked on the next step), `-absolute` negative control (full-gap jolt + slave yanked to the
+host point), undeformed no-op (byte-identical), FE_Datastore send/recv round-trip of the captured
+state.*
+
 **Phase 3 — apeGmsh generator + Zone-B + docs.** Teach the apeGmsh assembly path to emit
 `LadrunoEmbeddedNode` (replacing/optioning `ASDEmbeddedNodeElement`); Zone-B items 8–9; the
 `LadrunoEmbeddedNode_guide.md` (mirror the rebar guide); banner + ledger + manifest rows.
 
-**Scope locked:** Phases 0–2b = the C++ (kernel + element + UR virtual + interface mode +
-the v2 `-corot` frame co-rotation); Phase 3 = tooling + docs. UR (Phase 2) is the only phase
-touching vanilla beyond the already-shipped virtuals; Phase 2b (v1 and the v2 `-corot`) adds
-no vanilla surface — `-corot` reuses the UR `getInterpolationGradients` machinery.
+**Scope locked:** Phases 0–2c = the C++ (kernel + element + UR virtual + interface mode +
+the v2 `-corot` frame co-rotation + the 2c initial-gap capture); Phase 3 = tooling + docs. UR
+(Phase 2) is the only phase touching vanilla beyond the already-shipped virtuals; Phases 2b
+(`-corot`) and 2c (initial-gap capture) add **no vanilla surface**.
 
 > **Review gate (post-`wf_bbe77ee8`):** **Phase 0 = GO now.** **Hold Phase 1+ until M1–M6
 > (§13) are reflected in the code design** — in particular M1/ES-1 (per-class bipenalty

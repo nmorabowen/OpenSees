@@ -44,6 +44,14 @@
 //            -matN tag | -matT1 tag | -matT2 tag ..  [-corot]]
 //           [-enforce {penalty | al}]
 //           [-bipenalty {-dtcr dt | -wcap beta}]
+//           [-absolute]                                   # opt out of initial-gap capture
+//
+//   -absolute (alias -noInitGap, ADR 23): by DEFAULT the element captures the gap at
+//   activation (setDomain) and drives traction from the RELATIVE gap (g - g0), so an element
+//   added to an ALREADY-DEFORMED host (staged construction) is born stress-free instead of
+//   yanking the slave to chase the host's accumulated displacement. -absolute disables that
+//   capture and keeps the ABSOLUTE tie u_c = sum N_i u_host (legacy v1 / a deliberate
+//   snap-to-host). Capture is a no-op when the element is added at the undeformed state.
 //
 //   -matN/-matT1/-matT2 (ADR 23 Phase 2b, D9): turn the translational tie into a
 //   material-driven INTERFACE — each local direction (normal e_0, tangents e_1/e_2)
@@ -206,6 +214,7 @@ void* OPS_LadrunoEmbeddedNode(void)
   bool haveOrient = false;
   int matTag[3] = { -1, -1, -1 };  // -matN / -matT1 / -matT2 uniaxial tags
   bool corot = false;            // -corot (v2): co-rotate the material frame with the host
+  bool initGapCapture = true;    // ON by default; -absolute keeps the absolute tie (no offset)
 
   while (OPS_GetNumRemainingInputArgs() > 0) {
     const char* opt = OPS_GetString();
@@ -389,6 +398,12 @@ void* OPS_LadrunoEmbeddedNode(void)
       // needs host gradients ∂N/∂x (resolved below, like -rot).
       corot = true;
     }
+    else if (strcmp(opt, "-absolute") == 0 || strcmp(opt, "-noInitGap") == 0) {
+      // ADR 23 — opt out of the initial-gap capture: keep the ABSOLUTE tie u_c = Σ N_i u_host
+      // (the legacy v1 behavior, or a deliberate snap-to-host). Default = capture ON (the
+      // element is born stress-free at the current host configuration ⇒ no staged jolt).
+      initGapCapture = false;
+    }
     else if (strcmp(opt, "-matN") == 0 || strcmp(opt, "-matT1") == 0 ||
              strcmp(opt, "-matT2") == 0) {
       int slot = (strcmp(opt, "-matN") == 0) ? 0 : (strcmp(opt, "-matT1") == 0) ? 1 : 2;
@@ -533,7 +548,7 @@ void* OPS_LadrunoEmbeddedNode(void)
                                        (rot || corot) ? &gradN : 0,
                                        matMode, corot, haveNormal ? &normalDir : 0,
                                        haveOrient ? &orientDir : 0,
-                                       matN, matT1, matT2);
+                                       matN, matT1, matT2, initGapCapture);
   if (e == 0) {
     opserr << "WARNING LadrunoEmbeddedNode: could not create element\n";
     return 0;
