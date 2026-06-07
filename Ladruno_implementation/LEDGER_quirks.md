@@ -1003,6 +1003,22 @@ From the finite-strain validation Phase P4 (Taylor-bar impact, 2026-06-02,
   (`gh pr checks <n> --watch`): a fast (~1-2 min) fail = compile error, a slow
   (~5-6 min) fail = test failure. Don't trust a green fast-gate.
 
+- **`LadrunoEmbeddedNode` is WIDE but only the U+`g0` core is VALIDATED — and
+  `getInitialStiff` aliases the D9 tangent.** The element exposes five flag-gated capabilities
+  (U · UP · UR · D9 · enforcement), but the [[23_ladruno_embedded_node_adr|ADR §14]] re-scope
+  declares **only the U translational tie + `g0` stress-free birth + penalty/AL/bipenalty** as
+  the *validated, world-class* core ([[27_ladruno_embedded_node_validation_plan]]). **Do not
+  cite UR/UP/D9/`-corot` as validated** — UR is `½curl(u)` SPIN (not moment transfer; rigid
+  spin on CST/TET4), UP is niche poromechanics, D9 is interface/contact-flavored (uncoupled
+  friction only approximate). Their Zone-A *mechanics* tests prove they run, **not** that
+  they're validated. **The one real latent bug:** `getInitialStiff()` aliases
+  `getTangentStiff()` → `formTransTraction()` → `setTrialStrain()`, so in **D9 mode** the
+  "initial" stiffness is **state-dependent** and **mutates material state during a query**.
+  Harmless for the U core (`matMode 0` → `K_u·I`, exact/state-independent) but a real bug that
+  **gates D9 promotion** — fix it to use each direction's *initial* tangent with no side
+  effect. Also: `sendSelf`/`recvSelf` has **no version field** despite the format changing every
+  phase (hdr→29 in #214) — add one (retroactively; pre-#214 DBs already incompatible). 2026-06-07.
+
 - **`Ladruno_scripts\build.bat` takes ONE target argument, not a list.** It reads only
   `%1` (`set "MODE=%1"` → `set "TARGETS=%MODE%"`), so `build.bat OpenSees OpenSeesSP
   OpenSeesMP` builds **only `OpenSees`** and silently ignores `%2 %3 …` — exit code 0, no
