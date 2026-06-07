@@ -639,6 +639,11 @@ state.*
 **Phase 3 — apeGmsh generator + Zone-B + docs.** Teach the apeGmsh assembly path to emit
 `LadrunoEmbeddedNode` (replacing/optioning `ASDEmbeddedNodeElement`); Zone-B items 8–9; the
 `LadrunoEmbeddedNode_guide.md` (mirror the rebar guide); banner + ledger + manifest rows.
+**Status: the guide is WRITTEN** ([[LadrunoEmbeddedNode_guide]] — theory + grammar + responses
++ the `g.embed` generator contract in §10.6) and the apeGmsh contract
+([[ladruno_apegmsh_contract]]) now routes node-on-continuum ties to this element (the outdated
+"route to ASDEmbeddedNodeElement" note is corrected). **Still TO IMPLEMENT (apeGmsh side):** the
+`g.embed` generator (inverse map → emit `-host -xi`/`-shape`) and the Zone-B head-to-head cases.
 
 **Scope locked:** Phases 0–2c = the C++ (kernel + element + UR virtual + interface mode +
 the v2 `-corot` frame co-rotation + the 2c initial-gap capture); Phase 3 = tooling + docs. UR
