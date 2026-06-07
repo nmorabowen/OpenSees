@@ -315,11 +315,45 @@ control). **Full grammar, theory, responses, and use cases: [[LadrunoEmbeddedReb
 - **2D hosts:** no element implements `getInterpolationWeights` in 2D yet, so for a
   2D quad/tri host apeGmsh must compute the **`-shape`** weights itself (bilinear /
   area coords); 3D hosts (LadrunoBrick/BezierTet10) take `-xi`.
-- **Node-on-continuum ties (a frame on a 2D boundary, e.g. a tunnel lining):
-  route to the upstream `ASDEmbeddedNodeElement`, not this element.** ASD is
-  2D-native and does its own projection; `LadrunoEmbeddedRebar` is the
-  *bar-in-solid* tool (anisotropic axial bond + transverse penalty). Recorded so the
-  generator picks the right tie for each case.
+- **General node-on-continuum ties (mesh stitch, point/part embed, frame-into-solid):
+  use the fork `LadrunoEmbeddedNode` (ELE 33006), NOT the bar-in-solid rebar element.**
+  `LadrunoEmbeddedRebar` is the *anisotropic bar-in-solid* tool (axial bond + transverse
+  penalty); the **isotropic** node tie is `LadrunoEmbeddedNode` — see its own section below.
+  (`ASDEmbeddedNodeElement` stays a valid **2D-native fallback** where no fork solid host is
+  in play, but it is implicit-only and tri/tet-only.)
+
+### General node-to-host embedment (`LadrunoEmbeddedNode`) — **`g.embed` generator TO IMPLEMENT on apeGmsh side**
+
+**OpenSees side.** A penalty **coupling** element (ELE **33006**) — the **isotropic** sibling
+of `LadrunoEmbeddedRebar` over the same kernel — that ties one constrained node to a host
+element's nodes via shape-function weights, so an arbitrary node embeds in a **non-matching**
+host mesh (mesh stitch, point/part embed, beam/shell-into-solid, SSI). **v1 SUPPORTED CORE =
+the U translational tie + `g0` stress-free birth (no jolt on staged addition) + penalty/AL/
+bipenalty enforcement + `-kt auto` conditioning** — host-agnostic (hex/tet/quad), implicit +
+explicit. **UR/UP/D9/`-corot` are EXPERIMENTAL (not validated) — keep them off in the
+generator.** This is the **drop-in fork upgrade** of the `ASDEmbeddedNodeElement` ties apeGmsh
+already emits for non-matching meshes. **Full grammar, theory, responses, use cases (incl. the
+generator contract): [[LadrunoEmbeddedNode_guide]].**
+
+**Recommended apeGmsh approach (element shipped, generator not).** Ship a
+`g.embed(nodes=<set>, host=<set>, k="auto", enforce="penalty", explicit=None, staged=True)`
+generator. apeGmsh owns the irreducible **point location / inverse map** (global point → host
+ξ). It should:
+1. for each constrained node, find the containing host element and **inverse-map to ξ** (the
+   same guarded Newton as `g.reinforce`, ADR 20 D3);
+2. emit `element LadrunoEmbeddedNode <tag> <cNode> -host <hostEle> -xi ξ η ζ -k auto -kAlpha 1e3
+   [-enforce penalty|al] [-bipenalty -wcap β|-dtcr dt]` — prefer **`-xi`** (host owns the
+   weights) on **3D** hosts; for **2D** hosts (no `getInterpolationWeights` override) compute
+   the bilinear/area weights and emit **`-shape N…`**;
+3. default to **U-only** (rotations free — Abaqus `*EMBEDDED REGION`-consistent) and **`g0` on**
+   (stress-free birth on a staged add). Keep `-rot`/`-pressure`/`-matN`/`-corot` **off**
+   (experimental, opt-in only with a "not validated" note);
+4. **frame→solid moment connections:** emit a **string of ties along the embedded stub**
+   (≥2 nodes spanning a lever arm) so the moment transfers as a force couple — do **not** use
+   the single-point `-rot` spin tie (see [[LadrunoEmbeddedNode_guide]] §10.5).
+- **Explicit runs:** add `-bipenalty -wcap β` (host-aware) so the stiff penalty tie doesn't
+  collapse the step; `ops.criticalTimeStep()` accounts for the ties (host-reduced `μ`) via the
+  same `getExplicitCriticalTimeStep` seam as the rebar.
 
 ### Absorbing boundaries (`ASDAbsorbingBoundary2D/3D` + `LysmerTriangle`) — **`g.absorbing_boundary` generator TO IMPLEMENT on apeGmsh side**
 
@@ -391,6 +425,9 @@ This is a quick reference; the deep specs live next door:
 - [[LadrunoEmbeddedRebar_guide]] — embedded-reinforcement coupling element: full
   grammar, theory (tie, anisotropic traction, penalty/AL, co-rot, bipenalty), and
   the `g.reinforce` use cases.
+- [[LadrunoEmbeddedNode_guide]] — general node-to-host embedment (ELE 33006): the
+  isotropic U tie + `g0` stress-free birth + penalty/AL/bipenalty, the responses, and
+  the `g.embed` generator contract (incl. frame→solid moment ties).
 - [[20_ladruno_embedded_reinforcement_adr]] — embedded reinforcement ADR (D1–D6 +
   the §10 Mode-P roadmap; the guarded inverse-map contract is D3).
 - [[lysmer_asd_absorbing_boundaries_guide]] — Lysmer/ASD free-field absorbing
