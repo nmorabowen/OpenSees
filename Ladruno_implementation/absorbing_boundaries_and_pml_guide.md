@@ -72,6 +72,16 @@ broker (parallel/clone) in
 
 ## 3. Lysmer dashpot family
 
+> **Deep dive lives in [[lysmer_asd_absorbing_boundaries_guide]].** This section is
+> the survey-level summary. The formulation-level study — the four mechanisms
+> (free-field column + FF→soil traction + **relative-velocity** dashpots + compliant
+> base), the stage machine, the 3D static condensation, and the **apeGmsh ghost-layer
+> generator contract** — is in that companion guide. Note it **corrects** an
+> imprecision below: the ASD elements are a FLAC/PLAXIS-style *free-field boundary*,
+> not "Lysmer + free-field spring"; the dashpots act on `V_ff − V_ss` (so only the
+> scattered field is absorbed), the base input is a **velocity** history at `2ρV·v`,
+> and the free-field column needs its **own Rayleigh damping**.
+
 ### 3.1 `LysmerTriangle` — the bare dashpot facet
 
 3-node triangular facet, 3 DOF/node (9 DOF total), placed on the truncation
