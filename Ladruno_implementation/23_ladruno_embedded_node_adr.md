@@ -571,22 +571,40 @@ units (D9-4, no bondScale). Full material lifecycle (getCopy/commit/revert/setTr
 + broker serialization; AL re-projects λ off material directions (M4/D9-3); bipenalty
 `k_eff=max(K_u, init tangents)` with a stiffening-material warning (M6/ES-4). Models
 cohesive / unilateral-gap (ENT/ElasticPPGap) / elastic-bedding / bond; approximate
-friction (fixed ElasticPP slip). **DEFERRED to v2:** the `-corot` frame co-rotation
-(D9.1 — for a large-rotation contact normal; would reuse the Phase-2 continuum-rotation
-machinery to rotate the frame) and the auto host-face-normal. v1 uses the REFERENCE
-frame (small-rotation interfaces; large-rotation rigorous contact is the separate
-`LadrunoContact`). No new vanilla. *Gate: Zone-A item 10 (fixed-frame subset) — Elastic
-== penalty, ENT unilateral gap, ElasticPP fixed slip, AL reprojection, bipenalty k_eff,
-2D, -matN-requires-normal, local responses. Item 11 (AL×material×corot) deferred with
-the corot frame.*
+friction (fixed ElasticPP slip). v1 used the REFERENCE frame. No new vanilla. *Gate:
+Zone-A item 10 (fixed-frame subset) — Elastic == penalty, ENT unilateral gap, ElasticPP
+fixed slip, AL reprojection, bipenalty k_eff, 2D, -matN-requires-normal, local responses.*
+
+**Phase 2b v2 — D9 frame co-rotation (`-corot`). BUILT (2026-06-07).** The local material
+frame now CO-ROTATES with the host continuum rotation `θ_host = skew(∇u)|_ξ` at the embedded
+point: `frameCur = R(θ_host)·frame` (3D Rodrigues exponential map of the axial vector / 2D
+drilling planar rotation), so a directional contact normal follows the deformed host. Reuses
+the **Phase-2 continuum-rotation machinery** verbatim — `θ_host` from the host gradients
+`∂N/∂x` via the shared `rotOper` (factored into `hostContinuumRotation`), supplied by
+`-dNdx`/`-gradXi`/`-xi` exactly as UR. `-corot` is material-mode-only (parse-time reject
+otherwise — the isotropic/penalty tie is already frame-objective) and resolves `corotActive`
+in `setDomain` (needs `gradN`). The co-rotated `frameCur` drives the traction/tangent, the AL
+λ-reprojection (so **frame rotation alone** can no longer leak the multiplier onto a material
+axis — M4/D9-3 now exercised under rotation), and the `localGap`/`localForce`/`normal`
+responses. The **dropped `∂e_d/∂u` consistent-tangent term (R7/D9-5)** is inherited from the
+rebar: residual exact, tangent inexact (frame-objective for explicit, step-halving for
+implicit, may slow Newton on stiff-normal large-per-step-rotation contact); NB when the host
+DOFs are prescribed the cNode tangent is in fact exact (`θ_host` is host-only). Serialization
+extends to `corot` + `gradN` (hdr→27; gradN now sent whenever UR **or** `-corot`). No new
+vanilla. *Gate: Zone-A — frame normal = `R(θ_z)·n` under a prescribed-host drilling rotation
+(2D) with a `-corot`-off negative control; `-corot`-requires-material parse guard; **item 11**
+(AL × material × corot — λ·e_0^cur stays ~0 under frame rotation).* **DEFERRED still:** the
+auto host-face-normal (ill-defined for an interior volume embedding — belongs to
+`LadrunoContact`'s surface projection); large-rotation rigorous contact remains `LadrunoContact`.
 
 **Phase 3 — apeGmsh generator + Zone-B + docs.** Teach the apeGmsh assembly path to emit
 `LadrunoEmbeddedNode` (replacing/optioning `ASDEmbeddedNodeElement`); Zone-B items 8–9; the
 `LadrunoEmbeddedNode_guide.md` (mirror the rebar guide); banner + ledger + manifest rows.
 
-**Scope locked:** Phases 0–2b = the C++ (kernel + element + UR virtual + interface mode);
-Phase 3 = tooling + docs. UR (Phase 2) is the only phase touching vanilla beyond the
-already-shipped virtuals; Phase 2b adds no vanilla surface.
+**Scope locked:** Phases 0–2b = the C++ (kernel + element + UR virtual + interface mode +
+the v2 `-corot` frame co-rotation); Phase 3 = tooling + docs. UR (Phase 2) is the only phase
+touching vanilla beyond the already-shipped virtuals; Phase 2b (v1 and the v2 `-corot`) adds
+no vanilla surface — `-corot` reuses the UR `getInterpolationGradients` machinery.
 
 > **Review gate (post-`wf_bbe77ee8`):** **Phase 0 = GO now.** **Hold Phase 1+ until M1–M6
 > (§13) are reflected in the code design** — in particular M1/ES-1 (per-class bipenalty

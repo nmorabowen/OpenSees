@@ -9,6 +9,8 @@ Like the rebar battery, these checks pin the coupling MECHANICS without a host c
 we play the "host" with explicit nodes whose displacements we prescribe (fix), so the gap
 g = u_c - sum N_i u_host is fully controlled. The -host/-xi legs use a real LadrunoBrick.
 """
+import math
+
 import pytest
 
 from _testbed import ops
@@ -673,3 +675,94 @@ def test_matN_requires_normal():
     except Exception:
         pass
     assert 1 not in (ops.getEleTags() or [])
+
+
+# ====================================== Phase 2b v2 — D9 material-frame co-rotation (-corot)
+# -corot makes the material frame track the host CONTINUUM rotation θ = skew(∇u) at the
+# embedded point: frameCur = R(θ)·frame (3D Rodrigues / 2D drilling). A directional contact
+# normal then follows the deformed host. It needs the host gradients ∂N/∂x (here via -dNdx,
+# the gradient analog of -shape) and applies to the material interface only (the isotropic /
+# penalty tie is already frame-objective). The dropped ∂e_d/∂u tangent term keeps the
+# residual exact (tangent inexact — R7). As elsewhere we pin the mechanics by prescribing the
+# host translations (⇒ θ_host is known and held), with the cNode free.
+
+def test_corot_normal_rotates_2d():
+    """2D: a prescribed host translation + ∂N/∂x induce a continuum drilling rotation
+    θ_z = ½(∂N/∂x·u_y − ∂N/∂y·u_x); under -corot the material normal rotates with it
+    (normal response = R(θ_z)·n = (cos θ_z, sin θ_z)). WITHOUT -corot it stays the
+    reference normal (1,0) — the negative control proving -corot does the rotating."""
+    ku, ke = 1.0e5, 2.0e5
+    gx, gy = 0.0, 2.0
+    a, b = 0.1, 0.0
+    thz = 0.5 * (gx * b - gy * a)                 # = −gy·a/2 = −0.1
+
+    def _build(corot):
+        ops.wipe(); ops.model("basic", "-ndm", 2, "-ndf", 2)
+        ops.node(1, 0.0, 0.0); ops.node(2, 0.0, 0.0)
+        ops.uniaxialMaterial("Elastic", 20, ke)
+        args = ["LadrunoEmbeddedNode", 1, 1, 1, 2, "-shape", 1.0, "-k", ku,
+                "-normal", 1.0, 0.0, "-matN", 20, "-dNdx", gx, gy]
+        if corot:
+            args.append("-corot")
+        ops.element(*args)
+        ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
+        ops.sp(2, 1, a); ops.sp(2, 2, b)          # host prescribed ⇒ θ_z = −0.1
+        _solve_static()
+
+    _build(corot=True)
+    nrm = ops.eleResponse(1, "normal")
+    assert nrm[0] == pytest.approx(math.cos(thz), rel=1e-4)
+    assert nrm[1] == pytest.approx(math.sin(thz), rel=1e-4)
+
+    _build(corot=False)                            # negative control: reference frame
+    nrm = ops.eleResponse(1, "normal")
+    assert nrm[0] == pytest.approx(1.0, abs=1e-9)
+    assert nrm[1] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_corot_requires_material_mode():
+    """-corot without any -mat* is rejected at parse time (the isotropic/penalty tie is
+    already frame-objective; there is no frame to co-rotate)."""
+    ops.wipe(); ops.model("basic", "-ndm", 3, "-ndf", 3)
+    ops.node(1, 0.0, 0.0, 0.0); ops.node(2, 0.0, 0.0, 0.0)
+    try:
+        ops.element("LadrunoEmbeddedNode", 1, 1, 1, 2, "-shape", 1.0, "-k", 1.0e5,
+                    "-normal", 1.0, 0.0, 0.0, "-dNdx", 1.0, 0.0, 0.0, "-corot")
+    except Exception:
+        pass
+    assert 1 not in (ops.getEleTags() or [])
+
+
+def test_corot_al_material_reprojection_3d():
+    """ADR 23 item 11 — AL × material × corot. A host translation + ∂N/∂x induce a continuum
+    rotation about z (θ = ½ g×u_host), so the material normal (reference y) co-rotates toward
+    x. Under -enforce al the multiplier λ augments only the PENALTY directions and is
+    re-projected off the (rotated) material direction each commit (M4/D9-3): λ·e_0^cur stays
+    ~0 even though frame rotation alone could leak it there."""
+    F, ku, ke = 50.0, 1.0e4, 2.0e5
+    gx, gy, gz = 2.0, 0.0, 0.0
+    a, b, c = 0.0, 0.05, 0.0                       # θ = ½ g×u = (0,0,0.05) ⇒ θ_z = 0.05
+    ops.wipe(); ops.model("basic", "-ndm", 3, "-ndf", 3)
+    ops.node(1, 0.0, 0.0, 0.0); ops.node(2, 0.0, 0.0, 0.0)
+    ops.uniaxialMaterial("Elastic", 21, ke)
+    ops.element("LadrunoEmbeddedNode", 1, 1, 1, 2, "-shape", 1.0, "-k", ku,
+                "-normal", 0.0, 1.0, 0.0, "-matN", 21, "-dNdx", gx, gy, gz,
+                "-corot", "-enforce", "al")
+    ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
+    ops.sp(2, 1, a); ops.sp(2, 2, b); ops.sp(2, 3, c)   # host prescribed ⇒ θ_z = 0.05
+    ops.fix(1, 0, 0, 1)                            # cNode free in x,y; z fixed
+    ops.load(1, F, 0.0, 0.0)                       # load along x (≈ penalty tangent e_1)
+    ops.constraints("Transformation"); ops.numberer("Plain"); ops.system("FullGeneral")
+    ops.test("NormDispIncr", 1e-11, 50); ops.algorithm("Newton")
+    ops.integrator("LoadControl", 1.0); ops.analysis("Static")
+    assert ops.analyze(1) == 0
+    ops.loadConst("-time", 0.0)
+    ops.integrator("LoadControl", 0.0)
+    assert ops.analyze(8) == 0                      # constant-load Uzawa updates
+
+    nrm = ops.eleResponse(1, "normal")             # the frame really rotated (corot active)
+    assert abs(nrm[0]) == pytest.approx(math.sin(0.05), rel=1e-2)
+    lam = ops.eleResponse(1, "lambda")             # λ purged off the rotated material normal
+    leak = sum(lam[k] * nrm[k] for k in range(3))
+    lam_mag = math.sqrt(sum(l * l for l in lam))
+    assert abs(leak) < 1e-6 * max(lam_mag, 1.0)

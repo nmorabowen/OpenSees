@@ -51,7 +51,7 @@ LadrunoEmbeddedNode::LadrunoEmbeddedNode(int tag, int ndm_, int cNode,
         bool bipenalty_, int bpMode_, double bpDt_, double bpBeta_,
         bool pressure_, double kp_,
         bool rot_, double kr_, bool krAuto_, double krAlpha_, const Matrix* gradN_,
-        bool matMode_, const Vector* normalDir_, const Vector* orientDir_,
+        bool matMode_, bool corot_, const Vector* normalDir_, const Vector* orientDir_,
         UniaxialMaterial* matN_, UniaxialMaterial* matT1_, UniaxialMaterial* matT2_)
   : Element(tag, ELE_TAG_LadrunoEmbeddedNode),
     ndm(ndm_), nHost(hostNodes.Size()),
@@ -61,6 +61,7 @@ LadrunoEmbeddedNode::LadrunoEmbeddedNode(int tag, int ndm_, int cNode,
     gradN(), Kr(kr_), krAuto(krAuto_), krAlpha(krAlpha_), krResolved(false),
     lambda_r((ndm_ == 3) ? 3 : 1),
     matMode(matMode_ ? 1 : 0), normalDir(), orientDir(), haveOrient(false), frame(),
+    corot(corot_), corotActive(false), frameCur(),
     enforce(enforce_), lambda(ndm_),
     hostEleTag(hostEleTag_), ktAuto(ktAuto_), ktAlpha(ktAlpha_), ktResolved(false),
     bipenalty(bipenalty_), bpMode(bpMode_), bpDt(bpDt_), bpBeta(bpBeta_),
@@ -74,8 +75,9 @@ LadrunoEmbeddedNode::LadrunoEmbeddedNode(int tag, int ndm_, int cNode,
     connectedNodes(1 + i) = hostNodes(i);
   lambda.Zero();
   lambda_r.Zero();
-  // host cartesian gradients ∂N_i/∂x_j (nHost × ndm) for the UR tie (-dNdx / -gradXi).
-  if (rflag == 1 && gradN_ != 0)
+  // host cartesian gradients ∂N_i/∂x_j (nHost × ndm) for the UR tie (-dNdx / -gradXi)
+  // and/or the D9 frame co-rotation (-corot, v2) — both read ∂N/∂x.
+  if ((rflag == 1 || corot) && gradN_ != 0)
     gradN = *gradN_;
 
   // ADR 23 Phase 2b (D9) — material-driven interface: clone each supplied uniaxial
@@ -102,6 +104,7 @@ LadrunoEmbeddedNode::LadrunoEmbeddedNode()
     rflag(0), nrot(0), rActive(false),
     gradN(), Kr(0.0), krAuto(false), krAlpha(0.0), krResolved(false), lambda_r(),
     matMode(0), normalDir(), orientDir(), haveOrient(false), frame(),
+    corot(false), corotActive(false), frameCur(),
     enforce(0), lambda(),
     hostEleTag(-1), ktAuto(false), ktAlpha(0.0), ktResolved(false),
     bipenalty(false), bpMode(0), bpDt(0.0), bpBeta(0.0),
@@ -205,6 +208,25 @@ void LadrunoEmbeddedNode::setDomain(Domain* theDomain)
     }
   }
 
+  // ADR 23 Phase 2b v2 (D9.1) — resolve the material-frame co-rotation (-corot). Only
+  // meaningful for a material interface (the isotropic/penalty frame is unused), and it
+  // needs the host gradients ∂N/∂x (same surface as UR). Else keep the REFERENCE frame.
+  corotActive = false;
+  if (corot) {
+    if (matMode != 1) {
+      opserr << "WARNING LadrunoEmbeddedNode " << this->getTag()
+             << ": -corot only applies to a material interface (-matN/-matT*); "
+             << "ignoring (penalty/isotropic ties are already frame-objective)\n";
+    } else if (gradN.noRows() != nHost || gradN.noCols() != ndm) {
+      opserr << "WARNING LadrunoEmbeddedNode " << this->getTag()
+             << ": -corot needs host gradients ∂N/∂x (need " << nHost << "x" << ndm
+             << ", got " << gradN.noRows() << "x" << gradN.noCols()
+             << "); supply -dNdx/-gradXi/-xi; using the reference frame\n";
+    } else {
+      corotActive = true;
+    }
+  }
+
   this->allocate();
   this->DomainComponent::setDomain(theDomain);
 }
@@ -295,21 +317,87 @@ double LadrunoEmbeddedNode::rotOper(int r, int i, int j) const
   return (j == 0) ? -half * gy : (j == 1) ? half * gx : 0.0;
 }
 
+// θ_host(ξ) = skew(∇u)|_ξ: the host CONTINUUM rotation at the embedded point (size nrot),
+// θ_r = Σ_i Σ_j rotOper(r,i,j)·u_host,i,j. Shared by the UR gap (computeGapR) and the D9
+// frame co-rotation (updateFrame). Needs gradN (∂N/∂x) — present iff rActive or corotActive.
+void LadrunoEmbeddedNode::hostContinuumRotation(Vector& th)
+{
+  if (th.Size() != nrot) th.resize(nrot);
+  th.Zero();
+  for (int r = 0; r < nrot; r++) {
+    double v = 0.0;
+    for (int i = 0; i < nHost; i++) {
+      const Vector& uh = theNodes[1 + i]->getTrialDisp();
+      for (int j = 0; j < ndm; j++)
+        v += this->rotOper(r, i, j) * uh(j);
+    }
+    th(r) = v;
+  }
+}
+
 // g_r = θ_c − θ_host(ξ): the constrained node's rotation DOFs (indices ndm..ndm+nrot)
 // minus the host continuum rotation interpolated at the embedded point (size nrot).
 void LadrunoEmbeddedNode::computeGapR(Vector& gr)
 {
   if (gr.Size() != nrot) gr.resize(nrot);
+  Vector th(nrot);
+  this->hostContinuumRotation(th);
   const Vector& uc = theNodes[0]->getTrialDisp();
-  for (int r = 0; r < nrot; r++) {
-    double th = 0.0;
-    for (int i = 0; i < nHost; i++) {
-      const Vector& uh = theNodes[1 + i]->getTrialDisp();
-      for (int j = 0; j < ndm; j++)
-        th += this->rotOper(r, i, j) * uh(j);
-    }
-    gr(r) = uc(ndm + r) - th;
+  for (int r = 0; r < nrot; r++)
+    gr(r) = uc(ndm + r) - th(r);
+}
+
+// ADR 23 Phase 2b v2 (D9.1) — rotation operator R(θ_host) that carries the REFERENCE frame
+// to its co-rotated configuration. 3D: the exponential map of the axial vector θ_host
+// (Rodrigues, R = I + (sinφ/φ)S + ((1−cosφ)/φ²)S², S = skew(θ), φ = |θ|; series limit I+S+½S²
+// as φ→0). 2D: the planar rotation by the single drilling angle θ_z. R is orthonormal, so
+// frameCur = R·frame stays an orthonormal frame.
+void LadrunoEmbeddedNode::frameRotation(const Vector& th, Matrix& R)
+{
+  if (R.noRows() != ndm || R.noCols() != ndm) R.resize(ndm, ndm);
+  R.Zero();
+  if (ndm == 2) {
+    double c = cos(th(0)), s = sin(th(0));
+    R(0, 0) = c; R(0, 1) = -s;
+    R(1, 0) = s; R(1, 1) =  c;
+    return;
   }
+  double tx = th(0), ty = th(1), tz = th(2);
+  double phi2 = tx * tx + ty * ty + tz * tz;
+  double phi = sqrt(phi2);
+  double a, b;                                   // R = I + a·S + b·S²
+  if (phi < 1.0e-8) { a = 1.0; b = 0.5; }        // series limit (φ→0)
+  else { a = sin(phi) / phi; b = (1.0 - cos(phi)) / phi2; }
+  // S = skew(θ):  S·v = θ × v
+  double S[3][3] = { {  0.0, -tz,  ty },
+                     {  tz,  0.0, -tx },
+                     { -ty,  tx,  0.0 } };
+  for (int i = 0; i < 3; i++)
+    for (int j = 0; j < 3; j++) {
+      double s2 = 0.0;                            // (S²)_ij
+      for (int k = 0; k < 3; k++) s2 += S[i][k] * S[k][j];
+      R(i, j) = (i == j ? 1.0 : 0.0) + a * S[i][j] + b * s2;
+    }
+}
+
+// ADR 23 Phase 2b v2 (D9.1) — refresh the working frame: frameCur = R(θ_host)·frame under
+// -corot (the frame tracks the host continuum rotation at the embedded point), else the
+// frozen REFERENCE frame. Cheap no-op (a copy) when !corotActive. Call before any frameCur
+// read (traction, AL re-projection, responses). The ∂e_d/∂u tangent term is dropped (R7).
+void LadrunoEmbeddedNode::updateFrame(void)
+{
+  if (!corotActive) { frameCur = frame; return; }
+  Vector th(nrot);
+  this->hostContinuumRotation(th);
+  Matrix R(ndm, ndm);
+  this->frameRotation(th, R);
+  frameCur.resize(ndm, ndm);
+  for (int i = 0; i < ndm; i++)
+    for (int j = 0; j < ndm; j++) {
+      double v = 0.0;
+      for (int k = 0; k < ndm; k++) v += R(i, k) * frame(k, j);
+      frameCur(i, j) = v;
+    }
 }
 
 // ADR 23 Phase 2b (D9) — build the orthonormal local frame from the supplied normal
@@ -332,6 +420,7 @@ void LadrunoEmbeddedNode::buildFrame(void)
 
   if (ndm == 2) {
     frame(0, 1) = -n(1); frame(1, 1) = n(0);   // the one in-plane tangent
+    frameCur = frame;
     return;
   }
   // 3D — first tangent from -orient (or an auto axis least aligned with n)
@@ -358,6 +447,7 @@ void LadrunoEmbeddedNode::buildFrame(void)
   t2(1) = n(2) * t1(0) - n(0) * t1(2);
   t2(2) = n(0) * t1(1) - n(1) * t1(0);
   for (int k = 0; k < 3; k++) { frame(k, 1) = t1(k); frame(k, 2) = t2(k); }
+  frameCur = frame;   // default working frame (co-rotated in updateFrame under -corot)
 }
 
 // ADR 23 Phase 2b (D9) — translational traction t and tangent D for the gap g, either
@@ -375,9 +465,10 @@ void LadrunoEmbeddedNode::formTransTraction(const Vector& g, Vector& t, Matrix& 
     for (int k = 0; k < ndm; k++) { t(k) = Ku * g(k); D(k, k) = Ku; }
     return;
   }
+  // frameCur = the co-rotated frame under -corot (updateFrame), else the reference frame.
   for (int dd = 0; dd < ndm; dd++) {
     double gd = 0.0;
-    for (int k = 0; k < ndm; k++) gd += g(k) * frame(k, dd);
+    for (int k = 0; k < ndm; k++) gd += g(k) * frameCur(k, dd);
     double td, kd;
     if (matDir[dd] != 0) {
       matDir[dd]->setTrialStrain(gd);
@@ -386,9 +477,9 @@ void LadrunoEmbeddedNode::formTransTraction(const Vector& g, Vector& t, Matrix& 
     } else {
       td = Ku * gd; kd = Ku;
     }
-    for (int k = 0; k < ndm; k++) t(k) += td * frame(k, dd);
+    for (int k = 0; k < ndm; k++) t(k) += td * frameCur(k, dd);
     for (int a = 0; a < ndm; a++)
-      for (int b = 0; b < ndm; b++) D(a, b) += kd * frame(a, dd) * frame(b, dd);
+      for (int b = 0; b < ndm; b++) D(a, b) += kd * frameCur(a, dd) * frameCur(b, dd);
   }
 }
 
@@ -507,18 +598,21 @@ int LadrunoEmbeddedNode::commitState(void)
     } else {
       // D9 — Uzawa over the PENALTY directions only (material directions carry physical
       // force, not λ); then M4/D9-3 re-project λ off every material direction so an AL
-      // step can never leak the multiplier onto a material axis.
+      // step can never leak the multiplier onto a material axis. Under -corot the frame
+      // has rotated this step, so the purge runs against the CURRENT frameCur — frame
+      // rotation alone can shift a transverse multiplier onto a material axis (D9-3).
+      this->updateFrame();
       for (int dd = 0; dd < ndm; dd++) {
         if (hasMat[dd]) continue;
         double gd = 0.0;
-        for (int k = 0; k < ndm; k++) gd += g(k) * frame(k, dd);
-        for (int k = 0; k < ndm; k++) lambda(k) += Ku * gd * frame(k, dd);
+        for (int k = 0; k < ndm; k++) gd += g(k) * frameCur(k, dd);
+        for (int k = 0; k < ndm; k++) lambda(k) += Ku * gd * frameCur(k, dd);
       }
       for (int dd = 0; dd < ndm; dd++) {
         if (!hasMat[dd]) continue;
         double la = 0.0;
-        for (int k = 0; k < ndm; k++) la += lambda(k) * frame(k, dd);
-        for (int k = 0; k < ndm; k++) lambda(k) -= la * frame(k, dd);
+        for (int k = 0; k < ndm; k++) la += lambda(k) * frameCur(k, dd);
+        for (int k = 0; k < ndm; k++) lambda(k) -= la * frameCur(k, dd);
       }
     }
     if (upActive) lambda_p += Kp * this->computeGapP();
@@ -585,6 +679,7 @@ const Vector& LadrunoEmbeddedNode::getResistingForce(void)
 
   // translational traction: isotropic K_u·g, or (D9) the material-frame interface
   // t = Σ_d f_d(g·e_d) e_d. (+ λ for AL — constant within an inner solve.)
+  this->updateFrame();                  // co-rotate the D9 frame (-corot) before reading it
   Vector t(ndm);
   Matrix Dscratch(ndm, ndm);
   this->formTransTraction(g, t, Dscratch);
@@ -663,9 +758,11 @@ const Matrix& LadrunoEmbeddedNode::getTangentStiff(void)
   this->resolveAutoKt();
   K->Zero();
   // translational tangent D_u: isotropic K_u·I, or (D9) the material-frame
-  // D = Σ_d k_d e_d⊗e_d (state-dependent ⇒ needs the current gap).
+  // D = Σ_d k_d e_d⊗e_d (state-dependent ⇒ needs the current gap). The ∂e_d/∂u term from
+  // the co-rotating frame (-corot) is dropped (R7 — residual exact, tangent inexact).
   Vector g(ndm);
   this->computeGap(g);
+  this->updateFrame();                  // co-rotate the D9 frame (-corot) before reading it
   Vector tscratch(ndm);
   Matrix Du(ndm, ndm);
   this->formTransTraction(g, tscratch, Du);
@@ -754,7 +851,7 @@ const Matrix& LadrunoEmbeddedNode::getMass(void)
 int LadrunoEmbeddedNode::sendSelf(int commitTag, Channel& theChannel)
 {
   int dbTag = this->getDbTag();
-  static Vector hdr(26);
+  static Vector hdr(27);
   hdr(0) = this->getTag();
   hdr(1) = ndm;
   hdr(2) = nHost;
@@ -785,6 +882,7 @@ int LadrunoEmbeddedNode::sendSelf(int commitTag, Channel& theChannel)
     hdr(20 + d) = ct;
     hdr(23 + d) = dt;
   }
+  hdr(26) = corot ? 1.0 : 0.0;        // ADR 23 Phase 2b v2 — D9 frame co-rotation
   if (theChannel.sendVector(dbTag, commitTag, hdr) < 0) {
     opserr << "LadrunoEmbeddedNode::sendSelf - header failed\n";
     return -1;
@@ -793,22 +891,27 @@ int LadrunoEmbeddedNode::sendSelf(int commitTag, Channel& theChannel)
     opserr << "LadrunoEmbeddedNode::sendSelf - ID failed\n";
     return -1;
   }
-  // payload: Nshape(nHost) + lambda(ndm) + lambda_p(1) [+ gradN(nHost·ndm)+lambda_r(nrot)
-  // if UR] [+ normalDir(ndm)+orientDir(ndm) if D9].
-  int extraR = (rflag == 1) ? (nHost * ndm + nrot) : 0;
+  // payload: Nshape(nHost) + lambda(ndm) + lambda_p(1) [+ gradN(nHost·ndm) if UR or -corot]
+  // [+ lambda_r(nrot) if UR] [+ normalDir(ndm)+orientDir(ndm) if D9]. gradN is needed by
+  // BOTH the UR tie and the D9 frame co-rotation, so it is serialized whenever either is on.
+  bool gradNeeded = (rflag == 1 || corot);
+  int extraG = gradNeeded ? (nHost * ndm) : 0;
+  int extraLR = (rflag == 1) ? nrot : 0;
   int extraM = (matMode == 1) ? (2 * ndm) : 0;
-  Vector payload(nHost + ndm + 1 + extraR + extraM);
+  Vector payload(nHost + ndm + 1 + extraG + extraLR + extraM);
   for (int i = 0; i < nHost; i++) payload(i) = Nshape(i);
   for (int k = 0; k < ndm; k++)
     payload(nHost + k) = (lambda.Size() == ndm) ? lambda(k) : 0.0;
   payload(nHost + ndm) = lambda_p;
   int off = nHost + ndm + 1;
-  if (rflag == 1) {
+  if (gradNeeded) {
     for (int i = 0; i < nHost; i++)
       for (int j = 0; j < ndm; j++)
         payload(off + i * ndm + j) =
           (gradN.noRows() == nHost && gradN.noCols() == ndm) ? gradN(i, j) : 0.0;
     off += nHost * ndm;
+  }
+  if (rflag == 1) {
     for (int r = 0; r < nrot; r++)
       payload(off + r) = (lambda_r.Size() == nrot) ? lambda_r(r) : 0.0;
     off += nrot;
@@ -836,7 +939,7 @@ int LadrunoEmbeddedNode::recvSelf(int commitTag, Channel& theChannel,
                                   FEM_ObjectBroker& theBroker)
 {
   int dbTag = this->getDbTag();
-  static Vector hdr(26);
+  static Vector hdr(27);
   if (theChannel.recvVector(dbTag, commitTag, hdr) < 0) {
     opserr << "LadrunoEmbeddedNode::recvSelf - header failed\n";
     return -1;
@@ -861,6 +964,7 @@ int LadrunoEmbeddedNode::recvSelf(int commitTag, Channel& theChannel,
   krAlpha = hdr(17);
   matMode = (int)hdr(18);                // ADR 23 Phase 2b — D9
   haveOrient = (hdr(19) != 0.0);
+  corot = (hdr(26) != 0.0);              // ADR 23 Phase 2b v2 — D9 frame co-rotation
   nrot = (ndm == 3) ? 3 : 1;
   ktResolved = false;
   bpResolved = false;
@@ -869,6 +973,7 @@ int LadrunoEmbeddedNode::recvSelf(int commitTag, Channel& theChannel,
   iPenalty = 0.0;
   upActive = false;   // re-resolved in setDomain (needs the nodes' ndf)
   rActive = false;    // re-resolved in setDomain
+  corotActive = false; // re-resolved in setDomain
   nDOF = 0;           // recomputed in setDomain
 
   connectedNodes.resize(1 + nHost);
@@ -876,9 +981,11 @@ int LadrunoEmbeddedNode::recvSelf(int commitTag, Channel& theChannel,
     opserr << "LadrunoEmbeddedNode::recvSelf - ID failed\n";
     return -1;
   }
-  int extraR = (rflag == 1) ? (nHost * ndm + nrot) : 0;
+  bool gradNeeded = (rflag == 1 || corot);
+  int extraG = gradNeeded ? (nHost * ndm) : 0;
+  int extraLR = (rflag == 1) ? nrot : 0;
   int extraM = (matMode == 1) ? (2 * ndm) : 0;
-  Vector payload(nHost + ndm + 1 + extraR + extraM);
+  Vector payload(nHost + ndm + 1 + extraG + extraLR + extraM);
   if (theChannel.recvVector(dbTag, commitTag, payload) < 0) {
     opserr << "LadrunoEmbeddedNode::recvSelf - payload failed\n";
     return -1;
@@ -890,12 +997,14 @@ int LadrunoEmbeddedNode::recvSelf(int commitTag, Channel& theChannel,
   lambda_p = payload(nHost + ndm);
   lambda_r.resize(nrot); lambda_r.Zero();
   int off = nHost + ndm + 1;
-  if (rflag == 1) {
+  if (gradNeeded) {
     gradN.resize(nHost, ndm);
     for (int i = 0; i < nHost; i++)
       for (int j = 0; j < ndm; j++)
         gradN(i, j) = payload(off + i * ndm + j);
     off += nHost * ndm;
+  }
+  if (rflag == 1) {
     for (int r = 0; r < nrot; r++) lambda_r(r) = payload(off + r);
     off += nrot;
   }
@@ -949,7 +1058,7 @@ void LadrunoEmbeddedNode::Print(OPS_Stream& s, int flag)
     s << "  +material-interface(";
     for (int d = 0; d < ndm; d++)
       s << (matDir[d] != 0 ? "mat" : "penalty") << (d < ndm - 1 ? "/" : "");
-    s << ")";
+    s << (corot ? (corotActive ? ", corot" : ", corot-inactive") : "") << ")";
   }
   s << "\n";
 }
@@ -1007,6 +1116,7 @@ Response* LadrunoEmbeddedNode::setResponse(const char** argv, int argc, OPS_Stre
 int LadrunoEmbeddedNode::getResponse(int responseID, Information& eleInfo)
 {
   this->resolveAutoKt();
+  this->updateFrame();           // co-rotated D9 frame (-corot) for the localGap/Force/normal
   Vector g(ndm);
   this->computeGap(g);
   switch (responseID) {
@@ -1063,21 +1173,21 @@ int LadrunoEmbeddedNode::getResponse(int responseID, Information& eleInfo)
   }
   case 14: return eleInfo.setVector(lambda_r);
   case 15: { if (rActive) this->resolveKr(); return eleInfo.setDouble(Kr); }
-  case 16: {   // D9 local-frame gap components g_d = g·e_d (global g if no frame)
+  case 16: {   // D9 local-frame gap components g_d = g·e_d (co-rotated frame; global if none)
     Vector gl(ndm); gl.Zero();
     if (matMode == 1)
       for (int d = 0; d < ndm; d++)
-        for (int k = 0; k < ndm; k++) gl(d) += g(k) * frame(k, d);
+        for (int k = 0; k < ndm; k++) gl(d) += g(k) * frameCur(k, d);
     else
       gl = g;
     return eleInfo.setVector(gl);
   }
-  case 17: {   // D9 local-frame force components t_d (per direction)
+  case 17: {   // D9 local-frame force components t_d (per direction; co-rotated frame)
     Vector tl(ndm); tl.Zero();
     if (matMode == 1) {
       for (int d = 0; d < ndm; d++) {
         double gd = 0.0;
-        for (int k = 0; k < ndm; k++) gd += g(k) * frame(k, d);
+        for (int k = 0; k < ndm; k++) gd += g(k) * frameCur(k, d);
         if (matDir[d] != 0) { matDir[d]->setTrialStrain(gd); tl(d) = matDir[d]->getStress(); }
         else                  tl(d) = Ku * gd;
       }
@@ -1086,9 +1196,9 @@ int LadrunoEmbeddedNode::getResponse(int responseID, Information& eleInfo)
     }
     return eleInfo.setVector(tl);
   }
-  case 18: {   // D9 frame normal e_0 (global components)
+  case 18: {   // D9 frame normal e_0 (global components; co-rotated under -corot)
     Vector nrm(ndm); nrm.Zero();
-    if (matMode == 1) for (int k = 0; k < ndm; k++) nrm(k) = frame(k, 0);
+    if (matMode == 1) for (int k = 0; k < ndm; k++) nrm(k) = frameCur(k, 0);
     return eleInfo.setVector(nrm);
   }
   default: return -1;
