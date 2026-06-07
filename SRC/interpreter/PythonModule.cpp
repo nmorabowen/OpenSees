@@ -605,7 +605,7 @@ initopensees(void)
 "        • LadrunoRCConcrete — RC plastic-damage + MCFT compression softening (shell)\n"
 "        • LadrunoBondSlip — 1D bond-slip τ–s (CEB-FIP MC2010)\n"
 "        • LadrunoEmbeddedRebar — rebar in non-matching mesh (bond/penalty/AL)\n"
-"        • LadrunoEmbeddedNode — node-to-host embedding tie (penalty/AL)\n"
+"        • LadrunoEmbeddedNode — stress-free node-to-host embed tie (penalty/AL, implicit+explicit)\n"
 "        • LadrunoArcLength — adaptive arc-length radius (Ramm desired-iter)\n"
 "        • LadrunoDynamicRelaxation — quasi-static DR (Gershgorin mass + kinetic damping)\n"
 "        • LadrunoIndirectControl — indirect/CMOD control (snap-back tracking)\n"

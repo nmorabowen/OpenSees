@@ -26,6 +26,16 @@ updated: 2026-06-03
 
 # ADR 23 — General `LadrunoEmbeddedNode` (node-to-host coupling)
 
+> [!important] v1 scope (2026-06-07 credibility re-scope) — read **§14** first
+> The build below (§1–§13) scoped the *full* U·UP·UR·D9 surface. After a credibility
+> review we **re-scoped v1** to a focused, validated core: **U translational tie + `g0`
+> stress-free birth + penalty/AL/bipenalty enforcement** (the only "validated, world-class"
+> path), with **UP / UR / D9 / `-corot` kept in the tree but flagged EXPERIMENTAL (not
+> validated)**. The benchmark framing (Abaqus `*EMBEDDED REGION`, LS-DYNA
+> `*CONSTRAINED_BEAM_IN_SOLID`), the supported/experimental split, and the corrected
+> must-fix list are in **§14**; the battery that earns the claim is
+> [[27_ladruno_embedded_node_validation_plan]].
+
 **Status:** proposed, **revised after adversarial review** (workflow `wf_bbe77ee8`, 33
 agents: 25/26 findings survived verification, 1 confirmed blocker; verdict
 **proceed-with-changes**, **Phase 0 = GO**). The must-fix list is folded in below; the
@@ -729,3 +739,90 @@ transverse λ-reprojection), `:498-521` (getMass lumps `[0,ndm)` only); `Element
 (getCharacteristicLength/getInterpolationWeights/getExplicitCriticalTimeStep present,
 getInterpolationGradients absent); `ASDEmbeddedNodeElement.cpp:277` (parse-time `-rot`/`-p`
 guard); `classTags.h:924` (33005 last ELE tag, 33006 free).
+
+---
+
+## 14. v1 scoping & status — supported core vs experimental (credibility re-scope, 2026-06-07)
+
+> [!important] Read this first if you are deciding what to rely on
+> `LadrunoEmbeddedNode` grew to **five** flag-gated capabilities (U · UP · UR · D9 ·
+> enforcement). Even gated, the wide surface **dilutes the validation story** and was the
+> wrong way to earn the original goal: a **world-class embedment** that starts closing the
+> gap with Abaqus / LS-DYNA. This section re-scopes v1 to a **focused, validated core**; the
+> rest stays in the tree but is **explicitly experimental (not validated)**. *Focused-and-
+> validated beats wide-and-half-tested.* The validation battery that earns the "world-class"
+> claim is [[27_ladruno_embedded_node_validation_plan]].
+
+### 14.1 The benchmark — what a world-class embedment actually is
+- **Abaqus `*EMBEDDED REGION` / `*EMBEDDED ELEMENT`:** the **translational** DOFs of embedded
+  nodes are constrained to (interpolated from) the host element; embedded **rotations are left
+  FREE** (the embedded beam/shell carries its own bending); embedded nodes are **born
+  consistent** with the host at activation (no jolt). → our **U tie + g0 stress-free birth**,
+  with rotations free by default.
+- **LS-DYNA `*CONSTRAINED_BEAM_IN_SOLID` / `*CONSTRAINED_..._IN_SOLID`:** a **penalty**,
+  **non-matching** coupling with normal + tangential terms; **slip/bond is an OPTIONAL add-on**
+  and **rigorous friction is a SEPARATE `*CONTACT` card**. → our **penalty/AL/bipenalty**
+  enforcement is the core; D9 cohesive/contact/friction/bond is the *optional* (experimental)
+  add-on, and rigorous frictional contact belongs to the separate `LadrunoContact` lineage.
+
+The decisive differentiator over the one OpenSees precedent (`ASDEmbeddedNodeElement`,
+implicit-only, raw `1e18` penalty, tri/tet-only) is: **host-agnostic** (hex/tet/quad),
+**`-kt auto` conditioning** (no `1e18`), **AL** (near-exact at moderate `K`), and **clean
+EXPLICIT** capability (bipenalty + self-reported `getExplicitCriticalTimeStep` + the
+`CriticalTimeStep` fold-in). That implicit-**and**-explicit conditioning story is the headline
+the validation plan foregrounds.
+
+### 14.2 v1 SUPPORTED CORE (ships as "validated")
+The **only** path that carries the validated, world-class claim:
+1. **U — the isotropic translational shape-function tie** into a non-matching host
+   (`-shape`/`-xi`/`-host`), host-agnostic, 2D + 3D. Frame-objective (no `-corot` needed).
+2. **Stress-free birth — the `g0` offset capture** (the parent `ASDEmbeddedNodeElement`
+   `m_U0` pattern), so an element added to an already-deformed host (staged construction) is
+   born force- and stress-free. **DONE — shipped in PR #214** (default ON; `-absolute` opts
+   out). This is the test that separates a world-class embedment from a toy.
+3. **Enforcement for the U tie:** `penalty | al` (augmented Lagrangian, near-exact at moderate
+   `K`) + **bipenalty** (explicit `dt_cr`, the genuine differentiator) + **`-kt auto`**
+   host-stiffness conditioning. (NB the UR-only `-kr auto` and the D9-only `k_eff` bipenalty
+   path ride with their *experimental* features, not the core.)
+
+### 14.3 EXPERIMENTAL — flag-gated, NOT validated (kept in place, no migration commitment)
+These remain available behind their flags but are **not part of the v1 validation battery**
+and **must not be sold as validated**. They stay on the element (no deprecation/migration
+plan); promotion to "supported" requires their own validation pass.
+- **UP (pressure, `-pressure`)** — niche poromechanics (u-p saturated hosts). Experimental.
+- **UR (rotation, `-rot`)** — ties the constrained node's rotations to the host **continuum
+  SPIN** `θ = ½ curl(u) = skew(∇u)`. **This is NOT the lever-based moment transfer** Abaqus /
+  LS-DYNA use for shell-to-solid coupling; on a **CST / TET4** host `∂N/∂x` is element-constant
+  so it degenerates to a single **rigid element-wide spin** (UR-4). It is a documented
+  *spin-restraint / regularization*, not a validated moment-transfer mechanism. **Real
+  continuum moment transfer is a separate future track (its own ADR), not this curl tie.**
+- **D9 (per-direction cohesive / unilateral-contact / approximate-friction / bond materials),
+  incl. the v2 `-corot` frame co-rotation** — this is conceptually an **interface / contact**
+  capability, **not an embedment feature**: it is adjacent to the `LadrunoContact` (scoped,
+  `project_ladruno_contact`) and [[LadrunoBondSlip_guide|LadrunoBondSlip]] lineage. It is kept
+  here as an **experimental convenience**; rigorous coupled friction is `LadrunoContact`'s job
+  (uncoupled per-direction uniaxials only approximate Coulomb friction — a fixed `ElasticPP`
+  slip, not `μ·N`). Experimental.
+
+### 14.4 v1 must-fix correctness list (code tasks — NOT this docs PR)
+Status-corrected against what has already shipped:
+- **(a) `g0` stress-free capture — DONE (PR #214).** No jolt on staged addition; relative gap
+  drives all traction; the D9 `setTrialStrain` sees the relative gap (materials born
+  unstrained). Validated by `test_staged_*` in `tests/test_ladrunoEmbeddedNode_element.py`.
+- **(b) `getInitialStiff` must use the per-direction INITIAL tangent in D9 mode.** Today
+  `getInitialStiff()` aliases `getTangentStiff()` → `formTransTraction()` → `setTrialStrain()`,
+  so in **D9 mode** the "initial" stiffness is **state-dependent** and **mutates material
+  state during a query**. This is a real bug **for D9 only** (experimental); for the U core
+  (`matMode 0`) `getInitialStiff = K_u·I` is exact and state-independent, so it does **not**
+  affect the v1-core claim. Fix gates D9 promotion.
+- **(c) Add a VERSION field to `sendSelf`/`recvSelf`.** The serialization has **no version
+  field** (`hdr(0)=tag`, `hdr(1)=ndm`, …) yet the format has changed every phase (hdr grew to
+  **29** in #214). Originally this was "add the version *before* the g0 format change" — but
+  #214 already changed it, so this is now **retroactive hygiene**: add a version int now and
+  accept that pre-#214 DBs are already incompatible (acceptable for this fast-moving internal
+  fork — DB format is not externally stable, per `LEDGER_quirks`). Lower urgency than a
+  correctness bug.
+
+These are tracked as code follow-ups; **this re-scope is docs-only** (ADR + validation plan +
+status markers). See [[27_ladruno_embedded_node_validation_plan]] for the battery that earns
+the world-class claim, and §9 for the build history of the (now experimental) UR/UP/D9 phases.
