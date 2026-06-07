@@ -1003,6 +1003,17 @@ From the finite-strain validation Phase P4 (Taylor-bar impact, 2026-06-02,
   (`gh pr checks <n> --watch`): a fast (~1-2 min) fail = compile error, a slow
   (~5-6 min) fail = test failure. Don't trust a green fast-gate.
 
+- **`Ladruno_scripts\build.bat` takes ONE target argument, not a list.** It reads only
+  `%1` (`set "MODE=%1"` → `set "TARGETS=%MODE%"`), so `build.bat OpenSees OpenSeesSP
+  OpenSeesMP` builds **only `OpenSees`** and silently ignores `%2 %3 …` — exit code 0, no
+  warning. (The `~/.claude/CLAUDE.md` example showing a multi-target list is misleading.)
+  To build several targets either run it once per target, or run it with **no arguments**
+  (`build.bat` alone builds all five: OpenSees, OpenSeesSP, OpenSeesMP, OpenSeesPy,
+  OpenSeesPyMP — incremental via Ninja, so cheap after the first). The Python test module
+  is `OpenSeesPy` → `dist\bin\opensees.pyd`; the Tcl exes are `OpenSees/SP/MP.exe`. Symptom
+  of the trap: after a "successful" multi-arg build, `dist\bin` has `opensees.pyd` but no
+  `OpenSees*.exe`. 2026-06-07.
+
 - **Anisotropic embedded coupling (`LadrunoEmbeddedRebar`) needs a CO-ROTATED bar
   axis under large host rotation; isotropic node ties (`ASDEmbeddedNodeElement`) do
   not.** The frozen reference `dir` is the *only* true large-rotation defect: the gap
@@ -1090,6 +1101,33 @@ From the finite-strain validation Phase P4 (Taylor-bar impact, 2026-06-02,
   a Zone-A mechanics test where the host is prescribed (`sp`/`fix`), the cNode tangent is *exact*
   and Newton converges quadratically — the inexactness only bites when the host continuum is free
   and spinning per-step. 2026-06-07.
+
+### LadrunoEmbeddedNode v1 dropped the parent `m_U0` offset-capture → absolute tie yanks on staged addition (FIXED, ADR 23 Phase 2c)
+- **The bug:** v1 computed every gap as a pure TRIAL-DISPLACEMENT difference
+  (`g = u_c − Σ N_i u_host`, kernel `LadrunoEmbedded::computeGap`; likewise `g_p`, `g_r`), so
+  the penalty enforced an ABSOLUTE tie `u_c = Σ N_i u_host`. An element added MID-ANALYSIS to a
+  host that has already deformed (staged construction) activates with `g = −N·u_host ≠ 0` and the
+  penalty **yanks the slave** by the full accumulated host displacement — a spurious force spike.
+  The parent `ASDEmbeddedNodeElement` (and `equalDOF_Mixed`) already capture this offset
+  (`m_U0` snapshot at `setDomain`, `getGlobalDisplacements()` returns `U − m_U0`); the fork's v1
+  port silently dropped it.
+- **The fix:** at `setDomain` capture each ACTIVE gap ONCE (`g0`/`gp0`/`gr0`, guarded by
+  `g0Computed`) and drive ALL traction from the RELATIVE gap `(g − g0)`. Subtract the offset
+  **inside** `computeGap`/`computeGapP`/`computeGapR` (NOT at each call site) so every consumer
+  is covered in one place.
+- **Force-free ≠ stress-free — the trap.** Zeroing only the penalty force is NOT enough in the
+  D9 material mode: the gap also drives `matDir[d]->setTrialStrain(g·e_d)`. If the offset is an
+  additive force correction, the material still sees the ABSOLUTE gap and is born PRE-STRAINED
+  (a cohesive law partway up its backbone, a gap material already closed, bond pre-slipped) —
+  force-corrected but NOT stress-free. Subtracting `g0` inside the gap (so the material's strain
+  ORIGIN shifts) is what makes it genuinely stress-free. This is why "shift the canonical gap"
+  beats "subtract at each consumer."
+- **Default ON; no-op when undeformed.** Capture is ON by default (restores parent behavior);
+  when the element is added at the undeformed state `g0 = 0` ⇒ byte-identical to the absolute
+  tie, so the whole v1 battery is unaffected. `-absolute` (alias `-noInitGap`) opts out (legacy
+  tie / a deliberate snap-to-host). `g0Computed` is serialized so `recvSelf` restores the
+  captured offset instead of re-capturing. UR is linearized ⇒ `gr0` subtraction is exact for
+  small inter-stage rotation, approximate for large. 2026-06-07.
 
 ### Per-DOF-class bipenalty: a translational `m_p` CANNOT bound the rotation mode (ADR 23 M1/ES-1)
 - **Why it bites:** the bipenalty mass penalty `m_p` (lumped on the slave's translational

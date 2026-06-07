@@ -52,7 +52,8 @@ LadrunoEmbeddedNode::LadrunoEmbeddedNode(int tag, int ndm_, int cNode,
         bool pressure_, double kp_,
         bool rot_, double kr_, bool krAuto_, double krAlpha_, const Matrix* gradN_,
         bool matMode_, bool corot_, const Vector* normalDir_, const Vector* orientDir_,
-        UniaxialMaterial* matN_, UniaxialMaterial* matT1_, UniaxialMaterial* matT2_)
+        UniaxialMaterial* matN_, UniaxialMaterial* matT1_, UniaxialMaterial* matT2_,
+        bool initGapCapture_)
   : Element(tag, ELE_TAG_LadrunoEmbeddedNode),
     ndm(ndm_), nHost(hostNodes.Size()),
     connectedNodes(1 + hostNodes.Size()), Nshape(shape),
@@ -68,7 +69,9 @@ LadrunoEmbeddedNode::LadrunoEmbeddedNode(int tag, int ndm_, int cNode,
     mPenalty(0.0), iPenalty(0.0), bpResolved(false),
     nDOF(0), nodeNdf(1 + hostNodes.Size()), dofOffset(1 + hostNodes.Size()),
     pflag(pressure_ ? 1 : 0),
-    theNodes(0), K(0), P(0), M0(0)
+    theNodes(0), K(0), P(0), M0(0),
+    initGapCapture(initGapCapture_), g0Computed(false),
+    g0(ndm_), gp0(0.0), gr0((ndm_ == 3) ? 3 : 1)
 {
   connectedNodes(0) = cNode;
   for (int i = 0; i < nHost; i++)
@@ -110,7 +113,8 @@ LadrunoEmbeddedNode::LadrunoEmbeddedNode()
     bipenalty(false), bpMode(0), bpDt(0.0), bpBeta(0.0),
     mPenalty(0.0), iPenalty(0.0), bpResolved(false),
     nDOF(0), nodeNdf(), dofOffset(), pflag(0),
-    theNodes(0), K(0), P(0), M0(0)
+    theNodes(0), K(0), P(0), M0(0),
+    initGapCapture(true), g0Computed(false), g0(), gp0(0.0), gr0()
 {
   for (int d = 0; d < 3; d++) { matDir[d] = 0; hasMat[d] = false; }
 }
@@ -226,6 +230,11 @@ void LadrunoEmbeddedNode::setDomain(Domain* theDomain)
       corotActive = true;
     }
   }
+
+  // ADR 23 — capture the initial gap NOW (after the layout/activation/gradients are resolved),
+  // so an element added to an already-deformed host (staged construction) is born stress-free.
+  // The guard makes it once-only; recvSelf restores a captured g0 and skips re-capture.
+  this->captureInitialGap();
 
   this->allocate();
   this->DomainComponent::setDomain(theDomain);
@@ -345,6 +354,23 @@ void LadrunoEmbeddedNode::computeGapR(Vector& gr)
   const Vector& uc = theNodes[0]->getTrialDisp();
   for (int r = 0; r < nrot; r++)
     gr(r) = uc(ndm + r) - th(r);
+  if (g0Computed)
+    for (int r = 0; r < nrot; r++) gr(r) -= gr0(r);
+}
+
+// ADR 23 — capture the initial (activation) gap ONCE so the element is born stress-free at
+// the current (possibly already-deformed) host configuration. Called from setDomain after the
+// DOF layout + activation flags (upActive/rActive) + host gradients are resolved. With g0/gp0/
+// gr0 still ≡ 0 and g0Computed=false, the computeGap* calls below return the ABSOLUTE gap; we
+// store it and flip g0Computed so every later call returns the RELATIVE gap. No-op under
+// -absolute (initGapCapture=false) or once already captured (the recvSelf restore path).
+void LadrunoEmbeddedNode::captureInitialGap(void)
+{
+  if (!initGapCapture || g0Computed) return;
+  this->computeGap(g0);                       // g0 ← u_c − Σ N_i u_host,i at activation
+  if (upActive) gp0 = this->computeGapP();    // gp0 ← pressure gap (UP)
+  if (rActive)  this->computeGapR(gr0);       // gr0 ← θ_c − θ_host  (UR)
+  g0Computed = true;                          // the relative gap (g−g0) is now live
 }
 
 // ADR 23 Phase 2b v2 (D9.1) — rotation operator R(θ_host) that carries the REFERENCE frame
@@ -647,16 +673,20 @@ int LadrunoEmbeddedNode::revertToStart(void)
 
 void LadrunoEmbeddedNode::computeGap(Vector& g)
 {
-  // g = u_c − Σ N_i u_host,i (translational, the first ndm DOFs of each node).
+  // g = u_c − Σ N_i u_host,i (translational, the first ndm DOFs of each node), then minus
+  // the captured activation offset g0 (RELATIVE gap; g0≡0 until captured / under -absolute).
   LadrunoEmbedded::computeGap(theNodes, Nshape, nHost, ndm, g);
+  if (g0Computed)
+    for (int k = 0; k < ndm; k++) g(k) -= g0(k);
 }
 
 double LadrunoEmbeddedNode::computeGapP(void)
 {
-  // g_p = p_c − Σ N_i p_host,i  (pressure DOF = index ndm, the u-p convention).
+  // g_p = p_c − Σ N_i p_host,i − gp0  (pressure DOF = index ndm, the u-p convention).
   double gp = theNodes[0]->getTrialDisp()(ndm);
   for (int i = 0; i < nHost; i++)
     gp -= Nshape(i) * theNodes[1 + i]->getTrialDisp()(ndm);
+  if (g0Computed) gp -= gp0;
   return gp;
 }
 
@@ -851,7 +881,7 @@ const Matrix& LadrunoEmbeddedNode::getMass(void)
 int LadrunoEmbeddedNode::sendSelf(int commitTag, Channel& theChannel)
 {
   int dbTag = this->getDbTag();
-  static Vector hdr(27);
+  static Vector hdr(29);
   hdr(0) = this->getTag();
   hdr(1) = ndm;
   hdr(2) = nHost;
@@ -883,6 +913,8 @@ int LadrunoEmbeddedNode::sendSelf(int commitTag, Channel& theChannel)
     hdr(23 + d) = dt;
   }
   hdr(26) = corot ? 1.0 : 0.0;        // ADR 23 Phase 2b v2 — D9 frame co-rotation
+  hdr(27) = initGapCapture ? 1.0 : 0.0;   // ADR 23 — initial-gap (offset) capture
+  hdr(28) = g0Computed ? 1.0 : 0.0;
   if (theChannel.sendVector(dbTag, commitTag, hdr) < 0) {
     opserr << "LadrunoEmbeddedNode::sendSelf - header failed\n";
     return -1;
@@ -898,7 +930,8 @@ int LadrunoEmbeddedNode::sendSelf(int commitTag, Channel& theChannel)
   int extraG = gradNeeded ? (nHost * ndm) : 0;
   int extraLR = (rflag == 1) ? nrot : 0;
   int extraM = (matMode == 1) ? (2 * ndm) : 0;
-  Vector payload(nHost + ndm + 1 + extraG + extraLR + extraM);
+  int extraGap = ndm + 1 + nrot;   // ADR 23 — g0(ndm) + gp0(1) + gr0(nrot), always
+  Vector payload(nHost + ndm + 1 + extraG + extraLR + extraM + extraGap);
   for (int i = 0; i < nHost; i++) payload(i) = Nshape(i);
   for (int k = 0; k < ndm; k++)
     payload(nHost + k) = (lambda.Size() == ndm) ? lambda(k) : 0.0;
@@ -921,7 +954,15 @@ int LadrunoEmbeddedNode::sendSelf(int commitTag, Channel& theChannel)
       payload(off + k) = (normalDir.Size() == ndm) ? normalDir(k) : 0.0;
     for (int k = 0; k < ndm; k++)
       payload(off + ndm + k) = (haveOrient && orientDir.Size() == ndm) ? orientDir(k) : 0.0;
+    off += 2 * ndm;
   }
+  // ADR 23 — captured initial-gap offsets (always present): g0(ndm) + gp0(1) + gr0(nrot).
+  for (int k = 0; k < ndm; k++)
+    payload(off + k) = (g0.Size() == ndm) ? g0(k) : 0.0;
+  payload(off + ndm) = gp0;
+  for (int r = 0; r < nrot; r++)
+    payload(off + ndm + 1 + r) = (gr0.Size() == nrot) ? gr0(r) : 0.0;
+  off += ndm + 1 + nrot;
   if (theChannel.sendVector(dbTag, commitTag, payload) < 0) {
     opserr << "LadrunoEmbeddedNode::sendSelf - payload failed\n";
     return -1;
@@ -939,7 +980,7 @@ int LadrunoEmbeddedNode::recvSelf(int commitTag, Channel& theChannel,
                                   FEM_ObjectBroker& theBroker)
 {
   int dbTag = this->getDbTag();
-  static Vector hdr(27);
+  static Vector hdr(29);
   if (theChannel.recvVector(dbTag, commitTag, hdr) < 0) {
     opserr << "LadrunoEmbeddedNode::recvSelf - header failed\n";
     return -1;
@@ -965,6 +1006,8 @@ int LadrunoEmbeddedNode::recvSelf(int commitTag, Channel& theChannel,
   matMode = (int)hdr(18);                // ADR 23 Phase 2b — D9
   haveOrient = (hdr(19) != 0.0);
   corot = (hdr(26) != 0.0);              // ADR 23 Phase 2b v2 — D9 frame co-rotation
+  initGapCapture = (hdr(27) != 0.0);     // ADR 23 — initial-gap (offset) capture
+  g0Computed = (hdr(28) != 0.0);
   nrot = (ndm == 3) ? 3 : 1;
   ktResolved = false;
   bpResolved = false;
@@ -985,7 +1028,8 @@ int LadrunoEmbeddedNode::recvSelf(int commitTag, Channel& theChannel,
   int extraG = gradNeeded ? (nHost * ndm) : 0;
   int extraLR = (rflag == 1) ? nrot : 0;
   int extraM = (matMode == 1) ? (2 * ndm) : 0;
-  Vector payload(nHost + ndm + 1 + extraG + extraLR + extraM);
+  int extraGap = ndm + 1 + nrot;   // ADR 23 — g0(ndm) + gp0(1) + gr0(nrot), always
+  Vector payload(nHost + ndm + 1 + extraG + extraLR + extraM + extraGap);
   if (theChannel.recvVector(dbTag, commitTag, payload) < 0) {
     opserr << "LadrunoEmbeddedNode::recvSelf - payload failed\n";
     return -1;
@@ -1035,7 +1079,16 @@ int LadrunoEmbeddedNode::recvSelf(int commitTag, Channel& theChannel,
       }
     }
     this->buildFrame();
+    off += 2 * ndm;
   }
+  // ADR 23 — restore the captured initial-gap offsets (g0Computed gates their use). Sized
+  // here so a -absolute / never-captured element still has well-formed (zero) members.
+  g0.resize(ndm);
+  for (int k = 0; k < ndm; k++) g0(k) = payload(off + k);
+  gp0 = payload(off + ndm);
+  gr0.resize(nrot);
+  for (int r = 0; r < nrot; r++) gr0(r) = payload(off + ndm + 1 + r);
+  off += ndm + 1 + nrot;
 
   nodeNdf.resize(1 + nHost);
   dofOffset.resize(1 + nHost);
@@ -1060,6 +1113,8 @@ void LadrunoEmbeddedNode::Print(OPS_Stream& s, int flag)
       s << (matDir[d] != 0 ? "mat" : "penalty") << (d < ndm - 1 ? "/" : "");
     s << (corot ? (corotActive ? ", corot" : ", corot-inactive") : "") << ")";
   }
+  s << (initGapCapture ? (g0Computed ? "  +initGap(captured)" : "  +initGap")
+                       : "  +absolute(no initGap)");
   s << "\n";
 }
 
@@ -1110,6 +1165,10 @@ Response* LadrunoEmbeddedNode::setResponse(const char** argv, int argc, OPS_Stre
     return new ElementResponse(this, 17, Vector(ndm));
   if (strcmp(argv[0], "normal") == 0)
     return new ElementResponse(this, 18, Vector(ndm));
+  // ADR 23 — the captured translational initial-gap offset g0 (zero until captured / under
+  // -absolute). Diagnostic for staged activation (the relative gap = absolute − initGap).
+  if (strcmp(argv[0], "initGap") == 0 || strcmp(argv[0], "offset") == 0)
+    return new ElementResponse(this, 19, Vector(ndm));
   return 0;
 }
 
@@ -1200,6 +1259,11 @@ int LadrunoEmbeddedNode::getResponse(int responseID, Information& eleInfo)
     Vector nrm(ndm); nrm.Zero();
     if (matMode == 1) for (int k = 0; k < ndm; k++) nrm(k) = frameCur(k, 0);
     return eleInfo.setVector(nrm);
+  }
+  case 19: {   // captured translational initial-gap offset g0 (zero if never captured)
+    Vector off(ndm); off.Zero();
+    if (g0Computed && g0.Size() == ndm) off = g0;
+    return eleInfo.setVector(off);
   }
   default: return -1;
   }

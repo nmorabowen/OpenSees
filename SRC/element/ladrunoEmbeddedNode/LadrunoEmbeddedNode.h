@@ -87,7 +87,7 @@ class LadrunoEmbeddedNode : public Element
                       const Vector* normalDir = 0,
                       const Vector* orientDir = 0,
                       UniaxialMaterial* matN = 0, UniaxialMaterial* matT1 = 0,
-                      UniaxialMaterial* matT2 = 0);
+                      UniaxialMaterial* matT2 = 0, bool initGapCapture = true);
   LadrunoEmbeddedNode();
   ~LadrunoEmbeddedNode();
 
@@ -267,7 +267,25 @@ class LadrunoEmbeddedNode : public Element
   Vector* P;                // nDOF
   Matrix* M0;               // mass (nDOF x nDOF; zero unless bipenalty)
 
-  void computeGap(Vector& g);  // g = u_c − Σ N_i u_host,i (translational, size ndm)
+  // ADR 23 — INITIAL-GAP (offset) capture for stress-free STAGED activation (mirrors the
+  // parent ASDEmbeddedNodeElement m_U0 pattern). At setDomain the element captures each
+  // ACTIVE gap ONCE (g0/gp0/gr0) and thereafter drives ALL traction from the RELATIVE gap
+  // (g−g0): a constraint added to an already-deformed host is born force- AND stress-free.
+  // The subtraction lives INSIDE computeGap/computeGapP/computeGapR, so EVERY consumer —
+  // penalty force, tangent, AL Uzawa, the D9 material setTrialStrain (so interface materials
+  // are born UNSTRAINED, not just the penalty zeroed), and the recorder gap probes — sees the
+  // relative gap. ON by default (restores parent behavior; byte-identical when added at the
+  // undeformed state ⇒ g0=0). `-absolute` (initGapCapture=false) keeps the ABSOLUTE tie (the
+  // legacy v1 behavior / a deliberate snap-to-host). UR is linearized, so gr0 subtraction is
+  // exact for small inter-stage rotation, approximate for large (consistent with UR's scope).
+  bool initGapCapture;      // -absolute ⇒ false: keep the absolute tie (no offset capture)
+  bool g0Computed;          // capture-once guard (the relative gap is live once true)
+  Vector g0;                // captured translational offset (size ndm)
+  double gp0;               // captured pressure offset (UP)
+  Vector gr0;               // captured rotation offset (size nrot; UR)
+  void captureInitialGap(void);  // capture g0/gp0/gr0 once at setDomain (active classes only)
+
+  void computeGap(Vector& g);  // g = u_c − Σ N_i u_host,i − g0 (translational, size ndm)
 };
 
 #endif

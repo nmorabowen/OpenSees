@@ -766,3 +766,107 @@ def test_corot_al_material_reprojection_3d():
     leak = sum(lam[k] * nrm[k] for k in range(3))
     lam_mag = math.sqrt(sum(l * l for l in lam))
     assert abs(leak) < 1e-6 * max(lam_mag, 1.0)
+
+
+# =================================== Initial-gap (offset) capture — stress-free staged activation
+# By default the element captures the gap at activation (setDomain) and drives ALL traction from
+# the RELATIVE gap (g − g0), so an element added to an ALREADY-DEFORMED host (staged construction)
+# is born stress-free instead of yanking the slave to chase the host's accumulated displacement
+# (the parent ASDEmbeddedNodeElement m_U0 behavior). `-absolute` opts out (the legacy absolute
+# tie / a deliberate snap-to-host). We deform a real LadrunoBrick (stage 1), then tie a fresh
+# slave node into the deformed host (stage 2) and inspect the element at activation.
+
+def _deformed_brick_host(load=10.0):
+    """LadrunoBrick (tag 100): fix the z=0 face, shear-load the z=1 face in +x, solve + freeze.
+    Leaves the domain holding the DEFORMED, committed host ready for a stage-2 element add."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for tag, (x, y, z) in _CUBE.items():
+        ops.node(tag, x, y, z)
+    for tag in (11, 12, 13, 14):                  # z=0 face fully fixed
+        ops.fix(tag, 1, 1, 1)
+    ops.nDMaterial("ElasticIsotropic", 1, 1000.0, 0.3)
+    ops.element("LadrunoBrick", 100, 11, 12, 13, 14, 15, 16, 17, 18, 1)
+    ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
+    for tag in (15, 16, 17, 18):                  # shear the top face in +x
+        ops.load(tag, load, 0.0, 0.0)
+    ops.constraints("Transformation"); ops.numberer("Plain"); ops.system("FullGeneral")
+    ops.test("NormDispIncr", 1e-10, 30); ops.algorithm("Newton")
+    ops.integrator("LoadControl", 1.0); ops.analysis("Static")
+    assert ops.analyze(1) == 0
+    ops.loadConst("-time", 0.0)                    # freeze stage-1 load; host stays deformed
+
+
+def test_staged_activation_born_stress_free():
+    """Default capture: a slave tied into the deformed host at -xi centroid is born with ZERO
+    force and ZERO relative gap; the captured offset equals −(host centroid disp)."""
+    Ku = 1.0e6
+    _deformed_brick_host()
+    uc = sum(ops.nodeDisp(t, 1) for t in _CUBE) / 8.0     # host centroid x-disp (weights 0.125)
+    assert abs(uc) > 1e-4                                  # the host really moved
+    ops.node(1, 0.5, 0.5, 0.5)                             # fresh slave (u = 0)
+    ops.element("LadrunoEmbeddedNode", 1, 1, "-host", 100, "-xi", 0.0, 0.0, 0.0, "-k", Ku)
+    assert abs(ops.eleResponse(1, "force")[0]) < 1e-3      # born force-free (no jolt)
+    assert abs(ops.eleResponse(1, "gap")[0]) < 1e-9        # relative gap zero at activation
+    assert ops.eleResponse(1, "initGap")[0] == pytest.approx(-uc, rel=1e-6)   # offset captured
+    ops.integrator("LoadControl", 0.0)                     # one constant-load step
+    assert ops.analyze(1) == 0
+    assert abs(ops.nodeDisp(1, 1)) < 1e-4                  # slave NOT yanked (tracks increments)
+
+
+def test_staged_activation_absolute_yanks():
+    """-absolute (negative control): the same staged add WITHOUT capture is born with the full
+    accumulated gap → a large jolt force, and the slave is yanked to the deformed host point."""
+    Ku = 1.0e6
+    _deformed_brick_host()
+    uc = sum(ops.nodeDisp(t, 1) for t in _CUBE) / 8.0
+    ops.node(1, 0.5, 0.5, 0.5)
+    ops.element("LadrunoEmbeddedNode", 1, 1, "-host", 100, "-xi", 0.0, 0.0, 0.0,
+                "-k", Ku, "-absolute")
+    assert abs(ops.eleResponse(1, "gap")[0]) == pytest.approx(abs(uc), rel=1e-6)     # full gap
+    assert abs(ops.eleResponse(1, "force")[0]) == pytest.approx(Ku * abs(uc), rel=1e-3)  # jolt
+    assert ops.eleResponse(1, "initGap")[0] == 0.0          # no capture
+    ops.integrator("LoadControl", 0.0)
+    assert ops.analyze(1) == 0
+    assert ops.nodeDisp(1, 1) == pytest.approx(uc, rel=2e-2)   # slave yanked to the host point
+
+
+def test_staged_capture_noop_when_undeformed():
+    """Capture is a no-op when the element is added at the UNDEFORMED state (g0 = 0): the
+    isotropic tie behaves exactly as before — so the whole v1 battery stays byte-identical."""
+    ku = 1.0e5
+    _single_host_node(ku=ku)                                # added at rest ⇒ g0 = 0
+    assert ops.eleResponse(1, "initGap")[0] == 0.0
+    R = _push1(1, 2.0e-3)
+    assert abs(R[0]) == pytest.approx(ku * 2.0e-3, rel=1e-6)   # identical to the absolute tie
+    assert ops.eleResponse(1, "gap")[0] == pytest.approx(2.0e-3, rel=1e-6)
+
+
+def test_staged_serialization_roundtrip():
+    """sendSelf/recvSelf round-trip (FE_Datastore) of the element carrying a captured g0 — proves
+    the bumped header/payload buffers are self-consistent and the broker reconstructs the element.
+    Skips if this build lacks database support."""
+    from _testbed.roundtrip import database_roundtrip
+
+    def _build():
+        Ku = 1.0e6
+        ops.wipe()                       # the roundtrip helper calls _build before any wipe
+        ops.model("basic", "-ndm", 3, "-ndf", 3)
+        for tag, (x, y, z) in _CUBE.items():
+            ops.node(tag, x, y, z)
+        for tag in (11, 12, 13, 14):
+            ops.fix(tag, 1, 1, 1)
+        ops.nDMaterial("ElasticIsotropic", 1, 1000.0, 0.3)
+        ops.element("LadrunoBrick", 100, 11, 12, 13, 14, 15, 16, 17, 18, 1)
+        ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
+        for tag in (15, 16, 17, 18):
+            ops.load(tag, 10.0, 0.0, 0.0)
+        ops.constraints("Transformation"); ops.numberer("Plain"); ops.system("FullGeneral")
+        ops.test("NormDispIncr", 1e-10, 30); ops.algorithm("Newton")
+        ops.integrator("LoadControl", 1.0); ops.analysis("Static")
+        assert ops.analyze(1) == 0
+        ops.node(1, 0.5, 0.5, 0.5)                          # stage-2 slave ⇒ nonzero captured g0
+        ops.element("LadrunoEmbeddedNode", 1, 1, "-host", 100, "-xi", 0.0, 0.0, 0.0, "-k", Ku)
+
+    database_roundtrip(_build, probe_nodes=[15, 17], ndf=3,
+                       probe_fn=lambda: list(ops.eleResponse(1, "initGap")))
