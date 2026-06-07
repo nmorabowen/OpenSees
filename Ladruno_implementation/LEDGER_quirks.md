@@ -1003,6 +1003,17 @@ From the finite-strain validation Phase P4 (Taylor-bar impact, 2026-06-02,
   (`gh pr checks <n> --watch`): a fast (~1-2 min) fail = compile error, a slow
   (~5-6 min) fail = test failure. Don't trust a green fast-gate.
 
+- **`Ladruno_scripts\build.bat` takes ONE target argument, not a list.** It reads only
+  `%1` (`set "MODE=%1"` → `set "TARGETS=%MODE%"`), so `build.bat OpenSees OpenSeesSP
+  OpenSeesMP` builds **only `OpenSees`** and silently ignores `%2 %3 …` — exit code 0, no
+  warning. (The `~/.claude/CLAUDE.md` example showing a multi-target list is misleading.)
+  To build several targets either run it once per target, or run it with **no arguments**
+  (`build.bat` alone builds all five: OpenSees, OpenSeesSP, OpenSeesMP, OpenSeesPy,
+  OpenSeesPyMP — incremental via Ninja, so cheap after the first). The Python test module
+  is `OpenSeesPy` → `dist\bin\opensees.pyd`; the Tcl exes are `OpenSees/SP/MP.exe`. Symptom
+  of the trap: after a "successful" multi-arg build, `dist\bin` has `opensees.pyd` but no
+  `OpenSees*.exe`. 2026-06-07.
+
 - **Anisotropic embedded coupling (`LadrunoEmbeddedRebar`) needs a CO-ROTATED bar
   axis under large host rotation; isotropic node ties (`ASDEmbeddedNodeElement`) do
   not.** The frozen reference `dir` is the *only* true large-rotation defect: the gap
