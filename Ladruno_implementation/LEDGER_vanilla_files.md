@@ -101,6 +101,11 @@ and re-verify.
 | `SRC/tcl/commands.cpp` | `// Ladruno`: classic-Tcl `integrator LadrunoIndirectControl` branch (extern + `strcmp` dispatch → `OPS_LadrunoIndirectControl`) **and** the `test LadrunoStabilizedUnbalance` branch in `specifyCTest` (`#include <LadrunoStabilizedUnbalance.h>` + `new LadrunoStabilizedUnbalance(tol,numIter,printIt,normType,maxTol)`) so the convergence test is reachable from the classic `OpenSees` Tcl binary, not just openseespy (review finding) | _pending (§8 follow-ups)_ |
 | `SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp` | `// Ladruno`: `getNewStaticIntegrator` case `INTEGRATOR_TAGS_LadrunoIndirectControl` → `new LadrunoIndirectControl()` + `getNewConvergenceTest` case `CONVERGENCE_TEST_LadrunoStabilizedUnbalance` → `new LadrunoStabilizedUnbalance()` (+ includes), for parallel/database `recvSelf` | _pending (§8 follow-ups)_ |
 | `SRC/runtime/runtime/TclPackageClassBroker.cpp` | `// Ladruno`: same two broker cases (integrator + convergence test) + includes, for the Tcl-package class broker | _pending (§8 follow-ups)_ |
+| `SRC/classTags.h` | `// Ladruno` (ADR 28): register `ELE_TAG_LadrunoDistributingCoupling`=33011 (RBE3 / distributing coupling); 33009/33010 noted reserved for the VEM/SBFEM frontier elements | _pending (RBE3 PR)_ |
+| `SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp` | `// Ladruno`: `#include "ladrunoDistributingCoupling/LadrunoDistributingCoupling.h"` + `case ELE_TAG_LadrunoDistributingCoupling: return new LadrunoDistributingCoupling();` for parallel/database `recvSelf` | _pending (RBE3 PR)_ |
+| `SRC/interpreter/OpenSeesElementCommands.cpp` | `// Ladruno`: register `element` dispatch for `LadrunoDistributingCoupling`/`ladrunoDistributingCoupling` (fwd-decl + 2 `functionMap` inserts) | _pending (RBE3 PR)_ |
+| `SRC/element/CMakeLists.txt` | `// Ladruno`: `add_subdirectory(ladrunoDistributingCoupling)` (classTag 33011) | _pending (RBE3 PR)_ |
+| `SRC/{tcl/tclMain.cpp,interpreter/PythonModule.cpp}` | Splash-banner feature list regen (`FEATURES-START/END`) via `patch_banner.py` — add LadrunoDistributingCoupling line | _pending (RBE3 PR)_ |
 
 > [!note] Upstreamable bugfixes
 > Some PRs fix genuine upstream bugs (not fork-only features) and are candidates
