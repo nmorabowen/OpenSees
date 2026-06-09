@@ -40,6 +40,13 @@ class InitStrainNDMaterial : public NDMaterial
   public:
     InitStrainNDMaterial(int tag, NDMaterial &material, const Vector &eps0);
     InitStrainNDMaterial(int tag, NDMaterial &material, double eps0);
+    // Ladruno: ADOPTING ctor (dimension-general). Takes OWNERSHIP of an already
+    // type-reduced inner view (e.g. material.getCopy("PlaneStrain")) plus the
+    // view-sized eps0 and the canonical 3D eps0. Unlike the reference ctors above
+    // (which always rebuild a 3D template) this preserves whatever view the inner
+    // already is, so a 2D / axisymmetric element can wrap a reduced-order material.
+    InitStrainNDMaterial(int tag, NDMaterial *innerAdopt, const Vector &eps0View,
+                         const Vector &eps0Full);
     InitStrainNDMaterial();
     ~InitStrainNDMaterial();
     
@@ -85,7 +92,14 @@ class InitStrainNDMaterial : public NDMaterial
 
   private:
     NDMaterial *theMaterial;
-    Vector epsInit;
+    Vector epsInit;     // ACTIVE initial strain, sized to the inner order (3/4/6)
+    // Ladruno: canonical 3D (size-6 Voigt {11,22,33,12,23,13}) initial strain.
+    // The eps0_ij setParameter API always edits THIS; epsInit is re-projected from
+    // it per dimensional view, so eps0 commands behave identically in 2D/axisym/3D.
+    Vector epsInit3D;
+    // Ladruno: rebuild epsInit (view-sized) from epsInit3D using the order-implied
+    // component map (3->PlaneStrain {0,1,3}, 4->AxiSymmetric {0,1,2,3}, else 3D id).
+    void projectEps0(void);
 };
 
 
