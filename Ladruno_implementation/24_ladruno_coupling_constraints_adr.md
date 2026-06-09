@@ -194,12 +194,15 @@ The highest-value gap (no OpenSees equivalent) and the DOF-mismatch tool. A
   of shape functions, and a **rotational reference block**), AL, bipenalty, `-host`/
   set-based authoring, energy diagnostics, serialization.
 
-### D3 — Kinematic coupling / RBE2 (`LadrunoKinematicCoupling`)
+### D3 — Kinematic coupling / RBE2 (`LadrunoKinematicCoupling`) — **BUILT (ELE 33012)**
 A reference node R rigidly driving a slave set: `u_i = u_R + θ_R × (x_i − x_R)`.
-Two routes:
-- **(a) Penalty rigid tie (v1, fork-style):** penalize `g_i = u_i − (u_R + θ_R×r_i)`
-  per slave — explicit-safe, reuses the kernel, `-kt auto`/bipenalty apply. Adds a
-  (penalty) stiffness to the slaves — the RBE2/rigid behavior.
+**Route (a) shipped** as `LadrunoKinematicCoupling` (classTag 33012, spec +
+4-lens-reviewed in [[29_ladruno_kinematic_coupling_rbe2_adr|ADR 29]], Zone-A 16/16). Two routes:
+- **(a) Penalty rigid tie (v1, fork-style) — DONE:** penalize `g_i = u_i − (u_R + θ_R×r_i)`
+  per slave — explicit-safe, `-kt auto`/bipenalty apply. Adds a (penalty) stiffness to
+  the slaves — the RBE2/rigid behavior. Selectable `-dof` (translation-only /
+  translation+transport / full-rigid). The role-inversion vs RBE3 forced a default-OFF
+  bipenalty with a massless-DOF scan over R *and* slaves (ADR 29 §6).
 - **(b) LS-DYNA-style condensation (deferred):** condense slave masses to R, integrate
   R as a 6-DOF body, update slaves kinematically (Theory §25). Explicit-native, no
   added stiffness, but a **custom element + integrator hook** — bigger lift. Record
@@ -327,7 +330,7 @@ banner line — per the usual Definition-of-Done.
 2. **`LadrunoDistributingCoupling` / RBE3** — the flagship gap; penalty kernel +
    weighted B-operator + reference rotation + mass redistribution; `-kt auto` /
    `-bipenalty` for explicit. Validate vs Nastran RBE3 / Abaqus distributing.
-3. **`LadrunoKinematicCoupling` / RBE2 (penalty)** — sibling, reuses the kernel.
+3. **`LadrunoKinematicCoupling` / RBE2 (penalty)** — **DONE** (ELE 33012, ADR 29, Zone-A 16/16).
 4. *(deferred)* LS-DYNA-style rigid-body **condensation** path (D3b) and the
    **N-node** multi-retained constraint (D4 Tier 2) — only if penalty conditioning
    or implicit exactness demands it.

@@ -42,6 +42,7 @@ GLOBS = [
     "SRC/element/ladrunoEmbeddedNode/*.cpp", "SRC/element/ladrunoEmbeddedNode/*.h",
     "SRC/element/ladrunoPlane/*.cpp", "SRC/element/ladrunoPlane/*.h",
     "SRC/element/ladrunoDistributingCoupling/*.cpp", "SRC/element/ladrunoDistributingCoupling/*.h",
+    "SRC/element/ladrunoKinematicCoupling/*.cpp", "SRC/element/ladrunoKinematicCoupling/*.h",
     "SRC/element/bezierTriangle/*.cpp", "SRC/element/bezierTriangle/*.h",
     "SRC/element/bezierTetrahedron/*.cpp", "SRC/element/bezierTetrahedron/*.h",
     "SRC/element/solidTransformation/*.cpp", "SRC/element/solidTransformation/*.h",
