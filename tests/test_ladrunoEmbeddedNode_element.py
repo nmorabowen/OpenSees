@@ -907,3 +907,29 @@ def test_staged_serialization_roundtrip():
 
     database_roundtrip(_build, probe_nodes=[15, 17], ndf=3,
                        probe_fn=lambda: list(ops.eleResponse(1, "initGap")))
+
+
+# =================================================== implicit-transient damping (getDamp crash)
+def test_transient_newmark_smoke():
+    """REGRESSION — the pure penalty coupling no-ops setRayleighDampingFactors, which suppresses
+    the base Element::getDamp LAZY allocation of its Rayleigh scratch. Without an explicit
+    getDamp/getRayleighDampingForces override the base indexes theMatrices[-1] (index stays -1)
+    and HARD-CRASHES on the first IMPLICIT-transient step: Newmark's velocity coefficient
+    c2 = γ/(βΔt) is always nonzero, so FE_Element::addCtoTang → Element::getDamp fires every step
+    (the residual addD_Force path hits it too). The rest of this battery is quasi-static (Static)
+    or — for the bipenalty legs — explicit, whose effective tangent dodges getDamp when there is
+    no Rayleigh damping, so they all miss it. Build with -bipenalty so the cNode carries m_p, run
+    a few Newmark steps, and assert they return 0 (would segfault/exit before the getDamp fix)."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    ops.node(1, 0.0, 0.0, 0.0)              # constrained node (free) — carries m_p
+    ops.node(2, 0.0, 0.0, 0.0); ops.fix(2, 1, 1, 1)   # host fixed ⇒ g = u_c
+    Ku, dt = 1.0e6, 1.0e-3
+    ops.element("LadrunoEmbeddedNode", 1, 1, 1, 2, "-shape", 1.0, "-k", Ku,
+                "-bipenalty", "-dtcr", dt)
+    ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
+    ops.load(1, 1.0, 0.0, 0.0)
+    ops.constraints("Transformation"); ops.numberer("Plain"); ops.system("FullGeneral")
+    ops.test("NormDispIncr", 1e-8, 30); ops.algorithm("Newton")
+    ops.integrator("Newmark", 0.5, 0.25); ops.analysis("Transient")
+    assert ops.analyze(5, dt) == 0          # crashes in getDamp without the override

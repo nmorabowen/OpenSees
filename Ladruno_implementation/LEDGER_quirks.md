@@ -1222,5 +1222,9 @@ From the finite-strain validation Phase P4 (Taylor-bar impact, 2026-06-02,
   base index path. `D≡0` is physically correct for a pure coupling; mass/inertia still come
   from `getMass` + bipenalty. Confirmed: `LadrunoDistributingCoupling` (RBE3, 33011) crashed
   a Newmark transient (exit 5) before the override, passes after (regression test added).
-  **`LadrunoEmbeddedNode` (33006) + `LadrunoEmbeddedRebar` (33005) have the SAME latent bug**
-  (no-op setRayleigh, no getDamp override) — to be fixed. 2026-06-07.
+  **`LadrunoEmbeddedNode` (33006) + `LadrunoEmbeddedRebar` (33005) had the SAME latent bug**
+  (no-op setRayleigh, no getDamp override) — **FIXED 2026-06-09** with the identical
+  element-owned zeroed `C0`/`dampF` pattern + a `Newmark 0.5 0.25` `test_transient_newmark_smoke`
+  regression in each Zone-A battery (empirically reproduced: pre-fix the smoke test segfaults
+  `0xC0000005`, post-fix 77/77 pass). See [[LEDGER_implementations]] rows 33005/33006, PR #220.
+  2026-06-07 (RBE3) / 2026-06-09 (embedded).

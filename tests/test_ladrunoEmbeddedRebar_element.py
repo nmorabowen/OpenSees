@@ -667,3 +667,30 @@ def test_bipenalty_governs_cfl_critical_step():
     # would be invisible and dt_cr would be the brick's value.
     assert dtcr == pytest.approx(embed_dtcr, rel=1e-3)
     assert dtcr < 1.0e-2                                 # governed by the tie, not the host
+
+
+# =================================================== implicit-transient damping (getDamp crash)
+def test_transient_newmark_smoke():
+    """REGRESSION — the pure penalty coupling no-ops setRayleighDampingFactors, which suppresses
+    the base Element::getDamp LAZY allocation of its Rayleigh scratch. Without an explicit
+    getDamp/getRayleighDampingForces override the base indexes theMatrices[-1] (index stays -1)
+    and HARD-CRASHES on the first IMPLICIT-transient step: Newmark's velocity coefficient
+    c2 = γ/(βΔt) is always nonzero, so FE_Element::addCtoTang → Element::getDamp fires every step
+    (the residual addD_Force path hits it too). The other transient legs above use
+    CentralDifferenceLadruno (explicit), whose effective tangent dodges getDamp with no Rayleigh
+    damping, so they miss it. Build with -bipenalty so the rebar node carries m_p, run a few
+    Newmark steps, and assert they return 0 (would segfault/exit before the getDamp fix)."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    ops.node(1, 0.0, 0.0, 0.0)              # rebar node (free) — carries m_p
+    ops.node(2, 0.0, 0.0, 0.0); ops.fix(2, 1, 1, 1)   # host fixed
+    ops.fix(1, 0, 1, 1)                     # rebar: only x (axial) free
+    k, dt = 1.0e4, 1.0e-3
+    ops.element("LadrunoEmbeddedRebar", 1, 1, 1, 2, "-shape", 1.0, "-dir", 1.0, 0.0, 0.0,
+                "-perfect", k, "-kt", k, "-bipenalty", "-dtcr", dt)
+    ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
+    ops.load(1, 1.0, 0.0, 0.0)
+    ops.constraints("Transformation"); ops.numberer("Plain"); ops.system("FullGeneral")
+    ops.test("NormDispIncr", 1e-8, 30); ops.algorithm("Newton")
+    ops.integrator("Newmark", 0.5, 0.25); ops.analysis("Transient")
+    assert ops.analyze(5, dt) == 0          # crashes in getDamp without the override

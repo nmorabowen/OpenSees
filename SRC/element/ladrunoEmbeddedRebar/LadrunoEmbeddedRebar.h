@@ -120,6 +120,14 @@ class LadrunoEmbeddedRebar : public Element
   int setRayleighDampingFactors(double alphaM, double betaK,
                                 double betaK0, double betaKc);
 
+  // ADR 20 §10.6 (D-bp-5) — D == 0 for a pure penalty coupling. The base
+  // Element::getDamp/getRayleighDampingForces lazily allocate their Rayleigh scratch
+  // inside the no-op setRayleighDampingFactors above, so the base path would index an
+  // unallocated buffer (index stays -1) and HARD-CRASH the first implicit-transient step
+  // (Newmark/HHT c2·C is always nonzero). Return an element-owned zeroed C / damping force.
+  const Matrix& getDamp(void);
+  const Vector& getRayleighDampingForces(void);
+
   // ADR 20 §10.6.1 — self-reported explicit critical step `2√(m_p/k_eff)` so a
   // -cfl explicit integrator (CriticalTimeStep) honors the bipenalty bound, which
   // the per-element eigensolve cannot see (λ_max=0; the massless free host slaves
@@ -216,6 +224,8 @@ class LadrunoEmbeddedRebar : public Element
   Matrix* K;                // nDOF x nDOF
   Vector* P;                // nDOF
   Matrix* M0;               // zero mass (nDOF x nDOF)
+  Matrix* C0;               // zero damping (nDOF x nDOF; getDamp scratch)
+  Vector* dampF;            // zero Rayleigh damping force (nDOF)
   Response* bondEnergyResp; // cached bondMat "energy" sub-response (ADR §10.2b)
 
   // committed/trial scalar slip is held by bondMat; nothing else is path-dep.
