@@ -173,12 +173,22 @@ recipe ("add nodal mass or use the penalty path"). A SOE-cooperative skip is Pha
      the full diagnostic battery (§5.2);
    - at `doneNumberingDOF()` (equation numbers now known) freezes each group's equation
      indices into a `LadrunoConstraintProjector` object.
-2. **A small consumer hook on `CentralDifferenceLadruno`**:
-   `setConstraintProjector(LadrunoConstraintProjector*)`. The handler pushes it: the
-   base class's `setLinks()` already hands the handler the `Integrator&`
-   (`ConstraintHandler.h:56-58`), so the handler checks
-   `getIntegratorPtr()->getClassTag() == INTEGRATOR_TAGS_CentralDifferenceLadruno`,
-   downcasts, pushes. **If the integrator is anything else → hard, early, named error**
+2. **A small consumer interface, not a concrete downcast**:
+   `LadrunoProjectionConsumer` (abstract, one method:
+   `setConstraintProjector(LadrunoConstraintProjector*)`), implemented by
+   `CentralDifferenceLadruno` in v1. The handler pushes it: the base class's
+   `setLinks()` already hands the handler the `Integrator&`
+   (`ConstraintHandler.h:56-58`), so the handler `dynamic_cast`s to the *interface* —
+   never to the concrete integrator class — and pushes. This makes P4 adoption by
+   ExplicitBathe/LNVD a pure integrator-side change (implement the interface, add the
+   per-sub-step insertion points); the handler is untouched. The projection is thus
+   **explicit-family-portable but deliberately not integrator-agnostic**: implicit
+   schemes are excluded on principle (D6 — projecting Newton iterates without also
+   projecting residual+tangent breaks constrained equilibrium; doing it consistently
+   *is* the Transformation method, which already exists). Coupled-explicit schemes
+   with damping on the LHS (e.g. `NewmarkExplicit`'s `(M+γΔtC)`) would change the
+   projection weight from `M` to the LHS matrix — out of scope; the interface contract
+   assumes an M-only LHS. **If the cast fails → hard, early, named error**
    ("LadrunoProjectionHandler requires an explicit projection-aware integrator; use
    constraints Transformation/Penalty for implicit analyses"). Both classes are
    fork-owned → no `AnalysisModel`/vanilla edit for the seam. (classTags.h +
@@ -332,7 +342,7 @@ onto a merged PR branch).
 |---|---|---|---|
 | D1 | enforcement mechanism | **acceleration projection**, not Δt-bounded penalty | bounded penalty (DYNA Eq. 25.30) is for compliant joints; ties need exactness AND Δt-neutrality — only projection gives both |
 | D2 | vs Transformation in explicit | new handler | `TᵀMT` off-diagonals are incompatible with the Diagonal-SOE recipe (silently dropped, T6); plus upstream's silent one-MP limit / 0-free-DOF segfault |
-| D3 | where the projection lives | integrator post-solve hook, handler builds the operator | matches the math (projection acts on `a`); handler already receives the Integrator via `setLinks` → zero vanilla seam |
+| D3 | where the projection lives | integrator post-solve hook behind a `LadrunoProjectionConsumer` interface; handler builds the operator | matches the math (projection acts on `a`); handler already receives the Integrator via `setLinks` → zero vanilla seam; interface (not concrete downcast) keeps the handler untouched when ExplicitBathe/LNVD adopt it (P4) |
 | D4 | simultaneous vs sequential group enforcement | connected-component groups, joint solve | refuses DYNA's last-evaluated-wins fragility; groups are tiny (≤ retained-DOF count) |
 | D5 | chains | refuse with named error (v1) | diagnostic-over-silent; Abaqus-style composition deferred (P4) |
 | D6 | scope | explicit-only, CDL-first | implicit already well served; CDL is fork-owned so the seam is ours to cut |
