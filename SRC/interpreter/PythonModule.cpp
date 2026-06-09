@@ -606,6 +606,7 @@ initopensees(void)
 "        • LadrunoBondSlip — 1D bond-slip τ–s (CEB-FIP MC2010)\n"
 "        • LadrunoEmbeddedRebar — rebar in non-matching mesh (bond/penalty/AL)\n"
 "        • LadrunoEmbeddedNode — stress-free node-to-host embed tie (penalty/AL, implicit+explicit)\n"
+"        • LadrunoDistributingCoupling — RBE3 distributing coupling (ndf-mismatch moment transfer)\n"
 "        • LadrunoArcLength — adaptive arc-length radius (Ramm desired-iter)\n"
 "        • LadrunoDynamicRelaxation — quasi-static DR (Gershgorin mass + kinetic damping)\n"
 "        • LadrunoIndirectControl — indirect/CMOD control (snap-back tracking)\n"

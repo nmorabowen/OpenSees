@@ -1198,3 +1198,29 @@ From the finite-strain validation Phase P4 (Taylor-bar impact, 2026-06-02,
   rotations on ndf=6 nodes) nonzero mass, use consistent mass, or restrain the massless dofs.
   Relevant to [[central_difference_ladruno_guide]]. See [[ndf_and_mixed_models_guide]] §7.
   2026-06-07.
+
+### A no-op `setRayleighDampingFactors` WITHOUT a `getDamp` override ⇒ hard crash in implicit transient
+- **Why it bites:** a pure-coupling/penalty element often overrides
+  `setRayleighDampingFactors(...)` to a no-op `return 0` to refuse Rayleigh damping (so a
+  `betaK` can't spuriously shrink its explicit `dt_cr`). But the base `Element::getDamp()`
+  (`SRC/element/Element.cpp:211`) does `if (index==-1) this->setRayleighDampingFactors(...)`
+  then `theMatrices[index]->Zero()` — and it is the BASE `setRayleighDampingFactors` that
+  lazily allocates `theMatrices[index]` and sets `index>=0`. A no-op override never
+  allocates, so `index` stays at its ctor default −1 and `theMatrices[-1]` is an
+  out-of-bounds dereference → **hard crash**. `FE_Element::addCtoTang(fact)` calls
+  `getDamp()` whenever `fact!=0`, and the Newmark/HHT velocity coefficient
+  `c2=γ/(βΔt)` is ALWAYS nonzero ⇒ getDamp fires in EVERY implicit transient step. The
+  residual damping-force path `addD_Force` calls it too. `getMass`,
+  `getResistingForceIncInertia`, and `getRayleighDampingForces` share the same
+  `theMatrices[index]` landmine — the first two are usually already overridden (so safe);
+  **`getDamp` (and `getRayleighDampingForces`) are the ones people forget.**
+- **Why quasi-static tests miss it:** `LoadControl`/`Static` never form a C-tangent;
+  `CentralDifference` (explicit) dodges it when the model has no Rayleigh. Only an implicit
+  transient (Newmark/HHT) — or any transient with Rayleigh — triggers it.
+- **Fix:** override `getDamp()` and `getRayleighDampingForces()` to return an element-owned
+  ZEROED `Matrix`/`Vector` (sized `nDOF`, allocated alongside the mass matrix), bypassing the
+  base index path. `D≡0` is physically correct for a pure coupling; mass/inertia still come
+  from `getMass` + bipenalty. Confirmed: `LadrunoDistributingCoupling` (RBE3, 33011) crashed
+  a Newmark transient (exit 5) before the override, passes after (regression test added).
+  **`LadrunoEmbeddedNode` (33006) + `LadrunoEmbeddedRebar` (33005) have the SAME latent bug**
+  (no-op setRayleigh, no getDamp override) — to be fixed. 2026-06-07.
