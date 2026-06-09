@@ -184,6 +184,10 @@ class BezierTet10 : public Element
     Response *setResponse(const char **argv, int argc, OPS_Stream &s);
     int getResponse(int responseID, Information &eleInformation);
 
+    // Parameter interface (stress-control staging / sensitivity)
+    int setParameter(const char **argv, int argc, Parameter &param);
+    int updateParameter(int parameterID, Information &info);
+
     int displaySelf(Renderer &, int mode, float fact,
                     const char **displayModes = 0, int numModes = 0);
 

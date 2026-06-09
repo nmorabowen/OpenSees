@@ -85,6 +85,7 @@
 #include <math.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 // ═══════════════════════════════════════════════════════════════════
 //  STATIC DATA
@@ -1710,6 +1711,75 @@ int BezierTri6::getResponse(int responseID, Information &eleInfo)
         return eleInfo.setVector(w);
     }
 
+    default:
+        return -1;
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  PARAMETER INTERFACE
+// ═══════════════════════════════════════════════════════════════════
+//
+// setParameter is what `parameter` / `addToParameter $ptag element $tag
+// <args>` reach. Three routes, mirroring SixNodeTri / LadrunoCST:
+//
+//   "pressure"            → register THIS element (responseID 2); the
+//                           Parameter drives `pressure` through
+//                           updateParameter below.
+//   "material" $gp <args> → delegate to the NDMaterial at GP $gp (1-based).
+//   anything else         → broadcast to every GP material. This is the
+//                           stress-control path: commitStressIncrementXX
+//                           etc. register the MATERIALS with the Parameter,
+//                           which then dispatches updateParameter straight
+//                           to them (no element-level hop needed).
+//
+// Without this override, Element::setParameter returns -1 and
+// addToParameter is a SILENT no-op — staged stress control (apeGmsh
+// ops.initial_stress / STKO stressControl) does nothing through this
+// element while Tri31/SixNodeTri hosts work fine.
+
+int
+BezierTri6::setParameter(const char **argv, int argc, Parameter &param)
+{
+    if (argc < 1)
+        return -1;
+
+    int res = -1;
+
+    // surface pressure on the element itself
+    if (strcmp(argv[0], "pressure") == 0)
+        return param.addObject(2, this);
+
+    // a specific Gauss-point material: "material $gp <args>"
+    if ((strstr(argv[0], "material") != 0) &&
+        (strcmp(argv[0], "materialState") != 0)) {
+        if (argc < 3)
+            return -1;
+        int pointNum = atoi(argv[1]);
+        if (pointNum > 0 && pointNum <= NGAUSS)
+            return theMaterial[pointNum-1]->setParameter(&argv[2], argc-2, param);
+        return -1;
+    }
+
+    // otherwise a forall-material parameter — broadcast to every GP
+    for (int i = 0; i < NGAUSS; i++) {
+        int matRes = theMaterial[i]->setParameter(argv, argc, param);
+        if (matRes != -1)
+            res = matRes;
+    }
+
+    return res;
+}
+
+int
+BezierTri6::updateParameter(int parameterID, Information &info)
+{
+    switch (parameterID) {
+    case 2:
+        // pressure enters getResistingForce on the fly — no nodal-load
+        // recompute needed (unlike SixNodeTri::setPressureLoadAtNodes).
+        pressure = info.theDouble;
+        return 0;
     default:
         return -1;
     }
