@@ -15,6 +15,7 @@ import math
 import pytest
 
 from _testbed import ops
+from _testbed.roundtrip import database_roundtrip
 
 pytestmark = [pytest.mark.zone_a]
 
@@ -221,3 +222,87 @@ def test_al_runs():
     _solve_static()
     d = ops.nodeDisp(1)
     assert d[0] == pytest.approx(0.002, rel=1e-6)          # free ref -> gap ~ 0 even at finite K
+
+
+# ----------------------------------------- 12. TRANSIENT smoke (getDamp regression guard)
+def test_transient_newmark_runs():
+    """A pure penalty coupling overrides setRayleighDampingFactors to a no-op; the base
+    Element::getDamp then dereferences an unallocated damping slot the first time a
+    transient integrator forms the C-tangent -> hard crash. This guards that getDamp /
+    getRayleighDampingForces are overridden to zero. The reference mass comes from the
+    bipenalty m_p/I_p, so the 6 free reference DOFs are non-singular under Newmark."""
+    _flat_face(kt=1.0e7, bip=1.0e-3)
+    for nd in (2, 3, 4, 5):
+        ops.fix(nd, 1, 1, 1)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(1, 0.0, 0.0, 0.0, 0.0, 0.0, 1000.0)
+    ops.constraints("Transformation")
+    ops.numberer("Plain")
+    ops.system("FullGeneral")
+    ops.test("NormDispIncr", 1e-8, 30)
+    ops.algorithm("Newton")
+    ops.integrator("Newmark", 0.5, 0.25)
+    ops.analysis("Transient")
+    assert ops.analyze(3, 1.0e-4) == 0                     # would CRASH without getDamp override
+    assert math.isfinite(ops.nodeDisp(1)[5])              # drilling response is finite
+
+
+# ----------------------------------------- 13. 2D drilling rotation fit
+def test_2d_drilling_rotation_fit():
+    """2D: reference node (ndf=3: ux,uy,Rz) coupled to 3 non-collinear independents
+    (ndf=2). A drilling rotation field on the independents recovers Rz = phi."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.node(1, 0.0, 0.0, "-ndf", 3)                      # reference (drilling)
+    tri = [(1.0, 0.0), (-0.5, 0.8660254), (-0.5, -0.8660254)]   # equilateral, centroid origin
+    for i, c in enumerate(tri):
+        ops.node(2 + i, *c)
+    ops.element("LadrunoDistributingCoupling", 1, 1, 3, 2, 3, 4, "-k", 1.0e7)
+    phi = 1.0e-3
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    for i, c in enumerate(tri):
+        ops.sp(2 + i, 1, -phi * c[1])                     # u_x = -phi*r_y
+        ops.sp(2 + i, 2, phi * c[0])                      # u_y =  phi*r_x
+    _solve_static()
+    d = ops.nodeDisp(1)
+    assert d[2] == pytest.approx(phi, rel=1e-6)           # drilling Rz = phi
+    assert abs(d[0]) < 1e-9 and abs(d[1]) < 1e-9          # ref at centroid -> no translation
+    assert ops.eleResponse(1, "nKept")[0] == pytest.approx(1.0)   # the single drilling axis
+
+
+# ----------------------------------------- 14. unequal weights -> weighted mean
+def test_unequal_weights_weighted_mean():
+    """Distinct independent translations with unequal weights; the reference translation
+    is the WEIGHTED mean (rotations fixed). Exercises the w_i/W entries of B directly."""
+    _flat_face(weights=[1.0, 2.0, 3.0, 4.0], kt=1.0e7)
+    ops.fix(1, 0, 0, 0, 1, 1, 1)                          # free translations; fix ref rotations
+    ux = [0.001, 0.002, 0.003, 0.004]
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    for i in range(4):
+        ops.sp(2 + i, 1, ux[i])
+        ops.sp(2 + i, 2, 0.0)
+        ops.sp(2 + i, 3, 0.0)
+    _solve_static()
+    W = 1.0 + 2.0 + 3.0 + 4.0
+    expected = sum(w * u for w, u in zip([1, 2, 3, 4], ux)) / W
+    assert ops.nodeDisp(1)[0] == pytest.approx(expected, rel=1e-7)
+
+
+# ----------------------------------------- 15. serialization round-trip (sendSelf/recvSelf)
+def test_database_roundtrip():
+    """FE_Datastore round-trip exercises sendSelf/recvSelf + the broker. The probe reads
+    element-owned, geometry-derived state (K_r = K_t*ell^2 and nKept), so it fails if
+    recvSelf did not reconstruct the element (geometry is recomputed from coords on recv)."""
+    def build():
+        _flat_face(kt=1.0e7)
+        field = {2 + i: (0.001, 0.0, 0.0) for i in range(4)}
+        _prescribe_indep(field)
+        _solve_static()
+
+    database_roundtrip(
+        build, probe_nodes=[1], ndf=6,
+        probe_fn=lambda: [ops.eleResponse(1, "kr")[0], ops.eleResponse(1, "nKept")[0]],
+    )
