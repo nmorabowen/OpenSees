@@ -8,6 +8,7 @@ related:
   - "[[23_ladruno_embedded_node_adr]]"          # sibling: node-into-host (UR ≠ RBE3 rotation)
   - "[[20_ladruno_embedded_reinforcement_adr]]" # the shared penalty/AL/bipenalty kernel
   - "[[ndf_and_mixed_models_guide]]"            # the ndf-mismatch driver
+  - "[[LadrunoDistributingCoupling_guide]]"     # the user/developer guide
   - "[[LEDGER_implementations]]"
 tags: [adr, constraints, coupling, rbe3, distributing-coupling, ndf-mismatch, moment-transfer, explicit-dynamics, abaqus, ls-dyna, nastran]
 updated: 2026-06-07
