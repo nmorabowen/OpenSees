@@ -332,6 +332,33 @@ element LadrunoDistributingCoupling $tag $refNode $N $i1 ... $iN
 
 ---
 
+## 8b. Implementation review (2026-06-07, post-build, 4-lens)
+
+After the element built + the 11-case quasi-static battery passed, a second 4-lens
+adversarial sweep reviewed the **actual code** (math / serialization / numerics /
+integration). The math (tangent re-derived as the exact `BᵀDB`, crossOp/transOp signs,
+2D path), the Jacobi eigensolver (verified bit-accurate vs `numpy.eigh` on flat /
+collinear / rank-1 / degenerate inputs), the spectral pseudo-inverse / projector
+(`P·I_c⁺=I_c⁺`, idempotent), and the serialization round-trip were all confirmed
+**correct**. One **HIGH** bug was found that the quasi-static tests structurally could
+not catch and was **confirmed empirically (Newmark transient crashed, exit 5)**:
+
+- **`getDamp` index landmine.** The element refuses Rayleigh via a no-op
+  `setRayleighDampingFactors`, so the base `Element::getDamp` never allocates its lazy
+  damping-matrix slot (`index` stays −1) and dereferences `theMatrices[-1]` the first
+  time a transient integrator forms the C-tangent (`FE_Element::addCtoTang`, nonzero
+  Newmark c-factor) — a hard crash in the element's **primary** (dynamic) use case.
+  **Fixed:** override `getDamp()` + `getRayleighDampingForces()` to return element-owned
+  zeroed matrix/vector (`C0`/`dampF`), bypassing the base path (D ≡ 0 is physically
+  correct; mass comes from `getMass` + bipenalty). Guarded by a new transient-Newmark
+  regression test. The dead `bpWarned` member was removed.
+
+The same no-op-setRayleigh-without-getDamp pattern is a latent transient crash in the
+sibling **`LadrunoEmbeddedNode` (33006)** and **`LadrunoEmbeddedRebar` (33005)** — flagged
+for a separate fix (their explicit tests use CentralDifference, which dodges the path).
+Final battery: **15/15** (added: transient Newmark smoke, 2D drilling, unequal-weight
+mean, FE_Datastore round-trip).
+
 ## 9. References
 - **ADR 24** §2 (Abaqus/LS-DYNA/Nastran alignment), §2.1 (LS-DYNA explicit constraint
   treatment), D2 (mass redistribution), D5 (`dt` knobs). **ADR 23 / EmbeddedNode** (the
