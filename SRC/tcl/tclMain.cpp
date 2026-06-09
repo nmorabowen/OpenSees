@@ -166,6 +166,7 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • LadrunoEmbeddedRebar — rebar in non-matching mesh (bond/penalty/AL)\n"
 "        • LadrunoEmbeddedNode — stress-free node-to-host embed tie (penalty/AL, implicit+explicit)\n"
 "        • LadrunoDistributingCoupling — RBE3 distributing coupling (ndf-mismatch moment transfer)\n"
+"        • LadrunoKinematicCoupling — RBE2 rigid kinematic coupling (selectable -dof, transport)\n"
 "        • LadrunoArcLength — adaptive arc-length radius (Ramm desired-iter)\n"
 "        • LadrunoDynamicRelaxation — quasi-static DR (Gershgorin mass + kinetic damping)\n"
 "        • LadrunoIndirectControl — indirect/CMOD control (snap-back tracking)\n"

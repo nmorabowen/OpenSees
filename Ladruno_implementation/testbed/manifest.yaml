@@ -835,6 +835,33 @@ features:
       I_c pseudo-inverse, derived rotational penalty, bipenalty on the massless reference)
       are RBE3-specific. Plan: 28_ladruno_distributing_coupling_rbe3_adr.md.
 
+  - feature: LadrunoKinematicCoupling
+    classtag: 33012          # ELE_TAG (element) family; after LadrunoDistributingCoupling=33011
+    tag_symbol: ELE_TAG_LadrunoKinematicCoupling
+    pr: null
+    feature_class: element
+    required_tiers: [T0, T1]
+    pytest: tests/test_ladrunoKinematicCoupling_element.py
+    tcl: WAIVED(element LadrunoKinematicCoupling ...; shared OpenSeesElementCommands functionMap serves Tcl + Python; verified via the Zone-A pytest battery)
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesElementCommands.cpp
+      - SRC/element/CMakeLists.txt
+      - SRC/element/ladrunoKinematicCoupling/CMakeLists.txt
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      RBE2 \ kinematic-coupling element (ADR 29): a reference node R RIGIDLY drives a
+      slave set via a per-slave rigid tie u_i = u_R + theta_R x (x_i-x_R), theta_i =
+      theta_R where tied. = Abaqus *COUPLING,kinematic / LS-DYNA
+      *CONSTRAINED_NODAL_RIGID_BODY / Nastran RBE2 — the rigid sibling of RBE3 (adds
+      stiffness; R is the master, not the dependent). -dof selects the dependent
+      components (subsumes translation-only / translation+transport / full-rigid). No
+      least-squares fit / I_c / weights (simpler than RBE3). Explicit: -bipenalty
+      DEFAULT OFF (R is often massed), with a massless-DOF scan over R AND slaves,
+      Gershgorin-row-sum sizing. Plan: 29_ladruno_kinematic_coupling_rbe2_adr.md.
+
   # --- worked examples shipped with the scaffold (existing elements, no new C++) ---
 
   - feature: forceBeamColumn_cantilever     # T1 worked example (existing element)

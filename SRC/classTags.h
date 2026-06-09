@@ -927,6 +927,7 @@
 #define ELE_TAG_LadrunoCST                 33008 // N. Mora-Bowen (Ladruno) — 3-node constant-strain triangle (std only); thin 2D sibling of LadrunoQuad; ladruno private band >=33000 (see Ladruno_implementation/25_ladruno_plane_elements_adr.md)
 // 33009 (VEM) / 33010 (SBFEM) reserved for the plane-frontier ADR 26 elements (not yet implemented)
 #define ELE_TAG_LadrunoDistributingCoupling 33011 // N. Mora-Bowen (Ladruno) — RBE3 / distributing-coupling element (reference node interpolated from a weighted independent set; moment-transfer ndf-mismatch tool; penalty/AL, derived rotational penalty, bipenalty; reuses LadrunoEmbeddedKernel translation block); ladruno private band >=33000 (see Ladruno_implementation/28_ladruno_distributing_coupling_rbe3_adr.md)
+#define ELE_TAG_LadrunoKinematicCoupling   33012 // N. Mora-Bowen (Ladruno) — RBE2 / kinematic-coupling element (reference node RIGIDLY drives a slave set via per-slave rigid tie u_i=u_R+theta_R x d_i; selectable -dof; penalty/AL, transport block, default-off bipenalty with massless-DOF scan); rigid sibling of LadrunoDistributingCoupling; ladruno private band >=33000 (see Ladruno_implementation/29_ladruno_kinematic_coupling_rbe2_adr.md)
 
 
 #define FRN_TAG_Coulomb            1

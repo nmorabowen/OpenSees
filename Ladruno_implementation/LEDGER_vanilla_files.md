@@ -106,6 +106,11 @@ and re-verify.
 | `SRC/interpreter/OpenSeesElementCommands.cpp` | `// Ladruno`: register `element` dispatch for `LadrunoDistributingCoupling`/`ladrunoDistributingCoupling` (fwd-decl + 2 `functionMap` inserts) | _pending (RBE3 PR)_ |
 | `SRC/element/CMakeLists.txt` | `// Ladruno`: `add_subdirectory(ladrunoDistributingCoupling)` (classTag 33011) | _pending (RBE3 PR)_ |
 | `SRC/{tcl/tclMain.cpp,interpreter/PythonModule.cpp}` | Splash-banner feature list regen (`FEATURES-START/END`) via `patch_banner.py` — add LadrunoDistributingCoupling line | _pending (RBE3 PR)_ |
+| `SRC/classTags.h` | `// Ladruno` (ADR 29): register `ELE_TAG_LadrunoKinematicCoupling`=33012 (RBE2 / kinematic coupling), after RBE3=33011 | _pending (RBE2 PR)_ |
+| `SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp` | `// Ladruno`: `#include "ladrunoKinematicCoupling/LadrunoKinematicCoupling.h"` + `case ELE_TAG_LadrunoKinematicCoupling: return new LadrunoKinematicCoupling();` for parallel/database `recvSelf` | _pending (RBE2 PR)_ |
+| `SRC/interpreter/OpenSeesElementCommands.cpp` | `// Ladruno`: register `element` dispatch for `LadrunoKinematicCoupling`/`ladrunoKinematicCoupling` (fwd-decl + 2 `functionMap` inserts) | _pending (RBE2 PR)_ |
+| `SRC/element/CMakeLists.txt` | `// Ladruno`: `add_subdirectory(ladrunoKinematicCoupling)` (classTag 33012) | _pending (RBE2 PR)_ |
+| `SRC/{tcl/tclMain.cpp,interpreter/PythonModule.cpp}` | Splash-banner feature list regen (`FEATURES-START/END`) via `patch_banner.py` — add LadrunoKinematicCoupling line | _pending (RBE2 PR)_ |
 
 > [!note] Upstreamable bugfixes
 > Some PRs fix genuine upstream bugs (not fork-only features) and are candidates

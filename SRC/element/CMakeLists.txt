@@ -38,6 +38,7 @@ add_subdirectory(ladrunoEmbeddedRebar) # Ladruno — embedded-reinforcement coup
 add_subdirectory(ladrunoEmbeddedNode) # Ladruno — general node-to-host coupling element (classTag 33006)
 add_subdirectory(ladrunoPlane) # Ladruno — unified 2D continuum elements: LadrunoQuad 33007 / LadrunoCST 33008
 add_subdirectory(ladrunoDistributingCoupling) # Ladruno — RBE3 / distributing-coupling element (classTag 33011)
+add_subdirectory(ladrunoKinematicCoupling) # Ladruno — RBE2 / kinematic-coupling element (classTag 33012)
 add_subdirectory(twoNodeLink)
 add_subdirectory(tetrahedron)
 add_subdirectory(triangle)
