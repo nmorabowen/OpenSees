@@ -809,6 +809,32 @@ features:
       baseline / triangular-mesh fallback / future E-FEM carrier. Plan:
       25_ladruno_plane_elements_adr.md.
 
+  - feature: LadrunoDistributingCoupling
+    classtag: 33011          # ELE_TAG (element) family; after LadrunoCST=33008 (33009/33010 reserved VEM/SBFEM)
+    tag_symbol: ELE_TAG_LadrunoDistributingCoupling
+    pr: null
+    feature_class: element
+    required_tiers: [T0, T1]
+    pytest: tests/test_ladrunoDistributingCoupling_element.py
+    tcl: WAIVED(element LadrunoDistributingCoupling ...; shared OpenSeesElementCommands functionMap serves Tcl + Python; verified via the Zone-A pytest battery)
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesElementCommands.cpp
+      - SRC/element/CMakeLists.txt
+      - SRC/element/ladrunoDistributingCoupling/CMakeLists.txt
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      RBE3 / distributing-coupling element (ADR 28): a reference node R (6-DOF) whose
+      motion is the weighted least-squares rigid-body fit of an independent node set
+      (3-DOF) — a load at R distributes to the set without stiffening it. = Abaqus
+      *COUPLING,distributing / LS-DYNA *CONSTRAINED_INTERPOLATION / Nastran RBE3. Driver
+      = the ndf-mismatch moment-transfer interface (beam/shell node into a solid face).
+      Translation reuses LadrunoEmbeddedKernel; the rotation/transport blocks (spectral
+      I_c pseudo-inverse, derived rotational penalty, bipenalty on the massless reference)
+      are RBE3-specific. Plan: 28_ladruno_distributing_coupling_rbe3_adr.md.
+
   # --- worked examples shipped with the scaffold (existing elements, no new C++) ---
 
   - feature: forceBeamColumn_cantilever     # T1 worked example (existing element)

@@ -24,36 +24,6 @@ them. This is observation-only — fixes we actually applied are tracked in
 
 ## Quirks
 
-### A no-op `setRayleighDampingFactors` override CRASHES implicit transient unless `getDamp`/`getRayleighDampingForces` are ALSO overridden
-- **Bites:** a fork element that refuses Rayleigh damping by overriding
-  `setRayleighDampingFactors(...)` to a no-op `return 0` (the pure-penalty
-  coupling pattern: `LadrunoEmbeddedNode` 33006, `LadrunoEmbeddedRebar` 33005,
-  `LadrunoDistributingCoupling` 33011) HARD-CRASHES (segfault / exit) on the
-  first **implicit** transient step — Newmark/HHT — while passing every
-  quasi-static and explicit test. Explicit (CentralDifference) dodges it because
-  its effective tangent skips `getDamp` when there is no Rayleigh; `Static`
-  never asks for damping. So a green Zone-A battery hides it.
-- **Why:** base `Element::getDamp()` (`SRC/element/Element.cpp:~211`) lazily
-  allocates its damping scratch the FIRST time it runs — *by calling
-  `this->setRayleighDampingFactors(...)`*, which sets the internal `index>=0` and
-  `new`s `theMatrices[index]`. A no-op override never allocates, so `index`
-  stays at its ctor default **−1** and the very next line dereferences
-  `theMatrices[-1]` → out-of-bounds. `FE_Element::addCtoTang(fact)` calls
-  `getDamp()` whenever `fact != 0`, and Newmark's velocity coefficient
-  `c2 = γ/(βΔt)` is ALWAYS nonzero ⇒ `getDamp` fires every implicit step (the
-  residual `addD_Force` path hits it too). `getMass`/`getResistingForceIncInertia`
-  share the same base index pattern but are safe ONLY because these elements
-  already override them.
-- **Workaround/status (2026-06-09):** override BOTH `getDamp()` (return an
-  element-owned zeroed `Matrix`) and `getRayleighDampingForces()` (zeroed
-  `Vector`), sized `nDOF`, allocated alongside `M0`. Physically exact — `D == 0`
-  for a pure penalty coupling; mass/inertia still flow through `getMass` +
-  bipenalty `m_p`/`I_p`. Fixed on all three: RBE3 first (empirically: a Newmark
-  transient went exit-5 → 0), then `LadrunoEmbeddedNode`/`LadrunoEmbeddedRebar`.
-  Pin with a `integrator Newmark 0.5 0.25` + `analysis Transient` smoke test
-  (`test_transient_newmark_smoke` in each battery) — the quasi-static/explicit
-  legs do not cover it. See [[LEDGER_implementations]] rows 33005/33006.
-
 ### Cloning the ASDConcrete3D plastic-damage spine: two silent-but-fatal requirements (`/E` measure + E-consistent backbone `q`)
 - **Bites:** re-implementing the `ASDConcrete3D` update (e.g. `LadrunoRCKernel.h`). Two omissions each yield a material that *compiles, runs, and even passes a β-ratio test* yet is physically wrong:
   1. **The equivalent-strain measures must be divided by E.** `equivalentTensile/CompressiveStrainMeasure` return `lublinerCriterion(...) / E` (`ASDConcrete3DMaterial.cpp:2509,2522`) — the Lubliner criterion is a STRESS; `/E` converts it to the *strain* abscissa that indexes the hardening backbone. Omit it and the abscissa is ~E× too large → the lookup lands in deep softening → `dt̄/dc̄≈1` → nominal stress collapses to ~0 (looks like near-zero stiffness). A β-*ratio* test CANNOT catch this (the `/E` scaling cancels in the ratio); only an ABSOLUTE-stress test (σ=E·ε) does.
@@ -1228,3 +1198,33 @@ From the finite-strain validation Phase P4 (Taylor-bar impact, 2026-06-02,
   rotations on ndf=6 nodes) nonzero mass, use consistent mass, or restrain the massless dofs.
   Relevant to [[central_difference_ladruno_guide]]. See [[ndf_and_mixed_models_guide]] §7.
   2026-06-07.
+
+### A no-op `setRayleighDampingFactors` WITHOUT a `getDamp` override ⇒ hard crash in implicit transient
+- **Why it bites:** a pure-coupling/penalty element often overrides
+  `setRayleighDampingFactors(...)` to a no-op `return 0` to refuse Rayleigh damping (so a
+  `betaK` can't spuriously shrink its explicit `dt_cr`). But the base `Element::getDamp()`
+  (`SRC/element/Element.cpp:211`) does `if (index==-1) this->setRayleighDampingFactors(...)`
+  then `theMatrices[index]->Zero()` — and it is the BASE `setRayleighDampingFactors` that
+  lazily allocates `theMatrices[index]` and sets `index>=0`. A no-op override never
+  allocates, so `index` stays at its ctor default −1 and `theMatrices[-1]` is an
+  out-of-bounds dereference → **hard crash**. `FE_Element::addCtoTang(fact)` calls
+  `getDamp()` whenever `fact!=0`, and the Newmark/HHT velocity coefficient
+  `c2=γ/(βΔt)` is ALWAYS nonzero ⇒ getDamp fires in EVERY implicit transient step. The
+  residual damping-force path `addD_Force` calls it too. `getMass`,
+  `getResistingForceIncInertia`, and `getRayleighDampingForces` share the same
+  `theMatrices[index]` landmine — the first two are usually already overridden (so safe);
+  **`getDamp` (and `getRayleighDampingForces`) are the ones people forget.**
+- **Why quasi-static tests miss it:** `LoadControl`/`Static` never form a C-tangent;
+  `CentralDifference` (explicit) dodges it when the model has no Rayleigh. Only an implicit
+  transient (Newmark/HHT) — or any transient with Rayleigh — triggers it.
+- **Fix:** override `getDamp()` and `getRayleighDampingForces()` to return an element-owned
+  ZEROED `Matrix`/`Vector` (sized `nDOF`, allocated alongside the mass matrix), bypassing the
+  base index path. `D≡0` is physically correct for a pure coupling; mass/inertia still come
+  from `getMass` + bipenalty. Confirmed: `LadrunoDistributingCoupling` (RBE3, 33011) crashed
+  a Newmark transient (exit 5) before the override, passes after (regression test added).
+  **`LadrunoEmbeddedNode` (33006) + `LadrunoEmbeddedRebar` (33005) had the SAME latent bug**
+  (no-op setRayleigh, no getDamp override) — **FIXED 2026-06-09** with the identical
+  element-owned zeroed `C0`/`dampF` pattern + a `Newmark 0.5 0.25` `test_transient_newmark_smoke`
+  regression in each Zone-A battery (empirically reproduced: pre-fix the smoke test segfaults
+  `0xC0000005`, post-fix 77/77 pass). See [[LEDGER_implementations]] rows 33005/33006, PR #220.
+  2026-06-07 (RBE3) / 2026-06-09 (embedded).
