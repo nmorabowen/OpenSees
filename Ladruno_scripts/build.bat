@@ -69,8 +69,24 @@ set "TARGETS=OpenSees OpenSeesSP OpenSeesMP OpenSeesPy OpenSeesPyMP"
 if not "%MODE%"=="" set "TARGETS=%MODE%"
 
 REM ----- Load toolchain ----------------------------------------------------
-echo === Loading toolchain ===
-call "%SCRIPT_DIR%\setup_env.bat" || (echo setup_env.bat failed & exit /b 1)
+REM setup_env.bat (vcvars64 + 3x oneAPI vars.bat) is the slow part of a build.
+REM Skip it when the toolchain is already active in this shell:
+REM   - `set SKIP_SETUP_ENV=1` before running, to force-skip (you manage the
+REM     toolchain yourself), OR
+REM   - `call Ladruno_scripts\setup_env.bat` ONCE in your cmd window, then run
+REM     build.bat repeatedly -- the LADRUNO_TOOLCHAIN_LOADED sentinel is
+REM     inherited and we auto-skip the reload.
+REM Within a single build.bat run the sentinel can't carry across runs (this
+REM script's setlocal discards it at endlocal), so the pre-load-once workflow
+REM is what actually saves time.
+if defined SKIP_SETUP_ENV (
+    echo === Toolchain reload skipped ^(SKIP_SETUP_ENV set^) ===
+) else if defined LADRUNO_TOOLCHAIN_LOADED (
+    echo === Toolchain already loaded in this shell; skipping setup_env.bat ===
+) else (
+    echo === Loading toolchain ===
+    call "%SCRIPT_DIR%\setup_env.bat" || (echo setup_env.bat failed & exit /b 1)
+)
 
 REM ----- 1. MUMPS: build once if not already installed ---------------------
 if not exist "%MUMPS_INSTALL%\lib\dmumps.lib" (
