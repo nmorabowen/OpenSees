@@ -186,11 +186,121 @@ def cantilever():
            f"FE={round(uy, 4)} est={round(est, 4)} ratio={round(ratio, 3)}")
 
 
+# --- 6. parameter forwarding (stress-control staging) ------------------------
+# Regression for the setParameter gap: without the element-level override,
+# `addToParameter <p> element <tag> commitStressIncrementXX` was a SILENT
+# no-op through the Bezier elements (stresses stayed 0.0) while
+# Tri31/SixNodeTri hosts reached the target exactly. Mirrors the apeGmsh
+# ops.initial_stress / STKO stressControl mechanism with the same material
+# chain (PlaneStrain-wrapped ASDPlasticMaterial3D, MohrCoulomb).
+_ASDP_MC_ARGS = (
+    'MohrCoulomb_YF', 'MohrCoulomb_PF', 'LinearIsotropic3D_EL',
+    'BackStress(NullHardeningTensorFunction):',
+    'Begin_Internal_Variables',
+    'BackStress', 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+    'End_Internal_Variables',
+    'Begin_Model_Parameters',
+    'AF_cr', 0.0, 'AF_ha', 0.0, 'DP_eta', 0.0, 'DP_etabar', 0.0,
+    'DP_xi_c', 0.0, 'Dilatancy', 0.0, 'DuncanChang_MaxSigma3', 0.0,
+    'DuncanChang_n', 0.0, 'InitialP0', 0.0, 'MC_c', 1014.0, 'MC_ds', 1e-05,
+    'MC_phi', 45.95, 'MC_psi', 11.49, 'MassDensity', 4.5,
+    'PoissonsRatio', 0.18, 'ReferencePressure', 0.0,
+    'ReferenceYoungsModulus', 0.0, 'ScalarLinearHardeningParameter', 0.0,
+    'TC_min_stress', 0.0, 'TensorLinearHardeningParameter', 0.0,
+    'YoungsModulus', 4080000.0,
+    'End_Model_Parameters',
+    'Begin_Integration_Options',
+    'f_absolute_tol', 1e-06, 'stress_absolute_tol', 1e-06,
+    'n_max_iterations', 100, 'rk45_dT_min', 0.01, 'rk45_niter_max', 100,
+    'return_to_yield_surface', 'Disabled',
+    'integration_method', 'Backward_Euler', 'tangent_type', 'Secant',
+    'End_Integration_Options',
+)
+_SIGMA_TARGET = -6300.0
+
+
+def _stress_control_chain():
+    # Penalty + sp (NOT ops.fix): an all-fix model leaves the solver with
+    # zero equations and FullGeneral hard-crashes on setSize(0).
+    ops.constraints('Penalty', 1e16, 1e16); ops.numberer('Plain')
+    ops.system('FullGeneral'); ops.test('NormDispIncr', 1e-8, 20)
+    ops.algorithm('Newton'); ops.integrator('LoadControl', 0.0)
+    ops.analysis('Static')
+
+
+_SIGMA_TOL = 0.5   # vs target 6300 — pass/fail gap is -6300 vs 0.0
+
+
+def _inject_isotropic(ele_tag):
+    """parameter/addToParameter/updateParameter the ISOTROPIC -6300 state
+    (XX=YY=ZZ), exactly like the staged in-situ install. Isotropic = pure
+    pressure, far inside the MC surface — a pure sigma_xx injection at zero
+    confinement yields (tau 3150 > strength ~2969) and return-maps away
+    from the target, which would test plasticity, not parameter routing."""
+    for ptag, comp in ((1, 'XX'), (2, 'YY'), (3, 'ZZ')):
+        ops.parameter(ptag)
+        ops.addToParameter(ptag, 'element', ele_tag,
+                           f'commitStressIncrement{comp}')
+    _stress_control_chain()
+    for ptag in (1, 2, 3):
+        ops.updateParameter(ptag, _SIGMA_TARGET)
+    return ops.analyze(1)
+
+
+def stress_control_tri6():
+    ops.wipe(); ops.model('basic', '-ndm', 2, '-ndf', 2)
+    ops.nDMaterial('ASDPlasticMaterial3D', 1, *_ASDP_MC_ARGS)
+    ops.nDMaterial('PlaneStrain', 2, 1)
+    crd = {1: (0, 0), 2: (2, 0), 3: (0, 1), 4: (1, 0), 5: (1, 0.5), 6: (0, 0.5)}
+    for n, (x, y) in crd.items():
+        ops.node(n, float(x), float(y))
+    ops.element('BezierTri6', 1, 1, 2, 3, 4, 5, 6, 1.0, 'PlaneStrain', 2)
+    ops.timeSeries('Linear', 1); ops.pattern('Plain', 1, 1)
+    for n in crd:
+        ops.sp(n, 1, 0.0); ops.sp(n, 2, 0.0)
+    rc = _inject_isotropic(1)
+    s = ops.eleResponse(1, 'stresses')   # 3 GP x (sxx, syy, sxy)
+    ok = (rc == 0 and len(s) == 9
+          and all(abs(s[3 * g] - _SIGMA_TARGET) < _SIGMA_TOL
+                  and abs(s[3 * g + 1] - _SIGMA_TARGET) < _SIGMA_TOL
+                  for g in range(3)))
+    record("stress-control param forwarding (Tri6)", ok,
+           f"sigma_xx={round(s[0], 3) if s else '—'} (target {_SIGMA_TARGET})")
+
+
+def stress_control_tet10():
+    ops.wipe(); ops.model('basic', '-ndm', 3, '-ndf', 3)
+    ops.nDMaterial('ASDPlasticMaterial3D', 1, *_ASDP_MC_ARGS)
+    # canonical straight-sided tet: vertices then mid-edges
+    # (1-2),(2-3),(1-3),(1-4),(3-4),(2-4) per the BezierTet10 node order
+    v = {1: (0, 0, 0), 2: (1, 0, 0), 3: (0, 1, 0), 4: (0, 0, 1)}
+    mids = {5: (1, 2), 6: (2, 3), 7: (1, 3), 8: (1, 4), 9: (3, 4), 10: (2, 4)}
+    for n, c in v.items():
+        ops.node(n, *[float(q) for q in c])
+    for n, (a, b) in mids.items():
+        ops.node(n, *[(v[a][k] + v[b][k]) / 2.0 for k in range(3)])
+    ops.element('BezierTet10', 1, *range(1, 11), 1)
+    ops.timeSeries('Linear', 1); ops.pattern('Plain', 1, 1)
+    for n in range(1, 11):
+        ops.sp(n, 1, 0.0); ops.sp(n, 2, 0.0); ops.sp(n, 3, 0.0)
+    rc = _inject_isotropic(1)
+    s = ops.eleResponse(1, 'stresses')   # 4 GP x 6 comps
+    ncomp = len(s) // 4 if s else 0
+    ok = (rc == 0 and ncomp >= 6
+          and all(abs(s[ncomp * g] - _SIGMA_TARGET) < _SIGMA_TOL
+                  and abs(s[ncomp * g + 1] - _SIGMA_TARGET) < _SIGMA_TOL
+                  and abs(s[ncomp * g + 2] - _SIGMA_TARGET) < _SIGMA_TOL
+                  for g in range(4)))
+    record("stress-control param forwarding (Tet10)", ok,
+           f"sigma_xx={round(s[0], 3) if s else '—'} (target {_SIGMA_TARGET})")
+
+
 if __name__ == "__main__":
     print("=" * 64)
     print("  BezierTri6 regression test")
     print("=" * 64)
-    for fn in (patch_test, selfweight, lumped_mass, bbar_guard, cantilever):
+    for fn in (patch_test, selfweight, lumped_mass, bbar_guard, cantilever,
+               stress_control_tri6, stress_control_tet10):
         try:
             fn()
         except Exception as exc:  # noqa: BLE001
