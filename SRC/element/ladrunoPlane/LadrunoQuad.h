@@ -33,14 +33,15 @@
 //           '-type', <PlaneStrain|PlaneStress>,    (default PlaneStrain)
 //           '-thick', t, '-rho', r, '-body', b1, b2, '-pressure', p)
 //
-// v1 (ADR 25, Phase 1): small-strain (geometrically linear) kinematics, two
-// formulations:
+// small-strain (geometrically linear) kinematics, three formulations:
 //   std  — full 2x2 Gauss displacement      (reduces to upstream FourNodeQuad)
 //   bbar — mean-dilatation B-bar (2D factor 1/2; PlaneStrain only) — cures
 //          volumetric locking
-// ssp / eas are RESERVED (parser errors with a "not yet implemented" hint) so
-// the API is stable; the geometry layer (-geom corot/finite) drops in later via
-// the SolidTransformation seam (ADR 25 P4/P5).
+//   ssp  — stabilized single-point (port of SSPquad::GetStab) + Tier-A
+//          damage-scaled hourglass Kstab  (ADR 25 Phase 2)
+// eas is RESERVED (parser errors with a "not yet implemented" hint, ADR 25 P3)
+// so the API is stable; the geometry layer (-geom corot/finite) drops in later
+// via the SolidTransformation seam (ADR 25 P4/P5).
 //
 // See Ladruno_implementation/25_ladruno_plane_elements_adr.md
 

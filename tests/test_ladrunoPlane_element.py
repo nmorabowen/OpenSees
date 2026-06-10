@@ -1,4 +1,4 @@
-"""LadrunoQuad (classTag 33006) & LadrunoCST (classTag 33007) — Zone-A battery.
+"""LadrunoQuad (classTag 33007) & LadrunoCST (classTag 33008) — Zone-A battery.
 
 ADR 25, Phase 1: small-strain (geometrically linear) ``-geom linear``. The
 headline gate is bit-for-bit overlap with the upstream elements:
@@ -12,8 +12,9 @@ On top of that:
   * volumetric-locking relief: near-incompressible (nu=0.4999) PlaneStrain, the
     quad's ``bbar`` is strictly more flexible than ``std`` (std locks);
   * constant-strain patch: every Gauss point reports the closed-form stress;
-  * reserved formulations ``ssp``/``eas`` are refused at the factory (ADR 25
-    P2/P3) and ``bbar`` is PlaneStrain-only.
+  * ``ssp`` (stabilized single-point, ADR 25 P2) is implemented and cross-checked
+    against upstream ``SSPquad``; ``eas`` is still refused at the factory (P3) and
+    ``bbar`` is PlaneStrain-only.
 
 Plan: Ladruno_implementation/25_ladruno_plane_elements_adr.md.
 """

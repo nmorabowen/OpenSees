@@ -459,7 +459,7 @@ const Matrix &LadrunoQuad::getInitialStiff(void)
     K.addMatrixTripleProduct(1.0, B, D, dvol);
   }
   Ki = new Matrix(K);
-  return K;
+  return *Ki;   // return the cached copy, not the shared static scratch K
 }
 
 const Matrix &LadrunoQuad::getMass(void)

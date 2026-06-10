@@ -269,7 +269,7 @@ const Matrix &LadrunoCST::getInitialStiff(void)
     }
   }
   Ki = new Matrix(K);
-  return K;
+  return *Ki;   // return the cached copy, not the shared static scratch K
 }
 
 const Matrix &LadrunoCST::getMass(void)
