@@ -125,6 +125,46 @@ conan install "%SRC%\conanfile.py" ^
     --build=missing
 if errorlevel 1 (echo Conan install failed & exit /b 1)
 
+REM ----- 2b. Pin CMake to the conan-provided copy --------------------------
+REM A system-wide CMake 4.x on PATH shadows the conan-pinned 3.31.x and makes
+REM the `conan-release` preset configure fail (ZLIB-not-found / preset
+REM mismatch) WITHOUT regenerating build.ninja, so the build silently dies at
+REM Step 3 with stale binaries left in dist\. Locate the conan cache cmake.exe
+REM (now guaranteed present: conan install just ran) and put its dir FIRST on
+REM PATH so every `cmake` call below resolves to the matching version.
+REM Discovery mirrors the init.tcl cache-grep idiom further down; no hash is
+REM hardcoded. See project_build_env_cmake43_conan_zlib build note.
+echo.
+echo === Step 2b: Pinning CMake to the conan-provided copy ===
+set "CONAN_CMAKE="
+for /f "delims=" %%I in ('dir /s /b /a-d "%USERPROFILE%\.conan2\cmake.exe" 2^>nul ^| findstr /i "\\p\\bin\\cmake.exe"') do set "CONAN_CMAKE=%%I"
+if defined CONAN_CMAKE (
+    for %%D in ("!CONAN_CMAKE!") do set "CONAN_CMAKE_DIR=%%~dpD"
+    set "PATH=!CONAN_CMAKE_DIR!;!PATH!"
+    echo   pinned: !CONAN_CMAKE!
+) else (
+    echo   WARNING: conan CMake not found in cache; falling back to PATH cmake.
+    echo            If configure fails with ZLIB-not-found, a system CMake 4.x
+    echo            is likely shadowing the conan 3.31.x — see the build notes.
+)
+for /f "delims=" %%V in ('cmake --version 2^>^&1 ^| findstr /i "version"') do echo   using %%V
+
+REM ----- 2c. Heal a cache written by a foreign cmake ------------------------
+REM If a shadowing cmake ever got as far as configure, it overwrote
+REM CMakeCache.txt; reconfiguring that cache with the conan cmake is asking
+REM for stale/poisoned results. The cache records which binary wrote it
+REM (CMAKE_COMMAND). If that isn't the conan-cache copy, delete JUST the
+REM cache file: the next configure is clean, while compiled objects survive
+REM (ninja re-runs only what its command hashes say changed).
+if defined CONAN_CMAKE if exist "%BUILD_DIR%\CMakeCache.txt" (
+    findstr /b /i /c:"CMAKE_COMMAND:INTERNAL=" "%BUILD_DIR%\CMakeCache.txt" | findstr /i ".conan2" >nul
+    if errorlevel 1 (
+        echo   CMakeCache.txt was written by a non-conan cmake -- deleting it
+        echo   ^(one-time clean reconfigure; compiled objects are preserved^)
+        del /q "%BUILD_DIR%\CMakeCache.txt"
+    )
+)
+
 REM ----- 3. CMake configure ------------------------------------------------
 echo.
 echo === Step 3: CMake configure ===
