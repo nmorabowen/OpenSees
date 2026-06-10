@@ -66,6 +66,13 @@ echo.
 echo MKL_ROOT=%MKLROOT%
 echo I_MPI_ROOT=%I_MPI_ROOT%
 echo.
+
+REM ---- 7. Sentinel: mark the toolchain as loaded in THIS shell ------------
+REM build.bat checks this so a second build in the same window can skip the
+REM slow vcvars64 + 3x oneAPI vars.bat reload. Persists only when this script
+REM is `call`ed directly from an interactive shell (build.bat's own setlocal
+REM discards it at endlocal, which is why pre-loading once is what saves time).
+set "LADRUNO_TOOLCHAIN_LOADED=1"
 goto :eof
 
 :checktool
