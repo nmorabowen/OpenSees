@@ -212,7 +212,10 @@ schema: chunked `[T×nIds×nComp]` time-series (replaces per-step `DATA/STEP_<k>
 (transient/static/eigen); standard-rule `QUADRATURE` by derivation +
 `GLOBAL_GP_COORDS` + explicit `NDIR`; energy `ON_DOMAIN`/`ON_REGIONS` +
 `MODEL/SETS`. `IntRule` enum must match `ladruno::detail::ElementIntegrationRuleType`.
-Partitions: `stem.part-N.ladruno` (0-based).
+Partitions: `stem.part-N.ladruno` (0-based). Option order on the recorder line does
+not matter — `-G energy <regions…>` may be followed by other flags in both
+openseespy and the classic Tcl exe (a Tcl-only cursor bug used to force `-G energy`
+to line end; fixed, guarded by the `TCL FLAG ORDER` regression gate).
 
 **Recommended apeGmsh approach.**
 - Add a typed `ops.recorder.Ladruno(…)` (apeGmsh-side name; sibling of the existing

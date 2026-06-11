@@ -135,15 +135,17 @@ void *OPS_LadrunoBrick()
       // accepts Python numeric args AND Tcl numeric strings — OPS_GetString
       // would return "Invalid String Input!" for a Python float and silently
       // drop the coeff). If the next token is not a number it is the next
-      // option (e.g. -lumped): GetDoubleInput advances the cursor even on
-      // failure, so ResetCurrentInputArg(-1) un-gets exactly that one token
-      // and the option loop re-reads it.
+      // option (e.g. -lumped): un-get it so the option loop re-reads it —
+      // but only if the failed read consumed it (openseespy advances the
+      // cursor on a failed double parse; the classic Tcl elementAPI does
+      // not, and a blind -1 rewind there overshoots one token).
       if (OPS_GetNumRemainingInputArgs() > 0) {
         int n1 = 1;
         double tmp = 0.0;
+        int oldn = OPS_GetNumRemainingInputArgs();
         if (OPS_GetDoubleInput(&n1, &tmp) == 0)
           hgCoeff = tmp;
-        else
+        else if (OPS_GetNumRemainingInputArgs() < oldn)
           OPS_ResetCurrentInputArg(-1);
       }
     }

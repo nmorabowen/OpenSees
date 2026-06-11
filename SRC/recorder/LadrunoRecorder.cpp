@@ -2296,8 +2296,14 @@ void* OPS_LadrunoRecorder()
 			// like -T) and hand it back to the outer parse loop.
 			while (numdata > 0) {
 				int tag = 0; int n = 1;
+				int oldn = OPS_GetNumRemainingInputArgs();
 				if (OPS_GetIntInput(&n, &tag) < 0) {
-					OPS_ResetCurrentInputArg(-1);
+					// un-consume the flag only if the failed read consumed it:
+					// openseespy advances the cursor on a failed int parse, the
+					// classic Tcl elementAPI does not — a blind -1 rewind there
+					// overshoots onto the previous token and desyncs numdata.
+					if (OPS_GetNumRemainingInputArgs() < oldn)
+						OPS_ResetCurrentInputArg(-1);
 					break;
 				}
 				numdata--;

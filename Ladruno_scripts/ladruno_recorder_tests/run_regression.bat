@@ -69,6 +69,11 @@ call :gateA "SHELL BARE VERB"     shell_bare_verb_model.py shell_bare_verb_check
 call :gate2 "EIGEN modes"         eigen_model.py           eigen_check.py           eig_ref.mpco    eig_test.ladruno
 call :gateA "PRECISION f32"       precision_model.py       precision_check.py       "%OUT%\prec_f64.ladruno" "%OUT%\prec_f32.ladruno"
 
+REM ---- classic Tcl exe: -G energy in a NON-final position --------------------
+REM (openseespy coverage of the same ordering lives in energy_model.py; the
+REM  elementAPI_TCL cursor contract differs, so the Tcl exe needs its own gate)
+call :gateTcl "TCL FLAG ORDER"    flag_order_model.tcl     flag_order_check.py      flag_order.ladruno
+
 echo ==========================================================
 if %FAILS% GTR 0 (
     echo  REGRESSION: %FAILS% gate failures
@@ -107,6 +112,23 @@ echo --- %~1 ---
 "%BUILDPY%" "%TESTS%\%~2" "%DISTBIN%" "%OUT%"
 if errorlevel 1 (echo [FAIL] %~1 : model runner failed & set /a FAILS+=1 & goto :eof)
 "%VENVPY%" "%TESTS%\%~3" %~4 %~5
+if errorlevel 1 (echo [FAIL] %~1 & set /a FAILS+=1) else (echo [PASS] %~1)
+goto :eof
+
+REM  :gateTcl  label deck check outName  -> classic Tcl exe deck + venv check.
+REM  OpenSees.exe exits 0 even when the script dies, so PASS/FAIL keys on the
+REM  deck's OK marker in the captured log, not the exit code.
+:gateTcl
+echo.
+echo --- %~1 ---
+if not exist "%DISTBIN%\OpenSees.exe" (
+    echo [SKIP] %~1 : %DISTBIN%\OpenSees.exe not built ^(Ladruno_scripts\build.bat OpenSees^)
+    goto :eof
+)
+"%DISTBIN%\OpenSees.exe" "%TESTS%\%~2" "%OUT%" > "%OUT%\%~n2.log" 2>&1
+findstr /c:"FLAG_ORDER_MODEL OK" "%OUT%\%~n2.log" >nul
+if errorlevel 1 (echo [FAIL] %~1 : deck did not reach OK marker & type "%OUT%\%~n2.log" & set /a FAILS+=1 & goto :eof)
+"%VENVPY%" "%TESTS%\%~3" "%OUT%\%~4"
 if errorlevel 1 (echo [FAIL] %~1 & set /a FAILS+=1) else (echo [PASS] %~1)
 goto :eof
 

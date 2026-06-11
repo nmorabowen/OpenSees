@@ -76,6 +76,7 @@ Models run under the **build python** (matches the pyd ABI); checks run under th
 | **FRAME3D localForce** | elasticBeamColumn3d + forceBeamColumn3d (fiber) | vs mpco 1e-12 |
 | **SHELL forces** | ShellMITC4 stress resultants | vs mpco 1e-12 |
 | **EIGEN modes** | `-N modesOfVibration` eigenvectors (KIND=eigen, `DATA/STEP_k/MODE_k`) | vs mpco 1e-12 |
+| **TCL FLAG ORDER** | classic Tcl exe, `-G energy <tag>` in a NON-final position (`flag_order_model.tcl`) | OK marker + all channels present |
 
 (The bold rows are the new element-type coverage. `mp_parallel` is openseesmp-only
 and is run separately.)

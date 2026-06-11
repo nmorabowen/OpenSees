@@ -254,7 +254,13 @@ void *OPS_LadrunoMonitorRecorder()
         if (strcmp(opt, "-node") == 0 || strcmp(opt, "-nodes") == 0) {
             while (OPS_GetNumRemainingInputArgs() > 0) {
                 int num = 1, v;
-                if (OPS_GetIntInput(&num, &v) < 0) { OPS_ResetCurrentInputArg(-1); break; }
+                int oldn = OPS_GetNumRemainingInputArgs();
+                if (OPS_GetIntInput(&num, &v) < 0) {
+                    // un-consume the flag only if the failed read consumed it
+                    // (openseespy does; the classic Tcl elementAPI does not)
+                    if (OPS_GetNumRemainingInputArgs() < oldn) OPS_ResetCurrentInputArg(-1);
+                    break;
+                }
                 nodes.push_back(v);
             }
         }
@@ -278,7 +284,13 @@ void *OPS_LadrunoMonitorRecorder()
         else if (strcmp(opt, "-dof") == 0 || strcmp(opt, "-dofs") == 0) {
             while (OPS_GetNumRemainingInputArgs() > 0) {
                 int num = 1, d;
-                if (OPS_GetIntInput(&num, &d) < 0) { OPS_ResetCurrentInputArg(-1); break; }
+                int oldn = OPS_GetNumRemainingInputArgs();
+                if (OPS_GetIntInput(&num, &d) < 0) {
+                    // un-consume the flag only if the failed read consumed it
+                    // (openseespy does; the classic Tcl elementAPI does not)
+                    if (OPS_GetNumRemainingInputArgs() < oldn) OPS_ResetCurrentInputArg(-1);
+                    break;
+                }
                 dofs.push_back(d - 1);
             }
         }
