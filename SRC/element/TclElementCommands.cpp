@@ -106,6 +106,13 @@ extern void *OPS_ModElasticBeam3d(void);
 extern void *OPS_ElasticBeam2d(const ID &info);
 extern void *OPS_ElasticBeam3d(void);
 extern void *OPS_LadrunoIMKBeam(void); // N. Mora-Bowen (Ladruno)
+extern void *OPS_LadrunoBrick(void); // N. Mora-Bowen (Ladruno)
+extern void *OPS_LadrunoQuad(void); // N. Mora-Bowen (Ladruno)
+extern void *OPS_LadrunoCST(void); // N. Mora-Bowen (Ladruno)
+extern void *OPS_LadrunoDistributingCoupling(void); // N. Mora-Bowen (Ladruno)
+extern void *OPS_LadrunoKinematicCoupling(void); // N. Mora-Bowen (Ladruno)
+extern void *OPS_LadrunoEmbeddedNode(void); // N. Mora-Bowen (Ladruno)
+extern void *OPS_LadrunoEmbeddedRebar(void); // N. Mora-Bowen (Ladruno)
 extern void *OPS_ElasticTimoshenkoBeam2d(void);
 extern void *OPS_ElasticTimoshenkoBeam3d(void);
 extern void *OPS_TPB1D(void);
@@ -560,8 +567,42 @@ TclModelBuilderElementCommand(ClientData clientData, Tcl_Interp *interp,
       opserr << "TclElementCommand -- unable to create element of type : " << argv[1] << endln;
       return TCL_ERROR;
     }
-  } else if ((strcmp(argv[1],"LadrunoIMKBeam") == 0) || (strcmp(argv[1],"ladrunoIMKBeam")) == 0) {
-    Element *theEle = (Element *)OPS_LadrunoIMKBeam(); // N. Mora-Bowen (Ladruno)
+  } else if ((strncmp(argv[1], "Ladruno", 7) == 0) || (strncmp(argv[1], "ladruno", 7) == 0)) {
+    // N. Mora-Bowen (Ladruno) — ONE chain slot for the whole Ladruno element
+    // band, dispatched through a flat factory table. Each additional
+    // `else if` in this function deepens MSVC's lexically-nested-block count
+    // (the chain already sits at the C1061 "blocks nested too deeply" limit:
+    // one branch per element here broke the Windows build), and the table
+    // also keeps future Ladruno elements a one-line addition.
+    static const struct {
+      const char *name;
+      const char *alias;
+      void *(*factory)(void);
+    } ladrunoElementTable[] = {
+      {"LadrunoIMKBeam",              "ladrunoIMKBeam",              OPS_LadrunoIMKBeam},
+      {"LadrunoBrick",                "ladrunoBrick",                OPS_LadrunoBrick},
+      {"LadrunoQuad",                 "ladrunoQuad",                 OPS_LadrunoQuad},
+      {"LadrunoCST",                  "ladrunoCST",                  OPS_LadrunoCST},
+      {"LadrunoDistributingCoupling", "ladrunoDistributingCoupling", OPS_LadrunoDistributingCoupling},
+      {"LadrunoKinematicCoupling",    "ladrunoKinematicCoupling",    OPS_LadrunoKinematicCoupling},
+      {"LadrunoEmbeddedNode",         "ladrunoEmbeddedNode",         OPS_LadrunoEmbeddedNode},
+      {"LadrunoEmbeddedRebar",        "ladrunoEmbeddedRebar",        OPS_LadrunoEmbeddedRebar},
+    };
+    const int nLadruno = (int)(sizeof(ladrunoElementTable) / sizeof(ladrunoElementTable[0]));
+    Element *theEle = 0;
+    int found = 0;
+    for (int i = 0; i < nLadruno; i++) {
+      if ((strcmp(argv[1], ladrunoElementTable[i].name) == 0) ||
+          (strcmp(argv[1], ladrunoElementTable[i].alias) == 0)) {
+        theEle = (Element *)ladrunoElementTable[i].factory();
+        found = 1;
+        break;
+      }
+    }
+    if (found == 0) {
+      opserr << "ERROR -- element of type " << argv[1] << " not known" << endln;
+      return TCL_ERROR;
+    }
     if (theEle != 0)
       theElement = theEle;
     else {
