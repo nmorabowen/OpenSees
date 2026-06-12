@@ -157,11 +157,83 @@ Incremental rebuilds only recompile what changed; the 30-minute figure is for a
 cold build. (The clone is `--depth 1`, so `git fetch` + `reset --hard` is the
 update path — don't expect full history locally.)
 
-## 7. Not yet built (but expected to work)
+## 7. OpenSeesMP — built & cluster-verified (2026-06-11)
+
+**Status:** proven — built from the same `5865f22` tree and validated on the
+SLURM compute nodes (2-rank job via `srun --mpi=pmix_v3`, real distinct
+`getPID` ranks, splash `Version 3.8.0 (5865f22…)`).
+
+| Path | What it is |
+|---|---|
+| `~/ladruno_build_test/OpenSees/build/Release/OpenSeesMP` | the MP binary (~45 MB, MUMPS enabled) |
+| `~/ladruno_build_test/openseesmp.sh` | **run wrapper** — TCL_LIBRARY + LD_LIBRARY_PATH (use this, also under srun) |
+| `~/ladruno_build_test/cmake_configure_mp2.log` / `build_openseesmp2.log` | configure + build logs of the proven build |
+
+### The two facts that make or break it
+
+1. **Compute nodes have NO apt OpenMPI.** The login node's
+   `/usr/lib/x86_64-linux-gnu/openmpi` (4.1.2) does not exist on the nodes —
+   a binary linked against it dies there with *"libmpi_cxx.so.40: cannot open
+   shared object file"* (exit 127). The cluster's canonical MPI is
+   **`/opt/openmpi` (4.0.5)**, present on every node; all working lab
+   binaries link it. Configure with its compiler wrappers (below).
+2. **MUMPS must be linked in.** apeGmsh-emitted partitioned decks auto-emit
+   `system Mumps`; a `-D_NOMUMPS` build is useless for them. The static libs
+   and headers already live on the share: `/mnt/nfshare/lib/lib{dmumps,
+   mumps_common,pord}.a` + `/mnt/nfshare/include/dmumps_c.h`, with ScaLAPACK
+   at `/mnt/nfshare/lib/libscalapack-openmpi.so` (node-visible — do NOT use
+   the login node's apt scalapack for the same reason as fact 1).
+
+### The proven recipe
+
+```bash
+cd ~/ladruno_build_test/OpenSees
+# force FindMPI to re-detect if a previous configure cached the apt MPI
+sed -i '/^MPI_/d;/^FindMPI/d' build/Release/CMakeCache.txt
+cmake -S . -B build/Release \
+  -DCMAKE_TOOLCHAIN_FILE=build/Release/generators/conan_toolchain.cmake \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DMPI_C_COMPILER=/opt/openmpi/bin/mpicc \
+  -DMPI_CXX_COMPILER=/opt/openmpi/bin/mpicxx \
+  -DMPI_Fortran_COMPILER=/opt/openmpi/bin/mpif90 \
+  -DMUMPS_DIR=/mnt/nfshare/lib \
+  -DMUMPS_INCLUDE_DIR=/mnt/nfshare/include \
+  -DSCALAPACK_LIBRARIES=/mnt/nfshare/lib/libscalapack-openmpi.so \
+  -DOPENMPI=TRUE
+cmake --build build/Release --target OpenSeesMP -j20   # minutes, not 30 — object libs are reused
+```
+
+Sanity-check the link before shipping it to the queue:
+
+```bash
+ldd build/Release/OpenSeesMP | grep -E 'mpi|scalapack'
+# every libmpi* line must say /opt/openmpi/lib, scalapack must say /mnt/nfshare/lib
+```
+
+### Running under SLURM
+
+The wrapper exports what the conan-Tcl + nfshare link needs and `exec`s the
+binary, so it is the thing to hand to `srun` (each rank execs through it):
+
+```bash
+srun --cpu-bind=cores --mpi=pmix_v3 ~/ladruno_build_test/openseesmp.sh deck.tcl
+```
+
+From apeGmsh (the `apeGmsh.hpc` module, ADR 0060 there):
+
+```python
+job = cluster.submit(job_dir, np=8,
+    binary="/mnt/deadmanschest/nmorabowen/ladruno_build_test/openseesmp.sh")
+```
+
+Note for **sequential-style decks on the queue**: this is a true
+`_PARALLEL_INTERPRETERS` build — every rank runs the full script with its own
+`getPID`. Decks must be partition-aware (apeGmsh partitioned emits are).
+
+## 8. Not yet built (but expected to work)
 
 - **`OpenSeesPy`** — the target is configured (Python 3.10 dev found); build with
   `cmake --build build/Release --target OpenSeesPy -j20`. Note the resulting
   module imports under esmeralda's Python 3.10, not the Windows 3.12 test env.
-- **`OpenSeesSP` / `OpenSeesMP`** — OpenMPI 4.1.2 + dev headers are present, so
-  the parallel interpreters are plausible on those 24 cores. Untested; expect to
-  pass the MPI toolchain through conan/CMake flags and validate separately.
+- **`OpenSeesSP`** — same MPI recipe as §7 should apply
+  (`--target OpenSeesSP`). Untested.
