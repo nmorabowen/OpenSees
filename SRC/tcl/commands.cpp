@@ -101,6 +101,7 @@ extern "C" int         OPS_ResetInputNoBuilder(ClientData clientData, Tcl_Interp
 #include <FEM_ObjectBrokerAllClasses.h>
 
 #include <Timer.h>
+#include <Profiler.h>   // Ladruno stack profiler (HDF5 writer comes via Profiler.h)
 #include <ModelBuilder.h>
 #include "commands.h"
 
@@ -816,6 +817,106 @@ int Tcl_InterpOpenSeesObjCmd(ClientData clientData,  Tcl_Interp *interp, int obj
 }
 
 
+// Ladruno stack profiler — classic-Tcl twin of the new-interpreter
+// OPS_profiler() (SRC/interpreter/OpenSeesCommands.cpp). The profiler core +
+// HDF5 writer live in OPS_Utilities (interpreter-neutral, always linked); only
+// the command surface was new-interpreter-only, which left the deployed Tcl
+// executables without `profiler`. Subcommands and flags mirror the Python
+// side: start [-deep] [-memory] [-perStep] | stop | reset |
+// report <file> [-run <id>] | memory.
+// Run-header identity: like the new interpreter (cmds->get*Name()), the
+// user-typed analysis type strings are stashed at command time by
+// specifyAlgorithm / specifyIntegrator / specifySOE — getClassType() returns
+// "UnknownMovableObject" for these classes, so the typed string is the only
+// interpretable name. nDOF and dt_cr come from the live analysis globals
+// exactly as on the Python side.
+static std::string ops_profilerAlgorithmName;
+static std::string ops_profilerIntegratorName;
+static std::string ops_profilerSolverName;
+
+int
+TclCommand_profiler(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
+{
+  if (argc < 2) {
+    opserr << "WARNING profiler - expected subcommand: start|stop|reset|report|memory\n";
+    return TCL_ERROR;
+  }
+  ops_profiler::Profiler& P = ops_profiler::theProfiler();
+  const char* sub = argv[1];
+
+  if (strcmp(sub, "start") == 0) {
+    bool deep = false, mem = false;
+    for (int i = 2; i < argc; i++) {
+      if (strcmp(argv[i], "-deep") == 0)         deep = true;
+      else if (strcmp(argv[i], "-memory") == 0)  mem = true;
+      else if (strcmp(argv[i], "-perStep") == 0) P.config().perStep = true;
+    }
+    P.setDeep(deep);
+    P.setMem(mem);
+    P.start();
+    return TCL_OK;
+  }
+  if (strcmp(sub, "stop") == 0)  { P.stop();  return TCL_OK; }
+  if (strcmp(sub, "reset") == 0) { P.reset(); return TCL_OK; }
+
+  if (strcmp(sub, "report") == 0) {
+    if (argc < 3) {
+      opserr << "WARNING profiler report <filename> [-run <id>]\n";
+      return TCL_ERROR;
+    }
+    const char* fname = argv[2];
+    const char* runid = "run0";
+    for (int i = 3; i < argc; i++) {
+      if (strcmp(argv[i], "-run") == 0 && i + 1 < argc)
+        runid = argv[++i];
+    }
+    const ops_profiler::ProfileNode& rollup = P.mergedRollup();
+    ops_profiler::RunMeta meta = P.buildMeta();
+    meta.algorithm  = ops_profilerAlgorithmName;
+    meta.integrator = ops_profilerIntegratorName;
+    meta.solver     = ops_profilerSolverName;
+    if (theSOE != 0)
+      meta.nDOF = theSOE->getNumEqn();
+    if (theTransientIntegrator != 0) {
+      const double dtcr = theTransientIntegrator->getCriticalTimeStep();
+      if (dtcr > 0.0) {
+        meta.dt_cr = dtcr;
+        if (meta.dt_max > 0.0)
+          meta.oversample_ratio = dtcr / meta.dt_max;
+      }
+    }
+    ops_profiler::MemorySnapshot snap = P.buildMemorySnapshot();
+    const ops_profiler::Series& ser = P.series();
+    ops_profiler::ProfilerHDF5Writer w;
+    if (!w.open(fname)) {
+      opserr << "WARNING profiler report - could not open '" << fname << "'\n";
+      return TCL_ERROR;
+    }
+    bool ok = w.writeRun(runid, rollup, meta,
+                         (ser.nSteps() > 0 ? &ser : (const ops_profiler::Series*)0),
+                         snap);
+    w.close();
+    if (!ok) {
+      opserr << "WARNING profiler report - writeRun failed (run id '" << runid
+             << "' may already exist in '" << fname << "')\n";
+      return TCL_ERROR;
+    }
+    return TCL_OK;
+  }
+
+  if (strcmp(sub, "memory") == 0) {
+    ops_profiler::MemorySnapshot snap = P.buildMemorySnapshot();
+    char buffer[32];
+    sprintf(buffer, "%lld", (long long)snap.peak_bytes);
+    Tcl_SetResult(interp, buffer, TCL_VOLATILE);
+    return TCL_OK;
+  }
+
+  opserr << "WARNING profiler - unknown subcommand '" << sub << "'\n";
+  return TCL_ERROR;
+}
+
+
 int OpenSeesAppInit(Tcl_Interp *interp) {
 
   ops_TheActiveDomain = &theDomain;
@@ -859,8 +960,11 @@ int OpenSeesAppInit(Tcl_Interp *interp) {
     Tcl_CreateCommand(interp, "getNDF", &getNDF,
         (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
 
+    Tcl_CreateCommand(interp, "profiler", &TclCommand_profiler,
+		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL); // Ladruno
+
     Tcl_CreateCommand(interp, "wipe", &wipeModel,
-		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL); 
+		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
 
     Tcl_CreateCommand(interp, "wipeAnalysis", &wipeAnalysis,
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);    
@@ -3070,7 +3174,9 @@ specifySOE(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
   if (argc < 2) {
       opserr << "WARNING need to specify a model type \n";
       return TCL_ERROR;
-  }    
+  }
+
+  ops_profilerSolverName = argv[1];   // Ladruno: profiler run-header identity
 
   // check argv[1] for type of SOE and create it
   // BAND GENERAL SOE & SOLVER
@@ -3917,7 +4023,9 @@ specifyAlgorithm(ClientData clientData, Tcl_Interp *interp, int argc,
   if (argc < 2) {
       opserr << "WARNING need to specify an Algorithm type \n";
       return TCL_ERROR;
-  }    
+  }
+
+  ops_profilerAlgorithmName = argv[1];   // Ladruno: profiler run-header identity
   EquiSolnAlgo *theNewAlgo = 0;
   OPS_ResetInputNoBuilder(clientData, interp, 2, argc, argv, &theDomain);
 
@@ -4603,7 +4711,9 @@ specifyIntegrator(ClientData clientData, Tcl_Interp *interp, int argc,
   if (argc < 2) {
       opserr << "WARNING need to specify an Integrator type \n";
       return TCL_ERROR;
-  }    
+  }
+
+  ops_profilerIntegratorName = argv[1];   // Ladruno: profiler run-header identity
 
   // check argv[1] for type of Numberer and create the object
   if (strcmp(argv[1],"LoadControl") == 0) {
