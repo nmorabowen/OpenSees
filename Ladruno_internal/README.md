@@ -15,6 +15,7 @@ Internal-only notes about the Ladruno OpenSees fork: how it was built, why speci
 ## Contents
 
 - [[01_compilation_journal]] — full record of the Windows build (toolchain, the eight CMakeLists patches, MUMPS LP64 saga, splash banner). Read this when something breaks and you need to remember *why* a patch is there.
+- [[02_esmeralda_linux_build_guide]] — Linux build on the `esmeralda` SSH host: machine inventory, where the binaries live, the `opensees.sh` run wrapper (`TCL_LIBRARY` gotcha), proven conan+cmake recipe, and how to rebuild when `ladruno` moves.
 
 ## Conventions
 
