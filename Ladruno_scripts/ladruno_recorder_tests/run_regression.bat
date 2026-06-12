@@ -68,6 +68,7 @@ call :gateA "SHELL LAYER STRESS"  shell_layer_model.py     shell_layer_check.py 
 call :gateA "SHELL BARE VERB"     shell_bare_verb_model.py shell_bare_verb_check.py "%OUT%\bare_section.ladruno" "%OUT%\bare_material.ladruno"
 call :gate2 "EIGEN modes"         eigen_model.py           eigen_check.py           eig_ref.mpco    eig_test.ladruno
 call :gateA "PRECISION f32"       precision_model.py       precision_check.py       "%OUT%\prec_f64.ladruno" "%OUT%\prec_f32.ladruno"
+call :gate1 "RANK ENV PROBE"      rank_env_model.py        rank_env_check.py
 
 REM ---- classic Tcl exe: -G energy in a NON-final position --------------------
 REM (openseespy coverage of the same ordering lives in energy_model.py; the

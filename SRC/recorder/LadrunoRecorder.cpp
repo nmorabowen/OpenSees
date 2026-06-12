@@ -234,10 +234,19 @@ LadrunoRecorder::~LadrunoRecorder()
 			finalizeAllSinks();
 		clearSources();
 		if (m_data->initialized && m_data->info.h_file_id != ladrunons::HID_INVALID) {
-			ladrunons::h5::file::flush(m_data->info.h_file_id);
-			ladrunons::h5::file::close(m_data->info.h_file_id);
-			ladrunons::h5::plist::close(m_data->info.h_group_proplist);
-			ladrunons::h5::plist::close(m_data->info.h_file_proplist);
+			// When the recorder dies at process exit (deck never wiped), HDF5's
+			// own atexit handler has usually run first: it flushes + closes every
+			// open ID — that is why the data survives — and the closes below then
+			// operate on dead IDs, spamming 4 HDF5-DIAG stacks per rank to stderr
+			// (observed on every cluster .err). H5E_BEGIN_TRY is HDF5's canonical
+			// attempt-silently wrapper for exactly this shutdown-path situation;
+			// on a live library (normal `wipe`) these closes behave as before.
+			H5E_BEGIN_TRY {
+				ladrunons::h5::file::flush(m_data->info.h_file_id);
+				ladrunons::h5::file::close(m_data->info.h_file_id);
+				ladrunons::h5::plist::close(m_data->info.h_group_proplist);
+				ladrunons::h5::plist::close(m_data->info.h_file_proplist);
+			} H5E_END_TRY;
 		}
 		delete m_data;
 	}
@@ -439,21 +448,39 @@ int LadrunoRecorder::initialize()
 	//   * PartitionedDomain/OpenSeesMP: the recorder was broadcast from P0
 	//     (send_self_count != 0) and p_id is the assigned 0-based index;
 	//   * interpreter-per-rank/openseesmp: each rank built the recorder itself
-	//     (send_self_count == 0); the launcher (Intel MPI / MS-MPI) exports
-	//     PMI_RANK + PMI_SIZE per rank, so index by PMI_RANK.
-	// Single process (no PMI env, or PMI_SIZE <= 1) -> not partitioned -> verbatim.
+	//     (send_self_count == 0); index by the launcher's per-rank environment.
+	//     Launchers disagree on the names: Intel MPI / MS-MPI export
+	//     PMI_RANK+PMI_SIZE, OpenMPI exports OMPI_COMM_WORLD_RANK+_SIZE, and
+	//     SLURM's srun exports SLURM_PROCID+SLURM_NTASKS under every MPI
+	//     plugin — including pmix, where no PMI_* exist at all (live-caught on
+	//     a `srun --mpi=pmix_v3` cluster: every rank opened the same file and
+	//     the NFS lock storm silently killed the recorder). First pair with
+	//     SIZE > 1 wins; SLURM is probed last because sbatch also exports
+	//     SLURM_NTASKS into the batch shell itself, so a real MPI launcher's
+	//     own variables should take precedence when both are present.
+	//     (PMIX_RANK exists under pmix but has no reliable SIZE companion.)
+	// Single process (no launcher env, or SIZE <= 1) -> not partitioned -> verbatim.
 	int part_id = m_data->p_id;
 	bool is_partitioned = (m_data->send_self_count != 0);
 	int num_parts = 1;
 	{
-		const char* pmi_size = std::getenv("PMI_SIZE");
-		const char* pmi_rank = std::getenv("PMI_RANK");
-		int np_env = (pmi_size != 0) ? std::atoi(pmi_size) : 1;
-		if (np_env > 1) {
-			num_parts = np_env;
-			if (!is_partitioned) {   // interpreter-per-rank: index by the launcher rank
-				part_id = (pmi_rank != 0) ? std::atoi(pmi_rank) : 0;
-				is_partitioned = true;
+		static const char* const size_rank_env[][2] = {
+			{ "PMI_SIZE",            "PMI_RANK" },              // Intel MPI / MS-MPI
+			{ "OMPI_COMM_WORLD_SIZE", "OMPI_COMM_WORLD_RANK" }, // OpenMPI
+			{ "SLURM_NTASKS",        "SLURM_PROCID" },          // srun (incl. pmix)
+		};
+		const size_t n_pairs = sizeof(size_rank_env) / sizeof(size_rank_env[0]);
+		for (size_t i = 0; i < n_pairs; ++i) {
+			const char* size_env = std::getenv(size_rank_env[i][0]);
+			int np_env = (size_env != 0) ? std::atoi(size_env) : 1;
+			if (np_env > 1) {
+				num_parts = np_env;
+				if (!is_partitioned) {   // interpreter-per-rank: index by the launcher rank
+					const char* rank_env = std::getenv(size_rank_env[i][1]);
+					part_id = (rank_env != 0) ? std::atoi(rank_env) : 0;
+					is_partitioned = true;
+				}
+				break;
 			}
 		}
 	}
