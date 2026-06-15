@@ -46,7 +46,8 @@ One repeatable script (`build.bat`) that produces from a fresh clone of upstream
 | Intel oneAPI | 2025.1 | `C:\Program Files (x86)\Intel\oneAPI\` | `ifx.exe` (Fortran), MKL (BLAS/LAPACK/ScaLAPACK), Intel MPI |
 | CMake | 4.3.0 | `C:\Program Files\CMake\bin\` | Build generator |
 | Ninja | latest (winget) | on PATH | Fast build executor |
-| Python | 3.11.9 | `C:\Users\nmora\AppData\Local\Programs\Python\Python311\` | OpenSeesPy ABI target + Conan host |
+| Python (build/ABI) | **3.12** | `C:\Users\nmora\AppData\Local\Python\pythoncore-3.12-64\` | OpenSeesPy ABI target — `opensees.pyd` links `python312.dll` |
+| Python (Conan host) | 3.11.9 | `C:\Users\nmora\AppData\Local\Programs\Python\Python311\` | Conan driver only (still works under 3.11) |
 | Conan | 2.28.1 | pip --user | Fetches HDF5, TCL, ZLIB, Eigen3 |
 | MUMPS | 5.5.1 | local build → `mumps-install/` | Parallel sparse direct solver |
 
