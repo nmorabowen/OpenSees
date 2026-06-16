@@ -310,3 +310,44 @@ element parity 96/96 @1e-12; multi-stage 2 stages (108 nodal values); energy clo
 settled-tail max|ERR%|=0.037%; kernel cross-check ON_DOMAIN vs text sidecar = 4.98e-9;
 MODEL/SETS self-describes regions. Harness: `Ladruno_scripts/ladruno_recorder_tests/
 energy_{model,check}.py`, `run_energy.bat`, `run_regression.bat`.
+
+## 2026-06-16 — Fresh-machine bring-up (`nmb`) + `install_prereqs.ps1`
+
+Brought the build up on a second Windows box (`C:\Users\nmb\…`). The box had
+**none** of the toolchain — only Git and winget. Installed everything from
+scratch and the full `build.bat` then produced all five targets clean (only the
+pre-existing benign `LNK4006` SuiteSparse/SuperLU/`ELMT05` warnings). Verified by
+running: `OpenSees.exe` (truss disp = PL/EA = 0.01 exact), `opensees.pyd`
+(same model via `import opensees`), and `OpenSeesMP.exe` under `mpiexec -n 2`
+(both ranks report, clean terminate).
+
+New tooling: **`Ladruno_scripts/install_prereqs.ps1`** — one-shot, idempotent
+winget installer for the documented prereqs. Skips what's already present so a
+dismissed UAC prompt just means re-run. It does **not** fetch MUMPS (build.bat
+Step 1 still owns that).
+
+Gotchas learned this round:
+- **winget Intel package IDs are `Intel.OneAPI.BaseToolkit` / `Intel.OneAPI.HPCToolkit`**
+  (capital "OneAPI"). `Intel.oneAPI.HPCToolkit` returns "no package found". HPC
+  must be installed *after* Base (it layers onto the same oneAPI root). HPC is
+  what provides `ifx` + Intel MPI; Base alone is MKL only.
+- **VS-bundled CMake/Ninja win on PATH after `vcvars64`** — `cmake` resolves to
+  `…\VS\2022\Community\Common7\IDE\CommonExtensions\…\CMake\bin\cmake.exe` (3.x),
+  *not* the standalone Kitware 4.3.3 winget put down. This is actually lucky: it
+  sidesteps the documented CMake-4.x "ZLIB-not-found" preset hazard for the
+  direct MUMPS configure, and `build.bat` Step 2b still pins the conan cmake for
+  the OpenSees preset regardless.
+- **`build.bat` `PYEXE` was a single hardcoded `nmora` path** — broke on any
+  other machine. Replaced with machine-agnostic detection: honor an explicit
+  `PYEXE`, else probe `%LOCALAPPDATA%\Programs\Python\Python312`, the old nmora
+  path, and `%ProgramFiles%\Python312`, else `where python`.
+- **Windows PowerShell 5.1 parses BOM-less files as ANSI** — non-ASCII (em-dashes)
+  in `install_prereqs.ps1` produced bogus "Missing closing ')'" parse errors and
+  would also break `powershell -File` at runtime. Saved the script UTF-8 **with
+  BOM**. (Same root cause as the `banner_ASCII_utf8bom.txt` workaround in
+  `build_inno_installer.ps1`.)
+
+Installer: `winget install JRSoftware.InnoSetup`, then
+`Ladruno_scripts/build_inno_installer.ps1` →
+`Ladruno_files/Ladruno_OpenSees_<YYYYMMDD>_setup.exe` (~155 MB, single
+self-contained setup with the venv-picker wizard).

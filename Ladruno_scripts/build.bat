@@ -3,13 +3,15 @@ setlocal enabledelayedexpansion
 REM ==========================================================================
 REM  build.bat — drive the OpenSees build end to end
 REM
-REM  Prereqs (one-time, on this machine):
+REM  Prereqs (one-time, on this machine) -- install them all in one shot with:
+REM       powershell -ExecutionPolicy Bypass -File Ladruno_scripts\install_prereqs.ps1
 REM    1. Visual Studio 2022 Community (with the C++ workload + Windows SDK)
 REM    2. Intel oneAPI Base + HPC toolkit (compiler, MKL, MPI)
 REM    3. CMake 3.23+, Ninja, Python 3.12, Git
 REM    4. Conan 2.x  (pip install --user conan)
 REM    5. MUMPS 5.5.1 source archive at mumps-archive\mumps_src.tar.gz
-REM       (downloaded once from https://mumps-solver.org/MUMPS_5.5.1.tar.gz)
+REM       (downloaded once from https://mumps-solver.org/MUMPS_5.5.1.tar.gz;
+REM        install_prereqs.ps1 does NOT fetch this -- build.bat Step 1 does)
 REM
 REM  Usage (from a fresh cmd.exe):
 REM    cd <fork-clone-root>                   (e.g. C:\Users\nmora\Github\OpenSees)
@@ -39,7 +41,22 @@ set "BUILD_DIR=%BUILD%\build\Release"
 set "INSTALL=%ROOT%\install"
 set "DIST=%ROOT%\dist"
 set "PROFILE=%SCRIPT_DIR%\opensees-msvc-static.profile"
-set "PYEXE=C:\Users\nmora\AppData\Local\Python\pythoncore-3.12-64\python.exe"
+
+REM ----- Locate Python 3.12 (machine-agnostic) -----------------------------
+REM Ladruno: PYEXE was a single hardcoded user path, which broke on any other
+REM machine. Honor an explicitly-set PYEXE first; otherwise probe the common
+REM install locations for a python.exe and fall back to `where python`.
+if defined PYEXE if exist "%PYEXE%" goto :pyexe_ok
+set "PYEXE="
+for %%P in (
+    "%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
+    "C:\Users\nmora\AppData\Local\Python\pythoncore-3.12-64\python.exe"
+    "%ProgramFiles%\Python312\python.exe"
+) do if not defined PYEXE if exist "%%~P" set "PYEXE=%%~P"
+if not defined PYEXE for /f "delims=" %%P in ('where python 2^>nul') do if not defined PYEXE set "PYEXE=%%P"
+if not defined PYEXE (echo ERROR: could not locate a Python 3.12 interpreter; set PYEXE explicitly & exit /b 1)
+:pyexe_ok
+echo === Using Python: %PYEXE% ===
 
 set "MUMPS_SRC=%ROOT%\mumps-src"
 set "MUMPS_BUILD=%ROOT%\mumps-build"
