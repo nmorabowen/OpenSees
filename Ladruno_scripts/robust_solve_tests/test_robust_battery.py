@@ -20,6 +20,7 @@ pytestmark = pytest.mark.skipif(
 import robust_drive                       # noqa: E402
 import torture_softening as soft          # noqa: E402
 import torture_snapthrough as snap        # noqa: E402
+import torture_stabilize as stab          # noqa: E402
 
 
 # --- softening: the clean load-control killer -----------------------------
@@ -82,3 +83,44 @@ def test_robust_drive_refuses_stabilize():
     with pytest.raises(NotImplementedError):
         robust_drive.robust_drive(
             None, done=lambda: True, load_increment=1.0, stabilize=True)
+
+
+# --- Layer-1.5: the stabilization-energy observability seam (rung-4 gate) ---
+# These verify the C++ getters (LadrunoArcLength 33004) the driver reads to gate
+# rung-4 and ramp the viscous coefficient (ADR-31 "gate vs audit", R-RAMPDOWN).
+def test_stabilize_seam_reports_sane_energy():
+    import opensees as ops
+    r = stab.run_stabilized(adaptStab=True)
+    assert r["committed"] > 0
+    assert r["ref"] > 0.0                          # Estrain0 calibrated at commit
+    assert r["dissip"] >= 0.0
+    # identity: dissipationRatio == dissipatedEnergy / referenceEnergy
+    assert r["ratio"] == pytest.approx(r["dissip"] / r["ref"], rel=1e-9)
+
+
+def test_stabilize_adaptstab_bounds_dissipation():
+    # -adaptStab holds the cumulative ratio near fTarget; without it the ratio
+    # accumulates well above (the watchdog signal the driver gates on is real).
+    a = stab.run_stabilized(adaptStab=True)
+    b = stab.run_stabilized(adaptStab=False)
+    assert a["ratio"] < 100 * stab.FTARGET        # O(fTarget), tight margin
+    assert b["ratio"] > a["ratio"]                # cumulative drifts up
+
+
+def test_stabilize_scaleCVisc_ramps_down():
+    # R-RAMPDOWN: scaling cVisc by 0.1 cuts the per-window artificial dissipation.
+    inc_full, inc_ramped = stab.measure_rampdown(factor=0.1)
+    assert inc_full > 0.0
+    assert inc_ramped < inc_full
+
+
+def test_stabilize_scaleCVisc_rejects_nonpositive():
+    import opensees as ops
+    stab.build()
+    stab._arm(adaptStab=False)
+    ops.analyze(1)
+    # factor must be > 0; the C++ guard warns to stderr, which openseespy raises.
+    with pytest.raises(ops.OpenSeesError):
+        ops.ladrunoArcLength("scaleCVisc", 0.0)
+    with pytest.raises(ops.OpenSeesError):
+        ops.ladrunoArcLength("scaleCVisc", -2.0)

@@ -350,6 +350,28 @@ Layer-0 (`robust_drive.py` spine + rung-3 switch + peak detector + JSONL log + p
 - `LadrunoArcLength` (33004): `getStabilizationDissipatedEnergy()` (=`dissipVisc`), `getReferenceStrainEnergy()` (=`Estrain0`), `getStabilizationDissipationRatio()` (=`dissipVisc/Estrain0`, the same fraction `commit()`/`Print()` already compute), and the `scaleCVisc()` actuator (R-RAMPDOWN). Exposed via new `ladrunoArcLength` subcommands `dissipationRatio | dissipatedEnergy | referenceEnergy | scaleCVisc`. This unlocks rung-4 (the driver can read the dissipation gate and ramp `c`).
 - `LadrunoDynamicRelaxation` (33005): `getResidualNorm()` (force-based settling signal, R-DR-ENERGY) + `getKineticEnergy()`. **C++ getters only** — the `ladrunoDR` runtime command is deferred to the rung-5 increment (first consumed/testable there) per R-SCOPE.
 
-No `sendSelf/recvSelf` change (see Reserved-class-tags update). Next: build + a rung-4 stabilization regression once the build machine frees up.
+No `sendSelf/recvSelf` change (see Reserved-class-tags update).
+
+### 2026-06-16 (later) — Layer-1.5 BUILT + verified; rung-4 design tightened
+
+Compiled the `86af9af37` getters into the robust worktree's `opensees.pyd` and
+locked them into the battery: new fixture `torture_stabilize.py` + 4
+`test_stabilize_*` cases (`test_robust_battery.py`), **12 green**. The seam works
+exactly as designed: the identity `dissipationRatio == dissipatedEnergy /
+referenceEnergy` holds, `-adaptStab` bounds the cumulative ratio near `fTarget`
+(5.7e-4) while the un-adapted ratio drifts (0.35), and `scaleCVisc(0.1)` cuts the
+per-window viscous work ~10× (R-RAMPDOWN). Build blocker fixed en route:
+`build.bat` had a stale machine-specific `PYEXE` (ported the beam branch's
+machine-agnostic probe block).
+
+**Measuring the seam tightened the rung-4 design** (full detail in
+[[LEDGER_quirks]] "what viscous regularization can and cannot pass"): `-stabilize`
+**cannot** pass pure softening (it is load control), **`-adaptStab` prevents**
+crossing a hard limit, and a snap-through crosses only **without** adaptStab at an
+elevated `f` via a diffusive crawl (R-LOG-MASK). So rung-4 is a *narrow last
+resort* (rung-3 wins on both current fixtures), not the limit-point hero the v1
+framing implied. The `stabilize=True` refusal therefore **stays in place** until
+the rung-4 scope is confirmed with the track owner. Next: commit + push Layer-1.5
+PR; then the rung-4 scope decision.
 
 *(move to `Ladruno_internal/implemented_robust_solve_driver.md` when the driver is complete.)*
