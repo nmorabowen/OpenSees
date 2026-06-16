@@ -3175,17 +3175,42 @@ int OPS_LadrunoArcLengthCmd()
         return 0;
     }
 
+    // value-taking actuator (ADR-31 R-RAMPDOWN): scale the viscous coefficient;
+    // echoes the resulting dissipation ratio so the driver sees the effect.
+    if (strcmp(sub, "scaleCVisc") == 0) {
+        if (OPS_GetNumRemainingInputArgs() < 1) {
+            opserr << "WARNING ladrunoArcLength scaleCVisc - expects one value\n";
+            return -1;
+        }
+        int nd = 1;
+        double v = 0.0;
+        if (OPS_GetDoubleInput(&nd, &v) < 0) {
+            opserr << "WARNING ladrunoArcLength scaleCVisc - failed to read value\n";
+            return -1;
+        }
+        if (la->scaleCVisc(v) < 0) return -1;
+        double r = la->getStabilizationDissipationRatio();
+        int n = 1;
+        OPS_SetDoubleOutput(&n, &r, true);
+        return 0;
+    }
+
     // read-only queries
     double out = 0.0;
-    if      (strcmp(sub, "arcLength") == 0)       out = la->getArcLength();
-    else if (strcmp(sub, "deltaLambdaStep") == 0) out = la->getDeltaLambdaStep();
-    else if (strcmp(sub, "currentLambda") == 0)   out = la->getCurrentLambda();
-    else if (strcmp(sub, "sign") == 0)            out = (double)la->getSignLastDeltaLambdaStep();
-    else if (strcmp(sub, "deltaUstepNorm") == 0)  out = la->getDeltaUstepNorm();
+    if      (strcmp(sub, "arcLength") == 0)        out = la->getArcLength();
+    else if (strcmp(sub, "deltaLambdaStep") == 0)  out = la->getDeltaLambdaStep();
+    else if (strcmp(sub, "currentLambda") == 0)    out = la->getCurrentLambda();
+    else if (strcmp(sub, "sign") == 0)             out = (double)la->getSignLastDeltaLambdaStep();
+    else if (strcmp(sub, "deltaUstepNorm") == 0)   out = la->getDeltaUstepNorm();
+    // ADR-31 Layer-1.5 stabilization-energy gate
+    else if (strcmp(sub, "dissipationRatio") == 0) out = la->getStabilizationDissipationRatio();
+    else if (strcmp(sub, "dissipatedEnergy") == 0) out = la->getStabilizationDissipatedEnergy();
+    else if (strcmp(sub, "referenceEnergy") == 0)  out = la->getReferenceStrainEnergy();
     else {
         opserr << "WARNING ladrunoArcLength - unknown subcommand '" << sub
-               << "' (use reduceStep|increaseStep|setArcLength|arcLength|"
-                  "deltaLambdaStep|currentLambda|sign|deltaUstepNorm)\n";
+               << "' (use reduceStep|increaseStep|setArcLength|scaleCVisc|arcLength|"
+                  "deltaLambdaStep|currentLambda|sign|deltaUstepNorm|"
+                  "dissipationRatio|dissipatedEnergy|referenceEnergy)\n";
         return -1;
     }
     int n = 1;

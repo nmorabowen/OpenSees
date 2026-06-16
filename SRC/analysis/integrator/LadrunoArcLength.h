@@ -137,6 +137,21 @@ class LadrunoArcLength : public StaticIntegrator
     // stabilizing (caller falls back to the SOE B).
     const Vector *getStabilizedTrueResidualVector(void) const;
 
+    // --- Layer-1.5 stabilization-energy gate (ADR-31) ---
+    // The dissipation watchdog the robust-solve driver reads each step to decide
+    // whether STABILIZE is over-diffusing the answer, plus the runtime actuator
+    // to ramp the viscous coefficient down (R-RAMPDOWN). `dissipVisc` is the
+    // cumulative artificial viscous work W_stab already accumulated in commit();
+    // the reference is the calibration strain energy `Estrain0`. All read-only on
+    // existing in-memory state -- NO sendSelf/recvSelf change (serial v1).
+    // Energy ACCOUNTING (recorder SW term) is fed from these getters, never the
+    // other way round -- the artificial f_v/M* never touch the domain a recorder
+    // sees (ADR-31 "gate vs audit").
+    double getStabilizationDissipatedEnergy(void) const; // cumulative W_stab
+    double getReferenceStrainEnergy(void) const;         // Estrain0 baseline
+    double getStabilizationDissipationRatio(void) const; // W_stab / Estrain0
+    int    scaleCVisc(double factor);                    // cVisc,cOverDt *= factor (>0)
+
     int sendSelf(int commitTag, Channel &theChannel);
     int recvSelf(int commitTag, Channel &theChannel,
                  FEM_ObjectBroker &theBroker);

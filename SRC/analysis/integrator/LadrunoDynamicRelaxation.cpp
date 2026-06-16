@@ -469,6 +469,19 @@ LadrunoDynamicRelaxation::getVel(void)
     return *Vhalf;
 }
 
+// --- Layer-1.5 settling / micro-burst signals (ADR-31) --------------------
+// residualNorm = max_i |f_ext - f_int|_i (== ||M* . a||_inf), refreshed each
+// newStep(); the force-based quasi-staticness signal (R-DR-ENERGY).
+double LadrunoDynamicRelaxation::getResidualNorm(void) const
+{
+    return residualNorm;
+}
+
+double LadrunoDynamicRelaxation::getKineticEnergy(void) const
+{
+    return kineticEnergy;
+}
+
 int
 LadrunoDynamicRelaxation::sendSelf(int cTag, Channel &theChannel)
 {

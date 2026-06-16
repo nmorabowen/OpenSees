@@ -311,7 +311,7 @@ A passing battery is the v1 acceptance gate AND the seed for the published V&V a
 
 ## Reserved class tags
 
-**v1 needs NO new Integrator/Algorithm class.** The Layer-1.5 observability seam is named getters + `OPS_` subcommands on the EXISTING `LadrunoArcLength` (33004) and `LadrunoDynamicRelaxation` (33005) — no new class tag, but a `Vector` payload widening on 33004's `sendSelf/recvSelf` for `cVisc`/dissipation state (legacy-read size-guarded, recorded in [[LEDGER_implementations]]).
+**v1 needs NO new Integrator/Algorithm class.** The Layer-1.5 observability seam is named getters + `OPS_` subcommands on the EXISTING `LadrunoArcLength` (33004) and `LadrunoDynamicRelaxation` (33005) — no new class tag. **Update (drafted 2026-06-16): no `sendSelf/recvSelf` widening was needed either** — the getters are read-only on already-serialized (`cVisc`/`cOverDt`) or per-analysis in-memory watchdog state (`dissipVisc`/`Estrain0`). The anticipated `Vector` payload change is unnecessary for serial v1 (revisit only if a parallel run must checkpoint mid-stabilization). See the implementation log.
 
 Deferred class tags (RESERVED in the **Integrator** registry per [[LEDGER_implementations]] convention; bands are per-registry — these do not collide with identical ELE/MAT/RECORDER numbers):
 
@@ -342,4 +342,14 @@ First runnable validation on the freshly-built `dist` (`ca98b3ccb`). Fixtures un
 
 Scenario (d) in each fixture is the Layer-0 rung-3 prototype (load→displacement constraint switch). Next: promote into `robust_drive()` (`adaptive_static` + rung-3 switch + rung-5 dynamics fall-through + JSONL decision log) and wire both fixtures as the pytest acceptance gate.
 
-*(filled in once the plan is being executed; move to `Ladruno_internal/implemented_robust_solve_driver.md` when done.)*
+### 2026-06-16 — Layer-0 shipped (PR #242); Layer-1.5 getters drafted
+
+Layer-0 (`robust_drive.py` spine + rung-3 switch + peak detector + JSONL log + pytest gate, 8 green) shipped as PR #242.
+
+**Layer-1.5 C++ getters drafted** in an isolated worktree (build pending the machine being free — a sibling agent's build was live):
+- `LadrunoArcLength` (33004): `getStabilizationDissipatedEnergy()` (=`dissipVisc`), `getReferenceStrainEnergy()` (=`Estrain0`), `getStabilizationDissipationRatio()` (=`dissipVisc/Estrain0`, the same fraction `commit()`/`Print()` already compute), and the `scaleCVisc()` actuator (R-RAMPDOWN). Exposed via new `ladrunoArcLength` subcommands `dissipationRatio | dissipatedEnergy | referenceEnergy | scaleCVisc`. This unlocks rung-4 (the driver can read the dissipation gate and ramp `c`).
+- `LadrunoDynamicRelaxation` (33005): `getResidualNorm()` (force-based settling signal, R-DR-ENERGY) + `getKineticEnergy()`. **C++ getters only** — the `ladrunoDR` runtime command is deferred to the rung-5 increment (first consumed/testable there) per R-SCOPE.
+
+No `sendSelf/recvSelf` change (see Reserved-class-tags update). Next: build + a rung-4 stabilization regression once the build machine frees up.
+
+*(move to `Ladruno_internal/implemented_robust_solve_driver.md` when the driver is complete.)*
