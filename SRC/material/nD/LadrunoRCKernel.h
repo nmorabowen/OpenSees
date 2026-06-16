@@ -388,6 +388,15 @@ struct Params {
     bool   betaOn;                     // false => beta=1 (identity gate)
     bool   lublinerTCReduced;          // true  => k1=0 in compressive measure
     int    tangentMode;                // 0 algorithmic, 1 secant, 2 numerical
+    // --- Phase 2a: fixed-crack aggregate-interlock shear retention (membrane) ---
+    bool   interlockOn;                // false => no interlock (Phase-1 baseline)
+    int    shearRetMode;              // 0 = MCFT v_ci cap (default); reserved 1=dsfm
+    double aggSize;                   // max aggregate size a_g (SI: mm)
+    double crackStrain;              // eps_cr crack-formation strain (<=0 => ftmax/E)
+    double crackSpacing;            // s_theta crack spacing (<=0 => lch, else 1)
+    double lch;                     // characteristic length (s_theta fallback)
+    double betaSrMin;              // residual shear-retention floor (tangent safety)
+    double sqrtFc;                // sqrt(fc') cache, set by setupParams (SI: sqrt(MPa))
     Backbone ht, hc;                   // tension / compression backbones
 };
 
@@ -396,6 +405,8 @@ inline void setupParams(Params& P)    // call after ht/hc are filled
     double fcmax = backboneMaxStress(P.hc);
     double ftmax = backboneMaxStress(P.ht);
     P.fcft_ratio = (ftmax > 0.0) ? (fcmax / ftmax > 5.0 ? fcmax / ftmax : 5.0) : 1.0;
+    P.sqrtFc = fcmax > 0.0 ? sqrt(fcmax) : 0.0;
+    if (P.crackStrain <= 0.0) P.crackStrain = (P.E > 0.0) ? ftmax / P.E : 0.0;
 }
 
 struct RCHist {
@@ -405,12 +416,18 @@ struct RCHist {
     double dt_bar, dc_bar;  // last nominal damage scalars (output/diagnostic)
     double beta;            // last MCFT factor (diagnostic)
     double eps1;            // last in-plane principal tensile strain (diagnostic)
+    // --- Phase 2a: fixed-crack aggregate-interlock state ---
+    double cracked;         // 0/1 fixed-crack flag (double for serialization)
+    double crackC, crackS;  // in-plane crack-NORMAL direction (cos,sin), frozen at capture
+    double wmax;            // max crack width reached (monotonic interlock degradation)
+    double betaSr;          // last realized shear-retention secant (diagnostic)
 };
 
 inline void histZero(RCHist& h)
 {
     for (int i = 0; i < 6; ++i) { h.stress_eff[i] = 0.0; h.strain[i] = 0.0; }
     h.xt = h.xc = 0.0; h.dt_bar = h.dc_bar = 0.0; h.beta = 1.0; h.eps1 = 0.0;
+    h.cracked = 0.0; h.crackC = 1.0; h.crackS = 0.0; h.wmax = 0.0; h.betaSr = 1.0;
 }
 
 inline double equivTensile(const double Si[3], double fcft, double Kc)
@@ -495,12 +512,58 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
     for (int a = 0; a < 6; ++a)
         sig6[a] = (1.0 - dt_bar) * D.ST[a] + beta * (1.0 - dc_bar) * D.SC[a];
 
+    // ---- Phase 2a: fixed-crack aggregate-interlock shear retention (membrane) ----
+    // Replaces the smeared (isotropic-damage) membrane shear tau_xy on a FROZEN crack
+    // plane with tau_ci = clamp(G*gamma_nt, +/- v_ci,max), v_ci,max degrading with the
+    // (monotonically grown) crack width w = macauley(eps_n)*s_theta (Vecchio-Collins).
+    // SI units assumed (fc in MPa = N/mm^2, w & a_g in mm). Default-off => no change.
+    // Phase 2a = a v_ci,max BOUND on the already-assembled (damage-reduced) crack-plane
+    // shear, NOT a substitution with bare-elastic shear. So below the cap the stress is
+    // UNCHANGED (continuous across cracking, no double-count), and the cap clips the
+    // smeared crack-shear to the Vecchio-Collins limit. This keeps stress+tangent a
+    // matched secant (see the tangent block; m_sigma . m_eps == 1).
+    double crk_c = in.crackC, crk_s = in.crackS, cracked = in.cracked, wmax = in.wmax;
+    double betaSr = 1.0;
+    bool   il_active = false, il_capped = false;
+    double il_m[3] = { 0.0, 0.0, 0.0 };             // m_eps: stress back-rotation of a shear change
+    if (P.interlockOn) {
+        if (cracked < 0.5 && e1 >= P.crackStrain && !degen) {   // freeze crack normal
+            cracked = 1.0; crk_c = p1[0]; crk_s = p1[1];
+        }
+        if (cracked >= 0.5) {
+            il_active = true;
+            double exx = eps6[0], eyy = eps6[1], gxy = eps6[3];
+            double c = crk_c, s = crk_s, c2 = c*c, s2 = s*s, cs = c*s;
+            double en = exx*c2 + eyy*s2 + gxy*cs;               // strain normal to the FROZEN crack
+            double sth = (P.crackSpacing > 0.0) ? P.crackSpacing : (P.lch > 0.0 ? P.lch : 1.0);
+            double w = macauley(en) * sth;
+            if (w > wmax) wmax = w;                              // irreversible (monotonic)
+            double denom = 0.31 + 24.0 * wmax / (P.aggSize + 16.0);
+            double vcimax = (denom > 0.0) ? 0.18 * P.sqrtFc / denom : 0.18 * P.sqrtFc;
+            // tau_sm = smeared (damaged) crack-plane shear stress = m_sigma . sig_ip
+            double sxx = sig6[0], syy = sig6[1], sxy = sig6[3];
+            double tau_sm = cs * (syy - sxx) + (c2 - s2) * sxy;
+            double tau_ci = tau_sm;
+            if (tau_ci >  vcimax) { tau_ci =  vcimax; il_capped = true; }
+            if (tau_ci < -vcimax) { tau_ci = -vcimax; il_capped = true; }
+            double dtau = tau_ci - tau_sm;                       // <=0 in magnitude (a clip)
+            betaSr = (fabs(tau_sm) > 1.0e-30) ? tau_ci / tau_sm : 1.0;
+            // back-rotate the shear change: global stress deviation = dtau * m_eps
+            il_m[0] = -2.0*cs; il_m[1] = 2.0*cs; il_m[2] = c2 - s2;
+            sig6[0] += dtau * il_m[0];
+            sig6[1] += dtau * il_m[1];
+            sig6[3] += dtau * il_m[2];
+        }
+    }
+
     // effective stress reassembly for next-step commit (beta NOT applied)
     for (int a = 0; a < 6; ++a)
         out.stress_eff[a] = (1.0 - dt_plastic) * D.ST[a] + (1.0 - dc_plastic) * D.SC[a];
     for (int a = 0; a < 6; ++a) out.strain[a] = eps6[a];
     out.xt = new_xt; out.xc = new_xc;
     out.dt_bar = dt_bar; out.dc_bar = dc_bar; out.beta = beta; out.eps1 = e1;
+    out.cracked = cracked; out.crackC = crk_c; out.crackS = crk_s;
+    out.wmax = wmax; out.betaSr = betaSr;
 
     // tangent
     if (do_tangent) {
@@ -543,6 +606,35 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
                         for (int c = 0; c < 6; ++c)
                             Dtan6[a][c] += coef * D.SC[a] * P1[c];
                 }
+            }
+            // Phase-2a interlock CONSISTENT tangent. The stress clips the crack-shear
+            // tau_sm = m_sigma.sig_ip to +/- v_ci,max via sig_ip += dtau*m_eps. Below the
+            // cap dtau==0 => stress unchanged => tangent unchanged (no cross-term). When
+            // capped, tau_ci is pinned, so d(tau_ci)/deps=0 and the consistent secant is
+            //   Dtan_ip -= (1-betaSrMin) * m_eps (x) (m_sigma . Dtan_ip).
+            // Since m_sigma . m_eps == (c^2+s^2)^2 == 1, this removes the crack-shear
+            // stiffness exactly (the full removal at betaSrMin=0; betaSrMin keeps a small
+            // residual for conditioning — a documented stabilization, stress stays fully
+            // capped regardless). NOTE: the dependence of v_ci,max on the crack-opening
+            // strain (d v_ci,max/d eps_n, active only while w is at its monotone max) is a
+            // 2nd-order normal->shear coupling that is intentionally OMITTED here, matching
+            // the secant character of the Phase-1 W_B tangent (which is itself W_B*C0, not
+            // the fully-consistent damage tangent). Use tangentMode 2 (numerical) if an
+            // exact cracked tangent is ever needed.
+            if (il_capped) {
+                double c = crk_c, s = crk_s, c2 = c*c, s2 = s*s, cs = c*s;
+                const int vidx[3] = { 0, 1, 3 };
+                double msig[3] = { -cs, cs, c2 - s2 };       // m_sigma (tensor shear projector)
+                double row[3];
+                for (int j = 0; j < 3; ++j) {
+                    double acc = 0.0;
+                    for (int k = 0; k < 3; ++k) acc += msig[k] * Dtan6[vidx[k]][vidx[j]];
+                    row[j] = acc;
+                }
+                double fac = 1.0 - P.betaSrMin;
+                for (int a = 0; a < 3; ++a)
+                    for (int c3 = 0; c3 < 3; ++c3)
+                        Dtan6[vidx[a]][vidx[c3]] -= fac * il_m[a] * row[c3];
             }
         }
     }

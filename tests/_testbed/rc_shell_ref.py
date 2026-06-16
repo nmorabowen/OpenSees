@@ -184,13 +184,35 @@ def eps1_from_membrane(exx, eyy, gxy):
     return max(0.0, c + r)
 
 
+def eps1_dir_from_membrane(exx, eyy, gxy):
+    """Mirror of kernel eps1FromMembrane: returns (e1, p1c, p1s, degen) where
+    (p1c,p1s) is the in-plane unit eigenvector of the largest principal strain.
+    gxy is engineering shear."""
+    c = 0.5 * (exx + eyy)
+    half_diff = 0.5 * (exx - eyy)
+    half_gxy = 0.5 * gxy
+    r = np.sqrt(half_diff * half_diff + half_gxy * half_gxy)
+    scale = abs(exx) + abs(eyy) + abs(gxy) + 1.0e-30
+    if r < 1.0e-9 * scale:
+        return max(0.0, c), 1.0, 0.0, True
+    lam1 = c + r
+    vx = half_gxy
+    vy = lam1 - exx
+    nrm = np.sqrt(vx * vx + vy * vy)
+    if nrm < 1.0e-300:
+        return max(0.0, lam1), 1.0, 0.0, False
+    return max(0.0, lam1), vx / nrm, vy / nrm, False
+
+
 # ---------------------------------------------------------------------------
 # Material params + state
 # ---------------------------------------------------------------------------
 class Params:
     def __init__(self, E, nu, Kc, ht, hc,
                  beta_on=False, lubliner_tc_reduced=False, beta_floor=0.1,
-                 cdf=0.0, eta=0.0):
+                 cdf=0.0, eta=0.0,
+                 interlock_on=False, agg_size=16.0, crack_strain=0.0,
+                 crack_spacing=0.0, lch=0.0, beta_sr_min=0.01):
         self.E = E
         self.nu = nu
         self.Kc = Kc
@@ -205,15 +227,29 @@ class Params:
         fcmax = hc.max_stress()
         ftmax = ht.max_stress()
         self.fcft_ratio = max(5.0, fcmax / ftmax) if ftmax > 0.0 else 1.0
+        # Phase 2a: fixed-crack aggregate-interlock shear retention
+        self.interlock_on = interlock_on
+        self.agg_size = agg_size
+        self.crack_spacing = crack_spacing
+        self.lch = lch
+        self.beta_sr_min = beta_sr_min
+        self.sqrt_fc = np.sqrt(fcmax) if fcmax > 0.0 else 0.0
+        self.crack_strain = crack_strain if crack_strain > 0.0 else (ftmax / E if E > 0.0 else 0.0)
 
 
 class State:
-    """committed state, mirrors the RCHist fields used in Phase 1"""
+    """committed state, mirrors the RCHist fields used in Phase 1 (+ Phase 2a crack state)"""
     def __init__(self):
         self.stress_eff = np.zeros(6)
         self.strain = np.zeros(6)
         self.xt = 0.0   # committed tensile equiv strain (svt)
         self.xc = 0.0   # committed compressive equiv strain (svc)
+        # Phase 2a fixed-crack interlock state
+        self.cracked = 0.0
+        self.crackC = 1.0
+        self.crackS = 0.0
+        self.wmax = 0.0
+        self.beta_sr = 1.0
 
     def copy(self):
         s = State()
@@ -221,6 +257,11 @@ class State:
         s.strain = self.strain.copy()
         s.xt = self.xt
         s.xc = self.xc
+        s.cracked = self.cracked
+        s.crackC = self.crackC
+        s.crackS = self.crackS
+        s.wmax = self.wmax
+        s.beta_sr = self.beta_sr
         return s
 
 
@@ -250,8 +291,9 @@ def compute(P, st_committed, strain6, betaMode='strength'):
 
     Si, V, ST, SC, R = stress_decomposition(stress_eff, P.cdf)
 
-    # MCFT beta from the in-plane membrane tensile principal strain (independent of eps_33)
-    e1 = eps1_from_membrane(strain6[0], strain6[1], 2.0 * strain6[3])  # strain6[3] is tensor; *2 -> engineering
+    # MCFT beta from the in-plane membrane tensile principal strain (independent of eps_33).
+    # strain6[3] is ENGINEERING shear (matches the kernel + elastic_C0 convention).
+    e1, p1c, p1s, degen = eps1_dir_from_membrane(strain6[0], strain6[1], strain6[3])
     if betaMode == 'off' or not P.beta_on:
         beta = 1.0
     else:
@@ -311,6 +353,37 @@ def compute(P, st_committed, strain6, betaMode='strength'):
     # nominal stress — THE Phase-1 insertion: beta multiplies the assembled compressive cone
     sigma = (1.0 - dt_bar) * ST + beta * (1.0 - dc_bar) * SC
 
+    # ---- Phase 2a: fixed-crack aggregate-interlock shear retention (membrane) ----
+    crk_c, crk_s = st_committed.crackC, st_committed.crackS
+    cracked, wmax = st_committed.cracked, st_committed.wmax
+    beta_sr = 1.0
+    if P.interlock_on:
+        if cracked < 0.5 and e1 >= P.crack_strain and not degen:
+            cracked = 1.0
+            crk_c, crk_s = p1c, p1s
+        if cracked >= 0.5:
+            exx, eyy, gxy = strain6[0], strain6[1], strain6[3]
+            c, s = crk_c, crk_s
+            c2, s2, cs = c * c, s * s, c * s
+            en = exx * c2 + eyy * s2 + gxy * cs
+            sth = P.crack_spacing if P.crack_spacing > 0.0 else (P.lch if P.lch > 0.0 else 1.0)
+            w = macauley(en) * sth
+            if w > wmax:
+                wmax = w
+            denom = 0.31 + 24.0 * wmax / (P.agg_size + 16.0)
+            vcimax = 0.18 * P.sqrt_fc / denom if denom > 0.0 else 0.18 * P.sqrt_fc
+            # CAP the smeared (damaged) crack-plane shear at +/- v_ci,max (matches the
+            # kernel formulation B): tau_sm = m_sigma . sig_ip ; deviation along m_eps.
+            sxx, syy, sxy = sigma[0], sigma[1], sigma[3]
+            tau_sm = cs * (syy - sxx) + (c2 - s2) * sxy
+            tau_ci = max(-vcimax, min(vcimax, tau_sm))
+            dtau = tau_ci - tau_sm
+            beta_sr = tau_ci / tau_sm if abs(tau_sm) > 1.0e-30 else 1.0
+            m0, m1, m3 = -2.0 * cs, 2.0 * cs, c2 - s2
+            sigma[0] += dtau * m0
+            sigma[1] += dtau * m1
+            sigma[3] += dtau * m3
+
     # effective stress reassembly for next-step commit (beta NOT applied — cpp:2451-2453)
     stress_eff = (1.0 - dt_plastic) * ST + (1.0 - dc_plastic) * SC
 
@@ -318,9 +391,15 @@ def compute(P, st_committed, strain6, betaMode='strength'):
     st.strain = strain6.copy()
     st.xt = new_xt
     st.xc = new_xc
+    st.cracked = cracked
+    st.crackC = crk_c
+    st.crackS = crk_s
+    st.wmax = wmax
+    st.beta_sr = beta_sr
 
     info = dict(Si=Si, beta=beta, dt_bar=dt_bar, dc_bar=dc_bar, e1=e1,
-                sigma=sigma, dc_plastic=dc_plastic)
+                sigma=sigma, dc_plastic=dc_plastic, beta_sr=beta_sr,
+                cracked=cracked, crackC=crk_c, crackS=crk_s, wmax=wmax)
     return sigma, info, st
 
 

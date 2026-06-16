@@ -1253,3 +1253,28 @@ From the finite-strain validation Phase P4 (Taylor-bar impact, 2026-06-02,
   regression in each Zone-A battery (empirically reproduced: pre-fix the smoke test segfaults
   `0xC0000005`, post-fix 77/77 pass). See [[LEDGER_implementations]] rows 33005/33006, PR #220.
   2026-06-07 (RBE3) / 2026-06-09 (embedded).
+
+- **RC-shell Phase 2a interlock — the MCFT `v_ci,max` formula is UNIT-DEPENDENT (SI: N, mm).**
+  `LadrunoRCConcrete -interlock` bounds the crack-plane shear at the Vecchio–Collins limit
+  `v_ci,max = 0.18·√fc' / (0.31 + 24·w/(a_g+16))` with crack width `w = eps_n·s_theta`. The
+  numeric constants (0.18, 0.31, 24, 16) are empirical in **MPa and mm** — `√fc'` is `√(MPa)`,
+  `w` and `a_g` are in **mm**. The rest of the kernel is unit-agnostic, but this one law is not:
+  use it on an N–mm–tonne–s model (fc' in MPa = N/mm², lengths in mm) or rescale the constants.
+  `s_theta` defaults to `-crackSpacing`, else `lch`, else 1.0; `a_g` (`-agg`) defaults to 16 mm.
+  NB Phase 2a **CLIPS the smeared (damage-reduced) crack-plane shear `τ_sm=m_σ·sig_ip` to ±v_ci,max**
+  (a bound), it does NOT substitute bare-elastic `G·γ`; below the cap the stress is unchanged.
+- **Fixed-crack interlock only engages under NON-PROPORTIONAL loading.** The crack normal freezes to
+  the principal-tensile direction at cracking; under a *proportional* path stress/strain stay coaxial,
+  so the crack-plane shear is ~0 and `v_ci,max` never binds — interlock looks inert. It engages only
+  once the principal direction ROTATES off the frozen normal (tension-then-shear, any non-radial path).
+  TEST consequence: an off-axis interlock test MUST be two-stage (freeze oblique, then rotate shear onto
+  it); a single proportional ramp gives `τ_nt≈0` and tests nothing.
+- **rc_shell_ref.py oracle uses RAW `(x,y,q)` backbones; the C++ kernel ADJUSTS them
+  (`buildBackbone` E-consistency).** So oracle-vs-C++ **absolute** stress only matches for
+  quantities INDEPENDENT of the backbone q-adjustment. The Phase-1 β gate dodges this by being
+  a RATIO; the Phase-2a interlock cap test dodges it by asserting only the **CAPPED** crack-plane shear
+  `|τ_nt| == v_ci,max` (backbone-free); sub-cap `σ_xy` is the damaged smeared shear and differs
+  C++-vs-oracle. To compare absolute normal stresses oracle-vs-C++ you must first port
+  `buildBackbone`'s adjust() into the numpy Backbone. (Two-stage driver `_path_tension_then_shear`:
+  tension on dof-1∝X, shear on dof-2∝X — disjoint DOFs let one SP per DOF realize the path under Penalty;
+  pass `gamma0>0` to freeze an OBLIQUE crack for the off-axis rotation test.)
