@@ -212,7 +212,7 @@ class Params:
                  beta_on=False, lubliner_tc_reduced=False, beta_floor=0.1,
                  cdf=0.0, eta=0.0,
                  interlock_on=False, agg_size=16.0, crack_strain=0.0,
-                 crack_spacing=0.0, lch=0.0, beta_sr_min=0.01):
+                 crack_spacing=0.0, lch=0.0, beta_sr_min=0.01, interlock_cyclic=False):
         self.E = E
         self.nu = nu
         self.Kc = Kc
@@ -229,6 +229,7 @@ class Params:
         self.fcft_ratio = max(5.0, fcmax / ftmax) if ftmax > 0.0 else 1.0
         # Phase 2a: fixed-crack aggregate-interlock shear retention
         self.interlock_on = interlock_on
+        self.interlock_cyclic = interlock_cyclic
         self.agg_size = agg_size
         self.crack_spacing = crack_spacing
         self.lch = lch
@@ -250,6 +251,8 @@ class State:
         self.crackS = 0.0
         self.wmax = 0.0
         self.beta_sr = 1.0
+        self.tauCr = 0.0      # Phase 2b committed crack-shear stress
+        self.gammaCr = 0.0    # Phase 2b committed crack slip
 
     def copy(self):
         s = State()
@@ -262,6 +265,8 @@ class State:
         s.crackS = self.crackS
         s.wmax = self.wmax
         s.beta_sr = self.beta_sr
+        s.tauCr = self.tauCr
+        s.gammaCr = self.gammaCr
         return s
 
 
@@ -353,14 +358,17 @@ def compute(P, st_committed, strain6, betaMode='strength'):
     # nominal stress — THE Phase-1 insertion: beta multiplies the assembled compressive cone
     sigma = (1.0 - dt_bar) * ST + beta * (1.0 - dc_bar) * SC
 
-    # ---- Phase 2a: fixed-crack aggregate-interlock shear retention (membrane) ----
+    # ---- Phase 2a/2b: fixed-crack aggregate-interlock (membrane) ----
     crk_c, crk_s = st_committed.crackC, st_committed.crackS
     cracked, wmax = st_committed.cracked, st_committed.wmax
+    tau_cr, gamma_cr = st_committed.tauCr, st_committed.gammaCr
     beta_sr = 1.0
     if P.interlock_on:
+        just_captured = False
         if cracked < 0.5 and e1 >= P.crack_strain and not degen:
             cracked = 1.0
             crk_c, crk_s = p1c, p1s
+            just_captured = True
         if cracked >= 0.5:
             exx, eyy, gxy = strain6[0], strain6[1], strain6[3]
             c, s = crk_c, crk_s
@@ -370,15 +378,27 @@ def compute(P, st_committed, strain6, betaMode='strength'):
             w = macauley(en) * sth
             if w > wmax:
                 wmax = w
-            denom = 0.31 + 24.0 * wmax / (P.agg_size + 16.0)
+            w_use = w if P.interlock_cyclic else wmax    # reversible (cyclic) vs monotone (2a)
+            denom = 0.31 + 24.0 * w_use / (P.agg_size + 16.0)
             vcimax = 0.18 * P.sqrt_fc / denom if denom > 0.0 else 0.18 * P.sqrt_fc
-            # CAP the smeared (damaged) crack-plane shear at +/- v_ci,max (matches the
-            # kernel formulation B): tau_sm = m_sigma . sig_ip ; deviation along m_eps.
             sxx, syy, sxy = sigma[0], sigma[1], sigma[3]
             tau_sm = cs * (syy - sxx) + (c2 - s2) * sxy
-            tau_ci = max(-vcimax, min(vcimax, tau_sm))
+            if P.interlock_cyclic:
+                # Phase 2b: incremental friction-slip crack-shear (FSAM-style)
+                Gint = 0.5 * P.E / (1.0 + P.nu)
+                g_nt = 2.0 * (eyy - exx) * cs + gxy * (c2 - s2)
+                if just_captured:                         # seed for stress continuity (== 2a value)
+                    gamma_cr = g_nt
+                    tau_cr = max(-vcimax, min(vcimax, tau_sm))
+                tau_ci = max(-vcimax, min(vcimax, tau_cr + Gint * (g_nt - gamma_cr)))
+                gamma_cr = g_nt
+                tau_cr = tau_ci
+                beta_sr = tau_ci / vcimax if vcimax > 1.0e-30 else 0.0   # cap utilization
+            else:
+                # Phase 2a: CLIP the smeared (damaged) crack-plane shear at +/- v_ci,max
+                tau_ci = max(-vcimax, min(vcimax, tau_sm))
+                beta_sr = tau_ci / tau_sm if abs(tau_sm) > 1.0e-30 else 1.0
             dtau = tau_ci - tau_sm
-            beta_sr = tau_ci / tau_sm if abs(tau_sm) > 1.0e-30 else 1.0
             m0, m1, m3 = -2.0 * cs, 2.0 * cs, c2 - s2
             sigma[0] += dtau * m0
             sigma[1] += dtau * m1
@@ -396,10 +416,13 @@ def compute(P, st_committed, strain6, betaMode='strength'):
     st.crackS = crk_s
     st.wmax = wmax
     st.beta_sr = beta_sr
+    st.tauCr = tau_cr
+    st.gammaCr = gamma_cr
 
     info = dict(Si=Si, beta=beta, dt_bar=dt_bar, dc_bar=dc_bar, e1=e1,
                 sigma=sigma, dc_plastic=dc_plastic, beta_sr=beta_sr,
-                cracked=cracked, crackC=crk_c, crackS=crk_s, wmax=wmax)
+                cracked=cracked, crackC=crk_c, crackS=crk_s, wmax=wmax,
+                tauCr=tau_cr, gammaCr=gamma_cr)
     return sigma, info, st
 
 

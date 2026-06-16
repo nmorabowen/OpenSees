@@ -390,6 +390,7 @@ struct Params {
     int    tangentMode;                // 0 algorithmic, 1 secant, 2 numerical
     // --- Phase 2a: fixed-crack aggregate-interlock shear retention (membrane) ---
     bool   interlockOn;                // false => no interlock (Phase-1 baseline)
+    bool   interlockCyclic;          // Phase 2b: incremental friction-slip + reversible w
     int    shearRetMode;              // 0 = MCFT v_ci cap (default); reserved 1=dsfm
     double aggSize;                   // max aggregate size a_g (SI: mm)
     double crackStrain;              // eps_cr crack-formation strain (<=0 => ftmax/E)
@@ -421,6 +422,9 @@ struct RCHist {
     double crackC, crackS;  // in-plane crack-NORMAL direction (cos,sin), frozen at capture
     double wmax;            // max crack width reached (monotonic interlock degradation)
     double betaSr;          // last realized shear-retention secant (diagnostic)
+    // --- Phase 2b: cyclic crack-shear friction-slip state ---
+    double tauCr;           // committed crack-plane shear stress (incremental friction)
+    double gammaCr;         // committed crack-plane engineering shear strain (slip)
 };
 
 inline void histZero(RCHist& h)
@@ -428,6 +432,7 @@ inline void histZero(RCHist& h)
     for (int i = 0; i < 6; ++i) { h.stress_eff[i] = 0.0; h.strain[i] = 0.0; }
     h.xt = h.xc = 0.0; h.dt_bar = h.dc_bar = 0.0; h.beta = 1.0; h.eps1 = 0.0;
     h.cracked = 0.0; h.crackC = 1.0; h.crackS = 0.0; h.wmax = 0.0; h.betaSr = 1.0;
+    h.tauCr = 0.0; h.gammaCr = 0.0;
 }
 
 inline double equivTensile(const double Si[3], double fcft, double Kc)
@@ -522,14 +527,27 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
     // UNCHANGED (continuous across cracking, no double-count), and the cap clips the
     // smeared crack-shear to the Vecchio-Collins limit. This keeps stress+tangent a
     // matched secant (see the tangent block; m_sigma . m_eps == 1).
+    // Phase 2a (default): a v_ci,max BOUND that CLIPS the already-assembled (damage-
+    // reduced) crack-plane shear tau_sm = m_sigma.sig_ip to +/- v_ci,max -- NOT a bare-
+    // elastic substitution; below the cap the stress is unchanged (continuous). w is
+    // monotone (irreversible). m_sigma . m_eps == 1 => matched secant tangent.
+    // Phase 2b (-cyclic): the crack-plane shear becomes an INDEPENDENT incremental
+    // friction-slip state (FSAM-style): tau_cr = clamp(tau_cr_committed + G*dgamma_nt,
+    // +/- v_ci,max), with v_ci,max(w) now REVERSIBLE (crack closure raises the cap).
+    // Cyclic reversal unloads along G and re-caps in the opposite sense; the cap
+    // collapsing as the crack re-opens (w grows) gives pinching. Reduces to a monotone
+    // ramp-then-cap (same plateau as 2a) under monotonic loading.
     double crk_c = in.crackC, crk_s = in.crackS, cracked = in.cracked, wmax = in.wmax;
+    double tauCr = in.tauCr, gammaCr = in.gammaCr;   // 2b cyclic crack-shear state
     double betaSr = 1.0;
-    bool   il_active = false, il_capped = false;
+    bool   il_active = false, il_capped = false, il_cyclic = false;
     double il_m[3] = { 0.0, 0.0, 0.0 };             // m_eps: stress back-rotation of a shear change
+    double il_Gint = 0.0;                            // interlock shear modulus (cyclic tangent)
     if (P.interlockOn) {
         if (cracked < 0.5 && e1 >= P.crackStrain && !degen) {   // freeze crack normal
             cracked = 1.0; crk_c = p1[0]; crk_s = p1[1];
         }
+        bool just_captured = (in.cracked < 0.5 && cracked >= 0.5);
         if (cracked >= 0.5) {
             il_active = true;
             double exx = eps6[0], eyy = eps6[1], gxy = eps6[3];
@@ -537,19 +555,37 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
             double en = exx*c2 + eyy*s2 + gxy*cs;               // strain normal to the FROZEN crack
             double sth = (P.crackSpacing > 0.0) ? P.crackSpacing : (P.lch > 0.0 ? P.lch : 1.0);
             double w = macauley(en) * sth;
-            if (w > wmax) wmax = w;                              // irreversible (monotonic)
-            double denom = 0.31 + 24.0 * wmax / (P.aggSize + 16.0);
+            if (w > wmax) wmax = w;                              // tracked max (diagnostic / 2a)
+            double w_use = P.interlockCyclic ? w : wmax;        // reversible (cyclic) vs monotone (2a)
+            double denom = 0.31 + 24.0 * w_use / (P.aggSize + 16.0);
             double vcimax = (denom > 0.0) ? 0.18 * P.sqrtFc / denom : 0.18 * P.sqrtFc;
-            // tau_sm = smeared (damaged) crack-plane shear stress = m_sigma . sig_ip
             double sxx = sig6[0], syy = sig6[1], sxy = sig6[3];
-            double tau_sm = cs * (syy - sxx) + (c2 - s2) * sxy;
-            double tau_ci = tau_sm;
-            if (tau_ci >  vcimax) { tau_ci =  vcimax; il_capped = true; }
-            if (tau_ci < -vcimax) { tau_ci = -vcimax; il_capped = true; }
-            double dtau = tau_ci - tau_sm;                       // <=0 in magnitude (a clip)
-            betaSr = (fabs(tau_sm) > 1.0e-30) ? tau_ci / tau_sm : 1.0;
-            // back-rotate the shear change: global stress deviation = dtau * m_eps
-            il_m[0] = -2.0*cs; il_m[1] = 2.0*cs; il_m[2] = c2 - s2;
+            double tau_sm = cs * (syy - sxx) + (c2 - s2) * sxy; // smeared crack-plane shear
+            double tau_ci;
+            if (P.interlockCyclic) {
+                il_cyclic = true;
+                il_Gint = 0.5 * E / (1.0 + P.nu);               // interlock shear modulus = G
+                double g_nt = 2.0*(eyy - exx)*cs + gxy*(c2 - s2);
+                if (just_captured) {                            // seed for stress CONTINUITY:
+                    gammaCr = g_nt;                             // slip origin = capture slip,
+                    tauCr = (tau_sm >  vcimax) ?  vcimax        // tau origin = the clipped smeared
+                          : (tau_sm < -vcimax) ? -vcimax : tau_sm;  // shear (== the 2a value) so the
+                }                                               // capture step is continuous (no jump)
+                tau_ci = tauCr + il_Gint * (g_nt - gammaCr);    // incremental friction predictor
+                if (tau_ci >  vcimax) { tau_ci =  vcimax; il_capped = true; }
+                if (tau_ci < -vcimax) { tau_ci = -vcimax; il_capped = true; }
+                gammaCr = g_nt; tauCr = tau_ci;                 // advance committed slip/stress
+                // betaSr in cyclic = cap UTILIZATION tau_ci/v_ci,max (in [-1,1]); the 2a
+                // retention-secant tau_ci/tau_sm is non-physical here (tau_ci is independent).
+                betaSr = (vcimax > 1.0e-30) ? tau_ci / vcimax : 0.0;
+            } else {
+                tau_ci = tau_sm;                                // 2a: clip the smeared shear
+                if (tau_ci >  vcimax) { tau_ci =  vcimax; il_capped = true; }
+                if (tau_ci < -vcimax) { tau_ci = -vcimax; il_capped = true; }
+                betaSr = (fabs(tau_sm) > 1.0e-30) ? tau_ci / tau_sm : 1.0;
+            }
+            double dtau = tau_ci - tau_sm;
+            il_m[0] = -2.0*cs; il_m[1] = 2.0*cs; il_m[2] = c2 - s2;   // m_eps
             sig6[0] += dtau * il_m[0];
             sig6[1] += dtau * il_m[1];
             sig6[3] += dtau * il_m[2];
@@ -564,6 +600,7 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
     out.dt_bar = dt_bar; out.dc_bar = dc_bar; out.beta = beta; out.eps1 = e1;
     out.cracked = cracked; out.crackC = crk_c; out.crackS = crk_s;
     out.wmax = wmax; out.betaSr = betaSr;
+    out.tauCr = tauCr; out.gammaCr = gammaCr;
 
     // tangent
     if (do_tangent) {
@@ -621,7 +658,26 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
             // the secant character of the Phase-1 W_B tangent (which is itself W_B*C0, not
             // the fully-consistent damage tangent). Use tangentMode 2 (numerical) if an
             // exact cracked tangent is ever needed.
-            if (il_capped) {
+            if (il_cyclic) {
+                // Phase-2b cyclic consistent tangent. Crack-shear is INDEPENDENT
+                // (tau_cr = tau_cr_c + G*dgamma_nt, clamped): remove the smeared crack-shear
+                // sensitivity m_eps (x) (m_sigma.Dtan_ip), then add the friction stiffness
+                // G*m_eps (x) m_eps (full when sliding-elastic; floored to betaSrMin*G when
+                // capped/plastic for conditioning). v_ci,max(w) coupling omitted (2nd order).
+                double c = crk_c, s = crk_s, c2 = c*c, s2 = s*s, cs = c*s;
+                const int vidx[3] = { 0, 1, 3 };
+                double msig[3] = { -cs, cs, c2 - s2 };
+                double row[3];
+                for (int j = 0; j < 3; ++j) {
+                    double acc = 0.0;
+                    for (int k = 0; k < 3; ++k) acc += msig[k] * Dtan6[vidx[k]][vidx[j]];
+                    row[j] = acc;
+                }
+                double gcoef = (il_capped ? P.betaSrMin : 1.0) * il_Gint;
+                for (int a = 0; a < 3; ++a)
+                    for (int c3 = 0; c3 < 3; ++c3)
+                        Dtan6[vidx[a]][vidx[c3]] += -il_m[a] * row[c3] + gcoef * il_m[a] * il_m[c3];
+            } else if (il_capped) {
                 double c = crk_c, s = crk_s, c2 = c*c, s2 = s*s, cs = c*s;
                 const int vidx[3] = { 0, 1, 3 };
                 double msig[3] = { -cs, cs, c2 - s2 };       // m_sigma (tensor shear projector)

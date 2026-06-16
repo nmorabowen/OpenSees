@@ -42,7 +42,7 @@ TD = [0.0, 0.0,    1.0 - 0.5 / 5.0]
 
 
 def _rc(tag, beta=False, lub_reduced=None,
-        interlock=False, agg=16.0, crack_spacing=0.0, beta_sr_min=0.01):
+        interlock=False, agg=16.0, crack_spacing=0.0, beta_sr_min=0.01, cyclic=False):
     if lub_reduced is None:
         lub_reduced = beta
     args = ["LadrunoRCConcrete", tag, E, NU,
@@ -56,6 +56,8 @@ def _rc(tag, beta=False, lub_reduced=None,
         args += ["-interlock", "-agg", agg, "-betaSrMin", beta_sr_min]
         if crack_spacing > 0.0:
             args += ["-crackSpacing", crack_spacing]
+        if cyclic:
+            args += ["-cyclic"]
     ops.nDMaterial(*args)
 
 
@@ -217,9 +219,9 @@ def _path_tension_then_shear(mat_fn, exx, gamma, n1=40, n2=60, gamma0=0.0):
         ops.node(t, *c)
     mat_fn(1)
     ops.element("stdBrick", 1, 1, 2, 3, 4, 5, 6, 7, 8, 1)
-    ops.timeSeries("Path", 1, "-time", 0.0, 1.0, 2.0, "-values", 0.0, 1.0, 1.0)  # tension: ramp, hold
+    ops.timeSeries("Path", 1, "-time", 0.0, 1.0, 2.0, "-values", 0.0, 1.0, 1.0, "-useLast")  # tension: ramp, hold
     f0 = (gamma0 / gamma) if gamma != 0.0 else 0.0
-    ops.timeSeries("Path", 2, "-time", 0.0, 1.0, 2.0, "-values", 0.0, f0, 1.0)   # shear: ->g0, ->gamma
+    ops.timeSeries("Path", 2, "-time", 0.0, 1.0, 2.0, "-values", 0.0, f0, 1.0, "-useLast")   # shear: ->g0, ->gamma
     ops.pattern("Plain", 1, 1)
     for t, (x, y, z) in _CUBE.items():
         ops.sp(t, 1, exx * x)     # u_x = exx*X  -> eps_xx
@@ -362,3 +364,199 @@ def test_interlock_offaxis_crack_rotation():
     tau_nt = cs * (sig[1] - sig[0]) + (c2 - s2) * sig[3]
     assert abs(tau_nt) == pytest.approx(vci, rel=5.0e-3), (
         f"off-axis crack-plane shear {abs(tau_nt)} != v_ci,max {vci} (n=({c:.3f},{s:.3f}))")
+
+
+# ==========================================================================
+#  Phase 2b — cyclic crack-shear (incremental friction-slip), -cyclic flag
+# ==========================================================================
+def _path_stages(mat_fn, exx, gamma, ts1_vals, ts2_vals, nper=60, record_from=1):
+    """Multi-stage HOMOGENEOUS path: tension on dof-1 (exx*X) scaled by Path ts1_vals,
+    shear on dof-2 (gamma*X, engineering gxy) scaled by Path ts2_vals (disjoint DOFs).
+    Stage k spans pseudo-time [k, k+1]. Records (gxy, sig6) EVERY step from stage
+    `record_from` onward. gxy is read from nodeDisp (u_y at X=1 == engineering gxy)."""
+    nst = len(ts1_vals) - 1
+    # pad one extra hold node beyond the analysis end (time nst) so float-accumulated
+    # pseudo-time overshoot still interpolates to the held final value (Path returns 0
+    # outside its range otherwise -> strains collapse, crack spuriously "closes").
+    times = [float(i) for i in range(nst + 2)]
+    ts1_vals = list(ts1_vals) + [ts1_vals[-1]]
+    ts2_vals = list(ts2_vals) + [ts2_vals[-1]]
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for t, c in _CUBE.items():
+        ops.node(t, *c)
+    mat_fn(1)
+    ops.element("stdBrick", 1, 1, 2, 3, 4, 5, 6, 7, 8, 1)
+    ops.timeSeries("Path", 1, "-time", *times, "-values", *ts1_vals)
+    ops.timeSeries("Path", 2, "-time", *times, "-values", *ts2_vals)
+    ops.pattern("Plain", 1, 1)
+    for t, (x, y, z) in _CUBE.items():
+        ops.sp(t, 1, exx * x)
+        ops.sp(t, 3, 0.0)
+    ops.pattern("Plain", 2, 2)
+    for t, (x, y, z) in _CUBE.items():
+        ops.sp(t, 2, gamma * x)
+    ops.system("FullGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Penalty", 1.0e14, 1.0e14)
+    ops.test("NormDispIncr", 1.0e-8, 300, 0)
+    ops.algorithm("Newton")
+    ops.integrator("LoadControl", 1.0 / nper)
+    ops.analysis("Static")
+    out = []
+    for stage in range(nst):
+        for _ in range(nper):
+            assert ops.analyze(1) == 0, f"cyclic analyze failed (stage {stage})"
+            if stage >= record_from:
+                ops.eleResponse(1, "forces")
+                sig = list(ops.eleResponse(1, "stresses"))[0:6]
+                out.append((ops.nodeDisp(2, 2), sig))
+    return out
+
+
+def _loop_energy(pts):
+    E = pg = pt = 0.0
+    for g, sig in pts:
+        E += 0.5 * (sig[3] + pt) * (g - pg)
+        pg, pt = g, sig[3]
+    return E
+
+
+@pytest.mark.t1
+def test_cyclic_reversal_caps_and_dissipates():
+    """-cyclic: an axis-aligned crack (tension along x) cycled in shear must (a) saturate
+    the crack-shear at +/- v_ci,max on both half-cycles and (b) dissipate energy (a
+    hysteresis loop, area > 0)."""
+    import numpy as np
+    exx, gamma, sth, a_g = 5.0e-4, 2.0e-3, 50.0, 16.0
+    pts = _path_stages(lambda t: _rc(t, beta=False, interlock=True, cyclic=True, agg=a_g, crack_spacing=sth),
+                       exx, gamma, [0, 1, 1, 1, 1], [0, 0, 1, -1, 1], nper=80, record_from=1)
+    vci = _vci_max(np.sqrt(max(CS)), exx * sth, a_g)
+    taus = [sig[3] for _, sig in pts]
+    assert max(taus) == pytest.approx(vci, rel=3.0e-3), f"+peak {max(taus)} != vci {vci}"
+    assert min(taus) == pytest.approx(-vci, rel=3.0e-3), f"-peak {min(taus)} != -vci {vci}"
+    # dissipation over a CLOSED cycle only (stages 2+3 return +gamma->-gamma->+gamma): the open
+    # stage-1 loading work is excluded so the threshold isn't a one-way-work tautology. A
+    # near-rectangular friction loop dissipates ~ 4*vci*gamma; require well above the elastic
+    # band area (~vci^2/G) to prove genuine hysteresis.
+    nrec = len(pts)
+    closed = pts[nrec // 3:]                      # the +gamma->-gamma->+gamma portion
+    assert _loop_energy(closed) > 2.0 * vci * gamma, "closed-loop dissipation too small"
+    # crackShear response wiring: tauCr == global sigma_xy for the axis-aligned crack
+    cshear = list(ops.eleResponse(1, "material", "1", "crackShear"))
+    assert cshear[0] == pytest.approx(pts[-1][1][3], rel=1.0e-6), "crackShear tauCr != sigma_xy"
+
+
+@pytest.mark.t1
+def test_cyclic_unload_stiffness_is_G():
+    """On reversal off the cap, the crack-shear unloads along the elastic interlock
+    modulus G = E/2(1+nu) (stiff), not along the cap — the friction-slip signature."""
+    import numpy as np
+    exx, gamma, sth, a_g = 5.0e-4, 2.0e-3, 50.0, 16.0
+    G = E / (2.0 * (1.0 + NU))
+    pts = _path_stages(lambda t: _rc(t, beta=False, interlock=True, cyclic=True, agg=a_g, crack_spacing=sth),
+                       exx, gamma, [0, 1, 1, 1], [0, 0, 1, -1], nper=80, record_from=1)
+    # the reversal is the MAX-slip point (end of the +shear leg); the next step unloads
+    gs = [g for g, _ in pts]
+    ipk = int(np.argmax(gs))
+    g0, s0 = pts[ipk][0], pts[ipk][1][3]
+    g1, s1 = pts[ipk + 1][0], pts[ipk + 1][1][3]
+    slope = (s1 - s0) / (g1 - g0)
+    assert slope == pytest.approx(G, rel=2.0e-2), f"unload slope {slope} != G {G}"
+    # CLOSED-FORM (oracle-independent) elasto-friction line: on the stiff unload off the +cap,
+    # tau(delta) = vci - G*delta until it re-caps at -vci (delta = 2*vci/G). Check a sample
+    # strictly inside the elastic band.
+    vci = _vci_max(np.sqrt(max(CS)), exx * sth, a_g)
+    for g, sig in pts[ipk + 1:]:
+        delta = g0 - g                                  # slip retraction from the peak (>0)
+        if 0 < delta < 1.8 * vci / G:                   # inside the elastic band, before re-cap
+            assert sig[3] == pytest.approx(vci - G * delta, abs=2.0e-3, rel=3.0e-3), (
+                f"unload line off: tau={sig[3]} != vci-G*delta={vci - G * delta}")
+            break
+
+
+@pytest.mark.t1
+def test_cyclic_crack_closure_recovers_capacity():
+    """Crack-width-reversible cap: open the crack wide (low v_ci,max), shear to the cap,
+    then CLOSE the crack (reduce normal tension) and slip further — the cap must rise to
+    v_ci,max of the smaller width, so the shear exceeds the open-crack plateau."""
+    exx, gamma, sth, a_g = 1.2e-3, 3.0e-3, 50.0, 16.0
+    # stage1 ramp tension; stage2 shear to cap (open); stage3 close (exx*0.2) + more slip
+    pts = _path_stages(lambda t: _rc(t, beta=False, interlock=True, cyclic=True, agg=a_g, crack_spacing=sth),
+                       exx, gamma, [0, 1, 1, 0.2], [0, 0, 1, 1.6], nper=60, record_from=1)
+    import numpy as np
+    taus = [sig[3] for _, sig in pts]
+    cap_open = _vci_max(np.sqrt(max(CS)), exx * sth, a_g)
+    cap_closed = _vci_max(np.sqrt(max(CS)), 0.2 * exx * sth, a_g)
+    assert max(taus) == pytest.approx(cap_closed, rel=5.0e-3), f"closed cap {max(taus)} != {cap_closed}"
+    assert cap_closed > 1.10 * cap_open, "closure did not raise the cap"
+
+
+@pytest.mark.t1
+def test_cyclic_monotonic_reduces_to_2a_plateau():
+    """Under monotonic loading -cyclic ramps the crack-shear at G then caps at the SAME
+    v_ci,max as the 2a clip -> identical plateau (the cyclic law is a superset)."""
+    import numpy as np
+    exx, gamma, sth, a_g = 5.0e-4, 2.0e-3, 50.0, 16.0
+    cyc = _path_tension_then_shear(
+        lambda t: _rc(t, beta=False, interlock=True, cyclic=True, agg=a_g, crack_spacing=sth),
+        exx, gamma, n1=40, n2=80)
+    twoa = _path_tension_then_shear(
+        lambda t: _rc(t, beta=False, interlock=True, cyclic=False, agg=a_g, crack_spacing=sth),
+        exx, gamma, n1=40, n2=80)
+    vci = _vci_max(np.sqrt(max(CS)), exx * sth, a_g)
+    assert cyc[-1][1][3] == pytest.approx(vci, rel=3.0e-3), f"cyclic monotonic plateau {cyc[-1][1][3]} != vci {vci}"
+    # both saturate the SAME bound -> the cyclic monotonic plateau equals the actual 2a-run plateau
+    assert cyc[-1][1][3] == pytest.approx(twoa[-1][1][3], rel=3.0e-3), "cyclic plateau != 2a-run plateau"
+
+
+@pytest.mark.t1
+def test_cyclic_matches_oracle_path():
+    """For an axis-aligned crack the cyclic crack-shear sigma_xy == tau_ci (the independent
+    friction stress), which is backbone-INDEPENDENT -> C++ must match the numpy oracle
+    step-by-step over the whole reversing path (not just at the cap)."""
+    import numpy as np
+    import sys, os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "_testbed"))
+    import rc_shell_ref as ref
+    exx, gamma, sth, a_g = 5.0e-4, 2.0e-3, 50.0, 16.0
+    pts = _path_stages(lambda t: _rc(t, beta=False, interlock=True, cyclic=True, agg=a_g, crack_spacing=sth),
+                       exx, gamma, [0, 1, 1, 1, 1], [0, 0, 1, -1, 1], nper=40, record_from=0)
+    P = ref.reference_params(beta_on=False)
+    P.interlock_on = True
+    P.interlock_cyclic = True
+    P.agg_size = a_g
+    P.crack_spacing = sth
+    st = ref.State()
+    nmax = 0.0
+    for g, sig in pts:
+        s = np.array([exx, 0.0, 0.0, g, 0.0, 0.0])
+        sig_o, _, st = ref.compute(P, st, s)
+        nmax = max(nmax, abs(sig[3] - sig_o[3]))
+    assert nmax < 5.0e-3, f"C++ vs oracle cyclic crack-shear mismatch {nmax}"
+
+
+@pytest.mark.t1
+def test_cyclic_tangent_assembled_in_opensees():
+    """The cyclic consistent tangent, AS ASSEMBLED IN OPENSEES (not just standalone FD): for an
+    axis-aligned crack the in-plane shear tangent Dtan[3][3] must equal the interlock modulus G
+    while sliding-elastic (sub-cap), and collapse to betaSrMin*G once the friction cap binds
+    (the friction stiffness is removed). Reads the 6x6 material tangent via eleResponse."""
+    import numpy as np
+    G, bsr = E / (2.0 * (1.0 + NU)), 0.01
+    sth, a_g = 50.0, 16.0
+    vci = _vci_max(np.sqrt(max(CS)), 5.0e-4 * sth, a_g)
+
+    def t33_after(gamma):
+        _path_tension_then_shear(
+            lambda t: _rc(t, beta=False, interlock=True, cyclic=True, agg=a_g,
+                          crack_spacing=sth, beta_sr_min=bsr),
+            5.0e-4, gamma, n1=40, n2=60)
+        T = list(ops.eleResponse(1, "material", "1", "tangent"))   # 6x6 row-major
+        return T[3 * 6 + 3]
+
+    # sub-cap sliding (G*gamma < vci => gamma < vci/G): tangent == G
+    g_sub = 0.6 * vci / G
+    assert t33_after(g_sub) == pytest.approx(G, rel=2.0e-2), "sliding-elastic Dtan[3][3] != G"
+    # well past the cap: friction stiffness removed -> betaSrMin*G
+    assert t33_after(2.0e-3) == pytest.approx(bsr * G, rel=0.2), "capped Dtan[3][3] != betaSrMin*G"

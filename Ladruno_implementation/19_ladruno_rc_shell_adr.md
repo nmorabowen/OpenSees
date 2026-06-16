@@ -546,6 +546,39 @@ and pinching are **2b**.
   acceptance item, not yet run for 2a; (3) the condensed PlateFiber/PlaneStress × interlock interaction is
   exercised only via the 3D `stdBrick` so far.
 
+#### Phase 2b.1 (SHIPPED) — cyclic crack-shear (incremental friction-slip)
+- **Flag:** `-cyclic` (a sub-flag of `-interlock`); default OFF ⇒ 2a (monotone clip) is byte-identical.
+- **Model (decided):** the crack-plane shear becomes an **independent incremental friction-slip state**
+  (FSAM-crib, `InterLocker_improved`): `tau_cr = clamp(tau_cr_committed + G·(gamma_nt − gamma_nt_committed),
+  ±v_ci,max(w))`, `G = E/2(1+nu)`, slip origin frozen at crack capture. The crack width `w` is now
+  **REVERSIBLE** (`w = macauley(eps_n)·s_theta` of the *current* opening, not the monotone max) so crack
+  closure raises the cap (capacity recovery); reduces to a monotone ramp-then-cap (same `v_ci,max` plateau
+  as 2a) under monotonic loading. State = 2 committed scalars `{tauCr, gammaCr}` per the FSAM minimal recipe.
+- **Cap = MCFT `v_ci,max(w)`** (not Coulomb `μ·σ_n`) — keeps the 2a/ADR bound; the FSAM `μ·f_n` friction
+  cap is an alternative deferred to 2b.2.
+- **Diverges from FSAM in three respects** (so the "FSAM crib" credit is not misread): (1) the cap is MCFT
+  `v_ci,max(w)`, not FSAM's Coulomb `μ·f_n`; (2) the slip stiffness is the FULL elastic `G = E/2(1+nu)`, not
+  FSAM's `0.4·Ec`; (3) there is **no zero-shear-when-open collapse** — an open crack still transfers shear up
+  to the (width-degraded) `v_ci,max(w)` rather than being forced to zero. (1) and (3) keep continuity with the
+  2a bound; the FSAM variants are 2b.2 options.
+- **Consistent tangent:** remove the smeared crack-shear sensitivity `m_eps⊗(m_sigma·D)` then add the
+  friction stiffness `G·m_eps⊗m_eps` (full when sliding-elastic; floored to `betaSrMin·G` when capped).
+  Verified: standalone FD gives `Dtan[3][3] = G` exactly on the elastic-unload branch. **At the single
+  crack-CAPTURE step** the stress is seeded to the clipped smeared shear (continuity) while the tangent adds
+  the friction stiffness — a deliberate one-step secant compromise (same spirit as 2a's capture), not a
+  derivation error.
+- **Verified (Zone-A, material-point):** reversal re-caps at ∓`v_ci,max` + energy dissipation; unload
+  stiffness == `G`; crack-closure raises the cap (capacity recovery); monotonic reduces to the 2a plateau;
+  C++ ≡ numpy oracle step-by-step over a full reversing path (cyclic crack-shear is backbone-independent).
+- **Pinching is a PANEL phenomenon (deferred to 2b.2):** at a material point with a fixed crack and constant
+  normal strain the loop is *fat* (the elastic `±v_ci/G` band is sub-step); a pinched waist needs the crack
+  to open/close during the cycle (principal-direction rotation), which only happens in a real panel. The
+  ADR's pinching-shape + hysteretic-energy acceptance vs a **Tran–Wallace squat-wall** experiment is 2b.2.
+- **Deferred to 2b.2:** crack-closure spectral reassembly on the NORMAL direction; the `-shearRetention
+  {const|dsfm|rots}` retention CURVES + cyclic interlock-surface degradation (FSAM `epsiloncmax` knockdown of
+  `v_ci,max`); panel/experiment pinching validation; rigid-rotation objectivity; PlateFiber×condensation +
+  serialization-round-trip cyclic tests.
+
 ### Phase 3 — Tension stiffening + crack-band/`lch` hardening
 - **Build:** VC/CM tension-stiffening plateaus (opt-in); resolve `lch` per **D5 Option A or B**.
 - **New:** if Option B, the ledgered vanilla `lch` plumb.
