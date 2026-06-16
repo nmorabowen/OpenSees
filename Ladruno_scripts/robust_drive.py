@@ -61,6 +61,7 @@ def robust_drive(ops, done, *,
                  algorithms=_DEFAULT_LADDER,
                  min_scale=1.0 / 1024,
                  grow=2.0,
+                 peak_cutbacks=3,
                  max_substeps=20000,
                  stabilize=False,
                  dynamics=False,
@@ -72,6 +73,10 @@ def robust_drive(ops, done, *,
     load_increment : nominal LoadControl load-factor step (scaled by the spine).
     control        : (node, dof, du) enabling the rung-3 switch to DisplacementControl;
                      None disables the switch (load control only).
+    peak_cutbacks  : cheap peak/limit detector (ADR-31 R-INSTAB heuristic) - after
+                     this many consecutive cutbacks with NO successful commit, treat
+                     it as a limit point (load control cannot pass) and switch early
+                     rather than grinding load control down to min_scale.
     max_substeps   : global budget (R-THRASH/R-TERMINATION); INCOMPLETE if exceeded.
     stabilize      : rung-4 auto-stabilization - REFUSED at Layer 0 (raises).
     dynamics       : rung-5 fall-through - HOOK only; logs and aborts (not built).
@@ -96,11 +101,15 @@ def robust_drive(ops, done, *,
 
     scale = 1.0
     algo_i = 0
+    cutbacks = 0                                    # consecutive cutbacks since last commit
 
     def set_algo(i):
         spec = algorithms[i % len(algorithms)]
         ops.algorithm(*spec)
         return spec[0]
+
+    def can_switch():
+        return res.mode == "LoadControl" and control is not None
 
     def set_step():
         if res.mode == "LoadControl":
@@ -123,6 +132,7 @@ def robust_drive(ops, done, *,
             if ops.analyze(1) == 0:                 # converged
                 res.min_scale_used = min(res.min_scale_used, scale)
                 res.algos[algo_name] = res.algos.get(algo_name, 0) + 1
+                cutbacks = 0                        # progress made -> reset the detector
                 if scale < 1.0:                     # grow back toward nominal
                     scale = min(1.0, scale * grow)
                 if algo_i != 0:                     # fall back to the easy algorithm
@@ -139,18 +149,29 @@ def robust_drive(ops, done, *,
             scale *= 0.5
             algo_i = 0
             algo_name = set_algo(algo_i)
+            cutbacks += 1
+            # cheap peak/limit detector (R-INSTAB heuristic): repeated cutbacks
+            # with NO commit => load control is at a limit/peak, not over-stepping.
+            # Switch early instead of grinding to the floor.
+            if can_switch() and cutbacks >= peak_cutbacks:
+                res.mode = "DisplacementControl"
+                res.switches += 1
+                scale, algo_i, cutbacks = 1.0, 0, 0
+                algo_name = set_algo(algo_i)
+                log("constraint_switch", to="DisplacementControl",
+                    reason=f"peak detected ({peak_cutbacks} cutbacks, no commit)")
+                continue
             if scale >= min_scale:
                 log("cutback", scale=scale)
                 continue
-            # --- rung 3 (constraint switch load -> displacement) ---------------
-            if res.mode == "LoadControl" and control is not None:
+            # --- rung 3 (constraint switch at the cutback floor) ---------------
+            if can_switch():
                 res.mode = "DisplacementControl"
                 res.switches += 1
-                scale = 1.0
-                algo_i = 0
+                scale, algo_i, cutbacks = 1.0, 0, 0
                 algo_name = set_algo(algo_i)
                 log("constraint_switch", to="DisplacementControl",
-                    reason="load-control exhausted at limit/peak (rung 3)")
+                    reason="load-control exhausted at floor (rung 3)")
                 continue
             # --- rung 5 (dynamics) - hook only --------------------------------
             if dynamics:
