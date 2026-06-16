@@ -560,3 +560,36 @@ def test_cyclic_tangent_assembled_in_opensees():
     assert t33_after(g_sub) == pytest.approx(G, rel=2.0e-2), "sliding-elastic Dtan[3][3] != G"
     # well past the cap: friction stiffness removed -> betaSrMin*G
     assert t33_after(2.0e-3) == pytest.approx(bsr * G, rel=0.2), "capped Dtan[3][3] != betaSrMin*G"
+
+
+@pytest.mark.t1
+def test_serialization_roundtrip_cracked_cyclic_state():
+    """sendSelf/recvSelf round-trip (via the FE database) of a CRACKED cyclic state: the
+    frozen crack frame + width + the Phase-2b friction state {tauCr,gammaCr} must survive
+    a save/restore bit-exactly (guards the RC_DATA=242 send/recv field count/order)."""
+    import os
+    import tempfile
+    # drive an oblique crack + some cyclic shear so crackState AND crackShear are non-trivial
+    _path_tension_then_shear(
+        lambda t: _rc(t, beta=False, interlock=True, cyclic=True, crack_spacing=50.0),
+        5.0e-4, 4.0e-3, n1=40, n2=60, gamma0=2.0e-3)
+    before = (list(ops.eleResponse(1, "material", "1", "crackState"))
+              + list(ops.eleResponse(1, "material", "1", "crackShear")))
+    assert before[0] >= 0.5, "precondition: crack must have formed"
+
+    db = os.path.join(tempfile.mkdtemp(prefix="rc_rt_"), "rc_state")
+    try:
+        ops.database("File", db)
+        ops.save(1)
+        ops.restore(1)
+        after = (list(ops.eleResponse(1, "material", "1", "crackState"))
+                 + list(ops.eleResponse(1, "material", "1", "crackShear")))
+        assert all(abs(a - b) <= 1.0e-9 + 1.0e-9 * abs(b) for a, b in zip(before, after)), (
+            f"serialized state drifted: before={before} after={after}")
+    finally:
+        import glob
+        for f in glob.glob(db + "*"):
+            try:
+                os.remove(f)
+            except OSError:
+                pass
