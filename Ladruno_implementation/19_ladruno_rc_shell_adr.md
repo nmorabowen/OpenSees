@@ -516,6 +516,36 @@ Each phase is independently shippable and reduces to baseline when its flags are
   the retention term is load-bearing; **rigid-rotation objectivity** test on a cracked state (the
   stored-normal form must pass the supported corotational-element route).
 
+#### Phase 2a (SHIPPED) — the bounded monotonic slice
+Phase 2 splits into **2a** (monotonic, shipped) and **2b** (cyclic, next). 2a delivers the
+**`v_ci,max` BOUND** on the membrane shear; the `{const|dsfm|rots}` retention CURVES, crack-closure,
+and pinching are **2b**.
+- **Flag:** ships as **`-interlock`** (with `-agg`, `-crackStrain`, `-crackSpacing`, `-lch`, `-betaSrMin`),
+  default OFF ⇒ bit-identical to Phase 1. `shearRetMode` is reserved (only mode 0 wired); the ADR's
+  `-shearRetention {const|dsfm|rots}` name is **deferred to 2b** (will alias/replace `-interlock` then).
+- **Formulation (decided):** at first crossing of `eps_cr` the in-plane crack NORMAL is frozen. Thereafter
+  the **smeared (damage-reduced) crack-plane shear** `tau_sm = m_sigma·sig_ip` is **clipped** to
+  `±v_ci,max` — i.e. 2a is a *bound on the existing shear*, NOT a substitution with bare-elastic `G·gamma`
+  (the bare-elastic replacement was rejected in review: it injects a stress discontinuity at cracking and a
+  tangent inconsistency). Below the cap the stress is unchanged (continuous, no double-count).
+- **Crack width:** `w = macauley(eps_n)·s_theta` with `eps_n` the strain **normal to the FROZEN crack**
+  (this supersedes the literal `w = eps_1·s_theta` wording in §"Shear retention"; the two are equal at
+  capture and `eps_n` is the fixed-crack-consistent opening thereafter). `w` grows **monotonically**
+  (irreversible interlock degradation). `s_theta` = `-crackSpacing` → `lch` → 1.
+- **Tangent (consistent):** sub-cap → baseline (no cross-term); capped → the rank-1 removal
+  `Dtan_ip -= (1-betaSrMin)·m_eps ⊗ (m_sigma·Dtan_ip)`, exact because `m_sigma·m_eps = (c²+s²)² = 1` pins
+  the crack-shear. The `v_ci,max(w)` normal→shear coupling is a deliberately-omitted 2nd-order term,
+  consistent with the Phase-1 secant `W_B·C0`.
+- **Verified:** Zone-A — interlock-OFF reduce-to-ASDConcrete3D on a sheared path; `v_ci,max` cap vs
+  closed-form + numpy oracle; **off-axis (oblique) crack** rotation (crack normal vs analytic principal
+  dir + projected crack-shear == `v_ci,max`); ON-vs-OFF ablation. Standalone g++ FD confirms the cap
+  (axis + off-axis) and the tangent-pinning identity.
+- **Known 2a limits (documented, deferred):** (1) **equibiaxial/degenerate** membrane states never freeze
+  a crack (arbitrary principal dir) → no interlock there until the state leaves degeneracy; (2) the
+  **rigid-rotation objectivity** test on a stored-normal cracked state (corot-element route) is a 2b
+  acceptance item, not yet run for 2a; (3) the condensed PlateFiber/PlaneStress × interlock interaction is
+  exercised only via the 3D `stdBrick` so far.
+
 ### Phase 3 — Tension stiffening + crack-band/`lch` hardening
 - **Build:** VC/CM tension-stiffening plateaus (opt-in); resolve `lch` per **D5 Option A or B**.
 - **New:** if Option B, the ledgered vanilla `lch` plumb.

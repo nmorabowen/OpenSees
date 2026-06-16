@@ -67,6 +67,10 @@ void* OPS_LadrunoRCConcrete(void)
   double Kc = 2.0 / 3.0, betaFloor = 0.1, rho = 0.0;
   bool betaOn = false, lubRed = false;
   int  tanMode = 0;
+  // Phase 2a: aggregate-interlock shear retention (default off)
+  bool   interlockOn = false;
+  double aggSize = 16.0, crackStrain = 0.0, crackSpacing = 0.0, lch = 0.0, betaSrMin = 0.01;
+  int    shearRetMode = 0;
 
   auto readList = [](std::vector<double>& v) {
     v.clear();
@@ -98,6 +102,14 @@ void* OPS_LadrunoRCConcrete(void)
     else if (strcmp(opt, "-lublinerReduced") == 0)   lubRed = true;
     else if (strcmp(opt, "-secant") == 0)            tanMode = 1;
     else if (strcmp(opt, "-numericalTangent") == 0)  tanMode = 2;
+    else if (strcmp(opt, "-interlock") == 0)         interlockOn = true;
+    else if (strcmp(opt, "-agg") == 0)          { int nd = 1; if (OPS_GetDoubleInput(&nd, &aggSize) < 0)      { opserr << "LadrunoRCConcrete: -agg needs a value.\n";          return 0; } }
+    else if (strcmp(opt, "-crackStrain") == 0)  { int nd = 1; if (OPS_GetDoubleInput(&nd, &crackStrain) < 0)  { opserr << "LadrunoRCConcrete: -crackStrain needs a value.\n";  return 0; } }
+    else if (strcmp(opt, "-crackSpacing") == 0) { int nd = 1; if (OPS_GetDoubleInput(&nd, &crackSpacing) < 0) { opserr << "LadrunoRCConcrete: -crackSpacing needs a value.\n"; return 0; } }
+    else if (strcmp(opt, "-lch") == 0)          { int nd = 1; if (OPS_GetDoubleInput(&nd, &lch) < 0)          { opserr << "LadrunoRCConcrete: -lch needs a value.\n";          return 0; } }
+    else if (strcmp(opt, "-betaSrMin") == 0)    { int nd = 1; if (OPS_GetDoubleInput(&nd, &betaSrMin) < 0)    { opserr << "LadrunoRCConcrete: -betaSrMin needs a value.\n";    return 0; } }
+    // NOTE: shearRetMode (the ADR's -shearRetention {const|dsfm|rots}) is reserved for
+    // Phase 2b; only mode 0 (the v_ci,max bound) is wired today, so no parse token yet.
     // unknown tokens are ignored (forward-compat)
   }
 
@@ -114,6 +126,9 @@ void* OPS_LadrunoRCConcrete(void)
   P.E = E; P.nu = nu; P.Kc = Kc; P.betaFloor = betaFloor;
   P.cdf = 0.0; P.eta = 0.0;
   P.betaOn = betaOn; P.lublinerTCReduced = lubRed; P.tangentMode = tanMode;
+  P.interlockOn = interlockOn; P.shearRetMode = shearRetMode;
+  P.aggSize = aggSize; P.crackStrain = crackStrain; P.crackSpacing = crackSpacing;
+  P.lch = lch; P.betaSrMin = betaSrMin; P.sqrtFc = 0.0;
 
   // build backbones via the faithful ASDConcrete3D HardeningLaw c-tor + adjust()
   // (elastic-consistent q). -Cd/-Td are optional -> pad with zeros to match length.
@@ -138,6 +153,8 @@ LadrunoRCConcrete::LadrunoRCConcrete()
   // safe defaults until recvSelf populates P
   P.E = 1.0; P.nu = 0.0; P.Kc = 2.0/3.0; P.fcft_ratio = 5.0; P.betaFloor = 0.1;
   P.cdf = 0.0; P.eta = 0.0; P.betaOn = false; P.lublinerTCReduced = false; P.tangentMode = 0;
+  P.interlockOn = false; P.shearRetMode = 0; P.aggSize = 16.0; P.crackStrain = 0.0;
+  P.crackSpacing = 0.0; P.lch = 0.0; P.betaSrMin = 0.01; P.sqrtFc = 0.0;
   P.ht.n = 0; P.hc.n = 0;
   this->setupDim();
   this->revertToStart();
@@ -320,9 +337,11 @@ NDMaterial* LadrunoRCConcrete::getCopy(const char* type)
 // ===========================================================================
 //  parallel  (serialize params + backbones + committed history)
 // ===========================================================================
-static const int RC_NSCALAR = 3 /*tag,dim,rho*/ + 10 /*E,nu,Kc,fcft,betaFloor,cdf,eta,betaOn,lubRed,tanMode*/;
+static const int RC_NSCALAR = 3 /*tag,dim,rho*/ + 10 /*E,nu,Kc,fcft,betaFloor,cdf,eta,betaOn,lubRed,tanMode*/
+                            + 8 /*interlockOn,shearRetMode,aggSize,crackStrain,crackSpacing,lch,betaSrMin,sqrtFc*/;
 static const int RC_BACK = 1 + 3*MAXPTS;   // n + x[]+y[]+q[]
-static const int RC_HIST = 6 + 6 + 6;      // stress_eff, strain, (xt,xc,dt_bar,dc_bar,beta,eps1)
+static const int RC_HIST = 6 + 6 + 6        // stress_eff, strain, (xt,xc,dt_bar,dc_bar,beta,eps1)
+                         + 5;               // + (cracked,crackC,crackS,wmax,betaSr)
 static const int RC_DATA = RC_NSCALAR + 2*RC_BACK + RC_HIST + 1 /*cEps33*/;
 
 int LadrunoRCConcrete::sendSelf(int commitTag, Channel& theChannel)
@@ -337,6 +356,10 @@ int LadrunoRCConcrete::sendSelf(int commitTag, Channel& theChannel)
   data(c++) = P.betaOn ? 1.0 : 0.0;
   data(c++) = P.lublinerTCReduced ? 1.0 : 0.0;
   data(c++) = P.tangentMode;
+  data(c++) = P.interlockOn ? 1.0 : 0.0;
+  data(c++) = P.shearRetMode;
+  data(c++) = P.aggSize; data(c++) = P.crackStrain; data(c++) = P.crackSpacing;
+  data(c++) = P.lch; data(c++) = P.betaSrMin; data(c++) = P.sqrtFc;
   data(c++) = P.ht.n;
   for (int i = 0; i < MAXPTS; i++) data(c++) = P.ht.x[i];
   for (int i = 0; i < MAXPTS; i++) data(c++) = P.ht.y[i];
@@ -350,6 +373,8 @@ int LadrunoRCConcrete::sendSelf(int commitTag, Channel& theChannel)
   data(c++) = histN.xt; data(c++) = histN.xc;
   data(c++) = histN.dt_bar; data(c++) = histN.dc_bar;
   data(c++) = histN.beta; data(c++) = histN.eps1;
+  data(c++) = histN.cracked; data(c++) = histN.crackC; data(c++) = histN.crackS;
+  data(c++) = histN.wmax; data(c++) = histN.betaSr;
   data(c++) = cEps33;
 
   if (theChannel.sendVector(this->getDbTag(), commitTag, data) < 0) {
@@ -375,6 +400,10 @@ int LadrunoRCConcrete::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBr
   P.betaOn = (data(c++) != 0.0);
   P.lublinerTCReduced = (data(c++) != 0.0);
   P.tangentMode = (int)data(c++);
+  P.interlockOn = (data(c++) != 0.0);
+  P.shearRetMode = (int)data(c++);
+  P.aggSize = data(c++); P.crackStrain = data(c++); P.crackSpacing = data(c++);
+  P.lch = data(c++); P.betaSrMin = data(c++); P.sqrtFc = data(c++);
   P.ht.n = (int)data(c++);
   for (int i = 0; i < MAXPTS; i++) P.ht.x[i] = data(c++);
   for (int i = 0; i < MAXPTS; i++) P.ht.y[i] = data(c++);
@@ -388,6 +417,8 @@ int LadrunoRCConcrete::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBr
   histN.xt = data(c++); histN.xc = data(c++);
   histN.dt_bar = data(c++); histN.dc_bar = data(c++);
   histN.beta = data(c++); histN.eps1 = data(c++);
+  histN.cracked = data(c++); histN.crackC = data(c++); histN.crackS = data(c++);
+  histN.wmax = data(c++); histN.betaSr = data(c++);
   cEps33 = data(c++);
 
   this->setupDim();
@@ -408,6 +439,9 @@ void LadrunoRCConcrete::Print(OPS_Stream& s, int)
   s << "  Kc    : " << P.Kc << "   fc/ft ratio: " << P.fcft_ratio << endln;
   s << "  beta  : " << (P.betaOn ? "ON" : "off") << "  floor=" << P.betaFloor
     << "  lublinerReduced=" << (P.lublinerTCReduced ? 1 : 0) << endln;
+  s << "  interlock: " << (P.interlockOn ? "ON" : "off") << "  a_g=" << P.aggSize
+    << "  eps_cr=" << P.crackStrain << "  s_theta=" << P.crackSpacing
+    << "  betaSrMin=" << P.betaSrMin << endln;
   s << "  view  : " << this->getType() << " (order " << ncomp << ")" << endln;
 }
 
@@ -430,6 +464,10 @@ Response* LadrunoRCConcrete::setResponse(const char** argv, int argc, OPS_Stream
     return new MaterialResponse(this, 5, Vector(1));
   if (strcmp(a, "eps1") == 0 || strcmp(a, "transverseTensileStrain") == 0)
     return new MaterialResponse(this, 6, Vector(1));
+  if (strcmp(a, "betaShear") == 0 || strcmp(a, "shearRetention") == 0)
+    return new MaterialResponse(this, 7, Vector(1));
+  if (strcmp(a, "crackState") == 0 || strcmp(a, "crackNormal") == 0)
+    return new MaterialResponse(this, 8, Vector(4));   // (cracked, crackC, crackS, wmax)
   return NDMaterial::setResponse(argv, argc, s);
 }
 
@@ -442,6 +480,9 @@ int LadrunoRCConcrete::getResponse(int responseID, Information& matInfo)
     case 4: if (matInfo.theVector) { Vector& v = *(matInfo.theVector); v(0) = histTr.dt_bar; v(1) = histTr.dc_bar; } return 0;
     case 5: if (matInfo.theVector) (*(matInfo.theVector))(0) = histTr.beta;   return 0;
     case 6: if (matInfo.theVector) (*(matInfo.theVector))(0) = histTr.eps1;   return 0;
+    case 7: if (matInfo.theVector) (*(matInfo.theVector))(0) = histTr.betaSr; return 0;
+    case 8: if (matInfo.theVector) { Vector& v = *(matInfo.theVector);
+              v(0) = histTr.cracked; v(1) = histTr.crackC; v(2) = histTr.crackS; v(3) = histTr.wmax; } return 0;
     default: return -1;
   }
 }
