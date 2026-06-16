@@ -114,25 +114,30 @@ Build a **header-only, OpenSees-free `LadrunoConcrete3DKernel.h`** (the
 
 ### 4.1 Yield surface — Menétrey–Willam, normalized
 
-Use the **fc-normalized** three-invariant form (this normalization is load-bearing: an
-un-normalized mix of `ρ²` and linear `ξ`/`ρ` terms silently sets a wrong meridian ratio and
-fails Kupfer while unit tests pass). With `ξ = I₁/√3`, `ρ = √(2J₂)`, Lode angle `θ`:
+**PINNED against Grassl et al. 2013 (IJSS 50:3805, arXiv:1307.6998) — equation numbers cited.**
+fc-normalized three-invariant form. With `σ̄_V = I₁/3` (Eq.12; in code stored as `ξ = I₁/√3`, so
+`ξ/(√3·fc) = σ̄_V/fc`), `ρ̄ = √(2J₂)` (Eq.13), Lode angle `θ̄` (Eq.14):
 
 ```
-f(ξ,ρ,θ; qh1,qh2) = (√1.5 · ρ/fc)²
-                  + m0 · qh1 · qh2 · [ ρ/(√6·fc)·r(θ,e) + ξ/(√3·fc) ]
-                  − qh1² · qh2²
-m0 = 3·(fc² − ft²)/(fc·ft) · e/(e+1)          (normalized-coordinate friction)
-r(θ,e) = Willam–Warnke elliptic Lode function,  e ∈ (0.5, 1]  (0.5 = convexity limit, EXCLUSIVE —
-surface degenerates at e=0.5; code guards `e>0.5`)
+                ⎧                                      ⎫²
+f_p(σ̄_V,ρ̄,θ̄;κp)=⎨ [1−qh1(κp)]·(ρ̄/(√6 fc) + σ̄_V/fc)² + √(3/2)·ρ̄/fc ⎬          ← Eq.(18)
+                ⎩                                      ⎭
+              + m0·qh1²(κp)·qh2(κp)·[ ρ̄/(√6 fc)·r(θ̄,e) + σ̄_V/fc ] − qh1²(κp)·qh2²(κp)
+
+qh1=qh2=1  ⇒  (3/2)ρ̄²/fc² + m0[ρ̄·r/(√6 fc) + σ̄_V/fc] − 1 = 0   (failure surface Eq.21 = Menétrey-Willam)
+m0 = 3(fc²−ft²)/(fc·ft) · e/(e+1)                               ← Eq.(20)
+r(θ̄,e) = Willam-Warnke elliptic Lode fn (Eq.19), e ∈ (0.5,1]   (0.5 = convexity limit, EXCLUSIVE)
 ```
+
+The `[1−qh1]` term is an **ellipsoidal hardening cap** that closes the surface during hardening
+(`qh1<1`) and vanishes at peak (`qh1=1` → the open MW cone). My earlier draft's `qh1·qh2`/`qh1²qh2²`
+guess was **wrong** for `qh≠1`; both reduce to Eq.21 at `qh=1` (why P0/P1 passed), but only Eq.(18)
+is correct under hardening — now implemented and gated (HA reduce-to-P1 = 2.6e-13).
 
 **Fixes folded in:**
-- **[BLOCKING] Pin the exact form against the literature.** At P0, transcribe `f`, `m0`, and
-  `r(θ,e)` with **equation numbers** from Grassl et al. 2013 (IJSS) and Menétrey–Willam 1995,
-  and add an **oracle assertion** that the un-hardened (`qh1=qh2=1`) surface reproduces the
-  target tensile/compressive meridian ratio **and** the Kupfer `fcc/fc ≈ 1.16` biaxial point
-  **before any return-map code**.
+- **[DONE] Pinned against the literature.** `f`, `m0`, `r(θ,e)` carry Eq. numbers (18/19/20/21);
+  P0 oracle asserts the un-hardened surface reproduces the meridian/eccentricity identity **and**
+  Kupfer `fcc/fc=1.16` (recovering `e≈0.52`) before any return-map code — both PASS.
 - **[MAJOR] `m0` and `e` are coupled — do not freeze both independently.** Choose explicitly:
   **(a)** freeze `e≈0.525` and treat equibiaxial strength as a *derived output* (set the Kupfer
   tolerance to accommodate), **or (b)** derive `e` from an equibiaxial-ratio input
@@ -140,16 +145,38 @@ surface degenerates at e=0.5; code guards `e>0.5`)
   construction. **Recommend (b)** for "usable out of the box." Either way, `e` is a *validation
   target, never fit to Kupfer*.
 
-### 4.2 Return map — non-associated flow, ductility, apex handling
+### 4.2 Return map — hardening, ductility, non-associated flow, apex (PINNED to Grassl 2013)
 
-- **Non-associated potential** `g ≠ f` with an explicit **dilatancy** parameter `Df`
-  (associated flow over-predicts dilatancy → ruins confined response). The consequence is a
-  **non-symmetric** consistent tangent (`∂g/∂σ ≠ ∂f/∂σ`); this propagates to solver choice
-  (§4.5) and the demote criterion (§4.4).
-- **Ductility measure `x(σ)`** scales the plastic-strain increment so post-peak *compressive*
-  ductility grows with confinement — **this is what makes confinement precise** vs "CDP with a
-  nicer surface." Adopt CDPM2's published `Aₕ/Bₕ/Cₕ/Dₕ` defaults **verbatim** (inherit their
-  triaxial calibration) — do not ship a reduced guess.
+**Hardening laws (Eqs. 30–31), `κp`-driven:**
+```
+qh1(κp) = qh0 + (1−qh0)(κp³−3κp²+3κp) − Hp(κp³−3κp²+2κp)   if κp<1, else 1      ← Eq.(30)
+qh2(κp) = 1 if κp<1, else 1 + Hp(κp−1)                                            ← Eq.(31)
+```
+`qh1` ramps the surface from `qh0` to the failure cone over `κp∈[0,1]`; `qh2` adds post-peak
+plastic hardening for `κp>1`. **Effective-stress plasticity is MONOTONIC (no peak)** — the
+failure surface is reached exactly at `κp=1` (gated: `σ11(κp=1)=fc` to 7e-4); the *peak/softening
+is the DAMAGE part (P2)*, not plasticity.
+
+**Hardening-variable evolution + ductility measure (Eqs. 32–36):**
+```
+κ̇p = (λ̇‖m‖ / xh(σ̄_V)) · (2cosθ̄)²                                              ← Eq.(32)
+xh(σ̄_V) = Ah − (Ah−Bh)exp(−Rh/Ch)        if Rh≥0   ;   Eh exp(Rh/Fh)+Dh  if Rh<0  ← Eq.(33)
+Rh = −σ̄_V/fc − 1/3   (Eq.34) ;  Eh=Bh−Dh (Eq.35) ;  Fh=(Bh−Dh)Ch/(Ah−Bh) (Eq.36)
+```
+`Rh` is **the confinement term**: compression (`σ̄_V<0`) → `Rh>0` → larger `xh` → slower `κp` →
+more plastic strain to reach the failure surface ⇒ **confinement-dependent ductility, by
+mechanism** (gated HD: strain at `κp=1` grows 0.0012→0.0032 from unconfined to `p/fc=0.1`). Ship
+CDPM2's published `Aₕ/Bₕ/Cₕ/Dₕ` (calibrated from peak strains — recalibrate for fork data, §6).
+
+- **Non-associated potential** `g_p` (Eqs. 22–29) — **Lode-INDEPENDENT** (no `r(θ̄)`; the yield
+  surface has `r`, the potential does not). The deviatoric flow `∂g/∂ρ̄ = 3ρ̄/fc² + m0/(√6 fc)`
+  carries **no `r`** (corrected from the P0 draft). Dilatancy via `Df = −m₂/m₁` (Eq.27) sets the
+  volumetric flow through `mg(σ̄_V)` (Eq.23) which decreases with confinement. v1 oracle uses a
+  simplified constant-`Df` volumetric flow; the full `mg` potential is a follow-on (does not
+  change peak strength — flow-independent). Non-associated ⇒ **non-symmetric** tangent (§4.4/§4.5).
+- **Semi-implicit return**: invariant `(ξ,ρ)` space, `θ̄` frozen → radial deviatoric return,
+  4-unknown Newton `(ξ,ρ,Δλ,κp)`. **Reduces to the verified perfect-plastic map at qh0=1,Hp=0
+  (HA = 2.6e-13).**
 - **[MAJOR] Order of operations for `x(σ)` vs `Gc`.** lch-regularize the *intrinsic* softening
   law **first** (so `Gc` is size-objective at reference confinement), **then** apply `x(σ)` to
   the plastic increment in a way that **preserves total compressive fracture energy per unit

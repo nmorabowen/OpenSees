@@ -88,3 +88,31 @@ def test_p0_dp_limit_e1():
     (the surface degenerates to a smooth Drucker-Prager-like meridian)."""
     for th in [0.0, 0.2, 0.4, 0.6, 0.8, 1.0, ref.np.pi / 3.0]:
         assert abs(ref.lode_r(th, 1.0) - 1.0) < 1.0e-14
+
+
+# ---------------------------------------------------------------------------
+# P1-hardening — CDPM2 qh1/qh2/kappa_p/ductility (Grassl et al. 2013 Eq.18,30-36):
+#   U1 hardening unit identities; HA reduce-to-P1 (qh0=1,Hp=0); HB failure surface at kappa_p=1;
+#   HC pre-peak nonlinear hardening from qh0; HD confinement raises ductility (Eq.32-34).
+# (Effective-stress plasticity is monotonic hardening — the peak/softening is DAMAGE = P2.)
+# ---------------------------------------------------------------------------
+def test_p1_hardening_gate():
+    r = ref.run_hardening_gate(verbose=False)
+    assert r["U1_ok"]                                # qh1/qh2/ductility identities
+    assert r["HA_reduce_to_P1"] < 1.0e-8             # reduces to the verified perfect-plastic map
+    assert r["HB_err"] < 0.02                        # failure surface reached at kappa_p=1 (sig=fc)
+    assert r["HB_all_conv"]
+    assert r["HC_nonlinear"]                         # yields at ~qh0*fc, hardens up monotonically
+    assert r["HD_confinement_more_ductile"]          # confinement -> larger strain at kappa_p=1
+    assert r["PASS"]
+
+
+def test_p1_hardening_reduces_surface_to_failure():
+    """yield_f with qh1=qh2=1 (Eq.18) is byte-identical to the failure surface (Eq.21)."""
+    mp = ref.make_material(30000.0, 0.2, 30.0, 3.0)
+    for s in ([-30.0, 0, 0], [-40, -3, -3], [3.0, 0, 0], [-50, -10, -5]):
+        sv = ref.principal_to_voigt(*s)
+        f_hard = ref.yield_f(sv, 30.0, 3.0, mp["e"], 1.0, 1.0)
+        xi, rho, th, *_ = ref.invariants(sv)
+        f_fail = ref._yf_inv(xi, rho, ref.lode_r(th, mp["e"]), mp)
+        assert abs(f_hard - f_fail) < 1.0e-12

@@ -91,14 +91,47 @@ def m0_of(fc, ft, e):
     return 3.0 * (fc * fc - ft * ft) / (fc * ft) * e / (e + 1.0)
 
 
-def yield_f(sig, fc, ft, e, qh1=1.0, qh2=1.0):
-    """fc-normalized Menetrey-Willam. qh1=qh2=1 => failure surface. COMPRESSION NEGATIVE."""
+def yield_f(sig, fc, ft, e, qh1v=1.0, qh2v=1.0):
+    """CDPM2 yield function f_p — Grassl et al. 2013 IJSS Eq. (18). qh1v=qh2v=1 => failure surface
+    Eq. (21) = Menetrey-Willam. COMPRESSION NEGATIVE. Note xi/(sqrt3 fc) = (I1/3)/fc = sigV/fc."""
     xi, rho, theta, *_ = invariants(sig)
     m0 = m0_of(fc, ft, e)
     r = lode_r(theta, e)
-    term_quad = (SQRT1_5 * rho / fc) ** 2
-    term_lin = m0 * qh1 * qh2 * (rho * r / (SQRT6 * fc) + xi / (SQRT3 * fc))
-    return term_quad + term_lin - (qh1 * qh1) * (qh2 * qh2)
+    sigV_fc = xi / (SQRT3 * fc)                       # = sigma_V/fc  (Eq.12: sigV=I1/3)
+    AV = rho / (SQRT6 * fc) + sigV_fc                 # the ellipsoidal hardening-cap base
+    RR = rho * r / (SQRT6 * fc) + sigV_fc             # the m0-friction bracket (carries Lode r)
+    quad = SQRT1_5 * rho / fc                         # sqrt(3/2) rho/fc
+    # Eq. (18): {[1-qh1]AV^2 + quad}^2 + m0 qh1^2 qh2 RR - qh1^2 qh2^2
+    return ((1.0 - qh1v) * AV * AV + quad) ** 2 \
+        + m0 * qh1v * qh1v * qh2v * RR - (qh1v * qh1v) * (qh2v * qh2v)
+
+
+# ---------------------------------------------------------------------------
+# CDPM2 plasticity HARDENING building blocks (Grassl et al. 2013, Sec. 2.2.3-2.2.4).
+# Unit-verified here; wired into the hardening return map in the next increment.
+#   qh1(kp)  Eq. (30)   pre-peak size: qh0 -> 1 over kp in [0,1], slope Hp at kp=1^-
+#   qh2(kp)  Eq. (31)   post-peak: 1 (kp<1), then 1+Hp(kp-1)
+#   xh(sigV) Eqs. (33-36)  hardening DUCTILITY measure; Rh=-sigV/fc-1/3 (Eq.34) => more ductile
+#            under compression (sigV<0 => Rh>0 => larger xh => slower kp => more plastic strain to peak)
+# ---------------------------------------------------------------------------
+def qh1(kp, qh0, Hp):
+    if kp < 1.0:
+        return qh0 + (1.0 - qh0) * (kp**3 - 3.0 * kp**2 + 3.0 * kp) \
+            - Hp * (kp**3 - 3.0 * kp**2 + 2.0 * kp)
+    return 1.0
+
+
+def qh2(kp, Hp):
+    return 1.0 if kp < 1.0 else 1.0 + Hp * (kp - 1.0)
+
+
+def ductility_xh(sigV, fc, Ah, Bh, Ch, Dh):
+    Rh = -sigV / fc - 1.0 / 3.0                       # Eq. (34)
+    if Rh >= 0.0:
+        return Ah - (Ah - Bh) * np.exp(-Rh / Ch)      # Eq. (33) upper branch
+    Eh = Bh - Dh                                      # Eq. (35)
+    Fh = (Bh - Dh) * Ch / (Ah - Bh)                   # Eq. (36)
+    return Eh * np.exp(Rh / Fh) + Dh                  # Eq. (33) lower branch
 
 
 # ---------------------------------------------------------------------------
@@ -264,12 +297,16 @@ def run_p0_gate(fc=30.0, ft=3.0, target_fcc_ratio=1.16, verbose=True):
 # Hardening qh1/qh2 + ductility measure x(sigma) = the NEXT P1 increment (this slice gives the
 # PEAK-STRENGTH envelope, which is the failure surface and the headline confined-triaxial gate).
 # ===========================================================================
-def make_material(E, nu, fc, ft, Df=1.0, target_fcc_ratio=1.16, e=None):
+def make_material(E, nu, fc, ft, Df=1.0, target_fcc_ratio=1.16, e=None,
+                  qh0=0.3, Hp=0.5, Ah=0.08, Bh=0.003, Ch=2.0, Dh=1.0e-6):
+    # qh0,Hp: hardening laws Eq.30-31.  Ah,Bh,Ch,Dh: ductility measure Eq.33 (literature defaults;
+    # calibrated per-concrete from peak strains — flagged in ADR 6 as recalibrate-for-fork-data).
     if e is None:
         e = eccentricity_from_kupfer(fc, ft, target_fcc_ratio)
     K = E / (3.0 * (1.0 - 2.0 * nu))
     G = E / (2.0 * (1.0 + nu))
-    return dict(E=E, nu=nu, fc=fc, ft=ft, e=e, m0=m0_of(fc, ft, e), Df=Df, K=K, G=G)
+    return dict(E=E, nu=nu, fc=fc, ft=ft, e=e, m0=m0_of(fc, ft, e), Df=Df, K=K, G=G,
+                qh0=qh0, Hp=Hp, Ah=Ah, Bh=Bh, Ch=Ch, Dh=Dh)
 
 
 def _yf_inv(xi, rho, r, mp):
@@ -292,12 +329,14 @@ def return_map_principal(sig_tr, mp, tol=1.0e-12):
     p_tr = xi_tr / SQRT3
     s_tr = np.array(sig_tr, float) - p_tr   # trial deviator principals
 
-    # smooth semi-implicit Newton in (xi, rho, dlam); theta frozen at th_tr
+    # smooth semi-implicit Newton in (xi, rho, dlam); theta frozen at th_tr.
+    # FLOW gradient m_s = dg/drho is Lode-INDEPENDENT (CDPM2 potential has no r; Eq.22-25) — NOT
+    # df/drho. The YIELD gradient (Jacobian row 3) keeps r. Volumetric flow m_v carries dilatancy Df.
     xi, rho, dlam = xi_tr, rho_tr, 0.0
     apex = False
     converged = False
     for _ in range(100):
-        m_s = 3.0 * rho / (fc * fc) + m0 * r / (SQRT6 * fc)
+        m_s = 3.0 * rho / (fc * fc) + m0 / (SQRT6 * fc)          # dg/drho (flow, NO Lode r)
         R1 = xi - xi_tr + 3.0 * K * dlam * m_v
         R2 = rho - rho_tr + 2.0 * G * dlam * m_s
         R3 = _yf_inv(xi, rho, r, mp)
@@ -495,6 +534,183 @@ def run_p1_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, verbose=True):
     return res
 
 
+# ===========================================================================
+# P1-hardening — CDPM2 plasticity with hardening (qh1/qh2/kappa_p/ductility).
+#
+# Semi-implicit (theta frozen) return map with FOUR unknowns (xi, rho, dlam, kappa_p):
+#     xi  = xi_tr  - 3K dlam m_v                          (m_v = Df m0/(sqrt3 fc), dilatancy)
+#     rho = rho_tr - 2G dlam m_s                          (m_s = 3 rho/fc^2 + m0/(sqrt6 fc), NO Lode r)
+#     f_p(xi, rho, theta_tr, kappa_p) = 0                 (Eq.18 with qh1(kp), qh2(kp))
+#     kappa_p = kappa_p,n + dlam (||m||/xh(sigV)) (2 cos theta)^2   (Eq.32)
+# with ||m|| = sqrt(m_v^2 + m_s^2). Jacobian = NUMERICAL (oracle is a correctness reference; the
+# analytic 4x4 tangent is the C++ kernel's job, FD-checked against this). FLOW kept simplified
+# (constant-Df dilatancy, not the full mg potential Eq.22-29) — documented; mg = follow-on.
+# Reduce-to-P1 (qh0=1, Hp=0 => qh1=qh2=1 => Eq.21) is the safety gate.
+# ===========================================================================
+def _yf_inv_hard(xi, rho, r, kp, mp):
+    """CDPM2 Eq.18 in invariant space with hardening qh1(kp), qh2(kp). _yf_inv == this at kp s.t.
+    qh1=qh2=1 (the failure surface Eq.21)."""
+    fc, m0 = mp["fc"], mp["m0"]
+    q1 = qh1(kp, mp["qh0"], mp["Hp"])
+    q2 = qh2(kp, mp["Hp"])
+    sigV_fc = xi / (SQRT3 * fc)
+    AV = rho / (SQRT6 * fc) + sigV_fc
+    RR = rho * r / (SQRT6 * fc) + sigV_fc
+    quad = SQRT1_5 * rho / fc
+    return ((1.0 - q1) * AV * AV + quad) ** 2 + m0 * q1 * q1 * q2 * RR - (q1 * q1) * (q2 * q2)
+
+
+def return_map_hardening(sig_tr, mp, kp_n, tol=1.0e-11):
+    """sig_tr = 3 trial principal stresses, kp_n = committed kappa_p.
+    Returns (sig_new[3], kp_new, plastic, f_after, converged)."""
+    fc, m0, Df, K, G = mp["fc"], mp["m0"], mp["Df"], mp["K"], mp["G"]
+    sv = np.array([sig_tr[0], sig_tr[1], sig_tr[2], 0.0, 0.0, 0.0])
+    xi_tr, rho_tr, th_tr, *_ = invariants(sv)
+    r = lode_r(th_tr, mp["e"])
+    f_tr = _yf_inv_hard(xi_tr, rho_tr, r, kp_n, mp)
+    if f_tr <= tol * fc:
+        return np.array(sig_tr, float), kp_n, False, f_tr, True
+    p_tr = xi_tr / SQRT3
+    s_tr = np.array(sig_tr, float) - p_tr
+    cos2 = (2.0 * np.cos(th_tr)) ** 2
+    m_v = Df * m0 / (SQRT3 * fc)
+
+    def resid(u):
+        xi, rho, dlam, kp = u
+        m_s = 3.0 * rho / (fc * fc) + m0 / (SQRT6 * fc)
+        mnorm = np.sqrt(m_v * m_v + m_s * m_s)
+        xh = ductility_xh(xi / SQRT3, fc, mp["Ah"], mp["Bh"], mp["Ch"], mp["Dh"])
+        return np.array([
+            xi - xi_tr + 3.0 * K * dlam * m_v,
+            rho - rho_tr + 2.0 * G * dlam * m_s,
+            _yf_inv_hard(xi, rho, r, kp, mp),
+            kp - kp_n - dlam * mnorm / xh * cos2,
+        ])
+
+    u = np.array([xi_tr, rho_tr, 0.0, kp_n])
+    converged = False
+    for _ in range(100):
+        R = resid(u)
+        if (abs(R[0]) < tol * fc and abs(R[1]) < tol * fc
+                and abs(R[2]) < tol and abs(R[3]) < tol):
+            converged = True
+            break
+        J = np.zeros((4, 4))
+        for j in range(4):
+            du = 1.0e-8 * (abs(u[j]) + 1.0e-6)
+            up = u.copy()
+            up[j] += du
+            J[:, j] = (resid(up) - R) / du
+        u = u + np.linalg.solve(J, -R)
+
+    xi, rho, dlam, kp = u
+    p_new = xi / SQRT3
+    dev_scale = rho / rho_tr if rho_tr > 0.0 else 0.0
+    sig_new = s_tr * dev_scale + p_new
+    return sig_new, kp, True, _yf_inv_hard(xi, rho, r, kp, mp), converged
+
+
+def drive_hardening(mp, eps11_path, confine="free", sigma3=0.0):
+    """Hardening counterpart of drive_axial (tracks kappa_p). Principal-stress, lateral mixed control."""
+    eps = np.zeros(3)
+    sig = np.zeros(3)
+    el = 0.0
+    kp = 0.0
+    out = {k: [] for k in ("eps11", "sig11", "kp", "plastic", "conv")}
+    for e11 in eps11_path:
+        inner_conv = False
+        for _ in range(80):
+            deps = np.array([e11 - eps[0], el - eps[1], el - eps[2]])
+            snew, _, _, _, _ = return_map_hardening(_elastic_pred(sig, deps, mp), mp, kp)
+            res = lateral_residual(0.5 * (snew[1] + snew[2]), el, confine, p=sigma3)
+            if abs(res) < 1.0e-10 * (mp["fc"] + 1.0):
+                inner_conv = True
+                break
+            d = 1.0e-8 * (abs(el) + 1.0e-6)
+            deps2 = np.array([e11 - eps[0], (el + d) - eps[1], (el + d) - eps[2]])
+            snew2, _, _, _, _ = return_map_hardening(_elastic_pred(sig, deps2, mp), mp, kp)
+            res2 = lateral_residual(0.5 * (snew2[1] + snew2[2]), el + d, confine, p=sigma3)
+            Jd = (res2 - res) / d
+            if abs(Jd) < 1.0e-12:
+                Jd = 1.0e-12 if Jd >= 0.0 else -1.0e-12
+            el -= res / Jd
+        deps = np.array([e11 - eps[0], el - eps[1], el - eps[2]])
+        snew, kp_new, plastic, _, map_conv = return_map_hardening(_elastic_pred(sig, deps, mp), mp, kp)
+        sig, kp = snew, kp_new
+        eps = np.array([e11, el, el])
+        for k, v in (("eps11", e11), ("sig11", sig[0]), ("kp", kp),
+                     ("plastic", plastic), ("conv", bool(inner_conv and map_conv))):
+            out[k].append(v)
+    return {k: np.array(v) for k, v in out.items()}
+
+
+def run_hardening_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, verbose=True):
+    res = {}
+    # U1: hardening building-block unit identities (Eqs.30-36)
+    q1_0 = qh1(0.0, 0.3, 0.5)
+    q1_1 = qh1(1.0, 0.3, 0.5)
+    ks = np.linspace(0.0, 1.0, 60)
+    q1_mono = all(qh1(ks[i], 0.3, 0.5) <= qh1(ks[i + 1], 0.3, 0.5) + 1e-12 for i in range(len(ks) - 1))
+    xh_comp = ductility_xh(-fc, fc, 0.08, 0.003, 2.0, 1.0e-6)        # compression (Rh>0)
+    xh_tens = ductility_xh(+0.2 * fc, fc, 0.08, 0.003, 2.0, 1.0e-6)  # tension (Rh<0)
+    res["U1_ok"] = bool(abs(q1_0 - 0.3) < 1e-14 and abs(q1_1 - 1.0) < 1e-14 and q1_mono
+                        and qh2(0.5, 0.5) == 1.0 and qh2(1.5, 0.5) > 1.0 and xh_comp > xh_tens)
+
+    # HA: reduce-to-P1 — qh0=1, Hp=0 => qh1=qh2=1 => hardening map == perfect-plastic map.
+    # (compression/deviatoric states only; hydrostatic-tension apex+hardening is deferred to P2.)
+    mp_rigid = make_material(E, nu, fc, ft, qh0=1.0, Hp=0.0)
+    maxd = 0.0
+    for st in ([-40, -3, -3], [-50, 0, 0], [-30, -10, -8], [-35, -5, -2], [3.5, 0, 0]):
+        sh, _, _, _, _ = return_map_hardening(st, mp_rigid, 0.0)
+        sp, _, _, _, _ = return_map_principal(st, mp_rigid)
+        maxd = max(maxd, float(np.max(np.abs(sh - sp))))
+    res["HA_reduce_to_P1"] = maxd
+
+    # NB: effective-stress plasticity is MONOTONIC hardening (no peak — the peak/softening comes
+    # from DAMAGE, P2). The failure surface is reached EXACTLY at kappa_p=1, where uniaxial
+    # compression sits at sig11 = -fc. Gate on that, not on a (nonexistent) plasticity peak.
+    mp = make_material(E, nu, fc, ft)
+    d0 = drive_hardening(mp, np.linspace(0, -0.006, 800), confine="free")
+    pl = d0["plastic"].astype(bool)
+    first_yield = -d0["sig11"][pl][0] if pl.any() else 0.0
+    # HB: sig11 at the step where kappa_p first crosses 1  ==  fc (failure surface reached)
+    ik = int(np.argmax(d0["kp"] >= 1.0)) if (d0["kp"] >= 1.0).any() else -1
+    sig_at_kp1 = -d0["sig11"][ik] if ik >= 0 else np.nan
+    res["HB_sig_at_kp1"] = float(sig_at_kp1)
+    res["HB_err"] = abs(sig_at_kp1 / fc - 1.0) if ik >= 0 else 1.0
+    res["HB_all_conv"] = bool(d0["conv"].all())
+    # HC: pre-peak nonlinearity — first yield near qh0*fc (<< fc), monotone-rising hardening to fc
+    res["HC_first_yield_over_fc"] = first_yield / fc
+    mono = all(-d0["sig11"][i] <= -d0["sig11"][i + 1] + 1e-9 for i in range(np.argmax(d0["kp"] >= 1.0)))
+    res["HC_nonlinear"] = bool(first_yield < 0.6 * fc and mono and ik >= 0)
+
+    # HD: confinement ductility — axial strain at kappa_p=1 grows with sigma3 (Eq.32-34 ductility)
+    eps_at_kp1 = {}
+    for p in (0.0, 0.10 * fc):
+        dd = drive_hardening(mp, np.linspace(0, -0.02, 1000), confine="active", sigma3=p)
+        j = int(np.argmax(dd["kp"] >= 1.0)) if (dd["kp"] >= 1.0).any() else -1
+        eps_at_kp1[p] = abs(dd["eps11"][j]) if j >= 0 else np.nan
+    res["HD_eps_at_kp1"] = eps_at_kp1
+    res["HD_confinement_more_ductile"] = bool(eps_at_kp1[0.10 * fc] > eps_at_kp1[0.0])
+
+    ok = (res["U1_ok"] and res["HA_reduce_to_P1"] < 1.0e-8
+          and res["HB_err"] < 0.02 and res["HB_all_conv"]
+          and res["HC_nonlinear"] and res["HD_confinement_more_ductile"])
+    res["PASS"] = bool(ok)
+    if verbose:
+        print(f"  E={E} nu={nu} fc={fc} ft={ft}  qh0={mp['qh0']} Hp={mp['Hp']}")
+        print(f"  U1 hardening unit identities (qh1/qh2/ductility) ok={res['U1_ok']}")
+        print(f"  HA reduce-to-P1 (qh0=1,Hp=0): max|sig_hard-sig_pp|={res['HA_reduce_to_P1']:.2e}")
+        print(f"  HB sig11 at kappa_p=1 = {res['HB_sig_at_kp1']:.4f} (target fc={fc}) err={res['HB_err']:.2e}"
+              f"  conv={res['HB_all_conv']}")
+        print(f"  HC pre-peak: first yield/fc={res['HC_first_yield_over_fc']:.3f} (~qh0), monotone hardening"
+              f"  ok={res['HC_nonlinear']}")
+        print(f"  HD confinement ductility: eps(kp=1) unconf={eps_at_kp1[0.0]:.5f}"
+              f"  conf(0.1fc)={eps_at_kp1[0.10*fc]:.5f}  more_ductile={res['HD_confinement_more_ductile']}")
+        print(f"  => HARDENING GATE {'PASS' if ok else 'FAIL'}")
+    return res
+
+
 if __name__ == "__main__":
     print("=" * 74)
     print("LadrunoConcrete3D P0 oracle gate — Menetrey-Willam surface normalization")
@@ -511,3 +727,9 @@ if __name__ == "__main__":
     p1 = run_p1_gate(verbose=True)
     print("-" * 74)
     print(f"P1: {'PASS' if p1['PASS'] else 'FAIL'}")
+    print("=" * 74)
+    print("LadrunoConcrete3D P1-hardening gate — CDPM2 qh1/qh2/kappa_p/ductility (Eq.18,30-36)")
+    print("=" * 74)
+    h = run_hardening_gate(verbose=True)
+    print("-" * 74)
+    print(f"HARDENING: {'PASS' if h['PASS'] else 'FAIL'}")
