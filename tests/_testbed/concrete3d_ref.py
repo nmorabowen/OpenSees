@@ -711,6 +711,153 @@ def run_hardening_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, verbose=True):
     return res
 
 
+# ===========================================================================
+# P1-tangent — general-tensor return map (spectral recompose) + CONSISTENT (algorithmic) tangent.
+#
+# The principal-stress return maps above are lifted to full 6-tensor strain control via the
+# spectral split: eigendecompose the trial stress, return the principal stresses (radial
+# deviatoric return preserves eigenvectors), recompose with the trial eigenvectors. The consistent
+# tangent dsigma/depsilon is NUMERICAL here (the algorithmic tangent of the discrete map — the
+# oracle reference). The C++ kernel's ANALYTIC tangent is FD-checked against this in the build PR.
+# Tensor (NOT engineering) shear convention throughout: voigt {00,11,22,01,12,02}, off-diag = eps_ij.
+# ===========================================================================
+def voigt_to_mat(v):
+    return np.array([[v[0], v[3], v[5]], [v[3], v[1], v[4]], [v[5], v[4], v[2]]], float)
+
+
+def mat_to_voigt(M):
+    return np.array([M[0, 0], M[1, 1], M[2, 2], M[0, 1], M[1, 2], M[0, 2]], float)
+
+
+def elastic_C(mp):
+    lam = mp["K"] - 2.0 * mp["G"] / 3.0
+    G = mp["G"]
+    C = np.zeros((6, 6))
+    for i in range(3):
+        for j in range(3):
+            C[i, j] = lam
+        C[i, i] += 2.0 * G
+    for i in range(3, 6):
+        C[i, i] = 2.0 * G                      # tensor: dsig_ij = 2G deps_ij
+    return C
+
+
+def elastic_pred_tensor(sig_n, deps, mp):
+    lam = mp["K"] - 2.0 * mp["G"] / 3.0
+    G = mp["G"]
+    tr = deps[0] + deps[1] + deps[2]
+    s = np.array(sig_n, float).copy()
+    for i in range(3):
+        s[i] += lam * tr + 2.0 * G * deps[i]
+    for i in range(3, 6):
+        s[i] += 2.0 * G * deps[i]
+    return s
+
+
+def return_map_tensor(sig_n, deps, mp, kp_n, hardening=True):
+    """6-tensor return: elastic predict -> eigendecompose -> principal return -> recompose.
+    Returns (sig_new[6], kp_new, plastic, converged)."""
+    sig_tr = elastic_pred_tensor(sig_n, deps, mp)
+    w, V = np.linalg.eigh(voigt_to_mat(sig_tr))           # w ascending, V columns = eigenvectors
+    if hardening:
+        sp, kp_new, plastic, _, conv = return_map_hardening(w, mp, kp_n)
+    else:
+        sp, plastic, _, _, conv = return_map_principal(w, mp)
+        kp_new = kp_n
+    sig_new = mat_to_voigt(V @ np.diag(sp) @ V.T)          # radial return preserves V
+    return sig_new, kp_new, plastic, conv
+
+
+def consistent_tangent(sig_n, deps, mp, kp_n, hardening=True, rel_step=1.0e-6):
+    """Numerical algorithmic tangent dsigma/depsilon (6x6) by central difference of the map."""
+    base = mp["fc"] / mp["E"]
+    C = np.zeros((6, 6))
+    for j in range(6):
+        d = rel_step * (abs(deps[j]) + base)
+        dp = np.array(deps, float).copy(); dp[j] += d
+        dm = np.array(deps, float).copy(); dm[j] -= d
+        sp, _, _, _ = return_map_tensor(sig_n, dp, mp, kp_n, hardening)
+        sm, _, _, _ = return_map_tensor(sig_n, dm, mp, kp_n, hardening)
+        C[:, j] = (sp - sm) / (2.0 * d)
+    return C
+
+
+def run_tangent_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, verbose=True):
+    res = {}
+    mp = make_material(E, nu, fc, ft)
+    Cel = elastic_C(mp)
+    nrm = lambda A: float(np.sqrt(np.sum(A * A)))
+
+    # T1: tensor return reduces to the principal map for a DIAGONAL plastic trial
+    deps_diag = np.array([-2.0e-3, 5.0e-4, 7.0e-4, 0.0, 0.0, 0.0])
+    st, _, _, _ = return_map_tensor(np.zeros(6), deps_diag, mp, 0.0)
+    sig_tr = elastic_pred_tensor(np.zeros(6), deps_diag, mp)
+    w = np.sort(sig_tr[:3])
+    sp_ref, _, _, _, _ = return_map_hardening(w, mp, 0.0)
+    res["T1_reduce_diag"] = float(np.max(np.abs(np.sort(st[:3]) - np.sort(sp_ref))))
+
+    # Tangent computed on the PERFECT-PLASTIC map (analytic Jacobian => ~1e-13 stress => clean FD).
+    # The hardening map uses a numerical Jacobian (~1e-8) — too noisy for a clean tangent; its
+    # analytic tangent is the C++ build-PR work, FD-checked against this machinery. hardening=False.
+    HP = dict(hardening=False)
+
+    # T2: elastic step -> tangent == elastic C
+    C_el = consistent_tangent(np.zeros(6), np.array([-1.0e-5, 0, 0, 0, 0, 0]), mp, 0.0, **HP)
+    res["T2_elastic_err"] = nrm(C_el - Cel) / nrm(Cel)
+
+    # PLASTIC, off-meridian (Lode ~52deg), low-confinement (lateral expansion) so it actually
+    # yields, 3 distinct principals + shear (clean eigvecs). Df=0.3 = non-associated DILATANCY.
+    # Same state at (e=1,Df=1) is fully associated (T3b) => the symmetric/asymmetric pair isolates
+    # exactly the non-associativity that forces an unsymmetric solver (ADR 4.4/4.5).
+    deps_pl = np.array([-2.0e-3, 6.0e-4, 2.0e-4, 1.0e-4, 0.0, 0.0])
+    mp_na = make_material(E, nu, fc, ft, Df=0.3)
+    C_pl = consistent_tangent(np.zeros(6), deps_pl, mp_na, 0.0, **HP)
+    res["T3_asym_nonassoc"] = nrm(C_pl - C_pl.T) / nrm(C_pl)        # non-associated => NON-symmetric
+
+    # T3b: associated limit e=1 (no Lode r), Df=1 => flow == yield gradient. The asymmetry drops
+    # ~20x vs the non-associated model, confirming Df+Lode drive the BULK asymmetry. The residual
+    # (~2%) is the SEMI-IMPLICIT theta-FREEZE: freezing the Lode direction breaks the variational
+    # structure, so Tier-1 is slightly non-symmetric even when associated => unsymmetric solver is
+    # required UNCONDITIONALLY (reinforces ADR 4.4/4.5), not only for Df<1.
+    mp_as = make_material(E, nu, fc, ft, Df=1.0, e=1.0)
+    C_as = consistent_tangent(np.zeros(6), deps_pl, mp_as, 0.0, **HP)
+    res["T3b_sym_assoc"] = nrm(C_as - C_as.T) / nrm(C_as)
+
+    # T4: tangent STABILITY — central-difference tangent agrees across two FD steps (well-defined,
+    # not noise). (A strict quadratic-Taylor test is inherently FD-roundoff-limited; the analytic
+    # tangent + its FD-check is the C++ build-PR deliverable.)
+    C_a = consistent_tangent(np.zeros(6), deps_pl, mp_na, 0.0, rel_step=2.0e-6, **HP)
+    C_b = consistent_tangent(np.zeros(6), deps_pl, mp_na, 0.0, rel_step=8.0e-7, **HP)
+    res["T4_step_stability"] = nrm(C_a - C_b) / nrm(C_a)
+
+    # T5: frame objectivity — rotate strain by Q => stress rotates by Q (isotropic map)
+    sig0, _, _, _ = return_map_tensor(np.zeros(6), deps_pl, mp_na, 0.0, **HP)
+    th = 0.5
+    Q = np.array([[np.cos(th), -np.sin(th), 0], [np.sin(th), np.cos(th), 0], [0, 0, 1]])
+    Emat = voigt_to_mat(deps_pl)
+    s_rot, _, _, _ = return_map_tensor(np.zeros(6), mat_to_voigt(Q @ Emat @ Q.T), mp_na, 0.0, **HP)
+    s_base = voigt_to_mat(sig0)
+    res["T5_objectivity"] = nrm(voigt_to_mat(s_rot) - Q @ s_base @ Q.T) / nrm(s_base)
+
+    ok = (res["T1_reduce_diag"] < 1.0e-9 and res["T2_elastic_err"] < 1.0e-6
+          and res["T3_asym_nonassoc"] > 1.0e-1                       # strongly non-symmetric
+          and res["T3b_sym_assoc"] < 0.05                            # ~20x smaller (theta-freeze residual)
+          and res["T3_asym_nonassoc"] > 5.0 * res["T3b_sym_assoc"]   # non-association dominates
+          and res["T4_step_stability"] < 1.0e-3 and res["T5_objectivity"] < 1.0e-9)
+    res["PASS"] = bool(ok)
+    if verbose:
+        print(f"  E={E} nu={nu} fc={fc} ft={ft}")
+        print(f"  T1 tensor-reduce-to-principal (diag)   = {res['T1_reduce_diag']:.2e}  (<1e-9)")
+        print(f"  T2 elastic tangent == C_elastic        = {res['T2_elastic_err']:.2e}  (<1e-6)")
+        print(f"  T3 asymmetry ||C-C^T||/||C|| (Df=0.3)  = {res['T3_asym_nonassoc']:.3e}  (non-associated)")
+        print(f"  T3b associated limit (e=1,Df=1)        = {res['T3b_sym_assoc']:.2e}  (~20x smaller;"
+              f" residual = semi-implicit theta-freeze)")
+        print(f"  T4 tangent step-stability              = {res['T4_step_stability']:.2e}  (<1e-3)")
+        print(f"  T5 frame objectivity                   = {res['T5_objectivity']:.2e}  (<1e-9)")
+        print(f"  => TANGENT GATE {'PASS' if ok else 'FAIL'}")
+    return res
+
+
 if __name__ == "__main__":
     print("=" * 74)
     print("LadrunoConcrete3D P0 oracle gate — Menetrey-Willam surface normalization")
@@ -733,3 +880,9 @@ if __name__ == "__main__":
     h = run_hardening_gate(verbose=True)
     print("-" * 74)
     print(f"HARDENING: {'PASS' if h['PASS'] else 'FAIL'}")
+    print("=" * 74)
+    print("LadrunoConcrete3D P1-tangent gate — consistent tangent (spectral tensor return)")
+    print("=" * 74)
+    t = run_tangent_gate(verbose=True)
+    print("-" * 74)
+    print(f"TANGENT: {'PASS' if t['PASS'] else 'FAIL'}")

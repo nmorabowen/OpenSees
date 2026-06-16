@@ -116,3 +116,21 @@ def test_p1_hardening_reduces_surface_to_failure():
         xi, rho, th, *_ = ref.invariants(sv)
         f_fail = ref._yf_inv(xi, rho, ref.lode_r(th, mp["e"]), mp)
         assert abs(f_hard - f_fail) < 1.0e-12
+
+
+# ---------------------------------------------------------------------------
+# P1-tangent — consistent (algorithmic) tangent of the spectral tensor return map:
+#   T1 reduce-to-principal; T2 elastic==C_el; T3 NON-symmetric for non-associated flow;
+#   T3b associated limit ~20x more symmetric (residual = semi-implicit theta-freeze => Tier-1
+#   needs an unsymmetric solver UNCONDITIONALLY); T4 step-stable; T5 frame-objective.
+# ---------------------------------------------------------------------------
+def test_p1_tangent_gate():
+    r = ref.run_tangent_gate(verbose=False)
+    assert r["T1_reduce_diag"] < 1.0e-9
+    assert r["T2_elastic_err"] < 1.0e-6
+    assert r["T3_asym_nonassoc"] > 1.0e-1               # non-associated => non-symmetric tangent
+    assert r["T3b_sym_assoc"] < 0.05                    # associated limit ~20x smaller
+    assert r["T3_asym_nonassoc"] > 5.0 * r["T3b_sym_assoc"]
+    assert r["T4_step_stability"] < 1.0e-3
+    assert r["T5_objectivity"] < 1.0e-9
+    assert r["PASS"]

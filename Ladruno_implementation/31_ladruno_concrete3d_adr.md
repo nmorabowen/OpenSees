@@ -237,10 +237,14 @@ CDPM2's published `Aₕ/Bₕ/Cₕ/Dₕ` (calibrated from peak strains — recali
 
 ### 4.4 Robustness — three tiers, one kernel
 
-- **Tier-1 (default): implicit-accurate** semi-implicit return map. Non-associated ⇒ **non-
-  symmetric** tangent ⇒ **requires an unsymmetric solver** (`UmfPack`/`FullGeneral`). This is a
-  **hard usage requirement** (OpenSees has no runtime guard) — document it in the user guide and
-  the banner note; warn if a symmetric solver is detected.
+- **Tier-1 (default): implicit-accurate** semi-implicit return map. The consistent tangent is
+  **non-symmetric** ⇒ **requires an unsymmetric solver** (`UmfPack`/`FullGeneral`). **Verified
+  in the oracle (P1-tangent gate):** strongly non-symmetric for non-associated flow
+  (`‖C−Cᵀ‖/‖C‖ ≈ 0.46` at `Df=0.3`), and **non-symmetric even in the associated limit** (`e=1,
+  Df=1` → `≈0.024`, ~20× smaller but nonzero) — the residual is the **semi-implicit θ-freeze**
+  (freezing the Lode direction breaks the variational structure). So the unsymmetric solver is a
+  **hard requirement UNCONDITIONALLY**, not only for `Df<1` (OpenSees has no runtime guard —
+  document in the user guide + banner note; warn on a symmetric solver).
 - **[BLOCKING] Tier-2 (IMPL-EX) must freeze the PLASTIC state too, not just damage.** Freezing
   only `ω` and still solving the non-associated softening return implicitly leaves the tangent
   non-symmetric and **indefinite on the softening branch** — the SPD promise is false. Following
