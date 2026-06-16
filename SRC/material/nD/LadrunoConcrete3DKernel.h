@@ -47,11 +47,12 @@
 //     (freeze plastic state + damage => SPD secant); Tier-3 explicit (no tangent). Duvaut-Lions
 //     viscous eta at the PLASTIC level.
 //
-// STATUS: P0 SCAFFOLD. The Menetrey-Willam FAILURE surface (yieldF / lodeR / m0Of /
-// invariants) is IMPLEMENTED and mirrors the numpy oracle 1:1 (P0 gate: surface normalization,
-// meridian/eccentricity identity, Kupfer fcc/fc). The return map (P1), dual damage (P2),
-// robustness tiers (P3), finite-strain out-contract (P4), and confined-fiber condensation (§4.6)
-// are STUBS with ADR-phase markers below. No physics beyond the surface should be trusted yet.
+// STATUS: P0/P1 SURFACE + HARDENING LAWS. The CDPM2 yield surface (yieldF, Eq.18 with the [1-qh1]
+// cap) and the hardening building blocks (qh1Of/qh2Of Eq.30-31, ductilityXh Eq.33-36) are
+// IMPLEMENTED and mirror the numpy oracle 1:1 (gated: surface normalization, Kupfer fcc/fc, the
+// hardening unit identities, and the oracle's 4-unknown hardening return map). The C++ return map
+// (the actual stress update, P1-build), dual damage (P2), robustness tiers (P3), finite-strain
+// out-contract (P4), and confined-fiber condensation (§4.6) are STUBS with ADR-phase markers.
 //
 // Tensor convention: symmetric tensors stored as 6 TENSOR components in the canonical OpenSees
 // order {00,11,22,01,12,02} (off-diagonal slots hold TRUE tensor components, not engineering —
@@ -85,6 +86,13 @@ struct Params {
     double Gc = 0.0;    // compressive (WEAKEST-calibrated knob — ADR §6)
     // flow / ductility (P1)
     double Df = 0.0;    // dilatancy (non-associated flow)
+    // hardening (P1, CDPM2 Eqs. 30-36)
+    double qh0 = 0.3;   // initial yield fraction (qh1 at kp=0)
+    double Hp = 0.5;    // hardening modulus (qh1 slope at kp=1^-, qh2 slope for kp>1)
+    double Ah = 0.08;   // ductility-measure params (Eq.33; literature defaults, recalibrate)
+    double Bh = 0.003;
+    double Ch = 2.0;
+    double Dh = 1.0e-6;
     // rate / robustness
     double eta = 0.0;            // Duvaut-Lions viscosity (0 => inviscid, byte-identical)
     bool   implex = false;       // Tier-2
@@ -149,17 +157,41 @@ inline double m0Of(double fc, double ft, double e)
 }
 
 // ---------------------------------------------------------------------------
-// fc-normalized Menetrey-Willam yield function. qh1=qh2=1 => FAILURE surface.
-// (PIN against Grassl et al. 2013 IJSS + Menetrey-Willam 1995 by Eq. number at review.)
+// CDPM2 yield function f_p — Grassl et al. 2013 IJSS Eq. (18). qh1=qh2=1 => FAILURE surface
+// Eq. (21) = Menetrey-Willam 1995. Note xi/(sqrt3 fc) = (I1/3)/fc = sigma_V/fc (Eq.12).
 // ---------------------------------------------------------------------------
 inline double yieldF(const double sig[6], const Params& mp, double qh1 = 1.0, double qh2 = 1.0)
 {
     double xi, rho, theta;
     invariants(sig, xi, rho, theta);
     const double r = lodeR(theta, mp.e);
-    const double termQuad = (SQRT1_5 * rho / mp.fc) * (SQRT1_5 * rho / mp.fc);
-    const double termLin = mp.m0 * qh1 * qh2 * (rho * r / (SQRT6 * mp.fc) + xi / (SQRT3 * mp.fc));
-    return termQuad + termLin - (qh1 * qh1) * (qh2 * qh2);
+    const double sigV_fc = xi / (SQRT3 * mp.fc);                 // sigma_V/fc
+    const double AV = rho / (SQRT6 * mp.fc) + sigV_fc;           // hardening-cap base
+    const double RR = rho * r / (SQRT6 * mp.fc) + sigV_fc;       // m0-friction bracket (Lode r)
+    const double quad = SQRT1_5 * rho / mp.fc;                   // sqrt(3/2) rho/fc
+    const double cap = (1.0 - qh1) * AV * AV + quad;
+    return cap * cap + mp.m0 * qh1 * qh1 * qh2 * RR - (qh1 * qh1) * (qh2 * qh2);  // Eq.(18)
+}
+
+// CDPM2 hardening building blocks (Grassl et al. 2013 Eqs. 30-36). qh1: qh0->1 over kp in [0,1]
+// (Eq.30); qh2: 1 then 1+Hp(kp-1) (Eq.31); ductility xh (Eq.33) with Rh=-sigV/fc-1/3 (Eq.34) =>
+// more ductile under compression. (Used by the P1 hardening return map; mirrors the numpy oracle.)
+inline double qh1Of(double kp, double qh0, double Hp)
+{
+    if (kp < 1.0)
+        return qh0 + (1.0 - qh0) * (kp * kp * kp - 3.0 * kp * kp + 3.0 * kp)
+            - Hp * (kp * kp * kp - 3.0 * kp * kp + 2.0 * kp);
+    return 1.0;
+}
+inline double qh2Of(double kp, double Hp) { return kp < 1.0 ? 1.0 : 1.0 + Hp * (kp - 1.0); }
+inline double ductilityXh(double sigV, double fc, double Ah, double Bh, double Ch, double Dh)
+{
+    const double Rh = -sigV / fc - 1.0 / 3.0;                    // Eq.(34)
+    if (Rh >= 0.0)
+        return Ah - (Ah - Bh) * std::exp(-Rh / Ch);             // Eq.(33) upper
+    const double Eh = Bh - Dh;                                   // Eq.(35)
+    const double Fh = (Bh - Dh) * Ch / (Ah - Bh);               // Eq.(36)
+    return Eh * std::exp(Rh / Fh) + Dh;                          // Eq.(33) lower
 }
 
 // Convenience: eccentricity that makes the equibiaxial strength hit fcc/fc=target (ADR 4.1b).
