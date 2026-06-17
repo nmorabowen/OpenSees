@@ -481,6 +481,7 @@
 #include "ladrunoDistributingCoupling/LadrunoDistributingCoupling.h"	// N. Mora-Bowen (Ladruno)
 #include "ladrunoKinematicCoupling/LadrunoKinematicCoupling.h"	// N. Mora-Bowen (Ladruno)
 #include "ladrunoDispBeamColumn/LadrunoDispBeamColumn2d.h"	// N. Mora-Bowen (Ladruno)
+#include "ladrunoDispBeamColumn/LadrunoDispBeamColumn3d.h"	// N. Mora-Bowen (Ladruno)
 #include "joint/Joint2D.h"		// Arash
 #include "joint/Inno3DPnPJoint.h" // Cristian Miculas
 #include "twoNodeLink/TwoNodeLink.h"
@@ -1066,6 +1067,9 @@ FEM_ObjectBrokerAllClasses::getNewElement(int classTag)
 
     case ELE_TAG_LadrunoDispBeamColumn2d:	// N. Mora-Bowen (Ladruno)
       return new LadrunoDispBeamColumn2d();
+
+    case ELE_TAG_LadrunoDispBeamColumn3d:	// N. Mora-Bowen (Ladruno)
+      return new LadrunoDispBeamColumn3d();
 
     case ELE_TAG_LadrunoIMKBeam:	// N. Mora-Bowen (Ladruno)
       return new LadrunoIMKBeam();

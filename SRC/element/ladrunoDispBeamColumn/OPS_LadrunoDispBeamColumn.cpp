@@ -50,6 +50,7 @@
 
 // Planar builder, defined in LadrunoDispBeamColumn2d.cpp.
 extern void *OPS_LadrunoDispBeamColumn2d();
+extern void *OPS_LadrunoDispBeamColumn3d();
 
 void *OPS_LadrunoDispBeamColumn()
 {
@@ -59,7 +60,10 @@ void *OPS_LadrunoDispBeamColumn()
   if (ndm == 2 && ndf == 3)
     return OPS_LadrunoDispBeamColumn2d();
 
-  opserr << "WARNING LadrunoDispBeamColumn -- model must be ndm 2 / ndf 3 (2D). "
-            "The 3D sibling is not yet available in this build.\n";
+  if (ndm == 3 && ndf == 6)
+    return OPS_LadrunoDispBeamColumn3d();
+
+  opserr << "WARNING LadrunoDispBeamColumn -- model must be ndm 2/ndf 3 (2D) "
+            "or ndm 3/ndf 6 (3D)\n";
   return 0;
 }
