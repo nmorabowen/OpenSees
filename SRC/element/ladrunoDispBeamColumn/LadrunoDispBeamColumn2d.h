@@ -56,7 +56,8 @@ class LadrunoDispBeamColumn2d : public Element
 		     BeamIntegration &bi, CrdTransf &coordTransf,
 		     double rho = 0.0, int cMass = 0,
 		     Damping *theDamping = 0,
-		     int lchMode = 0, double userLch = 0.0);  // Ladruno (ADR 32): regularization length mode
+		     int lchMode = 0, double userLch = 0.0,  // Ladruno (ADR 32): regularization length mode
+		     int nlGeom = 0);                        // Ladruno (ADR 32): 0=linear basic strain, 1=½θ² bowing (NL)
     LadrunoDispBeamColumn2d();
     ~LadrunoDispBeamColumn2d();
 
@@ -131,6 +132,13 @@ class LadrunoDispBeamColumn2d : public Element
     double current_section_lch;
     int    lchMode;
     double userLch;
+
+    // Ladruno (ADR 32) Stage-1: nlGeom = 0 uses the stock linear basic strain
+    // (constant axial + linear curvature); nlGeom = 1 adds the ½θ² bowing term to
+    // the axial section strain (DispBeamColumnNL2d formulation), giving the
+    // displacement-based P-δ / bowing coupling. Both still rely on the geomTransf
+    // for rigid-body rotation; -nl improves the in-element large-deflection response.
+    int    nlGeom;
 
 	int numSections;
 	SectionForceDeformation** theSections; // pointer to the ND material objects

@@ -237,3 +237,54 @@ def test_corotational_large_displacement_matches_stock():
     # faithful clone: identical to stock under the same Corotational transform
     for a, b in zip(d_lad, d_ref):
         assert math.isclose(a, b, rel_tol=1e-9, abs_tol=1e-12)
+
+
+# ---------------------------------------------------------------------------
+# Test: -nl  ½θ² bowing strain toggle (Linear transform, axially restrained)
+# ---------------------------------------------------------------------------
+def _lin_transf_tip(nl, P, n=4, nsteps=20):
+    """Axially-restrained cantilever under a Linear geomTransf, transverse tip
+    load P over nsteps with Newton; return tip vertical displacement. With -nl
+    the ½θ² bowing builds axial tension under the restraint (tension stiffening)
+    that the linear basic strain cannot represent."""
+    _beam_model()
+    dx = _L / n
+    for i in range(n + 1):
+        ops.node(i + 1, i * dx, 0.0)
+    ops.fix(1, 1, 1, 1)
+    tip = n + 1
+    ops.fix(tip, 1, 0, 0)  # restrain axial DOF at the free end
+    ops.section("Elastic", 1, _E, _A, _Iz)
+    ops.geomTransf("Linear", 1)
+    ops.beamIntegration("Lobatto", 1, 1, 3)
+    extra = ("-nl",) if nl else ()
+    for i in range(1, n + 1):
+        ops.element("LadrunoDispBeamColumn", i, i, i + 1, 1, 1, *extra)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(tip, 0.0, -float(P), 0.0)
+    ops.system("BandGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Transformation")
+    ops.test("NormDispIncr", 1.0e-10, 50)
+    ops.algorithm("Newton")
+    ops.integrator("LoadControl", 1.0 / nsteps)
+    ops.analysis("Static")
+    assert ops.analyze(nsteps) == 0
+    return ops.nodeDisp(tip, 2)
+
+
+def test_nl_reduces_to_linear_at_small_deformation():
+    d_nl = _lin_transf_tip(True, 1.0)
+    d_lin = _lin_transf_tip(False, 1.0)
+    # tiny load -> theta ~ 0 -> ½θ² negligible -> NL == linear
+    assert math.isclose(d_nl, d_lin, rel_tol=1e-5)
+
+
+def test_nl_stiffens_under_finite_rotation():
+    d_nl = _lin_transf_tip(True, 300.0)
+    d_lin = _lin_transf_tip(False, 300.0)
+    # both deflect substantially; the -nl bowing builds restraint tension that
+    # stiffens the member, so |tip(NL)| < |tip(linear)| by a clear margin
+    assert abs(d_lin) > 5.0
+    assert abs(d_nl) < 0.98 * abs(d_lin)
