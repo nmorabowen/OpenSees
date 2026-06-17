@@ -175,6 +175,22 @@ def test_p2_damage_gate():
     assert r["PASS"]
 
 
+def test_p2b_compression_damage_gate():
+    """P2b: compressive damage wc + the alpha_c tension/compression split (CDPM2 Eq.37,46-57).
+    C0 alpha_c -> 0 (tension) / 1 (compression) and the general equivalent strain Eq.37 == eps0 on
+    the failure surface; C1 nominal compression peaks at fc then softens (effective stress monotonic);
+    C2 the ADR §4.3 BLOCKING crack-band Gc gate: dissipation*lch == Gc, size-objective across lch."""
+    r = ref.run_p2b_gate(verbose=False)
+    assert r["C0_ok"]                       # alpha_c split: 0 tension, 1 compression
+    assert r["C0_eqstrain_ok"]              # Eq.37 equivalent strain == eps0 on the failure surface
+    assert r["C1_peak_err"] < 0.03          # nominal compression peak == fc (the damage peak)
+    assert r["C1_eff_monotone"]             # P1 effective stress monotonic (no plastic peak)
+    assert r["C1_softens"]                  # softens with wc -> 1
+    assert r["C2_max_rel_err"] < 0.02       # crack-band dissipation*lch == Gc
+    assert r["C2_objective"]                # ... independent of lch
+    assert r["PASS"]
+
+
 @pytest.mark.skipif(shutil.which("g++") is None, reason="g++ not available")
 def test_cpp_kernel_matches_oracle_dump(tmp_path):
     committed = os.path.join(TESTBED, "concrete3d_oracle_fixture.txt")

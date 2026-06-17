@@ -248,10 +248,23 @@ so `∫σ d ε_i = f_t·ε_f = G_f/lch` by construction. The lumped `ε_i ≈ ε
 because it dropped the `ω_t·κ_dt2` term and starved under tension's tiny ductility — **the precise
 equations were essential, not a refinement** (the P0 `qh1·qh2`-guess lesson, reconfirmed).
 
-`κ_dt1`/`κ_dt2` and the equivalent strain Eq.37 (general tensor `ε̃`, only the uniaxial Eq.38
-`ε̃=σ̄_t/E` is wired so far) are documented in the oracle. **NEXT (P2b+):** compression `ω_c` +
-`α_c` spectral split (Eq.46-50, `β_c`) → general Eq.37 `ε̃` + the tensor spectral split → unilateral
-crack-closure recovery → dual-projector damaged tangent → C++ port + `nDMaterial` wrapper (lands 33017).
+**P2b — compression `ω_c` + the `α_c` T/C split — DONE + VERIFIED** (PR after #259; oracle
+`run_p2b_gate`, pytest `test_p2b_compression_damage_gate`, Zone-A 14/14):
+- **C0:** `α_c` (Eq.46) = 0 (uniaxial tension) / 1 (uniaxial compression); the **general equivalent
+  strain Eq.37** `ε̃` = `ε₀` on the failure surface for *any* state (verified comp + tension) and
+  reduces to Eq.38 in uniaxial tension.
+- **C1:** nominal uniaxial-compression **peaks at `f_c`** (1.4% err) then softens, P1 effective
+  stress monotonic.
+- **C2 [ADR BLOCKING]:** crack-band `G_c` **size-objective** (5.000 for lch ∈ {50,100,200}, rel err
+  1e-4) via the compression inelastic split `ε_i = κ_dc1 + ω_c·κ_dc2` (Eq.47-49,52,55), `ε_fc=G_c/(f_c·lch)`.
+- Ductility `x_s = 1+(A_s−1)R_s`, `R_s=−√6 σ̄_V/ρ̄` (Eq.56-57) wired (`x_s=A_s` in uniaxial
+  compression — the confinement-ductility hook). **`β_c` (Eq.50) DROPPED for the MONOTONIC slice**
+  (it is the smooth damage↔plasticity transition for CYCLIC loading) → restore as a P2c refinement.
+
+`κ_dt1`/`κ_dt2`/`κ_dc1`/`κ_dc2`, `α_c`, and Eq.37/38 are in the oracle. **NEXT (P2c+):** the TENSOR
+spectral split (`ω_t` on `σ̄_t` + `ω_c` on `σ̄_c` recompose for general 6-strain, eigdec like the P1
+tangent) → unilateral crack-closure recovery → `β_c` cyclic + the dual-projector damaged tangent →
+C++ port (`returnMapDamaged` over the P1 kernel) + the `nDMaterial` wrapper (lands classTag 33017).
 
 ## 7. Roadmap context
 
