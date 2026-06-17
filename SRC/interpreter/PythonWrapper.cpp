@@ -1109,6 +1109,19 @@ static PyObject *Py_ops_ladrunoArcLength(PyObject *self, PyObject *args)
     return wrapper->getResults();
 }
 
+// Ladruno: runtime query of the active LadrunoDynamicRelaxation (rung-5 settling).
+static PyObject *Py_ops_ladrunoDR(PyObject *self, PyObject *args)
+{
+    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
+
+    if (OPS_LadrunoDRCmd() < 0) {
+	opserr<<(void*)0;
+	return NULL;
+    }
+
+    return wrapper->getResults();
+}
+
 static PyObject *Py_ops_recorder(PyObject *self, PyObject *args)
 {
     wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
@@ -3165,6 +3178,7 @@ PythonWrapper::addOpenSeesCommands()
     addCommand("testNorms", &Py_ops_getCTestNorms);
     addCommand("testIter", &Py_ops_getCTestIter);
     addCommand("ladrunoArcLength", &Py_ops_ladrunoArcLength);   // Ladruno: Layer-B
+    addCommand("ladrunoDR", &Py_ops_ladrunoDR);   // Ladruno: rung-5 DR query
     addCommand("recorder", &Py_ops_recorder);
     addCommand("database", &Py_ops_database);
     addCommand("save", &Py_ops_save);

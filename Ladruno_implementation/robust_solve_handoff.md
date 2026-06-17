@@ -31,9 +31,13 @@ this first on resume. Design + risks: [[31_ladruno_robust_solve_driver_adr]].
   hardcoded a stale `PYEXE` (`C:\Users\nmora\…`), so CMake auto-picked Python 3.14
   and configure failed. Ported the machine-agnostic `PYEXE` probe block (the one on
   the beam branch's `18cb1baba`) into `Ladruno_scripts\build.bat` here.
-- **rung-4 is still NOT wired** into `robust_drive.py` (`stabilize=True` still
-  raises). What changed is the *design*: measuring the seam revealed `-stabilize`
-  is a narrow last-resort, not a limit-point hero (see "rung-4 reality check").
+- **rung-4 AND rung-5 are now WIRED + built + green** (2026-06-16, later). The
+  driver was rewritten as a clean phase machine (rungs 0-3 implicit → rung-4
+  stabilization → rung-5 dynamics). rung-5 needed a new `ladrunoDR` C++ command
+  (the DR settling getters had no runtime exposure); added across all 4 interp
+  sites + rebuilt. **Battery: 15 green.** Still on `guppi/robust-solve-driver`,
+  uncommitted (this builds on the Layer-1.5 commit `fb6f44dba`, already pushed).
+  See "rung-4/5 as-built" below for the honest verdict discipline.
 
 ## Branch / worktree topology (GET THIS RIGHT before touching git)
 
@@ -119,27 +123,48 @@ python -m pytest Ladruno_scripts\robust_solve_tests -q     # 12 green
 #    (base ladruno). Rebase on origin/ladruno first if it has advanced.
 ```
 
+## rung-4/5 as-built (2026-06-16) — the honest verdict discipline
+
+`robust_drive.py` is now a phase machine: `phase_implicit` (rungs 0-3) →
+`phase_stabilized` (rung-4) → `phase_dynamics` (rung-5). Escalation at the floor:
+rung-3 (if a control DOF) → rung-4 (if `stabilize`) → rung-5 (if `dynamics`).
+
+- **rung-4** arms `LadrunoArcLength -stabilize stab_f` (NO `-adaptStab`) +
+  `LadrunoStabilizedUnbalance`, issued ONCE (the integrator is stateful — never
+  re-issued per step, unlike LoadControl). Reads `dissipationRatio` each commit,
+  decays `c` via `scaleCVisc(0.5)` after a clean window (R-RAMPDOWN), records
+  `stab_dissipated` (the L0 `SW` energy-partition term). Verdict is
+  `regularized` only if the c-reduction drift was computed, else **`unverified`**
+  (deferred → currently always `unverified`); NEVER `equilibrium`. `bool(res)` is
+  False for any stabilized result by construction.
+- **rung-5** does the atomic R-HANDOFF: snapshot `λ=getTime()`, `loadConst('-time',λ)`,
+  `wipeAnalysis`, build a Transient analysis with `LadrunoDynamicRelaxation`,
+  settle on the **mass-free** `ladrunoDR residualNorm < dr_settle_tol·‖P‖`
+  (‖P‖ proxy = `max(1,|λ|)`, overridable via `dr_pref`), then `setTime(λ)`+`loadConst`
+  on return. Verdict `regularized` (a relaxed rest, not a traced branch). The
+  R-HANDOFF regression asserts `getTime()` is restored EXACTLY.
+- **No clean-WIN fixture exists** for rung-4/5 in this battery: pure softening
+  defeats stabilize too, and adaptive load control dynamically *jumps* a
+  snap-through before rung-4 is reached (R-LOG-MASK). So the tests assert
+  ESCALATION + honest verdict + the handoff contract, plus that rung-3 is
+  preferred when a control DOF exists. (`test_stabilize_*`, `test_ladrunoDR_*`,
+  `test_robust_drive_rung4_*`, `test_robust_drive_rung5_*`.)
+
 ## Immediate next steps (priority order)
 
-1. **Commit the uncommitted working-tree changes** (build.bat fix, the new
-   fixture + 4 tests, the quirk, this handoff) and push Layer-1.5 to its own PR
-   (base `ladruno`). The getters are built + 12-green; nothing blocks the PR.
-2. **Decide rung-4 scope with the track owner** (see "rung-4 reality check"):
-   the optimistic "arm STABILIZE at the limit point" reflex is wrong for the
-   current battery (rung-3 wins on both fixtures). If proceeding, rung-4 wiring in
-   `robust_drive.py` = replace the `stabilize=True` refusal with: arm `-stabilize`
-   **without** adaptStab at an elevated `f`, pre-validate `scaleCVisc` factor>0,
-   read `dissipationRatio` each step, ramp `c` down once past the limit, the
-   mandatory c-reduction verification pass (R-DIFFUSION), and a hard
-   `verdict="regularized"/"unverified"` stamp. Add the **L0 energy partition**
-   post-processing (`SW := W_stab`, `RES_true := RES − SW`) — ADR-31 "Energy
-   accounting". A snap-through (not softening) fixture is the right regression
-   vehicle, but note it crosses only by a diffusive crawl.
-3. **Rung-5**: the `ladrunoDR` runtime command (4-file Python/Tcl wrapper,
-   deferred per R-SCOPE) + the implicit→DR handoff primitive (R-HANDOFF), then
-   wire the dynamics fall-through.
-4. **Battery**: buckling-column fixture (rung-3 limit-point, no build), then the
-   slack-cable snap (needs rung-5).
+1. **Commit + push** the rung-4/5 working-tree changes (the driver rewrite, the
+   `ladrunoDR` C++ command across 4 interp files, `torture_dynamics.py`, the
+   battery additions, ledgers). Build is green + 15-green battery.
+2. **(Deferred) the c-reduction diffusion bound** — the one piece of rung-4 not
+   built. Today every stabilized success is stamped `unverified`. To upgrade to
+   `regularized`-with-evidence, re-run the stabilized segment/drive at halved
+   `stab_f` and bound the peak-load drift (needs a caller-supplied rebuild hook).
+3. **(Deferred) the indirect-control polish tail** after a rung-5 excursion —
+   re-land on the true branch with a few CMOD-controlled implicit steps
+   (`LadrunoIndirectControl`); today rung-5 returns the DR rest state as-is.
+4. **Battery**: a model where DR genuinely *rescues* (tangent pathology static
+   can't pass) would make rung-5 a WIN, not just plumbing; and a distributed-
+   buckling model with no single control DOF would make rung-4 a WIN.
 
 ## Key facts — do NOT re-derive
 

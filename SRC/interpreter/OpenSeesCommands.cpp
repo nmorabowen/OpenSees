@@ -89,6 +89,7 @@ UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 #include <PFEMIntegrator.h>
 #include <TransientIntegrator.h>      // Ladruno: profiler dt_cr (getCriticalTimeStep)
 #include <LadrunoArcLength.h>         // Ladruno: Layer-B reduceStep/revert runtime command
+#include <LadrunoDynamicRelaxation.h> // Ladruno: rung-5 DR settling/micro-burst query command
 #include <classTags.h>               // Ladruno: INTEGRATOR_TAGS_LadrunoArcLength guard
 #include <PFEMSolver.h>
 #include <PFEMLinSOE.h>
@@ -3211,6 +3212,45 @@ int OPS_LadrunoArcLengthCmd()
                << "' (use reduceStep|increaseStep|setArcLength|scaleCVisc|arcLength|"
                   "deltaLambdaStep|currentLambda|sign|deltaUstepNorm|"
                   "dissipationRatio|dissipatedEnergy|referenceEnergy)\n";
+        return -1;
+    }
+    int n = 1;
+    OPS_SetDoubleOutput(&n, &out, true);
+    return 0;
+}
+
+// ladrunoDR <sub> -- runtime query of the active LadrunoDynamicRelaxation (33005);
+// the rung-5 settling / micro-burst signals (ADR-31 R-DR-ENERGY). Read-only.
+//   ladrunoDR residualNorm   -> ||f_ext - f_int||_inf  (mass-free settling gate)
+//   ladrunoDR kineticEnergy  -> 1/2 v^T M* v           (micro-burst signal)
+// The robust-solve driver reads residualNorm/residualNorm0 each DR step to decide
+// when the dynamics excursion has relaxed to a quasi-static rest state -- the
+// physical-mass EnergyBalance KE is ~0 on DR's pseudo-mass models, so the gate
+// MUST be this force residual, not a KE ratio.
+int OPS_LadrunoDRCmd()
+{
+    if (cmds == 0) return 0;
+    TransientIntegrator *ti = cmds->getTransientIntegrator();
+    if (ti == 0 || ti->getClassTag() != INTEGRATOR_TAGS_LadrunoDynamicRelaxation) {
+        opserr << "WARNING ladrunoDR - the active transient integrator is not a "
+                  "LadrunoDynamicRelaxation (set `integrator LadrunoDynamicRelaxation "
+                  "...` first)\n";
+        return -1;
+    }
+    LadrunoDynamicRelaxation *dr = (LadrunoDynamicRelaxation *)ti;
+
+    if (OPS_GetNumRemainingInputArgs() < 1) {
+        opserr << "WARNING ladrunoDR - expects a subcommand "
+                  "(residualNorm|kineticEnergy)\n";
+        return -1;
+    }
+    const char *sub = OPS_GetString();
+    double out = 0.0;
+    if      (strcmp(sub, "residualNorm") == 0)  out = dr->getResidualNorm();
+    else if (strcmp(sub, "kineticEnergy") == 0) out = dr->getKineticEnergy();
+    else {
+        opserr << "WARNING ladrunoDR - unknown subcommand '" << sub
+               << "' (use residualNorm|kineticEnergy)\n";
         return -1;
     }
     int n = 1;

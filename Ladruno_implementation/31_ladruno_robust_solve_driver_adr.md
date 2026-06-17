@@ -374,4 +374,32 @@ framing implied. The `stabilize=True` refusal therefore **stays in place** until
 the rung-4 scope is confirmed with the track owner. Next: commit + push Layer-1.5
 PR; then the rung-4 scope decision.
 
+### 2026-06-16 (later still) — rung-4 + rung-5 WIRED (phase machine), 15 green
+
+Track owner elected to wire both. `robust_drive.py` rewritten as a phase machine:
+`phase_implicit` (rungs 0-3) → `phase_stabilized` (rung-4) → `phase_dynamics`
+(rung-5), escalating at the cutback floor (rung-3 if a control DOF, else rung-4
+if `stabilize`, else rung-5 if `dynamics`).
+
+- **rung-4**: arms `LadrunoArcLength -stabilize` (no `-adaptStab`) +
+  `LadrunoStabilizedUnbalance`, issued ONCE (stateful integrator — never re-issued
+  per step). Gates on `dissipationRatio`, decays `c` via `scaleCVisc` (R-RAMPDOWN),
+  exposes `stab_dissipated` (L0 `SW`). Verdict `regularized` only with a computed
+  c-reduction drift, else `unverified`; never `equilibrium`, and `bool(res)` is
+  False for any stabilized result.
+- **rung-5**: new `ladrunoDR residualNorm|kineticEnergy` runtime command (the DR
+  getters had C++ but no command exposure; added across OpenSeesCommands.{cpp,h} +
+  Python/Tcl wrappers, rebuilt). Atomic R-HANDOFF: snapshot λ, `loadConst`, build a
+  Transient `LadrunoDynamicRelaxation` analysis, settle on mass-free
+  `residualNorm < dr_settle_tol·‖P‖`, restore `setTime(λ)`. The R-HANDOFF
+  regression asserts λ is restored EXACTLY. Verdict `regularized` (relaxed rest).
+
+**No clean-WIN fixture exists** in this battery (pure softening defeats stabilize;
+adaptive load control jumps a snap-through before rung-4 — R-LOG-MASK), so the new
+tests assert ESCALATION + honest verdict + the handoff contract, and that rung-3
+is preferred when a control DOF exists. Battery 8→**15 green**. Two pieces remain
+DEFERRED (handoff doc): the c-reduction diffusion bound (so a stabilized run can be
+`regularized`-with-evidence rather than `unverified`) and the indirect-control
+polish tail after a DR excursion.
+
 *(move to `Ladruno_internal/implemented_robust_solve_driver.md` when the driver is complete.)*
