@@ -169,7 +169,7 @@ Full regression green.
 
 Design in [[32_ladruno_dispbeamcolumn_regularization_adr]] (the 11-agent scope + 2 adversarial reviews live in its implementation log); gotchas in [[LEDGER_quirks]].
 
-## Shipped (all merged to `ladruno`; PRs #251 #254 #255 #258 #260 + review-fix)
+## Shipped (all merged to `ladruno`; PRs #251 #254 #255 #258 #260 + review-fix; Stage-2 cohesive material #264)
 - **LadrunoDispBeamColumn2d** (`ELE_TAG 33013`) + **LadrunoDispBeamColumn3d** (`ELE_TAG 33014`) —
   displacement-based fiber frame, clones of `DispBeamColumn2d/3d`. ONE ndm-dispatched command
   `LadrunoDispBeamColumn` (ndm2/ndf3 → 2D, ndm3/ndf6 → 3D). Reduces to stock bit-identically.
@@ -198,9 +198,9 @@ Design in [[32_ladruno_dispbeamcolumn_regularization_adr]] (the 11-agent scope +
   that is what Tier-2 addresses.
 
 ## Resume (next session) — Stage 2 (embedded hinge)
-- **DONE (2026-06-17, branch `guppi/ladruno-dispbeamcolumn-hinge`):** the discrete cohesive law
-  `LadrunoCohesiveHinge` (`MAT_TAG 33003`, uniaxial) — the Tier-2 building block — landed standalone +
-  10/10 tests. Strain = rotation jump `[[θ]]`, stress = cohesive moment `M`; near-rigid penalty
+- **DONE (2026-06-17, merged [#264](https://github.com/nmorabowen/OpenSees/pull/264)):** the discrete
+  cohesive law `LadrunoCohesiveHinge` (`MAT_TAG 33003`, uniaxial) — the Tier-2 building block — landed
+  standalone + 10/10 tests. Strain = rotation jump `[[θ]]`, stress = cohesive moment `M`; near-rigid penalty
   (guarded floor `Mc²/2Gf`) → exp/linear softening calibrated so `∫M d[[θ]]==Gf` (LINEAR exact to
   1e-9); irreversible secant damage; `getEnergy()`. This is the *cheap solver-independent energy gate*
   the ADR said to land first. Parser:
