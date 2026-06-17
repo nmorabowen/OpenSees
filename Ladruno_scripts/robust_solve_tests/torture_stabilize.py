@@ -76,6 +76,25 @@ def run_stabilized(adaptStab=False, n_steps=200):
     }
 
 
+def peak_load_stabilized(f, n_steps=300):
+    """Drive the softening truss under -stabilize at fraction f; return peak |load|.
+
+    The metric for the c-reduction diffusion bound (R-DIFFUSION): on pure softening
+    the converged load tops out at the physical strength peak (~PEAK), which is
+    essentially independent of the artificial dissipation fraction f — so halving f
+    barely moves it, and `diffusion_drift` is small (the answer is trustworthy).
+    """
+    build()
+    dlam = PEAK / 200.0
+    ops.integrator("LadrunoArcLength", dlam, 1.0, "-stabilize", f)
+    peak = 0.0
+    for _ in range(n_steps):
+        if ops.analyze(1) != 0:
+            break
+        peak = max(peak, abs(ops.getLoadFactor(1)))
+    return peak
+
+
 def measure_rampdown(factor=0.1, warmup=40, window=5):
     """Verify scaleCVisc ramps the per-window artificial dissipation down."""
     build()

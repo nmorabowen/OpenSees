@@ -131,6 +131,8 @@ buckling, contact chatter) or the tangent is unusable.
 | `stab_hard_gate` | `0.05` | dissipation ratio above which the run is flagged `over_diffused` (informs the verdict; does **not** abort — crossing inherently dissipates) |
 | `stab_rampdown_window` | `8` | clean stabilized steps before `scaleCVisc(0.5)` decays `c` (R-RAMPDOWN) |
 | `stab_max_cutbacks` | `12` | stabilized `reduceStep` failures before escalating to rung-5 |
+| `verify_rebuild` | `None` | `callable(f) -> peak_load`. The c-reduction diffusion bound (R-DIFFUSION): on a rung-4 success the driver re-runs at `stab_f/2` and bounds the peak-load drift, upgrading `unverified` → `regularized` iff drift ≤ `verify_tol`. `None` → bound not computed (stays `unverified`) |
+| `verify_tol` | `0.02` | peak-load drift threshold for the c-reduction bound (2%) |
 | `dynamics` | `False` | enable rung-5 |
 | `dr_settle_tol` | `1e-4` | DR is quasi-static once `residualNorm < dr_settle_tol · ‖P‖` (mass-free) |
 | `dr_max_steps` | `4000` | DR step budget per excursion |
@@ -164,9 +166,11 @@ it for clean.
 - **`equilibrium`** — reached via rungs 0-3 only. Truthy. Publishable.
 - **`regularized`** — reached via rung-4 *with* a computed c-reduction drift, or a
   rung-5 DR rest state. A real solution point, but path-fidelity is qualified.
-- **`unverified`** — reached via rung-4 *without* the diffusion bound (the current
-  default, since that pass is deferred): "I got there, but I did not bound how
-  much the artificial viscosity moved the answer." Never trust it as-is.
+- **`unverified`** — reached via rung-4 but the c-reduction diffusion bound was
+  not computed (no `verify_rebuild`) **or** it exceeded `verify_tol`: "I got there,
+  but I have not shown the artificial viscosity didn't move the answer." Never
+  trust it as-is. Supply `verify_rebuild` to upgrade a trustworthy run to
+  `regularized`.
 - **`incomplete` / `aborted`** — did not reach `done()`.
 
 ---
@@ -200,6 +204,29 @@ res = robust_drive(ops,
 assert res.mode == "Stabilized" and not bool(res)   # engaged, honest non-equilibrium
 ```
 
+**Auditing a stabilized run (the c-reduction bound).** When a `-stabilize` run
+*does* reach the target, prove the artificial viscosity didn't shape the answer by
+re-running at half the dissipation and bounding the peak-load drift:
+
+```python
+from robust_drive import diffusion_drift
+
+def run_at_f(f):                 # rebuild + drive stabilized at fraction f; return peak |λ|
+    build_model()
+    ops.integrator("LadrunoArcLength", dlam, 1.0, "-stabilize", f)
+    peak = 0.0
+    while not done() and ops.analyze(1) == 0:
+        peak = max(peak, abs(ops.getLoadFactor(1)))
+    return peak
+
+drift = diffusion_drift(run_at_f, f=1e-3)   # |peak(f) - peak(f/2)| / max(...)
+# drift <= 0.02  -> the stabilized answer is f-insensitive (trustworthy)
+```
+
+Pass `run_at_f` as `verify_rebuild=` to have `robust_drive` compute this
+automatically on a rung-4 success and upgrade the verdict `unverified` →
+`regularized`.
+
 ### Rung-5 — dynamics fall-through + R-HANDOFF
 
 With `control=None, stabilize=False, dynamics=True`, the driver freezes the load,
@@ -232,10 +259,10 @@ assert res.verdict == "regularized" and not bool(res)
 - **`-cVisc` is overwritten** by the first-commit calibration in the shipped
   ADR-20 `-stabilize` code (a latent quirk; the explicit-coefficient path does not
   take effect today). See [[LEDGER_quirks]].
-- **Deferred** (tracked in the ADR + handoff): the rung-4 **c-reduction diffusion
-  bound** (until built, stabilized successes stay `unverified`, never
-  `regularized`-with-evidence) and the rung-5 **indirect-control polish tail**
-  (re-land on the true branch with a few CMOD steps after a DR excursion).
+- **Deferred** (tracked in the ADR + handoff): the rung-5 **indirect-control polish
+  tail** — re-land on the true branch with a few CMOD steps after a DR excursion.
+  (The rung-4 **c-reduction diffusion bound** is now shipped — see `verify_rebuild`
+  / `diffusion_drift`.)
 
 ---
 

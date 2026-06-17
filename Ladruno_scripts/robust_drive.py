@@ -49,7 +49,7 @@ from ladruno_solve import _DEFAULT_LADDER
 class RobustResult:
     __slots__ = ("completed", "substeps", "switches", "mode", "verdict",
                  "min_scale_used", "algos", "dissipation_ratio", "stab_dissipated",
-                 "peak_drift", "dr_settled", "over_diffused", "dr_lambda")
+                 "peak_drift", "dr_settled", "over_diffused", "dr_lambda", "peak_load")
 
     def __init__(self):
         self.completed = False
@@ -66,6 +66,7 @@ class RobustResult:
         self.dr_settled = False         # did the rung-5 DR phase reach quasi-static
         self.over_diffused = False      # rung-4 dissipation crossed the hard gate
         self.dr_lambda = None           # load factor frozen across the DR handoff (R-HANDOFF)
+        self.peak_load = 0.0            # peak |load factor| during a rung-4 stabilized phase
 
     def __bool__(self):
         return self.completed and self.verdict == "equilibrium"
@@ -74,6 +75,31 @@ class RobustResult:
         return (f"<RobustResult {self.verdict} completed={self.completed} "
                 f"substeps={self.substeps} switches={self.switches} "
                 f"mode={self.mode} min_scale={self.min_scale_used:g}>")
+
+
+def diffusion_drift(run_at_f, f, factor=0.5):
+    """The c-reduction diffusion bound (ADR-31 R-DIFFUSION), standalone.
+
+    A viscous-stabilized solution depends on the artificial dissipation fraction
+    `f`; `LadrunoStabilizedUnbalance` proves a point is in equilibrium but NOT that
+    the path is `f`-independent. The only trustworthy fidelity certificate is to
+    re-run with HALF the viscosity and check the answer barely moved.
+
+    run_at_f : callable(f) -> float. Rebuilds the model, drives it stabilized at the
+               dissipated-energy fraction `f`, and returns a comparable scalar metric
+               (typically the peak load factor, or a control-DOF response).
+    f        : the fraction the headline run used.
+    factor   : viscosity reduction for the check (default 0.5 -> half).
+
+    Returns the RELATIVE drift |m(f) - m(factor*f)| / max(|m(f)|, |m(factor*f)|).
+    Small (e.g. < 0.02) => the stabilized answer is essentially `f`-independent and
+    can be trusted (`regularized`); large => the viscosity is shaping the answer
+    (`unverified`). This is what `robust_drive(verify_rebuild=...)` computes
+    internally; use it directly to audit any `-stabilize` run.
+    """
+    m1 = float(run_at_f(f))
+    m2 = float(run_at_f(f * factor))
+    return abs(m1 - m2) / max(abs(m1), abs(m2), 1e-30)
 
 
 def robust_drive(ops, done, *,
@@ -90,6 +116,8 @@ def robust_drive(ops, done, *,
                  stab_hard_gate=0.05,
                  stab_rampdown_window=8,
                  stab_max_cutbacks=12,
+                 verify_rebuild=None,
+                 verify_tol=0.02,
                  dynamics=False,
                  dr_settle_tol=1.0e-4,
                  dr_max_steps=4000,
@@ -113,6 +141,15 @@ def robust_drive(ops, done, *,
                      dissipates).
     stab_rampdown_window : clean stabilized steps before scaleCVisc(0.5) decays c
                      (R-RAMPDOWN).
+    verify_rebuild : optional callable(f) -> peak_load. The c-reduction diffusion
+                     bound (R-DIFFUSION): if a rung-4 phase reaches done(), the
+                     driver calls verify_rebuild(stab_f/2) to re-run the analysis at
+                     HALF the viscosity and compares the peak load factor. Drift <=
+                     verify_tol -> verdict `regularized` (f-insensitive, trustworthy);
+                     otherwise `unverified`. None -> the bound is NOT computed and the
+                     stamp stays `unverified` (never silently trusted). See the
+                     module-level `diffusion_drift` helper for the standalone form.
+    verify_tol     : peak-load drift threshold for the c-reduction bound (default 2%).
     dynamics       : enable rung-5 DR fall-through (needs the `ladrunoDR` command).
     dr_settle_tol  : DR is quasi-static once residualNorm < dr_settle_tol * Pref
                      (the mass-free force criterion; R-DR-ENERGY -- the physical-mass
@@ -240,6 +277,7 @@ def robust_drive(ops, done, *,
             res.substeps += 1
             if ops.analyze(1) == 0:
                 res.algos[algo] = res.algos.get(algo, 0) + 1
+                res.peak_load = max(res.peak_load, abs(ops.getTime()))  # |λ| for the c-bound
                 res.dissipation_ratio = ops.ladrunoArcLength("dissipationRatio")
                 res.stab_dissipated = ops.ladrunoArcLength("dissipatedEnergy")
                 if res.dissipation_ratio > stab_hard_gate and not res.over_diffused:
@@ -322,15 +360,30 @@ def robust_drive(ops, done, *,
             status = phase_stabilized()
             if status == "done":
                 res.completed = True
-                # Stabilized is NEVER equilibrium. Without the c-reduction
-                # diffusion bound (deferred), the honest stamp is `unverified`
-                # (R-DIFFUSION: "if the drift was not computed, stamp unverified").
-                res.verdict = "regularized" if res.peak_drift is not None \
-                    else "unverified"
+                # Stabilized is NEVER equilibrium. The c-reduction diffusion bound
+                # (R-DIFFUSION) is the only trustworthy fidelity certificate: re-run
+                # the stabilized analysis at HALF stab_f and bound the peak-load
+                # drift. `verify_rebuild(f)` rebuilds the model, drives it stabilized
+                # at fraction f, and returns the peak |load factor| it reached.
+                #   - drift <= verify_tol  -> `regularized` (f-insensitive: trustworthy)
+                #   - drift  > verify_tol  -> `unverified`  (the viscosity moved the answer)
+                #   - no verify_rebuild    -> `unverified`  ("drift not computed")
+                if verify_rebuild is not None:
+                    try:
+                        peak_half = float(verify_rebuild(stab_f * 0.5))
+                        denom = max(abs(res.peak_load), abs(peak_half), 1e-30)
+                        res.peak_drift = abs(res.peak_load - peak_half) / denom
+                        res.verdict = "regularized" if res.peak_drift <= verify_tol \
+                            else "unverified"
+                    except Exception as exc:                 # verify must never crash the run
+                        res.verdict = "unverified"
+                        log("verify_failed", error=str(exc))
+                else:
+                    res.verdict = "unverified"
                 log("done", verdict=res.verdict,
                     dissipation_ratio=res.dissipation_ratio,
                     stab_dissipated=res.stab_dissipated,
-                    over_diffused=res.over_diffused)
+                    peak_drift=res.peak_drift, over_diffused=res.over_diffused)
                 return res
             if status == "stop":
                 return res

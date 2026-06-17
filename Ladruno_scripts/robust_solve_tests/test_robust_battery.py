@@ -112,6 +112,26 @@ def test_robust_drive_rung3_preferred_over_rung4():
     assert res.mode == "DisplacementControl"   # rung-3, not rung-4
 
 
+# --- rung-4 c-reduction diffusion bound (R-DIFFUSION) ------------------------
+# The only trustworthy fidelity certificate for a stabilized run: re-run at half
+# the viscosity and bound the peak-load drift. `robust_drive(verify_rebuild=…)`
+# computes this internally on a rung-4 success and upgrades `unverified` →
+# `regularized` iff drift ≤ verify_tol; `diffusion_drift` is the standalone form.
+def test_diffusion_drift_discriminates():
+    # pure math: an f-insensitive metric → ~0 drift; an f-sensitive one → large.
+    flat = robust_drive.diffusion_drift(lambda f: 30.0, 1e-3)
+    assert flat == 0.0
+    sensitive = robust_drive.diffusion_drift(lambda f: 1.0 + 10.0 * f, 0.1)
+    assert sensitive > 0.1                     # halving f moved the metric a lot
+
+
+def test_stabilize_diffusion_bound_trustworthy_on_softening():
+    # the stabilized strength peak is f-independent → drift below the 2% gate, so a
+    # verify_rebuild=peak_load_stabilized rung-4 run would stamp `regularized`.
+    drift = robust_drive.diffusion_drift(stab.peak_load_stabilized, 1e-3)
+    assert drift <= 0.02
+
+
 # --- rung-5 (dynamics fall-through) + the ladrunoDR command + R-HANDOFF ------
 def test_ladrunoDR_command_surface():
     import opensees as ops
