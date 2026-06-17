@@ -841,3 +841,80 @@ def test_shearret_const_matches_oracle_path():
         sig_o, _, st = ref.compute(P, st, s)
         nmax = max(nmax, abs(sig[3] - sig_o[3]))
     assert nmax < 5.0e-3, f"C++ vs oracle const-retention cyclic mismatch {nmax}"
+
+
+# ==========================================================================
+#  Phase 2b.2c — crack-closure on the NORMAL direction (unilateral recovery)
+#  The cloned ASDConcrete3D spine reassembles the spectral tension/compression
+#  split EVERY step from the live effective stress with independent dt/dc and
+#  cdf=0, which IS unilateral crack closure on the normal: tensile cracking
+#  (dt>0) must NOT knock down the compressive capacity once the crack closes.
+#  The fixed-crack addition is shear-only, so the normal closure is the spine's
+#  job. These gates verify it end-to-end in OpenSees.
+# ==========================================================================
+def _run_legs(mat_fn, targets, nper=80):
+    """Drive node-2 dof-1 (uniaxial stress, lateral free) through successive SIGNED
+    displacement targets via DisplacementControl. Returns [(eps_xx, sig_xx), ...]."""
+    _build(mat_fn)
+    out = []
+    u = 0.0
+    for tgt in targets:
+        d = (tgt - u) / nper
+        ops.integrator("DisplacementControl", 2, 1, d)
+        for _ in range(nper):
+            assert ops.analyze(1) == 0, f"leg to {tgt} analyze failed"
+            ops.eleResponse(1, "forces")
+            sig = list(ops.eleResponse(1, "stresses"))[0:6]
+            out.append((ops.nodeDisp(2, 1), sig[0]))
+        u = tgt
+    return out
+
+
+@pytest.mark.t1
+def test_crack_closure_recovers_full_compression():
+    """Unilateral crack closure on the NORMAL direction: crack the point in tension
+    (dt>0, sigma softens), then load it into compression past the peak. The compressive
+    capacity must FULLY recover (prior tensile damage does not bleed into compression,
+    cdf=0) — i.e. the compression peak equals a virgin compression run with no prior
+    cracking. This is the spine's spectral reassembly = crack closure, verified end-to-end."""
+    # crack in tension (eps past ft/E=1e-4), then compress past the peak (eps ~ -2e-3)
+    cracked = _run_legs(lambda t: _rc(t, beta=False), [3.0e-4, -2.4e-3])
+    virgin = _run_legs(lambda t: _rc(t, beta=False), [-2.4e-3])
+    peak_cracked = min(s for _, s in cracked)     # most compressive
+    peak_virgin = min(s for _, s in virgin)
+    assert peak_cracked < -25.0, f"compression did not develop after closure: {peak_cracked}"
+    assert peak_cracked == pytest.approx(peak_virgin, rel=1.0e-3), (
+        f"crack closure did not recover full compression: cracked peak {peak_cracked} "
+        f"vs virgin {peak_virgin}")
+
+
+@pytest.mark.t1
+def test_crack_closure_tension_damage_is_irreversible():
+    """The flip side of unilateral closure: after cracking + closing + REOPENING, the
+    reopened tensile stress must follow the DAMAGED (softened) tension envelope, not the
+    virgin elastic one — tensile damage is irreversible even though compression recovered."""
+    # crack DEEP into tension softening (eps=1e-3, the TE/TS tail where the envelope is 0.5),
+    # then close into compression, then reopen to the same +tension strain.
+    pts = _run_legs(lambda t: _rc(t, beta=False), [1.0e-3, -1.0e-3, 1.0e-3])
+    # the reopened-tension tail must follow the DAMAGED envelope (~0.5), far below both the
+    # virgin tensile peak ft=3 AND the virgin elastic response E*eps at that strain.
+    reopen = [s for e, s in pts[-80:] if e > 6.0e-4]
+    assert reopen, "no reopened-tension samples"
+    assert max(reopen) < 0.4 * max(TS), (
+        f"reopened tension {max(reopen)} not on the damaged envelope (ft={max(TS)})")
+    assert max(reopen) < 0.1 * E * 1.0e-3, "reopened tension not below virgin elastic (no damage?)"
+
+
+@pytest.mark.t1
+def test_crack_closure_with_interlock_recovers_compression():
+    """Crack closure with the fixed-crack interlock ON: forming the crack + freezing its
+    normal must NOT corrupt the normal compressive recovery (the interlock modifies only the
+    crack-plane SHEAR). Compression peak after a frozen-crack + closure == virgin compression."""
+    sth = 50.0
+    cracked = _run_legs(lambda t: _rc(t, beta=False, interlock=True, cyclic=True, crack_spacing=sth),
+                        [3.0e-4, -2.4e-3])
+    virgin = _run_legs(lambda t: _rc(t, beta=False), [-2.4e-3])
+    peak_cracked = min(s for _, s in cracked)
+    peak_virgin = min(s for _, s in virgin)
+    assert peak_cracked == pytest.approx(peak_virgin, rel=1.0e-3), (
+        f"interlock corrupted normal closure: cracked {peak_cracked} vs virgin {peak_virgin}")

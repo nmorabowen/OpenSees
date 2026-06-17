@@ -681,6 +681,35 @@ is the constitutive frame-indifference identity
 - **Still deferred to 2b.2c.3+:** crack-closure normal spectral reassembly; **panel/experiment pinching
   validation (Tran–Wallace squat-wall, meshed)**.
 
+#### Phase 2b.2c.3 (RESOLVED by verification, test-only) — crack-closure on the NORMAL direction
+The deferred "crack-closure normal spectral reassembly" turns out to be **already correct in the cloned
+spine** — the right engineering conclusion, not a new feature. `ASDConcrete3D`'s `StressDecomposition`
+recomputes the spectral tension/compression split **every step** from the live effective stress with
+**independent `dt`/`dc`** and `cdf=0`; that per-step recompose **is** unilateral crack closure on the
+normal direction (tensile damage `dt` does not bleed into the compressive cone, so a closing crack
+recovers full compressive stiffness). The kernel clones this verbatim. The **fixed-crack** addition
+(2a/2b) is therefore correctly **shear-only** — it modifies only the crack-plane shear `m_σ·σ_ip`, never
+the normal stress, which remains the spine's spectral job. There is no separate fixed-crack normal
+reassembly to add at the constitutive level; adding one would double-count the spine's recompose.
+- **Verified (Zone-A, `tests/test_ladrunoRCConcrete_material.py`):** (i) crack a point in tension
+  (`dt>0`, stress softens) then load past the compressive peak ⇒ the compression capacity **fully
+  recovers** (== a virgin compression run, prior tensile damage does not knock it down); (ii) crack →
+  close → **reopen** ⇒ the reopened tension follows the **damaged** envelope (≪ virgin elastic), so
+  tensile damage is irreversible even though compression recovered; (iii) the same full-compression
+  recovery holds with the **fixed-crack interlock ON** (freezing the crack normal does not corrupt the
+  normal closure). 4/4 new gates; full RC suite 42/42.
+- **Caveat (honest):** this verifies the **rotating/spectral** closure (the spine's frame), which the
+  objectivity gate (2b.2c.2) showed is frame-indifferent. A *directional* fixed-crack normal
+  traction–separation law (distinct from the spine's spectral normal) is **not** part of this model and
+  is not needed for the membrane-shear physics; if a future phase wants an explicit fixed-crack normal
+  opening law it is a separate, deliberate addition (noted, not silently assumed done).
+
+#### Still deferred to 2b.2c.4 — **panel/experiment pinching validation (Tran–Wallace squat-wall, meshed)**
+The one remaining 2b.2c item: a meshed non-homogeneous wall where principal rotation produces the pinched
+*waist* the material-point tests structurally cannot (Zone-B, gmsh). Material physics for cyclic is now
+complete (compression softening, interlock bound, cyclic friction-slip, X-cracking + wear, retention
+curves, IMPL-EX robustness, objectivity, crack closure); this is a **validation**, not new physics.
+
 ### Phase 3 — Tension stiffening + crack-band/`lch` hardening
 - **Build:** VC/CM tension-stiffening plateaus (opt-in); resolve `lch` per **D5 Option A or B**.
 - **New:** if Option B, the ledgered vanilla `lch` plumb.
