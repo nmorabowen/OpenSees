@@ -959,20 +959,40 @@ def run_tangent_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, verbose=True):
 # energy-objectivity gate. Compression wc + the alpha_c spectral split (Eq.46) + unilateral
 # crack-closure recovery + the dual-projector damaged tangent are the P2b+ increments.
 # ===========================================================================
+def _solve_omega_t_exp(kappa_dt, kdt1, kdt2, sig_t_eff, E, ft, eps_f):
+    """CDPM2 tensile damage, EXPONENTIAL softening (Eq.55) with the inelastic-strain split Eq.52.
+    eps_i = kdt1 + wt*kdt2 (Eq.52); nominal sig_t_nom = ft*exp(-eps_i/eps_f) (Eq.55); and
+    sig_t_nom = (1-wt)*sig_t_eff (Eq.1). wt is IMPLICIT (eps_i carries wt) => 1-D Newton on wt.
+    eps_f = wf/lch = Gf/(ft*lch) so int sig_t_nom d eps_i == ft*eps_f == Gf/lch (size-objective)."""
+    if sig_t_eff <= 0.0 or kappa_dt <= ft / E:
+        return 0.0
+    wt = 0.0
+    for _ in range(60):
+        epsi = kdt1 + wt * kdt2
+        ex = ft * np.exp(-epsi / eps_f)
+        F = (1.0 - wt) * sig_t_eff - ex                 # = 0
+        dF = -sig_t_eff + ex * kdt2 / eps_f             # dF/dwt
+        if abs(F) < 1.0e-12 * ft:
+            break
+        step = F / dF if dF != 0.0 else 0.0
+        wt -= step
+        wt = min(1.0, max(0.0, wt))
+    return wt
+
+
 def drive_uniaxial_tension_damaged(mp, eps11_path, Gf, lch):
-    """Uniaxial-STRESS tension with tensile damage on top of the P1 effective-stress return.
-    SOFTENING DRIVER = the INELASTIC (smeared-crack) strain eps_i = eps_tot - sig_eff/E accumulated
-    PAST damage onset (kappa_p=1 <=> eps_eq=sig_eff/E>=eps0=ft/E). This is the CDPM2 inelastic
-    strain (Eq.52 kappa_dt1/kappa_dt2 split, here the uniaxial lumped form) — it grows with total
-    deformation, unlike the effective sig_eff/E which only hardens slowly. Exponential crack-band
-    softening sig_t_nom = ft*exp(-eps_i/eps_f), eps_f = wf/lch = Gf/(ft*lch); wt = 1 - sig_t_nom/sig_eff
-    (Eq.1). Dissipation int(sig_t_nom d eps_i)*lch == Gf (size-objective, Bazant crack band)."""
-    E, ft = mp["E"], mp["ft"]
+    """Uniaxial-STRESS tension: P1 effective-stress return + CDPM2 tensile damage (Eq.1,38,44-45,
+    52,55). Damage driver = the equivalent strain kappa_dt = max(eps_eq), eps_eq = sig_t_eff/E
+    (Eq.38). The INELASTIC strain eps_i = kdt1 + wt*kdt2 (Eq.52): kdt1 = accumulated plastic-strain
+    norm /x_s (Eq.44), kdt2 = (kappa_dt-eps0)/x_s (Eq.45); x_s = softening ductility (Eq.56, =1 in
+    uniaxial tension since Rs=0). wt solved implicitly per step. Tracks eps_i for the energy gate."""
+    E, ft, nu = mp["E"], mp["ft"], mp["nu"]
     eps0 = ft / E
     eps_f = Gf / (ft * lch)
     eps = np.zeros(3); sig_eff = np.zeros(3); kp = 0.0; el = 0.0
-    epsi_onset = None; epsi_max = 0.0
-    out = {k: [] for k in ("eps11", "sig11", "wt", "kp", "sig_eff", "epsi")}
+    kappa_dt = 0.0; kdt1 = 0.0
+    epl_prev = np.zeros(3)
+    out = {k: [] for k in ("eps11", "sig11", "wt", "kp", "sig_eff", "epsi", "kappa_dt")}
     for e11 in eps11_path:
         for _ in range(80):                       # lateral Newton: EFFECTIVE lateral stress -> 0
             deps = np.array([e11 - eps[0], el - eps[1], el - eps[2]])
@@ -991,17 +1011,24 @@ def drive_uniaxial_tension_damaged(mp, eps11_path, Gf, lch):
         sig_eff, kp, _, _, _ = return_map_hardening(_elastic_pred(sig_eff, deps, mp), mp, kp)
         eps = np.array([e11, el, el])
         s_eff = sig_eff[0]
-        eps_crack = e11 - s_eff / E                          # total inelastic axial strain
-        wt = 0.0
-        if s_eff / E >= eps0 - 1.0e-15:                       # damage onset at kappa_p=1
-            if epsi_onset is None:
-                epsi_onset = eps_crack                        # freeze the plastic strain at onset
-            epsi_max = max(epsi_max, eps_crack - epsi_onset)  # monotone inelastic driver since onset
-            sig_t_nom = ft * np.exp(-epsi_max / eps_f)        # Eq.51 exponential, crack-band
-            wt = max(0.0, min(1.0, 1.0 - sig_t_nom / max(s_eff, 1.0e-12)))
-        sig11_nom = (1.0 - wt) * s_eff                        # Eq.1 (tension branch)
+        # equivalent strain (Eq.38 uniaxial) + history (Eq.6-7)
+        eps_eq = max(s_eff, 0.0) / E
+        kappa_dt_new = max(kappa_dt, eps_eq)
+        loading = kappa_dt_new > kappa_dt + 1.0e-300
+        # plastic strain (principal): eps_p = eps_total - effective-elastic strain
+        epl = eps - np.array([(sig_eff[0] - nu * (sig_eff[1] + sig_eff[2])) / E,
+                              (sig_eff[1] - nu * (sig_eff[0] + sig_eff[2])) / E,
+                              (sig_eff[2] - nu * (sig_eff[0] + sig_eff[1])) / E])
+        if kappa_dt_new > eps0 and loading:                 # Eq.44: accumulate ||d eps_p||/x_s (x_s=1 tension)
+            kdt1 += float(np.linalg.norm(epl - epl_prev))
+        epl_prev = epl
+        kappa_dt = kappa_dt_new
+        kdt2 = max(kappa_dt - eps0, 0.0)                    # Eq.45 (x_s=1)
+        wt = _solve_omega_t_exp(kappa_dt, kdt1, kdt2, max(s_eff, 0.0), E, ft, eps_f)
+        epsi = kdt1 + wt * kdt2                             # Eq.52
+        sig11_nom = (1.0 - wt) * s_eff                      # Eq.1
         for k, v in (("eps11", e11), ("sig11", sig11_nom), ("wt", wt),
-                     ("kp", kp), ("sig_eff", s_eff), ("epsi", epsi_max)):
+                     ("kp", kp), ("sig_eff", s_eff), ("epsi", epsi), ("kappa_dt", kappa_dt)):
             out[k].append(v)
     return {k: np.array(v) for k, v in out.items()}
 
@@ -1038,24 +1065,22 @@ def run_p2_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, verbose=True):
     res["D2_max_rel_err"] = max(abs(gf_lch[l] / Gf - 1.0) for l in gf_lch)
     res["D2_objective"] = (max(gf_lch.values()) - min(gf_lch.values())) / Gf < 0.05
 
-    # PASS gate = D1 (the damage PEAK mechanism: nominal peaks at ft, P1 effective stress monotonic,
-    # damage onset at kappa_p=1). D2 (crack-band Gf energy objectivity) is the ADR §4.3 BLOCKING gate
-    # but is a DIAGNOSTIC here pending the precise CDPM2 inelastic-strain split (Eq.44-45/52,
-    # kappa_dt1/kappa_dt2): the lumped eps_i = eps_tot - sig_eff/E starves under tension's tiny
-    # ductility (the effective stress hardens too stiffly), so dissipation*lch is NOT yet size-
-    # objective. DO NOT gate D2 until the split is pinned from the paper's actual equations (the
-    # twice-failed lumped attempt is the stop-guessing signal — cf. the P0 qh1*qh2 lesson). [P2a-WIP]
-    res["D2_WIP"] = True
-    ok = (res["D1_peak_err"] < 0.02 and res["D1_eff_monotone"])
+    # PASS gate: D1 (the damage PEAK mechanism — nominal peaks at ft, P1 effective stress monotonic,
+    # onset at kappa_p=1, softens to ~0) AND D2 (the ADR §4.3 BLOCKING crack-band Gf energy gate:
+    # dissipation*lch == Gf, size-objective across lch). D2 is now MET via the faithful CDPM2
+    # inelastic-strain split eps_i = kappa_dt1 + wt*kappa_dt2 (Eq.52) — integrating the exponential
+    # softening over eps_i gives ft*eps_f == Gf/lch exactly, independent of lch.
+    ok = (res["D1_peak_err"] < 0.02 and res["D1_eff_monotone"] and res["D1_softens"]
+          and res["D2_max_rel_err"] < 0.02 and res["D2_objective"])
     res["PASS"] = bool(ok)
     if verbose:
         print(f"  E={E} nu={nu} fc={fc} ft={ft} Gf={Gf}  eps0={eps0:.3e}")
-        print(f"  D1 [GATE] nominal peak = {res['D1_peak']:.4f} (target ft={ft}) err={res['D1_peak_err']:.2e}"
-              f"  eff-monotone(no plastic peak)={res['D1_eff_monotone']}  softens={res['D1_softens']}")
-        print(f"  D2 [DIAGNOSTIC/WIP] crack-band Gf objectivity (dissipation*lch): "
+        print(f"  D1 nominal peak = {res['D1_peak']:.4f} (target ft={ft}) err={res['D1_peak_err']:.2e}"
+              f"  eff-monotone(no plastic peak)={res['D1_eff_monotone']}  softens-to-0={res['D1_softens']}")
+        print(f"  D2 crack-band Gf objectivity (dissipation*lch): "
               + "  ".join(f"lch={int(l)}:{gf_lch[l]:.4f}" for l in sorted(gf_lch))
-              + f"  (target {Gf}); NOT objective yet — needs CDPM2 kappa_dt1/kappa_dt2 split (Eq.44-45/52)")
-        print(f"  => P2 GATE (D1 peak) {'PASS' if ok else 'FAIL'}")
+              + f"  (target {Gf})  max rel err={res['D2_max_rel_err']:.2e}  objective={res['D2_objective']}")
+        print(f"  => P2 GATE {'PASS' if ok else 'FAIL'}")
     return res
 
 

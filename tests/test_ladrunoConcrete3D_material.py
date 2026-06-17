@@ -158,6 +158,23 @@ def test_p1_tangent_gate():
 # tolerance floors. Skipped where g++ is unavailable (e.g. the Windows pyd test env); CI (Ubuntu
 # Zone-A) runs it for real.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# P2 — dual scalar DAMAGE (CDPM2 §2.3, Grassl 2013). P2a: tensile wt + crack-band Gf objectivity.
+#   D1 the nominal stress PEAKS at ft (P1 plasticity alone is monotonic — the peak IS damage),
+#      the effective stress stays monotonic, damage initiates at kappa_p=1, softens to ~0.
+#   D2 the ADR §4.3 BLOCKING crack-band energy gate: dissipation*lch == Gf, size-objective across
+#      lch — via the faithful CDPM2 inelastic-strain split eps_i = kappa_dt1 + wt*kappa_dt2 (Eq.52).
+# ---------------------------------------------------------------------------
+def test_p2_damage_gate():
+    r = ref.run_p2_gate(verbose=False)
+    assert r["D1_peak_err"] < 0.02          # nominal tensile peak == ft (the damage peak)
+    assert r["D1_eff_monotone"]             # P1 effective stress monotonic (no plastic peak)
+    assert r["D1_softens"]                  # softens to ~0 with wt -> 1
+    assert r["D2_max_rel_err"] < 0.02       # crack-band dissipation*lch == Gf
+    assert r["D2_objective"]                # ... independent of lch (Bazant size-objectivity)
+    assert r["PASS"]
+
+
 @pytest.mark.skipif(shutil.which("g++") is None, reason="g++ not available")
 def test_cpp_kernel_matches_oracle_dump(tmp_path):
     committed = os.path.join(TESTBED, "concrete3d_oracle_fixture.txt")

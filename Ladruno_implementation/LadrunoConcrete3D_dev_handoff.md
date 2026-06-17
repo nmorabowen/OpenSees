@@ -232,19 +232,26 @@ P1 failure surface — pre-peak pure plasticity, post-peak damage, no double-cou
 exponential softening (Eq.51-59), crack-band `ε_f → w_f/h`, `G_Ft = f_t·w_f/2`; `α_c` T/C split
 (Eq.46); compressive exponential + confinement ductility (Eq.55-57).
 
-**DONE + VERIFIED (oracle `run_p2_gate` D1, commit ce7788d):** the nominal uniaxial-tension stress
-now **peaks exactly at `f_t`** then damage softens it, while the P1 effective stress stays
-**monotonic** — proving the `(1−ω_t)σ̄` architecture and the onset-at-`κ_p=1` coupling. *(P1 alone
-has no peak; P2 is where the peak comes from.)*
+**DONE + VERIFIED (oracle `run_p2_gate`, pytest `test_p2_damage_gate`, 13/13 Zone-A):**
+- **D1 — the peak is damage:** the nominal uniaxial-tension stress **peaks exactly at `f_t`** then
+  softens to ~0 (`ω_t→1`), while the P1 effective stress stays **monotonic** — proving the
+  `(1−ω_t)σ̄` architecture and the onset-at-`κ_p=1` coupling. *(P1 alone has no peak.)*
+- **D2 — the ADR §4.3 BLOCKING crack-band `G_f` energy gate PASSES:** dissipation·lch = `G_f`
+  (0.1000 for lch ∈ {50,100,200}, rel err 2e-5) — **size-objective**.
 
-**OPEN / the precise next step (BLOCKER, do NOT guess):** the crack-band **G_f energy is not yet
-size-objective**. The lumped inelastic driver `ε_i = ε_tot − σ̄/E` starves because tension's tiny
-ductility makes the effective stress harden too stiffly. The fix is the **exact CDPM2 inelastic-
-strain split `κ_dt1`/`κ_dt2`** (Eq.44-45) combined as `ε_i = κ_dt1 + ω_t·κ_dt2` (Eq.52) with the
-bilinear `ω_t` (Eq.54). Two lumped attempts failed → **pin Eq.44-45/52/54 from the actual paper
-(PDF, not the abstract)** before the next implementation pass (the P0 `qh1·qh2`-guess lesson).
-Then: D2 G_f objectivity gate → compression `ω_c` + `α_c` spectral split → unilateral recovery →
-dual-projector damaged tangent → the C++ port + the `nDMaterial` wrapper (lands classTag 33017).
+The fix that unlocked D2 was the **exact CDPM2 inelastic-strain split** (fetched from the paper):
+`ε_i = κ_dt1 + ω_t·κ_dt2` (Eq.52), with `κ̇_dt1 = ‖ε̇_p‖/x_s` (Eq.44, scaled accumulated PLASTIC
+strain) and `κ_dt2 = (κ_dt−ε₀)/x_s` (Eq.45); `x_s = 1+(A_s−1)R_s`, `R_s = −√6 σ̄_V/ρ̄` for `σ̄_V≤0`
+else 0 (Eq.56-57, `x_s=1` in uniaxial tension). `ω_t` is **implicit** (`ε_i` carries `ω_t`) → a 1-D
+Newton; exponential softening `σ_t,nom = f_t·exp(−ε_i/ε_f)` (Eq.55), `ε_f = w_f/lch = G_f/(f_t·lch)`,
+so `∫σ d ε_i = f_t·ε_f = G_f/lch` by construction. The lumped `ε_i ≈ ε_tot−σ̄/E` failed (twice)
+because it dropped the `ω_t·κ_dt2` term and starved under tension's tiny ductility — **the precise
+equations were essential, not a refinement** (the P0 `qh1·qh2`-guess lesson, reconfirmed).
+
+`κ_dt1`/`κ_dt2` and the equivalent strain Eq.37 (general tensor `ε̃`, only the uniaxial Eq.38
+`ε̃=σ̄_t/E` is wired so far) are documented in the oracle. **NEXT (P2b+):** compression `ω_c` +
+`α_c` spectral split (Eq.46-50, `β_c`) → general Eq.37 `ε̃` + the tensor spectral split → unilateral
+crack-closure recovery → dual-projector damaged tangent → C++ port + `nDMaterial` wrapper (lands 33017).
 
 ## 7. Roadmap context
 
