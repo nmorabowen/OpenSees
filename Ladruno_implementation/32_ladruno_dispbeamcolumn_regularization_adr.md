@@ -172,7 +172,7 @@ In scope for v1 via the existing **Corotational** transform (`CorotCrdTransf2d` 
 - **Adversarial review of -nl + 3D (2026-06-17):** 10-agent workflow, verdict **merge-ready, 0 must-fix**; geometric tangent verified term-by-term against NL2d/NL3d. Two low-sev should-fixes applied: (1) 3D `getTangentStiff` applied the damping stiffness-multiplier only on the `-nl` branch (via `getBasicStiff`) — moved the multiplier to `getInitialStiff` (mirroring 2D) so both tangent branches are consistent under `-damp`; (2) corrected the stale dispatcher comment (3D is built) + documented `-nl`. Nice-to-have left: 3D `getTangentStiff` recomputes-then-discards the linear kb when `-nl` (perf only). 28/28 still green.
 - **NOT yet (next):** Stage-2 (embedded hinge). Handoff in [[ladruno_handoff]] (Track 3).
 
-### 2026-06-17 — Stage 2 started: `LadrunoCohesiveHinge` cohesive material (branch `guppi/ladruno-dispbeamcolumn-hinge`)
+### 2026-06-17 — Stage 2 started: `LadrunoCohesiveHinge` cohesive material (merged [#264](https://github.com/nmorabowen/OpenSees/pull/264))
 
 The Tier-2 hinge's **discrete cohesive law** ships first, standalone, before any
 element wiring — it is the independently-mergeable, lowest-risk piece and it
