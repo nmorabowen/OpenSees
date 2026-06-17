@@ -84,6 +84,7 @@ void* OPS_LadrunoDispBeamColumn2d()
     int cmass = 0;
     int lchMode = 0;       // Ladruno (ADR 32): 0=ip (default), 1=element, 2=user
     double userLch = 0.0;
+    int nlGeom = 0;        // Ladruno (ADR 32): 0=linear basic strain, 1=½θ² bowing (-nl)
     numData = 1;
     while(OPS_GetNumRemainingInputArgs() > 0) {
 	const char* type = OPS_GetString();
@@ -135,6 +136,10 @@ void* OPS_LadrunoDispBeamColumn2d()
             lchMode = 2;
         }
     }
+    // Ladruno (ADR 32): -nl enables the ½θ² bowing (nonlinear) basic strain.
+    else if (strcmp(type, "-nl") == 0) {
+        nlGeom = 1;
+    }
     }
 
     // check transf
@@ -169,7 +174,7 @@ void* OPS_LadrunoDispBeamColumn2d()
     }
     
     Element *theEle =  new LadrunoDispBeamColumn2d(iData[0],iData[1],iData[2],secTags.Size(),sections,
-					    *bi,*theTransf,mass,cmass,theDamping,lchMode,userLch);
+					    *bi,*theTransf,mass,cmass,theDamping,lchMode,userLch,nlGeom);
     delete [] sections;
     return theEle;
 }
@@ -178,12 +183,12 @@ LadrunoDispBeamColumn2d::LadrunoDispBeamColumn2d(int tag, int nd1, int nd2,
 				   int numSec, SectionForceDeformation **s,
 				   BeamIntegration& bi,
 				   CrdTransf &coordTransf, double r, int cm,
-				   Damping *damping, int lchM, double userL)
+				   Damping *damping, int lchM, double userL, int nlG)
 :Element (tag, ELE_TAG_LadrunoDispBeamColumn2d),
  numSections(numSec), theSections(0), crdTransf(0), beamInt(0),
   connectedExternalNodes(2),
   Q(6), q(3), rho(r), cMass(cm), parameterID(0), theDamping(0),
-  current_section_lch(0.0), lchMode(lchM), userLch(userL)
+  current_section_lch(0.0), lchMode(lchM), userLch(userL), nlGeom(nlG)
 {
   // Allocate arrays of pointers to SectionForceDeformations
   theSections = new SectionForceDeformation *[numSections];
@@ -251,7 +256,7 @@ LadrunoDispBeamColumn2d::LadrunoDispBeamColumn2d()
  connectedExternalNodes(2),
   Q(6), q(3), rho(0.0), cMass(0), parameterID(0),
   theDamping(0),
-  current_section_lch(0.0), lchMode(0), userLch(0.0)
+  current_section_lch(0.0), lchMode(0), userLch(0.0), nlGeom(0)
 {
     q0[0] = 0.0;
     q0[1] = 0.0;
@@ -472,12 +477,16 @@ LadrunoDispBeamColumn2d::update(void)
 
     //double xi6 = 6.0*pts(i,0);
     double xi6 = 6.0*xi[i];
+    // Ladruno (ADR 32) Stage-1: transverse slope theta(zeta) for the ½θ² bowing term
+    double zeta = xi[i];
+    double theta = (3.0*zeta*zeta - 4.0*zeta + 1.0)*v(1) + (3.0*zeta*zeta - 2.0*zeta)*v(2);
 
     int j;
     for (j = 0; j < order; j++) {
       switch(code(j)) {
       case SECTION_RESPONSE_P:
-	e(j) = oneOverL*v(0); break;
+	// Ladruno (ADR 32): nlGeom adds the ½θ² membrane/bowing strain (DispBeamColumnNL2d)
+	e(j) = oneOverL*v(0) + (nlGeom ? 0.5*theta*theta : 0.0); break;
       case SECTION_RESPONSE_MZ:
 	e(j) = oneOverL*((xi6-4.0)*v(1) + (xi6-2.0)*v(2)); break;
       default:
@@ -534,25 +543,83 @@ LadrunoDispBeamColumn2d::getBasicStiff(Matrix &kb, int initial)
   double wt[maxNumSections];
   beamInt->getSectionWeights(numSections, L, wt);
 
+  // Ladruno (ADR 32) Stage-1: basic trial disp needed for the NL bowing terms.
+  const Vector &v = crdTransf->getBasicTrialDisp();
+
   // Loop over the integration points
   for (int i = 0; i < numSections; i++) {
-    
+
     int order = theSections[i]->getOrder();
     const ID &code = theSections[i]->getType();
 
+    double xi6 = 6.0*xi[i];
+    int j, k;
+    double tmp;
+
+    if (nlGeom && !initial) {
+      // Ladruno (ADR 32) Stage-1: ½θ² nonlinear-geometry tangent (verbatim from
+      // DispBeamColumnNL2d::getBasicStiff): material + geometric (axial-force) terms.
+      double zeta = xi[i];
+      double c1 = 3.0*zeta*zeta - 4.0*zeta + 1.0;
+      double c2 = 3.0*zeta*zeta - 2.0*zeta;
+      double theta = c1*v(1) + c2*v(2);
+
+      const Matrix &ks = theSections[i]->getSectionTangent();
+      const Vector &s  = theSections[i]->getStressResultant();
+      double wti = wt[i]*oneOverL;
+
+      // geometric (axial-force) term: int_0^L N * C'*C dx
+      for (j = 0; j < order; j++) {
+        if (code(j) == SECTION_RESPONSE_P) {
+          tmp = s(j)*wt[i]*L;
+          kb(1,1) += tmp*c1*c1; kb(2,1) += tmp*c2*c1;
+          kb(1,2) += tmp*c1*c2; kb(2,2) += tmp*c2*c2;
+        }
+      }
+
+      Matrix B(order,3);
+      Matrix C(order,3);
+      static Matrix C1(1,3);
+      for (j = 0; j < order; j++) {
+        switch (code(j)) {
+        case SECTION_RESPONSE_P:
+          B(j,0) = 1.0; C(j,1) = c1; C(j,2) = c2; C1(0,1) = c1; C1(0,2) = c2; break;
+        case SECTION_RESPONSE_MZ:
+          B(j,1) = xi6-4.0; B(j,2) = xi6-2.0; break;
+        default: break;
+        }
+      }
+
+      // B'*ks*B  +  B'*ks*C*theta  +  C1'*ks*B*theta  +  C1'*ks*C*theta²*L
+      kb.addMatrixTripleProduct(1.0, B, ks, wti);
+      Matrix kC(order,3);
+      kC.addMatrixProduct(0.0, ks, C, 1.0);
+      kb.addMatrixTransposeProduct(1.0, B, kC, theta*wt[i]);
+
+      Matrix ks1(1,order);
+      static Matrix ksB(1,3);
+      for (j = 0; j < order; j++) {
+        if (code(j) == SECTION_RESPONSE_P) {
+          for (int jj = 0; jj < order; jj++) ks1(0,jj) = ks(j,jj);
+          ksB.addMatrixProduct(0.0, ks1, B, 1.0);
+          kb.addMatrixTransposeProduct(1.0, C1, ksB, theta*wt[i]);
+          ksB.addMatrixProduct(0.0, ks1, C, 1.0);
+          kb.addMatrixTransposeProduct(1.0, C1, ksB, theta*theta*wt[i]*L);
+        }
+      }
+      continue;
+    }
+
+    // ----- linear basic strain (stock DispBeamColumn2d), also used for initial -----
     Matrix ka(workArea, order, 3);
     ka.Zero();
 
-    double xi6 = 6.0*xi[i];
-
     // Get the section tangent stiffness
     const Matrix &ks = (initial) ? theSections[i]->getInitialTangent() : theSections[i]->getSectionTangent();
-        
+
     // Perform numerical integration
     //kb.addMatrixTripleProduct(1.0, *B, ks, wts(i)/L);
     double wti = wt[i]*oneOverL;
-    double tmp;
-    int j, k;
     for (j = 0; j < order; j++) {
       switch(code(j)) {
       case SECTION_RESPONSE_P:
@@ -621,7 +688,14 @@ LadrunoDispBeamColumn2d::getTangentStiff()
 
     // Get the section tangent stiffness and stress resultant
     const Vector &s = theSections[i]->getStressResultant();
-        
+
+    // Ladruno (ADR 32) Stage-1: ½θ² bowing contribution to the basic force
+    const Vector &vb = crdTransf->getBasicTrialDisp();
+    double zeta = xi[i];
+    double c1nl = 3.0*zeta*zeta - 4.0*zeta + 1.0;
+    double c2nl = 3.0*zeta*zeta - 2.0*zeta;
+    double thetaNL = c1nl*vb(1) + c2nl*vb(2);
+
     // Perform numerical integration
     //q.addMatrixTransposeVector(1.0, *B, s, wts(i));
     double si;
@@ -632,14 +706,23 @@ LadrunoDispBeamColumn2d::getTangentStiff()
       case SECTION_RESPONSE_P:
 	q(0) += si; break;
       case SECTION_RESPONSE_MZ:
-	q(1) += (xi6-4.0)*si; q(2) += (xi6-2.0)*si; break;
+	q(1) += (xi6-4.0)*si; q(2) += (xi6-2.0)*si;
+	if (nlGeom) {
+	  for (int jj = 0; jj < order; jj++) {
+	    if (code(jj) == SECTION_RESPONSE_P) {
+	      q(1) += c1nl*thetaNL*s(jj)*wt[i]*L;
+	      q(2) += c2nl*thetaNL*s(jj)*wt[i]*L;
+	    }
+	  }
+	}
+	break;
       default:
 	break;
       }
     }
-    
+
   }
-  
+
   // Add effects of element loads, q = q(v) + q0
   q(0) += q0[0];
   q(1) += q0[1];
@@ -858,10 +941,17 @@ LadrunoDispBeamColumn2d::getResistingForce()
     
     // Get section stress resultant
     const Vector &s = theSections[i]->getStressResultant();
-    
+
+    // Ladruno (ADR 32) Stage-1: ½θ² bowing contribution to the basic force
+    const Vector &vb = crdTransf->getBasicTrialDisp();
+    double zeta = xi[i];
+    double c1nl = 3.0*zeta*zeta - 4.0*zeta + 1.0;
+    double c2nl = 3.0*zeta*zeta - 2.0*zeta;
+    double thetaNL = c1nl*vb(1) + c2nl*vb(2);
+
     // Perform numerical integration on internal force
     //q.addMatrixTransposeVector(1.0, *B, s, wts(i));
-    
+
     double si;
     for (int j = 0; j < order; j++) {
       //si = s(j)*wts(i);
@@ -870,11 +960,20 @@ LadrunoDispBeamColumn2d::getResistingForce()
       case SECTION_RESPONSE_P:
 	q(0) += si; break;
       case SECTION_RESPONSE_MZ:
-	q(1) += (xi6-4.0)*si; q(2) += (xi6-2.0)*si; break;
+	q(1) += (xi6-4.0)*si; q(2) += (xi6-2.0)*si;
+	if (nlGeom) {
+	  for (int jj = 0; jj < order; jj++) {
+	    if (code(jj) == SECTION_RESPONSE_P) {
+	      q(1) += c1nl*thetaNL*s(jj)*wt[i]*L;
+	      q(2) += c2nl*thetaNL*s(jj)*wt[i]*L;
+	    }
+	  }
+	}
+	break;
       default:
 	break;
       }
-    }    
+    }
   }
   
   // Add effects of element loads, q = q(v) + q0
@@ -957,7 +1056,7 @@ LadrunoDispBeamColumn2d::sendSelf(int commitTag, Channel &theChannel)
   int i, j;
   int loc = 0;
   
-  static Vector data(18);  // Ladruno (ADR 32): +2 slots for lchMode, userLch
+  static Vector data(19);  // Ladruno (ADR 32): +3 slots for lchMode, userLch, nlGeom
   data(0) = this->getTag();
   data(1) = connectedExternalNodes(0);
   data(2) = connectedExternalNodes(1);
@@ -998,9 +1097,10 @@ LadrunoDispBeamColumn2d::sendSelf(int commitTag, Channel &theChannel)
     data(15) = dbTag;
   }
 
-  // Ladruno (ADR 32): regularization-length config
+  // Ladruno (ADR 32): regularization-length config + nonlinear-geometry flag
   data(16) = lchMode;
   data(17) = userLch;
+  data(18) = nlGeom;
 
   if (theChannel.sendVector(dbTag, commitTag, data) < 0) {
     opserr << "LadrunoDispBeamColumn2d::sendSelf() - failed to send data Vector\n";
@@ -1074,7 +1174,7 @@ LadrunoDispBeamColumn2d::recvSelf(int commitTag, Channel &theChannel,
   int dbTag = this->getDbTag();
   int i;
   
-  static Vector data(18);  // Ladruno (ADR 32): +2 slots for lchMode, userLch
+  static Vector data(19);  // Ladruno (ADR 32): +3 slots for lchMode, userLch, nlGeom
 
   if (theChannel.recvVector(dbTag, commitTag, data) < 0)  {
     opserr << "LadrunoDispBeamColumn2d::recvSelf() - failed to recv data Vector\n";
@@ -1103,6 +1203,7 @@ LadrunoDispBeamColumn2d::recvSelf(int commitTag, Channel &theChannel,
   // recomputed in update(), so it is not serialized).
   lchMode = (int)data(16);
   userLch = data(17);
+  nlGeom = (int)data(18);
   current_section_lch = 0.0;
 
   // create a new crdTransf object if one needed
