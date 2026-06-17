@@ -7,6 +7,7 @@ related:
   - "[[LadrunoJ2_guide]]"
   - "[[LadrunoUniaxialJ2_guide]]"
   - "[[LadrunoRebarBuckling_guide]]"
+  - "[[LadrunoRCConcrete_guide]]"
   - "[[finite_strain_trifecta_guide]]"
   - "[[09_finite_strain_material_wrapper]]"
   - "[[15_lemaitre_ductile_damage_adr]]"
@@ -69,6 +70,7 @@ you need.
 | **`StagedStrain`** | nDMaterial (wrapper) | 33014 | stress-free **small-strain** staged birth (`ε₀`) | [[LadrunoStaged_guide]] |
 | **`LadrunoRebarBuckling`** | uniaxialMaterial (wrapper) | 33001 | reinforcing-bar buckling-average degradation overlay | [[LadrunoRebarBuckling_guide]] |
 | **`LadrunoBondSlip`** | uniaxialMaterial | 33002 | 1D bond-slip τ–s (MC2010 backbone) for embedded rebar | [[LadrunoBondSlip_guide]] |
+| **`LadrunoRCConcrete`** | nDMaterial | 33015 | RC plastic-damage (ASDConcrete3D spine + MCFT softening + aggregate interlock); 3D/PlaneStress/PlateFiber views — the RC layer-shell material | [[LadrunoRCConcrete_guide]] |
 
 Plus the **Lemaitre ductile-damage mode** (`-damage lemaitre …`) — not a class, a
 mode on both J2 materials (§6). And three **shared header-only kernels** that are
