@@ -31,7 +31,8 @@
 // LadrunoConcrete3DKernel — the PURE numerical core of LadrunoConcrete3D, a CDPM2-grade
 // solid-concrete plastic-damage model. Plain doubles + <cmath>, NO OpenSees dependency, so the
 // SAME verified core can be:
-//   * unit-tested standalone (g++) against the numpy oracle tests/_testbed/concrete3d_ref.py,
+//   * unit-tested standalone (g++) via tests/_testbed/concrete3d_kernel_check.cpp (surface +
+//     hardening identities; the full oracle-numeric-dump diff is the P1 build-PR deliverable),
 //   * delegated to by the small-strain  nDMaterial LadrunoConcrete3D (classTag 33017), and
 //   * lifted to finite strain by  nDMaterial LogStrain  (LogStrainNDMaterial 33010) feeding
 //     LadrunoBrick -geom finite  (isotropic plastic-damage is objective under large rotation).

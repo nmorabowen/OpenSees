@@ -174,9 +174,21 @@ CDPM2's published `Aₕ/Bₕ/Cₕ/Dₕ` (calibrated from peak strains — recali
   volumetric flow through `mg(σ̄_V)` (Eq.23) which decreases with confinement. v1 oracle uses a
   simplified constant-`Df` volumetric flow; the full `mg` potential is a follow-on (does not
   change peak strength — flow-independent). Non-associated ⇒ **non-symmetric** tangent (§4.4/§4.5).
-- **Semi-implicit return**: invariant `(ξ,ρ)` space, `θ̄` frozen → radial deviatoric return,
-  4-unknown Newton `(ξ,ρ,Δλ,κp)`. **Reduces to the verified perfect-plastic map at qh0=1,Hp=0
-  (HA = 2.6e-13).**
+- **Semi-implicit return — TWO maps (load-bearing for the C++ implementer):** the **perfect-plastic
+  limit is a 3-unknown `(ξ,ρ,Δλ)` Newton with a closed-form analytic Jacobian**; the **hardening map
+  adds `κp` as a 4th unknown with a numerical Jacobian** (so its stress is only ~1e-8 — the C++ build
+  PR owes the **analytic 4×4 Jacobian**, incl. piecewise `∂xh/∂σ̄_V` across `Rh=0` and cubic
+  `∂qh1/∂κp`, FD-checked against the oracle). `θ̄` frozen → radial deviatoric return. The **consistent
+  tangent is taken on the perfect-plastic map** (analytic inner Jacobian → clean FD). **Reduces to the
+  verified perfect-plastic map at qh0=1,Hp=0 (HA = 2.6e-13).**
+- **[KNOWN GAPS — build-PR scope, must be in the handoff]** (a) the **hardening apex is unhandled**
+  beyond a hydrostatic-vertex projection; near the tensile apex the frozen-θ residual can read ~0
+  while the point is off-surface — the **honest independent-θ `f` flag (added) reports
+  `converged=False`** there, but the dedicated apex/Koiter sub-algorithm + drift correction are owed.
+  (b) **Off-meridian first-yield drift** (κp~0, small surface + steep `qh1` ramp): the semi-implicit
+  return leaves an O(0.1) off-surface drift that does NOT vanish under refinement — needs sub-stepping
+  near first yield. Verified only on the compressive meridian (the axisymmetric driver can't make
+  off-meridian states); diagnostic `HE` records it.
 - **[MAJOR] Order of operations for `x(σ)` vs `Gc`.** lch-regularize the *intrinsic* softening
   law **first** (so `Gc` is size-objective at reference confinement), **then** apply `x(σ)` to
   the plastic increment in a way that **preserves total compressive fracture energy per unit
@@ -241,9 +253,12 @@ CDPM2's published `Aₕ/Bₕ/Cₕ/Dₕ` (calibrated from peak strains — recali
   **non-symmetric** ⇒ **requires an unsymmetric solver** (`UmfPack`/`FullGeneral`). **Verified
   in the oracle (P1-tangent gate):** strongly non-symmetric for non-associated flow
   (`‖C−Cᵀ‖/‖C‖ ≈ 0.46` at `Df=0.3`), and **non-symmetric even in the associated limit** (`e=1,
-  Df=1` → `≈0.024`, ~20× smaller but nonzero) — the residual is the **semi-implicit θ-freeze**
-  (freezing the Lode direction breaks the variational structure). So the unsymmetric solver is a
-  **hard requirement UNCONDITIONALLY**, not only for `Df<1` (OpenSees has no runtime guard —
+  Df=1` → `≈0.024`, ~20× smaller but nonzero). **The associated-limit residual is the frozen-
+  eigenvector spectral recompose** (`σ=V·diag(σₚ)·Vᵀ` with `V` held at the trial drops the
+  eigenprojection/spin terms `dV/dε`) — falsified that it is the Lode θ-freeze: a principal-space
+  off-meridian associated state is machine-symmetric (~2e-10), and the full-tensor asymmetry scales
+  **linearly with shear** (→0 as shear→0), FD-step-independent (gate T3c). So the unsymmetric solver
+  is a **hard requirement UNCONDITIONALLY**, not only for `Df<1` (OpenSees has no runtime guard —
   document in the user guide + banner note; warn on a symmetric solver).
 - **[BLOCKING] Tier-2 (IMPL-EX) must freeze the PLASTIC state too, not just damage.** Freezing
   only `ω` and still solving the non-associated softening return implicitly leaves the tangent
