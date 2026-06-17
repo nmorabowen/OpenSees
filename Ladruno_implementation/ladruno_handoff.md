@@ -206,18 +206,27 @@ Design in [[32_ladruno_dispbeamcolumn_regularization_adr]] (the 11-agent scope +
   the ADR said to land first. Parser:
   `uniaxialMaterial LadrunoCohesiveHinge tag Mc Gf <-penalty K|-penaltyRatio r> <-exp|-linear>`.
   Registered at the 5 uniaxial sites (NOT the element 3-site list — different registry).
-- **NEXT — wire it into the element.** The robust EAS rotation-jump hinge (Armero–Ehrlich): enhanced
-  curvature `κ = B·d + G·α` with a (regularized-)Dirac `G` at one hinge IP, `α` (the jump) converged
-  inside `update()` and **statically condensed to the 3-DOF basic `K_basic`/`pb` BEFORE calling
-  `crdTransf`** (the PINNED INVARIANT — the corotational transform owns its own geometric stiffness and
-  exposes NO seam for element-internal DOFs). The cohesive `M([[θ]])` IS the condensed `K_αα`/force
-  contribution (any UniaxialMaterial in the hinge slot; LadrunoCohesiveHinge the default). Reuse the
-  LadrunoBrick/ASDShellQ4 EAS static-condensation **algebra** (NOT LadrunoBrick's `globalizeStiff`
-  seam). Landmines (ADR §"Four explicit design rules"): (1) freeze the fiber section at the hinge IP
-  when it opens — no Gf double-count; (2) `K_αα→0` at the cohesive peak is the activation event every
-  hinge hits — use a closed-form/return-mapping jump update, NOT LadrunoBrick's residual `Kaa.Solve`.
-  Snap-back solve: `LadrunoIndirectControl` (built) is the follower. Start with a 2D single-element
-  patch test (constant-moment to machine precision; reduce-to-Tier-1 when no hinge).
+- **DONE — PR-2a element-side embedded hinge (2D), `-hinge $matTag`.** Before coding, a 4-agent
+  adversarial review of the ADR found load-bearing plan errors and CORRECTED them (see ADR 32
+  "2026-06-17 adversarial-review CORRECTIONS"): the shipped base is **Euler–Bernoulli not Timoshenko**;
+  "freeze the section" is unimplementable AND unnecessary — the bulk sees the BOUNDED enhancement
+  `κ_bulk = B·v − α/L` (Gbar=−1/L) and unloads on its own (Armero–Ehrlich split), the cohesive law
+  carries the jump; the **Dirac never enters quadrature** (orthogonality `∫G=0` exact); `K_αα` is
+  **sign-discontinuous at activation and indefinite on the softening branch** (not "zero at the peak"),
+  so the reciprocal is **GUARDED** (a closed-form update does NOT escape the singularity). Implemented:
+  scalar `α` inner-Newton in `update()`, static condensation `K_basic = K_vv − K_vα K_αα⁻¹ K_αv` to the
+  3-DOF basic system **before** `crdTransf` (pinned invariant), `getResistingForce` unchanged (sections
+  hold converged `κ_bulk`). ALL gated on `hingeOn` (no-hinge path bit-identical); `-hinge`+`-nl`
+  rejected. 8/8 gates green (patch test 1e-9, `∫M d[[θ]]==Gf`, element total-dissipation==Gf,
+  tight-Newton tangent through softening, commit/revert + DB roundtrip).
+- **NEXT — PR-2b hardening (deferred from PR-2a):** integration-objectivity sweep; pre-cracked
+  finite-rotation invariance (rotate an open hinge 90/180° under Corotational → zero force/dissipation
+  increment); `-nl`+hinge cross-term algebra; **non-Newton/line-search α re-convergence** (PR-2a is
+  monotonic full-Newton only — `getTangentStiff` can be called without a preceding `update()`, so add
+  the idempotent re-converge-α-from-`αCommit` against the current basic disp); `ladruno_drive` collapse
+  test (needs the still-RESERVED dissipation arc-length, [[22_ladruno_dissipation_arclength_adr]]); then
+  **3D** (own ADR — quaternion-triad finite-rotation biaxial/torsional jump). Snap-back solve:
+  `LadrunoIndirectControl` (built) is the follower.
 - Known low-sev nice-to-have: 3D `getTangentStiff` recomputes the linear kb then discards it when `-nl`
   (perf only; guard with `if(!nlGeom)`).
 

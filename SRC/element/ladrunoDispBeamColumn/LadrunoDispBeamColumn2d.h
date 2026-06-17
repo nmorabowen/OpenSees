@@ -47,6 +47,7 @@ class Node;
 class SectionForceDeformation;
 class CrdTransf;
 class Response;
+class UniaxialMaterial;
 
 class LadrunoDispBeamColumn2d : public Element
 {
@@ -57,7 +58,8 @@ class LadrunoDispBeamColumn2d : public Element
 		     double rho = 0.0, int cMass = 0,
 		     Damping *theDamping = 0,
 		     int lchMode = 0, double userLch = 0.0,  // Ladruno (ADR 32): regularization length mode
-		     int nlGeom = 0);                        // Ladruno (ADR 32): 0=linear basic strain, 1=½θ² bowing (NL)
+		     int nlGeom = 0,                         // Ladruno (ADR 32): 0=linear basic strain, 1=½θ² bowing (NL)
+		     UniaxialMaterial *hingeMat = 0);        // Ladruno (ADR 32) Tier-2: embedded cohesive hinge M([[theta]])
     LadrunoDispBeamColumn2d();
     ~LadrunoDispBeamColumn2d();
 
@@ -139,6 +141,34 @@ class LadrunoDispBeamColumn2d : public Element
     // displacement-based P-δ / bowing coupling. Both still rely on the geomTransf
     // for rigid-body rotation; -nl improves the in-element large-deflection response.
     int    nlGeom;
+
+    // Ladruno (ADR 32) Tier-2: embedded strong-discontinuity rotation-jump hinge.
+    // hingeOn=1 activates a single scalar rotation jump `alpha` carried by a discrete
+    // cohesive law theHinge (any UniaxialMaterial; LadrunoCohesiveHinge is the default).
+    // The bulk section at every IP sees the BOUNDED enhanced curvature
+    //   kappa_bulk = B*v + Gbar*alpha,   Gbar = -1/L   (constant, orthogonal: integral Gbar dx = -1)
+    // so as alpha grows the bulk UNLOADS (no double count); the cohesive M([[theta]])
+    // carries all post-peak fracture energy. alpha is converged by an inner Newton in
+    // update() and statically condensed to the 3-DOF basic system BEFORE crdTransf
+    // (the PINNED INVARIANT): K_basic = K_vv - K_valpha * (1/K_aa) * K_valpha^T, with a
+    // GUARDED reciprocal (K_aa is sign-discontinuous at activation and indefinite on the
+    // softening branch). All of this is GATED on hingeOn so the no-hinge path is
+    // byte-identical to Stage-1. v1: linear basic strain only (mutually exclusive with -nl),
+    // single hinge, monotonic full-Newton / DisplacementControl. See ADR 32 (2026-06-17
+    // adversarial-review CORRECTIONS) for the derivation and the deferred hardening.
+    int              hingeOn;           // 1 if an embedded cohesive hinge is active
+    UniaxialMaterial *theHinge;         // the discrete cohesive M([[theta]]) law (element owns a copy)
+    double           hingeJump;         // trial rotation jump alpha (converged in update())
+    double           hingeJumpCommit;   // committed alpha (inner-Newton warm start + serialization)
+    double           hingeKaa;          // cached guarded K_alphaalpha at the converged state
+    double           hingeKv[3];        // cached K_v-alpha 3-vector at the converged state
+    double           hingeMscale;       // running moment scale (~Mc) for a stable inner-Newton
+                                        // convergence tol that does not collapse when the
+                                        // fully-broken hinge carries M -> 0 (transient)
+
+    // Tier-2 helper: inner Newton on the scalar jump alpha; sets the section trial
+    // deformations with the -alpha/L bulk-curvature offset, caches hingeKaa/hingeKv.
+    int solveHingeJump(const Vector &v, double L);
 
 	int numSections;
 	SectionForceDeformation** theSections; // pointer to the ND material objects
