@@ -311,7 +311,7 @@ A passing battery is the v1 acceptance gate AND the seed for the published V&V a
 
 ## Reserved class tags
 
-**v1 needs NO new Integrator/Algorithm class.** The Layer-1.5 observability seam is named getters + `OPS_` subcommands on the EXISTING `LadrunoArcLength` (33004) and `LadrunoDynamicRelaxation` (33005) — no new class tag, but a `Vector` payload widening on 33004's `sendSelf/recvSelf` for `cVisc`/dissipation state (legacy-read size-guarded, recorded in [[LEDGER_implementations]]).
+**v1 needs NO new Integrator/Algorithm class.** The Layer-1.5 observability seam is named getters + `OPS_` subcommands on the EXISTING `LadrunoArcLength` (33004) and `LadrunoDynamicRelaxation` (33005) — no new class tag. **Update (drafted 2026-06-16): no `sendSelf/recvSelf` widening was needed either** — the getters are read-only on already-serialized (`cVisc`/`cOverDt`) or per-analysis in-memory watchdog state (`dissipVisc`/`Estrain0`). The anticipated `Vector` payload change is unnecessary for serial v1 (revisit only if a parallel run must checkpoint mid-stabilization). See the implementation log.
 
 Deferred class tags (RESERVED in the **Integrator** registry per [[LEDGER_implementations]] convention; bands are per-registry — these do not collide with identical ELE/MAT/RECORDER numbers):
 
@@ -342,4 +342,64 @@ First runnable validation on the freshly-built `dist` (`ca98b3ccb`). Fixtures un
 
 Scenario (d) in each fixture is the Layer-0 rung-3 prototype (load→displacement constraint switch). Next: promote into `robust_drive()` (`adaptive_static` + rung-3 switch + rung-5 dynamics fall-through + JSONL decision log) and wire both fixtures as the pytest acceptance gate.
 
-*(filled in once the plan is being executed; move to `Ladruno_internal/implemented_robust_solve_driver.md` when done.)*
+### 2026-06-16 — Layer-0 shipped (PR #242); Layer-1.5 getters drafted
+
+Layer-0 (`robust_drive.py` spine + rung-3 switch + peak detector + JSONL log + pytest gate, 8 green) shipped as PR #242.
+
+**Layer-1.5 C++ getters drafted** in an isolated worktree (build pending the machine being free — a sibling agent's build was live):
+- `LadrunoArcLength` (33004): `getStabilizationDissipatedEnergy()` (=`dissipVisc`), `getReferenceStrainEnergy()` (=`Estrain0`), `getStabilizationDissipationRatio()` (=`dissipVisc/Estrain0`, the same fraction `commit()`/`Print()` already compute), and the `scaleCVisc()` actuator (R-RAMPDOWN). Exposed via new `ladrunoArcLength` subcommands `dissipationRatio | dissipatedEnergy | referenceEnergy | scaleCVisc`. This unlocks rung-4 (the driver can read the dissipation gate and ramp `c`).
+- `LadrunoDynamicRelaxation` (33005): `getResidualNorm()` (force-based settling signal, R-DR-ENERGY) + `getKineticEnergy()`. **C++ getters only** — the `ladrunoDR` runtime command is deferred to the rung-5 increment (first consumed/testable there) per R-SCOPE.
+
+No `sendSelf/recvSelf` change (see Reserved-class-tags update).
+
+### 2026-06-16 (later) — Layer-1.5 BUILT + verified; rung-4 design tightened
+
+Compiled the `86af9af37` getters into the robust worktree's `opensees.pyd` and
+locked them into the battery: new fixture `torture_stabilize.py` + 4
+`test_stabilize_*` cases (`test_robust_battery.py`), **12 green**. The seam works
+exactly as designed: the identity `dissipationRatio == dissipatedEnergy /
+referenceEnergy` holds, `-adaptStab` bounds the cumulative ratio near `fTarget`
+(5.7e-4) while the un-adapted ratio drifts (0.35), and `scaleCVisc(0.1)` cuts the
+per-window viscous work ~10× (R-RAMPDOWN). Build blocker fixed en route:
+`build.bat` had a stale machine-specific `PYEXE` (ported the beam branch's
+machine-agnostic probe block).
+
+**Measuring the seam tightened the rung-4 design** (full detail in
+[[LEDGER_quirks]] "what viscous regularization can and cannot pass"): `-stabilize`
+**cannot** pass pure softening (it is load control), **`-adaptStab` prevents**
+crossing a hard limit, and a snap-through crosses only **without** adaptStab at an
+elevated `f` via a diffusive crawl (R-LOG-MASK). So rung-4 is a *narrow last
+resort* (rung-3 wins on both current fixtures), not the limit-point hero the v1
+framing implied. The `stabilize=True` refusal therefore **stays in place** until
+the rung-4 scope is confirmed with the track owner. Next: commit + push Layer-1.5
+PR; then the rung-4 scope decision.
+
+### 2026-06-16 (later still) — rung-4 + rung-5 WIRED (phase machine), 15 green
+
+Track owner elected to wire both. `robust_drive.py` rewritten as a phase machine:
+`phase_implicit` (rungs 0-3) → `phase_stabilized` (rung-4) → `phase_dynamics`
+(rung-5), escalating at the cutback floor (rung-3 if a control DOF, else rung-4
+if `stabilize`, else rung-5 if `dynamics`).
+
+- **rung-4**: arms `LadrunoArcLength -stabilize` (no `-adaptStab`) +
+  `LadrunoStabilizedUnbalance`, issued ONCE (stateful integrator — never re-issued
+  per step). Gates on `dissipationRatio`, decays `c` via `scaleCVisc` (R-RAMPDOWN),
+  exposes `stab_dissipated` (L0 `SW`). Verdict `regularized` only with a computed
+  c-reduction drift, else `unverified`; never `equilibrium`, and `bool(res)` is
+  False for any stabilized result.
+- **rung-5**: new `ladrunoDR residualNorm|kineticEnergy` runtime command (the DR
+  getters had C++ but no command exposure; added across OpenSeesCommands.{cpp,h} +
+  Python/Tcl wrappers, rebuilt). Atomic R-HANDOFF: snapshot λ, `loadConst`, build a
+  Transient `LadrunoDynamicRelaxation` analysis, settle on mass-free
+  `residualNorm < dr_settle_tol·‖P‖`, restore `setTime(λ)`. The R-HANDOFF
+  regression asserts λ is restored EXACTLY. Verdict `regularized` (relaxed rest).
+
+**No clean-WIN fixture exists** in this battery (pure softening defeats stabilize;
+adaptive load control jumps a snap-through before rung-4 — R-LOG-MASK), so the new
+tests assert ESCALATION + honest verdict + the handoff contract, and that rung-3
+is preferred when a control DOF exists. Battery 8→**15 green**. Two pieces remain
+DEFERRED (handoff doc): the c-reduction diffusion bound (so a stabilized run can be
+`regularized`-with-evidence rather than `unverified`) and the indirect-control
+polish tail after a DR excursion.
+
+*(move to `Ladruno_internal/implemented_robust_solve_driver.md` when the driver is complete.)*

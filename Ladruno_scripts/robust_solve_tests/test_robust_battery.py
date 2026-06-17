@@ -20,6 +20,8 @@ pytestmark = pytest.mark.skipif(
 import robust_drive                       # noqa: E402
 import torture_softening as soft          # noqa: E402
 import torture_snapthrough as snap        # noqa: E402
+import torture_stabilize as stab          # noqa: E402
+import torture_dynamics as dyn            # noqa: E402
 
 
 # --- softening: the clean load-control killer -----------------------------
@@ -77,8 +79,97 @@ def test_robust_drive_selftest_passes():
     assert robust_drive._selftest() == 0
 
 
-# --- the driver must REFUSE rung-4 until the C++ getters ship (R-OBS) ------
-def test_robust_drive_refuses_stabilize():
-    with pytest.raises(NotImplementedError):
-        robust_drive.robust_drive(
-            None, done=lambda: True, load_increment=1.0, stabilize=True)
+# --- rung-4 (auto-stabilization) is wired; verdict discipline is honest -----
+# There is no clean-WIN fixture for rung-4 in this battery: pure softening defeats
+# stabilize too (it IS load control), and a snap-through is dynamically jumped by
+# adaptive load control before rung-4 is reached (R-LOG-MASK). So we assert the
+# ESCALATION + honest verdict, and that rung-3 is preferred when a control DOF
+# exists. The seam getters/gate/ramp-down are exercised by test_stabilize_* above.
+def test_robust_drive_rung4_engages_on_softening():
+    import opensees as ops
+    soft.build()
+    ops.integrator("LoadControl", soft.PEAK / 200.0)
+    res = robust_drive.robust_drive(
+        ops, done=lambda: soft.strain() <= -0.010,
+        load_increment=soft.PEAK / 200.0, control=None, stabilize=True,
+        stab_f=1.0e-3, max_substeps=4000)
+    assert res.switches >= 1                 # escalated past plain load control
+    assert res.mode == "Stabilized"          # reached rung-4
+    assert not res.completed                 # stabilize cannot pass pure softening
+    assert res.verdict in ("incomplete", "unverified")
+    assert not bool(res)                     # NEVER a clean equilibrium
+
+
+def test_robust_drive_rung3_preferred_over_rung4():
+    # With a control DOF, rung-3 wins cleanly even though stabilize is enabled.
+    import opensees as ops
+    soft.build()
+    ops.integrator("LoadControl", soft.PEAK / 200.0)
+    res = robust_drive.robust_drive(
+        ops, done=lambda: soft.strain() <= -0.010,
+        load_increment=soft.PEAK / 200.0, control=(2, 1, -5.0e-5), stabilize=True)
+    assert bool(res) and res.verdict == "equilibrium"
+    assert res.mode == "DisplacementControl"   # rung-3, not rung-4
+
+
+# --- rung-5 (dynamics fall-through) + the ladrunoDR command + R-HANDOFF ------
+def test_ladrunoDR_command_surface():
+    import opensees as ops
+    rn, ke = dyn.dr_command_surface()
+    assert rn >= 0.0 and ke >= 0.0           # the getters resolve on active DR
+    # the command must reject a bogus subcommand (openseespy raises on stderr)
+    with pytest.raises(ops.OpenSeesError):
+        ops.ladrunoDR("bogus")
+
+
+def test_robust_drive_rung5_dynamics_handoff():
+    res, t_after = dyn.run_rung5()
+    assert res.switches >= 1                  # escalated all the way to rung-5
+    assert res.mode == "Dynamics"
+    assert res.dr_settled                     # DR reached the mass-free settling gate
+    # R-HANDOFF contract: lambda is frozen and restored EXACTLY across the excursion
+    assert res.dr_lambda is not None
+    assert t_after == res.dr_lambda
+    # a DR rest state is regularized, never a clean equilibrium
+    assert res.verdict == "regularized" and not bool(res)
+
+
+# --- Layer-1.5: the stabilization-energy observability seam (rung-4 gate) ---
+# These verify the C++ getters (LadrunoArcLength 33004) the driver reads to gate
+# rung-4 and ramp the viscous coefficient (ADR-31 "gate vs audit", R-RAMPDOWN).
+def test_stabilize_seam_reports_sane_energy():
+    import opensees as ops
+    r = stab.run_stabilized(adaptStab=True)
+    assert r["committed"] > 0
+    assert r["ref"] > 0.0                          # Estrain0 calibrated at commit
+    assert r["dissip"] >= 0.0
+    # identity: dissipationRatio == dissipatedEnergy / referenceEnergy
+    assert r["ratio"] == pytest.approx(r["dissip"] / r["ref"], rel=1e-9)
+
+
+def test_stabilize_adaptstab_bounds_dissipation():
+    # -adaptStab holds the cumulative ratio near fTarget; without it the ratio
+    # accumulates well above (the watchdog signal the driver gates on is real).
+    a = stab.run_stabilized(adaptStab=True)
+    b = stab.run_stabilized(adaptStab=False)
+    assert a["ratio"] < 100 * stab.FTARGET        # O(fTarget), tight margin
+    assert b["ratio"] > a["ratio"]                # cumulative drifts up
+
+
+def test_stabilize_scaleCVisc_ramps_down():
+    # R-RAMPDOWN: scaling cVisc by 0.1 cuts the per-window artificial dissipation.
+    inc_full, inc_ramped = stab.measure_rampdown(factor=0.1)
+    assert inc_full > 0.0
+    assert inc_ramped < inc_full
+
+
+def test_stabilize_scaleCVisc_rejects_nonpositive():
+    import opensees as ops
+    stab.build()
+    stab._arm(adaptStab=False)
+    ops.analyze(1)
+    # factor must be > 0; the C++ guard warns to stderr, which openseespy raises.
+    with pytest.raises(ops.OpenSeesError):
+        ops.ladrunoArcLength("scaleCVisc", 0.0)
+    with pytest.raises(ops.OpenSeesError):
+        ops.ladrunoArcLength("scaleCVisc", -2.0)
