@@ -109,10 +109,16 @@ class LadrunoRCConcrete : public NDMaterial {
   double Dtan[6][6];
   int    status;
 
+  // IMPL-EX runtime (config lives in P.implex* so getCopy propagates it)
+  double implexError;              // last |dt_explicit - dt_implicit| (max over dt,dc)
+  double dtime_n, dtime_n_commit, dtime_0;
+  bool   commitDone;
+
   // helpers
   void setupDim(void);
-  void integrate(void);
+  void integrate(bool do_implex, double tfac);
   void condenseTangent(void);
+  double implexTimeFactor(void) const;
 
   // element-facing return buffers
   Vector stressOut;

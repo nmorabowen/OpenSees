@@ -74,6 +74,9 @@ void* OPS_LadrunoRCConcrete(void)
   // Phase 2b.2b: second orthogonal crack (X-cracking) + slip-driven interlock wear
   bool   xcrackOn = false;
   double degKappa = 0.5, degSlipRef = 0.01, degMin = 0.1;
+  // Phase 4: IMPL-EX (implicit-explicit) robustness for cyclic softening
+  bool   implexOn = false, implexCtrl = false;
+  double implexAlpha = 1.0, implexErrTol = 0.05, implexTimeRedLim = 0.01;
 
   auto readList = [](std::vector<double>& v) {
     v.clear();
@@ -116,6 +119,13 @@ void* OPS_LadrunoRCConcrete(void)
     else if (strcmp(opt, "-degKappa") == 0)     { int nd = 1; if (OPS_GetDoubleInput(&nd, &degKappa) < 0)     { opserr << "LadrunoRCConcrete: -degKappa needs a value.\n";     return 0; } }
     else if (strcmp(opt, "-degSlipRef") == 0)   { int nd = 1; if (OPS_GetDoubleInput(&nd, &degSlipRef) < 0)   { opserr << "LadrunoRCConcrete: -degSlipRef needs a value.\n";   return 0; } }
     else if (strcmp(opt, "-degMin") == 0)       { int nd = 1; if (OPS_GetDoubleInput(&nd, &degMin) < 0)       { opserr << "LadrunoRCConcrete: -degMin needs a value.\n";       return 0; } }
+    else if (strcmp(opt, "-implex") == 0)            implexOn = true;
+    else if (strcmp(opt, "-implexAlpha") == 0)  { int nd = 1; if (OPS_GetDoubleInput(&nd, &implexAlpha) < 0)   { opserr << "LadrunoRCConcrete: -implexAlpha needs a value.\n";   return 0; } }
+    else if (strcmp(opt, "-implexControl") == 0) {
+      implexCtrl = true; int nd = 1;
+      if (OPS_GetDoubleInput(&nd, &implexErrTol) < 0 || OPS_GetDoubleInput(&nd, &implexTimeRedLim) < 0) {
+        opserr << "LadrunoRCConcrete: -implexControl needs $errTol $timeReductionLimit.\n"; return 0; }
+    }
     // NOTE: shearRetMode (the ADR's -shearRetention {const|dsfm|rots}) is reserved for
     // Phase 2b; only mode 0 (the v_ci,max bound) is wired today, so no parse token yet.
     // unknown tokens are ignored (forward-compat)
@@ -143,6 +153,8 @@ void* OPS_LadrunoRCConcrete(void)
   P.aggSize = aggSize; P.crackStrain = crackStrain; P.crackSpacing = crackSpacing;
   P.lch = lch; P.betaSrMin = betaSrMin; P.sqrtFc = 0.0;
   P.xcrackOn = xcrackOn; P.degKappa = degKappa; P.degSlipRef = degSlipRef; P.degMin = degMin;
+  P.implex = implexOn; P.implexAlpha = implexAlpha; P.implexControl = implexCtrl;
+  P.implexErrTol = implexErrTol; P.implexTimeRedLim = implexTimeRedLim;
 
   // build backbones via the faithful ASDConcrete3D HardeningLaw c-tor + adjust()
   // (elastic-consistent q). -Cd/-Td are optional -> pad with zeros to match length.
@@ -162,6 +174,7 @@ void* OPS_LadrunoRCConcrete(void)
 LadrunoRCConcrete::LadrunoRCConcrete()
   : NDMaterial(0, ND_TAG_LadrunoRCConcrete),
     rho(0.0), dim(DIM_3D), ncomp(6), condense(false), cEps33(0.0), status(STATUS_OK),
+    implexError(0.0), dtime_n(0.0), dtime_n_commit(0.0), dtime_0(0.0), commitDone(false),
     stressOut(6), strainOut(6), tangentOut(6, 6)
 {
   // safe defaults until recvSelf populates P
@@ -170,6 +183,8 @@ LadrunoRCConcrete::LadrunoRCConcrete()
   P.interlockOn = false; P.interlockCyclic = false; P.shearRetMode = 0; P.aggSize = 16.0;
   P.crackStrain = 0.0; P.crackSpacing = 0.0; P.lch = 0.0; P.betaSrMin = 0.01; P.sqrtFc = 0.0;
   P.xcrackOn = false; P.degKappa = 0.5; P.degSlipRef = 0.01; P.degMin = 0.1;
+  P.implex = false; P.implexAlpha = 1.0; P.implexControl = false;
+  P.implexErrTol = 0.05; P.implexTimeRedLim = 0.01;
   P.ht.n = 0; P.hc.n = 0;
   this->setupDim();
   this->revertToStart();
@@ -178,6 +193,7 @@ LadrunoRCConcrete::LadrunoRCConcrete()
 LadrunoRCConcrete::LadrunoRCConcrete(int tag, const Params& P_, double rho_, int dimMode)
   : NDMaterial(tag, ND_TAG_LadrunoRCConcrete),
     P(P_), rho(rho_), dim(dimMode), ncomp(6), condense(false), cEps33(0.0), status(STATUS_OK),
+    implexError(0.0), dtime_n(0.0), dtime_n_commit(0.0), dtime_0(0.0), commitDone(false),
     stressOut(6), strainOut(6), tangentOut(6, 6)
 {
   this->setupDim();
@@ -216,26 +232,52 @@ void LadrunoRCConcrete::condenseTangent(void)
 // ===========================================================================
 //  strain interface  (ENGINEERING shear — no tensor conversion)
 // ===========================================================================
-void LadrunoRCConcrete::integrate(void)
+extern double ops_Dt;   // current (pseudo-)time increment, from OPS_Globals
+
+void LadrunoRCConcrete::integrate(bool do_implex, double tfac)
 {
-  status = returnMap3D(P, strain6, histN, stress6, Dtan, histTr, true, 0);
+  status = returnMap3D(P, strain6, histN, stress6, Dtan, histTr, true, 0, do_implex, tfac);
+}
+
+double LadrunoRCConcrete::implexTimeFactor(void) const
+{
+  // Extrapolation factor tf = (dt_n / dt_{n-1}) * alpha. In DYNAMIC analysis with a
+  // smooth time step this is ~alpha. In STATIC analysis the "time" is the load factor,
+  // whose increment is erratic (and resets across loadConst), so the raw ratio can be
+  // garbage (huge/negative) and would blow up the threshold extrapolation. Guard it:
+  // fall back to alpha whenever the ratio is non-finite/non-positive, and clamp the
+  // acceleration to a safe band so a one-step time spike cannot detonate the damage.
+  if (!P.implex || !commitDone) return P.implexAlpha;
+  if (dtime_n_commit <= 0.0 || dtime_n <= 0.0) return P.implexAlpha;
+  double tf = dtime_n / dtime_n_commit * P.implexAlpha;
+  if (!(tf > 0.0)) return P.implexAlpha;        // NaN / non-positive guard
+  const double tfMax = 2.0 * (P.implexAlpha > 0.0 ? P.implexAlpha : 1.0);
+  if (tf > tfMax) tf = tfMax;
+  return tf;
 }
 
 int LadrunoRCConcrete::setTrialStrain(const Vector& e)
 {
+  if (P.implex) {
+    dtime_n = ops_Dt;
+    if (!commitDone) { dtime_0 = dtime_n; dtime_n_commit = dtime_n; }
+  }
+  const bool   dox = P.implex;
+  const double tf  = this->implexTimeFactor();
+
   double eps33 = strain6[2];
   for (int i = 0; i < 6; i++) strain6[i] = 0.0;
   if (condense) strain6[2] = eps33;
   for (int a = 0; a < ncomp; a++) strain6[vmap[a]] = e(a);   // engineering shear, no factor
 
-  if (!condense) { this->integrate(); return (status == STATUS_NO_CONVERGE) ? -1 : 0; }
+  if (!condense) { this->integrate(dox, tf); return (status == STATUS_NO_CONVERGE) ? -1 : 0; }
 
   // enforce sigma_33 = 0: guarded Newton on eps_33 (= strain6[2]); dSNPO sec 9.4
   const int maxIt = 25;
   double prevAbs = 1.0e300;
   bool converged = false;
   for (int it = 0; it < maxIt; it++) {
-    this->integrate();
+    this->integrate(dox, tf);
     double smag = 0.0; for (int i = 0; i < 6; i++) smag += stress6[i]*stress6[i];
     smag = sqrt(smag);
     double tol22 = 1.0e-10 * (smag > 1.0 ? smag : 1.0);
@@ -311,8 +353,25 @@ int LadrunoRCConcrete::getOrder(void) const { return ncomp; }
 // ===========================================================================
 int LadrunoRCConcrete::commitState(void)
 {
+  if (P.implex) {
+    // IMPL-EX commit: the trial currently holds the EXPLICIT response (extrapolated,
+    // frozen damage). Re-integrate IMPLICITLY at the converged strain to advance the
+    // TRUE thresholds for next step's extrapolation and measure the implex error.
+    double dt_ex = histTr.dt_bar, dc_ex = histTr.dc_bar;
+    this->integrate(false, 1.0);                       // implicit pass -> histTr = true state
+    implexError = fmax(fabs(dt_ex - histTr.dt_bar), fabs(dc_ex - histTr.dc_bar));
+    // roll n -> n-1: the previously committed thresholds become the 'old' generation
+    histTr.xt_old = histN.xt; histTr.xc_old = histN.xc; histTr.eps1_old = histN.eps1;
+    dtime_n_commit = dtime_n;
+    // advisory error control: warn if the implex extrapolation error is large (the user
+    // should reduce the time/step size). Automatic dt-reduction is deferred.
+    if (P.implexControl && implexError > P.implexErrTol)
+      opserr << "WARNING LadrunoRCConcrete (tag " << this->getTag() << "): IMPL-EX error "
+             << implexError << " > tol " << P.implexErrTol << " — reduce the step size.\n";
+  }
   histN = histTr;
   cEps33 = strain6[2];
+  commitDone = true;
   return 0;
 }
 int LadrunoRCConcrete::revertToLastCommit(void)
@@ -327,6 +386,7 @@ int LadrunoRCConcrete::revertToStart(void)
   histZero(histTr);
   for (int i = 0; i < 6; i++) { strain6[i] = 0.0; stress6[i] = 0.0; }
   cEps33 = 0.0;
+  implexError = 0.0; dtime_n = dtime_n_commit = dtime_0 = 0.0; commitDone = false;
   double C0[6][6]; elasticTangent(P.E, P.nu, C0);
   for (int a = 0; a < 6; a++) for (int b = 0; b < 6; b++) Dtan[a][b] = C0[a][b];
   return 0;
@@ -352,17 +412,20 @@ NDMaterial* LadrunoRCConcrete::getCopy(const char* type)
 // ===========================================================================
 //  parallel  (serialize params + backbones + committed history)
 // ===========================================================================
-static const int RC_SCHEMA_VERSION = 1;    // bump when the wire layout changes (hard-checked in recvSelf)
+static const int RC_SCHEMA_VERSION = 2;    // bump when the wire layout changes (hard-checked in recvSelf); v2 = +IMPL-EX
 static const int RC_NSCALAR = 1 /*schemaVersion*/ + 3 /*tag,dim,rho*/
                             + 10 /*E,nu,Kc,fcft,betaFloor,cdf,eta,betaOn,lubRed,tanMode*/
                             + 8 /*interlockOn,shearRetMode,aggSize,crackStrain,crackSpacing,lch,betaSrMin,sqrtFc*/
                             + 1 /*interlockCyclic*/
-                            + 4 /*xcrackOn,degKappa,degSlipRef,degMin*/;
+                            + 4 /*xcrackOn,degKappa,degSlipRef,degMin*/
+                            + 5 /*implex,implexAlpha,implexControl,implexErrTol,implexTimeRedLim*/
+                            + 5 /*dtime_n,dtime_n_commit,dtime_0,commitDone,implexError*/;
 static const int RC_BACK = 1 + 3*MAXPTS;   // n + x[]+y[]+q[]
 static const int RC_HIST = 6 + 6 + 6        // stress_eff, strain, (xt,xc,dt_bar,dc_bar,beta,eps1)
                          + 5                // + (cracked,crackC,crackS,wmax,betaSr)
                          + 2                // + Phase-2b (tauCr,gammaCr)
-                         + 2;               // + Phase-2b.2b (cracked2,slipCum)
+                         + 2                // + Phase-2b.2b (cracked2,slipCum)
+                         + 3;               // + Phase-4 IMPL-EX (xt_old,xc_old,eps1_old)
 static const int RC_DATA = RC_NSCALAR + 2*RC_BACK + RC_HIST + 1 /*cEps33*/;
 
 int LadrunoRCConcrete::sendSelf(int commitTag, Channel& theChannel)
@@ -385,6 +448,12 @@ int LadrunoRCConcrete::sendSelf(int commitTag, Channel& theChannel)
   data(c++) = P.lch; data(c++) = P.betaSrMin; data(c++) = P.sqrtFc;
   data(c++) = P.xcrackOn ? 1.0 : 0.0;
   data(c++) = P.degKappa; data(c++) = P.degSlipRef; data(c++) = P.degMin;
+  data(c++) = P.implex ? 1.0 : 0.0;
+  data(c++) = P.implexAlpha;
+  data(c++) = P.implexControl ? 1.0 : 0.0;
+  data(c++) = P.implexErrTol; data(c++) = P.implexTimeRedLim;
+  data(c++) = dtime_n; data(c++) = dtime_n_commit; data(c++) = dtime_0;
+  data(c++) = commitDone ? 1.0 : 0.0; data(c++) = implexError;
   data(c++) = P.ht.n;
   for (int i = 0; i < MAXPTS; i++) data(c++) = P.ht.x[i];
   for (int i = 0; i < MAXPTS; i++) data(c++) = P.ht.y[i];
@@ -402,6 +471,7 @@ int LadrunoRCConcrete::sendSelf(int commitTag, Channel& theChannel)
   data(c++) = histN.wmax; data(c++) = histN.betaSr;
   data(c++) = histN.tauCr; data(c++) = histN.gammaCr;
   data(c++) = histN.cracked2; data(c++) = histN.slipCum;
+  data(c++) = histN.xt_old; data(c++) = histN.xc_old; data(c++) = histN.eps1_old;
   data(c++) = cEps33;
 
   if (theChannel.sendVector(this->getDbTag(), commitTag, data) < 0) {
@@ -440,6 +510,12 @@ int LadrunoRCConcrete::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBr
   P.lch = data(c++); P.betaSrMin = data(c++); P.sqrtFc = data(c++);
   P.xcrackOn = (data(c++) != 0.0);
   P.degKappa = data(c++); P.degSlipRef = data(c++); P.degMin = data(c++);
+  P.implex = (data(c++) != 0.0);
+  P.implexAlpha = data(c++);
+  P.implexControl = (data(c++) != 0.0);
+  P.implexErrTol = data(c++); P.implexTimeRedLim = data(c++);
+  dtime_n = data(c++); dtime_n_commit = data(c++); dtime_0 = data(c++);
+  commitDone = (data(c++) != 0.0); implexError = data(c++);
   P.ht.n = (int)data(c++);
   for (int i = 0; i < MAXPTS; i++) P.ht.x[i] = data(c++);
   for (int i = 0; i < MAXPTS; i++) P.ht.y[i] = data(c++);
@@ -457,6 +533,7 @@ int LadrunoRCConcrete::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBr
   histN.wmax = data(c++); histN.betaSr = data(c++);
   histN.tauCr = data(c++); histN.gammaCr = data(c++);
   histN.cracked2 = data(c++); histN.slipCum = data(c++);
+  histN.xt_old = data(c++); histN.xc_old = data(c++); histN.eps1_old = data(c++);
   cEps33 = data(c++);
 
   this->setupDim();
@@ -483,6 +560,10 @@ void LadrunoRCConcrete::Print(OPS_Stream& s, int)
     << "  eps_cr=" << P.crackStrain << "  s_theta=" << P.crackSpacing
     << "  betaSrMin=" << P.betaSrMin;
   if (P.xcrackOn) s << "  degKappa=" << P.degKappa << " degSlipRef=" << P.degSlipRef << " degMin=" << P.degMin;
+  s << endln;
+  s << "  implex: " << (P.implex ? "ON" : "off");
+  if (P.implex) s << "  alpha=" << P.implexAlpha
+                  << (P.implexControl ? " (control)" : "") << "  lastError=" << implexError;
   s << endln;
   s << "  view  : " << this->getType() << " (order " << ncomp << ")" << endln;
 }
@@ -514,6 +595,8 @@ Response* LadrunoRCConcrete::setResponse(const char** argv, int argc, OPS_Stream
     return new MaterialResponse(this, 9, Vector(2));   // (tauCr, gammaCr) Phase-2b
   if (strcmp(a, "xcrackState") == 0)
     return new MaterialResponse(this, 10, Vector(2));  // (cracked2, slipCum) Phase-2b.2b
+  if (strcmp(a, "implexError") == 0 || strcmp(a, "ImplexError") == 0)
+    return new MaterialResponse(this, 11, Vector(1));  // IMPL-EX |dt_ex - dt_im| Phase-4
   return NDMaterial::setResponse(argv, argc, s);
 }
 
@@ -533,6 +616,7 @@ int LadrunoRCConcrete::getResponse(int responseID, Information& matInfo)
               v(0) = histTr.tauCr; v(1) = histTr.gammaCr; } return 0;
     case 10: if (matInfo.theVector) { Vector& v = *(matInfo.theVector);
               v(0) = histTr.cracked2; v(1) = histTr.slipCum; } return 0;
+    case 11: if (matInfo.theVector) (*(matInfo.theVector))(0) = implexError; return 0;
     default: return -1;
   }
 }
