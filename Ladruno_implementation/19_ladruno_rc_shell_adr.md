@@ -579,6 +579,25 @@ and pinching are **2b**.
   `v_ci,max`); panel/experiment pinching validation; rigid-rotation objectivity; PlateFiber×condensation +
   serialization-round-trip cyclic tests.
 
+#### Phase 2b.2a (SHIPPED) — shell-element integration + serialization (test-only, no kernel change)
+Closes the two biggest test gaps the adversarial reviews flagged. **No code change** — proves the existing
+material in its real target host.
+- **Shell integration (the whole point):** `LadrunoRCConcrete` is exercised end-to-end inside
+  **`ASDShellQ4` + `section LayeredShell`** (the PlateFiber view via `getCopy("PlateFiber")` + its
+  guarded `σ33=0` inner Newton), which until now had only been tested on a 3D `stdBrick`. New
+  `tests/test_ladrunoRCConcrete_shell.py` (Zone-A, no gmsh — a single flat ASDShellQ4 unit quad with every
+  membrane DOF prescribed via Penalty): (1) membrane tension cracks + softens (`Nxx` peaks at `ft·h` then
+  drops); (2) **cyclic membrane shear saturates `Nxy` at the MCFT bound `±v_ci,max·h` on both signs** — the
+  PlateFiber × σ33-condensation × cyclic-friction path, verified in the real shell; (3) the interlock is
+  load-bearing in the shell (ON caps `Nxy` below OFF).
+- **Serialization round-trip:** a Zone-A test drives an oblique cracked cyclic state, `save`/`restore`s it
+  through the FE database (`sendSelf`/`recvSelf`), and asserts the crack frame + width + `{tauCr,gammaCr}`
+  survive bit-exactly (guards the `RC_DATA=242` field count/order).
+- **Still deferred to 2b.2b:** crack-closure normal spectral reassembly; `-shearRetention` retention CURVES +
+  cyclic interlock-surface degradation; **panel/experiment pinching validation (Tran–Wallace)** — the one
+  that needs a meshed non-homogeneous wall where principal rotation produces the pinched waist; rigid-rotation
+  objectivity; serialization schema-version field.
+
 ### Phase 3 — Tension stiffening + crack-band/`lch` hardening
 - **Build:** VC/CM tension-stiffening plateaus (opt-in); resolve `lch` per **D5 Option A or B**.
 - **New:** if Option B, the ledgered vanilla `lch` plumb.
