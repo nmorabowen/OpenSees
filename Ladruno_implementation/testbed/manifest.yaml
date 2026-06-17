@@ -862,6 +862,32 @@ features:
       DEFAULT OFF (R is often massed), with a massless-DOF scan over R AND slaves,
       Gershgorin-row-sum sizing. Plan: 29_ladruno_kinematic_coupling_rbe2_adr.md.
 
+  - feature: LadrunoDispBeamColumn2d
+    classtag: 33013          # ELE_TAG (element) family; after LadrunoKinematicCoupling=33012 (numerically equals ND_TAG 33013 InitDefGrad — different registry, not a collision)
+    tag_symbol: ELE_TAG_LadrunoDispBeamColumn2d
+    pr: null
+    feature_class: element
+    required_tiers: [T0, T1]
+    pytest: tests/test_ladrunoDispBeamColumn2d_element.py
+    tcl: WAIVED(element LadrunoDispBeamColumn2d ...; shared OpenSeesElementCommands functionMap serves Tcl + Python; verified via the Zone-A pytest battery)
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesElementCommands.cpp
+      - SRC/element/CMakeLists.txt
+      - SRC/element/ladrunoDispBeamColumn/CMakeLists.txt
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      Regularized displacement-based fiber frame element (2D, ADR 32): a drop-in
+      DispBeamColumn2d that adds a Tier-1 per-integration-point characteristic-length
+      (lch) channel mirroring ForceBeamColumn, so crack-band / auto-regularizing
+      materials (ASDConcrete3D, Lemaitre) regularize softening over the localizing IP
+      rather than the whole element (fixes LEDGER_quirks 59). Element-registry tag
+      numerically equals ND_TAG 33013 (InitDefGrad) but lives in a different registry —
+      not a collision. Embedded softening hinge (Tier-2) planned. Plan:
+      32_ladruno_dispbeamcolumn_regularization_adr.md.
+
   # --- worked examples shipped with the scaffold (existing elements, no new C++) ---
 
   - feature: forceBeamColumn_cantilever     # T1 worked example (existing element)
