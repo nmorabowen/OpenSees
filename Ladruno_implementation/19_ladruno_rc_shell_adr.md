@@ -704,11 +704,25 @@ reassembly to add at the constitutive level; adding one would double-count the s
   is not needed for the membrane-shear physics; if a future phase wants an explicit fixed-crack normal
   opening law it is a separate, deliberate addition (noted, not silently assumed done).
 
-#### Still deferred to 2b.2c.4 — **panel/experiment pinching validation (Tran–Wallace squat-wall, meshed)**
+#### Phase 2b.2c.4 (HARNESS built, validation deferred) — Tran–Wallace squat-wall pinching
 The one remaining 2b.2c item: a meshed non-homogeneous wall where principal rotation produces the pinched
-*waist* the material-point tests structurally cannot (Zone-B, gmsh). Material physics for cyclic is now
-complete (compression softening, interlock bound, cyclic friction-slip, X-cracking + wear, retention
-curves, IMPL-EX robustness, objectivity, crack closure); this is a **validation**, not new physics.
+*waist* the material-point tests structurally cannot. Material physics for cyclic is now **complete**
+(compression softening, interlock bound, cyclic friction-slip, X-cracking + wear, retention curves,
+IMPL-EX robustness, objectivity, crack closure); this is a **validation**, not new physics.
+- **Harness built (`tests/_testbed/rc_wall_harness.py`, not a pytest gate):** a structured `NX×NY`
+  ASDShellQ4 grid on a `LayeredShell` = 4 `LadrunoRCConcrete` concrete layers (full cyclic stack
+  `-beta -lublinerReduced -interlock -cyclic -implex`) + 2 smeared `PlateRebar(Steel02)` web-steel layers
+  (no gmsh — environment-portable). **Status (run on this branch):** the model assembles, runs, and
+  produces a real cyclic shear response **with hysteretic dissipation** on the first drift cycle
+  (`V≈±146 kN` at 0.3 mm; closed-loop area > 0), then **walls on convergence at larger drift (~0.6 mm+)**
+  — the classic cyclic-softening RC-wall barrier.
+- **Deferred (the research-grade validation):** (1) a robust multi-cycle solver — arc-length /
+  `LadrunoIndirectControl` follower (built for exactly this snap-back), dynamic relaxation, finer
+  substeps, or an IMPL-EX-error step-cut — to push to the drifts where the waist is pronounced;
+  (2) calibration to a named specimen (**Tran–Wallace RW-A20-P10** or a PEER squat-wall) asserting
+  **pinching shape + cumulative hysteretic energy** vs the measured loops (the ADR's primary squat-wall
+  gate); (3) optional gmsh/apeGmsh graded mesh + boundary elements (then `zone_b`). This is the genuine
+  Zone-B validation the ADR always framed it as, not a clean material slice.
 
 ### Phase 3 — Tension stiffening + crack-band/`lch` hardening
 - **Build:** VC/CM tension-stiffening plateaus (opt-in); resolve `lch` per **D5 Option A or B**.

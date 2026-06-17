@@ -1332,3 +1332,22 @@ non-obvious behaviours, all relevant to anyone wiring `-stabilize` into a driver
 - **Bites:** editing fork source in the WORKTREE, copying to the main checkout, running `build.bat`, and testing — but the binary still shows OLD behavior (a new `-flag` is silently ignored, a new response returns empty). Two distinct traps stack: (1) `cp "src" "C:\…\dst"` from the Bash tool can mis-resolve the Windows backslash destination and write nowhere useful (the file you think you copied is unchanged in the main checkout — `grep -c <newsymbol>` there returns 0); (2) even after a correct `Copy-Item`, ninja compares mtimes and **`Copy-Item` PRESERVES the source's (older) mtime**, so if the worktree file was edited before the last build's `.obj`, ninja sees the object as newer and SKIPS recompiling — `opensees.pyd`'s timestamp never advances.
 - **Tells:** the built `.pyd` LastWriteTime does not change after a "successful" build; `grep -c "<your new symbol>" <main-checkout-source>` returns 0; a parser silently ignores your new token (the RC parser treats unknown tokens as no-ops — forward-compat — so a non-compiled flag fails OPEN, not loud).
 - **Fix (proven):** copy via `Copy-Item` (reliable on Windows), then explicitly bump the destination mtime `(Get-Item $dst).LastWriteTime = Get-Date` (and the `.cpp` that `#include`s a changed header) BEFORE `build.bat`, and confirm the build log shows `Building CXX object …<file>.cpp.obj` + `copying OpenSeesPy.dll -> opensees.pyd` and that the `.pyd` timestamp advanced. Run `build.bat` via the PowerShell tool, not the Bash heredoc (the latter captured only the banner here). Learned 2026-06-17.
+
+### Cyclic softening RC shell wall (ASDShellQ4 + LadrunoRCConcrete) walls on Newton convergence past first crack
+- **Bites:** building a meshed reinforced RC shear wall — `ASDShellQ4` grid on a `LayeredShell`
+  (`LadrunoRCConcrete` concrete layers + `PlateRebar(Steel02)` web steel) — and pushing it cyclically
+  under `DisplacementControl` to demonstrate panel-scale pinching. It assembles fine and runs the first
+  small-drift cycle (real `V`–`δ` hysteresis with dissipation), then `analyze` returns `-3`
+  (`NormDispIncr` stalls with a large residual `deltaR`) at the next, larger amplitude — even with
+  `-implex`, `KrylovNewton`, and `NewtonLineSearch`/`ModifiedNewton`/`Broyden` fallbacks.
+- **Why:** the softening plastic-damage + crack-localization makes the global tangent indefinite/ill-
+  conditioned at the load-redistribution events (crack formation, interlock cap engaging across a row of
+  elements); a load-/displacement-controlled Newton has no way around the limit/snap-back points. IMPL-EX
+  helps the MATERIAL tangent stay SPD-secant but does not fix the STRUCTURAL snap-through. This is the
+  textbook reason squat-wall validation is hard, not a bug in the material (the material-point + single-
+  shell-element cyclic gates all pass).
+- **Fix (the deferred path, not yet done):** drive with an arc-length / indirect-displacement control
+  (`LadrunoIndirectControl` / `LadrunoArcLength` are built for exactly this snap-back), or dynamic
+  relaxation / quasi-static transient with mass; finer substeps; possibly an IMPL-EX-error step-cut.
+  Harness scaffold: `tests/_testbed/rc_wall_harness.py`. Learned 2026-06-17 building the Phase-2b.2c.4
+  Tran–Wallace pinching validation for [[19_ladruno_rc_shell_adr|LadrunoRCConcrete]].
