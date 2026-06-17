@@ -14,12 +14,23 @@ The C++ kernel SRC/material/nD/LadrunoConcrete3DKernel.h implements the SAME sur
 (yieldF/lodeR/m0Of/invariants); the g++-vs-oracle byte check lands with the return map in P1.
 """
 import os
+import shutil
+import subprocess
 import sys
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "_testbed"))
+HERE = os.path.dirname(__file__)
+REPO = os.path.abspath(os.path.join(HERE, os.pardir))
+TESTBED = os.path.join(HERE, "_testbed")
+sys.path.insert(0, TESTBED)
 import concrete3d_ref as ref  # noqa: E402
+
+
+# CI runs `pytest -m "zone_a"` (.github/workflows/ladruno.yml) — without this marker the WHOLE
+# file (surface/return-map/hardening/tangent gates + the C++ kernel byte check) is silently
+# deselected and never runs in CI. (Was missing since #240; caught in the PR #249 adversarial review.)
+pytestmark = [pytest.mark.zone_a]
 
 
 CASES = [(30.0, 3.0), (40.0, 3.5), (50.0, 4.0), (25.0, 2.0)]
@@ -138,3 +149,46 @@ def test_p1_tangent_gate():
     assert r["T4_taylor_ratio"] > 3.5                  # quadratic-Taylor convergence (~4)
     assert r["T5_objectivity"] < 1.0e-9
     assert r["PASS"]
+
+
+# ---------------------------------------------------------------------------
+# C++ KERNEL <-> oracle byte check (ADR §5 deliverable). Regenerate the oracle numeric-dump
+# fixture, compile the standalone g++ self-check of SRC/material/nD/LadrunoConcrete3DKernel.h,
+# and diff its return map + analytic consistent tangent against the oracle at the cross-platform
+# tolerance floors. Skipped where g++ is unavailable (e.g. the Windows pyd test env); CI (Ubuntu
+# Zone-A) runs it for real.
+# ---------------------------------------------------------------------------
+@pytest.mark.skipif(shutil.which("g++") is None, reason="g++ not available")
+def test_cpp_kernel_matches_oracle_dump(tmp_path):
+    committed = os.path.join(TESTBED, "concrete3d_oracle_fixture.txt")
+    # 1) regenerate the fixture to a TMP path on THIS platform (never overwrite the committed
+    #    artifact — else the diff would be self-referential and the test would dirty the tree;
+    #    PR #249 review). The g++ check then runs against this SAME-PLATFORM dump.
+    fixture = os.path.join(tmp_path, "fixture.txt")
+    subprocess.run([sys.executable, os.path.join(TESTBED, "gen_concrete3d_fixture.py"), fixture],
+                   check=True, cwd=TESTBED)
+    # 2) THE REAL GATE: compile the self-check (header-only kernel; -I repo root for SRC/) and run it
+    #    against the SAME-PLATFORM fresh dump (C++ and oracle compiled/run on one platform => the
+    #    precision floors hold exactly).
+    exe = os.path.join(tmp_path, "c3dchk.exe")
+    src = os.path.join(TESTBED, "concrete3d_kernel_check.cpp")
+    subprocess.run(["g++", "-std=c++17", "-O2", "-I", REPO, src, "-o", exe], check=True, cwd=REPO)
+    out = subprocess.run([exe, fixture], cwd=REPO, capture_output=True, text=True)
+    assert out.returncode == 0, f"g++ kernel check failed:\n{out.stdout}\n{out.stderr}"
+    assert "KERNEL CHECK: ALL PASS" in out.stdout
+    # 3) ROT-GUARD: the committed artifact should still be ~current — but compared NUMERICALLY with a
+    #    GENEROUS tolerance, never byte-wise. repr(float) is not bit-stable across platforms, and the
+    #    oracle's TANGENT entries are a numerical central-difference (rel_step 1e-6) that AMPLIFIES
+    #    last-ULP libm differences ~1e6x (=> ~1e-5 relative cross-platform). 1e-3 still catches real
+    #    oracle drift (a genuine equation change shifts values by >>1e-3) while ignoring that noise.
+    rt = open(fixture).read().split()
+    ct = open(committed).read().split()
+    assert len(rt) == len(ct), "committed fixture structure is stale — regenerate + commit"
+    for a, b in zip(rt, ct):
+        try:
+            fa, fb = float(a), float(b)
+        except ValueError:
+            assert a == b, f"committed fixture token changed ({a!r} vs {b!r}) — regenerate + commit"
+            continue
+        assert abs(fa - fb) <= 1e-3 * max(1.0, abs(fb)), \
+            f"committed fixture numerically stale ({a} vs {b}) — regenerate + commit"
