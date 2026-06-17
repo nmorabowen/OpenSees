@@ -161,23 +161,33 @@ def test_p1_tangent_gate():
 @pytest.mark.skipif(shutil.which("g++") is None, reason="g++ not available")
 def test_cpp_kernel_matches_oracle_dump(tmp_path):
     committed = os.path.join(TESTBED, "concrete3d_oracle_fixture.txt")
-    # 1) regenerate the fixture to a TMP path (never overwrite the committed artifact — else the
-    #    "diff against the committed fixture" would be self-referential and the test would dirty the
-    #    tree; PR #249 review). Deterministic regen => also assert the committed fixture is up to date.
+    # 1) regenerate the fixture to a TMP path on THIS platform (never overwrite the committed
+    #    artifact — else the diff would be self-referential and the test would dirty the tree;
+    #    PR #249 review). The g++ check then runs against this SAME-PLATFORM dump.
     fixture = os.path.join(tmp_path, "fixture.txt")
     subprocess.run([sys.executable, os.path.join(TESTBED, "gen_concrete3d_fixture.py"), fixture],
                    check=True, cwd=TESTBED)
-    with open(fixture) as f:
-        regen = f.read()
-    with open(committed) as f:
-        on_disk = f.read()
-    assert regen == on_disk, ("committed concrete3d_oracle_fixture.txt is stale — re-run "
-                              "`python tests/_testbed/gen_concrete3d_fixture.py` and commit it")
-    # 2) compile the self-check (header-only kernel; -I repo root for the SRC/ include)
+    # 2) validate the committed artifact is current — but NUMERICALLY, not byte-wise: repr(float)
+    #    from the oracle's iterative solves is not bit-stable across platforms (Windows vs Linux
+    #    libm differ in the last ~ULPs), so byte-equality is non-portable. A 1e-6 relative tol
+    #    still catches real oracle drift (a genuine change shifts values by >>1e-6) while ignoring
+    #    cross-platform noise. Token structure (labels, counts) must match exactly.
+    rt = open(fixture).read().split()
+    ct = open(committed).read().split()
+    assert len(rt) == len(ct), "committed fixture structure is stale — regenerate + commit"
+    for a, b in zip(rt, ct):
+        try:
+            fa, fb = float(a), float(b)
+        except ValueError:
+            assert a == b, f"committed fixture token changed ({a!r} vs {b!r}) — regenerate + commit"
+            continue
+        assert abs(fa - fb) <= 1e-6 * max(1.0, abs(fb)), \
+            f"committed fixture numerically stale ({a} vs {b}) — regenerate + commit"
+    # 3) compile the self-check (header-only kernel; -I repo root for the SRC/ include)
     exe = os.path.join(tmp_path, "c3dchk.exe")
     src = os.path.join(TESTBED, "concrete3d_kernel_check.cpp")
     subprocess.run(["g++", "-std=c++17", "-O2", "-I", REPO, src, "-o", exe], check=True, cwd=REPO)
-    # 3) run the check against the COMMITTED fixture (the artifact under test)
-    out = subprocess.run([exe, committed], cwd=REPO, capture_output=True, text=True)
+    # 4) run the check against the SAME-PLATFORM fresh dump (the real C++<->oracle gate)
+    out = subprocess.run([exe, fixture], cwd=REPO, capture_output=True, text=True)
     assert out.returncode == 0, f"g++ kernel check failed:\n{out.stdout}\n{out.stderr}"
     assert "KERNEL CHECK: ALL PASS" in out.stdout
