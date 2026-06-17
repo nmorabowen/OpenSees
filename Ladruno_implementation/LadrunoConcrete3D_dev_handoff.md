@@ -248,10 +248,41 @@ so `∫σ d ε_i = f_t·ε_f = G_f/lch` by construction. The lumped `ε_i ≈ ε
 because it dropped the `ω_t·κ_dt2` term and starved under tension's tiny ductility — **the precise
 equations were essential, not a refinement** (the P0 `qh1·qh2`-guess lesson, reconfirmed).
 
-`κ_dt1`/`κ_dt2` and the equivalent strain Eq.37 (general tensor `ε̃`, only the uniaxial Eq.38
-`ε̃=σ̄_t/E` is wired so far) are documented in the oracle. **NEXT (P2b+):** compression `ω_c` +
-`α_c` spectral split (Eq.46-50, `β_c`) → general Eq.37 `ε̃` + the tensor spectral split → unilateral
-crack-closure recovery → dual-projector damaged tangent → C++ port + `nDMaterial` wrapper (lands 33017).
+**P2b — compression `ω_c` + the `α_c` T/C split — DONE + VERIFIED** (PR after #259; oracle
+`run_p2b_gate`, pytest `test_p2b_compression_damage_gate`, Zone-A 14/14):
+- **C0:** `α_c` (Eq.46) = 0 (uniaxial tension) / 1 (uniaxial compression); the **general equivalent
+  strain Eq.37** `ε̃` = `ε₀` on the failure surface for *any* state (verified comp + tension) and
+  reduces to Eq.38 in uniaxial tension.
+- **C1:** nominal uniaxial-compression **peaks at `f_c`** (1.4% err) then softens, P1 effective
+  stress monotonic.
+- **C2:** crack-band `G_c` softening-law WIRING (`∫|σ|dε_i·lch = G_c/lch` BY CONSTRUCTION via
+  `ε_i = κ_dc1 + ω_c·κ_dc2`, Eq.47-49,52,55, `ε_fc=G_c/(f_c·lch)`) — catches `ε_fc` errors, NOT an
+  independent objectivity proof (see the PR #261 review note below).
+- Ductility `x_s = 1+(A_s−1)R_s`, `R_s=−√6 σ̄_V/ρ̄` (Eq.56-57) wired (`x_s=A_s` in uniaxial
+  compression — the confinement-ductility hook). **`β_c` (Eq.50) DROPPED for the MONOTONIC slice**
+  (it is the smooth damage↔plasticity transition for CYCLIC loading) → restore as a P2c refinement.
+
+> **PR #261 adversarial-review (workflow, 2026-06-17) — folded in:** (1) **CRITICAL** the implicit
+> `ω_t`/`ω_c` Newton clamp-stalled to `ω=0` on steep-softening paths (small `ε_f`, e.g. large lch) →
+> the cracked material spuriously **HEALED** (stress jumped back to the full effective stress); the
+> residual `F(ω)` is non-monotone. **Fixed:** a bracketed (bisection-safeguarded) root solve
+> `_solve_omega_bracketed` (the root is always bracketed on `[0,1]` during damage). Regression
+> `test_p2_no_spurious_healing` drives the failing high-lch regimes. (2) **The `G_f`/`G_c` "objectivity
+> gate" was TAUTOLOGICAL** — integrating `σ_nom` over `ε_i` (the softening law's own abscissa) returns
+> `G_f/lch` by construction (invariant to E, ν, D_f, A_s). Relabelled D2/C2 honestly as the `ε_f`
+> WIRING check. (3) **The FE-visible TOTAL fracture energy is NOT lch-objective (~33% spread)** because
+> the effective-PLASTICITY dissipation is per-volume and un-regularized — a **CDPM2 damage-only-
+> regularization characteristic** (CDPM2 regularizes the damage softening only). Now measured + REPORTED
+> (D3/C3), not hidden; regularizing the plastic dissipation (ADR §4.3 [MAJOR]) is a documented P2c task.
+> (4) onset-at-`κ_p=1` now directly gated (D0/C0b). (5) coverage gap: the C2 leg holds `x_s` constant
+> (uniaxial `R_s=1`), so it does not exercise the confinement-ductility effect — a multi-confinement
+> `G_c` leg is a P2c gap. **No correctness defect found in Eq.37/46/52/56-57 or the α_c split (the
+> reviewers re-derived them clean).**
+
+`κ_dt1`/`κ_dt2`/`κ_dc1`/`κ_dc2`, `α_c`, and Eq.37/38 are in the oracle. **NEXT (P2c+):** the TENSOR
+spectral split (`ω_t` on `σ̄_t` + `ω_c` on `σ̄_c` recompose for general 6-strain, eigdec like the P1
+tangent) → unilateral crack-closure recovery → `β_c` cyclic + the dual-projector damaged tangent →
+C++ port (`returnMapDamaged` over the P1 kernel) + the `nDMaterial` wrapper (lands classTag 33017).
 
 ## 7. Roadmap context
 

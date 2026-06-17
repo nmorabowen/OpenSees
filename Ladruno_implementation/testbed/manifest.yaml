@@ -653,6 +653,28 @@ features:
       flag, weld/HAZ -- all deferred). Plan/ADR:
       Ladruno_implementation/13_ladruno_uniaxial_j2_adr.md (shipped via #95).
 
+  - feature: LadrunoCohesiveHinge
+    classtag: 33003          # MAT_TAG (uniaxial) family; discrete cohesive moment-rotation hinge (N. Mora-Bowen)
+    tag_symbol: MAT_TAG_LadrunoCohesiveHinge
+    pr: 0                    # backfilled in PR #261 — sibling PR (ADR 32 §Tier-2) shipped the material+test but omitted this manifest row (cf. feedback_stale_pr_ledger_ci)
+    feature_class: material
+    required_tiers: [T0m, T1]
+    pytest: tests/test_ladrunoCohesiveHinge_material.py
+    tcl: WAIVED(uniaxialMaterial LadrunoCohesiveHinge ...; shared OpenSeesUniaxialMaterialCommands registry serves Tcl + Python; verified via the Zone-A pytest battery)
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesUniaxialMaterialCommands.cpp
+      - SRC/material/uniaxial/TclModelBuilderUniaxialMaterialCommand.cpp
+      - SRC/material/uniaxial/CMakeLists.txt
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      Discrete cohesive moment-rotation law M([[theta]]) carrying a per-hinge fracture energy Gf,
+      for the LadrunoDispBeamColumn Tier-2 embedded strong-discontinuity hinge (ADR 32 §Tier-2):
+      rigid-softening penalty (guarded floor Mc^2/2Gf) + exp/linear envelope calibrated to
+      int M d[[theta]] == Gf. Plan: 32_ladruno_dispbeamcolumn_regularization_adr.md.
+
   - feature: LadrunoRebarBuckling
     classtag: 33001          # MAT_TAG (uniaxial) family; sibling of LadrunoUniaxialJ2=33000, per-registry band (no collision w/ ELE BezierTet10=33001)
     tag_symbol: MAT_TAG_LadrunoRebarBuckling
