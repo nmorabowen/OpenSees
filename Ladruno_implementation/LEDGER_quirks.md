@@ -1284,3 +1284,36 @@ non-obvious behaviours, all relevant to anyone wiring `-stabilize` into a driver
   rather than returning the −1. A driver must pre-validate `factor>0` itself (never rely on
   catching the −1) or wrap the call in try/except. (Tcl sees the −1 return; Python does not.)
   Verified by `torture_stabilize.py` + `test_robust_battery.py::test_stabilize_*` (4 cases).
+- **RC-shell Phase 2a interlock — the MCFT `v_ci,max` formula is UNIT-DEPENDENT (SI: N, mm).**
+  `LadrunoRCConcrete -interlock` bounds the crack-plane shear at the Vecchio–Collins limit
+  `v_ci,max = 0.18·√fc' / (0.31 + 24·w/(a_g+16))` with crack width `w = eps_n·s_theta`. The
+  numeric constants (0.18, 0.31, 24, 16) are empirical in **MPa and mm** — `√fc'` is `√(MPa)`,
+  `w` and `a_g` are in **mm**. The rest of the kernel is unit-agnostic, but this one law is not:
+  use it on an N–mm–tonne–s model (fc' in MPa = N/mm², lengths in mm) or rescale the constants.
+  `s_theta` defaults to `-crackSpacing`, else `lch`, else 1.0; `a_g` (`-agg`) defaults to 16 mm.
+  NB Phase 2a **CLIPS the smeared (damage-reduced) crack-plane shear `τ_sm=m_σ·sig_ip` to ±v_ci,max**
+  (a bound), it does NOT substitute bare-elastic `G·γ`; below the cap the stress is unchanged.
+- **Fixed-crack interlock only engages under NON-PROPORTIONAL loading.** The crack normal freezes to
+  the principal-tensile direction at cracking; under a *proportional* path stress/strain stay coaxial,
+  so the crack-plane shear is ~0 and `v_ci,max` never binds — interlock looks inert. It engages only
+  once the principal direction ROTATES off the frozen normal (tension-then-shear, any non-radial path).
+  TEST consequence: an off-axis interlock test MUST be two-stage (freeze oblique, then rotate shear onto
+  it); a single proportional ramp gives `τ_nt≈0` and tests nothing.
+- **rc_shell_ref.py oracle uses RAW `(x,y,q)` backbones; the C++ kernel ADJUSTS them
+  (`buildBackbone` E-consistency).** So oracle-vs-C++ **absolute** stress only matches for
+  quantities INDEPENDENT of the backbone q-adjustment. The Phase-1 β gate dodges this by being
+  a RATIO; the Phase-2a interlock cap test dodges it by asserting only the **CAPPED** crack-plane shear
+  `|τ_nt| == v_ci,max` (backbone-free); sub-cap `σ_xy` is the damaged smeared shear and differs
+  C++-vs-oracle. To compare absolute normal stresses oracle-vs-C++ you must first port
+  `buildBackbone`'s adjust() into the numpy Backbone. (Two-stage driver `_path_tension_then_shear`:
+  tension on dof-1∝X, shear on dof-2∝X — disjoint DOFs let one SP per DOF realize the path under Penalty;
+  pass `gamma0>0` to freeze an OBLIQUE crack for the off-axis rotation test.)
+
+### `timeSeries Path` returns 0 BEYOND its last time node — float-accumulated pseudo-time overshoots and collapses prescribed strains
+- **Bites:** a multi-stage prescribed-strain cyclic driver built from `timeSeries('Path', ...)` + `LoadControl(1/nper)` over N stages. The intended end pseudo-time is `N`, but `nper×N` accumulations of `1/nper` (e.g. `1/80`, not exact in binary) land at `N + epsilon`. `Path` returns **0** outside `[t_first, t_last]`, so at the FINAL step every `sp`-prescribed DOF drops to 0 → the element snaps to ~zero strain. For the RC cyclic interlock this looked like a phantom `-3.18` crack-shear spike (crack "closed" at `en≈0` ⇒ `v_ci,max` jumps to its max `0.18√fc/0.31`) — a TEST artifact, not a kernel bug.
+- **Why:** `PathSeries::getFactor(t)` returns 0 for `t > t_last` (and `< t_first`). The classic mis-diagnosis is "the cap is wrong"; the real tell is reading the GP strain at the offending step (it's ~0, not the held value).
+- **Fix (robust):** pad the Path with an extra HOLD node beyond the analysis end — `times=[0..N, N+1]`, `values=[...,last, last]` — so any overshoot interpolates between two equal final values. (`-useLast` as a trailing openseespy arg did NOT take effect in this build; the pad is reliable.) Learned 2026-06-16 building the Phase-2b cyclic shear driver `_path_stages`.
+
+### RC fixed-crack cyclic PINCHING is a panel phenomenon, not a material-point one
+- **Bites:** expecting a pinched (waisted) `τ_nt`–`γ_nt` hysteresis loop from a single material point / one element under homogeneous cyclic shear at constant normal strain. You get a FAT loop instead.
+- **Why:** with the crack frozen and `en` (hence `v_ci,max`) constant, the only nonlinearity is the `±v_ci,max` clamp; the elastic interlock band has width `2·v_ci,max/G ≈ 5e-4` in slip — sub-step at normal resolution — so the loop is essentially a `±v_ci,max` rectangle (maximum dissipation, zero pinch). A pinched waist requires the crack to OPEN/CLOSE during the cycle (`v_ci,max` low near slip-reversal, high at slip-peaks), which needs the principal direction to ROTATE relative to the fixed crack — i.e. a real panel / non-homogeneous stress field. So Phase-2b.1 material-point tests assert the MECHANISM (reversal re-cap, unload=G, closure cap-recovery, energy>0), and the pinching-shape + hysteretic-energy acceptance is a panel/experiment (Tran–Wallace) gate deferred to 2b.2. Learned 2026-06-16.

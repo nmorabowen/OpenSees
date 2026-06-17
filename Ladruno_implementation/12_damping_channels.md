@@ -13,6 +13,10 @@ tags:
 
 # Damping channels in OpenSees — complete reference
 
+> **See also:** [`damping_sensitivity/README.md`](damping_sensitivity/README.md) —
+> differentiating the response w.r.t. these damping channels (FD vs DDM; the
+> zero-vanilla-touch finite-difference route + reusable helper, validated exact).
+
 > [!summary]
 > There are **six** distinct mechanisms by which damping enters the OpenSees
 > equations of motion. They live on different objects, combine by **different

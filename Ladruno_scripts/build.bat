@@ -3,13 +3,15 @@ setlocal enabledelayedexpansion
 REM ==========================================================================
 REM  build.bat — drive the OpenSees build end to end
 REM
-REM  Prereqs (one-time, on this machine):
+REM  Prereqs (one-time, on this machine) -- install them all in one shot with:
+REM       powershell -ExecutionPolicy Bypass -File Ladruno_scripts\install_prereqs.ps1
 REM    1. Visual Studio 2022 Community (with the C++ workload + Windows SDK)
 REM    2. Intel oneAPI Base + HPC toolkit (compiler, MKL, MPI)
 REM    3. CMake 3.23+, Ninja, Python 3.12, Git
 REM    4. Conan 2.x  (pip install --user conan)
 REM    5. MUMPS 5.5.1 source archive at mumps-archive\mumps_src.tar.gz
-REM       (downloaded once from https://mumps-solver.org/MUMPS_5.5.1.tar.gz)
+REM       (downloaded once from https://mumps-solver.org/MUMPS_5.5.1.tar.gz;
+REM        install_prereqs.ps1 does NOT fetch this -- build.bat Step 1 does)
 REM
 REM  Usage (from a fresh cmd.exe):
 REM    cd <fork-clone-root>                   (e.g. C:\Users\nmora\Github\OpenSees)

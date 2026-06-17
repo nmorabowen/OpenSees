@@ -36,7 +36,10 @@ line. (Banner art itself comes from `banner_ASCII.txt` → `BANNER-START/END`.)
 
 - `Ladruno_implementation/` — ledgers (above) + forward-looking feature plans.
 - `Ladruno_internal/` — build history / compilation journal; deep build and
-  toolchain detail.
+  toolchain detail. See `BUILD_GOTCHAS.md` (env/runtime workarounds: Python 3.12
+  ABI, batch traps, CMake-4.3 shadow, MUMPS, test bootstrap, installer DLL-lock)
+  and `WORKFLOW_GOTCHAS.md` (PR/CI/git traps on this fast-auto-merging fork:
+  stranded commits, stale-PR "no checks", header stamp, vanilla footprint).
 - `Ladruno_scripts/` — build, installer, banner, and test tooling.
 
 ## PRs

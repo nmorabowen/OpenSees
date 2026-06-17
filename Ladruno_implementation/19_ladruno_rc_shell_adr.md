@@ -516,6 +516,88 @@ Each phase is independently shippable and reduces to baseline when its flags are
   the retention term is load-bearing; **rigid-rotation objectivity** test on a cracked state (the
   stored-normal form must pass the supported corotational-element route).
 
+#### Phase 2a (SHIPPED) — the bounded monotonic slice
+Phase 2 splits into **2a** (monotonic, shipped) and **2b** (cyclic, next). 2a delivers the
+**`v_ci,max` BOUND** on the membrane shear; the `{const|dsfm|rots}` retention CURVES, crack-closure,
+and pinching are **2b**.
+- **Flag:** ships as **`-interlock`** (with `-agg`, `-crackStrain`, `-crackSpacing`, `-lch`, `-betaSrMin`),
+  default OFF ⇒ bit-identical to Phase 1. `shearRetMode` is reserved (only mode 0 wired); the ADR's
+  `-shearRetention {const|dsfm|rots}` name is **deferred to 2b** (will alias/replace `-interlock` then).
+- **Formulation (decided):** at first crossing of `eps_cr` the in-plane crack NORMAL is frozen. Thereafter
+  the **smeared (damage-reduced) crack-plane shear** `tau_sm = m_sigma·sig_ip` is **clipped** to
+  `±v_ci,max` — i.e. 2a is a *bound on the existing shear*, NOT a substitution with bare-elastic `G·gamma`
+  (the bare-elastic replacement was rejected in review: it injects a stress discontinuity at cracking and a
+  tangent inconsistency). Below the cap the stress is unchanged (continuous, no double-count).
+- **Crack width:** `w = macauley(eps_n)·s_theta` with `eps_n` the strain **normal to the FROZEN crack**
+  (this supersedes the literal `w = eps_1·s_theta` wording in §"Shear retention"; the two are equal at
+  capture and `eps_n` is the fixed-crack-consistent opening thereafter). `w` grows **monotonically**
+  (irreversible interlock degradation). `s_theta` = `-crackSpacing` → `lch` → 1.
+- **Tangent (consistent):** sub-cap → baseline (no cross-term); capped → the rank-1 removal
+  `Dtan_ip -= (1-betaSrMin)·m_eps ⊗ (m_sigma·Dtan_ip)`, exact because `m_sigma·m_eps = (c²+s²)² = 1` pins
+  the crack-shear. The `v_ci,max(w)` normal→shear coupling is a deliberately-omitted 2nd-order term,
+  consistent with the Phase-1 secant `W_B·C0`.
+- **Verified:** Zone-A — interlock-OFF reduce-to-ASDConcrete3D on a sheared path; `v_ci,max` cap vs
+  closed-form + numpy oracle; **off-axis (oblique) crack** rotation (crack normal vs analytic principal
+  dir + projected crack-shear == `v_ci,max`); ON-vs-OFF ablation. Standalone g++ FD confirms the cap
+  (axis + off-axis) and the tangent-pinning identity.
+- **Known 2a limits (documented, deferred):** (1) **equibiaxial/degenerate** membrane states never freeze
+  a crack (arbitrary principal dir) → no interlock there until the state leaves degeneracy; (2) the
+  **rigid-rotation objectivity** test on a stored-normal cracked state (corot-element route) is a 2b
+  acceptance item, not yet run for 2a; (3) the condensed PlateFiber/PlaneStress × interlock interaction is
+  exercised only via the 3D `stdBrick` so far.
+
+#### Phase 2b.1 (SHIPPED) — cyclic crack-shear (incremental friction-slip)
+- **Flag:** `-cyclic` (a sub-flag of `-interlock`); default OFF ⇒ 2a (monotone clip) is byte-identical.
+- **Model (decided):** the crack-plane shear becomes an **independent incremental friction-slip state**
+  (FSAM-crib, `InterLocker_improved`): `tau_cr = clamp(tau_cr_committed + G·(gamma_nt − gamma_nt_committed),
+  ±v_ci,max(w))`, `G = E/2(1+nu)`, slip origin frozen at crack capture. The crack width `w` is now
+  **REVERSIBLE** (`w = macauley(eps_n)·s_theta` of the *current* opening, not the monotone max) so crack
+  closure raises the cap (capacity recovery); reduces to a monotone ramp-then-cap (same `v_ci,max` plateau
+  as 2a) under monotonic loading. State = 2 committed scalars `{tauCr, gammaCr}` per the FSAM minimal recipe.
+- **Cap = MCFT `v_ci,max(w)`** (not Coulomb `μ·σ_n`) — keeps the 2a/ADR bound; the FSAM `μ·f_n` friction
+  cap is an alternative deferred to 2b.2.
+- **Diverges from FSAM in three respects** (so the "FSAM crib" credit is not misread): (1) the cap is MCFT
+  `v_ci,max(w)`, not FSAM's Coulomb `μ·f_n`; (2) the slip stiffness is the FULL elastic `G = E/2(1+nu)`, not
+  FSAM's `0.4·Ec`; (3) there is **no zero-shear-when-open collapse** — an open crack still transfers shear up
+  to the (width-degraded) `v_ci,max(w)` rather than being forced to zero. (1) and (3) keep continuity with the
+  2a bound; the FSAM variants are 2b.2 options.
+- **Consistent tangent:** remove the smeared crack-shear sensitivity `m_eps⊗(m_sigma·D)` then add the
+  friction stiffness `G·m_eps⊗m_eps` (full when sliding-elastic; floored to `betaSrMin·G` when capped).
+  Verified: standalone FD gives `Dtan[3][3] = G` exactly on the elastic-unload branch. **At the single
+  crack-CAPTURE step** the stress is seeded to the clipped smeared shear (continuity) while the tangent adds
+  the friction stiffness — a deliberate one-step secant compromise (same spirit as 2a's capture), not a
+  derivation error.
+- **Verified (Zone-A, material-point):** reversal re-caps at ∓`v_ci,max` + energy dissipation; unload
+  stiffness == `G`; crack-closure raises the cap (capacity recovery); monotonic reduces to the 2a plateau;
+  C++ ≡ numpy oracle step-by-step over a full reversing path (cyclic crack-shear is backbone-independent).
+- **Pinching is a PANEL phenomenon (deferred to 2b.2):** at a material point with a fixed crack and constant
+  normal strain the loop is *fat* (the elastic `±v_ci/G` band is sub-step); a pinched waist needs the crack
+  to open/close during the cycle (principal-direction rotation), which only happens in a real panel. The
+  ADR's pinching-shape + hysteretic-energy acceptance vs a **Tran–Wallace squat-wall** experiment is 2b.2.
+- **Deferred to 2b.2:** crack-closure spectral reassembly on the NORMAL direction; the `-shearRetention
+  {const|dsfm|rots}` retention CURVES + cyclic interlock-surface degradation (FSAM `epsiloncmax` knockdown of
+  `v_ci,max`); panel/experiment pinching validation; rigid-rotation objectivity; PlateFiber×condensation +
+  serialization-round-trip cyclic tests.
+
+#### Phase 2b.2a (SHIPPED) — shell-element integration + serialization (test-only, no kernel change)
+Closes the two biggest test gaps the adversarial reviews flagged. **No code change** — proves the existing
+material in its real target host.
+- **Shell integration (the whole point):** `LadrunoRCConcrete` is exercised end-to-end inside
+  **`ASDShellQ4` + `section LayeredShell`** (the PlateFiber view via `getCopy("PlateFiber")` + its
+  guarded `σ33=0` inner Newton), which until now had only been tested on a 3D `stdBrick`. New
+  `tests/test_ladrunoRCConcrete_shell.py` (Zone-A, no gmsh — a single flat ASDShellQ4 unit quad with every
+  membrane DOF prescribed via Penalty): (1) membrane tension cracks + softens (`Nxx` peaks at `ft·h` then
+  drops); (2) **cyclic membrane shear saturates `Nxy` at the MCFT bound `±v_ci,max·h` on both signs** — the
+  PlateFiber × σ33-condensation × cyclic-friction path, verified in the real shell; (3) the interlock is
+  load-bearing in the shell (ON caps `Nxy` below OFF).
+- **Serialization round-trip:** a Zone-A test drives an oblique cracked cyclic state, `save`/`restore`s it
+  through the FE database (`sendSelf`/`recvSelf`), and asserts the crack frame + width + `{tauCr,gammaCr}`
+  survive bit-exactly (guards the `RC_DATA=242` field count/order).
+- **Still deferred to 2b.2b:** crack-closure normal spectral reassembly; `-shearRetention` retention CURVES +
+  cyclic interlock-surface degradation; **panel/experiment pinching validation (Tran–Wallace)** — the one
+  that needs a meshed non-homogeneous wall where principal rotation produces the pinched waist; rigid-rotation
+  objectivity; serialization schema-version field.
+
 ### Phase 3 — Tension stiffening + crack-band/`lch` hardening
 - **Build:** VC/CM tension-stiffening plateaus (opt-in); resolve `lch` per **D5 Option A or B**.
 - **New:** if Option B, the ledgered vanilla `lch` plumb.
