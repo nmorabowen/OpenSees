@@ -589,6 +589,7 @@ def return_map_hardening(sig_tr, mp, kp_n, tol=1.0e-11):
 
     u = np.array([xi_tr, rho_tr, 0.0, kp_n])
     converged = False
+    apex = False
     for _ in range(100):
         R = resid(u)
         if (abs(R[0]) < tol * fc and abs(R[1]) < tol * fc
@@ -602,12 +603,39 @@ def return_map_hardening(sig_tr, mp, kp_n, tol=1.0e-11):
             up[j] += du
             J[:, j] = (resid(up) - R) / du
         u = u + np.linalg.solve(J, -R)
+        if u[1] < 0.0:                       # deviatoric return overshoots => hydrostatic apex
+            apex = True
+            break
 
     xi, rho, dlam, kp = u
-    p_new = xi / SQRT3
-    dev_scale = rho / rho_tr if rho_tr > 0.0 else 0.0
-    sig_new = s_tr * dev_scale + p_new
-    return sig_new, kp, True, _yf_inv_hard(xi, rho, r, kp, mp), converged
+    if apex:
+        # Hydrostatic-tension APEX return (mirror return_map_principal): project to the cone vertex
+        # rho=0, f(xi,0;kp)=0. For the hardened surface qh2=1 (kp<1) this is xi_apex=sqrt3 fc/m0;
+        # solve the 1-D f(xi,0)=0 generally for robustness. (Rigorous non-unique vertex multiplier =
+        # Koiter, ADR 4.2 — deferred.)
+        lo, hi = 0.0, SQRT3 * fc / m0 * 4.0
+        for _ in range(80):
+            mid = 0.5 * (lo + hi)
+            if _yf_inv_hard(lo, 0.0, r, kp, mp) * _yf_inv_hard(mid, 0.0, r, kp, mp) <= 0.0:
+                hi = mid
+            else:
+                lo = mid
+        xi = 0.5 * (lo + hi)
+        p_new = xi / SQRT3
+        sig_new = np.array([p_new, p_new, p_new])
+    else:
+        p_new = xi / SQRT3
+        dev_scale = rho / rho_tr if rho_tr > 0.0 else 0.0
+        sig_new = s_tr * dev_scale + p_new
+
+    # HONEST convergence: recompute f INDEPENDENTLY at the returned stress with its OWN (updated)
+    # Lode angle — the frozen-theta residual R[2] can read ~0 while the point is off-surface near
+    # the apex (the frozen theta != the returned stress's true theta). Never report converged for
+    # an off-surface point.
+    f_indep = yield_f(np.array([sig_new[0], sig_new[1], sig_new[2], 0.0, 0.0, 0.0]),
+                      fc, mp["ft"], mp["e"], qh1(kp, mp["qh0"], mp["Hp"]), qh2(kp, mp["Hp"]))
+    converged = bool((converged or apex) and abs(f_indep) < 1.0e-7 * (fc + 1.0))
+    return sig_new, kp, True, f_indep, converged
 
 
 def drive_hardening(mp, eps11_path, confine="free", sigma3=0.0):
@@ -642,6 +670,22 @@ def drive_hardening(mp, eps11_path, confine="free", sigma3=0.0):
                      ("plastic", plastic), ("conv", bool(inner_conv and map_conv))):
             out[k].append(v)
     return {k: np.array(v) for k, v in out.items()}
+
+
+def drive_triaxial_strain(mp, eps_end, nsteps):
+    """Fully strain-controlled OFF-MERIDIAN hardening path (3 DISTINCT principal strains, no lateral
+    solve) — the axisymmetric drive_hardening cannot generate off-meridian (theta != 60deg) states.
+    Returns (max independent-f drift over the path, final kappa_p, max |theta-theta_frozen| proxy)."""
+    eps = np.zeros(3)
+    sig = np.zeros(3)
+    kp = 0.0
+    max_f = 0.0
+    for i in range(1, nsteps + 1):
+        et = np.array(eps_end, float) * (i / nsteps)
+        sig, kp, _, f_indep, _ = return_map_hardening(_elastic_pred(sig, et - eps, mp), mp, kp)
+        eps = et
+        max_f = max(max_f, abs(f_indep))          # f_indep is the INDEPENDENT-theta drift (post-M1)
+    return max_f, kp
 
 
 def run_hardening_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, verbose=True):
@@ -693,6 +737,16 @@ def run_hardening_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, verbose=True):
     res["HD_eps_at_kp1"] = eps_at_kp1
     res["HD_confinement_more_ductile"] = bool(eps_at_kp1[0.10 * fc] > eps_at_kp1[0.0])
 
+    # HE (DIAGNOSTIC, not a pass gate): off-meridian hardening drift. The axisymmetric HB/HC/HD are
+    # stuck on the compressive meridian (theta=60, frozen=true, no drift). A 3-distinct-principal
+    # strain path exposes a KNOWN LIMITATION: near FIRST YIELD off-meridian (kappa_p~0, the surface
+    # is small + qh1 ramps steeply) the semi-implicit return leaves an off-surface drift that the
+    # honest independent-f flag (M1) correctly reports as converged=False. The build PR must address
+    # it (sub-stepping near first yield / off-meridian, and the apex sub-algorithm). Recorded so the
+    # handoff states it honestly; NOT gated because the fix is build-PR scope.
+    eps_end = [-3.0e-3, 8.0e-4, 1.0e-4]
+    res["HE_drift_offmeridian"] = drive_triaxial_strain(mp, eps_end, 256)[0]
+
     ok = (res["U1_ok"] and res["HA_reduce_to_P1"] < 1.0e-8
           and res["HB_err"] < 0.02 and res["HB_all_conv"]
           and res["HC_nonlinear"] and res["HD_confinement_more_ductile"])
@@ -705,6 +759,8 @@ def run_hardening_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, verbose=True):
               f"  conv={res['HB_all_conv']}")
         print(f"  HC pre-peak: first yield/fc={res['HC_first_yield_over_fc']:.3f} (~qh0), monotone hardening"
               f"  ok={res['HC_nonlinear']}")
+        print(f"  HE off-meridian drift (DIAGNOSTIC, known limitation, not gated) = "
+              f"{res['HE_drift_offmeridian']:.2e}  (honest-f flags these converged=False; build-PR fix)")
         print(f"  HD confinement ductility: eps(kp=1) unconf={eps_at_kp1[0.0]:.5f}"
               f"  conf(0.1fc)={eps_at_kp1[0.10*fc]:.5f}  more_ductile={res['HD_confinement_more_ductile']}")
         print(f"  => HARDENING GATE {'PASS' if ok else 'FAIL'}")
@@ -796,9 +852,11 @@ def run_tangent_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, verbose=True):
     sp_ref, _, _, _, _ = return_map_hardening(w, mp, 0.0)
     res["T1_reduce_diag"] = float(np.max(np.abs(np.sort(st[:3]) - np.sort(sp_ref))))
 
-    # Tangent computed on the PERFECT-PLASTIC map (analytic Jacobian => ~1e-13 stress => clean FD).
-    # The hardening map uses a numerical Jacobian (~1e-8) — too noisy for a clean tangent; its
-    # analytic tangent is the C++ build-PR work, FD-checked against this machinery. hardening=False.
+    # Tangent gate runs on the PERFECT-PLASTIC map because it has an ANALYTIC inner Jacobian
+    # (machine-clean inner solve). NOT because the hardening FD tangent is noisy — the outer
+    # central-difference tangent of the hardening map is actually just as step-stable (~2.8e-10).
+    # The hardening map's analytic 4x4 tangent is the C++ build-PR deliverable, FD-checked against
+    # this machinery. hardening=False.
     HP = dict(hardening=False)
 
     # T2: elastic step -> tangent == elastic C
@@ -816,19 +874,40 @@ def run_tangent_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, verbose=True):
 
     # T3b: associated limit e=1 (no Lode r), Df=1 => flow == yield gradient. The asymmetry drops
     # ~20x vs the non-associated model, confirming Df+Lode drive the BULK asymmetry. The residual
-    # (~2%) is the SEMI-IMPLICIT theta-FREEZE: freezing the Lode direction breaks the variational
-    # structure, so Tier-1 is slightly non-symmetric even when associated => unsymmetric solver is
-    # required UNCONDITIONALLY (reinforces ADR 4.4/4.5), not only for Df<1.
+    # (~2.4%) is the FROZEN-EIGENVECTOR SPECTRAL RECOMPOSE (V diag(sp) V^T with V held at the trial
+    # drops the eigenprojection/spin terms dV/deps), NOT the Lode theta-freeze. FALSIFIED that it is
+    # the theta-freeze (see T3c probe below): in principal space (no recompose) the same off-meridian
+    # associated state is machine-symmetric (~2e-10); the 2.4% appears ONLY with shear and scales
+    # LINEARLY with shear magnitude, FD-step-independent. Conclusion is unchanged: Tier-1 is non-
+    # symmetric even when associated => unsymmetric solver required UNCONDITIONALLY (ADR 4.4).
     mp_as = make_material(E, nu, fc, ft, Df=1.0, e=1.0)
     C_as = consistent_tangent(np.zeros(6), deps_pl, mp_as, 0.0, **HP)
     res["T3b_sym_assoc"] = nrm(C_as - C_as.T) / nrm(C_as)
 
-    # T4: tangent STABILITY — central-difference tangent agrees across two FD steps (well-defined,
-    # not noise). (A strict quadratic-Taylor test is inherently FD-roundoff-limited; the analytic
-    # tangent + its FD-check is the C++ build-PR deliverable.)
-    C_a = consistent_tangent(np.zeros(6), deps_pl, mp_na, 0.0, rel_step=2.0e-6, **HP)
-    C_b = consistent_tangent(np.zeros(6), deps_pl, mp_na, 0.0, rel_step=8.0e-7, **HP)
-    res["T4_step_stability"] = nrm(C_a - C_b) / nrm(C_a)
+    # T3c: FALSIFICATION probe — the associated-limit asymmetry is the spectral recompose, not the
+    # theta-freeze. (i) principal-space associated off-meridian state is machine-symmetric; (ii) the
+    # full-tensor asymmetry scales linearly with shear and ->0 as shear->0.
+    deps_noshear = np.array([-2.0e-3, 6.0e-4, 2.0e-4, 0.0, 0.0, 0.0])
+    C_ns = consistent_tangent(np.zeros(6), deps_noshear, mp_as, 0.0, **HP)
+    res["T3c_assoc_noshear_sym"] = nrm(C_ns - C_ns.T) / nrm(C_ns)            # ~0 (no recompose spin)
+    asy = []
+    for g in (1.0e-5, 5.0e-5):
+        dps = np.array([-2.0e-3, 6.0e-4, 2.0e-4, g, 0.0, 0.0])
+        Cg = consistent_tangent(np.zeros(6), dps, mp_as, 0.0, **HP)
+        asy.append(nrm(Cg - Cg.T) / nrm(Cg))
+    res["T3c_shear_linear"] = asy[1] / asy[0] if asy[0] > 0 else 0.0        # ~5 (linear in shear)
+
+    # T4: quadratic-Taylor consistency — sigma(eps+d*v) - sigma(eps) - C:(d*v) = O(d^2), so the
+    # residual ratio -> ~4 as d halves. Strictly stronger than step-stability: it proves C is the
+    # ACTUAL derivative, not merely a step-converged FD operator. (Base state is deep plastic so
+    # perturbations stay C1.) This is the gate the C++ analytic tangent will be FD-checked against.
+    sig0t, _, _, _ = return_map_tensor(np.zeros(6), deps_pl, mp_na, 0.0, **HP)
+    vdir = np.array([1.0, -0.3, 0.2, 0.15, -0.1, 0.05])
+    tay = []
+    for dd in (1.0e-4, 5.0e-5):
+        s1, _, _, _ = return_map_tensor(np.zeros(6), deps_pl + dd * vdir, mp_na, 0.0, **HP)
+        tay.append(nrm(s1 - (sig0t + C_pl @ (dd * vdir))))
+    res["T4_taylor_ratio"] = tay[0] / tay[1] if tay[1] > 0 else 0.0
 
     # T5: frame objectivity — rotate strain by Q => stress rotates by Q (isotropic map)
     sig0, _, _, _ = return_map_tensor(np.zeros(6), deps_pl, mp_na, 0.0, **HP)
@@ -841,18 +920,22 @@ def run_tangent_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, verbose=True):
 
     ok = (res["T1_reduce_diag"] < 1.0e-9 and res["T2_elastic_err"] < 1.0e-6
           and res["T3_asym_nonassoc"] > 1.0e-1                       # strongly non-symmetric
-          and res["T3b_sym_assoc"] < 0.05                            # ~20x smaller (theta-freeze residual)
+          and res["T3b_sym_assoc"] < 0.05                            # ~20x smaller (recompose-spin residual)
           and res["T3_asym_nonassoc"] > 5.0 * res["T3b_sym_assoc"]   # non-association dominates
-          and res["T4_step_stability"] < 1.0e-3 and res["T5_objectivity"] < 1.0e-9)
+          and res["T3c_assoc_noshear_sym"] < 1.0e-6                  # associated + NO shear => symmetric
+          and 4.0 < res["T3c_shear_linear"] < 6.0                    # asymmetry LINEAR in shear (=> recompose)
+          and res["T4_taylor_ratio"] > 3.5                           # quadratic Taylor convergence (~4)
+          and res["T5_objectivity"] < 1.0e-9)
     res["PASS"] = bool(ok)
     if verbose:
         print(f"  E={E} nu={nu} fc={fc} ft={ft}")
         print(f"  T1 tensor-reduce-to-principal (diag)   = {res['T1_reduce_diag']:.2e}  (<1e-9)")
         print(f"  T2 elastic tangent == C_elastic        = {res['T2_elastic_err']:.2e}  (<1e-6)")
         print(f"  T3 asymmetry ||C-C^T||/||C|| (Df=0.3)  = {res['T3_asym_nonassoc']:.3e}  (non-associated)")
-        print(f"  T3b associated limit (e=1,Df=1)        = {res['T3b_sym_assoc']:.2e}  (~20x smaller;"
-              f" residual = semi-implicit theta-freeze)")
-        print(f"  T4 tangent step-stability              = {res['T4_step_stability']:.2e}  (<1e-3)")
+        print(f"  T3b associated limit (e=1,Df=1)        = {res['T3b_sym_assoc']:.2e}  (~20x smaller)")
+        print(f"  T3c assoc+NO-shear symmetric           = {res['T3c_assoc_noshear_sym']:.2e}  (<1e-6) ;"
+              f" shear-linearity = {res['T3c_shear_linear']:.2f} (~5 => SPECTRAL RECOMPOSE, not theta-freeze)")
+        print(f"  T4 Taylor quadratic ratio (~4)         = {res['T4_taylor_ratio']:.2f}  (>3.5)")
         print(f"  T5 frame objectivity                   = {res['T5_objectivity']:.2e}  (<1e-9)")
         print(f"  => TANGENT GATE {'PASS' if ok else 'FAIL'}")
     return res

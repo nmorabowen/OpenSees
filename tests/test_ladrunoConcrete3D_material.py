@@ -131,6 +131,10 @@ def test_p1_tangent_gate():
     assert r["T3_asym_nonassoc"] > 1.0e-1               # non-associated => non-symmetric tangent
     assert r["T3b_sym_assoc"] < 0.05                    # associated limit ~20x smaller
     assert r["T3_asym_nonassoc"] > 5.0 * r["T3b_sym_assoc"]
-    assert r["T4_step_stability"] < 1.0e-3
+    # falsification: associated-limit asymmetry is the SPECTRAL RECOMPOSE (linear in shear), not the
+    # theta-freeze (principal-space associated state is machine-symmetric)
+    assert r["T3c_assoc_noshear_sym"] < 1.0e-6
+    assert 4.0 < r["T3c_shear_linear"] < 6.0           # asymmetry linear in shear
+    assert r["T4_taylor_ratio"] > 3.5                  # quadratic-Taylor convergence (~4)
     assert r["T5_objectivity"] < 1.0e-9
     assert r["PASS"]
