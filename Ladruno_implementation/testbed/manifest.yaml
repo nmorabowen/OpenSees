@@ -913,6 +913,30 @@ features:
       not a collision. Embedded softening hinge (Tier-2) planned. Plan:
       32_ladruno_dispbeamcolumn_regularization_adr.md.
 
+  - feature: LadrunoDispBeamColumn3d
+    classtag: 33014          # ELE_TAG (element) family; 3D sibling of LadrunoDispBeamColumn2d=33013 (numerically equals ND_TAG 33014 StagedStrain — different registry, not a collision)
+    tag_symbol: ELE_TAG_LadrunoDispBeamColumn3d
+    pr: null
+    feature_class: element
+    required_tiers: [T0, T1]
+    pytest: tests/test_ladrunoDispBeamColumn3d_element.py
+    tcl: WAIVED(element LadrunoDispBeamColumn3d ...; shared OpenSeesElementCommands functionMap serves Tcl + Python; verified via the Zone-A pytest battery)
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesElementCommands.cpp
+      - SRC/element/CMakeLists.txt
+      - SRC/element/ladrunoDispBeamColumn/CMakeLists.txt
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      Regularized displacement-based fiber frame element (3D, ADR 32): the 3D sibling of
+      LadrunoDispBeamColumn2d=33013 — a drop-in DispBeamColumn3d with the same Tier-1
+      per-integration-point characteristic-length (lch) channel mirroring ForceBeamColumn,
+      plus an optional -nl 1/2(theta_y^2 + theta_z^2) biaxial bowing term (DispBeamColumnNL3d).
+      Element-registry tag numerically equals ND_TAG 33014 (StagedStrain) but lives in a
+      different registry — not a collision. Plan: 32_ladruno_dispbeamcolumn_regularization_adr.md.
+
   # --- worked examples shipped with the scaffold (existing elements, no new C++) ---
 
   - feature: forceBeamColumn_cantilever     # T1 worked example (existing element)

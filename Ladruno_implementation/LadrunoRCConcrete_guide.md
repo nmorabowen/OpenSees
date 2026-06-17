@@ -247,6 +247,42 @@ Driven by the **committed** `slipCum` ⇒ tangent-neutral (the benign 2b.1 tange
 unchanged). This produces gradual cyclic strength decay (verified caps `2.90 → 2.50 → 2.10`
 over three cycles). Knobs: `-degKappa` (0.5), `-degSlipRef` (0.01), `-degMin` (0.1).
 
+### 4.5 IMPL-EX robustness — `-implex`
+
+Softening plastic-damage produces an **indefinite consistent tangent** on the softening
+branch, so a vanilla Newton solve of a cyclic RC wall stalls (an `nDMaterial` with no
+robustness escape cannot be driven through reversals of a meshed softening wall). IMPL-EX
+(Oliver et al. 2008) is the escape: each step the damage thresholds `xt, xc` and the MCFT
+`β` are **frozen** by an explicit extrapolation of the committed history,
+
+$$x_{\text{ext}} = x_n + t_f\,(x_n - x_{n-1}), \qquad t_f = \frac{\Delta t_{n+1}}{\Delta t_n}\,\alpha,$$
+
+so the returned tangent is the **secant** `W_B·C0` with no softening-rate term and no `β`
+cross-term — it removes the dominant indefinite contribution and lets Newton converge. The
+**true implicit** thresholds are recomputed at commit to advance the state and to measure
+the IMPL-EX error (`implexError` response).
+
+> [!important] What is and isn't frozen (honest scope)
+> The **damage** (the softening source) is frozen — that is the robustness that matters.
+> The spectral **projectors** PT/PC are **not** frozen here (they are recomputed from the
+> live stress each call), consistent with this material's fixed-projector-secant philosophy
+> (the implicit tangent also omits `∂P/∂ε`). So the tangent is not perfectly strain-constant
+> under a rotating principal axis; a full `PT_commit` freeze for that case is a scoped
+> follow-up. IMPL-EX is **exact on proportional paths** (the threshold grows linearly, so the
+> extrapolation is exact — error ~1e-12) and lags `O(Δt)` at rate changes (e.g. cracking
+> onset).
+
+> [!warning] Static analysis: the time factor is guarded
+> In a **static** analysis the "time" is the load factor, whose increment is erratic (and
+> resets at `loadConst`), so the raw `Δt_{n+1}/Δt_n` would detonate the extrapolation. The
+> material guards `t_f` (falls back to `α` for non-positive/non-finite increments, clamps to
+> `2α`), which makes static IMPL-EX use a uniform `t_f≈α` — supply roughly uniform load steps.
+
+`-implex` is **default OFF** ⇒ the material is the fully-implicit baseline, bit-identical.
+Combine with `-numericalTangent` and the forward-difference path is automatically bypassed
+(it is invalid under IMPL-EX). Pairs naturally with the cyclic interlock flags for cyclic
+wall analysis.
+
 ---
 
 ## 5. The views and the shell seam
@@ -298,7 +334,8 @@ nDMaterial LadrunoRCConcrete $tag $E $nu \
     [-secant | -numericalTangent] \
     [-interlock [-agg $ag] [-crackStrain $ec] [-crackSpacing $sθ] [-lch $l] [-betaSrMin $m]] \
     [-cyclic] \
-    [-xcrack [-degKappa $k] [-degSlipRef $sr] [-degMin $dm]]
+    [-xcrack [-degKappa $k] [-degSlipRef $sr] [-degMin $dm]] \
+    [-implex [-implexAlpha $a] [-implexControl $errTol $timeRedLim]]
 ```
 
 | Token | Meaning | Default |
@@ -321,6 +358,9 @@ nDMaterial LadrunoRCConcrete $tag $E $nu \
 | `-cyclic` | **enable** cyclic friction-slip (implies `-interlock`) (§4.3) | OFF |
 | `-xcrack` | **enable** second crack + cumulative-slip wear (implies `-cyclic`) (§4.4) | OFF |
 | `-degKappa` / `-degSlipRef` / `-degMin` | Archard wear: max knockdown / slip reference / residual floor | 0.5 / 0.01 / 0.1 |
+| `-implex` | **enable** IMPL-EX integration (robust constant secant for cyclic softening, §4.5) | OFF (fully implicit) |
+| `-implexAlpha` | IMPL-EX extrapolation-factor multiplier | 1.0 |
+| `-implexControl` | advisory error control `$errTol $timeRedLim` (warns when the implex error exceeds tol) | off |
 
 > [!important] Flag implication chain
 > `-xcrack` ⇒ `-cyclic` ⇒ `-interlock` (each law lives inside the previous block). All
