@@ -214,7 +214,8 @@ class Params:
                  cdf=0.0, eta=0.0,
                  interlock_on=False, agg_size=16.0, crack_strain=0.0,
                  crack_spacing=0.0, lch=0.0, beta_sr_min=0.01, interlock_cyclic=False,
-                 xcrack_on=False, deg_kappa=0.5, deg_slip_ref=0.01, deg_min=0.1):
+                 xcrack_on=False, deg_kappa=0.5, deg_slip_ref=0.01, deg_min=0.1,
+                 shear_ret_mode=0, shear_ret_factor=0.4):
         self.E = E
         self.nu = nu
         self.Kc = Kc
@@ -233,6 +234,8 @@ class Params:
         self.interlock_on = interlock_on
         self.interlock_cyclic = interlock_cyclic
         self.xcrack_on = xcrack_on
+        self.shear_ret_mode = shear_ret_mode       # 0 mcft | 1 const | 2 dsfm | 3 rots
+        self.shear_ret_factor = shear_ret_factor   # const-mode retention mu
         self.deg_kappa = deg_kappa
         self.deg_slip_ref = deg_slip_ref
         self.deg_min = deg_min
@@ -374,7 +377,8 @@ def compute(P, st_committed, strain6, betaMode='strength'):
     tau_cr, gamma_cr = st_committed.tauCr, st_committed.gammaCr
     cracked2, slip_cum = st_committed.cracked2, st_committed.slipCum
     beta_sr = 1.0
-    if P.interlock_on:
+    # shearRetMode 3 (rots) = rotating-coaxial: skip the fixed-crack shear entirely.
+    if P.interlock_on and P.shear_ret_mode != 3:
         just_captured = False
         if cracked < 0.5 and e1 >= P.crack_strain and not degen:
             cracked = 1.0
@@ -410,7 +414,13 @@ def compute(P, st_committed, strain6, betaMode='strength'):
             tau_sm = cs * (syy - sxx) + (c2 - s2) * sxy
             if P.interlock_cyclic:
                 # Phase 2b: incremental friction-slip crack-shear (FSAM-style)
-                Gint = 0.5 * P.E / (1.0 + P.nu)
+                # Phase 2b.2c: crack-shear slip stiffness G_slip per -shearRetention mode.
+                Gfull = 0.5 * P.E / (1.0 + P.nu)
+                Gint = Gfull
+                if P.shear_ret_mode == 1:      # const: mu*G
+                    Gint = P.shear_ret_factor * Gfull
+                elif P.shear_ret_mode == 2:    # dsfm: width-degraded
+                    Gint = Gfull * (0.31 / denom)
                 g_nt = 2.0 * (eyy - exx) * cs + gxy * (c2 - s2)
                 # cumulative sliding (skip the capture step; in.gammaCr is still the uncracked 0)
                 slip_cum = st_committed.slipCum + (0.0 if just_captured else abs(g_nt - st_committed.gammaCr))

@@ -631,6 +631,33 @@ state + governing-cap** variant that delivers the same physics without those fla
 - **Still deferred to 2b.2c:** crack-closure normal spectral reassembly; the `-shearRetention {const|dsfm|
   rots}` retention CURVES; **panel/experiment pinching validation (Tran–Wallace)**; rigid-rotation objectivity.
 
+#### Phase 2b.2c.1 (SHIPPED) — `-shearRetention {mcft|const|dsfm|rots}` crack-shear retention curves
+Wires the long-reserved `shearRetMode` (the parser had a `NOTE` placeholder, only mode 0 live) into a real
+flag selecting the **CYCLIC crack-plane slip stiffness** `G_slip` in the friction predictor
+`τ_cr = clamp(τ_cr_c + G_slip·Δγ_nt, ±v_ci,max(w))`. The `v_ci,max(w)` **cap is unchanged in every mode**
+(keeps the 2a/ADR bound) — only the slip stiffness changes. All modes reduce to `mcft`.
+- **Flag:** `-shearRetention {mcft|const|dsfm|rots}` (+ `-shearRetFactor $mu` for `const`). Default = `mcft`.
+  `const`/`dsfm` imply `-interlock -cyclic`; `rots` implies `-interlock`. mcft (the shipped default) implies
+  nothing ⇒ **2b.2b byte-identical when the flag is absent**.
+- **Modes (decided):**
+  - `mcft` (0, default): `G_slip = G = E/2(1+ν)` — the shipped full-elastic slip stiffness (DSFM-with-slip).
+  - `const` (1): `G_slip = μ·G`, `μ = -shearRetFactor` ∈ (0,1] (default 0.4, the FSAM `0.4·Ec` lineage) —
+    classic constant shear retention (Rots/Červenka). `μ=1` ⇒ bit-identical to `mcft`.
+  - `dsfm` (2): `G_slip = G·(0.31/denom)`, `denom = 0.31 + 24w/(a_g+16)` — DSFM-flavored **width-degraded**
+    slip stiffness (softens as the crack opens). At `w=0` ⇒ `mcft`.
+  - `rots` (3): rotating-coaxial — the fixed-crack shear block is **skipped entirely** (no capture, no clip,
+    no friction, no tangent cross-term), so the membrane shear stays smeared/spectral ⇒ **identical to
+    `-interlock` OFF**. The ADR's monotonic-only rotating choice, surfaced so a user can A/B vs fixed-crack.
+- **Scope honesty:** `const`/`dsfm` parametrize the *slip stiffness*, which only exists on the `-cyclic`
+  friction path; on the 2a monotone-clip path they are inert (same `v_ci,max` plateau). Documented, not silent.
+- **Serialization:** `RC_SCHEMA_VERSION 2→3` (+`shearRetFactor`, hard-checked; rejects v2 vectors).
+- **Verified (Zone-A, material-point + numpy oracle):** `const(μ=1)` ≡ `mcft` (max |Δτ| < 1e-9); `const`
+  unload slope == `μ·G`; `dsfm` unload slope == `G·0.31/denom` (closed-form, wide-crack); cap still
+  `±v_ci,max` in every mode; `rots` ≡ interlock-OFF (no crack frozen); C++ ≡ numpy oracle step-by-step on a
+  reversing `const` path. 25/25 material + 35/35 full RC suite green; no regression to 2a/2b.1/2b.2b.
+- **Still deferred to 2b.2c.2+:** crack-closure normal spectral reassembly; **panel/experiment pinching
+  validation (Tran–Wallace)**; rigid-rotation objectivity.
+
 ### Phase 3 — Tension stiffening + crack-band/`lch` hardening
 - **Build:** VC/CM tension-stiffening plateaus (opt-in); resolve `lch` per **D5 Option A or B**.
 - **New:** if Option B, the ledgered vanilla `lch` plumb.
