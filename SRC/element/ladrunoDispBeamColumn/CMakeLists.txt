@@ -10,9 +10,11 @@
 target_sources(OPS_Element
     PRIVATE
     LadrunoDispBeamColumn2d.cpp
+    LadrunoDispBeamColumn3d.cpp
     OPS_LadrunoDispBeamColumn.cpp
     PUBLIC
     LadrunoDispBeamColumn2d.h
+    LadrunoDispBeamColumn3d.h
 )
 
 target_include_directories(OPS_Element PUBLIC ${CMAKE_CURRENT_LIST_DIR})
