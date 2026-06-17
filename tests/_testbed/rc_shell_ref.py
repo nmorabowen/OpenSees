@@ -199,8 +199,9 @@ def eps1_dir_from_membrane(exx, eyy, gxy):
     vx = half_gxy
     vy = lam1 - exx
     nrm = np.sqrt(vx * vx + vy * vy)
-    if nrm < 1.0e-300:
-        return max(0.0, lam1), 1.0, 0.0, False
+    # scale-relative fallback to the major axis (avoid normalizing numerical dust)
+    if nrm < 1.0e-9 * (abs(half_diff) + abs(half_gxy) + 1.0e-30):
+        return (max(0.0, lam1), 1.0, 0.0, False) if exx >= eyy else (max(0.0, lam1), 0.0, 1.0, False)
     return max(0.0, lam1), vx / nrm, vy / nrm, False
 
 
@@ -212,7 +213,8 @@ class Params:
                  beta_on=False, lubliner_tc_reduced=False, beta_floor=0.1,
                  cdf=0.0, eta=0.0,
                  interlock_on=False, agg_size=16.0, crack_strain=0.0,
-                 crack_spacing=0.0, lch=0.0, beta_sr_min=0.01, interlock_cyclic=False):
+                 crack_spacing=0.0, lch=0.0, beta_sr_min=0.01, interlock_cyclic=False,
+                 xcrack_on=False, deg_kappa=0.5, deg_slip_ref=0.01, deg_min=0.1):
         self.E = E
         self.nu = nu
         self.Kc = Kc
@@ -230,6 +232,10 @@ class Params:
         # Phase 2a: fixed-crack aggregate-interlock shear retention
         self.interlock_on = interlock_on
         self.interlock_cyclic = interlock_cyclic
+        self.xcrack_on = xcrack_on
+        self.deg_kappa = deg_kappa
+        self.deg_slip_ref = deg_slip_ref
+        self.deg_min = deg_min
         self.agg_size = agg_size
         self.crack_spacing = crack_spacing
         self.lch = lch
@@ -253,6 +259,8 @@ class State:
         self.beta_sr = 1.0
         self.tauCr = 0.0      # Phase 2b committed crack-shear stress
         self.gammaCr = 0.0    # Phase 2b committed crack slip
+        self.cracked2 = 0.0   # Phase 2b.2b second (orthogonal) crack flag
+        self.slipCum = 0.0   # Phase 2b.2b cumulative |slip| (abrasion wear driver)
 
     def copy(self):
         s = State()
@@ -267,6 +275,8 @@ class State:
         s.beta_sr = self.beta_sr
         s.tauCr = self.tauCr
         s.gammaCr = self.gammaCr
+        s.cracked2 = self.cracked2
+        s.slipCum = self.slipCum
         return s
 
 
@@ -362,6 +372,7 @@ def compute(P, st_committed, strain6, betaMode='strength'):
     crk_c, crk_s = st_committed.crackC, st_committed.crackS
     cracked, wmax = st_committed.cracked, st_committed.wmax
     tau_cr, gamma_cr = st_committed.tauCr, st_committed.gammaCr
+    cracked2, slip_cum = st_committed.cracked2, st_committed.slipCum
     beta_sr = 1.0
     if P.interlock_on:
         just_captured = False
@@ -375,18 +386,34 @@ def compute(P, st_committed, strain6, betaMode='strength'):
             c2, s2, cs = c * c, s * s, c * s
             en = exx * c2 + eyy * s2 + gxy * cs
             sth = P.crack_spacing if P.crack_spacing > 0.0 else (P.lch if P.lch > 0.0 else 1.0)
-            w = macauley(en) * sth
+            # Phase 2b.2b: second orthogonal crack -> governing (most-open) opening
+            en_gov = en
+            if P.xcrack_on and P.interlock_cyclic:
+                c2n, s2n = -s, c
+                en2 = exx * c2n * c2n + eyy * s2n * s2n + gxy * c2n * s2n
+                if cracked2 < 0.5 and en2 >= P.crack_strain:
+                    cracked2 = 1.0
+                if cracked2 >= 0.5 and en2 > en_gov:
+                    en_gov = en2
+            w = macauley(en_gov) * sth
             if w > wmax:
                 wmax = w
             w_use = w if P.interlock_cyclic else wmax    # reversible (cyclic) vs monotone (2a)
             denom = 0.31 + 24.0 * w_use / (P.agg_size + 16.0)
             vcimax = 0.18 * P.sqrt_fc / denom if denom > 0.0 else 0.18 * P.sqrt_fc
+            # Phase 2b.2b: slip-driven irreversible wear (committed slip_cum -> tangent-neutral)
+            if P.xcrack_on and P.deg_slip_ref > 0.0:
+                kn = 1.0 - P.deg_kappa * (st_committed.slipCum / P.deg_slip_ref)
+                kn = max(P.deg_min, min(1.0, kn))
+                vcimax *= kn
             sxx, syy, sxy = sigma[0], sigma[1], sigma[3]
             tau_sm = cs * (syy - sxx) + (c2 - s2) * sxy
             if P.interlock_cyclic:
                 # Phase 2b: incremental friction-slip crack-shear (FSAM-style)
                 Gint = 0.5 * P.E / (1.0 + P.nu)
                 g_nt = 2.0 * (eyy - exx) * cs + gxy * (c2 - s2)
+                # cumulative sliding (skip the capture step; in.gammaCr is still the uncracked 0)
+                slip_cum = st_committed.slipCum + (0.0 if just_captured else abs(g_nt - st_committed.gammaCr))
                 if just_captured:                         # seed for stress continuity (== 2a value)
                     gamma_cr = g_nt
                     tau_cr = max(-vcimax, min(vcimax, tau_sm))
@@ -418,6 +445,8 @@ def compute(P, st_committed, strain6, betaMode='strength'):
     st.beta_sr = beta_sr
     st.tauCr = tau_cr
     st.gammaCr = gamma_cr
+    st.cracked2 = cracked2
+    st.slipCum = slip_cum
 
     info = dict(Si=Si, beta=beta, dt_bar=dt_bar, dc_bar=dc_bar, e1=e1,
                 sigma=sigma, dc_plastic=dc_plastic, beta_sr=beta_sr,
