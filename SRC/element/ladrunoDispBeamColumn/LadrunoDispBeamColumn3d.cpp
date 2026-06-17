@@ -859,10 +859,13 @@ LadrunoDispBeamColumn3d::getBasicStiff(Matrix &kb, int initial)
 	break;
       }
     }
-    
+
   }
-  
-  if(theDamping) kb *= theDamping->getStiffnessMultiplier();
+  // Ladruno (ADR 32): the damping stiffness-multiplier is applied by getInitialStiff
+  // (mirroring the 2D sibling), NOT here. Stock 3D applied it in getBasicStiff, but that
+  // made getTangentStiff's -nl path (which calls getBasicStiff) pick up the multiplier on
+  // the tangent while the inlined linear path did not — a branch-dependent inconsistency
+  // under -damp. Applying it only in getInitialStiff keeps both tangent branches consistent.
 }
 
 const Matrix&
@@ -871,10 +874,11 @@ LadrunoDispBeamColumn3d::getInitialStiff()
   static Matrix kb(6,6);
 
   this->getBasicStiff(kb, 1);
+  if(theDamping) kb *= theDamping->getStiffnessMultiplier();
 
   // Transform to global stiffness
   K = crdTransf->getInitialGlobalStiffMatrix(kb);
-  
+
   return K;
 }
 

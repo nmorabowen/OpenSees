@@ -408,6 +408,12 @@ struct Params {
     double lch;                     // characteristic length (s_theta fallback)
     double betaSrMin;              // residual shear-retention floor (tangent safety)
     double sqrtFc;                // sqrt(fc') cache, set by setupParams (SI: sqrt(MPa))
+    // --- Phase 4 (pulled forward): IMPL-EX (implicit-explicit) ---
+    bool   implex;                 // false => fully implicit (default, baseline-identical)
+    double implexAlpha;            // extrapolation factor multiplier (default 1.0)
+    bool   implexControl;          // adaptive time-step error control (advisory)
+    double implexErrTol;           // error tolerance for -implexControl (default 0.05)
+    double implexTimeRedLim;       // min dt fraction for -implexControl (default 0.01)
     Backbone ht, hc;                   // tension / compression backbones
 };
 
@@ -438,6 +444,9 @@ struct RCHist {
     // --- Phase 2b.2b: second orthogonal crack + interlock-surface wear ---
     double cracked2;        // 0/1 second (orthogonal) crack flag
     double slipCum;         // cumulative |crack slip| (abrasion/Archard wear driver, irreversible)
+    // --- Phase 4: IMPL-EX previous-committed (n-1) generation for explicit extrapolation ---
+    double xt_old, xc_old;  // committed tensile/compressive equiv strain at step n-1
+    double eps1_old;        // committed in-plane principal tensile strain at step n-1
 };
 
 inline void histZero(RCHist& h)
@@ -447,6 +456,7 @@ inline void histZero(RCHist& h)
     h.cracked = 0.0; h.crackC = 1.0; h.crackS = 0.0; h.wmax = 0.0; h.betaSr = 1.0;
     h.tauCr = 0.0; h.gammaCr = 0.0;
     h.cracked2 = 0.0; h.slipCum = 0.0;
+    h.xt_old = h.xc_old = 0.0; h.eps1_old = 0.0;
 }
 
 inline double equivTensile(const double Si[3], double fcft, double Kc)
@@ -467,10 +477,29 @@ inline double equivCompressive(const double Si[3], double fcft, double Kc, doubl
 // (sig6, Dtan6, trial out). No mutation of `in`. Phase-1: implex off, eta-rate
 // optional. Mirrors compute() (cpp:2322-2481) step for step.
 // ---------------------------------------------------------------------------
+// do_implex: when true (and P.implex), the damage thresholds (xt,xc) and the MCFT
+//   beta are taken from an EXPLICIT extrapolation of the committed history
+//   (x_ext = x_n + tf*(x_n - x_{n-1}), tf = time_factor), FROZEN over the step. The
+//   returned tangent is then the secant W_B*C0 with frozen dt_bar/dc_bar/beta (no
+//   softening-rate term, no beta cross-term) -> removes the dominant indefinite
+//   contribution (the damage rate) and is robust for cyclic softening. The TRUE
+//   implicit thresholds are recomputed at commit (do_implex=false) to advance the
+//   state + measure the implex error. Mirrors ASDConcrete3DMaterial::compute(do_implex).
+//   SCOPE (honest): unlike the reference, the spectral projectors PT/PC are NOT frozen
+//   here -- they are recomputed from the live effective stress every call, consistent
+//   with this material's fixed-projector-secant philosophy (dP/deps is omitted in ALL
+//   tangents, implicit included). So the tangent is NOT perfectly strain-constant under
+//   a rotating principal axis; the damage (the softening source) IS frozen, which is the
+//   robustness that matters. The interlock/friction block (below) likewise runs its
+//   normal implicit logic in the explicit pass (it is SPD/secant-character). Freezing
+//   PT_commit for a fully strain-constant tangent under rotating principals is a scoped
+//   follow-up (see ADR 19 Phase 4).
 inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
                        double sig6[6], double Dtan6[6][6], RCHist& out,
-                       bool do_tangent = true, double* residual = 0)
+                       bool do_tangent = true, double* residual = 0,
+                       bool do_implex = false, double time_factor = 1.0)
 {
+    const bool implexExplicit = (P.implex && do_implex);
     const double E = P.E;
     double C0[6][6]; elasticTangent(E, P.nu, C0);
 
@@ -488,7 +517,15 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
     // MCFT beta from in-plane membrane principal tensile strain (gxy = eps6[3] engineering)
     double p1[2]; int degen = 0;
     double e1 = eps1FromMembrane(eps6[0], eps6[1], eps6[3], p1, &degen);
-    double beta = P.betaOn ? betaCompr(e1, P.betaFloor) : 1.0;
+    // IMPL-EX: freeze beta over the step from the extrapolated (committed) eps1, so the
+    // returned tangent carries no beta cross-term (constant secant). eps1 itself is a
+    // pure function of strain, so this is the only path-frozen quantity here.
+    double e1_beta = e1;
+    if (implexExplicit && P.betaOn) {
+        e1_beta = in.eps1 + time_factor * (in.eps1 - in.eps1_old);
+        if (e1_beta < 0.0) e1_beta = 0.0;
+    }
+    double beta = P.betaOn ? betaCompr(e1_beta, P.betaFloor) : 1.0;
     double k1c  = (P.betaOn && P.lublinerTCReduced) ? 0.0 : 1.0;
 
     // committed hardening
@@ -508,8 +545,18 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
     double xc_trial = xc_meas + xc_pl;
 
     double new_xt = in.xt, new_xc = in.xc;
-    if (xt_trial > pt.x) { double xn = rc1 * pt.x + rc2 * xt_trial; pt = evaluateAt(P.ht, xn); new_xt = pt.x; }
-    if (xc_trial > pc.x) { double xn = rc1 * pc.x + rc2 * xc_trial; pc = evaluateAt(P.hc, xn); new_xc = pc.x; }
+    if (implexExplicit) {
+        // explicit extrapolation of the damage thresholds (frozen over the step)
+        double xt_ext = in.xt + time_factor * (in.xt - in.xt_old);
+        double xc_ext = in.xc + time_factor * (in.xc - in.xc_old);
+        if (xt_ext < in.xt) xt_ext = in.xt;     // threshold is monotone non-decreasing
+        if (xc_ext < in.xc) xc_ext = in.xc;
+        pt = evaluateAt(P.ht, xt_ext); new_xt = pt.x;
+        pc = evaluateAt(P.hc, xc_ext); new_xc = pc.x;
+    } else {
+        if (xt_trial > pt.x) { double xn = rc1 * pt.x + rc2 * xt_trial; pt = evaluateAt(P.ht, xn); new_xt = pt.x; }
+        if (xc_trial > pc.x) { double xn = rc1 * pc.x + rc2 * xc_trial; pc = evaluateAt(P.hc, xn); new_xc = pc.x; }
+    }
 
     double seff_eq_t = (pt.x - xt_pl) * E;
     double dt_plastic = seff_eq_t > 0.0 ? 1.0 - pt.q / seff_eq_t : 0.0;
@@ -644,10 +691,18 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
     out.wmax = wmax; out.betaSr = betaSr;
     out.tauCr = tauCr; out.gammaCr = gammaCr;
     out.cracked2 = cracked2; out.slipCum = slipCum;
+    // IMPL-EX (n-1) generation: carried through verbatim; the rolling n->n-1 is done
+    // by the host material at commit (so a mid-step explicit pass never corrupts it).
+    out.xt_old = in.xt_old; out.xc_old = in.xc_old; out.eps1_old = in.eps1_old;
 
     // tangent
     if (do_tangent) {
-        if (P.tangentMode == 2) {
+        // Under IMPL-EX the numerical (forward-difference) tangent is INVALID: the base
+        // point is the explicit stress while a perturbed re-call would re-enter implicitly
+        // (do_implex defaults false), so the quotient mixes branches (O(implexError/h),
+        // huge). IMPL-EX always uses the frozen-damage secant below — matching the
+        // reference, which disables the numerical tangent whenever implex is on.
+        if (P.tangentMode == 2 && !implexExplicit) {
             // numerical (forward difference) -- reserved diagnostic
             double base[6]; for (int a = 0; a < 6; ++a) base[a] = sig6[a];
             for (int b = 0; b < 6; ++b) {
@@ -675,7 +730,7 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
             // beta cross-term (algorithmic only, tangentMode 0):
             //   d sigma/d eps += (1-dc_bar) SC (x) [dBeta/deps1 * deps1/deps]
             //   deps1/deps (engineering dual) = [p1x^2, p1y^2, 0, p1x p1y, 0, 0]
-            if (P.tangentMode == 0 && P.betaOn) {
+            if (P.tangentMode == 0 && P.betaOn && !implexExplicit) {
                 double dbeta = dBetaCompr(e1, P.betaFloor);
                 if (dbeta != 0.0) {
                     double P1[6] = { 0,0,0,0,0,0 };

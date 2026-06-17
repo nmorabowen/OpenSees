@@ -365,8 +365,30 @@ features:
       symmetry + homogeneous patch + objectivity, 6/6 green). Element-class gate green
       against dist/bin (test_ladrunoBrick_element.py 14/14).
 
-  # (LadrunoDispBeamColumn2d row lives below, next to the 3D sibling — the earlier duplicate
-  #  here, backfilled in #249, was removed in #261 to dedupe after the sibling's canonical row landed.)
+  - feature: LadrunoDispBeamColumn2d
+    classtag: 33013          # ELE_TAG (element) family; numerically equals ND_TAG 33013 (InitDefGrad) — different registry, not a collision (N. Mora-Bowen)
+    tag_symbol: ELE_TAG_LadrunoDispBeamColumn2d
+    pr: 0                    # backfilled in PR #249 — a sibling PR (ADR 32) shipped the element+test but omitted this manifest row
+    feature_class: element
+    required_tiers: [T0, T1]
+    pytest: tests/test_ladrunoDispBeamColumn2d_element.py
+    tcl: WAIVED(Python/OPS-factory driven; shared element command registry)
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesElementCommands.cpp
+      - SRC/element/CMakeLists.txt
+    dispatch: {tcl: false, functionMap: true}
+    status: active
+    notes: >
+      Regularized displacement-based fiber frame (2D): a Tier-1 per-integration-point
+      characteristic-length (lch) channel mirroring ForceBeamColumn so crack-band /
+      auto-regularizing materials regularize softening over the localizing IP, not the
+      whole element (LEDGER_quirks §59). Embedded softening hinge planned (Tier-2). ADR
+      32_ladruno_dispbeamcolumn_regularization_adr.md. Manifest row BACKFILLED during
+      PR #249 (the sibling PR that shipped the element + test omitted it, leaving G9
+      red on ladruno HEAD — see feedback_stale_pr_ledger_ci).
 
   - feature: LadrunoIMKBeam
     classtag: 33003          # ELE_TAG family; 3D concentrated-plasticity IMK beam (N. Mora-Bowen)
@@ -631,6 +653,28 @@ features:
       flag, weld/HAZ -- all deferred). Plan/ADR:
       Ladruno_implementation/13_ladruno_uniaxial_j2_adr.md (shipped via #95).
 
+  - feature: LadrunoCohesiveHinge
+    classtag: 33003          # MAT_TAG (uniaxial) family; discrete cohesive moment-rotation hinge (N. Mora-Bowen)
+    tag_symbol: MAT_TAG_LadrunoCohesiveHinge
+    pr: 0                    # backfilled in PR #261 — sibling PR (ADR 32 §Tier-2) shipped the material+test but omitted this manifest row (cf. feedback_stale_pr_ledger_ci)
+    feature_class: material
+    required_tiers: [T0m, T1]
+    pytest: tests/test_ladrunoCohesiveHinge_material.py
+    tcl: WAIVED(uniaxialMaterial LadrunoCohesiveHinge ...; shared OpenSeesUniaxialMaterialCommands registry serves Tcl + Python; verified via the Zone-A pytest battery)
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesUniaxialMaterialCommands.cpp
+      - SRC/material/uniaxial/TclModelBuilderUniaxialMaterialCommand.cpp
+      - SRC/material/uniaxial/CMakeLists.txt
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      Discrete cohesive moment-rotation law M([[theta]]) carrying a per-hinge fracture energy Gf,
+      for the LadrunoDispBeamColumn Tier-2 embedded strong-discontinuity hinge (ADR 32 §Tier-2):
+      rigid-softening penalty (guarded floor Mc^2/2Gf) + exp/linear envelope calibrated to
+      int M d[[theta]] == Gf. Plan: 32_ladruno_dispbeamcolumn_regularization_adr.md.
+
   - feature: LadrunoRebarBuckling
     classtag: 33001          # MAT_TAG (uniaxial) family; sibling of LadrunoUniaxialJ2=33000, per-registry band (no collision w/ ELE BezierTet10=33001)
     tag_symbol: MAT_TAG_LadrunoRebarBuckling
@@ -892,9 +936,9 @@ features:
       32_ladruno_dispbeamcolumn_regularization_adr.md.
 
   - feature: LadrunoDispBeamColumn3d
-    classtag: 33014          # ELE_TAG (element) family; 3D sibling of LadrunoDispBeamColumn2d (numerically equals ND_TAG 33014 StagedStrain — different registry, not a collision)
+    classtag: 33014          # ELE_TAG (element) family; 3D sibling of LadrunoDispBeamColumn2d=33013 (numerically equals ND_TAG 33014 StagedStrain — different registry, not a collision)
     tag_symbol: ELE_TAG_LadrunoDispBeamColumn3d
-    pr: 0                    # backfilled in PR #261 — sibling PR (ADR 32) shipped the 3D element+test but omitted this manifest row (G9 red on ladruno HEAD; cf. feedback_stale_pr_ledger_ci)
+    pr: null
     feature_class: element
     required_tiers: [T0, T1]
     pytest: tests/test_ladrunoDispBeamColumn3d_element.py
@@ -909,11 +953,11 @@ features:
     status: active
     notes: >
       Regularized displacement-based fiber frame element (3D, ADR 32): the 3D sibling of
-      LadrunoDispBeamColumn2d — Tier-1 per-IP characteristic-length (lch) channel mirroring
-      ForceBeamColumn, plus the -nl 0.5*(thetaY^2+thetaZ^2) biaxial bowing term
-      (DispBeamColumnNL3d). Element-registry tag numerically equals ND_TAG 33014 (StagedStrain)
-      but lives in a different registry — not a collision. Plan:
-      32_ladruno_dispbeamcolumn_regularization_adr.md.
+      LadrunoDispBeamColumn2d=33013 — a drop-in DispBeamColumn3d with the same Tier-1
+      per-integration-point characteristic-length (lch) channel mirroring ForceBeamColumn,
+      plus an optional -nl 1/2(theta_y^2 + theta_z^2) biaxial bowing term (DispBeamColumnNL3d).
+      Element-registry tag numerically equals ND_TAG 33014 (StagedStrain) but lives in a
+      different registry — not a collision. Plan: 32_ladruno_dispbeamcolumn_regularization_adr.md.
 
   # --- worked examples shipped with the scaffold (existing elements, no new C++) ---
 

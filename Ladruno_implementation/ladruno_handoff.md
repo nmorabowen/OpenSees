@@ -162,3 +162,66 @@ Full regression green.
   `add_dll_directory` + `sys.path`→`<wt>\dist\bin`); validate/oracle with venv python
   (h5py). `LADRUNO_OPENSEES_QUIET=1`; `grep -a` (banner has binary bytes).
 - `gh pr create` needs `--repo nmorabowen/OpenSees` (else targets upstream).
+
+---
+
+# Track 3 — LadrunoDispBeamColumn (regularized disp-based frame) (DONE through Stage 1, merged + 28/28 green 2026-06-17)
+
+Design in [[32_ladruno_dispbeamcolumn_regularization_adr]] (the 11-agent scope + 2 adversarial reviews live in its implementation log); gotchas in [[LEDGER_quirks]].
+
+## Shipped (all merged to `ladruno`; PRs #251 #254 #255 #258 #260 + review-fix; Stage-2 cohesive material #264)
+- **LadrunoDispBeamColumn2d** (`ELE_TAG 33013`) + **LadrunoDispBeamColumn3d** (`ELE_TAG 33014`) —
+  displacement-based fiber frame, clones of `DispBeamColumn2d/3d`. ONE ndm-dispatched command
+  `LadrunoDispBeamColumn` (ndm2/ndf3 → 2D, ndm3/ndf6 → 3D). Reduces to stock bit-identically.
+- **Tier-1 `lch` channel** — `current_section_lch = wt[i]*crdTransf->getInitialLength()` (REFERENCE
+  length) set INSIDE the `update()` IP loop right before `setTrialSectionDeformation`;
+  `getCharacteristicLength()` override; `-lch {ip|element|<value>}` (`isfinite`-guarded). Makes
+  crack-band/auto-reg materials (ASDConcrete1D `-autoRegularization`, ASDSteel1D, LadrunoUniaxialJ2+
+  Lemaitre) regularize over the localizing IP, not the whole element — fixes the `LEDGER_quirks §59`
+  pathology stock `DispBeamColumn` has. Mesh-objectivity + correct-band validated.
+- **Large displacement** — via the existing Corotational `CrdTransf` (validated == stock); no
+  element-side geometric code.
+- **`-nl`** — ½θ² (2D) / ½(θz²+θy²) (3D) bowing strain (`DispBeamColumnNL2d/NL3d`). Default linear.
+
+## Load-bearing facts (don't re-derive)
+- **3-SITE registration** for a Ladruno element: `classTags.h` + `FEM_ObjectBrokerAllClasses.cpp` +
+  `interpreter/OpenSeesElementCommands.cpp` `functionMap` (OpenSeesPy) **AND**
+  `element/TclElementCommands.cpp` `ladrunoElementTable` (the standalone Tcl `OpenSees.exe`). Missing
+  the last → builds/links clean but `element ... not known` ONLY in the exe. Enumerate sites:
+  `grep -rln "OPS_LadrunoIMKBeam" SRC/ | grep -v ladrunoIMKBeam/`.
+- The `lch` assignment MUST stay inside the IP loop (once-only material latch). REFERENCE length.
+- 3D `getTangentStiff` INLINES kb+q (unlike 2D which calls `getBasicStiff`); the `-nl` path overwrites
+  kb via `getBasicStiff` + adds bowing to q. The damping stiffness-multiplier was MOVED from 3D
+  `getBasicStiff` → `getInitialStiff` (mirroring 2D) so the `-nl`/linear tangents stay consistent
+  under `-damp`.
+- Tier-1 only helps `lch`-CONSUMING materials; non-regularizing ones (Concrete02) stay mesh-dependent →
+  that is what Tier-2 addresses.
+
+## Resume (next session) — Stage 2 (embedded hinge)
+- **DONE (2026-06-17, merged [#264](https://github.com/nmorabowen/OpenSees/pull/264)):** the discrete
+  cohesive law `LadrunoCohesiveHinge` (`MAT_TAG 33003`, uniaxial) — the Tier-2 building block — landed
+  standalone + 10/10 tests. Strain = rotation jump `[[θ]]`, stress = cohesive moment `M`; near-rigid penalty
+  (guarded floor `Mc²/2Gf`) → exp/linear softening calibrated so `∫M d[[θ]]==Gf` (LINEAR exact to
+  1e-9); irreversible secant damage; `getEnergy()`. This is the *cheap solver-independent energy gate*
+  the ADR said to land first. Parser:
+  `uniaxialMaterial LadrunoCohesiveHinge tag Mc Gf <-penalty K|-penaltyRatio r> <-exp|-linear>`.
+  Registered at the 5 uniaxial sites (NOT the element 3-site list — different registry).
+- **NEXT — wire it into the element.** The robust EAS rotation-jump hinge (Armero–Ehrlich): enhanced
+  curvature `κ = B·d + G·α` with a (regularized-)Dirac `G` at one hinge IP, `α` (the jump) converged
+  inside `update()` and **statically condensed to the 3-DOF basic `K_basic`/`pb` BEFORE calling
+  `crdTransf`** (the PINNED INVARIANT — the corotational transform owns its own geometric stiffness and
+  exposes NO seam for element-internal DOFs). The cohesive `M([[θ]])` IS the condensed `K_αα`/force
+  contribution (any UniaxialMaterial in the hinge slot; LadrunoCohesiveHinge the default). Reuse the
+  LadrunoBrick/ASDShellQ4 EAS static-condensation **algebra** (NOT LadrunoBrick's `globalizeStiff`
+  seam). Landmines (ADR §"Four explicit design rules"): (1) freeze the fiber section at the hinge IP
+  when it opens — no Gf double-count; (2) `K_αα→0` at the cohesive peak is the activation event every
+  hinge hits — use a closed-form/return-mapping jump update, NOT LadrunoBrick's residual `Kaa.Solve`.
+  Snap-back solve: `LadrunoIndirectControl` (built) is the follower. Start with a 2D single-element
+  patch test (constant-moment to machine precision; reduce-to-Tier-1 when no hinge).
+- Known low-sev nice-to-have: 3D `getTangentStiff` recomputes the linear kb then discards it when `-nl`
+  (perf only; guard with `if(!nlGeom)`).
+
+## Build / run recipe
+- `Ladruno_scripts\build.bat OpenSeesPy` (PYEXE autodetect is on `ladruno` now). Tests:
+  `python -m pytest tests/test_ladrunoDispBeamColumn2d_element.py tests/test_ladrunoDispBeamColumn3d_element.py`
+  with `PYTHONPATH`/`PATH` = `dist\bin` and `LADRUNO_OPENSEES_QUIET=1`.

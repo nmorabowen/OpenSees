@@ -67,7 +67,7 @@ Per-registry bands are independent (Element / uniaxial / Integrator each have th
 
 - `ELE_TAG_LadrunoDispBeamColumn2d = 33013` — RESERVED, not yet built. Free in the **Element** registry (used: 33000,02–08,11,12; 33009/33010 reserved by [[26_ladruno_plane_frontier_adr]] for VEM/SBFEM; 33016 reserved for LogStrain2D). Numerically equals `ND_TAG_InitDefGradNDMaterial 33013` — **not** a collision (different registry, per the ledger rule).
 - `ELE_TAG_LadrunoDispBeamColumn3d = 33014` — RESERVED, not yet built (Element registry; numerically equals `ND_TAG_StagedStrainNDMaterial 33014`, again not a collision).
-- `MAT_TAG_LadrunoCohesiveHinge` — RESERVED, number TBD against the uniaxial band at implementation.
+- `MAT_TAG_LadrunoCohesiveHinge = 33003` — BUILT (Stage 2, 2026-06-17). Uniaxial band (used: 33000 J2, 33001 RebarBuckling, 33002 BondSlip; 33003 was the next free slot).
 
 ## How
 
@@ -169,6 +169,49 @@ In scope for v1 via the existing **Corotational** transform (`CorotCrdTransf2d` 
 - **Stage-1 large-disp (Corotational) VERIFIED (2026-06-17):** `tests/test_ladrunoDispBeamColumn2d_element.py::test_corotational_large_displacement_matches_stock` — elastic cantilever driven into large deflection under a Corotational transform matches stock `dispBeamColumn` bit-identically (large-disp is in scope via the existing `CrdTransf`, no element-side geometric code). Shipped #255.
 - **Stage-1 `½θ²` NL-strain toggle SHIPPED (2026-06-17):** `-nl` flag adds the `DispBeamColumnNL2d` bowing strain `ε₀ = v(0)/L + ½θ²` (θ from the Hermitian slope interpolation), with the matching geometric tangent in `getBasicStiff` (axial-force + B'ksC coupling) and the bowing term in the force/tangent `q`-loops; `getInitialStiff` stays linear; `nlGeom` serialized (data Vector 18→19). Default `nlGeom=0` keeps the linear basic strain (reduce-to-stock unchanged). Verified: reduces to linear at small deformation; under an axially-restrained cantilever at finite rotation the `-nl` bowing builds restraint tension that stiffens the member (|tip| drops >2% vs linear). 15/15 tests pass.
 - **3D sibling SHIPPED (2026-06-17):** `LadrunoDispBeamColumn3d` (`ELE_TAG 33014`) — clone of `DispBeamColumn3d` + the Tier-1 per-IP `lch` channel + the `-nl` biaxial bowing `ε₀ = v(0)/L + ½(θz²+θy²)` (ported verbatim from `DispBeamColumnNL3d`: biaxial geometric tangent in `getBasicStiff`, bowing in the force/tangent `q`-loops). Reached through the same `LadrunoDispBeamColumn` command (ndm-dispatch: ndm2/ndf3 → 2D, ndm3/ndf6 → 3D). `lchMode`/`userLch`/`nlGeom` serialized (data 16→19). Verified (`tests/test_ladrunoDispBeamColumn3d_element.py`, 13 tests): reduce-to-stock bit-identical, `-lch`/`-nl` accept + inf/nan/≤0 reject, Corotational large-disp == stock, `-nl` reduces-to-linear / stiffens under finite rotation. 28/28 (2D+3D) pass.
-- **NOT yet (next):** Stage-2 (embedded hinge).
+- **Adversarial review of -nl + 3D (2026-06-17):** 10-agent workflow, verdict **merge-ready, 0 must-fix**; geometric tangent verified term-by-term against NL2d/NL3d. Two low-sev should-fixes applied: (1) 3D `getTangentStiff` applied the damping stiffness-multiplier only on the `-nl` branch (via `getBasicStiff`) — moved the multiplier to `getInitialStiff` (mirroring 2D) so both tangent branches are consistent under `-damp`; (2) corrected the stale dispatcher comment (3D is built) + documented `-nl`. Nice-to-have left: 3D `getTangentStiff` recomputes-then-discards the linear kb when `-nl` (perf only). 28/28 still green.
+- **NOT yet (next):** Stage-2 (embedded hinge). Handoff in [[ladruno_handoff]] (Track 3).
+
+### 2026-06-17 — Stage 2 started: `LadrunoCohesiveHinge` cohesive material (merged [#264](https://github.com/nmorabowen/OpenSees/pull/264))
+
+The Tier-2 hinge's **discrete cohesive law** ships first, standalone, before any
+element wiring — it is the independently-mergeable, lowest-risk piece and it
+unblocks the *cheap solver-independent energy gate* (`∫M d[[θ]] == Gf`) the ADR
+says to land FIRST (before the path-follower / multi-mesh tests).
+
+- **Files:** `SRC/material/uniaxial/LadrunoCohesiveHinge.{h,cpp}` (`MAT_TAG 33003`),
+  `tests/test_ladrunoCohesiveHinge_material.py` (10 tests).
+- **Law (rigid–softening cohesive + irreversible secant-to-origin damage):**
+  near-rigid penalty `Kpen` pre-peak (hinge CLOSED, `M = Kpen·κ`) up to `M = Mc`,
+  then softening — **exponential** (default) `M = Mc·exp(−a(κ−κ0))` or **linear**
+  `M = Mc(1 − (κ−κ0)/κf)` — calibrated so the **monotonic envelope integrates to
+  EXACTLY `Gf`**: `κ0 = Mc/Kpen`, `Esoft = Gf − Mc²/(2Kpen)`, `a = Mc/Esoft`,
+  `κf = 2Esoft/Mc`. Strain = rotation jump `[[θ]]`, stress = cohesive moment `M`.
+  **No `lch` to calibrate** — `Gf` is consumed directly (the whole point of the
+  discrete hinge vs. Tier-1 smearing).
+- **Guarded penalty floor (ADR "near-rigid penalty with a guarded floor"):** both
+  calibrations require `Kpen > Mc²/(2Gf)` (else pre-peak energy alone exceeds `Gf`).
+  Default `Kpen = penaltyRatio·floor` (`penaltyRatio` default 1000 → pre-peak energy
+  ≈0.1% of `Gf`, near-rigid). A user `-penalty K` below the floor is **clamped with
+  a loud `opserr` warning**, not accepted.
+- **Irreversibility:** `κmax = max|κ|` is the monotone damage driver; unload/reload
+  is the secant `Ksec = Menv(κmax)/κmax` to the origin (isotropic damage) — no
+  strength recovery, no residual moment at zero jump.
+- **`getEnergy()`** overridden: trapezoidal path work `∫M d[[θ]]` (exact for the
+  piecewise-linear LINEAR envelope).
+- **Parser:** `uniaxialMaterial LadrunoCohesiveHinge tag Mc Gf <-penalty K | -penaltyRatio r> <-exp|-linear>`;
+  rejects `Mc≤0`/`Gf≤0`. Registered at the 5 uniaxial sites (`classTags.h`,
+  `FEM_ObjectBrokerAllClasses.cpp`, `OpenSeesUniaxialMaterialCommands.cpp` (Py),
+  `TclModelBuilderUniaxialMaterialCommand.cpp` (Tcl), `CMakeLists.txt`).
+- **Verified (OpenSeesPy, 10/10):** energy gate `∫M d[[θ]] == Gf` — LINEAR exact to
+  `1e-9` (finite-jump break), EXP converges to `2e-3` (tail truncation); `peak == Mc`
+  & near-rigid activation at `κ0`; initial tangent `== Kpen`; irreversible secant
+  unload (returns to ~0 moment) + no reload recovery; sign symmetry; guarded floor
+  clamps & still dissipates `Gf`; DB sendSelf/recvSelf round-trips the committed
+  `κmax/work`. Existing 28/28 DispBeamColumn tests unchanged (only `classTags.h` +
+  uniaxial plumbing touched).
+- **NEXT:** wire the cohesive material into the element as the Tier-2 enhanced
+  rotation-jump `κ = B·d + G·α` with `α` statically condensed to the 3-DOF basic
+  system BEFORE `crdTransf` (the PINNED INVARIANT) — the genuinely hard EAS piece.
 
 *(move to `Ladruno_internal/implemented_<name>.md` when Stage 1 merges to `ladruno`)*

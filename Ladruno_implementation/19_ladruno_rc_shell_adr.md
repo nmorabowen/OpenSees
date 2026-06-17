@@ -640,6 +640,35 @@ state + governing-cap** variant that delivers the same physics without those fla
   numbers); a loud failure if a scalar `lch` fallback is used in softening.
 
 ### Phase 4 — Finite-strain view + IMPL-EX
+
+#### Phase 4a (SHIPPED) — IMPL-EX on the small-strain material (pulled forward)
+IMPL-EX was pulled ahead of the finite-strain view because the **Phase-2b.2c cyclic-wall
+validation is blocked on it**: a meshed squat panel under axial + cyclic shear will not
+converge with vanilla Newton (the implicit consistent tangent goes indefinite on the
+softening branch), and `LadrunoRCConcrete` had no IMPL-EX while `ASDConcrete3D` does — this
+was empirically falsified on a single-element ASDShellQ4 panel before implementing.
+- **Flag:** `-implex` [`-implexAlpha a`] [`-implexControl tol redLim`], default OFF ⇒
+  fully-implicit, byte-identical. No new classTag.
+- **Scheme (mirrors `ASDConcrete3DMaterial::compute(do_implex,…)`):** `setTrialStrain` runs
+  the EXPLICIT pass — damage thresholds `xt,xc` and MCFT `β` from `x_ext = x_n + tf·(x_n −
+  x_{n-1})`, frozen over the step ⇒ secant tangent, no softening-rate/no β cross-term.
+  `commitState` re-integrates IMPLICITLY at the converged strain to advance the TRUE
+  thresholds, measure `implexError`, and roll n→n-1. RCHist += `{xt_old,xc_old,eps1_old}`;
+  serialization schema **v1→v2** (RC_DATA 242→262, hard-checked); `implexError` response.
+- **Static-analysis guard (real gotcha, in [[LEDGER_quirks]]):** `implexTimeFactor()` clamps
+  the load-factor-pseudo-time `ops_Dt` ratio (erratic + resets at `loadConst`) — fall back to
+  `α`, clamp to `2α` — else the extrapolation detonates on the first static step.
+- **Honest scope:** the DAMAGE is frozen (the robustness that matters); the spectral
+  projectors PT/PC are NOT frozen (consistent with the material's fixed-projector-secant
+  philosophy — the implicit tangent omits `∂P/∂ε` too). Full `PT_commit` freeze for a
+  strain-constant tangent under rotating principals is a scoped follow-up.
+- **Verified:** Zone-A 6/6 (`tests/test_ladrunoRCConcrete_implex.py`): off-identical, tracks
+  implicit on a smooth path, error active on rate change / zero while elastic, SPD secant
+  under softening, `-numericalTangent` bypassed under implex, save/restore continuation.
+  3-agent adversarial review (0 state-machine/serialization bugs; fixed the FD-tangent
+  bypass and a header overclaim).
+
+#### Phase 4b (deferred) — finite-strain view
 - **Build:** `LadrunoRCFiniteStrain` (33015) via `setTrialF`/`LogStrainNDMaterial`; IMPL-EX with clamped
   `eps_1`/`beta` and an implex-vs-implicit error monitor + step-cut.
 - **Reuses:** `FiniteStrainNDMaterial`, `LogStrainNDMaterial` (verified present); `LadrunoJ2Finite` pattern.
