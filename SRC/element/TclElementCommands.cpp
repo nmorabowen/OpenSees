@@ -111,6 +111,7 @@ extern void *OPS_LadrunoQuad(void); // N. Mora-Bowen (Ladruno)
 extern void *OPS_LadrunoCST(void); // N. Mora-Bowen (Ladruno)
 extern void *OPS_LadrunoDistributingCoupling(void); // N. Mora-Bowen (Ladruno)
 extern void *OPS_LadrunoKinematicCoupling(void); // N. Mora-Bowen (Ladruno)
+extern void *OPS_LadrunoDispBeamColumn(void); // N. Mora-Bowen (Ladruno)
 extern void *OPS_LadrunoEmbeddedNode(void); // N. Mora-Bowen (Ladruno)
 extern void *OPS_LadrunoEmbeddedRebar(void); // N. Mora-Bowen (Ladruno)
 extern void *OPS_ElasticTimoshenkoBeam2d(void);
@@ -585,6 +586,7 @@ TclModelBuilderElementCommand(ClientData clientData, Tcl_Interp *interp,
       {"LadrunoCST",                  "ladrunoCST",                  OPS_LadrunoCST},
       {"LadrunoDistributingCoupling", "ladrunoDistributingCoupling", OPS_LadrunoDistributingCoupling},
       {"LadrunoKinematicCoupling",    "ladrunoKinematicCoupling",    OPS_LadrunoKinematicCoupling},
+      {"LadrunoDispBeamColumn",       "ladrunoDispBeamColumn",       OPS_LadrunoDispBeamColumn},
       {"LadrunoEmbeddedNode",         "ladrunoEmbeddedNode",         OPS_LadrunoEmbeddedNode},
       {"LadrunoEmbeddedRebar",        "ladrunoEmbeddedRebar",        OPS_LadrunoEmbeddedRebar},
     };
