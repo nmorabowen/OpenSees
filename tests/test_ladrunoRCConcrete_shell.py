@@ -40,7 +40,8 @@ NLAYERS = 4
 _QUAD = {1: (0.0, 0.0), 2: (1.0, 0.0), 3: (1.0, 1.0), 4: (0.0, 1.0)}
 
 
-def _mat(tag, interlock=False, cyclic=False, crack_spacing=0.0, agg=16.0):
+def _mat(tag, interlock=False, cyclic=False, crack_spacing=0.0, agg=16.0,
+         xcrack=False, deg_kappa=None, deg_slip_ref=None):
     args = ["LadrunoRCConcrete", tag, E, NU,
             "-Ce", *CE, "-Cs", *CS, "-Cd", *CD,
             "-Te", *TE, "-Ts", *TS, "-Td", *TD, "-Kc", KC]
@@ -50,6 +51,12 @@ def _mat(tag, interlock=False, cyclic=False, crack_spacing=0.0, agg=16.0):
             args += ["-crackSpacing", crack_spacing]
         if cyclic:
             args += ["-cyclic"]
+        if xcrack:
+            args += ["-xcrack"]
+            if deg_kappa is not None:
+                args += ["-degKappa", deg_kappa]
+            if deg_slip_ref is not None:
+                args += ["-degSlipRef", deg_slip_ref]
     ops.nDMaterial(*args)
 
 
@@ -182,3 +189,26 @@ def test_shell_interlock_is_load_bearing():
         lambda t: _mat(t, interlock=False), exx, gamma, ts2_vals=(0, 0, 1))
     nxy_on, nxy_off = on[-1][1], off[-1][1]
     assert nxy_on < 0.7 * nxy_off, f"interlock not load-bearing in shell: on={nxy_on} off={nxy_off}"
+
+
+@pytest.mark.t1
+def test_shell_xcrack_cyclic_membrane_shear_degrades():
+    """Phase 2b.2b through the REAL shell (ASDShellQ4 + LayeredShell, PlateFiber view x the
+    sigma_33 condensation Newton): with -xcrack the cumulative-slip interlock wear must make the
+    capped membrane shear Nxy DECAY over repeated cycles, while plain -cyclic keeps a constant
+    cap. Exercises the X-crack/wear path end-to-end in the condensed shell view (purity + the
+    degradation as integrated, not just at the 3D material point)."""
+    exx, gamma, sth = 5.0e-4, 2.0e-3, 50.0
+    ts2 = (0, 0, 1, -1, 1, -1, 1, -1)          # 3 shear cycles; + extremes end stages 1,3,5
+
+    def plus_caps(mat_fn):
+        pts = _shell_tension_then_cyclic_shear(mat_fn, exx, gamma, n1=40, nleg=60, ts2_vals=ts2)
+        # recorded shear legs 1..6 of 60 each -> + extremes at indices 59, 179, 299
+        return [pts[59][1], pts[179][1], pts[299][1]]
+
+    wear = plus_caps(lambda t: _mat(t, interlock=True, cyclic=True, xcrack=True,
+                                    crack_spacing=sth, deg_kappa=0.5, deg_slip_ref=0.03))
+    nowear = plus_caps(lambda t: _mat(t, interlock=True, cyclic=True, crack_spacing=sth))
+    assert wear[0] > wear[1] > wear[2], f"shell Nxy cap not decaying with wear: {wear}"
+    assert wear[2] < 0.8 * wear[0], f"insufficient shell cyclic decay: {wear}"
+    assert nowear[2] == pytest.approx(nowear[0], rel=3.0e-2), f"no-wear shell cap drifted: {nowear}"

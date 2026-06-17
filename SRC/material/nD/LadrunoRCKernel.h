@@ -358,7 +358,13 @@ inline double eps1FromMembrane(double exx, double eyy, double gxy, double p1[2],
     double vx = half_gxy;
     double vy = lam1 - exx;
     double nrm = sqrt(vx * vx + vy * vy);
-    if (nrm < 1.0e-300) { p1[0] = 1.0; p1[1] = 0.0; }
+    // SCALE-RELATIVE fallback: when the eigenvector magnitude is numerical dust (tiny gxy +
+    // a near-cancelling vy that rounds to a sub-ULP nonzero), normalizing it would freeze a
+    // garbage crack normal (e.g. (0,-1) instead of (1,0)). Fall back to the major-strain axis.
+    if (nrm < 1.0e-9 * (fabs(half_diff) + fabs(half_gxy) + 1.0e-30)) {
+        p1[0] = (exx >= eyy) ? 1.0 : 0.0;
+        p1[1] = (exx >= eyy) ? 0.0 : 1.0;
+    }
     else { p1[0] = vx / nrm; p1[1] = vy / nrm; }
     return macauley(lam1);
 }
@@ -391,6 +397,10 @@ struct Params {
     // --- Phase 2a: fixed-crack aggregate-interlock shear retention (membrane) ---
     bool   interlockOn;                // false => no interlock (Phase-1 baseline)
     bool   interlockCyclic;          // Phase 2b: incremental friction-slip + reversible w
+    bool   xcrackOn;                 // Phase 2b.2b: 2nd orthogonal crack + slip-driven wear
+    double degKappa;                 // wear knockdown slope (default 0.5)
+    double degSlipRef;               // reference peak slip for full wear (<=0 => no wear)
+    double degMin;                   // residual cap fraction floor (default 0.1)
     int    shearRetMode;              // 0 = MCFT v_ci cap (default); reserved 1=dsfm
     double aggSize;                   // max aggregate size a_g (SI: mm)
     double crackStrain;              // eps_cr crack-formation strain (<=0 => ftmax/E)
@@ -425,6 +435,9 @@ struct RCHist {
     // --- Phase 2b: cyclic crack-shear friction-slip state ---
     double tauCr;           // committed crack-plane shear stress (incremental friction)
     double gammaCr;         // committed crack-plane engineering shear strain (slip)
+    // --- Phase 2b.2b: second orthogonal crack + interlock-surface wear ---
+    double cracked2;        // 0/1 second (orthogonal) crack flag
+    double slipCum;         // cumulative |crack slip| (abrasion/Archard wear driver, irreversible)
 };
 
 inline void histZero(RCHist& h)
@@ -433,6 +446,7 @@ inline void histZero(RCHist& h)
     h.xt = h.xc = 0.0; h.dt_bar = h.dc_bar = 0.0; h.beta = 1.0; h.eps1 = 0.0;
     h.cracked = 0.0; h.crackC = 1.0; h.crackS = 0.0; h.wmax = 0.0; h.betaSr = 1.0;
     h.tauCr = 0.0; h.gammaCr = 0.0;
+    h.cracked2 = 0.0; h.slipCum = 0.0;
 }
 
 inline double equivTensile(const double Si[3], double fcft, double Kc)
@@ -539,6 +553,7 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
     // ramp-then-cap (same plateau as 2a) under monotonic loading.
     double crk_c = in.crackC, crk_s = in.crackS, cracked = in.cracked, wmax = in.wmax;
     double tauCr = in.tauCr, gammaCr = in.gammaCr;   // 2b cyclic crack-shear state
+    double cracked2 = in.cracked2, slipCum = in.slipCum;   // 2b.2b X-crack + wear state
     double betaSr = 1.0;
     bool   il_active = false, il_capped = false, il_cyclic = false;
     double il_m[3] = { 0.0, 0.0, 0.0 };             // m_eps: stress back-rotation of a shear change
@@ -552,13 +567,37 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
             il_active = true;
             double exx = eps6[0], eyy = eps6[1], gxy = eps6[3];
             double c = crk_c, s = crk_s, c2 = c*c, s2 = s*s, cs = c*s;
-            double en = exx*c2 + eyy*s2 + gxy*cs;               // strain normal to the FROZEN crack
+            double en = exx*c2 + eyy*s2 + gxy*cs;               // strain normal to the FROZEN crack 1
             double sth = (P.crackSpacing > 0.0) ? P.crackSpacing : (P.lch > 0.0 ? P.lch : 1.0);
-            double w = macauley(en) * sth;
+            // ---- Phase 2b.2b: second orthogonal crack (X-cracking) ----
+            // Crack 2 normal = (-s,c) (orthogonal to crack 1), frozen when the strain normal to
+            // THAT plane reaches eps_cr (FSAM CepsA2>=eunpA2 + orthogonality lock). The cap then
+            // uses the GOVERNING (most-open) crack's opening, so the REVERSE shear direction is
+            // interlock-capped too (2a/2b.1 single crack only capped the crack-1 direction).
+            double en_gov = en;
+            if (P.xcrackOn && P.interlockCyclic) {
+                double c2n = -s, s2n = c;                       // crack-2 (orthogonal) normal
+                double en2 = exx*c2n*c2n + eyy*s2n*s2n + gxy*c2n*s2n;
+                if (cracked2 < 0.5 && en2 >= P.crackStrain) cracked2 = 1.0;
+                if (cracked2 >= 0.5 && en2 > en_gov) en_gov = en2;   // most-open crack governs
+            }
+            double w = macauley(en_gov) * sth;
             if (w > wmax) wmax = w;                              // tracked max (diagnostic / 2a)
             double w_use = P.interlockCyclic ? w : wmax;        // reversible (cyclic) vs monotone (2a)
             double denom = 0.31 + 24.0 * w_use / (P.aggSize + 16.0);
             double vcimax = (denom > 0.0) ? 0.18 * P.sqrtFc / denom : 0.18 * P.sqrtFc;
+            // ---- Phase 2b.2b: slip-driven irreversible interlock-surface wear (degradation) ----
+            // Aggregate-interlock abrasion (Archard) scales with the CUMULATIVE crack sliding
+            // distance; knock the cap down by kn = max(degMin, 1 - degKappa*clamp(slipCum/degSlipRef,
+            // 0,1)). Driven by the COMMITTED slipCum (in.slipCum) so it is tangent-neutral. Unlike a
+            // peak-slip law (which saturates in cycle 1 under constant amplitude), cumulative sliding
+            // keeps wearing every reversal -> cyclic strength decay (and the low-cap pinched waist).
+            if (P.xcrackOn && P.degSlipRef > 0.0) {
+                double kn = 1.0 - P.degKappa * (in.slipCum / P.degSlipRef);
+                if (kn < P.degMin) kn = P.degMin;
+                if (kn > 1.0) kn = 1.0;
+                vcimax *= kn;
+            }
             double sxx = sig6[0], syy = sig6[1], sxy = sig6[3];
             double tau_sm = cs * (syy - sxx) + (c2 - s2) * sxy; // smeared crack-plane shear
             double tau_ci;
@@ -566,6 +605,9 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
                 il_cyclic = true;
                 il_Gint = 0.5 * E / (1.0 + P.nu);               // interlock shear modulus = G
                 double g_nt = 2.0*(eyy - exx)*cs + gxy*(c2 - s2);
+                // 2b.2b wear driver: accumulate the sliding distance (skip the capture step,
+                // where in.gammaCr is still the uncracked 0 and would inject a spurious jump).
+                slipCum = in.slipCum + (just_captured ? 0.0 : fabs(g_nt - in.gammaCr));
                 if (just_captured) {                            // seed for stress CONTINUITY:
                     gammaCr = g_nt;                             // slip origin = capture slip,
                     tauCr = (tau_sm >  vcimax) ?  vcimax        // tau origin = the clipped smeared
@@ -601,6 +643,7 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
     out.cracked = cracked; out.crackC = crk_c; out.crackS = crk_s;
     out.wmax = wmax; out.betaSr = betaSr;
     out.tauCr = tauCr; out.gammaCr = gammaCr;
+    out.cracked2 = cracked2; out.slipCum = slipCum;
 
     // tangent
     if (do_tangent) {
