@@ -195,3 +195,45 @@ def test_mesh_objectivity_ip():
     assert e2 > 0 and e4 > 0 and e8 > 0
     # refinement change shrinks and the finest step is small (objective)
     assert abs(e8 - e4) / e4 < 0.05
+
+
+# ---------------------------------------------------------------------------
+# Test: large-displacement via Corotational transform == stock dispBeamColumn
+# ---------------------------------------------------------------------------
+def _corot_largedef_tip(ele_name, n=4, nsteps=30):
+    """Elastic cantilever under a Corotational transform driven into large
+    deflection (pure geometric nonlinearity); return tip displacement vector."""
+    _beam_model()
+    dx = _L / n
+    for i in range(n + 1):
+        ops.node(i + 1, i * dx, 0.0)
+    ops.fix(1, 1, 1, 1)
+    ops.section("Elastic", 1, _E, _A, _Iz)
+    ops.geomTransf("Corotational", 1)
+    ops.beamIntegration("Lobatto", 1, 1, 3)
+    for i in range(1, n + 1):
+        ops.element(ele_name, i, i, i + 1, 1, 1)
+    tip = n + 1
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(tip, 0.0, -400.0, 0.0)
+    ops.system("BandGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Transformation")
+    ops.test("NormDispIncr", 1.0e-10, 50)
+    ops.algorithm("Newton")
+    ops.integrator("LoadControl", 1.0 / nsteps)
+    ops.analysis("Static")
+    assert ops.analyze(nsteps) == 0
+    return [ops.nodeDisp(tip, d) for d in range(1, 4)]
+
+
+def test_corotational_large_displacement_matches_stock():
+    d_lad = _corot_largedef_tip("LadrunoDispBeamColumn")
+    d_ref = _corot_largedef_tip("dispBeamColumn")
+    # genuinely large deflection (geometric nonlinearity active): tip drop and
+    # axial shortening both substantial fractions of the length
+    assert abs(d_lad[1]) > 10.0 and abs(d_lad[0]) > 1.0
+    # faithful clone: identical to stock under the same Corotational transform
+    for a, b in zip(d_lad, d_ref):
+        assert math.isclose(a, b, rel_tol=1e-9, abs_tol=1e-12)
