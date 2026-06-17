@@ -2,13 +2,13 @@
 title: "LadrunoConcrete3D — developer / C++-implementer handoff guide"
 project: Ladruno
 type: handoff guide
-status: P0/P1 oracle complete + 2-round adversarial review (GO-WITH-FIXES, all folded in); C++ build PR is next
+status: P0/P1 oracle complete + C++ KERNEL return map + analytic consistent tangent DONE (g++ oracle-numeric-dump verified). NEXT = P2 dual damage + the nDMaterial wrapper (carries the 33017 define + foot-gun guards).
 related:
   - "[[31_ladruno_concrete3d_adr]]"          # the ADR (decision record)
   - "[[project_ladruno_concrete3d]]"          # the agent-memory pointer
   - "[[10_ladruno_j2_plasticity]]"            # the kernel pattern + return-map IMPL-EX donor
   - "[[19_ladruno_rc_shell_adr]]"             # the shell/MCFT sibling (33015)
-updated: 2026-06-16
+updated: 2026-06-17
 ---
 
 # LadrunoConcrete3D — handoff to the C++ implementer
@@ -34,7 +34,8 @@ C++ port plus the items in §7.
 | `tests/_testbed/concrete3d_ref.py` | **The spec.** numpy oracle: surface, return maps, hardening, ductility, spectral tensor return, consistent tangent. Run it: `python tests/_testbed/concrete3d_ref.py` → P0/P1/HARDENING/TANGENT all PASS. |
 | `tests/test_ladrunoConcrete3D_material.py` | pytest gates (11/11). Mirrors the oracle gates. |
 | `tests/_testbed/concrete3d_kernel_check.cpp` | standalone **g++ self-check** of the kernel surface+hardening identities (`g++ -std=c++17 -I. … && ./c3dchk`). |
-| `SRC/material/nD/LadrunoConcrete3DKernel.h` | **Header-only, OpenSees-free C++ kernel.** Surface (`yieldF`) + hardening laws (`qh1Of/qh2Of/ductilityXh`) DONE and byte-match the oracle. **`returnMap` is a STUB** — that's your job. |
+| `SRC/material/nD/LadrunoConcrete3DKernel.h` | **Header-only, OpenSees-free C++ kernel — return map + analytic tangent DONE.** Surface (`yieldF`), hardening (`qh1Of/qh2Of/ductilityXh`), `eccentricityFromKupfer`, `returnMapPrincipal`/`returnMapHardening` (analytic 3×3/4×4 Jacobians + apex + honest-f), spectral `returnMapTensor`, non-symmetric analytic `consistentTangent`, and the public `returnMap(strain, State)` all implemented + g++ oracle-verified. P2 damage / wrapper still stubbed. |
+| `tests/_testbed/gen_concrete3d_fixture.py` + `concrete3d_oracle_fixture.txt` | oracle numeric-dump generator + committed fixture (physical driven paths + tangent cases) that `concrete3d_kernel_check.cpp` diffs against. |
 | `Ladruno_implementation/31_ladruno_concrete3d_adr.md` | the decision record (read §4 for the formulation, §8 risk register). |
 
 The kernel follows the `LadrunoJ2Kernel` "one core, many views" doctrine (plain doubles + `<cmath>`,
@@ -145,26 +146,41 @@ analytic tangent and FD-check it against the oracle.** Verified facts you must r
 
 ---
 
-## 5. The C++ build-PR checklist (what you MUST do)
+## 5. The C++ build-PR checklist — status
 
-1. `#define ND_TAG_LadrunoConcrete3D 33017` in `SRC/classTags.h` (currently deferred — no orphan).
-2. Add the `LEDGER_implementations.md` row (feature, kind, **33017**, files, status, PR) — same PR.
-3. **Define `eccentricityFromKupfer`** (`.cpp` bisection mirroring the oracle) — and **add the
-   `e>0.5` convexity clamp here** (and reject/clamp user-supplied `e≤0.5`).
-4. Implement `returnMap`:
-   - perfect-plastic 3-unknown Newton with **analytic 3×3 Jacobian**;
-   - hardening 4-unknown Newton with **analytic 4×4 Jacobian** (incl. `∂xh/∂σ̄_V` across `Rh=0`,
-     `∂qh1/∂κp`), FD-checked against the oracle;
-   - **apex/Lode-corner sub-algorithm** for both maps (the stub only declares it);
-   - **honest convergence**: recompute `f` independently at the returned stress with its *updated*
-     `θ̄`; never report `converged` for an off-surface point (the oracle now does this);
-   - **non-symmetric `Dtan6`** on the perfect-plastic map, FD-checked.
-   - expose `sigEffImplicit[6]` separately from nominal `sigma[6]` (the LogStrain `bᵉ` fix, ADR R3).
-5. Commit the standalone g++ **oracle-numeric-dump diff** at the ADR §5 tolerance floors
-   (1e-7 / 1e-8 / 1e-6) — extends the existing `concrete3d_kernel_check.cpp`.
-6. **Enforce `mp.m0 == m0Of(fc,ft,e)`** in one place in the wrapper; never let the user set `m0`
-   independently (a wrapper foot-gun — `yieldF` trusts `mp.m0`).
-7. **Require an unsymmetric solver unconditionally** (Tier-1) — document; warn on a symmetric solver.
+**KERNEL increment (DONE — this PR, `LadrunoConcrete3DKernel.h`, g++ oracle-numeric-dump verified):**
+
+- [x] **Defined `eccentricityFromKupfer`** (inline bisection mirror of the oracle, + the
+  `equibiaxialStrength` helper); the routine searches strictly inside the convexity band `(0.5, 1)`.
+  *(Kept inline in the header — the LadrunoJ2Kernel "all-inline" doctrine — so the standalone g++
+  self-check stays a single TU; the earlier "declaration-only in a `.cpp`" plan was superseded.)*
+- [x] **`returnMap` implemented** (as `returnMapPrincipal` / `returnMapHardening` / `returnMapTensor`
+  / public `returnMap(strain, State)`):
+  - perfect-plastic 3-unknown Newton with **analytic 3×3 Jacobian** (matches the oracle to ~1e-13);
+  - hardening 4-unknown Newton with **analytic 4×4 Jacobian** (incl. `∂xh/∂σ̄_V` across `Rh=0`,
+    `∂qh1/∂κp`), self-FD-checked to ~1e-9 and oracle-matched to the ~1e-8 reference floor;
+  - **hydrostatic-tension apex fallback** for both maps;
+  - **honest convergence** — `f` recomputed at the returned stress with its *own* Lode angle;
+  - **non-symmetric analytic `Dtan6`** — spectral lift (de Souza Neto Box A.6) of the principal
+    Jacobian via IFT on the inner Newton residual; FD-matches the oracle numerical tangent to
+    ~2e-10 (perfect-plastic) / ~7e-7 (hardening). The Lode directional gradient `dr/dw` uses an
+    isolated scalar central-difference (corner-singular in closed form; the rest is closed-form).
+  - `sigEffImplicit[6]` exposed (== `sigma` at P1; the LogStrain `bᵉ` fix, ADR R3).
+- [x] **Committed g++ oracle-numeric-dump diff** — `concrete3d_kernel_check.cpp` (+ `gen_concrete3d_fixture.py`
+  → `concrete3d_oracle_fixture.txt`); wired into `tests/test_ladrunoConcrete3D_material.py` (CI compiles
+  + runs it where g++ is available). Floors: perfect-plastic stress 1e-9 / kp 1e-10 (analytic oracle
+  Jacobian ⇒ machine-precision); hardening stress 1e-6 / kp 1e-7 (the oracle hardening reference is
+  itself ~1e-8, numerical Jacobian, §6.3); tangent 1e-6.
+
+**WRAPPER increment (DEFERRED — lands with P2 damage, where the stress peak first appears):**
+
+- [ ] `#define ND_TAG_LadrunoConcrete3D 33017` in `SRC/classTags.h` (still deferred — **no orphan
+  tag**; the LEDGER row reserves it, mirroring the LogStrain2D 33016 convention).
+- [ ] The `nDMaterial LadrunoConcrete3D` class (`.cpp/.h` + FEM_ObjectBroker + Tcl/Py parser +
+  commit cycle), and there:
+  - **Enforce `mp.m0 == m0Of(fc,ft,e)`** in one place; never let the user set `m0` independently
+    (`yieldF` trusts `mp.m0`); reject/clamp user-supplied `e≤0.5`.
+  - **Require an unsymmetric solver unconditionally** (Tier-1) — document; warn on a symmetric solver.
 
 ---
 
@@ -193,11 +209,13 @@ analytic tangent and FD-check it against the oracle.** Verified facts you must r
 
 ## 7. Roadmap context
 
-P0 surface ✓ → **P1 return-map/hardening/tangent ✓ (oracle, this handoff)** → **C++ build PR (§5)** →
-**P2 dual damage `ωt`/`ωc` + crack-band** (where the peak/softening comes from) → P3 robustness tiers
-(Tier-2 IMPL-EX freezes plastic state + damage; Tier-3 explicit) → P4 finite-strain (`LogStrain`,
-clean — isotropic, no co-rotating backstress) → P5 confined-fiber view (§4.6 hoop-spring condensation,
-"Mander by mechanism" in 1D fibers) → P6 auto-hybrid switch.
+P0 surface ✓ → P1 return-map/hardening/tangent ✓ (oracle) → **C++ kernel return map + analytic
+tangent ✓ (this PR, g++ oracle-dump verified)** → **P2 dual damage `ωt`/`ωc` + crack-band (where the
+peak/softening comes from) + the nDMaterial wrapper (33017 define + foot-gun guards, §5)** → P3
+robustness tiers (Tier-2 IMPL-EX freezes plastic state + damage; Tier-3 explicit) → P4 finite-strain
+(`LogStrain`, clean — isotropic, no co-rotating backstress) → P5 confined-fiber view (§4.6 hoop-spring
+condensation, "Mander by mechanism" in 1D fibers) → P6 auto-hybrid switch.
 
 PRs so far (all → `ladruno`): **#240** P0 surface + P1 return map · **#244** hardening · **#247**
-consistent tangent · **#248** review fixes.
+consistent tangent · **#248** review fixes · **(this PR)** C++ kernel return map + analytic tangent +
+g++ oracle-numeric-dump gate.

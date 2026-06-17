@@ -14,11 +14,16 @@ The C++ kernel SRC/material/nD/LadrunoConcrete3DKernel.h implements the SAME sur
 (yieldF/lodeR/m0Of/invariants); the g++-vs-oracle byte check lands with the return map in P1.
 """
 import os
+import shutil
+import subprocess
 import sys
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "_testbed"))
+HERE = os.path.dirname(__file__)
+REPO = os.path.abspath(os.path.join(HERE, os.pardir))
+TESTBED = os.path.join(HERE, "_testbed")
+sys.path.insert(0, TESTBED)
 import concrete3d_ref as ref  # noqa: E402
 
 
@@ -138,3 +143,25 @@ def test_p1_tangent_gate():
     assert r["T4_taylor_ratio"] > 3.5                  # quadratic-Taylor convergence (~4)
     assert r["T5_objectivity"] < 1.0e-9
     assert r["PASS"]
+
+
+# ---------------------------------------------------------------------------
+# C++ KERNEL <-> oracle byte check (ADR §5 deliverable). Regenerate the oracle numeric-dump
+# fixture, compile the standalone g++ self-check of SRC/material/nD/LadrunoConcrete3DKernel.h,
+# and diff its return map + analytic consistent tangent against the oracle at the cross-platform
+# tolerance floors. Skipped where g++ is unavailable (e.g. the Windows pyd test env); CI (Ubuntu
+# Zone-A) runs it for real.
+# ---------------------------------------------------------------------------
+@pytest.mark.skipif(shutil.which("g++") is None, reason="g++ not available")
+def test_cpp_kernel_matches_oracle_dump(tmp_path):
+    # 1) regenerate the fixture from the oracle (deterministic — keeps C++ in sync with the spec)
+    subprocess.run([sys.executable, os.path.join(TESTBED, "gen_concrete3d_fixture.py")],
+                   check=True, cwd=TESTBED)
+    # 2) compile the self-check (header-only kernel; -I repo root for the SRC/ include)
+    exe = os.path.join(tmp_path, "c3dchk.exe")
+    src = os.path.join(TESTBED, "concrete3d_kernel_check.cpp")
+    subprocess.run(["g++", "-std=c++17", "-O2", "-I", REPO, src, "-o", exe], check=True, cwd=REPO)
+    # 3) run from the repo root so the default fixture relative path resolves
+    out = subprocess.run([exe], cwd=REPO, capture_output=True, text=True)
+    assert out.returncode == 0, f"g++ kernel check failed:\n{out.stdout}\n{out.stderr}"
+    assert "KERNEL CHECK: ALL PASS" in out.stdout
