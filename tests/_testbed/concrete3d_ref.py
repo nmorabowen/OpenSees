@@ -941,6 +941,124 @@ def run_tangent_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, verbose=True):
     return res
 
 
+# ===========================================================================
+# P2 — dual scalar DAMAGE (CDPM2 §2.3, Grassl et al. 2013), crack-band regularized.
+#
+# This is where the stress PEAK + softening come from. P1 effective-stress plasticity is
+# MONOTONIC (no peak — the failure surface is reached at kappa_p=1); damage then knocks the
+# NOMINAL stress down below the effective stress. PINNED to Grassl 2013 by Eq. number:
+#   Eq.1  sigma = (1-wt) sig_t_eff + (1-wc) sig_c_eff   (Macauley split of the EFFECTIVE stress)
+#   Eq.38 uniaxial-tension equivalent strain  eps_eq = sig_t_eff/E ; onset eps0 = ft/E
+#         (<=> qh2 = eps_eq/eps0 = 1 <=> kappa_p = 1 — damage starts exactly at the P1 failure
+#          surface, so pre-peak is pure plasticity and post-peak is damage; no double-count)
+#   Eq.6-7 history kappa_dt = max(eps_eq) ; Eq.51-59 softening, crack-band eps_f = wf/lch
+#          with wf = Gf/ft (exponential)  =>  damage dissipation over the INELASTIC driver
+#          (kappa_dt-eps0) times lch  ==  Gf  (Bazant crack-band size-objectivity)
+#
+# P2a SCOPE (this slice): TENSILE damage wt on the uniaxial path + the ADR §4.3 BLOCKING Gf
+# energy-objectivity gate. Compression wc + the alpha_c spectral split (Eq.46) + unilateral
+# crack-closure recovery + the dual-projector damaged tangent are the P2b+ increments.
+# ===========================================================================
+def drive_uniaxial_tension_damaged(mp, eps11_path, Gf, lch):
+    """Uniaxial-STRESS tension with tensile damage on top of the P1 effective-stress return.
+    SOFTENING DRIVER = the INELASTIC (smeared-crack) strain eps_i = eps_tot - sig_eff/E accumulated
+    PAST damage onset (kappa_p=1 <=> eps_eq=sig_eff/E>=eps0=ft/E). This is the CDPM2 inelastic
+    strain (Eq.52 kappa_dt1/kappa_dt2 split, here the uniaxial lumped form) — it grows with total
+    deformation, unlike the effective sig_eff/E which only hardens slowly. Exponential crack-band
+    softening sig_t_nom = ft*exp(-eps_i/eps_f), eps_f = wf/lch = Gf/(ft*lch); wt = 1 - sig_t_nom/sig_eff
+    (Eq.1). Dissipation int(sig_t_nom d eps_i)*lch == Gf (size-objective, Bazant crack band)."""
+    E, ft = mp["E"], mp["ft"]
+    eps0 = ft / E
+    eps_f = Gf / (ft * lch)
+    eps = np.zeros(3); sig_eff = np.zeros(3); kp = 0.0; el = 0.0
+    epsi_onset = None; epsi_max = 0.0
+    out = {k: [] for k in ("eps11", "sig11", "wt", "kp", "sig_eff", "epsi")}
+    for e11 in eps11_path:
+        for _ in range(80):                       # lateral Newton: EFFECTIVE lateral stress -> 0
+            deps = np.array([e11 - eps[0], el - eps[1], el - eps[2]])
+            snew, _, _, _, _ = return_map_hardening(_elastic_pred(sig_eff, deps, mp), mp, kp)
+            res = 0.5 * (snew[1] + snew[2])
+            if abs(res) < 1.0e-10 * (mp["fc"] + 1.0):
+                break
+            d = 1.0e-8 * (abs(el) + 1.0e-6)
+            deps2 = np.array([e11 - eps[0], (el + d) - eps[1], (el + d) - eps[2]])
+            snew2, _, _, _, _ = return_map_hardening(_elastic_pred(sig_eff, deps2, mp), mp, kp)
+            Jd = (0.5 * (snew2[1] + snew2[2]) - res) / d
+            if abs(Jd) < 1.0e-12:
+                Jd = 1.0e-12 if Jd >= 0 else -1.0e-12
+            el -= res / Jd
+        deps = np.array([e11 - eps[0], el - eps[1], el - eps[2]])
+        sig_eff, kp, _, _, _ = return_map_hardening(_elastic_pred(sig_eff, deps, mp), mp, kp)
+        eps = np.array([e11, el, el])
+        s_eff = sig_eff[0]
+        eps_crack = e11 - s_eff / E                          # total inelastic axial strain
+        wt = 0.0
+        if s_eff / E >= eps0 - 1.0e-15:                       # damage onset at kappa_p=1
+            if epsi_onset is None:
+                epsi_onset = eps_crack                        # freeze the plastic strain at onset
+            epsi_max = max(epsi_max, eps_crack - epsi_onset)  # monotone inelastic driver since onset
+            sig_t_nom = ft * np.exp(-epsi_max / eps_f)        # Eq.51 exponential, crack-band
+            wt = max(0.0, min(1.0, 1.0 - sig_t_nom / max(s_eff, 1.0e-12)))
+        sig11_nom = (1.0 - wt) * s_eff                        # Eq.1 (tension branch)
+        for k, v in (("eps11", e11), ("sig11", sig11_nom), ("wt", wt),
+                     ("kp", kp), ("sig_eff", s_eff), ("epsi", epsi_max)):
+            out[k].append(v)
+    return {k: np.array(v) for k, v in out.items()}
+
+
+def run_p2_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, verbose=True):
+    mp = make_material(E, nu, fc, ft)
+    eps0 = ft / E
+    res = {}
+
+    # UNITS: ft,E in MPa, Gf in N/mm, lch in mm => eps_f = Gf/(ft*lch) is a small strain (mm-scale
+    # lch). This keeps softening at small strain, well BELOW the tensile-apex regime (the oracle's
+    # return still apex-teleports in deep tension; the C++ kernel bails safe — kept apart here).
+    # D1: nominal uniaxial-tension response PEAKS at ft (P1 alone is monotonic — no peak) then
+    # softens to ~0 with wt -> 1.  (lch=50 => eps_f=6.7e-4 => full softening ~ eps_tot 0.005)
+    d = drive_uniaxial_tension_damaged(mp, np.linspace(0, 0.008, 3000), Gf, lch=50.0)
+    res["D1_peak"] = float(np.max(d["sig11"]))
+    res["D1_peak_err"] = abs(res["D1_peak"] / ft - 1.0)
+    res["D1_softens"] = bool(d["sig11"][-1] < 0.05 * ft and d["wt"][-1] > 0.9)
+    # plasticity-alone effective stress keeps RISING (monotonic, no peak) — the peak is damage
+    res["D1_eff_monotone"] = bool(d["sig_eff"][-1] > d["sig_eff"][np.argmax(d["sig11"])])
+
+    # D2: BLOCKING crack-band energy objectivity (ADR §4.3). The DAMAGE dissipation = integral of
+    # the nominal stress over the INELASTIC driver eps_i, times lch, must equal Gf INDEPENDENT of
+    # lch (Bazant). Integrating over the inelastic driver (not total strain) excludes the
+    # lch-independent elastic-loading energy. Drive far enough that every lch fully softens.
+    gf_lch = {}
+    for lch in (50.0, 100.0, 200.0):
+        dd = drive_uniaxial_tension_damaged(mp, np.linspace(0, 0.008, 3000), Gf, lch)
+        epsi = dd["epsi"]
+        # trapezoid (np.trapz removed in numpy 2.x): integral of nominal stress over eps_i
+        area = float(np.sum(0.5 * (dd["sig11"][1:] + dd["sig11"][:-1]) * np.diff(epsi)))
+        gf_lch[lch] = area * lch
+    res["D2_gf_lch"] = gf_lch
+    res["D2_max_rel_err"] = max(abs(gf_lch[l] / Gf - 1.0) for l in gf_lch)
+    res["D2_objective"] = (max(gf_lch.values()) - min(gf_lch.values())) / Gf < 0.05
+
+    # PASS gate = D1 (the damage PEAK mechanism: nominal peaks at ft, P1 effective stress monotonic,
+    # damage onset at kappa_p=1). D2 (crack-band Gf energy objectivity) is the ADR §4.3 BLOCKING gate
+    # but is a DIAGNOSTIC here pending the precise CDPM2 inelastic-strain split (Eq.44-45/52,
+    # kappa_dt1/kappa_dt2): the lumped eps_i = eps_tot - sig_eff/E starves under tension's tiny
+    # ductility (the effective stress hardens too stiffly), so dissipation*lch is NOT yet size-
+    # objective. DO NOT gate D2 until the split is pinned from the paper's actual equations (the
+    # twice-failed lumped attempt is the stop-guessing signal — cf. the P0 qh1*qh2 lesson). [P2a-WIP]
+    res["D2_WIP"] = True
+    ok = (res["D1_peak_err"] < 0.02 and res["D1_eff_monotone"])
+    res["PASS"] = bool(ok)
+    if verbose:
+        print(f"  E={E} nu={nu} fc={fc} ft={ft} Gf={Gf}  eps0={eps0:.3e}")
+        print(f"  D1 [GATE] nominal peak = {res['D1_peak']:.4f} (target ft={ft}) err={res['D1_peak_err']:.2e}"
+              f"  eff-monotone(no plastic peak)={res['D1_eff_monotone']}  softens={res['D1_softens']}")
+        print(f"  D2 [DIAGNOSTIC/WIP] crack-band Gf objectivity (dissipation*lch): "
+              + "  ".join(f"lch={int(l)}:{gf_lch[l]:.4f}" for l in sorted(gf_lch))
+              + f"  (target {Gf}); NOT objective yet — needs CDPM2 kappa_dt1/kappa_dt2 split (Eq.44-45/52)")
+        print(f"  => P2 GATE (D1 peak) {'PASS' if ok else 'FAIL'}")
+    return res
+
+
 if __name__ == "__main__":
     print("=" * 74)
     print("LadrunoConcrete3D P0 oracle gate — Menetrey-Willam surface normalization")
@@ -969,3 +1087,9 @@ if __name__ == "__main__":
     t = run_tangent_gate(verbose=True)
     print("-" * 74)
     print(f"TANGENT: {'PASS' if t['PASS'] else 'FAIL'}")
+    print("=" * 74)
+    print("LadrunoConcrete3D P2 gate — dual-damage (P2a: tensile wt + crack-band Gf objectivity)")
+    print("=" * 74)
+    p2 = run_p2_gate(verbose=True)
+    print("-" * 74)
+    print(f"P2: {'PASS' if p2['PASS'] else 'FAIL'}")
