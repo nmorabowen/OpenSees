@@ -15,6 +15,7 @@ tags:
 
 Cold-resume map for the robust nonlinear-solution driver track (ADR-31). Read
 this first on resume. Design + risks: [[31_ladruno_robust_solve_driver_adr]].
+**User-facing usage guide:** [[robust_solve_guide]].
 
 ## TL;DR — where we are
 
