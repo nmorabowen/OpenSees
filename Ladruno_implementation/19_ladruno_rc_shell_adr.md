@@ -658,6 +658,29 @@ flag selecting the **CYCLIC crack-plane slip stiffness** `G_slip` in the frictio
 - **Still deferred to 2b.2c.2+:** crack-closure normal spectral reassembly; **panel/experiment pinching
   validation (Tran–Wallace)**; rigid-rotation objectivity.
 
+#### Phase 2b.2c.2 (SHIPPED, test-only) — rigid-rotation objectivity gate
+The keystone acceptance test deferred since 2a/2b.1/2b.2a/2b.2b. The fixed-crack design rests on the
+claim (ADR D1/D5) that the supported large-rotation route — the **corotational element**
+(`ASDShellQ4 -corotational`), which feeds the small-strain material the *de-rotated* strain `Q^T E Q` —
+is objective for the **directional** crack/interlock state. The property that makes that route objective
+is the constitutive frame-indifference identity
+`σ(Q E Q^T) == Q σ(E) Q^T` over an arbitrary cracked, cyclic, X-cracked history.
+- **Test:** `tests/test_ladrunoRCConcrete_objectivity.py` (Zone-A). The homogeneous all-DOF-prescribed
+  (Penalty) `stdBrick` probe is driven through a tension-then-reversing-shear path that forms a fixed
+  crack and exercises the interlock, in the reference frame AND in a frame rigidly rotated about z by a
+  **large** angle (parametrized 30°/90°/127°, plus 63° with `-xcrack` + wear), prescribing the full
+  symmetric strain tensor `u = E·X` from the rotated basis tensors `Q A Q^T`, `Q B Q^T`. Asserts the two
+  stress trajectories coincide after the Q-transform to `< 1e-5·peak`.
+- **Result: PASS (4/4), no kernel change.** The cracked directional state is objective **by construction**
+  — the crack normal is captured from the strain principal direction (co-rotates with the frame), the
+  interlock projectors `m_ε`/`m_σ` are built from that normal (co-rotate), and the friction predictor /
+  `v_ci,max` cap / wear are built from *frame-invariant scalars* (`g_nt`, `e_n`, `slipCum`). So rotating
+  the strain frame rotates the stress frame identically. This **discharges the ADR's Zone-A objectivity
+  item (a)** (corotational-element route → PASS) at the constitutive level; the §14.11 `setTrialF`
+  material-view xfail (item b) is unchanged (that path is Phase 4).
+- **Still deferred to 2b.2c.3+:** crack-closure normal spectral reassembly; **panel/experiment pinching
+  validation (Tran–Wallace squat-wall, meshed)**.
+
 ### Phase 3 — Tension stiffening + crack-band/`lch` hardening
 - **Build:** VC/CM tension-stiffening plateaus (opt-in); resolve `lch` per **D5 Option A or B**.
 - **New:** if Option B, the ledgered vanilla `lch` plumb.
