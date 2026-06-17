@@ -401,7 +401,23 @@ struct Params {
     double degKappa;                 // wear knockdown slope (default 0.5)
     double degSlipRef;               // reference peak slip for full wear (<=0 => no wear)
     double degMin;                   // residual cap fraction floor (default 0.1)
-    int    shearRetMode;              // 0 = MCFT v_ci cap (default); reserved 1=dsfm
+    // --- Phase 2b.2c: -shearRetention {mcft|const|dsfm|rots} crack-shear retention curve ---
+    // Selects the CYCLIC crack-plane slip stiffness G_slip used in the friction predictor
+    // tau_cr = clamp(tau_cr_c + G_slip*dgamma_nt, +/- v_ci,max(w)). The v_ci,max(w) CAP is
+    // unchanged in every mode (keeps the ADR bound). Modes (all reduce to mcft):
+    //   0 mcft  (default): G_slip = G = E/2(1+nu)  -- the shipped full-elastic slip stiffness.
+    //   1 const          : G_slip = shearRetFactor*G -- classic constant shear retention
+    //                      (Rots/Cervenka). shearRetFactor in (0,1]; ==1 -> mcft.
+    //   2 dsfm           : G_slip = G*(0.31/denom)  -- DSFM-flavored width-degraded slip
+    //                      stiffness (softens as the crack opens). At w=0 -> mcft.
+    //   3 rots           : rotating-coaxial -- NO independent crack-shear; the membrane shear
+    //                      stays smeared/spectral (the interlock shear block is skipped). The
+    //                      ADR's monotonic-only rotating choice; lets a user A/B vs fixed-crack.
+    // const/dsfm parametrize the slip stiffness, so they only bite on the -cyclic path; on the
+    // 2a monotone-clip path they are inert (same v_ci,max plateau). The parser implies the
+    // needed flags (const/dsfm -> -interlock -cyclic; rots -> -interlock).
+    int    shearRetMode;             // 0 mcft (default) | 1 const | 2 dsfm | 3 rots
+    double shearRetFactor;           // const-mode retention factor mu in (0,1] (default 0.4)
     double aggSize;                   // max aggregate size a_g (SI: mm)
     double crackStrain;              // eps_cr crack-formation strain (<=0 => ftmax/E)
     double crackSpacing;            // s_theta crack spacing (<=0 => lch, else 1)
@@ -605,7 +621,10 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
     bool   il_active = false, il_capped = false, il_cyclic = false;
     double il_m[3] = { 0.0, 0.0, 0.0 };             // m_eps: stress back-rotation of a shear change
     double il_Gint = 0.0;                            // interlock shear modulus (cyclic tangent)
-    if (P.interlockOn) {
+    // shearRetMode 3 (rots) = rotating-coaxial: skip the fixed-crack shear entirely, so the
+    // membrane shear stays smeared/spectral (no capture, no clip, no friction). il_active
+    // stays false => the tangent carries no crack cross-term either.
+    if (P.interlockOn && P.shearRetMode != 3) {
         if (cracked < 0.5 && e1 >= P.crackStrain && !degen) {   // freeze crack normal
             cracked = 1.0; crk_c = p1[0]; crk_s = p1[1];
         }
@@ -650,7 +669,11 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
             double tau_ci;
             if (P.interlockCyclic) {
                 il_cyclic = true;
-                il_Gint = 0.5 * E / (1.0 + P.nu);               // interlock shear modulus = G
+                // crack-shear slip stiffness G_slip per -shearRetention mode (cap unchanged).
+                double Gfull = 0.5 * E / (1.0 + P.nu);          // full elastic shear modulus G
+                il_Gint = Gfull;                                 // mcft (default): full G
+                if (P.shearRetMode == 1)      il_Gint = P.shearRetFactor * Gfull;  // const: mu*G
+                else if (P.shearRetMode == 2) il_Gint = Gfull * (0.31 / denom);    // dsfm: width-degraded
                 double g_nt = 2.0*(eyy - exx)*cs + gxy*(c2 - s2);
                 // 2b.2b wear driver: accumulate the sliding distance (skip the capture step,
                 // where in.gammaCr is still the uncracked 0 and would inject a spurious jump).

@@ -247,7 +247,34 @@ Driven by the **committed** `slipCum` ⇒ tangent-neutral (the benign 2b.1 tange
 unchanged). This produces gradual cyclic strength decay (verified caps `2.90 → 2.50 → 2.10`
 over three cycles). Knobs: `-degKappa` (0.5), `-degSlipRef` (0.01), `-degMin` (0.1).
 
-### 4.5 IMPL-EX robustness — `-implex`
+### 4.5 Crack-shear retention curve — `-shearRetention` (Phase 2b.2c)
+
+The cyclic crack-plane **slip stiffness** `G_slip` in the friction predictor
+`τ_cr = clamp(τ_cr^c + G_slip·Δγ_nt, ±v_ci,max(w))` is selectable. The `v_ci,max(w)` **cap is
+unchanged** in every mode — only the slip stiffness changes. All modes reduce to `mcft`.
+
+| `-shearRetention <mode>` | `G_slip` | meaning |
+|---|---|---|
+| `mcft` (default) | `G = E/2(1+ν)` | full elastic slip stiffness — the shipped DSFM-with-slip law |
+| `const` | `μ·G` | classic constant shear retention (Rots/Červenka); `μ = -shearRetFactor` ∈ (0,1], default 0.4 |
+| `dsfm` | `G·(0.31/denom)` | DSFM width-degraded: softens as the crack opens (`denom = 0.31 + 24w/(a_g+16)`); `→ G` at `w=0` |
+| `rots` | — | rotating-coaxial: the fixed-crack shear is skipped entirely ⇒ identical to `-interlock` OFF |
+
+`const`/`dsfm` imply `-interlock -cyclic`; `rots` implies `-interlock`. Omitting `-shearRetention`
+(or `mcft`) is **2b.2b byte-identical**. Because `const`/`dsfm` parametrize the *slip* stiffness, they
+only bite on the `-cyclic` path; on the 2a monotone-clip path they are inert (same `v_ci,max` plateau).
+
+> [!example] Softer, width-aware cyclic crack shear
+> ```tcl
+> # constant 40%-of-G crack-shear retention (FSAM-like 0.4·Ec):
+> nDMaterial LadrunoRCConcrete 1 $E $nu -Ce ... -Cs ... -Te ... -Ts ... \
+>     -crackSpacing 50.0 -shearRetention const -shearRetFactor 0.4
+> # DSFM width-degraded slip stiffness:
+> nDMaterial LadrunoRCConcrete 2 $E $nu -Ce ... -Cs ... -Te ... -Ts ... \
+>     -crackSpacing 50.0 -shearRetention dsfm
+> ```
+
+### 4.6 IMPL-EX robustness — `-implex`
 
 Softening plastic-damage produces an **indefinite consistent tangent** on the softening
 branch, so a vanilla Newton solve of a cyclic RC wall stalls (an `nDMaterial` with no

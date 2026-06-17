@@ -70,7 +70,8 @@ void* OPS_LadrunoRCConcrete(void)
   // Phase 2a/2b: aggregate-interlock shear retention (default off)
   bool   interlockOn = false, interlockCyclic = false;
   double aggSize = 16.0, crackStrain = 0.0, crackSpacing = 0.0, lch = 0.0, betaSrMin = 0.01;
-  int    shearRetMode = 0;
+  int    shearRetMode = 0;       // 0 mcft (default) | 1 const | 2 dsfm | 3 rots
+  double shearRetFactor = 0.4;   // const-mode retention mu in (0,1]
   // Phase 2b.2b: second orthogonal crack (X-cracking) + slip-driven interlock wear
   bool   xcrackOn = false;
   double degKappa = 0.5, degSlipRef = 0.01, degMin = 0.1;
@@ -126,14 +127,27 @@ void* OPS_LadrunoRCConcrete(void)
       if (OPS_GetDoubleInput(&nd, &implexErrTol) < 0 || OPS_GetDoubleInput(&nd, &implexTimeRedLim) < 0) {
         opserr << "LadrunoRCConcrete: -implexControl needs $errTol $timeReductionLimit.\n"; return 0; }
     }
-    // NOTE: shearRetMode (the ADR's -shearRetention {const|dsfm|rots}) is reserved for
-    // Phase 2b; only mode 0 (the v_ci,max bound) is wired today, so no parse token yet.
+    // Phase 2b.2c: -shearRetention {mcft|const|dsfm|rots} crack-shear retention curve.
+    else if (strcmp(opt, "-shearRetention") == 0) {
+      const char* m = (OPS_GetNumRemainingInputArgs() > 0) ? OPS_GetString() : 0;
+      if      (m && strcmp(m, "mcft")  == 0) shearRetMode = 0;
+      else if (m && strcmp(m, "const") == 0) shearRetMode = 1;
+      else if (m && strcmp(m, "dsfm")  == 0) shearRetMode = 2;
+      else if (m && strcmp(m, "rots")  == 0) shearRetMode = 3;
+      else { opserr << "LadrunoRCConcrete: -shearRetention needs {mcft|const|dsfm|rots}.\n"; return 0; }
+    }
+    else if (strcmp(opt, "-shearRetFactor") == 0) { int nd = 1; if (OPS_GetDoubleInput(&nd, &shearRetFactor) < 0) { opserr << "LadrunoRCConcrete: -shearRetFactor needs a value.\n"; return 0; } }
     // unknown tokens are ignored (forward-compat)
   }
 
   // -cyclic implies -interlock; -xcrack implies -cyclic (the X-crack/wear law lives inside
   // the cyclic friction-slip block, which lives inside the interlock block).
   if (xcrackOn) interlockCyclic = true;
+  // a non-default shear-retention curve is an interlock feature; const/dsfm parametrize the
+  // CYCLIC slip stiffness, so they imply -interlock -cyclic. rots only needs -interlock
+  // (it disables the fixed-crack shear). mcft (0) implies nothing (it is the default).
+  if (shearRetMode == 1 || shearRetMode == 2) interlockCyclic = true;
+  if (shearRetMode != 0) interlockOn = true;
   if (interlockCyclic && !interlockOn) interlockOn = true;
 
   if (Ce.size() < 2 || Cs.size() != Ce.size()) {
@@ -149,7 +163,8 @@ void* OPS_LadrunoRCConcrete(void)
   P.E = E; P.nu = nu; P.Kc = Kc; P.betaFloor = betaFloor;
   P.cdf = 0.0; P.eta = 0.0;
   P.betaOn = betaOn; P.lublinerTCReduced = lubRed; P.tangentMode = tanMode;
-  P.interlockOn = interlockOn; P.interlockCyclic = interlockCyclic; P.shearRetMode = shearRetMode;
+  P.interlockOn = interlockOn; P.interlockCyclic = interlockCyclic;
+  P.shearRetMode = shearRetMode; P.shearRetFactor = shearRetFactor;
   P.aggSize = aggSize; P.crackStrain = crackStrain; P.crackSpacing = crackSpacing;
   P.lch = lch; P.betaSrMin = betaSrMin; P.sqrtFc = 0.0;
   P.xcrackOn = xcrackOn; P.degKappa = degKappa; P.degSlipRef = degSlipRef; P.degMin = degMin;
@@ -180,7 +195,7 @@ LadrunoRCConcrete::LadrunoRCConcrete()
   // safe defaults until recvSelf populates P
   P.E = 1.0; P.nu = 0.0; P.Kc = 2.0/3.0; P.fcft_ratio = 5.0; P.betaFloor = 0.1;
   P.cdf = 0.0; P.eta = 0.0; P.betaOn = false; P.lublinerTCReduced = false; P.tangentMode = 0;
-  P.interlockOn = false; P.interlockCyclic = false; P.shearRetMode = 0; P.aggSize = 16.0;
+  P.interlockOn = false; P.interlockCyclic = false; P.shearRetMode = 0; P.shearRetFactor = 0.4; P.aggSize = 16.0;
   P.crackStrain = 0.0; P.crackSpacing = 0.0; P.lch = 0.0; P.betaSrMin = 0.01; P.sqrtFc = 0.0;
   P.xcrackOn = false; P.degKappa = 0.5; P.degSlipRef = 0.01; P.degMin = 0.1;
   P.implex = false; P.implexAlpha = 1.0; P.implexControl = false;
@@ -412,10 +427,10 @@ NDMaterial* LadrunoRCConcrete::getCopy(const char* type)
 // ===========================================================================
 //  parallel  (serialize params + backbones + committed history)
 // ===========================================================================
-static const int RC_SCHEMA_VERSION = 2;    // bump when the wire layout changes (hard-checked in recvSelf); v2 = +IMPL-EX
+static const int RC_SCHEMA_VERSION = 3;    // bump when the wire layout changes (hard-checked in recvSelf); v2 = +IMPL-EX; v3 = +shearRetFactor
 static const int RC_NSCALAR = 1 /*schemaVersion*/ + 3 /*tag,dim,rho*/
                             + 10 /*E,nu,Kc,fcft,betaFloor,cdf,eta,betaOn,lubRed,tanMode*/
-                            + 8 /*interlockOn,shearRetMode,aggSize,crackStrain,crackSpacing,lch,betaSrMin,sqrtFc*/
+                            + 9 /*interlockOn,shearRetMode,shearRetFactor,aggSize,crackStrain,crackSpacing,lch,betaSrMin,sqrtFc*/
                             + 1 /*interlockCyclic*/
                             + 4 /*xcrackOn,degKappa,degSlipRef,degMin*/
                             + 5 /*implex,implexAlpha,implexControl,implexErrTol,implexTimeRedLim*/
@@ -443,7 +458,7 @@ int LadrunoRCConcrete::sendSelf(int commitTag, Channel& theChannel)
   data(c++) = P.tangentMode;
   data(c++) = P.interlockOn ? 1.0 : 0.0;
   data(c++) = P.interlockCyclic ? 1.0 : 0.0;
-  data(c++) = P.shearRetMode;
+  data(c++) = P.shearRetMode; data(c++) = P.shearRetFactor;
   data(c++) = P.aggSize; data(c++) = P.crackStrain; data(c++) = P.crackSpacing;
   data(c++) = P.lch; data(c++) = P.betaSrMin; data(c++) = P.sqrtFc;
   data(c++) = P.xcrackOn ? 1.0 : 0.0;
@@ -505,7 +520,7 @@ int LadrunoRCConcrete::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBr
   P.tangentMode = (int)data(c++);
   P.interlockOn = (data(c++) != 0.0);
   P.interlockCyclic = (data(c++) != 0.0);
-  P.shearRetMode = (int)data(c++);
+  P.shearRetMode = (int)data(c++); P.shearRetFactor = data(c++);
   P.aggSize = data(c++); P.crackStrain = data(c++); P.crackSpacing = data(c++);
   P.lch = data(c++); P.betaSrMin = data(c++); P.sqrtFc = data(c++);
   P.xcrackOn = (data(c++) != 0.0);
@@ -560,6 +575,12 @@ void LadrunoRCConcrete::Print(OPS_Stream& s, int)
     << "  eps_cr=" << P.crackStrain << "  s_theta=" << P.crackSpacing
     << "  betaSrMin=" << P.betaSrMin;
   if (P.xcrackOn) s << "  degKappa=" << P.degKappa << " degSlipRef=" << P.degSlipRef << " degMin=" << P.degMin;
+  if (P.interlockOn) {
+    const char* srn = (P.shearRetMode == 1) ? "const" : (P.shearRetMode == 2) ? "dsfm"
+                    : (P.shearRetMode == 3) ? "rots" : "mcft";
+    s << "  shearRetention=" << srn;
+    if (P.shearRetMode == 1) s << "(mu=" << P.shearRetFactor << ")";
+  }
   s << endln;
   s << "  implex: " << (P.implex ? "ON" : "off");
   if (P.implex) s << "  alpha=" << P.implexAlpha

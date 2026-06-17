@@ -43,7 +43,8 @@ TD = [0.0, 0.0,    1.0 - 0.5 / 5.0]
 
 def _rc(tag, beta=False, lub_reduced=None,
         interlock=False, agg=16.0, crack_spacing=0.0, beta_sr_min=0.01, cyclic=False,
-        xcrack=False, deg_kappa=None, deg_slip_ref=None, deg_min=None):
+        xcrack=False, deg_kappa=None, deg_slip_ref=None, deg_min=None,
+        shear_ret=None, shear_ret_factor=None):
     if lub_reduced is None:
         lub_reduced = beta
     args = ["LadrunoRCConcrete", tag, E, NU,
@@ -59,6 +60,10 @@ def _rc(tag, beta=False, lub_reduced=None,
             args += ["-crackSpacing", crack_spacing]
         if cyclic:
             args += ["-cyclic"]
+        if shear_ret is not None:
+            args += ["-shearRetention", shear_ret]
+            if shear_ret_factor is not None:
+                args += ["-shearRetFactor", shear_ret_factor]
         if xcrack:
             args += ["-xcrack"]
             if deg_kappa is not None:
@@ -713,3 +718,203 @@ def test_xcrack_matches_oracle_cyclic():
         sig_o, _, st = ref.compute(P, st, s)
         nmax = max(nmax, abs(sig[3] - sig_o[3]))
     assert nmax < 5.0e-3, f"C++ vs oracle xcrack cyclic mismatch {nmax}"
+
+
+# ==========================================================================
+#  Phase 2b.2c — -shearRetention {mcft|const|dsfm|rots} crack-shear retention curve
+#  The mode selects the CYCLIC crack-plane slip stiffness G_slip in the friction
+#  predictor tau_cr = clamp(tau_cr_c + G_slip*dgamma_nt, +/- v_ci,max(w)). The cap is
+#  unchanged in every mode. mcft = full G (default); const = mu*G; dsfm = width-degraded
+#  G; rots = rotating-coaxial (no independent crack shear). All reduce to mcft.
+# ==========================================================================
+def _shear_unload_slope(mat_fn, exx=5.0e-4, gamma=2.0e-3, sth=50.0, a_g=16.0):
+    """Drive tension-then-cyclic-shear; return (slope at the first reversal, v_ci,max).
+    The reversal unloads along the crack-shear slip stiffness G_slip -> this measures it."""
+    import numpy as np
+    pts = _path_stages(mat_fn, exx, gamma, [0, 1, 1, 1], [0, 0, 1, -1], nper=80, record_from=1)
+    gs = [g for g, _ in pts]
+    ipk = int(np.argmax(gs))
+    g0, s0 = pts[ipk][0], pts[ipk][1][3]
+    g1, s1 = pts[ipk + 1][0], pts[ipk + 1][1][3]
+    vci = _vci_max(np.sqrt(max(CS)), exx * sth, a_g)
+    return (s1 - s0) / (g1 - g0), vci
+
+
+@pytest.mark.t1
+def test_shearret_const_unity_matches_mcft():
+    """-shearRetention const with mu=1 must be byte-identical to the default (mcft) cyclic
+    path: same slip stiffness G, same cap -> identical crack-shear trajectory."""
+    import numpy as np
+    exx, gamma, sth, a_g = 5.0e-4, 2.0e-3, 50.0, 16.0
+    base = _path_stages(lambda t: _rc(t, beta=False, interlock=True, cyclic=True, agg=a_g, crack_spacing=sth),
+                        exx, gamma, [0, 1, 1, 1, 1], [0, 0, 1, -1, 1], nper=40, record_from=0)
+    cst = _path_stages(lambda t: _rc(t, beta=False, interlock=True, cyclic=True, agg=a_g, crack_spacing=sth,
+                                     shear_ret="const", shear_ret_factor=1.0),
+                       exx, gamma, [0, 1, 1, 1, 1], [0, 0, 1, -1, 1], nper=40, record_from=0)
+    nmax = max(abs(a[1][3] - b[1][3]) for a, b in zip(base, cst))
+    assert nmax < 1.0e-9, f"const(mu=1) != mcft: max |dtau|={nmax}"
+
+
+@pytest.mark.t1
+def test_shearret_const_unload_stiffness_is_mu_G():
+    """const-mode unload slope off the cap == mu*G (the reduced constant retention stiffness),
+    strictly softer than the full-G mcft default."""
+    G, mu = E / (2.0 * (1.0 + NU)), 0.4
+    sth, a_g = 50.0, 16.0
+    slope, vci = _shear_unload_slope(
+        lambda t: _rc(t, beta=False, interlock=True, cyclic=True, agg=a_g, crack_spacing=sth,
+                      shear_ret="const", shear_ret_factor=mu))
+    assert slope == pytest.approx(mu * G, rel=3.0e-2), f"const unload slope {slope} != mu*G {mu * G}"
+    assert slope < 0.8 * G, "const retention not softer than full G"
+
+
+@pytest.mark.t1
+def test_shearret_dsfm_unload_stiffness_is_width_degraded():
+    """dsfm-mode unload slope off the cap == G*(0.31/denom) (the width-degraded slip
+    stiffness, denom = 0.31 + 24 w/(a_g+16)). Strictly softer than full G once the crack opens."""
+    import numpy as np
+    G = E / (2.0 * (1.0 + NU))
+    # a wide crack (w = exx*sth = 0.1 mm) so the DSFM width-degradation is pronounced:
+    # denom = 0.31 + 24*0.1/32 = 0.385 -> G_slip = G*0.31/0.385 ~= 0.805*G.
+    exx, sth, a_g = 1.0e-3, 100.0, 16.0
+    w = exx * sth
+    denom = 0.31 + 24.0 * w / (a_g + 16.0)
+    g_expected = G * (0.31 / denom)
+    slope, vci = _shear_unload_slope(
+        lambda t: _rc(t, beta=False, interlock=True, cyclic=True, agg=a_g, crack_spacing=sth,
+                      shear_ret="dsfm"), exx=exx, sth=sth, a_g=a_g)
+    assert slope == pytest.approx(g_expected, rel=4.0e-2), f"dsfm unload slope {slope} != G*0.31/denom {g_expected}"
+    assert slope < 0.9 * G, "dsfm retention not softer than full G at this crack width"
+
+
+@pytest.mark.t1
+def test_shearret_const_caps_at_same_vci():
+    """The retention mode changes the slip STIFFNESS, not the CAP: const-mode crack-shear
+    still saturates at +/- v_ci,max(w), identical to the default."""
+    import numpy as np
+    exx, gamma, sth, a_g = 5.0e-4, 3.0e-3, 50.0, 16.0
+    pts = _path_stages(lambda t: _rc(t, beta=False, interlock=True, cyclic=True, agg=a_g, crack_spacing=sth,
+                                     shear_ret="const", shear_ret_factor=0.4),
+                       exx, gamma, [0, 1, 1, 1, 1], [0, 0, 1, -1, 1], nper=80, record_from=1)
+    vci = _vci_max(np.sqrt(max(CS)), exx * sth, a_g)
+    taus = [sig[3] for _, sig in pts]
+    assert max(taus) == pytest.approx(vci, rel=4.0e-3), f"const +peak {max(taus)} != vci {vci}"
+    assert min(taus) == pytest.approx(-vci, rel=4.0e-3), f"const -peak {min(taus)} != -vci {vci}"
+
+
+@pytest.mark.t1
+def test_shearret_rots_disables_crack_shear():
+    """-shearRetention rots = rotating-coaxial: the fixed-crack shear block is skipped, so the
+    membrane shear stays smeared -> identical to interlock OFF (no crack capture, no cap)."""
+    exx, gamma, sth = 5.0e-4, 2.0e-3, 50.0
+    off = _path_tension_then_shear(
+        lambda t: _rc(t, beta=False, interlock=False), exx, gamma, n1=40, n2=70)
+    rots = _path_tension_then_shear(
+        lambda t: _rc(t, beta=False, interlock=True, cyclic=True, crack_spacing=sth, shear_ret="rots"),
+        exx, gamma, n1=40, n2=70)
+    nmax = max(abs(a[1][3] - b[1][3]) for a, b in zip(off, rots))
+    assert nmax < 1.0e-9, f"rots != interlock-off (smeared shear): max |dtau|={nmax}"
+    # and rots must NOT have frozen a crack
+    assert list(ops.eleResponse(1, "material", "1", "crackState"))[0] < 0.5, "rots wrongly froze a crack"
+
+
+@pytest.mark.t1
+def test_shearret_const_matches_oracle_path():
+    """C++ vs numpy oracle over a full reversing path with const-mode retention (mu=0.4):
+    axis-aligned crack => sigma_xy == tau_ci is backbone-independent, so a step-by-step match."""
+    import numpy as np
+    import sys, os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "_testbed"))
+    import rc_shell_ref as ref
+    exx, gamma, sth, a_g, mu = 5.0e-4, 2.0e-3, 50.0, 16.0, 0.4
+    pts = _path_stages(lambda t: _rc(t, beta=False, interlock=True, cyclic=True, agg=a_g, crack_spacing=sth,
+                                     shear_ret="const", shear_ret_factor=mu),
+                       exx, gamma, [0, 1, 1, 1, 1], [0, 0, 1, -1, 1], nper=40, record_from=0)
+    P = ref.reference_params(beta_on=False)
+    P.interlock_on = True; P.interlock_cyclic = True
+    P.agg_size = a_g; P.crack_spacing = sth
+    P.shear_ret_mode = 1; P.shear_ret_factor = mu
+    st = ref.State()
+    nmax = 0.0
+    for g, sig in pts:
+        s = np.array([exx, 0.0, 0.0, g, 0.0, 0.0])
+        sig_o, _, st = ref.compute(P, st, s)
+        nmax = max(nmax, abs(sig[3] - sig_o[3]))
+    assert nmax < 5.0e-3, f"C++ vs oracle const-retention cyclic mismatch {nmax}"
+
+
+# ==========================================================================
+#  Phase 2b.2c — crack-closure on the NORMAL direction (unilateral recovery)
+#  The cloned ASDConcrete3D spine reassembles the spectral tension/compression
+#  split EVERY step from the live effective stress with independent dt/dc and
+#  cdf=0, which IS unilateral crack closure on the normal: tensile cracking
+#  (dt>0) must NOT knock down the compressive capacity once the crack closes.
+#  The fixed-crack addition is shear-only, so the normal closure is the spine's
+#  job. These gates verify it end-to-end in OpenSees.
+# ==========================================================================
+def _run_legs(mat_fn, targets, nper=80):
+    """Drive node-2 dof-1 (uniaxial stress, lateral free) through successive SIGNED
+    displacement targets via DisplacementControl. Returns [(eps_xx, sig_xx), ...]."""
+    _build(mat_fn)
+    out = []
+    u = 0.0
+    for tgt in targets:
+        d = (tgt - u) / nper
+        ops.integrator("DisplacementControl", 2, 1, d)
+        for _ in range(nper):
+            assert ops.analyze(1) == 0, f"leg to {tgt} analyze failed"
+            ops.eleResponse(1, "forces")
+            sig = list(ops.eleResponse(1, "stresses"))[0:6]
+            out.append((ops.nodeDisp(2, 1), sig[0]))
+        u = tgt
+    return out
+
+
+@pytest.mark.t1
+def test_crack_closure_recovers_full_compression():
+    """Unilateral crack closure on the NORMAL direction: crack the point in tension
+    (dt>0, sigma softens), then load it into compression past the peak. The compressive
+    capacity must FULLY recover (prior tensile damage does not bleed into compression,
+    cdf=0) — i.e. the compression peak equals a virgin compression run with no prior
+    cracking. This is the spine's spectral reassembly = crack closure, verified end-to-end."""
+    # crack in tension (eps past ft/E=1e-4), then compress past the peak (eps ~ -2e-3)
+    cracked = _run_legs(lambda t: _rc(t, beta=False), [3.0e-4, -2.4e-3])
+    virgin = _run_legs(lambda t: _rc(t, beta=False), [-2.4e-3])
+    peak_cracked = min(s for _, s in cracked)     # most compressive
+    peak_virgin = min(s for _, s in virgin)
+    assert peak_cracked < -25.0, f"compression did not develop after closure: {peak_cracked}"
+    assert peak_cracked == pytest.approx(peak_virgin, rel=1.0e-3), (
+        f"crack closure did not recover full compression: cracked peak {peak_cracked} "
+        f"vs virgin {peak_virgin}")
+
+
+@pytest.mark.t1
+def test_crack_closure_tension_damage_is_irreversible():
+    """The flip side of unilateral closure: after cracking + closing + REOPENING, the
+    reopened tensile stress must follow the DAMAGED (softened) tension envelope, not the
+    virgin elastic one — tensile damage is irreversible even though compression recovered."""
+    # crack DEEP into tension softening (eps=1e-3, the TE/TS tail where the envelope is 0.5),
+    # then close into compression, then reopen to the same +tension strain.
+    pts = _run_legs(lambda t: _rc(t, beta=False), [1.0e-3, -1.0e-3, 1.0e-3])
+    # the reopened-tension tail must follow the DAMAGED envelope (~0.5), far below both the
+    # virgin tensile peak ft=3 AND the virgin elastic response E*eps at that strain.
+    reopen = [s for e, s in pts[-80:] if e > 6.0e-4]
+    assert reopen, "no reopened-tension samples"
+    assert max(reopen) < 0.4 * max(TS), (
+        f"reopened tension {max(reopen)} not on the damaged envelope (ft={max(TS)})")
+    assert max(reopen) < 0.1 * E * 1.0e-3, "reopened tension not below virgin elastic (no damage?)"
+
+
+@pytest.mark.t1
+def test_crack_closure_with_interlock_recovers_compression():
+    """Crack closure with the fixed-crack interlock ON: forming the crack + freezing its
+    normal must NOT corrupt the normal compressive recovery (the interlock modifies only the
+    crack-plane SHEAR). Compression peak after a frozen-crack + closure == virgin compression."""
+    sth = 50.0
+    cracked = _run_legs(lambda t: _rc(t, beta=False, interlock=True, cyclic=True, crack_spacing=sth),
+                        [3.0e-4, -2.4e-3])
+    virgin = _run_legs(lambda t: _rc(t, beta=False), [-2.4e-3])
+    peak_cracked = min(s for _, s in cracked)
+    peak_virgin = min(s for _, s in virgin)
+    assert peak_cracked == pytest.approx(peak_virgin, rel=1.0e-3), (
+        f"interlock corrupted normal closure: cracked {peak_cracked} vs virgin {peak_virgin}")

@@ -631,6 +631,99 @@ state + governing-cap** variant that delivers the same physics without those fla
 - **Still deferred to 2b.2c:** crack-closure normal spectral reassembly; the `-shearRetention {const|dsfm|
   rots}` retention CURVES; **panel/experiment pinching validation (Tran–Wallace)**; rigid-rotation objectivity.
 
+#### Phase 2b.2c.1 (SHIPPED) — `-shearRetention {mcft|const|dsfm|rots}` crack-shear retention curves
+Wires the long-reserved `shearRetMode` (the parser had a `NOTE` placeholder, only mode 0 live) into a real
+flag selecting the **CYCLIC crack-plane slip stiffness** `G_slip` in the friction predictor
+`τ_cr = clamp(τ_cr_c + G_slip·Δγ_nt, ±v_ci,max(w))`. The `v_ci,max(w)` **cap is unchanged in every mode**
+(keeps the 2a/ADR bound) — only the slip stiffness changes. All modes reduce to `mcft`.
+- **Flag:** `-shearRetention {mcft|const|dsfm|rots}` (+ `-shearRetFactor $mu` for `const`). Default = `mcft`.
+  `const`/`dsfm` imply `-interlock -cyclic`; `rots` implies `-interlock`. mcft (the shipped default) implies
+  nothing ⇒ **2b.2b byte-identical when the flag is absent**.
+- **Modes (decided):**
+  - `mcft` (0, default): `G_slip = G = E/2(1+ν)` — the shipped full-elastic slip stiffness (DSFM-with-slip).
+  - `const` (1): `G_slip = μ·G`, `μ = -shearRetFactor` ∈ (0,1] (default 0.4, the FSAM `0.4·Ec` lineage) —
+    classic constant shear retention (Rots/Červenka). `μ=1` ⇒ bit-identical to `mcft`.
+  - `dsfm` (2): `G_slip = G·(0.31/denom)`, `denom = 0.31 + 24w/(a_g+16)` — DSFM-flavored **width-degraded**
+    slip stiffness (softens as the crack opens). At `w=0` ⇒ `mcft`.
+  - `rots` (3): rotating-coaxial — the fixed-crack shear block is **skipped entirely** (no capture, no clip,
+    no friction, no tangent cross-term), so the membrane shear stays smeared/spectral ⇒ **identical to
+    `-interlock` OFF**. The ADR's monotonic-only rotating choice, surfaced so a user can A/B vs fixed-crack.
+- **Scope honesty:** `const`/`dsfm` parametrize the *slip stiffness*, which only exists on the `-cyclic`
+  friction path; on the 2a monotone-clip path they are inert (same `v_ci,max` plateau). Documented, not silent.
+- **Serialization:** `RC_SCHEMA_VERSION 2→3` (+`shearRetFactor`, hard-checked; rejects v2 vectors).
+- **Verified (Zone-A, material-point + numpy oracle):** `const(μ=1)` ≡ `mcft` (max |Δτ| < 1e-9); `const`
+  unload slope == `μ·G`; `dsfm` unload slope == `G·0.31/denom` (closed-form, wide-crack); cap still
+  `±v_ci,max` in every mode; `rots` ≡ interlock-OFF (no crack frozen); C++ ≡ numpy oracle step-by-step on a
+  reversing `const` path. 25/25 material + 35/35 full RC suite green; no regression to 2a/2b.1/2b.2b.
+- **Still deferred to 2b.2c.2+:** crack-closure normal spectral reassembly; **panel/experiment pinching
+  validation (Tran–Wallace)**; rigid-rotation objectivity.
+
+#### Phase 2b.2c.2 (SHIPPED, test-only) — rigid-rotation objectivity gate
+The keystone acceptance test deferred since 2a/2b.1/2b.2a/2b.2b. The fixed-crack design rests on the
+claim (ADR D1/D5) that the supported large-rotation route — the **corotational element**
+(`ASDShellQ4 -corotational`), which feeds the small-strain material the *de-rotated* strain `Q^T E Q` —
+is objective for the **directional** crack/interlock state. The property that makes that route objective
+is the constitutive frame-indifference identity
+`σ(Q E Q^T) == Q σ(E) Q^T` over an arbitrary cracked, cyclic, X-cracked history.
+- **Test:** `tests/test_ladrunoRCConcrete_objectivity.py` (Zone-A). The homogeneous all-DOF-prescribed
+  (Penalty) `stdBrick` probe is driven through a tension-then-reversing-shear path that forms a fixed
+  crack and exercises the interlock, in the reference frame AND in a frame rigidly rotated about z by a
+  **large** angle (parametrized 30°/90°/127°, plus 63° with `-xcrack` + wear), prescribing the full
+  symmetric strain tensor `u = E·X` from the rotated basis tensors `Q A Q^T`, `Q B Q^T`. Asserts the two
+  stress trajectories coincide after the Q-transform to `< 1e-5·peak`.
+- **Result: PASS (4/4), no kernel change.** The cracked directional state is objective **by construction**
+  — the crack normal is captured from the strain principal direction (co-rotates with the frame), the
+  interlock projectors `m_ε`/`m_σ` are built from that normal (co-rotate), and the friction predictor /
+  `v_ci,max` cap / wear are built from *frame-invariant scalars* (`g_nt`, `e_n`, `slipCum`). So rotating
+  the strain frame rotates the stress frame identically. This **discharges the ADR's Zone-A objectivity
+  item (a)** (corotational-element route → PASS) at the constitutive level; the §14.11 `setTrialF`
+  material-view xfail (item b) is unchanged (that path is Phase 4).
+- **Still deferred to 2b.2c.3+:** crack-closure normal spectral reassembly; **panel/experiment pinching
+  validation (Tran–Wallace squat-wall, meshed)**.
+
+#### Phase 2b.2c.3 (RESOLVED by verification, test-only) — crack-closure on the NORMAL direction
+The deferred "crack-closure normal spectral reassembly" turns out to be **already correct in the cloned
+spine** — the right engineering conclusion, not a new feature. `ASDConcrete3D`'s `StressDecomposition`
+recomputes the spectral tension/compression split **every step** from the live effective stress with
+**independent `dt`/`dc`** and `cdf=0`; that per-step recompose **is** unilateral crack closure on the
+normal direction (tensile damage `dt` does not bleed into the compressive cone, so a closing crack
+recovers full compressive stiffness). The kernel clones this verbatim. The **fixed-crack** addition
+(2a/2b) is therefore correctly **shear-only** — it modifies only the crack-plane shear `m_σ·σ_ip`, never
+the normal stress, which remains the spine's spectral job. There is no separate fixed-crack normal
+reassembly to add at the constitutive level; adding one would double-count the spine's recompose.
+- **Verified (Zone-A, `tests/test_ladrunoRCConcrete_material.py`):** (i) crack a point in tension
+  (`dt>0`, stress softens) then load past the compressive peak ⇒ the compression capacity **fully
+  recovers** (== a virgin compression run, prior tensile damage does not knock it down); (ii) crack →
+  close → **reopen** ⇒ the reopened tension follows the **damaged** envelope (≪ virgin elastic), so
+  tensile damage is irreversible even though compression recovered; (iii) the same full-compression
+  recovery holds with the **fixed-crack interlock ON** (freezing the crack normal does not corrupt the
+  normal closure). 4/4 new gates; full RC suite 42/42.
+- **Caveat (honest):** this verifies the **rotating/spectral** closure (the spine's frame), which the
+  objectivity gate (2b.2c.2) showed is frame-indifferent. A *directional* fixed-crack normal
+  traction–separation law (distinct from the spine's spectral normal) is **not** part of this model and
+  is not needed for the membrane-shear physics; if a future phase wants an explicit fixed-crack normal
+  opening law it is a separate, deliberate addition (noted, not silently assumed done).
+
+#### Phase 2b.2c.4 (HARNESS built, validation deferred) — Tran–Wallace squat-wall pinching
+The one remaining 2b.2c item: a meshed non-homogeneous wall where principal rotation produces the pinched
+*waist* the material-point tests structurally cannot. Material physics for cyclic is now **complete**
+(compression softening, interlock bound, cyclic friction-slip, X-cracking + wear, retention curves,
+IMPL-EX robustness, objectivity, crack closure); this is a **validation**, not new physics.
+- **Harness built (`tests/_testbed/rc_wall_harness.py`, not a pytest gate):** a structured `NX×NY`
+  ASDShellQ4 grid on a `LayeredShell` = 4 `LadrunoRCConcrete` concrete layers (full cyclic stack
+  `-beta -lublinerReduced -interlock -cyclic -implex`) + 2 smeared `PlateRebar(Steel02)` web-steel layers
+  (no gmsh — environment-portable). **Status (run on this branch):** the model assembles, runs, and
+  produces a real cyclic shear response **with hysteretic dissipation** on the first drift cycle
+  (`V≈±146 kN` at 0.3 mm; closed-loop area > 0), then **walls on convergence at larger drift (~0.6 mm+)**
+  — the classic cyclic-softening RC-wall barrier.
+- **Deferred (the research-grade validation):** (1) a robust multi-cycle solver — arc-length /
+  `LadrunoIndirectControl` follower (built for exactly this snap-back), dynamic relaxation, finer
+  substeps, or an IMPL-EX-error step-cut — to push to the drifts where the waist is pronounced;
+  (2) calibration to a named specimen (**Tran–Wallace RW-A20-P10** or a PEER squat-wall) asserting
+  **pinching shape + cumulative hysteretic energy** vs the measured loops (the ADR's primary squat-wall
+  gate); (3) optional gmsh/apeGmsh graded mesh + boundary elements (then `zone_b`). This is the genuine
+  Zone-B validation the ADR always framed it as, not a clean material slice.
+
 ### Phase 3 — Tension stiffening + crack-band/`lch` hardening
 - **Build:** VC/CM tension-stiffening plateaus (opt-in); resolve `lch` per **D5 Option A or B**.
 - **New:** if Option B, the ledgered vanilla `lch` plumb.
