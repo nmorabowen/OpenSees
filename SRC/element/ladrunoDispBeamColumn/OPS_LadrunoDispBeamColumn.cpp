@@ -35,7 +35,8 @@
 //   element('LadrunoDispBeamColumn', eleTag, iNode, jNode, transfTag, integrationTag
 //           [, '-mass', massPerLength] [, '-cMass'] [, '-damp', dampTag]
 //           [, '-lch', {ip|element|<value>}]    # regularization length (default: ip)
-//           [, '-nl'])                          # ½θ² (2D) / ½(θy²+θz²) (3D) bowing strain (default: linear)
+//           [, '-nl']                           # ½θ² (2D) / ½(θy²+θz²) (3D) bowing strain (default: linear)
+//           [, '-hinge', matTag])               # 2D only: embedded cohesive rotation-jump hinge (ADR 32 Tier-2)
 //
 // -lch selects the characteristic length reported to crack-band / auto-regularizing
 // materials (ASDConcrete1D -autoRegularization, ASDSteel1D, LadrunoUniaxialJ2+Lemaitre):
@@ -47,8 +48,12 @@
 // DispBeamColumnNL{2,3}d bowing strain (displacement-based P-δ). Default (no -nl) is
 // bit-identical to stock dispBeamColumn.
 //
-// Both the 2D and 3D classes are built and dispatched below. Tier-2 (embedded softening
-// hinge) is a later stage.
+// -hinge $matTag (2D only, PR-2a) embeds a discrete cohesive rotation-jump hinge carrying
+// any UniaxialMaterial (LadrunoCohesiveHinge is the intended default): kappa_bulk = B*v - alpha/L,
+// alpha condensed to the 3-DOF basic system before crdTransf. Mutually exclusive with -nl.
+//
+// Both the 2D and 3D classes are built and dispatched below. The embedded hinge (-hinge)
+// is 2D only in v1; the 3D embedded hinge is a later stage.
 
 #include <elementAPI.h>
 #include <OPS_Globals.h>

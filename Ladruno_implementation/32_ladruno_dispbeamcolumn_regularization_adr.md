@@ -214,4 +214,137 @@ says to land FIRST (before the path-follower / multi-mesh tests).
   rotation-jump `κ = B·d + G·α` with `α` statically condensed to the 3-DOF basic
   system BEFORE `crdTransf` (the PINNED INVARIANT) — the genuinely hard EAS piece.
 
+### 2026-06-17 — Adversarial pre-implementation review of Stage-2 element wiring → CORRECTIONS (4-agent review)
+
+Before coding the element-side hinge, a 4-agent adversarial review (corotational
+composition / EAS-condensation+activation / energy-double-count+freezing /
+kinematics+serialization+sequencing) was run against this ADR's Tier-2 plan. It
+found **several load-bearing errors in the plan as written**. The plan is amended
+as follows; the original §Tier-2 / landmines text is superseded where they conflict.
+
+1. **Kinematics: the shipped base is EULER–BERNOULLI, not Timoshenko.** Stage-1
+   shipped a faithful clone of `DispBeamColumn2d` (`LadrunoDispBeamColumn2d.cpp:491`
+   == `DispBeamColumn2d.cpp:671`, cubic-Hermite linear curvature; the §"Kinematics
+   (default Timoshenko)" text and the `TimoshenkoBeamColumn2d.cpp:610` reference are
+   WRONG and were never built). The hinge `G` operator is therefore built against
+   the E–B curvature field `κ_d = (1/L)[(6ξ−4)θ_i + (6ξ−2)θ_j]`. Do NOT pull in the
+   Timoshenko `phi`/shear-row B-operator — that would break reduce-to-Tier-1.
+
+2. **"Freeze the fiber section" is unimplementable AND unnecessary — use the real
+   Armero–Ehrlich split.** There is no `SectionForceDeformation` API to freeze/elastic-
+   unload a section; `setTrialSectionDeformation` always re-evaluates fibers from the
+   strain handed in. The correct mechanism: the **bulk section sees the BOUNDED
+   enhanced curvature** `κ_bulk = B·v + Ḡ·α`, where `Ḡ = −1/L` (constant, bounded —
+   the smooth part of the incompatible mode). As `α` grows, `Ḡ·α` *unloads* the bulk
+   (its curvature decreases), so the bulk dissipates nothing further and unloads on
+   its own constitutive law — no freeze flag, no double count. ALL post-peak
+   dissipation is carried by the cohesive `M([[θ]])` on `α`. Delete the contradictory
+   "softening branch of the same section / not a parallel spring" language: post-
+   activation this is operationally a discrete hinge in **series** with an elastically-
+   unloading bulk (Jukić–Brank–Ibrahimbegović 2013 embedded-discontinuity beam).
+
+3. **The Dirac never enters quadrature; orthogonality is machine-exact.** The jump
+   (Dirac) part is handled DIRECTLY by the cohesive law (`M_coh(α)` added to the
+   enhancement residual), not integrated. Only the bounded `Ḡ = −1/L` is integrated:
+   `Σ wt_k Ḡ = −(1/L)·Σ wt_k = −1` exactly (Lobatto/Legendre weights sum to L), and
+   the jump contributes `+1`, so `∫G dx = 0` holds to machine precision under ANY
+   rule — resolving the "Dirac-at-one-IP vs ∫G=0 is unsatisfiable" objection.
+
+4. **The condensation algebra (per element, scalar α, ONE hinge):**
+   - enhancement residual `h(α) = Σ_k wt_k · Ḡ · M_sec,k(κ_bulk) + M_coh(α) = 0`
+   - `K_αα = Σ_k wt_k · Ḡ · EI_sec,k · Ḡ + dM_coh/dα`  (bulk term ≥0; cohesive term <0
+     post-peak) — **`K_αα` is sign-discontinuous at activation and INDEFINITE across
+     the whole softening branch, not merely zero "at the peak"** (the landmine-#2
+     premise was mis-stated). The condensed tangent `K_basic = K_vv − K_vα K_αα⁻¹ K_αv`
+     contains `K_αα⁻¹` regardless of how α is found — **"closed-form jump update" does
+     NOT escape the singularity.** Mitigation that ACTUALLY works: a **guarded
+     reciprocal** `1/K_αα` with a magnitude floor (`|K_αα| ≥ ε·K_αα0`), the bulk
+     `Ḡᵀ EI Ḡ` providing a positive stabiliser. Inner Newton on the scalar α with the
+     same floor.
+   - `K_vα = Σ_k wt_k · B_kᵀ · EI_sec,k · Ḡ` (3-vector), `K_αv = K_vαᵀ`. Axial DOF
+     untouched in v1 (linear basic strain only).
+   - **The basic FORCE needs NO explicit condensation correction**: at converged α
+     (`h=0`) the sections already hold `κ_bulk`, so `q = Σ wt_k B_kᵀ M_sec,k` IS the
+     condensed basic force. Only the TANGENT gets the `−K_vα K_αα⁻¹ K_αv` correction.
+
+5. **`-nl` bowing × α couples the jump into the axial/geometric channel** (the `½θ²`
+   membrane strain makes the axial force depend on the bending rotations, which the
+   hinge curvature perturbs). v1 **forbids `-nl` + `-hinge` together** (parser error);
+   the hinge uses the linear basic strain. (Revisit the cross-term algebra later.)
+
+6. **Reduce-to-Tier-1 must be byte-identical → GATE the α machinery** on a per-element
+   `hingeOn` flag, exactly like the `-nl` flag. With no `-hinge` option the force/
+   stiffness/update paths take the IDENTICAL code path (and FP summation order) they
+   take today — never "condensation with zero operands" (which perturbs at O(ulp) and
+   fails the `RELDIFF==0.0` gate).
+
+7. **State/serialization & cached-tangent (the non-Newton hole):** `getTangentStiff()`
+   can be called WITHOUT a preceding `update()` under ModifiedNewton / KrylovNewton /
+   line-search / arc-length — so a naive "converge α in update(), cache, readers
+   trust cache" contract reads a STALE α under exactly the solvers Stage-2's later
+   gates use. **PR-2a restricts to monotonic full-Newton / DisplacementControl** (the
+   solver-independent gates need nothing else); the idempotent re-converge-α-from-
+   commit hardening is deferred to PR-2b. The localization/`αCommit` flag flips ONLY
+   in `commitState`; `revertToLastCommit` restores α to `αCommit` and rebuilds the
+   hinge tangent (else a rejected step resurrects/loses a hinge). Serialize the hinge
+   material like the sections (classTag+dbTag+sendSelf) + scalar `αCommit`/`hingeOn`/
+   `hingeLoc`; gate so old (no-hinge) streams are unaffected.
+
+8. **`setDomain` "non-softening fibers at hinge IP" check is unbuildable** — there is
+   NO `isSoftening()` query anywhere in `SRC/`. Downgrade to a **documented user
+   contract** for v1 (the hinge carries `Gf`; pairing it with a softening fiber
+   section at the same IP double-counts and is the user's responsibility). A real
+   `isSoftening()` interface is a separate vanilla-file change, deferred.
+
+9. **Energy gate must measure ELEMENT total dissipation** (`∫F·v` via EnergyBalance)
+   on an OTHERWISE-ELASTIC section `== Gf` — the cohesive material's own `Twork==Gf`
+   gate (already green) cannot detect the section re-integrating the same energy.
+
+#### PR-2a scope (the minimal correct first increment — what ships next)
+
+- `-hinge <matTag> [loc]` (or `-hinge -Mc Mc -Gf Gf ...` auto-building a
+  `LadrunoCohesiveHinge`): ONE rotation-jump `α` (scalar) condensed per element with
+  the guarded reciprocal; default hinge location mid-element. Linear basic strain
+  only (mutually exclusive with `-nl`). Linear + Corotational transf, monotonic.
+- Everything GATED on `hingeOn` so the no-hinge path is byte-identical to Stage-1.
+- **Gates (solver-independent, no path-follower):** (a) reduce-to-Tier-1 `RELDIFF==0.0`
+  with `-hinge` absent; (b) constant-moment patch test to machine precision (a single
+  element under pure moment: the hinge carries exactly the applied moment, zero
+  spurious stress); (c) single-element `∫M d[[θ]] == Gf` under DisplacementControl;
+  (d) FD-tangent of the condensed `K_basic` (incl. an open-hinge state); (e) element
+  total-dissipation `== Gf` on an elastic section; (f) commit/revert state cycle.
+- **Deferred to PR-2b+:** integration-objectivity sweep, pre-cracked finite-rotation
+  invariance, `-nl`+hinge cross-terms, non-Newton/line-search α re-convergence, the
+  `ladruno_drive` collapse test (needs the still-RESERVED dissipation arc-length), 3D.
+
+### 2026-06-17 — PR-2a SHIPPED: element-side embedded hinge (`-hinge $matTag`, 2D)
+
+The corrected formulation above, implemented and validated. Reuses `ELE_TAG 33013`
+(no new tag — same element, new gated option).
+
+- **Files:** `SRC/element/ladrunoDispBeamColumn/LadrunoDispBeamColumn2d.{h,cpp}` +
+  `OPS_LadrunoDispBeamColumn.cpp` (usage), `tests/test_ladrunoDispBeamColumn2d_hinge.py` (8 tests).
+- **What landed:** `-hinge $matTag` adds a single scalar rotation jump `α` carried by any
+  `UniaxialMaterial` (default `LadrunoCohesiveHinge`). `update()` runs an inner Newton on
+  `α` (sections see `κ_bulk = B·v − α/L`; residual `h = −Σwt·M_sec + M_coh(α)`; **guarded**
+  `1/K_αα` with a magnitude floor against the bulk term). `getTangentStiff()` subtracts the
+  cached condensation `K_vα K_αα⁻¹ K_αv` from the 3×3 basic stiffness **before** `crdTransf`
+  (pinned invariant); `getResistingForce()` is UNCHANGED (sections hold the converged
+  `κ_bulk`, so `q` is already the condensed basic force). Inner-Newton convergence uses a
+  running moment scale `hingeMscale` (~Mc) so the tol does not collapse when a fully-broken
+  LINEAR hinge carries `M→0`. ALL gated on `hingeOn`; `-hinge`+`-nl` rejected at parse.
+  commit/revert/revertToStart + sendSelf/recvSelf (separate hinge-material send like the
+  sections, + `hingeOn`/`hingeJumpCommit`, data Vector 19→21).
+- **Verified (OpenSeesPy, 8/8; full 46/46 element+material+hinge):** reduce-to-Tier-1
+  **bit-identical** with `-hinge` absent; constant-moment **patch test** — the hinge carries
+  exactly the applied moment to `1e-9` (enhancement equilibrium `h=0`); **energy gate** — a
+  cantilever past the hinge peak dissipates `Gf` (LINEAR `19.999992` vs `20`, ~4e-7 rel) and
+  peaks at `Mc`; **element total dissipation == Gf** on an elastic section (closed
+  load/unload cycle, no bulk double-count); **tangent consistency** — every step through
+  EXP softening converges under NormDispIncr-1e-12 Newton ≤10 iters; commit/revert + DB
+  sendSelf/recvSelf round-trip of an open hinge.
+- **Honest scope:** `setDomain` non-softening-fiber check is a documented user contract (no
+  `isSoftening()` exists). FD-tangent is via tight-Newton convergence (the testbed has no
+  element-DOF FD harness). PR-2b carries the deferred list above.
+
 *(move to `Ladruno_internal/implemented_<name>.md` when Stage 1 merges to `ladruno`)*
