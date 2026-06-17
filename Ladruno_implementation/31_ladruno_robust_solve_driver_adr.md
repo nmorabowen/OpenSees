@@ -402,4 +402,20 @@ DEFERRED (handoff doc): the c-reduction diffusion bound (so a stabilized run can
 `regularized`-with-evidence rather than `unverified`) and the indirect-control
 polish tail after a DR excursion.
 
+### 2026-06-17 — c-reduction diffusion bound SHIPPED (R-DIFFUSION)
+
+The rung-4 fidelity certificate is now built (Python-only, no rebuild; 17-green).
+`diffusion_drift(run_at_f, f, factor=0.5)` re-runs a stabilized analysis at `f`
+and `factor·f` and returns the relative peak-load drift; `robust_drive` accepts
+`verify_rebuild=run_at_f` (+ `verify_tol`, default 2%) and, on a rung-4 success,
+computes `peak_drift` and **upgrades the verdict `unverified` → `regularized` iff
+drift ≤ verify_tol** (else stays `unverified`). `peak_load` (peak `|λ|` over the
+stabilized phase) is tracked for the bound. Honest scope: on the shipped fixtures
+no rung-4 phase reaches `done()` (softening blocks stabilize; snap-through is
+jumped by adaptive load control — R-LOG-MASK), so the driver's INTERNAL verify
+path is logic-complete but not fixture-exercised; the standalone `diffusion_drift`
+is unit-tested directly (pure-math discrimination + the softening strength peak,
+which is `f`-independent → drift ≡ 0 → trustworthy). Only the rung-5 indirect-
+control polish tail remains deferred.
+
 *(move to `Ladruno_internal/implemented_robust_solve_driver.md` when the driver is complete.)*

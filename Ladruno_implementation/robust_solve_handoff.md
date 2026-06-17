@@ -135,8 +135,9 @@ rung-3 (if a control DOF) → rung-4 (if `stabilize`) → rung-5 (if `dynamics`)
   re-issued per step, unlike LoadControl). Reads `dissipationRatio` each commit,
   decays `c` via `scaleCVisc(0.5)` after a clean window (R-RAMPDOWN), records
   `stab_dissipated` (the L0 `SW` energy-partition term). Verdict is
-  `regularized` only if the c-reduction drift was computed, else **`unverified`**
-  (deferred → currently always `unverified`); NEVER `equilibrium`. `bool(res)` is
+  `regularized` only if the **c-reduction diffusion bound** (now SHIPPED 2026-06-17,
+  `verify_rebuild=` / module-level `diffusion_drift`) is computed and the peak-load
+  drift ≤ `verify_tol`, else **`unverified`**; NEVER `equilibrium`. `bool(res)` is
   False for any stabilized result by construction.
 - **rung-5** does the atomic R-HANDOFF: snapshot `λ=getTime()`, `loadConst('-time',λ)`,
   `wipeAnalysis`, build a Transient analysis with `LadrunoDynamicRelaxation`,
@@ -153,19 +154,21 @@ rung-3 (if a control DOF) → rung-4 (if `stabilize`) → rung-5 (if `dynamics`)
 
 ## Immediate next steps (priority order)
 
-1. **Commit + push** the rung-4/5 working-tree changes (the driver rewrite, the
-   `ladrunoDR` C++ command across 4 interp files, `torture_dynamics.py`, the
-   battery additions, ledgers). Build is green + 15-green battery.
-2. **(Deferred) the c-reduction diffusion bound** — the one piece of rung-4 not
-   built. Today every stabilized success is stamped `unverified`. To upgrade to
-   `regularized`-with-evidence, re-run the stabilized segment/drive at halved
-   `stab_f` and bound the peak-load drift (needs a caller-supplied rebuild hook).
-3. **(Deferred) the indirect-control polish tail** after a rung-5 excursion —
+Driver shipped to `ladruno`: PR #243 (rung-0..5 + Layer-1.5), PR #250 (the user
+guide). The **c-reduction diffusion bound is now SHIPPED too** (2026-06-17,
+branch `guppi/robust-creduction`, 17-green): `verify_rebuild=` param + the
+module-level `diffusion_drift(run_at_f, f)` helper; `peak_drift`/`peak_load` on
+the result; verdict upgrades `unverified` → `regularized` when drift ≤ `verify_tol`.
+
+1. **(Deferred) the indirect-control polish tail** after a rung-5 excursion —
    re-land on the true branch with a few CMOD-controlled implicit steps
    (`LadrunoIndirectControl`); today rung-5 returns the DR rest state as-is.
-4. **Battery**: a model where DR genuinely *rescues* (tangent pathology static
-   can't pass) would make rung-5 a WIN, not just plumbing; and a distributed-
-   buckling model with no single control DOF would make rung-4 a WIN.
+2. **Battery / win fixtures**: a model where DR genuinely *rescues* (tangent
+   pathology static can't pass) would make rung-5 a WIN, not just plumbing; and a
+   distributed-buckling model with no single control DOF would make rung-4 a WIN
+   — and would finally exercise the driver's INTERNAL `verify_rebuild` path (today
+   only the standalone `diffusion_drift` is unit-tested, since no fixture makes a
+   rung-4 phase reach `done()`).
 
 ## Key facts — do NOT re-derive
 
