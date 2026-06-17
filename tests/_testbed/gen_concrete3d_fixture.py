@@ -5,17 +5,23 @@ deliverable (ADR §5): it pins the C++ LadrunoConcrete3DKernel return map + anal
 tangent to the verified numpy oracle at the cross-platform tolerance floors
 (stress 1e-7, kappa_p 1e-8, tangent 1e-6).
 
-Run:  python tests/_testbed/gen_concrete3d_fixture.py
-Writes: tests/_testbed/concrete3d_oracle_fixture.txt   (committed)
+Run:  python tests/_testbed/gen_concrete3d_fixture.py [output_path]
+Writes: tests/_testbed/concrete3d_oracle_fixture.txt   (committed; default), OR the path given as
+        argv[1] (the pytest regenerates to a tmp dir so it never overwrites/validates-against-itself
+        the committed artifact — PR #249 review).
 
 Param block order (12 numbers): E nu fc ft e Df qh0 Hp Ah Bh Ch Dh
   (the C++ side sets m0 = m0Of(fc,ft,e); both sides derive K,G from E,nu identically.)
+
+Deterministic (no Date/random) — regenerates byte-identically, so CI can assert the committed
+fixture is up to date via a fresh regen + diff.
 """
 import os
+import sys
 import numpy as np
 import concrete3d_ref as ref
 
-OUT = os.path.join(os.path.dirname(__file__), "concrete3d_oracle_fixture.txt")
+DEFAULT_OUT = os.path.join(os.path.dirname(__file__), "concrete3d_oracle_fixture.txt")
 
 
 def _mp(E, nu, fc, ft, e, Df, qh0=0.3, Hp=0.5, Ah=0.08, Bh=0.003, Ch=2.0, Dh=1.0e-6):
@@ -81,7 +87,8 @@ def driven_strain_path(mp, eps11_path, hardening, confine="free", sigma3=0.0):
     return deps_list, rows
 
 
-def main():
+def main(out=None):
+    out = out or DEFAULT_OUT
     lines = []
     emitted = []   # (label, pblock, hardening, deps_list, rows)
 
@@ -159,10 +166,11 @@ def main():
         lines.append(_fmt(deps))
         lines.append(_fmt(C.flatten()))
 
-    with open(OUT, "w") as fh:
+    with open(out, "w") as fh:
         fh.write("\n".join(lines) + "\n")
-    print(f"wrote {OUT}: {len(emitted)} paths, {len(tans)} tangent cases")
+    print(f"wrote {out}: {len(emitted)} paths, {len(tans)} tangent cases")
+    return out
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1] if len(sys.argv) > 1 else None)

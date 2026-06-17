@@ -186,8 +186,24 @@ analytic tangent and FD-check it against the oracle.** Verified facts you must r
 
 ## 6. Known gaps & caveats — state these honestly
 
+> **PR #249 adversarial-review correction (2026-06-17):** a 5-lens panel found that in the C++ kernel
+> the hardening apex branch could falsely report `converged=True` while teleporting a deep-COMPRESSION
+> trial to the hydrostatic-TENSION vertex with `κp<κp_n` (even `κp<0`) — ~2% of converged hardening
+> returns were inadmissible — directly contradicting the old item-1 claim below. **Fixed in the
+> kernel:** every converged plastic hardening return is now gated on admissibility (`κp≥κp_n`,
+> `Δλ≥0`, finite, on-surface); an inadmissible/non-converged state honestly reports
+> `converged=false` and falls back to the elastic predictor (never poisons `κp`-history), so the
+> caller cuts the step. The C++ deliberately diverges from the oracle's (equally-arbitrary) apex
+> teleport here — it is the safe reference. A fuzz regression (`run_robustness` in
+> `concrete3d_kernel_check.cpp`) asserts **0 inadmissible** converged returns over 180k trials. The
+> *accurate* apex tangent (rank-deficient, ~0) is still owed — the kernel returns the elastic
+> operator at a converged apex (≈K too stiff; flagged, slows but doesn't corrupt Newton). The panel
+> also caught: the whole test file lacked the `zone_a` CI marker (so nothing ran in CI — fixed); the
+> g++ check now adds per-entry + asymmetry-norm tangent checks and a NaN-guard regression.
+
 1. **Hardening apex** is only a hydrostatic-vertex projection; the dedicated apex/Koiter sub-algorithm
-   is owed. The honest-`f` flag now reports `converged=False` near the apex (it used to lie ~0).
+   is owed. The honest-`f` flag + admissibility gate now genuinely report `converged=False` near the
+   apex (see the PR #249 note above — pre-fix this *claim was false*, the apex lied `converged=True`).
 2. **Off-meridian first-yield drift** (`κp~0`, small surface + steep `qh1` ramp): the semi-implicit
    return leaves O(0.1) off-surface drift that does **not** vanish under refinement — needs
    **sub-stepping near first yield off-meridian**. Diagnostic `HE` records it; only the compressive

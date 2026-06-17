@@ -111,7 +111,13 @@ static void run_oracle_dump(const char* path) {
             kp_n = kpC;
         }
         worst_sig = std::fmax(worst_sig, maxs); worst_kp = std::fmax(worst_kp, maxk);
-        const double tolS = hard ? 1.0e-6 : 1.0e-9;   // hardening oracle ref ~1e-8 (numerical Jac)
+        // Tolerances. Perfect-plastic: both maps use an ANALYTIC inner Jacobian => machine-precision
+        // (~1e-13). Hardening: per single step the C++ (analytic 4x4 Jac) and the oracle (numerical
+        // 4x4 Jac) converge to the SAME root to the residual tol (~1e-11); over a committed MULTI-
+        // STEP path the hardening stiffness amplifies those per-step differences to ~1e-8 (the
+        // observed 3.9e-8). NOT apex contamination — the driven paths are fully converged + radial
+        // (verified). Floors set just above that accumulation bound.
+        const double tolS = hard ? 1.0e-6 : 1.0e-9;
         const double tolK = hard ? 1.0e-7 : 1.0e-10;
         bool ok = maxs < tolS && maxk < tolK;
         if (!ok) ++fails;
@@ -131,24 +137,98 @@ static void run_oracle_dump(const char* path) {
         for (int i = 0; i < 36; ++i) fh >> CO[i];
         double sigC[6], kpC, Dt[6][6];
         returnMapTensor(mp, sig_n, deps, kp_n, hard != 0, sigC, kpC, Dt, true);
-        double nd = 0, nn = 0;
+        double nd = 0, nn = 0, cmax = 0;
         for (int A = 0; A < 6; ++A) for (int B = 0; B < 6; ++B) {
             double d = Dt[A][B] - CO[A*6+B]; nd += d * d; nn += CO[A*6+B] * CO[A*6+B];
+            cmax = std::fmax(cmax, std::fabs(CO[A*6+B]));
         }
         double rel = std::sqrt(nd / nn);
+        // PER-ENTRY relative check on SIGNIFICANT entries (relative-Frobenius hides large errors on
+        // the small antisymmetric off-diagonal terms — and the whole point of this kernel is its
+        // NON-symmetric tangent, PR #249 review HIGH-3).
+        double perEntry = 0;
+        for (int A = 0; A < 6; ++A) for (int B = 0; B < 6; ++B)
+            if (std::fabs(CO[A*6+B]) > 0.01 * cmax)
+                perEntry = std::fmax(perEntry, std::fabs(Dt[A][B] - CO[A*6+B]) / std::fabs(CO[A*6+B]));
+        // ASYMMETRY-norm match: the non-symmetric part is the unsymmetric-solver justification —
+        // verify the C++ reproduces the oracle's asymmetry, not just the symmetric bulk.
+        double asC = 0, asO = 0, na = 0;
+        for (int A = 0; A < 6; ++A) for (int B = 0; B < 6; ++B) {
+            asC += (Dt[A][B]-Dt[B][A])*(Dt[A][B]-Dt[B][A]);
+            double oab = CO[A*6+B]-CO[B*6+A]; asO += oab*oab; na += CO[A*6+B]*CO[A*6+B];
+        }
+        double asymC = std::sqrt(asC/na), asymO = std::sqrt(asO/na);
+        double asymErr = std::fabs(asymC - asymO);
         worst_tan = std::fmax(worst_tan, rel);
-        bool ok = rel < 1.0e-6;
+        const double tolTan = hard ? 2.0e-6 : 1.0e-6;   // hardening oracle tangent = FD-of-FD, looser
+        bool ok = rel < tolTan && perEntry < 5.0e-3 && asymErr < 1.0e-3;
         if (!ok) ++fails;
-        std::printf("  %-24s tan_rel_err=%.3e  %s\n", label.c_str(), rel, ok ? "ok" : "FAIL");
+        std::printf("  %-24s tan_rel=%.3e perEntry=%.2e asym C/O=%.3f/%.3f  %s\n",
+                    label.c_str(), rel, perEntry, asymC, asymO, ok ? "ok" : "FAIL");
     }
     std::printf("  WORST  sig=%.2e (pp<1e-9/hard<1e-6)  kp=%.2e (pp<1e-10/hard<1e-7)  tan=%.3e (<1e-6)\n",
                 worst_sig, worst_kp, worst_tan);
+}
+
+// ---- (C) robustness / honesty regressions (PR #249 adversarial-review fixes) ----------------
+static void run_robustness() {
+    std::printf("[C] robustness / honesty regressions\n");
+    Params mp; mp.E = 30000; mp.nu = 0.2; mp.fc = 30; mp.ft = 3;
+    mp.e = eccentricityFromKupfer(30, 3, 1.16); mp.m0 = m0Of(30, 3, mp.e);
+    mp.qh0 = 0.3; mp.Hp = 0.5; mp.Ah = 0.08; mp.Bh = 0.003; mp.Ch = 2.0; mp.Dh = 1e-6;
+
+    // C1 — ADMISSIBILITY/HONESTY fuzz: NO converged plastic hardening return may have kp<kp_n,
+    // dlam<0, or a non-finite/off-surface stress. (Pre-fix: ~2% of returns lied with kp<0 / a
+    // sign-flipped tension apex for deep-compression trials.)
+    unsigned s = 12345u; auto rnd = [&]() { s = s*1664525u + 1013904223u; return (s>>8)*(1.0/16777216.0); };
+    int bad = 0, conv = 0, total = 0;
+    for (double Df : {0.3, 0.85, 1.0}) {
+        mp.Df = Df;
+        for (int t = 0; t < 60000; ++t) {
+            double w[3]; for (int i = 0; i < 3; ++i) w[i] = (rnd()*2.0 - 1.0) * 80.0;
+            double kp_n = rnd() * 1.2;
+            PrincipalResult pr = returnMapHardening(w, mp, kp_n);
+            ++total;
+            if (!pr.plastic) continue;
+            bool fin = std::isfinite(pr.sp[0]) && std::isfinite(pr.sp[1]) && std::isfinite(pr.sp[2]) && std::isfinite(pr.kp);
+            if (pr.converged) {
+                ++conv;
+                // a converged plastic return MUST be admissible + on-surface
+                if (!fin || pr.kp < kp_n - 1e-9 || pr.dlam < -1e-9 || std::fabs(pr.f_after) > 1e-6*(mp.fc+1.0)) ++bad;
+            }
+        }
+    }
+    check(bad == 0, "no converged hardening return is inadmissible (kp>=kp_n, dlam>=0, on-surface, finite)");
+    std::printf("       (fuzzed %d trials, %d converged-plastic, %d inadmissible)\n", total, conv, bad);
+
+    // C2 — deep-COMPRESSION near-apex hardening trial must NOT teleport to the tension vertex and
+    // claim convergence (the headline apex bug). It must report converged=false + leave kp uncorrupted.
+    {
+        mp.Df = 1.0;
+        double w[3] = {-46.81, -50.41, 2.81}; double kp_n = 0.0702;
+        PrincipalResult pr = returnMapHardening(w, mp, kp_n);
+        bool teleported = pr.converged && pr.sp[0] > 0 && pr.sp[1] > 0 && pr.sp[2] > 0;  // all-tension vertex
+        check(!teleported, "deep-compression trial not falsely converged at the tension apex");
+        check(!pr.converged || pr.kp >= kp_n - 1e-9, "apex/overshoot does not commit kp<kp_n");
+    }
+
+    // C3 — NaN guard: degenerate params (ft=0 => m0=Inf => apex xi blows up) must NOT leak NaN;
+    // returnMapTensor falls back to the finite elastic predictor with status!=0.
+    {
+        Params bd = mp; bd.ft = 0.0; bd.m0 = m0Of(bd.fc, bd.ft, bd.e);  // m0 = +Inf
+        double sig_n[6] = {0,0,0,0,0,0}, deps[6] = {-2e-3, 5e-4, 5e-4, 0, 0, 0};
+        double sigN[6], kpN, Dt[6][6];
+        int st = returnMapTensor(bd, sig_n, deps, 0.0, true, sigN, kpN, Dt, true);
+        bool fin = true; for (int i = 0; i < 6; ++i) { if (!std::isfinite(sigN[i])) fin = false; for (int j=0;j<6;++j) if(!std::isfinite(Dt[i][j])) fin=false; }
+        check(fin && st == 2, "degenerate-param trial returns finite fallback + status 2 (no NaN leak)");
+    }
 }
 
 int main(int argc, char** argv) {
     run_identities();
     const char* fix = argc > 1 ? argv[1] : "tests/_testbed/concrete3d_oracle_fixture.txt";
     run_oracle_dump(fix);
+    run_robustness();
     std::printf(fails ? "\nKERNEL CHECK: %d FAIL\n" : "\nKERNEL CHECK: ALL PASS\n", fails);
     return fails ? 1 : 0;
 }

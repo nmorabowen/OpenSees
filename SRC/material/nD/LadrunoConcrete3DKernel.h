@@ -489,7 +489,22 @@ inline PrincipalResult returnMapHardening(const double sigTr[3], const Params& m
     // HONEST convergence: recompute f at the returned stress with ITS OWN Lode angle.
     double svn[6] = {R.sp[0], R.sp[1], R.sp[2], 0, 0, 0};
     R.f_after = yieldF(svn, mp, qh1Of(kp, mp.qh0, mp.Hp), qh2Of(kp, mp.Hp));
-    R.converged = (converged || apex) && std::fabs(R.f_after) < 1.0e-7 * (fc + 1.0);
+    // ADMISSIBILITY + SAFETY (PR #249 adversarial-review fix). A valid plastic return needs
+    // dlam>=0 and a NON-DECREASING hardening variable (kp>=kp_n). The semi-implicit hardening
+    // Newton can overshoot to rho<0; the apex bisection then returns a SIGN-FLIPPED hydrostatic-
+    // tension vertex with kp<kp_n (or kp<0) for a deep-COMPRESSION trial — the documented KNOWN
+    // GAP (handoff §6: low-kp / off-meridian first-yield + the apex needs sub-stepping + a
+    // dedicated apex sub-algorithm). Be HONEST (never report converged for an inadmissible/off-
+    // surface state — the old `(converged||apex)&&|f|<tol` lied here) and SAFE (never hand back
+    // the garbage iterate — kp<kp_n would poison the committed history): fall back to the elastic
+    // predictor so the caller's status!=0 cuts the step. This deliberately diverges from the
+    // numpy oracle's (equally-arbitrary) apex teleport — the kernel is the safe reference here.
+    const bool admissible = std::isfinite(R.f_after) && dlam >= -1.0e-12 && kp >= kp_n - 1.0e-12;
+    R.converged = (converged || apex) && std::fabs(R.f_after) < 1.0e-7 * (fc + 1.0) && admissible;
+    if (!R.converged) {
+        for (int a = 0; a < 3; ++a) R.sp[a] = sigTr[a];   // safe fallback = elastic predictor
+        R.kp = kp_n; R.xi = xi_tr; R.rho = rho_tr; R.dlam = 0.0; R.apex = false;
+    }
     R.plastic = true;
     return R;
 }
@@ -726,12 +741,14 @@ inline void consistentTangent(const double sig_tr[6], const double w[3], const d
                               const PrincipalResult& pr, const Params& mp, bool hardening,
                               double Dtan6[6][6])
 {
-    if (!pr.plastic) { elasticC(mp, Dtan6); return; }
-    if (pr.apex) {
-        // At the vertex the deviatoric response collapses; use the elastic operator as the
-        // (rank-deficient-safe) tangent surrogate — apex states are measure-zero & flagged.
-        elasticC(mp, Dtan6); return;
-    }
+    // Elastic step, the non-converged safe fallback (returnMapHardening reset to the elastic
+    // predictor), or a converged apex => the elastic operator. NOTE (PR #249 review): at a true
+    // apex the physical tangent collapses toward zero (the stress is pinned at the vertex — an
+    // ATTRACTING PLATEAU, NOT measure-zero), so this elastic surrogate is ~K too STIFF there and
+    // can slow the global Newton. That is acceptable for P1 because the apex is the deferred
+    // KNOWN-GAP regime (handoff §6) and the return map flags it (converged=false ⇒ step-cut);
+    // the dedicated rank-deficient apex tangent lands with the apex sub-algorithm (P2+).
+    if (!pr.plastic || !pr.converged || pr.apex) { elasticC(mp, Dtan6); return; }
     // eigenprojections E_a = e_a (x) e_a (rank-1)
     double E[3][3][3];
     for (int a = 0; a < 3; ++a) for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) E[a][i][j] = V[i][a] * V[j][a];
@@ -820,6 +837,19 @@ inline int returnMapTensor(const Params& mp, const double sig_n[6], const double
         S[i][j] = v;
     }
     matToVoigt(S, sig_new);
+
+    // SAFETY NET (PR #249 review): never propagate a non-finite stress into the global solve.
+    // Catches the NaN/Inf that degenerate params produce (e.g. ft=0/fc=ft => m0<=0 => the apex
+    // xi=sqrt3 fc/m0 blows up). The kernel ASSUMES valid params (fc>0, ft>0, 0<=nu<0.5, m0>0) —
+    // the nDMaterial wrapper enforces that (handoff §5); this is the last-line defensive guard.
+    bool finite = true;
+    for (int i = 0; i < 6; ++i) if (!std::isfinite(sig_new[i])) finite = false;
+    if (!finite) {
+        for (int i = 0; i < 6; ++i) sig_new[i] = sig_tr[i];   // elastic predictor (best available)
+        kp_new = kp_n;
+        if (doTangent) elasticC(mp, Dtan6);
+        return 2;
+    }
 
     if (doTangent) consistentTangent(sig_tr, w, V, pr, mp, hardening, Dtan6);
     return pr.converged ? 0 : 2;   // 0 OK, 2 = no-converge (honest flag)

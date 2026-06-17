@@ -27,6 +27,12 @@ sys.path.insert(0, TESTBED)
 import concrete3d_ref as ref  # noqa: E402
 
 
+# CI runs `pytest -m "zone_a"` (.github/workflows/ladruno.yml) — without this marker the WHOLE
+# file (surface/return-map/hardening/tangent gates + the C++ kernel byte check) is silently
+# deselected and never runs in CI. (Was missing since #240; caught in the PR #249 adversarial review.)
+pytestmark = [pytest.mark.zone_a]
+
+
 CASES = [(30.0, 3.0), (40.0, 3.5), (50.0, 4.0), (25.0, 2.0)]
 
 
@@ -154,14 +160,24 @@ def test_p1_tangent_gate():
 # ---------------------------------------------------------------------------
 @pytest.mark.skipif(shutil.which("g++") is None, reason="g++ not available")
 def test_cpp_kernel_matches_oracle_dump(tmp_path):
-    # 1) regenerate the fixture from the oracle (deterministic — keeps C++ in sync with the spec)
-    subprocess.run([sys.executable, os.path.join(TESTBED, "gen_concrete3d_fixture.py")],
+    committed = os.path.join(TESTBED, "concrete3d_oracle_fixture.txt")
+    # 1) regenerate the fixture to a TMP path (never overwrite the committed artifact — else the
+    #    "diff against the committed fixture" would be self-referential and the test would dirty the
+    #    tree; PR #249 review). Deterministic regen => also assert the committed fixture is up to date.
+    fixture = os.path.join(tmp_path, "fixture.txt")
+    subprocess.run([sys.executable, os.path.join(TESTBED, "gen_concrete3d_fixture.py"), fixture],
                    check=True, cwd=TESTBED)
+    with open(fixture) as f:
+        regen = f.read()
+    with open(committed) as f:
+        on_disk = f.read()
+    assert regen == on_disk, ("committed concrete3d_oracle_fixture.txt is stale — re-run "
+                              "`python tests/_testbed/gen_concrete3d_fixture.py` and commit it")
     # 2) compile the self-check (header-only kernel; -I repo root for the SRC/ include)
     exe = os.path.join(tmp_path, "c3dchk.exe")
     src = os.path.join(TESTBED, "concrete3d_kernel_check.cpp")
     subprocess.run(["g++", "-std=c++17", "-O2", "-I", REPO, src, "-o", exe], check=True, cwd=REPO)
-    # 3) run from the repo root so the default fixture relative path resolves
-    out = subprocess.run([exe], cwd=REPO, capture_output=True, text=True)
+    # 3) run the check against the COMMITTED fixture (the artifact under test)
+    out = subprocess.run([exe, committed], cwd=REPO, capture_output=True, text=True)
     assert out.returncode == 0, f"g++ kernel check failed:\n{out.stdout}\n{out.stderr}"
     assert "KERNEL CHECK: ALL PASS" in out.stdout
