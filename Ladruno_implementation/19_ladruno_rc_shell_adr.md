@@ -724,6 +724,32 @@ IMPL-EX robustness, objectivity, crack closure); this is a **validation**, not n
   gate); (3) optional gmsh/apeGmsh graded mesh + boundary elements (then `zone_b`). This is the genuine
   Zone-B validation the ADR always framed it as, not a clean material slice.
 
+##### Phase 2b.2c.4a (SHIPPED) — deferred item (1) RESOLVED via quasi-static EXPLICIT
+Item (1) — the robust multi-cycle solver — is solved by the **right tool, not a heavier implicit one**.
+The fork's monotonic solvers (`LadrunoArcLength`, `LadrunoIndirectControl`, `LadrunoDynamicRelaxation`,
+the `robust_drive` rung ladder) all trace ONE equilibrium path through a limit point — a load **reversal**
+is not a single monotonic path, so none of them naturally do cyclic. The cyclic tool is **quasi-static
+EXPLICIT** (`CentralDifferenceLadruno`): it forms NO stiffness tangent, so the indefinite-softening-tangent
+stall that wals the implicit harness at ~0.6 mm **does not exist** — reversals + softening integrate through.
+- **Result:** a gmsh-meshed 4×3 squat wall (aspect H/L=0.75, `-beta -interlock -cyclic -xcrack`) **completes
+  the full ±8 mm reversing drift schedule** under `CentralDifferenceLadruno` (15000 steps, ~1.8 MN peak,
+  physical). The single-element panel completes too. **The implicit barrier is gone.**
+- **Panel-scale ablation (the load-bearing proof):** with the cyclic friction-slip + X-crack wear ON the
+  wall dissipates **~28 % LESS hysteretic energy** and reaches **~11 % lower peak shear** than the monotone
+  `-interlock` bound (which cannot degrade across reversals). At single-element scale this is invisible
+  (concrete-damage-dominated); at the mesh scale principal rotation engages the interlock and it is a clear
+  margin. Tests: `tests/test_ladrunoRCConcrete_wall.py` (Zone-B, gmsh): (i) explicit completes the cyclic
+  softening history; (ii) cyclic degradation is load-bearing (energy + peak vs monotone).
+- **Explicit recipe / gotchas (in [[LEDGER_quirks]]):** element mass via material `-rho` (nodal mass leaves
+  the eigensolve with no M); **ASDShellQ4 supplies no per-element `dt_cr`** (`criticalTimeStep()`=-1) ⇒
+  manual wave-speed bound `dt≈0.2·h/√(E/ρ)`; no `equalDOF` (stability ignores constraints — prescribe the
+  rigid-top drift via per-node `sp`); mass-proportional damping only (`betaK` collapses `dt_cr`); quasi-static
+  = loading period ≫ structure period (cosine drift on a dt grid).
+- **Still deferred (items 2–3):** quantitative **Tran–Wallace RW-A20-P10** calibration (specimen geometry +
+  smeared/boundary reinforcement + measured-loop pinching-shape & cumulative-energy assertions) and the
+  optional graded gmsh/boundary-element mesh. The SOLVER is no longer the blocker; what remains is the
+  experiment match.
+
 ### Phase 3 — Tension stiffening + crack-band/`lch` hardening
 - **Build:** VC/CM tension-stiffening plateaus (opt-in); resolve `lch` per **D5 Option A or B**.
 - **New:** if Option B, the ledgered vanilla `lch` plumb.

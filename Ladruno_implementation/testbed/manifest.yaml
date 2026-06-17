@@ -599,7 +599,8 @@ features:
     required_tiers: [T0m, T1]
     pytest: tests/test_ladrunoRCConcrete_material.py   # elastic; reduce-to-ASDConcrete3D tension+compression byte-match (beta off); biaxial beta-softening ratio==beta (4/4)
     tcl: WAIVED(nDMaterial LadrunoRCConcrete ...; shared OpenSeesNDMaterialCommands registry serves Tcl + Python; verified via the Zone-A pytest battery + reduce-to-ASDConcrete3D)
-    zone_b: []
+    zone_b:
+      - tests/test_ladrunoRCConcrete_wall.py   # 2b.2c.4a: meshed squat wall, quasi-static explicit cyclic (completion + interlock-degradation ablation)
     core_files:
       - SRC/classTags.h
       - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
