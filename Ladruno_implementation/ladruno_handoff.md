@@ -198,12 +198,26 @@ Design in [[32_ladruno_dispbeamcolumn_regularization_adr]] (the 11-agent scope +
   that is what Tier-2 addresses.
 
 ## Resume (next session) — Stage 2 (embedded hinge)
-- The robust EAS rotation-jump cohesive hinge (Armero–Ehrlich). A multi-PR research arc — start with a
-  **2D single-element proof-of-concept** before wiring the element. Reuse the LadrunoBrick/ASDShellQ4
-  EAS static-condensation kernel. **PINNED INVARIANT** (ADR 32 §How): condense the `α` jump to the
-  3-DOF basic system BEFORE calling `crdTransf` (the corotational transform owns its own geometric
-  stiffness and exposes no seam for element-internal DOFs). Snap-back solve: `LadrunoIndirectControl`
-  (built) is the follower.
+- **DONE (2026-06-17, branch `guppi/ladruno-dispbeamcolumn-hinge`):** the discrete cohesive law
+  `LadrunoCohesiveHinge` (`MAT_TAG 33003`, uniaxial) — the Tier-2 building block — landed standalone +
+  10/10 tests. Strain = rotation jump `[[θ]]`, stress = cohesive moment `M`; near-rigid penalty
+  (guarded floor `Mc²/2Gf`) → exp/linear softening calibrated so `∫M d[[θ]]==Gf` (LINEAR exact to
+  1e-9); irreversible secant damage; `getEnergy()`. This is the *cheap solver-independent energy gate*
+  the ADR said to land first. Parser:
+  `uniaxialMaterial LadrunoCohesiveHinge tag Mc Gf <-penalty K|-penaltyRatio r> <-exp|-linear>`.
+  Registered at the 5 uniaxial sites (NOT the element 3-site list — different registry).
+- **NEXT — wire it into the element.** The robust EAS rotation-jump hinge (Armero–Ehrlich): enhanced
+  curvature `κ = B·d + G·α` with a (regularized-)Dirac `G` at one hinge IP, `α` (the jump) converged
+  inside `update()` and **statically condensed to the 3-DOF basic `K_basic`/`pb` BEFORE calling
+  `crdTransf`** (the PINNED INVARIANT — the corotational transform owns its own geometric stiffness and
+  exposes NO seam for element-internal DOFs). The cohesive `M([[θ]])` IS the condensed `K_αα`/force
+  contribution (any UniaxialMaterial in the hinge slot; LadrunoCohesiveHinge the default). Reuse the
+  LadrunoBrick/ASDShellQ4 EAS static-condensation **algebra** (NOT LadrunoBrick's `globalizeStiff`
+  seam). Landmines (ADR §"Four explicit design rules"): (1) freeze the fiber section at the hinge IP
+  when it opens — no Gf double-count; (2) `K_αα→0` at the cohesive peak is the activation event every
+  hinge hits — use a closed-form/return-mapping jump update, NOT LadrunoBrick's residual `Kaa.Solve`.
+  Snap-back solve: `LadrunoIndirectControl` (built) is the follower. Start with a 2D single-element
+  patch test (constant-moment to machine precision; reduce-to-Tier-1 when no hinge).
 - Known low-sev nice-to-have: 3D `getTangentStiff` recomputes the linear kb then discards it when `-nl`
   (perf only; guard with `if(!nlGeom)`).
 
