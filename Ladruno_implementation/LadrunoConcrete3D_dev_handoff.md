@@ -223,6 +223,29 @@ analytic tangent and FD-check it against the oracle.** Verified facts you must r
 
 ---
 
+## 6b. P2 damage — status (started 2026-06-17, `guppi/concrete3d-p2-damage`, WIP)
+
+CDPM2 damage pinned to **Grassl 2013 §2.3** by equation (fetched from the source):
+`σ = (1−ω_t)σ̄_t + (1−ω_c)σ̄_c` (Eq.1); equivalent strain `ε̃` (Eq.37), uniaxial `ε̃ = σ̄_t/E`
+(Eq.38); onset `ε₀ = f_t/E` ⟺ `q_h2 = ε̃/ε₀ = 1` ⟺ **κ_p = 1** (damage starts exactly at the
+P1 failure surface — pre-peak pure plasticity, post-peak damage, no double-count); bilinear/
+exponential softening (Eq.51-59), crack-band `ε_f → w_f/h`, `G_Ft = f_t·w_f/2`; `α_c` T/C split
+(Eq.46); compressive exponential + confinement ductility (Eq.55-57).
+
+**DONE + VERIFIED (oracle `run_p2_gate` D1, commit ce7788d):** the nominal uniaxial-tension stress
+now **peaks exactly at `f_t`** then damage softens it, while the P1 effective stress stays
+**monotonic** — proving the `(1−ω_t)σ̄` architecture and the onset-at-`κ_p=1` coupling. *(P1 alone
+has no peak; P2 is where the peak comes from.)*
+
+**OPEN / the precise next step (BLOCKER, do NOT guess):** the crack-band **G_f energy is not yet
+size-objective**. The lumped inelastic driver `ε_i = ε_tot − σ̄/E` starves because tension's tiny
+ductility makes the effective stress harden too stiffly. The fix is the **exact CDPM2 inelastic-
+strain split `κ_dt1`/`κ_dt2`** (Eq.44-45) combined as `ε_i = κ_dt1 + ω_t·κ_dt2` (Eq.52) with the
+bilinear `ω_t` (Eq.54). Two lumped attempts failed → **pin Eq.44-45/52/54 from the actual paper
+(PDF, not the abstract)** before the next implementation pass (the P0 `qh1·qh2`-guess lesson).
+Then: D2 G_f objectivity gate → compression `ω_c` + `α_c` spectral split → unilateral recovery →
+dual-projector damaged tangent → the C++ port + the `nDMaterial` wrapper (lands classTag 33017).
+
 ## 7. Roadmap context
 
 P0 surface ✓ → P1 return-map/hardening/tangent ✓ (oracle) → **C++ kernel return map + analytic
