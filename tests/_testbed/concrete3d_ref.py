@@ -959,25 +959,43 @@ def run_tangent_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, verbose=True):
 # energy-objectivity gate. Compression wc + the alpha_c spectral split (Eq.46) + unilateral
 # crack-closure recovery + the dual-projector damaged tangent are the P2b+ increments.
 # ===========================================================================
+def _solve_omega_bracketed(kd1, kd2, sig_eff, f, eps_f):
+    """Solve the implicit damage residual F(w) = (1-w)*sig_eff - f*exp(-(kd1+w*kd2)/eps_f) = 0 for
+    w in [0,1]. The exponential softening makes eps_i = kd1 + w*kd2 carry w, so F is NON-MONOTONE in
+    w when eps_f is small (steep softening) — a raw clamped Newton can step the wrong way and STALL at
+    w=0 (the cracked material spuriously HEALS: PR #261 adversarial-review CRITICAL). During damage
+    the root is ALWAYS bracketed: F(0)=sig_eff - f*exp(-kd1/eps_f) > 0, F(1) = -f*exp(...) < 0 — so use
+    a SAFEGUARDED Newton-with-bisection-fallback that never leaves the bracket (Brent-lite)."""
+    def Fof(w):
+        return (1.0 - w) * sig_eff - f * np.exp(-(kd1 + w * kd2) / eps_f)
+    lo, hi = 0.0, 1.0
+    if Fof(lo) <= 0.0:       # not damage-loading (or already relaxed) => no damage
+        return 0.0
+    if Fof(hi) >= 0.0:       # fully damaged
+        return 1.0
+    w = 0.5
+    for _ in range(100):
+        Fw = Fof(w)
+        if abs(Fw) < 1.0e-13 * (f + 1.0):
+            break
+        if Fw > 0.0:
+            lo = w
+        else:
+            hi = w
+        dF = -sig_eff + f * np.exp(-(kd1 + w * kd2) / eps_f) * kd2 / eps_f   # safeguarded Newton...
+        wn = w - Fw / dF if dF != 0.0 else w
+        w = wn if (lo < wn < hi) else 0.5 * (lo + hi)                        # ...fall back to bisection
+    return min(1.0, max(0.0, w))
+
+
 def _solve_omega_t_exp(kappa_dt, kdt1, kdt2, sig_t_eff, E, ft, eps_f):
     """CDPM2 tensile damage, EXPONENTIAL softening (Eq.55) with the inelastic-strain split Eq.52.
     eps_i = kdt1 + wt*kdt2 (Eq.52); nominal sig_t_nom = ft*exp(-eps_i/eps_f) (Eq.55); and
-    sig_t_nom = (1-wt)*sig_t_eff (Eq.1). wt is IMPLICIT (eps_i carries wt) => 1-D Newton on wt.
+    sig_t_nom = (1-wt)*sig_t_eff (Eq.1). wt IMPLICIT (eps_i carries wt) => bracketed root solve.
     eps_f = wf/lch = Gf/(ft*lch) so int sig_t_nom d eps_i == ft*eps_f == Gf/lch (size-objective)."""
     if sig_t_eff <= 0.0 or kappa_dt <= ft / E:
         return 0.0
-    wt = 0.0
-    for _ in range(60):
-        epsi = kdt1 + wt * kdt2
-        ex = ft * np.exp(-epsi / eps_f)
-        F = (1.0 - wt) * sig_t_eff - ex                 # = 0
-        dF = -sig_t_eff + ex * kdt2 / eps_f             # dF/dwt
-        if abs(F) < 1.0e-12 * ft:
-            break
-        step = F / dF if dF != 0.0 else 0.0
-        wt -= step
-        wt = min(1.0, max(0.0, wt))
-    return wt
+    return _solve_omega_bracketed(kdt1, kdt2, sig_t_eff, ft, eps_f)
 
 
 def drive_uniaxial_tension_damaged(mp, eps11_path, Gf, lch):
@@ -1064,20 +1082,11 @@ def alpha_compression(sig_pr):
 def _solve_omega_c_exp(kdc1, kdc2, sig_c_mag, fc, eps_fc):
     """Compressive damage, exponential softening (Eq.55 analog with fc, Gc). eps_i = kdc1 + wc*kdc2
     (Eq.52 analog); |sig_c_nom| = fc*exp(-eps_i/eps_fc) = (1-wc)*|sig_c_eff|; wc implicit -> Newton.
-    eps_fc = wfc/lch = Gc/(fc*lch) => int |sig_c_nom| d eps_i == fc*eps_fc == Gc/lch (objective)."""
+    eps_fc = wfc/lch = Gc/(fc*lch) => int |sig_c_nom| d eps_i == fc*eps_fc == Gc/lch (objective).
+    wc IMPLICIT (eps_i carries wc) => bracketed root solve (same non-monotone-F healing guard as wt)."""
     if sig_c_mag <= 0.0:
         return 0.0
-    wc = 0.0
-    for _ in range(60):
-        epsi = kdc1 + wc * kdc2
-        ex = fc * np.exp(-epsi / eps_fc)
-        F = (1.0 - wc) * sig_c_mag - ex
-        dF = -sig_c_mag + ex * kdc2 / eps_fc
-        if abs(F) < 1.0e-12 * fc:
-            break
-        wc -= (F / dF) if dF != 0.0 else 0.0
-        wc = min(1.0, max(0.0, wc))
-    return wc
+    return _solve_omega_bracketed(kdc1, kdc2, sig_c_mag, fc, eps_fc)
 
 
 def drive_uniaxial_compression_damaged(mp, eps11_path, Gc, lch, As=5.0):
@@ -1155,8 +1164,17 @@ def run_p2b_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gc=5.0, As=2.0, verbose=Tru
     res["C1_peak_err"] = abs(res["C1_peak"] / fc - 1.0)
     res["C1_softens"] = bool(-d["sig11"][-1] < 0.1 * fc and d["wc"][-1] > 0.85)
     res["C1_eff_monotone"] = bool(-d["sig_eff"][-1] > -d["sig_eff"][np.argmin(d["sig11"])])
+    # C0b onset coincidence (PR #261 review): compression damage initiates at kappa_p=1 / sig_eff=-fc
+    ci = np.argmax(d["wc"] > 1.0e-9)
+    res["C0b_kp_at_onset"] = float(d["kp"][ci]) if d["wc"][ci] > 1.0e-9 else -1.0
+    res["C0b_ok"] = bool(abs(res["C0b_kp_at_onset"] - 1.0) < 0.05
+                         and abs(-d["sig_eff"][ci] / fc - 1.0) < 0.05)
 
-    # C2: BLOCKING crack-band Gc energy objectivity — dissipation*lch == Gc across lch
+    # C2 — crack-band SOFTENING-LAW lch-scaling (the eps_fc WIRING; Gc/lch BY CONSTRUCTION), NOT an
+    # independent objectivity proof (PR #261 review: int over eps_i is tautological). C3 reports the
+    # honest FE-visible total. NOTE (review MEDIUM): uniaxial compression has Rs=1 exactly, so x_s=As
+    # is constant across all lch here — this leg does NOT exercise the confinement-ductility (x_s) effect
+    # on dissipation; a multi-confinement Gc leg (sigma3!=0, ADR §4.3 [MAJOR]) is a documented P2c gap.
     gc_lch = {}
     for lch in (50.0, 100.0, 200.0):
         dd = drive_uniaxial_compression_damaged(mp, np.linspace(0, -0.15, 4000), Gc, lch, As=As)
@@ -1165,21 +1183,34 @@ def run_p2b_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gc=5.0, As=2.0, verbose=Tru
         gc_lch[lch] = area * lch
     res["C2_gc_lch"] = gc_lch
     res["C2_max_rel_err"] = max(abs(gc_lch[l] / Gc - 1.0) for l in gc_lch)
-    res["C2_objective"] = (max(gc_lch.values()) - min(gc_lch.values())) / Gc < 0.02
 
-    ok = (res["C0_ok"] and res["C0_eqstrain_ok"] and res["C1_peak_err"] < 0.03
-          and res["C1_softens"] and res["C1_eff_monotone"]
-          and res["C2_max_rel_err"] < 0.02 and res["C2_objective"])
+    # C3 — HONEST FE-visible compression energy (REPORTED, not gated): same CDPM2 damage-only-
+    # regularization caveat as tension D3 (un-regularized effective-plasticity dissipation makes the
+    # FE-visible total lch-dependent).
+    wtot = {}
+    for lch in (50.0, 100.0, 200.0):
+        dd = drive_uniaxial_compression_damaged(mp, np.linspace(0, -0.15, 4000), Gc, lch, As=As)
+        s = -dd["sig11"]; et = -dd["eps11"]
+        Wel = 0.5 * float(s[-1]) ** 2 / E
+        wtot[lch] = (float(np.sum(0.5 * (s[1:] + s[:-1]) * np.diff(et))) - Wel) * lch
+    res["C3_wtot_lch"] = wtot
+    res["C3_total_spread"] = (max(wtot.values()) - min(wtot.values())) / Gc
+
+    ok = (res["C0_ok"] and res["C0_eqstrain_ok"] and res["C0b_ok"] and res["C1_peak_err"] < 0.03
+          and res["C1_softens"] and res["C1_eff_monotone"] and res["C2_max_rel_err"] < 0.02)
     res["PASS"] = bool(ok)
     if verbose:
         print(f"  E={E} nu={nu} fc={fc} ft={ft} Gc={Gc} As={As}")
         print(f"  C0 alpha_c: tension={res['C0_alpha_tens']:.3e} compression={res['C0_alpha_comp']:.4f}"
               f"  eps_tilde/eps0 on surface: comp={res['C0_eqstrain_comp']:.5f} tens={res['C0_eqstrain_tens']:.5f}")
+        print(f"  C0b onset: kappa_p={res['C0b_kp_at_onset']:.4f} (=1)  ok={res['C0b_ok']}")
         print(f"  C1 nominal peak = {res['C1_peak']:.4f} (target fc={fc}) err={res['C1_peak_err']:.2e}"
               f"  eff-monotone={res['C1_eff_monotone']}  softens={res['C1_softens']}")
-        print(f"  C2 crack-band Gc objectivity (dissipation*lch): "
-              + "  ".join(f"lch={int(l)}:{gc_lch[l]:.3f}" for l in sorted(gc_lch))
-              + f"  (target {Gc})  max rel err={res['C2_max_rel_err']:.2e}  objective={res['C2_objective']}")
+        print(f"  C2 crack-band softening-law wiring (Gc/lch BY CONSTRUCTION): "
+              + "  ".join(f"lch={int(l)}:{gc_lch[l]:.3f}" for l in sorted(gc_lch)) + f"  err={res['C2_max_rel_err']:.2e}")
+        print(f"  C3 [REPORTED, not gated] FE-visible TOTAL/crack-area: "
+              + "  ".join(f"lch={int(l)}:{wtot[l]:.3f}" for l in sorted(wtot))
+              + f"  spread={res['C3_total_spread']:.2f}*Gc  [CDPM2 damage-only; confined x_s leg = P2c gap]")
         print(f"  => P2b GATE {'PASS' if ok else 'FAIL'}")
     return res
 
@@ -1200,37 +1231,62 @@ def run_p2_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, verbose=True):
     res["D1_softens"] = bool(d["sig11"][-1] < 0.05 * ft and d["wt"][-1] > 0.9)
     # plasticity-alone effective stress keeps RISING (monotonic, no peak) — the peak is damage
     res["D1_eff_monotone"] = bool(d["sig_eff"][-1] > d["sig_eff"][np.argmax(d["sig11"])])
+    # D0 (onset coincidence, PR #261 review): damage must initiate at kappa_p=1 / sig_eff=ft, NOT a
+    # by-product. Directly gate kp at the first damaging step (was unverified — onset eps0*2 used to pass).
+    di = np.argmax(d["wt"] > 1.0e-9)
+    res["D0_kp_at_onset"] = float(d["kp"][di]) if d["wt"][di] > 1.0e-9 else -1.0
+    res["D0_seff_at_onset"] = float(d["sig_eff"][di]) if d["wt"][di] > 1.0e-9 else 0.0
+    res["D0_ok"] = bool(abs(res["D0_kp_at_onset"] - 1.0) < 0.05 and abs(res["D0_seff_at_onset"] / ft - 1.0) < 0.05)
 
-    # D2: BLOCKING crack-band energy objectivity (ADR §4.3). The DAMAGE dissipation = integral of
-    # the nominal stress over the INELASTIC driver eps_i, times lch, must equal Gf INDEPENDENT of
-    # lch (Bazant). Integrating over the inelastic driver (not total strain) excludes the
-    # lch-independent elastic-loading energy. Drive far enough that every lch fully softens.
+    # D2 — crack-band SOFTENING-LAW lch-scaling (NOT independent objectivity). The damage softening
+    # sig_nom = ft*exp(-eps_i/eps_f) with eps_f = Gf/(ft*lch) gives int sig_nom d eps_i = ft*eps_f =
+    # Gf/lch BY CONSTRUCTION — so this verifies the eps_f WIRING (the DAMAGE dissipation is correctly
+    # regularized to Gf), it does NOT independently prove FE size-objectivity (PR #261 review: that
+    # integral is tautological w.r.t. eps_i). The honest FE-objectivity check is D3.
     gf_lch = {}
     for lch in (50.0, 100.0, 200.0):
         dd = drive_uniaxial_tension_damaged(mp, np.linspace(0, 0.008, 3000), Gf, lch)
         epsi = dd["epsi"]
-        # trapezoid (np.trapz removed in numpy 2.x): integral of nominal stress over eps_i
-        area = float(np.sum(0.5 * (dd["sig11"][1:] + dd["sig11"][:-1]) * np.diff(epsi)))
+        area = float(np.sum(0.5 * (dd["sig11"][1:] + dd["sig11"][:-1]) * np.diff(epsi)))   # trapz
         gf_lch[lch] = area * lch
     res["D2_gf_lch"] = gf_lch
     res["D2_max_rel_err"] = max(abs(gf_lch[l] / Gf - 1.0) for l in gf_lch)
-    res["D2_objective"] = (max(gf_lch.values()) - min(gf_lch.values())) / Gf < 0.05
 
-    # PASS gate: D1 (the damage PEAK mechanism — nominal peaks at ft, P1 effective stress monotonic,
-    # onset at kappa_p=1, softens to ~0) AND D2 (the ADR §4.3 BLOCKING crack-band Gf energy gate:
-    # dissipation*lch == Gf, size-objective across lch). D2 is now MET via the faithful CDPM2
-    # inelastic-strain split eps_i = kappa_dt1 + wt*kappa_dt2 (Eq.52) — integrating the exponential
-    # softening over eps_i gives ft*eps_f == Gf/lch exactly, independent of lch.
-    ok = (res["D1_peak_err"] < 0.02 and res["D1_eff_monotone"] and res["D1_softens"]
-          and res["D2_max_rel_err"] < 0.02 and res["D2_objective"])
+    # D3 — HONEST FE-visible energy diagnostic (PR #261 review; REPORTED, not gated). The FE-visible
+    # fracture energy per crack area is the nominal stress integrated over the PHYSICAL total strain,
+    # times lch:  Wtot*lch = int sig_nom d eps_tot * lch. CDPM2 regularizes the DAMAGE softening ONLY
+    # (D2), so the effective-PLASTICITY dissipation — which is per-VOLUME, not localized to the crack
+    # band — is NOT lch-regularized and makes Wtot*lch lch-DEPENDENT (~30% over a 4x lch range here).
+    # This is a CDPM2 damage-only-regularization characteristic, NOT a bug: it is small in realistic
+    # regimes (damage softens before large plastic strain accrues) and shrinks if the post-peak
+    # effective hardening is bounded. Reported honestly rather than hidden by the D2 construction;
+    # regularizing the plastic dissipation too is a documented follow-on (P2c / ADR §4.3 [MAJOR]).
+    wtot = {}
+    for lch in (50.0, 100.0, 200.0):
+        dd = drive_uniaxial_tension_damaged(mp, np.linspace(0, 0.008, 3000), Gf, lch)
+        s = dd["sig11"]; et = dd["eps11"]
+        Wel = 0.5 * float(s[-1]) ** 2 / E
+        wtot[lch] = (float(np.sum(0.5 * (s[1:] + s[:-1]) * np.diff(et))) - Wel) * lch
+    res["D3_wtot_lch"] = wtot
+    res["D3_total_spread"] = (max(wtot.values()) - min(wtot.values())) / Gf       # FE-visible spread (reported)
+
+    # PASS gate (honest): D0 onset at kappa_p=1; D1 the damage peak mechanism; D2 the crack-band
+    # softening-law wiring (Gf/lch by construction — catches eps_f errors, not an independent
+    # objectivity proof). The FE-visible TOTAL non-objectivity (D3) is a documented CDPM2
+    # damage-only-regularization characteristic and is REPORTED, not gated.
+    ok = (res["D0_ok"] and res["D1_peak_err"] < 0.02 and res["D1_eff_monotone"] and res["D1_softens"]
+          and res["D2_max_rel_err"] < 0.02)
     res["PASS"] = bool(ok)
     if verbose:
         print(f"  E={E} nu={nu} fc={fc} ft={ft} Gf={Gf}  eps0={eps0:.3e}")
+        print(f"  D0 onset: kappa_p={res['D0_kp_at_onset']:.4f} (=1) sig_eff/ft={res['D0_seff_at_onset']/ft:.4f}  ok={res['D0_ok']}")
         print(f"  D1 nominal peak = {res['D1_peak']:.4f} (target ft={ft}) err={res['D1_peak_err']:.2e}"
-              f"  eff-monotone(no plastic peak)={res['D1_eff_monotone']}  softens-to-0={res['D1_softens']}")
-        print(f"  D2 crack-band Gf objectivity (dissipation*lch): "
-              + "  ".join(f"lch={int(l)}:{gf_lch[l]:.4f}" for l in sorted(gf_lch))
-              + f"  (target {Gf})  max rel err={res['D2_max_rel_err']:.2e}  objective={res['D2_objective']}")
+              f"  eff-monotone={res['D1_eff_monotone']}  softens-to-0={res['D1_softens']}")
+        print(f"  D2 crack-band softening-law wiring (int sig d eps_i *lch == Gf BY CONSTRUCTION): "
+              + "  ".join(f"lch={int(l)}:{gf_lch[l]:.4f}" for l in sorted(gf_lch)) + f"  err={res['D2_max_rel_err']:.2e}")
+        print(f"  D3 [REPORTED, not gated] FE-visible TOTAL dissipation/crack-area (incl. un-regularized plastic): "
+              + "  ".join(f"lch={int(l)}:{wtot[l]:.4f}" for l in sorted(wtot))
+              + f"  spread={res['D3_total_spread']:.2f}*Gf  [CDPM2 damage-only regularization]")
         print(f"  => P2 GATE {'PASS' if ok else 'FAIL'}")
     return res
 

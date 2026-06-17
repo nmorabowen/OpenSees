@@ -159,36 +159,62 @@ def test_p1_tangent_gate():
 # Zone-A) runs it for real.
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
-# P2 — dual scalar DAMAGE (CDPM2 §2.3, Grassl 2013). P2a: tensile wt + crack-band Gf objectivity.
-#   D1 the nominal stress PEAKS at ft (P1 plasticity alone is monotonic — the peak IS damage),
-#      the effective stress stays monotonic, damage initiates at kappa_p=1, softens to ~0.
-#   D2 the ADR §4.3 BLOCKING crack-band energy gate: dissipation*lch == Gf, size-objective across
-#      lch — via the faithful CDPM2 inelastic-strain split eps_i = kappa_dt1 + wt*kappa_dt2 (Eq.52).
+# P2 — dual scalar DAMAGE (CDPM2 §2.3, Grassl 2013). P2a: tensile wt. Gates (honest, post PR #261
+# adversarial review): D0 damage initiates at kappa_p=1; D1 nominal peaks at ft while the P1 effective
+# stress stays monotonic (the peak IS damage) and softens to ~0; D2 the crack-band softening-law
+# eps_f WIRING (int sig d eps_i *lch == Gf BY CONSTRUCTION — catches eps_f errors, NOT an independent
+# objectivity proof). The FE-visible TOTAL dissipation is ~33% lch-dependent (un-regularized effective
+# plasticity = a CDPM2 damage-only-regularization characteristic) and is REPORTED (D3), not gated.
+# The ω-solve uses a bracketed (bisection-safeguarded) root find — a raw clamped Newton spuriously
+# HEALED the cracked material (PR #261 CRITICAL).
 # ---------------------------------------------------------------------------
 def test_p2_damage_gate():
     r = ref.run_p2_gate(verbose=False)
+    assert r["D0_ok"]                       # damage initiates at kappa_p=1 / sig_eff=ft
     assert r["D1_peak_err"] < 0.02          # nominal tensile peak == ft (the damage peak)
     assert r["D1_eff_monotone"]             # P1 effective stress monotonic (no plastic peak)
-    assert r["D1_softens"]                  # softens to ~0 with wt -> 1
-    assert r["D2_max_rel_err"] < 0.02       # crack-band dissipation*lch == Gf
-    assert r["D2_objective"]                # ... independent of lch (Bazant size-objectivity)
+    assert r["D1_softens"]                  # softens to ~0 with wt -> 1 (no spurious healing)
+    assert r["D2_max_rel_err"] < 0.02       # crack-band softening-law wiring: int sig d eps_i *lch == Gf
     assert r["PASS"]
 
 
 def test_p2b_compression_damage_gate():
     """P2b: compressive damage wc + the alpha_c tension/compression split (CDPM2 Eq.37,46-57).
-    C0 alpha_c -> 0 (tension) / 1 (compression) and the general equivalent strain Eq.37 == eps0 on
-    the failure surface; C1 nominal compression peaks at fc then softens (effective stress monotonic);
-    C2 the ADR §4.3 BLOCKING crack-band Gc gate: dissipation*lch == Gc, size-objective across lch."""
+    C0 alpha_c -> 0 (tension) / 1 (compression) + Eq.37 == eps0 on the failure surface; C0b damage
+    initiates at kappa_p=1; C1 nominal compression peaks at fc then softens; C2 the crack-band Gc
+    softening-law wiring (Gc/lch BY CONSTRUCTION). FE-visible total non-objectivity (C3) reported."""
     r = ref.run_p2b_gate(verbose=False)
     assert r["C0_ok"]                       # alpha_c split: 0 tension, 1 compression
     assert r["C0_eqstrain_ok"]              # Eq.37 equivalent strain == eps0 on the failure surface
+    assert r["C0b_ok"]                      # compression damage initiates at kappa_p=1
     assert r["C1_peak_err"] < 0.03          # nominal compression peak == fc (the damage peak)
     assert r["C1_eff_monotone"]             # P1 effective stress monotonic (no plastic peak)
-    assert r["C1_softens"]                  # softens with wc -> 1
-    assert r["C2_max_rel_err"] < 0.02       # crack-band dissipation*lch == Gc
-    assert r["C2_objective"]                # ... independent of lch
+    assert r["C1_softens"]                  # softens with wc -> 1 (no spurious healing)
+    assert r["C2_max_rel_err"] < 0.02       # crack-band softening-law wiring: |sig| d eps_i *lch == Gc
     assert r["PASS"]
+
+
+def test_p2_no_spurious_healing():
+    """Regression for the PR #261 adversarial-review CRITICAL: the implicit omega solve must not
+    clamp-stall to 0 on a physical softening path (a raw clamped Newton did, so the cracked material
+    spontaneously HEALED — stress jumped back to full effective stress). The bracketed solver fixes it.
+    Drive the workflow's failing regimes (steep softening: physical params + large lch where eps_f is
+    small) and assert wt/wc never collapses 0.3+ -> ~0 while still loading."""
+    import numpy as np
+
+    def healed(w):
+        return any(w[i] > 0.3 and w[i + 1] < 0.05 for i in range(len(w) - 1))
+
+    # tension: the exact failing case (E=20000,fc=50,ft=4,Gf=0.05,lch=200) + the default-param lch=800
+    mp = ref.make_material(20000.0, 0.2, 50.0, 4.0, Df=1.0)
+    dt = ref.drive_uniaxial_tension_damaged(mp, np.linspace(0, 0.0006, 400), Gf=0.05, lch=200.0)
+    assert not healed(dt["wt"]) and dt["wt"].max() > 0.9
+    mp2 = ref.make_material(30000.0, 0.2, 30.0, 3.0, Df=1.0)
+    dt2 = ref.drive_uniaxial_tension_damaged(mp2, np.linspace(0, 0.01, 3000), Gf=0.1, lch=800.0)
+    assert not healed(dt2["wt"]) and dt2["wt"].max() > 0.9
+    # compression: fc=50,Gc=1,lch=800 (steep) — wc must reach ~1 without healing
+    dc = ref.drive_uniaxial_compression_damaged(mp, np.linspace(0, -0.05, 3000), Gc=1.0, lch=800.0, As=2.0)
+    assert not healed(dc["wc"]) and dc["wc"].max() > 0.9
 
 
 @pytest.mark.skipif(shutil.which("g++") is None, reason="g++ not available")
