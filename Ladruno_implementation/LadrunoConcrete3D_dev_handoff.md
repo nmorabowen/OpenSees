@@ -223,6 +223,36 @@ analytic tangent and FD-check it against the oracle.** Verified facts you must r
 
 ---
 
+## 6b. P2 damage — status (started 2026-06-17, `guppi/concrete3d-p2-damage`, WIP)
+
+CDPM2 damage pinned to **Grassl 2013 §2.3** by equation (fetched from the source):
+`σ = (1−ω_t)σ̄_t + (1−ω_c)σ̄_c` (Eq.1); equivalent strain `ε̃` (Eq.37), uniaxial `ε̃ = σ̄_t/E`
+(Eq.38); onset `ε₀ = f_t/E` ⟺ `q_h2 = ε̃/ε₀ = 1` ⟺ **κ_p = 1** (damage starts exactly at the
+P1 failure surface — pre-peak pure plasticity, post-peak damage, no double-count); bilinear/
+exponential softening (Eq.51-59), crack-band `ε_f → w_f/h`, `G_Ft = f_t·w_f/2`; `α_c` T/C split
+(Eq.46); compressive exponential + confinement ductility (Eq.55-57).
+
+**DONE + VERIFIED (oracle `run_p2_gate`, pytest `test_p2_damage_gate`, 13/13 Zone-A):**
+- **D1 — the peak is damage:** the nominal uniaxial-tension stress **peaks exactly at `f_t`** then
+  softens to ~0 (`ω_t→1`), while the P1 effective stress stays **monotonic** — proving the
+  `(1−ω_t)σ̄` architecture and the onset-at-`κ_p=1` coupling. *(P1 alone has no peak.)*
+- **D2 — the ADR §4.3 BLOCKING crack-band `G_f` energy gate PASSES:** dissipation·lch = `G_f`
+  (0.1000 for lch ∈ {50,100,200}, rel err 2e-5) — **size-objective**.
+
+The fix that unlocked D2 was the **exact CDPM2 inelastic-strain split** (fetched from the paper):
+`ε_i = κ_dt1 + ω_t·κ_dt2` (Eq.52), with `κ̇_dt1 = ‖ε̇_p‖/x_s` (Eq.44, scaled accumulated PLASTIC
+strain) and `κ_dt2 = (κ_dt−ε₀)/x_s` (Eq.45); `x_s = 1+(A_s−1)R_s`, `R_s = −√6 σ̄_V/ρ̄` for `σ̄_V≤0`
+else 0 (Eq.56-57, `x_s=1` in uniaxial tension). `ω_t` is **implicit** (`ε_i` carries `ω_t`) → a 1-D
+Newton; exponential softening `σ_t,nom = f_t·exp(−ε_i/ε_f)` (Eq.55), `ε_f = w_f/lch = G_f/(f_t·lch)`,
+so `∫σ d ε_i = f_t·ε_f = G_f/lch` by construction. The lumped `ε_i ≈ ε_tot−σ̄/E` failed (twice)
+because it dropped the `ω_t·κ_dt2` term and starved under tension's tiny ductility — **the precise
+equations were essential, not a refinement** (the P0 `qh1·qh2`-guess lesson, reconfirmed).
+
+`κ_dt1`/`κ_dt2` and the equivalent strain Eq.37 (general tensor `ε̃`, only the uniaxial Eq.38
+`ε̃=σ̄_t/E` is wired so far) are documented in the oracle. **NEXT (P2b+):** compression `ω_c` +
+`α_c` spectral split (Eq.46-50, `β_c`) → general Eq.37 `ε̃` + the tensor spectral split → unilateral
+crack-closure recovery → dual-projector damaged tangent → C++ port + `nDMaterial` wrapper (lands 33017).
+
 ## 7. Roadmap context
 
 P0 surface ✓ → P1 return-map/hardening/tangent ✓ (oracle) → **C++ kernel return map + analytic
