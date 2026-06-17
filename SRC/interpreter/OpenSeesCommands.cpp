@@ -89,6 +89,7 @@ UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 #include <PFEMIntegrator.h>
 #include <TransientIntegrator.h>      // Ladruno: profiler dt_cr (getCriticalTimeStep)
 #include <LadrunoArcLength.h>         // Ladruno: Layer-B reduceStep/revert runtime command
+#include <LadrunoDynamicRelaxation.h> // Ladruno: rung-5 DR settling/micro-burst query command
 #include <classTags.h>               // Ladruno: INTEGRATOR_TAGS_LadrunoArcLength guard
 #include <PFEMSolver.h>
 #include <PFEMLinSOE.h>
@@ -3175,17 +3176,81 @@ int OPS_LadrunoArcLengthCmd()
         return 0;
     }
 
+    // value-taking actuator (ADR-31 R-RAMPDOWN): scale the viscous coefficient;
+    // echoes the resulting dissipation ratio so the driver sees the effect.
+    if (strcmp(sub, "scaleCVisc") == 0) {
+        if (OPS_GetNumRemainingInputArgs() < 1) {
+            opserr << "WARNING ladrunoArcLength scaleCVisc - expects one value\n";
+            return -1;
+        }
+        int nd = 1;
+        double v = 0.0;
+        if (OPS_GetDoubleInput(&nd, &v) < 0) {
+            opserr << "WARNING ladrunoArcLength scaleCVisc - failed to read value\n";
+            return -1;
+        }
+        if (la->scaleCVisc(v) < 0) return -1;
+        double r = la->getStabilizationDissipationRatio();
+        int n = 1;
+        OPS_SetDoubleOutput(&n, &r, true);
+        return 0;
+    }
+
     // read-only queries
     double out = 0.0;
-    if      (strcmp(sub, "arcLength") == 0)       out = la->getArcLength();
-    else if (strcmp(sub, "deltaLambdaStep") == 0) out = la->getDeltaLambdaStep();
-    else if (strcmp(sub, "currentLambda") == 0)   out = la->getCurrentLambda();
-    else if (strcmp(sub, "sign") == 0)            out = (double)la->getSignLastDeltaLambdaStep();
-    else if (strcmp(sub, "deltaUstepNorm") == 0)  out = la->getDeltaUstepNorm();
+    if      (strcmp(sub, "arcLength") == 0)        out = la->getArcLength();
+    else if (strcmp(sub, "deltaLambdaStep") == 0)  out = la->getDeltaLambdaStep();
+    else if (strcmp(sub, "currentLambda") == 0)    out = la->getCurrentLambda();
+    else if (strcmp(sub, "sign") == 0)             out = (double)la->getSignLastDeltaLambdaStep();
+    else if (strcmp(sub, "deltaUstepNorm") == 0)   out = la->getDeltaUstepNorm();
+    // ADR-31 Layer-1.5 stabilization-energy gate
+    else if (strcmp(sub, "dissipationRatio") == 0) out = la->getStabilizationDissipationRatio();
+    else if (strcmp(sub, "dissipatedEnergy") == 0) out = la->getStabilizationDissipatedEnergy();
+    else if (strcmp(sub, "referenceEnergy") == 0)  out = la->getReferenceStrainEnergy();
     else {
         opserr << "WARNING ladrunoArcLength - unknown subcommand '" << sub
-               << "' (use reduceStep|increaseStep|setArcLength|arcLength|"
-                  "deltaLambdaStep|currentLambda|sign|deltaUstepNorm)\n";
+               << "' (use reduceStep|increaseStep|setArcLength|scaleCVisc|arcLength|"
+                  "deltaLambdaStep|currentLambda|sign|deltaUstepNorm|"
+                  "dissipationRatio|dissipatedEnergy|referenceEnergy)\n";
+        return -1;
+    }
+    int n = 1;
+    OPS_SetDoubleOutput(&n, &out, true);
+    return 0;
+}
+
+// ladrunoDR <sub> -- runtime query of the active LadrunoDynamicRelaxation (33005);
+// the rung-5 settling / micro-burst signals (ADR-31 R-DR-ENERGY). Read-only.
+//   ladrunoDR residualNorm   -> ||f_ext - f_int||_inf  (mass-free settling gate)
+//   ladrunoDR kineticEnergy  -> 1/2 v^T M* v           (micro-burst signal)
+// The robust-solve driver reads residualNorm/residualNorm0 each DR step to decide
+// when the dynamics excursion has relaxed to a quasi-static rest state -- the
+// physical-mass EnergyBalance KE is ~0 on DR's pseudo-mass models, so the gate
+// MUST be this force residual, not a KE ratio.
+int OPS_LadrunoDRCmd()
+{
+    if (cmds == 0) return 0;
+    TransientIntegrator *ti = cmds->getTransientIntegrator();
+    if (ti == 0 || ti->getClassTag() != INTEGRATOR_TAGS_LadrunoDynamicRelaxation) {
+        opserr << "WARNING ladrunoDR - the active transient integrator is not a "
+                  "LadrunoDynamicRelaxation (set `integrator LadrunoDynamicRelaxation "
+                  "...` first)\n";
+        return -1;
+    }
+    LadrunoDynamicRelaxation *dr = (LadrunoDynamicRelaxation *)ti;
+
+    if (OPS_GetNumRemainingInputArgs() < 1) {
+        opserr << "WARNING ladrunoDR - expects a subcommand "
+                  "(residualNorm|kineticEnergy)\n";
+        return -1;
+    }
+    const char *sub = OPS_GetString();
+    double out = 0.0;
+    if      (strcmp(sub, "residualNorm") == 0)  out = dr->getResidualNorm();
+    else if (strcmp(sub, "kineticEnergy") == 0) out = dr->getKineticEnergy();
+    else {
+        opserr << "WARNING ladrunoDR - unknown subcommand '" << sub
+               << "' (use residualNorm|kineticEnergy)\n";
         return -1;
     }
     int n = 1;

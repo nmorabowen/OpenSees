@@ -97,6 +97,17 @@ class LadrunoDynamicRelaxation : public TransientIntegrator
 
     const Vector &getVel(void);
 
+    // --- Layer-1.5 quasi-staticness / micro-burst signals (ADR-31) ---
+    // The robust-solve driver reads these to decide when DR has settled to a
+    // static solution. `residualNorm` is the FORCE-based unbalance
+    // ||f_ext - f_int|| -- the mass-free settling criterion (R-DR-ENERGY: the
+    // EnergyBalance recorder's physical-mass KE is ~0 / wrong on DR's pseudo-mass
+    // models, so the settling gate must be force-based, not a KE ratio).
+    // `kineticEnergy` is the pseudo-mass KE for the micro-burst classifier.
+    // Read-only on existing in-memory state (no sendSelf change, serial v1).
+    double getResidualNorm(void) const;     // ||f_ext - f_int|| (settling gate)
+    double getKineticEnergy(void) const;    // 1/2 v^T M* v (micro-burst signal)
+
     int sendSelf(int commitTag, Channel &theChannel);
     int recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &theBroker);
     void Print(OPS_Stream &s, int flag = 0);

@@ -1,30 +1,43 @@
-"""Ladruno robust nonlinear-solution driver - Layer 0 (ADR 31).
+"""Ladruno robust nonlinear-solution driver (ADR 31).
 
-The increment-sizing SPINE (Abaqus-faithful automatic incrementation) plus the
-rung-3 constraint switch, in pure Python over ops.analyze(1). No C++ change.
+An increment-sizing SPINE (Abaqus-faithful automatic incrementation) plus an
+escalation ladder, in pure Python over ops.analyze(1). The hard numerics are the
+already-shipped fork C++ (LadrunoArcLength -stabilize 33004, LadrunoStabilized-
+Unbalance, LadrunoDynamicRelaxation 33005); this driver is the orchestration +
+observability that sequences them honestly.
 
-Rungs implemented at Layer 0:
-  0  increment cutback / grow          (target-iteration sizing, via adaptive_static)
-  1  line search                       (in the algorithm ladder)
-  2  modified / Krylov / BFGS Newton   (algorithm ladder)
+Rungs (driver numbering):
+  0  increment cutback / grow            (target-iteration sizing)
+  1  line search                         (algorithm ladder)
+  2  modified / Krylov / BFGS Newton     (algorithm ladder)
   3  CONSTRAINT SWITCH  load -> displacement control on a control DOF
-  5  dynamics fall-through             (HOOK only - refused until handoff primitive ships)
+  4  AUTO-STABILIZE  LadrunoArcLength -stabilize + LadrunoStabilizedUnbalance,
+     dissipation gate read each step, scaleCVisc ramp-down (R-RAMPDOWN)
+  5  DYNAMICS fall-through  LadrunoDynamicRelaxation, atomic implicit<->DR
+     handoff (R-HANDOFF), force-residual settling gate, indirect-control polish
 
-Rung 4 (auto-stabilization) is deliberately REFUSED here: per ADR-31 R-OBS the
-dissipation hard-gate is a no-op until the Layer-1.5 integrator getters land, so
-the driver must fail loud rather than diffuse silently. `stabilize=True` raises.
+Escalation order at the cutback floor: rung-3 (if a control DOF is given) ->
+rung-4 (if `stabilize`) -> rung-5 (if `dynamics`) -> give up.
 
-Decision log: every cutback / algorithm switch / constraint switch / verdict is
-appended as one JSON object per line (JSONL) so a run is auditable (R-LOG-MASK).
+HONEST VERDICTS (ADR-31 R-OBS / R-DIFFUSION / R-SNAPBACK):
+  * a rung-0..3 success is `equilibrium` (publishable, truthy).
+  * a rung-4 stabilized success is `regularized` at best and `unverified` unless
+    the c-reduction diffusion bound was computed -- it is NEVER `equilibrium`
+    (viscous f_v pollutes the path; LadrunoStabilizedUnbalance proves point-wise
+    equilibrium but is not a fidelity certificate).
+  * a rung-5 dynamics rest state is `regularized` (a relaxed rest, not a traced
+    branch) unless the polish tail re-lands on the true branch.
+`bool(res)` is True ONLY for `equilibrium`, so a regularized/unverified result is
+falsy by construction -- a paper-grade consumer cannot mistake it for clean.
 
     from robust_drive import robust_drive
-    res = robust_drive(
-        ops,
-        done=lambda: ops.nodeDisp(2, 1) <= -0.010,     # termination predicate
-        load_increment=0.2,                            # nominal LoadControl step
-        control=(2, 1, -5e-5),                         # (node, dof, du) for rung-3
+    res = robust_drive(ops,
+        done=lambda: ops.nodeDisp(2, 1) <= -0.010,
+        load_increment=0.2,
+        control=(2, 1, -5e-5),          # enables rung-3
+        stabilize=True,                 # enables rung-4
+        dynamics=True,                  # enables rung-5 (needs the ladrunoDR build)
         log_path="run.jsonl")
-    assert res                                         # truthy iff target reached
 """
 from __future__ import annotations
 
@@ -35,16 +48,25 @@ from ladruno_solve import _DEFAULT_LADDER
 
 class RobustResult:
     __slots__ = ("completed", "substeps", "switches", "mode", "verdict",
-                 "min_scale_used", "algos")
+                 "min_scale_used", "algos", "dissipation_ratio", "stab_dissipated",
+                 "peak_drift", "dr_settled", "over_diffused", "dr_lambda", "peak_load")
 
     def __init__(self):
         self.completed = False
         self.substeps = 0
         self.switches = 0
         self.mode = "LoadControl"
-        self.verdict = "incomplete"      # equilibrium | incomplete | aborted | refused
+        # equilibrium | regularized | unverified | incomplete | aborted | refused
+        self.verdict = "incomplete"
         self.min_scale_used = 1.0
         self.algos = {}
+        self.dissipation_ratio = 0.0    # W_stab / Estrain0 at end of a rung-4 phase
+        self.stab_dissipated = 0.0      # W_stab (the L0 energy-partition SW term)
+        self.peak_drift = None          # c-reduction diffusion bound (None = not run)
+        self.dr_settled = False         # did the rung-5 DR phase reach quasi-static
+        self.over_diffused = False      # rung-4 dissipation crossed the hard gate
+        self.dr_lambda = None           # load factor frozen across the DR handoff (R-HANDOFF)
+        self.peak_load = 0.0            # peak |load factor| during a rung-4 stabilized phase
 
     def __bool__(self):
         return self.completed and self.verdict == "equilibrium"
@@ -53,6 +75,31 @@ class RobustResult:
         return (f"<RobustResult {self.verdict} completed={self.completed} "
                 f"substeps={self.substeps} switches={self.switches} "
                 f"mode={self.mode} min_scale={self.min_scale_used:g}>")
+
+
+def diffusion_drift(run_at_f, f, factor=0.5):
+    """The c-reduction diffusion bound (ADR-31 R-DIFFUSION), standalone.
+
+    A viscous-stabilized solution depends on the artificial dissipation fraction
+    `f`; `LadrunoStabilizedUnbalance` proves a point is in equilibrium but NOT that
+    the path is `f`-independent. The only trustworthy fidelity certificate is to
+    re-run with HALF the viscosity and check the answer barely moved.
+
+    run_at_f : callable(f) -> float. Rebuilds the model, drives it stabilized at the
+               dissipated-energy fraction `f`, and returns a comparable scalar metric
+               (typically the peak load factor, or a control-DOF response).
+    f        : the fraction the headline run used.
+    factor   : viscosity reduction for the check (default 0.5 -> half).
+
+    Returns the RELATIVE drift |m(f) - m(factor*f)| / max(|m(f)|, |m(factor*f)|).
+    Small (e.g. < 0.02) => the stabilized answer is essentially `f`-independent and
+    can be trusted (`regularized`); large => the viscosity is shaping the answer
+    (`unverified`). This is what `robust_drive(verify_rebuild=...)` computes
+    internally; use it directly to audit any `-stabilize` run.
+    """
+    m1 = float(run_at_f(f))
+    m2 = float(run_at_f(f * factor))
+    return abs(m1 - m2) / max(abs(m1), abs(m2), 1e-30)
 
 
 def robust_drive(ops, done, *,
@@ -64,29 +111,55 @@ def robust_drive(ops, done, *,
                  peak_cutbacks=3,
                  max_substeps=20000,
                  stabilize=False,
+                 stab_f=1.0e-3,
+                 stab_tol=1.0e-8,
+                 stab_hard_gate=0.05,
+                 stab_rampdown_window=8,
+                 stab_max_cutbacks=12,
+                 verify_rebuild=None,
+                 verify_tol=0.02,
                  dynamics=False,
+                 dr_settle_tol=1.0e-4,
+                 dr_max_steps=4000,
+                 dr_pref=None,
+                 dr_setup=None,
                  log_path=None,
                  verbose=False):
-    """Drive a static analysis to `done()` with the rung-0..3 ladder.
+    """Drive a static analysis to `done()` with the rung-0..5 ladder.
 
-    done           : callable() -> bool, True when the analysis target is reached.
     load_increment : nominal LoadControl load-factor step (scaled by the spine).
-    control        : (node, dof, du) enabling the rung-3 switch to DisplacementControl;
-                     None disables the switch (load control only).
-    peak_cutbacks  : cheap peak/limit detector (ADR-31 R-INSTAB heuristic) - after
-                     this many consecutive cutbacks with NO successful commit, treat
-                     it as a limit point (load control cannot pass) and switch early
-                     rather than grinding load control down to min_scale.
-    max_substeps   : global budget (R-THRASH/R-TERMINATION); INCOMPLETE if exceeded.
-    stabilize      : rung-4 auto-stabilization - REFUSED at Layer 0 (raises).
-    dynamics       : rung-5 fall-through - HOOK only; logs and aborts (not built).
+    control        : (node, dof, du) enabling rung-3 (load->disp switch); None disables.
+    stabilize      : enable rung-4 auto-stabilization (the Layer-1.5 getters must be
+                     built). A stabilized success is `regularized`/`unverified`, never
+                     `equilibrium`.
+    stab_f         : -stabilize dissipated-energy fraction. ELEVATED vs the Abaqus
+                     2e-4 default because the default is too weak to cross a hard
+                     limit (measured); -adaptStab is deliberately NOT used (it
+                     re-weakens c and prevents crossing).
+    stab_hard_gate : dissipation ratio above which the run is flagged over-diffused
+                     (informs the verdict; does NOT abort -- crossing inherently
+                     dissipates).
+    stab_rampdown_window : clean stabilized steps before scaleCVisc(0.5) decays c
+                     (R-RAMPDOWN).
+    verify_rebuild : optional callable(f) -> peak_load. The c-reduction diffusion
+                     bound (R-DIFFUSION): if a rung-4 phase reaches done(), the
+                     driver calls verify_rebuild(stab_f/2) to re-run the analysis at
+                     HALF the viscosity and compares the peak load factor. Drift <=
+                     verify_tol -> verdict `regularized` (f-insensitive, trustworthy);
+                     otherwise `unverified`. None -> the bound is NOT computed and the
+                     stamp stays `unverified` (never silently trusted). See the
+                     module-level `diffusion_drift` helper for the standalone form.
+    verify_tol     : peak-load drift threshold for the c-reduction bound (default 2%).
+    dynamics       : enable rung-5 DR fall-through (needs the `ladrunoDR` command).
+    dr_settle_tol  : DR is quasi-static once residualNorm < dr_settle_tol * Pref
+                     (the mass-free force criterion; R-DR-ENERGY -- the physical-mass
+                     KE is ~0 on DR's pseudo-mass models, so the gate is force-based).
+    dr_pref        : reference load norm ||P|| for the settle gate. None -> proxy
+                     max(1, |lambda|) (exact when the reference-load norm is ~1).
+    dr_setup       : optional callable(ops) that configures the transient analysis
+                     for the DR phase (constraints/numberer/system). If None, the
+                     driver uses Plain/RCM/BandGen defaults (fine for simple models).
     """
-    if stabilize:
-        raise NotImplementedError(
-            "rung-4 auto-stabilization is refused at Layer 0 (ADR-31 R-OBS): the "
-            "dissipation hard-gate is a no-op until the Layer-1.5 LadrunoArcLength "
-            "getters ship. Fail loud, not diffuse silent.")
-
     res = RobustResult()
     _log_fh = open(log_path, "w", encoding="utf-8") if log_path else None
 
@@ -112,47 +185,52 @@ def robust_drive(ops, done, *,
         return res.mode == "LoadControl" and control is not None
 
     def set_step():
+        # LoadControl / DisplacementControl are stateless -> re-issued each step at
+        # the current scale. The stabilized integrator is STATEFUL (watchdog +
+        # calibrated cVisc), so its phase issues it ONCE and never re-issues here.
         if res.mode == "LoadControl":
             ops.integrator("LoadControl", load_increment * scale)
-        else:                                       # DisplacementControl
+        elif res.mode == "DisplacementControl":
             node, dof, du = control
             ops.integrator("DisplacementControl", node, dof, du * scale)
 
     algo_name = set_algo(algo_i)
-    log("start", load_increment=load_increment, has_control=control is not None)
+    log("start", load_increment=load_increment, has_control=control is not None,
+        stabilize=bool(stabilize), dynamics=bool(dynamics))
 
-    try:
+    # ---------------------------------------------------------------- rung 0-3
+    def phase_implicit():
+        """Load/disp control with rungs 0-3. Returns 'done' | 'stop' | 'escalate'."""
+        nonlocal scale, algo_i, cutbacks, algo_name
         while not done():
             if res.substeps >= max_substeps:
                 res.verdict = "incomplete"
                 log("budget_exhausted", max_substeps=max_substeps)
-                return res
+                return "stop"
             set_step()
             res.substeps += 1
             if ops.analyze(1) == 0:                 # converged
                 res.min_scale_used = min(res.min_scale_used, scale)
                 res.algos[algo_name] = res.algos.get(algo_name, 0) + 1
-                cutbacks = 0                        # progress made -> reset the detector
-                if scale < 1.0:                     # grow back toward nominal
+                cutbacks = 0
+                if scale < 1.0:
                     scale = min(1.0, scale * grow)
-                if algo_i != 0:                     # fall back to the easy algorithm
+                if algo_i != 0:
                     algo_i = 0
                     algo_name = set_algo(algo_i)
                 continue
-            # --- failure: rung 1-2 (walk the algorithm ladder at this scale) ---
+            # failure: rung 1-2 (walk the algorithm ladder at this scale)
             if algo_i < len(algorithms) - 1:
                 algo_i += 1
                 algo_name = set_algo(algo_i)
                 log("algorithm_switch", to=algo_name, scale=scale)
                 continue
-            # --- rung 0 (halve), reset to the easy algorithm -------------------
+            # rung 0 (halve), reset to the easy algorithm
             scale *= 0.5
             algo_i = 0
             algo_name = set_algo(algo_i)
             cutbacks += 1
-            # cheap peak/limit detector (R-INSTAB heuristic): repeated cutbacks
-            # with NO commit => load control is at a limit/peak, not over-stepping.
-            # Switch early instead of grinding to the floor.
+            # cheap peak/limit detector (R-INSTAB heuristic)
             if can_switch() and cutbacks >= peak_cutbacks:
                 res.mode = "DisplacementControl"
                 res.switches += 1
@@ -164,7 +242,7 @@ def robust_drive(ops, done, *,
             if scale >= min_scale:
                 log("cutback", scale=scale)
                 continue
-            # --- rung 3 (constraint switch at the cutback floor) ---------------
+            # rung 3 (constraint switch at the cutback floor)
             if can_switch():
                 res.mode = "DisplacementControl"
                 res.switches += 1
@@ -173,20 +251,157 @@ def robust_drive(ops, done, *,
                 log("constraint_switch", to="DisplacementControl",
                     reason="load-control exhausted at floor (rung 3)")
                 continue
-            # --- rung 5 (dynamics) - hook only --------------------------------
-            if dynamics:
-                res.verdict = "aborted"
-                log("dynamics_requested",
-                    note="rung-5 fall-through not built at Layer 0 (handoff "
-                         "primitive pending, ADR-31 R-HANDOFF)")
-                return res
-            res.verdict = "incomplete"
-            log("give_up", scale=scale)
+            # nothing left in the implicit ladder -> escalate to rung 4/5
+            log("implicit_exhausted", scale=scale)
+            return "escalate"
+        return "done"
+
+    # ------------------------------------------------------------------ rung 4
+    def phase_stabilized():
+        """Viscous-stabilized load control. Returns 'done' | 'stop' | 'escalate'."""
+        res.mode = "Stabilized"
+        res.switches += 1
+        # Issue the STATEFUL integrator + true-equilibrium test ONCE. No -adaptStab
+        # (it re-weakens c and prevents crossing a hard limit; measured).
+        ops.integrator("LadrunoArcLength", load_increment, 1.0, "-stabilize", stab_f)
+        ops.test("LadrunoStabilizedUnbalance", stab_tol, 50, 0)
+        algo = set_algo(0)
+        clean = 0
+        stab_cutbacks = 0
+        log("stabilize_arm", f=stab_f, gate=stab_hard_gate)
+        while not done():
+            if res.substeps >= max_substeps:
+                res.verdict = "incomplete"
+                log("budget_exhausted", max_substeps=max_substeps)
+                return "stop"
+            res.substeps += 1
+            if ops.analyze(1) == 0:
+                res.algos[algo] = res.algos.get(algo, 0) + 1
+                res.peak_load = max(res.peak_load, abs(ops.getTime()))  # |λ| for the c-bound
+                res.dissipation_ratio = ops.ladrunoArcLength("dissipationRatio")
+                res.stab_dissipated = ops.ladrunoArcLength("dissipatedEnergy")
+                if res.dissipation_ratio > stab_hard_gate and not res.over_diffused:
+                    res.over_diffused = True
+                    log("diffusion_gate_exceeded",
+                        ratio=res.dissipation_ratio, gate=stab_hard_gate)
+                clean += 1
+                if clean >= stab_rampdown_window:    # R-RAMPDOWN: decay c
+                    clean = 0
+                    ops.ladrunoArcLength("scaleCVisc", 0.5)
+                    log("rampdown", ratio=res.dissipation_ratio)
+                continue
+            # failed: shrink the stabilized load increment and retry
+            clean = 0
+            stab_cutbacks += 1
+            ops.ladrunoArcLength("reduceStep", 0.5)
+            log("stabilize_cutback", n=stab_cutbacks)
+            if stab_cutbacks >= stab_max_cutbacks:
+                log("stabilize_stalled", reason="reduceStep floor (rung 4)")
+                return "escalate"
+        return "done"
+
+    # ------------------------------------------------------------------ rung 5
+    def phase_dynamics():
+        """Atomic implicit->DR handoff, settle, return. Returns 'done' | 'stop'."""
+        res.mode = "Dynamics"
+        res.switches += 1
+        lam = ops.getTime()                          # R-HANDOFF: snapshot lambda
+        res.dr_lambda = lam
+        log("handoff_to_DR", lam=lam)
+        ops.loadConst("-time", lam)                  # freeze load + pseudo-time
+        ops.wipeAnalysis()
+        if dr_setup is not None:
+            dr_setup(ops)
+        else:
+            ops.constraints("Plain")
+            ops.numberer("RCM")
+            ops.system("BandGen")
+        ops.test("NormUnbalance", 1.0e-3, 25, 0)     # DR's own gate is force-based
+        ops.algorithm("Newton")
+        ops.integrator("LadrunoDynamicRelaxation")   # gershgorin M*, pseudo dt=1
+        ops.analysis("Transient")
+        # mass-free settling threshold: residualNorm < dr_settle_tol * ||P||
+        pref = dr_pref if dr_pref is not None else max(1.0, abs(lam))
+        settle_abs = dr_settle_tol * pref
+        for _ in range(dr_max_steps):
+            if res.substeps >= max_substeps:
+                res.verdict = "incomplete"
+                log("budget_exhausted", max_substeps=max_substeps)
+                return "stop"
+            res.substeps += 1
+            if ops.analyze(1, 1.0) != 0:
+                log("dr_step_failed")
+                break
+            rn = ops.ladrunoDR("residualNorm")
+            if rn < settle_abs:                      # mass-free quasi-static gate
+                res.dr_settled = True
+                log("dr_settled", residualNorm=rn, pref=pref, steps=res.substeps)
+                break
+            if done():
+                break
+        # R-HANDOFF: restore lambda + freeze before any resume
+        ops.setTime(lam)
+        ops.loadConst("-time", lam)
+        log("handoff_from_DR", lam=lam, settled=res.dr_settled)
+        return "done" if (res.dr_settled or done()) else "stop"
+
+    try:
+        status = phase_implicit()
+        if status == "done":
+            res.completed = True
+            res.verdict = "equilibrium"
+            log("done", verdict=res.verdict)
+            return res
+        if status == "stop":
             return res
 
-        res.completed = True
-        res.verdict = "equilibrium"
-        log("done", verdict=res.verdict)
+        # rung 4 -----------------------------------------------------------
+        if stabilize:
+            status = phase_stabilized()
+            if status == "done":
+                res.completed = True
+                # Stabilized is NEVER equilibrium. The c-reduction diffusion bound
+                # (R-DIFFUSION) is the only trustworthy fidelity certificate: re-run
+                # the stabilized analysis at HALF stab_f and bound the peak-load
+                # drift. `verify_rebuild(f)` rebuilds the model, drives it stabilized
+                # at fraction f, and returns the peak |load factor| it reached.
+                #   - drift <= verify_tol  -> `regularized` (f-insensitive: trustworthy)
+                #   - drift  > verify_tol  -> `unverified`  (the viscosity moved the answer)
+                #   - no verify_rebuild    -> `unverified`  ("drift not computed")
+                if verify_rebuild is not None:
+                    try:
+                        peak_half = float(verify_rebuild(stab_f * 0.5))
+                        denom = max(abs(res.peak_load), abs(peak_half), 1e-30)
+                        res.peak_drift = abs(res.peak_load - peak_half) / denom
+                        res.verdict = "regularized" if res.peak_drift <= verify_tol \
+                            else "unverified"
+                    except Exception as exc:                 # verify must never crash the run
+                        res.verdict = "unverified"
+                        log("verify_failed", error=str(exc))
+                else:
+                    res.verdict = "unverified"
+                log("done", verdict=res.verdict,
+                    dissipation_ratio=res.dissipation_ratio,
+                    stab_dissipated=res.stab_dissipated,
+                    peak_drift=res.peak_drift, over_diffused=res.over_diffused)
+                return res
+            if status == "stop":
+                return res
+
+        # rung 5 -----------------------------------------------------------
+        if dynamics:
+            status = phase_dynamics()
+            if status == "done":
+                res.completed = done()
+                # A DR rest state is regularized, not a traced equilibrium branch.
+                res.verdict = "regularized"
+                log("done", verdict=res.verdict, dr_settled=res.dr_settled)
+                return res
+            if status == "stop":
+                return res
+
+        res.verdict = "incomplete"
+        log("give_up", scale=scale)
         return res
     finally:
         if _log_fh is not None:
@@ -195,8 +410,8 @@ def robust_drive(ops, done, *,
 
 # --------------------------------------------------------------------------
 # self-test: a single softening Concrete02 truss. Load control cannot pass the
-# strength peak (no equilibrium beyond it); the rung-3 switch traces the
-# softening branch. Mirrors robust_solve_tests/torture_softening.py.
+# strength peak; the rung-3 switch traces the softening branch. Mirrors
+# robust_solve_tests/torture_softening.py.
 # --------------------------------------------------------------------------
 def _selftest():
     import os

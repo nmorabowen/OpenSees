@@ -598,6 +598,39 @@ material in its real target host.
   that needs a meshed non-homogeneous wall where principal rotation produces the pinched waist; rigid-rotation
   objectivity; serialization schema-version field.
 
+#### Phase 2b.2b (SHIPPED) — second orthogonal crack (X-cracking) + cyclic interlock-surface wear
+Designed via a 3-formulation design→critique workflow. The workflow's two-state-SUM design was found to
+**double-count** (net membrane shear `≈ τ_ci1 − τ_ci2 − τ_sm1` → `≈2·v_ci,max` when both cracks equally
+engaged) and to need a first-order reversal tangent; the **shipped design is a corrected single-friction-
+state + governing-cap** variant that delivers the same physics without those flaws.
+- **Flag:** `-xcrack` (implies `-cyclic`⇒`-interlock`); default OFF ⇒ 2b.1 byte-identical. Knobs
+  `-degKappa`/`-degSlipRef`/`-degMin`.
+- **Second crack:** an orthogonal crack 2, normal `(−s,c)`, freezes when the strain normal to THAT plane
+  reaches `eps_cr` (FSAM `CepsA2≥eunpA2` + orthogonality lock). The interlock cap then uses the **GOVERNING
+  (most-open) crack's opening** `v_ci,max(macauley(max(en1,en2))·s_θ)` — so the REVERSE shear direction is
+  also capped (2a/2b.1 single crack only capped the crack-1 direction). No double-count: ONE friction state,
+  ONE governing cap.
+- **Cyclic wear:** an irreversible Archard-style knockdown `kn = max(degMin, 1 − degKappa·clamp(slipCum/
+  degSlipRef,0,1))` driven by the **cumulative crack sliding distance** `slipCum` (not peak slip, which
+  saturates in cycle 1 under constant amplitude). Driven by the COMMITTED `slipCum` ⇒ tangent-neutral, so the
+  benign 2b.1 tangent is unchanged. This produces gradual cyclic strength decay (verified: +caps `2.90→2.50→
+  2.10` over 3 cycles) — and, with the friction unload, the low-cap reversal waist (the pinch driver).
+- **Serialization** grows a hard-checked **schema-version field** (`RC_SCHEMA_VERSION`, rejects mismatched
+  vectors) + `{cracked2, slipCum}` (+2 doubles) + 4 Params. New `xcrackState` response.
+- **Verified (Zone-A, material-point):** reduce-to-2b.1 (xcrack + `degKappa 0` on a no-crack-2 path = bit-
+  identical); crack 2 captures under biaxial (not uniaxial) tension; **cyclic strength degrades monotonically**
+  over cycles (constant-amplitude) vs constant no-wear cap; C++ ≡ numpy oracle step-by-step with wear engaged.
+- **PINCHING shape is still a panel effect** (2b.2c, below): under proportional homogeneous shear the crack
+  sits on the principal plane (`g_nt=0`, interlock inert); X-cracking + wear give bidirectional capping +
+  strength decay at the material point, but the pinched *waist* needs a meshed wall (principal rotation).
+- **Coverage note (review):** the `en_gov = max(en1,en2)` *crack-2-governs* branch is verified analytically
+  (2 design-review agents re-derived it) but is NOT hit by a homogeneous material-point test — exercising it
+  needs crack 2 to FORM (biaxial) AND GOVERN (`en2>en1`, `en1<0`) with shear on a crack plane, i.e. a
+  non-proportional biaxial path. That regime is exercised naturally by the 2b.2c meshed panel (rotating
+  principals + both cracks); a dedicated homogeneous off-axis test is deferred there.
+- **Still deferred to 2b.2c:** crack-closure normal spectral reassembly; the `-shearRetention {const|dsfm|
+  rots}` retention CURVES; **panel/experiment pinching validation (Tran–Wallace)**; rigid-rotation objectivity.
+
 ### Phase 3 — Tension stiffening + crack-band/`lch` hardening
 - **Build:** VC/CM tension-stiffening plateaus (opt-in); resolve `lch` per **D5 Option A or B**.
 - **New:** if Option B, the ledgered vanilla `lch` plumb.

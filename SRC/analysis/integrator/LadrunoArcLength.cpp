@@ -688,6 +688,41 @@ LadrunoArcLength::getStabilizedTrueResidualVector(void) const
     return stabilize ? &residualTrue : 0;
 }
 
+// --- Layer-1.5 stabilization-energy gate (ADR-31) -------------------------
+// dissipVisc is the cumulative viscous work W_stab accumulated in commit()
+// (= sum_i cOverDt*M*_i*deltaUstep_i^2 over committed stabilized steps).
+double LadrunoArcLength::getStabilizationDissipatedEnergy(void) const
+{
+    return dissipVisc;
+}
+
+double LadrunoArcLength::getReferenceStrainEnergy(void) const
+{
+    return Estrain0;
+}
+
+// W_stab / Estrain0 -- the same fraction commit()/adaptStab and Print() already
+// use; the driver compares it to fTarget (~2e-4) and ramps c down if exceeded.
+double LadrunoArcLength::getStabilizationDissipationRatio(void) const
+{
+    return (Estrain0 > 0.0) ? dissipVisc / Estrain0 : 0.0;
+}
+
+// Runtime actuator (R-RAMPDOWN): scale the viscous coefficient (and the applied
+// cOverDt) by `factor`. Used by the driver to decay c toward zero once the limit
+// point is cleared, or to dial stabilization up. factor must be > 0.
+int LadrunoArcLength::scaleCVisc(double factor)
+{
+    if (factor <= 0.0) {
+        opserr << "WARNING LadrunoArcLength::scaleCVisc - factor must be > 0 "
+                  "(got " << factor << "); ignored\n";
+        return -1;
+    }
+    cVisc   *= factor;
+    cOverDt  = (dtPseudo > 0.0) ? cVisc / dtPseudo : cVisc;
+    return 0;
+}
+
 int
 LadrunoArcLength::sendSelf(int cTag, Channel &theChannel)
 {
