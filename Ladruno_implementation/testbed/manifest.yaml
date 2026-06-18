@@ -689,7 +689,7 @@ features:
       - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
       - SRC/interpreter/OpenSeesNDMaterialCommands.cpp
       - SRC/material/nD/CMakeLists.txt
-    dispatch: {tcl: true, functionMap: true}
+    dispatch: {tcl: false, functionMap: true}   # no classic-Tcl TclModelBuilderNDMaterialCommand entry; the shared OpenSeesNDMaterialCommands registry serves both Tcl + Python (matches the LadrunoRCConcrete ND sibling)
     status: active
     notes: >
       Coupled biaxial (Mz-My) cohesive interaction-surface moment-rotation hinge (nDMaterial),
