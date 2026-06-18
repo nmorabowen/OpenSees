@@ -106,7 +106,7 @@ int main()
 
     // Equibiaxial (degenerate) floor: drive exx==eyy post-crack; BOTH in-plane normals
     // must be pinned to sigma_ts(e1=exx) (the degen-branch fix; the old 0.5-coeff reached
-    // only halfway). Also FD-check the pinned D[0][0] there.
+    // only halfway).
     {
         Params P; fill(P, 1); RCHist h; histZero(h);
         int nbe = 0; double maxerr = 0.0;
@@ -127,6 +127,38 @@ int main()
         }
         printf("equibiaxial: pinned-both steps=%d  worst rel-err=%.2e\n", nbe, maxerr);
         if (nbe < 50) { printf("EQUIBIAXIAL FLOOR FAIL (degen under-delivers?)\n"); return 1; }
+    }
+
+    // Degenerate (equibiaxial) consistent-tangent check. FD is ill-defined at the degenerate
+    // point (any single-component perturbation breaks exx==eyy and leaves the degenerate branch),
+    // so instead ANALYTICALLY cross-check the TS contribution: D_on - D_bare must equal the
+    // degen-branch formula  ts_inj_a * (ts_dsig*P1eps[c] - row[c]),  ts_inj=(1,1,0),
+    // P1eps=(0.5,0.5,0,0,0,0), row[c] = 0.5*(D_bare[0][c]+D_bare[1][c]) (= ts_meas . D_bare).
+    // This catches a wrong degen P1eps / ts_inj / ts_meas that the FD uniaxial leg cannot.
+    {
+        double e = 0.0025;                            // post-crack, floor binding at equibiaxial
+        double eps[6] = { e, e, 0,0,0,0 };
+        Params Pon; fill(Pon, 1);  RCHist hon;  histZero(hon);
+        Params Poff; fill(Poff, 0); RCHist hoff; histZero(hoff);
+        double son[6], Don[6][6], soff[6], Dbare[6][6]; RCHist oon, ooff;
+        returnMap3D(Pon,  eps, hon,  son,  Don,   oon, true);
+        returnMap3D(Poff, eps, hoff, soff, Dbare, ooff, true);
+        double ds; tensStiff(e, 1, Pon.ftPeak, Pon.tensStiffC, Pon.tensStiffAlpha, &ds);
+        double P1eps[6] = { 0.5, 0.5, 0, 0, 0, 0 };
+        const int vidx[3] = { 0, 1, 3 };
+        double tinj[3] = { 1.0, 1.0, 0.0 };
+        double worst = 0.0;
+        for (int a = 0; a < 3; ++a) {
+            int r = vidx[a];
+            for (int c = 0; c < 6; ++c) {
+                double row = 0.5 * (Dbare[0][c] + Dbare[1][c]);     // ts_meas . D_bare
+                double expected = Dbare[r][c] + tinj[a] * (ds * P1eps[c] - row);
+                double rel = fabs(Don[r][c] - expected) / (fabs(expected) + fabs(Don[r][c]) + 1.0);
+                if (rel > worst) worst = rel;
+            }
+        }
+        printf("equibiaxial degen tangent analytic cross-check: worst rel-err=%.2e\n", worst);
+        if (worst > 1e-9) { printf("DEGEN TANGENT FAIL\n"); return 1; }
     }
 
     if (nbad == 0 && nfloor > 10) { printf("GPP TENSSTIFF GATE: PASS\n"); return 0; }

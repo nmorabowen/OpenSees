@@ -423,7 +423,7 @@ nDMaterial LadrunoRCConcrete $tag $E $nu \
 | `-implexAlpha` | IMPL-EX extrapolation-factor multiplier | 1.0 |
 | `-implexControl` | advisory error control `$errTol $timeRedLim` (warns when the implex error exceeds tol) | off |
 | `-tensStiff` | **enable** tension stiffening: `vc` (Bentz) or `cm` (Collins–Mitchell) (§4.7) | OFF |
-| `-tensStiffC` | `vc`-mode sqrt coefficient `c` (`> 0`) | 500 |
+| `-tensStiffC` | `vc`-mode sqrt coefficient `c` (`> 0`; **ignored in `cm` mode** — `cm` hard-codes 500, a warning is emitted) | 500 |
 | `-tensStiffAlpha` | `cm`-mode `α1·α2` scale | 1.0 |
 
 > [!important] Flag implication chain

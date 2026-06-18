@@ -288,6 +288,19 @@ def test_load_unload_floor_tracks_live_e1():
     assert s_lo > s_peak, (s_peak, s_lo)      # re-inflated (sigma_ts decreasing in e1)
 
 
+def test_parser_rejects_bad_args():
+    """The new validation paths must reject: -tensStiffC<=0 (sqrt-NaN guard) and an unknown
+    -tensStiff mode. A dropped guard would re-introduce post-crack NaN and stay green."""
+    ops.wipe(); ops.model("basic", "-ndm", 3, "-ndf", 3)
+    base = ["LadrunoRCConcrete", 1, E, NU, "-Ce", *CE, "-Cs", *CS, "-Te", *TE, "-Ts", *TS]
+    with pytest.raises(Exception):
+        ops.nDMaterial(*base, "-tensStiff", "vc", "-tensStiffC", 0.0)
+    with pytest.raises(Exception):
+        ops.nDMaterial(*[*base[:1], 2, *base[2:]], "-tensStiff", "vc", "-tensStiffC", -5.0)
+    with pytest.raises(Exception):
+        ops.nDMaterial(*[*base[:1], 3, *base[2:]], "-tensStiff", "bogus")
+
+
 def test_serialization_roundtrip():
     """schema v4 send/recv balance: drive a TS-on material past cracking, round-trip
     the committed state through the FE_Datastore, and confirm the pinned stress
@@ -302,3 +315,85 @@ def test_serialization_roundtrip():
         build, probe_nodes=[2], ndf=3,
         probe_fn=lambda: list(ops.eleResponse(1, "stresses"))[0:6],
     )
+
+
+def test_serialization_nondefault_params():
+    """The v4 wire must carry tensStiffC / tensStiffAlpha / ftPeak, not just survive at defaults.
+    Round-trip a NON-default vc c=2000 (and a cm alpha=0.6): if a slot is dropped/misordered,
+    recvSelf reverts to the ctor default (c=500 / alpha=1) and the restored stress diverges from
+    the rebuilt parser value, so before!=after fails. The probe targets the floored stress, which
+    depends on those values."""
+    for mode, kw in (("vc", {"c": 2000.0}), ("cm", {"alpha": 0.6})):
+        def build(mode=mode, kw=kw):
+            _build(lambda t: _rc(t, mode, **kw))
+            ops.integrator("DisplacementControl", 2, 1, 1.0e-3)
+            assert ops.analyze(3) == 0
+            ops.eleResponse(1, "forces")
+        database_roundtrip(
+            build, probe_nodes=[2], ndf=3, dbname=f"rc_ts_{mode}",
+            probe_fn=lambda: list(ops.eleResponse(1, "stresses"))[0:6],
+        )
+
+
+def test_implex_with_tensstiff():
+    """TS under IMPL-EX (`-implex`): the analysis converges and the floor is still applied —
+    the floored stress tracks sigma_ts(ε1) (within the one-step extrapolation lag) and stays
+    materially above the bare-off softening run."""
+    def _rc_implex(t):
+        ops.nDMaterial("LadrunoRCConcrete", t, E, NU, "-Ce", *CE, "-Cs", *CS, "-Cd", *CD,
+                       "-Te", *TE, "-Ts", *TS, "-Td", *TD, "-Kc", KC, "-tensStiff", "vc", "-implex")
+    _build(_rc_implex)
+    ops.integrator("DisplacementControl", 2, 1, 3.0e-3 / 150)
+    for _ in range(150):
+        assert ops.analyze(1) == 0, "implex+TS analyze failed"
+    ops.eleResponse(1, "forces")
+    e = ops.nodeDisp(2, 1)
+    s_on = list(ops.eleResponse(1, "stresses"))[0]
+    s_off = _run(lambda t: _rc(t), 3.0e-3, 150)[-1][1]
+    assert s_on > 1.5 * s_off, (s_off, s_on)                       # floor applied under implex
+    assert s_on == pytest.approx(_sig_ts(e), rel=0.06), (s_on, _sig_ts(e))
+
+
+def test_tensstiff_interlock_nonproportional_robust():
+    """TS (live p1) + fixed-crack interlock (frozen crack) under a NON-proportional path
+    (tension to crack, then add shear so the principal axis rotates). This drives the documented
+    TS→interlock boundary: the interlock (frozen crack) reworks the in-plane stress AFTER the TS
+    floor (live p1), so the floor is NOT cleanly preserved here — exactly why combined TS+interlock
+    is scoped to PROPORTIONAL loading. The robustness claim is what matters: the solve must stay
+    well-behaved (every step converges, finite stress) through the boundary."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for t, co in _CUBE.items():
+        ops.node(t, *co)
+    ops.nDMaterial("LadrunoRCConcrete", 1, E, NU, "-Ce", *CE, "-Cs", *CS, "-Cd", *CD,
+                   "-Te", *TE, "-Ts", *TS, "-Td", *TD, "-Kc", KC,
+                   "-tensStiff", "vc", "-interlock", "-crackSpacing", 50.0)
+    ops.element("stdBrick", 1, 1, 2, 3, 4, 5, 6, 7, 8, 1)
+    exx, gmax = 2.0e-3, 1.0e-3
+    times = [0.0, 1.0, 2.0]
+    ops.timeSeries("Path", 1, "-time", *times, "-values", 0.0, 1.0, 1.0)   # tension then hold
+    ops.timeSeries("Path", 2, "-time", *times, "-values", 0.0, 0.0, 1.0)   # shear in stage 2
+    ops.pattern("Plain", 1, 1)
+    for t, (x, y, z) in _CUBE.items():
+        ops.sp(t, 1, exx * x)                                   # u_x = exx*X
+        ops.sp(t, 3, 0.0)
+    ops.pattern("Plain", 2, 2)
+    for t, (x, y, z) in _CUBE.items():
+        ops.sp(t, 2, gmax * x)                                  # u_y = gamma*X (engineering shear)
+    ops.system("FullGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Penalty", 1.0e14, 1.0e14)
+    ops.test("NormDispIncr", 1.0e-7, 100, 0)
+    ops.algorithm("Newton")
+    ops.integrator("LoadControl", 1.0 / 80)
+    ops.analysis("Static")
+    for _ in range(160):                                        # stage 1 (tension) + stage 2 (shear)
+        assert ops.analyze(1) == 0, "non-proportional TS+interlock analyze failed"
+    ops.eleResponse(1, "forces")
+    sig = list(ops.eleResponse(1, "stresses"))[0:6]
+    import math
+    assert all(math.isfinite(x) for x in sig), sig            # robust: no NaN/inf at the boundary
+    assert abs(sig[3]) > 1.0e-3, sig                          # shear actually developed (axes rotated)
+    # stress stays bounded (no runaway) — combined non-proportional TS+interlock is well-behaved
+    # even though the floor is not exactly preserved (the documented proportional-only boundary).
+    assert max(abs(x) for x in sig) < 5.0 * FT, sig

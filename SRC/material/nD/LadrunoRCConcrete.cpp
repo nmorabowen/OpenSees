@@ -169,6 +169,11 @@ void* OPS_LadrunoRCConcrete(void)
     opserr << "nDMaterial LadrunoRCConcrete error: -tensStiffC must be > 0.\n";
     return 0;
   }
+  // cm mode hard-codes the Collins-Mitchell 500 coefficient, so -tensStiffC is inert there;
+  // warn rather than silently ignore a user-supplied value (footgun: they likely wanted vc).
+  if (tensStiffMode == 2 && tensStiffC != 500.0)
+    opserr << "WARNING nDMaterial LadrunoRCConcrete: -tensStiffC is ignored in cm mode "
+              "(cm uses the fixed Collins-Mitchell 500); use -tensStiff vc for a tunable c.\n";
 
   if (Ce.size() < 2 || Cs.size() != Ce.size()) {
     opserr << "nDMaterial LadrunoRCConcrete error: need -Ce and -Cs of equal length (>=2).\n";
