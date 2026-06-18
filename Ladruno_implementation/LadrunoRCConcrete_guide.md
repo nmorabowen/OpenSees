@@ -2,7 +2,7 @@
 title: "LadrunoRCConcrete — nonlinear RC layer-shell constitutive material"
 project: Ladruno
 type: reference / user guide
-status: shipped (Phase 1 + Phase 2a + 2b.1 + 2b.2a + 2b.2b; MERGED PRs #155 / #192 / #239 / #245 / #246 / #253)
+status: shipped — Phase 1 / 2a / 2b.1 / 2b.2a / 2b.2b / 2b.2c.1-4a + IMPL-EX (4a); cyclic material physics COMPLETE. Remaining: quantitative Tran–Wallace experiment match, Phase 3 (tension stiffening), 4b (finite view), 5 (solid-shell). MERGED PRs #155 #192 #239 #245 #246 #253 #263 #266 (+ shear-retention/objectivity/closure siblings)
 classTag: 33015 (ND_TAG family)
 material: "nDMaterial LadrunoRCConcrete — 3D / PlaneStress / PlateFiber views"
 related:
@@ -448,6 +448,52 @@ nDMaterial LadrunoRCConcrete 1 30000.0 0.2 \
 # no -beta / -interlock ⇒ trajectory-faithful to ASDConcrete3D (the reduce-to-baseline gate)
 ```
 
+### 7.4 Cyclic RC wall — quasi-static EXPLICIT recipe (the cyclic solver)
+
+A **cyclic** softening RC wall will **not** converge under implicit Newton — the
+plastic-damage consistent tangent goes indefinite on the softening branch, and the
+reversals stall (`-implex` helps but does not fully cure a meshed cyclic wall). The
+monotonic solvers (`LadrunoArcLength`, `LadrunoIndirectControl`, `LadrunoDynamicRelaxation`,
+`robust_drive`) trace **one** equilibrium path through a limit point — a load reversal is
+not a single monotonic path, so they don't do cyclic. The right tool is **quasi-static
+explicit** (`CentralDifferenceLadruno`): it forms no stiffness tangent, so the
+indefinite-tangent stall simply doesn't exist and the reversals integrate through.
+
+```python
+import math, openseespy.opensees as ops
+# ... build the meshed wall: ASDShellQ4 + section LayeredShell(LadrunoRCConcrete ... -beta
+#     -interlock -cyclic -xcrack -rho 2.4e-9); fix the base; lock z + all rotations (planar) ...
+
+# (1) element mass via the material -rho (NOT ops.mass — the dt_cr eigensolve needs element M)
+# (2) ASDShellQ4 supplies no per-element dt_cr (criticalTimeStep() == -1): manual wave-speed bound
+E, rho, h = 30000.0, 2.4e-9, 500.0           # MPa, tonne/mm^3, element size mm
+dt = 0.2 * h / math.sqrt(E / rho)            # ~0.2 * transit time  (frac 0.1-0.2)
+
+# (3) rigid top via per-node sp (NO equalDOF — stability/dt_cr ignore constraints)
+#     held axial via a Constant pattern; cyclic drift via a slow cosine Path on a dt-based grid
+ops.constraints("Transformation"); ops.numberer("RCM")
+ops.system("Diagonal")                       # trivial M^-1
+ops.algorithm("Linear")                      # exactly ONE solve/step
+ops.integrator("CentralDifferenceLadruno", "-cflAbort", "-lump", "diagonal")
+ops.analysis("Transient")
+for _ in range(total_steps):                 # seg_time = steps_per_seg*dt MUST be >> structure period
+    ops.analyze(1, dt)                       # (quasi-static: keep KE << strain energy)
+```
+
+> [!warning] Explicit gotchas (each is a real trap — see [[LEDGER_quirks]])
+> - **Element mass, not nodal:** give the material `-rho`; `ops.mass(...)` alone leaves the
+>   eigensolve with no element mass matrix.
+> - **`ASDShellQ4` reports no `dt_cr`** (`criticalTimeStep()` → −1); using it blindly gives
+>   `dt = 0.2·(−1) < 0` → instant blow-up. Use the manual `dt ≈ frac·h/√(E/ρ)`.
+> - **No `equalDOF`/rigid ties** — `dt_cr` and the CD stability bound ignore constraints, so a
+>   rigid top via `equalDOF` makes the bound a lie and the run detonates. Prescribe the rigid-top
+>   drift by putting the **same `sp` value on every top node**.
+> - **Mass-proportional damping only** — stiffness-proportional (`betaK`) Rayleigh collapses `dt_cr`.
+
+This is the recipe validated in `tests/test_ladrunoRCConcrete_wall.py` (a 4×3 squat wall
+completes the full ±drift schedule; the cyclic interlock degradation is load-bearing at the
+panel scale — §9).
+
 ---
 
 ## 8. State recording
@@ -477,16 +523,21 @@ Through the element's `material` response (`eleResponse(ele, "material", gp, "<n
 
 ## 9. Verification and validation
 
-Shipped across five phases, each with a Zone-A battery (material-point + shell-element) and
+Shipped across many phases, each with a Zone-A battery (material-point + shell-element) and
 a numpy oracle (`tests/_testbed/rc_shell_ref.py`) the C++ matches step-by-step:
 
 | Phase | What it pins | Tests |
 |---|---|---|
 | **1** (#155/#192) | `β` on the **strength** axis (`|σc| = β(ε1)·fc'` exact); reduce-to-`ASDConcrete3D` tension+compression byte-match with `β` off; biaxial β-softening ratio == `β(ε1)` | numpy oracle + standalone g++ + `tests/test_ladrunoRCConcrete_material.py` |
-| **2a** (#239) | interlock-OFF reduce-to-baseline; `v_ci,max` cap vs closed-form; **off-axis** crack rotation (normal vs analytic principal dir); ON-vs-OFF ablation; standalone g++ FD on the cap + tangent-pinning identity | material-point battery |
-| **2b.1** (#245) | reversal re-caps at ∓`v_ci,max` + energy dissipation; unload stiffness == `G`; crack-closure raises the cap; monotonic reduces to the 2a plateau; C++ ≡ numpy over a full reversing path | material-point battery |
-| **2b.2a** (#246) | **end-to-end in `ASDShellQ4` + `LayeredShell`**: membrane tension cracks+softens; cyclic membrane shear saturates `Nxy` at `±v_ci,max·h` both signs; interlock load-bearing in the shell; serialization round-trip bit-exact | `tests/test_ladrunoRCConcrete_shell.py` |
-| **2b.2b** (#253) | reduce-to-2b.1 (xcrack + `degKappa 0` = bit-identical); crack 2 captures under biaxial tension; cyclic strength degrades monotonically over cycles; C++ ≡ numpy with wear; shell-level cyclic decay | material + shell batteries |
+| **2a** (#239) | interlock-OFF reduce-to-baseline; `v_ci,max` cap vs closed-form; **off-axis** crack rotation; ON-vs-OFF ablation; standalone g++ FD on the cap + tangent-pinning identity | material-point battery |
+| **2b.1** (#245) | reversal re-caps at ∓`v_ci,max` + energy dissipation; unload stiffness == `G`; crack-closure raises the cap; monotonic reduces to the 2a plateau; C++ ≡ numpy over a reversing path | material-point battery |
+| **2b.2a** (#246) | **end-to-end in `ASDShellQ4` + `LayeredShell`**: membrane tension cracks+softens; cyclic `Nxy` saturates at `±v_ci,max·h` both signs; interlock load-bearing in the shell; serialization round-trip bit-exact | `tests/test_ladrunoRCConcrete_shell.py` |
+| **2b.2b** (#253) | reduce-to-2b.1 (xcrack + `degKappa 0` = bit-identical); crack 2 captures under biaxial tension; cyclic strength degrades monotonically; C++ ≡ numpy with wear | material + shell batteries |
+| **2b.2c.1** | `-shearRetention` modes: `const(μ=1)`≡`mcft` to 1e-9; `const` unload == `μ·G`; `dsfm` unload == `G·0.31/denom` (closed-form); cap still `±v_ci,max` every mode; `rots` ≡ interlock-off | material battery + numpy oracle |
+| **2b.2c.2** | **rigid-rotation objectivity** — `σ(Q E Qᵀ) == Q σ(E) Qᵀ` over a cracked/cyclic/X-cracked history, frame rotated 30°/90°/127° (the corotational-element route is objective by construction) | `tests/test_ladrunoRCConcrete_objectivity.py` |
+| **2b.2c.3** | **crack-closure on the normal** is already correct in the cloned spine (per-step spectral recompose = unilateral closure): compress-past-peak fully recovers; reopened tension follows the damaged envelope | material battery |
+| **2b.2c.4a** | **meshed squat wall, quasi-static EXPLICIT** completes the full ±drift cyclic schedule (implicit walls at ~0.6 mm); cyclic interlock degradation load-bearing at panel scale (−28% energy, −11% peak vs monotone) | `tests/test_ladrunoRCConcrete_wall.py` (Zone-B) |
+| **4a** (#263) | **IMPL-EX** (`-implex`): off-identical; tracks implicit on a smooth path; error active on rate change / 0 elastic; SPD secant under softening; save/restore continuation | `tests/test_ladrunoRCConcrete_implex.py` |
 
 > [!note] The load-bearing gate is β-on-the-strength-axis
 > Proven three independent ways (numpy oracle, standalone g++ build of `LadrunoRCKernel.h`,
@@ -500,9 +551,14 @@ a numpy oracle (`tests/_testbed/rc_shell_ref.py`) the C++ matches step-by-step:
 > [!caution] Known boundaries
 > - **Pinching *shape* is a panel effect.** X-cracking + wear give bidirectional capping
 >   and cyclic strength decay at the material point, but the pinched *waist* needs a meshed
->   wall where principal rotation opens/closes the crack within a cycle (deferred Phase
->   2b.2c). Under proportional homogeneous shear the crack sits on the principal plane and
->   interlock is inert.
+>   wall where principal rotation opens/closes the crack within a cycle. Under proportional
+>   homogeneous shear the crack sits on the principal plane and the interlock is inert. The
+>   meshed wall + quasi-static explicit (§7.4, `tests/test_ladrunoRCConcrete_wall.py`) now
+>   demonstrates the panel mechanism (the cyclic interlock degradation is load-bearing:
+>   −28% hysteretic energy, −11% peak vs the monotone bound). What remains is a
+>   **quantitative match to a named experiment** (Tran–Wallace RW-A20-P10 / a PEER squat
+>   wall): specimen geometry + reinforcement layout + digitized measured loops, asserting
+>   pinching shape + cumulative hysteretic energy. The solver is no longer the blocker.
 > - **No through-thickness `σ33` crush.** The director-shell host cannot carry transverse
 >   normal stress — punching / bearing / 3D crush is the deferred `LadrunoSolidShell`
 >   (classTag 33020), not this material on `ASDShellQ4`.
