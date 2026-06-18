@@ -1,8 +1,8 @@
 ---
-title: "RC shell stack — forward handout: Phase 3 and beyond"
+title: "RC shell stack — forward handout: Phase 4b and beyond (Phase 3 shipped)"
 project: Ladruno
 type: developer handoff / forward plan
-status: planning (cyclic material physics COMPLETE; this is the roadmap for what remains)
+status: planning — cyclic material physics + Phase 3 (tension stiffening + crack-band lch) COMPLETE; remaining = V (Tran–Wallace), 3b structural rotated-mesh gate (staged), Phase 4b (finite view), Phase 5 (solid-shell)
 owner: nmora
 related:
   - "[[19_ladruno_rc_shell_adr]]"
@@ -16,25 +16,34 @@ tags:
   - roadmap
   - handoff
   - tension-stiffening
+  - crack-band
+  - regularization
   - finite-strain
   - solid-shell
   - punching
 ---
 
-# RC shell stack — forward handout: Phase 3 and beyond
+# RC shell stack — forward handout: Phase 4b and beyond
 
 This is the **developer handoff** for everything left in the RC shell stack after the cyclic
-constitutive core landed. It turns the terse Phase-3/4/5 bullets of the source ADR
-([[19_ladruno_rc_shell_adr]]) into actionable plans: for each remaining item — *goal, what to
-build, what to reuse, the decisions already locked vs still open, the acceptance gates, the
-gotchas to watch, and the rough effort*. Read the ADR for the full reasoning; read this to
-**pick up and execute**.
+constitutive core **and Phase 3 (tension stiffening + crack-band `lch` regularization)** landed.
+It turns the terse Phase-4/5 bullets of the source ADR ([[19_ladruno_rc_shell_adr]]) into
+actionable plans: for each remaining item — *goal, what to build, what to reuse, the decisions
+already locked vs still open, the acceptance gates, the gotchas to watch, and the rough effort*.
+Read the ADR for the full reasoning; read this to **pick up and execute**.
+
+> [!note] What changed since this handout was first written (2026-06-18)
+> **Phase 3 is SHIPPED.** `-tensStiff {vc|cm}` tension stiffening (3a, PR #273) and
+> `-autoRegularization $lch_ref` crack-band regularization (3b, PR #277, **Option A** — scalar
+> in-plane `lch`, zero vanilla edit) are merged. The Phase-3 section below is kept as a *shipped*
+> record; the one remaining 3b item is the **structural** rotated-mesh objectivity gate (staged).
+> The live forward work is **V → Phase 4b → Phase 5**.
 
 ---
 
 ## Where we are (the baseline this builds on)
 
-**Shipped and merged to `ladruno` (the cyclic material physics is COMPLETE):**
+**Shipped and merged to `ladruno` (cyclic material physics + Phase 3 are COMPLETE):**
 
 | Capability | Flag | Phase / PR |
 |---|---|---|
@@ -48,14 +57,18 @@ gotchas to watch, and the rough effort*. Read the ADR for the full reasoning; re
 | Crack-closure-on-normal (verified already correct) | — (test) | 2b.2c.3 |
 | Meshed-wall **quasi-static explicit** cyclic validation | — (Zone-B) | 2b.2c.4a (#266) |
 | **IMPL-EX** robustness | `-implex` | 4a (#263) |
+| **Tension stiffening** (stress floor on the live principal axis) | `-tensStiff {vc\|cm}` (+`-tensStiffC/-tensStiffAlpha`) | **3a (#273)** |
+| **Crack-band (Bažant–Oh) regularization** (mesh-objective softening energy) | `-autoRegularization $lch_ref` | **3b (#277)** |
+
+Schema is now **v5** (hard-checked); all flags **default OFF ⇒ baseline-identical**.
 
 **The solver story is settled:** cyclic softening RC walls run as **quasi-static explicit**
 (`CentralDifferenceLadruno`) — see [[LadrunoRCConcrete_guide]] §7.4 for the recipe and the four
 traps (element mass via `-rho`; `ASDShellQ4` has no `dt_cr` → manual wave-speed bound; no
 `equalDOF`; mass-proportional damping only). `-implex` is the implicit-path alternative.
 
-**What remains** is one validation item + three forward phases. None of them is blocked by the
-others except where noted.
+**What remains** is one validation item, one staged Phase-3 gate, and two forward phases. None is
+blocked by the others except where noted.
 
 ---
 
@@ -64,17 +77,18 @@ others except where noted.
 | Item | Kind | Blocks on | Effort | Recommended order |
 |---|---|---|---|---|
 | **V — Tran–Wallace experiment calibration** | validation (Zone-B) | *experimental data from the user* | M | when data is available |
-| **Phase 3 — tension stiffening + directional `lch`** | material (small) + maybe 1 vanilla edit | nothing | S–M | **do first (code-only)** |
-| **Phase 4b — finite-strain view** (`LadrunoRCFiniteStrain`) | material view | reuses shipped `LogStrain`/`FiniteStrainNDMaterial` | M | after Phase 3 |
+| **3b-struct — structural rotated-mesh objectivity gate** | validation (Zone-B) | a softening-localization solver setup | S–M | optional, anytime |
+| **Phase 4b — finite-strain view** (`LadrunoRCFiniteStrain`) | material view | reuses shipped `LogStrain`/`FiniteStrainNDMaterial` | M | **do first (code-only)** |
 | **Phase 5 — `LadrunoSolidShell`** (33020) | NEW element | wants Phase 4b (the 3D material view) | **L (the big one)** | last |
 
 `S`≈a focused slice, `M`≈a multi-day phase, `L`≈a multi-PR element with net-new EAS code.
 
 > [!tip] Recommended sequencing
-> **Phase 3 → Phase 4b → Phase 5**, with **V (Tran–Wallace)** slotted in whenever the
-> experimental loops become available (it needs your input, not more code infrastructure). Phase
-> 3 is the cleanest self-contained next slice; Phase 5 is the heavy lift and genuinely wants the
-> Phase-4b 3D material view first.
+> **Phase 4b → Phase 5**, with **V (Tran–Wallace)** slotted in whenever the experimental loops
+> become available (it needs your input, not more code infrastructure) and **3b-struct** whenever
+> a localization-solver harness is convenient (the regularization *mechanism* is already proven at
+> the material point). Phase 4b is the cleanest self-contained next code slice; Phase 5 is the
+> heavy lift and genuinely wants the Phase-4b 3D material view first.
 
 ---
 
@@ -112,54 +126,51 @@ Phase 3 + ADR risk "MCFT needs composite `ε1`").
 
 ---
 
-## Phase 3 — Tension stiffening + crack-band / `lch` hardening
+## Phase 3 — Tension stiffening + crack-band / `lch` hardening (SHIPPED)
 
-**Goal.** (a) Average tensile stress *between* cracks from bonded reinforcement (tension
-stiffening), for slabs and distributed-reinforcement walls; (b) make in-plane softening
-**size-objective on an inclined-crack (rotated) mesh**, not just an axis-aligned one.
+Both halves landed; this is the *shipped record* (full detail in [[LadrunoRCConcrete_guide]] §4.7–4.8,
+ADR Phase 3, and the `LEDGER_implementations` row).
 
-**What to build.**
-1. **Tension-stiffening plateau** as an opt-in mode. Two candidate laws (ADR §"Tension
-   stiffening"): MCFT/Bentz `σ_t_avg = ft/(1+√(c·ε1))` and Collins–Mitchell
-   `α1·α2·ft/(1+√(500·ε1))`. Currently bakeable into the `-Te/-Ts` backbone (the documented
-   default); Phase 3 promotes it to a real `-tensStiff {vc|cm}` knob (the ADR reserves the name)
-   driven by the **composite `ε1`** (reinforced, not bare-concrete) so it doesn't double-count
-   with a separate steel layer.
-2. **`lch` resolution — pick and own ONE (ADR decision D5):**
-   - **Option A (default, recommended):** accept the element's scalar in-plane `lch` via
-     `getCharacteristicLength()` (already encodes `ASDShellQ4`'s EAS `/2`); treat through-thickness
-     crush as the layer thickness; **document that out-of-plane bending-crack energy is not
-     through-thickness size-objective on the director shell** (that's Phase 5's solid-shell).
-   - **Option B (only if inclined-crack objectivity must be exact):** a small **Ladruno-tagged,
-     `LEDGER_vanilla_files`-recorded** edit to `LayeredShellFiberSection`/`ASDShellQ4` plumbing a
-     per-direction `lch` to the layer — and **drop the "zero vanilla edit" claim** for that case.
+**3a — Tension stiffening (`-tensStiff {vc|cm}`, PR #273).** A stress **floor** on the *live*
+in-plane principal tensile axis `p1`: inject `Δ = σ_ts(ε1) − nᵀσn` along `p1` (only when `Δ>0`),
+active **only post-crack** (`ε1 ≥ ε_cr`). `σ_ts = ft/(1+√(c·ε1))` (`vc`/Bentz) or
+`α·ft/(1+√(500·ε1))` (`cm`/Collins–Mitchell), driven by the **composite `ε1`** (= the membrane
+principal tensile strain the MCFT `β` already uses — perfect-bond compatibility, no separate steel
+layer needed). Equibiaxial floors both in-plane normals; consistent tangent + IMPL-EX freeze.
+**Monotonic-scope (v1):** re-inflates on unload (no `ε1max` memory) — use for pushover.
 
-**Reuse.** The spine's `buildBackbone`/`adjust()` E-consistency machinery; the existing
-`getCharacteristicLength()` channel; `tests/_testbed/rc_shell_ref.py` oracle.
+**3b — Crack-band (Bažant–Oh) regularization (`-autoRegularization $lch_ref`, PR #277).**
+**Option A chosen** (the ADR D5 decision is now resolved): a faithful clone of `ASDConcrete3D`'s
+auto-regularization — the post-peak softening is rescaled so `g_reg = G_f0·(lch_ref/lch)`, hence
+the physical dissipated energy `g_reg·lch` is **mesh-objective**. `lch` is the element's scalar
+`getCharacteristicLength()` (EAS-aware) or an explicit `-lch`, **latched once**; **loud failure**
+if unresolved (no silent default). **Zero vanilla edit** — Option B (per-direction vanilla plumb)
+was *not* taken; the single-scalar √2 inclined-strut mis-regularization is the documented residual.
 
-**Decisions — locked vs open.** Locked: tension stiffening rides the **composite `ε1`**; flags-off
-reduces to the bare fracture-energy backbone (baseline-identical). **Open:** which `lch` option
-ships (A vs B), and the crush-band floor `lch_t ≥ max(t_i, k·d_agg)`.
+> [!warning] The Phase-3 bug worth remembering (3b review)
+> `regularize()` must re-apply `adjust()` (E-cap + monotone plastic strain + non-decreasing damage)
+> after each scaling step — the reference does, and omitting it lets the post-peak plastic strain go
+> non-monotone and corrupts `q`/damage **~6% on steep-softening backbones, invisible to every energy
+> gate** (the fracture energy uses only `x,y`). Caught by a 3-agent review; gated now with a
+> steep-damage plastic-strain-monotonicity check in `rc_reg_gpp.cpp`. See [[LEDGER_quirks]].
 
-**Acceptance gates (ADR Phase 3).**
-- In-plane **mesh-objectivity on a ROTATED (inclined-crack) notched panel**: peak ~1–3%, energy
-  ~3–5% across a 2× refine — **calibrated on the elastic shell patch first**, NOT imported from the
-  brick numbers.
-- A **loud failure** if the scalar `lch` fallback is silently used in a softening run (no silent
-  default — ADR D5).
-- Tension-stiffening: average tension above the bare softening curve, reducing to it as `ε1` grows;
-  reduce-to-baseline with the flag off.
+**Still open — 3b-struct (staged Zone-B gate).** The regularization *mechanism* is proven at the
+material point (`g_reg·lch` constant across `lch` — oracle R1 + g++ + Zone-A). The **structural**
+proof is not yet wired:
 
-**Gotchas / risks.**
-- **`lch` is a single in-plane scalar on this seam** and `ASDShellQ4` halves it under EAS. A single
-  scalar mis-regularizes ~45° struts by up to √2 (ADR risk). Option A documents this away; Option B
-  fixes it at the cost of a vanilla edit.
-- **`lch_t = t_i` is NOT a safe compression default** — it can trigger snapback that the material's
-  `gmin` clamp silently discards; floor it at a physical crush-band width.
-- **Composite `ε1` consistency** must be reconciled everywhere (softening *and* stiffening use it).
-
-**Effort:** S–M. Tension stiffening is a small additive mode; the `lch` work is S for Option A, M
-for Option B (the vanilla plumb + ledger).
+- **Goal.** In-plane **mesh-objectivity on a ROTATED (inclined-crack) / notched panel**: peak ~1–3%,
+  total dissipated energy ~3–5% across a 2× refine — calibrated on the elastic shell patch first,
+  NOT imported from the brick numbers.
+- **What to build.** A localizing panel (a notch or a weak element row so the crack picks one band)
+  at two mesh refinements, `-autoRegularization` on, driven to full softening; assert peak load +
+  total dissipated energy mesh-objective. A straight **Bažant-bar** (one row of `ASDShellQ4`, weak
+  first element — gmsh-free, hence Zone-A) is the cleanest first cut; the inclined notched panel is
+  the harder Zone-B version.
+- **Gotcha (why it's staged).** Softening localization in series **snap-backs** (the elastic
+  unloading of the stiff part can outrun the band's dissipation) — displacement control may not
+  converge; heavy regularization (long ductile tail) helps, else use arc-length / quasi-static
+  explicit. This is the standard difficulty, not a material bug.
+- **Effort:** S–M.
 
 ---
 
@@ -269,10 +280,13 @@ These are the ADR open questions that recur; keep them in view:
   phase wants the full consistent tangent, it must add the **Miehe (1993) / dSNPO §A** coalescence
   regularization (blend to the symmetric average when `|λ_i − λ_j| < tol`), or it produces
   indefinite/NaN tangents in states walls/slabs visit routinely.
-- **`lch` is a single in-plane scalar** on the director-shell seam (Phase 3 decision; Phase 5
-  needs directional/projected `lch` for through-thickness).
-- **MCFT needs composite `ε1`** — smeared web steel homogenized inside the kernel; discrete boundary
-  bars are separate `PlateRebar` layers (recurs in V and Phase 3).
+- **`lch` is a single in-plane scalar** on the director-shell seam — **resolved as Option A** in
+  Phase 3b (`getCharacteristicLength()` or `-lch`, latched once, loud-fail if unresolved). The
+  residual is a √2 mis-regularization of ~45° struts and no through-thickness objectivity; Phase 5's
+  solid-shell needs directional/projected `lch`.
+- **MCFT needs composite `ε1`** — the membrane principal tensile strain (shared by concrete + smeared
+  steel under perfect-bond compatibility) the kernel already computes; tension stiffening (3a) and
+  `β` both ride it. Discrete boundary bars are separate `PlateRebar` layers (recurs in V).
 - **The shell path is `PlateFiber`-only** — `ASDShellQ4` consumes a *section*, not an `nDMaterial`;
   all wall shear flows through the order-5 condensed `PlateFiber`. Any new analysis is done in that
   5-component condensed setting, not a free-standing 3×3.
@@ -283,16 +297,27 @@ These are the ADR open questions that recur; keep them in view:
 
 - **Source:** `SRC/material/nD/{LadrunoRCKernel.h, LadrunoRCConcrete.{cpp,h}}` (kernel is
   header-only, OpenSees-free, numpy-oracle-testable).
-- **Oracle:** `tests/_testbed/rc_shell_ref.py`. **Batteries:**
-  `tests/test_ladrunoRCConcrete_{material,shell,implex,objectivity,wall}.py`.
+- **Oracle:** `tests/_testbed/rc_shell_ref.py` (now also `fracture_energy`/`regularize`/`tens_stiff`
+  + the A1/T1/R1 gates). **Batteries:**
+  `tests/test_ladrunoRCConcrete_{material,shell,implex,objectivity,wall,tensstiff,reg}.py` plus the
+  CI-wired g++ gates `tests/test_ladrunoRCConcrete_{tensstiff,reg}_cpp.py` (compile+run
+  `tests/_testbed/rc_{tensstiff,reg}_gpp.cpp` — the *only* tangent / fidelity gates, since a converged
+  static stress is tangent-independent).
 - **Build:** edit in the worktree → copy to the main checkout → **bump the file mtime** (Copy-Item
   preserves the old mtime → ninja skips the rebuild — see [[LEDGER_quirks]]) → `build.bat OpenSeesPy`
-  via the PowerShell tool → confirm the `.pyd` timestamp advanced.
-- **Schema:** currently **v3** (hard-checked). Any new committed state bumps it; keep send/recv
-  counts balanced (the RC_DATA arithmetic).
+  via the PowerShell tool → confirm the `.pyd` timestamp advanced. **Test interpreter:**
+  `C:\Users\nmora\AppData\Local\Python\pythoncore-3.12-64\python.exe` with the `dist\bin`
+  `os.add_dll_directory` + `sys.path.insert` bootstrap (set `LADRUNO_OPENSEES_QUIET=1`).
+- **Schema:** currently **v5** (hard-checked; v2=IMPL-EX, v3=shearRetFactor, v4=tension stiffening,
+  v5=regularization). Any new committed state bumps it; keep send/recv counts balanced (the
+  `RC_NSCALAR`/`RC_DATA` arithmetic) — and add a NON-default-value round-trip test (a dropped wire
+  slot reverts to the ctor default and a default-valued round-trip can't catch it).
 - **Build-control:** every phase updates the three ledgers (`LEDGER_implementations`,
-  `LEDGER_quirks`, `LEDGER_vanilla_files` *if* Phase-3 Option B touches a vanilla file) **in the same
-  PR**, and the ADR phase subsection. New fork-authored files get the LADRUNO header stamp.
+  `LEDGER_quirks`, `LEDGER_vanilla_files` *if* a vanilla file is touched) **in the same PR**, and the
+  ADR phase subsection. New fork-authored files get the LADRUNO header stamp. **CI/merge:** this fork
+  auto-merges `ladruno` fast — a PR that sits goes **DIRTY**; merge `ladruno` in, and **backfill any
+  manifest row a sibling PR left behind** (the G9 gate fails on the inherited gap — see
+  [[feedback_stale_pr_ledger_ci]]; hit again in 3b for `ND_TAG_LadrunoCohesiveHingeBiaxial`).
 - **Reviews:** the project convention is implement → adversarial review → fix → PR. Each phase here
   warrants it (the §14.11 xfail, the EAS softening stability, and the tangent degeneracy are the
   likely review hot-spots).
