@@ -676,6 +676,31 @@ features:
       rigid-softening penalty (guarded floor Mc^2/2Gf) + exp/linear envelope calibrated to
       int M d[[theta]] == Gf. Plan: 32_ladruno_dispbeamcolumn_regularization_adr.md.
 
+  - feature: LadrunoCohesiveHingeBiaxial
+    classtag: 33004          # ND_TAG family; coupled biaxial Mz-My cohesive interaction-surface hinge (N. Mora-Bowen). 33004 free in the ND registry (numerically equals ELE_TAG_LadrunoIMKBeam2d / INTEGRATOR_TAGS_LadrunoArcLength — different registries, no collision)
+    tag_symbol: ND_TAG_LadrunoCohesiveHingeBiaxial
+    pr: 275
+    feature_class: material
+    required_tiers: [T0m, T1]
+    pytest: tests/test_ladrunoDispBeamColumn3d_hinge_coupled.py   # on-axis reduction == scalar -hinge element; elliptical interaction onset; mixed-mode dissipation Gf_y..Gf_z; coupled-section tight-Newton; finite-rotation invariance (Corot); parser exclusivity; DB roundtrip (9/9)
+    tcl: WAIVED(nDMaterial LadrunoCohesiveHingeBiaxial ...; shared OpenSeesNDMaterialCommands registry serves Tcl + Python; verified via the Zone-A pytest battery + on-axis reduction to the scalar LadrunoCohesiveHinge)
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesNDMaterialCommands.cpp
+      - SRC/material/nD/CMakeLists.txt
+    dispatch: {tcl: false, functionMap: true}
+    status: active
+    notes: >
+      Coupled biaxial cohesive law (NDMaterial order 2) with an Mz-My interaction surface for the
+      LadrunoDispBeamColumn3d Tier-2 embedded hinge (-hingeBiaxial), the v2 refinement of the scalar
+      LadrunoCohesiveHinge (33003): strain = jump vector [alpha_z,alpha_y], stress = [Mz,My],
+      tangent = 2x2. Elliptical onset sqrt((Mz/Mcz)^2+(My/Mcy)^2)=1 + isotropic secant damage on the
+      normalized norm r, per-axis Gf, linear mode-mix — reduces EXACTLY to LadrunoCohesiveHinge on
+      each pure bending axis. Element reuses the PR-3b biaxial inner Newton (the full 2x2 cohesive
+      tangent enters K_alphaalpha) + eigenvalue-floored inverse + rank-2 condensation. Plan/ADR:
+      Ladruno_implementation/34_ladruno_cohesive_hinge_biaxial_adr.md (shipped via #275).
+
   - feature: LadrunoRebarBuckling
     classtag: 33001          # MAT_TAG (uniaxial) family; sibling of LadrunoUniaxialJ2=33000, per-registry band (no collision w/ ELE BezierTet10=33001)
     tag_symbol: MAT_TAG_LadrunoRebarBuckling
