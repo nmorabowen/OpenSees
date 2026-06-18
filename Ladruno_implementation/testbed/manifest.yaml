@@ -676,6 +676,27 @@ features:
       rigid-softening penalty (guarded floor Mc^2/2Gf) + exp/linear envelope calibrated to
       int M d[[theta]] == Gf. Plan: 32_ladruno_dispbeamcolumn_regularization_adr.md.
 
+  - feature: LadrunoCohesiveHingeBiaxial
+    classtag: 33004          # ND_TAG family; coupled Mz-My cohesive interaction-surface hinge (N. Mora-Bowen)
+    tag_symbol: ND_TAG_LadrunoCohesiveHingeBiaxial
+    pr: 0                    # backfilled here — sibling PR #275 (ADR 34 PR-4a) shipped the material+tests but omitted this manifest row, inherited via merge (cf. feedback_stale_pr_ledger_ci)
+    feature_class: material
+    required_tiers: [T0m, T1]
+    pytest: tests/test_ladrunoDispBeamColumn3d_hinge_coupled.py
+    tcl: WAIVED(nDMaterial LadrunoCohesiveHingeBiaxial ...; shared OpenSeesNDMaterialCommands registry serves Tcl + Python; verified via the Zone-A pytest battery)
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesNDMaterialCommands.cpp
+      - SRC/material/nD/CMakeLists.txt
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      Coupled biaxial (Mz-My) cohesive interaction-surface moment-rotation hinge (nDMaterial),
+      the 3D companion of the uniaxial LadrunoCohesiveHinge, for the LadrunoDispBeamColumn3d
+      Tier-2 embedded strong-discontinuity hinge (ADR 34 PR-4a). Manifest row backfilled by the
+      RC-shell Phase-3b PR which inherited the gap via a ladruno merge.
+
   - feature: LadrunoRebarBuckling
     classtag: 33001          # MAT_TAG (uniaxial) family; sibling of LadrunoUniaxialJ2=33000, per-registry band (no collision w/ ELE BezierTet10=33001)
     tag_symbol: MAT_TAG_LadrunoRebarBuckling
