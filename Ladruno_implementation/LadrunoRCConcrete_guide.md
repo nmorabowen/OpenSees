@@ -578,6 +578,14 @@ a numpy oracle (`tests/_testbed/rc_shell_ref.py`) the C++ matches step-by-step:
 >   separate flag; the default bare fracture-energy backbone reduces to baseline. A
 >   dedicated `-tensStiff` knob is reserved in the ADR but not yet wired.
 
+> [!note] What's next (the deferred phases)
+> The cyclic constitutive physics is complete. The remaining work — a dedicated `-tensStiff`
+> tension-stiffening knob + directional `lch` (Phase 3), the finite-strain view
+> `LadrunoRCFiniteStrain` (Phase 4b), the through-thickness `LadrunoSolidShell` punching host
+> (Phase 5), and the quantitative Tran–Wallace experiment calibration — is planned in the
+> developer handout **[[rc_shell_phase3plus_handout]]** (goal, build, reuse, acceptance gates,
+> gotchas, and effort per item).
+
 ---
 
 ## 11. References
