@@ -36,8 +36,9 @@ Read the ADR for the full reasoning; read this to **pick up and execute**.
 > **Phase 3 is SHIPPED.** `-tensStiff {vc|cm}` tension stiffening (3a, PR #273) and
 > `-autoRegularization $lch_ref` crack-band regularization (3b, PR #277, **Option A** — scalar
 > in-plane `lch`, zero vanilla edit) are merged. The Phase-3 section below is kept as a *shipped*
-> record; the one remaining 3b item is the **structural** rotated-mesh objectivity gate (staged).
-> The live forward work is **V → Phase 4b → Phase 5**.
+> record; the **axis-aligned Bažant-bar** structural objectivity gate is now also SHIPPED (Zone-A,
+> `tests/test_ladrunoRCConcrete_meshobj.py`), leaving only the harder **inclined/notched-panel**
+> objectivity gate staged. The live forward work is **V → Phase 4b → Phase 5**.
 
 ---
 
@@ -77,7 +78,8 @@ blocked by the others except where noted.
 | Item | Kind | Blocks on | Effort | Recommended order |
 |---|---|---|---|---|
 | **V — Tran–Wallace experiment calibration** | validation (Zone-B) | *experimental data from the user* | M | when data is available |
-| **3b-struct — structural rotated-mesh objectivity gate** | validation (Zone-B) | a softening-localization solver setup | S–M | optional, anytime |
+| ~~**3b-struct axis-aligned Bažant-bar**~~ — SHIPPED (Zone-A) | validation (Zone-A) | — | — | done |
+| **3b-struct — inclined/notched-panel objectivity gate** | validation (Zone-B) | a softening-localization solver setup | S–M | optional, anytime |
 | **Phase 4b — finite-strain view** (`LadrunoRCFiniteStrain`) | material view | reuses shipped `LogStrain`/`FiniteStrainNDMaterial` | M | **do first (code-only)** |
 | **Phase 5 — `LadrunoSolidShell`** (33020) | NEW element | wants Phase 4b (the 3D material view) | **L (the big one)** | last |
 
@@ -154,22 +156,32 @@ was *not* taken; the single-scalar √2 inclined-strut mis-regularization is the
 > gate** (the fracture energy uses only `x,y`). Caught by a 3-agent review; gated now with a
 > steep-damage plastic-strain-monotonicity check in `rc_reg_gpp.cpp`. See [[LEDGER_quirks]].
 
-**Still open — 3b-struct (staged Zone-B gate).** The regularization *mechanism* is proven at the
-material point (`g_reg·lch` constant across `lch` — oracle R1 + g++ + Zone-A). The **structural**
-proof is not yet wired:
+**3b-struct — axis-aligned Bažant-bar (SHIPPED, Zone-A).** The straight-bar half is done:
+`tests/test_ladrunoRCConcrete_meshobj.py` builds one row of `ASDShellQ4`, localizes the crack with
+a 10%-thinner left section column (thickness not material, so the backbone + regularization stay
+identical and the band factor cancels between meshes), and drives the SAME 100×50 specimen at three
+meshes (2×1 / 4×2 / 8×4 — `lch` 50/25/12.5, each element latching its own
+`getCharacteristicLength()`, **no `-lch`**) to full tensile softening under static displacement
+control. With `-autoRegularization` the total dissipated energy is **mesh-objective** (energy ratios
+1.000/1.000/1.000 across the 4× refine, peak within 0.7%); the un-regularized **negative control**
+spuriously halves (fine/coarse ≈ 0.50) and the un-regularized finest mesh even snap-back-diverges
+— so the gate has teeth and the structural `g_reg·lch` mechanism is now proven, not just the
+material-point one. The two recipe traps (localize via thinner section; the negative control must
+use the coarser meshes because reg-OFF fine snap-backs) are in [[LEDGER_quirks]].
+
+**Still open — 3b-struct inclined panel (staged Zone-B gate).** The harder half remains:
 
 - **Goal.** In-plane **mesh-objectivity on a ROTATED (inclined-crack) / notched panel**: peak ~1–3%,
-  total dissipated energy ~3–5% across a 2× refine — calibrated on the elastic shell patch first,
-  NOT imported from the brick numbers.
-- **What to build.** A localizing panel (a notch or a weak element row so the crack picks one band)
-  at two mesh refinements, `-autoRegularization` on, driven to full softening; assert peak load +
-  total dissipated energy mesh-objective. A straight **Bažant-bar** (one row of `ASDShellQ4`, weak
-  first element — gmsh-free, hence Zone-A) is the cleanest first cut; the inclined notched panel is
-  the harder Zone-B version.
-- **Gotcha (why it's staged).** Softening localization in series **snap-backs** (the elastic
-  unloading of the stiff part can outrun the band's dissipation) — displacement control may not
-  converge; heavy regularization (long ductile tail) helps, else use arc-length / quasi-static
-  explicit. This is the standard difficulty, not a material bug.
+  total dissipated energy ~3–5% across a 2× refine. This is the case that additionally surfaces the
+  documented single-scalar-`lch` **√2 mis-regularization** of ~45° struts (the Option-A residual) —
+  whether to assert it as a known-residual band or leave it as documented-only is a design call.
+- **What to build.** A localizing notched/inclined panel (gmsh/`apeGmsh`) at two mesh refinements,
+  `-autoRegularization` on, driven to full softening; assert peak + total dissipated energy
+  mesh-objective.
+- **Gotcha (why it's staged).** Softening localization in series **snap-backs** — displacement
+  control may not converge across a diagonal band; heavy regularization helps, else use arc-length /
+  quasi-static explicit (the [[LadrunoRCConcrete_guide]] §7.4 recipe). The axis-aligned bar dodged
+  this by staying short + ductile; the inclined panel will not.
 - **Effort:** S–M.
 
 ---
