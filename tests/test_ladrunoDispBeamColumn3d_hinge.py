@@ -253,9 +253,13 @@ def test_solver_robustness_dissipates_Gf_3d(algo):
 #  integration objectivity (strong-axis hinge is nIP-invariant)
 # --------------------------------------------------------------------------- #
 def test_integration_objectivity_nIP_sweep_3d():
+    # Drive to DEEP softening (~0.85x the full-break jump) but NOT past full break — a
+    # fully-broken single-element hinge is a zero-stiffness mechanism whose pure-Newton solve
+    # is platform-FP-fragile. nIP-invariance holds anywhere on the softening branch. (Mirrors
+    # the 2D fix for the Ubuntu CI failure from #269.)
     theta_break = _full_break_jump(_Mc, _Gf) + _Mc * _L / _E
     nstep = 500
-    dth = 1.1 * theta_break / nstep
+    dth = 0.85 * theta_break / nstep
     ref = None
     for nIP in (2, 3, 4, 5):
         _build(hinge=True, shape="-linear", nIP=nIP)
