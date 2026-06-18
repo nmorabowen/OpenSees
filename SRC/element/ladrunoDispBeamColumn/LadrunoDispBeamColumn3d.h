@@ -47,6 +47,7 @@ class SectionForceDeformation;
 class CrdTransf;
 class BeamIntegration;
 class Response;
+class UniaxialMaterial;
 
 class LadrunoDispBeamColumn3d : public Element
 {
@@ -57,7 +58,8 @@ class LadrunoDispBeamColumn3d : public Element
              double rho = 0.0, int cMass = 0,
              Damping *theDamping = 0,
              int lchMode = 0, double userLch = 0.0,  // Ladruno (ADR 32): regularization length mode
-             int nlGeom = 0);                        // Ladruno (ADR 32): 0=linear basic strain, 1=½(θy²+θz²) bowing (NL)
+             int nlGeom = 0,                         // Ladruno (ADR 32): 0=linear basic strain, 1=½(θy²+θz²) bowing (NL)
+             UniaxialMaterial *hingeMatZ = 0);       // Ladruno (ADR 33) Tier-2: embedded strong-axis (Mz) cohesive hinge
     LadrunoDispBeamColumn3d();
     ~LadrunoDispBeamColumn3d();
 
@@ -125,6 +127,30 @@ class LadrunoDispBeamColumn3d : public Element
     int    lchMode;
     double userLch;
     int    nlGeom;
+
+    // Ladruno (ADR 33) Tier-2 PR-3a: embedded strong-axis (Mz) rotation-jump hinge — the
+    // literal 2D scalar hinge on the Mz row of the 6-DOF 3D basic system. One scalar jump
+    // alpha_z carried by a discrete cohesive law theHingeZ (any UniaxialMaterial). The bulk
+    // section sees kappa_z_bulk = (1/L)((6xi-4)v1+(6xi-2)v2) + Gbar_z*alpha_z, Gbar_z=-1/L,
+    // so it unloads as the jump grows (no double-count); the cohesive M([[theta]]) carries Gf.
+    // alpha_z is converged by an inner Newton in update() and STATICALLY CONDENSED to the
+    // 6-DOF basic system BEFORE CorotCrdTransf3d (the PINNED INVARIANT): a guarded rank-1
+    // update kb -= hingeKvZ hingeKvZ^T / hingeKaaZ. hingeKvZ is a 6-vector (incl. the
+    // cross-tangent rows ks(MY,MZ), ks(T,MZ), ks(P,MZ)) so the condensed off-diagonals are
+    // right. ALL gated on hingeOn so the no-hinge path is byte-identical. v1: strong axis
+    // only (alpha_y / the coupled 2x2 / torsion are PR-3b+), linear basic strain (XOR -nl),
+    // monotonic full-Newton / DisplacementControl. See ADR 33 (built on the 2D ADR 32 PR-2a).
+    int              hingeOn;           // 1 if the embedded Mz hinge is active
+    UniaxialMaterial *theHingeZ;        // discrete cohesive M_z([[theta_z]]) law (element owns a copy)
+    double           hingeJumpZ;        // trial strong-axis rotation jump alpha_z (converged in update())
+    double           hingeJumpCommitZ;  // committed alpha_z (inner-Newton warm start + serialization)
+    double           hingeKaaZ;         // cached guarded K_alphaalpha_z at the converged state
+    double           hingeKvZ[6];       // cached K_v-alpha_z 6-vector at the converged state
+    double           hingeMscaleZ;      // running moment scale (~Mc_z) for a stable inner-Newton tol
+
+    // Tier-2 helper: inner Newton on the scalar jump alpha_z; sets the 6-DOF section trial
+    // deformations with the -alpha_z/L Mz-curvature offset, caches hingeKaaZ/hingeKvZ.
+    int solveHingeJump(const Vector &v, double L);
 
 	int numSections;
 	SectionForceDeformation** theSections; // pointer to the ND material objects

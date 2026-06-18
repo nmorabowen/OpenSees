@@ -36,7 +36,7 @@
 //           [, '-mass', massPerLength] [, '-cMass'] [, '-damp', dampTag]
 //           [, '-lch', {ip|element|<value>}]    # regularization length (default: ip)
 //           [, '-nl']                           # ½θ² (2D) / ½(θy²+θz²) (3D) bowing strain (default: linear)
-//           [, '-hinge', matTag])               # 2D only: embedded cohesive rotation-jump hinge (ADR 32 Tier-2)
+//           [, '-hinge', matTag])               # embedded cohesive rotation-jump hinge (ADR 32 Tier-2 2D / ADR 33 3D strong-axis Mz)
 //
 // -lch selects the characteristic length reported to crack-band / auto-regularizing
 // materials (ASDConcrete1D -autoRegularization, ASDSteel1D, LadrunoUniaxialJ2+Lemaitre):
@@ -52,8 +52,9 @@
 // any UniaxialMaterial (LadrunoCohesiveHinge is the intended default): kappa_bulk = B*v - alpha/L,
 // alpha condensed to the 3-DOF basic system before crdTransf. Mutually exclusive with -nl.
 //
-// Both the 2D and 3D classes are built and dispatched below. The embedded hinge (-hinge)
-// is 2D only in v1; the 3D embedded hinge is a later stage.
+// Both the 2D and 3D classes are built and dispatched below. The embedded hinge (-hinge) is
+// the full 2D rotation-jump hinge (ADR 32 PR-2a) and, in 3D, the strong-axis (Mz) rotation jump
+// (ADR 33 PR-3a); the 3D weak-axis (My) + coupled biaxial 2x2 are PR-3b.
 
 #include <elementAPI.h>
 #include <OPS_Globals.h>
