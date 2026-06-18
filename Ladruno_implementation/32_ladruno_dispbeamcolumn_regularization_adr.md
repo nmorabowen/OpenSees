@@ -347,4 +347,27 @@ The corrected formulation above, implemented and validated. Reuses `ELE_TAG 3301
   `isSoftening()` exists). FD-tangent is via tight-Newton convergence (the testbed has no
   element-DOF FD harness). PR-2b carries the deferred list above.
 
+### 2026-06-17 — PR-2b: 2D Stage-2 objectivity / invariance / robustness gates (test-only)
+
+Empirical probing showed the PR-2a hinge **already passes** the deferred Stage-2 validation
+gates — the implementation is robust; PR-2b locks them in as regressions (no source change).
+
+- **Probed first (not assumed):** under a transverse-load cantilever with the **Corotational**
+  transform driven to a **74° tip rotation**, the hinge dissipates `Gf = 20.0000` exactly with
+  zero step failures → the pinned invariant (condensed basic K/q through `crdTransf`) composes
+  correctly with the rotating frame. And under **Newton / ModifiedNewton / NewtonLineSearch /
+  KrylovNewton** the dissipation is identically `Gf` (the residual is always evaluated
+  post-`update()`, so tangent reuse / line search never corrupt the converged dissipation) —
+  the non-Newton "stale-α" hole the review flagged does **not** bite in practice, so the
+  deferred idempotent-re-converge hardening is **unnecessary**.
+- **Gates added** (`tests/test_ladrunoDispBeamColumn2d_hinge.py`, 8→15): corotational
+  large-rotation `Gf`-dissipation (tip rot > 0.5 rad); orientation invariance (member at 0° vs
+  90° under Corotational → identical M–θ path + `Gf` to round-off); integration-objectivity
+  sweep (Lobatto nIP ∈ {2..6} → invariant M–θ + `Gf` to 1e-6, the discrete hinge has NO
+  residual nIP drift); solver-robustness (4 algorithms all dissipate `Gf`). Full 53/53 green.
+- **2D Stage-2 is now gate-complete** except the `ladruno_drive` snap-back collapse test (still
+  blocked on the RESERVED dissipation arc-length, [[22_ladruno_dissipation_arclength_adr]]) and
+  the `-nl`+hinge cross-terms. **3D** is the next real frontier (own ADR — quaternion-triad
+  finite-rotation biaxial/torsional jump).
+
 *(move to `Ladruno_internal/implemented_<name>.md` when Stage 1 merges to `ladruno`)*

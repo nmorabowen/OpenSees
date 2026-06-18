@@ -277,3 +277,134 @@ def test_hinge_database_roundtrip():
             ops.eleResponse(1, "hinge", "energy")[0],
         ],
     )
+
+
+# =========================================================================== #
+#  PR-2b — objectivity / invariance / robustness gates (the Stage-2 exit gates
+#  PR-2a deferred). The embedded-hinge physics already passes these; the tests
+#  lock them in as regressions.
+# =========================================================================== #
+def _oriented_cantilever(angle_deg, transf, nIP=5, shape="-linear"):
+    """Cantilever of length _L oriented at `angle_deg` from +x, node1 fixed. Returns
+    nothing; leaves the model built with the hinge element (tag 1) ready to load."""
+    th = math.radians(angle_deg)
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 3)
+    ops.node(1, 0.0, 0.0)
+    ops.node(2, _L * math.cos(th), _L * math.sin(th))
+    ops.fix(1, 1, 1, 1)
+    ops.section("Elastic", 1, _E, _A, _Iz)
+    ops.geomTransf(transf, 1)
+    ops.beamIntegration("Lobatto", 1, 1, nIP)
+    ops.uniaxialMaterial("LadrunoCohesiveHinge", 77, _Mc, _Gf, shape)
+    ops.element("LadrunoDispBeamColumn", 1, 1, 2, 1, 1, "-hinge", 77)
+
+
+def _drive_moment(dtheta, nstep, algo="Newton"):
+    """Tip moment (orientation-independent) + rotation control on dof 3; returns the
+    sampled (theta, M) path and the final hinge energy."""
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(2, 0.0, 0.0, 1.0)
+    ops.system("FullGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Transformation")
+    ops.test("NormDispIncr", 1.0e-10, 60)
+    ops.algorithm(algo)
+    ops.integrator("DisplacementControl", 2, 3, dtheta)
+    ops.analysis("Static")
+    path = []
+    for _ in range(nstep):
+        assert ops.analyze(1) == 0
+        path.append((ops.nodeDisp(2, 3), ops.getTime()))
+    return path, _hinge("energy")
+
+
+# --------------------------------------------------------------------------- #
+#  Corotational large-rotation: the hinge dissipates Gf while the element rotates
+#  through finite angle (validates the pinned invariant: condensed basic K/q
+#  compose correctly with the rotating frame).
+# --------------------------------------------------------------------------- #
+def test_corotational_large_rotation_dissipates_Gf():
+    _oriented_cantilever(0.0, "Corotational")
+    theta_break = _full_break_jump(_Mc, _Gf) + _Mc * _L / _E
+    nstep = 2000
+    # transverse tip load drives a genuine large rotation as the cantilever deflects
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(2, 0.0, -1.0, 0.0)
+    ops.system("FullGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Transformation")
+    ops.test("NormDispIncr", 1.0e-10, 60)
+    ops.algorithm("Newton")
+    # push the tip transverse a large fraction of L -> finite member rotation
+    ops.integrator("DisplacementControl", 2, 2, -0.6 * _L / nstep)
+    ops.analysis("Static")
+    max_rot = 0.0
+    for _ in range(nstep):
+        assert ops.analyze(1) == 0
+        max_rot = max(max_rot, abs(ops.nodeDisp(2, 3)))
+    # the element genuinely underwent a finite rotation ...
+    assert max_rot > 0.5, max_rot
+    # ... and the hinge still dissipated exactly Gf (frame-invariant fracture energy)
+    assert math.isclose(_hinge("energy"), _Gf, rel_tol=3e-3), (_hinge("energy"), _Gf)
+
+
+# --------------------------------------------------------------------------- #
+#  Orientation invariance: the same relative-rotation history gives an identical
+#  hinge response regardless of the member's absolute orientation (Corotational).
+# --------------------------------------------------------------------------- #
+def test_orientation_invariance_corotational():
+    theta_break = _full_break_jump(_Mc, _Gf) + _Mc * _L / _E
+    nstep = 600
+    dth = 1.1 * theta_break / nstep
+
+    _oriented_cantilever(0.0, "Corotational")
+    path0, e0 = _drive_moment(dth, nstep)
+
+    _oriented_cantilever(90.0, "Corotational")
+    path90, e90 = _drive_moment(dth, nstep)
+
+    # hinge dissipation identical, and the full M-theta path identical, to round-off
+    assert math.isclose(e0, e90, rel_tol=1e-9), (e0, e90)
+    for (t0, m0), (t9, m9) in zip(path0, path90):
+        assert math.isclose(m0, m9, rel_tol=1e-8, abs_tol=1e-9), (m0, m9)
+
+
+# --------------------------------------------------------------------------- #
+#  Integration objectivity: the DISCRETE hinge response is independent of the
+#  integration-point count (unlike Tier-1 lch smearing, which keeps a residual
+#  nIP drift). Sweep Lobatto nIP and assert the M-theta curve + Gf are invariant.
+# --------------------------------------------------------------------------- #
+def test_integration_objectivity_nIP_sweep():
+    theta_break = _full_break_jump(_Mc, _Gf) + _Mc * _L / _E
+    nstep = 600
+    dth = 1.1 * theta_break / nstep
+
+    ref_path = None
+    ref_e = None
+    for nIP in (2, 3, 4, 5, 6):
+        _oriented_cantilever(0.0, "Linear", nIP=nIP)
+        path, e = _drive_moment(dth, nstep)
+        if ref_path is None:
+            ref_path, ref_e = path, e
+            continue
+        assert math.isclose(e, ref_e, rel_tol=1e-6), (nIP, e, ref_e)
+        for (t, m), (tr, mr) in zip(path, ref_path):
+            assert math.isclose(m, mr, rel_tol=1e-6, abs_tol=1e-7), (nIP, m, mr)
+
+
+# --------------------------------------------------------------------------- #
+#  Solver robustness: the hinge dissipates Gf under every standard nonlinear
+#  algorithm (the residual is always evaluated post-update(), so tangent reuse /
+#  line search do not corrupt the dissipation).
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("algo", ["Newton", "ModifiedNewton",
+                                  "NewtonLineSearch", "KrylovNewton"])
+def test_solver_robustness_dissipates_Gf(algo):
+    _oriented_cantilever(0.0, "Linear")
+    theta_break = _full_break_jump(_Mc, _Gf) + _Mc * _L / _E
+    nstep = 1200
+    _, e = _drive_moment(1.05 * theta_break / nstep, nstep, algo=algo)
+    assert math.isclose(e, _Gf, rel_tol=3e-3), (algo, e, _Gf)
