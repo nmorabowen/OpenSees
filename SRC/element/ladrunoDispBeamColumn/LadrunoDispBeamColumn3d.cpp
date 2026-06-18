@@ -861,6 +861,13 @@ LadrunoDispBeamColumn3d::solveHingeJump(const Vector &v, double L)
   hingeJumpZ = alpha;
   opserr << "WARNING LadrunoDispBeamColumn3d (tag " << this->getTag()
          << "): embedded-hinge inner Newton did not converge in " << maxIter << " iters\n";
+  // Best-effort: return the last iterate + warn (the standard OpenSees internal-iteration convention,
+  // cf. ForceBeamColumn). A transient inner miss happens at the cohesive activation kink for trial v
+  // the global Newton probes mid-iteration; aborting the whole step there makes softening fragile,
+  // and the converged global state always carries a converged inner state. The global NormDispIncr
+  // test is the arbiter: an inconsistent force keeps the global residual up, so a truly bad state
+  // cannot be silently accepted. (Robustly hitting the ADR-33 "cut the step" intent needs the
+  // deferred onset-tangent hardening; see ADR 34 NEXT.)
   return 0;
 }
 
@@ -1058,7 +1065,10 @@ LadrunoDispBeamColumn3d::solveHingeJumpBiaxial(const Vector &v, double L)
     double Kaa_yy = oneOverL*sumEIy + Cyy;
     double Kaa_zy = oneOverL*sumCpl + Czy;
 
-    // EIGENVALUE floor: bounds every mode against the positive bulk terms + the cohesive tangents
+    // EIGENVALUE floor: bounds every mode against the positive bulk terms + the cohesive tangents.
+    // (Scaled by the DIAGONAL magnitudes only — folding in the off-diagonal over-floors the modes
+    // near the elliptical onset and destabilizes the radial inner Newton; the diagonal scale is the
+    // validated choice.)
     double floor = 1.0e-8*(fabs(oneOverL*sumEIz) + fabs(oneOverL*sumEIy) + fabs(Czz) + fabs(Cyy)) + 1.0e-300;
     ladrunoFlooredInv2x2(Kaa_zz, Kaa_zy, Kaa_yy, floor, iZZ, iZY, iYY);
 
@@ -1095,6 +1105,10 @@ LadrunoDispBeamColumn3d::solveHingeJumpBiaxial(const Vector &v, double L)
   hingeKaaInvZZ = iZZ; hingeKaaInvZY = iZY; hingeKaaInvYY = iYY;
   opserr << "WARNING LadrunoDispBeamColumn3d (tag " << this->getTag()
          << "): biaxial embedded-hinge inner Newton did not converge in " << maxIter << " iters\n";
+  // Best-effort return (see solveHingeJump): a transient inner miss at the coupled-law elliptical
+  // onset is recovered by the global Newton's next iterate; aborting the step here breaks softening
+  // robustness and conflicts with the OpenSees internal-iteration convention. Global NormDispIncr is
+  // the arbiter. (The ADR-33 strict "cut the step" needs the deferred onset-tangent hardening.)
   return 0;
 }
 

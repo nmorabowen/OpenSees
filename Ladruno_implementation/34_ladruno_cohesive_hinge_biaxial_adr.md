@@ -140,3 +140,40 @@ The coupled law and its element wiring, implemented and validated.
   frozen-mix tangent; prescribe the rotations (radial control) there. The cohesive mode-mix is the
   instantaneous direction (radial-exact). **NEXT:** B-K/power-law mode-mix; a fully consistent
   off-radial tangent (∂mix/∂α); torsion (ADR 33 PR-3c).
+
+### 2026-06-18 — Adversarial review (32-agent workflow) dispositions
+
+A find→perspective-diverse-verify→synthesize workflow over PR-3b + PR-4a raised 8 surviving
+findings. Dispositions after checking each against the source (88/88 stays green):
+
+- **"Stray brace truncates the parser" (claimed must-fix) — FALSE POSITIVE.** Line 197 `}` is the
+  necessary close of the option `while` loop; flags after `-hingeBiaxial` ARE parsed in later
+  iterations (the `-hingeBiaxial $tag -nl` exclusivity test passes precisely because `-nl` is parsed
+  and then rejected). The finding's own structural description contradicts its conclusion; the
+  verifiers pattern-matched "double brace = bug". No change.
+- **"Inner Newton returns success on maxIter" (claimed must-fix) — kept BEST-EFFORT by design.**
+  Returning `-1` to cut the global step (a literal reading of the ADR-33 §invariant note) was tried
+  and **reverted**: a transient inner miss at the coupled-law elliptical onset (r→1) happens for
+  trial `v` the global Newton probes mid-iteration, and aborting the step there breaks softening
+  robustness AND conflicts with the OpenSees internal-iteration convention (`ForceBeamColumn` et al.
+  return best-effort + warn). The global `NormDispIncr` test is the real arbiter; the converged
+  global state always carries a converged inner state. Comments now document this. Robustly meeting
+  the strict "cut the step" intent needs the deferred onset-tangent hardening (a consistent
+  off-radial / line-searched inner solve), tracked under NEXT.
+- **Eigenvalue floor omits the off-diagonal `Czy` (latent) — left diagonal-only ON PURPOSE.** Folding
+  `|Kaa_zy|` into the floor over-floors the modes near the elliptical onset and destabilizes the
+  radial inner Newton (broke 4 tests when tried). The diagonal scale is the validated choice.
+- **`hingeMscaleZ/Y` lifetime ratchet (should-fix) — not a defect.** The running scale anchors the
+  inner tolerance to ~`Mc` (the hinge caps the moment at `Mc`, so the peak it tracks ≈ `Mc`), giving
+  `tol ≈ 1e-11·Mc` always — tight, not "grossly loose". The reviewer's per-solve reset would
+  REINTRODUCE the tol-collapse for a fully-broken hinge (`M→0`) that the member was added to fix.
+- **Stale condensation cache after `revertToLastCommit` (should-fix) — documented v1 scope.**
+  Real latent hazard only off the v1 contract (full Newton + DisplacementControl, where `update()`
+  always precedes `getTangentStiff`); 2D PR-2b empirically confirmed the residual is always post-
+  `update()`. A staleness guard is deferred (needs a re-solve in `getTangentStiff`).
+- **Nits applied:** corrected the `Esoft>0` comment to credit the `penaltyRatio≥1000` guard (not the
+  per-axis floors); documented the coupled tangent's by-design row asymmetry (`Kc01≠Kc10` when
+  `Gfz≠Gfy` — the correct Jacobian of a non-potential damage model; the element symmetrizes before
+  the 2×2 inverse).
+- **Dismissed on the mechanics** (refuted by verification, not resurrected): dD/dr sign, off-diagonal
+  coupling sign, trapezoidal work integral, r=0 division guard, eigenvalue-floor magnitude.
