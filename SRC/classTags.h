@@ -575,6 +575,7 @@
 
 #define ND_TAG_InitStrainNDMaterial 7020 // Massimo Petracca ASDEA Software
 #define ND_TAG_ASDPlasticMaterial3D 10000 // For ASDPlasticity-class material
+#define ND_TAG_LadrunoCohesiveHingeBiaxial 33004 // N. Mora-Bowen (Ladruno) — coupled biaxial cohesive Mz-My interaction-surface hinge law (NDMaterial order 2) for the LadrunoDispBeamColumn3d Tier-2 embedded hinge (ADR 34); elliptical onset + isotropic secant damage, per-axis Gf, reduces to scalar LadrunoCohesiveHinge (33003) on each pure axis; ladruno private ND band (33004 free in the ND registry; numerically equals ELE_TAG_LadrunoIMKBeam2d / INTEGRATOR_TAGS_LadrunoArcLength — different registries, not a collision)
 #define ND_TAG_LogStrainNDMaterial 33010 // N. Mora-Bowen (Ladruno) — logarithmic/Hencky finite-strain adaptor (seam 3); ladruno private ND band >=33010
 #define ND_TAG_LadrunoJ2 33011 // N. Mora-Bowen (Ladruno) — combined isotropic (Voce+linear) + Chaboche AF kinematic von Mises J2
 #define ND_TAG_LadrunoJ2Finite 33012 // N. Mora-Bowen (Ladruno) — finite-strain-native combined-hardening J2 with co-rotating backstress (dSNPO §14.11)
