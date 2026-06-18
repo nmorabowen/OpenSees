@@ -59,7 +59,8 @@ class LadrunoDispBeamColumn3d : public Element
              Damping *theDamping = 0,
              int lchMode = 0, double userLch = 0.0,  // Ladruno (ADR 32): regularization length mode
              int nlGeom = 0,                         // Ladruno (ADR 32): 0=linear basic strain, 1=½(θy²+θz²) bowing (NL)
-             UniaxialMaterial *hingeMatZ = 0);       // Ladruno (ADR 33) Tier-2: embedded strong-axis (Mz) cohesive hinge
+             UniaxialMaterial *hingeMatZ = 0,        // Ladruno (ADR 33) Tier-2: embedded strong-axis (Mz) cohesive hinge
+             UniaxialMaterial *hingeMatY = 0);       // Ladruno (ADR 33 PR-3b): embedded weak-axis (My) cohesive hinge (biaxial)
     LadrunoDispBeamColumn3d();
     ~LadrunoDispBeamColumn3d();
 
@@ -144,13 +145,37 @@ class LadrunoDispBeamColumn3d : public Element
     UniaxialMaterial *theHingeZ;        // discrete cohesive M_z([[theta_z]]) law (element owns a copy)
     double           hingeJumpZ;        // trial strong-axis rotation jump alpha_z (converged in update())
     double           hingeJumpCommitZ;  // committed alpha_z (inner-Newton warm start + serialization)
-    double           hingeKaaZ;         // cached guarded K_alphaalpha_z at the converged state
+    double           hingeKaaZ;         // cached guarded K_alphaalpha_z at the converged state (Z-only rank-1)
     double           hingeKvZ[6];       // cached K_v-alpha_z 6-vector at the converged state
     double           hingeMscaleZ;      // running moment scale (~Mc_z) for a stable inner-Newton tol
 
+    // Ladruno (ADR 33) Tier-2 PR-3b: the WEAK-axis (My) jump alpha_y, making the hinge biaxial.
+    // Present (theHingeY != 0) iff -hingeY was given (which requires -hinge). The two bending
+    // jumps alpha = [alpha_z, alpha_y] are solved by ONE unified inner Newton (a single
+    // setTrialSectionDeformation per IP sets BOTH bulk curvatures kappa_*_bulk = B_*v - alpha_*/L),
+    // and condensed by a TRUE coupled 2x2: K_aa carries the off-diagonal (1/L)sum wt*ks(MZ,MY) so
+    // the staggered-activation tangent is exact when the section couples bending axes (ks(MZ,MY)!=0,
+    // generic for any axially-loaded biaxially-bent section). K_aa^{-1} is an EIGENVALUE-FLOORED
+    // inverse (bounds every mode, sign per eigenvalue preserved) — not two rank-1 updates, not a
+    // det-floored adjugate. Block-diagonal cohesive (one scalar law per axis); biaxial coupling
+    // flows through the bulk ks. See ADR 33 PR-3b.
+    UniaxialMaterial *theHingeY;        // discrete cohesive M_y([[theta_y]]) law (element owns a copy)
+    double           hingeJumpY;        // trial weak-axis rotation jump alpha_y (converged in update())
+    double           hingeJumpCommitY;  // committed alpha_y (inner-Newton warm start + serialization)
+    double           hingeKvY[6];       // cached K_v-alpha_y 6-vector at the converged state
+    double           hingeMscaleY;      // running moment scale (~Mc_y) for a stable inner-Newton tol
+    double           hingeKaaInvZZ;     // cached eigenvalue-floored 2x2 inverse of K_aa (symmetric):
+    double           hingeKaaInvZY;     //   [[hingeKaaInvZZ, hingeKaaInvZY],
+    double           hingeKaaInvYY;     //    [hingeKaaInvZY, hingeKaaInvYY]] (biaxial rank-2 condensation)
+
     // Tier-2 helper: inner Newton on the scalar jump alpha_z; sets the 6-DOF section trial
-    // deformations with the -alpha_z/L Mz-curvature offset, caches hingeKaaZ/hingeKvZ.
+    // deformations with the -alpha_z/L Mz-curvature offset, caches hingeKaaZ/hingeKvZ. (Z-only.)
     int solveHingeJump(const Vector &v, double L);
+
+    // Tier-2 PR-3b helper: unified inner Newton on the biaxial jump [alpha_z, alpha_y]; sets both
+    // bulk curvatures in ONE setTrialSectionDeformation/IP, caches hingeKvZ/hingeKvY + the
+    // eigenvalue-floored 2x2 inverse hingeKaaInv* for the rank-2 condensation.
+    int solveHingeJumpBiaxial(const Vector &v, double L);
 
 	int numSections;
 	SectionForceDeformation** theSections; // pointer to the ND material objects

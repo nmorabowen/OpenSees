@@ -82,6 +82,7 @@ void* OPS_LadrunoDispBeamColumn3d()
     double userLch = 0.0;
     int nlGeom = 0;        // Ladruno (ADR 32): 0=linear basic strain, 1=½(θy²+θz²) bowing (-nl)
     UniaxialMaterial *hingeMatZ = 0;  // Ladruno (ADR 33) Tier-2: embedded strong-axis (Mz) cohesive hinge
+    UniaxialMaterial *hingeMatY = 0;  // Ladruno (ADR 33 PR-3b): embedded weak-axis (My) cohesive hinge (biaxial)
     numData = 1;
     while(OPS_GetNumRemainingInputArgs() > 0) {
 	const char* type = OPS_GetString();
@@ -152,12 +153,39 @@ void* OPS_LadrunoDispBeamColumn3d()
             return 0;
         }
     }
+    // Ladruno (ADR 33) Tier-2 PR-3b: -hingeY $matTag adds the weak-axis (My) cohesive
+    // rotation-jump, making the hinge biaxial (true coupled 2x2 condensation). Requires -hinge.
+    else if (strcmp(type, "-hingeY") == 0) {
+        if (OPS_GetNumRemainingInputArgs() < 1) {
+            opserr << "WARNING LadrunoDispBeamColumn3d: -hingeY needs a uniaxialMaterial tag\n";
+            return 0;
+        }
+        int hingeTagY;
+        if (OPS_GetIntInput(&numData, &hingeTagY) < 0) {
+            opserr << "WARNING LadrunoDispBeamColumn3d: invalid -hingeY material tag\n";
+            return 0;
+        }
+        hingeMatY = OPS_getUniaxialMaterial(hingeTagY);
+        if (hingeMatY == 0) {
+            opserr << "WARNING LadrunoDispBeamColumn3d: -hingeY uniaxialMaterial " << hingeTagY
+                   << " not found\n";
+            return 0;
+        }
+    }
+    }
+
+    // Ladruno (ADR 33) PR-3b: the weak-axis jump is an ADD-ON to the strong-axis hinge — the
+    // coupled biaxial 2x2 condenses both bending jumps together, so -hingeY requires -hinge.
+    if (hingeMatY != 0 && hingeMatZ == 0) {
+        opserr << "WARNING LadrunoDispBeamColumn3d: -hingeY requires -hinge (the biaxial hinge "
+                  "condenses the strong- and weak-axis jumps together).\n";
+        return 0;
     }
 
     // Ladruno (ADR 33) Tier-2: the embedded hinge and the -nl bowing strain are mutually
     // exclusive in v1 — the ½(θz²+θy²) membrane term couples the rotation jump into the axial
     // channel. Reject the combination loudly rather than silently mis-condense.
-    if (hingeMatZ != 0 && nlGeom != 0) {
+    if ((hingeMatZ != 0 || hingeMatY != 0) && nlGeom != 0) {
         opserr << "WARNING LadrunoDispBeamColumn3d: -hinge and -nl are mutually exclusive in v1 "
                   "(the bowing strain couples the rotation jump into the axial channel); "
                   "use one or the other.\n";
@@ -196,7 +224,7 @@ void* OPS_LadrunoDispBeamColumn3d()
     }
     
     Element *theEle =  new LadrunoDispBeamColumn3d(iData[0],iData[1],iData[2],secTags.Size(),sections,
-					    *bi,*theTransf,mass,cmass, theDamping,lchMode,userLch,nlGeom,hingeMatZ);
+					    *bi,*theTransf,mass,cmass, theDamping,lchMode,userLch,nlGeom,hingeMatZ,hingeMatY);
     delete [] sections;
     return theEle;
 }
@@ -206,21 +234,33 @@ LadrunoDispBeamColumn3d::LadrunoDispBeamColumn3d(int tag, int nd1, int nd2,
 				   BeamIntegration &bi,
 				   CrdTransf &coordTransf, double r, int cm,
 				   Damping *damping, int lchM, double userL, int nlG,
-				   UniaxialMaterial *hingeMatZ)
+				   UniaxialMaterial *hingeMatZ, UniaxialMaterial *hingeMatY)
 :Element (tag, ELE_TAG_LadrunoDispBeamColumn3d),
 numSections(numSec), theSections(0), crdTransf(0), beamInt(0),
 connectedExternalNodes(2),
 Q(12), q(6), rho(r), cMass(cm), parameterID(0), theDamping(0),
 current_section_lch(0.0), lchMode(lchM), userLch(userL), nlGeom(nlG),
 hingeOn(0), theHingeZ(0), hingeJumpZ(0.0), hingeJumpCommitZ(0.0), hingeKaaZ(0.0),
-hingeMscaleZ(0.0)
+hingeMscaleZ(0.0),
+theHingeY(0), hingeJumpY(0.0), hingeJumpCommitY(0.0), hingeMscaleY(0.0),
+hingeKaaInvZZ(0.0), hingeKaaInvZY(0.0), hingeKaaInvYY(0.0)
 {
   hingeKvZ[0] = hingeKvZ[1] = hingeKvZ[2] = hingeKvZ[3] = hingeKvZ[4] = hingeKvZ[5] = 0.0;
+  hingeKvY[0] = hingeKvY[1] = hingeKvY[2] = hingeKvY[3] = hingeKvY[4] = hingeKvY[5] = 0.0;
   // Ladruno (ADR 33) Tier-2: own a copy of the strong-axis cohesive hinge material
   if (hingeMatZ != 0) {
     theHingeZ = hingeMatZ->getCopy();
     if (theHingeZ == 0) {
       opserr << "LadrunoDispBeamColumn3d::LadrunoDispBeamColumn3d - failed to copy hinge material\n";
+      exit(-1);
+    }
+    hingeOn = 1;
+  }
+  // Ladruno (ADR 33 PR-3b): own a copy of the weak-axis cohesive hinge material (biaxial add-on)
+  if (hingeMatY != 0) {
+    theHingeY = hingeMatY->getCopy();
+    if (theHingeY == 0) {
+      opserr << "LadrunoDispBeamColumn3d::LadrunoDispBeamColumn3d - failed to copy weak-axis hinge material\n";
       exit(-1);
     }
     hingeOn = 1;
@@ -299,9 +339,12 @@ Q(12), q(6), rho(0.0), cMass(0), parameterID(0),
 theDamping(0),
 current_section_lch(0.0), lchMode(0), userLch(0.0), nlGeom(0),
 hingeOn(0), theHingeZ(0), hingeJumpZ(0.0), hingeJumpCommitZ(0.0), hingeKaaZ(0.0),
-hingeMscaleZ(0.0)
+hingeMscaleZ(0.0),
+theHingeY(0), hingeJumpY(0.0), hingeJumpCommitY(0.0), hingeMscaleY(0.0),
+hingeKaaInvZZ(0.0), hingeKaaInvZY(0.0), hingeKaaInvYY(0.0)
 {
   hingeKvZ[0] = hingeKvZ[1] = hingeKvZ[2] = hingeKvZ[3] = hingeKvZ[4] = hingeKvZ[5] = 0.0;
+  hingeKvY[0] = hingeKvY[1] = hingeKvY[2] = hingeKvY[3] = hingeKvY[4] = hingeKvY[5] = 0.0;
   q0[0] = 0.0;
   q0[1] = 0.0;
   q0[2] = 0.0;
@@ -339,6 +382,9 @@ LadrunoDispBeamColumn3d::~LadrunoDispBeamColumn3d()
 
   if (theHingeZ != 0)   // Ladruno (ADR 33) Tier-2
     delete theHingeZ;
+
+  if (theHingeY != 0)   // Ladruno (ADR 33 PR-3b)
+    delete theHingeY;
 }
 
 int
@@ -465,6 +511,10 @@ LadrunoDispBeamColumn3d::commitState()
     if (hingeOn) {
       hingeJumpCommitZ = hingeJumpZ;
       if (theHingeZ) retVal += theHingeZ->commitState();
+      if (theHingeY) {                       // PR-3b biaxial
+        hingeJumpCommitY = hingeJumpY;
+        retVal += theHingeY->commitState();
+      }
     }
 
     return retVal;
@@ -488,6 +538,10 @@ LadrunoDispBeamColumn3d::revertToLastCommit()
     if (hingeOn) {
       hingeJumpZ = hingeJumpCommitZ;
       if (theHingeZ) retVal += theHingeZ->revertToLastCommit();
+      if (theHingeY) {                       // PR-3b biaxial
+        hingeJumpY = hingeJumpCommitY;
+        retVal += theHingeY->revertToLastCommit();
+      }
     }
 
     return retVal;
@@ -514,6 +568,14 @@ LadrunoDispBeamColumn3d::revertToStart()
       hingeKvZ[0] = hingeKvZ[1] = hingeKvZ[2] = hingeKvZ[3] = hingeKvZ[4] = hingeKvZ[5] = 0.0;
       hingeMscaleZ = 0.0;
       if (theHingeZ) retVal += theHingeZ->revertToStart();
+      if (theHingeY) {                       // PR-3b biaxial
+        hingeJumpY = 0.0;
+        hingeJumpCommitY = 0.0;
+        hingeKvY[0] = hingeKvY[1] = hingeKvY[2] = hingeKvY[3] = hingeKvY[4] = hingeKvY[5] = 0.0;
+        hingeMscaleY = 0.0;
+        hingeKaaInvZZ = hingeKaaInvZY = hingeKaaInvYY = 0.0;
+        retVal += theHingeY->revertToStart();
+      }
     }
 
     return retVal;
@@ -536,11 +598,15 @@ LadrunoDispBeamColumn3d::update(void)
   double L = crdTransf->getInitialLength();
   double oneOverL = 1.0/L;
 
-  // Ladruno (ADR 33) Tier-2: when the strong-axis hinge is active, the bulk Mz section
-  // strain includes the -alpha_z/L enhancement and alpha_z is converged by an inner Newton
-  // (which sets the section deformations itself). GATED so the no-hinge path below is untouched.
-  if (hingeOn)
+  // Ladruno (ADR 33) Tier-2: when the embedded hinge is active, the bulk Mz (and, biaxial, My)
+  // section strain includes the -alpha_*/L enhancement and the jump(s) are converged by an inner
+  // Newton (which sets the section deformations itself). GATED so the no-hinge path below is
+  // untouched. PR-3b: theHingeY != 0 routes to the coupled biaxial solve; Z-only stays PR-3a.
+  if (hingeOn) {
+    if (theHingeY != 0)
+      return solveHingeJumpBiaxial(v, L);
     return solveHingeJump(v, L);
+  }
 
   //const Matrix &pts = quadRule.getIntegrPointCoords(numSections);
   double xi[maxNumSections];
@@ -737,6 +803,210 @@ LadrunoDispBeamColumn3d::solveHingeJump(const Vector &v, double L)
   return 0;
 }
 
+// Ladruno (ADR 33) PR-3b: eigenvalue-floored inverse of a symmetric 2x2 [[a,b],[b,d]].
+// Each eigenvalue's MAGNITUDE is floored to `floor` (its SIGN is preserved — a softening-induced
+// negative eigenvalue is physical), then the inverse is reconstructed spectrally
+// A^{-1} = sum_i (1/lam_i) q_i q_i^T. This bounds EVERY mode, unlike a det-floored adjugate whose
+// numerator blows up ~1e8x along the near-null eigenvector at staggered activation (ADR 33 risk).
+static void
+ladrunoFlooredInv2x2(double a, double b, double d, double floor,
+                     double &iZZ, double &iZY, double &iYY)
+{
+  double half = 0.5*(a + d);
+  double diff = 0.5*(a - d);
+  double rad  = sqrt(diff*diff + b*b);
+  double lam1 = half + rad;   // q1: eigenvector (lam1 - d, b) (robust; for symmetric 2x2)
+  double lam2 = half - rad;   // q2: the orthonormal complement of q1
+
+  double q1x, q1y;
+  if (fabs(b) > 1.0e-300) {
+    q1x = lam1 - d;  q1y = b;
+  } else {
+    // already diagonal: principal axes ARE the coordinate axes
+    if (a >= d) { q1x = 1.0; q1y = 0.0; }
+    else        { q1x = 0.0; q1y = 1.0; }
+  }
+  double n1 = sqrt(q1x*q1x + q1y*q1y);
+  if (n1 < 1.0e-300) { q1x = 1.0; q1y = 0.0; n1 = 1.0; }
+  q1x /= n1; q1y /= n1;
+  double q2x = -q1y, q2y = q1x;     // orthonormal complement
+
+  double f1 = (fabs(lam1) < floor) ? ((lam1 < 0.0) ? -floor : floor) : lam1;
+  double f2 = (fabs(lam2) < floor) ? ((lam2 < 0.0) ? -floor : floor) : lam2;
+  double i1 = 1.0/f1, i2 = 1.0/f2;
+
+  iZZ = i1*q1x*q1x + i2*q2x*q2x;
+  iZY = i1*q1x*q1y + i2*q2x*q2y;
+  iYY = i1*q1y*q1y + i2*q2y*q2y;
+}
+
+// Ladruno (ADR 33) Tier-2 PR-3b: unified inner Newton on the BIAXIAL rotation jump
+// alpha = [alpha_z, alpha_y] on the Mz/My rows of the 6-DOF basic system. ONE
+// setTrialSectionDeformation per IP sets BOTH bulk curvatures (a second pass would overwrite the
+// strain vector and corrupt the section state from the first). The bulk sections see
+//   kappa_z_bulk = (1/L)((6xi-4)v1+(6xi-2)v2) - alpha_z/L,   kappa_y_bulk = (1/L)((6xi-4)v3+(6xi-2)v4) - alpha_y/L,
+// the axial/torsion channels stay linear. Enhancement equilibrium and the TRUE coupled tangent:
+//   h_z = -sum wt*s(MZ) + M_coh_z(alpha_z) = 0,   h_y = -sum wt*s(MY) + M_coh_y(alpha_y) = 0
+//   K_aa = [[ (1/L)sum wt*ks(MZ,MZ) + dMz/dalphaz ,  (1/L)sum wt*½(ks(MZ,MY)+ks(MY,MZ)) ],
+//           [  (sym)                              ,  (1/L)sum wt*ks(MY,MY) + dMy/dalphay ]]
+// solved with an EIGENVALUE-FLOORED 2x2 inverse. The 6x2 K_v-alpha (hingeKvZ | hingeKvY) carries
+// the cross-tangent rows so the condensed off-diagonals of the 6x6 basic kb are right. The basic
+// FORCE needs no correction (at h=0 the sections hold kappa_bulk, so q = sum wt*B^T*s IS condensed).
+int
+LadrunoDispBeamColumn3d::solveHingeJumpBiaxial(const Vector &v, double L)
+{
+  double oneOverL = 1.0/L;
+  const double Gbar = -oneOverL;   // bounded incompatible-mode enhancement (per bending axis)
+
+  double xi[maxNumSections];
+  beamInt->getSectionLocations(numSections, L, xi);
+  double wt[maxNumSections];
+  beamInt->getSectionWeights(numSections, L, wt);
+
+  double az = hingeJumpCommitZ;    // warm start from the committed jumps (path-correct)
+  double ay = hingeJumpCommitY;
+
+  const int maxIter = 30;
+  double KvZ[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+  double KvY[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+  double iZZ = 0.0, iZY = 0.0, iYY = 0.0;
+
+  for (int iter = 0; iter < maxIter; iter++) {
+
+    int err = 0;
+    double sumMz = 0.0, sumMy = 0.0;       // sum wt*M_sec(MZ/MY)
+    double sumEIz = 0.0, sumEIy = 0.0;     // sum wt*ks(MZ,MZ)/ks(MY,MY)
+    double sumCpl = 0.0;                    // sum wt*½(ks(MZ,MY)+ks(MY,MZ))
+    for (int a = 0; a < 6; a++) { KvZ[a] = 0.0; KvY[a] = 0.0; }
+
+    // --- set every IP's bulk-enhanced section strain at the current (alpha_z, alpha_y) ---
+    for (int i = 0; i < numSections; i++) {
+
+      int order = theSections[i]->getOrder();
+      const ID &code = theSections[i]->getType();
+      double xi6 = 6.0*xi[i];
+
+      Vector e(workArea, order);
+      for (int j = 0; j < order; j++) {
+        switch (code(j)) {
+        case SECTION_RESPONSE_P:
+          e(j) = oneOverL*v(0); break;
+        case SECTION_RESPONSE_MZ:
+          e(j) = oneOverL*((xi6-4.0)*v(1) + (xi6-2.0)*v(2)) + Gbar*az; break;
+        case SECTION_RESPONSE_MY:
+          e(j) = oneOverL*((xi6-4.0)*v(3) + (xi6-2.0)*v(4)) + Gbar*ay; break;
+        case SECTION_RESPONSE_T:
+          e(j) = oneOverL*v(5); break;
+        default:
+          e(j) = 0.0; break;
+        }
+      }
+
+      // Tier-1 lch latch (identical to the no-hinge update loop)
+      if (lchMode == 1)       current_section_lch = L;
+      else if (lchMode == 2)  current_section_lch = userLch;
+      else                    current_section_lch = wt[i]*L;
+
+      err += theSections[i]->setTrialSectionDeformation(e);
+
+      const Vector &s  = theSections[i]->getStressResultant();
+      const Matrix &ks = theSections[i]->getSectionTangent();
+      int idxP = -1, idxMZ = -1, idxMY = -1, idxT = -1;
+      for (int j = 0; j < order; j++) {
+        switch (code(j)) {
+        case SECTION_RESPONSE_P:  idxP  = j; break;
+        case SECTION_RESPONSE_MZ: idxMZ = j; break;
+        case SECTION_RESPONSE_MY: idxMY = j; break;
+        case SECTION_RESPONSE_T:  idxT  = j; break;
+        default: break;
+        }
+      }
+      // strong-axis (alpha_z) column of K_v-alpha + the Mz residual/diagonal terms
+      if (idxMZ >= 0) {
+        double EIz = ks(idxMZ, idxMZ);
+        sumMz  += wt[i]*s(idxMZ);
+        sumEIz += wt[i]*EIz;
+        KvZ[1] += -oneOverL*wt[i]*(xi6-4.0)*EIz;
+        KvZ[2] += -oneOverL*wt[i]*(xi6-2.0)*EIz;
+        if (idxP  >= 0) KvZ[0] += -oneOverL*wt[i]*ks(idxP,  idxMZ);
+        if (idxMY >= 0) {
+          KvZ[3] += -oneOverL*wt[i]*(xi6-4.0)*ks(idxMY, idxMZ);
+          KvZ[4] += -oneOverL*wt[i]*(xi6-2.0)*ks(idxMY, idxMZ);
+        }
+        if (idxT  >= 0) KvZ[5] += -oneOverL*wt[i]*ks(idxT,  idxMZ);
+      }
+      // weak-axis (alpha_y) column of K_v-alpha + the My residual/diagonal terms
+      if (idxMY >= 0) {
+        double EIy = ks(idxMY, idxMY);
+        sumMy  += wt[i]*s(idxMY);
+        sumEIy += wt[i]*EIy;
+        KvY[3] += -oneOverL*wt[i]*(xi6-4.0)*EIy;
+        KvY[4] += -oneOverL*wt[i]*(xi6-2.0)*EIy;
+        if (idxP  >= 0) KvY[0] += -oneOverL*wt[i]*ks(idxP,  idxMY);
+        if (idxMZ >= 0) {
+          KvY[1] += -oneOverL*wt[i]*(xi6-4.0)*ks(idxMZ, idxMY);
+          KvY[2] += -oneOverL*wt[i]*(xi6-2.0)*ks(idxMZ, idxMY);
+        }
+        if (idxT  >= 0) KvY[5] += -oneOverL*wt[i]*ks(idxT,  idxMY);
+      }
+      // symmetric bending-bending coupling K_aa(z,y) = (1/L)sum wt*½(ks(MZ,MY)+ks(MY,MZ))
+      if (idxMZ >= 0 && idxMY >= 0)
+        sumCpl += wt[i]*0.5*(ks(idxMZ, idxMY) + ks(idxMY, idxMZ));
+    }
+
+    if (err != 0) {
+      opserr << "LadrunoDispBeamColumn3d::solveHingeJumpBiaxial() - failed setTrialSectionDeformations()\n";
+      return err;
+    }
+
+    // --- cohesive laws at the current jumps (block-diagonal: one scalar law per axis) ---
+    theHingeZ->setTrialStrain(az);
+    double Mz = theHingeZ->getStress();
+    double Kz = theHingeZ->getTangent();
+    theHingeY->setTrialStrain(ay);
+    double My = theHingeY->getStress();
+    double Ky = theHingeY->getTangent();
+
+    double hz = -sumMz + Mz;
+    double hy = -sumMy + My;
+
+    // TRUE coupled 2x2 K_aa (bulk + cohesive on the diagonal, bulk-only off-diagonal)
+    double Kaa_zz = oneOverL*sumEIz + Kz;
+    double Kaa_yy = oneOverL*sumEIy + Ky;
+    double Kaa_zy = oneOverL*sumCpl;
+
+    // EIGENVALUE floor: bounds every mode against the positive bulk terms + the cohesive tangents
+    double floor = 1.0e-8*(fabs(oneOverL*sumEIz) + fabs(oneOverL*sumEIy) + fabs(Kz) + fabs(Ky)) + 1.0e-300;
+    ladrunoFlooredInv2x2(Kaa_zz, Kaa_zy, Kaa_yy, floor, iZZ, iZY, iYY);
+
+    // per-axis STABLE moment scales (do not collapse when a fully-broken LINEAR hinge carries M->0)
+    double MhereZ = fabs(Mz) + fabs(sumMz);
+    double MhereY = fabs(My) + fabs(sumMy);
+    if (MhereZ > hingeMscaleZ) hingeMscaleZ = MhereZ;
+    if (MhereY > hingeMscaleY) hingeMscaleY = MhereY;
+
+    bool okZ = fabs(hz) <= 1.0e-11*hingeMscaleZ + 1.0e-12;
+    bool okY = fabs(hy) <= 1.0e-11*hingeMscaleY + 1.0e-12;
+    if (okZ && okY) {
+      hingeJumpZ = az; hingeJumpY = ay;
+      for (int a = 0; a < 6; a++) { hingeKvZ[a] = KvZ[a]; hingeKvY[a] = KvY[a]; }
+      hingeKaaInvZZ = iZZ; hingeKaaInvZY = iZY; hingeKaaInvYY = iYY;
+      return 0;
+    }
+
+    // guarded coupled Newton step: dalpha = -K_aa_floored^{-1} h
+    az -= (iZZ*hz + iZY*hy);
+    ay -= (iZY*hz + iYY*hy);
+  }
+
+  hingeJumpZ = az; hingeJumpY = ay;
+  for (int a = 0; a < 6; a++) { hingeKvZ[a] = KvZ[a]; hingeKvY[a] = KvY[a]; }
+  hingeKaaInvZZ = iZZ; hingeKaaInvZY = iZY; hingeKaaInvYY = iYY;
+  opserr << "WARNING LadrunoDispBeamColumn3d (tag " << this->getTag()
+         << "): biaxial embedded-hinge inner Newton did not converge in " << maxIter << " iters\n";
+  return 0;
+}
+
 double
 LadrunoDispBeamColumn3d::getCharacteristicLength(void)
 {
@@ -913,11 +1183,22 @@ LadrunoDispBeamColumn3d::getTangentStiff()
   // element-internal DOFs): a guarded rank-1 update kb -= hingeKvZ hingeKvZ^T / hingeKaaZ. The kb
   // here is the INLINE-built linear basic stiffness (the nlGeom path is dead under -hinge). The
   // basic FORCE q needs NO correction (sections already hold the converged kappa_z_bulk).
-  if (hingeOn && hingeKaaZ != 0.0) {
-    double invKaa = 1.0/hingeKaaZ;
-    for (int a = 0; a < 6; a++)
-      for (int b = 0; b < 6; b++)
-        kb(a,b) -= hingeKvZ[a]*hingeKvZ[b]*invKaa;
+  if (hingeOn) {
+    if (theHingeY != 0) {
+      // PR-3b biaxial: rank-2 kb -= K_v-alpha * K_aa_floored^{-1} * K_v-alpha^T, with the 6x2
+      // K_v-alpha = [hingeKvZ | hingeKvY] and the symmetric eigenvalue-floored 2x2 inverse.
+      double iZZ = hingeKaaInvZZ, iZY = hingeKaaInvZY, iYY = hingeKaaInvYY;
+      for (int a = 0; a < 6; a++)
+        for (int b = 0; b < 6; b++)
+          kb(a,b) -= hingeKvZ[a]*(iZZ*hingeKvZ[b] + iZY*hingeKvY[b])
+                   + hingeKvY[a]*(iZY*hingeKvZ[b] + iYY*hingeKvY[b]);
+    } else if (hingeKaaZ != 0.0) {
+      // PR-3a strong-axis only: guarded rank-1 kb -= hingeKvZ hingeKvZ^T / hingeKaaZ.
+      double invKaa = 1.0/hingeKaaZ;
+      for (int a = 0; a < 6; a++)
+        for (int b = 0; b < 6; b++)
+          kb(a,b) -= hingeKvZ[a]*hingeKvZ[b]*invKaa;
+    }
   }
 
   // Transform to global stiffness
@@ -1457,7 +1738,7 @@ LadrunoDispBeamColumn3d::sendSelf(int commitTag, Channel &theChannel)
   int i, j;
   int loc = 0;
   
-  static Vector data(21);  // Ladruno (ADR 32 +3 lchMode/userLch/nlGeom; ADR 33 +2 hingeOn/hingeJumpCommitZ)
+  static Vector data(23);  // Ladruno (ADR 32 +3 lchMode/userLch/nlGeom; ADR 33 +2 hingeOn/hingeJumpCommitZ; PR-3b +2 hingeOnY/hingeJumpCommitY)
   data(0) = this->getTag();
   data(1) = connectedExternalNodes(0);
   data(2) = connectedExternalNodes(1);
@@ -1507,6 +1788,9 @@ LadrunoDispBeamColumn3d::sendSelf(int commitTag, Channel &theChannel)
   // material itself is sent after the sections, mirroring the section dbTag/classTag pattern).
   data(19) = hingeOn;
   data(20) = hingeJumpCommitZ;
+  // Ladruno (ADR 33 PR-3b): weak-axis (biaxial) hinge presence flag + committed jump
+  data(21) = (theHingeY != 0) ? 1 : 0;
+  data(22) = hingeJumpCommitY;
 
   if (theChannel.sendVector(dbTag, commitTag, data) < 0) {
     opserr << "LadrunoDispBeamColumn3d::sendSelf() - failed to send data Vector\n";
@@ -1567,9 +1851,14 @@ LadrunoDispBeamColumn3d::sendSelf(int commitTag, Channel &theChannel)
       return -1;
   }
 
-  // Ladruno (ADR 33) Tier-2: send the embedded strong-axis hinge material (classTag+dbTag then sendSelf)
+  // Ladruno (ADR 33) Tier-2: send the embedded hinge material metadata as ONE ID — size 2
+  // (strong-axis only) or size 4 (biaxial). Two separate same-size IDs sharing the element
+  // dbTag+commitTag would COLLIDE in the FE_Datastore (key = dbTag/commitTag/size), so the
+  // second silently overwrites the first; the combined ID (size 2 vs 4) keys distinctly. Each
+  // material then sends itself under its own (distinct) material dbTag. Z-only keeps the PR-3a stream.
   if (hingeOn && theHingeZ) {
-    ID hingeID(2);
+    int nHingeID = (theHingeY != 0) ? 4 : 2;
+    ID hingeID(nHingeID);
     hingeID(0) = theHingeZ->getClassTag();
     int hDbTag = theHingeZ->getDbTag();
     if (hDbTag == 0) {
@@ -1577,12 +1866,25 @@ LadrunoDispBeamColumn3d::sendSelf(int commitTag, Channel &theChannel)
       if (hDbTag != 0) theHingeZ->setDbTag(hDbTag);
     }
     hingeID(1) = hDbTag;
+    if (theHingeY != 0) {
+      hingeID(2) = theHingeY->getClassTag();
+      int hDbTagY = theHingeY->getDbTag();
+      if (hDbTagY == 0) {
+        hDbTagY = theChannel.getDbTag();
+        if (hDbTagY != 0) theHingeY->setDbTag(hDbTagY);
+      }
+      hingeID(3) = hDbTagY;
+    }
     if (theChannel.sendID(dbTag, commitTag, hingeID) < 0) {
       opserr << "LadrunoDispBeamColumn3d::sendSelf() - failed to send hinge ID\n";
       return -1;
     }
     if (theHingeZ->sendSelf(commitTag, theChannel) < 0) {
       opserr << "LadrunoDispBeamColumn3d::sendSelf() - failed to send hinge material\n";
+      return -1;
+    }
+    if (theHingeY != 0 && theHingeY->sendSelf(commitTag, theChannel) < 0) {
+      opserr << "LadrunoDispBeamColumn3d::sendSelf() - failed to send weak-axis hinge material\n";
       return -1;
     }
   }
@@ -1600,7 +1902,7 @@ LadrunoDispBeamColumn3d::recvSelf(int commitTag, Channel &theChannel,
   int dbTag = this->getDbTag();
   int i;
   
-  static Vector data(21);  // Ladruno (ADR 32 +3 lchMode/userLch/nlGeom; ADR 33 +2 hingeOn/hingeJumpCommitZ)
+  static Vector data(23);  // Ladruno (ADR 32 +3 lchMode/userLch/nlGeom; ADR 33 +2 hingeOn/hingeJumpCommitZ; PR-3b +2 hingeOnY/hingeJumpCommitY)
 
   if (theChannel.recvVector(dbTag, commitTag, data) < 0)  {
     opserr << "LadrunoDispBeamColumn3d::recvSelf() - failed to recv data Vector\n";
@@ -1639,6 +1941,15 @@ LadrunoDispBeamColumn3d::recvSelf(int commitTag, Channel &theChannel,
   hingeKaaZ = 0.0;
   hingeKvZ[0] = hingeKvZ[1] = hingeKvZ[2] = hingeKvZ[3] = hingeKvZ[4] = hingeKvZ[5] = 0.0;
   hingeMscaleZ = 0.0;
+
+  // Ladruno (ADR 33 PR-3b): weak-axis (biaxial) hinge — presence flag + committed jump (the
+  // material is reconstructed after the strong-axis one; the 2x2 inverse cache is transient).
+  int hasHingeY = (int)data(21);
+  hingeJumpCommitY = data(22);
+  hingeJumpY = hingeJumpCommitY;
+  hingeKvY[0] = hingeKvY[1] = hingeKvY[2] = hingeKvY[3] = hingeKvY[4] = hingeKvY[5] = 0.0;
+  hingeMscaleY = 0.0;
+  hingeKaaInvZZ = hingeKaaInvZY = hingeKaaInvYY = 0.0;
 
   // create a new crdTransf object if one needed
   if (crdTransf == 0 || crdTransf->getClassTag() != crdTransfClassTag) {
@@ -1818,9 +2129,11 @@ LadrunoDispBeamColumn3d::recvSelf(int commitTag, Channel &theChannel,
     }
   }
 
-  // Ladruno (ADR 33) Tier-2: reconstruct the embedded strong-axis hinge material (sent after damping).
+  // Ladruno (ADR 33) Tier-2: reconstruct the embedded hinge material(s) from the combined ID
+  // (size 2 strong-axis only, size 4 biaxial — matching sendSelf's collision-free keying).
   if (hingeOn) {
-    ID hingeID(2);
+    int nHingeID = hasHingeY ? 4 : 2;
+    ID hingeID(nHingeID);
     if (theChannel.recvID(dbTag, commitTag, hingeID) < 0) {
       opserr << "LadrunoDispBeamColumn3d::recvSelf() - failed to recv hinge ID\n";
       return -1;
@@ -1841,9 +2154,33 @@ LadrunoDispBeamColumn3d::recvSelf(int commitTag, Channel &theChannel,
       opserr << "LadrunoDispBeamColumn3d::recvSelf() - hinge material failed to recv itself\n";
       return -1;
     }
+
+    // Ladruno (ADR 33 PR-3b): the weak-axis material (sent after the strong-axis one)
+    if (hasHingeY) {
+      int hClassTagY = hingeID(2);
+      int hDbTagY = hingeID(3);
+      if (theHingeY == 0 || theHingeY->getClassTag() != hClassTagY) {
+        if (theHingeY) delete theHingeY;
+        theHingeY = theBroker.getNewUniaxialMaterial(hClassTagY);
+        if (theHingeY == 0) {
+          opserr << "LadrunoDispBeamColumn3d::recvSelf() - Broker could not create weak-axis hinge material of class "
+                 << hClassTagY << endln;
+          return -1;
+        }
+      }
+      theHingeY->setDbTag(hDbTagY);
+      if (theHingeY->recvSelf(commitTag, theChannel, theBroker) < 0) {
+        opserr << "LadrunoDispBeamColumn3d::recvSelf() - weak-axis hinge material failed to recv itself\n";
+        return -1;
+      }
+    }
+    else {
+      if (theHingeY) { delete theHingeY; theHingeY = 0; }
+    }
   }
   else {
     if (theHingeZ) { delete theHingeZ; theHingeZ = 0; }
+    if (theHingeY) { delete theHingeY; theHingeY = 0; }
   }
 
   return 0;
@@ -2161,6 +2498,10 @@ LadrunoDispBeamColumn3d::setResponse(const char **argv, int argc, OPS_Stream &ou
     // int Mz d[[theta_z]], hinge kappaMax/damage/...). Lets the gates read the hinge state.
     else if (hingeOn && theHingeZ != 0 && argc > 1 && strcmp(argv[0],"hinge") == 0) {
       theResponse = theHingeZ->setResponse(&argv[1], argc-1, output);
+    }
+    // Ladruno (ADR 33 PR-3b): forward "hingeY <resp>" to the embedded weak-axis cohesive material.
+    else if (hingeOn && theHingeY != 0 && argc > 1 && strcmp(argv[0],"hingeY") == 0) {
+      theResponse = theHingeY->setResponse(&argv[1], argc-1, output);
     }
 
     if (theResponse == 0)

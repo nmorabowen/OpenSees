@@ -36,7 +36,8 @@
 //           [, '-mass', massPerLength] [, '-cMass'] [, '-damp', dampTag]
 //           [, '-lch', {ip|element|<value>}]    # regularization length (default: ip)
 //           [, '-nl']                           # ½θ² (2D) / ½(θy²+θz²) (3D) bowing strain (default: linear)
-//           [, '-hinge', matTag])               # embedded cohesive rotation-jump hinge (ADR 32 Tier-2 2D / ADR 33 3D strong-axis Mz)
+//           [, '-hinge', matTag]                # embedded cohesive rotation-jump hinge (ADR 32 Tier-2 2D / ADR 33 3D strong-axis Mz)
+//           [, '-hingeY', matTag])              # 3D ONLY: weak-axis (My) cohesive hinge -> biaxial coupled hinge (ADR 33 PR-3b); requires -hinge
 //
 // -lch selects the characteristic length reported to crack-band / auto-regularizing
 // materials (ASDConcrete1D -autoRegularization, ASDSteel1D, LadrunoUniaxialJ2+Lemaitre):
@@ -54,7 +55,9 @@
 //
 // Both the 2D and 3D classes are built and dispatched below. The embedded hinge (-hinge) is
 // the full 2D rotation-jump hinge (ADR 32 PR-2a) and, in 3D, the strong-axis (Mz) rotation jump
-// (ADR 33 PR-3a); the 3D weak-axis (My) + coupled biaxial 2x2 are PR-3b.
+// (ADR 33 PR-3a). Adding -hingeY in 3D makes the hinge BIAXIAL (ADR 33 PR-3b): a second weak-axis
+// (My) jump condensed with the strong-axis one through a TRUE coupled 2x2 (eigenvalue-floored
+// inverse) so the staggered-activation tangent is exact when the section couples bending axes.
 
 #include <elementAPI.h>
 #include <OPS_Globals.h>
