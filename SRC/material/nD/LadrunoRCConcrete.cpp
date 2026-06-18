@@ -31,6 +31,8 @@
 #include <Channel.h>
 #include <MaterialResponse.h>
 #include <Information.h>
+#include <OPS_Globals.h>   // ops_TheActiveElement (Phase 3b lch latch)
+#include <Element.h>       // Element::getCharacteristicLength()
 #include <string.h>
 #include <math.h>
 #include <vector>
@@ -82,6 +84,9 @@ void* OPS_LadrunoRCConcrete(void)
   // Phase 3: tension stiffening (default off => baseline-identical)
   int    tensStiffMode = 0;       // 0 off | 1 vc (Bentz) | 2 cm (Collins-Mitchell)
   double tensStiffC = 500.0, tensStiffAlpha = 1.0;
+  // Phase 3b: crack-band (Bazant-Oh) regularization (default off => baseline-identical)
+  bool   autoReg = false;
+  double lchRef = 1.0;
 
   auto readList = [](std::vector<double>& v) {
     v.clear();
@@ -150,6 +155,11 @@ void* OPS_LadrunoRCConcrete(void)
     }
     else if (strcmp(opt, "-tensStiffC") == 0)     { int nd = 1; if (OPS_GetDoubleInput(&nd, &tensStiffC) < 0)     { opserr << "LadrunoRCConcrete: -tensStiffC needs a value.\n";     return 0; } }
     else if (strcmp(opt, "-tensStiffAlpha") == 0) { int nd = 1; if (OPS_GetDoubleInput(&nd, &tensStiffAlpha) < 0) { opserr << "LadrunoRCConcrete: -tensStiffAlpha needs a value.\n"; return 0; } }
+    // Phase 3b: -autoRegularization $lch_ref  (crack-band Bazant-Oh regularization).
+    else if (strcmp(opt, "-autoRegularization") == 0) {
+      autoReg = true; int nd = 1;
+      if (OPS_GetDoubleInput(&nd, &lchRef) < 0) { opserr << "LadrunoRCConcrete: -autoRegularization needs $lch_ref.\n"; return 0; }
+    }
     // unknown tokens are ignored (forward-compat)
   }
 
@@ -174,6 +184,10 @@ void* OPS_LadrunoRCConcrete(void)
   if (tensStiffMode == 2 && tensStiffC != 500.0)
     opserr << "WARNING nDMaterial LadrunoRCConcrete: -tensStiffC is ignored in cm mode "
               "(cm uses the fixed Collins-Mitchell 500); use -tensStiff vc for a tunable c.\n";
+  if (autoReg && lchRef <= 0.0) {
+    opserr << "nDMaterial LadrunoRCConcrete error: -autoRegularization $lch_ref must be > 0.\n";
+    return 0;
+  }
 
   if (Ce.size() < 2 || Cs.size() != Ce.size()) {
     opserr << "nDMaterial LadrunoRCConcrete error: need -Ce and -Cs of equal length (>=2).\n";
@@ -197,6 +211,7 @@ void* OPS_LadrunoRCConcrete(void)
   P.implexErrTol = implexErrTol; P.implexTimeRedLim = implexTimeRedLim;
   P.tensStiffMode = tensStiffMode; P.tensStiffC = tensStiffC;
   P.tensStiffAlpha = tensStiffAlpha; P.ftPeak = 0.0;   // ftPeak set by setupParams
+  P.autoReg = autoReg; P.lchRef = lchRef;
 
   // build backbones via the faithful ASDConcrete3D HardeningLaw c-tor + adjust()
   // (elastic-consistent q). -Cd/-Td are optional -> pad with zeros to match length.
@@ -217,6 +232,7 @@ LadrunoRCConcrete::LadrunoRCConcrete()
   : NDMaterial(0, ND_TAG_LadrunoRCConcrete),
     rho(0.0), dim(DIM_3D), ncomp(6), condense(false), cEps33(0.0), status(STATUS_OK),
     implexError(0.0), dtime_n(0.0), dtime_n_commit(0.0), dtime_0(0.0), commitDone(false),
+    regularizationDone(false), regLch(0.0),
     stressOut(6), strainOut(6), tangentOut(6, 6)
 {
   // safe defaults until recvSelf populates P
@@ -228,6 +244,7 @@ LadrunoRCConcrete::LadrunoRCConcrete()
   P.implex = false; P.implexAlpha = 1.0; P.implexControl = false;
   P.implexErrTol = 0.05; P.implexTimeRedLim = 0.01;
   P.tensStiffMode = 0; P.tensStiffC = 500.0; P.tensStiffAlpha = 1.0; P.ftPeak = 0.0;
+  P.autoReg = false; P.lchRef = 1.0;
   P.ht.n = 0; P.hc.n = 0;
   this->setupDim();
   this->revertToStart();
@@ -237,6 +254,7 @@ LadrunoRCConcrete::LadrunoRCConcrete(int tag, const Params& P_, double rho_, int
   : NDMaterial(tag, ND_TAG_LadrunoRCConcrete),
     P(P_), rho(rho_), dim(dimMode), ncomp(6), condense(false), cEps33(0.0), status(STATUS_OK),
     implexError(0.0), dtime_n(0.0), dtime_n_commit(0.0), dtime_0(0.0), commitDone(false),
+    regularizationDone(false), regLch(0.0),
     stressOut(6), strainOut(6), tangentOut(6, 6)
 {
   this->setupDim();
@@ -299,8 +317,35 @@ double LadrunoRCConcrete::implexTimeFactor(void) const
   return tf;
 }
 
+// Phase 3b: latch the characteristic length once and regularize the softening backbones so the
+// dissipated energy is mesh-objective (clone of ASDConcrete3D's first-setTrialStrain latch). The
+// lch is the element's getCharacteristicLength() (already EAS-aware on ASDShellQ4) unless -lch was
+// given. LOUD FAILURE (no silent fallback, ADR D5) if -autoRegularization is on but no lch can be
+// resolved. Latched once (regularizationDone); getCopy runs before analysis so copies regularize
+// per-element. Default off => never called.
+int LadrunoRCConcrete::regularizeIfNeeded(void)
+{
+  if (!P.autoReg || regularizationDone) return 0;
+  double lch = (P.lch > 0.0) ? P.lch
+             : (ops_TheActiveElement ? ops_TheActiveElement->getCharacteristicLength() : 0.0);
+  regularizationDone = true;                 // latch regardless, so we warn/regularize only once
+  if (!(lch > 0.0)) {
+    opserr << "FATAL LadrunoRCConcrete (tag " << this->getTag()
+           << "): -autoRegularization requested but no characteristic length is available "
+              "(no active element and no -lch). Refusing to run with a non-objective softening "
+              "law — supply -lch $l or use the material inside an element.\n";
+    regLch = 0.0;
+    return -1;
+  }
+  regLch = lch;
+  ladruno_rc_kernel::regularize(P.ht, lch, P.lchRef, P.E);
+  ladruno_rc_kernel::regularize(P.hc, lch, P.lchRef, P.E);
+  return 0;
+}
+
 int LadrunoRCConcrete::setTrialStrain(const Vector& e)
 {
+  if (this->regularizeIfNeeded() < 0) { status = STATUS_NO_CONVERGE; return -1; }
   if (P.implex) {
     dtime_n = ops_Dt;
     if (!commitDone) { dtime_0 = dtime_n; dtime_n_commit = dtime_n; }
@@ -455,7 +500,7 @@ NDMaterial* LadrunoRCConcrete::getCopy(const char* type)
 // ===========================================================================
 //  parallel  (serialize params + backbones + committed history)
 // ===========================================================================
-static const int RC_SCHEMA_VERSION = 4;    // bump when the wire layout changes (hard-checked in recvSelf); v2 = +IMPL-EX; v3 = +shearRetFactor; v4 = +tension stiffening
+static const int RC_SCHEMA_VERSION = 5;    // bump when the wire layout changes (hard-checked in recvSelf); v2 = +IMPL-EX; v3 = +shearRetFactor; v4 = +tension stiffening; v5 = +crack-band regularization
 static const int RC_NSCALAR = 1 /*schemaVersion*/ + 3 /*tag,dim,rho*/
                             + 10 /*E,nu,Kc,fcft,betaFloor,cdf,eta,betaOn,lubRed,tanMode*/
                             + 9 /*interlockOn,shearRetMode,shearRetFactor,aggSize,crackStrain,crackSpacing,lch,betaSrMin,sqrtFc*/
@@ -463,6 +508,7 @@ static const int RC_NSCALAR = 1 /*schemaVersion*/ + 3 /*tag,dim,rho*/
                             + 4 /*xcrackOn,degKappa,degSlipRef,degMin*/
                             + 5 /*implex,implexAlpha,implexControl,implexErrTol,implexTimeRedLim*/
                             + 4 /*tensStiffMode,tensStiffC,tensStiffAlpha,ftPeak*/
+                            + 4 /*autoReg,lchRef,regularizationDone,regLch*/
                             + 5 /*dtime_n,dtime_n_commit,dtime_0,commitDone,implexError*/;
 static const int RC_BACK = 1 + 3*MAXPTS;   // n + x[]+y[]+q[]
 static const int RC_HIST = 6 + 6 + 6        // stress_eff, strain, (xt,xc,dt_bar,dc_bar,beta,eps1)
@@ -498,6 +544,8 @@ int LadrunoRCConcrete::sendSelf(int commitTag, Channel& theChannel)
   data(c++) = P.implexErrTol; data(c++) = P.implexTimeRedLim;
   data(c++) = P.tensStiffMode; data(c++) = P.tensStiffC;
   data(c++) = P.tensStiffAlpha; data(c++) = P.ftPeak;
+  data(c++) = P.autoReg ? 1.0 : 0.0; data(c++) = P.lchRef;
+  data(c++) = regularizationDone ? 1.0 : 0.0; data(c++) = regLch;
   data(c++) = dtime_n; data(c++) = dtime_n_commit; data(c++) = dtime_0;
   data(c++) = commitDone ? 1.0 : 0.0; data(c++) = implexError;
   data(c++) = P.ht.n;
@@ -562,6 +610,8 @@ int LadrunoRCConcrete::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBr
   P.implexErrTol = data(c++); P.implexTimeRedLim = data(c++);
   P.tensStiffMode = (int)data(c++); P.tensStiffC = data(c++);
   P.tensStiffAlpha = data(c++); P.ftPeak = data(c++);
+  P.autoReg = (data(c++) != 0.0); P.lchRef = data(c++);
+  regularizationDone = (data(c++) != 0.0); regLch = data(c++);
   dtime_n = data(c++); dtime_n_commit = data(c++); dtime_0 = data(c++);
   commitDone = (data(c++) != 0.0); implexError = data(c++);
   P.ht.n = (int)data(c++);
@@ -623,6 +673,10 @@ void LadrunoRCConcrete::Print(OPS_Stream& s, int)
   if (P.tensStiffMode == 1) s << "  c=" << P.tensStiffC;
   if (P.tensStiffMode == 2) s << "  alpha=" << P.tensStiffAlpha;
   if (P.tensStiffMode != 0) s << "  ft=" << P.ftPeak;
+  s << endln;
+  s << "  autoRegularization: " << (P.autoReg ? "ON" : "off");
+  if (P.autoReg) s << "  lch_ref=" << P.lchRef << (regularizationDone ? "  lch=" : "  (pending)");
+  if (P.autoReg && regularizationDone) s << regLch;
   s << endln;
   s << "  view  : " << this->getType() << " (order " << ncomp << ")" << endln;
 }

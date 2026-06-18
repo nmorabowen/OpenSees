@@ -179,6 +179,72 @@ inline void buildBackbone(Backbone& b, double E,
     b.n = n;
 }
 
+// ---------------------------------------------------------------------------
+// Phase 3b: crack-band (Bazant-Oh) fracture-energy regularization. Faithful clone of
+// ASDConcrete3D HardeningLaw::computeFractureEnergy + regularize. fractureEnergy returns the
+// specific (per-length) area under the softening branch; regularize() rescales the post-peak
+// strain abscissa in place so g_reg = G_f0*(lch_ref/lch) => the dissipated energy density * lch
+// (the physical fracture energy) is mesh-objective. Self-contained (regularize recomputes g0),
+// so the Backbone struct + its serialization are unchanged. Default off => never called.
+// ---------------------------------------------------------------------------
+inline double fractureEnergy(const Backbone& b, double E, int* bounded, int* pos1o, int* pos2o)
+{
+    *bounded = 0; *pos1o = 0; *pos2o = 0;
+    const int n = b.n;
+    int pos1 = 0; bool f1 = false;
+    for (int i = 1; i < n; ++i)
+        if ((b.y[i] - b.y[i-1]) / (b.x[i] - b.x[i-1]) < 0.0) { pos1 = i-1; f1 = true; break; }
+    if (!f1) return 0.0;                                   // no softening => unbounded energy
+    int pos2 = 0; bool f2 = false;
+    for (int i = pos1+1; i < n; ++i)
+        if ((b.y[i] - b.y[i-1]) / (b.x[i] - b.x[i-1]) >= 0.0) { pos2 = i-1; f2 = true; break; }
+    double g_add = 0.0;
+    if (!f2) {                                             // extend the last segment to zero stress
+        if (b.y[n-1] > 0.0) {
+            double k = (b.y[n-1] - b.y[n-2]) / (b.x[n-1] - b.x[n-2]);
+            double x3 = b.x[n-1] - b.y[n-1] / k;
+            g_add = b.y[n-1] * (x3 - b.x[n-1]) / 2.0;
+        }
+        pos2 = n-1;
+    }
+    double d1 = b.q[pos1] > 0.0 ? 1.0 - b.y[pos1] / b.q[pos1] : 0.0;
+    double Ed = (1.0 - d1) * E;
+    double g = Ed > 0.0 ? b.y[pos1] * b.y[pos1] / Ed / 2.0 : 0.0;   // unloading triangle at the peak
+    for (int i = pos1+1; i <= pos2; ++i) g += (b.x[i] - b.x[i-1]) * (b.y[i-1] + b.y[i]) / 2.0;
+    g += g_add;
+    *bounded = 1; *pos1o = pos1; *pos2o = pos2;
+    return g;
+}
+
+inline void regularize(Backbone& b, double lch, double lch_ref, double E)
+{
+    int bounded, pos1, pos2;
+    double g0 = fractureEnergy(b, E, &bounded, &pos1, &pos2);
+    double lch_scale = lch > 0.0 ? lch_ref / lch : 0.0;
+    if (!bounded || lch_scale <= 0.0 || lch_scale == 1.0) return;
+    double gnew = g0 * lch_scale;
+    double gmin = (b.y[pos1] * b.x[pos1] / 2.0) * 1.01;    // floor (lch too large): keep monotone x
+    if (gnew < gmin) gnew = gmin;
+    double tol = 1.0e-3 * gnew;
+    double x0 = b.x[pos1];
+    double g = g0, dscale = (g0 > 0.0) ? gnew / g0 : 1.0;
+    for (int iter = 0; iter < 10; ++iter) {
+        for (int i = pos1+1; i < b.n; ++i) {
+            double xi_inel = b.x[i] - b.y[i] / E; if (xi_inel < 0.0) xi_inel = 0.0;
+            double xi_pl = b.x[i] - b.q[i] / E;
+            double xi_ratio = xi_inel > 0.0 ? xi_pl / xi_inel : 0.0;
+            b.x[i] = x0 + (b.x[i] - x0) * dscale;          // stretch the post-peak strain
+            xi_inel = b.x[i] - b.y[i] / E; if (xi_inel < 0.0) xi_inel = 0.0;
+            xi_pl = xi_inel * xi_ratio;                    // keep the plastic-to-inelastic ratio
+            b.q[i] = E * (b.x[i] - xi_pl);
+        }
+        int bd, p1, p2;
+        g = fractureEnergy(b, E, &bd, &p1, &p2);
+        if (fabs(g - gnew) < tol) break;
+        dscale = (g > 0.0) ? gnew / g : 1.0;
+    }
+}
+
 inline double macauley(double x) { return x > 0.0 ? x : 0.0; }
 
 // ---------------------------------------------------------------------------
@@ -456,6 +522,9 @@ struct Params {
     double tensStiffC;             // vc-mode sqrt coefficient c (default 500)
     double tensStiffAlpha;         // cm-mode alpha1*alpha2 (default 1)
     double ftPeak;                 // tension-backbone peak ft, cached by setupParams
+    // --- Phase 3b: crack-band (Bazant-Oh) regularization (default off => baseline-identical) ---
+    bool   autoReg;                // -autoRegularization: scale softening so G_f is mesh-objective
+    double lchRef;                 // reference characteristic length the backbone was authored at
     Backbone ht, hc;                   // tension / compression backbones
 };
 
