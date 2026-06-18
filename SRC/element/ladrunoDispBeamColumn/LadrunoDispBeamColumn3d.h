@@ -48,6 +48,7 @@ class CrdTransf;
 class BeamIntegration;
 class Response;
 class UniaxialMaterial;
+class NDMaterial;
 
 class LadrunoDispBeamColumn3d : public Element
 {
@@ -60,7 +61,8 @@ class LadrunoDispBeamColumn3d : public Element
              int lchMode = 0, double userLch = 0.0,  // Ladruno (ADR 32): regularization length mode
              int nlGeom = 0,                         // Ladruno (ADR 32): 0=linear basic strain, 1=½(θy²+θz²) bowing (NL)
              UniaxialMaterial *hingeMatZ = 0,        // Ladruno (ADR 33) Tier-2: embedded strong-axis (Mz) cohesive hinge
-             UniaxialMaterial *hingeMatY = 0);       // Ladruno (ADR 33 PR-3b): embedded weak-axis (My) cohesive hinge (biaxial)
+             UniaxialMaterial *hingeMatY = 0,        // Ladruno (ADR 33 PR-3b): embedded weak-axis (My) cohesive hinge (biaxial)
+             NDMaterial *hingeMatC = 0);             // Ladruno (ADR 34): coupled biaxial (Mz-My) cohesive hinge (order-2 NDMaterial)
     LadrunoDispBeamColumn3d();
     ~LadrunoDispBeamColumn3d();
 
@@ -167,6 +169,14 @@ class LadrunoDispBeamColumn3d : public Element
     double           hingeKaaInvZZ;     // cached eigenvalue-floored 2x2 inverse of K_aa (symmetric):
     double           hingeKaaInvZY;     //   [[hingeKaaInvZZ, hingeKaaInvZY],
     double           hingeKaaInvYY;     //    [hingeKaaInvZY, hingeKaaInvYY]] (biaxial rank-2 condensation)
+
+    // Ladruno (ADR 34): the COUPLED biaxial cohesive law — an order-2 NDMaterial carrying the
+    // Mz-My interaction surface. Present (theHingeC != 0) iff -hingeBiaxial was given (exclusive
+    // with -hinge/-hingeY/-nl). It replaces the two block-diagonal scalar laws: the inner Newton
+    // (solveHingeJumpBiaxial, shared) feeds it the jump vector [alpha_z, alpha_y] and reads back the
+    // moment vector + the FULL 2x2 cohesive tangent, so the cohesive off-diagonal enters K_alphaalpha
+    // (the block-diagonal laws contributed only a diagonal). Same rank-2 condensation. See ADR 34.
+    NDMaterial      *theHingeC;         // coupled biaxial cohesive M([[theta_z,theta_y]]) law (element owns a copy)
 
     // Tier-2 helper: inner Newton on the scalar jump alpha_z; sets the 6-DOF section trial
     // deformations with the -alpha_z/L Mz-curvature offset, caches hingeKaaZ/hingeKvZ. (Z-only.)
