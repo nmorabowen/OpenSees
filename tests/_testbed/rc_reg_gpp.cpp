@@ -47,6 +47,26 @@ int main()
         printf("  lch==lch_ref no-op: max|delta|=%.2e\n", dmax);
         if (dmax > 1e-12) nbad++;
     }
+    // Steep-mid-softening-damage backbone: after regularize the post-peak PLASTIC strain
+    // (x - q/E) must stay monotone non-decreasing (the adjustBackbone re-enforcement). Without
+    // adjust, scaling drives it backward and corrupts q/damage (energy stays right, so the
+    // energy gate above cannot catch it).
+    {
+        double Xe[4] = { 0.0, 8.68e-5, 3.36e-3, 3.89e-3 };
+        double Ye[4] = { 0.0, 2.19,    1.93,    0.292   };
+        double De[4] = { 0.0, 0.099,   0.484,   0.986   };
+        Backbone bs; buildBackbone(bs, E, Xe, Ye, De, 4);
+        regularize(bs, 8.0, lch_ref, E);
+        double prev = -1e300; int bad = 0;
+        for (int i = 0; i < bs.n; ++i) {
+            double xpl = bs.x[i] - bs.q[i] / E;             // plastic strain
+            if (xpl < prev - 1e-12) bad++;
+            prev = xpl;
+        }
+        printf("steep-damage regularize: plastic-strain monotone=%s\n", bad ? "NO" : "yes");
+        if (bad) { printf("ADJUST FAIL (plastic strain went backward)\n"); return 1; }
+    }
+
     if (nbad == 0) { printf("GPP REG GATE: PASS\n"); return 0; }
     printf("GPP REG GATE: FAIL (%d)\n", nbad);
     return 1;

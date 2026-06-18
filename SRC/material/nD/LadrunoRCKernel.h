@@ -179,6 +179,40 @@ inline void buildBackbone(Backbone& b, double E,
     b.n = n;
 }
 
+// Re-enforce the HardeningLaw invariants on an already-built backbone (the clone of
+// ASDConcrete3D HardeningLaw::adjust used inside regularize): cap each secant slope at E,
+// keep the plastic strain (x - q/E) monotone non-decreasing, keep damage non-decreasing, and
+// recompute q = y/(1-d). d is derived from the stored q (d = 1 - y/q). Mirrors the inline
+// adjust block in buildBackbone; xtol/ytol are inert post-scaling (points stay strictly
+// increasing) but kept for parity. Without this, scaling can drive the post-peak plastic
+// strain backward and corrupt q/damage on steep-softening backbones (energy stays correct).
+inline void adjustBackbone(Backbone& b, double E, double xtol, double ytol)
+{
+    const int n = b.n;
+    double Eloc = (n > 1 && b.x[1] > 0.0) ? b.y[1] / b.x[1] : E;
+    for (int i = 1; i < n; ++i) {
+        double xi = b.x[i], xold = b.x[i-1], yi = b.y[i], yold = b.y[i-1];
+        double di   = b.q[i]   > 0.0 ? 1.0 - yi   / b.q[i]   : 0.0;
+        double dold = b.q[i-1] > 0.0 ? 1.0 - yold / b.q[i-1] : 0.0;
+        if (xi <= xold) xi += xtol;
+        if (yi < ytol) yi = ytol;
+        double Ei = (yi - yold) / (xi - xold);
+        if (Ei > Eloc) yi = yold + (xi - xold) * Eloc;
+        double eepd_old = dold < 1.0 ? xold - yold / ((1.0 - dold) * Eloc) : xold;
+        double eepd     = di   < 1.0 ? xi   - yi   / ((1.0 - di)   * Eloc) : -1.0;
+        if (eepd < eepd_old) {
+            double v = 1.0 - yi / Eloc / (xi - eepd_old);
+            di = v < 0.0 ? 0.0 : (v > 1.0 ? 1.0 : v);
+        }
+        if (di < dold) di = dold;
+        if (di > 1.0 - 1.0e-12) di = 1.0 - 1.0e-12;        // guard q against 1/(1-d) blow-up
+        Ei = (yi - yold) / (xi - xold);
+        double Ed = (1.0 - di) * Eloc;
+        if (Ei > Ed) yi = Ed * (xi - eepd_old);
+        b.x[i] = xi; b.y[i] = yi; b.q[i] = yi / (1.0 - di);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Phase 3b: crack-band (Bazant-Oh) fracture-energy regularization. Faithful clone of
 // ASDConcrete3D HardeningLaw::computeFractureEnergy + regularize. fractureEnergy returns the
@@ -238,11 +272,13 @@ inline void regularize(Backbone& b, double lch, double lch_ref, double E)
             xi_pl = xi_inel * xi_ratio;                    // keep the plastic-to-inelastic ratio
             b.q[i] = E * (b.x[i] - xi_pl);
         }
+        adjustBackbone(b, E, 0.0, 0.0);                    // re-enforce monotonicity (ASD parity)
         int bd, p1, p2;
         g = fractureEnergy(b, E, &bd, &p1, &p2);
         if (fabs(g - gnew) < tol) break;
         dscale = (g > 0.0) ? gnew / g : 1.0;
     }
+    adjustBackbone(b, E, 0.0, 0.0);                        // final re-adjust (ASDConcrete3D:1000)
 }
 
 inline double macauley(double x) { return x > 0.0 ? x : 0.0; }

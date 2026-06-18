@@ -232,7 +232,7 @@ LadrunoRCConcrete::LadrunoRCConcrete()
   : NDMaterial(0, ND_TAG_LadrunoRCConcrete),
     rho(0.0), dim(DIM_3D), ncomp(6), condense(false), cEps33(0.0), status(STATUS_OK),
     implexError(0.0), dtime_n(0.0), dtime_n_commit(0.0), dtime_0(0.0), commitDone(false),
-    regularizationDone(false), regLch(0.0),
+    regularizationDone(false), regLch(0.0), regWarned(false),
     stressOut(6), strainOut(6), tangentOut(6, 6)
 {
   // safe defaults until recvSelf populates P
@@ -254,7 +254,7 @@ LadrunoRCConcrete::LadrunoRCConcrete(int tag, const Params& P_, double rho_, int
   : NDMaterial(tag, ND_TAG_LadrunoRCConcrete),
     P(P_), rho(rho_), dim(dimMode), ncomp(6), condense(false), cEps33(0.0), status(STATUS_OK),
     implexError(0.0), dtime_n(0.0), dtime_n_commit(0.0), dtime_0(0.0), commitDone(false),
-    regularizationDone(false), regLch(0.0),
+    regularizationDone(false), regLch(0.0), regWarned(false),
     stressOut(6), strainOut(6), tangentOut(6, 6)
 {
   this->setupDim();
@@ -328,18 +328,24 @@ int LadrunoRCConcrete::regularizeIfNeeded(void)
   if (!P.autoReg || regularizationDone) return 0;
   double lch = (P.lch > 0.0) ? P.lch
              : (ops_TheActiveElement ? ops_TheActiveElement->getCharacteristicLength() : 0.0);
-  regularizationDone = true;                 // latch regardless, so we warn/regularize only once
   if (!(lch > 0.0)) {
-    opserr << "FATAL LadrunoRCConcrete (tag " << this->getTag()
-           << "): -autoRegularization requested but no characteristic length is available "
-              "(no active element and no -lch). Refusing to run with a non-objective softening "
-              "law — supply -lch $l or use the material inside an element.\n";
+    // LOUD FAILURE: do NOT latch (regularizationDone stays false) — otherwise an algorithm
+    // step-retry would find it "done" and silently proceed on the un-regularized backbone. We
+    // re-fail every step; the message is gated to once (regWarned) to avoid spam.
+    if (!regWarned) {
+      opserr << "FATAL LadrunoRCConcrete (tag " << this->getTag()
+             << "): -autoRegularization requested but no characteristic length is available "
+                "(no active element and no -lch). Refusing to run with a non-objective softening "
+                "law — supply -lch $l or use the material inside an element.\n";
+      regWarned = true;
+    }
     regLch = 0.0;
     return -1;
   }
   regLch = lch;
   ladruno_rc_kernel::regularize(P.ht, lch, P.lchRef, P.E);
   ladruno_rc_kernel::regularize(P.hc, lch, P.lchRef, P.E);
+  regularizationDone = true;                  // latch only on SUCCESS
   return 0;
 }
 
@@ -483,9 +489,17 @@ int LadrunoRCConcrete::revertToStart(void)
 // ===========================================================================
 //  copies
 // ===========================================================================
+// NOTE (Phase 3b): regularize() mutates P.ht/P.hc in place, so we must propagate the
+// regularization LATCH to the copy (mirror ASDConcrete3D's copy-ctor, which copies
+// regularization_done). Otherwise a copy made AFTER this instance regularized would carry the
+// already-stretched backbone but a reset flag, and re-regularize (double-scale). In the normal
+// host flow getCopy runs before any setTrialStrain so the latch is false here, but propagating
+// it makes copy-of-a-used-instance safe too.
 NDMaterial* LadrunoRCConcrete::getCopy(void)
 {
-  return new LadrunoRCConcrete(this->getTag(), P, rho, dim);
+  LadrunoRCConcrete* c = new LadrunoRCConcrete(this->getTag(), P, rho, dim);
+  c->regularizationDone = regularizationDone; c->regLch = regLch;
+  return c;
 }
 NDMaterial* LadrunoRCConcrete::getCopy(const char* type)
 {
@@ -494,7 +508,9 @@ NDMaterial* LadrunoRCConcrete::getCopy(const char* type)
   else if (strcmp(type, "PlateFiber") == 0)                                  d = DIM_PLATEFIBER;
   else if (strcmp(type, "PlaneStress") == 0 || strcmp(type, "PlaneStress2D") == 0) d = DIM_PSTRESS;
   if (d < 0) return NDMaterial::getCopy(type);
-  return new LadrunoRCConcrete(this->getTag(), P, rho, d);
+  LadrunoRCConcrete* c = new LadrunoRCConcrete(this->getTag(), P, rho, d);
+  c->regularizationDone = regularizationDone; c->regLch = regLch;
+  return c;
 }
 
 // ===========================================================================

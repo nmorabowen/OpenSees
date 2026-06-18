@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 
 from _testbed import ops
+from _testbed.roundtrip import database_roundtrip
 
 pytestmark = [pytest.mark.zone_a]
 
@@ -119,3 +120,43 @@ def test_reg_parser_guard():
     with pytest.raises(Exception):
         ops.nDMaterial("LadrunoRCConcrete", 1, E, NU, "-Ce", *CE, "-Cs", *CS,
                        "-Te", *TE, "-Ts", *TS, "-autoRegularization", 0.0)
+
+
+def test_reg_serialization_roundtrip():
+    """The v5 wire must carry autoReg/lchRef/regularizationDone/regLch AND the regularized
+    backbone. Drive a non-default `-autoRegularization 50 -lch 30` material past peak (so it has
+    regularized + latched), round-trip through the FE_Datastore, and confirm the post-restore
+    stress survives — and that the restored (already-regularized, latched) material does NOT
+    re-regularize (else the continued stress would diverge)."""
+    def build():
+        _run_setup(lambda t: _rc(t, auto_reg=True, lch=30.0, lch_ref=50.0))
+        ops.integrator("DisplacementControl", 2, 1, 1.5e-3 / 3)
+        assert ops.analyze(3) == 0
+        ops.eleResponse(1, "forces")
+
+    database_roundtrip(
+        build, probe_nodes=[2], ndf=3, dbname="rc_reg_rt",
+        probe_fn=lambda: list(ops.eleResponse(1, "stresses"))[0:6],
+    )
+
+
+def _run_setup(mat_fn):
+    """Build the determinate unit-cube brick model (no analysis) for the round-trip build_fn."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for t, c in _CUBE.items():
+        ops.node(t, *c)
+    mat_fn(1)
+    ops.fix(1, 1, 1, 1); ops.fix(2, 0, 1, 1); ops.fix(3, 0, 0, 1); ops.fix(4, 1, 0, 1)
+    ops.fix(5, 1, 1, 0); ops.fix(6, 0, 1, 0); ops.fix(8, 1, 0, 0)
+    ops.element("stdBrick", 1, 1, 2, 3, 4, 5, 6, 7, 8, 1)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    for n in (2, 3, 6, 7):
+        ops.load(n, 0.25, 0.0, 0.0)
+    ops.system("FullGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.test("NormDispIncr", 1.0e-10, 100, 0)
+    ops.algorithm("Newton")
+    ops.analysis("Static")

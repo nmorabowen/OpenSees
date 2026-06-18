@@ -82,6 +82,40 @@ class Backbone:
         g += g_add
         return g, True, pos1, pos2
 
+    def adjust(self, E, xtol=0.0, ytol=0.0):
+        """Re-enforce HardeningLaw invariants (clone of ASDConcrete3D adjust): E-cap, plastic-
+        strain monotone, damage non-decreasing, q=y/(1-d). d derived from q. Used by regularize."""
+        n = len(self.x)
+        Eloc = self.y[1] / self.x[1] if (n > 1 and self.x[1] > 0.0) else E
+        for i in range(1, n):
+            xi, xold = self.x[i], self.x[i - 1]
+            yi, yold = self.y[i], self.y[i - 1]
+            di = 1.0 - yi / self.q[i] if self.q[i] > 0.0 else 0.0
+            dold = 1.0 - yold / self.q[i - 1] if self.q[i - 1] > 0.0 else 0.0
+            if xi <= xold:
+                xi += xtol
+            if yi < ytol:
+                yi = ytol
+            Ei = (yi - yold) / (xi - xold)
+            if Ei > Eloc:
+                yi = yold + (xi - xold) * Eloc
+            eepd_old = xold - yold / ((1.0 - dold) * Eloc) if dold < 1.0 else xold
+            eepd = xi - yi / ((1.0 - di) * Eloc) if di < 1.0 else -1.0
+            if eepd < eepd_old:
+                v = 1.0 - yi / Eloc / (xi - eepd_old)
+                di = max(0.0, min(1.0, v))
+            if di < dold:
+                di = dold
+            if di > 1.0 - 1.0e-12:
+                di = 1.0 - 1.0e-12
+            Ei = (yi - yold) / (xi - xold)
+            Ed = (1.0 - di) * Eloc
+            if Ei > Ed:
+                yi = Ed * (xi - eepd_old)
+            self.x[i] = xi
+            self.y[i] = yi
+            self.q[i] = yi / (1.0 - di)
+
     def regularize(self, lch, lch_ref, E):
         """Scale the softening branch so the regularized specific energy = G_f0*(lch_ref/lch),
         i.e. dissipated energy density * lch is mesh-objective. Clone of HardeningLaw::regularize.
@@ -106,10 +140,12 @@ class Backbone:
                 xi_inel = max(self.x[i] - self.y[i] / E, 0.0)
                 xi_pl = xi_inel * xi_ratio
                 self.q[i] = E * (self.x[i] - xi_pl)
+            self.adjust(E)                       # re-enforce monotonicity (ASDConcrete3D parity)
             g, _, _, _ = self.fracture_energy(E)
             if abs(g - gnew) < tol:
                 break
             dscale = gnew / g
+        self.adjust(E)                           # final re-adjust
         return g
 
     def evaluate_at(self, x):
@@ -719,7 +755,10 @@ def run_R1(verbose=True):
     energy g_reg must satisfy g_reg = G_f0 * (lch_ref/lch), so the PHYSICAL dissipated energy
     g_reg * lch is mesh-objective (== G_f0 * lch_ref, constant across lch). Drive several lch."""
     E = 30000.0
-    ht = Backbone([(0.0, 0.0, 1.0e-12), (0.0001, 3.0, 3.0), (0.0010, 0.5, 5.0), (0.0040, 0.0, 8.0)])
+    # first-point q=0 (d0=0), matching what the C++ buildBackbone always produces, so the
+    # oracle adjust() sees the same backbone the kernel regularize() does.
+    ht = Backbone([(0.0, 0.0, 0.0), (0.0001, 3.0, 3.0), (0.0010, 0.5, 5.0), (0.0040, 0.0, 8.0)])
+    ht.adjust(E)                              # normalize like buildBackbone (E-consistent q)
     g0, bounded, pos1, pos2 = ht.fracture_energy(E)
     lch_ref = 50.0
     phys_ref = g0 * lch_ref
