@@ -2,7 +2,7 @@
 title: "LadrunoRCConcrete — nonlinear RC layer-shell constitutive material"
 project: Ladruno
 type: reference / user guide
-status: shipped — Phase 1 / 2a / 2b.1 / 2b.2a / 2b.2b / 2b.2c.1-4a + IMPL-EX (4a); cyclic material physics COMPLETE. Remaining: quantitative Tran–Wallace experiment match, Phase 3 (tension stiffening), 4b (finite view), 5 (solid-shell). MERGED PRs #155 #192 #239 #245 #246 #253 #263 #266 (+ shear-retention/objectivity/closure siblings)
+status: shipped — Phase 1 / 2a / 2b.1 / 2b.2a / 2b.2b / 2b.2c.1-4a + IMPL-EX (4a) + tension stiffening (3a); cyclic material physics COMPLETE. Remaining: quantitative Tran–Wallace experiment match, Phase 3 directional lch, 4b (finite view), 5 (solid-shell). MERGED PRs #155 #192 #239 #245 #246 #253 #263 #266 (+ shear-retention/objectivity/closure siblings); Phase 3a tension stiffening in flight
 classTag: 33015 (ND_TAG family)
 material: "nDMaterial LadrunoRCConcrete — 3D / PlaneStress / PlateFiber views"
 related:
@@ -310,6 +310,39 @@ Combine with `-numericalTangent` and the forward-difference path is automaticall
 (it is invalid under IMPL-EX). Pairs naturally with the cyclic interlock flags for cyclic
 wall analysis.
 
+### 4.7 Tension stiffening — `-tensStiff {vc|cm}` (Phase 3a)
+
+Between cracks, bonded reinforcement carries part of the tension, so the **average** concrete
+tensile stress stays **above** the bare fracture-energy softening curve. Phase 3a adds this as
+an opt-in **stress floor** on the live in-plane principal tensile axis `p1`:
+
+$$\sigma_{ts}(\varepsilon_1)=\begin{cases}\dfrac{f_t}{1+\sqrt{c\,\varepsilon_1}} & \texttt{vc}\ \text{(MCFT / Bentz)}\\[2ex]\dfrac{\alpha\,f_t}{1+\sqrt{500\,\varepsilon_1}} & \texttt{cm}\ \text{(Collins–Mitchell)}\end{cases}$$
+
+with `f_t` = the tension-backbone peak and `ε1` the **composite** (reinforced) membrane
+principal tensile strain — the *same* `ε1` the MCFT `β` uses (perfect-bond strain
+compatibility), so it does not need a separate steel layer's strain. The floor injects
+`Δ = σ_ts(ε1) − n^T σ n` along `p1` (rank-1, only when `Δ>0`) so the principal tensile stress
+is pinned **up** to `σ_ts`; it never lowers the bare stress. It is active **only post-crack**
+(`ε1 ≥ ε_cr`), so the elastic pre-crack branch is untouched. Equibiaxial (degenerate `p1`)
+floors **both** in-plane normals to `σ_ts`. The consistent tangent adds the `dσ_ts/dε1` and
+the `−d(n^Tσn)/dε` pinning terms (fixed-projector secant, omitting `dp1/dε`, like the `β`
+tangent); under IMPL-EX the cross-term is dropped (frozen-`ε1` secant).
+
+`-tensStiff` is **default OFF** ⇒ bit-identical baseline. Knobs: `-tensStiffC $c` (vc
+coefficient, default 500, must be `>0`) and `-tensStiffAlpha $a` (cm scale, default 1); `vc`
+with `c=500` and `cm` with `α=1` are the same curve.
+
+> [!warning] Monotonic-scope (v1)
+> `σ_ts` is a pure function of the **live** `ε1` (no `ε1max` memory). Because `σ_ts`
+> *decreases* with `ε1`, on **unloading** the floor **re-inflates** (tracks `σ_ts(live ε1)`
+> back up) — correct on the monotone loading branch (the slab / distributed-reinforcement
+> pushover use case), but **not** a hysteretic cyclic-tension model. **Use `-tensStiff` for
+> monotonic / pushover analyses.** When combined with the fixed-crack `-interlock`, TS uses
+> the *live* `p1` while interlock uses the *frozen* crack normal, so under principal-axis
+> rotation TS leaks a small shear onto the frozen plane that interlock then bounds —
+> combined TS+interlock is validated for **proportional (non-rotating)** loading. An
+> `ε1max`-envelope + secant-unload + frozen-plane TS is the documented cyclic upgrade.
+
 ---
 
 ## 5. The views and the shell seam
@@ -362,7 +395,8 @@ nDMaterial LadrunoRCConcrete $tag $E $nu \
     [-interlock [-agg $ag] [-crackStrain $ec] [-crackSpacing $sθ] [-lch $l] [-betaSrMin $m]] \
     [-cyclic] \
     [-xcrack [-degKappa $k] [-degSlipRef $sr] [-degMin $dm]] \
-    [-implex [-implexAlpha $a] [-implexControl $errTol $timeRedLim]]
+    [-implex [-implexAlpha $a] [-implexControl $errTol $timeRedLim]] \
+    [-tensStiff {vc|cm} [-tensStiffC $c] [-tensStiffAlpha $a]]
 ```
 
 | Token | Meaning | Default |
@@ -388,6 +422,9 @@ nDMaterial LadrunoRCConcrete $tag $E $nu \
 | `-implex` | **enable** IMPL-EX integration (robust constant secant for cyclic softening, §4.5) | OFF (fully implicit) |
 | `-implexAlpha` | IMPL-EX extrapolation-factor multiplier | 1.0 |
 | `-implexControl` | advisory error control `$errTol $timeRedLim` (warns when the implex error exceeds tol) | off |
+| `-tensStiff` | **enable** tension stiffening: `vc` (Bentz) or `cm` (Collins–Mitchell) (§4.7) | OFF |
+| `-tensStiffC` | `vc`-mode sqrt coefficient `c` (`> 0`) | 500 |
+| `-tensStiffAlpha` | `cm`-mode `α1·α2` scale | 1.0 |
 
 > [!important] Flag implication chain
 > `-xcrack` ⇒ `-cyclic` ⇒ `-interlock` (each law lives inside the previous block). All
@@ -538,6 +575,7 @@ a numpy oracle (`tests/_testbed/rc_shell_ref.py`) the C++ matches step-by-step:
 | **2b.2c.3** | **crack-closure on the normal** is already correct in the cloned spine (per-step spectral recompose = unilateral closure): compress-past-peak fully recovers; reopened tension follows the damaged envelope | material battery |
 | **2b.2c.4a** | **meshed squat wall, quasi-static EXPLICIT** completes the full ±drift cyclic schedule (implicit walls at ~0.6 mm); cyclic interlock degradation load-bearing at panel scale (−28% energy, −11% peak vs monotone) | `tests/test_ladrunoRCConcrete_wall.py` (Zone-B) |
 | **4a** (#263) | **IMPL-EX** (`-implex`): off-identical; tracks implicit on a smooth path; error active on rate change / 0 elastic; SPD secant under softening; save/restore continuation | `tests/test_ladrunoRCConcrete_implex.py` |
+| **3a** | **tension stiffening** (`-tensStiff`): pre-crack untouched; post-crack `σ_xx == σ_ts(ε1)` closed-form (uniaxial + equibiaxial-both-normals); above-bare; `vc≡cm` defaults; `cm(α)`; PlateFiber-shell floor `Nxx==σ_ts·h`; TS+interlock proportional; FD tangent (g++); schema-v4 round-trip | numpy oracle T1 + standalone g++ + `tests/test_ladrunoRCConcrete_tensstiff.py` |
 
 > [!note] The load-bearing gate is β-on-the-strength-axis
 > Proven three independent ways (numpy oracle, standalone g++ build of `LadrunoRCKernel.h`,
@@ -573,14 +611,16 @@ a numpy oracle (`tests/_testbed/rc_shell_ref.py`) the C++ matches step-by-step:
 > - **Smeared web steel only, inside the kernel.** Discrete boundary rebar where buckling
 >   matters is a separate `PlateRebar(LadrunoRebarBuckling)` layer at the true depth, with
 >   the overlapping concrete reduced (no ρ-weighted double-count).
-> - **Tension stiffening** is supplied through the tabulated `-Te/-Ts` tension backbone
->   (bake a Collins–Mitchell / Bentz averaged-tension curve into the points) rather than a
->   separate flag; the default bare fracture-energy backbone reduces to baseline. A
->   dedicated `-tensStiff` knob is reserved in the ADR but not yet wired.
+> - **Tension stiffening** is available two ways: bake a Collins–Mitchell / Bentz
+>   averaged-tension curve into the tabulated `-Te/-Ts` backbone, **or** use the dedicated
+>   `-tensStiff {vc|cm}` knob (§4.7, Phase 3a) which floors the live principal tensile stress
+>   to `σ_ts(ε1)` post-crack. The `-tensStiff` floor is **monotonic-scope** (re-inflates on
+>   unload; use for pushover), and combined with `-interlock` is validated for proportional
+>   loading. Default off ⇒ baseline.
 
 > [!note] What's next (the deferred phases)
-> The cyclic constitutive physics is complete. The remaining work — a dedicated `-tensStiff`
-> tension-stiffening knob + directional `lch` (Phase 3), the finite-strain view
+> The cyclic constitutive physics is complete and the `-tensStiff` tension-stiffening knob
+> (Phase 3a) is shipped. The remaining work — directional `lch` (Phase 3b), the finite-strain view
 > `LadrunoRCFiniteStrain` (Phase 4b), the through-thickness `LadrunoSolidShell` punching host
 > (Phase 5), and the quantitative Tran–Wallace experiment calibration — is planned in the
 > developer handout **[[rc_shell_phase3plus_handout]]** (goal, build, reuse, acceptance gates,

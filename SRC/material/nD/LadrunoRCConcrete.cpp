@@ -163,6 +163,13 @@ void* OPS_LadrunoRCConcrete(void)
   if (shearRetMode != 0) interlockOn = true;
   if (interlockCyclic && !interlockOn) interlockOn = true;
 
+  // tension stiffening: c sits under a sqrt (sigma_ts = ft/(1+sqrt(c*e1))), so c must be
+  // positive or it produces NaN once the crack gate opens (cm mode uses a fixed 500).
+  if (tensStiffMode == 1 && tensStiffC <= 0.0) {
+    opserr << "nDMaterial LadrunoRCConcrete error: -tensStiffC must be > 0.\n";
+    return 0;
+  }
+
   if (Ce.size() < 2 || Cs.size() != Ce.size()) {
     opserr << "nDMaterial LadrunoRCConcrete error: need -Ce and -Cs of equal length (>=2).\n";
     return 0;

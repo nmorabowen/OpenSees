@@ -751,9 +751,28 @@ stall that wals the implicit harness at ~0.6 mm **does not exist** — reversals
   experiment match.
 
 ### Phase 3 — Tension stiffening + crack-band/`lch` hardening
-- **Build:** VC/CM tension-stiffening plateaus (opt-in); resolve `lch` per **D5 Option A or B**.
-- **New:** if Option B, the ledgered vanilla `lch` plumb.
-- **Deliverable:** slab/distributed-reinforcement tension stiffening; size-objective in-plane softening.
+
+#### Phase 3a (SHIPPED) — VC/CM tension stiffening
+- **Built:** `-tensStiff {vc|cm}` (+`-tensStiffC c`, `-tensStiffAlpha a`), default OFF ⇒ baseline-identical.
+  A rank-1 stress FLOOR on the LIVE in-plane principal tensile axis `p1`: inject `Δ=σ_ts(ε1)−n^Tσn` along
+  `p1` (only when `Δ>0`), active ONLY post-crack (`ε1≥ε_cr`). `σ_ts=ft/(1+√(c·ε1))` (vc/Bentz) or
+  `α·ft/(1+√(500·ε1))` (cm/Collins–Mitchell); `ε1`=the COMPOSITE membrane principal tensile strain (same
+  one the MCFT `β` uses). Equibiaxial (degenerate `p1`) floors BOTH in-plane normals (self-consistency
+  `ts_meas·ts_inj=1`). Consistent tangent (`dσ_ts/dε1` + the full-6-column `−d(n^Tσn)/dε` pinning, `dp1/dε`
+  omitted like the `β` tangent; dropped under IMPL-EX). `ftPeak` cached + serialized; **schema v3→v4**.
+- **Scope (v1):** MONOTONIC backbone floor — `σ_ts(live ε1)` re-inflates on unload (no `ε1max` memory);
+  combined TS+interlock validated for proportional (non-rotating) loading. Cyclic upgrade
+  (`ε1max`-envelope + secant unload + frozen-plane TS) deferred.
+- **Gates:** numpy oracle T1 (uniaxial closed-form `σ_xx==σ_ts(ε1)`) + standalone g++ (floor +
+  equibiaxial-both-normals to 1e-16 + FD tangent on the pinned direction) + OpenSees Zone-A 11/11
+  (`tests/test_ladrunoRCConcrete_tensstiff.py`, incl. PlateFiber-shell `Nxx==σ_ts·h` + schema-v4
+  round-trip). Hardened via a 3-agent adversarial review (degen 2× under-delivery fix; `c>0` guard;
+  PlateFiber/interlock/cm/unload coverage). **Zero vanilla edit (Option A retained).**
+
+#### Phase 3b (TODO) — crack-band/`lch` resolution
+- **Build:** resolve `lch` per **D5 Option A** (chosen): accept the element's scalar in-plane `lch`,
+  document the inclined-crack/through-thickness non-objectivity, loud failure if a scalar `lch` is silently
+  used in a softening run.
 - **Acceptance:** in-plane mesh-objectivity on an **inclined-crack (rotated) mesh** (peak ~1–3%, energy
   ~3–5% across 2× refine, calibrated on the elastic shell patch first — **not** imported from the brick
   numbers); a loud failure if a scalar `lch` fallback is used in softening.

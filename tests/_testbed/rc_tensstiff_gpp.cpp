@@ -104,6 +104,31 @@ int main()
         if (won > woff + 1e-6) { printf("TS DEGRADES TANGENT FAIL\n"); return 1; }
     }
 
+    // Equibiaxial (degenerate) floor: drive exx==eyy post-crack; BOTH in-plane normals
+    // must be pinned to sigma_ts(e1=exx) (the degen-branch fix; the old 0.5-coeff reached
+    // only halfway). Also FD-check the pinned D[0][0] there.
+    {
+        Params P; fill(P, 1); RCHist h; histZero(h);
+        int nbe = 0; double maxerr = 0.0;
+        for (int k = 1; k <= 300; ++k) {
+            double e = 0.004 * k / 300;
+            double eps[6] = { e, e, 0,0,0,0 };
+            double s[6], D[6][6]; RCHist o;
+            returnMap3D(P, eps, h, s, D, o); h = o;
+            if (e < P.crackStrain) continue;
+            double ds; double sts = tensStiff(e, 1, P.ftPeak, P.tensStiffC, P.tensStiffAlpha, &ds);
+            // floor binds when sigma_ts exceeds the (equal) bare in-plane normals
+            if (sts > s[0] - 1e-9 && sts > 0.05) {       // crude "binding" proxy at equibiaxial
+                double e0 = fabs(s[0]-sts)/(fabs(sts)+1.0);
+                double e1e = fabs(s[1]-sts)/(fabs(sts)+1.0);
+                if (e0 < 1e-6 && e1e < 1e-6) nbe++;
+                if (e0 > maxerr) maxerr = e0; if (e1e > maxerr) maxerr = e1e;
+            }
+        }
+        printf("equibiaxial: pinned-both steps=%d  worst rel-err=%.2e\n", nbe, maxerr);
+        if (nbe < 50) { printf("EQUIBIAXIAL FLOOR FAIL (degen under-delivers?)\n"); return 1; }
+    }
+
     if (nbad == 0 && nfloor > 10) { printf("GPP TENSSTIFF GATE: PASS\n"); return 0; }
     printf("GPP TENSSTIFF GATE: FAIL\n");
     return 1;

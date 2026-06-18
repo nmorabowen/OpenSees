@@ -408,17 +408,24 @@ def compute(P, st_committed, strain6, betaMode='strength'):
     # Default off -> baseline-identical. Degenerate (equibiaxial) -> isotropic in-plane.
     ts_sig = 0.0
     if P.tens_stiff_mode != 0 and e1 >= P.crack_strain:
+        # ts_inj = injection weights; ts_meas = measured-quantity weights (q = ts_meas . sig_ip).
+        # NON-degen: rank-1 on p1 (ts_meas.ts_inj = (c^2+s^2)^2 = 1). DEGEN (equibiaxial):
+        # q = in-plane mean, inject g to BOTH normals (ts_inj=(1,1,0), ts_meas=(0.5,0.5,0)) so
+        # each in-plane normal reaches sigma_ts -- the rank-1 (0.5,0.5,0) reuse reaches only half.
         if degen:
-            a, b, ab = 0.5, 0.5, 0.0
+            ts_inj = (1.0, 1.0, 0.0)
+            ts_meas = (0.5, 0.5, 0.0)
         else:
             a, b, ab = p1c * p1c, p1s * p1s, p1c * p1s
-        n_sig = sigma[0] * a + sigma[1] * b + 2.0 * sigma[3] * ab   # n^T sigma n
+            ts_inj = (a, b, ab)
+            ts_meas = (a, b, 2.0 * ab)
+        q = sigma[0] * ts_meas[0] + sigma[1] * ts_meas[1] + sigma[3] * ts_meas[2]
         ts_sig, _ = tens_stiff(e1, P.tens_stiff_mode, P.ft_peak, P.tens_stiff_c, P.tens_stiff_alpha)
-        delta = ts_sig - n_sig
+        delta = ts_sig - q
         if delta > 0.0:
-            sigma[0] += delta * a
-            sigma[1] += delta * b
-            sigma[3] += delta * ab
+            sigma[0] += delta * ts_inj[0]
+            sigma[1] += delta * ts_inj[1]
+            sigma[3] += delta * ts_inj[2]
 
     # ---- Phase 2a/2b: fixed-crack aggregate-interlock (membrane) ----
     crk_c, crk_s = st_committed.crackC, st_committed.crackS

@@ -631,23 +631,54 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
     // stress (a normal stress on the ~p1 plane contributes ~0 crack-plane shear). IMPL-EX: e1 is
     // frozen from the extrapolated committed eps1 (like beta), and the tangent cross-term is
     // omitted below (constant secant).
+    // SCOPE / LIMITATIONS (v1, documented boundaries -- see LadrunoRCConcrete_guide + LEDGER_quirks):
+    //  (1) MONOTONIC backbone floor: sigma_ts is a pure function of the LIVE e1 (no eps1max
+    //      memory). sigma_ts DECREASES with e1, so on UNLOADING (e1 decreasing) the floor
+    //      RE-INFLATES (tracks sigma_ts(live e1) back up). This is correct on the monotone
+    //      loading branch (the slab / distributed-reinforcement pushover use case TS is scoped
+    //      for) but is NOT a hysteretic cyclic-tension model -- use -tensStiff for MONOTONIC /
+    //      pushover analyses. (A future eps1max-envelope + secant-unload is the cyclic upgrade.)
+    //  (2) TS uses the LIVE principal axis p1 (rotating-crack MCFT view). When combined with the
+    //      FIXED-crack -interlock block (which uses the frozen crack normal), TS's normal-stress
+    //      injection adds a small shear on the FROZEN crack plane once principal axes rotate
+    //      (delta*sin(th_rel)cos(th_rel)) which the interlock then bounds. Combined TS+interlock
+    //      is validated for NON-rotating (proportional) loading; rotating-axis combined use is a
+    //      documented boundary, not a guaranteed-correct superposition.
     double e1_ts = e1;
     if (implexExplicit && P.tensStiffMode != 0) {
         e1_ts = in.eps1 + time_factor * (in.eps1 - in.eps1_old);
         if (e1_ts < 0.0) e1_ts = 0.0;
     }
+    // Three in-plane vectors over Voigt indices {0,1,3}, set per degenerate state:
+    //   ts_inj  = injection weights      (sig_i += ts_inj_i * delta)
+    //   ts_meas = the measured-quantity  (q = ts_meas . sig_ip), pinned to sigma_ts
+    //   ts_P1eps= de1/deps strain dual (6-vec, membrane only)
+    // NON-degenerate: q = n^T sig n on p1 (rank-1) -> ts_inj=(a,b,ab), ts_meas=(a,b,2ab),
+    //   self-consistency ts_meas.ts_inj = a^2+b^2+2(ab)^2 = (p1x^2+p1y^2)^2 = 1.
+    // DEGENERATE (equibiaxial, p1 ill-defined): q = in-plane MEAN normal 0.5(s0+s1);
+    //   inject g=sigma_ts-q to BOTH normals -> ts_inj=(1,1,0), ts_meas=(0.5,0.5,0),
+    //   ts_meas.ts_inj = 1 (each in-plane normal reaches sigma_ts; the rank-1 (0.5,0.5,0)
+    //   reuse would only reach the half-way point -- self-consistency coeff 0.5).
     bool   ts_active = false;
-    double ts_a = 0.0, ts_b = 0.0, ts_ab = 0.0, ts_dsig = 0.0;
+    double ts_inj[3] = {0,0,0}, ts_meas[3] = {0,0,0}, ts_P1eps[6] = {0,0,0,0,0,0}, ts_dsig = 0.0;
     if (P.tensStiffMode != 0 && e1_ts >= P.crackStrain) {
-        if (degen) { ts_a = 0.5; ts_b = 0.5; ts_ab = 0.0; }
-        else       { ts_a = p1[0]*p1[0]; ts_b = p1[1]*p1[1]; ts_ab = p1[0]*p1[1]; }
-        double n_sig  = sig6[0]*ts_a + sig6[1]*ts_b + 2.0*sig6[3]*ts_ab;   // n^T sigma n
+        if (degen) {
+            ts_inj[0] = 1.0;  ts_inj[1] = 1.0;
+            ts_meas[0] = 0.5; ts_meas[1] = 0.5;
+            ts_P1eps[0] = 0.5; ts_P1eps[1] = 0.5;         // de1/d(exx)=de1/d(eyy)=0.5 (mean)
+        } else {
+            double a = p1[0]*p1[0], b = p1[1]*p1[1], ab = p1[0]*p1[1];
+            ts_inj[0] = a;  ts_inj[1] = b;  ts_inj[2] = ab;
+            ts_meas[0] = a; ts_meas[1] = b; ts_meas[2] = 2.0*ab;
+            ts_P1eps[0] = a; ts_P1eps[1] = b; ts_P1eps[3] = ab;   // de1/deps (membrane)
+        }
+        double q      = ts_meas[0]*sig6[0] + ts_meas[1]*sig6[1] + ts_meas[2]*sig6[3];
         double sig_ts = tensStiff(e1_ts, P.tensStiffMode, P.ftPeak, P.tensStiffC, P.tensStiffAlpha, &ts_dsig);
-        double delta  = sig_ts - n_sig;
+        double delta  = sig_ts - q;
         if (delta > 0.0) {
-            sig6[0] += delta * ts_a;
-            sig6[1] += delta * ts_b;
-            sig6[3] += delta * ts_ab;
+            sig6[0] += delta * ts_inj[0];
+            sig6[1] += delta * ts_inj[1];
+            sig6[3] += delta * ts_inj[2];
             ts_active = true;
         }
     }
@@ -837,10 +868,7 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
             // reads the floored Dtan (consistent with the floored stress order).
             if (P.tangentMode == 0 && ts_active && !implexExplicit) {
                 const int vidx[3] = { 0, 1, 3 };
-                double ts_inj[3]  = { ts_a, ts_b, ts_ab };
-                double ts_meas[3] = { ts_a, ts_b, 2.0*ts_ab };
-                double P1eps[6]   = { ts_a, ts_b, 0.0, ts_ab, 0.0, 0.0 };   // de1/deps (membrane)
-                double row[6];                                              // d(n^T sig n)/deps, all cols
+                double row[6];                                              // d(q)/deps, all cols
                 for (int c = 0; c < 6; ++c) {
                     double acc = 0.0;
                     for (int k = 0; k < 3; ++k) acc += ts_meas[k] * Dtan6[vidx[k]][c];
@@ -848,7 +876,7 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
                 }
                 for (int a = 0; a < 3; ++a)
                     for (int c = 0; c < 6; ++c)
-                        Dtan6[vidx[a]][c] += ts_inj[a] * (ts_dsig * P1eps[c] - row[c]);
+                        Dtan6[vidx[a]][c] += ts_inj[a] * (ts_dsig * ts_P1eps[c] - row[c]);
             }
             // Phase-2a interlock CONSISTENT tangent. The stress clips the crack-shear
             // tau_sm = m_sigma.sig_ip to +/- v_ci,max via sig_ip += dtau*m_eps. Below the
