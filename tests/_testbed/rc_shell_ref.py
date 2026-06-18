@@ -42,6 +42,112 @@ class Backbone:
     def max_stress(self):
         return float(np.max(self.y))
 
+    def copy(self):
+        b = Backbone.__new__(Backbone)
+        b.x = self.x.copy(); b.y = self.y.copy(); b.q = self.q.copy()
+        return b
+
+    # ---- Phase 3b: crack-band (Bazant-Oh) regularization, cloned from ASDConcrete3D ----
+    def fracture_energy(self, E):
+        """Specific (per-length) fracture energy = area under the softening branch, the
+        clone of HardeningLaw::computeFractureEnergy. Returns (g, bounded, pos1, pos2).
+        pos1 = first negative-slope point (peak / softening begin); pos2 = softening end
+        (or the extrapolated zero-stress point). Unbounded (no softening) => g=0, bounded=False."""
+        x, y = self.x, self.y
+        n = len(x)
+        pos1, found1 = 0, False
+        for i in range(1, n):
+            if (y[i] - y[i - 1]) / (x[i] - x[i - 1]) < 0.0:
+                pos1, found1 = i - 1, True
+                break
+        if not found1:
+            return 0.0, False, 0, 0
+        pos2, found2 = 0, False
+        for i in range(pos1 + 1, n):
+            if (y[i] - y[i - 1]) / (x[i] - x[i - 1]) >= 0.0:
+                pos2, found2 = i - 1, True
+                break
+        g_add = 0.0
+        if not found2:
+            if y[-1] > 0.0:
+                k = (y[-1] - y[-2]) / (x[-1] - x[-2])
+                x3 = x[-1] - y[-1] / k
+                g_add = y[-1] * (x3 - x[-1]) / 2.0
+            pos2 = n - 1
+        d_pos1 = 1.0 - y[pos1] / self.q[pos1] if self.q[pos1] > 0.0 else 0.0
+        Ed = (1.0 - d_pos1) * E
+        g = (y[pos1] ** 2 / Ed / 2.0) if Ed > 0.0 else 0.0
+        for i in range(pos1 + 1, pos2 + 1):
+            g += (x[i] - x[i - 1]) * (y[i - 1] + y[i]) / 2.0
+        g += g_add
+        return g, True, pos1, pos2
+
+    def adjust(self, E, xtol=0.0, ytol=0.0):
+        """Re-enforce HardeningLaw invariants (clone of ASDConcrete3D adjust): E-cap, plastic-
+        strain monotone, damage non-decreasing, q=y/(1-d). d derived from q. Used by regularize."""
+        n = len(self.x)
+        Eloc = self.y[1] / self.x[1] if (n > 1 and self.x[1] > 0.0) else E
+        for i in range(1, n):
+            xi, xold = self.x[i], self.x[i - 1]
+            yi, yold = self.y[i], self.y[i - 1]
+            di = 1.0 - yi / self.q[i] if self.q[i] > 0.0 else 0.0
+            dold = 1.0 - yold / self.q[i - 1] if self.q[i - 1] > 0.0 else 0.0
+            if xi <= xold:
+                xi += xtol
+            if yi < ytol:
+                yi = ytol
+            Ei = (yi - yold) / (xi - xold)
+            if Ei > Eloc:
+                yi = yold + (xi - xold) * Eloc
+            eepd_old = xold - yold / ((1.0 - dold) * Eloc) if dold < 1.0 else xold
+            eepd = xi - yi / ((1.0 - di) * Eloc) if di < 1.0 else -1.0
+            if eepd < eepd_old:
+                v = 1.0 - yi / Eloc / (xi - eepd_old)
+                di = max(0.0, min(1.0, v))
+            if di < dold:
+                di = dold
+            if di > 1.0 - 1.0e-12:
+                di = 1.0 - 1.0e-12
+            Ei = (yi - yold) / (xi - xold)
+            Ed = (1.0 - di) * Eloc
+            if Ei > Ed:
+                yi = Ed * (xi - eepd_old)
+            self.x[i] = xi
+            self.y[i] = yi
+            self.q[i] = yi / (1.0 - di)
+
+    def regularize(self, lch, lch_ref, E):
+        """Scale the softening branch so the regularized specific energy = G_f0*(lch_ref/lch),
+        i.e. dissipated energy density * lch is mesh-objective. Clone of HardeningLaw::regularize.
+        Operates in place; call on a fresh copy of the un-regularized backbone."""
+        g0, bounded, pos1, pos2 = self.fracture_energy(E)
+        lch_scale = lch_ref / lch if lch > 0.0 else 0.0
+        if not bounded or lch_scale <= 0.0 or lch_scale == 1.0:
+            return g0
+        gnew = g0 * lch_scale
+        gmin = (self.y[pos1] * self.x[pos1] / 2.0) * 1.01
+        gnew = max(gnew, gmin)
+        tol = 1.0e-3 * gnew
+        x0 = self.x[pos1]
+        g = g0
+        dscale = gnew / g0
+        for _ in range(10):
+            for i in range(pos1 + 1, len(self.x)):
+                xi_inel = max(self.x[i] - self.y[i] / E, 0.0)
+                xi_pl = self.x[i] - self.q[i] / E
+                xi_ratio = xi_pl / xi_inel if xi_inel > 0.0 else 0.0
+                self.x[i] = x0 + (self.x[i] - x0) * dscale
+                xi_inel = max(self.x[i] - self.y[i] / E, 0.0)
+                xi_pl = xi_inel * xi_ratio
+                self.q[i] = E * (self.x[i] - xi_pl)
+            self.adjust(E)                       # re-enforce monotonicity (ASDConcrete3D parity)
+            g, _, _, _ = self.fracture_energy(E)
+            if abs(g - gnew) < tol:
+                break
+            dscale = gnew / g
+        self.adjust(E)                           # final re-adjust
+        return g
+
     def evaluate_at(self, x):
         """Return (x, y, d, q) at abscissa x — piecewise linear, with the
         positive-tangent extrapolation rule beyond the last point."""
@@ -644,6 +750,38 @@ def run_T1(verbose=True):
     return ok
 
 
+def run_R1(verbose=True):
+    """Phase-3b crack-band regularization gate. The regularized specific (per-length) fracture
+    energy g_reg must satisfy g_reg = G_f0 * (lch_ref/lch), so the PHYSICAL dissipated energy
+    g_reg * lch is mesh-objective (== G_f0 * lch_ref, constant across lch). Drive several lch."""
+    E = 30000.0
+    # first-point q=0 (d0=0), matching what the C++ buildBackbone always produces, so the
+    # oracle adjust() sees the same backbone the kernel regularize() does.
+    ht = Backbone([(0.0, 0.0, 0.0), (0.0001, 3.0, 3.0), (0.0010, 0.5, 5.0), (0.0040, 0.0, 8.0)])
+    ht.adjust(E)                              # normalize like buildBackbone (E-consistent q)
+    g0, bounded, pos1, pos2 = ht.fracture_energy(E)
+    lch_ref = 50.0
+    phys_ref = g0 * lch_ref
+    ok = bounded
+    rows = []
+    for lch in (lch_ref, 25.0, 100.0, 200.0):
+        b = ht.copy()
+        g_reg = b.regularize(lch, lch_ref, E)
+        want = g0 * (lch_ref / lch)
+        phys = g_reg * lch
+        e_spec = abs(g_reg - want) / (want + 1e-30)
+        e_phys = abs(phys - phys_ref) / (phys_ref + 1e-30)
+        gate = e_spec < 2.0e-3 and e_phys < 2.0e-3
+        ok = ok and gate
+        rows.append((lch, g0, g_reg, want, phys, e_phys, gate))
+    if verbose:
+        print(f"  G_f0(specific)={g0:.5f}  physical G_f=g*lch={phys_ref:.4f} (must stay constant)")
+        print(f"  {'lch':>7} {'g_reg':>9} {'want':>9} {'g*lch':>9} {'|phys-ref|/ref':>14}  gate")
+        for lch, g0_, g_reg, want, phys, ep, g in rows:
+            print(f"  {lch:7.1f} {g_reg:9.5f} {want:9.5f} {phys:9.4f} {ep:14.2e}  {'PASS' if g else 'FAIL'}")
+    return ok
+
+
 if __name__ == '__main__':
     print("=== A1: beta-on-strength closed-form gate (numpy oracle) ===")
     ok1, _ = run_A1()
@@ -651,4 +789,7 @@ if __name__ == '__main__':
     print("\n=== T1: tension-stiffening floor closed-form gate (numpy oracle) ===")
     ok2 = run_T1()
     print(f"T1 GATE: {'PASS — sigma_xx tracks sigma_ts(e1) post-crack, untouched pre-crack' if ok2 else 'FAIL'}")
-    raise SystemExit(0 if (ok1 and ok2) else 1)
+    print("\n=== R1: crack-band regularization energy-objectivity gate (numpy oracle) ===")
+    ok3 = run_R1()
+    print(f"R1 GATE: {'PASS — g_reg*lch is mesh-objective (== G_f0*lch_ref)' if ok3 else 'FAIL'}")
+    raise SystemExit(0 if (ok1 and ok2 and ok3) else 1)

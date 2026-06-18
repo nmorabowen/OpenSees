@@ -769,13 +769,25 @@ stall that wals the implicit harness at ~0.6 mm **does not exist** — reversals
   round-trip). Hardened via a 3-agent adversarial review (degen 2× under-delivery fix; `c>0` guard;
   PlateFiber/interlock/cm/unload coverage). **Zero vanilla edit (Option A retained).**
 
-#### Phase 3b (TODO) — crack-band/`lch` resolution
-- **Build:** resolve `lch` per **D5 Option A** (chosen): accept the element's scalar in-plane `lch`,
-  document the inclined-crack/through-thickness non-objectivity, loud failure if a scalar `lch` is silently
-  used in a softening run.
-- **Acceptance:** in-plane mesh-objectivity on an **inclined-crack (rotated) mesh** (peak ~1–3%, energy
-  ~3–5% across 2× refine, calibrated on the elastic shell patch first — **not** imported from the brick
-  numbers); a loud failure if a scalar `lch` fallback is used in softening.
+#### Phase 3b (SHIPPED, structural gate staged) — crack-band/`lch` resolution
+- **Built:** `-autoRegularization $lch_ref` (default OFF ⇒ baseline-identical) — a faithful clone of
+  `ASDConcrete3D`'s opt-in Bažant–Oh regularization: `fractureEnergy` + `regularize` (+ the `adjust`
+  re-enforcement) in `LadrunoRCKernel.h`; latch `lch = ops_TheActiveElement->getCharacteristicLength()`
+  (EAS-aware) or `-lch` **once** at first `setTrialStrain`; rescale the softening so `g_reg =
+  G_f0·(lch_ref/lch)` ⇒ `g_reg·lch` mesh-objective. **D5 Option A** retained (scalar in-plane `lch`,
+  zero vanilla edit). **LOUD FAILURE** (no silent fallback) if `autoReg` on but no `lch` resolvable.
+  schema v4→v5. `getCopy` propagates the latch; loud-fail does **not** latch (so a step-retry can't
+  silently proceed un-regularized).
+- **Gates:** numpy oracle R1 (`g_reg·lch` constant across `lch`) + standalone g++ `rc_reg_gpp.cpp`
+  (energy-objectivity + `lch==lch_ref` no-op + steep-damage plastic-strain monotonicity) + CI wrapper
+  + Zone-A 5/5 (`tests/test_ladrunoRCConcrete_reg.py`: energy×`lch` objectivity across `lch=50/25/12.5`,
+  no-op reduce, element-`lch` path, parser guard, schema-v5 serialization round-trip). Hardened via a
+  3-agent adversarial review (the missing `adjust()` re-enforcement, the `getCopy` double-regularize
+  latch, and the loud-fail self-latch were all caught + fixed).
+- **Staged:** the **structural** in-plane mesh-objectivity gate on an **inclined-crack (rotated) /
+  notched panel** (localization study; peak ~1–3%, energy ~3–5% across 2× refine) — the regularization
+  MECHANISM is proven at the material point (energy×`lch` const); the localized-band structural proof
+  (snap-back-prone, needs a careful softening solver) is the remaining acceptance item.
 
 ### Phase 4 — Finite-strain view + IMPL-EX
 

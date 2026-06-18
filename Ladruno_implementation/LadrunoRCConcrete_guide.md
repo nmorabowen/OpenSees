@@ -2,7 +2,7 @@
 title: "LadrunoRCConcrete — nonlinear RC layer-shell constitutive material"
 project: Ladruno
 type: reference / user guide
-status: shipped — Phase 1 / 2a / 2b.1 / 2b.2a / 2b.2b / 2b.2c.1-4a + IMPL-EX (4a) + tension stiffening (3a); cyclic material physics COMPLETE. Remaining: quantitative Tran–Wallace experiment match, Phase 3 directional lch, 4b (finite view), 5 (solid-shell). MERGED PRs #155 #192 #239 #245 #246 #253 #263 #266 (+ shear-retention/objectivity/closure siblings); Phase 3a tension stiffening in flight
+status: shipped — Phase 1 / 2a / 2b.1 / 2b.2a / 2b.2b / 2b.2c.1-4a + IMPL-EX (4a) + Phase 3 (3a tension stiffening + 3b crack-band lch regularization); cyclic material physics COMPLETE. Remaining: quantitative Tran–Wallace experiment match, Phase 3b structural rotated-mesh objectivity gate (staged), 4b (finite view), 5 (solid-shell). MERGED PRs #155 #192 #239 #245 #246 #253 #263 #266 #273 (3a); Phase 3b in flight
 classTag: 33015 (ND_TAG family)
 material: "nDMaterial LadrunoRCConcrete — 3D / PlaneStress / PlateFiber views"
 related:
@@ -343,6 +343,42 @@ with `c=500` and `cm` with `α=1` are the same curve.
 > combined TS+interlock is validated for **proportional (non-rotating)** loading. An
 > `ε1max`-envelope + secant-unload + frozen-plane TS is the documented cyclic upgrade.
 
+### 4.8 Crack-band regularization — `-autoRegularization $lch_ref` (Phase 3b)
+
+The softening backbones (`-Te/-Ts`, `-Ce/-Cs`) are authored as stress–strain curves, so without
+regularization the dissipated energy depends on the element size (mesh-dependent softening). Phase
+3b adds the opt-in Bažant–Oh **crack-band** scaling (a faithful clone of `ASDConcrete3D`'s
+`-autoRegularization`): the post-peak branch is rescaled so the **specific** fracture energy
+`g_reg = G_f0 · (lch_ref / lch)`, hence the **physical** dissipated energy `g_reg · lch` is
+**mesh-objective**.
+
+- `lch_ref` is the characteristic length the backbone was authored at (the strain axis is
+  "calibrated" to a band of width `lch_ref`).
+- `lch` is the element's `getCharacteristicLength()` (already EAS-aware on `ASDShellQ4`), latched
+  **once** at the first `setTrialStrain` — unless an explicit `-lch $l` is supplied (which then
+  also feeds the interlock `s_θ`). Each Gauss-point/layer copy regularizes with **its own**
+  element's `lch`.
+- The rescale runs the same iterative scaling + `adjust()` re-enforcement (E-cap, monotone
+  plastic strain, non-decreasing damage) as the reference, so steep-softening backbones stay
+  physically consistent. `lch == lch_ref` is an exact no-op.
+
+`-autoRegularization` is **default OFF** ⇒ the backbones are used verbatim (bake `G_f/lch` in
+yourself, the prior convention) and the material is bit-identical to baseline.
+
+> [!warning] No silent fallback (ADR D5)
+> If `-autoRegularization` is on but **no** `lch` can be resolved (no active element *and* no
+> `-lch`), the material **refuses to run** (a `FATAL` message + a failed `setTrialStrain`, emitted
+> once) rather than silently regularizing with a wrong/default length. Inside an element during
+> analysis `ops_TheActiveElement->getCharacteristicLength()` is always available, so this only
+> guards genuine misuse (a material exercised outside any element with no `-lch`).
+
+> [!note] Scope (v1)
+> This regularizes the **in-plane** softening energy via the element's scalar `lch`. A single
+> scalar mis-regularizes inclined (~45°) struts by up to √2 (ADR D5), and through-thickness
+> bending-crack energy is not size-objective on the director shell. The **structural** rotated-mesh
+> (inclined-crack notched-panel) objectivity gate is staged (the material-point energy-objectivity
+> `g_reg·lch = const` is proven across `lch`).
+
 ---
 
 ## 5. The views and the shell seam
@@ -374,12 +410,13 @@ non-convergence code** instead.
 > output history — idempotent across the inner re-calls — so the Newton cannot corrupt the
 > committed crack frame.
 
-> [!note] `lch` resolution (ADR D5 Option A)
+> [!note] `lch` resolution (ADR D5 Option A — wired in Phase 3b)
 > The material accepts the element's **scalar in-plane** `lch` via
 > `getCharacteristicLength()` (which already encodes `ASDShellQ4`'s EAS `/2` correction),
-> or an explicit `-lch`. Through-thickness bending-crack energy is **not** size-objective on
-> the director-shell host — that physics belongs to the future solid-shell. There is no
-> silent `lch` default in a softening run.
+> or an explicit `-lch`. With `-autoRegularization` (§4.8) this `lch` drives Bažant–Oh
+> crack-band scaling so the softening energy is mesh-objective; **no silent `lch` default** in a
+> softening run (loud failure if unresolved). Through-thickness bending-crack energy is **not**
+> size-objective on the director-shell host — that physics belongs to the future solid-shell.
 
 ---
 
@@ -396,7 +433,8 @@ nDMaterial LadrunoRCConcrete $tag $E $nu \
     [-cyclic] \
     [-xcrack [-degKappa $k] [-degSlipRef $sr] [-degMin $dm]] \
     [-implex [-implexAlpha $a] [-implexControl $errTol $timeRedLim]] \
-    [-tensStiff {vc|cm} [-tensStiffC $c] [-tensStiffAlpha $a]]
+    [-tensStiff {vc|cm} [-tensStiffC $c] [-tensStiffAlpha $a]] \
+    [-autoRegularization $lch_ref]
 ```
 
 | Token | Meaning | Default |
@@ -425,6 +463,7 @@ nDMaterial LadrunoRCConcrete $tag $E $nu \
 | `-tensStiff` | **enable** tension stiffening: `vc` (Bentz) or `cm` (Collins–Mitchell) (§4.7) | OFF |
 | `-tensStiffC` | `vc`-mode sqrt coefficient `c` (`> 0`; **ignored in `cm` mode** — `cm` hard-codes 500, a warning is emitted) | 500 |
 | `-tensStiffAlpha` | `cm`-mode `α1·α2` scale | 1.0 |
+| `-autoRegularization` | **enable** crack-band (Bažant–Oh) regularization at reference length `$lch_ref` (§4.8) | OFF |
 
 > [!important] Flag implication chain
 > `-xcrack` ⇒ `-cyclic` ⇒ `-interlock` (each law lives inside the previous block). All
@@ -576,6 +615,7 @@ a numpy oracle (`tests/_testbed/rc_shell_ref.py`) the C++ matches step-by-step:
 | **2b.2c.4a** | **meshed squat wall, quasi-static EXPLICIT** completes the full ±drift cyclic schedule (implicit walls at ~0.6 mm); cyclic interlock degradation load-bearing at panel scale (−28% energy, −11% peak vs monotone) | `tests/test_ladrunoRCConcrete_wall.py` (Zone-B) |
 | **4a** (#263) | **IMPL-EX** (`-implex`): off-identical; tracks implicit on a smooth path; error active on rate change / 0 elastic; SPD secant under softening; save/restore continuation | `tests/test_ladrunoRCConcrete_implex.py` |
 | **3a** | **tension stiffening** (`-tensStiff`): pre-crack untouched; post-crack `σ_xx == σ_ts(ε1)` closed-form (uniaxial + equibiaxial-both-normals); above-bare; `vc≡cm` defaults; `cm(α)`; PlateFiber-shell floor `Nxx==σ_ts·h`; TS+interlock proportional; FD tangent (g++); schema-v4 round-trip | numpy oracle T1 + standalone g++ + `tests/test_ladrunoRCConcrete_tensstiff.py` |
+| **3b** | **crack-band regularization** (`-autoRegularization`): `g_reg·lch` mesh-objective across `lch` (50/25/12.5); `lch==lch_ref` no-op; element-`lch` path; steep-damage plastic-strain monotone (g++); parser guard; schema-v5 round-trip. *Structural rotated-mesh objectivity STAGED.* | numpy oracle R1 + standalone g++ + `tests/test_ladrunoRCConcrete_reg.py` |
 
 > [!note] The load-bearing gate is β-on-the-strength-axis
 > Proven three independent ways (numpy oracle, standalone g++ build of `LadrunoRCKernel.h`,

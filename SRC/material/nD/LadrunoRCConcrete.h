@@ -114,6 +114,12 @@ class LadrunoRCConcrete : public NDMaterial {
   double dtime_n, dtime_n_commit, dtime_0;
   bool   commitDone;
 
+  // Phase 3b: crack-band regularization latch (config in P.autoReg/P.lchRef; getCopy propagates)
+  bool   regularizationDone;       // latched once at first setTrialStrain (mirror ASDConcrete3D)
+  double regLch;                   // characteristic length used for regularization (diagnostic)
+  bool   regWarned;                // loud-fail message emitted once (transient, not serialized)
+  int    regularizeIfNeeded(void); // resolve lch (element or -lch) + regularize ht/hc once; -1 loud-fail
+
   // helpers
   void setupDim(void);
   void integrate(bool do_implex, double tfac);
