@@ -157,7 +157,10 @@ void LadrunoCohesiveHingeBiaxial::effectiveLaw(double wz, double wy, double rMax
 {
   S = wz*Mcz*Mcz/Kpenz + wy*Mcy*Mcy/Kpeny;
   double Gfmix = wz*Gfz + wy*Gfy;
-  double Esoft = Gfmix - 0.5*S;            // > 0 by the per-axis floors (S/2 < Gf_mix)
+  // Esoft > 0 for EVERY mode mix because computeDerived forces Kpen_i = penaltyRatio*Mc_i^2/(2 Gf_i)
+  // with penaltyRatio >= 1000, so S = sum w_i*Mc_i^2/Kpen_i = (2/penaltyRatio)*sum w_i*Gf_i = (2/pr)*Gf_mix
+  // and Esoft = Gf_mix*(1 - 1/pr) > 0 strictly. Hence the divisions by S and Esoft below are safe.
+  double Esoft = Gfmix - 0.5*S;
 
   if (rMax <= 1.0) {                       // pre-peak (closed): T_eff = S r, D = 0
     Teff  = S*rMax;
@@ -219,6 +222,10 @@ int LadrunoCohesiveHingeBiaxial::setTrialStrain(const Vector& v)
     double dDdr  = (Teff - dTeff*TrMax) / (S*TrMax*TrMax);
     double drdaz = az / (a0z*a0z*TrMax);
     double drday = ay / (a0y*a0y*TrMax);
+    // ASYMMETRIC BY DESIGN: row i carries its own Kpen_i, so Ttangent(0,1) != Ttangent(1,0) when
+    // Gfz != Gfy. This is the correct Jacobian of a history-dependent (non-potential) damage model,
+    // NOT a bug — do not "fix" it into symmetry. The element symmetrizes (Czy = ½(Kc01+Kc10)) before
+    // its eigenvalue-floored 2x2 inverse, which is what needs a symmetric matrix.
     Ttangent(0,0) -= Kpenz*az*dDdr*drdaz;
     Ttangent(0,1) -= Kpenz*az*dDdr*drday;
     Ttangent(1,0) -= Kpeny*ay*dDdr*drdaz;
