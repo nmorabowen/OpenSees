@@ -1,7 +1,7 @@
 ---
 title: LadrunoDispBeamColumn3d — Tier-2 embedded strong-discontinuity hinge (3D)
 project: Ladruno
-status: in-progress (PR-3a shipped; PR-3b biaxial pending)
+status: in-progress (PR-3a + PR-3b biaxial shipped; coupled cohesive / torsion / -nl+hinge pending)
 priority: high
 owner: nmora
 tags:
@@ -205,3 +205,49 @@ The strong-axis jump `α_z` only — the literal 2D scalar algebra on the Mz row
 - **NEXT (PR-3b):** the weak-axis jump `α_y` + the TRUE coupled 2×2 `K_αα` (off-diagonal
   `ks(MZ,MY)`) with the **eigenvalue-floored** guarded inverse + 6×2 `K_vα` + the staggered-activation
   FD sweep. Then the coupled biaxial cohesive (`33004`, v2), torsion, `-nl`+hinge.
+
+### 2026-06-18 — PR-3b SHIPPED: biaxial (Mz+My) coupled embedded hinge, 3D
+
+The weak-axis jump `α_y`, making the hinge biaxial — `-hingeY $matTag` adds a second cohesive
+law on the My row of the 6-DOF basic system; the two jumps `α = [α_z, α_y]` are condensed with a
+TRUE coupled 2×2. Reuses `ELE_TAG 33014` (same element, gated `-hingeY` add-on; `-hingeY` requires
+`-hinge`). The three corrections the adversarial review forced are all implemented exactly:
+
+- **Files:** `SRC/element/ladrunoDispBeamColumn/LadrunoDispBeamColumn3d.{h,cpp}` +
+  `OPS_LadrunoDispBeamColumn.cpp` (usage), `tests/test_ladrunoDispBeamColumn3d_hinge_biaxial.py` (14 tests).
+- **What landed:** `-hingeY $matTag` adds `theHingeY` (any `UniaxialMaterial`). A new
+  `solveHingeJumpBiaxial()` runs ONE unified inner Newton on `[α_z, α_y]` — a single
+  `setTrialSectionDeformation` per IP sets BOTH bulk curvatures `κ_*_bulk = B_*v − α_*/L` (a second
+  pass would overwrite the strain vector and corrupt the section state). The 2×2 `K_αα` carries the
+  symmetric bending–bending off-diagonal `(1/L)Σwt·½(ks(MZ,MY)+ks(MY,MZ))`; it is inverted by a new
+  static `ladrunoFlooredInv2x2` — **eigenvalue-floored** (each eigenvalue's magnitude floored, its
+  sign preserved; spectral reconstruction), which bounds every mode (the det-floored adjugate blows
+  up along the near-null eigenvector at staggered activation). `getTangentStiff()` applies a rank-2
+  condensation `kb −= K_vα·K_αα⁻¹·K_vαᵀ` (6×2 `K_vα = [hingeKvZ | hingeKvY]`) to the inline-built
+  6×6 `kb` **before** `CorotCrdTransf3d` (the pinned invariant). `getResistingForce` unchanged
+  (sections hold both converged `κ_bulk`, so `q` is already the condensed biaxial force). ALL gated:
+  `-hinge` alone keeps the PR-3a rank-1 path **byte-for-byte** (`theHingeY==0`); `-hingeY` requires
+  `-hinge`; `-hingeY`+`-nl` rejected. commit/revert/revertToStart + sendSelf/recvSelf grow `data`
+  21→23 (`hingeOnY`, `hingeJumpCommitY`); the hinge metadata is sent as **ONE combined ID** (size 2
+  strong-only / size 4 biaxial) — two separate same-size IDs sharing the element dbTag+commitTag
+  COLLIDE in the `FE_Datastore` (its key is dbTag/commitTag/size), silently overwriting the strong
+  axis (caught by the biaxial DB-roundtrip gate, fixed). `"hingeY <resp>"` setResponse passthrough.
+- **Verified (OpenSeesPy, 14/14; full 79/79 element+hinge 2D+3D + cohesive material):** parse
+  (`-hingeY` requires `-hinge`; `-hingeY`/`-nl` exclusive); **reduce-to-PR-3a** (pure Mz → `α_y≈0`,
+  weak axis closed, Mz dissipates `Gf_z`); independent weak axis (pure My → `α_z≈0`, My dissipates
+  `Gf_y`); **constant biaxial patch test** (each hinge carries exactly its applied moment, `1e-8`);
+  **energy partition** (drive z then y → `hingeZ==Gf_z`, `hingeY==Gf_y`); **the coupled-2×2 gate** —
+  a product-of-inertia fiber section (`Iyz≠0`) driven through STAGGERED biaxial softening converges
+  under tight Newton (maxIter 10), the consistent coupled tangent the oracle (two independent rank-1
+  updates lose convergence when `ks(MZ,MY)≠0`); **finite-rotation invariance** under `CorotCrdTransf3d`
+  (skew prescribed transverse disp → >1 rad member rotation, both hinges dissipate `Gf`); solver
+  robustness (Newton/ModifiedNewton/KrylovNewton); nIP-objectivity; commit/revert + DB roundtrip with
+  BOTH hinges open. Deep single-element biaxial softening is traced robustly by **prescribing the
+  softening rotations** (a free DOF under a dead moment snaps at weak-axis activation — a control
+  artifact, not a tangent defect; the strong axis drives to full break cleanly either way).
+- **Honest scope:** the staggered-activation gate uses tight-Newton-through-coupled-softening as the
+  tangent oracle (the established 2D/PR-3a stance; a literal global-DOF FD harness is unavailable in
+  the OpenSeesPy testbed without a state-eval-without-commit hook). The cohesive laws stay
+  block-diagonal (the dominant biaxial coupling flows through the bulk `ks` in `K_αα`).
+- **NEXT (PR-3c+):** the coupled biaxial cohesive interaction surface (`MAT_TAG 33004`, v2 material);
+  a torsional jump (`α_t`, `-torsion`); `-nl`+hinge cross-terms; per-axis distinct hinge IP locations.
