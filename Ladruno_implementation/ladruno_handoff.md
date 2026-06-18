@@ -219,14 +219,21 @@ Design in [[32_ladruno_dispbeamcolumn_regularization_adr]] (the 11-agent scope +
   hold converged `κ_bulk`). ALL gated on `hingeOn` (no-hinge path bit-identical); `-hinge`+`-nl`
   rejected. 8/8 gates green (patch test 1e-9, `∫M d[[θ]]==Gf`, element total-dissipation==Gf,
   tight-Newton tangent through softening, commit/revert + DB roundtrip).
-- **NEXT — PR-2b hardening (deferred from PR-2a):** integration-objectivity sweep; pre-cracked
-  finite-rotation invariance (rotate an open hinge 90/180° under Corotational → zero force/dissipation
-  increment); `-nl`+hinge cross-term algebra; **non-Newton/line-search α re-convergence** (PR-2a is
-  monotonic full-Newton only — `getTangentStiff` can be called without a preceding `update()`, so add
-  the idempotent re-converge-α-from-`αCommit` against the current basic disp); `ladruno_drive` collapse
-  test (needs the still-RESERVED dissipation arc-length, [[22_ladruno_dissipation_arclength_adr]]); then
-  **3D** (own ADR — quaternion-triad finite-rotation biaxial/torsional jump). Snap-back solve:
-  `LadrunoIndirectControl` (built) is the follower.
+- **DONE — PR-2b 2D objectivity/invariance/robustness gates (test-only).** Probed first: the PR-2a
+  hinge ALREADY passes them. Added (`tests/test_ladrunoDispBeamColumn2d_hinge.py`, 8→15): corotational
+  large-rotation `Gf`-dissipation at **74° tip rotation** (pinned invariant under finite rotation),
+  orientation invariance (member 0° vs 90° → identical M–θ to round-off), integration-objectivity
+  Lobatto nIP∈{2..6} sweep (invariant, no residual nIP drift — the discrete-hinge advantage over Tier-1
+  lch), solver robustness (Newton/ModifiedNewton/NewtonLineSearch/KrylovNewton all dissipate `Gf`).
+  **Finding:** the non-Newton "stale-α" hole the review flagged does NOT bite — the residual is always
+  evaluated post-`update()`, so tangent reuse / line search never corrupt the converged dissipation.
+  The idempotent-re-converge hardening is therefore **unnecessary** (don't build it).
+- **NEXT — what's genuinely left for Tier-2:** (1) the `ladruno_drive` snap-back collapse test, still
+  blocked on the RESERVED dissipation arc-length ([[22_ladruno_dissipation_arclength_adr]]) — build that
+  integrator first or trace with `LadrunoIndirectControl` (CMOD on the hinge jump); (2) `-nl`+hinge
+  cross-term algebra (the bowing×α axial coupling, currently rejected at parse); (3) **3D** — its own
+  ADR (quaternion-triad finite-rotation biaxial/torsional jump on `CorotCrdTransf3d`), the real frontier.
+  The 2D Tier-1+Tier-2 element is otherwise gate-complete.
 - Known low-sev nice-to-have: 3D `getTangentStiff` recomputes the linear kb then discards it when `-nl`
   (perf only; guard with `if(!nlGeom)`).
 
