@@ -31,6 +31,7 @@
 #include <Node.h>
 #include <SectionForceDeformation.h>
 #include <UniaxialMaterial.h>   // Ladruno (ADR 33) Tier-2: embedded cohesive hinge
+#include <NDMaterial.h>         // Ladruno (ADR 34): coupled biaxial cohesive hinge (order-2)
 #include <CrdTransf.h>
 #include <Matrix.h>
 #include <Vector.h>
@@ -83,6 +84,7 @@ void* OPS_LadrunoDispBeamColumn3d()
     int nlGeom = 0;        // Ladruno (ADR 32): 0=linear basic strain, 1=½(θy²+θz²) bowing (-nl)
     UniaxialMaterial *hingeMatZ = 0;  // Ladruno (ADR 33) Tier-2: embedded strong-axis (Mz) cohesive hinge
     UniaxialMaterial *hingeMatY = 0;  // Ladruno (ADR 33 PR-3b): embedded weak-axis (My) cohesive hinge (biaxial)
+    NDMaterial *hingeMatC = 0;        // Ladruno (ADR 34): coupled biaxial (Mz-My) cohesive hinge (order-2 NDMaterial)
     numData = 1;
     while(OPS_GetNumRemainingInputArgs() > 0) {
 	const char* type = OPS_GetString();
@@ -172,6 +174,34 @@ void* OPS_LadrunoDispBeamColumn3d()
             return 0;
         }
     }
+    // Ladruno (ADR 34): -hingeBiaxial $matTag embeds the COUPLED biaxial cohesive law (an order-2
+    // NDMaterial, LadrunoCohesiveHingeBiaxial) carrying the Mz-My interaction surface. Exclusive
+    // with the block-diagonal -hinge/-hingeY (and -nl).
+    else if (strcmp(type, "-hingeBiaxial") == 0 || strcmp(type, "-hingeC") == 0) {
+        if (OPS_GetNumRemainingInputArgs() < 1) {
+            opserr << "WARNING LadrunoDispBeamColumn3d: -hingeBiaxial needs an nDMaterial tag\n";
+            return 0;
+        }
+        int hingeTagC;
+        if (OPS_GetIntInput(&numData, &hingeTagC) < 0) {
+            opserr << "WARNING LadrunoDispBeamColumn3d: invalid -hingeBiaxial material tag\n";
+            return 0;
+        }
+        hingeMatC = OPS_getNDMaterial(hingeTagC);
+        if (hingeMatC == 0) {
+            opserr << "WARNING LadrunoDispBeamColumn3d: -hingeBiaxial nDMaterial " << hingeTagC
+                   << " not found\n";
+            return 0;
+        }
+    }
+    }
+
+    // Ladruno (ADR 34): the coupled biaxial cohesive replaces the two block-diagonal scalar laws —
+    // reject mixing it with -hinge/-hingeY.
+    if (hingeMatC != 0 && (hingeMatZ != 0 || hingeMatY != 0)) {
+        opserr << "WARNING LadrunoDispBeamColumn3d: -hingeBiaxial (coupled) is mutually exclusive "
+                  "with -hinge/-hingeY (block-diagonal); use one or the other.\n";
+        return 0;
     }
 
     // Ladruno (ADR 33) PR-3b: the weak-axis jump is an ADD-ON to the strong-axis hinge — the
@@ -185,7 +215,7 @@ void* OPS_LadrunoDispBeamColumn3d()
     // Ladruno (ADR 33) Tier-2: the embedded hinge and the -nl bowing strain are mutually
     // exclusive in v1 — the ½(θz²+θy²) membrane term couples the rotation jump into the axial
     // channel. Reject the combination loudly rather than silently mis-condense.
-    if ((hingeMatZ != 0 || hingeMatY != 0) && nlGeom != 0) {
+    if ((hingeMatZ != 0 || hingeMatY != 0 || hingeMatC != 0) && nlGeom != 0) {
         opserr << "WARNING LadrunoDispBeamColumn3d: -hinge and -nl are mutually exclusive in v1 "
                   "(the bowing strain couples the rotation jump into the axial channel); "
                   "use one or the other.\n";
@@ -224,7 +254,7 @@ void* OPS_LadrunoDispBeamColumn3d()
     }
     
     Element *theEle =  new LadrunoDispBeamColumn3d(iData[0],iData[1],iData[2],secTags.Size(),sections,
-					    *bi,*theTransf,mass,cmass, theDamping,lchMode,userLch,nlGeom,hingeMatZ,hingeMatY);
+					    *bi,*theTransf,mass,cmass, theDamping,lchMode,userLch,nlGeom,hingeMatZ,hingeMatY,hingeMatC);
     delete [] sections;
     return theEle;
 }
@@ -234,7 +264,8 @@ LadrunoDispBeamColumn3d::LadrunoDispBeamColumn3d(int tag, int nd1, int nd2,
 				   BeamIntegration &bi,
 				   CrdTransf &coordTransf, double r, int cm,
 				   Damping *damping, int lchM, double userL, int nlG,
-				   UniaxialMaterial *hingeMatZ, UniaxialMaterial *hingeMatY)
+				   UniaxialMaterial *hingeMatZ, UniaxialMaterial *hingeMatY,
+				   NDMaterial *hingeMatC)
 :Element (tag, ELE_TAG_LadrunoDispBeamColumn3d),
 numSections(numSec), theSections(0), crdTransf(0), beamInt(0),
 connectedExternalNodes(2),
@@ -243,7 +274,8 @@ current_section_lch(0.0), lchMode(lchM), userLch(userL), nlGeom(nlG),
 hingeOn(0), theHingeZ(0), hingeJumpZ(0.0), hingeJumpCommitZ(0.0), hingeKaaZ(0.0),
 hingeMscaleZ(0.0),
 theHingeY(0), hingeJumpY(0.0), hingeJumpCommitY(0.0), hingeMscaleY(0.0),
-hingeKaaInvZZ(0.0), hingeKaaInvZY(0.0), hingeKaaInvYY(0.0)
+hingeKaaInvZZ(0.0), hingeKaaInvZY(0.0), hingeKaaInvYY(0.0),
+theHingeC(0)
 {
   hingeKvZ[0] = hingeKvZ[1] = hingeKvZ[2] = hingeKvZ[3] = hingeKvZ[4] = hingeKvZ[5] = 0.0;
   hingeKvY[0] = hingeKvY[1] = hingeKvY[2] = hingeKvY[3] = hingeKvY[4] = hingeKvY[5] = 0.0;
@@ -261,6 +293,15 @@ hingeKaaInvZZ(0.0), hingeKaaInvZY(0.0), hingeKaaInvYY(0.0)
     theHingeY = hingeMatY->getCopy();
     if (theHingeY == 0) {
       opserr << "LadrunoDispBeamColumn3d::LadrunoDispBeamColumn3d - failed to copy weak-axis hinge material\n";
+      exit(-1);
+    }
+    hingeOn = 1;
+  }
+  // Ladruno (ADR 34): own a copy of the coupled biaxial cohesive law (order-2 NDMaterial)
+  if (hingeMatC != 0) {
+    theHingeC = hingeMatC->getCopy();
+    if (theHingeC == 0) {
+      opserr << "LadrunoDispBeamColumn3d::LadrunoDispBeamColumn3d - failed to copy coupled biaxial hinge material\n";
       exit(-1);
     }
     hingeOn = 1;
@@ -341,7 +382,8 @@ current_section_lch(0.0), lchMode(0), userLch(0.0), nlGeom(0),
 hingeOn(0), theHingeZ(0), hingeJumpZ(0.0), hingeJumpCommitZ(0.0), hingeKaaZ(0.0),
 hingeMscaleZ(0.0),
 theHingeY(0), hingeJumpY(0.0), hingeJumpCommitY(0.0), hingeMscaleY(0.0),
-hingeKaaInvZZ(0.0), hingeKaaInvZY(0.0), hingeKaaInvYY(0.0)
+hingeKaaInvZZ(0.0), hingeKaaInvZY(0.0), hingeKaaInvYY(0.0),
+theHingeC(0)
 {
   hingeKvZ[0] = hingeKvZ[1] = hingeKvZ[2] = hingeKvZ[3] = hingeKvZ[4] = hingeKvZ[5] = 0.0;
   hingeKvY[0] = hingeKvY[1] = hingeKvY[2] = hingeKvY[3] = hingeKvY[4] = hingeKvY[5] = 0.0;
@@ -385,6 +427,9 @@ LadrunoDispBeamColumn3d::~LadrunoDispBeamColumn3d()
 
   if (theHingeY != 0)   // Ladruno (ADR 33 PR-3b)
     delete theHingeY;
+
+  if (theHingeC != 0)   // Ladruno (ADR 34)
+    delete theHingeC;
 }
 
 int
@@ -515,6 +560,10 @@ LadrunoDispBeamColumn3d::commitState()
         hingeJumpCommitY = hingeJumpY;
         retVal += theHingeY->commitState();
       }
+      if (theHingeC) {                       // ADR 34 coupled (jumps committed, plus the law's history)
+        hingeJumpCommitY = hingeJumpY;
+        retVal += theHingeC->commitState();
+      }
     }
 
     return retVal;
@@ -541,6 +590,10 @@ LadrunoDispBeamColumn3d::revertToLastCommit()
       if (theHingeY) {                       // PR-3b biaxial
         hingeJumpY = hingeJumpCommitY;
         retVal += theHingeY->revertToLastCommit();
+      }
+      if (theHingeC) {                       // ADR 34 coupled
+        hingeJumpY = hingeJumpCommitY;
+        retVal += theHingeC->revertToLastCommit();
       }
     }
 
@@ -576,6 +629,14 @@ LadrunoDispBeamColumn3d::revertToStart()
         hingeKaaInvZZ = hingeKaaInvZY = hingeKaaInvYY = 0.0;
         retVal += theHingeY->revertToStart();
       }
+      if (theHingeC) {                       // ADR 34 coupled
+        hingeJumpY = 0.0;
+        hingeJumpCommitY = 0.0;
+        hingeKvY[0] = hingeKvY[1] = hingeKvY[2] = hingeKvY[3] = hingeKvY[4] = hingeKvY[5] = 0.0;
+        hingeMscaleY = 0.0;
+        hingeKaaInvZZ = hingeKaaInvZY = hingeKaaInvYY = 0.0;
+        retVal += theHingeC->revertToStart();
+      }
     }
 
     return retVal;
@@ -603,7 +664,7 @@ LadrunoDispBeamColumn3d::update(void)
   // Newton (which sets the section deformations itself). GATED so the no-hinge path below is
   // untouched. PR-3b: theHingeY != 0 routes to the coupled biaxial solve; Z-only stays PR-3a.
   if (hingeOn) {
-    if (theHingeY != 0)
+    if (theHingeY != 0 || theHingeC != 0)   // PR-3b block-diagonal OR ADR-34 coupled -> biaxial solve
       return solveHingeJumpBiaxial(v, L);
     return solveHingeJump(v, L);
   }
@@ -866,10 +927,18 @@ LadrunoDispBeamColumn3d::solveHingeJumpBiaxial(const Vector &v, double L)
   double az = hingeJumpCommitZ;    // warm start from the committed jumps (path-correct)
   double ay = hingeJumpCommitY;
 
-  const int maxIter = 30;
+  const int maxIter = 50;
   double KvZ[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
   double KvY[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
   double iZZ = 0.0, iZY = 0.0, iYY = 0.0;
+
+  // Ladruno (ADR 34): adaptive step damping — the coupled cohesive (theHingeC) has a
+  // sign-discontinuous tangent at the elliptical onset (r=1) and a frozen-mix tangent that is
+  // only exact on radial jump paths, so a full Newton step can overshoot the activation kink and
+  // oscillate. Halving the step whenever the residual grows tames it; the damping is a no-op when
+  // the residual decreases monotonically, so the block-diagonal (PR-3b) path is unaffected.
+  double damp = 1.0;
+  double hnormPrev = 1.0e300;
 
   for (int iter = 0; iter < maxIter; iter++) {
 
@@ -959,24 +1028,38 @@ LadrunoDispBeamColumn3d::solveHingeJumpBiaxial(const Vector &v, double L)
       return err;
     }
 
-    // --- cohesive laws at the current jumps (block-diagonal: one scalar law per axis) ---
-    theHingeZ->setTrialStrain(az);
-    double Mz = theHingeZ->getStress();
-    double Kz = theHingeZ->getTangent();
-    theHingeY->setTrialStrain(ay);
-    double My = theHingeY->getStress();
-    double Ky = theHingeY->getTangent();
+    // --- cohesive moments + cohesive tangent at the current jumps ---
+    // theHingeC (ADR 34): ONE coupled law -> moment vector + a FULL 2x2 cohesive tangent (the
+    // off-diagonal Czy enters K_aa). Else (PR-3b): two block-diagonal scalar laws (Czy = 0).
+    double Mz, My, Czz, Cyy, Czy;
+    if (theHingeC != 0) {
+      static Vector jumpVec(2);
+      jumpVec(0) = az; jumpVec(1) = ay;
+      theHingeC->setTrialStrain(jumpVec);
+      const Vector &Mvec = theHingeC->getStress();
+      const Matrix &Kc   = theHingeC->getTangent();
+      Mz = Mvec(0); My = Mvec(1);
+      Czz = Kc(0,0); Cyy = Kc(1,1);
+      Czy = 0.5*(Kc(0,1) + Kc(1,0));   // symmetrize the cohesive coupling
+    } else {
+      theHingeZ->setTrialStrain(az);
+      Mz = theHingeZ->getStress();  Czz = theHingeZ->getTangent();
+      theHingeY->setTrialStrain(ay);
+      My = theHingeY->getStress();  Cyy = theHingeY->getTangent();
+      Czy = 0.0;
+    }
 
     double hz = -sumMz + Mz;
     double hy = -sumMy + My;
 
-    // TRUE coupled 2x2 K_aa (bulk + cohesive on the diagonal, bulk-only off-diagonal)
-    double Kaa_zz = oneOverL*sumEIz + Kz;
-    double Kaa_yy = oneOverL*sumEIy + Ky;
-    double Kaa_zy = oneOverL*sumCpl;
+    // TRUE coupled 2x2 K_aa (bulk + cohesive on the diagonal; off-diagonal = bulk ks(MZ,MY) +
+    // the cohesive coupling Czy — nonzero only for the ADR-34 coupled interaction surface)
+    double Kaa_zz = oneOverL*sumEIz + Czz;
+    double Kaa_yy = oneOverL*sumEIy + Cyy;
+    double Kaa_zy = oneOverL*sumCpl + Czy;
 
     // EIGENVALUE floor: bounds every mode against the positive bulk terms + the cohesive tangents
-    double floor = 1.0e-8*(fabs(oneOverL*sumEIz) + fabs(oneOverL*sumEIy) + fabs(Kz) + fabs(Ky)) + 1.0e-300;
+    double floor = 1.0e-8*(fabs(oneOverL*sumEIz) + fabs(oneOverL*sumEIy) + fabs(Czz) + fabs(Cyy)) + 1.0e-300;
     ladrunoFlooredInv2x2(Kaa_zz, Kaa_zy, Kaa_yy, floor, iZZ, iZY, iYY);
 
     // per-axis STABLE moment scales (do not collapse when a fully-broken LINEAR hinge carries M->0)
@@ -994,9 +1077,17 @@ LadrunoDispBeamColumn3d::solveHingeJumpBiaxial(const Vector &v, double L)
       return 0;
     }
 
-    // guarded coupled Newton step: dalpha = -K_aa_floored^{-1} h
-    az -= (iZZ*hz + iZY*hy);
-    ay -= (iZY*hz + iYY*hy);
+    // adaptive damping: shrink the step when the residual grew (overshot the activation kink),
+    // relax back toward the full step otherwise. No-op while the residual decreases monotonically.
+    double hnorm = sqrt((hz/(hingeMscaleZ+1.0e-12))*(hz/(hingeMscaleZ+1.0e-12))
+                      + (hy/(hingeMscaleY+1.0e-12))*(hy/(hingeMscaleY+1.0e-12)));
+    if (hnorm > hnormPrev) damp *= 0.5;
+    else                   damp = (damp*1.5 < 1.0) ? damp*1.5 : 1.0;
+    hnormPrev = hnorm;
+
+    // guarded coupled Newton step: dalpha = -damp * K_aa_floored^{-1} h
+    az -= damp*(iZZ*hz + iZY*hy);
+    ay -= damp*(iZY*hz + iYY*hy);
   }
 
   hingeJumpZ = az; hingeJumpY = ay;
@@ -1184,8 +1275,8 @@ LadrunoDispBeamColumn3d::getTangentStiff()
   // here is the INLINE-built linear basic stiffness (the nlGeom path is dead under -hinge). The
   // basic FORCE q needs NO correction (sections already hold the converged kappa_z_bulk).
   if (hingeOn) {
-    if (theHingeY != 0) {
-      // PR-3b biaxial: rank-2 kb -= K_v-alpha * K_aa_floored^{-1} * K_v-alpha^T, with the 6x2
+    if (theHingeY != 0 || theHingeC != 0) {
+      // PR-3b biaxial / ADR-34 coupled: rank-2 kb -= K_v-alpha * K_aa_floored^{-1} * K_v-alpha^T, with the 6x2
       // K_v-alpha = [hingeKvZ | hingeKvY] and the symmetric eigenvalue-floored 2x2 inverse.
       double iZZ = hingeKaaInvZZ, iZY = hingeKaaInvZY, iYY = hingeKaaInvYY;
       for (int a = 0; a < 6; a++)
@@ -1738,7 +1829,7 @@ LadrunoDispBeamColumn3d::sendSelf(int commitTag, Channel &theChannel)
   int i, j;
   int loc = 0;
   
-  static Vector data(23);  // Ladruno (ADR 32 +3 lchMode/userLch/nlGeom; ADR 33 +2 hingeOn/hingeJumpCommitZ; PR-3b +2 hingeOnY/hingeJumpCommitY)
+  static Vector data(26);  // Ladruno (ADR 32 +3; ADR 33 +2; PR-3b +2; ADR 34 +3 hingeOnC/classTag/dbTag)
   data(0) = this->getTag();
   data(1) = connectedExternalNodes(0);
   data(2) = connectedExternalNodes(1);
@@ -1791,6 +1882,20 @@ LadrunoDispBeamColumn3d::sendSelf(int commitTag, Channel &theChannel)
   // Ladruno (ADR 33 PR-3b): weak-axis (biaxial) hinge presence flag + committed jump
   data(21) = (theHingeY != 0) ? 1 : 0;
   data(22) = hingeJumpCommitY;
+  // Ladruno (ADR 34): coupled biaxial cohesive (NDMaterial) presence + classTag/dbTag (folded into
+  // data to avoid any FE_Datastore ID-size collision; the material itself sendSelf's below).
+  data(23) = (theHingeC != 0) ? 1 : 0;
+  data(24) = 0;
+  data(25) = 0;
+  if (theHingeC != 0) {
+    data(24) = theHingeC->getClassTag();
+    int cDbTag = theHingeC->getDbTag();
+    if (cDbTag == 0) {
+      cDbTag = theChannel.getDbTag();
+      if (cDbTag != 0) theHingeC->setDbTag(cDbTag);
+    }
+    data(25) = theHingeC->getDbTag();
+  }
 
   if (theChannel.sendVector(dbTag, commitTag, data) < 0) {
     opserr << "LadrunoDispBeamColumn3d::sendSelf() - failed to send data Vector\n";
@@ -1889,6 +1994,13 @@ LadrunoDispBeamColumn3d::sendSelf(int commitTag, Channel &theChannel)
     }
   }
 
+  // Ladruno (ADR 34): send the coupled biaxial cohesive material (mutually exclusive with Z/Y, so
+  // no ID block above; its classTag/dbTag rode in the data Vector).
+  if (theHingeC != 0 && theHingeC->sendSelf(commitTag, theChannel) < 0) {
+    opserr << "LadrunoDispBeamColumn3d::sendSelf() - failed to send coupled biaxial hinge material\n";
+    return -1;
+  }
+
   return 0;
 }
 
@@ -1902,7 +2014,7 @@ LadrunoDispBeamColumn3d::recvSelf(int commitTag, Channel &theChannel,
   int dbTag = this->getDbTag();
   int i;
   
-  static Vector data(23);  // Ladruno (ADR 32 +3 lchMode/userLch/nlGeom; ADR 33 +2 hingeOn/hingeJumpCommitZ; PR-3b +2 hingeOnY/hingeJumpCommitY)
+  static Vector data(26);  // Ladruno (ADR 32 +3; ADR 33 +2; PR-3b +2; ADR 34 +3 hingeOnC/classTag/dbTag)
 
   if (theChannel.recvVector(dbTag, commitTag, data) < 0)  {
     opserr << "LadrunoDispBeamColumn3d::recvSelf() - failed to recv data Vector\n";
@@ -1950,6 +2062,11 @@ LadrunoDispBeamColumn3d::recvSelf(int commitTag, Channel &theChannel,
   hingeKvY[0] = hingeKvY[1] = hingeKvY[2] = hingeKvY[3] = hingeKvY[4] = hingeKvY[5] = 0.0;
   hingeMscaleY = 0.0;
   hingeKaaInvZZ = hingeKaaInvZY = hingeKaaInvYY = 0.0;
+
+  // Ladruno (ADR 34): coupled biaxial cohesive (NDMaterial) presence + classTag/dbTag
+  int hasHingeC = (int)data(23);
+  int cClassTag = (int)data(24);
+  int cDbTag    = (int)data(25);
 
   // create a new crdTransf object if one needed
   if (crdTransf == 0 || crdTransf->getClassTag() != crdTransfClassTag) {
@@ -2129,9 +2246,10 @@ LadrunoDispBeamColumn3d::recvSelf(int commitTag, Channel &theChannel,
     }
   }
 
-  // Ladruno (ADR 33) Tier-2: reconstruct the embedded hinge material(s) from the combined ID
-  // (size 2 strong-axis only, size 4 biaxial — matching sendSelf's collision-free keying).
-  if (hingeOn) {
+  // Ladruno (ADR 33) Tier-2: reconstruct the block-diagonal hinge material(s) from the combined ID
+  // (size 2 strong-axis only, size 4 biaxial). Skipped entirely for the coupled law (ADR 34), which
+  // is mutually exclusive with -hinge/-hingeY and sent NO Z/Y ID block (only theHingeC, below).
+  if (hingeOn && hasHingeC == 0) {
     int nHingeID = hasHingeY ? 4 : 2;
     ID hingeID(nHingeID);
     if (theChannel.recvID(dbTag, commitTag, hingeID) < 0) {
@@ -2181,6 +2299,27 @@ LadrunoDispBeamColumn3d::recvSelf(int commitTag, Channel &theChannel,
   else {
     if (theHingeZ) { delete theHingeZ; theHingeZ = 0; }
     if (theHingeY) { delete theHingeY; theHingeY = 0; }
+  }
+
+  // Ladruno (ADR 34): reconstruct the coupled biaxial cohesive material (NDMaterial broker).
+  if (hingeOn && hasHingeC) {
+    if (theHingeC == 0 || theHingeC->getClassTag() != cClassTag) {
+      if (theHingeC) delete theHingeC;
+      theHingeC = theBroker.getNewNDMaterial(cClassTag);
+      if (theHingeC == 0) {
+        opserr << "LadrunoDispBeamColumn3d::recvSelf() - Broker could not create coupled hinge nDMaterial of class "
+               << cClassTag << endln;
+        return -1;
+      }
+    }
+    theHingeC->setDbTag(cDbTag);
+    if (theHingeC->recvSelf(commitTag, theChannel, theBroker) < 0) {
+      opserr << "LadrunoDispBeamColumn3d::recvSelf() - coupled hinge material failed to recv itself\n";
+      return -1;
+    }
+  }
+  else {
+    if (theHingeC) { delete theHingeC; theHingeC = 0; }
   }
 
   return 0;
@@ -2502,6 +2641,11 @@ LadrunoDispBeamColumn3d::setResponse(const char **argv, int argc, OPS_Stream &ou
     // Ladruno (ADR 33 PR-3b): forward "hingeY <resp>" to the embedded weak-axis cohesive material.
     else if (hingeOn && theHingeY != 0 && argc > 1 && strcmp(argv[0],"hingeY") == 0) {
       theResponse = theHingeY->setResponse(&argv[1], argc-1, output);
+    }
+    // Ladruno (ADR 34): forward "hingeBiaxial <resp>" to the coupled biaxial cohesive material.
+    else if (hingeOn && theHingeC != 0 && argc > 1 &&
+             (strcmp(argv[0],"hingeBiaxial") == 0 || strcmp(argv[0],"hingeC") == 0)) {
+      theResponse = theHingeC->setResponse(&argv[1], argc-1, output);
     }
 
     if (theResponse == 0)

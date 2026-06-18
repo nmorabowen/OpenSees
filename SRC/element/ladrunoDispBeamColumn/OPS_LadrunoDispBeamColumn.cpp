@@ -37,7 +37,8 @@
 //           [, '-lch', {ip|element|<value>}]    # regularization length (default: ip)
 //           [, '-nl']                           # ½θ² (2D) / ½(θy²+θz²) (3D) bowing strain (default: linear)
 //           [, '-hinge', matTag]                # embedded cohesive rotation-jump hinge (ADR 32 Tier-2 2D / ADR 33 3D strong-axis Mz)
-//           [, '-hingeY', matTag])              # 3D ONLY: weak-axis (My) cohesive hinge -> biaxial coupled hinge (ADR 33 PR-3b); requires -hinge
+//           [, '-hingeY', matTag]               # 3D ONLY: weak-axis (My) cohesive hinge -> biaxial block-diagonal hinge (ADR 33 PR-3b); requires -hinge
+//           [, '-hingeBiaxial', ndMatTag])      # 3D ONLY: coupled Mz-My cohesive interaction surface (ADR 34, LadrunoCohesiveHingeBiaxial); exclusive with -hinge/-hingeY
 //
 // -lch selects the characteristic length reported to crack-band / auto-regularizing
 // materials (ASDConcrete1D -autoRegularization, ASDSteel1D, LadrunoUniaxialJ2+Lemaitre):
