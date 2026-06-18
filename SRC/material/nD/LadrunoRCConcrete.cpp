@@ -42,6 +42,7 @@ using namespace ladruno_rc_kernel;
 //             -Ce {..} -Cs {..} <-Cd {..}>  (compression backbone: strain/nom-stress/damage)
 //             -Te {..} -Ts {..} <-Td {..}>  (tension backbone)
 //             <-Kc $Kc> <-beta> <-betaFloor $f> <-lublinerReduced>
+//             <-tensStiff {vc|cm}> <-tensStiffC $c> <-tensStiffAlpha $a>  (Phase 3)
 //             <-rho $rho> <-secant | -numericalTangent>
 // ===========================================================================
 void* OPS_LadrunoRCConcrete(void)
@@ -78,6 +79,9 @@ void* OPS_LadrunoRCConcrete(void)
   // Phase 4: IMPL-EX (implicit-explicit) robustness for cyclic softening
   bool   implexOn = false, implexCtrl = false;
   double implexAlpha = 1.0, implexErrTol = 0.05, implexTimeRedLim = 0.01;
+  // Phase 3: tension stiffening (default off => baseline-identical)
+  int    tensStiffMode = 0;       // 0 off | 1 vc (Bentz) | 2 cm (Collins-Mitchell)
+  double tensStiffC = 500.0, tensStiffAlpha = 1.0;
 
   auto readList = [](std::vector<double>& v) {
     v.clear();
@@ -137,6 +141,15 @@ void* OPS_LadrunoRCConcrete(void)
       else { opserr << "LadrunoRCConcrete: -shearRetention needs {mcft|const|dsfm|rots}.\n"; return 0; }
     }
     else if (strcmp(opt, "-shearRetFactor") == 0) { int nd = 1; if (OPS_GetDoubleInput(&nd, &shearRetFactor) < 0) { opserr << "LadrunoRCConcrete: -shearRetFactor needs a value.\n"; return 0; } }
+    // Phase 3: -tensStiff {vc|cm} tension-stiffening mode (+ -tensStiffC c, -tensStiffAlpha a).
+    else if (strcmp(opt, "-tensStiff") == 0) {
+      const char* m = (OPS_GetNumRemainingInputArgs() > 0) ? OPS_GetString() : 0;
+      if      (m && strcmp(m, "vc") == 0) tensStiffMode = 1;
+      else if (m && strcmp(m, "cm") == 0) tensStiffMode = 2;
+      else { opserr << "LadrunoRCConcrete: -tensStiff needs {vc|cm}.\n"; return 0; }
+    }
+    else if (strcmp(opt, "-tensStiffC") == 0)     { int nd = 1; if (OPS_GetDoubleInput(&nd, &tensStiffC) < 0)     { opserr << "LadrunoRCConcrete: -tensStiffC needs a value.\n";     return 0; } }
+    else if (strcmp(opt, "-tensStiffAlpha") == 0) { int nd = 1; if (OPS_GetDoubleInput(&nd, &tensStiffAlpha) < 0) { opserr << "LadrunoRCConcrete: -tensStiffAlpha needs a value.\n"; return 0; } }
     // unknown tokens are ignored (forward-compat)
   }
 
@@ -149,6 +162,18 @@ void* OPS_LadrunoRCConcrete(void)
   if (shearRetMode == 1 || shearRetMode == 2) interlockCyclic = true;
   if (shearRetMode != 0) interlockOn = true;
   if (interlockCyclic && !interlockOn) interlockOn = true;
+
+  // tension stiffening: c sits under a sqrt (sigma_ts = ft/(1+sqrt(c*e1))), so c must be
+  // positive or it produces NaN once the crack gate opens (cm mode uses a fixed 500).
+  if (tensStiffMode == 1 && tensStiffC <= 0.0) {
+    opserr << "nDMaterial LadrunoRCConcrete error: -tensStiffC must be > 0.\n";
+    return 0;
+  }
+  // cm mode hard-codes the Collins-Mitchell 500 coefficient, so -tensStiffC is inert there;
+  // warn rather than silently ignore a user-supplied value (footgun: they likely wanted vc).
+  if (tensStiffMode == 2 && tensStiffC != 500.0)
+    opserr << "WARNING nDMaterial LadrunoRCConcrete: -tensStiffC is ignored in cm mode "
+              "(cm uses the fixed Collins-Mitchell 500); use -tensStiff vc for a tunable c.\n";
 
   if (Ce.size() < 2 || Cs.size() != Ce.size()) {
     opserr << "nDMaterial LadrunoRCConcrete error: need -Ce and -Cs of equal length (>=2).\n";
@@ -170,6 +195,8 @@ void* OPS_LadrunoRCConcrete(void)
   P.xcrackOn = xcrackOn; P.degKappa = degKappa; P.degSlipRef = degSlipRef; P.degMin = degMin;
   P.implex = implexOn; P.implexAlpha = implexAlpha; P.implexControl = implexCtrl;
   P.implexErrTol = implexErrTol; P.implexTimeRedLim = implexTimeRedLim;
+  P.tensStiffMode = tensStiffMode; P.tensStiffC = tensStiffC;
+  P.tensStiffAlpha = tensStiffAlpha; P.ftPeak = 0.0;   // ftPeak set by setupParams
 
   // build backbones via the faithful ASDConcrete3D HardeningLaw c-tor + adjust()
   // (elastic-consistent q). -Cd/-Td are optional -> pad with zeros to match length.
@@ -200,6 +227,7 @@ LadrunoRCConcrete::LadrunoRCConcrete()
   P.xcrackOn = false; P.degKappa = 0.5; P.degSlipRef = 0.01; P.degMin = 0.1;
   P.implex = false; P.implexAlpha = 1.0; P.implexControl = false;
   P.implexErrTol = 0.05; P.implexTimeRedLim = 0.01;
+  P.tensStiffMode = 0; P.tensStiffC = 500.0; P.tensStiffAlpha = 1.0; P.ftPeak = 0.0;
   P.ht.n = 0; P.hc.n = 0;
   this->setupDim();
   this->revertToStart();
@@ -427,13 +455,14 @@ NDMaterial* LadrunoRCConcrete::getCopy(const char* type)
 // ===========================================================================
 //  parallel  (serialize params + backbones + committed history)
 // ===========================================================================
-static const int RC_SCHEMA_VERSION = 3;    // bump when the wire layout changes (hard-checked in recvSelf); v2 = +IMPL-EX; v3 = +shearRetFactor
+static const int RC_SCHEMA_VERSION = 4;    // bump when the wire layout changes (hard-checked in recvSelf); v2 = +IMPL-EX; v3 = +shearRetFactor; v4 = +tension stiffening
 static const int RC_NSCALAR = 1 /*schemaVersion*/ + 3 /*tag,dim,rho*/
                             + 10 /*E,nu,Kc,fcft,betaFloor,cdf,eta,betaOn,lubRed,tanMode*/
                             + 9 /*interlockOn,shearRetMode,shearRetFactor,aggSize,crackStrain,crackSpacing,lch,betaSrMin,sqrtFc*/
                             + 1 /*interlockCyclic*/
                             + 4 /*xcrackOn,degKappa,degSlipRef,degMin*/
                             + 5 /*implex,implexAlpha,implexControl,implexErrTol,implexTimeRedLim*/
+                            + 4 /*tensStiffMode,tensStiffC,tensStiffAlpha,ftPeak*/
                             + 5 /*dtime_n,dtime_n_commit,dtime_0,commitDone,implexError*/;
 static const int RC_BACK = 1 + 3*MAXPTS;   // n + x[]+y[]+q[]
 static const int RC_HIST = 6 + 6 + 6        // stress_eff, strain, (xt,xc,dt_bar,dc_bar,beta,eps1)
@@ -467,6 +496,8 @@ int LadrunoRCConcrete::sendSelf(int commitTag, Channel& theChannel)
   data(c++) = P.implexAlpha;
   data(c++) = P.implexControl ? 1.0 : 0.0;
   data(c++) = P.implexErrTol; data(c++) = P.implexTimeRedLim;
+  data(c++) = P.tensStiffMode; data(c++) = P.tensStiffC;
+  data(c++) = P.tensStiffAlpha; data(c++) = P.ftPeak;
   data(c++) = dtime_n; data(c++) = dtime_n_commit; data(c++) = dtime_0;
   data(c++) = commitDone ? 1.0 : 0.0; data(c++) = implexError;
   data(c++) = P.ht.n;
@@ -529,6 +560,8 @@ int LadrunoRCConcrete::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBr
   P.implexAlpha = data(c++);
   P.implexControl = (data(c++) != 0.0);
   P.implexErrTol = data(c++); P.implexTimeRedLim = data(c++);
+  P.tensStiffMode = (int)data(c++); P.tensStiffC = data(c++);
+  P.tensStiffAlpha = data(c++); P.ftPeak = data(c++);
   dtime_n = data(c++); dtime_n_commit = data(c++); dtime_0 = data(c++);
   commitDone = (data(c++) != 0.0); implexError = data(c++);
   P.ht.n = (int)data(c++);
@@ -585,6 +618,11 @@ void LadrunoRCConcrete::Print(OPS_Stream& s, int)
   s << "  implex: " << (P.implex ? "ON" : "off");
   if (P.implex) s << "  alpha=" << P.implexAlpha
                   << (P.implexControl ? " (control)" : "") << "  lastError=" << implexError;
+  s << endln;
+  s << "  tensStiff: " << (P.tensStiffMode == 1 ? "vc" : P.tensStiffMode == 2 ? "cm" : "off");
+  if (P.tensStiffMode == 1) s << "  c=" << P.tensStiffC;
+  if (P.tensStiffMode == 2) s << "  alpha=" << P.tensStiffAlpha;
+  if (P.tensStiffMode != 0) s << "  ft=" << P.ftPeak;
   s << endln;
   s << "  view  : " << this->getType() << " (order " << ncomp << ")" << endln;
 }

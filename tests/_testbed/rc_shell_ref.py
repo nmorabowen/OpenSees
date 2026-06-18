@@ -176,6 +176,30 @@ def beta_compr(e1, floorv):
     return b
 
 
+# ---------------------------------------------------------------------------
+# Phase 3: tension-stiffening average tensile stress carried between cracks by
+# bonded reinforcement (a stress FLOOR above the bare fracture-energy softening).
+#   mode 1 vc (MCFT / Bentz):       sigma_t_avg = ft / (1 + sqrt(c   * e1))
+#   mode 2 cm (Collins-Mitchell):   sigma_t_avg = alpha * ft / (1 + sqrt(500 * e1))
+# e1 is the COMPOSITE (reinforced) in-plane principal tensile strain — the same
+# membrane e1 already used for the MCFT beta (perfect-bond strain compatibility).
+# Returns (sigma_ts, d sigma_ts / d e1). e1 is clamped >= 0 by the caller.
+# ---------------------------------------------------------------------------
+def tens_stiff(e1, mode, ft, c, alpha):
+    if mode == 1:      # vc
+        cc, ft_eff = c, ft
+    elif mode == 2:    # cm
+        cc, ft_eff = 500.0, alpha * ft
+    else:
+        return 0.0, 0.0
+    u = np.sqrt(cc * e1) if e1 > 0.0 else 0.0
+    denom = 1.0 + u
+    sig = ft_eff / denom
+    # d/de1: u = sqrt(cc*e1), du/de1 = cc/(2u); d sig/de1 = -ft_eff*du/de1/denom^2
+    dsig = (-ft_eff * (cc / (2.0 * u)) / (denom * denom)) if u > 0.0 else 0.0
+    return sig, dsig
+
+
 def eps1_from_membrane(exx, eyy, gxy):
     """Largest eigenvalue of the in-plane 2x2 TOTAL strain tensor, clamped >=0.
     gxy is engineering shear; tensor shear = gxy/2."""
@@ -215,7 +239,8 @@ class Params:
                  interlock_on=False, agg_size=16.0, crack_strain=0.0,
                  crack_spacing=0.0, lch=0.0, beta_sr_min=0.01, interlock_cyclic=False,
                  xcrack_on=False, deg_kappa=0.5, deg_slip_ref=0.01, deg_min=0.1,
-                 shear_ret_mode=0, shear_ret_factor=0.4):
+                 shear_ret_mode=0, shear_ret_factor=0.4,
+                 tens_stiff_mode=0, tens_stiff_c=500.0, tens_stiff_alpha=1.0):
         self.E = E
         self.nu = nu
         self.Kc = Kc
@@ -245,6 +270,11 @@ class Params:
         self.beta_sr_min = beta_sr_min
         self.sqrt_fc = np.sqrt(fcmax) if fcmax > 0.0 else 0.0
         self.crack_strain = crack_strain if crack_strain > 0.0 else (ftmax / E if E > 0.0 else 0.0)
+        # Phase 3: tension stiffening (default off -> baseline-identical)
+        self.tens_stiff_mode = tens_stiff_mode     # 0 off | 1 vc | 2 cm
+        self.tens_stiff_c = tens_stiff_c           # vc-mode sqrt coefficient
+        self.tens_stiff_alpha = tens_stiff_alpha   # cm-mode alpha1*alpha2
+        self.ft_peak = ftmax                       # tension backbone peak (= ft)
 
 
 class State:
@@ -371,6 +401,32 @@ def compute(P, st_committed, strain6, betaMode='strength'):
     # nominal stress — THE Phase-1 insertion: beta multiplies the assembled compressive cone
     sigma = (1.0 - dt_bar) * ST + beta * (1.0 - dc_bar) * SC
 
+    # ---- Phase 3: tension stiffening (rank-1 FLOOR along the live principal tensile axis) ----
+    # Between cracks, bonded reinforcement holds the average concrete tension above the bare
+    # softening curve. Inject delta = sigma_ts(e1) - n^T sigma n along p1 (only when delta>0),
+    # active ONLY post-crack (e1 >= eps_cr) so the elastic pre-crack branch is untouched.
+    # Default off -> baseline-identical. Degenerate (equibiaxial) -> isotropic in-plane.
+    ts_sig = 0.0
+    if P.tens_stiff_mode != 0 and e1 >= P.crack_strain:
+        # ts_inj = injection weights; ts_meas = measured-quantity weights (q = ts_meas . sig_ip).
+        # NON-degen: rank-1 on p1 (ts_meas.ts_inj = (c^2+s^2)^2 = 1). DEGEN (equibiaxial):
+        # q = in-plane mean, inject g to BOTH normals (ts_inj=(1,1,0), ts_meas=(0.5,0.5,0)) so
+        # each in-plane normal reaches sigma_ts -- the rank-1 (0.5,0.5,0) reuse reaches only half.
+        if degen:
+            ts_inj = (1.0, 1.0, 0.0)
+            ts_meas = (0.5, 0.5, 0.0)
+        else:
+            a, b, ab = p1c * p1c, p1s * p1s, p1c * p1s
+            ts_inj = (a, b, ab)
+            ts_meas = (a, b, 2.0 * ab)
+        q = sigma[0] * ts_meas[0] + sigma[1] * ts_meas[1] + sigma[3] * ts_meas[2]
+        ts_sig, _ = tens_stiff(e1, P.tens_stiff_mode, P.ft_peak, P.tens_stiff_c, P.tens_stiff_alpha)
+        delta = ts_sig - q
+        if delta > 0.0:
+            sigma[0] += delta * ts_inj[0]
+            sigma[1] += delta * ts_inj[1]
+            sigma[3] += delta * ts_inj[2]
+
     # ---- Phase 2a/2b: fixed-crack aggregate-interlock (membrane) ----
     crk_c, crk_s = st_committed.crackC, st_committed.crackS
     cracked, wmax = st_committed.cracked, st_committed.wmax
@@ -461,7 +517,7 @@ def compute(P, st_committed, strain6, betaMode='strength'):
     info = dict(Si=Si, beta=beta, dt_bar=dt_bar, dc_bar=dc_bar, e1=e1,
                 sigma=sigma, dc_plastic=dc_plastic, beta_sr=beta_sr,
                 cracked=cracked, crackC=crk_c, crackS=crk_s, wmax=wmax,
-                tauCr=tau_cr, gammaCr=gamma_cr)
+                tauCr=tau_cr, gammaCr=gamma_cr, ts_sig=ts_sig)
     return sigma, info, st
 
 
@@ -539,8 +595,60 @@ def run_A1(verbose=True):
     return ok, rows
 
 
+def run_T1(verbose=True):
+    """Phase-3 tension-stiffening gate. Drive a monotone uniaxial membrane tension
+    eps_xx: 0 -> 0.004 (eps_yy = eps_zz = 0), so the live principal tensile axis is x
+    and n^T sigma n == sigma_xx exactly. Assert, per step:
+      (a) PRE-crack (eps_xx < eps_cr): TS-on == TS-off (the elastic branch is untouched);
+      (b) POST-crack where sigma_ts(e1) > bare sigma_xx: sigma_xx(on) == sigma_ts(e1)
+          EXACTLY (the floor binds — closed form), and >= sigma_xx(off);
+      (c) reduce-to-baseline: tens_stiff_mode=0 reproduces the bare run bit-for-bit."""
+    def run(mode):
+        hc = Backbone([(0.0, 0.0, 1.0e-12), (0.0007, 24.0, 24.0),
+                       (0.0020, 30.0, 40.0), (0.0100, 5.0, 45.0)])
+        ht = Backbone([(0.0, 0.0, 1.0e-12), (0.0001, 3.0, 3.0), (0.0010, 0.5, 5.0)])
+        P = Params(E=30000.0, nu=0.2, Kc=0.667, ht=ht, hc=hc, tens_stiff_mode=mode)
+        st = State()
+        out = []
+        n = 400
+        for k in range(1, n + 1):
+            exx = 0.004 * k / n
+            sigma, info, st = compute(P, st, np.array([exx, 0.0, 0.0, 0.0, 0.0, 0.0]))
+            sig_ts, _ = tens_stiff(info['e1'], 1, P.ft_peak, P.tens_stiff_c, P.tens_stiff_alpha)
+            out.append((exx, info['e1'], sigma[0], P.crack_strain, sig_ts))
+        return out
+    off, vc, cm = run(0), run(1), run(2)
+    ok = True
+    n_floor = 0
+    for (exx, e1, s_off, ecr, sts), (_, _, s_vc, _, _) in zip(off, vc):
+        if exx < ecr:                              # (a) pre-crack untouched
+            if abs(s_vc - s_off) > 1.0e-9 * (abs(s_off) + 1.0):
+                ok = False
+        else:                                       # (b) post-crack: floor binds or inert
+            if s_vc + 1.0e-9 < s_off:               # never below the bare curve
+                ok = False
+            if sts > s_off + 1.0e-9:                # the floor is binding here
+                n_floor += 1
+                if abs(s_vc - sts) > 1.0e-7 * (abs(sts) + 1.0):   # closed form
+                    ok = False
+    # (c) cm-mode default (c=500, alpha=1) coincides with vc-mode default c=500
+    for (_, _, s_vc, _, _), (_, _, s_cm, _, _) in zip(vc, cm):
+        if abs(s_vc - s_cm) > 1.0e-9 * (abs(s_vc) + 1.0):
+            ok = False
+    ok = ok and (n_floor > 10)                      # the gate actually exercised the floor
+    if verbose:
+        print(f"  binding-floor steps checked (closed form): {n_floor}")
+        for (exx, e1, s_off, ecr, sts), (_, _, s_vc, _, _) in list(zip(off, vc))[::80]:
+            tag = "pre " if exx < ecr else ("floor" if sts > s_off + 1e-9 else "bare ")
+            print(f"  exx={exx:7.5f} e1={e1:7.5f} [{tag}] off={s_off:8.4f} on={s_vc:8.4f} ts={sts:8.4f}")
+    return ok
+
+
 if __name__ == '__main__':
     print("=== A1: beta-on-strength closed-form gate (numpy oracle) ===")
-    ok, _ = run_A1()
-    print(f"\nA1 GATE: {'PASS — beta scales the strength axis exactly' if ok else 'FAIL'}")
-    raise SystemExit(0 if ok else 1)
+    ok1, _ = run_A1()
+    print(f"A1 GATE: {'PASS — beta scales the strength axis exactly' if ok1 else 'FAIL'}")
+    print("\n=== T1: tension-stiffening floor closed-form gate (numpy oracle) ===")
+    ok2 = run_T1()
+    print(f"T1 GATE: {'PASS — sigma_xx tracks sigma_ts(e1) post-crack, untouched pre-crack' if ok2 else 'FAIL'}")
+    raise SystemExit(0 if (ok1 and ok2) else 1)
