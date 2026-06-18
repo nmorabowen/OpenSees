@@ -228,12 +228,27 @@ Design in [[32_ladruno_dispbeamcolumn_regularization_adr]] (the 11-agent scope +
   **Finding:** the non-Newton "stale-α" hole the review flagged does NOT bite — the residual is always
   evaluated post-`update()`, so tangent reuse / line search never corrupt the converged dissipation.
   The idempotent-re-converge hardening is therefore **unnecessary** (don't build it).
-- **NEXT — what's genuinely left for Tier-2:** (1) the `ladruno_drive` snap-back collapse test, still
-  blocked on the RESERVED dissipation arc-length ([[22_ladruno_dissipation_arclength_adr]]) — build that
-  integrator first or trace with `LadrunoIndirectControl` (CMOD on the hinge jump); (2) `-nl`+hinge
-  cross-term algebra (the bowing×α axial coupling, currently rejected at parse); (3) **3D** — its own
-  ADR (quaternion-triad finite-rotation biaxial/torsional jump on `CorotCrdTransf3d`), the real frontier.
-  The 2D Tier-1+Tier-2 element is otherwise gate-complete.
+- **DONE — PR-3a 3D STRONG-AXIS embedded hinge ([[33_ladruno_dispbeamcolumn3d_hinge_adr]], ADR 33).**
+  Scoped by a **17-agent workflow** (4 scouts × 3 designs × perspective-diverse adversarial verify +
+  synthesis) which killed three tempting-but-wrong shortcuts: two independent rank-1 updates (wrong when
+  `ks(MZ,MY)≠0`), running the 2D kernel verbatim twice (`setTrialSectionDeformation` overwrites the whole
+  strain vector), and a det-floored adjugate inverse (blows up ~1e8× at staggered activation → use
+  **eigenvalue flooring** in PR-3b). PR-3a ships the **strong-axis jump `α_z` only** — the literal 2D
+  scalar algebra on the Mz row of the 6-DOF basic system, one guarded rank-1 condensation **before**
+  `CorotCrdTransf3d` (`hingeKvZ` a 6-vector incl. the cross-tangent rows so off-diagonals are right).
+  12/12 gates incl. **finite-rotation invariance under `CorotCrdTransf3d`** (>0.5 rad member rotation
+  still dissipates Gf → pinned invariant survives the quaternion triad). Full 65/65. Reuses `ELE_TAG 33014`.
+- **NEXT — PR-3b: 3D BIAXIAL hinge** (the design is in ADR 33 §2-4, fully reviewed): add the weak-axis
+  jump `α_y` + the **TRUE coupled 2×2 `K_αα`** (off-diagonal `(1/L)Σwt·ks(MZ,MY)`) with an
+  **eigenvalue-floored** symmetric-2×2 guarded inverse (NOT det-floor) + 6×2 `K_vα` + a `‖dK‖_F ≤
+  1e3·‖K_vv‖_F` step-cut guard; per-component `Mscale_z/Mscale_y`; one unified inner Newton setting both
+  channels in ONE `setTrialSectionDeformation`. Gate: extend the FD/finite-rotation suite to a
+  **staggered-activation** path (z opens before y, det(K_αα)→0 crossing). Block-diagonal cohesive
+  (two scalar `LadrunoCohesiveHinge`) — the bulk `ks(MZ,MY)` carries the dominant coupling.
+- **Then (PR-3c+ / other tracks):** coupled biaxial cohesive `MAT_TAG 33004` (v2 material); torsional
+  jump (`-torsion`); `-nl`+hinge cross-terms; the `ladruno_drive` snap-back collapse test (blocked on the
+  RESERVED dissipation arc-length [[22_ladruno_dissipation_arclength_adr]], or trace with
+  `LadrunoIndirectControl`). The 2D and 3D-strong-axis Tier-2 elements are gate-complete.
 - Known low-sev nice-to-have: 3D `getTangentStiff` recomputes the linear kb then discards it when `-nl`
   (perf only; guard with `if(!nlGeom)`).
 
