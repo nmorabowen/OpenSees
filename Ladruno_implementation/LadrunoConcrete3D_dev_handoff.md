@@ -361,12 +361,35 @@ FD-checked against the P2d numerical reference. Structure (ADR §4.3 [MAJOR]):
   kink). The C++ picks the committed-sign subgradient (same family as the eigenvalue-crossing the ADR
   flags).
 
-**NEXT (P2f):** `β_c` cyclic (Eq.50; couples into the monotonic compression damage — re-gate C1/C2)
-+ multiaxial-damage apportioning (extreme-principal vs `‖σ̄_t‖` norm; `/x_s` onset harmonization across
-channels) + plastic-dissipation regularization (the D3/C3 caveat) → then the **C++ port**
-(`returnMapDamaged` over the P1 kernel: spectral split + `_solve_omega_bracketed` per channel + nominal
-recompose + the analytic damaged tangent above) + the `nDMaterial` wrapper (lands classTag 33017 +
-the foot-gun guards).
+**P2e ADVERSARIAL REVIEW (4-dim workflow, folded in — review-fixes PR):** the math core held (every
+shipped uniaxial `σ11`/`ω_c` correct, no return-map/tangent error), three findings fixed: (1) **[MAJOR]
+spurious `ω_t` in pure compression** — the `ω`-solve was gated only by `sig_t_drive>0`, so the ~1e-10 MPa
+lateral-Newton residual (sign-dependent) drove `ω_t→1` in pure uniaxial-STRESS compression (mask-hidden
+behind the compressive channel, but it poisons the tensile history). FIXED with a **physical floor**:
+solve `ω_t` only when `sig_t_drive > 1e-6·ft` (mirror `ω_c`/`fc`), at all 3 sites (driver, single-step,
+analytic-tangent). Gated: `DT0_pure_compression_wt < 1e-6`. (2) **[MAJOR] DT3 was tautological** — in its
+`comp_early` window `ω_t≡0` (the driver floors it once all principals are compressive), so it never fed
+`apply_damage_principal` a *(compressive principal, live `ω_t`)* pair; a broken unilateral routing still
+passed. FIXED by testing the routing DIRECTLY + unconditionally (`DT0_unilateral` +
+`DT0_compr_wt_invariant`: a compressive principal is carried by `(1−ω_c)` ONLY, byte-invariant to a live
+`ω_t=0.95`); DT3 kept as the end-to-end check with an honest docstring. (3) **[MINOR] PE6** docstring
+named the wrong kink directions (it's the lateral-normal AND coupled in-plane shear, not just lateral) —
+reworded; the gate already only asserts the axial column.
+
+**KNOWN LIMITATION (DT5 diagnostic, reported): compression→tension damage coupling.** Per literal CDPM2
+**Eq.43** `κ̇_dt = ε̃̇` (FULL equivalent strain, **no `(1−α_c)` factor** — re-confirmed from the arXiv
+source), so a compression excursion accumulates `κ_dt1/κ_dt2` and **pre-damages a subsequent tension
+reload — today to ZERO tensile strength** (DT5 reports `tension-after-compression peak ≈ 0` vs fresh
+`ft`). The monotonic tension/compression responses (DT1/DT2) are correct; this is the **cyclic T/C
+coupling** (the dropped `β_c` Eq.50 + the open `α_t`-weighting question: literal-CDPM2 full-`ε̃` vs a
+tensile-plastic-strain projection) and is **P2f** scope. Tracked, not gated.
+
+**NEXT (P2f):** `β_c` cyclic (Eq.50; couples into the monotonic compression damage — re-gate C1/C2) +
+the compression→tension coupling temper (DT5) + multiaxial-damage apportioning (extreme-principal vs
+`‖σ̄_t‖` norm; `/x_s` onset harmonization across channels) + plastic-dissipation regularization (the
+D3/C3 caveat) → then the **C++ port** (`returnMapDamaged` over the P1 kernel: spectral split +
+`_solve_omega_bracketed` per channel + the physical floor + nominal recompose + the analytic damaged
+tangent above) + the `nDMaterial` wrapper (lands classTag 33017 + the foot-gun guards).
 
 ## 7. Roadmap context
 

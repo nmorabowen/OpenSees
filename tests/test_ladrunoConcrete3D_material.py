@@ -196,20 +196,26 @@ def test_p2b_compression_damage_gate():
 
 def test_p2c_tensor_damage_gate():
     """P2c: the UNIFIED tensor dual-damage update (CDPM2 Eq.1 spectral split) + automatic
-    unilateral crack-closure. DT0 split is an exact partition + wt=wc=0 is the identity; DT1/DT2
-    the single update reduces to the validated P2a (tension, exact) / P2b (compression, to the
-    onset-crossing step) 1D drivers; DT3 a tension->compression reversal RECOVERS the cracked
-    stiffness (nominal/effective -> 1 in early compression though wt~1) because the converged
-    effective stress is RE-SPLIT every step (ADR 4.3 BLOCKING — no extra state, tier-independent);
-    DT4 the damaged stress is frame-objective (the spectral recompose carries the eigenvectors)."""
+    unilateral crack-closure. DT0 split is an exact partition + wt=wc=0 is the identity + the
+    UNILATERAL routing is tested DIRECTLY (a compressive principal is carried by (1-wc) ONLY,
+    wt-invariant, even under a LIVE wt=0.95) + the physical FLOOR (pure compression does NOT
+    spuriously activate wt off the lateral-Newton residual, mirror for tension wc); DT1/DT2 the
+    single update reduces to the validated P2a (tension, exact) / P2b (compression, to the
+    onset-crossing step) 1D drivers; DT3 the end-to-end tension->compression reversal recovers the
+    cracked stiffness via the per-step RE-SPLIT (ADR 4.3 BLOCKING); DT4 the damaged stress is
+    frame-objective. (DT5 reports the deferred compression->tension cyclic coupling = P2f.)"""
     r = ref.run_p2c_gate(verbose=False)
     assert r["DT0_split_partition"] < 1.0e-14    # st + sc == sig exactly
     assert r["DT0_identity"] < 1.0e-14           # wt=wc=0 => nominal == effective
+    assert r["DT0_unilateral"] < 1.0e-14         # compressive principals via (1-wc), tensile via (1-wt)
+    assert r["DT0_compr_wt_invariant"] < 1.0e-14  # compressive entries are wt-INVARIANT (the closed crack)
+    assert r["DT0_pure_compression_wt"] < 1.0e-6  # FLOOR: no spurious wt in pure compression (review-fix)
+    assert r["DT0_pure_tension_wc"] < 1.0e-6      # FLOOR mirror: no spurious wc in pure tension
     assert r["DT1_sig_maxdiff"] < 1.0e-7         # pure tension reduces EXACTLY to the P2a driver
     assert r["DT1_wt_maxdiff"] < 1.0e-7
     assert r["DT2_sig_maxdiff"] < 1.0e-2         # pure compression matches P2b (to the onset step)
     assert r["DT2_wc_maxdiff"] < 1.0e-2
-    assert r["DT3_recovered"]                    # unilateral crack-closure recovers full stiffness
+    assert r["DT3_recovered"]                    # unilateral crack-closure recovers full stiffness (end-to-end)
     assert r["DT4_objectivity"] < 1.0e-9         # damaged stress rotates with the strain
     assert r["PASS"]
 
