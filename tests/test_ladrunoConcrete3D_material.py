@@ -194,6 +194,26 @@ def test_p2b_compression_damage_gate():
     assert r["PASS"]
 
 
+def test_p2c_tensor_damage_gate():
+    """P2c: the UNIFIED tensor dual-damage update (CDPM2 Eq.1 spectral split) + automatic
+    unilateral crack-closure. DT0 split is an exact partition + wt=wc=0 is the identity; DT1/DT2
+    the single update reduces to the validated P2a (tension, exact) / P2b (compression, to the
+    onset-crossing step) 1D drivers; DT3 a tension->compression reversal RECOVERS the cracked
+    stiffness (nominal/effective -> 1 in early compression though wt~1) because the converged
+    effective stress is RE-SPLIT every step (ADR 4.3 BLOCKING — no extra state, tier-independent);
+    DT4 the damaged stress is frame-objective (the spectral recompose carries the eigenvectors)."""
+    r = ref.run_p2c_gate(verbose=False)
+    assert r["DT0_split_partition"] < 1.0e-14    # st + sc == sig exactly
+    assert r["DT0_identity"] < 1.0e-14           # wt=wc=0 => nominal == effective
+    assert r["DT1_sig_maxdiff"] < 1.0e-7         # pure tension reduces EXACTLY to the P2a driver
+    assert r["DT1_wt_maxdiff"] < 1.0e-7
+    assert r["DT2_sig_maxdiff"] < 1.0e-2         # pure compression matches P2b (to the onset step)
+    assert r["DT2_wc_maxdiff"] < 1.0e-2
+    assert r["DT3_recovered"]                    # unilateral crack-closure recovers full stiffness
+    assert r["DT4_objectivity"] < 1.0e-9         # damaged stress rotates with the strain
+    assert r["PASS"]
+
+
 def test_p2_no_spurious_healing():
     """Regression for the PR #261 adversarial-review CRITICAL: the implicit omega solve must not
     clamp-stall to 0 on a physical softening path (a raw clamped Newton did, so the cracked material
