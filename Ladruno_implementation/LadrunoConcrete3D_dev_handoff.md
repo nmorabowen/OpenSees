@@ -2,7 +2,7 @@
 title: "LadrunoConcrete3D — developer / C++-implementer handoff guide"
 project: Ladruno
 type: handoff guide
-status: P0/P1 oracle + C++ KERNEL return map/tangent (g++-verified) + P2 dual damage DONE in oracle — P2a tensile ω_t, P2b compressive ω_c + α_c split, P2c UNIFIED TENSOR split + automatic unilateral crack-closure, P2d single-step tensor update + NUMERICAL damaged tangent, P2e the ANALYTIC dual-projector damaged consistent tangent (D_dam:C_eff − dual rank-updates, FD == numerical ref). NEXT = P2f (β_c cyclic + multiaxial apportioning + plastic-dissipation regularization) → C++ returnMapDamaged port + the nDMaterial wrapper (carries the 33017 define + foot-gun guards).
+status: P0/P1 oracle + C++ KERNEL return map/tangent (g++-verified) + P2 dual damage DONE in oracle (P2a tensile ω_t, P2b compressive ω_c + α_c split, P2c UNIFIED TENSOR split + automatic unilateral, P2d single-step update + NUMERICAL tangent, P2e ANALYTIC dual-projector damaged tangent) + adversarial-review-hardened (ω floor, de-tautologized DT3) + **P3a C++ KERNEL DAMAGE stress update ported (g++ byte-verified ~1e-14)**. NEXT = P3b (the ANALYTIC damaged tangent in the kernel) → the nDMaterial wrapper (33017 + foot-gun guards); P2f cyclic (β_c + the compression→tension temper) deferred.
 related:
   - "[[31_ladruno_concrete3d_adr]]"          # the ADR (decision record)
   - "[[project_ladruno_concrete3d]]"          # the agent-memory pointer
@@ -172,7 +172,26 @@ analytic tangent and FD-check it against the oracle.** Verified facts you must r
   Jacobian ⇒ machine-precision); hardening stress 1e-6 / kp 1e-7 (the oracle hardening reference is
   itself ~1e-8, numerical Jacobian, §6.3); tangent 1e-6.
 
-**WRAPPER increment (DEFERRED — lands with P2 damage, where the stress peak first appears):**
+**KERNEL DAMAGE increment (DONE — P3a, this PR, g++ byte-verified):** the P2 monotonic damage
+subsystem ported into `LadrunoConcrete3DKernel.h`, mirroring the oracle verbatim:
+- [x] **Damage kinematics** — `equivStrainGeneral` (Eq.37), `alphaCompression` (Eq.46),
+  `damageDrivers` (`ε̃`, `α_c`, `x_s` Eq.56-57), `solveOmegaBracketed` (the bisection-safeguarded
+  implicit-`ω` root, PR #261 no-spurious-healing); `As` added to `Params`.
+- [x] **`damagedUpdate`** — the dual-damage NOMINAL stress `σ = (1−ω_t)⟨σ̄⟩₊ + (1−ω_c)⟨σ̄⟩₋` (Eq.1):
+  re-eig the converged effective stress (⇒ **automatic unilateral**), accumulate the histories
+  (clamped at `ε0`, full `‖Δε_p‖` via `plasticStrain6` isotropic compliance + tensor Frobenius), the
+  **physical FLOOR** `> 1e-6·strength` on each `ω`-drive (review-fix), recompose. `State` extended with
+  `sigEff` + the 6 damage-history fields; `returnMap` now returns the nominal `σ` and keeps
+  `sigEffImplicit` = effective.
+- [x] **g++ byte-check** — 4 `DMG` fixture cases (tension / reversal / confined-compression / shear
+  committed damage states + a probe) reproduce the oracle `damaged_step_tensor` nominal stress to
+  **~1e-14** (machine precision — single-step committed state, no multi-step amplification). Wired into
+  the existing pytest g++ gate.
+- [ ] **NOT yet:** the ANALYTIC dual-projector DAMAGED tangent in the kernel (`returnMap` currently
+  returns the P1 EFFECTIVE tangent — over-stiff on softening) — the oracle reference is P2e
+  `damaged_tangent_analytic`; that is the next kernel slice (P3b).
+
+**WRAPPER increment (DEFERRED — lands after the kernel damage tangent, P3b):**
 
 - [ ] `#define ND_TAG_LadrunoConcrete3D 33017` in `SRC/classTags.h` (still deferred — **no orphan
   tag**; the LEDGER row reserves it, mirroring the LogStrain2D 33016 convention).
