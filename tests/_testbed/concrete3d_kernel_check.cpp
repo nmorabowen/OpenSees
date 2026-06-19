@@ -166,9 +166,17 @@ static void run_oracle_dump(const char* path) {
         std::printf("  %-24s tan_rel=%.3e perEntry=%.2e asym C/O=%.3f/%.3f  %s\n",
                     label.c_str(), rel, perEntry, asymC, asymO, ok ? "ok" : "FAIL");
     }
-    // ---- (B3) P2 DAMAGE: committed damage state + deps -> NOMINAL stress (oracle damaged_step_tensor) ----
+    // ---- (B3) P2 DAMAGE: committed damage state + deps -> NOMINAL stress (oracle damaged_step_tensor)
+    //      AND (B4) the P3b ANALYTIC dual-projector DAMAGED consistent tangent. B3 pins the damage
+    //      STRESS to the oracle (cross-platform). B4 is SELF-CONTAINED: the analytic damaged tangent
+    //      (returnMap doTangent=true) is checked against a NUMERICAL central-difference of the SAME
+    //      C++ damaged nominal stress (the operator the global Newton consumes) — exactly as the
+    //      oracle run_p2e_gate checks analytic vs numerical. Since B3 pins the stress to the oracle,
+    //      analytic==numerical here certifies the analytic tangent without any cross-platform FD
+    //      noise. The 4 committed states are the smooth PE1/PE2/PE3/PE4 regimes (tension / confined
+    //      compression / shear-nonassoc / reversal) — off the sigma_lat=0 Macaulay kink. ----
     fh >> tok; int ndmg; fh >> ndmg;          // NDMG
-    double worst_dmg = 0;
+    double worst_dmg = 0, worst_dtan = 0;
     for (int d = 0; d < ndmg; ++d) {
         fh >> tok; std::string label; fh >> label;   // DMG <label>
         double pb[12]; for (int i = 0; i < 12; ++i) fh >> pb[i];
@@ -183,19 +191,51 @@ static void run_oracle_dump(const char* path) {
         for (int i = 0; i < 6; ++i) fh >> deps[i];
         for (int i = 0; i < 6; ++i) fh >> sigO[i];
         double strain[6]; for (int i = 0; i < 6; ++i) strain[i] = in.eps[i] + deps[i];
-        double sigC[6], sigEff[6], Dt[6][6];
-        returnMap(mp, strain, in, out, sigC, sigEff, Dt, false, -1.0, /*hardening=*/true);
+        double sigC[6], sigEff[6], Da[6][6];
+        returnMap(mp, strain, in, out, sigC, sigEff, Da, true, -1.0, /*hardening=*/true);  // analytic tangent
         double maxs = 0; for (int i = 0; i < 6; ++i) maxs = std::fmax(maxs, std::fabs(sigC[i] - sigO[i]));
         worst_dmg = std::fmax(worst_dmg, maxs);
-        // damage = effective return (~1e-8 hardening floor) THEN the smooth analytic damage recompose;
-        // no new amplification => same hardening floor as the return-map paths.
-        bool ok = maxs < 1.0e-6;
-        if (!ok) ++fails;
-        std::printf("  %-24s nom_sig_err=%.2e  %s\n", label.c_str(), maxs, ok ? "ok" : "FAIL");
+        // (B3) damage = effective return (~1e-8 hardening floor) THEN the smooth analytic damage
+        // recompose; no new amplification => same hardening floor as the return-map paths.
+        bool oks = maxs < 1.0e-6;
+
+        // (B4) NUMERICAL damaged tangent: central diff of returnMap's nominal stress over the strain
+        // increment, committed `in` held fixed (mirrors oracle damaged_consistent_tangent, rel_step 1e-6).
+        double Cn[6][6];
+        const double base = mp.fc / mp.E;
+        for (int j = 0; j < 6; ++j) {
+            const double dd = 1.0e-6 * (std::fabs(deps[j]) + base);
+            double sp[6], sm[6], se[6], junk[6][6]; State o2;
+            double strp[6], strm[6];
+            for (int i = 0; i < 6; ++i) { strp[i] = strain[i]; strm[i] = strain[i]; }
+            strp[j] += dd; strm[j] -= dd;
+            returnMap(mp, strp, in, o2, sp, se, junk, false, -1.0, true);
+            returnMap(mp, strm, in, o2, sm, se, junk, false, -1.0, true);
+            for (int i = 0; i < 6; ++i) Cn[i][j] = (sp[i] - sm[i]) / (2.0 * dd);
+        }
+        double nd = 0, nn = 0, cmax = 0;
+        for (int A = 0; A < 6; ++A) for (int B = 0; B < 6; ++B) {
+            double df = Da[A][B] - Cn[A][B]; nd += df * df; nn += Cn[A][B] * Cn[A][B];
+            cmax = std::fmax(cmax, std::fabs(Cn[A][B]));
+        }
+        double rel = std::sqrt(nd / nn);
+        double perEntry = 0;
+        for (int A = 0; A < 6; ++A) for (int B = 0; B < 6; ++B)
+            if (std::fabs(Cn[A][B]) > 0.01 * cmax)
+                perEntry = std::fmax(perEntry, std::fabs(Da[A][B] - Cn[A][B]) / std::fabs(Cn[A][B]));
+        worst_dtan = std::fmax(worst_dtan, rel);
+        // analytic vs numerical of the SAME C++ stress: floored by the central-diff truncation + the
+        // single-step hardening return-map convergence noise (the perturbed step re-solves the inner
+        // Newton). Both ~1e-5; floors set just above.
+        bool okt = rel < 5.0e-5 && perEntry < 5.0e-3;
+        if (!oks || !okt) ++fails;
+        std::printf("  %-24s nom_sig_err=%.2e %s   tan_rel=%.2e perEntry=%.2e %s\n",
+                    label.c_str(), maxs, oks ? "ok" : "FAIL", rel, perEntry, okt ? "ok" : "FAIL");
     }
 
-    std::printf("  WORST  sig=%.2e (pp<1e-9/hard<1e-6)  kp=%.2e (pp<1e-10/hard<1e-7)  tan=%.3e (<1e-6)  dmg=%.2e (<1e-6)\n",
-                worst_sig, worst_kp, worst_tan, worst_dmg);
+    std::printf("  WORST  sig=%.2e (pp<1e-9/hard<1e-6)  kp=%.2e (pp<1e-10/hard<1e-7)  tan=%.3e (<1e-6)"
+                "  dmg=%.2e (<1e-6)  dmgtan=%.2e (<5e-5)\n",
+                worst_sig, worst_kp, worst_tan, worst_dmg, worst_dtan);
 }
 
 // ---- (C) robustness / honesty regressions (PR #249 adversarial-review fixes) ----------------

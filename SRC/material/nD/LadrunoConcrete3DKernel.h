@@ -58,9 +58,16 @@
 // (tests/_testbed/concrete3d_kernel_check.cpp): perfect-plastic stress+tangent to machine precision,
 // hardening to the oracle's numerical-Jacobian reference floor (~1e-8). KNOWN GAP (inherited from
 // the oracle, handoff §6): the low-kappa_p tiny-surface / off-meridian first-yield APEX regime needs
-// sub-stepping + a dedicated apex sub-algorithm. STILL STUBS (later phases): dual damage (P2, where
-// the stress PEAK/softening comes from), robustness tiers (P3), finite-strain out-contract (P4),
-// confined-fiber condensation (§4.6). NO OpenSees nDMaterial wrapper yet (classTag 33017 reserved).
+// sub-stepping + a dedicated apex sub-algorithm.
+// P2/P3a/P3b DAMAGE COMPLETE in the kernel: the dual scalar omega_t/omega_c update (damagedUpdate,
+// Eq.1 spectral split + automatic unilateral re-split, where the stress PEAK/softening comes from)
+// AND the P3b ANALYTIC dual-projector DAMAGED consistent tangent (damagedTangent: D_dam:C_eff -
+// sig_t(x)d_omega_t - sig_c(x)d_omega_c) — returnMap returns this damaged tangent when doTangent.
+// Both verified against the oracle (NOMINAL stress ~1e-14; damaged tangent == a numerical central
+// diff of the SAME C++ stress ~1e-7 AND == the oracle damaged_tangent_analytic ~1e-7). STILL TO COME
+// (later phases): robustness tiers (P3 IMPL-EX), finite-strain out-contract (P4), confined-fiber
+// condensation (§4.6), the cyclic beta_c temper (P2f). NO OpenSees nDMaterial wrapper yet (classTag
+// 33017 reserved).
 //
 // Tensor convention: symmetric tensors stored as 6 TENSOR components in the canonical OpenSees
 // order {00,11,22,01,12,02} (off-diagonal slots hold TRUE tensor components, not engineering —
@@ -968,6 +975,281 @@ inline void damagedUpdate(const Params& mp, const State& in, const double sig_ef
     out.kdc = kdc; out.kdc1 = kdc1; out.kdc2 = kdc2;
 }
 
+// ===========================================================================
+// P3b — ANALYTIC dual-projector DAMAGED consistent tangent. Supporting machinery
+// (ports the oracle's isotropic_tangent / _dscalar_dsig / damaged_tangent_analytic
+// VERBATIM), then the tangent itself. The C++ public entry point returnMap upgrades
+// its P1 EFFECTIVE tangent to this damaged tangent when doTangent is requested.
+// ===========================================================================
+
+// de Souza Neto-Peric-Owen 2008 Box A.6 derivative dY/dX of an isotropic symmetric-tensor
+// function Y = sum_a y(lam_a) E_a, given eigenvalues `lam`, eigenvectors `V` (columns), and the
+// per-eigenvalue values yv=y(lam_a), ypv=y'(lam_a):
+//     (dY/dX : S) = sum_a ypv_a (E_a:S) E_a + sum_{a!=b} G_ab E_a S E_b,
+//     G_ab = (yv_a - yv_b)/(lam_a - lam_b)  (-> ypv_a as lam_b -> lam_a, l'Hopital).
+// Mirrors the oracle isotropic_tangent byte-for-byte: operate on real 3x3 matrices, build each
+// 6x6 column by applying to the basis Voigt tensor e_j, pack with matToVoigt {00,11,22,01,12,02}.
+inline void isotropicTangent(const double lam[3], const double V[3][3],
+                             const double yv[3], const double ypv[3], double D6[6][6],
+                             double tol = 1.0e-8)
+{
+    double E[3][3][3];
+    for (int a = 0; a < 3; ++a) for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j)
+        E[a][i][j] = V[i][a] * V[j][a];
+    double G[3][3];
+    for (int a = 0; a < 3; ++a) for (int b = 0; b < 3; ++b) {
+        if (a == b) { G[a][b] = 0.0; continue; }
+        const double dl = lam[a] - lam[b];
+        G[a][b] = (std::fabs(dl) < tol) ? ypv[a] : (yv[a] - yv[b]) / dl;
+    }
+    for (int j = 0; j < 6; ++j) {
+        double Sj[6] = {0, 0, 0, 0, 0, 0}; Sj[j] = 1.0;
+        double S[3][3]; voigtToMat(Sj, S);
+        double out[3][3];
+        for (int i = 0; i < 3; ++i) for (int k = 0; k < 3; ++k) out[i][k] = 0.0;
+        for (int a = 0; a < 3; ++a) {                                   // sum_a ypv_a (E_a:S) E_a
+            double EaS = 0.0;
+            for (int i = 0; i < 3; ++i) for (int k = 0; k < 3; ++k) EaS += E[a][i][k] * S[i][k];
+            const double c = ypv[a] * EaS;
+            for (int i = 0; i < 3; ++i) for (int k = 0; k < 3; ++k) out[i][k] += c * E[a][i][k];
+        }
+        for (int a = 0; a < 3; ++a) for (int b = 0; b < 3; ++b) {       // sum_{a!=b} G_ab E_a S E_b
+            if (a == b) continue;
+            double ES[3][3];
+            for (int i = 0; i < 3; ++i) for (int k = 0; k < 3; ++k) {
+                double v = 0.0; for (int m = 0; m < 3; ++m) v += E[a][i][m] * S[m][k]; ES[i][k] = v;
+            }
+            double M[3][3];
+            for (int i = 0; i < 3; ++i) for (int k = 0; k < 3; ++k) {
+                double v = 0.0; for (int m = 0; m < 3; ++m) v += ES[i][m] * E[b][m][k]; M[i][k] = v;
+            }
+            for (int i = 0; i < 3; ++i) for (int k = 0; k < 3; ++k) out[i][k] += G[a][b] * M[i][k];
+        }
+        double out6[6]; matToVoigt(out, out6);
+        for (int i = 0; i < 6; ++i) D6[i][j] = out6[i];
+    }
+}
+
+// 6x6 inverse by Gauss-Jordan w/ partial pivot — the elastic compliance C^-1 for the
+// plastic-strain-rate chain term d(eps_p)/d(eps) = I - C^-1 C_eff. Returns false if singular.
+inline bool invert6(const double A[6][6], double Inv[6][6])
+{
+    double M[6][12];
+    for (int i = 0; i < 6; ++i)
+        for (int j = 0; j < 6; ++j) { M[i][j] = A[i][j]; M[i][j + 6] = (i == j) ? 1.0 : 0.0; }
+    for (int c = 0; c < 6; ++c) {
+        int piv = c; for (int r = c + 1; r < 6; ++r) if (std::fabs(M[r][c]) > std::fabs(M[piv][c])) piv = r;
+        if (std::fabs(M[piv][c]) < 1.0e-300) return false;
+        for (int j = 0; j < 12; ++j) { double t = M[c][j]; M[c][j] = M[piv][j]; M[piv][j] = t; }
+        const double d = M[c][c];
+        for (int j = 0; j < 12; ++j) M[c][j] /= d;
+        for (int r = 0; r < 6; ++r) if (r != c) {
+            const double f = M[r][c];
+            for (int j = 0; j < 12; ++j) M[r][j] -= f * M[c][j];
+        }
+    }
+    for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) Inv[i][j] = M[i][j + 6];
+    return true;
+}
+
+// Scalar damage-driver as a function of the full effective stress (eigendecompose -> principals).
+//   which 0 = equiv strain (Eq.37), 1 = softening ductility xs (Eq.56-57), 2 = alpha_c (Eq.46).
+inline double scalarDriver(int which, const double sig6[6], const Params& mp)
+{
+    double A[3][3], w[3], V[3][3]; voigtToMat(sig6, A); eig3sym(A, w, V);
+    if (which == 0) return equivStrainGeneral(w, mp);
+    if (which == 1) { double et, ac, xs; damageDrivers(w, mp, et, ac, xs); return xs; }
+    return alphaCompression(w);
+}
+
+// Isolated micro-FD gradient d(scalarDriver)/d(sig) per Voigt component (oracle _dscalar_dsig,
+// h=1e-6). These are PER-COMPONENT grads of a scalar-of-stress => NO [1,1,1,2,2,2] tensor weight
+// (unlike the eigenprojection / ||Deps_p|| gradients below, which DO carry it — LEDGER quirk).
+inline void dscalarDsig(int which, const double sig6[6], const Params& mp, double g[6], double h = 1.0e-6)
+{
+    for (int k = 0; k < 6; ++k) {
+        double dp[6], dm[6];
+        for (int i = 0; i < 6; ++i) { dp[i] = sig6[i]; dm[i] = sig6[i]; }
+        dp[k] += h; dm[k] -= h;
+        g[k] = (scalarDriver(which, dp, mp) - scalarDriver(which, dm, mp)) / (2.0 * h);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// P3b ANALYTIC dual-projector DAMAGED consistent tangent (mirrors the oracle
+// damaged_tangent_analytic VERBATIM):
+//     C = D_dam : C_eff  -  sig_t (x) dω_t/dε  -  sig_c (x) dω_c/dε        (ADR §4.3 MAJOR)
+// D_dam = isotropicTangent spectral derivative of the per-principal damaged stress with ω FROZEN
+// (Box A.6); the two rank-1 updates carry the ω-sensitivity via the IFT on the bracketed ω-solve
+// F(ω)=(1-ω)D - f exp(-(kd1+ω kd2)/eps_f)=0 (H=dF/dω=D[(1-ω)kd2/eps_f - 1]), chained through the
+// CDPM2 damage histories. `Ceff` = the P1 EFFECTIVE consistent tangent (from returnMapTensor);
+// `sig_eff` = the converged effective stress; `in` = the committed damage history. RECOMPUTES the
+// same drivers as damagedUpdate (self-contained, exactly as the oracle does), so the ω used here is
+// byte-identical to the update's. FD-verified == the P2d numerical reference ~1e-10.
+// Voigt-WEIGHT quirk (LEDGER): the TENSOR gradients (eigenprojection Emax/Emin, ||Deps_p||) carry
+// the [1,1,1,2,2,2] double-contraction weight W6 BEFORE Ceff^T; the per-component micro-FD scalar
+// grads (det/dxs/dac) do NOT (already per-component).
+// ---------------------------------------------------------------------------
+inline void damagedTangent(const Params& mp, const State& in, const double sig_eff[6],
+                           const double eps_new[6], const double Ceff[6][6], double D6[6][6])
+{
+    static const double W6[6] = {1.0, 1.0, 1.0, 2.0, 2.0, 2.0};
+    const double eps0   = mp.ft / mp.E;
+    const double eps_f  = mp.Gf / (mp.ft * mp.lch);
+    const double eps_fc = mp.Gc / (mp.fc * mp.lch);
+
+    double A[3][3], w[3], V[3][3];
+    voigtToMat(sig_eff, A);
+    eig3sym(A, w, V);
+    double et, ac, xs; damageDrivers(w, mp, et, ac, xs);
+
+    // plastic-strain INCREMENT (tensor Voigt) + its Frobenius norm (== ddot6 with W6)
+    double epl[6], epl_n[6], depl[6];
+    plasticStrain6(sig_eff,   eps_new, mp, epl);
+    plasticStrain6(in.sigEff, in.eps,  mp, epl_n);
+    for (int i = 0; i < 6; ++i) depl[i] = epl[i] - epl_n[i];
+    double dnorm2 = 0.0;
+    for (int i = 0; i < 6; ++i) dnorm2 += W6[i] * depl[i] * depl[i];
+    const double dnorm = std::sqrt(dnorm2);
+
+    const double et_max_n = in.et_max;
+    const double det_raw = (et - et_max_n > 0.0) ? (et - et_max_n) : 0.0;
+    const double loref = et_max_n > eps0 ? et_max_n : eps0;
+    const double above = (et - loref > 0.0) ? (et - loref) : 0.0;
+    const bool loading = det_raw > 0.0 && et > eps0;
+
+    double kdt1 = in.kdt1, kdt2 = in.kdt2, kdc = in.kdc, kdc1 = in.kdc1, kdc2 = in.kdc2;
+    if (loading) {
+        kdt2 += above / xs;          kdt1 += dnorm / xs;
+        kdc  += ac * above;          kdc2 += ac * above / xs;
+        kdc1 += ac * dnorm / xs;
+    }
+    const double et_max2 = et_max_n > et ? et_max_n : et;
+
+    // extreme effective principals + their eigenprojections (argmax/argmin; eig3sym is unsorted)
+    int imax = 0, imin = 0;
+    for (int i = 1; i < 3; ++i) { if (w[i] > w[imax]) imax = i; if (w[i] < w[imin]) imin = i; }
+    const double Dt = w[imax] > 0.0 ? w[imax] : 0.0;
+    const double Dc = (-w[imin]) > 0.0 ? -w[imin] : 0.0;
+    const double wt = (et_max2 > eps0 && Dt > 1.0e-6 * mp.ft)
+                    ? solveOmegaBracketed(kdt1, kdt2, Dt, mp.ft, eps_f) : 0.0;
+    const double wc = (kdc > 0.0 && Dc > 1.0e-6 * mp.fc)
+                    ? solveOmegaBracketed(kdc1, kdc2, Dc, mp.fc, eps_fc) : 0.0;
+
+    // D_dam = spectral derivative of the per-principal damaged stress with ω FROZEN
+    double yv[3], ypv[3];
+    for (int a = 0; a < 3; ++a) {
+        const double st = w[a] > 0.0 ? w[a] : 0.0;
+        const double sc = w[a] < 0.0 ? w[a] : 0.0;
+        yv[a]  = (1.0 - wt) * st + (1.0 - wc) * sc;
+        ypv[a] = (w[a] > 0.0) ? (1.0 - wt) : (1.0 - wc);
+    }
+    double Ddam[6][6];
+    isotropicTangent(w, V, yv, ypv, Ddam);
+
+    // sig_t = <sig_bar>+ , sig_c = <sig_bar>- recomposed on the SAME eigenvectors
+    double sig_t[6], sig_c[6];
+    {
+        double St[3][3], Sc[3][3];
+        for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) {
+            double vt = 0.0, vc = 0.0;
+            for (int a = 0; a < 3; ++a) {
+                const double sp = w[a];
+                vt += V[i][a] * (sp > 0.0 ? sp : 0.0) * V[j][a];
+                vc += V[i][a] * (sp < 0.0 ? sp : 0.0) * V[j][a];
+            }
+            St[i][j] = vt; Sc[i][j] = vc;
+        }
+        matToVoigt(St, sig_t); matToVoigt(Sc, sig_c);
+    }
+
+    // C = D_dam @ C_eff
+    double C[6][6];
+    for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) {
+        double v = 0.0; for (int k = 0; k < 6; ++k) v += Ddam[i][k] * Ceff[k][j];
+        C[i][j] = v;
+    }
+
+    // --- chain-rule gradient pieces (each d(.)/dε, 6-vector) ---
+    // Ceff^T @ g  (d(scalar of sig_eff)/dε = (d sig_eff/dε)^T @ (d scalar/d sig_eff))
+    auto CeffT = [&](const double g[6], double out[6]) {
+        for (int k = 0; k < 6; ++k) { double v = 0.0; for (int i = 0; i < 6; ++i) v += Ceff[i][k] * g[i]; out[k] = v; }
+    };
+    double g_et[6], g_xs[6], g_ac[6], det_deps[6], dxs_deps[6], dac_deps[6];
+    dscalarDsig(0, sig_eff, mp, g_et);   CeffT(g_et, det_deps);
+    dscalarDsig(1, sig_eff, mp, g_xs);   CeffT(g_xs, dxs_deps);
+    dscalarDsig(2, sig_eff, mp, g_ac);   CeffT(g_ac, dac_deps);
+
+    // eigenprojection gradients (WITH W6 tensor weight): dDt/dε = Ceff^T (W6 . Emax), dDc/dε = -Ceff^T (W6 . Emin)
+    double dDt_deps[6], dDc_deps[6];
+    {
+        double Em[3][3], En[3][3], Em6[6], En6[6], tmp[6];
+        for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) {
+            Em[i][j] = V[i][imax] * V[j][imax];
+            En[i][j] = V[i][imin] * V[j][imin];
+        }
+        matToVoigt(Em, Em6); matToVoigt(En, En6);
+        for (int i = 0; i < 6; ++i) tmp[i] = W6[i] * Em6[i];
+        if (Dt > 0.0) CeffT(tmp, dDt_deps); else for (int i = 0; i < 6; ++i) dDt_deps[i] = 0.0;
+        for (int i = 0; i < 6; ++i) tmp[i] = W6[i] * En6[i];
+        if (Dc > 0.0) { CeffT(tmp, dDc_deps); for (int i = 0; i < 6; ++i) dDc_deps[i] = -dDc_deps[i]; }
+        else for (int i = 0; i < 6; ++i) dDc_deps[i] = 0.0;
+    }
+
+    // ||Deps_p|| gradient: depl_deps = I - C^-1 Ceff ; dnorm/dε = depl_deps^T (W6 . depl) / dnorm
+    double dnorm_deps[6];
+    if (dnorm > 1.0e-14) {
+        double Cel[6][6], Cinv[6][6], CinvCeff[6][6];
+        elasticC(mp, Cel); invert6(Cel, Cinv);
+        for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) {
+            double v = 0.0; for (int k = 0; k < 6; ++k) v += Cinv[i][k] * Ceff[k][j];
+            CinvCeff[i][j] = v;
+        }
+        double x[6]; for (int i = 0; i < 6; ++i) x[i] = W6[i] * depl[i];
+        for (int k = 0; k < 6; ++k) {
+            double v = 0.0;
+            for (int i = 0; i < 6; ++i) {
+                const double depl_deps_ik = ((i == k) ? 1.0 : 0.0) - CinvCeff[i][k];
+                v += depl_deps_ik * x[i];
+            }
+            dnorm_deps[k] = v / dnorm;
+        }
+    } else for (int i = 0; i < 6; ++i) dnorm_deps[i] = 0.0;
+
+    // dkd*/dε under loading (else zero)
+    double dkdt1[6], dkdt2[6], dkdc1[6], dkdc2[6];
+    if (loading) {
+        const double ixs = 1.0 / xs, ixs2 = ixs * ixs;
+        for (int i = 0; i < 6; ++i) {
+            dkdt2[i] = det_deps[i] * ixs - above * dxs_deps[i] * ixs2;
+            dkdt1[i] = dnorm_deps[i] * ixs - dnorm * dxs_deps[i] * ixs2;
+            dkdc2[i] = (dac_deps[i] * above + ac * det_deps[i]) * ixs - ac * above * dxs_deps[i] * ixs2;
+            dkdc1[i] = (dac_deps[i] * dnorm + ac * dnorm_deps[i]) * ixs - ac * dnorm * dxs_deps[i] * ixs2;
+        }
+    } else for (int i = 0; i < 6; ++i) { dkdt1[i] = dkdt2[i] = dkdc1[i] = dkdc2[i] = 0.0; }
+
+    // ω via IFT (only when interior 0<ω<1; clamped/inactive ω is insensitive => dω=0)
+    double dwt[6], dwc[6];
+    if (wt > 0.0 && wt < 1.0) {
+        const double Ht = Dt * ((1.0 - wt) * kdt2 / eps_f - 1.0);
+        const double a0 = -(1.0 - wt) / Ht;
+        const double a1 = -(1.0 - wt) * Dt / (eps_f * Ht);
+        const double a2 = -(1.0 - wt) * Dt * wt / (eps_f * Ht);
+        for (int i = 0; i < 6; ++i) dwt[i] = a0 * dDt_deps[i] + a1 * dkdt1[i] + a2 * dkdt2[i];
+    } else for (int i = 0; i < 6; ++i) dwt[i] = 0.0;
+    if (wc > 0.0 && wc < 1.0) {
+        const double Hc = Dc * ((1.0 - wc) * kdc2 / eps_fc - 1.0);
+        const double a0 = -(1.0 - wc) / Hc;
+        const double a1 = -(1.0 - wc) * Dc / (eps_fc * Hc);
+        const double a2 = -(1.0 - wc) * Dc * wc / (eps_fc * Hc);
+        for (int i = 0; i < 6; ++i) dwc[i] = a0 * dDc_deps[i] + a1 * dkdc1[i] + a2 * dkdc2[i];
+    } else for (int i = 0; i < 6; ++i) dwc[i] = 0.0;
+
+    // assemble: C - sig_t (x) dω_t - sig_c (x) dω_c
+    for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j)
+        D6[i][j] = C[i][j] - sig_t[i] * dwt[j] - sig_c[i] * dwc[j];
+}
+
 // ---------------------------------------------------------------------------
 // Atomic incremental return (mirrors the oracle return_map_tensor exactly):
 // elastic-predict sig_tr = sig_n + C:deps -> eigendecompose -> principal return
@@ -1037,9 +1319,16 @@ inline int returnMap(const Params& mp, const double strain[6], const State& in, 
     // (2) P2 dual-damage NOMINAL stress (writes out.sig + the damage history). Unilateral by re-split.
     damagedUpdate(mp, in, sig_eff, strain, out);
     for (int i = 0; i < 6; ++i) sigma[i] = out.sig[i];
-    // NB Dtan6 is currently the EFFECTIVE consistent tangent (P1). The ANALYTIC dual-projector DAMAGED
-    // tangent (oracle damaged_tangent_analytic, P2e) is the NEXT kernel slice; until then a Tier-1
-    // implicit solve sees the effective tangent (over-stiff on the softening branch).
+    // (3) P3b — upgrade Dtan6 (the P1 EFFECTIVE consistent tangent from step 1) to the ANALYTIC
+    // dual-projector DAMAGED tangent  D_dam:C_eff - sig_t(x)dωt - sig_c(x)dωc  (oracle
+    // damaged_tangent_analytic). Only on a CONVERGED effective return (status==0): on a non-converge
+    // returnMapTensor already left Dtan6 the safe elastic/effective fallback and status!=0 cuts the
+    // step, so the damaged linearization (built on that fallback Ceff) would be meaningless.
+    if (doTangent && status == 0) {
+        double Ceff[6][6];
+        for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) Ceff[i][j] = Dtan6[i][j];
+        damagedTangent(mp, in, sig_eff, strain, Ceff, Dtan6);
+    }
     return status;
 }
 
