@@ -582,6 +582,8 @@
 #define ND_TAG_InitDefGradNDMaterial 33013 // N. Mora-Bowen (Ladruno) — multiplicative staged-activation wrapper (F_rel = F·F0⁻¹); stress-free birth of finite-strain continuum elements appended mid-stage
 #define ND_TAG_StagedStrainNDMaterial 33014 // N. Mora-Bowen (Ladruno) — small-strain, dimension-general (2D+3D) auto-capturing staged-activation wrapper (ε_rel = ε − ε0); stress-free birth of small-strain continuum elements appended mid-stage
 #define ND_TAG_LadrunoRCConcrete 33015 // N. Mora-Bowen (Ladruno) — RC plastic-damage (ASDConcrete3D spine + MCFT compression softening); ONE multi-dim class (3D/PlaneStress/PlateFiber via getType/getCopy, LadrunoJ2 pattern); ADR 19 (moved 33014->33015: StagedStrain took 33014 on ladruno)
+// 33016 reserved for LogStrain2D (ADR 25), 33017 reserved for LadrunoConcrete3D (ADR 31) — not yet in this header
+#define ND_TAG_LadrunoRCFiniteStrain 33018 // N. Mora-Bowen (Ladruno) — finite-strain (Hencky) view of the RC plastic-damage material (B=F Fᵀ -> ½ln B -> shared LadrunoRCKernel -> Cauchy + spatial tangent); isotropic-objective, directional crack state xfail under large rotation (dSNPO §14.11); ADR 19 Phase 4b
 
 
 #define FIBER_TAG_Uniaxial2d	1
