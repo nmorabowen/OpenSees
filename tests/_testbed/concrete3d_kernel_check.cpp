@@ -166,8 +166,36 @@ static void run_oracle_dump(const char* path) {
         std::printf("  %-24s tan_rel=%.3e perEntry=%.2e asym C/O=%.3f/%.3f  %s\n",
                     label.c_str(), rel, perEntry, asymC, asymO, ok ? "ok" : "FAIL");
     }
-    std::printf("  WORST  sig=%.2e (pp<1e-9/hard<1e-6)  kp=%.2e (pp<1e-10/hard<1e-7)  tan=%.3e (<1e-6)\n",
-                worst_sig, worst_kp, worst_tan);
+    // ---- (B3) P2 DAMAGE: committed damage state + deps -> NOMINAL stress (oracle damaged_step_tensor) ----
+    fh >> tok; int ndmg; fh >> ndmg;          // NDMG
+    double worst_dmg = 0;
+    for (int d = 0; d < ndmg; ++d) {
+        fh >> tok; std::string label; fh >> label;   // DMG <label>
+        double pb[12]; for (int i = 0; i < 12; ++i) fh >> pb[i];
+        Params mp = makeParams(pb);
+        fh >> mp.Gf >> mp.Gc >> mp.lch >> mp.As;
+        State in, out;
+        for (int i = 0; i < 6; ++i) fh >> in.eps[i];
+        for (int i = 0; i < 6; ++i) fh >> in.sigEff[i];
+        fh >> in.kp;
+        fh >> in.et_max >> in.kdt1 >> in.kdt2 >> in.kdc >> in.kdc1 >> in.kdc2;
+        double deps[6], sigO[6];
+        for (int i = 0; i < 6; ++i) fh >> deps[i];
+        for (int i = 0; i < 6; ++i) fh >> sigO[i];
+        double strain[6]; for (int i = 0; i < 6; ++i) strain[i] = in.eps[i] + deps[i];
+        double sigC[6], sigEff[6], Dt[6][6];
+        returnMap(mp, strain, in, out, sigC, sigEff, Dt, false, -1.0, /*hardening=*/true);
+        double maxs = 0; for (int i = 0; i < 6; ++i) maxs = std::fmax(maxs, std::fabs(sigC[i] - sigO[i]));
+        worst_dmg = std::fmax(worst_dmg, maxs);
+        // damage = effective return (~1e-8 hardening floor) THEN the smooth analytic damage recompose;
+        // no new amplification => same hardening floor as the return-map paths.
+        bool ok = maxs < 1.0e-6;
+        if (!ok) ++fails;
+        std::printf("  %-24s nom_sig_err=%.2e  %s\n", label.c_str(), maxs, ok ? "ok" : "FAIL");
+    }
+
+    std::printf("  WORST  sig=%.2e (pp<1e-9/hard<1e-6)  kp=%.2e (pp<1e-10/hard<1e-7)  tan=%.3e (<1e-6)  dmg=%.2e (<1e-6)\n",
+                worst_sig, worst_kp, worst_tan, worst_dmg);
 }
 
 // ---- (C) robustness / honesty regressions (PR #249 adversarial-review fixes) ----------------

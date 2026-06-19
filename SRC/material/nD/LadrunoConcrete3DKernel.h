@@ -94,6 +94,8 @@ struct Params {
     double Gc = 0.0;    // compressive (WEAKEST-calibrated knob — ADR §6)
     // flow / ductility (P1)
     double Df = 0.0;    // dilatancy (non-associated flow)
+    // damage (P2) softening ductility (Eq.56: x_s = 1 + (As-1) Rs)
+    double As = 2.0;    // confinement-ductility amplitude (=x_s in uniaxial compression)
     // hardening (P1, CDPM2 Eqs. 30-36)
     double qh0 = 0.3;   // initial yield fraction (qh1 at kp=0)
     double Hp = 0.5;    // hardening modulus (qh1 slope at kp=1^-, qh2 slope for kp>1)
@@ -283,6 +285,69 @@ inline double eccentricityFromKupfer(double fc, double ft, double targetFccRatio
         if (hi - lo < 1.0e-12) break;
     }
     return 0.5 * (lo + hi);
+}
+
+// ===========================================================================
+// P2 DAMAGE kinematics (CDPM2 §2.3, Grassl et al. 2013) — ports the oracle verbatim.
+//   equivStrainGeneral  Eq.37 : ε̃ (== σ̄/E uniaxial tension, == ε0 on the failure surface)
+//   alphaCompression    Eq.46 : 0 (tension) .. 1 (compression)
+//   damageDrivers              : ε̃, α_c, and the softening ductility x_s (Eq.56-57)
+//   solveOmegaBracketed        : the implicit (1-ω)D = f·exp(-(kd1+ω·kd2)/eps_f) root, bisection-
+//                                safeguarded so a non-monotone F never clamp-stalls to 0 (PR #261)
+// sig_pr = 3 EFFECTIVE principal stresses (the damage drivers are frame-invariant).
+// ===========================================================================
+inline double equivStrainGeneral(const double sig_pr[3], const Params& mp)
+{
+    const double eps0 = mp.ft / mp.E;
+    const double sv[6] = { sig_pr[0], sig_pr[1], sig_pr[2], 0.0, 0.0, 0.0 };
+    double xi, rho, theta; invariants(sv, xi, rho, theta);
+    const double sigV = xi / SQRT3;
+    const double A = rho * lodeR(theta, mp.e) / (SQRT6 * mp.fc) + sigV / mp.fc;
+    double rad = (eps0 * eps0 * mp.m0 * mp.m0 / 4.0) * A * A
+               + 3.0 * eps0 * eps0 * rho * rho / (2.0 * mp.fc * mp.fc);
+    if (rad < 0.0) rad = 0.0;
+    return (eps0 * mp.m0 / 2.0) * A + std::sqrt(rad);
+}
+
+inline double alphaCompression(const double sig_pr[3])
+{
+    double nrm2 = 0.0, num = 0.0;
+    for (int i = 0; i < 3; ++i) {
+        nrm2 += sig_pr[i] * sig_pr[i];
+        const double spc = sig_pr[i] < 0.0 ? sig_pr[i] : 0.0;   // negative part
+        num += spc * sig_pr[i];
+    }
+    if (nrm2 <= 1.0e-300) return 0.0;
+    return num / nrm2;
+}
+
+inline void damageDrivers(const double sig_pr[3], const Params& mp, double& et, double& ac, double& xs)
+{
+    et = equivStrainGeneral(sig_pr, mp);
+    ac = alphaCompression(sig_pr);
+    const double sv[6] = { sig_pr[0], sig_pr[1], sig_pr[2], 0.0, 0.0, 0.0 };
+    double xi, rho, theta; invariants(sv, xi, rho, theta);
+    const double sigV = xi / SQRT3;
+    const double Rs = (sigV <= 0.0 && rho > 1.0e-12) ? (-SQRT6 * sigV / rho) : 0.0;   // Eq.57
+    xs = 1.0 + (mp.As - 1.0) * Rs;                                                     // Eq.56
+}
+
+inline double solveOmegaBracketed(double kd1, double kd2, double sig_eff, double f, double eps_f)
+{
+    auto Fof = [&](double w) { return (1.0 - w) * sig_eff - f * std::exp(-(kd1 + w * kd2) / eps_f); };
+    double lo = 0.0, hi = 1.0;
+    if (Fof(lo) <= 0.0) return 0.0;   // not damage-loading
+    if (Fof(hi) >= 0.0) return 1.0;   // fully damaged
+    double w = 0.5;
+    for (int it = 0; it < 100; ++it) {
+        const double Fw = Fof(w);
+        if (std::fabs(Fw) < 1.0e-13 * (f + 1.0)) break;
+        if (Fw > 0.0) lo = w; else hi = w;
+        const double dF = -sig_eff + f * std::exp(-(kd1 + w * kd2) / eps_f) * kd2 / eps_f;
+        const double wn = (dF != 0.0) ? (w - Fw / dF) : w;       // safeguarded Newton...
+        w = (lo < wn && wn < hi) ? wn : 0.5 * (lo + hi);         // ...bisection fallback
+    }
+    return w < 0.0 ? 0.0 : (w > 1.0 ? 1.0 : w);
 }
 
 // ===========================================================================
@@ -806,9 +871,102 @@ inline void consistentTangent(const double sig_tr[6], const double w[3], const d
 // ===========================================================================
 struct State {
     double eps[6] = {0, 0, 0, 0, 0, 0};   // committed total strain (tensor comps)
-    double sig[6] = {0, 0, 0, 0, 0, 0};   // committed stress     (tensor comps)
+    double sig[6] = {0, 0, 0, 0, 0, 0};   // committed NOMINAL stress (tensor comps)
+    double sigEff[6] = {0, 0, 0, 0, 0, 0}; // committed EFFECTIVE stress (drives the next return + the damage plastic strain)
     double kp = 0.0;                       // committed kappa_p
+    // P2 damage history (CDPM2 §2.3): et_max = max equiv-strain (Eq.43); kd*1/kd*2 the plastic /
+    // damage-scaled inelastic-strain parts (Eq.44/45/48/49) feeding eps_i = kd1 + omega*kd2 (Eq.52).
+    double et_max = 0.0;
+    double kdt1 = 0.0, kdt2 = 0.0;         // tensile
+    double kdc = 0.0, kdc1 = 0.0, kdc2 = 0.0;  // compressive (kdc = the alpha_c-weighted history)
 };
+
+// ---------------------------------------------------------------------------
+// Elastic (compliance) plastic strain eps_p = eps - C^-1 : sig_eff (tensor Voigt), isotropic
+// closed form (no linear solve) — mirrors the oracle _plastic_strain6.
+// ---------------------------------------------------------------------------
+inline void plasticStrain6(const double sig_eff[6], const double eps[6], const Params& mp, double epl[6])
+{
+    const double E = mp.E, nu = mp.nu;
+    epl[0] = eps[0] - (sig_eff[0] - nu * (sig_eff[1] + sig_eff[2])) / E;
+    epl[1] = eps[1] - (sig_eff[1] - nu * (sig_eff[0] + sig_eff[2])) / E;
+    epl[2] = eps[2] - (sig_eff[2] - nu * (sig_eff[0] + sig_eff[1])) / E;
+    for (int k = 3; k < 6; ++k) epl[k] = eps[k] - sig_eff[k] * (1.0 + nu) / E;  // eps_ij = sig_ij/(2G)
+}
+
+// ---------------------------------------------------------------------------
+// P2 dual-damage NOMINAL stress update (mirrors the oracle damaged_step_tensor EXACTLY): from the
+// committed history `in` + the new EFFECTIVE stress/strain, accumulate the CDPM2 damage drivers,
+// solve omega_t/omega_c (bracketed, physical-floored), and recompose the nominal stress via the
+// spectral split  sigma = (1-omega_t)<sig_bar>+ + (1-omega_c)<sig_bar>-  (Eq.1). Writes the new
+// damage history into `out`. The split is recomputed from the CONVERGED effective stress every step
+// => automatic, tier-independent unilateral crack-closure (ADR §4.3 BLOCKING).
+// ---------------------------------------------------------------------------
+inline void damagedUpdate(const Params& mp, const State& in, const double sig_eff[6],
+                          const double eps_new[6], State& out)
+{
+    const double eps0 = mp.ft / mp.E;
+    const double eps_f  = mp.Gf / (mp.ft * mp.lch);
+    const double eps_fc = mp.Gc / (mp.fc * mp.lch);
+
+    double A[3][3], w[3], V[3][3];
+    voigtToMat(sig_eff, A);
+    eig3sym(A, w, V);
+
+    double et, ac, xs; damageDrivers(w, mp, et, ac, xs);
+
+    // plastic-strain increment (tensor Frobenius norm ||M||_F = sqrt(sum M_ij^2))
+    double epl[6], epl_n[6];
+    plasticStrain6(sig_eff,   eps_new,   mp, epl);
+    plasticStrain6(in.sigEff, in.eps,    mp, epl_n);
+    double Md[3][3], Mn[3][3];
+    voigtToMat(epl, Md); voigtToMat(epl_n, Mn);
+    double dnorm2 = 0.0;
+    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) {
+        const double d = Md[i][j] - Mn[i][j]; dnorm2 += d * d;
+    }
+    const double dnorm = std::sqrt(dnorm2);
+
+    const double et_max_n = in.et_max;
+    const double det_raw = (et - et_max_n > 0.0) ? (et - et_max_n) : 0.0;
+    const double lo = et_max_n > eps0 ? et_max_n : eps0;
+    const double above = (et - lo > 0.0) ? (et - lo) : 0.0;       // increment ABOVE the onset eps0
+    const bool loading = det_raw > 0.0 && et > eps0;
+
+    double kdt1 = in.kdt1, kdt2 = in.kdt2, kdc = in.kdc, kdc1 = in.kdc1, kdc2 = in.kdc2;
+    if (loading) {
+        kdt2 += above / xs;          kdt1 += dnorm / xs;                 // Eq.45 / Eq.44 (no alpha_c)
+        kdc  += ac * above;          kdc2 += ac * above / xs;            // Eq.47 / Eq.49
+        kdc1 += ac * dnorm / xs;                                         // Eq.48 (beta_c = 1, monotonic)
+    }
+    const double et_max = et_max_n > et ? et_max_n : et;
+
+    // softening drives = the extreme effective principal of each sign; physical FLOOR (review-fix):
+    // never solve omega on a numerical-residual stress (~1e-10 MPa) -> flips wt 0<->1 in compression.
+    double Dt = w[0]; for (int i = 1; i < 3; ++i) if (w[i] > Dt) Dt = w[i]; if (Dt < 0.0) Dt = 0.0;
+    double mn = w[0]; for (int i = 1; i < 3; ++i) if (w[i] < mn) mn = w[i];
+    double Dc = -mn; if (Dc < 0.0) Dc = 0.0;
+    const double wt = (et_max > eps0 && Dt > 1.0e-6 * mp.ft)
+                    ? solveOmegaBracketed(kdt1, kdt2, Dt, mp.ft, eps_f) : 0.0;
+    const double wc = (kdc > 0.0 && Dc > 1.0e-6 * mp.fc)
+                    ? solveOmegaBracketed(kdc1, kdc2, Dc, mp.fc, eps_fc) : 0.0;
+
+    // nominal principal stresses (Eq.1) then recompose on the SAME eigenvectors
+    double sp[3];
+    for (int i = 0; i < 3; ++i) {
+        const double st = w[i] > 0.0 ? w[i] : 0.0;
+        const double sc = w[i] < 0.0 ? w[i] : 0.0;
+        sp[i] = (1.0 - wt) * st + (1.0 - wc) * sc;
+    }
+    double S[3][3];
+    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) {
+        double v = 0.0; for (int a = 0; a < 3; ++a) v += V[i][a] * sp[a] * V[j][a];
+        S[i][j] = v;
+    }
+    matToVoigt(S, out.sig);
+    out.et_max = et_max; out.kdt1 = kdt1; out.kdt2 = kdt2;
+    out.kdc = kdc; out.kdc1 = kdc1; out.kdc2 = kdc2;
+}
 
 // ---------------------------------------------------------------------------
 // Atomic incremental return (mirrors the oracle return_map_tensor exactly):
@@ -871,10 +1029,17 @@ inline int returnMap(const Params& mp, const double strain[6], const State& in, 
 {
     double deps[6];
     for (int i = 0; i < 6; ++i) deps[i] = strain[i] - in.eps[i];
-    double kp_new;
-    int status = returnMapTensor(mp, in.sig, deps, in.kp, hardening, sigma, kp_new, Dtan6, doTangent);
-    for (int i = 0; i < 6; ++i) { out.eps[i] = strain[i]; out.sig[i] = sigma[i]; sigEffImplicit[i] = sigma[i]; }
+    // (1) EFFECTIVE-stress return from the committed EFFECTIVE state (NOT the nominal sig).
+    double sig_eff[6], kp_new;
+    int status = returnMapTensor(mp, in.sigEff, deps, in.kp, hardening, sig_eff, kp_new, Dtan6, doTangent);
+    for (int i = 0; i < 6; ++i) { out.eps[i] = strain[i]; out.sigEff[i] = sig_eff[i]; sigEffImplicit[i] = sig_eff[i]; }
     out.kp = kp_new;
+    // (2) P2 dual-damage NOMINAL stress (writes out.sig + the damage history). Unilateral by re-split.
+    damagedUpdate(mp, in, sig_eff, strain, out);
+    for (int i = 0; i < 6; ++i) sigma[i] = out.sig[i];
+    // NB Dtan6 is currently the EFFECTIVE consistent tangent (P1). The ANALYTIC dual-projector DAMAGED
+    // tangent (oracle damaged_tangent_analytic, P2e) is the NEXT kernel slice; until then a Tier-1
+    // implicit solve sees the effective tangent (over-stiff on the softening branch).
     return status;
 }
 
