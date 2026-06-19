@@ -1341,8 +1341,11 @@ def drive_damaged_unified(mp, eps11_path, Gf, Gc, lch, As=2.0, sigma3=0.0):
         # spectral drives: extreme effective principal of each sign (reduces to P2a/P2b uniaxially)
         sig_t_drive = max(float(np.max(sig_eff)), 0.0)
         sig_c_drive = max(-float(np.min(sig_eff)), 0.0)
-        wt = _solve_omega_bracketed(kdt1, kdt2, sig_t_drive, ft, eps_f) if (et_max > eps0 and sig_t_drive > 0.0) else 0.0
-        wc = _solve_omega_bracketed(kdc1, kdc2, sig_c_drive, fc, eps_fc) if (kdc > 0.0 and sig_c_drive > 0.0) else 0.0
+        # PHYSICAL FLOOR on the softening drive: only solve omega when the extreme principal of that
+        # sign is a REAL stress (> 1e-6 * strength), never on the ~1e-10 MPa lateral-Newton residual.
+        # Without it the residual's SIGN spuriously flips wt 0<->1 in pure compression (review-fix).
+        wt = _solve_omega_bracketed(kdt1, kdt2, sig_t_drive, ft, eps_f) if (et_max > eps0 and sig_t_drive > 1.0e-6 * ft) else 0.0
+        wc = _solve_omega_bracketed(kdc1, kdc2, sig_c_drive, fc, eps_fc) if (kdc > 0.0 and sig_c_drive > 1.0e-6 * fc) else 0.0
 
         sig_nom = apply_damage_principal(sig_eff, wt, wc)            # Eq.1
         for k, v in (("eps11", e11), ("eps_lat", el), ("sig11", sig_nom[0]), ("wt", wt), ("wc", wc),
@@ -1363,6 +1366,23 @@ def run_p2c_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, Gc=5.0, As=2.0, ver
     st, sc = spectral_split_principal(sp)
     res["DT0_split_partition"] = float(np.max(np.abs((st + sc) - sp)))
     res["DT0_identity"] = float(np.max(np.abs(apply_damage_principal(sp, 0.0, 0.0) - sp)))
+    # DT0c: the UNILATERAL routing mechanism, tested DIRECTLY (the sharp check the path-level DT3
+    # cannot make — under reversal the driver floors wt to 0 once all principals are compressive).
+    # A high tensile damage wt=0.95 must leave the COMPRESSIVE principals scaled by (1-wc) ONLY
+    # (wt-invariant = the crack closes), and the tensile principal scaled by (1-wt).
+    mixed = np.array([-5.0, -1.0, 2.0])
+    expect = np.array([0.8 * -5.0, 0.8 * -1.0, 0.05 * 2.0])           # (1-0.2)*compr, (1-0.95)*tens
+    res["DT0_unilateral"] = float(np.max(np.abs(apply_damage_principal(mixed, 0.95, 0.2) - expect)))
+    wt_invar = apply_damage_principal(mixed, 0.95, 0.2)[:2]
+    wt_invar2 = apply_damage_principal(mixed, 0.10, 0.2)[:2]          # change wt only
+    res["DT0_compr_wt_invariant"] = float(np.max(np.abs(wt_invar - wt_invar2)))   # compressive entries unchanged
+    # DT0d: the physical FLOOR — pure monotonic compression must NOT spuriously activate tensile
+    # damage off the ~1e-10 MPa lateral-Newton residual (review-fix; was wt->1, mask-hidden behind
+    # the compressive channel). Mirror: pure tension must not activate wc.
+    dpc = drive_damaged_unified(mp, np.linspace(0, -0.05, 1500), Gf, Gc, 50.0, As)
+    dpt = drive_damaged_unified(mp, np.linspace(0, 0.004, 1500), Gf, Gc, 50.0, As)
+    res["DT0_pure_compression_wt"] = float(np.max(dpc["wt"]))         # ~0
+    res["DT0_pure_tension_wc"] = float(np.max(dpt["wc"]))             # ~0
 
     # DT1: REDUCE-TO-P2a — pure uniaxial tension. The unified driver's nominal stress + wt must be
     # byte-identical to the validated tensile-only driver (same crack-band eps_f, same softening).
@@ -1382,19 +1402,20 @@ def run_p2c_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, Gc=5.0, As=2.0, ver
     res["DT2_peak"] = float(-np.min(duc["sig11"]))
     res["DT2_peak_err"] = abs(res["DT2_peak"] / fc - 1.0)
 
-    # DT3: UNILATERAL crack-closure — load tension into softening (wt high), reverse through 0 into
-    # compression. The tension damage MUST NOT degrade the compression branch: nominal/effective on
-    # the compressive side recovers to ~1 (crack closed), having been (1-wt)<<1 in tension softening.
+    # DT3: UNILATERAL crack-closure at the PATH level — load tension into softening (wt->1), reverse
+    # through 0 into compression, confirm the nominal compressive branch recovers full stiffness
+    # (nominal/effective -> 1). NOTE (review-fix, honest): once the reversal makes ALL principals
+    # compressive the driver floors wt to 0, so in this window the recovery is the per-step RE-SPLIT
+    # routing the (now-compressive) axial principal into the (1-wc~0) channel. The wt-INVARIANT
+    # closed-crack mechanism itself (a compressive principal carried by (1-wc) regardless of a LIVE
+    # wt) is tested directly + unconditionally by DT0_unilateral above; DT3 is the end-to-end check.
     path = np.concatenate([np.linspace(0, 0.006, 600),       # tension to deep softening
                            np.linspace(0.006, -0.012, 1200)])  # reverse into compression
     dr = drive_damaged_unified(mp, path, Gf, Gc, lch, As)
     safe = np.where(dr["sig_eff"] == 0.0, 1.0, dr["sig_eff"])
     ratio = dr["sig11"] / safe                              # nominal/effective = (1-omega) on the live channel
     ten = dr["sig_eff"] > 0.01 * ft
-    # EARLY compression: a real compressive stress but BEFORE compression damage (wc~0). This is the
-    # unilateral window — the crack has closed, so nominal must recover to the FULL effective stress
-    # even though the tension damage wt is still ~1 (it would corrupt this if it were not re-split out).
-    comp_early = (dr["sig_eff"] < -0.02 * fc) & (dr["wc"] < 1.0e-3)
+    comp_early = (dr["sig_eff"] < -0.02 * fc) & (dr["wc"] < 1.0e-3)   # real compression, pre-compression-damage
     res["DT3_wt_peak"] = float(np.max(dr["wt"]))
     res["DT3_min_ratio_tension"] = float(np.min(ratio[ten])) if ten.any() else 1.0       # << 1 (damaged)
     res["DT3_recovery_ratio"] = float(np.max(ratio[comp_early])) if comp_early.any() else 0.0  # ~1 (recovered)
@@ -1413,11 +1434,25 @@ def run_p2c_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, Gc=5.0, As=2.0, ver
     nrm = lambda A: float(np.sqrt(np.sum(A * A)))
     res["DT4_objectivity"] = nrm(got - Q @ base @ Q.T) / nrm(base)
 
+    # DT5 [DIAGNOSTIC, REPORTED not gated] — compression->tension damage COUPLING. Per CDPM2 Eq.43 the
+    # tensile history kappa_dt tracks the FULL equivalent strain (no (1-alpha_c) factor), so a
+    # compression excursion accumulates kappa_dt1/kdt2 and PRE-DAMAGES a subsequent tension reload. In
+    # this MONOTONIC slice (beta_c=1, no tensile/compressive plastic-strain projection) that coupling
+    # is un-tempered, so compression-then-tension currently loses ALL tensile strength. The honest
+    # tempering (the cyclic beta_c transition Eq.50 + the alpha_t-weighting question — literal CDPM2 vs
+    # a tensile-plastic-strain projection) is the P2f cyclic increment. Reported so the limitation is
+    # tracked, NOT gated (the monotonic tension/compression responses DT1/DT2 are correct).
+    cpath = np.concatenate([np.linspace(0, -0.01, 800), np.linspace(-0.01, 0.004, 800)])
+    dcyc = drive_damaged_unified(mp, cpath, Gf, Gc, lch, As)
+    res["DT5_tension_after_compression_peak"] = float(np.max(dcyc["sig11"][800:]))   # ~0 today (vs ft fresh)
+
     # DT1 (tension) telescopes EXACTLY to the P2a driver (x_s=1 => clamped kdt2 == max(kdt-eps0,0)).
     # DT2 (compression) matches P2b up to ONE onset-crossing step (the kdc2 sliver between the last
     # sub-eps0 eps_tilde and eps0; P2b doesn't clamp it) => a tight non-zero floor, vanishing under
     # step refinement. Stress diffs are in MPa (fc=30), so 1e-3 is ~3e-5 relative.
     ok = (res["DT0_split_partition"] < 1.0e-14 and res["DT0_identity"] < 1.0e-14
+          and res["DT0_unilateral"] < 1.0e-14 and res["DT0_compr_wt_invariant"] < 1.0e-14
+          and res["DT0_pure_compression_wt"] < 1.0e-6 and res["DT0_pure_tension_wc"] < 1.0e-6
           and res["DT1_sig_maxdiff"] < 1.0e-7 and res["DT1_wt_maxdiff"] < 1.0e-7
           and res["DT1_peak_err"] < 0.02
           and res["DT2_sig_maxdiff"] < 1.0e-2 and res["DT2_wc_maxdiff"] < 1.0e-2
@@ -1427,7 +1462,9 @@ def run_p2c_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, Gc=5.0, As=2.0, ver
     res["PASS"] = bool(ok)
     if verbose:
         print(f"  E={E} nu={nu} fc={fc} ft={ft} Gf={Gf} Gc={Gc} As={As}")
-        print(f"  DT0 split partition={res['DT0_split_partition']:.1e}  wt=wc=0 identity={res['DT0_identity']:.1e}")
+        print(f"  DT0 split partition={res['DT0_split_partition']:.1e}  wt=wc=0 identity={res['DT0_identity']:.1e}"
+              f"  unilateral(compr wt-invariant)={res['DT0_unilateral']:.1e}/{res['DT0_compr_wt_invariant']:.1e}"
+              f"  pure-compr wt={res['DT0_pure_compression_wt']:.2e} pure-tens wc={res['DT0_pure_tension_wc']:.2e}")
         print(f"  DT1 reduce->P2a (tension): sig maxdiff={res['DT1_sig_maxdiff']:.2e}"
               f"  wt maxdiff={res['DT1_wt_maxdiff']:.2e}  peak={res['DT1_peak']:.3f} (ft={ft})")
         print(f"  DT2 reduce->P2b (compression): sig maxdiff={res['DT2_sig_maxdiff']:.2e}"
@@ -1435,6 +1472,8 @@ def run_p2c_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, Gc=5.0, As=2.0, ver
         print(f"  DT3 unilateral: wt_peak={res['DT3_wt_peak']:.3f}  tension nom/eff(min)={res['DT3_min_ratio_tension']:.3f}"
               f"  early-compression nom/eff(recovery)={res['DT3_recovery_ratio']:.3f}  recovered={res['DT3_recovered']}")
         print(f"  DT4 frame objectivity (rotated damaged stress) = {res['DT4_objectivity']:.2e}")
+        print(f"  DT5 [DIAGNOSTIC] tension-after-compression peak = {res['DT5_tension_after_compression_peak']:.3f}"
+              f" (fresh ft={ft}; ~0 = un-tempered CDPM2 T/C coupling, P2f beta_c/alpha_t task)")
         print(f"  => P2c GATE {'PASS' if ok else 'FAIL'}")
     return res
 
@@ -1498,8 +1537,9 @@ def damaged_step_tensor(state, deps6, mp, Gf, Gc, lch, As=2.0):
     et_max = max(et_max, et)
     sig_t_drive = max(float(np.max(w)), 0.0)
     sig_c_drive = max(-float(np.min(w)), 0.0)
-    wt = _solve_omega_bracketed(kdt1, kdt2, sig_t_drive, ft, eps_f) if (et_max > eps0 and sig_t_drive > 0.0) else 0.0
-    wc = _solve_omega_bracketed(kdc1, kdc2, sig_c_drive, fc, eps_fc) if (kdc > 0.0 and sig_c_drive > 0.0) else 0.0
+    # physical floor (see drive_damaged_unified): no omega-solve on a numerical-residual stress
+    wt = _solve_omega_bracketed(kdt1, kdt2, sig_t_drive, ft, eps_f) if (et_max > eps0 and sig_t_drive > 1.0e-6 * ft) else 0.0
+    wc = _solve_omega_bracketed(kdc1, kdc2, sig_c_drive, fc, eps_fc) if (kdc > 0.0 and sig_c_drive > 1.0e-6 * fc) else 0.0
     sig_nom = mat_to_voigt(V @ np.diag(apply_damage_principal(w, wt, wc)) @ V.T)   # Eq.1, recompose
     new_state = dict(sig_bar=sig_bar, kp=kp_new, eps=eps_new, et_max=et_max,
                      kdt1=kdt1, kdt2=kdt2, kdc=kdc, kdc1=kdc1, kdc2=kdc2)
@@ -1755,8 +1795,9 @@ def damaged_tangent_analytic(state, deps6, mp, Gf, Gc, lch, As=2.0):
     et_max2 = max(et_max, et)
     Dt = max(float(np.max(lam)), 0.0)
     Dc = max(-float(np.min(lam)), 0.0)
-    wt = _solve_omega_bracketed(kdt1, kdt2, Dt, ft, eps_f) if (et_max2 > eps0 and Dt > 0.0) else 0.0
-    wc = _solve_omega_bracketed(kdc1, kdc2, Dc, fc, eps_fc) if (kdc > 0.0 and Dc > 0.0) else 0.0
+    # SAME physical floor as damaged_step_tensor (keeps the analytic tangent's omega == the update's)
+    wt = _solve_omega_bracketed(kdt1, kdt2, Dt, ft, eps_f) if (et_max2 > eps0 and Dt > 1.0e-6 * ft) else 0.0
+    wc = _solve_omega_bracketed(kdc1, kdc2, Dc, fc, eps_fc) if (kdc > 0.0 and Dc > 1.0e-6 * fc) else 0.0
 
     Ceff = consistent_tangent(state["sig_bar"], deps6, mp, state["kp"], hardening=True)
 
@@ -1880,9 +1921,13 @@ def run_p2e_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, Gc=5.0, As=2.0, ver
     Ceff_pp = consistent_tangent(np.zeros(6), deps_pp, mp, 0.0, hardening=True)
     res["PE5_predamage_rel"] = rel(Ca, Ceff_pp); res["PE5_predamage_w0"] = bool(info_pp["wt"] == 0.0 and info_pp["wc"] == 0.0)
 
-    # PE6: the Macaulay-KINK at sigma_lat=0 (uniaxial-STRESS compression) is a valid-subgradient point,
-    # NOT a bug: the analytic tangent matches the numerical on the LOADED (axial) component, and only
-    # the ~zero-stress lateral directions differ (the central diff crosses the kink). Reported.
+    # PE6: the Macaulay-KINK at sigma_lat=0 (uniaxial-STRESS compression, the lateral eigenvalues
+    # degenerate near zero) is a valid-subgradient point, NOT a bug. The analytic tangent matches the
+    # numerical on the LOADED axial column (gated below); the disagreement (~33%) is in the columns
+    # whose perturbation crosses the kink — the near-zero-stress LATERAL-normal directions AND the
+    # coupled in-plane SHEAR (the central diff straddles the t/c boundary there). PE1-PE5 gate the FULL
+    # 6x6 at smooth states (eigenvalues bounded from 0, incl. confined compression PE2); PE6 only
+    # asserts the axial column + REPORTS the kink spread.
     duc = drive_damaged_unified(mp, np.linspace(0, -0.12, 2000), Gf, Gc, lch, As)
     ik = int(np.argmax(duc["wc"] > 0.5))
     st_k, _, _, _ = _advance_damaged(make_damage_state(mp),
