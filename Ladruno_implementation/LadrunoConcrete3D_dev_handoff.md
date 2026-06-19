@@ -2,7 +2,7 @@
 title: "LadrunoConcrete3D — developer / C++-implementer handoff guide"
 project: Ladruno
 type: handoff guide
-status: P0/P1 oracle + C++ KERNEL return map/tangent (g++-verified) + P2 dual damage DONE in oracle — P2a tensile ω_t, P2b compressive ω_c + α_c split, P2c UNIFIED TENSOR split + automatic unilateral crack-closure. NEXT = P2d (β_c cyclic + dual-projector damaged tangent + multiaxial apportioning) → C++ returnMapDamaged port + the nDMaterial wrapper (carries the 33017 define + foot-gun guards).
+status: P0/P1 oracle + C++ KERNEL return map/tangent (g++-verified) + P2 dual damage DONE in oracle — P2a tensile ω_t, P2b compressive ω_c + α_c split, P2c UNIFIED TENSOR split + automatic unilateral crack-closure, P2d single-step tensor update + NUMERICAL damaged consistent tangent (the reference for the C++ analytic dual-projector tangent). NEXT = P2e (β_c cyclic + the ANALYTIC dual-projector tangent + multiaxial apportioning) → C++ returnMapDamaged port + the nDMaterial wrapper (carries the 33017 define + foot-gun guards).
 related:
   - "[[31_ladruno_concrete3d_adr]]"          # the ADR (decision record)
   - "[[project_ladruno_concrete3d]]"          # the agent-memory pointer
@@ -307,11 +307,37 @@ constitutive update the C++ `nDMaterial` wrapper will call** — `spectral_split
   `σ̄`, splits the eigenvalues, recomposes on the SAME eigenvectors, so the spectral recompose carries
   the rotation and `ω_t`/`ω_c` (invariant) are unchanged.
 
-**NEXT (P2d):** `β_c` cyclic (Eq.50) + the **dual-projector damaged tangent** (`−σ̄_t⊗∂ω_t/∂ε −
-σ̄_c⊗∂ω_c/∂ε`, FD-checked across a reversal AND an eigenvalue-crossing path, ADR §4.3 [MAJOR]) +
-multiaxial-damage apportioning + plastic-dissipation regularization (the D3/C3 caveat) → then the
-**C++ port** (`returnMapDamaged` over the P1 kernel: spectral split + `_solve_omega_bracketed` per
-channel + nominal recompose) + the `nDMaterial` wrapper (lands classTag 33017 + the foot-gun guards).
+**P2d — the SINGLE-STEP tensor update + the DAMAGED CONSISTENT TANGENT (oracle reference) — DONE +
+VERIFIED** (oracle `run_p2d_gate`, pytest `test_p2d_damaged_tangent_gate`, Zone-A 17/17). The path
+drivers carry state in locals; P2d factors the per-step logic into an explicit **`damaged_step_tensor`
+(state, deps) → (σ_nom, new state, diagnostics)** — the exact contract the C++ `setTrialStrain` mirrors —
+so one update can be **perturbed for the tangent** (fixed committed state, vary the increment) and
+**chained step-by-step** (== the path driver). The committed `state` = `{σ̄, κ_p, ε, et_max, κ_dt1/2,
+κ_dc/1/2}`; the plastic-strain increment uses the **tensor Frobenius norm** `‖Δε_p‖`, `ε_p = ε − C⁻¹:σ̄`
+(generalizes the principal compliance the path drivers used; off-diagonals via the tensor elastic `C`).
+- The **damaged consistent tangent** `dσ/dε = (1−ω_t)dσ̄_t/dε + (1−ω_c)dσ̄_c/dε − σ̄_t⊗∂ω_t/∂ε −
+  σ̄_c⊗∂ω_c/∂ε` (the full dual-projector operator, ADR §4.3 [MAJOR]) is provided **NUMERICALLY** here
+  (`damaged_consistent_tangent` = central difference of `damaged_step_tensor`) — the **honest reference
+  the C++ ANALYTIC tangent is FD-checked against**, exactly the P1-tangent pattern (oracle numerical
+  #247 → C++ analytic #249). The analytic spectral-projector derivatives `∂P_T/∂σ` + the implicit-ω
+  chain rule are the **C++ deliverable**.
+- **Gates:** **TD0** the single-step update reproduces the P2c path driver (tension 1e-14; compression
+  ~5e-9, the eigendecompose-route floor over the long path); **TD1** with no damage the tangent reduces
+  to the elastic `C` (7.8e-14) and, on a plastic-but-pre-peak step (`ω=0`), to the **P1 effective
+  tangent** (3.3e-11) — both the `(1−ω)` factor and the `−σ̄⊗∂ω` rank-update vanish pre-onset; **TD2**
+  on the softening branch the tangent is **DEGRADED + INDEFINITE** (`C[0,0]≈−3.2e3 < 0`,
+  `λ_min(symC)≈−3.4e3 < 0`) — **the concrete Tier-2 IMPL-EX motivation**; **TD3** non-symmetric
+  (`‖C−Cᵀ‖/‖C‖≈0.31`) for non-associated + damaged flow ⇒ unsymmetric solver (ADR §4.4); **TD4** the
+  update is frame-objective (7.9e-16); **TD5** the tangent stays **finite** across a tension→compression
+  **reversal** (`ω_t≈0.9`) and near an **eigenvalue crossing** (`σ̄≈` hydrostatic, where the analytic
+  `∂P_T/∂σ` is singular — the C++ analytic tangent must regularize the crossing or accept Tier-2 drops).
+
+**NEXT (P2e):** `β_c` cyclic (Eq.50) + the **ANALYTIC** dual-projector tangent (spectral `∂P_T/∂σ` +
+implicit-ω chain rule, FD-checked against `damaged_consistent_tangent`) + multiaxial-damage apportioning
+(extreme-principal vs `‖σ̄_t‖` norm; `/x_s` onset harmonization across channels) + plastic-dissipation
+regularization (the D3/C3 caveat) → then the **C++ port** (`returnMapDamaged` over the P1 kernel:
+spectral split + `_solve_omega_bracketed` per channel + nominal recompose + the analytic damaged
+tangent) + the `nDMaterial` wrapper (lands classTag 33017 + the foot-gun guards).
 
 ## 7. Roadmap context
 
@@ -325,5 +351,6 @@ condensation, "Mander by mechanism" in 1D fibers) → P6 auto-hybrid switch.
 PRs so far (all → `ladruno`): **#240** P0 surface + P1 return map · **#244** hardening · **#247**
 consistent tangent · **#248** review fixes · **#249** C++ kernel return map + analytic tangent +
 g++ oracle-numeric-dump gate · **#259** P2a tensile damage + crack-band `G_f` · **#261** P2b
-compressive damage + `α_c` split + crack-band `G_c` · **(this PR)** P2c unified tensor dual-damage
-split + automatic unilateral crack-closure.
+compressive damage + `α_c` split + crack-band `G_c` · **#284** P2c unified tensor dual-damage
+split + automatic unilateral crack-closure · **(this PR)** P2d single-step tensor update + numerical
+damaged consistent tangent.

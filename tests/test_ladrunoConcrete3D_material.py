@@ -214,6 +214,31 @@ def test_p2c_tensor_damage_gate():
     assert r["PASS"]
 
 
+def test_p2d_damaged_tangent_gate():
+    """P2d: the SINGLE-STEP tensor constitutive update (what the C++ setTrialStrain mirrors) + its
+    numerical DAMAGED CONSISTENT TANGENT (the reference the C++ analytic dual-projector tangent is
+    FD-checked against). TD0 the single-step update reproduces the P2c path driver; TD1 with no damage
+    the tangent reduces to the elastic C / the P1 effective tangent (the (1-w) factor and the
+    -sig(x)dw rank-update both vanish pre-onset); TD2 on the softening branch the tangent is DEGRADED
+    and INDEFINITE (lambda_min<0, C[0,0]<0) — the Tier-2 IMPL-EX motivation; TD3 non-symmetric for
+    non-associated + damaged flow (unsymmetric solver, ADR 4.4); TD4 the update is frame-objective;
+    TD5 the tangent stays finite across a load REVERSAL and near an eigenvalue crossing (the hard
+    dP_T/dsig cases the C++ analytic tangent must regularize)."""
+    r = ref.run_p2d_gate(verbose=False)
+    assert r["TD0_tension_maxdiff"] < 1.0e-9        # single-step update == the P2c path driver (tension)
+    assert r["TD0_compression_maxdiff"] < 1.0e-6    # ... and compression (eigendecompose-route floor)
+    assert r["TD1a_elastic_err"] < 1.0e-6           # no-damage tangent == elastic C
+    assert r["TD1b_predamage"]                      # plastic-but-pre-peak step has w_t=w_c=0
+    assert r["TD1b_match_effective"] < 1.0e-6       # ... and its tangent == the P1 effective tangent
+    assert r["TD2_softening_reached"]
+    assert r["TD2_degraded_indefinite"]             # softening tangent: C[0,0]<0 and lambda_min(sym)<0
+    assert r["TD3_asym"] > 1.0e-2                    # damaged + non-associated => non-symmetric
+    assert r["TD4_objectivity"] < 1.0e-9            # the damaged update is frame-objective
+    assert r["TD5_reversal_finite"]                 # tangent finite across a tension->compression reversal
+    assert r["TD5_degenerate_finite"]               # ... and near an eigenvalue crossing
+    assert r["PASS"]
+
+
 def test_p2_no_spurious_healing():
     """Regression for the PR #261 adversarial-review CRITICAL: the implicit omega solve must not
     clamp-stall to 0 on a physical softening path (a raw clamped Newton did, so the cracked material
