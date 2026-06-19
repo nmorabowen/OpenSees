@@ -80,7 +80,7 @@ blocked by the others except where noted.
 | **V — Tran–Wallace experiment calibration** | validation (Zone-B) | *experimental data from the user* | M | when data is available |
 | ~~**3b-struct axis-aligned Bažant-bar**~~ — SHIPPED (Zone-A) | validation (Zone-A) | — | — | done |
 | **3b-struct — inclined/notched-panel objectivity gate** | validation (Zone-B) | a softening-localization solver setup | S–M | optional, anytime |
-| **Phase 4b — finite-strain view** (`LadrunoRCFiniteStrain`) | material view | reuses shipped `LogStrain`/`FiniteStrainNDMaterial` | M | **do first (code-only)** |
+| ~~**Phase 4b — finite-strain view** (`LadrunoRCFiniteStrain`)~~ — SHIPPED (classTag 33018, Zone-A 9/9) | material view | — | — | done |
 | **Phase 5 — `LadrunoSolidShell`** (33020) | NEW element | wants Phase 4b (the 3D material view) | **L (the big one)** | last |
 
 `S`≈a focused slice, `M`≈a multi-day phase, `L`≈a multi-PR element with net-new EAS code.
@@ -186,7 +186,22 @@ use the coarser meshes because reg-OFF fine snap-backs) are in [[LEDGER_quirks]]
 
 ---
 
-## Phase 4b — Finite-strain view (`LadrunoRCFiniteStrain`)
+## Phase 4b — Finite-strain view (`LadrunoRCFiniteStrain`) — SHIPPED
+
+> [!note] SHIPPED 2026-06-18 (classTag **33018**, Zone-A 9/9)
+> Built as a **native `FiniteStrainNDMaterial` subclass**, NOT the generic `LogStrain` wrapper —
+> the wrapper recovers the committed `bᵉ` via the inner's *initial* tangent (`εᵉ=C₀⁻¹:τ`), which a
+> stiffness-degrading damage inner shrinks by `(1−d)`, drifting the finite-strain trajectory (now in
+> [[LEDGER_quirks]]). The native view sidesteps it: the RC spine carries **no tensorial plastic
+> strain**, so the elastic left Cauchy–Green is simply the **total `B=F Fᵀ`** recomputed each step —
+> no `bᵉ` to track, and no channel-B (the directional crack is left in a fixed frame ⇒ the §14.11
+> xfail). Seam `B→½ln B→returnMap3D→σ=τ/J + c=(1/2J)[D:L:B]`; all RC flags + IMPL-EX ride the shared
+> kernel unchanged. Gated by `tests/test_ladrunoRCFiniteStrain.py` (the headline check: finite Cauchy
+> `σ == (small-strain RC at ½ln B)/J`, a same-binary cross-check). The **directional** large-rotation
+> xfail was NOT wired as an element-solver test (a committed-crack-then-large-rotation static solve
+> fights the softening interlock tangent — the same reason the cyclic wall validation is quasi-static
+> explicit); the isotropic-spine objectivity IS verified, and the directional boundary is documented.
+> The text below is the original plan, kept as the design record.
 
 **Goal.** A large-strain RC material for the solid-shell host and for `-geom finite` runs;
 symmetric-solver, explicit-friendly cyclic. This is the third `getType()` view of the existing

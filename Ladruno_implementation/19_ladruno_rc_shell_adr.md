@@ -818,13 +818,24 @@ was empirically falsified on a single-element ASDShellQ4 panel before implementi
   3-agent adversarial review (0 state-machine/serialization bugs; fixed the FD-tangent
   bypass and a header overclaim).
 
-#### Phase 4b (deferred) — finite-strain view
-- **Build:** `LadrunoRCFiniteStrain` (33015) via `setTrialF`/`LogStrainNDMaterial`; IMPL-EX with clamped
-  `eps_1`/`beta` and an implex-vs-implicit error monitor + step-cut.
-- **Reuses:** `FiniteStrainNDMaterial`, `LogStrainNDMaterial` (verified present); `LadrunoJ2Finite` pattern.
-- **Deliverable:** large-strain RC for the solid-shell; symmetric-solver explicit-friendly cyclic runs.
-- **Acceptance:** IMPL-EX `O(dt)` on a **smooth** proportional path (excluding damage-activation/closure
-  steps); cyclic energy-balance band on the wall; rigid-rotation-of-a-cracked-point **xfail** (§14.11).
+#### Phase 4b (SHIPPED 2026-06-18, classTag **33018**) — finite-strain view
+- **Built:** `LadrunoRCFiniteStrain` as a **native `FiniteStrainNDMaterial` subclass** (NOT the generic
+  `LogStrain` wrapper — that recovers the committed `bᵉ` via the inner *initial* tangent, which a
+  stiffness-degrading damage inner shrinks by `(1−d)`; see `LEDGER_quirks`). The RC spine carries no
+  tensorial plastic strain ⇒ the elastic left Cauchy–Green is the **total `B=F Fᵀ`** recomputed each
+  step (no `bᵉ` to track). Seam: `B → εᵉ=½ln B → returnMap3D → σ=τ/J + c=(1/2J)[D:L:B]`
+  (`LogStrainKernel.h`). All RC flags + **IMPL-EX** ride the shared kernel unchanged. classTag 33018
+  (the ADR's earlier "33015" was the small-strain class — a separate broker class needs its own tag).
+- **Reused:** `FiniteStrainNDMaterial`, `LogStrainKernel.h`, `LadrunoRCKernel.h`; the `LadrunoJ2Finite` pattern.
+- **Acceptance (Zone-A 9/9, `tests/test_ladrunoRCFiniteStrain.py`):** reduce-to-small-strain; the headline
+  stress-seam cross-check `σ == (small-strain RC at ½ln B)/J`; ELASTIC tangent `K==FD` (the damage
+  tangent is a deliberate secant ⇒ the FD gate stays elastic); isotropic-spine objectivity `σ(QF)==Qσ(F)Qᵀ`
+  at two rotation magnitudes; IMPL-EX tracks implicit; det F≤0 guard; DB round-trip. The
+  **directional** large-rotation **xfail** (§14.11, fixed-crack/interlock state not co-rotated by the
+  material view) is the documented boundary; it was NOT wired as an element-solver test (a
+  committed-crack-then-large-rotation static solve fights the softening interlock tangent — the same
+  reason the cyclic wall is quasi-static explicit). A co-rotating-crack finite-native view (the RC
+  analog of `LadrunoJ2Finite`'s channel-B) to flip the xfail is deferred.
 
 ### Phase 5 — `LadrunoSolidShell` (33020) — optional through-thickness host
 - **Build:** 8-node, 3-DOF, **genuine state-dependent EAS-on-`E33`** (persistent `alpha`, per-Newton

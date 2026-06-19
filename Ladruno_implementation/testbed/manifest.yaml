@@ -621,6 +621,37 @@ features:
       gate proven 3x (numpy oracle + standalone g++ + OpenSees). Tag moved 33014->33015
       after StagedStrain took 33014. Plan/ADR: Ladruno_implementation/19_ladruno_rc_shell_adr.md.
 
+  - feature: LadrunoRCFiniteStrain
+    classtag: 33018          # ND_TAG family; finite-strain (Hencky) view of the RC plastic-damage material (B=F Fᵀ -> ½ln B -> shared LadrunoRCKernel); after LadrunoRCConcrete=33015 (33016 reserved LogStrain2D, 33017 reserved LadrunoConcrete3D)
+    tag_symbol: ND_TAG_LadrunoRCFiniteStrain
+    pr: 282
+    feature_class: material
+    required_tiers: [T0m, T1]
+    pytest: tests/test_ladrunoRCFiniteStrain.py   # reduce-to-small-strain; elastic tangent==FD; patch sigma==(small-strain RC at ½lnB)/J; multistep committed; isotropic objectivity x2; IMPL-EX; detF guard; DB round-trip (10/10)
+    tcl: WAIVED(nDMaterial LadrunoRCFiniteStrain ...; shared OpenSeesNDMaterialCommands registry serves Tcl + Python; consumed by element LadrunoBrick -geom finite; verified via the Zone-A pytest battery)
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesNDMaterialCommands.cpp
+      - SRC/material/nD/CMakeLists.txt
+    dispatch: {tcl: false, functionMap: true}
+    status: active
+    notes: >
+      Phase 4b of the RC shell stack (ADR 19). Native FiniteStrainNDMaterial subclass
+      lifting the RC plastic-damage material to large strain via the Hencky seam
+      (B=F Fᵀ -> eps=½ln B -> shared LadrunoRCKernel returnMap3D -> Cauchy sigma=tau/J +
+      spatial tangent c=(1/2J)[D:L:B] from LogStrainKernel). NOT the generic LogStrain
+      wrapper (that recovers the elastic strain via the inner INITIAL tangent, shrunk by
+      (1-d) for a stiffness-degrading damage inner); the RC spine carries no tensorial
+      plastic strain so the elastic left Cauchy-Green is the TOTAL B=F Fᵀ recomputed each
+      step (no bᵉ to track; committed state = the same RCHist as the small-strain class).
+      All RC flags (-beta/-interlock/-cyclic/-xcrack/-shearRetention/-tensStiff/
+      -autoRegularization) + IMPL-EX ride the shared kernel unchanged. Isotropic-damage
+      spine objective (verified sigma(QF)==Q sigma(F) Qᵀ); the directional fixed-crack/
+      interlock state is xfail under large rotation (dSNPO §14.11) -- the corotational
+      ELEMENT is the objective route. Consumed by element LadrunoBrick -geom finite.
+      Plan/ADR: Ladruno_implementation/19_ladruno_rc_shell_adr.md.
+
   - feature: LadrunoUniaxialJ2
     classtag: 33000          # MAT_TAG (uniaxial) family; per-registry band, no collision w/ ELE/ND/INTEGRATOR/RECORDER 33000
     tag_symbol: MAT_TAG_LadrunoUniaxialJ2
