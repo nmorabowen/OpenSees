@@ -1280,9 +1280,12 @@ def _damage_drivers(sig_eff_pr, mp, As):
     return et, ac, xs
 
 
-def drive_damaged_unified(mp, eps11_path, Gf, Gc, lch, As=2.0):
-    """UNIFIED dual-damage uniaxial-STRESS driver (lateral mixed control: EFFECTIVE lateral
-    stress -> 0). Handles tension, compression, AND tension<->compression reversal in one update —
+def drive_damaged_unified(mp, eps11_path, Gf, Gc, lch, As=2.0, sigma3=0.0):
+    """UNIFIED dual-damage uniaxial-STRESS driver (lateral mixed control). Default `sigma3=0` holds the
+    EFFECTIVE lateral stress at 0 (uniaxial stress); `sigma3>0` holds it at -sigma3 (ACTIVE confinement
+    — a small confining pressure keeps the lateral principals clearly compressive, off the sigma_lat=0
+    Macaulay kink, and is the STRESS-controlled = cross-platform-robust way to a confined-compression-
+    damaged state). Handles tension, compression, AND tension<->compression reversal in one update —
     the spectral split routes each principal to its channel every step (automatic unilateral).
     Returns nominal axial stress + both damage variables + effective stress (for ratio checks)."""
     E, fc, ft, nu = mp["E"], mp["fc"], mp["ft"], mp["nu"]
@@ -1295,16 +1298,16 @@ def drive_damaged_unified(mp, eps11_path, Gf, Gc, lch, As=2.0):
     epl_prev = np.zeros(3)
     out = {k: [] for k in ("eps11", "eps_lat", "sig11", "wt", "wc", "sig_eff", "kp", "epsi_t", "epsi_c")}
     for e11 in eps11_path:
-        for _ in range(80):                              # lateral Newton: EFFECTIVE lateral -> 0
+        for _ in range(80):                              # lateral Newton: EFFECTIVE lateral -> -sigma3
             deps = np.array([e11 - eps[0], el - eps[1], el - eps[2]])
             snew, _, _, _, _ = return_map_hardening(_elastic_pred(sig_eff, deps, mp), mp, kp)
-            res = 0.5 * (snew[1] + snew[2])
+            res = 0.5 * (snew[1] + snew[2]) + sigma3        # target EFFECTIVE lateral stress = -sigma3
             if abs(res) < 1.0e-10 * (mp["fc"] + 1.0):
                 break
             d = 1.0e-8 * (abs(el) + 1.0e-6)
             deps2 = np.array([e11 - eps[0], (el + d) - eps[1], (el + d) - eps[2]])
             snew2, _, _, _, _ = return_map_hardening(_elastic_pred(sig_eff, deps2, mp), mp, kp)
-            Jd = (0.5 * (snew2[1] + snew2[2]) - res) / d
+            Jd = (0.5 * (snew2[1] + snew2[2]) + sigma3 - res) / d
             if abs(Jd) < 1.0e-12:
                 Jd = 1.0e-12 if Jd >= 0 else -1.0e-12
             el -= res / Jd
@@ -1839,14 +1842,21 @@ def run_p2e_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, Gc=5.0, As=2.0, ver
     Ca, Cn = tangents(st_t, np.array([1.0e-6, 0, 0, 0, 0, 0]))
     res["PE1_tension_rel"] = rel(Ca, Cn); res["PE1_wt"] = float(wt_t[-1])
 
-    # PE2: CONFINED/triaxial COMPRESSION-damaged (smooth — eigenvalues bounded from 0, avoiding the
-    # uniaxial-stress sigma_lat=0 Macaulay kink). Distinct, clearly-negative principals.
-    st_c, _, _, wc_c = _advance_damaged(make_damage_state(mp),
-                                        [np.array([e, 0.3*e, 0.15*e, 0, 0, 0]) for e in np.linspace(0, -0.02, 1200)],
-                                        mp, Gf, Gc, lch, As)
+    # PE2: CONFINED COMPRESSION-damaged (smooth — lateral effective stress held at -sigma3 so the
+    # principals stay clearly compressive, OFF the sigma_lat=0 Macaulay kink, AND alpha_c<1 so the
+    # d(alpha_c)/dsig term is exercised). Built STRESS-controlled (cross-platform-robust, unlike the
+    # confined-STRAIN return-map regime which is chaotic near the apex); the committed state is taken
+    # at the first step past wc>0.5 so it is well inside softening with margin.
+    dconf = drive_damaged_unified(mp, np.linspace(0, -0.05, 2000), Gf, Gc, lch, As, sigma3=0.05 * fc)
+    ic = int(np.argmax(dconf["wc"] > 0.5)) if (dconf["wc"] > 0.5).any() else -1
+    st_c, _, _, _ = _advance_damaged(make_damage_state(mp),
+                                     [np.array([dconf["eps11"][i], dconf["eps_lat"][i], dconf["eps_lat"][i], 0, 0, 0]) for i in range(ic)],
+                                     mp, Gf, Gc, lch, As)
     lam_c = np.linalg.eigvalsh(voigt_to_mat(st_c["sig_bar"]))
-    Ca, Cn = tangents(st_c, np.array([-2.0e-6, -0.6e-6, -0.3e-6, 0, 0, 0]))
-    res["PE2_compression_rel"] = rel(Ca, Cn); res["PE2_wc"] = float(wc_c[-1]); res["PE2_lam_max"] = float(lam_c.max())
+    dc = np.array([dconf["eps11"][ic], dconf["eps_lat"][ic], dconf["eps_lat"][ic], 0, 0, 0]) - st_c["eps"]
+    Ca, Cn = tangents(st_c, dc)
+    res["PE2_compression_rel"] = rel(Ca, Cn); res["PE2_wc"] = float(dconf["wc"][ic]) if ic > 0 else 0.0
+    res["PE2_lam_max"] = float(lam_c.max())
 
     # PE3: SHEAR, NON-ASSOCIATED (Df=0.3), damaged — exercises the off-diagonal spectral terms +
     # the non-symmetric coupling.
