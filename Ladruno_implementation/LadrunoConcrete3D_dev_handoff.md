@@ -2,7 +2,7 @@
 title: "LadrunoConcrete3D — developer / C++-implementer handoff guide"
 project: Ladruno
 type: handoff guide
-status: P0/P1 oracle complete + C++ KERNEL return map + analytic consistent tangent DONE (g++ oracle-numeric-dump verified). NEXT = P2 dual damage + the nDMaterial wrapper (carries the 33017 define + foot-gun guards).
+status: P0/P1 oracle + C++ KERNEL return map/tangent (g++-verified) + P2 dual damage DONE in oracle — P2a tensile ω_t, P2b compressive ω_c + α_c split, P2c UNIFIED TENSOR split + automatic unilateral crack-closure. NEXT = P2d (β_c cyclic + dual-projector damaged tangent + multiaxial apportioning) → C++ returnMapDamaged port + the nDMaterial wrapper (carries the 33017 define + foot-gun guards).
 related:
   - "[[31_ladruno_concrete3d_adr]]"          # the ADR (decision record)
   - "[[project_ladruno_concrete3d]]"          # the agent-memory pointer
@@ -279,10 +279,39 @@ equations were essential, not a refinement** (the P0 `qh1·qh2`-guess lesson, re
 > `G_c` leg is a P2c gap. **No correctness defect found in Eq.37/46/52/56-57 or the α_c split (the
 > reviewers re-derived them clean).**
 
-`κ_dt1`/`κ_dt2`/`κ_dc1`/`κ_dc2`, `α_c`, and Eq.37/38 are in the oracle. **NEXT (P2c+):** the TENSOR
-spectral split (`ω_t` on `σ̄_t` + `ω_c` on `σ̄_c` recompose for general 6-strain, eigdec like the P1
-tangent) → unilateral crack-closure recovery → `β_c` cyclic + the dual-projector damaged tangent →
-C++ port (`returnMapDamaged` over the P1 kernel) + the `nDMaterial` wrapper (lands classTag 33017).
+`κ_dt1`/`κ_dt2`/`κ_dc1`/`κ_dc2`, `α_c`, and Eq.37/38 are in the oracle.
+
+**P2c — the UNIFIED TENSOR dual-damage update + unilateral crack-closure — DONE + VERIFIED**
+(oracle `run_p2c_gate`, pytest `test_p2c_tensor_damage_gate`, Zone-A 16/16). P2a/P2b validated the two
+scalar softening laws on *separate* uniaxial-stress drivers; P2c fuses them into the **single
+constitutive update the C++ `nDMaterial` wrapper will call** — `spectral_split_principal`,
+`apply_damage_principal`, `damaged_stress_tensor`, `drive_damaged_unified`:
+- **One equivalent strain `ε̃` (Eq.37) + `α_c` (Eq.46) drive BOTH histories** — tension `κ_dt ← ε̃`
+  (full, Eq.43); compression `κ_dc ← α_c·ε̃` (Eq.47); the plastic parts `κ_dt1=∫‖ε̇_p‖/x_s`,
+  `κ_dc1=∫α_c·‖ε̇_p‖/x_s` (Eq.44/48, `β_c=1` monotonic); the damage-scaled parts `κ_d2=∫ dκ_d/x_s`
+  (Eq.45/49). The **equations were re-pinned from the arXiv full text** (`ε̇_t=ε̇` Eq.43 vs
+  `ε̇_c=α_c·ε̇` Eq.47, `κ̇_dt1=(1/x_s)‖ε̇_p‖` Eq.44 — tension has **no** `α_c` factor).
+- **Nominal `σ = (1−ω_t)σ̄_t + (1−ω_c)σ̄_c` (Eq.1)** — `ω_t`/`ω_c` solved by the bracketed root,
+  each driven by the **extreme effective principal of its sign** (`max⟨σ̄_i⟩₊` / `max⟨−σ̄_i⟩₊`), which
+  collapses to the single axial stress P2a/P2b used → **DT1 reduces to P2a EXACTLY** (4.9e-13;
+  confirming Eq.37 ≡ `σ̄/E` for *all* uniaxial-tension `σ̄`, not just on the surface), **DT2 to P2b**
+  to the one onset-crossing step (2e-3 MPa). The genuinely multiaxial apportioning (biaxial/triaxial
+  peak: extreme-principal vs `‖σ̄_t‖` norm; `/x_s` onset harmonization across channels) is a P2d gate.
+- **UNILATERAL recovery is AUTOMATIC + tier-independent (ADR §4.3 BLOCKING)** — because the split is
+  recomputed from the **converged effective stress every step**, a principal flipping negative (crack
+  closing) is routed into the `(1−ω_c)` channel and is **no longer** multiplied by `(1−ω_t)`. **DT3:** a
+  tension→compression reversal (`ω_t→1`) recovers `nominal/effective → 1.000` in early compression with
+  **zero extra state** (no `s_rec·g_close` knob needed for the standard full-recovery assumption). The
+  partial-recovery `s_rec` knob + the dual-projector analytic tangent + `β_c` cyclic stay **P2d**.
+- **DT4** the damaged stress is frame-objective (6.4e-16) — `damaged_stress_tensor` eigendecomposes
+  `σ̄`, splits the eigenvalues, recomposes on the SAME eigenvectors, so the spectral recompose carries
+  the rotation and `ω_t`/`ω_c` (invariant) are unchanged.
+
+**NEXT (P2d):** `β_c` cyclic (Eq.50) + the **dual-projector damaged tangent** (`−σ̄_t⊗∂ω_t/∂ε −
+σ̄_c⊗∂ω_c/∂ε`, FD-checked across a reversal AND an eigenvalue-crossing path, ADR §4.3 [MAJOR]) +
+multiaxial-damage apportioning + plastic-dissipation regularization (the D3/C3 caveat) → then the
+**C++ port** (`returnMapDamaged` over the P1 kernel: spectral split + `_solve_omega_bracketed` per
+channel + nominal recompose) + the `nDMaterial` wrapper (lands classTag 33017 + the foot-gun guards).
 
 ## 7. Roadmap context
 
@@ -294,5 +323,7 @@ robustness tiers (Tier-2 IMPL-EX freezes plastic state + damage; Tier-3 explicit
 condensation, "Mander by mechanism" in 1D fibers) → P6 auto-hybrid switch.
 
 PRs so far (all → `ladruno`): **#240** P0 surface + P1 return map · **#244** hardening · **#247**
-consistent tangent · **#248** review fixes · **(this PR)** C++ kernel return map + analytic tangent +
-g++ oracle-numeric-dump gate.
+consistent tangent · **#248** review fixes · **#249** C++ kernel return map + analytic tangent +
+g++ oracle-numeric-dump gate · **#259** P2a tensile damage + crack-band `G_f` · **#261** P2b
+compressive damage + `α_c` split + crack-band `G_c` · **(this PR)** P2c unified tensor dual-damage
+split + automatic unilateral crack-closure.

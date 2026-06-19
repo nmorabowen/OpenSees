@@ -1215,6 +1215,227 @@ def run_p2b_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gc=5.0, As=2.0, verbose=Tru
     return res
 
 
+# ===========================================================================
+# P2c — UNIFIED TENSOR dual damage: the spectral T/C split on a GENERAL effective
+# stress + automatic per-step unilateral crack-closure (CDPM2 Eq.1, Grassl 2013).
+#
+# P2a/P2b validated the two scalar softening laws on separate uniaxial-STRESS drivers.
+# P2c fuses them into ONE constitutive update (the shape the C++ nDMaterial wrapper calls):
+#   1. effective-stress return map (P1 kernel) -> sig_bar (6-tensor / principal)
+#   2. spectral split sig_bar = sig_bar_t + sig_bar_c  (Macaulay on eigenvalues, Eq.1)
+#   3. ONE equivalent strain eps_tilde (Eq.37) + alpha_c (Eq.46) drive BOTH histories:
+#        tension  kappa_dt  <- FULL eps_tilde         (Eq.43:  d kappa_dt = d eps_tilde)
+#        compr.   kappa_dc  <- alpha_c * eps_tilde    (Eq.47:  d kappa_dc = alpha_c d eps_tilde)
+#      with kdt1/kdc1 the plastic-strain parts (Eq.44/48, beta_c=1 monotonic) and
+#      kdt2/kdc2 the damage-scaled parts (Eq.45/49), all /x_s ductility (Eq.56-57).
+#   4. omega_t, omega_c solved implicitly per channel (Eq.52,55; bracketed root, no healing)
+#   5. NOMINAL sigma = (1-omega_t) sig_bar_t + (1-omega_c) sig_bar_c   (Eq.1)
+#
+# UNILATERAL recovery is AUTOMATIC and tier-independent (ADR 4.3 BLOCKING): because the
+# split is recomputed from the CONVERGED effective stress EVERY step, a principal that flips
+# negative (crack closing) is routed into the (1-omega_c) channel — it is no longer multiplied
+# by (1-omega_t), so the cracked stiffness is recovered with NO extra state. The partial-recovery
+# knob s_rec * g_close (ADR 4.3) and the dual-projector analytic tangent + beta_c cyclic are P2d.
+#
+# DRIVE CHOICE (reduces EXACTLY to the gated P2a/P2b): each channel's scalar softening law is
+# driven by the EXTREME effective principal of its sign — sig_t_drive = max_i<sig_bar_i>+ ,
+# sig_c_drive = max_i<-sig_bar_i>+ . In uniaxial tension/compression these collapse to the single
+# axial effective stress P2a/P2b used. The genuinely MULTIAXIAL apportioning (biaxial/triaxial
+# peak: extreme-principal vs ||sig_bar_t|| norm) is gated coaxially here and pinned in P2d.
+# ===========================================================================
+def spectral_split_principal(sig_pr):
+    """Macaulay split of principal stresses into tension/compression parts (Eq.1). Returns
+    (st, sc) with st = <sig>+ (>=0), sc = <sig>- (<=0), st + sc == sig elementwise."""
+    s = np.asarray(sig_pr, float)
+    return np.maximum(s, 0.0), np.minimum(s, 0.0)
+
+
+def apply_damage_principal(sig_pr, wt, wc):
+    """Nominal principal stress from the dual-scalar spectral split (Eq.1):
+    sig = (1-wt) <sig_bar>+ + (1-wc) <sig_bar>- . Unilateral recovery is automatic — a
+    principal < 0 sits in the (1-wc) channel regardless of wt."""
+    st, sc = spectral_split_principal(sig_pr)
+    return (1.0 - wt) * st + (1.0 - wc) * sc
+
+
+def damaged_stress_tensor(sig_eff6, wt, wc):
+    """Full 6-tensor nominal stress: eigendecompose the effective stress, split its eigenvalues,
+    apply (1-wt)/(1-wc), recompose on the SAME eigenvectors. The frame-objective form of
+    apply_damage_principal — the eigenvectors carry the rotation."""
+    w, V = np.linalg.eigh(voigt_to_mat(sig_eff6))
+    sp = apply_damage_principal(w, wt, wc)
+    return mat_to_voigt(V @ np.diag(sp) @ V.T)
+
+
+def _damage_drivers(sig_eff_pr, mp, As):
+    """Per-step damage kinematics from the EFFECTIVE principal stress: equivalent strain
+    eps_tilde (Eq.37), compressive weight alpha_c (Eq.46), softening ductility x_s (Eq.56-57)."""
+    et = equiv_strain_general(sig_eff_pr, mp)                       # Eq.37
+    ac = alpha_compression(sig_eff_pr)                             # Eq.46
+    sv6 = np.array([sig_eff_pr[0], sig_eff_pr[1], sig_eff_pr[2], 0, 0, 0])
+    xi, rho, _, *_ = invariants(sv6)
+    sigV = xi / SQRT3
+    Rs = (-SQRT6 * sigV / rho) if (sigV <= 0.0 and rho > 1.0e-12) else 0.0   # Eq.57
+    xs = 1.0 + (As - 1.0) * Rs                                               # Eq.56
+    return et, ac, xs
+
+
+def drive_damaged_unified(mp, eps11_path, Gf, Gc, lch, As=2.0):
+    """UNIFIED dual-damage uniaxial-STRESS driver (lateral mixed control: EFFECTIVE lateral
+    stress -> 0). Handles tension, compression, AND tension<->compression reversal in one update —
+    the spectral split routes each principal to its channel every step (automatic unilateral).
+    Returns nominal axial stress + both damage variables + effective stress (for ratio checks)."""
+    E, fc, ft, nu = mp["E"], mp["fc"], mp["ft"], mp["nu"]
+    eps0 = ft / E
+    eps_f = Gf / (ft * lch)
+    eps_fc = Gc / (fc * lch)
+    eps = np.zeros(3); sig_eff = np.zeros(3); kp = 0.0; el = 0.0
+    et_max = 0.0                                          # running max of eps_tilde (Eq.43 history)
+    kdt1 = kdt2 = kdc = kdc1 = kdc2 = 0.0
+    epl_prev = np.zeros(3)
+    out = {k: [] for k in ("eps11", "sig11", "wt", "wc", "sig_eff", "kp", "epsi_t", "epsi_c")}
+    for e11 in eps11_path:
+        for _ in range(80):                              # lateral Newton: EFFECTIVE lateral -> 0
+            deps = np.array([e11 - eps[0], el - eps[1], el - eps[2]])
+            snew, _, _, _, _ = return_map_hardening(_elastic_pred(sig_eff, deps, mp), mp, kp)
+            res = 0.5 * (snew[1] + snew[2])
+            if abs(res) < 1.0e-10 * (mp["fc"] + 1.0):
+                break
+            d = 1.0e-8 * (abs(el) + 1.0e-6)
+            deps2 = np.array([e11 - eps[0], (el + d) - eps[1], (el + d) - eps[2]])
+            snew2, _, _, _, _ = return_map_hardening(_elastic_pred(sig_eff, deps2, mp), mp, kp)
+            Jd = (0.5 * (snew2[1] + snew2[2]) - res) / d
+            if abs(Jd) < 1.0e-12:
+                Jd = 1.0e-12 if Jd >= 0 else -1.0e-12
+            el -= res / Jd
+        deps = np.array([e11 - eps[0], el - eps[1], el - eps[2]])
+        sig_eff, kp, _, _, _ = return_map_hardening(_elastic_pred(sig_eff, deps, mp), mp, kp)
+        eps = np.array([e11, el, el])
+
+        # damage kinematics (frame-invariant; computed from the EFFECTIVE stress)
+        et, ac, xs = _damage_drivers(sig_eff, mp, As)
+        det_raw = max(et - et_max, 0.0)                   # Eq.43 raw increment d kappa_dt
+        above = max(et - max(et_max, eps0), 0.0)          # increment ABOVE the onset eps0 (kappa_p>1)
+        loading = det_raw > 0.0 and et > eps0             # damage active <=> past the failure surface
+        # plastic principal strain (effective elastic strain removed)
+        epl = eps - np.array([(sig_eff[0] - nu * (sig_eff[1] + sig_eff[2])) / E,
+                              (sig_eff[1] - nu * (sig_eff[0] + sig_eff[2])) / E,
+                              (sig_eff[2] - nu * (sig_eff[0] + sig_eff[1])) / E])
+        dnorm_epl = float(np.linalg.norm(epl - epl_prev))
+        if loading:
+            # kdt2/kdc2 integrate d kappa_d/x_s from the onset eps0 (Eq.45/49); clamping the lower
+            # limit at eps0 telescopes to max(kappa_dt-eps0,0) when x_s=1, so the tension channel is
+            # byte-identical to the P2a driver. kdt1/kdc1 take the FULL plastic-strain increment
+            # (Eq.44/48), matching P2a/P2b. (Variable-x_s onset harmonization across channels = P2d.)
+            kdt2 += above / xs                            # Eq.45  d kappa_dt2 = d kappa_dt / x_s
+            kdt1 += dnorm_epl / xs                        # Eq.44  (tension: no alpha_c factor)
+            kdc += ac * above                             # Eq.47  d kappa_dc = alpha_c d eps_tilde
+            kdc2 += ac * above / xs                       # Eq.49
+            kdc1 += ac * dnorm_epl / xs                   # Eq.48  (beta_c = 1, monotonic slice)
+        et_max = max(et_max, et)                          # ALWAYS track the eps_tilde history (Eq.43)
+        epl_prev = epl
+
+        # spectral drives: extreme effective principal of each sign (reduces to P2a/P2b uniaxially)
+        sig_t_drive = max(float(np.max(sig_eff)), 0.0)
+        sig_c_drive = max(-float(np.min(sig_eff)), 0.0)
+        wt = _solve_omega_bracketed(kdt1, kdt2, sig_t_drive, ft, eps_f) if (et_max > eps0 and sig_t_drive > 0.0) else 0.0
+        wc = _solve_omega_bracketed(kdc1, kdc2, sig_c_drive, fc, eps_fc) if (kdc > 0.0 and sig_c_drive > 0.0) else 0.0
+
+        sig_nom = apply_damage_principal(sig_eff, wt, wc)            # Eq.1
+        for k, v in (("eps11", e11), ("sig11", sig_nom[0]), ("wt", wt), ("wc", wc),
+                     ("sig_eff", sig_eff[0]), ("kp", kp),
+                     ("epsi_t", kdt1 + wt * kdt2), ("epsi_c", kdc1 + wc * kdc2)):
+            out[k].append(v)
+    return {k: np.array(v) for k, v in out.items()}
+
+
+def run_p2c_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, Gc=5.0, As=2.0, verbose=True):
+    mp = make_material(E, nu, fc, ft)
+    res = {}
+
+    # DT0: the pure-kinematics identities the unified update rests on.
+    #   - spectral split is a partition: st + sc == sig, st>=0>=sc
+    #   - apply_damage with wt=wc=0 is the identity (no damage => effective stress unchanged)
+    sp = np.array([5.0, -2.0, -7.0])
+    st, sc = spectral_split_principal(sp)
+    res["DT0_split_partition"] = float(np.max(np.abs((st + sc) - sp)))
+    res["DT0_identity"] = float(np.max(np.abs(apply_damage_principal(sp, 0.0, 0.0) - sp)))
+
+    # DT1: REDUCE-TO-P2a — pure uniaxial tension. The unified driver's nominal stress + wt must be
+    # byte-identical to the validated tensile-only driver (same crack-band eps_f, same softening).
+    lch = 50.0
+    du = drive_damaged_unified(mp, np.linspace(0, 0.008, 3000), Gf, Gc, lch, As)
+    da = drive_uniaxial_tension_damaged(mp, np.linspace(0, 0.008, 3000), Gf, lch)
+    res["DT1_sig_maxdiff"] = float(np.max(np.abs(du["sig11"] - da["sig11"])))
+    res["DT1_wt_maxdiff"] = float(np.max(np.abs(du["wt"] - da["wt"])))
+    res["DT1_peak"] = float(np.max(du["sig11"]))
+    res["DT1_peak_err"] = abs(res["DT1_peak"] / ft - 1.0)
+
+    # DT2: REDUCE-TO-P2b — pure uniaxial compression vs the validated compressive-only driver.
+    duc = drive_damaged_unified(mp, np.linspace(0, -0.15, 4000), Gf, Gc, lch, As)
+    db = drive_uniaxial_compression_damaged(mp, np.linspace(0, -0.15, 4000), Gc, lch, As=As)
+    res["DT2_sig_maxdiff"] = float(np.max(np.abs(duc["sig11"] - db["sig11"])))
+    res["DT2_wc_maxdiff"] = float(np.max(np.abs(duc["wc"] - db["wc"])))
+    res["DT2_peak"] = float(-np.min(duc["sig11"]))
+    res["DT2_peak_err"] = abs(res["DT2_peak"] / fc - 1.0)
+
+    # DT3: UNILATERAL crack-closure — load tension into softening (wt high), reverse through 0 into
+    # compression. The tension damage MUST NOT degrade the compression branch: nominal/effective on
+    # the compressive side recovers to ~1 (crack closed), having been (1-wt)<<1 in tension softening.
+    path = np.concatenate([np.linspace(0, 0.006, 600),       # tension to deep softening
+                           np.linspace(0.006, -0.012, 1200)])  # reverse into compression
+    dr = drive_damaged_unified(mp, path, Gf, Gc, lch, As)
+    safe = np.where(dr["sig_eff"] == 0.0, 1.0, dr["sig_eff"])
+    ratio = dr["sig11"] / safe                              # nominal/effective = (1-omega) on the live channel
+    ten = dr["sig_eff"] > 0.01 * ft
+    # EARLY compression: a real compressive stress but BEFORE compression damage (wc~0). This is the
+    # unilateral window — the crack has closed, so nominal must recover to the FULL effective stress
+    # even though the tension damage wt is still ~1 (it would corrupt this if it were not re-split out).
+    comp_early = (dr["sig_eff"] < -0.02 * fc) & (dr["wc"] < 1.0e-3)
+    res["DT3_wt_peak"] = float(np.max(dr["wt"]))
+    res["DT3_min_ratio_tension"] = float(np.min(ratio[ten])) if ten.any() else 1.0       # << 1 (damaged)
+    res["DT3_recovery_ratio"] = float(np.max(ratio[comp_early])) if comp_early.any() else 0.0  # ~1 (recovered)
+    res["DT3_recovered"] = bool(res["DT3_min_ratio_tension"] < 0.5 and res["DT3_recovery_ratio"] > 0.98
+                                and res["DT3_wt_peak"] > 0.8)
+
+    # DT4: FRAME OBJECTIVITY of the damaged stress — rotate a damaged tensor state by Q, the nominal
+    # stress rotates by Q (the spectral recompose carries the eigenvectors; wt/wc are invariant).
+    sig_eff6 = np.array([4.0, -1.5, -6.0, 0.8, -0.3, 0.5])    # an arbitrary off-axis effective state
+    wt0, wc0 = 0.6, 0.25
+    th = 0.7
+    Q = np.array([[np.cos(th), -np.sin(th), 0.0], [np.sin(th), np.cos(th), 0.0], [0.0, 0.0, 1.0]])
+    base = voigt_to_mat(damaged_stress_tensor(sig_eff6, wt0, wc0))
+    rot_in = mat_to_voigt(Q @ voigt_to_mat(sig_eff6) @ Q.T)
+    got = voigt_to_mat(damaged_stress_tensor(rot_in, wt0, wc0))
+    nrm = lambda A: float(np.sqrt(np.sum(A * A)))
+    res["DT4_objectivity"] = nrm(got - Q @ base @ Q.T) / nrm(base)
+
+    # DT1 (tension) telescopes EXACTLY to the P2a driver (x_s=1 => clamped kdt2 == max(kdt-eps0,0)).
+    # DT2 (compression) matches P2b up to ONE onset-crossing step (the kdc2 sliver between the last
+    # sub-eps0 eps_tilde and eps0; P2b doesn't clamp it) => a tight non-zero floor, vanishing under
+    # step refinement. Stress diffs are in MPa (fc=30), so 1e-3 is ~3e-5 relative.
+    ok = (res["DT0_split_partition"] < 1.0e-14 and res["DT0_identity"] < 1.0e-14
+          and res["DT1_sig_maxdiff"] < 1.0e-7 and res["DT1_wt_maxdiff"] < 1.0e-7
+          and res["DT1_peak_err"] < 0.02
+          and res["DT2_sig_maxdiff"] < 1.0e-2 and res["DT2_wc_maxdiff"] < 1.0e-2
+          and res["DT2_peak_err"] < 0.03
+          and res["DT3_recovered"]
+          and res["DT4_objectivity"] < 1.0e-9)
+    res["PASS"] = bool(ok)
+    if verbose:
+        print(f"  E={E} nu={nu} fc={fc} ft={ft} Gf={Gf} Gc={Gc} As={As}")
+        print(f"  DT0 split partition={res['DT0_split_partition']:.1e}  wt=wc=0 identity={res['DT0_identity']:.1e}")
+        print(f"  DT1 reduce->P2a (tension): sig maxdiff={res['DT1_sig_maxdiff']:.2e}"
+              f"  wt maxdiff={res['DT1_wt_maxdiff']:.2e}  peak={res['DT1_peak']:.3f} (ft={ft})")
+        print(f"  DT2 reduce->P2b (compression): sig maxdiff={res['DT2_sig_maxdiff']:.2e}"
+              f"  wc maxdiff={res['DT2_wc_maxdiff']:.2e}  peak={res['DT2_peak']:.3f} (fc={fc})")
+        print(f"  DT3 unilateral: wt_peak={res['DT3_wt_peak']:.3f}  tension nom/eff(min)={res['DT3_min_ratio_tension']:.3f}"
+              f"  early-compression nom/eff(recovery)={res['DT3_recovery_ratio']:.3f}  recovered={res['DT3_recovered']}")
+        print(f"  DT4 frame objectivity (rotated damaged stress) = {res['DT4_objectivity']:.2e}")
+        print(f"  => P2c GATE {'PASS' if ok else 'FAIL'}")
+    return res
+
+
 def run_p2_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, verbose=True):
     mp = make_material(E, nu, fc, ft)
     eps0 = ft / E
@@ -1331,3 +1552,9 @@ if __name__ == "__main__":
     p2b = run_p2b_gate(verbose=True)
     print("-" * 74)
     print(f"P2b: {'PASS' if p2b['PASS'] else 'FAIL'}")
+    print("=" * 74)
+    print("LadrunoConcrete3D P2c gate — unified TENSOR dual-damage split + unilateral crack-closure")
+    print("=" * 74)
+    p2c = run_p2c_gate(verbose=True)
+    print("-" * 74)
+    print(f"P2c: {'PASS' if p2c['PASS'] else 'FAIL'}")
