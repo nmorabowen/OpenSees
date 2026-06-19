@@ -163,6 +163,7 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • LadrunoRebarBuckling — rebar buckling wrapper (Dhakal–Maekawa / Gomes–Appleton, cyclic re-straightening)\n"
 "        • LadrunoRCConcrete — RC plastic-damage + MCFT compression softening (shell)\n"
 "        • LadrunoRCFiniteStrain — finite-strain (Hencky) RC plastic-damage view (-geom finite)\n"
+"        • LadrunoConcrete3D — CDPM2-grade solid concrete (Menétrey-Willam + dual damage, 3D)\n"
 "        • LadrunoBondSlip — 1D bond-slip τ–s (CEB-FIP MC2010)\n"
 "        • LadrunoCohesiveHinge — discrete cohesive moment–rotation hinge (Gf per hinge, ∫M dθ=Gf)\n"
 "        • LadrunoCohesiveHingeBiaxial — coupled Mz–My cohesive interaction-surface hinge (elliptical onset, per-axis Gf)\n"

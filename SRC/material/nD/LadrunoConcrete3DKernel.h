@@ -910,7 +910,8 @@ inline void plasticStrain6(const double sig_eff[6], const double eps[6], const P
 // => automatic, tier-independent unilateral crack-closure (ADR §4.3 BLOCKING).
 // ---------------------------------------------------------------------------
 inline void damagedUpdate(const Params& mp, const State& in, const double sig_eff[6],
-                          const double eps_new[6], State& out)
+                          const double eps_new[6], State& out,
+                          double* wtOut = nullptr, double* wcOut = nullptr)
 {
     const double eps0 = mp.ft / mp.E;
     const double eps_f  = mp.Gf / (mp.ft * mp.lch);
@@ -973,6 +974,8 @@ inline void damagedUpdate(const Params& mp, const State& in, const double sig_ef
     matToVoigt(S, out.sig);
     out.et_max = et_max; out.kdt1 = kdt1; out.kdt2 = kdt2;
     out.kdc = kdc; out.kdc1 = kdc1; out.kdc2 = kdc2;
+    if (wtOut) *wtOut = wt;   // expose the damage variables for the wrapper's recorders (read-only)
+    if (wcOut) *wcOut = wc;
 }
 
 // ===========================================================================
@@ -1307,7 +1310,8 @@ inline int returnMapTensor(const Params& mp, const double sig_n[6], const double
 // ===========================================================================
 inline int returnMap(const Params& mp, const double strain[6], const State& in, State& out,
                      double sigma[6], double sigEffImplicit[6], double Dtan6[6][6],
-                     bool doTangent, double /*dScaleOverride*/ = -1.0, bool hardening = true)
+                     bool doTangent, double /*dScaleOverride*/ = -1.0, bool hardening = true,
+                     double* wtOut = nullptr, double* wcOut = nullptr)
 {
     double deps[6];
     for (int i = 0; i < 6; ++i) deps[i] = strain[i] - in.eps[i];
@@ -1317,7 +1321,7 @@ inline int returnMap(const Params& mp, const double strain[6], const State& in, 
     for (int i = 0; i < 6; ++i) { out.eps[i] = strain[i]; out.sigEff[i] = sig_eff[i]; sigEffImplicit[i] = sig_eff[i]; }
     out.kp = kp_new;
     // (2) P2 dual-damage NOMINAL stress (writes out.sig + the damage history). Unilateral by re-split.
-    damagedUpdate(mp, in, sig_eff, strain, out);
+    damagedUpdate(mp, in, sig_eff, strain, out, wtOut, wcOut);
     for (int i = 0; i < 6; ++i) sigma[i] = out.sig[i];
     // (3) P3b — upgrade Dtan6 (the P1 EFFECTIVE consistent tangent from step 1) to the ANALYTIC
     // dual-projector DAMAGED tangent  D_dam:C_eff - sig_t(x)dωt - sig_c(x)dωc  (oracle
