@@ -1293,7 +1293,7 @@ def drive_damaged_unified(mp, eps11_path, Gf, Gc, lch, As=2.0):
     et_max = 0.0                                          # running max of eps_tilde (Eq.43 history)
     kdt1 = kdt2 = kdc = kdc1 = kdc2 = 0.0
     epl_prev = np.zeros(3)
-    out = {k: [] for k in ("eps11", "sig11", "wt", "wc", "sig_eff", "kp", "epsi_t", "epsi_c")}
+    out = {k: [] for k in ("eps11", "eps_lat", "sig11", "wt", "wc", "sig_eff", "kp", "epsi_t", "epsi_c")}
     for e11 in eps11_path:
         for _ in range(80):                              # lateral Newton: EFFECTIVE lateral -> 0
             deps = np.array([e11 - eps[0], el - eps[1], el - eps[2]])
@@ -1342,7 +1342,7 @@ def drive_damaged_unified(mp, eps11_path, Gf, Gc, lch, As=2.0):
         wc = _solve_omega_bracketed(kdc1, kdc2, sig_c_drive, fc, eps_fc) if (kdc > 0.0 and sig_c_drive > 0.0) else 0.0
 
         sig_nom = apply_damage_principal(sig_eff, wt, wc)            # Eq.1
-        for k, v in (("eps11", e11), ("sig11", sig_nom[0]), ("wt", wt), ("wc", wc),
+        for k, v in (("eps11", e11), ("eps_lat", el), ("sig11", sig_nom[0]), ("wt", wt), ("wc", wc),
                      ("sig_eff", sig_eff[0]), ("kp", kp),
                      ("epsi_t", kdt1 + wt * kdt2), ("epsi_c", kdc1 + wc * kdc2)):
             out[k].append(v)
@@ -1433,6 +1433,228 @@ def run_p2c_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, Gc=5.0, As=2.0, ver
               f"  early-compression nom/eff(recovery)={res['DT3_recovery_ratio']:.3f}  recovered={res['DT3_recovered']}")
         print(f"  DT4 frame objectivity (rotated damaged stress) = {res['DT4_objectivity']:.2e}")
         print(f"  => P2c GATE {'PASS' if ok else 'FAIL'}")
+    return res
+
+
+# ===========================================================================
+# P2d — the SINGLE-STEP tensor damaged update (what the C++ setTrialStrain mirrors) + its
+# numerical DAMAGED CONSISTENT TANGENT (the reference the C++ analytic dual-projector tangent
+# is FD-checked against — exactly the P1-tangent slice pattern: oracle = numerical, C++ = analytic).
+#
+# The path drivers above carry their state in locals; here it is an explicit committed `state` dict
+# so a single update can be perturbed for the tangent (fixed committed state, vary the strain
+# increment) and chained step-by-step (== the path driver, gate TD0). The damaged consistent tangent
+#   dsigma/deps = (1-w_t) dsig_t/deps + (1-w_c) dsig_c/deps  -  sig_t (x) dw_t/deps  -  sig_c (x) dw_c/deps
+# is the full dual-projector operator (ADR 4.3 [MAJOR]); its ANALYTIC form (spectral projector
+# derivatives dP_T/dsig + the implicit-omega chain rule) is the C++ deliverable. Here it is the
+# central difference of `damaged_step_tensor` — the honest reference + the gates that characterize it
+# (degraded, INDEFINITE on softening => the Tier-2 IMPL-EX motivation, non-symmetric, frame-objective,
+# finite across a reversal AND an eigenvalue-crossing).
+# ===========================================================================
+def make_damage_state(mp):
+    """Committed state for the single-step tensor damaged update (all tensors Voigt {00,11,22,01,12,02},
+    tensor shear convention)."""
+    return dict(sig_bar=np.zeros(6), kp=0.0, eps=np.zeros(6),
+                et_max=0.0, kdt1=0.0, kdt2=0.0, kdc=0.0, kdc1=0.0, kdc2=0.0)
+
+
+def _plastic_strain6(sig_bar6, eps6, mp):
+    """Plastic strain tensor eps_p = eps - C^-1 : sig_bar (tensor Voigt). Generalizes the principal
+    compliance the path drivers use; off-diagonal handled via the tensor elastic C."""
+    return np.asarray(eps6, float) - np.linalg.solve(elastic_C(mp), np.asarray(sig_bar6, float))
+
+
+def damaged_step_tensor(state, deps6, mp, Gf, Gc, lch, As=2.0):
+    """ONE constitutive update: committed `state` + strain increment `deps6` -> (nominal sigma[6],
+    NEW state, diagnostics). Pure (does not mutate `state`). Identical kinematics to
+    drive_damaged_unified (gate TD0), lifted to a general 6-strain via the spectral split."""
+    E, fc, ft = mp["E"], mp["fc"], mp["ft"]
+    eps0 = ft / E
+    eps_f = Gf / (ft * lch)
+    eps_fc = Gc / (fc * lch)
+    deps6 = np.asarray(deps6, float)
+    sig_bar, kp_new, plastic, conv = return_map_tensor(state["sig_bar"], deps6, mp, state["kp"])
+    eps_new = state["eps"] + deps6
+    w, V = np.linalg.eigh(voigt_to_mat(sig_bar))          # effective principal stresses (ascending)
+    et, ac, xs = _damage_drivers(w, mp, As)
+    # plastic-strain increment (TENSOR Frobenius norm; reduces to the principal norm when coaxial)
+    depl = _plastic_strain6(sig_bar, eps_new, mp) - _plastic_strain6(state["sig_bar"], state["eps"], mp)
+    dnorm_epl = float(np.sqrt(np.sum(voigt_to_mat(depl) ** 2)))
+    et_max = state["et_max"]
+    det_raw = max(et - et_max, 0.0)
+    above = max(et - max(et_max, eps0), 0.0)
+    loading = det_raw > 0.0 and et > eps0
+    kdt1, kdt2 = state["kdt1"], state["kdt2"]
+    kdc, kdc1, kdc2 = state["kdc"], state["kdc1"], state["kdc2"]
+    if loading:                                           # same accumulation as drive_damaged_unified
+        kdt2 += above / xs
+        kdt1 += dnorm_epl / xs
+        kdc += ac * above
+        kdc2 += ac * above / xs
+        kdc1 += ac * dnorm_epl / xs
+    et_max = max(et_max, et)
+    sig_t_drive = max(float(np.max(w)), 0.0)
+    sig_c_drive = max(-float(np.min(w)), 0.0)
+    wt = _solve_omega_bracketed(kdt1, kdt2, sig_t_drive, ft, eps_f) if (et_max > eps0 and sig_t_drive > 0.0) else 0.0
+    wc = _solve_omega_bracketed(kdc1, kdc2, sig_c_drive, fc, eps_fc) if (kdc > 0.0 and sig_c_drive > 0.0) else 0.0
+    sig_nom = mat_to_voigt(V @ np.diag(apply_damage_principal(w, wt, wc)) @ V.T)   # Eq.1, recompose
+    new_state = dict(sig_bar=sig_bar, kp=kp_new, eps=eps_new, et_max=et_max,
+                     kdt1=kdt1, kdt2=kdt2, kdc=kdc, kdc1=kdc1, kdc2=kdc2)
+    return sig_nom, new_state, dict(wt=wt, wc=wc, plastic=plastic, conv=conv)
+
+
+def damaged_consistent_tangent(state, deps6, mp, Gf, Gc, lch, As=2.0, rel_step=1.0e-6):
+    """Numerical algorithmic tangent dsigma/deps (6x6) of the damaged update by central difference,
+    at fixed COMMITTED state (the algorithmic operator the global Newton consumes)."""
+    base = mp["fc"] / mp["E"]
+    C = np.zeros((6, 6))
+    for j in range(6):
+        d = rel_step * (abs(deps6[j]) + base)
+        dp = np.array(deps6, float); dp[j] += d
+        dm = np.array(deps6, float); dm[j] -= d
+        sp, _, _ = damaged_step_tensor(state, dp, mp, Gf, Gc, lch, As)
+        sm, _, _ = damaged_step_tensor(state, dm, mp, Gf, Gc, lch, As)
+        C[:, j] = (sp - sm) / (2.0 * d)
+    return C
+
+
+def _advance_damaged(state, eps_path6, mp, Gf, Gc, lch, As=2.0):
+    """Chain damaged_step_tensor along a prescribed list of TOTAL strain tensors; return the state +
+    the per-step (sigma, wt, wc). Used to build committed softening/reversal states for the tangent."""
+    sig, wt, wc = [], [], []
+    for eps_t in eps_path6:
+        deps = np.asarray(eps_t, float) - state["eps"]
+        s, state, info = damaged_step_tensor(state, deps, mp, Gf, Gc, lch, As)
+        sig.append(s); wt.append(info["wt"]); wc.append(info["wc"])
+    return state, np.array(sig), np.array(wt), np.array(wc)
+
+
+def run_p2d_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, Gc=5.0, As=2.0, verbose=True):
+    mp = make_material(E, nu, fc, ft)
+    nrm = lambda A: float(np.sqrt(np.sum(A * A)))
+    res = {}
+    lch = 50.0
+
+    # TD0: the single-step tensor update == the validated P2c path driver. Feed the unified driver's
+    # OWN (axial, lateral) strain history through damaged_step_tensor step-by-step and match sig11.
+    du = drive_damaged_unified(mp, np.linspace(0, 0.008, 1500), Gf, Gc, lch, As)
+    st = make_damage_state(mp)
+    sig_step = []
+    for i in range(len(du["eps11"])):
+        eps_i = np.array([du["eps11"][i], du["eps_lat"][i], du["eps_lat"][i], 0.0, 0.0, 0.0])
+        s, st, _ = damaged_step_tensor(st, eps_i - st["eps"], mp, Gf, Gc, lch, As)
+        sig_step.append(s[0])
+    res["TD0_tension_maxdiff"] = float(np.max(np.abs(np.array(sig_step) - du["sig11"])))
+    duc = drive_damaged_unified(mp, np.linspace(0, -0.12, 2000), Gf, Gc, lch, As)
+    st = make_damage_state(mp); sigc_step = []
+    for i in range(len(duc["eps11"])):
+        eps_i = np.array([duc["eps11"][i], duc["eps_lat"][i], duc["eps_lat"][i], 0.0, 0.0, 0.0])
+        s, st, _ = damaged_step_tensor(st, eps_i - st["eps"], mp, Gf, Gc, lch, As)
+        sigc_step.append(s[0])
+    res["TD0_compression_maxdiff"] = float(np.max(np.abs(np.array(sigc_step) - duc["sig11"])))
+
+    # TD1: with NO damage (w=0) the damaged tangent is the P1 EFFECTIVE consistent tangent.
+    #   (a) tiny elastic step -> elastic C; (b) a plastic-but-pre-peak step (kappa_p<1, w=0) -> the
+    #   effective P1 tangent (consistent_tangent on the same trial). Confirms the (1-w) factor and the
+    #   -sig (x) dw rank-update both vanish before onset.
+    st0 = make_damage_state(mp)
+    Cel = elastic_C(mp)
+    C_el = damaged_consistent_tangent(st0, np.array([-1.0e-6, 0, 0, 0, 0, 0]), mp, Gf, Gc, lch, As)
+    res["TD1a_elastic_err"] = nrm(C_el - Cel) / nrm(Cel)
+    deps_pp = np.array([-9.0e-4, 2.0e-4, 2.0e-4, 0.0, 0.0, 0.0])        # plastic, pre-peak (kp<1)
+    _, _, info_pp = damaged_step_tensor(st0, deps_pp, mp, Gf, Gc, lch, As)
+    res["TD1b_predamage"] = bool(info_pp["wt"] == 0.0 and info_pp["wc"] == 0.0 and info_pp["plastic"])
+    C_dmg_pp = damaged_consistent_tangent(st0, deps_pp, mp, Gf, Gc, lch, As)
+    C_eff_pp = consistent_tangent(np.zeros(6), deps_pp, mp, 0.0, hardening=True)
+    res["TD1b_match_effective"] = nrm(C_dmg_pp - C_eff_pp) / nrm(C_eff_pp)
+
+    # TD2: in the SOFTENING regime the damaged tangent is DEGRADED and INDEFINITE. Drive a prescribed
+    # uniaxial-STRAIN tension path just past the nominal peak, freeze that committed state, take the
+    # axial tangent for a further tension increment: C[0,0] < 0 (snap-back) and lambda_min(sym C) < 0.
+    path = [np.array([e, 0, 0, 0, 0, 0]) for e in np.linspace(0, 6.0e-4, 400)]
+    sstate, sig_path, wt_path, _ = _advance_damaged(make_damage_state(mp), path, mp, Gf, Gc, lch, As)
+    ipk = int(np.argmax(sig_path[:, 0]))
+    res["TD2_softening_reached"] = bool(wt_path[-1] > 0.5 and sig_path[-1, 0] < sig_path[ipk, 0])
+    # rebuild the committed state at a post-peak point (2/3 into the softening tail)
+    isoft = (ipk + len(path)) // 2 + (len(path) - ipk) // 6
+    sstate2, _, wt2, _ = _advance_damaged(make_damage_state(mp), path[:isoft], mp, Gf, Gc, lch, As)
+    C_soft = damaged_consistent_tangent(sstate2, np.array([2.0e-7, 0, 0, 0, 0, 0]), mp, Gf, Gc, lch, As)
+    res["TD2_wt_at_state"] = float(wt2[-1])
+    res["TD2_axial_tangent"] = float(C_soft[0, 0])
+    sym = 0.5 * (C_soft + C_soft.T)
+    res["TD2_min_eig_sym"] = float(np.min(np.linalg.eigvalsh(sym)))
+    res["TD2_degraded_indefinite"] = bool(C_soft[0, 0] < 0.0 and res["TD2_min_eig_sym"] < 0.0)
+
+    # TD3: NON-symmetric — a damaged, sheared, non-associated state. Both the non-associated plastic
+    # flow AND the -sig (x) dw damage rank-update break symmetry => unsymmetric solver (ADR 4.4).
+    mp_na = make_material(E, nu, fc, ft, Df=0.3)
+    st_sh = make_damage_state(mp_na)
+    pre = [np.array([e, -0.2 * e, -0.2 * e, 0.3 * e, 0, 0]) for e in np.linspace(0, 5.0e-4, 300)]
+    st_sh, _, wts, _ = _advance_damaged(st_sh, pre, mp_na, Gf, Gc, lch, As)
+    C_sh = damaged_consistent_tangent(st_sh, np.array([3.0e-6, -0.6e-6, -0.6e-6, 0.9e-6, 0, 0]),
+                                      mp_na, Gf, Gc, lch, As)
+    res["TD3_wt"] = float(wts[-1])
+    res["TD3_asym"] = nrm(C_sh - C_sh.T) / nrm(C_sh)
+
+    # TD4: frame objectivity of the UPDATE (state + increment rotated by Q -> stress rotates by Q).
+    # Exercises the histories (invariant) + the spectral recompose under a non-trivial committed state.
+    base_state = make_damage_state(mp)
+    bp = [np.array([e, -0.1 * e, 0.05 * e, 0.2 * e, -0.1 * e, 0.05 * e]) for e in np.linspace(0, 4.0e-4, 200)]
+    base_state, _, _, _ = _advance_damaged(base_state, bp, mp, Gf, Gc, lch, As)
+    deps_o = np.array([2.0e-6, -0.5e-6, 0.3e-6, 0.4e-6, -0.2e-6, 0.1e-6])
+    s_base, _, _ = damaged_step_tensor(base_state, deps_o, mp, Gf, Gc, lch, As)
+    th = 0.6
+    Q = np.array([[np.cos(th), -np.sin(th), 0.0], [np.sin(th), np.cos(th), 0.0], [0.0, 0.0, 1.0]])
+    rot_state = dict(base_state)
+    rot_state["sig_bar"] = mat_to_voigt(Q @ voigt_to_mat(base_state["sig_bar"]) @ Q.T)
+    rot_state["eps"] = mat_to_voigt(Q @ voigt_to_mat(base_state["eps"]) @ Q.T)
+    deps_rot = mat_to_voigt(Q @ voigt_to_mat(deps_o) @ Q.T)
+    s_rot, _, _ = damaged_step_tensor(rot_state, deps_rot, mp, Gf, Gc, lch, As)
+    res["TD4_objectivity"] = nrm(voigt_to_mat(s_rot) - Q @ voigt_to_mat(s_base) @ Q.T) / nrm(voigt_to_mat(s_base))
+
+    # TD5: the HARD cases stay finite (no NaN / blow-up). (i) load REVERSAL — committed state is
+    # tension-damaged (wt high), tangent for a COMPRESSION increment (the (1-wt) channel switches off,
+    # the (1-wc) channel switches on). (ii) near-DEGENERATE eigenvalues (sig_bar ~ hydrostatic) where
+    # the analytic dP_T/dsig term is singular — the numerical tangent must still be finite (the C++
+    # analytic tangent must regularize the eigenvalue-crossing or accept Tier-2 drops; ADR 4.3 [MAJOR]).
+    rev_state, _, wt_rev, _ = _advance_damaged(make_damage_state(mp),
+                                               [np.array([e, 0, 0, 0, 0, 0]) for e in np.linspace(0, 5.0e-4, 300)],
+                                               mp, Gf, Gc, lch, As)
+    C_rev = damaged_consistent_tangent(rev_state, np.array([-2.0e-6, 0, 0, 0, 0, 0]), mp, Gf, Gc, lch, As)
+    res["TD5_reversal_wt"] = float(wt_rev[-1])
+    res["TD5_reversal_finite"] = bool(np.all(np.isfinite(C_rev)) and nrm(C_rev) < 1.0e3 * nrm(Cel))
+    deg_state = make_damage_state(mp)
+    deg_state["sig_bar"] = np.array([2.0, 2.0, 2.0 + 1.0e-7, 0.0, 0.0, 0.0])     # near-triple eigenvalue
+    C_deg = damaged_consistent_tangent(deg_state, np.array([1.0e-6, 1.0e-6, -2.0e-6, 0, 0, 0]), mp, Gf, Gc, lch, As)
+    res["TD5_degenerate_finite"] = bool(np.all(np.isfinite(C_deg)))
+
+    # TD0 tension is exact (1e-14); the compression residual (~5e-9 MPa, ~2e-10 relative to fc) is the
+    # eigendecompose route (return_map_tensor) vs the direct principal path driver accumulated over the
+    # long deep-compression path — numerically "the same stress", with a platform-robust floor for the
+    # LAPACK eigensolver. The genuine physics-equivalence is the tension leg + TD1's tangent reductions.
+    ok = (res["TD0_tension_maxdiff"] < 1.0e-9 and res["TD0_compression_maxdiff"] < 1.0e-6
+          and res["TD1a_elastic_err"] < 1.0e-6
+          and res["TD1b_predamage"] and res["TD1b_match_effective"] < 1.0e-6
+          and res["TD2_softening_reached"] and res["TD2_degraded_indefinite"]
+          and res["TD3_wt"] > 0.05 and res["TD3_asym"] > 1.0e-2
+          and res["TD4_objectivity"] < 1.0e-9
+          and res["TD5_reversal_finite"] and res["TD5_degenerate_finite"])
+    res["PASS"] = bool(ok)
+    if verbose:
+        print(f"  E={E} nu={nu} fc={fc} ft={ft} Gf={Gf} Gc={Gc} As={As}")
+        print(f"  TD0 single-step==path-driver: tension={res['TD0_tension_maxdiff']:.2e}"
+              f"  compression={res['TD0_compression_maxdiff']:.2e}")
+        print(f"  TD1a elastic tangent == C_el = {res['TD1a_elastic_err']:.2e}")
+        print(f"  TD1b pre-damage (w=0,plastic)={res['TD1b_predamage']}  tangent==P1 effective:"
+              f" {res['TD1b_match_effective']:.2e}")
+        print(f"  TD2 softening: wt@state={res['TD2_wt_at_state']:.3f}  C[0,0]={res['TD2_axial_tangent']:.1f}"
+              f"  lambda_min(sym)={res['TD2_min_eig_sym']:.1f}  degraded+indefinite={res['TD2_degraded_indefinite']}")
+        print(f"  TD3 non-symmetric (Df=0.3, damaged, shear): wt={res['TD3_wt']:.3f}"
+              f"  ||C-C^T||/||C||={res['TD3_asym']:.3e}")
+        print(f"  TD4 frame objectivity of the update = {res['TD4_objectivity']:.2e}")
+        print(f"  TD5 reversal finite (wt={res['TD5_reversal_wt']:.2f})={res['TD5_reversal_finite']}"
+              f"  near-degenerate-eig finite={res['TD5_degenerate_finite']}")
+        print(f"  => P2d GATE {'PASS' if ok else 'FAIL'}")
     return res
 
 
@@ -1558,3 +1780,9 @@ if __name__ == "__main__":
     p2c = run_p2c_gate(verbose=True)
     print("-" * 74)
     print(f"P2c: {'PASS' if p2c['PASS'] else 'FAIL'}")
+    print("=" * 74)
+    print("LadrunoConcrete3D P2d gate — single-step tensor update + damaged consistent tangent")
+    print("=" * 74)
+    p2d = run_p2d_gate(verbose=True)
+    print("-" * 74)
+    print(f"P2d: {'PASS' if p2d['PASS'] else 'FAIL'}")
