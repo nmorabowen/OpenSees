@@ -652,6 +652,38 @@ features:
       ELEMENT is the objective route. Consumed by element LadrunoBrick -geom finite.
       Plan/ADR: Ladruno_implementation/19_ladruno_rc_shell_adr.md.
 
+  - feature: LadrunoConcrete3D
+    classtag: 33017          # ND_TAG family; CDPM2-grade solid-concrete plastic-damage (Menétrey-Willam 3-invariant + non-associated flow + confinement-aware hardening + dual scalar omega_t/omega_c damage with crack-band Gf/Gc + auto unilateral); after LogStrain2D=33016 reserved, before LadrunoRCFiniteStrain=33018
+    tag_symbol: ND_TAG_LadrunoConcrete3D
+    pr: 292
+    feature_class: material
+    required_tiers: [T0m, T1]
+    pytest: tests/test_ladrunoConcrete3D_element.py   # openseespy nDMaterial-in-a-stdBrick battery: elastic; uniaxial tension peak=ft + softening; uniaxial compression peak~fc; confined strength rises; tangent==FD; commit/revert + DB round-trip. (The numpy oracle + g++ kernel byte-check live in tests/test_ladrunoConcrete3D_material.py.)
+    tcl: WAIVED(nDMaterial LadrunoConcrete3D ...; shared OpenSeesNDMaterialCommands registry serves Tcl + Python; verified via the Zone-A pytest battery + the g++ oracle-numeric-dump kernel check)
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesNDMaterialCommands.cpp
+      - SRC/material/nD/CMakeLists.txt
+    dispatch: {tcl: false, functionMap: true}   # no classic-Tcl TclModelBuilderNDMaterialCommand entry; the shared OpenSeesNDMaterialCommands registry serves both Tcl + Python (matches the LadrunoRCConcrete / LadrunoRCFiniteStrain ND siblings)
+    status: active
+    notes: >
+      CDPM2-grade solid-concrete plastic-damage nDMaterial (ADR 31), the solid/triaxial
+      sibling of LadrunoRCConcrete (33015, shell/MCFT). Thin OpenSees wrapper over the
+      header-only OpenSees-free LadrunoConcrete3DKernel.h (the SAME core the g++ oracle-
+      numeric-dump self-check pins to the numpy oracle concrete3d_ref.py): effective-stress
+      Menétrey-Willam 3-invariant surface (friction m0, eccentricity e from Kupfer fcc/fc,
+      Willam-Warnke Lode r), confinement-aware hardening (qh1/qh2/kappa_p + ductility xh),
+      non-associated flow (dilatancy Df), semi-implicit return map, and the dual scalar
+      damage omega_t/omega_c on the spectral tension/compression split with crack-band
+      Gf/Gc + automatic per-step unilateral crack-closure; analytic dual-projector damaged
+      consistent tangent. v1 = 3D ("ThreeDimensional") only (the finite-strain view is free
+      via nDMaterial LogStrain wrapping this 3D material; PlaneStrain/AxiSymmetric/PlateFiber
+      reduced views are Phase 2). Tier-1 implicit only (IMPL-EX / Duvaut-Lions are P3). The
+      consistent tangent is NON-SYMMETRIC (non-associated flow + the semi-implicit theta-
+      freeze even associated) -> the parser warns to use an unsymmetric solver. Plan/ADR:
+      Ladruno_implementation/31_ladruno_concrete3d_adr.md.
+
   - feature: LadrunoUniaxialJ2
     classtag: 33000          # MAT_TAG (uniaxial) family; per-registry band, no collision w/ ELE/ND/INTEGRATOR/RECORDER 33000
     tag_symbol: MAT_TAG_LadrunoUniaxialJ2
