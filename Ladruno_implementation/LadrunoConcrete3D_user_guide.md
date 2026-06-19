@@ -2,21 +2,27 @@
 title: "LadrunoConcrete3D — user guide (intended API + modeling guidance)"
 project: Ladruno
 type: user guide
-status: API SPEC — the constitutive law is verified (oracle); the C++ nDMaterial is pending the build PR
+status: API SPEC (short) — the constitutive law is verified (oracle, through P2 damage + analytic tangent); the C++ KERNEL has the return map, the analytic effective tangent, and the damage stress update (g++-verified); the nDMaterial wrapper is still pending. For the full theory/architecture/usage/quirks reference see LadrunoConcrete3D_guide.
 related:
+  - "[[LadrunoConcrete3D_guide]]"          # the COMPLETE four-part reference
   - "[[LadrunoConcrete3D_dev_handoff]]"   # the implementer's brief
   - "[[31_ladruno_concrete3d_adr]]"
   - "[[19_ladruno_rc_shell_adr]]"          # LadrunoRCConcrete (shell/MCFT sibling)
-updated: 2026-06-16
+updated: 2026-06-19
 ---
 
-# LadrunoConcrete3D — user guide
+# LadrunoConcrete3D — user guide (short)
 
-> [!warning] Build status
-> The **constitutive law is verified** (numpy oracle + 2 review rounds), but the **C++ `nDMaterial`
-> is not built yet** — the return map is a stub pending the build PR (see
-> [[LadrunoConcrete3D_dev_handoff]] §5). This guide is the **intended interface and modeling
-> guidance** so models can be planned against it. Commands below will work once the build lands.
+> [!info] This is the short API spec. The **complete reference** (theory · architecture · usage ·
+> quirks) is **[[LadrunoConcrete3D_guide]]**.
+
+> [!warning] Build status (2026-06-19)
+> The **constitutive law is fully verified** (numpy oracle through P2 dual damage + the analytic
+> damaged tangent, 2 adversarial-review rounds). The **C++ kernel** has the effective return map, the
+> analytic effective tangent, **and the dual-damage nominal-stress update** (all g++ byte-verified).
+> **Not yet shipped:** the analytic *damaged* tangent in the kernel + the `nDMaterial LadrunoConcrete3D`
+> wrapper (classTag 33017). So the model is **not callable from Tcl/Python yet** — this is the intended
+> interface; commands below will work once the wrapper lands.
 
 ## 1. What it is, and when to use it
 
