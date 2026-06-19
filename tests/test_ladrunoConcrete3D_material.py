@@ -239,6 +239,29 @@ def test_p2d_damaged_tangent_gate():
     assert r["PASS"]
 
 
+def test_p2e_analytic_damaged_tangent_gate():
+    """P2e: the ANALYTIC dual-projector damaged consistent tangent (the C++ deliverable),
+    `C = D_dam : C_eff - sig_t (x) dw_t/deps - sig_c (x) dw_c/deps`, FD-verified against the P2d
+    NUMERICAL reference. PE0 the spectral isotropic-function derivative (incl. the l'Hopital
+    near-degenerate path); PE1-PE4 analytic == numerical in tension / confined-compression / shear
+    non-associated / reversal damaged states (rel ~1e-10); PE5 reduces to the elastic C and the P1
+    effective tangent before onset; PE6 at the sigma_lat=0 Macaulay kink (uniaxial-stress compression)
+    the analytic tangent is a VALID subgradient — it agrees with the central difference on the loaded
+    axial component, and only the ~zero-stress lateral directions differ (the kink, not a bug)."""
+    r = ref.run_p2e_gate(verbose=False)
+    assert r["PE0_sq"] < 1.0e-5            # spectral dY/dX vs Y=X^2
+    assert r["PE0_damage"] < 1.0e-7        # ... and the damage function
+    assert r["PE0_degenerate"] < 1.0e-7    # ... near-degenerate eigenvalues (l'Hopital)
+    assert r["PE1_tension_rel"] < 1.0e-6 and r["PE1_wt"] > 0.5
+    assert r["PE2_compression_rel"] < 1.0e-6 and r["PE2_wc"] > 0.3 and r["PE2_lam_max"] < -0.5
+    assert r["PE3_shear_rel"] < 1.0e-6 and r["PE3_wt"] > 0.5
+    assert r["PE4_reversal_rel"] < 1.0e-6
+    assert r["PE5_elastic_rel"] < 1.0e-9
+    assert r["PE5_predamage_w0"] and r["PE5_predamage_rel"] < 1.0e-6
+    assert r["PE6_kink_axial_rel"] < 1.0e-3   # the loaded axial component is robust at the kink
+    assert r["PASS"]
+
+
 def test_p2_no_spurious_healing():
     """Regression for the PR #261 adversarial-review CRITICAL: the implicit omega solve must not
     clamp-stall to 0 on a physical softening path (a raw clamped Newton did, so the cracked material

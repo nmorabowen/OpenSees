@@ -1658,6 +1658,259 @@ def run_p2d_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, Gc=5.0, As=2.0, ver
     return res
 
 
+# ===========================================================================
+# P2e — the ANALYTIC dual-projector DAMAGED CONSISTENT TANGENT (the C++ deliverable), FD-verified
+# against the P2d numerical reference (`damaged_consistent_tangent`). Structure (ADR 4.3 [MAJOR]):
+#     dsigma/deps = D_dam : C_eff  -  sig_t (x) dw_t/deps  -  sig_c (x) dw_c/deps
+#   * C_eff = the P1 EFFECTIVE consistent tangent dsig_bar/deps (numerical here; ANALYTIC in the C++
+#     kernel #249). P2e adds the analytic DAMAGE linearization on top.
+#   * D_dam = the spectral derivative of the per-principal damaged stress with omega FROZEN
+#     (de Souza Neto Box A.6 isotropic tensor-function derivative; the same machinery as the P1
+#     spectral tangent). This IS the (1-w_t)dsig_t/deps + (1-w_c)dsig_c/deps dual-projector secant.
+#   * dw_t/deps, dw_c/deps via the implicit-function theorem on the bracketed omega-solve, chained
+#     through the histories. The scalar sub-gradients d(eps_tilde)/dsig, d(x_s)/dsig, d(alpha_c)/dsig
+#     are ISOLATED scalar micro-FDs (the LadrunoJ2/P1 "Lode directional gradient by micro-FD" pattern);
+#     d(lambda_extreme)/dsig is the analytic eigenprojection; d||deps_p||/deps is closed form.
+#
+# KEY non-smooth point (NOT a bug): at sigma_lat = 0 (uniaxial-STRESS compression) the lateral
+# eigenvalues sit on the Macaulay kink, so the central-difference tangent crosses into tension and
+# disagrees with the analytic subgradient by O(w_c-w_t) on the ~zero-stress lateral directions. The
+# analytic tangent returns a VALID subgradient (the committed-sign side); the gate verifies it at
+# smooth states (eigenvalues bounded from 0) and characterizes the kink on the loaded component only.
+# ===========================================================================
+_TENSOR_W6 = np.array([1.0, 1.0, 1.0, 2.0, 2.0, 2.0])   # double-contraction weights, tensor-shear Voigt
+
+
+def ddot6(a, b):
+    """Tensor double contraction A:B for symmetric tensors in Voigt {00,11,22,01,12,02} (tensor shear)."""
+    a = np.asarray(a, float); b = np.asarray(b, float)
+    return float(a[0]*b[0] + a[1]*b[1] + a[2]*b[2] + 2.0*(a[3]*b[3] + a[4]*b[4] + a[5]*b[5]))
+
+
+def isotropic_tangent(lam, V, yv, ypv, tol=1.0e-8):
+    """6x6 derivative dY/dX of an isotropic symmetric-tensor function Y = sum_a y(lam_a) E_a, given the
+    eigenvalues `lam`, eigenvectors `V` (columns), and the per-eigenvalue values `yv`=y(lam_a) and
+    `ypv`=y'(lam_a). de Souza Neto Box A.6 operational form:
+        (dY/dX : S) = sum_a ypv_a (E_a:S) E_a + sum_{a!=b} G_ab E_a S E_b,
+        G_ab = (yv_a - yv_b)/(lam_a - lam_b)   (-> ypv_a as lam_b -> lam_a, l'Hopital)."""
+    E = [np.outer(V[:, a], V[:, a]) for a in range(3)]
+
+    def apply(S):
+        out = np.zeros((3, 3))
+        for a in range(3):
+            out += ypv[a] * np.sum(E[a] * S) * E[a]
+        for a in range(3):
+            for b in range(3):
+                if a == b:
+                    continue
+                dl = lam[a] - lam[b]
+                G = ypv[a] if abs(dl) < tol else (yv[a] - yv[b]) / dl
+                out += G * (E[a] @ S @ E[b])
+        return out
+
+    D = np.zeros((6, 6))
+    for j in range(6):
+        Sj = np.zeros(6); Sj[j] = 1.0
+        D[:, j] = mat_to_voigt(apply(voigt_to_mat(Sj)))
+    return D
+
+
+def _dscalar_dsig(fn, sig6, h=1.0e-6):
+    """Isolated micro-FD gradient d(fn)/d(sig) of a scalar-of-stress function (per Voigt component)."""
+    g = np.zeros(6)
+    for k in range(6):
+        dp = np.array(sig6, float); dp[k] += h
+        dm = np.array(sig6, float); dm[k] -= h
+        g[k] = (fn(dp) - fn(dm)) / (2.0 * h)
+    return g
+
+
+def damaged_tangent_analytic(state, deps6, mp, Gf, Gc, lch, As=2.0):
+    """ANALYTIC dual-projector damaged consistent tangent (6x6). Recomputes the same step as
+    `damaged_step_tensor` (so it is self-contained) and assembles D_dam:C_eff - sig_t(x)dw_t -
+    sig_c(x)dw_c. FD-verified against `damaged_consistent_tangent` at smooth states (run_p2e_gate)."""
+    E, fc, ft = mp["E"], mp["fc"], mp["ft"]
+    eps0 = ft / E
+    eps_f = Gf / (ft * lch)
+    eps_fc = Gc / (fc * lch)
+    deps6 = np.asarray(deps6, float)
+    sig_bar, kp_new, plastic, conv = return_map_tensor(state["sig_bar"], deps6, mp, state["kp"])
+    eps_new = state["eps"] + deps6
+    lam, V = np.linalg.eigh(voigt_to_mat(sig_bar))
+    et, ac, xs = _damage_drivers(lam, mp, As)
+    depl = _plastic_strain6(sig_bar, eps_new, mp) - _plastic_strain6(state["sig_bar"], state["eps"], mp)
+    dnorm = float(np.sqrt(ddot6(depl, depl)))
+    et_max = state["et_max"]
+    det_raw = max(et - et_max, 0.0)
+    above = max(et - max(et_max, eps0), 0.0)
+    loading = det_raw > 0.0 and et > eps0
+    kdt1, kdt2 = state["kdt1"], state["kdt2"]
+    kdc, kdc1, kdc2 = state["kdc"], state["kdc1"], state["kdc2"]
+    if loading:
+        kdt2 += above / xs; kdt1 += dnorm / xs
+        kdc += ac * above; kdc2 += ac * above / xs; kdc1 += ac * dnorm / xs
+    et_max2 = max(et_max, et)
+    Dt = max(float(np.max(lam)), 0.0)
+    Dc = max(-float(np.min(lam)), 0.0)
+    wt = _solve_omega_bracketed(kdt1, kdt2, Dt, ft, eps_f) if (et_max2 > eps0 and Dt > 0.0) else 0.0
+    wc = _solve_omega_bracketed(kdc1, kdc2, Dc, fc, eps_fc) if (kdc > 0.0 and Dc > 0.0) else 0.0
+
+    Ceff = consistent_tangent(state["sig_bar"], deps6, mp, state["kp"], hardening=True)
+
+    # D_dam: spectral derivative of the per-principal damage with omega FROZEN
+    yv = [(1.0 - wt) * max(lam[a], 0.0) + (1.0 - wc) * min(lam[a], 0.0) for a in range(3)]
+    ypv = [(1.0 - wt) if lam[a] > 0.0 else (1.0 - wc) for a in range(3)]
+    Ddam = isotropic_tangent(lam, V, yv, ypv)
+    sig_t = mat_to_voigt(V @ np.diag(np.maximum(lam, 0.0)) @ V.T)
+    sig_c = mat_to_voigt(V @ np.diag(np.minimum(lam, 0.0)) @ V.T)
+    C = Ddam @ Ceff
+
+    # chain-rule pieces (each a 6-vector d(.)/deps)
+    Cinv = np.linalg.inv(elastic_C(mp))
+    depl_deps = np.eye(6) - Cinv @ Ceff                                  # d(eps_p)/d(eps)
+    det_deps = Ceff.T @ _dscalar_dsig(lambda s: equiv_strain_general(np.linalg.eigvalsh(voigt_to_mat(s)), mp), sig_bar)
+    dxs_deps = Ceff.T @ _dscalar_dsig(lambda s: _damage_drivers(np.linalg.eigvalsh(voigt_to_mat(s)), mp, As)[2], sig_bar)
+    dac_deps = Ceff.T @ _dscalar_dsig(lambda s: alpha_compression(np.linalg.eigvalsh(voigt_to_mat(s))), sig_bar)
+    Emax = np.outer(V[:, 2], V[:, 2]); Emin = np.outer(V[:, 0], V[:, 0])  # eigh ascending
+    dDt_deps = Ceff.T @ (_TENSOR_W6 * mat_to_voigt(Emax)) if Dt > 0.0 else np.zeros(6)
+    dDc_deps = -(Ceff.T @ (_TENSOR_W6 * mat_to_voigt(Emin))) if Dc > 0.0 else np.zeros(6)
+    dnorm_deps = (depl_deps.T @ (_TENSOR_W6 * depl)) / dnorm if dnorm > 1.0e-14 else np.zeros(6)
+
+    if loading:
+        dkdt2 = det_deps / xs - above * dxs_deps / xs**2
+        dkdt1 = dnorm_deps / xs - dnorm * dxs_deps / xs**2
+        dkdc2 = (dac_deps * above + ac * det_deps) / xs - ac * above * dxs_deps / xs**2
+        dkdc1 = (dac_deps * dnorm + ac * dnorm_deps) / xs - ac * dnorm * dxs_deps / xs**2
+    else:
+        dkdt2 = dkdt1 = dkdc2 = dkdc1 = np.zeros(6)
+
+    # omega via IFT on F(w) = (1-w)D - f exp(-(kd1+w kd2)/eps_f) = 0 ; H = dF/dw = D[(1-w)kd2/eps_f - 1]
+    if 0.0 < wt < 1.0:
+        Ht = Dt * ((1.0 - wt) * kdt2 / eps_f - 1.0)
+        dwt = (-(1.0 - wt) / Ht) * dDt_deps + (-(1.0 - wt) * Dt / (eps_f * Ht)) * dkdt1 \
+            + (-(1.0 - wt) * Dt * wt / (eps_f * Ht)) * dkdt2
+    else:
+        dwt = np.zeros(6)
+    if 0.0 < wc < 1.0:
+        Hc = Dc * ((1.0 - wc) * kdc2 / eps_fc - 1.0)
+        dwc = (-(1.0 - wc) / Hc) * dDc_deps + (-(1.0 - wc) * Dc / (eps_fc * Hc)) * dkdc1 \
+            + (-(1.0 - wc) * Dc * wc / (eps_fc * Hc)) * dkdc2
+    else:
+        dwc = np.zeros(6)
+
+    return C - np.outer(sig_t, dwt) - np.outer(sig_c, dwc)
+
+
+def run_p2e_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, Gc=5.0, As=2.0, verbose=True):
+    mp = make_material(E, nu, fc, ft)
+    nrm = lambda A: float(np.sqrt(np.sum(A * A)))
+    rel = lambda Ca, Cn: nrm(Ca - Cn) / nrm(Cn)
+    lch = 50.0
+    res = {}
+
+    def tangents(state, deps, m=mp):
+        return (damaged_tangent_analytic(state, deps, m, Gf, Gc, lch, As),
+                damaged_consistent_tangent(state, deps, m, Gf, Gc, lch, As))
+
+    # PE0: the spectral isotropic-function derivative is correct vs a numerical dY/dX — for the known
+    # Y=X^2 (distinct eigvals) AND the damage function (incl. a near-degenerate eigenvalue, l'Hopital).
+    def Yof(X6, y):
+        l, Vv = np.linalg.eigh(voigt_to_mat(X6)); return mat_to_voigt(Vv @ np.diag([y(z) for z in l]) @ Vv.T)
+    def numD(X6, y, h=1.0e-6):
+        D = np.zeros((6, 6))
+        for j in range(6):
+            dp = X6.copy(); dp[j] += h; dm = X6.copy(); dm[j] -= h
+            D[:, j] = (Yof(dp, y) - Yof(dm, y)) / (2.0 * h)
+        return D
+    def specD(X6, y, yp):
+        l, Vv = np.linalg.eigh(voigt_to_mat(X6))
+        return isotropic_tangent(l, Vv, [y(z) for z in l], [yp(z) for z in l])
+    Xd = np.array([3.0, -1.0, 2.0, 0.4, -0.2, 0.3])
+    res["PE0_sq"] = nrm(specD(Xd, lambda z: z*z, lambda z: 2*z) - numD(Xd, lambda z: z*z))
+    yd = lambda z: 0.4*max(z, 0.0) + 0.8*min(z, 0.0); ypd = lambda z: 0.4 if z > 0 else 0.8
+    res["PE0_damage"] = nrm(specD(Xd, yd, ypd) - numD(Xd, yd))
+    Xdeg = np.array([2.0, 2.0 + 1.0e-7, -1.0, 0.0, 0.0, 0.0])
+    res["PE0_degenerate"] = nrm(specD(Xdeg, yd, ypd) - numD(Xdeg, yd, h=1.0e-7))
+
+    # PE1: TENSION-damaged — analytic == numerical reference.
+    st_t, _, wt_t, _ = _advance_damaged(make_damage_state(mp),
+                                        [np.array([e, 0, 0, 0, 0, 0]) for e in np.linspace(0, 4.5e-4, 300)],
+                                        mp, Gf, Gc, lch, As)
+    Ca, Cn = tangents(st_t, np.array([1.0e-6, 0, 0, 0, 0, 0]))
+    res["PE1_tension_rel"] = rel(Ca, Cn); res["PE1_wt"] = float(wt_t[-1])
+
+    # PE2: CONFINED/triaxial COMPRESSION-damaged (smooth — eigenvalues bounded from 0, avoiding the
+    # uniaxial-stress sigma_lat=0 Macaulay kink). Distinct, clearly-negative principals.
+    st_c, _, _, wc_c = _advance_damaged(make_damage_state(mp),
+                                        [np.array([e, 0.3*e, 0.15*e, 0, 0, 0]) for e in np.linspace(0, -0.02, 1200)],
+                                        mp, Gf, Gc, lch, As)
+    lam_c = np.linalg.eigvalsh(voigt_to_mat(st_c["sig_bar"]))
+    Ca, Cn = tangents(st_c, np.array([-2.0e-6, -0.6e-6, -0.3e-6, 0, 0, 0]))
+    res["PE2_compression_rel"] = rel(Ca, Cn); res["PE2_wc"] = float(wc_c[-1]); res["PE2_lam_max"] = float(lam_c.max())
+
+    # PE3: SHEAR, NON-ASSOCIATED (Df=0.3), damaged — exercises the off-diagonal spectral terms +
+    # the non-symmetric coupling.
+    mp_na = make_material(E, nu, fc, ft, Df=0.3)
+    st_s, _, wt_s, _ = _advance_damaged(make_damage_state(mp_na),
+                                        [np.array([e, -0.2*e, -0.2*e, 0.3*e, 0, 0]) for e in np.linspace(0, 5.0e-4, 300)],
+                                        mp_na, Gf, Gc, lch, As)
+    Ca, Cn = tangents(st_s, np.array([3.0e-6, -0.6e-6, -0.6e-6, 0.9e-6, 0, 0]), m=mp_na)
+    res["PE3_shear_rel"] = rel(Ca, Cn); res["PE3_wt"] = float(wt_s[-1])
+
+    # PE4: load REVERSAL — committed tension-damaged, tangent for a compression increment.
+    Ca, Cn = tangents(st_t, np.array([-2.0e-6, 0, 0, 0, 0, 0]))
+    res["PE4_reversal_rel"] = rel(Ca, Cn)
+
+    # PE5: reduce-to — no damage => analytic tangent is the elastic C / the P1 effective tangent.
+    res["PE5_elastic_rel"] = nrm(damaged_tangent_analytic(make_damage_state(mp), np.array([-1.0e-6, 0, 0, 0, 0, 0]),
+                                                          mp, Gf, Gc, lch, As) - elastic_C(mp)) / nrm(elastic_C(mp))
+    deps_pp = np.array([-9.0e-4, 2.0e-4, 2.0e-4, 0, 0, 0])
+    _, _, info_pp = damaged_step_tensor(make_damage_state(mp), deps_pp, mp, Gf, Gc, lch, As)
+    Ca = damaged_tangent_analytic(make_damage_state(mp), deps_pp, mp, Gf, Gc, lch, As)
+    Ceff_pp = consistent_tangent(np.zeros(6), deps_pp, mp, 0.0, hardening=True)
+    res["PE5_predamage_rel"] = rel(Ca, Ceff_pp); res["PE5_predamage_w0"] = bool(info_pp["wt"] == 0.0 and info_pp["wc"] == 0.0)
+
+    # PE6: the Macaulay-KINK at sigma_lat=0 (uniaxial-STRESS compression) is a valid-subgradient point,
+    # NOT a bug: the analytic tangent matches the numerical on the LOADED (axial) component, and only
+    # the ~zero-stress lateral directions differ (the central diff crosses the kink). Reported.
+    duc = drive_damaged_unified(mp, np.linspace(0, -0.12, 2000), Gf, Gc, lch, As)
+    ik = int(np.argmax(duc["wc"] > 0.5))
+    st_k, _, _, _ = _advance_damaged(make_damage_state(mp),
+                                     [np.array([duc["eps11"][i], duc["eps_lat"][i], duc["eps_lat"][i], 0, 0, 0]) for i in range(ik)],
+                                     mp, Gf, Gc, lch, As)
+    # the PHYSICAL next increment (lateral expanding to hold sigma_lat=0) — perturbing the near-zero
+    # lateral directions is what crosses the Macaulay kink under the central difference.
+    dk = np.array([duc["eps11"][ik], duc["eps_lat"][ik], duc["eps_lat"][ik], 0, 0, 0]) - st_k["eps"]
+    Ca = damaged_tangent_analytic(st_k, dk, mp, Gf, Gc, lch, As)
+    Cn = damaged_consistent_tangent(st_k, dk, mp, Gf, Gc, lch, As)
+    res["PE6_kink_axial_rel"] = abs(Ca[0, 0] - Cn[0, 0]) / abs(Cn[0, 0])      # loaded axial component agrees
+    res["PE6_kink_full_rel"] = rel(Ca, Cn)                                     # full tangent: the kink shows here
+
+    TOL = 1.0e-6
+    ok = (res["PE0_sq"] < 1.0e-5 and res["PE0_damage"] < 1.0e-7 and res["PE0_degenerate"] < 1.0e-7
+          and res["PE1_tension_rel"] < TOL and res["PE1_wt"] > 0.5
+          and res["PE2_compression_rel"] < TOL and res["PE2_wc"] > 0.3 and res["PE2_lam_max"] < -0.5
+          and res["PE3_shear_rel"] < TOL and res["PE3_wt"] > 0.5
+          and res["PE4_reversal_rel"] < TOL
+          and res["PE5_elastic_rel"] < 1.0e-9 and res["PE5_predamage_w0"] and res["PE5_predamage_rel"] < TOL
+          and res["PE6_kink_axial_rel"] < 1.0e-3)
+    res["PASS"] = bool(ok)
+    if verbose:
+        print(f"  E={E} nu={nu} fc={fc} ft={ft} Gf={Gf} Gc={Gc} As={As}")
+        print(f"  PE0 spectral dY/dX: X^2={res['PE0_sq']:.2e}  damage={res['PE0_damage']:.2e}"
+              f"  near-degenerate(l'Hopital)={res['PE0_degenerate']:.2e}")
+        print(f"  PE1 TENSION (wt={res['PE1_wt']:.3f}) analytic==numerical: rel={res['PE1_tension_rel']:.2e}")
+        print(f"  PE2 CONFINED-COMPRESSION (wc={res['PE2_wc']:.3f}, lam_max={res['PE2_lam_max']:.2f}): rel={res['PE2_compression_rel']:.2e}")
+        print(f"  PE3 SHEAR non-assoc (wt={res['PE3_wt']:.3f}, Df=0.3): rel={res['PE3_shear_rel']:.2e}")
+        print(f"  PE4 REVERSAL (tension-damaged + compression incr): rel={res['PE4_reversal_rel']:.2e}")
+        print(f"  PE5 reduce: elastic={res['PE5_elastic_rel']:.2e}  pre-damage(w=0)={res['PE5_predamage_w0']}"
+              f" tangent==P1-effective rel={res['PE5_predamage_rel']:.2e}")
+        print(f"  PE6 Macaulay-kink (uniaxial-stress compression sigma_lat=0): axial rel={res['PE6_kink_axial_rel']:.2e}"
+              f" (matches); full rel={res['PE6_kink_full_rel']:.2e} (kink on ~zero-stress lateral — valid subgradient)")
+        print(f"  => P2e GATE {'PASS' if ok else 'FAIL'}")
+    return res
+
+
 def run_p2_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, verbose=True):
     mp = make_material(E, nu, fc, ft)
     eps0 = ft / E
@@ -1786,3 +2039,9 @@ if __name__ == "__main__":
     p2d = run_p2d_gate(verbose=True)
     print("-" * 74)
     print(f"P2d: {'PASS' if p2d['PASS'] else 'FAIL'}")
+    print("=" * 74)
+    print("LadrunoConcrete3D P2e gate — ANALYTIC dual-projector damaged tangent (FD == numerical ref)")
+    print("=" * 74)
+    p2e = run_p2e_gate(verbose=True)
+    print("-" * 74)
+    print(f"P2e: {'PASS' if p2e['PASS'] else 'FAIL'}")
