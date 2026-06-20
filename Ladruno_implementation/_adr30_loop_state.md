@@ -47,7 +47,7 @@ Spec: `30_ladruno_explicit_constraint_projection_adr.md`. Host integrator:
 |---|---|---|---|---|
 | P0 falsify & baseline (no SRC) | ✅ MERGED | #300 (671b5236) | 3 passed (hardened) | Gate-0 SOUND |
 | P1 core (equalDOF) | ✅ PR OPEN, awaiting approval | #305 (guppi/adr30-p1-core) | 11 P1 + 3 P0 pass; ZoneA 870; transient regr clean | Gate-A + Gate-B BOTH PASSED (fixes applied) |
-| P2 general C (rigidLink/diaphragm) | TESTS 5/5 GREEN (no new code); Gate-C running | guppi/adr30-p2-transport | T3,T6fix,T7 + 2 boundary | Gate-C (read-only Explore) running |
+| P2 general C (rigidLink/diaphragm) | ✅ PR OPEN, awaiting approval | #307 (guppi/adr30-p2-transport) | 6 P2 (T3/T6fix/T6b/T7+2 bdry) + 11 P1 pass | Gate-C SOUND (read-only); rigor+UX folded |
 | P3 queries + EQ | not started | — | T8,T9 | Gate-D |
 
 ## Adversarial findings log
@@ -179,3 +179,19 @@ _(append per gate: finding · lens · REAL/REFUTED · resolution)_
 - DEFERRED (non-blocking, documented): runtime frozen-Ccr staleness guard (P2b/P4); condition-number
   rank check (ADR O1). Both are the SAME limits Transformation carries.
 - Rebuild bkom5fq9z (projector message + banner regen). Then run P2 6/6 + regression → PR.
+
+### General pre-merge review (P2, wf_0980ef20-3b6, 11 READ-ONLY Explore agents)
+- **Verdict: SAFE-TO-MERGE** — projection pipeline fundamentally correct, no bugs in handler/
+  projector/hook; house-rules compliant (ledgers, header stamps, classTag 33001 no collision,
+  banner); vanilla DirectIntegrationAnalysis edit verified backward-compatible (870 ZoneA, 0 regr).
+- 2 REAL consistency gaps found (same error-contract family as the main-path fix, missed elsewhere)
+  — both FIXED in this branch:
+  1. DirectIntegrationAnalysis::setIntegrator()/setAlgorithm() ignored domainChanged() returns
+     (mid-session swap path) → added the `<0`⇒return -1 guard to both setters.
+  2. TransientDomainDecompositionAnalysis::domainChanged() (parallel driver) dropped the
+     doneNumberingDOF() return (overwritten by setSize) → added the check. Defense-in-depth
+     (v1 projection handler is partition-interior only).
+  Both ledgered (LEDGER_vanilla). The other 2 "confirmed_blocking" were verify-stage CONFIRMATIONS
+  of correct claims (not bugs). Minor/deferred: condition-number rank check (ADR O1), frozen-Ccr
+  staleness guard (P4) — both documented, both = same limits Transformation carries.
+- Rebuild bi1sves9v; then test + transient regression → push to PR #307 → merge.
