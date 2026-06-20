@@ -62,6 +62,11 @@ void *OPS_ExplicitBatheLNVDSMSConsistent(void)
         opserr << "WARNING ExplicitBatheLNVDSMSConsistent - $p must be in (0,1)\n";
         return 0;
     }
+    if (alpha < 0.0 || alpha >= 1.0) {   // match the ExplicitBatheLNVD base contract
+        opserr << "WARNING ExplicitBatheLNVDSMSConsistent - $alpha (FLAC local damping) "
+                  "must be in [0,1) (got " << alpha << ")\n";
+        return 0;
+    }
     if (dtTarget <= 0.0) {
         opserr << "WARNING ExplicitBatheLNVDSMSConsistent - $dtTarget must be positive\n";
         return 0;
