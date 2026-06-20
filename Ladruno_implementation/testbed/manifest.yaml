@@ -211,8 +211,10 @@ features:
       Consumes the shared CriticalTimeStep kernel (lumpElementMass/elementCriticalDt,
       self-report aware). Re-baselined + dtor-restored (no persistent Domain mutation);
       -cflAbort/-recompute rejected (they re-run the un-augmented element eigensolve).
-      v1 sequential / partition-interior; constraint-node exclusion + parallel shared-node
-      MPI reduction deferred (one-time warnings). 3 milestone adversarial reviews folded
+      v1 sequential / partition-interior. CONSTRAINT-NODE EXCLUSION shipped v1.1: sub-target
+      elements touching an MP-constrained (equalDOF/RBE) slave node are excluded from scaling
+      and reported as still-governing (SP/fix not excluded). Parallel shared-node MPI reduction
+      still deferred (one-time warning). 3 milestone adversarial reviews folded
       (Review-3 NEEDS-REWORK: dead cap, no-restore, missing constraint guard — all fixed).
       Ships with HRZ mass-conserving lumping (ADR 35, -lump hrz, no new classTag).
       CDL-8 first-step correctness + CDL-9 betaK collapse are the differentiators.

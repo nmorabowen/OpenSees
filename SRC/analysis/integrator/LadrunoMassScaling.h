@@ -52,11 +52,14 @@
 #include <ElementIter.h>
 #include <Node.h>
 #include <NodeIter.h>
+#include <MP_Constraint.h>      // Ladruno: constraint-exclusion guard (slave-node hazard)
+#include <MP_ConstraintIter.h>
 #include <Matrix.h>
 #include <Vector.h>
 #include <OPS_Globals.h>
 
 #include <map>
+#include <set>
 #include <cmath>
 
 namespace Ladruno {
@@ -72,6 +75,11 @@ struct MassScalingReport {
     int    nSelfReport;   // throttling elements SKIPPED because their bound is mass-
                           //   independent (self-reported) — scaling can't help them
     int    nMismatch;     // elements skipped due to a non-node-major / DOF mismatch
+    int    nConstrained;  // sub-target elements SKIPPED because they touch an MP-constrained
+                          //   (slave) node — injected mass would transfer through T^T M T and
+                          //   the dt boost would not land; they remain GOVERNING (see below)
+    double minDtConstrained; // smallest dt_e among the excluded constrained elements (the
+                          //   step that still governs because they were not scaled; <=0 none)
 };
 
 // Build the per-node fictitious-mass increment (additive diagonal) into `injected`
@@ -84,9 +92,25 @@ buildMassScaling(AnalysisModel *theModel, double dtTarget, CTSLumping lumping,
     MassScalingReport rep; rep.addedMass = 0.0; rep.modelMass = 0.0;
     rep.nScaled = 0; rep.nElems = 0; rep.minDtScaled = dtTarget;
     rep.nSelfReport = 0; rep.nMismatch = 0;
+    rep.nConstrained = 0; rep.minDtConstrained = -1.0;
     if (theModel == 0 || dtTarget <= 0.0) return rep;
     Domain *theDomain = theModel->getDomainPtr();
     if (theDomain == 0) return rep;
+
+    // --- SMS-CONSTRAINTS (ADR-36 v1.1): collect the MP-constrained (SLAVE) node tags. A
+    //     slave DOF is eliminated by the handler and any injected mass is redistributed to
+    //     the retained node through T^T M T, so the per-element dt boost would NOT land —
+    //     scaling such an element silently mis-distributes mass and under-delivers dt.
+    //     EXCLUDE those elements (skip + count + report they still govern). SP/fix nodes are
+    //     NOT a hazard (mass on a removed DOF is inert; refinement at a fixed support — the
+    //     motivating case — must still scale), so only MP slaves are collected here.
+    std::set<int> constrainedNodes;
+    {
+        MP_Constraint *theMP;
+        MP_ConstraintIter &mps = theDomain->getMPs();
+        while ((theMP = mps()) != 0)
+            constrainedNodes.insert(theMP->getNodeConstrained());
+    }
 
     Element *ele;
     ElementIter &elements = theDomain->getElements();
@@ -131,6 +155,27 @@ buildMassScaling(AnalysisModel *theModel, double dtTarget, CTSLumping lumping,
         // self-report-aware per-element stable step
         double dt_e = elementCriticalDt(ele, useTangent, mdiag, n);
         if (dt_e <= 0.0 || dt_e >= dtTarget) { delete[] mdiag; continue; }
+
+        // --- SMS-CONSTRAINTS: this sub-target element WOULD be scaled, but if any of its
+        //     nodes is an MP-constrained slave, skip it (mass would not land through the
+        //     constraint). Count it and remember its dt_e — it remains GOVERNING, so the
+        //     integrator can honestly tell the user dtTarget is not delivered for it.
+        if (!constrainedNodes.empty()) {
+            Node **cnds = ele->getNodePtrs();
+            int cnn = ele->getNumExternalNodes();
+            bool touchesConstrained = false;
+            for (int a = 0; a < cnn && cnds; ++a) {
+                if (cnds[a] != 0 && constrainedNodes.count(cnds[a]->getTag())) {
+                    touchesConstrained = true; break;
+                }
+            }
+            if (touchesConstrained) {
+                rep.nConstrained++;
+                if (rep.minDtConstrained < 0.0 || dt_e < rep.minDtConstrained)
+                    rep.minDtConstrained = dt_e;
+                delete[] mdiag; continue;
+            }
+        }
 
         // s_e = (dt_target/dt_e)^2 ; add (s_e-1)*m to the element's nodes by lumped share
         double ratio = dtTarget / dt_e;

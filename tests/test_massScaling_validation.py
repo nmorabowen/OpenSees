@@ -552,40 +552,57 @@ def test_selfreport_element_skipped_normal_scaled(capfd):
 
 
 # --------------------------------------------------------------------------
-# T-CONSTR: the v1 constrained-node limitation is honestly disclosed AND the
-#   documented v1 behavior holds — a constrained scaled-element node is NOT excluded
-#   from scaling (it still receives injected mass). This pins the current contract and
-#   becomes a change-detector when the constraint-exclusion guard is built (the assert
-#   on injection then flips).
+# T-CONSTR: the constraint-exclusion guard (ADR-36 v1.1). A sub-target element that
+#   touches an MP-constraint (equalDOF/rigidDiaphragm/rigidLink) SLAVE node is EXCLUDED — its
+#   injected mass would be redistributed through the constraint's T^T M T and the dt
+#   boost would not land. The guard must be TARGETED: it excludes the constrained
+#   element (its slave node stays massless) AND reports it still governs, while a FREE
+#   sub-target element in the same model is still scaled.
 # --------------------------------------------------------------------------
 def _constr_model():
-    """Tiny stiff truss whose free node is tied to a driver node by equalDOF."""
+    """Two tiny trusses: trussA touches an equalDOF SLAVE node (must be EXCLUDED), trussB
+    is free (must be SCALED). Both dt_e ~ 1e-3 << dtTarget."""
     ops.wipe()
     ops.model("basic", "-ndm", 2, "-ndf", 2)
+    # constrained leg: node 2 is the equalDOF slave -> trussA(1-2) excluded
     ops.node(1, 0.0, 0.0); ops.fix(1, 1, 1)
-    ops.node(2, 0.1, 0.0); ops.fix(2, 0, 1)              # truss free node (x)
-    ops.node(3, 0.2, 0.0); ops.fix(3, 0, 1)              # driver retained node
+    ops.node(2, 0.1, 0.0); ops.fix(2, 0, 1)
+    ops.node(3, 0.2, 0.0); ops.fix(3, 0, 1)              # retained (master) node
+    # free leg: node 5 is unconstrained -> trussB(4-5) scaled
+    ops.node(4, 0.0, 1.0); ops.fix(4, 1, 1)
+    ops.node(5, 0.1, 1.0); ops.fix(5, 0, 1)
     ops.uniaxialMaterial("Elastic", 1, 1.0e4)            # c=100, L=0.1 -> dt_e~1e-3 < dtTarget
-    ops.element("Truss", 1, 1, 2, 1.0, 1, "-rho", 1.0)   # dt_e < dtTarget -> scaled
-    ops.equalDOF(3, 2, 1)                                 # tie node-2 x to node-3 (retained)
+    ops.element("Truss", 1, 1, 2, 1.0, 1, "-rho", 1.0)   # touches slave node 2
+    ops.element("Truss", 2, 4, 5, 1.0, 1, "-rho", 1.0)   # free
+    ops.equalDOF(3, 2, 1)                                 # node-2 x slaved to node-3 (retained)
     ops.constraints("Transformation")
     ops.numberer("Plain")
 
 
-def test_constrained_node_limitation_disclosed(capfd):
+def test_constrained_element_excluded_free_scaled(capfd):
     _constr_model()
     capfd.readouterr()
-    _prime_sms((SMS, 0.01), dt=2.0e-4)
+    _prime_sms((SMS, 0.01, "-verbose"), dt=2.0e-4)
     err = capfd.readouterr().err
 
-    assert "v1 limitations" in err and "constrained nodes" in err, (
-        "the one-time v1 constrained-node limitation warning must be disclosed; stderr:\n%s"
-        % err
+    # the v1.1 disclosure: constrained elements are EXCLUDED and still govern
+    assert "EXCLUDED from scaling" in err and "still GOVERN" in err, (
+        "the constraint-exclusion warning (excluded + still-govern) must fire; stderr:\n%s" % err
     )
-    # documented v1 behavior: constrained nodes are NOT excluded -> the scaled truss's
-    # constrained node still receives injected mass. (Flips when the exclusion guard ships.)
-    assert ops.nodeMass(2, 1) > 0.0, (
-        "v1: a constrained scaled-element node is NOT excluded, so it still carries injected "
-        "mass (nodeMass>0); got %r — if this is now 0, the exclusion guard shipped and this "
-        "test should assert the NEW behavior" % ops.nodeMass(2, 1)
+    # guard is TARGETED: the constrained slave node 2 gets NO injection (excluded)...
+    assert ops.nodeMass(2, 1) == 0.0, (
+        "trussA touches the equalDOF slave node 2 -> it must be EXCLUDED (slave stays "
+        "massless); got injected nodal mass %r" % ops.nodeMass(2, 1)
+    )
+    # ...while the FREE truss's node 5 IS scaled (injection landed). A blanket exclusion
+    # that skipped everything would fail this leg.
+    assert ops.nodeMass(5, 1) > 0.0, (
+        "the free trussB must still be scaled (injected nodal mass > 0 on node 5); got %r"
+        % ops.nodeMass(5, 1)
+    )
+    # exactly one element scaled (the free one); the constrained one excluded, counted.
+    m = re.search(r"scaled (\d+)/(\d+)\s+elements", err)
+    assert m and int(m.group(1)) == 1 and int(m.group(2)) == 2, (
+        "expected 'scaled 1/2 elements' (free trussB scaled, constrained trussA excluded); "
+        "line:\n%s" % err
     )
