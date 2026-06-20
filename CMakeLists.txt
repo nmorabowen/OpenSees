@@ -1208,6 +1208,15 @@ if(HDF5_FOUND)
    if (HDF5_VERSION VERSION_GREATER_EQUAL 1.12.0)
          add_compile_definitions(_H5DRM)
          add_compile_definitions(_HDF5)
+         # Ladruno (DRM study): add_compile_definitions only reaches targets
+         # created AFTER this point, but OPS_INTERPRETER is defined ~line 594
+         # (well before here), so OpenSeesPatternCommands.cpp was compiled
+         # WITHOUT _H5DRM -> ops.pattern('H5DRM',...) returned "unknown pattern
+         # type" from openseespy even though the class is linked. Apply the
+         # defines to that already-created target explicitly.
+         if (TARGET OPS_INTERPRETER)
+            target_compile_definitions(OPS_INTERPRETER PRIVATE _H5DRM _HDF5)
+         endif()
          message(STATUS "OPS >>> Have HDF5 and VERSION >= 1.12.0")
    endif()
 else()

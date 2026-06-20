@@ -72,6 +72,13 @@ void* OPS_LoadPattern();
 void* OPS_UniformExcitationPattern();
 void* OPS_MultiSupportPattern();
 void* OPS_TimeSeriesIntegrator();
+#ifdef _H5DRM
+// Ladruno (DRM study): expose H5DRM to openseespy. The OPS_ factory lives in
+// H5DRMLoadPattern.cpp and parses tag/file/factor/crd_scale/distance_tolerance/
+// do_transform/T/x0; it was never wired into this (Python/interpreter) dispatch,
+// so ops.pattern('H5DRM', ...) returned "unknown pattern type" (Tcl-only before).
+void* OPS_H5DRMLoadPattern();
+#endif
 
 namespace {
     static LoadPattern* theActiveLoadPattern = 0;
@@ -111,7 +118,16 @@ int OPS_Pattern()
 	theActiveMultiSupportPattern = (MultiSupportPattern*)OPS_MultiSupportPattern();
 	pattern = theActiveMultiSupportPattern;
 
-    } else {
+    }
+#ifdef _H5DRM
+    else if ((strcmp(type, "H5DRM") == 0) || (strcmp(type, "h5drm") == 0)) {
+	// Ladruno (DRM study): H5DRM domain-reduction-method load pattern.
+	theActiveLoadPattern = (LoadPattern*)OPS_H5DRMLoadPattern();
+	pattern = theActiveLoadPattern;
+
+    }
+#endif
+    else {
 	opserr<<"WARNING unknown pattern type"<<type<<"\n";
 	return -1;
     }

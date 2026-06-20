@@ -535,7 +535,13 @@ TclPatternCommand(ClientData clientData, Tcl_Interp *interp,
               return TCL_ERROR;
         }
       }
-      double stuff[12];
+      // Ladruno: initialize the transform to identity (T) + zero (x0). Previously
+      // `stuff[12]` was left UNINITIALIZED, so when fewer than 12 trailing transform
+      // values were supplied (the common case) T/x0 carried stack garbage (denormal
+      // doubles), corrupting the station->node coordinate transform in
+      // H5DRMLoadPattern::do_intitialization() so only ~1 of N DRM nodes matched.
+      // crd_scale survived because it has its own parsed default; T/x0 did not.
+      double stuff[12] = {1.0, 0.0, 0.0,  0.0, 1.0, 0.0,  0.0, 0.0, 1.0,  0.0, 0.0, 0.0};
       if(argc > 7+12)
       {
         for (int i = 0; i < 12; ++i)
