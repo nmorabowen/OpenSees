@@ -1,0 +1,16 @@
+# Regenerable run artifacts / large binaries — keep the SCRIPTS + SCOPE.md, not these.
+# Datasets: regenerate with gen_drm_dataset.py (ShakerMaker) — ~8 MB each.
+*.h5drm
+*.h5
+*.npz
+# Run outputs / recorder files
+*.out
+drm_out*.txt
+# Generated OpenSees decks (regenerate via build_drm_model.py / build_drm_buffered.py / setup_tcl_run.py)
+drm_model.py
+drm_model.tcl
+drm_model_buf.tcl
+drm_run*.tcl
+bc_fixed.tcl
+bc_lysmer*.tcl
+lysmer_elements.tcl

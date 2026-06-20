@@ -706,31 +706,62 @@ TclCommand_addPattern(ClientData clientData, Tcl_Interp *interp, int argc,
   else if ((strcmp(argv[1], "H5DRM") == 0) || 
            (strcmp(argv[1], "h5drm") == 0)) {
 
+    // Ladruno: restore full-arg H5DRM parsing (crd_scale / distance_tolerance /
+    // do_coordinate_transformation / 3x3 T + x0), mirroring the legacy
+    // SRC/domain/pattern/TclPatternCommand.cpp parser. The prior 3-arg form
+    // (`new H5DRM(tag,filename,factor)`) relied on constructor default args that
+    // arrived as UNINITIALIZED garbage for T/x0, corrupting the coordinate
+    // transform so only ~1 of N DRM nodes matched. Here T defaults to identity
+    // and x0 to zero, and we pass them explicitly to the real constructor.
     int tag = 0;
     if (Tcl_GetInt(interp, argv[2], &tag) != TCL_OK) {
-      opserr << OpenSees::PromptValueError << "insufficient number of arguments - want: pattern ";
-      opserr << "H5DRM tag filename factor\n";
+      opserr << OpenSees::PromptValueError << "want: pattern H5DRM tag filename "
+             << "<factor crd_scale distance_tolerance do_transform T00..T22 x00..x02>\n";
       return TCL_ERROR;
     }
 
     std::string filename = argv[3];
 
     double factor = 1.0;
-    if (Tcl_GetDouble(interp, argv[4], &factor) != TCL_OK) {
-      opserr << OpenSees::PromptValueError << "insufficient number of arguments - want: pattern ";
-      opserr << "H5DRM " << patternID << " filename factor\n";
+    if (argc > 4 && Tcl_GetDouble(interp, argv[4], &factor) != TCL_OK) {
+      opserr << OpenSees::PromptValueError << "H5DRM: invalid factor\n";
       return TCL_ERROR;
     }
+    double crd_scale = 1.0;
+    if (argc > 5 && Tcl_GetDouble(interp, argv[5], &crd_scale) != TCL_OK) {
+      opserr << OpenSees::PromptValueError << "H5DRM: invalid crd_scale\n";
+      return TCL_ERROR;
+    }
+    double distance_tolerance = 1e-3;
+    if (argc > 6 && Tcl_GetDouble(interp, argv[6], &distance_tolerance) != TCL_OK) {
+      opserr << OpenSees::PromptValueError << "H5DRM: invalid distance_tolerance\n";
+      return TCL_ERROR;
+    }
+    int do_coordinate_transformation = 1;
+    if (argc > 7 && Tcl_GetInt(interp, argv[7], &do_coordinate_transformation) != TCL_OK) {
+      opserr << OpenSees::PromptValueError << "H5DRM: invalid do_coordinate_transformation\n";
+      return TCL_ERROR;
+    }
+    // T defaults to identity, x0 to zero; overridden only if all 12 are supplied.
+    double stuff[12] = {1.0, 0.0, 0.0,  0.0, 1.0, 0.0,  0.0, 0.0, 1.0,  0.0, 0.0, 0.0};
+    if (argc > 7 + 12) {
+      for (int i = 0; i < 12; ++i) {
+        if (Tcl_GetDouble(interp, argv[7 + i + 1], &stuff[i]) != TCL_OK) {
+          opserr << OpenSees::PromptValueError << "H5DRM: invalid transform value\n";
+          return TCL_ERROR;
+        }
+      }
+    }
 
-    opserr << "Creating H5DRM tag = " << tag
-           << " filename = " << filename.c_str() << " factor = " << factor
-           << "\n";
+    opserr << "Creating H5DRM tag = " << tag << " filename = " << filename.c_str()
+           << " factor = " << factor << " crd_scale = " << crd_scale
+           << " distance_tolerance = " << distance_tolerance
+           << " do_coordinate_transformation = " << do_coordinate_transformation << "\n";
 
-    thePattern = new H5DRM(tag, filename, factor);
-
-    opserr << "Done! Creating H5DRM tag = " << tag
-           << " filename = " << filename.c_str() << " factor = " << factor
-           << "\n";
+    thePattern = new H5DRMLoadPattern(tag, filename, factor, crd_scale,
+                     distance_tolerance, (bool)do_coordinate_transformation,
+                     stuff[0], stuff[1], stuff[2], stuff[3], stuff[4], stuff[5],
+                     stuff[6], stuff[7], stuff[8], stuff[9], stuff[10], stuff[11]);
 
     domain->addLoadPattern(thePattern);
     return TCL_OK;

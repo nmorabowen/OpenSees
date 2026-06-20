@@ -948,9 +948,66 @@ bool H5DRMLoadPattern::drm_direct_read(double t)
     DRM_D.Zero();
     DRM_A.Zero();
 
-    if (t < tstart || t > tend)
+    if (t < tstart)
     {
-        H5DRMout << "t = " << t << " tstart = " << tstart << " tend = " << tend << " DRM Not computing forces (t < tstart or t > tend)"  << endln;
+        H5DRMout << "t = " << t << " tstart = " << tstart << " DRM Not computing forces (t < tstart)"  << endln;
+        return true;
+    }
+
+    // Ladruno (DRM study): hold-final-displacement past end-of-record (jaabell
+    // 99b7c2c11). Past tend the index arithmetic ran off the array (errorflag3/4
+    // < 0 -> "Failed to read" -> exit(-1)). Instead, read the FINAL displacement
+    // timestep for every DRM node and hold it constant with zero acceleration, so
+    // the analysis can continue indefinitely after the DRM record ends without
+    // losing the static DRM boundary traction. Reuses the persistent member
+    // ih5_dis_ds (acquired once in do_intitialization, closed in cleanup) so the
+    // memory-leak fix is preserved (no per-call H5Dget_space / double-close).
+    if (t >= tend)
+    {
+        if (MPI_local_rank == 0)
+        {
+            H5DRMout << "t = " << t << " >= tend = " << tend
+                     << " -- holding final displacement, zero acceleration." << endln;
+        }
+
+        const int i_final = N_timesteps - 1;
+        hsize_t stride[2] = {1, 1};
+        hsize_t count[2]  = {3, 1};
+        hsize_t block[2]  = {1, 1};
+        hsize_t rank_one_array = 1;
+        hsize_t one_node_data_dims[1]    = {3};
+        hsize_t one_node_data_maxdims[1] = {3};
+
+        for (int n = 0; n < DRM_Nodes.Size(); ++n)
+        {
+            int nodeTag    = DRM_Nodes(n);
+            int station_id = nodetag2station_id[nodeTag];
+            int data_pos   = station_id2data_pos[station_id];
+            int local_pos  = nodetag2local_pos[nodeTag];
+
+            double d_final[3] = {0., 0., 0.};
+            hsize_t start[2] = {(hsize_t) data_pos, (hsize_t) i_final};
+
+            hid_t memspace = H5Screate_simple(rank_one_array,
+                                              one_node_data_dims,
+                                              one_node_data_maxdims);
+            hsize_t mem_start[1]  = {0};
+            hsize_t mem_stride[1] = {1};
+            hsize_t mem_count[1]  = {3};
+            hsize_t mem_block[1]  = {1};
+            H5Sselect_hyperslab(memspace, H5S_SELECT_SET,
+                                mem_start, mem_stride, mem_count, mem_block);
+            H5Sselect_hyperslab(ih5_dis_ds, H5S_SELECT_SET,
+                                start, stride, count, block);
+            H5Dread(ih5_dis, H5T_NATIVE_DOUBLE,
+                    memspace, ih5_dis_ds, ih5_xfer_plist, d_final);
+            H5Sclose(memspace);
+
+            DRM_D(3 * local_pos + 0) = d_final[0];
+            DRM_D(3 * local_pos + 1) = d_final[1];
+            DRM_D(3 * local_pos + 2) = d_final[2];
+            // DRM_A components remain zero (already zeroed above)
+        }
         return true;
     }
 
@@ -958,6 +1015,14 @@ bool H5DRMLoadPattern::drm_direct_read(double t)
     int i2 = (int) floor( (t - tstart) / dt) + 1;
     double t1 = i1 * dt + tstart;
     double t2 = i2 * dt + tstart;
+    // Ladruno (DRM study): clamp the near-end interpolation stencil so i2 never
+    // overruns the last sample (jaabell 9be15c3d0, shadow-var fix from 99b7c2c11).
+    if (i2 >= N_timesteps - 2) {
+        i2 = N_timesteps - 2;
+        i1 = i2 - 1;
+        t1 = i1 * dt + tstart;
+        t2 = i2 * dt + tstart;
+    }
     double dtau = (t - t1) / (t2 - t1);
 
     if (MPI_local_rank == 0)
@@ -1080,10 +1145,14 @@ bool H5DRMLoadPattern::drm_direct_read(double t)
             exit(-1);
         }
 
-        d1[2] = -d1[2];
-        d2[2] = -d2[2];
-        a1[2] = -a1[2];
-        a2[2] = -a2[2];
+        // Ladruno (DRM study): Z-flip removed (jaabell 9be15c3d0). ShakerMaker is
+        // z=Down(+down); when the FE model is built in the same z-down frame the
+        // d[2]/a[2] negation flips the vertical field vs geometry. Testing whether
+        // this flip is the source of the free-box drift + wrong vertical sign.
+        // d1[2] = -d1[2];
+        // d2[2] = -d2[2];
+        // a1[2] = -a1[2];
+        // a2[2] = -a2[2];
 
 
         DRM_D(3 * local_pos + 0) = d1[0] * (1 - dtau) + d2[0] * (dtau);
@@ -1260,10 +1329,14 @@ bool H5DRMLoadPattern::drm_differentiate_displacements(double t)
             exit(-1);
         }
 
-        d1[2] = -d1[2];
-        d2[2] = -d2[2];
-        a1[2] = -a1[2];
-        a2[2] = -a2[2];
+        // Ladruno (DRM study): Z-flip removed (jaabell 9be15c3d0). ShakerMaker is
+        // z=Down(+down); when the FE model is built in the same z-down frame the
+        // d[2]/a[2] negation flips the vertical field vs geometry. Testing whether
+        // this flip is the source of the free-box drift + wrong vertical sign.
+        // d1[2] = -d1[2];
+        // d2[2] = -d2[2];
+        // a1[2] = -a1[2];
+        // a2[2] = -a2[2];
 
 
         DRM_D(3 * local_pos + 0) = d1[0] * (1 - dtau) + d2[0] * (dtau);
