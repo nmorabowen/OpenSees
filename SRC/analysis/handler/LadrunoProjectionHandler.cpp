@@ -119,17 +119,20 @@ LadrunoProjectionHandler::handle(const ID *nodesLast)
         return -1;
     }
 
-    // collect homogeneous SPs (Plain-style); warn on non-homogeneous (not v1)
+    // P4b: a fresh handle() rebuilds the prescribed-motion records from scratch.
+    prescribedDOFs.clear();
+    prescribedKey.clear();
+
+    // Collect every SP (Plain-style). Homogeneous SPs (`fix`) are excluded from the
+    // equation set below. Non-homogeneous SPs / imposedMotion are ALSO excluded from the
+    // equation set (eqn = -1), but their prescribed DISPLACEMENT is imposed on the node each
+    // step by applyLoad() (P4b); ImposedMotionSP supplies vel/accel itself. They are recorded
+    // in the node loop below (where the Node* and the -1 mark are both in hand).
     std::multimap<int, SP_Constraint *> allSPs;
     SP_ConstraintIter &theSPs = theDomain->getDomainAndLoadPatternSPs();
     SP_Constraint *theSP;
-    while ((theSP = theSPs()) != 0) {
-        if (theSP->isHomogeneous() == false)
-            opserr << "WARNING LadrunoProjectionHandler::handle() - non-homogeneous SP "
-                      "at node " << theSP->getNodeTag()
-                   << " not enforced in v1 (homogeneous assumed)\n";
+    while ((theSP = theSPs()) != 0)
         allSPs.insert(std::make_pair(theSP->getNodeTag(), theSP));
-    }
 
     // DOF_Groups: free=-2, homogeneous-SP=-1. KEY: MP slave DOFs are NOT set to -4
     // (they keep their own equation + diagonal mass; the projector enforces the tie).
@@ -156,6 +159,16 @@ LadrunoProjectionHandler::handle(const ID *nodesLast)
             if (cid(dof) == -2) {
                 dofPtr->setID(dof, -1);
                 countDOF--;
+                // P4b: a non-homogeneous SP (or imposedMotion) carries a prescribed motion.
+                // Record it so applyLoad() can impose the displacement on the node each step.
+                if (it->second->isHomogeneous() == false) {
+                    PrescribedDOF p;
+                    p.nodeTag = nodeID;        // resolved fresh in applyLoad() (no stored Node*)
+                    p.dof     = dof;
+                    p.sp      = it->second;
+                    prescribedDOFs.push_back(p);
+                    prescribedKey.insert(std::make_pair(nodeID, dof));
+                }
             } else {
                 opserr << "WARNING LadrunoProjectionHandler::handle() - multiple SPs at DOF "
                        << dof << " node " << nodeID << endln;
@@ -551,6 +564,19 @@ LadrunoProjectionHandler::doneNumberingDOF(void)
             if (e >= 0) {
                 colOf[v] = (int)survMasterVtx.size();
                 survMasterVtx.push_back(v);
+            } else if (prescribedKey.find(std::make_pair(vtxNode[v], vtxDof[v]))
+                       != prescribedKey.end()) {
+                // P4b: a prescribed-motion DOF used as a constraint MASTER would be dropped
+                // here (eqn<0) and its slaves forced to a=0 — silently WRONG (the slave should
+                // follow C*a_prescribed). Refuse loudly. Driving slaves from a prescribed master
+                // (the "overwrite a before projecting" known-RHS projection) is a later phase.
+                opserr << "LadrunoProjectionHandler - PRESCRIBED MASTER: DOF (node "
+                       << vtxNode[v] << " dof " << vtxDof[v] << ") carries a prescribed motion "
+                          "(non-homogeneous SP / imposedMotion) AND is a constraint master in "
+                          "group " << gi << ". Driving constrained DOFs from a prescribed master "
+                          "is not supported in this phase. Prescribe the motion on a free "
+                          "(unconstrained) DOF, or use constraints Transformation.\n";
+                return -2;
             }
         }
         int nRet = (int)survMasterVtx.size();
@@ -566,9 +592,18 @@ LadrunoProjectionHandler::doneNumberingDOF(void)
             Node *np = theDomain->getNode(vtxNode[sr.vtx]);
             int ec = (np != 0) ? np->getDOF_GroupPtr()->getID()(vtxDof[sr.vtx]) : -1;
             if (ec < 0) {
-                opserr << "LadrunoProjectionHandler - SP-on-SLAVE: constrained DOF (node "
-                       << vtxNode[sr.vtx] << " dof " << vtxDof[sr.vtx] << ") is also SP-fixed. "
-                          "Remove the fix or the tie.\n";
+                if (prescribedKey.find(std::make_pair(vtxNode[sr.vtx], vtxDof[sr.vtx]))
+                    != prescribedKey.end())
+                    opserr << "LadrunoProjectionHandler - PRESCRIBED SLAVE: constrained DOF "
+                              "(node " << vtxNode[sr.vtx] << " dof " << vtxDof[sr.vtx] << ") "
+                              "carries a prescribed motion (non-homogeneous SP / imposedMotion) "
+                              "AND is tied by an MP/EQ. A DOF cannot be both prescribed and "
+                              "constraint-driven (overconstraint). Remove the tie or the "
+                              "prescribed motion.\n";
+                else
+                    opserr << "LadrunoProjectionHandler - SP-on-SLAVE: constrained DOF (node "
+                           << vtxNode[sr.vtx] << " dof " << vtxDof[sr.vtx] << ") is also SP-fixed. "
+                              "Remove the fix or the tie.\n";
                 return -2;
             }
             std::vector<int> cols; std::vector<double> coef;
@@ -657,6 +692,37 @@ LadrunoProjectionHandler::doneNumberingDOF(void)
     return 0;
 }
 
+// ===========================================================================
+// applyLoad(): impose prescribed-motion displacement on the recorded SP DOFs (P4b)
+// ===========================================================================
+// Called from AnalysisModel::updateDomain(time,dt) AFTER theDomain->applyLoad(time) — so an
+// ImposedMotionSP has already set the node's trial vel/accel from its GroundMotion, and we set
+// the displacement here (the disp is "the responsibility of the constraint handler", per
+// ImposedMotionSP). A plain non-homogeneous SP supplies only the displacement; its vel/accel
+// stay 0 (the same limitation constraints Transformation carries — not a regression). The DOF
+// is SP-excluded (eqn = -1), so the integrator's setResponse() scatter skips it and the imposed
+// value survives (DOF_Group::setNodeDisp guards on loc>=0). Mirrors
+// TransformationDOF_Group::enforceSPs(doMP=1).
+int
+LadrunoProjectionHandler::applyLoad(void)
+{
+    Domain *theDomain = this->getDomainPtr();
+    if (theDomain == 0)
+        return 0;
+    // Resolve the node fresh each step (store the tag, not a Node* — matches the handler's
+    // vtxNode convention and is robust to a node removed without a re-handle).
+    for (int i = 0; i < (int)prescribedDOFs.size(); i++) {
+        PrescribedDOF &p = prescribedDOFs[i];
+        if (p.sp == 0)
+            continue;
+        Node *np = theDomain->getNode(p.nodeTag);
+        if (np == 0)
+            continue;
+        np->setTrialDisp(p.sp->getValue() + p.sp->getInitialValue(), p.dof);
+    }
+    return 0;
+}
+
 double
 LadrunoProjectionHandler::getTieForce(int nodeTag, int dof) const
 {
@@ -693,6 +759,8 @@ LadrunoProjectionHandler::clearAll(void)
     theGroups.clear();
     vtxNode.clear();
     vtxDof.clear();
+    prescribedDOFs.clear();   // P4b: drop the prescribed-motion records (rebuilt at next handle())
+    prescribedKey.clear();
     // doneNumberingDOF() now re-binds the integrator UNCONDITIONALLY (incl. a 0 push on
     // the zero-group path), so the integrator never retains a freed projector after a
     // rebuild. We keep ownership and free in the dtor / next doneNumberingDOF.
