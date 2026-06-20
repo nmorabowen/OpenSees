@@ -65,6 +65,10 @@ class LadrunoProjectionHandler : public ConstraintHandler
     int sendSelf(int commitTag, Channel &theChannel);
     int recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &theBroker);
 
+    // P3 tie-force query: the constraint force f_tie = M(a_raw - a_proj) at (nodeTag, dof)
+    // from the last projection step. 0 if no projector, unknown node/dof, or untied DOF.
+    double getTieForce(int nodeTag, int dof) const;
+
   protected:
 
   private:

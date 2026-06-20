@@ -94,6 +94,12 @@ class LadrunoConstraintProjector
     bool isMassReady(void) const { return massReady; }
     void invalidateMass(void) { massReady = false; }
 
+    // Tie-force query (ADR-30 P3): the constraint force f_tie = M (a_raw - a_proj) per
+    // DOF, cached during the last project(). Indexed by global equation number; 0 on a
+    // DOF not in any group. Returns 0 if no projection has run yet.
+    double tieForceAtEqn(int eqn) const;
+    const Vector &getTieForces(void) const { return tieForce; }
+
   private:
     struct Group {
         ID allEqn;      // eqn of each L row (retained-first), all >= 0
@@ -109,6 +115,7 @@ class LadrunoConstraintProjector
     bool massReady;
     bool projectICs;
     double icTol;
+    Vector tieForce;   // P3: cached f_tie = M(a_raw - a_proj), sized to numEqn at project()
 };
 
 #endif

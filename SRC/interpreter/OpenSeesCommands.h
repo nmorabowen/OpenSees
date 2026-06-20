@@ -276,6 +276,7 @@ int OPS_BeamIntegration();
 /* OpenSeesOutputCommands.cpp */
 int OPS_nodeDisp();
 int OPS_nodeReaction();
+int OPS_LadrunoProjectionTieForce();   // Ladruno: ADR-30 P3 tie-force query
 int OPS_nodeEigenvector();
 int OPS_getTime();
 int OPS_eleResponse();

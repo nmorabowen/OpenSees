@@ -39,6 +39,9 @@ UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 // Description: commands to output
 
 #include <elementAPI.h>
+#include <ConstraintHandler.h>                 // Ladruno: ADR-30 P3 tie-force query
+#include <LadrunoProjectionHandler.h>          // Ladruno: ADR-30 P3
+extern ConstraintHandler **OPS_GetHandler(void);   // Ladruno: defined in OpenSeesCommands.cpp
 #include <Domain.h>
 #include <Node.h>
 #include <NodeIter.h>
@@ -255,6 +258,42 @@ int OPS_nodeDisp()
 	}
     }
 
+    return 0;
+}
+
+
+// Ladruno (ADR-30 P3): ladrunoProjectionTieForce nodeTag? dof?
+// Returns the constraint tie force f = M(a_raw - a_proj) at (node, dof) from the last
+// projection step. Requires the active handler to be LadrunoProjection.
+int OPS_LadrunoProjectionTieForce()
+{
+    if (OPS_GetNumRemainingInputArgs() < 2) {
+	opserr << "WARNING want - ladrunoProjectionTieForce nodeTag? dof?\n";
+	return -1;
+    }
+    int data[2];
+    int numdata = 2;
+    if (OPS_GetIntInput(&numdata, data) < 0) {
+	opserr << "WARNING ladrunoProjectionTieForce - failed to read int inputs\n";
+	return -1;
+    }
+    int nodeTag = data[0];
+    int dof = data[1] - 1;          // 1-based (user) -> 0-based (local DOF index)
+
+    ConstraintHandler **theHandler = OPS_GetHandler();
+    LadrunoProjectionHandler *lph = 0;
+    if (theHandler != 0 && *theHandler != 0)
+	lph = dynamic_cast<LadrunoProjectionHandler *>(*theHandler);
+    if (lph == 0) {
+	opserr << "WARNING ladrunoProjectionTieForce - the active constraint handler is not "
+		  "LadrunoProjection (use `constraints LadrunoProjection`).\n";
+	return -1;
+    }
+
+    double f = lph->getTieForce(nodeTag, dof);
+    int one = 1;
+    if (OPS_SetDoubleOutput(&one, &f, true) < 0)
+	return -1;
     return 0;
 }
 

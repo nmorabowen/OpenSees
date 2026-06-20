@@ -1051,6 +1051,9 @@ Domain::clearAll(void) {
   theSPs->clearAll();
   thePCs->clearAll();
   theMPs->clearAll();
+  theEQs->clearAll();   // Ladruno (ADR-30): upstream clearAll() omitted EQ_Constraints
+                        // (added later) -> `wipe` leaked them into the next model; any
+                        // handler that reads getEQs() (LadrunoProjection) then mis-assembles.
   theLoadPatterns->clearAll();
   theParameters->clearAll();
   numParameters = 0;
