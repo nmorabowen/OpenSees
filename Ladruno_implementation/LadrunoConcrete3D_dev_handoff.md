@@ -2,13 +2,13 @@
 title: "LadrunoConcrete3D — developer / C++-implementer handoff guide"
 project: Ladruno
 type: handoff guide
-status: P0/P1 oracle + C++ KERNEL return map/tangent (g++-verified) + P2 dual damage DONE in oracle (P2a tensile ω_t, P2b compressive ω_c + α_c split, P2c UNIFIED TENSOR split + automatic unilateral, P2d single-step update + NUMERICAL tangent, P2e ANALYTIC dual-projector damaged tangent) + adversarial-review-hardened (ω floor, de-tautologized DT3) + **P3a C++ KERNEL DAMAGE stress update ported (g++ byte-verified ~1e-14)**. NEXT = P3b (the ANALYTIC damaged tangent in the kernel) → the nDMaterial wrapper (33017 + foot-gun guards); P2f cyclic (β_c + the compression→tension temper) deferred.
+status: SHIPPED to `ladruno` — kernel (return map + analytic damaged tangent, g++-verified) + nDMaterial wrapper (classTag 33017) + ALL dimensional views (3D + PlaneStrain/AxiSymmetric/PlateFiber/PlaneStress, #299) + P3 Tier-2 IMPL-EX (oracle #301 → review-hardened #304 → C++ kernel port + `-implex` wrapper #309). NEXT = Duvaut–Lions `-eta` → cyclic `β_c` temper (P2f) → Tier-3 explicit demo. See §0 for the current-state handoff.
 related:
   - "[[31_ladruno_concrete3d_adr]]"          # the ADR (decision record)
   - "[[project_ladruno_concrete3d]]"          # the agent-memory pointer
   - "[[10_ladruno_j2_plasticity]]"            # the kernel pattern + return-map IMPL-EX donor
   - "[[19_ladruno_rc_shell_adr]]"             # the shell/MCFT sibling (33015)
-updated: 2026-06-17
+updated: 2026-06-20
 ---
 
 # LadrunoConcrete3D — handoff to the C++ implementer
@@ -17,13 +17,64 @@ This is the working brief for whoever writes the **C++ return map**. The **numpy
 (`tests/_testbed/concrete3d_ref.py`) is the *verified specification* — when in doubt, the oracle is
 right and this doc explains it. Everything here has been **pinned to Grassl et al. 2013** (CDPM2,
 IJSS 50:3805 / arXiv:1307.6998) by equation number and **adversarially reviewed twice** (a 15-agent
-ADR scoping panel and a 5-agent final review). The physics is correct; what remains is a faithful
-C++ port plus the items in §7.
+ADR scoping panel and a 5-agent final review). The physics is correct, and the C++ port + wrapper +
+all dimensional views + Tier-2 IMPL-EX are **shipped** — **§0 is the current-state handoff** for the
+next session; §1–§6 remain the verified technical reference; §7 lists what is left (Duvaut–Lions,
+cyclic, Tier-3).
 
 > **One-line summary:** CDPM2-grade solid concrete = effective-stress **Menétrey–Willam plasticity**
 > (3-invariant surface, non-associated flow, confinement-aware ductility) + **dual scalar damage**.
 > classTag **33017** (ND band). Solid/triaxial sibling of `LadrunoRCConcrete` (33015, shell/MCFT).
 > **P0/P1 = plasticity only and is MONOTONIC (no peak); the peak/softening is the DAMAGE part (P2).**
+
+---
+
+## 0. Current state (2026-06-20) — handoff for the next session
+
+Everything below is **shipped to `ladruno`** unless marked. Methodology throughout: **oracle-first**
+(numpy `concrete3d_ref.py` = the verified spec) → **g++ kernel byte-check** (`concrete3d_kernel_check.cpp`
+vs a regenerated `concrete3d_oracle_fixture.txt`, run by the pytest gate; g++ is available locally so the
+check runs without the 30-min OpenSees build) → **wrapper** → **element battery** → one PR per increment
+off `ladruno` (fast auto-merge ⇒ fresh branch each time; predict the next PR number for ledger refs).
+
+**SHIPPED:**
+- **Kernel + `nDMaterial LadrunoConcrete3D` (classTag 33017)** — MW surface, non-assoc flow, confinement
+  ductility, semi-implicit return, dual damage ωt/ωc, crack-band, analytic damaged tangent. g++-verified
+  (#240–#294).
+- **ALL dimensional views (#299)** — 3D + PlaneStrain/AxiSymmetric/PlateFiber/PlaneStress via one
+  `dim`-mode class (`setupDim`/`vmap`/`condense`); `getCopy(type)` selects the view (parser builds the 3D
+  prototype). PlaneStress/PlateFiber = nested ε22-Newton + static condensation. Verified self-referentially
+  vs the 3D material (no CDPM2 peer). `tests/test_ladrunoConcrete3D_element.py`.
+- **P3 Tier-2 IMPL-EX (#301 oracle → #304 review → #309 C++/`-implex`)** — `-implex` reports an explicit
+  extrapolated stress (plastic incr + dual damage frozen, `r=Δt/Δt_n` clamped [0,2]) + the degraded-elastic
+  secant `D_dam(ω~):C0`; commits the exact implicit state. Kernel `State` += `wt/wc/dwt/dwc/depl[6]/dt_n`;
+  `returnMap` has a `dt` param + Tier-2 branch; wrapper reads `dt=ops_Dt`. g++ check **B5** (`NIMPLEX`
+  block) pins the reported stress to the oracle ~1e-16. Oracle gate `run_p3_implex_gate` / pytest
+  `test_p3_implex_gate` (PI1–PI6).
+
+**TWO LIVE QUIRKS (also in [[LEDGER_quirks]]) — carry these forward:**
+1. **Dual-damage IMPL-EX secant is SPD only on SINGLE-SIGN principal states.** `D_dam(ω~):C0` does not
+   commute (two branch slopes 1−ωt≠1−ωc), so on a mixed-sign high-ω state (tension crack + lateral
+   compression, ωt>~0.97) the symmetric part is INDEFINITE. Genuine dual-damage consistency and
+   unconditional SPD are mutually exclusive — the contract is conditional (gate PI5 pins it).
+2. **`-implex` + `DisplacementControl` past a limit point DIVERGES.** `dt=ops_Dt` is the load-factor (λ)
+   increment under DisplacementControl — non-uniform near limit points → over-extrapolates ω. `-implex`
+   is for implicit TRANSIENT dynamics + uniform LoadControl; for softening+DisplacementControl use Tier-1
+   + an unsymmetric solver (or Tier-3 explicit). **A clean future fix: source the IMPL-EX `dt` from a
+   monotone control parameter, not λ** — worth doing before promoting `-implex` for quasi-static softening.
+
+**NEXT INCREMENTS (each its own oracle-first PR):**
+- **Duvaut–Lions `-eta`** (ADR §4.4): relax the plastic multiplier toward the inviscid return by
+  `Δt/(η+Δt)`; **η→0 must recover the inviscid return byte-for-byte** (the byte gate). `Params.eta`
+  already exists (unused). Validate against a **closed-form 1-D overstress oracle**. Note `eta` shares the
+  same `dt=ops_Dt` caveat as IMPL-EX. Do NOT inherit ASDConcrete3D's `rate_coeff` (it blends a damage
+  driver, not a plastic stress).
+- **Cyclic `β_c` temper (P2f)** — see §6b: `β_c` (Grassl Eq.50) couples into the monotonic compression
+  damage (re-gate C1/C2) + the compression→tension pre-damage temper (the DT5 diagnostic) + multiaxial
+  apportioning. Oracle-first, then port to `damagedUpdate`.
+- **Tier-3 explicit demo** — `do_tangent=false`, no global tangent ⇒ softening is a non-issue; pair with
+  `CentralDifferenceLadruno`/`ExplicitBathe`. Mostly a validation/demo increment (the kernel already runs
+  with `doTangent=false`).
 
 ---
 
@@ -187,19 +238,19 @@ subsystem ported into `LadrunoConcrete3DKernel.h`, mirroring the oracle verbatim
   committed damage states + a probe) reproduce the oracle `damaged_step_tensor` nominal stress to
   **~1e-14** (machine precision — single-step committed state, no multi-step amplification). Wired into
   the existing pytest g++ gate.
-- [ ] **NOT yet:** the ANALYTIC dual-projector DAMAGED tangent in the kernel (`returnMap` currently
-  returns the P1 EFFECTIVE tangent — over-stiff on softening) — the oracle reference is P2e
-  `damaged_tangent_analytic`; that is the next kernel slice (P3b).
+- [x] **DONE (P3b #291):** the ANALYTIC dual-projector DAMAGED tangent in the kernel — `returnMap`
+  upgrades `Dtan6` to `D_dam:C_eff − σ̄_t⊗∂ω_t/∂ε − σ̄_c⊗∂ω_c/∂ε` (oracle `damaged_tangent_analytic`)
+  on a converged effective return; self-verified vs a numerical central-diff of the same C++ stress.
 
-**WRAPPER increment (DEFERRED — lands after the kernel damage tangent, P3b):**
+**WRAPPER increment — DONE (#292 wrapper, #299 reduced views, #309 IMPL-EX; see §0):**
 
-- [ ] `#define ND_TAG_LadrunoConcrete3D 33017` in `SRC/classTags.h` (still deferred — **no orphan
-  tag**; the LEDGER row reserves it, mirroring the LogStrain2D 33016 convention).
-- [ ] The `nDMaterial LadrunoConcrete3D` class (`.cpp/.h` + FEM_ObjectBroker + Tcl/Py parser +
-  commit cycle), and there:
-  - **Enforce `mp.m0 == m0Of(fc,ft,e)`** in one place; never let the user set `m0` independently
-    (`yieldF` trusts `mp.m0`); reject/clamp user-supplied `e≤0.5`.
-  - **Require an unsymmetric solver unconditionally** (Tier-1) — document; warn on a symmetric solver.
+- [x] `#define ND_TAG_LadrunoConcrete3D 33017` in `SRC/classTags.h` (DEFINED, #292).
+- [x] The `nDMaterial LadrunoConcrete3D` class (`.cpp/.h` + FEM_ObjectBroker + Tcl/Py parser + commit
+  cycle + flat-`Vector` serialization), with:
+  - `m0` enforced as `m0Of(fc,ft,e)` in the ctor (never user-set); `e∈(0.5,1]` guarded; full foot-gun
+    guards (E>0, 0≤ν<0.5, 0<ft<fc, Gf,Gc>0, As≥1).
+  - the unsymmetric-solver warning (and, under `-implex`, the conditional-SPD note).
+  - **all dimensional views** (`dim`-mode, #299) and **`-implex` Tier-2** (#309) — see §0.
 
 ---
 
@@ -242,7 +293,7 @@ subsystem ported into `LadrunoConcrete3DKernel.h`, mirroring the oracle verbatim
 
 ---
 
-## 6b. P2 damage — status (started 2026-06-17, `guppi/concrete3d-p2-damage`, WIP)
+## 6b. P2 damage — status (SHIPPED through P2e; cyclic `β_c` = P2f, still owed — see §0/§7)
 
 CDPM2 damage pinned to **Grassl 2013 §2.3** by equation (fetched from the source):
 `σ = (1−ω_t)σ̄_t + (1−ω_c)σ̄_c` (Eq.1); equivalent strain `ε̃` (Eq.37), uniaxial `ε̃ = σ̄_t/E`
@@ -412,16 +463,18 @@ tangent above) + the `nDMaterial` wrapper (lands classTag 33017 + the foot-gun g
 
 ## 7. Roadmap context
 
-P0 surface ✓ → P1 return-map/hardening/tangent ✓ (oracle) → **C++ kernel return map + analytic
-tangent ✓ (this PR, g++ oracle-dump verified)** → **P2 dual damage `ωt`/`ωc` + crack-band (where the
-peak/softening comes from) + the nDMaterial wrapper (33017 define + foot-gun guards, §5)** → P3
-robustness tiers (Tier-2 IMPL-EX freezes plastic state + damage; Tier-3 explicit) → P4 finite-strain
-(`LogStrain`, clean — isotropic, no co-rotating backstress) → P5 confined-fiber view (§4.6 hoop-spring
-condensation, "Mander by mechanism" in 1D fibers) → P6 auto-hybrid switch.
+P0 surface ✓ → P1 return-map/hardening/tangent ✓ → **C++ kernel return map + analytic tangent ✓** →
+**P2 dual damage `ωt`/`ωc` + crack-band ✓** → **nDMaterial wrapper (33017) ✓** → **ALL dimensional
+views ✓ (#299)** → **P3 robustness: Tier-2 IMPL-EX ✓ (oracle #301 → review #304 → C++/`-implex` #309;
+freezes plastic state + damage)** → **NEXT: Duvaut–Lions `-eta` (the rate term, §0) → cyclic `β_c`
+(P2f, §6b) → Tier-3 explicit demo** → P4 finite-strain (`LogStrain`, clean — already free via the
+wrapper) → P5 confined-fiber view (§4.6 hoop-spring condensation, "Mander by mechanism") → P6
+auto-hybrid switch.
 
-PRs so far (all → `ladruno`): **#240** P0 surface + P1 return map · **#244** hardening · **#247**
-consistent tangent · **#248** review fixes · **#249** C++ kernel return map + analytic tangent +
-g++ oracle-numeric-dump gate · **#259** P2a tensile damage + crack-band `G_f` · **#261** P2b
-compressive damage + `α_c` split + crack-band `G_c` · **#284** P2c unified tensor dual-damage
-split + automatic unilateral crack-closure · **#285** P2d single-step tensor update + numerical
-damaged consistent tangent · **(this PR)** P2e the analytic dual-projector damaged tangent.
+PRs (all → `ladruno`): **#240** P0+P1 · **#244** hardening · **#247** tangent · **#248** review ·
+**#249** C++ kernel + g++ gate · **#259** P2a `G_f` · **#261** P2b `α_c`+`G_c` · **#284** P2c unified
+tensor split + auto-unilateral · **#285** P2d single-step + numerical tangent · **#286** P2e analytic
+damaged tangent · **#287** PE2 cross-platform · **#288** P2e review (ω floor) · **#289** P3a C++ damage
+stress · **#290** guide · **#291** P3b C++ damaged tangent · **#292** nDMaterial wrapper (33017) ·
+**#293** handout · **#294** wrapper convention tests · **#299** Phase-2 reduced views · **#301** P3
+IMPL-EX oracle · **#304** IMPL-EX review fixes · **#309** IMPL-EX C++ port + `-implex`.
