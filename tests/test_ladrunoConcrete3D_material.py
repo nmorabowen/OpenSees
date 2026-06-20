@@ -302,6 +302,34 @@ def test_p3_implex_gate():
     assert r["PASS"]
 
 
+def test_p3_eta_gate():
+    """P3 Duvaut-Lions viscoplastic regularization (-eta, ADR 4.4), oracle slice (the C++ kernel port is
+    a follow-up build PR). The inviscid (rate-independent) plastic return is relaxed toward the elastic
+    trial at the PLASTIC level by the Simo-Hughes closed form sigma=(1-beta)sig_trial+beta sig_inviscid,
+    beta=dt/(eta+dt); damage then follows from the relaxed effective stress, and the effective tangent
+    blends (1-beta)C_elastic+beta C_inviscid. PV1 eta=0 is BYTE-identical to the inviscid Tier-1 path;
+    PV2 the scalar backward-Euler integrator converges (order ~1) to the CONTINUOUS closed-form
+    overstress; PV3 the EXACT discrete steady overstress = E*eps_rate*eta (the closed-form 1-D oracle,
+    dt-independent); PV4 the tensor kernel's relaxed effective stress IS the (1-beta)trial+beta inviscid
+    blend (tension/compression/shear); PV5 the viscous damaged tangent matches its numerical FD (PV5a)
+    and, at a genuinely PLASTIC pre-onset step, reduces to the blended effective tangent (PV5b); PV6 the
+    overstress norm grows monotonically with eta (the viscous-regularization signature)."""
+    r = ref.run_p3_eta_gate(verbose=False)
+    # PV1 the headline byte gate: eta=0 recovers the inviscid return EXACTLY (not just to a tolerance)
+    assert r["PV1_byte_exact"] and r["PV1_eta0_byte"] == 0.0
+    # PV2/PV3 the closed-form 1-D overstress oracle: exact discrete steady state + order-1 transient
+    assert r["PV3_exact"] and r["PV3_steady_rel_err"] < 1.0e-10
+    assert r["PV2_converges"] and r["PV2_order"] > 0.8
+    # PV4 the tensor kernel implements exactly the Duvaut-Lions stress blend
+    assert r["PV4_is_blend"] and r["PV4_blend_rel"] < 1.0e-12
+    # PV5 the viscous damaged consistent tangent (the C++ deliverable) is correct
+    assert r["PV5a_ok"] and r["PV5a_fd_rel"] < 1.0e-5
+    assert r["PV5b_ok"] and r["PV5b_plastic"] and r["PV5b_omega"] < 1.0e-9 and r["PV5b_rel"] < 1.0e-9
+    # PV6 the regularization signature: more viscosity => more overstress above the rate-independent backbone
+    assert r["PV6_monotone"]
+    assert r["PASS"]
+
+
 def test_p2_no_spurious_healing():
     """Regression for the PR #261 adversarial-review CRITICAL: the implicit omega solve must not
     clamp-stall to 0 on a physical softening path (a raw clamped Newton did, so the cracked material
