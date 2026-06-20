@@ -1883,6 +1883,9 @@ int OPS_Integrator()
     } else if (strcmp(type, "CentralDifferenceSMS") == 0) {   // Ladruno
 	ti = (TransientIntegrator*)OPS_CentralDifferenceSMS();
 
+    } else if (strcmp(type, "CentralDifferenceSMSConsistent") == 0) {   // Ladruno
+	ti = (TransientIntegrator*)OPS_CentralDifferenceSMSConsistent();
+
     } else if (strcmp(type, "LadrunoDynamicRelaxation") == 0) {   // Ladruno
 	ti = (TransientIntegrator*)OPS_LadrunoDynamicRelaxation();
 
