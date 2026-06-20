@@ -46,10 +46,14 @@
 
 #include <ConstraintHandler.h>
 #include <vector>
+#include <set>
+#include <utility>
 
 class LadrunoConstraintProjector;
 class FE_Element;
 class DOF_Group;
+class Node;
+class SP_Constraint;
 
 class LadrunoProjectionHandler : public ConstraintHandler
 {
@@ -60,6 +64,7 @@ class LadrunoProjectionHandler : public ConstraintHandler
 
     int handle(const ID *nodesNumberedLast = 0);
     int doneNumberingDOF(void);
+    int applyLoad(void);          // P4b: enforce prescribed-motion (non-homog SP) displacement
     void clearAll(void);
 
     int sendSelf(int commitTag, Channel &theChannel);
@@ -84,6 +89,19 @@ class LadrunoProjectionHandler : public ConstraintHandler
         std::vector<int> masterVtx;              // retained DOF vertices (cols of L)
         std::vector<SlaveRec> slaves;            // constrained rows of L
     };
+
+    // --- P4b prescribed-motion record (one non-homogeneous SP / imposedMotion DOF) ---
+    // The DOF stays SP-excluded (eqn = -1, like a fix); applyLoad() imposes its prescribed
+    // displacement on the node each step (mirrors TransformationDOF_Group::enforceSPs).
+    // ImposedMotionSP sets vel/accel itself in domain applyLoad (before handler applyLoad);
+    // a plain SP supplies only the displacement (vel/accel = 0 — same as Transformation).
+    struct PrescribedDOF {
+        int nodeTag;                             // resolved fresh via getNode() in applyLoad()
+        int dof;                                 // local dof number
+        SP_Constraint *sp;                       // for getValue()+getInitialValue()
+    };
+    std::vector<PrescribedDOF> prescribedDOFs;
+    std::set<std::pair<int,int> > prescribedKey; // (nodeTag,dof) of every prescribed DOF
 
     // vertex bookkeeping (a vertex = one (node,dof) pair)
     std::vector<int> vtxNode;                    // node tag per vertex
