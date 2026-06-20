@@ -271,24 +271,34 @@ def test_p2e_analytic_damaged_tangent_gate():
 def test_p3_implex_gate():
     """P3 Tier-2 IMPL-EX robustness (ADR 4.4), oracle slice (the C++ kernel port is a follow-up build
     PR). IMPL-EX reports an EXPLICIT stress from EXTRAPOLATED internal variables (plastic-strain
-    increment + dual damage frozen at the committed-history rate) so the algorithmic tangent is the
-    constant degraded-elastic secant `D_dam(w~):C0`, while committing the exact IMPLICIT variables.
-    PI1 [HEADLINE]: the symmetrized Tier-2 tangent stays POSITIVE-DEFINITE across a softening
-    snap-back where the Tier-1 tangent is INDEFINITE (gate TD2) — the convergence fix. PI2: the
-    committed trajectory is byte-identical to a pure Tier-1 run (IMPL-EX must not corrupt the implicit
-    state; the ADR finite-strain `sig_eff,implicit` contract). PI3: the explicit overstress -> 0 under
-    step refinement (O(dt)). PI4: the IMPL-EX error monitor is non-zero in softening, zero pre-onset."""
+    increment + dual damage frozen at the committed-history rate, ratio CLAMPED to [0,R_MAX]) so the
+    algorithmic tangent is the degraded-elastic secant `D_dam(w~):C0`, while committing the exact
+    IMPLICIT variables. Adversarial-review-hardened (the 6 confirmed findings of #301's review):
+    PI1 single-sign SPD across the snap-back where Tier-1 is INDEFINITE; PI2 committed==Tier-1
+    byte-exact; PI3 SMOOTH-region O(dt) order across >=3 levels (the global-max overstress is dominated
+    by an irreducible onset C0-kink lag and is NOT used as the metric — ALG-1/GAT-2); PI4 error monitor;
+    PI5 the secant IS d(sig_rep)/d(deps) (FD) AND the dual-damage SPD limitation is PINNED (mixed-sign
+    high-omega is NOT SPD — NUM-1, the contract is conditional not unconditional); PI6 robustness under
+    NON-UNIFORM dt via the extrapolation-ratio clamp (ALG-2/NUM-2/NUM-3: no omega over-extrapolation,
+    no plastic-strain blow-up, no backward damage on negative dt)."""
     r = ref.run_p3_implex_gate(verbose=False)
     assert r["softening_reached"]
-    # PI1 the headline falsification: IMPL-EX SPD, Tier-1 indefinite at the same softening state
+    # PI1 the headline falsification (single-sign): IMPL-EX SPD, Tier-1 indefinite at the same state
     assert r["PI1_implex_SPD"] and r["PI1_implex_min_eig"] > 0.0
     assert r["PI1_tier1_indefinite"] and r["PI1_tier1_min_eig"] < 0.0
     # PI2 committed == Tier-1 to machine precision (no implicit-state corruption)
     assert r["PI2_commit_matches_tier1"]
     assert r["PI2_commit_sig_bar_err"] < 1.0e-12 and r["PI2_commit_wt_err"] < 1.0e-12
-    # PI3 explicit error shrinks with dt (and is bounded), PI4 monitor is meaningful
-    assert r["PI3_converges"] and r["PI3_err_4N"] < r["PI3_err_N"]
+    # PI3 smooth-region convergence order >= ~1 across >=3 levels (it is ~2), monotone (not the
+    # brittle single-ratio-at-one-N the review flagged); the onset global-max lag is recorded
+    assert r["PI3_converges"] and r["PI3_min_order"] > 0.8 and r["PI3_smooth_monotone"]
     assert r["PI4_monitor_ok"]
+    # PI5 secant == consistent tangent of the reported stress, AND the SPD scope is honest/pinned
+    assert r["PI5_consistent_and_scope_pinned"]
+    assert r["PI5_fd_consistency_rel"] < 1.0e-5
+    assert r["PI5_singlesign_min_eig"] > 0.0 and r["PI5_mixedsign_min_eig"] < 0.0
+    # PI6 the r-clamp makes non-uniform / step-cutting dt robust
+    assert r["PI6_robust"]
     assert r["PASS"]
 
 

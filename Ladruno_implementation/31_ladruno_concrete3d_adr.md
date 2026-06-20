@@ -263,10 +263,21 @@ CDPM2's published `Aₕ/Bₕ/Cₕ/Dₕ` (calibrated from peak strains — recali
 - **[BLOCKING] Tier-2 (IMPL-EX) must freeze the PLASTIC state too, not just damage.** Freezing
   only `ω` and still solving the non-associated softening return implicitly leaves the tangent
   non-symmetric and **indefinite on the softening branch** — the SPD promise is false. Following
-  Oliver/Huespe, **extrapolate the plastic multiplier + hardening variable + damage** so the
-  Tier-2 tangent is a true constant secant `(1−ω̃)·C₀`-degraded, which **is** symmetric SPD.
-  Falsification gate: confined-triaxial post-peak, assert the smallest eigenvalue of the
-  symmetrized Tier-2 tangent stays `> 0` across the snap-back.
+  Oliver/Huespe, **extrapolate the plastic-strain increment + the dual damage** so the explicit
+  effective stress is linear in `Δε` and the Tier-2 secant is `D_dam(ω̃):C₀`. **[CORRECTED — oracle
+  P3 IMPL-EX adversarial review, #301 review/NUM-1]:** this secant is symmetric-part SPD **only in
+  SINGLE-SIGN principal regimes** (all-tensile / all-compressive `σ̄_x`, where `D_dam` is one positive
+  scaling — the original `(1−ω̃)·C₀` claim). On a **MIXED-SIGN, high-`ω` direction-contrast** state (a
+  tensile-damaged principal beside an undamaged compressive one, `ω_t > ~0.97`) the two branch slopes
+  `(1−ω_t) ≠ (1−ω_c)` make `D_dam:C₀` non-commuting and its symmetric part **indefinite** (`λ_min ≈
+  −5e2` for `σ̄=[1,−2,−2]`, `ω_t=0.99`) — the intrinsic dual-damage IMPL-EX limitation, not a fixable
+  bug (genuine dual-damage *consistency* and unconditional SPD are mutually exclusive). The secant
+  nonetheless remains the **exact consistent tangent of the reported explicit stress** (FD-verified)
+  and is far better-conditioned than Tier-1, and the **committed physics is exact**. Falsification
+  gates (oracle PI1/PI5/PI6): single-sign snap-back SPD; `D_dam(ω̃):C₀ == d(σ_rep)/d(Δε)`; the
+  mixed-sign indefiniteness **pinned** (not claimed away); and the extrapolation **time-ratio CLAMPED
+  to `[0,R_max]`** (a step-cutting solver's `dt`-growth otherwise over-extrapolates `ω̃` past `[0,1)`
+  ⇒ stress collapse + injects unbounded plastic strain via `Δε̃ᵖ`; negative `dt` ⇒ `r=0`).
 - **Tier-3 (explicit-dynamic):** same kernel, `do_tangent=false`; no global tangent ⇒ softening
   is a non-issue (`CentralDifferenceLadruno`/`ExplicitBathe`; LS-DYNA CSCM/KCC philosophy).
 - **[BLOCKING] Duvaut–Lions at the PLASTIC level.** Relax the plastic multiplier toward the
