@@ -257,6 +257,69 @@ def test_corotational_large_rotation_coupled():
 
 
 # --------------------------------------------------------------------------- #
+#  Benzeggagh-Kenane mode-mix (ADR 34 #2): a nonlinear Gf interpolation makes the
+#  damage mix-dependent so the consistent off-radial tangent term is live; the
+#  element's coupled condensation must still converge through deep biaxial softening.
+# --------------------------------------------------------------------------- #
+def test_bk_modemix_coupled_converges_and_reduces_on_axis():
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 6)
+    ops.node(1, 0.0, 0.0, 0.0)
+    ops.node(2, _L, 0.0, 0.0)
+    ops.fix(1, 1, 1, 1, 1, 1, 1)
+    ops.section("Elastic", 1, _E, _A, _Iz, _Iy, _G, _J)
+    ops.geomTransf("Linear", 1, 0.0, 0.0, 1.0)
+    ops.beamIntegration("Lobatto", 1, 1, 5)
+    # eta = 2 -> nonlinear B-K fracture-energy mix (live off-radial mode-mix tangent)
+    ops.nDMaterial("LadrunoCohesiveHingeBiaxial", 79, _McZ, _GfZ, _McY, _GfY, "-exp", "-bk", 2.0)
+    ops.element("LadrunoDispBeamColumn", 1, 1, 2, 1, 1, "-hingeBiaxial", 79)
+    tbz, tby = _theta_break(_McZ, _GfZ), _theta_break(_McY, _GfY)
+    n = 1500
+    _prescribe({_RZ: 1.3 * tbz, _RY: 1.3 * tby}, n, tol=1.0e-11, maxiter=12)
+    for _ in range(n):
+        assert ops.analyze(1) == 0
+    # combined break dissipates a mixed-mode energy strictly between the two axes
+    e = _hc("energy")
+    assert min(_GfY, _GfZ) - 1e-6 <= e <= max(_GfY, _GfZ) + 1e-6, (e, _GfY, _GfZ)
+    assert abs(_hc("jumpZ")) > 0.0 and abs(_hc("jumpY")) > 0.0
+
+
+def test_bk_pure_axis_unchanged_by_eta():
+    # on a pure axis Gf_mix = Gf_z regardless of eta -> the B-K element matches the
+    # default (eta=1) element's Mz path bit-for-bit.
+    tbz = _theta_break(_McZ, _GfZ)
+    n = 800
+
+    def build(eta):
+        ops.wipe()
+        ops.model("basic", "-ndm", 3, "-ndf", 6)
+        ops.node(1, 0.0, 0.0, 0.0)
+        ops.node(2, _L, 0.0, 0.0)
+        ops.fix(1, 1, 1, 1, 1, 1, 1)
+        ops.section("Elastic", 1, _E, _A, _Iz, _Iy, _G, _J)
+        ops.geomTransf("Linear", 1, 0.0, 0.0, 1.0)
+        ops.beamIntegration("Lobatto", 1, 1, 5)
+        a = [79, _McZ, _GfZ, _McY, _GfY, "-linear"]
+        if eta != 1.0:
+            a += ["-bk", eta]
+        ops.nDMaterial("LadrunoCohesiveHingeBiaxial", *a)
+        ops.element("LadrunoDispBeamColumn", 1, 1, 2, 1, 1, "-hingeBiaxial", 79)
+
+    def run(eta):
+        build(eta)
+        _prescribe({_RZ: 1.1 * tbz}, n)
+        out = []
+        for _ in range(n):
+            assert ops.analyze(1) == 0
+            out.append(ops.eleForce(1, 6))
+        return out
+
+    m1, m2 = run(1.0), run(3.0)
+    for a, b in zip(m1, m2):
+        assert abs(a - b) <= 1e-9 * (abs(b) + 1.0), (a, b)
+
+
+# --------------------------------------------------------------------------- #
 #  DB roundtrip with the coupled hinge open
 # --------------------------------------------------------------------------- #
 def test_coupled_database_roundtrip():

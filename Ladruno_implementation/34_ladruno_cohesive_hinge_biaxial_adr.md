@@ -1,7 +1,7 @@
 ---
 title: LadrunoCohesiveHingeBiaxial — coupled Mz–My cohesive interaction surface
 project: Ladruno
-status: PR-4a shipped (coupled material + element wiring; B-K mode-mix / consistent off-radial tangent / torsion deferred)
+status: PR-4b shipped (coupled material + element wiring + B-K mode-mix + consistent off-radial tangent; torsion deferred)
 priority: medium
 owner: nmora
 tags:
@@ -93,14 +93,59 @@ off-diagonal** that, added to the bulk `ks(MZ,MY)` term, makes the element's `K_
 
 ## Decisions / scope
 
-- **Linear mode-mix** `Gf_mix = w_z Gf_z + w_y Gf_y` (B-K/power-law variants deferred); radial-path
-  exact, instantaneous-mix off-radial (documented v1 approximation, like most engineering CZMs).
+- **Mode-mix** `Gf_mix` = Benzeggagh-Kenane `Gf_z + (Gf_y - Gf_z) w_y^eta` via `-bk eta` (default
+  `eta=1` = the original linear interpolation, bit-identical). The **consistent off-radial tangent**
+  (PR-4b) carries `dD/dw . dw/dalpha`; see the PR-4b log for the mix-invariance subtlety that makes
+  it a no-op at `eta=1`.
 - **NDMaterial order 2**, not a bespoke class — reusable, broker-serializable, standard plumbing.
 - **No torsion coupling** (the twist channel stays linear; `α_t` is ADR 33 PR-3c).
 - The element keeps `-hinge`/`-hingeY` (block-diagonal) as the cheaper default; `-hingeBiaxial`
   is the opt-in coupled law for cases needing the moment interaction ellipse.
 
 ## Implementation log
+
+### 2026-06-19 — PR-4b SHIPPED: B-K mode-mix + consistent off-radial tangent (item #1 + #2)
+
+Closing handoff items #1 (consistent off-radial tangent) and #2 (B-K mode-mix) together — they
+turned out to be inseparable.
+
+**The load-bearing discovery (don't re-derive — it redefined item #1).** The v1 "frozen-mix tangent,
+exact only on radial paths" caveat is **vacuous for the default linear mix**: the exact-reduction
+calibration `Kpen_i = ratio*Mc_i^2/(2 Gf_i)` makes `c_i = Mc_i^2/Kpen_i = 2 Gf_i/ratio`, so
+`S = (2/ratio) Gf_lin` and `Esoft = Gf_lin(1 - 1/ratio)` — both proportional to the LINEAR `Gf_lin`,
+which makes the softening rate `A = S/Esoft = 2/(ratio-1)` a **constant, independent of the mode mix**.
+Hence `D = D(r)` ALONE (verified against the compiled material: at fixed `r`, damage spread across
+pure-z / 45deg / pure-y is `0` for EXP, `1e-16` for LINEAR). The v1 tangent was therefore ALREADY the
+exact consistent off-radial Jacobian; the `dD/dw . dw/dalpha` term item #1 asked for is identically
+zero at `eta=1`.
+
+**So #1 only becomes real WITH #2.** A **Benzeggagh-Kenane** fracture-energy mix
+`Gf_mix = Gf_z + (Gf_y - Gf_z) w_y^eta` (`-bk eta`, default 1) breaks the `S ∝ Gf_mix` proportionality
+for `eta != 1`, so `A` and hence `D` become genuinely mix-dependent and the consistent tangent's
+mode-mix term goes LIVE and nonzero. Peak-scale `S` and the elliptical onset stay LINEAR/unchanged →
+exact pure-axis reduction (`Gf_mix = Gf_z` on the z-axis for ANY `eta`) is preserved.
+
+- **Material:** added `bkEta` (parsed `-bk`/`-eta`/`-modemix`, `>0`); `effectiveLaw` uses the B-K
+  `Gf_mix` (branched on `eta==1.0` so the default is bit-for-bit unchanged). `setTrialStrain` adds the
+  consistent mode-mix tangent term `dD/dw_z . dw_z/dalpha_j` (guarded to `eta!=1` AND both axes active
+  — `pow(w_y, eta-1)` would blow up at `w_y=0` for `eta<1`, but `dw_z/dalpha` is zero there anyway).
+  `dD/dw_z = -(1/r) d(rho)/dA . dA/dw_z` with `rho = T_eff/S`; `dGf_mix/dw_z = eta(Gf_z-Gf_y) w_y^(eta-1)`.
+  Serialization `data` 13→14 (carry `bkEta`); JSON/Print show it; new raw `tangent` material response
+  (id 207, `[K00,K01,K10,K11]`).
+- **Magnitude caveat:** at the **near-rigid default `ratio=1000`** the mode-mix term is real but tiny
+  (~1e-4 of the tangent) because `D ≈ 1 - 1/r` (mix-independent secant geometry) dominates and the
+  mix only enters via `A = O(1/ratio)`. It is numerically significant only for softer penalties
+  (~1e-2 at `ratio=10`). The element default is unaffected; `-bk` is an opt-in refinement.
+- **Tests:** `tests/test_ladrunoCohesiveHingeBiaxial_material.py` (46) — a `zeroLengthND` material
+  point driven to exact prescribed `alpha`, reading the raw 2x2 via the new response. The capstone
+  `test_consistent_tangent_matches_fd_offradial` (ratio=10, eta in {0.5,1,2}) asserts C++ tangent ==
+  central-FD of `M(alpha)` to ~1e-7 AND that the **frozen-mix tangent deviates from FD for eta != 1**
+  (the term is necessary). Plus mix-invariance-only-at-eta=1, pure-axis-unaffected-by-eta, B-K
+  dissipation `Gf_z + (Gf_y-Gf_z)(1/2)^eta`, pre-peak diagonal penalty. Element-level (in
+  `test_ladrunoDispBeamColumn3d_hinge_coupled.py`): a `-bk 2` coupled element converges through deep
+  biaxial softening; a pure-axis `-bk 3` element matches the `eta=1` element's Mz path bit-for-bit.
+- **Verified:** full battery **136/136** (the 88 stay bit-stable → `eta=1` default unchanged;
+  +2 element B-K, +46 material-point); `check_manifest` / `check_classtags` OK (no new classTag).
 
 ### 2026-06-18 — PR-4a SHIPPED: LadrunoCohesiveHingeBiaxial + element wiring
 
