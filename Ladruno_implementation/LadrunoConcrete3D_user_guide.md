@@ -52,7 +52,7 @@ nDMaterial LadrunoConcrete3D $tag $E $nu $fc $ft $Gf $Gc  \
     <-Df $Df>  <-As $As>  <-rho $rho>                     \
     <-hardening $qh0 $Hp>                                 \
     <-ductility $Ah $Bh $Ch $Dh>                          \
-    <-lch $lch>  <-autoRegularization>
+    <-lch $lch>  <-autoRegularization>  <-implex>
 ```
 `E ν fc ft Gf Gc` are **positional and required**; `fc`, `ft` are **positive magnitudes** (the model
 uses **compression-negative** internally). `-autoRegularization` pulls the crack-band length from the

@@ -212,9 +212,40 @@ def main(out=None):
         lines.append(_fmt(deps))
         lines.append(_fmt(sig_nom))
 
+    # ---- (B5) P3 Tier-2 IMPL-EX: a committed IMPLEX state (with the extrapolation increments) + a
+    #      step -> the REPORTED explicit stress sig_rep. Pins the C++ returnMap(implex=true) reported
+    #      stress to the oracle damaged_step_implex. Includes a dt-JUMP case (r clamped to implexRmax).
+    rmax = float(ref._IMPLEX_RMAX)
+    implexes = []   # (label, mp, lch, committed_state, deps[6], dt, sig_rep[6])
+
+    def add_implex(label, mp, build_path, deps, dt):
+        st = ref._advance_implex(mp, build_path, Gf, Gc, lch, As)          # uniform dt=1 => committed dt_n=1
+        sig_rep, _C, _ns, _d = ref.damaged_step_implex(st, np.asarray(deps, float), dt, mp, Gf, Gc, lch, As)
+        implexes.append((label, mp, st, np.asarray(deps, float), float(dt), sig_rep))
+
+    itpath = [np.array([e, 0, 0, 0, 0, 0]) for e in np.linspace(4.5e-4 / 300, 4.5e-4, 300)]   # to softening
+    add_implex("implex_tension", mp_h, itpath, [1.0e-6, 0, 0, 0, 0, 0], 1.0)                  # uniform dt (r=1)
+    add_implex("implex_reversal", mp_h, itpath, [-2.0e-6, 0, 0, 0, 0, 0], 1.0)                # tension-damaged -> compression
+    add_implex("implex_dtjump", mp_h, itpath, [1.0e-6, 0, 0, 0, 0, 0], 10.0)                  # r=10 -> CLAMPED to rmax
+
+    lines.append(f"NIMPLEX {len(implexes)}")
+    for label, mp, st, deps, dt, sig_rep in implexes:
+        lines.append(f"IMPLEX {label} {_fmt(_pblock(mp))} {repr(float(Gf))} {repr(float(Gc))} "
+                     f"{repr(float(lch))} {repr(float(As))} {repr(rmax)}")
+        lines.append(_fmt(st["eps"]))
+        lines.append(_fmt(st["sig_bar"]))
+        lines.append(repr(float(st["kp"])))
+        lines.append(_fmt([st["et_max"], st["kdt1"], st["kdt2"], st["kdc"], st["kdc1"], st["kdc2"]]))
+        lines.append(_fmt([st["wt"], st["wc"], st["dwt"], st["dwc"], st["dt_n"]]))
+        lines.append(_fmt(st["depl"]))
+        lines.append(repr(float(dt)))
+        lines.append(_fmt(deps))
+        lines.append(_fmt(sig_rep))
+
     with open(out, "w") as fh:
         fh.write("\n".join(lines) + "\n")
-    print(f"wrote {out}: {len(emitted)} paths, {len(tans)} tangent cases, {len(dmgs)} damage cases")
+    print(f"wrote {out}: {len(emitted)} paths, {len(tans)} tangent cases, {len(dmgs)} damage cases, "
+          f"{len(implexes)} implex cases")
     return out
 
 
