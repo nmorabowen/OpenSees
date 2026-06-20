@@ -606,3 +606,75 @@ def test_constrained_element_excluded_free_scaled(capfd):
         "expected 'scaled 1/2 elements' (free trussB scaled, constrained trussA excluded); "
         "line:\n%s" % err
     )
+
+
+# --------------------------------------------------------------------------
+# T-BETAK: stiffness-proportional (betaK) Rayleigh damping shrinks the explicit stable
+#   step, so SMS must size against the DAMPED step (closed form s = T^2 + 2*T*c,
+#   c = betaK/dt_e) — injecting MORE mass than the undamped s = T^2. A betaK-blind SMS
+#   (the pre-v1.1 behavior) injects only T^2 -> under-scales -> still unstable at dtTarget.
+#   Single stiff truss so the injected nodal mass is purely this element's.
+# --------------------------------------------------------------------------
+M_BK_NODE = 0.05          # truss lumped nodal mass = 0.5*rho*A*L = 0.5*1*1*0.1
+
+
+def _betaK_model(betaK):
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.node(1, 0.0, 0.0); ops.fix(1, 1, 1)
+    ops.node(2, 0.1, 0.0); ops.fix(2, 0, 1)          # free in x
+    ops.uniaxialMaterial("Elastic", 1, 1.0e4)        # k=EA/L=1e5, m_node=0.05 -> tiny dt_e
+    ops.element("Truss", 1, 1, 2, 1.0, 1, "-rho", 1.0)
+    if betaK > 0.0:
+        ops.rayleigh(0.0, betaK, 0.0, 0.0)           # alphaM=0, betaK(current)=betaK
+    ops.constraints("Transformation")
+    ops.numberer("Plain")
+
+
+def _betaK_inject(betaK, dtTarget):
+    """Prime SMS one step; return the injected nodal mass on the free node (node 2, x)."""
+    _betaK_model(betaK)
+    _prime_sms((SMS, dtTarget), dt=2.0e-4)
+    return ops.nodeMass(2, 1)
+
+
+def _betaK_dt_e():
+    _betaK_model(0.0)
+    ops.system("Diagonal"); ops.test("NormDispIncr", 1e-12, 1); ops.algorithm("Linear")
+    ops.integrator(CDL, "-cfl"); ops.analysis("Transient")
+    ops.analyze(1, 1e-6)
+    return ops.criticalTimeStep()
+
+
+def test_betaK_damped_sizing():
+    dtTarget = 0.005
+    dt_e = _betaK_dt_e()
+    assert 0.0 < dt_e < dtTarget, "fixture: truss dt_e=%.4g must be sub-target %.4g" % (dt_e, dtTarget)
+    betaK = 5.0e-4
+
+    dm_u = _betaK_inject(0.0, dtTarget)              # undamped sizing (s = T^2)
+    dm_d = _betaK_inject(betaK, dtTarget)            # betaK-damped sizing (s = T^2 + 2*T*c)
+    assert dm_u > 0.0, "undamped injection must be positive (element sub-target)"
+
+    # undamped baseline IS the textbook s = (dtTarget/dt_e)^2 (proves the no-damping path
+    # is byte-unchanged): injected = (T^2 - 1)*m_node.
+    T = dtTarget / dt_e
+    su = T * T
+    assert abs(dm_u - (su - 1.0) * M_BK_NODE) / ((su - 1.0) * M_BK_NODE) < 0.05, (
+        "undamped injection %.5g != textbook (T^2-1)*m=%.5g" % (dm_u, (su - 1.0) * M_BK_NODE)
+    )
+
+    # betaK MUST inject MORE (a betaK-blind SMS would tie dm_d to dm_u -> fails here)...
+    assert dm_d > 1.02 * dm_u, (
+        "betaK damping must increase the injected mass over the undamped sizing (got dm_d=%.5g "
+        "<= 1.02*dm_u=%.5g) — betaK term not folded into the scale" % (dm_d, dm_u)
+    )
+    # ...and by the CLOSED-FORM amount: s_d = T^2 + 2*T*c, c = betaK/dt_e.
+    c = betaK / dt_e
+    sd = T * T + 2.0 * T * c
+    pred_ratio = (sd - 1.0) / (su - 1.0)
+    got_ratio = dm_d / dm_u
+    assert abs(got_ratio - pred_ratio) / pred_ratio < 0.05, (
+        "betaK injected-mass ratio %.4f != closed-form (T^2+2Tc-1)/(T^2-1)=%.4f -> wrong "
+        "betaK-damped scale" % (got_ratio, pred_ratio)
+    )
