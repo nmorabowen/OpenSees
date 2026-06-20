@@ -152,3 +152,33 @@ by a manual probe or a one-time warning, not by a regression test.
     scale too; the explicit run uses `system Diagonal` regardless of `-lump` (so `-lump`
     drives only the dt_cr ESTIMATE).
   - **Tier 1 deferred to a follow-up session** (T-CAP/ENERGY/SELFREP/CONSTR).
+
+- **2026-06-20 — Tier 1 landed** (`tests/test_massScaling_validation.py`, appended below Tier 0),
+  one adversarial-review round (no criticals/vacuity; strengthened loose checks per the review).
+  Four robustness tests, each with a control that fails on a broken/no-op SMS:
+  - **T-CAP** — the `-maxAddedMass` cap WARNING fires with the REAL element-mass-denominator
+    fraction (kills SMS-CAP-DEAD's dead 0%); asserts the `%`-straddling `"% exceeds -maxAddedMass
+    cap"` survives (also guards the PythonStream fix below); positive control: a 5000% cap +
+    `-verbose` still runs + reports a sub-cap fraction but does NOT trip the cap.
+  - **T-ENERGY** — undamped free-vibration KE+IE closure under SMS (recorder mass == integrator
+    scaled mass, drift <5%) + a PINNED magnitude leg: the SMS conserved-energy uplift over the
+    unscaled run equals the analytic injected nodal KE `½v₀²·Σ(injected mₓ)` within 15% (a recorder
+    blind to nodal mass predicts 0 uplift → fails; a mis-scaled mass → wrong magnitude). The
+    EnergyBalanceKernel sums BOTH element AND nodal mass, and SMS injects at nodes, so closure holds.
+  - **T-SELFREP** — a bipenalty `LadrunoKinematicCoupling` (mass-independent self-reported bound
+    < dtTarget) is SKIPPED (`nSelfReport` warning + slave node stays massless) while a normal truss
+    in the same model IS scaled (injected nodeMass>0, `scaled 1/2`); guarded by a truss-only
+    `dt_e < dtTarget` pre-check so a platform drift can't masquerade as a skip regression.
+  - **T-CONSTR** — the one-time v1 constrained-node limitation is disclosed, and the documented
+    "constrained nodes are NOT excluded" behavior is pinned (constrained node still injected) — a
+    change-detector that flips when the exclusion guard is built.
+  - **REAL BUG surfaced + fixed (`SRC/interpreter/PythonStream.h`):** `PythonStream::err_out` passed
+    the already-formatted message AS the format to `PySys_FormatStderr(msg.c_str())`, so any literal
+    `%` in an openseespy `opserr` message was eaten as a bogus printf conversion — the SMS cap
+    warning (`"... % exceeds -maxAddedMass cap 5%"`) was illegible to the very Python audience the
+    SMS-CAP-DEAD fix serves. Fix: `PySys_FormatStderr("%s", msg.c_str())`. Tcl `StandardStream`
+    (`cerr << s`) was unaffected. Upstreamable (CWE-134); ledgered in `LEDGER_vanilla_files.md`
+    (upstreamable-bugfixes) + `LEDGER_quirks.md` (incl. the residual ~1000-byte `PySys_FormatStderr`
+    ceiling caveat). All 7 validation tests + a 65-test integrator/energy/coupling swath green.
+  - **Tier 0 acceptance earned:** the [[project_ladruno_mass_scaling]] "tested for stability not
+    accuracy" caveat can be lifted (Tier 0 reference-match + Tier 1 closure now in place).

@@ -66,7 +66,12 @@ template<class T>void PythonStream::err_out(T err)
   std::stringstream ss;
   ss << err;
   msg = ss.str();
-  PySys_FormatStderr(msg.c_str());
+  // Ladruno: the already-formatted message must be passed as a %s ARGUMENT, not as
+  // the format string itself. Any literal '%' in an opserr message (e.g. "50% of
+  // model mass", "exceeds -maxAddedMass cap 5%") was otherwise consumed as a bogus
+  // printf conversion by PySys_FormatStderr and silently dropped/garbled under
+  // openseespy (the Tcl StandardStream path was unaffected). Classic format-string bug.
+  PySys_FormatStderr("%s", msg.c_str());
 }
 
 

@@ -194,7 +194,7 @@ features:
     pr: 295
     feature_class: integrator
     required_tiers: [dynamics-battery]
-    pytest: tests/test_centralDifferenceSMS_integrator.py   # SMS-1..4 Zone-A (construct/run, tiny-element stability win, no-op below target, dtor-restore)
+    pytest: tests/test_centralDifferenceSMS_integrator.py   # SMS-1..4 Zone-A (construct/run, tiny-element stability win, no-op below target, dtor-restore). FIDELITY+robustness: tests/test_massScaling_validation.py — Tier 0 (T-ACC reference-match, T-MODAL (s-1)m magnitude+monotone sweep, T-HRZ rowsum-unsafe; ADR 37 #303) + Tier 1 (T-CAP -maxAddedMass cap fires w/ real frac, T-ENERGY pinned injected-KE closure, T-SELFREP self-report skip, T-CONSTR v1 constrained-node disclosure)
     tcl: WAIVED(integrator; Python-first feature, Tcl dispatch wired via OpenSeesCommands)
     core_files:                                    # registration sites (dispatch wiring)
       - SRC/classTags.h
@@ -216,6 +216,31 @@ features:
       (Review-3 NEEDS-REWORK: dead cap, no-restore, missing constraint guard — all fixed).
       Ships with HRZ mass-conserving lumping (ADR 35, -lump hrz, no new classTag).
       CDL-8 first-step correctness + CDL-9 betaK collapse are the differentiators.
+
+  - feature: LadrunoProjectionHandler
+    classtag: 33001          # HANDLER family; first fork ConstraintHandler, private band
+    tag_symbol: HANDLER_TAG_LadrunoProjectionHandler
+    pr: 305
+    feature_class: handler
+    required_tiers: [dynamics-battery]
+    pytest: tests/test_adr30_projection_p1.py   # ADR-30 P1 (equalDOF explicit constraint projection); P0 falsify/baseline = tests/test_adr30_projection_p0.py (#300)
+    tcl: WAIVED(handler; Python-first, Tcl dispatch wired via commands.cpp specifyConstraintHandler)
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/system_of_eqn/linearSOE/diagonal/DiagonalSOE.h
+      - SRC/interpreter/OpenSeesCommands.cpp
+      - SRC/tcl/commands.cpp
+      - SRC/analysis/handler/CMakeLists.txt
+      - SRC/analysis/analysis/DirectIntegrationAnalysis.cpp
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      ADR-30 P1: DYNA-style explicit constraint projection (L^T M L)^-1 L^T M accel
+      projection on the diagonal SOE for equalDOF/MP constraints. Manifest row BACKFILLED
+      here (mass-scaling validation PR) — #305 registered the classTag + shipped the
+      handler/tests but left no manifest row, so the G9 gate failed on every later PR's
+      merge with ladruno (inherited ledger debt). See LEDGER_vanilla_files ADR-30 rows.
 
   - feature: LadrunoArcLength
     classtag: 33004          # INTEGRATOR family; per-registry band (coexists w/ ELE_TAG_LadrunoIMKBeam2d=33004)

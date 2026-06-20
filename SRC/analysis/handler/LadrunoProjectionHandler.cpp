@@ -32,6 +32,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>     // Ladruno: fabs (libstdc++/gcc needs the explicit include; MSVC pulled it transitively)
 #include <map>
 #include <utility>
 
