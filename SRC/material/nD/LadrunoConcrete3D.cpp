@@ -203,8 +203,10 @@ LadrunoConcrete3D::LadrunoConcrete3D()
     rho(0.0), lchFixed(1.0), autoReg(false), implex(false), eta(0.0),
     dim(DIM_3D), ncomp(6), condense(false), cEps22(0.0),
     kp_n(0.0), etmax_n(0.0), kdt1_n(0.0), kdt2_n(0.0), kdc_n(0.0), kdc1_n(0.0), kdc2_n(0.0),
+    sigtmax_n(0.0), sigcmax_n(0.0),
     wt_n(0.0), wc_n(0.0), dwt_n(0.0), dwc_n(0.0), dtn_n(0.0),
     kp_t(0.0), etmax_t(0.0), kdt1_t(0.0), kdt2_t(0.0), kdc_t(0.0), kdc1_t(0.0), kdc2_t(0.0),
+    sigtmax_t(0.0), sigcmax_t(0.0),
     wt_t(0.0), wc_t(0.0), dwt_t(0.0), dwc_t(0.0), dtn_t(0.0),
     omegaT(0.0), omegaC(0.0), lastStatus(0),
     stressOut(6), strainOut(6), tangentOut(6, 6)
@@ -224,8 +226,10 @@ LadrunoConcrete3D::LadrunoConcrete3D(int tag, double E_, double nu_, double fc_,
     rho(rho_), lchFixed(lch_), autoReg(autoReg_), implex(implex_), eta(eta_),
     dim(dimMode), ncomp(6), condense(false), cEps22(0.0),
     kp_n(0.0), etmax_n(0.0), kdt1_n(0.0), kdt2_n(0.0), kdc_n(0.0), kdc1_n(0.0), kdc2_n(0.0),
+    sigtmax_n(0.0), sigcmax_n(0.0),
     wt_n(0.0), wc_n(0.0), dwt_n(0.0), dwc_n(0.0), dtn_n(0.0),
     kp_t(0.0), etmax_t(0.0), kdt1_t(0.0), kdt2_t(0.0), kdc_t(0.0), kdc1_t(0.0), kdc2_t(0.0),
+    sigtmax_t(0.0), sigcmax_t(0.0),
     wt_t(0.0), wc_t(0.0), dwt_t(0.0), dwc_t(0.0), dtn_t(0.0),
     omegaT(0.0), omegaC(0.0), lastStatus(0),
     stressOut(6), strainOut(6), tangentOut(6, 6)
@@ -300,6 +304,7 @@ void LadrunoConcrete3D::integrate(bool doTangent)
   in.kp = kp_n; in.et_max = etmax_n;
   in.kdt1 = kdt1_n; in.kdt2 = kdt2_n;
   in.kdc = kdc_n; in.kdc1 = kdc1_n; in.kdc2 = kdc2_n;
+  in.sigtMax = sigtmax_n; in.sigcMax = sigcmax_n;     // P2g monotone drive history (no-heal cyclic damage)
   // IMPL-EX committed bookkeeping (the extrapolation source); harmless when !implex
   in.wt = wt_n; in.wc = wc_n; in.dwt = dwt_n; in.dwc = dwc_n; in.dt_n = dtn_n;
   for (int i = 0; i < 6; i++) in.depl[i] = depl_n[i];
@@ -318,6 +323,7 @@ void LadrunoConcrete3D::integrate(bool doTangent)
   kp_t = out.kp; etmax_t = out.et_max;
   kdt1_t = out.kdt1; kdt2_t = out.kdt2;
   kdc_t = out.kdc; kdc1_t = out.kdc1; kdc2_t = out.kdc2;
+  sigtmax_t = out.sigtMax; sigcmax_t = out.sigcMax;   // P2g monotone drive history
   // trial IMPL-EX bookkeeping (committed on commitState)
   wt_t = out.wt; wc_t = out.wc; dwt_t = out.dwt; dwc_t = out.dwc; dtn_t = out.dt_n;
   for (int i = 0; i < 6; i++) depl_t[i] = out.depl[i];
@@ -457,6 +463,7 @@ int LadrunoConcrete3D::commitState(void)
   kp_n = kp_t; etmax_n = etmax_t;
   kdt1_n = kdt1_t; kdt2_n = kdt2_t;
   kdc_n = kdc_t; kdc1_n = kdc1_t; kdc2_n = kdc2_t;
+  sigtmax_n = sigtmax_t; sigcmax_n = sigcmax_t;   // P2g monotone drive history
   wt_n = wt_t; wc_n = wc_t; dwt_n = dwt_t; dwc_n = dwc_t; dtn_n = dtn_t;
   for (int i = 0; i < 6; i++) depl_n[i] = depl_t[i];
   cEps22 = strain6[2];               // converged out-of-plane strain (condensed modes)
@@ -471,6 +478,7 @@ int LadrunoConcrete3D::revertToLastCommit(void)
   kp_t = kp_n; etmax_t = etmax_n;
   kdt1_t = kdt1_n; kdt2_t = kdt2_n;
   kdc_t = kdc_n; kdc1_t = kdc1_n; kdc2_t = kdc2_n;
+  sigtmax_t = sigtmax_n; sigcmax_t = sigcmax_n;   // P2g monotone drive history
   wt_t = wt_n; wc_t = wc_n; dwt_t = dwt_n; dwc_t = dwc_n; dtn_t = dtn_n;
   for (int i = 0; i < 6; i++) depl_t[i] = depl_n[i];
   omegaT = 0.0; omegaC = 0.0;
@@ -489,6 +497,7 @@ int LadrunoConcrete3D::revertToStart(void)
   }
   kp_n = 0.0; etmax_n = 0.0; kdt1_n = 0.0; kdt2_n = 0.0; kdc_n = 0.0; kdc1_n = 0.0; kdc2_n = 0.0;
   kp_t = 0.0; etmax_t = 0.0; kdt1_t = 0.0; kdt2_t = 0.0; kdc_t = 0.0; kdc1_t = 0.0; kdc2_t = 0.0;
+  sigtmax_n = sigcmax_n = sigtmax_t = sigcmax_t = 0.0;   // P2g monotone drive history
   wt_n = wc_n = dwt_n = dwc_n = dtn_n = 0.0;
   wt_t = wc_t = dwt_t = dwc_t = dtn_t = 0.0;
   omegaT = 0.0; omegaC = 0.0; lastStatus = 0;
@@ -538,8 +547,9 @@ NDMaterial* LadrunoConcrete3D::getCopy(const char* type)
 // ===========================================================================
 //  parallel / serialization (flat Vector — the kernel state is all fixed-size scalars)
 // ===========================================================================
-static const int LC3D_NDATA = 1 + 18 + 1 + 1 + 25 + 1 + 1 + 1 + 11;
-// tag +18 params +autoReg +dim +25 state +cEps22 +implex +eta +IMPL-EX committed(wt,wc,dwt,dwc,dtn + depl[6])
+static const int LC3D_NDATA = 1 + 18 + 1 + 1 + 25 + 2 + 1 + 1 + 1 + 11;
+// tag +18 params +autoReg +dim +25 state +2 P2g(sigtmax,sigcmax) +cEps22 +implex +eta
+// +IMPL-EX committed(wt,wc,dwt,dwc,dtn + depl[6])
 
 int LadrunoConcrete3D::sendSelf(int commitTag, Channel& theChannel)
 {
@@ -558,6 +568,7 @@ int LadrunoConcrete3D::sendSelf(int commitTag, Channel& theChannel)
   data(c++) = kp_n; data(c++) = etmax_n;
   data(c++) = kdt1_n; data(c++) = kdt2_n;
   data(c++) = kdc_n; data(c++) = kdc1_n; data(c++) = kdc2_n;
+  data(c++) = sigtmax_n; data(c++) = sigcmax_n;   // P2g monotone drive history
   data(c++) = cEps22;
   data(c++) = implex ? 1.0 : 0.0;
   data(c++) = eta;
@@ -592,6 +603,7 @@ int LadrunoConcrete3D::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBr
   kp_n = data(c++); etmax_n = data(c++);
   kdt1_n = data(c++); kdt2_n = data(c++);
   kdc_n = data(c++); kdc1_n = data(c++); kdc2_n = data(c++);
+  sigtmax_n = data(c++); sigcmax_n = data(c++);   // P2g monotone drive history
   cEps22 = data(c++);
   implex = (data(c++) != 0.0);
   eta = data(c++);

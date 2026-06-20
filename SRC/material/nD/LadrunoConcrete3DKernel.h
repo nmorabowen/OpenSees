@@ -887,6 +887,11 @@ struct State {
     double et_max = 0.0;
     double kdt1 = 0.0, kdt2 = 0.0;         // tensile
     double kdc = 0.0, kdc1 = 0.0, kdc2 = 0.0;  // compressive (kdc = the alpha_c-weighted history)
+    // P2g — MONOTONE (no-heal) cyclic damage: the running MAX of each channel's effective drive stress.
+    // omega is solved against these (not the live drive), so on an elastic unload (live drive drops,
+    // histories frozen) omega stays FIXED (no healing) and the nominal stress unloads along the damage
+    // secant (1-omega)*sig_bar. On any monotonic path max == live => byte-identical to the pre-P2g kernel.
+    double sigtMax = 0.0, sigcMax = 0.0;
     // P3 Tier-2 IMPL-EX bookkeeping (committed IMPLICIT damage + the per-variable increments and the
     // committed dt, for the next step's extrapolation x~ = x_n + (dt/dt_n)*dx_n). Unused when !implex.
     double wt = 0.0, wc = 0.0;             // committed IMPLICIT dual damage
@@ -984,10 +989,13 @@ inline void damagedUpdate(const Params& mp, const State& in, const double sig_ef
     double Dt = w[0]; for (int i = 1; i < 3; ++i) if (w[i] > Dt) Dt = w[i]; if (Dt < 0.0) Dt = 0.0;
     double mn = w[0]; for (int i = 1; i < 3; ++i) if (w[i] < mn) mn = w[i];
     double Dc = -mn; if (Dc < 0.0) Dc = 0.0;
-    const double wt = (et_max > eps0 && Dt > 1.0e-6 * mp.ft)
-                    ? solveOmegaBracketed(kdt1, kdt2, Dt, mp.ft, eps_f) : 0.0;
-    const double wc = (kdc > 0.0 && Dc > 1.0e-6 * mp.fc)
-                    ? solveOmegaBracketed(kdc1, kdc2, Dc, mp.fc, eps_fc) : 0.0;
+    // P2g — drive omega with the MONOTONE running max (no heal on unload); max == live on monotonic paths.
+    const double sigtMax = in.sigtMax > Dt ? in.sigtMax : Dt;
+    const double sigcMax = in.sigcMax > Dc ? in.sigcMax : Dc;
+    const double wt = (et_max > eps0 && sigtMax > 1.0e-6 * mp.ft)
+                    ? solveOmegaBracketed(kdt1, kdt2, sigtMax, mp.ft, eps_f) : 0.0;
+    const double wc = (kdc > 0.0 && sigcMax > 1.0e-6 * mp.fc)
+                    ? solveOmegaBracketed(kdc1, kdc2, sigcMax, mp.fc, eps_fc) : 0.0;
 
     // nominal principal stresses (Eq.1) then recompose on the SAME eigenvectors
     double sp[3];
@@ -1004,6 +1012,7 @@ inline void damagedUpdate(const Params& mp, const State& in, const double sig_ef
     matToVoigt(S, out.sig);
     out.et_max = et_max; out.kdt1 = kdt1; out.kdt2 = kdt2;
     out.kdc = kdc; out.kdc1 = kdc1; out.kdc2 = kdc2;
+    out.sigtMax = sigtMax; out.sigcMax = sigcMax;   // P2g monotone drive history
     if (wtOut) *wtOut = wt;   // expose the damage variables for the wrapper's recorders (read-only)
     if (wcOut) *wcOut = wc;
 }
@@ -1165,10 +1174,18 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
     for (int i = 1; i < 3; ++i) { if (w[i] > w[imax]) imax = i; if (w[i] < w[imin]) imin = i; }
     const double Dt = w[imax] > 0.0 ? w[imax] : 0.0;
     const double Dc = (-w[imin]) > 0.0 ? -w[imin] : 0.0;
-    const double wt = (et_max2 > eps0 && Dt > 1.0e-6 * mp.ft)
-                    ? solveOmegaBracketed(kdt1, kdt2, Dt, mp.ft, eps_f) : 0.0;
-    const double wc = (kdc > 0.0 && Dc > 1.0e-6 * mp.fc)
-                    ? solveOmegaBracketed(kdc1, kdc2, Dc, mp.fc, eps_fc) : 0.0;
+    // P2g — MONOTONE drive (mirror damagedUpdate). Solve omega against the running max; tLoading/cLoading
+    // mark whether each channel is ADVANCING its max (== loading). On UNLOAD (live drive < committed max)
+    // the drive is frozen and the histories are frozen, so d(omega)/d(eps)=0 and the tangent collapses to
+    // the SPD damage secant D_dam:C_eff. On loading max == live => byte-identical to the pre-P2g tangent.
+    const double sigtMax = in.sigtMax > Dt ? in.sigtMax : Dt;
+    const double sigcMax = in.sigcMax > Dc ? in.sigcMax : Dc;
+    const bool tLoading = Dt >= in.sigtMax;
+    const bool cLoading = Dc >= in.sigcMax;
+    const double wt = (et_max2 > eps0 && sigtMax > 1.0e-6 * mp.ft)
+                    ? solveOmegaBracketed(kdt1, kdt2, sigtMax, mp.ft, eps_f) : 0.0;
+    const double wc = (kdc > 0.0 && sigcMax > 1.0e-6 * mp.fc)
+                    ? solveOmegaBracketed(kdc1, kdc2, sigcMax, mp.fc, eps_fc) : 0.0;
 
     // D_dam = spectral derivative of the per-principal damaged stress with ω FROZEN
     double yv[3], ypv[3];
@@ -1223,10 +1240,12 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
             En[i][j] = V[i][imin] * V[j][imin];
         }
         matToVoigt(Em, Em6); matToVoigt(En, En6);
+        // P2g: d(drive_max)/d(eps) = the live eigenprojection ONLY while the channel advances its max;
+        // frozen (zero) on unload so the -sig(x)d(omega) rank-update vanishes => SPD secant tangent.
         for (int i = 0; i < 6; ++i) tmp[i] = W6[i] * Em6[i];
-        if (Dt > 0.0) CeffT(tmp, dDt_deps); else for (int i = 0; i < 6; ++i) dDt_deps[i] = 0.0;
+        if (Dt > 0.0 && tLoading) CeffT(tmp, dDt_deps); else for (int i = 0; i < 6; ++i) dDt_deps[i] = 0.0;
         for (int i = 0; i < 6; ++i) tmp[i] = W6[i] * En6[i];
-        if (Dc > 0.0) { CeffT(tmp, dDc_deps); for (int i = 0; i < 6; ++i) dDc_deps[i] = -dDc_deps[i]; }
+        if (Dc > 0.0 && cLoading) { CeffT(tmp, dDc_deps); for (int i = 0; i < 6; ++i) dDc_deps[i] = -dDc_deps[i]; }
         else for (int i = 0; i < 6; ++i) dDc_deps[i] = 0.0;
     }
 
@@ -1285,19 +1304,21 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
     } else for (int i = 0; i < 6; ++i) { dkdt1[i] = dkdt2[i] = dkdc1[i] = dkdc2[i] = 0.0; }
 
     // ω via IFT (only when interior 0<ω<1; clamped/inactive ω is insensitive => dω=0)
+    // (P2g) D = the MONOTONE drive sigtMax/sigcMax; dDt_deps/dDc_deps are already zeroed on unload, so an
+    // unloading channel contributes d(omega)=0 (secant). On loading D == live drive => unchanged.
     double dwt[6], dwc[6];
     if (wt > 0.0 && wt < 1.0) {
-        const double Ht = Dt * ((1.0 - wt) * kdt2 / eps_f - 1.0);
+        const double Ht = sigtMax * ((1.0 - wt) * kdt2 / eps_f - 1.0);
         const double a0 = -(1.0 - wt) / Ht;
-        const double a1 = -(1.0 - wt) * Dt / (eps_f * Ht);
-        const double a2 = -(1.0 - wt) * Dt * wt / (eps_f * Ht);
+        const double a1 = -(1.0 - wt) * sigtMax / (eps_f * Ht);
+        const double a2 = -(1.0 - wt) * sigtMax * wt / (eps_f * Ht);
         for (int i = 0; i < 6; ++i) dwt[i] = a0 * dDt_deps[i] + a1 * dkdt1[i] + a2 * dkdt2[i];
     } else for (int i = 0; i < 6; ++i) dwt[i] = 0.0;
     if (wc > 0.0 && wc < 1.0) {
-        const double Hc = Dc * ((1.0 - wc) * kdc2 / eps_fc - 1.0);
+        const double Hc = sigcMax * ((1.0 - wc) * kdc2 / eps_fc - 1.0);
         const double a0 = -(1.0 - wc) / Hc;
-        const double a1 = -(1.0 - wc) * Dc / (eps_fc * Hc);
-        const double a2 = -(1.0 - wc) * Dc * wc / (eps_fc * Hc);
+        const double a1 = -(1.0 - wc) * sigcMax / (eps_fc * Hc);
+        const double a2 = -(1.0 - wc) * sigcMax * wc / (eps_fc * Hc);
         for (int i = 0; i < 6; ++i) dwc[i] = a0 * dDc_deps[i] + a1 * dkdc1[i] + a2 * dkdc2[i];
     } else for (int i = 0; i < 6; ++i) dwc[i] = 0.0;
 
