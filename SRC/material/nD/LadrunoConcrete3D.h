@@ -77,7 +77,7 @@ class LadrunoConcrete3D : public NDMaterial {
   LadrunoConcrete3D(int tag, double E, double nu, double fc, double ft, double Gf, double Gc,
                     double e, double Df, double As,
                     double qh0, double Hp, double Ah, double Bh, double Ch, double Dh,
-                    double rho, double lch, bool autoReg, int dimMode = DIM_3D);
+                    double rho, double lch, bool autoReg, bool implex = false, int dimMode = DIM_3D);
   ~LadrunoConcrete3D();
 
   const char* getClassType(void) const { return "LadrunoConcrete3D"; }
@@ -122,6 +122,7 @@ class LadrunoConcrete3D : public NDMaterial {
   double rho;                  // mass density
   double lchFixed;             // characteristic length when -autoRegularization is OFF
   bool   autoReg;              // pull lch from the active element each step
+  bool   implex;               // Tier-2 IMPL-EX (P3 robustness; default OFF = Tier-1 implicit)
 
   // ---- dimensional view (element-facing ordering; the kernel is always 3D) ----
   int    dim;                  // DIM_*
@@ -138,6 +139,12 @@ class LadrunoConcrete3D : public NDMaterial {
   double etmax_n;              // committed max equiv-strain history (Eq.43)
   double kdt1_n, kdt2_n;       // committed tensile damage histories (Eq.44-45)
   double kdc_n, kdc1_n, kdc2_n;// committed compressive damage histories (Eq.47-49)
+  // committed IMPL-EX bookkeeping (the implicit damage + per-variable increments + dt, for the next
+  // step's extrapolation; unused when !implex)
+  double wt_n, wc_n;           // committed IMPLICIT dual damage
+  double dwt_n, dwc_n;         // committed implicit damage increments
+  double depl_n[6];            // committed implicit plastic-strain increment (tensor)
+  double dtn_n;                // committed time step
 
   // ---- trial state (recomputed each setTrialStrain) ----
   double strain6[6];           // trial total strain (tensor)
@@ -145,6 +152,7 @@ class LadrunoConcrete3D : public NDMaterial {
   double sigEff6[6];           // trial effective stress
   double kp_t;
   double etmax_t, kdt1_t, kdt2_t, kdc_t, kdc1_t, kdc2_t;
+  double wt_t, wc_t, dwt_t, dwc_t, depl_t[6], dtn_t;   // trial IMPL-EX bookkeeping
   double Dtan6[6][6];          // trial damaged tangent (kernel TENSOR convention)
   double omegaT, omegaC;       // trial damage variables (for recorders)
   int    lastStatus;           // 0 converged, 2 no-converge (honest off-surface flag)

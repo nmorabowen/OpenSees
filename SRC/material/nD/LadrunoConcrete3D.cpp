@@ -86,6 +86,7 @@ void* OPS_LadrunoConcrete3D(void)
   double qh0 = 0.3, Hp = 0.5, Ah = 0.08, Bh = 0.003, Ch = 2.0, Dh = 1.0e-6;
   double lch = 1.0;
   bool autoReg = false;
+  bool implex = false;
 
   while (OPS_GetNumRemainingInputArgs() > 0) {
     const char* flag = OPS_GetString();
@@ -127,6 +128,9 @@ void* OPS_LadrunoConcrete3D(void)
     else if (strcmp(flag, "-autoRegularization") == 0) {
       autoReg = true;
     }
+    else if (strcmp(flag, "-implex") == 0) {
+      implex = true;
+    }
     else {
       opserr << "WARNING LadrunoConcrete3D: unknown option '" << flag << "'\n";
       return 0;
@@ -151,11 +155,20 @@ void* OPS_LadrunoConcrete3D(void)
 
   // The CDPM2 consistent tangent is NON-SYMMETRIC (non-associated flow, and ~2% even associated
   // from the semi-implicit theta-freeze) — a symmetric solver will under-converge or diverge.
-  opserr << "LadrunoConcrete3D (tag " << tag << "): the consistent tangent is NON-SYMMETRIC; "
-         << "use an unsymmetric solver (e.g. `system FullGeneral` or `system UmfPack`).\n";
+  // The Tier-2 IMPL-EX secant (-implex) is the degraded-elastic D_dam(w~):C0 — symmetric-part SPD on
+  // SINGLE-SIGN principal states (so a symmetric solver works there) but it can lose definiteness on
+  // mixed-sign high-omega states (a tension crack carrying lateral compression); an unsymmetric solver
+  // is the safe default in both tiers.
+  if (implex)
+    opserr << "LadrunoConcrete3D (tag " << tag << "): -implex (Tier-2) — the secant is the degraded-elastic "
+           << "D_dam(w~):C0, symmetric-part SPD on single-sign states; an unsymmetric solver is still "
+           << "the safe default (mixed-sign high-omega can lose definiteness).\n";
+  else
+    opserr << "LadrunoConcrete3D (tag " << tag << "): the consistent tangent is NON-SYMMETRIC; "
+           << "use an unsymmetric solver (e.g. `system FullGeneral` or `system UmfPack`).\n";
 
   NDMaterial* mat = new LadrunoConcrete3D(tag, E, nu, fc, ft, Gf, Gc, ecc, Df, As,
-                                          qh0, Hp, Ah, Bh, Ch, Dh, rho, lch, autoReg);
+                                          qh0, Hp, Ah, Bh, Ch, Dh, rho, lch, autoReg, implex);
   if (mat == 0) {
     opserr << "WARNING LadrunoConcrete3D: failed to allocate material\n";
     return 0;
@@ -170,10 +183,12 @@ LadrunoConcrete3D::LadrunoConcrete3D()
   : NDMaterial(0, ND_TAG_LadrunoConcrete3D),
     E(0.0), nu(0.0), fc(0.0), ft(0.0), Gf(0.0), Gc(0.0), ecc(0.0), m0(0.0),
     Df(0.0), As(2.0), qh0(0.3), Hp(0.5), Ah(0.08), Bh(0.003), Ch(2.0), Dh(1.0e-6),
-    rho(0.0), lchFixed(1.0), autoReg(false),
+    rho(0.0), lchFixed(1.0), autoReg(false), implex(false),
     dim(DIM_3D), ncomp(6), condense(false), cEps22(0.0),
     kp_n(0.0), etmax_n(0.0), kdt1_n(0.0), kdt2_n(0.0), kdc_n(0.0), kdc1_n(0.0), kdc2_n(0.0),
+    wt_n(0.0), wc_n(0.0), dwt_n(0.0), dwc_n(0.0), dtn_n(0.0),
     kp_t(0.0), etmax_t(0.0), kdt1_t(0.0), kdt2_t(0.0), kdc_t(0.0), kdc1_t(0.0), kdc2_t(0.0),
+    wt_t(0.0), wc_t(0.0), dwt_t(0.0), dwc_t(0.0), dtn_t(0.0),
     omegaT(0.0), omegaC(0.0), lastStatus(0),
     stressOut(6), strainOut(6), tangentOut(6, 6)
 {
@@ -184,15 +199,17 @@ LadrunoConcrete3D::LadrunoConcrete3D()
 LadrunoConcrete3D::LadrunoConcrete3D(int tag, double E_, double nu_, double fc_, double ft_,
                                      double Gf_, double Gc_, double e_, double Df_, double As_,
                                      double qh0_, double Hp_, double Ah_, double Bh_, double Ch_, double Dh_,
-                                     double rho_, double lch_, bool autoReg_, int dimMode)
+                                     double rho_, double lch_, bool autoReg_, bool implex_, int dimMode)
   : NDMaterial(tag, ND_TAG_LadrunoConcrete3D),
     E(E_), nu(nu_), fc(fc_), ft(ft_), Gf(Gf_), Gc(Gc_), ecc(e_),
     m0(Ladruno::Concrete3D::m0Of(fc_, ft_, e_)),
     Df(Df_), As(As_), qh0(qh0_), Hp(Hp_), Ah(Ah_), Bh(Bh_), Ch(Ch_), Dh(Dh_),
-    rho(rho_), lchFixed(lch_), autoReg(autoReg_),
+    rho(rho_), lchFixed(lch_), autoReg(autoReg_), implex(implex_),
     dim(dimMode), ncomp(6), condense(false), cEps22(0.0),
     kp_n(0.0), etmax_n(0.0), kdt1_n(0.0), kdt2_n(0.0), kdc_n(0.0), kdc1_n(0.0), kdc2_n(0.0),
+    wt_n(0.0), wc_n(0.0), dwt_n(0.0), dwc_n(0.0), dtn_n(0.0),
     kp_t(0.0), etmax_t(0.0), kdt1_t(0.0), kdt2_t(0.0), kdc_t(0.0), kdc1_t(0.0), kdc2_t(0.0),
+    wt_t(0.0), wc_t(0.0), dwt_t(0.0), dwc_t(0.0), dtn_t(0.0),
     omegaT(0.0), omegaC(0.0), lastStatus(0),
     stressOut(6), strainOut(6), tangentOut(6, 6)
 {
@@ -250,7 +267,7 @@ void LadrunoConcrete3D::integrate(bool doTangent)
   p.Gf = Gf; p.Gc = Gc;
   p.Df = Df; p.As = As;
   p.qh0 = qh0; p.Hp = Hp; p.Ah = Ah; p.Bh = Bh; p.Ch = Ch; p.Dh = Dh;
-  p.eta = 0.0; p.implex = false;                 // Tier-1 implicit (P3 robustness tiers later)
+  p.eta = 0.0; p.implex = implex;                 // Tier-1 implicit (default) / Tier-2 IMPL-EX (-implex)
 
   // crack-band: lch from the active element (mesh-objective) when -autoRegularization is on,
   // else the fixed -lch the input was calibrated for.
@@ -266,16 +283,26 @@ void LadrunoConcrete3D::integrate(bool doTangent)
   in.kp = kp_n; in.et_max = etmax_n;
   in.kdt1 = kdt1_n; in.kdt2 = kdt2_n;
   in.kdc = kdc_n; in.kdc1 = kdc1_n; in.kdc2 = kdc2_n;
+  // IMPL-EX committed bookkeeping (the extrapolation source); harmless when !implex
+  in.wt = wt_n; in.wc = wc_n; in.dwt = dwt_n; in.dwc = dwc_n; in.dt_n = dtn_n;
+  for (int i = 0; i < 6; i++) in.depl[i] = depl_n[i];
+
+  // current time increment for the IMPL-EX extrapolation ratio r = dt/dt_n (ASDConcrete3D uses the
+  // same global). Only consulted under -implex; for Tier-1 the kernel ignores it.
+  double dt = ops_Dt;
 
   State out;
   double sigEffImpl[6];
   lastStatus = Ladruno::Concrete3D::returnMap(p, strain6, in, out, stress6, sigEffImpl, Dtan6,
-                                              doTangent, -1.0, /*hardening=*/true, &omegaT, &omegaC);
+                                              doTangent, dt, /*hardening=*/true, &omegaT, &omegaC);
 
   for (int i = 0; i < 6; i++) sigEff6[i] = out.sigEff[i];
   kp_t = out.kp; etmax_t = out.et_max;
   kdt1_t = out.kdt1; kdt2_t = out.kdt2;
   kdc_t = out.kdc; kdc1_t = out.kdc1; kdc2_t = out.kdc2;
+  // trial IMPL-EX bookkeeping (committed on commitState)
+  wt_t = out.wt; wc_t = out.wc; dwt_t = out.dwt; dwc_t = out.dwc; dtn_t = out.dt_n;
+  for (int i = 0; i < 6; i++) depl_t[i] = out.depl[i];
 
   if (lastStatus != 0)
     opserr << "WARNING LadrunoConcrete3D: return map did not converge (tag "
@@ -412,6 +439,8 @@ int LadrunoConcrete3D::commitState(void)
   kp_n = kp_t; etmax_n = etmax_t;
   kdt1_n = kdt1_t; kdt2_n = kdt2_t;
   kdc_n = kdc_t; kdc1_n = kdc1_t; kdc2_n = kdc2_t;
+  wt_n = wt_t; wc_n = wc_t; dwt_n = dwt_t; dwc_n = dwc_t; dtn_n = dtn_t;
+  for (int i = 0; i < 6; i++) depl_n[i] = depl_t[i];
   cEps22 = strain6[2];               // converged out-of-plane strain (condensed modes)
   return 0;
 }
@@ -424,6 +453,8 @@ int LadrunoConcrete3D::revertToLastCommit(void)
   kp_t = kp_n; etmax_t = etmax_n;
   kdt1_t = kdt1_n; kdt2_t = kdt2_n;
   kdc_t = kdc_n; kdc1_t = kdc1_n; kdc2_t = kdc2_n;
+  wt_t = wt_n; wc_t = wc_n; dwt_t = dwt_n; dwc_t = dwc_n; dtn_t = dtn_n;
+  for (int i = 0; i < 6; i++) depl_t[i] = depl_n[i];
   omegaT = 0.0; omegaC = 0.0;
   Params p; p.E = E; p.nu = nu;
   Ladruno::Concrete3D::elasticC(p, Dtan6);
@@ -436,9 +467,12 @@ int LadrunoConcrete3D::revertToStart(void)
   for (int i = 0; i < 6; i++) {
     eps_n[i] = 0.0; sig_n[i] = 0.0; sigEff_n[i] = 0.0;
     strain6[i] = 0.0; stress6[i] = 0.0; sigEff6[i] = 0.0;
+    depl_n[i] = 0.0; depl_t[i] = 0.0;
   }
   kp_n = 0.0; etmax_n = 0.0; kdt1_n = 0.0; kdt2_n = 0.0; kdc_n = 0.0; kdc1_n = 0.0; kdc2_n = 0.0;
   kp_t = 0.0; etmax_t = 0.0; kdt1_t = 0.0; kdt2_t = 0.0; kdc_t = 0.0; kdc1_t = 0.0; kdc2_t = 0.0;
+  wt_n = wc_n = dwt_n = dwc_n = dtn_n = 0.0;
+  wt_t = wc_t = dwt_t = dwc_t = dtn_t = 0.0;
   omegaT = 0.0; omegaC = 0.0; lastStatus = 0;
   cEps22 = 0.0;
   Params p; p.E = E; p.nu = nu;
@@ -464,7 +498,7 @@ const char* LadrunoConcrete3D::getType(void) const
 NDMaterial* LadrunoConcrete3D::getCopy(void)
 {
   return new LadrunoConcrete3D(this->getTag(), E, nu, fc, ft, Gf, Gc, ecc, Df, As,
-                               qh0, Hp, Ah, Bh, Ch, Dh, rho, lchFixed, autoReg, dim);
+                               qh0, Hp, Ah, Bh, Ch, Dh, rho, lchFixed, autoReg, implex, dim);
 }
 
 NDMaterial* LadrunoConcrete3D::getCopy(const char* type)
@@ -480,13 +514,14 @@ NDMaterial* LadrunoConcrete3D::getCopy(const char* type)
     return NDMaterial::getCopy(type);   // let the base report the unsupported type
 
   return new LadrunoConcrete3D(this->getTag(), E, nu, fc, ft, Gf, Gc, ecc, Df, As,
-                               qh0, Hp, Ah, Bh, Ch, Dh, rho, lchFixed, autoReg, d);
+                               qh0, Hp, Ah, Bh, Ch, Dh, rho, lchFixed, autoReg, implex, d);
 }
 
 // ===========================================================================
 //  parallel / serialization (flat Vector — the kernel state is all fixed-size scalars)
 // ===========================================================================
-static const int LC3D_NDATA = 1 + 18 + 1 + 1 + 25 + 1;   // tag +18 params +autoReg +dim +25 state +cEps22
+static const int LC3D_NDATA = 1 + 18 + 1 + 1 + 25 + 1 + 1 + 11;
+// tag +18 params +autoReg +dim +25 state +cEps22 +implex +IMPL-EX committed(wt,wc,dwt,dwc,dtn + depl[6])
 
 int LadrunoConcrete3D::sendSelf(int commitTag, Channel& theChannel)
 {
@@ -506,6 +541,9 @@ int LadrunoConcrete3D::sendSelf(int commitTag, Channel& theChannel)
   data(c++) = kdt1_n; data(c++) = kdt2_n;
   data(c++) = kdc_n; data(c++) = kdc1_n; data(c++) = kdc2_n;
   data(c++) = cEps22;
+  data(c++) = implex ? 1.0 : 0.0;
+  data(c++) = wt_n; data(c++) = wc_n; data(c++) = dwt_n; data(c++) = dwc_n; data(c++) = dtn_n;
+  for (int i = 0; i < 6; i++) data(c++) = depl_n[i];
 
   if (theChannel.sendVector(this->getDbTag(), commitTag, data) < 0) {
     opserr << "LadrunoConcrete3D::sendSelf - failed to send vector\n";
@@ -536,6 +574,9 @@ int LadrunoConcrete3D::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBr
   kdt1_n = data(c++); kdt2_n = data(c++);
   kdc_n = data(c++); kdc1_n = data(c++); kdc2_n = data(c++);
   cEps22 = data(c++);
+  implex = (data(c++) != 0.0);
+  wt_n = data(c++); wc_n = data(c++); dwt_n = data(c++); dwc_n = data(c++); dtn_n = data(c++);
+  for (int i = 0; i < 6; i++) depl_n[i] = data(c++);
 
   this->setupDim();             // rebuild vmap/ncomp/condense + resize the return buffers
   this->revertToLastCommit();   // sync trial buffers + tangent to the received committed state

@@ -320,6 +320,21 @@ conflicts, Theory p. 543) and Abaqus (automatic overconstraint resolution). So:
   CDL hook; `equalDOF` only. T1, T2, T4, T5 green.
 - **P2 — general C:** rigidLink/rigidDiaphragm transport columns, SP-fixed-retained
   column deletion, group rank checks. T3, T6, T7 green.
+
+  > **P2 — DONE (2026-06-20).** The P1 operator was already general-C (`L=[I;C]`, the
+  > handler builds `L` from the MP's full `Ccr`), so transport needed **no new projector
+  > code** — P2 is validation. `LadrunoProjection`+`Diagonal` reproduces the dense-correct
+  > `Transformation`+`FullGeneral` answer for `rigidLink -beam` and 3D `rigidDiaphragm`
+  > (rel < 1e-6) — i.e. it FIXES the silent off-diagonal-mass drop P0/T6 documented — with
+  > the transport constraint held to ~1e-12. Tests `tests/test_adr30_projection_p2.py`
+  > (T6fix, T7, T3, + boundary refusals). **§2.5 boundary made concrete:** under the
+  > projection handler every TIED DOF keeps its own equation, so each (incl. a diaphragm
+  > slave's perpendicular rotation) needs nonzero lumped mass — a massless rotational tie
+  > is refused (with `Transformation` the slave is eliminated, so it was free there). And a
+  > DOF the diaphragm controls must not be SP-fixed (SP-on-slave refusal). Both are loud,
+  > named errors. The frozen small-rotation `Ccr` is the SAME limitation `Transformation`
+  > carries (not a regression). Relaxing the massless-tied-slave restriction = P4
+  > (SOE-cooperative elimination).
 - **P3 — queries & EQ:** tie-force recorder query; `EQ_Constraint` groups; `-verbose`
   report polish. T8, T9 green.
 - **P4 — deferred:** prescribed-motion overwrite; MP-chain composition; ExplicitBathe/

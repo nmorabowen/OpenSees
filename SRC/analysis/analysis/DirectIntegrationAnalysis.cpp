@@ -505,14 +505,20 @@ DirectIntegrationAnalysis::setAlgorithm(EquiSolnAlgo &theNewAlgorithm)
     theAlgorithm->setLinks(*theAnalysisModel, *theIntegrator, *theSOE, theTest);
   // invoke domainChanged() either indirectly or directly
   // domainStamp = 0;
+  // Ladruno (ADR-30): honor the domainChanged() error contract on the setter path too
+  // (mirrors the main domainChanged() guards) so an IC-compliance / setup abort raised by
+  // a mid-session algorithm swap is not silently dropped.
   if (domainStamp != 0)
-    theAlgorithm->domainChanged();
+    if (theAlgorithm->domainChanged() < 0) {
+      opserr << "DirectIntegrationAnalysis::setAlgorithm() - Algorithm::domainChanged() failed\n";
+      return -1;
+    }
 
   return 0;
 }
 
 
-int 
+int
 DirectIntegrationAnalysis::setIntegrator(TransientIntegrator &theNewIntegrator)
 {
   // invoke the destructor on the old one
@@ -528,9 +534,15 @@ DirectIntegrationAnalysis::setIntegrator(TransientIntegrator &theNewIntegrator)
 
   // cause domainChanged to be invoked on next analyze
   //  domainStamp = 0;
+  // Ladruno (ADR-30): honor the domainChanged() error contract on the setter path too —
+  // a CentralDifferenceLadruno IC-compliance abort on a mid-session integrator swap must
+  // not be silently swallowed.
   if (domainStamp != 0)
-    theIntegrator->domainChanged();
-   
+    if (theIntegrator->domainChanged() < 0) {
+      opserr << "DirectIntegrationAnalysis::setIntegrator() - Integrator::domainChanged() failed\n";
+      return -1;
+    }
+
   return 0;
 }
 int 

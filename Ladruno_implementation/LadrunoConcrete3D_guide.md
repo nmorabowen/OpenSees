@@ -349,7 +349,7 @@ nDMaterial LadrunoConcrete3D $tag $E $nu $fc $ft $Gf $Gc  \
     <-Df $Df>  <-As $As>  <-rho $rho>                     \
     <-hardening $qh0 $Hp>                                 \
     <-ductility $Ah $Bh $Ch $Dh>                          \
-    <-lch $lch>  <-autoRegularization>
+    <-lch $lch>  <-autoRegularization>  <-implex>
 ```
 ```python
 ops.nDMaterial("LadrunoConcrete3D", 1, 30000.0, 0.2, 30.0, 3.0, 0.1, 5.0, "-Df", 0.85)
@@ -370,7 +370,11 @@ return map always runs on the full 6-comp tensor, and PlaneStress/PlateFiber enf
 `nDMaterial LogStrain $ftag $thisTag` feeding `element LadrunoBrick … -geom finite` (isotropic
 plastic-damage is objective under large rotation). NB unconfined plane-STRESS post-peak softening is
 snap-backy (the σ_zz=0 nested Newton can stall on the limit point) → robust pre-peak / under confinement.
-`-eta`/`-implex` are **not** exposed in v1 (the kernel's robustness tiers are P3).
+`-implex` engages the **Tier-2 IMPL-EX** robustness mode (P3, #309): it reports an explicit
+extrapolated stress with the degraded-elastic secant `D_dam(ω̃):C0` (symmetric-part SPD on single-sign
+principal states — so a *symmetric* solver works there — but conditional on mixed-sign high-ω; an
+unsymmetric solver stays the safe default) while committing the exact implicit state. `-eta` (Duvaut–
+Lions viscosity) is still deferred.
 
 ## 18. Parameters, defaults & calibration
 
@@ -388,7 +392,8 @@ snap-backy (the σ_zz=0 nested Newton can stall on the limit point) → robust p
 | `-ductility Ah Bh Ch Dh` | confinement-ductility (Eq.33) | 0.08, 0.003, 2.0, 1e-6 (CDPM2 table) |
 | `-lch` | fixed crack-band characteristic length (length units) | 1.0 |
 | `-autoRegularization` | pull `lch` from the parent element each step (mesh-objective) | off |
-| ~~`-eta`/`-implex`~~ | Duvaut–Lions viscosity / Tier-2 IMPL-EX | **not in v1 (P3)** |
+| `-implex` | engage **Tier-2 IMPL-EX** (degraded-elastic secant; SPD on single-sign states) | off (Tier-1) — P3 #309 |
+| ~~`-eta`~~ | Duvaut–Lions viscosity | **not yet (P3)** |
 
 - **`e` is a validation target, not a fit knob** — leave it derived from `-kupfer` unless you have biaxial
   data; it lands at the canonical `e ≈ 0.52`.
@@ -472,7 +477,8 @@ regularized) with the **analytic damaged tangent** (Tier-1 implicit), in **all d
 3D + PlaneStrain/AxiSymmetric/PlateFiber/PlaneStress (#299) + the `LogStrain` finite view.
 
 **Deferred:** cyclic (`β_c` + the compression→tension temper, P2f), multiaxial-damage apportioning,
-the robustness tiers (`-eta`/`-implex`, explicit — P3), and the confined-fiber 1D view (§4.6 of the ADR).
+the remaining robustness work (`-eta` Duvaut–Lions, explicit Tier-3 — P3; `-implex` Tier-2 shipped #309),
+and the confined-fiber 1D view (§4.6 of the ADR).
 
 ## 22. Units
 
@@ -583,7 +589,7 @@ mm-scale. Compression-negative internally; enter `fc`, `ft` positive.
 | **Phase 2** | **PlaneStrain / AxiSymmetric / PlateFiber / PlaneStress reduced views (one `dim`-mode class)** | [#299](https://github.com/nmorabowen/OpenSees/pull/299) |
 | **P3 IMPL-EX (oracle)** | **Tier-2 IMPL-EX: extrapolate plastic+damage (ratio-clamped) ⇒ degraded-elastic secant `D_dam(w~):C0`; commit the implicit vars (numpy oracle + falsification gate)** | [#301](https://github.com/nmorabowen/OpenSees/pull/301) |
 | P3 IMPL-EX review | adversarial-review fixes: conditional SPD (single-sign only — NUM-1), `r`-clamp (ALG-2/NUM-2/NUM-3), smooth-region PI3 (ALG-1/GAT-2) | [#304](https://github.com/nmorabowen/OpenSees/pull/304) |
-| P3 IMPL-EX (C++) | port `damaged_step_implex` to the kernel + `-implex` parser/serialization (next) | *next* |
+| **P3 IMPL-EX (C++)** | **`returnMap` Tier-2 branch + `State` IMPL-EX fields + `-implex` wrapper/serialization + g++ B5 byte-check + symmetric-solver element test** | [#309](https://github.com/nmorabowen/OpenSees/pull/309) |
 | P3 Duvaut–Lions | `-eta` plastic-level viscosity (`Δt/(η+Δt)`, η→0 byte-exact) | *deferred* |
 | P2f | cyclic `β_c` + compression→tension temper + multiaxial apportioning | *deferred* |
 

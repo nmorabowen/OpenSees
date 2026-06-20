@@ -102,9 +102,13 @@ LadrunoConstraintProjector::buildMass(LinearSOE *theSOE)
             if (g.m(r) <= 0.0) {
                 opserr << "LadrunoConstraintProjector::buildMass() - massless DOF "
                           "(equation " << e << ", lumped mass " << g.m(r) << ") in a "
-                          "constraint group. A projected tie needs nonzero lumped mass "
-                          "on every retained/constrained DOF — add nodal or element "
-                          "mass, or use constraints Penalty/Transformation.\n";
+                          "constraint group. The projection handler keeps every tied DOF "
+                          "in the equation set, so each needs nonzero lumped mass. For "
+                          "translational DOFs add physical mass; for ROTATIONAL ties "
+                          "(rigidLink -beam, rigidDiaphragm corners tie the perpendicular "
+                          "rotation) add a small rotational mass (e.g. ~0.01-0.1% of the "
+                          "node's translational mass). Otherwise use constraints "
+                          "Penalty/Transformation (which eliminate the slave DOF).\n";
                 return -1;
             }
         }

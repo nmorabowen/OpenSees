@@ -233,9 +233,41 @@ static void run_oracle_dump(const char* path) {
                     label.c_str(), maxs, oks ? "ok" : "FAIL", rel, perEntry, okt ? "ok" : "FAIL");
     }
 
+    // ---- (B5) P3 Tier-2 IMPL-EX: committed IMPLEX state + step -> the REPORTED explicit stress.
+    //      Pins returnMap(implex=true) reported sigma to the oracle damaged_step_implex (incl. a
+    //      dt-JUMP case that exercises the extrapolation-ratio clamp r<=implexRmax). ----
+    fh >> tok; int nimplex; fh >> nimplex;     // NIMPLEX
+    double worst_implex = 0;
+    for (int d = 0; d < nimplex; ++d) {
+        fh >> tok; std::string label; fh >> label;   // IMPLEX <label>
+        double pb[12]; for (int i = 0; i < 12; ++i) fh >> pb[i];
+        Params mp = makeParams(pb);
+        fh >> mp.Gf >> mp.Gc >> mp.lch >> mp.As >> mp.implexRmax;
+        mp.implex = true;
+        State in, out;
+        for (int i = 0; i < 6; ++i) fh >> in.eps[i];
+        for (int i = 0; i < 6; ++i) fh >> in.sigEff[i];
+        fh >> in.kp;
+        fh >> in.et_max >> in.kdt1 >> in.kdt2 >> in.kdc >> in.kdc1 >> in.kdc2;
+        fh >> in.wt >> in.wc >> in.dwt >> in.dwc >> in.dt_n;
+        for (int i = 0; i < 6; ++i) fh >> in.depl[i];
+        double dt; fh >> dt;
+        double deps[6], sigO[6];
+        for (int i = 0; i < 6; ++i) fh >> deps[i];
+        for (int i = 0; i < 6; ++i) fh >> sigO[i];
+        double strain[6]; for (int i = 0; i < 6; ++i) strain[i] = in.eps[i] + deps[i];
+        double sigC[6], sigEff[6], Da[6][6];
+        returnMap(mp, strain, in, out, sigC, sigEff, Da, true, dt, /*hardening=*/true);
+        double maxs = 0; for (int i = 0; i < 6; ++i) maxs = std::fmax(maxs, std::fabs(sigC[i] - sigO[i]));
+        worst_implex = std::fmax(worst_implex, maxs);
+        bool ok = maxs < 1.0e-6;
+        if (!ok) ++fails;
+        std::printf("  %-24s implex_sig_err=%.2e %s\n", label.c_str(), maxs, ok ? "ok" : "FAIL");
+    }
+
     std::printf("  WORST  sig=%.2e (pp<1e-9/hard<1e-6)  kp=%.2e (pp<1e-10/hard<1e-7)  tan=%.3e (<1e-6)"
-                "  dmg=%.2e (<1e-6)  dmgtan=%.2e (<5e-5)\n",
-                worst_sig, worst_kp, worst_tan, worst_dmg, worst_dtan);
+                "  dmg=%.2e (<1e-6)  dmgtan=%.2e (<5e-5)  implex=%.2e (<1e-6)\n",
+                worst_sig, worst_kp, worst_tan, worst_dmg, worst_dtan, worst_implex);
 }
 
 // ---- (C) robustness / honesty regressions (PR #249 adversarial-review fixes) ----------------
