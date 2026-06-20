@@ -45,8 +45,8 @@ Spec: `30_ladruno_explicit_constraint_projection_adr.md`. Host integrator:
 ## Phase status
 | Phase | State | PR | Tests | Gate |
 |---|---|---|---|---|
-| P0 falsify & baseline (no SRC) | READY FOR APPROVAL | — | 3 passed (hardened) | Gate-0 SOUND, fixes applied |
-| P1 core (equalDOF) | not started | — | T1,T2,T4,T5 | Gate-A (math, pre-code) + Gate-B (code) |
+| P0 falsify & baseline (no SRC) | ✅ MERGED | #300 (671b5236) | 3 passed (hardened) | Gate-0 SOUND |
+| P1 core (equalDOF) | BUILT, 12/12 green; Gate-B running | guppi/adr30-p1-core | T1,T2,T4,T5 + P0 all pass | Gate-A done; Gate-B + full-ZoneA running |
 | P2 general C (rigidLink/diaphragm) | not started | — | T3,T6,T7 | Gate-C |
 | P3 queries + EQ | not started | — | T8,T9 | Gate-D |
 
@@ -90,3 +90,53 @@ _(append per gate: finding · lens · REAL/REFUTED · resolution)_
 
 ## Running notes / decisions
 - 2026-06-19: loop started. P0 test = `tests/test_adr30_projection_p0.py`.
+
+### Gate-A (P1 pre-code math, wf_09671e08, 15 agents)
+- **Verdict: algebra core SOUND** (C1 M-orthogonal/idempotent, C2 momentum, C5 equalDOF→mass-avg
+  all rigorously verified; operator correctly general-C → P2 not blocked). All blockers in seam/hook.
+- 10 confirmed fixes folded into `_adr30_p1_design.md` "Gate-A resolutions" (R1–R10). Load-bearing:
+  - R1 IC check uses MP offset form `(u_c−Uc0)=C(u_r−Ur0)` (verified accessors exist MP_Constraint.h:82-83).
+  - R2 mass source = Diagonal-SOE diagonal ONLY (Node::getMass omits element mass); read BETWEEN
+    formTangent and solve (verified DiagonalDirectSolver.cpp:124 overwrites A→1/aii on factor).
+  - R3 `*Aprev=Aproj` at CDL line 533 is the load-bearing manifold write.
+  - R4 SP-fixed retained → zero-overwrite orphaned slaves (not empty projector).
+  - R5 consistent-mass guard (refuse cMass on tied DOFs).
+  - R6 IC check covers velocity, every domainChanged, null-projector→warn.
+- Code facts verified: DiagonalDirectSolver in-place reciprocal; MP Uc0/Ur0 accessors; DiagonalSOE getA.
+- **NEXT: implement handler+projector+CDL hook, build, run T1/T2/T4/T5, then Gate-B (code panel).**
+
+### P1 build + test (2026-06-20)
+- Full OpenSeesPy build GREEN (worktree dist/bin; mumps seeded from main clone).
+- P1 battery 9/9 + P0 3/3 = 12 passed. Dynamics regression 43 passed/1 xfail.
+- 2 BUGS caught by tests before Gate-B (both fixed + rebuilt):
+  1. doneNumberingDOF override skipped base FE_Element::setID() → added `this->ConstraintHandler::doneNumberingDOF()`.
+  2. LATENT UPSTREAM: DirectIntegrationAnalysis::domainChanged() ignored handle()/doneNumberingDOF()
+     return codes → handler conflict diagnostics printed but analysis ran on. Fixed driver to honor
+     `<0`=error contract (vanilla edit, ledgered). T5 conflict battery caught it. (analyze checks
+     domainChanged()<0 at :209 → propagates.)
+- Vanilla edits this phase: classTags.h, DiagonalSOE.h (getDiagonalA), OpenSeesCommands.cpp,
+  tcl/commands.cpp, FEM_ObjectBrokerAllClasses.cpp, analysis/handler/CMakeLists.txt,
+  analysis/analysis/DirectIntegrationAnalysis.cpp. All ledgered (LEDGER_vanilla).
+- Full Zone-A regression: **870 passed, 1 xfail, 0 regressions** (382s) — the universal
+  DirectIntegrationAnalysis driver edit + CDL hook are safe across the whole suite.
+- Gate-B code panel: wf_aa96881d-4e1 (running).
+
+### Gate-B (P1 code panel, wf_aa96881d-4e1, 10 agents)
+- **Verdict: projector math + implementation SOUND** (verified EXACT: tie_err=0, momentum 4e-16
+  on unequal-mass multi-slave star; memory/ownership clean; mass-read-before-factor timing correct;
+  no false aborts of other handlers; consistentMassGuard no false positives). 2 BLOCKERS, both the
+  same error-contract family as the handle()/doneNumberingDOF fix:
+  1. **IC-abort swallowed** — `DirectIntegrationAnalysis::domainChanged()` line 461 left
+     `theIntegrator->domainChanged()` UNCHECKED, so CDL's enforceIC -1 (the -projectICs gate) was
+     dropped → off-manifold ICs ran on silently. FIX: check `<0 → return -1` (mirrors handle path).
+     [A Gate-B verify agent applied this edit to the source itself — audited via git diff, correct +
+     clean, kept. PROCESS NOTE: Gate-B used agentType general-purpose (Edit access); future gates
+     should use read-only Explore to avoid agents mutating the tree.]
+  2. **Zero-group rebuild UAF** — doneNumberingDOF freed the old projector but skipped the consumer
+     push under `numGroups()>0`, leaving the integrator with a dangling pointer (MPs removed mid-run).
+     FIX: re-bind the consumer UNCONDITIONALLY — push projector if groups, push 0 if zero (CDL guards
+     all derefs on `theProjector != 0`); clearAll comment corrected.
+- Tests added: T3 (IC-violation aborts; -projectICs snaps+runs), zero-group-rebuild UAF guard
+  (uses remove('mp',2)). Rebuild blj5yulya running.
+- Minor/nit (deferred, non-blocking): near-singular probe only catches exact zero pivot; project()
+  solve-failure `continue` is quiet; dead delta-size code; parallel send/recv scope (v1 single-proc).

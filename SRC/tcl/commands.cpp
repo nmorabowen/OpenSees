@@ -4002,11 +4002,19 @@ specifyConstraintHandler(ClientData clientData, Tcl_Interp *interp, int argc,
           return TCL_ERROR;
   }
 
+  else if (strcmp(argv[1],"LadrunoProjection") == 0) {   // Ladruno: ADR-30
+      extern void *OPS_LadrunoProjectionHandler(void);
+      OPS_ResetInputNoBuilder(clientData, interp, 2, argc, argv, &theDomain);
+      theHandler = (ConstraintHandler*)OPS_LadrunoProjectionHandler();
+      if (theHandler == 0)
+          return TCL_ERROR;
+  }
+
   else {
     opserr << "WARNING No ConstraintHandler type exists (Plain, Penalty,\n";
     opserr << " Lagrange, Transformation) only\n";
     return TCL_ERROR;
-  }    
+  }
   return TCL_OK;
 }
 

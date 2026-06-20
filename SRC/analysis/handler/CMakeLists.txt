@@ -10,15 +10,20 @@ target_sources(OPS_Analysis
       PlainHandler.cpp
       PenaltyConstraintHandler.cpp 
       LagrangeConstraintHandler.cpp
-      TransformationConstraintHandler.cpp 
+      TransformationConstraintHandler.cpp
       AutoConstraintHandler.cpp
+      LadrunoProjectionHandler.cpp
+      LadrunoConstraintProjector.cpp
     PUBLIC
-      ConstraintHandler.h 
+      ConstraintHandler.h
       PlainHandler.h
-      PenaltyConstraintHandler.h 
+      PenaltyConstraintHandler.h
       LagrangeConstraintHandler.h
-      TransformationConstraintHandler.h 
+      TransformationConstraintHandler.h
       AutoConstraintHandler.h
+      LadrunoProjectionHandler.h
+      LadrunoConstraintProjector.h
+      LadrunoProjectionConsumer.h
 )
 
 target_include_directories(OPS_Analysis PUBLIC ${CMAKE_CURRENT_LIST_DIR})

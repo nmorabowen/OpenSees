@@ -1,0 +1,98 @@
+/* ****************************************************************** **
+**    OpenSees - Open System for Earthquake Engineering Simulation    **
+**          Pacific Earthquake Engineering Research Center            **
+** ****************************************************************** */
+
+// LADRUNO-HEADER-START
+// ==========================================================================
+//
+//   ▄█          ▄████████ ████████▄     ▄████████ ███    █▄  ███▄▄▄▄    ▄██████▄
+//  ███         ███    ███ ███   ▀███   ███    ███ ███    ███ ███▀▀▀██▄ ███    ███
+//  ███         ███    ███ ███    ███   ███    ███ ███    ███ ███   ███ ███    ███
+//  ███         ███    ███ ███    ███  ▄███▄▄▄▄██▀ ███    ███ ███   ███ ███    ███
+//  ███       ▀███████████ ███    ███ ▀▀███▀▀▀▀▀   ███    ███ ███   ███ ███    ███
+//  ███         ███    ███ ███    ███ ▀███████████ ███    ███ ███   ███ ███    ███
+//  ███▌    ▄   ███    ███ ███   ▄███   ███    ███ ███    ███ ███   ███ ███    ███
+//  █████▄▄██   ███    █▀  ████████▀    ███    ███ ████████▀   ▀█   █▀   ▀██████▀
+//  ▀                                   ███    ███
+//
+//  Ladruno — a research fork of OpenSees
+//  Created by:  Nicolas Mora Bowen  ·  Patricio Palacios  ·  José Abell  ·  Guppi
+//
+// Header auto-stamped by Ladruno_scripts/stamp_headers.py (art: banner_ASCII.txt).
+// Do not hand-edit between the markers; edit the script/art and re-run instead.
+// ==========================================================================
+// LADRUNO-HEADER-END
+
+// ADR-30 P1 — LadrunoProjectionHandler (HANDLER_TAG 33001, first fork handler).
+//
+// Plain-style assembly that does NOT eliminate MP slave DOFs: every node DOF keeps
+// its own equation and its own diagonal mass (homogeneous SPs excluded, as Plain).
+// The multi-point constraints are instead enforced in explicit dynamics by the
+// LadrunoConstraintProjector (M-orthogonal acceleration projection), pushed to a
+// projection-aware integrator (CentralDifferenceLadruno) via LadrunoProjectionConsumer.
+//
+// At handle() it builds the connected-component constraint groups (union-find over
+// DOF vertices), runs the topological diagnostics (chain / double-slave / zero-free)
+// and the lumped-mass guard, and stores the groups; at doneNumberingDOF() it freezes
+// equation indices into the projector and pushes it to the integrator.
+//
+// v1 scope: equalDOF / equalDOF-style identity MPs. rigidLink/rigidDiaphragm transport
+// (general C) = P2. Command: constraints LadrunoProjection <-verbose> <-projectICs>
+// <-icTol $tol>. See Ladruno_implementation/30_..._adr.md and _adr30_p1_design.md.
+
+#ifndef LadrunoProjectionHandler_h
+#define LadrunoProjectionHandler_h
+
+#include <ConstraintHandler.h>
+#include <vector>
+
+class LadrunoConstraintProjector;
+class FE_Element;
+class DOF_Group;
+
+class LadrunoProjectionHandler : public ConstraintHandler
+{
+  public:
+    LadrunoProjectionHandler();
+    LadrunoProjectionHandler(bool verbose, bool projectICs, double icTol);
+    ~LadrunoProjectionHandler();
+
+    int handle(const ID *nodesNumberedLast = 0);
+    int doneNumberingDOF(void);
+    void clearAll(void);
+
+    int sendSelf(int commitTag, Channel &theChannel);
+    int recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &theBroker);
+
+  protected:
+
+  private:
+    // --- per-slave record (one constrained DOF and the retained masters it ties to)
+    struct SlaveRec {
+        int vtx;                                 // vertex id of the constrained DOF
+        std::vector<int> masterVtx;              // retained vertices it ties to
+        std::vector<double> coeff;               // C row entries (= 1 for equalDOF)
+        double delta;                            // Uc0(i) - sum_j C(i,j) Ur0(j)
+    };
+    // --- a connected-component constraint group (filled at handle())
+    struct RawGroup {
+        std::vector<int> masterVtx;              // retained DOF vertices (cols of L)
+        std::vector<SlaveRec> slaves;            // constrained rows of L
+    };
+
+    // vertex bookkeeping (a vertex = one (node,dof) pair)
+    std::vector<int> vtxNode;                    // node tag per vertex
+    std::vector<int> vtxDof;                     // local dof per vertex
+    std::vector<RawGroup> theGroups;
+
+    LadrunoConstraintProjector *theProjector;    // owned
+    bool verbose;
+    bool projectICs;
+    double icTol;
+
+    int buildGroups(void);                       // handle()-time grouping + diagnostics
+    int consistentMassGuard(void);               // refuse cMass on a tied DOF
+};
+
+#endif

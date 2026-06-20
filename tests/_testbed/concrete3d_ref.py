@@ -1984,6 +1984,15 @@ def run_p2e_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, Gc=5.0, As=2.0, ver
 # IMPLICIT increment of each frozen variable (dwt, dwc, depl) + the committed dt, so x~ = x_n +
 # (dt/dt_n)*dx_n. First step / no history (dt_n=0) => factor 0 => pure elastic-predictor explicit.
 # ===========================================================================
+# IMPL-EX extrapolation time-ratio cap r = dt/dt_n (adversarial-review ALG-2/NUM-2/NUM-3): an adaptive
+# step-GROWTH (a small step then a much larger one, exactly what a step-cutting solver produces) makes
+# r large, over-extrapolates the bounded damage past [0,1) (reported stress collapses, tangent goes
+# near-singular/indefinite) and injects an unbounded spurious plastic strain via depl_x = r*depl.
+# ASDConcrete3D likewise guards the IMPL-EX time ratio (there via error-control step reduction); we use
+# a hard cap. r<0 (a backward/negative dt) is floored to 0 — extrapolation only advances forward.
+_IMPLEX_RMAX = 2.0
+
+
 def make_implex_state(mp):
     """Committed IMPL-EX state = the Tier-1 damage state + the frozen-variable increments and dt."""
     s = make_damage_state(mp)
@@ -1992,8 +2001,16 @@ def make_implex_state(mp):
 
 
 def _implex_secant_tangent(sig_bar_x, wt_x, wc_x, mp):
-    """The Tier-2 SPD secant: D_dam(omega FROZEN) : C_elastic. Plastic flow frozen => the effective
-    tangent is the elastic C0; omega frozen => no -sig(x)dw rank-update => symmetric-part SPD."""
+    """The Tier-2 secant tangent: D_dam(omega FROZEN) : C_elastic. With the plastic flow frozen the
+    effective tangent collapses to the elastic C0, and freezing omega drops the -sig(x)dw rank-update.
+    SPD CAVEAT (adversarial-review NUM-1): D_dam is symmetric, but D_dam @ C0 does NOT commute, so the
+    secant is symmetric-part SPD only in SINGLE-SIGN principal regimes (all-tensile or all-compressive
+    sig_bar_x, where D_dam is a single positive scaling). On a MIXED-SIGN, high-omega direction-contrast
+    state (a tensile-damaged principal beside an undamaged compressive one, omega_t > ~0.97) the two
+    branch slopes (1-wt) != (1-wc) make the symmetric part lose definiteness — the intrinsic dual-damage
+    IMPL-EX limitation (gate PI5 pins it). It is still far better-conditioned than the Tier-1 tangent and
+    the COMMITTED physics is exact (PI2). This IS the consistent tangent of the reported explicit stress
+    (gate PI5 FD-verifies), so the global Newton consumes exactly d(sig_rep)/d(deps)."""
     lam, V = np.linalg.eigh(voigt_to_mat(sig_bar_x))
     yv = [(1.0 - wt_x) * max(lam[a], 0.0) + (1.0 - wc_x) * min(lam[a], 0.0) for a in range(3)]
     ypv = [(1.0 - wt_x) if lam[a] > 0.0 else (1.0 - wc_x) for a in range(3)]
@@ -2005,9 +2022,12 @@ def damaged_step_implex(state, deps6, dt, mp, Gf, Gc, lch, As=2.0):
       * EXPLICIT (reported): effective stress with the plastic-strain increment FROZEN (extrapolated)
         + dual damage FROZEN (extrapolated) => sig_bar_x is LINEAR in deps => tangent D_dam(w~):C0.
       * IMPLICIT (committed): the exact `damaged_step_tensor`; commit its internal variables + the
-        per-variable increments (dwt, dwc, depl) and dt for the NEXT step's extrapolation."""
+        per-variable increments (dwt, dwc, depl) and dt for the NEXT step's extrapolation.
+    The extrapolation time-ratio is CLAMPED to [0, _IMPLEX_RMAX] (see the module note) so adaptive /
+    step-cutting stepping cannot over-extrapolate the bounded damage or inject unbounded plastic strain."""
     deps6 = np.asarray(deps6, float)
-    r = (dt / state["dt_n"]) if state["dt_n"] > 0.0 else 0.0          # extrapolation factor
+    # extrapolation factor r = dt/dt_n, clamped to [0, R_MAX]; r<0 (negative dt) -> 0 (forward-only)
+    r = min(dt / state["dt_n"], _IMPLEX_RMAX) if (state["dt_n"] > 0.0 and dt > 0.0) else 0.0
     wt_x = min(max(state["wt"] + r * state["dwt"], 0.0), 1.0 - 1.0e-12)
     wc_x = min(max(state["wc"] + r * state["dwc"], 0.0), 1.0 - 1.0e-12)
     depl_x = r * np.asarray(state["depl"], float)                     # frozen plastic-strain increment
@@ -2047,10 +2067,21 @@ def drive_damaged_implex(mp, eps_path6, Gf, Gc, lch, As=2.0, dt=1.0):
                 min_eig_sym=np.array(mineig), state=st)
 
 
+def _advance_implex(mp, eps_path6, Gf, Gc, lch, As=2.0, dt=1.0):
+    """Chain IMPL-EX steps and return the final COMMITTED implex state (for the FD/robustness gates)."""
+    st = make_implex_state(mp)
+    for eps_t in eps_path6:
+        _, _, st, _ = damaged_step_implex(st, np.asarray(eps_t, float) - st["eps"], dt, mp, Gf, Gc, lch, As)
+    return st
+
+
 def run_p3_implex_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, Gc=5.0, As=2.0, verbose=True):
     """Tier-2 IMPL-EX falsification battery (ADR 4.4). Oracle-only (numpy); the C++ kernel port is a
-    follow-up build PR. PI1 is the headline gate: the symmetrized Tier-2 tangent stays POSITIVE-
-    DEFINITE across a softening snap-back where the Tier-1 tangent is INDEFINITE (gate TD2)."""
+    follow-up build PR. PI1: the symmetrized Tier-2 secant stays POSITIVE-DEFINITE across a SINGLE-SIGN
+    softening snap-back where the Tier-1 tangent is INDEFINITE (gate TD2). PI2 committed==Tier-1; PI3
+    smooth-region O(dt) order across >=3 levels; PI4 error monitor; PI5 secant==d(sig_rep)/d(deps) +
+    the PINNED dual-damage SPD limitation (mixed-sign high-omega is NOT SPD — conditional, see NUM-1);
+    PI6 robustness under non-uniform dt (the extrapolation-ratio clamp). Adversarial-review-hardened."""
     mp = make_material(E, nu, fc, ft)
     lch = 100.0
     nrm = lambda A: float(np.sqrt(np.sum(np.asarray(A) ** 2)))
@@ -2084,35 +2115,100 @@ def run_p3_implex_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, Gc=5.0, As=2.
     res["PI2_commit_wt_err"] = abs(run["wt"][-1] - wt_ref[-1])
     res["PI2_commit_matches_tier1"] = bool(res["PI2_commit_sig_bar_err"] < 1e-12 and res["PI2_commit_wt_err"] < 1e-12)
 
-    # PI3 explicit error -> 0 under step refinement (O(dt) IMPL-EX overstress). Drive the SAME total
-    # strain with N and 4N uniform steps; the peak reported-vs-implicit gap shrinks with finer dt.
-    def _peak_err(nsteps):
-        p = [np.array([e, 0, 0, 0, 0, 0]) for e in np.linspace(eps_end / nsteps, eps_end, nsteps)]
+    # PI3 explicit error -> 0 under step refinement. (adversarial-review ALG-1/GAT-2) The GLOBAL-max gap
+    # is dominated by an IRREDUCIBLE one-step lag at the damage-ONSET C0 kink (dwt jumps 0->finite, an
+    # O(1)-in-rate event that does NOT refine away and is non-monotone) — gating it at a hardcoded N was
+    # brittle. Instead measure the gap at a FIXED strain in the SMOOTH softening tail and assert a clean
+    # convergence ORDER across >=3 refinement levels.
+    eps_eval = 3.5e-4                                                 # smooth softening tail (onset ~ ft/E ~ 1e-4)
+    def _gap_at_strain(nsteps):
+        grid = np.linspace(eps_end / nsteps, eps_end, nsteps)
+        p = [np.array([e, 0, 0, 0, 0, 0]) for e in grid]
         rr = drive_damaged_implex(mp, p, Gf, Gc, lch, As, dt=eps_end / nsteps)
-        return float(np.max(np.abs(rr["sig_rep"][:, 0] - rr["sig_impl"][:, 0])))
-    eN, e4N = _peak_err(nN), _peak_err(4 * nN)
-    res["PI3_err_N"], res["PI3_err_4N"] = eN, e4N
-    res["PI3_converges"] = bool(e4N < 0.6 * eN and eN < ft)          # shrinks ~O(dt), bounded by ft
+        gap = np.abs(rr["sig_rep"][:, 0] - rr["sig_impl"][:, 0])
+        return float(np.interp(eps_eval, grid, gap)), float(np.max(gap))
+    levels = [200, 400, 800]
+    gaps, gmax = zip(*[_gap_at_strain(n) for n in levels])
+    orders = [np.log(gaps[i] / gaps[i + 1]) / np.log(levels[i + 1] / levels[i]) for i in range(len(levels) - 1)]
+    res["PI3_gaps_smooth"] = list(gaps)
+    res["PI3_orders"] = [float(o) for o in orders]
+    res["PI3_min_order"] = float(np.min(orders))
+    res["PI3_smooth_monotone"] = bool(all(gaps[i] > gaps[i + 1] for i in range(len(gaps) - 1)))
+    res["PI3_onset_lag_floors"] = bool(min(gmax) < max(gmax) * 1.5 and min(gmax) > 0.0)  # global-max does NOT refine (documented)
+    res["PI3_converges"] = bool(res["PI3_smooth_monotone"] and res["PI3_min_order"] > 0.8 and max(gaps) < ft)
 
     # PI4 error monitor is meaningful: > 0 while damage evolves, ~0 in the pre-onset elastic regime.
     res["PI4_err_softening"] = float(np.max(run["err"]))
     res["PI4_err_preonset"] = float(np.max(run["err"][run["wt"] <= 0.0])) if np.any(run["wt"] <= 0.0) else 0.0
     res["PI4_monitor_ok"] = bool(res["PI4_err_softening"] > 1e-4 and res["PI4_err_preonset"] < 1e-12)
 
+    # PI5 the secant IS the consistent tangent of the reported explicit stress (the IMPL-EX quadratic-
+    # convergence contract) + the HONEST SPD scope (adversarial-review NUM-1). (a) FD-verify C_spd ==
+    # d(sig_rep)/d(deps) at a deep-softening committed state; (b) PIN the dual-damage SPD limitation:
+    # the secant is SPD in SINGLE-SIGN regimes but the symmetric part goes INDEFINITE on a MIXED-SIGN
+    # high-omega state (tension crack carrying lateral compression), so PI1's SPD is conditional.
+    st_soft = _advance_implex(mp, path[:isoft], Gf, Gc, lch, As)
+    deps_fd = np.array([2.0e-7, -0.5e-7, 0.3e-7, 1.0e-7, 0.0, 0.0])
+    s0, C0c, _, _ = damaged_step_implex(st_soft, deps_fd, 1.0, mp, Gf, Gc, lch, As)
+    Cfd = np.zeros((6, 6)); h = 1.0e-9
+    for j in range(6):
+        dp = np.array(deps_fd, float); dp[j] += h
+        dm = np.array(deps_fd, float); dm[j] -= h
+        sp, _, _, _ = damaged_step_implex(st_soft, dp, 1.0, mp, Gf, Gc, lch, As)
+        sm, _, _, _ = damaged_step_implex(st_soft, dm, 1.0, mp, Gf, Gc, lch, As)
+        Cfd[:, j] = (sp - sm) / (2.0 * h)
+    res["PI5_fd_consistency_rel"] = nrm(C0c - Cfd) / (nrm(Cfd) + 1e-30)
+    # single-sign vs mixed-sign secant at high omega_t (the NUM-1 boundary, directly probed)
+    single = _implex_secant_tangent(np.array([2.0, 1.0, 0.5, 0, 0, 0]), 0.99, 0.0, mp)   # all-tensile
+    mixed = _implex_secant_tangent(np.array([1.0, -2.0, -2.0, 0, 0, 0]), 0.99, 0.0, mp)   # tension + lateral compression
+    res["PI5_singlesign_min_eig"] = float(np.min(np.linalg.eigvalsh(0.5 * (single + single.T))))
+    res["PI5_mixedsign_min_eig"] = float(np.min(np.linalg.eigvalsh(0.5 * (mixed + mixed.T))))
+    res["PI5_consistent_and_scope_pinned"] = bool(
+        res["PI5_fd_consistency_rel"] < 1e-5            # C_spd == d(sig_rep)/d(deps)
+        and res["PI5_singlesign_min_eig"] > 0.0         # SPD in single-sign regimes (PI1 generalizes)
+        and res["PI5_mixedsign_min_eig"] < 0.0)         # NOT SPD on mixed-sign high-omega (the pinned limitation)
+
+    # PI6 robustness under NON-UNIFORM dt (the r-clamp; adversarial-review ALG-2/NUM-2/NUM-3). From a
+    # softening committed state: (a) a large dt-GROWTH step keeps the reported stress finite + sane and
+    # SPD (the clamp stops omega over-extrapolating past [0,1) / a plastic-strain blow-up); (b) a
+    # NEGATIVE dt floors r to 0 => no backward damage (wt_x == committed wt).
+    base = _peak_state = _advance_implex(mp, path[:isoft], Gf, Gc, lch, As)
+    dt0 = 1.0
+    deps_next = np.array([eps_end / nN, 0, 0, 0, 0, 0])
+    sj, Cj, _, dj = damaged_step_implex(base, deps_next, 100.0 * dt0, mp, Gf, Gc, lch, As)  # r would be 100 unclamped
+    res["PI6_jump_sig_finite"] = bool(np.all(np.isfinite(sj)) and nrm(sj) < 10.0 * ft)
+    res["PI6_jump_wt_x_bounded"] = bool(dj["wt_x"] < 1.0 - 1e-9)                  # NOT saturated to 1
+    res["PI6_jump_min_eig"] = float(np.min(np.linalg.eigvalsh(0.5 * (Cj + Cj.T))))
+    res["PI6_jump_SPD"] = bool(res["PI6_jump_min_eig"] > 0.0)                     # single-sign path stays SPD
+    _, _, _, dn = damaged_step_implex(base, deps_next, -dt0, mp, Gf, Gc, lch, As)  # negative dt
+    res["PI6_negdt_no_backward"] = bool(abs(dn["wt_x"] - base["wt"]) < 1e-14)
+    res["PI6_robust"] = bool(res["PI6_jump_sig_finite"] and res["PI6_jump_wt_x_bounded"]
+                             and res["PI6_jump_SPD"] and res["PI6_negdt_no_backward"])
+
     ok = (res["softening_reached"] and res["PI1_implex_SPD"] and res["PI1_tier1_indefinite"]
-          and res["PI2_commit_matches_tier1"] and res["PI3_converges"] and res["PI4_monitor_ok"])
+          and res["PI2_commit_matches_tier1"] and res["PI3_converges"] and res["PI4_monitor_ok"]
+          and res["PI5_consistent_and_scope_pinned"] and res["PI6_robust"])
     res["PASS"] = bool(ok)
     if verbose:
         print(f"  E={E} nu={nu} fc={fc} ft={ft} Gf={Gf} Gc={Gc} As={As} lch={lch}")
         print(f"  softening reached (wt_final={run['wt'][-1]:.3f}): {res['softening_reached']}")
-        print(f"  PI1 [HEADLINE] IMPL-EX SPD across snap-back: lambda_min(sym)={res['PI1_implex_min_eig']:.3e}>0 "
+        print(f"  PI1 [HEADLINE, single-sign] IMPL-EX SPD across snap-back: lambda_min(sym)={res['PI1_implex_min_eig']:.3e}>0 "
               f"({res['PI1_implex_SPD']}); Tier-1 at same state INDEFINITE lambda_min={res['PI1_tier1_min_eig']:.3e}<0 "
               f"({res['PI1_tier1_indefinite']})")
         print(f"  PI2 committed trajectory == Tier-1: sig_bar rel={res['PI2_commit_sig_bar_err']:.2e} "
               f"wt err={res['PI2_commit_wt_err']:.2e} ({res['PI2_commit_matches_tier1']})")
-        print(f"  PI3 explicit error -> 0 (dt refine): err(N)={eN:.3e} err(4N)={e4N:.3e} ({res['PI3_converges']})")
+        print(f"  PI3 smooth-region order (>=3 levels): orders={[f'{o:.2f}' for o in res['PI3_orders']]} "
+              f"min={res['PI3_min_order']:.2f} monotone={res['PI3_smooth_monotone']} "
+              f"(onset global-max lag floors={res['PI3_onset_lag_floors']}) ({res['PI3_converges']})")
         print(f"  PI4 error monitor: softening max={res['PI4_err_softening']:.3e} pre-onset={res['PI4_err_preonset']:.2e} "
               f"({res['PI4_monitor_ok']})")
+        print(f"  PI5 secant==d(sig_rep)/d(deps) rel={res['PI5_fd_consistency_rel']:.2e}; "
+              f"SPD scope: single-sign min_eig={res['PI5_singlesign_min_eig']:.2e}>0, "
+              f"MIXED-SIGN min_eig={res['PI5_mixedsign_min_eig']:.2e}<0 (pinned limitation) "
+              f"({res['PI5_consistent_and_scope_pinned']})")
+        print(f"  PI6 non-uniform dt (r-clamp): jump sig finite={res['PI6_jump_sig_finite']} "
+              f"wt_x bounded={res['PI6_jump_wt_x_bounded']} SPD={res['PI6_jump_SPD']} "
+              f"neg-dt no-backward={res['PI6_negdt_no_backward']} ({res['PI6_robust']})")
         print(f"  => P3 IMPL-EX GATE {'PASS' if ok else 'FAIL'}")
     return res
 
