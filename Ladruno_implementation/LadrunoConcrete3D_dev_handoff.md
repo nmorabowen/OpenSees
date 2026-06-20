@@ -2,7 +2,7 @@
 title: "LadrunoConcrete3D — developer / C++-implementer handoff guide"
 project: Ladruno
 type: handoff guide
-status: SHIPPED to `ladruno` — kernel (return map + analytic damaged tangent, g++-verified) + nDMaterial wrapper (classTag 33017) + ALL dimensional views (3D + PlaneStrain/AxiSymmetric/PlateFiber/PlaneStress, #299) + P3 Tier-2 IMPL-EX (oracle #301 → review-hardened #304 → C++ kernel port + `-implex` wrapper #309) + P3 Duvaut–Lions `-eta` ORACLE (#315). NEXT = the Duvaut–Lions C++ kernel port + `-eta` wrapper parser → cyclic `β_c` temper (P2f) → Tier-3 explicit demo. See §0 for the current-state handoff.
+status: SHIPPED to `ladruno` — kernel (return map + analytic damaged tangent, g++-verified) + nDMaterial wrapper (classTag 33017) + ALL dimensional views (3D + PlaneStrain/AxiSymmetric/PlateFiber/PlaneStress, #299) + P3 Tier-2 IMPL-EX (oracle #301 → review-hardened #304 → C++ kernel port + `-implex` wrapper #309) + P3 Duvaut–Lions `-eta` ORACLE (#316). NEXT = the Duvaut–Lions C++ kernel port + `-eta` wrapper parser → cyclic `β_c` temper (P2f) → Tier-3 explicit demo. See §0 for the current-state handoff.
 related:
   - "[[31_ladruno_concrete3d_adr]]"          # the ADR (decision record)
   - "[[project_ladruno_concrete3d]]"          # the agent-memory pointer
@@ -51,7 +51,7 @@ off `ladruno` (fast auto-merge ⇒ fresh branch each time; predict the next PR n
   `returnMap` has a `dt` param + Tier-2 branch; wrapper reads `dt=ops_Dt`. g++ check **B5** (`NIMPLEX`
   block) pins the reported stress to the oracle ~1e-16. Oracle gate `run_p3_implex_gate` / pytest
   `test_p3_implex_gate` (PI1–PI6).
-- **P3 Duvaut–Lions `-eta` ORACLE (#315)** — viscoplastic relaxation at the PLASTIC level (ADR §4.4): the
+- **P3 Duvaut–Lions `-eta` ORACLE (#316)** — viscoplastic relaxation at the PLASTIC level (ADR §4.4): the
   inviscid effective return + `κ_p` are relaxed toward the elastic trial by the Simo–Hughes closed form
   `σ̄ = (1−β)σ̄_tr + β σ̄_inviscid`, `β = Δt/(η+Δt)`; damage then follows from the **relaxed** effective
   stress, and the effective consistent tangent blends `C_eff ← (1−β)C_elastic + β C_inviscid`. `make_material`
@@ -76,7 +76,7 @@ off `ladruno` (fast auto-merge ⇒ fresh branch each time; predict the next PR n
    monotone control parameter, not λ** — worth doing before promoting `-implex` for quasi-static softening.
 
 **NEXT INCREMENTS (each its own oracle-first PR):**
-- **Duvaut–Lions C++ kernel port + `-eta` wrapper parser** (the build PR for #315's oracle): mirror the
+- **Duvaut–Lions C++ kernel port + `-eta` wrapper parser** (the build PR for #316's oracle): mirror the
   oracle blend in `LadrunoConcrete3DKernel.h` `returnMap` — after the inviscid `returnMapTensor`, when
   `mp.eta>0 && dt>0` form the elastic-predictor `sig_tr` and blend `sig_eff ← (1−β)sig_tr + β sig_eff`,
   `kp ← (1−β)kp_n + β kp` (`β=dt/(eta+dt)`), run `damagedUpdate` on the relaxed `sig_eff`, and blend the
@@ -484,7 +484,7 @@ tangent above) + the `nDMaterial` wrapper (lands classTag 33017 + the foot-gun g
 P0 surface ✓ → P1 return-map/hardening/tangent ✓ → **C++ kernel return map + analytic tangent ✓** →
 **P2 dual damage `ωt`/`ωc` + crack-band ✓** → **nDMaterial wrapper (33017) ✓** → **ALL dimensional
 views ✓ (#299)** → **P3 robustness: Tier-2 IMPL-EX ✓ (oracle #301 → review #304 → C++/`-implex` #309;
-freezes plastic state + damage)** → **Duvaut–Lions `-eta` ORACLE ✓ (#315, the rate term, §0)** →
+freezes plastic state + damage)** → **Duvaut–Lions `-eta` ORACLE ✓ (#316, the rate term, §0)** →
 **NEXT: the Duvaut–Lions C++ kernel port + `-eta` wrapper parser (§0) → cyclic `β_c`
 (P2f, §6b) → Tier-3 explicit demo** → P4 finite-strain (`LogStrain`, clean — already free via the
 wrapper) → P5 confined-fiber view (§4.6 hoop-spring condensation, "Mander by mechanism") → P6
@@ -496,5 +496,5 @@ tensor split + auto-unilateral · **#285** P2d single-step + numerical tangent �
 damaged tangent · **#287** PE2 cross-platform · **#288** P2e review (ω floor) · **#289** P3a C++ damage
 stress · **#290** guide · **#291** P3b C++ damaged tangent · **#292** nDMaterial wrapper (33017) ·
 **#293** handout · **#294** wrapper convention tests · **#299** Phase-2 reduced views · **#301** P3
-IMPL-EX oracle · **#304** IMPL-EX review fixes · **#309** IMPL-EX C++ port + `-implex` · **#315**
+IMPL-EX oracle · **#304** IMPL-EX review fixes · **#309** IMPL-EX C++ port + `-implex` · **#316**
 Duvaut–Lions `-eta` oracle.
