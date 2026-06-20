@@ -30,6 +30,7 @@ LadrunoIMKBeam — concentrated-plasticity IMK beam hinges
 LadrunoRebarBuckling — rebar buckling wrapper (Dhakal–Maekawa / Gomes–Appleton, cyclic re-straightening)
 LadrunoRCConcrete — RC plastic-damage + MCFT compression softening (shell)
 LadrunoRCFiniteStrain — finite-strain (Hencky) RC plastic-damage view (-geom finite)
+LadrunoConcrete3D — CDPM2-grade solid concrete (Menétrey-Willam + dual damage, 3D)
 LadrunoBondSlip — 1D bond-slip τ–s (CEB-FIP MC2010)
 LadrunoCohesiveHinge — discrete cohesive moment–rotation hinge (Gf per hinge, ∫M dθ=Gf)
 LadrunoCohesiveHingeBiaxial — coupled Mz–My cohesive interaction-surface hinge (elliptical onset, per-axis Gf)

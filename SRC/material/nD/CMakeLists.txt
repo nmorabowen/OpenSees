@@ -66,6 +66,7 @@ target_sources(OPS_Material
     LadrunoJ2Finite.cpp
     LadrunoRCConcrete.cpp
     LadrunoRCFiniteStrain.cpp
+    LadrunoConcrete3D.cpp
     IncrementalElasticIsotropicThreeDimensional.cpp
     ConcreteMcftNonLinear5.cpp
     ConcreteMcftNonLinear7.cpp
@@ -155,6 +156,8 @@ target_sources(OPS_Material
     LadrunoRCFiniteStrain.h
     LadrunoRCKernel.h
     LadrunoHardening.h
+    LadrunoConcrete3D.h
+    LadrunoConcrete3DKernel.h
     FiniteStrainNDMaterial.h
     IncrementalElasticIsotropicThreeDimensional.h
     ConcreteMcftNonLinear5.h

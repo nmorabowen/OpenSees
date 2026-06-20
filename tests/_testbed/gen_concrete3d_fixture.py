@@ -173,9 +173,48 @@ def main(out=None):
         lines.append(_fmt(deps))
         lines.append(_fmt(C.flatten()))
 
+    # ---- P2 DAMAGE cases (committed damage state + deps -> oracle NOMINAL stress) ----
+    # Build a well-posed committed damage state with the path drivers, then probe one more increment;
+    # the C++ kernel reproduces it via returnMap (effective return on in.sigEff + damagedUpdate).
+    Gf, Gc, As = 0.1, 5.0, 2.0
+    dmgs = []   # (label, mp, Gf, Gc, lch, As, state_dict, deps[6], sig_nom[6])
+
+    def add_dmg(label, mp, lch, build_path, deps):
+        st = ref.make_damage_state(mp)
+        st, _, _, _ = ref._advance_damaged(st, build_path, mp, Gf, Gc, lch, As)
+        sig_nom, _, _ = ref.damaged_step_tensor(st, np.asarray(deps, float), mp, Gf, Gc, lch, As)
+        dmgs.append((label, mp, lch, st, np.asarray(deps, float), sig_nom))
+
+    lch = 50.0
+    # tension-damaged, probe a small further tension increment
+    tpath = [np.array([e, 0, 0, 0, 0, 0]) for e in np.linspace(0, 4.5e-4, 300)]
+    add_dmg("dmg_tension", mp_h, lch, tpath, [1.0e-6, 0, 0, 0, 0, 0])
+    # tension-damaged, probe a COMPRESSION increment (reversal -> unilateral re-split routing)
+    add_dmg("dmg_reversal", mp_h, lch, tpath, [-2.0e-6, 0, 0, 0, 0, 0])
+    # CONFINED compression-damaged (stress-controlled, off the sigma_lat=0 kink), probe compression
+    dconf = ref.drive_damaged_unified(mp_h, np.linspace(0, -0.05, 2000), Gf, Gc, lch, As, sigma3=0.05 * 30.0)
+    ic = int(np.argmax(dconf["wc"] > 0.5))
+    cpath = [np.array([dconf["eps11"][i], dconf["eps_lat"][i], dconf["eps_lat"][i], 0, 0, 0]) for i in range(ic)]
+    add_dmg("dmg_compression", mp_h, lch, cpath,
+            [dconf["eps11"][ic] - cpath[-1][0], dconf["eps_lat"][ic] - cpath[-1][1], dconf["eps_lat"][ic] - cpath[-1][2], 0, 0, 0])
+    # sheared damaged state, probe with shear (exercises the spectral recompose of the nominal split)
+    spath = [np.array([e, -0.2 * e, -0.2 * e, 0.3 * e, 0, 0]) for e in np.linspace(0, 5.0e-4, 300)]
+    add_dmg("dmg_shear", mp_na, lch, spath, [3.0e-6, -0.6e-6, -0.6e-6, 0.9e-6, 0, 0])
+
+    lines.append(f"NDMG {len(dmgs)}")
+    for label, mp, lch, st, deps, sig_nom in dmgs:
+        lines.append(f"DMG {label} {_fmt(_pblock(mp))} {repr(float(Gf))} {repr(float(Gc))} "
+                     f"{repr(float(lch))} {repr(float(As))}")
+        lines.append(_fmt(st["eps"]))
+        lines.append(_fmt(st["sig_bar"]))
+        lines.append(repr(float(st["kp"])))
+        lines.append(_fmt([st["et_max"], st["kdt1"], st["kdt2"], st["kdc"], st["kdc1"], st["kdc2"]]))
+        lines.append(_fmt(deps))
+        lines.append(_fmt(sig_nom))
+
     with open(out, "w") as fh:
         fh.write("\n".join(lines) + "\n")
-    print(f"wrote {out}: {len(emitted)} paths, {len(tans)} tangent cases")
+    print(f"wrote {out}: {len(emitted)} paths, {len(tans)} tangent cases, {len(dmgs)} damage cases")
     return out
 
 

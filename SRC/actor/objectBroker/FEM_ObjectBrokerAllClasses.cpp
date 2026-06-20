@@ -257,6 +257,7 @@
 #include "StagedStrainNDMaterial.h" // Ladruno — small-strain (2D+3D) auto-capturing staged-activation wrapper
 #include "LadrunoRCConcrete.h"     // Ladruno — RC plastic-damage + MCFT compression softening (ADR 19)
 #include "LadrunoRCFiniteStrain.h" // Ladruno — finite-strain (Hencky) view of the RC plastic-damage material (ADR 19 Phase 4b)
+#include "LadrunoConcrete3D.h"     // Ladruno — CDPM2-grade solid-concrete plastic-damage (ADR 31)
 #include "ElasticOrthotropicThreeDimensional.h"
 #include "ElasticOrthotropicPlaneStress.h"
 #include "J2PlaneStrain.h"
@@ -2382,6 +2383,9 @@ FEM_ObjectBrokerAllClasses::getNewNDMaterial(int classTag)
 
   case ND_TAG_LadrunoRCFiniteStrain:              // Ladruno — finite-strain (Hencky) view of the RC plastic-damage material (ADR 19 Phase 4b)
     return new LadrunoRCFiniteStrain();
+
+  case ND_TAG_LadrunoConcrete3D:                  // Ladruno — CDPM2-grade solid-concrete plastic-damage (ADR 31)
+    return new LadrunoConcrete3D();
 
   case ND_TAG_ElasticOrthotropicThreeDimensional:
     return new ElasticOrthotropicThreeDimensional();
