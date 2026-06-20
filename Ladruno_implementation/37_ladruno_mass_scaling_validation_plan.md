@@ -133,4 +133,22 @@ by a manual probe or a one-time warning, not by a regression test.
 
 ## Implementation log
 
-*(filled in as tests land; this plan is the spec.)*
+- **2026-06-20 — Tier 0 landed** (`tests/test_massScaling_validation.py`), two adversarial
+  review rounds. Round 1 found the first cut **vacuous** (a zero-injection no-op passed the
+  "accuracy" gate better than the real feature); reworked. Round 2 confirmed the 5 criticals
+  dead and flagged loose bands; tightened (floor-control band, analytic magnitude check,
+  honest HRZ estimate-vs-run, eigen mode guard). Tests:
+  - **T-ACC** — (A) control leg: plain CD **diverges** at a supra-stable step (dt=0.011,
+    above the global limit ~0.0105) while SMS holds → fails on a broken/no-op SMS; (B)
+    fidelity at modest scaling within engineering tolerance, with a no-scaling
+    discretization-floor control so a no-op fails the lower leg.
+  - **T-MODAL** — SMS injects the **analytic `(s-1)·m`** mass (SMS-independent eigen oracle,
+    <2%) + monotone dtTarget sweep lowering f1.
+  - **T-HRZ** — on a consistent-mass beam, rowsum yields indefinite rotational lumped mass →
+    eigensolve rejects those pairs → grossly inflated (unsafe) dt_cr; hrz≈diagonal (both
+    safe); trusting rowsum's number destabilizes a run.
+  - **Findings (for the report):** SMS **over-scales** (sizes against the conservative element
+    pencil, not the global step); at `dtTarget` above the bulk element step the bulk elements
+    scale too; the explicit run uses `system Diagonal` regardless of `-lump` (so `-lump`
+    drives only the dt_cr ESTIMATE).
+  - **Tier 1 deferred to a follow-up session** (T-CAP/ENERGY/SELFREP/CONSTR).

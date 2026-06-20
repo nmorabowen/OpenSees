@@ -48,6 +48,19 @@ def _rms(xs):
     return math.sqrt(sum(v * v for v in xs) / len(xs)) if xs else 0.0
 
 
+def _rel_rms(t_a, u_a, t_b, u_b):
+    """Relative RMS of (run a) vs the interpolated (run b reference), on a's grid."""
+    t_end = min(t_a[-1], t_b[-1])
+    diff, base = [], []
+    for ts, ua in zip(t_a, u_a):
+        if ts > t_end:
+            break
+        ub = _interp(t_b, u_b, ts)
+        diff.append(ua - ub)
+        base.append(ub)
+    return _rms(diff) / _rms(base) if _rms(base) > 0 else float("inf")
+
+
 # --------------------------------------------------------------------------
 # node1(fix) - e1(bulk) - node2 - e2(tiny,interior) - node3 - e3(bulk) - node4(free)
 #   bulk e1/e3: L=1.0, E=1e4, rho=1
@@ -85,7 +98,8 @@ def _eigen_f1(extra_mass=None):
 def _mode1():
     _model()
     ops.system("FullGeneral")
-    lam = ops.eigen("-fullGenLapack", 1)
+    lam = ops.eigen("-fullGenLapack", 2)
+    assert lam[0] < lam[1], "eigen did not return ascending modes (LAPACK/harness issue)"
     w1 = math.sqrt(lam[0])
     phi = {n: ops.nodeEigenvector(n, 1, 1) for n in FREE}
     pmax = max(abs(v) for v in phi.values())
@@ -150,26 +164,21 @@ def test_sms_reference_match():
     w1, phi = _mode1()
     T = 1.5 * (2.0 * math.pi / w1)
     seed = {n: 1.0e-3 * phi[n] for n in FREE}
-    t_ref, u_ref = _seed_and_run((CDL,), 0.005, T, seed)
-    t_sms, u_sms2 = _seed_and_run((SMS, 0.0095), 0.008, T, seed)   # dtTarget modest, dt clean
+    t_ref, u_ref = _seed_and_run((CDL,), 0.005, T, seed)             # fine-dt truth
+    t_ctl, u_ctl = _seed_and_run((CDL,), 0.008, T, seed)            # SAME dt, NO scaling
+    t_sms, u_s = _seed_and_run((SMS, 0.0095), 0.008, T, seed)       # modest scaling, same dt
+    assert _rms(u_s) > 1e-6 and _rms(u_ref) > 1e-6, "degenerate run"
 
-    assert _rms(u_sms2) > 1e-6 and _rms(u_ref) > 1e-6, "degenerate run"
-    t_end = min(t_ref[-1], t_sms[-1])
-    diff, ref_on_grid = [], []
-    for ts, us in zip(t_sms, u_sms2):
-        if ts > t_end:
-            break
-        ur = _interp(t_ref, u_ref, ts)
-        diff.append(us - ur)
-        ref_on_grid.append(ur)
-    rel = _rms(diff) / _rms(ref_on_grid)
-    # Two-sided: a zero-injection no-op lands at the ~discretization floor (well under
-    # 2%); the real feature's mode-1 shift puts it in a band we bound from BOTH sides
-    # so neither a no-op nor a grossly-wrong injection passes.
-    assert 0.015 < rel < 0.09, (
-        "SMS@supra-dt vs fine reference: rel RMS %.3f%% outside [1.5%%,9%%] — a no-op "
-        "would fall below, a mis-sized injection above (steps sms=%d ref=%d)"
-        % (100 * rel, len(t_sms), len(t_ref))
+    floor = _rel_rms(t_ctl, u_ctl, t_ref, u_ref)   # pure discretization error at dt=0.008
+    sms = _rel_rms(t_sms, u_s, t_ref, u_ref)        # discretization + mass-scaling shift
+    # faithful: the scaled run stays within engineering tolerance of the converged truth.
+    assert sms < 0.045, "SMS@modest-scaling not faithful: rel RMS %.3f%%" % (100 * sms)
+    # real injection: the mass-scaling shift adds a MEASURABLE error beyond the no-scaling
+    # discretization floor, so a no-op (which would tie the floor) fails this leg. The
+    # injection MAGNITUDE is pinned separately + tightly by T-MODAL.
+    assert sms > 1.3 * floor, (
+        "SMS error %.3f%% not meaningfully above the no-scaling floor %.3f%% — injection "
+        "not exercised (a no-op would tie the floor)" % (100 * sms, 100 * floor)
     )
 
 
@@ -286,16 +295,20 @@ def test_hrz_rowsum_unsafe_on_consistent_beam():
         "rowsum dt_cr should be grossly inflated vs the diagonal-mass run limit: "
         "rowsum=%.5g diag=%.5g" % (dt_rowsum, dt_diag)
     )
-    assert 0.5 * dt_diag < dt_hrz < 2.0 * dt_diag, (
-        "hrz should be near the diagonal estimate (both safe-ish), not inflated like "
-        "rowsum: hrz=%.5g diag=%.5g" % (dt_hrz, dt_diag)
+    ratio = dt_hrz / dt_diag
+    assert 1.05 < ratio < 1.35, (
+        "hrz/diagonal dt_cr ratio %.3f outside [1.05,1.35] (HRZ's mass-conserving rescale "
+        "gives ~1.18 here; a broken HRZ moves it out). hrz=%.5g diag=%.5g"
+        % (ratio, dt_hrz, dt_diag)
     )
 
-    # TRUSTING rowsum's number destabilizes a real run; a step below the diagonal
-    # estimate is stable. (The run uses diagonal-of-consistent mass either way.)
-    assert not math.isfinite(_beam_maxtip(0.9 * dt_rowsum, 200)) or \
-        _beam_maxtip(0.9 * dt_rowsum, 200) > 1.0e2, \
-        "a run at rowsum's reported dt_cr (%.5g) should diverge" % (0.9 * dt_rowsum)
-    u_safe = _beam_maxtip(0.5 * dt_diag, 200)
-    assert math.isfinite(u_safe) and u_safe < 1.0, \
-        "a step below the diagonal dt_cr should be stable, got %r" % u_safe
+    # A user who TRUSTS rowsum's dt_cr picks a step that destabilizes the run; one who
+    # trusts diagonal's number is safe. (The run mass is diagonal-of-consistent either
+    # way; rowsum's estimate is unsafe BECAUSE its indefinite rotational lump inflates it.)
+    u_trust_rowsum = _beam_maxtip(0.9 * dt_rowsum, 200)
+    u_trust_diag = _beam_maxtip(0.9 * dt_diag, 200)
+    assert not math.isfinite(u_trust_rowsum) or u_trust_rowsum > 1.0e2, \
+        "running at 0.9*rowsum dt_cr (%.5g) should diverge" % (0.9 * dt_rowsum)
+    assert math.isfinite(u_trust_diag) and u_trust_diag < 1.0, \
+        "running at 0.9*diagonal dt_cr (%.5g) should be stable, got %r" \
+        % (0.9 * dt_diag, u_trust_diag)
