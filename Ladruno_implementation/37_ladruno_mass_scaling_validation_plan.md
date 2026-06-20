@@ -1,0 +1,136 @@
+---
+title: Mass scaling + HRZ lumping — validation plan (accuracy/fidelity)
+project: Ladruno
+status: ready-to-implement
+priority: high
+owner: nmora
+tags:
+  - validation
+  - integrator
+  - explicit
+  - mass-scaling
+---
+
+# Mass scaling + HRZ lumping — validation plan
+
+> **Validation plan (post-merge).** ADR 35 (HRZ, [[35_ladruno_hrz_lumped_mass_adr]])
+> and ADR 36 (CentralDifferenceSMS, [[36_ladruno_selective_mass_scaling_adr]]) shipped
+> in **PR #295**. The shipped tests prove the features **run, stabilize, and clean up**
+> — but mass scaling's whole purpose is a **speed↔accuracy trade**, and only the speed
+> side is validated. This plan closes the **fidelity** gap and converts the review's
+> warned/probed behaviors into asserted tests. Follow-up PR off `ladruno` (not an amend
+> to #295).
+
+## What is already covered (do not re-do)
+
+- HRZ kernel math: g++ standalone, 18 invariant checks (conservation, reduce-to-rowsum,
+  direction-dependent α, rotational mean, guard). `tests/_hrz_verify/hrz_standalone.cpp`.
+- HRZ integration: `-lump hrz` parses/runs on all 3 explicit integrators; HRZ≠diagonal
+  regression guard; HRZ==rowsum on a lumped truss. `tests/test_hrz_lumped_mass.py` (6).
+- SMS: constructs/runs; **tiny-element stability win** (plain CD diverges at the bulk
+  step, SMS stays bounded); no-op below target; **dtor-restore**.
+  `tests/test_centralDifferenceSMS_integrator.py` (4).
+
+## The gap (why this plan)
+
+The SMS stability test asserts the scaled run stays **bounded**, not that it **matches
+the unscaled reference**. ADR 36's own Test 2 (reference-match) and Test 4
+(frequency-shift) — the *accuracy* checks — were never implemented. Likewise the
+Review-3 fixes (cap, energy closure, self-report skip, constraint guard) are confirmed
+by a manual probe or a one-time warning, not by a regression test.
+
+## Conventions
+
+- **Zone-A, numpy-free** where possible (pure-`math` RMS/eigen helpers, mirroring
+  `tests/test_centralDifferenceLadruno_integrator.py`) so the tests run in the lean CI.
+  `ops.eigen` and `ops.nodeMass`/`ops.nodeEigenvector` are built-ins (no numpy needed).
+- Bootstrap: `from _testbed import ops` (dist/bin on `sys.path` + `os.add_dll_directory`).
+- Each test maps to an ADR test id; status starts `planned`.
+
+---
+
+## Tier 0 — fidelity (the actual gap) — Zone-A
+
+### T-ACC — SMS reference-match  *(ADR 36 Test 2)*
+- **Model:** fixed–free chain, one short/stiff/light element (tiny `dt_e`) + soft bulk,
+  seeded with a small initial displacement. Choose a **modest** `dtTarget` so the added
+  mass is a few % (NOT the ~2500× of the stability test) — i.e. the *useful* regime.
+- **Procedure:** (a) unscaled `CentralDifferenceLadruno` at the true small Δt = reference
+  history; (b) `CentralDifferenceSMS dtTarget` at the bulk Δt. Sample the free-node
+  displacement at common times.
+- **Assert:** `RMS(u_sms − u_ref)/RMS(u_ref) < 5%` (tighten to ~2% if achievable).
+- **Why it matters:** this is the test that proves the scaled answer is *usable*, not
+  merely bounded. **The single most important missing test.**
+
+### T-MODAL — frequency-shift tradeoff  *(ADR 36 Test 4, Zone-A surrogate)*
+- **Model:** a multi-DOF lumped-mass shear column (masses + `Elastic`/`Truss` springs),
+  one sub-target stiff story. (The SSI soil-column version is Zone-B, deferred.)
+- **Procedure:** `ops.eigen(n)` → record `f₁..f₃`. Apply SMS (run one `domainChanged` via
+  a priming `analyze`), re-`eigen`. Sweep `dtTarget` over several values.
+- **Assert:** Δf₁ < 1% at the modest `dtTarget`; and Δf₁ **monotonically grows** as
+  `dtTarget` is pushed (the honest tradeoff curve — documents how hard a user can push).
+
+### T-HRZ-END2END — HRZ where row-sum is genuinely wrong
+- **Model:** a beam/shell transient (consistent mass, rotational DOFs) where row-sum
+  zeros the rotational mass → garbage/inflated `dt_cr`.
+- **Assert:** `-lump hrz` yields a finite, physically-correct `dt_cr` and a stable run at
+  `dt < dt_cr,hrz`, while `-lump rowsum` mis-estimates it. Stronger than the current
+  "finite/positive" + "≠ diagonal" assertions.
+
+---
+
+## Tier 1 — robustness (review findings → asserted) — Zone-A
+
+### T-CAP — `-maxAddedMass` cap actually fires  *(locks SMS-CAP-DEAD)*
+- Drive a model where the added-mass fraction exceeds a small `-maxAddedMass`; **capture
+  stderr** (`capsys`/redirect) and assert the WARNING text appears and `frac` is the
+  real (element-mass-denominator) value — not the dead `0%`. (We only probed this.)
+
+### T-ENERGY — energy closure under scaling  *(locks the M2 claim)*
+- Run SMS with an `EnergyBalanceRecorder`; assert the energy balance closes (KE computed
+  against the **scaled** nodal mass), i.e. the residual stays within the recorder's
+  tolerance over the run.
+
+### T-SELFREP — self-report elements skipped  *(locks SMS-SELFREPORT)*
+- Include a `LadrunoKinematicCoupling` (RBE2, self-reporting, mass-independent bound)
+  below `dtTarget`; assert it is **not** scaled (`nSelfReport>0` warning emitted), and a
+  pure-eigensolve element in the same model **is** scaled.
+
+### T-CONSTR — constrained-node behavior  *(the deferred v1 guard)*
+- An `equalDOF`/RBE2-tied tiny element; assert the v1 limitation warning fires and the
+  documented behavior holds (dt under-delivered + which elements remain governing
+  reported). Becomes a stricter test once the constraint-exclusion guard is built.
+
+---
+
+## Tier 2 — motivating case + deferred features (later)
+
+### T-ZONEB — realistic refined 3D mesh  *(Zone-B, gmsh)*
+- A gmsh-meshed 3D model with a **refinement zone** of tiny elements (the actual SSI /
+  contact / pile use case). Assert SMS runs stably at the bulk Δt with bounded error vs a
+  fine-Δt reference, and report the achieved %added-mass + Δf₁. This is "does it work on
+  a *real* model," and the honest proof the feature delivers its motivating value.
+
+### T-MPI — parallel shared-node correctness  *(gated on the MPI reduction feature)*
+- OpenSeesMP, 2-rank partition with a boundary node on a scaled element; assert the
+  shared-node ΔM is reduced consistently across ranks. v1 only warns; this test lands
+  with the deferred MPI feature.
+
+### T-CONSISTENT — consistent/Olovsson scaling  *(gated on the v2 feature)*
+- Frequency-preservation of consistent (anisotropic) scaling vs lumped at the same
+  %added-mass — the v2 selling point.
+
+---
+
+## Acceptance / exit criteria
+
+- **Tier 0 green** → the accuracy claim is earned; the project memory's "tested for
+  stability not accuracy" caveat can be lifted.
+- **Tier 1 green** → every Review-3 fix has a regression test (not just a probe/warning).
+- Tier 2 is opportunistic / feature-gated.
+- Update `Ladruno_implementation/testbed/manifest.yaml` (the `CentralDifferenceSMS` row's
+  test coverage) and flip the `project_ladruno_mass_scaling` memory caveat on Tier-0 pass.
+
+## Implementation log
+
+*(filled in as tests land; this plan is the spec.)*
