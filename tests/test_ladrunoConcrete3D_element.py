@@ -20,10 +20,16 @@ Gates (the element-level shadow of the oracle D0/D1/C1 + the wiring):
 
 Plan/ADR: Ladruno_implementation/31_ladruno_concrete3d_adr.md.
 """
+import os
+import sys
+
 import pytest
 
 from _testbed import ops
 from _testbed.roundtrip import setresponse_smoke, database_roundtrip
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "_testbed"))
+import concrete3d_ref as ref  # noqa: E402  the numpy oracle (the verified spec)
 
 pytestmark = [pytest.mark.zone_a]
 
@@ -203,3 +209,84 @@ def test_database_roundtrip():
         assert ops.analyze(1) == 0
     database_roundtrip(build, probe_nodes=[2], ndf=3,
                        probe_fn=lambda: list(ops.eleResponse(1, "material", 1, "stress")))
+
+
+# ---------------------------------------------------------------------------
+# MULTIAXIAL / SHEAR coverage — pins the wrapper's engineering<->tensor shear conversions
+# (strain x0.5 in, x2 out; tangent shear-COLUMNS x0.5; stress unscaled) against the numpy oracle.
+# The element gates above drive only node-2 dof-1, so every engineering shear component is identically
+# zero and a wrong shear factor would stay green (the adversarial-review false-green gap). These probe
+# the material OBJECT directly with arbitrary 6-strain vectors (incl. shear) via the `NDTest` facility
+# (SetStrain -> setTrialStrain; GetStress -> getStress; GetTangentStiffness -> getTangent), so the
+# conversion is exercised at non-zero shear with no element/solve in the way.
+# ---------------------------------------------------------------------------
+def _matobj(**kw):
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    _mat(1, **kw)
+    return 1
+
+
+def _nd_stress(tag, eps_eng):
+    ops.NDTest("SetStrain", tag, *[float(x) for x in eps_eng])
+    return list(ops.NDTest("GetStress", tag))
+
+
+def _nd_tangent(tag, eps_eng):
+    ops.NDTest("SetStrain", tag, *[float(x) for x in eps_eng])
+    return list(ops.NDTest("GetTangentStiffness", tag))   # 36, row-major
+
+
+def _eps_tensor(eps_eng):
+    """engineering {.., gxy, gyz, gzx} -> tensor Voigt {.., exy, eyz, ezx} (the oracle convention)."""
+    return ref.np.array([eps_eng[0], eps_eng[1], eps_eng[2],
+                         0.5 * eps_eng[3], 0.5 * eps_eng[4], 0.5 * eps_eng[5]])
+
+
+@pytest.mark.t1
+def test_elastic_simple_shear():
+    """Pure elastic simple shear gamma_xy: sig_xy = G*gamma_xy and the normal stresses ~ 0 — the
+    decisive check of the shear factor. strain x0.5 IN (eps_xy_tensor = gamma/2) and stress shear
+    UNscaled (sig_xy = 2G*eps_xy_tensor = G*gamma)."""
+    G = _E / (2.0 * (1.0 + _NU))
+    gamma = 0.3 * (_FT / _E)                            # safely elastic
+    tag = _matobj()
+    sig = _nd_stress(tag, [0, 0, 0, gamma, 0, 0])
+    assert sig[3] == pytest.approx(G * gamma, rel=1e-5), f"sig_xy {sig[3]} != G*gamma {G * gamma}"
+    for i in (0, 1, 2, 4, 5):
+        assert abs(sig[i]) < 1e-6 * G * gamma + 1e-9, f"spurious sig[{i}] = {sig[i]}"
+    # getStrain round-trips engineering shear (x2 out): SetStrain gamma -> GetStrain gamma
+    eps_back = list(ops.NDTest("GetStrain", tag))
+    assert eps_back[3] == pytest.approx(gamma, rel=1e-6), f"getStrain shear {eps_back[3]} != {gamma}"
+
+
+@pytest.mark.t1
+def test_multiaxial_elastic_stress_vs_oracle():
+    """A small multiaxial strain WITH shear, elastic: all 6 stress comps == the oracle C0:eps (true
+    tensor stress). Pins strain-in shear x0.5 + Poisson coupling + stress-out unscaled."""
+    mp = ref.make_material(_E, _NU, _FC, _FT)
+    s = _FT / _E
+    eps_eng = [0.2 * s, -0.1 * s, 0.05 * s, 0.25 * s, -0.15 * s, 0.1 * s]
+    sig = _nd_stress(_matobj(), eps_eng)
+    sig_ref = ref.elastic_C(mp) @ _eps_tensor(eps_eng)   # tensor-convention C @ tensor strain = true stress
+    for i in range(6):
+        assert sig[i] == pytest.approx(float(sig_ref[i]), rel=1e-5, abs=1e-7), \
+            f"stress[{i}] {sig[i]} != oracle {sig_ref[i]}"
+
+
+@pytest.mark.t1
+def test_elastic_tangent_vs_oracle():
+    """The material's 6x6 tangent (wrapper engineering convention) == the oracle elastic C0 with shear
+    COLUMNS halved: T[i][j] = C0[i][j] (j<3) or 0.5*C0[i][j] (j>=3). Pins getTangent's column-only
+    x0.5 + the lambda (Poisson) coupling + the 2G->G shear stiffness — untouched by the uniaxial axial
+    asserts. (Elastic state, so getTangent == the elastic operator.)"""
+    mp = ref.make_material(_E, _NU, _FC, _FT)
+    s = _FT / _E
+    T = _nd_tangent(_matobj(), [0.15 * s, -0.05 * s, 0.0, 0.2 * s, 0.0, 0.1 * s])
+    C0 = ref.elastic_C(mp)
+    cmax = max(abs(float(C0[i][j])) for i in range(6) for j in range(6))
+    for i in range(6):
+        for j in range(6):
+            expect = float(C0[i][j]) * (0.5 if j >= 3 else 1.0)
+            assert T[i * 6 + j] == pytest.approx(expect, rel=1e-5, abs=1e-6 * cmax), \
+                f"tangent[{i}][{j}] {T[i*6+j]} != expected {expect} (col-halved oracle C0)"
