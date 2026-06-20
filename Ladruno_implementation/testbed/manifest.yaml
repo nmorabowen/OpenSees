@@ -221,6 +221,40 @@ features:
       Ships with HRZ mass-conserving lumping (ADR 35, -lump hrz, no new classTag).
       CDL-8 first-step correctness + CDL-9 betaK collapse are the differentiators.
 
+  - feature: CentralDifferenceSMSConsistent
+    classtag: 33008          # INTEGRATOR family; new class (N. Mora-Bowen). NB 33008
+                             # is independently ELE_TAG_LadrunoCST — per-registry, no collision.
+    tag_symbol: INTEGRATOR_TAGS_CentralDifferenceSMSConsistent
+    pr: 320
+    feature_class: integrator
+    required_tiers: [dynamics-battery]
+    pytest: tests/test_centralDifferenceSMSConsistent_integrator.py   # TCONS-1..7 Zone-A: construct/run, supra-stable necessity (CD diverges@dtTarget), NO nodal-mass mutation (vs lumped control), f1 PRESERVATION vs lumped (FFT: consistent -0.17% vs lumped -53% on the oracle Case-A bar), reduce-to-base bit-identical to CDL, PCG converges <=30 iters, TCONS-7 constraint-touching elements EXCLUDED (adversarial-review regression: master/slave MP node under default Transformation handler would OOB the n×n M_bar). numpy oracle: Ladruno_implementation/mass_scaling_consistent/oracle_olovsson_sms.py
+    tcl: WAIVED(integrator; Python-first feature, Tcl dispatch wired via OpenSeesCommands)
+    core_files:                                    # registration sites (dispatch wiring)
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/runtime/runtime/TclPackageClassBroker.cpp
+      - SRC/interpreter/OpenSeesCommands.cpp
+      - SRC/interpreter/OpenSeesCommands.h
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      CONSISTENT (Olovsson) selective mass scaling (ADR 38) — the v2 of CentralDifferenceSMS
+      (33007). Sibling subclass of CentralDifferenceLadruno (protected classTag ctor). Instead
+      of the lumped isotropic diagonal increment, injects the centroidal Olovsson scaling mass
+      M_bar_e = beta[diag(m_a) - m m^T/M_e] (row sums zero -> rigid translation gets no added
+      inertia -> f1 PRESERVED while the relative/deformation modes are loaded -> dt_e->dtTarget;
+      same betaK-damped beta as the lumped path). M_tilde = M_lump + sum_e M_bar_e is SPD but
+      NON-diagonal, so it cannot live in Node mass and `system Diagonal` no longer inverts it
+      trivially: the base gained a no-op refineAccel() hook (lumped path stays byte-identical)
+      that this class overrides to replace the diagonal solve a=M_lump^-1 r by a matrix-free
+      Jacobi(lumped-diagonal)-preconditioned CG solve of M_tilde a = r (3-21 iters; the factored
+      DiagonalSOE supplies 1/mass as both r-recovery and preconditioner). NO Node mutation, so no
+      inject/restore lifecycle. Reuses the shared sizing (dt_e/self-report/betaK/MP-slave
+      exclusion/cap) via Ladruno::buildMassScalingConsistent. Oracle-first (Phase 0 numpy proof:
+      f1 drift <0.3% vs 54-83% for lumped, PCG 12-21 iters). v1 sequential / partition-interior;
+      energy-recorder KE does not yet see the M_bar term (diagonal-summing recorder; documented).
+
   - feature: LadrunoProjectionHandler
     classtag: 33001          # HANDLER family; first fork ConstraintHandler, private band
     tag_symbol: HANDLER_TAG_LadrunoProjectionHandler

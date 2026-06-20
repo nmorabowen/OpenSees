@@ -43,7 +43,26 @@ fed the message AS the printf format to `PySys_FormatStderr`, so any literal `%`
 `opserr` message was silently eaten (the SMS cap warning was illegible). Fix:
 `PySys_FormatStderr("%s", msg)`. Upstreamable (CWE-134). See [[LEDGER_quirks]].
 
-**What's NEXT (both substantial, neither started):**
+**DONE since this handoff was written (2026-06-20): T-CONSISTENT shipped.** Consistent
+(Olovsson) mass scaling now exists as a sibling integrator `CentralDifferenceSMSConsistent`
+(classTag 33008, ADR 38). It injects the centroidal scaling mass
+`M̄ₑ = β[diag(mₐ) − m mᵀ/Mₑ]` (row sums zero ⇒ rigid translation gets no added inertia ⇒
+**f1 preserved**) and solves the resulting non-diagonal `M̃ = M_lump + ΣM̄ₑ` by a matrix-free
+Jacobi(lumped-diagonal)-preconditioned CG inside the step — via a new no-op `refineAccel()`
+hook on the base (lumped path byte-identical). Oracle-first
+(`Ladruno_implementation/mass_scaling_consistent/`), Zone-A `T-CONSISTENT` 6/6 in
+`tests/test_centralDifferenceSMSConsistent_integrator.py`. Measured (transient FFT, oracle
+Case-A bar): **f1 −0.17% (consistent) vs −53.4% (lumped)** at the same dtTarget. The two
+deferred follow-ups: V4 energy-recorder KE does not yet include the `M̄` term (diagonal-
+summing recorder — a documented gap), and consistent scaling under MPI shares the T-MPI gap
+below. See [[38_ladruno_consistent_mass_scaling_adr]].
+
+**What's NEXT:**
+- **V4 — consistent-mass energy closure.** The `EnergyBalanceRecorder` sums node/element
+  `getMass()` (diagonal) for KE, so it does NOT see the cross-node `M̄ₑ`. Either expose
+  `½ vᵀ M̃ v` from the consistent integrator or document the gap (currently documented). The
+  lumped path's KE closes (nodal injection is visible to the recorder); the consistent path's
+  does not. Small, Zone-A-testable.
 - **T-MPI — parallel shared-node ΔM reduction.** v1 is sequential / partition-interior
   only; a partition-boundary node gets only rank-local Δmₑ and the only MPI reduction is
   the scalar dt, so shared-node masses desync across ranks. The fix is `MPI_Allreduce` of

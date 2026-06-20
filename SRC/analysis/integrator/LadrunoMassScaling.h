@@ -54,12 +54,16 @@
 #include <NodeIter.h>
 #include <MP_Constraint.h>      // Ladruno: constraint-exclusion guard (slave-node hazard)
 #include <MP_ConstraintIter.h>
+#include <FE_Element.h>         // Ladruno: consistent (Olovsson) path — element eqn map
+#include <FE_EleIter.h>
+#include <ID.h>
 #include <Matrix.h>
 #include <Vector.h>
 #include <OPS_Globals.h>
 
 #include <map>
 #include <set>
+#include <vector>
 #include <cmath>
 
 namespace Ladruno {
@@ -264,6 +268,278 @@ applyMassScaling(Domain *theDomain, const std::map<int, Vector> &injected, doubl
             m(k, k) += sign * inj(k);
         nd->setMass(m);
     }
+}
+
+// ==========================================================================
+//  CONSISTENT (Olovsson) selective mass scaling — ADR 38 (v2 of ADR 36)
+// ==========================================================================
+//
+// Instead of the isotropic diagonal increment (s-1)*m_a that lumped scaling adds
+// to each node (which shifts ALL global frequencies, incl. f1), the consistent path
+// injects the CENTROIDAL Olovsson element scaling mass
+//
+//     M_bar_e = beta_e * [ diag(m_a) - m m^T / M_e ]      (per spatial direction)
+//
+// whose row sums are ZERO -> M_bar_e * t_rigid = 0: rigid-body translation receives
+// no added inertia, so f1 is preserved while the relative/deformation modes (which
+// govern the explicit step) are loaded -> dt_e -> dtTarget exactly as in v1. The same
+// beta_e = T^2 + 2*T*c - 1 (betaK-damped, T = dtTarget/dt_e, c = betaK/dt_e) is reused.
+//
+// The resulting M_tilde = M_lump + sum_e M_bar_e is SPD but NON-diagonal (the
+// -m m^T/M_e term couples the element's nodes), so it CANNOT live in per-node
+// Node::setMass and the trivial `system Diagonal` a = M^-1 r no longer applies. The
+// integrator solves M_tilde a = r matrix-free by Jacobi(lumped-diagonal)-preconditioned
+// CG (consistentPCG below) — the lumped diagonal is the SOE diagonal the explicit run
+// already assembles. Proven by the numpy oracle (Ladruno_implementation/
+// mass_scaling_consistent/oracle_olovsson_sms.py): 12-21 CG iters, f1 drift < 0.3% vs
+// 54-83% for lumped, at the same dtTarget. See 38_ladruno_consistent_mass_scaling_adr.md.
+
+// One scaled element's consistent scaling mass + its global equation-number map.
+//   eqn(i)  : SOE equation number of local DOF i (node-major); < 0 if the DOF is
+//             constrained/fixed (eliminated) — skipped in the mat-vec.
+//   Mbar    : n x n centroidal scaling mass (beta already applied; nonzero only on
+//             same-direction translational DOF pairs).
+struct ConsistentBlock {
+    ID     eqn;
+    Matrix Mbar;
+    ConsistentBlock(const ID &e, const Matrix &m) : eqn(e), Mbar(m) {}
+};
+
+// Build the per-element consistent scaling blocks for the given target step. Iterates
+// the AnalysisModel's FE_Elements (for the equation-number map getID()), reusing the
+// SAME per-element sizing the lumped path uses (dt_e via the shared CriticalTimeStep
+// kernel, self-report skip, betaK-damped beta, MP-slave constraint exclusion). Does NOT
+// touch the Domain or any Node mass — the blocks are integrator-owned scratch consumed
+// only by consistentMatVec / consistentPCG. `blocks` must be empty.
+inline MassScalingReport
+buildMassScalingConsistent(AnalysisModel *theModel, double dtTarget, CTSLumping lumping,
+                           bool useTangent, std::vector<ConsistentBlock> &blocks)
+{
+    MassScalingReport rep; rep.addedMass = 0.0; rep.modelMass = 0.0;
+    rep.nScaled = 0; rep.nElems = 0; rep.minDtScaled = dtTarget;
+    rep.nSelfReport = 0; rep.nMismatch = 0;
+    rep.nConstrained = 0; rep.minDtConstrained = -1.0;
+    if (theModel == 0 || dtTarget <= 0.0) return rep;
+    Domain *theDomain = theModel->getDomainPtr();
+    if (theDomain == 0) return rep;
+
+    // MP-constrained node tags — STRICTER than the lumped path: exclude any sub-target
+    // element touching EITHER a slave (getNodeConstrained) OR a master/retained
+    // (getNodeRetained) MP node. Rationale: the consistent path is matrix-free in the
+    // EQUATION-number space (FE_Element::getID()), so it bypasses the constraint handler's
+    // assembly. Under the default TransformationConstraintHandler an element attached to a
+    // constrained node has a TRANSFORMED FE id — a different basis AND a different size
+    // (a retained node's TransformationDOF_Group absorbs the slave's DOFs, so getID().Size()
+    // > the element's own n) — so scattering the ORIGINAL-basis n x n M_bar through that id
+    // is both wrong-basis and an out-of-bounds read. (The lumped path can stay slave-only
+    // because it injects into Node mass, which the handler then transforms correctly via
+    // T^T M T.) Excluded elements are counted (nConstrained) and reported as still governing.
+    // This also keeps M_bar off every projector (ADR-30) equation, so the lumped-diagonal
+    // projector mass stays exact.
+    std::set<int> constrainedNodes;
+    {
+        MP_Constraint *theMP;
+        MP_ConstraintIter &mps = theDomain->getMPs();
+        while ((theMP = mps()) != 0) {
+            constrainedNodes.insert(theMP->getNodeConstrained());
+            constrainedNodes.insert(theMP->getNodeRetained());
+        }
+    }
+
+    FE_Element *fePtr;
+    FE_EleIter &fes = theModel->getFEs();
+    while ((fePtr = fes()) != 0) {
+        Element *ele = fePtr->getElement();
+        if (ele == 0) continue;
+        rep.nElems++;
+
+        const Matrix &M = ele->getMass();
+        int n = M.noRows();
+        if (n == 0) continue;
+        double *mdiag = new double[n];
+        lumpElementMass(ele, M, lumping, mdiag);
+
+        // model-mass denominator (sum of element translational lumped mass), same as v1.
+        Node **nds = ele->getNodePtrs();
+        int nn = ele->getNumExternalNodes();
+        {
+            int p = 0;
+            for (int a = 0; a < nn && p < n; ++a) {
+                Node *ndp = nds ? nds[a] : 0;
+                if (ndp == 0) break;
+                int ndmA = ndp->getCrds().Size();
+                int ndf = ndp->getNumberDOF();
+                for (int k = 0; k < ndf && p < n; ++k, ++p)
+                    if (k < ndmA) rep.modelMass += mdiag[p];
+            }
+        }
+
+        // self-report: mass-independent bound -> scaling can't help; skip + count.
+        if (ele->getExplicitCriticalTimeStep() > 0.0) {
+            if (ele->getExplicitCriticalTimeStep() < dtTarget) rep.nSelfReport++;
+            delete[] mdiag; continue;
+        }
+
+        double dt_e = elementCriticalDt(ele, useTangent, mdiag, n);
+        if (dt_e <= 0.0) { delete[] mdiag; continue; }
+
+        // betaK-damped sizing (identical closed form to the lumped path).
+        double betaK = ele->getRayleighDampingFactors()(1);
+        if (betaK < 0.0) betaK = 0.0;
+        double cDamp = betaK / dt_e;
+        double dtDamped = dt_e * (std::sqrt(1.0 + cDamp * cDamp) - cDamp);
+        if (dtDamped >= dtTarget) { delete[] mdiag; continue; }   // already stable
+
+        // constraint exclusion (MP slave): skip + count + remember governing dt.
+        if (!constrainedNodes.empty()) {
+            bool touches = false;
+            for (int a = 0; a < nn && nds; ++a)
+                if (nds[a] != 0 && constrainedNodes.count(nds[a]->getTag())) { touches = true; break; }
+            if (touches) {
+                rep.nConstrained++;
+                if (rep.minDtConstrained < 0.0 || dtDamped < rep.minDtConstrained)
+                    rep.minDtConstrained = dtDamped;
+                delete[] mdiag; continue;
+            }
+        }
+
+        double T = dtTarget / dt_e;
+        double beta = T * T + 2.0 * T * cDamp - 1.0;   // = s - 1 > 0
+
+        // ---- build the centroidal scaling mass M_bar (n x n) -------------------
+        // Walk the element node-by-node to recover, for each translational direction d,
+        // the local DOF positions and their lumped masses; then for each node pair (a,b)
+        //   M_bar[loc_a_d, loc_b_d] += beta*(m_a_d * delta_ab - m_a_d*m_b_d / M_e_d).
+        // Non-translational (rotational / u-p) DOFs get no scaling mass (M_bar row = 0),
+        // mirroring the lumped path which only adds to k < ndmA.
+        Matrix Mbar(n, n);
+        Mbar.Zero();
+
+        // first pass: per-node DOF base offset + translational dim (node-major layout).
+        // pos must reach exactly n (node-major mass), else this element's layout is not
+        // node-major -> skip (count nMismatch), consistent with the lumped partial-inject.
+        int *base = new int[nn];
+        int *ndmOf = new int[nn];
+        int pos = 0; bool ok = (nds != 0);
+        for (int a = 0; a < nn && ok; ++a) {
+            Node *ndp = nds[a];
+            if (ndp == 0) { ok = false; break; }
+            base[a] = pos;
+            ndmOf[a] = ndp->getCrds().Size();
+            pos += ndp->getNumberDOF();
+        }
+        if (!ok || pos != n) {
+            delete[] base; delete[] ndmOf; delete[] mdiag;
+            rep.nMismatch++; continue;
+        }
+
+        // common translational dimension across the element's nodes (min ndm seen).
+        int ndmE = ndmOf[0];
+        for (int a = 1; a < nn; ++a) if (ndmOf[a] < ndmE) ndmE = ndmOf[a];
+
+        double addedTrans = 0.0;
+        for (int d = 0; d < ndmE; ++d) {
+            double Med = 0.0;
+            for (int a = 0; a < nn; ++a) Med += mdiag[base[a] + d];
+            if (Med <= 0.0) continue;   // massless direction -> no scaling mass
+            for (int a = 0; a < nn; ++a) {
+                double ma = mdiag[base[a] + d];
+                int ia = base[a] + d;
+                for (int b = 0; b < nn; ++b) {
+                    double mb = mdiag[base[b] + d];
+                    int ib = base[b] + d;
+                    double val = beta * (((a == b) ? ma : 0.0) - ma * mb / Med);
+                    Mbar(ia, ib) += val;
+                }
+                addedTrans += beta * (ma - ma * ma / Med);   // diagonal trace contribution
+            }
+        }
+        delete[] base; delete[] ndmOf; delete[] mdiag;
+
+        // DEFENSIVE: the matvec scatters the n x n M_bar through this id, so the id MUST
+        // be the plain node-major map of size n. A surviving element touches no MP node, so
+        // under the standard handlers getID().Size()==n; but guard anyway against any FE-layer
+        // DOF expansion (transformed/exotic handler) -> skip (count nMismatch) rather than
+        // read M_bar out of bounds.
+        const ID &feID = fePtr->getID();
+        if (feID.Size() != n) { rep.nMismatch++; continue; }
+
+        // store the block with this element's equation-number map.
+        blocks.push_back(ConsistentBlock(feID, Mbar));
+        rep.addedMass += addedTrans;
+        rep.nScaled++;
+        if (dtDamped < rep.minDtScaled) rep.minDtScaled = dtDamped;
+    }
+    return rep;
+}
+
+// Matrix-free apply  y = M_tilde x = (diag) .* x + sum_e M_bar_e x_e.
+//   diagMinv : the SOE diagonal AFTER the in-place factor (DiagonalDirectSolver stores
+//              1/mass), length neq. The lumped diagonal is 1/diagMinv[i]; this is also
+//              the Jacobi preconditioner. Pass it directly to avoid recomputing.
+// y and x are full SOE-length vectors. Constrained DOFs (eqn < 0) are skipped.
+inline void
+consistentMatVec(const std::vector<ConsistentBlock> &blocks,
+                 const double *diagMinv, int neq, const Vector &x, Vector &y)
+{
+    for (int i = 0; i < neq; ++i)
+        y(i) = (diagMinv[i] != 0.0 ? (x(i) / diagMinv[i]) : 0.0);   // diag mass = 1/diagMinv
+    for (size_t e = 0; e < blocks.size(); ++e) {
+        const ConsistentBlock &blk = blocks[e];
+        const ID &id = blk.eqn;
+        const Matrix &Mb = blk.Mbar;
+        int nl = id.Size();
+        for (int a = 0; a < nl; ++a) {
+            int ea = id(a);
+            if (ea < 0 || ea >= neq) continue;
+            double acc = 0.0;
+            for (int b = 0; b < nl; ++b) {
+                int eb = id(b);
+                if (eb < 0 || eb >= neq) continue;
+                acc += Mb(a, b) * x(eb);
+            }
+            y(ea) += acc;
+        }
+    }
+}
+
+// Solve M_tilde a = r matrix-free by Jacobi(diag)-preconditioned CG, in place: `a`
+// enters as the diagonal solve M_lump^-1 r (the starting guess AND the way r is
+// recovered by the caller) and exits as M_tilde^-1 r. diagMinv = 1/lumped-mass
+// (the SOE factored diagonal = the preconditioner). Returns the iteration count;
+// writes the achieved relative residual to *relResid if non-null.
+inline int
+consistentPCG(const std::vector<ConsistentBlock> &blocks,
+              const double *diagMinv, int neq, const Vector &r, Vector &a,
+              double tol = 1.0e-10, int maxit = 200, double *relResid = 0)
+{
+    Vector Ax(neq), z(neq), p(neq), Ap(neq);
+    // start from a = M_lump^-1 r (already in `a` on entry); residual = r - M_tilde a
+    consistentMatVec(blocks, diagMinv, neq, a, Ax);
+    Vector res(neq);
+    for (int i = 0; i < neq; ++i) res(i) = r(i) - Ax(i);
+    for (int i = 0; i < neq; ++i) z(i) = diagMinv[i] * res(i);
+    p = z;
+    double rz = res ^ z;
+    double rnorm0 = r.Norm();
+    if (rnorm0 <= 0.0) rnorm0 = 1.0;
+    int k = 0;
+    for (k = 1; k <= maxit; ++k) {
+        consistentMatVec(blocks, diagMinv, neq, p, Ap);
+        double pAp = p ^ Ap;
+        if (pAp <= 0.0) break;                  // breakdown guard (M_tilde SPD => pAp>0)
+        double alpha = rz / pAp;
+        a.addVector(1.0, p, alpha);
+        res.addVector(1.0, Ap, -alpha);
+        if (res.Norm() <= tol * rnorm0) break;
+        for (int i = 0; i < neq; ++i) z(i) = diagMinv[i] * res(i);
+        double rzNew = res ^ z;
+        double bcg = rzNew / rz;
+        for (int i = 0; i < neq; ++i) p(i) = z(i) + bcg * p(i);
+        rz = rzNew;
+    }
+    if (relResid) *relResid = res.Norm() / rnorm0;
+    return (k > maxit) ? maxit : k;   // loop exits at maxit+1 if never converged; clamp
 }
 
 } // namespace Ladruno

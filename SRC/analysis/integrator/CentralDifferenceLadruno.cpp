@@ -497,6 +497,8 @@ int CentralDifferenceLadruno::newStep(double _deltaT)
             return -3;
         }
         *Aprev = theLinSOE->getX();              // a_0 = M^{-1}(P_0 - C v_0 - F_int(u_0))
+        if (this->refinesAccel())                // Ladruno (ADR-38): consistent solve
+            this->refineAccel(*Aprev);           //   a_0 = M_tilde^-1 r (matrix-free PCG)
         if (theProjector != 0)
             theProjector->project(*Aprev);       // Ladruno: project a_0 onto the manifold
         Vhalf->addVector(1.0, *Aprev, -0.5 * deltaT);   // v_{-1/2} = v_0 - dt/2 a_0 (projected)
@@ -560,8 +562,16 @@ int CentralDifferenceLadruno::update(const Vector &U)
     // — load-bearing for manifold invariance — next step's leap-frog via *Aprev below.
     // The NaN/Inf circuit breaker above deliberately ran on the RAW U.
     const Vector *Aused = &U;
-    if (theProjector != 0) {
+    // Ladruno (ADR-38): consistent (Olovsson) mass scaling replaces the diagonal solve
+    // a = M_lump^-1 r by a = M_tilde^-1 r (matrix-free PCG) BEFORE projection. Default
+    // no-op (refinesAccel()==false) -> the lumped path is byte-identical.
+    if (this->refinesAccel()) {
         *Aproj = U;
+        this->refineAccel(*Aproj);
+        Aused = Aproj;
+    }
+    if (theProjector != 0) {
+        if (Aused != Aproj) *Aproj = *Aused;   // (no-refine case) stage raw U into Aproj
         theProjector->project(*Aproj);
         Aused = Aproj;
     }
