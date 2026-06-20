@@ -2,7 +2,7 @@
 title: "LadrunoConcrete3D — user guide (API + modeling guidance)"
 project: Ladruno
 type: user guide
-status: SHIPPED — `nDMaterial LadrunoConcrete3D` (classTag 33017) is callable from Tcl/Python on `ladruno` (kernel g++-verified through P3b analytic damaged tangent; wrapper verified on Zone-A CI). v1 = 3D only; cyclic/reduced-views/robustness-tiers deferred. For the full theory/architecture/usage/quirks reference see LadrunoConcrete3D_guide.
+status: SHIPPED — `nDMaterial LadrunoConcrete3D` (classTag 33017) is callable from Tcl/Python on `ladruno` (kernel g++-verified through P3b analytic damaged tangent; wrapper verified on Zone-A CI). ALL dimensional views ship (3D + PlaneStrain/AxiSymmetric/PlateFiber/PlaneStress, #299); cyclic temper + robustness tiers deferred. For the full theory/architecture/usage/quirks reference see LadrunoConcrete3D_guide.
 related:
   - "[[LadrunoConcrete3D_guide]]"          # the COMPLETE four-part reference
   - "[[LadrunoConcrete3D_dev_handoff]]"   # the implementer's brief
@@ -20,8 +20,9 @@ updated: 2026-06-19
 > `nDMaterial LadrunoConcrete3D` (classTag 33017) is **callable from Tcl and Python** on `ladruno`. The
 > C++ kernel is g++ byte-verified against the numpy oracle through the analytic damaged tangent (P3b),
 > and the wrapper is verified end-to-end on Zone-A CI (full build + an openseespy stdBrick battery).
-> **v1 is 3D only** (finite-strain via `nDMaterial LogStrain`); the cyclic temper, the reduced views,
-> and the robustness tiers (`-eta`/`-implex`) are deferred.
+> **ALL dimensional views ship** — 3D + the Phase-2 reduced PlaneStrain / AxiSymmetric / PlateFiber /
+> PlaneStress (one `dim`-mode class, reached via the element's `getCopy(type)`; finite-strain via
+> `nDMaterial LogStrain`). The cyclic temper and the robustness tiers (`-eta`/`-implex`) are deferred.
 
 ## 1. What it is, and when to use it
 
@@ -99,10 +100,12 @@ no runtime *enforcement*, but the parser **prints a warning at material creation
   envelope** (Kupfer biaxial, confined `fcc(σ₃)`), **confinement-dependent ductility**, **the peak +
   tension/compression softening + automatic unilateral recovery**, crack-band-regularized — with the
   **analytic damaged tangent** (Tier-1 implicit). Effective-stress plasticity is monotonic; the peak and
-  softening are the **damage** part. 3D, plus the finite-strain view via `nDMaterial LogStrain`.
+  softening are the **damage** part. **All dimensional views** — 3D + PlaneStrain / AxiSymmetric /
+  PlateFiber / PlaneStress (the element picks one via `getCopy(type)`) + the finite-strain view via
+  `nDMaterial LogStrain`. (PlaneStress/PlateFiber enforce σ_zz=0 by a nested ε_zz Newton + static
+  condensation; unconfined plane-STRESS post-peak softening is snap-backy → robust pre-peak / confined.)
 - **Deferred:** cyclic (`β_c` + the compression→tension temper, P2f), robustness tiers (`-eta`/`-implex`,
-  explicit — P3), the PlaneStrain/AxiSymmetric/PlateFiber reduced views (Phase 2), the confined-fiber
-  1D view ("Mander by mechanism").
+  explicit — P3), the confined-fiber 1D view ("Mander by mechanism").
 
 ## 6. Worked example skeleton
 

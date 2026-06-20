@@ -290,3 +290,248 @@ def test_elastic_tangent_vs_oracle():
             expect = float(C0[i][j]) * (0.5 if j >= 3 else 1.0)
             assert T[i * 6 + j] == pytest.approx(expect, rel=1e-5, abs=1e-6 * cmax), \
                 f"tangent[{i}][{j}] {T[i*6+j]} != expected {expect} (col-halved oracle C0)"
+
+
+# ===========================================================================
+# PHASE-2 REDUCED VIEWS — PlaneStrain / PlaneStress / AxiSymmetric / PlateFiber
+#
+# One class serves every dimensional view via a `dim` mode (the LadrunoJ2 doctrine,
+# PR #90): the kernel return map always runs on the full 6-comp tensor; the element
+# vector is mapped to the reduced ordering, and PlaneStress/PlateFiber enforce
+# sigma_zz = 0 by a nested Newton on eps_zz + static condensation of the 33 dof.
+#
+# CDPM2 has NO upstream OpenSees peer, so the gates are SELF-REFERENTIAL: a reduced
+# view created by an element's getCopy(type) is checked against the shipped 3D
+# material under the matching out-of-plane constraint —
+#   PlaneStrain : in-plane stress/tangent == the 3D slice with eps_zz = gxz = gyz = 0
+#   PlaneStress : in-plane stress/tangent == the 3D state with eps_zz solved so sig_zz = 0
+# The elastic tangents are additionally pinned to the CLOSED-FORM plane-strain /
+# plane-stress isotropic moduli (independent of the wrapper). NDTest can only feed a
+# 6-comp strain (3D), so reduced views are reached through the `quad` element
+# (PlaneStrain/PlaneStress) and `bbarQuad` (AxiSymmetric2D), exactly as #90 did.
+# AxiSym shares the PlaneStrain mapping machinery; PlateFiber shares the PlaneStress
+# condensation machinery (so the two gated archetypes cover all four views' code).
+# ===========================================================================
+_QNODES = {1: (0.0, 0.0), 2: (1.0, 0.0), 3: (1.0, 1.0), 4: (0.0, 1.0)}
+
+
+def _build_quad(qtype):
+    """A single unit quad of the reduced-view material; the element calls getCopy(qtype)."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    for t, (x, y) in _QNODES.items():
+        ops.node(t, x, y)
+    _mat(1)
+    ops.fix(1, 1, 1)
+    ops.fix(2, 0, 1)
+    ops.fix(4, 1, 0)
+    ops.element("quad", 1, 1, 2, 3, 4, 1.0, qtype, 1)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.system("FullGeneral")                                  # CDPM2 tangent is NON-SYMMETRIC
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.test("NormDispIncr", 1.0e-10, 100, 0)
+    ops.algorithm("Newton")
+
+
+def _gp1_strain():
+    return list(ops.eleResponse(1, "strain"))[0:3]             # (exx, eyy, gxy) engineering, GP1
+
+
+def _gp1_stress():
+    return list(ops.eleResponse(1, "stress"))[0:3]             # (sxx, syy, sxy), GP1
+
+
+def _gp1_mat_tangent():
+    return list(ops.eleResponse(1, "material", 1, "tangent"))  # reduced ncomp x ncomp, row-major
+
+
+def _solve_elastic_quad(qtype, fx=0.4, fy=0.3):
+    """Drive a quad into a small (sub-onset) multiaxial+shear elastic state and read GP1."""
+    _build_quad(qtype)
+    ops.load(2, fx, 0.0)
+    ops.load(3, fx, fy)                                         # mixed -> in-plane shear
+    ops.integrator("LoadControl", 1.0)
+    ops.analysis("Static")
+    assert ops.analyze(1) == 0, f"{qtype} elastic quad did not converge"
+    return _gp1_strain(), _gp1_stress(), _gp1_mat_tangent()
+
+
+def _planestrain_closed_form_D():
+    E, nu = _E, _NU
+    k = E / ((1.0 + nu) * (1.0 - 2.0 * nu))
+    return [[k * (1.0 - nu), k * nu, 0.0],
+            [k * nu, k * (1.0 - nu), 0.0],
+            [0.0, 0.0, k * (1.0 - 2.0 * nu) / 2.0]]            # sig = D * eps_eng (gamma)
+
+
+def _planestress_closed_form_D():
+    E, nu = _E, _NU
+    k = E / (1.0 - nu * nu)
+    return [[k, k * nu, 0.0],
+            [k * nu, k, 0.0],
+            [0.0, 0.0, k * (1.0 - nu) / 2.0]]
+
+
+# ---------------------------------------------------------------------------
+# PlaneStrain — the MAPPING path (no condensation): the reduced view is exactly
+# the 3D slice with eps_zz = gxz = gyz = 0.
+# ---------------------------------------------------------------------------
+@pytest.mark.t1
+def test_planestrain_stress_matches_3d_slice():
+    eps, sig, _ = _solve_elastic_quad("PlaneStrain")
+    exx, eyy, gxy = eps
+    assert max(abs(exx), abs(eyy), abs(gxy)) < _FT / _E, "drove past the damage onset (not elastic)"
+    # the shipped 3D material fed the same in-plane strain with eps_zz = gxz = gyz = 0
+    sig3d = _nd_stress(_matobj(), [exx, eyy, 0.0, gxy, 0.0, 0.0])
+    for k, full in enumerate((0, 1, 3)):
+        assert sig[k] == pytest.approx(sig3d[full], rel=1e-6, abs=1e-7), \
+            f"PlaneStrain stress[{k}] {sig[k]} != 3D slice {sig3d[full]}"
+
+
+@pytest.mark.t1
+def test_planestrain_tangent_closed_form():
+    _, _, T = _solve_elastic_quad("PlaneStrain")
+    D = _planestrain_closed_form_D()
+    dmax = max(abs(D[i][j]) for i in range(3) for j in range(3))
+    for i in range(3):
+        for j in range(3):
+            assert T[i * 3 + j] == pytest.approx(D[i][j], rel=1e-5, abs=1e-6 * dmax), \
+                f"PlaneStrain tangent[{i}][{j}] {T[i*3+j]} != closed form {D[i][j]}"
+
+
+# ---------------------------------------------------------------------------
+# PlaneStress — the CONDENSATION path: eps_zz solved so sig_zz = 0.
+# ---------------------------------------------------------------------------
+def _solve_szz_zero_3d(tag, exx, eyy, gxy, ezz0=0.0, commit=False):
+    """Newton on eps_zz so the 3D material's sigma_zz = 0; returns (in-plane stress, eps_zz)."""
+    ezz = ezz0
+    s = None
+    for _ in range(60):
+        s = _nd_stress(tag, [exx, eyy, ezz, gxy, 0.0, 0.0])
+        T = _nd_tangent(tag, [exx, eyy, ezz, gxy, 0.0, 0.0])    # current 6x6 (row-major)
+        smag = sum(v * v for v in s) ** 0.5
+        if abs(s[2]) <= 1e-11 * (smag if smag > 1.0 else 1.0):
+            break
+        d22 = T[2 * 6 + 2]                                       # d(sig_zz)/d(eps_zz), normal col unscaled
+        ezz -= s[2] / d22
+    if commit:
+        ops.NDTest("CommitState", tag)
+    return [s[0], s[1], s[3]], ezz
+
+
+@pytest.mark.t1
+def test_planestress_stress_enforces_szz_zero():
+    eps, sig, _ = _solve_elastic_quad("PlaneStress")
+    exx, eyy, gxy = eps
+    assert max(abs(exx), abs(eyy), abs(gxy)) < _FT / _E, "drove past the damage onset (not elastic)"
+    sig3d, _ = _solve_szz_zero_3d(_matobj(), exx, eyy, gxy)
+    for k in range(3):
+        assert sig[k] == pytest.approx(sig3d[k], rel=1e-6, abs=1e-7), \
+            f"PlaneStress stress[{k}] {sig[k]} != sigma_zz=0 3D solve {sig3d[k]}"
+
+
+@pytest.mark.t1
+def test_planestress_tangent_closed_form():
+    _, _, T = _solve_elastic_quad("PlaneStress")
+    D = _planestress_closed_form_D()
+    dmax = max(abs(D[i][j]) for i in range(3) for j in range(3))
+    for i in range(3):
+        for j in range(3):
+            assert T[i * 3 + j] == pytest.approx(D[i][j], rel=1e-5, abs=1e-6 * dmax), \
+                f"PlaneStress tangent[{i}][{j}] {T[i*3+j]} != closed form {D[i][j]}"
+
+
+# ---------------------------------------------------------------------------
+# PlaneStress NONLINEAR — the condensation must hold under plasticity + damage.
+# Drive the quad in (pre-peak, hardening) compression so it converges robustly,
+# record the GP1 strain path, then REPLAY it through the 3D material with the
+# sigma_zz = 0 Newton + commit each step: the final in-plane stress must match.
+# This validates the condensed return map (state + tangent) end-to-end.
+# ---------------------------------------------------------------------------
+@pytest.mark.t1
+def test_planestress_nonlinear_replay_matches_3d():
+    # uniaxial in-plane COMPRESSION (hardening pre-peak ⇒ robust convergence), driven by
+    # DisplacementControl on the right edge (nodes 2,3 tied in x via equalDOF) so the GP
+    # state is a clean, well-controlled uniaxial-stress compression that goes plastic+damaged.
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    for t, (x, y) in _QNODES.items():
+        ops.node(t, x, y)
+    _mat(1)
+    ops.fix(1, 1, 1)                                            # origin pinned
+    ops.fix(2, 0, 1)                                            # bottom-right: y fixed
+    ops.fix(4, 1, 0)                                            # top-left: x fixed
+    ops.equalDOF(2, 3, 1)                                       # right edge moves uniformly in x
+    ops.element("quad", 1, 1, 2, 3, 4, 1.0, "PlaneStress", 1)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(2, -1.0, 0.0)                                      # reference; DisplacementControl drives
+    ops.system("FullGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Transformation")
+    ops.test("NormDispIncr", 1.0e-9, 100, 0)
+    ops.algorithm("Newton")
+    nsteps = 50
+    eps_target = -1.2e-3                                        # past onset, pre-peak (converges)
+    ops.integrator("DisplacementControl", 2, 1, eps_target / nsteps)
+    ops.analysis("Static")
+    path = []
+    for _ in range(nsteps):
+        assert ops.analyze(1) == 0, "PlaneStress compression quad did not converge"
+        path.append(_gp1_strain())
+    sig_quad = _gp1_stress()
+    # must have actually gone nonlinear (guard against a vacuous elastic comparison)
+    assert max(abs(c) for c in path[-1]) > _FT / _E, "stayed elastic — replay would be trivial"
+
+    # replay the SAME GP1 strain path through a fresh 3D material, committing each step
+    tag = _matobj()
+    ezz = 0.0
+    sig3d = None
+    for (exx, eyy, gxy) in path:
+        sig3d, ezz = _solve_szz_zero_3d(tag, exx, eyy, gxy, ezz0=ezz, commit=True)
+    for k in range(3):
+        assert sig_quad[k] == pytest.approx(sig3d[k], rel=2e-5, abs=1e-6), \
+            f"nonlinear PlaneStress stress[{k}] {sig_quad[k]} != replayed 3D {sig3d[k]}"
+
+
+# ---------------------------------------------------------------------------
+# AxiSymmetric — getCopy("AxiSymmetric2D") via bbarQuad. The order-4 mapping shares
+# the (passing) PlaneStrain non-condense machinery; the only AxiSym-specific datum is
+# vmap={00,11,22(hoop),01} — confirmed against the element's own documented strain
+# order (ConstantPressureVolumeQuad.cpp:367-370). We verify the getCopy path + order-4
+# + the tangent mapping SOLVE-FREE: building the element calls getCopy("AxiSymmetric2D")
+# (it would error if it returned null/wrong order), and the material's elastic 4×4
+# tangent (read via eleResponse, no analysis) must equal the closed-form axisymmetric
+# isotropic operator. (A full bbarQuad SOLVE is NOT gated: the mixed u-p element is
+# numerically fragile with the non-symmetric CDPM2 tangent — an element-interaction
+# issue, not a reduced-view bug; cf. the snap-back caveat.)
+# ---------------------------------------------------------------------------
+def _axisym_closed_form_C():
+    E, nu = _E, _NU
+    lam = E * nu / ((1.0 + nu) * (1.0 - 2.0 * nu))
+    mu = E / (2.0 * (1.0 + nu))
+    a = lam + 2.0 * mu
+    return [[a, lam, lam, 0.0],
+            [lam, a, lam, 0.0],
+            [lam, lam, a, 0.0],
+            [0.0, 0.0, 0.0, mu]]                               # rz shear column halved (2mu->mu)
+
+
+@pytest.mark.t1
+def test_axisymmetric_getcopy_and_tangent():
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.node(1, 1.0, 0.0); ops.node(2, 2.0, 0.0)
+    ops.node(3, 2.0, 1.0); ops.node(4, 1.0, 1.0)               # off the symmetry axis (r > 0)
+    _mat(1)
+    ops.element("bbarQuad", 1, 1, 2, 3, 4, 1.0, 1)             # getCopy("AxiSymmetric2D") -> order 4
+    T = list(ops.eleResponse(1, "material", 1, "tangent"))     # elastic 4x4, no solve
+    assert len(T) == 16, f"AxiSym tangent has {len(T)} entries, expected 16 (order 4)"
+    C = _axisym_closed_form_C()
+    cmax = max(abs(C[i][j]) for i in range(4) for j in range(4))
+    for i in range(4):
+        for j in range(4):
+            assert T[i * 4 + j] == pytest.approx(C[i][j], rel=1e-5, abs=1e-6 * cmax), \
+                f"AxiSym tangent[{i}][{j}] {T[i*4+j]} != closed form {C[i][j]}"
