@@ -182,3 +182,23 @@ by a manual probe or a one-time warning, not by a regression test.
     ceiling caveat). All 7 validation tests + a 65-test integrator/energy/coupling swath green.
   - **Tier 0 acceptance earned:** the [[project_ladruno_mass_scaling]] "tested for stability not
     accuracy" caveat can be lifted (Tier 0 reference-match + Tier 1 closure now in place).
+
+- **2026-06-20 — Tier 2 / T-ZONEB landed** (`tests/test_massScaling_validation_zoneb.py`, Zone-B,
+  raw-gmsh). The motivating-case proof on a real meshed 3D bar: a 1x1x10 hex prism (2x2 across)
+  with a localized FINE band (dz=0.25, 2x finer than the coarse dz=0.5) near the clamped end — the
+  SSI/contact/pile pattern. One test, `test_zoneb_refined_bar_sms_fidelity`:
+  - **NECESSITY** — plain `CentralDifferenceLadruno` at the bulk dt DIVERGES (tiny elements above
+    their step) while `CentralDifferenceSMS` at the same dt stays bounded (a no-op SMS diverges
+    here too → the leg is non-vacuous).
+  - **FIDELITY (modal)** — the ~22% fictitious mass sits in a LOW-participation zone, so f1 shifts
+    **0.03%** (eigen). The honest selling point: a lot of added mass, almost no frequency cost.
+  - **FIDELITY (response)** — free-end axial period (dP 0.44%) and peak amplitude (ratio 1.00) track
+    the fine-dt reference. Period/peak deliberately ISOLATE the scaling fidelity from bulk-dt
+    time-integration dispersion (a raw full-history RMS folds in ~12% dispersion, which is the point
+    of running at the big step, not a scaling error).
+  - **Report** — headline numbers (88 hexes, 16 scaled, %added, df1, dP, peak ratio) surfaced in the
+    assert/print. **Measured: 22.4% added, df1 0.028%, dP 0.44%, peak 1.000.**
+  - Runs in the **nightly Zone-B job** (`pytest -m zone_b`, self-hosted), NOT the PR Zone-A gate, so
+    it's validated locally (Windows) + shares the gmsh hex-order assumption with the green nightly
+    bend test. **T-MPI / T-CONSISTENT remain feature-gated** (need the MPI-reduction / consistent-
+    scaling features first). With T-ZONEB the validation plan is COMPLETE for the v1 feature set.
