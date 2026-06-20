@@ -298,15 +298,18 @@ def run_p0_gate(fc=30.0, ft=3.0, target_fcc_ratio=1.16, verbose=True):
 # PEAK-STRENGTH envelope, which is the failure surface and the headline confined-triaxial gate).
 # ===========================================================================
 def make_material(E, nu, fc, ft, Df=1.0, target_fcc_ratio=1.16, e=None,
-                  qh0=0.3, Hp=0.5, Ah=0.08, Bh=0.003, Ch=2.0, Dh=1.0e-6):
+                  qh0=0.3, Hp=0.5, Ah=0.08, Bh=0.003, Ch=2.0, Dh=1.0e-6, eta=0.0):
     # qh0,Hp: hardening laws Eq.30-31.  Ah,Bh,Ch,Dh: ductility measure Eq.33 (literature defaults;
     # calibrated per-concrete from peak strains — flagged in ADR 6 as recalibrate-for-fork-data).
+    # eta: Duvaut-Lions viscoplastic relaxation time (ADR 4.4). eta=0 => inviscid, BYTE-identical to
+    #   the Tier-1 path. eta>0 relaxes the plastic return toward the inviscid solution with the factor
+    #   beta = dt/(eta+dt); see `damaged_step_tensor`. Units of TIME (consistent with the analysis dt).
     if e is None:
         e = eccentricity_from_kupfer(fc, ft, target_fcc_ratio)
     K = E / (3.0 * (1.0 - 2.0 * nu))
     G = E / (2.0 * (1.0 + nu))
     return dict(E=E, nu=nu, fc=fc, ft=ft, e=e, m0=m0_of(fc, ft, e), Df=Df, K=K, G=G,
-                qh0=qh0, Hp=Hp, Ah=Ah, Bh=Bh, Ch=Ch, Dh=Dh)
+                qh0=qh0, Hp=Hp, Ah=Ah, Bh=Bh, Ch=Ch, Dh=Dh, eta=eta)
 
 
 def _yf_inv(xi, rho, r, mp):
@@ -1506,16 +1509,40 @@ def _plastic_strain6(sig_bar6, eps6, mp):
     return np.asarray(eps6, float) - np.linalg.solve(elastic_C(mp), np.asarray(sig_bar6, float))
 
 
-def damaged_step_tensor(state, deps6, mp, Gf, Gc, lch, As=2.0):
+def _dl_beta(mp, dt):
+    """Duvaut-Lions relaxation factor beta = dt/(eta+dt) (ADR 4.4). Returns 1.0 (=> inviscid, the
+    Tier-1 path BYTE-for-byte) whenever eta<=0 OR dt<=0 — so eta=0 is byte-identical AND a missing
+    time increment (static / no pseudo-time) safely falls back to the inviscid return rather than the
+    elastic limit beta->0. The viscous regime needs BOTH a positive viscosity and a positive dt."""
+    eta = mp.get("eta", 0.0)
+    if eta > 0.0 and dt > 0.0:
+        return dt / (eta + dt)
+    return 1.0
+
+
+def damaged_step_tensor(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
     """ONE constitutive update: committed `state` + strain increment `deps6` -> (nominal sigma[6],
     NEW state, diagnostics). Pure (does not mutate `state`). Identical kinematics to
-    drive_damaged_unified (gate TD0), lifted to a general 6-strain via the spectral split."""
+    drive_damaged_unified (gate TD0), lifted to a general 6-strain via the spectral split.
+
+    Duvaut-Lions viscoplasticity (ADR 4.4, applied at the PLASTIC/effective-stress level): with
+    `mp["eta"]>0` and `dt>0` the inviscid effective return `sig_bar` and its hardening variable `kp`
+    are RELAXED toward the elastic trial by `beta=dt/(eta+dt)`:
+        sig_bar <- (1-beta) sig_tr + beta sig_bar_inviscid ,  kp <- (1-beta) kp_n + beta kp_inviscid
+    (the Simo-Hughes closed form: beta->1 as eta->0 recovers the inviscid return EXACTLY; beta->0 as
+    eta->inf freezes the elastic trial). Damage is then computed from the RELAXED effective stress, so
+    the implied plastic strain (and thus the damage drivers) shrink consistently with the relaxation."""
     E, fc, ft = mp["E"], mp["fc"], mp["ft"]
     eps0 = ft / E
     eps_f = Gf / (ft * lch)
     eps_fc = Gc / (fc * lch)
     deps6 = np.asarray(deps6, float)
     sig_bar, kp_new, plastic, conv = return_map_tensor(state["sig_bar"], deps6, mp, state["kp"])
+    beta = _dl_beta(mp, dt)
+    if beta < 1.0:                                        # Duvaut-Lions: relax toward the inviscid return
+        sig_tr = elastic_pred_tensor(state["sig_bar"], deps6, mp)
+        sig_bar = (1.0 - beta) * sig_tr + beta * sig_bar
+        kp_new = (1.0 - beta) * state["kp"] + beta * kp_new
     eps_new = state["eps"] + deps6
     w, V = np.linalg.eigh(voigt_to_mat(sig_bar))          # effective principal stresses (ascending)
     et, ac, xs = _damage_drivers(w, mp, As)
@@ -1546,17 +1573,18 @@ def damaged_step_tensor(state, deps6, mp, Gf, Gc, lch, As=2.0):
     return sig_nom, new_state, dict(wt=wt, wc=wc, plastic=plastic, conv=conv)
 
 
-def damaged_consistent_tangent(state, deps6, mp, Gf, Gc, lch, As=2.0, rel_step=1.0e-6):
+def damaged_consistent_tangent(state, deps6, mp, Gf, Gc, lch, As=2.0, rel_step=1.0e-6, dt=0.0):
     """Numerical algorithmic tangent dsigma/deps (6x6) of the damaged update by central difference,
-    at fixed COMMITTED state (the algorithmic operator the global Newton consumes)."""
+    at fixed COMMITTED state (the algorithmic operator the global Newton consumes). `dt` forwards the
+    Duvaut-Lions relaxation (beta is constant in deps, so the FD picks up the blended effective tangent)."""
     base = mp["fc"] / mp["E"]
     C = np.zeros((6, 6))
     for j in range(6):
         d = rel_step * (abs(deps6[j]) + base)
         dp = np.array(deps6, float); dp[j] += d
         dm = np.array(deps6, float); dm[j] -= d
-        sp, _, _ = damaged_step_tensor(state, dp, mp, Gf, Gc, lch, As)
-        sm, _, _ = damaged_step_tensor(state, dm, mp, Gf, Gc, lch, As)
+        sp, _, _ = damaged_step_tensor(state, dp, mp, Gf, Gc, lch, As, dt=dt)
+        sm, _, _ = damaged_step_tensor(state, dm, mp, Gf, Gc, lch, As, dt=dt)
         C[:, j] = (sp - sm) / (2.0 * d)
     return C
 
@@ -1768,16 +1796,26 @@ def _dscalar_dsig(fn, sig6, h=1.0e-6):
     return g
 
 
-def damaged_tangent_analytic(state, deps6, mp, Gf, Gc, lch, As=2.0):
+def damaged_tangent_analytic(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
     """ANALYTIC dual-projector damaged consistent tangent (6x6). Recomputes the same step as
     `damaged_step_tensor` (so it is self-contained) and assembles D_dam:C_eff - sig_t(x)dw_t -
-    sig_c(x)dw_c. FD-verified against `damaged_consistent_tangent` at smooth states (run_p2e_gate)."""
+    sig_c(x)dw_c. FD-verified against `damaged_consistent_tangent` at smooth states (run_p2e_gate).
+
+    Duvaut-Lions (ADR 4.4): with `mp["eta"]>0` and `dt>0` the effective stress is relaxed exactly as in
+    `damaged_step_tensor`, and the effective consistent tangent blends `C_eff <- (1-beta)C_elastic +
+    beta C_eff_inviscid` (since beta is constant in deps and sig_tr is linear in deps). The damage
+    linearization then chains through the RELAXED effective stress and its blended tangent automatically."""
     E, fc, ft = mp["E"], mp["fc"], mp["ft"]
     eps0 = ft / E
     eps_f = Gf / (ft * lch)
     eps_fc = Gc / (fc * lch)
     deps6 = np.asarray(deps6, float)
     sig_bar, kp_new, plastic, conv = return_map_tensor(state["sig_bar"], deps6, mp, state["kp"])
+    beta = _dl_beta(mp, dt)
+    if beta < 1.0:                                        # relax the effective stress + kp (mirror the update)
+        sig_tr = elastic_pred_tensor(state["sig_bar"], deps6, mp)
+        sig_bar = (1.0 - beta) * sig_tr + beta * sig_bar
+        kp_new = (1.0 - beta) * state["kp"] + beta * kp_new
     eps_new = state["eps"] + deps6
     lam, V = np.linalg.eigh(voigt_to_mat(sig_bar))
     et, ac, xs = _damage_drivers(lam, mp, As)
@@ -1800,6 +1838,8 @@ def damaged_tangent_analytic(state, deps6, mp, Gf, Gc, lch, As=2.0):
     wc = _solve_omega_bracketed(kdc1, kdc2, Dc, fc, eps_fc) if (kdc > 0.0 and Dc > 1.0e-6 * fc) else 0.0
 
     Ceff = consistent_tangent(state["sig_bar"], deps6, mp, state["kp"], hardening=True)
+    if beta < 1.0:                                        # Duvaut-Lions blended effective tangent
+        Ceff = (1.0 - beta) * elastic_C(mp) + beta * Ceff
 
     # D_dam: spectral derivative of the per-principal damage with omega FROZEN
     yv = [(1.0 - wt) * max(lam[a], 0.0) + (1.0 - wc) * min(lam[a], 0.0) for a in range(3)]
@@ -2213,6 +2253,198 @@ def run_p3_implex_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, Gc=5.0, As=2.
     return res
 
 
+# ===========================================================================
+# P3 Duvaut-Lions viscoplastic regularization (-eta, ADR 4.4)
+# ---------------------------------------------------------------------------
+# The Duvaut-Lions model relaxes the inviscid (rate-independent) plastic return toward the elastic
+# trial over a characteristic time eta. Simo & Hughes (Computational Inelasticity, Box) backward-Euler
+# closed form:  sigma_{n+1} = (sigma_trial + (dt/eta) sigma_bar_inviscid) / (1 + dt/eta)
+#            =  (1-beta) sigma_trial + beta sigma_bar_inviscid ,   beta = dt/(eta+dt) in [0,1].
+#   eta -> 0   (beta -> 1): the inviscid return, recovered BYTE-for-byte (the byte gate).
+#   eta -> inf (beta -> 0): the frozen elastic trial (infinitely fast loading, no time to relax).
+# We apply it at the PLASTIC (effective-stress) level (ADR: "Duvaut-Lions at the PLASTIC level"), so
+# the EFFECTIVE stress and its hardening variable kappa_p relax; the damage then follows from the
+# relaxed effective stress. The consistent tangent blends C_eff <- (1-beta)C_elastic + beta C_inviscid.
+#
+# Closed-form 1-D overstress oracle (the ADR's named validation): a scalar perfectly-plastic bar
+# (yield sigY) under constant strain rate. The DISCRETE backward-Euler fixed point has overstress
+#   sigma_steady - sigY = E * eps_rate * eta   EXACTLY (independent of dt) — see derivation in PV3.
+# The CONTINUOUS solution is sigma(t) = sigY + E eps_rate eta (1 - exp(-(t-t_y)/eta)) for t > t_y.
+# ===========================================================================
+def duvaut_lions_1d_discrete(E, sigY, eps_rate, eta, dt, n):
+    """Independent scalar Duvaut-Lions backward-Euler integrator, 1-D perfect plasticity from rest.
+    Inviscid projection = clip(sigma_trial, -sigY, sigY); blend with beta=dt/(eta+dt). Returns (t, sigma)."""
+    beta = dt / (eta + dt) if (eta > 0.0 and dt > 0.0) else 1.0
+    sig = 0.0
+    t = np.empty(n); s = np.empty(n)
+    for k in range(n):
+        sig_tr = sig + E * eps_rate * dt
+        sig_bar = min(max(sig_tr, -sigY), sigY)          # 1-D inviscid return (perfect plasticity)
+        sig = (1.0 - beta) * sig_tr + beta * sig_bar
+        t[k] = (k + 1) * dt; s[k] = sig
+    return t, s
+
+
+def duvaut_lions_1d_analytic(E, sigY, eps_rate, eta, t):
+    """Continuous Duvaut-Lions solution, 1-D perfect plasticity, constant strain rate from rest:
+    elastic sigma=E eps_rate t until yield at t_y=sigY/(E eps_rate); then the overstress relaxes
+    sigma(t) = sigY + E eps_rate eta (1 - exp(-(t-t_y)/eta))."""
+    t = np.asarray(t, float)
+    t_y = sigY / (E * eps_rate)
+    return np.where(t <= t_y, E * eps_rate * t,
+                    sigY + E * eps_rate * eta * (1.0 - np.exp(-(t - t_y) / eta)))
+
+
+def _confined_compression_state(mp, Gf, Gc, lch, As, e11_end=-3.0e-3, n=120):
+    """A CLEAN plastic, PRE-onset (omega=0) committed state + the next strain increment, for the eta
+    tangent/overstress gates. Built from the uniaxial-STRESS mixed-control driver (which holds the
+    effective lateral stress at ~0 and stays on the compressive meridian) — its diagonal total-strain
+    path [eps11, eps_lat, eps_lat] is replayed through `damaged_step_tensor`, reproducing a genuinely
+    plastic hardening state WITHOUT the oracle's uniaxial-STRAIN deep-compression apex chaos (kp<0,
+    spuriously elastic). Returns (state, deps_probe, kp_probe, plastic_probe)."""
+    d = drive_damaged_unified(mp, np.linspace(0.0, e11_end, n), Gf, Gc, lch, As)
+    path = [np.array([d["eps11"][k], d["eps_lat"][k], d["eps_lat"][k], 0.0, 0.0, 0.0]) for k in range(n)]
+    idx = next(k for k in range(1, n) if 0.5 < d["kp"][k] < 0.98 and d["wc"][k] < 1.0e-12)  # hardening, pre-damage
+    st, _, _, _ = _advance_damaged(make_damage_state(mp), path[:idx], mp, Gf, Gc, lch, As)
+    deps = path[idx] - path[idx - 1]
+    _, kp_probe, plastic_probe, _ = return_map_tensor(st["sig_bar"], deps, mp, st["kp"])
+    return st, deps, kp_probe, plastic_probe
+
+
+def run_p3_eta_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, Gc=5.0, As=2.0, verbose=True):
+    """Duvaut-Lions viscoplastic (-eta) falsification battery (ADR 4.4). Oracle-only (numpy); the C++
+    kernel port is a follow-up build PR. PV1 eta=0 byte-identical to the inviscid Tier-1 path; PV2 the
+    scalar backward-Euler integrator converges to the CONTINUOUS closed-form overstress as dt->0; PV3
+    the EXACT discrete steady overstress = E eps_rate eta (the closed-form 1-D oracle, dt-independent);
+    PV4 the tensor kernel's relaxed effective stress IS the (1-beta)trial + beta inviscid blend;
+    PV5 the viscous damaged tangent matches its numerical FD (PV5a) and reduces to the blended effective
+    tangent pre-onset (PV5b); PV6 the overstress grows monotonically with eta (regularization signature)."""
+    mp = make_material(E, nu, fc, ft)
+    mp_eta = lambda eta: make_material(E, nu, fc, ft, eta=eta)
+    nrm = lambda A: float(np.sqrt(np.sum(np.asarray(A) ** 2)))
+    lch = 50.0
+    res = {}
+
+    # --- PV1: eta=0 is BYTE-identical to the inviscid Tier-1 damaged update (over a damaging path) ---
+    st0 = make_damage_state(mp); st_e = make_damage_state(mp_eta(0.0))
+    max_byte = 0.0
+    for k in range(200):
+        deps = np.array([4.0e-5, 0, 0, 0, 0, 0])          # uniaxial-strain tension into softening
+        s_inv, st0, _ = damaged_step_tensor(st0, deps, mp, Gf, Gc, lch, As)
+        s_eta, st_e, _ = damaged_step_tensor(st_e, deps, mp_eta(0.0), Gf, Gc, lch, As, dt=1.0)
+        max_byte = max(max_byte, nrm(s_eta - s_inv))
+    res["PV1_eta0_byte"] = max_byte
+    res["PV1_byte_exact"] = bool(max_byte == 0.0)
+
+    # --- PV2 + PV3: the closed-form 1-D overstress oracle ---
+    sigY, eps_rate, eta = 30.0, 1.0e-3, 0.5
+    # PV3 (EXACT): the discrete backward-Euler fixed point. In the plastic regime sig_bar=sigY:
+    #   sig* = (1-beta) sig* + (1-beta) E eps_rate dt + beta sigY  =>  sig* - sigY = ((1-beta)/beta) E eps_rate dt
+    #   (1-beta)/beta = eta/dt  =>  sig* - sigY = (eta/dt) E eps_rate dt = E eps_rate eta  (dt CANCELS).
+    over_exact = E * eps_rate * eta
+    res["PV3_overstress_target"] = over_exact
+    pv3_err = []
+    for dt in (1.0, 0.25, 0.05):                           # many steps to reach the fixed point
+        n = int(60.0 / (eps_rate * E) / dt) + 4000         # well past yield, into steady state
+        _, s = duvaut_lions_1d_discrete(E, sigY, eps_rate, eta, dt, n)
+        pv3_err.append(abs((s[-1] - sigY) - over_exact) / over_exact)
+    res["PV3_steady_rel_err"] = max(pv3_err)
+    res["PV3_exact"] = bool(res["PV3_steady_rel_err"] < 1.0e-10)
+    # PV2 (transient): the discrete blend IS backward-Euler of the Duvaut-Lions ODE (1/(1+dt/eta) per
+    # step vs the exact exp(-dt/eta)) so it carries an O(dt) GLOBAL error that must converge at order 1.
+    # Evaluate MID-transient (t_y + 2*eta, where exp(-2)~0.14 of the overstress is still relaxing — NOT
+    # at steady state, where both would be exact and the order is undefined). t_y = sigY/(E*eps_rate) =
+    # 1.0; pick T = t_y + 2*eta = 2.0 (a clean multiple of every dt so yield lands on a step boundary,
+    # isolating the ODE-integration error from the yield-crossing error).
+    t_y = sigY / (E * eps_rate)
+    T = t_y + 2.0 * eta
+    pv2_err = []
+    for dt in (0.5, 0.25, 0.125):
+        n = int(round(T / dt))
+        t, s = duvaut_lions_1d_discrete(E, sigY, eps_rate, eta, dt, n)
+        pv2_err.append(abs(s[-1] - float(duvaut_lions_1d_analytic(E, sigY, eps_rate, eta, t[-1]))))
+    res["PV2_transient_errs"] = pv2_err
+    res["PV2_order"] = float(np.log(pv2_err[0] / pv2_err[-1]) / np.log(4.0))   # dt halved twice => /4
+    res["PV2_converges"] = bool(pv2_err[-1] < pv2_err[0] and res["PV2_order"] > 0.8)
+
+    # --- PV4: the TENSOR kernel relaxed effective stress IS the independent (1-beta)trial+beta inviscid blend ---
+    eta4, dt4 = 0.3, 1.0
+    beta4 = dt4 / (eta4 + dt4)
+    m4 = mp_eta(eta4)
+    pv4 = []
+    # tension and compression committed states, plus a fresh state, each probed with a plastic increment
+    stT, _, _, _ = _advance_damaged(make_damage_state(m4), [np.array([2.0e-4 * i, 0, 0, 0, 0, 0]) for i in range(1, 30)], m4, Gf, Gc, lch, As)
+    stC, _, _, _ = _advance_damaged(make_damage_state(m4), [np.array([-3.0e-4 * i, 0, 0, 0, 0, 0]) for i in range(1, 30)], m4, Gf, Gc, lch, As)
+    for st, deps in ((make_damage_state(m4), np.array([3.0e-4, 0, 0, 0, 0, 0])),
+                     (stT, np.array([2.0e-4, 0, 0, 0, 0, 0])),
+                     (stC, np.array([-3.0e-4, 0, 0, 0, 0, 0])),
+                     (stC, np.array([1.0e-4, 1.0e-4, 0, 0.5e-4, 0, 0]))):   # mixed/shear increment
+        sig_bar_inv, _, _, _ = return_map_tensor(st["sig_bar"], deps, m4, st["kp"])
+        sig_tr = elastic_pred_tensor(st["sig_bar"], deps, m4)
+        blend = (1.0 - beta4) * sig_tr + beta4 * sig_bar_inv
+        _, new_st, _ = damaged_step_tensor(st, deps, m4, Gf, Gc, lch, As, dt=dt4)
+        pv4.append(nrm(new_st["sig_bar"] - blend) / max(nrm(blend), 1.0))
+    res["PV4_blend_rel"] = max(pv4)
+    res["PV4_is_blend"] = bool(res["PV4_blend_rel"] < 1.0e-12)
+
+    # --- PV5: the viscous damaged consistent tangent ---
+    # PV5a: analytic == numerical FD at a smooth viscous-damaged state (the C++ deliverable's check).
+    eta5, dt5 = 0.4, 1.0
+    m5 = mp_eta(eta5)
+    st5, _, _, _ = _advance_damaged(make_damage_state(m5), [np.array([5.0e-5 * i, 0, 0, 0, 0, 0]) for i in range(1, 60)], m5, Gf, Gc, lch, As)
+    deps5 = np.array([5.0e-5, 0, 0, 0, 0, 0])
+    Ca = damaged_tangent_analytic(st5, deps5, m5, Gf, Gc, lch, As, dt=dt5)
+    Cn = damaged_consistent_tangent(st5, deps5, m5, Gf, Gc, lch, As, dt=dt5)
+    res["PV5a_fd_rel"] = nrm(Ca - Cn) / nrm(Cn)
+    res["PV5a_ok"] = bool(res["PV5a_fd_rel"] < 1.0e-5)
+    # PV5b: at a genuinely PLASTIC but PRE-onset step (omega=0) the viscous damaged tangent reduces to
+    # the blended effective tangent (1-beta)C_el + beta C_eff_inviscid (D_dam=I and the -sig(x)domega
+    # rank-updates vanish at omega=0). The state is a CLEAN confined-compression hardening state (NOT a
+    # tautological elastic step — PV5b_plastic asserts the probe yields).
+    beta5 = dt5 / (eta5 + dt5)
+    stc, deps5b, _, plastic5b = _confined_compression_state(m5, Gf, Gc, lch, As)
+    _, _, infob = damaged_step_tensor(stc, deps5b, m5, Gf, Gc, lch, As, dt=dt5)
+    Cb = damaged_tangent_analytic(stc, deps5b, m5, Gf, Gc, lch, As, dt=dt5)
+    Ceff_inv = consistent_tangent(stc["sig_bar"], deps5b, m5, stc["kp"], hardening=True)
+    Cblend = (1.0 - beta5) * elastic_C(m5) + beta5 * Ceff_inv
+    res["PV5b_plastic"] = bool(plastic5b)
+    res["PV5b_omega"] = max(infob["wt"], infob["wc"])
+    res["PV5b_rel"] = nrm(Cb - Cblend) / nrm(Cblend)
+    res["PV5b_ok"] = bool(plastic5b and res["PV5b_omega"] < 1.0e-9 and res["PV5b_rel"] < 1.0e-9)
+
+    # --- PV6: the overstress NORM grows monotonically with eta (the viscous-regularization signature) ---
+    # At the clean confined-compression PLASTIC state, ||sig_visc - sig_inv|| = (1-beta)||sig_tr-sig_inv||
+    # (the effective stress lags the rate-independent backbone) grows as eta increases (beta decreases)
+    # and is > 0 whenever the step is plastic. The committed state is inviscid (built with eta=0).
+    st6, deps6v, _, _ = _confined_compression_state(mp, Gf, Gc, lch, As)
+    s_inv6, _, _, _ = return_map_tensor(st6["sig_bar"], deps6v, mp, st6["kp"])   # eta-independent inviscid backbone
+    over = []
+    for eta in (0.1, 0.5, 2.0, 10.0):
+        me = mp_eta(eta)
+        _, nst, _ = damaged_step_tensor(st6, deps6v, me, Gf, Gc, lch, As, dt=1.0)
+        over.append(nrm(nst["sig_bar"] - s_inv6))           # overstress tensor norm above the backbone
+    res["PV6_overstress"] = over
+    res["PV6_monotone"] = bool(all(over[i + 1] > over[i] for i in range(len(over) - 1)) and over[0] > 0.0)
+
+    ok = (res["PV1_byte_exact"] and res["PV2_converges"] and res["PV3_exact"]
+          and res["PV4_is_blend"] and res["PV5a_ok"] and res["PV5b_ok"] and res["PV6_monotone"])
+    res["PASS"] = bool(ok)
+    if verbose:
+        print(f"  E={E} nu={nu} fc={fc} ft={ft} Gf={Gf} Gc={Gc} As={As} lch={lch}")
+        print(f"  PV1 eta=0 BYTE-identical to inviscid: max|dsig|={res['PV1_eta0_byte']:.1e} ({res['PV1_byte_exact']})")
+        print(f"  PV2 1-D transient -> continuous closed form: errs={[f'{e:.2e}' for e in pv2_err]} "
+              f"order={res['PV2_order']:.2f} ({res['PV2_converges']})")
+        print(f"  PV3 [HEADLINE] 1-D EXACT steady overstress = E*eps_rate*eta = {over_exact:.4f}: "
+              f"rel err={res['PV3_steady_rel_err']:.2e} ({res['PV3_exact']})")
+        print(f"  PV4 tensor relaxed sig_bar == (1-beta)trial+beta inviscid: rel={res['PV4_blend_rel']:.2e} ({res['PV4_is_blend']})")
+        print(f"  PV5a viscous damaged tangent analytic==FD: rel={res['PV5a_fd_rel']:.2e} ({res['PV5a_ok']})")
+        print(f"  PV5b plastic={res['PV5b_plastic']} pre-onset (omega={res['PV5b_omega']:.1e}) == blended effective tangent: "
+              f"rel={res['PV5b_rel']:.2e} ({res['PV5b_ok']})")
+        print(f"  PV6 overstress NORM monotone in eta: {[f'{o:.3f}' for o in over]} ({res['PV6_monotone']})")
+        print(f"  => P3 ETA GATE {'PASS' if ok else 'FAIL'}")
+    return res
+
+
 def run_p2_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, verbose=True):
     mp = make_material(E, nu, fc, ft)
     eps0 = ft / E
@@ -2347,3 +2579,15 @@ if __name__ == "__main__":
     p2e = run_p2e_gate(verbose=True)
     print("-" * 74)
     print(f"P2e: {'PASS' if p2e['PASS'] else 'FAIL'}")
+    print("=" * 74)
+    print("LadrunoConcrete3D P3 Tier-2 IMPL-EX gate — explicit extrapolated stress + SPD secant tangent")
+    print("=" * 74)
+    p3i = run_p3_implex_gate(verbose=True)
+    print("-" * 74)
+    print(f"P3 IMPL-EX: {'PASS' if p3i['PASS'] else 'FAIL'}")
+    print("=" * 74)
+    print("LadrunoConcrete3D P3 Duvaut-Lions gate — viscoplastic -eta + closed-form 1-D overstress")
+    print("=" * 74)
+    p3e = run_p3_eta_gate(verbose=True)
+    print("-" * 74)
+    print(f"P3 ETA: {'PASS' if p3e['PASS'] else 'FAIL'}")
