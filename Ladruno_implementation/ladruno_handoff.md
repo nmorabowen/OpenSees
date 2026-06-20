@@ -168,14 +168,15 @@ Full regression green.
 
 ---
 
-# Track 3 — LadrunoDispBeamColumn (regularized disp-based frame) (DONE through ADR 34 PR-4a, merged + 88/88 green 2026-06-18)
+# Track 3 — LadrunoDispBeamColumn (regularized disp-based frame) (DONE through ADR 34 PR-4b, B-K mode-mix + consistent off-radial tangent, 136/136 green 2026-06-19)
 
 Design in [[32_ladruno_dispbeamcolumn_regularization_adr]] (2D), [[33_ladruno_dispbeamcolumn3d_hinge_adr]] (3D hinge), [[34_ladruno_cohesive_hinge_biaxial_adr]] (coupled material); gotchas in [[LEDGER_quirks]].
 
-## CURRENT STATE (2026-06-18): the embedded-hinge feature is COMPLETE end-to-end.
+## CURRENT STATE (2026-06-19): the embedded-hinge feature is COMPLETE end-to-end.
 All of Stage 0–1 + Stage 2 (2D hinge, 3D strong-axis, 3D biaxial block-diagonal, 3D coupled
-interaction-surface) is shipped to `ladruno`, **88/88** (2D+3D element + scalar/biaxial/coupled hinge
-+ cohesive material), CI green (Zone-A Ubuntu + classTag/manifest gates). 0 open PRs.
+interaction-surface + B-K mode-mix `-bk` + consistent off-radial tangent) is shipped to `ladruno`,
+**136/136** (2D+3D element + scalar/biaxial/coupled hinge + cohesive material + material-point tangent
+battery), CI green (Zone-A Ubuntu + classTag/manifest gates). 0 open PRs.
 Session PRs: #274 (PR-3b biaxial), #275 (PR-4a coupled material), #276 (adversarial-review
 dispositions), #280 (manifest dispatch.tcl fix). Then a 32-agent adversarial review of #274+#275 —
 its dispositions are in [[34_ladruno_cohesive_hinge_biaxial_adr]] §"Adversarial review dispositions"
@@ -218,17 +219,22 @@ its dispositions are in [[34_ladruno_cohesive_hinge_biaxial_adr]] §"Adversarial
   that is what Tier-2 addresses.
 
 ## Resume (next session) — recommended NEXT, in priority order
-1. **Consistent off-radial onset tangent for the coupled law (HIGHEST VALUE).** The documented v1
-   limitation: `LadrunoCohesiveHingeBiaxial`'s 2×2 tangent is **frozen-mix** (exact only on radial
-   jump paths) and sign-discontinuous at the elliptical onset (r=1). On deeply weak-axis-dominant
-   paths driven by INDIRECT control (a non-radial jump path), the inner Newton transiently misses at
-   onset → the element falls back to best-effort + warn (see quirk). Fix: a consistent tangent that
-   carries ∂(mode-mix)/∂α (or a line-searched inner solve that re-evaluates the residual). This is
-   ALSO what would let the strict ADR-33 "cut the global step on inner non-convergence" behavior hold
-   robustly (currently best-effort, deliberately — see quirk). Without it, prescribe rotations
-   (radial control) for deep coupled softening.
-2. **B-K / power-law mode-mix** for `Gf_mix(w)` (currently linear `w_z Gf_z + w_y Gf_y` in
-   `effectiveLaw`); reduces to the per-axis Gf on the pure axes regardless, so this is a refinement.
+1. ✅ **DONE (PR-4b, 2026-06-19) — consistent off-radial tangent + B-K mode-mix (items #1 & #2,
+   inseparable).** KEY FINDING: at the default LINEAR mix the v1 tangent was **already exact** off-radial —
+   `Kpen_i ∝ Mc_i²/Gf_i` forces `S ∝ Gf_lin` so `A = S/Esoft = 2/(ratio-1)` is mix-INDEPENDENT → `D = D(r)`
+   alone → the `∂(mode-mix)/∂α` term item #1 asked for is identically zero. It only becomes live with a
+   **NONLINEAR** mix, so #2 had to land too: Benzeggagh-Kenane `Gf_mix = Gf_z + (Gf_y-Gf_z) w_y^η` via
+   `-bk η` (default 1 = linear, bit-identical). With `η≠1`, `D` is mix-dependent and the consistent
+   mode-mix tangent term is live (FD-gated). Caveat: at the near-rigid default `ratio=1000` the term is
+   tiny (~1e-4; `D≈1-1/r` dominates), significant only for softer penalties (~1e-2 at `ratio=10`). The
+   **remaining** robustness lever (the inner Newton's r=1 onset KINK on weak-axis-dominant indirect paths)
+   is a SOLVER matter (line search), NOT tangent completeness — see [[LEDGER_quirks]]; still best-effort +
+   prescribe-rotations for deep coupled softening. See [[34_ladruno_cohesive_hinge_biaxial_adr]] §PR-4b.
+2. **Inner-Newton onset line search (the REAL robustness lever left from item #1).** The weak-axis-
+   dominant indirect-control misses come from the non-smooth KINK at the elliptical onset `r=1`
+   (rigid→softening corner), not tangent incompleteness (which is now provably exact). A line-searched /
+   backtracking inner solve in `solveHingeJumpBiaxial` would let the strict ADR-33 "cut the step" intent
+   hold; current best-effort + adaptive damping (PR-4a) is the workaround.
 3. **Torsional jump `α_t` (`-torsion`)** — a 3rd condensed channel; needs a torsional cohesive-law
    concept (fiber rupture in torsion is unstandardized — research-y, lower confidence).
 4. **`-nl` + hinge cross-terms** — lift the v1 parser ban (2D+3D); the ½θ² bowing couples the jump
@@ -269,5 +275,5 @@ its dispositions are in [[34_ladruno_cohesive_hinge_biaxial_adr]] §"Adversarial
 ## Build / run recipe
 - `Ladruno_scripts\build.bat OpenSeesPy OpenSees`. Editing `classTags.h` forces a wide recompile; a
   new `add_subdirectory`/source needs the build re-run once. Tests (PYTHONPATH/PATH = `dist\bin`):
-  `python -m pytest tests/test_ladrunoDispBeamColumn2d_element.py tests/test_ladrunoDispBeamColumn3d_element.py tests/test_ladrunoDispBeamColumn2d_hinge.py tests/test_ladrunoDispBeamColumn3d_hinge.py tests/test_ladrunoDispBeamColumn3d_hinge_biaxial.py tests/test_ladrunoDispBeamColumn3d_hinge_coupled.py tests/test_ladrunoCohesiveHinge_material.py`
-  (88/88). CI gates locally: `python ci/check_manifest.py && python ci/check_classtags.py`.
+  `python -m pytest tests/test_ladrunoDispBeamColumn2d_element.py tests/test_ladrunoDispBeamColumn3d_element.py tests/test_ladrunoDispBeamColumn2d_hinge.py tests/test_ladrunoDispBeamColumn3d_hinge.py tests/test_ladrunoDispBeamColumn3d_hinge_biaxial.py tests/test_ladrunoDispBeamColumn3d_hinge_coupled.py tests/test_ladrunoCohesiveHinge_material.py tests/test_ladrunoCohesiveHingeBiaxial_material.py`
+  (136/136). CI gates locally: `python ci/check_manifest.py && python ci/check_classtags.py`.
