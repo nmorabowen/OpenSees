@@ -200,6 +200,13 @@ def main(out=None):
     # sheared damaged state, probe with shear (exercises the spectral recompose of the nominal split)
     spath = [np.array([e, -0.2 * e, -0.2 * e, 0.3 * e, 0, 0]) for e in np.linspace(0, 5.0e-4, 300)]
     add_dmg("dmg_shear", mp_na, lch, spath, [3.0e-6, -0.6e-6, -0.6e-6, 0.9e-6, 0, 0])
+    # P2g CYCLIC no-heal (discriminating): load tension into softening, THEN elastically unload so the
+    # committed sigt_max EXCEEDS the live drive; probe a further unload step. The kernel must drive
+    # omega_t with the MONOTONE sigt_max (not the live stress) to reproduce the secant nominal stress —
+    # a kernel that re-solved omega against the live drive would HEAL and diverge here.
+    cyc_path = ([np.array([e, 0, 0, 0, 0, 0]) for e in np.linspace(0, 9.0e-4, 300)]
+                + [np.array([e, 0, 0, 0, 0, 0]) for e in np.linspace(9.0e-4, 5.0e-4, 120)[1:]])
+    add_dmg("dmg_cyclic_unload", mp_h, lch, cyc_path, [-2.0e-5, 0, 0, 0, 0, 0])
 
     lines.append(f"NDMG {len(dmgs)}")
     for label, mp, lch, st, deps, sig_nom in dmgs:
@@ -208,7 +215,8 @@ def main(out=None):
         lines.append(_fmt(st["eps"]))
         lines.append(_fmt(st["sig_bar"]))
         lines.append(repr(float(st["kp"])))
-        lines.append(_fmt([st["et_max"], st["kdt1"], st["kdt2"], st["kdc"], st["kdc1"], st["kdc2"]]))
+        lines.append(_fmt([st["et_max"], st["kdt1"], st["kdt2"], st["kdc"], st["kdc1"], st["kdc2"],
+                           st["sigt_max"], st["sigc_max"]]))   # P2g monotone-drive history (8 fields)
         lines.append(_fmt(deps))
         lines.append(_fmt(sig_nom))
 
@@ -235,7 +243,8 @@ def main(out=None):
         lines.append(_fmt(st["eps"]))
         lines.append(_fmt(st["sig_bar"]))
         lines.append(repr(float(st["kp"])))
-        lines.append(_fmt([st["et_max"], st["kdt1"], st["kdt2"], st["kdc"], st["kdc1"], st["kdc2"]]))
+        lines.append(_fmt([st["et_max"], st["kdt1"], st["kdt2"], st["kdc"], st["kdc1"], st["kdc2"],
+                           st["sigt_max"], st["sigc_max"]]))   # P2g monotone-drive history (8 fields)
         lines.append(_fmt([st["wt"], st["wc"], st["dwt"], st["dwc"], st["dt_n"]]))
         lines.append(_fmt(st["depl"]))
         lines.append(repr(float(dt)))
@@ -278,7 +287,8 @@ def main(out=None):
         lines.append(_fmt(st["eps"]))
         lines.append(_fmt(st["sig_bar"]))
         lines.append(repr(float(st["kp"])))
-        lines.append(_fmt([st["et_max"], st["kdt1"], st["kdt2"], st["kdc"], st["kdc1"], st["kdc2"]]))
+        lines.append(_fmt([st["et_max"], st["kdt1"], st["kdt2"], st["kdc"], st["kdc1"], st["kdc2"],
+                           st["sigt_max"], st["sigc_max"]]))   # P2g monotone-drive history (8 fields)
         lines.append(_fmt(deps))
         lines.append(_fmt(sig_visc))
         lines.append(_fmt(sig_inv))

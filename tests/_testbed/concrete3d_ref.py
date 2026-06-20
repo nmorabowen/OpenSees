@@ -1011,7 +1011,7 @@ def drive_uniaxial_tension_damaged(mp, eps11_path, Gf, lch):
     eps0 = ft / E
     eps_f = Gf / (ft * lch)
     eps = np.zeros(3); sig_eff = np.zeros(3); kp = 0.0; el = 0.0
-    kappa_dt = 0.0; kdt1 = 0.0
+    kappa_dt = 0.0; kdt1 = 0.0; sigt_max = 0.0             # P2g: monotone running-max drive (no heal)
     epl_prev = np.zeros(3)
     out = {k: [] for k in ("eps11", "sig11", "wt", "kp", "sig_eff", "epsi", "kappa_dt")}
     for e11 in eps11_path:
@@ -1045,7 +1045,8 @@ def drive_uniaxial_tension_damaged(mp, eps11_path, Gf, lch):
         epl_prev = epl
         kappa_dt = kappa_dt_new
         kdt2 = max(kappa_dt - eps0, 0.0)                    # Eq.45 (x_s=1)
-        wt = _solve_omega_t_exp(kappa_dt, kdt1, kdt2, max(s_eff, 0.0), E, ft, eps_f)
+        sigt_max = max(sigt_max, max(s_eff, 0.0))           # P2g: monotone drive => omega_t never heals
+        wt = _solve_omega_t_exp(kappa_dt, kdt1, kdt2, sigt_max, E, ft, eps_f)
         epsi = kdt1 + wt * kdt2                             # Eq.52
         sig11_nom = (1.0 - wt) * s_eff                      # Eq.1
         for k, v in (("eps11", e11), ("sig11", sig11_nom), ("wt", wt),
@@ -1124,7 +1125,7 @@ def drive_uniaxial_compression_damaged(mp, eps11_path, Gc, lch, As=5.0, beta_c_o
     ft = mp["ft"]; eps0 = ft / E
     eps_fc = Gc / (fc * lch)
     eps = np.zeros(3); sig_eff = np.zeros(3); kp = 0.0; el = 0.0
-    et_prev = 0.0; kdc = 0.0; kdc1 = 0.0
+    et_prev = 0.0; kdc = 0.0; kdc1 = 0.0; sigc_max = 0.0   # P2g: monotone running-max drive (no heal)
     epl_prev = np.zeros(3)
     out = {k: [] for k in ("eps11", "sig11", "wc", "kp", "sig_eff", "epsi", "alpha_c")}
     for e11 in eps11_path:
@@ -1161,7 +1162,8 @@ def drive_uniaxial_compression_damaged(mp, eps11_path, Gc, lch, As=5.0, beta_c_o
         epl_prev = epl
         kdc2 = kdc
         sig_c_mag = max(-sig_eff[0], 0.0)                    # compressive axial magnitude (uniaxial)
-        wc = _solve_omega_c_exp(kdc1, kdc2, sig_c_mag, fc, eps_fc)
+        sigc_max = max(sigc_max, sig_c_mag)                  # P2g: monotone drive => omega_c never heals
+        wc = _solve_omega_c_exp(kdc1, kdc2, sigc_max, fc, eps_fc)
         epsi = kdc1 + wc * kdc2
         sig11_nom = (1.0 - wc) * sig_eff[0]                  # Eq.1 (compression branch; sig_eff[0]<0)
         for k, v in (("eps11", e11), ("sig11", sig11_nom), ("wc", wc),
@@ -1327,6 +1329,7 @@ def drive_damaged_unified(mp, eps11_path, Gf, Gc, lch, As=2.0, sigma3=0.0):
     eps_fc = Gc / (fc * lch)
     eps = np.zeros(3); sig_eff = np.zeros(3); kp = 0.0; el = 0.0
     et_max = 0.0                                          # running max of eps_tilde (Eq.43 history)
+    sigt_max = sigc_max = 0.0                             # P2g: monotone running-max effective drive (no heal)
     kdt1 = kdt2 = kdc = kdc1 = kdc2 = 0.0
     epl_prev = np.zeros(3)
     out = {k: [] for k in ("eps11", "eps_lat", "sig11", "wt", "wc", "sig_eff", "kp", "epsi_t", "epsi_c")}
@@ -1375,11 +1378,17 @@ def drive_damaged_unified(mp, eps11_path, Gf, Gc, lch, As=2.0, sigma3=0.0):
         # spectral drives: extreme effective principal of each sign (reduces to P2a/P2b uniaxially)
         sig_t_drive = max(float(np.max(sig_eff)), 0.0)
         sig_c_drive = max(-float(np.min(sig_eff)), 0.0)
+        # P2g — MONOTONE (no-heal) cyclic damage: drive each omega with the running MAX of its drive
+        # stress (see damaged_step_tensor). On an elastic unload the live drive drops but the max (and the
+        # frozen histories) keep omega fixed => no healing; the nominal stress unloads along the secant
+        # (1-omega)*sig_bar. Identical to the live drive on monotonic loading (max == live).
+        sigt_max = max(sigt_max, sig_t_drive)
+        sigc_max = max(sigc_max, sig_c_drive)
         # PHYSICAL FLOOR on the softening drive: only solve omega when the extreme principal of that
         # sign is a REAL stress (> 1e-6 * strength), never on the ~1e-10 MPa lateral-Newton residual.
         # Without it the residual's SIGN spuriously flips wt 0<->1 in pure compression (review-fix).
-        wt = _solve_omega_bracketed(kdt1, kdt2, sig_t_drive, ft, eps_f) if (et_max > eps0 and sig_t_drive > 1.0e-6 * ft) else 0.0
-        wc = _solve_omega_bracketed(kdc1, kdc2, sig_c_drive, fc, eps_fc) if (kdc > 0.0 and sig_c_drive > 1.0e-6 * fc) else 0.0
+        wt = _solve_omega_bracketed(kdt1, kdt2, sigt_max, ft, eps_f) if (et_max > eps0 and sigt_max > 1.0e-6 * ft) else 0.0
+        wc = _solve_omega_bracketed(kdc1, kdc2, sigc_max, fc, eps_fc) if (kdc > 0.0 and sigc_max > 1.0e-6 * fc) else 0.0
 
         sig_nom = apply_damage_principal(sig_eff, wt, wc)            # Eq.1
         for k, v in (("eps11", e11), ("eps_lat", el), ("sig11", sig_nom[0]), ("wt", wt), ("wc", wc),
@@ -1529,9 +1538,11 @@ def run_p2c_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, Gc=5.0, As=2.0, ver
 # ===========================================================================
 def make_damage_state(mp):
     """Committed state for the single-step tensor damaged update (all tensors Voigt {00,11,22,01,12,02},
-    tensor shear convention)."""
+    tensor shear convention). sigt_max/sigc_max (P2g) are the MONOTONE running maxima of the per-channel
+    effective drive stress — they make omega_t/omega_c monotone (no healing on elastic unload)."""
     return dict(sig_bar=np.zeros(6), kp=0.0, eps=np.zeros(6),
-                et_max=0.0, kdt1=0.0, kdt2=0.0, kdc=0.0, kdc1=0.0, kdc2=0.0)
+                et_max=0.0, kdt1=0.0, kdt2=0.0, kdc=0.0, kdc1=0.0, kdc2=0.0,
+                sigt_max=0.0, sigc_max=0.0)
 
 
 def _plastic_strain6(sig_bar6, eps6, mp):
@@ -1595,12 +1606,23 @@ def damaged_step_tensor(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
     et_max = max(et_max, et)
     sig_t_drive = max(float(np.max(w)), 0.0)
     sig_c_drive = max(-float(np.min(w)), 0.0)
+    # P2g — MONOTONE (no-heal) cyclic damage. Drive each omega with the running MAXIMUM of its effective
+    # drive stress, not the live value. The histories kd*1/kd*2 are already monotone (they accumulate only
+    # when loading), so the live drive is the ONLY non-monotone input to the bracketed omega-solve: on an
+    # elastic UNLOAD the drive drops while the histories are frozen, and F(0)=drive-f*exp(-kd1/eps_f) goes
+    # <=0 => the solve relaxes omega back ("heals", the F4 diagnostic). The running max freezes omega on
+    # unload (no heal; the nominal stress then unloads along the damage secant (1-omega)*sig_bar) and is
+    # BYTE-IDENTICAL on any monotonic path (max == live), so DT1/DT2 reduce-to-P2a/P2b still hold. This is
+    # the CDPM2 statement that omega = omega(kappa_d) is a function of the monotone history only.
+    sigt_max = max(state.get("sigt_max", 0.0), sig_t_drive)
+    sigc_max = max(state.get("sigc_max", 0.0), sig_c_drive)
     # physical floor (see drive_damaged_unified): no omega-solve on a numerical-residual stress
-    wt = _solve_omega_bracketed(kdt1, kdt2, sig_t_drive, ft, eps_f) if (et_max > eps0 and sig_t_drive > 1.0e-6 * ft) else 0.0
-    wc = _solve_omega_bracketed(kdc1, kdc2, sig_c_drive, fc, eps_fc) if (kdc > 0.0 and sig_c_drive > 1.0e-6 * fc) else 0.0
+    wt = _solve_omega_bracketed(kdt1, kdt2, sigt_max, ft, eps_f) if (et_max > eps0 and sigt_max > 1.0e-6 * ft) else 0.0
+    wc = _solve_omega_bracketed(kdc1, kdc2, sigc_max, fc, eps_fc) if (kdc > 0.0 and sigc_max > 1.0e-6 * fc) else 0.0
     sig_nom = mat_to_voigt(V @ np.diag(apply_damage_principal(w, wt, wc)) @ V.T)   # Eq.1, recompose
     new_state = dict(sig_bar=sig_bar, kp=kp_new, eps=eps_new, et_max=et_max,
-                     kdt1=kdt1, kdt2=kdt2, kdc=kdc, kdc1=kdc1, kdc2=kdc2)
+                     kdt1=kdt1, kdt2=kdt2, kdc=kdc, kdc1=kdc1, kdc2=kdc2,
+                     sigt_max=sigt_max, sigc_max=sigc_max)
     return sig_nom, new_state, dict(wt=wt, wc=wc, plastic=plastic, conv=conv)
 
 
@@ -1865,9 +1887,19 @@ def damaged_tangent_analytic(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
     et_max2 = max(et_max, et)
     Dt = max(float(np.max(lam)), 0.0)
     Dc = max(-float(np.min(lam)), 0.0)
+    # P2g — MONOTONE drive (mirror damaged_step_tensor). Solve omega against the running max, and mark
+    # whether each channel is ADVANCING its max (== loading). On UNLOAD (live drive < committed max) the
+    # drive is frozen AND the histories are frozen, so d(omega)/d(eps)=0 and the tangent collapses to the
+    # damage SECANT D_dam:C_eff (SPD) — the well-conditioned unloading branch. During loading max == live
+    # and the channel advances, so the tangent is byte-identical to the pre-P2g analytic tangent (the P2e
+    # gates are unaffected).
+    sigt_max = max(state.get("sigt_max", 0.0), Dt)
+    sigc_max = max(state.get("sigc_max", 0.0), Dc)
+    t_loading = Dt >= state.get("sigt_max", 0.0)          # live tensile drive at/above the committed max
+    c_loading = Dc >= state.get("sigc_max", 0.0)
     # SAME physical floor as damaged_step_tensor (keeps the analytic tangent's omega == the update's)
-    wt = _solve_omega_bracketed(kdt1, kdt2, Dt, ft, eps_f) if (et_max2 > eps0 and Dt > 1.0e-6 * ft) else 0.0
-    wc = _solve_omega_bracketed(kdc1, kdc2, Dc, fc, eps_fc) if (kdc > 0.0 and Dc > 1.0e-6 * fc) else 0.0
+    wt = _solve_omega_bracketed(kdt1, kdt2, sigt_max, ft, eps_f) if (et_max2 > eps0 and sigt_max > 1.0e-6 * ft) else 0.0
+    wc = _solve_omega_bracketed(kdc1, kdc2, sigc_max, fc, eps_fc) if (kdc > 0.0 and sigc_max > 1.0e-6 * fc) else 0.0
 
     Ceff = consistent_tangent(state["sig_bar"], deps6, mp, state["kp"], hardening=True)
     if beta < 1.0:                                        # Duvaut-Lions blended effective tangent
@@ -1888,8 +1920,10 @@ def damaged_tangent_analytic(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
     dxs_deps = Ceff.T @ _dscalar_dsig(lambda s: _damage_drivers(np.linalg.eigvalsh(voigt_to_mat(s)), mp, As)[2], sig_bar)
     dac_deps = Ceff.T @ _dscalar_dsig(lambda s: alpha_compression(np.linalg.eigvalsh(voigt_to_mat(s))), sig_bar)
     Emax = np.outer(V[:, 2], V[:, 2]); Emin = np.outer(V[:, 0], V[:, 0])  # eigh ascending
-    dDt_deps = Ceff.T @ (_TENSOR_W6 * mat_to_voigt(Emax)) if Dt > 0.0 else np.zeros(6)
-    dDc_deps = -(Ceff.T @ (_TENSOR_W6 * mat_to_voigt(Emin))) if Dc > 0.0 else np.zeros(6)
+    # d(drive_max)/d(eps): the live eigenprojection ONLY while the channel advances its running max
+    # (P2g); frozen (zero) on unload so the -sig(x)d(omega) rank-update vanishes => secant tangent.
+    dDt_deps = Ceff.T @ (_TENSOR_W6 * mat_to_voigt(Emax)) if (Dt > 0.0 and t_loading) else np.zeros(6)
+    dDc_deps = -(Ceff.T @ (_TENSOR_W6 * mat_to_voigt(Emin))) if (Dc > 0.0 and c_loading) else np.zeros(6)
     dnorm_deps = (depl_deps.T @ (_TENSOR_W6 * depl)) / dnorm if dnorm > 1.0e-14 else np.zeros(6)
     # d(beta_c)/d(eps): beta_c = beta_c(sig_bar(eps), kp(eps)) depends on BOTH rho_bar(sig_bar) AND
     # qh2(kp), so a single composite micro-FD THROUGH the return map captures the full gradient (the
@@ -1924,16 +1958,18 @@ def damaged_tangent_analytic(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
         dkdt2 = dkdt1 = dkdc2 = dkdc1 = np.zeros(6)
 
     # omega via IFT on F(w) = (1-w)D - f exp(-(kd1+w kd2)/eps_f) = 0 ; H = dF/dw = D[(1-w)kd2/eps_f - 1]
+    # (P2g) D = the MONOTONE drive sigt_max/sigc_max; dDt_deps/dDc_deps are already zeroed on unload, so
+    # an unloading channel contributes d(omega)=0 (secant). On loading D == live drive => unchanged.
     if 0.0 < wt < 1.0:
-        Ht = Dt * ((1.0 - wt) * kdt2 / eps_f - 1.0)
-        dwt = (-(1.0 - wt) / Ht) * dDt_deps + (-(1.0 - wt) * Dt / (eps_f * Ht)) * dkdt1 \
-            + (-(1.0 - wt) * Dt * wt / (eps_f * Ht)) * dkdt2
+        Ht = sigt_max * ((1.0 - wt) * kdt2 / eps_f - 1.0)
+        dwt = (-(1.0 - wt) / Ht) * dDt_deps + (-(1.0 - wt) * sigt_max / (eps_f * Ht)) * dkdt1 \
+            + (-(1.0 - wt) * sigt_max * wt / (eps_f * Ht)) * dkdt2
     else:
         dwt = np.zeros(6)
     if 0.0 < wc < 1.0:
-        Hc = Dc * ((1.0 - wc) * kdc2 / eps_fc - 1.0)
-        dwc = (-(1.0 - wc) / Hc) * dDc_deps + (-(1.0 - wc) * Dc / (eps_fc * Hc)) * dkdc1 \
-            + (-(1.0 - wc) * Dc * wc / (eps_fc * Hc)) * dkdc2
+        Hc = sigc_max * ((1.0 - wc) * kdc2 / eps_fc - 1.0)
+        dwc = (-(1.0 - wc) / Hc) * dDc_deps + (-(1.0 - wc) * sigc_max / (eps_fc * Hc)) * dkdc1 \
+            + (-(1.0 - wc) * sigc_max * wc / (eps_fc * Hc)) * dkdc2
     else:
         dwc = np.zeros(6)
 
@@ -2099,22 +2135,21 @@ def run_p2f_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, Gc=5.0, As=2.0, ver
     res["F3_ok"] = bool(res["F3_stress_gap"] > 0.1 * fc                       # real beta_c clearly more ductile
                         and 0.0 < res["F3_bc_min"] <= res["F3_bc_max"] < 1.0)  # beta_c in (0,1) (~const in uniaxial comp)
 
-    # F4 [DIAGNOSTIC, REPORTED not gated] — full cyclic compression load->unload->reload. beta_c (Eq.50)
-    # supplies the correct compressive-damage RATE, but it does NOT by itself make the damage variable
-    # monotone: the oracle solves omega_c IMPLICITLY against the CURRENT effective stress every step, so
-    # an elastic UNLOAD (effective stress drops, history frozen) lets omega_c relax back ("heals"). A
-    # cyclic-correct response needs omega_c driven by the MONOTONE history (omega_c <- max over the path),
-    # a separate fix touching every driver + the committed state + the C++ kernel — the NEXT P2f slice.
-    # Reported here (the DT5 pattern) so the limitation is explicit, not hidden.
+    # F4 — full cyclic compression load->unload->reload. beta_c (Eq.50) supplies the correct compressive-
+    # damage RATE but does NOT by itself make the damage variable monotone. P2g drives omega_c with the
+    # MONOTONE running-max of the effective drive stress, so an elastic UNLOAD (drive drops, histories
+    # frozen) keeps omega_c FIXED (no healing) and the nominal stress unloads along the degraded secant.
+    # Now a real gate (was a reported diagnostic in #321).
     seg1 = np.linspace(0.0, -2.0e-3, 700)
     seg2 = np.linspace(-2.0e-3, -0.5e-3, 250)        # elastic unload
     seg3 = np.linspace(-0.5e-3, -4.0e-3, 1200)       # reload past the previous max
     cyc = np.concatenate([seg1, seg2[1:], seg3[1:]])
     dc = drive_uniaxial_compression_damaged(mp, cyc, Gc, lch, As=As, beta_c_on=True)
-    res["F4_wc_heals_on_unload"] = bool(np.min(np.diff(dc["wc"])) < -1.0e-6)   # True today (the next-slice gap)
+    res["F4_wc_heals_on_unload"] = bool(np.min(np.diff(dc["wc"])) < -1.0e-9)   # False now (monotone omega_c)
     res["F4_wc_peak"] = float(np.max(dc["wc"]))
+    res["F4_ok"] = bool(not res["F4_wc_heals_on_unload"] and res["F4_wc_peak"] > 0.1)
 
-    ok = res["F1_ok"] and res["F2_ok"] and res["F3_ok"]
+    ok = res["F1_ok"] and res["F2_ok"] and res["F3_ok"] and res["F4_ok"]
     res["PASS"] = bool(ok)
     if verbose:
         print(f"  E={E} nu={nu} fc={fc} ft={ft} Gc={Gc} As={As} Df={Df} lch={lch}")
@@ -2123,9 +2158,123 @@ def run_p2f_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, Gc=5.0, As=2.0, ver
               f"eff-monotone={res['F2_eff_monotone']} ({res['F2_ok']})")
         print(f"  F3 non-tautology: max stress gap (real beta_c vs beta_c=1)={res['F3_stress_gap']:.2f} MPa (>{0.1*fc:.1f}); "
               f"beta_c in [{res['F3_bc_min']:.3f},{res['F3_bc_max']:.3f}] ({res['F3_ok']})")
-        print(f"  F4 [DIAGNOSTIC] cyclic omega_c heals on unload = {res['F4_wc_heals_on_unload']} "
-              f"(wc_peak={res['F4_wc_peak']:.3f}; monotone-omega_c = the NEXT P2f slice)")
+        print(f"  F4 cyclic omega_c heals on unload = {res['F4_wc_heals_on_unload']} (=False; monotone-omega_c, P2g) "
+              f"wc_peak={res['F4_wc_peak']:.3f} ({res['F4_ok']})")
         print(f"  => P2f GATE {'PASS' if ok else 'FAIL'}")
+    return res
+
+
+# ===========================================================================
+# P2g — MONOTONE (no-heal) cyclic damage. omega_t/omega_c were re-solved every step against the LIVE
+# effective drive stress (sig_t_drive/sig_c_drive). The kappa-histories are already monotone (they
+# accumulate only when loading), so the live drive is the ONLY non-monotone input: on an elastic UNLOAD
+# the drive drops, F(0)=drive - f*exp(-kd1/eps_f) goes <=0, and the bracketed solve relaxes omega back
+# (the material spuriously HEALS — the #321 F4 diagnostic). CDPM2 states omega = omega(kappa_d): a
+# function of the MONOTONE history only. The fix tracks the running max of each channel's drive stress
+# (sigt_max/sigc_max) and solves omega against THAT, so omega is monotone-nondecreasing and the nominal
+# stress unloads along the degraded damage secant (1-omega)*sig_bar. On any MONOTONIC path max == live,
+# so the change is byte-identical to the pre-P2g drivers (DT1/DT2/P2e/P2f backbones are unaffected).
+# The analytic damaged tangent drops the -sig(x)d(omega) rank-update on an unloading channel (frozen
+# drive => d(omega)=0), so the unload tangent is the SPD damage secant D_dam:C_eff (well-conditioned,
+# contrast the INDEFINITE Tier-1 loading tangent of gate TD2).
+# ===========================================================================
+def run_p2g_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, Gc=5.0, As=2.0, verbose=True):
+    """P2g — monotone (no-heal) cyclic damage. Gates:
+      G1 tension load->unload: omega_t monotone (no heal) + secant unload (sig_nom == (1-wt)*sig_bar)
+      G2 tension reload BELOW the previous peak retraces the secant (omega_t frozen, no strength regain)
+      G3 compression load->unload: omega_c monotone (no heal) + secant unload (the F4 fix)
+      G4 omega never decreases across a tension->compression reversal (persistent crack, no cross-heal)
+      G5 reduce-to-monotonic: the single-step tensor update == the path driver on a monotonic path
+      G6 the UNLOAD damaged tangent is the SPD secant (analytic == numerical; -sig(x)d(omega) vanished)"""
+    mp = make_material(E, nu, fc, ft); lch = 50.0; res = {}
+
+    # ---- G1/G2 tension: load deep into softening, elastic-unload to half, reload past the previous peak
+    pk = 0.0012
+    nL, nU, nR = 600, 300, 600
+    tpath = np.concatenate([np.linspace(0.0, pk, nL),
+                            np.linspace(pk, 0.5 * pk, nU)[1:],            # elastic unload
+                            np.linspace(0.5 * pk, 1.5 * pk, nR)[1:]])     # reload past previous max
+    d = drive_damaged_unified(mp, tpath, Gf, Gc, lch, As)
+    wt, se, sn = d["wt"], d["sig_eff"], d["sig11"]
+    wt_peak = float(wt[nL - 1])
+    unl = slice(nL, nL + nU - 1)                                          # the unload window
+    res["G1_wt_min_diff"] = float(np.min(np.diff(wt)))                    # >= ~0 over the WHOLE path
+    res["G1_wt_peak"] = wt_peak
+    res["G1_secant_err"] = float(np.max(np.abs(sn[unl] - (1.0 - wt_peak) * se[unl])) / ft)
+    res["G1_ok"] = bool(res["G1_wt_min_diff"] > -1.0e-9 and 0.3 < wt_peak < 0.999
+                        and res["G1_secant_err"] < 1.0e-9)
+    rel = slice(nL + nU - 1, nL + nU - 1 + 200)                          # reload, safely below the peak
+    res["G2_wt_frozen"] = float(np.max(wt[rel]) - np.min(wt[rel]))        # ~0 (omega frozen on reload<peak)
+    res["G2_ok"] = bool(res["G2_wt_frozen"] < 1.0e-9)
+
+    # ---- G3 compression: load past the damage onset into softening, elastic-unload (the F4 fix). The
+    #      unload stays COMPRESSIVE (a small dEps; a large unload would elastically overshoot the big
+    #      residual plastic strain into tension, where the stress routes through the (1-wc) -> (1-wt)
+    #      channel and the single-channel secant identity no longer applies).
+    pc = -0.06
+    cpath = np.concatenate([np.linspace(0.0, pc, 1500), np.linspace(pc, pc + 0.002, 400)[1:]])
+    dc = drive_damaged_unified(mp, cpath, Gf, Gc, lch, As)
+    wc, sec, snc = dc["wc"], dc["sig_eff"], dc["sig11"]
+    wc_peak = float(wc[1500 - 1])
+    unlc = slice(1500, 1500 + 399)
+    res["G3_wc_min_diff"] = float(np.min(np.diff(wc)))
+    res["G3_wc_peak"] = wc_peak
+    res["G3_secant_err"] = float(np.max(np.abs(snc[unlc] - (1.0 - wc_peak) * sec[unlc])) / fc)
+    res["G3_ok"] = bool(res["G3_wc_min_diff"] > -1.0e-9 and 0.1 < wc_peak < 0.999
+                        and res["G3_secant_err"] < 1.0e-9)
+
+    # ---- G4 monotone omega across a tension->compression reversal (the crack persists, no cross-heal)
+    rpath = np.concatenate([np.linspace(0.0, 0.0009, 400), np.linspace(0.0009, -0.02, 800)[1:]])
+    dr4 = drive_damaged_unified(mp, rpath, Gf, Gc, lch, As)
+    res["G4_wt_min_diff"] = float(np.min(np.diff(dr4["wt"])))
+    res["G4_wc_min_diff"] = float(np.min(np.diff(dr4["wc"])))
+    res["G4_ok"] = bool(res["G4_wt_min_diff"] > -1.0e-9 and res["G4_wc_min_diff"] > -1.0e-9)
+
+    # ---- G5 reduce-to-monotonic: chain the single-step tensor update (the C++ setTrialStrain contract)
+    #      along the recorded uniaxial-stress monotonic tension path; nominal axial == the path driver.
+    mono = np.linspace(0.0, 0.0009, 500)
+    dm = drive_damaged_unified(mp, mono, Gf, Gc, lch, As)
+    st = make_damage_state(mp); chain = []
+    for k in range(len(mono)):
+        eps_t = np.array([mono[k], dm["eps_lat"][k], dm["eps_lat"][k], 0.0, 0.0, 0.0])
+        s, st, _ = damaged_step_tensor(st, eps_t - st["eps"], mp, Gf, Gc, lch, As)
+        chain.append(s[0])
+    res["G5_maxdiff"] = float(np.max(np.abs(np.array(chain) - dm["sig11"])))
+    res["G5_ok"] = bool(res["G5_maxdiff"] < 1.0e-9)
+
+    # ---- G6 the UNLOAD tangent is the SPD damage secant. Build a tensile-damaged committed state on a
+    #      uniaxial-STRAIN path (no apex fragility), take one elastic-UNLOAD step, and check the analytic
+    #      damaged tangent == the numerical central difference AND its symmetric part is SPD (lambda_min>0)
+    #      — i.e. the -sig(x)d(omega) rank-update vanished (frozen omega) leaving D_dam:C_eff.
+    st = make_damage_state(mp)
+    for e in np.linspace(0.0, 0.0009, 400):
+        st = damaged_step_tensor(st, np.array([e, 0, 0, 0, 0, 0]) - st["eps"], mp, Gf, Gc, lch, As)[1]
+    deps_unl = np.array([-2.0e-5, 0.0, 0.0, 0.0, 0.0, 0.0])
+    _, _, info = damaged_step_tensor(st, deps_unl, mp, Gf, Gc, lch, As)
+    Ca = damaged_tangent_analytic(st, deps_unl, mp, Gf, Gc, lch, As)
+    Cn = damaged_consistent_tangent(st, deps_unl, mp, Gf, Gc, lch, As)
+    res["G6_wt_at_unload"] = float(info["wt"])
+    res["G6_tangent_relerr"] = float(np.max(np.abs(Ca - Cn)) / (np.max(np.abs(Cn)) + 1.0e-30))
+    res["G6_lambda_min"] = float(np.min(np.linalg.eigvalsh(0.5 * (Ca + Ca.T))))
+    res["G6_ok"] = bool(info["wt"] > 0.3 and res["G6_tangent_relerr"] < 1.0e-6 and res["G6_lambda_min"] > 0.0)
+
+    ok = (res["G1_ok"] and res["G2_ok"] and res["G3_ok"] and res["G4_ok"]
+          and res["G5_ok"] and res["G6_ok"])
+    res["PASS"] = bool(ok)
+    if verbose:
+        print(f"  E={E} nu={nu} fc={fc} ft={ft} Gf={Gf} Gc={Gc} As={As} lch={lch}")
+        print(f"  G1 tension no-heal: wt_peak={wt_peak:.3f} min d(wt)={res['G1_wt_min_diff']:.1e} "
+              f"secant_err={res['G1_secant_err']:.1e} ({res['G1_ok']})")
+        print(f"  G2 reload<peak omega frozen: span={res['G2_wt_frozen']:.1e} ({res['G2_ok']})")
+        print(f"  G3 compression no-heal (F4 fix): wc_peak={wc_peak:.3f} min d(wc)={res['G3_wc_min_diff']:.1e} "
+              f"secant_err={res['G3_secant_err']:.1e} ({res['G3_ok']})")
+        print(f"  G4 reversal monotone: min d(wt)={res['G4_wt_min_diff']:.1e} min d(wc)={res['G4_wc_min_diff']:.1e} "
+              f"({res['G4_ok']})")
+        print(f"  G5 single-step == path driver (monotonic): maxdiff={res['G5_maxdiff']:.1e} ({res['G5_ok']})")
+        print(f"  G6 unload tangent SPD secant: wt={res['G6_wt_at_unload']:.3f} "
+              f"analytic-vs-FD relerr={res['G6_tangent_relerr']:.1e} lambda_min={res['G6_lambda_min']:.3e} "
+              f"({res['G6_ok']})")
+        print(f"  => P2g GATE {'PASS' if ok else 'FAIL'}")
     return res
 
 
@@ -2708,6 +2857,12 @@ if __name__ == "__main__":
     p2f = run_p2f_gate(verbose=True)
     print("-" * 74)
     print(f"P2f: {'PASS' if p2f['PASS'] else 'FAIL'}")
+    print("=" * 74)
+    print("LadrunoConcrete3D P2g gate — monotone (no-heal) cyclic damage + SPD unload secant tangent")
+    print("=" * 74)
+    p2g = run_p2g_gate(verbose=True)
+    print("-" * 74)
+    print(f"P2g: {'PASS' if p2g['PASS'] else 'FAIL'}")
     print("=" * 74)
     print("LadrunoConcrete3D P3 Tier-2 IMPL-EX gate — explicit extrapolated stress + SPD secant tangent")
     print("=" * 74)

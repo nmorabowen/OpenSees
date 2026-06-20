@@ -278,13 +278,37 @@ def test_p2f_gate():
     the real beta_c changes the post-peak stress by tens of MPa vs beta_c=1 and is a genuine
     state-dependent factor in (0,1). (The analytic damaged tangent now carries the d beta_c/d eps term,
     re-verified by test_p2e_analytic_damaged_tangent_gate; the crack-band Gc wiring re-verified by
-    test_p2b_compression_damage_gate. F4 — cyclic omega_c monotonicity / no-healing on unload — is a
-    REPORTED diagnostic: it needs a monotone-omega_c history fix, the NEXT P2f slice.)"""
+    test_p2b_compression_damage_gate. F4 — cyclic omega_c does NOT heal on unload — is now a real gate
+    (the monotone-omega_c drive fix, P2g; see test_p2g_monotone_damage_gate).)"""
     r = ref.run_p2f_gate(verbose=False)
     assert r["F1_ok"] and abs(r["F1_bc_peak"] - r["F1_bc_expect"]) < 1.0e-12 and 0.0 < r["F1_bc_peak"] < 1.0
     assert r["F2_ok"] and r["F2_peak_err"] < 0.03 and r["F2_softens"] and r["F2_eff_monotone"]
     assert r["F3_ok"] and r["F3_stress_gap"] > 0.1 * 30.0   # tens of MPa: real beta_c clearly more ductile
     assert 0.0 < r["F3_bc_min"] <= r["F3_bc_max"] < 1.0
+    assert r["F4_ok"] and not r["F4_wc_heals_on_unload"]    # P2g: monotone omega_c (no healing on unload)
+    assert r["PASS"]
+
+
+def test_p2g_monotone_damage_gate():
+    """P2g: MONOTONE (no-heal) cyclic damage. omega_t/omega_c were re-solved every step against the LIVE
+    effective drive stress; the kappa-histories are already monotone, so on an elastic UNLOAD the live
+    drive drops and the bracketed solve relaxes omega back (the material spuriously HEALS — #321's F4
+    diagnostic). The fix drives each omega with the running MAX of its channel's drive stress, so
+    omega = omega(kappa_d) is monotone and the nominal stress unloads along the degraded damage secant
+    (1-omega)*sig_bar. On any monotonic path max == live, so this is byte-identical to the pre-P2g
+    drivers (DT1/DT2/P2e/P2f are unaffected). G1 tension no-heal + secant unload; G2 reload below the
+    previous peak retraces the secant (omega frozen); G3 compression no-heal + secant unload (the F4
+    fix); G4 omega never decreases across a tension->compression reversal (persistent crack, no
+    cross-heal); G5 the single-step tensor update (the C++ setTrialStrain contract) == the path driver on
+    a monotonic path; G6 the UNLOAD damaged tangent is the SPD secant D_dam:C_eff (analytic == numerical
+    central diff; the -sig(x)d(omega) rank-update vanished on the frozen channel)."""
+    r = ref.run_p2g_gate(verbose=False)
+    assert r["G1_ok"] and r["G1_wt_min_diff"] > -1.0e-9 and r["G1_secant_err"] < 1.0e-9 and 0.3 < r["G1_wt_peak"] < 0.999
+    assert r["G2_ok"] and r["G2_wt_frozen"] < 1.0e-9
+    assert r["G3_ok"] and r["G3_wc_min_diff"] > -1.0e-9 and r["G3_secant_err"] < 1.0e-9 and r["G3_wc_peak"] > 0.1
+    assert r["G4_ok"] and r["G4_wt_min_diff"] > -1.0e-9 and r["G4_wc_min_diff"] > -1.0e-9
+    assert r["G5_ok"] and r["G5_maxdiff"] < 1.0e-9
+    assert r["G6_ok"] and r["G6_tangent_relerr"] < 1.0e-6 and r["G6_lambda_min"] > 0.0 and r["G6_wt_at_unload"] > 0.3
     assert r["PASS"]
 
 

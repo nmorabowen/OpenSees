@@ -187,6 +187,7 @@ static void run_oracle_dump(const char* path) {
         for (int i = 0; i < 6; ++i) fh >> in.sigEff[i];
         fh >> in.kp;
         fh >> in.et_max >> in.kdt1 >> in.kdt2 >> in.kdc >> in.kdc1 >> in.kdc2;
+        fh >> in.sigtMax >> in.sigcMax;   // P2g monotone-drive history (8-field line)
         double deps[6], sigO[6];
         for (int i = 0; i < 6; ++i) fh >> deps[i];
         for (int i = 0; i < 6; ++i) fh >> sigO[i];
@@ -249,6 +250,7 @@ static void run_oracle_dump(const char* path) {
         for (int i = 0; i < 6; ++i) fh >> in.sigEff[i];
         fh >> in.kp;
         fh >> in.et_max >> in.kdt1 >> in.kdt2 >> in.kdc >> in.kdc1 >> in.kdc2;
+        fh >> in.sigtMax >> in.sigcMax;   // P2g monotone-drive history (8-field line)
         fh >> in.wt >> in.wc >> in.dwt >> in.dwc >> in.dt_n;
         for (int i = 0; i < 6; ++i) fh >> in.depl[i];
         double dt; fh >> dt;
@@ -283,6 +285,7 @@ static void run_oracle_dump(const char* path) {
         for (int i = 0; i < 6; ++i) fh >> in.sigEff[i];
         fh >> in.kp;
         fh >> in.et_max >> in.kdt1 >> in.kdt2 >> in.kdc >> in.kdc1 >> in.kdc2;
+        fh >> in.sigtMax >> in.sigcMax;   // P2g monotone-drive history (8-field line)
         double deps[6], sigVisc[6], sigInv[6];
         for (int i = 0; i < 6; ++i) fh >> deps[i];
         for (int i = 0; i < 6; ++i) fh >> sigVisc[i];

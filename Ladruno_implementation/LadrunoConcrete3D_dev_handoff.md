@@ -2,7 +2,7 @@
 title: "LadrunoConcrete3D — developer / C++-implementer handoff guide"
 project: Ladruno
 type: handoff guide
-status: SHIPPED to `ladruno` — kernel (return map + analytic damaged tangent, g++-verified) + nDMaterial wrapper (classTag 33017) + ALL dimensional views (3D + PlaneStrain/AxiSymmetric/PlateFiber/PlaneStress, #299) + P3 Tier-2 IMPL-EX (oracle #301 → review-hardened #304 → C++ kernel port + `-implex` wrapper #309) + P3 Duvaut–Lions `-eta` (oracle #316 → C++ kernel port + `-eta` wrapper #318) + P2f cyclic `β_c` ORACLE + C++ kernel port (faithful CDPM2 compressive ductility, g++-verified, #321). NEXT = monotone-`ω_c` cyclic damage → Tier-3 explicit demo. See §0 / §6b for the current-state handoff.
+status: SHIPPED to `ladruno` — kernel (return map + analytic damaged tangent, g++-verified) + nDMaterial wrapper (classTag 33017) + ALL dimensional views (3D + PlaneStrain/AxiSymmetric/PlateFiber/PlaneStress, #299) + P3 Tier-2 IMPL-EX (oracle #301 → review-hardened #304 → C++ kernel port + `-implex` wrapper #309) + P3 Duvaut–Lions `-eta` (oracle #316 → C++ kernel port + `-eta` wrapper #318) + P2f cyclic `β_c` ORACLE + C++ kernel port (faithful CDPM2 compressive ductility, g++-verified, #321) + P2g monotone-`ω` no-heal cyclic damage (oracle + C++ kernel + wrapper, secant unload + SPD unload tangent, #325). NEXT = DT5 compression→tension temper → Tier-3 explicit demo. See §0 / §6b for the current-state handoff.
 related:
   - "[[31_ladruno_concrete3d_adr]]"          # the ADR (decision record)
   - "[[project_ladruno_concrete3d]]"          # the agent-memory pointer
@@ -94,11 +94,26 @@ off `ladruno` (fast auto-merge ⇒ fresh branch each time; predict the next PR n
   the C1/C2/P2e re-gating, the `∂β_c/∂ε` analytic-tangent term (composite micro-FD through the return map
   — the kernel mirrors it), and the KEY finding that the cyclic story needs a separate monotone-`ω_c` fix.
 
+**SHIPPED (P2g monotone-`ω` no-heal cyclic damage — oracle + C++ kernel + wrapper, #325):**
+- **P2g monotone-`ω` (#325)** — `ω_t`/`ω_c` were re-solved each step against the LIVE effective drive
+  stress; the inelastic histories `κd*` are already monotone, so the live drive was the ONLY non-monotone
+  input — on elastic unload it drops with the histories frozen and the bracketed solve relaxed `ω` back
+  (the crack HEALED, the #321 F4 diagnostic). Fix: drive each `ω` with the running MAX of its channel's
+  drive stress (`sigt_max`/`sigc_max`, two new committed scalars in the kernel `State` AND the wrapper,
+  serialized `LC3D_NDATA`+2), so `ω = ω(κ_d)` is monotone-nondecreasing, the unload follows the degraded
+  secant `(1-ω)σ̄`, and the analytic damaged tangent drops the `−σ⊗∂ω` rank-update on an unloading channel
+  (per-channel "advancing the max" flag) ⇒ the **SPD secant** `D_dam:C_eff` (vs the INDEFINITE loading
+  tangent TD2). On any monotonic path `max == live` ⇒ **byte-identical** to pre-P2g (DT1/DT2/P2e/P2f and
+  every monotonic g++ case unchanged). Oracle `run_p2g_gate` G1-G6 (tension no-heal + secant unload; reload
+  retraces; compression no-heal; reversal monotone; reduce-to-monotonic; SPD unload tangent) + pytest
+  `test_p2g_monotone_damage_gate` + g++ **discriminating** `dmg_cyclic_unload` byte-check (`nom_sig_err=0`;
+  a live-drive kernel would heal and diverge) + element `test_cyclic_no_heal_unload`. The F4 diagnostic is
+  now a real gate (`F4_ok`, no heal).
+
 **NEXT INCREMENTS (each its own oracle-first PR):**
-- **Monotone-`ω_c` cyclic damage** — drive `ω_c` by the monotone history (`ω_c ← max` over the path) so
-  it does NOT heal on elastic unload (the P2f F4 diagnostic); touches every driver + the committed state
-  + the C++ kernel.
-- **Compression→tension temper (DT5)** + multiaxial-damage apportioning + plastic-dissipation regularization.
+- **Compression→tension temper (DT5)** — the literal CDPM2 `κ̇_dt=ε̃̇` (Eq.43, no `(1−α_c)`) pre-damages a
+  tension reload after compression to ~0; resolve the `α_t`-weighting question (literal-CDPM2 vs a tensile-
+  plastic-strain projection) + multiaxial-damage apportioning + plastic-dissipation regularization.
 - **Tier-3 explicit demo** — `do_tangent=false`, no global tangent ⇒ softening is a non-issue; pair with
   `CentralDifferenceLadruno`/`ExplicitBathe`. Mostly a validation/demo increment (the kernel already runs
   with `doTangent=false`).
@@ -515,7 +530,8 @@ P0 surface ✓ → P1 return-map/hardening/tangent ✓ → **C++ kernel return m
 views ✓ (#299)** → **P3 robustness: Tier-2 IMPL-EX ✓ (oracle #301 → review #304 → C++/`-implex` #309;
 freezes plastic state + damage)** → **Duvaut–Lions `-eta` ✓ (oracle #316 → C++ kernel + `-eta` wrapper
 #318, the rate term, §0)** → **P2f cyclic `β_c` ✓ (oracle + C++ kernel port #321, faithful CDPM2 compressive ductility, §6b)** →
-**NEXT: monotone-`ω_c` cyclic damage → Tier-3 explicit demo** → P4 finite-strain (`LogStrain`, clean — already free via the
+**P2g monotone-`ω` no-heal ✓ (oracle + C++ kernel + wrapper #325, secant unload + SPD unload tangent, §0)** →
+**NEXT: DT5 compression→tension temper → Tier-3 explicit demo** → P4 finite-strain (`LogStrain`, clean — already free via the
 wrapper) → P5 confined-fiber view (§4.6 hoop-spring condensation, "Mander by mechanism") → P6
 auto-hybrid switch.
 
@@ -527,4 +543,5 @@ stress · **#290** guide · **#291** P3b C++ damaged tangent · **#292** nDMater
 **#293** handout · **#294** wrapper convention tests · **#299** Phase-2 reduced views · **#301** P3
 IMPL-EX oracle · **#304** IMPL-EX review fixes · **#309** IMPL-EX C++ port + `-implex` · **#316**
 Duvaut–Lions `-eta` oracle · **#318** Duvaut–Lions `-eta` C++ kernel port + `-eta` wrapper · **#321**
-P2f cyclic `β_c` oracle + C++ kernel port (faithful CDPM2 compressive ductility).
+P2f cyclic `β_c` oracle + C++ kernel port (faithful CDPM2 compressive ductility) · **#325** P2g
+monotone-`ω` no-heal cyclic damage (oracle + C++ kernel + wrapper; secant unload + SPD unload tangent).
