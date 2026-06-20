@@ -194,7 +194,7 @@ features:
     pr: 295
     feature_class: integrator
     required_tiers: [dynamics-battery]
-    pytest: tests/test_centralDifferenceSMS_integrator.py   # SMS-1..4 Zone-A (construct/run, tiny-element stability win, no-op below target, dtor-restore). FIDELITY+robustness: tests/test_massScaling_validation.py — Tier 0 (T-ACC reference-match, T-MODAL (s-1)m magnitude+monotone sweep, T-HRZ rowsum-unsafe; ADR 37 #303) + Tier 1 (T-CAP -maxAddedMass cap fires w/ real frac, T-ENERGY pinned injected-KE closure, T-SELFREP self-report skip, T-CONSTR v1 constrained-node disclosure)
+    pytest: tests/test_centralDifferenceSMS_integrator.py   # SMS-1..4 Zone-A (construct/run, tiny-element stability win, no-op below target, dtor-restore). FIDELITY+robustness: tests/test_massScaling_validation.py — Tier 0 (T-ACC reference-match, T-MODAL (s-1)m magnitude+monotone sweep, T-HRZ rowsum-unsafe; ADR 37 #303) + Tier 1 (T-CAP -maxAddedMass cap fires w/ real frac, T-ENERGY pinned injected-KE closure, T-SELFREP self-report skip, T-CONSTR v1 constrained-node disclosure) + Tier 2 T-ZONEB tests/test_massScaling_validation_zoneb.py (Zone-B gmsh refined 3D bar: necessity + df1<1% + period/peak fidelity; nightly)
     tcl: WAIVED(integrator; Python-first feature, Tcl dispatch wired via OpenSeesCommands)
     core_files:                                    # registration sites (dispatch wiring)
       - SRC/classTags.h
