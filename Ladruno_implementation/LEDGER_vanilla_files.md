@@ -143,3 +143,4 @@ and re-verify.
 | Vanilla file | Upstreamable fix | Fork PR |
 |---|---|---|
 | Lagrange quad/tri elements (`SRC/element/...`) | Fix `setResponse` NdMaterialOutput tags so MPCO sees material output | [#7](https://github.com/nmorabowen/OpenSees/pull/7) |
+| `SRC/interpreter/PythonStream.h` | `// Ladruno`: format-string bug in `err_out` — the already-formatted message was passed as the *format* to `PySys_FormatStderr(msg.c_str())`, so any literal `%` in an `opserr` message (e.g. `"% of model mass"`, `"exceeds -maxAddedMass cap 5%"`) was consumed as a bogus printf conversion and silently dropped/garbled under **openseespy** (Tcl `StandardStream` path unaffected). Fix: `PySys_FormatStderr("%s", msg.c_str())`. Surfaced by the SMS cap-warning validation (T-CAP). | _pending (mass-scaling validation PR)_ |

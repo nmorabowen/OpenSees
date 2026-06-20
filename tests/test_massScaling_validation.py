@@ -312,3 +312,280 @@ def test_hrz_rowsum_unsafe_on_consistent_beam():
     assert math.isfinite(u_trust_diag) and u_trust_diag < 1.0, \
         "running at 0.9*diagonal dt_cr (%.5g) should be stable, got %r" \
         % (0.9 * dt_diag, u_trust_diag)
+
+
+# ==========================================================================
+# Tier 1 — robustness: convert the Review-3 fixes from one-time probes/warnings
+# into asserted regression tests. Plan §"Tier 1". Each warning reaches stderr via
+# opserr -> StandardStream -> std::cerr (fd 2), so `capfd` (NOT capsys, which only
+# sees Python-level sys.stderr) is the capture fixture.
+# ==========================================================================
+import re
+
+
+def _prime_sms(integrator_args, dt=1.0e-4):
+    """Run ONE explicit step so CentralDifferenceSMS::domainChanged fires (the
+    scaling pass + all its warnings happen there). Returns analyze()'s code."""
+    ops.system("Diagonal")
+    ops.test("NormDispIncr", 1e-12, 1)
+    ops.algorithm("Linear")
+    ops.integrator(*integrator_args)
+    ops.analysis("Transient")
+    return ops.analyze(1, dt)
+
+
+_ADDED_RE = re.compile(r"added mass\s+([0-9.eE+\-]+)% of model mass")
+
+
+# --------------------------------------------------------------------------
+# T-CAP: the -maxAddedMass cap actually fires, and the reported fraction is the
+#   REAL (element-mass-denominator) value, not the dead 0% of the SMS-CAP-DEAD bug.
+#   Control: the SAME over-scaled model under a LARGE cap must NOT warn -> proves
+#   the cap compares (not always-warns) and the denominator is non-zero.
+# --------------------------------------------------------------------------
+def test_cap_warning_fires_with_real_fraction(capfd):
+    # aggressive target -> large added mass (well past any small cap)
+    _model()
+    capfd.readouterr()                                   # drop setup chatter
+    _prime_sms((SMS, 0.02, "-maxAddedMass", 0.001))      # 0.1% cap, ~exceeded
+    err_small = capfd.readouterr().err
+
+    _model()
+    capfd.readouterr()
+    # -verbose so the info line prints even when the cap is NOT tripped (the info line is
+    # otherwise emitted only on over/self-report/mismatch) -> the control can positively
+    # assert SMS ran and computed a sub-cap fraction.
+    _prime_sms((SMS, 0.02, "-maxAddedMass", 50.0, "-verbose"))   # 5000% cap, never exceeded
+    err_big = capfd.readouterr().err
+
+    # NB the asserted substring carries the LEADING '%' ("% exceeds ...") on purpose: that
+    # '%' straddles the X<<"% exceeds"<<cap message chunks and is exactly what the openseespy
+    # PythonStream format-string bug used to eat. So this leg doubly guards (a) the cap fires
+    # and (b) the '%'-roundtrip survives -> a PythonStream regression fails HERE, localized.
+    assert "% exceeds -maxAddedMass cap" in err_small, (
+        "the -maxAddedMass cap WARNING (with its leading '%%') must fire when added mass "
+        "exceeds a 0.1%% cap; stderr was:\n%s" % err_small
+    )
+    # positive control: under a 5000%% cap SMS still RUNS and reports a (sub-cap) fraction
+    # ('% of model mass' line present) but does NOT trip the cap. Proves the cap COMPARES
+    # (not always-warns) AND that scaling happened (not a silent no-op that trivially passes
+    # the 'not in' check).
+    assert _ADDED_RE.search(err_big), (
+        "under a 5000%% cap SMS must still run and report 'added mass X%% of model mass' "
+        "(else the control is a vacuous silence); stderr:\n%s" % err_big
+    )
+    assert "exceeds -maxAddedMass cap" not in err_big, (
+        "the cap must NOT warn under a 5000%% cap (else it always-warns and the test is "
+        "vacuous); stderr was:\n%s" % err_big
+    )
+    # the reported added-mass % must be the REAL element-mass-denominator value, not the
+    # dead 0% (SMS-CAP-DEAD: nodal getMass() is 0 on -rho models -> a 0/0 -> 0% cap).
+    m = _ADDED_RE.search(err_small)
+    assert m is not None, "no 'added mass X%% of model mass' line found:\n%s" % err_small
+    frac_pct = float(m.group(1))
+    assert frac_pct > 0.1, (
+        "reported added-mass fraction %.4g%% must be the real (non-zero) value above the "
+        "0.1%% cap; a 0%% here would be the SMS-CAP-DEAD bug (dead nodal denominator)"
+        % frac_pct
+    )
+
+
+# --------------------------------------------------------------------------
+# T-ENERGY: energy closes under scaling. The EnergyBalanceRecorder's KE sums BOTH
+#   element mass AND nodal mass (EnergyBalanceKernel addNodeEnergy -> node->getMass),
+#   and SMS injects its fictitious mass at the NODES -> the recorder's KE picks up
+#   exactly the augmentation the leap-frog M^-1 uses. Two legs:
+#   (1) undamped free vibration: total mechanical energy KE+IE stays conserved under
+#       SMS (closure: recorder mass == integrator mass);
+#   (2) the SMS run's conserved energy level is HIGHER than the unscaled run's, because
+#       the recorder sees the SCALED nodal mass (a recorder blind to nodal mass would
+#       tie them -> leg 2 fails: non-vacuous).
+# --------------------------------------------------------------------------
+def _energy_run(integrator_args, dt, nsteps, v0, efile):
+    _model()
+    for n in FREE:
+        ops.setNodeVel(n, 1, v0, "-commit")              # seed KE in mode-rich state
+    ops.recorder("EnergyBalance", "-file", efile, "-time")
+    ops.system("Diagonal")
+    ops.test("NormDispIncr", 1e-12, 1)
+    ops.algorithm("Linear")
+    ops.integrator(*integrator_args)
+    ops.analysis("Transient")
+    for _ in range(nsteps):
+        if ops.analyze(1, dt) != 0:
+            break
+    # injected nodal x-mass per free node (baseline is 0 on the -rho chain, so whatever
+    # nodeMass reads here is purely the SMS injection). Read BEFORE remove/wipe.
+    inj = {nn: ops.nodeMass(nn, 1) for nn in FREE}
+    ops.remove("recorders")                              # flush/close
+    rows = []
+    with open(efile) as fh:
+        for line in fh:
+            v = line.split()
+            if v:
+                rows.append([float(x) for x in v])
+    return rows, inj
+
+
+def test_energy_closes_under_scaling(tmp_path):
+    dt, n, v0 = 0.008, 300, 2.0
+    r_sms, inj_sms = _energy_run((SMS, 0.016), dt, n, v0, str(tmp_path / "sms.txt"))
+    r_cdl, inj_cdl = _energy_run((CDL,), dt, n, v0, str(tmp_path / "cdl.txt"))
+    assert len(r_sms) > 20 and len(r_cdl) > 20, "too few energy rows recorded"
+    assert all(v == 0.0 for v in inj_cdl.values()), "unscaled CDL must inject NO nodal mass"
+
+    # (1) closure: KE+IE conserved under SMS (recorder mass consistent with the
+    #     integrator's scaled M). cols (with -time): time KE IE DW ULW RES ERR%
+    mech_sms = [row[1] + row[2] for row in r_sms]
+    e_mean = sum(mech_sms) / len(mech_sms)
+    drift = (max(mech_sms) - min(mech_sms)) / e_mean
+    assert max(row[2] for row in r_sms) > 0.05 * r_sms[0][1], "no KE<->IE exchange (dead IE)"
+    # < 5% is the plan's fidelity tolerance; this is ordinary explicit discretization, NOT
+    # non-closure. A KE inconsistent with the integrator's (scaled) mass does not merely
+    # drift — it accumulates without bound; the magnitude check below is what proves the
+    # recorder actually reads the scaled nodal mass.
+    assert drift < 0.05, (
+        "SMS mechanical-energy drift %.3f%% (expect < 5%%) — gross non-closure (KE read "
+        "against the wrong mass) would blow up here, not merely drift" % (100 * drift)
+    )
+
+    # (2) PINNED magnitude (not a loose inequality): undamped free vibration conserves KE+IE
+    #     at its initial value E0 = 1/2 sum(m_i v_i^2). Seeding only x-velocity v0, the SMS
+    #     run's conserved level exceeds the unscaled run's by EXACTLY the injected nodal KE,
+    #     1/2 v0^2 sum(injected m_x), IFF the recorder reads the scaled nodal mass. A recorder
+    #     blind to nodal mass predicts 0 uplift -> fails; a mis-scaled mass -> wrong magnitude.
+    e_sms = sum(mech_sms) / len(mech_sms)
+    e_cdl = sum(row[1] + row[2] for row in r_cdl) / len(r_cdl)
+    pred_uplift = 0.5 * v0 * v0 * sum(inj_sms.values())
+    assert pred_uplift > 0.05 * e_cdl, (
+        "test weak: predicted injected-KE uplift %.4g is <5%% of the unscaled energy %.4g — "
+        "pick a more aggressive dtTarget" % (pred_uplift, e_cdl)
+    )
+    rel = abs((e_sms - e_cdl) - pred_uplift) / pred_uplift
+    assert rel < 0.15, (
+        "SMS conserved energy uplift (e_sms-e_cdl)=%.4g must match the analytic injected KE "
+        "%.4g within 15%% (got %.1f%%); off-magnitude => recorder mis-reads the scaled nodal "
+        "mass, zero => blind to it" % (e_sms - e_cdl, pred_uplift, 100 * rel)
+    )
+
+
+# --------------------------------------------------------------------------
+# T-SELFREP: an element whose stability bound is MASS-INDEPENDENT (self-reported,
+#   e.g. a bipenalty LadrunoKinematicCoupling: dt = 2*sqrt(m_p/k)) cannot be helped
+#   by adding nodal mass, so SMS must SKIP it (nSelfReport warning) while a normal
+#   eigensolve element in the same model IS scaled.
+# --------------------------------------------------------------------------
+def _selfrep_model(coupling_dtcr):
+    """3D model: a massed reference R + a massless slave tied by a bipenalty RBE2
+    (self-reports coupling_dtcr), plus a separate tiny stiff truss that SMS scales."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 6)
+    # self-reporting coupling (test-9 pattern: massed R, massless slave)
+    ops.node(1, 0.0, 0.0, 0.0); ops.mass(1, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0)
+    ops.node(2, 1.0, 0.0, 0.0, "-ndf", 3)                # free massless 3-DOF slave
+    ops.element("LadrunoKinematicCoupling", 1, 1, 1, 2,
+                "-k", 1.0e7, "-bipenalty", "-dtcr", coupling_dtcr)
+    # scalable normal element: a short 3-DOF truss (dt_e ~ 1e-3 << dtTarget) with -rho.
+    # Use -ndf 3 nodes so the element mass is non-singular (a 6-DOF truss has zero
+    # rotational mass -> elementCriticalDt's generalized eigensolve can't size it -> it
+    # would be skipped, not scaled).
+    ops.node(3, 0.0, 1.0, 0.0, "-ndf", 3); ops.fix(3, 1, 1, 1)
+    ops.node(4, 0.1, 1.0, 0.0, "-ndf", 3); ops.fix(4, 0, 1, 1)
+    ops.uniaxialMaterial("Elastic", 1, 1.0e4)            # c=100, L=0.1 -> dt_e~1e-3
+    ops.element("Truss", 2, 3, 4, 1.0, 1, "-rho", 1.0)
+    ops.constraints("Transformation")
+    ops.numberer("Plain")
+
+
+def _truss_only_dt_e():
+    """The truss's element-pencil step in isolation (no coupling), to GUARD that the
+    fixture's truss really is sub-target on this platform (a drift above dtTarget would
+    make it skipped, not scaled, and muddy the self-report assertions)."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    ops.node(3, 0.0, 1.0, 0.0); ops.fix(3, 1, 1, 1)
+    ops.node(4, 0.1, 1.0, 0.0); ops.fix(4, 0, 1, 1)
+    ops.uniaxialMaterial("Elastic", 1, 1.0e4)
+    ops.element("Truss", 2, 3, 4, 1.0, 1, "-rho", 1.0)
+    ops.constraints("Transformation"); ops.numberer("Plain")
+    ops.system("Diagonal"); ops.test("NormDispIncr", 1e-12, 1); ops.algorithm("Linear")
+    ops.integrator(CDL, "-cfl"); ops.analysis("Transient")
+    ops.analyze(1, 1e-6)
+    return ops.criticalTimeStep()
+
+
+def test_selfreport_element_skipped_normal_scaled(capfd):
+    dtcr = 1.0e-3
+    dtTarget = 0.01                                       # > coupling bound AND > truss dt_e
+    dt_e = _truss_only_dt_e()
+    assert 0.0 < dt_e < dtTarget, (
+        "fixture guard: the scalable truss's dt_e=%.4g must be in (0, dtTarget=%.4g) so SMS "
+        "scales it; a platform drift here muddies the test, not the feature" % (dt_e, dtTarget)
+    )
+    _selfrep_model(dtcr)
+    capfd.readouterr()
+    _prime_sms((SMS, dtTarget, "-verbose"), dt=2.0e-4)    # safe sub-bound step
+    err = capfd.readouterr().err
+
+    assert "MASS-INDEPENDENT (self-reported)" in err, (
+        "the self-report SKIP warning must fire for the bipenalty coupling; stderr:\n%s" % err
+    )
+    # the normal truss WAS scaled: SMS injects fictitious mass at its free node (baseline
+    # nodal mass is 0 on a -rho truss, so any positive nodeMass is the injection).
+    assert ops.nodeMass(4, 1) > 0.0, (
+        "the normal truss element must be scaled (injected nodal mass > 0 on node 4); "
+        "got %r" % ops.nodeMass(4, 1)
+    )
+    # the coupling was NOT scaled: its massless slave node 2 receives NO injected mass (SMS
+    # skips self-reporting elements before injection; the coupling's own bipenalty lumping
+    # lives in the element matrix, not the nodal mass). This is the direct skip detector — a
+    # broken SMS that scaled the coupling anyway would push node-2 mass > 0.
+    assert ops.nodeMass(2, 1) == 0.0, (
+        "the self-reporting coupling must NOT be scaled (slave node 2 stays massless); "
+        "got injected nodal mass %r" % ops.nodeMass(2, 1)
+    )
+    # and exactly one of the two elements was scaled (truss yes, coupling no).
+    m = re.search(r"scaled\s+(\d+)/(\d+)\s+elements", err)
+    assert m and int(m.group(2)) == 2 and int(m.group(1)) == 1, (
+        "expected 'scaled 1/2 elements' (truss scaled, coupling skipped); line:\n%s" % err
+    )
+
+
+# --------------------------------------------------------------------------
+# T-CONSTR: the v1 constrained-node limitation is honestly disclosed AND the
+#   documented v1 behavior holds — a constrained scaled-element node is NOT excluded
+#   from scaling (it still receives injected mass). This pins the current contract and
+#   becomes a change-detector when the constraint-exclusion guard is built (the assert
+#   on injection then flips).
+# --------------------------------------------------------------------------
+def _constr_model():
+    """Tiny stiff truss whose free node is tied to a driver node by equalDOF."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.node(1, 0.0, 0.0); ops.fix(1, 1, 1)
+    ops.node(2, 0.1, 0.0); ops.fix(2, 0, 1)              # truss free node (x)
+    ops.node(3, 0.2, 0.0); ops.fix(3, 0, 1)              # driver retained node
+    ops.uniaxialMaterial("Elastic", 1, 1.0e4)            # c=100, L=0.1 -> dt_e~1e-3 < dtTarget
+    ops.element("Truss", 1, 1, 2, 1.0, 1, "-rho", 1.0)   # dt_e < dtTarget -> scaled
+    ops.equalDOF(3, 2, 1)                                 # tie node-2 x to node-3 (retained)
+    ops.constraints("Transformation")
+    ops.numberer("Plain")
+
+
+def test_constrained_node_limitation_disclosed(capfd):
+    _constr_model()
+    capfd.readouterr()
+    _prime_sms((SMS, 0.01), dt=2.0e-4)
+    err = capfd.readouterr().err
+
+    assert "v1 limitations" in err and "constrained nodes" in err, (
+        "the one-time v1 constrained-node limitation warning must be disclosed; stderr:\n%s"
+        % err
+    )
+    # documented v1 behavior: constrained nodes are NOT excluded -> the scaled truss's
+    # constrained node still receives injected mass. (Flips when the exclusion guard ships.)
+    assert ops.nodeMass(2, 1) > 0.0, (
+        "v1: a constrained scaled-element node is NOT excluded, so it still carries injected "
+        "mass (nodeMass>0); got %r — if this is now 0, the exclusion guard shipped and this "
+        "test should assert the NEW behavior" % ops.nodeMass(2, 1)
+    )
