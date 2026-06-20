@@ -2,7 +2,7 @@
 title: "LadrunoConcrete3D — CDPM2 solid-concrete implementation guide"
 project: Ladruno
 type: implementation guide
-status: oracle COMPLETE through P2 damage (P0 surface · P1 return-map/hardening/tangent · P2a-e dual damage + analytic tangent) + adversarial-review-hardened; C++ KERNEL has the return map, the analytic effective tangent, AND the damage stress update (all g++ byte-verified); STILL OWED = the analytic damaged tangent in the kernel (P3b) + the nDMaterial wrapper (classTag 33017). The model is NOT yet callable from Tcl/Python.
+status: SHIPPED — `nDMaterial LadrunoConcrete3D` (classTag 33017) is callable from Tcl/Python on `ladruno`. The C++ kernel is complete and g++ byte-verified against the numpy oracle through P0 surface · P1 return-map/hardening/analytic tangent · P2a-e dual damage · P3a damage stress update · P3b analytic damaged tangent; the wrapper adds the parser/serialization/recorders and is verified end-to-end on Zone-A CI (full build + an openseespy stdBrick battery). v1 = 3D only (finite-strain via `nDMaterial LogStrain`); DEFERRED = the cyclic `β_c` temper (P2f), the Phase-2 reduced views, and the P3 robustness tiers (IMPL-EX / explicit).
 related:
   - "[[31_ladruno_concrete3d_adr]]"          # the decision record
   - "[[LadrunoConcrete3D_dev_handoff]]"      # the implementer's brief (build-PR checklist)
@@ -14,14 +14,17 @@ updated: 2026-06-19
 
 # LadrunoConcrete3D — CDPM2 solid-concrete implementation guide
 
-> [!warning] Build status (2026-06-19)
-> The **constitutive law is fully verified** by a numpy oracle through P2 dual damage + the analytic
-> damaged tangent, hardened by two adversarial-review rounds. The **C++ kernel**
-> (`LadrunoConcrete3DKernel.h`) implements the effective-stress return map, the analytic effective
-> tangent, **and the dual-damage nominal-stress update** — all g++ byte-verified against the oracle.
-> **Not yet shipped:** the analytic *damaged* tangent in the kernel (P3b) and the
-> `nDMaterial LadrunoConcrete3D` wrapper (classTag **33017**). So the model is **not callable from
-> Tcl/Python yet** — Part III is the *intended* interface plus how to exercise the verified core today.
+> [!success] Build status (2026-06-19) — SHIPPED
+> `nDMaterial LadrunoConcrete3D` (classTag **33017**) is **callable from Tcl and Python** on `ladruno`.
+> The **C++ kernel** (`LadrunoConcrete3DKernel.h`) implements the effective-stress return map, the
+> analytic effective tangent, the dual-damage nominal-stress update, **and the analytic *damaged*
+> tangent** (P3b) — all g++ byte-verified against the numpy oracle. The **wrapper**
+> (`LadrunoConcrete3D.{h,cpp}`) adds the parser, foot-gun guards, flat-`Vector` serialization, and
+> recorders, verified end-to-end on Zone-A CI (full build + an openseespy stdBrick battery). **v1 is
+> 3D only** (the finite-strain view is free via `nDMaterial LogStrain` wrapping this 3D material; the
+> PlaneStrain/AxiSymmetric/PlateFiber reduced views are Phase 2) and **Tier-1 implicit** (IMPL-EX /
+> Duvaut–Lions viscosity are P3). Part III is the real interface; §20 also shows the numpy oracle for
+> single-point studies. Deferred: the cyclic `β_c` temper (P2f) + the reduced views + the robustness tiers.
 
 `LadrunoConcrete3D` is a **CDPM2-grade** (Grassl, Xenos, Nyström, Rempling, Gylltoft 2013;
 arXiv:1307.6998) 3D **solid** concrete `nDMaterial`: effective-stress **Menétrey–Willam plasticity**
@@ -39,8 +42,8 @@ regularized**. It is the solid/triaxial sibling of [[19_ladruno_rc_shell_adr|`La
 - **Part II — Architecture** — §10 oracle-first · §11 one kernel · §12 the damaged update · §13 the
   analytic damaged tangent · §14 state + the effective/nominal split · §15 the g++ byte-check ·
   §16 the gate ladder
-- **Part III — Usage** — §17 command grammar (intended) · §18 parameters + calibration · §19 the
-  unsymmetric-solver requirement · §20 exercising the core today · §21 phases + recorders · §22 units
+- **Part III — Usage** — §17 command grammar · §18 parameters + calibration · §19 the
+  unsymmetric-solver requirement · §20 running it + softening convergence · §21 recorders + roadmap · §22 units
 - **Part IV — Quirks** — §23 consolidated quirks
 - **Appendices** — A phase/PR history + V&V · B references
 
@@ -247,8 +250,10 @@ off-diagonals. `Params` holds `E,ν,fc,ft,e,m0,Gf,Gc,Df,As,qh0,Hp,Ah..Dh,η,lch`
 | effective tangent | `principalJacobian`, `consistentTangent` | g++ ~2e-10 (pp) / ~7e-7 (hard) |
 | **damage kinematics** | `equivStrainGeneral` (Eq.37), `alphaCompression` (Eq.46), `damageDrivers` (`ε̃,α_c,x_s`), `solveOmegaBracketed` | (see §12) |
 | **damage update** | `plasticStrain6`, `damagedUpdate` (Eq.1 nominal), public `returnMap` | **g++ vs oracle ~1e-14** |
+| **damaged tangent** | `isotropicTangent` (Box A.6), `invert6`, `scalarDriver`/`dscalarDsig`, `damagedTangent` (§13) | g++ self-check (analytic == numerical of the same stress) ~1e-7; vs oracle analytic ~1e-7 |
 
-**Still owed:** the **analytic damaged tangent** in the kernel (§13, P3b) and the `nDMaterial` wrapper.
+The kernel is **complete**: `returnMap` returns the nominal stress + the analytic damaged tangent. The
+remaining work is the cyclic `β_c` temper (P2f) and the robustness tiers (P3) — see Appendix A.
 
 ## 12. The damaged constitutive update — effective → nominal
 
@@ -270,8 +275,12 @@ byte-stable across eig conventions.
 ## 13. The analytic damaged tangent — `C = D_dam : C_eff − σ̄_t⊗∂ω_t/∂ε − σ̄_c⊗∂ω_c/∂ε`
 
 Derived + FD-verified in the **oracle** (`damaged_tangent_analytic`, P2e) to rel ~1e-10 against the P2d
-numerical reference; the **kernel port is P3b** (the kernel currently returns the *effective* tangent —
-over-stiff on softening). The three pieces (the C++ must replicate exactly):
+numerical reference, then **ported to the kernel** (`damagedTangent`, P3b #291); `returnMap` now returns
+this damaged tangent when a tangent is requested (the effective tangent is the non-converged fallback).
+The C++ port is verified **self-contained** — the analytic damaged tangent is diffed against a
+**numerical central difference of the same C++ damaged nominal stress** (the operator the global Newton
+consumes; ~1e-7, no cross-platform FD noise because the stress is already oracle-pinned by the DMG
+fixture) — and cross-checked directly against the oracle's analytic tangent (~1e-7). The three pieces:
 
 - **`C_eff`** — the P1 effective consistent tangent (numerical in the oracle; *analytic* in the kernel,
   already shipped). The C++ assembles its own `C_eff` and adds the damage linearization.
@@ -292,8 +301,10 @@ subgradient) at the `σ̄_lat=0` Macaulay kink.
 
 `State` carries: `eps[6]`, `sig[6]` (committed **nominal**), `sigEff[6]` (committed **effective** —
 drives the next return *and* the damage plastic strain), `kp`, and the **six damage histories**
-`et_max, kdt1, kdt2, kdc, kdc1, kdc2`. The caller commits by copying `out → in`. The wrapper (pending)
-serializes `Params`' fixed block + this `State` + the IMPL-EX scalars.
+`et_max, kdt1, kdt2, kdc, kdc1, kdc2`. The caller commits by copying `out → in`. The wrapper serializes
+the `Params` fixed block + this committed `State` as **one flat `Vector`** (`sendSelf`/`recvSelf`) —
+the state is all fixed-size scalars (no borrowed sub-objects), so the ADR's hybrid-serialization concern
+is moot for the as-built kernel. (When IMPL-EX lands in P3 its `svt_commit` scalars append to the block.)
 
 ## 15. The g++ byte-verification harness
 
@@ -326,43 +337,54 @@ in the apex-fragile regime and diverge across platforms (a CI-red incident, §23
 
 # Part III — Usage
 
-> Until the `nDMaterial` wrapper ships, the commands below are the **intended** interface (so models can
-> be planned and reviewed against it); §20 is how to exercise the verified core today.
+The material is **shipped** — the grammar below is the real interface. §20 also shows the numpy oracle
+for single-point parametric studies outside an FE model.
 
-## 17. Command grammar (intended)
+## 17. Command grammar
 
 ```tcl
-nDMaterial LadrunoConcrete3D $tag $E $nu $fc $ft  \
-    <-rho $rho>                                   \
-    <-e $e | -fcc $fccRatio>                      \
-    <-Df $Df>                                     \
-    <-hardening $qh0 $Hp>                         \
-    <-ductility $Ah $Bh $Ch $Dh>                  \
-    <-Gf $Gf -Gc $Gc>  <-As $As>                  \
-    <-eta $eta> <-implex>
+nDMaterial LadrunoConcrete3D $tag $E $nu $fc $ft $Gf $Gc  \
+    <-e $e | -kupfer $fccRatio>                           \
+    <-Df $Df>  <-As $As>  <-rho $rho>                     \
+    <-hardening $qh0 $Hp>                                 \
+    <-ductility $Ah $Bh $Ch $Dh>                          \
+    <-lch $lch>  <-autoRegularization>
 ```
-`fc`, `ft` are **positive magnitudes**; the model is compression-negative internally. Consumed by any
-3D solid element (`LadrunoBrick`, `stdBrick`, `SSPbrick`, …); the planned `-geom finite` lift rides the
-existing `LogStrain`/finite path.
+```python
+ops.nDMaterial("LadrunoConcrete3D", 1, 30000.0, 0.2, 30.0, 3.0, 0.1, 5.0, "-Df", 0.85)
+```
+`E ν fc ft Gf Gc` are **positional and required**; `fc`, `ft` are **positive magnitudes** (the model is
+compression-negative internally). `e` defaults to the Kupfer value (`-kupfer` ratio, default 1.16 ⇒
+`e≈0.52`) or is set directly with `-e`. **Crack-band length:** `-lch` sets a fixed characteristic length
+(default 1.0, in the input's length units); `-autoRegularization` instead pulls `lch` from the parent
+element each step (`getCharacteristicLength()`) so the damage dissipation is mesh-objective — prefer it
+in a real mesh, and calibrate `Gf`/`Gc` for the element size otherwise.
+
+Consumed by any 3D solid element (`LadrunoBrick`, `stdBrick`, `SSPbrick`, …). **v1 is 3D only**: the
+finite-strain view is `nDMaterial LogStrain $ftag $thisTag` feeding `element LadrunoBrick … -geom finite`
+(isotropic plastic-damage is objective under large rotation); the PlaneStrain/AxiSymmetric/PlateFiber
+reduced views are Phase 2. `-eta`/`-implex` are **not** exposed in v1 (the kernel's robustness tiers
+are P3).
 
 ## 18. Parameters, defaults & calibration
 
 | Param | Meaning | Default |
 |---|---|---|
-| `E, nu` | Young's modulus, Poisson ratio | required |
-| `fc, ft` | uniaxial compressive / tensile strength (positive) | required |
+| `E, nu` | Young's modulus, Poisson ratio (positional) | required (`E>0`, `0≤ν<0.5`) |
+| `fc, ft` | uniaxial compressive / tensile strength, **positive** (positional) | required (`0<ft<fc`) |
+| `Gf, Gc` | tensile / compressive fracture energy, crack-band (positional) | required (`>0`) |
+| `-e` | deviatoric eccentricity, **∈ (0.5, 1] (hard convexity bound)** | derived from `-kupfer` |
+| `-kupfer` | equibiaxial/uniaxial ratio `fcc/fc` (sets `e`) | 1.16 (Kupfer → `e≈0.52`) |
+| `-Df` | dilatancy (non-associated flow); `<1` realistic, `=1` associated | 1.0 (set `<1`, e.g. 0.85) |
+| `-As` | softening ductility (`x_s` in compression = the confinement-ductility hook); `≥1` | 2.0 |
 | `-rho` | mass density | 0 |
-| `-e` | deviatoric eccentricity, **∈ (0.5, 1] (hard convexity bound)** | derived from `-fcc` |
-| `-fcc` | equibiaxial/uniaxial ratio `fcc/fc` (sets `e`) | 1.16 (Kupfer → `e≈0.52`) |
-| `-Df` | dilatancy (non-associated flow); `<1` realistic, `=1` associated | set `<1` (e.g. 0.7) |
 | `-hardening qh0 Hp` | initial yield fraction; hardening modulus | 0.3, 0.5 |
-| `-ductility Ah Bh Ch Dh` | confinement-ductility (Eq.33) | CDPM2 literature defaults |
-| `-Gf -Gc` | tensile / compressive fracture energy (crack-band) | from `fc` |
-| `-As` | softening ductility (`x_s` in compression = the confinement-ductility hook) | 2.0 |
-| `-eta` | Duvaut–Lions viscosity (0 = inviscid) | 0 |
-| `-implex` | engage Tier-2 IMPL-EX | off |
+| `-ductility Ah Bh Ch Dh` | confinement-ductility (Eq.33) | 0.08, 0.003, 2.0, 1e-6 (CDPM2 table) |
+| `-lch` | fixed crack-band characteristic length (length units) | 1.0 |
+| `-autoRegularization` | pull `lch` from the parent element each step (mesh-objective) | off |
+| ~~`-eta`/`-implex`~~ | Duvaut–Lions viscosity / Tier-2 IMPL-EX | **not in v1 (P3)** |
 
-- **`e` is a validation target, not a fit knob** — leave it derived from `-fcc` unless you have biaxial
+- **`e` is a validation target, not a fit knob** — leave it derived from `-kupfer` unless you have biaxial
   data; it lands at the canonical `e ≈ 0.52`.
 - **`-ductility` sets the absolute peak strain + its confinement growth** — the defaults give the right
   *trend*; recalibrate `Ah/Bh/Ch/Dh` to measured peak strains. Keep `Hp` small.
@@ -378,37 +400,73 @@ unconditionally — even at `Df=1`. You **must** use an unsymmetric solver:
 system UmfPack          ;# or FullGeneral
 ```
 
-A symmetric solver (`ProfileSPD`, `BandSPD`, symmetric `Mumps`) **silently mis-solves** — there is no
-runtime guard (the wrapper will warn). The IMPL-EX tier (`-implex`) is SPD ⇒ symmetric is fine there.
+A symmetric solver (`ProfileSPD`, `BandSPD`, symmetric `Mumps`) **silently mis-solves**. There is no
+runtime *enforcement* (OpenSees lets you pick any solver), but **the parser prints a one-line warning at
+material creation** reminding you to use an unsymmetric solver. (When the IMPL-EX tier lands in P3 it is
+SPD ⇒ a symmetric solver is fine there.)
 
-## 20. Exercising the verified core today (no wrapper)
+## 20. Running it — a single-element probe + softening convergence
+
+A statically-determinate `stdBrick` unit cube (1/8-symmetry restraints) under displacement control is
+the cleanest single-point probe (this is the Zone-A battery, `tests/test_ladrunoConcrete3D_element.py`):
+
+```python
+ops.model("basic", "-ndm", 3, "-ndf", 3)
+# ... 8 nodes of the unit cube + 1/8-symmetry fixes ...
+ops.nDMaterial("LadrunoConcrete3D", 1, 30000.0, 0.2, 30.0, 3.0, 0.1, 5.0)   # E nu fc ft Gf Gc
+ops.element("stdBrick", 1, 1,2,3,4,5,6,7,8, 1)
+ops.system("FullGeneral")                       # NON-symmetric tangent — REQUIRED (§19)
+ops.test("NormDispIncr", 1e-8, 200); ops.algorithm("Newton"); ops.analysis("Static")
+ops.integrator("DisplacementControl", 2, 1, d)  # drive a face; read eleResponse(1,"stresses")
+```
+
+> [!warning] Unconfined softening is snap-backy — step-cut through the limit point
+> Unconfined uniaxial **tension** softening reaches the damage limit point **immediately** (onset at
+> `ε0 = ft/E ≈ 1e-4`), so a fixed displacement step stalls the single-element implicit Newton right at
+> the peak. Drive it with **adaptive step-cutting** (halve the increment on a failed `analyze`, grow it
+> back once converging) to traverse the limit point. **Compression** hardens through ~150 pre-peak steps
+> before its peak, so plain fixed-step DisplacementControl captures `σ ≈ −fc` fine. For deep post-peak
+> softening prefer a confined cell, an arc-length / indirect-control integrator, or the Tier-3 explicit
+> path (P3). The deep-softening + `G_f`-objectivity claims are gated in the numpy oracle, not here.
+
+For **single-point parametric studies** (envelopes, calibration) outside an FE model, the numpy oracle
+is the fastest path — it is the verified specification the kernel byte-matches:
 
 ```bash
-# the full constitutive law, all gates (numpy only):
-python tests/_testbed/concrete3d_ref.py
-# the pytest gate battery + the g++ kernel byte-check:
-python -m pytest tests/test_ladrunoConcrete3D_material.py -q
+python tests/_testbed/concrete3d_ref.py                          # all gates (numpy only)
+python -m pytest tests/test_ladrunoConcrete3D_material.py -q      # oracle gates + the g++ kernel byte-check
+python -m pytest tests/test_ladrunoConcrete3D_element.py -q       # the openseespy material battery
 ```
 ```python
-# single-point response from the oracle (the exact constitutive update the wrapper will call):
 import sys; sys.path.insert(0, "tests/_testbed"); import numpy as np, concrete3d_ref as R
-mp = R.make_material(E=30000., nu=0.2, fc=30., ft=3., Df=0.7)
-st = R.make_damage_state(mp)
+mp  = R.make_material(E=30000., nu=0.2, fc=30., ft=3., Df=0.85)
+st  = R.make_damage_state(mp)
 sig, st, info = R.damaged_step_tensor(st, deps6, mp, Gf=0.1, Gc=5.0, lch=50., As=2.0)
 C   = R.damaged_tangent_analytic(st, deps6, mp, 0.1, 5.0, 50., 2.0)   # the analytic damaged tangent
 ```
 
-## 21. What you get at each phase + recorders
+## 21. Recorders + what's shipped vs deferred
 
-- **Now (oracle + kernel through the damage stress update):** the full **monotonic** stress response —
-  pre-peak plasticity, the triaxial strength envelope (Kupfer biaxial, confined `fcc(σ3)`),
-  confinement-dependent ductility, **the peak + tension/compression softening + automatic unilateral
-  recovery**, crack-band-regularized.
-- **P3b:** the analytic damaged tangent in the kernel (Tier-1 implicit accuracy on softening).
-- **Wrapper:** callable `nDMaterial`, classTag 33017, recorders — stress/strain/tangent + `damage`
-  (tension/compression), `kappa_p`, `equivalentPlasticStrain`, `implexError`.
-- **P2f / later:** cyclic (`β_c` + the compression→tension temper), multiaxial-damage apportioning,
-  robustness tiers (`-implex`, explicit), finite strain (`-geom finite`), the confined-fiber 1D view.
+Per-Gauss-point material recorders, via the element's `material` response
+(`recorder ... -ele $tag material $gp <name>` / `ops.eleResponse($tag, "material", $gp, "<name>")`):
+
+| name | content |
+|---|---|
+| `stress` / `strain` | nominal stress / total strain (6, engineering shear) |
+| `tangent` | the 6×6 consistent (damaged, non-symmetric) tangent |
+| `effectiveStress` | the undamaged effective stress `σ̄` (6) — record alongside `stress` to see the damage knock-down |
+| `damage` | the dual damage `[ω_t, ω_c]` |
+| `kappaP` | the plastic hardening variable `κ_p` (=1 at the failure surface) |
+| `plasticStrain` | `ε_p = ε − C⁻¹:σ̄` (6, engineering shear) |
+
+**Shipped (v1):** callable `nDMaterial LadrunoConcrete3D` (classTag 33017) — the full **monotonic**
+response (pre-peak plasticity, the Kupfer-biaxial / confined `fcc(σ3)` envelope, confinement-dependent
+ductility, the peak + tension/compression softening + automatic unilateral recovery, crack-band
+regularized) with the **analytic damaged tangent** (Tier-1 implicit), 3D + the `LogStrain` finite view.
+
+**Deferred:** cyclic (`β_c` + the compression→tension temper, P2f), multiaxial-damage apportioning,
+the robustness tiers (`-eta`/`-implex`, explicit — P3), the PlaneStrain/AxiSymmetric/PlateFiber reduced
+views (Phase 2), and the confined-fiber 1D view (§4.6 of the ADR).
 
 ## 22. Units
 
@@ -472,8 +530,24 @@ mm-scale. Compression-negative internally; enter `fc`, `ft` positive.
     `pytest -m zone_a` silently deselects it (the #249 CI-false-green incident — the whole file ran
     *nothing* while reporting SUCCESS).
 
-11. **`m0` is derived, never user-set.** `yieldF` trusts `mp.m0`; the wrapper must enforce
-    `m0 == m0Of(fc,ft,e)` in one place and reject `e ≤ 0.5` (convexity).
+11. **`m0` is derived, never user-set.** `yieldF` trusts `mp.m0`; the wrapper enforces
+    `m0 == m0Of(fc,ft,e)` in one place (the constructor) and the parser rejects `e ∉ (0.5,1]`
+    (convexity), `ft ≥ fc` (would give `m0 ≤ 0`), `ν ∉ [0,0.5)`, and non-positive `E/fc/ft/Gf/Gc`.
+
+12. **The kernel tangent is in the TENSOR convention — halve its shear COLUMNS at the OpenSees boundary.**
+    The kernel returns `dσ_ij = 2G dε_ij` (the shear diagonal of `elasticC` is `2G`, true-tensor shear),
+    but the element wants `d(σ)/d(engineering strain)` where `γ_ij = 2ε_ij`. So the wrapper scales the
+    **shear columns** of the 6×6 by `0.5` (`tangentOut(a,b) = Dtan[a][b]·(b≥3 ? 0.5 : 1)`); strains are
+    halved in / doubled out; stresses are unchanged (true tensor stress == engineering stress). This
+    **differs from `LadrunoJ2`**, whose kernel already returns an engineering tangent (no column scale) —
+    don't copy the J2 `getTangent` verbatim. (Verify: elastic shear `2G·0.5 = G`, the right stiffness.)
+
+13. **Unconfined softening is snap-backy on a single implicit element — step-cut, don't fix the step.**
+    Tension reaches the damage limit point at the first step (onset `ε0 = ft/E`); a fixed displacement
+    increment stalls the global Newton at the peak. Drive with adaptive step-cutting through the limit
+    point (the element-test pattern); compression is fine fixed-step because it hardens through ~150
+    pre-peak steps first. Gate the element-level claims at "peak = ft/fc + degradation + `ω` develops";
+    leave deep softening + `G_f`-objectivity to the numpy oracle (the ADR "Tier-3 explicit" note). §20.
 
 ---
 
@@ -494,15 +568,21 @@ mm-scale. Compression-negative internally; enter `fc`, `ft` positive.
 | P2e | analytic dual-projector damaged tangent (oracle) | [#286](https://github.com/nmorabowen/OpenSees/pull/286) |
 | fix | PE2 cross-platform robustness | [#287](https://github.com/nmorabowen/OpenSees/pull/287) |
 | review | 4-dim adversarial review fixes (`ω` floor + de-tautologize DT3 + DT5 diagnostic) | [#288](https://github.com/nmorabowen/OpenSees/pull/288) |
-| **P3a** | **C++ kernel damage stress update (g++ byte-verified ~1e-14)** | [#289](https://github.com/nmorabowen/OpenSees/pull/289) |
-| P3b | analytic damaged tangent in the kernel | *next* |
-| wrapper | `nDMaterial LadrunoConcrete3D` + classTag 33017 | *pending* |
+| P3a | C++ kernel damage stress update (g++ byte-verified ~1e-14) | [#289](https://github.com/nmorabowen/OpenSees/pull/289) |
+| docs | comprehensive implementation guide (this doc) | [#290](https://github.com/nmorabowen/OpenSees/pull/290) |
+| **P3b** | **analytic damaged tangent in the kernel (self-verified ~1e-7)** | [#291](https://github.com/nmorabowen/OpenSees/pull/291) |
+| **wrapper** | **`nDMaterial LadrunoConcrete3D` ships — classTag 33017 DEFINED** | [#292](https://github.com/nmorabowen/OpenSees/pull/292) |
 | P2f | cyclic `β_c` + compression→tension temper + multiaxial apportioning | *deferred* |
+| Phase 2 | PlaneStrain / AxiSymmetric / PlateFiber reduced views | *deferred* |
+| P3 | robustness tiers (`-eta`/`-implex`, explicit) | *deferred* |
 
-**V&V status:** oracle gates **18/18** (Zone-A); the g++ kernel byte-check (PATH/TAN/DMG + fuzzer)
-green on Linux CI. classTag 33017 **RESERVED** (lands with the wrapper; LogStrain2D-33016 convention).
-Two adversarial-review rounds (a 5-lens panel on #249, a 4-dimension workflow on P2c-P2e) — math core
-held both times; findings folded in (CI false-green, apex honesty, the `ω` floor, the tautological DT3).
+**V&V status:** oracle gates **18/18** (Zone-A); the g++ kernel byte-check (PATH/TAN/DMG + the damaged-
+tangent self-check + fuzzer) green on Linux CI; the openseespy material battery
+(`test_ladrunoConcrete3D_element.py`: elastic, tension peak=`ft`+softening, compression peak≈`fc`, damage
+routing, response wiring, FE_Datastore round-trip) green on Zone-A. classTag 33017 **DEFINED** (shipped;
+LogStrain2D-33016 convention). Two adversarial-review rounds (a 5-lens panel on #249, a 4-dimension
+workflow on P2c-P2e) — math core held both times; findings folded in (CI false-green, apex honesty, the
+`ω` floor, the tautological DT3).
 
 ## B. References
 
