@@ -34,12 +34,19 @@
 // regularization + automatic unilateral crack-closure. See
 // Ladruno_implementation/31_ladruno_concrete3d_adr.md. classTag 33017.
 //
-// v1 SCOPE (ADR 4.5): 3D ("ThreeDimensional") only — the finite-strain view is free via
-// nDMaterial LogStrain wrapping this 3D material. PlaneStrain / AxiSymmetric / PlateFiber
-// reduced views are deferred to Phase 2 (each with its own reduce-to-3D verification). Tier-1
-// implicit only (IMPL-EX / Duvaut-Lions viscosity are P3). The CDPM2 consistent tangent is
-// NON-SYMMETRIC (non-associated flow + the semi-implicit theta-freeze even associated) => use
-// an UNSYMMETRIC solver (e.g. `system FullGeneral` / `UmfPack`); the parser warns.
+// SCOPE: all dimensional views ("ThreeDimensional" + the Phase-2 reduced PlaneStrain /
+// AxiSymmetric / PlateFiber / PlaneStress) are served by this ONE class through a `dim` mode
+// (the LadrunoJ2 "one core, many views" doctrine): the kernel return map always runs on the full
+// 6-component tensor, and the element-facing strain/stress/tangent are mapped to the reduced
+// ordering. The element requests a view via getCopy(type); the OPS parser always builds the 3D
+// prototype. PlaneStress / PlateFiber enforce the out-of-plane sigma_22 = 0 by a nested Newton on
+// eps_22 + static condensation of the 33 dof (de Souza Neto et al. sec 9.2.3). The finite-strain
+// view is also free via nDMaterial LogStrain wrapping the 3D material. Tier-1 implicit only
+// (IMPL-EX / Duvaut-Lions viscosity are P3). The CDPM2 consistent tangent is NON-SYMMETRIC
+// (non-associated flow + the semi-implicit theta-freeze even associated) => use an UNSYMMETRIC
+// solver (e.g. `system FullGeneral` / `UmfPack`); the parser warns. NB unconfined plane-STRESS
+// softening is snap-backy and the sigma_22 = 0 nested Newton can stall on the post-peak limit
+// point (Tier-3 explicit territory) — the reduced views are robust pre-peak / under confinement.
 //
 // Tensor convention (LadrunoJ2 lineage): the kernel stores symmetric tensors as 6 components
 // {00,11,22,01,12,02} with TRUE tensor off-diagonals. The element passes ENGINEERING shear
@@ -59,11 +66,18 @@
 
 class LadrunoConcrete3D : public NDMaterial {
  public:
+  // dimensional views (element-facing ordering, engineering shear)
+  enum { DIM_3D = 0,         // {00,11,22,01,12,02}      order 6
+         DIM_PSTRAIN,        // {00,11,01}  (eps22=0)    order 3
+         DIM_AXISYM,         // {00,11,22,01}            order 4
+         DIM_PLATEFIBER,     // {00,11,01,12,02} sig22=0 order 5
+         DIM_PSTRESS };      // {00,11,01}  sig22=0      order 3
+
   LadrunoConcrete3D();
   LadrunoConcrete3D(int tag, double E, double nu, double fc, double ft, double Gf, double Gc,
                     double e, double Df, double As,
                     double qh0, double Hp, double Ah, double Bh, double Ch, double Dh,
-                    double rho, double lch, bool autoReg);
+                    double rho, double lch, bool autoReg, int dimMode = DIM_3D);
   ~LadrunoConcrete3D();
 
   const char* getClassType(void) const { return "LadrunoConcrete3D"; }
@@ -84,8 +98,8 @@ class LadrunoConcrete3D : public NDMaterial {
 
   NDMaterial* getCopy(void);
   NDMaterial* getCopy(const char* type);
-  const char* getType(void) const { return "ThreeDimensional"; }
-  int getOrder(void) const { return 6; }
+  const char* getType(void) const;          // dim-dependent (see .cpp)
+  int getOrder(void) const { return ncomp; }
 
   double getRho(void) { return rho; }
 
@@ -109,6 +123,13 @@ class LadrunoConcrete3D : public NDMaterial {
   double lchFixed;             // characteristic length when -autoRegularization is OFF
   bool   autoReg;              // pull lch from the active element each step
 
+  // ---- dimensional view (element-facing ordering; the kernel is always 3D) ----
+  int    dim;                  // DIM_*
+  int    ncomp;                // element vector order (3..6)
+  int    vmap[6];              // reduced index a -> full 6-comp tensor index
+  bool   condense;            // enforce sigma_22 = 0 (PlaneStress / PlateFiber)
+  double cEps22;               // committed out-of-plane tensor strain (condensed modes)
+
   // ---- committed kernel state (tensor components; shear = TRUE tensor) ----
   double eps_n[6];             // committed total strain
   double sig_n[6];             // committed NOMINAL stress
@@ -130,6 +151,8 @@ class LadrunoConcrete3D : public NDMaterial {
 
   // helpers
   void integrate(bool doTangent);
+  void setupDim(void);             // fill ncomp/vmap/condense + size the return buffers
+  void condenseTangent(void);      // static condensation of the 33 dof (sigma_22 = 0)
 
   // element-facing return buffers
   Vector stressOut;

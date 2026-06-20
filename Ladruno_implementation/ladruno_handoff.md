@@ -13,12 +13,15 @@ tags:
 
 # Ladruno — session handoff
 
-Cold-resume map. Two tracks below: the **`ladruno` recorder** (original) and the
+Cold-resume map. Three tracks below: the **`ladruno` recorder** (original), the
 **solid element / finite-strain stack** (LadrunoBrick + SolidTransformation +
-LogStrain). Recorder deep detail in the `.claude` memory `project_mpco_ladruno.md`;
-design in [[03_ladruno_recorder]] (orig ADR) + [[07_adr_post_review_storage]]
-(post-review decisions); on-disk format in [[ladruno_schema_v1]]; in-flight work in
-[[06_quadrature_global_gp_plan]]; gotchas in [[LEDGER_quirks]].
+LogStrain), and **Track 3 — LadrunoDispBeamColumn** (regularized disp-based frame +
+embedded softening hinge; COMPLETE through the coupled biaxial hinge as of 2026-06-18,
+see its §"CURRENT STATE"). Recorder deep detail in the `.claude` memory
+`project_mpco_ladruno.md`; design in [[03_ladruno_recorder]] (orig ADR) +
+[[07_adr_post_review_storage]] (post-review decisions); on-disk format in
+[[ladruno_schema_v1]]; in-flight work in [[06_quadrature_global_gp_plan]]; gotchas in
+[[LEDGER_quirks]].
 
 ---
 
@@ -165,11 +168,28 @@ Full regression green.
 
 ---
 
-# Track 3 — LadrunoDispBeamColumn (regularized disp-based frame) (DONE through Stage 1, merged + 28/28 green 2026-06-17)
+# Track 3 — LadrunoDispBeamColumn (regularized disp-based frame) (DONE through ADR 34 PR-4a, merged + 88/88 green 2026-06-18)
 
-Design in [[32_ladruno_dispbeamcolumn_regularization_adr]] (the 11-agent scope + 2 adversarial reviews live in its implementation log); gotchas in [[LEDGER_quirks]].
+Design in [[32_ladruno_dispbeamcolumn_regularization_adr]] (2D), [[33_ladruno_dispbeamcolumn3d_hinge_adr]] (3D hinge), [[34_ladruno_cohesive_hinge_biaxial_adr]] (coupled material); gotchas in [[LEDGER_quirks]].
 
-## Shipped (all merged to `ladruno`; PRs #251 #254 #255 #258 #260 + review-fix; Stage-2 cohesive material #264)
+## CURRENT STATE (2026-06-18): the embedded-hinge feature is COMPLETE end-to-end.
+All of Stage 0–1 + Stage 2 (2D hinge, 3D strong-axis, 3D biaxial block-diagonal, 3D coupled
+interaction-surface) is shipped to `ladruno`, **88/88** (2D+3D element + scalar/biaxial/coupled hinge
++ cohesive material), CI green (Zone-A Ubuntu + classTag/manifest gates). 0 open PRs.
+Session PRs: #274 (PR-3b biaxial), #275 (PR-4a coupled material), #276 (adversarial-review
+dispositions), #280 (manifest dispatch.tcl fix). Then a 32-agent adversarial review of #274+#275 —
+its dispositions are in [[34_ladruno_cohesive_hinge_biaxial_adr]] §"Adversarial review dispositions"
+(net: 2 doc nits applied, the 2 "must-fix"es were a false positive + a convention conflict; see quirks).
+
+## The element's four hinge modes (one ndm-dispatched `LadrunoDispBeamColumn` command)
+- 2D `-hinge $matTag` (scalar α); 3D `-hinge $matTag` (strong-axis α_z, rank-1 condensation);
+- 3D `-hinge $mZ -hingeY $mY` (BIAXIAL block-diagonal: two scalar laws, true coupled 2×2 K_αα via the
+  bulk ks(MZ,MY), eigenvalue-floored inverse, rank-2 condensation);
+- 3D `-hingeBiaxial $ndMatTag` (COUPLED: one `LadrunoCohesiveHingeBiaxial` order-2 NDMaterial carrying
+  the Mz–My interaction ellipse; the full 2×2 cohesive tangent enters K_αα). Exclusivity:
+  `-hingeY` requires `-hinge`; `-hingeBiaxial` excludes `-hinge`/`-hingeY`; any hinge excludes `-nl`.
+
+## Shipped (all merged to `ladruno`; PRs #251 #254 #255 #258 #260 + review-fix; Stage-2 cohesive material #264; 2D hinge #267/#269; 3D PR-3a #271; PR-3b #274; PR-4a #275)
 - **LadrunoDispBeamColumn2d** (`ELE_TAG 33013`) + **LadrunoDispBeamColumn3d** (`ELE_TAG 33014`) —
   displacement-based fiber frame, clones of `DispBeamColumn2d/3d`. ONE ndm-dispatched command
   `LadrunoDispBeamColumn` (ndm2/ndf3 → 2D, ndm3/ndf6 → 3D). Reduces to stock bit-identically.
@@ -197,62 +217,57 @@ Design in [[32_ladruno_dispbeamcolumn_regularization_adr]] (the 11-agent scope +
 - Tier-1 only helps `lch`-CONSUMING materials; non-regularizing ones (Concrete02) stay mesh-dependent →
   that is what Tier-2 addresses.
 
-## Resume (next session) — Stage 2 (embedded hinge)
-- **DONE (2026-06-17, merged [#264](https://github.com/nmorabowen/OpenSees/pull/264)):** the discrete
-  cohesive law `LadrunoCohesiveHinge` (`MAT_TAG 33003`, uniaxial) — the Tier-2 building block — landed
-  standalone + 10/10 tests. Strain = rotation jump `[[θ]]`, stress = cohesive moment `M`; near-rigid penalty
-  (guarded floor `Mc²/2Gf`) → exp/linear softening calibrated so `∫M d[[θ]]==Gf` (LINEAR exact to
-  1e-9); irreversible secant damage; `getEnergy()`. This is the *cheap solver-independent energy gate*
-  the ADR said to land first. Parser:
-  `uniaxialMaterial LadrunoCohesiveHinge tag Mc Gf <-penalty K|-penaltyRatio r> <-exp|-linear>`.
-  Registered at the 5 uniaxial sites (NOT the element 3-site list — different registry).
-- **DONE — PR-2a element-side embedded hinge (2D), `-hinge $matTag`.** Before coding, a 4-agent
-  adversarial review of the ADR found load-bearing plan errors and CORRECTED them (see ADR 32
-  "2026-06-17 adversarial-review CORRECTIONS"): the shipped base is **Euler–Bernoulli not Timoshenko**;
-  "freeze the section" is unimplementable AND unnecessary — the bulk sees the BOUNDED enhancement
-  `κ_bulk = B·v − α/L` (Gbar=−1/L) and unloads on its own (Armero–Ehrlich split), the cohesive law
-  carries the jump; the **Dirac never enters quadrature** (orthogonality `∫G=0` exact); `K_αα` is
-  **sign-discontinuous at activation and indefinite on the softening branch** (not "zero at the peak"),
-  so the reciprocal is **GUARDED** (a closed-form update does NOT escape the singularity). Implemented:
-  scalar `α` inner-Newton in `update()`, static condensation `K_basic = K_vv − K_vα K_αα⁻¹ K_αv` to the
-  3-DOF basic system **before** `crdTransf` (pinned invariant), `getResistingForce` unchanged (sections
-  hold converged `κ_bulk`). ALL gated on `hingeOn` (no-hinge path bit-identical); `-hinge`+`-nl`
-  rejected. 8/8 gates green (patch test 1e-9, `∫M d[[θ]]==Gf`, element total-dissipation==Gf,
-  tight-Newton tangent through softening, commit/revert + DB roundtrip).
-- **DONE — PR-2b 2D objectivity/invariance/robustness gates (test-only).** Probed first: the PR-2a
-  hinge ALREADY passes them. Added (`tests/test_ladrunoDispBeamColumn2d_hinge.py`, 8→15): corotational
-  large-rotation `Gf`-dissipation at **74° tip rotation** (pinned invariant under finite rotation),
-  orientation invariance (member 0° vs 90° → identical M–θ to round-off), integration-objectivity
-  Lobatto nIP∈{2..6} sweep (invariant, no residual nIP drift — the discrete-hinge advantage over Tier-1
-  lch), solver robustness (Newton/ModifiedNewton/NewtonLineSearch/KrylovNewton all dissipate `Gf`).
-  **Finding:** the non-Newton "stale-α" hole the review flagged does NOT bite — the residual is always
-  evaluated post-`update()`, so tangent reuse / line search never corrupt the converged dissipation.
-  The idempotent-re-converge hardening is therefore **unnecessary** (don't build it).
-- **DONE — PR-3a 3D STRONG-AXIS embedded hinge ([[33_ladruno_dispbeamcolumn3d_hinge_adr]], ADR 33).**
-  Scoped by a **17-agent workflow** (4 scouts × 3 designs × perspective-diverse adversarial verify +
-  synthesis) which killed three tempting-but-wrong shortcuts: two independent rank-1 updates (wrong when
-  `ks(MZ,MY)≠0`), running the 2D kernel verbatim twice (`setTrialSectionDeformation` overwrites the whole
-  strain vector), and a det-floored adjugate inverse (blows up ~1e8× at staggered activation → use
-  **eigenvalue flooring** in PR-3b). PR-3a ships the **strong-axis jump `α_z` only** — the literal 2D
-  scalar algebra on the Mz row of the 6-DOF basic system, one guarded rank-1 condensation **before**
-  `CorotCrdTransf3d` (`hingeKvZ` a 6-vector incl. the cross-tangent rows so off-diagonals are right).
-  12/12 gates incl. **finite-rotation invariance under `CorotCrdTransf3d`** (>0.5 rad member rotation
-  still dissipates Gf → pinned invariant survives the quaternion triad). Full 65/65. Reuses `ELE_TAG 33014`.
-- **NEXT — PR-3b: 3D BIAXIAL hinge** (the design is in ADR 33 §2-4, fully reviewed): add the weak-axis
-  jump `α_y` + the **TRUE coupled 2×2 `K_αα`** (off-diagonal `(1/L)Σwt·ks(MZ,MY)`) with an
-  **eigenvalue-floored** symmetric-2×2 guarded inverse (NOT det-floor) + 6×2 `K_vα` + a `‖dK‖_F ≤
-  1e3·‖K_vv‖_F` step-cut guard; per-component `Mscale_z/Mscale_y`; one unified inner Newton setting both
-  channels in ONE `setTrialSectionDeformation`. Gate: extend the FD/finite-rotation suite to a
-  **staggered-activation** path (z opens before y, det(K_αα)→0 crossing). Block-diagonal cohesive
-  (two scalar `LadrunoCohesiveHinge`) — the bulk `ks(MZ,MY)` carries the dominant coupling.
-- **Then (PR-3c+ / other tracks):** coupled biaxial cohesive `MAT_TAG 33004` (v2 material); torsional
-  jump (`-torsion`); `-nl`+hinge cross-terms; the `ladruno_drive` snap-back collapse test (blocked on the
-  RESERVED dissipation arc-length [[22_ladruno_dissipation_arclength_adr]], or trace with
-  `LadrunoIndirectControl`). The 2D and 3D-strong-axis Tier-2 elements are gate-complete.
-- Known low-sev nice-to-have: 3D `getTangentStiff` recomputes the linear kb then discards it when `-nl`
-  (perf only; guard with `if(!nlGeom)`).
+## Resume (next session) — recommended NEXT, in priority order
+1. **Consistent off-radial onset tangent for the coupled law (HIGHEST VALUE).** The documented v1
+   limitation: `LadrunoCohesiveHingeBiaxial`'s 2×2 tangent is **frozen-mix** (exact only on radial
+   jump paths) and sign-discontinuous at the elliptical onset (r=1). On deeply weak-axis-dominant
+   paths driven by INDIRECT control (a non-radial jump path), the inner Newton transiently misses at
+   onset → the element falls back to best-effort + warn (see quirk). Fix: a consistent tangent that
+   carries ∂(mode-mix)/∂α (or a line-searched inner solve that re-evaluates the residual). This is
+   ALSO what would let the strict ADR-33 "cut the global step on inner non-convergence" behavior hold
+   robustly (currently best-effort, deliberately — see quirk). Without it, prescribe rotations
+   (radial control) for deep coupled softening.
+2. **B-K / power-law mode-mix** for `Gf_mix(w)` (currently linear `w_z Gf_z + w_y Gf_y` in
+   `effectiveLaw`); reduces to the per-axis Gf on the pure axes regardless, so this is a refinement.
+3. **Torsional jump `α_t` (`-torsion`)** — a 3rd condensed channel; needs a torsional cohesive-law
+   concept (fiber rupture in torsion is unstandardized — research-y, lower confidence).
+4. **`-nl` + hinge cross-terms** — lift the v1 parser ban (2D+3D); the ½θ² bowing couples the jump
+   into the axial channel, so the condensation gets cross-terms (deferred algebra).
+5. **`ladruno_drive` snap-back collapse gate (2D)** — blocked on the RESERVED dissipation arc-length
+   [[22_ladruno_dissipation_arclength_adr]] (or trace with `LadrunoIndirectControl` 33006).
+- Low-sev nice-to-have: 3D `getTangentStiff` recomputes the linear kb then discards it when `-nl`
+  (perf only; guard `if(!nlGeom)`).
+
+## Load-bearing facts (don't re-derive / don't "fix" back)
+- **Registration sites.** A Ladruno ELEMENT needs 4 sites (`classTags.h`,
+  `FEM_ObjectBrokerAllClasses.cpp`, `interpreter/OpenSeesElementCommands.cpp` functionMap,
+  `element/TclElementCommands.cpp` ladrunoElementTable). A Ladruno **nDMaterial** (the coupled hinge)
+  needs 4: `classTags.h`, broker `getNewNDMaterial` case+include, `OpenSeesNDMaterialCommands.cpp`
+  map+extern, `material/nD/CMakeLists.txt`. **PLUS a `Ladruno_implementation/testbed/manifest.yaml`
+  row** for every new classTag — the `classTag + manifest` CI gate (`ci/check_manifest.py`) goes RED
+  without it (it failed after #275; cf. quirks "manifest row"). Mirror an existing ND row.
+- **Best-effort inner Newton (quirk — DON'T return -1).** `solveHingeJump`/`solveHingeJumpBiaxial`
+  return 0 + warn on maxIter, NOT a failure code. Returning -1 (to "cut the step" per the ADR's literal
+  text) makes softening fragile and conflicts with OpenSees convention (`ForceBeamColumn`) — it broke
+  4 coupled tests at the onset. The global `NormDispIncr` test is the arbiter. See [[LEDGER_quirks]].
+- **Eigenvalue floor is DIAGONAL-only (quirk).** The 2×2 condensation floor scales by
+  `|bulk_zz|+|bulk_yy|+|Czz|+|Cyy|` — folding in the off-diagonal `Czy` over-floors near onset and
+  destabilizes the radial inner Newton (broke 4 tests when tried). See [[LEDGER_quirks]].
+- **Deep biaxial/coupled softening test recipe: PRESCRIBE the rotations.** A free DOF under a dead
+  moment SNAPS at hinge activation (a single-element control artifact, not a tangent bug — the strong
+  axis drives to full break cleanly either way). The robust driver is `sp`-prescribed nodal rotations
+  ramped via LoadControl (`_prescribe` helper in the test files); for finite-rotation gates prescribe
+  skew transverse displacements (member rotates + hinge opens, no dead-load snap). Corotational coupled
+  must stay strong-axis-DOMINANT (weak-axis-dominant indirect paths hit the unstable onset, item #1).
+- **FE_Datastore ID collision.** Two same-size IDs sent with the same dbTag+commitTag COLLIDE
+  (key = dbTag/commitTag/size); the second overwrites the first. The Z/Y hinge metadata is sent as ONE
+  combined ID (size 2 strong-only / size 4 biaxial); the coupled nD material's classTag/dbTag ride in
+  the element `data` Vector (23→26) to dodge it. (Caught by the biaxial DB-roundtrip gate.)
+- The Stage-0/1 facts still hold: `lch` assignment stays INSIDE the IP loop (REFERENCE length); 3D
+  `getTangentStiff` INLINES kb+q; the `-damp` stiffness-multiplier lives in `getInitialStiff`.
 
 ## Build / run recipe
-- `Ladruno_scripts\build.bat OpenSeesPy` (PYEXE autodetect is on `ladruno` now). Tests:
-  `python -m pytest tests/test_ladrunoDispBeamColumn2d_element.py tests/test_ladrunoDispBeamColumn3d_element.py`
-  with `PYTHONPATH`/`PATH` = `dist\bin` and `LADRUNO_OPENSEES_QUIET=1`.
+- `Ladruno_scripts\build.bat OpenSeesPy OpenSees`. Editing `classTags.h` forces a wide recompile; a
+  new `add_subdirectory`/source needs the build re-run once. Tests (PYTHONPATH/PATH = `dist\bin`):
+  `python -m pytest tests/test_ladrunoDispBeamColumn2d_element.py tests/test_ladrunoDispBeamColumn3d_element.py tests/test_ladrunoDispBeamColumn2d_hinge.py tests/test_ladrunoDispBeamColumn3d_hinge.py tests/test_ladrunoDispBeamColumn3d_hinge_biaxial.py tests/test_ladrunoDispBeamColumn3d_hinge_coupled.py tests/test_ladrunoCohesiveHinge_material.py`
+  (88/88). CI gates locally: `python ci/check_manifest.py && python ci/check_classtags.py`.
