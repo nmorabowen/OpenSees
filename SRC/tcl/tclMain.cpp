@@ -177,6 +177,7 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • LadrunoDynamicRelaxation — quasi-static DR (Gershgorin mass + kinetic damping)\n"
 "        • LadrunoIndirectControl — indirect/CMOD control (snap-back tracking)\n"
 "        • LadrunoStabilizedUnbalance — true-equilibrium test for -stabilize\n"
+"        • LadrunoProjection — momentum-conserving explicit constraint projection (equalDOF/rigidLink/diaphragm)\n"
 "        • Ladruno — modular HDF5 .ladruno recorder\n"
 "\n";
     // FEATURES-END

@@ -46,8 +46,8 @@ Spec: `30_ladruno_explicit_constraint_projection_adr.md`. Host integrator:
 | Phase | State | PR | Tests | Gate |
 |---|---|---|---|---|
 | P0 falsify & baseline (no SRC) | ✅ MERGED | #300 (671b5236) | 3 passed (hardened) | Gate-0 SOUND |
-| P1 core (equalDOF) | BUILT, 12/12 green; Gate-B running | guppi/adr30-p1-core | T1,T2,T4,T5 + P0 all pass | Gate-A done; Gate-B + full-ZoneA running |
-| P2 general C (rigidLink/diaphragm) | not started | — | T3,T6,T7 | Gate-C |
+| P1 core (equalDOF) | ✅ PR OPEN, awaiting approval | #305 (guppi/adr30-p1-core) | 11 P1 + 3 P0 pass; ZoneA 870; transient regr clean | Gate-A + Gate-B BOTH PASSED (fixes applied) |
+| P2 general C (rigidLink/diaphragm) | TESTS 5/5 GREEN (no new code); Gate-C running | guppi/adr30-p2-transport | T3,T6fix,T7 + 2 boundary | Gate-C (read-only Explore) running |
 | P3 queries + EQ | not started | — | T8,T9 | Gate-D |
 
 ## Adversarial findings log
@@ -140,3 +140,42 @@ _(append per gate: finding · lens · REAL/REFUTED · resolution)_
   (uses remove('mp',2)). Rebuild blj5yulya running.
 - Minor/nit (deferred, non-blocking): near-singular probe only catches exact zero pivot; project()
   solve-failure `continue` is quiet; dead delta-size code; parallel send/recv scope (v1 single-proc).
+
+### P2 (general-C transport) — 2026-06-20
+- **KEY: P1 was already general-C** (L=[I;C], handler builds L from full Ccr) → transport needs
+  NO new projector code. P2 = validation + boundary-pinning.
+- Probes proved it: 2D rigidLink-beam under LadrunoProjection+Diagonal MATCHES Transformation+
+  FullGeneral (rel≈0, <5e-7) — FIXES the P0/T6 mass-drop; transport gap u_c-(C u_r)=8.6e-16.
+  3D rigidDiaphragm matches dense ref + stays rigid.
+- §2.5 boundary CONCRETE: every TIED DOF keeps its own equation → needs nonzero lumped mass.
+  rigidLink-beam / 3D rigidDiaphragm tie the slave PERPENDICULAR ROTATION (rz) → slave rz needs
+  rotational mass (Transformation eliminates it, so it was free there). Massless rotational tie →
+  refused (buildMass per-row m<=0). SP-fixing a diaphragm-controlled DOF → SP-on-slave refused.
+  Frozen small-rotation Ccr = SAME limit Transformation has (not a regression). P4 = SOE-coop
+  elimination to relax massless-tied-slave.
+- Tests tests/test_adr30_projection_p2.py 5/5 (T6fix, T7, T3, massless-rot-tie refused, SP-on-tied
+  refused) — pass on the SHIPPED P1 build (no rebuild).
+- Bookkeeping: banner_features.txt + patch_banner (LadrunoProjection line, P2 = first user-visible);
+  ADR §7 P2 marked DONE; impl ledger row updated.
+- Gate-C: wf_dda26141-35a — READ-ONLY Explore agents (no tree mutation, fixing the Gate-B process gap).
+- OPEN: near-singular LtML rank check only catches EXACT zero pivot (Gate-B/Gate-C minor) — decide if
+  P2 hardens it (needs rebuild) or defers. NOTE: P2 added no SRC yet, so banner/ADR rebuild pending
+  only if banner must show; tests don't need it.
+
+### Gate-C (P2 general-C, wf_dda26141-35a, 13 READ-ONLY Explore agents)
+- **Verdict: general-C transport mathematically SOUND** (3 of 4 lenses + verify stage confirm by
+  code-read + probes; L built faithfully from multi-column Ccr, no sign/index error; momentum +
+  manifold to machine eps; FIXES P0/T6 — uy RMS 0.020 vs diagonal-wrong 0.0).
+- The lone "critical SP-fixed-master truncation" claim (transport lens) was REFUTED: dropping a
+  HOMOGENEOUS-SP master column is CORRECT (that DOF's accel ≡ 0, so the term is genuinely zero);
+  the edge-cases lens independently verified partial-column survival is right.
+- 4 "confirmed_blocking" entries are NOT correctness bugs (per the verify stage's own fixes):
+  2 = validation-strategy notes ("PASS / not a bug"), 2 = doc/UX gaps. RESOLUTIONS:
+  - Added **T6b**: OpenSees-INDEPENDENT analytic anchor (forced modal response incl. slave rz mass)
+    → proj ≈ analytic, closes the triangle (addresses "reference not independent").
+  - Improved the massless-tie error message (rotational-tie guidance: add ~0.01-0.1% rot mass).
+  - LEDGER_quirks: tied-DOF-needs-mass + frozen-Ccr small-rotation (SAME limit as Transformation,
+    not a regression) + near-singular LtML (ADR O1, deferred).
+- DEFERRED (non-blocking, documented): runtime frozen-Ccr staleness guard (P2b/P4); condition-number
+  rank check (ADR O1). Both are the SAME limits Transformation carries.
+- Rebuild bkom5fq9z (projector message + banner regen). Then run P2 6/6 + regression → PR.
