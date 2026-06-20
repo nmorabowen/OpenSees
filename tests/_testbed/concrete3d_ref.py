@@ -1966,6 +1966,157 @@ def run_p2e_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, Gc=5.0, As=2.0, ver
     return res
 
 
+# ===========================================================================
+# P3 — Tier-2 IMPL-EX robustness (ADR 4.4). The Tier-1 implicit return map + dual-damage solve is
+# accurate, but its consistent tangent is NON-SYMMETRIC and INDEFINITE on the softening branch
+# (gate TD2: C[0,0]<0, lambda_min(sym)<0) => the global Newton stalls past the limit point (the
+# snap-back stalls we hit on the single-element softening tests). IMPL-EX (Oliver/Huespe) reports an
+# EXPLICIT stress assembled from EXTRAPOLATED internal variables (the plastic-strain increment AND
+# the dual damage frozen at the committed-history rate) so the algorithmic tangent is a CONSTANT
+# degraded-elastic secant D_dam(w~):C0 — symmetric-part SPD across the snap-back — while the
+# COMMITTED internal variables are the exact IMPLICIT ones (so the explicit error -> 0 as dt -> 0 and
+# the committed trajectory is byte-identical to Tier-1). ADR 4.4 [BLOCKING]: freeze the PLASTIC state
+# too, not just damage — freezing only omega leaves Ceff non-associated/non-symmetric and the SPD
+# promise is false. Here freezing the plastic-strain increment collapses the effective tangent to the
+# elastic C0; freezing omega drops the -sig(x)dw rank-update; the product is the SPD secant.
+#
+# Extrapolation (ASDConcrete3D pattern): x~ = x_n + (dt/dt_n)*(x_n - x_{n-1}). We carry the committed
+# IMPLICIT increment of each frozen variable (dwt, dwc, depl) + the committed dt, so x~ = x_n +
+# (dt/dt_n)*dx_n. First step / no history (dt_n=0) => factor 0 => pure elastic-predictor explicit.
+# ===========================================================================
+def make_implex_state(mp):
+    """Committed IMPL-EX state = the Tier-1 damage state + the frozen-variable increments and dt."""
+    s = make_damage_state(mp)
+    s.update(wt=0.0, wc=0.0, dwt=0.0, dwc=0.0, depl=np.zeros(6), dt_n=0.0)
+    return s
+
+
+def _implex_secant_tangent(sig_bar_x, wt_x, wc_x, mp):
+    """The Tier-2 SPD secant: D_dam(omega FROZEN) : C_elastic. Plastic flow frozen => the effective
+    tangent is the elastic C0; omega frozen => no -sig(x)dw rank-update => symmetric-part SPD."""
+    lam, V = np.linalg.eigh(voigt_to_mat(sig_bar_x))
+    yv = [(1.0 - wt_x) * max(lam[a], 0.0) + (1.0 - wc_x) * min(lam[a], 0.0) for a in range(3)]
+    ypv = [(1.0 - wt_x) if lam[a] > 0.0 else (1.0 - wc_x) for a in range(3)]
+    return isotropic_tangent(lam, V, yv, ypv) @ elastic_C(mp)
+
+
+def damaged_step_implex(state, deps6, dt, mp, Gf, Gc, lch, As=2.0):
+    """ONE Tier-2 IMPL-EX update (pure). Returns (sig_reported[6], C_spd[6,6], new_state, diag).
+      * EXPLICIT (reported): effective stress with the plastic-strain increment FROZEN (extrapolated)
+        + dual damage FROZEN (extrapolated) => sig_bar_x is LINEAR in deps => tangent D_dam(w~):C0.
+      * IMPLICIT (committed): the exact `damaged_step_tensor`; commit its internal variables + the
+        per-variable increments (dwt, dwc, depl) and dt for the NEXT step's extrapolation."""
+    deps6 = np.asarray(deps6, float)
+    r = (dt / state["dt_n"]) if state["dt_n"] > 0.0 else 0.0          # extrapolation factor
+    wt_x = min(max(state["wt"] + r * state["dwt"], 0.0), 1.0 - 1.0e-12)
+    wc_x = min(max(state["wc"] + r * state["dwc"], 0.0), 1.0 - 1.0e-12)
+    depl_x = r * np.asarray(state["depl"], float)                     # frozen plastic-strain increment
+    # explicit effective stress = sig_bar_n + C0:(deps - depl_x)  (LINEAR in deps => elastic tangent)
+    sig_bar_x = elastic_pred_tensor(state["sig_bar"], deps6 - depl_x, mp)
+    lam_x, V_x = np.linalg.eigh(voigt_to_mat(sig_bar_x))
+    sig_rep = mat_to_voigt(V_x @ np.diag(apply_damage_principal(lam_x, wt_x, wc_x)) @ V_x.T)
+    C_spd = _implex_secant_tangent(sig_bar_x, wt_x, wc_x, mp)
+    # implicit solve -> the COMMITTED internal variables (accuracy + the next extrapolation source)
+    sig_impl, st_impl, info = damaged_step_tensor(state, deps6, mp, Gf, Gc, lch, As)
+    depl_new = _plastic_strain6(st_impl["sig_bar"], st_impl["eps"], mp) \
+        - _plastic_strain6(state["sig_bar"], state["eps"], mp)
+    new_state = dict(st_impl)
+    new_state.update(wt=info["wt"], wc=info["wc"],
+                     dwt=info["wt"] - state["wt"], dwc=info["wc"] - state["wc"],
+                     depl=depl_new, dt_n=dt)
+    diag = dict(wt_x=wt_x, wc_x=wc_x, wt_impl=info["wt"], wc_impl=info["wc"],
+                implex_err=max(abs(wt_x - info["wt"]), abs(wc_x - info["wc"])),
+                sig_impl=sig_impl, min_eig_sym=float(np.min(np.linalg.eigvalsh(0.5 * (C_spd + C_spd.T)))))
+    return sig_rep, C_spd, new_state, diag
+
+
+def drive_damaged_implex(mp, eps_path6, Gf, Gc, lch, As=2.0, dt=1.0):
+    """Chain `damaged_step_implex` along a list of TOTAL strain tensors (uniform dt). Returns dict of
+    per-step arrays: reported sigma, implicit sigma, wt/wc (implicit), implex_err, min_eig_sym; and
+    the final committed state (for a Tier-1 cross-check)."""
+    st = make_implex_state(mp)
+    sig_rep, sig_impl, wt, wc, err, mineig = [], [], [], [], [], []
+    for eps_t in eps_path6:
+        deps = np.asarray(eps_t, float) - st["eps"]
+        s, _C, st, d = damaged_step_implex(st, deps, dt, mp, Gf, Gc, lch, As)
+        sig_rep.append(s); sig_impl.append(d["sig_impl"])
+        wt.append(d["wt_impl"]); wc.append(d["wc_impl"])
+        err.append(d["implex_err"]); mineig.append(d["min_eig_sym"])
+    return dict(sig_rep=np.array(sig_rep), sig_impl=np.array(sig_impl),
+                wt=np.array(wt), wc=np.array(wc), err=np.array(err),
+                min_eig_sym=np.array(mineig), state=st)
+
+
+def run_p3_implex_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, Gc=5.0, As=2.0, verbose=True):
+    """Tier-2 IMPL-EX falsification battery (ADR 4.4). Oracle-only (numpy); the C++ kernel port is a
+    follow-up build PR. PI1 is the headline gate: the symmetrized Tier-2 tangent stays POSITIVE-
+    DEFINITE across a softening snap-back where the Tier-1 tangent is INDEFINITE (gate TD2)."""
+    mp = make_material(E, nu, fc, ft)
+    lch = 100.0
+    nrm = lambda A: float(np.sqrt(np.sum(np.asarray(A) ** 2)))
+    res = {}
+
+    # ---- a uniaxial-STRAIN tension path that drives WELL past the nominal peak into deep softening
+    # (same construction as gate TD2, where the Tier-1 tangent is degraded + indefinite). ----
+    eps_end = 6.0e-4
+    nN = 400
+    path = [np.array([e, 0, 0, 0, 0, 0]) for e in np.linspace(eps_end / nN, eps_end, nN)]
+    run = drive_damaged_implex(mp, path, Gf, Gc, lch, As)
+    ipk = int(np.argmax(run["sig_rep"][:, 0]))
+    res["softening_reached"] = bool(run["wt"][-1] > 0.5 and run["sig_rep"][-1, 0] < run["sig_rep"][ipk, 0])
+
+    # PI1 [HEADLINE]: SPD across the snap-back. Every post-onset IMPL-EX tangent has lambda_min(sym)>0,
+    # while the Tier-1 tangent at the SAME deep-softening committed state is INDEFINITE (lambda_min<0).
+    post = run["min_eig_sym"][run["wt"] > 1.0e-6]
+    res["PI1_implex_min_eig"] = float(np.min(post)) if post.size else 0.0
+    res["PI1_implex_SPD"] = bool(post.size > 0 and np.all(post > 0.0))
+    # the Tier-1 reference at a deep-softening state (rebuild the committed state ~2/3 down the tail)
+    isoft = (ipk + nN) // 2 + (nN - ipk) // 6
+    s_t1, _, wt1, _ = _advance_damaged(make_damage_state(mp), path[:isoft], mp, Gf, Gc, lch, As)
+    C_t1 = damaged_consistent_tangent(s_t1, np.array([2.0e-7, 0, 0, 0, 0, 0]), mp, Gf, Gc, lch, As)
+    res["PI1_tier1_min_eig"] = float(np.min(np.linalg.eigvalsh(0.5 * (C_t1 + C_t1.T))))
+    res["PI1_tier1_indefinite"] = bool(res["PI1_tier1_min_eig"] < 0.0 and float(wt1[-1]) > 0.5)
+
+    # PI2 consistency: the COMMITTED internal trajectory is the IMPLICIT one => byte-identical to a
+    # pure Tier-1 run (IMPL-EX must not corrupt the implicit state; ADR 4.4 finite-strain contract).
+    s_ref, sig_ref, wt_ref, wc_ref = _advance_damaged(make_damage_state(mp), path, mp, Gf, Gc, lch, As)
+    res["PI2_commit_sig_bar_err"] = nrm(run["state"]["sig_bar"] - s_ref["sig_bar"]) / (nrm(s_ref["sig_bar"]) + 1e-30)
+    res["PI2_commit_wt_err"] = abs(run["wt"][-1] - wt_ref[-1])
+    res["PI2_commit_matches_tier1"] = bool(res["PI2_commit_sig_bar_err"] < 1e-12 and res["PI2_commit_wt_err"] < 1e-12)
+
+    # PI3 explicit error -> 0 under step refinement (O(dt) IMPL-EX overstress). Drive the SAME total
+    # strain with N and 4N uniform steps; the peak reported-vs-implicit gap shrinks with finer dt.
+    def _peak_err(nsteps):
+        p = [np.array([e, 0, 0, 0, 0, 0]) for e in np.linspace(eps_end / nsteps, eps_end, nsteps)]
+        rr = drive_damaged_implex(mp, p, Gf, Gc, lch, As, dt=eps_end / nsteps)
+        return float(np.max(np.abs(rr["sig_rep"][:, 0] - rr["sig_impl"][:, 0])))
+    eN, e4N = _peak_err(nN), _peak_err(4 * nN)
+    res["PI3_err_N"], res["PI3_err_4N"] = eN, e4N
+    res["PI3_converges"] = bool(e4N < 0.6 * eN and eN < ft)          # shrinks ~O(dt), bounded by ft
+
+    # PI4 error monitor is meaningful: > 0 while damage evolves, ~0 in the pre-onset elastic regime.
+    res["PI4_err_softening"] = float(np.max(run["err"]))
+    res["PI4_err_preonset"] = float(np.max(run["err"][run["wt"] <= 0.0])) if np.any(run["wt"] <= 0.0) else 0.0
+    res["PI4_monitor_ok"] = bool(res["PI4_err_softening"] > 1e-4 and res["PI4_err_preonset"] < 1e-12)
+
+    ok = (res["softening_reached"] and res["PI1_implex_SPD"] and res["PI1_tier1_indefinite"]
+          and res["PI2_commit_matches_tier1"] and res["PI3_converges"] and res["PI4_monitor_ok"])
+    res["PASS"] = bool(ok)
+    if verbose:
+        print(f"  E={E} nu={nu} fc={fc} ft={ft} Gf={Gf} Gc={Gc} As={As} lch={lch}")
+        print(f"  softening reached (wt_final={run['wt'][-1]:.3f}): {res['softening_reached']}")
+        print(f"  PI1 [HEADLINE] IMPL-EX SPD across snap-back: lambda_min(sym)={res['PI1_implex_min_eig']:.3e}>0 "
+              f"({res['PI1_implex_SPD']}); Tier-1 at same state INDEFINITE lambda_min={res['PI1_tier1_min_eig']:.3e}<0 "
+              f"({res['PI1_tier1_indefinite']})")
+        print(f"  PI2 committed trajectory == Tier-1: sig_bar rel={res['PI2_commit_sig_bar_err']:.2e} "
+              f"wt err={res['PI2_commit_wt_err']:.2e} ({res['PI2_commit_matches_tier1']})")
+        print(f"  PI3 explicit error -> 0 (dt refine): err(N)={eN:.3e} err(4N)={e4N:.3e} ({res['PI3_converges']})")
+        print(f"  PI4 error monitor: softening max={res['PI4_err_softening']:.3e} pre-onset={res['PI4_err_preonset']:.2e} "
+              f"({res['PI4_monitor_ok']})")
+        print(f"  => P3 IMPL-EX GATE {'PASS' if ok else 'FAIL'}")
+    return res
+
+
 def run_p2_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, verbose=True):
     mp = make_material(E, nu, fc, ft)
     eps0 = ft / E

@@ -581,10 +581,14 @@ mm-scale. Compression-negative internally; enter `fc`, `ft` positive.
 | docs | shipped-material handout refresh | [#293](https://github.com/nmorabowen/OpenSees/pull/293) |
 | test | wrapper shear/multiaxial convention tests (NDTest) | [#294](https://github.com/nmorabowen/OpenSees/pull/294) |
 | **Phase 2** | **PlaneStrain / AxiSymmetric / PlateFiber / PlaneStress reduced views (one `dim`-mode class)** | [#299](https://github.com/nmorabowen/OpenSees/pull/299) |
+| **P3 IMPL-EX (oracle)** | **Tier-2 IMPL-EX: extrapolate plastic+damage ⇒ SPD secant `D_dam(w~):C0` across the snap-back where Tier-1 is indefinite; commit the implicit vars (numpy oracle + falsification gate)** | [#301](https://github.com/nmorabowen/OpenSees/pull/301) |
+| P3 IMPL-EX (C++) | port `damaged_step_implex` to the kernel + `-implex` parser/serialization (next) | *next* |
+| P3 Duvaut–Lions | `-eta` plastic-level viscosity (`Δt/(η+Δt)`, η→0 byte-exact) | *deferred* |
 | P2f | cyclic `β_c` + compression→tension temper + multiaxial apportioning | *deferred* |
-| P3 | robustness tiers (`-eta`/`-implex`, explicit) | *deferred* |
 
-**V&V status:** oracle gates **18/18** (Zone-A); the g++ kernel byte-check (PATH/TAN/DMG + the damaged-
+**V&V status:** oracle gates **19/19** (Zone-A, incl. the P3 IMPL-EX falsification gate `test_p3_implex_gate`:
+SPD secant across the snap-back vs the indefinite Tier-1 tangent, committed==Tier-1, O(Δt) explicit error);
+the g++ kernel byte-check (PATH/TAN/DMG + the damaged-
 tangent self-check + fuzzer) green on Linux CI; the openseespy material battery
 (`test_ladrunoConcrete3D_element.py`: elastic, tension peak=`ft`+softening, compression peak≈`fc`, damage
 routing, response wiring, FE_Datastore round-trip, the NDTest shear/multiaxial convention legs, and the

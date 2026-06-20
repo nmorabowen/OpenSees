@@ -268,6 +268,30 @@ def test_p2e_analytic_damaged_tangent_gate():
     assert r["PASS"]
 
 
+def test_p3_implex_gate():
+    """P3 Tier-2 IMPL-EX robustness (ADR 4.4), oracle slice (the C++ kernel port is a follow-up build
+    PR). IMPL-EX reports an EXPLICIT stress from EXTRAPOLATED internal variables (plastic-strain
+    increment + dual damage frozen at the committed-history rate) so the algorithmic tangent is the
+    constant degraded-elastic secant `D_dam(w~):C0`, while committing the exact IMPLICIT variables.
+    PI1 [HEADLINE]: the symmetrized Tier-2 tangent stays POSITIVE-DEFINITE across a softening
+    snap-back where the Tier-1 tangent is INDEFINITE (gate TD2) — the convergence fix. PI2: the
+    committed trajectory is byte-identical to a pure Tier-1 run (IMPL-EX must not corrupt the implicit
+    state; the ADR finite-strain `sig_eff,implicit` contract). PI3: the explicit overstress -> 0 under
+    step refinement (O(dt)). PI4: the IMPL-EX error monitor is non-zero in softening, zero pre-onset."""
+    r = ref.run_p3_implex_gate(verbose=False)
+    assert r["softening_reached"]
+    # PI1 the headline falsification: IMPL-EX SPD, Tier-1 indefinite at the same softening state
+    assert r["PI1_implex_SPD"] and r["PI1_implex_min_eig"] > 0.0
+    assert r["PI1_tier1_indefinite"] and r["PI1_tier1_min_eig"] < 0.0
+    # PI2 committed == Tier-1 to machine precision (no implicit-state corruption)
+    assert r["PI2_commit_matches_tier1"]
+    assert r["PI2_commit_sig_bar_err"] < 1.0e-12 and r["PI2_commit_wt_err"] < 1.0e-12
+    # PI3 explicit error shrinks with dt (and is bounded), PI4 monitor is meaningful
+    assert r["PI3_converges"] and r["PI3_err_4N"] < r["PI3_err_N"]
+    assert r["PI4_monitor_ok"]
+    assert r["PASS"]
+
+
 def test_p2_no_spurious_healing():
     """Regression for the PR #261 adversarial-review CRITICAL: the implicit omega solve must not
     clamp-stall to 0 on a physical softening path (a raw clamped Newton did, so the cracked material
