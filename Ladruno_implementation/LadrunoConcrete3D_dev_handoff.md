@@ -2,7 +2,7 @@
 title: "LadrunoConcrete3D — developer / C++-implementer handoff guide"
 project: Ladruno
 type: handoff guide
-status: SHIPPED to `ladruno` — kernel (return map + analytic damaged tangent, g++-verified) + nDMaterial wrapper (classTag 33017) + ALL dimensional views (3D + PlaneStrain/AxiSymmetric/PlateFiber/PlaneStress, #299) + P3 Tier-2 IMPL-EX (oracle #301 → review-hardened #304 → C++ kernel port + `-implex` wrapper #309) + P3 Duvaut–Lions `-eta` (oracle #316 → C++ kernel port + `-eta` wrapper #318) + P2f cyclic `β_c` ORACLE + C++ kernel port (faithful CDPM2 compressive ductility, g++-verified, #319). NEXT = monotone-`ω_c` cyclic damage → Tier-3 explicit demo. See §0 / §6b for the current-state handoff.
+status: SHIPPED to `ladruno` — kernel (return map + analytic damaged tangent, g++-verified) + nDMaterial wrapper (classTag 33017) + ALL dimensional views (3D + PlaneStrain/AxiSymmetric/PlateFiber/PlaneStress, #299) + P3 Tier-2 IMPL-EX (oracle #301 → review-hardened #304 → C++ kernel port + `-implex` wrapper #309) + P3 Duvaut–Lions `-eta` (oracle #316 → C++ kernel port + `-eta` wrapper #318) + P2f cyclic `β_c` ORACLE + C++ kernel port (faithful CDPM2 compressive ductility, g++-verified, #321). NEXT = monotone-`ω_c` cyclic damage → Tier-3 explicit demo. See §0 / §6b for the current-state handoff.
 related:
   - "[[31_ladruno_concrete3d_adr]]"          # the ADR (decision record)
   - "[[project_ladruno_concrete3d]]"          # the agent-memory pointer
@@ -85,8 +85,8 @@ off `ladruno` (fast auto-merge ⇒ fresh branch each time; predict the next PR n
    + an unsymmetric solver (or Tier-3 explicit). **A clean future fix: source the IMPL-EX `dt` from a
    monotone control parameter, not λ** — worth doing before promoting `-implex` for quasi-static softening.
 
-**SHIPPED (P2f β_c — oracle + C++ kernel port, #319):**
-- **P2f cyclic `β_c` (#319)** — the full CDPM2 `β_c` (Eq.50) restored into the compressive-damage plastic
+**SHIPPED (P2f β_c — oracle + C++ kernel port, #321):**
+- **P2f cyclic `β_c` (#321)** — the full CDPM2 `β_c` (Eq.50) restored into the compressive-damage plastic
   driver `κ_dc1` in BOTH the oracle AND the C++ kernel (`damagedUpdate` + `damagedTangent`); makes
   compression markedly more ductile (faithful CDPM2, user decision). g++-verified (the `dmg_compression`
   byte-check stress ~3.5e-15, its analytic damaged tangent with the `∂β_c/∂ε` term matches numerical
@@ -481,7 +481,7 @@ reload — today to ZERO tensile strength** (DT5 reports `tension-after-compress
 coupling** (the dropped `β_c` Eq.50 + the open `α_t`-weighting question: literal-CDPM2 full-`ε̃` vs a
 tensile-plastic-strain projection) and is **P2f** scope. Tracked, not gated.
 
-**P2f `β_c` cyclic — ORACLE DONE (#319, `guppi/concrete3d-p2f-betac`).** The full CDPM2 `β_c` (Eq.50)
+**P2f `β_c` cyclic — ORACLE DONE (#321, `guppi/concrete3d-p2f-betac`).** The full CDPM2 `β_c` (Eq.50)
 `= f_t·q_h2·√(2/3)/(ρ̄·√(1+2D_f²))` is restored into the compressive-damage plastic driver `κ_dc1`
 (Eq.48) at all four sites (`drive_uniaxial_compression_damaged`, `drive_damaged_unified`,
 `damaged_step_tensor`, `damaged_tangent_analytic`); `beta_c(sig_eff,kp,mp)` helper (ρ̄>0 guard, clamp
@@ -514,7 +514,7 @@ P0 surface ✓ → P1 return-map/hardening/tangent ✓ → **C++ kernel return m
 **P2 dual damage `ωt`/`ωc` + crack-band ✓** → **nDMaterial wrapper (33017) ✓** → **ALL dimensional
 views ✓ (#299)** → **P3 robustness: Tier-2 IMPL-EX ✓ (oracle #301 → review #304 → C++/`-implex` #309;
 freezes plastic state + damage)** → **Duvaut–Lions `-eta` ✓ (oracle #316 → C++ kernel + `-eta` wrapper
-#318, the rate term, §0)** → **P2f cyclic `β_c` ✓ (oracle + C++ kernel port #319, faithful CDPM2 compressive ductility, §6b)** →
+#318, the rate term, §0)** → **P2f cyclic `β_c` ✓ (oracle + C++ kernel port #321, faithful CDPM2 compressive ductility, §6b)** →
 **NEXT: monotone-`ω_c` cyclic damage → Tier-3 explicit demo** → P4 finite-strain (`LogStrain`, clean — already free via the
 wrapper) → P5 confined-fiber view (§4.6 hoop-spring condensation, "Mander by mechanism") → P6
 auto-hybrid switch.
@@ -526,5 +526,5 @@ damaged tangent · **#287** PE2 cross-platform · **#288** P2e review (ω floor)
 stress · **#290** guide · **#291** P3b C++ damaged tangent · **#292** nDMaterial wrapper (33017) ·
 **#293** handout · **#294** wrapper convention tests · **#299** Phase-2 reduced views · **#301** P3
 IMPL-EX oracle · **#304** IMPL-EX review fixes · **#309** IMPL-EX C++ port + `-implex` · **#316**
-Duvaut–Lions `-eta` oracle · **#318** Duvaut–Lions `-eta` C++ kernel port + `-eta` wrapper · **#319**
+Duvaut–Lions `-eta` oracle · **#318** Duvaut–Lions `-eta` C++ kernel port + `-eta` wrapper · **#321**
 P2f cyclic `β_c` oracle + C++ kernel port (faithful CDPM2 compressive ductility).
