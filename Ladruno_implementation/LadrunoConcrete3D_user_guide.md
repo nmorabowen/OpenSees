@@ -22,7 +22,8 @@ updated: 2026-06-19
 > and the wrapper is verified end-to-end on Zone-A CI (full build + an openseespy stdBrick battery).
 > **ALL dimensional views ship** — 3D + the Phase-2 reduced PlaneStrain / AxiSymmetric / PlateFiber /
 > PlaneStress (one `dim`-mode class, reached via the element's `getCopy(type)`; finite-strain via
-> `nDMaterial LogStrain`). The cyclic temper and the robustness tiers (`-eta`/`-implex`) are deferred.
+> `nDMaterial LogStrain`). The robustness tiers **`-implex`** (Tier-2 IMPL-EX) and **`-eta`** (Duvaut–
+> Lions viscoplastic) both ship; the cyclic temper (`β_c`) and the `-eta`+`-implex` combination are deferred.
 
 ## 1. What it is, and when to use it
 
@@ -52,11 +53,13 @@ nDMaterial LadrunoConcrete3D $tag $E $nu $fc $ft $Gf $Gc  \
     <-Df $Df>  <-As $As>  <-rho $rho>                     \
     <-hardening $qh0 $Hp>                                 \
     <-ductility $Ah $Bh $Ch $Dh>                          \
-    <-lch $lch>  <-autoRegularization>  <-implex>
+    <-lch $lch>  <-autoRegularization>  <-implex>  <-eta $eta>
 ```
 `E ν fc ft Gf Gc` are **positional and required**; `fc`, `ft` are **positive magnitudes** (the model
 uses **compression-negative** internally). `-autoRegularization` pulls the crack-band length from the
-parent element (mesh-objective); otherwise `-lch` sets it (default 1.0).
+parent element (mesh-objective); otherwise `-lch` sets it (default 1.0). `-implex` engages the Tier-2
+IMPL-EX algorithm (SPD-secant robustness); `-eta` engages Duvaut–Lions viscoplastic relaxation — both
+read the analysis time increment (`ops_Dt`), so they need a transient or uniform-pseudo-time analysis.
 
 ## 3. Parameters & defaults
 
@@ -73,7 +76,8 @@ parent element (mesh-objective); otherwise `-lch` sets it (default 1.0).
 | `-hardening qh0 Hp` | initial yield fraction `qh0`; hardening modulus `Hp` | 0.3, 0.5 |
 | `-ductility Ah Bh Ch Dh` | confinement-ductility (Eq.33) — **calibrate from peak strains** | 0.08, 0.003, 2.0, 1e-6 |
 | `-lch` / `-autoRegularization` | crack-band length: fixed / from the element | 1.0 / off |
-| ~~`-eta`/`-implex`~~ | Duvaut–Lions viscosity / Tier-2 IMPL-EX | **not in v1 (P3)** |
+| `-implex` | Tier-2 IMPL-EX robustness (degraded-elastic SPD secant; reads `ops_Dt`) | off (Tier-1) |
+| `-eta` | Duvaut–Lions viscoplastic relaxation time `η` (`β=dt/(η+dt)`; reads `ops_Dt`) | 0 (inviscid) |
 
 **Calibration notes:**
 - `e` is a *validation* target, not a fit knob — leave it derived from `-kupfer` (1.16) unless you have
@@ -104,8 +108,13 @@ no runtime *enforcement*, but the parser **prints a warning at material creation
   PlateFiber / PlaneStress (the element picks one via `getCopy(type)`) + the finite-strain view via
   `nDMaterial LogStrain`. (PlaneStress/PlateFiber enforce σ_zz=0 by a nested ε_zz Newton + static
   condensation; unconfined plane-STRESS post-peak softening is snap-backy → robust pre-peak / confined.)
-- **Deferred:** cyclic (`β_c` + the compression→tension temper, P2f), robustness tiers (`-eta`/`-implex`,
-  explicit — P3), the confined-fiber 1D view ("Mander by mechanism").
+- **Robustness tiers (P3, shipped):** **`-implex`** (Tier-2 IMPL-EX — explicit extrapolated stress +
+  degraded-elastic SPD secant; for transient / uniform LoadControl, NOT softening + DisplacementControl)
+  and **`-eta`** (Duvaut–Lions viscoplastic relaxation `σ̄=(1−β)σ̄_tr+β σ̄_inv`, `β=dt/(η+dt)`; `η→0` or no
+  time increment ⇒ inviscid). Both read `ops_Dt`. The Tier-3 explicit demo runs the same kernel with no
+  global tangent.
+- **Deferred:** cyclic (`β_c` + the compression→tension temper, P2f), the confined-fiber 1D view
+  ("Mander by mechanism"), the `-eta` + `-implex` combined mode.
 
 ## 6. Worked example skeleton
 

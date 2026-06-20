@@ -242,10 +242,51 @@ def main(out=None):
         lines.append(_fmt(deps))
         lines.append(_fmt(sig_rep))
 
+    # ---- (B6) P3 Duvaut-Lions -eta: a committed (INVISCID) damage state + a step -> the RELAXED nominal
+    #      stress at eta>0/dt>0 (viscous) AND at dt<=0 (the inviscid fallback). Pins the C++
+    #      returnMap(eta,dt) to the oracle damaged_step_tensor(...,dt) AND verifies the eta->0/dt<=0
+    #      byte-identity (= the inviscid Tier-1 path). The committed history is eta-independent (built
+    #      inviscid); only the current step relaxes. eta_plastic uses a clean uniaxial-STRESS pre-onset
+    #      state (NOT uniaxial-strain, which hits the deep-compression apex chaos) so the viscous-inviscid
+    #      gap is a genuine plastic overstress, not a near-elastic ~0 (the PV5b/PV6 oracle lesson).
+    etas = []   # (label, mp_eta, lch, state, deps[6], eta, dt, sig_visc[6], sig_inv[6])
+
+    def add_eta(label, mp, lch, build_path, deps, eta, dt):
+        st = ref.make_damage_state(mp)
+        st, _, _, _ = ref._advance_damaged(st, build_path, mp, Gf, Gc, lch, As)   # inviscid committed history
+        me = dict(mp); me["eta"] = eta
+        deps = np.asarray(deps, float)
+        sig_visc, _, _ = ref.damaged_step_tensor(st, deps, me, Gf, Gc, lch, As, dt=dt)
+        sig_inv, _, _ = ref.damaged_step_tensor(st, deps, me, Gf, Gc, lch, As, dt=0.0)   # dt<=0 => inviscid
+        etas.append((label, me, lch, st, deps, float(eta), float(dt), sig_visc, sig_inv))
+
+    add_eta("eta_tension", mp_h, lch, tpath, [1.0e-6, 0, 0, 0, 0, 0], 0.5, 1.0)
+    add_eta("eta_compression", mp_h, lch, cpath,
+            [dconf["eps11"][ic] - cpath[-1][0], dconf["eps_lat"][ic] - cpath[-1][1],
+             dconf["eps_lat"][ic] - cpath[-1][2], 0, 0, 0], 0.5, 1.0)
+    dpp = ref.drive_damaged_unified(mp_h, np.linspace(0.0, -3.0e-3, 120), Gf, Gc, lch, As)
+    ipp = next(k for k in range(1, 120) if 0.5 < dpp["kp"][k] < 0.98 and dpp["wc"][k] < 1.0e-12)
+    pppath = [np.array([dpp["eps11"][i], dpp["eps_lat"][i], dpp["eps_lat"][i], 0, 0, 0]) for i in range(ipp)]
+    add_eta("eta_plastic", mp_h, lch, pppath,
+            [dpp["eps11"][ipp] - pppath[-1][0], dpp["eps_lat"][ipp] - pppath[-1][1],
+             dpp["eps_lat"][ipp] - pppath[-1][2], 0, 0, 0], 0.3, 1.0)
+
+    lines.append(f"NETA {len(etas)}")
+    for label, me, lch, st, deps, eta, dt, sig_visc, sig_inv in etas:
+        lines.append(f"ETA {label} {_fmt(_pblock(me))} {repr(float(Gf))} {repr(float(Gc))} "
+                     f"{repr(float(lch))} {repr(float(As))} {repr(eta)} {repr(dt)}")
+        lines.append(_fmt(st["eps"]))
+        lines.append(_fmt(st["sig_bar"]))
+        lines.append(repr(float(st["kp"])))
+        lines.append(_fmt([st["et_max"], st["kdt1"], st["kdt2"], st["kdc"], st["kdc1"], st["kdc2"]]))
+        lines.append(_fmt(deps))
+        lines.append(_fmt(sig_visc))
+        lines.append(_fmt(sig_inv))
+
     with open(out, "w") as fh:
         fh.write("\n".join(lines) + "\n")
     print(f"wrote {out}: {len(emitted)} paths, {len(tans)} tangent cases, {len(dmgs)} damage cases, "
-          f"{len(implexes)} implex cases")
+          f"{len(implexes)} implex cases, {len(etas)} eta cases")
     return out
 
 

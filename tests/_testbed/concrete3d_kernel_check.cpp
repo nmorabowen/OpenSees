@@ -265,9 +265,57 @@ static void run_oracle_dump(const char* path) {
         std::printf("  %-24s implex_sig_err=%.2e %s\n", label.c_str(), maxs, ok ? "ok" : "FAIL");
     }
 
+    // ---- (B6) P3 Duvaut-Lions -eta: committed state + step -> the RELAXED nominal stress (viscous,
+    //      eta>0/dt>0) AND the eta->0/dt<=0 inviscid fallback. Pins returnMap(eta,dt) to the oracle
+    //      damaged_step_tensor(...,dt), verifies the dt<=0 byte-identity to the inviscid path, AND
+    //      confirms the viscous result genuinely DIFFERS from the inviscid one (non-tautology). ----
+    fh >> tok; int neta; fh >> neta;          // NETA
+    double worst_eta = 0, worst_eta_inv = 0, max_eta_gap = 0;
+    for (int d = 0; d < neta; ++d) {
+        fh >> tok; std::string label; fh >> label;   // ETA <label>
+        double pb[12]; for (int i = 0; i < 12; ++i) fh >> pb[i];
+        Params mp = makeParams(pb);
+        fh >> mp.Gf >> mp.Gc >> mp.lch >> mp.As;
+        double eta, dt; fh >> eta >> dt;
+        mp.eta = eta;
+        State in, out;
+        for (int i = 0; i < 6; ++i) fh >> in.eps[i];
+        for (int i = 0; i < 6; ++i) fh >> in.sigEff[i];
+        fh >> in.kp;
+        fh >> in.et_max >> in.kdt1 >> in.kdt2 >> in.kdc >> in.kdc1 >> in.kdc2;
+        double deps[6], sigVisc[6], sigInv[6];
+        for (int i = 0; i < 6; ++i) fh >> deps[i];
+        for (int i = 0; i < 6; ++i) fh >> sigVisc[i];
+        for (int i = 0; i < 6; ++i) fh >> sigInv[i];
+        double strain[6]; for (int i = 0; i < 6; ++i) strain[i] = in.eps[i] + deps[i];
+        double sigC[6], sigEff[6], Da[6][6];
+        returnMap(mp, strain, in, out, sigC, sigEff, Da, true, dt, /*hardening=*/true);     // viscous (eta>0, dt>0)
+        double maxs = 0; for (int i = 0; i < 6; ++i) maxs = std::fmax(maxs, std::fabs(sigC[i] - sigVisc[i]));
+        worst_eta = std::fmax(worst_eta, maxs);
+        State o2; double sigI[6], se2[6], junk[6][6];
+        returnMap(mp, strain, in, o2, sigI, se2, junk, false, -1.0, /*hardening=*/true);    // dt<=0 => inviscid fallback
+        double maxi = 0, gap = 0;
+        for (int i = 0; i < 6; ++i) {
+            maxi = std::fmax(maxi, std::fabs(sigI[i] - sigInv[i]));
+            gap = std::fmax(gap, std::fabs(sigC[i] - sigI[i]));
+        }
+        worst_eta_inv = std::fmax(worst_eta_inv, maxi);
+        max_eta_gap = std::fmax(max_eta_gap, gap);
+        bool ok = maxs < 1.0e-6 && maxi < 1.0e-6;
+        if (!ok) ++fails;
+        std::printf("  %-24s eta_sig_err=%.2e %s  inv_fallback_err=%.2e  visc-inv gap=%.2e\n",
+                    label.c_str(), maxs, ok ? "ok" : "FAIL", maxi, gap);
+    }
+    // non-tautology: at least one viscous case must differ materially from its inviscid fallback
+    bool eta_nontrivial = (neta == 0) || (max_eta_gap > 1.0e-3);
+    if (!eta_nontrivial) ++fails;
+    if (neta > 0)
+        std::printf("  eta nontrivial (max viscous-inviscid gap >1e-3): %s (gap=%.2e)\n",
+                    eta_nontrivial ? "ok" : "FAIL", max_eta_gap);
+
     std::printf("  WORST  sig=%.2e (pp<1e-9/hard<1e-6)  kp=%.2e (pp<1e-10/hard<1e-7)  tan=%.3e (<1e-6)"
-                "  dmg=%.2e (<1e-6)  dmgtan=%.2e (<5e-5)  implex=%.2e (<1e-6)\n",
-                worst_sig, worst_kp, worst_tan, worst_dmg, worst_dtan, worst_implex);
+                "  dmg=%.2e (<1e-6)  dmgtan=%.2e (<5e-5)  implex=%.2e (<1e-6)  eta=%.2e (<1e-6)  eta_inv=%.2e (<1e-6)\n",
+                worst_sig, worst_kp, worst_tan, worst_dmg, worst_dtan, worst_implex, worst_eta, worst_eta_inv);
 }
 
 // ---- (C) robustness / honesty regressions (PR #249 adversarial-review fixes) ----------------
