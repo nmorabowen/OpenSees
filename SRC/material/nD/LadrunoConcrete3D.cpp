@@ -87,6 +87,7 @@ void* OPS_LadrunoConcrete3D(void)
   double lch = 1.0;
   bool autoReg = false;
   bool implex = false;
+  double eta = 0.0;
 
   while (OPS_GetNumRemainingInputArgs() > 0) {
     const char* flag = OPS_GetString();
@@ -131,6 +132,10 @@ void* OPS_LadrunoConcrete3D(void)
     else if (strcmp(flag, "-implex") == 0) {
       implex = true;
     }
+    else if (strcmp(flag, "-eta") == 0) {
+      numData = 1;
+      if (OPS_GetDoubleInput(&numData, &eta) < 0 || eta < 0.0) { opserr << "WARNING LadrunoConcrete3D: -eta wants eta >= 0\n"; return 0; }
+    }
     else {
       opserr << "WARNING LadrunoConcrete3D: unknown option '" << flag << "'\n";
       return 0;
@@ -167,8 +172,20 @@ void* OPS_LadrunoConcrete3D(void)
     opserr << "LadrunoConcrete3D (tag " << tag << "): the consistent tangent is NON-SYMMETRIC; "
            << "use an unsymmetric solver (e.g. `system FullGeneral` or `system UmfPack`).\n";
 
+  // Duvaut-Lions viscoplastic relaxation (-eta): relaxes the inviscid plastic return toward the elastic
+  // trial by beta = dt/(eta+dt) (eta in TIME units; dt = ops_Dt). eta=0 (or no time increment) => inviscid,
+  // byte-identical to Tier-1. v1 applies -eta in the Tier-1 path only; under -implex the implicit solve
+  // stays inviscid (the -eta + -implex composition is deferred — warn).
+  if (eta > 0.0 && implex)
+    opserr << "LadrunoConcrete3D (tag " << tag << "): -eta with -implex — the Duvaut-Lions relaxation is "
+           << "applied to the Tier-1 implicit path only; the IMPL-EX extrapolation runs INVISCID (the "
+           << "combined mode is not yet validated).\n";
+  else if (eta > 0.0)
+    opserr << "LadrunoConcrete3D (tag " << tag << "): -eta = " << eta << " (Duvaut-Lions, Tier-1) — relaxes "
+           << "with beta = dt/(eta+dt); needs a positive time increment (transient or pseudo-time), else inviscid.\n";
+
   NDMaterial* mat = new LadrunoConcrete3D(tag, E, nu, fc, ft, Gf, Gc, ecc, Df, As,
-                                          qh0, Hp, Ah, Bh, Ch, Dh, rho, lch, autoReg, implex);
+                                          qh0, Hp, Ah, Bh, Ch, Dh, rho, lch, autoReg, implex, eta);
   if (mat == 0) {
     opserr << "WARNING LadrunoConcrete3D: failed to allocate material\n";
     return 0;
@@ -183,7 +200,7 @@ LadrunoConcrete3D::LadrunoConcrete3D()
   : NDMaterial(0, ND_TAG_LadrunoConcrete3D),
     E(0.0), nu(0.0), fc(0.0), ft(0.0), Gf(0.0), Gc(0.0), ecc(0.0), m0(0.0),
     Df(0.0), As(2.0), qh0(0.3), Hp(0.5), Ah(0.08), Bh(0.003), Ch(2.0), Dh(1.0e-6),
-    rho(0.0), lchFixed(1.0), autoReg(false), implex(false),
+    rho(0.0), lchFixed(1.0), autoReg(false), implex(false), eta(0.0),
     dim(DIM_3D), ncomp(6), condense(false), cEps22(0.0),
     kp_n(0.0), etmax_n(0.0), kdt1_n(0.0), kdt2_n(0.0), kdc_n(0.0), kdc1_n(0.0), kdc2_n(0.0),
     wt_n(0.0), wc_n(0.0), dwt_n(0.0), dwc_n(0.0), dtn_n(0.0),
@@ -199,12 +216,12 @@ LadrunoConcrete3D::LadrunoConcrete3D()
 LadrunoConcrete3D::LadrunoConcrete3D(int tag, double E_, double nu_, double fc_, double ft_,
                                      double Gf_, double Gc_, double e_, double Df_, double As_,
                                      double qh0_, double Hp_, double Ah_, double Bh_, double Ch_, double Dh_,
-                                     double rho_, double lch_, bool autoReg_, bool implex_, int dimMode)
+                                     double rho_, double lch_, bool autoReg_, bool implex_, double eta_, int dimMode)
   : NDMaterial(tag, ND_TAG_LadrunoConcrete3D),
     E(E_), nu(nu_), fc(fc_), ft(ft_), Gf(Gf_), Gc(Gc_), ecc(e_),
     m0(Ladruno::Concrete3D::m0Of(fc_, ft_, e_)),
     Df(Df_), As(As_), qh0(qh0_), Hp(Hp_), Ah(Ah_), Bh(Bh_), Ch(Ch_), Dh(Dh_),
-    rho(rho_), lchFixed(lch_), autoReg(autoReg_), implex(implex_),
+    rho(rho_), lchFixed(lch_), autoReg(autoReg_), implex(implex_), eta(eta_),
     dim(dimMode), ncomp(6), condense(false), cEps22(0.0),
     kp_n(0.0), etmax_n(0.0), kdt1_n(0.0), kdt2_n(0.0), kdc_n(0.0), kdc1_n(0.0), kdc2_n(0.0),
     wt_n(0.0), wc_n(0.0), dwt_n(0.0), dwc_n(0.0), dtn_n(0.0),
@@ -267,7 +284,7 @@ void LadrunoConcrete3D::integrate(bool doTangent)
   p.Gf = Gf; p.Gc = Gc;
   p.Df = Df; p.As = As;
   p.qh0 = qh0; p.Hp = Hp; p.Ah = Ah; p.Bh = Bh; p.Ch = Ch; p.Dh = Dh;
-  p.eta = 0.0; p.implex = implex;                 // Tier-1 implicit (default) / Tier-2 IMPL-EX (-implex)
+  p.eta = eta; p.implex = implex;                 // Tier-1 (default, +Duvaut-Lions -eta) / Tier-2 IMPL-EX (-implex)
 
   // crack-band: lch from the active element (mesh-objective) when -autoRegularization is on,
   // else the fixed -lch the input was calibrated for.
@@ -287,8 +304,9 @@ void LadrunoConcrete3D::integrate(bool doTangent)
   in.wt = wt_n; in.wc = wc_n; in.dwt = dwt_n; in.dwc = dwc_n; in.dt_n = dtn_n;
   for (int i = 0; i < 6; i++) in.depl[i] = depl_n[i];
 
-  // current time increment for the IMPL-EX extrapolation ratio r = dt/dt_n (ASDConcrete3D uses the
-  // same global). Only consulted under -implex; for Tier-1 the kernel ignores it.
+  // current time increment: the IMPL-EX extrapolation ratio r = dt/dt_n (-implex) AND the Duvaut-Lions
+  // relaxation factor beta = dt/(eta+dt) (-eta) both read it (ASDConcrete3D uses the same global).
+  // Ignored when neither -implex nor -eta is active (inviscid Tier-1).
   double dt = ops_Dt;
 
   State out;
@@ -498,7 +516,7 @@ const char* LadrunoConcrete3D::getType(void) const
 NDMaterial* LadrunoConcrete3D::getCopy(void)
 {
   return new LadrunoConcrete3D(this->getTag(), E, nu, fc, ft, Gf, Gc, ecc, Df, As,
-                               qh0, Hp, Ah, Bh, Ch, Dh, rho, lchFixed, autoReg, implex, dim);
+                               qh0, Hp, Ah, Bh, Ch, Dh, rho, lchFixed, autoReg, implex, eta, dim);
 }
 
 NDMaterial* LadrunoConcrete3D::getCopy(const char* type)
@@ -514,14 +532,14 @@ NDMaterial* LadrunoConcrete3D::getCopy(const char* type)
     return NDMaterial::getCopy(type);   // let the base report the unsupported type
 
   return new LadrunoConcrete3D(this->getTag(), E, nu, fc, ft, Gf, Gc, ecc, Df, As,
-                               qh0, Hp, Ah, Bh, Ch, Dh, rho, lchFixed, autoReg, implex, d);
+                               qh0, Hp, Ah, Bh, Ch, Dh, rho, lchFixed, autoReg, implex, eta, d);
 }
 
 // ===========================================================================
 //  parallel / serialization (flat Vector — the kernel state is all fixed-size scalars)
 // ===========================================================================
-static const int LC3D_NDATA = 1 + 18 + 1 + 1 + 25 + 1 + 1 + 11;
-// tag +18 params +autoReg +dim +25 state +cEps22 +implex +IMPL-EX committed(wt,wc,dwt,dwc,dtn + depl[6])
+static const int LC3D_NDATA = 1 + 18 + 1 + 1 + 25 + 1 + 1 + 1 + 11;
+// tag +18 params +autoReg +dim +25 state +cEps22 +implex +eta +IMPL-EX committed(wt,wc,dwt,dwc,dtn + depl[6])
 
 int LadrunoConcrete3D::sendSelf(int commitTag, Channel& theChannel)
 {
@@ -542,6 +560,7 @@ int LadrunoConcrete3D::sendSelf(int commitTag, Channel& theChannel)
   data(c++) = kdc_n; data(c++) = kdc1_n; data(c++) = kdc2_n;
   data(c++) = cEps22;
   data(c++) = implex ? 1.0 : 0.0;
+  data(c++) = eta;
   data(c++) = wt_n; data(c++) = wc_n; data(c++) = dwt_n; data(c++) = dwc_n; data(c++) = dtn_n;
   for (int i = 0; i < 6; i++) data(c++) = depl_n[i];
 
@@ -575,6 +594,7 @@ int LadrunoConcrete3D::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBr
   kdc_n = data(c++); kdc1_n = data(c++); kdc2_n = data(c++);
   cEps22 = data(c++);
   implex = (data(c++) != 0.0);
+  eta = data(c++);
   wt_n = data(c++); wc_n = data(c++); dwt_n = data(c++); dwc_n = data(c++); dtn_n = data(c++);
   for (int i = 0; i < 6; i++) depl_n[i] = data(c++);
 

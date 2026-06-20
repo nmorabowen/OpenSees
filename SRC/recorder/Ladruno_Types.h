@@ -487,7 +487,8 @@ namespace detail {
 			VelocitySensitivity,
 			AngularVelocitySensitivity,
 			AccelerationSensitivity,
-			AngularAccelerationSensitivity
+			AngularAccelerationSensitivity,
+			ConstraintTieForce   // Ladruno (ADR-30 P4): projection constraint tie force
 		};
 	};
 

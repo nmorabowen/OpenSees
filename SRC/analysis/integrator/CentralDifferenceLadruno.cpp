@@ -48,6 +48,10 @@
 #include <Vector.h>
 #include <DOF_Group.h>
 #include <DOF_GrpIter.h>
+#include <Domain.h>        // Ladruno (ADR-30 P4): tie-force scatter to nodes
+#include <Node.h>
+#include <NodeIter.h>
+#include <ID.h>
 #include <Channel.h>
 #include <FEM_ObjectBroker.h>
 #include <elementAPI.h>
@@ -616,6 +620,31 @@ int CentralDifferenceLadruno::commit(void)
         opserr << "WARNING CentralDifferenceLadruno::commit() - no AnalysisModel set\n";
         return -1;
     }
+
+    // Ladruno (ADR-30 P4): scatter the projector's per-equation tie force
+    // f = M(a_raw - a_proj) (cached during the step's update()) onto the nodes, so the
+    // node-based LadrunoRecorder can record a `constraintTieForce` field. Done before
+    // commitDomain() (recorders run after commit). Untied/SP-fixed DOFs -> 0.
+    if (theProjector != 0 && theProjector->isMassReady()) {
+        Domain *theDomain = theModel->getDomainPtr();
+        if (theDomain != 0) {
+            NodeIter &theNodes = theDomain->getNodes();
+            Node *nodePtr;
+            while ((nodePtr = theNodes()) != 0) {
+                DOF_Group *dg = nodePtr->getDOF_GroupPtr();
+                if (dg == 0) continue;
+                const ID &id = dg->getID();
+                int ndf = nodePtr->getNumberDOF();
+                Vector tf(ndf);
+                for (int d = 0; d < ndf && d < id.Size(); d++) {
+                    int eqn = id(d);
+                    tf(d) = (eqn >= 0) ? theProjector->tieForceAtEqn(eqn) : 0.0;
+                }
+                nodePtr->setProjectionTieForce(tf);
+            }
+        }
+    }
+
     // Time was already advanced inside newStep()/update() via updateDomain(newtime, dt).
     return theModel->commitDomain();
 }

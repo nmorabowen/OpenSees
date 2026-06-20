@@ -162,6 +162,12 @@ class Node : public DomainComponent
     virtual const Vector &getReaction();
     virtual int   addReactionForce(const Vector &, double factor);
     virtual int   resetReactionForce(int flag);
+
+    // Ladruno (ADR-30 P4): constraint tie force M(a_raw - a_proj) at this node, written
+    // by the integrator each commit; getter lazily allocates (zeros) so a recorder can
+    // read it before any projection step.
+    virtual const Vector &getProjectionTieForce(void);
+    virtual int           setProjectionTieForce(const Vector &tieForce);
     virtual const Vector *getResponse(NodeResponseType);
 
     virtual void setCrds(double Crd1);
@@ -223,6 +229,11 @@ class Node : public DomainComponent
     Vector *reaction;
     Vector *displayLocation;
     double temperature; // Minjie
+    // Ladruno (ADR-30 P4): lazily-allocated per-node constraint tie-force buffer
+    // M(a_raw - a_proj), scattered each commit by a projection-aware integrator so the
+    // (node-based) LadrunoRecorder can record it. In-class init = safe across all ctors
+    // without touching their init lists; freed in ~Node().
+    Vector *projTieForce = 0;
 };
 
 #endif

@@ -2,7 +2,7 @@
 title: "LadrunoConcrete3D — developer / C++-implementer handoff guide"
 project: Ladruno
 type: handoff guide
-status: SHIPPED to `ladruno` — kernel (return map + analytic damaged tangent, g++-verified) + nDMaterial wrapper (classTag 33017) + ALL dimensional views (3D + PlaneStrain/AxiSymmetric/PlateFiber/PlaneStress, #299) + P3 Tier-2 IMPL-EX (oracle #301 → review-hardened #304 → C++ kernel port + `-implex` wrapper #309) + P3 Duvaut–Lions `-eta` ORACLE (#316). NEXT = the Duvaut–Lions C++ kernel port + `-eta` wrapper parser → cyclic `β_c` temper (P2f) → Tier-3 explicit demo. See §0 for the current-state handoff.
+status: SHIPPED to `ladruno` — kernel (return map + analytic damaged tangent, g++-verified) + nDMaterial wrapper (classTag 33017) + ALL dimensional views (3D + PlaneStrain/AxiSymmetric/PlateFiber/PlaneStress, #299) + P3 Tier-2 IMPL-EX (oracle #301 → review-hardened #304 → C++ kernel port + `-implex` wrapper #309) + P3 Duvaut–Lions `-eta` (oracle #316 → C++ kernel port + `-eta` wrapper #318). NEXT = cyclic `β_c` temper (P2f) → Tier-3 explicit demo. See §0 for the current-state handoff.
 related:
   - "[[31_ladruno_concrete3d_adr]]"          # the ADR (decision record)
   - "[[project_ladruno_concrete3d]]"          # the agent-memory pointer
@@ -62,7 +62,17 @@ off `ladruno` (fast auto-merge ⇒ fresh branch each time; predict the next PR n
   (`duvaut_lions_1d_discrete/_analytic` — exact discrete steady overstress `= E·ε̇·η`, dt-independent, +
   an order-1 transient); PV4 the tensor kernel == the `(1−β)`-blend; PV5 the viscous damaged tangent (FD +
   the pre-onset blend identity on a genuinely-plastic confined-compression state); PV6 overstress-norm
-  monotone in `η`. **Still ORACLE-only — the C++ kernel port + `-eta` wrapper parser is the next build PR.**
+  monotone in `η`.
+- **P3 Duvaut–Lions `-eta` C++ KERNEL PORT + `-eta` WRAPPER (#318)** — the build PR for #316's oracle.
+  Kernel `returnMap`: after the inviscid `returnMapTensor`, when `!implex && eta>0 && dt>0` form `sig_tr`
+  via `elasticPredTensor` and blend `sig_eff ← (1−β)sig_tr + β sig_eff`, `kp ← (1−β)kp_n + β kp`, then
+  blend `Dtan6 ← (1−β)C0 + β Dtan6` (so `damagedTangent` chains its damage linearization through the
+  blended `C_eff`); `damagedUpdate` runs on the relaxed `sig_eff`; `sigEffImplicit` = the relaxed
+  effective stress. Wrapper: parse `-eta η` (guard `η≥0`), member `eta`, set `p.eta`, pass `dt=ops_Dt`,
+  serialize `eta` (`LC3D_NDATA`+1); warn `-eta`+`-implex` runs the IMPL-EX path inviscid. g++ byte-check
+  **B6** (`NETA`): viscous nominal == oracle `damaged_step_tensor(...,dt)` (~1e-14), the `dt≤0` inviscid
+  fallback == oracle byte-for-byte, + a non-tautology guard (max viscous−inviscid gap >1e-3). Element
+  `test_eta_*` (LoadControl inviscid-limit + genuine-effect, db roundtrip). v1 = Tier-1 + `eta` only.
 
 **TWO LIVE QUIRKS (also in [[LEDGER_quirks]]) — carry these forward:**
 1. **Dual-damage IMPL-EX secant is SPD only on SINGLE-SIGN principal states.** `D_dam(ω~):C0` does not
@@ -76,17 +86,6 @@ off `ladruno` (fast auto-merge ⇒ fresh branch each time; predict the next PR n
    monotone control parameter, not λ** — worth doing before promoting `-implex` for quasi-static softening.
 
 **NEXT INCREMENTS (each its own oracle-first PR):**
-- **Duvaut–Lions C++ kernel port + `-eta` wrapper parser** (the build PR for #316's oracle): mirror the
-  oracle blend in `LadrunoConcrete3DKernel.h` `returnMap` — after the inviscid `returnMapTensor`, when
-  `mp.eta>0 && dt>0` form the elastic-predictor `sig_tr` and blend `sig_eff ← (1−β)sig_tr + β sig_eff`,
-  `kp ← (1−β)kp_n + β kp` (`β=dt/(eta+dt)`), run `damagedUpdate` on the relaxed `sig_eff`, and blend the
-  effective tangent `Ceff ← (1−β)C0 + β Ceff` before `damagedTangent`. **Keep `sigEffImplicit` = the
-  relaxed `sig_eff`** (the returned stress — LogStrain `bᵉ` contract). `Params.eta` already exists; the
-  `dt` param is already on `returnMap` (shared with IMPL-EX). Wrapper: parse `-eta η` (guard `η≥0`), pass
-  `dt=ops_Dt`. g++ byte-check: add a `NETA` fixture block (a viscous committed state + probe) pinned to
-  the oracle `damaged_step_tensor(..., dt)`; **`η=0` must reproduce the inviscid `NDMG` case byte-for-byte**.
-  v1 scope = Tier-1 + `eta` (the `!implex` branch); `-eta`+`-implex` interaction deferred (document it).
-  Do NOT inherit ASDConcrete3D's `rate_coeff` (it blends a damage driver, not a plastic stress).
 - **Cyclic `β_c` temper (P2f)** — see §6b: `β_c` (Grassl Eq.50) couples into the monotonic compression
   damage (re-gate C1/C2) + the compression→tension pre-damage temper (the DT5 diagnostic) + multiaxial
   apportioning. Oracle-first, then port to `damagedUpdate`.
@@ -484,8 +483,9 @@ tangent above) + the `nDMaterial` wrapper (lands classTag 33017 + the foot-gun g
 P0 surface ✓ → P1 return-map/hardening/tangent ✓ → **C++ kernel return map + analytic tangent ✓** →
 **P2 dual damage `ωt`/`ωc` + crack-band ✓** → **nDMaterial wrapper (33017) ✓** → **ALL dimensional
 views ✓ (#299)** → **P3 robustness: Tier-2 IMPL-EX ✓ (oracle #301 → review #304 → C++/`-implex` #309;
-freezes plastic state + damage)** → **Duvaut–Lions `-eta` ORACLE ✓ (#316, the rate term, §0)** →
-**NEXT: the Duvaut–Lions C++ kernel port + `-eta` wrapper parser (§0) → cyclic `β_c`
+freezes plastic state + damage)** → **Duvaut–Lions `-eta` ✓ (oracle #316 → C++ kernel + `-eta` wrapper
+#318, the rate term, §0)** →
+**NEXT: cyclic `β_c`
 (P2f, §6b) → Tier-3 explicit demo** → P4 finite-strain (`LogStrain`, clean — already free via the
 wrapper) → P5 confined-fiber view (§4.6 hoop-spring condensation, "Mander by mechanism") → P6
 auto-hybrid switch.
@@ -497,4 +497,4 @@ damaged tangent · **#287** PE2 cross-platform · **#288** P2e review (ω floor)
 stress · **#290** guide · **#291** P3b C++ damaged tangent · **#292** nDMaterial wrapper (33017) ·
 **#293** handout · **#294** wrapper convention tests · **#299** Phase-2 reduced views · **#301** P3
 IMPL-EX oracle · **#304** IMPL-EX review fixes · **#309** IMPL-EX C++ port + `-implex` · **#316**
-Duvaut–Lions `-eta` oracle.
+Duvaut–Lions `-eta` oracle · **#318** Duvaut–Lions `-eta` C++ kernel port + `-eta` wrapper.

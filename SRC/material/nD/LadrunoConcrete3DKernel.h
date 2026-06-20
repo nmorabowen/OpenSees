@@ -1336,6 +1336,27 @@ inline int returnMap(const Params& mp, const double strain[6], const State& in, 
     // (1) IMPLICIT EFFECTIVE-stress return from the committed EFFECTIVE state (NOT the nominal sig).
     double sig_eff[6], kp_new;
     int status = returnMapTensor(mp, in.sigEff, deps, in.kp, hardening, sig_eff, kp_new, Dtan6, doTangent);
+    // (1b) Duvaut-Lions viscoplastic relaxation at the PLASTIC level (ADR §4.4; oracle PR #316). Relax the
+    //   inviscid effective return + kp toward the elastic trial by beta = dt/(eta+dt) (Simo-Hughes closed
+    //   form). beta < 1 only with a positive viscosity AND a positive dt; eta==0 OR dt<=0 => beta=1 =>
+    //   BYTE-identical to the inviscid Tier-1 path (a missing time increment falls back to inviscid, NOT
+    //   to the elastic beta->0 limit). Damage then follows from the RELAXED effective stress (downstream
+    //   uses sig_eff/kp_new), and the EFFECTIVE consistent tangent blends C_eff <- (1-beta)C0 + beta C_eff
+    //   (damagedTangent chains its damage linearization through this blended C_eff). v1: Tier-1 only —
+    //   gated on !implex so the IMPL-EX implicit solve stays inviscid (matches the oracle scope; the
+    //   -eta + -implex composition is deferred).
+    if (!mp.implex && mp.eta > 0.0 && dt > 0.0) {
+        const double beta = dt / (mp.eta + dt);
+        double sig_tr[6];
+        elasticPredTensor(in.sigEff, deps, mp, sig_tr);
+        for (int i = 0; i < 6; ++i) sig_eff[i] = (1.0 - beta) * sig_tr[i] + beta * sig_eff[i];
+        kp_new = (1.0 - beta) * in.kp + beta * kp_new;
+        if (doTangent && status == 0) {
+            double C0[6][6]; elasticC(mp, C0);
+            for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j)
+                Dtan6[i][j] = (1.0 - beta) * C0[i][j] + beta * Dtan6[i][j];
+        }
+    }
     for (int i = 0; i < 6; ++i) { out.eps[i] = strain[i]; out.sigEff[i] = sig_eff[i]; sigEffImplicit[i] = sig_eff[i]; }
     out.kp = kp_new;
     // (2) IMPLICIT P2 dual-damage NOMINAL stress (writes out.sig + the damage history). Unilateral by re-split.

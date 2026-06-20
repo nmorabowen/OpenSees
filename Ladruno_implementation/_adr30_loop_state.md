@@ -48,7 +48,8 @@ Spec: `30_ladruno_explicit_constraint_projection_adr.md`. Host integrator:
 | P0 falsify & baseline (no SRC) | ✅ MERGED | #300 (671b5236) | 3 passed (hardened) | Gate-0 SOUND |
 | P1 core (equalDOF) | ✅ MERGED | #305 (668ad8e9) | 11 P1 + 3 P0; ZoneA 870 | Gate-A + Gate-B SOUND |
 | P2 general C (rigidLink/diaphragm) | ✅ MERGED | #307 (9990e206) | 6 P2 + general-review fixes | Gate-C + general review SOUND |
-| P3 queries + EQ | ✅ PR OPEN, awaiting approval | #312 (guppi/adr30-p3-queries) | T8/T9/EQ/guard/missing-node; full ZoneA 938 pass | Gate-D SOUND (1 blocker fixed) + EQ-leak upstream bug fixed |
+| P3 queries + EQ | ✅ MERGED | #312 (2760cf37) + #313 handoff | T8/T9/EQ/guard/missing-node; ZoneA 938 | Gate-D SOUND + EQ-leak upstream bug fixed |
+| P4a tie-force recorder | ✅ MERGED | #317 (61341837) | p4 records+h5py readback ±F·m₂/M; ZoneA 942 | focused + general review BOTH SAFE-TO-MERGE |
 
 ## Adversarial findings log
 _(append per gate: finding · lens · REAL/REFUTED · resolution)_
@@ -249,3 +250,31 @@ P0 #300 · P1 #305 · P2 #307 · P3 #312 — ALL MERGED to ladruno. LadrunoProje
 (HANDLER 33001) ships explicit constraint projection for equalDOF + rigidLink + rigidDiaphragm
 + equationConstraint, with the tie-force query, IC manifold guard, full diagnostic battery, and
 the deferred-P4 backlog documented. Handoff: `projection_handler_handoff.md`. Loop ends.
+
+### P4a — native tie-force recorder (2026-06-20, branch guppi/adr30-p4-recorder)
+- User chose "dedicated nodal buffer + source" (not reactions). Implemented:
+  - Node.{h,cpp} (VANILLA): lazily-alloc projTieForce slot (in-class `=0` init → safe across all
+    ctors w/o touching init lists; freed in ~Node), get/setProjectionTieForce. Ledgered.
+  - CentralDifferenceLadruno::commit(): scatter projector tieForce → nodes (via DOF_Group getID)
+    before commitDomain (recorders read after commit); only when projector active+massReady.
+  - Recorder (fork): Ladruno_Types.h enum ConstraintTieForce; Ladruno_NodeResults
+    ConstraintTieForceSource (vec3 force, TFx/y/z); LadrunoRecorder keyword `constraintTieForce`/
+    `tieForce` + switch case. Writes CONSTRAINT_TIE_FORCE/DATA to .ladruno HDF5.
+- Test tests/test_adr30_projection_p4.py: records + h5py readback DATA==±F*m2/M equal/opposite.
+  Test bug found+fixed (h5py walk matched sibling STEP metadata → read /DATA only).
+- ADR-30 battery+recorder 38 passed. Full Zone-A (buw5d7w6e) + focused P4 review (wf_ce3743b4) running.
+- Correct by construction: recorder reads Node tie force = integrator scatter = projector cache =
+  same source as the P3 query (validated vs analytics in T8).
+
+### P4a general review (wf_454fdba8, 4 read-only lenses) + MERGED #317 (61341837)
+- **Verdict: all 4 lenses SAFE-TO-MERGE; 0 serious, 0 confirmed-blocking; 19 findings all nits**
+  (mostly correctness confirmations): Node core no blast radius (reactions/sensitivity/parallel/DB/
+  copy unaffected, not serialized, no leak/double-free); scatter guard airtight (plain CDL + SMS pay
+  nothing); recorder robust across envelope/f32/region/partition + enum backward-compatible; test
+  binds (catches sign-flip + zero-scatter). No fixes needed.
+- Minor follow-ups (optional, non-blocking): add a plain-CDL-no-projection zeros recording test;
+  h5py-in-CI nit (test importorskips → could silently skip on a box without h5py).
+- **P4a MERGED → ladruno (squash 61341837).** Native tie-force recording (`recorder ladruno ...
+  constraintTieForce`) ships. ADR-30: v1 (P0-P3) + P4a recorder all on ladruno.
+- Remaining P4 (deferred, independent): prescribed-motion overwrite, MP-chain composition,
+  ExplicitBathe/LNVD adoption, near-singular LtML condition gate, frozen-Ccr runtime guard.
