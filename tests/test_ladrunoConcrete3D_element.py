@@ -50,6 +50,8 @@ def _mat(tag, **kw):
         args += ["-lch", kw["lch"]]
     if kw.get("implex"):
         args += ["-implex"]
+    if "eta" in kw:
+        args += ["-eta", kw["eta"]]
     ops.nDMaterial(*args)
 
 
@@ -614,6 +616,61 @@ def test_implex_database_roundtrip():
     IMPL-EX committed fields (implex flag + wt/wc/dwt/dwc/dtn + depl[6])."""
     def build():
         _build(lambda t: _mat(t, implex=True))
+        ops.integrator("DisplacementControl", 2, 1, 0.5 * (_FT / _E))
+        assert ops.analyze(1) == 0
+    database_roundtrip(build, probe_nodes=[2], ndf=3,
+                       probe_fn=lambda: list(ops.eleResponse(1, "material", 1, "stress")))
+
+
+# ===========================================================================
+# P3 Duvaut-Lions viscoplasticity (`-eta`) — element-level plumbing. The relaxation MATH (the
+# Simo-Hughes blend) + the closed-form 1-D overstress oracle live in the numpy oracle (test_p3_eta_gate)
+# and the g++ kernel byte-check (B6: NETA, reported stress == oracle to ~1e-14, eta=0 == inviscid). These
+# gate the WRAPPER wiring end-to-end: the parser flag, integrate() passing dt=ops_Dt into the kernel
+# relaxation, commit, and send/recvSelf of the new eta field.
+# ===========================================================================
+def _run_loadcontrol_disp(mat_fn, fnode, nsteps):
+    """Uniform LoadControl compression (monotone pseudo-time ⇒ dt=ops_Dt=1/nsteps, uniform — the
+    well-defined Duvaut-Lions dt). Returns (converged_steps, nodeDisp(2,1), sig_xx, kappaP)."""
+    _build(mat_fn)
+    ops.remove("loadPattern", 1)
+    ops.pattern("Plain", 1, 1)
+    for n in (2, 3, 6, 7):
+        ops.load(n, fnode, 0.0, 0.0)
+    ops.integrator("LoadControl", 1.0 / nsteps)
+    ops.analysis("Static")
+    ok = 0
+    for _ in range(nsteps):
+        if ops.analyze(1) != 0:
+            break
+        ok += 1
+    return ok, ops.nodeDisp(2, 1), _sig_xx(), list(ops.eleResponse(1, "material", 1, "kappaP"))[0]
+
+
+@pytest.mark.t1
+def test_eta_loadcontrol_inviscid_limit_and_effect():
+    """-eta end-to-end under uniform LoadControl compression into the HARDENING regime. Gates the WRAPPER
+    wiring: the parser flag, integrate() reading dt=ops_Dt and applying the Duvaut-Lions relaxation, and
+    commit. Under FORCE control the converged gauss stress is fixed by equilibrium (≈ load), so the
+    relaxation shows in the STRAIN: a vanishing eta (eta << dt) recovers Tier-1, while a finite eta
+    (eta ~ dt ⇒ less plastic flow per step ⇒ stiffer over the step) changes the strain at a given load."""
+    o0, d0, s0, k0 = _run_loadcontrol_disp(lambda t: _mat(t), -5.0, 300)                 # Tier-1 inviscid
+    oe, de, se, ke = _run_loadcontrol_disp(lambda t: _mat(t, eta=1.0e-9), -5.0, 300)     # eta << dt => inviscid
+    ob, db, sb, kb = _run_loadcontrol_disp(lambda t: _mat(t, eta=0.05), -5.0, 300)       # eta >> dt => relaxed
+    assert o0 == 300 and oe == 300 and ob == 300, f"did not fully converge ({o0},{oe},{ob})"
+    assert k0 > 0.05, f"Tier-1 did not go plastic (kappaP={k0})"
+    # inviscid limit: a vanishing eta recovers Tier-1 (strain AND stress)
+    assert de == pytest.approx(d0, rel=1.0e-4), f"eta->0 disp {de} != Tier-1 {d0}"
+    assert se == pytest.approx(s0, rel=1.0e-4), f"eta->0 sig {se} != Tier-1 {s0}"
+    # genuine effect: a real eta changes the response (less plastic strain per step => smaller |disp|)
+    assert abs(db - d0) > 1.0e-3 * abs(d0), f"-eta had no end-to-end effect (visc disp {db} vs tier1 {d0})"
+
+
+@pytest.mark.t1
+def test_eta_database_roundtrip():
+    """FE_Datastore round-trip of a viscous (-eta) material exercises the new send/recvSelf eta field."""
+    def build():
+        _build(lambda t: _mat(t, eta=0.5))
         ops.integrator("DisplacementControl", 2, 1, 0.5 * (_FT / _E))
         assert ops.analyze(1) == 0
     database_roundtrip(build, probe_nodes=[2], ndf=3,
