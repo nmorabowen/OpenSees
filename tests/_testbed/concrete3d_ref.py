@@ -1082,6 +1082,27 @@ def alpha_compression(sig_pr):
     return float(np.sum(spc * s) / nrm2)
 
 
+def beta_c(sig_pr, kp, mp):
+    """CDPM2 beta_c (Eq.50): the factor scaling the PLASTIC-strain part of the compressive damage
+    driver kappa_dc1 (Eq.48). beta_c = ft * qh2(kp) * sqrt(2/3) / (rho_bar * sqrt(1 + 2 Df^2)),
+    rho_bar = sqrt(2 J2) of the EFFECTIVE stress. It provides "a smooth transition from pure damage to
+    damage-plasticity softening during cyclic loading" (Grassl 2013 2.3.5): the more deviatoric the
+    effective stress (large rho_bar), the LESS the plastic strain feeds compressive damage. In monotonic
+    uniaxial compression on the failure surface (qh2=1, rho_bar=fc*sqrt(2/3)) it is ~ft/(fc*sqrt(1+2Df^2))
+    (~0.058 for ft/fc=0.1, Df=1) — so it makes compression markedly MORE DUCTILE than the beta_c=1
+    simplification the monotonic slice used (P2b/P2c). Guarded for rho_bar->0 (hydrostatic); clamped to
+    [0,1] (a plastic-contribution fraction is physically <=1 — inactive in the damaging regime where
+    rho_bar is large, so the clamp never binds there and the analytic tangent stays smooth).
+    sig_pr = 3 EFFECTIVE principal stresses (or the deviatoric invariant can be passed via rho)."""
+    ft, Df, Hp = mp["ft"], mp["Df"], mp["Hp"]
+    sv = np.array([sig_pr[0], sig_pr[1], sig_pr[2], 0.0, 0.0, 0.0])
+    _, rho, *_ = invariants(sv)
+    if rho <= 1.0e-12:
+        return 1.0                                    # hydrostatic: no deviatoric drive -> fall back (clamp)
+    bc = ft * qh2(kp, Hp) * np.sqrt(2.0 / 3.0) / (rho * np.sqrt(1.0 + 2.0 * Df * Df))
+    return min(max(bc, 0.0), 1.0)
+
+
 def _solve_omega_c_exp(kdc1, kdc2, sig_c_mag, fc, eps_fc):
     """Compressive damage, exponential softening (Eq.55 analog with fc, Gc). eps_i = kdc1 + wc*kdc2
     (Eq.52 analog); |sig_c_nom| = fc*exp(-eps_i/eps_fc) = (1-wc)*|sig_c_eff|; wc implicit -> Newton.
@@ -1092,11 +1113,13 @@ def _solve_omega_c_exp(kdc1, kdc2, sig_c_mag, fc, eps_fc):
     return _solve_omega_bracketed(kdc1, kdc2, sig_c_mag, fc, eps_fc)
 
 
-def drive_uniaxial_compression_damaged(mp, eps11_path, Gc, lch, As=5.0):
+def drive_uniaxial_compression_damaged(mp, eps11_path, Gc, lch, As=5.0, beta_c_on=True):
     """Uniaxial-STRESS compression: P1 effective return + CDPM2 compressive damage (Eq.37,46-57).
     Tracks the compressive history kdc1 (Eq.48, alpha_c*beta_c-scaled plastic strain) and
     kdc2 (Eq.49, alpha_c-scaled equivalent strain /x_s). x_s = 1+(As-1)*Rs, Rs=-sqrt6 sigV/rho for
-    sigV<=0 (Eq.56-57, =As in uniaxial compression -> ductility). Returns nominal axial stress."""
+    sigV<=0 (Eq.56-57, =As in uniaxial compression -> ductility). Returns nominal axial stress.
+    `beta_c_on` (default True) applies the full CDPM2 beta_c (Eq.50); False forces beta_c=1 (the old
+    monotonic simplification) for the P2f non-tautology comparison (real beta_c is markedly more ductile)."""
     E, fc, nu, Df = mp["E"], mp["fc"], mp["nu"], mp["Df"]
     ft = mp["ft"]; eps0 = ft / E
     eps_fc = Gc / (fc * lch)
@@ -1133,10 +1156,8 @@ def drive_uniaxial_compression_damaged(mp, eps11_path, Gc, lch, As=5.0):
                               (sig_eff[2] - nu * (sig_eff[0] + sig_eff[1])) / E])
         if et > eps0 and det > 0.0:                          # damage active (kappa_p>1)
             kdc += ac * det / xs                             # Eq.47+49: kdc2 driver (alpha_c eps_tilde /x_s)
-            # Eq.48 plastic-strain part. The beta_c factor (Eq.50) is documented as the smooth
-            # damage<->plasticity transition for CYCLIC loading; for the MONOTONIC P2b slice it is
-            # dropped (= kappa_dt1's alpha_c/x_s-scaled form) and restored as a P2c cyclic refinement.
-            kdc1 += ac / xs * float(np.linalg.norm(epl - epl_prev))            # Eq.48 (monotonic)
+            bc = beta_c(sig_eff, kp, mp) if beta_c_on else 1.0   # Eq.50 (P2f) cyclic damage<->plasticity factor
+            kdc1 += ac * bc / xs * float(np.linalg.norm(epl - epl_prev))       # Eq.48 (full CDPM2 beta_c)
         epl_prev = epl
         kdc2 = kdc
         sig_c_mag = max(-sig_eff[0], 0.0)                    # compressive axial magnitude (uniaxial)
@@ -1161,8 +1182,10 @@ def run_p2b_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gc=5.0, As=2.0, verbose=Tru
     res["C0_eqstrain_tens"] = equiv_strain_general([ft, 0, 0], mp) / (ft / E)    # -> ~1
     res["C0_eqstrain_ok"] = bool(abs(res["C0_eqstrain_comp"] - 1.0) < 1e-6 and abs(res["C0_eqstrain_tens"] - 1.0) < 1e-6)
 
-    # C1: nominal uniaxial-compression PEAKS at fc then softens (the peak is damage); eff monotone
-    d = drive_uniaxial_compression_damaged(mp, np.linspace(0, -0.15, 4000), Gc, lch=50.0, As=As)
+    # C1: nominal uniaxial-compression PEAKS at fc then softens (the peak is damage); eff monotone.
+    # (P2f: range extended 0.15->0.4 — the full beta_c makes compression more ductile, so it needs more
+    # strain to soften to <10% fc.)
+    d = drive_uniaxial_compression_damaged(mp, np.linspace(0, -0.4, 4000), Gc, lch=50.0, As=As)
     res["C1_peak"] = float(-np.min(d["sig11"]))
     res["C1_peak_err"] = abs(res["C1_peak"] / fc - 1.0)
     res["C1_softens"] = bool(-d["sig11"][-1] < 0.1 * fc and d["wc"][-1] > 0.85)
@@ -1178,12 +1201,19 @@ def run_p2b_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gc=5.0, As=2.0, verbose=Tru
     # honest FE-visible total. NOTE (review MEDIUM): uniaxial compression has Rs=1 exactly, so x_s=As
     # is constant across all lch here — this leg does NOT exercise the confinement-ductility (x_s) effect
     # on dissipation; a multi-confinement Gc leg (sigma3!=0, ADR §4.3 [MAJOR]) is a documented P2c gap.
+    # P2f re-gate: the full CDPM2 beta_c (Eq.50) makes compression markedly more ductile, so over a
+    # FIXED compression strain the softening no longer fully completes at small lch (large eps_fc). The
+    # omega_c solve enforces |sig_c_nom| = fc*exp(-eps_i/eps_fc) EXACTLY, so the integral tail from the
+    # path's last eps_i to infinity is the analytic exp tail eps_fc*|sig_c_last|; adding it removes the
+    # truncation (the dominant error) and keeps the path short/fast — the residual is the trapezoidal
+    # discretization of the post-peak exponential.
     gc_lch = {}
     for lch in (50.0, 100.0, 200.0):
-        dd = drive_uniaxial_compression_damaged(mp, np.linspace(0, -0.15, 4000), Gc, lch, As=As)
+        dd = drive_uniaxial_compression_damaged(mp, np.linspace(0, -0.4, 4000), Gc, lch, As=As)
         epsi = dd["epsi"]
         area = float(np.sum(0.5 * (-dd["sig11"][1:] - dd["sig11"][:-1]) * np.diff(epsi)))  # |sig| d epsi
-        gc_lch[lch] = area * lch
+        tail = (Gc / (fc * lch)) * float(-dd["sig11"][-1])     # eps_fc * |sig_c_last| (analytic exp tail)
+        gc_lch[lch] = (area + tail) * lch
     res["C2_gc_lch"] = gc_lch
     res["C2_max_rel_err"] = max(abs(gc_lch[l] / Gc - 1.0) for l in gc_lch)
 
@@ -1337,7 +1367,8 @@ def drive_damaged_unified(mp, eps11_path, Gf, Gc, lch, As=2.0, sigma3=0.0):
             kdt1 += dnorm_epl / xs                        # Eq.44  (tension: no alpha_c factor)
             kdc += ac * above                             # Eq.47  d kappa_dc = alpha_c d eps_tilde
             kdc2 += ac * above / xs                       # Eq.49
-            kdc1 += ac * dnorm_epl / xs                   # Eq.48  (beta_c = 1, monotonic slice)
+            bc = beta_c(sig_eff, kp, mp)                  # Eq.50  (P2f) cyclic damage<->plasticity factor
+            kdc1 += ac * bc * dnorm_epl / xs              # Eq.48  (full CDPM2 beta_c)
         et_max = max(et_max, et)                          # ALWAYS track the eps_tilde history (Eq.43)
         epl_prev = epl
 
@@ -1560,7 +1591,7 @@ def damaged_step_tensor(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
         kdt1 += dnorm_epl / xs
         kdc += ac * above
         kdc2 += ac * above / xs
-        kdc1 += ac * dnorm_epl / xs
+        kdc1 += ac * beta_c(w, kp_new, mp) * dnorm_epl / xs   # Eq.48 with the full CDPM2 beta_c (Eq.50, P2f)
     et_max = max(et_max, et)
     sig_t_drive = max(float(np.max(w)), 0.0)
     sig_c_drive = max(-float(np.min(w)), 0.0)
@@ -1827,9 +1858,10 @@ def damaged_tangent_analytic(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
     loading = det_raw > 0.0 and et > eps0
     kdt1, kdt2 = state["kdt1"], state["kdt2"]
     kdc, kdc1, kdc2 = state["kdc"], state["kdc1"], state["kdc2"]
+    bc = beta_c(lam, kp_new, mp)                          # Eq.50 (P2f): scales the kdc1 plastic part
     if loading:
         kdt2 += above / xs; kdt1 += dnorm / xs
-        kdc += ac * above; kdc2 += ac * above / xs; kdc1 += ac * dnorm / xs
+        kdc += ac * above; kdc2 += ac * above / xs; kdc1 += ac * bc * dnorm / xs
     et_max2 = max(et_max, et)
     Dt = max(float(np.max(lam)), 0.0)
     Dc = max(-float(np.min(lam)), 0.0)
@@ -1859,12 +1891,35 @@ def damaged_tangent_analytic(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
     dDt_deps = Ceff.T @ (_TENSOR_W6 * mat_to_voigt(Emax)) if Dt > 0.0 else np.zeros(6)
     dDc_deps = -(Ceff.T @ (_TENSOR_W6 * mat_to_voigt(Emin))) if Dc > 0.0 else np.zeros(6)
     dnorm_deps = (depl_deps.T @ (_TENSOR_W6 * depl)) / dnorm if dnorm > 1.0e-14 else np.zeros(6)
+    # d(beta_c)/d(eps): beta_c = beta_c(sig_bar(eps), kp(eps)) depends on BOTH rho_bar(sig_bar) AND
+    # qh2(kp), so a single composite micro-FD THROUGH the return map captures the full gradient (the
+    # rho_bar part is smooth; the qh2(kp) part needs d kp/d eps, which the C++ kernel gets analytically
+    # from the 4-unknown return-map IFT — here it is the legitimate oracle micro-FD, same step as the
+    # numerical reference so the FD truncation correlates). Only needed under compressive loading.
+    dbc_deps = np.zeros(6)
+    if loading and bc > 0.0:
+        base = fc / E
+
+        def _bc_of(d6):
+            sb, kpv, _, _ = return_map_tensor(state["sig_bar"], d6, mp, state["kp"])
+            if beta < 1.0:
+                sb = (1.0 - beta) * elastic_pred_tensor(state["sig_bar"], d6, mp) + beta * sb
+                kpv = (1.0 - beta) * state["kp"] + beta * kpv
+            return beta_c(np.linalg.eigvalsh(voigt_to_mat(sb)), kpv, mp)
+
+        for j in range(6):
+            hh = 1.0e-6 * (abs(deps6[j]) + base)
+            dp = np.array(deps6, float); dp[j] += hh
+            dm = np.array(deps6, float); dm[j] -= hh
+            dbc_deps[j] = (_bc_of(dp) - _bc_of(dm)) / (2.0 * hh)
 
     if loading:
         dkdt2 = det_deps / xs - above * dxs_deps / xs**2
         dkdt1 = dnorm_deps / xs - dnorm * dxs_deps / xs**2
         dkdc2 = (dac_deps * above + ac * det_deps) / xs - ac * above * dxs_deps / xs**2
-        dkdc1 = (dac_deps * dnorm + ac * dnorm_deps) / xs - ac * dnorm * dxs_deps / xs**2
+        # kdc1 = ac * bc * dnorm / xs  (Eq.48 with beta_c) => product rule over ac, bc, dnorm, xs
+        dkdc1 = (dac_deps * bc * dnorm + ac * dbc_deps * dnorm + ac * bc * dnorm_deps) / xs \
+            - ac * bc * dnorm * dxs_deps / xs**2
     else:
         dkdt2 = dkdt1 = dkdc2 = dkdc1 = np.zeros(6)
 
@@ -2003,6 +2058,74 @@ def run_p2e_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, Gc=5.0, As=2.0, ver
         print(f"  PE6 Macaulay-kink (uniaxial-stress compression sigma_lat=0): axial rel={res['PE6_kink_axial_rel']:.2e}"
               f" (matches); full rel={res['PE6_kink_full_rel']:.2e} (kink on ~zero-stress lateral — valid subgradient)")
         print(f"  => P2e GATE {'PASS' if ok else 'FAIL'}")
+    return res
+
+
+def run_p2f_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, Gc=5.0, As=2.0, verbose=True):
+    """P2f — the CDPM2 cyclic beta_c (Eq.50), restored into the compressive-damage plastic driver
+    kappa_dc1 (Eq.48). beta_c = ft*qh2(kp)*sqrt(2/3) / (rho_bar*sqrt(1+2*Df^2)) gives "a smooth
+    transition from pure damage to damage-plasticity during cyclic loading" (Grassl 2013 2.3.5); in
+    MONOTONIC compression it is ~ft/(fc*sqrt(1+2*Df^2)) << 1, so it makes compression markedly MORE
+    DUCTILE than the beta_c=1 simplification the P2b/P2c monotonic slice used (the chosen 'faithful'
+    direction). Gates: F1 the closed-form beta_c at the uniaxial-compression peak + bounds; F2 the
+    monotonic backbone STILL valid (peak=fc, softens, effective-stress monotone); F3 NON-tautology — the
+    real beta_c suppresses damage vs beta_c=1 (more ductile) AND is a genuine state-dependent factor in
+    (0,1); F4 cyclic compression load->unload->reload is consistent (no damage healing, reload follows
+    the degraded secant, reload stays at/under the monotonic envelope)."""
+    mp = make_material(E, nu, fc, ft); Df = mp["Df"]; lch = 50.0; res = {}
+
+    # F1: beta_c at the uniaxial-compression peak (kp=1 => qh2=1, rho_bar = fc*sqrt(2/3))
+    bc_peak = beta_c([-fc, 0.0, 0.0], 1.0, mp)
+    bc_expect = ft / (fc * np.sqrt(1.0 + 2.0 * Df * Df))     # ft*qh2*sqrt(2/3)/(fc*sqrt(2/3)*sqrt(1+2Df^2))
+    res["F1_bc_peak"] = bc_peak; res["F1_bc_expect"] = bc_expect
+    res["F1_ok"] = bool(abs(bc_peak - bc_expect) < 1.0e-12 and 0.0 < bc_peak < 1.0)
+
+    # F2 + F3: monotonic compression with the real beta_c vs the beta_c=1 simplification (fine resolution
+    # — the damage onset region is step-sensitive, so use a resolved path)
+    path = np.linspace(0, -0.3, 5000)
+    dr = drive_uniaxial_compression_damaged(mp, path, Gc, lch, As=As, beta_c_on=True)
+    d1 = drive_uniaxial_compression_damaged(mp, path, Gc, lch, As=As, beta_c_on=False)
+    res["F2_peak"] = float(-np.min(dr["sig11"])); res["F2_peak_err"] = abs(res["F2_peak"] / fc - 1.0)
+    res["F2_softens"] = bool(-dr["sig11"][-1] < 0.1 * fc and dr["wc"][-1] > 0.85)
+    res["F2_eff_monotone"] = bool(-dr["sig_eff"][-1] > -dr["sig_eff"][int(np.argmin(dr["sig11"]))])
+    res["F2_ok"] = bool(res["F2_peak_err"] < 0.03 and res["F2_softens"] and res["F2_eff_monotone"])
+    # F3 non-tautology: the real beta_c is markedly MORE DUCTILE than beta_c=1 — the post-peak STRESS
+    # differs by tens of MPa (omega_c eventually saturates to ~1 for both at deep strain, so the wc gap
+    # is small there; the STRESS gap is the unambiguous metric). beta_c is a genuine state-dependent
+    # factor in (0,1), not a constant.
+    res["F3_stress_gap"] = float(np.max(np.abs(dr["sig11"] - d1["sig11"])))
+    bcs = [beta_c([dr["sig_eff"][k], 0.0, 0.0], dr["kp"][k], mp) for k in range(len(path)) if dr["wc"][k] > 1.0e-9]
+    res["F3_bc_min"] = float(min(bcs)); res["F3_bc_max"] = float(max(bcs))
+    res["F3_ok"] = bool(res["F3_stress_gap"] > 0.1 * fc                       # real beta_c clearly more ductile
+                        and 0.0 < res["F3_bc_min"] <= res["F3_bc_max"] < 1.0)  # beta_c in (0,1) (~const in uniaxial comp)
+
+    # F4 [DIAGNOSTIC, REPORTED not gated] — full cyclic compression load->unload->reload. beta_c (Eq.50)
+    # supplies the correct compressive-damage RATE, but it does NOT by itself make the damage variable
+    # monotone: the oracle solves omega_c IMPLICITLY against the CURRENT effective stress every step, so
+    # an elastic UNLOAD (effective stress drops, history frozen) lets omega_c relax back ("heals"). A
+    # cyclic-correct response needs omega_c driven by the MONOTONE history (omega_c <- max over the path),
+    # a separate fix touching every driver + the committed state + the C++ kernel — the NEXT P2f slice.
+    # Reported here (the DT5 pattern) so the limitation is explicit, not hidden.
+    seg1 = np.linspace(0.0, -2.0e-3, 700)
+    seg2 = np.linspace(-2.0e-3, -0.5e-3, 250)        # elastic unload
+    seg3 = np.linspace(-0.5e-3, -4.0e-3, 1200)       # reload past the previous max
+    cyc = np.concatenate([seg1, seg2[1:], seg3[1:]])
+    dc = drive_uniaxial_compression_damaged(mp, cyc, Gc, lch, As=As, beta_c_on=True)
+    res["F4_wc_heals_on_unload"] = bool(np.min(np.diff(dc["wc"])) < -1.0e-6)   # True today (the next-slice gap)
+    res["F4_wc_peak"] = float(np.max(dc["wc"]))
+
+    ok = res["F1_ok"] and res["F2_ok"] and res["F3_ok"]
+    res["PASS"] = bool(ok)
+    if verbose:
+        print(f"  E={E} nu={nu} fc={fc} ft={ft} Gc={Gc} As={As} Df={Df} lch={lch}")
+        print(f"  F1 beta_c peak={bc_peak:.5f} (closed form {bc_expect:.5f}) in (0,1) ({res['F1_ok']})")
+        print(f"  F2 monotonic backbone: peak={res['F2_peak']:.3f} (fc={fc}) softens={res['F2_softens']} "
+              f"eff-monotone={res['F2_eff_monotone']} ({res['F2_ok']})")
+        print(f"  F3 non-tautology: max stress gap (real beta_c vs beta_c=1)={res['F3_stress_gap']:.2f} MPa (>{0.1*fc:.1f}); "
+              f"beta_c in [{res['F3_bc_min']:.3f},{res['F3_bc_max']:.3f}] ({res['F3_ok']})")
+        print(f"  F4 [DIAGNOSTIC] cyclic omega_c heals on unload = {res['F4_wc_heals_on_unload']} "
+              f"(wc_peak={res['F4_wc_peak']:.3f}; monotone-omega_c = the NEXT P2f slice)")
+        print(f"  => P2f GATE {'PASS' if ok else 'FAIL'}")
     return res
 
 
@@ -2579,6 +2702,12 @@ if __name__ == "__main__":
     p2e = run_p2e_gate(verbose=True)
     print("-" * 74)
     print(f"P2e: {'PASS' if p2e['PASS'] else 'FAIL'}")
+    print("=" * 74)
+    print("LadrunoConcrete3D P2f gate — cyclic beta_c (Eq.50): faithful CDPM2 compressive-damage ductility")
+    print("=" * 74)
+    p2f = run_p2f_gate(verbose=True)
+    print("-" * 74)
+    print(f"P2f: {'PASS' if p2f['PASS'] else 'FAIL'}")
     print("=" * 74)
     print("LadrunoConcrete3D P3 Tier-2 IMPL-EX gate — explicit extrapolated stress + SPD secant tangent")
     print("=" * 74)

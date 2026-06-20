@@ -908,15 +908,38 @@ inline void plasticStrain6(const double sig_eff[6], const double eps[6], const P
     for (int k = 3; k < 6; ++k) epl[k] = eps[k] - sig_eff[k] * (1.0 + nu) / E;  // eps_ij = sig_ij/(2G)
 }
 
+// forward decl (damagedTangent's d beta_c/dε does a composite micro-FD through the return map, and
+// returnMapTensor is defined further down)
+inline int returnMapTensor(const Params& mp, const double sig_n[6], const double deps[6], double kp_n,
+                           bool hardening, double sig_new[6], double& kp_new, double Dtan6[6][6],
+                           bool doTangent);
+
+// CDPM2 beta_c (Eq.50, P2f): the factor scaling the PLASTIC-strain part of the compressive-damage
+// driver kappa_dc1 (Eq.48). beta_c = ft*qh2(kp)*sqrt(2/3) / (rho_bar*sqrt(1+2*Df^2)), rho_bar = sqrt(2 J2)
+// of the EFFECTIVE stress. Mirror of the oracle beta_c(). In monotonic compression ~ft/(fc*sqrt(1+2Df^2))
+// << 1, so it makes compression markedly MORE DUCTILE than the beta_c=1 simplification (faithful CDPM2).
+// rho_bar->0 guard (hydrostatic) + clamp [0,1] (a plastic-contribution fraction <=1; inactive in the
+// damaging regime where rho_bar is large, so the clamp never binds and the analytic tangent stays smooth).
+inline double betaC(const double sig_pr[3], double kp, const Params& mp)
+{
+    double sv[6] = { sig_pr[0], sig_pr[1], sig_pr[2], 0.0, 0.0, 0.0 };
+    double xi, rho, theta; invariants(sv, xi, rho, theta);
+    if (rho <= 1.0e-12) return 1.0;
+    double bc = mp.ft * qh2Of(kp, mp.Hp) * std::sqrt(2.0 / 3.0) / (rho * std::sqrt(1.0 + 2.0 * mp.Df * mp.Df));
+    if (bc < 0.0) bc = 0.0; if (bc > 1.0) bc = 1.0;
+    return bc;
+}
+
 // ---------------------------------------------------------------------------
 // P2 dual-damage NOMINAL stress update (mirrors the oracle damaged_step_tensor EXACTLY): from the
 // committed history `in` + the new EFFECTIVE stress/strain, accumulate the CDPM2 damage drivers,
 // solve omega_t/omega_c (bracketed, physical-floored), and recompose the nominal stress via the
 // spectral split  sigma = (1-omega_t)<sig_bar>+ + (1-omega_c)<sig_bar>-  (Eq.1). Writes the new
 // damage history into `out`. The split is recomputed from the CONVERGED effective stress every step
-// => automatic, tier-independent unilateral crack-closure (ADR §4.3 BLOCKING).
+// => automatic, tier-independent unilateral crack-closure (ADR §4.3 BLOCKING). `kp` = the current
+// (post-return) hardening variable, for beta_c (Eq.50).
 // ---------------------------------------------------------------------------
-inline void damagedUpdate(const Params& mp, const State& in, const double sig_eff[6],
+inline void damagedUpdate(const Params& mp, const State& in, const double sig_eff[6], double kp,
                           const double eps_new[6], State& out,
                           double* wtOut = nullptr, double* wcOut = nullptr)
 {
@@ -952,7 +975,7 @@ inline void damagedUpdate(const Params& mp, const State& in, const double sig_ef
     if (loading) {
         kdt2 += above / xs;          kdt1 += dnorm / xs;                 // Eq.45 / Eq.44 (no alpha_c)
         kdc  += ac * above;          kdc2 += ac * above / xs;            // Eq.47 / Eq.49
-        kdc1 += ac * dnorm / xs;                                         // Eq.48 (beta_c = 1, monotonic)
+        kdc1 += ac * betaC(w, kp, mp) * dnorm / xs;                      // Eq.48 with the full CDPM2 beta_c (Eq.50, P2f)
     }
     const double et_max = et_max_n > et ? et_max_n : et;
 
@@ -1101,7 +1124,7 @@ inline void dscalarDsig(int which, const double sig6[6], const Params& mp, doubl
 // grads (det/dxs/dac) do NOT (already per-component).
 // ---------------------------------------------------------------------------
 inline void damagedTangent(const Params& mp, const State& in, const double sig_eff[6],
-                           const double eps_new[6], const double Ceff[6][6], double D6[6][6])
+                           const double eps_new[6], double kp_new, const double Ceff[6][6], double D6[6][6])
 {
     static const double W6[6] = {1.0, 1.0, 1.0, 2.0, 2.0, 2.0};
     const double eps0   = mp.ft / mp.E;
@@ -1128,11 +1151,12 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
     const double above = (et - loref > 0.0) ? (et - loref) : 0.0;
     const bool loading = det_raw > 0.0 && et > eps0;
 
+    const double bc = betaC(w, kp_new, mp);              // Eq.50 (P2f): scales the kdc1 plastic part
     double kdt1 = in.kdt1, kdt2 = in.kdt2, kdc = in.kdc, kdc1 = in.kdc1, kdc2 = in.kdc2;
     if (loading) {
         kdt2 += above / xs;          kdt1 += dnorm / xs;
         kdc  += ac * above;          kdc2 += ac * above / xs;
-        kdc1 += ac * dnorm / xs;
+        kdc1 += ac * bc * dnorm / xs;
     }
     const double et_max2 = et_max_n > et ? et_max_n : et;
 
@@ -1226,7 +1250,28 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
         }
     } else for (int i = 0; i < 6; ++i) dnorm_deps[i] = 0.0;
 
-    // dkd*/dε under loading (else zero)
+    // d(beta_c)/dε (P2f): beta_c depends on BOTH rho_bar(sig_bar) AND qh2(kp), so a single composite
+    // micro-FD THROUGH the return map captures the full gradient (mirror of the oracle; same step as the
+    // numerical reference so the FD truncation correlates). Only needed under compressive loading.
+    double dbc_deps[6] = {0,0,0,0,0,0};
+    if (loading && bc > 0.0) {
+        double deps[6]; for (int i = 0; i < 6; ++i) deps[i] = eps_new[i] - in.eps[i];
+        const double base = mp.fc / mp.E;
+        for (int j = 0; j < 6; ++j) {
+            const double hh = 1.0e-6 * (std::fabs(deps[j]) + base);
+            double dp[6], dm[6]; for (int i = 0; i < 6; ++i) { dp[i] = deps[i]; dm[i] = deps[i]; }
+            dp[j] += hh; dm[j] -= hh;
+            double sbp[6], sbm[6], kpp, kpm, dum[6][6];
+            returnMapTensor(mp, in.sigEff, dp, in.kp, true, sbp, kpp, dum, false);
+            returnMapTensor(mp, in.sigEff, dm, in.kp, true, sbm, kpm, dum, false);
+            double Ap[3][3], wp[3], Vp[3][3], Am[3][3], wm[3], Vm[3][3];
+            voigtToMat(sbp, Ap); eig3sym(Ap, wp, Vp);
+            voigtToMat(sbm, Am); eig3sym(Am, wm, Vm);
+            dbc_deps[j] = (betaC(wp, kpp, mp) - betaC(wm, kpm, mp)) / (2.0 * hh);
+        }
+    }
+
+    // dkd*/dε under loading (else zero).  kdc1 = ac * bc * dnorm / xs (Eq.48 with beta_c) => product rule.
     double dkdt1[6], dkdt2[6], dkdc1[6], dkdc2[6];
     if (loading) {
         const double ixs = 1.0 / xs, ixs2 = ixs * ixs;
@@ -1234,7 +1279,8 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
             dkdt2[i] = det_deps[i] * ixs - above * dxs_deps[i] * ixs2;
             dkdt1[i] = dnorm_deps[i] * ixs - dnorm * dxs_deps[i] * ixs2;
             dkdc2[i] = (dac_deps[i] * above + ac * det_deps[i]) * ixs - ac * above * dxs_deps[i] * ixs2;
-            dkdc1[i] = (dac_deps[i] * dnorm + ac * dnorm_deps[i]) * ixs - ac * dnorm * dxs_deps[i] * ixs2;
+            dkdc1[i] = (dac_deps[i] * bc * dnorm + ac * dbc_deps[i] * dnorm + ac * bc * dnorm_deps[i]) * ixs
+                     - ac * bc * dnorm * dxs_deps[i] * ixs2;
         }
     } else for (int i = 0; i < 6; ++i) { dkdt1[i] = dkdt2[i] = dkdc1[i] = dkdc2[i] = 0.0; }
 
@@ -1361,7 +1407,7 @@ inline int returnMap(const Params& mp, const double strain[6], const State& in, 
     out.kp = kp_new;
     // (2) IMPLICIT P2 dual-damage NOMINAL stress (writes out.sig + the damage history). Unilateral by re-split.
     double wt_impl = 0.0, wc_impl = 0.0;
-    damagedUpdate(mp, in, sig_eff, strain, out, &wt_impl, &wc_impl);
+    damagedUpdate(mp, in, sig_eff, kp_new, strain, out, &wt_impl, &wc_impl);
     // carry the committed IMPLICIT damage + the per-variable increments for the next IMPL-EX extrapolation
     out.wt = wt_impl; out.wc = wc_impl;
     out.dwt = wt_impl - in.wt; out.dwc = wc_impl - in.wc;
@@ -1379,7 +1425,7 @@ inline int returnMap(const Params& mp, const double strain[6], const State& in, 
         if (doTangent && status == 0) {
             double Ceff[6][6];
             for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) Ceff[i][j] = Dtan6[i][j];
-            damagedTangent(mp, in, sig_eff, strain, Ceff, Dtan6);
+            damagedTangent(mp, in, sig_eff, strain, kp_new, Ceff, Dtan6);
         }
         return status;
     }
