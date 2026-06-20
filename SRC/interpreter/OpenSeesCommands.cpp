@@ -1886,6 +1886,12 @@ int OPS_Integrator()
     } else if (strcmp(type, "CentralDifferenceSMSConsistent") == 0) {   // Ladruno
 	ti = (TransientIntegrator*)OPS_CentralDifferenceSMSConsistent();
 
+    } else if (strcmp(type, "ExplicitBatheSMS") == 0) {   // Ladruno
+	ti = (TransientIntegrator*)OPS_ExplicitBatheSMS();
+
+    } else if (strcmp(type, "ExplicitBatheSMSConsistent") == 0) {   // Ladruno
+	ti = (TransientIntegrator*)OPS_ExplicitBatheSMSConsistent();
+
     } else if (strcmp(type, "LadrunoDynamicRelaxation") == 0) {   // Ladruno
 	ti = (TransientIntegrator*)OPS_LadrunoDynamicRelaxation();
 

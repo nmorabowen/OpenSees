@@ -159,3 +159,16 @@ dominant lumped diagonal, so the preconditioned operator is well-conditioned ~`1
   doesn't close for the consistent integrator (it does for lumped). Documented in the manifest,
   handoff, and [[LEDGER_quirks]]; the gap is small in the design regime (low-participation
   scaled elements). NEXT (v2): the recorder KE hook, then T-MPI.
+- **2026-06-20 — ExplicitBathe SMS family added (33009 lumped, 33010 consistent).** The
+  same kernel (`buildMassScaling*` / `consistentPCG`) and `refineAccel()` hook pattern,
+  ported to the Noh-Bathe `ExplicitBathe`. `ExplicitBathe` gained a protected classTag ctor
+  + the no-op `refineAccel()` hook called at BOTH sub-step solves (`A_tpdt` from the external
+  algorithm solve, `A_tdt` from the inline second solve); default no-op keeps `ExplicitBathe`
+  byte-identical (base regression green). `ExplicitBatheSMS` (lumped) needs NO solve hook —
+  ExplicitBathe assembles only the mass on the RHS, so nodal injection is seen directly (the
+  ADR-36 "trivial follow-up"). `ExplicitBatheSMSConsistent` overrides `refineAccel` with the
+  matrix-free PCG; the inline second solve reuses the factored DiagonalSOE (`isAfactored` ⇒
+  1/mass at both sites, so r-recovery is valid). Measured identical to the CDL family: f1
+  **−0.17% (consistent) vs −53.41% (lumped)** via transient FFT. Command takes the Noh-Bathe
+  `$p` first. Zone-A `tests/test_explicitBatheSMS_integrator.py`. LNVD (separate base) is a
+  clean follow-up, not done here.

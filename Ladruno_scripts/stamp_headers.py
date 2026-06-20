@@ -63,6 +63,8 @@ GLOBS = [
     "SRC/analysis/integrator/CentralDifferenceLadruno.*",
     "SRC/analysis/integrator/CentralDifferenceSMS.*",
     "SRC/analysis/integrator/CentralDifferenceSMSConsistent.*",
+    "SRC/analysis/integrator/ExplicitBatheSMS.*",
+    "SRC/analysis/integrator/ExplicitBatheSMSConsistent.*",
     "SRC/analysis/integrator/LadrunoMassLumping.h",
     "SRC/analysis/integrator/LadrunoMassScaling.h",
     "SRC/analysis/integrator/LadrunoArcLength.*",

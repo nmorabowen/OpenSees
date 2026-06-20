@@ -598,6 +598,8 @@ void* OPS_ExplicitBatheLNVD();
 void* OPS_CentralDifferenceLadruno();
 void* OPS_CentralDifferenceSMS();       // Ladruno — selective mass scaling
 void* OPS_CentralDifferenceSMSConsistent();   // Ladruno — consistent (Olovsson) mass scaling
+void* OPS_ExplicitBatheSMS();           // Ladruno — Noh-Bathe lumped mass scaling
+void* OPS_ExplicitBatheSMSConsistent(); // Ladruno — Noh-Bathe consistent mass scaling
 void* OPS_LadrunoDynamicRelaxation();   // Ladruno
 
 void* OPS_LinearAlgorithm();
