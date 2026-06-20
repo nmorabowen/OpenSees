@@ -100,6 +100,18 @@ namespace ladruno {
 		void build();
 	};
 
+	// Ladruno (ADR-30 P4): projection constraint tie force M(a_raw - a_proj), read from
+	// Node::getProjectionTieForce() (scattered by CentralDifferenceLadruno each commit).
+	// A plain vec3 force field — no reaction flag, no partition-reduction prime.
+	class ConstraintTieForceSource : public NodeResultSource {
+	public:
+		explicit ConstraintTieForceSource(const detail::ProcessInfo& info);
+		ConstraintTieForceSource(const detail::ProcessInfo& info, const std::vector<int>& ids);
+		void evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer) override;
+	private:
+		void build();
+	};
+
 	class RotationSource : public NodeResultSource {
 	public:
 		explicit RotationSource(const detail::ProcessInfo& info);
