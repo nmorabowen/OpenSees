@@ -51,6 +51,7 @@
 #include <Channel.h>
 #include <FEM_ObjectBroker.h>
 #include <elementAPI.h>
+#include <LadrunoConstraintProjector.h>   // Ladruno: ADR-30
 #include <cmath>
 #include <limits>
 #include <string.h>
@@ -150,7 +151,8 @@ CentralDifferenceLadruno::CentralDifferenceLadruno()
       undamped_critical_element_tag(0),
       verbose(false), cflAbort(false), divergenceFactor(0.0), prevKE(0.0),
       cflUseTangent(false), cflRecomputeEvery(0), cflStepCount(0),
-      cflFirstComputation(true), lumping(CTSLumping::Diagonal), betaKWarned(false)
+      cflFirstComputation(true), lumping(CTSLumping::Diagonal), betaKWarned(false),
+      theProjector(0), massBuilt(false), Aproj(0)
 {
 }
 
@@ -184,7 +186,8 @@ CentralDifferenceLadruno::CentralDifferenceLadruno(
       verbose(verbose_), cflAbort(cflAbort_), divergenceFactor(divergenceFactor_),
       prevKE(0.0), cflUseTangent(cflUseTangent_),
       cflRecomputeEvery(cflRecomputeEvery_), cflStepCount(0),
-      cflFirstComputation(true), lumping(lumping_), betaKWarned(false)
+      cflFirstComputation(true), lumping(lumping_), betaKWarned(false),
+      theProjector(0), massBuilt(false), Aproj(0)
 {
 }
 
@@ -195,6 +198,18 @@ CentralDifferenceLadruno::~CentralDifferenceLadruno()
     if (Aprev != 0) delete Aprev;
     if (Vfull != 0) delete Vfull;
     if (Azero != 0) delete Azero;
+    if (Aproj != 0) delete Aproj;
+    // theProjector is owned by LadrunoProjectionHandler — do NOT delete here.
+}
+
+// Ladruno (ADR-30): the projection handler pushes its (non-owning) projector. We
+// re-read the mass next solve (massBuilt=false) since a new projector implies a new
+// constraint set / numbering.
+void
+CentralDifferenceLadruno::setConstraintProjector(LadrunoConstraintProjector *p)
+{
+    theProjector = p;
+    massBuilt = false;
 }
 
 // Explicit: only the mass matrix on the LHS -> a trivial diagonal M^{-1} solve.
@@ -250,18 +265,21 @@ int CentralDifferenceLadruno::domainChanged()
         if (Aprev != 0) delete Aprev;
         if (Vfull != 0) delete Vfull;
         if (Azero != 0) delete Azero;
+        if (Aproj != 0) delete Aproj;
 
         Ut    = new Vector(size);
         Vhalf = new Vector(size);
         Aprev = new Vector(size);
         Vfull = new Vector(size);
         Azero = new Vector(size);   // stays zero for the lifetime of the object
+        Aproj = new Vector(size);   // Ladruno (ADR-30): projected-accel scratch
 
         if (Ut == 0 || Ut->Size() != size ||
             Vhalf == 0 || Vhalf->Size() != size ||
             Aprev == 0 || Aprev->Size() != size ||
             Vfull == 0 || Vfull->Size() != size ||
-            Azero == 0 || Azero->Size() != size) {
+            Azero == 0 || Azero->Size() != size ||
+            Aproj == 0 || Aproj->Size() != size) {
             opserr << "CentralDifferenceLadruno::domainChanged - out of memory\n";
             return -1;
         }
@@ -297,6 +315,26 @@ int CentralDifferenceLadruno::domainChanged()
 
     firstStep = true;
     cflStepCount = 0;
+
+    // Ladruno (ADR-30): the projected-mass cache is invalid after a domain change;
+    // re-read diag(M) at the next starter. Then check (or project) IC compliance of
+    // the committed (u0, v0) against every constraint group — Ut/Vhalf currently hold
+    // them. enforceIC() needs no mass (it uses L, delta only), so it is safe here.
+    massBuilt = false;
+    if (theProjector != 0) {
+        int nViol = theProjector->enforceIC(*Ut, *Vhalf);
+        if (nViol > 0) {
+            opserr << "CentralDifferenceLadruno::domainChanged - " << nViol
+                   << " initial-condition constraint violation(s); aborting. Fix the "
+                      "ICs or add -projectICs to the constraints command.\n";
+            return -1;
+        }
+    } else {
+        // A LadrunoProjectionHandler would have pushed a projector at
+        // doneNumberingDOF(); none here means either a different handler (fine) or a
+        // mid-run integrator swap that bypassed doneNumberingDOF (then the IC check is
+        // silently skipped — warn once is handled by the handler path).
+    }
 
     // dt_cr is computed here unconditionally (ADR C4): CriticalTimeStep runs its
     // OWN LAPACK eigensolve of K v = lambda M v, so it needs neither a dt nor the
@@ -435,6 +473,17 @@ int CentralDifferenceLadruno::newStep(double _deltaT)
             opserr << "CentralDifferenceLadruno::newStep() - starter: formTangent failed\n";
             return -3;
         }
+        // Ladruno (ADR-30): read diag(M) for the projector from the assembled SOE NOW,
+        // before solve() factors it in place (DiagonalDirectSolver overwrites A[i] with
+        // 1/A[i] on the factor pass). Mass is constant between domain changes.
+        if (theProjector != 0 && !massBuilt) {
+            if (theProjector->buildMass(theLinSOE) < 0) {
+                opserr << "CentralDifferenceLadruno::newStep() - starter: projector "
+                          "buildMass failed (massless DOF / non-Diagonal SOE)\n";
+                return -3;
+            }
+            massBuilt = true;
+        }
         if (this->formUnbalance() < 0) {
             opserr << "CentralDifferenceLadruno::newStep() - starter: formUnbalance failed\n";
             return -3;
@@ -444,7 +493,9 @@ int CentralDifferenceLadruno::newStep(double _deltaT)
             return -3;
         }
         *Aprev = theLinSOE->getX();              // a_0 = M^{-1}(P_0 - C v_0 - F_int(u_0))
-        Vhalf->addVector(1.0, *Aprev, -0.5 * deltaT);   // v_{-1/2} = v_0 - dt/2 a_0
+        if (theProjector != 0)
+            theProjector->project(*Aprev);       // Ladruno: project a_0 onto the manifold
+        Vhalf->addVector(1.0, *Aprev, -0.5 * deltaT);   // v_{-1/2} = v_0 - dt/2 a_0 (projected)
     }
 
     // ---- Leap-frog advance (ADR How) ------------------------------------------
@@ -500,15 +551,26 @@ int CentralDifferenceLadruno::update(const Vector &U)
         return -5;
     }
 
+    // Ladruno (ADR-30): project the solved acceleration onto the constraint manifold.
+    // The projected a_{n+1} (Aproj) drives the full-step velocity, the node state, AND
+    // — load-bearing for manifold invariance — next step's leap-frog via *Aprev below.
+    // The NaN/Inf circuit breaker above deliberately ran on the RAW U.
+    const Vector *Aused = &U;
+    if (theProjector != 0) {
+        *Aproj = U;
+        theProjector->project(*Aproj);
+        Aused = Aproj;
+    }
+
     // Clean FULL-step velocity output at t_{n+1}:
     //   v_{n+1} = 1/2 (v_{n+1/2} + v_{n+3/2}) = v_{n+1/2} + dt/2 a_{n+1}
     // (the extra half-step is exactly the centered (u_{n+2}-u_n)/2dt identity).
     // Vhalf currently holds v_{n+1/2}.
     *Vfull = *Vhalf;
-    Vfull->addVector(1.0, U, 0.5 * deltaT);
+    Vfull->addVector(1.0, *Aused, 0.5 * deltaT);
 
     // Push the consistent full-step snapshot (u_{n+1}, v_{n+1}, a_{n+1}) to the nodes.
-    theModel->setResponse(*Ut, *Vfull, U);
+    theModel->setResponse(*Ut, *Vfull, *Aused);
     if (theModel->updateDomain() < 0) {
         opserr << "CentralDifferenceLadruno::update() - failed to update the domain\n";
         return -6;
@@ -529,8 +591,10 @@ int CentralDifferenceLadruno::update(const Vector &U)
     if (verbose)
         opserr << "CentralDifferenceLadruno::update() max|a| = " << A_max << endln;
 
-    // Carry a_{n+1} as a_n for the next step's leap-frog velocity advance.
-    *Aprev = U;
+    // Carry a_{n+1} as a_n for the next step's leap-frog velocity advance. This is the
+    // load-bearing manifold write (Gate-A R3): newStep() advances Vhalf/Ut with *Aprev,
+    // so it MUST be the PROJECTED acceleration.
+    *Aprev = *Aused;
 
     return 0;
 }

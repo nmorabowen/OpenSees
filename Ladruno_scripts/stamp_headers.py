@@ -75,6 +75,9 @@ GLOBS = [
     "SRC/recorder/LadrunoMonitor*.cpp", "SRC/recorder/LadrunoMonitor*.h",
     "SRC/recorder/EnergyBalanceRecorder.*", "SRC/recorder/EnergyBalanceKernel.h",
     "SRC/convergenceTest/LadrunoStabilizedUnbalance.*",
+    "SRC/analysis/handler/LadrunoProjectionHandler.*",
+    "SRC/analysis/handler/LadrunoConstraintProjector.*",
+    "SRC/analysis/handler/LadrunoProjectionConsumer.h",
 ]
 SUFFIXES = {".cpp", ".h", ".hpp", ".cc", ".cxx"}
 

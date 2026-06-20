@@ -415,14 +415,25 @@ DirectIntegrationAnalysis::domainChanged(void)
     // now we invoke handle() on the constraint handler which
     // causes the creation of FE_Element and DOF_Group objects
     // and their addition to the AnalysisModel.
-    theConstraintHandler->handle();
+    // Ladruno (ADR-30): honor the handle() error contract (<0 = fatal). Upstream
+    // ignored the return, so a handler that detects a bad constraint set (e.g. the
+    // LadrunoProjectionHandler's chain/double-constraint/SP-on-slave diagnostics)
+    // printed its error but the analysis ran on anyway. Additive: every handler
+    // returns >=0 on success and <0 only on a genuine error.
+    if (theConstraintHandler->handle() < 0) {
+        opserr << "DirectIntegrationAnalysis::domainChanged() - ConstraintHandler::handle() failed\n";
+        return -1;
+    }
 
     // we now invoke number() on the numberer which causes
     // equation numbers to be assigned to all the DOFs in the
     // AnalysisModel.
     theDOF_Numberer->numberDOF();
 
-    theConstraintHandler->doneNumberingDOF();
+    if (theConstraintHandler->doneNumberingDOF() < 0) {   // Ladruno (ADR-30): same contract
+        opserr << "DirectIntegrationAnalysis::domainChanged() - ConstraintHandler::doneNumberingDOF() failed\n";
+        return -1;
+    }
 
     // we invoke setGraph() on the LinearSOE which
     // causes that object to determine its size
@@ -447,11 +458,20 @@ DirectIntegrationAnalysis::domainChanged(void)
     theAnalysisModel->clearDOFGraph();
 
     // we invoke domainChange() on the integrator and algorithm
-    theIntegrator->domainChanged();
+    // Ladruno (ADR-30): honor the integrator domainChanged() contract (<0 = fatal).
+    // Upstream dropped this return, so a CentralDifferenceLadruno IC-compliance abort
+    // (and every other domainChanged failure: out-of-memory, missing model/SOE) printed
+    // its error but the analysis ran on anyway, defeating the -projectICs IC-safety gate.
+    // Mirrors BasicAnalysisBuilder::domainChanged(), which already checks this. Additive:
+    // a healthy integrator returns >=0, so this is a no-op except on a genuine failure.
+    if (theIntegrator->domainChanged() < 0) {
+        opserr << "DirectIntegrationAnalysis::domainChanged() - Integrator::domainChanged() failed\n";
+        return -1;
+    }
     theAlgorithm->domainChanged();
 
     return 0;
-}    
+}
 
 int 
 DirectIntegrationAnalysis::setNumberer(DOF_Numberer &theNewNumberer) 
