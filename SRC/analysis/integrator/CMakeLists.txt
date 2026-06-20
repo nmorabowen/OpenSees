@@ -92,6 +92,7 @@ target_sources(OPS_Analysis
        ExplicitBathe.cpp                # JAA
        ExplicitBatheLNVD.cpp            # JAA
        CentralDifferenceLadruno.cpp     # nmb - explicit leap-frog CD + dt_cr
+       CentralDifferenceSMS.cpp         # nmb - selective mass scaling on CDL
        LadrunoDynamicRelaxation.cpp     # nmb - quasi-static dynamic relaxation
        CriticalTimeStep.cpp             # nmb - shared dt_cr eigensolve
        ExplicitDifferenceStatic.cpp     # JAA
@@ -142,6 +143,9 @@ target_sources(OPS_Analysis
        ExplicitBathe.h
        ExplicitBatheLNVD.h
        CentralDifferenceLadruno.h
+       CentralDifferenceSMS.h
+       LadrunoMassLumping.h
+       LadrunoMassScaling.h
        LadrunoDynamicRelaxation.h
        CriticalTimeStep.h
        ExplicitDifferenceStatic.h

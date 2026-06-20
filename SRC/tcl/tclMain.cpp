@@ -147,6 +147,8 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • EnergyBalance recorder (per-region energy sidecar)\n"
 "        • Explicit Noh–Bathe integrators (ExplicitBathe / LNVD)\n"
 "        • CentralDifferenceLadruno — robust explicit central difference\n"
+"        • CentralDifferenceSMS — selective mass scaling (DT2MS-style, explicit)\n"
+"        • HRZ mass-conserving lumping (-lump hrz) for dt_cr\n"
 "        • Queryable critical time step (dt_cr)\n"
 "        • BezierTri6 — quadratic Bézier triangle (Kadapa 2018)\n"
 "        • BezierTet10 — quadratic Bézier tetrahedron (Kadapa 2018)\n"

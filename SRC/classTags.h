@@ -1145,6 +1145,7 @@
 #define INTEGRATOR_TAGS_LadrunoArcLength                 33004 // N. Mora-Bowen (Ladruno) — adaptive (+ future viscous-stabilized) arc-length; ladruno integrator band >=33000. NB 33004 is independently reused in the ELE_TAG space (ELE_TAG_LadrunoIMKBeam2d=33004) — tag bands are PER-REGISTRY, no collision.
 #define INTEGRATOR_TAGS_LadrunoDynamicRelaxation         33005 // N. Mora-Bowen (Ladruno) — quasi-static dynamic relaxation (Gershgorin fictitious mass + Cundall kinetic damping); TransientIntegrator, ladruno integrator band >=33000.
 #define INTEGRATOR_TAGS_LadrunoIndirectControl           33006 // N. Mora-Bowen (Ladruno) — indirect / CMOD displacement control (weighted multi-DOF control quantity c.U, monotone through snap-back); StaticIntegrator, ladruno integrator band >=33000.
+#define INTEGRATOR_TAGS_CentralDifferenceSMS             33007 // N. Mora-Bowen (Ladruno) — selective mass scaling on CentralDifferenceLadruno; ladruno integrator band >=33000. NB 33007 is independently reused in the ELE_TAG space (ELE_TAG_LadrunoQuad=33007) — tag bands are PER-REGISTRY, no collision.
 
 
 #define LinSOE_TAGS_FullGenLinSOE		1

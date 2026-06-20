@@ -86,8 +86,9 @@ extern "C" int dggev_(char *JOBVL, char *JOBVR, int *N, double *A, int *LDA,
 //   -tangent                           estimate dt_cr from the current tangent
 //                                      stiffness (default: initial stiffness)
 //   -recompute <N>                     refresh dt_cr every N steps (implies -tangent)
-//   -lump <rowsum|diagonal>            element-mass lumping for dt_cr (default
+//   -lump <rowsum|diagonal|hrz>        element-mass lumping for dt_cr (default
 //                                      rowsum; diagonal = diagonal-of-consistent,
+//                                      hrz = mass-conserving Hinton-Rock-Zienkiewicz,
 //                                      better for rotational DOFs)
 void *OPS_ExplicitBathe(void) {
     double p = 0.54;            // default: good high-frequency dissipation
@@ -143,8 +144,9 @@ void *OPS_ExplicitBathe(void) {
                 const char *m = OPS_GetString();
                 if (strcmp(m, "diagonal") == 0)      lumping = CTSLumping::Diagonal;
                 else if (strcmp(m, "rowsum") == 0)   lumping = CTSLumping::RowSum;
+                else if (strcmp(m, "hrz") == 0)      lumping = CTSLumping::HRZ;
                 else opserr << "WARNING ExplicitBathe - unknown -lump " << m
-                            << " (use rowsum|diagonal; keeping rowsum)\n";
+                            << " (use rowsum|diagonal|hrz; keeping rowsum)\n";
             }
         } else {
             opserr << "WARNING ExplicitBathe - unknown option " << arg
@@ -641,8 +643,9 @@ double ExplicitBathe::getCriticalTimeStep(void) const {
 
 // Send object state for parallel processing
 int ExplicitBathe::sendSelf(int cTag, Channel &theChannel) {
-    Vector data(1);
+    Vector data(2);
     data(0) = p;
+    data(1) = (double)(int)lumping;   // 0=RowSum, 1=Diagonal, 2=HRZ
 
     if (theChannel.sendVector(this->getDbTag(), cTag, data) < 0) {
         opserr << "ExplicitBathe::sendSelf() - could not send data\n";
@@ -654,13 +657,19 @@ int ExplicitBathe::sendSelf(int cTag, Channel &theChannel) {
 
 // Receive object state for parallel processing
 int ExplicitBathe::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBroker) {
-    Vector data(1);
+    Vector data(2);
     if (theChannel.recvVector(this->getDbTag(), cTag, data) < 0) {
         opserr << "ExplicitBathe::recvSelf() - could not receive data\n";
         return -1;
     }
 
     p = data(0);
+    {   // decode lumping; default to RowSum (this integrator's default)
+        int lc = (int)data(1);
+        lumping = (lc == 2) ? CTSLumping::HRZ
+                : (lc == 1) ? CTSLumping::Diagonal
+                            : CTSLumping::RowSum;
+    }
 
     // Recalculate integration coefficients from received p
     q1 = (1.0 - 2.0*p) / (2.0*p*(1.0 - p));

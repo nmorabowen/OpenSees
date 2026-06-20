@@ -29,16 +29,22 @@
 #define CriticalTimeStep_h
 
 class AnalysisModel;
+class Element;
+class Matrix;
 
 // How the element mass is lumped to the diagonal M of the per-element pencil.
 enum class CTSLumping {
-    RowSum,  // sum each row onto the diagonal. Cheap, but non-conservative for the
-             //   rotational DOFs of beams/shells (row sums there can be ~0).
-    Diagonal // diagonal-of-consistent: M_ii directly. Strictly positive for a
-             //   consistent mass, so it avoids the row-sum rotational pathology.
-             //   NOTE: this is NOT mass-conserving (sum of M_ii need not equal the
-             //   element mass), so it can be NON-conservative for translational DOFs.
-             //   A true mass-conserving HRZ lump is a follow-up (see ADR).
+    RowSum,   // (0) sum each row onto the diagonal. Cheap, but non-conservative for
+              //   the rotational DOFs of beams/shells (row sums there can be ~0).
+    Diagonal, // (1) diagonal-of-consistent: M_ii directly. Strictly positive for a
+              //   consistent mass, so it avoids the row-sum rotational pathology.
+              //   NOTE: this is NOT mass-conserving (sum of M_ii need not equal the
+              //   element mass), so it can be NON-conservative for translational DOFs.
+    HRZ       // (2) Hinton-Rock-Zienkiewicz mass-conserving lump (Ladruno, ADR 35):
+              //   per translational direction d, scale the consistent diagonal so it
+              //   sums to the element mass; rotational DOFs take the mean of the
+              //   translational scales. Positive AND mass-conserving AND rotation-aware.
+              //   See LadrunoMassLumping.h (Ladruno::hrzLump).
 };
 
 // Result of one scan over the (local) domain's elements.
@@ -72,5 +78,39 @@ struct CTSResult {
 CTSResult computeCriticalTimeStep(AnalysisModel *theModel,
                                   bool useTangent,
                                   CTSLumping lumping);
+
+// ---- per-element kernel (reused by computeCriticalTimeStep AND the selective
+//      mass-scaling integrator, ADR 36) ------------------------------------
+//
+// Lump one element's CONSISTENT mass `M` into the diagonal `mdiag` (caller-sized
+// to M.noRows()) per `lumping`. For HRZ the per-DOF translation/rotation tags
+// are built from the element's node layout (first ndm DOFs of each node are
+// translational; the element mass is assumed ordered node-by-node — true for
+// node-major element matrices). Mass-first / D8: the caller passes the M it
+// already fetched; this copies it fully into mdiag before returning, so the
+// caller may then fetch the stiffness without aliasing a shared static matrix.
+void lumpElementMass(Element *ele, const Matrix &M, CTSLumping lumping,
+                     double *mdiag);
+
+// Largest generalized eigenvalue lambda_max (= omega_max^2) of K v = lambda M v
+// for one element, with M the diagonal `mdiag` (length n). useTangent selects
+// getTangentStiff() over getInitialStiff(). Returns < 0 on DOF mismatch or
+// eigensolve failure. NOTE: this is the EIGENSOLVE half only — it does NOT
+// account for an element's self-reported bound (getExplicitCriticalTimeStep);
+// callers that need the authoritative per-element step must use
+// elementCriticalDt (below), not this directly.
+double elementLambdaMax(Element *ele, bool useTangent,
+                        const double *mdiag, int n);
+
+// Authoritative UNDAMPED per-element critical step, with the same precedence
+// computeCriticalTimeStep applies: a positive self-reported bound
+// (getExplicitCriticalTimeStep) wins over the eigensolve (some elements — e.g.
+// bipenalty couplings — carry a stability limit their per-element pencil can't
+// express, where elementLambdaMax would return ~0 and miss it). Otherwise
+// returns 2/sqrt(lambda_max). Returns < 0 if neither is available. This is the
+// accessor the selective mass-scaling integrator (CentralDifferenceSMS, ADR 36)
+// must call to size its per-element scale factor.
+double elementCriticalDt(Element *ele, bool useTangent,
+                         const double *mdiag, int n);
 
 #endif

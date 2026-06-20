@@ -18,10 +18,13 @@
 // the explicit Noh-Bathe integrators (hoisted out of ExplicitBathe.cpp).
 
 #include <CriticalTimeStep.h>
+#include <LadrunoMassLumping.h>
 #include <AnalysisModel.h>
 #include <Domain.h>
 #include <Element.h>
 #include <ElementIter.h>
+#include <Node.h>
+#include <ID.h>
 #include <Matrix.h>
 #include <Vector.h>
 #include <OPS_Globals.h>
@@ -178,6 +181,104 @@ static double maxGeneralizedEigenvalue(int n, double *K_data, double *M_data)
     return lambdaMax;
 }
 
+// ---- per-element kernel (extracted so the selective mass-scaling integrator
+//      reuses the exact same D8-safe lump + eigensolve, ADR 36) -------------
+
+void lumpElementMass(Element *ele, const Matrix &M, CTSLumping lumping,
+                     double *mdiag)
+{
+    int n = M.noRows();
+    if (n <= 0) return;
+
+    if (lumping == CTSLumping::Diagonal) {
+        // diagonal-of-consistent mass: M_ii (strictly positive, dimensionally
+        // consistent for rotational DOFs).
+        for (int i = 0; i < n; ++i)
+            mdiag[i] = M(i, i);
+    } else if (lumping == CTSLumping::HRZ) {
+        // Hinton-Rock-Zienkiewicz mass-conserving lump (ADR 35). Build dofDir
+        // from the element node layout: the first ndm DOFs of each node are
+        // translational (dir 0..ndm-1), the rest rotational (-1). The element
+        // mass M is ordered node-by-node, so dofDir lines up by construction.
+        ID dofDir(n);
+        Node **nodes = ele->getNodePtrs();
+        int numNodes = ele->getNumExternalNodes();
+        int pos = 0;
+        bool built = (nodes != 0);
+        for (int a = 0; a < numNodes && built && pos < n; ++a) {
+            Node *nd = nodes[a];
+            if (nd == 0) { built = false; break; }
+            // per-node spatial dim: the first ndmA DOFs of THIS node are
+            // translational (handles mixed-dimension assemblies); the rest
+            // (rotations, drilling, pressure) are tagged -1. Assumes the
+            // element mass is node-major and translational-first per node.
+            int ndmA = nd->getCrds().Size();
+            int ndfN = nd->getNumberDOF();
+            for (int k = 0; k < ndfN && pos < n; ++k, ++pos)
+                dofDir(pos) = (k < ndmA) ? k : -1;
+        }
+        if (built && pos == n) {
+            int rc = Ladruno::hrzLump(M, dofDir, mdiag, n);
+            if (rc != Ladruno::HRZ_OK)
+                opserr << "WARNING CriticalTimeStep - element " << ele->getTag()
+                       << ": HRZ lump fell back to diagonal-of-consistent\n";
+        } else {
+            // could not infer DOF layout (mixed-ndf / coupling element): fall
+            // back to diagonal-of-consistent and warn (ADR 35 risk note).
+            opserr << "WARNING CriticalTimeStep - element " << ele->getTag()
+                   << ": -lump hrz could not tag DOFs, using diagonal\n";
+            for (int i = 0; i < n; ++i) mdiag[i] = M(i, i);
+        }
+    } else {
+        // row-sum lumping: sum of each row onto the diagonal.
+        for (int i = 0; i < n; ++i) {
+            double sum = 0.0;
+            for (int j = 0; j < n; ++j)
+                sum += M(i, j);
+            mdiag[i] = sum;
+        }
+    }
+}
+
+double elementLambdaMax(Element *ele, bool useTangent,
+                        const double *mdiag, int n)
+{
+    const Matrix &K = useTangent ? ele->getTangentStiff() : ele->getInitialStiff();
+    if (K.noRows() != n) return -1.0;
+
+    // pack column-major for LAPACK
+    double *K_data = new double[n * n];
+    double *M_data = new double[n * n];
+    for (int j = 0; j < n; ++j) {
+        for (int i = 0; i < n; ++i) {
+            K_data[j * n + i] = K(i, j);
+            M_data[j * n + i] = (i == j) ? mdiag[i] : 0.0;
+        }
+    }
+
+    double lambdaMax = maxGeneralizedEigenvalue(n, K_data, M_data);
+
+    delete[] K_data;
+    delete[] M_data;
+    return lambdaMax;
+}
+
+double elementCriticalDt(Element *ele, bool useTangent,
+                         const double *mdiag, int n)
+{
+    // self-reported bound takes precedence over the eigensolve (mirrors the
+    // self-report stage in computeCriticalTimeStep: an element may carry a
+    // stability limit its per-element K v = lambda M v pencil cannot express,
+    // e.g. a bipenalty coupling whose host DOFs slave out -> lambda_max ~ 0).
+    double selfDt = ele->getExplicitCriticalTimeStep();
+    if (selfDt > 0.0)
+        return selfDt;
+    double lambdaMax = elementLambdaMax(ele, useTangent, mdiag, n);
+    if (lambdaMax > 0.0)
+        return 2.0 / std::sqrt(lambdaMax);
+    return -1.0;
+}
+
 CTSResult computeCriticalTimeStep(AnalysisModel *theModel,
                                   bool useTangent,
                                   CTSLumping lumping)
@@ -219,45 +320,20 @@ CTSResult computeCriticalTimeStep(AnalysisModel *theModel,
         // Read and lump the mass BEFORE fetching the stiffness: getMass() and
         // getInitialStiff()/getTangentStiff() may both return a reference to the
         // SAME shared static matrix, so holding both at once aliases (D8).
+        // --- mass first, lumped to a diagonal vector (D8: copy M fully before
+        //     the stiffness is fetched). Both steps now go through the shared
+        //     per-element kernel (lumpElementMass + elementLambdaMax) so the
+        //     selective mass-scaling integrator lumps/eigensolves identically.
         const Matrix &M = ele->getMass();
         int n = M.noRows();
         if (n == 0) { r.n_scanned++; continue; }
 
         double *mdiag = new double[n];
-        if (lumping == CTSLumping::Diagonal) {
-            // diagonal-of-consistent mass: M_ii (strictly positive, dimensionally
-            // consistent for rotational DOFs).
-            for (int i = 0; i < n; ++i)
-                mdiag[i] = M(i, i);
-        } else {
-            // row-sum lumping: sum of each row onto the diagonal.
-            for (int i = 0; i < n; ++i) {
-                double sum = 0.0;
-                for (int j = 0; j < n; ++j)
-                    sum += M(i, j);
-                mdiag[i] = sum;
-            }
-        }
+        lumpElementMass(ele, M, lumping, mdiag);
 
-        // --- now the stiffness (M reference no longer used) ---------------
-        const Matrix &K = useTangent ? ele->getTangentStiff() : ele->getInitialStiff();
-        if (K.noRows() != n) { delete[] mdiag; r.n_scanned++; continue; }
-
-        // pack column-major for LAPACK
-        double *K_data = new double[n * n];
-        double *M_data = new double[n * n];
-        for (int j = 0; j < n; ++j) {
-            for (int i = 0; i < n; ++i) {
-                K_data[j * n + i] = K(i, j);
-                M_data[j * n + i] = (i == j) ? mdiag[i] : 0.0;
-            }
-        }
-
-        double lambdaMax = maxGeneralizedEigenvalue(n, K_data, M_data);
+        double lambdaMax = elementLambdaMax(ele, useTangent, mdiag, n);
 
         delete[] mdiag;
-        delete[] K_data;
-        delete[] M_data;
         r.n_scanned++;
 
         if (lambdaMax > 0.0) {
