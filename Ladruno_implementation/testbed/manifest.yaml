@@ -311,7 +311,7 @@ features:
   - feature: ExplicitBatheLNVDSMS
     classtag: 33011
     tag_symbol: INTEGRATOR_TAGS_ExplicitBatheLNVDSMS
-    pr: 0
+    pr: 324
     feature_class: integrator
     required_tiers: [dynamics-battery]
     pytest: tests/test_explicitBatheLNVDSMS_integrator.py   # EBL-SMS-1 supra-stable (plain LNVD diverges@dtTarget), EBL-SMS-2 nodal-mass injection; + consistent sibling tests in the same file
@@ -335,7 +335,7 @@ features:
   - feature: ExplicitBatheLNVDSMSConsistent
     classtag: 33012
     tag_symbol: INTEGRATOR_TAGS_ExplicitBatheLNVDSMSConsistent
-    pr: 0
+    pr: 324
     feature_class: integrator
     required_tiers: [dynamics-battery]
     pytest: tests/test_explicitBatheLNVDSMS_integrator.py   # EBL-CONS-1 supra-stable + no nodal mass, EBL-CONS-2 f1 preservation vs lumped (FFT), EBL-CONS-3 reduce-to-base bit-identical to ExplicitBatheLNVD, EBL-CONS-4 PCG<=30 at both sub-steps
