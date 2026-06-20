@@ -108,13 +108,16 @@
 
 #include <TransientIntegrator.h>
 #include <CriticalTimeStep.h>   // CTSLumping, CTSResult, computeCriticalTimeStep()
+#include <LadrunoProjectionConsumer.h>   // Ladruno: ADR-30 explicit constraint projection
 
 class DOF_Group;
 class FE_Element;
 class Vector;
 class LinearSOE;
+class LadrunoConstraintProjector;
 
-class CentralDifferenceLadruno : public TransientIntegrator
+class CentralDifferenceLadruno : public TransientIntegrator,
+                                 public LadrunoProjectionConsumer
 {
 public:
     // Constructors
@@ -145,6 +148,11 @@ public:
 
     // Modal-damping hook: returns the LAGGED half-step velocity (ADR C5).
     const Vector &getVel(void);
+
+    // Ladruno (ADR-30): LadrunoProjectionConsumer — the handler pushes its
+    // (non-owning) acceleration projector here; we project a0 in the starter and
+    // a_{n+1} in update() so MP constraints are enforced without penalty/elimination.
+    void setConstraintProjector(LadrunoConstraintProjector *theProjector_) override;
 
     // Methods for parallel processing
     virtual int sendSelf(int commitTag, Channel &theChannel);
@@ -204,6 +212,12 @@ private:
     bool   cflFirstComputation;// gate the detailed report to the first computation
     CTSLumping lumping;        // element-mass lumping for the dt_cr pencil (-lump)
     bool   betaKWarned;        // emit the beta-K-trap warning at most once
+
+    // Ladruno (ADR-30): explicit constraint projection (null unless the handler is
+    // LadrunoProjectionHandler). theProjector is NON-owning (handler owns it).
+    LadrunoConstraintProjector *theProjector;
+    bool   massBuilt;          // projector mass read this domainChanged() yet?
+    Vector *Aproj;             // projected-acceleration scratch for update()
 };
 
 #endif

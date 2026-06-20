@@ -64,6 +64,11 @@ class DiagonalSOE : public LinearSOE
     const Vector &getX(void);
     const Vector &getB(void);
   const Matrix *getA(void);
+    // Ladruno (ADR-30): raw assembled diagonal A[], indexed by equation number.
+    // Valid only BEFORE the solver factors it in place (DiagonalDirectSolver
+    // overwrites A[i] with 1/A[i] on the factor pass). The projection handler reads
+    // this between the integrator's M-only formTangent() and its solve().
+    const double *getDiagonalA(void) const { return A; }
     double normRHS(void);
 
     int saveSparseA(OPS_Stream &output, int baseIndex = 0);
