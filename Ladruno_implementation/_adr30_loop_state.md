@@ -48,7 +48,7 @@ Spec: `30_ladruno_explicit_constraint_projection_adr.md`. Host integrator:
 | P0 falsify & baseline (no SRC) | ✅ MERGED | #300 (671b5236) | 3 passed (hardened) | Gate-0 SOUND |
 | P1 core (equalDOF) | ✅ MERGED | #305 (668ad8e9) | 11 P1 + 3 P0; ZoneA 870 | Gate-A + Gate-B SOUND |
 | P2 general C (rigidLink/diaphragm) | ✅ MERGED | #307 (9990e206) | 6 P2 + general-review fixes | Gate-C + general review SOUND |
-| P3 queries + EQ | TESTS 4/4 GREEN; Gate-D running | guppi/adr30-p3-queries | T8/T9/EQ/guard + ZoneA-30 44 pass | Gate-D (read-only) running |
+| P3 queries + EQ | ✅ PR OPEN, awaiting approval | #312 (guppi/adr30-p3-queries) | T8/T9/EQ/guard/missing-node; full ZoneA 938 pass | Gate-D SOUND (1 blocker fixed) + EQ-leak upstream bug fixed |
 
 ## Adversarial findings log
 _(append per gate: finding · lens · REAL/REFUTED · resolution)_
@@ -242,3 +242,10 @@ _(append per gate: finding · lens · REAL/REFUTED · resolution)_
 - **v1 (P0-P3) COMPLETE pending full-ZoneA + PR.** Vanilla P3 touches: OpenSeesCommands.h,
   OpenSeesOutputCommands.cpp, PythonWrapper.cpp, TclWrapper.cpp (query cmd) + Domain.cpp (EQ fix);
   fork handler/projector/CDL. All ledgered.
+
+---
+## ✅ v1 COMPLETE (2026-06-20)
+P0 #300 · P1 #305 · P2 #307 · P3 #312 — ALL MERGED to ladruno. LadrunoProjectionHandler
+(HANDLER 33001) ships explicit constraint projection for equalDOF + rigidLink + rigidDiaphragm
++ equationConstraint, with the tie-force query, IC manifold guard, full diagnostic battery, and
+the deferred-P4 backlog documented. Handoff: `projection_handler_handoff.md`. Loop ends.
