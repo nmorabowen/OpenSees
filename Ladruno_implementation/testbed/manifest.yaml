@@ -225,7 +225,7 @@ features:
     classtag: 33008          # INTEGRATOR family; new class (N. Mora-Bowen). NB 33008
                              # is independently ELE_TAG_LadrunoCST — per-registry, no collision.
     tag_symbol: INTEGRATOR_TAGS_CentralDifferenceSMSConsistent
-    pr: 0
+    pr: 320
     feature_class: integrator
     required_tiers: [dynamics-battery]
     pytest: tests/test_centralDifferenceSMSConsistent_integrator.py   # TCONS-1..7 Zone-A: construct/run, supra-stable necessity (CD diverges@dtTarget), NO nodal-mass mutation (vs lumped control), f1 PRESERVATION vs lumped (FFT: consistent -0.17% vs lumped -53% on the oracle Case-A bar), reduce-to-base bit-identical to CDL, PCG converges <=30 iters, TCONS-7 constraint-touching elements EXCLUDED (adversarial-review regression: master/slave MP node under default Transformation handler would OOB the n×n M_bar). numpy oracle: Ladruno_implementation/mass_scaling_consistent/oracle_olovsson_sms.py
