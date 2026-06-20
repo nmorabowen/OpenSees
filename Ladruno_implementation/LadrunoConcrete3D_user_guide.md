@@ -108,6 +108,10 @@ no runtime *enforcement*, but the parser **prints a warning at material creation
   PlateFiber / PlaneStress (the element picks one via `getCopy(type)`) + the finite-strain view via
   `nDMaterial LogStrain`. (PlaneStress/PlateFiber enforce σ_zz=0 by a nested ε_zz Newton + static
   condensation; unconfined plane-STRESS post-peak softening is snap-backy → robust pre-peak / confined.)
+  Compression uses the **full CDPM2 `β_c` (Eq.50)** — a state-dependent factor (`≈ f_t/(f_c√(1+2D_f²))`
+  in uniaxial compression) on the plastic part of the compressive-damage driver — so the post-peak
+  **compression response is markedly more DUCTILE** than a `β_c=1` model (calibrate `G_c` to your
+  measured compression softening accordingly).
 - **Robustness tiers (P3, shipped):** **`-implex`** (Tier-2 IMPL-EX — explicit extrapolated stress +
   degraded-elastic SPD secant; for transient / uniform LoadControl, NOT softening + DisplacementControl)
   and **`-eta`** (Duvaut–Lions viscoplastic relaxation `σ̄=(1−β)σ̄_tr+β σ̄_inv`, `β=dt/(η+dt)`; `η→0` or no

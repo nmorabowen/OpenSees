@@ -268,6 +268,26 @@ def test_p2e_analytic_damaged_tangent_gate():
     assert r["PASS"]
 
 
+def test_p2f_gate():
+    """P2f: the CDPM2 cyclic beta_c (Eq.50) restored into the compressive-damage plastic driver
+    kappa_dc1 (Eq.48) — `beta_c = ft qh2 sqrt(2/3) / (rho_bar sqrt(1+2 Df^2))`. In monotonic compression
+    beta_c ~ ft/(fc sqrt(1+2 Df^2)) << 1, so it makes compression markedly MORE DUCTILE than the
+    beta_c=1 simplification the P2b/P2c slice used (the chosen 'faithful CDPM2' direction). F1 the
+    closed-form value at the uniaxial-compression peak (= ft/(fc sqrt(1+2 Df^2)), in (0,1)); F2 the
+    monotonic backbone is STILL valid (peak=fc, softens, effective-stress monotone); F3 NON-tautology —
+    the real beta_c changes the post-peak stress by tens of MPa vs beta_c=1 and is a genuine
+    state-dependent factor in (0,1). (The analytic damaged tangent now carries the d beta_c/d eps term,
+    re-verified by test_p2e_analytic_damaged_tangent_gate; the crack-band Gc wiring re-verified by
+    test_p2b_compression_damage_gate. F4 — cyclic omega_c monotonicity / no-healing on unload — is a
+    REPORTED diagnostic: it needs a monotone-omega_c history fix, the NEXT P2f slice.)"""
+    r = ref.run_p2f_gate(verbose=False)
+    assert r["F1_ok"] and abs(r["F1_bc_peak"] - r["F1_bc_expect"]) < 1.0e-12 and 0.0 < r["F1_bc_peak"] < 1.0
+    assert r["F2_ok"] and r["F2_peak_err"] < 0.03 and r["F2_softens"] and r["F2_eff_monotone"]
+    assert r["F3_ok"] and r["F3_stress_gap"] > 0.1 * 30.0   # tens of MPa: real beta_c clearly more ductile
+    assert 0.0 < r["F3_bc_min"] <= r["F3_bc_max"] < 1.0
+    assert r["PASS"]
+
+
 def test_p3_implex_gate():
     """P3 Tier-2 IMPL-EX robustness (ADR 4.4), oracle slice (the C++ kernel port is a follow-up build
     PR). IMPL-EX reports an EXPLICIT stress from EXTRAPOLATED internal variables (plastic-strain
