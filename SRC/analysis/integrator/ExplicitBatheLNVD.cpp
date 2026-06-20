@@ -121,8 +121,9 @@ void *OPS_ExplicitBatheLNVD(void) {
                 const char *m = OPS_GetString();
                 if (strcmp(m, "diagonal") == 0)      lumping = CTSLumping::Diagonal;
                 else if (strcmp(m, "rowsum") == 0)   lumping = CTSLumping::RowSum;
+                else if (strcmp(m, "hrz") == 0)      lumping = CTSLumping::HRZ;
                 else opserr << "WARNING ExplicitBatheLNVD - unknown -lump " << m
-                            << " (use rowsum|diagonal; keeping rowsum)\n";
+                            << " (use rowsum|diagonal|hrz; keeping rowsum)\n";
             }
         } else {
             opserr << "WARNING ExplicitBatheLNVD - unknown option " << arg
@@ -564,9 +565,10 @@ double ExplicitBatheLNVD::getUnbalanceNorm(void) const {
 }
 
 int ExplicitBatheLNVD::sendSelf(int cTag, Channel &theChannel) {
-    Vector data(2);
+    Vector data(3);
     data(0) = p;
     data(1) = alpha_flac;
+    data(2) = (double)(int)lumping;   // 0=RowSum, 1=Diagonal, 2=HRZ
     if (theChannel.sendVector(this->getDbTag(), cTag, data) < 0) {
         opserr << "ExplicitBatheLNVD::sendSelf() - could not send data\n";
         return -1;
@@ -575,13 +577,19 @@ int ExplicitBatheLNVD::sendSelf(int cTag, Channel &theChannel) {
 }
 
 int ExplicitBatheLNVD::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBroker) {
-    Vector data(2);
+    Vector data(3);
     if (theChannel.recvVector(this->getDbTag(), cTag, data) < 0) {
         opserr << "ExplicitBatheLNVD::recvSelf() - could not receive data\n";
         return -1;
     }
     p = data(0);
     alpha_flac = data(1);
+    {   // decode lumping; default to RowSum (this integrator's default)
+        int lc = (int)data(2);
+        lumping = (lc == 2) ? CTSLumping::HRZ
+                : (lc == 1) ? CTSLumping::Diagonal
+                            : CTSLumping::RowSum;
+    }
     q1 = (1.0 - 2.0*p) / (2.0*p*(1.0 - p));
     q2 = 0.5 - p * q1;
     q0 = -q1 - q2 + 0.5;

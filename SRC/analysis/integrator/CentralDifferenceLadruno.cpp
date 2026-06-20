@@ -71,7 +71,7 @@
 void *OPS_CentralDifferenceLadruno(void)
 {
     // Usage: integrator CentralDifferenceLadruno <-cfl> <-cflAbort> <-tangent>
-    //                                            <-recompute N> <-lump rowsum|diagonal>
+    //                                            <-recompute N> <-lump rowsum|diagonal|hrz>
     //                                            <-verbose> <-divergence f>
     // No positional argument and NO -damping flag: this is ONE explicit scheme.
     // (For coupled / implicit-damped CD use `integrator NewmarkExplicit 0.5`.)
@@ -118,8 +118,9 @@ void *OPS_CentralDifferenceLadruno(void)
                 const char *m = OPS_GetString();
                 if (strcmp(m, "diagonal") == 0)      lumping = CTSLumping::Diagonal;
                 else if (strcmp(m, "rowsum") == 0)   lumping = CTSLumping::RowSum;
+                else if (strcmp(m, "hrz") == 0)      lumping = CTSLumping::HRZ;
                 else opserr << "WARNING CentralDifferenceLadruno - unknown -lump " << m
-                            << " (use rowsum|diagonal; keeping diagonal)\n";
+                            << " (use rowsum|diagonal|hrz; keeping diagonal)\n";
             }
         } else {
             opserr << "WARNING CentralDifferenceLadruno - unknown option " << arg
@@ -153,12 +154,25 @@ CentralDifferenceLadruno::CentralDifferenceLadruno()
 {
 }
 
-// Main constructor
+// Main constructor (public) — delegates to the classTag-carrying protected ctor.
 CentralDifferenceLadruno::CentralDifferenceLadruno(
     int compute_critical_timestep_, bool verbose_, bool cflAbort_,
     double divergenceFactor_, bool cflUseTangent_, int cflRecomputeEvery_,
     CTSLumping lumping_)
-    : TransientIntegrator(INTEGRATOR_TAGS_CentralDifferenceLadruno),
+    : CentralDifferenceLadruno(INTEGRATOR_TAGS_CentralDifferenceLadruno,
+                               compute_critical_timestep_, verbose_, cflAbort_,
+                               divergenceFactor_, cflUseTangent_,
+                               cflRecomputeEvery_, lumping_)
+{
+}
+
+// Protected constructor — subclasses (CentralDifferenceSMS) pass their own classTag.
+CentralDifferenceLadruno::CentralDifferenceLadruno(
+    int classTag,
+    int compute_critical_timestep_, bool verbose_, bool cflAbort_,
+    double divergenceFactor_, bool cflUseTangent_, int cflRecomputeEvery_,
+    CTSLumping lumping_)
+    : TransientIntegrator(classTag),
       deltaT(0.0),
       Ut(0), Vhalf(0), Aprev(0), Vfull(0), Azero(0),
       updateCount(0), firstStep(true),
@@ -556,7 +570,7 @@ int CentralDifferenceLadruno::sendSelf(int cTag, Channel &theChannel)
     data(3) = divergenceFactor;
     data(4) = cflUseTangent ? 1.0 : 0.0;
     data(5) = (double)cflRecomputeEvery;
-    data(6) = (lumping == CTSLumping::Diagonal) ? 1.0 : 0.0;
+    data(6) = (double)(int)lumping;   // 0=RowSum, 1=Diagonal, 2=HRZ (legacy: 1=Diag, 0=RowSum)
 
     if (theChannel.sendVector(this->getDbTag(), cTag, data) < 0) {
         opserr << "WARNING CentralDifferenceLadruno::sendSelf() - could not send data\n";
@@ -578,7 +592,17 @@ int CentralDifferenceLadruno::recvSelf(int cTag, Channel &theChannel, FEM_Object
     divergenceFactor = data(3);
     cflUseTangent    = (data(4) != 0.0);
     cflRecomputeEvery = (int)data(5);
-    lumping          = (data(6) != 0.0) ? CTSLumping::Diagonal : CTSLumping::RowSum;
+    {   // 3-way decode (legacy binaries sent 1.0=Diagonal, 0.0=RowSum; both map back
+        // correctly here). HRZ=2 from a newer peer; an OLD binary reading our HRZ would
+        // see 2.0!=0 -> Diagonal, the only (documented, safe) lossy pairing.
+        int lc = (int)data(6);
+        lumping = (lc == 2) ? CTSLumping::HRZ
+                : (lc == 0) ? CTSLumping::RowSum
+                            : CTSLumping::Diagonal;
+        if (lc < 0 || lc > 2)
+            opserr << "WARNING CentralDifferenceLadruno::recvSelf - unknown lumping "
+                   << "code " << lc << " (using Diagonal)\n";
+    }
 
     return 0;
 }

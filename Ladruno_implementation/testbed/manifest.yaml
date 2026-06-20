@@ -186,6 +186,35 @@ features:
       Full Linux link restored via PR #28 (dsygvx_ swap in CriticalTimeStep). Zone-A
       battery tests/test_centralDifferenceLadruno_integrator.py authored: CDL-1..10,
       numpy-free; CDL-10 energy closure un-skipped now that the link is restored.
+
+  - feature: CentralDifferenceSMS
+    classtag: 33007          # INTEGRATOR family; new class (N. Mora-Bowen). NB 33007
+                             # is independently ELE_TAG_LadrunoQuad — per-registry, no collision.
+    tag_symbol: INTEGRATOR_TAGS_CentralDifferenceSMS
+    pr: 0                    # fill on PR creation
+    feature_class: integrator
+    required_tiers: [dynamics-battery]
+    pytest: tests/test_centralDifferenceSMS_integrator.py   # SMS-1..4 Zone-A (construct/run, tiny-element stability win, no-op below target, dtor-restore)
+    tcl: WAIVED(integrator; Python-first feature, Tcl dispatch wired via OpenSeesCommands)
+    core_files:                                    # registration sites (dispatch wiring)
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/runtime/runtime/TclPackageClassBroker.cpp
+      - SRC/interpreter/OpenSeesCommands.cpp
+      - SRC/interpreter/OpenSeesCommands.h
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      Selective (LS-DYNA DT2MS-style) mass scaling on CentralDifferenceLadruno (ADR 36):
+      subclass via a protected classTag ctor, injects additive nodal mass (s_e-1)*m with
+      s_e=(dtTarget/dt_e)^2 at domainChanged so sub-target elements run at the bulk step.
+      Consumes the shared CriticalTimeStep kernel (lumpElementMass/elementCriticalDt,
+      self-report aware). Re-baselined + dtor-restored (no persistent Domain mutation);
+      -cflAbort/-recompute rejected (they re-run the un-augmented element eigensolve).
+      v1 sequential / partition-interior; constraint-node exclusion + parallel shared-node
+      MPI reduction deferred (one-time warnings). 3 milestone adversarial reviews folded
+      (Review-3 NEEDS-REWORK: dead cap, no-restore, missing constraint guard — all fixed).
+      Ships with HRZ mass-conserving lumping (ADR 35, -lump hrz, no new classTag).
       CDL-8 first-step correctness + CDL-9 betaK collapse are the differentiators.
 
   - feature: LadrunoArcLength

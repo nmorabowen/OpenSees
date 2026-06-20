@@ -142,3 +142,7 @@ __pycache__
 # Claude Code session scratch (never commit)
 .claude/
 _build_ladrunobrick.log
+
+# Ladruno transient build logs / banner backups (not source)
+Ladruno_scripts/_*.log
+Ladruno_scripts/patch_banner_backups/

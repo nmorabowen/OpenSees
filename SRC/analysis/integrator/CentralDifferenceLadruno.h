@@ -154,6 +154,14 @@ public:
     void Print(OPS_Stream &s, int flag = 0);
 
 protected:
+    // Delegating constructor for subclasses (e.g. CentralDifferenceSMS) that must
+    // carry their OWN integrator classTag through the FEM_ObjectBroker round-trip.
+    CentralDifferenceLadruno(int classTag,
+                             int compute_critical_timestep,
+                             bool verbose, bool cflAbort,
+                             double divergenceFactor,
+                             bool cflUseTangent, int cflRecomputeEvery,
+                             CTSLumping lumping);
 
 private:
     // Time step
