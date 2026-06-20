@@ -2,7 +2,7 @@
 title: "LadrunoConcrete3D — developer / C++-implementer handoff guide"
 project: Ladruno
 type: handoff guide
-status: SHIPPED to `ladruno` — kernel (return map + analytic damaged tangent, g++-verified) + nDMaterial wrapper (classTag 33017) + ALL dimensional views (3D + PlaneStrain/AxiSymmetric/PlateFiber/PlaneStress, #299) + P3 Tier-2 IMPL-EX (oracle #301 → review-hardened #304 → C++ kernel port + `-implex` wrapper #309) + P3 Duvaut–Lions `-eta` (oracle #316 → C++ kernel port + `-eta` wrapper #317). NEXT = cyclic `β_c` temper (P2f) → Tier-3 explicit demo. See §0 for the current-state handoff.
+status: SHIPPED to `ladruno` — kernel (return map + analytic damaged tangent, g++-verified) + nDMaterial wrapper (classTag 33017) + ALL dimensional views (3D + PlaneStrain/AxiSymmetric/PlateFiber/PlaneStress, #299) + P3 Tier-2 IMPL-EX (oracle #301 → review-hardened #304 → C++ kernel port + `-implex` wrapper #309) + P3 Duvaut–Lions `-eta` (oracle #316 → C++ kernel port + `-eta` wrapper #318). NEXT = cyclic `β_c` temper (P2f) → Tier-3 explicit demo. See §0 for the current-state handoff.
 related:
   - "[[31_ladruno_concrete3d_adr]]"          # the ADR (decision record)
   - "[[project_ladruno_concrete3d]]"          # the agent-memory pointer
@@ -63,7 +63,7 @@ off `ladruno` (fast auto-merge ⇒ fresh branch each time; predict the next PR n
   an order-1 transient); PV4 the tensor kernel == the `(1−β)`-blend; PV5 the viscous damaged tangent (FD +
   the pre-onset blend identity on a genuinely-plastic confined-compression state); PV6 overstress-norm
   monotone in `η`.
-- **P3 Duvaut–Lions `-eta` C++ KERNEL PORT + `-eta` WRAPPER (#317)** — the build PR for #316's oracle.
+- **P3 Duvaut–Lions `-eta` C++ KERNEL PORT + `-eta` WRAPPER (#318)** — the build PR for #316's oracle.
   Kernel `returnMap`: after the inviscid `returnMapTensor`, when `!implex && eta>0 && dt>0` form `sig_tr`
   via `elasticPredTensor` and blend `sig_eff ← (1−β)sig_tr + β sig_eff`, `kp ← (1−β)kp_n + β kp`, then
   blend `Dtan6 ← (1−β)C0 + β Dtan6` (so `damagedTangent` chains its damage linearization through the
@@ -484,7 +484,7 @@ P0 surface ✓ → P1 return-map/hardening/tangent ✓ → **C++ kernel return m
 **P2 dual damage `ωt`/`ωc` + crack-band ✓** → **nDMaterial wrapper (33017) ✓** → **ALL dimensional
 views ✓ (#299)** → **P3 robustness: Tier-2 IMPL-EX ✓ (oracle #301 → review #304 → C++/`-implex` #309;
 freezes plastic state + damage)** → **Duvaut–Lions `-eta` ✓ (oracle #316 → C++ kernel + `-eta` wrapper
-#317, the rate term, §0)** →
+#318, the rate term, §0)** →
 **NEXT: cyclic `β_c`
 (P2f, §6b) → Tier-3 explicit demo** → P4 finite-strain (`LogStrain`, clean — already free via the
 wrapper) → P5 confined-fiber view (§4.6 hoop-spring condensation, "Mander by mechanism") → P6
@@ -497,4 +497,4 @@ damaged tangent · **#287** PE2 cross-platform · **#288** P2e review (ω floor)
 stress · **#290** guide · **#291** P3b C++ damaged tangent · **#292** nDMaterial wrapper (33017) ·
 **#293** handout · **#294** wrapper convention tests · **#299** Phase-2 reduced views · **#301** P3
 IMPL-EX oracle · **#304** IMPL-EX review fixes · **#309** IMPL-EX C++ port + `-implex` · **#316**
-Duvaut–Lions `-eta` oracle · **#317** Duvaut–Lions `-eta` C++ kernel port + `-eta` wrapper.
+Duvaut–Lions `-eta` oracle · **#318** Duvaut–Lions `-eta` C++ kernel port + `-eta` wrapper.
