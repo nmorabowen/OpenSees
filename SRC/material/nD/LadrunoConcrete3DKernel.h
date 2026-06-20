@@ -112,7 +112,8 @@ struct Params {
     double Dh = 1.0e-6;
     // rate / robustness
     double eta = 0.0;            // Duvaut-Lions viscosity (0 => inviscid, byte-identical)
-    bool   implex = false;       // Tier-2
+    bool   implex = false;       // Tier-2 (IMPL-EX)
+    double implexRmax = 2.0;     // IMPL-EX extrapolation time-ratio cap (review ALG-2; r=dt/dt_n clamped [0,rmax])
     // regularization
     double lch = 1.0;            // parent-element characteristic length
     double lch_ref = 1.0;        // reference length of the input Gf/Gc
@@ -886,6 +887,12 @@ struct State {
     double et_max = 0.0;
     double kdt1 = 0.0, kdt2 = 0.0;         // tensile
     double kdc = 0.0, kdc1 = 0.0, kdc2 = 0.0;  // compressive (kdc = the alpha_c-weighted history)
+    // P3 Tier-2 IMPL-EX bookkeeping (committed IMPLICIT damage + the per-variable increments and the
+    // committed dt, for the next step's extrapolation x~ = x_n + (dt/dt_n)*dx_n). Unused when !implex.
+    double wt = 0.0, wc = 0.0;             // committed IMPLICIT dual damage
+    double dwt = 0.0, dwc = 0.0;           // committed implicit damage increments
+    double depl[6] = {0, 0, 0, 0, 0, 0};   // committed implicit plastic-strain increment (tensor)
+    double dt_n = 0.0;                      // committed time step
 };
 
 // ---------------------------------------------------------------------------
@@ -1305,33 +1312,89 @@ inline int returnMapTensor(const Params& mp, const double sig_n[6], const double
 //   sigEffImplicit = the UNDAMAGED effective stress (== sigma at P1; the LogStrain
 //     b^e fix per ADR R3 — kept separate so a future damage/IMPL-EX choice never
 //     corrupts the finite-strain recovery).
-//   dScaleOverride : <0 Tier-1 implicit (P1 ignores it — no damage yet).
+//   dt : current time increment (ops_Dt). Only used for the Tier-2 IMPL-EX extrapolation ratio
+//        r = dt/dt_n; ignored for Tier-1 (mp.implex == false).
 // Returns: 0 converged, 2 no-converge (honest off-surface flag).
+//
+// TIER-1 (mp.implex == false): reports the IMPLICIT nominal stress + the analytic dual-projector
+//   damaged tangent (P3b), exactly as before.
+// TIER-2 (mp.implex == true, ADR §4.4): ALSO runs the implicit solve (for the committed internal
+//   variables + the next-step extrapolation source), but REPORTS the EXPLICIT stress assembled from
+//   EXTRAPOLATED internals (the plastic-strain increment + the dual damage frozen at the committed
+//   rate, ratio clamped to [0, implexRmax]) and the degraded-elastic SECANT D_dam(w~):C0. The secant
+//   is symmetric-part SPD only in SINGLE-SIGN principal regimes (review NUM-1) — it is still the exact
+//   d(sigma)/d(strain) of the reported explicit stress. sigEffImplicit stays the IMPLICIT effective
+//   stress regardless of tier (the LogStrain b^e contract, ADR R3).
 // ===========================================================================
 inline int returnMap(const Params& mp, const double strain[6], const State& in, State& out,
                      double sigma[6], double sigEffImplicit[6], double Dtan6[6][6],
-                     bool doTangent, double /*dScaleOverride*/ = -1.0, bool hardening = true,
+                     bool doTangent, double dt = 0.0, bool hardening = true,
                      double* wtOut = nullptr, double* wcOut = nullptr)
 {
     double deps[6];
     for (int i = 0; i < 6; ++i) deps[i] = strain[i] - in.eps[i];
-    // (1) EFFECTIVE-stress return from the committed EFFECTIVE state (NOT the nominal sig).
+    // (1) IMPLICIT EFFECTIVE-stress return from the committed EFFECTIVE state (NOT the nominal sig).
     double sig_eff[6], kp_new;
     int status = returnMapTensor(mp, in.sigEff, deps, in.kp, hardening, sig_eff, kp_new, Dtan6, doTangent);
     for (int i = 0; i < 6; ++i) { out.eps[i] = strain[i]; out.sigEff[i] = sig_eff[i]; sigEffImplicit[i] = sig_eff[i]; }
     out.kp = kp_new;
-    // (2) P2 dual-damage NOMINAL stress (writes out.sig + the damage history). Unilateral by re-split.
-    damagedUpdate(mp, in, sig_eff, strain, out, wtOut, wcOut);
-    for (int i = 0; i < 6; ++i) sigma[i] = out.sig[i];
-    // (3) P3b — upgrade Dtan6 (the P1 EFFECTIVE consistent tangent from step 1) to the ANALYTIC
-    // dual-projector DAMAGED tangent  D_dam:C_eff - sig_t(x)dωt - sig_c(x)dωc  (oracle
-    // damaged_tangent_analytic). Only on a CONVERGED effective return (status==0): on a non-converge
-    // returnMapTensor already left Dtan6 the safe elastic/effective fallback and status!=0 cuts the
-    // step, so the damaged linearization (built on that fallback Ceff) would be meaningless.
-    if (doTangent && status == 0) {
-        double Ceff[6][6];
-        for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) Ceff[i][j] = Dtan6[i][j];
-        damagedTangent(mp, in, sig_eff, strain, Ceff, Dtan6);
+    // (2) IMPLICIT P2 dual-damage NOMINAL stress (writes out.sig + the damage history). Unilateral by re-split.
+    double wt_impl = 0.0, wc_impl = 0.0;
+    damagedUpdate(mp, in, sig_eff, strain, out, &wt_impl, &wc_impl);
+    // carry the committed IMPLICIT damage + the per-variable increments for the next IMPL-EX extrapolation
+    out.wt = wt_impl; out.wc = wc_impl;
+    out.dwt = wt_impl - in.wt; out.dwc = wc_impl - in.wc;
+    { double epl[6], epl_n[6];
+      plasticStrain6(out.sigEff, out.eps, mp, epl);
+      plasticStrain6(in.sigEff,  in.eps,  mp, epl_n);
+      for (int i = 0; i < 6; ++i) out.depl[i] = epl[i] - epl_n[i]; }
+    out.dt_n = (dt > 0.0) ? dt : in.dt_n;
+    if (wtOut) *wtOut = wt_impl;   // recorders show the IMPLICIT (accurate) damage in both tiers
+    if (wcOut) *wcOut = wc_impl;
+
+    if (!mp.implex) {
+        // ---- TIER-1: report the implicit nominal + the analytic damaged tangent (P3b) ----
+        for (int i = 0; i < 6; ++i) sigma[i] = out.sig[i];
+        if (doTangent && status == 0) {
+            double Ceff[6][6];
+            for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) Ceff[i][j] = Dtan6[i][j];
+            damagedTangent(mp, in, sig_eff, strain, Ceff, Dtan6);
+        }
+        return status;
+    }
+
+    // ---- TIER-2 IMPL-EX: report the EXPLICIT extrapolated stress + the degraded-elastic SECANT ----
+    double r = (in.dt_n > 0.0 && dt > 0.0) ? (dt / in.dt_n) : 0.0;   // forward-only; floored at 0
+    if (r > mp.implexRmax) r = mp.implexRmax;                        // clamp (review ALG-2/NUM-2/NUM-3)
+    double wt_x = in.wt + r * in.dwt; if (wt_x < 0.0) wt_x = 0.0; if (wt_x > 1.0 - 1.0e-12) wt_x = 1.0 - 1.0e-12;
+    double wc_x = in.wc + r * in.dwc; if (wc_x < 0.0) wc_x = 0.0; if (wc_x > 1.0 - 1.0e-12) wc_x = 1.0 - 1.0e-12;
+    double deps_eff[6];
+    for (int i = 0; i < 6; ++i) deps_eff[i] = deps[i] - r * in.depl[i];   // frozen plastic-strain increment
+    double sig_bar_x[6];
+    elasticPredTensor(in.sigEff, deps_eff, mp, sig_bar_x);               // LINEAR in deps => elastic tangent
+    double A[3][3], w[3], V[3][3]; voigtToMat(sig_bar_x, A); eig3sym(A, w, V);
+    double sp[3];
+    for (int i = 0; i < 3; ++i) {
+        const double st = w[i] > 0.0 ? w[i] : 0.0, sc = w[i] < 0.0 ? w[i] : 0.0;
+        sp[i] = (1.0 - wt_x) * st + (1.0 - wc_x) * sc;                   // Eq.1 with FROZEN damage
+    }
+    double S[3][3];
+    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) {
+        double v = 0.0; for (int a = 0; a < 3; ++a) v += V[i][a] * sp[a] * V[j][a];
+        S[i][j] = v;
+    }
+    matToVoigt(S, sigma);
+    if (doTangent) {
+        double yv[3], ypv[3];
+        for (int i = 0; i < 3; ++i) {
+            yv[i] = (1.0 - wt_x) * (w[i] > 0.0 ? w[i] : 0.0) + (1.0 - wc_x) * (w[i] < 0.0 ? w[i] : 0.0);
+            ypv[i] = (w[i] > 0.0) ? (1.0 - wt_x) : (1.0 - wc_x);
+        }
+        double Ddam[6][6], C0[6][6]; isotropicTangent(w, V, yv, ypv, Ddam); elasticC(mp, C0);
+        for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) {
+            double v = 0.0; for (int k = 0; k < 6; ++k) v += Ddam[i][k] * C0[k][j];
+            Dtan6[i][j] = v;                                             // D_dam(w~) : C0
+        }
     }
     return status;
 }

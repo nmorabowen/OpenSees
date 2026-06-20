@@ -48,11 +48,14 @@ def _mat(tag, **kw):
     args = ["LadrunoConcrete3D", tag, E, nu, fc, ft, Gf, Gc]
     if "lch" in kw:
         args += ["-lch", kw["lch"]]
+    if kw.get("implex"):
+        args += ["-implex"]
     ops.nDMaterial(*args)
 
 
-def _build(mat_fn):
-    """Single stdBrick unit cube, 1/8-symmetry determinate restraints. UNSYMMETRIC solver."""
+def _build(mat_fn, solver="FullGeneral"):
+    """Single stdBrick unit cube, 1/8-symmetry determinate restraints. UNSYMMETRIC solver by default
+    (the CDPM2 tangent is non-symmetric); pass solver="ProfileSPD" for the IMPL-EX symmetric-solver test."""
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 3)
     for t, c in _CUBE.items():
@@ -70,7 +73,7 @@ def _build(mat_fn):
     ops.pattern("Plain", 1, 1)
     for n in (2, 3, 6, 7):
         ops.load(n, 0.25, 0.0, 0.0)        # unit x-traction reference (DisplacementControl drives)
-    ops.system("FullGeneral")              # the CDPM2 tangent is NON-SYMMETRIC
+    ops.system(solver)                     # the CDPM2 tangent is NON-SYMMETRIC (Tier-1)
     ops.numberer("Plain")
     ops.constraints("Plain")
     ops.test("NormDispIncr", 1.0e-8, 200, 0)
@@ -100,11 +103,11 @@ def _run(mat_fn, eps_target, nsteps):
     return out
 
 
-def _drive_adaptive(mat_fn, eps_target, base_steps, max_cuts=7):
+def _drive_adaptive(mat_fn, eps_target, base_steps, max_cuts=7, solver="FullGeneral"):
     """Displacement-control driver with step-CUTTING through the softening limit point — the only
     way a single implicit element gets past an unconfined tension/compression peak (the snap-back
     regime). Returns [(eps_xx, sig_xx, omega_t)] for every converged increment."""
-    _build(mat_fn)
+    _build(mat_fn, solver=solver)
     out = []
     step = eps_target / base_steps
     cuts = 0
@@ -535,3 +538,83 @@ def test_axisymmetric_getcopy_and_tangent():
         for j in range(4):
             assert T[i * 4 + j] == pytest.approx(C[i][j], rel=1e-5, abs=1e-6 * cmax), \
                 f"AxiSym tangent[{i}][{j}] {T[i*4+j]} != closed form {C[i][j]}"
+
+
+# ===========================================================================
+# P3 Tier-2 IMPL-EX (`-implex`) — element-level plumbing. The IMPL-EX algorithm + its SPD/consistency
+# falsification battery live in the numpy oracle (test_p3_implex_gate) and the g++ kernel byte-check
+# (B5, reported stress == oracle to ~1e-16). These gate the WRAPPER wiring end-to-end: the parser flag,
+# integrate() passing dt=ops_Dt + reading the IMPL-EX state, commitState, and send/recvSelf of the new
+# committed fields. Plus the user-facing payoff: a single-sign softening run on a SYMMETRIC solver.
+# ===========================================================================
+def _run_loadcontrol(mat_fn, fnode, nsteps):
+    """Uniform LoadControl compression (the IMPL-EX-friendly stepping — a monotone pseudo-time, unlike
+    DisplacementControl's lambda-based dt near a limit point). Returns (converged_steps, sig_xx, kappaP)."""
+    _build(mat_fn)
+    ops.remove("loadPattern", 1)
+    ops.pattern("Plain", 1, 1)
+    for n in (2, 3, 6, 7):
+        ops.load(n, fnode, 0.0, 0.0)
+    ops.integrator("LoadControl", 1.0 / nsteps)
+    ops.analysis("Static")
+    ok = 0
+    for _ in range(nsteps):
+        if ops.analyze(1) != 0:
+            break
+        ok += 1
+    s = _sig_xx()
+    kp = list(ops.eleResponse(1, "material", 1, "kappaP"))[0]
+    return ok, s, kp
+
+
+@pytest.mark.t1
+def test_implex_loadcontrol_matches_tier1():
+    """-implex end-to-end under uniform LoadControl compression into the HARDENING regime: converges,
+    develops plasticity (kappaP>0), and the committed stress matches the Tier-1 run (pre-peak omega_c=0,
+    so the explicit/implicit gap is the plastic-flow extrapolation only — tight). Exercises the parser,
+    integrate()+dt=ops_Dt, the IMPL-EX commit, and confirms IMPL-EX does not corrupt the implicit state.
+    (NB IMPL-EX wants ~uniform pseudo-time; DisplacementControl past a limit point feeds a non-uniform
+    lambda-dt that over-extrapolates — use Tier-1 / transient / uniform stepping there.)"""
+    o1, s1, k1 = _run_loadcontrol(lambda t: _mat(t), -5.0, 300)
+    o2, s2, k2 = _run_loadcontrol(lambda t: _mat(t, implex=True), -5.0, 300)
+    assert o1 == 300 and o2 == 300, f"did not fully converge (tier1 {o1}/300, implex {o2}/300)"
+    assert k2 > 0.05, f"-implex did not go plastic (kappaP={k2})"
+    assert s2 == pytest.approx(s1, rel=1e-4), f"-implex sig {s2} != Tier-1 {s1}"
+
+
+@pytest.mark.t1
+def test_implex_tangent_better_conditioned_in_softening():
+    """The IMPL-EX payoff at the material level, via NDTest (strain-controlled ⇒ no global limit point).
+    Drive uniaxial TENSION past onset into softening (SetStrain + CommitState each step) for a Tier-1 and
+    an -implex material, then read the axial tangent C[0][0] (index 0 is a NORMAL component — unaffected
+    by the engineering shear-column halving, so its sign is convention-robust): the Tier-1 damaged tangent
+    is INDEFINITE (C[0][0] < 0, the snap-back) while the -implex degraded-elastic secant D_dam(w~):C0 is
+    POSITIVE (C[0][0] > 0). Both report a softened axial stress."""
+    def drive(implex):
+        ops.wipe(); ops.model("basic", "-ndm", 3, "-ndf", 3)
+        _mat(1, implex=implex)
+        for e in [i * 4.0e-4 / 240 for i in range(1, 241)]:   # 0 -> 4e-4 (well past onset eps0=1e-4)
+            ops.NDTest("SetStrain", 1, e, 0, 0, 0, 0, 0)
+            ops.NDTest("CommitState", 1)
+        sig = list(ops.NDTest("GetStress", 1))[0]
+        T = list(ops.NDTest("GetTangentStiffness", 1))        # 36, row-major
+        return sig, T[0]                                       # sig_xx, C[0][0]
+    s_t1, c_t1 = drive(False)
+    s_ix, c_ix = drive(True)
+    # both softened well below the tensile peak ft
+    assert s_t1 < _FT and s_ix < _FT, f"did not soften (tier1 {s_t1}, implex {s_ix})"
+    # the decisive contrast: Tier-1 axial tangent INDEFINITE, IMPL-EX secant POSITIVE
+    assert c_t1 < 0.0, f"expected Tier-1 softening axial tangent < 0, got {c_t1}"
+    assert c_ix > 0.0, f"expected -implex secant axial tangent > 0, got {c_ix}"
+
+
+@pytest.mark.t1
+def test_implex_database_roundtrip():
+    """FE_Datastore round-trip of a partially-damaged -implex material exercises the new send/recvSelf
+    IMPL-EX committed fields (implex flag + wt/wc/dwt/dwc/dtn + depl[6])."""
+    def build():
+        _build(lambda t: _mat(t, implex=True))
+        ops.integrator("DisplacementControl", 2, 1, 0.5 * (_FT / _E))
+        assert ops.analyze(1) == 0
+    database_roundtrip(build, probe_nodes=[2], ndf=3,
+                       probe_fn=lambda: list(ops.eleResponse(1, "material", 1, "stress")))
