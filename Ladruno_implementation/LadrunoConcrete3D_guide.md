@@ -2,7 +2,7 @@
 title: "LadrunoConcrete3D — CDPM2 solid-concrete implementation guide"
 project: Ladruno
 type: implementation guide
-status: SHIPPED — `nDMaterial LadrunoConcrete3D` (classTag 33017) is callable from Tcl/Python on `ladruno`. The C++ kernel is complete and g++ byte-verified against the numpy oracle through P0 surface · P1 return-map/hardening/analytic tangent · P2a-e dual damage · P3a damage stress update · P3b analytic damaged tangent; the wrapper adds the parser/serialization/recorders and is verified end-to-end on Zone-A CI (full build + an openseespy stdBrick battery). v1 = 3D only (finite-strain via `nDMaterial LogStrain`); DEFERRED = the cyclic `β_c` temper (P2f), the Phase-2 reduced views, and the P3 robustness tiers (IMPL-EX / explicit).
+status: SHIPPED — `nDMaterial LadrunoConcrete3D` (classTag 33017) is callable from Tcl/Python on `ladruno`. The C++ kernel is complete and g++ byte-verified against the numpy oracle through P0 surface · P1 return-map/hardening/analytic tangent · P2a-e dual damage · P3a damage stress update · P3b analytic damaged tangent; the wrapper adds the parser/serialization/recorders and is verified end-to-end on Zone-A CI (full build + an openseespy stdBrick battery). ALL dimensional views ship — 3D + the Phase-2 reduced PlaneStrain/AxiSymmetric/PlateFiber/PlaneStress (#299, one `dim`-mode class via `getCopy(type)`; finite-strain via `nDMaterial LogStrain`); DEFERRED = the cyclic `β_c` temper (P2f) and the P3 robustness tiers (IMPL-EX / explicit).
 related:
   - "[[31_ladruno_concrete3d_adr]]"          # the decision record
   - "[[LadrunoConcrete3D_dev_handoff]]"      # the implementer's brief (build-PR checklist)
@@ -20,11 +20,12 @@ updated: 2026-06-19
 > analytic effective tangent, the dual-damage nominal-stress update, **and the analytic *damaged*
 > tangent** (P3b) — all g++ byte-verified against the numpy oracle. The **wrapper**
 > (`LadrunoConcrete3D.{h,cpp}`) adds the parser, foot-gun guards, flat-`Vector` serialization, and
-> recorders, verified end-to-end on Zone-A CI (full build + an openseespy stdBrick battery). **v1 is
-> 3D only** (the finite-strain view is free via `nDMaterial LogStrain` wrapping this 3D material; the
-> PlaneStrain/AxiSymmetric/PlateFiber reduced views are Phase 2) and **Tier-1 implicit** (IMPL-EX /
-> Duvaut–Lions viscosity are P3). Part III is the real interface; §20 also shows the numpy oracle for
-> single-point studies. Deferred: the cyclic `β_c` temper (P2f) + the reduced views + the robustness tiers.
+> recorders, verified end-to-end on Zone-A CI (full build + an openseespy stdBrick battery). **All
+> dimensional views ship** (#299): 3D + the Phase-2 reduced PlaneStrain / AxiSymmetric / PlateFiber /
+> PlaneStress — one `dim`-mode class, the element selects a view via `getCopy(type)` (the finite-strain
+> view is also free via `nDMaterial LogStrain`); **Tier-1 implicit** (IMPL-EX / Duvaut–Lions viscosity
+> are P3). Part III is the real interface; §20 also shows the numpy oracle for single-point studies.
+> Deferred: the cyclic `β_c` temper (P2f) + the robustness tiers.
 
 `LadrunoConcrete3D` is a **CDPM2-grade** (Grassl, Xenos, Nyström, Rempling, Gylltoft 2013;
 arXiv:1307.6998) 3D **solid** concrete `nDMaterial`: effective-stress **Menétrey–Willam plasticity**
@@ -360,11 +361,16 @@ compression-negative internally). `e` defaults to the Kupfer value (`-kupfer` ra
 element each step (`getCharacteristicLength()`) so the damage dissipation is mesh-objective — prefer it
 in a real mesh, and calibrate `Gf`/`Gc` for the element size otherwise.
 
-Consumed by any 3D solid element (`LadrunoBrick`, `stdBrick`, `SSPbrick`, …). **v1 is 3D only**: the
-finite-strain view is `nDMaterial LogStrain $ftag $thisTag` feeding `element LadrunoBrick … -geom finite`
-(isotropic plastic-damage is objective under large rotation); the PlaneStrain/AxiSymmetric/PlateFiber
-reduced views are Phase 2. `-eta`/`-implex` are **not** exposed in v1 (the kernel's robustness tiers
-are P3).
+Consumed by any 3D solid element (`LadrunoBrick`, `stdBrick`, `SSPbrick`, …) **and the reduced-view
+hosts** — `quad`/`SSPquad`/`tri31` with type `PlaneStrain`/`PlaneStress`, the axisymmetric `bbarQuad`
+(`AxiSymmetric2D`), and shell fiber sections (`PlateFiber`). One `dim`-mode class serves them all: the
+element requests a view via `getCopy(type)` (the parser always builds the 3D prototype), the kernel
+return map always runs on the full 6-comp tensor, and PlaneStress/PlateFiber enforce σ_zz=0 by a nested
+ε_zz Newton + static condensation of the 33 dof. The finite-strain view is also free —
+`nDMaterial LogStrain $ftag $thisTag` feeding `element LadrunoBrick … -geom finite` (isotropic
+plastic-damage is objective under large rotation). NB unconfined plane-STRESS post-peak softening is
+snap-backy (the σ_zz=0 nested Newton can stall on the limit point) → robust pre-peak / under confinement.
+`-eta`/`-implex` are **not** exposed in v1 (the kernel's robustness tiers are P3).
 
 ## 18. Parameters, defaults & calibration
 
@@ -462,11 +468,11 @@ Per-Gauss-point material recorders, via the element's `material` response
 **Shipped (v1):** callable `nDMaterial LadrunoConcrete3D` (classTag 33017) — the full **monotonic**
 response (pre-peak plasticity, the Kupfer-biaxial / confined `fcc(σ3)` envelope, confinement-dependent
 ductility, the peak + tension/compression softening + automatic unilateral recovery, crack-band
-regularized) with the **analytic damaged tangent** (Tier-1 implicit), 3D + the `LogStrain` finite view.
+regularized) with the **analytic damaged tangent** (Tier-1 implicit), in **all dimensional views** —
+3D + PlaneStrain/AxiSymmetric/PlateFiber/PlaneStress (#299) + the `LogStrain` finite view.
 
 **Deferred:** cyclic (`β_c` + the compression→tension temper, P2f), multiaxial-damage apportioning,
-the robustness tiers (`-eta`/`-implex`, explicit — P3), the PlaneStrain/AxiSymmetric/PlateFiber reduced
-views (Phase 2), and the confined-fiber 1D view (§4.6 of the ADR).
+the robustness tiers (`-eta`/`-implex`, explicit — P3), and the confined-fiber 1D view (§4.6 of the ADR).
 
 ## 22. Units
 
@@ -572,14 +578,18 @@ mm-scale. Compression-negative internally; enter `fc`, `ft` positive.
 | docs | comprehensive implementation guide (this doc) | [#290](https://github.com/nmorabowen/OpenSees/pull/290) |
 | **P3b** | **analytic damaged tangent in the kernel (self-verified ~1e-7)** | [#291](https://github.com/nmorabowen/OpenSees/pull/291) |
 | **wrapper** | **`nDMaterial LadrunoConcrete3D` ships — classTag 33017 DEFINED** | [#292](https://github.com/nmorabowen/OpenSees/pull/292) |
+| docs | shipped-material handout refresh | [#293](https://github.com/nmorabowen/OpenSees/pull/293) |
+| test | wrapper shear/multiaxial convention tests (NDTest) | [#294](https://github.com/nmorabowen/OpenSees/pull/294) |
+| **Phase 2** | **PlaneStrain / AxiSymmetric / PlateFiber / PlaneStress reduced views (one `dim`-mode class)** | [#299](https://github.com/nmorabowen/OpenSees/pull/299) |
 | P2f | cyclic `β_c` + compression→tension temper + multiaxial apportioning | *deferred* |
-| Phase 2 | PlaneStrain / AxiSymmetric / PlateFiber reduced views | *deferred* |
 | P3 | robustness tiers (`-eta`/`-implex`, explicit) | *deferred* |
 
 **V&V status:** oracle gates **18/18** (Zone-A); the g++ kernel byte-check (PATH/TAN/DMG + the damaged-
 tangent self-check + fuzzer) green on Linux CI; the openseespy material battery
 (`test_ladrunoConcrete3D_element.py`: elastic, tension peak=`ft`+softening, compression peak≈`fc`, damage
-routing, response wiring, FE_Datastore round-trip) green on Zone-A. classTag 33017 **DEFINED** (shipped;
+routing, response wiring, FE_Datastore round-trip, the NDTest shear/multiaxial convention legs, and the
+Phase-2 reduced-view gates — PlaneStrain stress/tangent vs the 3D slice, PlaneStress stress/tangent vs the
+σ_zz=0 solve + a nonlinear damaging replay, AxiSym build+run) green on Zone-A. classTag 33017 **DEFINED** (shipped;
 LogStrain2D-33016 convention). Two adversarial-review rounds (a 5-lens panel on #249, a 4-dimension
 workflow on P2c-P2e) — math core held both times; findings folded in (CI false-green, apex honesty, the
 `ω` floor, the tautological DT3).

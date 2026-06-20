@@ -171,32 +171,72 @@ LadrunoConcrete3D::LadrunoConcrete3D()
     E(0.0), nu(0.0), fc(0.0), ft(0.0), Gf(0.0), Gc(0.0), ecc(0.0), m0(0.0),
     Df(0.0), As(2.0), qh0(0.3), Hp(0.5), Ah(0.08), Bh(0.003), Ch(2.0), Dh(1.0e-6),
     rho(0.0), lchFixed(1.0), autoReg(false),
+    dim(DIM_3D), ncomp(6), condense(false), cEps22(0.0),
     kp_n(0.0), etmax_n(0.0), kdt1_n(0.0), kdt2_n(0.0), kdc_n(0.0), kdc1_n(0.0), kdc2_n(0.0),
     kp_t(0.0), etmax_t(0.0), kdt1_t(0.0), kdt2_t(0.0), kdc_t(0.0), kdc1_t(0.0), kdc2_t(0.0),
     omegaT(0.0), omegaC(0.0), lastStatus(0),
     stressOut(6), strainOut(6), tangentOut(6, 6)
 {
+  this->setupDim();
   this->revertToStart();
 }
 
 LadrunoConcrete3D::LadrunoConcrete3D(int tag, double E_, double nu_, double fc_, double ft_,
                                      double Gf_, double Gc_, double e_, double Df_, double As_,
                                      double qh0_, double Hp_, double Ah_, double Bh_, double Ch_, double Dh_,
-                                     double rho_, double lch_, bool autoReg_)
+                                     double rho_, double lch_, bool autoReg_, int dimMode)
   : NDMaterial(tag, ND_TAG_LadrunoConcrete3D),
     E(E_), nu(nu_), fc(fc_), ft(ft_), Gf(Gf_), Gc(Gc_), ecc(e_),
     m0(Ladruno::Concrete3D::m0Of(fc_, ft_, e_)),
     Df(Df_), As(As_), qh0(qh0_), Hp(Hp_), Ah(Ah_), Bh(Bh_), Ch(Ch_), Dh(Dh_),
     rho(rho_), lchFixed(lch_), autoReg(autoReg_),
+    dim(dimMode), ncomp(6), condense(false), cEps22(0.0),
     kp_n(0.0), etmax_n(0.0), kdt1_n(0.0), kdt2_n(0.0), kdc_n(0.0), kdc1_n(0.0), kdc2_n(0.0),
     kp_t(0.0), etmax_t(0.0), kdt1_t(0.0), kdt2_t(0.0), kdc_t(0.0), kdc1_t(0.0), kdc2_t(0.0),
     omegaT(0.0), omegaC(0.0), lastStatus(0),
     stressOut(6), strainOut(6), tangentOut(6, 6)
 {
+  this->setupDim();
   this->revertToStart();
 }
 
 LadrunoConcrete3D::~LadrunoConcrete3D() {}
+
+// ===========================================================================
+//  dimensional view setup: reduced-vector order -> full 6-comp tensor index
+//  (full ordering 0:00 1:11 2:22 3:01 4:12 5:02; the out-of-plane normal is
+//  always index 2, so condensation acts on row/col 2.)
+// ===========================================================================
+void LadrunoConcrete3D::setupDim(void)
+{
+  switch (dim) {
+    case DIM_PSTRAIN:    ncomp = 3; { int m[3]={0,1,3};       for(int a=0;a<3;a++) vmap[a]=m[a]; } condense=false; break;
+    case DIM_AXISYM:     ncomp = 4; { int m[4]={0,1,2,3};     for(int a=0;a<4;a++) vmap[a]=m[a]; } condense=false; break;
+    case DIM_PLATEFIBER: ncomp = 5; { int m[5]={0,1,3,4,5};   for(int a=0;a<5;a++) vmap[a]=m[a]; } condense=true;  break;
+    case DIM_PSTRESS:    ncomp = 3; { int m[3]={0,1,3};       for(int a=0;a<3;a++) vmap[a]=m[a]; } condense=true;  break;
+    case DIM_3D:
+    default:             ncomp = 6; { int m[6]={0,1,2,3,4,5}; for(int a=0;a<6;a++) vmap[a]=m[a]; } condense=false; break;
+  }
+  stressOut.resize(ncomp);
+  strainOut.resize(ncomp);
+  tangentOut.resize(ncomp, ncomp);
+}
+
+// Static condensation of the out-of-plane (33, index 2) dof so sigma_22 = 0:
+//   Dtan6[I][J] -= Dtan6[I][2] Dtan6[2][J] / Dtan6[2][2].
+// Done in the kernel TENSOR convention; since index 2 is a NORMAL component its
+// column is unscaled, and column-halving (engineering shear) commutes with this
+// rank-1 update, so getTangent halves the shear columns of the condensed matrix.
+void LadrunoConcrete3D::condenseTangent(void)
+{
+  double d22 = Dtan6[2][2];
+  if (fabs(d22) < 1.0e-300) return;
+  double col[6], row[6];
+  for (int i = 0; i < 6; i++) { col[i] = Dtan6[i][2]; row[i] = Dtan6[2][i]; }
+  for (int I = 0; I < 6; I++)
+    for (int J = 0; J < 6; J++)
+      Dtan6[I][J] -= col[I]*row[J]/d22;
+}
 
 // ===========================================================================
 //  parameter pack + the kernel call
@@ -244,11 +284,50 @@ void LadrunoConcrete3D::integrate(bool doTangent)
 
 // ===========================================================================
 //  strain interface (element passes ENGINEERING shear; kernel wants TENSOR shear)
+//
+//  The element vector is the reduced view; map it into the full 6-comp tensor
+//  strain (the kernel is always 3D). Components NOT in vmap are zero (e.g. eps_22
+//  in plane strain, the transverse shears in 2D); for condensed modes (PlaneStress
+//  / PlateFiber) eps_22 is an internal unknown solved so sigma_22 = 0 — preserve
+//  its running value as the Newton starting guess.
 // ===========================================================================
 int LadrunoConcrete3D::setTrialStrain(const Vector& e)
 {
-  for (int i = 0; i < 6; i++) strain6[i] = (i < 3) ? e(i) : 0.5 * e(i);  // gamma -> eps_tensor
-  this->integrate(true);
+  double eps22 = strain6[2];
+  for (int i = 0; i < 6; i++) strain6[i] = 0.0;
+  if (condense) strain6[2] = eps22;
+
+  for (int a = 0; a < ncomp; a++) {
+    int full = vmap[a];
+    double val = e(a);
+    if (full >= 3) val *= 0.5;          // engineering -> tensor shear
+    strain6[full] = val;
+  }
+
+  if (!condense) {
+    this->integrate(true);
+    return 0;
+  }
+
+  // enforce sigma_22 = 0: Newton on eps_22 (= strain6[2]); dSNPO sec 9.2.3. The
+  // CDPM2 tangent can soften/lose definiteness post-peak (snap-back) — guard the
+  // pivot and warn rather than diverge silently.
+  const int maxIt = 30;
+  for (int it = 0; it < maxIt; it++) {
+    this->integrate(true);
+    double d22 = Dtan6[2][2];
+    double smag = 0.0;
+    for (int i = 0; i < 6; i++) smag += stress6[i]*stress6[i];
+    smag = sqrt(smag);
+    double tol22 = 1.0e-9 * (smag > 1.0 ? smag : 1.0);
+    if (fabs(stress6[2]) <= tol22) break;
+    if (fabs(d22) < 1.0e-300) break;
+    strain6[2] -= stress6[2] / d22;
+    if (it == maxIt - 1)
+      opserr << "WARNING LadrunoConcrete3D: sigma_22 condensation did not converge (tag "
+             << this->getTag() << ", |s22|=" << fabs(stress6[2]) << ")\n";
+  }
+  this->condenseTangent();
   return 0;
 }
 
@@ -256,10 +335,11 @@ int LadrunoConcrete3D::setTrialStrain(const Vector& v, const Vector&) { return t
 
 int LadrunoConcrete3D::setTrialStrainIncr(const Vector& v)
 {
-  Vector ne(6);
-  for (int i = 0; i < 6; i++) {
-    double cur = (i < 3) ? strain6[i] : 2.0 * strain6[i];   // tensor -> engineering
-    ne(i) = cur + v(i);
+  Vector ne(ncomp);
+  for (int a = 0; a < ncomp; a++) {
+    int full = vmap[a];
+    double cur = (full >= 3) ? 2.0 * strain6[full] : strain6[full];   // tensor -> engineering
+    ne(a) = cur + v(a);
   }
   return this->setTrialStrain(ne);
 }
@@ -271,13 +351,16 @@ int LadrunoConcrete3D::setTrialStrainIncr(const Vector& v, const Vector&) { retu
 // ===========================================================================
 const Vector& LadrunoConcrete3D::getStress(void)
 {
-  for (int i = 0; i < 6; i++) stressOut(i) = stress6[i];   // true tensor stress == engineering stress
+  for (int a = 0; a < ncomp; a++) stressOut(a) = stress6[vmap[a]];   // true tensor stress == engineering
   return stressOut;
 }
 
 const Vector& LadrunoConcrete3D::getStrain(void)
 {
-  for (int i = 0; i < 6; i++) strainOut(i) = (i < 3) ? strain6[i] : 2.0 * strain6[i];  // tensor -> gamma
+  for (int a = 0; a < ncomp; a++) {
+    int full = vmap[a];
+    strainOut(a) = (full >= 3) ? 2.0 * strain6[full] : strain6[full];  // tensor -> engineering shear
+  }
   return strainOut;
 }
 
@@ -285,9 +368,12 @@ const Matrix& LadrunoConcrete3D::getTangent(void)
 {
   // kernel tangent is in the TENSOR convention (dsig_ij = 2G deps_ij); the element wants
   // d(sigma)/d(engineering strain), so the shear COLUMNS (deps_eng = 2 deps_tensor) are halved.
-  for (int a = 0; a < 6; a++)
-    for (int b = 0; b < 6; b++)
-      tangentOut(a, b) = (b < 3) ? Dtan6[a][b] : 0.5 * Dtan6[a][b];
+  // For condensed modes Dtan6 is already statically condensed (sigma_22 = 0) by setTrialStrain.
+  for (int a = 0; a < ncomp; a++)
+    for (int b = 0; b < ncomp; b++) {
+      int fb = vmap[b];
+      tangentOut(a, b) = (fb < 3) ? Dtan6[vmap[a]][fb] : 0.5 * Dtan6[vmap[a]][fb];
+    }
   return tangentOut;
 }
 
@@ -297,9 +383,23 @@ const Matrix& LadrunoConcrete3D::getInitialTangent(void)
   p.E = E; p.nu = nu;
   double Cel[6][6];
   Ladruno::Concrete3D::elasticC(p, Cel);
-  for (int a = 0; a < 6; a++)
-    for (int b = 0; b < 6; b++)
-      tangentOut(a, b) = (b < 3) ? Cel[a][b] : 0.5 * Cel[a][b];
+  // condensed views (PlaneStress / PlateFiber) get the proper plane-stress elastic
+  // modulus as K0 (the rank-1 33-condensation of the isotropic C) — a correct initial
+  // stiffness matters for the softening-fragile Newton path.
+  if (condense) {
+    double d22 = Cel[2][2];
+    if (fabs(d22) > 1.0e-300) {
+      double col[6], rw[6];
+      for (int i = 0; i < 6; i++) { col[i] = Cel[i][2]; rw[i] = Cel[2][i]; }
+      for (int I = 0; I < 6; I++)
+        for (int J = 0; J < 6; J++) Cel[I][J] -= col[I]*rw[J]/d22;
+    }
+  }
+  for (int a = 0; a < ncomp; a++)
+    for (int b = 0; b < ncomp; b++) {
+      int fb = vmap[b];
+      tangentOut(a, b) = (fb < 3) ? Cel[vmap[a]][fb] : 0.5 * Cel[vmap[a]][fb];
+    }
   return tangentOut;
 }
 
@@ -312,6 +412,7 @@ int LadrunoConcrete3D::commitState(void)
   kp_n = kp_t; etmax_n = etmax_t;
   kdt1_n = kdt1_t; kdt2_n = kdt2_t;
   kdc_n = kdc_t; kdc1_n = kdc1_t; kdc2_n = kdc2_t;
+  cEps22 = strain6[2];               // converged out-of-plane strain (condensed modes)
   return 0;
 }
 
@@ -319,14 +420,14 @@ int LadrunoConcrete3D::revertToLastCommit(void)
 {
   // restore the trial buffers to the committed state (a re-issued setTrialStrain overwrites them)
   for (int i = 0; i < 6; i++) { strain6[i] = eps_n[i]; stress6[i] = sig_n[i]; sigEff6[i] = sigEff_n[i]; }
+  if (condense) strain6[2] = cEps22;
   kp_t = kp_n; etmax_t = etmax_n;
   kdt1_t = kdt1_n; kdt2_t = kdt2_n;
   kdc_t = kdc_n; kdc1_t = kdc1_n; kdc2_t = kdc2_n;
   omegaT = 0.0; omegaC = 0.0;
-  this->getInitialTangent();
-  for (int a = 0; a < 6; a++) for (int b = 0; b < 6; b++) Dtan6[a][b] = 0.0;
   Params p; p.E = E; p.nu = nu;
   Ladruno::Concrete3D::elasticC(p, Dtan6);
+  if (condense) this->condenseTangent();
   return 0;
 }
 
@@ -339,9 +440,22 @@ int LadrunoConcrete3D::revertToStart(void)
   kp_n = 0.0; etmax_n = 0.0; kdt1_n = 0.0; kdt2_n = 0.0; kdc_n = 0.0; kdc1_n = 0.0; kdc2_n = 0.0;
   kp_t = 0.0; etmax_t = 0.0; kdt1_t = 0.0; kdt2_t = 0.0; kdc_t = 0.0; kdc1_t = 0.0; kdc2_t = 0.0;
   omegaT = 0.0; omegaC = 0.0; lastStatus = 0;
+  cEps22 = 0.0;
   Params p; p.E = E; p.nu = nu;
   Ladruno::Concrete3D::elasticC(p, Dtan6);
+  if (condense) this->condenseTangent();
   return 0;
+}
+
+const char* LadrunoConcrete3D::getType(void) const
+{
+  switch (dim) {
+    case DIM_PSTRAIN:    return "PlaneStrain";
+    case DIM_AXISYM:     return "AxiSymmetric";
+    case DIM_PLATEFIBER: return "PlateFiber";
+    case DIM_PSTRESS:    return "PlaneStress";
+    default:             return "ThreeDimensional";
+  }
 }
 
 // ===========================================================================
@@ -350,24 +464,29 @@ int LadrunoConcrete3D::revertToStart(void)
 NDMaterial* LadrunoConcrete3D::getCopy(void)
 {
   return new LadrunoConcrete3D(this->getTag(), E, nu, fc, ft, Gf, Gc, ecc, Df, As,
-                               qh0, Hp, Ah, Bh, Ch, Dh, rho, lchFixed, autoReg);
+                               qh0, Hp, Ah, Bh, Ch, Dh, rho, lchFixed, autoReg, dim);
 }
 
 NDMaterial* LadrunoConcrete3D::getCopy(const char* type)
 {
-  if (strcmp(type, "ThreeDimensional") == 0 || strcmp(type, "3D") == 0)
-    return this->getCopy();
-  // v1 is 3D-only (the finite-strain view is via LogStrain wrapping this 3D material; the
-  // PlaneStrain/AxiSymmetric/PlateFiber reduced views are deferred to Phase 2).
-  opserr << "LadrunoConcrete3D::getCopy - type '" << type
-         << "' not supported in v1 (3D only; reduced views are Phase 2)\n";
-  return 0;
+  int d = -1;
+  if      (strcmp(type, "ThreeDimensional") == 0 || strcmp(type, "3D") == 0)            d = DIM_3D;
+  else if (strcmp(type, "PlaneStrain") == 0 || strcmp(type, "PlaneStrain2D") == 0)      d = DIM_PSTRAIN;
+  else if (strcmp(type, "AxiSymmetric") == 0 || strcmp(type, "AxiSymmetric2D") == 0)    d = DIM_AXISYM;
+  else if (strcmp(type, "PlateFiber") == 0)                                             d = DIM_PLATEFIBER;
+  else if (strcmp(type, "PlaneStress") == 0 || strcmp(type, "PlaneStress2D") == 0)      d = DIM_PSTRESS;
+
+  if (d < 0)
+    return NDMaterial::getCopy(type);   // let the base report the unsupported type
+
+  return new LadrunoConcrete3D(this->getTag(), E, nu, fc, ft, Gf, Gc, ecc, Df, As,
+                               qh0, Hp, Ah, Bh, Ch, Dh, rho, lchFixed, autoReg, d);
 }
 
 // ===========================================================================
 //  parallel / serialization (flat Vector — the kernel state is all fixed-size scalars)
 // ===========================================================================
-static const int LC3D_NDATA = 1 + 18 + 1 + 25;   // tag + 18 params + autoReg + 25 committed state
+static const int LC3D_NDATA = 1 + 18 + 1 + 1 + 25 + 1;   // tag +18 params +autoReg +dim +25 state +cEps22
 
 int LadrunoConcrete3D::sendSelf(int commitTag, Channel& theChannel)
 {
@@ -379,12 +498,14 @@ int LadrunoConcrete3D::sendSelf(int commitTag, Channel& theChannel)
   data(c++) = qh0; data(c++) = Hp; data(c++) = Ah; data(c++) = Bh; data(c++) = Ch; data(c++) = Dh;
   data(c++) = rho; data(c++) = lchFixed;
   data(c++) = autoReg ? 1.0 : 0.0;
+  data(c++) = (double)dim;
   for (int i = 0; i < 6; i++) data(c++) = eps_n[i];
   for (int i = 0; i < 6; i++) data(c++) = sig_n[i];
   for (int i = 0; i < 6; i++) data(c++) = sigEff_n[i];
   data(c++) = kp_n; data(c++) = etmax_n;
   data(c++) = kdt1_n; data(c++) = kdt2_n;
   data(c++) = kdc_n; data(c++) = kdc1_n; data(c++) = kdc2_n;
+  data(c++) = cEps22;
 
   if (theChannel.sendVector(this->getDbTag(), commitTag, data) < 0) {
     opserr << "LadrunoConcrete3D::sendSelf - failed to send vector\n";
@@ -407,13 +528,16 @@ int LadrunoConcrete3D::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBr
   qh0 = data(c++); Hp = data(c++); Ah = data(c++); Bh = data(c++); Ch = data(c++); Dh = data(c++);
   rho = data(c++); lchFixed = data(c++);
   autoReg = (data(c++) != 0.0);
+  dim = (int)data(c++);
   for (int i = 0; i < 6; i++) eps_n[i] = data(c++);
   for (int i = 0; i < 6; i++) sig_n[i] = data(c++);
   for (int i = 0; i < 6; i++) sigEff_n[i] = data(c++);
   kp_n = data(c++); etmax_n = data(c++);
   kdt1_n = data(c++); kdt2_n = data(c++);
   kdc_n = data(c++); kdc1_n = data(c++); kdc2_n = data(c++);
+  cEps22 = data(c++);
 
+  this->setupDim();             // rebuild vmap/ncomp/condense + resize the return buffers
   this->revertToLastCommit();   // sync trial buffers + tangent to the received committed state
   return 0;
 }
@@ -452,13 +576,13 @@ Response* LadrunoConcrete3D::setResponse(const char** argv, int argc, OPS_Stream
   if (strcmp(a, "tangent") == 0 || strcmp(a, "Tangent") == 0)
     return new MaterialResponse(this, 3, this->getTangent());
   if (strcmp(a, "effectiveStress") == 0 || strcmp(a, "sigEff") == 0)
-    return new MaterialResponse(this, 4, Vector(6));
+    return new MaterialResponse(this, 4, Vector(ncomp));
   if (strcmp(a, "damage") == 0 || strcmp(a, "omega") == 0)
     return new MaterialResponse(this, 5, Vector(2));
   if (strcmp(a, "kappaP") == 0 || strcmp(a, "kappa_p") == 0 || strcmp(a, "kappaPlastic") == 0)
     return new MaterialResponse(this, 6, Vector(1));
   if (strcmp(a, "plasticStrain") == 0 || strcmp(a, "plasticStrains") == 0)
-    return new MaterialResponse(this, 7, Vector(6));
+    return new MaterialResponse(this, 7, Vector(ncomp));
 
   return NDMaterial::setResponse(argv, argc, s);
 }
@@ -475,10 +599,10 @@ int LadrunoConcrete3D::getResponse(int responseID, Information& matInfo)
     case 3:
       if (matInfo.theMatrix) *(matInfo.theMatrix) = this->getTangent();
       return 0;
-    case 4:                                   // effective (undamaged) stress, 6 tensor comps
+    case 4:                                   // effective (undamaged) stress, reduced view
       if (matInfo.theVector) {
         Vector& v = *(matInfo.theVector);
-        for (int i = 0; i < 6; i++) v(i) = sigEff6[i];
+        for (int a = 0; a < ncomp; a++) v(a) = sigEff6[vmap[a]];   // stress unscaled
       }
       return 0;
     case 5:                                   // dual damage [omega_t, omega_c]
@@ -490,13 +614,16 @@ int LadrunoConcrete3D::getResponse(int responseID, Information& matInfo)
     case 6:                                   // hardening variable kappa_p
       if (matInfo.theVector) (*(matInfo.theVector))(0) = kp_t;
       return 0;
-    case 7:                                   // plastic strain eps - C^-1 sigEff (engineering shear)
+    case 7:                                   // plastic strain eps - C^-1 sigEff (engineering shear, reduced view)
       if (matInfo.theVector) {
         Vector& v = *(matInfo.theVector);
         double epl[6];
         Params p; p.E = E; p.nu = nu;
         Ladruno::Concrete3D::plasticStrain6(sigEff6, strain6, p, epl);
-        for (int i = 0; i < 6; i++) v(i) = (i < 3) ? epl[i] : 2.0 * epl[i];
+        for (int a = 0; a < ncomp; a++) {
+          int full = vmap[a];
+          v(a) = (full >= 3) ? 2.0 * epl[full] : epl[full];
+        }
       }
       return 0;
     default:
