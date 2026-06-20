@@ -180,9 +180,12 @@ int CentralDifferenceSMS::domainChanged(void)
     // hard-reject: the feature still runs, but the user must heed them.
     if (!warnedLimitations) {
         warnedLimitations = true;
-        opserr << "CentralDifferenceSMS: v1 limitations -- (1) constrained nodes "
-                  "(SP/MP/equalDOF/RBE) are NOT excluded from scaling; if scaled-element "
-                  "nodes are constrained, dt may be under-delivered or mass mis-distributed. "
+        opserr << "CentralDifferenceSMS: v1 limitations -- (1) elements touching an "
+                  "MP-constraint SLAVE node (equalDOF/rigidDiaphragm/rigidLink) are EXCLUDED "
+                  "from scaling (their injected mass would not land through the constraint); "
+                  "they remain governing, so dtTarget is NOT delivered for them -- lower dt or "
+                  "remove the constraint (count reported below). SP/fix nodes are fine; RBE2/"
+                  "RBE3 couplings are elements handled by the self-report skip, not here. "
                   "(2) scaling sizes against the UNDAMPED step and adds mass to nodes; with "
                   "stiffness-proportional (betaK) or nodal (alphaM) Rayleigh damping the "
                   "scaled model may still be unstable / pick up spurious damping -- prefer "
@@ -198,7 +201,7 @@ int CentralDifferenceSMS::domainChanged(void)
 
     double frac = (rep.modelMass > 0.0) ? rep.addedMass / rep.modelMass : 0.0;
     bool over = (maxAddedMassFrac > 0.0 && frac > maxAddedMassFrac);
-    if (verboseSMS || over || rep.nSelfReport > 0 || rep.nMismatch > 0) {
+    if (verboseSMS || over || rep.nSelfReport > 0 || rep.nMismatch > 0 || rep.nConstrained > 0) {
         opserr << "CentralDifferenceSMS: dtTarget=" << dtTarget
                << " scaled " << rep.nScaled << "/" << rep.nElems
                << " elements; added mass " << (100.0 * frac) << "% of model mass"
@@ -212,6 +215,11 @@ int CentralDifferenceSMS::domainChanged(void)
         opserr << "WARNING CentralDifferenceSMS: " << rep.nMismatch
                << " element(s) had a non-node-major / DOF-mismatch mass and were SKIPPED "
                   "(not scaled) -- their dt is not recovered.\n";
+    if (rep.nConstrained > 0)
+        opserr << "WARNING CentralDifferenceSMS: " << rep.nConstrained
+               << " sub-target element(s) touch an MP-constrained (slave) node and were "
+                  "EXCLUDED from scaling -- they still GOVERN at dt_e=" << rep.minDtConstrained
+               << " < dtTarget=" << dtTarget << "; lower dt to dt_e or remove the constraint.\n";
     if (over)
         opserr << "WARNING CentralDifferenceSMS: added mass " << (100.0 * frac)
                << "% exceeds -maxAddedMass cap " << (100.0 * maxAddedMassFrac)

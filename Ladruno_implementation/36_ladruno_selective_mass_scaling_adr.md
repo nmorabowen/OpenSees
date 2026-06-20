@@ -235,17 +235,22 @@ timestep), Vol I `*CONTROL_TIMESTEP` (`DT2MS`/`IMSCL`/`MS1ST`), Olovsson & Simon
 > test 4. If f₁ drift exceeds 1% at the scaling needed for real 3D SSI meshes, elevate
 > consistent scaling to a v2 ADR.
 
-> [!question]
-> **Constrained nodes (RBE2/RBE3, MP constraints, rigid diaphragm).** Adding mass to a
-> retained/constrained node interacts with the constraint handler and with the
-> dt_cr-ignores-constraints caveat inherited from ADR 04/05. v1: refuse to scale
-> constrained nodes (warn) and document. **But** if *all* of a governing element's nodes
-> are constrained (common for the SSI interface elements that motivate this feature), that
-> element stays unscaled and continues to govern dt — a partial no-op. v1 must therefore
-> **report which elements remain governing after scaling** so the user knows dtTarget was
-> not achieved (rather than silently under-delivering). Test 3a: an RBE2/`equalDOF`-tied
-> small element. Revisit with the explicit-constraint-projection work
-> ([[project_explicit_constraint_projection]]).
+> [!done] IMPLEMENTED v1.1 (2026-06-20)
+> **Constrained nodes (equalDOF / rigidDiaphragm / rigidLink / generic MP_Constraint).** Adding mass to a
+> constrained (slave) node interacts with the constraint handler and with the
+> dt_cr-ignores-constraints caveat inherited from ADR 04/05. The shipped v1 only *warned*;
+> **v1.1 EXCLUDES** any sub-target element touching an MP-constrained **slave** node
+> (`Domain::getMPs()->getNodeConstrained()`): the injected mass would be redistributed
+> through the constraint's `Tᵀ M T` and the dt boost would not land. Such elements are
+> skipped, counted (`nConstrained`), and **reported as still governing** at their un-scaled
+> `dt_e` (so the user knows dtTarget was not delivered for them — lower dt or remove the
+> constraint — rather than silently under-delivering / mis-distributing mass). **SP/fixed
+> nodes are deliberately NOT excluded** (mass on a removed DOF is inert, and the motivating
+> SSI/pile case puts refinement right on fixed supports). The guard is keyed on MP *slave*
+> nodes only. Tested: `tests/test_massScaling_validation.py::test_constrained_element_excluded_free_scaled`
+> (constrained truss excluded + slave stays massless, free truss still scaled `1/2`). The
+> deeper constraint-aware scaling (project ΔM through the constraint) is still future work,
+> tied to the explicit-constraint-projection handler ([[project_explicit_constraint_projection]]).
 
 > [!question]
 > **dt_cr recompute is blind to nodal augmentation.** The per-element pencil uses element
