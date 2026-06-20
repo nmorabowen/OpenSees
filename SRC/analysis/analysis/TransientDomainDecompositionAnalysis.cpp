@@ -389,7 +389,16 @@ TransientDomainDecompositionAnalysis::domainChanged(void)
   }	    
 
   result = theConstraintHandler->doneNumberingDOF();
-  
+  // Ladruno (ADR-30): honor the doneNumberingDOF() error contract here too (the parallel
+  // driver checked handle() + integrator->domainChanged() but dropped this one), so a
+  // LadrunoProjectionHandler diagnostic (chain / non-projection-aware integrator / etc.)
+  // is not silently swallowed under distributed transient analysis.
+  if (result < 0) {
+    opserr << "TransientDomainDecompositionAnalysis::domainChanged() - ";
+    opserr << "ConstraintHandler::doneNumberingDOF() failed";
+    return -1;
+  }
+
   // we invoke setSize() on the LinearSOE which
   // causes that object to determine its size
   Graph &theGraph = theAnalysisModel->getDOFGraph();
