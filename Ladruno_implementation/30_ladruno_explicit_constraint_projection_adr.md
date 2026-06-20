@@ -337,6 +337,23 @@ conflicts, Theory p. 543) and Abaqus (automatic overconstraint resolution). So:
   > (SOE-cooperative elimination).
 - **P3 — queries & EQ:** tie-force recorder query; `EQ_Constraint` groups; `-verbose`
   report polish. T8, T9 green.
+
+  > **P3 — DONE (2026-06-20). v1 COMPLETE.** Tie-force query `f = M(a_raw − a_proj)`
+  > cached in the projector each `project()` and exposed via the command
+  > `ladrunoProjectionTieForce nodeTag dof` (T8: equal-and-opposite `±F·m₂/M`, momentum
+  > corollary). `EQ_Constraint` groups supported by extending `buildGroups()` to iterate
+  > `getEQs()` — a single constrained DOF tied to a coefficient *vector* of retained DOFs
+  > is the multi-master general-C row the projector already handles (no new projector
+  > logic; EQ test green). Energy closure T9: tied undamped free-vibration conserves
+  > total mechanical energy (drift < 1e-3 of peak — no spurious dissipation). `-verbose`
+  > prints a per-group retained/constrained/fixed summary.
+  >
+  > **Recorder scope note:** the tie-force is exposed as the lean *query* (the ADR's
+  > "free byproduct"). NATIVE recording via `LadrunoRecorder` is **deferred to P4**: the
+  > recorder is node-based (iterates Domain nodes) and cannot reach the handler-owned
+  > projector, so it needs either the reaction slot or a dedicated nodal tie-force buffer
+  > + recorder source — a design choice not forced here. Users can record the query by
+  > scripting it per step meanwhile.
 - **P4 — deferred:** prescribed-motion overwrite; MP-chain composition; ExplicitBathe/
   LNVD adoption; RBE2/RBE3 eliminable-block routing (retire bipenalty where possible);
   SOE-cooperative massless-slave skip.

@@ -48,6 +48,8 @@
 #include <SP_ConstraintIter.h>
 #include <MP_Constraint.h>
 #include <MP_ConstraintIter.h>
+#include <EQ_Constraint.h>
+#include <EQ_ConstraintIter.h>
 #include <Integrator.h>
 #include <ID.h>
 #include <Matrix.h>
@@ -279,9 +281,66 @@ LadrunoProjectionHandler::buildGroups(void)
         }
     }
 
+    // EQ_Constraint (P3): one constrained DOF tied to a coefficient VECTOR of retained
+    // DOFs (u_c = sum_k C[k] u_{r_k}), possibly across several retained nodes — i.e. the
+    // multi-master general-C row the projector already handles. Mirror the MP edge build.
+    EQ_ConstraintIter &theEQs = theDomain->getEQs();
+    EQ_Constraint *eqPtr;
+    while ((eqPtr = theEQs()) != 0) {
+        int cNode = eqPtr->getNodeConstrained();
+        int cDof  = eqPtr->getConstrainedDOFs();
+        const ID &rNodes = eqPtr->getNodeRetained();
+        const ID &rDofs  = eqPtr->getRetainedDOFs();
+        const Vector &C  = eqPtr->getConstraint();
+
+        std::pair<int, int> cp(cNode, cDof);
+        int cv;
+        std::map<std::pair<int,int>,int>::iterator itc = vtxOf.find(cp);
+        if (itc == vtxOf.end()) {
+            cv = (int)vtxNode.size();
+            vtxOf[cp] = cv; vtxNode.push_back(cNode); vtxDof.push_back(cDof);
+            parent.push_back(cv); slaveMPcount.push_back(0);
+            isMaster.push_back(0); isSlave.push_back(0);
+        } else cv = itc->second;
+        isSlave[cv] = 1;
+        slaveMPcount[cv] += 1;
+
+        for (int k = 0; k < rDofs.Size(); k++) {
+            double c = C(k);
+            if (c == 0.0) continue;
+            std::pair<int, int> rp(rNodes(k), rDofs(k));
+            int rv;
+            std::map<std::pair<int,int>,int>::iterator itr = vtxOf.find(rp);
+            if (itr == vtxOf.end()) {
+                rv = (int)vtxNode.size();
+                vtxOf[rp] = rv; vtxNode.push_back(rNodes(k)); vtxDof.push_back(rDofs(k));
+                parent.push_back(rv); slaveMPcount.push_back(0);
+                isMaster.push_back(0); isSlave.push_back(0);
+            } else rv = itr->second;
+            isMaster[rv] = 1;
+            Edge e; e.slaveVtx = cv; e.masterVtx = rv; e.coeff = c; e.delta = 0.0;
+            edges.push_back(e);
+        }
+    }
+
     int nv = (int)vtxNode.size();
     if (nv == 0)
-        return 0;   // no MPs -> nothing to project (still a valid analysis)
+        return 0;   // no MPs/EQs -> nothing to project (still a valid analysis)
+
+    // Partition-locality guard (ADR §4): every DOF a constraint references must resolve
+    // to a node in THIS domain. A node tag absent from the domain = a partition-crossing
+    // MP/EQ under OpenSeesSP/MP (v1 is partition-interior only). Refuse with a named error
+    // rather than silently mis-assemble — doneNumberingDOF() would otherwise treat the
+    // missing master as SP-fixed and drop its column (a silent wrong answer).
+    for (int v = 0; v < nv; v++) {
+        if (theDomain->getNode(vtxNode[v]) == 0) {
+            opserr << "LadrunoProjectionHandler - constraint references node " << vtxNode[v]
+                   << " not present in this domain. v1 requires partition-LOCAL constraint "
+                      "groups (no partition-crossing MP/EQ); use constraints Transformation "
+                      "for distributed analysis.\n";
+            return -1;
+        }
+    }
 
     // union-find connect
     for (int i = 0; i < nv; i++) parent[i] = i;
@@ -356,6 +415,34 @@ LadrunoProjectionHandler::buildGroups(void)
             }
             g.slaves.push_back(s);
         }
+    }
+
+    // EQ re-walk: populate the slave rows (masters/coeffs/delta) for each EQ_Constraint.
+    EQ_ConstraintIter &theEQs2 = theDomain->getEQs();
+    while ((eqPtr = theEQs2()) != 0) {
+        int cNode = eqPtr->getNodeConstrained();
+        int cDof  = eqPtr->getConstrainedDOFs();
+        const ID &rNodes = eqPtr->getNodeRetained();
+        const ID &rDofs  = eqPtr->getRetainedDOFs();
+        const Vector &C  = eqPtr->getConstraint();
+        double Uc0 = eqPtr->getConstrainedDOFsInitialDisplacement();
+        const Vector &Ur0 = eqPtr->getRetainedDOFsInitialDisplacement();
+
+        int cv = vtxOf[std::make_pair(cNode, cDof)];
+        int r = cv; while (par[r] != r) r = par[r];
+        RawGroup &g = theGroups[rootToGroup[r]];
+        SlaveRec s;
+        s.vtx = cv;
+        s.delta = Uc0;
+        for (int k = 0; k < rDofs.Size(); k++) {
+            double c = C(k);
+            if (c == 0.0) continue;
+            int rv = vtxOf[std::make_pair(rNodes(k), rDofs(k))];
+            s.masterVtx.push_back(rv);
+            s.coeff.push_back(c);
+            if (k < Ur0.Size()) s.delta -= c * Ur0(k);
+        }
+        g.slaves.push_back(s);
     }
     return 0;
 }
@@ -539,6 +626,11 @@ LadrunoProjectionHandler::doneNumberingDOF(void)
         for (int i = 0; i < (int)fixedEqns.size(); i++) fe(i) = fixedEqns[i];
 
         theProjector->addGroup(allEqn, nRet, L, delta, fe);
+
+        if (verbose)
+            opserr << "  LadrunoProjection group " << gi << ": " << nRet
+                   << " retained DOF(s), " << nCon << " constrained, "
+                   << fe.Size() << " SP-fixed-master slave(s) zeroed.\n";
     }
 
     // Push the projector to the integrator via the abstract interface. ALWAYS re-bind
@@ -563,6 +655,29 @@ LadrunoProjectionHandler::doneNumberingDOF(void)
         consumer->setConstraintProjector(theProjector->numGroups() > 0 ? theProjector : 0);
     }
     return 0;
+}
+
+double
+LadrunoProjectionHandler::getTieForce(int nodeTag, int dof) const
+{
+    if (theProjector == 0)
+        return 0.0;
+    Domain *theDomain = this->getDomainPtr();
+    if (theDomain == 0)
+        return 0.0;
+    Node *np = theDomain->getNode(nodeTag);
+    if (np == 0)
+        return 0.0;
+    DOF_Group *dg = np->getDOF_GroupPtr();
+    if (dg == 0)
+        return 0.0;
+    const ID &id = dg->getID();
+    if (dof < 0 || dof >= id.Size())
+        return 0.0;
+    int eqn = id(dof);
+    if (eqn < 0)
+        return 0.0;          // SP-fixed / unnumbered DOF carries no projected tie force
+    return theProjector->tieForceAtEqn(eqn);
 }
 
 void

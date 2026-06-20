@@ -46,9 +46,9 @@ Spec: `30_ladruno_explicit_constraint_projection_adr.md`. Host integrator:
 | Phase | State | PR | Tests | Gate |
 |---|---|---|---|---|
 | P0 falsify & baseline (no SRC) | ✅ MERGED | #300 (671b5236) | 3 passed (hardened) | Gate-0 SOUND |
-| P1 core (equalDOF) | ✅ PR OPEN, awaiting approval | #305 (guppi/adr30-p1-core) | 11 P1 + 3 P0 pass; ZoneA 870; transient regr clean | Gate-A + Gate-B BOTH PASSED (fixes applied) |
-| P2 general C (rigidLink/diaphragm) | ✅ PR OPEN, awaiting approval | #307 (guppi/adr30-p2-transport) | 6 P2 (T3/T6fix/T6b/T7+2 bdry) + 11 P1 pass | Gate-C SOUND (read-only); rigor+UX folded |
-| P3 queries + EQ | not started | — | T8,T9 | Gate-D |
+| P1 core (equalDOF) | ✅ MERGED | #305 (668ad8e9) | 11 P1 + 3 P0; ZoneA 870 | Gate-A + Gate-B SOUND |
+| P2 general C (rigidLink/diaphragm) | ✅ MERGED | #307 (9990e206) | 6 P2 + general-review fixes | Gate-C + general review SOUND |
+| P3 queries + EQ | TESTS 4/4 GREEN; Gate-D running | guppi/adr30-p3-queries | T8/T9/EQ/guard + ZoneA-30 44 pass | Gate-D (read-only) running |
 
 ## Adversarial findings log
 _(append per gate: finding · lens · REAL/REFUTED · resolution)_
@@ -195,3 +195,50 @@ _(append per gate: finding · lens · REAL/REFUTED · resolution)_
   of correct claims (not bugs). Minor/deferred: condition-number rank check (ADR O1), frozen-Ccr
   staleness guard (P4) — both documented, both = same limits Transformation carries.
 - Rebuild bi1sves9v; then test + transient regression → push to PR #307 → merge.
+
+### P3 (queries + EQ) — 2026-06-20, branch guppi/adr30-p3-queries
+- Tie-force query (option 1 + recorder): projector caches f_tie = M(a_raw-a_proj) per eqn in
+  project(); handler getTieForce(node,dof) maps node/dof→eqn; command `ladrunoProjectionTieForce
+  node dof` wired (decl OpenSeesCommands.h, impl OpenSeesOutputCommands.cpp via OPS_GetHandler+
+  dynamic_cast, Py wrapper+register PythonWrapper.cpp, Tcl wrapper+register TclWrapper.cpp).
+- EQ_Constraint support: buildGroups now also iterates theDomain->getEQs() (single cDOF tied to a
+  coeff VECTOR of retained DOFs = multi-master general-C row the projector already handles). Two
+  loops mirrored (vertex/edge build + slave re-walk). delta = Uc0 - sum c_k Ur0_k.
+- -verbose: per-group retained/constrained/fixed summary at doneNumberingDOF.
+- Tests tests/test_adr30_projection_p3.py: T8 (tie force = ±F*m2/M, equal/opposite), T9 (energy
+  closure, drift<1e-3), EQ (equationConstraint enforced + tie-force query on EQ), GUARD (query
+  refuses non-projection handler). Build bt3av58si running.
+- RECORDER finding: LadrunoRecorder is node-based (iterates domain nodes) and CANNOT reach the
+  handler-owned projector → native recording needs either the reaction slot (option 2, user leaned
+  away) or a new nodal buffer + recorder source. DECISION: ship the lean query in P3; surface the
+  recorder-source as a scoped follow-up at the P3 gate (don't force an awkward coupling).
+- Vanilla touches added (ledger debt to record): OpenSeesCommands.h, OpenSeesOutputCommands.cpp,
+  PythonWrapper.cpp, TclWrapper.cpp (the query command). EQ support is in the fork-owned handler.
+- NEXT: build → run P3 tests → ledger/bookkeeping → Gate-D → PR.
+
+### Gate-D (P3 code panel, wf_becac856-3c3, 5 READ-ONLY Explore agents)
+- **Verdict: 3 of 4 lenses PASS (no bugs)** — tie-force cache (sign/timing/sizing correct, a_raw
+  captured before overwrite, fixedEqn intentionally uncached), command plumbing (dynamic_cast null-
+  safe, dof 1→0-based, registered Py+Tcl), EQ support (mirrored loops, delta=Uc0-Σc_k Ur0_k, chain/
+  double diagnostics fire for EQ + mixed groups), tests rigorous, vanilla fully ledgered.
+- 1 BLOCKER (confirmed): ADR §4 partition-crossing refusal was UNIMPLEMENTED — a cross-partition /
+  missing node tag would be silently treated as SP-fixed (mis-assembly). FIXED: added a node-
+  existence guard in buildGroups (every vtx node must be in this domain, else named refusal). Test
+  test_constraint_to_missing_node_refused added. Rebuild b8x5icdc3.
+- ~20 minor findings all CONFIRM correctness. No other action.
+- **v1 (P0-P3) functionally COMPLETE.** Deferred to P4 (documented): native LadrunoRecorder tie-force
+  source, prescribed-motion overwrite, MP-chain composition, ExplicitBathe/LNVD adoption, near-singular
+  condition-number rank check, frozen-Ccr runtime staleness guard.
+
+### P3 post-Gate-D: regression caught a REAL upstream bug (EQ leak)
+- Gate-D partition guard added → full-suite run FAILED (9) but each test PASSED ALONE: classic
+  test-ordering leaked-global-state signature. Root cause: `Domain::clearAll()` (called by `wipe`)
+  never cleared `theEQs` — EQ_Constraint was a later upstream add, omitted from clearAll. The EQ test
+  left a stale equationConstraint; the NEXT test's P3 handler (now reads getEQs()) picked it up →
+  mis-assembled. INVISIBLE pre-P3 (no handler read EQs). FIX: `theEQs->clearAll();` in Domain.cpp
+  (one line, upstreamable; ledgered LEDGER_vanilla + LEDGER_quirks).
+- After fix: previously-failing order p3,p0,p1,p2 = 25 passed; dynamics regr 30+1xfail; full Zone-A
+  running (b9zs7381a) — Domain::clearAll is universal so full regression is the gate before PR.
+- **v1 (P0-P3) COMPLETE pending full-ZoneA + PR.** Vanilla P3 touches: OpenSeesCommands.h,
+  OpenSeesOutputCommands.cpp, PythonWrapper.cpp, TclWrapper.cpp (query cmd) + Domain.cpp (EQ fix);
+  fork handler/projector/CDL. All ledgered.

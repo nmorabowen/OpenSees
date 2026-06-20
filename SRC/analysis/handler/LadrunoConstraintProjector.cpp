@@ -154,17 +154,27 @@ LadrunoConstraintProjector::project(Vector &a)
         return;
     }
 
+    // P3: (re)size + zero the tie-force cache to the current system size.
+    if (tieForce.Size() != a.Size())
+        tieForce = Vector(a.Size());
+    tieForce.Zero();
+
     for (int gi = 0; gi < (int)groups.size(); gi++) {
         Group &g = groups[gi];
 
         // orphaned slaves (every retained master SP-fixed) -> a_c = C*0 = 0
         for (int i = 0; i < g.fixedEqn.Size(); i++)
-            a(g.fixedEqn(i)) = 0.0;
+            a(g.fixedEqn(i)) = 0.0;   // tie force on these rows not cached (mass not held)
 
         int nrows = g.allEqn.Size();
         int nRet  = g.nRet;
         if (nRet == 0 || nrows == 0)
             continue;
+
+        // capture a_raw BEFORE overwriting (needed for the tie force f = M(a_raw-a_proj))
+        Vector araw(nrows);
+        for (int r = 0; r < nrows; r++)
+            araw(r) = a(g.allEqn(r));
 
         // rhs = L^T (M .* a_raw)
         Vector rhs(nRet);
@@ -172,7 +182,7 @@ LadrunoConstraintProjector::project(Vector &a)
         for (int p = 0; p < nRet; p++) {
             double s = 0.0;
             for (int r = 0; r < nrows; r++)
-                s += g.L(r, p) * g.m(r) * a(g.allEqn(r));
+                s += g.L(r, p) * g.m(r) * araw(r);
             rhs(p) = s;
         }
 
@@ -185,14 +195,25 @@ LadrunoConstraintProjector::project(Vector &a)
             continue;
         }
 
-        // a_full = L ar, scatter back (overwrites BOTH retained and constrained)
+        // a_full = L ar, scatter back (overwrites BOTH retained and constrained),
+        // and cache the tie force f = m (a_raw - a_proj) per row.
         for (int r = 0; r < nrows; r++) {
-            double s = 0.0;
+            double aproj = 0.0;
             for (int p = 0; p < nRet; p++)
-                s += g.L(r, p) * ar(p);
-            a(g.allEqn(r)) = s;
+                aproj += g.L(r, p) * ar(p);
+            int e = g.allEqn(r);
+            tieForce(e) = g.m(r) * (araw(r) - aproj);
+            a(e) = aproj;
         }
     }
+}
+
+double
+LadrunoConstraintProjector::tieForceAtEqn(int eqn) const
+{
+    if (eqn < 0 || eqn >= tieForce.Size())
+        return 0.0;
+    return tieForce(eqn);
 }
 
 int
