@@ -1358,6 +1358,8 @@ int LadrunoRecorder::initNodeSources()
 			src = new ladrunons::AngularAccelerationSource(info, node_ids); break;
 		case NR::NodalResultType::Pressure:
 			src = new ladrunons::PressureSource(info, node_ids); break;
+		case NR::NodalResultType::ConstraintTieForce:   // Ladruno (ADR-30 P4)
+			src = new ladrunons::ConstraintTieForceSource(info, node_ids); break;
 		case NR::NodalResultType::ReactionForce: {
 			ladrunons::ReactionForceSource* s = new ladrunons::ReactionForceSource(info, node_ids);
 			reac = s->reactionFlag(); src = s; break; }
@@ -2395,6 +2397,8 @@ void* OPS_LadrunoRecorder()
 					nodal_results_requests.push_back(ladrunons::detail::NodalResultType::Acceleration);
 				else if (strcmp(data, "angularAcceleration") == 0)
 					nodal_results_requests.push_back(ladrunons::detail::NodalResultType::AngularAcceleration);
+				else if (strcmp(data, "constraintTieForce") == 0 || strcmp(data, "tieForce") == 0)  // Ladruno (ADR-30 P4)
+					nodal_results_requests.push_back(ladrunons::detail::NodalResultType::ConstraintTieForce);
 				else if (strcmp(data, "reactionForce") == 0)
 					nodal_results_requests.push_back(ladrunons::detail::NodalResultType::ReactionForce);
 				else if (strcmp(data, "reactionMoment") == 0)

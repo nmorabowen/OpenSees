@@ -535,6 +535,8 @@ Node::~Node()
     if (reaction != 0)
       delete reaction;
 
+    if (projTieForce != 0)   // Ladruno (ADR-30 P4)
+      delete projTieForce;
 
     if (displayLocation != 0)
       delete displayLocation;
@@ -2188,8 +2190,40 @@ Node::resetReactionForce(int flag){
 	const Vector &theVel = this->getTrialVel(); // in case vel not created
 	reaction->addMatrixVector(1.0, *mass, theVel, alphaM);
       }
-    } 
+    }
   }
+  return 0;
+}
+
+// Ladruno (ADR-30 P4): constraint tie-force buffer. getter lazily allocates + zeros so a
+// recorder can read it before any projection step; setter copies the integrator's scatter.
+const Vector &
+Node::getProjectionTieForce(void)
+{
+  if (projTieForce == 0) {
+    projTieForce = new Vector(numberDOF);
+    if (projTieForce == 0) {
+      opserr << "FATAL Node::getProjectionTieForce() - out of memory\n";
+      exit(-1);
+    }
+  }
+  return *projTieForce;
+}
+
+int
+Node::setProjectionTieForce(const Vector &tieForce)
+{
+  if (projTieForce == 0) {
+    projTieForce = new Vector(numberDOF);
+    if (projTieForce == 0)
+      return -1;
+  }
+  if (tieForce.Size() != numberDOF) {
+    opserr << "WARNING Node::setProjectionTieForce() - incompatible sizes "
+           << tieForce.Size() << " vs " << numberDOF << " at node " << this->getTag() << "\n";
+    return -1;
+  }
+  *projTieForce = tieForce;
   return 0;
 }
 

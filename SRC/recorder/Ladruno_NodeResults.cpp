@@ -129,6 +129,48 @@ namespace ladruno {
 	}
 
 	/* ===================================================================== */
+	/* ConstraintTieForceSource (Ladruno ADR-30 P4)                          */
+	/* ===================================================================== */
+	ConstraintTieForceSource::ConstraintTieForceSource(const detail::ProcessInfo& info)
+		: NodeResultSource(info) { build(); }
+	ConstraintTieForceSource::ConstraintTieForceSource(const detail::ProcessInfo& info, const std::vector<int>& ids)
+		: NodeResultSource(info, ids) { build(); }
+
+	void ConstraintTieForceSource::build()
+	{
+		m_schema.name = "CONSTRAINT_TIE_FORCE";
+		m_schema.display_name = "Constraint Tie Force";
+		m_schema.num_components = 0;
+		if (m_ndim == 1) {
+			m_schema.components_csv = "TFx";
+			m_schema.num_components = 1;
+			m_schema.data_type = detail::ResultDataType::Scalar;
+		}
+		else if (m_ndim == 2) {
+			m_schema.components_csv = "TFx,TFy";
+			m_schema.num_components = 2;
+			m_schema.data_type = detail::ResultDataType::Vectorial;
+		}
+		else if (m_ndim == 3) {
+			m_schema.components_csv = "TFx,TFy,TFz";
+			m_schema.num_components = 3;
+			m_schema.data_type = detail::ResultDataType::Vectorial;
+		}
+		m_schema.dimension = "F";
+		m_schema.description = "Projection constraint tie force M(a_raw - a_proj)";
+		m_schema.result_type = detail::ResultType::Generic;
+	}
+
+	void ConstraintTieForceSource::evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer)
+	{
+		buffer.assign(m_ids.size() * m_schema.num_components, 0.0);
+		for (size_t i = 0; i < m_ids.size(); i++) {
+			Node* n = getNode(info, m_ids[i]);
+			if (n) utils::misc::bufferNodeResponseVec3u(i, m_ndim, n->getProjectionTieForce(), buffer);
+		}
+	}
+
+	/* ===================================================================== */
 	/* RotationSource                                                        */
 	/* ===================================================================== */
 

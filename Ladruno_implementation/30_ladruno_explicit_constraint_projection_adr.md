@@ -354,6 +354,17 @@ conflicts, Theory p. 543) and Abaqus (automatic overconstraint resolution). So:
   > projector, so it needs either the reaction slot or a dedicated nodal tie-force buffer
   > + recorder source — a design choice not forced here. Users can record the query by
   > scripting it per step meanwhile.
+
+  > **P4a — native tie-force recorder DONE (2026-06-20).** Chosen route = dedicated nodal
+  > buffer (NOT the reaction slot). `Node` gets a lazily-allocated `projTieForce` slot
+  > (`get/setProjectionTieForce`, mirroring `reaction`); `CentralDifferenceLadruno::commit()`
+  > scatters `M(a_raw−a_proj)` onto the nodes before `commitDomain()` (recorders read after
+  > commit); a new `ConstraintTieForceSource` (`NodalResultType::ConstraintTieForce`,
+  > keyword `constraintTieForce`/`tieForce`) writes the `CONSTRAINT_TIE_FORCE` field to the
+  > `.ladruno` HDF5. Test `tests/test_adr30_projection_p4.py` records + h5py-reads back
+  > `DATA == ±F·m₂/M` (equal-and-opposite). Correct by construction — same source as the
+  > P3 query. Remaining P4: prescribed-motion overwrite, MP-chain composition,
+  > ExplicitBathe/LNVD adoption, near-singular condition gate, frozen-Ccr runtime guard.
 - **P4 — deferred:** prescribed-motion overwrite; MP-chain composition; ExplicitBathe/
   LNVD adoption; RBE2/RBE3 eliminable-block routing (retire bipenalty where possible);
   SOE-cooperative massless-slave skip.

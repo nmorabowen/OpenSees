@@ -249,3 +249,18 @@ P0 #300 · P1 #305 · P2 #307 · P3 #312 — ALL MERGED to ladruno. LadrunoProje
 (HANDLER 33001) ships explicit constraint projection for equalDOF + rigidLink + rigidDiaphragm
 + equationConstraint, with the tie-force query, IC manifold guard, full diagnostic battery, and
 the deferred-P4 backlog documented. Handoff: `projection_handler_handoff.md`. Loop ends.
+
+### P4a — native tie-force recorder (2026-06-20, branch guppi/adr30-p4-recorder)
+- User chose "dedicated nodal buffer + source" (not reactions). Implemented:
+  - Node.{h,cpp} (VANILLA): lazily-alloc projTieForce slot (in-class `=0` init → safe across all
+    ctors w/o touching init lists; freed in ~Node), get/setProjectionTieForce. Ledgered.
+  - CentralDifferenceLadruno::commit(): scatter projector tieForce → nodes (via DOF_Group getID)
+    before commitDomain (recorders read after commit); only when projector active+massReady.
+  - Recorder (fork): Ladruno_Types.h enum ConstraintTieForce; Ladruno_NodeResults
+    ConstraintTieForceSource (vec3 force, TFx/y/z); LadrunoRecorder keyword `constraintTieForce`/
+    `tieForce` + switch case. Writes CONSTRAINT_TIE_FORCE/DATA to .ladruno HDF5.
+- Test tests/test_adr30_projection_p4.py: records + h5py readback DATA==±F*m2/M equal/opposite.
+  Test bug found+fixed (h5py walk matched sibling STEP metadata → read /DATA only).
+- ADR-30 battery+recorder 38 passed. Full Zone-A (buw5d7w6e) + focused P4 review (wf_ce3743b4) running.
+- Correct by construction: recorder reads Node tie force = integrator scatter = projector cache =
+  same source as the P3 query (validated vs analytics in T8).
