@@ -2,7 +2,7 @@
 title: "LadrunoProjectionHandler (ADR-30) — handoff / v1 complete"
 project: Ladruno
 type: handoff
-status: v1 SHIPPED (P0–P3 merged to ladruno, 2026-06-20)
+status: v1 SHIPPED (P0–P3) + P4a tie-force recorder — all merged to ladruno, 2026-06-20
 related:
   - "[[30_ladruno_explicit_constraint_projection_adr]]"   # the spec
   - "[[_adr30_p1_design]]"                                 # P1 pseudocode + Gate-A resolutions
@@ -36,6 +36,9 @@ ops.algorithm("Linear")                         # one solve/step
 ops.analyze(nsteps, dt)
 
 f = ops.ladrunoProjectionTieForce(nodeTag, dof) # the constraint tie force M(a_raw - a_proj)
+
+# native HDF5 recording (P4a): writes the CONSTRAINT_TIE_FORCE field per node per step
+ops.recorder("ladruno", "out.ladruno", "-N", "constraintTieForce")
 ```
 
 **Supported constraints (v1):** `equalDOF`, `equalDOF_Mixed`, `rigidLink -bar`/`-beam`,
@@ -83,6 +86,13 @@ CDL hook (fork-owned, `SRC/analysis/integrator/CentralDifferenceLadruno.{h,cpp}`
 consumer; **buildMass between formTangent and solve** (the DiagonalDirectSolver overwrites the
 diagonal with 1/m on the factor pass); **project a0** in the starter before seeding `v_{−1/2}`;
 **project a_{n+1}** in `update()` — the `*Aprev = Aproj` write is what carries manifold invariance.
+P4a adds a tie-force **scatter in `commit()`**: `M(a_raw−a_proj)` → `Node::setProjectionTieForce`
+(before `commitDomain()`), guarded by `theProjector && isMassReady()` so a non-projection run pays
+nothing.
+
+Recorder (fork-owned): `Node::projTieForce` slot (vanilla Node, P4a); the `CONSTRAINT_TIE_FORCE`
+node-result = `Ladruno_Types.h` enum + `Ladruno_NodeResults` `ConstraintTieForceSource` +
+`LadrunoRecorder.cpp` keyword/switch.
 
 Vanilla seams (all `// Ladruno`, in LEDGER_vanilla): `classTags.h` (33001); `DiagonalSOE::getDiagonalA`;
 the `constraints LadrunoProjection` branch in `OpenSeesCommands.cpp` + `tcl/commands.cpp`; the broker
@@ -105,10 +115,10 @@ Command: `SRC/interpreter/OpenSeesOutputCommands.cpp::OPS_LadrunoProjectionTieFo
   — which is why P2 needed no new projector code.
 - **Gate-B** (P1 code) + **Gate-C** (P2 transport) + **Gate-D** (P3) + a **general pre-merge review**:
   implementation verified exact (tie to machine zero, momentum to 4e-16, transport gap ~1e-12).
-- **Tests:** `tests/test_adr30_projection_p{0,1,2,3}.py` (~26 cases): T1 momentum, T2 vs
+- **Tests:** `tests/test_adr30_projection_p{0,1,2,3,4}.py` (~30 cases): T1 momentum, T2 vs
   `Transformation` ref, T3 diaphragm, T4 Δt-neutrality, T5 conflict battery, T6fix (fixes the P0
   mass-drop), T6b analytic anchor, T7 rigidLink free-vib, T8 tie-force, T9 energy closure, EQ,
-  IC-violation, UAF, missing-node. Full Zone-A green (938).
+  IC-violation, UAF, missing-node, P4a recorder HDF5 readback. Full Zone-A green (942).
 
 **Bugs this work caught and fixed** (the high-value byproducts): a latent upstream silent-swallow
 of handler/integrator error returns in `DirectIntegrationAnalysis` (now honored across the transient
@@ -117,22 +127,28 @@ drivers), and a real upstream `Domain::clearAll()` bug that **leaked `EQ_Constra
 
 ---
 
-## 4. Deferred — P4 backlog (priority order)
+## 4. P4 — status & remaining backlog
 
-1. **Native `LadrunoRecorder` tie-force source** — *user asked for this.* OPEN DESIGN DECISION:
-   the `LadrunoRecorder` is node-based (iterates Domain nodes) and **cannot reach the handler-owned
-   projector**, so recording needs either (a) write the tie force into the node **reaction** slot
-   (free query via `nodeReaction` + free recording via the existing reaction source, but it lives in
-   the reaction slot), or (b) a **dedicated nodal tie-force buffer** (integrator writes it each step)
-   + a new `Ladruno_NodeResults` source. v1 ships the lean query only; pick (a) or (b) for P4.
-2. **Prescribed-motion overwrite** (non-homogeneous SP / `imposedMotion`): overwrite `a` on those
+**P4a — native tie-force recorder: DONE (#317, merge 61341837).** Chosen route = a **dedicated
+nodal buffer** (not the reaction slot, to keep it separate from reactions): `Node` gets a lazily-
+allocated `projTieForce` slot (`get/setProjectionTieForce`, mirrors `reaction`, transient/not-
+serialized); `CentralDifferenceLadruno::commit()` scatters `M(a_raw−a_proj)` onto the nodes before
+`commitDomain()`; a `ConstraintTieForceSource` (`NodalResultType::ConstraintTieForce`, keyword
+`constraintTieForce`/`tieForce`) writes the `CONSTRAINT_TIE_FORCE` field to the `.ladruno` HDF5.
+Test `tests/test_adr30_projection_p4.py` (h5py readback `DATA == ±F·m₂/M`). Two adversarial reviews
+(focused + general) both SAFE-TO-MERGE — Node core has zero blast radius, the scatter is free when
+projection is inactive. Optional test nits left: a plain-CDL-no-projection zeros-recording test;
+`h5py` is `importorskip` (silently skips on a box without it).
+
+**Remaining backlog (priority order, all independent, none required for the core feature):**
+1. **Prescribed-motion overwrite** (non-homogeneous SP / `imposedMotion`): overwrite `a` on those
    DOFs before projecting the rest.
-3. **MP-chain composition** (currently refused): substitute `C` matrices (Abaqus-style).
-4. **ExplicitBathe / LNVD adoption** — implement `LadrunoProjectionConsumer` + the per-sub-step hooks.
-5. **RBE2/RBE3 eliminable-block routing** through the projector (retire bipenalty where eliminable).
-6. **Near-singular `LᵀML`** condition-number gate (the rank check catches only an exact zero pivot;
+2. **MP-chain composition** (currently refused): substitute `C` matrices (Abaqus-style).
+3. **ExplicitBathe / LNVD adoption** — implement `LadrunoProjectionConsumer` + the per-sub-step hooks.
+4. **RBE2/RBE3 eliminable-block routing** through the projector (retire bipenalty where eliminable).
+5. **Near-singular `LᵀML`** condition-number gate (the rank check catches only an exact zero pivot;
    ADR O1) and a **frozen-`Ccr` runtime staleness guard** (warn at large accumulated rotation).
-7. **SOE-cooperative massless-slave elimination** — would relax the "every tied DOF needs mass"
+6. **SOE-cooperative massless-slave elimination** — would relax the "every tied DOF needs mass"
    requirement (lets diaphragm slaves keep zero rotational mass like `Transformation`).
 
 ## 5. Pointers
