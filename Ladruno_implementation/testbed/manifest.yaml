@@ -191,7 +191,7 @@ features:
     classtag: 33007          # INTEGRATOR family; new class (N. Mora-Bowen). NB 33007
                              # is independently ELE_TAG_LadrunoQuad — per-registry, no collision.
     tag_symbol: INTEGRATOR_TAGS_CentralDifferenceSMS
-    pr: 0                    # fill on PR creation
+    pr: 295
     feature_class: integrator
     required_tiers: [dynamics-battery]
     pytest: tests/test_centralDifferenceSMS_integrator.py   # SMS-1..4 Zone-A (construct/run, tiny-element stability win, no-op below target, dtor-restore)

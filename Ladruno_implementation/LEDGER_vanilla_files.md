@@ -122,12 +122,12 @@ and re-verify.
 | `SRC/material/uniaxial/TclModelBuilderUniaxialMaterialCommand.cpp` | `// Ladruno`: extern `OPS_LadrunoCohesiveHinge()` + `strcmp(argv[1],"LadrunoCohesiveHinge")` dispatch block (classic-Tcl `OpenSees.exe` path) | [#264](https://github.com/nmorabowen/OpenSees/pull/264) |
 | `SRC/material/uniaxial/CMakeLists.txt` | Add `LadrunoCohesiveHinge.cpp` to `OPS_Material` sources + `LadrunoCohesiveHinge.h` to headers | [#264](https://github.com/nmorabowen/OpenSees/pull/264) |
 | `SRC/{tcl/tclMain.cpp,interpreter/PythonModule.cpp}` | Splash-banner feature list regen (`FEATURES-START/END`) via `patch_banner.py` — add LadrunoCohesiveHinge line | [#264](https://github.com/nmorabowen/OpenSees/pull/264) |
-| `SRC/classTags.h` | Register `INTEGRATOR_TAGS_CentralDifferenceSMS`=33007 (selective mass-scaling explicit integrator; per-registry band, distinct from `ELE_TAG_LadrunoQuad`=33007) | _(SMS PR)_ |
-| `SRC/interpreter/OpenSeesCommands.{h,cpp}` | `// Ladruno`: declare `OPS_CentralDifferenceSMS()` + `strcmp(type,"CentralDifferenceSMS")` dispatch in the integrator command | _(SMS PR)_ |
-| `SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp` | `// Ladruno`: `#include "CentralDifferenceSMS.h"` + `case INTEGRATOR_TAGS_CentralDifferenceSMS: return new CentralDifferenceSMS();` (parallel/database `recvSelf` reconstruction) | _(SMS PR)_ |
-| `SRC/runtime/runtime/TclPackageClassBroker.cpp` | `// Ladruno`: `#include "CentralDifferenceSMS.h"` + `case INTEGRATOR_TAGS_CentralDifferenceSMS: return new CentralDifferenceSMS();` | _(SMS PR)_ |
-| `SRC/analysis/integrator/CMakeLists.txt` | Add `CentralDifferenceSMS.cpp` to sources + `CentralDifferenceSMS.h`/`LadrunoMassLumping.h`/`LadrunoMassScaling.h` to headers | _(SMS PR)_ |
-| `SRC/{tcl/tclMain.cpp,interpreter/PythonModule.cpp}` | Splash-banner feature regen via `patch_banner.py` — add CentralDifferenceSMS + HRZ-lumping lines | _(SMS PR)_ |
+| `SRC/classTags.h` | Register `INTEGRATOR_TAGS_CentralDifferenceSMS`=33007 (selective mass-scaling explicit integrator; per-registry band, distinct from `ELE_TAG_LadrunoQuad`=33007) | [#295](https://github.com/nmorabowen/OpenSees/pull/295) |
+| `SRC/interpreter/OpenSeesCommands.{h,cpp}` | `// Ladruno`: declare `OPS_CentralDifferenceSMS()` + `strcmp(type,"CentralDifferenceSMS")` dispatch in the integrator command | [#295](https://github.com/nmorabowen/OpenSees/pull/295) |
+| `SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp` | `// Ladruno`: `#include "CentralDifferenceSMS.h"` + `case INTEGRATOR_TAGS_CentralDifferenceSMS: return new CentralDifferenceSMS();` (parallel/database `recvSelf` reconstruction) | [#295](https://github.com/nmorabowen/OpenSees/pull/295) |
+| `SRC/runtime/runtime/TclPackageClassBroker.cpp` | `// Ladruno`: `#include "CentralDifferenceSMS.h"` + `case INTEGRATOR_TAGS_CentralDifferenceSMS: return new CentralDifferenceSMS();` | [#295](https://github.com/nmorabowen/OpenSees/pull/295) |
+| `SRC/analysis/integrator/CMakeLists.txt` | Add `CentralDifferenceSMS.cpp` to sources + `CentralDifferenceSMS.h`/`LadrunoMassLumping.h`/`LadrunoMassScaling.h` to headers | [#295](https://github.com/nmorabowen/OpenSees/pull/295) |
+| `SRC/{tcl/tclMain.cpp,interpreter/PythonModule.cpp}` | Splash-banner feature regen via `patch_banner.py` — add CentralDifferenceSMS + HRZ-lumping lines | [#295](https://github.com/nmorabowen/OpenSees/pull/295) |
 
 > [!note] Upstreamable bugfixes
 > Some PRs fix genuine upstream bugs (not fork-only features) and are candidates
