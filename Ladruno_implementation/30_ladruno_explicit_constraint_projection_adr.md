@@ -152,10 +152,22 @@ DOF-map corruption. Composition is Phase 4.
 `LᵀML` singular ⟺ a whole retained direction is massless → **named error** at first
 projection build ("massless retained set", echoing the RBE2 massless-DOF-scan lesson).
 A massless *slave* DOF is mechanically fine (its raw `a` is irrelevant — the projection
-overwrites it), **but** the diagonal SOE will refuse the zero-diagonal solve before we
-ever get there. v1: detect at `handle()` (mass scan over slave DOFs), error with the
-recipe ("add nodal mass or use the penalty path"). A SOE-cooperative skip is Phase 4
-(needs a vanilla touch; not worth it for v1). → Open question O1.
+overwrites it), **but** with the handler's Plain-style assembly that slave keeps its own
+equation and zero diagonal mass → the assembled `M` is singular. v1: detect at `handle()`
+(mass scan over slave DOFs), error with the recipe ("add nodal mass or use the penalty
+path"). A SOE-cooperative skip is Phase 4 (needs a vanilla touch; not worth it for v1).
+→ Open question O1.
+
+> **P0 empirical finding (2026-06-19, Gate-0):** the SOE layer cannot be trusted to
+> police this, which is what makes the handle()-time scan *mandatory* rather than a
+> nicety. Measured on the shipped build: a zero-mass free DOF under `system Diagonal`
+> aborts at solve time with an opaque `DiagonalDirectSolver aii = 0` (analyze → −2) —
+> a correct refusal, but late and non-actionable; under `system FullGeneral` **and**
+> `system BandGeneral` the singular LAPACK factorization is **swallowed and `analyze`
+> returns success (rc = 0) with a non-physical result** — silently wrong. So the
+> earlier "the diagonal SOE will refuse before we get there" reasoning is
+> Diagonal-specific and does *not* generalize; only an up-front handler scan is safe.
+> (Test: `tests/test_adr30_projection_p0.py::test_massless_dof_is_not_policeable_by_the_soe_layer`.)
 
 ---
 
@@ -282,6 +294,17 @@ conflicts, Theory p. 543) and Abaqus (automatic overconstraint resolution). So:
 | T4 | dt sweep 0.99·dt_cr (stable) / 1.01·dt_cr (diverges) **with and without ties** | tie does not change the stability boundary (interlacing claim §2.2) |
 | T5 | conflict battery (§5.2, 7 cases) | each refused with its named error; no segfault, no silent pass |
 | T6 | **Phase-0 falsification**: rigidDiaphragm + CD + Transformation + `system Diagonal` vs BandGen | expected: Diagonal drops `TᵀMT` off-diagonals → wrong response. Outcome → LEDGER_quirks row either way |
+
+> **P0 T6 — DONE (2026-06-19, Gate-0 SOUND).** Implemented as a 2D
+> `rigidLink -beam` with an offset point mass (the minimal faithful stand-in for a
+> diaphragm slave — same `(uy,rz)` transport coupling; a diaphragm is N such slaves)
+> rather than the literal 3D `rigidDiaphragm`, and `FullGeneral`/`BandGeneral` as the
+> dense reference. **Result confirmed:** `system Diagonal` keeps only `diag(A)` and
+> drops the condensed `m·d` off-diagonal → the coupling-induced `uy` is *identically
+> zero* and the coupled `rz` mode is detuned (period 1.54 s → 1.40 s), while
+> CD+`FullGeneral`, implicit Newmark+`FullGeneral`, and an OpenSees-free closed-form
+> modal solution all agree to <1%. The D2 premise holds. Test:
+> `tests/test_adr30_projection_p0.py::test_T6_diagonal_soe_drops_condensed_offdiagonal_mass`.
 | T7 | `rigidLink -beam` with rotary inertia, free vibration | frequencies vs assembled-reference < 1e-8 rel |
 | T8 | tie-force recovery `M(a_raw−a_proj)` | matches high-α penalty reference force within 0.1% |
 | T9 | energy closure on T3 via `EnergyBalanceRecorder` | drift < 1e-3 of peak KE over the record |
