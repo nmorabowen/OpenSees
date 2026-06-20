@@ -1892,6 +1892,12 @@ int OPS_Integrator()
     } else if (strcmp(type, "ExplicitBatheSMSConsistent") == 0) {   // Ladruno
 	ti = (TransientIntegrator*)OPS_ExplicitBatheSMSConsistent();
 
+    } else if (strcmp(type, "ExplicitBatheLNVDSMS") == 0) {   // Ladruno
+	ti = (TransientIntegrator*)OPS_ExplicitBatheLNVDSMS();
+
+    } else if (strcmp(type, "ExplicitBatheLNVDSMSConsistent") == 0) {   // Ladruno
+	ti = (TransientIntegrator*)OPS_ExplicitBatheLNVDSMSConsistent();
+
     } else if (strcmp(type, "LadrunoDynamicRelaxation") == 0) {   // Ladruno
 	ti = (TransientIntegrator*)OPS_LadrunoDynamicRelaxation();
 

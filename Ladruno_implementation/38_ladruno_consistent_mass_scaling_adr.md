@@ -172,3 +172,12 @@ dominant lumped diagonal, so the preconditioned operator is well-conditioned ~`1
   **−0.17% (consistent) vs −53.41% (lumped)** via transient FFT. Command takes the Noh-Bathe
   `$p` first. Zone-A `tests/test_explicitBatheSMS_integrator.py`. LNVD (separate base) is a
   clean follow-up, not done here.
+- **2026-06-20 — LNVD SMS family added (33011 lumped, 33012 consistent).** The same pattern
+  ported to `ExplicitBatheLNVD` (Noh-Bathe + FLAC local non-viscous damping; a separate
+  `TransientIntegrator` base, not an `ExplicitBathe` subclass). Same two-sub-step solve
+  structure ⇒ same hook placement (`A_tpdt`, `A_tdt`); protected classTag ctor + no-op
+  `refineAccel` (base LNVD + lumped LNVDSMS byte-identical, regression green). The FLAC `alpha`
+  is orthogonal to the mass-scaling sizing. Command takes `$p $alpha` first. Measured identical:
+  f1 **−0.17% vs −53.41%**. Zone-A `tests/test_explicitBatheLNVDSMS_integrator.py`. The
+  explicit-integrator SMS axis (CentralDifference / ExplicitBathe / ExplicitBatheLNVD) is now
+  complete for both lumped and consistent.

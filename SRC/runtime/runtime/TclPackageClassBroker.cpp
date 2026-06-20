@@ -456,6 +456,8 @@ using namespace OpenSees::Hash::literals;
 #include "CentralDifferenceSMSConsistent.h"   // Ladruno
 #include "ExplicitBatheSMS.h"           // Ladruno
 #include "ExplicitBatheSMSConsistent.h" // Ladruno
+#include "ExplicitBatheLNVDSMS.h"           // Ladruno
+#include "ExplicitBatheLNVDSMSConsistent.h" // Ladruno
 #include "LadrunoDynamicRelaxation.h"   // Ladruno
 #include "NewmarkHSFixedNumIter.h"
 #include "NewmarkHSIncrLimit.h"
@@ -1845,6 +1847,12 @@ TclPackageClassBroker::getNewTransientIntegrator(int classTag)
 
   case INTEGRATOR_TAGS_ExplicitBatheSMSConsistent:   // Ladruno
     return new ExplicitBatheSMSConsistent(); // must recvSelf
+
+  case INTEGRATOR_TAGS_ExplicitBatheLNVDSMS:   // Ladruno
+    return new ExplicitBatheLNVDSMS(); // must recvSelf
+
+  case INTEGRATOR_TAGS_ExplicitBatheLNVDSMSConsistent:   // Ladruno
+    return new ExplicitBatheLNVDSMSConsistent(); // must recvSelf
 
   case INTEGRATOR_TAGS_LadrunoDynamicRelaxation: // Ladruno
     return new LadrunoDynamicRelaxation(); // must recvSelf

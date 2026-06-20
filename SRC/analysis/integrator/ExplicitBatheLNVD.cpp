@@ -176,7 +176,21 @@ ExplicitBatheLNVD::ExplicitBatheLNVD(double _p, double _alpha_flac,
                                      double divergenceFactor_,
                                      bool cflUseTangent_, int cflRecomputeEvery_,
                                      CTSLumping lumping_)
-    : TransientIntegrator(INTEGRATOR_TAGS_ExplicitBatheLNVD),
+    // delegate to the protected classTag ctor with LNVD's own tag (byte-identical)
+    : ExplicitBatheLNVD(INTEGRATOR_TAGS_ExplicitBatheLNVD, _p, _alpha_flac,
+                        compute_critical_timestep_, verbose_, cflAbort_, divergenceFactor_,
+                        cflUseTangent_, cflRecomputeEvery_, lumping_)
+{
+}
+
+// Protected classTag ctor (the real init) — subclasses pass their own classTag.
+ExplicitBatheLNVD::ExplicitBatheLNVD(int classTag, double _p, double _alpha_flac,
+                                     int compute_critical_timestep_,
+                                     bool verbose_, bool cflAbort_,
+                                     double divergenceFactor_,
+                                     bool cflUseTangent_, int cflRecomputeEvery_,
+                                     CTSLumping lumping_)
+    : TransientIntegrator(classTag),
       deltaT(0.0), p(_p), q0(0.0), q1(0.0), q2(0.0), alpha_flac(_alpha_flac),
       U_t(0), V_t(0), A_t(0),
       U_tpdt(0), V_tpdt(0), V_fake(0), A_tpdt(0),
@@ -410,6 +424,9 @@ int ExplicitBatheLNVD::update(const Vector &U) {
 
     // store acceleration at t + p*dt
     *A_tpdt = U;
+    // Ladruno (ADR-38): consistent mass scaling refines this sub-step-1 accel. Default no-op.
+    if (this->refinesAccel())
+        this->refineAccel(*A_tpdt);
 
     // velocity at t + p*dt
     *V_tpdt = *V_t;
@@ -437,6 +454,11 @@ int ExplicitBatheLNVD::update(const Vector &U) {
     this->formUnbalance();
     theLinSOE->solve();
     *A_tdt = theLinSOE->getX();
+    // Ladruno (ADR-38): consistent mass scaling refines this sub-step-2 accel. The SOE
+    // diagonal is still the factored 1/mass (DiagonalDirectSolver factors once), so the
+    // refineAccel r-recovery is valid here too.
+    if (this->refinesAccel())
+        this->refineAccel(*A_tdt);
 
     const double A_max = A_tdt->pNorm(0);
     if (A_max != A_max || A_max == std::numeric_limits<double>::infinity()) {
