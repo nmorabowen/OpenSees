@@ -152,14 +152,31 @@ buildMassScaling(AnalysisModel *theModel, double dtTarget, CTSLumping lumping,
             delete[] mdiag; continue;
         }
 
-        // self-report-aware per-element stable step
+        // self-report-aware per-element UNDAMPED stable step (= 2/w0, w0 = sqrt(lambdaMax))
         double dt_e = elementCriticalDt(ele, useTangent, mdiag, n);
-        if (dt_e <= 0.0 || dt_e >= dtTarget) { delete[] mdiag; continue; }
+        if (dt_e <= 0.0) { delete[] mdiag; continue; }
+
+        // --- SMS-BETAK: size against the DAMPED step. Stiffness-proportional (betaK)
+        //     Rayleigh damping shrinks the explicit stable step (xi = betaK*w/2 GROWS with
+        //     w), so sizing against the undamped 2/w0 UNDER-scales -> still unstable at
+        //     dtTarget. With c = betaK/dt_e (= 0.5*betaK*w0) the betaK-damped step at
+        //     mass-scale s is dt_d(s) = (2/w0)(sqrt(s + c^2) - c) -- a CLOSED-FORM that
+        //     inverts to s = T^2 + 2*T*c, T = dtTarget/dt_e. (Mass-proportional alphaM is
+        //     intentionally excluded: it does NOT reduce the high-frequency step that
+        //     governs explicit stability, and folding it in across scales is non-monotonic.
+        //     Mirrors the betaK term of computeCriticalTimeStep's damped estimate.)
+        //     Reduces EXACTLY to the undamped s=(dtTarget/dt_e)^2 when betaK=0 -> no-damping
+        //     models are byte-identical.
+        double betaK = ele->getRayleighDampingFactors()(1);
+        if (betaK < 0.0) betaK = 0.0;
+        double cDamp = betaK / dt_e;                                   // = 0.5*betaK*w0
+        double dtDamped = dt_e * (std::sqrt(1.0 + cDamp * cDamp) - cDamp);   // current (s=1) damped step
+        if (dtDamped >= dtTarget) { delete[] mdiag; continue; }        // already stable incl. betaK damping
 
         // --- SMS-CONSTRAINTS: this sub-target element WOULD be scaled, but if any of its
         //     nodes is an MP-constrained slave, skip it (mass would not land through the
-        //     constraint). Count it and remember its dt_e — it remains GOVERNING, so the
-        //     integrator can honestly tell the user dtTarget is not delivered for it.
+        //     constraint). Count it and remember its (damped) dt — it remains GOVERNING, so
+        //     the integrator can honestly tell the user dtTarget is not delivered for it.
         if (!constrainedNodes.empty()) {
             Node **cnds = ele->getNodePtrs();
             int cnn = ele->getNumExternalNodes();
@@ -171,15 +188,16 @@ buildMassScaling(AnalysisModel *theModel, double dtTarget, CTSLumping lumping,
             }
             if (touchesConstrained) {
                 rep.nConstrained++;
-                if (rep.minDtConstrained < 0.0 || dt_e < rep.minDtConstrained)
-                    rep.minDtConstrained = dt_e;
+                if (rep.minDtConstrained < 0.0 || dtDamped < rep.minDtConstrained)
+                    rep.minDtConstrained = dtDamped;
                 delete[] mdiag; continue;
             }
         }
 
-        // s_e = (dt_target/dt_e)^2 ; add (s_e-1)*m to the element's nodes by lumped share
-        double ratio = dtTarget / dt_e;
-        double factor = ratio * ratio - 1.0;   // > 0
+        // betaK-damped scale s = T^2 + 2*T*c (closed-form inverse of dt_d(s)=dtTarget); add
+        // (s-1)*m to the element's nodes by lumped share.
+        double T = dtTarget / dt_e;
+        double factor = T * T + 2.0 * T * cDamp - 1.0;   // = s - 1 > 0
 
         // --- SMS-PARTIAL-INJECT: stage this element's increments LOCALLY, then commit
         //     to the shared `injected` map ONLY if the full DOF walk maps node-by-node
@@ -221,7 +239,7 @@ buildMassScaling(AnalysisModel *theModel, double dtTarget, CTSLumping lumping,
         }
         rep.addedMass += addedTrans;
         rep.nScaled++;
-        if (dt_e < rep.minDtScaled) rep.minDtScaled = dt_e;
+        if (dtDamped < rep.minDtScaled) rep.minDtScaled = dtDamped;   // governing (damped) step
     }
     return rep;
 }

@@ -124,6 +124,19 @@ sₑ  = (Δt_target / Δtₑ)²          ≥ 1
 Δmₑ = (sₑ − 1) · mₑ               (the added "fictitious" mass for element e)
 ```
 
+**betaK-damped sizing (v1.1, 2026-06-20).** Stiffness-proportional (betaK) Rayleigh
+damping shrinks the explicit stable step (ξ = betaK·ω/2 grows with ω), so the undamped
+`sₑ = (Δt_target/Δtₑ)²` UNDER-scales and the element is still unstable at Δt_target. With
+`c = betaK/Δtₑ` (= ½·betaK·ωₑ,max) the betaK-damped step at scale `s` is
+`Δt_d(s) = (2/ωₑ,max)(√(s + c²) − c)`, which inverts in **closed form** to
+`sₑ = T² + 2·T·c`, `T = Δt_target/Δtₑ`. This reduces to the undamped `T²` when betaK = 0
+(no-damping models byte-identical) and injects more mass when betaK > 0 so the *damped*
+step reaches Δt_target. Mass-proportional (alphaM) damping is intentionally **excluded** —
+it does not reduce the high-frequency step that governs explicit stability, and folding it
+in across scales is non-monotonic. The skip test also uses the damped step (an element
+whose undamped Δtₑ exceeds Δt_target but whose *damped* step does not is now correctly
+scaled). Tested: `test_massScaling_validation.py::test_betaK_damped_sizing`.
+
 `Δmₑ` is distributed to the element's nodes in proportion to their existing lumped share
 (HRZ lump from [[35_ladruno_hrz_lumped_mass_adr]]), then **added** to each node's mass
 matrix diagonal. The scaling factor `sₑ` is a *per-element estimate* — it assumes all of

@@ -213,8 +213,10 @@ features:
       -cflAbort/-recompute rejected (they re-run the un-augmented element eigensolve).
       v1 sequential / partition-interior. CONSTRAINT-NODE EXCLUSION shipped v1.1: sub-target
       elements touching an MP-constrained (equalDOF/RBE) slave node are excluded from scaling
-      and reported as still-governing (SP/fix not excluded). Parallel shared-node MPI reduction
-      still deferred (one-time warning). 3 milestone adversarial reviews folded
+      and reported as still-governing (SP/fix not excluded). betaK-DAMPED SIZING shipped v1.1:
+      sizes against the damped step via closed-form s=T^2+2*T*betaK/dt_e (reduces to T^2 when
+      betaK=0; alphaM not folded in). Parallel shared-node MPI reduction still deferred (one-time
+      warning). 3 milestone adversarial reviews folded
       (Review-3 NEEDS-REWORK: dead cap, no-restore, missing constraint guard — all fixed).
       Ships with HRZ mass-conserving lumping (ADR 35, -lump hrz, no new classTag).
       CDL-8 first-step correctness + CDL-9 betaK collapse are the differentiators.

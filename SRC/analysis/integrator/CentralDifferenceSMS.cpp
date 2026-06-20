@@ -186,10 +186,10 @@ int CentralDifferenceSMS::domainChanged(void)
                   "they remain governing, so dtTarget is NOT delivered for them -- lower dt or "
                   "remove the constraint (count reported below). SP/fix nodes are fine; RBE2/"
                   "RBE3 couplings are elements handled by the self-report skip, not here. "
-                  "(2) scaling sizes against the UNDAMPED step and adds mass to nodes; with "
-                  "stiffness-proportional (betaK) or nodal (alphaM) Rayleigh damping the "
-                  "scaled model may still be unstable / pick up spurious damping -- prefer "
-                  "no/mass-proportional damping. (3) parallel shared/boundary nodes are not "
+                  "(2) sizing now accounts for stiffness-proportional (betaK) Rayleigh damping "
+                  "(it shrinks the explicit step) via the closed-form s=T^2+2*T*betaK/dt_e; "
+                  "mass-proportional (alphaM) damping is NOT folded in (it does not reduce the "
+                  "high-frequency stable step). (3) parallel shared/boundary nodes are not "
                   "mass-reduced across ranks (sequential / partition-interior use only).\n";
     }
 
