@@ -61,6 +61,8 @@
 #include <ID.h>
 #include <Matrix.h>
 
+#include <LadrunoMassScalingEnergy.h>   // Ladruno V4: consistent (Olovsson) scaling-mass KE
+
 #include <cmath>
 
 namespace ebkernel {
@@ -108,6 +110,21 @@ inline void addElementEnergy(Element *ele, Vector &vel,
         for (int i = 0; i < numDOF; ++i)
             for (int j = 0; j < numDOF; ++j)
                 kinetic += 0.5 * M(i, j) * vel(i) * vel(j);
+
+    // Ladruno V4 — CONSISTENT (Olovsson) selective mass scaling injects a cross-node
+    // element scaling mass M_bar_e that lives only inside the integrator (never in
+    // Node/Element getMass), so getMass() above sees only the lumped diagonal. Add the
+    // missing 1/2 v^T M_bar_e v here (vel is already this element's node-major velocity)
+    // so the consistent-path energy balance closes. The registry is empty for the lumped
+    // path and every base integrator -> active() is false -> no extra work, no double
+    // counting. See SRC/analysis/integrator/LadrunoMassScalingEnergy.h.
+    {
+        const Ladruno::MassScalingEnergyRegistry &reg =
+            Ladruno::MassScalingEnergyRegistry::instance();
+        if (reg.active())
+            kinetic += reg.elementScalingKE(ele->getTag(), vel, numDOF);
+    }
+
     if (haveDamp)
         for (int i = 0; i < numDOF; ++i)
             for (int j = 0; j < numDOF; ++j)

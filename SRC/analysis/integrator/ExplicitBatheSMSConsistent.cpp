@@ -30,6 +30,7 @@
 
 #include <ExplicitBatheSMSConsistent.h>
 #include <LadrunoMassScaling.h>
+#include <LadrunoMassScalingEnergy.h>   // Ladruno V4: publish M_bar blocks to the energy recorder
 #include <AnalysisModel.h>
 #include <Domain.h>
 #include <LinearSOE.h>
@@ -145,6 +146,7 @@ ExplicitBatheSMSConsistent::ExplicitBatheSMSConsistent(
 
 ExplicitBatheSMSConsistent::~ExplicitBatheSMSConsistent()
 {
+    Ladruno::MassScalingEnergyRegistry::instance().clear(this);   // Ladruno V4 (owner-guarded)
     if (blocks != 0) delete blocks;
 }
 
@@ -202,6 +204,15 @@ int ExplicitBatheSMSConsistent::domainChanged(void)
                << " element(s) need scaling but the SOE is NOT `system Diagonal` -- the "
                   "consistent mass CANNOT be applied and dt=" << dtTarget
                << " will run UNSCALED -> expect INSTABILITY. Use `system Diagonal`.\n";
+
+    // Ladruno V4: publish the node-major M_bar blocks (keyed by element tag) for the
+    // EnergyBalanceRecorder. Empty when nothing is scaled -> registry stays inactive.
+    {
+        std::map<int, Matrix> ebBlocks;
+        for (size_t i = 0; i < blocks->size(); ++i)
+            ebBlocks[(*blocks)[i].eleTag] = (*blocks)[i].Mbar;
+        Ladruno::MassScalingEnergyRegistry::instance().publish(this, ebBlocks);
+    }
 
     return 0;
 }
@@ -287,6 +298,7 @@ int ExplicitBatheSMSConsistent::recvSelf(int cTag, Channel &theChannel, FEM_Obje
     pcgTol        = data(5);
     pcgMaxIt      = (int)data(6);
     if (blocks != 0) blocks->clear();
+    Ladruno::MassScalingEnergyRegistry::instance().clear(this);   // Ladruno V4
     warnedLimitations = false;
     warnedSolver = false;
     warnedPCG = false;
