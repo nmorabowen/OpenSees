@@ -181,7 +181,7 @@ static void run_oracle_dump(const char* path) {
         fh >> tok; std::string label; fh >> label;   // DMG <label>
         double pb[12]; for (int i = 0; i < 12; ++i) fh >> pb[i];
         Params mp = makeParams(pb);
-        fh >> mp.Gf >> mp.Gc >> mp.lch >> mp.As;
+        fh >> mp.Gf >> mp.Gc >> mp.lch >> mp.As >> mp.ctTemper;   // P2h ctTemper mode (0/1/2)
         State in, out;
         for (int i = 0; i < 6; ++i) fh >> in.eps[i];
         for (int i = 0; i < 6; ++i) fh >> in.sigEff[i];

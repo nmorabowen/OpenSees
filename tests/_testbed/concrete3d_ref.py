@@ -298,7 +298,8 @@ def run_p0_gate(fc=30.0, ft=3.0, target_fcc_ratio=1.16, verbose=True):
 # PEAK-STRENGTH envelope, which is the failure surface and the headline confined-triaxial gate).
 # ===========================================================================
 def make_material(E, nu, fc, ft, Df=1.0, target_fcc_ratio=1.16, e=None,
-                  qh0=0.3, Hp=0.5, Ah=0.08, Bh=0.003, Ch=2.0, Dh=1.0e-6, eta=0.0):
+                  qh0=0.3, Hp=0.5, Ah=0.08, Bh=0.003, Ch=2.0, Dh=1.0e-6, eta=0.0,
+                  ct_temper="none"):
     # qh0,Hp: hardening laws Eq.30-31.  Ah,Bh,Ch,Dh: ductility measure Eq.33 (literature defaults;
     # calibrated per-concrete from peak strains — flagged in ADR 6 as recalibrate-for-fork-data).
     # eta: Duvaut-Lions viscoplastic relaxation time (ADR 4.4). eta=0 => inviscid, BYTE-identical to
@@ -309,7 +310,46 @@ def make_material(E, nu, fc, ft, Df=1.0, target_fcc_ratio=1.16, e=None,
     K = E / (3.0 * (1.0 - 2.0 * nu))
     G = E / (2.0 * (1.0 + nu))
     return dict(E=E, nu=nu, fc=fc, ft=ft, e=e, m0=m0_of(fc, ft, e), Df=Df, K=K, G=G,
-                qh0=qh0, Hp=Hp, Ah=Ah, Bh=Bh, Ch=Ch, Dh=Dh, eta=eta)
+                qh0=qh0, Hp=Hp, Ah=Ah, Bh=Bh, Ch=Ch, Dh=Dh, eta=eta, ct_temper=ct_temper)
+
+
+# ---------------------------------------------------------------------------
+# P2h — compression->tension damage-coupling TEMPER (the `-ctTemper` modes). Per literal CDPM2 (Eq.43,
+# kappa_dt-dot = eps_tilde-dot, NO (1-alpha_c) factor) the tensile damage history accumulates during
+# compression too, so a compression excursion PRE-DAMAGES a subsequent tension reload to ~0 (the DT5
+# diagnostic). `ct_temper` scales the tensile-history (kdt1/kdt2) accumulation by a tensile weight w_t:
+#   'none'   : w_t = 1            -> literal CDPM2 (default; BYTE-identical to the un-tempered drivers)
+#   'alphat' : w_t = 1 - alpha_c  -> stress-state weight; compression (alpha_c~1) => w_t~0, no tension
+#              pre-damage. Leaves BOTH monotonic backbones EXACT (alpha_c=0 in tension => w_t=1; the
+#              compression backbone rides the kdc channel) and removes ONLY the cross-coupling.
+#   'proj'   : w_t = ||proj of d eps_p onto TENSILE-stress directions|| / ||d eps_p||  -> the fraction of
+#              the plastic-strain increment that acts along POSITIVE effective-stress principal directions.
+#              In compression ALL principals are compressive => the projection is empty => w_t=0 (full
+#              shield). NB the plastic strain's OWN positive part is NOT a valid shield: compression's
+#              dilatant flow makes the lateral plastic strains positive, so ||<deps_p>+||/||deps_p|| stays
+#              large in compression. Projecting onto the tensile-STRESS frame is the correct mechanistic
+#              measure. 'proj' lightly softens the monotonic TENSION backbone (the loaded axial direction
+#              carries < 100% of ||deps_p|| because of the lateral plastic flow).
+# Both temper modes -> 0 in pure compression and -> 1 (alphat) / <1 (proj) in pure tension.
+# ---------------------------------------------------------------------------
+def tensile_damage_weight(mp, ac, depl6, w_stress, V_stress):
+    """Tensile-damage-history weight w_t for the -ctTemper modes. `ac`=alpha_c (Eq.46); `depl6`=the
+    plastic-strain increment (Voigt tensor); `w_stress`,`V_stress`=the EFFECTIVE-stress eigenvalues and
+    eigenvectors (proj projects depl onto the directions where w_stress>0)."""
+    mode = mp.get("ct_temper", "none")
+    if mode == "alphat":
+        w = 1.0 - ac
+        return w if w > 0.0 else 0.0
+    if mode == "proj":
+        M = voigt_to_mat(depl6)
+        nrm = float(np.sqrt(np.sum(M * M)))
+        if nrm <= 1.0e-300:
+            return 1.0
+        Deig = V_stress.T @ M @ V_stress                 # plastic-strain increment in the stress eigenframe
+        floor = 1.0e-6 * mp["ft"]
+        tens = sum(Deig[a, a] ** 2 for a in range(3) if w_stress[a] > floor)   # tensile-stress directions
+        return float(np.sqrt(tens) / nrm)
+    return 1.0   # 'none' (literal CDPM2)
 
 
 def _yf_inv(xi, rho, r, mp):
@@ -1366,8 +1406,12 @@ def drive_damaged_unified(mp, eps11_path, Gf, Gc, lch, As=2.0, sigma3=0.0):
             # limit at eps0 telescopes to max(kappa_dt-eps0,0) when x_s=1, so the tension channel is
             # byte-identical to the P2a driver. kdt1/kdc1 take the FULL plastic-strain increment
             # (Eq.44/48), matching P2a/P2b. (Variable-x_s onset harmonization across channels = P2d.)
-            kdt2 += above / xs                            # Eq.45  d kappa_dt2 = d kappa_dt / x_s
-            kdt1 += dnorm_epl / xs                        # Eq.44  (tension: no alpha_c factor)
+            # coaxial uniaxial-stress path: stress frame = principal axes (V=I), depl principal = epl-epl_prev
+            wt_w = tensile_damage_weight(mp, ac, np.array([(epl - epl_prev)[0], (epl - epl_prev)[1],
+                                                           (epl - epl_prev)[2], 0.0, 0.0, 0.0]),
+                                         sig_eff, np.eye(3))    # P2h ctTemper weight (1 if 'none')
+            kdt2 += wt_w * above / xs                     # Eq.45  d kappa_dt2 = d kappa_dt / x_s
+            kdt1 += wt_w * dnorm_epl / xs                 # Eq.44  (w_t tempers compression->tension coupling)
             kdc += ac * above                             # Eq.47  d kappa_dc = alpha_c d eps_tilde
             kdc2 += ac * above / xs                       # Eq.49
             bc = beta_c(sig_eff, kp, mp)                  # Eq.50  (P2f) cyclic damage<->plasticity factor
@@ -1598,8 +1642,9 @@ def damaged_step_tensor(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
     kdt1, kdt2 = state["kdt1"], state["kdt2"]
     kdc, kdc1, kdc2 = state["kdc"], state["kdc1"], state["kdc2"]
     if loading:                                           # same accumulation as drive_damaged_unified
-        kdt2 += above / xs
-        kdt1 += dnorm_epl / xs
+        wt_w = tensile_damage_weight(mp, ac, depl, w, V)     # P2h ctTemper weight (1 if 'none')
+        kdt2 += wt_w * above / xs
+        kdt1 += wt_w * dnorm_epl / xs
         kdc += ac * above
         kdc2 += ac * above / xs
         kdc1 += ac * beta_c(w, kp_new, mp) * dnorm_epl / xs   # Eq.48 with the full CDPM2 beta_c (Eq.50, P2f)
@@ -1881,8 +1926,9 @@ def damaged_tangent_analytic(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
     kdt1, kdt2 = state["kdt1"], state["kdt2"]
     kdc, kdc1, kdc2 = state["kdc"], state["kdc1"], state["kdc2"]
     bc = beta_c(lam, kp_new, mp)                          # Eq.50 (P2f): scales the kdc1 plastic part
+    wt_w = tensile_damage_weight(mp, ac, depl, lam, V)    # P2h ctTemper weight
     if loading:
-        kdt2 += above / xs; kdt1 += dnorm / xs
+        kdt2 += wt_w * above / xs; kdt1 += wt_w * dnorm / xs
         kdc += ac * above; kdc2 += ac * above / xs; kdc1 += ac * bc * dnorm / xs
     et_max2 = max(et_max, et)
     Dt = max(float(np.max(lam)), 0.0)
@@ -1947,9 +1993,34 @@ def damaged_tangent_analytic(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
             dm = np.array(deps6, float); dm[j] -= hh
             dbc_deps[j] = (_bc_of(dp) - _bc_of(dm)) / (2.0 * hh)
 
+    # d(w_t)/d(eps) for the ctTemper modes (P2h): 'none' -> 0 (unchanged tangent); 'alphat' ->
+    # -d(alpha_c)/deps (analytic, reuses dac_deps); 'proj' -> composite micro-FD through the return map
+    # (w_t is the tensile fraction of the plastic-strain increment). Only under loading.
+    mode = mp.get("ct_temper", "none")
+    dwt_w_deps = np.zeros(6)
+    if loading and mode == "alphat":
+        dwt_w_deps = -dac_deps
+    elif loading and mode == "proj":
+        base = fc / E
+
+        def _wtw_of(d6):
+            sb, _, _, _ = return_map_tensor(state["sig_bar"], d6, mp, state["kp"])
+            if beta < 1.0:
+                sb = (1.0 - beta) * elastic_pred_tensor(state["sig_bar"], d6, mp) + beta * sb
+            dpl = _plastic_strain6(sb, state["eps"] + d6, mp) - _plastic_strain6(state["sig_bar"], state["eps"], mp)
+            wv, Vv = np.linalg.eigh(voigt_to_mat(sb))
+            return tensile_damage_weight(mp, ac, dpl, wv, Vv)
+
+        for j in range(6):
+            hh = 1.0e-6 * (abs(deps6[j]) + base)
+            dp = np.array(deps6, float); dp[j] += hh
+            dm = np.array(deps6, float); dm[j] -= hh
+            dwt_w_deps[j] = (_wtw_of(dp) - _wtw_of(dm)) / (2.0 * hh)
+
     if loading:
-        dkdt2 = det_deps / xs - above * dxs_deps / xs**2
-        dkdt1 = dnorm_deps / xs - dnorm * dxs_deps / xs**2
+        # kdt2 = w_t * above / xs ; kdt1 = w_t * dnorm / xs  (Eq.45/44 with the ctTemper weight) => product rule
+        dkdt2 = wt_w * (det_deps / xs - above * dxs_deps / xs**2) + (above / xs) * dwt_w_deps
+        dkdt1 = wt_w * (dnorm_deps / xs - dnorm * dxs_deps / xs**2) + (dnorm / xs) * dwt_w_deps
         dkdc2 = (dac_deps * above + ac * det_deps) / xs - ac * above * dxs_deps / xs**2
         # kdc1 = ac * bc * dnorm / xs  (Eq.48 with beta_c) => product rule over ac, bc, dnorm, xs
         dkdc1 = (dac_deps * bc * dnorm + ac * dbc_deps * dnorm + ac * bc * dnorm_deps) / xs \
@@ -2275,6 +2346,84 @@ def run_p2g_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, Gc=5.0, As=2.0, ver
               f"analytic-vs-FD relerr={res['G6_tangent_relerr']:.1e} lambda_min={res['G6_lambda_min']:.3e} "
               f"({res['G6_ok']})")
         print(f"  => P2g GATE {'PASS' if ok else 'FAIL'}")
+    return res
+
+
+# ===========================================================================
+# P2h — compression->tension damage-coupling TEMPER (the `-ctTemper` modes). Per literal CDPM2 (Eq.43,
+# kappa_dt-dot = eps_tilde-dot, no (1-alpha_c)) a compression excursion accumulates the TENSILE damage
+# history, so a subsequent tension reload comes back PRE-DAMAGED to ~0 (the DT5 diagnostic). The temper
+# scales the tensile-history accumulation by a weight w_t (see tensile_damage_weight):
+#   'none'   (default) w_t=1            -> literal CDPM2 (byte-identical to the shipped un-tempered material)
+#   'alphat'           w_t=1-alpha_c    -> compression (alpha_c~1)=>w_t~0; restores tension after compression
+#                                          AND leaves both monotonic backbones exact (alpha_c=0 in tension)
+#   'proj'             w_t=||<deps_p>+||/||deps_p|| -> kinematic tensile fraction; restores tension but also
+#                                          lightly softens the monotonic tension backbone.
+# ===========================================================================
+def run_p2h_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, Gc=5.0, As=2.0, verbose=True):
+    """P2h — the ctTemper compression->tension coupling modes. H0 'none' keeps faithful CDPM2 (tension
+    dies after compression, byte-identical monotonic tension to the default); H1 'alphat' restores
+    tension-after-compression to ~ft AND keeps the monotonic tension backbone byte-identical; H2 'proj'
+    restores tension (looser) with a lightly-softened monotonic tension backbone; H3 both modes keep
+    omega monotone (P2g no-heal preserved); H4 analytic == numerical damaged tangent for both modes."""
+    lch = 50.0; res = {}
+    cpath = np.concatenate([np.linspace(0, -0.01, 800), np.linspace(-0.01, 0.004, 800)[1:]])
+    mono_t = np.linspace(0, 0.004, 800)
+
+    def _tac(mode):                                          # tension-after-compression peak + the path
+        mp = make_material(E, nu, fc, ft, ct_temper=mode)
+        d = drive_damaged_unified(mp, cpath, Gf, Gc, lch, As)
+        return float(np.max(d["sig11"][800:])), d
+
+    def _mono(mode):
+        mp = make_material(E, nu, fc, ft, ct_temper=mode)
+        return drive_damaged_unified(mp, mono_t, Gf, Gc, lch, As)["sig11"]
+
+    p_none, _ = _tac("none")
+    p_at, d_at = _tac("alphat")
+    p_pr, d_pr = _tac("proj")
+    res["H0_none_tac"] = p_none; res["H1_alphat_tac"] = p_at; res["H2_proj_tac"] = p_pr
+    res["H0_ok"] = bool(p_none < 0.2 * ft)                   # faithful: tension dies after compression
+
+    mn = _mono("none")
+    res["H1_mono_maxdiff"] = float(np.max(np.abs(mn - _mono("alphat"))))
+    res["H1_restored"] = bool(p_at > 0.7 * ft)
+    res["H1_ok"] = bool(res["H1_restored"] and res["H1_mono_maxdiff"] < 1.0e-7)
+
+    res["H2_mono_reldiff"] = float(np.max(np.abs(_mono("proj") - mn)) / ft)
+    res["H2_ok"] = bool(p_pr > 0.5 * ft and res["H2_mono_reldiff"] < 0.2)
+
+    res["H3_alphat_wt_mono"] = float(np.min(np.diff(d_at["wt"])))
+    res["H3_proj_wt_mono"] = float(np.min(np.diff(d_pr["wt"])))
+    res["H3_ok"] = bool(res["H3_alphat_wt_mono"] > -1.0e-9 and res["H3_proj_wt_mono"] > -1.0e-9)
+
+    def _tan_rel(mode):                                      # analytic vs numerical damaged tangent
+        mp = make_material(E, nu, fc, ft, ct_temper=mode)
+        st = make_damage_state(mp)
+        for e in np.linspace(0, 0.0009, 400):
+            st = damaged_step_tensor(st, np.array([e, 0, 0, 0, 0, 0]) - st["eps"], mp, Gf, Gc, lch, As)[1]
+        deps = np.array([3.0e-5, 0, 0, 0, 0, 0])
+        Ca = damaged_tangent_analytic(st, deps, mp, Gf, Gc, lch, As)
+        Cn = damaged_consistent_tangent(st, deps, mp, Gf, Gc, lch, As)
+        return float(np.max(np.abs(Ca - Cn)) / (np.max(np.abs(Cn)) + 1.0e-30))
+    res["H4_alphat_tan"] = _tan_rel("alphat")
+    res["H4_proj_tan"] = _tan_rel("proj")
+    res["H4_ok"] = bool(res["H4_alphat_tan"] < 1.0e-5 and res["H4_proj_tan"] < 1.0e-4)
+
+    ok = res["H0_ok"] and res["H1_ok"] and res["H2_ok"] and res["H3_ok"] and res["H4_ok"]
+    res["PASS"] = bool(ok)
+    if verbose:
+        print(f"  E={E} nu={nu} fc={fc} ft={ft} Gf={Gf} Gc={Gc} As={As} lch={lch}")
+        print(f"  H0 none (faithful): tension-after-compression peak={p_none:.4f} (<{0.2*ft:.2f}; dies) ({res['H0_ok']})")
+        print(f"  H1 alphat: tac peak={p_at:.4f} (>{0.7*ft:.2f}=restored)  monotonic-tension maxdiff vs none="
+              f"{res['H1_mono_maxdiff']:.1e} (byte) ({res['H1_ok']})")
+        print(f"  H2 proj: tac peak={p_pr:.4f} (>{0.5*ft:.2f}=restored)  monotonic-tension reldiff vs none="
+              f"{res['H2_mono_reldiff']:.3f} (<0.2) ({res['H2_ok']})")
+        print(f"  H3 omega monotone (no heal): alphat min d(wt)={res['H3_alphat_wt_mono']:.1e} "
+              f"proj min d(wt)={res['H3_proj_wt_mono']:.1e} ({res['H3_ok']})")
+        print(f"  H4 analytic==numerical tangent: alphat rel={res['H4_alphat_tan']:.1e} "
+              f"proj rel={res['H4_proj_tan']:.1e} ({res['H4_ok']})")
+        print(f"  => P2h GATE {'PASS' if ok else 'FAIL'}")
     return res
 
 
@@ -2863,6 +3012,12 @@ if __name__ == "__main__":
     p2g = run_p2g_gate(verbose=True)
     print("-" * 74)
     print(f"P2g: {'PASS' if p2g['PASS'] else 'FAIL'}")
+    print("=" * 74)
+    print("LadrunoConcrete3D P2h gate — compression->tension damage-coupling temper (-ctTemper modes)")
+    print("=" * 74)
+    p2h = run_p2h_gate(verbose=True)
+    print("-" * 74)
+    print(f"P2h: {'PASS' if p2h['PASS'] else 'FAIL'}")
     print("=" * 74)
     print("LadrunoConcrete3D P3 Tier-2 IMPL-EX gate — explicit extrapolated stress + SPD secant tangent")
     print("=" * 74)
