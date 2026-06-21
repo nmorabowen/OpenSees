@@ -154,7 +154,7 @@ CentralDifference"): a **time-varying prescribed SP via the Transformation handl
 dynamics cannot; keep loading slow (hundreds of wave transits) + a small mass-proportional `rayleigh` to
 settle lateral (Poisson) ringing. (See [[LEDGER_quirks]].)
 
-**SHIPPED — P2i multiaxial-damage apportioning (oracle + C++ kernel + g++ biaxial byte-check, #TBD):**
+**SHIPPED — P2i multiaxial-damage apportioning (oracle + C++ kernel + g++ biaxial byte-check, #336):**
 - **The change (oracle):** the TENSILE ω-solve is now driven by **`E·ε̃` (Eq.37 equivalent strain)**
   instead of the extreme tensile principal `max⟨σ̄_i⟩₊`, gated by the presence of a real tensile principal
   (`max(σ̄) > 1e-6·ft`) so pure/dominant compression keeps the tensile history clean. The **COMPRESSIVE**
@@ -171,7 +171,7 @@ settle lateral (Poisson) ringing. (See [[LEDGER_quirks]].)
   damaged state (1.05e-8; equal-biaxial `(e,e,0)` is an eigenvalue degeneracy where FD rotates frozen
   eigenvectors — use `(e,0.6e,0)` + a P2e-style small probe). Tangent gates P2e/P2f STILL pass ⇒
   `E·det_deps` is correct for uniaxial/confined/shear/reversal.
-- **C++ KERNEL PORT DONE (#TBD, this PR):** the `E·ε̃`-gated tensile drive + `E·det_deps` gradient mirrored
+- **C++ KERNEL PORT DONE (#336, this PR):** the `E·ε̃`-gated tensile drive + `E·det_deps` gradient mirrored
   in `LadrunoConcrete3DKernel.h` at 3 sites — `damagedUpdate` (`Dt = E·et` gated by `max(w)>1e-6·ft`),
   `damagedTangent` (same drive + `dDt_deps = E·det_deps`, replacing the `Emax` eigenprojection; `Emin`
   kept for the compressive channel). The tensile drive-gradient is now the per-component `det_deps` (a
@@ -606,7 +606,7 @@ freezes plastic state + damage)** → **Duvaut–Lions `-eta` ✓ (oracle #316 �
 **P2h `-ctTemper` compression→tension damage temper ✓ (oracle + C++ kernel + wrapper #327, none/alphat/proj, §0)** →
 **P3 Tier-3 explicit ✓ (g++ B7 do_tangent-independence gate + element CentralDifference softening demo #328 — robustness trilogy complete)** →
 **Tier-3 explicit quasi-static + cross-integrator ✓ (#333 — prescribed-motion peak+softening backbone, CDL + ExplicitBathe, oracle-backbone match, implicit-stall contrast; corrects the #328 prescribed-SP gotcha)** →
-**P2i multiaxial-damage apportioning ✓ (oracle + C++ kernel + g++ biaxial byte-check #TBD — tensile ω-drive = `E·ε̃` Eq.37, compressive keeps extreme-principal; uni<tri<bi escalation)** →
+**P2i multiaxial-damage apportioning ✓ (oracle + C++ kernel + g++ biaxial byte-check #336 — tensile ω-drive = `E·ε̃` Eq.37, compressive keeps extreme-principal; uni<tri<bi escalation)** →
 **NEXT: plastic-dissipation regularization (D3/C3) → P4 finite-strain (`LogStrain`, clean — already free via the
 wrapper)** → P5 confined-fiber view (§4.6 hoop-spring condensation, "Mander by mechanism") → P6
 auto-hybrid switch.
@@ -625,5 +625,5 @@ monotone-`ω` no-heal cyclic damage (oracle + C++ kernel + wrapper; secant unloa
 **#328** P3 Tier-3 explicit (g++ B7 do_tangent-independence gate + element CentralDifference softening demo) ·
 **#333** Tier-3 explicit quasi-static + cross-integrator (prescribed-motion peak+softening backbone, CDL +
 ExplicitBathe, oracle-backbone match, implicit-stall contrast; corrects the #328 prescribed-SP gotcha) ·
-**#TBD** P2i multiaxial-damage apportioning (oracle + C++ kernel + g++ `dmg_biaxial_tension` byte-check —
+**#336** P2i multiaxial-damage apportioning (oracle + C++ kernel + g++ `dmg_biaxial_tension` byte-check —
 tensile ω-drive `E·ε̃` Eq.37, compressive keeps extreme-principal; uni<tri<bi escalation).
