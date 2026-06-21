@@ -231,6 +231,12 @@ extern void *OPS_CentralDifference(void);
 extern void *OPS_ExplicitBathe(void);
 extern void *OPS_ExplicitBatheLNVD(void);
 extern void *OPS_CentralDifferenceLadruno(void);
+extern void *OPS_CentralDifferenceSMS(void);   // Ladruno (selective mass scaling)
+extern void *OPS_CentralDifferenceSMSConsistent(void);   // Ladruno
+extern void *OPS_ExplicitBatheSMS(void);   // Ladruno
+extern void *OPS_ExplicitBatheSMSConsistent(void);   // Ladruno
+extern void *OPS_ExplicitBatheLNVDSMS(void);   // Ladruno
+extern void *OPS_ExplicitBatheLNVDSMSConsistent(void);   // Ladruno
 extern void *OPS_LadrunoArcLength(void);   // Ladruno
 extern void *OPS_LadrunoIndirectControl(void);   // Ladruno
 extern void *OPS_LadrunoDynamicRelaxation(void);   // Ladruno
@@ -5631,6 +5637,46 @@ specifyIntegrator(ClientData clientData, Tcl_Interp *interp, int argc,
     theTransientIntegrator = (TransientIntegrator *)OPS_CentralDifferenceLadruno();
 
     if (theTransientAnalysis != 0)
+      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+  }
+
+  // Ladruno: selective mass scaling (lumped + consistent) on the three explicit
+  // integrators. Mirrors the openseespy registration in OpenSeesCommands.cpp so the
+  // SMS integrators the splash banner advertises are reachable from classic Tcl too.
+  // Null-guard the factory: it returns 0 on a bad argument set (avoids a deref).
+  else if (strcmp(argv[1],"CentralDifferenceSMS") == 0) {
+    theTransientIntegrator = (TransientIntegrator *)OPS_CentralDifferenceSMS();
+    if (theTransientIntegrator != 0 && theTransientAnalysis != 0)
+      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+  }
+
+  else if (strcmp(argv[1],"CentralDifferenceSMSConsistent") == 0) {
+    theTransientIntegrator = (TransientIntegrator *)OPS_CentralDifferenceSMSConsistent();
+    if (theTransientIntegrator != 0 && theTransientAnalysis != 0)
+      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+  }
+
+  else if (strcmp(argv[1],"ExplicitBatheSMS") == 0) {
+    theTransientIntegrator = (TransientIntegrator *)OPS_ExplicitBatheSMS();
+    if (theTransientIntegrator != 0 && theTransientAnalysis != 0)
+      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+  }
+
+  else if (strcmp(argv[1],"ExplicitBatheSMSConsistent") == 0) {
+    theTransientIntegrator = (TransientIntegrator *)OPS_ExplicitBatheSMSConsistent();
+    if (theTransientIntegrator != 0 && theTransientAnalysis != 0)
+      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+  }
+
+  else if (strcmp(argv[1],"ExplicitBatheLNVDSMS") == 0) {
+    theTransientIntegrator = (TransientIntegrator *)OPS_ExplicitBatheLNVDSMS();
+    if (theTransientIntegrator != 0 && theTransientAnalysis != 0)
+      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+  }
+
+  else if (strcmp(argv[1],"ExplicitBatheLNVDSMSConsistent") == 0) {
+    theTransientIntegrator = (TransientIntegrator *)OPS_ExplicitBatheLNVDSMSConsistent();
+    if (theTransientIntegrator != 0 && theTransientAnalysis != 0)
       theTransientAnalysis->setIntegrator(*theTransientIntegrator);
   }
 
