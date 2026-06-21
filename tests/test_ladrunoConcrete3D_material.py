@@ -355,6 +355,26 @@ def test_p2i_multiaxial_apportioning_gate():
     assert r["PASS"]
 
 
+def test_p5_confined_fiber_gate():
+    """P5: CONFINED-FIBER view (ADR 4.6) — the SAME kernel condensed against a PASSIVE hoop spring, so the
+    confinement strength + ductility gain ("Mander by mechanism") EMERGE from the MW cap + non-associated
+    dilatancy + ductility measure, with NO pre-baked Mander backbone. The lateral Newton targets the hoop
+    residual sig_lat_eff + sig_hoop(eps_lat)=0 instead of the free (sigma3=0) target. F1 reduce-to-plain-1D
+    (hoop_K=0 == the free uniaxial-stress driver, BYTE-identical). F2 confined gain: peak strength fcc>fc AND
+    the strain-at-peak ductility BOTH grow monotonically with a realistic hoop stiffness (self-mobilized p>0).
+    F3 THE HEADLINE: fcc/fc reproduces the Mander circular-hoop formula evaluated at the SELF-MOBILIZED
+    p_conf@peak to within 5% for p/fc in [~0.1,0.2] (the mechanism analog of the 3-D active-confinement gate).
+    F4 hoop YIELD caps the mobilized pressure (stirrup yields => bounded confinement). Circular/spiral hoops
+    only (symmetric eps22=eps33 condensation; rectangular ties are anisotropic — a two-spring extension)."""
+    r = ref.run_p5_gate(verbose=False)
+    assert r["F1_reduce_1d"] < 1.0e-9                            # hoop_K=0 reduces to the free 1-D driver
+    assert r["F2_strength_monotone"]                            # fcc grows with hoop stiffness (confined strength)
+    assert r["F2_ductility_monotone"]                          # eps_peak grows with hoop stiffness (ductility)
+    assert r["F3_npts"] >= 1 and r["F3_mander_relerr"] < 0.05   # Mander-by-mechanism within 5%
+    assert r["F4_caps_below_elastic"]                          # hoop yield bounds the confining pressure
+    assert r["PASS"]
+
+
 def test_p3_implex_gate():
     """P3 Tier-2 IMPL-EX robustness (ADR 4.4), oracle slice (the C++ kernel port is a follow-up build
     PR). IMPL-EX reports an EXPLICIT stress from EXTRAPOLATED internal variables (plastic-strain
