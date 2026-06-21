@@ -8,8 +8,9 @@ status: >
   (33009/33010), ExplicitBatheLNVD (33011/33012). ADR 36 (lumped), ADR 38 (consistent),
   ADR 37 validation. PRs #295/#303/#306/#308/#311/#314 (CD lumped+validation),
   #320 (CD consistent), #324 (ExplicitBathe + LNVD families; subsumed #322). All merged.
-  NEXT (both v2/architectural, neither started): V4 consistent-mass energy-recorder KE,
-  T-MPI parallel shared-node reduction. See §0.
+  V4 (consistent-mass energy-recorder KE closure) DONE this session — global
+  MassScalingEnergyRegistry conduit, all 3 consistent integrators. NEXT (architectural,
+  not started): T-MPI parallel shared-node reduction. See §0.
 tags:
   - integrator
   - explicit
@@ -81,13 +82,23 @@ three consistent integrators:
 message AS the printf format to `PySys_FormatStderr`, eating literal `%` in `opserr`. Fix:
 `PySys_FormatStderr("%s", msg)`. Upstreamable (CWE-134).
 
-**What's NEXT (both v2/architectural, neither started):**
-- **V4 — consistent-mass energy closure.** The `EnergyBalanceRecorder` sums node/element
-  `getMass()` (diagonal) for KE, so it does NOT see the cross-node `M̄ₑ` (the consistent KE
-  doesn't close in the recorder; the lumped path's does). A correct fix needs a
-  recorder↔integrator KE hook — but the recorder holds only a `Domain*` and has NO access to
-  the active integrator (verified), so this is a real architectural seam, not a quick edit.
-  Documented gap for all three consistent integrators.
+**What's NEXT:**
+- **V4 — consistent-mass energy closure. DONE (this session).** The `EnergyBalanceRecorder`
+  builds KE from node/element `getMass()` (the lumped diagonal), so it could not see the
+  cross-node `M̄ₑ` that the consistent path keeps only inside the integrator (matrix-free PCG
+  operand). The recorder holds only a `Domain*` (no integrator handle), so the fix is a
+  process-global **`Ladruno::MassScalingEnergyRegistry`** (`SRC/analysis/integrator/
+  LadrunoMassScalingEnergy.{h,cpp}`): the active consistent integrator `publish()`es its
+  per-element node-major `M̄ₑ` (keyed by element tag — `ConsistentBlock` gained an `eleTag`)
+  at the end of `domainChanged` and `clear()`s on teardown (owner-guarded so a stale dtor
+  can't wipe a newer publisher); the shared `EnergyBalanceKernel.h` queries it per element
+  and adds the missing `½vᵀM̄ₑv` (vel is already node-major — no equation-number work).
+  Empty for the lumped path + every base integrator (`active()==false`) ⇒ byte-identical
+  there, no double count. Wired on all three consistent integrators. Validated by
+  `tests/test_massScaling_consistent_energy.py` (Zone-A 4/4): an analytic `½vᵀM̃v` oracle
+  (recorder KE == lumped+`M̄` to ~machine precision, all 3 integrators, `M̄`≈77% of KE on a
+  deformation-rich IC) + CD mechanical-energy conservation (drift <5% vs the pre-V4
+  reconstruction `½vᵀM_lump v + IE`, which oscillates with the omitted `M̄`). See [[LEDGER_quirks]].
 - **T-MPI — parallel shared-node ΔM reduction.** v1 is sequential / partition-interior only;
   a partition-boundary node gets only rank-local Δmₑ and the only MPI reduction is the scalar
   dt, so shared-node masses desync across ranks. Fix = `MPI_Allreduce` the per-shared-node
@@ -118,6 +129,10 @@ SRC/analysis/integrator/
                               hrzLumpRaw (g++-verified). CTSLumping::HRZ mode.
   LadrunoMassScaling.h        SMS core (ADR 36): buildMassScaling (sizing + the guards) +
                               applyMassScaling (commit/restore nodal ΔM). HEADER-ONLY.
+                              ConsistentBlock now also carries eleTag (V4 energy conduit).
+  LadrunoMassScalingEnergy.{h,cpp}  V4 energy conduit: process-global owner-guarded
+                              MassScalingEnergyRegistry (eleTag -> node-major M̄ₑ) so the
+                              EnergyBalanceRecorder can add ½vᵀM̄ₑv (consistent KE closure).
   CentralDifferenceSMS.{h,cpp}  The integrator. Subclass of CentralDifferenceLadruno via a
                               protected classTag ctor. domainChanged injects; dtor restores.
 

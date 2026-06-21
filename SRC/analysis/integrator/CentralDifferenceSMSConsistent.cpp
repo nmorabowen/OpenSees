@@ -30,6 +30,7 @@
 
 #include <CentralDifferenceSMSConsistent.h>
 #include <LadrunoMassScaling.h>
+#include <LadrunoMassScalingEnergy.h>   // Ladruno V4: publish M_bar blocks to the energy recorder
 #include <AnalysisModel.h>
 #include <Domain.h>
 #include <LinearSOE.h>
@@ -154,6 +155,9 @@ CentralDifferenceSMSConsistent::~CentralDifferenceSMSConsistent()
 {
     // No Domain mutation to restore (the consistent scaling mass lives only in `blocks`,
     // integrator-owned scratch consumed by the matrix-free PCG).
+    // Ladruno V4: retire our blocks from the energy-recorder conduit (owner-guarded:
+    // a no-op if a newer integrator has since published).
+    Ladruno::MassScalingEnergyRegistry::instance().clear(this);
     if (blocks != 0) delete blocks;
 }
 
@@ -223,6 +227,16 @@ int CentralDifferenceSMSConsistent::domainChanged(void)
                   "consistent mass CANNOT be applied (the PCG preconditioner is the lumped "
                   "diagonal) and dtTarget=" << dtTarget << " will run UNSCALED -> expect "
                   "INSTABILITY. Use `system Diagonal`.\n";
+
+    // Ladruno V4: publish the node-major M_bar blocks (keyed by element tag) so the
+    // EnergyBalanceRecorder can add the cross-node 1/2 v^T M_bar v its Node/Element
+    // getMass() cannot see. Empty when nothing is scaled -> registry stays inactive.
+    {
+        std::map<int, Matrix> ebBlocks;
+        for (size_t i = 0; i < blocks->size(); ++i)
+            ebBlocks[(*blocks)[i].eleTag] = (*blocks)[i].Mbar;
+        Ladruno::MassScalingEnergyRegistry::instance().publish(this, ebBlocks);
+    }
 
     return 0;
 }
@@ -321,6 +335,7 @@ int CentralDifferenceSMSConsistent::recvSelf(int cTag, Channel &theChannel,
     pcgTol        = data(5);
     pcgMaxIt      = (int)data(6);
     if (blocks != 0) { blocks->clear(); }
+    Ladruno::MassScalingEnergyRegistry::instance().clear(this);   // Ladruno V4
     warnedLimitations = false;
     warnedSolver = false;
     warnedPCG = false;
