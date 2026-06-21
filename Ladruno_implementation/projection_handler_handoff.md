@@ -2,7 +2,7 @@
 title: "LadrunoProjectionHandler (ADR-30) — handoff / v1 + prescribed motion + Noh–Bathe adoption complete"
 project: Ladruno
 type: handoff
-status: v1 (P0–P3) + P4a recorder + P4b/P4c prescribed-motion + P5 ExplicitBathe/LNVD adoption — P0–P4c merged to ladruno, P5 pending, 2026-06-20/21
+status: v1 (P0–P3) + P4a recorder + P4b/P4c prescribed-motion + P5 ExplicitBathe/LNVD adoption + P6 condition/staleness guards (closes O1) — P0–P5 merged to ladruno (P5 #334), P6 pending, 2026-06-21
 related:
   - "[[30_ladruno_explicit_constraint_projection_adr]]"   # the spec
   - "[[_adr30_p1_design]]"                                 # P1 pseudocode + Gate-A resolutions
@@ -187,14 +187,27 @@ family. Design: `_adr30_p5_design.md`. Tests `tests/test_adr30_projection_p5.py`
 projection==Transformation under EB and LNVD, FLAC-damped tie, the two inherited SMS subclasses, a
 no-projection regression, recorder readback). ZERO vanilla (all six are fork-authored integrators).
 
+**P6 — condition gate + frozen-Ccr staleness guard: DONE (closes ADR O1).** Two warn/refuse-only
+robustness guards (NO change to the projection math). **(3a)** `LadrunoConstraintProjector::buildMass()`
+replaced its single exact-pivot test-solve with a real **condition-number gate**: a self-contained
+symmetric **Jacobi** eigensolve (`ladrunoSymEigJacobi`, no LAPACK dependency — sidesteps the `dsygv_`
+gap) estimates `cond = λmax/λmin` of each SPD `LtML`; **refuse** above `1e12` (also catches the exact
+singular `λmin≤0`), **warn** above `1e8`. Catches the near-singular set (barely-dependent retained
+direction, disparate tied masses, near-redundant constraint) the old check missed. **(3b)** Handler
+**frozen-Ccr staleness warn**: at transport, `flagRotMonitor()` records masters whose Ccr couples a
+**rotational** master DOF into a **translational** slave DOF (the rigidLink-beam / rigidDiaphragm lever
+arm — equalDOF rotation-ties and bar links are NOT flagged), capturing `θ0`; `applyLoad()` warns ONCE
+per master when the rotation drift crosses `0.1 rad`, pointing to RBE2 / `Transformation` for finite
+rotation. Design: `_adr30_p6_design.md`. Tests `tests/test_adr30_projection_p6.py` (TP6-1..5: gate
+passes a healthy group / refuses cond~1e13 / warns-but-runs cond~1e10; staleness NOTE fires on a
+>0.1 rad rigidLink-beam master and not on a small rotation). ZERO vanilla (projector + handler are fork).
+
 **Remaining backlog (priority order, all independent, none required for the core feature):**
 1. **MP-chain composition** (currently refused): substitute `C` matrices (Abaqus-style).
 2. **RBE2/RBE3 eliminable-block routing** through the projector (retire bipenalty where eliminable).
-3. **Near-singular `LᵀML`** condition-number gate (the rank check catches only an exact zero pivot;
-   ADR O1) and a **frozen-`Ccr` runtime staleness guard** (warn at large accumulated rotation).
-4. **SOE-cooperative massless-slave elimination** — would relax the "every tied DOF needs mass"
+3. **SOE-cooperative massless-slave elimination** — would relax the "every tied DOF needs mass"
    requirement (lets diaphragm slaves keep zero rotational mass like `Transformation`).
-5. **Prescribed-motion deferred sub-cases:** a *plain* `SP` master supplies disp-only (vel/accel=0,
+4. **Prescribed-motion deferred sub-cases:** a *plain* `SP` master supplies disp-only (vel/accel=0,
    documented); a slave tied to BOTH free and prescribed masters (mixed) is refused rather than
    solved — a full mixed treatment would need a genuine displacement-level projection.
 
