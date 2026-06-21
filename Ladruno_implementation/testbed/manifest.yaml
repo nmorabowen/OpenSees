@@ -258,7 +258,7 @@ features:
   - feature: ExplicitBatheSMS
     classtag: 33009          # INTEGRATOR family; new class (N. Mora-Bowen).
     tag_symbol: INTEGRATOR_TAGS_ExplicitBatheSMS
-    pr: 322
+    pr: 324
     feature_class: integrator
     required_tiers: [dynamics-battery]
     pytest: tests/test_explicitBatheSMS_integrator.py   # EBSMS-1 supra-stable (plain EB diverges@dtTarget), EBSMS-2 nodal-mass injection; + the consistent sibling tests in the same file
@@ -284,7 +284,7 @@ features:
   - feature: ExplicitBatheSMSConsistent
     classtag: 33010          # INTEGRATOR family; new class (N. Mora-Bowen).
     tag_symbol: INTEGRATOR_TAGS_ExplicitBatheSMSConsistent
-    pr: 322
+    pr: 324
     feature_class: integrator
     required_tiers: [dynamics-battery]
     pytest: tests/test_explicitBatheSMS_integrator.py   # EBCONS-1 supra-stable + NO nodal-mass mutation, EBCONS-2 f1 PRESERVATION vs lumped (FFT: consistent -0.17% vs lumped -53% on the oracle Case-A bar), EBCONS-3 reduce-to-base bit-identical to ExplicitBathe, EBCONS-4 PCG<=30 at BOTH sub-steps
