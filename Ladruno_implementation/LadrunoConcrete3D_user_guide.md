@@ -23,7 +23,10 @@ updated: 2026-06-19
 > **ALL dimensional views ship** — 3D + the Phase-2 reduced PlaneStrain / AxiSymmetric / PlateFiber /
 > PlaneStress (one `dim`-mode class, reached via the element's `getCopy(type)`; finite-strain via
 > `nDMaterial LogStrain`). The robustness tiers **`-implex`** (Tier-2 IMPL-EX) and **`-eta`** (Duvaut–
-> Lions viscoplastic) both ship; the cyclic temper (`β_c`) and the `-eta`+`-implex` combination are deferred.
+> Lions viscoplastic) both ship; the **cyclic** path ships too — the full CDPM2 `β_c`, monotone (no-heal)
+> damage, and the `-ctTemper` compression→tension temper. **Tier-3 (explicit dynamics)** marches straight
+> through softening with no global tangent (§6b). Still deferred: the `-eta`+`-implex` combination, the
+> confined-fiber 1D view, and the multiaxial-damage apportioning refinement.
 
 ## 1. What it is, and when to use it
 
@@ -117,8 +120,15 @@ no runtime *enforcement*, but the parser **prints a warning at material creation
   and **`-eta`** (Duvaut–Lions viscoplastic relaxation `σ̄=(1−β)σ̄_tr+β σ̄_inv`, `β=dt/(η+dt)`; `η→0` or no
   time increment ⇒ inviscid). Both read `ops_Dt`. The Tier-3 explicit demo runs the same kernel with no
   global tangent.
-- **Deferred:** cyclic (`β_c` + the compression→tension temper, P2f), the confined-fiber 1D view
-  ("Mander by mechanism"), the `-eta` + `-implex` combined mode.
+- **Cyclic (shipped):** the full CDPM2 `β_c` (Eq.50), **monotone no-heal damage** (`ω` driven by the
+  running-max history so an elastic unload follows the degraded secant `(1−ω)σ̄` and does NOT heal), and
+  **`-ctTemper {none|alphat|proj}`** — the compression→tension damage-coupling temper (`none` = literal
+  CDPM2; `alphat`/`proj` restore tensile strength after a compression excursion).
+- **Tier-3 explicit dynamics (shipped — see §6b):** the same kernel runs with no global tangent, so an
+  explicit integrator (`CentralDifferenceLadruno` / `ExplicitBathe`) marches through softening with no
+  unsymmetric solver and no step-cutting.
+- **Deferred:** the confined-fiber 1D view ("Mander by mechanism"), the `-eta` + `-implex` combined mode,
+  and the multiaxial-damage apportioning refinement (driving `ω` with `E·ε̃`).
 
 ## 6. Worked example skeleton
 
@@ -139,6 +149,45 @@ Notes: **unconfined softening is snap-backy** on a single implicit element — d
 step-cutting** (halve the increment on a failed `analyze`), use a confined cell, or an arc-length /
 indirect-control integrator. Compression hardens through its pre-peak range so plain fixed-step
 DisplacementControl reaches `−fc` fine; tension reaches its limit point at once (onset `ε0=ft/E`).
+
+## 6b. Tier-3 — explicit dynamics (softening with no global tangent)
+
+An **explicit** integrator never forms or factorizes a global tangent, so the non-symmetric/indefinite
+damaged tangent is irrelevant and there is **no limit point to track** — a displacement-driven boundary
+makes the response kinematically controlled. The material kernel already runs with `doTangent=false`; you
+just need element **mass** (`-rho`) and an explicit time-stepper. Pair with `CentralDifferenceLadruno`
+(leap-frog) or `ExplicitBathe` (Noh–Bathe composite).
+
+```python
+import openseespy.opensees as ops
+ops.model("basic", "-ndm", 3, "-ndf", 3)
+# ... 8 nodes of a unit brick + 1/8-symmetry restraints; driven face = nodes 2,3,6,7 ...
+ops.nDMaterial("LadrunoConcrete3D", 1, 30000.0, 0.2, 30.0, 3.0, 0.1, 5.0, "-rho", 2.4)  # -rho => mass
+ops.element("stdBrick", 1, 1,2,3,4,5,6,7,8, 1)
+
+# prescribe the driven-face axial displacement u_x(t) = rate * t (support motion)
+rate = 0.03 / (2000 * 0.003)               # reach eps=0.03 over nsteps*dt
+ops.timeSeries("Linear", 1)                # factor(t) = t
+ops.pattern("Plain", 1, 1)
+for n in (2, 3, 6, 7):
+    ops.sp(n, 1, rate)
+ops.rayleigh(20.0, 0.0, 0.0, 0.0)          # light MASS-proportional damping (stays tangent-free)
+
+ops.constraints("Transformation"); ops.numberer("Plain")
+ops.system("Diagonal")                     # NO global tangent is ever formed/factorized
+ops.test("NormDispIncr", 1.0e-12, 1); ops.algorithm("Linear")
+ops.integrator("CentralDifferenceLadruno") # or  ops.integrator("ExplicitBathe", 0.54)
+ops.analysis("Transient")
+for _ in range(2000):
+    ops.analyze(1, 0.003)                  # dt ~ 0.35 x the CFL limit le/c_d (c_d=sqrt((K+4G/3)/rho))
+```
+The gauss stress rises elastically, peaks at `~ft`, then softens (`ω_t→~1`) along the same backbone the
+Tier-1 implicit run produces — but reached by forward time-marching, with **no unsymmetric solver and no
+step-cutting**. Keep loading slow (here ~hundreds of wave transits over the run) so the response tracks
+the quasi-static backbone; a small mass-proportional `rayleigh` settles the lateral (Poisson) ringing.
+Validated in `tests/test_ladrunoConcrete3D_element.py` (the "Tier-3 EXPLICIT-DYNAMICS" section) under both
+fork steppers, including the contrast that a fixed-step implicit Newton **stalls** at the limit point
+where the explicit run completes.
 
 ## 7. Recorders
 

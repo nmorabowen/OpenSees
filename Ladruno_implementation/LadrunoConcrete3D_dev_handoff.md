@@ -124,12 +124,27 @@ off `ladruno` (fast auto-merge ⇒ fresh branch each time; predict the next PR n
   `dmg_cttemper_proj` (pure tension); wrapper parses `-ctTemper`, serializes the int (`LC3D_NDATA`+1).
   No new classTag/banner.
 
+**SHIPPED (Tier-3 explicit-dynamics demo — element battery, #333):**
+- **Tier-3 explicit demo** — no oracle/kernel change (the kernel already runs with `doTangent=false`, and
+  the wrapper already parses `-rho` for element mass). The increment is the **element battery**
+  (`tests/test_ladrunoConcrete3D_element.py`, new "Tier-3 EXPLICIT-DYNAMICS" section): the 1/8-symmetry
+  unit cube given mass via `-rho`, driven face x-DOF prescribed by a Linear timeSeries (support motion),
+  `system Diagonal` + `algorithm Linear` (⇒ NO global tangent ever formed/factorized) under BOTH fork
+  explicit steppers (`CentralDifferenceLadruno` + `ExplicitBathe`). Gates: (1) each integrator marches
+  straight THROUGH tension softening, stays finite, peaks at ~`f_t` then degrades with `ω_t→~1`
+  (the static backbone, reached by forward time-marching, NO unsymmetric solver / NO step-cutting);
+  (2) the explicit peak == the Tier-1 implicit (`_drive_adaptive`) peak (rate-independent backbone
+  cross-check); (3) **the payoff made concrete** — the SAME single cube under fixed-step implicit Newton
+  + DisplacementControl STALLS at the immediate softening limit point (`ε0=f_t/E`) after a handful of
+  steps, while the explicit run completes the full ramp. This is the ADR §4.4 "softening is a non-issue
+  for explicit" claim, validated end-to-end in OpenSees.
+
 **NEXT INCREMENTS (each its own oracle-first PR):**
-- **Multiaxial-damage apportioning + plastic-dissipation regularization** — the remaining P2 refinements
-  (extreme-principal vs `‖σ̄_t‖` norm; the D3/C3 un-regularized plastic dissipation caveat).
-- **Tier-3 explicit demo** — `do_tangent=false`, no global tangent ⇒ softening is a non-issue; pair with
-  `CentralDifferenceLadruno`/`ExplicitBathe`. Mostly a validation/demo increment (the kernel already runs
-  with `doTangent=false`).
+- **Multiaxial-damage apportioning + plastic-dissipation regularization** — the remaining P2 refinements.
+  USER DECISION (2026-06-20): drive the multiaxial ω-solve with **`E·ε̃` (CDPM2-consistent, Eq.37)** —
+  the same equivalent strain that already drives the κ histories — replacing the extreme-principal drive
+  (`max⟨σ̄_i⟩₊` / `max⟨−σ̄_i⟩₊`); uniaxial reduces to current behavior. Plus the D3/C3 un-regularized
+  plastic-dissipation caveat (CDPM2 regularizes the damage softening only).
 
 ---
 
@@ -545,7 +560,8 @@ freezes plastic state + damage)** → **Duvaut–Lions `-eta` ✓ (oracle #316 �
 #318, the rate term, §0)** → **P2f cyclic `β_c` ✓ (oracle + C++ kernel port #321, faithful CDPM2 compressive ductility, §6b)** →
 **P2g monotone-`ω` no-heal ✓ (oracle + C++ kernel + wrapper #325, secant unload + SPD unload tangent, §0)** →
 **P2h `-ctTemper` compression→tension damage temper ✓ (oracle + C++ kernel + wrapper #327, none/alphat/proj, §0)** →
-**NEXT: multiaxial apportioning → Tier-3 explicit demo** → P4 finite-strain (`LogStrain`, clean — already free via the
+**Tier-3 explicit-dynamics demo ✓ (element battery #333 — CDL + ExplicitBathe march through softening, no global tangent / no step-cutting, §0)** →
+**NEXT: multiaxial apportioning (E·ε̃ drive) + plastic-dissipation regularization** → P4 finite-strain (`LogStrain`, clean — already free via the
 wrapper) → P5 confined-fiber view (§4.6 hoop-spring condensation, "Mander by mechanism") → P6
 auto-hybrid switch.
 
@@ -559,4 +575,6 @@ IMPL-EX oracle · **#304** IMPL-EX review fixes · **#309** IMPL-EX C++ port + `
 Duvaut–Lions `-eta` oracle · **#318** Duvaut–Lions `-eta` C++ kernel port + `-eta` wrapper · **#321**
 P2f cyclic `β_c` oracle + C++ kernel port (faithful CDPM2 compressive ductility) · **#325** P2g
 monotone-`ω` no-heal cyclic damage (oracle + C++ kernel + wrapper; secant unload + SPD unload tangent) ·
-**#327** P2h `-ctTemper {none|alphat|proj}` compression→tension damage temper (oracle + C++ kernel + wrapper).
+**#327** P2h `-ctTemper {none|alphat|proj}` compression→tension damage temper (oracle + C++ kernel + wrapper) ·
+**#333** Tier-3 explicit-dynamics demo (element battery: CDL + ExplicitBathe march through tension softening,
+no global tangent / no step-cutting; explicit completes where fixed-step implicit stalls).
