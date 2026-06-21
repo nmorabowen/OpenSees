@@ -207,3 +207,26 @@ dominant lumped diagonal, so the preconditioned operator is well-conditioned ~`1
   already parallel-correct (T-MPI), the parallel SMS axis is COMPLETE. Lumped/consistent under
   OpenSeesSP (`system Diagonal`→DistributedDiagonalSOE) is the remaining (deferred) increment —
   it would need the analogous Channel-based assemble, behind the same virtuals.
+- **2026-06-21 — SMS reachable from classic Tcl.** Registered all 6 SMS integrators in the
+  legacy `specifyIntegrator()` Tcl parser (`SRC/tcl/commands.cpp`) — they were openseespy-only
+  despite the splash banner advertising them. Mechanical mirror of the existing
+  `CentralDifferenceLadruno` Tcl wiring; smoke-tested (`OpenSees.exe` builds + steps all 6).
+  Shipped PR #340. (No adversarial gate — additive mechanical mirror of a proven sibling.)
+- **2026-06-21 — OpenSeesSP consistent path: INVESTIGATED, DEFERRED (decision).** A read-only
+  feasibility pass concluded the SP increment is codeable but NOT responsibly shippable now:
+  (1) **No validation path.** OpenSeesSP is Tcl-only and needs `mpiexec OpenSeesSP.exe` over a
+  hand-partitioned subdomain model; there is no working explicit-SP example to adapt, and at
+  `np=1` the Channel reduction is a no-op, so the np=1-vs-np=2 + serial-gold cross-check that
+  validated the MP path (V5) has no SP analogue locally. (2) **No demonstrated demand / unusual
+  config.** Every SP example uses `system Mumps` + an IMPLICIT integrator (Newmark/static);
+  explicit central-difference under SP's domain-decomposition is untested and not a configuration
+  users exercise. (3) **Would ship untested into vanilla core.** The 4 overrides go on
+  `DistributedDiagonalSOE` (vanilla), plus a wrinkle: `DistributedDiagonalSolver` leaves `A` as
+  *mass* (not `1/mass`, unlike the serial/MPI solvers — `X=B/A` at solve, no in-place invert), so
+  `getScalingDiagonalA()` would need a cached inverted array — more unverifiable code. Shipping
+  unvalidated distributed numerics into vanilla core contradicts the V5 discipline (adversarial
+  gate + gold cross-check). **To revisit, do it right:** first build a minimal `mpiexec
+  OpenSeesSP` partitioned-model harness (validate even the lumped/baseline path under SP), and
+  have a concrete explicit-SP use case; then add the 4 overrides (Channel gather→P0→sum→broadcast,
+  mirroring `DistributedDiagonalSolver::solve()`) behind the existing `LinearSOE` virtuals — the
+  integrator/helper layer (`LadrunoConsistentRefine.h`) is already SP-agnostic and needs no change.

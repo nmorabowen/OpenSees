@@ -12,9 +12,11 @@ status: >
   VALIDATED parallel-correct (np=1 vs np=2 bit-identical; the distributed/MPI diagonal solver
   sums shared-node ΔM at solve time) and the stale "not reduced" warnings were corrected;
   the CONSISTENT (Olovsson) path now has a DISTRIBUTED PCG (V5) — VALIDATED under OpenSeesMP
-  `system MPIDiagonal` (MPI np=2 == serial reference). The parallel SMS axis is COMPLETE for
-  OpenSeesMP (OpenSeesSP/DistributedDiagonalSOE is the deferred increment). NOT CI-gated
-  (single-process CI). See §0. (Lumped T-MPI + consistent V5 on this branch / PR.)
+  `system MPIDiagonal` (MPI np=2 == serial reference; PR #335). SMS is now also reachable from
+  the legacy Tcl `integrator` parser (PR #340). The SMS axis is COMPLETE for every realistic
+  config (serial + OpenSeesMP, lumped + consistent, openseespy + Tcl). OpenSeesSP
+  (DistributedDiagonalSOE) was INVESTIGATED and DEFERRED — no local validation path + no
+  demonstrated explicit-SP demand (see §0). NOT CI-gated (single-process CI). See §0.
 tags:
   - integrator
   - explicit
@@ -145,11 +147,12 @@ message AS the printf format to `PySys_FormatStderr`, eating literal `%` in `ops
   (max abs diff 0 to recorder precision) AND `np=1`==`np=2` AND consistent (1.746e-3) ≠ lumped
   (2.35e-3); serial Zone-A 36/36 green. **Caveat: the Zone-A CI gate is single-process**, so
   the 2-rank `mpiexec` tests (lumped + consistent) cannot be gated in CI — local-only validation.
-  **Tcl-parser gap found:** `integrator CentralDifferenceSMS …` errors in the *Tcl*
-  `OpenSeesMP.exe` ("No Integrator type exists") — SMS is registered only in the interpreter/
-  openseespy layer (`OpenSeesCommands.cpp`), not the legacy `SRC/tcl/commands.cpp:5588`
-  `integrator` dispatch, even though the Tcl splash banner advertises it. Reach SMS via
-  openseespy (`openseesmp`), or wire the SMS classTags into the legacy Tcl parser (follow-up).
+  **Tcl-parser gap FIXED (PR #340):** `integrator CentralDifferenceSMS …` used to error in the
+  *Tcl* `OpenSees.exe`/`OpenSeesMP.exe` ("No Integrator type exists") — SMS was registered only
+  in the interpreter/openseespy layer (`OpenSeesCommands.cpp`), not the legacy
+  `SRC/tcl/commands.cpp` `specifyIntegrator()` dispatch, despite the splash banner advertising it.
+  Now all 6 are wired into the Tcl parser (mirrors the `CentralDifferenceLadruno` branch);
+  smoke-tested via `OpenSees.exe Ladruno_implementation/mass_scaling_mpi/sms_tcl_smoke.tcl`.
 
 **Merge mechanics lesson (this session).** #320/#322/#324 were a `--base ladruno` stack.
 After #320 squash-merged, #322 went CONFLICTING (its branch carried #320's pre-squash
@@ -354,12 +357,18 @@ peak ratio 1.000.
   frequencies; pair with `T-CONSISTENT` (frequency-preservation vs lumped at the same
   %added-mass). `applyMassScaling` currently writes diagonal-only via `Node::setMass`; the
   consistent path needs the off-diagonal nodal mass route.
-- **MPI shared-node reduction: DONE for lumped (validated bit-identical), open for consistent.**
-  The lumped path is parallel-correct via the distributed/MPI diagonal solver's solve-time
-  shared-DOF sum (see §0 T-MPI + `mass_scaling_mpi/`). The remaining increment is the
-  **CONSISTENT (Olovsson) distributed CG**: give `consistentPCG`/`consistentMatVec` global
-  (MPI_Allreduce'd) inner products and a shared-DOF `M̄` matvec exchange so Olovsson scaling
-  works in parallel. Cannot gate in the single-process CI — local 2-rank `mpiexec` only.
-  Optional adjacent fix: wire the SMS integrator classTags into the legacy Tcl `integrator`
-  parser (`SRC/tcl/commands.cpp`) so `OpenSeesMP.exe`/Tcl can reach them (the banner already
-  advertises them; today they are openseespy-only).
+- **MPI shared-node reduction: DONE — lumped AND consistent.** Lumped is parallel-correct via
+  the distributed/MPI diagonal solver's solve-time shared-DOF sum; consistent got a distributed
+  CG (V5: `consistentParPCG`/`consistentParMatVec` with global all-reduced inner products + a
+  shared-DOF `M̄` assemble, weight `wᵢ=1/multiplicityᵢ`) — both validated 2-rank `mpiexec`,
+  adversarially reviewed clean (PR #335). See §0 + `mass_scaling_mpi/`.
+- **Tcl-parser wiring: DONE (PR #340).** All 6 SMS integrators reachable from the legacy Tcl
+  `integrator` parser, not just openseespy.
+- **OpenSeesSP (DistributedDiagonalSOE) consistent path: DEFERRED (decision 2026-06-21).** See
+  the ADR-38 log entry — codeable (the integrator/helper layer is already SP-agnostic; just add
+  the 4 `LinearSOE` overrides to `DistributedDiagonalSOE` via Channel gather→P0→sum→broadcast,
+  noting that solver leaves `A` as *mass* so `getScalingDiagonalA` needs a cached inverse), but
+  NOT responsibly shippable now: no local explicit-SP validation harness, no demonstrated demand
+  (SP examples are all `Mumps`+implicit), and it would put untested distributed numerics in
+  vanilla core. Revisit only with a real `mpiexec OpenSeesSP` harness + a concrete use case.
+  **The mass-scaling axis is otherwise COMPLETE.**
