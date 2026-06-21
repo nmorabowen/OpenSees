@@ -868,12 +868,13 @@ def _build_explicit(mat_fn, rate, alphaM=0.0):
     ops.algorithm("Linear")
 
 
-def _run_explicit(integrator_args, eps_target, nsteps, dt, alphaM=0.0):
+def _run_explicit(integrator_args, eps_target, nsteps, dt, alphaM=0.0, **mat_kw):
     """Drive the cube to eps_target axial strain over nsteps explicit steps of size dt. Returns
-    [(eps_xx, sig_xx, omega_t)] per step (eps_xx = nodeDisp(2,1) on the unit cube)."""
+    [(eps_xx, sig_xx, omega_t)] per step (eps_xx = nodeDisp(2,1) on the unit cube). Extra mat_kw
+    (e.g. lch=...) are forwarded to the material."""
     t_end = nsteps * dt
     rate = eps_target / t_end                          # u_x(t) = rate * t reaches eps_target at t_end
-    _build_explicit(lambda tag: _mat(tag, rho=_RHO), rate, alphaM=alphaM)
+    _build_explicit(lambda tag: _mat(tag, rho=_RHO, **mat_kw), rate, alphaM=alphaM)
     ops.integrator(*integrator_args)
     ops.analysis("Transient")
     out = []
@@ -937,14 +938,19 @@ def test_explicit_backbone_matches_oracle():
 
 
 def test_explicit_completes_where_fixedstep_implicit_stalls():
-    """The Tier-3 payoff, made concrete: the SAME single cube under fixed-step implicit Newton
+    """The Tier-3 payoff, made concrete: the SAME single cube with a STEEP (snap-backy) softening law
+    (lch=50 ⇒ eps_f=Gf/(ft·lch)≈6.7e-4, a sharp post-peak drop) under fixed-step implicit Newton
     (DisplacementControl, no step-cutting) STALLS at the immediate softening limit point (eps0=ft/E),
-    converging only a handful of steps; the explicit run completes the full ramp. (Tier-1 needs the
-    _drive_adaptive step-cutting + FullGeneral to get through — see the static softening test.)"""
-    implicit_fixed = _run(lambda t: _mat(t), 0.03, 300)           # plain DisplacementControl, breaks on stall
-    explicit = _run_explicit(CDL, 0.03, _NSTEPS_EXPL, _DT_EXPL, alphaM=20.0)
+    converging only a handful of steps; the explicit run marches the full ramp. (Tier-1 needs the
+    _drive_adaptive step-cutting + FullGeneral to get through — see the static softening test.) NB the
+    contrast needs a genuinely snap-backy law: with the unit cube's default autoReg lch≈1 the softening
+    is gradual (eps_f≈0.03) and plain DisplacementControl can path-follow many steps — platform-dependent
+    and NOT the Tier-3 point. The steep law makes the implicit stall unambiguous on every platform."""
+    lch = 50.0
+    implicit_fixed = _run(lambda t: _mat(t, lch=lch), 0.03, 300)  # plain DisplacementControl, breaks on stall
+    explicit = _run_explicit(CDL, 0.03, _NSTEPS_EXPL, _DT_EXPL, alphaM=20.0, lch=lch)
     assert len(implicit_fixed) < 60, (
-        f"fixed-step implicit unexpectedly survived softening ({len(implicit_fixed)} steps) — "
+        f"fixed-step implicit unexpectedly survived steep softening ({len(implicit_fixed)} steps) — "
         "contrast no longer demonstrates the Tier-3 payoff")
     assert len(explicit) == _NSTEPS_EXPL, (
         f"explicit failed to complete ({len(explicit)}/{_NSTEPS_EXPL}) — the Tier-3 claim")
