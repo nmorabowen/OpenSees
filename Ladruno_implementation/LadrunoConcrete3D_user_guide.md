@@ -108,9 +108,11 @@ no runtime *enforcement*, but the parser **prints a warning at material creation
   tension/compression softening + automatic unilateral recovery**, crack-band-regularized — with the
   **analytic damaged tangent** (Tier-1 implicit). Effective-stress plasticity is monotonic; the peak and
   softening are the **damage** part. **All dimensional views** — 3D + PlaneStrain / AxiSymmetric /
-  PlateFiber / PlaneStress (the element picks one via `getCopy(type)`) + the finite-strain view via
-  `nDMaterial LogStrain`. (PlaneStress/PlateFiber enforce σ_zz=0 by a nested ε_zz Newton + static
-  condensation; unconfined plane-STRESS post-peak softening is snap-backy → robust pre-peak / confined.)
+  PlateFiber / PlaneStress (the element picks one via `getCopy(type)`) + the **finite-strain view via
+  `nDMaterial LogStrain`** (validated — `element LadrunoBrick … <logTag> -geom finite`; isotropic ⇒
+  `σ(QF)=Qσ(F)Qᵀ` EXACT under arbitrary rotation, no co-rotating-internal-variable caveat). (PlaneStress/
+  PlateFiber enforce σ_zz=0 by a nested ε_zz Newton + static condensation; unconfined plane-STRESS
+  post-peak softening is snap-backy → robust pre-peak / confined.)
   Compression uses the **full CDPM2 `β_c` (Eq.50)** — a state-dependent factor (`≈ f_t/(f_c√(1+2D_f²))`
   in uniaxial compression) on the plastic part of the compressive-damage driver — so the post-peak
   **compression response is markedly more DUCTILE** than a `β_c=1` model (calibrate `G_c` to your
