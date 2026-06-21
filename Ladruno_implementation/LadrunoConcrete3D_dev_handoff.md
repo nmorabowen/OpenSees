@@ -130,10 +130,14 @@ change was needed — the kernel already runs with `do_tangent=false` and the wr
 `getRho()` for the explicit mass. Deliverables: (a) g++ **B7** gate — `returnMap(do_tangent=false)`
 committed stress + state is **byte-identical** to `do_tangent=true` (`t3=0`; ADR §398 "Tier-3 committed
 == Tier-1"), certifying the material is exact under an explicit solver that never factorizes the
-indefinite softening tangent; (b) element `test_tier3_explicit_softening` — drives unconfined tension
-into deep softening under `CentralDifference` (prescribed-displacement ramp, `system Diagonal`,
-`-rho` mass), which **completes every step** where Tier-1 implicit `DisplacementControl` stalls at the
-limit point, with the nominal stress peaking ~`ft` then degrading and `ω_t` developing.
+indefinite softening tangent; (b) element `test_tier3_explicit_path_runs` — a free-dynamics tension
+stretch (initial face velocity — the proven explicit idiom; a ramped prescribed-SP is an implicit/static
+construct that fails under CentralDifference) under `CentralDifferenceLadruno` + `system Diagonal` lumped
+mass (via `-rho`), confirming the material **integrates end-to-end** (mass + transient + stress) and stays
+bounded. (NB the elastic strain-to-peak `eps0=ft/E~1e-4` is a blink under free dynamics, so a clean
+quasi-static softening curve isn't the element test's job — that's the numpy oracle + the B7 gate.)
+**GOTCHA found:** the element test helper `_mat` silently ignored an unknown `rho=` kwarg → material
+`rho=0` → zero element mass → `system Diagonal` solve fails at step 0; `_mat` now forwards `-rho`.
 
 **NEXT INCREMENTS (each its own oracle-first PR):**
 - **Multiaxial-damage apportioning + plastic-dissipation regularization** — the remaining P2 refinements
