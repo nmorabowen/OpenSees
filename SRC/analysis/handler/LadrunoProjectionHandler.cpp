@@ -778,7 +778,8 @@ LadrunoProjectionHandler::doneNumberingDOF(void)
         // non-projection-aware integrator (Transformation/Penalty path) is legitimate.
         if (theProjector->numGroups() > 0) {
             opserr << "LadrunoProjectionHandler::doneNumberingDOF() - this handler requires "
-                      "an explicit projection-aware integrator (e.g. CentralDifferenceLadruno). "
+                      "an explicit projection-aware integrator (e.g. CentralDifferenceLadruno, "
+                      "ExplicitBathe, ExplicitBatheLNVD, or their SMS variants). "
                       "Use constraints Transformation/Penalty for implicit analyses.\n";
             return -4;
         }

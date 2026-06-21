@@ -101,6 +101,7 @@
 
 #include <TransientIntegrator.h>
 #include <CriticalTimeStep.h>   // CTSLumping, CTSResult, computeCriticalTimeStep()
+#include <LadrunoProjectionConsumer.h>   // Ladruno (ADR-30 P5): projection seam
 
 // Published Noh-Bathe stability advantage over central difference (~2x at the
 // optimal sub-step parameter). dt_cr_NB = EB_NB_STABILITY_FACTOR * (2/omega_max).
@@ -110,8 +111,13 @@
 class DOF_Group;
 class FE_Element;
 class Vector;
+class LadrunoConstraintProjector;   // Ladruno (ADR-30 P5)
 
-class ExplicitBathe : public TransientIntegrator
+// Ladruno (ADR-30 P5): ExplicitBathe is a LadrunoProjectionConsumer, so the
+// LadrunoProjectionHandler can enforce MP/EQ constraints by M-orthogonal accel
+// projection under the Noh-Bathe scheme (same contract as CentralDifferenceLadruno).
+// The 4 SMS/Consistent subclasses inherit this without further code.
+class ExplicitBathe : public TransientIntegrator, public LadrunoProjectionConsumer
 {
 public:
     // Constructors
@@ -143,7 +149,11 @@ public:
 
     // Method to obtain current velocity
     const Vector &getVel(void);
-    
+
+    // Ladruno (ADR-30 P5): the LadrunoProjectionHandler pushes its (non-owning)
+    // constraint projector through this seam at doneNumberingDOF().
+    void setConstraintProjector(LadrunoConstraintProjector *theProjector) override;
+
     // Methods for parallel processing
     virtual int sendSelf(int commitTag, Channel &theChannel);
     virtual int recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &theBroker);
@@ -232,6 +242,10 @@ private:
     int cflStepCount;         // step counter for periodic recompute
     bool cflFirstComputation; // gate the detailed report to the first computation
     CTSLumping lumping;       // element-mass lumping for the dt_cr pencil (-lump)
+
+    // Ladruno (ADR-30 P5): constraint projection (non-owning; owned by the handler).
+    LadrunoConstraintProjector *theProjector;  // 0 unless LadrunoProjection is active
+    bool massBuilt;                            // has the projector read diag(M) yet?
 };
 
 #endif
