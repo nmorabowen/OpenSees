@@ -278,3 +278,53 @@ the deferred-P4 backlog documented. Handoff: `projection_handler_handoff.md`. Lo
   constraintTieForce`) ships. ADR-30: v1 (P0-P3) + P4a recorder all on ladruno.
 - Remaining P4 (deferred, independent): prescribed-motion overwrite, MP-chain composition,
   ExplicitBathe/LNVD adoption, near-singular LtML condition gate, frozen-Ccr runtime guard.
+
+### P4b — prescribed-motion overwrite (2026-06-20, branch guppi/adr30-p4b-prescribed-motion)
+- User picked this as the next phase. Design doc `_adr30_p4b_design.md`. Splits into
+  **Tier 1** (prescribed DOF NOT in a constraint group — common multi-support/base-excitation;
+  handler-only) and **Tier 2** (prescribed DOF IS an MP master — the literal "overwrite a
+  before projecting", needs projector known-RHS surgery).
+- **PRE-CODE design gate wf_5afb0c9a-8cb (5 refute lenses, read-only Explore, + verify):**
+  Tier-1 mechanism SOUND on every lens (no approach refutation; the 22 "confirmed-blocking"
+  are all "not implemented yet" = the to-do list). Confirmed: implement handler applyLoad()
+  = `node->setTrialDisp(sp->getValue()+sp->getInitialValue(), dof)` per recorded non-homog SP,
+  called from AnalysisModel::updateDomain→handler->applyLoad (runs AFTER domain applyLoad, so
+  ImposedMotionSP's node vel/accel survive); keep prescribed DOFs at eqn=-1; integrator
+  UNCHANGED. Critical safety check: a prescribed DOF used as MP/EQ **master** is silently
+  dropped today (eqn<0 → fixedEqns → slave accel forced 0) → MUST refuse with named error.
+  **Tier 2 DEFERRED to P4c** (gate confirmed Q1 real: starter project(a0) runs BEFORE that
+  step's applyLoad, so the node-read of a_p fails at the starter; needs read-from-SP/GM-at-t0
+  + free/prescribed column split + C_p·a_p RHS). Refuted: buildMass-wrong + IC-check-misfire
+  (prescribed DOFs are eqn<0, not in the u/v vectors checkIC reads).
+- **SCOPE P4b = Tier 1 + prescribed-master refusal.** Plan: handle() records non-homog SPs +
+  refuses prescribed slave (overconstraint) and prescribed master (Tier-2 deferred); applyLoad()
+  override sets prescribed disp; clearAll() clears records. Tests test_adr30_projection_p4b.py:
+  base-excitation vs Transformation+BandGen, constant non-homog SP offset, prescribed-master
+  refusal, prescribed-slave refusal.
+- **IMPLEMENTED (handler-only, ZERO vanilla touch).** LadrunoProjectionHandler.{h,cpp}:
+  handle() records non-homog SPs as PrescribedDOF{Node*,dof,SP*} + prescribedKey set (was
+  warn-and-drop); applyLoad() override = setTrialDisp(getValue()+getInitialValue(),dof) per
+  prescribed DOF; doneNumberingDOF refuses a prescribed MASTER (else-if prescribedKey when
+  e<0, before the silent fixedEqns drop); SP-on-slave message now distinguishes PRESCRIBED
+  SLAVE; clearAll() clears the records. Integrator UNCHANGED.
+- **BUILD green** (full first build of the worktree, exit 0). **Tests: P4b 4/4** (TP1 base-
+  excitation rel<1e-6 vs Transformation+FullGeneral + response nontrivial, TP2 settlement,
+  TP3 prescribed-slave refused, TP4 prescribed-master refused — both named errors fire).
+  **ADR-30 battery 30/30** (P0-P4 + P4b, no projection regression). **Full Zone-A: 949
+  passed, 1 xfailed, 2 FAILED** — both pre-existing g++-standalone-kernel-compile env
+  failures (test_hrz_standalone_kernel AssertionError; test_cpp_kernel_matches_oracle_dump
+  WinError-2 CreateProcess) UNRELATED to P4b (diff = LadrunoProjectionHandler.{cpp,h} +88/-10
+  only; CI Ubuntu runs g++ properly). Ledgers updated (impl row + quirks; no vanilla row).
+- **Code-review gate wf_34b51896-209 (4 read-only lenses + verify, 17 agents) DONE.** 7
+  "confirmed" findings triaged; 6 REJECTED on the mechanics, 1 ADOPTED:
+  - REJECTED "homogeneous-fix drift" (blocking): an eqn=−1 DOF is never integrated (not in the
+    eqn vector), setResponse skips it → stays at committed 0; unchanged from shipped P0-P4a +
+    all Zone-A fixed-DOF models. The verify agent rubber-stamped a wrong premise.
+  - REJECTED "MP-added-after-setup stale slave gate" + "missing sendSelf of prescribed records"
+    + "Tier-2 IC" + "pre-analyze query shows un-imposed disp" (the proposed doneNumberingDOF
+    fix is itself buggy — a load-pattern SP's valueC isn't set yet → would impose 0).
+  - ADOPTED (findings 3+5, robustness/convention): PrescribedDOF stored a raw Node*; the rest
+    of the handler stores node TAGS (vtxNode) and resolves via getNode. Switched PrescribedDOF
+    to {int nodeTag; int dof; SP_Constraint* sp} + resolve `theDomain->getNode(nodeTag)` fresh
+    in applyLoad (skip if null) — removes the theoretical dangling-Node* UAF, matches convention.
+  - Rebuild bof4yzu7j (incremental). Re-run P4b + ADR-30 battery, then PR.
