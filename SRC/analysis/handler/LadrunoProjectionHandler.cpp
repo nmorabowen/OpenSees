@@ -60,6 +60,10 @@
 #include <elementAPI.h>
 #include <classTags.h>
 
+// Ladruno (ADR-30 P6): a frozen small-rotation Ccr (rigidLink-beam / rigidDiaphragm lever arm)
+// loses validity once the master rotation accumulates past ~0.1 rad. Warn (once per node) above.
+#define LADRUNO_CCR_STALE_RAD 0.1
+
 // ---- command parser -------------------------------------------------------
 void *OPS_LadrunoProjectionHandler(void)
 {
@@ -252,6 +256,7 @@ LadrunoProjectionHandler::buildGroups(void)
     theGroups.clear();
     vtxNode.clear();
     vtxDof.clear();
+    rotMonitors.clear();   // P6: rebuilt below from the rotational lever-arm couplings
 
     std::map<std::pair<int, int>, int> vtxOf;   // (node,dof) -> vertex id
     std::vector<int> parent;                     // union-find
@@ -294,6 +299,10 @@ LadrunoProjectionHandler::buildGroups(void)
             for (int j = 0; j < rDofs.Size(); j++) {
                 double c = Ccr(i, j);
                 if (c == 0.0) continue;
+                // P6: a nonzero Ccr entry coupling a master ROTATIONAL DOF into a slave
+                // TRANSLATIONAL DOF is a frozen lever arm (rigidLink-beam / rigidDiaphragm)
+                // that goes stale under finite rotation -> monitor it.
+                this->flagRotMonitor(rNode, rDofs(j), cNode, cDofs(i));
                 std::pair<int, int> rp(rNode, rDofs(j));
                 int rv;
                 std::map<std::pair<int,int>,int>::iterator itr = vtxOf.find(rp);
@@ -800,6 +809,44 @@ LadrunoProjectionHandler::doneNumberingDOF(void)
 // is SP-excluded (eqn = -1), so the integrator's setResponse() scatter skips it and the imposed
 // value survives (DOF_Group::setNodeDisp guards on loc>=0). Mirrors
 // TransformationDOF_Group::enforceSPs(doMP=1).
+
+// P6: register a frozen lever-arm coupling for staleness monitoring. Called from the transport
+// loop with a master (node,dof) -> slave (node,dof) whose Ccr entry is nonzero. The lever arm
+// that goes stale under finite rotation is the MASTER-ROTATION -> SLAVE-TRANSLATION cross term
+// (rigidLink-beam / rigidDiaphragm). A rotation->rotation tie (equalDOF on rz) or a pure
+// translation tie (rigidLink-bar) carries no lever arm and is ignored. Deduped by master node.
+void
+LadrunoProjectionHandler::flagRotMonitor(int masterNode, int masterDof,
+                                         int slaveNode, int slaveDof)
+{
+    Domain *theDomain = this->getDomainPtr();
+    if (theDomain == 0) return;
+    Node *mp = theDomain->getNode(masterNode);
+    Node *sp = theDomain->getNode(slaveNode);
+    if (mp == 0 || sp == 0) return;
+    int ndmM = mp->getCrds().Size();
+    int ndfM = mp->getNumberDOF();
+    int ndmS = sp->getCrds().Size();
+    // OpenSees convention: 2D node (ndm==2) -> dof 2 is rz; 3D 6-dof node -> dofs 3,4,5 are rotations;
+    // translational DOFs are 0..(ndm-1).
+    bool masterRot  = (ndmM == 2 && masterDof >= 2) || (ndmM == 3 && ndfM >= 6 && masterDof >= 3);
+    bool slaveTrans = (slaveDof >= 0 && slaveDof < ndmS);
+    if (!masterRot || !slaveTrans) return;
+    for (int i = 0; i < (int)rotMonitors.size(); i++)
+        if (rotMonitors[i].nodeTag == masterNode) return;   // already monitored
+    RotMonitor m;
+    m.nodeTag = masterNode;
+    m.warned = false;
+    if (ndmM == 2) { m.rotDof.push_back(2); }
+    else           { m.rotDof.push_back(3); m.rotDof.push_back(4); m.rotDof.push_back(5); }
+    const Vector &u = mp->getTrialDisp();   // at handle() time trial == committed == initial config
+    for (int k = 0; k < (int)m.rotDof.size(); k++) {
+        int d = m.rotDof[k];
+        m.theta0.push_back((d < u.Size()) ? u(d) : 0.0);
+    }
+    rotMonitors.push_back(m);
+}
+
 int
 LadrunoProjectionHandler::applyLoad(void)
 {
@@ -852,6 +899,34 @@ LadrunoProjectionHandler::applyLoad(void)
         Vector vv = snp->getTrialVel();  vv(d.dof) = vc;  snp->setTrialVel(vv);
         Vector av = snp->getTrialAccel(); av(d.dof) = ac; snp->setTrialAccel(av);
     }
+
+    // P6: frozen-Ccr staleness warning. Watch each flagged master's rotation drift since the
+    // constraints were built; warn ONCE per node once it exceeds the small-rotation validity of
+    // the baked-in lever arm. (Behavior is unchanged — this is a diagnostic only.)
+    for (int i = 0; i < (int)rotMonitors.size(); i++) {
+        RotMonitor &m = rotMonitors[i];
+        if (m.warned)
+            continue;
+        Node *np = theDomain->getNode(m.nodeTag);
+        if (np == 0)
+            continue;
+        const Vector &u = np->getTrialDisp();
+        double drift = 0.0;
+        for (int k = 0; k < (int)m.rotDof.size(); k++) {
+            int dd = m.rotDof[k];
+            double th = (dd < u.Size()) ? u(dd) : 0.0;
+            double a = fabs(th - m.theta0[k]);
+            if (a > drift) drift = a;
+        }
+        if (drift > LADRUNO_CCR_STALE_RAD) {
+            opserr << "LadrunoProjectionHandler - NOTE master node " << m.nodeTag
+                   << " has rotated " << drift << " rad since the constraints were built; the "
+                      "rigidLink -beam / rigidDiaphragm lever arm (frozen small-rotation Ccr) is "
+                      "now stale and the tie will drift. For finite rotation use the RBE2 element "
+                      "(LadrunoKinematicCoupling) or constraints Transformation.\n";
+            m.warned = true;
+        }
+    }
     return 0;
 }
 
@@ -895,6 +970,7 @@ LadrunoProjectionHandler::clearAll(void)
     prescribedKey.clear();
     derivedSlaves.clear();    // P4c: drop the derived-prescribed-slave records
     derivedKey.clear();
+    rotMonitors.clear();      // P6: drop the frozen-Ccr staleness monitors
     // doneNumberingDOF() now re-binds the integrator UNCONDITIONALLY (incl. a 0 push on
     // the zero-group path), so the integrator never retains a freed projector after a
     // rebuild. We keep ownership and free in the dtor / next doneNumberingDOF.

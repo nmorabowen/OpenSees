@@ -31,6 +31,73 @@
 #include <DiagonalSOE.h>
 #include <OPS_Globals.h>
 #include <cmath>
+#include <vector>
+#include <limits>
+
+// Ladruno (ADR-30 P6): condition-number thresholds for the per-group LtML = L^T M L.
+// LtML is SPD (positive masses + full-rank L); a near-singular LtML makes project() amplify
+// round-off into a garbage acceleration, which the old exact-pivot test-solve never caught.
+#define LADRUNO_LTML_COND_REFUSE 1.0e12   // cond above this -> refuse (numerically singular)
+#define LADRUNO_LTML_COND_WARN   1.0e8    // cond above this -> warn once (ill-conditioned)
+
+// Ladruno (ADR-30 P6): eigenvalues of a small SYMMETRIC matrix A (n x n) by cyclic Jacobi.
+// Fills eig[0..n-1] (unsorted); eigenVECTORS are not needed (used only for a condition-number
+// estimate of the tiny SPD LtML, n typically <= 6). Self-contained — no LAPACK dependency, so it
+// sidesteps the bundled-LAPACK symbol gaps (cf. the dsygv_ incident). Returns 0 on success.
+static int
+ladrunoSymEigJacobi(const Matrix &A, Vector &eig)
+{
+    int n = A.noRows();
+    if (n <= 0 || A.noCols() != n) return -1;
+    eig = Vector(n);
+    if (n == 1) { eig(0) = A(0, 0); return 0; }
+
+    std::vector<double> a((size_t)n * n);
+    for (int i = 0; i < n; i++)
+        for (int j = 0; j < n; j++)
+            a[(size_t)i * n + j] = A(i, j);
+
+    const int maxSweeps = 100;
+    for (int sweep = 0; sweep < maxSweeps; sweep++) {
+        double off = 0.0;
+        for (int i = 0; i < n; i++)
+            for (int j = i + 1; j < n; j++)
+                off += a[(size_t)i * n + j] * a[(size_t)i * n + j];
+        if (off <= 1.0e-30) break;
+
+        for (int p = 0; p < n; p++) {
+            for (int q = p + 1; q < n; q++) {
+                double apq = a[(size_t)p * n + q];
+                if (apq == 0.0) continue;
+                double app = a[(size_t)p * n + p];
+                double aqq = a[(size_t)q * n + q];
+                // t solves t^2 + 2*theta*t - 1 = 0 with the smaller-magnitude root; the
+                // Givens rotation G (G[p][q]=s, G[q][p]=-s, diag c) zeros a'_pq in G^T A G.
+                double theta = (aqq - app) / (2.0 * apq);
+                double t = (theta >= 0.0 ? 1.0 : -1.0) /
+                           (std::fabs(theta) + std::sqrt(theta * theta + 1.0));
+                double c = 1.0 / std::sqrt(t * t + 1.0);
+                double s = t * c;
+                // A G (columns p,q)
+                for (int k = 0; k < n; k++) {
+                    double g = a[(size_t)k * n + p];
+                    double h = a[(size_t)k * n + q];
+                    a[(size_t)k * n + p] = c * g - s * h;
+                    a[(size_t)k * n + q] = s * g + c * h;
+                }
+                // G^T (...) (rows p,q)
+                for (int k = 0; k < n; k++) {
+                    double g = a[(size_t)p * n + k];
+                    double h = a[(size_t)q * n + k];
+                    a[(size_t)p * n + k] = c * g - s * h;
+                    a[(size_t)q * n + k] = s * g + c * h;
+                }
+            }
+        }
+    }
+    for (int i = 0; i < n; i++) eig(i) = a[(size_t)i * n + i];
+    return 0;
+}
 
 LadrunoConstraintProjector::LadrunoConstraintProjector()
   : groups(), massReady(false), projectICs(false), icTol(1.0e-8)
@@ -125,19 +192,39 @@ LadrunoConstraintProjector::buildMass(LinearSOE *theSOE)
             }
         }
 
-        // singularity guard: a rank-deficient LtML = a massless/redundant retained
-        // direction. Probe with a test solve on a copy (Solve may factor in place).
+        // Ladruno (ADR-30 P6 / O1): condition-number gate. LtML is SPD; estimate
+        // cond = lambda_max/lambda_min via a self-contained symmetric Jacobi eigensolve.
+        // A near-singular LtML (a barely-dependent retained direction, a tiny relative mass,
+        // a near-redundant constraint) passes an exact-pivot test-solve but makes project()
+        // amplify round-off into a garbage acceleration -> REFUSE above COND_REFUSE (this also
+        // catches the exact-singular case lambda_min -> 0), WARN once above COND_WARN.
         if (nRet > 0) {
-            Matrix tmp(g.LtML);
-            Vector e0(nRet), x0(nRet);
-            e0(0) = 1.0;
-            if (tmp.Solve(e0, x0) < 0) {
-                opserr << "LadrunoConstraintProjector::buildMass() - singular Lt M L in "
-                          "group " << gi << " (a retained direction has no mass, or a "
-                          "redundant/cyclic constraint). Fix the constraint set or add "
-                          "mass.\n";
+            Vector eig;
+            if (ladrunoSymEigJacobi(g.LtML, eig) < 0) {
+                opserr << "LadrunoConstraintProjector::buildMass() - eigenvalue estimate "
+                          "failed for Lt M L in group " << gi << ".\n";
                 return -1;
             }
+            double lmax = eig(0), lmin = eig(0);
+            for (int k = 1; k < eig.Size(); k++) {
+                if (eig(k) > lmax) lmax = eig(k);
+                if (eig(k) < lmin) lmin = eig(k);
+            }
+            double cond = (lmin > 0.0) ? (lmax / lmin)
+                                       : std::numeric_limits<double>::infinity();
+            if (lmin <= 0.0 || cond > LADRUNO_LTML_COND_REFUSE) {
+                opserr << "LadrunoConstraintProjector::buildMass() - near-singular Lt M L in "
+                          "group " << gi << " (condition number " << cond << ", min eigenvalue "
+                       << lmin << "). A retained direction has (almost) no mass, or the "
+                          "constraints are redundant/cyclic. Fix the constraint set, add mass, "
+                          "or use constraints Penalty/Transformation.\n";
+                return -1;
+            }
+            if (cond > LADRUNO_LTML_COND_WARN)
+                opserr << "LadrunoConstraintProjector::buildMass() - NOTE Lt M L in group " << gi
+                       << " is ill-conditioned (condition number " << cond << "); the projected "
+                          "acceleration may lose precision. Check for near-redundant constraints "
+                          "or widely disparate tied masses.\n";
         }
     }
 

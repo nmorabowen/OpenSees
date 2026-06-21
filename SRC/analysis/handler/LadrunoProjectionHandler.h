@@ -120,6 +120,19 @@ class LadrunoProjectionHandler : public ConstraintHandler
     std::vector<DerivedSlave> derivedSlaves;
     std::set<std::pair<int,int> > derivedKey;    // (nodeTag,dof) of every derived-prescribed slave
 
+    // P6: frozen-Ccr staleness monitor. A rigidLink-beam / rigidDiaphragm MP bakes the master's
+    // lever arm into L from Ccr ONCE (small-rotation, frozen). For accumulated master rotation
+    // >~0.1 rad the tie silently drifts. We can't refresh Ccr cheaply (that's the RBE2 element /
+    // finite-rotation route), but we WARN: flag masters whose rotational DOF couples into a slave
+    // row, capture theta0 at build, warn ONCE in applyLoad when the rotation drift is large.
+    struct RotMonitor {
+        int nodeTag;                 // master node with a frozen rotational coupling
+        std::vector<int> rotDof;     // its rotational local DOFs (2D: {2}; 3D: {3,4,5})
+        std::vector<double> theta0;  // committed rotation at build (drift baseline)
+        bool warned;                 // one-shot warning latch
+    };
+    std::vector<RotMonitor> rotMonitors;
+
     // vertex bookkeeping (a vertex = one (node,dof) pair)
     std::vector<int> vtxNode;                    // node tag per vertex
     std::vector<int> vtxDof;                     // local dof per vertex
@@ -133,6 +146,9 @@ class LadrunoProjectionHandler : public ConstraintHandler
     int buildGroups(void);                       // handle()-time grouping + diagnostics
     int classifyDerivedSlaves(int &countDOF);    // P4c: exclude prescribed-driven slaves, refuse mixed
     int consistentMassGuard(void);               // refuse cMass on a tied DOF
+    // P6: register a frozen lever-arm coupling (master rotation -> slave translation) for
+    // staleness monitoring. A rotation->rotation tie (equalDOF on rz) carries no lever arm.
+    void flagRotMonitor(int masterNode, int masterDof, int slaveNode, int slaveDof);
 };
 
 #endif
