@@ -245,6 +245,45 @@ def main(out=None):
         lines.append(_fmt(deps))
         lines.append(_fmt(sig_nom))
 
+    # ---- (B8) P5 CONFINED-FIBER (§4.6): a committed confined state (looped confined_step) + one more axial
+    #      increment -> oracle NOMINAL axial stress + mobilized hoop pressure + converged lateral strain.
+    #      The C++ driveConfinedFiber reproduces it (nested lateral Newton vs the hoop + damagedUpdate). The
+    #      committed state is the kernel State (6-Voigt diagonal); epl_prev is NOT dumped (the kernel derives
+    #      it via plasticStrain6(in.sigEff,in.eps) == the oracle's tracked epl_prev). ----
+    cfibs = []   # (label, mp, lch, eps6, sig6, kp, hist8, e11_next, hoopK, hoopFy, sig_nom6, el_new, p_conf)
+
+    def add_cfib(label, mp, lch, eps_build, ndiv, deps11, hoopK, hoopFy):
+        st = ref._confined_state0()
+        for e in np.linspace(0.0, eps_build, ndiv):
+            _s, _p, st, _d = ref.confined_step(st, e, mp, Gf, Gc, lch, As, hoopK, hoopFy)
+        eps6 = [float(st["eps"][0]), float(st["eps"][1]), float(st["eps"][2]), 0.0, 0.0, 0.0]
+        sig6 = [float(st["sig_eff"][0]), float(st["sig_eff"][1]), float(st["sig_eff"][2]), 0.0, 0.0, 0.0]
+        hist8 = [st["et_max"], st["kdt1"], st["kdt2"], st["kdc"], st["kdc1"], st["kdc2"], st["sigt_max"], st["sigc_max"]]
+        e11_next = float(st["eps"][0]) + deps11
+        sig_nom, p_conf, stn, _d = ref.confined_step(st, e11_next, mp, Gf, Gc, lch, As, hoopK, hoopFy)
+        sig_nom6 = [float(sig_nom[0]), float(sig_nom[1]), float(sig_nom[2]), 0.0, 0.0, 0.0]
+        cfibs.append((label, mp, lch, eps6, sig6, float(st["kp"]), hist8, e11_next,
+                      float(hoopK), float(hoopFy), sig_nom6, float(stn["el"]), float(p_conf)))
+
+    # reduce-to-free (hoopK=0): driveConfinedFiber must match the free uniaxial-stress damaged step.
+    add_cfib("cfib_free", mp_h, lch, -2.0e-3, 200, -1.0e-5, 0.0, 1.0e30)
+    # confined compression (hoopK=1200): hoop mobilized, p_conf>0 — the headline Mander-by-mechanism path.
+    add_cfib("cfib_confined", mp_h, lch, -3.0e-3, 250, -1.0e-5, 1200.0, 1.0e30)
+    # hoop YIELD (hoopK=2000, low fy): p_conf capped at fy => hoopStiffness=0 in the condensation.
+    add_cfib("cfib_yield", mp_h, lch, -4.0e-3, 300, -1.0e-5, 2000.0, 3.0)
+
+    lines.append(f"NCFIB {len(cfibs)}")
+    for label, mp, lch, eps6, sig6, kp, hist8, e11_next, hoopK, hoopFy, sig_nom6, el_new, p_conf in cfibs:
+        lines.append(f"CFIB {label} {_fmt(_pblock(mp))} {repr(float(Gf))} {repr(float(Gc))} "
+                     f"{repr(float(lch))} {repr(float(As))} {_CT[mp.get('ct_temper', 'none')]}")
+        lines.append(_fmt(eps6))
+        lines.append(_fmt(sig6))
+        lines.append(repr(float(kp)))
+        lines.append(_fmt(hist8))
+        lines.append(f"{repr(float(e11_next))} {repr(float(hoopK))} {repr(float(hoopFy))}")
+        lines.append(_fmt(sig_nom6))
+        lines.append(f"{repr(float(el_new))} {repr(float(p_conf))}")
+
     # ---- (B5) P3 Tier-2 IMPL-EX: a committed IMPLEX state (with the extrapolation increments) + a
     #      step -> the REPORTED explicit stress sig_rep. Pins the C++ returnMap(implex=true) reported
     #      stress to the oracle damaged_step_implex. Includes a dt-JUMP case (r clamped to implexRmax).

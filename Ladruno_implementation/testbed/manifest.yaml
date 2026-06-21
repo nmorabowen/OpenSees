@@ -852,7 +852,7 @@ features:
     pr: 292
     feature_class: material
     required_tiers: [T0m, T1]
-    pytest: tests/test_ladrunoConcrete3D_element.py   # openseespy nDMaterial-in-a-stdBrick battery: elastic; uniaxial tension peak=ft + softening; uniaxial compression peak~fc; confined strength rises; tangent==FD; commit/revert + DB round-trip. (The numpy oracle + g++ kernel byte-check live in tests/test_ladrunoConcrete3D_material.py.)
+    pytest: tests/test_ladrunoConcrete3D_element.py   # openseespy nDMaterial-in-a-stdBrick battery: elastic; uniaxial tension peak=ft + softening; uniaxial compression peak~fc; confined strength rises; tangent==FD; commit/revert + DB round-trip; reduced views (PlaneStrain/AxiSym/PlateFiber/PlaneStress); P5b confined-fiber (BeamFiber) view via zeroLengthSection+NDFiber (reduce-to-oracle + confinement gain). (The numpy oracle + g++ kernel byte-check — incl. the CFIB confined-fiber cases — live in tests/test_ladrunoConcrete3D_material.py.)
     tcl: WAIVED(nDMaterial LadrunoConcrete3D ...; shared OpenSeesNDMaterialCommands registry serves Tcl + Python; verified via the Zone-A pytest battery + the g++ oracle-numeric-dump kernel check)
     core_files:
       - SRC/classTags.h

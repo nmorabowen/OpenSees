@@ -71,14 +71,16 @@ class LadrunoConcrete3D : public NDMaterial {
          DIM_PSTRAIN,        // {00,11,01}  (eps22=0)    order 3
          DIM_AXISYM,         // {00,11,22,01}            order 4
          DIM_PLATEFIBER,     // {00,11,01,12,02} sig22=0 order 5
-         DIM_PSTRESS };      // {00,11,01}  sig22=0      order 3
+         DIM_PSTRESS,        // {00,11,01}  sig22=0      order 3
+         DIM_BEAMFIBER };    // {00,01,02}  P5 confined  order 3  (lateral 11,22,12 condensed vs the hoop)
 
   LadrunoConcrete3D();
   LadrunoConcrete3D(int tag, double E, double nu, double fc, double ft, double Gf, double Gc,
                     double e, double Df, double As,
                     double qh0, double Hp, double Ah, double Bh, double Ch, double Dh,
                     double rho, double lch, bool autoReg, bool implex = false,
-                    double eta = 0.0, int ctTemper = 0, int dimMode = DIM_3D);
+                    double eta = 0.0, int ctTemper = 0,
+                    double hoopK = 0.0, double hoopFy = 1.0e30, int dimMode = DIM_3D);
   ~LadrunoConcrete3D();
 
   const char* getClassType(void) const { return "LadrunoConcrete3D"; }
@@ -126,12 +128,17 @@ class LadrunoConcrete3D : public NDMaterial {
   bool   implex;               // Tier-2 IMPL-EX (P3 robustness; default OFF = Tier-1 implicit)
   double eta;                  // Duvaut-Lions viscoplastic relaxation time (P3; default 0 = inviscid)
   int    ctTemper;             // P2h compression->tension damage temper: 0=none 1=alphat 2=proj (default none)
+  // P5 confined-fiber view (DIM_BEAMFIBER, §4.6): the passive transverse-steel hoop spring the lateral
+  // condensation balances. hoopK = confining stiffness d(p_conf)/d(eps_lat) (>=0; 0 => free reduction =
+  // plain BeamFiber); hoopFy = hoop yield (caps p_conf). Circular/spiral hoops (symmetric two-normal).
+  double hoopK, hoopFy;
 
   // ---- dimensional view (element-facing ordering; the kernel is always 3D) ----
   int    dim;                  // DIM_*
   int    ncomp;                // element vector order (3..6)
   int    vmap[6];              // reduced index a -> full 6-comp tensor index
   bool   condense;            // enforce sigma_22 = 0 (PlaneStress / PlateFiber)
+  bool   confined;             // P5 confined-fiber view: condense {11,22,12} vs the hoop (DIM_BEAMFIBER)
   double cEps22;               // committed out-of-plane tensor strain (condensed modes)
 
   // ---- committed kernel state (tensor components; shear = TRUE tensor) ----

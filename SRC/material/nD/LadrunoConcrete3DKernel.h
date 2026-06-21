@@ -1564,6 +1564,135 @@ inline int returnMap(const Params& mp, const double strain[6], const State& in, 
     return status;
 }
 
+// ===========================================================================
+// P5 — CONFINED-FIBER VIEW (§4.6, "Mander by mechanism"). The same triaxial kernel condensed into a
+// 1-D beam-column fiber against the PASSIVE transverse-steel confinement. The axial strain (the retained
+// BeamFiber comps {0,3,5} = axial 00 + the two transverse shears 01,02) is imposed; the lateral block
+// {1,2,4} (the two lateral normals 11,22 + their in-plane shear 12) is condensed by a nested Newton so
+// the EFFECTIVE lateral normal stresses balance the passive hoop and the in-plane shear is traction-free:
+//      sigEff_11 + sig_hoop(eps_11) = 0,   sigEff_22 + sig_hoop(eps_22) = 0,   sigEff_12 = 0.
+// The non-associated dilatancy mobilizes the hoop tension self-consistently => confined strength +
+// ductility EMERGE (NO pre-baked Mander backbone). Mirrors the oracle confined_step EXACTLY (symmetric
+// eps_11=eps_22, shears 0); hoopK=0 reduces to the free uniaxial-stress driver byte-for-byte.
+// Circular/spiral hoops only (the symmetric two-normal condensation; rectangular ties are anisotropic).
+// NB the lateral balance is on the EFFECTIVE stress (matches the shipped P5a oracle); at/near the peak
+// the damage is ~0 so nominal==effective and the Mander match is unaffected (record in LEDGER_quirks).
+// ---------------------------------------------------------------------------
+
+// Passive circular-hoop spring: tension-only (slack in lateral contraction, eps_lat<=0), elastic-
+// perfectly-plastic (stiffness K, yield fy). Returns the confining pressure sig_hoop >= 0 (the concrete's
+// effective lateral stress balances -sig_hoop). Mirrors the oracle hoop_stress.
+inline double hoopStress(double epsLat, double K, double fy)
+{
+    if (epsLat <= 0.0) return 0.0;
+    const double s = K * epsLat;
+    return (s < fy) ? s : fy;
+}
+// d sig_hoop / d eps_lat: K below yield (and in tension), 0 once yielded or slack. Oracle hoop_stiffness.
+inline double hoopStiffness(double epsLat, double K, double fy)
+{
+    return (epsLat > 0.0 && K * epsLat < fy) ? K : 0.0;
+}
+
+// Solve the 3x3 system A x = b by Gauss elimination with partial pivoting. false on a singular pivot.
+inline bool solve3(const double A[3][3], const double b[3], double x[3])
+{
+    double M[3][4];
+    for (int i = 0; i < 3; ++i) { for (int j = 0; j < 3; ++j) M[i][j] = A[i][j]; M[i][3] = b[i]; }
+    for (int c = 0; c < 3; ++c) {
+        int piv = c; double best = std::fabs(M[c][c]);
+        for (int r = c + 1; r < 3; ++r) if (std::fabs(M[r][c]) > best) { best = std::fabs(M[r][c]); piv = r; }
+        if (best < 1.0e-300) return false;
+        if (piv != c) for (int j = 0; j < 4; ++j) { double t = M[piv][j]; M[piv][j] = M[c][j]; M[c][j] = t; }
+        for (int r = 0; r < 3; ++r) {
+            if (r == c) continue;
+            const double f = M[r][c] / M[c][c];
+            for (int j = c; j < 4; ++j) M[r][j] -= f * M[c][j];
+        }
+    }
+    for (int i = 0; i < 3; ++i) x[i] = M[i][3] / M[i][i];
+    return true;
+}
+
+// Confined-fiber update. `strain` holds the imposed retained comps {0,3,5} on entry; the lateral block
+// {1,2,4} starts from the committed guess and is OVERWRITTEN with the converged condensed strains. Writes
+// the NOMINAL stress (all 6 comps; the wrapper reads {0,3,5}), the implicit effective stress, the new
+// State, and (doTangent) the condensed consistent tangent on the retained comps:
+//   dsig_R/deps_R = Cdam_RR - Cdam_RL * (Ceff_LL + Hoop)^-1 * Ceff_LR
+// (Cdam = the P2 damaged tangent for the output rows; the constraint block uses the EFFECTIVE tangent
+// Ceff_LL + the hoop stiffness on the lateral-normal diagonal). Reduces to a plain static condensation
+// where omega->0 (Cdam->Ceff). Returns 0 converged / 2 the inviscid effective return did not converge.
+inline int driveConfinedFiber(const Params& mp, double strain[6], const State& in, State& out,
+                              double sigma[6], double sigEffImpl[6], double Dtan6[6][6],
+                              bool doTangent, double hoopK, double hoopFy, double dt = 0.0)
+{
+    const int L[3] = {1, 2, 4};                       // condensed lateral block (eps_11, eps_22, gamma_12)
+    const double tol = 1.0e-10 * (mp.fc + 1.0);
+    double sig_eff[6] = {0,0,0,0,0,0}, kp_new = in.kp, Ceff[6][6];
+    int status = 0;
+    for (int it = 0; it < 80; ++it) {                 // nested lateral Newton vs the hoop residual
+        double deps[6]; for (int i = 0; i < 6; ++i) deps[i] = strain[i] - in.eps[i];
+        status = returnMapTensor(mp, in.sigEff, deps, in.kp, true, sig_eff, kp_new, Ceff, true);
+        double r[3] = { sig_eff[1] + hoopStress(strain[1], hoopK, hoopFy),
+                        sig_eff[2] + hoopStress(strain[2], hoopK, hoopFy),
+                        sig_eff[4] };
+        if (std::sqrt(r[0]*r[0] + r[1]*r[1] + r[2]*r[2]) < tol) break;
+        double J[3][3];
+        for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) J[i][j] = Ceff[L[i]][L[j]];
+        J[0][0] += hoopStiffness(strain[1], hoopK, hoopFy);
+        J[1][1] += hoopStiffness(strain[2], hoopK, hoopFy);
+        double dx[3];
+        if (!solve3(J, r, dx)) break;
+        for (int j = 0; j < 3; ++j) strain[L[j]] -= dx[j];          // J dx = r  =>  step -dx
+    }
+    // final sync (mirror the oracle's post-loop re-evaluation): recompute the effective return at the
+    // converged lateral strain so sig_eff/Ceff/kp_new always correspond to the committed strain (guards
+    // the rare 80-iter-exhausted case where the last lateral update post-dates the last returnMapTensor),
+    // and flag a genuinely unmet lateral balance as non-converged (status 2 => the caller cuts the step).
+    {
+        double deps[6]; for (int i = 0; i < 6; ++i) deps[i] = strain[i] - in.eps[i];
+        status = returnMapTensor(mp, in.sigEff, deps, in.kp, true, sig_eff, kp_new, Ceff, true);
+        const double rf[3] = { sig_eff[1] + hoopStress(strain[1], hoopK, hoopFy),
+                               sig_eff[2] + hoopStress(strain[2], hoopK, hoopFy),
+                               sig_eff[4] };
+        if (std::sqrt(rf[0]*rf[0] + rf[1]*rf[1] + rf[2]*rf[2]) >= 1.0e-6 * (mp.fc + 1.0)) status = 2;
+    }
+    // commit the converged effective state + the IMPLICIT P2 dual-damage nominal stress (mirror returnMap)
+    for (int i = 0; i < 6; ++i) { out.eps[i] = strain[i]; out.sigEff[i] = sig_eff[i]; sigEffImpl[i] = sig_eff[i]; }
+    out.kp = kp_new;
+    double wt_impl = 0.0, wc_impl = 0.0;
+    damagedUpdate(mp, in, sig_eff, kp_new, strain, out, &wt_impl, &wc_impl);
+    for (int i = 0; i < 6; ++i) sigma[i] = out.sig[i];
+    out.wt = wt_impl; out.wc = wc_impl; out.dwt = wt_impl - in.wt; out.dwc = wc_impl - in.wc;
+    { double epl[6], epl_n[6];
+      plasticStrain6(out.sigEff, out.eps, mp, epl);
+      plasticStrain6(in.sigEff,  in.eps,  mp, epl_n);
+      for (int i = 0; i < 6; ++i) out.depl[i] = epl[i] - epl_n[i]; }
+    out.dt_n = (dt > 0.0) ? dt : in.dt_n;
+
+    if (doTangent) {
+        if (status != 0) { elasticC(mp, Dtan6); return status; }   // safe fallback; caller cuts the step
+        double Cdam[6][6];
+        damagedTangent(mp, in, sig_eff, strain, kp_new, Ceff, Cdam);
+        double Kll[3][3];
+        for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) Kll[i][j] = Ceff[L[i]][L[j]];
+        Kll[0][0] += hoopStiffness(strain[1], hoopK, hoopFy);
+        Kll[1][1] += hoopStiffness(strain[2], hoopK, hoopFy);
+        double Tmat[3][6];                                          // Tmat = Kll^-1 * Ceff[L][:]
+        for (int k = 0; k < 6; ++k) {
+            double rhs[3] = { Ceff[L[0]][k], Ceff[L[1]][k], Ceff[L[2]][k] }, tcol[3];
+            if (!solve3(Kll, rhs, tcol)) { tcol[0] = tcol[1] = tcol[2] = 0.0; }
+            for (int i = 0; i < 3; ++i) Tmat[i][k] = tcol[i];
+        }
+        for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) {   // Dtan = Cdam - Cdam[:,L] * Tmat
+            double v = Cdam[i][j];
+            for (int a = 0; a < 3; ++a) v -= Cdam[i][L[a]] * Tmat[a][j];
+            Dtan6[i][j] = v;                                        // only retained rows/cols {0,3,5} are read
+        }
+    }
+    return status;
+}
+
 } // namespace Concrete3D
 } // namespace Ladruno
 
