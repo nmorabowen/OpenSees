@@ -2,13 +2,13 @@
 title: "LadrunoConcrete3D — developer / C++-implementer handoff guide"
 project: Ladruno
 type: handoff guide
-status: SHIPPED to `ladruno` — kernel (return map + analytic damaged tangent, g++-verified) + nDMaterial wrapper (classTag 33017) + ALL dimensional views (3D + PlaneStrain/AxiSymmetric/PlateFiber/PlaneStress, #299) + P3 Tier-2 IMPL-EX (oracle #301 → review-hardened #304 → C++ kernel port + `-implex` wrapper #309) + P3 Duvaut–Lions `-eta` (oracle #316 → C++ kernel port + `-eta` wrapper #318) + P2f cyclic `β_c` ORACLE + C++ kernel port (faithful CDPM2 compressive ductility, g++-verified, #321) + P2g monotone-`ω` no-heal cyclic damage (oracle + C++ kernel + wrapper, secant unload + SPD unload tangent, #325) + P2h `-ctTemper {none|alphat|proj}` compression→tension damage temper (oracle + C++ kernel + wrapper, #327) + P3 Tier-3 explicit (do_tangent-independence gate + CentralDifference softening demo, #328 — robustness trilogy complete) + Tier-3 quasi-static prescribed-motion + cross-integrator demo (CDL + ExplicitBathe, oracle-backbone match, #333). NEXT = multiaxial apportioning (E·ε̃ drive) → P4 finite-strain. See §0 / §6b for the current-state handoff.
+status: SHIPPED to `ladruno` — kernel (return map + analytic damaged tangent, g++-verified) + nDMaterial wrapper (classTag 33017) + ALL dimensional views (3D + PlaneStrain/AxiSymmetric/PlateFiber/PlaneStress, #299) + P3 Tier-2 IMPL-EX (oracle #301 → review-hardened #304 → C++ kernel port + `-implex` wrapper #309) + P3 Duvaut–Lions `-eta` (oracle #316 → C++ kernel port + `-eta` wrapper #318) + P2f cyclic `β_c` ORACLE + C++ kernel port (faithful CDPM2 compressive ductility, g++-verified, #321) + P2g monotone-`ω` no-heal cyclic damage (oracle + C++ kernel + wrapper, secant unload + SPD unload tangent, #325) + P2h `-ctTemper {none|alphat|proj}` compression→tension damage temper (oracle + C++ kernel + wrapper, #327) + P3 Tier-3 explicit (do_tangent-independence gate + CentralDifference softening demo, #328 — robustness trilogy complete) + Tier-3 quasi-static prescribed-motion + cross-integrator demo (CDL + ExplicitBathe, oracle-backbone match, #333) + P2i multiaxial-damage apportioning (tensile ω-drive `E·ε̃` Eq.37, oracle + C++ kernel + g++ biaxial byte-check, #336) + P4 finite-strain via `nDMaterial LogStrain` (isotropic ⇒ `σ(QF)=Qσ(F)Qᵀ` EXACT, no §14.11 boundary, validation gate, #339) + P5a confined-fiber view ORACLE ("Mander by mechanism" — fcc/fc reproduces Mander ≤2.9% from a self-mobilized hoop pressure, #341). NEXT = P5b C++ confined-fiber view + condensed 1-D tangent + fiber integration → P6 auto-hybrid (plastic-dissipation regularization DEFERRED: approach A — qh2 cap — empirically backfires, small FE-visible payoff). See §0 / §6b for the current-state handoff.
 related:
   - "[[31_ladruno_concrete3d_adr]]"          # the ADR (decision record)
   - "[[project_ladruno_concrete3d]]"          # the agent-memory pointer
   - "[[10_ladruno_j2_plasticity]]"            # the kernel pattern + return-map IMPL-EX donor
   - "[[19_ladruno_rc_shell_adr]]"             # the shell/MCFT sibling (33015)
-updated: 2026-06-20
+updated: 2026-06-21
 ---
 
 # LadrunoConcrete3D — handoff to the C++ implementer
@@ -29,7 +29,7 @@ cyclic, Tier-3).
 
 ---
 
-## 0. Current state (2026-06-20) — handoff for the next session
+## 0. Current state (2026-06-21) — handoff for the next session
 
 Everything below is **shipped to `ladruno`** unless marked. Methodology throughout: **oracle-first**
 (numpy `concrete3d_ref.py` = the verified spec) → **g++ kernel byte-check** (`concrete3d_kernel_check.cpp`
