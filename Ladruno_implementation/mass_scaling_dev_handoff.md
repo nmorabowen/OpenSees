@@ -2,12 +2,14 @@
 title: "Mass scaling + HRZ lumping — developer handoff guide"
 project: Ladruno
 status: >
-  SHIPPED to `ladruno`. HRZ mass-conserving lumping (ADR 35, `-lump hrz`) + selective
-  mass scaling `CentralDifferenceSMS` (ADR 36, INTEGRATOR classTag 33007). Validation
-  COMPLETE (ADR 37: Tier 0 fidelity #303, Tier 1 robustness #306, Tier 2 motivating-case
-  T-ZONEB #308). v1.1 features: constraint-exclusion guard #311, betaK-damped sizing #314.
-  NEXT = T-MPI (parallel shared-node ΔM reduction — CI-testability gap) or T-CONSISTENT
-  (consistent/Olovsson anisotropic scaling). See §0.
+  SHIPPED to `ladruno` — the explicit-integrator SMS axis is COMPLETE. HRZ lumping
+  (ADR 35, `-lump hrz`) + selective mass scaling, LUMPED and CONSISTENT (Olovsson),
+  on ALL THREE explicit integrators: CentralDifference (33007/33008), ExplicitBathe
+  (33009/33010), ExplicitBatheLNVD (33011/33012). ADR 36 (lumped), ADR 38 (consistent),
+  ADR 37 validation. PRs #295/#303/#306/#308/#311/#314 (CD lumped+validation),
+  #320 (CD consistent), #324 (ExplicitBathe + LNVD families; subsumed #322). All merged.
+  NEXT (both v2/architectural, neither started): V4 consistent-mass energy-recorder KE,
+  T-MPI parallel shared-node reduction. See §0.
 tags:
   - integrator
   - explicit
@@ -23,38 +25,84 @@ code lives, the non-obvious decisions, the validated behavior, and what is left.
 
 ---
 
-## 0. Current state (2026-06-20) — handoff for the next session
+## 0. Current state (2026-06-21) — handoff for the next session
 
-**The feature is shipped and validated.** Both ADR-35 (HRZ) and ADR-36 (SMS) are on
-`ladruno`, the ADR-37 validation plan is complete (Tier 0/1/2), and the two highest-value
-v1.1 correctness features (constraint-exclusion guard, betaK-damped sizing) are in.
+**The explicit-integrator SMS axis is COMPLETE and merged to `ladruno`.** Selective mass
+scaling exists in BOTH flavors — **lumped** (conventional/DT2MS, ADR 36) and **consistent**
+(Olovsson, ADR 38) — on ALL THREE Ladruno explicit integrators. Six integrator classTags:
 
-| Increment | What | PR |
-|---|---|---|
-| HRZ + SMS | `-lump hrz`, `CentralDifferenceSMS` (classTag 33007) | #295 |
-| Tier 0 | fidelity: reference-match, (s−1)·m modal magnitude, HRZ-rowsum-unsafe | #303 |
-| Tier 1 | robustness: cap fires, energy closure, self-report skip, constraint disclosure | #306 |
-| Tier 2 | T-ZONEB: SMS on a gmsh-meshed refined 3D bar (motivating case) | #308 |
-| v1.1 | constraint-exclusion guard (MP slave nodes) | #311 |
-| v1.1 | betaK-damped sizing (closed form) | #314 |
+| Integrator | Lumped | Consistent (Olovsson) | shipped via |
+|---|---|---|---|
+| `CentralDifference[Ladruno]` | `CentralDifferenceSMS` **33007** | `CentralDifferenceSMSConsistent` **33008** | #295/#303/#306/#308/#311/#314 ; #320 |
+| `ExplicitBathe` (Noh-Bathe) | `ExplicitBatheSMS` **33009** | `ExplicitBatheSMSConsistent` **33010** | #324 (subsumed #322) |
+| `ExplicitBatheLNVD` (+FLAC) | `ExplicitBatheLNVDSMS` **33011** | `ExplicitBatheLNVDSMSConsistent` **33012** | #324 |
 
-**Also fixed along the way (#306):** an upstream openseespy bug — `PythonStream::err_out`
-fed the message AS the printf format to `PySys_FormatStderr`, so any literal `%` in an
-`opserr` message was silently eaten (the SMS cap warning was illegible). Fix:
-`PySys_FormatStderr("%s", msg)`. Upstreamable (CWE-134). See [[LEDGER_quirks]].
+All on `ladruno` (confirmed: `git show origin/ladruno:SRC/classTags.h` has all 6 tags;
+the 8 EB/LNVD family files are in the tree). ADR-37 validation (Tier 0/1/2) complete for
+the CD lumped path; the consistent + EB/LNVD families are validated by their own Zone-A
+suites (see §4).
 
-**What's NEXT (both substantial, neither started):**
-- **T-MPI — parallel shared-node ΔM reduction.** v1 is sequential / partition-interior
-  only; a partition-boundary node gets only rank-local Δmₑ and the only MPI reduction is
-  the scalar dt, so shared-node masses desync across ranks. The fix is `MPI_Allreduce` of
-  the per-shared-node injected ΔM. **Caveat: the Zone-A CI gate is single-process**, so
-  T-MPI (a 2-rank `mpiexec` test) cannot be gated in CI — validate locally only. First do a
-  read-only investigation of how OpenSeesMP assembles shared-node mass (it may already sum
-  `setMass` contributions, shrinking or removing the need).
-- **T-CONSISTENT — consistent/Olovsson anisotropic scaling.** v1 injects an isotropic
-  diagonal Δm. Consistent (anisotropic) scaling preserves frequencies better at the same
-  %added-mass — the "v2" selling point. Larger change (inject a consistent ΔM matrix), but
-  sequential and fully Zone-A-testable.
+**The consistent (Olovsson) architecture — the one big idea (ADR 38).** Lumped scaling
+adds an isotropic diagonal `(s−1)·mₐ` to each throttling element's nodes, which shifts ALL
+global frequencies incl. f1. Consistent scaling injects the **centroidal** scaling mass
+`M̄ₑ = β[diag(mₐ) − m mᵀ/Mₑ]` whose **row sums are zero** ⇒ `M̄·t_rigid = 0` ⇒ rigid
+translation gets no added inertia ⇒ **f1 preserved** while only the relative/deformation
+modes (which govern the explicit step) are loaded. Measured (transient FFT, oracle Case-A
+bar): **f1 −0.17% (consistent) vs −53.4% (lumped)** at the same dtTarget — identical across
+all three integrators.
+
+`M̃ = M_lump + ΣM̄ₑ` is SPD but **non-diagonal**, so it can't live in `Node` mass and
+`system Diagonal` can't invert it trivially. The solve is the key mechanism, shared by all
+three consistent integrators:
+- A protected **no-op `virtual refineAccel(Vector&)` hook** was added to each explicit base
+  (`CentralDifferenceLadruno`, `ExplicitBathe`, `ExplicitBatheLNVD`), called at every site
+  that consumes a diagonal `a = M_lump⁻¹r` solve (CD: starter + update; the Noh-Bathe pair:
+  both sub-steps `A_tpdt`/`A_tdt`). **Default no-op ⇒ the base + lumped paths are
+  byte-identical** (a guarantee, not something to prove; base regressions confirm it).
+- The consistent subclass overrides it to: read the **factored `DiagonalSOE`** (post-solve
+  `getDiagonalA()` = `1/mass`, the Jacobi preconditioner AND the way to recover the RHS as
+  `r = a / Ainv`), then run a **matrix-free Jacobi-preconditioned CG** (`Ladruno::consistentPCG`)
+  to replace `a` with `M̃⁻¹r`. Converges in 3–21 iters (M̄ is a small perturbation of the
+  dominant lumped diagonal). It NEVER mutates `Node` mass ⇒ no inject/restore lifecycle.
+- All sizing (`dt_e`, self-report skip, betaK-damped `s = T²+2Tc`, MP-node exclusion, cap)
+  is the ONE shared kernel `LadrunoMassScaling.h` (`buildMassScaling` / `applyMassScaling`
+  for lumped; `buildMassScalingConsistent` / `consistentMatVec` / `consistentPCG` +
+  `struct ConsistentBlock` for consistent). Oracle: `Ladruno_implementation/mass_scaling_consistent/`.
+
+**Two adversarial-review findings folded (don't re-discover):**
+- **CONSISTENT excludes BOTH slave AND master MP nodes** (lumped excludes only slaves).
+  Under the default `Transformation` handler an element touching an MP *master/retained*
+  node has a transformed `FE_Element::getID()` LARGER than the element `n` → pairing it with
+  the n×n `M̄` was an OOB read. Fix: exclude slave+master + a defensive `getID().Size()==n`
+  guard (also keeps `M̄` off every ADR-30 projector equation). See [[LEDGER_quirks]].
+- **LNVD factories validate `alpha ∈ [0,1)`** to match the parent `ExplicitBatheLNVD` contract.
+
+**Also fixed earlier (#306):** an upstream openseespy bug — `PythonStream::err_out` fed the
+message AS the printf format to `PySys_FormatStderr`, eating literal `%` in `opserr`. Fix:
+`PySys_FormatStderr("%s", msg)`. Upstreamable (CWE-134).
+
+**What's NEXT (both v2/architectural, neither started):**
+- **V4 — consistent-mass energy closure.** The `EnergyBalanceRecorder` sums node/element
+  `getMass()` (diagonal) for KE, so it does NOT see the cross-node `M̄ₑ` (the consistent KE
+  doesn't close in the recorder; the lumped path's does). A correct fix needs a
+  recorder↔integrator KE hook — but the recorder holds only a `Domain*` and has NO access to
+  the active integrator (verified), so this is a real architectural seam, not a quick edit.
+  Documented gap for all three consistent integrators.
+- **T-MPI — parallel shared-node ΔM reduction.** v1 is sequential / partition-interior only;
+  a partition-boundary node gets only rank-local Δmₑ and the only MPI reduction is the scalar
+  dt, so shared-node masses desync across ranks. Fix = `MPI_Allreduce` the per-shared-node
+  injected ΔM (lumped) / the M̄ contribution (consistent). **Caveat: the Zone-A CI gate is
+  single-process**, so a 2-rank `mpiexec` test cannot be gated in CI — validate locally only.
+  Start read-only: determine whether OpenSeesMP already sums shared-node `setMass` across
+  ranks (may shrink/remove the need for the lumped path).
+
+**Merge mechanics lesson (this session).** #320/#322/#324 were a `--base ladruno` stack.
+After #320 squash-merged, #322 went CONFLICTING (its branch carried #320's pre-squash
+commits). Resolved by the CLAUDE.md-endorsed recovery: rebase/merge the **leaf** (#324)
+onto current `ladruno` (one conflict resolution — all conflicts were empty-`theirs`
+"keep-ours" in the shared registration/ledger files), merge #324 carrying BOTH the EB and
+LNVD families, and **close #322 as superseded** (its content shipped via #324). For future
+stacks: merge the bottom first, then immediately rebase the leaf; or just land one leaf PR.
 
 ---
 

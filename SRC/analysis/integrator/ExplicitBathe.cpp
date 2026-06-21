@@ -198,7 +198,19 @@ ExplicitBathe::ExplicitBathe(double _p, int compute_critical_timestep_,
                              bool verbose_, bool cflAbort_, double divergenceFactor_,
                              bool cflUseTangent_, int cflRecomputeEvery_,
                              CTSLumping lumping_)
-    : TransientIntegrator(INTEGRATOR_TAGS_ExplicitBathe),
+    // delegate to the protected classTag ctor with ExplicitBathe's own tag (byte-identical)
+    : ExplicitBathe(INTEGRATOR_TAGS_ExplicitBathe, _p, compute_critical_timestep_,
+                    verbose_, cflAbort_, divergenceFactor_, cflUseTangent_,
+                    cflRecomputeEvery_, lumping_)
+{
+}
+
+// Protected classTag ctor (the real init) — subclasses pass their own classTag.
+ExplicitBathe::ExplicitBathe(int classTag, double _p, int compute_critical_timestep_,
+                             bool verbose_, bool cflAbort_, double divergenceFactor_,
+                             bool cflUseTangent_, int cflRecomputeEvery_,
+                             CTSLumping lumping_)
+    : TransientIntegrator(classTag),
       deltaT(0.0), p(_p), q0(0.0), q1(0.0), q2(0.0),
       U_t(0), V_t(0), A_t(0),
       U_tpdt(0), V_tpdt(0), V_fake(0), A_tpdt(0),
@@ -513,6 +525,10 @@ int ExplicitBathe::update(const Vector &U) {
     
     // Store acceleration at t + p*dt
     *A_tpdt = U;
+    // Ladruno (ADR-38): consistent mass scaling refines this sub-step-1 accel
+    // (a = M_tilde^-1 r) from the just-factored diagonal SOE. Default no-op.
+    if (this->refinesAccel())
+        this->refineAccel(*A_tpdt);
 
     // Update velocity at t + p*dt (corrected)
     // v_{t+p*dt} = v_t + (a_t + a_{t+p*dt}) * p*dt/2
@@ -548,6 +564,11 @@ int ExplicitBathe::update(const Vector &U) {
     this->formUnbalance();
     theLinSOE->solve();
     *A_tdt = theLinSOE->getX();
+    // Ladruno (ADR-38): consistent mass scaling refines this sub-step-2 accel. The SOE
+    // diagonal is still the factored 1/mass (DiagonalDirectSolver only factors once;
+    // this is the "just solve" reuse), so refineAccel's r-recovery is valid here too.
+    if (this->refinesAccel())
+        this->refineAccel(*A_tdt);
 
     // Circuit breaker 1: catch a blown-up (NaN/Inf) acceleration before it
     // silently propagates through the rest of the run.

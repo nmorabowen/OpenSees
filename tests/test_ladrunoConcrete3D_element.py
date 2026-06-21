@@ -52,6 +52,8 @@ def _mat(tag, **kw):
         args += ["-implex"]
     if "eta" in kw:
         args += ["-eta", kw["eta"]]
+    if "ctTemper" in kw:
+        args += ["-ctTemper", kw["ctTemper"]]
     ops.nDMaterial(*args)
 
 
@@ -210,6 +212,87 @@ def test_response_wiring():
 def test_database_roundtrip():
     def build():
         _build(lambda t: _mat(t))
+        ops.integrator("DisplacementControl", 2, 1, 0.5 * (_FT / _E))
+        assert ops.analyze(1) == 0
+    database_roundtrip(build, probe_nodes=[2], ndf=3,
+                       probe_fn=lambda: list(ops.eleResponse(1, "material", 1, "stress")))
+
+
+# ---------------------------------------------------------------------------
+# P2g — CYCLIC no-heal: damage is MONOTONE on elastic unload (omega does NOT heal) and the nominal
+# stress unloads along the degraded damage secant. This is the end-to-end check of the wrapper commit
+# cycle carrying the new monotone drive history (sigtmax/sigcmax) under a real DisplacementControl
+# analysis (the material/g++ levels are gated by test_p2g_monotone_damage_gate + the dmg_cyclic_unload
+# byte-check). Tension: damage onset is immediate, so load with step-cutting through the limit point,
+# then elastically unload (stable, plain DisplacementControl).
+# ---------------------------------------------------------------------------
+@pytest.mark.t1
+def test_cyclic_no_heal_unload():
+    _build(lambda t: _mat(t))
+    out = []
+    eps_peak = 0.0015
+    step = eps_peak / 200; cuts = 0; guard = 0
+    while ops.nodeDisp(2, 1) < eps_peak and guard < 2000:
+        guard += 1
+        ops.integrator("DisplacementControl", 2, 1, step)
+        if ops.analyze(1) == 0:
+            out.append((ops.nodeDisp(2, 1), _sig_xx(), _wt()))
+            if cuts > 0 and guard % 4 == 0:
+                step *= 2.0; cuts -= 1
+        else:
+            step *= 0.5; cuts += 1
+            if cuts > 10:
+                break
+    assert len(out) > 10, f"tension load did not converge ({len(out)} steps)"
+    eps_rev, _, wt_rev = out[-1]
+    assert wt_rev > 0.2, f"omega_t at reversal {wt_rev} too small to test no-heal"
+
+    # --- ELASTIC UNLOAD back toward half the reversal strain (plain DisplacementControl) ---
+    nun = 60
+    ops.integrator("DisplacementControl", 2, 1, (0.5 * eps_rev - eps_rev) / nun)
+    unl = []
+    for _ in range(nun):
+        if ops.analyze(1) != 0:
+            break
+        unl.append((ops.nodeDisp(2, 1), _sig_xx(), _wt()))
+    assert len(unl) > 10, f"unload did not converge ({len(unl)} steps)"
+
+    # (1) NO HEALING — omega_t is FROZEN across the whole elastic unload (== the reversal value).
+    wt_unl = [w for _, _, w in unl]
+    assert min(wt_unl) >= wt_rev - 1.0e-9, f"omega_t healed on unload: {min(wt_unl)} < {wt_rev}"
+    assert max(wt_unl) <= wt_rev + 1.0e-9, f"omega_t grew on elastic unload: {max(wt_unl)} > {wt_rev}"
+
+    # (2) SECANT UNLOAD — the nominal stress drops toward 0 along the degraded secant; the unload
+    #     stiffness d(sig)/d(eps) is positive, below the elastic E, and ~ (1-omega_t)*E (uniaxial stress).
+    e0, s0, _ = unl[0]; e1, s1, _ = unl[-1]
+    assert s1 < s0, f"stress did not reduce on unload ({s1} !< {s0})"
+    sec_stiff = (s0 - s1) / (e0 - e1)
+    assert 0.0 < sec_stiff < _E, f"unload secant stiffness {sec_stiff} not in (0, E={_E})"
+    assert sec_stiff == pytest.approx((1.0 - wt_rev) * _E, rel=0.3), \
+        f"secant stiffness {sec_stiff} != (1-wt)E {(1.0 - wt_rev) * _E}"
+
+
+# ---------------------------------------------------------------------------
+# P2h — the -ctTemper {none|alphat|proj} compression->tension damage-coupling modes parse, run, and
+# round-trip. In PURE tension none and alphat are byte-identical (alpha_c=0 => w_t=1) and proj is lightly
+# softer; all peak at ~ft. The discriminating compression->tension RESTORATION is gated at the material
+# level (test_p2h_cttemper_gate + the g++ dmg_cttemper_* byte-checks); here we confirm the wrapper
+# plumbing (parser + commit cycle + serialization) for every mode end-to-end.
+# ---------------------------------------------------------------------------
+@pytest.mark.t1
+@pytest.mark.parametrize("mode", ["none", "alphat", "proj"])
+def test_cttemper_parses_and_runs(mode):
+    res = _drive_adaptive(lambda t: _mat(t, ctTemper=mode), 0.02, 300)
+    assert len(res) > 12, f"{mode}: only {len(res)} steps converged"
+    peak = max(s for _, s, _ in res)
+    assert peak == pytest.approx(_FT, rel=0.05), f"{mode} tension peak {peak} != ft {_FT}"
+
+
+@pytest.mark.t1
+def test_cttemper_database_roundtrip():
+    """A -ctTemper mode survives a FE_Datastore round-trip (the ctTemper int is serialized)."""
+    def build():
+        _build(lambda t: _mat(t, ctTemper="alphat"))
         ops.integrator("DisplacementControl", 2, 1, 0.5 * (_FT / _E))
         assert ops.analyze(1) == 0
     database_roundtrip(build, probe_nodes=[2], ndf=3,

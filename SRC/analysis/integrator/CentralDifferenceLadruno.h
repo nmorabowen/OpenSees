@@ -171,6 +171,17 @@ protected:
                              bool cflUseTangent, int cflRecomputeEvery,
                              CTSLumping lumping);
 
+    // Ladruno (ADR-38): acceleration-refinement hook for CONSISTENT (Olovsson) mass
+    // scaling. The diagonal `system Diagonal` solve gives a = M_lump^-1 r; the
+    // consistent path needs a = M_tilde^-1 r with M_tilde = M_lump + sum_e M_bar_e
+    // (non-diagonal). A subclass (CentralDifferenceSMSConsistent) overrides
+    // refinesAccel()->true and refineAccel() to recover r = M_lump .* a and replace
+    // a by the matrix-free PCG solve. Called at the TWO sites that consume the diagonal
+    // solve: the newStep() starter and update(). The default is a no-op, so the lumped
+    // path (this base + CentralDifferenceSMS) stays BYTE-IDENTICAL.
+    virtual bool refinesAccel(void) const { return false; }
+    virtual int  refineAccel(Vector &a)   { return 0; }
+
 private:
     // Time step
     double deltaT;

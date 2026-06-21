@@ -78,7 +78,7 @@ class LadrunoConcrete3D : public NDMaterial {
                     double e, double Df, double As,
                     double qh0, double Hp, double Ah, double Bh, double Ch, double Dh,
                     double rho, double lch, bool autoReg, bool implex = false,
-                    double eta = 0.0, int dimMode = DIM_3D);
+                    double eta = 0.0, int ctTemper = 0, int dimMode = DIM_3D);
   ~LadrunoConcrete3D();
 
   const char* getClassType(void) const { return "LadrunoConcrete3D"; }
@@ -125,6 +125,7 @@ class LadrunoConcrete3D : public NDMaterial {
   bool   autoReg;              // pull lch from the active element each step
   bool   implex;               // Tier-2 IMPL-EX (P3 robustness; default OFF = Tier-1 implicit)
   double eta;                  // Duvaut-Lions viscoplastic relaxation time (P3; default 0 = inviscid)
+  int    ctTemper;             // P2h compression->tension damage temper: 0=none 1=alphat 2=proj (default none)
 
   // ---- dimensional view (element-facing ordering; the kernel is always 3D) ----
   int    dim;                  // DIM_*
@@ -141,6 +142,7 @@ class LadrunoConcrete3D : public NDMaterial {
   double etmax_n;              // committed max equiv-strain history (Eq.43)
   double kdt1_n, kdt2_n;       // committed tensile damage histories (Eq.44-45)
   double kdc_n, kdc1_n, kdc2_n;// committed compressive damage histories (Eq.47-49)
+  double sigtmax_n, sigcmax_n; // committed monotone drive maxima (P2g: no-heal cyclic damage)
   // committed IMPL-EX bookkeeping (the implicit damage + per-variable increments + dt, for the next
   // step's extrapolation; unused when !implex)
   double wt_n, wc_n;           // committed IMPLICIT dual damage
@@ -154,6 +156,7 @@ class LadrunoConcrete3D : public NDMaterial {
   double sigEff6[6];           // trial effective stress
   double kp_t;
   double etmax_t, kdt1_t, kdt2_t, kdc_t, kdc1_t, kdc2_t;
+  double sigtmax_t, sigcmax_t;                         // trial monotone drive maxima (P2g)
   double wt_t, wc_t, dwt_t, dwc_t, depl_t[6], dtn_t;   // trial IMPL-EX bookkeeping
   double Dtan6[6][6];          // trial damaged tangent (kernel TENSOR convention)
   double omegaT, omegaC;       // trial damage variables (for recorders)

@@ -181,12 +181,13 @@ static void run_oracle_dump(const char* path) {
         fh >> tok; std::string label; fh >> label;   // DMG <label>
         double pb[12]; for (int i = 0; i < 12; ++i) fh >> pb[i];
         Params mp = makeParams(pb);
-        fh >> mp.Gf >> mp.Gc >> mp.lch >> mp.As;
+        fh >> mp.Gf >> mp.Gc >> mp.lch >> mp.As >> mp.ctTemper;   // P2h ctTemper mode (0/1/2)
         State in, out;
         for (int i = 0; i < 6; ++i) fh >> in.eps[i];
         for (int i = 0; i < 6; ++i) fh >> in.sigEff[i];
         fh >> in.kp;
         fh >> in.et_max >> in.kdt1 >> in.kdt2 >> in.kdc >> in.kdc1 >> in.kdc2;
+        fh >> in.sigtMax >> in.sigcMax;   // P2g monotone-drive history (8-field line)
         double deps[6], sigO[6];
         for (int i = 0; i < 6; ++i) fh >> deps[i];
         for (int i = 0; i < 6; ++i) fh >> sigO[i];
@@ -249,6 +250,7 @@ static void run_oracle_dump(const char* path) {
         for (int i = 0; i < 6; ++i) fh >> in.sigEff[i];
         fh >> in.kp;
         fh >> in.et_max >> in.kdt1 >> in.kdt2 >> in.kdc >> in.kdc1 >> in.kdc2;
+        fh >> in.sigtMax >> in.sigcMax;   // P2g monotone-drive history (8-field line)
         fh >> in.wt >> in.wc >> in.dwt >> in.dwc >> in.dt_n;
         for (int i = 0; i < 6; ++i) fh >> in.depl[i];
         double dt; fh >> dt;
@@ -283,6 +285,7 @@ static void run_oracle_dump(const char* path) {
         for (int i = 0; i < 6; ++i) fh >> in.sigEff[i];
         fh >> in.kp;
         fh >> in.et_max >> in.kdt1 >> in.kdt2 >> in.kdc >> in.kdc1 >> in.kdc2;
+        fh >> in.sigtMax >> in.sigcMax;   // P2g monotone-drive history (8-field line)
         double deps[6], sigVisc[6], sigInv[6];
         for (int i = 0; i < 6; ++i) fh >> deps[i];
         for (int i = 0; i < 6; ++i) fh >> sigVisc[i];
