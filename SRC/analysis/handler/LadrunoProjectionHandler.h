@@ -103,6 +103,23 @@ class LadrunoProjectionHandler : public ConstraintHandler
     std::vector<PrescribedDOF> prescribedDOFs;
     std::set<std::pair<int,int> > prescribedKey; // (nodeTag,dof) of every prescribed DOF
 
+    // --- P4c derived-prescribed slave (Tier 2: prescribed MASTER) ---------------------
+    // A slave DOF tied ONLY to prescribed master(s) (no free retained master) is itself
+    // fully determined by the prescribed motion: u_c = sum_k C_k u_{p_k} + delta, and
+    // likewise v_c / a_c (no delta). Rather than the (acceleration-only, drifting) known-RHS
+    // projection, such a slave is KINEMATICALLY imposed: excluded from the equation set
+    // (eqn = -1, like its masters) and its u/v/a set from the masters each step in applyLoad
+    // (after the masters' own disp is imposed) -> exact tracking, no drift, like Transformation.
+    // A slave tied to BOTH a free and a prescribed master (mixed) is refused (handle()).
+    struct DerivedSlave {
+        int nodeTag, dof;                        // the constrained DOF (eqn-excluded)
+        std::vector<int> masterNode, masterDof;  // its prescribed master DOFs
+        std::vector<double> coeff;               // C row entries on those masters
+        double delta;                            // Uc0 - sum_k C_k Ur0_k (disp offset only)
+    };
+    std::vector<DerivedSlave> derivedSlaves;
+    std::set<std::pair<int,int> > derivedKey;    // (nodeTag,dof) of every derived-prescribed slave
+
     // vertex bookkeeping (a vertex = one (node,dof) pair)
     std::vector<int> vtxNode;                    // node tag per vertex
     std::vector<int> vtxDof;                     // local dof per vertex
@@ -114,6 +131,7 @@ class LadrunoProjectionHandler : public ConstraintHandler
     double icTol;
 
     int buildGroups(void);                       // handle()-time grouping + diagnostics
+    int classifyDerivedSlaves(int &countDOF);    // P4c: exclude prescribed-driven slaves, refuse mixed
     int consistentMassGuard(void);               // refuse cMass on a tied DOF
 };
 
