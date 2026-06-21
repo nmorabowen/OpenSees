@@ -300,6 +300,58 @@ def test_cttemper_database_roundtrip():
 
 
 # ---------------------------------------------------------------------------
+# P3 Tier-3 — EXPLICIT dynamics. Tier-1 implicit STALLS at the unconfined tension-softening limit point
+# (the snap-back; test_uniaxial_tension_peak_and_softening needs step-cutting to crawl past it). Under an
+# EXPLICIT integrator (CentralDifference) the global solver advances on the MASS matrix and NEVER
+# factorizes the (indefinite) softening tangent, so the SAME material runs straight through softening. The
+# committed stress is byte-identical to Tier-1 (g++ B7: t3=0 — do_tangent=false == do_tangent=true). Here:
+# drive the x=1 face into deep tension softening with a prescribed-displacement ramp under CentralDifference
+# and confirm it COMPLETES every step (no stall) with the nominal stress peaking ~ft then degrading and
+# omega_t developing. rho is picked for a convenient explicit dt (a demo of the path, not a calibrated
+# rate); -lch 1 gives a gentle eps_f = Gf/(ft*lch) so the softening branch is well-resolved.
+# ---------------------------------------------------------------------------
+@pytest.mark.t1
+def test_tier3_explicit_softening():
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for t, c in _CUBE.items():
+        ops.node(t, *c)
+    _mat(1, lch=1.0, rho=2.4e-3)                  # rho => explicit dt ~ L*sqrt(rho/E); lch=1 => gentle softening
+    ops.fix(1, 1, 1, 1); ops.fix(2, 0, 1, 1); ops.fix(3, 0, 0, 1); ops.fix(4, 1, 0, 1)
+    ops.fix(5, 1, 1, 0); ops.fix(6, 0, 1, 0); ops.fix(8, 1, 0, 0)
+    ops.element("stdBrick", 1, 1, 2, 3, 4, 5, 6, 7, 8, 1)
+    # prescribed-displacement ramp on the x=1 face (dof 1 of nodes 2,3,6,7) => uniform uniaxial tension.
+    umax, tramp = 0.03, 0.1                       # strain ~0.03 (deep softening, eps0=ft/E=1e-4); slow ramp
+    ops.timeSeries("Linear", 1, "-factor", 1.0 / tramp)   # series(tramp) = 1 => prescribed disp reaches umax
+    ops.pattern("Plain", 1, 1)
+    for n in (2, 3, 6, 7):
+        ops.sp(n, 1, umax)
+    ops.constraints("Transformation")
+    ops.numberer("Plain")
+    ops.system("Diagonal")                        # lumped-mass explicit solve (never factorizes the tangent)
+    ops.test("NormDispIncr", 1.0e-8, 10, 0)
+    ops.algorithm("Linear")
+    dt = 5.0e-5                                    # < CFL (L*sqrt(rho/E) ~ 2.8e-4)
+    ops.integrator("CentralDifference")
+    ops.analysis("Transient")
+    nsteps = int(round(tramp / dt))
+    sig, wt, done = [], [], 0
+    for _ in range(nsteps):
+        if ops.analyze(1, dt) != 0:
+            break
+        done += 1
+        sig.append(_sig_xx()); wt.append(_wt())
+    # (1) COMPLETES — explicit runs the full ramp through softening where Tier-1 implicit stalls.
+    assert done == nsteps, f"explicit run stalled at step {done}/{nsteps}"
+    assert all(abs(s) < 1.0e3 for s in sig), "stress blew up (explicit instability)"
+    # (2) the nominal stress PEAKS near ft then DEGRADES (softening captured); omega_t develops.
+    peak = max(sig)
+    assert 0.5 * _FT < peak < 1.5 * _FT, f"tension peak {peak} not ~ft {_FT}"
+    assert sig[-1] < 0.6 * peak, f"did not soften past the peak (end {sig[-1]} vs peak {peak})"
+    assert max(wt) > 0.3, f"omega_t {max(wt)} did not develop under explicit softening"
+
+
+# ---------------------------------------------------------------------------
 # MULTIAXIAL / SHEAR coverage — pins the wrapper's engineering<->tensor shear conversions
 # (strain x0.5 in, x2 out; tangent shear-COLUMNS x0.5; stress unscaled) against the numpy oracle.
 # The element gates above drive only node-2 dof-1, so every engineering shear component is identically
