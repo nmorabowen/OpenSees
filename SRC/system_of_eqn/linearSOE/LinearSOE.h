@@ -87,7 +87,19 @@ class LinearSOE : public MovableObject
 
     virtual void setX(int loc, double value) =0;
     virtual void setX(const Vector &X) =0;
-    
+
+    // Ladruno: distributed-diagonal hooks for the consistent (Olovsson) mass-scaling
+    // parallel PCG. A shared-library integrator (OpenSeesLIB) must drive a cross-rank
+    // PCG without referencing the MPI-only MPIDiagonalSOE type, which is linked only
+    // into the MP executables. These default to a serial no-op; MPIDiagonalSOE overrides
+    // them. isDistributedDiagonal() gates the parallel path; getScalingDiagonalA()
+    // returns the factored (1/mass) GLOBAL diagonal; assembleSharedSum() sums a vector's
+    // shared-DOF entries across ranks; globalReduceSum() all-reduces a scalar.
+    virtual bool isDistributedDiagonal(void) const { return false; }
+    virtual const double *getScalingDiagonalA(void) const { return 0; }
+    virtual int assembleSharedSum(Vector &v) { return 0; }
+    virtual double globalReduceSum(double localVal) const { return localVal; }
+
     LinearSOESolver *getSolver(void);
     
   protected:

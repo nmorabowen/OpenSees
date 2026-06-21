@@ -8,11 +8,13 @@ status: >
   (33009/33010), ExplicitBatheLNVD (33011/33012). ADR 36 (lumped), ADR 38 (consistent),
   ADR 37 validation. PRs #295/#303/#306/#308/#311/#314 (CD lumped+validation),
   #320 (CD consistent), #324 (ExplicitBathe + LNVD families; subsumed #322). All merged.
-  V4 (consistent-mass energy-recorder KE closure) DONE. T-MPI: the LUMPED path is now
+  V4 (consistent-mass energy-recorder KE closure) DONE. T-MPI: the LUMPED path is
   VALIDATED parallel-correct (np=1 vs np=2 bit-identical; the distributed/MPI diagonal solver
-  sums shared-node ΔM at solve time) and the stale "not reduced across ranks" warnings were
-  corrected; the CONSISTENT (Olovsson) path is confirmed NOT parallel-safe (rank-local PCG) —
-  its distributed CG is the remaining increment. See §0.
+  sums shared-node ΔM at solve time) and the stale "not reduced" warnings were corrected;
+  the CONSISTENT (Olovsson) path now has a DISTRIBUTED PCG (V5) — VALIDATED under OpenSeesMP
+  `system MPIDiagonal` (MPI np=2 == serial reference). The parallel SMS axis is COMPLETE for
+  OpenSeesMP (OpenSeesSP/DistributedDiagonalSOE is the deferred increment). NOT CI-gated
+  (single-process CI). See §0. (Lumped T-MPI + consistent V5 on this branch / PR.)
 tags:
   - integrator
   - explicit
@@ -101,8 +103,9 @@ message AS the printf format to `PySys_FormatStderr`, eating literal `%` in `ops
   (recorder KE == lumped+`M̄` to ~machine precision, all 3 integrators, `M̄`≈77% of KE on a
   deformation-rich IC) + CD mechanical-energy conservation (drift <5% vs the pre-V4
   reconstruction `½vᵀM_lump v + IE`, which oscillates with the omitted `M̄`). See [[LEDGER_quirks]].
-- **T-MPI — parallel shared-node ΔM reduction. LUMPED path: VALIDATED parallel-correct
-  (this session); CONSISTENT path: confirmed NOT parallel-safe.** The earlier worry
+- **T-MPI — parallel shared-node ΔM reduction. LUMPED path: VALIDATED parallel-correct;
+  CONSISTENT path: distributed PCG IMPLEMENTED + VALIDATED (V5). The parallel SMS axis is
+  COMPLETE for OpenSeesMP.** The earlier worry
   ("a partition-boundary node gets only rank-local Δmₑ … shared-node masses desync") was
   **WRONG for the lumped path.** Why: in a parallel build `system Diagonal` auto-swaps to
   `DistributedDiagonalSOE` (OpenSeesSP) and `system MPIDiagonal` → `MPIDiagonalSOE`
@@ -123,13 +126,25 @@ message AS the printf format to `PySys_FormatStderr`, eating literal `%` in `ops
   `ExplicitBatheSMS`, `ExplicitBatheLNVDSMS` `.cpp` limitation (3) + `CentralDifferenceSMS.h`
   scope comment): they used to say "parallel shared/boundary nodes are not mass-reduced
   across ranks", now they state the truth (lumped IS reduced via the distributed/MPI diagonal
-  solver; consistent is not). The **CONSISTENT (Olovsson) path is genuinely NOT
-  parallel-safe** — its matrix-free PCG (`consistentPCG`/`consistentMatVec` in
-  `LadrunoMassScaling.h`) uses rank-local inner products (`res ^ z`, `p ^ Ap`) with no
-  `MPI_Allreduce` and no shared-DOF matvec exchange. Making it parallel = a real distributed
-  CG (global dot products + shared-DOF `M̄` accumulation); the consistent-variant warnings
-  ("not reduced") are already accurate. **Caveat: the Zone-A CI gate is single-process**, so
-  the 2-rank `mpiexec` test cannot be gated in CI — it is a local-only validation.
+  solver; consistent is not).
+- **CONSISTENT (Olovsson) parallel — V5, DONE.** The serial `consistentPCG`/`consistentMatVec`
+  ARE rank-local (local `res^z`/`p^Ap`, no shared-DOF `M̄` exchange), so a **distributed PCG**
+  was added: `consistentParPCG`/`consistentParMatVec` + `ConsistentParOps` in
+  `LadrunoMassScaling.h`, driven from the shared `LadrunoConsistentRefine.h` (one body for all
+  3 consistent integrators, serial + MPI). **The one idea** is the weight `wᵢ=1/multiplicityᵢ`:
+  the matvec applies the GLOBAL (replicated) lumped diagonal WEIGHTED + off-diagonal `M̄ₑ` in
+  FULL then `assembleSharedSum`s shared DOFs across ranks (diagonal → full-once, off-diagonal
+  accumulates); inner products use the same `w` + `globalReduceSum` (all-reduce). Every CG
+  control scalar is global ⇒ identical iter count on all ranks ⇒ collectives lockstep (no
+  deadlock); `w≡1`/no-op assemble/identity reduce ⇒ collapses to the serial PCG at `np=1`.
+  **Architecture gotcha (see [[LEDGER_quirks]]):** the integrators are in the shared
+  `OpenSeesLIB`, which can NOT `#ifdef _PARALLEL_INTERPRETERS` nor reference `MPIDiagonalSOE`
+  (both exist only in the MP executables). Dispatch goes through 4 new `LinearSOE` base virtuals
+  (serial no-op defaults; `MPIDiagonalSOE` overrides). **Validated** (`mass_scaling_mpi/
+  run_consistent.ps1`): MPI `np=2` == serial `DiagonalSOE`+`consistentPCG` gold reference
+  (max abs diff 0 to recorder precision) AND `np=1`==`np=2` AND consistent (1.746e-3) ≠ lumped
+  (2.35e-3); serial Zone-A 36/36 green. **Caveat: the Zone-A CI gate is single-process**, so
+  the 2-rank `mpiexec` tests (lumped + consistent) cannot be gated in CI — local-only validation.
   **Tcl-parser gap found:** `integrator CentralDifferenceSMS …` errors in the *Tcl*
   `OpenSeesMP.exe` ("No Integrator type exists") — SMS is registered only in the interpreter/
   openseespy layer (`OpenSeesCommands.cpp`), not the legacy `SRC/tcl/commands.cpp:5588`

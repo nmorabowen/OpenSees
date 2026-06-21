@@ -52,6 +52,17 @@ class MPIDiagonalSOE : public LinearSOE
     const Vector &getB(void);
     double normRHS(void);
 
+    // Ladruno (consistent/Olovsson parallel PCG): override the LinearSOE distributed-
+    // diagonal hooks so a shared-library integrator can run a cross-rank PCG through the
+    // base pointer. getScalingDiagonalA() exposes the factored diagonal (post-solve
+    // A[i]=1/mass_i, GLOBAL at shared DOFs); assembleSharedSum() sums a vector's shared-
+    // DOF entries across ranks (mirrors the solver B-exchange); globalReduceSum() all-
+    // reduces a scalar. See LadrunoConsistentRefine.h.
+    bool isDistributedDiagonal(void) const { return true; }
+    const double *getScalingDiagonalA(void) const { return A; }
+    int assembleSharedSum(Vector &v);
+    double globalReduceSum(double localVal) const;
+
     int setDiagonalSolver(MPIDiagonalSolver &newSolver);    
     
     int sendSelf(int commitTag, Channel &theChannel);

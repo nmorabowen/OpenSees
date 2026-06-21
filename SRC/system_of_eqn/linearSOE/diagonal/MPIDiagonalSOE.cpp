@@ -83,11 +83,78 @@ MPIDiagonalSOE::~MPIDiagonalSOE()
 }
 
 
-int 
+int
 MPIDiagonalSOE::getNumEqn(void) const
 {
   return size;
 }
+
+
+// Ladruno (consistent/Olovsson parallel PCG) ===============================
+// Sum vector v's shared-DOF entries across neighbour ranks, in place, so every
+// sharing rank ends with the global sum at its shared DOFs. Mirrors the RHS (B)
+// exchange in MPIDiagonalSolver::solve() (the "else" / notSet==false branch),
+// but on an arbitrary vector. REQUIRES the neighbour maps already built by the
+// first solve() (guaranteed: refineAccel runs after the step's diagonal solve);
+// a no-op if they are not yet set up. v.Size() must equal the SOE size.
+int
+MPIDiagonalSOE::assembleSharedSum(Vector &v)
+{
+  if (v.Size() != size) return -1;
+  // The send buffers (myActualNeighborsBsToSend) AND the per-neighbour posloc sizes
+  // (myNeighborsSizes) are populated only by the FIRST solve()'s setup pass; a no-op
+  // before that (refineAccel always runs post-solve, so this just guards np=1 / a
+  // pre-solve call). myActualNeighborsSharedDOFs is allocated earlier in setSize, so
+  // it is NOT the right readiness signal.
+  if (myActualNeighborsBsToSend.empty()) return 0;
+
+  double *vv = &v(0);
+  int n = (2*actualNeighbors > 0) ? 2*actualNeighbors : 1;
+  MPI_Request *theRequests = new MPI_Request[n];
+  MPI_Status  *theStatuses = new MPI_Status[n];
+  int ct = 0;
+
+  for (int i = 0; i < maxNeighbors; i++)
+    if ((i != processID) && (myNeighbors[i] == 1))
+      MPI_Irecv((myActualNeighborsSharedBs.find(i)->second), maxShared, MPI_DOUBLE,
+                i, MPI_ANY_TAG, MPI_COMM_WORLD, &theRequests[ct++]);
+
+  for (int i = 0; i < maxNeighbors; i++) {
+    if ((i != processID) && (myNeighbors[i] == 1)) {
+      int upto = myNeighborsSizes[i];
+      double *tmpptr = (myActualNeighborsBsToSend.find(i)->second);
+      int *posloc = (myActualNeighborsSharedDOFs.find(i)->second);
+      for (int jj = 0; jj < upto; jj++)
+        tmpptr[jj] = vv[posloc[jj]];
+      MPI_Isend(tmpptr, upto, MPI_DOUBLE, i, i, MPI_COMM_WORLD, &theRequests[ct++]);
+    }
+  }
+
+  MPI_Waitall(ct, theRequests, theStatuses);
+
+  for (int i = 0; i < maxNeighbors; i++) {
+    if ((i != processID) && (myNeighbors[i] == 1)) {
+      int *posloc = (myActualNeighborsSharedDOFs.find(i)->second);
+      double *dat = (myActualNeighborsSharedBs.find(i)->second);
+      for (int k = 0; k < myNeighborsSizes[i]; k++)
+        vv[posloc[k]] += dat[k];
+    }
+  }
+
+  delete [] theRequests;
+  delete [] theStatuses;
+  return 0;
+}
+
+// Sum a scalar across all ranks (global inner-product reduction for the PCG).
+double
+MPIDiagonalSOE::globalReduceSum(double localVal) const
+{
+  double g = 0.0;
+  MPI_Allreduce(&localVal, &g, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+  return g;
+}
+// Ladruno end ==============================================================
 
 
 

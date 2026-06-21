@@ -69,10 +69,48 @@ The integrators also print a (false-alarm) CFL warning because the per-element d
 eigensolve cannot see the injected nodal mass — the run is in fact stable (bounded,
 bit-identical). This is the documented dt_cr-vs-augmentation blind spot (LEDGER_quirks).
 
+## Consistent (Olovsson) parallel — V5
+
+The lumped result above needs **no** MPI work (the distributed/MPI diagonal solver already
+reduces shared-node mass). The **consistent (Olovsson)** path is different: it solves
+`M_tilde a = r` by a matrix-free Jacobi-PCG, and the serial `consistentPCG` is rank-local
+(local inner products, no shared-DOF `M_bar` exchange) — wrong at partition boundaries. V5
+adds a **distributed PCG** (`consistentParPCG` in `LadrunoMassScaling.h`, driven by
+`LadrunoConsistentRefine.h`) keyed on one weight `w_i = 1/multiplicity_i`:
+
+- matvec: GLOBAL (replicated) lumped diagonal applied WEIGHTED + off-diagonal `M_bar_e` in
+  FULL, then `assembleSharedSum` across ranks ⇒ diagonal collapses to full-once, off-diagonal
+  accumulates over all element-owning ranks;
+- inner products: same `w` + `globalReduceSum` (all-reduce) ⇒ each shared DOF counted once;
+- all CG control scalars are global ⇒ identical iteration count on every rank ⇒ the per-iter
+  collectives stay in lockstep (no deadlock). At `np=1` it collapses to the serial PCG.
+
+Because the integrators live in the shared `OpenSeesLIB` (compiled once, linked into serial
+AND MP) they cannot reference the MP-only `MPIDiagonalSOE`, so dispatch goes through new
+`LinearSOE` base virtuals that `MPIDiagonalSOE` overrides.
+
+```powershell
+cmd /c "Ladruno_scripts\build.bat OpenSeesPyMP"   # (also OpenSeesPy for the serial reference)
+powershell -ExecutionPolicy Bypass -File 'Ladruno_implementation\mass_scaling_mpi\run_consistent.ps1'
+```
+
+Measured: `np=1` vs `np=2` match to recorder precision (`max |abs diff| 0`, final 1.746e-3),
+and the **gold cross-check** — MPI `np=2` vs the serial `DiagonalSOE`+`consistentPCG`
+reference (`sms_bar_serial_consistent.py`) — also matches to recorder precision. The
+consistent final (1.746e-3) differs from the lumped final (2.35e-3), confirming it is
+genuinely Olovsson, not a lumped fallback. Serial Zone-A 36/36 stays green.
+
+> Non-vacuity: a stale binary once made BOTH ranks diverge to the same overflow, which a
+> naive A/B compare "passed". `compare*.py` now reject non-finite / `|disp|>1.0` output, and
+> the serial cross-check rules out a bug shared by `np=1` and `np=2`.
+
 ## Files
 
-- `sms_bar_mp.py` — the openseespy MP model (handles np=1 and np=2).
+- `sms_bar_mp.py` — the openseespy MP model, LUMPED `CentralDifferenceSMS` (np=1 and np=2).
+- `sms_bar_mp_consistent.py` — MP model, CONSISTENT `CentralDifferenceSMSConsistent`.
+- `sms_bar_serial_consistent.py` — serial reference (`opensees.pyd`, `system Diagonal`).
 - `sms_bar_mp.tcl` — Tcl twin; **does not run** (`CentralDifferenceSMS` absent from the
   legacy Tcl `integrator` parser) — kept to document that gap.
-- `compare.py` — reads `tip_np1.out` / `tip_np2.out`, prints PASS/FAIL.
-- `run.ps1` — runs np=1 then np=2 via Intel `mpiexec` and compares.
+- `compare.py` / `compare_consistent.py` — read the `tip*_np*.out` files, print PASS/FAIL
+  (both reject diverged/non-finite output).
+- `run.ps1` / `run_consistent.ps1` — run np=1 then np=2 via Intel `mpiexec` and compare.

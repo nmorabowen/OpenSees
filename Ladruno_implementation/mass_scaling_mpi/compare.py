@@ -5,7 +5,20 @@ PASS criterion: the np=2 (shared-node, cross-rank DeltaM reduction) history must
 match the np=1 (whole-model, all-local injection) history to round-off. A failure
 means the shared-node fictitious mass was NOT summed across the partition.
 """
+import math
 import sys
+
+# Physical sanity bound (unit-load bar tip disp is O(1e-3)). A diverged np=1 and np=2
+# can match each other's overflow garbage and falsely "pass" -- reject non-finite/huge.
+PHYS_MAX = 1.0
+
+
+def finite_ok(rows, tag):
+    for _, d in rows:
+        if not math.isfinite(d) or abs(d) > PHYS_MAX:
+            print(f"FAIL: {tag} DIVERGED (non-finite or |disp|>{PHYS_MAX}: {d:.3e})")
+            return False
+    return True
 
 
 def load(path):
@@ -29,6 +42,9 @@ def main():
         sys.exit(1)
     if len(ref) != len(par):
         print(f"WARN: step count differs ref={len(ref)} par={len(par)} (compare first {n})")
+
+    if not finite_ok(ref[:n], "np=1") or not finite_ok(par[:n], "np=2"):
+        sys.exit(1)
 
     max_abs = 0.0
     max_rel = 0.0

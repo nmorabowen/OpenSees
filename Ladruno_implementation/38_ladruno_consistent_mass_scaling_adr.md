@@ -181,3 +181,29 @@ dominant lumped diagonal, so the preconditioned operator is well-conditioned ~`1
   f1 **−0.17% vs −53.41%**. Zone-A `tests/test_explicitBatheLNVDSMS_integrator.py`. The
   explicit-integrator SMS axis (CentralDifference / ExplicitBathe / ExplicitBatheLNVD) is now
   complete for both lumped and consistent.
+- **2026-06-21 — V5: distributed (MPI) consistent PCG — DONE.** The serial `consistentPCG`
+  is rank-local (local inner products, no shared-DOF `M̄` exchange), so the consistent path
+  was wrong at partition boundaries under OpenSeesMP. V5 adds a distributed PCG
+  (`consistentParPCG`/`consistentParMatVec` + `ConsistentParOps` in `LadrunoMassScaling.h`)
+  built on ONE ownership-free weight `wᵢ=1/multiplicityᵢ` (mult = #ranks sharing DOF i):
+  the matvec applies the GLOBAL (replicated) lumped diagonal WEIGHTED + off-diagonal `M̄ₑ`
+  in FULL then sum-assembles shared DOFs across ranks (diagonal → full-once, off-diagonal
+  accumulates); global inner products use the same `w` + all-reduce; every CG control scalar
+  is global ⇒ identical iteration count on all ranks ⇒ collectives stay in lockstep (no
+  deadlock). Collapses byte-identically to the serial PCG at `np=1` (no neighbours, `w≡1`,
+  identity reduce) ⇒ serial path untouched. **Architecture:** the 3 consistent integrators
+  live in the shared `OpenSeesLIB` and cannot reference the MP-only `MPIDiagonalSOE`
+  (`_PARALLEL_INTERPRETERS` + that SOE exist only in the MP executables), so dispatch goes
+  through 4 new `LinearSOE` base virtuals (serial no-op defaults; `MPIDiagonalSOE` overrides
+  `getScalingDiagonalA`/`assembleSharedSum`/`globalReduceSum`/`isDistributedDiagonal`). The
+  3 `refineAccel` bodies are factored into the shared `LadrunoConsistentRefine.h` (collective-
+  safe early-returns). **Validation** (`Ladruno_implementation/mass_scaling_mpi/`, local
+  2-rank, NOT CI-gated — single-process CI): MPI `np=2` == serial `DiagonalSOE`+`consistentPCG`
+  gold reference (max abs diff 0 to recorder precision, final 1.746e-3) AND `np=1`==`np=2` AND
+  consistent (1.746e-3) ≠ lumped (2.35e-3) ⇒ genuinely Olovsson, partition-invariant. Serial
+  Zone-A 36/36 green (no regression from the `refineAccel` refactor). Two bugs caught & fixed
+  en route: `build.bat` honored only `%1` (built only the first target → stale MP binary), and
+  the A/B comparator passed two diverged runs (now rejects non-finite). With the lumped path
+  already parallel-correct (T-MPI), the parallel SMS axis is COMPLETE. Lumped/consistent under
+  OpenSeesSP (`system Diagonal`→DistributedDiagonalSOE) is the remaining (deferred) increment —
+  it would need the analogous Channel-based assemble, behind the same virtuals.
