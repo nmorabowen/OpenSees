@@ -8,9 +8,10 @@ status: >
   (33009/33010), ExplicitBatheLNVD (33011/33012). ADR 36 (lumped), ADR 38 (consistent),
   ADR 37 validation. PRs #295/#303/#306/#308/#311/#314 (CD lumped+validation),
   #320 (CD consistent), #324 (ExplicitBathe + LNVD families; subsumed #322). All merged.
-  V4 (consistent-mass energy-recorder KE closure) DONE this session — global
-  MassScalingEnergyRegistry conduit, all 3 consistent integrators. NEXT (architectural,
-  not started): T-MPI parallel shared-node reduction. See §0.
+  V4 (consistent-mass energy-recorder KE closure) DONE (PR #331) — global
+  MassScalingEnergyRegistry conduit, all 3 consistent integrators. NEXT (architectural):
+  T-MPI — read-only investigation DONE, scope narrowed to the CONSISTENT path only (the
+  LUMPED path is already reduced by DistributedDiagonalSolver; not CI-gatable). See §0.
 tags:
   - integrator
   - explicit
@@ -99,13 +100,25 @@ message AS the printf format to `PySys_FormatStderr`, eating literal `%` in `ops
   (recorder KE == lumped+`M̄` to ~machine precision, all 3 integrators, `M̄`≈77% of KE on a
   deformation-rich IC) + CD mechanical-energy conservation (drift <5% vs the pre-V4
   reconstruction `½vᵀM_lump v + IE`, which oscillates with the omitted `M̄`). See [[LEDGER_quirks]].
-- **T-MPI — parallel shared-node ΔM reduction.** v1 is sequential / partition-interior only;
-  a partition-boundary node gets only rank-local Δmₑ and the only MPI reduction is the scalar
-  dt, so shared-node masses desync across ranks. Fix = `MPI_Allreduce` the per-shared-node
-  injected ΔM (lumped) / the M̄ contribution (consistent). **Caveat: the Zone-A CI gate is
-  single-process**, so a 2-rank `mpiexec` test cannot be gated in CI — validate locally only.
-  Start read-only: determine whether OpenSeesMP already sums shared-node `setMass` across
-  ranks (may shrink/remove the need for the lumped path).
+- **T-MPI — parallel shared-node reduction (the read-only investigation is DONE — scope narrowed
+  to the CONSISTENT path only).** The original worry was that a partition-boundary node gets only
+  rank-local Δmₑ and desyncs across ranks. **Investigation finding (2026-06-21): the LUMPED path is
+  ALREADY correct in parallel — no T-MPI needed.** The explicit integrator assembles nodal mass into
+  the SOE `A` via `formNodTangent → DOF_Group::addMtoTang` (`Node::getMass`, which INCLUDES the SMS-
+  injected ΔM from `applyMassScaling`'s `Node::setMass`), and **`DistributedDiagonalSolver::solve()`
+  already SUMS shared-DOF `A` across ranks every step** (P0 gather→sum→broadcast,
+  `SRC/system_of_eqn/linearSOE/diagonal/DistributedDiagonalSolver.cpp:97-152`). So a boundary node's
+  injected mass IS reduced today (modulo the rank-local dt_cr report + cap%, which are DIAGNOSTICS,
+  not correctness). The earlier "lumped desyncs" framing was overstated — confirmed exactly as the
+  read-only check hypothesized. (NB: a first subagent pass wrongly concluded lumped "bypasses"
+  assembly; it missed the `addMtoTang` path. The `formNodTangent → addMtoTang` call is the proof.)
+  **The CONSISTENT path IS the genuine remaining item:** `M̄ₑ` is matrix-free in `refineAccel` (NOT in
+  the SOE `A`), so it never reaches `DistributedDiagonalSolver`'s reduction. A distributed run needs
+  cross-rank reduction of (a) the `consistentMatVec` scatter on partition-boundary equations and
+  (b) the PCG inner products (`res^z`, `p^Ap`) — i.e. the PCG must run as a distributed solve, not a
+  per-rank one. Hook near `consistentPCG` in `LadrunoMassScaling.h` + the boundary-DOF set from the
+  `DistributedDiagonalSOE` (`myDOFsShared`). **Caveat: the Zone-A CI gate is single-process**, so a
+  2-rank `mpiexec` test cannot be gated in CI — validate locally only. Substantial; likely multi-session.
 
 **Merge mechanics lesson (this session).** #320/#322/#324 were a `--base ladruno` stack.
 After #320 squash-merged, #322 went CONFLICTING (its branch carried #320's pre-squash
@@ -305,12 +318,19 @@ peak ratio 1.000.
 
 ## 7. Where to start the next increment
 
-- **Consistent/Olovsson scaling (recommended next):** sequential, Zone-A-testable, real
-  value. Inject a consistent ΔM matrix (not a diagonal) sized to preserve the element's
-  frequencies; pair with `T-CONSISTENT` (frequency-preservation vs lumped at the same
-  %added-mass). `applyMassScaling` currently writes diagonal-only via `Node::setMass`; the
-  consistent path needs the off-diagonal nodal mass route.
-- **MPI shared-node reduction:** start read-only — determine whether OpenSeesMP already sums
-  shared-node `setMass` contributions across ranks (Subdomain / parallel assembly). If yes,
-  the "limitation" is overstated and the fix is small; if no, `MPI_Allreduce` the per-shared
-  -node ΔM in `domainChanged`. Remember T-MPI cannot gate in the single-process CI.
+Both items that used to live here are now resolved — consistent/Olovsson scaling SHIPPED
+(33008/33010/33012, #320/#324) and V4 energy closure SHIPPED (#331); the MPI read-only
+investigation is DONE. The ONLY remaining increment:
+
+- **Consistent-path T-MPI (the genuine remaining item; the lumped path is already correct).**
+  The read-only investigation (see §0) established that the LUMPED injected mass is already
+  reduced across ranks by `DistributedDiagonalSolver::solve()` (it sums shared-DOF `A`, and the
+  injection reaches `A` via `formNodTangent → DOF_Group::addMtoTang`). The CONSISTENT path is
+  different: `M̄ₑ` is matrix-free in `refineAccel`, never assembled into `A`, so it bypasses that
+  reduction. To run distributed, the matrix-free PCG (`consistentPCG`/`consistentMatVec` in
+  `LadrunoMassScaling.h`) must become a DISTRIBUTED solve: `MPI_Allreduce` the `consistentMatVec`
+  contributions on partition-boundary equations and the two PCG inner products (`res^z`, `p^Ap`)
+  each iteration; get the boundary-DOF set from the `DistributedDiagonalSOE` (`myDOFsShared`).
+  **Substantial, multi-session, and NOT CI-gatable** (the Zone-A gate is single-process — validate
+  with a local 2-rank `mpiexec` run only). Until then the consistent integrators are
+  sequential / partition-interior only (the lumped families work in parallel).
