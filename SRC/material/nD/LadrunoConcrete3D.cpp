@@ -59,7 +59,8 @@ void* OPS_LadrunoConcrete3D(void)
     opserr << "WARNING: insufficient args\n";
     opserr << "Want: nDMaterial LadrunoConcrete3D tag? E? nu? fc? ft? Gf? Gc? "
            << "<-e e? | -kupfer ratio?> <-Df Df?> <-As As?> <-rho rho?> "
-           << "<-hardening qh0? Hp?> <-ductility Ah? Bh? Ch? Dh?> <-lch lch?> <-autoRegularization>\n";
+           << "<-hardening qh0? Hp?> <-ductility Ah? Bh? Ch? Dh?> <-lch lch?> <-autoRegularization> "
+           << "<-implex> <-eta eta?> <-ctTemper none|alphat|proj> <-hoop K? <-hoopFy fy?>>\n";
     return 0;
   }
 
@@ -89,6 +90,8 @@ void* OPS_LadrunoConcrete3D(void)
   bool implex = false;
   double eta = 0.0;
   int ctTemper = 0;            // P2h compression->tension damage temper: 0=none 1=alphat 2=proj
+  double hoopK = 0.0;          // P5 confined-fiber (BeamFiber view): passive hoop confining stiffness
+  double hoopFy = 1.0e30;      //                                     hoop yield (caps the confining pressure)
 
   while (OPS_GetNumRemainingInputArgs() > 0) {
     const char* flag = OPS_GetString();
@@ -143,6 +146,17 @@ void* OPS_LadrunoConcrete3D(void)
       else if (strcmp(mode, "alphat") == 0) ctTemper = 1;
       else if (strcmp(mode, "proj") == 0)   ctTemper = 2;
       else { opserr << "WARNING LadrunoConcrete3D: -ctTemper wants {none|alphat|proj}\n"; return 0; }
+    }
+    else if (strcmp(flag, "-hoop") == 0) {
+      // P5 confined-fiber view (§4.6): the passive transverse-steel hoop stiffness. Used ONLY by the
+      // BeamFiber view (getCopy("BeamFiber"), e.g. fibers of an NDFiberSection3d); inert for the solid
+      // 3D / plane views. Optional yield via a separate -hoopFy (default = no yield).
+      numData = 1;
+      if (OPS_GetDoubleInput(&numData, &hoopK) < 0 || hoopK < 0.0) { opserr << "WARNING LadrunoConcrete3D: -hoop wants K >= 0\n"; return 0; }
+    }
+    else if (strcmp(flag, "-hoopFy") == 0) {
+      numData = 1;
+      if (OPS_GetDoubleInput(&numData, &hoopFy) < 0 || hoopFy <= 0.0) { opserr << "WARNING LadrunoConcrete3D: -hoopFy wants fy > 0\n"; return 0; }
     }
     else {
       opserr << "WARNING LadrunoConcrete3D: unknown option '" << flag << "'\n";
@@ -203,8 +217,17 @@ void* OPS_LadrunoConcrete3D(void)
     opserr << "LadrunoConcrete3D (tag " << tag << "): -ctTemper proj — compression->tension damage "
            << "coupling tempered by the tensile-stress-projected plastic-strain fraction.\n";
 
+  if (hoopK > 0.0) {
+    opserr << "LadrunoConcrete3D (tag " << tag << "): -hoop K=" << hoopK << (hoopFy < 1.0e29 ? "" : " (no yield)")
+           << " — confined-fiber view (§4.6); active only through getCopy(\"BeamFiber\") (e.g. NDFiberSection3d).\n";
+    if (implex || eta > 0.0)
+      opserr << "LadrunoConcrete3D (tag " << tag << "): the confined-fiber (BeamFiber) view runs Tier-1 implicit "
+             << "ONLY — -implex / -eta are INERT in this view (the 3D / plane views still use them).\n";
+  }
+
   NDMaterial* mat = new LadrunoConcrete3D(tag, E, nu, fc, ft, Gf, Gc, ecc, Df, As,
-                                          qh0, Hp, Ah, Bh, Ch, Dh, rho, lch, autoReg, implex, eta, ctTemper);
+                                          qh0, Hp, Ah, Bh, Ch, Dh, rho, lch, autoReg, implex, eta, ctTemper,
+                                          hoopK, hoopFy);
   if (mat == 0) {
     opserr << "WARNING LadrunoConcrete3D: failed to allocate material\n";
     return 0;
@@ -220,7 +243,8 @@ LadrunoConcrete3D::LadrunoConcrete3D()
     E(0.0), nu(0.0), fc(0.0), ft(0.0), Gf(0.0), Gc(0.0), ecc(0.0), m0(0.0),
     Df(0.0), As(2.0), qh0(0.3), Hp(0.5), Ah(0.08), Bh(0.003), Ch(2.0), Dh(1.0e-6),
     rho(0.0), lchFixed(1.0), autoReg(false), implex(false), eta(0.0), ctTemper(0),
-    dim(DIM_3D), ncomp(6), condense(false), cEps22(0.0),
+    hoopK(0.0), hoopFy(1.0e30),
+    dim(DIM_3D), ncomp(6), condense(false), confined(false), cEps22(0.0),
     kp_n(0.0), etmax_n(0.0), kdt1_n(0.0), kdt2_n(0.0), kdc_n(0.0), kdc1_n(0.0), kdc2_n(0.0),
     sigtmax_n(0.0), sigcmax_n(0.0),
     wt_n(0.0), wc_n(0.0), dwt_n(0.0), dwc_n(0.0), dtn_n(0.0),
@@ -238,13 +262,14 @@ LadrunoConcrete3D::LadrunoConcrete3D(int tag, double E_, double nu_, double fc_,
                                      double Gf_, double Gc_, double e_, double Df_, double As_,
                                      double qh0_, double Hp_, double Ah_, double Bh_, double Ch_, double Dh_,
                                      double rho_, double lch_, bool autoReg_, bool implex_, double eta_,
-                                     int ctTemper_, int dimMode)
+                                     int ctTemper_, double hoopK_, double hoopFy_, int dimMode)
   : NDMaterial(tag, ND_TAG_LadrunoConcrete3D),
     E(E_), nu(nu_), fc(fc_), ft(ft_), Gf(Gf_), Gc(Gc_), ecc(e_),
     m0(Ladruno::Concrete3D::m0Of(fc_, ft_, e_)),
     Df(Df_), As(As_), qh0(qh0_), Hp(Hp_), Ah(Ah_), Bh(Bh_), Ch(Ch_), Dh(Dh_),
     rho(rho_), lchFixed(lch_), autoReg(autoReg_), implex(implex_), eta(eta_), ctTemper(ctTemper_),
-    dim(dimMode), ncomp(6), condense(false), cEps22(0.0),
+    hoopK(hoopK_), hoopFy(hoopFy_),
+    dim(dimMode), ncomp(6), condense(false), confined(false), cEps22(0.0),
     kp_n(0.0), etmax_n(0.0), kdt1_n(0.0), kdt2_n(0.0), kdc_n(0.0), kdc1_n(0.0), kdc2_n(0.0),
     sigtmax_n(0.0), sigcmax_n(0.0),
     wt_n(0.0), wc_n(0.0), dwt_n(0.0), dwc_n(0.0), dtn_n(0.0),
@@ -267,11 +292,16 @@ LadrunoConcrete3D::~LadrunoConcrete3D() {}
 // ===========================================================================
 void LadrunoConcrete3D::setupDim(void)
 {
+  confined = false;
   switch (dim) {
     case DIM_PSTRAIN:    ncomp = 3; { int m[3]={0,1,3};       for(int a=0;a<3;a++) vmap[a]=m[a]; } condense=false; break;
     case DIM_AXISYM:     ncomp = 4; { int m[4]={0,1,2,3};     for(int a=0;a<4;a++) vmap[a]=m[a]; } condense=false; break;
     case DIM_PLATEFIBER: ncomp = 5; { int m[5]={0,1,3,4,5};   for(int a=0;a<5;a++) vmap[a]=m[a]; } condense=true;  break;
     case DIM_PSTRESS:    ncomp = 3; { int m[3]={0,1,3};       for(int a=0;a<3;a++) vmap[a]=m[a]; } condense=true;  break;
+    // P5 confined-fiber (BeamFiber): retained {00,01,02} = axial + 2 transverse shears; the lateral
+    // block {11,22,12} is condensed by driveConfinedFiber vs the hoop (NOT the sigma_22=0 single-index
+    // path => `condense` stays false; `confined` selects the dedicated kernel call in integrate()).
+    case DIM_BEAMFIBER:  ncomp = 3; { int m[3]={0,3,5};       for(int a=0;a<3;a++) vmap[a]=m[a]; } condense=false; confined=true; break;
     case DIM_3D:
     default:             ncomp = 6; { int m[6]={0,1,2,3,4,5}; for(int a=0;a<6;a++) vmap[a]=m[a]; } condense=false; break;
   }
@@ -337,8 +367,18 @@ void LadrunoConcrete3D::integrate(bool doTangent)
 
   State out;
   double sigEffImpl[6];
-  lastStatus = Ladruno::Concrete3D::returnMap(p, strain6, in, out, stress6, sigEffImpl, Dtan6,
-                                              doTangent, dt, /*hardening=*/true, &omegaT, &omegaC);
+  if (confined) {
+    // P5 confined-fiber view: the axial (retained {00,01,02}) strain is imposed in strain6; the lateral
+    // block {11,22,12} is condensed by a nested Newton vs the passive hoop spring (§4.6). driveConfinedFiber
+    // overwrites strain6[{1,2,4}] with the converged lateral strains + writes the NOMINAL stress + the
+    // condensed tangent on the retained comps. omegaT/omegaC (recorders) = the implicit damage in out.
+    lastStatus = Ladruno::Concrete3D::driveConfinedFiber(p, strain6, in, out, stress6, sigEffImpl, Dtan6,
+                                                         doTangent, hoopK, hoopFy, dt);
+    omegaT = out.wt; omegaC = out.wc;
+  } else {
+    lastStatus = Ladruno::Concrete3D::returnMap(p, strain6, in, out, stress6, sigEffImpl, Dtan6,
+                                                doTangent, dt, /*hardening=*/true, &omegaT, &omegaC);
+  }
 
   for (int i = 0; i < 6; i++) sigEff6[i] = out.sigEff[i];
   kp_t = out.kp; etmax_t = out.et_max;
@@ -365,6 +405,21 @@ void LadrunoConcrete3D::integrate(bool doTangent)
 // ===========================================================================
 int LadrunoConcrete3D::setTrialStrain(const Vector& e)
 {
+  if (confined) {
+    // P5 confined-fiber (BeamFiber): retained {00,01,02} from the element; seed the condensed lateral
+    // block {11,22,12} from the committed strain (warm start for the inner Newton, which lives inside
+    // driveConfinedFiber). One integrate() does the whole nested lateral solve + the condensed tangent.
+    strain6[1] = eps_n[1]; strain6[2] = eps_n[2]; strain6[4] = eps_n[4];
+    for (int a = 0; a < ncomp; a++) {
+      int full = vmap[a];
+      double val = e(a);
+      if (full >= 3) val *= 0.5;        // engineering -> tensor shear
+      strain6[full] = val;
+    }
+    this->integrate(true);
+    return 0;
+  }
+
   double eps22 = strain6[2];
   for (int i = 0; i < 6; i++) strain6[i] = 0.0;
   if (condense) strain6[2] = eps22;
@@ -466,6 +521,25 @@ const Matrix& LadrunoConcrete3D::getInitialTangent(void)
       for (int I = 0; I < 6; I++)
         for (int J = 0; J < 6; J++) Cel[I][J] -= col[I]*rw[J]/d22;
     }
+  } else if (confined) {
+    // P5 BeamFiber: condense the elastic C over the lateral block {11,22,12}. At eps_lat=0 the hoop is
+    // slack (hoopStiffness=0), so K0 is the free-reduction BeamFiber elastic stiffness on {00,01,02}.
+    const int L[3] = {1, 2, 4};
+    double Kll[3][3];
+    for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) Kll[i][j] = Cel[L[i]][L[j]];
+    double Tmat[3][6];
+    for (int k = 0; k < 6; k++) {
+      double rhs[3] = { Cel[L[0]][k], Cel[L[1]][k], Cel[L[2]][k] }, tcol[3];
+      if (!Ladruno::Concrete3D::solve3(Kll, rhs, tcol)) { tcol[0]=tcol[1]=tcol[2]=0.0; }
+      for (int i = 0; i < 3; i++) Tmat[i][k] = tcol[i];
+    }
+    double Ccond[6][6];
+    for (int i = 0; i < 6; i++) for (int j = 0; j < 6; j++) {
+      double v = Cel[i][j];
+      for (int a = 0; a < 3; a++) v -= Cel[i][L[a]]*Tmat[a][j];
+      Ccond[i][j] = v;
+    }
+    for (int i = 0; i < 6; i++) for (int j = 0; j < 6; j++) Cel[i][j] = Ccond[i][j];
   }
   for (int a = 0; a < ncomp; a++)
     for (int b = 0; b < ncomp; b++) {
@@ -536,6 +610,7 @@ const char* LadrunoConcrete3D::getType(void) const
     case DIM_AXISYM:     return "AxiSymmetric";
     case DIM_PLATEFIBER: return "PlateFiber";
     case DIM_PSTRESS:    return "PlaneStress";
+    case DIM_BEAMFIBER:  return "BeamFiber";
     default:             return "ThreeDimensional";
   }
 }
@@ -546,7 +621,8 @@ const char* LadrunoConcrete3D::getType(void) const
 NDMaterial* LadrunoConcrete3D::getCopy(void)
 {
   return new LadrunoConcrete3D(this->getTag(), E, nu, fc, ft, Gf, Gc, ecc, Df, As,
-                               qh0, Hp, Ah, Bh, Ch, Dh, rho, lchFixed, autoReg, implex, eta, ctTemper, dim);
+                               qh0, Hp, Ah, Bh, Ch, Dh, rho, lchFixed, autoReg, implex, eta, ctTemper,
+                               hoopK, hoopFy, dim);
 }
 
 NDMaterial* LadrunoConcrete3D::getCopy(const char* type)
@@ -557,20 +633,22 @@ NDMaterial* LadrunoConcrete3D::getCopy(const char* type)
   else if (strcmp(type, "AxiSymmetric") == 0 || strcmp(type, "AxiSymmetric2D") == 0)    d = DIM_AXISYM;
   else if (strcmp(type, "PlateFiber") == 0)                                             d = DIM_PLATEFIBER;
   else if (strcmp(type, "PlaneStress") == 0 || strcmp(type, "PlaneStress2D") == 0)      d = DIM_PSTRESS;
+  else if (strcmp(type, "BeamFiber") == 0)                                              d = DIM_BEAMFIBER;
 
   if (d < 0)
     return NDMaterial::getCopy(type);   // let the base report the unsupported type
 
   return new LadrunoConcrete3D(this->getTag(), E, nu, fc, ft, Gf, Gc, ecc, Df, As,
-                               qh0, Hp, Ah, Bh, Ch, Dh, rho, lchFixed, autoReg, implex, eta, ctTemper, d);
+                               qh0, Hp, Ah, Bh, Ch, Dh, rho, lchFixed, autoReg, implex, eta, ctTemper,
+                               hoopK, hoopFy, d);
 }
 
 // ===========================================================================
 //  parallel / serialization (flat Vector — the kernel state is all fixed-size scalars)
 // ===========================================================================
-static const int LC3D_NDATA = 1 + 18 + 1 + 1 + 25 + 2 + 1 + 1 + 1 + 1 + 11;
+static const int LC3D_NDATA = 1 + 18 + 1 + 1 + 25 + 2 + 1 + 1 + 1 + 1 + 11 + 2;
 // tag +18 params +autoReg +dim +25 state +2 P2g(sigtmax,sigcmax) +cEps22 +implex +eta
-// +1 ctTemper(P2h) +IMPL-EX committed(wt,wc,dwt,dwc,dtn + depl[6])
+// +1 ctTemper(P2h) +IMPL-EX committed(wt,wc,dwt,dwc,dtn + depl[6]) +2 P5 hoop(hoopK,hoopFy)
 
 int LadrunoConcrete3D::sendSelf(int commitTag, Channel& theChannel)
 {
@@ -596,6 +674,7 @@ int LadrunoConcrete3D::sendSelf(int commitTag, Channel& theChannel)
   data(c++) = (double)ctTemper;                    // P2h compression->tension damage temper mode
   data(c++) = wt_n; data(c++) = wc_n; data(c++) = dwt_n; data(c++) = dwc_n; data(c++) = dtn_n;
   for (int i = 0; i < 6; i++) data(c++) = depl_n[i];
+  data(c++) = hoopK; data(c++) = hoopFy;           // P5 confined-fiber hoop spring (DIM_BEAMFIBER)
 
   if (theChannel.sendVector(this->getDbTag(), commitTag, data) < 0) {
     opserr << "LadrunoConcrete3D::sendSelf - failed to send vector\n";
@@ -632,6 +711,7 @@ int LadrunoConcrete3D::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBr
   ctTemper = (int)data(c++);                        // P2h compression->tension damage temper mode
   wt_n = data(c++); wc_n = data(c++); dwt_n = data(c++); dwc_n = data(c++); dtn_n = data(c++);
   for (int i = 0; i < 6; i++) depl_n[i] = data(c++);
+  hoopK = data(c++); hoopFy = data(c++);            // P5 confined-fiber hoop spring (DIM_BEAMFIBER)
 
   this->setupDim();             // rebuild vmap/ncomp/condense + resize the return buffers
   this->revertToLastCommit();   // sync trial buffers + tangent to the received committed state

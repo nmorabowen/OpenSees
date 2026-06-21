@@ -57,6 +57,10 @@ def _mat(tag, **kw):
         args += ["-eta", kw["eta"]]
     if "ctTemper" in kw:
         args += ["-ctTemper", kw["ctTemper"]]
+    if "hoop" in kw:
+        args += ["-hoop", kw["hoop"]]
+    if "hoopFy" in kw:
+        args += ["-hoopFy", kw["hoopFy"]]
     ops.nDMaterial(*args)
 
 
@@ -954,3 +958,100 @@ def test_explicit_completes_where_fixedstep_implicit_stalls():
         "contrast no longer demonstrates the Tier-3 payoff")
     assert len(explicit) == _NSTEPS_EXPL, (
         f"explicit failed to complete ({len(explicit)}/{_NSTEPS_EXPL}) — the Tier-3 claim")
+
+
+# ===========================================================================
+#  P5 — CONFINED-FIBER VIEW (DIM_BEAMFIBER, §4.6 "Mander by mechanism").
+#  A single-fiber NDFiber section (area 1, at the centroid) in a zeroLengthSection element: the
+#  imposed axial nodal displacement IS the section axial strain (unit length), and the section axial
+#  force P == the fiber's nominal axial stress (A=1). getCopy("BeamFiber") routes the confined view
+#  (lateral 11,22,12 condensed vs the passive hoop). Drives match the oracle confined_step path, so
+#  P(eps) is byte-faithful to the numpy oracle; hoop=0 reduces to the free uniaxial-stress backbone.
+# ===========================================================================
+_CFIB_LCH = 1.0   # the material's default lch (no -lch / -autoRegularization) => gradual, convergent softening
+
+
+def _build_confined_zls(hoopK, hoopFy=None):
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 6)
+    ops.node(1, 0.0, 0.0, 0.0)
+    ops.node(2, 0.0, 0.0, 0.0)
+    ops.fix(1, 1, 1, 1, 1, 1, 1)
+    ops.fix(2, 0, 1, 1, 1, 1, 1)              # free axial (dof 1) only => pure axial fiber strain
+    kw = {"hoop": hoopK}
+    if hoopFy is not None:
+        kw["hoopFy"] = hoopFy
+    _mat(1, **kw)
+    ops.section("NDFiber", 1)
+    ops.fiber(0.0, 0.0, 1.0, 1)               # single fiber, unit area => P == axial stress
+    ops.element("zeroLengthSection", 1, 1, 2, 1)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(2, 1.0, 0, 0, 0, 0, 0)
+    ops.system("FullGeneral")                 # the confined tangent is non-symmetric
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.test("NormDispIncr", 1.0e-8, 200, 0)
+    ops.algorithm("Newton")
+    ops.analysis("Static")
+
+
+def _Paxial():
+    ops.eleResponse(1, "forces")
+    return float(ops.eleResponse(1, "section", "force")[0])   # section axial resultant P (= sig_axial, A=1)
+
+
+def _run_confined(hoopK, eps_target, nsteps, hoopFy=None):
+    """DisplacementControl the axial dof to eps_target over nsteps; collect (eps, P). Stops on the first
+    non-converged step (records what it reached) so a snap-back never fails the harness."""
+    _build_confined_zls(hoopK, hoopFy)
+    deps = eps_target / nsteps
+    out = []
+    for _ in range(nsteps):
+        ops.integrator("DisplacementControl", 2, 1, deps)
+        if ops.analyze(1) != 0:
+            break
+        out.append((ops.nodeDisp(2, 1), _Paxial()))
+    return out
+
+
+def test_confined_fiber_reduce_to_oracle():
+    """hoop=0 BeamFiber == the free uniaxial-stress backbone: the section axial force P(eps) matches the
+    numpy oracle drive_confined_fiber(hoop_K=0) along a compression path (the element-level reduce-to-1D,
+    the §4.6 analog of the cube uniaxial gate). Pure axial => the fiber sees no shear, the lateral block
+    is condensed exactly as the oracle."""
+    eps_t = -1.8e-3
+    n = 180
+    rec = _run_confined(0.0, eps_t, n)
+    assert len(rec) == n, f"hoop=0 confined fiber stalled at step {len(rec)}/{n}"
+    mp = ref.make_material(_E, _NU, _FC, _FT)
+    path = ref.np.array([e for e, _ in rec])
+    o = ref.drive_confined_fiber(mp, path, _GF, _GC, lch=_CFIB_LCH, As=2.0, hoop_K=0.0)
+    P = ref.np.array([p for _, p in rec])
+    err = float(ref.np.max(ref.np.abs(P - o["sig11"])) / _FC)
+    assert err < 5.0e-3, f"hoop=0 P(eps) vs oracle free backbone rel-fc err {err:.2e}"
+
+
+def test_confinement_raises_capacity():
+    """Mander-by-mechanism at the element level: a passive hoop (K>0) raises the peak axial capacity
+    above the unconfined fiber. The non-associated dilatancy mobilizes the hoop self-consistently => the
+    confined peak |P| exceeds the unconfined peak |P| (and the confining pressure is genuinely active)."""
+    eps_t = -3.0e-3
+    n = 300
+    plain = _run_confined(0.0, eps_t, n)
+    conf = _run_confined(1200.0, eps_t, n)
+    assert len(plain) > 50 and len(conf) > 50, "confined-fiber runs stalled too early to compare peaks"
+    pk_plain = max(abs(p) for _, p in plain)
+    pk_conf = max(abs(p) for _, p in conf)
+    assert pk_conf > 1.02 * pk_plain, (
+        f"confined peak |P|={pk_conf:.3f} should exceed the unconfined peak |P|={pk_plain:.3f}")
+
+
+def test_confined_fiber_view_builds():
+    """getCopy(\"BeamFiber\") is reachable + the confined view loads through an NDFiber section without
+    exit(-1) (order 3, type BeamFiber); a couple of elastic steps stay finite. Cheap reachability gate
+    independent of the softening-convergence path."""
+    rec = _run_confined(1200.0, -2.0e-4, 8, hoopFy=3.0)   # tiny strain (elastic-ish), hoop yield set
+    assert len(rec) == 8
+    for _, p in rec:
+        assert math.isfinite(p)

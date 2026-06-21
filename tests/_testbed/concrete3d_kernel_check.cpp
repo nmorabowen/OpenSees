@@ -253,6 +253,60 @@ static void run_oracle_dump(const char* path) {
                     worst_t3, ok3 ? "ok" : "FAIL");
     }
 
+    // ---- (B8) P5 CONFINED-FIBER (§4.6): a committed confined state + one axial increment -> the kernel
+    //      driveConfinedFiber NOMINAL axial stress + mobilized hoop pressure + converged lateral strain,
+    //      byte-matched to the oracle confined_step. cfib_free (hoopK=0) certifies the reduce-to-free
+    //      condensation; cfib_confined the headline Mander-by-mechanism path; cfib_yield the hoop-yield cap.
+    fh >> tok; int ncfib; fh >> ncfib;        // NCFIB
+    double worst_cfib = 0, worst_cfib_el = 0, worst_cfib_p = 0, worst_cfib_t = 0;
+    for (int d = 0; d < ncfib; ++d) {
+        fh >> tok; std::string label; fh >> label;   // CFIB <label>
+        double pb[12]; for (int i = 0; i < 12; ++i) fh >> pb[i];
+        Params mp = makeParams(pb);
+        fh >> mp.Gf >> mp.Gc >> mp.lch >> mp.As >> mp.ctTemper;
+        State in, out;
+        for (int i = 0; i < 6; ++i) fh >> in.eps[i];
+        for (int i = 0; i < 6; ++i) fh >> in.sigEff[i];
+        fh >> in.kp;
+        fh >> in.et_max >> in.kdt1 >> in.kdt2 >> in.kdc >> in.kdc1 >> in.kdc2;
+        fh >> in.sigtMax >> in.sigcMax;
+        double e11_next, hoopK, hoopFy;
+        fh >> e11_next >> hoopK >> hoopFy;
+        double sigO[6]; for (int i = 0; i < 6; ++i) fh >> sigO[i];
+        double elO, pconfO; fh >> elO >> pconfO;
+        // impose axial = e11_next on the retained comps {0,3,5}; the lateral block {1,2,4} starts from the
+        // committed guess (in.eps) and driveConfinedFiber Newton-solves it against the hoop residual.
+        double strain[6]; for (int i = 0; i < 6; ++i) strain[i] = in.eps[i];
+        strain[0] = e11_next; strain[3] = 0.0; strain[5] = 0.0;
+        double sigC[6], sigEff[6], Da[6][6];
+        int stat = driveConfinedFiber(mp, strain, in, out, sigC, sigEff, Da, true, hoopK, hoopFy, -1.0);
+        double serr  = std::fabs(sigC[0] - sigO[0]);
+        double elerr = std::fabs(strain[1] - elO);
+        double perr  = std::fabs(hoopStress(strain[1], hoopK, hoopFy) - pconfO);
+        worst_cfib    = std::fmax(worst_cfib, serr);
+        worst_cfib_el = std::fmax(worst_cfib_el, elerr);
+        worst_cfib_p  = std::fmax(worst_cfib_p, perr);
+        // CONDENSED TANGENT (the novel P5b deliverable): C[0][0]=d(sig_axial)/d(eps_axial) via re-solving
+        // the WHOLE confined update (inner lateral Newton + damage) at the perturbed axial strain — the
+        // exact operator the fiber Newton consumes. SELF-CONTAINED (no oracle tangent dump), like the B4
+        // damaged-tangent check: a numerical central-diff of the (oracle-pinned) confined nominal stress.
+        double dC = 1.0e-6 * (std::fabs(e11_next) + mp.fc / mp.E);
+        double sp[6], sm[6], seD[6], DaD[6][6]; State op, om;
+        double strp[6], strm[6];
+        for (int i = 0; i < 6; ++i) { strp[i] = in.eps[i]; strm[i] = in.eps[i]; }
+        strp[0] = e11_next + dC; strp[3] = strp[5] = 0.0;
+        strm[0] = e11_next - dC; strm[3] = strm[5] = 0.0;
+        driveConfinedFiber(mp, strp, in, op, sp, seD, DaD, false, hoopK, hoopFy, -1.0);
+        driveConfinedFiber(mp, strm, in, om, sm, seD, DaD, false, hoopK, hoopFy, -1.0);
+        double Cfd = (sp[0] - sm[0]) / (2.0 * dC);
+        double terr = std::fabs(Da[0][0] - Cfd) / (std::fabs(Cfd) + 1.0);
+        worst_cfib_t = std::fmax(worst_cfib_t, terr);
+        bool ok = (stat == 0) && serr < 1.0e-6 && elerr < 1.0e-8 && perr < 1.0e-6 && terr < 5.0e-3;
+        if (!ok) ++fails;
+        std::printf("  %-24s nom_sig_err=%.2e  el_err=%.2e  p_err=%.2e  Ctan_fd=%.2e  %s\n",
+                    label.c_str(), serr, elerr, perr, terr, ok ? "ok" : "FAIL");
+    }
+
     // ---- (B5) P3 Tier-2 IMPL-EX: committed IMPLEX state + step -> the REPORTED explicit stress.
     //      Pins returnMap(implex=true) reported sigma to the oracle damaged_step_implex (incl. a
     //      dt-JUMP case that exercises the extrapolation-ratio clamp r<=implexRmax). ----

@@ -1474,6 +1474,77 @@ def mander_fcc_ratio(p_over_fc):
     return -1.254 + 2.254 * np.sqrt(1.0 + 7.94 * x) - 2.0 * x
 
 
+def _confined_state0():
+    """Initial committed state for the confined-fiber single-step driver (mirrors the kernel State for
+    the §4.6 view: 3-principal eps/sig_eff, the lateral guess `el`, and the CDPM2 damage histories)."""
+    return dict(eps=np.zeros(3), sig_eff=np.zeros(3), kp=0.0, el=0.0, et_max=0.0,
+                sigt_max=0.0, sigc_max=0.0, kdt1=0.0, kdt2=0.0, kdc=0.0, kdc1=0.0, kdc2=0.0,
+                epl_prev=np.zeros(3))
+
+
+def confined_step(st, e11, mp, Gf, Gc, lch, As=2.0, hoop_K=0.0, hoop_fy=1.0e30):
+    """ONE confined-fiber step from committed state `st` (the single-step contract the C++ kernel
+    driveConfinedFiber reproduces, mirroring damaged_step_tensor for the §4.6 hoop condensation). The
+    axial strain `e11` is imposed; the lateral strain `el` (=eps22=eps33) is Newton-solved so the
+    EFFECTIVE lateral stress balances the passive hoop: sig_lat_eff(el) + sig_hoop(el) = 0. After the
+    plastic return the CDPM2 dual-damage update runs EXACTLY as drive_damaged_unified / damaged_step_tensor
+    (P2a-P2i: tensile_damage_weight, beta_c, the monotone sigt/sigc_max no-heal drive, the P2i E*eps_tilde
+    tensile drive). Returns (sig_nom_3, p_conf, new_state, diag{wt,wc,sig_eff,kp}). hoop_K=0 => sig_hoop=0
+    => the free uniaxial-stress step (drive_damaged_unified sigma3=0). The byte-check (CFIB) drives this."""
+    E, fc, ft, nu = mp["E"], mp["fc"], mp["ft"], mp["nu"]
+    eps0 = ft / E
+    eps_f = Gf / (ft * lch)
+    eps_fc = Gc / (fc * lch)
+    eps = st["eps"].copy(); sig_eff = st["sig_eff"].copy(); kp = st["kp"]; el = st["el"]
+    et_max = st["et_max"]; sigt_max = st["sigt_max"]; sigc_max = st["sigc_max"]
+    kdt1 = st["kdt1"]; kdt2 = st["kdt2"]; kdc = st["kdc"]; kdc1 = st["kdc1"]; kdc2 = st["kdc2"]
+    epl_prev = st["epl_prev"].copy()
+
+    for _ in range(80):                              # lateral Newton: sig_lat_eff + sig_hoop(el) -> 0
+        deps = np.array([e11 - eps[0], el - eps[1], el - eps[2]])
+        snew, _, _, _, _ = return_map_hardening(_elastic_pred(sig_eff, deps, mp), mp, kp)
+        res = 0.5 * (snew[1] + snew[2]) + hoop_stress(el, hoop_K, hoop_fy)
+        if abs(res) < 1.0e-10 * (fc + 1.0):
+            break
+        d = 1.0e-8 * (abs(el) + 1.0e-6)
+        deps2 = np.array([e11 - eps[0], (el + d) - eps[1], (el + d) - eps[2]])
+        snew2, _, _, _, _ = return_map_hardening(_elastic_pred(sig_eff, deps2, mp), mp, kp)
+        Jd = (0.5 * (snew2[1] + snew2[2]) + hoop_stress(el + d, hoop_K, hoop_fy) - res) / d
+        if abs(Jd) < 1.0e-12:
+            Jd = 1.0e-12 if Jd >= 0 else -1.0e-12
+        el -= res / Jd
+    deps = np.array([e11 - eps[0], el - eps[1], el - eps[2]])
+    sig_eff, kp, _, _, _ = return_map_hardening(_elastic_pred(sig_eff, deps, mp), mp, kp)
+    eps = np.array([e11, el, el])
+
+    et, ac, xs = _damage_drivers(sig_eff, mp, As)
+    above = max(et - max(et_max, eps0), 0.0)
+    det_raw = max(et - et_max, 0.0)
+    loading = det_raw > 0.0 and et > eps0
+    epl = eps - np.array([(sig_eff[0] - nu * (sig_eff[1] + sig_eff[2])) / E,
+                          (sig_eff[1] - nu * (sig_eff[0] + sig_eff[2])) / E,
+                          (sig_eff[2] - nu * (sig_eff[0] + sig_eff[1])) / E])
+    dnorm = float(np.linalg.norm(epl - epl_prev))
+    if loading:
+        wt_w = tensile_damage_weight(mp, ac, np.array([(epl - epl_prev)[0], (epl - epl_prev)[1],
+                                                       (epl - epl_prev)[2], 0.0, 0.0, 0.0]),
+                                     sig_eff, np.eye(3))
+        kdt2 += wt_w * above / xs;   kdt1 += wt_w * dnorm / xs
+        kdc += ac * above;           kdc2 += ac * above / xs
+        kdc1 += ac * beta_c(sig_eff, kp, mp) * dnorm / xs
+    et_max = max(et_max, et); epl_prev = epl
+
+    sig_t_drive = E * et if float(np.max(sig_eff)) > 1.0e-6 * ft else 0.0
+    sig_c_drive = max(-float(np.min(sig_eff)), 0.0)
+    sigt_max = max(sigt_max, sig_t_drive); sigc_max = max(sigc_max, sig_c_drive)
+    wt = _solve_omega_bracketed(kdt1, kdt2, sigt_max, ft, eps_f) if (et_max > eps0 and sigt_max > 1.0e-6 * ft) else 0.0
+    wc = _solve_omega_bracketed(kdc1, kdc2, sigc_max, fc, eps_fc) if (kdc > 0.0 and sigc_max > 1.0e-6 * fc) else 0.0
+    sig_nom = apply_damage_principal(sig_eff, wt, wc)
+    new = dict(eps=eps, sig_eff=sig_eff, kp=kp, el=el, et_max=et_max, sigt_max=sigt_max,
+               sigc_max=sigc_max, kdt1=kdt1, kdt2=kdt2, kdc=kdc, kdc1=kdc1, kdc2=kdc2, epl_prev=epl)
+    return sig_nom, hoop_stress(el, hoop_K, hoop_fy), new, dict(wt=wt, wc=wc, sig_eff=sig_eff.copy(), kp=kp)
+
+
 def drive_confined_fiber(mp, eps11_path, Gf, Gc, lch, As=2.0, hoop_K=0.0, hoop_fy=1.0e30):
     """PASSIVE confined-fiber driver (ADR 4.6). Axial strain eps11 is prescribed (the fiber section); the
     lateral strain eps_lat=eps22=eps33 is Newton-solved so the EFFECTIVE lateral stress balances the hoop
@@ -1579,10 +1650,22 @@ def run_p5_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, Gc=5.0, As=2.0, verb
     res["F4_p_capped"] = float(np.max(r_yl["p_conf"]))
     res["F4_caps_below_elastic"] = float(np.max(r_yl["p_conf"])) <= 3.0 + 1.0e-9 < float(np.max(r_el["p_conf"]))
 
+    # F5 — the single-step primitive confined_step (the C++ kernel byte-check contract) reproduces the
+    # full-path drive_confined_fiber EXACTLY when looped over the same axial path (so the CFIB fixture,
+    # which dumps a committed state + one confined_step, is a faithful slice of the validated driver).
+    Kf5 = 1200.0
+    full = drive_confined_fiber(mp, path, Gf, Gc, lch=50.0, As=As, hoop_K=Kf5)
+    stp = _confined_state0(); s11 = []
+    for e11 in path:
+        sig_nom, _p, stp, _d = confined_step(stp, e11, mp, Gf, Gc, lch=50.0, As=As, hoop_K=Kf5)
+        s11.append(sig_nom[0])
+    res["F5_step_eq_path"] = float(np.max(np.abs(np.asarray(s11) - full["sig11"])))
+
     ok = (res["F1_reduce_1d"] < 1.0e-9
           and res["F2_strength_monotone"] and res["F2_ductility_monotone"]
           and res["F3_npts"] >= 1 and res["F3_mander_relerr"] < 0.05
-          and res["F4_caps_below_elastic"])
+          and res["F4_caps_below_elastic"]
+          and res["F5_step_eq_path"] < 1.0e-12)
     res["PASS"] = bool(ok)
     if verbose:
         print(f"  F1 reduce-to-plain-1D       max|dsig11| = {res['F1_reduce_1d']:.2e}   (< 1e-9, hoop_K=0)")
@@ -1591,6 +1674,7 @@ def run_p5_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, Gc=5.0, As=2.0, verb
                   f"  mander fcc/fc={mander / fc:.3f}")
         print(f"  F3 Mander-by-mechanism      max rel err = {res['F3_mander_relerr']:.3e} over {res['F3_npts']} pts  (< 5%)")
         print(f"  F4 hoop-yield caps pressure p_max={res['F4_p_capped']:.3f}  ({'ok' if res['F4_caps_below_elastic'] else 'FAIL'})")
+        print(f"  F5 confined_step==path      max|dsig11| = {res['F5_step_eq_path']:.2e}   (< 1e-12, byte-faithful primitive)")
         print(f"  => P5 GATE {'PASS' if ok else 'FAIL'}")
     return res
 
