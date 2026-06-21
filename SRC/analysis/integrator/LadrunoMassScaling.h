@@ -65,6 +65,7 @@
 #include <set>
 #include <vector>
 #include <cmath>
+#include <functional>   // Ladruno: parallel consistent PCG (ConsistentParOps callbacks)
 
 namespace Ladruno {
 
@@ -545,6 +546,115 @@ consistentPCG(const std::vector<ConsistentBlock> &blocks,
     }
     if (relResid) *relResid = res.Norm() / rnorm0;
     return (k > maxit) ? maxit : k;   // loop exits at maxit+1 if never converged; clamp
+}
+
+// ===========================================================================
+// Ladruno: DISTRIBUTED (MPI) consistent PCG — the parallel sibling of the two
+// functions above. Solves M_tilde a = r matrix-free across MPI ranks where the
+// model is manually partitioned (OpenSeesMP, `system MPIDiagonal`) and a
+// partition-boundary node DOF is SHARED by several ranks.
+//
+// The whole correctness trick is one weight vector  w_i = 1 / multiplicity_i
+// (multiplicity = number of ranks that hold DOF i; 1 for purely-local DOFs):
+//
+//   * Matrix-free matvec  y = M_tilde x:  the lumped diagonal (the SOE's
+//     getDiagonalA() is the GLOBAL, already cross-rank-reduced 1/mass at shared
+//     DOFs and is therefore replicated on every sharing rank) is applied
+//     WEIGHTED by w_i, the off-diagonal M_bar_e blocks (each element lives on
+//     exactly one rank) are applied in FULL, and then the shared entries of y
+//     are summed across ranks (assembleShared). The sum turns w_i * (full diag)
+//     over multiplicity ranks back into the full diagonal exactly once, while
+//     the off-diagonal contributions of all element-owning ranks accumulate.
+//   * Global inner products  <x,y> = globalSum( sum_i w_i x_i y_i ):  the weight
+//     makes each shared DOF count once across the ranks that hold it.
+//
+// All CG control scalars (rz, pAp, residual norm) are GLOBAL reductions, so the
+// iteration count is identical on every rank -> the per-iteration assembleShared
+// / globalSum collectives stay in lockstep (no deadlock). With w == null,
+// assembleShared == null and globalSum == null this reduces EXACTLY to the
+// serial consistentMatVec / consistentPCG above (the serial callers keep using
+// those; this path is only taken when a distributed SOE is detected).
+// ===========================================================================
+struct ConsistentParOps {
+    const double *w;                          // length neq; w[i]=1/mult (1 if non-shared). null => all ones
+    std::function<void(double *, int)> assembleShared;  // sum v[0..n) shared entries across ranks, in place. null => no-op
+    std::function<double(double)>      globalSum;        // sum a scalar across ranks. null => identity
+    ConsistentParOps() : w(0) {}
+};
+
+inline double
+consistentParDot(const Vector &x, const Vector &y, int neq, const ConsistentParOps &ops)
+{
+    const double *w = ops.w;
+    double s = 0.0;
+    for (int i = 0; i < neq; ++i)
+        s += (w ? w[i] : 1.0) * x(i) * y(i);
+    return ops.globalSum ? ops.globalSum(s) : s;
+}
+
+// y = M_tilde x  (distributed). x must be consistent (identical on every rank) at
+// shared DOFs on entry; y is consistent at shared DOFs on exit.
+inline void
+consistentParMatVec(const std::vector<ConsistentBlock> &blocks, const double *diagMinv,
+                    int neq, const Vector &x, Vector &y, const ConsistentParOps &ops)
+{
+    const double *w = ops.w;
+    for (int i = 0; i < neq; ++i) {
+        double diag = (diagMinv[i] != 0.0) ? (x(i) / diagMinv[i]) : 0.0;
+        y(i) = (w ? w[i] : 1.0) * diag;       // diagonal weighted -> assembled to full once
+    }
+    for (size_t e = 0; e < blocks.size(); ++e) {
+        const ConsistentBlock &blk = blocks[e];
+        const ID &id = blk.eqn;
+        const Matrix &Mb = blk.Mbar;
+        int nl = id.Size();
+        for (int a = 0; a < nl; ++a) {
+            int ea = id(a);
+            if (ea < 0 || ea >= neq) continue;
+            double acc = 0.0;
+            for (int b = 0; b < nl; ++b) {
+                int eb = id(b);
+                if (eb < 0 || eb >= neq) continue;
+                acc += Mb(a, b) * x(eb);
+            }
+            y(ea) += acc;                     // off-diagonal applied in FULL (element is rank-local)
+        }
+    }
+    if (ops.assembleShared)
+        ops.assembleShared(&y(0), neq);       // sum shared entries across ranks
+}
+
+inline int
+consistentParPCG(const std::vector<ConsistentBlock> &blocks, const double *diagMinv,
+                 int neq, const Vector &r, Vector &a, const ConsistentParOps &ops,
+                 double tol = 1.0e-10, int maxit = 200, double *relResid = 0)
+{
+    Vector Ax(neq), z(neq), p(neq), Ap(neq), res(neq);
+    consistentParMatVec(blocks, diagMinv, neq, a, Ax, ops);   // a enters as M_lump^-1 r
+    for (int i = 0; i < neq; ++i) res(i) = r(i) - Ax(i);
+    for (int i = 0; i < neq; ++i) z(i) = diagMinv[i] * res(i);
+    p = z;
+    double rz = consistentParDot(res, z, neq, ops);
+    double rnorm0 = std::sqrt(consistentParDot(r, r, neq, ops));
+    if (rnorm0 <= 0.0) rnorm0 = 1.0;
+    int k = 0;
+    for (k = 1; k <= maxit; ++k) {
+        consistentParMatVec(blocks, diagMinv, neq, p, Ap, ops);
+        double pAp = consistentParDot(p, Ap, neq, ops);
+        if (pAp <= 0.0) break;                // breakdown guard (M_tilde SPD => pAp>0 globally)
+        double alpha = rz / pAp;
+        a.addVector(1.0, p, alpha);
+        res.addVector(1.0, Ap, -alpha);
+        double resnorm = std::sqrt(consistentParDot(res, res, neq, ops));
+        if (resnorm <= tol * rnorm0) break;
+        for (int i = 0; i < neq; ++i) z(i) = diagMinv[i] * res(i);
+        double rzNew = consistentParDot(res, z, neq, ops);
+        double bcg = rzNew / rz;
+        for (int i = 0; i < neq; ++i) p(i) = z(i) + bcg * p(i);
+        rz = rzNew;
+    }
+    if (relResid) *relResid = std::sqrt(consistentParDot(res, res, neq, ops)) / rnorm0;
+    return (k > maxit) ? maxit : k;
 }
 
 } // namespace Ladruno

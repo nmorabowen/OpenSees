@@ -49,8 +49,12 @@
 // (which cannot see the nodal augmentation) and would spuriously hard-abort a run
 // that is in fact stable (ADR-36 MF-1).
 //
-// v1 scope: lumped scaling, sequential / partition-interior nodes. Consistent
-// (Olovsson) scaling and a parallel shared-node mass reduction are future work.
+// Parallel: the injected lumped mass on a shared/boundary node IS reduced across
+// ranks by a distributed/MPI diagonal solver (OpenSeesMP `system MPIDiagonal`,
+// OpenSeesSP `system Diagonal` -> DistributedDiagonalSOE), since the explicit
+// M^-1 solve reads that summed diagonal -- validated bit-identical to serial
+// (ADR-36 T-MPI). The CONSISTENT (Olovsson) sibling is NOT parallel-safe: its
+// matrix-free PCG (LadrunoMassScaling.h) uses rank-local inner products.
 
 #include <CentralDifferenceLadruno.h>
 #include <Vector.h>

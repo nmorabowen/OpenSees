@@ -30,6 +30,7 @@
 
 #include <CentralDifferenceSMSConsistent.h>
 #include <LadrunoMassScaling.h>
+#include <LadrunoConsistentRefine.h>    // Ladruno V5: shared serial+MPI refineAccel body
 #include <LadrunoMassScalingEnergy.h>   // Ladruno V4: publish M_bar blocks to the energy recorder
 #include <AnalysisModel.h>
 #include <Domain.h>
@@ -184,8 +185,10 @@ int CentralDifferenceSMSConsistent::domainChanged(void)
                   "as the lumped SMS); they remain governing. (2) sizing accounts for betaK "
                   "Rayleigh damping (closed-form s=T^2+2*T*betaK/dt_e); alphaM is not folded "
                   "in. (3) the step solves M_tilde a = r by matrix-free PCG with the lumped "
-                  "diagonal as preconditioner -- REQUIRES `system Diagonal`. (4) parallel "
-                  "shared/boundary nodes are not reduced across ranks (sequential use).\n";
+                  "diagonal as preconditioner -- REQUIRES `system Diagonal` (serial) or "
+                  "`system MPIDiagonal` (OpenSeesMP). (4) in PARALLEL the distributed PCG "
+                  "reduces shared/boundary-node coupling across ranks (global inner products + "
+                  "shared-DOF M_bar assembly) -- use `system MPIDiagonal`.\n";
     }
 
     Ladruno::MassScalingReport rep =
@@ -221,12 +224,17 @@ int CentralDifferenceSMSConsistent::domainChanged(void)
     // but the SOE is not Diagonal, refineAccel cannot apply the consistent mass and the run
     // will execute the un-scaled diagonal solve at dtTarget -> UNSTABLE (not merely slow).
     // Warn prominently here, before stepping, in addition to the per-step refineAccel guard.
-    if (rep.nScaled > 0 && dynamic_cast<DiagonalSOE *>(this->getLinearSOE()) == 0)
-        opserr << "WARNING CentralDifferenceSMSConsistent: " << rep.nScaled
-               << " element(s) need scaling but the SOE is NOT `system Diagonal` -- the "
-                  "consistent mass CANNOT be applied (the PCG preconditioner is the lumped "
-                  "diagonal) and dtTarget=" << dtTarget << " will run UNSCALED -> expect "
-                  "INSTABILITY. Use `system Diagonal`.\n";
+    {
+        LinearSOE *soe = this->getLinearSOE();
+        bool okSOE = (dynamic_cast<DiagonalSOE *>(soe) != 0) ||
+                     (soe != 0 && soe->isDistributedDiagonal());
+        if (rep.nScaled > 0 && !okSOE)
+            opserr << "WARNING CentralDifferenceSMSConsistent: " << rep.nScaled
+                   << " element(s) need scaling but the SOE is NOT `system Diagonal`/"
+                      "`system MPIDiagonal` -- the consistent mass CANNOT be applied (the PCG "
+                      "preconditioner is the lumped diagonal) and dtTarget=" << dtTarget
+                   << " will run UNSCALED -> expect INSTABILITY.\n";
+    }
 
     // Ladruno V4: publish the node-major M_bar blocks (keyed by element tag) so the
     // EnergyBalanceRecorder can add the cross-node 1/2 v^T M_bar v its Node/Element
@@ -243,54 +251,16 @@ int CentralDifferenceSMSConsistent::domainChanged(void)
 
 int CentralDifferenceSMSConsistent::refineAccel(Vector &a)
 {
-    // Nothing scaled -> M_tilde == M_lump, the diagonal solve already in `a` is exact.
-    if (blocks == 0 || blocks->empty())
+    // Nothing built -> M_tilde == M_lump, the diagonal solve already in `a` is exact.
+    // (In a parallel run every rank's domainChanged allocated `blocks`, so this is symmetric.)
+    if (blocks == 0)
         return 0;
-
-    LinearSOE *theSOE = this->getLinearSOE();
-    DiagonalSOE *theDiag = dynamic_cast<DiagonalSOE *>(theSOE);
-    if (theDiag == 0) {
-        if (!warnedSolver) {
-            warnedSolver = true;
-            opserr << "WARNING CentralDifferenceSMSConsistent::refineAccel - consistent "
-                      "(Olovsson) mass scaling REQUIRES `system Diagonal` (the lumped "
-                      "diagonal is the PCG preconditioner). The current SOE is not a "
-                      "DiagonalSOE; falling back to the un-scaled diagonal solve (the "
-                      "scaling mass is NOT applied -- expect the un-raised stable step).\n";
-        }
-        return 0;
-    }
-
-    // Post-solve the DiagonalDirectSolver stored A[i] = 1/mass_i (the factored diagonal).
-    // That IS the Jacobi preconditioner; the lumped mass is 1/A[i]. The incoming `a` is
-    // the diagonal solve M_lump^-1 r, so recover r = M_lump .* a = a / A.
-    const double *Ainv = theDiag->getDiagonalA();
-    int neq = theDiag->getNumEqn();
-    if (Ainv == 0 || neq != a.Size())
-        return 0;
-
-    Vector r(neq);
-    for (int i = 0; i < neq; ++i)
-        r(i) = (Ainv[i] != 0.0) ? (a(i) / Ainv[i]) : 0.0;
-
-    double relResid = 0.0;
-    int iters = Ladruno::consistentPCG(*blocks, Ainv, neq, r, a,
-                                       pcgTol, pcgMaxIt, &relResid);
-    if (verboseSMS)
-        opserr << "  CentralDifferenceSMSConsistent: PCG " << iters
-               << " iters, rel.resid " << relResid << "\n";
-    // M_tilde is SPD so CG must converge; a non-converged step means a near-singular
-    // M_tilde (e.g. a zero-mass free DOF) -> the accel `a` is only a partial solve.
-    // Surface it once so a silently-wrong run is not mistaken for success.
-    if (relResid > pcgTol && iters >= pcgMaxIt && !warnedPCG) {
-        warnedPCG = true;
-        opserr << "WARNING CentralDifferenceSMSConsistent::refineAccel - the mass-scaling "
-                  "PCG did NOT converge (" << iters << " iters, rel.resid " << relResid
-               << " > tol " << pcgTol << "); the consistent mass solve is incomplete this "
-                  "step. Likely a near-singular M_tilde (a zero-mass free DOF) -- raise "
-                  "-pcgMaxIt or check the mass distribution.\n";
-    }
-    return 0;
+    // Serial OR distributed (MPIDiagonalSOE) consistent solve -> a := M_tilde^-1 r.
+    // The helper picks the path at runtime via the LinearSOE base virtuals.
+    return Ladruno::applyConsistentRefine(*blocks, this->getLinearSOE(), a,
+                                          pcgTol, pcgMaxIt, verboseSMS,
+                                          warnedSolver, warnedPCG,
+                                          "CentralDifferenceSMSConsistent");
 }
 
 int CentralDifferenceSMSConsistent::sendSelf(int cTag, Channel &theChannel)

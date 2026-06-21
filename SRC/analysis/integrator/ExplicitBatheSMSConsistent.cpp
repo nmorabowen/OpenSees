@@ -30,6 +30,7 @@
 
 #include <ExplicitBatheSMSConsistent.h>
 #include <LadrunoMassScaling.h>
+#include <LadrunoConsistentRefine.h>    // Ladruno V5: shared serial+MPI refineAccel body
 #include <LadrunoMassScalingEnergy.h>   // Ladruno V4: publish M_bar blocks to the energy recorder
 #include <AnalysisModel.h>
 #include <Domain.h>
@@ -170,7 +171,9 @@ int ExplicitBatheSMSConsistent::domainChanged(void)
                   "(1) elements touching an MP-constraint slave OR master node are EXCLUDED. "
                   "(2) sizing accounts for betaK damping; alphaM is not folded in. (3) both "
                   "Noh-Bathe sub-steps solve M_tilde a = r by matrix-free PCG -- REQUIRES "
-                  "`system Diagonal`. (4) parallel shared/boundary nodes are not reduced.\n";
+                  "`system Diagonal` (serial) or `system MPIDiagonal` (OpenSeesMP). (4) in "
+                  "PARALLEL the distributed PCG reduces shared/boundary-node coupling across "
+                  "ranks -- use `system MPIDiagonal`.\n";
     }
 
     Ladruno::MassScalingReport rep =
@@ -199,11 +202,16 @@ int ExplicitBatheSMSConsistent::domainChanged(void)
         opserr << "WARNING ExplicitBatheSMSConsistent: added mass " << (100.0 * frac)
                << "% exceeds -maxAddedMass cap " << (100.0 * maxAddedMassFrac) << "%\n";
 
-    if (rep.nScaled > 0 && dynamic_cast<DiagonalSOE *>(this->getLinearSOE()) == 0)
-        opserr << "WARNING ExplicitBatheSMSConsistent: " << rep.nScaled
-               << " element(s) need scaling but the SOE is NOT `system Diagonal` -- the "
-                  "consistent mass CANNOT be applied and dt=" << dtTarget
-               << " will run UNSCALED -> expect INSTABILITY. Use `system Diagonal`.\n";
+    {
+        LinearSOE *soe = this->getLinearSOE();
+        bool okSOE = (dynamic_cast<DiagonalSOE *>(soe) != 0) ||
+                     (soe != 0 && soe->isDistributedDiagonal());
+        if (rep.nScaled > 0 && !okSOE)
+            opserr << "WARNING ExplicitBatheSMSConsistent: " << rep.nScaled
+                   << " element(s) need scaling but the SOE is NOT `system Diagonal`/"
+                      "`system MPIDiagonal` -- the consistent mass CANNOT be applied and dt="
+                   << dtTarget << " will run UNSCALED -> expect INSTABILITY.\n";
+    }
 
     // Ladruno V4: publish the node-major M_bar blocks (keyed by element tag) for the
     // EnergyBalanceRecorder. Empty when nothing is scaled -> registry stays inactive.
@@ -219,42 +227,12 @@ int ExplicitBatheSMSConsistent::domainChanged(void)
 
 int ExplicitBatheSMSConsistent::refineAccel(Vector &a)
 {
-    if (blocks == 0 || blocks->empty())
+    if (blocks == 0)
         return 0;
-
-    LinearSOE *theSOE = this->getLinearSOE();
-    DiagonalSOE *theDiag = dynamic_cast<DiagonalSOE *>(theSOE);
-    if (theDiag == 0) {
-        if (!warnedSolver) {
-            warnedSolver = true;
-            opserr << "WARNING ExplicitBatheSMSConsistent::refineAccel - consistent mass "
-                      "scaling REQUIRES `system Diagonal`; falling back to the un-scaled "
-                      "diagonal solve (scaling NOT applied).\n";
-        }
-        return 0;
-    }
-
-    const double *Ainv = theDiag->getDiagonalA();   // factored: 1/mass
-    int neq = theDiag->getNumEqn();
-    if (Ainv == 0 || neq != a.Size())
-        return 0;
-
-    Vector r(neq);
-    for (int i = 0; i < neq; ++i)
-        r(i) = (Ainv[i] != 0.0) ? (a(i) / Ainv[i]) : 0.0;
-
-    double relResid = 0.0;
-    int iters = Ladruno::consistentPCG(*blocks, Ainv, neq, r, a, pcgTol, pcgMaxIt, &relResid);
-    if (verboseSMS)
-        opserr << "  ExplicitBatheSMSConsistent: PCG " << iters
-               << " iters, rel.resid " << relResid << "\n";
-    if (relResid > pcgTol && iters >= pcgMaxIt && !warnedPCG) {
-        warnedPCG = true;
-        opserr << "WARNING ExplicitBatheSMSConsistent::refineAccel - the mass-scaling PCG did "
-                  "NOT converge (" << iters << " iters, rel.resid " << relResid
-               << "); the consistent solve is incomplete -- raise -pcgMaxIt / check the mass.\n";
-    }
-    return 0;
+    return Ladruno::applyConsistentRefine(*blocks, this->getLinearSOE(), a,
+                                          pcgTol, pcgMaxIt, verboseSMS,
+                                          warnedSolver, warnedPCG,
+                                          "ExplicitBatheSMSConsistent");
 }
 
 int ExplicitBatheSMSConsistent::sendSelf(int cTag, Channel &theChannel)

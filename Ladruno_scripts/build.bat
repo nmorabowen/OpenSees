@@ -80,6 +80,11 @@ if /i "%MODE%"=="clean" (
     echo Wiping build/ ...
     rmdir /s /q "%BUILD%" 2>nul
     set "MODE="
+) else (
+    REM Ladruno: honor MULTIPLE target args. Was `set MODE=%1` (first arg only), which
+    REM silently dropped extra targets -- `build.bat OpenSeesPy OpenSeesPyMP` built only
+    REM OpenSeesPy. Use the whole arg list as the target set.
+    set "MODE=%*"
 )
 
 set "TARGETS=OpenSees OpenSeesSP OpenSeesMP OpenSeesPy OpenSeesPyMP"

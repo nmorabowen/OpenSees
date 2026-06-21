@@ -166,8 +166,10 @@ int ExplicitBatheSMS::domainChanged(void)
         opserr << "ExplicitBatheSMS: v1 limitations -- (1) elements touching an MP-constraint "
                   "SLAVE node are EXCLUDED from scaling (they remain governing). (2) sizing "
                   "accounts for betaK Rayleigh damping (closed-form s=T^2+2*T*betaK/dt_e); alphaM "
-                  "is not folded in. (3) parallel shared/boundary nodes are not reduced across "
-                  "ranks (sequential / partition-interior use only).\n";
+                  "is not folded in. (3) in PARALLEL the injected lumped mass on a shared node IS "
+                  "summed across ranks by a distributed/MPI diagonal solver (`system MPIDiagonal` "
+                  "/ OpenSeesSP `system Diagonal`); the CONSISTENT (Olovsson) variant is NOT "
+                  "parallel-safe (rank-local matrix-free PCG).\n";
     }
 
     Ladruno::MassScalingReport rep =
