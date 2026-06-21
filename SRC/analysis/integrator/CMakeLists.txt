@@ -94,6 +94,10 @@ target_sources(OPS_Analysis
        CentralDifferenceLadruno.cpp     # nmb - explicit leap-frog CD + dt_cr
        CentralDifferenceSMS.cpp         # nmb - selective mass scaling on CDL
        CentralDifferenceSMSConsistent.cpp  # nmb - consistent (Olovsson) mass scaling on CDL
+       ExplicitBatheSMS.cpp             # nmb - lumped mass scaling on Noh-Bathe ExplicitBathe
+       ExplicitBatheSMSConsistent.cpp   # nmb - consistent mass scaling on Noh-Bathe ExplicitBathe
+       ExplicitBatheLNVDSMS.cpp         # nmb - lumped mass scaling on Noh-Bathe+LNVD
+       ExplicitBatheLNVDSMSConsistent.cpp  # nmb - consistent mass scaling on Noh-Bathe+LNVD
        LadrunoDynamicRelaxation.cpp     # nmb - quasi-static dynamic relaxation
        CriticalTimeStep.cpp             # nmb - shared dt_cr eigensolve
        ExplicitDifferenceStatic.cpp     # JAA
@@ -146,6 +150,10 @@ target_sources(OPS_Analysis
        CentralDifferenceLadruno.h
        CentralDifferenceSMS.h
        CentralDifferenceSMSConsistent.h
+       ExplicitBatheSMS.h
+       ExplicitBatheSMSConsistent.h
+       ExplicitBatheLNVDSMS.h
+       ExplicitBatheLNVDSMSConsistent.h
        LadrunoMassLumping.h
        LadrunoMassScaling.h
        LadrunoDynamicRelaxation.h

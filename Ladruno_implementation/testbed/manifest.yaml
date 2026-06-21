@@ -255,6 +255,108 @@ features:
       f1 drift <0.3% vs 54-83% for lumped, PCG 12-21 iters). v1 sequential / partition-interior;
       energy-recorder KE does not yet see the M_bar term (diagonal-summing recorder; documented).
 
+  - feature: ExplicitBatheSMS
+    classtag: 33009          # INTEGRATOR family; new class (N. Mora-Bowen).
+    tag_symbol: INTEGRATOR_TAGS_ExplicitBatheSMS
+    pr: 322
+    feature_class: integrator
+    required_tiers: [dynamics-battery]
+    pytest: tests/test_explicitBatheSMS_integrator.py   # EBSMS-1 supra-stable (plain EB diverges@dtTarget), EBSMS-2 nodal-mass injection; + the consistent sibling tests in the same file
+    tcl: WAIVED(integrator; Python-first feature, Tcl dispatch wired via OpenSeesCommands)
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/runtime/runtime/TclPackageClassBroker.cpp
+      - SRC/interpreter/OpenSeesCommands.cpp
+      - SRC/interpreter/OpenSeesCommands.h
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      LUMPED selective mass scaling on the Noh-Bathe ExplicitBathe (ADR 36; the
+      ExplicitBathe sibling of CentralDifferenceSMS=33007). Subclass via a new protected
+      ExplicitBathe classTag ctor; domainChanged injects additive nodal mass
+      (s_e-1)*m via the shared Ladruno::buildMassScaling and restores on teardown. Because
+      ExplicitBathe assembles only the mass on the RHS (system Diagonal), the nodal injection
+      is seen by the leap-frog with NO solve-path change -- the "trivial follow-up" ADR-36
+      anticipated. Command takes the Noh-Bathe p first: integrator ExplicitBatheSMS $p
+      $dtTarget. -cflAbort/-recompute rejected. v1 sequential / partition-interior.
+
+  - feature: ExplicitBatheSMSConsistent
+    classtag: 33010          # INTEGRATOR family; new class (N. Mora-Bowen).
+    tag_symbol: INTEGRATOR_TAGS_ExplicitBatheSMSConsistent
+    pr: 322
+    feature_class: integrator
+    required_tiers: [dynamics-battery]
+    pytest: tests/test_explicitBatheSMS_integrator.py   # EBCONS-1 supra-stable + NO nodal-mass mutation, EBCONS-2 f1 PRESERVATION vs lumped (FFT: consistent -0.17% vs lumped -53% on the oracle Case-A bar), EBCONS-3 reduce-to-base bit-identical to ExplicitBathe, EBCONS-4 PCG<=30 at BOTH sub-steps
+    tcl: WAIVED(integrator; Python-first feature, Tcl dispatch wired via OpenSeesCommands)
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/runtime/runtime/TclPackageClassBroker.cpp
+      - SRC/interpreter/OpenSeesCommands.cpp
+      - SRC/interpreter/OpenSeesCommands.h
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      CONSISTENT (Olovsson) selective mass scaling on the Noh-Bathe ExplicitBathe (ADR 38;
+      the ExplicitBathe sibling of CentralDifferenceSMSConsistent=33008). Injects the
+      centroidal M_bar = beta[diag(m)-mm^T/M_e] (f1 preserved) and solves the non-diagonal
+      M_tilde a=r matrix-free (Ladruno::consistentPCG) at BOTH Noh-Bathe sub-steps via the
+      base refineAccel() hook added to ExplicitBathe (default no-op -> ExplicitBathe AND the
+      lumped ExplicitBatheSMS stay byte-identical). Reuses buildMassScalingConsistent
+      (shared dt_e/self-report/betaK/MP slave+master exclusion/cap). Measured f1 -0.17% vs
+      lumped -53% (transient FFT). v1 sequential; energy-recorder KE gap inherited from
+      33008 (documented). Command: integrator ExplicitBatheSMSConsistent $p $dtTarget.
+
+  - feature: ExplicitBatheLNVDSMS
+    classtag: 33011
+    tag_symbol: INTEGRATOR_TAGS_ExplicitBatheLNVDSMS
+    pr: 324
+    feature_class: integrator
+    required_tiers: [dynamics-battery]
+    pytest: tests/test_explicitBatheLNVDSMS_integrator.py   # EBL-SMS-1 supra-stable (plain LNVD diverges@dtTarget), EBL-SMS-2 nodal-mass injection; + consistent sibling tests in the same file
+    tcl: WAIVED(integrator; Python-first feature, Tcl dispatch wired via OpenSeesCommands)
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/runtime/runtime/TclPackageClassBroker.cpp
+      - SRC/interpreter/OpenSeesCommands.cpp
+      - SRC/interpreter/OpenSeesCommands.h
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      LUMPED selective mass scaling on the Noh-Bathe + FLAC-LNVD ExplicitBatheLNVD (ADR 36;
+      the LNVD sibling of ExplicitBatheSMS=33009). Subclass via a new protected ExplicitBatheLNVD
+      classTag ctor; domainChanged injects additive nodal mass via Ladruno::buildMassScaling +
+      restore. LNVD assembles only the mass on the RHS, so the injection needs NO solve hook.
+      The FLAC local damping (alpha) is separate from the mass-scaling sizing. Command takes the
+      Noh-Bathe p and FLAC alpha first: integrator ExplicitBatheLNVDSMS $p $alpha $dtTarget.
+
+  - feature: ExplicitBatheLNVDSMSConsistent
+    classtag: 33012
+    tag_symbol: INTEGRATOR_TAGS_ExplicitBatheLNVDSMSConsistent
+    pr: 324
+    feature_class: integrator
+    required_tiers: [dynamics-battery]
+    pytest: tests/test_explicitBatheLNVDSMS_integrator.py   # EBL-CONS-1 supra-stable + no nodal mass, EBL-CONS-2 f1 preservation vs lumped (FFT), EBL-CONS-3 reduce-to-base bit-identical to ExplicitBatheLNVD, EBL-CONS-4 PCG<=30 at both sub-steps
+    tcl: WAIVED(integrator; Python-first feature, Tcl dispatch wired via OpenSeesCommands)
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/runtime/runtime/TclPackageClassBroker.cpp
+      - SRC/interpreter/OpenSeesCommands.cpp
+      - SRC/interpreter/OpenSeesCommands.h
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      CONSISTENT (Olovsson) selective mass scaling on the Noh-Bathe + FLAC-LNVD ExplicitBatheLNVD
+      (ADR 38; the LNVD sibling of ExplicitBatheSMSConsistent=33010). Centroidal M_bar + matrix-free
+      PCG (Ladruno::consistentPCG) refined at BOTH Noh-Bathe sub-step solves via the base refineAccel()
+      hook added to ExplicitBatheLNVD (default no-op -> ExplicitBatheLNVD AND lumped ExplicitBatheLNVDSMS
+      stay byte-identical). Reuses buildMassScalingConsistent (slave+master MP exclusion). v1 sequential;
+      energy-recorder KE gap inherited from 33008. Command: integrator ExplicitBatheLNVDSMSConsistent
+      $p $alpha $dtTarget.
+
   - feature: LadrunoProjectionHandler
     classtag: 33001          # HANDLER family; first fork ConstraintHandler, private band
     tag_symbol: HANDLER_TAG_LadrunoProjectionHandler

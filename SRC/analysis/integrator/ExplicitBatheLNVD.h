@@ -118,6 +118,19 @@ public:
     void Print(OPS_Stream &s, int flag = 0);
 
 protected:
+    // Ladruno (ADR-38): delegating ctor for subclasses (ExplicitBatheLNVDSMS /
+    // ExplicitBatheLNVDSMSConsistent) that carry their OWN integrator classTag.
+    ExplicitBatheLNVD(int classTag, double p, double alpha_flac,
+                      int compute_critical_timestep_, bool verbose, bool cflAbort,
+                      double divergenceFactor, bool cflUseTangent, int cflRecomputeEvery,
+                      CTSLumping lumping);
+
+    // Ladruno (ADR-38): acceleration-refinement hook for CONSISTENT (Olovsson) mass
+    // scaling. Called after BOTH Noh-Bathe sub-step solves (A_tpdt, A_tdt). Default no-op
+    // keeps ExplicitBatheLNVD byte-identical; the consistent subclass overrides it with the
+    // matrix-free PCG (a = M_tilde^-1 r). The lumped subclass does NOT override it.
+    virtual bool refinesAccel(void) const { return false; }
+    virtual int  refineAccel(Vector &a)   { return 0; }
 
 private:
     // add the FLAC local non-viscous damping to the assembled SOE residual

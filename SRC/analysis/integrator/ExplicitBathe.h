@@ -152,6 +152,21 @@ public:
     void Print(OPS_Stream &s, int flag = 0);
 
 protected:
+    // Ladruno (ADR-38): delegating constructor for subclasses (ExplicitBatheSMS /
+    // ExplicitBatheSMSConsistent) that must carry their OWN integrator classTag through
+    // the FEM_ObjectBroker round-trip.
+    ExplicitBathe(int classTag, double p, int compute_critical_timestep_,
+                  bool verbose, bool cflAbort, double divergenceFactor,
+                  bool cflUseTangent, int cflRecomputeEvery, CTSLumping lumping);
+
+    // Ladruno (ADR-38): acceleration-refinement hook for CONSISTENT (Olovsson) mass
+    // scaling. ExplicitBathe takes TWO diagonal solves per step (the Noh-Bathe sub-steps
+    // -> A_tpdt and A_tdt); this is called after BOTH so the consistent integrator can
+    // replace each a = M_lump^-1 r by a = M_tilde^-1 r (matrix-free PCG). The default is a
+    // no-op, so plain ExplicitBathe AND the lumped ExplicitBatheSMS (whose nodal injection
+    // the RHS mass assembly already sees) stay BYTE-IDENTICAL.
+    virtual bool refinesAccel(void) const { return false; }
+    virtual int  refineAccel(Vector &a)   { return 0; }
 
 private:
     // Time step
