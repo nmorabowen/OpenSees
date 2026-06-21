@@ -106,7 +106,21 @@ MPIDiagonalSOE::assembleSharedSum(Vector &v)
   // before that (refineAccel always runs post-solve, so this just guards np=1 / a
   // pre-solve call). myActualNeighborsSharedDOFs is allocated earlier in setSize, so
   // it is NOT the right readiness signal.
-  if (myActualNeighborsBsToSend.empty()) return 0;
+  if (myActualNeighborsBsToSend.empty()) {
+    // Tripwire (adversarial-review hardening): empty buffers with actual neighbours means
+    // this was called BEFORE the first solve() set up the exchange — the cross-rank sum
+    // would be SILENTLY dropped. Harmless for the shipped consistent integrators (their
+    // refineAccel always runs after a solve), but warn once so a future pre-solve caller
+    // is not bitten by a silent wrong answer. No neighbours (np=1 / interior) is a genuine
+    // no-op and stays silent.
+    static bool warnedNotReady = false;
+    if (actualNeighbors > 0 && !warnedNotReady) {
+      warnedNotReady = true;
+      opserr << "WARNING MPIDiagonalSOE::assembleSharedSum - called before the first solve() "
+                "set up the neighbour exchange; shared-DOF entries NOT reduced this call.\n";
+    }
+    return 0;
+  }
 
   double *vv = &v(0);
   int n = (2*actualNeighbors > 0) ? 2*actualNeighbors : 1;

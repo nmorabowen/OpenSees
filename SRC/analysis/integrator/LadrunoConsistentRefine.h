@@ -150,7 +150,8 @@ applyConsistentRefine(std::vector<ConsistentBlock> &blocks, LinearSOE *theSOE, V
         warnedPCG = true;
         opserr << "WARNING " << cls << "::refineAccel - the mass-scaling PCG did NOT converge ("
                << iters << " iters, rel.resid " << relResid << " > tol " << pcgTol
-               << "); the consistent mass solve is incomplete this step (near-singular M_tilde?).\n";
+               << "); the consistent mass solve is incomplete this step. Likely a near-singular "
+                  "M_tilde (a zero-mass free DOF) -- raise -pcgMaxIt or check the mass distribution.\n";
     }
     return 0;
 }
