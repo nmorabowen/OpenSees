@@ -223,6 +223,15 @@ def main(out=None):
     mp_at = dict(mp_h); mp_at["ct_temper"] = "alphat"
     bpth = [np.array([e, -0.5 * e, -0.5 * e, 0, 0, 0]) for e in np.linspace(0, 6.0e-4, 300)]
     add_dmg("dmg_cttemper_alphat", mp_at, lch, bpth, [2.0e-6, -1.0e-6, -1.0e-6, 0, 0, 0])
+    # P2i MULTIAXIAL apportioning (discriminating): an UNEQUAL biaxial-tension damaged state — two POSITIVE
+    # principals, so E*eps_tilde (Eq.37) drives BOTH the omega-solve and (in the tangent) its gradient
+    # E*det_deps ABOVE the extreme tensile principal. A pre-P2i kernel (extreme-principal drive) gives a
+    # different nominal stress AND tangent here; uniaxial cases (dmg_tension/_cyclic_unload/_cttemper_proj)
+    # stay byte-identical because E*eps_tilde == sig_bar_t there. Unequal (e, 0.6e) keeps the tensile
+    # principals DISTINCT (an equal biaxial has a degenerate eigenpair where the FD rotates frozen
+    # eigenvectors — the P2e/I4 frozen-eigenvector limitation, not a drive bug).
+    bipath = [np.array([e, 0.6 * e, 0, 0, 0, 0]) for e in np.linspace(0, 6.0e-4, 300)]
+    add_dmg("dmg_biaxial_tension", mp_h, lch, bipath, [1.0e-6, 0.6e-6, 0, 0, 0, 0])
 
     lines.append(f"NDMG {len(dmgs)}")
     for label, mp, lch, st, deps, sig_nom in dmgs:

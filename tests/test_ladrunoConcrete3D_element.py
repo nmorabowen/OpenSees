@@ -20,6 +20,7 @@ Gates (the element-level shadow of the oracle D0/D1/C1 + the wiring):
 
 Plan/ADR: Ladruno_implementation/31_ladruno_concrete3d_adr.md.
 """
+import math
 import os
 import sys
 
@@ -46,6 +47,8 @@ def _mat(tag, **kw):
     fc = kw.get("fc", _FC); ft = kw.get("ft", _FT)
     Gf = kw.get("Gf", _GF); Gc = kw.get("Gc", _GC)
     args = ["LadrunoConcrete3D", tag, E, nu, fc, ft, Gf, Gc]
+    if "rho" in kw:
+        args += ["-rho", kw["rho"]]
     if "lch" in kw:
         args += ["-lch", kw["lch"]]
     if kw.get("implex"):
@@ -54,8 +57,6 @@ def _mat(tag, **kw):
         args += ["-eta", kw["eta"]]
     if "ctTemper" in kw:
         args += ["-ctTemper", kw["ctTemper"]]
-    if "rho" in kw:
-        args += ["-rho", kw["rho"]]
     ops.nDMaterial(*args)
 
 
@@ -810,3 +811,146 @@ def test_eta_database_roundtrip():
         assert ops.analyze(1) == 0
     database_roundtrip(build, probe_nodes=[2], ndf=3,
                        probe_fn=lambda: list(ops.eleResponse(1, "material", 1, "stress")))
+
+
+# ===========================================================================
+# Tier-3 EXPLICIT-DYNAMICS demo — the ADR §4.4 "softening is a non-issue" payoff.
+#
+# CDPM2 unconfined softening is snap-backy: the Tier-1 implicit path needs an
+# UNSYMMETRIC solver (FullGeneral) AND displacement-control step-CUTTING through
+# the limit point (see _drive_adaptive / test_uniaxial_tension_peak_and_softening).
+# An EXPLICIT integrator sidesteps both: it never forms or factorizes a global
+# tangent (so the indefinite/non-symmetric damaged tangent, TD2/TD3, is irrelevant)
+# and a displacement-driven boundary makes the response kinematically controlled —
+# there is NO global limit point to track. The material kernel already runs with
+# doTangent=false; this section validates that end-to-end in OpenSees under BOTH
+# fork explicit steppers, cross-checked against the SAME (oracle-verified) static
+# softening backbone.
+#
+# Specimen: the 1/8-symmetry unit cube (a uniaxial-stress constitutive probe), now
+# given mass via -rho. The driven face x-DOF is prescribed by a Linear timeSeries
+# (support motion) so the axial strain is imposed kinematically; the free lateral
+# (Poisson) DOFs carry the inertia. Loading is slow (hundreds of wave transits over
+# the run) so the gauss stress tracks the quasi-static backbone.
+# ===========================================================================
+CDL = ("CentralDifferenceLadruno",)
+EB = ("ExplicitBathe", 0.54)            # p = 0.54, the source-battery sub-step value
+_RHO = 2.4                              # density (consistent units) -> finite element mass
+
+
+def _build_explicit(mat_fn, rate, alphaM=0.0):
+    """1/8-symmetry unit cube (same determinate restraints as _build) with MASS, the driven face
+    x-DOF prescribed as u_x(t) = rate * t via a Linear timeSeries (support motion). system Diagonal
+    + algorithm Linear => no global tangent is ever formed/factorized (the Tier-3 point)."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for t, c in _CUBE.items():
+        ops.node(t, *c)
+    mat_fn(1)
+    ops.fix(1, 1, 1, 1)
+    ops.fix(2, 0, 1, 1)
+    ops.fix(3, 0, 0, 1)
+    ops.fix(4, 1, 0, 1)
+    ops.fix(5, 1, 1, 0)
+    ops.fix(6, 0, 1, 0)
+    ops.fix(8, 1, 0, 0)
+    ops.element("stdBrick", 1, 1, 2, 3, 4, 5, 6, 7, 8, 1)
+    ops.timeSeries("Linear", 1)                       # factor(t) = t
+    ops.pattern("Plain", 1, 1)
+    for n in (2, 3, 6, 7):
+        ops.sp(n, 1, rate)                            # prescribed u_x = rate * t (the imposed strain ramp)
+    if alphaM > 0.0:
+        ops.rayleigh(alphaM, 0.0, 0.0, 0.0)           # mass-proportional only => stays tangent-free
+    ops.constraints("Transformation")
+    ops.numberer("Plain")
+    ops.system("Diagonal")
+    ops.test("NormDispIncr", 1.0e-12, 1)
+    ops.algorithm("Linear")
+
+
+def _run_explicit(integrator_args, eps_target, nsteps, dt, alphaM=0.0, **mat_kw):
+    """Drive the cube to eps_target axial strain over nsteps explicit steps of size dt. Returns
+    [(eps_xx, sig_xx, omega_t)] per step (eps_xx = nodeDisp(2,1) on the unit cube). Extra mat_kw
+    (e.g. lch=...) are forwarded to the material."""
+    t_end = nsteps * dt
+    rate = eps_target / t_end                          # u_x(t) = rate * t reaches eps_target at t_end
+    _build_explicit(lambda tag: _mat(tag, rho=_RHO, **mat_kw), rate, alphaM=alphaM)
+    ops.integrator(*integrator_args)
+    ops.analysis("Transient")
+    out = []
+    for _ in range(nsteps):
+        if ops.analyze(1, dt) != 0:
+            break
+        out.append((ops.nodeDisp(2, 1), _sig_xx(), _wt()))
+    return out
+
+
+# the explicit step: ~0.35 x the unit-cube dilatational CFL limit le/c_d, c_d = sqrt((K+4G/3)/rho).
+# K=E/(3(1-2nu)), G=E/(2(1+nu)) for E=30000,nu=0.2 => c_d~118, le/c_d~0.0085 -> dt=0.003 is safe.
+_DT_EXPL = 0.003
+_NSTEPS_EXPL = 2000                                    # T = 6.0 -> ~700 wave transits (quasi-static)
+
+
+@pytest.mark.t1
+@pytest.mark.parametrize("integ", [CDL, EB], ids=["CDL", "ExplicitBathe"])
+def test_explicit_tension_softening_runs_through(integ):
+    """The headline Tier-3 gate: an explicit run marches a CDPM2 specimen straight THROUGH tension
+    softening — no unsymmetric solver, no step-cutting, no convergence test — and stays finite. The
+    nominal gauss stress peaks at ~ft then degrades while omega_t -> ~1, exactly the static backbone
+    (test_uniaxial_tension_peak_and_softening) but reached by forward time-marching."""
+    res = _run_explicit(integ, 0.03, _NSTEPS_EXPL, _DT_EXPL, alphaM=20.0)
+    assert len(res) == _NSTEPS_EXPL, f"explicit run did not complete ({len(res)}/{_NSTEPS_EXPL} steps)"
+    sig = [s for _, s, _ in res]
+    assert all(math.isfinite(s) for s in sig), "explicit softening run went non-finite"
+    peak = max(sig)
+    ipk = sig.index(peak)
+    assert peak == pytest.approx(_FT, rel=0.10), f"explicit tensile peak {peak} != ft {_FT}"
+    assert ipk > 0, "peak at the very first step (no pre-peak elastic rise captured)"
+    # softens substantially past the peak (oracle: ~1.22 at eps=0.03, i.e. ~0.4 ft)
+    assert sig[-1] < 0.6 * peak, f"did not soften past peak (end {sig[-1]:.3f} vs peak {peak:.3f})"
+    wt_max = max(w for _, _, w in res)
+    assert wt_max > 0.5, f"omega_t {wt_max} did not develop in explicit tension softening"
+
+
+def test_explicit_backbone_matches_oracle():
+    """Cross-validation against the VERIFIED SPEC: the cube (default lch=1.0, no -autoRegularization)
+    is a uniaxial-stress probe, so the explicit nominal-stress backbone must track the numpy oracle's
+    drive_uniaxial_tension_damaged (lch=1.0) — pinning that mass/rate do not corrupt the rate-INDEPENDENT
+    (eta=0) CDPM2 response. Compared at the PEAK (~ft) and at the final softened strain; tolerances
+    absorb the explicit dynamic ripple about the quasi-static backbone."""
+    import numpy as np
+    mp = ref.make_material(_E, _NU, _FC, _FT)
+    bb = ref.drive_uniaxial_tension_damaged(mp, np.linspace(0.0, 0.03, 600), Gf=_GF, lch=1.0)
+    sig_o = bb["sig11"]
+    peak_o = float(sig_o.max())
+    end_o = float(sig_o[-1])                                       # ~1.22 at eps=0.03 (softened, omega_t~1)
+
+    expl = _run_explicit(CDL, 0.03, _NSTEPS_EXPL, _DT_EXPL, alphaM=20.0)
+    assert len(expl) == _NSTEPS_EXPL
+    sig_e = [s for _, s, _ in expl]
+    assert max(sig_e) == pytest.approx(peak_o, rel=0.10), (
+        f"explicit peak {max(sig_e):.3f} != oracle peak {peak_o:.3f}")
+    # final softened plateau: average the last 5% of steps to suppress the explicit dynamic ripple
+    tail = sig_e[-_NSTEPS_EXPL // 20:]
+    end_e = sum(tail) / len(tail)
+    assert end_e == pytest.approx(end_o, rel=0.25), (
+        f"explicit softened backbone {end_e:.3f} != oracle {end_o:.3f} at eps=0.03")
+
+
+def test_explicit_completes_where_fixedstep_implicit_stalls():
+    """The Tier-3 payoff, made concrete: the SAME single cube with a STEEP (snap-backy) softening law
+    (lch=50 ⇒ eps_f=Gf/(ft·lch)≈6.7e-4, a sharp post-peak drop) under fixed-step implicit Newton
+    (DisplacementControl, no step-cutting) STALLS at the immediate softening limit point (eps0=ft/E),
+    converging only a handful of steps; the explicit run marches the full ramp. (Tier-1 needs the
+    _drive_adaptive step-cutting + FullGeneral to get through — see the static softening test.) NB the
+    contrast needs a genuinely snap-backy law: with the unit cube's default autoReg lch≈1 the softening
+    is gradual (eps_f≈0.03) and plain DisplacementControl can path-follow many steps — platform-dependent
+    and NOT the Tier-3 point. The steep law makes the implicit stall unambiguous on every platform."""
+    lch = 50.0
+    implicit_fixed = _run(lambda t: _mat(t, lch=lch), 0.03, 300)  # plain DisplacementControl, breaks on stall
+    explicit = _run_explicit(CDL, 0.03, _NSTEPS_EXPL, _DT_EXPL, alphaM=20.0, lch=lch)
+    assert len(implicit_fixed) < 60, (
+        f"fixed-step implicit unexpectedly survived steep softening ({len(implicit_fixed)} steps) — "
+        "contrast no longer demonstrates the Tier-3 payoff")
+    assert len(explicit) == _NSTEPS_EXPL, (
+        f"explicit failed to complete ({len(explicit)}/{_NSTEPS_EXPL}) — the Tier-3 claim")

@@ -332,6 +332,29 @@ def test_p2h_cttemper_gate():
     assert r["PASS"]
 
 
+def test_p2i_multiaxial_apportioning_gate():
+    """P2i: MULTIAXIAL-DAMAGE APPORTIONING. The tensile omega-solve is driven by E*eps_tilde (the CDPM2
+    equivalent strain, Eq.37) instead of the extreme tensile principal; the compressive channel keeps the
+    extreme principal (eps_tilde is ft-scaled, so E*eps_tilde could never reach fc to onset omega_c). USER
+    decision 2026-06-21. I1 the change is INVISIBLE in uniaxial tension (E*eps_tilde == sig_bar_t), so the
+    unified driver still matches the uniaxial reference byte-for-byte (DT1/D1/P2a unaffected). I2 BOTH
+    equibiaxial AND triaxial tension drive E*eps_tilde above the uniaxial ft (damage onsets at a lower
+    per-principal stress — the CDPM2-consistent envelope the extreme-principal model can't reproduce); the
+    ordering is uni<tri<bi (hydrostatic-triaxial is APEX-CAPPED, escalates less than deviatoric biaxial).
+    I3 no spurious compression->tension damage (the tension gate keeps omega_t=0 in pure compression).
+    I4 the analytic damaged tangent (with its new tensile drive-gradient E*det_deps) == the numerical
+    reference at an UNEQUAL biaxial-tension damaged state (off the equal-biaxial eigenvalue degeneracy)."""
+    ft = 3.0
+    r = ref.run_p2i_gate(verbose=False)
+    assert r["I1_reduce_uniaxial"] < 1.0e-9                       # uniaxial byte-identical (invisible change)
+    assert abs(r["I2_uni"] - ft) < 1.0e-6 * ft                   # Eq.38 identity E*eps_tilde == ft
+    assert r["I2_bi"] > r["I2_uni"] and r["I2_tri"] > r["I2_uni"]  # both escalate above uniaxial
+    assert r["I2_bi"] > r["I2_tri"]                              # deviatoric biaxial > apex-capped triaxial
+    assert r["I3_pure_compression_wt"] < 1.0e-9                  # no spurious compression->tension damage
+    assert r["I4_tangent_rel"] < 1.0e-6                          # analytic == numerical multiaxial tangent
+    assert r["PASS"]
+
+
 def test_p3_implex_gate():
     """P3 Tier-2 IMPL-EX robustness (ADR 4.4), oracle slice (the C++ kernel port is a follow-up build
     PR). IMPL-EX reports an EXPLICIT stress from EXTRAPOLATED internal variables (plastic-strain
