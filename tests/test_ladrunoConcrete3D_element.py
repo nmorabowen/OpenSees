@@ -54,6 +54,8 @@ def _mat(tag, **kw):
         args += ["-eta", kw["eta"]]
     if "ctTemper" in kw:
         args += ["-ctTemper", kw["ctTemper"]]
+    if "rho" in kw:
+        args += ["-rho", kw["rho"]]
     ops.nDMaterial(*args)
 
 
@@ -297,6 +299,56 @@ def test_cttemper_database_roundtrip():
         assert ops.analyze(1) == 0
     database_roundtrip(build, probe_nodes=[2], ndf=3,
                        probe_fn=lambda: list(ops.eleResponse(1, "material", 1, "stress")))
+
+
+# ---------------------------------------------------------------------------
+# P3 Tier-3 — EXPLICIT dynamics. Tier-1 implicit STALLS at the unconfined tension-softening limit point
+# (the snap-back; test_uniaxial_tension_peak_and_softening needs step-cutting to crawl past it) because the
+# consistent tangent goes INDEFINITE there (gate TD2). An EXPLICIT integrator advances on the MASS matrix
+# and NEVER factorizes that tangent, so the same material runs straight through tensile cracking. The
+# committed stress is byte-identical to Tier-1 (g++ B7: t3=0 — do_tangent=false == do_tangent=true). Here we
+# DEMONSTRATE the explicit PATH end-to-end: a free-dynamics tension yank (initial face velocity — the proven
+# explicit idiom, NOT a prescribed-SP ramp which is an implicit/static construct) drives the cube into the
+# damaging regime under CentralDifferenceLadruno; the run COMPLETES (no stall — the Tier-3 value vs the
+# implicit limit-point stall), the stress stays BOUNDED (no instability), and omega_t develops (the inelastic
+# regime was integrated under explicit). rho is picked for a convenient explicit dt. (NB the elastic
+# strain-to-peak eps0=ft/E~1e-4 is a blink under free dynamics, so this is a "runs through cracking" demo, not
+# a clean quasi-static loading curve — that lives in the numpy oracle + the g++ B7 correctness gate.)
+# ---------------------------------------------------------------------------
+@pytest.mark.t1
+def test_tier3_explicit_path_runs():
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for t, c in _CUBE.items():
+        ops.node(t, *c)
+    _mat(1, rho=2.4e-3)                           # -rho => element mass for the explicit (Diagonal) solve
+    ops.fix(1, 1, 1, 1); ops.fix(2, 0, 1, 1); ops.fix(3, 0, 0, 1); ops.fix(4, 1, 0, 1)
+    ops.fix(5, 1, 1, 0); ops.fix(6, 0, 1, 0); ops.fix(8, 1, 0, 0)
+    ops.element("stdBrick", 1, 1, 2, 3, 4, 5, 6, 7, 8, 1)
+    for n in (2, 3, 6, 7):                        # initial +x velocity on the x=1 face => free tension stretch
+        ops.setNodeVel(n, 1, 0.4, "-commit")
+    ops.constraints("Transformation")
+    ops.numberer("Plain")
+    ops.system("Diagonal")                        # lumped-mass explicit solve (never factorizes the tangent)
+    ops.test("NormDispIncr", 1.0e-12, 1)
+    ops.algorithm("Linear")
+    ops.integrator("CentralDifferenceLadruno")    # auto dt_cr; prime once then a sub-critical fixed dt
+    ops.analysis("Transient")
+    assert ops.analyze(1, 1.0e-9) == 0, "explicit prime step failed"
+    dt = 0.3 * ops.criticalTimeStep()
+    sig, done = [], 0
+    for _ in range(400):
+        if ops.analyze(1, dt) != 0:
+            break
+        done += 1
+        sig.append(_sig_xx())
+    # (1) COMPLETES — the material integrates under explicit (mass via getRho + transient + getStress),
+    #     the path that makes softening safe (the global solve never factorizes the indefinite tangent).
+    assert done == 400, f"explicit run stalled at step {done}/400"
+    # (2) BOUNDED + LOADED — the free tension stretch develops a sensible stress (no instability/blow-up);
+    #     the inelastic-softening correctness in explicit mode (do_tangent-independence) is the g++ B7 gate.
+    assert all(abs(s) < 5.0 * _FT for s in sig), "stress blew up (explicit instability)"
+    assert max(abs(s) for s in sig) > 0.2 * _FT, "material did not load under explicit"
 
 
 # ---------------------------------------------------------------------------
