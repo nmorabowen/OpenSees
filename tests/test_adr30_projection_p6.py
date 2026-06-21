@@ -17,8 +17,6 @@
   TP6-4  staleness: a rigidLink-beam master rotated past 0.1 rad emits the one-time NOTE.
   TP6-5  staleness: the same model kept at small rotation does NOT emit the NOTE.
 """
-import os
-
 import numpy as np
 import pytest
 
@@ -81,9 +79,12 @@ def test_TP6_3_ill_conditioned_group_warns_but_runs():
 # the slave ux,uy (dofs 0,1, translational) -> flagged. Drive the master rotation with
 # an applied moment; the NOTE fires once the drift crosses 0.1 rad.
 # --------------------------------------------------------------------------
-def _run_rigidlink_beam(moment, nsteps, dt, logpath):
+# NB capture opserr with pytest's `capfd` (file-descriptor level), NOT `ops.logFile`:
+# logFile calls opserr.setFile() and is NEVER restored to the console, which POLLUTES the
+# global opserr for every later test in the same openseespy process (they share one process)
+# -> their own stderr captures come back empty. capfd is per-test and non-polluting.
+def _run_rigidlink_beam(moment, nsteps, dt):
     ops.wipe()
-    ops.logFile(logpath, "-noEcho")          # capture opserr (the NOTE) to a file
     ops.model("basic", "-ndm", 2, "-ndf", 3)
     ops.node(1, 0.0, 0.0)
     ops.node(2, 1.0, 0.0)                     # offset slave -> nonzero lever arm
@@ -101,29 +102,23 @@ def _run_rigidlink_beam(moment, nsteps, dt, logpath):
     for _ in range(nsteps):
         if ops.analyze(1, dt) != 0:
             break
-    rz = abs(ops.nodeDisp(1, 3))
-    # opserr's FileStream buffers; redirecting to a throwaway file CLOSES (flushes) logpath.
-    ops.logFile(logpath + ".flush", "-noEcho")
-    ops.wipe()
-    txt = ""
-    if os.path.exists(logpath):
-        with open(logpath, "r", errors="ignore") as fh:
-            txt = fh.read()
-    return rz, txt
+    return abs(ops.nodeDisp(1, 3))
 
 
-def test_TP6_4_staleness_note_fires_on_large_rotation(tmp_path):
-    log = str(tmp_path / "stale_big.log")
+def test_TP6_4_staleness_note_fires_on_large_rotation(capfd):
     # large moment + many steps -> master rz blows past 0.1 rad
-    rz, txt = _run_rigidlink_beam(50.0, 400, 5.0e-3, log)
+    rz = _run_rigidlink_beam(50.0, 400, 5.0e-3)
+    out = capfd.readouterr()
+    txt = (out.err + out.out).lower()
     assert rz > 0.1, f"master did not rotate enough to trigger (rz={rz:.4f})"
-    assert ("stale" in txt.lower()) or ("rotated" in txt.lower()), (
-        f"frozen-Ccr staleness NOTE not emitted; log:\n{txt[-800:]}")
+    assert ("stale" in txt) or ("rotated" in txt), (
+        f"frozen-Ccr staleness NOTE not emitted; captured:\n{txt[-800:]}")
 
 
-def test_TP6_5_no_staleness_note_on_small_rotation(tmp_path):
-    log = str(tmp_path / "stale_small.log")
+def test_TP6_5_no_staleness_note_on_small_rotation(capfd):
     # tiny moment + few steps -> rz stays well under 0.1 rad -> no NOTE
-    rz, txt = _run_rigidlink_beam(1.0e-4, 20, 1.0e-3, log)
+    rz = _run_rigidlink_beam(1.0e-4, 20, 1.0e-3)
+    out = capfd.readouterr()
+    txt = (out.err + out.out).lower()
     assert rz < 0.1, f"control rotated too much (rz={rz:.4f})"
-    assert "stale" not in txt.lower(), f"staleness NOTE fired on a small rotation; log:\n{txt}"
+    assert "stale" not in txt, f"staleness NOTE fired on a small rotation; captured:\n{txt}"
