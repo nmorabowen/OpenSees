@@ -295,14 +295,18 @@ applyMassScaling(Domain *theDomain, const std::map<int, Vector> &injected, doubl
 // 54-83% for lumped, at the same dtTarget. See 38_ladruno_consistent_mass_scaling_adr.md.
 
 // One scaled element's consistent scaling mass + its global equation-number map.
+//   eleTag  : the element's tag (Ladruno V4 — keys the EnergyBalanceRecorder energy
+//             conduit so the recorder can add 1/2 v^T M_bar v per element; the matvec
+//             itself never needs it).
 //   eqn(i)  : SOE equation number of local DOF i (node-major); < 0 if the DOF is
 //             constrained/fixed (eliminated) — skipped in the mat-vec.
 //   Mbar    : n x n centroidal scaling mass (beta already applied; nonzero only on
-//             same-direction translational DOF pairs).
+//             same-direction translational DOF pairs). Node-major local-DOF layout.
 struct ConsistentBlock {
+    int    eleTag;
     ID     eqn;
     Matrix Mbar;
-    ConsistentBlock(const ID &e, const Matrix &m) : eqn(e), Mbar(m) {}
+    ConsistentBlock(int tag, const ID &e, const Matrix &m) : eleTag(tag), eqn(e), Mbar(m) {}
 };
 
 // Build the per-element consistent scaling blocks for the given target step. Iterates
@@ -464,8 +468,9 @@ buildMassScalingConsistent(AnalysisModel *theModel, double dtTarget, CTSLumping 
         const ID &feID = fePtr->getID();
         if (feID.Size() != n) { rep.nMismatch++; continue; }
 
-        // store the block with this element's equation-number map.
-        blocks.push_back(ConsistentBlock(feID, Mbar));
+        // store the block with this element's tag (Ladruno V4 energy conduit) and
+        // equation-number map.
+        blocks.push_back(ConsistentBlock(ele->getTag(), feID, Mbar));
         rep.addedMass += addedTrans;
         rep.nScaled++;
         if (dtDamped < rep.minDtScaled) rep.minDtScaled = dtDamped;

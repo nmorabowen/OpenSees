@@ -176,7 +176,7 @@ static void run_oracle_dump(const char* path) {
     //      noise. The 4 committed states are the smooth PE1/PE2/PE3/PE4 regimes (tension / confined
     //      compression / shear-nonassoc / reversal) — off the sigma_lat=0 Macaulay kink. ----
     fh >> tok; int ndmg; fh >> ndmg;          // NDMG
-    double worst_dmg = 0, worst_dtan = 0;
+    double worst_dmg = 0, worst_dtan = 0, worst_t3 = 0;
     for (int d = 0; d < ndmg; ++d) {
         fh >> tok; std::string label; fh >> label;   // DMG <label>
         double pb[12]; for (int i = 0; i < 12; ++i) fh >> pb[i];
@@ -196,6 +196,23 @@ static void run_oracle_dump(const char* path) {
         returnMap(mp, strain, in, out, sigC, sigEff, Da, true, -1.0, /*hardening=*/true);  // analytic tangent
         double maxs = 0; for (int i = 0; i < 6; ++i) maxs = std::fmax(maxs, std::fabs(sigC[i] - sigO[i]));
         worst_dmg = std::fmax(worst_dmg, maxs);
+        // (B7) TIER-3 explicit: with do_tangent=false the kernel skips the tangent assembly entirely; the
+        // committed NOMINAL stress + state MUST be byte-identical to the do_tangent=true path (ADR §398:
+        // "Tier-3 explicit committed stress == Tier-1 implicit"). Certifies the material is exact under an
+        // explicit solver (which never factorizes the indefinite softening tangent).
+        { State o3; double s3[6], se3[6], junk3[6][6];
+          returnMap(mp, strain, in, o3, s3, se3, junk3, false, -1.0, true);
+          double t3 = 0;
+          for (int i = 0; i < 6; ++i) {
+              t3 = std::fmax(t3, std::fabs(s3[i] - sigC[i]));
+              t3 = std::fmax(t3, std::fabs(o3.sig[i] - out.sig[i]));
+              t3 = std::fmax(t3, std::fabs(o3.sigEff[i] - out.sigEff[i]));
+          }
+          t3 = std::fmax(t3, std::fabs(o3.kp - out.kp));
+          t3 = std::fmax(t3, std::fabs(o3.et_max - out.et_max));
+          t3 = std::fmax(t3, std::fabs(o3.kdt1 - out.kdt1) + std::fabs(o3.kdc1 - out.kdc1));
+          worst_t3 = std::fmax(worst_t3, t3);
+        }
         // (B3) damage = effective return (~1e-8 hardening floor) THEN the smooth analytic damage
         // recompose; no new amplification => same hardening floor as the return-map paths.
         bool oks = maxs < 1.0e-6;
@@ -229,9 +246,11 @@ static void run_oracle_dump(const char* path) {
         // single-step hardening return-map convergence noise (the perturbed step re-solves the inner
         // Newton). Both ~1e-5; floors set just above.
         bool okt = rel < 5.0e-5 && perEntry < 5.0e-3;
-        if (!oks || !okt) ++fails;
-        std::printf("  %-24s nom_sig_err=%.2e %s   tan_rel=%.2e perEntry=%.2e %s\n",
-                    label.c_str(), maxs, oks ? "ok" : "FAIL", rel, perEntry, okt ? "ok" : "FAIL");
+        bool ok3 = worst_t3 < 1.0e-13;                 // Tier-3 do_tangent=false == do_tangent=true (byte)
+        if (!oks || !okt || !ok3) ++fails;
+        std::printf("  %-24s nom_sig_err=%.2e %s   tan_rel=%.2e perEntry=%.2e %s   t3=%.1e %s\n",
+                    label.c_str(), maxs, oks ? "ok" : "FAIL", rel, perEntry, okt ? "ok" : "FAIL",
+                    worst_t3, ok3 ? "ok" : "FAIL");
     }
 
     // ---- (B5) P3 Tier-2 IMPL-EX: committed IMPLEX state + step -> the REPORTED explicit stress.

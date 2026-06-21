@@ -2,7 +2,7 @@
 title: "LadrunoConcrete3D — developer / C++-implementer handoff guide"
 project: Ladruno
 type: handoff guide
-status: SHIPPED to `ladruno` — kernel (return map + analytic damaged tangent, g++-verified) + nDMaterial wrapper (classTag 33017) + ALL dimensional views (3D + PlaneStrain/AxiSymmetric/PlateFiber/PlaneStress, #299) + P3 Tier-2 IMPL-EX (oracle #301 → review-hardened #304 → C++ kernel port + `-implex` wrapper #309) + P3 Duvaut–Lions `-eta` (oracle #316 → C++ kernel port + `-eta` wrapper #318) + P2f cyclic `β_c` ORACLE + C++ kernel port (faithful CDPM2 compressive ductility, g++-verified, #321) + P2g monotone-`ω` no-heal cyclic damage (oracle + C++ kernel + wrapper, secant unload + SPD unload tangent, #325) + P2h `-ctTemper {none|alphat|proj}` compression→tension damage temper (oracle + C++ kernel + wrapper, #327). NEXT = multiaxial apportioning → Tier-3 explicit demo. See §0 / §6b for the current-state handoff.
+status: SHIPPED to `ladruno` — kernel (return map + analytic damaged tangent, g++-verified) + nDMaterial wrapper (classTag 33017) + ALL dimensional views (3D + PlaneStrain/AxiSymmetric/PlateFiber/PlaneStress, #299) + P3 Tier-2 IMPL-EX (oracle #301 → review-hardened #304 → C++ kernel port + `-implex` wrapper #309) + P3 Duvaut–Lions `-eta` (oracle #316 → C++ kernel port + `-eta` wrapper #318) + P2f cyclic `β_c` ORACLE + C++ kernel port (faithful CDPM2 compressive ductility, g++-verified, #321) + P2g monotone-`ω` no-heal cyclic damage (oracle + C++ kernel + wrapper, secant unload + SPD unload tangent, #325) + P2h `-ctTemper {none|alphat|proj}` compression→tension damage temper (oracle + C++ kernel + wrapper, #327) + P3 Tier-3 explicit (do_tangent-independence gate + CentralDifference softening demo, #328 — robustness trilogy complete) + Tier-3 quasi-static prescribed-motion + cross-integrator demo (CDL + ExplicitBathe, oracle-backbone match, #333). NEXT = multiaxial apportioning (E·ε̃ drive) → P4 finite-strain. See §0 / §6b for the current-state handoff.
 related:
   - "[[31_ladruno_concrete3d_adr]]"          # the ADR (decision record)
   - "[[project_ladruno_concrete3d]]"          # the agent-memory pointer
@@ -124,20 +124,35 @@ off `ladruno` (fast auto-merge ⇒ fresh branch each time; predict the next PR n
   `dmg_cttemper_proj` (pure tension); wrapper parses `-ctTemper`, serializes the int (`LC3D_NDATA`+1).
   No new classTag/banner.
 
-**SHIPPED (Tier-3 explicit-dynamics demo — element battery, #333):**
-- **Tier-3 explicit demo** — no oracle/kernel change (the kernel already runs with `doTangent=false`, and
-  the wrapper already parses `-rho` for element mass). The increment is the **element battery**
-  (`tests/test_ladrunoConcrete3D_element.py`, new "Tier-3 EXPLICIT-DYNAMICS" section): the 1/8-symmetry
-  unit cube given mass via `-rho`, driven face x-DOF prescribed by a Linear timeSeries (support motion),
-  `system Diagonal` + `algorithm Linear` (⇒ NO global tangent ever formed/factorized) under BOTH fork
-  explicit steppers (`CentralDifferenceLadruno` + `ExplicitBathe`). Gates: (1) each integrator marches
-  straight THROUGH tension softening, stays finite, peaks at ~`f_t` then degrades with `ω_t→~1`
-  (the static backbone, reached by forward time-marching, NO unsymmetric solver / NO step-cutting);
-  (2) the explicit peak == the Tier-1 implicit (`_drive_adaptive`) peak (rate-independent backbone
-  cross-check); (3) **the payoff made concrete** — the SAME single cube under fixed-step implicit Newton
-  + DisplacementControl STALLS at the immediate softening limit point (`ε0=f_t/E`) after a handful of
-  steps, while the explicit run completes the full ramp. This is the ADR §4.4 "softening is a non-issue
-  for explicit" claim, validated end-to-end in OpenSees.
+**SHIPPED (P3 Tier-3 explicit — validation/demo, #328):** the robustness trilogy is now complete
+(Tier-1 implicit · Tier-2 IMPL-EX `-implex` · Duvaut–Lions `-eta` · **Tier-3 explicit**). No source
+change was needed — the kernel already runs with `do_tangent=false` and the wrapper already exposes
+`getRho()` for the explicit mass. Deliverables: (a) g++ **B7** gate — `returnMap(do_tangent=false)`
+committed stress + state is **byte-identical** to `do_tangent=true` (`t3=0`; ADR §398 "Tier-3 committed
+== Tier-1"), certifying the material is exact under an explicit solver that never factorizes the
+indefinite softening tangent; (b) element `test_tier3_explicit_path_runs` — a free-dynamics tension
+stretch (initial face velocity) under `CentralDifferenceLadruno` + `system Diagonal` lumped
+mass (via `-rho`), confirming the material **integrates end-to-end** (mass + transient + stress) and stays
+bounded. **GOTCHA found:** the element test helper `_mat` silently ignored an unknown `rho=` kwarg →
+material `rho=0` → zero element mass → `system Diagonal` solve fails at step 0; `_mat` now forwards `-rho`.
+
+**SHIPPED (Tier-3 explicit — quasi-static prescribed-motion + cross-integrator + oracle-backbone, #333):**
+builds on #328 with the demo it deferred — a **clean quasi-static peak+softening backbone under explicit**.
+The new "Tier-3 EXPLICIT-DYNAMICS" section in `tests/test_ladrunoConcrete3D_element.py` drives the
+`-rho` cube by **prescribed support motion** (driven-face x-DOF = `rate·t` via a Linear `timeSeries`,
+`constraints Transformation` + `system Diagonal` + `algorithm Linear`, light mass-proportional `rayleigh`)
+under BOTH fork steppers. Gates: (1) `test_explicit_tension_softening_runs_through[CDL/ExplicitBathe]` —
+each integrator marches THROUGH softening, finite, peaks at ~`f_t`, `ω_t→~1` (NO unsymmetric solver / NO
+step-cutting); (2) `test_explicit_backbone_matches_oracle` — the explicit nominal-stress backbone tracks
+the numpy oracle `drive_uniaxial_tension_damaged` (lch=1.0) at the peak + softened plateau (windowed mean
+absorbs the dynamic ripple); (3) `test_explicit_completes_where_fixedstep_implicit_stalls` — the payoff:
+the SAME cube under fixed-step implicit Newton + DisplacementControl STALLS at the limit point while the
+explicit run completes. Validated on a fresh worktree `OpenSeesPy` build: full file 30/30 green (25 base + #328's `test_tier3_explicit_path_runs` + the 4 new explicit tests).
+**CORRECTS the #328 gotcha** ("a ramped prescribed-SP is an implicit/static construct that fails under
+CentralDifference"): a **time-varying prescribed SP via the Transformation handler is fine under explicit**
+(both CDL and ExplicitBathe) — it is exactly support-motion input — and gives the quasi-static curve free
+dynamics cannot; keep loading slow (hundreds of wave transits) + a small mass-proportional `rayleigh` to
+settle lateral (Poisson) ringing. (See [[LEDGER_quirks]].)
 
 **NEXT INCREMENTS (each its own oracle-first PR):**
 - **Multiaxial-damage apportioning + plastic-dissipation regularization** — the remaining P2 refinements.
@@ -145,6 +160,8 @@ off `ladruno` (fast auto-merge ⇒ fresh branch each time; predict the next PR n
   the same equivalent strain that already drives the κ histories — replacing the extreme-principal drive
   (`max⟨σ̄_i⟩₊` / `max⟨−σ̄_i⟩₊`); uniaxial reduces to current behavior. Plus the D3/C3 un-regularized
   plastic-dissipation caveat (CDPM2 regularizes the damage softening only).
+- **P4 finite-strain** — `nDMaterial LogStrain` wrapping the 3D material (clean: isotropic, no
+  co-rotating backstress); already free via the wrapper, needs a validation gate.
 
 ---
 
@@ -560,9 +577,10 @@ freezes plastic state + damage)** → **Duvaut–Lions `-eta` ✓ (oracle #316 �
 #318, the rate term, §0)** → **P2f cyclic `β_c` ✓ (oracle + C++ kernel port #321, faithful CDPM2 compressive ductility, §6b)** →
 **P2g monotone-`ω` no-heal ✓ (oracle + C++ kernel + wrapper #325, secant unload + SPD unload tangent, §0)** →
 **P2h `-ctTemper` compression→tension damage temper ✓ (oracle + C++ kernel + wrapper #327, none/alphat/proj, §0)** →
-**Tier-3 explicit-dynamics demo ✓ (element battery #333 — CDL + ExplicitBathe march through softening, no global tangent / no step-cutting, §0)** →
-**NEXT: multiaxial apportioning (E·ε̃ drive) + plastic-dissipation regularization** → P4 finite-strain (`LogStrain`, clean — already free via the
-wrapper) → P5 confined-fiber view (§4.6 hoop-spring condensation, "Mander by mechanism") → P6
+**P3 Tier-3 explicit ✓ (g++ B7 do_tangent-independence gate + element CentralDifference softening demo #328 — robustness trilogy complete)** →
+**Tier-3 explicit quasi-static + cross-integrator ✓ (#333 — prescribed-motion peak+softening backbone, CDL + ExplicitBathe, oracle-backbone match, implicit-stall contrast; corrects the #328 prescribed-SP gotcha)** →
+**NEXT: multiaxial apportioning (E·ε̃ drive, Eq.37) + plastic-dissipation regularization → P4 finite-strain (`LogStrain`, clean — already free via the
+wrapper)** → P5 confined-fiber view (§4.6 hoop-spring condensation, "Mander by mechanism") → P6
 auto-hybrid switch.
 
 PRs (all → `ladruno`): **#240** P0+P1 · **#244** hardening · **#247** tangent · **#248** review ·
@@ -576,5 +594,6 @@ Duvaut–Lions `-eta` oracle · **#318** Duvaut–Lions `-eta` C++ kernel port +
 P2f cyclic `β_c` oracle + C++ kernel port (faithful CDPM2 compressive ductility) · **#325** P2g
 monotone-`ω` no-heal cyclic damage (oracle + C++ kernel + wrapper; secant unload + SPD unload tangent) ·
 **#327** P2h `-ctTemper {none|alphat|proj}` compression→tension damage temper (oracle + C++ kernel + wrapper) ·
-**#333** Tier-3 explicit-dynamics demo (element battery: CDL + ExplicitBathe march through tension softening,
-no global tangent / no step-cutting; explicit completes where fixed-step implicit stalls).
+**#328** P3 Tier-3 explicit (g++ B7 do_tangent-independence gate + element CentralDifference softening demo) ·
+**#333** Tier-3 explicit quasi-static + cross-integrator (prescribed-motion peak+softening backbone, CDL +
+ExplicitBathe, oracle-backbone match, implicit-stall contrast; corrects the #328 prescribed-SP gotcha).

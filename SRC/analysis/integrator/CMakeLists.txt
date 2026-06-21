@@ -98,6 +98,7 @@ target_sources(OPS_Analysis
        ExplicitBatheSMSConsistent.cpp   # nmb - consistent mass scaling on Noh-Bathe ExplicitBathe
        ExplicitBatheLNVDSMS.cpp         # nmb - lumped mass scaling on Noh-Bathe+LNVD
        ExplicitBatheLNVDSMSConsistent.cpp  # nmb - consistent mass scaling on Noh-Bathe+LNVD
+       LadrunoMassScalingEnergy.cpp     # nmb - V4 consistent scaling-mass KE conduit (energy recorder)
        LadrunoDynamicRelaxation.cpp     # nmb - quasi-static dynamic relaxation
        CriticalTimeStep.cpp             # nmb - shared dt_cr eigensolve
        ExplicitDifferenceStatic.cpp     # JAA
@@ -156,6 +157,7 @@ target_sources(OPS_Analysis
        ExplicitBatheLNVDSMSConsistent.h
        LadrunoMassLumping.h
        LadrunoMassScaling.h
+       LadrunoMassScalingEnergy.h
        LadrunoDynamicRelaxation.h
        CriticalTimeStep.h
        ExplicitDifferenceStatic.h
