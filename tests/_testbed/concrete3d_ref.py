@@ -1444,6 +1444,157 @@ def drive_damaged_unified(mp, eps11_path, Gf, Gc, lch, As=2.0, sigma3=0.0):
     return {k: np.array(v) for k, v in out.items()}
 
 
+# ---------------------------------------------------------------------------
+# P5 — CONFINED-FIBER view (ADR 4.6): the SAME kernel condensed against a PASSIVE hoop spring, so the
+# confinement strength + ductility gain ("Mander by mechanism") EMERGE from the MW cap + non-associated
+# dilatancy + ductility measure, with NO pre-baked Mander backbone. Identical to drive_damaged_unified
+# except the lateral Newton targets the HOOP residual R = sig_lat_eff(eps_lat) + sig_hoop(eps_lat) = 0
+# instead of the free/active target (sigma3=0 / -sigma3). The non-associated dilatancy sets the lateral
+# expansion -> mobilizes the hoop tension -> supplies the confining pressure self-consistently.
+# ---------------------------------------------------------------------------
+def hoop_stress(eps_lat, hoop_K, hoop_fy=1.0e30):
+    """Passive circular-hoop spring: tension only (slack in lateral contraction), elastic-perfectly-plastic
+    with stiffness hoop_K and yield hoop_fy. sig_hoop>0 is the confining pressure the hoop applies on the
+    concrete lateral face (so the concrete's effective lateral stress is -sig_hoop at equilibrium)."""
+    if eps_lat <= 0.0:
+        return 0.0
+    return min(hoop_K * eps_lat, hoop_fy)
+
+
+def hoop_stiffness(eps_lat, hoop_K, hoop_fy=1.0e30):
+    """d sig_hoop / d eps_lat (for the lateral-Newton Jacobian + the condensed tangent): hoop_K below
+    yield, 0 once yielded (or slack)."""
+    return hoop_K if (eps_lat > 0.0 and hoop_K * eps_lat < hoop_fy) else 0.0
+
+
+def mander_fcc_ratio(p_over_fc):
+    """Mander et al. (1988) confined strength ratio for CIRCULAR hoops (uniform confining pressure f_l=p):
+    fcc/fc = -1.254 + 2.254 sqrt(1 + 7.94 p/fc) - 2 p/fc. The empirical target the mechanism reproduces."""
+    x = p_over_fc
+    return -1.254 + 2.254 * np.sqrt(1.0 + 7.94 * x) - 2.0 * x
+
+
+def drive_confined_fiber(mp, eps11_path, Gf, Gc, lch, As=2.0, hoop_K=0.0, hoop_fy=1.0e30):
+    """PASSIVE confined-fiber driver (ADR 4.6). Axial strain eps11 is prescribed (the fiber section); the
+    lateral strain eps_lat=eps22=eps33 is Newton-solved so the EFFECTIVE lateral stress balances the hoop
+    spring: sig_lat_eff + sig_hoop(eps_lat) = 0. hoop_K=0 reduces EXACTLY to the free uniaxial-stress driver
+    (drive_damaged_unified, sigma3=0). Returns the nominal axial stress + the mobilized confining pressure.
+    Circular/spiral hoops only (the symmetric eps22=eps33 condensation; rectangular ties are anisotropic)."""
+    E, fc, ft, nu = mp["E"], mp["fc"], mp["ft"], mp["nu"]
+    eps0 = ft / E
+    eps_f = Gf / (ft * lch)
+    eps_fc = Gc / (fc * lch)
+    eps = np.zeros(3); sig_eff = np.zeros(3); kp = 0.0; el = 0.0
+    et_max = 0.0
+    sigt_max = sigc_max = 0.0
+    kdt1 = kdt2 = kdc = kdc1 = kdc2 = 0.0
+    epl_prev = np.zeros(3)
+    out = {k: [] for k in ("eps11", "eps_lat", "sig11", "wc", "p_conf", "sig_eff", "kp")}
+    for e11 in eps11_path:
+        for _ in range(80):                              # lateral Newton: sig_lat_eff + sig_hoop(el) -> 0
+            deps = np.array([e11 - eps[0], el - eps[1], el - eps[2]])
+            snew, _, _, _, _ = return_map_hardening(_elastic_pred(sig_eff, deps, mp), mp, kp)
+            res = 0.5 * (snew[1] + snew[2]) + hoop_stress(el, hoop_K, hoop_fy)
+            if abs(res) < 1.0e-10 * (fc + 1.0):
+                break
+            d = 1.0e-8 * (abs(el) + 1.0e-6)
+            deps2 = np.array([e11 - eps[0], (el + d) - eps[1], (el + d) - eps[2]])
+            snew2, _, _, _, _ = return_map_hardening(_elastic_pred(sig_eff, deps2, mp), mp, kp)
+            Jd = (0.5 * (snew2[1] + snew2[2]) + hoop_stress(el + d, hoop_K, hoop_fy) - res) / d
+            if abs(Jd) < 1.0e-12:
+                Jd = 1.0e-12 if Jd >= 0 else -1.0e-12
+            el -= res / Jd
+        deps = np.array([e11 - eps[0], el - eps[1], el - eps[2]])
+        sig_eff, kp, _, _, _ = return_map_hardening(_elastic_pred(sig_eff, deps, mp), mp, kp)
+        eps = np.array([e11, el, el])
+
+        et, ac, xs = _damage_drivers(sig_eff, mp, As)
+        above = max(et - max(et_max, eps0), 0.0)
+        det_raw = max(et - et_max, 0.0)
+        loading = det_raw > 0.0 and et > eps0
+        epl = eps - np.array([(sig_eff[0] - nu * (sig_eff[1] + sig_eff[2])) / E,
+                              (sig_eff[1] - nu * (sig_eff[0] + sig_eff[2])) / E,
+                              (sig_eff[2] - nu * (sig_eff[0] + sig_eff[1])) / E])
+        dnorm = float(np.linalg.norm(epl - epl_prev))
+        if loading:
+            wt_w = tensile_damage_weight(mp, ac, np.array([(epl - epl_prev)[0], (epl - epl_prev)[1],
+                                                           (epl - epl_prev)[2], 0.0, 0.0, 0.0]),
+                                         sig_eff, np.eye(3))
+            kdt2 += wt_w * above / xs;   kdt1 += wt_w * dnorm / xs
+            kdc += ac * above;           kdc2 += ac * above / xs
+            kdc1 += ac * beta_c(sig_eff, kp, mp) * dnorm / xs
+        et_max = max(et_max, et); epl_prev = epl
+
+        sig_t_drive = E * et if float(np.max(sig_eff)) > 1.0e-6 * ft else 0.0
+        sig_c_drive = max(-float(np.min(sig_eff)), 0.0)
+        sigt_max = max(sigt_max, sig_t_drive); sigc_max = max(sigc_max, sig_c_drive)
+        wt = _solve_omega_bracketed(kdt1, kdt2, sigt_max, ft, eps_f) if (et_max > eps0 and sigt_max > 1.0e-6 * ft) else 0.0
+        wc = _solve_omega_bracketed(kdc1, kdc2, sigc_max, fc, eps_fc) if (kdc > 0.0 and sigc_max > 1.0e-6 * fc) else 0.0
+        sig_nom = apply_damage_principal(sig_eff, wt, wc)
+        for k, v in (("eps11", e11), ("eps_lat", el), ("sig11", sig_nom[0]), ("wc", wc),
+                     ("p_conf", hoop_stress(el, hoop_K, hoop_fy)), ("sig_eff", sig_eff[0]), ("kp", kp)):
+            out[k].append(v)
+    return {k: np.array(v) for k, v in out.items()}
+
+
+def run_p5_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, Gc=5.0, As=2.0, verbose=True):
+    """P5 — CONFINED-FIBER view ("Mander by mechanism"). F1 reduce-to-plain-1D (hoop_K=0 == the free
+    uniaxial-stress driver, BYTE-identical); F2 confined gain emerges (peak strength fcc>fc AND the
+    strain-at-peak ductility grow monotonically with a realistic hoop stiffness, with a self-mobilized
+    confining pressure p>0); F3 the HEADLINE — fcc/fc matches the Mander circular-hoop formula evaluated
+    at the SELF-MOBILIZED pressure p_conf@peak to within 5% for p/fc in [~0.1, 0.2] (the mechanism analog
+    of the 3-D active-confinement Gate 2); F4 hoop YIELD caps the mobilized pressure (stirrup yields =>
+    bounded confinement)."""
+    mp = make_material(E, nu, fc, ft)
+    path = np.linspace(0.0, -0.02, 1500)
+    res = {}
+
+    # F1 — reduce-to-plain-1D: hoop_K=0 => sig_hoop=0 => the free uniaxial-stress driver, byte-for-byte.
+    a = drive_confined_fiber(mp, path, Gf, Gc, lch=50.0, As=As, hoop_K=0.0)
+    b = drive_damaged_unified(mp, path, Gf, Gc, lch=50.0, As=As, sigma3=0.0)
+    res["F1_reduce_1d"] = float(np.max(np.abs(a["sig11"] - b["sig11"])))
+
+    # F2/F3 — sweep a realistic hoop stiffness; read fcc, eps_peak, the mobilized p, and the Mander target.
+    peaks = []                          # (hoop_K, fcc, eps_peak, p_conf@peak, mander fcc)
+    for K in (0.0, 1200.0, 2000.0):
+        r = drive_confined_fiber(mp, path, Gf, Gc, lch=50.0, As=As, hoop_K=K)
+        s = -r["sig11"]; ip = int(np.argmax(s))
+        p = float(r["p_conf"][ip])
+        peaks.append((K, float(s[ip]), -float(path[ip]), p, fc * mander_fcc_ratio(p / fc)))
+    res["F2_peaks"] = peaks
+    fccs = [p[1] for p in peaks]; epks = [p[2] for p in peaks]
+    res["F2_strength_monotone"] = all(fccs[i + 1] > fccs[i] * 1.001 for i in range(len(fccs) - 1))
+    res["F2_ductility_monotone"] = all(epks[i + 1] > epks[i] * 1.001 for i in range(len(epks) - 1))
+    # F3: the two confined points (p/fc in the Mander-valid band) match the Mander formula within 5%.
+    f3 = []
+    for K, fcc, epk, p, mander in peaks:
+        if 0.05 < p / fc < 0.25:
+            f3.append(abs(fcc - mander) / mander)
+    res["F3_mander_relerr"] = max(f3) if f3 else 1.0
+    res["F3_npts"] = len(f3)
+
+    # F4 — hoop YIELD caps the mobilized pressure: a low hoop_fy plateaus p_conf below the elastic value.
+    r_el = drive_confined_fiber(mp, path, Gf, Gc, lch=50.0, As=As, hoop_K=2000.0)
+    r_yl = drive_confined_fiber(mp, path, Gf, Gc, lch=50.0, As=As, hoop_K=2000.0, hoop_fy=3.0)
+    res["F4_p_capped"] = float(np.max(r_yl["p_conf"]))
+    res["F4_caps_below_elastic"] = float(np.max(r_yl["p_conf"])) <= 3.0 + 1.0e-9 < float(np.max(r_el["p_conf"]))
+
+    ok = (res["F1_reduce_1d"] < 1.0e-9
+          and res["F2_strength_monotone"] and res["F2_ductility_monotone"]
+          and res["F3_npts"] >= 1 and res["F3_mander_relerr"] < 0.05
+          and res["F4_caps_below_elastic"])
+    res["PASS"] = bool(ok)
+    if verbose:
+        print(f"  F1 reduce-to-plain-1D       max|dsig11| = {res['F1_reduce_1d']:.2e}   (< 1e-9, hoop_K=0)")
+        for K, fcc, epk, p, mander in peaks:
+            print(f"  F2 hoop_K={K:7.0f}  fcc/fc={fcc / fc:.3f}  eps_peak={epk:.4f}  p/fc={p / fc:.3f}"
+                  f"  mander fcc/fc={mander / fc:.3f}")
+        print(f"  F3 Mander-by-mechanism      max rel err = {res['F3_mander_relerr']:.3e} over {res['F3_npts']} pts  (< 5%)")
+        print(f"  F4 hoop-yield caps pressure p_max={res['F4_p_capped']:.3f}  ({'ok' if res['F4_caps_below_elastic'] else 'FAIL'})")
+        print(f"  => P5 GATE {'PASS' if ok else 'FAIL'}")
+    return res
+
+
 def run_p2c_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, Gc=5.0, As=2.0, verbose=True):
     mp = make_material(E, nu, fc, ft)
     res = {}
@@ -3136,3 +3287,9 @@ if __name__ == "__main__":
     p3e = run_p3_eta_gate(verbose=True)
     print("-" * 74)
     print(f"P3 ETA: {'PASS' if p3e['PASS'] else 'FAIL'}")
+    print("=" * 74)
+    print("LadrunoConcrete3D P5 gate — confined-fiber view (hoop-spring condensation, Mander by mechanism)")
+    print("=" * 74)
+    p5 = run_p5_gate(verbose=True)
+    print("-" * 74)
+    print(f"P5: {'PASS' if p5['PASS'] else 'FAIL'}")

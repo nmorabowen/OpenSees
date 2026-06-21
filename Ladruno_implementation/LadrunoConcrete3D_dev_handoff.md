@@ -201,12 +201,35 @@ settle lateral (Poisson) ringing. (See [[LEDGER_quirks]].)
   state** `σ(QF)=Qσ(F)Qᵀ` to ~1e-8 (exact, isotropic); (4) the LogStrain SEAM through damage — uniaxial
   finite stretch into ωt>0 ⇒ GP Cauchy == small-strain stress at `½ln b` pushed back by `/J`.
 
+**SHIPPED — P5a confined-fiber view ORACLE slice (§4.6, "Mander by mechanism", #TBD):**
+- **The SAME kernel condensed against a PASSIVE hoop spring** so the confinement strength + ductility gain
+  EMERGE (no pre-baked Mander backbone). `drive_confined_fiber` mirrors `drive_damaged_unified` but the
+  lateral Newton targets the HOOP residual `σ_lat_eff(ε_lat) + σ_hoop(ε_lat) = 0` instead of the free
+  (`σ_lat=0`) / active (`−σ3`) target; `σ_hoop(ε_lat) = min(K·ε_lat, f_y)` (tension-only elastic-perfectly-
+  plastic circular-hoop spring). The non-associated dilatancy sets the lateral expansion ⇒ mobilizes the
+  hoop tension ⇒ supplies the confining pressure self-consistently. `hoop_stress`/`hoop_stiffness`/
+  `mander_fcc_ratio` helpers added.
+- **Gate `run_p5_gate` / pytest `test_p5_confined_fiber_gate` (F1–F4, material gate 25/25):** F1 reduce-to-
+  plain-1D (`hoop_K=0` == `drive_damaged_unified(σ3=0)` BYTE-identical, 0.00e+00); F2 confined gain — fcc/fc
+  AND ε_peak BOTH grow monotonically with hoop stiffness (1.00→1.45→2.11 / 0.0012→0.0021→0.0034), self-
+  mobilized `p>0`; **F3 the HEADLINE "Mander by mechanism" — fcc/fc reproduces the Mander circular-hoop
+  formula `−1.254+2.254√(1+7.94 p/fc)−2p/fc` evaluated at the SELF-MOBILIZED `p_conf@peak` to ≤2.9% for
+  `p/fc∈[~0.085,0.244]`** (1.448 vs 1.492; 2.111 vs 2.121); F4 hoop YIELD (`hoop_fy`) caps the mobilized
+  pressure (stirrup yields ⇒ bounded confinement). Circular/spiral only (symmetric `ε22=ε33`; rectangular
+  ties are anisotropic — a two-spring `K_x,K_y` extension).
+
 **NEXT INCREMENTS (each its own oracle-first PR):**
-- **Plastic-dissipation regularization** — the D3/C3 un-regularized plastic-dissipation caveat (CDPM2
-  regularizes the damage softening only ⇒ FE-visible total fracture energy is ~33% non-objective in lch).
-  This is a research-grade modeling fork (CDPM2 has no canonical answer) — scope the approach (bound the
-  post-peak effective hardening vs lch-scale the plastic work) before implementing.
-- **P5 confined-fiber view** (§4.6 hoop-spring condensation, "Mander by mechanism" in 1D) → **P6 auto-hybrid**.
+- **P5b — C++ confined-fiber view + condensed 1-D tangent + fiber-section integration.** The oracle slice
+  proves the mechanism; the build slice ports the hoop-residual nested-Newton condensation into the kernel
+  (mirror the PlaneStress `σ33=0` condensation but with the `σ_hoop` lateral target + `∂σ_hoop/∂ε_lat` on the
+  lateral diagonal of the condensed `dσ11/dε11`), exposes it as a uniaxial/fiber view, and adds the
+  `σ_hoop(ε_lat)` parser (`-hoop K <fy>`). Commit the full condensed lateral state (own plastic/damage
+  history). Validate vs the oracle + a fiber-section element leg (confined core vs free cover fibers).
+- **Plastic-dissipation regularization** — RECONSIDERED: a naive qh2 cap (approach A) empirically WORSENS the
+  D3 spread 10–100× (a lower effective surface ⇒ more post-peak plastic flow); the per-volume plastic work
+  is lch-independent (so `W_p·lch ∝ lch`), and the FE-visible spread is already modest (~0.33·Gf) since the
+  damage knock-down dominates. A genuine fix needs lch-scaling the plastic-strain accumulation (deeper, small
+  payoff). DEFERRED / likely best left as a documented diagnostic. → **P6 auto-hybrid**.
 
 ---
 
@@ -626,8 +649,8 @@ freezes plastic state + damage)** → **Duvaut–Lions `-eta` ✓ (oracle #316 �
 **Tier-3 explicit quasi-static + cross-integrator ✓ (#333 — prescribed-motion peak+softening backbone, CDL + ExplicitBathe, oracle-backbone match, implicit-stall contrast; corrects the #328 prescribed-SP gotcha)** →
 **P2i multiaxial-damage apportioning ✓ (oracle + C++ kernel + g++ biaxial byte-check #336 — tensile ω-drive = `E·ε̃` Eq.37, compressive keeps extreme-principal; uni<tri<bi escalation)** →
 **P4 finite-strain ✓ (validation gate only #339 — `nDMaterial LogStrain` over the 3D material; isotropic ⇒ `σ(QF)=Qσ(F)Qᵀ` EXACT, no §14.11 boundary; 4/4 self-referential)** →
-**NEXT: plastic-dissipation regularization (D3/C3, research-grade fork)** → P5 confined-fiber view (§4.6 hoop-spring condensation, "Mander by mechanism") → P6
-auto-hybrid switch.
+**P5a confined-fiber view ORACLE ✓ (§4.6 hoop-spring condensation #TBD — "Mander by mechanism": fcc/fc reproduces Mander ≤2.9% from a SELF-mobilized hoop pressure; F1–F4)** →
+**NEXT: P5b C++ confined-fiber view + condensed 1-D tangent + fiber integration** → P6 auto-hybrid switch (plastic-dissipation regularization DEFERRED — approach A backfires, small FE-visible payoff).
 
 PRs (all → `ladruno`): **#240** P0+P1 · **#244** hardening · **#247** tangent · **#248** review ·
 **#249** C++ kernel + g++ gate · **#259** P2a `G_f` · **#261** P2b `α_c`+`G_c` · **#284** P2c unified
@@ -646,4 +669,6 @@ ExplicitBathe, oracle-backbone match, implicit-stall contrast; corrects the #328
 **#336** P2i multiaxial-damage apportioning (oracle + C++ kernel + g++ `dmg_biaxial_tension` byte-check —
 tensile ω-drive `E·ε̃` Eq.37, compressive keeps extreme-principal; uni<tri<bi escalation) ·
 **#339** P4 finite-strain validation gate (`nDMaterial LogStrain` over the 3D material; isotropic objectivity
-EXACT, no §14.11 boundary; `tests/test_ladrunoConcrete3D_finite.py` 4/4; no source change).
+EXACT, no §14.11 boundary; `tests/test_ladrunoConcrete3D_finite.py` 4/4; no source change) ·
+**#TBD** P5a confined-fiber view ORACLE (§4.6 hoop-spring condensation, "Mander by mechanism" — `drive_confined_fiber`
++ `run_p5_gate` F1–F4; fcc/fc reproduces Mander ≤2.9% from a self-mobilized hoop pressure; oracle-only, C++ view = P5b).
