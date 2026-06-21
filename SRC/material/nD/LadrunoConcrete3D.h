@@ -78,7 +78,7 @@ class LadrunoConcrete3D : public NDMaterial {
                     double e, double Df, double As,
                     double qh0, double Hp, double Ah, double Bh, double Ch, double Dh,
                     double rho, double lch, bool autoReg, bool implex = false,
-                    double eta = 0.0, int dimMode = DIM_3D);
+                    double eta = 0.0, int ctTemper = 0, int dimMode = DIM_3D);
   ~LadrunoConcrete3D();
 
   const char* getClassType(void) const { return "LadrunoConcrete3D"; }
@@ -125,6 +125,7 @@ class LadrunoConcrete3D : public NDMaterial {
   bool   autoReg;              // pull lch from the active element each step
   bool   implex;               // Tier-2 IMPL-EX (P3 robustness; default OFF = Tier-1 implicit)
   double eta;                  // Duvaut-Lions viscoplastic relaxation time (P3; default 0 = inviscid)
+  int    ctTemper;             // P2h compression->tension damage temper: 0=none 1=alphat 2=proj (default none)
 
   // ---- dimensional view (element-facing ordering; the kernel is always 3D) ----
   int    dim;                  // DIM_*

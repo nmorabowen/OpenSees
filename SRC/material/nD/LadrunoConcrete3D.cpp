@@ -88,6 +88,7 @@ void* OPS_LadrunoConcrete3D(void)
   bool autoReg = false;
   bool implex = false;
   double eta = 0.0;
+  int ctTemper = 0;            // P2h compression->tension damage temper: 0=none 1=alphat 2=proj
 
   while (OPS_GetNumRemainingInputArgs() > 0) {
     const char* flag = OPS_GetString();
@@ -135,6 +136,13 @@ void* OPS_LadrunoConcrete3D(void)
     else if (strcmp(flag, "-eta") == 0) {
       numData = 1;
       if (OPS_GetDoubleInput(&numData, &eta) < 0 || eta < 0.0) { opserr << "WARNING LadrunoConcrete3D: -eta wants eta >= 0\n"; return 0; }
+    }
+    else if (strcmp(flag, "-ctTemper") == 0) {
+      const char* mode = OPS_GetString();
+      if      (strcmp(mode, "none") == 0)   ctTemper = 0;
+      else if (strcmp(mode, "alphat") == 0) ctTemper = 1;
+      else if (strcmp(mode, "proj") == 0)   ctTemper = 2;
+      else { opserr << "WARNING LadrunoConcrete3D: -ctTemper wants {none|alphat|proj}\n"; return 0; }
     }
     else {
       opserr << "WARNING LadrunoConcrete3D: unknown option '" << flag << "'\n";
@@ -184,8 +192,19 @@ void* OPS_LadrunoConcrete3D(void)
     opserr << "LadrunoConcrete3D (tag " << tag << "): -eta = " << eta << " (Duvaut-Lions, Tier-1) — relaxes "
            << "with beta = dt/(eta+dt); needs a positive time increment (transient or pseudo-time), else inviscid.\n";
 
+  // P2h compression->tension damage temper (-ctTemper): shields the tensile damage history during
+  // compression so a subsequent tension reload is not pre-damaged to ~0 (literal CDPM2, the default
+  // 'none', does pre-damage it). 'alphat' (w_t=1-alpha_c) keeps both monotonic backbones exact;
+  // 'proj' (tensile-stress-projected plastic-strain fraction) lightly softens the tension backbone.
+  if (ctTemper == 1)
+    opserr << "LadrunoConcrete3D (tag " << tag << "): -ctTemper alphat — compression->tension damage "
+           << "coupling tempered by w_t = 1 - alpha_c (tension restored after compression).\n";
+  else if (ctTemper == 2)
+    opserr << "LadrunoConcrete3D (tag " << tag << "): -ctTemper proj — compression->tension damage "
+           << "coupling tempered by the tensile-stress-projected plastic-strain fraction.\n";
+
   NDMaterial* mat = new LadrunoConcrete3D(tag, E, nu, fc, ft, Gf, Gc, ecc, Df, As,
-                                          qh0, Hp, Ah, Bh, Ch, Dh, rho, lch, autoReg, implex, eta);
+                                          qh0, Hp, Ah, Bh, Ch, Dh, rho, lch, autoReg, implex, eta, ctTemper);
   if (mat == 0) {
     opserr << "WARNING LadrunoConcrete3D: failed to allocate material\n";
     return 0;
@@ -200,7 +219,7 @@ LadrunoConcrete3D::LadrunoConcrete3D()
   : NDMaterial(0, ND_TAG_LadrunoConcrete3D),
     E(0.0), nu(0.0), fc(0.0), ft(0.0), Gf(0.0), Gc(0.0), ecc(0.0), m0(0.0),
     Df(0.0), As(2.0), qh0(0.3), Hp(0.5), Ah(0.08), Bh(0.003), Ch(2.0), Dh(1.0e-6),
-    rho(0.0), lchFixed(1.0), autoReg(false), implex(false), eta(0.0),
+    rho(0.0), lchFixed(1.0), autoReg(false), implex(false), eta(0.0), ctTemper(0),
     dim(DIM_3D), ncomp(6), condense(false), cEps22(0.0),
     kp_n(0.0), etmax_n(0.0), kdt1_n(0.0), kdt2_n(0.0), kdc_n(0.0), kdc1_n(0.0), kdc2_n(0.0),
     sigtmax_n(0.0), sigcmax_n(0.0),
@@ -218,12 +237,13 @@ LadrunoConcrete3D::LadrunoConcrete3D()
 LadrunoConcrete3D::LadrunoConcrete3D(int tag, double E_, double nu_, double fc_, double ft_,
                                      double Gf_, double Gc_, double e_, double Df_, double As_,
                                      double qh0_, double Hp_, double Ah_, double Bh_, double Ch_, double Dh_,
-                                     double rho_, double lch_, bool autoReg_, bool implex_, double eta_, int dimMode)
+                                     double rho_, double lch_, bool autoReg_, bool implex_, double eta_,
+                                     int ctTemper_, int dimMode)
   : NDMaterial(tag, ND_TAG_LadrunoConcrete3D),
     E(E_), nu(nu_), fc(fc_), ft(ft_), Gf(Gf_), Gc(Gc_), ecc(e_),
     m0(Ladruno::Concrete3D::m0Of(fc_, ft_, e_)),
     Df(Df_), As(As_), qh0(qh0_), Hp(Hp_), Ah(Ah_), Bh(Bh_), Ch(Ch_), Dh(Dh_),
-    rho(rho_), lchFixed(lch_), autoReg(autoReg_), implex(implex_), eta(eta_),
+    rho(rho_), lchFixed(lch_), autoReg(autoReg_), implex(implex_), eta(eta_), ctTemper(ctTemper_),
     dim(dimMode), ncomp(6), condense(false), cEps22(0.0),
     kp_n(0.0), etmax_n(0.0), kdt1_n(0.0), kdt2_n(0.0), kdc_n(0.0), kdc1_n(0.0), kdc2_n(0.0),
     sigtmax_n(0.0), sigcmax_n(0.0),
@@ -289,6 +309,7 @@ void LadrunoConcrete3D::integrate(bool doTangent)
   p.Df = Df; p.As = As;
   p.qh0 = qh0; p.Hp = Hp; p.Ah = Ah; p.Bh = Bh; p.Ch = Ch; p.Dh = Dh;
   p.eta = eta; p.implex = implex;                 // Tier-1 (default, +Duvaut-Lions -eta) / Tier-2 IMPL-EX (-implex)
+  p.ctTemper = ctTemper;                          // P2h compression->tension damage temper (none/alphat/proj)
 
   // crack-band: lch from the active element (mesh-objective) when -autoRegularization is on,
   // else the fixed -lch the input was calibrated for.
@@ -525,7 +546,7 @@ const char* LadrunoConcrete3D::getType(void) const
 NDMaterial* LadrunoConcrete3D::getCopy(void)
 {
   return new LadrunoConcrete3D(this->getTag(), E, nu, fc, ft, Gf, Gc, ecc, Df, As,
-                               qh0, Hp, Ah, Bh, Ch, Dh, rho, lchFixed, autoReg, implex, eta, dim);
+                               qh0, Hp, Ah, Bh, Ch, Dh, rho, lchFixed, autoReg, implex, eta, ctTemper, dim);
 }
 
 NDMaterial* LadrunoConcrete3D::getCopy(const char* type)
@@ -541,15 +562,15 @@ NDMaterial* LadrunoConcrete3D::getCopy(const char* type)
     return NDMaterial::getCopy(type);   // let the base report the unsupported type
 
   return new LadrunoConcrete3D(this->getTag(), E, nu, fc, ft, Gf, Gc, ecc, Df, As,
-                               qh0, Hp, Ah, Bh, Ch, Dh, rho, lchFixed, autoReg, implex, eta, d);
+                               qh0, Hp, Ah, Bh, Ch, Dh, rho, lchFixed, autoReg, implex, eta, ctTemper, d);
 }
 
 // ===========================================================================
 //  parallel / serialization (flat Vector — the kernel state is all fixed-size scalars)
 // ===========================================================================
-static const int LC3D_NDATA = 1 + 18 + 1 + 1 + 25 + 2 + 1 + 1 + 1 + 11;
+static const int LC3D_NDATA = 1 + 18 + 1 + 1 + 25 + 2 + 1 + 1 + 1 + 1 + 11;
 // tag +18 params +autoReg +dim +25 state +2 P2g(sigtmax,sigcmax) +cEps22 +implex +eta
-// +IMPL-EX committed(wt,wc,dwt,dwc,dtn + depl[6])
+// +1 ctTemper(P2h) +IMPL-EX committed(wt,wc,dwt,dwc,dtn + depl[6])
 
 int LadrunoConcrete3D::sendSelf(int commitTag, Channel& theChannel)
 {
@@ -572,6 +593,7 @@ int LadrunoConcrete3D::sendSelf(int commitTag, Channel& theChannel)
   data(c++) = cEps22;
   data(c++) = implex ? 1.0 : 0.0;
   data(c++) = eta;
+  data(c++) = (double)ctTemper;                    // P2h compression->tension damage temper mode
   data(c++) = wt_n; data(c++) = wc_n; data(c++) = dwt_n; data(c++) = dwc_n; data(c++) = dtn_n;
   for (int i = 0; i < 6; i++) data(c++) = depl_n[i];
 
@@ -607,6 +629,7 @@ int LadrunoConcrete3D::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBr
   cEps22 = data(c++);
   implex = (data(c++) != 0.0);
   eta = data(c++);
+  ctTemper = (int)data(c++);                        // P2h compression->tension damage temper mode
   wt_n = data(c++); wc_n = data(c++); dwt_n = data(c++); dwc_n = data(c++); dtn_n = data(c++);
   for (int i = 0; i < 6; i++) depl_n[i] = data(c++);
 

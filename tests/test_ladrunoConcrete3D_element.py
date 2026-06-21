@@ -52,6 +52,8 @@ def _mat(tag, **kw):
         args += ["-implex"]
     if "eta" in kw:
         args += ["-eta", kw["eta"]]
+    if "ctTemper" in kw:
+        args += ["-ctTemper", kw["ctTemper"]]
     ops.nDMaterial(*args)
 
 
@@ -268,6 +270,33 @@ def test_cyclic_no_heal_unload():
     assert 0.0 < sec_stiff < _E, f"unload secant stiffness {sec_stiff} not in (0, E={_E})"
     assert sec_stiff == pytest.approx((1.0 - wt_rev) * _E, rel=0.3), \
         f"secant stiffness {sec_stiff} != (1-wt)E {(1.0 - wt_rev) * _E}"
+
+
+# ---------------------------------------------------------------------------
+# P2h — the -ctTemper {none|alphat|proj} compression->tension damage-coupling modes parse, run, and
+# round-trip. In PURE tension none and alphat are byte-identical (alpha_c=0 => w_t=1) and proj is lightly
+# softer; all peak at ~ft. The discriminating compression->tension RESTORATION is gated at the material
+# level (test_p2h_cttemper_gate + the g++ dmg_cttemper_* byte-checks); here we confirm the wrapper
+# plumbing (parser + commit cycle + serialization) for every mode end-to-end.
+# ---------------------------------------------------------------------------
+@pytest.mark.t1
+@pytest.mark.parametrize("mode", ["none", "alphat", "proj"])
+def test_cttemper_parses_and_runs(mode):
+    res = _drive_adaptive(lambda t: _mat(t, ctTemper=mode), 0.02, 300)
+    assert len(res) > 12, f"{mode}: only {len(res)} steps converged"
+    peak = max(s for _, s, _ in res)
+    assert peak == pytest.approx(_FT, rel=0.05), f"{mode} tension peak {peak} != ft {_FT}"
+
+
+@pytest.mark.t1
+def test_cttemper_database_roundtrip():
+    """A -ctTemper mode survives a FE_Datastore round-trip (the ctTemper int is serialized)."""
+    def build():
+        _build(lambda t: _mat(t, ctTemper="alphat"))
+        ops.integrator("DisplacementControl", 2, 1, 0.5 * (_FT / _E))
+        assert ops.analyze(1) == 0
+    database_roundtrip(build, probe_nodes=[2], ndf=3,
+                       probe_fn=lambda: list(ops.eleResponse(1, "material", 1, "stress")))
 
 
 # ---------------------------------------------------------------------------

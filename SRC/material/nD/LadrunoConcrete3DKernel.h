@@ -110,6 +110,12 @@ struct Params {
     double Bh = 0.003;
     double Ch = 2.0;
     double Dh = 1.0e-6;
+    // P2h compression->tension damage-coupling temper (the -ctTemper modes): scales the tensile
+    // damage-history (kdt1/kdt2) accumulation by a weight w_t. 0=none (w_t=1, literal CDPM2,
+    // byte-identical); 1=alphat (w_t=1-alpha_c); 2=proj (fraction of the plastic-strain increment along
+    // POSITIVE effective-stress directions). Both temper modes => w_t~0 in compression (no tension
+    // pre-damage). See tensileDamageWeight.
+    int    ctTemper = 0;
     // rate / robustness
     double eta = 0.0;            // Duvaut-Lions viscosity (0 => inviscid, byte-identical)
     bool   implex = false;       // Tier-2 (IMPL-EX)
@@ -327,6 +333,37 @@ inline double alphaCompression(const double sig_pr[3])
     }
     if (nrm2 <= 1.0e-300) return 0.0;
     return num / nrm2;
+}
+
+inline void voigtToMat(const double v[6], double M[3][3]);   // fwd decl (defined below; used by 'proj')
+
+// P2h compression->tension damage-coupling TEMPER weight w_t (mirror the oracle tensile_damage_weight):
+// scales the tensile damage-history accumulation. 0=none (w_t=1, byte-identical); 1=alphat (w_t=1-alpha_c);
+// 2=proj (fraction of the plastic-strain increment depl[6] along POSITIVE effective-stress principal
+// directions: project depl into the stress eigenframe V, keep the diagonal entries where w_stress>0).
+inline double tensileDamageWeight(const Params& mp, double ac, const double depl6[6],
+                                  const double w_stress[3], const double V[3][3])
+{
+    if (mp.ctTemper == 1) {                                  // alphat
+        const double w = 1.0 - ac;
+        return w > 0.0 ? w : 0.0;
+    }
+    if (mp.ctTemper == 2) {                                  // proj
+        double M[3][3]; voigtToMat(depl6, M);
+        double nrm2 = 0.0;
+        for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) nrm2 += M[i][j] * M[i][j];
+        if (nrm2 <= 1.0e-300) return 1.0;
+        const double floor = 1.0e-6 * mp.ft;
+        double tens = 0.0;
+        for (int a = 0; a < 3; ++a) {
+            if (w_stress[a] <= floor) continue;             // tensile-stress directions only
+            double d = 0.0;                                  // (V^T M V)_aa = plastic strain along axis a
+            for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) d += V[i][a] * M[i][j] * V[j][a];
+            tens += d * d;
+        }
+        return std::sqrt(tens) / std::sqrt(nrm2);
+    }
+    return 1.0;                                              // none (literal CDPM2)
 }
 
 inline void damageDrivers(const double sig_pr[3], const Params& mp, double& et, double& ac, double& xs)
@@ -978,7 +1015,9 @@ inline void damagedUpdate(const Params& mp, const State& in, const double sig_ef
 
     double kdt1 = in.kdt1, kdt2 = in.kdt2, kdc = in.kdc, kdc1 = in.kdc1, kdc2 = in.kdc2;
     if (loading) {
-        kdt2 += above / xs;          kdt1 += dnorm / xs;                 // Eq.45 / Eq.44 (no alpha_c)
+        double depl[6]; for (int i = 0; i < 6; ++i) depl[i] = epl[i] - epl_n[i];
+        const double wtw = tensileDamageWeight(mp, ac, depl, w, V);     // P2h ctTemper weight (1 if none)
+        kdt2 += wtw * above / xs;     kdt1 += wtw * dnorm / xs;          // Eq.45 / Eq.44 (w_t tempers C->T)
         kdc  += ac * above;          kdc2 += ac * above / xs;            // Eq.47 / Eq.49
         kdc1 += ac * betaC(w, kp, mp) * dnorm / xs;                      // Eq.48 with the full CDPM2 beta_c (Eq.50, P2f)
     }
@@ -1161,9 +1200,10 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
     const bool loading = det_raw > 0.0 && et > eps0;
 
     const double bc = betaC(w, kp_new, mp);              // Eq.50 (P2f): scales the kdc1 plastic part
+    const double wtw = tensileDamageWeight(mp, ac, depl, w, V);   // P2h ctTemper weight (1 if none)
     double kdt1 = in.kdt1, kdt2 = in.kdt2, kdc = in.kdc, kdc1 = in.kdc1, kdc2 = in.kdc2;
     if (loading) {
-        kdt2 += above / xs;          kdt1 += dnorm / xs;
+        kdt2 += wtw * above / xs;    kdt1 += wtw * dnorm / xs;
         kdc  += ac * above;          kdc2 += ac * above / xs;
         kdc1 += ac * bc * dnorm / xs;
     }
@@ -1290,13 +1330,45 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
         }
     }
 
+    // d(w_t)/dε for the ctTemper modes (P2h): none -> 0 (unchanged tangent); alphat -> -d(alpha_c)/dε
+    // (analytic, reuses dac_deps); proj -> composite micro-FD through the return map (w_t = the tensile-
+    // stress-projected plastic-strain fraction). Only under loading.
+    double dwtw_deps[6] = {0,0,0,0,0,0};
+    if (loading && mp.ctTemper == 1) {
+        for (int i = 0; i < 6; ++i) dwtw_deps[i] = -dac_deps[i];
+    } else if (loading && mp.ctTemper == 2) {
+        double deps[6]; for (int i = 0; i < 6; ++i) deps[i] = eps_new[i] - in.eps[i];
+        const double base = mp.fc / mp.E;
+        double epln[6]; plasticStrain6(in.sigEff, in.eps, mp, epln);
+        for (int j = 0; j < 6; ++j) {
+            const double hh = 1.0e-6 * (std::fabs(deps[j]) + base);
+            double dp[6], dm[6]; for (int i = 0; i < 6; ++i) { dp[i] = deps[i]; dm[i] = deps[i]; }
+            dp[j] += hh; dm[j] -= hh;
+            double sbp[6], sbm[6], kpp, kpm, dum[6][6];
+            returnMapTensor(mp, in.sigEff, dp, in.kp, true, sbp, kpp, dum, false);
+            returnMapTensor(mp, in.sigEff, dm, in.kp, true, sbm, kpm, dum, false);
+            double Ap[3][3], wp[3], Vp[3][3], Am[3][3], wm[3], Vm[3][3];
+            voigtToMat(sbp, Ap); eig3sym(Ap, wp, Vp);
+            voigtToMat(sbm, Am); eig3sym(Am, wm, Vm);
+            double eplp[6], eplm[6], dplp[6], dplm[6], epsp[6], epsm[6];
+            for (int i = 0; i < 6; ++i) { epsp[i] = in.eps[i] + dp[i]; epsm[i] = in.eps[i] + dm[i]; }
+            plasticStrain6(sbp, epsp, mp, eplp);
+            plasticStrain6(sbm, epsm, mp, eplm);
+            for (int i = 0; i < 6; ++i) { dplp[i] = eplp[i] - epln[i]; dplm[i] = eplm[i] - epln[i]; }
+            const double wpv = tensileDamageWeight(mp, alphaCompression(wp), dplp, wp, Vp);
+            const double wmv = tensileDamageWeight(mp, alphaCompression(wm), dplm, wm, Vm);
+            dwtw_deps[j] = (wpv - wmv) / (2.0 * hh);
+        }
+    }
+
     // dkd*/dε under loading (else zero).  kdc1 = ac * bc * dnorm / xs (Eq.48 with beta_c) => product rule.
+    // kdt2 = w_t * above / xs, kdt1 = w_t * dnorm / xs (Eq.45/44 with the ctTemper weight) => product rule.
     double dkdt1[6], dkdt2[6], dkdc1[6], dkdc2[6];
     if (loading) {
         const double ixs = 1.0 / xs, ixs2 = ixs * ixs;
         for (int i = 0; i < 6; ++i) {
-            dkdt2[i] = det_deps[i] * ixs - above * dxs_deps[i] * ixs2;
-            dkdt1[i] = dnorm_deps[i] * ixs - dnorm * dxs_deps[i] * ixs2;
+            dkdt2[i] = wtw * (det_deps[i] * ixs - above * dxs_deps[i] * ixs2) + (above * ixs) * dwtw_deps[i];
+            dkdt1[i] = wtw * (dnorm_deps[i] * ixs - dnorm * dxs_deps[i] * ixs2) + (dnorm * ixs) * dwtw_deps[i];
             dkdc2[i] = (dac_deps[i] * above + ac * det_deps[i]) * ixs - ac * above * dxs_deps[i] * ixs2;
             dkdc1[i] = (dac_deps[i] * bc * dnorm + ac * dbc_deps[i] * dnorm + ac * bc * dnorm_deps[i]) * ixs
                      - ac * bc * dnorm * dxs_deps[i] * ixs2;

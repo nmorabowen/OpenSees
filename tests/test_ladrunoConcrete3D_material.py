@@ -312,6 +312,26 @@ def test_p2g_monotone_damage_gate():
     assert r["PASS"]
 
 
+def test_p2h_cttemper_gate():
+    """P2h: the compression->tension damage-coupling TEMPER (`-ctTemper {none|alphat|proj}`). Per literal
+    CDPM2 (Eq.43, no (1-alpha_c)) the tensile damage history accumulates in compression, so a compression
+    excursion pre-damages a subsequent tension reload to ~0 (the DT5 diagnostic). The temper scales the
+    tensile-history accumulation by a weight w_t: 'none'=1 (faithful, default, byte-identical); 'alphat'=
+    1-alpha_c (restores tension after compression AND keeps both monotonic backbones exact); 'proj'=the
+    fraction of the plastic-strain increment along positive effective-stress directions (restores tension;
+    lightly softens the monotonic tension backbone). H0 'none' kills tension after compression + monotonic
+    tension byte-identical; H1 'alphat' restores tension to ~ft with a byte-identical monotonic backbone;
+    H2 'proj' restores tension with a <20% monotonic-tension change; H3 both keep omega monotone (P2g
+    no-heal preserved); H4 analytic == numerical damaged tangent for both temper modes."""
+    r = ref.run_p2h_gate(verbose=False)
+    assert r["H0_ok"] and r["H0_none_tac"] < 0.2 * 3.0           # faithful: tension dies after compression
+    assert r["H1_ok"] and r["H1_alphat_tac"] > 0.7 * 3.0 and r["H1_mono_maxdiff"] < 1.0e-7
+    assert r["H2_ok"] and r["H2_proj_tac"] > 0.5 * 3.0 and r["H2_mono_reldiff"] < 0.2
+    assert r["H3_ok"] and r["H3_alphat_wt_mono"] > -1.0e-9 and r["H3_proj_wt_mono"] > -1.0e-9
+    assert r["H4_ok"] and r["H4_alphat_tan"] < 1.0e-5 and r["H4_proj_tan"] < 1.0e-4
+    assert r["PASS"]
+
+
 def test_p3_implex_gate():
     """P3 Tier-2 IMPL-EX robustness (ADR 4.4), oracle slice (the C++ kernel port is a follow-up build
     PR). IMPL-EX reports an EXPLICIT stress from EXTRAPOLATED internal variables (plastic-strain

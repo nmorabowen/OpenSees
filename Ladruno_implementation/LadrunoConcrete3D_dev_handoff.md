@@ -2,7 +2,7 @@
 title: "LadrunoConcrete3D — developer / C++-implementer handoff guide"
 project: Ladruno
 type: handoff guide
-status: SHIPPED to `ladruno` — kernel (return map + analytic damaged tangent, g++-verified) + nDMaterial wrapper (classTag 33017) + ALL dimensional views (3D + PlaneStrain/AxiSymmetric/PlateFiber/PlaneStress, #299) + P3 Tier-2 IMPL-EX (oracle #301 → review-hardened #304 → C++ kernel port + `-implex` wrapper #309) + P3 Duvaut–Lions `-eta` (oracle #316 → C++ kernel port + `-eta` wrapper #318) + P2f cyclic `β_c` ORACLE + C++ kernel port (faithful CDPM2 compressive ductility, g++-verified, #321) + P2g monotone-`ω` no-heal cyclic damage (oracle + C++ kernel + wrapper, secant unload + SPD unload tangent, #325). NEXT = DT5 compression→tension temper → Tier-3 explicit demo. See §0 / §6b for the current-state handoff.
+status: SHIPPED to `ladruno` — kernel (return map + analytic damaged tangent, g++-verified) + nDMaterial wrapper (classTag 33017) + ALL dimensional views (3D + PlaneStrain/AxiSymmetric/PlateFiber/PlaneStress, #299) + P3 Tier-2 IMPL-EX (oracle #301 → review-hardened #304 → C++ kernel port + `-implex` wrapper #309) + P3 Duvaut–Lions `-eta` (oracle #316 → C++ kernel port + `-eta` wrapper #318) + P2f cyclic `β_c` ORACLE + C++ kernel port (faithful CDPM2 compressive ductility, g++-verified, #321) + P2g monotone-`ω` no-heal cyclic damage (oracle + C++ kernel + wrapper, secant unload + SPD unload tangent, #325) + P2h `-ctTemper {none|alphat|proj}` compression→tension damage temper (oracle + C++ kernel + wrapper, #326). NEXT = multiaxial apportioning → Tier-3 explicit demo. See §0 / §6b for the current-state handoff.
 related:
   - "[[31_ladruno_concrete3d_adr]]"          # the ADR (decision record)
   - "[[project_ladruno_concrete3d]]"          # the agent-memory pointer
@@ -110,10 +110,23 @@ off `ladruno` (fast auto-merge ⇒ fresh branch each time; predict the next PR n
   a live-drive kernel would heal and diverge) + element `test_cyclic_no_heal_unload`. The F4 diagnostic is
   now a real gate (`F4_ok`, no heal).
 
+**SHIPPED (P2h compression→tension damage temper `-ctTemper` — oracle + C++ kernel + wrapper, #326):**
+- **P2h `-ctTemper {none|alphat|proj}` (#326)** — the DT5 fix, behind a flag (user decision: offer BOTH
+  temper modes). Literal CDPM2 (Eq.43, `κ̇_dt=ε̃̇`, no `(1−α_c)`) accumulates the TENSILE damage history in
+  compression, so a compression excursion pre-damages a tension reload to ~0. A tensile weight `w_t` scales
+  the `κ_dt1/κ_dt2` accumulation: `none` (default) `w_t=1` (literal CDPM2, byte-identical); `alphat`
+  `w_t=1−α_c` (restores tension after compression, both monotonic backbones EXACT — the clean mode);
+  `proj` `w_t = ‖P+ Δε_p‖/‖Δε_p‖`, `P+` = projection onto the POSITIVE effective-STRESS principal
+  directions (tension restored; lightly softens the monotonic tension backbone). **KEY:** the plastic
+  strain's OWN `<Δε_p>+` is NOT a valid shield — compression's dilatant flow makes the lateral plastic
+  strains positive; project onto the tensile-STRESS frame. Analytic `∂w_t/∂ε` = `−∂α_c/∂ε` (alphat) /
+  micro-FD (proj). Oracle `run_p2h_gate` H0-H4; g++ `dmg_cttemper_alphat` (biaxial, discriminating) +
+  `dmg_cttemper_proj` (pure tension); wrapper parses `-ctTemper`, serializes the int (`LC3D_NDATA`+1).
+  No new classTag/banner.
+
 **NEXT INCREMENTS (each its own oracle-first PR):**
-- **Compression→tension temper (DT5)** — the literal CDPM2 `κ̇_dt=ε̃̇` (Eq.43, no `(1−α_c)`) pre-damages a
-  tension reload after compression to ~0; resolve the `α_t`-weighting question (literal-CDPM2 vs a tensile-
-  plastic-strain projection) + multiaxial-damage apportioning + plastic-dissipation regularization.
+- **Multiaxial-damage apportioning + plastic-dissipation regularization** — the remaining P2 refinements
+  (extreme-principal vs `‖σ̄_t‖` norm; the D3/C3 un-regularized plastic dissipation caveat).
 - **Tier-3 explicit demo** — `do_tangent=false`, no global tangent ⇒ softening is a non-issue; pair with
   `CentralDifferenceLadruno`/`ExplicitBathe`. Mostly a validation/demo increment (the kernel already runs
   with `doTangent=false`).
@@ -531,7 +544,8 @@ views ✓ (#299)** → **P3 robustness: Tier-2 IMPL-EX ✓ (oracle #301 → revi
 freezes plastic state + damage)** → **Duvaut–Lions `-eta` ✓ (oracle #316 → C++ kernel + `-eta` wrapper
 #318, the rate term, §0)** → **P2f cyclic `β_c` ✓ (oracle + C++ kernel port #321, faithful CDPM2 compressive ductility, §6b)** →
 **P2g monotone-`ω` no-heal ✓ (oracle + C++ kernel + wrapper #325, secant unload + SPD unload tangent, §0)** →
-**NEXT: DT5 compression→tension temper → Tier-3 explicit demo** → P4 finite-strain (`LogStrain`, clean — already free via the
+**P2h `-ctTemper` compression→tension damage temper ✓ (oracle + C++ kernel + wrapper #326, none/alphat/proj, §0)** →
+**NEXT: multiaxial apportioning → Tier-3 explicit demo** → P4 finite-strain (`LogStrain`, clean — already free via the
 wrapper) → P5 confined-fiber view (§4.6 hoop-spring condensation, "Mander by mechanism") → P6
 auto-hybrid switch.
 
@@ -544,4 +558,5 @@ stress · **#290** guide · **#291** P3b C++ damaged tangent · **#292** nDMater
 IMPL-EX oracle · **#304** IMPL-EX review fixes · **#309** IMPL-EX C++ port + `-implex` · **#316**
 Duvaut–Lions `-eta` oracle · **#318** Duvaut–Lions `-eta` C++ kernel port + `-eta` wrapper · **#321**
 P2f cyclic `β_c` oracle + C++ kernel port (faithful CDPM2 compressive ductility) · **#325** P2g
-monotone-`ω` no-heal cyclic damage (oracle + C++ kernel + wrapper; secant unload + SPD unload tangent).
+monotone-`ω` no-heal cyclic damage (oracle + C++ kernel + wrapper; secant unload + SPD unload tangent) ·
+**#326** P2h `-ctTemper {none|alphat|proj}` compression→tension damage temper (oracle + C++ kernel + wrapper).
