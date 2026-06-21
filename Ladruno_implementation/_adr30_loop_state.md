@@ -328,3 +328,42 @@ the deferred-P4 backlog documented. Handoff: `projection_handler_handoff.md`. Lo
     to {int nodeTag; int dof; SP_Constraint* sp} + resolve `theDomain->getNode(nodeTag)` fresh
     in applyLoad (skip if null) — removes the theoretical dangling-Node* UAF, matches convention.
   - Rebuild bof4yzu7j (incremental). Re-run P4b + ADR-30 battery, then PR.
+- **P4b MERGED #323 (squash 1d445ddc0, HEAD of origin/ladruno).** General pre-merge review
+  (3 lenses + verify) 0 blocking/0 major (all correctness findings REFUTED = design correct);
+  Zone-A Ubuntu CI PASS + classTag/manifest PASS. Memory note updated.
+
+### P4c — prescribed MASTER (Tier 2, known-RHS), branch guppi/adr30-p4c-prescribed-master
+- Drive constrained slaves from a prescribed master's accel: a_c = C_f a_f + C_p a_p (the literal
+  "overwrite a before projecting"). Design `_adr30_p4c_design.md`. **Pre-code design gate
+  wf_30113be2-380 (4 refute lenses + verify, 22 agents): math VERIFIED SOUND** (re-derived from
+  Lagrangian, reduces to shipped project() at nPres=0, signs/momentum correct), **a_p node-read
+  timing VERIFIED CORRECT** (starter updateDomain(t0):472 precedes project(a0):501; per-step
+  update() project not preceded by a setResponse — Q1 RESOLVED, no SP/GM-direct-read needed).
+- Two real must-implement items (both in design open Qs, gate-confirmed): (1) checkIC/snapICs must
+  add the C_p·u_p(committed) term — NO double-count with delta (delta carries initial Ur0, this is
+  current u_p); (2) nRet==0 && nPres>0 path: a_c = C_p·a_p directly, no solve (shipped project()
+  skips nRet==0). Refuted: Domain* lifetime (rebuilt each domainChanged), committed/trial mismatch.
+- PLAN: projector Group += Cp(nCon×nPres), presNode/presDof(nPres), Domain*; addGroup signature
+  extended; project() reads a_p=node->getTrialAccel, ã_c=a_raw,c−Cp·a_p, nRet==0 direct path,
+  a_c=(L a_f)_c+Cp·a_p; checkIC/snapICs +Cp·u_p; handler doneNumberingDOF reclassifies prescribed
+  master (eqn<0 ∩ prescribedKey) as a prescribed column + builds Cp (was P4b refusal); keep
+  prescribed-SLAVE refusal. Tests test_adr30_projection_p4c.py (TC1 imposedMotion on rigidLink
+  master, TC2 equalDOF prescribed master, TC3 diaphragm master, TC5 prescribed-slave still refused).
+- **PIVOT (2026-06-20): known-RHS acceleration projection ABANDONED → KINEMATIC imposition.**
+  Implemented the known-RHS projector machinery, then MEASURED it: the slave tracked the prescribed
+  master only to rel~1.5e-3, and the drift GREW as dt diverged from the GM's internal dtInt
+  (NON-converging — the imposed-master disp and the leap-frog slave use different integration
+  schemes; accel-only projection can't hold the DISPLACEMENT tie). User chose rework → kinematic.
+  Reverted the projector+handler accel edits (projector UNTOUCHED now). New approach: a slave
+  driven PURELY by prescribed masters is EXCLUDED from the equation set and its u/v/a imposed from
+  the masters each step in applyLoad (Tier-1 extended to slaves) — EXACT (slave-vs-master drift=0,
+  free-DOF vs Transformation=0). Mixed (free+prescribed) refused; zero-free-DOF refused (clean
+  error — was a segfault, caught by TP4's degenerate model, fixed + TC6 guards it). Handler-only:
+  classifyDerivedSlaves() (detect/exclude/refuse-mixed), applyLoad() (impose), doneNumberingDOF()
+  (drop prescribed master + skip derived slave), countDOF==0 guard.
+- BUILD green (v4). **ADR-30 battery 36/36** (p0-p4 26 + p4b 4 + p4c 6), RC=0 clean. P4b TP4
+  repurposed (prescribed master now SUPPORTED, was refused). Bug caught+fixed: classifyDerived had
+  `if(ec<0)continue` skipping ALL slaves (a free MP slave is -2<0); fixed to `if(ec!=-2)`. Quirk:
+  Transformation+CDL drops a rigidLink uy tie when the master also has imposedMotion SP → projection
+  is correct, TC3 self-verifies exact ties. Design doc updated w/ the pivot.
+  NEXT: full Zone-A (b09rhgh9k running) → code gate → bookkeeping → PR.

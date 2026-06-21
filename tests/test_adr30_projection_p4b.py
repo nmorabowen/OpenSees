@@ -15,11 +15,11 @@ imposed value).
   TP2   constant non-homogeneous SP (prescribed support settlement, disp-only) — projection
         trajectory matches the Transformation reference.
   TP3   a prescribed DOF that is ALSO an MP/EQ slave -> named refusal (overconstraint).
-  TP4   a prescribed DOF used as an MP/EQ MASTER -> named refusal (driving slaves from a
-        prescribed master = the deferred "overwrite a before projecting" phase; would
-        silently force slave a=0 today, so it must be refused, not run).
+  TP4   a prescribed DOF used as an MP/EQ MASTER -> in P4b this was refused; P4c now SUPPORTS
+        it via kinematic imposition (slave driven u_c = C u_master), so TP4 asserts it runs and
+        the slave tracks the prescribed master (full Tier-2 coverage in test_adr30_projection_p4c).
 
-TP1/TP2 are the correctness core; TP3/TP4 pin the scope boundary with loud errors.
+TP1/TP2 are the correctness core; TP3 pins the prescribed-slave refusal boundary.
 """
 import numpy as np
 import pytest
@@ -168,19 +168,25 @@ def test_TP3_prescribed_slave_refused():
     assert not _runs_ok(build), "prescribed-on-slave should be refused"
 
 
-def test_TP4_prescribed_master_refused():
-    """A prescribed DOF used as an equalDOF MASTER would have its slaves' accel silently
-    forced to 0 (the master is SP-excluded, eqn<0). Driving slaves from a prescribed master is
-    the deferred 'overwrite a before projecting' phase -> refuse loudly rather than run wrong."""
+def test_TP4_prescribed_master_now_supported_by_p4c():
+    """A prescribed DOF used as an equalDOF MASTER was refused in P4b (would silently force the
+    slaves' accel to 0). P4c supports it via KINEMATIC imposition: the slave is excluded from the
+    equation set and driven u_c = C u_master each step, tracking the prescribed master exactly.
+    (Full Tier-2 coverage lives in tests/test_adr30_projection_p4c.py.)"""
     def build():
         ops.wipe()
         ops.model("basic", "-ndm", 1, "-ndf", 1)
-        ops.node(1, 0.0); ops.mass(1, _M)
-        ops.node(2, 1.0); ops.mass(2, _M)
+        ops.node(1, 0.0); ops.mass(1, _M)     # prescribed master
+        ops.node(2, 0.0); ops.mass(2, _M)     # equalDOF slave -> derived (kinematic)
+        ops.node(3, 0.0); ops.mass(3, _M)     # free downstream DOF (so the analysis has an equation)
         ops.equalDOF(1, 2, 1)                 # node 1 dof 1 is the master (retained)
+        ops.uniaxialMaterial("Elastic", 1, _K)
+        ops.element("zeroLength", 1, 2, 3, "-mat", 1, "-dir", 1)
         ops.timeSeries("Constant", 1); ops.pattern("Plain", 1, 1)
         ops.sp(1, 1, 0.3, "-const")           # ... and prescribed -> prescribed master
         ops.constraints(PROJ); ops.numberer("Plain"); ops.system("Diagonal")
         ops.test("NormDispIncr", 1e-12, 10); ops.algorithm("Linear")
         ops.integrator(CDL); ops.analysis("Transient")
-    assert not _runs_ok(build), "prescribed master should be refused (Tier-2 deferred)"
+    assert _runs_ok(build), "prescribed master should now run (P4c kinematic imposition)"
+    # the slave (node 2) tracks the prescribed master (node 1 = 0.3) exactly
+    assert abs(ops.nodeDisp(2, 1) - 0.3) < 1e-10, "slave did not track the prescribed master"

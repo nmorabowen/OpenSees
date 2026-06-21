@@ -119,9 +119,11 @@ LadrunoProjectionHandler::handle(const ID *nodesLast)
         return -1;
     }
 
-    // P4b: a fresh handle() rebuilds the prescribed-motion records from scratch.
+    // P4b/P4c: a fresh handle() rebuilds the prescribed-motion + derived-slave records.
     prescribedDOFs.clear();
     prescribedKey.clear();
+    derivedSlaves.clear();
+    derivedKey.clear();
 
     // Collect every SP (Plain-style). Homogeneous SPs (`fix`) are excluded from the
     // equation set below. Non-homogeneous SPs / imposedMotion are ALSO excluded from the
@@ -214,6 +216,24 @@ LadrunoProjectionHandler::handle(const ID *nodesLast)
     // build the constraint groups + run the topological diagnostics
     if (this->buildGroups() < 0)
         return -6;
+    // P4c: a slave driven ONLY by prescribed master(s) is fully determined by the prescribed
+    // motion -> exclude it from the equation set (eqn=-1) and impose it kinematically in
+    // applyLoad(). Refuses a slave tied to BOTH a free and a prescribed master (mixed). This
+    // runs after buildGroups (needs the groups) and re-sizes the equation count below.
+    if (this->classifyDerivedSlaves(countDOF) < 0)
+        return -8;
+    theModel->setNumEqn(countDOF);
+    // Zero free equations (every DOF fixed / prescribed / derived-from-prescribed) leaves the
+    // explicit integrator nothing to solve and a 0-size SOE (a segfault downstream). Refuse with
+    // a clean, named error (ADR §5.2 "zero free DOFs -> clean error, not segfault"). count3 are
+    // subdomain-boundary DOFs (numbered later), so they still count as free here.
+    if (countDOF == 0 && count3 == 0) {
+        opserr << "LadrunoProjectionHandler::handle() - no free equations: every DOF is fixed, "
+                  "prescribed (SP/imposedMotion), or driven by a prescribed master. There is "
+                  "nothing for the explicit integrator to solve. Add a free DOF, or this model is "
+                  "pure kinematic playback (not supported by the projection handler).\n";
+        return -9;
+    }
     if (this->consistentMassGuard() < 0)
         return -7;
 
@@ -460,6 +480,84 @@ LadrunoProjectionHandler::buildGroups(void)
     return 0;
 }
 
+// ---- P4c: classify slaves driven by prescribed masters; exclude + record them ----------
+// A slave tied ONLY to prescribed master(s) (no free retained master) is fully determined by
+// the prescribed motion. Exclude it from the equation set (eqn=-1, decrement countDOF) and
+// record it for kinematic imposition in applyLoad() (u/v/a set from the masters, exact — no
+// projection drift). A slave tied to BOTH a free and a prescribed master is REFUSED (mixed:
+// the displacement tie to the prescribed master cannot be held by the free-DOF projection).
+// Masters are classified by their DOF mark at this point (free = -2/-3 not-yet-numbered; SP =
+// -1, prescribed iff in prescribedKey, else homogeneous-fixed). A homogeneous-fixed master
+// contributes 0 (its -Ur0 already folded into the slave's delta), so it does not make a slave
+// "free". Runs after buildGroups(), before equation numbering.
+int
+LadrunoProjectionHandler::classifyDerivedSlaves(int &countDOF)
+{
+    Domain *theDomain = this->getDomainPtr();
+    for (int gi = 0; gi < (int)theGroups.size(); gi++) {
+        RawGroup &g = theGroups[gi];
+        for (int s = 0; s < (int)g.slaves.size(); s++) {
+            SlaveRec &sr = g.slaves[s];
+            Node *snp = theDomain->getNode(vtxNode[sr.vtx]);
+            int ec = (snp != 0) ? snp->getDOF_GroupPtr()->getID()(vtxDof[sr.vtx]) : -1;
+            // At this point (post-buildGroups, pre-numbering) a normal MP/EQ slave DOF is marked
+            // -2 (free, awaiting an equation); -1 = the slave is itself SP-fixed/prescribed (the
+            // SP-on-slave / prescribed-slave overconstraint, refused in doneNumberingDOF); -3 =
+            // subdomain boundary. Only a -2 slave is a candidate for prescribed-driven exclusion.
+            if (ec != -2)
+                continue;
+
+            bool hasFree = false, hasPres = false;
+            for (int k = 0; k < (int)sr.masterVtx.size(); k++) {
+                int mv = sr.masterVtx[k];
+                Node *mnp = theDomain->getNode(vtxNode[mv]);
+                int me = (mnp != 0) ? mnp->getDOF_GroupPtr()->getID()(vtxDof[mv]) : -1;
+                bool mPres = prescribedKey.find(std::make_pair(vtxNode[mv], vtxDof[mv]))
+                             != prescribedKey.end();
+                if (mPres) hasPres = true;
+                else if (me != -1) hasFree = true;   // -2/-3 = a free DOF that will be numbered
+                // me==-1 && !mPres -> homogeneous fix: contributes 0, not "free"
+            }
+
+            if (hasFree && hasPres) {
+                opserr << "LadrunoProjectionHandler - MIXED MASTER: constrained DOF (node "
+                       << vtxNode[sr.vtx] << " dof " << vtxDof[sr.vtx] << ") is tied to BOTH a "
+                          "free DOF and a prescribed-motion DOF. Driving one slave from a mix of "
+                          "free and prescribed masters is not supported (the prescribed "
+                          "displacement tie cannot be held by the free-DOF acceleration "
+                          "projection). Split the constraint, or use constraints Transformation.\n";
+                return -1;
+            }
+            if (!hasPres)
+                continue;          // free-only or all-homogeneous-fixed -> normal projection path
+
+            // derived-prescribed slave: exclude from the equation set + record for applyLoad()
+            snp->getDOF_GroupPtr()->setID(vtxDof[sr.vtx], -1);
+            countDOF--;
+            DerivedSlave d;
+            d.nodeTag = vtxNode[sr.vtx];
+            d.dof     = vtxDof[sr.vtx];
+            d.delta   = sr.delta;
+            for (int k = 0; k < (int)sr.masterVtx.size(); k++) {
+                int mv = sr.masterVtx[k];
+                if (prescribedKey.find(std::make_pair(vtxNode[mv], vtxDof[mv])) == prescribedKey.end())
+                    continue;      // skip homogeneous-fixed masters (their -Ur0 is in delta)
+                d.masterNode.push_back(vtxNode[mv]);
+                d.masterDof.push_back(vtxDof[mv]);
+                d.coeff.push_back(sr.coeff[k]);
+            }
+            derivedSlaves.push_back(d);
+            derivedKey.insert(std::make_pair(d.nodeTag, d.dof));
+
+            if (verbose)
+                opserr << "  LadrunoProjection: DOF (node " << d.nodeTag << " dof " << d.dof
+                       << ") driven by " << (int)d.masterNode.size()
+                       << " prescribed master(s) -> kinematically imposed.\n";
+        }
+    }
+    return 0;
+}
+
 // ---- refuse consistent (off-diagonal) element mass on any tied DOF (R5) ----
 int
 LadrunoProjectionHandler::consistentMassGuard(void)
@@ -564,20 +662,12 @@ LadrunoProjectionHandler::doneNumberingDOF(void)
             if (e >= 0) {
                 colOf[v] = (int)survMasterVtx.size();
                 survMasterVtx.push_back(v);
-            } else if (prescribedKey.find(std::make_pair(vtxNode[v], vtxDof[v]))
-                       != prescribedKey.end()) {
-                // P4b: a prescribed-motion DOF used as a constraint MASTER would be dropped
-                // here (eqn<0) and its slaves forced to a=0 — silently WRONG (the slave should
-                // follow C*a_prescribed). Refuse loudly. Driving slaves from a prescribed master
-                // (the "overwrite a before projecting" known-RHS projection) is a later phase.
-                opserr << "LadrunoProjectionHandler - PRESCRIBED MASTER: DOF (node "
-                       << vtxNode[v] << " dof " << vtxDof[v] << ") carries a prescribed motion "
-                          "(non-homogeneous SP / imposedMotion) AND is a constraint master in "
-                          "group " << gi << ". Driving constrained DOFs from a prescribed master "
-                          "is not supported in this phase. Prescribe the motion on a free "
-                          "(unconstrained) DOF, or use constraints Transformation.\n";
-                return -2;
             }
+            // P4c: a prescribed-motion master (eqn<0, in prescribedKey) is DROPPED here, like a
+            // homogeneous fix — it drives only derived-prescribed slaves, which were excluded by
+            // classifyDerivedSlaves() and are imposed kinematically in applyLoad(). (A mix of free
+            // and prescribed masters on one slave was already refused there.) A homogeneous-fixed
+            // master (eqn<0, not prescribed) is likewise dropped (its slave -> a=0 via fixedEqns).
         }
         int nRet = (int)survMasterVtx.size();
 
@@ -592,6 +682,12 @@ LadrunoProjectionHandler::doneNumberingDOF(void)
             Node *np = theDomain->getNode(vtxNode[sr.vtx]);
             int ec = (np != 0) ? np->getDOF_GroupPtr()->getID()(vtxDof[sr.vtx]) : -1;
             if (ec < 0) {
+                // P4c: a derived-prescribed slave (driven purely by prescribed masters) was
+                // excluded by classifyDerivedSlaves() and is imposed kinematically in
+                // applyLoad() — skip it here (it owns no equation / projector row).
+                if (derivedKey.find(std::make_pair(vtxNode[sr.vtx], vtxDof[sr.vtx]))
+                    != derivedKey.end())
+                    continue;
                 if (prescribedKey.find(std::make_pair(vtxNode[sr.vtx], vtxDof[sr.vtx]))
                     != prescribedKey.end())
                     opserr << "LadrunoProjectionHandler - PRESCRIBED SLAVE: constrained DOF "
@@ -720,6 +816,41 @@ LadrunoProjectionHandler::applyLoad(void)
             continue;
         np->setTrialDisp(p.sp->getValue() + p.sp->getInitialValue(), p.dof);
     }
+
+    // P4c: impose the DERIVED-prescribed slaves (driven purely by prescribed masters). Runs
+    // AFTER the masters' own disp is set above, so u_master is current; v/a of an imposedMotion
+    // master were set by ImposedMotionSP in Domain::applyLoad (a plain SP master -> v=a=0). The
+    // slave is eqn-excluded, so setResponse() skips it and these imposed values survive.
+    //   u_c = sum_k C_k u_{m_k} + delta ;  v_c = sum_k C_k v_{m_k} ;  a_c = sum_k C_k a_{m_k}
+    for (int i = 0; i < (int)derivedSlaves.size(); i++) {
+        DerivedSlave &d = derivedSlaves[i];
+        Node *snp = theDomain->getNode(d.nodeTag);
+        if (snp == 0)
+            continue;
+        double uc = d.delta, vc = 0.0, ac = 0.0;
+        for (int k = 0; k < (int)d.masterNode.size(); k++) {
+            Node *mnp = theDomain->getNode(d.masterNode[k]);
+            if (mnp == 0)
+                continue;
+            int md = d.masterDof[k];
+            const Vector &mu = mnp->getTrialDisp();
+            const Vector &mv = mnp->getTrialVel();
+            const Vector &ma = mnp->getTrialAccel();
+            double c = d.coeff[k];
+            if (md >= 0 && md < mu.Size()) uc += c * mu(md);
+            if (md >= 0 && md < mv.Size()) vc += c * mv(md);
+            if (md >= 0 && md < ma.Size()) ac += c * ma(md);
+        }
+        // one bounds check guards all three setters consistently (d.dof is the recorded
+        // constrained dof, so this holds in practice; defensive against a malformed record).
+        int snd = snp->getNumberDOF();
+        if (d.dof < 0 || d.dof >= snd)
+            continue;
+        snp->setTrialDisp(uc, d.dof);                       // single-dof disp setter
+        // vel / accel have only whole-Vector setters: read-modify-write the slave's component
+        Vector vv = snp->getTrialVel();  vv(d.dof) = vc;  snp->setTrialVel(vv);
+        Vector av = snp->getTrialAccel(); av(d.dof) = ac; snp->setTrialAccel(av);
+    }
     return 0;
 }
 
@@ -761,6 +892,8 @@ LadrunoProjectionHandler::clearAll(void)
     vtxDof.clear();
     prescribedDOFs.clear();   // P4b: drop the prescribed-motion records (rebuilt at next handle())
     prescribedKey.clear();
+    derivedSlaves.clear();    // P4c: drop the derived-prescribed-slave records
+    derivedKey.clear();
     // doneNumberingDOF() now re-binds the integrator UNCONDITIONALLY (incl. a 0 push on
     // the zero-group path), so the integrator never retains a freed projector after a
     // rebuild. We keep ownership and free in the dtor / next doneNumberingDOF.
