@@ -72,12 +72,18 @@
 
 #include <TransientIntegrator.h>
 #include <CriticalTimeStep.h>   // CTSLumping, CTSResult, computeCriticalTimeStep()
+#include <LadrunoProjectionConsumer.h>   // Ladruno (ADR-30 P5): projection seam
 
 class DOF_Group;
 class FE_Element;
 class Vector;
+class LadrunoConstraintProjector;   // Ladruno (ADR-30 P5)
 
-class ExplicitBatheLNVD : public TransientIntegrator
+// Ladruno (ADR-30 P5): ExplicitBatheLNVD is a LadrunoProjectionConsumer (same
+// contract as ExplicitBathe / CentralDifferenceLadruno), so MP/EQ constraints can be
+// enforced by M-orthogonal accel projection under the FLAC-damped Noh-Bathe scheme.
+// The LNVDSMS / LNVDSMSConsistent subclasses inherit this without further code.
+class ExplicitBatheLNVD : public TransientIntegrator, public LadrunoProjectionConsumer
 {
 public:
     // constructors
@@ -105,6 +111,10 @@ public:
     int commit(void);
 
     const Vector &getVel(void);
+
+    // Ladruno (ADR-30 P5): the LadrunoProjectionHandler pushes its (non-owning)
+    // constraint projector through this seam at doneNumberingDOF().
+    void setConstraintProjector(LadrunoConstraintProjector *theProjector) override;
 
     // conservative (central-difference) critical time step; <=0 if not computed
     double getCriticalTimeStep(void) const override;
@@ -183,6 +193,10 @@ private:
     int cflStepCount;
     bool cflFirstComputation;
     CTSLumping lumping;       // element-mass lumping for the dt_cr pencil (-lump)
+
+    // Ladruno (ADR-30 P5): constraint projection (non-owning; owned by the handler).
+    LadrunoConstraintProjector *theProjector;  // 0 unless LadrunoProjection is active
+    bool massBuilt;                            // has the projector read diag(M) yet?
 };
 
 #endif

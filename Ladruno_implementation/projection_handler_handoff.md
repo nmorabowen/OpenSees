@@ -1,11 +1,12 @@
 ---
-title: "LadrunoProjectionHandler (ADR-30) — handoff / v1 + prescribed motion complete"
+title: "LadrunoProjectionHandler (ADR-30) — handoff / v1 + prescribed motion + Noh–Bathe adoption complete"
 project: Ladruno
 type: handoff
-status: v1 (P0–P3) + P4a recorder + P4b prescribed-motion + P4c prescribed-master — all merged to ladruno, 2026-06-20/21
+status: v1 (P0–P3) + P4a recorder + P4b/P4c prescribed-motion + P5 ExplicitBathe/LNVD adoption — P0–P4c merged to ladruno, P5 pending, 2026-06-20/21
 related:
   - "[[30_ladruno_explicit_constraint_projection_adr]]"   # the spec
   - "[[_adr30_p1_design]]"                                 # P1 pseudocode + Gate-A resolutions
+  - "[[_adr30_p5_design]]"                                 # P5 ExplicitBathe/LNVD adoption design
   - "[[_adr30_loop_state]]"                                # the full phase-by-phase build log
   - "[[05_robust_central_difference]]"                     # CentralDifferenceLadruno (host integrator)
 tags: [adr, constraints, explicit-dynamics, projection, handoff, ls-dyna, abaqus]
@@ -32,7 +33,8 @@ tie-force recorder #317 · **P4b prescribed motion (non-homog SP / imposedMotion
 ```python
 ops.constraints("LadrunoProjection")          # <-verbose> <-projectICs> <-icTol $tol>
 ops.system("Diagonal")                          # REQUIRED (the explicit lumped recipe)
-ops.integrator("CentralDifferenceLadruno")      # the only projection-aware integrator in v1
+ops.integrator("CentralDifferenceLadruno")      # or ExplicitBathe / ExplicitBatheLNVD and their
+                                                #   SMS/Consistent variants (P5); the whole explicit family
 ops.algorithm("Linear")                         # one solve/step
 # ... equalDOF / rigidLink / rigidDiaphragm / equationConstraint as usual ...
 ops.analyze(nsteps, dt)
@@ -171,17 +173,28 @@ accel-only projection leaves a NON-converging O(1e-3) displacement-tie drift. A 
 externally-imposed DOF must be imposed kinematically. Mixed (free+prescribed master on one slave) and
 zero-free-DOF groups are refused (named). Handler-only, projector UNTOUCHED, ZERO vanilla.
 
+**P5 — ExplicitBathe / LNVD adoption: DONE.** The `LadrunoProjectionConsumer` is now implemented by the
+**Noh–Bathe** family, so `constraints LadrunoProjection` works under it too (previously CDL-only). Only TWO
+base classes were edited — `ExplicitBathe` and `ExplicitBatheLNVD` — and the 4 SMS/Consistent subclasses
+(33009–33012) inherit it (all chain their `domainChanged()` to the base). The entire CentralDifference
+family (incl. SMS 33007/33008) already had projection via inheritance. Each base reads `diag(M)` once per
+stage (a one-shot `formTangent`+`buildMass` in `newStep`, before the algorithm's solve factors the SOE),
+projects the committed a0 at the starter, and projects **both** Noh–Bathe sub-step accelerations in
+`update()` (after any consistent-mass `refineAccel`, mirroring the CDL contract); the load-bearing carry is
+`A_t = A_tdt` (projected) at commit. The `commit()` tie-force scatter is replicated so the P4a
+`constraintTieForce` recorder works under these integrators. Handler error message broadened to name the
+family. Design: `_adr30_p5_design.md`. Tests `tests/test_adr30_projection_p5.py` (TP5-1..8: tie-exactness,
+projection==Transformation under EB and LNVD, FLAC-damped tie, the two inherited SMS subclasses, a
+no-projection regression, recorder readback). ZERO vanilla (all six are fork-authored integrators).
+
 **Remaining backlog (priority order, all independent, none required for the core feature):**
 1. **MP-chain composition** (currently refused): substitute `C` matrices (Abaqus-style).
-2. **ExplicitBathe / LNVD adoption** — implement `LadrunoProjectionConsumer` + the per-sub-step hooks.
-   NB the SMS families (CentralDifferenceSMSConsistent 33008, ExplicitBathe(LNVD)SMS(Consistent)
-   33009–33012, merged #320/#324) are now siblings on these integrators — adoption should account for them.
-3. **RBE2/RBE3 eliminable-block routing** through the projector (retire bipenalty where eliminable).
-4. **Near-singular `LᵀML`** condition-number gate (the rank check catches only an exact zero pivot;
+2. **RBE2/RBE3 eliminable-block routing** through the projector (retire bipenalty where eliminable).
+3. **Near-singular `LᵀML`** condition-number gate (the rank check catches only an exact zero pivot;
    ADR O1) and a **frozen-`Ccr` runtime staleness guard** (warn at large accumulated rotation).
-5. **SOE-cooperative massless-slave elimination** — would relax the "every tied DOF needs mass"
+4. **SOE-cooperative massless-slave elimination** — would relax the "every tied DOF needs mass"
    requirement (lets diaphragm slaves keep zero rotational mass like `Transformation`).
-6. **Prescribed-motion deferred sub-cases:** a *plain* `SP` master supplies disp-only (vel/accel=0,
+5. **Prescribed-motion deferred sub-cases:** a *plain* `SP` master supplies disp-only (vel/accel=0,
    documented); a slave tied to BOTH free and prescribed masters (mixed) is refused rather than
    solved — a full mixed treatment would need a genuine displacement-level projection.
 

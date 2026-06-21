@@ -55,6 +55,9 @@
 #include <Domain.h>
 #include <Element.h>
 #include <ElementIter.h>
+#include <Node.h>                          // Ladruno (ADR-30 P5): tie-force scatter
+#include <NodeIter.h>
+#include <LadrunoConstraintProjector.h>    // Ladruno (ADR-30 P5): constraint projection
 
 #define OPS_Export
 
@@ -185,7 +188,8 @@ ExplicitBathe::ExplicitBathe()
       verbose(false), cflAbort(false), divergenceFactor(0.0),
       prevKE(0.0), firstStep(true),
       cflUseTangent(false), cflRecomputeEvery(0), cflStepCount(0),
-      cflFirstComputation(true), lumping(CTSLumping::RowSum)
+      cflFirstComputation(true), lumping(CTSLumping::RowSum),
+      theProjector(0), massBuilt(false)   // Ladruno (ADR-30 P5)
 {}
 
 // Main constructor with parameters
@@ -225,7 +229,8 @@ ExplicitBathe::ExplicitBathe(int classTag, double _p, int compute_critical_times
       verbose(verbose_), cflAbort(cflAbort_), divergenceFactor(divergenceFactor_),
       prevKE(0.0), firstStep(true),
       cflUseTangent(cflUseTangent_), cflRecomputeEvery(cflRecomputeEvery_),
-      cflStepCount(0), cflFirstComputation(true), lumping(lumping_)
+      cflStepCount(0), cflFirstComputation(true), lumping(lumping_),
+      theProjector(0), massBuilt(false)   // Ladruno (ADR-30 P5)
 {
     // Calculate integration coefficients from p parameter
     q1 = (1.0 - 2.0*p) / (2.0*p*(1.0 - p));
@@ -250,6 +255,15 @@ ExplicitBathe::~ExplicitBathe() {
     if (V_tdt) delete V_tdt;
     if (A_tdt) delete A_tdt;
     if (R_tdt) delete R_tdt;
+}
+
+// Ladruno (ADR-30 P5): the projection handler pushes its (non-owning) projector.
+// Re-read diag(M) next starter (massBuilt=false) since a new projector implies a
+// new constraint set / numbering. theProjector is owned by LadrunoProjectionHandler.
+void ExplicitBathe::setConstraintProjector(LadrunoConstraintProjector *p)
+{
+    theProjector = p;
+    massBuilt = false;
 }
 
 // Handle domain changes (mesh modifications, initial conditions, etc.)
@@ -342,6 +356,21 @@ int ExplicitBathe::domainChanged() {
         }
     }
 
+    // Ladruno (ADR-30 P5): the projected-mass cache is invalid after a domain change;
+    // re-read diag(M) at the next starter. Then check (or snap) IC compliance of the
+    // committed (u0, v0) against every constraint group — U_t/V_t hold them now.
+    // enforceIC() needs no mass (it uses L, delta only), so it is safe here.
+    massBuilt = false;
+    if (theProjector != 0) {
+        int nViol = theProjector->enforceIC(*U_t, *V_t);
+        if (nViol > 0) {
+            opserr << "ExplicitBathe::domainChanged - " << nViol
+                   << " initial-condition constraint violation(s); aborting. Fix the "
+                      "ICs or add -projectICs to the constraints command.\n";
+            return -1;
+        }
+    }
+
     // Initialize critical timestep values
     damped_minimum_critical_timestep = std::numeric_limits<double>::infinity();
     undamped_minimum_critical_timestep = std::numeric_limits<double>::infinity();
@@ -397,6 +426,28 @@ int ExplicitBathe::newStep(double _deltaT) {
                       "acceleration; if a load is already applied, run one "
                       "equilibrium step (or set the initial acceleration) so a0 is "
                       "consistent.\n";
+    }
+
+    // Ladruno (ADR-30 P5): build the projector's diag(M) once per stage (re-armed by
+    // massBuilt=false at domainChanged / setConstraintProjector) and project the
+    // committed initial acceleration onto the constraint manifold. We must read M from
+    // the assembled Diagonal SOE BEFORE the algorithm's solve() factors it in place
+    // (DiagonalDirectSolver overwrites A[i] with 1/A[i]); so we form the (mass) tangent
+    // here ourselves. The algorithm re-forms M before its own solve, so the extra
+    // assembly is harmless (cost: one mass assembly on the first step of a stage).
+    if (theProjector != 0 && !massBuilt) {
+        LinearSOE *theLinSOE = this->getLinearSOE();
+        if (this->formTangent(CURRENT_TANGENT) < 0) {
+            opserr << "ExplicitBathe::newStep() - starter: formTangent failed (projector)\n";
+            return -3;
+        }
+        if (theProjector->buildMass(theLinSOE) < 0) {
+            opserr << "ExplicitBathe::newStep() - starter: projector buildMass failed "
+                      "(massless DOF / non-Diagonal SOE)\n";
+            return -3;
+        }
+        massBuilt = true;
+        theProjector->project(*A_t);   // project committed a0 onto the manifold
     }
 
     // Critical-time-step estimate (per-element generalized eigenproblem).
@@ -529,6 +580,10 @@ int ExplicitBathe::update(const Vector &U) {
     // (a = M_tilde^-1 r) from the just-factored diagonal SOE. Default no-op.
     if (this->refinesAccel())
         this->refineAccel(*A_tpdt);
+    // Ladruno (ADR-30 P5): project the sub-step-1 accel onto the constraint manifold
+    // (after any consistent-mass refine) before it feeds V_tpdt / U_tdt.
+    if (theProjector != 0)
+        theProjector->project(*A_tpdt);
 
     // Update velocity at t + p*dt (corrected)
     // v_{t+p*dt} = v_t + (a_t + a_{t+p*dt}) * p*dt/2
@@ -569,6 +624,11 @@ int ExplicitBathe::update(const Vector &U) {
     // this is the "just solve" reuse), so refineAccel's r-recovery is valid here too.
     if (this->refinesAccel())
         this->refineAccel(*A_tdt);
+    // Ladruno (ADR-30 P5): project the sub-step-2 accel (the load-bearing one — it
+    // becomes A_t at commit and drives next step's predictor → manifold invariance).
+    // The NaN/Inf circuit breaker below deliberately runs on the PROJECTED accel.
+    if (theProjector != 0)
+        theProjector->project(*A_tdt);
 
     // Circuit breaker 1: catch a blown-up (NaN/Inf) acceleration before it
     // silently propagates through the rest of the run.
@@ -642,6 +702,31 @@ int ExplicitBathe::commit() {
     if (theModel == nullptr) {
         opserr << "ExplicitBathe::commit() - no AnalysisModel set\n";
         return -1;
+    }
+
+    // Ladruno (ADR-30 P4/P5): scatter the projector's per-equation tie force
+    // f = M(a_raw - a_proj) (cached during the step's last project() = sub-step 2)
+    // onto the nodes, so the node-based LadrunoRecorder can record a constraintTieForce
+    // field under the Noh-Bathe integrators too. Done before commitDomain() (recorders
+    // run after commit). Untied / SP-fixed DOFs -> 0.
+    if (theProjector != 0 && theProjector->isMassReady()) {
+        Domain *theDomain = theModel->getDomainPtr();
+        if (theDomain != 0) {
+            NodeIter &theNodes = theDomain->getNodes();
+            Node *nodePtr;
+            while ((nodePtr = theNodes()) != 0) {
+                DOF_Group *dg = nodePtr->getDOF_GroupPtr();
+                if (dg == 0) continue;
+                const ID &id = dg->getID();
+                int ndf = nodePtr->getNumberDOF();
+                Vector tf(ndf);
+                for (int d = 0; d < ndf && d < id.Size(); d++) {
+                    int eqn = id(d);
+                    tf(d) = (eqn >= 0) ? theProjector->tieForceAtEqn(eqn) : 0.0;
+                }
+                nodePtr->setProjectionTieForce(tf);
+            }
+        }
     }
 
     return theModel->commitDomain();
