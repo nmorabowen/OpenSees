@@ -32,7 +32,7 @@ return map). P0 = validation only (light verification, no heavy gate).
 | Phase | State | Gate | PR | Notes |
 |---|---|---|---|---|
 | P0 falsify/baseline (no SRC) | **DONE ✓** | light verify ✓ | local | both protos pass; 2 design rules extracted |
-| P1 skeleton+handler+brute-force, zero-force | NOT STARTED | **adversarial design gate FIRST** | — | the BLOCKER-risk wiring |
+| P1 skeleton+handler+brute-force, zero-force | DESIGN GATE RUNNING | **adversarial design gate** (wv35sge9t) | — | `_adr39_p1_design.md`; gate launched, awaiting verdict |
 | P2 NTS penalty frictionless | NOT STARTED | **adversarial gate** | — | rigid-plane rung first |
 | P2.5 bucket sort drop-in | NOT STARTED | verify==brute force | — | — |
 | P3 IMPL-EX Coulomb — SHIP | NOT STARTED | **adversarial gate** | — | v1 ship |
@@ -65,12 +65,22 @@ return map). P0 = validation only (light verification, no heavy gate).
 - Gate decision: P0 is no-SRC validation → light self-review only; the heavy
   adversarial Workflow gate is reserved for P1 (wiring) / P2 (mechanics) / P3 (friction).
 
-### Iteration 2 — P1 design + adversarial design gate (NEXT)
-- Write `_adr39_p1_design.md` (FE_Element adapter + custom ConstraintHandler
-  injection + conservative-static connectivity + data structures).
-- Launch the P1 adversarial DESIGN gate (Workflow) BEFORE writing C++ — mirrors
-  ADR-30's pre-code Gate-A that caught 10 seam fixes. This is THE critical junction
-  (the B1/B2 BLOCKER-risk wiring).
+### Iteration 2 — P1 design + adversarial design gate
+- Read real interfaces: ConstraintHandler (handle() is the only FE factory, called
+  in domainChanged after clearAll), FE_Element bare ctor (tag,numDOF,ndof) for
+  adapters, **ConstraintHandler::update() is NOT called in the transient step loop**
+  (loop = newStep→solveCurrentStep→commit) → per-step contact trigger can't be there.
+- KEY DESIGN DECISION: **self-contained adapter** — LadrunoContactFE computes its
+  own narrow phase inside getResidual()/getTangent() (reads Node::getTrialDisp like
+  a normal Element) → NO per-step global trigger, NO vanilla integrator edit. Broad
+  phase only at epoch re-emit.
+- Wrote `_adr39_p1_design.md` with 5 open questions (Q-P1-1 trigger/trial-disp,
+  Q-P1-2 handler delegation, Q-P1-3 zero-force-NOT-byte-identical-graph, Q-P1-4
+  pair-state-commit, Q-P1-5 conservative connectivity).
+- **Launched adversarial DESIGN gate Workflow `wv35sge9t`** (4 source-grounded
+  reviewers: trigger · handler/numbering · state/lifecycle · completeness → synth).
+  Running in background. NEXT on completion: fold the verdict + fix list into the
+  P1 design, THEN write C++.
 
 ## Deferred / parked
 - P4 SOFT, P5 segment-based, P6 tied, AL upgrade (Q-AL), MPI — all post-v1 per ADR.
