@@ -1,8 +1,8 @@
 ---
-title: "LadrunoProjectionHandler (ADR-30) — handoff / v1 complete"
+title: "LadrunoProjectionHandler (ADR-30) — handoff / v1 + prescribed motion complete"
 project: Ladruno
 type: handoff
-status: v1 SHIPPED (P0–P3) + P4a tie-force recorder — all merged to ladruno, 2026-06-20
+status: v1 (P0–P3) + P4a recorder + P4b prescribed-motion + P4c prescribed-master — all merged to ladruno, 2026-06-20/21
 related:
   - "[[30_ladruno_explicit_constraint_projection_adr]]"   # the spec
   - "[[_adr30_p1_design]]"                                 # P1 pseudocode + Gate-A resolutions
@@ -21,7 +21,9 @@ constraint enforcement OpenSees lacked: **exact, momentum-conserving, Δt-neutra
 the O(n) `system Diagonal` recipe**. = LS-DYNA `*CONSTRAINED_LINEAR` / Theory §28 nodal-set
 `a = ΣMᵢaᵢ/ΣMᵢ`; the kinematic-contact half of Abaqus/Explicit.
 
-**Status: v1 COMPLETE.** P0 #300 · P1 #305 · P2 #307 · P3 #312, all merged to `ladruno`.
+**Status: v1 + PRESCRIBED MOTION COMPLETE.** P0 #300 · P1 #305 · P2 #307 · P3 #312 · P4a
+tie-force recorder #317 · **P4b prescribed motion (non-homog SP / imposedMotion on free DOFs)
+#323** · **P4c prescribed MASTER (drives constrained slaves) #329** — all merged to `ladruno`.
 
 ---
 
@@ -39,10 +41,21 @@ f = ops.ladrunoProjectionTieForce(nodeTag, dof) # the constraint tie force M(a_r
 
 # native HDF5 recording (P4a): writes the CONSTRAINT_TIE_FORCE field per node per step
 ops.recorder("ladruno", "out.ladruno", "-N", "constraintTieForce")
+
+# prescribed motion (P4b/P4c): base excitation + supports that drive ties, all under projection
+ops.sp(supportNode, dof, value, "-const")                 # non-homogeneous SP (prescribed disp)
+ops.pattern("MultipleSupport", p); ops.groundMotion(g, "Plain", "-accel", ts)
+ops.imposedMotion(supportNode, dof, g)                     # ground-motion support (disp+vel+accel)
 ```
 
-**Supported constraints (v1):** `equalDOF`, `equalDOF_Mixed`, `rigidLink -bar`/`-beam`,
+**Supported constraints:** `equalDOF`, `equalDOF_Mixed`, `rigidLink -bar`/`-beam`,
 `rigidDiaphragm`, `equationConstraint` (EQ). Homogeneous `fix` is handled (equation exclusion).
+**Prescribed motion (P4b/P4c):** non-homogeneous `SP` / `imposedMotion` works on a free support
+DOF (Tier 1, P4b — the structure feels it through `F_int`/damping) AND as a constraint **master**
+that drives its slaves (Tier 2, P4c — the slave is KINEMATICALLY imposed `u_c=ΣC_k u_{m_k}+delta`,
+exact). A plain `SP` supplies disp only (vel/accel = 0, same as `Transformation`); `imposedMotion`
+supplies all three. A DOF that is BOTH prescribed and a constraint slave, or a slave tied to BOTH
+a free and a prescribed master (mixed), or a group with zero free equations, is refused (named).
 
 **HARD REQUIREMENTS / gotchas (all enforced with named errors — see LEDGER_quirks):**
 - **`system Diagonal`** only (the projector reads the assembled lumped-mass diagonal). A
@@ -140,19 +153,42 @@ Test `tests/test_adr30_projection_p4.py` (h5py readback `DATA == ±F·m₂/M`). 
 projection is inactive. Optional test nits left: a plain-CDL-no-projection zeros-recording test;
 `h5py` is `importorskip` (silently skips on a box without it).
 
+**P4b — prescribed motion on free DOFs (Tier 1): DONE (#323, merge 1d445ddc0).** A non-homogeneous
+`SP`/`imposedMotion` DOF stays SP-excluded (`eqn=-1`); a new `LadrunoProjectionHandler::applyLoad()`
+imposes its prescribed DISPLACEMENT each step (`setTrialDisp(getValue()+getInitialValue(),dof)`,
+mirrors `TransformationDOF_Group::enforceSPs`); `ImposedMotionSP` supplies vel/accel. The integrator
+is UNCHANGED — free DOFs feel the support via `F_int`/damping (`setNode*` skips `eqn<0`). Handler-only,
+ZERO vanilla. A prescribed DOF used as a constraint master/slave was refused here (master refusal
+lifted in P4c).
+
+**P4c — prescribed MASTER (Tier 2): DONE (#329, merge d9108c84).** A slave driven PURELY by prescribed
+master(s) is KINEMATICALLY imposed: excluded from the equation set and `u/v/a` set from the masters
+each step in `applyLoad()` (`classifyDerivedSlaves()` detects+excludes+refuses-mixed; `doneNumberingDOF()`
+drops prescribed masters + skips derived slaves). EXACT (drift 0, matches `Transformation`).
+**Key lesson (LEDGER_quirks):** ADR §2.4's known-RHS *acceleration* projection was implemented first
+then ABANDONED — a prescribed master's disp is externally imposed while the slave leap-frogs, so
+accel-only projection leaves a NON-converging O(1e-3) displacement-tie drift. A kinematic tie to an
+externally-imposed DOF must be imposed kinematically. Mixed (free+prescribed master on one slave) and
+zero-free-DOF groups are refused (named). Handler-only, projector UNTOUCHED, ZERO vanilla.
+
 **Remaining backlog (priority order, all independent, none required for the core feature):**
-1. **Prescribed-motion overwrite** (non-homogeneous SP / `imposedMotion`): overwrite `a` on those
-   DOFs before projecting the rest.
-2. **MP-chain composition** (currently refused): substitute `C` matrices (Abaqus-style).
-3. **ExplicitBathe / LNVD adoption** — implement `LadrunoProjectionConsumer` + the per-sub-step hooks.
-4. **RBE2/RBE3 eliminable-block routing** through the projector (retire bipenalty where eliminable).
-5. **Near-singular `LᵀML`** condition-number gate (the rank check catches only an exact zero pivot;
+1. **MP-chain composition** (currently refused): substitute `C` matrices (Abaqus-style).
+2. **ExplicitBathe / LNVD adoption** — implement `LadrunoProjectionConsumer` + the per-sub-step hooks.
+   NB the SMS families (CentralDifferenceSMSConsistent 33008, ExplicitBathe(LNVD)SMS(Consistent)
+   33009–33012, merged #320/#324) are now siblings on these integrators — adoption should account for them.
+3. **RBE2/RBE3 eliminable-block routing** through the projector (retire bipenalty where eliminable).
+4. **Near-singular `LᵀML`** condition-number gate (the rank check catches only an exact zero pivot;
    ADR O1) and a **frozen-`Ccr` runtime staleness guard** (warn at large accumulated rotation).
-6. **SOE-cooperative massless-slave elimination** — would relax the "every tied DOF needs mass"
+5. **SOE-cooperative massless-slave elimination** — would relax the "every tied DOF needs mass"
    requirement (lets diaphragm slaves keep zero rotational mass like `Transformation`).
+6. **Prescribed-motion deferred sub-cases:** a *plain* `SP` master supplies disp-only (vel/accel=0,
+   documented); a slave tied to BOTH free and prescribed masters (mixed) is refused rather than
+   solved — a full mixed treatment would need a genuine displacement-level projection.
 
 ## 5. Pointers
-- Spec + decisions: `30_ladruno_explicit_constraint_projection_adr.md` (P0–P3 marked DONE inline).
+- Spec + decisions: `30_ladruno_explicit_constraint_projection_adr.md` (P0–P3 marked DONE inline;
+  §2.4 prescribed motion). Prescribed-motion design: `_adr30_p4b_design.md` (Tier 1) and
+  `_adr30_p4c_design.md` (Tier 2 — includes the abandoned known-RHS approach + the kinematic pivot).
 - The full phase-by-phase build log (every gate, finding, fix): `_adr30_loop_state.md`.
 - Gotchas: `LEDGER_quirks.md` (Diagonal off-diagonal drop · tied-DOF-needs-mass · frozen-Ccr ·
   near-singular LᵀML · EQ-clearAll leak). Provenance: `LEDGER_vanilla_files.md`,
