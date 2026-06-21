@@ -184,7 +184,7 @@ settle lateral (Poisson) ringing. (See [[LEDGER_quirks]].)
   pytest `test_ladrunoConcrete3D_material.py` 24/24. No wrapper / serialization / classTag change
   (`E·ε̃` is internal — no new parameter).
 
-**SHIPPED — P4 finite-strain via `nDMaterial LogStrain` (validation gate only, #TBD):**
+**SHIPPED — P4 finite-strain via `nDMaterial LogStrain` (validation gate only, #339):**
 - **No source change** — the 3D material lifts to finite strain through the GENERIC Hencky wrapper
   (`LogStrainNDMaterial` 33010): `element LadrunoBrick … <logTag> -geom finite` passes `F`; LogStrain forms
   `b=F Fᵀ`, `εᵉ=½ln b`, feeds the UNCHANGED small-strain `LadrunoConcrete3D`, treats the return as Kirchhoff
@@ -625,7 +625,7 @@ freezes plastic state + damage)** → **Duvaut–Lions `-eta` ✓ (oracle #316 �
 **P3 Tier-3 explicit ✓ (g++ B7 do_tangent-independence gate + element CentralDifference softening demo #328 — robustness trilogy complete)** →
 **Tier-3 explicit quasi-static + cross-integrator ✓ (#333 — prescribed-motion peak+softening backbone, CDL + ExplicitBathe, oracle-backbone match, implicit-stall contrast; corrects the #328 prescribed-SP gotcha)** →
 **P2i multiaxial-damage apportioning ✓ (oracle + C++ kernel + g++ biaxial byte-check #336 — tensile ω-drive = `E·ε̃` Eq.37, compressive keeps extreme-principal; uni<tri<bi escalation)** →
-**P4 finite-strain ✓ (validation gate only #TBD — `nDMaterial LogStrain` over the 3D material; isotropic ⇒ `σ(QF)=Qσ(F)Qᵀ` EXACT, no §14.11 boundary; 4/4 self-referential)** →
+**P4 finite-strain ✓ (validation gate only #339 — `nDMaterial LogStrain` over the 3D material; isotropic ⇒ `σ(QF)=Qσ(F)Qᵀ` EXACT, no §14.11 boundary; 4/4 self-referential)** →
 **NEXT: plastic-dissipation regularization (D3/C3, research-grade fork)** → P5 confined-fiber view (§4.6 hoop-spring condensation, "Mander by mechanism") → P6
 auto-hybrid switch.
 
@@ -645,5 +645,5 @@ monotone-`ω` no-heal cyclic damage (oracle + C++ kernel + wrapper; secant unloa
 ExplicitBathe, oracle-backbone match, implicit-stall contrast; corrects the #328 prescribed-SP gotcha) ·
 **#336** P2i multiaxial-damage apportioning (oracle + C++ kernel + g++ `dmg_biaxial_tension` byte-check —
 tensile ω-drive `E·ε̃` Eq.37, compressive keeps extreme-principal; uni<tri<bi escalation) ·
-**#TBD** P4 finite-strain validation gate (`nDMaterial LogStrain` over the 3D material; isotropic objectivity
+**#339** P4 finite-strain validation gate (`nDMaterial LogStrain` over the 3D material; isotropic objectivity
 EXACT, no §14.11 boundary; `tests/test_ladrunoConcrete3D_finite.py` 4/4; no source change).
