@@ -189,8 +189,12 @@ int CentralDifferenceSMS::domainChanged(void)
                   "(2) sizing now accounts for stiffness-proportional (betaK) Rayleigh damping "
                   "(it shrinks the explicit step) via the closed-form s=T^2+2*T*betaK/dt_e; "
                   "mass-proportional (alphaM) damping is NOT folded in (it does not reduce the "
-                  "high-frequency stable step). (3) parallel shared/boundary nodes are not "
-                  "mass-reduced across ranks (sequential / partition-interior use only).\n";
+                  "high-frequency stable step). (3) in PARALLEL the injected lumped mass on a "
+                  "shared/boundary node IS summed across ranks by a distributed/MPI diagonal "
+                  "solver (OpenSeesMP `system MPIDiagonal`, OpenSeesSP `system Diagonal`) -- the "
+                  "explicit M^-1 solve reads that reduced diagonal (validated bit-identical to "
+                  "serial). The CONSISTENT (Olovsson) variant is NOT parallel-safe: its "
+                  "matrix-free PCG uses rank-local inner products.\n";
     }
 
     Ladruno::MassScalingReport rep =

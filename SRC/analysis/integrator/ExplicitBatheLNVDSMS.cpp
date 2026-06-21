@@ -171,8 +171,10 @@ int ExplicitBatheLNVDSMS::domainChanged(void)
         opserr << "ExplicitBatheLNVDSMS: v1 limitations -- (1) elements touching an "
                   "MP-constraint SLAVE node are EXCLUDED. (2) sizing accounts for betaK "
                   "damping (closed-form s=T^2+2*T*betaK/dt_e); alphaM not folded in. NOTE the "
-                  "FLAC local damping (alpha) is separate from sizing. (3) parallel "
-                  "shared/boundary nodes are not reduced across ranks.\n";
+                  "FLAC local damping (alpha) is separate from sizing. (3) in PARALLEL the "
+                  "injected lumped mass on a shared node IS summed across ranks by a "
+                  "distributed/MPI diagonal solver (`system MPIDiagonal` / OpenSeesSP `system "
+                  "Diagonal`); the CONSISTENT (Olovsson) variant is NOT parallel-safe.\n";
     }
 
     Ladruno::MassScalingReport rep =

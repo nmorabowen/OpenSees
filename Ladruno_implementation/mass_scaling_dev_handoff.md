@@ -8,9 +8,11 @@ status: >
   (33009/33010), ExplicitBatheLNVD (33011/33012). ADR 36 (lumped), ADR 38 (consistent),
   ADR 37 validation. PRs #295/#303/#306/#308/#311/#314 (CD lumped+validation),
   #320 (CD consistent), #324 (ExplicitBathe + LNVD families; subsumed #322). All merged.
-  V4 (consistent-mass energy-recorder KE closure) DONE this session — global
-  MassScalingEnergyRegistry conduit, all 3 consistent integrators. NEXT (architectural,
-  not started): T-MPI parallel shared-node reduction. See §0.
+  V4 (consistent-mass energy-recorder KE closure) DONE. T-MPI: the LUMPED path is now
+  VALIDATED parallel-correct (np=1 vs np=2 bit-identical; the distributed/MPI diagonal solver
+  sums shared-node ΔM at solve time) and the stale "not reduced across ranks" warnings were
+  corrected; the CONSISTENT (Olovsson) path is confirmed NOT parallel-safe (rank-local PCG) —
+  its distributed CG is the remaining increment. See §0.
 tags:
   - integrator
   - explicit
@@ -99,13 +101,40 @@ message AS the printf format to `PySys_FormatStderr`, eating literal `%` in `ops
   (recorder KE == lumped+`M̄` to ~machine precision, all 3 integrators, `M̄`≈77% of KE on a
   deformation-rich IC) + CD mechanical-energy conservation (drift <5% vs the pre-V4
   reconstruction `½vᵀM_lump v + IE`, which oscillates with the omitted `M̄`). See [[LEDGER_quirks]].
-- **T-MPI — parallel shared-node ΔM reduction.** v1 is sequential / partition-interior only;
-  a partition-boundary node gets only rank-local Δmₑ and the only MPI reduction is the scalar
-  dt, so shared-node masses desync across ranks. Fix = `MPI_Allreduce` the per-shared-node
-  injected ΔM (lumped) / the M̄ contribution (consistent). **Caveat: the Zone-A CI gate is
-  single-process**, so a 2-rank `mpiexec` test cannot be gated in CI — validate locally only.
-  Start read-only: determine whether OpenSeesMP already sums shared-node `setMass` across
-  ranks (may shrink/remove the need for the lumped path).
+- **T-MPI — parallel shared-node ΔM reduction. LUMPED path: VALIDATED parallel-correct
+  (this session); CONSISTENT path: confirmed NOT parallel-safe.** The earlier worry
+  ("a partition-boundary node gets only rank-local Δmₑ … shared-node masses desync") was
+  **WRONG for the lumped path.** Why: in a parallel build `system Diagonal` auto-swaps to
+  `DistributedDiagonalSOE` (OpenSeesSP) and `system MPIDiagonal` → `MPIDiagonalSOE`
+  (OpenSeesMP); **both solvers SUM the shared-DOF diagonal across ranks at solve time**
+  (`DistributedDiagonalSolver`: gather→P0→`+=`→broadcast; `MPIDiagonalSolver`:
+  `intersectionsAB` accumulates A on the first solve). `CentralDifferenceLadruno` reads M
+  *through* `formTangent → SOE → solve` (the **reduced** diagonal), NOT raw `Node::getMass()`.
+  Each element lives wholly on one rank ⇒ per-element `dt_e`/`s` are correct rank-locally;
+  SMS injects `(s−1)·m` into each rank's local node copy via `setMass`; the solve-time
+  reduction then sums all ranks' contributions to exactly the right physical total.
+  **Empirical proof:** `Ladruno_implementation/mass_scaling_mpi/` — a 1D fixed-free bar with
+  a fine zone straddling the central node, run at `np=1` (whole bar, all-local injection) vs
+  `np=2` (split at the shared node, where elements 10/rank0 and 11/rank1 BOTH inject ΔM into
+  shared node 11). Tip-disp history matches **bit-identical** (`max |abs diff| = 0.000e+00`,
+  150 steps, 36.6% added mass on the fine zone). Run: `OpenSeesPyMP` + `system MPIDiagonal`
+  (the `pyd` lives in `dist/openseesmp/`; see `run.ps1`).
+  **Stale warnings CORRECTED** in the three lumped integrators (`CentralDifferenceSMS`,
+  `ExplicitBatheSMS`, `ExplicitBatheLNVDSMS` `.cpp` limitation (3) + `CentralDifferenceSMS.h`
+  scope comment): they used to say "parallel shared/boundary nodes are not mass-reduced
+  across ranks", now they state the truth (lumped IS reduced via the distributed/MPI diagonal
+  solver; consistent is not). The **CONSISTENT (Olovsson) path is genuinely NOT
+  parallel-safe** — its matrix-free PCG (`consistentPCG`/`consistentMatVec` in
+  `LadrunoMassScaling.h`) uses rank-local inner products (`res ^ z`, `p ^ Ap`) with no
+  `MPI_Allreduce` and no shared-DOF matvec exchange. Making it parallel = a real distributed
+  CG (global dot products + shared-DOF `M̄` accumulation); the consistent-variant warnings
+  ("not reduced") are already accurate. **Caveat: the Zone-A CI gate is single-process**, so
+  the 2-rank `mpiexec` test cannot be gated in CI — it is a local-only validation.
+  **Tcl-parser gap found:** `integrator CentralDifferenceSMS …` errors in the *Tcl*
+  `OpenSeesMP.exe` ("No Integrator type exists") — SMS is registered only in the interpreter/
+  openseespy layer (`OpenSeesCommands.cpp`), not the legacy `SRC/tcl/commands.cpp:5588`
+  `integrator` dispatch, even though the Tcl splash banner advertises it. Reach SMS via
+  openseespy (`openseesmp`), or wire the SMS classTags into the legacy Tcl parser (follow-up).
 
 **Merge mechanics lesson (this session).** #320/#322/#324 were a `--base ladruno` stack.
 After #320 squash-merged, #322 went CONFLICTING (its branch carried #320's pre-squash
@@ -310,7 +339,12 @@ peak ratio 1.000.
   frequencies; pair with `T-CONSISTENT` (frequency-preservation vs lumped at the same
   %added-mass). `applyMassScaling` currently writes diagonal-only via `Node::setMass`; the
   consistent path needs the off-diagonal nodal mass route.
-- **MPI shared-node reduction:** start read-only — determine whether OpenSeesMP already sums
-  shared-node `setMass` contributions across ranks (Subdomain / parallel assembly). If yes,
-  the "limitation" is overstated and the fix is small; if no, `MPI_Allreduce` the per-shared
-  -node ΔM in `domainChanged`. Remember T-MPI cannot gate in the single-process CI.
+- **MPI shared-node reduction: DONE for lumped (validated bit-identical), open for consistent.**
+  The lumped path is parallel-correct via the distributed/MPI diagonal solver's solve-time
+  shared-DOF sum (see §0 T-MPI + `mass_scaling_mpi/`). The remaining increment is the
+  **CONSISTENT (Olovsson) distributed CG**: give `consistentPCG`/`consistentMatVec` global
+  (MPI_Allreduce'd) inner products and a shared-DOF `M̄` matvec exchange so Olovsson scaling
+  works in parallel. Cannot gate in the single-process CI — local 2-rank `mpiexec` only.
+  Optional adjacent fix: wire the SMS integrator classTags into the legacy Tcl `integrator`
+  parser (`SRC/tcl/commands.cpp`) so `OpenSeesMP.exe`/Tcl can reach them (the banner already
+  advertises them; today they are openseespy-only).
