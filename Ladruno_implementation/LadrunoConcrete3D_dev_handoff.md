@@ -201,7 +201,7 @@ settle lateral (Poisson) ringing. (See [[LEDGER_quirks]].)
   state** `σ(QF)=Qσ(F)Qᵀ` to ~1e-8 (exact, isotropic); (4) the LogStrain SEAM through damage — uniaxial
   finite stretch into ωt>0 ⇒ GP Cauchy == small-strain stress at `½ln b` pushed back by `/J`.
 
-**SHIPPED — P5a confined-fiber view ORACLE slice (§4.6, "Mander by mechanism", #TBD):**
+**SHIPPED — P5a confined-fiber view ORACLE slice (§4.6, "Mander by mechanism", #341):**
 - **The SAME kernel condensed against a PASSIVE hoop spring** so the confinement strength + ductility gain
   EMERGE (no pre-baked Mander backbone). `drive_confined_fiber` mirrors `drive_damaged_unified` but the
   lateral Newton targets the HOOP residual `σ_lat_eff(ε_lat) + σ_hoop(ε_lat) = 0` instead of the free
@@ -649,7 +649,7 @@ freezes plastic state + damage)** → **Duvaut–Lions `-eta` ✓ (oracle #316 �
 **Tier-3 explicit quasi-static + cross-integrator ✓ (#333 — prescribed-motion peak+softening backbone, CDL + ExplicitBathe, oracle-backbone match, implicit-stall contrast; corrects the #328 prescribed-SP gotcha)** →
 **P2i multiaxial-damage apportioning ✓ (oracle + C++ kernel + g++ biaxial byte-check #336 — tensile ω-drive = `E·ε̃` Eq.37, compressive keeps extreme-principal; uni<tri<bi escalation)** →
 **P4 finite-strain ✓ (validation gate only #339 — `nDMaterial LogStrain` over the 3D material; isotropic ⇒ `σ(QF)=Qσ(F)Qᵀ` EXACT, no §14.11 boundary; 4/4 self-referential)** →
-**P5a confined-fiber view ORACLE ✓ (§4.6 hoop-spring condensation #TBD — "Mander by mechanism": fcc/fc reproduces Mander ≤2.9% from a SELF-mobilized hoop pressure; F1–F4)** →
+**P5a confined-fiber view ORACLE ✓ (§4.6 hoop-spring condensation #341 — "Mander by mechanism": fcc/fc reproduces Mander ≤2.9% from a SELF-mobilized hoop pressure; F1–F4)** →
 **NEXT: P5b C++ confined-fiber view + condensed 1-D tangent + fiber integration** → P6 auto-hybrid switch (plastic-dissipation regularization DEFERRED — approach A backfires, small FE-visible payoff).
 
 PRs (all → `ladruno`): **#240** P0+P1 · **#244** hardening · **#247** tangent · **#248** review ·
@@ -670,5 +670,5 @@ ExplicitBathe, oracle-backbone match, implicit-stall contrast; corrects the #328
 tensile ω-drive `E·ε̃` Eq.37, compressive keeps extreme-principal; uni<tri<bi escalation) ·
 **#339** P4 finite-strain validation gate (`nDMaterial LogStrain` over the 3D material; isotropic objectivity
 EXACT, no §14.11 boundary; `tests/test_ladrunoConcrete3D_finite.py` 4/4; no source change) ·
-**#TBD** P5a confined-fiber view ORACLE (§4.6 hoop-spring condensation, "Mander by mechanism" — `drive_confined_fiber`
+**#341** P5a confined-fiber view ORACLE (§4.6 hoop-spring condensation, "Mander by mechanism" — `drive_confined_fiber`
 + `run_p5_gate` F1–F4; fcc/fc reproduces Mander ≤2.9% from a self-mobilized hoop pressure; oracle-only, C++ view = P5b).
