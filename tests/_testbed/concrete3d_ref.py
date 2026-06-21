@@ -1419,8 +1419,10 @@ def drive_damaged_unified(mp, eps11_path, Gf, Gc, lch, As=2.0, sigma3=0.0):
         et_max = max(et_max, et)                          # ALWAYS track the eps_tilde history (Eq.43)
         epl_prev = epl
 
-        # spectral drives: extreme effective principal of each sign (reduces to P2a/P2b uniaxially)
-        sig_t_drive = max(float(np.max(sig_eff)), 0.0)
+        # P2i — multiaxial-consistent TENSILE drive E*eps_tilde (Eq.37), gated by a real tensile
+        # principal; compressive drive stays the extreme principal (ft-scaled eps_tilde can't onset wc).
+        # Reduces to the extreme principal uniaxially (E*eps_tilde == sig_bar_t). See damaged_step_tensor.
+        sig_t_drive = E * et if float(np.max(sig_eff)) > 1.0e-6 * ft else 0.0
         sig_c_drive = max(-float(np.min(sig_eff)), 0.0)
         # P2g — MONOTONE (no-heal) cyclic damage: drive each omega with the running MAX of its drive
         # stress (see damaged_step_tensor). On an elastic unload the live drive drops but the max (and the
@@ -1649,7 +1651,16 @@ def damaged_step_tensor(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
         kdc2 += ac * above / xs
         kdc1 += ac * beta_c(w, kp_new, mp) * dnorm_epl / xs   # Eq.48 with the full CDPM2 beta_c (Eq.50, P2f)
     et_max = max(et_max, et)
-    sig_t_drive = max(float(np.max(w)), 0.0)
+    # P2i — multiaxial-consistent TENSILE drive: E*eps_tilde (Eq.37 equivalent strain) instead of the
+    # extreme tensile principal, GATED by the presence of a real tensile principal. In uniaxial tension
+    # E*eps_tilde == sig_bar_t so it reduces to the extreme principal; in biaxial/triaxial tension
+    # eps_tilde folds in ALL tensile principals (E*eps_tilde > the extreme principal) => damage onsets at
+    # a lower per-principal stress (the CDPM2-consistent tensile envelope, Eq.37). The COMPRESSIVE drive
+    # stays the extreme principal: eps_tilde is ft-scaled (== eps0 on ANY failure surface), so E*eps_tilde
+    # can never reach fc and would NEVER onset wc. The tension gate keeps the tensile history clean in
+    # pure/dominant compression (wt affects the stress only through the positive-part split anyway).
+    # USER decision 2026-06-21 ([[LadrunoConcrete3D_dev_handoff]] §0).
+    sig_t_drive = E * et if float(np.max(w)) > 1.0e-6 * ft else 0.0
     sig_c_drive = max(-float(np.min(w)), 0.0)
     # P2g — MONOTONE (no-heal) cyclic damage. Drive each omega with the running MAXIMUM of its effective
     # drive stress, not the live value. The histories kd*1/kd*2 are already monotone (they accumulate only
@@ -1931,8 +1942,8 @@ def damaged_tangent_analytic(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
         kdt2 += wt_w * above / xs; kdt1 += wt_w * dnorm / xs
         kdc += ac * above; kdc2 += ac * above / xs; kdc1 += ac * bc * dnorm / xs
     et_max2 = max(et_max, et)
-    Dt = max(float(np.max(lam)), 0.0)
-    Dc = max(-float(np.min(lam)), 0.0)
+    Dt = E * et if float(np.max(lam)) > 1.0e-6 * ft else 0.0   # P2i: E*eps_tilde tensile drive (Eq.37)
+    Dc = max(-float(np.min(lam)), 0.0)                          # compressive drive: extreme principal
     # P2g — MONOTONE drive (mirror damaged_step_tensor). Solve omega against the running max, and mark
     # whether each channel is ADVANCING its max (== loading). On UNLOAD (live drive < committed max) the
     # drive is frozen AND the histories are frozen, so d(omega)/d(eps)=0 and the tangent collapses to the
@@ -1968,7 +1979,10 @@ def damaged_tangent_analytic(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
     Emax = np.outer(V[:, 2], V[:, 2]); Emin = np.outer(V[:, 0], V[:, 0])  # eigh ascending
     # d(drive_max)/d(eps): the live eigenprojection ONLY while the channel advances its running max
     # (P2g); frozen (zero) on unload so the -sig(x)d(omega) rank-update vanishes => secant tangent.
-    dDt_deps = Ceff.T @ (_TENSOR_W6 * mat_to_voigt(Emax)) if (Dt > 0.0 and t_loading) else np.zeros(6)
+    # P2i: d(E*eps_tilde)/d(eps) = E * d(eps_tilde)/d(eps) = E * det_deps (the equiv-strain gradient
+    # already assembled below), REPLACING the extreme-principal eigenprojection (Emax) for the tensile
+    # channel. The compressive channel keeps the extreme-principal eigenprojection (Emin).
+    dDt_deps = E * det_deps if (Dt > 0.0 and t_loading) else np.zeros(6)
     dDc_deps = -(Ceff.T @ (_TENSOR_W6 * mat_to_voigt(Emin))) if (Dc > 0.0 and c_loading) else np.zeros(6)
     dnorm_deps = (depl_deps.T @ (_TENSOR_W6 * depl)) / dnorm if dnorm > 1.0e-14 else np.zeros(6)
     # d(beta_c)/d(eps): beta_c = beta_c(sig_bar(eps), kp(eps)) depends on BOTH rho_bar(sig_bar) AND
@@ -2424,6 +2438,92 @@ def run_p2h_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, Gc=5.0, As=2.0, ver
         print(f"  H4 analytic==numerical tangent: alphat rel={res['H4_alphat_tan']:.1e} "
               f"proj rel={res['H4_proj_tan']:.1e} ({res['H4_ok']})")
         print(f"  => P2h GATE {'PASS' if ok else 'FAIL'}")
+    return res
+
+
+def run_p2i_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, Gc=5.0, As=2.0, verbose=True):
+    """P2i — MULTIAXIAL-DAMAGE APPORTIONING. The tensile omega-solve is now driven by E*eps_tilde (the
+    CDPM2 equivalent strain, Eq.37) instead of the extreme tensile principal max<sig_bar_i>+; the
+    COMPRESSIVE channel keeps the extreme principal (eps_tilde is ft-scaled => E*eps_tilde could never
+    reach fc, so it would never onset wc). USER decision 2026-06-21.
+
+    I1  reduce-to-uniaxial (byte): in uniaxial tension E*eps_tilde == sig_bar_t, so the unified driver
+        still matches the uniaxial-tension reference driver byte-for-byte (the change is invisible there,
+        hence DT1/D1/P2a are unaffected).
+    I2  multiaxial escalation: BOTH equibiaxial and triaxial tension drive E*eps_tilde ABOVE the uniaxial
+        ft, so they reach the damage onset eps0 at a LOWER per-principal stress than ft — the CDPM2-
+        consistent tensile envelope the extreme-principal model can't reproduce (it keeps every principal
+        at ft). Ordering is uni < TRI < BI (NOT uni<bi<tri): hydrostatic-triaxial tension is APEX-CAPPED
+        by the MW hydrostatic-tension vertex, so it escalates LESS than the deviatoric equibiaxial state.
+    I3  no spurious compression->tension damage: the tension gate keeps wt == 0 in pure compression
+        (E*eps_tilde > 0 there, but the gate blocks it; wt only affects the stress via the positive-part
+        split anyway).
+    I4  the analytic damaged tangent, with its tensile drive-gradient now d(E*eps_tilde)/deps = E*det_deps
+        (replacing the extreme-principal eigenprojection), == the numerical reference at a genuinely
+        biaxial-tension DAMAGED state."""
+    mp = make_material(E, nu, fc, ft)
+    eps0 = ft / E
+    res = {}
+
+    # I1 — reduce to the uniaxial-tension reference driver byte-for-byte.
+    path = np.linspace(0.0, 6.0 * eps0, 120)
+    uni = drive_uniaxial_tension_damaged(mp, path, Gf, lch=50.0)
+    unified = drive_damaged_unified(mp, path, Gf, Gc, lch=50.0, As=As)
+    i1 = float(np.max(np.abs(uni["sig11"] - unified["sig11"])))
+    res["I1_reduce_uniaxial"] = i1
+
+    # I2 — E*eps_tilde escalates with added tensile principals (extreme-principal would stay == ft).
+    Et_uni = E * equiv_strain_general(np.array([ft, 0.0, 0.0]), mp)       # == ft (Eq.38)
+    Et_bi = E * equiv_strain_general(np.array([ft, ft, 0.0]), mp)         # > ft
+    Et_tri = E * equiv_strain_general(np.array([ft, ft, ft]), mp)         # > equibiaxial
+    res["I2_uni"], res["I2_bi"], res["I2_tri"] = Et_uni, Et_bi, Et_tri
+
+    # I3 — pure (uniaxial-strain) compression: the tensile drive gate keeps wt == 0.
+    st = make_damage_state(mp)
+    wt_comp = 0.0
+    for e in np.linspace(0.0, -0.01, 80):
+        _, st, info = damaged_step_tensor(st, np.array([e, 0.0, 0.0, 0.0, 0.0, 0.0]) - st["eps"],
+                                          mp, Gf, Gc, 50.0, As)
+        wt_comp = max(wt_comp, info["wt"])
+    res["I3_pure_compression_wt"] = wt_comp
+
+    # I4 — analytic == numerical tangent at an UNEQUAL biaxial-tension DAMAGED state, built like the P2e
+    # gates: advance to a damaged committed state, then evaluate the tangent at a SMALL loading PROBE (NOT
+    # at the large onset-crossing step). Unequal biaxial (e, 0.6e, 0) keeps the tensile principals DISTINCT
+    # (an equal-biaxial (e,e,0) state has an exact eigenvalue degeneracy sig_bar_11==sig_bar_22, where the
+    # FD rotates the degenerate eigenvectors while the analytic holds them frozen — a known frozen-
+    # eigenvector limitation, not a drive-gradient bug). Here E*eps_tilde > the extreme principal, so this
+    # genuinely exercises the new tensile drive-gradient E*det_deps in a multiaxial regime.
+    nrm = lambda A: float(np.sqrt(np.sum(A * A)))
+    st_b, _, wt_b, _ = _advance_damaged(
+        make_damage_state(mp),
+        [np.array([e, 0.6 * e, 0.0, 0.0, 0.0, 0.0]) for e in np.linspace(0.0, 6.0e-4, 300)],
+        mp, Gf, Gc, 50.0, As)
+    probe = np.array([1.0e-6, 0.6e-6, 0.0, 0.0, 0.0, 0.0])
+    Ca = damaged_tangent_analytic(st_b, probe, mp, Gf, Gc, 50.0, As)
+    Cn = damaged_consistent_tangent(st_b, probe, mp, Gf, Gc, 50.0, As)
+    i4 = nrm(Ca - Cn) / nrm(Cn)
+    res["I4_tangent_rel"] = i4
+    res["I4_wt"] = float(wt_b[-1])
+
+    # I2 — both equibiaxial AND triaxial tension ESCALATE above uniaxial (damage onsets at a lower
+    # per-principal stress than ft), the CDPM2-consistent multiaxial behavior the extreme-principal model
+    # CANNOT reproduce (it keeps every principal at ft). NB the ordering is uni < TRI < BI, NOT uni<bi<tri:
+    # equibiaxial (deviatoric) drives eps_tilde HIGHER than hydrostatic-triaxial tension, which is
+    # APEX-CAPPED (the MW hydrostatic-tension vertex limits how far eps_tilde grows under (ft,ft,ft)). So
+    # assert each escalates above uniaxial; do NOT assume tri>bi. (Plus the Eq.38 identity uni==ft.)
+    ok = (i1 < 1.0e-9
+          and abs(Et_uni - ft) < 1.0e-6 * ft
+          and Et_bi > Et_uni * (1.0 + 1.0e-4) and Et_tri > Et_uni * (1.0 + 1.0e-4)
+          and wt_comp < 1.0e-9
+          and i4 < 1.0e-6)
+    res["PASS"] = ok
+    if verbose:
+        print(f"  I1 reduce-to-uniaxial       max|dsig11| = {i1:.2e}   (< 1e-9)")
+        print(f"  I2 E*eps_tilde escalation   uni={Et_uni:.4f} (=ft) bi={Et_bi:.4f} tri={Et_tri:.4f}")
+        print(f"  I3 pure-compression wt      = {wt_comp:.2e}   (< 1e-9, no spurious tension damage)")
+        print(f"  I4 analytic==numerical tan  rel = {i4:.2e}   (< 1e-6)")
+        print(f"  => P2i GATE {'PASS' if ok else 'FAIL'}")
     return res
 
 
@@ -3018,6 +3118,12 @@ if __name__ == "__main__":
     p2h = run_p2h_gate(verbose=True)
     print("-" * 74)
     print(f"P2h: {'PASS' if p2h['PASS'] else 'FAIL'}")
+    print("=" * 74)
+    print("LadrunoConcrete3D P2i gate — multiaxial-damage apportioning (tensile drive = E*eps_tilde, Eq.37)")
+    print("=" * 74)
+    p2i = run_p2i_gate(verbose=True)
+    print("-" * 74)
+    print(f"P2i: {'PASS' if p2i['PASS'] else 'FAIL'}")
     print("=" * 74)
     print("LadrunoConcrete3D P3 Tier-2 IMPL-EX gate — explicit extrapolated stress + SPD secant tangent")
     print("=" * 74)

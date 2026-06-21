@@ -1023,9 +1023,15 @@ inline void damagedUpdate(const Params& mp, const State& in, const double sig_ef
     }
     const double et_max = et_max_n > et ? et_max_n : et;
 
-    // softening drives = the extreme effective principal of each sign; physical FLOOR (review-fix):
-    // never solve omega on a numerical-residual stress (~1e-10 MPa) -> flips wt 0<->1 in compression.
-    double Dt = w[0]; for (int i = 1; i < 3; ++i) if (w[i] > Dt) Dt = w[i]; if (Dt < 0.0) Dt = 0.0;
+    // P2i — multiaxial-consistent TENSILE drive E*et (Eq.37 equivalent strain) instead of the extreme
+    // tensile principal, gated by the presence of a real tensile principal (reduces to the extreme
+    // principal in uniaxial tension, E*et == sig_bar_t; in biaxial/triaxial tension E*et > the extreme
+    // principal => damage onsets at a lower per-principal stress, the CDPM2-consistent envelope). The
+    // COMPRESSIVE drive stays the extreme principal: et is ft-scaled (== eps0 on ANY failure surface), so
+    // E*et could never reach fc and would never onset wc. Physical FLOOR (review-fix): never solve omega
+    // on a numerical-residual stress (~1e-10 MPa) -> flips wt 0<->1 in compression.
+    double maxw = w[0]; for (int i = 1; i < 3; ++i) if (w[i] > maxw) maxw = w[i];
+    double Dt = (maxw > 1.0e-6 * mp.ft) ? mp.E * et : 0.0;
     double mn = w[0]; for (int i = 1; i < 3; ++i) if (w[i] < mn) mn = w[i];
     double Dc = -mn; if (Dc < 0.0) Dc = 0.0;
     // P2g — drive omega with the MONOTONE running max (no heal on unload); max == live on monotonic paths.
@@ -1212,7 +1218,7 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
     // extreme effective principals + their eigenprojections (argmax/argmin; eig3sym is unsorted)
     int imax = 0, imin = 0;
     for (int i = 1; i < 3; ++i) { if (w[i] > w[imax]) imax = i; if (w[i] < w[imin]) imin = i; }
-    const double Dt = w[imax] > 0.0 ? w[imax] : 0.0;
+    const double Dt = (w[imax] > 1.0e-6 * mp.ft) ? mp.E * et : 0.0;   // P2i: E*et tensile drive (Eq.37)
     const double Dc = (-w[imin]) > 0.0 ? -w[imin] : 0.0;
     // P2g — MONOTONE drive (mirror damagedUpdate). Solve omega against the running max; tLoading/cLoading
     // mark whether each channel is ADVANCING its max (== loading). On UNLOAD (live drive < committed max)
@@ -1271,19 +1277,18 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
     dscalarDsig(1, sig_eff, mp, g_xs);   CeffT(g_xs, dxs_deps);
     dscalarDsig(2, sig_eff, mp, g_ac);   CeffT(g_ac, dac_deps);
 
-    // eigenprojection gradients (WITH W6 tensor weight): dDt/dε = Ceff^T (W6 . Emax), dDc/dε = -Ceff^T (W6 . Emin)
+    // drive gradients. P2i: the TENSILE drive is E*et, so d(Dt)/dε = E * det_deps (the equiv-strain
+    // gradient already assembled above), NOT the extreme-principal eigenprojection. det_deps is a
+    // per-Voigt-component micro-FD grad ⇒ it carries NO W6 weight (the W6 quirk applies to the tensor
+    // eigenprojection only). The COMPRESSIVE drive stays the extreme principal: dDc/dε = -Ceff^T (W6 . Emin).
+    // (P2g) each is frozen (zero) on unload so the -sig(x)d(omega) rank-update vanishes ⇒ SPD secant.
     double dDt_deps[6], dDc_deps[6];
     {
-        double Em[3][3], En[3][3], Em6[6], En6[6], tmp[6];
-        for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) {
-            Em[i][j] = V[i][imax] * V[j][imax];
-            En[i][j] = V[i][imin] * V[j][imin];
-        }
-        matToVoigt(Em, Em6); matToVoigt(En, En6);
-        // P2g: d(drive_max)/d(eps) = the live eigenprojection ONLY while the channel advances its max;
-        // frozen (zero) on unload so the -sig(x)d(omega) rank-update vanishes => SPD secant tangent.
-        for (int i = 0; i < 6; ++i) tmp[i] = W6[i] * Em6[i];
-        if (Dt > 0.0 && tLoading) CeffT(tmp, dDt_deps); else for (int i = 0; i < 6; ++i) dDt_deps[i] = 0.0;
+        if (Dt > 0.0 && tLoading) for (int i = 0; i < 6; ++i) dDt_deps[i] = mp.E * det_deps[i];
+        else for (int i = 0; i < 6; ++i) dDt_deps[i] = 0.0;
+        double En[3][3], En6[6], tmp[6];
+        for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) En[i][j] = V[i][imin] * V[j][imin];
+        matToVoigt(En, En6);
         for (int i = 0; i < 6; ++i) tmp[i] = W6[i] * En6[i];
         if (Dc > 0.0 && cLoading) { CeffT(tmp, dDc_deps); for (int i = 0; i < 6; ++i) dDc_deps[i] = -dDc_deps[i]; }
         else for (int i = 0; i < 6; ++i) dDc_deps[i] = 0.0;
