@@ -342,5 +342,84 @@ Full multi-agent gate (4 source-grounded reviewers → adversarial verify each �
   ZeroLengthContactASDimplex pair (rel 1e-6). Verify #350 merged before stacking. See
   contact_p2_handoff.md "P2b" section.
 
+### Iteration 14 — P2a MERGED (#350); P2b STARTED: plan + numpy oracle (7/7) BEFORE C++
+- #350 squash-merged to ladruno (P2a rigid-plane contact + gate fixes now fully shipped).
+  Branched guppi/contact-p2b off the merged ladruno (P2a verified present).
+- **P2b SPLIT into sub-rungs** (`_adr39_p2b_design.md`): **P2b-1** = projection kernel +
+  single slave vs single FIXED master segment (real bilinear/linear projection + derived
+  outward normal + faceted B + kₙBᵀB(+∂n/∂u) tangent; `-kn $val`; ASDimplex node-pair oracle).
+  **P2b-2** = deformable master + `-kn auto` + SOFT floor + Hertz + FD-on-rotated tangent gate.
+- Precedent recon (Explore): SimpleContact3D (bilinear projection/tangent algebra + the
+  unbounded-`while` :600-635 to FIX with a bounded Newton); ZeroLengthContactASDimplex ctor
+  `(tag, masterNd, slaveNd, Kn, Kt, mu, ndm, itype, xN,yN,zN)` = the node-pair ORACLE;
+  ContactMaterial3D tangent is LAGRANGE (author penalty tangent fresh); LadrunoBrick exposes
+  `materialPointers[gp]->getInitialTangent()` + `getCharacteristicLength()=cbrt(V)` for -kn auto.
+- **P1b parser ALREADY has the surface/contact plumbing**: `contactSurface $tag -master $nps
+  $n1..` stores nodesPerSeg; `contact $tag $masterSurf $slaveSurf $kn $kt $mu` parses kn. So
+  P2b-1 needs mainly: kernel + surface coord/normal cache + FE segment mode + handler + tests.
+- **NUMPY ORACLE `contact_prototypes/proto_p2b_nts.py` — 7/7 PASS** (oracle-first, the fork
+  discipline; no build): interior pen=exact, self-equilibrium |ΣF|=0/|ΣM|=1e-12, **winding-flip→
+  identical force** (BLOCKER-1), oblique-30° normal, out-of-bounds→0, tangent slave-block FD==
+  +kₙn⊗n (1.5e-11) + FULL tangent SYMMETRIC (4e-11, frictionless ✓) + ∂n/∂u rel-weight 3.6%
+  (non-negligible — main-term-only fails a tight FD gate, as the design gate predicted), tri-3+quad-4.
+  KEY: **OpenSees tangent convention K_assembled = −∂r/∂q** (verified vs P2a: r_s=+tₙn,
+  addKtToTang=+kₙn⊗n) — kernel main term = +kₙBᵀB. Math LOCKED; C++ transcription de-risked.
+- **NEXT (P2b-1 C++)**: transcribe to header-only `SRC/domain/contact/LadrunoContactKernel.h`
+  (pure fns, mirror LadrunoJ2Kernel) → LadrunoContactSurface setDomain coord/normal cache →
+  LadrunoContactFE SEGMENT ctor (project per-iter implicit/per-step explicit via kernel) →
+  handler builds segment adapters → `tests/test_adr39_contact_p2b.py` (ASDimplex oracle rel-1e-6,
+  self-eq, winding-flip, oblique, oob) → build OpenSeesPy → code gate → PR (base ladruno). The
+  full ∂n/∂u analytic block + FD-on-rotated gate lands in P2b-2 (deformable/rotated master);
+  P2b-1's fixed master makes the slave-block main term sufficient for its solve.
+
+### Iteration 15 — P2b-1 C++ WRITTEN (faceted NTS, fixed master), building
+- Transcribed the validated oracle to **NEW header-only `SRC/domain/contact/LadrunoContactKernel.h`**
+  (OpenSees-free pure fns: shape tri-3/quad-4, BOUNDED projection Newton w/ degenerate-segment
+  reject, DIRECTION-oriented winding-immune normal, gap, penalty). Stamped + stamp_headers glob.
+- `LadrunoContactFE` SEGMENT mode (3rd ctor): conn = {slave}∪{seg nodes} (ndof=3*(1+nps)), per-eval
+  projection via kernel, resid=Bᵀtn, tangent=kn·BᵀB (routed thru formEleTangent like P2a;
+  ∂n/∂u block deferred to P2b-2 — fixed master ⇒ slave-block kn·n⊗n exact). setID maps each
+  ndf==3 node's DOF_Group → 3 myID slots (verified FE_Element::setID concatenates full group IDs).
+- `LadrunoContactHandler`: one adapter per (slave node, master SEGMENT) pair — gate-sanctioned
+  BRUTE-FORCE pairing (bucket sort = P2.5); guards kind + ndf==3 + degenerate; computes orientDir.
+- `LadrunoContactDomain`: Contact struct made public + `getContact(i)` + optional `outward[3]`.
+- Parser: `contact ... -outward ox oy oz` (orientation dir toward allowed half-space; robust to
+  just-penetrated starts; peek/un-read via OPS_ResetCurrentInputArg(-1) keeps kn kt mu positional).
+- **ORIENTATION = explicit DIRECTION** (not slave-position): auto-orient-toward-slave-pos FAILS for
+  a just-penetrated start (slave is on the forbidden side by −1e-8 → normal flips). -outward fixes it
+  robustly + is winding-immune. Handler auto-derives orientDir = slave_ref − seg_centroid when no
+  -outward (for clearly-separated starts).
+- **P1b REGRESSION SURVIVES UNTOUCHED:** its `contact` defines a COLLINEAR master (nodes 1,2,3 on
+  x-axis) → degenerate → kernel projection sentinel returns -1 → zero force; numberer Plain is
+  connectivity-independent ⇒ still bitwise. (Made `contact` load-bearing without breaking P1b.)
+- TEST `tests/test_adr39_contact_p2b.py`: static pen=P/kn (quad+tri, 1e-6), oblique-30°, winding-flip
+  immunity, OOB pass-through, explicit e≈1, **ZeroLengthContactASDimplex cross-check** (rel 1e-6).
+- BUILD: cold worktree (peaceful-bassi) hit the MUMPS-download gotcha (no local archive + curl reset)
+  → copied mumps_src.tar.gz from compile-root → rebuilding (bakbc6n5c). LESSON: a fresh worktree needs
+  `mumps-archive/mumps_src.tar.gz` copied in before build.bat (offline-safe).
+- **NEXT on build**: run test_adr39_contact_p2b + p2a + p1 (expect all green) → P2b-1 code gate →
+  ledger (kernel new-file row + P2b in the contact row) → commit → PR (base ladruno) → P2b-2
+  (deformable master + -kn auto + Hertz + FD-on-rotated ∂n/∂u tangent gate).
+
+### Iteration 16 — P2b-1 BUILT + 19/19 green; code gate (wxh6f8ki0) PASS, fixes folded
+- Cold worktree build exit 0 (after copying mumps_src.tar.gz). First run: 16/19 — caught a
+  TEST bug (static tests freed the WRONG DOF: `fix(1,0,1,1)` frees x, but normal/load are +z →
+  singular matrix; winding-flip + ASDimplex passed VACUOUSLY comparing two frozen 1e-8 values).
+  FIX = `fix(1,1,1,0)` (free z) + oblique redesigned to free-z-only (pen=P/(kn·nz²)). **19/19 green**
+  (7 P2b + 5 P2a + 7 P1). C++ was correct; only the test DOF-freeing was wrong.
+- Committed P2b-1 (5eafac6ae) → **adversarial code gate (4 reviewers→verify→synth, 17 agents):
+  verdict PASS** (no BLOCKER, no MAJOR). Kernel faithful to oracle; tangent-drop sound for FIXED
+  master; P1b-regression-preservation PROVEN; no vacuous tests remain (re-audited).
+- **Folded (gate-recommended, in-scope):** H1 = addContact reject kn<0 (kn==0 still OK for P1b
+  zero-force); PARSE-2/H1 = handler warn+skip kn<=0 SEGMENT contact; H2 = kernel normalOriented
+  FAIL-SAFE on ambiguous orientation (|n·refDir|≈0 → false, refuse rather than guess a sign) +
+  NEW `test_p2b_auto_orientation_no_outward` covering the previously-untested auto-orient path;
+  KMF-3 = traction() internal Macaulay clamp (gap>=0 → 0, no adhesive foot-gun).
+- **Deferred to P2b-2 (gate-scoped):** TANG-1 = free-master ∂n/∂u consistent-tangent block (the
+  P2b-2 deliverable; optional P2b-1 diagnostic = warn on a free segment DOF). NITs deferred:
+  PARSE-1 (peek-idiom hardening — works on all tested paths), PARSE-3 (unknown-option swallow).
+- Rebuild b2bcxvto3 (warm) live. **NEXT on build**: re-run battery (expect 20/20 w/ the auto-orient
+  test) → commit fold → PR to ladruno (verify #350 merged; this branch is stacked on it) → P2b-2.
+
 ## Deferred / parked
 - P4 SOFT, P5 segment-based, P6 tied, AL upgrade (Q-AL), MPI — all post-v1 per ADR.

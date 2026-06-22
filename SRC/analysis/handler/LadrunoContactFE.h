@@ -57,6 +57,12 @@ class LadrunoContactFE : public FE_Element
     // normal (toward the slave's allowed half-space), kn = penalty stiffness.
     LadrunoContactFE(int tag, Node *slaveNode, int ndm,
                      const double p0[3], const double n[3], double kn);
+    // P2b: faceted node-to-segment penalty contact vs ONE master segment (tri-3 or
+    // quad-4, nps nodes). Connectivity = {slave} ∪ {segment nodes}; the outward
+    // normal is DERIVED per evaluation + oriented toward orientDir (the slave's
+    // allowed half-space — winding-immune, design-gate BLOCKER-1). 3D only (ndm==3).
+    LadrunoContactFE(int tag, Node *slaveNode, Node **segNodes, int nps, double kn,
+                     const double orientDir[3]);
     ~LadrunoContactFE();
 
     // self-owned buffers (base buffers are unavailable when myEle == 0)
@@ -92,17 +98,29 @@ class LadrunoContactFE : public FE_Element
     // gap n.(x_s - p0) at the slave's current trial position; <0 = penetration
     double rigidPlaneGap(void) const;
 
-    Vector resid;   // size-0 in P1a (empty connectivity); ndm in P2a
-    Matrix tang;    // 0x0 in P1a; ndm x ndm in P2a
+    // P2b: project the slave onto the master segment at the current trial config,
+    // derive the oriented normal + gap + shape weights. Returns the ACTIVE flag
+    // (true = penetrating + in-bounds). Fills gap(<0), n[3], N[nps], and the
+    // assembled gap operator B[ndof] = [ nᵀ | −N_i nᵀ ] over [slave, seg nodes].
+    bool segmentActive(double &gap, double n[3], double N[4], double *B) const;
+
+    Vector resid;   // size-0 in P1a; ndm in P2a; ndm*(1+nps) in P2b
+    Matrix tang;    // 0x0 in P1a; ndm x ndm in P2a; ndof x ndof in P2b
 
     // P2a rigid-plane binding (mode = RIGID_PLANE); unused/zero in P1a
-    enum Mode { EMPTY = 0, RIGID_PLANE = 1 };
+    enum Mode { EMPTY = 0, RIGID_PLANE = 1, SEGMENT = 2 };
     Mode mode;
     Node *theSlave;
     int ndm;
     double planeP0[3];
     double planeN[3];
     double kn;
+
+    // P2b SEGMENT binding (mode == SEGMENT)
+    Node *segNode[4];   // master segment nodes (tri-3 → 3, quad-4 → 4)
+    int nps;            // nodes per segment
+    double orientDir[3];// fixed direction toward the slave's allowed half-space
+                        // (the derived normal is flipped to satisfy n·orientDir>0)
 };
 
 #endif

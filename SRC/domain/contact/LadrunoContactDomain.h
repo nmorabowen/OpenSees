@@ -55,10 +55,25 @@ class LadrunoContactDomain
     // --- model definition (from the contactSurface / contact commands) ---
     int addSurface(LadrunoContactSurface *surf);          // takes ownership
     LadrunoContactSurface *getSurface(int tag) const;
-    // a contact interaction between a master and a slave surface (+ P2 params)
+    // a contact interaction between a master and a slave surface (+ P2 params).
+    // outward (optional, null = auto): a direction toward the slave's allowed
+    // half-space, used to orient the derived segment normal (design-gate BLOCKER-1);
+    // null = the handler auto-derives it from the slave-vs-segment geometry.
     int addContact(int tag, int masterSurfTag, int slaveSurfTag,
-                   double kn, double kt, double mu);
+                   double kn, double kt, double mu, const double *outward = 0);
     int getNumContacts(void) const { return (int)theContacts.size(); }
+
+    // --- P2b: faceted node-to-segment penalty contact. A Contact references a
+    //     MASTER_SEGMENTS surface + a SLAVE_NODES surface; the handler builds one
+    //     LadrunoContactFE per (slave node, master segment) pair. Exposed so the
+    //     handler (OPS_Analysis) can read the definition. ---
+    struct Contact {
+        int tag, masterSurfTag, slaveSurfTag;
+        double kn, kt, mu;
+        bool hasOutward;        // true if an explicit orientation direction was given
+        double outward[3];      // orientation direction toward the allowed half-space
+    };
+    const Contact &getContact(int i) const { return theContacts[i]; }
 
     // --- P2a: rigid analytical plane (point p0 + outward unit normal n) vs a
     //     slave node-set; one adapter per slave node, connectivity = {slave}. ---
@@ -82,10 +97,6 @@ class LadrunoContactDomain
     int getNumReverts(void) const { return numReverts; }
 
   private:
-    struct Contact {
-        int tag, masterSurfTag, slaveSurfTag;
-        double kn, kt, mu;
-    };
     std::vector<LadrunoContactSurface *> theSurfaces;   // owned
     std::vector<Contact> theContacts;
     std::vector<RigidPlane> theRigidPlanes;             // P2a

@@ -65,16 +65,27 @@ LadrunoContactDomain::getSurface(int tag) const
 
 int
 LadrunoContactDomain::addContact(int tag, int masterSurfTag, int slaveSurfTag,
-                                 double kn, double kt, double mu)
+                                 double kn, double kt, double mu, const double *outward)
 {
     if (getSurface(masterSurfTag) == 0 || getSurface(slaveSurfTag) == 0) {
         opserr << "WARNING LadrunoContactDomain::addContact() - master/slave surface "
                   "not defined (master " << masterSurfTag << ", slave " << slaveSurfTag << ")\n";
         return -1;
     }
+    if (kn < 0.0) {
+        // kn < 0 = attractive contact + negative-definite tangent (unstable). Reject
+        // at this choke point (covers Py + Tcl), mirroring addRigidPlane's guard.
+        // kn == 0 is allowed (the P1b zero-force topology path); the segment handler
+        // warns + skips an inert kn<=0 SEGMENT contact. (Gate H1.)
+        opserr << "WARNING LadrunoContactDomain::addContact() - penalty kn must be >= 0 (got "
+               << kn << ")\n";
+        return -1;
+    }
     Contact c;
     c.tag = tag; c.masterSurfTag = masterSurfTag; c.slaveSurfTag = slaveSurfTag;
     c.kn = kn; c.kt = kt; c.mu = mu;
+    c.hasOutward = (outward != 0);
+    for (int d = 0; d < 3; d++) c.outward[d] = (outward != 0) ? outward[d] : 0.0;
     theContacts.push_back(c);
     return 0;
 }

@@ -32,6 +32,7 @@
 #include <AnalysisModel.h>
 #include <Integrator.h>
 #include <Node.h>
+#include <Vector.h>
 #include <NodeIter.h>
 #include <DOF_Group.h>
 #include <SP_Constraint.h>
@@ -162,19 +163,88 @@ LadrunoContactHandler::handle(const ID *nodesLast)
     }
 
     // --- inject the contact FE adapter(s) ---
-    // P1b: ask the Domain-owned LadrunoContactDomain how many adapters to inject
-    // (one per contact definition); none if no contact engine is attached (pure
-    // Plain -> byte-identical to stock). Still EMPTY-connectivity zero adapters in
-    // P1b (graph-neutral) — the narrow phase + per-segment connectivity is P2.
+    // None if no contact engine is attached (pure Plain -> byte-identical to stock).
     LadrunoContactDomain *cd = theDomain->getLadrunoContactDomain();
-    int nAdapters = (cd != 0) ? cd->buildAdapterCount() : 0;
-    for (int a = 0; a < nAdapters; a++) {        // generic (P1b zero-force) contacts
-        LadrunoContactFE *contactFE = new LadrunoContactFE(numFe++);
-        if (contactFE == 0) {
-            opserr << "WARNING LadrunoContactHandler::handle() - out of memory (contact FE)\n";
-            return -5;
+
+    // P2b: faceted node-to-segment penalty contact. For each contact definition
+    // (MASTER_SEGMENTS surface vs SLAVE_NODES surface) build ONE bound adapter per
+    // (slave node, master segment) pair — the gate-sanctioned brute-force pairing
+    // (bucket-sort broad phase = P2.5). A degenerate/non-projecting segment yields
+    // zero force inside the adapter (so a topology-only contact stays graph-neutral
+    // under a connectivity-independent numberer — the P1b regression relies on this).
+    if (cd != 0) {
+        for (int c = 0; c < cd->getNumContacts(); c++) {
+            const LadrunoContactDomain::Contact &ct = cd->getContact(c);
+            LadrunoContactSurface *ms = cd->getSurface(ct.masterSurfTag);
+            LadrunoContactSurface *ss = cd->getSurface(ct.slaveSurfTag);
+            if (ms == 0 || ss == 0) {
+                opserr << "WARNING LadrunoContactHandler::handle() - contact " << ct.tag
+                       << ": master/slave surface not defined; skipped\n";
+                continue;
+            }
+            if (ms->getKind() != LadrunoContactSurface::MASTER_SEGMENTS ||
+                ss->getKind() != LadrunoContactSurface::SLAVE_NODES) {
+                opserr << "WARNING LadrunoContactHandler::handle() - contact " << ct.tag
+                       << ": need a MASTER_SEGMENTS master + SLAVE_NODES slave; skipped\n";
+                continue;
+            }
+            int nps = ms->getNodesPerSeg();
+            if (nps < 3 || nps > 4) {
+                opserr << "WARNING LadrunoContactHandler::handle() - contact " << ct.tag
+                       << ": nodesPerSeg " << nps << " unsupported (need 3 or 4); skipped\n";
+                continue;
+            }
+            if (ct.kn <= 0.0) {
+                // A SEGMENT contact needs a positive penalty (P2b-1 requires -kn).
+                // kn == 0 (e.g. `contact ... -outward` with the kn omitted) is inert;
+                // warn rather than silently build dead adapters. (Gate PARSE-2/H1.)
+                opserr << "WARNING LadrunoContactHandler::handle() - contact " << ct.tag
+                       << ": segment contact needs kn > 0 (got " << ct.kn << "); skipped\n";
+                continue;
+            }
+            const ID &mTags = ms->getNodeTags();
+            const ID &sTags = ss->getNodeTags();
+            int nSeg = mTags.Size() / nps;
+            for (int si = 0; si < sTags.Size(); si++) {
+                Node *sn = theDomain->getNode(sTags(si));
+                if (sn == 0 || sn->getNumberDOF() != 3) {
+                    if (sn != 0)
+                        opserr << "WARNING LadrunoContactHandler::handle() - contact " << ct.tag
+                               << " slave node " << sTags(si) << " ndf=" << sn->getNumberDOF()
+                               << " != 3; skipped (P2b is 3D translational)\n";
+                    continue;
+                }
+                for (int seg = 0; seg < nSeg; seg++) {
+                    Node *segNodes[4]; bool ok = true;
+                    for (int k = 0; k < nps; k++) {
+                        Node *mn = theDomain->getNode(mTags(seg * nps + k));
+                        if (mn == 0 || mn->getNumberDOF() != 3) { ok = false; break; }
+                        segNodes[k] = mn;
+                    }
+                    if (!ok) continue;   // missing/incompatible master node -> skip pair
+                    // orientation direction toward the slave's allowed half-space:
+                    // explicit -outward if given, else auto = (slave ref) − (segment
+                    // ref centroid). The derived normal is flipped to n·orientDir>0
+                    // (winding-immune). Use -outward for just-penetrated starts.
+                    double orientDir[3];
+                    if (ct.hasOutward) {
+                        for (int d = 0; d < 3; d++) orientDir[d] = ct.outward[d];
+                    } else {
+                        double cen[3] = {0.0, 0.0, 0.0};
+                        for (int k = 0; k < nps; k++) {
+                            const Vector &Xk = segNodes[k]->getCrds();
+                            for (int d = 0; d < 3; d++) cen[d] += Xk(d);
+                        }
+                        const Vector &Xs = sn->getCrds();
+                        for (int d = 0; d < 3; d++) orientDir[d] = Xs(d) - cen[d] / nps;
+                    }
+                    LadrunoContactFE *fe =
+                        new LadrunoContactFE(numFe++, sn, segNodes, nps, ct.kn, orientDir);
+                    if (fe == 0) return -5;
+                    theModel->addFE_Element(fe);
+                }
+            }
         }
-        theModel->addFE_Element(contactFE);
     }
 
     // P2a: rigid analytical-plane contacts -> ONE bound adapter per slave node
