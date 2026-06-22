@@ -193,6 +193,17 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                     continue;
                 }
                 int nd = sn->getCrds().Size();
+                if (sn->getNumberDOF() < nd) {
+                    // The adapter couples the slave's first nd translational DOFs;
+                    // a node with fewer DOFs than coordinates (ndf < ndm) would let
+                    // base setID() leave trailing myID slots at 0 (contact assembled
+                    // onto equation 0) and rigidPlaneGap() read past getTrialDisp().
+                    // Skip with a warning rather than silently corrupt the system.
+                    opserr << "WARNING LadrunoContactHandler::handle() - rigid-plane slave node "
+                           << nodeTags(k) << " has ndf=" << sn->getNumberDOF()
+                           << " < ndm=" << nd << "; skipped\n";
+                    continue;
+                }
                 LadrunoContactFE *fe = new LadrunoContactFE(numFe++, sn, nd, rp.p0, rp.n, rp.kn);
                 if (fe == 0) return -5;
                 theModel->addFE_Element(fe);

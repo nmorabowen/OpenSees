@@ -289,5 +289,38 @@ All folded into `_adr39_p2_design.md` (committed bae2456c → revised). NEXT: co
   Options if needed: (a) make FE_Element theMatrices/theVectors protected (1-line vanilla edit,
   ledger), or (b) document that contact models need ≥1 structural element. Deferred — not on the v1 path.
 
+### Iteration 12 — P2a ADVERSARIAL CODE GATE (wpqtt6tut) → SALVAGEABLE→PASS, fixes folded
+Full multi-agent gate (4 source-grounded reviewers → adversarial verify each → synth;
+25 agents, 20 findings, all verified against REAL upstream source). Verdict: SALVAGEABLE.
+- **Hardest claim VERIFIED**: getTangent→formEleTangent(this) routing is correct — no
+  double-count, no re-entrancy hazard, CDL truly mass-only, Newmark truly c1·K_c. Sign
+  restoring (never attracts), residual/tangent active-set consistent within a Newton seq,
+  parser n/p0/kn threading correct, 1e-6 tol conservative (not masking).
+- **1 BLOCKER (B1) — element-free teardown null-deref** [FIXED at source]: a contact-ONLY
+  model (mass + contactPlane, zero Domain Elements) segfaulted on teardown / 2nd analysis.
+  ROOT CAUSE (real upstream bug): `FE_Element(tag,numDOF_Group,ndof)` subtype ctor did
+  `numFEs++` BEFORE the `if(numFEs==0)` scratch-alloc guard → guard dead → theMatrices/
+  theVectors never allocated when the only FEs are subtype adapters → `~FE_Element` derefs
+  null. FIX = move `numFEs++` BELOW the guard (mirrors the element-backed ctor; zero
+  regression — real models have an element-backed FE first). Better than the gate's
+  "make members protected" workaround. Un-anchored `test_p2a_element_free_teardown` added
+  (runs the model TWICE → the exact repro); the anchor-truss was MASKING this from CI.
+- **In-scope folds** (all applied): kₙ≤0 guard + surface-Kind!=SLAVE_NODES guard in
+  `addRigidPlane`; ndf<ndm skip-guard in the handler (silent equation-0 mis-assembly + OOB
+  trial-disp read); `addKiToTang` override mirroring addKtToTang (else contact stiffness
+  vanishes under Newton -initial / ModifiedNewton / HALL_TANGENT — residual still correct
+  so never silently-wrong, just degraded). `test_p2a_inclined_penetration_static` added.
+- **Ledgers**: LEDGER_vanilla_files += FE_Element.cpp row; LEDGER_implementations P2a row
+  rewritten (was P1 zero-force) + PR #346.
+- **Deferred to P2b (documented scope)**: no implicit active-set freeze (P2a = monotone-
+  penetrating de-risk rung — anti-chatter is a P2b/implicit-ship deliverable); operator-
+  splitting integrators (AlphaOS) unsupported (getK_Force is a zero stub); null-DOF_Group
+  bind (unreachable in current handle() order). Static release→F=0 NOT added as a test —
+  out-of-contact penalty model is rank-deficient/singular; release is covered by the
+  explicit rebound tests (active set on→off, e≈1).
+- **NEXT**: rebuild OpenSeesPy on guppi/contact-p2a → run test_adr39_contact_p2a.py (expect
+  static + static-inclined + 2 impacts + element-free-teardown green) + p1 regression →
+  stamp_headers (no new files) → commit fixes to #346 → P2b.
+
 ## Deferred / parked
 - P4 SOFT, P5 segment-based, P6 tied, AL upgrade (Q-AL), MPI — all post-v1 per ADR.

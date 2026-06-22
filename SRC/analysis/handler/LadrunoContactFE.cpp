@@ -116,6 +116,21 @@ LadrunoContactFE::addKtToTang(double fact)
 }
 
 void
+LadrunoContactFE::addKiToTang(double fact)
+{
+    // Initial-stiffness algorithms (Newton -initial, ModifiedNewton -initial,
+    // HALL_TANGENT) form the LHS from K_initial. For a flat rigid plane the normal
+    // is constant, so K_initial == K_current == kn (n (x) n) when penetrating;
+    // mirror addKtToTang so the contact stiffness is not silently dropped (the base
+    // addKiToTang early-returns on myEle == 0). Residual is unaffected either way.
+    if (mode == RIGID_PLANE && rigidPlaneGap() < 0.0) {
+        for (int i = 0; i < ndm; i++)
+            for (int j = 0; j < ndm; j++)
+                tang(i, j) += fact * kn * planeN[i] * planeN[j];
+    }
+}
+
+void
 LadrunoContactFE::addCtoTang(double)
 {
     // contact carries no damping in P2 -> no-op

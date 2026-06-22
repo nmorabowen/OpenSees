@@ -117,3 +117,63 @@ def test_p2a_inclined_impact_offaxis():
     blew, e, max_pen = _explicit_impact([0.6, 0.8, 0.0])
     assert (not blew) and e <= 1.05 and max_pen < 0.02, f"blew={blew} e={e} pen={max_pen}"
     assert e > 0.9, f"off-axis rebound e={e}"
+
+
+def test_p2a_inclined_penetration_static():
+    """STATIC inclined plane: node free in x only, plane normal n=(0.6,0.8,0) through
+    the origin, node on the x-axis. The contact stiffness kn(n⊗n) projects onto the
+    free x-DOF as kn·nx², so the static x-penetration = P/(kn·nx²) (exact). This
+    exercises the off-axis B-operator (B=nᵀ) under a static LoadControl solve — the
+    explicit inclined test never does a static equilibrium."""
+    P = 1.0e3
+    nx, ny = 0.6, 0.8
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    ops.node(1, -1.0e-8, 0.0, 0.0)            # just penetrated along x → active step 1
+    ops.fix(1, 0, 1, 1)                        # free x only (kn·nx² > 0 → non-singular)
+    _anchor_truss(1, [-1.0e-8, 0.0, 0.0])
+    ops.contactSurface(1, "-slave", 1)
+    ops.contactPlane(1, 1, nx, ny, 0.0, 0.0, 0.0, 0.0, KN)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(1, -P, 0.0, 0.0)
+    ops.constraints("LadrunoContact")
+    ops.numberer("Plain")
+    ops.system("FullGeneral")
+    ops.integrator("LoadControl", 1.0)
+    ops.test("NormDispIncr", 1e-12, 30, 0)
+    ops.algorithm("Newton")
+    ops.analysis("Static")
+    assert ops.analyze(1) == 0
+    pen = -(-1.0e-8 + ops.nodeDisp(1, 1))     # x-penetration depth (pos)
+    expect = P / (KN * nx * nx)
+    assert pen > 0 and abs(pen - expect) / expect < 1e-6, f"pen={pen} expect={expect}"
+
+
+def test_p2a_element_free_teardown():
+    """CANONICAL mass-on-plane with ZERO structural elements (no anchor truss): the
+    contact adapter is the ONLY FE_Element. Before the FE_Element subtype-ctor fix
+    (numFEs++ moved below the allocation guard) the class-wide scratch never
+    allocated, so ~FE_Element null-deref'd when the last FE was destroyed — crashing
+    the process on teardown / a second analysis. The anchor truss in the other tests
+    masked this; here we run the un-anchored model TWICE in one process to prove the
+    fix. (If this segfaults the whole pytest process dies — that IS the regression.)"""
+    for trial in range(2):
+        ops.wipe()
+        ops.model("basic", "-ndm", 3, "-ndf", 3)
+        ops.node(1, 0.01, 0.0, 0.0)           # starts gap0=0.01 outside the plane
+        ops.fix(1, 0, 1, 1)                    # free x only
+        ops.mass(1, 1.0, 1.0, 1.0)
+        ops.contactSurface(1, "-slave", 1)
+        ops.contactPlane(1, 1, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, KN)
+        ops.setNodeVel(1, 1, -2.0, "-commit")  # flung toward the plane
+        ops.constraints("LadrunoContact")
+        ops.numberer("Plain")
+        ops.system("Diagonal")
+        ops.integrator("CentralDifferenceLadruno")
+        ops.algorithm("Linear")
+        ops.analysis("Transient")
+        dt = 0.5 * 2.0 * math.sqrt(1.0 / KN)
+        for _ in range(2000):
+            assert ops.analyze(1, dt) == 0, f"trial {trial} blew up"
+    ops.wipe()                                 # final teardown = the original crash point
