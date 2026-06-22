@@ -62,3 +62,10 @@ LadrunoContactFE::addMtoTang(double)
     // contact pairs contribute no mass (mass lives on the real structural
     // elements at the same nodes); no-op keeps the explicit LHS = lumped M only.
 }
+
+// Size-0 returns for the off-hot-path force variants (base would warn on myEle==0).
+const Vector &LadrunoContactFE::getTangForce(const Vector &, double) { resid.Zero(); return resid; }
+const Vector &LadrunoContactFE::getK_Force(const Vector &, double)   { resid.Zero(); return resid; }
+const Vector &LadrunoContactFE::getKi_Force(const Vector &, double)  { resid.Zero(); return resid; }
+const Vector &LadrunoContactFE::getC_Force(const Vector &, double)   { resid.Zero(); return resid; }
+const Vector &LadrunoContactFE::getM_Force(const Vector &, double)   { resid.Zero(); return resid; }

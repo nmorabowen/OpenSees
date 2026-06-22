@@ -32,8 +32,8 @@ return map). P0 = validation only (light verification, no heavy gate).
 | Phase | State | Gate | PR | Notes |
 |---|---|---|---|---|
 | P0 falsify/baseline (no SRC) | **DONE ✓** | light verify ✓ | local | both protos pass; 2 design rules extracted |
-| P1a FE+handler+empty-conn zero, bitwise | CODE DONE → BUILDING | design gate ✓; code gate after build | local | build bcc7upkiq running (cold worktree build, OpenSeesPy) |
-| P1b ContactDomain+surface+lifecycle hooks | NOT STARTED | — | — | after P1a green |
+| P1a FE+handler+empty-conn zero, bitwise | code-gate fixes REBUILDING (bzxri5l4l) | design gate ✓ + code gate ✓ | local | 3/3 bitwise green; code-gate fixes rebuild live |
+| P1b ContactDomain+surface+lifecycle hooks | DESIGN READY (build-blocked) | light review | — | `_adr39_p1b_design.md`, Q-P1b-1/3 RESOLVED; coding waits on classifier |
 | P2 NTS penalty frictionless | NOT STARTED | **adversarial gate** | — | rigid-plane rung first |
 | P2.5 bucket sort drop-in | NOT STARTED | verify==brute force | — | — |
 | P3 IMPL-EX Coulomb — SHIP | NOT STARTED | **adversarial gate** | — | v1 ship |
@@ -126,6 +126,46 @@ Files (all in SRC/analysis/handler/ for P1a; LadrunoContactFE moves to SRC/domai
   (adversarial) → ledger row + banner? (handler, not banner-worthy yet) → commit → P1b.
 - NOTE: only the OpenSeesPy target built (test uses opensees.pyd). Full OpenSees/SP/MP
   rebuild + ledger LEDGER_implementations row deferred to the P1 PR.
+
+### Iteration 5 — BUILD ✓ (exit 0) + P1a TEST ✓ 3/3 + code gate ✓
+- Cold worktree build succeeded (bcc7upkiq, exit 0); worktree now has its OWN
+  dist/bin/opensees.pyd (must run tests against THIS dist, not the compile-root one).
+- `test_adr39_contact_p1.py` **3/3 PASS**: bitwise-identical LadrunoContact==Plain
+  under BOTH CentralDifferenceLadruno (explicit) AND Newmark (implicit) + rebuild smoke.
+  The hybrid FE_Element-adapter injection is validated in compiled code.
+- **P1a code gate** (1 adversarial agent, source-grounded) → NO BLOCKER; core memory/
+  ownership/graph-neutrality SOUND. 4 fixes applied (rebuild pending):
+  1. (MAJOR) broker: `FEM_ObjectBrokerAllClasses::getNewConstraintHandler` case
+     HANDLER_TAG_LadrunoContactHandler + include (parallel/db restore).
+  2. (MAJOR) Tcl: `commands.cpp specifyConstraintHandler` `LadrunoContact` branch
+     (was openseespy-only → Tcl users got a hard error).
+  3. (REQUIRED) ledgers: LEDGER_implementations row + 5 LEDGER_vanilla_files rows.
+  4. (MINOR) LadrunoContactFE: override getM_Force/getC_Force/getTangForce/getK_Force/
+     getKi_Force → size-0 (base warns on myEle==0 under modal damping / non-diag mass).
+- NEXT: rebuild OpenSeesPy (incremental, warm cache → fast), re-run test_adr39
+  (still green), commit P1a fixes, then START P1b (ContactDomain on Domain + surface
+  + Domain::commit/revertToLastCommit hooks + contactSurface/contact parser).
+  (Build/commit briefly blocked on command classifier outage — retrying.)
+
+### Iteration 6 — build/commit blocked (persistent classifier outage); P1b design de-risked
+- Could not rebuild/commit the P1a fixes (Bash + PowerShell both gated on the
+  command-safety classifier, temporarily unavailable). All work below is files-only.
+- **P1b design RESOLVED to build-ready** (`_adr39_p1b_design.md`):
+  - Q-P1b-1 (lifetime): delete/reset `theContactDomain` in `Domain::clearAll()`
+    (`Domain.cpp:1041`, the wipe path) — mirrors the ADR-30 `theEQs` leak-fix at :1054.
+    domainChanged (AnalysisModel::clearAll) correctly leaves it alone.
+  - Q-P1b-3 (cross-lib): LadrunoContactDomain + LadrunoContactSurface → `SRC/domain/contact/`
+    (OPS_Domain); handler already links OPS_Domain (uses Domain.h) ⇒ no cycle. FE stays
+    in handler dir (OPS_Analysis) for P1b.
+  - commit/revert hook insertion points: `Domain.cpp:2185` (commit) + `:2211` (revert).
+- HELD: did NOT write P1b vanilla Domain.{h,cpp} edits — would stack unbuildable/
+  unverifiable code on the un-rebuilt P1a fixes. Resume order when classifier back:
+  (1) rebuild OpenSeesPy, (2) re-run test_adr39 (confirm green), (3) commit P1a fixes
+  + ledgers + P1b design, (4) write+build+test P1b.
+- WORKING-TREE UNCOMMITTED (durable via this doc + git): P1a fixes
+  [FEM_ObjectBrokerAllClasses.cpp, tcl/commands.cpp, LadrunoContactFE.{h,cpp}],
+  ledgers [LEDGER_implementations.md, LEDGER_vanilla_files.md], designs
+  [_adr39_p1b_design.md], this loop-state.
 
 ## Deferred / parked
 - P4 SOFT, P5 segment-based, P6 tied, AL upgrade (Q-AL), MPI — all post-v1 per ADR.

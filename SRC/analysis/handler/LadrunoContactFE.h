@@ -58,6 +58,16 @@ class LadrunoContactFE : public FE_Element
     const Matrix &getTangent(Integrator *theIntegrator);
     void addMtoTang(double fact = 1.0);   // contact pairs carry no mass -> no-op
 
+    // With myEle==0 the base force-vector helpers print a WARNING and return the
+    // shared error vector (FE_Element.cpp). They are reachable off the assembly
+    // hot path (e.g. modal damping doMv -> getM_Force when mass is non-diagonal),
+    // so override them to a clean size-0 return. (P2: real K/M/C force variants.)
+    const Vector &getTangForce(const Vector &x, double fact = 1.0);
+    const Vector &getK_Force(const Vector &x, double fact = 1.0);
+    const Vector &getKi_Force(const Vector &x, double fact = 1.0);
+    const Vector &getC_Force(const Vector &x, double fact = 1.0);
+    const Vector &getM_Force(const Vector &x, double fact = 1.0);
+
   private:
     Vector resid;   // size-0 in P1a (empty connectivity)
     Matrix tang;    // 0x0 in P1a
