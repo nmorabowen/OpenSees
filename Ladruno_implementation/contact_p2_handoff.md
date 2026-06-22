@@ -1,4 +1,16 @@
-# ADR-39 ContactDomain — handoff (resume: P2b-2b `-kn auto`)
+# ADR-39 ContactDomain — handoff (resume: P2b-2c ∂n/∂u tangent + Hertz)
+
+> **P2b-2b `-kn auto` SHIPPED** (PR pending → merge, base ladruno; battery 26/26, code-gate PASS).
+> Generic element-stiffness auto-sizing kₙ=f_si·mean(nᵀ getInitialStiff()_block n), f_si=0.10,
+> via base-`Element` virtuals (no element-type coupling, no new vanilla file). Parser accepts
+> literal `auto` in the kn slot. Owning solid auto-detected per (slave,segment) by face-node
+> subset match. Oracle `proto_p2b2b_autokn.py` 6/6 + `tests/test_adr39_contact_p2b2b.py` 4/4
+> (incl. ABSOLUTE P/pen==oracle + no-owning-solid skip). BUILD GOTCHA logged: a wired `.pth`
+> makes python print the banner → poisons CMake's Python probe → `set LADRUNO_OPENSEES_QUIET=1`
+> before building. **RESUME = P2b-2c** (∂n/∂u consistent tangent + Hertz; the SOFT Courant floor
+> for auto-kn also lands here). See `_adr39_loop_state.md` iter 18 for the full trail.
+
+## (historical) earlier resume point was P2b-2b `-kn auto`
 
 > Read this, then `_adr39_loop_state.md` (the LIVE driver — iteration log 1–17 has the
 > full trail), then `_adr39_p2b_design.md` (gated P2b spec). Parent ADR

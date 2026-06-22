@@ -28,6 +28,8 @@
 
 #include <LadrunoContactDomain.h>    // Ladruno: ADR-39 (adapter count from the engine)
 #include <LadrunoContactSurface.h>   // Ladruno: ADR-39 P2a (slave node-set)
+#include <LadrunoContactKernel.h>    // Ladruno: ADR-39 P2b-2b (reference normal for -kn auto)
+#include <Matrix.h>                  // Ladruno: ADR-39 P2b-2b (master getInitialStiff)
 #include <Domain.h>
 #include <AnalysisModel.h>
 #include <Integrator.h>
@@ -64,6 +66,68 @@ LadrunoContactHandler::LadrunoContactHandler()
 
 LadrunoContactHandler::~LadrunoContactHandler()
 {
+}
+
+// P2b-2b: auto-size the penalty kn for ONE (slave, master-segment) pair from the
+// OWNING solid element's initial stiffness, sourced GENERICALLY through base-Element
+// virtuals (getExternalNodes / getNumDOF / getInitialStiff) so any 3-DOF/node solid
+// works with NO element-type coupling and NO vanilla edit. Reduction (validated in
+// proto_p2b2b_autokn.py): kn = f_si * mean_over_seg_nodes( nᵀ K_block_node n ), where
+// K_block_node is the 3x3 diagonal block at that node's DOFs and n is the reference
+// segment normal. This is the element-stiffness form of the LS-DYNA 26.14a penalty
+// f·K·A²/V (K_diag ~ E·L ~ E·A²/V), the A²/V geometry absorbed exactly into the
+// assembled matrix. f_si = 0.10 (LS-DYNA SLSFAC default). Returns <= 0 on failure
+// (no owning solid found / non-3-DOF element / ambiguous reference normal) so the
+// caller skips the pair with a warning. The SOFT Courant floor (26.15) is P2b-2c.
+static double
+ladrunoResolveAutoKn(Domain *theDomain, Node **segNodes, int nps,
+                     const double orientDir[3])
+{
+    const double F_SI = 0.10;
+    // reference (undeformed) segment node coords
+    double Xref[4][3];
+    for (int k = 0; k < nps; k++) {
+        const Vector &Xk = segNodes[k]->getCrds();
+        for (int d = 0; d < 3; d++) Xref[k][d] = Xk(d);
+    }
+    // reference outward normal at the segment parametric center, oriented by orientDir
+    // (winding-immune; refuses an ambiguous in-plane reference direction).
+    double xiC  = (nps == 4) ? 0.0 : (1.0 / 3.0);
+    double etaC = (nps == 4) ? 0.0 : (1.0 / 3.0);
+    double n[3];
+    if (!LadrunoContactKernel::normalOriented(nps, xiC, etaC, Xref, orientDir, n))
+        return -1.0;
+    int segTags[4];
+    for (int k = 0; k < nps; k++) segTags[k] = segNodes[k]->getTag();
+    // owning solid = the first Domain element that (a) carries 3 translational DOFs
+    // per node and (b) contains ALL the segment's nodes. Brute force over the Domain
+    // elements (fine for the gate meshes; the bucket-sort broad phase is P2.5).
+    ElementIter &theEle = theDomain->getElements();
+    Element *e;
+    while ((e = theEle()) != 0) {
+        const ID &en = e->getExternalNodes();
+        int nn = en.Size();
+        if (nn <= 0 || e->getNumDOF() != 3 * nn) continue;   // not a 3-DOF/node solid
+        int loc[4]; bool allIn = true;
+        for (int k = 0; k < nps; k++) {
+            loc[k] = en.getLocation(segTags[k]);
+            if (loc[k] < 0) { allIn = false; break; }
+        }
+        if (!allIn) continue;
+        const Matrix &K = e->getInitialStiff();
+        if (K.noRows() != 3 * nn || K.noCols() != 3 * nn) return -1.0;
+        double acc = 0.0;
+        for (int k = 0; k < nps; k++) {
+            int c = 3 * loc[k];
+            double Kn[3];
+            for (int i = 0; i < 3; i++)
+                Kn[i] = K(c + i, c + 0) * n[0] + K(c + i, c + 1) * n[1] + K(c + i, c + 2) * n[2];
+            acc += n[0] * Kn[0] + n[1] * Kn[1] + n[2] * Kn[2];
+        }
+        double kn = F_SI * acc / nps;
+        return (kn > 0.0) ? kn : -1.0;
+    }
+    return -1.0;   // no owning solid element found for this segment
 }
 
 int
@@ -194,10 +258,12 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                        << ": nodesPerSeg " << nps << " unsupported (need 3 or 4); skipped\n";
                 continue;
             }
-            if (ct.kn <= 0.0) {
+            if (!ct.knAuto && ct.kn <= 0.0) {
                 // A SEGMENT contact needs a positive penalty (P2b-1 requires -kn).
                 // kn == 0 (e.g. `contact ... -outward` with the kn omitted) is inert;
                 // warn rather than silently build dead adapters. (Gate PARSE-2/H1.)
+                // `-kn auto` (P2b-2b) carries a 0 placeholder and is resolved per pair
+                // below, so it bypasses this guard.
                 opserr << "WARNING LadrunoContactHandler::handle() - contact " << ct.tag
                        << ": segment contact needs kn > 0 (got " << ct.kn << "); skipped\n";
                 continue;
@@ -238,8 +304,22 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                         const Vector &Xs = sn->getCrds();
                         for (int d = 0; d < 3; d++) orientDir[d] = Xs(d) - cen[d] / nps;
                     }
+                    // P2b-2b: resolve `-kn auto` per (slave, segment) pair from the
+                    // owning solid element's stiffness; a fixed `-kn $val` rides ct.kn.
+                    double knUse = ct.kn;
+                    if (ct.knAuto) {
+                        knUse = ladrunoResolveAutoKn(theDomain, segNodes, nps, orientDir);
+                        if (knUse <= 0.0) {
+                            opserr << "WARNING LadrunoContactHandler::handle() - contact "
+                                   << ct.tag << " slave node " << sTags(si) << " segment "
+                                   << seg << ": -kn auto could not size a penalty (no owning "
+                                      "solid element / non-3-DOF element / ambiguous normal); "
+                                      "pair skipped\n";
+                            continue;
+                        }
+                    }
                     LadrunoContactFE *fe =
-                        new LadrunoContactFE(numFe++, sn, segNodes, nps, ct.kn, orientDir);
+                        new LadrunoContactFE(numFe++, sn, segNodes, nps, knUse, orientDir);
                     if (fe == 0) return -5;
                     theModel->addFE_Element(fe);
                 }

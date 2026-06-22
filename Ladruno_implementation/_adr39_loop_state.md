@@ -444,5 +444,77 @@ Full multi-agent gate (4 source-grounded reviewers → adversarial verify each �
     proto_p2b_nts.py, ∂n/∂u≈3.6%). Lower priority since explicit-ship never forms the tangent.
 - **NEXT**: commit P2b-2a (tests + probe + plan) → PR to ladruno (validation-only, fast) → P2b-2b -kn auto.
 
+### Iteration 18 — P2b-2b `-kn auto` design DECIDED (user gate); oracle next
+- Resumed at P2b-2b (`-kn auto`) — verified #355 (P2b-2a) merged + is ladruno HEAD.
+- **DATA-MODEL DECISION (user-gated, both recs accepted):**
+  - **kn source = GENERIC element stiffness** (NOT LadrunoBrick-specific). `LadrunoBrick::
+    materialPointers[]` is PRIVATE → the handoff's `materialPointers[gp]->getInitialTangent()`
+    sketch is unreachable without a new accessor/dynamic_cast. Instead use base-`Element`
+    virtuals only: auto-detect the owning solid element per segment by face-node-subset match
+    (handler has the Domain at handle()), pull `getInitialStiff()` (24×24 for a hex), and
+    reduce **kn = f_si · mean_over_face_nodes( nᵀ K_block_node n )** where K_block_node is the
+    3×3 diagonal block at that node's DOFs and n is the segment normal. Works for ANY solid
+    element (LadrunoBrick/SSPbrick/stdBrick); NO element-type coupling; NO vanilla edit.
+  - **Dimensionally ≡ LS-DYNA 26.14a** `f·K·A²/V`: for a 3D solid of size L, modulus E,
+    K_diag ~ E·L and A²/V ~ L⁴/L³ = L ⇒ E·A²/V ~ E·L ~ K_diag (constant absorbed in f_si).
+    Documented as the OpenSees adaptation; f_si default 0.10 (LS-DYNA SLSFAC).
+  - **SOFT Courant floor (26.15) DEFERRED to P2b-2c** (needs nodal mass + Δt_c; mainly
+    explicit anti-chatter — keep this rung tight + gate-able).
+- Resolution point = `handle()` (has Domain → element lookup). Parser parses literal `auto`
+  in the kn slot → `knAuto` flag on Contact; handler resolves per pair. Reject auto for the
+  rigid plane (P2a — no deformable master). `-kn $val` path unchanged.
+- **NEXT**: oracle `contact_prototypes/proto_p2b2b_autokn.py` (reduction arithmetic on a
+  synthetic SPD block + scaling laws kn∝E, kn∝L, g=P/kn small) → C++ → build → test → gate → PR.
+- ORACLE `proto_p2b2b_autokn.py` **6/6 PASS** (assembles a real trilinear-hex K in numpy =
+  `LadrunoBrick -formulation std` getInitialStiff; validates reduction arithmetic T1, kn∝E
+  T2, kn∝L T3, penetration g/L<10% T4, oblique-normal positivity T5, mesh-objectivity T6).
+- **C++ WRITTEN** (cold worktree build live, b11fgz5d7; copied mumps_src.tar.gz first):
+  - `LadrunoContactDomain.{h,cpp}`: Contact struct += `bool knAuto`; `addContact(...,knAuto=false)`.
+  - PARSER `OpenSeesOutputCommands.cpp OPS_LadrunoContact`: kn slot accepts literal `auto`
+    (peek/classify; numeric `kn kt mu` path unchanged; `auto` may carry optional kt mu).
+  - HANDLER `LadrunoContactHandler.cpp`: file-static `ladrunoResolveAutoKn(dom,segNodes,nps,
+    orientDir)` — ref normal via kernel `normalOriented` at seg center, auto-detect owning
+    solid (ElementIter: getNumDOF==3·nNodes + getExternalNodes ⊇ seg tags), reduce
+    kn=f_si·mean(nᵀ getInitialStiff()_block n), f_si=0.10. Segment loop: `!ct.knAuto && kn<=0`
+    skip guard + per-pair resolve (knUse; skip+warn on <=0). NO new vanilla file, NO ele coupling.
+  - TEST `tests/test_adr39_contact_p2b2b.py` (4): converges+usable, kn∝E, ABSOLUTE P/pen==oracle
+    (imports proto_p2b2b_autokn — single source of truth), no-owning-solid→skip(spring-only).
+  - LEDGERS updated (impl row P2b-2b notes+files+#355 fix; vanilla P2b-2b parser-keyword row;
+    `// Ladruno ADR-39 P2b-2b` grep-marker in the parser). No stamp_headers change (no new SRC file).
+- **NEXT on build done**: run test_adr39_contact_p2b2b + p2b2 + p2b + p2a + p1 (expect all green) →
+  light code gate (heuristic, no novel math/core edit) → commit → PR base ladruno (verify #355 merged).
+- **BUILD ✓ (b11fgz5d7, exit 0)** cold worktree; re-wired the site-packages `.pth` to THIS
+  worktree's dist via `Ladruno_scripts/wire_venv_pth.py <wt>/dist/bin` (each fresh worktree has
+  its own dist → must re-wire before pytest; `import opensees` else fails). **BATTERY 26/26 GREEN**
+  (7 P1 + 5 P2a + 8 P2b-1 + 2 P2b-2a + 4 P2b-2b). One test self-correction: the "reasonable"
+  test mis-scaled the load (P=100 on E=2e4 = 0.5% pressure → 21% penetration; the heuristic is
+  CORRECT — penalty contact at f_si=0.10 ≈ LS-DYNA's soft default, penetration ∝ pressure/modulus)
+  → fixed to load a representative 0.1%-modulus pressure (P=p·E·L²) + threshold pen/L<0.10. The
+  ABSOLUTE oracle-match test (P/pen == imported proto_p2b2b auto_kn, rel<2%) passed unchanged.
+- **CODE GATE (1 focused source-grounded reviewer): NO BLOCKER, NO MAJOR.** Core verified sound:
+  PSD diagonal block ⇒ nᵀKn ≥ 0 (negative kn impossible), nᵀKn sign-insensitive (ref-vs-deformed
+  normal sign disagreement is harmless), generic [3·loc,3·loc+3) DOF-block extraction valid for any
+  3-DOF/node solid, getNumDOF()==3·nn filter CANNOT match a non-solid in a 3D model (truss has 2
+  nodes → face-node-subset fails), getInitialStiff() static-buffer use alias-safe (read before any
+  re-entrant call), shared ElementIter re-reset safe (outer ele loop fully drained first), knAuto
+  default-arg init clean, skip-guard + per-pair resolve-failure `continue` correct. **3 MINOR:**
+  (1) FOLDED — parser silently swallowed stray trailing tokens (also a deferred P2b-1 NIT) → now
+  errors on an unexpected token (`// Ladruno ADR-39 P2b-2b` gate MINOR-1). (2) DEFERRED to P2b-2c —
+  no floor on a tiny-positive kn (exactly what the SOFT Courant floor addresses). (3) DOC-ONLY —
+  first-match owning element is order-dependent for an INTERIOR/shared face (correct for the
+  intended EXTERIOR contact-master face; single owner). Gate-fix rebuild bo8d7gkui live.
+- **NEXT on gate-fix build**: re-run battery (expect 26/26) → commit P2b-2b → PR base ladruno
+  (re-check `gh pr view 355 --json state`==MERGED immediately before push; fork auto-merges fast).
+
+- **BUILD GOTCHA (new, important):** after `wire_venv_pth.py` points the site-packages `.pth`
+  at a VALID dist, EVERY `python` startup eagerly `import opensees` (the openseespy alias in the
+  boot) → prints the LADRUNO banner to stdout. CMake's `find_package(Python)` probe captures the
+  banner instead of a version string → "Could NOT find Python: Found unsuitable version <ASCII art>"
+  + a CMake syntax error → configure FAILS. FIX = `set LADRUNO_OPENSEES_QUIET=1` (user env) BEFORE
+  building whenever the .pth is wired (cold build worked only because its .pth pointed at a dist
+  where `import opensees` failed silently). Candidate for BUILD_GOTCHAS.md / LEDGER_quirks.
+
+### Iteration 18 RESULT — P2b-2b `-kn auto` SHIPPED-pending-PR (battery 26/26, gate PASS)
+
 ## Deferred / parked
 - P4 SOFT, P5 segment-based, P6 tied, AL upgrade (Q-AL), MPI — all post-v1 per ADR.

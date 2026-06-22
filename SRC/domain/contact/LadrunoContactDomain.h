@@ -59,8 +59,12 @@ class LadrunoContactDomain
     // outward (optional, null = auto): a direction toward the slave's allowed
     // half-space, used to orient the derived segment normal (design-gate BLOCKER-1);
     // null = the handler auto-derives it from the slave-vs-segment geometry.
+    // knAuto: if true, kn is auto-sized per (slave,segment) pair at handle() time
+    // from the owning solid element's stiffness (P2b-2b). The passed kn is then a
+    // placeholder (0) and ignored; the handler computes the real value.
     int addContact(int tag, int masterSurfTag, int slaveSurfTag,
-                   double kn, double kt, double mu, const double *outward = 0);
+                   double kn, double kt, double mu, const double *outward = 0,
+                   bool knAuto = false);
     int getNumContacts(void) const { return (int)theContacts.size(); }
 
     // --- P2b: faceted node-to-segment penalty contact. A Contact references a
@@ -70,6 +74,7 @@ class LadrunoContactDomain
     struct Contact {
         int tag, masterSurfTag, slaveSurfTag;
         double kn, kt, mu;
+        bool knAuto;            // true => kn auto-sized from the master element (P2b-2b)
         bool hasOutward;        // true if an explicit orientation direction was given
         double outward[3];      // orientation direction toward the allowed half-space
     };
