@@ -367,11 +367,11 @@ int OPS_LadrunoContactSurface()
     return 0;
 }
 
-// contact tag masterSurfTag slaveSurfTag <kn kt mu>
+// contact tag masterSurfTag slaveSurfTag <kn kt mu> <-outward ox oy oz>
 int OPS_LadrunoContact()
 {
     if (OPS_GetNumRemainingInputArgs() < 3) {
-        opserr << "WARNING want - contact tag masterSurfTag slaveSurfTag <kn kt mu>\n";
+        opserr << "WARNING want - contact tag masterSurfTag slaveSurfTag <kn kt mu> <-outward ox oy oz>\n";
         return -1;
     }
     int idata[3], n = 3;
@@ -380,13 +380,34 @@ int OPS_LadrunoContact()
         return -1;
     }
     double kn = 0.0, kt = 0.0, mu = 0.0;   // P1b zero-force defaults; P2 parses/uses
+    // kn kt mu come next UNLESS the next token is the -outward flag.
     if (OPS_GetNumRemainingInputArgs() >= 3) {
-        double d[3]; int m = 3;
-        if (OPS_GetDoubleInput(&m, d) < 0) {
-            opserr << "WARNING contact - could not read kn kt mu\n";
-            return -1;
+        const char *peek = OPS_GetString();   // consume + inspect; un-read either way
+        bool isOutward = (peek != 0 && strcmp(peek, "-outward") == 0);
+        OPS_ResetCurrentInputArg(-1);         // un-read the peeked token
+        if (!isOutward) {
+            double d[3]; int m = 3;
+            if (OPS_GetDoubleInput(&m, d) < 0) {
+                opserr << "WARNING contact - could not read kn kt mu\n";
+                return -1;
+            }
+            kn = d[0]; kt = d[1]; mu = d[2];
         }
-        kn = d[0]; kt = d[1]; mu = d[2];
+    }
+    // optional -outward ox oy oz : orientation direction toward the allowed half-space
+    bool hasOutward = false;
+    double outward[3] = {0.0, 0.0, 0.0};
+    while (OPS_GetNumRemainingInputArgs() > 0) {
+        const char *opt = OPS_GetString();
+        if (opt != 0 && strcmp(opt, "-outward") == 0) {
+            double o[3]; int m = 3;
+            if (OPS_GetDoubleInput(&m, o) < 0) {
+                opserr << "WARNING contact -outward - need ox oy oz\n";
+                return -1;
+            }
+            outward[0] = o[0]; outward[1] = o[1]; outward[2] = o[2];
+            hasOutward = true;
+        }
     }
     Domain *theDomain = OPS_GetDomain();
     if (theDomain == 0) return -1;
@@ -395,7 +416,8 @@ int OPS_LadrunoContact()
         opserr << "WARNING contact - define a contactSurface first\n";
         return -1;
     }
-    return cd->addContact(idata[0], idata[1], idata[2], kn, kt, mu);
+    return cd->addContact(idata[0], idata[1], idata[2], kn, kt, mu,
+                          hasOutward ? outward : 0);
 }
 
 // contactPlane tag slaveSurfTag  nx ny nz  px py pz  kn   (P2a rigid analytical plane)

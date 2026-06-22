@@ -372,5 +372,34 @@ Full multi-agent gate (4 source-grounded reviewers → adversarial verify each �
   full ∂n/∂u analytic block + FD-on-rotated gate lands in P2b-2 (deformable/rotated master);
   P2b-1's fixed master makes the slave-block main term sufficient for its solve.
 
+### Iteration 15 — P2b-1 C++ WRITTEN (faceted NTS, fixed master), building
+- Transcribed the validated oracle to **NEW header-only `SRC/domain/contact/LadrunoContactKernel.h`**
+  (OpenSees-free pure fns: shape tri-3/quad-4, BOUNDED projection Newton w/ degenerate-segment
+  reject, DIRECTION-oriented winding-immune normal, gap, penalty). Stamped + stamp_headers glob.
+- `LadrunoContactFE` SEGMENT mode (3rd ctor): conn = {slave}∪{seg nodes} (ndof=3*(1+nps)), per-eval
+  projection via kernel, resid=Bᵀtn, tangent=kn·BᵀB (routed thru formEleTangent like P2a;
+  ∂n/∂u block deferred to P2b-2 — fixed master ⇒ slave-block kn·n⊗n exact). setID maps each
+  ndf==3 node's DOF_Group → 3 myID slots (verified FE_Element::setID concatenates full group IDs).
+- `LadrunoContactHandler`: one adapter per (slave node, master SEGMENT) pair — gate-sanctioned
+  BRUTE-FORCE pairing (bucket sort = P2.5); guards kind + ndf==3 + degenerate; computes orientDir.
+- `LadrunoContactDomain`: Contact struct made public + `getContact(i)` + optional `outward[3]`.
+- Parser: `contact ... -outward ox oy oz` (orientation dir toward allowed half-space; robust to
+  just-penetrated starts; peek/un-read via OPS_ResetCurrentInputArg(-1) keeps kn kt mu positional).
+- **ORIENTATION = explicit DIRECTION** (not slave-position): auto-orient-toward-slave-pos FAILS for
+  a just-penetrated start (slave is on the forbidden side by −1e-8 → normal flips). -outward fixes it
+  robustly + is winding-immune. Handler auto-derives orientDir = slave_ref − seg_centroid when no
+  -outward (for clearly-separated starts).
+- **P1b REGRESSION SURVIVES UNTOUCHED:** its `contact` defines a COLLINEAR master (nodes 1,2,3 on
+  x-axis) → degenerate → kernel projection sentinel returns -1 → zero force; numberer Plain is
+  connectivity-independent ⇒ still bitwise. (Made `contact` load-bearing without breaking P1b.)
+- TEST `tests/test_adr39_contact_p2b.py`: static pen=P/kn (quad+tri, 1e-6), oblique-30°, winding-flip
+  immunity, OOB pass-through, explicit e≈1, **ZeroLengthContactASDimplex cross-check** (rel 1e-6).
+- BUILD: cold worktree (peaceful-bassi) hit the MUMPS-download gotcha (no local archive + curl reset)
+  → copied mumps_src.tar.gz from compile-root → rebuilding (bakbc6n5c). LESSON: a fresh worktree needs
+  `mumps-archive/mumps_src.tar.gz` copied in before build.bat (offline-safe).
+- **NEXT on build**: run test_adr39_contact_p2b + p2a + p1 (expect all green) → P2b-1 code gate →
+  ledger (kernel new-file row + P2b in the contact row) → commit → PR (base ladruno) → P2b-2
+  (deformable master + -kn auto + Hertz + FD-on-rotated ∂n/∂u tangent gate).
+
 ## Deferred / parked
 - P4 SOFT, P5 segment-based, P6 tied, AL upgrade (Q-AL), MPI — all post-v1 per ADR.

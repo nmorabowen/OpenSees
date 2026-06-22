@@ -26,22 +26,24 @@
 #include <Node.h>
 #include <DOF_Group.h>
 #include <Integrator.h>
+#include <LadrunoContactKernel.h>   // Ladruno: ADR-39 P2b (header-only NTS math)
 
 LadrunoContactFE::LadrunoContactFE(int tag)
   : FE_Element(tag, /*numDOF_Group=*/0, /*ndof=*/0),
-    resid(0), tang(0, 0), mode(EMPTY), theSlave(0), ndm(0), kn(0.0)
+    resid(0), tang(0, 0), mode(EMPTY), theSlave(0), ndm(0), kn(0.0), nps(0)
 {
     // myDOF_Groups and myID are size 0 (empty connectivity): the adapter adds NO
     // edges to the DOF graph, so the numberer permutation is untouched and the
     // result is bitwise-identical to no-contact. (P1a)
-    for (int d = 0; d < 3; d++) { planeP0[d] = 0.0; planeN[d] = 0.0; }
+    for (int d = 0; d < 3; d++) { planeP0[d] = 0.0; planeN[d] = 0.0; orientDir[d] = 0.0; }
+    for (int i = 0; i < 4; i++) segNode[i] = 0;
 }
 
 LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, int ndm_,
                                    const double p0[3], const double n[3], double kn_)
   : FE_Element(tag, /*numDOF_Group=*/1, /*ndof=*/ndm_),
     resid(ndm_), tang(ndm_, ndm_),
-    mode(RIGID_PLANE), theSlave(slaveNode), ndm(ndm_), kn(kn_)
+    mode(RIGID_PLANE), theSlave(slaveNode), ndm(ndm_), kn(kn_), nps(0)
 {
     // Connectivity = the slave node's DOF_Group; setID() fills myID with its first
     // ndm equation numbers (the translational DOFs). Same pattern as PenaltySP_FE.
@@ -50,11 +52,66 @@ LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, int ndm_,
         if (dg != 0)
             myDOF_Groups(0) = dg->getTag();
     }
-    for (int d = 0; d < 3; d++) { planeP0[d] = p0[d]; planeN[d] = n[d]; }
+    for (int d = 0; d < 3; d++) { planeP0[d] = p0[d]; planeN[d] = n[d]; orientDir[d] = 0.0; }
+    for (int i = 0; i < 4; i++) segNode[i] = 0;
+}
+
+LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, Node **segNodes,
+                                   int nps_, double kn_, const double odir[3])
+  : FE_Element(tag, /*numDOF_Group=*/1 + nps_, /*ndof=*/3 * (1 + nps_)),
+    resid(3 * (1 + nps_)), tang(3 * (1 + nps_), 3 * (1 + nps_)),
+    mode(SEGMENT), theSlave(slaveNode), ndm(3), kn(kn_), nps(nps_)
+{
+    // Connectivity = slave DOF_Group + each segment-node DOF_Group. setID() then
+    // fills myID = [slave xyz | seg_1 xyz | ... | seg_nps xyz] (each node ndf==3 ⇒
+    // its DOF_Group contributes exactly 3 ⇒ exact ndof match). The B-operator below
+    // assumes this layout. The handler guards ndf==3 on every node of the pair.
+    if (slaveNode != 0) {
+        DOF_Group *dg = slaveNode->getDOF_GroupPtr();
+        if (dg != 0) myDOF_Groups(0) = dg->getTag();
+    }
+    for (int i = 0; i < nps; i++) {
+        segNode[i] = segNodes[i];
+        if (segNodes[i] != 0) {
+            DOF_Group *dg = segNodes[i]->getDOF_GroupPtr();
+            if (dg != 0) myDOF_Groups(1 + i) = dg->getTag();
+        }
+    }
+    for (int i = nps; i < 4; i++) segNode[i] = 0;
+    // orientation direction (toward the slave's allowed half-space): the derived
+    // normal is flipped to satisfy n·orientDir>0, so it's winding-immune AND stays
+    // correct after the slave penetrates (a fixed direction, not a live position).
+    for (int d = 0; d < 3; d++) orientDir[d] = odir[d];
+    for (int d = 0; d < 3; d++) { planeP0[d] = 0.0; planeN[d] = 0.0; }
 }
 
 LadrunoContactFE::~LadrunoContactFE()
 {
+}
+
+bool
+LadrunoContactFE::segmentActive(double &gap, double n[3], double N[4], double *B) const
+{
+    if (mode != SEGMENT || theSlave == 0) return false;
+    double Xseg[4][3], xs[3];
+    const Vector &Xs = theSlave->getCrds();
+    const Vector &us = theSlave->getTrialDisp();
+    for (int d = 0; d < 3; d++) xs[d] = Xs(d) + us(d);
+    for (int i = 0; i < nps; i++) {
+        if (segNode[i] == 0) return false;
+        const Vector &Xi = segNode[i]->getCrds();
+        const Vector &ui = segNode[i]->getTrialDisp();
+        for (int d = 0; d < 3; d++) Xseg[i][d] = Xi(d) + ui(d);
+    }
+    if (!LadrunoContactKernel::evalSegment(nps, Xseg, xs, orientDir, gap, n, N))
+        return false;
+    // gap operator B (1×ndof) over [u_s | u_1..u_nps]: [ nᵀ | −N_i nᵀ ]
+    int ndof = 3 * (1 + nps);
+    for (int k = 0; k < ndof; k++) B[k] = 0.0;
+    for (int d = 0; d < 3; d++) B[d] = n[d];
+    for (int i = 0; i < nps; i++)
+        for (int d = 0; d < 3; d++) B[3 * (1 + i) + d] = -N[i] * n[d];
+    return true;
 }
 
 double
@@ -79,6 +136,14 @@ LadrunoContactFE::getResidual(Integrator *)
             double tn = -kn * g;             // tn = kn*|g| > 0 (Macaulay <-g>_+)
             for (int d = 0; d < ndm; d++)
                 resid(d) = tn * planeN[d];   // drives the slave toward g=0 (PenaltySP convention)
+        }
+    } else if (mode == SEGMENT) {
+        double gap, n[3], N[4], B[15];       // ndof <= 3*(1+4) = 15
+        if (segmentActive(gap, n, N, B)) {
+            double tn = LadrunoContactKernel::traction(kn, gap);  // = kn*<-gap>_+ > 0
+            int ndof = 3 * (1 + nps);
+            for (int k = 0; k < ndof; k++)
+                resid(k) = B[k] * tn;        // r = Bᵀ tn (slave +tn n, master −N_i tn n)
         }
     }
     return resid;
@@ -112,6 +177,16 @@ LadrunoContactFE::addKtToTang(double fact)
         for (int i = 0; i < ndm; i++)
             for (int j = 0; j < ndm; j++)
                 tang(i, j) += fact * kn * planeN[i] * planeN[j];
+    } else if (mode == SEGMENT) {
+        // K_c = kn BᵀB (main NTS term; ∂n/∂u block deferred to P2b-2 — for a FIXED
+        // master the slave block kn(n⊗n) is exact and the master DOFs are constrained).
+        double gap, n[3], N[4], B[15];
+        if (segmentActive(gap, n, N, B)) {
+            int ndof = 3 * (1 + nps);
+            for (int i = 0; i < ndof; i++)
+                for (int j = 0; j < ndof; j++)
+                    tang(i, j) += fact * kn * B[i] * B[j];
+        }
     }
 }
 
@@ -127,6 +202,15 @@ LadrunoContactFE::addKiToTang(double fact)
         for (int i = 0; i < ndm; i++)
             for (int j = 0; j < ndm; j++)
                 tang(i, j) += fact * kn * planeN[i] * planeN[j];
+    } else if (mode == SEGMENT) {
+        // initial-stiffness path: same kn BᵀB (flat segment ⇒ K_initial == K_current)
+        double gap, n[3], N[4], B[15];
+        if (segmentActive(gap, n, N, B)) {
+            int ndof = 3 * (1 + nps);
+            for (int i = 0; i < ndof; i++)
+                for (int j = 0; j < ndof; j++)
+                    tang(i, j) += fact * kn * B[i] * B[j];
+        }
     }
 }
 
