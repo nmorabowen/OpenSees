@@ -42,6 +42,8 @@
 #define LadrunoContactDomain_h
 
 #include <vector>
+#include <map>
+#include <set>
 
 class LadrunoContactSurface;
 class ID;
@@ -97,9 +99,37 @@ class LadrunoContactDomain
     // --- handler interface: how many adapters to inject this handle() ---
     int buildAdapterCount(void) const { return (int)theContacts.size(); }
 
+    // --- P3: per-pair Coulomb friction STATE (the first path-dependent contact
+    //     state). Lives on the engine (not the stateless adapter), keyed STABLY by
+    //     (contactTag, slaveNodeTag, GLOBAL segment ordinal) so it survives the
+    //     adapter rebuild every handle(). The adapter reads the committed plastic
+    //     slip gpT + engagement origin gT0, runs the return map, and writes gpTtrial;
+    //     commit()/revertToLastCommit() promote/drop the trial. ---
+    struct FrictionState {
+        double gpT[3];        // committed plastic slip from the engagement config
+        double gpTtrial[3];   // trial plastic slip (written each getResidual)
+        double gT0[3];        // ENGAGEMENT-config tangential origin (captured once)
+        bool   engaged;       // has gT0 been captured at first activation
+        FrictionState() : engaged(false) {
+            for (int d = 0; d < 3; d++) gpT[d] = gpTtrial[d] = gT0[d] = 0.0;
+        }
+    };
+    // lazily create + return the slot for a pair (zeroed, engaged=false if new).
+    FrictionState &getOrCreateFrictionState(int contactTag, int slaveTag, int segIndex);
+
+    // dead-slot GC (design-gate MAJOR: the engine survives domainChanged AND across
+    // analyze() calls, so a re-meshed/re-paired analysis would leak old friction
+    // slots — the ADR-30 theEQs leak class). The handler rebuilds the live key-set
+    // each handle(): frictionGCBegin() → frictionGCMark(...) per live pair →
+    // frictionGCEnd() erases any slot not marked.
+    void frictionGCBegin(void);
+    void frictionGCMark(int contactTag, int slaveTag, int segIndex);
+    void frictionGCEnd(void);
+    int  getNumFrictionStates(void) const { return (int)theFrictionStates.size(); }
+
     // --- lifecycle (driven by Domain::commit / revertToLastCommit) ---
-    int commit(void);              // P1b: no-op on state (counter for tests)
-    int revertToLastCommit(void);  // P1b: no-op on state (counter for tests)
+    int commit(void);              // P3: gpT = gpTtrial for every slot (+ counter)
+    int revertToLastCommit(void);  // P3: gpTtrial = gpT for every slot (+ counter)
     int getNumCommits(void) const { return numCommits; }
     int getNumReverts(void) const { return numReverts; }
 
@@ -109,6 +139,18 @@ class LadrunoContactDomain
     std::vector<RigidPlane> theRigidPlanes;             // P2a
     int numCommits;
     int numReverts;
+
+    // P3 friction state store, keyed by (contactTag, slaveTag, segIndex).
+    struct PairKey {
+        int c, s, g;
+        bool operator<(const PairKey &o) const {
+            if (c != o.c) return c < o.c;
+            if (s != o.s) return s < o.s;
+            return g < o.g;
+        }
+    };
+    std::map<PairKey, FrictionState> theFrictionStates;
+    std::set<PairKey> liveKeys;                         // GC scratch (per handle())
 };
 
 #endif

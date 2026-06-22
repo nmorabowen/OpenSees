@@ -131,18 +131,64 @@ LadrunoContactDomain::addRigidPlane(int tag, int slaveSurfTag,
     return 0;
 }
 
+LadrunoContactDomain::FrictionState &
+LadrunoContactDomain::getOrCreateFrictionState(int contactTag, int slaveTag, int segIndex)
+{
+    PairKey k; k.c = contactTag; k.s = slaveTag; k.g = segIndex;
+    // operator[] default-constructs a fresh FrictionState (engaged=false, zeroed)
+    // when the key is absent — exactly the lazy-create-at-first-activation contract.
+    return theFrictionStates[k];
+}
+
+void
+LadrunoContactDomain::frictionGCBegin(void)
+{
+    liveKeys.clear();
+}
+
+void
+LadrunoContactDomain::frictionGCMark(int contactTag, int slaveTag, int segIndex)
+{
+    PairKey k; k.c = contactTag; k.s = slaveTag; k.g = segIndex;
+    liveKeys.insert(k);
+}
+
+void
+LadrunoContactDomain::frictionGCEnd(void)
+{
+    // erase any slot whose key the current handle() did not mark live (a re-meshed
+    // or re-paired analysis leaves them behind otherwise). Marking a not-yet-created
+    // key is harmless; this only prunes EXISTING slots.
+    for (std::map<PairKey, FrictionState>::iterator it = theFrictionStates.begin();
+         it != theFrictionStates.end(); ) {
+        if (liveKeys.find(it->first) == liveKeys.end())
+            theFrictionStates.erase(it++);     // post-increment keeps the iterator valid
+        else
+            ++it;
+    }
+    liveKeys.clear();
+}
+
 int
 LadrunoContactDomain::commit(void)
 {
-    // P1b: no path-dependent state yet (zero force). The counter lets the test
-    // confirm the Domain::commit() hook actually drives us. P2 commits pair state.
+    // P3: promote the trial plastic slip to committed for every friction slot. The
+    // counter (kept from P1b) lets a test confirm the Domain::commit() hook fires.
     numCommits++;
+    for (std::map<PairKey, FrictionState>::iterator it = theFrictionStates.begin();
+         it != theFrictionStates.end(); ++it)
+        for (int d = 0; d < 3; d++) it->second.gpT[d] = it->second.gpTtrial[d];
     return 0;
 }
 
 int
 LadrunoContactDomain::revertToLastCommit(void)
 {
+    // P3: drop the trial back to the last committed plastic slip (a failed implicit
+    // step, or a Python adaptive-step retry that calls Domain::revertToLastCommit()).
     numReverts++;
+    for (std::map<PairKey, FrictionState>::iterator it = theFrictionStates.begin();
+         it != theFrictionStates.end(); ++it)
+        for (int d = 0; d < 3; d++) it->second.gpTtrial[d] = it->second.gpT[d];
     return 0;
 }

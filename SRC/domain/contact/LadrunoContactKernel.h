@@ -174,6 +174,61 @@ inline bool evalSegment(int nps, const double X[4][3], const double xs[3],
 // 0 for gap>=0 so a stray call can never produce a non-physical (adhesive) traction.
 inline double traction(double kn, double gap) { return (gap < 0.0) ? kn * (-gap) : 0.0; }
 
+// ------------------------------------------------ friction (ADR-39 P3, Coulomb)
+// tangential component of v w.r.t. the unit normal n: v − (v·n) n. Used to map a
+// relative-position vector onto the contact tangent plane.
+inline void tangentPart(const double v[3], const double n[3], double out[3]) {
+    double vn = dot3(v, n);
+    for (int d = 0; d < 3; d++) out[d] = v[d] - vn * n[d];
+}
+
+// Clean Coulomb DIRECT return map (NOT the ASDimplex "apparent damage" form, which
+// carries the quarantined shadowed-dE / ddata-OOB bugs). Structurally 1D plasticity
+// on the tangential traction with a pressure-dependent (Coulomb) yield radius μN.
+// Validated oracle-first in proto_p3_friction.py (6/6).
+//
+//   tT*  = kt·(gTeff − gpT)        trial elastic tangential traction (tangent plane)
+//   cap  = μN                       Coulomb cone radius  (N = kn·<−gap>₊ ≥ 0)
+//   STICK (‖tT*‖ ≤ cap): tT = tT*,  gpT unchanged
+//   SLIP  (‖tT*‖ > cap): n̂ = tT*/‖tT*‖, dλ = (‖tT*‖−cap)/kt,
+//                        tT = cap·n̂,  gpT += dλ·n̂
+//
+// SIGN (design-gate BLOCKER-1): the trial direction n̂* FOLLOWS the slave's tangential
+// MOTION, so assembling +tT would ACCELERATE the slave (energy injection,
+// a=g(sinθ+μcosθ)). The kernel therefore returns the FORCE the contact APPLIES to the
+// slave, ALREADY NEGATED: tFric = −tT. The FE then mirrors the normal block exactly
+// (resid_slave += tFric, resid_master_i += −N_i·tFric) so friction OPPOSES the motion
+// (incline ⇒ a=g(sinθ−μcosθ)). The negation lives in this ONE auditable place.
+//
+// gpTtrial is a PURE function of committed state (gpT + dλ·n̂, set not +=), so it is
+// idempotent across CDL's firstStep double getResidual (design-gate BLOCKER-2). The
+// near-zero guard is PHYSICALLY scaled: slip requires ‖tT*‖ > cap > 0, so n̂ is always
+// normalizable in the slip branch (no denormal 0/0); cap ≤ 0 (separated or μ=0) ⇒
+// stick with the elastic traction. The IMPL-EX multiplier-extrapolation variant is
+// retained only in the oracle for the P3.5 implicit leg (explicit discards the
+// tangent, so IMPL-EX buys nothing here while costing a one-step onset overshoot).
+// returns true if slipping (diagnostic), false if stick/inactive.
+inline bool frictionReturnMap(const double gTeff[3], const double gpT[3],
+                              double N, double kt, double mu,
+                              double tFric[3], double gpTtrial[3]) {
+    double tTtr[3];
+    for (int d = 0; d < 3; d++) tTtr[d] = kt * (gTeff[d] - gpT[d]);
+    double cap  = mu * N;
+    double norm = norm3(tTtr);
+    if (cap <= 0.0 || norm <= cap) {                 // stick (or inactive)
+        for (int d = 0; d < 3; d++) { tFric[d] = -tTtr[d]; gpTtrial[d] = gpT[d]; }
+        return false;
+    }
+    double inv  = 1.0 / norm;                        // norm > cap > 0 ⇒ safe
+    double dlam = (norm - cap) / kt;
+    for (int d = 0; d < 3; d++) {
+        double nh   = tTtr[d] * inv;
+        tFric[d]    = -cap * nh;
+        gpTtrial[d] = gpT[d] + dlam * nh;
+    }
+    return true;
+}
+
 } // namespace LadrunoContactKernel
 
 #endif

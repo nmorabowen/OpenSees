@@ -26,11 +26,14 @@
 #include <Node.h>
 #include <DOF_Group.h>
 #include <Integrator.h>
-#include <LadrunoContactKernel.h>   // Ladruno: ADR-39 P2b (header-only NTS math)
+#include <Domain.h>                 // Ladruno: ADR-39 P3 (lazy engine re-fetch)
+#include <LadrunoContactDomain.h>   // Ladruno: ADR-39 P3 (per-pair friction state)
+#include <LadrunoContactKernel.h>   // Ladruno: ADR-39 P2b/P3 (header-only NTS math)
 
 LadrunoContactFE::LadrunoContactFE(int tag)
   : FE_Element(tag, /*numDOF_Group=*/0, /*ndof=*/0),
-    resid(0), tang(0, 0), mode(EMPTY), theSlave(0), ndm(0), kn(0.0), nps(0)
+    resid(0), tang(0, 0), mode(EMPTY), theSlave(0), ndm(0), kn(0.0), nps(0),
+    kt(0.0), mu(0.0), theDomain(0), contactTag(0), segIndex(0)
 {
     // myDOF_Groups and myID are size 0 (empty connectivity): the adapter adds NO
     // edges to the DOF graph, so the numberer permutation is untouched and the
@@ -43,7 +46,8 @@ LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, int ndm_,
                                    const double p0[3], const double n[3], double kn_)
   : FE_Element(tag, /*numDOF_Group=*/1, /*ndof=*/ndm_),
     resid(ndm_), tang(ndm_, ndm_),
-    mode(RIGID_PLANE), theSlave(slaveNode), ndm(ndm_), kn(kn_), nps(0)
+    mode(RIGID_PLANE), theSlave(slaveNode), ndm(ndm_), kn(kn_), nps(0),
+    kt(0.0), mu(0.0), theDomain(0), contactTag(0), segIndex(0)
 {
     // Connectivity = the slave node's DOF_Group; setID() fills myID with its first
     // ndm equation numbers (the translational DOFs). Same pattern as PenaltySP_FE.
@@ -57,10 +61,13 @@ LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, int ndm_,
 }
 
 LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, Node **segNodes,
-                                   int nps_, double kn_, const double odir[3])
+                                   int nps_, double kn_, const double odir[3],
+                                   double kt_, double mu_, Domain *dom,
+                                   int contactTag_, int segIndex_)
   : FE_Element(tag, /*numDOF_Group=*/1 + nps_, /*ndof=*/3 * (1 + nps_)),
     resid(3 * (1 + nps_)), tang(3 * (1 + nps_), 3 * (1 + nps_)),
-    mode(SEGMENT), theSlave(slaveNode), ndm(3), kn(kn_), nps(nps_)
+    mode(SEGMENT), theSlave(slaveNode), ndm(3), kn(kn_), nps(nps_),
+    kt(kt_), mu(mu_), theDomain(dom), contactTag(contactTag_), segIndex(segIndex_)
 {
     // Connectivity = slave DOF_Group + each segment-node DOF_Group. setID() then
     // fills myID = [slave xyz | seg_1 xyz | ... | seg_nps xyz] (each node ndf==3 ⇒
@@ -90,7 +97,8 @@ LadrunoContactFE::~LadrunoContactFE()
 }
 
 bool
-LadrunoContactFE::segmentActive(double &gap, double n[3], double N[4], double *B) const
+LadrunoContactFE::segmentActive(double &gap, double n[3], double N[4], double *B,
+                                double *gTvec) const
 {
     if (mode != SEGMENT || theSlave == 0) return false;
     double Xseg[4][3], xs[3];
@@ -111,6 +119,21 @@ LadrunoContactFE::segmentActive(double &gap, double n[3], double N[4], double *B
     for (int d = 0; d < 3; d++) B[d] = n[d];
     for (int i = 0; i < nps; i++)
         for (int d = 0; d < 3; d++) B[3 * (1 + i) + d] = -N[i] * n[d];
+    // P3: relative tangential SLIP at the contact point. The closest-point projection
+    // makes (x_s − x̄) ∥ n, so POSITIONS carry NO tangential information; the slip is
+    // the slave DISPLACEMENT minus the interpolated master DISPLACEMENT at the
+    // projection: d = u_s − Σ N_i u_i, tangential part (the engagement origin gT0 is
+    // subtracted by the caller). u_s/u_i are read from the same trial config as the
+    // projection, at the SAME shape weights N — one consistent contact point.
+    if (gTvec != 0) {
+        double ubar[3] = {0.0, 0.0, 0.0};
+        for (int i = 0; i < nps; i++) {
+            const Vector &ui = segNode[i]->getTrialDisp();
+            for (int d = 0; d < 3; d++) ubar[d] += N[i] * ui(d);
+        }
+        double drel[3] = { us(0)-ubar[0], us(1)-ubar[1], us(2)-ubar[2] };
+        LadrunoContactKernel::tangentPart(drel, n, gTvec);
+    }
     return true;
 }
 
@@ -138,12 +161,48 @@ LadrunoContactFE::getResidual(Integrator *)
                 resid(d) = tn * planeN[d];   // drives the slave toward g=0 (PenaltySP convention)
         }
     } else if (mode == SEGMENT) {
-        double gap, n[3], N[4], B[15];       // ndof <= 3*(1+4) = 15
-        if (segmentActive(gap, n, N, B)) {
+        double gap, n[3], N[4], B[15], gTvec[3];   // ndof <= 3*(1+4) = 15
+        if (segmentActive(gap, n, N, B, gTvec)) {
             double tn = LadrunoContactKernel::traction(kn, gap);  // = kn*<-gap>_+ > 0
             int ndof = 3 * (1 + nps);
             for (int k = 0; k < ndof; k++)
                 resid(k) = B[k] * tn;        // r = Bᵀ tn (slave +tn n, master −N_i tn n)
+
+            // --- P3 Coulomb friction (force only; tangent is P3.5) ---
+            // mu<=0 SHORT-CIRCUITS before any state touch ⇒ byte-identical to the
+            // frictionless P2b path (+ dodges the n̂=tT*/‖tT*‖ 0/0). The engine is
+            // re-fetched lazily (wipe deletes it) and null-checked.
+            if (mu > 0.0 && theDomain != 0) {
+                LadrunoContactDomain *cd = theDomain->getLadrunoContactDomain();
+                if (cd != 0) {
+                    int slaveTag = theSlave->getTag();
+                    LadrunoContactDomain::FrictionState &st =
+                        cd->getOrCreateFrictionState(contactTag, slaveTag, segIndex);
+                    // capture the ENGAGEMENT-config tangential origin ONCE at first
+                    // activation (else a late-engaging slave's pre-contact tangential
+                    // drift becomes a spurious stick traction — design-gate MAJOR-1).
+                    if (!st.engaged) {
+                        for (int d = 0; d < 3; d++) st.gT0[d] = gTvec[d];
+                        st.engaged = true;
+                    }
+                    double gTeff[3];
+                    for (int d = 0; d < 3; d++) gTeff[d] = gTvec[d] - st.gT0[d];
+                    double tFric[3], gpTtrial[3];
+                    // N for the cone = current penetration force tn (design MINOR-8).
+                    LadrunoContactKernel::frictionReturnMap(gTeff, st.gpT, tn, kt, mu,
+                                                            tFric, gpTtrial);
+                    // trial = PURE fn of committed state (idempotent across the CDL
+                    // firstStep double-eval); commit() promotes it.
+                    for (int d = 0; d < 3; d++) st.gpTtrial[d] = gpTtrial[d];
+                    // mirror the normal block: slave += tFric, master_i += −N_i tFric.
+                    // tFric is the already-negated APPLIED force (kernel BLOCKER-1),
+                    // so friction OPPOSES the slave motion.
+                    for (int d = 0; d < 3; d++) resid(d) += tFric[d];
+                    for (int i = 0; i < nps; i++)
+                        for (int d = 0; d < 3; d++)
+                            resid(3 * (1 + i) + d) += -N[i] * tFric[d];
+                }
+            }
         }
     }
     return resid;

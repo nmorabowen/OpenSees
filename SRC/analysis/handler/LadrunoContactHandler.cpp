@@ -240,6 +240,33 @@ LadrunoContactHandler::handle(const ID *nodesLast)
     // zero force inside the adapter (so a topology-only contact stays graph-neutral
     // under a connectivity-independent numberer — the P1b regression relies on this).
     if (cd != 0) {
+        // P3: rebuild the live friction-state key-set this handle() so the engine can
+        // GC slots from a previous (re-meshed/re-paired) analysis. Mark every built
+        // frictional pair; sweep at the end.
+        cd->frictionGCBegin();
+
+        // P3 cross-contact shared-slave warning: a slave node in two contacts' slave
+        // sets gets two adapters → double traction (a modeling error the engine can't
+        // auto-resolve). Cheap multiset scan, mirrors the ndf!=3 warning.
+        {
+            std::multimap<int, int> slaveSeen;   // slaveNodeTag -> contactTag
+            for (int c = 0; c < cd->getNumContacts(); c++) {
+                const LadrunoContactDomain::Contact &ct = cd->getContact(c);
+                LadrunoContactSurface *ss = cd->getSurface(ct.slaveSurfTag);
+                if (ss == 0 || ss->getKind() != LadrunoContactSurface::SLAVE_NODES)
+                    continue;
+                const ID &st = ss->getNodeTags();
+                for (int i = 0; i < st.Size(); i++) {
+                    int tag = st(i);
+                    if (slaveSeen.find(tag) != slaveSeen.end())
+                        opserr << "WARNING LadrunoContactHandler::handle() - slave node "
+                               << tag << " appears in more than one contact's slave set; "
+                                  "its contact tractions will be ADDED (check the model)\n";
+                    slaveSeen.insert(std::make_pair(tag, ct.tag));
+                }
+            }
+        }
+
         for (int c = 0; c < cd->getNumContacts(); c++) {
             const LadrunoContactDomain::Contact &ct = cd->getContact(c);
             LadrunoContactSurface *ms = cd->getSurface(ct.masterSurfTag);
@@ -355,13 +382,21 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                             continue;
                         }
                     }
+                    // P3: thread kt/mu + the engine ptr + the friction-state key
+                    // (contactTag, GLOBAL segment ordinal `seg`). mu<=0 ⇒ the adapter
+                    // short-circuits friction (byte-identical to frictionless P2b).
                     LadrunoContactFE *fe =
-                        new LadrunoContactFE(numFe++, sn, segNodes, nps, knUse, orientDir);
+                        new LadrunoContactFE(numFe++, sn, segNodes, nps, knUse, orientDir,
+                                             ct.kt, ct.mu, theDomain, ct.tag, seg);
                     if (fe == 0) return -5;
                     theModel->addFE_Element(fe);
+                    if (ct.mu > 0.0)
+                        cd->frictionGCMark(ct.tag, sTags(si), seg);  // live this handle()
                 }
             }
         }
+
+        cd->frictionGCEnd();   // prune friction slots no live pair referenced
     }
 
     // P2a: rigid analytical-plane contacts -> ONE bound adapter per slave node

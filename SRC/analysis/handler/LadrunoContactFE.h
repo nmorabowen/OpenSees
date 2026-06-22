@@ -46,6 +46,7 @@
 
 class Integrator;
 class Node;
+class Domain;
 
 class LadrunoContactFE : public FE_Element
 {
@@ -61,8 +62,16 @@ class LadrunoContactFE : public FE_Element
     // quad-4, nps nodes). Connectivity = {slave} ∪ {segment nodes}; the outward
     // normal is DERIVED per evaluation + oriented toward orientDir (the slave's
     // allowed half-space — winding-immune, design-gate BLOCKER-1). 3D only (ndm==3).
+    //
+    // P3 friction: kt (tangential penalty), mu (Coulomb). When mu>0 the adapter adds
+    // the Coulomb friction traction, keeping its path-dependent plastic-slip state on
+    // the Domain-owned LadrunoContactDomain (looked up lazily via theDomain each
+    // getResidual — wipe deletes the engine, so the adapter must NOT cache its ptr),
+    // keyed (contactTag, slaveTag, segIndex). mu<=0 ⇒ byte-identical to frictionless
+    // P2b (no slot touch). kt/mu/engine args default to the frictionless path.
     LadrunoContactFE(int tag, Node *slaveNode, Node **segNodes, int nps, double kn,
-                     const double orientDir[3]);
+                     const double orientDir[3], double kt = 0.0, double mu = 0.0,
+                     Domain *theDomain = 0, int contactTag = 0, int segIndex = 0);
     ~LadrunoContactFE();
 
     // self-owned buffers (base buffers are unavailable when myEle == 0)
@@ -102,7 +111,10 @@ class LadrunoContactFE : public FE_Element
     // derive the oriented normal + gap + shape weights. Returns the ACTIVE flag
     // (true = penetrating + in-bounds). Fills gap(<0), n[3], N[nps], and the
     // assembled gap operator B[ndof] = [ nᵀ | −N_i nᵀ ] over [slave, seg nodes].
-    bool segmentActive(double &gap, double n[3], double N[4], double *B) const;
+    // P3: if gTvec != 0, also fills the tangential relative-position vector
+    // (x_s − x̄)_tangential (slip measure for the friction return map).
+    bool segmentActive(double &gap, double n[3], double N[4], double *B,
+                       double *gTvec = 0) const;
 
     Vector resid;   // size-0 in P1a; ndm in P2a; ndm*(1+nps) in P2b
     Matrix tang;    // 0x0 in P1a; ndm x ndm in P2a; ndof x ndof in P2b
@@ -121,6 +133,14 @@ class LadrunoContactFE : public FE_Element
     int nps;            // nodes per segment
     double orientDir[3];// fixed direction toward the slave's allowed half-space
                         // (the derived normal is flipped to satisfy n·orientDir>0)
+
+    // P3 friction binding (active only in SEGMENT mode with mu>0)
+    double kt;          // tangential penalty
+    double mu;          // Coulomb friction coefficient (<=0 ⇒ frictionless P2b path)
+    Domain *theDomain;  // for the LAZY engine re-fetch (wipe deletes the engine, so
+                        // we must not cache LadrunoContactDomain*); null ⇒ no friction
+    int contactTag;     // friction-state key: contact definition tag ...
+    int segIndex;       // ... and the GLOBAL master-segment ordinal (rebuild-stable)
 };
 
 #endif
