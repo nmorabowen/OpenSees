@@ -229,6 +229,40 @@ inline bool frictionReturnMap(const double gTeff[3], const double gpT[3],
     return true;
 }
 
+// ADR-39 P3.5 — friction tangent SLAVE block K_ss = D_TT·P_t + d_TN⊗n  (3×3), for the
+// assembled IMPLICIT tangent K_fric = Gᵀ K_ss G (G=[I|−N_i I], scattered by the FE).
+// Validated in proto_p35_implicit_tangent.py (slip==FD non-sym; stick==kt·P_t; the
+// committed-N/symmetric variant drops d_TN). consistent=false ⇒ DROP d_TN⊗n (the
+// SYMMETRIC default — solver-safe on any system; a symmetric SOE silently drops the
+// lower triangle, so a non-sym default would corrupt the solve, design-gate Q2); true
+// ⇒ include it (full consistent tangent: quadratic, NON-symmetric, needs FullGeneral/
+// UmfPack/BandGen). gTeff = slip from engagement; gpT = committed plastic slip; n = unit
+// normal; N = kn·<−gap>₊. Stick K_ss = kt·P_t; slip uses the idempotent D_TT·P_t = D_TT.
+inline void frictionTangentBlock(const double gTeff[3], const double gpT[3],
+                                 const double n[3], double N, double kn, double kt,
+                                 double mu, bool consistent, double Kss[3][3]) {
+    double tTtr[3];
+    for (int d = 0; d < 3; d++) tTtr[d] = kt * (gTeff[d] - gpT[d]);
+    double cap = mu * N, nrm = norm3(tTtr);
+    double Pt[3][3];                                 // tangent-plane projector I − n⊗n
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++) Pt[i][j] = (i == j ? 1.0 : 0.0) - n[i]*n[j];
+    if (cap <= 0.0 || nrm <= cap) {                  // STICK: K_ss = kt·P_t
+        for (int i = 0; i < 3; i++)
+            for (int j = 0; j < 3; j++) Kss[i][j] = kt * Pt[i][j];
+        return;
+    }
+    double inv = 1.0 / nrm, nh[3];                   // SLIP
+    for (int d = 0; d < 3; d++) nh[d] = tTtr[d] * inv;
+    double s = cap * kt * inv;                        // μN·kt/‖tT*‖
+    for (int i = 0; i < 3; i++)                       // (μN·kt/‖tT*‖)(P_t − n̂⊗n̂)
+        for (int j = 0; j < 3; j++) Kss[i][j] = s * (Pt[i][j] - nh[i]*nh[j]);
+    if (consistent) {                                // + d_TN⊗n , d_TN = −μ·kn·n̂
+        for (int i = 0; i < 3; i++)
+            for (int j = 0; j < 3; j++) Kss[i][j] += (-mu * kn * nh[i]) * n[j];
+    }
+}
+
 } // namespace LadrunoContactKernel
 
 #endif

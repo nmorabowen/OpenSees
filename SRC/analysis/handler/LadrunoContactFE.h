@@ -69,9 +69,15 @@ class LadrunoContactFE : public FE_Element
     // getResidual — wipe deletes the engine, so the adapter must NOT cache its ptr),
     // keyed (contactTag, slaveTag, segIndex). mu<=0 ⇒ byte-identical to frictionless
     // P2b (no slot touch). kt/mu/engine args default to the frictionless path.
+    // P3.5 implicit friction tangent: consistentTan=false (default) assembles the
+    // SYMMETRIC tangent (drop the d_TN⊗n column ⇒ solver-safe on any system, superlinear);
+    // true assembles the full non-symmetric consistent tangent (quadratic, needs
+    // FullGeneral/UmfPack). Only ever assembled under IMPLICIT integrators (addKtToTang);
+    // explicit CDL routes to addMtoTang (no-op) ⇒ P3 explicit byte-identical.
     LadrunoContactFE(int tag, Node *slaveNode, Node **segNodes, int nps, double kn,
                      const double orientDir[3], double kt = 0.0, double mu = 0.0,
-                     Domain *theDomain = 0, int contactTag = 0, int segIndex = 0);
+                     Domain *theDomain = 0, int contactTag = 0, int segIndex = 0,
+                     bool consistentTan = false);
     ~LadrunoContactFE();
 
     // self-owned buffers (base buffers are unavailable when myEle == 0)
@@ -116,6 +122,12 @@ class LadrunoContactFE : public FE_Element
     bool segmentActive(double &gap, double n[3], double N[4], double *B,
                        double *gTvec = 0) const;
 
+    // P3.5: scatter the 3×3 friction tangent block K_ss (LadrunoContactKernel::
+    // frictionTangentBlock) into `tang` via G = [I | −N_i I]: block (a,b) = w_a w_b K_ss
+    // with w = [1, −N_0, …, −N_nps]. consistent ⇒ include the non-symmetric d_TN⊗n.
+    void addFrictionTang(double fact, const double n[3], const double N[4], double tn,
+                         const double gTeff[3], const double gpT[3], bool consistent);
+
     Vector resid;   // size-0 in P1a; ndm in P2a; ndm*(1+nps) in P2b
     Matrix tang;    // 0x0 in P1a; ndm x ndm in P2a; ndof x ndof in P2b
 
@@ -141,6 +153,7 @@ class LadrunoContactFE : public FE_Element
                         // we must not cache LadrunoContactDomain*); null ⇒ no friction
     int contactTag;     // friction-state key: contact definition tag ...
     int segIndex;       // ... and the GLOBAL master-segment ordinal (rebuild-stable)
+    bool consistentTan; // P3.5: include the non-symmetric d_TN⊗n column (false ⇒ symmetric)
 };
 
 #endif

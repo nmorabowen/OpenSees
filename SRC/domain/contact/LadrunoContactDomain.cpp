@@ -66,7 +66,7 @@ LadrunoContactDomain::getSurface(int tag) const
 int
 LadrunoContactDomain::addContact(int tag, int masterSurfTag, int slaveSurfTag,
                                  double kn, double kt, double mu, const double *outward,
-                                 bool knAuto, double cellFrac)
+                                 bool knAuto, double cellFrac, bool consistentTan)
 {
     if (getSurface(masterSurfTag) == 0 || getSurface(slaveSurfTag) == 0) {
         opserr << "WARNING LadrunoContactDomain::addContact() - master/slave surface "
@@ -89,6 +89,7 @@ LadrunoContactDomain::addContact(int tag, int masterSurfTag, int slaveSurfTag,
     c.hasOutward = (outward != 0);
     for (int d = 0; d < 3; d++) c.outward[d] = (outward != 0) ? outward[d] : 0.0;
     c.cellFrac = (cellFrac > 0.0) ? cellFrac : 1.0;   // P2.5 broad-phase cell scale
+    c.consistentTan = consistentTan;                  // P3.5 friction tangent symmetry
     theContacts.push_back(c);
     return 0;
 }

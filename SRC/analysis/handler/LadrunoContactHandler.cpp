@@ -387,7 +387,8 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                     // short-circuits friction (byte-identical to frictionless P2b).
                     LadrunoContactFE *fe =
                         new LadrunoContactFE(numFe++, sn, segNodes, nps, knUse, orientDir,
-                                             ct.kt, ct.mu, theDomain, ct.tag, seg);
+                                             ct.kt, ct.mu, theDomain, ct.tag, seg,
+                                             ct.consistentTan);
                     if (fe == 0) return -5;
                     theModel->addFE_Element(fe);
                     if (ct.mu > 0.0)

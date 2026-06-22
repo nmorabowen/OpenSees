@@ -33,7 +33,7 @@
 LadrunoContactFE::LadrunoContactFE(int tag)
   : FE_Element(tag, /*numDOF_Group=*/0, /*ndof=*/0),
     resid(0), tang(0, 0), mode(EMPTY), theSlave(0), ndm(0), kn(0.0), nps(0),
-    kt(0.0), mu(0.0), theDomain(0), contactTag(0), segIndex(0)
+    kt(0.0), mu(0.0), theDomain(0), contactTag(0), segIndex(0), consistentTan(false)
 {
     // myDOF_Groups and myID are size 0 (empty connectivity): the adapter adds NO
     // edges to the DOF graph, so the numberer permutation is untouched and the
@@ -47,7 +47,7 @@ LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, int ndm_,
   : FE_Element(tag, /*numDOF_Group=*/1, /*ndof=*/ndm_),
     resid(ndm_), tang(ndm_, ndm_),
     mode(RIGID_PLANE), theSlave(slaveNode), ndm(ndm_), kn(kn_), nps(0),
-    kt(0.0), mu(0.0), theDomain(0), contactTag(0), segIndex(0)
+    kt(0.0), mu(0.0), theDomain(0), contactTag(0), segIndex(0), consistentTan(false)
 {
     // Connectivity = the slave node's DOF_Group; setID() fills myID with its first
     // ndm equation numbers (the translational DOFs). Same pattern as PenaltySP_FE.
@@ -63,11 +63,12 @@ LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, int ndm_,
 LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, Node **segNodes,
                                    int nps_, double kn_, const double odir[3],
                                    double kt_, double mu_, Domain *dom,
-                                   int contactTag_, int segIndex_)
+                                   int contactTag_, int segIndex_, bool consistentTan_)
   : FE_Element(tag, /*numDOF_Group=*/1 + nps_, /*ndof=*/3 * (1 + nps_)),
     resid(3 * (1 + nps_)), tang(3 * (1 + nps_), 3 * (1 + nps_)),
     mode(SEGMENT), theSlave(slaveNode), ndm(3), kn(kn_), nps(nps_),
-    kt(kt_), mu(mu_), theDomain(dom), contactTag(contactTag_), segIndex(segIndex_)
+    kt(kt_), mu(mu_), theDomain(dom), contactTag(contactTag_), segIndex(segIndex_),
+    consistentTan(consistentTan_)
 {
     // Connectivity = slave DOF_Group + each segment-node DOF_Group. setID() then
     // fills myID = [slave xyz | seg_1 xyz | ... | seg_nps xyz] (each node ndf==3 ⇒
@@ -135,6 +136,29 @@ LadrunoContactFE::segmentActive(double &gap, double n[3], double N[4], double *B
         LadrunoContactKernel::tangentPart(drel, n, gTvec);
     }
     return true;
+}
+
+void
+LadrunoContactFE::addFrictionTang(double fact, const double n[3], const double N[4],
+                                  double tn, const double gTeff[3], const double gpT[3],
+                                  bool consistent)
+{
+    // K_fric = Gᵀ K_ss G, G = [I | −N_i I]. Block (a,b) of the ndof×ndof tangent is
+    // w_a·w_b·K_ss with the scatter weights w = [1, −N_0, …, −N_{nps−1}] over
+    // [slave, seg nodes]. Validated assembly: proto_p35_implicit_tangent.py.
+    double Kss[3][3];
+    LadrunoContactKernel::frictionTangentBlock(gTeff, gpT, n, tn, kn, kt, mu, consistent, Kss);
+    double w[5];
+    w[0] = 1.0;
+    for (int i = 0; i < nps; i++) w[1 + i] = -N[i];
+    int nn = 1 + nps;
+    for (int a = 0; a < nn; a++)
+        for (int b = 0; b < nn; b++) {
+            double wab = fact * w[a] * w[b];
+            for (int i = 0; i < 3; i++)
+                for (int j = 0; j < 3; j++)
+                    tang(3 * a + i, 3 * b + j) += wab * Kss[i][j];
+        }
 }
 
 double
@@ -239,12 +263,28 @@ LadrunoContactFE::addKtToTang(double fact)
     } else if (mode == SEGMENT) {
         // K_c = kn BᵀB (main NTS term; ∂n/∂u block deferred to P2b-2 — for a FIXED
         // master the slave block kn(n⊗n) is exact and the master DOFs are constrained).
-        double gap, n[3], N[4], B[15];
-        if (segmentActive(gap, n, N, B)) {
+        double gap, n[3], N[4], B[15], gTvec[3];
+        if (segmentActive(gap, n, N, B, gTvec)) {
             int ndof = 3 * (1 + nps);
             for (int i = 0; i < ndof; i++)
                 for (int j = 0; j < ndof; j++)
                     tang(i, j) += fact * kn * B[i] * B[j];
+            // P3.5 friction tangent (IMPLICIT only — CDL never calls addKtToTang).
+            // Reads COMMITTED gpT (not gpTtrial) so the tangent is the derivative of the
+            // residual evaluated at the same state. Default consistentTan=false ⇒
+            // symmetric (drop d_TN⊗n, solver-safe); true ⇒ full non-sym consistent.
+            if (mu > 0.0 && theDomain != 0) {
+                LadrunoContactDomain *cd = theDomain->getLadrunoContactDomain();
+                if (cd != 0) {
+                    LadrunoContactDomain::FrictionState &st =
+                        cd->getOrCreateFrictionState(contactTag, theSlave->getTag(), segIndex);
+                    double gTeff[3];
+                    for (int d = 0; d < 3; d++)
+                        gTeff[d] = st.engaged ? (gTvec[d] - st.gT0[d]) : 0.0;
+                    double tn = LadrunoContactKernel::traction(kn, gap);
+                    addFrictionTang(fact, n, N, tn, gTeff, st.gpT, consistentTan);
+                }
+            }
         }
     }
 }
@@ -269,6 +309,15 @@ LadrunoContactFE::addKiToTang(double fact)
             for (int i = 0; i < ndof; i++)
                 for (int j = 0; j < ndof; j++)
                     tang(i, j) += fact * kn * B[i] * B[j];
+            // P3.5: the friction INITIAL stiffness is the STICK tangent kt·Gᵀ P_t G
+            // (SPD ⇒ a Modified/Initial-Newton contraction; gate Q5). gTeff/gpT do not
+            // matter (forced stick ⇒ K_ss = kt·P_t), so no engine slot is needed; the
+            // stick tangent is symmetric, so consistent=false here regardless.
+            if (mu > 0.0) {
+                double tn = LadrunoContactKernel::traction(kn, gap);
+                double zero[3] = {0.0, 0.0, 0.0};
+                addFrictionTang(fact, n, N, tn, zero, zero, false);
+            }
         }
     }
 }
