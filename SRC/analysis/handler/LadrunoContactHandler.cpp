@@ -26,7 +26,8 @@
 #include "LadrunoContactHandler.h"
 #include "LadrunoContactFE.h"
 
-#include <LadrunoContactDomain.h>   // Ladruno: ADR-39 (adapter count from the engine)
+#include <LadrunoContactDomain.h>    // Ladruno: ADR-39 (adapter count from the engine)
+#include <LadrunoContactSurface.h>   // Ladruno: ADR-39 P2a (slave node-set)
 #include <Domain.h>
 #include <AnalysisModel.h>
 #include <Integrator.h>
@@ -167,13 +168,36 @@ LadrunoContactHandler::handle(const ID *nodesLast)
     // P1b (graph-neutral) — the narrow phase + per-segment connectivity is P2.
     LadrunoContactDomain *cd = theDomain->getLadrunoContactDomain();
     int nAdapters = (cd != 0) ? cd->buildAdapterCount() : 0;
-    for (int a = 0; a < nAdapters; a++) {
+    for (int a = 0; a < nAdapters; a++) {        // generic (P1b zero-force) contacts
         LadrunoContactFE *contactFE = new LadrunoContactFE(numFe++);
         if (contactFE == 0) {
             opserr << "WARNING LadrunoContactHandler::handle() - out of memory (contact FE)\n";
             return -5;
         }
         theModel->addFE_Element(contactFE);
+    }
+
+    // P2a: rigid analytical-plane contacts -> ONE bound adapter per slave node
+    // (connectivity = that node). ndm derived per-node from its coordinates.
+    if (cd != 0) {
+        for (int p = 0; p < cd->getNumRigidPlanes(); p++) {
+            const LadrunoContactDomain::RigidPlane &rp = cd->getRigidPlane(p);
+            LadrunoContactSurface *surf = cd->getSurface(rp.slaveSurfTag);
+            if (surf == 0) continue;
+            const ID &nodeTags = surf->getNodeTags();
+            for (int k = 0; k < nodeTags.Size(); k++) {
+                Node *sn = theDomain->getNode(nodeTags(k));
+                if (sn == 0) {
+                    opserr << "WARNING LadrunoContactHandler::handle() - rigid-plane slave node "
+                           << nodeTags(k) << " not in domain; skipped\n";
+                    continue;
+                }
+                int nd = sn->getCrds().Size();
+                LadrunoContactFE *fe = new LadrunoContactFE(numFe++, sn, nd, rp.p0, rp.n, rp.kn);
+                if (fe == 0) return -5;
+                theModel->addFE_Element(fe);
+            }
+        }
     }
 
     return count3;

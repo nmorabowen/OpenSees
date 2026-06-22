@@ -24,6 +24,7 @@
 #include "LadrunoContactDomain.h"
 #include "LadrunoContactSurface.h"
 #include <OPS_Globals.h>   // opserr, endln
+#include <cmath>           // sqrt
 
 LadrunoContactDomain::LadrunoContactDomain()
   : numCommits(0), numReverts(0)
@@ -75,6 +76,27 @@ LadrunoContactDomain::addContact(int tag, int masterSurfTag, int slaveSurfTag,
     c.tag = tag; c.masterSurfTag = masterSurfTag; c.slaveSurfTag = slaveSurfTag;
     c.kn = kn; c.kt = kt; c.mu = mu;
     theContacts.push_back(c);
+    return 0;
+}
+
+int
+LadrunoContactDomain::addRigidPlane(int tag, int slaveSurfTag,
+                                    const double p0[3], const double n[3], double kn)
+{
+    if (getSurface(slaveSurfTag) == 0) {
+        opserr << "WARNING LadrunoContactDomain::addRigidPlane() - slave surface "
+               << slaveSurfTag << " not defined\n";
+        return -1;
+    }
+    double nrm = sqrt(n[0]*n[0] + n[1]*n[1] + n[2]*n[2]);
+    if (nrm < 1e-14) {
+        opserr << "WARNING LadrunoContactDomain::addRigidPlane() - zero normal\n";
+        return -1;
+    }
+    RigidPlane rp;
+    rp.tag = tag; rp.slaveSurfTag = slaveSurfTag; rp.kn = kn;
+    for (int d = 0; d < 3; d++) { rp.p0[d] = p0[d]; rp.n[d] = n[d] / nrm; }
+    theRigidPlanes.push_back(rp);
     return 0;
 }
 

@@ -60,6 +60,18 @@ class LadrunoContactDomain
                    double kn, double kt, double mu);
     int getNumContacts(void) const { return (int)theContacts.size(); }
 
+    // --- P2a: rigid analytical plane (point p0 + outward unit normal n) vs a
+    //     slave node-set; one adapter per slave node, connectivity = {slave}. ---
+    struct RigidPlane {
+        int tag, slaveSurfTag;
+        double p0[3], n[3];     // n stored normalized at add time
+        double kn;
+    };
+    int addRigidPlane(int tag, int slaveSurfTag,
+                      const double p0[3], const double n[3], double kn);
+    int getNumRigidPlanes(void) const { return (int)theRigidPlanes.size(); }
+    const RigidPlane &getRigidPlane(int i) const { return theRigidPlanes[i]; }
+
     // --- handler interface: how many adapters to inject this handle() ---
     int buildAdapterCount(void) const { return (int)theContacts.size(); }
 
@@ -76,6 +88,7 @@ class LadrunoContactDomain
     };
     std::vector<LadrunoContactSurface *> theSurfaces;   // owned
     std::vector<Contact> theContacts;
+    std::vector<RigidPlane> theRigidPlanes;             // P2a
     int numCommits;
     int numReverts;
 };

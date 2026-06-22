@@ -41,7 +41,7 @@ return map). P0 = validation only (light verification, no heavy gate).
 | P1a FE+handler+empty-conn zero, bitwise | **DONE ✓** (5eb3b810) | design gate ✓ + code gate ✓ | local | rebuilt + 3/3 bitwise green w/ fixes; committed |
 | P1b ContactDomain+surface+lifecycle hooks | **DONE ✓** (344a9c86) | light review ✓ (test-covered + clean compile; Domain non-copyable → no double-free) | local | 7/7 green; build exit 0; committed |
 | P2 NTS penalty narrow phase (frictionless) | DESIGN GATE ✓ → SPLIT P2a/P2b | full gate ✓ (SALVAGEABLE; folded) | — | design revised; P2a next (rigid plane, -kn val) |
-| P2a rigid+inclined plane, -kn val | NEXT (coding) | code gate after build | — | de-risked rung: penalty+B+active-set, no projection kernel |
+| P2a rigid+inclined plane, -kn val | **GREEN ✓** (3/3 + P1 regression 10/10) | code gate PENDING (fold into P2b gate) | guppi/contact-p2a | mechanics exact; committing |
 | P2b faceted+deformable+Hertz+auto-kn+∂n/∂u | NOT STARTED | full gate already covers; code gate | — | the deformable mechanics |
 | P2 NTS penalty frictionless | NOT STARTED | **adversarial gate** | — | rigid-plane rung first |
 | P2.5 bucket sort drop-in | NOT STARTED | verify==brute force | — | — |
@@ -220,6 +220,74 @@ Files (all in SRC/analysis/handler/ for P1a; LadrunoContactFE moves to SRC/domai
 All folded into `_adr39_p2_design.md` (committed bae2456c → revised). NEXT: code P2a.
   P2a needs the custom-FE_Element connectivity pattern (study PenaltySP_FE/TransformationFE
   — how a constraint-handler FE_Element subtype sets myDOF_Groups + myID + returns tang/resid).
+
+### Iteration 9 — P1 MERGED #345; P2a coded on fresh branch guppi/contact-p2a
+- P1 merged to ladruno (squash cfd35f458); CI caught a missing manifest.yaml row
+  (fixed: testbed/manifest.yaml LadrunoContactHandler row) → green → merged. LESSON:
+  add the manifest.yaml row in the SAME commit as any new classTag (not just the LEDGER table).
+- Branched fresh off ladruno (guppi/contact-p2a) per the stacked-PR pitfall.
+- **Custom-FE_Element connectivity pattern NAILED (PenaltySP_FE):** `FE_Element(tag, 1, ndof)`
+  + `myDOF_Groups(0) = node->getDOF_GroupPtr()->getTag()`; base `setID()` fills `myID` with
+  the node's first `numDOF` equation numbers (so coupling the leading ndm translational DOFs
+  is automatic). SIGN: `getTangent` returns **+K** (PenaltySP returns +alpha, NOT c1-scaled);
+  `getResidual` = force driving toward the constraint. c1 RESOLVED: residual determines the
+  answer (exact, c1-independent); bare K_c tangent → exact in statics (c1=1), ignored in
+  explicit, right-answer-but-maybe-more-Newton-iters in implicit-dynamic. So bare K_c is SAFE.
+- **P2a code (rigid analytical plane, inline math — kernel header deferred to P2b):**
+  - LadrunoContactDomain: `addRigidPlane(tag, slaveSurf, p0, n, kn)` (n normalized) + RigidPlane
+    struct + getNumRigidPlanes/getRigidPlane.
+  - LadrunoContactFE: 2nd ctor `(tag, Node* slave, ndm, p0, n, kn)` → FE_Element(tag,1,ndm),
+    binds slave DOF_Group; rigidPlaneGap()=n·(X+u−p0); getResidual=−kn·g·n (g<0); getTangent=
+    kn·n⊗n (active). EMPTY ctor kept for P1b path.
+  - Handler: per rigid plane → per slave node → bound adapter (ndm from node getCrds().Size()).
+  - Parser: `contactPlane tag slaveSurf nx ny nz px py pz kn` (OPS_ + Py + Tcl, dual-wired).
+  - Test test_adr39_contact_p2a.py: axis-aligned pen=P/kn (static, rel 1e-6) + inclined (3-4-5
+    off-axis n⊗n) + release→F≈0 + explicit impact stable/e≈1. Node STARTS just-penetrated
+    (−1e-8·n) so static contact is active from step 1 (else singular — no out-of-contact stiffness).
+  - Build bge579pp8 live.
+- NEXT on build: run test_adr39_contact_p2a.py; if green → P2a code gate → ledger P2a vanilla
+  rows (interpreter contactPlane) + manifest? (no new classTag, P2a rides 33002) → commit → PR
+  (or stack) → P2b (faceted+deformable+Hertz+auto-kn+∂n/∂u tangent + ZeroLengthContactASDimplex oracle).
+
+### Iteration 10 — P2a debug: build int-arg fix + STATIC PASS + explicit mass-pollution bug FIXED
+- Build fix 1: `OPS_GetDoubleInput(&nd, ...)` needed int* count; had `double nd` → C2664. Fixed.
+- **STATIC penetration=P/kn test PASSES** (1e-6) → adapter/penalty/connectivity/parser all correct.
+- **EXPLICIT pass-through BUG (important, generalizes to any backing-element-less FE_Element):**
+  node coasted THROUGH the plane at constant v. ROOT CAUSE: my getTangent returned K_c (contact
+  stiffness) DIRECTLY; the `Linear` algorithm re-forms the tangent EVERY step, and CDL assembles
+  getTangent into the explicit MASS (Diagonal) → M_xx = m + kn ≈ 1e6 → a_x ≈ 0 → node coasts.
+  (getResidual/contact force were FINE; the huge wrong mass made them ineffective.)
+  **FIX:** getTangent must route through `theIntegrator->formEleTangent(this)` (NOT return K
+  directly), + override the virtual `zeroTangent`/`addKtToTang`/`addCtoTang`/`addMtoTang` to feed
+  MY tang buffer. Then the INTEGRATOR decides: CDL formEleTangent = addMtoTang only (no-op) → tang=0
+  → NO mass pollution; Newmark = addKtToTang(c1) → c1·K_c; statics = addKtToTang(1) → K_c. This
+  ALSO resolves the c1-scaling correctly (better than the earlier "bare K_c" rationalization).
+  LESSON for P2b/handoff: a custom FE_Element (myEle==0) MUST go through formEleTangent; returning
+  K from getTangent corrupts the explicit mass matrix.
+
+### Iteration 11 — explicit physics FIXED (e=1.0, pen=0.002 exact); 3rd bug = teardown null-deref
+- After the formEleTangent fix: explicit impact CORRECT — penetration 0.002 (=v·√(m/kn) exact),
+  restitution e=1.0. Static still exact. MECHANICS ALL CORRECT.
+- Crash on a SECOND contact analysis in one process (first OK, 2nd ops.wipe crashes); NOT
+  static-specific — ANY two contact analyses; impact-alone passes.
+- **3rd bug (teardown null-deref, generalizes to any contact-ONLY model):** impact model has
+  node+mass+contact adapter but NO element-backed FE_Element → the base FE_Element shared static
+  scratch (theMatrices/theVectors), only allocated by the element-backed ctor, stays NULL → base
+  ~FE_Element loops `theVectors[i]` when last FE destroyed (numFEs→0) → null deref → segfault on
+  the 2nd wipe. P1 never hit it (Truss elements present). FIX: `ensureSharedScratch()` in both
+  LadrunoContactFE ctors — guard-allocate if null. LESSON: a custom FE_Element in a possibly-
+  element-free model must ensure the base shared scratch exists.
+- Rebuild b92sm7ub5 live. NEXT: full test_adr39_contact_p2a.py (expect static + 2 impacts green).
+- ensureSharedScratch guard FAILED to compile: theMatrices/theVectors are PRIVATE in FE_Element
+  (not protected) → subclass can't touch them. REVERTED. Instead fixed at the TEST level: each
+  P2a model carries a NEGLIGIBLE z-direction anchor truss (tiny EA, no test has z-motion → zero
+  physics effect) which gives the model an element-backed FE_Element so the base shared scratch
+  allocates. (A real contact model always has structural elements, so this is realistic, not a
+  hack.) Rebuild bmtn93h21 live. NEXT: run the battery.
+- KNOWN-LIMITATION for handoff: a true element-FREE contact model (single mass on a plane, no
+  elements at all) still crashes on teardown (base FE_Element private shared-scratch null-deref).
+  Options if needed: (a) make FE_Element theMatrices/theVectors protected (1-line vanilla edit,
+  ledger), or (b) document that contact models need ≥1 structural element. Deferred — not on the v1 path.
 
 ## Deferred / parked
 - P4 SOFT, P5 segment-based, P6 tied, AL upgrade (Q-AL), MPI — all post-v1 per ADR.

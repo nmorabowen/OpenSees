@@ -447,6 +447,12 @@ static int Tcl_ops_LadrunoContact(ClientData clientData, Tcl_Interp *interp, int
     return TCL_OK;
 }
 
+static int Tcl_ops_LadrunoContactPlane(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {  // Ladruno ADR-39 P2a
+    wrapper->resetCommandLine(argc, 1, argv);
+    if (OPS_LadrunoContactPlane() < 0) return TCL_ERROR;
+    return TCL_OK;
+}
+
 static int Tcl_ops_LadrunoContactInfo(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {  // Ladruno ADR-39
     wrapper->resetCommandLine(argc, 1, argv);
     if (OPS_LadrunoContactInfo() < 0) return TCL_ERROR;
@@ -1839,6 +1845,7 @@ TclWrapper::addOpenSeesCommands(Tcl_Interp* interp)
     addCommand(interp,"ladrunoProjectionTieForce", &Tcl_ops_LadrunoProjectionTieForce);  // Ladruno ADR-30 P3
     addCommand(interp,"contactSurface", &Tcl_ops_LadrunoContactSurface);   // Ladruno ADR-39
     addCommand(interp,"contact", &Tcl_ops_LadrunoContact);                 // Ladruno ADR-39
+    addCommand(interp,"contactPlane", &Tcl_ops_LadrunoContactPlane);       // Ladruno ADR-39 P2a
     addCommand(interp,"ladrunoContactInfo", &Tcl_ops_LadrunoContactInfo);  // Ladruno ADR-39
     addCommand(interp,"eigen", &Tcl_ops_eigen);
     addCommand(interp,"nDMaterial", &Tcl_ops_nDMaterial);
