@@ -32,7 +32,8 @@ return map). P0 = validation only (light verification, no heavy gate).
 | Phase | State | Gate | PR | Notes |
 |---|---|---|---|---|
 | P0 falsify/baseline (no SRC) | **DONE ✓** | light verify ✓ | local | both protos pass; 2 design rules extracted |
-| P1 skeleton+handler+brute-force, zero-force | DESIGN GATE RUNNING | **adversarial design gate** (wv35sge9t) | — | `_adr39_p1_design.md`; gate launched, awaiting verdict |
+| P1a FE+handler+empty-conn zero, bitwise | DESIGN DONE → CODING | design gate ✓ (SALVAGEABLE) | — | gate folded; replicate-handler + empty-conn + Domain commit/revert hooks |
+| P1b ContactDomain+surface+lifecycle hooks | NOT STARTED | — | — | after P1a green |
 | P2 NTS penalty frictionless | NOT STARTED | **adversarial gate** | — | rigid-plane rung first |
 | P2.5 bucket sort drop-in | NOT STARTED | verify==brute force | — | — |
 | P3 IMPL-EX Coulomb — SHIP | NOT STARTED | **adversarial gate** | — | v1 ship |
@@ -81,6 +82,30 @@ return map). P0 = validation only (light verification, no heavy gate).
   reviewers: trigger · handler/numbering · state/lifecycle · completeness → synth).
   Running in background. NEXT on completion: fold the verdict + fix list into the
   P1 design, THEN write C++.
+
+### Iteration 3 — P1 design gate verdict (SALVAGEABLE-WITH-CHANGES) FOLDED
+Gate caught 3 real bugs the zero-force test would NOT expose (but corrupt state at P3):
+- **BLOCKER-1:** commit-hook story refuted by all 4 — ConstraintHandler never called
+  at commit; its only per-step entry applyLoad() is pre-solve on REJECTABLE trial
+  state. FIX: state on Domain-owned LadrunoContactDomain, committed via `// Ladruno`
+  hook in `Domain::commit()`; adapters = STATELESS VIEWS re-bound by pair-key in handle().
+- **BLOCKER-2:** missing `Domain::revertToLastCommit()` hook (failed implicit steps
+  revert → friction state leaks into retry). Added.
+- **MAJOR-3:** implicit getTangent must return `c1·K_c` (Newmark addKtToTang(c1)), not raw K_c.
+- **MAJOR-4:** "explicit never calls getTangent" imprecise — getTangent IS called,
+  delegates to mass-only formEleTangent under CDL. Also myEle==0 ⇒ base helpers
+  early-return/exit(-1) ⇒ adapter MUST own its Vector/Matrix buffers + override both.
+- **Q-P1-2:** REPLICATE PlainHandler (not compose) — FE-tag collision + MP -4 elim.
+- **Q-P1-3:** EMPTY connectivity (size-0 getID) for inactive P1 adapter → genuinely
+  BITWISE identical (connectivity perturbs the numberer graph even at zero force).
+- **MINOR-10:** getExplicitCriticalTimeStep DEAD on adapters (CriticalTimeStep scans
+  Domain elements only) → removed from P1, route via ContactDomain at P3.
+- classTags: HANDLER_TAG_LadrunoContactHandler 33002, ELE_TAG_LadrunoContactFE 33015.
+- **P1 SPLIT: P1a** (FE + handler + `constraints LadrunoContact`, ≈1 vanilla edit,
+  bitwise gate) → **P1b** (ContactDomain on Domain + surface + commit/revert hooks
+  + parser). Folded into `_adr39_p1_design.md` + ADR table + hybrid-table precision.
+- NEXT: write P1a C++ (read LadrunoProjectionHandler::handle + PlainHandler::handle
+  as the replicate template), build (background), test bitwise under CDL+Newmark.
 
 ## Deferred / parked
 - P4 SOFT, P5 segment-based, P6 tied, AL upgrade (Q-AL), MPI — all post-v1 per ADR.

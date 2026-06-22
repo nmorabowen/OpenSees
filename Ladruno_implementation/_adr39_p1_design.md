@@ -1,131 +1,139 @@
 # ADR 39 — P1 design: skeleton + handler injection + zero-force hybrid
 
-> Pre-code design for P1. Goes through the adversarial DESIGN gate BEFORE C++
-> (mirrors ADR-30 Gate-A). Grounded in the real OpenSees interfaces read 2026-06-21.
-> Parent: `39_ladruno_contact_domain_adr.md`. Loop: `_adr39_loop_state.md`.
+> Pre-code design for P1. **Revised after the adversarial design gate** (Workflow
+> wv35sge9t, 4 reviewers + synth → SALVAGEABLE-WITH-CHANGES; all fixes folded in,
+> flagged `[GATE]`). Grounded in real OpenSees source. Parent:
+> `39_ladruno_contact_domain_adr.md`. Loop: `_adr39_loop_state.md`.
 
 ## P1 goal
 
-Prove the **hybrid plumbing + handler injection** with a **zero-force** contact
-adapter — NO narrow phase yet. Acceptance: the same model runs under
-`CentralDifferenceLadruno` (explicit) AND `Newmark` (implicit) with contact
-defined-but-inactive and gives the **same answer as no-contact** (tolerance, see
-Q-P1-3), and the handler delegates the non-contact constraints correctly.
+Prove the **hybrid plumbing + handler injection + commit/revert lifecycle** with
+a **zero-force** contact adapter — NO narrow phase. Split into **P1a** (prove
+hybrid+injection, ≈1 vanilla edit) then **P1b** (Domain surface + lifecycle
+hooks). `[GATE]`
 
 ## Grounded interface facts (verified in source)
 
-- `ConstraintHandler` (abstract): `handle(nodesNumberedLast)` is the **only**
-  FE_Element/DOF_Group factory; called inside `domainChanged()` after
-  `clearAll()` (`DirectIntegrationAnalysis.cpp:413,423`). `setLinks(Domain&,
-  AnalysisModel&, Integrator&)`, `update()`, `applyLoad()`, `doneNumberingDOF()`,
-  `clearAll()` are lifecycle hooks.
-- **`ConstraintHandler::update()` is NOT called in the transient step loop** —
-  the loop is `newStep → solveCurrentStep → commit`
-  (`DirectIntegrationAnalysis.cpp:215-258`). ⇒ the per-step contact trigger
-  CANNOT be the handler's `update()`.
-- `FE_Element` has a **bare constructor** `FE_Element(int tag, int numDOF_Group,
-  int ndof)` for adapters not backed by a Domain `Element`. Overridable:
-  `getResidual(Integrator*)`, `getTangent(Integrator*)`, `addMtoTang`, `getID`,
-  `getDOFtags`. A normal `Element` FE reads node trial disp inside its
-  `getResistingForce` — an adapter can do the same.
-- `LadrunoProjectionHandler` is the in-fork `ConstraintHandler` precedent
-  (HANDLER_TAG 33001).
+- `ConstraintHandler::handle(nodesNumberedLast)` is the **only** FE_Element/
+  DOF_Group factory; called inside `domainChanged()` after `clearAll()`
+  (`DirectIntegrationAnalysis.cpp:412,423`). `update()` is NOT in the step loop.
+- **`ConstraintHandler::applyLoad()` IS called every step** via
+  `AnalysisModel::applyLoadDomain`/`updateDomain` (`AnalysisModel.cpp:567,604`) —
+  but PRE-solve on TRIAL (rejectable) state. ⇒ right place for the **broad phase**
+  (P2.5), WRONG place for state **commit**. `[GATE MINOR-8]`
+- Adapter reading `Node::getTrialDisp()` in `getResidual` sees the CURRENT iterate
+  in BOTH families: explicit sets trial via `setResponse`+`updateDomain` in
+  `newStep` before `formUnbalance` (`CentralDifferenceLadruno.cpp:509-518`);
+  implicit updates trial each Newton iter (`Newmark.cpp:482-505`,
+  `NewtonRaphson.cpp:200-215`). `[GATE Q-P1-1 RESOLVED]`
+- `FE_Element` bare ctor `(tag, numDOF_Group, ndof)` → `myEle==0`. **With
+  `myEle==0` the base `getResidual`/`getTangent` `exit(-1)` and `zeroResidual`/
+  `addMtoTang`/etc. early-return** (`FE_Element.cpp:167-194,296,323`). ⇒ the
+  adapter MUST override `getResidual` AND `getTangent` AND own its own
+  `Vector`/`Matrix` buffers. `[GATE MAJOR-4]`
+- **Explicit DOES call `getTangent(this)`** (`IncrementalIntegrator::formTangent`
+  `:110-124`, unconditional) — it just delegates to `formEleTangent`, which under
+  CDL is mass-only (`CentralDifferenceLadruno.cpp:222-227`, no `addKtToTang`) ⇒
+  zero contact LHS. The earlier "explicit never calls getTangent" was imprecise.
+  `[GATE MAJOR-4]`
+- Implicit assembles the tangent as `addKtToTang(c1)` (`Newmark.cpp:289-294`) ⇒ the
+  adapter's `getTangent` must return **`c1·K_c`** (read the integrator combo
+  factors), not raw `K_c`. `[GATE MAJOR-3]`
 
-## Design decision: self-contained adapter (narrow phase in getResidual)
+## Design decision: self-contained, STATELESS-VIEW adapter
 
-**The contact FE_Element computes its own narrow phase when the assembly asks
-for its residual/tangent — exactly like a real Element.** No per-step global
-trigger, no vanilla integrator edit.
+**The contact FE_Element computes its own narrow phase in `getResidual`/
+`getTangent` (like a real Element) — no per-step trigger, no vanilla integrator
+edit.** The adapter is a **stateless VIEW**: all path-dependent pair state
+(gap0, friction slip/stick) lives on the **Domain-owned `LadrunoContactDomain`**,
+re-bound to fresh adapters by pair-key at every `handle()`. `[GATE Q-P1-4]`
 
-```
-class LadrunoContactFE : public FE_Element {
-  // connectivity = conservative static superset of nodes its pairs can couple
-  // (P1: one adapter per master segment; nodes = segment nodes ∪ candidate slaves)
-  const Vector& getResidual(Integrator*) override {
+```cpp
+class LadrunoContactFE : public FE_Element {     // ELE_TAG 33015
+  Vector resid;  Matrix tang;                    // OWN buffers (myEle==0)
+  // P1a: empty connectivity -> FE_Element(tag,0,0); resid size 0, tang 0x0
+  const Vector& getResidual(Integrator*) override {            // both families
      resid.Zero();
-     for (pair in myPairs) {                 // P1: myPairs empty / returns zero
-        project slave onto master seg (read Node::getTrialDisp);
-        if (gap < 0) { F = -kn*gap*n (+friction); scatter F into resid over myID; }
-     }
-     return resid;                           // explicit: this is all that's used
+     for (key in myPairKeys) { st = contactDomain->pair(key);  // VIEW: read state
+        project (Node::getTrialDisp); if (gap<0) scatter F into resid over myID; }
+     return resid;                               // P1: zero
   }
-  const Matrix& getTangent(Integrator*) override { ... K_c ... }  // implicit only
-  void addMtoTang(double) override {}        // contact pairs carry no mass
-  double getExplicitCriticalTimeStep() override { return active? 2*sqrt(m/kn):-1; }
+  const Matrix& getTangent(Integrator* I) override {           // implicit only
+     tang.Zero(); ... K_c ...; tang *= I->getCfactors...c1;    // [GATE MAJOR-3]
+     return tang;
+  }
+  void addMtoTang(double) override {}            // contact pairs carry no mass
 };
 ```
 
-- **Explicit:** `formEleTangent` is mass-only (verified) ⇒ `getTangent` never
-  called; `getResidual` injects `F_c`. Self-contained.
-- **Implicit:** `getResidual` + `getTangent` both used; Newton reads current trial
-  disp each iteration. Self-contained.
-- **Friction state** (path-dependent) commits in the adapter's `commitState`-equiv
-  (FE_Element has no commitState; the OWNING `LadrunoContactPair` state is committed
-  via a hook the handler calls at commit — Q-P1-4).
+## Lifecycle (the gate's BLOCKER fixes)
 
-## Component sketch (P1 scope = skeleton, zero force)
+- **Commit:** `Domain::commit()` is the single integrator-agnostic choke point
+  (`Domain.cpp:2157-2186`). Add `// Ladruno: if (theContactDomain)
+  theContactDomain->commit();`. (Domain iterates only Nodes/Elements, never
+  AnalysisModel FE_Elements ⇒ the adapter can't self-commit.) `[GATE BLOCKER-1]`
+- **Revert:** `Domain::revertToLastCommit()` (`Domain.cpp:2188-2214`) — failed
+  implicit steps call it (`DirectIntegrationAnalysis.cpp:201,219,230,260`). Add
+  `// Ladruno: theContactDomain->revertToLastCommit();` else rejected-trial
+  friction state leaks into the retry. **Was missing.** `[GATE BLOCKER-2]`
+- **clearAll/rebuild:** `domainChanged` does `AnalysisModel::clearAll()` (destroys
+  adapters) NOT `Domain::clearAll()`, so the Domain-owned `LadrunoContactDomain`
+  (and its pair state) SURVIVES. New adapters re-bind to it by pair-key in
+  `handle()`. `[GATE Q-P1-4]`
+- **Serialization** rides `LadrunoContactDomain::sendSelf/recvSelf` (or `Node`
+  slots à la `projTieForce`), never the FE. P1 single-proc stubs `→0`.
 
-1. **`LadrunoContactDomain`** (Domain owns `LadrunoContactDomain*`, nullable →
-   byte-identical when null). Holds surfaces + (P2.5) bucket grid + the adapter
-   set. P1: builds adapters from a **brute-force** candidate pairing.
-2. **`LadrunoContactSurface`** — from a node-set (slave) or element-face-set
-   (master). P1: stores node tags + segment connectivity; no projection.
-3. **`LadrunoContactFE : FE_Element`** — the adapter (above). P1: `getResidual` /
-   `getTangent` return **zero**; connectivity declared but force = 0.
-4. **`LadrunoContactHandler : ConstraintHandler`** — `handle()`:
-   (a) do the PlainHandler work (DOF_Groups for all nodes, FE_Elements for all
-   Domain elements) — by **composing an owned base handler** (`thePlain->handle()`)
-   or replicating it; then
-   (b) ask `theContactDomain` for its adapter set and `theModel->addFE_Element(fe)`
-   for each. `clearAll()` deletes the adapters. `commit` hook commits pair state.
+## Handler: REPLICATE PlainHandler, do not compose `[GATE Q-P1-2 / MAJOR-5]`
 
-## Open questions for the gate
+`LadrunoContactHandler::handle()` mirrors `LadrunoProjectionHandler::handle()`
+(`:148-218`): replicate the PlainHandler DOF_Group + element-FE loop, **track
+`numFe` locally** (PlainHandler returns `count3` ≠ `numFe`, `:299`, so a composer
+can't know the next FE tag — and `addFE_Element` silently drops duplicate tags),
+then append the contact adapter(s) with tags continuing above `numFe`. Override
+`doneNumberingDOF` to chain `this->ConstraintHandler::doneNumberingDOF()`.
+Numbering stays valid: contact FEs reuse existing node DOF_Groups (zero new
+equations); `setID()` auto-maps their equation IDs.
 
-> [!question] Q-P1-1 (per-step trigger)
-> With the self-contained-adapter design, is a per-step ContactDomain trigger
-> needed at all for P1/P2, or only at epoch re-emit (P2.5)? Confirm the adapter
-> reading `Node::getTrialDisp()` inside `getResidual` sees the CURRENT iterate in
-> both explicit (`newStep`-set trial) and implicit (Newton-updated trial). Any
-> case where the residual is requested with stale trial disp?
+## P1a — minimal (build first)
 
-> [!question] Q-P1-2 (handler delegation)
-> Compose an owned `PlainHandler` and call its `handle()`, then add contact FEs?
-> Or replicate PlainHandler's DOF_Group/FE loop? Composition risk: the owned
-> handler's `setLinks`, numbering (`doneNumberingDOF`), and `clearAll` must chain
-> correctly. Does adding contact FEs AFTER the base `handle()` but before
-> `doneNumberingDOF` keep the numbering valid (contact FEs reuse existing node
-> DOFs — no NEW equations)?
+Files: `SRC/domain/contact/LadrunoContactFE.{h,cpp}` (empty-connectivity zero
+adapter, owns buffers), `SRC/analysis/handler/LadrunoContactHandler.{h,cpp}`
+(replicate-PlainHandler + inject one empty adapter, hardcoded — no ContactDomain
+yet). Vanilla: the `constraints LadrunoContact` branch in `OPS_ConstraintHandler`
+(`OpenSeesCommands.cpp`). classTags: `HANDLER_TAG_LadrunoContactHandler 33002`
+(after 33001), `ELE_TAG_LadrunoContactFE 33015` (ELE band stops at 33014).
+`sendSelf/recvSelf → 0` stub. CMake: add `SRC/domain/contact/CMakeLists.txt` +
+the handler file to the analysis target.
 
-> [!question] Q-P1-3 (zero-force is NOT byte-identical — connectivity changes the graph)
-> A contact adapter declares connectivity (graph edges between surface nodes) even
-> at zero force. That changes the `DOF_Graph` → the numberer may produce a
-> different equation order / bandwidth → results equal but **NOT byte-identical**.
-> So the P1 gate must assert **same answer to ~1e-12**, NOT bitwise. OR: at
-> zero-force/inactive, the adapter declares EMPTY connectivity (getID size 0) so
-> the graph is untouched — is an empty-connectivity FE_Element legal (does
-> addFE_Element / DOF_Graph tolerate it)? Decide which.
+**P1a acceptance (`tests/test_adr39_contact_p1.py`, zone_a):**
+- 2-block model runs under `CentralDifferenceLadruno` AND `Newmark` with
+  `constraints LadrunoContact`; displacements **BITWISE** identical to no-contact
+  (empty connectivity ⇒ graph-neutral). `[GATE Q-P1-3: empty conn + bitwise]`
+- An `equalDOF` is still enforced through the handler (delegation works).
+- `clearAll`/rebuild roundtrip clean, incl. a forced unrelated `domainChanged`
+  (`remove element` mid-run) → contact behaviour unchanged. `[GATE MINOR-11]`
 
-> [!question] Q-P1-4 (pair state commit)
-> `FE_Element` has no `commitState`. Friction/gap state lives in
-> `LadrunoContactPair`. Who commits it each step? Options: the handler's
-> `applyLoad`/a commit hook; or the adapter registers a `Recorder`-like callback;
-> or ContactDomain commits all pairs when the Domain commits. Which is clean +
-> serialization-safe?
+## P1b — Domain surface + lifecycle hooks (on proven plumbing)
 
-> [!question] Q-P1-5 (conservative-static connectivity, P1 form)
-> P1 uses brute-force pairing (every slave × every master segment). Connectivity
-> per adapter = ? Simplest: ONE adapter over ALL surface nodes (dense but trivially
-> correct for P1's small tests). Per-segment adapters come with bucket sort (P2.5).
-> Is the one-big-adapter P1 simplification acceptable, or does it mask a real
-> numbering/assembly issue that per-segment would expose?
+`LadrunoContactDomain*` on `Domain` (nullable → byte-identical when null) +
+`LadrunoContactSurface`; the `Domain::commit()`/`revertToLastCommit()` `// Ladruno`
+hooks (wired, no-op at zero force); `contactSurface`/`contact` parser + Tcl/Py
+wrapper registrations. P2 switches the adapter to **declared per-segment
+connectivity** + the 1e-12 (not bitwise) gate. `[GATE Q-P1-5: per-segment at P2]`
 
-## P1 acceptance gates (tests)
+## Dead wiring removed `[GATE MINOR-10]`
 
-- Zero-force regression: 2-block model, contact defined, runs under CDL **and**
-  Newmark, displacements match no-contact to 1e-12 (Q-P1-3 tolerance).
-- Handler delegation: a model with an `equalDOF` + the contact handler →
-  the equalDOF is still enforced (delegation works).
-- `addFE_Element` of the adapter succeeds; `clearAll`/rebuild roundtrip clean
-  (no leak, no dangling).
-- Rigid-body translation of both bodies → ΣF_c = 0 (trivially true at zero force;
-  real test lands in P2).
+`getExplicitCriticalTimeStep()` on the adapter is UNREACHABLE — `CriticalTimeStep`
+scans `Domain->getElements()` only (`CriticalTimeStep.cpp:299,310`), never
+AnalysisModel FE adapters. Dropped from the P1 sketch; P3 routes contact `dt_cr`
+via `LadrunoContactDomain` (new CFL seam or a participating Domain element).
+
+## Resolved open questions (all closed by the gate)
+
+- Q-P1-1 trigger → self-contained `getResidual` correct; no per-step trigger
+  (broad-phase trigger = `applyLoad`, only needed at P2.5).
+- Q-P1-2 delegation → REPLICATE, track `numFe` locally.
+- Q-P1-3 byte-identical → EMPTY connectivity + **bitwise** gate (P2 → declared + 1e-12).
+- Q-P1-4 commit → Domain-owned state + `Domain::commit()`/`revertToLastCommit()`
+  hooks; adapters are stateless views.
+- Q-P1-5 connectivity → moot in P1 (empty); per-segment at P2.

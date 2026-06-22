@@ -200,15 +200,18 @@ differently per integrator family:
 
 | Integrator family | Calls on the contact FE | Behaviour | Q4 |
 |---|---|---|---|
-| Explicit (CentralDifference*, ExplicitBathe*, LNVD, SMS) | `getResistingForce()` (+`addMtoTang`, which a contact pair returns as 0 mass) | `F_c` → RHS; `getTangentStiff()` **never called** | (a) force-injection |
-| Implicit (Newmark, HHT, statics + Newton) | `getResistingForce()` **and** `getTangentStiff()` | `F_c` in residual, `K_c` in SOE, Newton iterates | (b) assembled |
+| Explicit (CentralDifference*, ExplicitBathe*, LNVD, SMS) | `getResidual()` **and** `getTangent()` — but `getTangent` delegates to `formEleTangent`, mass-only under CDL | `F_c` → RHS; contact LHS = 0 | (a) force-injection |
+| Implicit (Newmark, HHT, statics + Newton) | `getResidual()` **and** `getTangent()` (assembled `addKtToTang(c1)`) | `F_c` in residual, `c1·K_c` in SOE, Newton iterates | (b) assembled |
 
-The first row is **verified literally**: `CentralDifferenceLadruno::formEleTangent`
-is mass-only (`addMtoTang` only, no `addKtToTang`), so the explicit LHS never
-pulls `K_c`. The default `system Diagonal` cannot even store off-diagonal contact
-coupling, so a wide-connectivity adapter costs nothing on the explicit LHS. The
-SOE is built for fixed-pattern / varying-value assembly, so inactive pairs
-(structural zeros in pre-allocated slots) are a no-op.
+**Precision `[P1 GATE]`:** `getTangent(this)` IS called in BOTH families
+(`IncrementalIntegrator::formTangent:110-124`, unconditional) — it delegates to
+the integrator's `formEleTangent`, which under `CentralDifferenceLadruno` is
+**mass-only** (`:222-227`, no `addKtToTang`) ⇒ zero contact LHS in explicit. The
+implicit tangent is assembled as `addKtToTang(c1)` (`Newmark.cpp:289-294`) ⇒ the
+adapter's `getTangent` must return **`c1·K_c`**, not raw `K_c`. The default
+`system Diagonal` can't even store off-diagonal coupling, so a wide-connectivity
+adapter costs nothing on the explicit LHS; the SOE is built for fixed-pattern /
+varying-value assembly, so inactive pairs are a no-op.
 
 **Two corrections the gate forced:**
 
@@ -374,7 +377,8 @@ ADR-30 projection, and the conflict refusal aligns with ADR-30's chain refusal.
 | Phase | Deliverable | Gate / reference solution |
 |---|---|---|
 | **P0** | Falsify & baseline, **no SRC**: reproduce a pounding + an uplift problem with existing `ZeroLengthContactASDimplex` (pre-defined pairs); standalone bucket-sort prototype vs brute-force O(n²). | pair-list == brute force; penetration = P/k_n |
-| **P1** | `LadrunoContactDomain` + `LadrunoContactSurface` + `LadrunoContactFE` adapter + `LadrunoContactHandler`, fed by a **brute-force pair list (NO bucket sort yet)** `[GATE]`; adapter returns **zero** force. Proves the hybrid plumbing + the handler injection. | same model runs under CentralDifferenceLadruno **and** Newmark, contact-defined-but-inactive, **byte-identical to no-contact**; **rigid-body translate both bodies → ΣF_c=0, ΔE=0** `[GATE]` |
+| **P1a** | `LadrunoContactFE` (**empty-connectivity** zero adapter, owns buffers) + `LadrunoContactHandler` (**replicate**-PlainHandler injection) + `constraints LadrunoContact`. ≈1 vanilla edit. `[P1 GATE]` | model runs under CDL **and** Newmark with the handler active, **BITWISE** identical to no-contact (empty conn ⇒ graph-neutral); `equalDOF` still enforced through the handler; clearAll/rebuild + forced `domainChanged` roundtrip clean |
+| **P1b** | `LadrunoContactDomain` on `Domain` (nullable) + `LadrunoContactSurface` + the `Domain::commit()`/`revertToLastCommit()` `// Ladruno` lifecycle hooks (**stateless-view** adapters re-bound by pair-key) + `contactSurface`/`contact` parser. NO bucket sort (P2.5). `[P1 GATE]` | null ContactDomain ⇒ byte-identical to stock; commit/revert hooks no-op at zero force |
 | **P2** | NTS closest-point projection + **standard penalty** normal force (frictionless), `F_c` (+ `K_c` for the implicit assembly), **still on brute-force pairs**. First sub-rung = **slave-nodes vs a rigid analytical plane** `[GATE]`, then 2 deformable blocks. **Initial-interpenetration scan + warn/abort at setup** `[GATE]`. | penetration = P/k_n exact (explicit + implicit); **`K_c` vs FD on a ROTATED/curved config** `[GATE]`; **frictionless release/reopen → exact return to F=0** `[GATE]`; **Hertz cylinder/sphere-on-halfspace → analytic `p(r)=p₀√(1−(r/a)²)`, peak `p₀` + radius `a` converge under refinement** `[GATE]`; **contact patch test — report the NTS oscillation magnitude vs mesh ratio + confirm resultant equilibrium EXACT (known limitation, not pass/fail)** `[GATE]`; **`E_contact` bounded ≥ 0 frictionless, NEGATIVE ⇒ flag init-penetration** `[GATE]` |
 | **P2.5** | Swap brute-force pair generation for **bucket sort** (cell=LMAX, cap `NX·NY·NZ ≤ min(NSN,5000)`, segment-centroid search, runaway-node guard). | active-pair set == brute force; **runaway-node bbox guard fires** `[GATE]`; regroup-cost profile under **sustained sliding** (>5% rule) `[GATE]` |
 | **P3 — v1 SHIP (explicit)** | **IMPL-EX Coulomb friction** (`updateImplex`), tangential `F_t` (radial return on the `‖t_T‖≤μ|t_N|` cone; optional shear cap `κ·A`). | stick: no slip; **sliding-block-on-incline vs analytic `a=g(sinθ−μcosθ)` + static for `tanθ<μ`** `[GATE]`; **ironing/sliding-patch (block pressed + dragged across a non-matched master) — frictional shear resultant + moving-normal stability** `[GATE]`; **1D central impact, measured restitution `e(k_n,dt)` reported, elastic `e≈1`** `[GATE]`; **oblique frictional impact vs analytic Coulomb impulse** `[GATE]`; **`E_contact` = frictional dissipation (positive)** `[GATE]`; explicit 500-step stable; **friction-state db send/recv roundtrip** `[GATE]`; **contact on a rigidDiaphragm/equalDOF node + conflicting-constraint refusal** `[GATE]` |
