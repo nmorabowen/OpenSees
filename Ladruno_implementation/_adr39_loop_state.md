@@ -556,5 +556,55 @@ Full multi-agent gate (4 source-grounded reviewers → adversarial verify each �
 - **COMMIT PLAN:** P2.5 commits stack on the unmerged P2b-2b (#357) in this worktree. Commit P2.5
   as ONE separable commit; once #357 merges, fresh branch off ladruno + cherry-pick → PR base ladruno.
 
+### Iteration 19 RESULT — P2.5 MERGED #358 (Zone-A confirmation in flight)
+- #357 (P2b-2b) was green/CLEAN but the fork auto-merge stalled ~45 min → user approved
+  `gh pr merge --squash --auto`. On THIS repo (no required status checks) `--auto` merges
+  IMMEDIATELY when mergeable. #357 merged (ladruno c49de8773).
+- Branched fresh `guppi/contact-p25-bucketsort` off origin/ladruno (now incl. P2b-2b) +
+  cherry-picked the P2.5 commit (clean, 11 files) → PR **#358** → enabled `--auto` → MERGED.
+- **LESSON (`--auto` on this repo = merge-NOW):** with no required status checks, `gh pr merge
+  --auto` merges the instant the PR is mergeable — it does NOT wait for Zone-A. #358 merged while
+  Zone-A (Ubuntu) was still PENDING ⇒ P2.5 landed in ladruno before Linux verification. For #357
+  I'd waited for Zone-A first; for #358 I enabled --auto early. FUTURE: wait for Zone-A green
+  THEN merge (or accept the merge-before-Linux risk + fix-forward). Monitoring Zone-A on #358
+  (buinif8wt); code is portable header-only STL + local battery 29/29, so low risk, but this
+  fork has had Win→Linux drift (dsygv_ incident) — confirm green, fix-forward if red.
+
+### Iteration 19 FINAL — P2.5 Zone-A GREEN (9m7s); fully shipped, no Win→Linux drift.
+
+### Iteration 20 — P3 IMPL-EX Coulomb friction (the v1 SHIP) STARTED: oracle done
+- User: "lets do it" → P3 (the v1 ship, critical junction). ladruno confirmed sound (P2.5 Zone-A green).
+- Read the reference `ZeroLengthContactASDimplex::updateInternal` (damage-formulated return map +
+  its quarantined bugs) — Ladruno authors the CLEAN Coulomb radial return instead (ADR grounding).
+- **ORACLE `proto_p3_friction.py` 6/6 PASS** (friction math LOCKED): stick (‖tT‖<μN, no slip),
+  slip caps at μN + correct flow dir, dissipation≥0, **non-symmetric** consistent tangent vs FD
+  (∂tT/∂gT=(μN·kt/‖tT*‖)(I−n̂n̂) + the ∂tT/∂gN=−μ·kn·n̂ pressure-coupling column with NO symmetric
+  partner = rigorous non-symmetry), IMPL-EX→implicit in steady slip (6.8e-13), sliding-block-on-
+  incline a=g(sinθ−μcosθ) exact. Oracle caught 2 of my bugs (dropped-kt in ktan; FD ground truth)
+  + surfaced 2 design facts: (a) tangent non-symmetry is real (∂tT/∂gN coupling), (b) IMPL-EX
+  OVERSHOOTS one step at stick→slip onset (dlam_old still pre-slip 0) then re-syncs — documented.
+- Wrote `_adr39_p3_design.md` + ran the **adversarial DESIGN gate (2 source-grounded reviewers:
+  state/lifecycle + mechanics/signs) → SALVAGEABLE**, all 9 findings FOLDED into the design:
+  - **BLOCKER (sign):** `addB` sums the residual (no flip); `+tT` on the slave ACCELERATES it →
+    `a=g(sinθ+μcosθ)` energy injection. FIX: friction OPPOSES `n̂*`, kernel returns already-negated
+    applied force; **incline test MUST run through real CDL+addB** (not the oracle's hand-subtraction
+    — that's how the sign bug would ship green). The single most important guardrail.
+  - **MAJOR (engagement ref):** global-reference `gT` corrupts late-engaging contact (pre-contact
+    drift → spurious stick); store `gT0` at first activation.
+  - **MAJOR (DROP IMPL-EX from v1):** explicit discards the tangent so IMPL-EX buys nothing but costs
+    the onset-overshoot impulse; use the DIRECT return map (exact, no overshoot, removes dlam state) —
+    also dissolves the firstStep-double-getResidual BLOCKER. IMPL-EX kept in header for P3.5 only.
+  - **MAJOR:** dead-slot GC each handle() (ADR-30 theEQs leak class); mu≤0 short-circuit before any
+    slot touch (byte-identical P2b + dodges 0/0); explicit has no auto-retry → retry wrapper must revert.
+  - **MINOR:** segIndex=GLOBAL ordinal (not bucket candidate ci); cross-contact shared-slave warn;
+    adapter lazy-refetches engine via Domain* (wipe deletes engine→dangling); current-N for v1
+    (committed-N cap=P3.5); near-zero guard physically scaled; segIndex-flip slip-loss + kt≤kn note.
+  - Verdict: core architecture (engine-keyed state, commit-hook, clean return map) SOUND; design HARDENED.
+- **NEXT = code P3** (kernel direct Coulomb return map returning the NEGATED applied force +
+  engagement gT0 + engine per-pair state {gpT,gT0,engaged} + GC + mu≤0 short-circuit + adapter
+  lazy engine-refetch) → build → test (INCLINE through real CDL+addB = the gate; stick/slip/energy/
+  frictionless-regression/commit-revert/wipe-reanalyze) → code gate → PR base ladruno. Branch fresh
+  off ladruno (it has P2.5; HEAD after #358 merge). Oracle `proto_p3_friction.py` 6/6 is the math ref.
+
 ## Deferred / parked
 - P4 SOFT, P5 segment-based, P6 tied, AL upgrade (Q-AL), MPI — all post-v1 per ADR.
