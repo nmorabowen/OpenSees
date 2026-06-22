@@ -1,13 +1,13 @@
 ---
 title: "ADR 45 — Modal-analysis family: implementation roadmap & sequencing plan"
 project: Ladruno
-type: ADR / program plan (umbrella over ADRs 40/42/43/44)
+type: ADR / program plan (umbrella over ADRs 46/42/43/44)
 status: draft — planning, NO code
 priority: high
 owner: nmora
 related:
   - "[[modal_gap_study/00_SYNTHESIS]]"            # the cross-code theory + §6 load-bearing assessment this plan executes
-  - "[[40_ladruno_complex_modal_adr]]"            # member: complex/state-space modal (33019)
+  - "[[46_ladruno_complex_modal_adr]]"            # member: complex/state-space modal (33019)
   - "[[42_ladruno_buckling_adr]]"                 # member: prestressed modal + linear buckling (33021)
   - "[[43_ladruno_feast_eigensolver_adr]]"        # member: band-targeted parallel eigensolver (33022/33023) — the substrate
   - "[[44_ladruno_frequency_domain_adr]]"         # member: FRF/SSD/random + modal transient (33024)
@@ -23,7 +23,7 @@ updated: 2026-06-22
 # ADR 45 — Modal-analysis family: implementation roadmap & sequencing plan
 
 **Status:** draft. **Planning only — no code.** This is the *umbrella ADR* governing the rollout of
-the modal-analysis family (ADRs **40 / 42 / 43 / 44**, candidate **46**). The per-feature ADRs
+the modal-analysis family (ADRs **46 / 42 / 43 / 44**, candidate **47**). The per-feature ADRs
 specify *what each feature is and how it works*; this ADR decides *what we build, in what order, and
 which cross-cutting decisions gate the program*. Theory lives in
 [[modal_gap_study/00_SYNTHESIS]] (+ the four code dossiers).
@@ -31,8 +31,8 @@ which cross-cutting decisions gate the program*. Theory lives in
 > [!info] One-line thesis
 > Bring OpenSees modal analysis to commercial-code parity (complex/damped modes, prestressed +
 > buckling, robust band-targeted **parallel** eigensolving, frequency-domain response) by building
-> **one shared eigensolver substrate** (ADR 43) and a **cheap serial complex-modal proof** (ADR 40)
-> first, then layering the opportunistic deliverables (42, 44) and a future ROM extension (46).
+> **one shared eigensolver substrate** (ADR 43) and a **cheap serial complex-modal proof** (ADR 46)
+> first, then layering the opportunistic deliverables (42, 44) and a future ROM extension (47).
 
 ---
 
@@ -42,11 +42,11 @@ The four feature ADRs were scoped independently, but they are **not independent 
 
 - They **share a substrate** — every one rides the eigensolver, and three of four ride an
   *assembled-operator* contract (`M`, `C`, `K`) that OpenSees only partially exposes today.
-- They **share cross-cutting decisions** — the assembled-`C` accessor (40, reused by 44 and FEAST
+- They **share cross-cutting decisions** — the assembled-`C` accessor (46, reused by 44 and FEAST
   complex), the `-shift` exposure on the `eigen` command (42, touches shared code), the
   **MKL-FEAST-vs-vendored-PFEAST** build-dependency call (43), and the vanilla-footprint policy
   (CQC edit in 44, SP/MP build-flag surgery in 43).
-- They have a **non-obvious optimal order** — the cheapest ADR (40) and the most load-bearing ADR
+- They have a **non-obvious optimal order** — the cheapest ADR (46) and the most load-bearing ADR
   (43) are *different* ADRs, so "build cheapest first" and "build foundation first" disagree. That
   tension needs a decision, recorded once, here.
 
@@ -58,11 +58,11 @@ Precedent: [[Ladruno_explicit_roadmap]] plays the same umbrella role for the exp
 
 | ADR | Feature | classTag | Effort | Load-bearing (synthesis §6) |
 |---|---|---|---|---|
-| **40** | `LadrunoComplexEigen` — complex/state-space modal (non-classical damping) | 33019 | **S** | Domain-enabling (SSI/DRM/isolation/dampers) |
+| **46** | `LadrunoComplexEigen` — complex/state-space modal (non-classical damping) | 33019 | **S** | Domain-enabling (SSI/DRM/isolation/dampers) |
 | **42** | `LadrunoBuckle` — prestressed modal + linear buckling | 33021 | **S–M** | Standalone analysis (modest) |
 | **43** | `FeastEigenSOE`/`FeastEigenSolver` — band-targeted **parallel** eigensolver | 33022/33023 | **L** | **Substrate (highest)** + general SP/MP fix |
 | **44** | `LadrunoModalResponse` — FRF/SSD/random + modal transient | 33024 | **M** | Deliverable (none downstream) |
-| *(46)* | *ROM / Craig–Bampton substructuring (candidate, future)* | *TBD* | *L* | *Rides the family; biggest forward unlock* |
+| *(47)* | *ROM / Craig–Bampton substructuring (candidate, future)* | *TBD* | *L* | *Rides the family; biggest forward unlock* |
 
 `33020` is **deliberately skipped** — reserved for `LadrunoSolidShell` ([[19_ladruno_rc_shell_adr]]).
 ADR **41** is the unrelated mortar/ALM contact ADR already on `ladruno`.
@@ -77,21 +77,21 @@ ADR **41** is the unrelated mortar/ALM contact ADR already on `ladruno`.
    ┌──────────────┼───────────────────────────┐
    │ (serial eigen already enough)             │ (parallel + complex contours)
    ▼              ▼                             ▼
- ADR 40        ADR 42                        ADR 40 @ scale
+ ADR 46        ADR 42                        ADR 46 @ scale
  complex       buckling/Kg                   (re-host via complex FEAST)
  (serial OK)   (serial OK)                        │
    │              │                               │
    └──────┬───────┘                               │
           ▼                                       ▼
-        ADR 44  frequency domain (FRF/SSD/random) — consumes 40 + the eigensolver
+        ADR 44  frequency domain (FRF/SSD/random) — consumes 46 + the eigensolver
           │
           ▼
-        ADR 46  ROM / Craig–Bampton (future) — needs trustworthy basis + parallel eigen
+        ADR 47  ROM / Craig–Bampton (future) — needs trustworthy basis + parallel eigen
 ```
 
-Key reading: **40, 42, 44 can each ship on the *existing* serial ARPACK `eigen`.** ADR 43 is not a
+Key reading: **46, 42, 44 can each ship on the *existing* serial ARPACK `eigen`.** ADR 43 is not a
 *blocker* for a first version of any of them — it is the **scale + robustness + parallel** upgrade
-that makes them trustworthy on large/partitioned models and re-hosts 40's complex case via complex
+that makes them trustworthy on large/partitioned models and re-hosts 46's complex case via complex
 contours.
 
 ---
@@ -100,20 +100,20 @@ contours.
 
 Two defensible orders (synthesis §5 vs §6.5):
 
-- **Cheapest-first proof:** 40 → 42 → 43 → 44. Validates direction with the smallest spend.
-- **Unlock-the-most:** 43 → (40, 42) → 44. Builds the load-bearing substrate first.
+- **Cheapest-first proof:** 46 → 42 → 43 → 44. Validates direction with the smallest spend.
+- **Unlock-the-most:** 43 → (46, 42) → 44. Builds the load-bearing substrate first.
 
 **Decision — a hybrid that front-loads the cheap proof, then the substrate:**
 
 | Phase | Work | Why here | Depends on |
 |---|---|---|---|
-| **P-A** | **ADR 40 P0–P3** — complex modal, *serial*, on existing `eigen` | Cheapest, directly serves the research portfolio (isolation/dampers/SSI); de-risks the projection+QZ approach before any big build | existing `eigen`, `modalProperties` |
+| **P-A** | **ADR 46 P0–P3** — complex modal, *serial*, on existing `eigen` | Cheapest, directly serves the research portfolio (isolation/dampers/SSI); de-risks the projection+QZ approach before any big build | existing `eigen`, `modalProperties` |
 | **P-B** | **ADR 43 P1–P2** — serial **MKL-FEAST** eigensolver (band-target + Sturm) | The substrate; **zero new build dep** (MKL already linked); validated vs ARPACK | MKL |
 | **P-C** | **ADR 43 P3–P4** — **parallel** (MPI per-contour via `MumpsParallelSOE`) + **SP/MP unification** | The strategic payoff: large-model modal + the *general* parallel-composition fix | P-B, `MumpsParallelSOE`, PartitionedDomain |
 | **P-D** | **ADR 42** — prestressed modal + linear buckling | Opportunistic; rides serial eigen, gains band/Sturm from P-B; can jump ahead of P-C if a project needs it | corot/PDelta Kg, `eigen` |
-| **P-E** | **ADR 43 P5** — complex contours (re-host ADR 40 at scale) | Unifies the complex case onto the parallel substrate | P-A, P-C |
+| **P-E** | **ADR 43 P5** — complex contours (re-host ADR 46 at scale) | Unifies the complex case onto the parallel substrate | P-A, P-C |
 | **P-F** | **ADR 44** — frequency domain (FRF/SSD/random, modal transient) | Deliverable layer; build when a project asks | P-A, eigen |
-| *(P-G)* | *ADR 46 — ROM / Craig–Bampton* | *Future; the biggest forward unlock* | *whole family* |
+| *(P-G)* | *ADR 47 — ROM / Craig–Bampton* | *Future; the biggest forward unlock* | *whole family* |
 
 **Rationale.** P-A buys confidence + an immediately useful research deliverable for ~S effort. P-B
 starts the substrate at *zero dependency cost* (the most-load-bearing work that carries no build
@@ -126,7 +126,7 @@ sequenced after the substrate is proven serially. P-D/P-F are demand-driven.
 
 These appear in multiple ADRs; resolving them at the program level prevents divergent choices.
 
-### D1 — Assembled-`C` accessor (from ADR 40; reused by 44, 43-complex)
+### D1 — Assembled-`C` accessor (from ADR 46; reused by 44, 43-complex)
 OpenSees has **no assembled damping-matrix accessor** (audit: no `addC`/`formEleTangC`; only
 `Element::getDamp()`). **Decision:** build a single `LadrunoDampingAssembler` path in P-A (Rayleigh
 projected in closed form as `αM̃+βK̃`; element/material dampers via `getDamp()`), and **reuse it
@@ -184,7 +184,7 @@ Each gate is the ship gate for its phase. No phase merges without its gate green
 
 ## 8. Build / CI / ledger obligations across the family
 
-- **classTag reservations** (this PR, docs-only): 33019 (40), 33021 (42), 33022/33023 (43),
+- **classTag reservations** (this PR, docs-only): 33019 (46), 33021 (42), 33022/33023 (43),
   33024 (44) — RESERVED in [[LEDGER_implementations]]; **enter `SRC/classTags.h` only when each
   implementation merges**. 33020 skipped (LadrunoSolidShell).
 - **Per-shipping-phase:** add the `SRC/classTags.h` define; flip the ledger row RESERVED→active;
@@ -206,7 +206,8 @@ Each gate is the ship gate for its phase. No phase merges without its gate green
   QZ (Abaqus + LS-DYNA both avoid the full quadratic); parallel eigen = many independent distributed
   *linear* solves (Kratos PFEAST + LS-DYNA distributed factorization both avoid distributed Krylov).
 - **Numbering rebased** onto `ladruno` after ADR 41 (mortar/ALM contact) landed: family shifted
-  41→42, 42→43, 43→44; ROM candidate 45→**46** (this ADR took 45).
+  41→42, 42→43, 43→44; this roadmap took 45. **Then a concurrent `40_ladruno_performance_adr`
+  landed on `ladruno`, colliding on 40 → complex-modal moved 40→46 and the ROM candidate 46→47.**
 - This ADR + the four feature ADRs + the theory study ship together as a **docs-only PR**
   ([#351](https://github.com/nmorabowen/OpenSees/pull/351)); no `SRC/` change, no banner line yet.
 
@@ -214,7 +215,7 @@ Each gate is the ship gate for its phase. No phase merges without its gate green
 
 ## 10. Cross-references
 
-[[modal_gap_study/00_SYNTHESIS]] (theory + load-bearing) · [[40_ladruno_complex_modal_adr]] ·
+[[modal_gap_study/00_SYNTHESIS]] (theory + load-bearing) · [[46_ladruno_complex_modal_adr]] ·
 [[42_ladruno_buckling_adr]] · [[43_ladruno_feast_eigensolver_adr]] ·
-[[44_ladruno_frequency_domain_adr]] · candidate ADR 46 (ROM/Craig–Bampton) ·
+[[44_ladruno_frequency_domain_adr]] · candidate ADR 47 (ROM/Craig–Bampton) ·
 [[Ladruno_explicit_roadmap]] (umbrella-ADR precedent).

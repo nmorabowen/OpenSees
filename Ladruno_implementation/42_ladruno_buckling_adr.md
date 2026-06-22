@@ -10,7 +10,7 @@ related:
   - "[[modal_gap_study/03_kratos_source]]"      # PRIMARY template: Kratos prebuckling_strategy (Jia-Mang)
   - "[[modal_gap_study/02_abaqus_theory]]"      # Abaqus *BUCKLE / linear-perturbation-about-base-state
   - "[[modal_gap_study/01_opensees_current_state]]" # ground-truth file:line audit (dead buckling path)
-  - "[[40_ladruno_complex_modal_adr]]"          # SIBLING ADR 40 — complex/state-space modal (QZ on Φᵀ{M,C,K}Φ)
+  - "[[46_ladruno_complex_modal_adr]]"          # SIBLING ADR 46 — complex/state-space modal (QZ on Φᵀ{M,C,K}Φ)
   - "[[43_ladruno_feast_eigensolver_adr]]"      # SIBLING ADR 43 — FEAST/Sturm robust+parallel eigensolver
   - "[[44_ladruno_frequency_domain_adr]]"       # SIBLING ADR 44 — modal FRF / SSD / random
   - "[[20_ladruno_arclength_adr]]"              # NON-goal boundary: nonlinear post-buckling (arc-length)
@@ -141,7 +141,7 @@ This is ADR row **"B — Prestressed modal + buckling"** in
 
 `#define ANALYSIS_TAG_LadrunoBuckle 33021` (HANDLER/ANALYSIS band; **RESERVED, not yet built**).
 Record in `SRC/classTags.h` + `LEDGER_implementations.md` at reservation time so no sibling collides
-(ADR 40 complex-modal and ADR 43 FEAST will want neighboring tags).
+(ADR 46 complex-modal and ADR 43 FEAST will want neighboring tags).
 
 **In scope**
 
@@ -512,7 +512,7 @@ modal to the *same* `Kg`).
   `SRC/analysis/integrator/LadrunoBuckle.*` (+ command registrations), status
   `RESERVED → in-progress` per phase, PR `#tbd`. Update status as P1→P3 land.
 - **`SRC/classTags.h`** — `#define ANALYSIS_TAG_LadrunoBuckle 33021` with a `// Ladruno ADR 42`
-  marker; reserve it in the same PR that creates the class so no sibling (ADR 40/43) collides.
+  marker; reserve it in the same PR that creates the class so no sibling (ADR 46/43) collides.
 - **Banner** — add a line to `Ladruno_scripts/banner_features.txt` (e.g.
   `Linear buckling + prestressed modal (LadrunoBuckle)`), then run
   `python Ladruno_scripts/patch_banner.py` and rebuild — **do not hand-edit** the C strings. Every
@@ -539,9 +539,9 @@ modal to the *same* `Kg`).
   difference + continuation defaults) ported here near-verbatim.
 - [[modal_gap_study/02_abaqus_theory]] GAP 2 — `*BUCKLE` `(K0+λK_Δ)φ=0` and the
   linear-perturbation-about-base-state frame (the conceptual parent of §4).
-- [[40_ladruno_complex_modal_adr|ADR 40]] (complex/state-space modal) and
+- [[46_ladruno_complex_modal_adr|ADR 46]] (complex/state-space modal) and
   [[44_ladruno_frequency_domain_adr|ADR 44]] (modal FRF / SSD / random) — sibling modal ADRs that
-  also build on `eigen`; ADR 40's `Φ` basis can be the *preloaded* basis from this ADR (prestressed
+  also build on `eigen`; ADR 46's `Φ` basis can be the *preloaded* basis from this ADR (prestressed
   complex modes).
 - [[43_ladruno_feast_eigensolver_adr|ADR 43]] (FEAST / Sturm robust + parallel eigensolver) —
   buckling benefits directly: FEAST contour targeting + the Sturm-sequence negative-pivot count make

@@ -1,5 +1,5 @@
 ---
-title: "ADR 40 — Complex / state-space modal analysis for non-classically-damped systems (LadrunoComplexEigen): design spec"
+title: "ADR 46 — Complex / state-space modal analysis for non-classically-damped systems (LadrunoComplexEigen): design spec"
 project: Ladruno
 type: ADR / design spec
 status: draft — design only, NO code
@@ -20,13 +20,13 @@ tags: [adr, solver, dynamics, modal, complex-modes, non-classical-damping, state
 updated: 2026-06-22
 ---
 
-# ADR 40 — `LadrunoComplexEigen` (complex / state-space modal analysis)
+# ADR 46 — `LadrunoComplexEigen` (complex / state-space modal analysis)
 
 > **Strategic role (load-bearing assessment — see [[modal_gap_study/00_SYNTHESIS]] §6).**
 > **Domain-enabling / load-bearing for our research portfolio.** SSI, DRM, base isolation, and
 > supplemental dampers are all *non-classically damped* — real modes give wrong damping ratios for
 > every one of them, so this is the correct lens for the systems we actually model. It is also the
-> prerequisite for reduced-order modeling of those systems (candidate ADR 46). **Recommended build
+> prerequisite for reduced-order modeling of those systems (candidate ADR 47). **Recommended build
 > first** — cheap serial proof (reuses existing `eigen`), low risk, directly serves the research.
 > Re-hosted at scale by ADR 43's complex contours.
 
@@ -176,7 +176,7 @@ built**. Recorded here so a sibling never collides (next free after 33018 Ladrun
 | **Frequency-domain response** (FRF/SSD/random) built on $\zeta_k$ | [[44_ladruno_frequency_domain_adr\|ADR 44]] |
 | **Prestressed / geometric-stiffness** complex modes | compose with [[42_ladruno_buckling_adr\|ADR 42]] once both land |
 
-**Sibling relationship.** ADR 40 (complex modes) and ADR 44 (frequency domain) both ride on the
+**Sibling relationship.** ADR 46 (complex modes) and ADR 44 (frequency domain) both ride on the
 real $\Phi$ + reduced matrices; ADR 44 *consumes* the $\zeta_k$ this ADR produces. ADR 43's complex
 FEAST eventually offers the same complex eigenpairs at full scale, making this ADR the **serial,
 projection-based** member that proves the physics cheaply first.
@@ -679,7 +679,7 @@ Per `CLAUDE.md` (build-control is part of the work, same PR as the change):
     land (complex modes about a prestressed state).
   - [[43_ladruno_feast_eigensolver_adr]] — robust + parallel eigensolver. **ADR 43's complex FEAST
     contours will re-host THIS complex case at scale** (full-$N$ direct complex eigen, distributed),
-    making ADR 40 the serial/projection proof-of-physics that FEAST later generalizes.
+    making ADR 46 the serial/projection proof-of-physics that FEAST later generalizes.
   - [[44_ladruno_frequency_domain_adr]] — FRF/SSD/random; **consumes the mode-by-mode $\zeta_k$ this
     ADR produces** instead of a blanket damping value, and shares the $\Phi$ + reduced-matrix machinery.
 - **Fork context:** [[project_damping_channels]] (the six damping channels + the `-doRayleigh`
