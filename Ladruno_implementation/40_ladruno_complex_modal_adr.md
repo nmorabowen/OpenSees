@@ -26,7 +26,7 @@ updated: 2026-06-22
 > **Domain-enabling / load-bearing for our research portfolio.** SSI, DRM, base isolation, and
 > supplemental dampers are all *non-classically damped* — real modes give wrong damping ratios for
 > every one of them, so this is the correct lens for the systems we actually model. It is also the
-> prerequisite for reduced-order modeling of those systems (candidate ADR 45). **Recommended build
+> prerequisite for reduced-order modeling of those systems (candidate ADR 46). **Recommended build
 > first** — cheap serial proof (reuses existing `eigen`), low risk, directly serves the research.
 > Re-hosted at scale by ADR 43's complex contours.
 

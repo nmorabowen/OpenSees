@@ -160,7 +160,7 @@ that ride them.
  unlocks   feeds limit-point detection
  beyond    into arc-length (ADR 20/22)
  modal ↓
- ROM / Craig-Bampton substructuring (candidate ADR 45)
+ ROM / Craig-Bampton substructuring (candidate ADR 46)
 ```
 
 ### 6.3 The strongest "everything depends on it" argument
@@ -190,10 +190,21 @@ the weight shifts toward **43 (infrastructure)** and **40 (domain)**:
   family (and large-model NLTHA) usable; the SP/MP fix has value independent of modal analysis.
 - **42 and 44 are opportunistic** — build when a specific project asks.
 
-### 6.6 Forward note — the biggest genuine unlock (candidate ADR 45)
+### 6.6 Forward note — the biggest genuine unlock (candidate ADR 46)
 
 The single capability that would most strengthen the load-bearing case is **reduced-order modeling /
 Craig–Bampton component-mode substructuring** (flagged as future in §2b of the Abaqus dossier). It
 rides directly on this family (needs a trustworthy modal basis + parallel eigen) and is the enabler
-for fast large SSI / real-time hybrid simulation. **Proposed as a candidate ADR 45 — not yet
+for fast large SSI / real-time hybrid simulation. **Proposed as a candidate ADR 46 — not yet
 written; pending decision.**
+
+---
+
+## 7. Execution plan
+
+The phased rollout (P-A…P-G), cross-cutting decisions (assembled-`C`, MKL-FEAST vs PFEAST, `-shift`
+exposure, vanilla-footprint policy), program gates, and risk register live in the umbrella program
+ADR **[[45_ladruno_modal_family_roadmap_adr]]**. Headline sequence: **P-A** ADR 40 serial (cheap
+proof) → **P-B** ADR 43 serial MKL-FEAST (substrate, zero new dep) → **P-C** ADR 43 parallel +
+SP/MP unification → **P-D** ADR 42 buckling (opportunistic) → **P-E** ADR 43 complex contours
+(re-host 40 at scale) → **P-F** ADR 44 frequency domain → *(P-G)* ADR 46 ROM.
