@@ -731,7 +731,29 @@ Full multi-agent gate (4 source-grounded reviewers → adversarial verify each �
   predicate identity (tangent stick switch == residual's); committed gpT read; addKiToTang stick-only
   SPD; explicit byte-identity (no friction-tangent path under CDL); all init/threading correct. Only
   non-bug: design-doc naming drift `-symtan`→`-consistanttan` (fixed w/ a superseding note).
-- **NEXT**: commit P3.5 → PR base ladruno (wait Zone-A green before merge).
+- P3.5 committed (1582a755b) → PR #361 (base ladruno), Zone-A GREEN (7m53s).
+
+### Iteration 22 — P3.5 ADVERSARIAL REVIEW WORKFLOW (user-requested, wf_07aec2ab; 23 agents)
+- 5 dimensions (tangent-math / state-lifecycle / solver-safety / tests / integration) → each
+  finding adversarially VERIFIED (default-refuted) → synthesize. 18 findings, 2 refuted,
+  **0 BLOCKER; 2 confirmed MAJOR — BOTH test-coverage gaps, NOT code bugs.** The tangent-math
+  reviewer INDEPENDENTLY re-derived the kernel bug-free (transcription cross-check 2.5e-16; the
+  idempotency `D_TT·P_t=D_TT` shortcut proven safe — gTeff/gpT stay in-plane under constant n;
+  out-of-plane only matters once ∂n/∂u lands = deferred P2b-2c). Code = SOUND.
+- **The 2 MAJORs (tests) FOLDED (test-only, no rebuild):**
+  - `test_p35_static_stick_symmetric_solver` was VACUOUS for Q2 — stick ⇒ tangent trivially
+    symmetric, never exercises d_TN/the upper-triangle hazard. Docstring de-claimed; the real
+    symmetry-safety test is now SLIP-on-ProfileSPD.
+  - NO test assembled+solved the non-symmetric d_TN consistent column through the real solver
+    (stick short-circuits; default slip drops it). ADDED `test_p35_consistent_slip_fullgeneral`
+    (slip + `-consistanttan` on FullGeneral ⇒ d_TN assembled+solved, same root as symmetric,
+    ≤ iters) + `test_p35_symmetric_slip_on_symmetric_solver` (slip default on ProfileSPD ⇒
+    non-trivial symmetric block factors correctly). Slip-anchor refactored to `_slip_anchor_model`
+    (z0 just-touching ⇒ N builds ⇒ d_TN genuinely exercised).
+  - MINORs (deferred/noted): no runtime guard for `-consistanttan`+symmetric-solver (parse-warn
+    only); Newmark test validates force not tangent; coverage gaps tri-3/deformable-master/multi-
+    step (P3.5b backlog).
+- **Battery 46/46** (7 P3.5 + 39 prior). **NEXT**: commit folds → push #361 → wait Zone-A → merge.
 
 ## Deferred / parked
 - **P3.5b**: per-step active-set FREEZE / chatter detector (the design-gate Q3 MAJOR, deferred —
