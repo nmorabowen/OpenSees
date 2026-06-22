@@ -342,5 +342,35 @@ Full multi-agent gate (4 source-grounded reviewers → adversarial verify each �
   ZeroLengthContactASDimplex pair (rel 1e-6). Verify #350 merged before stacking. See
   contact_p2_handoff.md "P2b" section.
 
+### Iteration 14 — P2a MERGED (#350); P2b STARTED: plan + numpy oracle (7/7) BEFORE C++
+- #350 squash-merged to ladruno (P2a rigid-plane contact + gate fixes now fully shipped).
+  Branched guppi/contact-p2b off the merged ladruno (P2a verified present).
+- **P2b SPLIT into sub-rungs** (`_adr39_p2b_design.md`): **P2b-1** = projection kernel +
+  single slave vs single FIXED master segment (real bilinear/linear projection + derived
+  outward normal + faceted B + kₙBᵀB(+∂n/∂u) tangent; `-kn $val`; ASDimplex node-pair oracle).
+  **P2b-2** = deformable master + `-kn auto` + SOFT floor + Hertz + FD-on-rotated tangent gate.
+- Precedent recon (Explore): SimpleContact3D (bilinear projection/tangent algebra + the
+  unbounded-`while` :600-635 to FIX with a bounded Newton); ZeroLengthContactASDimplex ctor
+  `(tag, masterNd, slaveNd, Kn, Kt, mu, ndm, itype, xN,yN,zN)` = the node-pair ORACLE;
+  ContactMaterial3D tangent is LAGRANGE (author penalty tangent fresh); LadrunoBrick exposes
+  `materialPointers[gp]->getInitialTangent()` + `getCharacteristicLength()=cbrt(V)` for -kn auto.
+- **P1b parser ALREADY has the surface/contact plumbing**: `contactSurface $tag -master $nps
+  $n1..` stores nodesPerSeg; `contact $tag $masterSurf $slaveSurf $kn $kt $mu` parses kn. So
+  P2b-1 needs mainly: kernel + surface coord/normal cache + FE segment mode + handler + tests.
+- **NUMPY ORACLE `contact_prototypes/proto_p2b_nts.py` — 7/7 PASS** (oracle-first, the fork
+  discipline; no build): interior pen=exact, self-equilibrium |ΣF|=0/|ΣM|=1e-12, **winding-flip→
+  identical force** (BLOCKER-1), oblique-30° normal, out-of-bounds→0, tangent slave-block FD==
+  +kₙn⊗n (1.5e-11) + FULL tangent SYMMETRIC (4e-11, frictionless ✓) + ∂n/∂u rel-weight 3.6%
+  (non-negligible — main-term-only fails a tight FD gate, as the design gate predicted), tri-3+quad-4.
+  KEY: **OpenSees tangent convention K_assembled = −∂r/∂q** (verified vs P2a: r_s=+tₙn,
+  addKtToTang=+kₙn⊗n) — kernel main term = +kₙBᵀB. Math LOCKED; C++ transcription de-risked.
+- **NEXT (P2b-1 C++)**: transcribe to header-only `SRC/domain/contact/LadrunoContactKernel.h`
+  (pure fns, mirror LadrunoJ2Kernel) → LadrunoContactSurface setDomain coord/normal cache →
+  LadrunoContactFE SEGMENT ctor (project per-iter implicit/per-step explicit via kernel) →
+  handler builds segment adapters → `tests/test_adr39_contact_p2b.py` (ASDimplex oracle rel-1e-6,
+  self-eq, winding-flip, oblique, oob) → build OpenSeesPy → code gate → PR (base ladruno). The
+  full ∂n/∂u analytic block + FD-on-rotated gate lands in P2b-2 (deformable/rotated master);
+  P2b-1's fixed master makes the slave-block main term sufficient for its solve.
+
 ## Deferred / parked
 - P4 SOFT, P5 segment-based, P6 tied, AL upgrade (Q-AL), MPI — all post-v1 per ADR.
