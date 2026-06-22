@@ -1033,6 +1033,7 @@
 #define HANDLER_TAG_PenaltyHandlerNoHomoSPMultipliers   5
 #define HANDLER_TAG_AutoConstraintHandler    6
 #define HANDLER_TAG_LadrunoProjectionHandler 33001   // Ladruno: ADR-30 explicit constraint projection (fork private band)
+#define HANDLER_TAG_LadrunoContactHandler 33002   // Ladruno: ADR-39 ContactDomain — injects contact FE adapters via handle() (fork private band)
 
 #define NUMBERER_TAG_DOF_Numberer      	1
 #define NUMBERER_TAG_PlainNumberer 	2

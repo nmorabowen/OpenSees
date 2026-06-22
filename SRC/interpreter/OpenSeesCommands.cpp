@@ -1624,6 +1624,10 @@ int OPS_ConstraintHandler()
     	extern void *OPS_LadrunoProjectionHandler(void);
     	theHandler = (ConstraintHandler*)OPS_LadrunoProjectionHandler();
 
+    } else if (strcmp(type,"LadrunoContact") == 0) {   // Ladruno: ADR-39
+    	extern void *OPS_LadrunoContactHandler(void);
+    	theHandler = (ConstraintHandler*)OPS_LadrunoContactHandler();
+
     } else {
     	opserr<<"WARNING unknown ConstraintHandler type "<<type<<"\n";
     	return -1;
