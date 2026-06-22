@@ -322,5 +322,25 @@ Full multi-agent gate (4 source-grounded reviewers → adversarial verify each �
   static + static-inclined + 2 impacts + element-free-teardown green) + p1 regression →
   stamp_headers (no new files) → commit fixes to #346 → P2b.
 
+### Iteration 13 — gate fixes BUILT + 12/12 green; #346 AUTO-MERGED mid-work → recovered via #350
+- Incremental build (silly-raman worktree) exit 0; **full battery 12/12 GREEN** (5 P2a incl.
+  element-free-teardown + static-inclined + 7 P1 regression). B1 fix CONFIRMED: the un-anchored
+  element-free model runs TWICE in one process with no segfault.
+- Committed fixes to guppi/contact-p2a (7b3fa11cd) and pushed — but **PR #346 had AUTO-MERGED
+  (squash, f8e614b44) while the code gate was running**, so 7b3fa11cd STRANDED on the merged
+  branch (classic [[feedback_stranded_commits_after_automerge]]: d9ec2010d NOT an ancestor of
+  ladruno; squash ⇒ branch orphaned). LESSON RE-CONFIRMED: re-check `gh pr view <n> --json state`
+  IMMEDIATELY before any follow-up push; on this fork the window between "build" and "push" is
+  enough for an auto-merge.
+- RECOVERY: fresh branch `guppi/contact-p2a-gatefix` off origin/ladruno + cherry-pick 7b3fa11cd
+  (clean, 9 files; the only post-#346 commit #349 just renamed an ADR doc — no overlap) → PR
+  **#350** (base ladruno). P2a (rigid plane) is now FULLY SHIPPED once #350 merges (#346 base +
+  #350 gate fixes). silly-raman's guppi/contact-p2a branch is now orphaned/ignore it.
+- **NEXT = P2b** (the deformable mechanics, where the design-gate BLOCKERs live): faceted-master
+  projection + 2 deformable LadrunoBrick blocks + Hertz + `-kn auto` + SOFT floor + ∂n/∂u tangent
+  + bounded projection Newton + normal-from-element-centroid. Oracle = hand-placed
+  ZeroLengthContactASDimplex pair (rel 1e-6). Verify #350 merged before stacking. See
+  contact_p2_handoff.md "P2b" section.
+
 ## Deferred / parked
 - P4 SOFT, P5 segment-based, P6 tied, AL upgrade (Q-AL), MPI — all post-v1 per ADR.
