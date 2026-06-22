@@ -380,13 +380,37 @@ int OPS_LadrunoContact()
         return -1;
     }
     double kn = 0.0, kt = 0.0, mu = 0.0;   // P1b zero-force defaults; P2 parses/uses
-    // kn kt mu come next UNLESS the next token is the -outward flag.
-    if (OPS_GetNumRemainingInputArgs() >= 3) {
-        const char *peek = OPS_GetString();   // consume + inspect; un-read either way
+    bool knAuto = false;                   // Ladruno ADR-39 P2b-2b: `auto` -> size kn from master ele
+    // The kn slot accepts a number ("kn kt mu") OR the literal `auto`. Either may be
+    // omitted entirely (then the next token is the -outward flag, or end-of-args).
+    if (OPS_GetNumRemainingInputArgs() >= 1) {
+        const char *peek = OPS_GetString();   // consume + classify
         bool isOutward = (peek != 0 && strcmp(peek, "-outward") == 0);
-        OPS_ResetCurrentInputArg(-1);         // un-read the peeked token
-        if (!isOutward) {
-            double d[3]; int m = 3;
+        bool isAuto    = (peek != 0 && strcmp(peek, "auto") == 0);
+        if (isAuto) {
+            knAuto = true;                    // 'auto' consumed; kn is resolved at handle()
+            // optional kt mu (friction, P3) may follow unless the next token is a flag.
+            if (OPS_GetNumRemainingInputArgs() >= 2) {
+                const char *p2 = OPS_GetString();
+                bool flag2 = (p2 != 0 && p2[0] == '-');
+                OPS_ResetCurrentInputArg(-1);
+                if (!flag2) {
+                    double d[2]; int m = 2;
+                    if (OPS_GetDoubleInput(&m, d) < 0) {
+                        opserr << "WARNING contact - could not read kt mu after 'auto'\n";
+                        return -1;
+                    }
+                    kt = d[0]; mu = d[1];
+                }
+            }
+        } else if (isOutward) {
+            OPS_ResetCurrentInputArg(-1);     // un-read for the -outward flag loop below
+        } else {
+            OPS_ResetCurrentInputArg(-1);     // un-read; read the numeric kn (kt mu)
+            // existing form is exactly `kn kt mu`; tolerate a bare `kn` too.
+            int avail = OPS_GetNumRemainingInputArgs();
+            int m = (avail >= 3) ? 3 : 1;
+            double d[3] = {0.0, 0.0, 0.0};
             if (OPS_GetDoubleInput(&m, d) < 0) {
                 opserr << "WARNING contact - could not read kn kt mu\n";
                 return -1;
@@ -407,6 +431,14 @@ int OPS_LadrunoContact()
             }
             outward[0] = o[0]; outward[1] = o[1]; outward[2] = o[2];
             hasOutward = true;
+        } else {
+            // Ladruno ADR-39 P2b-2b (gate MINOR-1): error on an unexpected trailing
+            // token rather than silently swallowing it (e.g. a stray friction value
+            // after `auto`, or a mistyped `-outwards`) — silent acceptance hid input
+            // mistakes. Recognized forms: `kn kt mu`/`auto` then optional `-outward`.
+            opserr << "WARNING contact - unexpected token '" << (opt ? opt : "")
+                   << "' (expected -outward or end of arguments)\n";
+            return -1;
         }
     }
     Domain *theDomain = OPS_GetDomain();
@@ -417,7 +449,7 @@ int OPS_LadrunoContact()
         return -1;
     }
     return cd->addContact(idata[0], idata[1], idata[2], kn, kt, mu,
-                          hasOutward ? outward : 0);
+                          hasOutward ? outward : 0, knAuto);
 }
 
 // contactPlane tag slaveSurfTag  nx ny nz  px py pz  kn   (P2a rigid analytical plane)
