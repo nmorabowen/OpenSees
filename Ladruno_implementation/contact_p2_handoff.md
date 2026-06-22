@@ -1,110 +1,76 @@
-# ADR-39 ContactDomain — handoff (resume: P2a code gate → P2b)
+# ADR-39 ContactDomain — handoff (resume: P2b-2b `-kn auto`)
 
-> Handoff for the next session. Everything is durable in git + `_adr39_loop_state.md`
-> (the live driver — read its iteration log 1–11 for the full trail). Gated specs:
-> `_adr39_p2_design.md`. Parent: `39_ladruno_contact_domain_adr.md`.
+> Read this, then `_adr39_loop_state.md` (the LIVE driver — iteration log 1–17 has the
+> full trail), then `_adr39_p2b_design.md` (gated P2b spec). Parent ADR
+> `39_ladruno_contact_domain_adr.md`. Everything below is durable in git + those docs.
 
 ## Status (2026-06-22)
 
-- **P1 MERGED** (#345, ladruno squash cfd35f458): ContactDomain skeleton + handler
-  + lifecycle hooks + parser. ZERO-FORCE. 7/7 green.
-- **P2a in PR #346** (branch `guppi/contact-p2a`, base ladruno): **rigid analytical
-  plane, penalty NTS, frictionless — FIRST LOAD-BEARING contact.** 3/3 green (10/10
-  with P1 regression). Mechanics verified EXACT (static P/kn rel-1e-6; explicit
-  impact pen=v·√(m/kn)=0.002 exact, restitution e=1.0; inclined off-axis). Verify
-  #346 merged (`gh pr view 346 --json state`) before stacking P2b; if it stranded,
-  recover per [[feedback_stranded_commits_after_automerge]]. **Branch FRESH off the
-  updated ladruno** for P2b (stacked-PR pitfall).
+Phased explicit-first NTS penalty contact, each phase design→(gate)→code→build→test→
+code-gate→PR. **SHIPPED to `ladruno`:**
+- **P1** (#345) — ContactDomain skeleton + handler + lifecycle hooks + parser. Zero-force.
+- **P2a** (#346 + gate-fix #350) — rigid analytical plane, penalty NTS, frictionless.
+  FIRST load-bearing. Code-gate PASS (B1 `FE_Element` subtype-ctor scratch null-deref fixed
+  at source + kn/surface-kind/ndf guards + addKiToTang).
+- **P2b-1** (#354) — faceted node-to-segment vs a FIXED master segment. NEW header-only
+  `SRC/domain/contact/LadrunoContactKernel.h` (shape, bounded projection Newton, direction-
+  oriented winding-immune normal, gap, penalty) + `LadrunoContactFE` SEGMENT mode +
+  one-adapter-per-(slave,segment) handler + `contact … -outward`. Oracle-first
+  (`contact_prototypes/proto_p2b_nts.py` 7/7). Code-gate PASS.
+- **P2b-2a** (PR #355, validation-only, no C++) — proved the P2b-1 code ALREADY handles a
+  DEFORMABLE master (`tests/test_adr39_contact_p2b2.py` 2/2: slave-on-deformable-brick +
+  block-on-block, analytic-exact). ⇒ the deferred ∂n/∂u block is a CONVERGENCE REFINEMENT,
+  not a correctness gap. **Verify #355 merged before stacking** (this fork auto-merges; if
+  it stranded, recover per [[feedback_stranded_commits_after_automerge]]).
 
-## FIRST next-session task: the P2a CODE gate (user will run)
+Test battery: 22/22 (8 P2b-1 + 5 P2a + 7 P1 + 2 P2b-2a). HANDLER_TAG 33002; ELE_TAG 33015
+still RESERVED for a future contact element (P2b rides the handler, no new classTag).
 
-Run an adversarial code review of the P2a C++ (the user deferred it to fold into
-the P2b gate). Focus the reviewers on:
-- The `getTangent → integrator->formEleTangent` routing + the virtual `addKtToTang`/
-  `addMtoTang`/`zeroTangent` overrides (the explicit-mass-pollution fix). Is it
-  correct for ALL integrators (statics, Newmark, HHT, the SMS/Bathe family)? Does
-  `c1·K_c` match the consistent dynamic tangent?
-- Sign/active-set: `getResidual = −kn⟨−g⟩₊ n`, tangent `kn n⊗n` — never attracts;
-  active check consistent between getResidual and getTangent within a Newton iter.
-- The **element-free teardown crash** (known limitation, see below): decide the
-  real fix — make `FE_Element::theMatrices/theVectors` protected (1-line vanilla,
-  ledger) so the adapter can guard-allocate, OR document the ≥1-element requirement.
-- Lifecycle: bound adapter holds `Node*` resolved at handle(); survives
-  destroy/rebuild across domainChanged + ops.wipe (P1 lifecycle hooks).
-- The negligible z-anchor truss in the tests — is it truly zero-perturbation, or
-  should the gate prefer a cleaner test model?
+## RESUME = P2b-2b: `-kn auto` (the next real feature)
 
-## P2a known limitation (carry into the gate)
+Auto-size the penalty: `kn = f_si·K·A²/V` (LS-DYNA 26.14a, f_si≈0.10) + SOFT Courant floor
+`max(½·SOFSCL·m*/Δt_c², …)` (26.15). The **design problem to solve first:**
+- K (master stiffness), A (segment area), V (master element volume) have **no Element API**
+  (`Element.h` exposes only `getCharacteristicLength`). The master `LadrunoContactSurface`
+  stores NODE TAGS ONLY — there is **no link to the parent `LadrunoBrick`**. So step 1 is a
+  data-model/parser decision: **auto-detect the owning solid element from the face nodes**,
+  OR add a user-supplied master element tag to `contactSurface -master`/`contact`.
+- Once linked: K = `masterEle->...materialPointers[gp]->getInitialTangent()(0,0)` (LadrunoBrick
+  exposes the GP material array); V = `getCharacteristicLength()`³ or from nodal coords; A from
+  the segment node coords. **Cache at setDomain** (not reachable at getResidual — no per-step
+  Element access), retain the master element pointer on the surface/contact.
+- Parser: `contact … -kn auto` (the value path `-kn $val` stays). Reject auto for the rigid
+  plane (P2a) — undefined there (no deformable master).
+- Tests: a deformable block where `-kn auto` lands a physically-reasonable kn (penetration
+  small vs element size, no lock/blow-up); compare to a hand-tuned kn.
 
-A truly **element-free** contact model (single mass on a rigid plane, NO structural
-elements) **crashes on teardown**: the base `FE_Element` shared static scratch
-(`theMatrices`/`theVectors`) is **private** and only allocated by an element-backed
-FE ctor, so a contact-only model leaves it null → the base `~FE_Element` null-derefs
-it when the last FE (a contact adapter) is destroyed (numFEs→0). The P2a tests
-sidestep it with a negligible z-anchor truss (tiny EA, no z-motion → zero physics
-effect). Realistic meshed-body contact always has elements, so this is off the v1
-path — but the gate should pick the fix.
+## Then P2b-2c: ∂n/∂u consistent tangent + Hertz (convergence refinement)
 
-## Then: P2b — deformable mechanics (the design-gate BLOCKERs live here)
+The honest NTS tangent `kn·BᵀB + ∂n/∂u` block (drop only O(gn·κ)); the oracle
+`proto_p2b_nts.py` already has the FD ground truth (∂n/∂u≈3.6%, symmetric). Gate =
+**FD-on-ROTATED** (flat PASS, curved O(gn·κ) shrinks with refinement) + Hertz
+`p(r)=p₀√(1−(r/a)²)` refinement benchmark. LOW priority: the residual is exact, the main
+term converges (P2b-2a proved it), and the explicit-ship path never forms the tangent.
 
-`_adr39_p2_design.md` has the full spec. Faceted-master projection rung → 2
-deformable `LadrunoBrick` blocks + Hertz + `-kn auto` + SOFT floor + the **∂n/∂u
-tangent**. Honor the gate BLOCKERs verbatim:
-- **Derive outward normal from the master ELEMENT centroid** (`n·(x̄−x_elem)>0`);
-  winding-flip → identical force (gate). A flipped normal silently passes contact through.
-- **Bounded projection Newton**: cap 10 + `|detK|<ε‖g1‖‖g2‖` guard + non-convergence
-  SENTINEL (scan skips). Do NOT copy SimpleContact3D's unbounded `while` (:600-635).
-- **Tangent = `kn BᵀB` + ∂n/∂u block** (symmetric for frictionless), drop only
-  `O(g·κ)`. FD-on-flat-ROTATED must PASS (∂n/∂u≠0 for a flat seg under rotation —
-  the whole point); FD-on-curved carries an O(g·κ) residual that shrinks w/ refinement.
-- Concave-corner tie-break; getID superset ENFORCED (immutable surface + assert);
-  implicit RE-PROJECTS per Newton iter (explicit freezes per step); implicit
-  anti-chatter (freeze-set-per-step or NewtonLineSearch).
-- **Oracle**: hand-placed `ZeroLengthContactASDimplex` pre-defined pair, rel 1e-6
-  (THE deformable cross-check); Hertz = refinement-convergence benchmark.
-- Reusable math → header-only OpenSees-free `SRC/domain/contact/LadrunoContactKernel.h`
-  (mirror `LadrunoJ2Kernel.h`). `ContactMaterial3D` has NO penalty tangent to lift.
-- `-kn auto = f_si·K·A²/V` (26.14a): K/A/V have NO Element API → cache at setDomain
-  from `material->getInitialTangent()(0,0)` of a master GP + V from nodal coords;
-  retain the master element pointer.
+## Later: P2.5 bucket sort (drop-in broad phase) · P3 IMPL-EX Coulomb friction (SHIP) ·
+P3.5 implicit friction · P4 SOFT · P5 segment-based · P6 tied.
 
-## Then: P2.5 bucket sort · P3 IMPL-EX Coulomb friction (SHIP) · P3.5 implicit
-friction · P4 SOFT · P5 segment-based · P6 tied (rides ADR-30 projection).
+## Environment / build / test (verified, don't rediscover)
 
-## Hard-won C++ lessons (do not rediscover)
-
-1. **A backing-element-less FE_Element (myEle==0) MUST route `getTangent` through
-   `integrator->formEleTangent(this)`** and override the virtual `addKtToTang`/
-   `addMtoTang`/`zeroTangent` — returning K directly from `getTangent` corrupts the
-   EXPLICIT mass matrix (CDL re-forms the tangent each step and assembles getTangent
-   into M → M_xx≈kn → a≈0 → node coasts through).
-2. Custom FE connectivity (PenaltySP_FE pattern): `FE_Element(tag, 1, ndof)` +
-   `myDOF_Groups(0)=node->getDOF_GroupPtr()->getTag()`; base `setID()` fills `myID`
-   with the node's first `numDOF` equation numbers.
-3. Sign: `getTangent`=+K, `getResidual`=force toward the constraint (PenaltySP).
-4. Element-free model → base shared scratch null → teardown crash (above).
-5. A new classTag needs a `Ladruno_implementation/testbed/manifest.yaml` row in the
-   SAME commit (the G9 CI gate), not just the LEDGER_implementations table — P1
-   failed CI on this. (P2a added no classTag, so it was fine.)
-
-## Environment / build / test (verified)
-
-- Run python: `C:\Users\nmora\AppData\Local\Python\pythoncore-3.12-64\python.exe` (numpy+pytest).
-- DIST (worktree-local): `<worktree>\dist\bin`. Bootstrap:
-  `os.add_dll_directory(D); sys.path.insert(0,D); import opensees`.
-- Build (PowerShell tool, NOT Bash): `cmd /c "Ladruno_scripts\build.bat OpenSeesPy"`
-  (incremental ~min; `OpenSees OpenSeesSP OpenSeesMP` for PR-parity). Worktree build,
-  no warm cache shared with the compile-root checkout.
-- Run a test file (forward slashes in the path string — `\U` breaks the escape):
-  `python -c "import os,sys; D='<wt>/dist/bin'; os.add_dll_directory(D); sys.path.insert(0,D); import pytest; sys.exit(pytest.main(['tests/test_adr39_contact_p2a.py','-v']))"`
-- pytest crashes hide the cause (faulthandler). Reproduce hard crashes with a DIRECT
-  `python -u` script + `sys.stderr.write(...,flush)` to find the exact failing step.
-- New authored files: add to `Ladruno_scripts/stamp_headers.py` GLOBS + run it.
-  Ledger new files (LEDGER_implementations) + vanilla edits (LEDGER_vanilla_files).
-- Command classifier may have transient outages; if Bash/PowerShell get gated, retry
-  or do read-only/file work.
+- Run python (numpy+pytest): `C:\Users\nmora\AppData\Local\Python\pythoncore-3.12-64\python.exe`.
+  Module is `import opensees` (the built `.pyd`), NOT the `openseespy` package.
+- DIST (worktree-local): `<worktree>\dist\bin`. Bootstrap: `os.add_dll_directory(DIST);
+  sys.path.insert(0,DIST); import opensees`. Tests: `from _testbed import ops`.
+- Build (`cmd /c` via PowerShell tool, NOT Bash): `Ladruno_scripts\build.bat OpenSeesPy`.
+  **A FRESH worktree is a COLD build — copy `mumps-archive/mumps_src.tar.gz` in first** (from
+  compile-root `OpenSees/mumps-archive/`) or build.bat fails on the MUMPS download.
+- New authored files → add to `Ladruno_scripts/stamp_headers.py` GLOBS + run it. Ledger every
+  new file (LEDGER_implementations) + vanilla edit (LEDGER_vanilla_files) in the SAME PR.
+- Branch fresh off `ladruno` per phase (stacked-PR pitfall). Re-check `gh pr view <n> --json
+  state` IMMEDIATELY before any follow-up push — this fork auto-merges within minutes.
 
 ## Loop discipline (keep it)
-Per phase: design → adversarial gate at critical junctions (P2/P3 = full multi-agent)
-→ code → build → test → code gate → ledger → commit → PR (base ladruno). Keep
-`_adr39_loop_state.md` current every iteration; commit at each phase boundary.
+Per phase: design → adversarial gate at critical junctions (P2/P3 full multi-agent; mechanical
+ports light) → code → build → test → code gate → ledger → commit/PR. Keep `_adr39_loop_state.md`
+current every iteration; commit at each phase boundary so the loop survives context resets.
+Oracle-first (numpy reference before C++) has caught real issues cheaply every phase.
