@@ -66,7 +66,8 @@ class LadrunoContactDomain
     // placeholder (0) and ignored; the handler computes the real value.
     int addContact(int tag, int masterSurfTag, int slaveSurfTag,
                    double kn, double kt, double mu, const double *outward = 0,
-                   bool knAuto = false, double cellFrac = 1.0);
+                   bool knAuto = false, double cellFrac = 1.0,
+                   bool consistentTan = false);
     int getNumContacts(void) const { return (int)theContacts.size(); }
 
     // --- P2b: faceted node-to-segment penalty contact. A Contact references a
@@ -81,6 +82,9 @@ class LadrunoContactDomain
         double outward[3];      // orientation direction toward the allowed half-space
         double cellFrac;        // P2.5 bucket-sort cell = cellFrac * median seg diag
                                 // (1.0 default; a huge value => 1 bucket => brute force)
+        bool consistentTan;     // P3.5: true => non-symmetric consistent friction tangent
+                                // (quadratic, needs FullGeneral/UmfPack); false (default)
+                                // => the symmetric tangent (solver-safe on any system)
     };
     const Contact &getContact(int i) const { return theContacts[i]; }
 

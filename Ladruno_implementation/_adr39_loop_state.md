@@ -716,6 +716,25 @@ Full multi-agent gate (4 source-grounded reviewers → adversarial verify each �
   `-consistanttan` on FullGeneral; Newmark dynamic; explicit byte-identity; FD-at-slip tangent==∂resid)
   → code gate → PR base ladruno.
 
+### Iteration 22 RESULT — P3.5 implicit friction tangent CODED + 6/6 green + code gate PASS
+- C++: kernel `frictionTangentBlock` (3×3 K_ss; stick kt·P_t / slip (μN kt/‖tT*‖)(P_t−n̂⊗n̂);
+  +d_TN⊗n iff consistent) + FE `addFrictionTang` (Gᵀ K_ss G scatter, w=[1,−N_i]) wired into
+  `addKtToTang` (reads COMMITTED gpT) + `addKiToTang` (stick-only kt·GᵀP_tG); `consistentTan`
+  member (default false=symmetric); Contact.consistentTan + addContact arg; handler threads it;
+  parser `contact … -consistanttan` + the FullGeneral/UmfPack WARNING. No new file/classTag.
+- Incremental build exit 0. **P3.5 6/6 green**: static stick converges (THE gate — singular in
+  P3) + symmetric-solver-safe (ProfileSPD) + `-consistanttan` ≤-iters (FullGeneral) + static slip
+  w/ anchor (friction=μN) + Newmark dynamic (a=(Q−μN)/m) + explicit byte-identity. **Full battery
+  45/45** (6 P3.5 + 39 prior), no regression.
+- **CODE GATE (1 source-grounded reviewer): PASS, NO findings.** Transcription cross-checks against
+  the oracle EXACTLY (0.0) for stick/slip/G-scatter/symmetric-vs-nonsym/committed-N≡consistent=false;
+  predicate identity (tangent stick switch == residual's); committed gpT read; addKiToTang stick-only
+  SPD; explicit byte-identity (no friction-tangent path under CDL); all init/threading correct. Only
+  non-bug: design-doc naming drift `-symtan`→`-consistanttan` (fixed w/ a superseding note).
+- **NEXT**: commit P3.5 → PR base ladruno (wait Zone-A green before merge).
+
 ## Deferred / parked
+- **P3.5b**: per-step active-set FREEZE / chatter detector (the design-gate Q3 MAJOR, deferred —
+  symmetric default removes the d_TN chatter driver; NewtonLineSearch is the v1 mitigation).
 - P2b-2c ∂n/∂u normal tangent + Hertz + SOFT Courant floor; P4 SOFT, P5 segment-based, P6 tied,
   AL upgrade (Q-AL), MPI — all per ADR.

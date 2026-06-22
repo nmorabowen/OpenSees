@@ -423,6 +423,7 @@ int OPS_LadrunoContact()
     bool hasOutward = false;
     double outward[3] = {0.0, 0.0, 0.0};
     double cellFrac = 1.0;
+    bool consistentTan = false;   // Ladruno ADR-39 P3.5: friction tangent symmetry
     while (OPS_GetNumRemainingInputArgs() > 0) {
         const char *opt = OPS_GetString();
         if (opt != 0 && strcmp(opt, "-outward") == 0) {
@@ -442,6 +443,17 @@ int OPS_LadrunoContact()
                 return -1;
             }
             cellFrac = f[0];
+        } else if (opt != 0 && strcmp(opt, "-consistanttan") == 0) {
+            // Ladruno ADR-39 P3.5: opt in to the NON-SYMMETRIC consistent friction
+            // tangent (true quadratic Newton convergence). It REQUIRES a non-symmetric
+            // linear solver — `system FullGeneral` / `UmfPack` / `BandGeneral`. A
+            // symmetric solver (ProfileSPD/BandSPD/SparseSYM) reads only the upper
+            // triangle and SILENTLY drops the d_TN coupling, corrupting the solve. The
+            // default (symmetric) tangent is correct on any solver (design-gate Q2).
+            consistentTan = true;
+            opserr << "WARNING contact -consistanttan: the non-symmetric consistent "
+                      "friction tangent needs a non-symmetric solver (system FullGeneral/"
+                      "UmfPack/BandGeneral); symmetric solvers will silently corrupt it.\n";
         } else {
             // Ladruno ADR-39 P2b-2b (gate MINOR-1): error on an unexpected trailing
             // token rather than silently swallowing it (e.g. a stray friction value
@@ -460,7 +472,7 @@ int OPS_LadrunoContact()
         return -1;
     }
     return cd->addContact(idata[0], idata[1], idata[2], kn, kt, mu,
-                          hasOutward ? outward : 0, knAuto, cellFrac);
+                          hasOutward ? outward : 0, knAuto, cellFrac, consistentTan);
 }
 
 // contactPlane tag slaveSurfTag  nx ny nz  px py pz  kn   (P2a rigid analytical plane)

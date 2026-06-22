@@ -77,8 +77,12 @@ terms are O(gₙ·κ) and the active-set main term carries the solve (P2b-2a pro
   the initial tangential stiffness) — mirrors how the normal block adds `kn·BᵀB` there.
 - Explicit (`addMtoTang`) UNCHANGED (no friction tangent). `getTangent` still routes through
   `formEleTangent` so the integrator picks the combination (CDL mass-only; Newmark c1·Kt; static Kt).
-- **`-symtan` plumbing:** a `bool symFrictionTan` on the `Contact` (parser `contact … -symtan`),
-  threaded to the adapter; when set, the slip branch uses `d_TN=0` (committed-N) ⇒ symmetric.
+- **Flag plumbing (NOTE — the gate INVERTED the default, so the naming below flips):** the
+  SHIPPED knob is **`-consistanttan`** → `bool consistentTan` on the `Contact`, threaded to the
+  adapter. DEFAULT (`false`) = symmetric (drop `d_TN`); the flag opts INTO the non-symmetric
+  consistent tangent (add `d_TN`) and the parser emits the FullGeneral/UmfPack warning. (The
+  pre-flip text below uses the old `-symtan`/`symFrictionTan` names for the SAME mechanism with
+  the opposite default — read it as `-consistanttan` with the default inverted.)
 
 ## Active-set within a Newton step (the chatter question)
 
