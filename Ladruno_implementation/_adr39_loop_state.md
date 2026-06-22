@@ -421,5 +421,28 @@ Full multi-agent gate (4 source-grounded reviewers → adversarial verify each �
 - Rebuild b2bcxvto3 (warm) live. **NEXT on build**: re-run battery (expect 20/20 w/ the auto-orient
   test) → commit fold → PR to ladruno (verify #350 merged; this branch is stacked on it) → P2b-2.
 
+### Iteration 17 — P2b-1 MERGED #354; P2b-2a deformable-master VALIDATED (no new C++)
+- #354 (P2b-1) merged to ladruno (squash). Branched guppi/contact-p2b2 off it.
+- **KEY EMPIRICAL FINDING (probe_p2b2_deformable.py):** the MERGED P2b-1 NTS code ALREADY
+  handles a DEFORMABLE master — the FE/handler read master trial-disp + assemble the master
+  tangent blocks, so a free master "just works" with the main-term kn·BᵀB tangent. Single
+  fixed-bottom LadrunoBrick, top face = master, slave pressed down: static Newton CONVERGES,
+  contact gap = P/kn EXACT, brick compression = PL/EA EXACT (series). So the deferred ∂n/∂u
+  block (gate TANG-1) is a CONVERGENCE REFINEMENT (large-rotation/curved), NOT a correctness gap.
+- **`tests/test_adr39_contact_p2b2.py` 2/2 green** (test the MERGED code, zero new C++):
+  slave-on-deformable-brick (gap=P/kn + comp=PL/EA) + block-on-block (deformable-vs-deformable
+  interface, both bricks compress, per-node interface pen=(P/4)/kn). Block-on-block needed the
+  top block to START just-penetrated (else the unsupported block falls → diverge).
+- **P2b-2 REORGANIZED by the finding:**
+  - **P2b-2a = deformable-master validation — DONE** (this iteration; tests + probe; no C++).
+  - **P2b-2b = `-kn auto`** (NEXT real feature): cache K/A/V at setDomain — K from a master
+    `LadrunoBrick materialPointers[gp]->getInitialTangent()(0,0)`, V via getCharacteristicLength()
+    =cbrt(V) or nodal coords, retain the master element ptr; kn=f_si·K·A²/V (26.14a) + SOFT floor
+    (26.15). Needs a surface→master-element link (the surface stores node tags only today).
+  - **P2b-2c = ∂n/∂u consistent-tangent block + Hertz** (the hard math; FD-on-rotated gate;
+    convergence refinement for large-rotation/curved — oracle already has the FD ground truth in
+    proto_p2b_nts.py, ∂n/∂u≈3.6%). Lower priority since explicit-ship never forms the tangent.
+- **NEXT**: commit P2b-2a (tests + probe + plan) → PR to ladruno (validation-only, fast) → P2b-2b -kn auto.
+
 ## Deferred / parked
 - P4 SOFT, P5 segment-based, P6 tied, AL upgrade (Q-AL), MPI — all post-v1 per ADR.
