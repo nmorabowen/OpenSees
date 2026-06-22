@@ -17,7 +17,7 @@ tags:
 
 ## What
 
-ADR-40 is the **implicit, accuracy-first** complement to ADR-39's explicit, robust-first
+ADR-41 is the **implicit, accuracy-first** complement to ADR-39's explicit, robust-first
 node-to-segment (NTS) penalty `ContactDomain`. It ships **two coupled deliverables** as
 **additive leaf code inside the same ADR-39 ContactDomain subsystem** (an *extension*, not a
 sibling subsystem):
@@ -36,7 +36,7 @@ sibling subsystem):
 
 **Committed scope (this ADR):** `P0`→`P4` = the two kernels (friction + projection), the
 mortar narrow phase with **overlap clipping** (so the patch-test claim is honest), frictionless
-Uzawa ALM (the MVP), and frictional mortar. **Hard-deferred to a successor ADR-41:** dual
+Uzawa ALM (the MVP), and frictional mortar. **Hard-deferred to a successor ADR-42:** dual
 (biorthogonal) Lagrange shape functions, true-LM/saddle-point enforcement, self-contact, and
 NTN/NTS-via-mortar-weights. See *Risks* for the rejection rationale on each.
 
@@ -44,7 +44,7 @@ NTN/NTS-via-mortar-weights. See *Risks* for the rejection rationale on each.
 `LadrunoContactFE` is an *empty-connectivity zero adapter* (`FE_Element(tag,0,0)`,
 `getResidual`/`getTangent` return `Zero()`), `LadrunoContactDomain::commit()` is a no-op
 counter, and there is **no broad phase, no narrow phase, no projection kernel, and no friction
-class** in the tree. ADR-40 therefore does **not** "dock onto a working penalty engine"; it
+class** in the tree. ADR-41 therefore does **not** "dock onto a working penalty engine"; it
 **co-owns and builds** the shared narrow-phase machinery (projection kernel, real adapter
 connectivity, friction kernel) that ADR-39 P2/P3 will also consume. This is stated as a hard
 dependency, not assumed away.
@@ -54,7 +54,7 @@ dependency, not assumed away.
 - **The accuracy bar.** ADR-39 itself documents (`39_..._adr.md` §What, Risk Q-PATCH) that NTS
   "does not pass the contact patch test … interface-stress fidelity awaits mortar (v3)." The
   Kratos `ContactStructuralMechanicsApplication` reference sets exactly this bar: mortar
-  conditions with ALM and penalty, frictionless + frictional, passing the patch test. ADR-40
+  conditions with ALM and penalty, frictionless + frictional, passing the patch test. ADR-41
   delivers that bar earlier and at lower cost than full dual-mortar by using a **clipped
   Gauss-point mortar** + **Uzawa ALM**.
 - **Exact constraint at finite penalty.** Pure penalty (ADR-39) leaves residual penetration
@@ -77,7 +77,7 @@ dependency, not assumed away.
 | `SRC/material/nD/LadrunoFrictionKernel.h` | **Header-only, OpenSees-free** Coulomb+Tresca tangential radial-return + normal KKT law; consistent `C_ss` and the **non-symmetric** `C_sl` block. Sits beside `LadrunoJ2Kernel.h` / `LadrunoConcrete3DKernel.h` / `LadrunoRCKernel.h` (one-line CMake add). **Deliverable (2).** |
 | `SRC/domain/contact/LadrunoContactProjection.h` | **Header-only, plain-`double` only** closest-point projection (re-derived as pure functions from `SimpleContact3D::project/GetPoint/UpdateBase`) → `{xi_bar[2], gap_N, n[3], t1[3], t2[3], surface-metric g[2][2], phi_master[4]}`. **Bounded** Newton (≤10 iters + `|detK| < eps·‖g1‖‖g2‖` guard + non-convergence sentinel) — carries forward ADR-39 P2b's `contact_p2_handoff.md` BLOCKER. |
 | `SRC/domain/contact/LadrunoMortarKernel.h` | **Header-only, plain-`double` only** mortar segment integration: slave/master **overlap polygon clip** on the projected master plane → sub-triangle Gauss rule → `D`, `M`, weighted gap `g̃`, and the consistent linearization `dD,dM,dn,dξ` terms. numpy-oracle tested build-free. |
-| `SRC/domain/contact/LadrunoMortarPair.{h,cpp}` | **Domain-side path state** for one slave-facet ↔ master pairing: per slave-GP `{committed elastic slip s_e_n, λ_N, λ_T, slipFlag, last master-segment id + frame}`; `commit()`/`revertToLastCommit()`. The stateless-view target for the FE adapter (the ADR-40 analogue of ADR-39's planned `LadrunoContactPair`). |
+| `SRC/domain/contact/LadrunoMortarPair.{h,cpp}` | **Domain-side path state** for one slave-facet ↔ master pairing: per slave-GP `{committed elastic slip s_e_n, λ_N, λ_T, slipFlag, last master-segment id + frame}`; `commit()`/`revertToLastCommit()`. The stateless-view target for the FE adapter (the ADR-41 analogue of ADR-39's planned `LadrunoContactPair`). |
 | `SRC/domain/contact/LadrunoMortarSegment.{h,cpp}` | Narrow-phase formulation object owned by `LadrunoContactDomain`: drives the GP loop, calls `LadrunoContactProjection` + `LadrunoMortarKernel` + `LadrunoFrictionKernel`, returns `F_c` and `K_c`. Mortar sibling of the (planned ADR-39) NTS narrow phase. |
 | `SRC/analysis/algorithm/equiSolnAlgo/LadrunoAugmentedNewton.{h,cpp}` | **The Uzawa outer-loop driver.** A `NewtonRaphson` subclass whose `solveCurrentStep()` wraps the inner Newton, reads `‖g̃‖_∞` from the `LadrunoContactDomain`, performs the multiplier update on a **frozen active set**, and re-solves until `‖g̃‖_∞ < augTol` or `maxAug` — committing **once** per physical step. (See *Integration points* for why this, not a Tcl `analyze`-loop, is mandatory.) |
 | `tests/contact/ladruno_friction_reference.py` | numpy oracle for `LadrunoFrictionKernel.h` (stick/slip/cone return + FD-check of `C_ss`,`C_sl`). |
@@ -121,7 +121,7 @@ dependency, not assumed away.
 - `SRC/element/ladrunoEmbeddedRebar/LadrunoEmbeddedRebar.cpp` — **the in-fork ALM precedent**:
   `commitState()` (lines ~297–326) stores `lambda` on the object, does the Uzawa update
   `lambda(k) += kt·gt(k)` at the converged state (frozen-within-solve so the tangent stays
-  exact), and **re-projects `lambda` onto the current frame** under corotation. ADR-40 clones
+  exact), and **re-projects `lambda` onto the current frame** under corotation. ADR-41 clones
   this pattern *per slave-GP* on the `LadrunoMortarPair`.
 - `SRC/analysis/handler/Lagrange*` — `LagrangeDOF_Group`/`LagrangeMP_FE` — read to **confirm
   the rejected** true-LM path: `LagrangeDOF_Group` has **only** constraint-bound ctors
@@ -136,7 +136,7 @@ dependency, not assumed away.
 ### Public API (Tcl + Python)
 
 Extends the (ADR-39-owned) `contact`/`contactSurface` command family with a `-formulation`
-selector and ALM options. `nts` (ADR-39) and `mortar` (ADR-40) are siblings on one command.
+selector and ALM options. `nts` (ADR-39) and `mortar` (ADR-41) are siblings on one command.
 
 ```tcl
 # constraint handler (ADR-39, reused unchanged)
@@ -150,7 +150,7 @@ contactSurface 2 -kind slaveSegments  -faces $slaveFaceSet
 # NTS penalty (ADR-39)
 contact 10 -master 1 -slave 2 -formulation nts   -kn auto -kt auto -mu 0.3
 
-# MORTAR + ALM (ADR-40) — frictionless
+# MORTAR + ALM (ADR-41) — frictionless
 contact 11 -master 1 -slave 2 -formulation mortar -enforce alm \
         -kn auto -epsN auto -augTol 1e-8 -maxAug 20 -ngp 2
 
@@ -180,7 +180,7 @@ ops.algorithm('LadrunoAugmentedNewton','-augTol',1e-8,'-maxAug',20)
 ```
 Domain
  └─ LadrunoContactDomain*            (ADR-39; owns surfaces + contact defs + PATH STATE)
-     ├─ LadrunoContactSurface        (ADR-39; +slaveSegments kind in ADR-40)
+     ├─ LadrunoContactSurface        (ADR-39; +slaveSegments kind in ADR-41)
      ├─ Contact{ formulation, enforce, epsN, epsT, mu, augTol, maxAug, ... }
      └─ for each mortar contact:
          └─ LadrunoMortarSegment      (narrow phase; one per slave facet over an epoch)
@@ -222,7 +222,7 @@ For each slave facet paired (via the ADR-39 broad phase) with candidate master f
 
 What is **sacrificed vs full dual-mortar** (stated honestly): standard (not biorthogonal)
 multiplier basis → `D` is **not** diagonal, so the per-node `λ` update is local only after the
-per-facet `D`-solve; and it is **not** LBB/inf-sup optimal (deferred to ADR-41). ALM at finite
+per-facet `D`-solve; and it is **not** LBB/inf-sup optimal (deferred to ADR-42). ALM at finite
 `epsN` is the mitigation; the patch-test gate **reports** any residual pressure oscillation.
 
 ### FrictionalLaw interface (C++ signature sketch)
@@ -275,12 +275,12 @@ void normalTraction(double gN, double lambdaN, double epsN, int alm,
 consistent `Css = epsT·scale·(g − r⊗r)` with `r = tT*/‖tT*‖_g`, and `Csl = mu·sign(tN)·R`
 (Coulomb, **non-symmetric**) vs `Csl = 0` (Tresca → **symmetric**, the safe first bring-up).
 
-**Sharing with ADR-39 (the central question resolved):** ADR-40 **writes**
+**Sharing with ADR-39 (the central question resolved):** ADR-41 **writes**
 `LadrunoFrictionKernel.h`; ADR-39's planned P3 NTS friction will **adopt** it (its explicit
 IMPL-EX branch is a thin wrapper that extrapolates the committed state and calls the same
 `integrate()`). There is **no existing `LadrunoContactFriction` to refactor** — D2/D3/D4's
 "refactor ADR-39's friction with bit-for-bit regression" premise is false (verified: no such
-class in the tree). The correct ordering is **forward adoption**, and it only holds if ADR-40's
+class in the tree). The correct ordering is **forward adoption**, and it only holds if ADR-41's
 kernel lands before ADR-39 reaches P3.
 
 ### Integration points
@@ -316,11 +316,11 @@ kernel lands before ADR-39 reaches P3.
   across an epoch, `λ_T` (expressed in the old tangent frame) is **re-projected** onto the new
   frame (the EmbeddedRebar `lambda -= (λ·dirCur)dirCur` move), never carried stale.
 - **MP-constraint composition (Q-CONSTR, resolved not inherited).** `LadrunoContactHandler`
-  (verified) does **not** enforce `MP_Constraint`s — it warns. ADR-40 makes this an **explicit
+  (verified) does **not** enforce `MP_Constraint`s — it warns. ADR-41 makes this an **explicit
   P1 restriction**: a mortar slave/master node may **not** simultaneously be an `equalDOF` /
   `rigidDiaphragm` slave under this handler. The gate combines a mortar interface with a
   `rigidDiaphragm` and asserts the documented error (delegation to a base Transformation handler
-  is an ADR-41 item, not in this scope).
+  is an ADR-42 item, not in this scope).
 - **Unsymmetric solver (Coulomb).** `Csl ≠ 0` makes `K_c` unsymmetric → frictional Coulomb
   **requires** an unsymmetric SOE (`UmfPackGen`/`FullGen`), exercised at P3; Tresca (`Csl=0`)
   stays symmetric and is the first frictional bring-up. Precedent: `LadrunoConcrete3D` already
@@ -354,7 +354,7 @@ holds **only** for the null case (D1 review fix).
 > reusable verbatim (D2's claim corrected). **Decision:** ship Uzawa-over-penalty (`λ` as
 > Domain-side per-GP state, zero new DOFs), grounded in the **verified in-fork EmbeddedRebar
 > `commitState` AL precedent**. True-LM / saddle-point (with the inf-sup stabilization it
-> genuinely needs) is **hard-deferred to ADR-41**.
+> genuinely needs) is **hard-deferred to ADR-42**.
 
 > [!question] Q-DRIVER (the Uzawa outer loop) — **RESOLVED: custom EquiSolnAlgo.**
 > The per-step `Domain::commit` update (the EmbeddedRebar pattern) gives augmentation that
@@ -365,15 +365,15 @@ holds **only** for the null case (D1 review fix).
 
 > [!question] Q-MORTARLITE (full dual-mortar D/M vs mortar-lite) — **RESOLVED: clipped GP mortar, dual deferred.**
 > Un-clipped slave-GP "mortar-lite" (D1/D4) does **not** pass the non-matched patch test
-> (partition-of-unity broken at master element boundaries). ADR-40 ships **overlap clipping in
+> (partition-of-unity broken at master element boundaries). ADR-41 ships **overlap clipping in
 > the MVP** with a **standard** multiplier basis (`D` non-diagonal, per-facet solved). **Dual
 > (biorthogonal) basis** (diagonal `D`, cheap nodal `λ`) and **LBB-optimal** treatment are
-> **deferred to ADR-41** — finite-`epsN` ALM is the interim mitigation; the patch gate reports
+> **deferred to ADR-42** — finite-`epsN` ALM is the interim mitigation; the patch gate reports
 > any residual oscillation rather than hiding it.
 
 > [!question] Q-DEP (ADR-39 maturity) — **OPEN dependency, stated not assumed.**
 > ADR-39 shipped **P1 only** (zero adapter; no broad phase, narrow phase, projection kernel, or
-> friction). ADR-40 must either be **sequenced after ADR-39 P2 (broad phase + projection)**, or
+> friction). ADR-41 must either be **sequenced after ADR-39 P2 (broad phase + projection)**, or
 > **co-own** the projection kernel and adapter-connectivity work as its own P0.5/P1 deliverables.
 > This ADR takes the **co-own** stance for the projection + friction kernels (they are on the
 > critical path for both ADRs) and **depends on** ADR-39 P2.5 for the broad-phase pair candidates.
@@ -381,7 +381,7 @@ holds **only** for the null case (D1 review fix).
 > [!question] Q-CONSTR (rigidDiaphragm/equalDOF composition) — **RESOLVED for this scope: restricted.**
 > The contact handler does not enforce MP constraints. A mortar contact node may not also be an
 > MP slave; gated at P1 with a `rigidDiaphragm`+mortar model asserting the documented error.
-> Base-handler delegation is ADR-41.
+> Base-handler delegation is ADR-42.
 
 > [!question] Q-EPOCH / Q-GRAN (inherited from ADR-39, sharpened for mortar)
 > Mortar adapter connectivity (slave facet ∪ reachable master nodes) is **wider** than NTS →
@@ -454,8 +454,8 @@ correctly grounds zero-DOF ALM in a *real in-fork* precedent. Grafted:
 8. **Q-CONSTR / Q-EPOCH / Q-IMPLFILL / Q-EXPLICIT**: resolved-with-restriction or
    disclosed-with-gate, not "inherited" (ADR-39 shipped scaffolding, so there is nothing to inherit).
 9. **Single-maintainer realism** (all S): committed scope **cut to P0→P4**; dual basis, true-LM,
-   self-contact, NTN/NTS-via-mortar-weights **hard-deferred to ADR-41**.
+   self-contact, NTN/NTS-via-mortar-weights **hard-deferred to ADR-42**.
 
 **Hard-defer ledger:** full dual/biorthogonal mortar (Q-MORTARLITE), true-LM saddle-point +
 inf-sup stabilization (Q-DOF), self-contact, simplified MPC/NTN/NTS-via-mortar-weights,
-base-handler MP delegation (Q-CONSTR) → all **ADR-41**, each with the rejection reason above.
+base-handler MP delegation (Q-CONSTR) → all **ADR-42**, each with the rejection reason above.
