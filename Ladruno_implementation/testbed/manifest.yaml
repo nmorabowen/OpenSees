@@ -382,6 +382,33 @@ features:
       handler/tests but left no manifest row, so the G9 gate failed on every later PR's
       merge with ladruno (inherited ledger debt). See LEDGER_vanilla_files ADR-30 rows.
 
+  - feature: LadrunoContactHandler
+    classtag: 33002          # HANDLER family; ADR-39 ContactDomain, fork private band (after 33001)
+    tag_symbol: HANDLER_TAG_LadrunoContactHandler
+    pr: 345
+    feature_class: handler
+    required_tiers: [dynamics-battery]
+    pytest: tests/test_adr39_contact_p1.py   # ADR-39 P1 (injection + lifecycle, zero-force): bitwise CDL+Newmark, commit-hook, wipe, null=Plain
+    tcl: WAIVED(handler; Python-first, Tcl dispatch wired via commands.cpp specifyConstraintHandler + TclWrapper contact cmds)
+    core_files:
+      - SRC/classTags.h
+      - SRC/analysis/handler/LadrunoContactHandler.cpp
+      - SRC/analysis/handler/LadrunoContactFE.cpp
+      - SRC/domain/contact/LadrunoContactDomain.cpp
+      - SRC/domain/contact/LadrunoContactSurface.cpp
+      - SRC/domain/domain/Domain.cpp
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesCommands.cpp
+      - SRC/tcl/commands.cpp
+      - SRC/analysis/handler/CMakeLists.txt
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      ADR-39 P1: ContactDomain broad-phase contact subsystem skeleton. The handler
+      injects contact FE_Element adapters via handle() (the only legal FE factory);
+      P1 = empty-connectivity ZERO-FORCE adapter (graph-neutral, bitwise-identical to
+      stock). Narrow phase (real contact force) is P2. See 39_ladruno_contact_domain_adr.md.
+
   - feature: LadrunoArcLength
     classtag: 33004          # INTEGRATOR family; per-registry band (coexists w/ ELE_TAG_LadrunoIMKBeam2d=33004)
     tag_symbol: INTEGRATOR_TAGS_LadrunoArcLength
