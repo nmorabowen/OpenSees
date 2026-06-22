@@ -194,6 +194,14 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                        << ": nodesPerSeg " << nps << " unsupported (need 3 or 4); skipped\n";
                 continue;
             }
+            if (ct.kn <= 0.0) {
+                // A SEGMENT contact needs a positive penalty (P2b-1 requires -kn).
+                // kn == 0 (e.g. `contact ... -outward` with the kn omitted) is inert;
+                // warn rather than silently build dead adapters. (Gate PARSE-2/H1.)
+                opserr << "WARNING LadrunoContactHandler::handle() - contact " << ct.tag
+                       << ": segment contact needs kn > 0 (got " << ct.kn << "); skipped\n";
+                continue;
+            }
             const ID &mTags = ms->getNodeTags();
             const ID &sTags = ss->getNodeTags();
             int nSeg = mTags.Size() / nps;

@@ -401,5 +401,25 @@ Full multi-agent gate (4 source-grounded reviewers → adversarial verify each �
   ledger (kernel new-file row + P2b in the contact row) → commit → PR (base ladruno) → P2b-2
   (deformable master + -kn auto + Hertz + FD-on-rotated ∂n/∂u tangent gate).
 
+### Iteration 16 — P2b-1 BUILT + 19/19 green; code gate (wxh6f8ki0) PASS, fixes folded
+- Cold worktree build exit 0 (after copying mumps_src.tar.gz). First run: 16/19 — caught a
+  TEST bug (static tests freed the WRONG DOF: `fix(1,0,1,1)` frees x, but normal/load are +z →
+  singular matrix; winding-flip + ASDimplex passed VACUOUSLY comparing two frozen 1e-8 values).
+  FIX = `fix(1,1,1,0)` (free z) + oblique redesigned to free-z-only (pen=P/(kn·nz²)). **19/19 green**
+  (7 P2b + 5 P2a + 7 P1). C++ was correct; only the test DOF-freeing was wrong.
+- Committed P2b-1 (5eafac6ae) → **adversarial code gate (4 reviewers→verify→synth, 17 agents):
+  verdict PASS** (no BLOCKER, no MAJOR). Kernel faithful to oracle; tangent-drop sound for FIXED
+  master; P1b-regression-preservation PROVEN; no vacuous tests remain (re-audited).
+- **Folded (gate-recommended, in-scope):** H1 = addContact reject kn<0 (kn==0 still OK for P1b
+  zero-force); PARSE-2/H1 = handler warn+skip kn<=0 SEGMENT contact; H2 = kernel normalOriented
+  FAIL-SAFE on ambiguous orientation (|n·refDir|≈0 → false, refuse rather than guess a sign) +
+  NEW `test_p2b_auto_orientation_no_outward` covering the previously-untested auto-orient path;
+  KMF-3 = traction() internal Macaulay clamp (gap>=0 → 0, no adhesive foot-gun).
+- **Deferred to P2b-2 (gate-scoped):** TANG-1 = free-master ∂n/∂u consistent-tangent block (the
+  P2b-2 deliverable; optional P2b-1 diagnostic = warn on a free segment DOF). NITs deferred:
+  PARSE-1 (peek-idiom hardening — works on all tested paths), PARSE-3 (unknown-option swallow).
+- Rebuild b2bcxvto3 (warm) live. **NEXT on build**: re-run battery (expect 20/20 w/ the auto-orient
+  test) → commit fold → PR to ladruno (verify #350 merged; this branch is stacked on it) → P2b-2.
+
 ## Deferred / parked
 - P4 SOFT, P5 segment-based, P6 tied, AL upgrade (Q-AL), MPI — all post-v1 per ADR.

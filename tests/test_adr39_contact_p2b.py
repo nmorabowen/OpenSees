@@ -233,6 +233,40 @@ def test_p2b_explicit_impact_restitution():
     assert abs(max_pen - 0.002) / 0.002 < 0.05, f"pen={max_pen}"
 
 
+def test_p2b_auto_orientation_no_outward():
+    """Without -outward the handler AUTO-derives the orientation direction =
+    slave_ref − segment_centroid. For a slave clearly ABOVE the segment this points
+    +z → correct derived normal. Explicit impact rebounds (covers the auto-orient
+    code path; the kernel fail-safe rejects only a coplanar/ambiguous reference)."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    m = _quad_master(z=0.0, L=1.0, base=101)
+    gap0 = 0.01
+    ops.node(1, 0.0, 0.0, gap0)
+    ops.mass(1, 1.0, 1.0, 1.0)
+    ops.contactSurface(10, "-master", 4, *m)
+    ops.contactSurface(20, "-slave", 1)
+    ops.contact(1, 10, 20, KN, 0.0, 0.0)          # NO -outward → auto orientation
+    ops.setNodeVel(1, 3, -2.0, "-commit")
+    ops.constraints("LadrunoContact")
+    ops.numberer("Plain")
+    ops.system("Diagonal")
+    ops.integrator("CentralDifferenceLadruno")
+    ops.algorithm("Linear")
+    ops.analysis("Transient")
+    dt = 0.5 * 2.0 * math.sqrt(1.0 / KN)
+    max_pen, v_out = 0.0, 0.0
+    for _ in range(4000):
+        assert ops.analyze(1, dt) == 0
+        z = gap0 + ops.nodeDisp(1, 3)
+        vz = ops.nodeVel(1, 3)
+        if z < 0:
+            max_pen = max(max_pen, -z)
+        if z > 0.5 * gap0 and vz > 0:
+            v_out = vz
+    assert v_out / 2.0 > 0.9 and max_pen < 0.02, f"auto-orient e={v_out/2.0} pen={max_pen}"
+
+
 def test_p2b_asdimplex_cross_check():
     """ORACLE (design gate): the NTS segment contact and a hand-placed
     ZeroLengthContactASDimplex node-pair must give the SAME static penetration for

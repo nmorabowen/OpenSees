@@ -142,7 +142,13 @@ inline bool normalOriented(int nps, double xi, double eta, const double X[4][3],
     double j = norm3(raw);
     if (j < 1e-300) return false;
     for (int d = 0; d < 3; d++) n[d] = raw[d] / j;
-    if (dot3(n, refDir) < 0.0) for (int d = 0; d < 3; d++) n[d] = -n[d];
+    // FAIL-SAFE: if refDir is (numerically) perpendicular to n the outward sense is
+    // ambiguous (e.g. the slave reference point lies in the segment plane). Refuse
+    // the pair rather than guess a sign — the caller should pass an explicit
+    // -outward direction. (Gate H2.)
+    double proj = dot3(n, refDir);
+    if (std::fabs(proj) < 1e-12 * (norm3(refDir) + 1e-300)) return false;
+    if (proj < 0.0) for (int d = 0; d < 3; d++) n[d] = -n[d];
     return true;
 }
 
@@ -164,8 +170,9 @@ inline bool evalSegment(int nps, const double X[4][3], const double xs[3],
     return (gap < 0.0);                              // penetrating only
 }
 
-// penalty traction tn = kn*<−gap>₊  (caller has already checked gap<0)
-inline double traction(double kn, double gap) { return kn * (-gap); }
+// penalty traction tn = kn*<−gap>₊ . Internal Macaulay clamp (gate KMF-3): returns
+// 0 for gap>=0 so a stray call can never produce a non-physical (adhesive) traction.
+inline double traction(double kn, double gap) { return (gap < 0.0) ? kn * (-gap) : 0.0; }
 
 } // namespace LadrunoContactKernel
 

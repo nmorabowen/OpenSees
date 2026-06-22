@@ -72,6 +72,15 @@ LadrunoContactDomain::addContact(int tag, int masterSurfTag, int slaveSurfTag,
                   "not defined (master " << masterSurfTag << ", slave " << slaveSurfTag << ")\n";
         return -1;
     }
+    if (kn < 0.0) {
+        // kn < 0 = attractive contact + negative-definite tangent (unstable). Reject
+        // at this choke point (covers Py + Tcl), mirroring addRigidPlane's guard.
+        // kn == 0 is allowed (the P1b zero-force topology path); the segment handler
+        // warns + skips an inert kn<=0 SEGMENT contact. (Gate H1.)
+        opserr << "WARNING LadrunoContactDomain::addContact() - penalty kn must be >= 0 (got "
+               << kn << ")\n";
+        return -1;
+    }
     Contact c;
     c.tag = tag; c.masterSurfTag = masterSurfTag; c.slaveSurfTag = slaveSurfTag;
     c.kn = kn; c.kt = kt; c.mu = mu;
