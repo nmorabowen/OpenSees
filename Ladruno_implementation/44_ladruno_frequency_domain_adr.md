@@ -10,7 +10,7 @@ related:
   - "[[modal_gap_study/02_abaqus_theory]]"      # PRIMARY: TG §2.5.3 PWL modal SDOF, §2.5.6 RS, §2.5.7-8 SSD/random
   - "[[modal_gap_study/04_lsdyna_theory]]"      # *FREQUENCY_DOMAIN_* family (FRF/SSD/random/RS), modal vs direct
   - "[[modal_gap_study/01_opensees_current_state]]" # ground truth: eigen + modalProperties + responseSpectrumAnalysis
-  - "[[40_ladruno_complex_modal_adr]]"          # SIBLING (planned): non-classical damping → complex state-space modes
+  - "[[46_ladruno_complex_modal_adr]]"          # SIBLING (planned): non-classical damping → complex state-space modes
   - "[[42_ladruno_buckling_adr]]"               # SIBLING (planned): prestressed modal + linear buckling
   - "[[43_ladruno_feast_eigensolver_adr]]"      # SIBLING (planned): robust + parallel eigensolver (FEAST/complex-FEAST)
   - "[[LEDGER_implementations]]"
@@ -23,7 +23,7 @@ updated: 2026-06-22
 # ADR 44 — Frequency-domain & modal-superposition response
 
 > **Strategic role (load-bearing assessment — see [[modal_gap_study/00_SYNTHESIS]] §6).**
-> **Deliverable layer — NOT load-bearing.** This ADR *consumes* the modal basis from ADRs 40/43;
+> **Deliverable layer — NOT load-bearing.** This ADR *consumes* the modal basis from ADRs 46/43;
 > nothing downstream builds on it. It is the end-feature set (NVH, response spectrum, random
 > vibration, fast modal transient) that monetizes the infrastructure. Genuinely useful, but **build
 > it last — or only when a specific project needs it.**
@@ -33,7 +33,7 @@ built)** for the `LadrunoModalResponse` analysis/post-processor object. This ADR
 modal-superposition *frequency-domain toolkit* that rides on the existing `eigen` +
 `modalProperties` infrastructure. It is the fork's realization of [[modal_gap_study/00_SYNTHESIS]]
 **ADR-D ("Frequency domain")** and is the cheap, low-core-risk member of the modal ADR family
-(siblings: complex modes = ADR 40, buckling = ADR 42, parallel eigensolver = ADR 43).
+(siblings: complex modes = ADR 46, buckling = ADR 42, parallel eigensolver = ADR 43).
 
 > [!info] What this is, in one line
 > Once `eigen` gives the mode shapes Φ and frequencies ω_α and `modalProperties` gives modal
@@ -137,7 +137,7 @@ and recorder addressing — it does not enter the FE assembly.
   eigensolver. Deferred to a follow-up, links to **ADR 43** (robust+parallel/complex eigensolver).
 - **Non-classical damping in the modal space** (full reduced Φᵀ C Φ with off-diagonal coupling).
   The *time-domain* coupled form is mentioned in §4.6 as a one-time-factorization extension; the
-  *eigenvalue* treatment (complex modes ψ, complex ω_d, ζ) belongs to **ADR 40**. The default here
+  *eigenvalue* treatment (complex modes ψ, complex ω_d, ζ) belongs to **ADR 46**. The default here
   is **classical (diagonal) modal damping**; non-classical escalation is flagged, not built.
 - **Structural / complex-stiffness damping** (`F_s = i s F_int`) — only meaningful once a
   frequency-domain solver exists; admissible in SSD/random but deferred with direct SSD.
@@ -358,7 +358,7 @@ reuses OpenSees's existing `rayleigh`/`modalDamping` inputs.
   into each mode (as in `modalProperties` accounting); a future refinement, not P1-blocking.
 - **Caplet — non-classical check.** If the assembled `C` is *not* diagonalized by Φ (off-diagonal
   `φ_αᵀ C φ_β ≠ 0` beyond tolerance), classical decoupling is approximate. The toolkit reports a
-  **non-classicality index** and warns the user to escalate to **ADR 40** (complex modes). The
+  **non-classicality index** and warns the user to escalate to **ADR 46** (complex modes). The
   *time-domain* coupled fallback (solve the small coupled reduced system with a one-time
   factorization, TG §2.5.3) is a documented extension but is **not** in P1–P3 scope.
 
@@ -553,7 +553,7 @@ P1 ships the highest-value features and is independently useful; P2/P3 are pure 
 > [!question]
 > **Non-classical damping.** Localized dashpots / dissimilar-material damping make `Φᵀ C Φ`
 > non-diagonal; classical decoupling is then approximate. The toolkit computes a non-classicality
-> index and **warns + points to ADR 40** (complex modes) rather than silently producing wrong
+> index and **warns + points to ADR 46** (complex modes) rather than silently producing wrong
 > phase. The coupled time-domain fallback (one-time factorization) is a documented, deferred
 > extension.
 
@@ -611,7 +611,7 @@ P1 ships the highest-value features and is independently useful; P2/P3 are pure 
   RESPONSE_SPECTRUM}` parity targets; modal-vs-direct split; `MISSING_MASS_CORRECTION`.
 - [[modal_gap_study/01_opensees_current_state]] **§A/§B** — the `eigen` pipeline and the
   `modalProperties` / `responseSpectrumAnalysis` infrastructure this extends.
-- **ADR 40** (`40_ladruno_complex_modal_adr`) — non-classical damping → complex state-space modes
+- **ADR 46** (`46_ladruno_complex_modal_adr`) — non-classical damping → complex state-space modes
   (escalation target when `Φᵀ C Φ` is non-diagonal).
 - **ADR 42** (`42_ladruno_buckling_adr`) — prestressed modal + linear buckling (sibling; supplies
   preloaded Φ when a frequency-domain run rides a prestressed state).

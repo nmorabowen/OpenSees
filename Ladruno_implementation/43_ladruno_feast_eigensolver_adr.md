@@ -10,7 +10,7 @@ related:
   - "[[modal_gap_study/01_opensees_current_state]]" # ground-truth file:line audit of the current parallel-eigen plumbing
   - "[[modal_gap_study/03_kratos_source]]" # PRIMARY template — bundled PFEAST, 3-level MPI, no Anasazi/Trilinos eigen
   - "[[modal_gap_study/04_lsdyna_theory]]" # MPP eigen = distributed factorization, not distributed Lanczos; Sturm/inertia certification
-  - "[[40_ladruno_complex_modal_adr]]"     # complex/damped state-space modal — re-host its complex case at scale via complex contours
+  - "[[46_ladruno_complex_modal_adr]]"     # complex/damped state-space modal — re-host its complex case at scale via complex contours
   - "[[42_ladruno_buckling_adr]]"          # linear buckling — benefits from band-targeting + Sturm certification
   - "[[LEDGER_implementations]]"
   - "[[LEDGER_vanilla_files]]"
@@ -31,12 +31,12 @@ updated: 2026-06-22
 
 > **Strategic role (load-bearing assessment — see [[modal_gap_study/00_SYNTHESIS]] §6).**
 > **The substrate — highest load-bearing of the family.** This is infrastructure, not a feature:
-> (1) it is the eigensolver every other modal capability (40/41/43) rides; (2) the SP/MP
+> (1) it is the eigensolver every other modal capability (46/41/43) rides; (2) the SP/MP
 > parallel-composition fix is *general* parallel infrastructure that helps any large partitioned
 > analysis, not just modal. Combined with the fact that modal eigen sits upstream of every damped
 > time-history run (Rayleigh-damping calibration), this ADR is what makes the whole family — and
 > large-model NLTHA — actually trustworthy at scale. **The strategic investment** (large build);
-> sequence after the cheap ADR-40 proof.
+> sequence after the cheap ADR-46 proof.
 
 **Status:** DRAFT. Design only — **no code has landed.** classTags **33022**
 (`FeastEigenSOE`) + **33023** (`FeastEigenSolver`) are **RESERVED, not yet built**.
@@ -200,10 +200,10 @@ so a sibling ADR cannot collide.
   partitioned-domain + distributed-solve + contour-parallel model in one build.
 
 **NOT in scope (handed to siblings / later):**
-- **Full complex-contour damped eigen** — re-host of [[40_ladruno_complex_modal_adr|ADR
+- **Full complex-contour damped eigen** — re-host of [[46_ladruno_complex_modal_adr|ADR
   40]]'s state-space complex modal at scale. FEAST's complex contours
-  (`zfeast_*`) are the *mechanism*; the quadratic-pencil linearization is ADR 40's.
-  P5 coordinates with ADR 40; not built here.
+  (`zfeast_*`) are the *mechanism*; the quadratic-pencil linearization is ADR 46's.
+  P5 coordinates with ADR 46; not built here.
 - **AMLS / component-mode synthesis** (the EIGMTH=101-class "thousands of NVH modes"
   route) — a separate future ADR.
 - **Parallel `modalProperties` / CQC-SRSS** — needed for a complete parallel modal
@@ -349,7 +349,7 @@ protocol*: FEAST's RCI `ijob` replaces ARPACK's `ido`; the body is the same
 shifted system is complex — for the real-symmetric band case FEAST's `srci` keeps the
 real-arithmetic structure (it pairs $z_j$ and $\bar z_j$), so a **real** distributed
 solver (MUMPS) can be used per conjugate pair; the complex case (P5) needs a complex
-inner SOE (deferred, ADR 40 territory).
+inner SOE (deferred, ADR 46 territory).
 
 ### 5.3 MPI communicator splitting
 
@@ -427,7 +427,7 @@ distributed *eigen* coordinate iteration to gate. Concretely:
 | **P2 — Sturm/inertia certification** | expose negative-pivot/inertia count from the Band/Mumps factorization; `-certify` asserts FEAST $m$ == inertia($\lambda_2$)−inertia($\lambda_1$) | hand-built model with **known closely-spaced modes straddling the band edge**: FEAST $m$ equals the inertia count; deliberately under-sized $m_0$ is **detected** (saturation flagged), not silently wrong (§8.2) |
 | **P3 — MPI per-contour parallel** | `MPI_Comm_split` into per-quadrature sub-comms; each inner solve = `MumpsParallelSOE` on its sub-comm; `Allreduce`-sum the projector | **strong + weak scaling** on a partitioned model; bit-comparable eigenpairs to the P1 serial run (§8.3) |
 | **P4 — unify SP/MP build gating** | one coherent build where `MumpsParallelSOE` + the contour orchestrator compile together; comm-split orthogonal to partition/replication | the *impossible-today* combination — partitioned/replicated assembly + distributed solve + contour-parallel eigen — runs green in **one** binary (`OpenSeesSP` and/or `OpenSeesMP`); LEDGER_vanilla_files documents the guard change |
-| **P5 — complex contours** *(coordinate with [[40_ladruno_complex_modal_adr|ADR 40]])* | `zfeast_*` complex contour for the damped/non-symmetric pencil; needs a complex inner SOE | re-host ADR 40's complex/state-space modal at scale; gated on ADR 40's quadratic-pencil linearization landing first |
+| **P5 — complex contours** *(coordinate with [[46_ladruno_complex_modal_adr|ADR 46]])* | `zfeast_*` complex contour for the damped/non-symmetric pencil; needs a complex inner SOE | re-host ADR 46's complex/state-space modal at scale; gated on ADR 46's quadratic-pencil linearization landing first |
 
 Adversarial-gate policy (per [[feedback_adversarial_gate_when]]): **P1–P2 warrant the
 full multi-agent gate** (novel-to-the-fork contour math + a completeness *claim*);
@@ -572,7 +572,7 @@ precedents.
   bundled Fortran, no Anasazi); §5c FEAST RCI/`fpm` knobs.
 - [[modal_gap_study/04_lsdyna_theory]] §1/§4 — MPP eigen = distributed factorization +
   Sturm/inertia certification (the completeness guarantee we replicate in P2).
-- [[40_ladruno_complex_modal_adr]] (**ADR 40**) — complex/state-space damped modal;
+- [[46_ladruno_complex_modal_adr]] (**ADR 46**) — complex/state-space damped modal;
   P5 here re-hosts it at scale via `zfeast_*` complex contours.
 - [[42_ladruno_buckling_adr]] (**ADR 42**) — linear buckling $K\phi=\lambda K_g\phi$;
   benefits directly from FEAST band-targeting (buckling-load *band*) + Sturm

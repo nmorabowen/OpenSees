@@ -144,7 +144,7 @@ that ride them.
 | **43** FEAST + SP/MP fix | **Substrate** | **Yes — high** | The eigensolver every other modal capability rides; **and** the SP/MP parallel-composition fix is *general* parallel infrastructure (helps any large partitioned analysis, not just modal). |
 | **40** Complex modal | **Domain-enabling** | **Yes — for our portfolio** | Correct modal damping for SSI/DRM/isolation/dampers (all non-classically damped); prerequisite for reduced-order modeling of those systems. |
 | **42** Buckling / Kg | Standalone analysis | Modest | One real cross-link: the geometric-stiffness eigenpath could feed limit-point / bifurcation detection into the arc-length solvers (ADRs 20/22). |
-| **44** Frequency domain | **Deliverable** | No | Consumes 40/43; nothing downstream builds on it. Pure end-feature (NVH, response spectrum, random). |
+| **44** Frequency domain | **Deliverable** | No | Consumes 46/43; nothing downstream builds on it. Pure end-feature (NVH, response spectrum, random). |
 
 ### 6.2 The dependency map
 
@@ -153,14 +153,14 @@ that ride them.
             │     everything modal rides the eigensolver
    ┌────────┼─────────────────────┐
    ▼        ▼                     ▼
- ADR 40   ADR 42               ADR 44
+ ADR 46   ADR 42               ADR 44
  complex  buckling/Kg          FRF/SSD/random
-   │        │                    ▲ (consumes 40/43; leaf)
+   │        │                    ▲ (consumes 46/43; leaf)
    ▼        ▼
  unlocks   feeds limit-point detection
  beyond    into arc-length (ADR 20/22)
  modal ↓
- ROM / Craig-Bampton substructuring (candidate ADR 46)
+ ROM / Craig-Bampton substructuring (candidate ADR 47)
 ```
 
 ### 6.3 The strongest "everything depends on it" argument
@@ -182,20 +182,20 @@ and it holds.
 ### 6.5 Revised center of gravity for sequencing
 
 The earlier "A→B→C→D" order optimizes for *cheapest-first proof*. If the bar is *unlock the most*,
-the weight shifts toward **43 (infrastructure)** and **40 (domain)**:
+the weight shifts toward **43 (infrastructure)** and **46 (domain)**:
 
-- **ADR 40 first** — cheap serial proof the complex-modal direction is correct (reuses existing
+- **ADR 46 first** — cheap serial proof the complex-modal direction is correct (reuses existing
   `eigen`; validates against isolated/damped models). Low risk, directly serves the research.
 - **ADR 43 is the strategic investment** — the eigensolver + parallel fix is what makes the whole
   family (and large-model NLTHA) usable; the SP/MP fix has value independent of modal analysis.
 - **42 and 44 are opportunistic** — build when a specific project asks.
 
-### 6.6 Forward note — the biggest genuine unlock (candidate ADR 46)
+### 6.6 Forward note — the biggest genuine unlock (candidate ADR 47)
 
 The single capability that would most strengthen the load-bearing case is **reduced-order modeling /
 Craig–Bampton component-mode substructuring** (flagged as future in §2b of the Abaqus dossier). It
 rides directly on this family (needs a trustworthy modal basis + parallel eigen) and is the enabler
-for fast large SSI / real-time hybrid simulation. **Proposed as a candidate ADR 46 — not yet
+for fast large SSI / real-time hybrid simulation. **Proposed as a candidate ADR 47 — not yet
 written; pending decision.**
 
 ---
@@ -204,7 +204,7 @@ written; pending decision.**
 
 The phased rollout (P-A…P-G), cross-cutting decisions (assembled-`C`, MKL-FEAST vs PFEAST, `-shift`
 exposure, vanilla-footprint policy), program gates, and risk register live in the umbrella program
-ADR **[[45_ladruno_modal_family_roadmap_adr]]**. Headline sequence: **P-A** ADR 40 serial (cheap
+ADR **[[45_ladruno_modal_family_roadmap_adr]]**. Headline sequence: **P-A** ADR 46 serial (cheap
 proof) → **P-B** ADR 43 serial MKL-FEAST (substrate, zero new dep) → **P-C** ADR 43 parallel +
 SP/MP unification → **P-D** ADR 42 buckling (opportunistic) → **P-E** ADR 43 complex contours
-(re-host 40 at scale) → **P-F** ADR 44 frequency domain → *(P-G)* ADR 46 ROM.
+(re-host 46 at scale) → **P-F** ADR 44 frequency domain → *(P-G)* ADR 47 ROM.
