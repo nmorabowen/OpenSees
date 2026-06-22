@@ -419,8 +419,10 @@ int OPS_LadrunoContact()
         }
     }
     // optional -outward ox oy oz : orientation direction toward the allowed half-space
+    // optional -cell <frac>      : P2.5 bucket-sort cell = frac * median seg diagonal
     bool hasOutward = false;
     double outward[3] = {0.0, 0.0, 0.0};
+    double cellFrac = 1.0;
     while (OPS_GetNumRemainingInputArgs() > 0) {
         const char *opt = OPS_GetString();
         if (opt != 0 && strcmp(opt, "-outward") == 0) {
@@ -431,6 +433,15 @@ int OPS_LadrunoContact()
             }
             outward[0] = o[0]; outward[1] = o[1]; outward[2] = o[2];
             hasOutward = true;
+        } else if (opt != 0 && strcmp(opt, "-cell") == 0) {
+            // Ladruno ADR-39 P2.5: broad-phase cell-size scale (median seg diag).
+            // A huge value => 1 bucket => every segment a candidate = brute force.
+            double f[1]; int m = 1;
+            if (OPS_GetDoubleInput(&m, f) < 0) {
+                opserr << "WARNING contact -cell - need a positive frac\n";
+                return -1;
+            }
+            cellFrac = f[0];
         } else {
             // Ladruno ADR-39 P2b-2b (gate MINOR-1): error on an unexpected trailing
             // token rather than silently swallowing it (e.g. a stray friction value
@@ -449,7 +460,7 @@ int OPS_LadrunoContact()
         return -1;
     }
     return cd->addContact(idata[0], idata[1], idata[2], kn, kt, mu,
-                          hasOutward ? outward : 0, knAuto);
+                          hasOutward ? outward : 0, knAuto, cellFrac);
 }
 
 // contactPlane tag slaveSurfTag  nx ny nz  px py pz  kn   (P2a rigid analytical plane)

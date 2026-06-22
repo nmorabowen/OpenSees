@@ -516,5 +516,45 @@ Full multi-agent gate (4 source-grounded reviewers → adversarial verify each �
 
 ### Iteration 18 RESULT — P2b-2b `-kn auto` SHIPPED-pending-PR (battery 26/26, gate PASS)
 
+### Iteration 19 — P2.5 bucket-sort broad phase (user-chosen next rung); coded, building
+- User picked P2.5 (bucket sort) over P3/P2b-2c. Replaces the handler's brute-force
+  O(nSlave·nSeg) pairing with the §26.11 spatial bucket sort. Algorithm already validated
+  oracle-first in `proto_bucket_sort.py` (P0a 4/4: superset contract 0-miss, jittered mesh,
+  runaway guard recovers, 33× pruning) — re-confirmed PASS this iteration.
+- Design `_adr39_p25_design.md`. **C++ WRITTEN** (building on top of the unmerged P2b-2b
+  commits in THIS worktree; will cherry-pick onto a fresh ladruno branch once #357 merges):
+  - NEW header-only `SRC/domain/contact/LadrunoContactBucketSort.h` (OpenSees-free Grid class:
+    median-diag cell, bbox + runaway percentile clip, cap NX·NY·NZ≤min(nSeg,5000), segment-SPAN
+    registration type-13, 27-neighbour candidates() with sparse-set stamp de-dup). Stamped + glob.
+  - Handler segment loop: build Grid from master seg REFERENCE coords (missing-node backfill =
+    superset-preserving), per slave `grid.candidates()` → loop candidates not all nSeg. Narrow
+    phase UNCHANGED ⇒ result identical for any kept pair.
+  - `-cell <frac>` knob (Contact.cellFrac, parser, default 1.0): a HUGE value ⇒ 1 bucket ⇒ every
+    segment candidate = BRUTE FORCE (the equivalence-gate mechanism). Also a real distorted-mesh knob.
+  - TEST `tests/test_adr39_contact_p25_bucketsort.py`: **verify==brute force** (5×5=25-seg grid,
+    default cell vs `-cell 1e12`, bitwise-identical slave disps — the gate) + interior-segment
+    correctness (4×4) + single-segment regression.
+- **SCOPING (documented in the header):** grid built at handle() from REFERENCE coords ⇒
+  bitwise == brute force for STATIC/SMALL-MOTION (the validated regime + gate meshes). LARGE
+  sliding needs epoch re-emit (re-handle on membership change; LS-DYNA re-sorts every 10–15
+  cycles) — the follow-on rung. Build ba8eujt42 live (LADRUNO_OPENSEES_QUIET=1 set User-env).
+- **NEXT on build**: run test_p25 + full battery (expect 26+3 green) → code gate → commit P2.5
+  as ONE separable commit → after #357 merges, fresh branch off ladruno + cherry-pick → PR.
+- #357 (P2b-2b) status when last checked: OPEN, CLEAN/green (Zone-A passed), not yet auto-merged.
+- **BUILD ✓ (ba8eujt42); BATTERY 29/29 GREEN** (3 P2.5 + 26 prior). The verify==brute-force
+  gate passed: default bucket grid gives BITWISE-identical slave disps to `-cell 1e12` (brute
+  force) on a 5×5=25-seg grid ⇒ broad phase drops no near pair.
+- **CODE GATE (1 focused reviewer, 250k-probe superset re-derivation): NO BLOCKER/MAJOR.**
+  Superset guarantee PROVEN (penetration ⇒ slave in segment corner-AABB ⇒ in a span-registered
+  cell; ±1 neighbour = extra margin; 0 misses across skewed/ramped/mixed meshes). clampP edge
+  cases sound, linId in-range, cap-shrink-before-registration consistent, degenerate-seg floor
+  ok, missing-node backfill cannot leak HUGE_VAL, `-cell 1e12`⇒1 bucket truly brute force, out[]
+  no overflow (dedup), Grid↔handler seg-index aligned. **2 MINOR FOLDED:** (1) de-dup counter
+  `stampTick_`/`stamp_` widened int→long long (UB-after-2³¹ hardening, unreachable but clean);
+  (2) design-doc reconciled — code uses cell=lmaxFrac·median_diag (no r_search term); harmless
+  for the static/small-motion scope (gate-proven). Rebuild bm9q08wdk live; re-test → commit.
+- **COMMIT PLAN:** P2.5 commits stack on the unmerged P2b-2b (#357) in this worktree. Commit P2.5
+  as ONE separable commit; once #357 merges, fresh branch off ladruno + cherry-pick → PR base ladruno.
+
 ## Deferred / parked
 - P4 SOFT, P5 segment-based, P6 tied, AL upgrade (Q-AL), MPI — all post-v1 per ADR.
