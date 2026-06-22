@@ -32,7 +32,7 @@ return map). P0 = validation only (light verification, no heavy gate).
 | Phase | State | Gate | PR | Notes |
 |---|---|---|---|---|
 | P0 falsify/baseline (no SRC) | **DONE ✓** | light verify ✓ | local | both protos pass; 2 design rules extracted |
-| P1a FE+handler+empty-conn zero, bitwise | DESIGN DONE → CODING | design gate ✓ (SALVAGEABLE) | — | gate folded; replicate-handler + empty-conn + Domain commit/revert hooks |
+| P1a FE+handler+empty-conn zero, bitwise | CODE DONE → BUILDING | design gate ✓; code gate after build | local | build bcc7upkiq running (cold worktree build, OpenSeesPy) |
 | P1b ContactDomain+surface+lifecycle hooks | NOT STARTED | — | — | after P1a green |
 | P2 NTS penalty frictionless | NOT STARTED | **adversarial gate** | — | rigid-plane rung first |
 | P2.5 bucket sort drop-in | NOT STARTED | verify==brute force | — | — |
@@ -106,6 +106,26 @@ Gate caught 3 real bugs the zero-force test would NOT expose (but corrupt state 
   + parser). Folded into `_adr39_p1_design.md` + ADR table + hybrid-table precision.
 - NEXT: write P1a C++ (read LadrunoProjectionHandler::handle + PlainHandler::handle
   as the replicate template), build (background), test bitwise under CDL+Newmark.
+
+### Iteration 4 — P1a C++ WRITTEN + committed (e6943c3f), build running
+Files (all in SRC/analysis/handler/ for P1a; LadrunoContactFE moves to SRC/domain/contact at P2):
+- `LadrunoContactFE.{h,cpp}` — FE_Element adapter, bare ctor (0,0)=empty conn,
+  owns Vector resid(0)+Matrix tang(0,0), overrides getResidual/getTangent (zero)
+  + addMtoTang no-op. (myEle==0 ⇒ base helpers exit(-1), so owning buffers mandatory.)
+- `LadrunoContactHandler.{h,cpp}` — ConstraintHandler, replicates LadrunoProjectionHandler
+  DOF/FE loop, tracks numFe, injects ONE LadrunoContactFE(numFe++). MP present⇒warn
+  (P1b delegates). OPS_LadrunoContactHandler factory + sendSelf/recvSelf→0 stubs.
+- Wiring: classTags HANDLER_TAG_LadrunoContactHandler 33002; `constraints LadrunoContact`
+  branch in OpenSeesCommands.cpp (mirrors LadrunoProjection, 1 vanilla edit); CMake
+  (handler dir); stamp_headers globs + stamped (4 files).
+- `tests/test_adr39_contact_p1.py` — bitwise gate (truss chain, CDL+Newmark, LadrunoContact
+  ==Plain exactly) + rebuild smoke (remove element mid-run).
+- BUILD: `build.bat OpenSeesPy` (worktree = COLD build, ~30-45min, runs conan). bg bcc7upkiq.
+  build.bat roots at script location → BUILD_DIR=worktree/build/Release (no warm cache here).
+- NEXT on build done: run pytest test_adr39_contact_p1.py; if green → P1a code gate
+  (adversarial) → ledger row + banner? (handler, not banner-worthy yet) → commit → P1b.
+- NOTE: only the OpenSeesPy target built (test uses opensees.pyd). Full OpenSees/SP/MP
+  rebuild + ledger LEDGER_implementations row deferred to the P1 PR.
 
 ## Deferred / parked
 - P4 SOFT, P5 segment-based, P6 tied, AL upgrade (Q-AL), MPI — all post-v1 per ADR.
