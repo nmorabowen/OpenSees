@@ -606,5 +606,74 @@ Full multi-agent gate (4 source-grounded reviewers → adversarial verify each �
   frictionless-regression/commit-revert/wipe-reanalyze) → code gate → PR base ladruno. Branch fresh
   off ladruno (it has P2.5; HEAD after #358 merge). Oracle `proto_p3_friction.py` 6/6 is the math ref.
 
+### Iteration 21 — P3 friction C++ WRITTEN (explicit FORCE-only ship), cold worktree building
+- New worktree `vigilant-solomon-8c93bd` (branch guppi/vigilant-solomon-8c93bd, off ladruno
+  HEAD fe83cbe40 = #359 P3 design). Cold build (no dist/build/mumps) — copied
+  mumps_src.tar.gz in + set LADRUNO_OPENSEES_QUIET=1 (User env) before build.bat.
+- **P3 C++ transcribed from the gate-hardened design + oracle (proto_p3_friction.py 6/6):**
+  - **Kernel** `LadrunoContactKernel.h`: `tangentPart()` + `frictionReturnMap()` (clean
+    Coulomb DIRECT return map; returns NEGATED applied force `tFric=−tT` — SIGN in ONE place;
+    `gpTtrial` PURE fn of committed ⇒ firstStep-double-eval idempotent; near-zero guard is
+    physically scaled = slip needs ‖tT*‖>cap>0 so n̂ always normalizable). IMPL-EX stays in
+    the oracle only (explicit discards tangent).
+  - **Engine** `LadrunoContactDomain.{h,cpp}`: `FrictionState{gpT,gpTtrial,gT0,engaged}` in a
+    `std::map<PairKey(contactTag,slaveTag,segIndex),...>`; `getOrCreateFrictionState` (lazy);
+    real `commit()`(gpT=gpTtrial)/`revertToLastCommit()`(gpTtrial=gpT) REPLACING the P1b
+    counters (counters kept for the info command); `frictionGCBegin/Mark/End` (live key-set
+    GC each handle, ADR-30 theEQs leak class). `getNumFrictionStates()`.
+  - **Adapter** `LadrunoContactFE.{h,cpp}`: SEGMENT ctor += `kt,mu,Domain*,contactTag,segIndex`;
+    `segmentActive` += optional `gTvec` (tangential rel-pos = (xs−x̄)_⊥n at the SAME projection);
+    getResidual friction block — `mu>0 && theDomain` guard (mu≤0 SHORT-CIRCUITS ⇒ byte-identical
+    P2b), lazy `getLadrunoContactDomain()` re-fetch (wipe deletes engine), capture `gT0` at first
+    activation, `gTeff=gTvec−gT0`, return map w/ N=tn, write gpTtrial, MIRROR normal block
+    (slave+=tFric, master_i+=−N_i tFric). Tangent UNCHANGED (friction tangent=P3.5).
+  - **Handler** `LadrunoContactHandler.cpp`: thread `ct.kt,ct.mu,theDomain,ct.tag,seg` into the
+    SEGMENT ctor; `frictionGCBegin` + per-frictional-pair `frictionGCMark` + `frictionGCEnd`
+    bracketing the contact loop; cross-contact shared-slave multiset warning.
+  - No NEW vanilla file (Domain commit/revert hooks already wired P1b); no new classTag
+    (rides HANDLER 33002); no parser change (kt/mu already parsed P1b). No new authored file
+    (stamp_headers --check: all 146 current).
+  - **TEST** `tests/test_adr39_contact_p3_friction.py` (7): incline a=g(sinθ−μcosθ) through
+    REAL CDL+addB (THE sign gate; +μ=0 leg = g·sinθ), slip-caps-μN (a=(Q−μN)/m, f=μN, two
+    drives), stick (Q<μN held), dissipation (v_fric/v_free≈(Q−μN)/Q), frictionless regression
+    (mu=0 vs 0.5 pen=P/kn identical), commit-fires (numCommits==steps), wipe-reanalyze (GC+lifetime).
+  - Ledger: LEDGER_implementations contact row += P3 paragraph + P3 test file + #358/#359 PR fixes.
+- BUILD bqw9r1yfp live (cold, configure passed = QUIET flag worked, ~640/1871 at last check).
+- **CRITICAL SELF-CAUGHT BUG (pre-test, oracle-style numpy check):** my first gTvec used
+  POSITIONS (x_s − x̄)_tan — but the closest-point projection makes (x_s − x̄) ∥ n, so that
+  is IDENTICALLY ZERO ⇒ zero slip ⇒ NO friction. FIX = displacement-based slip
+  `d = u_s − Σ N_i u_i`, tangential part (master DISPLACEMENTS, not positions). Verified
+  numerically (pos→0 always, disp→δ) before rebuild.
+- **BUILD ✓** cold (bqw9r1yfp exit 0, QUIET flag → CMake Python probe clean) + incremental
+  rebuild after the slip fix. Re-wired .pth to this worktree dist.
+- **BATTERY 36/36 GREEN** (7 P3 + 7 P1 + 5 P2a + 8 P2b-1 + 2 P2b-2a + 4 P2b-2b + 3 P2.5).
+  P3 7/7: incline a=g(sinθ−μcosθ) (sign gate, +μ=0 leg g·sinθ), slip-caps-μN (2 drives),
+  stick, dissipation (v ratio 0.5), frictionless regression (mu=0 vs 0.5 pen identical),
+  commit-fires (numCommits==50), wipe-reanalyze. NO regression in the 29 prior.
+- **P3 CODE GATE (3 parallel source-grounded adversarial reviewers): 2× PASS + 1 SALVAGEABLE.**
+  - **sign/mechanics → PASS:** traced the SIGN end-to-end through REAL `addB`/CDL (could not
+    prove it wrong) — kernel `tFric=−tT` opposes motion ⇒ a=g(sinθ−μcosθ); return map
+    oracle-EXACT; cone N=tn safe; slip branch `norm>cap>0` ⇒ no 0/0; displacement-based slip
+    correct (position-based ≡0 by closest-point ⊥), convective migration a documented limit.
+  - **state/lifecycle → PASS** (all MINOR/NIT): firstStep idempotent (`gpTtrial` pure set of
+    committed); commit/revert hooks fire; GC bracket correct + `erase(it++)` safe; mu≤0
+    byte-identity; key = global `seg` (not `ci`), collision-free; lazy refetch wipe-safe; all
+    3 ctors init in declaration order.
+  - **tests → SALVAGEABLE** (the 2 load-bearing tests are genuinely strong; folded the gaps):
+    + **MAJOR revert-path** — was untested (design MAJOR-7); ADDED `test_p3_revert_path`
+      (failed implicit step → numReverts increments; verified the hook fires, probe confirmed).
+    + **MAJOR deformable-master friction** — the `resid_master_i += −N_i·tFric` block was never
+      exercised (all masters fixed); ADDED `test_p3_deformable_master_drag` (slave slides on a
+      deformable LadrunoBrick top face → friction DRAGS the brick top +x; sign-decisive).
+    + **MINOR late-engagement gT0** — the #1 design fix was untested (all tests pre-penetrate);
+      ADDED `test_p3_late_engagement_gt0` (slave drifts +x while separated, then penetrates →
+      a_x≈0 at engagement vs the −kt·Δ/m spurious-stick bug).
+    + dissipation reframed as an independent ENERGY-BALANCE check (drive work = KE + μN·x);
+      stick bound TIGHTENED to 1.2·(2Q/kt); frictionless-regression clarified (a statically-
+      ACTIVE friction leg is INFEASIBLE in v1 — free tangential DOF is singular w/o the friction
+      tangent, which is WHY the ship is explicit; active friction covered by slide/stick/incline).
+- **BATTERY 39/39 GREEN** (10 P3 + 29 prior). No regression.
+- **NEXT**: commit P3 → PR base ladruno (verify ladruno HEAD; wait Zone-A green before merge).
+
 ## Deferred / parked
 - P4 SOFT, P5 segment-based, P6 tied, AL upgrade (Q-AL), MPI — all post-v1 per ADR.
