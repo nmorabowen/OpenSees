@@ -34,7 +34,7 @@ return map). P0 = validation only (light verification, no heavy gate).
 | P0 falsify/baseline (no SRC) | **DONE ✓** | light verify ✓ | local | both protos pass; 2 design rules extracted |
 | P1a FE+handler+empty-conn zero, bitwise | **DONE ✓** (5eb3b810) | design gate ✓ + code gate ✓ | local | rebuilt + 3/3 bitwise green w/ fixes; committed |
 | P1b ContactDomain+surface+lifecycle hooks | **DONE ✓** (344a9c86) | light review ✓ (test-covered + clean compile; Domain non-copyable → no double-free) | local | 7/7 green; build exit 0; committed |
-| **P2 NTS penalty narrow phase (frictionless)** | NEXT | **FULL multi-agent adversarial gate** (mechanics) | — | first real-mechanics phase: closest-point projection + penalty normal + K_c |
+| **P2 NTS penalty narrow phase (frictionless)** | DESIGN GATE RUNNING (wp3cr60mf) | **FULL multi-agent gate** (mechanics) | — | `_adr39_p2_design.md` written; 4-reviewer gate launched |
 | P2 NTS penalty frictionless | NOT STARTED | **adversarial gate** | — | rigid-plane rung first |
 | P2.5 bucket sort drop-in | NOT STARTED | verify==brute force | — | — |
 | P3 IMPL-EX Coulomb — SHIP | NOT STARTED | **adversarial gate** | — | v1 ship |
