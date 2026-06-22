@@ -673,7 +673,49 @@ Full multi-agent gate (4 source-grounded reviewers → adversarial verify each �
       ACTIVE friction leg is INFEASIBLE in v1 — free tangential DOF is singular w/o the friction
       tangent, which is WHY the ship is explicit; active friction covered by slide/stick/incline).
 - **BATTERY 39/39 GREEN** (10 P3 + 29 prior). No regression.
-- **NEXT**: commit P3 → PR base ladruno (verify ladruno HEAD; wait Zone-A green before merge).
+
+### Iteration 21 RESULT — P3 friction MERGED #360 (squash 0139fd33a, Zone-A green 8m43s)
+- P3 (v1 explicit friction ship) merged to ladruno. **ADR-39 v1 contact ship COMPLETE:**
+  P1 → P2a → P2b-1/2a/2b → P2.5 → P3 friction. classTag/manifest + Zone-A all green; no
+  Win→Linux drift. User authorized pr+merge.
+
+### Iteration 22 — P3.5 implicit frictional Newton (the consistent NON-SYMMETRIC tangent) STARTED
+- Branched guppi/contact-p35-implicit-friction off origin/ladruno (has P3).
+- **WHY:** P3 ships friction FORCE-only; under IMPLICIT (static/Newmark) a free tangential DOF
+  is SINGULAR without the friction tangent (observed: FullGeneral U(0,0)=0 in P3 testing). P3.5
+  assembles the consistent friction tangent so implicit Newton converges. The per-traction
+  tangent blocks are already oracle-validated (proto_p3_friction.py friction_tangent, 6/6):
+  STICK ∂tT/∂gT=kt·P_t, ∂tT/∂gN=0 (SYMMETRIC); SLIP ∂tT/∂gT=(μN·kt/‖tT*‖)(P_t−n̂⊗n̂),
+  ∂tT/∂gN=−μ·kn·n̂ (the pressure-coupling column ⇒ NON-SYMMETRIC).
+- **Assembled tangent (the new 3D part to pin + code):** K_fric = Gᵀ[D_TT·P_t + d_TN⊗n]G where
+  G=[I|−N_i I] (rel-disp operator), P_t=(I−n⊗n) tangent projector, D_TT=∂tT/∂gT, d_TN=∂tT/∂gN.
+  Lives in `addKtToTang` (implicit path only; explicit CDL's addMtoTang skips it ⇒ P3 explicit
+  byte-identical). NON-SYMMETRIC ⇒ needs FullGeneral/UmfPack (document; cannot detect solver in FE).
+- **Open design Qs:** (1) current-N (non-sym, rigorous) vs committed-N (∂tT/∂gN=0 ⇒ SYMMETRIC,
+  robust, design's smoothness option) — pick/knob; (2) active-set per-Newton-iter re-projection vs
+  freeze-per-step (chatter); (3) IMPL-EX symmetric-secant variant = P3.5b or defer.
+- ORACLE `proto_p35_implicit_tangent.py` **4/4 PASS**: slip K_ss==FD (1.5e-9) + NON-symmetric
+  (asym/kt=4.0); stick==kt·P_t symmetric; committed-N (drop d_TN)==symmetric; full assembly
+  self-equilibrium (K·u_rigid≈0). 3D assembled tangent LOCKED.
+- Wrote `_adr39_p35_design.md` + ran **DESIGN GATE (2 source-grounded reviewers): tangent-mechanics
+  PASS + solver/active-set SALVAGEABLE.** Folded:
+  - **GATE-Q2 BLOCKER (decisive):** non-symmetric default = silent-wrong-answer foot-gun — symmetric
+    SOEs (ProfileSPDLinSOE.cpp:327, BandSPDLinSOE.cpp:269, SymSparse) read ONLY the upper triangle +
+    silently drop the lower; the FE can't see the SOE type. **FLIPPED the default to the SYMMETRIC
+    tangent** (drop the d_TN⊗n column ⇒ correct on ANY solver, superlinear); non-sym consistent
+    tangent (quadratic) = OPT-IN `-consistanttan` + a parser WARNING re FullGeneral/UmfPack.
+  - **GATE-Q3 MAJOR (deferred to P3.5b):** per-step active-set freeze; symmetric default removes the
+    d_TN chatter driver; document `NewtonLineSearch`. **Q4 resolved:** residual ALWAYS current-N
+    (correct equilibrium); symmetric default = approximate tangent for the exact residual (same root,
+    +1 iter). **Q5 addKiToTang stick-only = PASS** (SPD contraction). Explicit byte-identity = PASS.
+  - tangent-mechanics reviewer FD-validated the FULL ndof assembly to 1.5e-9; sign/scatter/c1 all exact.
+- **NEXT = code P3.5:** symmetric friction tangent in `addKtToTang` (Gᵀ D_TT P_t G; stick kt·P_t /
+  slip (μN kt/‖tT*‖)(P_t−n̂⊗n̂), current N, drop d_TN) + `-consistanttan` opt-in adds d_TN⊗n + parser
+  warning; `addKiToTang` stick-only; tangent reads committed gpT NOT gpTtrial. → build → test
+  (static stick converges = THE gate (singular in P3); static slip; superlinear default vs quadratic
+  `-consistanttan` on FullGeneral; Newmark dynamic; explicit byte-identity; FD-at-slip tangent==∂resid)
+  → code gate → PR base ladruno.
 
 ## Deferred / parked
-- P4 SOFT, P5 segment-based, P6 tied, AL upgrade (Q-AL), MPI — all post-v1 per ADR.
+- P2b-2c ∂n/∂u normal tangent + Hertz + SOFT Courant floor; P4 SOFT, P5 segment-based, P6 tied,
+  AL upgrade (Q-AL), MPI — all per ADR.
