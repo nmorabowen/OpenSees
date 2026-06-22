@@ -29,6 +29,7 @@
 #include <LadrunoContactDomain.h>    // Ladruno: ADR-39 (adapter count from the engine)
 #include <LadrunoContactSurface.h>   // Ladruno: ADR-39 P2a (slave node-set)
 #include <LadrunoContactKernel.h>    // Ladruno: ADR-39 P2b-2b (reference normal for -kn auto)
+#include <LadrunoContactBucketSort.h>// Ladruno: ADR-39 P2.5 (broad-phase pairing)
 #include <Matrix.h>                  // Ladruno: ADR-39 P2b-2b (master getInitialStiff)
 #include <Domain.h>
 #include <AnalysisModel.h>
@@ -49,6 +50,8 @@
 #include <classTags.h>
 #include <elementAPI.h>
 #include <map>
+#include <vector>
+#include <cmath>
 
 // ----------------------------------------------------------------------------
 // command factory: constraints LadrunoContact
@@ -271,6 +274,36 @@ LadrunoContactHandler::handle(const ID *nodesLast)
             const ID &mTags = ms->getNodeTags();
             const ID &sTags = ss->getNodeTags();
             int nSeg = mTags.Size() / nps;
+
+            // P2.5 BROAD PHASE: bucket-sort the master segments (reference coords)
+            // once, then per slave query only the 27-neighbour candidate segments
+            // instead of all nSeg (brute force). The kept set is a SUPERSET of every
+            // near pair, so the contact result is identical to brute force; a huge
+            // -cell (=> 1 bucket) reproduces brute force exactly (the equivalence
+            // gate). Missing master nodes (malformed model) are filled with the
+            // segment's first valid coord — superset-preserving, and the narrow loop
+            // below re-fetches + skips them anyway.
+            std::vector<double> segCoords((size_t)nSeg * nps * 3, 0.0);
+            for (int seg = 0; seg < nSeg; seg++) {
+                double *S = &segCoords[(size_t)seg * nps * 3];
+                bool haveFirst = false; double first[3] = {0.0, 0.0, 0.0};
+                for (int k = 0; k < nps; k++) {
+                    Node *mn = theDomain->getNode(mTags(seg * nps + k));
+                    if (mn != 0) {
+                        const Vector &X = mn->getCrds();
+                        S[k*3+0] = X(0); S[k*3+1] = X(1); S[k*3+2] = X(2);
+                        if (!haveFirst) { first[0]=X(0); first[1]=X(1); first[2]=X(2); haveFirst = true; }
+                    } else {
+                        S[k*3+0] = S[k*3+1] = S[k*3+2] = HUGE_VAL;   // mark missing
+                    }
+                }
+                for (int k = 0; k < nps; k++)   // backfill missing with first valid
+                    if (S[k*3+0] == HUGE_VAL)
+                        for (int d = 0; d < 3; d++) S[k*3+d] = first[d];
+            }
+            LadrunoContactBucketSort::Grid grid(nSeg, nps, segCoords.data(), ct.cellFrac, 1.0);
+            std::vector<int> cand(nSeg);
+
             for (int si = 0; si < sTags.Size(); si++) {
                 Node *sn = theDomain->getNode(sTags(si));
                 if (sn == 0 || sn->getNumberDOF() != 3) {
@@ -280,7 +313,11 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                                << " != 3; skipped (P2b is 3D translational)\n";
                     continue;
                 }
-                for (int seg = 0; seg < nSeg; seg++) {
+                const Vector &Xs0 = sn->getCrds();
+                double slavePt[3] = { Xs0(0), Xs0(1), Xs0(2) };
+                int nCand = grid.candidates(slavePt, cand.data());
+                for (int ci = 0; ci < nCand; ci++) {
+                    int seg = cand[ci];
                     Node *segNodes[4]; bool ok = true;
                     for (int k = 0; k < nps; k++) {
                         Node *mn = theDomain->getNode(mTags(seg * nps + k));

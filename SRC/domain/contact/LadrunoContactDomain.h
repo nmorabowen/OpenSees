@@ -64,7 +64,7 @@ class LadrunoContactDomain
     // placeholder (0) and ignored; the handler computes the real value.
     int addContact(int tag, int masterSurfTag, int slaveSurfTag,
                    double kn, double kt, double mu, const double *outward = 0,
-                   bool knAuto = false);
+                   bool knAuto = false, double cellFrac = 1.0);
     int getNumContacts(void) const { return (int)theContacts.size(); }
 
     // --- P2b: faceted node-to-segment penalty contact. A Contact references a
@@ -77,6 +77,8 @@ class LadrunoContactDomain
         bool knAuto;            // true => kn auto-sized from the master element (P2b-2b)
         bool hasOutward;        // true if an explicit orientation direction was given
         double outward[3];      // orientation direction toward the allowed half-space
+        double cellFrac;        // P2.5 bucket-sort cell = cellFrac * median seg diag
+                                // (1.0 default; a huge value => 1 bucket => brute force)
     };
     const Contact &getContact(int i) const { return theContacts[i]; }
 
