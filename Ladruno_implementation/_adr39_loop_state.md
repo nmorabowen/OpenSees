@@ -34,7 +34,9 @@ return map). P0 = validation only (light verification, no heavy gate).
 | P0 falsify/baseline (no SRC) | **DONE ✓** | light verify ✓ | local | both protos pass; 2 design rules extracted |
 | P1a FE+handler+empty-conn zero, bitwise | **DONE ✓** (5eb3b810) | design gate ✓ + code gate ✓ | local | rebuilt + 3/3 bitwise green w/ fixes; committed |
 | P1b ContactDomain+surface+lifecycle hooks | **DONE ✓** (344a9c86) | light review ✓ (test-covered + clean compile; Domain non-copyable → no double-free) | local | 7/7 green; build exit 0; committed |
-| **P2 NTS penalty narrow phase (frictionless)** | DESIGN GATE RUNNING (wp3cr60mf) | **FULL multi-agent gate** (mechanics) | — | `_adr39_p2_design.md` written; 4-reviewer gate launched |
+| P2 NTS penalty narrow phase (frictionless) | DESIGN GATE ✓ → SPLIT P2a/P2b | full gate ✓ (SALVAGEABLE; folded) | — | design revised; P2a next (rigid plane, -kn val) |
+| P2a rigid+inclined plane, -kn val | NEXT (coding) | code gate after build | — | de-risked rung: penalty+B+active-set, no projection kernel |
+| P2b faceted+deformable+Hertz+auto-kn+∂n/∂u | NOT STARTED | full gate already covers; code gate | — | the deformable mechanics |
 | P2 NTS penalty frictionless | NOT STARTED | **adversarial gate** | — | rigid-plane rung first |
 | P2.5 bucket sort drop-in | NOT STARTED | verify==brute force | — | — |
 | P3 IMPL-EX Coulomb — SHIP | NOT STARTED | **adversarial gate** | — | v1 ship |
@@ -184,6 +186,34 @@ Files (all in SRC/analysis/handler/ for P1a; LadrunoContactFE moves to SRC/domai
   - Stamped 4 contact files. Build bo5f2u6cy live.
 - NEXT on build done: full test_adr39 (P1a 3 + P1b 4 = 7) → light review → ledger P1b vanilla
   rows (Domain.{h,cpp}, interpreter ×4) → commit P1b → P2 (NTS penalty narrow phase).
+
+### Iteration 8 — P2 full design gate (wp3cr60mf) → SALVAGEABLE, folded
+4-lens mechanics gate caught a SELF-CONTRADICTION + 2 silent-wrong BLOCKERs before any C++:
+- **Q-P2-tan (decisive):** main-term-only K_c CANNOT pass the design's own FD-on-rotated
+  gate — ∂n/∂u≠0 for a FLAT segment under rigid rotation (n rotates w/ nodes; what
+  vanishes for flat is CURVATURE, not ∂n/∂u). FIX: include the ∂n/∂u block (honest
+  Laursen/Wriggers NTS tangent, SYMMETRIC for frictionless), drop only O(gₙ·κ). Formula
+  fix: main term = **kₙ BᵀB** not kₙ Bᵀ(n⊗n)B (B already carries n).
+- **BLOCKER-1 (silent-wrong):** outward normal must be DERIVED from master element
+  centroid, not trusted from node winding (flip → contact silently passes through).
+- **BLOCKER-2:** bounded projection Newton (cap 10 + detK guard + non-converge sentinel);
+  SimpleContact3D's unbounded `while` would hang the Domain scan.
+- MAJOR: concave-corner tie-break (max-penetration in-bounds, else edge/vertex avg normal);
+  gₙ0 default = no-offset + ABORT-on-init-penetration (stress-free = opt-in); -kn auto
+  DEMOTED to P2b (K/A/V has no Element API — cache at setDomain from material GP + nodal V);
+  implicit active-set freeze-per-step (or NewtonLineSearch); getID immutable+asserted;
+  implicit RE-PROJECTS per Newton iter, explicit freezes per step; first-order-exact is
+  interior-only.
+- REFERENCE (not 1e-12 abs): rigid-plane analytic g=P/kₙ rel-1e-8 [P2a]; hand-placed
+  ZeroLengthContactASDimplex pair cross-check rel-1e-6 [P2b oracle]; Hertz convergence.
+- **SPLIT MANDATORY: P2a** (rigid+inclined plane, -kn val, connectivity={slave}, B=nᵀ,
+  no projection kernel) **→ P2b** (faceted+deformable+Hertz+auto-kn+∂n/∂u tangent FD).
+- Kernel: header-only OpenSees-free `LadrunoContactKernel.h` (mirrors LadrunoJ2Kernel);
+  FE stays in OPS_Analysis (Analysis→Domain). ContactMaterial3D has NO penalty tangent
+  to lift (author fresh).
+All folded into `_adr39_p2_design.md` (committed bae2456c → revised). NEXT: code P2a.
+  P2a needs the custom-FE_Element connectivity pattern (study PenaltySP_FE/TransformationFE
+  — how a constraint-handler FE_Element subtype sets myDOF_Groups + myID + returns tang/resid).
 
 ## Deferred / parked
 - P4 SOFT, P5 segment-based, P6 tied, AL upgrade (Q-AL), MPI — all post-v1 per ADR.

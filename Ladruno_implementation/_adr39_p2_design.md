@@ -1,138 +1,169 @@
 # ADR 39 — P2 design: NTS penalty narrow phase (frictionless)
 
-> Pre-code design for P2 — the first REAL mechanics. Goes through the FULL
-> multi-agent adversarial gate BEFORE coding. Grounded in the ADR's Theory
-> grounding (LS-DYNA §26.7 + de Souza Neto / Laursen / Wriggers). Parent:
-> `39_ladruno_contact_domain_adr.md`; P1 done (`_adr39_p1_design.md`,
-> `_adr39_p1b_design.md`); loop `_adr39_loop_state.md`.
+> **Revised after the full 4-lens adversarial design gate** (Workflow wp3cr60mf →
+> SALVAGEABLE-WITH-CHANGES). The gate caught a self-contradiction (the main-term-
+> only tangent cannot pass the design's own FD-on-rotated gate) + two silent-wrong
+> BLOCKERs. All folded in below, flagged `[GATE]`. Verdict + fixes archived in the
+> loop log. Parent ADR `39_..._adr.md`; P1 done; loop `_adr39_loop_state.md`.
 
-## P2 goal
+## P2 goal + split `[GATE: split mandatory]`
 
-Turn the zero-force P1 adapters into real **node-to-segment (NTS) penalty
-contact** (frictionless): closest-point projection → gap → penalty normal force
-`F_c` (+ consistent tangent `K_c` for the implicit leg), assembled over **real
-per-pair connectivity**. Still **brute-force** candidate pairing (bucket sort is
-P2.5). Friction is P3.
+Real NTS penalty contact (frictionless). **Split into two shippable rungs** — the
+rigid plane isolates penalty+assembly+active-set from the four deformable-path
+risks (auto-kₙ reachability, projection robustness, normal orientation, faceted
+tangent):
+- **P2a** — slave nodes vs a **rigid analytical plane** (+ inclined plane),
+  explicit + implicit, **`-kn $val`** (no auto). Connectivity = {slave} only,
+  B = nᵀ, no projection kernel, no master mass. Ships clean.
+- **P2b** — faceted-master projection rung → two deformable `LadrunoBrick` blocks
+  + Hertz + `-kn auto` + SOFT floor + the **∂n/∂u** tangent (FD-on-rotated gate) +
+  the `ZeroLengthContactASDimplex` cross-check.
 
-## Kinematics — closest-point projection (LS-DYNA §26.6/26.10)
+Friction is P3; bucket sort P2.5.
 
-A slave node at `x_s = X_s + u_s`. A master segment with nodes `x_i = X_i + u_i`
-and bilinear (quad-4) / linear (tri-3) shape functions `φ_i(ξ,η)`. The master
-point `x̄(ξ,η) = Σ φ_i(ξ,η) x_i`, tangents `g_α = ∂x̄/∂ξ_α`, normal
-`n = (g_1 × g_2)/‖g_1 × g_2‖`.
+## Kinematics — closest-point projection (P2b) `[GATE: bounded + oriented]`
 
-**Projection** = find `(ξ̄,η̄)` s.t. `(x_s − x̄)·g_α = 0` (orthogonality). Newton
-on the 2×2 system (26.10), ≤10 iters; flat tri-3 → closed form (no Newton).
-**Gap** `g_n = n·(x_s − x̄)`; penetration ⇔ `g_n < 0` AND `(ξ̄,η̄)` inside the
-facet (with the §26.6 small overlap tolerance ~1.02 for edges).
+Slave `x_s`, master segment nodes `x_i`, bilinear/linear `φ_i(ξ,η)`,
+`x̄=Σφ_i x_i`, tangents `g_α=∂x̄/∂ξ_α`, `n=(g_1×g_2)/‖g_1×g_2‖`.
 
-## Force (penalty) + B-operator
+- **Projection** = Newton on `(x_s−x̄)·g_α=0` (26.10) — but **bounded** `[GATE
+  BLOCKER-2]`: cap 10 iters; reject segment if `|detK| < ε‖g_1‖‖g_2‖`; return a
+  **"no valid projection" sentinel** on non-convergence so the scan skips (never
+  assemble garbage). Do NOT copy SimpleContact3D's unbounded `while` (`:600-635`).
+  Flat tri-3 → closed-form (the de-risk path); quad-4 → bounded Newton.
+- **Outward normal is DERIVED, not trusted from winding** `[GATE BLOCKER-1 — the
+  #1 silent-wrong bug]`: at setDomain orient each segment normal from the master
+  **solid-element centroid**: flip `g_1×g_2` so `n·(x̄ − x_elem_centroid) > 0`.
+  (A flipped/inconsistent winding makes `gₙ<0` never fire → contact silently
+  passes through, or some pairs attract.) Gate: flip a block's winding → identical
+  force.
+- **Concave-corner / multi-facet tie-break** `[GATE MAJOR-4]`: among segments with
+  a valid IN-BOUNDS projection pick **max penetration** (most-negative gₙ); if none
+  in-bounds but the node is geometrically inside, project to the nearest
+  edge/vertex with the **averaged adjacent-facet normal**. "Node penetrates but no
+  segment claims it" = a gate **assertion**, never a silent zero.
+- Gap `gₙ = n·(x_s − x̄)`; penetration ⇔ `gₙ < 0` AND in-bounds.
 
-Pair active (`g_n < 0`): normal traction magnitude `t_n = -k_n g_n` (>0).
-- slave force `f_s = -t_n n` (pushes slave out);
-- master node force `f_i = +φ_i(ξ̄) t_n n`.
+## Force (penalty) + B-operator `[verified by the gate]`
 
-By the orthogonality result (ADR Q-TAN), `δg_n = n·(δu_s − Σ φ_i δu_i)` — the
-`∂ξ̄/∂u` term drops from the **residual**, so the force is FIRST-ORDER EXACT with
-a once-per-step-frozen `(ξ̄,η̄)`. Define the gap operator `B` (1 × nDOF) over the
-pair's DOFs `[u_s ; u_1..u_nseg]`: `g_n = B·U + g_n0`, `B = [ nᵀ | -φ_1 nᵀ ... ]`.
-Residual `r = Bᵀ t_n` (assembled into the adapter's resid over its `getID`).
+Macaulay form `[GATE MINOR-15]`: `tₙ = kₙ⟨−gₙ⟩₊` (penetrating branch only; hard
+zero otherwise — never write bare `−kₙgₙ`, the adhesion bug). Active pair:
+- slave `f_s = −tₙ n`, master node `f_i = +φ_i(ξ̄) tₙ n`.
+Gap operator (1×nDOF) over `[u_s ; u_1..u_nseg]`: `B = [ nᵀ | −φ_1 nᵀ ... ]`,
+residual `r = Bᵀ tₙ`. **Self-equilibrated for any kₙ** (ΣF=0, ΣM=0 at the
+converged projection) — gate-verified; add an explicit `|Σf|<1e-10·|F_c|` gate.
+First-order-exact-with-frozen-ξ̄ holds for **interior** projections only `[GATE
+MAJOR-10]`; at a clamped edge/vertex use the reduced edge normal or document the
+O(error).
 
-## Tangent `K_c` (implicit leg, scaled by c1)
+## Tangent `K_c` — the corrected, honest NTS tangent `[GATE BLOCKER-3, Q-P2-tan]`
 
-Consistent tangent (frictionless, de Souza Neto / Laursen):
-`K_c = k_n Bᵀ (n⊗n) B`  — the MAIN penalty term — **plus** the dropped
-`O(g_n·κ)` curvature + `∂n/∂u`/`∂ξ̄/∂u` terms. **P2 ships only the main term**
-(lagged geometric tangent, Q-TAN): exact for flat segments + small rotation,
-degrades on curved/rocking/large-slide. Newmark assembles `addKtToTang(c1)` ⇒ the
-adapter's `getTangent` returns `c1·K_c` (P1 gate MAJOR-3). Explicit never asks.
+`K_c = kₙ Bᵀ B  +  (∂n/∂u block)`, dropping ONLY the `O(gₙ·κ)` curvature term.
+- **Formula fix `[T1]`:** the main term is `kₙ BᵀB`, NOT `kₙ Bᵀ(n⊗n)B` — `B`
+  already contains `n`; the latter double-applies the projector.
+- **Include ∂n/∂u `[T2 — resolves the self-contradiction]`:** for a FLAT segment
+  under rigid rotation `∂n/∂u ≠ 0` (n rotates with the nodes), magnitude `O(tₙ)∝kₙ`
+  — finite, NOT negligible. Main-term-only would FAIL FD-on-rotated by construction.
+  The ∂n/∂u normal-variation block is the standard Laursen/Wriggers NTS tangent and
+  is **symmetric** for frictionless (a δ²gₙ Hessian) → symmetric solver stays valid.
+- FD-on-**flat-rotated** PASSES; FD-on-**curved** carries a documented `O(gₙ·κ)`
+  residual that shrinks with refinement (assert convergence, not exact pass).
+- `getTangent` returns **bare** `K_c`; Newmark scales by `c1` via `addKtToTang(c1)`
+  (no internal pre-multiply — double-scale risk `[T7]`). Explicit never asks.
+- **Implicit re-projects per Newton iteration; explicit freezes per step** `[GATE
+  MAJOR-9]`: the reference re-projects in `update()` every iter, commits geometry
+  at commitState. Recomputing `n` fresh while freezing ξ̄ violates the exactness
+  assumption + injects a spurious residual moment — keep `(ξ̄,x̄,n,B)` a consistent
+  set per evaluation.
 
-## `k_n auto` (LS-DYNA 26.14a + SOFT floor)
+## Active set `[GATE Q-P2-active-set]`
 
-`k_n = f_si·K·A²/V` for a solid master segment (K = bulk modulus, A = segment
-face area, V = element volume), `f_si` default **0.10**; with the SOFT=1 Courant
-floor `k = max(½·SOFSCL·m*/Δt_c², f_si·K·A²/V)` (26.15). `-kn $val` overrides.
-(Reading the master element's K/A/V via the surface→element link — Q-P2-kn.)
+Explicit steps through (fine). **Implicit needs an explicit anti-chatter rule** —
+freeze the active set per step (status from the predictor, held through the
+iteration; the semismooth fix, recommended) OR mandate `algorithm NewtonLineSearch`.
+Bake the choice into the implicit gate scripts or they won't converge.
 
-## Connectivity (P1 empty → P2 real) — the numbering shift
+## kₙ `[GATE MAJOR-6]`
 
-P2 adapters declare **real connectivity** = the pair's DOFs. **Granularity (P2):
-one adapter per SLAVE NODE**, connectivity = `{slave node} ∪ {ALL master-surface
-nodes}` (conservative static superset; bucket sort P2.5 prunes to neighbour
-segments). The adapter, in `getResidual`, brute-force-scans its master surface for
-the penetrated segment, projects, and assembles. Because connectivity is now
-non-empty, the gate is **answer-to-1e-12** vs a reference (NOT bitwise — the
-graph changes; P1 gate Q-P1-3). The frozen `getID` MUST be a superset of every
-DOF any active pair can touch, else `addB` silently drops force (P1 gate / Q-WIRE).
+- **P2a: `-kn $val` mandatory** (no auto). The rigid-plane/inclined/2-block gates
+  set kₙ explicitly.
+- **P2b: `-kn auto`** = `kₙ = f_si·K·A²/V` (26.14a, f_si=0.10) + SOFT floor
+  `max(½·SOFSCL·m*/Δt_c², …)` (26.15, deformable-only — undefined for the rigid
+  plane). **K/A/V has NO reachable Element API** (`Element.h:62` = only
+  `getCharacteristicLength`): reconstruct at setDomain from `material->getInitialTangent()(0,0)`
+  of a master GP + V from nodal coords, **cache it** (not reachable at getResidual),
+  retain the master element pointer.
 
-## State (P2 introduces the first pair state)
+## State / g_n0 `[GATE MAJOR-5]`
 
-`g_n0` (initial-gap capture for stress-free start) per pair, on the Domain-owned
-`LadrunoContactDomain` (committed via the P1b `Domain::commit`/`revert` hooks). The
-adapter is still a stateless VIEW reading pair state by key. Frictionless ⇒ the
-only state is `g_n0` + the active/inactive flag; friction slip is P3.
+Default = **no offset + ABORT on initial penetration** (matches the reference, keeps
+the negative-E_contact diagnostic meaningful). Stress-free-relief (StagedStrain
+analogue) is a **separate opt-in** that also offsets the release condition (release
+when `gₙ ≥ gₙ0`) and makes the gate measure ABSOLUTE penetration. Do NOT ship the
+offset as silent default. Pair state on the Domain-owned `LadrunoContactDomain`
+(committed via the P1b hooks); adapter is a stateless view.
 
-## First sub-rung (de-risk before deformable–deformable)
+## Connectivity `[GATE Q-P2-conn]`
 
-1. **slave nodes vs a RIGID analytical plane** (normal + point, no master
-   compliance) — penetration `= P/k_n` exact, unambiguous.
-2. then **two deformable LadrunoBrick blocks**.
+One adapter per slave; `getID = {slave} ∪ {all master-surface nodes}` is a valid
+superset for a SINGLE STATIC master surface. **Enforce, don't assume:** surface
+**immutable after setDomain** (hard error on post-analyze edit); cheap assertion in
+getResidual that the projected segment's nodes ⊆ getID (`opserr`+skip, not silent
+drop). One adapter ↔ one master surface.
+
+## Location `[GATE Q-P2-loc]`
+
+`LadrunoContactFE` STAYS in OPS_Analysis (handler dir); cross-lib direction
+Analysis→Domain (the established direction). Put the reusable projection/penalty/
+tangent math in a header-only OpenSees-free **`LadrunoContactKernel.h`** (mirrors
+`LadrunoJ2Kernel.h`) so both libs include it with no link inversion.
+
+## Reuse correction `[GATE MINOR-14]`
+
+`ContactMaterial3D` has NO penalty-normal tangent to lift (its `getTangent` is a
+Lagrange form: `(0,0)=0`, `(0,3)=1`). P2's `kₙBᵀB`+∂n/∂u is authored fresh; reuse
+= the projection algebra only (re-derived as pure fns). Friction `C_ss`/`C_sl` = P3.
+
+## Independent REFERENCE for the gate `[GATE: replaces the bogus "1e-12 abs"]`
+
+Penalty has an `O(load/kₙ)` penetration baseline + Newton converges to `tolGap`, so
+absolute 1e-12 is wrong. Three tiers at RELATIVE tol (matches the fork's ~1e-7 J2
+precedent):
+1. **rigid plane → analytic `g = P/kₙ`** (+ inclined `g = P(n·d̂)/kₙ`), rel 1e-8. [P2a]
+2. **single slave vs single fixed master segment → cross-check a hand-placed
+   `ZeroLengthContactASDimplex` pre-defined pair**, rel 1e-6 — **THE numerical
+   oracle for the deformable kernel**. [P2b]
+3. **Hertz** = the refinement-convergence benchmark; 2-spring series = order-of-
+   magnitude sanity only (ignores master bending/NTS distribution). [P2b]
+
+## Acceptance battery
+
+**P2a:** penetration `=P/kₙ` (explicit+implicit, rel 1e-8); inclined `=P(n·d̂)/kₙ`;
+release/reopen → exact F=0; **sign** (penetration→restoring, never attract);
+explicit 500-step stable; implicit converges under the anti-chatter rule;
+E_contact load–unload returns to 0 `[MINOR-17]`.
+**P2b:** faceted-master projection rung first; 2 deformable blocks; **`K_c`-vs-FD
+on flat-ROTATED** (PASS) + on CURVED (O(gₙ·κ) shrinks w/ refinement); Hertz
+`p(r)=p₀√(1−(r/a)²)` converges; ASDimplex cross-check (rel 1e-6); **self-equilibrium
+`|Σf|<1e-10·|F_c|`**; **oblique 30°/45° plane** (off-axis n⊗n); patch-test
+oscillation characterization + exact resultant; mesh-ratio sweep (master coarse vs
+fine); winding-flip → identical force; **convergence-RATE** gate (pre-declared).
 
 ## Files
 
-- `SRC/domain/contact/LadrunoContactDomain.{h,cpp}` — add pair state (`g_n0`,
-  active flag), the projection + penalty kernel (or a `LadrunoContactKernel.h`),
-  rigid-plane support.
-- `SRC/domain/contact/LadrunoContactSurface.{h,cpp}` — resolve Node* + coords at
-  setDomain; segment iteration; `getSegmentNodes(s)`.
-- `SRC/analysis/handler/LadrunoContactFE.{cpp,h}` — real connectivity (per slave
-  node) + real `getResidual`/`getTangent` (project, gap, penalty, B, K_c·c1).
-  Move to `SRC/domain/contact/`? (Q-P2-loc — it needs Node trial disp + the
-  surfaces; decide.)
-- reuse: SimpleContact3D projection algebra (`:575-684`, RE-DERIVE as pure fns);
-  `LadrunoEmbeddedKernel` scalar helpers.
-- `tests/test_adr39_contact_p2.py`.
+- `SRC/domain/contact/LadrunoContactKernel.h` — NEW header-only pure-fn math
+  (project, gap, penalty, B, K_c incl. ∂n/∂u, normal-orientation), OpenSees-free.
+- `LadrunoContactDomain.{h,cpp}` — pair state (gₙ0, active flag, rigid-plane def),
+  surface→element link + cached K/A/V (P2b), immutability enforcement.
+- `LadrunoContactSurface.{h,cpp}` — Node*/coords at setDomain, segment iteration,
+  derived outward normal, master-element pointer.
+- `LadrunoContactFE.{cpp,h}` — real connectivity + real getResidual/getTangent via
+  the kernel; per-step (explicit) / per-iteration (implicit) projection.
+- `tests/test_adr39_contact_p2a.py`, `tests/test_adr39_contact_p2b.py`.
 
-## P2 acceptance battery (the meaty one)
-
-- rigid-plane: penetration `= P/k_n` exact (explicit + implicit).
-- 2-block crush: penetration vs analytic 2-spring series.
-- **`K_c` vs finite-difference on a ROTATED/curved config** (a flat crush passes
-  even with `∂n/∂u` missing — false confidence; Q-TAN).
-- frictionless **release/reopen → exact return to F=0** (active-set on/off).
-- **Hertz** sphere/cylinder-on-halfspace → analytic `p(r)=p₀√(1−(r/a)²)`, peak
-  `p₀` + radius `a` converge under refinement.
-- **contact patch test** — report the NTS oscillation magnitude vs mesh ratio +
-  confirm resultant equilibrium EXACT (NTS fails it — characterize, not pass/fail).
-- `E_contact` bounded ≥ 0 frictionless; NEGATIVE ⇒ flag initial penetration.
-- 1e-12 (not bitwise) vs an independent reference; explicit stable.
-
-## Open questions for the gate
-
-> [!question] Q-P2-proj
-> Newton 2×2 projection robustness: non-convergence on near-degenerate segments,
-> the concave-corner / edge cases (§26.6 fails at sharp concave corners). Fallback?
-> Flat tri-3 closed form vs general Newton — support both or quad-only?
-
-> [!question] Q-P2-tan
-> Is shipping ONLY `k_n Bᵀ(n⊗n)B` (dropping `O(g_n·κ)`) acceptable for the P2
-> implicit gate, given the gate runs `K_c`-vs-FD on a ROTATED config? Or must P2
-> include the `∂n/∂u` term to pass FD on the rotated case? (This decides whether
-> the "lagged tangent" claim survives its own test.)
-
-> [!question] Q-P2-conn
-> One-adapter-per-slave with connectivity = {slave ∪ ALL master nodes}: is the
-> all-master-nodes superset too wide (dense K_c block, fill) even for P2's small
-> tests, or fine until P2.5 prunes it? Risk: a slave whose active segment's nodes
-> are (trivially) all in the superset — OK; but verify no active DOF escapes `getID`.
-
-> [!question] Q-P2-active-set
-> Active-set chatter: a pair flickering active/inactive across steps/iterations —
-> in implicit Newton this can prevent convergence (non-smooth). Frictionless
-> penalty is C0 at g_n=0; is that enough, or do we need a smoothing/persistence
-> rule for the P2 implicit gate? (Explicit just steps through.)
-
-> [!question] Q-P2-loc
-> Does `LadrunoContactFE` move to `SRC/domain/contact/` (OPS_Domain) now that it
-> needs the surfaces + projection kernel? Or stay in OPS_Analysis and call into
-> OPS_Domain? (Cross-lib direction; P1 kept it in handler dir.)
+## Resolved open questions (all closed by the gate)
+- Q-P2-proj → bounded Newton + sentinel + derived normal + tie-break; both tri/quad.
+- Q-P2-tan → **add ∂n/∂u** (drop only curvature); main term `kₙBᵀB`. The decisive fix.
+- Q-P2-conn → superset OK for one static surface; ENFORCE immutability + assert.
+- Q-P2-active-set → freeze-per-step (or NewtonLineSearch) for the implicit gate.
+- Q-P2-loc → stay OPS_Analysis; shared header-only kernel.
