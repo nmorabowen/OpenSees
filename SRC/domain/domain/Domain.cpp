@@ -78,6 +78,7 @@
 #include <Graph.h>
 #include <Recorder.h>
 #include <MeshRegion.h>
+#include <LadrunoContactDomain.h>   // Ladruno: ADR-39
 #include <Analysis.h>
 #include <FE_Datastore.h>
 #include <FEM_ObjectBroker.h>
@@ -105,7 +106,8 @@ Domain::Domain()
  theModalProperties(0),
  theModalDampingFactors(0), inclModalMatrix(false),
  lastChannel(0),
- paramIndex(0), paramSize(0), numParameters(0)
+ paramIndex(0), paramSize(0), numParameters(0),
+ theContactDomain(0)   // Ladruno: ADR-39
 {
   
     // init the arrays for storing the domain components
@@ -162,7 +164,8 @@ Domain::Domain(int numNodes, int numElements, int numSPs, int numMPs, int numEQs
  theBounds(6), theEigenvalues(0), theEigenvalueSetTime(0), 
  theModalProperties(0),
  theModalDampingFactors(0), inclModalMatrix(false),
- lastChannel(0), paramIndex(0), paramSize(0), numParameters(0)
+ lastChannel(0), paramIndex(0), paramSize(0), numParameters(0),
+ theContactDomain(0)   // Ladruno: ADR-39
 {
     // init the arrays for storing the domain components
     theElements = new MapOfTaggedObjects();
@@ -227,7 +230,8 @@ Domain::Domain(TaggedObjectStorage &theNodesStorage,
  theBounds(6), theEigenvalues(0), theEigenvalueSetTime(0), 
  theModalProperties(0),
  theModalDampingFactors(0), inclModalMatrix(false),
- lastChannel(0),paramIndex(0), paramSize(0), numParameters(0)
+ lastChannel(0),paramIndex(0), paramSize(0), numParameters(0),
+ theContactDomain(0)   // Ladruno: ADR-39
 {
     // init the arrays for storing the domain components
     thePCs      = new MapOfTaggedObjects();
@@ -288,7 +292,8 @@ Domain::Domain(TaggedObjectStorage &theStorage)
  theBounds(6), theEigenvalues(0), theEigenvalueSetTime(0), 
  theModalProperties(0),
  theModalDampingFactors(0), inclModalMatrix(false),
- lastChannel(0),paramIndex(0), paramSize(0), numParameters(0)
+ lastChannel(0),paramIndex(0), paramSize(0), numParameters(0),
+ theContactDomain(0)   // Ladruno: ADR-39
 {
     // init the arrays for storing the domain components
     theStorage.clearAll(); // clear the storage just in case populated
@@ -430,7 +435,13 @@ Domain::~Domain()
     delete [] theRegions;
     theRegions = 0;
   }
-  
+
+  // Ladruno (ADR-39): delete the owned contact engine
+  if (theContactDomain != 0) {
+    delete theContactDomain;
+    theContactDomain = 0;
+  }
+
   theRecorders = 0;
   numRecorders = 0;
 }
@@ -1077,6 +1088,16 @@ Domain::clearAll(void) {
   if (theRegions != 0) {
     delete [] theRegions;
     theRegions = 0;
+  }
+
+  // Ladruno (ADR-39): wipe the contact engine too. Like the theEQs->clearAll()
+  // fix above (ADR-30), an omitted cleanup here would leak the contact subsystem
+  // into the next model after ops.wipe(). NOTE: this is Domain::clearAll (the wipe
+  // path) — domainChanged runs AnalysisModel::clearAll, which does NOT reach here,
+  // so the contact engine correctly survives a re-analysis.
+  if (theContactDomain != 0) {
+    delete theContactDomain;
+    theContactDomain = 0;
   }
 
   // set the time back to 0.0
@@ -2171,6 +2192,12 @@ Domain::commit(void)
       elePtr->commitState();
     }
 
+    // Ladruno (ADR-39): commit contact pair state (gap0, friction) at the single
+    // integrator-agnostic choke point (the design gate's BLOCKER-1 fix — the
+    // ConstraintHandler is never called at commit).
+    if (theContactDomain != 0)
+      theContactDomain->commit();
+
     // set the new committed time in the domain
     committedTime = currentTime;
     dT = 0.0;
@@ -2198,10 +2225,16 @@ Domain::revertToLastCommit(void)
 	nodePtr->revertToLastCommit();
     
     Element *elePtr;
-    ElementIter &theElemIter = this->getElements();    
+    ElementIter &theElemIter = this->getElements();
     while ((elePtr = theElemIter()) != 0) {
 	elePtr->revertToLastCommit();
     }
+
+    // Ladruno (ADR-39): revert contact pair state too (design gate BLOCKER-2 —
+    // a failed implicit step calls revertToLastCommit; without this the rejected-
+    // trial friction state would leak into the retry).
+    if (theContactDomain != 0)
+      theContactDomain->revertToLastCommit();
 
     // set the current time and load factor in the domain to last committed
     currentTime = committedTime;
@@ -2717,6 +2750,15 @@ Domain::getRegionTags(ID& rtags) const
         rtags(i) = theRegions[i]->getTag();
     }
 
+}
+
+// Ladruno (ADR-39): attach/replace the optional contact engine (takes ownership).
+void
+Domain::setLadrunoContactDomain(LadrunoContactDomain *cd)
+{
+    if (theContactDomain != 0 && theContactDomain != cd)
+        delete theContactDomain;
+    theContactDomain = cd;
 }
 
 typedef map<int, int> MAP_INT;

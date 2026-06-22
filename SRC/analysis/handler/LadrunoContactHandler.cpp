@@ -26,6 +26,7 @@
 #include "LadrunoContactHandler.h"
 #include "LadrunoContactFE.h"
 
+#include <LadrunoContactDomain.h>   // Ladruno: ADR-39 (adapter count from the engine)
 #include <Domain.h>
 #include <AnalysisModel.h>
 #include <Integrator.h>
@@ -160,15 +161,20 @@ LadrunoContactHandler::handle(const ID *nodesLast)
     }
 
     // --- inject the contact FE adapter(s) ---
-    // P1a: ONE empty-connectivity zero adapter. The injection proves the plumbing;
-    // with empty connectivity it adds no graph edges, so results are bitwise
-    // identical to no-contact. P1b rebinds adapters to LadrunoContactDomain pairs.
-    LadrunoContactFE *contactFE = new LadrunoContactFE(numFe++);
-    if (contactFE == 0) {
-        opserr << "WARNING LadrunoContactHandler::handle() - out of memory (contact FE)\n";
-        return -5;
+    // P1b: ask the Domain-owned LadrunoContactDomain how many adapters to inject
+    // (one per contact definition); none if no contact engine is attached (pure
+    // Plain -> byte-identical to stock). Still EMPTY-connectivity zero adapters in
+    // P1b (graph-neutral) — the narrow phase + per-segment connectivity is P2.
+    LadrunoContactDomain *cd = theDomain->getLadrunoContactDomain();
+    int nAdapters = (cd != 0) ? cd->buildAdapterCount() : 0;
+    for (int a = 0; a < nAdapters; a++) {
+        LadrunoContactFE *contactFE = new LadrunoContactFE(numFe++);
+        if (contactFE == 0) {
+            opserr << "WARNING LadrunoContactHandler::handle() - out of memory (contact FE)\n";
+            return -5;
+        }
+        theModel->addFE_Element(contactFE);
     }
-    theModel->addFE_Element(contactFE);
 
     return count3;
 }

@@ -32,8 +32,8 @@ return map). P0 = validation only (light verification, no heavy gate).
 | Phase | State | Gate | PR | Notes |
 |---|---|---|---|---|
 | P0 falsify/baseline (no SRC) | **DONE ✓** | light verify ✓ | local | both protos pass; 2 design rules extracted |
-| P1a FE+handler+empty-conn zero, bitwise | code-gate fixes REBUILDING (bzxri5l4l) | design gate ✓ + code gate ✓ | local | 3/3 bitwise green; code-gate fixes rebuild live |
-| P1b ContactDomain+surface+lifecycle hooks | DESIGN READY (build-blocked) | light review | — | `_adr39_p1b_design.md`, Q-P1b-1/3 RESOLVED; coding waits on classifier |
+| P1a FE+handler+empty-conn zero, bitwise | **DONE ✓** (5eb3b810) | design gate ✓ + code gate ✓ | local | rebuilt + 3/3 bitwise green w/ fixes; committed |
+| P1b ContactDomain+surface+lifecycle hooks | CODE DONE → BUILDING (bo5f2u6cy) | light review after build | — | ContactDomain+surface+Domain hooks+parser written; build live |
 | P2 NTS penalty frictionless | NOT STARTED | **adversarial gate** | — | rigid-plane rung first |
 | P2.5 bucket sort drop-in | NOT STARTED | verify==brute force | — | — |
 | P3 IMPL-EX Coulomb — SHIP | NOT STARTED | **adversarial gate** | — | v1 ship |
@@ -166,6 +166,23 @@ Files (all in SRC/analysis/handler/ for P1a; LadrunoContactFE moves to SRC/domai
   [FEM_ObjectBrokerAllClasses.cpp, tcl/commands.cpp, LadrunoContactFE.{h,cpp}],
   ledgers [LEDGER_implementations.md, LEDGER_vanilla_files.md], designs
   [_adr39_p1b_design.md], this loop-state.
+
+### Iteration 7 — classifier back; P1a fixes committed (5eb3b810); P1b WRITTEN + building
+- Rebuilt OpenSeesPy w/ P1a fixes (bzxri5l4l, exit 0); test_adr39 3/3 green; COMMITTED 5eb3b810.
+- P1b code written (per build-ready design):
+  - NEW `SRC/domain/contact/`: LadrunoContactDomain.{h,cpp} (surfaces + contact defs +
+    commit/revert counters; buildAdapterCount) + LadrunoContactSurface.{h,cpp} + CMakeLists
+    (OPS_Domain) + add_subdirectory(contact).
+  - VANILLA Domain.{h,cpp}: theContactDomain ptr (declared LAST → no -Wreorder; init all 4
+    ctors; delete in dtor + clearAll-wipe mirroring ADR-30 theEQs fix; setter/getter; commit()
+    + revertToLastCommit() hooks drive the engine).
+  - Handler: inject buildAdapterCount() adapters (0 if no engine = pure Plain).
+  - PARSER: contactSurface / contact / ladrunoContactInfo — OPS_ fns (OpenSeesOutputCommands.cpp)
+    + decls (OpenSeesCommands.h) + Py + Tcl wrappers (dual-wired per the P1a code-gate lesson).
+  - TEST: +4 P1b cases (defined-contact bitwise+commit-fires CDL/Newmark, wipe-clears, null=pure-Plain).
+  - Stamped 4 contact files. Build bo5f2u6cy live.
+- NEXT on build done: full test_adr39 (P1a 3 + P1b 4 = 7) → light review → ledger P1b vanilla
+  rows (Domain.{h,cpp}, interpreter ×4) → commit P1b → P2 (NTS penalty narrow phase).
 
 ## Deferred / parked
 - P4 SOFT, P5 segment-based, P6 tied, AL upgrade (Q-AL), MPI — all post-v1 per ADR.

@@ -49,6 +49,7 @@ class NodalLoad;
 class ElementalLoad;
 class LoadPattern;
 class Parameter;
+class LadrunoContactDomain;   // Ladruno: ADR-39
 
 class ElementIter;
 class NodeIter;
@@ -231,9 +232,15 @@ class Domain
     virtual int  record(bool fromAnalysis=true);
     virtual int flushRecorders();
 
-    virtual int  addRegion(MeshRegion &theRegion);    	
-    virtual MeshRegion *getRegion(int region);    	
+    virtual int  addRegion(MeshRegion &theRegion);
+    virtual MeshRegion *getRegion(int region);
     virtual void getRegionTags(ID& rtags) const;
+
+    // Ladruno (ADR-39): the optional contact engine attached to this Domain.
+    // Nullable -> zero cost / byte-identical to stock when absent. Survives
+    // domainChanged (AnalysisModel::clearAll); deleted on Domain::clearAll + dtor.
+    void setLadrunoContactDomain(LadrunoContactDomain *cd);
+    LadrunoContactDomain *getLadrunoContactDomain(void) const { return theContactDomain; }
 
     virtual void Print(OPS_Stream &s, int flag =0);
     virtual void Print(OPS_Stream &s, ID *nodeTags, ID *eleTags, int flag =0);
@@ -298,7 +305,7 @@ class Domain
     SingleDomParamIter    *theParamIter;
     
     MeshRegion **theRegions;
-    int numRegions;    
+    int numRegions;
 
     int commitTag;
     
@@ -321,6 +328,8 @@ class Domain
     enum {paramSize_grow = 20};
     int paramSize;
     int numParameters;
+
+    LadrunoContactDomain *theContactDomain;   // Ladruno: ADR-39 (owned, nullable; declared last)
 };
 
 #endif

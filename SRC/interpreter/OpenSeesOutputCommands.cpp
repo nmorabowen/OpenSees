@@ -298,6 +298,126 @@ int OPS_LadrunoProjectionTieForce()
 }
 
 
+// ---------------------------------------------------------------------------
+// Ladruno (ADR-39): ContactDomain commands. P1b = define surfaces + contacts +
+// attach the engine; ZERO force (narrow phase is P2).
+// ---------------------------------------------------------------------------
+#include <LadrunoContactDomain.h>
+#include <LadrunoContactSurface.h>
+
+// lazily get/create the contact engine on the active Domain
+static LadrunoContactDomain *OPS_getOrCreateContactDomain()
+{
+    Domain *theDomain = OPS_GetDomain();
+    if (theDomain == 0) return 0;
+    LadrunoContactDomain *cd = theDomain->getLadrunoContactDomain();
+    if (cd == 0) {
+        cd = new LadrunoContactDomain();
+        theDomain->setLadrunoContactDomain(cd);
+    }
+    return cd;
+}
+
+// contactSurface tag (-slave | -master nodesPerSeg) nodeTag...
+int OPS_LadrunoContactSurface()
+{
+    if (OPS_GetNumRemainingInputArgs() < 3) {
+        opserr << "WARNING want - contactSurface tag (-slave | -master nodesPerSeg) nodeTag...\n";
+        return -1;
+    }
+    int tag, n = 1;
+    if (OPS_GetIntInput(&n, &tag) < 0) {
+        opserr << "WARNING contactSurface - could not read tag\n";
+        return -1;
+    }
+    const char *kindStr = OPS_GetString();
+    LadrunoContactSurface::Kind kind;
+    int nodesPerSeg = 0;
+    if (strcmp(kindStr, "-slave") == 0) {
+        kind = LadrunoContactSurface::SLAVE_NODES;
+    } else if (strcmp(kindStr, "-master") == 0) {
+        kind = LadrunoContactSurface::MASTER_SEGMENTS;
+        n = 1;
+        if (OPS_GetIntInput(&n, &nodesPerSeg) < 0 || nodesPerSeg < 3) {
+            opserr << "WARNING contactSurface -master - need nodesPerSeg (>=3)\n";
+            return -1;
+        }
+    } else {
+        opserr << "WARNING contactSurface - kind must be -slave or -master\n";
+        return -1;
+    }
+    int nrem = OPS_GetNumRemainingInputArgs();
+    if (nrem <= 0) {
+        opserr << "WARNING contactSurface - no node tags given\n";
+        return -1;
+    }
+    ID nodeTags(nrem);
+    for (int i = 0; i < nrem; i++) {
+        int v, one = 1;
+        if (OPS_GetIntInput(&one, &v) < 0) {
+            opserr << "WARNING contactSurface - could not read node tag\n";
+            return -1;
+        }
+        nodeTags(i) = v;
+    }
+    LadrunoContactDomain *cd = OPS_getOrCreateContactDomain();
+    if (cd == 0) return -1;
+    LadrunoContactSurface *s = new LadrunoContactSurface(tag, kind, nodeTags, nodesPerSeg);
+    if (cd->addSurface(s) < 0) { delete s; return -1; }
+    return 0;
+}
+
+// contact tag masterSurfTag slaveSurfTag <kn kt mu>
+int OPS_LadrunoContact()
+{
+    if (OPS_GetNumRemainingInputArgs() < 3) {
+        opserr << "WARNING want - contact tag masterSurfTag slaveSurfTag <kn kt mu>\n";
+        return -1;
+    }
+    int idata[3], n = 3;
+    if (OPS_GetIntInput(&n, idata) < 0) {
+        opserr << "WARNING contact - could not read tag/master/slave\n";
+        return -1;
+    }
+    double kn = 0.0, kt = 0.0, mu = 0.0;   // P1b zero-force defaults; P2 parses/uses
+    if (OPS_GetNumRemainingInputArgs() >= 3) {
+        double d[3]; int m = 3;
+        if (OPS_GetDoubleInput(&m, d) < 0) {
+            opserr << "WARNING contact - could not read kn kt mu\n";
+            return -1;
+        }
+        kn = d[0]; kt = d[1]; mu = d[2];
+    }
+    Domain *theDomain = OPS_GetDomain();
+    if (theDomain == 0) return -1;
+    LadrunoContactDomain *cd = theDomain->getLadrunoContactDomain();
+    if (cd == 0) {
+        opserr << "WARNING contact - define a contactSurface first\n";
+        return -1;
+    }
+    return cd->addContact(idata[0], idata[1], idata[2], kn, kt, mu);
+}
+
+// ladrunoContactInfo -> [numContacts, numCommits, numReverts] (0,0,0 if no engine)
+int OPS_LadrunoContactInfo()
+{
+    Domain *theDomain = OPS_GetDomain();
+    int out[3] = {0, 0, 0};
+    if (theDomain != 0) {
+        LadrunoContactDomain *cd = theDomain->getLadrunoContactDomain();
+        if (cd != 0) {
+            out[0] = cd->getNumContacts();
+            out[1] = cd->getNumCommits();
+            out[2] = cd->getNumReverts();
+        }
+    }
+    int three = 3;
+    if (OPS_SetIntOutput(&three, out, false) < 0)
+        return -1;
+    return 0;
+}
+
+
 int OPS_nodeCrd()
 {
     if (OPS_GetNumRemainingInputArgs() < 1) {
