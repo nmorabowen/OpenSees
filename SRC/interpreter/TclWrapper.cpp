@@ -435,6 +435,24 @@ static int Tcl_ops_LadrunoProjectionTieForce(ClientData clientData, Tcl_Interp *
     return TCL_OK;
 }
 
+static int Tcl_ops_LadrunoContactSurface(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {  // Ladruno ADR-39
+    wrapper->resetCommandLine(argc, 1, argv);
+    if (OPS_LadrunoContactSurface() < 0) return TCL_ERROR;
+    return TCL_OK;
+}
+
+static int Tcl_ops_LadrunoContact(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {  // Ladruno ADR-39
+    wrapper->resetCommandLine(argc, 1, argv);
+    if (OPS_LadrunoContact() < 0) return TCL_ERROR;
+    return TCL_OK;
+}
+
+static int Tcl_ops_LadrunoContactInfo(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {  // Ladruno ADR-39
+    wrapper->resetCommandLine(argc, 1, argv);
+    if (OPS_LadrunoContactInfo() < 0) return TCL_ERROR;
+    return TCL_OK;
+}
+
 static int Tcl_ops_eigen(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {
     wrapper->resetCommandLine(argc, 1, argv);
 
@@ -1819,6 +1837,9 @@ TclWrapper::addOpenSeesCommands(Tcl_Interp* interp)
     addCommand(interp,"reactions", &Tcl_ops_reactions);
     addCommand(interp,"nodeReaction", &Tcl_ops_nodeReaction);
     addCommand(interp,"ladrunoProjectionTieForce", &Tcl_ops_LadrunoProjectionTieForce);  // Ladruno ADR-30 P3
+    addCommand(interp,"contactSurface", &Tcl_ops_LadrunoContactSurface);   // Ladruno ADR-39
+    addCommand(interp,"contact", &Tcl_ops_LadrunoContact);                 // Ladruno ADR-39
+    addCommand(interp,"ladrunoContactInfo", &Tcl_ops_LadrunoContactInfo);  // Ladruno ADR-39
     addCommand(interp,"eigen", &Tcl_ops_eigen);
     addCommand(interp,"nDMaterial", &Tcl_ops_nDMaterial);
     addCommand(interp,"block2D", &Tcl_ops_block2d);

@@ -716,6 +716,27 @@ static PyObject *Py_ops_LadrunoProjectionTieForce(PyObject *self, PyObject *args
     return wrapper->getResults();
 }
 
+static PyObject *Py_ops_LadrunoContactSurface(PyObject *self, PyObject *args)  // Ladruno ADR-39
+{
+    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
+    if (OPS_LadrunoContactSurface() < 0) { opserr<<(void*)0; return NULL; }
+    return wrapper->getResults();
+}
+
+static PyObject *Py_ops_LadrunoContact(PyObject *self, PyObject *args)  // Ladruno ADR-39
+{
+    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
+    if (OPS_LadrunoContact() < 0) { opserr<<(void*)0; return NULL; }
+    return wrapper->getResults();
+}
+
+static PyObject *Py_ops_LadrunoContactInfo(PyObject *self, PyObject *args)  // Ladruno ADR-39
+{
+    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
+    if (OPS_LadrunoContactInfo() < 0) { opserr<<(void*)0; return NULL; }
+    return wrapper->getResults();
+}
+
 static PyObject *Py_ops_nodeReaction(PyObject *self, PyObject *args)
 {
     wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
@@ -3157,6 +3178,9 @@ PythonWrapper::addOpenSeesCommands()
     addCommand("reactions", &Py_ops_reactions);
     addCommand("nodeReaction", &Py_ops_nodeReaction);
     addCommand("ladrunoProjectionTieForce", &Py_ops_LadrunoProjectionTieForce);  // Ladruno ADR-30 P3
+    addCommand("contactSurface", &Py_ops_LadrunoContactSurface);    // Ladruno ADR-39
+    addCommand("contact", &Py_ops_LadrunoContact);                  // Ladruno ADR-39
+    addCommand("ladrunoContactInfo", &Py_ops_LadrunoContactInfo);   // Ladruno ADR-39
     addCommand("eigen", &Py_ops_eigen);
     addCommand("modalProperties", &Py_ops_modalProperties);
     addCommand("responseSpectrumAnalysis", &Py_ops_responseSpectrumAnalysis);

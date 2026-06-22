@@ -277,6 +277,9 @@ int OPS_BeamIntegration();
 int OPS_nodeDisp();
 int OPS_nodeReaction();
 int OPS_LadrunoProjectionTieForce();   // Ladruno: ADR-30 P3 tie-force query
+int OPS_LadrunoContactSurface();       // Ladruno: ADR-39 P1b
+int OPS_LadrunoContact();              // Ladruno: ADR-39 P1b
+int OPS_LadrunoContactInfo();          // Ladruno: ADR-39 P1b query
 int OPS_nodeEigenvector();
 int OPS_getTime();
 int OPS_eleResponse();
