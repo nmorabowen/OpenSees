@@ -4,6 +4,12 @@
 > resets. One source of truth for "where are we, what's next." Mirrors the
 > ADR-30 `_adr30_loop_state.md` pattern. ADR = `39_ladruno_contact_domain_adr.md`.
 
+## ⇒ HANDOFF POINT (2026-06-21): P1 shipped in PR #345; resume at P2a.
+See `contact_p2_handoff.md`. P1 = ContactDomain skeleton + handler + lifecycle +
+parser (zero-force), 7/7 green. P2 designed + gated (split P2a/P2b). NEXT = code P2a
+(rigid plane, -kn val) — study PenaltySP_FE/TransformationFE for the custom-FE
+connectivity. Verify #345 merged before stacking.
+
 ## Scheme
 
 Phased loop, explicit-first ship at P3. Each phase:
