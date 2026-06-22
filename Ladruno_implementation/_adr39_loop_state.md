@@ -289,5 +289,58 @@ All folded into `_adr39_p2_design.md` (committed bae2456c → revised). NEXT: co
   Options if needed: (a) make FE_Element theMatrices/theVectors protected (1-line vanilla edit,
   ledger), or (b) document that contact models need ≥1 structural element. Deferred — not on the v1 path.
 
+### Iteration 12 — P2a ADVERSARIAL CODE GATE (wpqtt6tut) → SALVAGEABLE→PASS, fixes folded
+Full multi-agent gate (4 source-grounded reviewers → adversarial verify each → synth;
+25 agents, 20 findings, all verified against REAL upstream source). Verdict: SALVAGEABLE.
+- **Hardest claim VERIFIED**: getTangent→formEleTangent(this) routing is correct — no
+  double-count, no re-entrancy hazard, CDL truly mass-only, Newmark truly c1·K_c. Sign
+  restoring (never attracts), residual/tangent active-set consistent within a Newton seq,
+  parser n/p0/kn threading correct, 1e-6 tol conservative (not masking).
+- **1 BLOCKER (B1) — element-free teardown null-deref** [FIXED at source]: a contact-ONLY
+  model (mass + contactPlane, zero Domain Elements) segfaulted on teardown / 2nd analysis.
+  ROOT CAUSE (real upstream bug): `FE_Element(tag,numDOF_Group,ndof)` subtype ctor did
+  `numFEs++` BEFORE the `if(numFEs==0)` scratch-alloc guard → guard dead → theMatrices/
+  theVectors never allocated when the only FEs are subtype adapters → `~FE_Element` derefs
+  null. FIX = move `numFEs++` BELOW the guard (mirrors the element-backed ctor; zero
+  regression — real models have an element-backed FE first). Better than the gate's
+  "make members protected" workaround. Un-anchored `test_p2a_element_free_teardown` added
+  (runs the model TWICE → the exact repro); the anchor-truss was MASKING this from CI.
+- **In-scope folds** (all applied): kₙ≤0 guard + surface-Kind!=SLAVE_NODES guard in
+  `addRigidPlane`; ndf<ndm skip-guard in the handler (silent equation-0 mis-assembly + OOB
+  trial-disp read); `addKiToTang` override mirroring addKtToTang (else contact stiffness
+  vanishes under Newton -initial / ModifiedNewton / HALL_TANGENT — residual still correct
+  so never silently-wrong, just degraded). `test_p2a_inclined_penetration_static` added.
+- **Ledgers**: LEDGER_vanilla_files += FE_Element.cpp row; LEDGER_implementations P2a row
+  rewritten (was P1 zero-force) + PR #346.
+- **Deferred to P2b (documented scope)**: no implicit active-set freeze (P2a = monotone-
+  penetrating de-risk rung — anti-chatter is a P2b/implicit-ship deliverable); operator-
+  splitting integrators (AlphaOS) unsupported (getK_Force is a zero stub); null-DOF_Group
+  bind (unreachable in current handle() order). Static release→F=0 NOT added as a test —
+  out-of-contact penalty model is rank-deficient/singular; release is covered by the
+  explicit rebound tests (active set on→off, e≈1).
+- **NEXT**: rebuild OpenSeesPy on guppi/contact-p2a → run test_adr39_contact_p2a.py (expect
+  static + static-inclined + 2 impacts + element-free-teardown green) + p1 regression →
+  stamp_headers (no new files) → commit fixes to #346 → P2b.
+
+### Iteration 13 — gate fixes BUILT + 12/12 green; #346 AUTO-MERGED mid-work → recovered via #350
+- Incremental build (silly-raman worktree) exit 0; **full battery 12/12 GREEN** (5 P2a incl.
+  element-free-teardown + static-inclined + 7 P1 regression). B1 fix CONFIRMED: the un-anchored
+  element-free model runs TWICE in one process with no segfault.
+- Committed fixes to guppi/contact-p2a (7b3fa11cd) and pushed — but **PR #346 had AUTO-MERGED
+  (squash, f8e614b44) while the code gate was running**, so 7b3fa11cd STRANDED on the merged
+  branch (classic [[feedback_stranded_commits_after_automerge]]: d9ec2010d NOT an ancestor of
+  ladruno; squash ⇒ branch orphaned). LESSON RE-CONFIRMED: re-check `gh pr view <n> --json state`
+  IMMEDIATELY before any follow-up push; on this fork the window between "build" and "push" is
+  enough for an auto-merge.
+- RECOVERY: fresh branch `guppi/contact-p2a-gatefix` off origin/ladruno + cherry-pick 7b3fa11cd
+  (clean, 9 files; the only post-#346 commit #349 just renamed an ADR doc — no overlap) → PR
+  **#350** (base ladruno). P2a (rigid plane) is now FULLY SHIPPED once #350 merges (#346 base +
+  #350 gate fixes). silly-raman's guppi/contact-p2a branch is now orphaned/ignore it.
+- **NEXT = P2b** (the deformable mechanics, where the design-gate BLOCKERs live): faceted-master
+  projection + 2 deformable LadrunoBrick blocks + Hertz + `-kn auto` + SOFT floor + ∂n/∂u tangent
+  + bounded projection Newton + normal-from-element-centroid. Oracle = hand-placed
+  ZeroLengthContactASDimplex pair (rel 1e-6). Verify #350 merged before stacking. See
+  contact_p2_handoff.md "P2b" section.
+
 ## Deferred / parked
 - P4 SOFT, P5 segment-based, P6 tied, AL upgrade (Q-AL), MPI — all post-v1 per ADR.

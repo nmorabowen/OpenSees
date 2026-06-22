@@ -170,25 +170,36 @@ FE_Element::FE_Element(int tag, int numDOF_Group, int ndof)
    myEle(0), theResidual(0), theTangent(0), theIntegrator(0)
 {
     // this is for a subtype, the subtype must set the myDOF_Groups ID array
-    numFEs++;
 
     // if this is the first FE_Element we now
     // create the arrays used to store pointers to class wide
     // matrix and vector objects used to return tangent and residual
+    //
+    // Ladruno (ADR-39 P2a): allocate the class-wide scratch BEFORE incrementing
+    // numFEs, mirroring the element-backed ctor above. The original code did
+    // numFEs++ first, so this `numFEs == 0` guard was dead and a model whose ONLY
+    // FE_Elements are subtype adapters (e.g. a contact-only model with no Domain
+    // Elements) never allocated theMatrices/theVectors -> null-deref in
+    // ~FE_Element when the last FE is destroyed. Incrementing AFTER the guard
+    // fixes it with zero behaviour change for any model that already has an
+    // element-backed FE (numFEs is already > 0 by the time those subtypes build).
     if (numFEs == 0) {
 	theMatrices = new Matrix *[MAX_NUM_DOF+1];
 	theVectors  = new Vector *[MAX_NUM_DOF+1];
-	
+
 	if (theMatrices == 0 || theVectors == 0) {
 	    opserr << "FE_Element::FE_Element(Element *) ";
-	    opserr << " ran out of memory";	    
+	    opserr << " ran out of memory";
 	}
 	for (int i=0; i<MAX_NUM_DOF; i++) {
 	    theMatrices[i] = 0;
 	    theVectors[i] = 0;
 	}
     }
-    
+
+    // increment number of FE_Elements by 1 (AFTER the first-time allocation guard)
+    numFEs++;   // Ladruno: ADR-39 P2a (moved below the guard; see note above)
+
     // as subtypes have no access to the tangent or residual we don't set them
     // this way we can detect if subclass does not provide all methods it should
 }

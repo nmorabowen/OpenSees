@@ -83,14 +83,31 @@ int
 LadrunoContactDomain::addRigidPlane(int tag, int slaveSurfTag,
                                     const double p0[3], const double n[3], double kn)
 {
-    if (getSurface(slaveSurfTag) == 0) {
+    LadrunoContactSurface *surf = getSurface(slaveSurfTag);
+    if (surf == 0) {
         opserr << "WARNING LadrunoContactDomain::addRigidPlane() - slave surface "
                << slaveSurfTag << " not defined\n";
+        return -1;
+    }
+    if (surf->getKind() != LadrunoContactSurface::SLAVE_NODES) {
+        // A MASTER_SEGMENTS surface stores flat, repeated connectivity; treating it
+        // as a slave node-set would double-count contact on shared nodes. Require a
+        // genuine slave node-set (the handler iterates getNodeTags() as slave nodes).
+        opserr << "WARNING LadrunoContactDomain::addRigidPlane() - surface "
+               << slaveSurfTag << " is not a slave node-set\n";
         return -1;
     }
     double nrm = sqrt(n[0]*n[0] + n[1]*n[1] + n[2]*n[2]);
     if (nrm < 1e-14) {
         opserr << "WARNING LadrunoContactDomain::addRigidPlane() - zero normal\n";
+        return -1;
+    }
+    if (kn <= 0.0) {
+        // kn < 0 would make contact attractive with a negative-definite tangent
+        // (unstable); kn == 0 is silently inert. Reject both at this choke point
+        // (covers the Python + Tcl parsers) — mirrors the zero-normal guard above.
+        opserr << "WARNING LadrunoContactDomain::addRigidPlane() - penalty kn must be "
+               << "> 0 (got " << kn << ")\n";
         return -1;
     }
     RigidPlane rp;

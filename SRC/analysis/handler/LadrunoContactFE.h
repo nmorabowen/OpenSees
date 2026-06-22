@@ -70,6 +70,11 @@ class LadrunoContactFE : public FE_Element
     // early-return when myEle==0).
     void zeroTangent(void);
     void addKtToTang(double fact = 1.0);  // += fact * K_c when the pair is active
+    void addKiToTang(double fact = 1.0);  // initial-stiffness path: K_initial == K_c
+                                          // here (flat rigid plane, n constant), so
+                                          // mirror addKtToTang -> Newton -initial /
+                                          // ModifiedNewton -initial keep the contact
+                                          // stiffness instead of silently dropping it.
     void addCtoTang(double fact = 1.0);   // contact has no damping -> no-op
     void addMtoTang(double fact = 1.0);   // contact pairs carry no mass -> no-op
 
