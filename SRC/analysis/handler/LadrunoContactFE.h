@@ -45,17 +45,32 @@
 #include <Matrix.h>
 
 class Integrator;
+class Node;
 
 class LadrunoContactFE : public FE_Element
 {
   public:
     // P1a: empty-connectivity adapter (numDOF_Group = 0, ndof = 0).
     LadrunoContactFE(int tag);
+    // P2a: rigid analytical plane vs ONE slave node. Connectivity = {slave} (the
+    // first ndm translational DOFs). p0 = a point on the plane, n = outward unit
+    // normal (toward the slave's allowed half-space), kn = penalty stiffness.
+    LadrunoContactFE(int tag, Node *slaveNode, int ndm,
+                     const double p0[3], const double n[3], double kn);
     ~LadrunoContactFE();
 
     // self-owned buffers (base buffers are unavailable when myEle == 0)
     const Vector &getResidual(Integrator *theIntegrator);
     const Matrix &getTangent(Integrator *theIntegrator);
+
+    // getTangent routes through the integrator's formEleTangent so the INTEGRATOR
+    // decides what to assemble (CDL -> addMtoTang only -> no contact stiffness in
+    // the explicit mass matrix; Newmark -> addKtToTang(c1) -> c1*K_c; statics ->
+    // addKtToTang(1) -> K_c). These overrides feed MY tang buffer (base helpers
+    // early-return when myEle==0).
+    void zeroTangent(void);
+    void addKtToTang(double fact = 1.0);  // += fact * K_c when the pair is active
+    void addCtoTang(double fact = 1.0);   // contact has no damping -> no-op
     void addMtoTang(double fact = 1.0);   // contact pairs carry no mass -> no-op
 
     // With myEle==0 the base force-vector helpers print a WARNING and return the
@@ -69,8 +84,20 @@ class LadrunoContactFE : public FE_Element
     const Vector &getM_Force(const Vector &x, double fact = 1.0);
 
   private:
-    Vector resid;   // size-0 in P1a (empty connectivity)
-    Matrix tang;    // 0x0 in P1a
+    // gap n.(x_s - p0) at the slave's current trial position; <0 = penetration
+    double rigidPlaneGap(void) const;
+
+    Vector resid;   // size-0 in P1a (empty connectivity); ndm in P2a
+    Matrix tang;    // 0x0 in P1a; ndm x ndm in P2a
+
+    // P2a rigid-plane binding (mode = RIGID_PLANE); unused/zero in P1a
+    enum Mode { EMPTY = 0, RIGID_PLANE = 1 };
+    Mode mode;
+    Node *theSlave;
+    int ndm;
+    double planeP0[3];
+    double planeN[3];
+    double kn;
 };
 
 #endif

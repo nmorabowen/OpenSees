@@ -730,6 +730,13 @@ static PyObject *Py_ops_LadrunoContact(PyObject *self, PyObject *args)  // Ladru
     return wrapper->getResults();
 }
 
+static PyObject *Py_ops_LadrunoContactPlane(PyObject *self, PyObject *args)  // Ladruno ADR-39 P2a
+{
+    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
+    if (OPS_LadrunoContactPlane() < 0) { opserr<<(void*)0; return NULL; }
+    return wrapper->getResults();
+}
+
 static PyObject *Py_ops_LadrunoContactInfo(PyObject *self, PyObject *args)  // Ladruno ADR-39
 {
     wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
@@ -3180,6 +3187,7 @@ PythonWrapper::addOpenSeesCommands()
     addCommand("ladrunoProjectionTieForce", &Py_ops_LadrunoProjectionTieForce);  // Ladruno ADR-30 P3
     addCommand("contactSurface", &Py_ops_LadrunoContactSurface);    // Ladruno ADR-39
     addCommand("contact", &Py_ops_LadrunoContact);                  // Ladruno ADR-39
+    addCommand("contactPlane", &Py_ops_LadrunoContactPlane);        // Ladruno ADR-39 P2a
     addCommand("ladrunoContactInfo", &Py_ops_LadrunoContactInfo);   // Ladruno ADR-39
     addCommand("eigen", &Py_ops_eigen);
     addCommand("modalProperties", &Py_ops_modalProperties);

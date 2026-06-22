@@ -398,6 +398,37 @@ int OPS_LadrunoContact()
     return cd->addContact(idata[0], idata[1], idata[2], kn, kt, mu);
 }
 
+// contactPlane tag slaveSurfTag  nx ny nz  px py pz  kn   (P2a rigid analytical plane)
+int OPS_LadrunoContactPlane()
+{
+    if (OPS_GetNumRemainingInputArgs() < 9) {
+        opserr << "WARNING want - contactPlane tag slaveSurfTag nx ny nz px py pz kn\n";
+        return -1;
+    }
+    int idata[2], ni = 2;
+    if (OPS_GetIntInput(&ni, idata) < 0) {
+        opserr << "WARNING contactPlane - could not read tag/slaveSurfTag\n";
+        return -1;
+    }
+    double d[7];
+    int nd = 7;
+    if (OPS_GetDoubleInput(&nd, d) < 0) {
+        opserr << "WARNING contactPlane - could not read nx ny nz px py pz kn\n";
+        return -1;
+    }
+    double n[3] = {d[0], d[1], d[2]};
+    double p0[3] = {d[3], d[4], d[5]};
+    double kn = d[6];
+    Domain *theDomain = OPS_GetDomain();
+    if (theDomain == 0) return -1;
+    LadrunoContactDomain *cd = theDomain->getLadrunoContactDomain();
+    if (cd == 0) {
+        opserr << "WARNING contactPlane - define the slave contactSurface first\n";
+        return -1;
+    }
+    return cd->addRigidPlane(idata[0], idata[1], p0, n, kn);
+}
+
 // ladrunoContactInfo -> [numContacts, numCommits, numReverts] (0,0,0 if no engine)
 int OPS_LadrunoContactInfo()
 {
