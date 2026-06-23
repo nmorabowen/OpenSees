@@ -87,7 +87,7 @@ enforcement: penalty (both lanes) + commit-cycle ALM (λ updated in LadrunoConta
 | `-kn auto` penalty sizing | `LadrunoContactKernel.h` / handler | ✅ shipped | 39 (P2b-2b) |
 | NTS path state (per-pair friction) | `LadrunoContactDomain::FrictionState` | ✅ shipped | 39 (P3) |
 | **Shared `LadrunoFrictionKernel.h` (extract + Tresca/τmax + ALM `λ_T` form)** | `SRC/material/nD/LadrunoFrictionKernel.h` | 🔜 refactor | 48→41 |
-| **Shared `LadrunoContactProjection.h` (metric `g` + φ_m for mortar GP)** | `SRC/domain/contact/LadrunoContactProjection.h` | 🔜 refactor | 48→41 |
+| Shared `LadrunoContactProjection.h` (metric `g` + φ_m for mortar GP) | `SRC/domain/contact/LadrunoContactProjection.h` | ✅ shipped (A2, #365) | 48→41 |
 | SOFT=1 Courant-stable penalty (explicit) | — | ⏳ pending | 39 (P4) |
 | SOFT=2 segment-based penalty (corner/edge) | — | ⏳ pending | 39 (P5) |
 | `∂n/∂u` consistent normal tangent + Hertz | — | ⏳ pending | 39 (P2b-2c) |
@@ -158,7 +158,7 @@ lands with C2**; D1 adds only the *within-step* `analyzeAugmented` held-load ref
 | Track | Phase | Delivers | Gate | Status |
 |---|---|---|---|---|
 | **A** shared kernels | A1 | Extract `LadrunoFrictionKernel.h` from `LadrunoContactKernel.h`; add Tresca/`τmax` cap (`min(μ|tN|+c, τmax)` cone) + `Css`/`Csl` + `-epsT auto` from `γ_crit=0.5%·L`; mortar `λ_T` form | ADR-39 P3/P3.5 gates stay **green bit-for-bit**; new numpy oracle FD-checks `Css/Csl` to 1e-6 | 🔜 |
-| | A2 | Extract `LadrunoContactProjection.h` (pure fns) returning surface metric `g[2][2]` + `φ_master[4]` for the GP loop | projection vs closed form on tilted + curved facet; bounded-Newton sentinel | 🔜 |
+| | A2 | Extract `LadrunoContactProjection.h` (pure fns) returning surface metric `g[2][2]` + `φ_master[4]` for the GP loop | projection vs closed form on tilted + curved facet; bounded-Newton sentinel | ✅ #365 (oracle 7/7, Zone-A green bit-for-bit) |
 | **B** NTS lane | B1 | P4 SOFT=1 Courant-stable penalty (explicit `dt_cr` not throttled by `kₙ`) | explicit stability + energy balance | ⏳ |
 | | B2 | P5 SOFT=2 segment-based penalty (corner/edge/T-intersection) | corner/edge robustness | ⏳ |
 | | B3 | P2b-2c `∂n/∂u` consistent normal tangent + Hertz benchmark | implicit Newton convergence on curved/large-sliding; Hertz `p(r)` | ⏳ |
