@@ -210,7 +210,12 @@ LadrunoContactDomain::accumulateMortarGap(int contactTag, int slaveNodeTag, int 
     MortarNormalState &st = theMortarNormalStates[nk];
     st.gtGlobal += gtFacet - fc.gt;
     st.aGlobal += aFacet - fc.a;
-    st.epsN = epsN;                 // same value across a fixed contact's facets at this node
+    // epsN for the commit-time Uzawa update at this node. For a fixed `-epsN val` every facet
+    // writes the same value. Under `-epsN auto` the penalty is sized PER MASTER FACET, so a
+    // shared slave node sees several; take the MAX (stiffest) — order-INDEPENDENT (a plain
+    // overwrite would be last-writer-wins, i.e. facet-eval-order dependent). epsN is reset to 0
+    // each handle() (mortarNormalGCEnd) so this max is per-analysis, never a cross-rebuild leak.
+    if (epsN > st.epsN) st.epsN = epsN;
     fc.gt = gtFacet; fc.a = aFacet;
 }
 
@@ -225,6 +230,10 @@ LadrunoContactDomain::getMaxMortarPenetration(void) const
         double gbar = st.gtGlobal / st.aGlobal;          // ḡ_I; < 0 ⇒ penetration
         // KKT-active only: a node held open (λ + epsN·ḡ ≥ 0) is NOT a contact violation even
         // if its raw ḡ < 0 (it would be clamped to zero pressure), so it does not count here.
+        // NOTE: this uses the GLOBAL gap (the augmentation measure), whereas the per-facet
+        // force/tangent active mask uses each facet's LOCAL gap; the two coincide at equilibrium
+        // (where this query is read — after the converged commit), so the augTol stop criterion
+        // is evaluated consistently with the converged force.
         if (st.lambdaN + st.epsN * gbar < 0.0 && -gbar > pen)
             pen = -gbar;
     }
@@ -264,6 +273,7 @@ LadrunoContactDomain::mortarNormalGCEnd(void)
          it != theMortarNormalStates.end(); ++it) {
         it->second.gtGlobal = 0.0;
         it->second.aGlobal = 0.0;
+        it->second.epsN = 0.0;     // re-established (max over facets) on the next residual sweep
     }
 }
 
