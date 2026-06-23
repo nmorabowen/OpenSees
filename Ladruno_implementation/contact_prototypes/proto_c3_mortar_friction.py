@@ -350,6 +350,104 @@ relT = np.abs(Kc - Kfd).max() / (np.abs(Kfd).max() + 1e-30)
 check("(T6) assembled K_c == FD(F_fric) (≤1e-6 rel)", relT <= 1e-6, f"max rel = {relT:.2e}")
 check("(T6) assembled symmetric tangent IS symmetric", np.allclose(Kc, Kc.T, atol=1e-9))
 
+# --- T7: C3.3 — the CONSISTENT (non-symmetric) assembled mortar tangent vs FD (N varies with u) -
+# `-consistanttan` adds the Coulomb pressure-coupling Csl = −∂cap/∂N·epsN·t̂⊗n. For mortar the
+# normal pressure N_I depends on u through the SAME b-operator (the normal part), so scattering the
+# kernel's consistent K_ss (kn=epsN) via b_IA·b_IB/a_I reproduces the full non-symmetric tangent.
+# This pins it: FD the assembled friction force where tFric_I depends on BOTH gTeff_I AND N_I(u).
+print("\nT7  CONSISTENT mortar tangent (Csl, N varies with u) == FD (≤1e-6) + is NON-symmetric")
+N0 = np.array([4.0, 6.0])                              # base normal pressure
+epsN_T = 2.0e3
+
+
+def N_of(I, U):                                        # N_I = N0 − epsN·(n·d_I) (compression grows w/ −normal disp)
+    r = np.zeros(3)
+    for B in range(nN):
+        r += bmat(I, B) * U[B]
+    return N0[I] - epsN_T * (np.dot(r, nT) / aI[I])
+
+
+def Ffric_N(U, gpT):                                   # friction force with N depending on u
+    F = np.zeros((nN, 3))
+    for I in range(nS):
+        tF, _, _ = friction_return_map(slip_at(I, U), gpT[I], N_of(I, U), epsTT, muT)
+        for A in range(nN):
+            F[A] += bmat(I, A) * tF
+    return F
+
+
+U0 = np.zeros((nN, 3)); U0[0] = U0[1] = np.array([1.0e-2, 3.0e-3, -1.0e-4])  # slip + slight normal
+gpT0 = np.zeros((nS, 3))
+Kc_cons = np.zeros((nN, 3, nN, 3))
+for I in range(nS):
+    Kss = friction_tangent_block(slip_at(I, U0), gpT0[I], nT, N_of(I, U0), epsN_T, epsTT, muT, True)
+    for A in range(nN):
+        for B in range(nN):
+            Kc_cons[A, :, B, :] += (bmat(I, A) * bmat(I, B) / aI[I]) * Kss
+Kc_cons = Kc_cons.reshape(nN * 3, nN * 3)
+Kfd_c = np.zeros((nN * 3, nN * 3))
+h = 1e-8
+for j in range(nN * 3):
+    Up = U0.copy().reshape(-1); Up[j] += h; Up = Up.reshape(nN, 3)
+    Um = U0.copy().reshape(-1); Um[j] -= h; Um = Um.reshape(nN, 3)
+    Kfd_c[:, j] = -(Ffric_N(Up, gpT0).reshape(-1) - Ffric_N(Um, gpT0).reshape(-1)) / (2 * h)
+relC = np.abs(Kc_cons - Kfd_c).max() / (np.abs(Kfd_c).max() + 1e-30)
+check("(T7) CONSISTENT K_c == FD(F_fric) with N(u) (≤1e-6 rel)", relC <= 1e-6, f"max rel = {relC:.2e}")
+check("(T7) consistent tangent is NON-symmetric (the Csl pressure coupling)",
+      not np.allclose(Kc_cons, Kc_cons.T, atol=1e-9))
+
+# --- T8: C3.3 — λ_T friction Uzawa (offset trick) drives the STICK elastic-slip creep → 0 --------
+# Penalty friction leaves a spurious elastic slip s_e = tT/epsT in STICK (epsT-dependent creep).
+# The tangential Uzawa carries the traction in λ_T so s_e → 0 at FINITE epsT (epsT-INDEPENDENT
+# converged tangential position). Offset trick: gTeff_eff = gTeff + λ_T/epsT (reuses the penalty
+# return map); λ_T ← −tFric (the returned cone-capped traction) once per commit.
+print("\nT8  λ_T friction Uzawa: STICK elastic-slip creep → 0, epsT-INDEPENDENT (held-load augmentation)")
+# A node held ONLY by friction (in normal contact), driven by a tangential force f_t < cap ⇒ STICK.
+# Static equilibrium (net force 0): f_t + tFric = 0, tFric = −(λ_T + epsT·u) ⇒ u = (f_t − λ_T)/epsT.
+# PENALTY (λ_T≡0): u = f_t/epsT — a spurious elastic CREEP that shrinks only as epsT→∞.
+# UZAWA (offset trick): λ_T ← −tFric = λ_T + epsT·u once per commit ⇒ λ_T → f_t, u → 0 at FINITE epsT.
+N_s = 5.0
+mu_s = 0.6
+cap_s = mu_s * N_s                                     # 3.0
+f_t = 1.2                                              # tangential drive < cap ⇒ STICK
+
+
+def stick_equilib(f_ext, lamT, epsT):
+    """net-force equilibrium f_ext + tFric = 0 for a node held only by friction (gpT=0, stick).
+    Returns (u, tFric_x). gTeff_eff = u + λ_T/epsT (the offset trick)."""
+    # stick: tFric = −(λ_T + epsT·u); f_ext + tFric = 0 ⇒ u = (f_ext − λ_T)/epsT.
+    u = (f_ext - lamT) / epsT
+    tF, _, slip = friction_return_map(np.array([u + lamT / epsT, 0.0, 0.0]), np.zeros(3),
+                                      N_s, epsT, mu_s)
+    return u, tF[0], slip
+
+
+def uzawa_T(epsT, maxAug=200, tol=1e-12):
+    lamT = 0.0
+    u = 0.0
+    for naug in range(1, maxAug + 1):
+        u, tFx, slip = stick_equilib(f_t, lamT, epsT)
+        lamT_new = -tFx                                # Uzawa: λ_T ← the returned (cone-capped) traction
+        if abs(lamT_new - lamT) < tol:
+            break
+        lamT = lamT_new
+    return u, lamT, naug, slip
+
+
+u_lo, lamT_lo, n_lo, slip_lo = uzawa_T(epsT=5.0e1)
+u_hi, lamT_hi, n_hi, slip_hi = uzawa_T(epsT=5.0e3)
+check("(T8) STICK stays stick (drive < cap)", (not slip_lo) and (not slip_hi))
+check("(T8) Uzawa: converged tangential disp → ~0, epsT-INDEPENDENT (5e1 vs 5e3, ≤1e-9)",
+      abs(u_lo) < 1e-9 and abs(u_hi) < 1e-9, f"u(5e1)={u_lo:.3e} u(5e3)={u_hi:.3e}")
+check("(T8) λ_T → the true stick traction f_t (carries the force, not the penalty creep)",
+      abs(lamT_lo - f_t) < 1e-9 and abs(lamT_hi - f_t) < 1e-9, f"λ_T={lamT_lo:.4f}/{lamT_hi:.4f} f_t={f_t}")
+# vs PENALTY (λ_T≡0, ONE solve): the converged disp IS epsT-dependent (creep = f_t/epsT)
+u_pen_lo, _, _ = stick_equilib(f_t, 0.0, 5.0e1)
+u_pen_hi, _, _ = stick_equilib(f_t, 0.0, 5.0e3)
+check("(T8) penalty (λ_T≡0) creep IS epsT-dependent (f_t/epsT) — the drift Uzawa removes",
+      abs(u_pen_lo - u_pen_hi) > 1e-4 and abs(u_pen_lo - f_t / 5.0e1) < 1e-12,
+      f"penalty u(5e1)={u_pen_lo:.3e} vs u(5e3)={u_pen_hi:.3e}")
+
 print(f"\n{'='*70}\n{'ALL PASS' if _fails == 0 else str(_fails) + ' FAILURE(S)'}  "
       f"(C3 mortar-friction oracle)\n{'='*70}")
 sys.exit(1 if _fails else 0)

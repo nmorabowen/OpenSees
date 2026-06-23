@@ -335,6 +335,10 @@ LadrunoContactDomain::commit(void)
         // C3.1 — promote the trial tangential slip (penalty friction; the EmbeddedRebar/NTS
         // FrictionState precedent). Done for every slot regardless of normal activity.
         for (int d = 0; d < 3; d++) st.gpT[d] = st.gpTtrial[d];
+        // C3.3 — one tangential Uzawa step per commit: λ_T ← the returned cone-capped traction
+        // (= lambdaTtrial = −tFric, written by the adapter). Drives the stick elastic creep → 0
+        // at finite epsT (the EmbeddedRebar precedent, the λ_N analogue). λ_T≡0 path is inert.
+        for (int d = 0; d < 3; d++) st.lambdaT[d] = st.lambdaTtrial[d];
         // C3.2 (MAJOR-2) — commit the engagement origin so a later rejected step can revert it.
         for (int d = 0; d < 3; d++) st.gT0committed[d] = st.gT0[d];
         st.engagedCommitted = st.engaged;
@@ -361,7 +365,11 @@ LadrunoContactDomain::revertToLastCommit(void)
     for (std::map<NodeKey, MortarNormalState>::iterator it = theMortarNormalStates.begin();
          it != theMortarNormalStates.end(); ++it) {
         MortarNormalState &st = it->second;
-        for (int d = 0; d < 3; d++) { st.gpTtrial[d] = st.gpT[d]; st.gT0[d] = st.gT0committed[d]; }
+        for (int d = 0; d < 3; d++) {
+            st.gpTtrial[d] = st.gpT[d];
+            st.gT0[d] = st.gT0committed[d];
+            st.lambdaTtrial[d] = st.lambdaT[d];        // C3.3 — drop the trial multiplier
+        }
         st.engaged = st.engagedCommitted;
     }
     return 0;

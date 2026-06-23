@@ -183,6 +183,15 @@ class LadrunoContactDomain
         double gpTtrial[3]; // trial slip (written each getResidual)
         double gT0[3];      // engagement-config tangential origin (captured at first activation)
         bool   engaged;     // has gT0 been captured at first contact activation
+        // C3.3 — tangential augmented-Lagrange multiplier λ_T (the friction analogue of λ_N). It
+        // is the committed cone-capped traction; the residual injects it via the OFFSET TRICK
+        // gTeff_eff = gTeff + λ_T/epsT (so the existing penalty return map yields tT = λ_T +
+        // epsT·(gTeff−gpT)). One Uzawa step per commit: λ_T ← −tFric (the returned traction), which
+        // drives the STICK elastic creep → 0 at FINITE epsT (epsT-independent tangential position).
+        // Committed-only (mutated solely in commit() from lambdaTtrial); ≡0 ⇒ the C3.1/C3.2 penalty
+        // friction (the held-load analyze_augmented proc augments it across commits).
+        double lambdaT[3];      // committed tangential multiplier
+        double lambdaTtrial[3]; // trial (= −tFric, written each getResidual)
         // C3.2 (MAJOR-2): gT0/engaged are mutated in getResidual (engagement capture), so a
         // rejected IMPLICIT Newton step must be able to revert them (else a stale origin latched
         // from the rejected config persists). Double-buffer the committed engagement state; commit()
@@ -191,7 +200,8 @@ class LadrunoContactDomain
         bool   engagedCommitted;
         MortarNormalState() : lambdaN(0.0), gtGlobal(0.0), aGlobal(0.0), epsN(0.0),
                               engaged(false), engagedCommitted(false) {
-            for (int d = 0; d < 3; d++) gpT[d] = gpTtrial[d] = gT0[d] = gT0committed[d] = 0.0;
+            for (int d = 0; d < 3; d++)
+                gpT[d] = gpTtrial[d] = gT0[d] = gT0committed[d] = lambdaT[d] = lambdaTtrial[d] = 0.0;
         }
     };
     // lazily create + return the per-node slot (zeroed if new).
