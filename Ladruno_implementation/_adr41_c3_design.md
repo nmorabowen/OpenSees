@@ -144,7 +144,11 @@ Mirror these; do not invent new architecture (the C2 lesson).
   (explicit/CDL force-only, like P3) ⇒ implicit needs C3.2.
 - **C3.2 — consistent friction TANGENT.** `addMortarTang` friction block (symmetric default + `-consistanttan`
   non-symmetric Coulomb). Gate: static frictional Newton CONVERGES (singular without it, the P3.5 gate);
-  symmetric-solver-safe; `Csl` FD-checked on a slipping config; Newmark dynamic.
+  symmetric-solver-safe; `Csl` FD-checked on a slipping config; Newmark dynamic. **Two C3.1-gate TODOs that
+  go live here (see [[LEDGER_quirks]]):** (1) `revertToLastCommit` must also revert `gT0`/`engaged`
+  (double-buffer them) — a rejected implicit step otherwise latches a stale engagement origin; (2) the
+  shared-node committed-slip order dependence (MAJOR-1) should get a non-matched friction regression +
+  a per-node slip reconciliation before non-matched frictional meshes are trusted.
 - **C3.3 (optional) — tangential Uzawa `λ_T`.** Only if a named gate needs the Δt-independent tangential
   converged answer beyond what penalty `epsT` gives. The `analyze_augmented` proc already drives it (the
   commit-cycle outer loop augments `λ_T` beside `λ_N`).

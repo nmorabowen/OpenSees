@@ -1565,3 +1565,29 @@ non-obvious behaviours, all relevant to anyone wiring `-stabilize` into a driver
   closest-point-projected contact, the normal gap is a POSITION quantity and the tangential slip is a
   DISPLACEMENT quantity — they are not interchangeable. Found while bringing up C3.1 (the driven-block
   gate caught it). See [[_adr41_c3_design]] §mechanics step 1, #377.
+
+### Mortar friction committed slip is last-writer-wins (order-dependent) at SHARED slave nodes — fenced to matched/explicit C3.1, must be guarded before non-matched friction
+- **Bites:** ADR-41 C3.1 mortar friction at a slave node shared by ≥2 (slave-facet, master-facet) pairs.
+  The per-global-node committed slip `st.gpTtrial` (`LadrunoContactFE::addMortarFriction`) is a plain
+  OVERWRITE: each facet visiting the node computes its OWN LOCAL `gbarT` (its own clip/projection) and the
+  LAST facet evaluated in the residual sweep wins the committed slip. The *force* is still deterministic
+  (every facet reads the same read-only committed `gpT`, so `R(u)` is clean — no singular solve), but the
+  committed plastic slip carried to the next step depends on FE-tag ordering. The normal gap dodged this
+  with an idempotent delta-accumulator keyed `(c,node,feTag)` (`accumulateMortarGap`); the friction slip has
+  no equivalent because the slip is a return-map OUTPUT, not a linear accumulation.
+- **Why it's fenced (for now):** C3.1 ships matched-facet + explicit (CDL) only — one facet per node, so the
+  race never fires (the battery is matched). It is within the design's accepted "standard-basis LOCAL
+  approximation at shared nodes" ([[_adr41_c3_design]]). But it is UNGUARDED and untested for non-matched
+  friction. **Before C4 / non-matched frictional meshes:** add a shared-node friction regression + either a
+  per-(node,feTag) slip reconciliation or an explicit area-weighted blend. Found by the C3.1 adversarial gate
+  (MAJOR-1, #377).
+
+### Mortar friction gT0/engaged are captured in getResidual and NOT reverted — latent until the C3.2 implicit tangent
+- **Bites:** ADR-41 C3.2 (NOT C3.1). `revertToLastCommit` drops only `gpTtrial=gpT` for mortar slots
+  (`LadrunoContactDomain.cpp`); the engagement origin `gT0`/`engaged` (set once in `addMortarFriction`) are
+  never reverted. A rejected Newton step that FIRST-engages a node latches `gT0` from the rejected trial
+  config; the retry keeps that stale origin (`engaged` stays true) ⇒ a spurious stick offset. Identical to
+  the shipped NTS SEGMENT behavior (which also doesn't revert `engaged`), so NOT a C3.1 regression, and
+  **unreachable under C3.1's explicit-only path** (CDL never reverts mid-step). It goes live when the C3.2
+  friction tangent lands and an implicit Newton step is rejected. **C3.2 TODO:** double-buffer `engaged`/`gT0`
+  (committed + trial) and revert them, or re-capture `gT0` on re-engagement. Found by the C3.1 gate (MAJOR-2, #377).
