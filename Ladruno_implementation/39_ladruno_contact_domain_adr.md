@@ -14,6 +14,10 @@ tags:
 
 # ContactDomain — broad-phase contact subsystem
 
+> **Part of the definitive contact plan — see the [[48_ladruno_contact_capstone_adr]] capstone**
+> (architecture, contracts, status-of-record, unified roadmap). ADR-39 is the **detailed design of
+> record for the NTS-penalty / explicit-first lane**; global status & sequencing live in the capstone.
+>
 > ADR 39. Supersedes the abandoned 2026-06-01 per-element `LadrunoContactNTS`
 > scoping (plan doc + prototypes were never committed and are lost; the
 > per-element value collapses into this subsystem's narrow phase). Decision
@@ -420,8 +424,10 @@ is unambiguous).
 > Penalty penetration is `O(load/εₙ)` and never zero; the accuracy↔conditioning
 > trade-off is fundamental. Augmented Lagrangian (Uzawa) recovers the exact
 > non-penetration at *finite* `εₙ` and we already have the AL machinery in
-> `LadrunoEmbeddedKernel`. Out of v1 (penalty ships), but the planned upgrade for
-> precision contact / quasi-static.
+> `LadrunoEmbeddedRebar::commitState()` (the in-fork Uzawa precedent
+> `lambda(k) += kt·gt(k)`). Out of v1 (penalty ships), but the planned upgrade for
+> precision contact / quasi-static. (See the ADR-48 capstone + ADR-41 for the
+> commit-cycle ALM design.)
 
 > [!question] Q-WIRE (injection mechanism)
 > Injection is a custom `ConstraintHandler` (emit FE_Elements in `handle()`), NOT

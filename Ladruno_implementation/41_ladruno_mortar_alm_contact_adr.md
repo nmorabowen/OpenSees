@@ -15,6 +15,12 @@ tags:
 
 # LadrunoMortar — mortar/ALM contact + FrictionalLaw
 
+> **Part of the definitive contact plan — see the [[48_ladruno_contact_capstone_adr]] capstone**
+> (architecture, contracts, status-of-record, unified roadmap). ADR-41 is the **detailed design of
+> record for the mortar / ALM accuracy-first lane**; global status & sequencing live in the capstone.
+> The "Sequencing reality" and Q-DEP notes below were corrected 2026-06-22 against the live tree
+> (ADR-39 has shipped P1→P3.5; this lane docks onto a working penalty NTS engine).
+
 ## What
 
 ADR-41 is the **implicit, accuracy-first** complement to ADR-39's explicit, robust-first
@@ -40,14 +46,34 @@ Uzawa ALM (the MVP), and frictional mortar. **Hard-deferred to a successor ADR-4
 (biorthogonal) Lagrange shape functions, true-LM/saddle-point enforcement, self-contact, and
 NTN/NTS-via-mortar-weights. See *Risks* for the rejection rationale on each.
 
-**Critical sequencing reality (every reviewer flagged this):** ADR-39 has shipped **P1 only** —
-`LadrunoContactFE` is an *empty-connectivity zero adapter* (`FE_Element(tag,0,0)`,
-`getResidual`/`getTangent` return `Zero()`), `LadrunoContactDomain::commit()` is a no-op
-counter, and there is **no broad phase, no narrow phase, no projection kernel, and no friction
-class** in the tree. ADR-41 therefore does **not** "dock onto a working penalty engine"; it
-**co-owns and builds** the shared narrow-phase machinery (projection kernel, real adapter
-connectivity, friction kernel) that ADR-39 P2/P3 will also consume. This is stated as a hard
-dependency, not assumed away.
+**Sequencing reality (UPDATED 2026-06-22 against the live tree — the original "P1 only" framing
+below is STALE and was rewritten).** ADR-39 has since shipped **P1 → P3.5** (PRs #345–#361): a
+working penalty NTS engine. Verified in the tree today:
+- **Broad phase shipped** — `SRC/domain/contact/LadrunoContactBucketSort.h` (P2.5, #358).
+- **Narrow phase + projection kernel shipped** — `SRC/domain/contact/LadrunoContactKernel.h`:
+  bounded closest-point projection Newton (`project`, ~L105, `maxIt` cap + `|detK|` degenerate
+  reject), winding-immune normal, gap, penalty traction (P2b, #354).
+- **Friction return map + consistent tangent shipped** — same header: `frictionReturnMap` (Coulomb,
+  P3 #360) and `frictionTangentBlock` (the consistent friction tangent, symmetric default +
+  `-consistanttan` non-symmetric opt-in, P3.5 #361).
+- **Real adapter connectivity shipped** — `LadrunoContactFE` SEGMENT ctor builds
+  `FE_Element(tag, 1+nps, 3·(1+nps))` and assembles real `Bᵀ·tn` + friction; **not** a zero adapter.
+- **Real path-state + commit shipped** — `LadrunoContactDomain::commit()` promotes committed friction
+  slip (`gpT = gpTtrial`) per per-pair `FrictionState`; **not** a no-op counter.
+
+So ADR-41 **does dock onto a working penalty NTS engine.** Of its five planned new files, **two
+already have shipped equivalents** inside `LadrunoContactKernel.h` (projection + friction kernel),
+and **three are genuinely mortar-specific and absent** (`LadrunoMortarKernel`, `LadrunoMortarPair`,
+`LadrunoMortarSegment`). The remaining ADR-41-specific work is therefore: the **mortar narrow phase
+with overlap clipping + D/M**, **Uzawa ALM** (now commit-cycle — Q-DRIVER), the **per-GP mortar
+state**, and **optionally extracting** ADR-39's in-`LadrunoContactKernel.h` friction math into the
+shared header-only `LadrunoFrictionKernel.h` (consolidation, not a greenfield build). See Q-DEP
+(re-resolved) for the corrected dependency status.
+
+> *Original (now-stale) text, preserved for the record:* "ADR-39 has shipped **P1 only** —
+> `LadrunoContactFE` is an empty-connectivity zero adapter … no broad phase, no narrow phase, no
+> projection kernel, and no friction class … ADR-41 **co-owns and builds** the shared narrow-phase
+> machinery." This was true at drafting; ADR-39 has since shipped that machinery (P2→P3.5).
 
 ## Why
 
@@ -62,8 +88,9 @@ dependency, not assumed away.
   resolving ADR-39 Risk Q-AL.
 - **One friction law, two consumers.** A return map is the single most reused, most
   bug-prone, most oracle-testable piece of any contact code. Factoring it header-only (mirroring
-  the proven `LadrunoJ2Kernel.h` discipline) and shipping it **first** de-risks both the ADR-39
-  NTS path (which will *adopt* it for its planned P3 friction) and this mortar path.
+  the proven `LadrunoJ2Kernel.h` discipline) and **extracting it from ADR-39's already-shipped
+  P3/P3.5 friction math in `LadrunoContactKernel.h`** (PRs #360/#361) gives both the ADR-39 NTS path
+  and this mortar path one oracle-tested return map. (Build direction reversed — see §How / Q-DEP.)
 - **Fork-convention fit.** Additive leaf classes, header-only OpenSees-free kernels, a
   selector-style command (`-formulation mortar -enforce alm`), and a phased loop with
   adversarial gates — exactly how every prior Ladruno element/material landed.
@@ -79,7 +106,7 @@ dependency, not assumed away.
 | `SRC/domain/contact/LadrunoMortarKernel.h` | **Header-only, plain-`double` only** mortar segment integration: slave/master **overlap polygon clip** on the projected master plane → sub-triangle Gauss rule → `D`, `M`, weighted gap `g̃`, and the consistent linearization `dD,dM,dn,dξ` terms. numpy-oracle tested build-free. |
 | `SRC/domain/contact/LadrunoMortarPair.{h,cpp}` | **Domain-side path state** for one slave-facet ↔ master pairing: per slave-GP `{committed elastic slip s_e_n, λ_N, λ_T, slipFlag, last master-segment id + frame}`; `commit()`/`revertToLastCommit()`. The stateless-view target for the FE adapter (the ADR-41 analogue of ADR-39's planned `LadrunoContactPair`). |
 | `SRC/domain/contact/LadrunoMortarSegment.{h,cpp}` | Narrow-phase formulation object owned by `LadrunoContactDomain`: drives the GP loop, calls `LadrunoContactProjection` + `LadrunoMortarKernel` + `LadrunoFrictionKernel`, returns `F_c` and `K_c`. Mortar sibling of the (planned ADR-39) NTS narrow phase. |
-| `SRC/analysis/algorithm/equiSolnAlgo/LadrunoAugmentedNewton.{h,cpp}` | **The Uzawa outer-loop driver.** A `NewtonRaphson` subclass whose `solveCurrentStep()` wraps the inner Newton, reads `‖g̃‖_∞` from the `LadrunoContactDomain`, performs the multiplier update on a **frozen active set**, and re-solves until `‖g̃‖_∞ < augTol` or `maxAug` — committing **once** per physical step. (See *Integration points* for why this, not a Tcl `analyze`-loop, is mandatory.) |
+| ~~`SRC/analysis/algorithm/equiSolnAlgo/LadrunoAugmentedNewton.{h,cpp}`~~ **(DEFERRED — see Q-DRIVER revision + the Abaqus-scope addendum)** | **No longer a P2 deliverable.** The MVP augments **per `Domain::commit()`** (the verified `LadrunoEmbeddedRebar::commitState()` precedent), so the multiplier update needs **zero new analysis-layer code** — it rides the `LadrunoContactDomain::commit()` seam ADR-39 already owns. A bespoke `NewtonRaphson` subclass is an **optional later upgrade**, built only if a named P2/P3 gate fails *specifically because within-step augmentation is required* and the held-load driver loop is insufficient. Tag `33001` stays **reserved-but-unbuilt** (same reserve-when-needed posture as the `ELE_TAG`). |
 | `tests/contact/ladruno_friction_reference.py` | numpy oracle for `LadrunoFrictionKernel.h` (stick/slip/cone return + FD-check of `C_ss`,`C_sl`). |
 | `tests/contact/ladruno_mortar_reference.py` | numpy oracle for projection + clipped `D`/`M` (partition-of-unity + constant-pressure patch). |
 
@@ -159,7 +186,10 @@ contact 12 -master 1 -slave 2 -formulation mortar -enforce alm \
         -kn auto -kt auto -epsN auto -epsT auto -augTol 1e-8 -maxAug 20 \
         -friction coulomb -mu 0.3 -cohesion 0.0
 system UmfPackGen           ;# unsymmetric (Coulomb C_sl); Tresca stays symmetric
-algorithm LadrunoAugmentedNewton -augTol 1e-8 -maxAug 20   ;# the Uzawa OUTER loop driver
+algorithm Newton            ;# MVP: stock Newton — λ augments per Domain::commit (EmbeddedRebar pattern)
+# within-step augmentation, when a gate proves it needed, is a documented held-load proc:
+#   analyzeAugmented $augTol $maxAug    ;# zero-increment re-commits reading ‖g̃‖ (NOT a custom algorithm)
+# the bespoke `algorithm LadrunoAugmentedNewton ...` is a DEFERRED upgrade (see Q-DRIVER), not the MVP.
 
 # mesh-tying (zero-gap permanent mortar = the active set frozen ON; no inequality)
 contact 13 -master 1 -slave 2 -formulation mortar -enforce penalty -tie
@@ -172,7 +202,8 @@ ops.contactSurface(1, '-kind','masterSegments','-faces', masterFaces)
 ops.contactSurface(2, '-kind','slaveSegments',  '-faces', slaveFaces)
 ops.contact(11, '-master',1,'-slave',2,'-formulation','mortar','-enforce','alm',
                 '-kn','auto','-epsN','auto','-augTol',1e-8,'-maxAug',20,'-ngp',2)
-ops.algorithm('LadrunoAugmentedNewton','-augTol',1e-8,'-maxAug',20)
+ops.algorithm('Newton')   # MVP: λ augments per commit (EmbeddedRebar pattern); see Q-DRIVER.
+# within-step augmentation = a held-load analyzeAugmented(augTol, maxAug) recipe, not a custom algorithm.
 ```
 
 ### Class hierarchy / data flow
@@ -194,11 +225,14 @@ handle()  [LadrunoContactHandler, 33002]
         - MORT branch -> LadrunoMortarSegment clipped-GP B
      state lives on LadrunoMortarPair (Domain) -> adapter is a STATELESS VIEW (ADR-39 rule)
 
-LadrunoAugmentedNewton::solveCurrentStep()   [the OUTER Uzawa loop]
- repeat:  inner NewtonRaphson to equilibrium at FROZEN λ
-          read ‖g̃‖_∞ from LadrunoContactDomain
-          λ_N += epsN·⟨g̃_N⟩₋  (clamp λ_N ≤ 0, compression-only KKT) ; λ_T outer update
- until ‖g̃‖_∞ < augTol or maxAug ;  then return -> ONE Domain::commit() promotes state
+MVP augmentation = commit-cycle Uzawa on STOCK NewtonRaphson (EmbeddedRebar precedent):
+ stock analyze step: newStep -> NewtonRaphson::solveCurrentStep (FROZEN λ) -> Domain::commit
+   Domain::commit -> LadrunoContactDomain::commit():
+       λ_N += epsN·⟨g̃_N⟩₋  (clamp λ_N ≤ 0, compression-only KKT) ; λ_T outer update
+       promote s_e ; one Uzawa update per commit  (exactly LadrunoEmbeddedRebar::commitState)
+ within-step convergence (if needed): driver holds load fixed (zero-increment integrator)
+   and re-commits until ‖g̃‖_∞ < augTol — a documented Tcl/Py `analyzeAugmented` proc,
+   NOT a custom EquiSolnAlgo.   [bespoke LadrunoAugmentedNewton = deferred upgrade, see Q-DRIVER]
 ```
 
 ### Mortar integration scheme (clipped Gauss-point mortar)
@@ -270,18 +304,33 @@ void normalTraction(double gN, double lambdaN, double epsN, int alm,
 } // namespace
 ```
 
-**Coulomb vs Tresca = one code path**: cone `f = ‖tT‖_g − (mu·|tN| + cohesion)` (Coulomb) vs
-`f = ‖tT‖_g − tauMax` (Tresca); slip is a radial return `tT = scale·tT*`, `scale = cap/‖tT*‖_g`,
-consistent `Css = epsT·scale·(g − r⊗r)` with `r = tT*/‖tT*‖_g`, and `Csl = mu·sign(tN)·R`
-(Coulomb, **non-symmetric**) vs `Csl = 0` (Tresca → **symmetric**, the safe first bring-up).
+**Coulomb vs Tresca = one cone, not two code paths** (sharpened against Abaqus TG §5.2.3,
+which unifies them as `tau_crit = min(mu*p, tau_max)`): the single critical stress is
+`cap = min(mu·|tN| + cohesion, tauMax)` — so a **Coulomb law with a pressure-independent cap**
+(`mu>0` *and* finite `tauMax`) is just the general case, pure Tresca is its `mu=0` corner, and
+pure Coulomb is `tauMax = ∞`. Slip is a radial return `tT = scale·tT*`,
+`scale = cap/‖tT*‖_g`, consistent `Css = epsT·scale·(g − r⊗r)` with `r = tT*/‖tT*‖_g`. The
+pressure-coupling block is **active only on the branch where the cap actually depends on `tN`**:
+`Csl = mu·sign(tN)·R` when `mu·|tN|+cohesion < tauMax` (Coulomb-controlled, **non-symmetric**),
+and `Csl = 0` when the `tauMax` cap is binding *or* `mu=0` (Tresca-controlled → **symmetric**,
+the safe first bring-up). This `min()`-selected `Csl` is the FD-checked discriminator at the P3
+gate (oracle must exercise both sides of the `min`).
 
-**Sharing with ADR-39 (the central question resolved):** ADR-41 **writes**
-`LadrunoFrictionKernel.h`; ADR-39's planned P3 NTS friction will **adopt** it (its explicit
-IMPL-EX branch is a thin wrapper that extrapolates the committed state and calls the same
-`integrate()`). There is **no existing `LadrunoContactFriction` to refactor** — D2/D3/D4's
-"refactor ADR-39's friction with bit-for-bit regression" premise is false (verified: no such
-class in the tree). The correct ordering is **forward adoption**, and it only holds if ADR-41's
-kernel lands before ADR-39 reaches P3.
+**Sharing with ADR-39 (UPDATED — the build DIRECTION reversed).** The original plan was
+"ADR-41 **writes** `LadrunoFrictionKernel.h` first; ADR-39 P3 **adopts** it (forward adoption)."
+That premise is now **inverted by reality**: ADR-39 P3/P3.5 already **shipped** its friction return
+map + consistent tangent **inside** `LadrunoContactKernel.h` (`frictionReturnMap` ~L211,
+`frictionTangentBlock` ~L241) *before* ADR-41 wrote anything. So the corrected options are:
+**(a) adopt/extend in place** — ADR-41's mortar narrow phase calls the existing
+`LadrunoContactKernel.h` friction math directly (fastest; couples mortar to the NTS header); or
+**(b) extract-then-share** — lift ADR-39's in-header friction math out into the standalone,
+OpenSees-free, separately-oracle'd `LadrunoFrictionKernel.h` ADR-41 specified, and have *both* the
+NTS path and the mortar path consume it (cleaner; a **refactor of shipped, validated code**, not a
+greenfield write — and it must keep ADR-39's P3/P3.5 gates green bit-for-bit). Recommended: **(b)**,
+because the mortar path needs the `λ_T`/ALM tangential form and the `min(μ|tN|+c, τ_max)` cone
+unification anyway, and a shared header is the right home for both. Note: ADR-39's shipped kernel is
+**penalty-`kt` NTS-flavored** and **dropped IMPL-EX from the v1 ship** (it survives only in the
+Python oracle) — the extraction must generalize it to the mortar `λ_T` form, not just copy it.
 
 ### Integration points
 
@@ -295,14 +344,24 @@ kernel lands before ADR-39 reaches P3.
   virtual); under explicit `CentralDifferenceLadruno` the adapter returns a **zero** tangent so
   the LHS stays mass-only. This is a P1 gate (FD-vs-`K_c` on a rotated config catches a wrong
   factor immediately).
-- **The Uzawa outer loop is an `EquiSolnAlgo`, NOT a Tcl `analyze`-loop.** A Tcl
-  `while {…} {analyze 1}` re-solve advances `committedTime`, bumps `commitTag`, **fires recorders
-  per augmentation**, and (under `LoadControl`) advances the load each call — all wrong. The
-  augmentation must loop `solveCurrentStep` **pre-commit** at frozen load, then commit once.
-  `LadrunoAugmentedNewton` (a `NewtonRaphson` subclass) owns that loop; the `λ` update happens
-  **in the algorithm between inner solves**, and `Domain::commit → LadrunoContactDomain::commit`
-  only **freezes** the converged `λ` and promotes `s_e`. (This is the single most important
-  correction across all 16 reviews — D1/D2/D3/D4 all under-specified the driver.)
+- **The Uzawa augmentation rides the commit cycle (MVP), not a custom `EquiSolnAlgo`** —
+  *revised after a source-grounded deep-dive of the analysis loop; supersedes the earlier
+  "must be an `EquiSolnAlgo`" stance.* The `λ` update lives in `LadrunoContactDomain::commit()`
+  (`Domain::commit` already calls it), updated **once per commit** exactly as
+  `LadrunoEmbeddedRebar::commitState()` does (`lambda += kt·g`, frame re-projection, committed-only).
+  This augments **across load steps** for free on **stock `NewtonRaphson`**. The earlier claim
+  that a Tcl loop is categorically wrong was overstated: of its three objections only **`LoadControl`
+  auto-advance** (`LoadControl::newStep`, `currentLambda += deltaLambda`) is a real correctness
+  issue, and it is defused by a **zero-increment integrator** during the augmentation sweep;
+  **recorder rows per augmentation** (`Domain::commit` fires recorders) are *cosmetic*; and
+  **"double-commit"** is **not** a correctness hazard (commit is idempotent on a converged state —
+  EmbeddedRebar relies on exactly this). Within-step augmentation, *when a gate proves it
+  necessary*, is first attempted via a documented **Tcl/Py `analyzeAugmented` proc** (held-load
+  zero-increment re-commits reading `‖g̃‖`), shipped as a tested recipe. A bespoke
+  `LadrunoAugmentedNewton` is the **last-resort** upgrade — subclassing `NewtonRaphson` (whose
+  header explicitly says "not expected … to be subclassed") is the fragile path, not the mandatory
+  one. (See Q-DRIVER and the Abaqus-scope addendum for the full cost/risk delta and the promotion
+  trigger.)
 - **revertToLastCommit invariant.** `λ_N`,`λ_T` and `s_e` are **committed-only** (mutated solely
   in `commit`), never on a trial, so a rejected step's `revertToLastCommit` is automatically
   safe — identical to the EmbeddedRebar precedent (whose `revertToLastCommit` does *not* touch
@@ -356,12 +415,26 @@ holds **only** for the null case (D1 review fix).
 > `commitState` AL precedent**. True-LM / saddle-point (with the inf-sup stabilization it
 > genuinely needs) is **hard-deferred to ADR-47**.
 
-> [!question] Q-DRIVER (the Uzawa outer loop) — **RESOLVED: custom EquiSolnAlgo.**
-> The per-step `Domain::commit` update (the EmbeddedRebar pattern) gives augmentation that
-> converges *across* load steps for free, but a true *within-step* augmentation loop (capped,
-> gap-gated) is **not** free and **must not** be a Tcl `analyze`-loop (double-commit / recorder /
-> load-advance corruption). `LadrunoAugmentedNewton` (a `NewtonRaphson` subclass, broker tag
-> 33001) is the additive-leaf driver; it commits once per physical step.
+> [!question] Q-DRIVER (the Uzawa loop) — **RE-RESOLVED: commit-cycle Uzawa primary; custom EquiSolnAlgo deferred.**
+> *Revised after a source-grounded deep-dive of `StaticAnalysis::analyze` / `IncrementalIntegrator::commit`
+> / `Domain::commit` / `LoadControl::newStep` / `LadrunoEmbeddedRebar::commitState` (see the
+> Abaqus-scope addendum for the full trace). Supersedes the prior "RESOLVED: custom EquiSolnAlgo".*
+> **Primary (P2 MVP):** update `λ` **once per `Domain::commit`** inside `LadrunoContactDomain::commit()`
+> — the verified in-fork EmbeddedRebar pattern, **zero new analysis-layer code**, on stock
+> `NewtonRaphson`. This augments *across* load steps for free; the P2 gates test the *converged*
+> answer, which it reaches.
+> **The earlier "Tcl loop is wrong" argument was overstated.** Of its three objections: (1) `LoadControl`
+> **load auto-advance** (`LoadControl::newStep`) is the only real correctness issue → defused by a
+> **zero-increment integrator** during the sweep; (2) **recorder rows per augmentation** are *cosmetic*;
+> (3) **"double-commit"** is **not** a correctness hazard (`Domain::commit` is idempotent on a converged
+> state — EmbeddedRebar already depends on this). So *within-step* augmentation, when needed, is a
+> **documented Tcl/Py `analyzeAugmented` proc** (held-load re-commits), not a class.
+> **Deferred upgrade:** the bespoke `LadrunoAugmentedNewton` (`NewtonRaphson` subclass, tag 33001
+> reserved-but-unbuilt) is built **only if** a named P2/P3 gate fails *specifically because within-step
+> augmentation is required* **and** the `analyzeAugmented` proc proves insufficient — e.g. a single
+> monotonic step that must land at `augTol` with no step structure to amortize across. Subclassing
+> `NewtonRaphson` (whose header says it is "not expected … to be subclassed") is the fragile
+> last resort, not the MVP mechanism.
 
 > [!question] Q-MORTARLITE (full dual-mortar D/M vs mortar-lite) — **RESOLVED: clipped GP mortar, dual deferred.**
 > Un-clipped slave-GP "mortar-lite" (D1/D4) does **not** pass the non-matched patch test
@@ -371,17 +444,53 @@ holds **only** for the null case (D1 review fix).
 > **deferred to ADR-47** — finite-`epsN` ALM is the interim mitigation; the patch gate reports
 > any residual oscillation rather than hiding it.
 
-> [!question] Q-DEP (ADR-39 maturity) — **OPEN dependency, stated not assumed.**
-> ADR-39 shipped **P1 only** (zero adapter; no broad phase, narrow phase, projection kernel, or
-> friction). ADR-41 must either be **sequenced after ADR-39 P2 (broad phase + projection)**, or
-> **co-own** the projection kernel and adapter-connectivity work as its own P0.5/P1 deliverables.
-> This ADR takes the **co-own** stance for the projection + friction kernels (they are on the
-> critical path for both ADRs) and **depends on** ADR-39 P2.5 for the broad-phase pair candidates.
+> [!question] Q-DEP (ADR-39 maturity) — **RE-RESOLVED 2026-06-22: dependency SATISFIED, not open.**
+> *The original "ADR-39 shipped P1 only → ADR-41 must co-own and build the shared kernels" is STALE.*
+> ADR-39 has shipped **P1 → P3.5** (#345–#361). Every machinery ADR-41 depended on now exists in the
+> tree: **broad phase** (`LadrunoContactBucketSort.h`, P2.5), **projection kernel** + **normal/penalty
+> law** (`LadrunoContactKernel.h`, P2b), **friction return map** (P3) + **consistent tangent** (P3.5),
+> **real adapter connectivity** (`LadrunoContactFE` SEGMENT ctor), and **committed per-pair path state**
+> (`LadrunoContactDomain::FrictionState` + real `commit()`). ADR-41 therefore **docks onto a working
+> penalty NTS engine** and consumes these directly — it does **not** co-own/build them.
+> **Residual dependency (the only one left):** if ADR-41 wants the shared header-only
+> `LadrunoFrictionKernel.h`, that is a **refactor-extract** of ADR-39's shipped in-`LadrunoContactKernel.h`
+> friction math (must keep P3/P3.5 gates green bit-for-bit), generalized to the mortar `λ_T` form — not
+> a greenfield write. **ADR-39 PENDING work does NOT block ADR-41:** ADR-39 P4 (SOFT=1 Courant-stable
+> penalty), P5 (SOFT=2 segment penalty), and P6 (mesh-tying) are **explicit-stability tiers**; ADR-41 is
+> the implicit/accuracy-first lane and is orthogonal to them.
 
 > [!question] Q-CONSTR (rigidDiaphragm/equalDOF composition) — **RESOLVED for this scope: restricted.**
 > The contact handler does not enforce MP constraints. A mortar contact node may not also be an
 > MP slave; gated at P1 with a `rigidDiaphragm`+mortar model asserting the documented error.
 > Base-handler delegation is ADR-47.
+
+> [!question] Q-NORMAL (faceted-master normal discontinuity / contact-point chatter) — **OPEN, raised by Abaqus TG §5.1.2.**
+> The mortar weighted gap `g̃` integrates over the slave facet, but the **normal `n` at each GP is
+> still taken from a single faceted master segment**, so `n` *jumps* across master inter-element
+> boundaries. Abaqus documents (§5.1.2) that exactly this slope discontinuity makes the contact
+> point **oscillate between segments** under sliding, and mitigates it with **slide-line smoothing**
+> (C1-continuous rounded junctions) — or, in small-sliding (§5.1.1), with an **averaged nodal-normal
+> field `N(X)`** evaluated as a smooth combination of adjacent segment normals. Overlap clipping
+> fixes the *partition-of-unity / pressure* problem (Q-MORTARLITE) but **not** this normal-direction
+> chatter; the `λ_T` frame re-projection on segment switch (the EmbeddedRebar move) reduces *stale*
+> tangents but does not smooth the normal itself. **Decision:** ship the faceted per-GP normal in
+> P1–P4 (honest), add a **smoothing/chatter gate** to the P3 sliding-patch test (monitor active-GP
+> normal flips per increment under sustained sliding), and **defer averaged-nodal-normal smoothing
+> to ADR-47** alongside the dual basis — both are surface-representation upgrades, not enforcement
+> changes. Optional interim mitigation: the Abaqus **viscous normal pressure**
+> `p_visc = mu_c·v_rel` (§5.2.1) damps status flip-flop near the threshold (disallowed under any
+> future arc-length lane, where velocity is undefined).
+
+> [!question] Q-SLIDING (small- vs finite-sliding cost lane) — **OPEN optimization, framed by Abaqus TG §5.1.1/§5.1.2.**
+> Abaqus splits contact into **small-sliding** (the master tangent plane each slave GP sees is
+> frozen affine in the master node coordinates at step start — no re-search, **symmetric**, no
+> re-number, correct under arbitrary rotation but only small tangential motion) and **finite-sliding**
+> (re-project every increment). The ADR's "epoch model" (frozen connectivity superset + re-number
+> between physical steps) is effectively *finite-sliding with a lagged active set*. For the large
+> class of problems with small interface slip (seated/bolted joints, tie-like contact, the `-tie`
+> P4 case), a `-sliding small` mode that freezes the affine projection plane per step would be
+> **cheaper and symmetric** and would sidestep most of Q-EPOCH's re-number/fill cost. Flag as a
+> post-P4 optimization lane, not MVP scope.
 
 > [!question] Q-EPOCH / Q-GRAN (inherited from ADR-39, sharpened for mortar)
 > Mortar adapter connectivity (slave facet ∪ reachable master nodes) is **wider** than NTS →
@@ -399,11 +508,119 @@ holds **only** for the null case (D1 review fix).
 > penalty force. Full ALM mortar is **implicit-only** (this is the accuracy-first lane,
 > complementary to ADR-39's explicit-first NTS). Do not promise explicit ALM.
 
+> [!question] Q-VISCOUS (viscous contact stabilization) — **OPEN, residue from the Abaqus adversarial scope. Best ROI of the residue.**
+> Abaqus offers a velocity-proportional normal pressure `p_visc = mu_c·v_rel` (TG §5.2.1) to damp
+> contact **chattering / snap-through** near status flips — exactly the fork's flagship
+> **pounding / rocking / uplift** regime. **Verified gap:** no velocity-proportional contact term
+> exists anywhere (`ZeroLengthContactASDimplex` even zeros its `getDamp()`), and ADR-41 currently
+> carries it only as an *unfunded mitigation note* under Q-NORMAL. It is **cheap** — a
+> `v_rel`-proportional residual term + a `getDamp()` contribution on the adapter (ASDimplex already
+> exposes the `getDamp()` seam). **Recommendation:** promote to a funded, gated **P3.5/P4 option**
+> (`-visc <mu_c>` on the contact def), off by default, auto-disabled under any future arc-length
+> lane (velocity undefined). Not in the committed P0→P4 spine yet — decide before P3 freezes.
+
+> [!question] Q-MUDEP (pressure-/velocity-dependent friction coefficient) — **OPEN residue, adopt-later.**
+> Abaqus's `mu` may depend on pressure / slip-rate / temperature (TG §5.2.3). The fork **already
+> has the machinery** in the *wrong module*: `SRC/element/frictionBearing/frictionModel/`
+> (`VelDependent`, `VelPressureDep` (Constantinou 1996), `VelNormalFrcDep`, `FrictionModel::setTrial`)
+> computes `mu(N,v)` — but for **isolator bearings**, never wired to a contact surface.
+> Velocity-weakening `mu(v)` governs sliding-interface seismic dissipation, so this is a real
+> structural payoff. **Recommendation:** after the constant-`mu` kernel ships (P3), let
+> `LadrunoFrictionKernel` take `mu` from a `FrictionModel`-style callback instead of a constant.
+> **Adopt later**, not MVP.
+
+> [!question] Q-ANISO (anisotropic / elliptic friction) — **OPEN residue, defer to ADR-47.**
+> Two principal `mu` (friction ellipse, TG §5.2.3) via the scaled-shear transform — the existing
+> radial return is reused after scaling, so it is a clean extension, not a rewrite. But it is
+> **niche for structural-seismic** (orthotropic rock joints, laminated/fabric interfaces) and
+> doubles the return-map state + oracle surface. **Recommendation:** defer to **ADR-47**. If ever
+> pursued, read TG §5.2.3 Eq.5.2.3-10/11 directly — the skill flags its ellipse RHS as schematic,
+> not the verbatim manual normalization.
+
 - **Dependencies:** header-only kernels (no external deps); numpy for oracles; an unsymmetric SOE
   (`UmfPackGen`, already in-tree) for frictional Coulomb.
 - **Numerical:** Uzawa is linearly convergent — provide `-epsN auto` (reuse ADR-39's `-kn auto`
   rule) + `maxAug` + an `epsN`-ramp heuristic; gate the `epsN`-independence claim explicitly.
+  - **`-epsT auto` from an elastic-slip bound (Abaqus TG §5.2.3).** Do **not** ship a bare
+    tangential-penalty number. Abaqus sizes its stick stiffness `k_stick` so the reversible
+    "elastic slip" stays under `gamma_crit = 0.5%` of the average contact-element length; mirror
+    that: `epsT_auto = c_T · cap / (gamma_crit · L_facet)` with `gamma_crit ≈ 5e-3·L_facet`, so a
+    sticking GP slips at most ~0.5 % of a facet before the cone engages. This makes the tangential
+    penalty **mesh-length-aware** (the dimensional sibling of ADR-39's `-kn auto`) rather than an
+    opaque constant, and gives the P3 stick gate a physical pass tolerance (`|s_e| ≤ gamma_crit`)
+    instead of an arbitrary one.
 - **Backwards compatibility:** purely additive; `null-mortar` is byte-identical to stock.
+
+## Abaqus Theory Guide cross-check (independent second source)
+
+The ADR's mechanics were derived from Kratos `ContactStructuralMechanicsApplication`. The Abaqus
+Theory Guide (Parts 5–6) is an **independent second source**; where it agrees it raises confidence
+in a committed decision, where it diverges it surfaces a real option. This section is secondary to
+the Kratos derivation and the source-verified OpenSees re-derivations above — it is *grounding*, not
+a new requirement.
+
+### Decisions Abaqus independently confirms (confidence ↑, no change)
+
+| ADR decision | Abaqus confirmation (TG cite) |
+|---|---|
+| **ALM/Uzawa over a penalty kernel** (resolves Q-AL) | Abaqus/Standard "hard" contact *is* a mixed formulation `p = lambda + k*(h − h̄)` with a small **reference stiffness** `k*` and a **local Newton** driving `(h − h̄) → 0` — textbook augmented Lagrange (§5.2.1). Uzawa-over-penalty is the same family Abaqus ships in production, not a budget substitute. |
+| **Reject true-LM / saddle-point** (Q-DOF) | A pure Lagrange multiplier `lambda` has no self-stiffness → a **zero on the Jacobian diagonal** that must be guarded against rigid-body modes; the reference stiffness `k*` exists precisely to remove it (§5.2.1). The inf-sup/LBB concern the ADR cites for deferring dual-mortar is the same pathology. |
+| **Coulomb ⇒ unsymmetric solver** (`Csl≠0`, `UmfPackGen`) | The consistent friction Jacobian is "**non-symmetric whenever sliding occurs**" — Abaqus *recommends the unsymmetric solver* for frictional sliding to keep Newton quadratic (§5.2.3). Exactly the ADR's P3 requirement. |
+| **Friction = rate-independent plasticity return map** | Abaqus states the friction constitutive structure "mirrors rate-independent plasticity": `tau_crit` = yield surface, stick = elastic region, slip = associated flow along `tau_i/tau_eq`, integrated by **backward-Euler radial return** (§5.2.3). Independent confirmation of the `ContactMaterial3D`-derived kernel. |
+| **`g̃` (weighted gap) with the normal inside the integral** | Abaqus builds overclosure `h = (x_s − x_proj)·n` from the *projected* normal and needs `dh`, `d²h` per point (§5.1, §5.2.1); it never factors a single `n` out of a surface integral. Matches the ADR's rejection of D1's flat-facet factoring. |
+
+### The augmentation driver — Abaqus's local augmentation tipped the verdict (Q-DRIVER re-resolved)
+
+- **Local (per-point) augmentation vs the global Uzawa outer loop.** Abaqus drives the
+  augmentation with a **local Newton *inside the contact constitutive law*** at each point
+  (`(h − h̄) → 0` to tolerance), so there is **no global outer augmentation loop** — the
+  augmentation is invisible to the analysis driver. This (plus a source-grounded deep-dive of the
+  OpenSees analysis loop) **flipped the original ADR choice**: the MVP now uses **commit-cycle
+  Uzawa** (the `LadrunoEmbeddedRebar::commitState` pattern — `λ` updated once per `Domain::commit`,
+  stock `NewtonRaphson`, **zero new analysis code**), and the bespoke global `LadrunoAugmentedNewton`
+  is **deferred** behind a within-step-convergence trigger. See **Q-DRIVER** (re-resolved) and the
+  adversarial-scope addendum below for the full cost/risk trace. Abaqus's local-augmentation
+  posture is the production-grade confirmation that no global driver is required for correctness.
+
+### Abaqus contact scope — adversarial review result (what OpenSees can learn, triaged)
+
+A four-agent adversarial pass (three lenses — kinematics / enforcement / friction — plus a
+ROI skeptic, each reading the live `SRC` contact tree and the TG) scoped the *whole* "what can
+OpenSees learn from Abaqus, contact-wise" question. Headline: **the premise mostly inverts** —
+11 of 12 candidate learnings are **already shipped or already committed** in ADR-39/41, and OpenSees
+is arguably *ahead* in one place (`ZeroLengthContactASDimplex` has an IMPL-EX contact option
+Abaqus/Standard lacks).
+
+**Already shipped (do not reinvent):** friction-as-plasticity radial return + non-symmetric
+consistent tangent (`ContactMaterial3D.cpp:333-334`); closest-point projection (`SimpleContact3D`,
+`BeamContact*`); cohesion + tension cutoff; the unsymmetric-solver path; pressure/velocity-dependent
+`mu` *machinery* (`frictionModel/`, just unwired); a second IMPL-EX friction implementation
+(`ZeroLengthContactASDimplex`).
+
+**Already planned here (folded last revision):** unified `min(mu|tN|+c, tauMax)` cone; `-epsT auto`
+from `gamma_crit = 0.5%·L_facet`; AL/Uzawa at finite penalty; nodal-normal smoothing (Q-NORMAL,
+→ ADR-47); small-vs-finite-sliding lane (Q-SLIDING).
+
+**Genuine net-new residue (now risk-noted above):** **Q-VISCOUS** viscous stabilization
+(best ROI — promote to a funded P3.5/P4 option), **Q-MUDEP** wire `mu(N,v)` into contact
+(adopt-later), **Q-ANISO** elliptic friction (→ ADR-47). Plus the `SimpleContact3D::project()`
+**unbounded Newton loop** defect (`SimpleContact3D.cpp:600`) — already on the ADR-41 P0.5 critical
+path (bounded re-derivation).
+
+**Unanimous skip / ADR-47 (scope-creep guard):** coupled multiphysics surfaces
+(pore-pressure / thermal / Joule / frictional-heat / acoustic), pressure penetration, exact-Lagrange
+stick, full slide-line Hermite smoothing, rigid *analytical*-surface subsystem, true-LM / dual-mortar.
+All low-ROI for a single-maintainer structural-seismic fork or already on the ADR-47 ledger — keep
+them out of the committed P0→P4.
+
+### Net effect on the plan
+
+Folded into the body: the unified `min(mu|tN|+c, tauMax)` cone (§5.2.3), the
+`gamma_crit = 0.5%·L_facet` elastic-slip basis for `-epsT auto` (§5.2.3), the **Q-DRIVER
+re-resolution** (commit-cycle primary, custom algorithm deferred), and five new risk notes
+(**Q-NORMAL**, **Q-SLIDING**, **Q-VISCOUS**, **Q-MUDEP**, **Q-ANISO**). The only committed-scope
+*change* is Q-DRIVER demoting `LadrunoAugmentedNewton` out of the P2 deliverable list (now a
+gated upgrade); the P0→P4 spine is otherwise unchanged, and no new deferral leaves the ADR-47 ledger.
 
 ## Implementation log
 
@@ -438,17 +655,24 @@ correctly grounds zero-DOF ALM in a *real in-fork* precedent. Grafted:
 1. **Patch test ⇄ mortar-lite contradiction** (all M lenses): **overlap clipping moved into the
    P1 MVP**; the headline is "passes the non-matched patch test" with clipping, and the gate is a
    hard ≤1e-6 numeric falsifier — *not* an oscillation-magnitude metric.
-2. **Uzawa driver** (all A/S lenses): **custom `LadrunoAugmentedNewton` `EquiSolnAlgo`**, never a
-   Tcl `analyze`-loop; commits once per step; `λ` updated between inner solves on a frozen set.
+2. **Uzawa driver** (all A/S lenses): ~~custom `LadrunoAugmentedNewton` `EquiSolnAlgo`~~ —
+   **SUPERSEDED by the Q-DRIVER re-resolution** (post-deep-dive). MVP is **commit-cycle Uzawa on
+   stock `NewtonRaphson`** (λ per `Domain::commit`, EmbeddedRebar pattern); within-step augmentation
+   is a held-load `analyzeAugmented` proc; the custom `EquiSolnAlgo` is a gated, deferred upgrade.
+   The original disposition correctly rejected a *naïve* `analyze`-loop, but over-generalized that
+   into "a custom algorithm is mandatory" — only `LoadControl` auto-advance is a real hazard, and a
+   zero-increment integrator defuses it.
 3. **c1 double-scaling** (D2/D4 A): adapter fetches `c1` via `getCFactor()`, returns `c1·K_c`,
    overrides `addKtToTang` to avoid re-scaling; zero tangent under explicit.
 4. **classTags** (all R lenses): the brief's "33015 taken by LadrunoContactFE" is **false**; MVP
    needs **no `ELE_TAG`**; only a new **algorithm tag 33001** is reserved; D4's 33009/33010
    suggestion (collides with ADR-26) **dropped**; `FrictionKernel` explicitly **not** an `FRN_TAG`.
-5. **ADR-39 maturity** (D2/D3/D4 S — fatal/major): premise that ADR-39 ships a working penalty
-   engine + a `LadrunoContactFriction` class is **false**; reframed as **co-own the shared
-   kernels + depend on ADR-39 P2.5 broad phase** (Q-DEP). No "bit-for-bit regression" of code
-   that doesn't exist — friction sharing is **forward adoption**.
+5. **ADR-39 maturity** (D2/D3/D4 S — fatal/major): **SUPERSEDED (drafting-time record; re-resolved
+   — see Sequencing-reality §What / Q-DEP).** At drafting, the premise that ADR-39 ships a working
+   penalty engine was treated as false and friction sharing as "forward adoption." Both are now
+   **stale**: ADR-39 has since shipped P1→P3.5 (a working penalty NTS engine *with* the friction
+   kernel), so the corrected framing is **dock onto the shipped engine + extract/share its in-tree
+   friction math** (reversed direction), not co-own-and-build.
 6. **`g̃` consistency** (D1 M): normal kept **inside** the integral; flat-facet factoring rejected.
 7. **Metric in slip tangent** (D4 M): `g` is a kernel input; `R = g·r`.
 8. **Q-CONSTR / Q-EPOCH / Q-IMPLFILL / Q-EXPLICIT**: resolved-with-restriction or
