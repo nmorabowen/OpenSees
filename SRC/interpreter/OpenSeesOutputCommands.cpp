@@ -443,6 +443,9 @@ int OPS_LadrunoContact()
     bool epsNAuto = false;
     double augTol = 1e-8;
     int maxAug = 20, ngp = 2;
+    // ADR-41 C3.1 mortar friction (Coulomb/Tresca unified cone min(μN+c, τmax)); all 0 ⇒ frictionless.
+    double mortarMu = 0.0, epsT = 0.0, cohesion = 0.0, tauMax = 0.0;
+    bool epsTAuto = false;
     while (OPS_GetNumRemainingInputArgs() > 0) {
         const char *opt = OPS_GetString();
         if (opt != 0 && strcmp(opt, "-mortar") == 0) {
@@ -486,6 +489,46 @@ int OPS_LadrunoContact()
                 return -1;
             }
             ngp = v[0];
+        } else if (opt != 0 && strcmp(opt, "-mu") == 0) {
+            // ADR-41 C3.1: Coulomb friction coefficient on the mortar interface.
+            double v[1]; int m = 1;
+            if (OPS_GetDoubleInput(&m, v) < 0) {
+                opserr << "WARNING contact -mu - need a value\n";
+                return -1;
+            }
+            mortarMu = v[0];
+        } else if (opt != 0 && strcmp(opt, "-epsT") == 0) {
+            // -epsT auto | <value> : tangential penalty (auto => = the normal penalty epsN).
+            if (OPS_GetNumRemainingInputArgs() < 1) {
+                opserr << "WARNING contact -epsT - need auto or a value\n";
+                return -1;
+            }
+            const char *e = OPS_GetString();
+            if (e != 0 && strcmp(e, "auto") == 0) {
+                epsTAuto = true;
+            } else {
+                OPS_ResetCurrentInputArg(-1);
+                double v[1]; int m = 1;
+                if (OPS_GetDoubleInput(&m, v) < 0) {
+                    opserr << "WARNING contact -epsT - need auto or a value\n";
+                    return -1;
+                }
+                epsT = v[0];
+            }
+        } else if (opt != 0 && strcmp(opt, "-cohesion") == 0) {
+            double v[1]; int m = 1;
+            if (OPS_GetDoubleInput(&m, v) < 0) {
+                opserr << "WARNING contact -cohesion - need a value\n";
+                return -1;
+            }
+            cohesion = v[0];
+        } else if (opt != 0 && strcmp(opt, "-tauMax") == 0) {
+            double v[1]; int m = 1;
+            if (OPS_GetDoubleInput(&m, v) < 0) {
+                opserr << "WARNING contact -tauMax - need a value\n";
+                return -1;
+            }
+            tauMax = v[0];
         } else if (opt != 0 && strcmp(opt, "-outward") == 0) {
             double o[3]; int m = 3;
             if (OPS_GetDoubleInput(&m, o) < 0) {
@@ -532,11 +575,11 @@ int OPS_LadrunoContact()
         return -1;
     }
     if (isMortar) {
-        // Ladruno ADR-41 C2.0: the mortar definition is STORED (separate from the NTS
-        // list) but the narrow-phase adapter is wired in C2.1 and the commit-cycle ALM in
-        // C2.2 — so a mortar contact is parsed/validated/inert here. friction (kt/mu) is C3.
+        // Ladruno ADR-41 C2.0/C2.2/C3.1: the mortar definition (normal ALM + C3.1 Coulomb/Tresca
+        // friction via -mu/-epsT/-cohesion/-tauMax). friction params ≤0 ⇒ the frictionless C2 path.
         return cd->addMortarContact(idata[0], idata[1], idata[2], kn, knAuto, epsN, epsNAuto,
-                                    augTol, maxAug, ngp, hasOutward ? outward : 0, cellFrac);
+                                    augTol, maxAug, ngp, hasOutward ? outward : 0, cellFrac,
+                                    mortarMu, epsT, epsTAuto, cohesion, tauMax, consistentTan);
     }
     return cd->addContact(idata[0], idata[1], idata[2], kn, kt, mu,
                           hasOutward ? outward : 0, knAuto, cellFrac, consistentTan);

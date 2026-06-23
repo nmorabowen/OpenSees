@@ -54,14 +54,16 @@ C1 gives per slave/master facet pair: `D_IJ`, `M_IK`, the weighted **normal** ga
 normal `n`. C2 added the per-node normal pressure `t_N,I = −(λ_N,I + epsN·ḡ_I)` (a compression magnitude
 ≥ 0; the force is `−(D·p)n`). C3 adds the tangential traction:
 
-1. **Weighted tangential gap (slip), per node.** The mortar-weighted relative tangential displacement at
-   slave node `I` is the tangential part of the weighted relative position:
-   `ḡ_T,I = P_t · ( (Σ_J D_IJ x_s,J − Σ_K M_IK x_m,K) / a_I − x̄0_I )`, where `P_t = I − n⊗n` projects out
-   the normal, `a_I = Σ_J D_IJ` (the same area normaliser as the normal gap), and `x̄0_I` is the
-   **engagement-config** weighted position captured once at first activation (the C3 analogue of the NTS
-   `gT0` — else a late-engaging node's pre-contact tangential drift becomes a spurious stick traction;
-   ADR-39 design-gate MAJOR-1, reused). Equivalently `ḡ_T,I` is the area-normalised mortar tangential gap.
-   **The slip increment fed to the return map is `gTeff_I = ḡ_T,I` (engagement-referenced).**
+1. **Weighted tangential gap (slip), per node — from DISPLACEMENTS, not positions.** The closest-point
+   projection makes the weighted relative POSITION `∫N_I(x_s − x_m(ξ̄))` purely NORMAL (`n·r = g̃`), so
+   positions carry **no** tangential slip information (the ADR-39 SEGMENT path hit this exact trap). The
+   tangential slip is the tangential part of the weighted relative **displacement**:
+   `ḡ_T,I = P_t · ( (Σ_J D_IJ u_s,J − Σ_K M_IK u_m,K) / a_I ) − gT0_I`, where `P_t = I − n⊗n`,
+   `a_I = Σ_J D_IJ`, `u` are nodal DISPLACEMENTS (`getTrialDisp`), and `gT0_I` is the **engagement-config**
+   weighted tangential displacement captured once at first contact (the C3 analogue of the NTS `gT0` — else
+   a late-engaging node's pre-contact drift becomes a spurious stick traction; ADR-39 MAJOR-1, reused).
+   **The slip fed to the return map is `gTeff_I = ḡ_T,I`.** (The ADR-39 SEGMENT form is `u_s − Σ N_i u_i`,
+   tangential — the mortar form is the `D/M`-weighted generalisation.)
 2. **Per-node return map (the SHIPPED kernel, verbatim).** Call
    `LadrunoFrictionKernel::frictionReturnMap(gTeff_I, gpT_I, N_I, epsT, mu, tFric_I, gpTtrial_I, cohesion, tauMax)`
    with the contact pressure `N_I = t_N,I = epsN·⟨−ḡ_I⟩ + (−λ_N,I)` (the C2 nodal normal pressure magnitude;
@@ -142,7 +144,11 @@ Mirror these; do not invent new architecture (the C2 lesson).
   (explicit/CDL force-only, like P3) ⇒ implicit needs C3.2.
 - **C3.2 — consistent friction TANGENT.** `addMortarTang` friction block (symmetric default + `-consistanttan`
   non-symmetric Coulomb). Gate: static frictional Newton CONVERGES (singular without it, the P3.5 gate);
-  symmetric-solver-safe; `Csl` FD-checked on a slipping config; Newmark dynamic.
+  symmetric-solver-safe; `Csl` FD-checked on a slipping config; Newmark dynamic. **Two C3.1-gate TODOs that
+  go live here (see [[LEDGER_quirks]]):** (1) `revertToLastCommit` must also revert `gT0`/`engaged`
+  (double-buffer them) — a rejected implicit step otherwise latches a stale engagement origin; (2) the
+  shared-node committed-slip order dependence (MAJOR-1) should get a non-matched friction regression +
+  a per-node slip reconciliation before non-matched frictional meshes are trusted.
 - **C3.3 (optional) — tangential Uzawa `λ_T`.** Only if a named gate needs the Δt-independent tangential
   converged answer beyond what penalty `epsT` gives. The `analyze_augmented` proc already drives it (the
   commit-cycle outer loop augments `λ_T` beside `λ_N`).

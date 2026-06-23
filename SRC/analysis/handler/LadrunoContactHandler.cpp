@@ -498,9 +498,28 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                             continue;
                         }
                     }
+                    // C3.1 friction: epsT auto ⇒ size from the normal penalty (epsUse); else the
+                    // given value. mu/cohesion/tauMax ≤0 ⇒ the adapter short-circuits (frictionless).
+                    double epsTuse = mc.epsTAuto ? epsUse : mc.epsT;
+                    // gate MINOR-1: friction REQUESTED but no tangential penalty given ⇒ the return
+                    // map would stick at ZERO force (silently inert). Default epsT to the normal
+                    // penalty and warn ONCE rather than ship dead friction.
+                    bool wantFric = (mc.mu > 0.0 || mc.cohesion > 0.0 || mc.tauMax > 0.0);
+                    if (wantFric && epsTuse <= 0.0) {
+                        epsTuse = epsUse;
+                        static bool warnedEpsT = false;
+                        if (!warnedEpsT) {
+                            warnedEpsT = true;
+                            opserr << "WARNING LadrunoContactHandler::handle() - mortar contact "
+                                   << mc.tag << ": friction requested without -epsT; defaulting the "
+                                      "tangential penalty to the normal penalty (-epsT auto). Set "
+                                      "-epsT explicitly to control it.\n";
+                        }
+                    }
                     LadrunoContactFE *fe =
                         new LadrunoContactFE(numFe++, sNodes, npsS, mNodes, npsM, epsUse,
-                                             orientDir, mc.tag, sf, theDomain);
+                                             orientDir, mc.tag, sf, theDomain,
+                                             mc.mu, epsTuse, mc.cohesion, mc.tauMax, mc.consistentTan);
                     if (fe == 0) return -5;
                     theModel->addFE_Element(fe);
                     // C2.2: this pair's slave nodes have a live λ_N slot this handle().

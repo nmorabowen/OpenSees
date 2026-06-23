@@ -93,9 +93,15 @@ class LadrunoContactFE : public FE_Element
     // slaveNodeTag); the adapter reports its per-facet g̃_I^facet/a_I^facet into that node slot
     // (accumulateMortarGap) then reads the running global gap. theDomain==0 ⇒ the C2.1 penalty
     // fallback (λ≡0, facet-local gap). addKtToTang assembles K_c=epsN·B̃ᵀdiag(act/a_global)B̃⊗(n⊗n).
+    // C3.1 friction: mu/epsT(in the kt slot)/cohesion/tauMax add the Coulomb/Tresca tangential
+    // traction (shipped LadrunoFrictionKernel). All ≤ 0 ⇒ byte-identical to the frictionless C2
+    // path (no slot touch — the NTS P3 `mu>0` short-circuit, generalized to the unified cone).
+    // consistentTan = the non-symmetric Coulomb friction tangent (C3.2; false = symmetric).
     LadrunoContactFE(int tag, Node **slaveNodes, int nps_s, Node **masterNodes, int nps_m,
                      double epsN, const double orientDir[3], int contactTag = 0,
-                     int slaveFacetIndex = 0, Domain *theDomain = 0);
+                     int slaveFacetIndex = 0, Domain *theDomain = 0,
+                     double mu = 0.0, double epsT = 0.0, double cohesion = 0.0,
+                     double tauMax = 0.0, bool consistentTan = false);
     ~LadrunoContactFE();
 
     // self-owned buffers (base buffers are unavailable when myEle == 0)
@@ -189,6 +195,20 @@ class LadrunoContactFE : public FE_Element
     Node *mortarMaster[4];  // master facet nodes
     int npsS, npsM;         // slave / master nodes-per-facet
     int slaveFacetIndex;    // GLOBAL slave-facet ordinal (rebuild-stable; C2.2 λ_N key)
+
+    // C3.1 MORTAR friction (active in MORTAR mode when mu>0 ∨ cohesion>0 ∨ tauMax>0). epsT (the
+    // tangential penalty) rides `kt`; mu reuses the friction `mu` member. cohesion/tauMax complete
+    // the unified cone cap = min(μN+c, τmax). consistentTan reuses the friction member.
+    double mortarCohesion;  // adhesive intercept c
+    double mortarTauMax;    // Tresca shear cap (≤0 ⇒ no upper cap)
+
+    // C3.1: assemble the mortar Coulomb/Tresca friction force into `resid` (called from the MORTAR
+    // getResidual after the normal block). p_normal[I] = the per-node normal pressure (≤0; the
+    // C2 value); for each in-contact node it builds the LOCAL weighted tangential gap, runs the
+    // shipped return map (engagement origin + committed slip on the Domain), and scatters the
+    // tangential traction via D/M exactly like the normal force. cd = the (non-null) engine.
+    void addMortarFriction(const double D[4][4], const double M[4][4], const double n[3],
+                           const double p_normal[4], class LadrunoContactDomain *cd);
 };
 
 #endif

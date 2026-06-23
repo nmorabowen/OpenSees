@@ -51,7 +51,7 @@ LadrunoContactFE::LadrunoContactFE(int tag)
     // result is bitwise-identical to no-contact. (P1a)
     for (int d = 0; d < 3; d++) { planeP0[d] = 0.0; planeN[d] = 0.0; orientDir[d] = 0.0; }
     for (int i = 0; i < 4; i++) { segNode[i] = 0; mortarSlave[i] = 0; mortarMaster[i] = 0; }
-    npsS = npsM = 0; slaveFacetIndex = 0;
+    npsS = npsM = 0; slaveFacetIndex = 0; mortarCohesion = mortarTauMax = 0.0;
 }
 
 LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, int ndm_,
@@ -70,7 +70,7 @@ LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, int ndm_,
     }
     for (int d = 0; d < 3; d++) { planeP0[d] = p0[d]; planeN[d] = n[d]; orientDir[d] = 0.0; }
     for (int i = 0; i < 4; i++) { segNode[i] = 0; mortarSlave[i] = 0; mortarMaster[i] = 0; }
-    npsS = npsM = 0; slaveFacetIndex = 0;
+    npsS = npsM = 0; slaveFacetIndex = 0; mortarCohesion = mortarTauMax = 0.0;
 }
 
 LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, Node **segNodes,
@@ -105,7 +105,7 @@ LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, Node **segNodes,
     for (int d = 0; d < 3; d++) orientDir[d] = odir[d];
     for (int d = 0; d < 3; d++) { planeP0[d] = 0.0; planeN[d] = 0.0; }
     for (int i = 0; i < 4; i++) { mortarSlave[i] = 0; mortarMaster[i] = 0; }
-    npsS = npsM = 0; slaveFacetIndex = 0;
+    npsS = npsM = 0; slaveFacetIndex = 0; mortarCohesion = mortarTauMax = 0.0;
 }
 
 // C2.1/C2.2 — clipped-GP MORTAR contact (one slave facet vs one master facet). theDomain
@@ -113,12 +113,14 @@ LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, Node **segNodes,
 LadrunoContactFE::LadrunoContactFE(int tag, Node **slaveNodes, int nps_s,
                                    Node **masterNodes, int nps_m, double epsN,
                                    const double odir[3], int contactTag_, int slaveFacetIndex_,
-                                   Domain *dom)
+                                   Domain *dom, double mu_, double epsT_, double cohesion_,
+                                   double tauMax_, bool consistentTan_)
   : FE_Element(tag, /*numDOF_Group=*/nps_s + nps_m, /*ndof=*/3 * (nps_s + nps_m)),
     resid(3 * (nps_s + nps_m)), tang(3 * (nps_s + nps_m), 3 * (nps_s + nps_m)),
     mode(MORTAR), theSlave(0), ndm(3), kn(epsN), nps(0),
-    kt(0.0), mu(0.0), theDomain(dom), contactTag(contactTag_), segIndex(0),
-    consistentTan(false), npsS(nps_s), npsM(nps_m), slaveFacetIndex(slaveFacetIndex_)
+    kt(epsT_), mu(mu_), theDomain(dom), contactTag(contactTag_), segIndex(0),
+    consistentTan(consistentTan_), npsS(nps_s), npsM(nps_m), slaveFacetIndex(slaveFacetIndex_),
+    mortarCohesion(cohesion_), mortarTauMax(tauMax_)
 {
     // Connectivity = each slave-facet DOF_Group then each master-facet DOF_Group.
     // setID() fills myID = [slave_0 xyz | … | master_0 xyz | …]; mortarActive()/the
@@ -349,6 +351,11 @@ LadrunoContactFE::getResidual(Integrator *)
                 for (int I = 0; I < npsS; I++) Mp += M[I][L] * p[I];
                 for (int d = 0; d < 3; d++) resid(3 * (npsS + L) + d) = Mp * n[d];
             }
+            // --- C3.1 Coulomb/Tresca friction (force only; tangent is C3.2) ---
+            // mu≤0 ∧ c≤0 ∧ τmax≤0 SHORT-CIRCUITS before any slot touch ⇒ byte-identical to the
+            // frictionless C2 path (the NTS P3 `mu>0` guard, generalized to the unified cone).
+            if ((mu > 0.0 || mortarCohesion > 0.0 || mortarTauMax > 0.0) && cd != 0)
+                addMortarFriction(D, M, n, p, cd);
         } else if (cd != 0) {
             // overlap empty THIS eval (the pair separated / the clip rejected it): zero this
             // facet's contribution so it stops biasing the shared node's accumulated global gap.
@@ -358,6 +365,81 @@ LadrunoContactFE::getResidual(Integrator *)
         }
     }
     return resid;
+}
+
+// C3.1 — Coulomb/Tresca friction FORCE on the mortar interface (penalty, λ_T≡0). For each slave
+// node in NORMAL contact (p_normal[I] < 0), build the LOCAL weighted tangential gap, run the
+// SHIPPED LadrunoFrictionKernel return map with the nodal normal pressure N_I = −p_normal[I], and
+// scatter the (already-negated, motion-opposing) tangential traction tFric_I via the D/M operators
+// exactly like the normal force: f^s_K += Σ_I D_KI tFric_I, f^m_L += −Σ_I M_IL tFric_I (self-
+// equilibrating via Σφ=1 — oracle T2). The slip is per-GLOBAL-slave-node committed state on the
+// Domain (gpT/gT0), the C3 analogue of λ_N (mirrors the NTS FrictionState; design [[_adr41_c3_design]]).
+void
+LadrunoContactFE::addMortarFriction(const double D[4][4], const double M[4][4], const double n[3],
+                                    const double p_normal[4], LadrunoContactDomain *cd)
+{
+    // facet node DISPLACEMENTS (NOT positions). The closest-point projection makes the weighted
+    // relative POSITION ∫N_I(x_s − x_m(ξ̄)) purely NORMAL (n·r = g̃), so positions carry NO
+    // tangential slip information — the tangential slip is the weighted relative DISPLACEMENT
+    // ∫N_I(u_s − u_m(ξ̄)), tangential part (the ADR-39 SEGMENT path uses exactly u_s − ΣN_i u_i).
+    double us[4][3], um[4][3];
+    for (int i = 0; i < npsS; i++) {
+        const Vector &u = mortarSlave[i]->getTrialDisp();
+        for (int d = 0; d < 3; d++) us[i][d] = u(d);
+    }
+    for (int i = 0; i < npsM; i++) {
+        const Vector &u = mortarMaster[i]->getTrialDisp();
+        for (int d = 0; d < 3; d++) um[i][d] = u(d);
+    }
+    double tFric[4][3] = {{0}};
+    for (int I = 0; I < npsS; I++) {
+        if (p_normal[I] >= 0.0) continue;             // friction only on in-contact nodes
+        double aFacet = 0.0;
+        for (int J = 0; J < npsS; J++) aFacet += D[I][J];
+        if (aFacet <= 1e-300) continue;
+        double N_I = -p_normal[I];                    // contact pressure magnitude (≥ 0)
+        // weighted relative DISPLACEMENT r_I = Σ_J D_IJ u_s,J − Σ_K M_IK u_m,K (= ∫N_I(u_s − u_m) dΓ);
+        // its tangential part / a_I is the area-normalised mortar tangential SLIP (gT0-referenced
+        // below, so a late-engaging node's pre-contact drift is not a spurious stick traction).
+        double r[3] = {0, 0, 0};
+        for (int J = 0; J < npsS; J++)
+            for (int d = 0; d < 3; d++) r[d] += D[I][J] * us[J][d];
+        for (int K = 0; K < npsM; K++)
+            for (int d = 0; d < 3; d++) r[d] -= M[I][K] * um[K][d];
+        double rn = r[0]*n[0] + r[1]*n[1] + r[2]*n[2];
+        double gbarT[3];
+        for (int d = 0; d < 3; d++) gbarT[d] = (r[d] - rn * n[d]) / aFacet;   // tangential, normalised
+
+        LadrunoContactDomain::MortarNormalState &st =
+            cd->getOrCreateMortarNormalState(contactTag, mortarSlave[I]->getTag());
+        // engagement origin captured ONCE at first contact (else pre-contact tangential drift
+        // becomes a spurious stick traction — the ADR-39 P3 MAJOR-1, reused).
+        if (!st.engaged) {
+            for (int d = 0; d < 3; d++) st.gT0[d] = gbarT[d];
+            st.engaged = true;
+        }
+        double gTeff[3];
+        for (int d = 0; d < 3; d++) gTeff[d] = gbarT[d] - st.gT0[d];
+        double tF[3], gpTtrial[3];
+        // N for the cone = the nodal normal pressure; epsT rides kt; trial = pure fn of committed
+        // gpT ⇒ idempotent across re-evals. Returns the APPLIED (negated) traction opposing motion.
+        LadrunoFrictionKernel::frictionReturnMap(gTeff, st.gpT, N_I, kt, mu, tF, gpTtrial,
+                                                 mortarCohesion, mortarTauMax);
+        for (int d = 0; d < 3; d++) { st.gpTtrial[d] = gpTtrial[d]; tFric[I][d] = tF[d]; }
+    }
+    // scatter via D (slave) / −M (master), like the normal force but a VECTOR traction
+    for (int K = 0; K < npsS; K++)
+        for (int d = 0; d < 3; d++) {
+            double s = 0.0;
+            for (int I = 0; I < npsS; I++) s += D[K][I] * tFric[I][d];
+            resid(3 * K + d) += s;
+        }
+    for (int L = 0; L < npsM; L++)
+        for (int d = 0; d < 3; d++) {
+            double s = 0.0;
+            for (int I = 0; I < npsS; I++) s += M[I][L] * tFric[I][d];
+            resid(3 * (npsS + L) + d) += -s;
+        }
 }
 
 const Matrix &
