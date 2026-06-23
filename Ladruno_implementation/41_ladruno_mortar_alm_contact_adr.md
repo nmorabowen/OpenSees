@@ -36,7 +36,7 @@ sibling subsystem):
 
 **Committed scope (this ADR):** `P0`→`P4` = the two kernels (friction + projection), the
 mortar narrow phase with **overlap clipping** (so the patch-test claim is honest), frictionless
-Uzawa ALM (the MVP), and frictional mortar. **Hard-deferred to a successor ADR-42:** dual
+Uzawa ALM (the MVP), and frictional mortar. **Hard-deferred to a successor ADR-47:** dual
 (biorthogonal) Lagrange shape functions, true-LM/saddle-point enforcement, self-contact, and
 NTN/NTS-via-mortar-weights. See *Risks* for the rejection rationale on each.
 
@@ -222,7 +222,7 @@ For each slave facet paired (via the ADR-39 broad phase) with candidate master f
 
 What is **sacrificed vs full dual-mortar** (stated honestly): standard (not biorthogonal)
 multiplier basis → `D` is **not** diagonal, so the per-node `λ` update is local only after the
-per-facet `D`-solve; and it is **not** LBB/inf-sup optimal (deferred to ADR-42). ALM at finite
+per-facet `D`-solve; and it is **not** LBB/inf-sup optimal (deferred to ADR-47). ALM at finite
 `epsN` is the mitigation; the patch-test gate **reports** any residual pressure oscillation.
 
 ### FrictionalLaw interface (C++ signature sketch)
@@ -320,7 +320,7 @@ kernel lands before ADR-39 reaches P3.
   P1 restriction**: a mortar slave/master node may **not** simultaneously be an `equalDOF` /
   `rigidDiaphragm` slave under this handler. The gate combines a mortar interface with a
   `rigidDiaphragm` and asserts the documented error (delegation to a base Transformation handler
-  is an ADR-42 item, not in this scope).
+  is an ADR-47 item, not in this scope).
 - **Unsymmetric solver (Coulomb).** `Csl ≠ 0` makes `K_c` unsymmetric → frictional Coulomb
   **requires** an unsymmetric SOE (`UmfPackGen`/`FullGen`), exercised at P3; Tresca (`Csl=0`)
   stays symmetric and is the first frictional bring-up. Precedent: `LadrunoConcrete3D` already
@@ -354,7 +354,7 @@ holds **only** for the null case (D1 review fix).
 > reusable verbatim (D2's claim corrected). **Decision:** ship Uzawa-over-penalty (`λ` as
 > Domain-side per-GP state, zero new DOFs), grounded in the **verified in-fork EmbeddedRebar
 > `commitState` AL precedent**. True-LM / saddle-point (with the inf-sup stabilization it
-> genuinely needs) is **hard-deferred to ADR-42**.
+> genuinely needs) is **hard-deferred to ADR-47**.
 
 > [!question] Q-DRIVER (the Uzawa outer loop) — **RESOLVED: custom EquiSolnAlgo.**
 > The per-step `Domain::commit` update (the EmbeddedRebar pattern) gives augmentation that
@@ -368,7 +368,7 @@ holds **only** for the null case (D1 review fix).
 > (partition-of-unity broken at master element boundaries). ADR-41 ships **overlap clipping in
 > the MVP** with a **standard** multiplier basis (`D` non-diagonal, per-facet solved). **Dual
 > (biorthogonal) basis** (diagonal `D`, cheap nodal `λ`) and **LBB-optimal** treatment are
-> **deferred to ADR-42** — finite-`epsN` ALM is the interim mitigation; the patch gate reports
+> **deferred to ADR-47** — finite-`epsN` ALM is the interim mitigation; the patch gate reports
 > any residual oscillation rather than hiding it.
 
 > [!question] Q-DEP (ADR-39 maturity) — **OPEN dependency, stated not assumed.**
@@ -381,7 +381,7 @@ holds **only** for the null case (D1 review fix).
 > [!question] Q-CONSTR (rigidDiaphragm/equalDOF composition) — **RESOLVED for this scope: restricted.**
 > The contact handler does not enforce MP constraints. A mortar contact node may not also be an
 > MP slave; gated at P1 with a `rigidDiaphragm`+mortar model asserting the documented error.
-> Base-handler delegation is ADR-42.
+> Base-handler delegation is ADR-47.
 
 > [!question] Q-EPOCH / Q-GRAN (inherited from ADR-39, sharpened for mortar)
 > Mortar adapter connectivity (slave facet ∪ reachable master nodes) is **wider** than NTS →
@@ -454,8 +454,8 @@ correctly grounds zero-DOF ALM in a *real in-fork* precedent. Grafted:
 8. **Q-CONSTR / Q-EPOCH / Q-IMPLFILL / Q-EXPLICIT**: resolved-with-restriction or
    disclosed-with-gate, not "inherited" (ADR-39 shipped scaffolding, so there is nothing to inherit).
 9. **Single-maintainer realism** (all S): committed scope **cut to P0→P4**; dual basis, true-LM,
-   self-contact, NTN/NTS-via-mortar-weights **hard-deferred to ADR-42**.
+   self-contact, NTN/NTS-via-mortar-weights **hard-deferred to ADR-47**.
 
 **Hard-defer ledger:** full dual/biorthogonal mortar (Q-MORTARLITE), true-LM saddle-point +
 inf-sup stabilization (Q-DOF), self-contact, simplified MPC/NTN/NTS-via-mortar-weights,
-base-handler MP delegation (Q-CONSTR) → all **ADR-42**, each with the rejection reason above.
+base-handler MP delegation (Q-CONSTR) → all **ADR-47**, each with the rejection reason above.
