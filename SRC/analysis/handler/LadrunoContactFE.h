@@ -19,7 +19,7 @@
 // ==========================================================================
 // LADRUNO-HEADER-END
 
-// ADR-39 P1a — LadrunoContactFE: an FE_Element adapter that injects contact
+// ADR-39 — LadrunoContactFE: an FE_Element adapter that injects contact
 // contributions into the assembly without being backed by a Domain Element.
 //
 // The contact narrow phase is self-contained here: getResidual()/getTangent()
@@ -30,10 +30,14 @@
 // state lives on the Domain-owned LadrunoContactDomain (P1b), so the adapter can
 // be destroyed/rebuilt every handle() with no state loss.
 //
-// P1a scope: EMPTY connectivity (size-0 getID/getDOFtags) + ZERO force, to prove
-// the injection plumbing is graph-neutral (bitwise-identical to no-contact). With
-// myEle==0 the base getResidual/getTangent exit(-1) and the base zero/add helpers
-// early-return, so this subtype MUST own its own buffers and override both.
+// Three modes, shipped incrementally:
+//   EMPTY       (P1a, #345) — size-0 getID/getDOFtags + ZERO force; legacy/null path proving the
+//                             injection plumbing is graph-neutral (bitwise-identical to no-contact).
+//   RIGID_PLANE (P2a, #346) — slave node vs a rigid analytical plane (penalty normal).
+//   SEGMENT     (P2b/P3/P3.5, #354/#360/#361) — faceted NTS penalty + Coulomb friction + consistent
+//                             tangent, real connectivity FE_Element(tag, 1+nps, 3*(1+nps)).
+// With myEle==0 (the EMPTY mode) the base getResidual/getTangent exit(-1) and the base zero/add
+// helpers early-return, so this subtype MUST own its own buffers and override both.
 //
 // See Ladruno_implementation/39_ladruno_contact_domain_adr.md + _adr39_p1_design.md.
 

@@ -1,0 +1,269 @@
+---
+title: Ladruno Contact — definitive architecture & unified roadmap (capstone over ADR-39 / ADR-41 / ADR-47)
+project: Ladruno
+status: draft
+priority: high
+owner: nmora
+tags:
+  - implementation
+  - contact
+  - capstone
+  - architecture
+  - roadmap
+---
+
+# Ladruno Contact — definitive capstone
+
+## What
+
+This is the **capstone** over the three contact ADRs. It is the **single source of truth** for the
+fork's contact subsystem: the target end-state, the contracts every formulation must honor, the
+authoritative component status, and the **one unified roadmap** that sequences all remaining work.
+
+It **owns no new leaf code** — the per-track ADRs do. It owns the **architecture, the sequencing,
+and the cross-cutting decision log**. When status, scope, or sequencing is in question, *this*
+document is authoritative; the per-track ADRs hold the detailed design and the phase-by-phase gates.
+
+- **ADR-39** — explicit/robust-first **NTS penalty** `ContactDomain` (the shipped substrate + the
+  remaining explicit-stability tiers). Detailed design of record for the NTS lane.
+- **ADR-41** — implicit/accuracy-first **mortar + Augmented-Lagrangian (commit-cycle Uzawa)**.
+  Detailed design of record for the mortar lane.
+- **ADR-47** — the **deferral ledger** (dual/biorthogonal mortar, true-LM saddle-point, self-contact,
+  full slide-line smoothing, anisotropic friction, …). *To be created;* this capstone fences its
+  scope.
+
+**Committed end-state (dual-lane, decided 2026-06-22):** one `LadrunoContactDomain` engine → broad
+phase → **shared header-only kernels** (projection, friction, normal law) → **two formulations**
+(`nts`, `mortar`) **× two enforcements** (`penalty`, **commit-cycle ALM**) → **mesh-tying**, all
+behind one `-formulation` / `-enforce` selector command. The deferred set is fenced to ADR-47.
+
+## Why
+
+- **Status drift is the concrete failure this prevents.** The 2026-06-22 scoping found ADR-41's
+  "ADR-39 shipped P1 only" premise was **7 PRs stale** — ADR-39 had since shipped P1→P3.5. A
+  capstone with a single status-of-record table stops three ADRs from disagreeing about reality.
+- **A single maintainer needs one backlog, not three.** The remaining work spans ADR-39 (P4–P6),
+  ADR-41 (mortar/ALM), and shared-kernel extraction. Sequencing them coherently — with an explicit
+  critical path — is the capstone's job.
+- **A "definitive" system needs definitive contracts.** Every formulation plugs into the same
+  `FE_Element` adapter / stateless-view / Domain-owned-state / null-build-byte-identity rules.
+  Writing those once, here, is what lets a new formulation (or ADR-47 upgrade) land safely.
+
+## Where — the target architecture
+
+```
+Domain
+ └─ LadrunoContactDomain*              engine: owns surfaces, contact defs, broad phase, PATH STATE
+     ├─ LadrunoContactSurface          slaveNodes | masterSegments | slaveSegments (facets)
+     ├─ LadrunoContactBucketSort        broad phase (spatial grid, 27-neighbour candidates)   [SHIPPED]
+     ├─ shared header-only kernels (OpenSees-free, numpy-oracle-tested):
+     │    ├─ LadrunoContactProjection   closest-point projection → {ξ̄, gN, n, t1,t2, g[2][2], φ_m}
+     │    ├─ LadrunoFrictionKernel      Coulomb+Tresca return map, cone min(μ|tN|+c, τmax), Css/Csl
+     │    └─ (normal law)               penalty ⟨−gN⟩ + commit-cycle ALM augmentation
+     ├─ per-pair PATH STATE  (Domain-owned, committed/reverted via Domain::commit hooks)
+     │    ├─ FrictionState     NTS per-(slave,segment) {gpT, gT0, engaged}                   [SHIPPED]
+     │    └─ LadrunoMortarPair mortar per-GP {s_e, λ_N, λ_T, slipFlag, frame}                [PLANNED]
+     └─ formulations (narrow phase), selected per contact def:
+          ├─ NTS narrow phase   (in LadrunoContactFE::getResidual/getTangent)               [SHIPPED]
+          └─ LadrunoMortarSegment  clipped-GP mortar (D, M, weighted gap g̃)                 [PLANNED]
+
+handle()  [LadrunoContactHandler, 33002]  → injects one LadrunoContactFE adapter per pair (runtime tag)
+   adapter = STATELESS VIEW; state lives on the Domain; null-build is byte-identical to stock.
+enforcement: penalty (both lanes) + commit-cycle ALM (λ updated in LadrunoContactDomain::commit,
+   the LadrunoEmbeddedRebar precedent — stock NewtonRaphson, NO custom EquiSolnAlgo for the MVP).
+```
+
+### Component inventory & status — SINGLE SOURCE OF TRUTH
+
+| Component | File | Status | Owner ADR |
+|---|---|---|---|
+| `ContactDomain` engine + lifecycle hooks | `SRC/domain/contact/LadrunoContactDomain.{h,cpp}` | ✅ shipped | 39 (P1) |
+| Constraint handler + adapter injection | `SRC/analysis/handler/LadrunoContact{Handler,FE}.{h,cpp}` | ✅ shipped | 39 (P1–P3.5) |
+| Surface representation (nodes / segments) | `SRC/domain/contact/LadrunoContactSurface.{h,cpp}` | ✅ shipped | 39 |
+| Broad phase (bucket sort) | `SRC/domain/contact/LadrunoContactBucketSort.h` | ✅ shipped | 39 (P2.5) |
+| Projection + normal/penalty + gap | `SRC/domain/contact/LadrunoContactKernel.h` | ✅ shipped | 39 (P2b) |
+| Coulomb friction return map | `LadrunoContactKernel.h::frictionReturnMap` | ✅ shipped | 39 (P3) |
+| Consistent friction tangent (sym + `-consistanttan`) | `LadrunoContactKernel.h::frictionTangentBlock` | ✅ shipped | 39 (P3.5) |
+| `-kn auto` penalty sizing | `LadrunoContactKernel.h` / handler | ✅ shipped | 39 (P2b-2b) |
+| NTS path state (per-pair friction) | `LadrunoContactDomain::FrictionState` | ✅ shipped | 39 (P3) |
+| **Shared `LadrunoFrictionKernel.h` (extract + Tresca/τmax + ALM `λ_T` form)** | `SRC/material/nD/LadrunoFrictionKernel.h` | 🔜 refactor | 48→41 |
+| **Shared `LadrunoContactProjection.h` (metric `g` + φ_m for mortar GP)** | `SRC/domain/contact/LadrunoContactProjection.h` | 🔜 refactor | 48→41 |
+| SOFT=1 Courant-stable penalty (explicit) | — | ⏳ pending | 39 (P4) |
+| SOFT=2 segment-based penalty (corner/edge) | — | ⏳ pending | 39 (P5) |
+| `∂n/∂u` consistent normal tangent + Hertz | — | ⏳ pending | 39 (P2b-2c) |
+| Mortar kernel (overlap clip, D/M, g̃) | `SRC/domain/contact/LadrunoMortarKernel.h` | 📋 planned | 41 |
+| Mortar per-GP state | `SRC/domain/contact/LadrunoMortarPair.{h,cpp}` | 📋 planned | 41 |
+| Mortar narrow phase | `SRC/domain/contact/LadrunoMortarSegment.{h,cpp}` | 📋 planned | 41 |
+| Commit-cycle ALM + `analyzeAugmented` recipe | (rides commit hooks; Tcl/Py proc) | 📋 planned | 41 |
+| Mesh-tying (`-tie`, zero-gap) | **degenerate-mortar D/M tie (committed route)** | 📋 planned | 41 |
+| Viscous stabilization (`-visc`) | (normal law + `getDamp`) | 📋 funded option | 41 (Q-VISCOUS) |
+| `mu(N,v)` from `frictionModel` wired into contact | — | 🧭 later | 41 (Q-MUDEP) |
+| Custom `LadrunoAugmentedNewton` (global Uzawa) | — | 🧭 deferred/trigger-gated | 41 (Q-DRIVER) |
+| dual/biorthogonal mortar, true-LM, self-contact, full slide-line smoothing, anisotropic friction | — | 🚫 deferred | 47 |
+
+## How — definitive contracts + the unified roadmap
+
+### Definitive contracts (every formulation MUST honor)
+
+These are the invariants that make the subsystem composable; they are owned here, not per-ADR.
+
+1. **Adapter = stateless view.** `LadrunoContactFE` (and the mortar adapter) compute the narrow
+   phase from `Node` trial state in `getResidual`/`getTangent`; **all path-dependent state lives on
+   the Domain** (`FrictionState` / `LadrunoMortarPair`) and is committed/reverted via
+   `Domain::commit` / `revertToLastCommit`. Adapters are freely destroyed/rebuilt each `handle()`.
+   *Mortar-lane requirement (not yet an existing property):* the mortar lane must register its own
+   Domain-owned `LadrunoMortarPair` map (keyed per segment-pair GP) **and** extend
+   `LadrunoContactDomain::commit()`/`revertToLastCommit()` to iterate it — the shipped hooks
+   currently iterate only `theFrictionStates`, so the shared-hook guarantee is a requirement on the
+   mortar PR (C2), not an inherited one.
+2. **Committed-only multiplier/slip state.** `λ`, elastic slip, and engagement origin are mutated
+   **only in `commit`** → a rejected step's `revertToLastCommit` is automatically safe (the
+   EmbeddedRebar invariant).
+3. **Enforcement = penalty + commit-cycle ALM; no true-LM, no mandatory custom algorithm.** ALM
+   augments `λ` once per `Domain::commit` (EmbeddedRebar precedent) on **stock `NewtonRaphson`**;
+   within-step augmentation, when a gate proves it needed, is a documented held-load
+   `analyzeAugmented` proc (zero-increment re-commits), **not** a bespoke `EquiSolnAlgo`. (Q-DRIVER,
+   re-resolved.) Because the sole `LadrunoContactDomain::commit()` chokepoint is `Domain::commit()`
+   (which advances `committedTime`, fires recorders, and bumps `commitTag`), the within-step driver
+   **MUST NOT re-enter `Domain::commit()`**; it routes through a dedicated augment-only path (or a
+   recorder-freeze + `commitTag`-restore protocol) so augmentation passes produce **no spurious
+   recorder samples** — this is the D1 gate's "without recorder/load corruption" clause.
+4. **`c1` handled once.** The adapter implements the standard `FE_Element` tangent callbacks;
+   `getTangent()` delegates to `Integrator::formEleTangent(this)`, so the integrator supplies the
+   c-factor as the `fact` argument of `addKtToTang(fact)` (Newmark passes its member `c1`). The
+   adapter returns `fact·K_c` — no `getCFactor()` call and no override. Under CDL/explicit,
+   `formEleTangent` invokes only `addMtoTang` (a no-op here), so the contact tangent is **identically
+   zero** (mass-only LHS).
+5. **Conservative-static-superset connectivity over a topology epoch.** Adapter `getID` is a frozen
+   superset within an epoch (no `domainChanged()` churn between augmentations / re-solves); active
+   set and pairing change only between physical steps.
+6. **Null-build byte-identity.** With no contact defined the build is **bitwise-identical to stock**.
+   An *active* adapter declares real connectivity, so the numberer permutation differs — the bitwise
+   claim holds only for the null case.
+7. **Symmetry discipline.** Frictionless / Tresca branches stay **symmetric**; only the Coulomb
+   `Csl≠0` branch is **unsymmetric** and opts into `UmfPackGen`/`FullGen` (`-consistanttan`). Default
+   tangent is solver-safe symmetric.
+8. **Shared kernels are header-only & OpenSees-free**, numpy-oracle-tested build-free (the
+   `LadrunoJ2Kernel.h` discipline). One friction return map, two consumers (NTS + mortar).
+
+### The one unified roadmap (sequenced backlog with gates)
+
+Tracks A–E. **Critical path for the new accuracy lane = A → C** (kernels then mortar); **B is
+independent** (NTS hardening) and can interleave. The binding kernel edge is **A2 → C1** (the
+mortar GP loop needs the metric `g`/`φ_master` the shipped `evalSegment` does not expose); **A1**
+(friction extraction) is a soft prerequisite for **C3 only** (mortar may bind the in-place
+`LadrunoContactKernel.h` friction per ADR-41 option (a) if A1 slips). The **commit-cycle ALM core
+lands with C2**; D1 adds only the *within-step* `analyzeAugmented` held-load refinement.
+
+| Track | Phase | Delivers | Gate | Status |
+|---|---|---|---|---|
+| **A** shared kernels | A1 | Extract `LadrunoFrictionKernel.h` from `LadrunoContactKernel.h`; add Tresca/`τmax` cap (`min(μ|tN|+c, τmax)` cone) + `Css`/`Csl` + `-epsT auto` from `γ_crit=0.5%·L`; mortar `λ_T` form | ADR-39 P3/P3.5 gates stay **green bit-for-bit**; new numpy oracle FD-checks `Css/Csl` to 1e-6 | 🔜 |
+| | A2 | Extract `LadrunoContactProjection.h` (pure fns) returning surface metric `g[2][2]` + `φ_master[4]` for the GP loop | projection vs closed form on tilted + curved facet; bounded-Newton sentinel | 🔜 |
+| **B** NTS lane | B1 | P4 SOFT=1 Courant-stable penalty (explicit `dt_cr` not throttled by `kₙ`) | explicit stability + energy balance | ⏳ |
+| | B2 | P5 SOFT=2 segment-based penalty (corner/edge/T-intersection) | corner/edge robustness | ⏳ |
+| | B3 | P2b-2c `∂n/∂u` consistent normal tangent + Hertz benchmark | implicit Newton convergence on curved/large-sliding; Hertz `p(r)` | ⏳ |
+| **C** mortar lane | C1 | `LadrunoMortarKernel.h`: overlap clip → sub-tri Gauss → `D`, `M`, weighted gap `g̃` + linearization | partition-of-unity `ΣM=ΣD` to 1e-12; **constant-pressure patch test on a non-matched mesh ≤1e-6** | 📋 |
+| | C2 | Frictionless **commit-cycle ALM** MVP: `LadrunoMortarPair` per-GP `λ_N`; mortar narrow phase + adapter | across-step converged penetration → tol; release→F=0; **Hertz** converges; eqn count constant across augmentations (within-step `maxAug` convergence is gated in D1) | 📋 |
+| | C3 | Frictional mortar: adopt shared `LadrunoFrictionKernel` (`λ_T`); Coulomb unsymmetric branch | incline `a=g(sinθ−μcosθ)`; Tresca cap; `Csl` FD-checked; Δt-independent converged answer | 📋 |
+| | C4 | Mesh-tying (`-tie`, zero-gap = active set frozen ON) — degenerate-mortar D/M tie. **This is the committed route;** ADR-39 P6's `MP_Constraint`/ADR-30-projection tie is a *separate alternative implementation* of the same `-tie` capability (different kernel, different gate), **superseded by C4 unless the explicit-lane momentum-conserving tie is explicitly scoped in** | uniform/linear traction across non-matched interface = single-block stress (exact patch) | 📋 |
+| **D** enforce/robust | D1 | Commit-cycle ALM mechanics + `analyzeAugmented` Tcl/Py proc (held-load re-commit) | within-step `‖g̃‖→augTol` without recorder/load corruption | 📋 |
+| | D2 | Viscous stabilization `-visc μ_c` (`p_visc=μ_c·v_rel`) — funded option for pounding/rocking chatter | chatter/snap-through damped; off under any arc-length lane | 📋 |
+| **E** deferred | — | dual/biorthogonal mortar, true-LM saddle-point + inf-sup, self-contact, full slide-line + nodal-normal smoothing, anisotropic friction, `mu(N,v)` wiring, custom `LadrunoAugmentedNewton` | — | 🚫 ADR-47 |
+
+### Unified command surface (the definitive API)
+
+```tcl
+constraints LadrunoContact
+contactSurface 1 -kind masterSegments -faces $master
+contactSurface 2 -kind slaveSegments  -faces $slave    ;# slaveNodes for NTS-only
+
+# NTS penalty (ADR-39, shipped)
+contact 10 -master 1 -slave 2 -formulation nts    -kn auto -kt auto -mu 0.3
+# Mortar + commit-cycle ALM (ADR-41)
+contact 11 -master 1 -slave 2 -formulation mortar -enforce alm -epsN auto -augTol 1e-8 -maxAug 20 -ngp 2
+# Mortar + ALM, frictional Coulomb (unsymmetric)
+contact 12 -master 1 -slave 2 -formulation mortar -enforce alm -friction coulomb -mu 0.3 \
+        -kt auto -epsT auto -augTol 1e-8 -maxAug 20      ;# pure Coulomb (no Tresca cap); add -tauMax <val> to cap
+system UmfPackGen
+# Mesh-tying (degenerate mortar, active set frozen ON)
+contact 13 -master 1 -slave 2 -formulation mortar -enforce penalty -tie
+
+algorithm Newton                          ;# MVP: λ augments per Domain::commit (EmbeddedRebar pattern)
+# within-step augmentation, if a gate needs it:
+#   analyzeAugmented $augTol $maxAug       ;# held-load zero-increment re-commits — NOT a custom algorithm
+```
+
+## Decision log (resolved architecture questions — pointers to the owning ADR)
+
+| Decision | Resolution | Owner |
+|---|---|---|
+| Enforcement family | Penalty + **commit-cycle ALM** (Uzawa-over-penalty, zero new DOFs) | 41 Q-AL/Q-DOF |
+| Augmentation driver | **Commit-cycle primary** (stock Newton); custom `EquiSolnAlgo` deferred behind a within-step trigger | 41 Q-DRIVER |
+| True-LM / saddle-point | **Rejected** (zero-diagonal + active-set re-number); → ADR-47 | 41 Q-DOF |
+| Mortar basis | **Standard + overlap clipping** (passes non-matched patch test); dual/biorthogonal → ADR-47 | 41 Q-MORTARLITE |
+| Friction cone | **Unified `min(μ|tN|+c, τmax)`** (Coulomb/Tresca/cap one return map); metric-aware `R=g·r` | 41 |
+| Tangential penalty sizing | `-epsT auto` from `γ_crit = 0.5%·L_facet` (Abaqus elastic-slip bound) | 41 |
+| Friction code ownership | ADR-39 shipped the kernel first → ADR-41 **extracts/shares** it (direction reversed) | 48→41 |
+| Solver symmetry | Coulomb branch unsymmetric only; frictionless/Tresca symmetric | 41 |
+| Explicit ALM | **Not promised** — full ALM is implicit-only; explicit is single-pass penalty | 41 Q-EXPLICIT |
+| Surface-normal smoothing | Faceted per-GP normal in v1; nodal-normal averaging → ADR-47 | 41 Q-NORMAL |
+
+**Open / cross-cutting questions this capstone tracks:** mortar epoch cost vs sliding distance
+(Q-EPOCH/Q-GRAN), implicit SOE fill growth (Q-IMPLFILL), MP-constraint composition restriction
+(Q-CONSTR), small- vs finite-sliding cost lane (Q-SLIDING), and whether D2 viscous stabilization
+earns a committed phase or stays optional.
+
+## Relationship to ADR-39 / ADR-41 / ADR-47
+
+- **This capstone (48)** owns: target architecture, contracts, the status-of-record table, the
+  unified roadmap, the decision log, and the deferred-set fence. Update it **in the same PR** as any
+  change that moves a component's status or re-sequences the backlog.
+- **ADR-39** owns: the NTS-penalty detailed design and its per-phase gates (P1–P6). Remains the
+  implementation record for the explicit-first lane.
+- **ADR-41** owns: the mortar/ALM detailed design, the friction-kernel extraction spec, and its
+  per-phase gates. Remains the implementation record for the accuracy-first lane.
+- **ADR-47** (to be created) owns: the deferred-feature designs with rejection rationale.
+
+## Risks / open questions
+
+- **Capstone drift (meta-risk).** The capstone is only useful if kept current. Mitigation: the
+  status-of-record table is the *only* place phase status lives; per-track ADRs link here rather than
+  re-asserting global status. Treat a stale capstone row as a build-control defect (same class as a
+  stale ledger row — which this scoping already caught once).
+- **Single-maintainer load.** Dual-lane is the committed end-state, but the **critical path is A→C**;
+  B (NTS hardening) and D2 (viscous) are independent and can be deprioritized without blocking the
+  mortar lane. The roadmap is explicitly parallelizable so scope can flex without re-architecting.
+- **ADR-47 does not yet exist as a file.** Several deferrals point at it. Create it (even as a
+  10-line stub ledger, one rejection-reason line per deferred item) **before C1 lands** — C1's
+  patch-test gate and C2's sliding/Hertz gates already lean on the non-dual-basis (inf-sup) and
+  faceted-normal-chatter deferral rationale, so it must have a documented home before those phases
+  ship.
+
+## Implementation log
+
+*(filled as phases land; each phase updates its row in the status-of-record table above and links
+its PR. Move detailed notes to the owning per-track ADR / `Ladruno_internal/`.)*
+
+## Adversarial review log
+
+**Gate 1 — 2026-06-22 (5-lens workflow, 28 agents, refute-by-default verification). Verdict:
+SALVAGEABLE → all dispositions folded; now PASS-equivalent.** Five independent lenses
+(Architecture/contracts · Roadmap/sequencing · Status-accuracy-vs-tree · Scope/single-maintainer
+realism · Cross-ADR consistency) raised **22 findings → 17 confirmed** after each was adversarially
+verified against the ADR text *and* the live tree. **0 blockers, 0 architecture-breaking defects** —
+the core structure (Domain-owned state, stateless adapters, commit-cycle ALM on stock Newton,
+header-only kernels, A→C critical path) held. Two `fix-now` issues, both with clean verbatim fixes:
+
+| ID | Sev | Issue | Fix (folded) |
+|---|---|---|---|
+| **ARCH-1** | major | Contract #4 misdescribed the `c1` API — named `getCFactor()` (never called; returns 0) + a non-existent `addKtToTang` override | Rewrote to the true `formEleTangent(this) → addKtToTang(fact)` mechanism (verified `LadrunoContactFE.cpp:244-290`, `Newmark.cpp:292`) |
+| **SCOPE-3** | major | Mesh-tying left **double-owned** (degenerate-mortar vs ADR-39 P6 MP path) — the exact cross-ADR drift this capstone exists to prevent | Named the degenerate-mortar D/M tie the committed route (C4); ADR-39 P6 reframed as a separate superseded alternative |
+
+`fold` (applied): **ROAD-3** (D1/C2 ordering — commit-cycle core lands with C2, D1 = within-step
+refinement), **XADR-2** (`-tauMax 0` example = frictionless; dropped), **SCOPE-4** (ADR-47 stub
+due **before C1**), **ARCH-3** (within-step driver must not re-enter `Domain::commit` — recorder/
+`commitTag` corruption), **ARCH-4** (mortar state must extend the commit hooks — not inherited),
+**XADR-1/XADR-4** (stale friction-direction narrative in ADR-41 marked superseded), **XADR-5**
+(ADR-39 Q-AL now names the `LadrunoEmbeddedRebar::commitState` precedent). `reject` (over-literal /
+dups / correct-as-written): ROAD-1, ROAD-2, ROAD-4, STATUS-2, XADR-3, XADR-6. `defer` (separate
+source-hygiene PR): **STATUS-1** — stale "zero adapter" comment in `LadrunoContactFE.cpp:22`.

@@ -19,7 +19,15 @@
 // ==========================================================================
 // LADRUNO-HEADER-END
 
-// ADR-39 P1a — LadrunoContactFE implementation (empty-connectivity zero adapter).
+// ADR-39 — LadrunoContactFE: contact FE_Element adapter (NTS penalty + Coulomb friction).
+// Three constructor modes, shipped incrementally:
+//   EMPTY       (P1a, #345) — empty-connectivity zero adapter; legacy/null path, graph-neutral,
+//                             bitwise-identical to no-contact (kept for the byte-identity baseline).
+//   RIGID_PLANE (P2a, #346) — slave node vs a rigid analytical plane; conn={slave}, penalty normal.
+//   SEGMENT     (P2b/P3/P3.5, #354/#360/#361) — faceted node-to-segment: real connectivity
+//                             FE_Element(tag, 1+nps, 3*(1+nps)); getResidual assembles Bᵀ·tn +
+//                             Coulomb friction; addKtToTang assembles kn·BᵀB + the consistent
+//                             friction tangent. Stateless view — per-pair path state on LadrunoContactDomain.
 // See LadrunoContactFE.h for the design rationale.
 
 #include "LadrunoContactFE.h"
