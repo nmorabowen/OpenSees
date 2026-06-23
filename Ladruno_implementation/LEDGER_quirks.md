@@ -1564,4 +1564,4 @@ non-obvious behaviours, all relevant to anyone wiring `-stabilize` into a driver
   normal projection); only the tangential slip switches to displacements. General lesson: in any
   closest-point-projected contact, the normal gap is a POSITION quantity and the tangential slip is a
   DISPLACEMENT quantity — they are not interchangeable. Found while bringing up C3.1 (the driven-block
-  gate caught it). See [[_adr41_c3_design]] §mechanics step 1, #PENDING.
+  gate caught it). See [[_adr41_c3_design]] §mechanics step 1, #377.
