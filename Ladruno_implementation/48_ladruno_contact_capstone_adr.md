@@ -222,7 +222,8 @@ earns a committed phase or stays optional.
   implementation record for the explicit-first lane.
 - **ADR-41** owns: the mortar/ALM detailed design, the friction-kernel extraction spec, and its
   per-phase gates. Remains the implementation record for the accuracy-first lane.
-- **ADR-47** (to be created) owns: the deferred-feature designs with rejection rationale.
+- **ADR-47** (created — [[47_ladruno_contact_deferrals_adr]]) owns: the deferred-features ledger
+  (rejection rationale + re-open trigger per item); each item graduates to its own ADR when re-opened.
 
 ## Risks / open questions
 
@@ -233,11 +234,11 @@ earns a committed phase or stays optional.
 - **Single-maintainer load.** Dual-lane is the committed end-state, but the **critical path is A→C**;
   B (NTS hardening) and D2 (viscous) are independent and can be deprioritized without blocking the
   mortar lane. The roadmap is explicitly parallelizable so scope can flex without re-architecting.
-- **ADR-47 does not yet exist as a file.** Several deferrals point at it. Create it (even as a
-  10-line stub ledger, one rejection-reason line per deferred item) **before C1 lands** — C1's
-  patch-test gate and C2's sliding/Hertz gates already lean on the non-dual-basis (inf-sup) and
-  faceted-normal-chatter deferral rationale, so it must have a documented home before those phases
-  ship.
+- **ADR-47 deferral ledger — created** ([[47_ladruno_contact_deferrals_adr]], 2026-06-23). The
+  deferred set now has a documented home with a re-open trigger per item (the C1 patch-test and
+  C2 sliding/Hertz gates lean on the non-dual-basis inf-sup and faceted-normal-chatter rationale).
+  *Keep it current:* when a deferred item is re-opened it graduates to its own ADR and the ledger
+  row is marked promoted.
 
 ## Implementation log
 
