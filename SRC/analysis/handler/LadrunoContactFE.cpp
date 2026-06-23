@@ -510,7 +510,7 @@ LadrunoContactFE::addKtToTang(double fact)
 // SET (∂λ/∂u = 0 within a sweep), so the penalty Gram block is unchanged. theDomain==0 ⇒ the
 // C2.1 fallback (λ≡0).
 void
-LadrunoContactFE::addMortarTang(double fact)
+LadrunoContactFE::addMortarTang(double fact, bool initialStiff)
 {
     double D[4][4], M[4][4], g[4], n[3];
     if (!mortarActive(D, M, g, n)) return;
@@ -578,8 +578,12 @@ LadrunoContactFE::addMortarTang(double fact)
             double rn = r[0]*n[0] + r[1]*n[1] + r[2]*n[2];
             double gTeff[3];
             for (int d = 0; d < 3; d++) gTeff[d] = (r[d] - rn * n[d]) / aFacet - st.gT0[d];
+            // initial-stiffness path ⇒ force the SPD STICK tangent kt·P_t: pass gTeff == gpT so the
+            // trial traction is zero (‖tT*‖ ≤ cap ⇒ the kernel returns the stick block). Avoids the
+            // rank-deficient slip tangent stalling Modified/Initial-Newton (gate MINOR-1, mirrors SEGMENT).
+            const double *gtForKss = initialStiff ? st.gpT : gTeff;
             double Kss[3][3];
-            LadrunoFrictionKernel::frictionTangentBlock(gTeff, st.gpT, n, N_I, kn, kt, mu,
+            LadrunoFrictionKernel::frictionTangentBlock(gtForKss, st.gpT, n, N_I, kn, kt, mu,
                                                         /*consistent=*/false, Kss,
                                                         mortarCohesion, mortarTauMax);
             // scatter: tang(3A+i,3B+j) += fact·(b_IA b_IB / a_I)·K_ss[i][j]
@@ -630,7 +634,8 @@ LadrunoContactFE::addKiToTang(double fact)
             }
         }
     } else if (mode == MORTAR) {
-        addMortarTang(fact);   // penalty K_initial == K_current (geometric terms deferred)
+        addMortarTang(fact, /*initialStiff=*/true);  // penalty K_initial == K_current; friction =
+                                                     // the SPD stick tangent (geometric terms deferred)
     }
 }
 

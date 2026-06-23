@@ -129,6 +129,31 @@ def test_c3_2_symmetric_solver_safe():
     assert abs(ux_sym - ux_full) < 1.0e-9, f"symmetric vs full disagree: {ux_sym} vs {ux_full}"
 
 
+def test_c3_2_modified_newton_stick_converges():
+    """Initial-stiffness path (ModifiedNewton): mortar `addKiToTang` must supply the SPD STICK
+    tangent kt·P_t (not the rank-deficient slip tangent), so a stick solve converges on the
+    initial stiffness. Gate MINOR-1 (C3.2 gate) — the SEGMENT path's gate Q5, mirrored for mortar."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    _master(0.0)
+    _slave(-DELTA)
+    ops.contactSurface(1, "-master", 4, 1, 2, 3, 4)
+    ops.contactSurface(2, "-slave-segments", 4, 5, 6, 7, 8)
+    ops.contact(1, 1, 2, "-mortar", "-epsN", EPS, "-epsT", EPS, "-cohesion", COH,
+                "-outward", 0.0, 0.0, 1.0)
+    ops.timeSeries("Constant", 1)
+    ops.pattern("Plain", 1, 1)
+    for t in (5, 6, 7, 8):
+        ops.load(t, 20.0 / 4.0, 0.0, -200.0 / 4.0)   # Qx=20 < cap=50 ⇒ stick
+    ops.constraints("LadrunoContact")
+    ops.numberer("Plain")
+    ops.system("FullGeneral")
+    ops.test("NormDispIncr", 1.0e-10, 60, 0)
+    ops.algorithm("ModifiedNewton")                  # uses the INITIAL stiffness (addKiToTang)
+    ops.analysis("Static")
+    assert ops.analyze(1) == 0, "ModifiedNewton stick did not converge (rank-deficient initial K?)"
+
+
 def test_c3_2_coulomb_static_converges():
     """Coulomb (μ>0) static Newton converges too — the cap = μN tracks the (penalty + one-commit
     Uzawa) normal pressure, but a single LoadControl step holds λ_N=0 during the Newton, so the

@@ -160,7 +160,10 @@ class LadrunoContactFE : public FE_Element
     // into `tang` (material/penalty only — geometric ∂{D,M,n}/∂u deferred). Shared by
     // addKtToTang / addKiToTang (the penalty K_initial == K_current). Same active mask
     // as the residual. fact = the integrator's c1 (or 1 for statics).
-    void addMortarTang(double fact);
+    // initialStiff=true (addKiToTang path) forces the friction STICK tangent kt·P_t (SPD ⇒ a
+    // Modified/Initial-Newton contraction), instead of the rank-deficient slip tangent — mirrors
+    // the SEGMENT addKiToTang rule (gate Q5). Default false (addKtToTang = current slip/stick).
+    void addMortarTang(double fact, bool initialStiff = false);
 
     Vector resid;   // size-0 in P1a; ndm in P2a; ndm*(1+nps) in P2b
     Matrix tang;    // 0x0 in P1a; ndm x ndm in P2a; ndof x ndof in P2b
