@@ -181,10 +181,17 @@ class LadrunoContactDomain
         // Uzawa) is C3.3 — C3.1/C3.2 ship penalty friction (λ_T≡0).
         double gpT[3];      // committed elastic tangential slip (promoted in commit())
         double gpTtrial[3]; // trial slip (written each getResidual)
-        double gT0[3];      // engagement-config tangential origin (captured once)
+        double gT0[3];      // engagement-config tangential origin (captured at first activation)
         bool   engaged;     // has gT0 been captured at first contact activation
-        MortarNormalState() : lambdaN(0.0), gtGlobal(0.0), aGlobal(0.0), epsN(0.0), engaged(false) {
-            for (int d = 0; d < 3; d++) gpT[d] = gpTtrial[d] = gT0[d] = 0.0;
+        // C3.2 (MAJOR-2): gT0/engaged are mutated in getResidual (engagement capture), so a
+        // rejected IMPLICIT Newton step must be able to revert them (else a stale origin latched
+        // from the rejected config persists). Double-buffer the committed engagement state; commit()
+        // promotes, revertToLastCommit() restores. (Unreachable under explicit CDL, live in C3.2.)
+        double gT0committed[3];
+        bool   engagedCommitted;
+        MortarNormalState() : lambdaN(0.0), gtGlobal(0.0), aGlobal(0.0), epsN(0.0),
+                              engaged(false), engagedCommitted(false) {
+            for (int d = 0; d < 3; d++) gpT[d] = gpTtrial[d] = gT0[d] = gT0committed[d] = 0.0;
         }
     };
     // lazily create + return the per-node slot (zeroed if new).
