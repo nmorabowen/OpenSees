@@ -67,7 +67,7 @@ class LadrunoContactDomain
     int addContact(int tag, int masterSurfTag, int slaveSurfTag,
                    double kn, double kt, double mu, const double *outward = 0,
                    bool knAuto = false, double cellFrac = 1.0,
-                   bool consistentTan = false);
+                   bool consistentTan = false, double muc = 0.0);
     int getNumContacts(void) const { return (int)theContacts.size(); }
 
     // --- P2b: faceted node-to-segment penalty contact. A Contact references a
@@ -85,6 +85,8 @@ class LadrunoContactDomain
         bool consistentTan;     // P3.5: true => non-symmetric consistent friction tangent
                                 // (quadratic, needs FullGeneral/UmfPack); false (default)
                                 // => the symmetric tangent (solver-safe on any system)
+        double muc;             // ADR-41 D2: viscous normal-stabilization coefficient (p_visc =
+                                // muc*gap_rate). 0 (default) => no viscous term (byte-identical).
     };
     const Contact &getContact(int i) const { return theContacts[i]; }
 
@@ -136,9 +138,10 @@ class LadrunoContactDomain
         int tag, slaveSurfTag;
         double p0[3], n[3];     // n stored normalized at add time
         double kn;
+        double muc;             // ADR-41 D2: viscous normal-stabilization coefficient (0 => none)
     };
     int addRigidPlane(int tag, int slaveSurfTag,
-                      const double p0[3], const double n[3], double kn);
+                      const double p0[3], const double n[3], double kn, double muc = 0.0);
     int getNumRigidPlanes(void) const { return (int)theRigidPlanes.size(); }
     const RigidPlane &getRigidPlane(int i) const { return theRigidPlanes[i]; }
 

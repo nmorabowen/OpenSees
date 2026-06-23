@@ -389,7 +389,7 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                     LadrunoContactFE *fe =
                         new LadrunoContactFE(numFe++, sn, segNodes, nps, knUse, orientDir,
                                              ct.kt, ct.mu, theDomain, ct.tag, seg,
-                                             ct.consistentTan);
+                                             ct.consistentTan, ct.muc);   // D2 viscous (0 ⇒ off)
                     if (fe == 0) return -5;
                     theModel->addFE_Element(fe);
                     if (ct.mu > 0.0)
@@ -575,7 +575,7 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                            << " < ndm=" << nd << "; skipped\n";
                     continue;
                 }
-                LadrunoContactFE *fe = new LadrunoContactFE(numFe++, sn, nd, rp.p0, rp.n, rp.kn);
+                LadrunoContactFE *fe = new LadrunoContactFE(numFe++, sn, nd, rp.p0, rp.n, rp.kn, rp.muc);   // D2 viscous (0 ⇒ off)
                 if (fe == 0) return -5;
                 theModel->addFE_Element(fe);
             }

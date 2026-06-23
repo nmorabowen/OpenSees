@@ -60,8 +60,9 @@ class LadrunoContactFE : public FE_Element
     // P2a: rigid analytical plane vs ONE slave node. Connectivity = {slave} (the
     // first ndm translational DOFs). p0 = a point on the plane, n = outward unit
     // normal (toward the slave's allowed half-space), kn = penalty stiffness.
+    // D2: muc = viscous normal-stabilization coefficient (p_visc = muc*gap_rate); 0 ⇒ no viscous term.
     LadrunoContactFE(int tag, Node *slaveNode, int ndm,
-                     const double p0[3], const double n[3], double kn);
+                     const double p0[3], const double n[3], double kn, double muc = 0.0);
     // P2b: faceted node-to-segment penalty contact vs ONE master segment (tri-3 or
     // quad-4, nps nodes). Connectivity = {slave} ∪ {segment nodes}; the outward
     // normal is DERIVED per evaluation + oriented toward orientDir (the slave's
@@ -81,7 +82,7 @@ class LadrunoContactFE : public FE_Element
     LadrunoContactFE(int tag, Node *slaveNode, Node **segNodes, int nps, double kn,
                      const double orientDir[3], double kt = 0.0, double mu = 0.0,
                      Domain *theDomain = 0, int contactTag = 0, int segIndex = 0,
-                     bool consistentTan = false);
+                     bool consistentTan = false, double muc = 0.0);
     // C2.1/C2.2 (ADR-41): clipped-GP MORTAR contact, ONE slave facet vs ONE master facet
     // (tri-3 / quad-4). Connectivity = {slave facet nodes} ∪ {master facet nodes},
     // FE_Element(tag, nps_s+nps_m, 3*(nps_s+nps_m)). getResidual integrates the pair via
@@ -191,6 +192,9 @@ class LadrunoContactFE : public FE_Element
     // P3 friction binding (active only in SEGMENT mode with mu>0)
     double kt;          // tangential penalty
     double mu;          // Coulomb friction coefficient (<=0 ⇒ frictionless P2b path)
+    double muc;         // D2: viscous normal-stabilization coeff (p_visc = muc*gap_rate; 0 ⇒ off).
+                        // RIGID_PLANE/SEGMENT only (D2.1); the term is force-only under CDL (explicit),
+                        // force + a C=muc*B Bᵀ damping tangent (addCtoTang) under implicit.
     Domain *theDomain;  // for the LAZY engine re-fetch (wipe deletes the engine, so
                         // we must not cache LadrunoContactDomain*); null ⇒ no friction
     int contactTag;     // friction-state key: contact definition tag ...

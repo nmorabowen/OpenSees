@@ -450,6 +450,11 @@ int OPS_LadrunoContact()
     // 3-vec r→0, no clamp, no friction). `-epsTie auto|val` is the tie penalty (an alias for the
     // -epsN penalty slot — a tie has one penalty). Mutually exclusive with -mu/-cohesion/-tauMax.
     bool isTie = false;
+    // ADR-41 D2 viscous stabilization: `-visc <μ_c>` adds a velocity-proportional normal contact
+    // damper (p_visc = μ_c·gap_rate) that bleeds chatter/snap-through energy in the pounding/rocking/
+    // uplift regime. 0 (default) ⇒ no viscous term (byte-identical). NTS-only in D2.1 (refused on
+    // -mortar — mortar viscous is D2.2); naturally inert in statics (velocity ≡ 0).
+    double muc = 0.0;
     while (OPS_GetNumRemainingInputArgs() > 0) {
         const char *opt = OPS_GetString();
         if (opt != 0 && strcmp(opt, "-mortar") == 0) {
@@ -457,6 +462,14 @@ int OPS_LadrunoContact()
         } else if (opt != 0 && strcmp(opt, "-tie") == 0) {
             // ADR-41 C4: a PERMANENT mesh-tie bond (requires -mortar; validated after the loop).
             isTie = true;
+        } else if (opt != 0 && strcmp(opt, "-visc") == 0) {
+            // ADR-41 D2: viscous normal-stabilization coefficient μ_c (p_visc = μ_c·gap_rate).
+            double v[1]; int m = 1;
+            if (OPS_GetDoubleInput(&m, v) < 0) {
+                opserr << "WARNING contact -visc - need a coefficient value\n";
+                return -1;
+            }
+            muc = v[0];
         } else if (opt != 0 && strcmp(opt, "-epsTie") == 0) {
             // -epsTie auto | <value> : the tie penalty (an alias for the -epsN penalty slot — a tie
             // has a single penalty; auto ⇒ sized from the owning solid, like the contact penalty).
@@ -610,6 +623,13 @@ int OPS_LadrunoContact()
                   "(-mu/-cohesion/-tauMax): a mesh-tie has no friction cone\n";
         return -1;
     }
+    if (muc > 0.0 && isMortar) {
+        // ADR-41 D2.1 ships viscous stabilization for the NTS lane only; mortar viscous is D2.2.
+        // Refuse rather than silently ignore so the user knows -visc had no effect.
+        opserr << "WARNING contact -visc is NTS-only in D2.1 (not yet supported with -mortar; "
+                  "mortar viscous stabilization is D2.2)\n";
+        return -1;
+    }
     if (isMortar) {
         // Ladruno ADR-41 C2.0/C2.2/C3.1: the mortar definition (normal ALM + C3.1 Coulomb/Tresca
         // friction via -mu/-epsT/-cohesion/-tauMax). friction params ≤0 ⇒ the frictionless C2 path.
@@ -618,15 +638,16 @@ int OPS_LadrunoContact()
                                     augTol, maxAug, ngp, hasOutward ? outward : 0, cellFrac,
                                     mortarMu, epsT, epsTAuto, cohesion, tauMax, consistentTan, isTie);
     }
+    // D2: -visc μ_c (NTS viscous normal stabilization; 0 ⇒ off, byte-identical).
     return cd->addContact(idata[0], idata[1], idata[2], kn, kt, mu,
-                          hasOutward ? outward : 0, knAuto, cellFrac, consistentTan);
+                          hasOutward ? outward : 0, knAuto, cellFrac, consistentTan, muc);
 }
 
-// contactPlane tag slaveSurfTag  nx ny nz  px py pz  kn   (P2a rigid analytical plane)
+// contactPlane tag slaveSurfTag  nx ny nz  px py pz  kn  <-visc μ_c>   (P2a rigid analytical plane)
 int OPS_LadrunoContactPlane()
 {
     if (OPS_GetNumRemainingInputArgs() < 9) {
-        opserr << "WARNING want - contactPlane tag slaveSurfTag nx ny nz px py pz kn\n";
+        opserr << "WARNING want - contactPlane tag slaveSurfTag nx ny nz px py pz kn <-visc muc>\n";
         return -1;
     }
     int idata[2], ni = 2;
@@ -643,6 +664,23 @@ int OPS_LadrunoContactPlane()
     double n[3] = {d[0], d[1], d[2]};
     double p0[3] = {d[3], d[4], d[5]};
     double kn = d[6];
+    // ADR-41 D2: optional trailing `-visc <μ_c>` viscous normal-stabilization coefficient (0 ⇒ off).
+    double muc = 0.0;
+    while (OPS_GetNumRemainingInputArgs() > 0) {
+        const char *opt = OPS_GetString();
+        if (opt != 0 && strcmp(opt, "-visc") == 0) {
+            double v[1]; int m = 1;
+            if (OPS_GetDoubleInput(&m, v) < 0) {
+                opserr << "WARNING contactPlane -visc - need a coefficient value\n";
+                return -1;
+            }
+            muc = v[0];
+        } else {
+            opserr << "WARNING contactPlane - unexpected token '" << (opt ? opt : "")
+                   << "' (expected -visc or end of arguments)\n";
+            return -1;
+        }
+    }
     Domain *theDomain = OPS_GetDomain();
     if (theDomain == 0) return -1;
     LadrunoContactDomain *cd = theDomain->getLadrunoContactDomain();
@@ -650,7 +688,7 @@ int OPS_LadrunoContactPlane()
         opserr << "WARNING contactPlane - define the slave contactSurface first\n";
         return -1;
     }
-    return cd->addRigidPlane(idata[0], idata[1], p0, n, kn);
+    return cd->addRigidPlane(idata[0], idata[1], p0, n, kn, muc);
 }
 
 // ladrunoContactInfo -> [numContacts, numCommits, numReverts, numMortarContacts]
