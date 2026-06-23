@@ -446,10 +446,36 @@ int OPS_LadrunoContact()
     // ADR-41 C3.1 mortar friction (Coulomb/Tresca unified cone min(μN+c, τmax)); all 0 ⇒ frictionless.
     double mortarMu = 0.0, epsT = 0.0, cohesion = 0.0, tauMax = 0.0;
     bool epsTAuto = false;
+    // ADR-41 C4 mesh-tying: `-tie` makes the mortar pair a PERMANENT bond (the zero-gap limit — full
+    // 3-vec r→0, no clamp, no friction). `-epsTie auto|val` is the tie penalty (an alias for the
+    // -epsN penalty slot — a tie has one penalty). Mutually exclusive with -mu/-cohesion/-tauMax.
+    bool isTie = false;
     while (OPS_GetNumRemainingInputArgs() > 0) {
         const char *opt = OPS_GetString();
         if (opt != 0 && strcmp(opt, "-mortar") == 0) {
             isMortar = true;
+        } else if (opt != 0 && strcmp(opt, "-tie") == 0) {
+            // ADR-41 C4: a PERMANENT mesh-tie bond (requires -mortar; validated after the loop).
+            isTie = true;
+        } else if (opt != 0 && strcmp(opt, "-epsTie") == 0) {
+            // -epsTie auto | <value> : the tie penalty (an alias for the -epsN penalty slot — a tie
+            // has a single penalty; auto ⇒ sized from the owning solid, like the contact penalty).
+            if (OPS_GetNumRemainingInputArgs() < 1) {
+                opserr << "WARNING contact -epsTie - need auto or a value\n";
+                return -1;
+            }
+            const char *p = OPS_GetString();
+            if (p != 0 && strcmp(p, "auto") == 0) {
+                epsNAuto = true;
+            } else {
+                OPS_ResetCurrentInputArg(-1);
+                double v[1]; int m = 1;
+                if (OPS_GetDoubleInput(&m, v) < 0) {
+                    opserr << "WARNING contact -epsTie - need auto or a value\n";
+                    return -1;
+                }
+                epsN = v[0];
+            }
         } else if (opt != 0 && strcmp(opt, "-epsN") == 0) {
             // -epsN auto | <value> : ALM normal penalty (auto => sized like -kn auto).
             if (OPS_GetNumRemainingInputArgs() < 1) {
@@ -574,12 +600,23 @@ int OPS_LadrunoContact()
         opserr << "WARNING contact - define a contactSurface first\n";
         return -1;
     }
+    if (isTie && !isMortar) {
+        opserr << "WARNING contact -tie requires -mortar (mesh-tying is a mortar formulation)\n";
+        return -1;
+    }
+    if (isTie && (mortarMu > 0.0 || cohesion > 0.0 || tauMax > 0.0)) {
+        // A tie is an EQUALITY bond — it has no friction cone. Refuse the combination explicitly.
+        opserr << "WARNING contact -tie is mutually exclusive with friction "
+                  "(-mu/-cohesion/-tauMax): a mesh-tie has no friction cone\n";
+        return -1;
+    }
     if (isMortar) {
         // Ladruno ADR-41 C2.0/C2.2/C3.1: the mortar definition (normal ALM + C3.1 Coulomb/Tresca
         // friction via -mu/-epsT/-cohesion/-tauMax). friction params ≤0 ⇒ the frictionless C2 path.
+        // C4: -tie ⇒ a permanent mesh-tie bond (full 3-vec r→0; friction refused above).
         return cd->addMortarContact(idata[0], idata[1], idata[2], kn, knAuto, epsN, epsNAuto,
                                     augTol, maxAug, ngp, hasOutward ? outward : 0, cellFrac,
-                                    mortarMu, epsT, epsTAuto, cohesion, tauMax, consistentTan);
+                                    mortarMu, epsT, epsTAuto, cohesion, tauMax, consistentTan, isTie);
     }
     return cd->addContact(idata[0], idata[1], idata[2], kn, kt, mu,
                           hasOutward ? outward : 0, knAuto, cellFrac, consistentTan);
@@ -653,6 +690,25 @@ int OPS_LadrunoMortarPenetration()
     }
     int one = 1;
     if (OPS_SetDoubleOutput(&one, &pen, true) < 0)
+        return -1;
+    return 0;
+}
+
+// ladrunoMortarTieResidual -> the max weighted relative-displacement bond ‖r̄‖_∞ over all mortar
+// TIE slave nodes (max over nodes/components of |r̄_I,d| = |rtGlobal_I,d / aGlobal_I|; 0 if no
+// engine / no tie). ADR-41 C4: the convergence measure a held-load `analyzeAugmented` loop reads to
+// stop augmenting (‖r‖ → an epsTie-INDEPENDENT augTol within maxAug = the headline ALM tie win).
+int OPS_LadrunoMortarTieResidual()
+{
+    Domain *theDomain = OPS_GetDomain();
+    double res = 0.0;
+    if (theDomain != 0) {
+        LadrunoContactDomain *cd = theDomain->getLadrunoContactDomain();
+        if (cd != 0)
+            res = cd->getMaxMortarTieResidual();
+    }
+    int one = 1;
+    if (OPS_SetDoubleOutput(&one, &res, true) < 0)
         return -1;
     return 0;
 }

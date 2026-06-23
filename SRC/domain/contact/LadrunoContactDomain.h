@@ -114,13 +114,19 @@ class LadrunoContactDomain
         double cohesion;        // adhesive intercept c
         double tauMax;          // Tresca shear cap (≤0 ⇒ no upper cap)
         bool   consistentTan;   // C3.2: non-symmetric Coulomb friction tangent
+        // ADR-41 C4 — mesh-tying: a PERMANENT bond (the zero-gap limit). isTie ⇒ the handler builds
+        // tie adapters (active set frozen ON, the FULL 3-vec r→0, no clamp/friction). epsN is the tie
+        // penalty epsTie (auto ⇒ sized from the owning solid, like the contact penalty). Mutually
+        // exclusive with friction (mu/cohesion/tauMax) — refused at the command surface.
+        bool   isTie;
     };
     int addMortarContact(int tag, int masterSurfTag, int slaveSurfTag,
                          double kn, bool knAuto, double epsN, bool epsNAuto,
                          double augTol, int maxAug, int ngp,
                          const double *outward = 0, double cellFrac = 1.0,
                          double mu = 0.0, double epsT = 0.0, bool epsTAuto = false,
-                         double cohesion = 0.0, double tauMax = 0.0, bool consistentTan = false);
+                         double cohesion = 0.0, double tauMax = 0.0, bool consistentTan = false,
+                         bool isTie = false);
     int getNumMortarContacts(void) const { return (int)theMortarContacts.size(); }
     const MortarContact &getMortarContact(int i) const { return theMortarContacts[i]; }
 
@@ -192,6 +198,19 @@ class LadrunoContactDomain
         // friction (the held-load analyze_augmented proc augments it across commits).
         double lambdaT[3];      // committed tangential multiplier
         double lambdaTtrial[3]; // trial (= −tFric, written each getResidual)
+        // ADR-41 C4 — MESH-TYING (a permanent bond; the zero-gap limit of contact). When isTie the
+        // node's active set is frozen ON and the FULL 3-vector weighted relative DISPLACEMENT
+        // r_I = Σ_J D_IJ u_s,J − Σ_K M_IK u_m,K is driven to ZERO (normal AND tangential, no KKT, no
+        // clamp, no friction). The tie multiplier lambdaTie is the λ_N analogue: COMMITTED-ONLY
+        // (mutated solely in commit()), Uzawa'd NO-CLAMP from the ORDER-INDEPENDENT global
+        // accumulator rtGlobal/aGlobal — λ_tie ← λ_tie + epsTie·(rtGlobal/aGlobal). r_I is a LINEAR
+        // accumulation (no return map), so — unlike the friction slip (a return-map OUTPUT, last-
+        // writer-wins at shared nodes; LEDGER_quirks MAJOR-1) — the global accumulator is correct and
+        // order-independent here (the C4 shared-node resolution). rtGlobal is transient (re-summed
+        // each residual sweep via accumulateMortarTie; zeroed each handle() in mortarNormalGCEnd).
+        double lambdaTie[3];    // committed tie multiplier (3-vec); mutated ONLY in commit(), NO clamp
+        double rtGlobal[3];     // Σ_facets r_I^facet (global weighted rel. disp.; for Uzawa + ‖r‖ query)
+        bool   isTie;           // true ⇒ tie slot (skip normal KKT/friction; assemble the full 3-vec bond)
         // C3.2 (MAJOR-2): gT0/engaged are mutated in getResidual (engagement capture), so a
         // rejected IMPLICIT Newton step must be able to revert them (else a stale origin latched
         // from the rejected config persists). Double-buffer the committed engagement state; commit()
@@ -199,9 +218,11 @@ class LadrunoContactDomain
         double gT0committed[3];
         bool   engagedCommitted;
         MortarNormalState() : lambdaN(0.0), gtGlobal(0.0), aGlobal(0.0), epsN(0.0),
-                              engaged(false), engagedCommitted(false) {
-            for (int d = 0; d < 3; d++)
+                              engaged(false), engagedCommitted(false), isTie(false) {
+            for (int d = 0; d < 3; d++) {
                 gpT[d] = gpTtrial[d] = gT0[d] = gT0committed[d] = lambdaT[d] = lambdaTtrial[d] = 0.0;
+                lambdaTie[d] = rtGlobal[d] = 0.0;
+            }
         }
     };
     // lazily create + return the per-node slot (zeroed if new).
@@ -216,6 +237,16 @@ class LadrunoContactDomain
     // ‖ḡ‖_∞ restricted to PENETRATION (max over active nodes of max(0, −ḡ_I)) — the convergence
     // measure the held-load `analyzeAugmented` proc reads to stop augmenting. 0 if no contact.
     double getMaxMortarPenetration(void) const;
+    // ADR-41 C4 — a tie facet reports its per-facet weighted relative displacement r_I^facet[3]
+    // (+ a_I^facet) into the slave node's GLOBAL accumulator rtGlobal (delta-update keyed by feTag,
+    // idempotent — same contract as accumulateMortarGap). Marks the slot isTie + records epsTie (the
+    // max over facets, order-independent). The GLOBAL r is read ONLY for the commit-time Uzawa and
+    // the ‖r‖ query (never back into the same sweep's force — the C2.2 deterministic-R(u) rule).
+    void accumulateMortarTie(int contactTag, int slaveNodeTag, int feTag,
+                             const double rFacet[3], double aFacet, double epsTie);
+    // ‖r̄‖_∞ over all TIE slave nodes (max over nodes/components of |rtGlobal_I,d / aGlobal_I|) — the
+    // tie convergence measure the held-load `analyzeAugmented` proc reads (the ‖ḡ‖ analogue). 0 if no tie.
+    double getMaxMortarTieResidual(void) const;
     int  getNumMortarNormalStates(void) const { return (int)theMortarNormalStates.size(); }
 
     // dead-slot GC (mirror frictionGC*): the engine survives domainChanged + across analyze()
@@ -278,7 +309,10 @@ class LadrunoContactDomain
     // transient per-facet contribution g̃_I^facet / a_I^facet keyed (contactTag, nodeTag, feTag);
     // delta-updated each getResidual, summed into the node slot's gtGlobal/aGlobal. Cleared every
     // handle() (feTag is not rebuild-stable). PairKey {c,s=nodeTag,g=feTag} reuses the 3-int key.
-    struct FacetContrib { double gt, a; FacetContrib() : gt(0.0), a(0.0) {} };
+    // gt = normal weighted gap (C2.2); r[3] = the C4 tie weighted relative displacement (mutually
+    // exclusive per node — a slot is a contact node OR a tie node). a = ∫N_I dΓ (shared).
+    struct FacetContrib { double gt, a, r[3];
+        FacetContrib() : gt(0.0), a(0.0) { r[0] = r[1] = r[2] = 0.0; } };
     std::map<PairKey, FacetContrib> theMortarFacetContribs;
 };
 

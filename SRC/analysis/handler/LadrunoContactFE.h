@@ -97,11 +97,16 @@ class LadrunoContactFE : public FE_Element
     // traction (shipped LadrunoFrictionKernel). All ≤ 0 ⇒ byte-identical to the frictionless C2
     // path (no slot touch — the NTS P3 `mu>0` short-circuit, generalized to the unified cone).
     // consistentTan = the non-symmetric Coulomb friction tangent (C3.2; false = symmetric).
+    // C4 isTie: a MESH-TIE pair (a permanent bond — the zero-gap limit of contact). When true the
+    // adapter skips the normal KKT + friction blocks entirely and assembles the FULL 3-vector tie
+    // force t_I = λ_tie,I + epsTie·(r_I/a_I) (no clamp) via D/−M + the SPD tangent epsTie·B̃ᵀB̃⊗I₃.
+    // epsN carries epsTie; mu/cohesion/tauMax are refused with -tie upstream. theDomain==0 ⇒ a pure
+    // penalty tie (λ_tie≡0). Mutually exclusive with the friction args (a tie has no cone).
     LadrunoContactFE(int tag, Node **slaveNodes, int nps_s, Node **masterNodes, int nps_m,
                      double epsN, const double orientDir[3], int contactTag = 0,
                      int slaveFacetIndex = 0, Domain *theDomain = 0,
                      double mu = 0.0, double epsT = 0.0, double cohesion = 0.0,
-                     double tauMax = 0.0, bool consistentTan = false);
+                     double tauMax = 0.0, bool consistentTan = false, bool isTie = false);
     ~LadrunoContactFE();
 
     // self-owned buffers (base buffers are unavailable when myEle == 0)
@@ -204,6 +209,7 @@ class LadrunoContactFE : public FE_Element
     // the unified cone cap = min(μN+c, τmax). consistentTan reuses the friction member.
     double mortarCohesion;  // adhesive intercept c
     double mortarTauMax;    // Tresca shear cap (≤0 ⇒ no upper cap)
+    bool   isTie;           // C4: MESH-TIE pair (full 3-vec r→0, no clamp/friction); kn carries epsTie
 
     // C3.1: assemble the mortar Coulomb/Tresca friction force into `resid` (called from the MORTAR
     // getResidual after the normal block). p_normal[I] = the per-node normal pressure (≤0; the
@@ -212,6 +218,15 @@ class LadrunoContactFE : public FE_Element
     // tangential traction via D/M exactly like the normal force. cd = the (non-null) engine.
     void addMortarFriction(const double D[4][4], const double M[4][4], const double n[3],
                            const double p_normal[4], class LadrunoContactDomain *cd);
+
+    // C4: assemble the MESH-TIE force into `resid`. For each slave node I build the FULL 3-vec
+    // weighted relative DISPLACEMENT r_I = Σ_J D_IJ u_s,J − Σ_K M_IK u_m,K (from getTrialDisp — the
+    // bond exists from the as-built config, so no gT0), form the tie traction t_I = λ_tie,I +
+    // epsTie·(r_I/a_I) (NO clamp), and scatter it via D/−M like the normal force (f^s_K = −Σ D_KI t_I,
+    // f^m_L = +Σ M_IL t_I). Reports r_I into the Domain GLOBAL accumulator (for the commit Uzawa +
+    // the ‖r‖ query). cd may be null ⇒ a pure penalty tie (λ_tie≡0, no global accumulation).
+    void addMortarTieForce(const double D[4][4], const double M[4][4],
+                           class LadrunoContactDomain *cd);
 };
 
 #endif

@@ -622,7 +622,7 @@ initopensees(void)
 "        • LadrunoIndirectControl — indirect/CMOD control (snap-back tracking)\n"
 "        • LadrunoStabilizedUnbalance — true-equilibrium test for -stabilize\n"
 "        • LadrunoProjection — momentum-conserving explicit constraint projection (equalDOF/rigidLink/diaphragm)\n"
-"        • LadrunoContact — NTS + mortar/ALM contact (penalty + commit-cycle Uzawa, Coulomb/Tresca friction)\n"
+"        • LadrunoContact — NTS + mortar/ALM contact (penalty + commit-cycle Uzawa, Coulomb/Tresca friction, mesh-tying)\n"
 "        • Ladruno — modular HDF5 .ladruno recorder\n"
 "\n";
         // FEATURES-END

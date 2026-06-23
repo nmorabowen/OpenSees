@@ -101,7 +101,8 @@ LadrunoContactDomain::addMortarContact(int tag, int masterSurfTag, int slaveSurf
                                        double augTol, int maxAug, int ngp,
                                        const double *outward, double cellFrac,
                                        double mu, double epsT, bool epsTAuto,
-                                       double cohesion, double tauMax, bool consistentTan)
+                                       double cohesion, double tauMax, bool consistentTan,
+                                       bool isTie)
 {
     LadrunoContactSurface *ms = getSurface(masterSurfTag);
     LadrunoContactSurface *ss = getSurface(slaveSurfTag);
@@ -129,6 +130,13 @@ LadrunoContactDomain::addMortarContact(int tag, int masterSurfTag, int slaveSurf
                   "(got kn " << kn << ", epsN " << epsN << ")\n";
         return -1;
     }
+    // C4 — a tie is an equality bond: it has no friction cone. Refuse the combination here too (the
+    // command surface refuses it first, but this choke point also covers a direct API call).
+    if (isTie && (mu > 0.0 || cohesion > 0.0 || tauMax > 0.0)) {
+        opserr << "WARNING LadrunoContactDomain::addMortarContact() - a mesh-tie (-tie) has no "
+                  "friction cone; -mu/-cohesion/-tauMax are not allowed with -tie\n";
+        return -1;
+    }
     MortarContact m;
     m.tag = tag; m.masterSurfTag = masterSurfTag; m.slaveSurfTag = slaveSurfTag;
     m.kn = kn; m.knAuto = knAuto;
@@ -144,6 +152,7 @@ LadrunoContactDomain::addMortarContact(int tag, int masterSurfTag, int slaveSurf
     m.cohesion = (cohesion > 0.0) ? cohesion : 0.0;
     m.tauMax = tauMax;                                // ≤0 ⇒ no Tresca upper cap
     m.consistentTan = consistentTan;
+    m.isTie = isTie;                                  // C4 — permanent mesh-tie bond
     theMortarContacts.push_back(m);
     return 0;
 }
@@ -247,6 +256,47 @@ LadrunoContactDomain::getMaxMortarPenetration(void) const
     return pen;
 }
 
+// ===================================================== ADR-41 C4 mesh-tying (λ_tie)
+void
+LadrunoContactDomain::accumulateMortarTie(int contactTag, int slaveNodeTag, int feTag,
+                                          const double rFacet[3], double aFacet, double epsTie)
+{
+    // delta update so a re-eval OVERWRITES (idempotent — the residual may be formed several times
+    // per Newton iterate, and twice on the CDL first step). The node's rtGlobal/aGlobal stays the
+    // running Σ over the facets this node touches. r_I is a LINEAR accumulation, so this global sum
+    // is order-INDEPENDENT (the C4 shared-node resolution; unlike the friction slip MAJOR-1).
+    PairKey fk; fk.c = contactTag; fk.s = slaveNodeTag; fk.g = feTag;
+    FacetContrib &fc = theMortarFacetContribs[fk];
+    NodeKey nk; nk.c = contactTag; nk.n = slaveNodeTag;
+    MortarNormalState &st = theMortarNormalStates[nk];
+    for (int d = 0; d < 3; d++) {
+        st.rtGlobal[d] += rFacet[d] - fc.r[d];
+        fc.r[d] = rFacet[d];
+    }
+    st.aGlobal += aFacet - fc.a;
+    fc.a = aFacet;
+    st.isTie = true;
+    // epsTie for the commit-time Uzawa at this node — MAX over facets (order-independent under
+    // `-epsTie auto`, which sizes per master facet), reusing the epsN slot (mutually exclusive use).
+    if (epsTie > st.epsN) st.epsN = epsTie;
+}
+
+double
+LadrunoContactDomain::getMaxMortarTieResidual(void) const
+{
+    double res = 0.0;
+    for (std::map<NodeKey, MortarNormalState>::const_iterator it = theMortarNormalStates.begin();
+         it != theMortarNormalStates.end(); ++it) {
+        const MortarNormalState &st = it->second;
+        if (!st.isTie || st.aGlobal <= 1e-300) continue;
+        for (int d = 0; d < 3; d++) {
+            double rbar = std::fabs(st.rtGlobal[d] / st.aGlobal);   // |r̄_I,d|; → 0 under the tie Uzawa
+            if (rbar > res) res = rbar;
+        }
+    }
+    return res;
+}
+
 void
 LadrunoContactDomain::mortarNormalGCBegin(void)
 {
@@ -281,6 +331,8 @@ LadrunoContactDomain::mortarNormalGCEnd(void)
         it->second.gtGlobal = 0.0;
         it->second.aGlobal = 0.0;
         it->second.epsN = 0.0;     // re-established (max over facets) on the next residual sweep
+        // C4 — the transient tie accumulator is also re-filled each sweep (only lambdaTie persists).
+        for (int d = 0; d < 3; d++) it->second.rtGlobal[d] = 0.0;
     }
 }
 
@@ -332,6 +384,18 @@ LadrunoContactDomain::commit(void)
     for (std::map<NodeKey, MortarNormalState>::iterator it = theMortarNormalStates.begin();
          it != theMortarNormalStates.end(); ++it) {
         MortarNormalState &st = it->second;
+        // C4 — mesh-tie Uzawa: λ_tie ← λ_tie + epsTie·(r_I/a_I), NO clamp (equality constraint).
+        // r_I is the just-converged GLOBAL weighted relative displacement (order-independent, the
+        // λ_N accumulator pattern). Drives ‖r‖ → 0 at FINITE epsTie (epsTie-INDEPENDENT bond — the
+        // headline ALM win); the held-load `analyzeAugmented` proc augments it within a step. λ_tie
+        // is mutated ONLY here ⇒ revertToLastCommit leaves it untouched (the committed-only invariant).
+        // A tie slot has no normal KKT / friction state, so skip the rest of the loop body.
+        if (st.isTie) {
+            if (st.aGlobal > 1e-300)
+                for (int d = 0; d < 3; d++)
+                    st.lambdaTie[d] += st.epsN * (st.rtGlobal[d] / st.aGlobal);
+            continue;
+        }
         // C3.1 — promote the trial tangential slip (penalty friction; the EmbeddedRebar/NTS
         // FrictionState precedent). Done for every slot regardless of normal activity.
         for (int d = 0; d < 3; d++) st.gpT[d] = st.gpTtrial[d];
