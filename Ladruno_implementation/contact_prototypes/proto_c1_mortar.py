@@ -248,24 +248,52 @@ def tri_quadrature(order):
     return b, w
 
 
+def is_convex2(poly, tol=1e-12):
+    """Convex test for a CCW polygon — every consecutive turn is a (weak) left turn.
+    The mortar path requires convex projected facets (Sutherland-Hodgman clip + an
+    honest slave-area integral); a concave/bow-tie facet is REFUSED upstream."""
+    P = np.asarray(poly, float)
+    n = len(P)
+    if n < 3:
+        return False
+    scale = max(np.linalg.norm(P[(i + 1) % n] - P[i]) for i in range(n))
+    if scale < 1e-300:
+        return False
+    for i in range(n):
+        a = P[(i + 1) % n] - P[i]
+        b = P[(i + 2) % n] - P[(i + 1) % n]
+        if (a[0] * b[1] - a[1] * b[0]) < -tol * scale * scale:
+            return False
+    return True
+
+
 def inverse_isomap_2d(nps, UV, q, tolR=1e-13, maxit=20):
-    """Recover ξ_s s.t. Σ N_I(ξ_s)·UV_I = q  (UV = slave nodes in aux 2D).
-    Closed form for tri-3 (affine); bounded Newton for the bilinear quad."""
+    """Recover ξ_s s.t. Σ N_I(ξ_s)·UV_I = q  (UV = slave nodes in aux 2D). Returns
+    (ξ, η, converged); the caller SKIPS a GP whose back-map did not converge (no silent
+    last-iterate). Closed form for tri-3 (affine); bounded Newton for the bilinear quad."""
     if nps == 3:
         Jm = np.column_stack([UV[1] - UV[0], UV[2] - UV[0]])
+        det = Jm[0, 0] * Jm[1, 1] - Jm[0, 1] * Jm[1, 0]
+        scale = np.linalg.norm(Jm[:, 0]) * np.linalg.norm(Jm[:, 1])
+        if abs(det) < 1e-14 * (scale + 1e-300):
+            return 0.0, 0.0, False
         xi, eta = np.linalg.solve(Jm, q - UV[0])
-        return xi, eta
+        return xi, eta, True
     xi = eta = 0.0
+    conv = False
     for _ in range(maxit):
         N, dNx, dNe = shape(4, xi, eta)
         r = N @ UV - q
         if np.linalg.norm(r) < tolR:
+            conv = True
             break
         Jm = np.column_stack([dNx @ UV, dNe @ UV])
+        if abs(np.linalg.det(Jm)) < 1e-300:
+            break
         d = np.linalg.solve(Jm, -r)
         xi += d[0]
         eta += d[1]
-    return xi, eta
+    return xi, eta, conv
 
 
 def clip_subtris(Xs, nps_s, Xm, nps_m, refDir, area_tol=1e-12):
@@ -279,6 +307,11 @@ def clip_subtris(Xs, nps_s, Xm, nps_m, refDir, area_tol=1e-12):
     n_s = facet_normal(Xs, nps_s, refDir)
     UVs = ensure_ccw(to2d(Xs[:nps_s], x0, e1, e2))
     UVm = ensure_ccw(to2d(Xm[:nps_m], x0, e1, e2))
+    # C1 scope = flat, CONVEX tri/quad facets — REFUSE a non-convex (concave/bow-tie or
+    # strongly-warped) projection rather than silently integrate its convex hull / truncate
+    # the clip (ADR-41 C1 review).
+    if not is_convex2(UVs) or not is_convex2(UVm):
+        return None
     # re-fetch the CCW slave UV in NODE order (back-map needs node ordering, not CCW)
     UVs_nodeorder = to2d(Xs[:nps_s], x0, e1, e2)
     poly = dedupe(clip_polygon(list(UVs), list(UVm)))
@@ -323,7 +356,9 @@ def mortar_pair(Xs, nps_s, Xm, nps_m, refDir, order=2):
         V0, V1, V2 = tri
         for (L0, L1, L2), w in zip(bary, wts):
             q = L0 * V0 + L1 * V1 + L2 * V2     # GP in aux 2D
-            xi_s, eta_s = inverse_isomap_2d(nps_s, UVs, q)
+            xi_s, eta_s, ok = inverse_isomap_2d(nps_s, UVs, q)
+            if not ok:                          # back-map did not converge: skip GP
+                continue
             Ns, _, _ = shape(nps_s, xi_s, eta_s)
             x_s = Ns @ Xs[:nps_s]
             p = project_full(nps_m, Xm, x_s, refDir)
@@ -593,7 +628,7 @@ def ref_gtilde(s_nodes, s_facets):
             A = 0.5 * abs(np.cross(V[1] - V[0], V[2] - V[0])[2])
             for (L0, L1, L2), w in zip(bary, wts):
                 xg = L0 * V[0] + L1 * V[1] + L2 * V[2]
-                xi_s, eta_s = inverse_isomap_2d(
+                xi_s, eta_s, _ = inverse_isomap_2d(
                     nps_s, np.column_stack([Xs[:, 0], Xs[:, 1]]), xg[:2])
                 Nsf, _, _ = shape(nps_s, xi_s, eta_s)
                 gN = n_pl @ (xg - x0_pl)
@@ -615,6 +650,68 @@ _, _, gm = assemble(sn6, sf6, mn_m, mf6, RD)
 dg_fd = (gp - gm) / (2 * h)
 check("central-FD d g̃/dz == -∫N_I (≤1e-6)", np.allclose(dg_fd, -row, atol=1e-6),
       f"max|Δ|={np.abs(dg_fd + row).max():.2e}")
+
+# === C1 adversarial-review hardening (gate findings folded — see LEDGER_quirks) ===
+
+# --- T8: a NON-CONVEX (concave/bow-tie) slave facet is REFUSED, not integrated over its
+#         convex hull (the silent-wrong-area finding). is_convex2 + integratePair → skip. -
+print("\nT8  convexity guard: concave/bow-tie slave facet REFUSED (no convex-hull integral)")
+Xcc = np.array([[0, 0, 0], [2, 0, 0], [2, 2, 0], [1.8, 0.2, 0]], float)  # concave quad
+Xcc4 = np.zeros((4, 3)); Xcc4[:4] = Xcc
+Xbig2 = np.array([[-1, -1, 0], [3, -1, 0], [3, 3, 0], [-1, 3, 0]], float)
+Xbig24 = np.zeros((4, 3)); Xbig24[:4] = Xbig2
+rcc = mortar_pair(Xcc4, 4, Xbig24, 4, RD)
+check("concave slave ⇒ pair refused (mortar_pair is None)", rcc is None)
+# projecting the slave to aux 2D and testing convexity directly:
+x0c, n0c, e1c, e2c = aux_plane(Xbig24, 4, RD)
+check("is_convex2 flags the concave projection", not is_convex2(to2d(Xcc, x0c, e1c, e2c)))
+# a genuinely convex quad in the same spot IS accepted (guard is not over-eager):
+Xcv = np.array([[0.2, 0.2, 0], [1.6, 0.3, 0], [1.7, 1.6, 0], [0.3, 1.5, 0]], float)
+Xcv4 = np.zeros((4, 3)); Xcv4[:4] = Xcv
+rcv = mortar_pair(Xcv4, 4, Xbig24, 4, RD)
+check("convex quad in the same spot IS accepted", rcv is not None and rcv["area"] > 0)
+
+# --- T9: TILTED, non-coplanar master vs flat slave — partition of unity STILL holds to
+#         1e-12 (locks in the reviewer's structural-robustness finding the old mesh missed).
+print("\nT9  tilted non-coplanar master (flat slave): ΣM==ΣD to 1e-12; ∫dΓ == slave area")
+sN, sF = quad_mesh(2, 2)                     # flat slave at z=0 over [0,1]²
+# master over a LARGER footprint [-0.5,1.5]² so the flat slave is fully covered even
+# after the tilt foreshortens the projection; then ∫dΓ == the slave area exactly.
+mN, mF = quad_mesh(3, 3, x0=-0.5, y0=-0.5, sx=2.0, sy=2.0)
+mN = mN.copy(); mN[:, 2] = 0.15 * mN[:, 0] + 0.10 * mN[:, 1]   # master plane TILTED
+D9, M9, g9 = assemble(sN, sF, mN, mF, RD)
+check("ΣM row == ΣD row (tilted master)", np.allclose(M9.sum(1), D9.sum(1), atol=1e-12),
+      f"max|ΔΣ|={np.abs(M9.sum(1) - D9.sum(1)).max():.2e}")
+check("∫dΓ == flat-slave area 1.0 (J corrects the master tilt for a FLAT slave)",
+      abs(D9.sum() - 1.0) < 1e-9, f"ΣΣD={D9.sum():.9f}")
+
+# --- T10: a WARPED (non-planar) slave facet biases the J=A_aux/|n_s·n0| area measure —
+#          a DOCUMENTED C1 limitation (flagged, not solved; the C2/ADR-47 fix is the
+#          per-sub-triangle slave Jacobian). We MEASURE the bias so it is tracked, and
+#          confirm partition of unity survives anyway (it reduces to Σφ=1).
+print("\nT10  warped slave facet: area-measure bias is bounded & DOCUMENTED; ΣM==ΣD survives")
+lift = 0.3
+Xwarp = np.array([[0, 0, 0], [1, 0, 0], [1, 1, lift], [0, 1, 0]], float)  # one node lifted
+Xwarp4 = np.zeros((4, 3)); Xwarp4[:4] = Xwarp
+Xcover = np.array([[-1, -1, 0.15], [2, -1, 0.15], [2, 2, 0.15], [-1, 2, 0.15]], float)
+Xcover4 = np.zeros((4, 3)); Xcover4[:4] = Xcover
+rw = mortar_pair(Xwarp4, 4, Xcover4, 4, RD)
+# true bilinear surface area of the warped quad — integrate |g1×g2| over the parent square
+gq = 8
+xg, wq = np.polynomial.legendre.leggauss(gq)
+true_area = 0.0
+for a in range(gq):
+    for b in range(gq):
+        _, dNx, dNe = shape(4, xg[a], xg[b])
+        g1 = dNx @ Xwarp
+        g2 = dNe @ Xwarp
+        true_area += wq[a] * wq[b] * np.linalg.norm(np.cross(g1, g2))
+bias = abs(rw["area"] - true_area) / true_area
+check("warped-facet area bias is the DOCUMENTED ~0.7% (bounded, < 2%)", bias < 2e-2,
+      f"kernel={rw['area']:.6f} true={true_area:.6f} rel bias={bias:.2e}")
+check("ΣM==ΣD survives the warp (reduces to Σφ=1)",
+      np.allclose(rw["M"].sum(1), rw["D"].sum(1), atol=1e-12),
+      f"max|ΔΣ|={np.abs(rw['M'].sum(1) - rw['D'].sum(1)).max():.2e}")
 
 print(f"\n{'='*64}\n{'ALL PASS' if _fails == 0 else str(_fails) + ' FAILURE(S)'}  "
       f"(C1 mortar-kernel oracle)\n{'='*64}")

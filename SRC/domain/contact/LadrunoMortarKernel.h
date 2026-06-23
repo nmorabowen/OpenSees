@@ -42,6 +42,15 @@
 // test ONLY: it returns D, M, g̃ and the per-GP geometry — NO traction, NO λ, NO ALM
 // (enforcement = C2; friction via LadrunoFrictionKernel = C3).
 //
+// SCOPE / known limitations (ADR-41 C1 adversarial review — see [[LEDGER_quirks]]):
+//   - FLAT, CONVEX tri/quad facets only. Non-convex (concave/bow-tie) facets are REFUSED
+//     (integratePair returns -1 via isConvex2) — they would otherwise integrate over the
+//     convex hull / truncate the clip. A NON-PLANAR (warped) slave facet is NOT refused
+//     but the constant `J = A_aux/|n_s·n0|` then biases the area measure (≈0.7% at a
+//     0.3·edge out-of-plane lift); the partition-of-unity and patch-test gates still pass
+//     because they reduce to Σφ=1 (measure-independent). The exact fix — a per-sub-triangle
+//     slave Jacobian |g1×g2| — is C2/ADR-47 work; flagged, not solved, in C1.
+//
 // Gates (proved oracle-first in contact_prototypes/proto_c1_mortar.py, 24/24):
 //   - Sutherland-Hodgman clip area vs known cases (incl. the 2(√2−1) octagon).
 //   - partition of unity  Σ_K M_IK == Σ_J D_IJ  to 1e-12 (matched AND non-matched).
@@ -95,6 +104,31 @@ inline void reverse2(double P[][2], int n) {
     }
 }
 inline void ensureCCW(double P[][2], int n) { if (signedArea2(P, n) < 0.0) reverse2(P, n); }
+
+// convexity test for a CCW polygon: every consecutive turn must be a (weak) left turn.
+// The mortar path REQUIRES convex projected facets — Sutherland-Hodgman needs a convex
+// CLIP polygon, and a non-convex SUBJECT would be silently integrated over its convex
+// hull (wrong area) / truncate the clip buffer (diverging from the oracle). A flat,
+// convex tri/quad facet always projects to a convex polygon; a concave/bow-tie or
+// strongly-warped facet does not ⇒ the caller REFUSES the pair (gate, ADR-41 C1 review).
+inline bool isConvex2(const double P[][2], int n, double tol = 1e-12) {
+    if (n < 3) return false;
+    double scale = 0.0;                          // edge-length scale for a relative tol
+    for (int i = 0; i < n; i++) {
+        int j = (i + 1) % n;
+        double ex = P[j][0]-P[i][0], ey = P[j][1]-P[i][1];
+        double e = std::sqrt(ex*ex + ey*ey);
+        if (e > scale) scale = e;
+    }
+    if (scale < 1e-300) return false;
+    for (int i = 0; i < n; i++) {
+        int j = (i + 1) % n, k = (i + 2) % n;
+        double ax = P[j][0]-P[i][0], ay = P[j][1]-P[i][1];
+        double bx = P[k][0]-P[j][0], by = P[k][1]-P[j][1];
+        if (ax*by - ay*bx < -tol * scale * scale) return false;   // a right turn ⇒ concave
+    }
+    return true;
+}
 
 // intersection of segment S->E with the infinite line A->B (Sutherland-Hodgman edge).
 inline void iline(const double S[2], const double E[2], const double A[2],
@@ -197,19 +231,26 @@ inline void to2d(const double X[3], const double x0[3], const double e1[3],
 
 // recover ξ_s s.t. Σ N_I(ξ_s)·UV_I = q  (UV = slave nodes in aux 2D). tri-3: affine;
 // quad: bounded inverse-bilinear Newton (same pattern as LadrunoContactProjection).
-inline void inverseIsomap2D(int nps, const double UV[4][2], const double q[2],
+// Returns TRUE on convergence (residual < tolR / non-degenerate affine map); FALSE lets
+// the caller SKIP that GP instead of integrating a wrong root (ADR-41 C1 review). With
+// the convex-facet guard in integratePair this cannot fail in C1, but the de-risk flag
+// mirrors LadrunoContactProjection::project — no silent last-iterate.
+inline bool inverseIsomap2D(int nps, const double UV[4][2], const double q[2],
                             double &xi, double &eta, double tolR = 1e-13, int maxIt = 20) {
     if (nps == 3) {
         double a00 = UV[1][0]-UV[0][0], a01 = UV[2][0]-UV[0][0];
         double a10 = UV[1][1]-UV[0][1], a11 = UV[2][1]-UV[0][1];
         double det = a00*a11 - a01*a10;
+        double scale = std::sqrt((a00*a00+a10*a10)*(a01*a01+a11*a11));
+        if (std::fabs(det) < 1e-14 * (scale + 1e-300)) { xi = eta = 0.0; return false; }
         double rx = q[0]-UV[0][0], ry = q[1]-UV[0][1];
         xi  = ( a11*rx - a01*ry) / det;
         eta = (-a10*rx + a00*ry) / det;
-        return;
+        return true;
     }
     xi = 0.0; eta = 0.0;
     double N[4], dNxi[4], dNeta[4];
+    bool conv = false;
     for (int it = 0; it < maxIt; it++) {
         LP::shape(4, xi, eta, N, dNxi, dNeta);
         double rx = -q[0], ry = -q[1], j00 = 0, j01 = 0, j10 = 0, j11 = 0;
@@ -218,12 +259,13 @@ inline void inverseIsomap2D(int nps, const double UV[4][2], const double q[2],
             j00 += dNxi[i]*UV[i][0];  j01 += dNeta[i]*UV[i][0];
             j10 += dNxi[i]*UV[i][1];  j11 += dNeta[i]*UV[i][1];
         }
-        if (std::sqrt(rx*rx + ry*ry) < tolR) break;
+        if (std::sqrt(rx*rx + ry*ry) < tolR) { conv = true; break; }
         double det = j00*j11 - j01*j10;
         if (std::fabs(det) < 1e-300) break;
         xi  -= ( j11*rx - j01*ry) / det;
         eta -= (-j10*rx + j00*ry) / det;
     }
+    return conv;
 }
 
 // barycentric triangle Gauss rule, weights SUM TO 1 (area applied separately). order<=2
@@ -266,6 +308,11 @@ inline int integratePair(int nps_s, const double Xs[4][3],
     for (int i = 0; i < nps_m; i++) to2d(Xm[i], x0, e1, e2, clip[i]);
     ensureCCW(subj, nps_s);
     ensureCCW(clip, nps_m);
+    // C1 scope = flat, CONVEX tri/quad facets. A concave/bow-tie or strongly-warped facet
+    // projects to a non-convex polygon ⇒ Sutherland-Hodgman would silently integrate the
+    // slave over its convex hull and truncate the clip buffer (diverging from the oracle).
+    // REFUSE the pair rather than return a wrong area (gate, ADR-41 C1 review).
+    if (!isConvex2(subj, nps_s) || !isConvex2(clip, nps_m)) return -1;
 
     double poly[MAXV][2];
     int np = clipPolygon(subj, nps_s, clip, nps_m, poly);
@@ -298,7 +345,7 @@ inline int integratePair(int nps_s, const double Xs[4][3],
                 bary[gp][0]*triP[0][0] + bary[gp][1]*triP[1][0] + bary[gp][2]*triP[2][0],
                 bary[gp][0]*triP[0][1] + bary[gp][1]*triP[1][1] + bary[gp][2]*triP[2][1] };
             double xi_s, eta_s;
-            inverseIsomap2D(nps_s, UVs, q, xi_s, eta_s);
+            if (!inverseIsomap2D(nps_s, UVs, q, xi_s, eta_s)) continue;  // back-map failed
             double Ns[4], dN1[4], dN2[4];
             LP::shape(nps_s, xi_s, eta_s, Ns, dN1, dN2);
             double x_s[3] = {0,0,0};
