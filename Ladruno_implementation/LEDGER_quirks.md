@@ -1585,6 +1585,18 @@ non-obvious behaviours, all relevant to anyone wiring `-stabilize` into a driver
   augments from the order-INDEPENDENT global accumulator `gtGlobal/aGlobal`. So the per-node `λ_T`/`gpT`
   reconciliation is the same single fix for the whole friction state. Still fenced to matched/explicit; the
   C3.3 gate (MINOR-1) re-confirmed it is inherited, not introduced.
+- **C4 update (#TBD) — RESOLVED for the TIE path; STILL FENCED for FRICTION.** C4 mesh-tying hits shared
+  slave nodes immediately (non-matching meshes are the whole point), so the pre-req had to be discharged
+  before relying on it. The tie state (`λ_tie`, the full 3-vec relative displacement `r_I`) does NOT inherit
+  the bug, because `r_I = Σ D u_s − Σ M u_m` is a **LINEAR accumulation** — not a return-map OUTPUT — so it
+  uses the SAME order-independent global accumulator `λ_N` already uses (`accumulateMortarTie` delta-update
+  keyed `(c,node,feTag)` → `rtGlobal`, Uzawa'd in `commit()` no-clamp). The FORCE reads each facet's LOCAL
+  `r` (deterministic R(u), the C2.2 rule); the GLOBAL `r` feeds only the commit Uzawa + the `‖r‖` query.
+  Pinned by `test_adr41_mortar_c4_1::test_c4_1_shared_node_order_independent` (a slave node shared by 2 tie
+  facets ⇒ either facet order gives a BIT-identical converged solution) + oracle T6. **The FRICTION
+  last-writer-wins (gpT/λ_T) is STILL fenced** — C4 is mutually exclusive with friction, so the tie never
+  touches the friction slip; non-matching FRICTIONAL meshes still need the per-(node,feTag) slip
+  reconciliation (an area-weighted blend, since the slip is a return-map output, not linear).
 
 ### Mortar friction gT0/engaged are captured in getResidual and NOT reverted — latent until the C3.2 implicit tangent
 - **Bites:** ADR-41 C3.2 (NOT C3.1). `revertToLastCommit` drops only `gpTtrial=gpT` for mortar slots

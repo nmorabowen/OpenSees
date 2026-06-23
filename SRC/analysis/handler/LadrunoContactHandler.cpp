@@ -530,10 +530,13 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                                       "-epsT explicitly to control it.\n";
                         }
                     }
+                    // C4 — a mesh-tie pair (mc.isTie): epsUse is epsTie; friction params are 0
+                    // (refused with -tie upstream). The adapter runs the full-3-vec r→0 bond.
                     LadrunoContactFE *fe =
                         new LadrunoContactFE(numFe++, sNodes, npsS, mNodes, npsM, epsUse,
                                              orientDir, mc.tag, sf, theDomain,
-                                             mc.mu, epsTuse, mc.cohesion, mc.tauMax, mc.consistentTan);
+                                             mc.mu, epsTuse, mc.cohesion, mc.tauMax, mc.consistentTan,
+                                             mc.isTie);
                     if (fe == 0) return -5;
                     theModel->addFE_Element(fe);
                     // C2.2: this pair's slave nodes have a live λ_N slot this handle().

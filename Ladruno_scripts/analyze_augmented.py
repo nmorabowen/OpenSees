@@ -32,25 +32,31 @@ Returns ``(status, n_aug, penetration)``:
 """
 
 
-def analyze_augmented(ops, maxAug=20, augTol=1.0e-9, verbose=False):
-    """Drive mortar contact penetration to ``augTol`` by held-load Uzawa augmentation.
+def analyze_augmented(ops, maxAug=20, augTol=1.0e-9, verbose=False, query=None):
+    """Drive a mortar ALM measure to ``augTol`` by held-load Uzawa augmentation.
 
     Must be called AFTER the load has been applied and a first equilibrium reached (so the
     penalty pressure / active set are established). Switches the integrator to a zero-increment
-    LoadControl and re-solves+commits until ``ops.ladrunoMortarPenetration() < augTol`` or
-    ``maxAug`` augmentations have run.
+    LoadControl and re-solves+commits until ``query() < augTol`` or ``maxAug`` augmentations run.
+
+    ``query`` is the convergence measure (a zero-arg callable). Default = the NORMAL contact
+    penetration ``ops.ladrunoMortarPenetration()`` (ADR-41 C2.2). For ADR-41 C4 mesh-tying pass
+    ``query=ops.ladrunoMortarTieResidual`` (the weighted relative-displacement bond ‖r̄‖_∞) — the
+    tie Uzawa (λ_tie ← λ_tie + epsTie·r/a, NO clamp) drives the SAME held-load loop.
     """
+    if query is None:
+        query = ops.ladrunoMortarPenetration
     # hold the external load: a zero-increment LoadControl re-solves at the SAME load level,
     # so the only thing that changes between augmentations is the committed multiplier lambda.
     ops.integrator("LoadControl", 0.0)
-    pen = ops.ladrunoMortarPenetration()
+    pen = query()
     for k in range(1, int(maxAug) + 1):
         rc = ops.analyze(1)
         if rc != 0:
             return rc, k, pen
-        pen = ops.ladrunoMortarPenetration()
+        pen = query()
         if verbose:
-            print(f"  [augment {k}] penetration = {pen:.3e}")
+            print(f"  [augment {k}] measure = {pen:.3e}")
         if pen < augTol:
             return 0, k, pen
     return 1, int(maxAug), pen

@@ -51,7 +51,7 @@ LadrunoContactFE::LadrunoContactFE(int tag)
     // result is bitwise-identical to no-contact. (P1a)
     for (int d = 0; d < 3; d++) { planeP0[d] = 0.0; planeN[d] = 0.0; orientDir[d] = 0.0; }
     for (int i = 0; i < 4; i++) { segNode[i] = 0; mortarSlave[i] = 0; mortarMaster[i] = 0; }
-    npsS = npsM = 0; slaveFacetIndex = 0; mortarCohesion = mortarTauMax = 0.0;
+    npsS = npsM = 0; slaveFacetIndex = 0; mortarCohesion = mortarTauMax = 0.0; isTie = false;
 }
 
 LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, int ndm_,
@@ -70,7 +70,7 @@ LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, int ndm_,
     }
     for (int d = 0; d < 3; d++) { planeP0[d] = p0[d]; planeN[d] = n[d]; orientDir[d] = 0.0; }
     for (int i = 0; i < 4; i++) { segNode[i] = 0; mortarSlave[i] = 0; mortarMaster[i] = 0; }
-    npsS = npsM = 0; slaveFacetIndex = 0; mortarCohesion = mortarTauMax = 0.0;
+    npsS = npsM = 0; slaveFacetIndex = 0; mortarCohesion = mortarTauMax = 0.0; isTie = false;
 }
 
 LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, Node **segNodes,
@@ -105,7 +105,7 @@ LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, Node **segNodes,
     for (int d = 0; d < 3; d++) orientDir[d] = odir[d];
     for (int d = 0; d < 3; d++) { planeP0[d] = 0.0; planeN[d] = 0.0; }
     for (int i = 0; i < 4; i++) { mortarSlave[i] = 0; mortarMaster[i] = 0; }
-    npsS = npsM = 0; slaveFacetIndex = 0; mortarCohesion = mortarTauMax = 0.0;
+    npsS = npsM = 0; slaveFacetIndex = 0; mortarCohesion = mortarTauMax = 0.0; isTie = false;
 }
 
 // C2.1/C2.2 — clipped-GP MORTAR contact (one slave facet vs one master facet). theDomain
@@ -114,13 +114,13 @@ LadrunoContactFE::LadrunoContactFE(int tag, Node **slaveNodes, int nps_s,
                                    Node **masterNodes, int nps_m, double epsN,
                                    const double odir[3], int contactTag_, int slaveFacetIndex_,
                                    Domain *dom, double mu_, double epsT_, double cohesion_,
-                                   double tauMax_, bool consistentTan_)
+                                   double tauMax_, bool consistentTan_, bool isTie_)
   : FE_Element(tag, /*numDOF_Group=*/nps_s + nps_m, /*ndof=*/3 * (nps_s + nps_m)),
     resid(3 * (nps_s + nps_m)), tang(3 * (nps_s + nps_m), 3 * (nps_s + nps_m)),
     mode(MORTAR), theSlave(0), ndm(3), kn(epsN), nps(0),
     kt(epsT_), mu(mu_), theDomain(dom), contactTag(contactTag_), segIndex(0),
     consistentTan(consistentTan_), npsS(nps_s), npsM(nps_m), slaveFacetIndex(slaveFacetIndex_),
-    mortarCohesion(cohesion_), mortarTauMax(tauMax_)
+    mortarCohesion(cohesion_), mortarTauMax(tauMax_), isTie(isTie_)
 {
     // Connectivity = each slave-facet DOF_Group then each master-facet DOF_Group.
     // setID() fills myID = [slave_0 xyz | … | master_0 xyz | …]; mortarActive()/the
@@ -325,6 +325,21 @@ LadrunoContactFE::getResidual(Integrator *)
         // Force along n (self-equilibrating ⇒ Σφ=1): F^s_K = −(D·p)_K n, F^m_L = +(Mᵀ·p)_L n.
         double D[4][4], M[4][4], g[4], n[3];
         LadrunoContactDomain *cd = (theDomain != 0) ? theDomain->getLadrunoContactDomain() : 0;
+        if (isTie) {
+            // C4 — MESH-TIE: a permanent bond. The active set is frozen ON for every slave node and
+            // the FULL 3-vec r_I = ΣD u_s − ΣM u_m is driven to zero (no KKT, no clamp, no friction).
+            if (mortarActive(D, M, g, n)) {
+                addMortarTieForce(D, M, cd);
+            } else if (cd != 0) {
+                // overlap empty this eval: zero this facet's r contribution so it stops biasing the
+                // shared node's global accumulator (mirrors the normal-gap empty-overlap reset).
+                double z[3] = {0.0, 0.0, 0.0};
+                for (int I = 0; I < npsS; I++)
+                    cd->accumulateMortarTie(contactTag, mortarSlave[I]->getTag(), this->getTag(),
+                                            z, 0.0, kn);
+            }
+            return resid;
+        }
         if (mortarActive(D, M, g, n)) {
             double p[4] = {0, 0, 0, 0};
             for (int I = 0; I < npsS; I++) {
@@ -449,6 +464,67 @@ LadrunoContactFE::addMortarFriction(const double D[4][4], const double M[4][4], 
         }
 }
 
+// C4 — MESH-TIE force (a permanent bond; the zero-gap limit of contact). For every slave node I of
+// the facet pair: build the FULL 3-vec weighted relative DISPLACEMENT r_I = Σ_J D_IJ u_s,J −
+// Σ_K M_IK u_m,K (from getTrialDisp — the bond exists from the as-built config, so NO gT0; the C3.1
+// displacement-not-position lesson), form t_I = λ_tie,I + epsTie·(r_I/a_I) (NO clamp — equality, all
+// 3 components), and scatter via D/−M exactly like the NORMAL force: f^s_K = −Σ_I D_KI t_I,
+// f^m_L = +Σ_I M_IL t_I (self-equilibrating, Σφ=1; oracle T2). The LOCAL r_I keeps R(u) deterministic
+// per facet (the C2.2 rule); the GLOBAL r is accumulated for the commit Uzawa + ‖r‖ query only.
+void
+LadrunoContactFE::addMortarTieForce(const double D[4][4], const double M[4][4],
+                                    LadrunoContactDomain *cd)
+{
+    double us[4][3], um[4][3];
+    for (int i = 0; i < npsS; i++) {
+        const Vector &u = mortarSlave[i]->getTrialDisp();
+        for (int d = 0; d < 3; d++) us[i][d] = u(d);
+    }
+    for (int i = 0; i < npsM; i++) {
+        const Vector &u = mortarMaster[i]->getTrialDisp();
+        for (int d = 0; d < 3; d++) um[i][d] = u(d);
+    }
+    double t[4][3] = {{0}};
+    for (int I = 0; I < npsS; I++) {
+        double aFacet = 0.0;
+        for (int J = 0; J < npsS; J++) aFacet += D[I][J];
+        if (aFacet <= 1e-300) continue;             // unreferenced slave node
+        // r_I = Σ_J D_IJ u_s,J − Σ_K M_IK u_m,K  (full 3-vec weighted relative displacement)
+        double r[3] = {0, 0, 0};
+        for (int J = 0; J < npsS; J++)
+            for (int d = 0; d < 3; d++) r[d] += D[I][J] * us[J][d];
+        for (int K = 0; K < npsM; K++)
+            for (int d = 0; d < 3; d++) r[d] -= M[I][K] * um[K][d];
+        double lamTie[3] = {0, 0, 0};
+        if (cd != 0) {
+            int nodeTag = mortarSlave[I]->getTag();
+            // accumulate the GLOBAL r (order-independent — the commit Uzawa + ‖r‖ query read it).
+            cd->accumulateMortarTie(contactTag, nodeTag, this->getTag(), r, aFacet, kn);
+            // the per-GLOBAL-node tie multiplier λ_tie (committed); it assembles globally for free
+            // (Σ_facets D_KI λ_tie = D_KI^global λ_tie) — the C2.2 variationally-consistent term.
+            const LadrunoContactDomain::MortarNormalState &st =
+                cd->getOrCreateMortarNormalState(contactTag, nodeTag);
+            for (int d = 0; d < 3; d++) lamTie[d] = st.lambdaTie[d];
+        }
+        // tie traction t_I = λ_tie,I + epsTie·(r_I^local/a_I) — full 3-vec, NO clamp (kn = epsTie).
+        for (int d = 0; d < 3; d++) t[I][d] = lamTie[d] + kn * (r[d] / aFacet);
+    }
+    // scatter like the NORMAL force: f^s_K = −Σ_I D_KI t_I, f^m_L = +Σ_I M_IL t_I (the buffer is
+    // zeroed at the top of getResidual and the tie owns the whole MORTAR residual ⇒ assign with =).
+    for (int K = 0; K < npsS; K++)
+        for (int d = 0; d < 3; d++) {
+            double s = 0.0;
+            for (int I = 0; I < npsS; I++) s += D[K][I] * t[I][d];
+            resid(3 * K + d) = -s;
+        }
+    for (int L = 0; L < npsM; L++)
+        for (int d = 0; d < 3; d++) {
+            double s = 0.0;
+            for (int I = 0; I < npsS; I++) s += M[I][L] * t[I][d];
+            resid(3 * (npsS + L) + d) = s;
+        }
+}
+
 const Matrix &
 LadrunoContactFE::getTangent(Integrator *theIntegrator)
 {
@@ -523,6 +599,34 @@ LadrunoContactFE::addMortarTang(double fact, bool initialStiff)
     if (!mortarActive(D, M, g, n)) return;
     int nN = npsS + npsM;
     LadrunoContactDomain *cd = (theDomain != 0) ? theDomain->getLadrunoContactDomain() : 0;
+    if (isTie) {
+        // C4 — MESH-TIE tangent: K = epsTie · B̃ᵀ diag(1/a_I) B̃ ⊗ I₃, B̃ = [D, −M]. The active set is
+        // frozen ON (W_I = 1/a_I for EVERY slave node — no compression mask) and the per-node block is
+        // the FULL identity I₃ (all 3 components tied — normal AND tangential), not the contact n⊗n.
+        // SPD, symmetric, no Csl, no active-set switching ⇒ no -consistanttan needed (oracle T2).
+        // initialStiff is irrelevant (the penalty Gram is constant; geometric ∂{D,M}/∂u deferred, as C2).
+        double W[4] = {0.0, 0.0, 0.0, 0.0};
+        for (int I = 0; I < npsS; I++) {
+            double aFacet = 0.0;
+            for (int J = 0; J < npsS; J++) aFacet += D[I][J];
+            if (aFacet > 1e-300) W[I] = 1.0 / aFacet;
+        }
+        for (int A = 0; A < nN; A++) {
+            for (int B = 0; B < nN; B++) {
+                double Ks = 0.0;
+                for (int I = 0; I < npsS; I++) {
+                    double bIA = (A < npsS) ? D[I][A] : -M[I][A - npsS];
+                    double bIB = (B < npsS) ? D[I][B] : -M[I][B - npsS];
+                    Ks += bIA * W[I] * bIB;
+                }
+                Ks *= kn;                              // epsTie
+                if (Ks == 0.0) continue;
+                for (int d = 0; d < 3; d++)
+                    tang(3 * A + d, 3 * B + d) += fact * Ks;   // ⊗ I₃ (diagonal in the 3-space)
+            }
+        }
+        return;
+    }
     double W[4] = {0.0, 0.0, 0.0, 0.0};               // act_I / a_I^facet
     for (int I = 0; I < npsS; I++) {
         double aFacet = 0.0;

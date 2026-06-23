@@ -1,7 +1,7 @@
 ---
 title: ADR-41 C4 design / handoff — mesh-tying (permanent mortar bond, zero-gap)
 project: Ladruno
-status: NOT STARTED — handoff for the next session (C1→C3 shipped; this is the last ADR-41 mortar track)
+status: SHIPPED (C4.0 oracle proto_c4_mortar_tie.py + C4.1 penalty tie force/tangent + C4.2 ALM, #TBD). ADR-41 mortar lane DONE (C1→C4). Battery 75/75. Next: ADR-47 (dual basis / true-LM / self-contact).
 owner: nmora
 tags:
   - implementation
