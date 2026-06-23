@@ -536,7 +536,7 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                         new LadrunoContactFE(numFe++, sNodes, npsS, mNodes, npsM, epsUse,
                                              orientDir, mc.tag, sf, theDomain,
                                              mc.mu, epsTuse, mc.cohesion, mc.tauMax, mc.consistentTan,
-                                             mc.isTie);
+                                             mc.isTie, mc.muc);   // D2.2 mortar viscous (0 ⇒ off)
                     if (fe == 0) return -5;
                     theModel->addFE_Element(fe);
                     // C2.2: this pair's slave nodes have a live λ_N slot this handle().

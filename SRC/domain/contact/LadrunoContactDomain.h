@@ -121,6 +121,8 @@ class LadrunoContactDomain
         // penalty epsTie (auto ⇒ sized from the owning solid, like the contact penalty). Mutually
         // exclusive with friction (mu/cohesion/tauMax) — refused at the command surface.
         bool   isTie;
+        double muc;             // ADR-41 D2.2: viscous normal-stabilization coeff on the mortar contact
+                                // (0 ⇒ off; not allowed with isTie — a bond has no chatter regime).
     };
     int addMortarContact(int tag, int masterSurfTag, int slaveSurfTag,
                          double kn, bool knAuto, double epsN, bool epsNAuto,
@@ -128,7 +130,7 @@ class LadrunoContactDomain
                          const double *outward = 0, double cellFrac = 1.0,
                          double mu = 0.0, double epsT = 0.0, bool epsTAuto = false,
                          double cohesion = 0.0, double tauMax = 0.0, bool consistentTan = false,
-                         bool isTie = false);
+                         bool isTie = false, double muc = 0.0);
     int getNumMortarContacts(void) const { return (int)theMortarContacts.size(); }
     const MortarContact &getMortarContact(int i) const { return theMortarContacts[i]; }
 

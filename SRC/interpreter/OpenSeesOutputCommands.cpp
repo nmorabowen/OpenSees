@@ -452,8 +452,8 @@ int OPS_LadrunoContact()
     bool isTie = false;
     // ADR-41 D2 viscous stabilization: `-visc <μ_c>` adds a velocity-proportional normal contact
     // damper (p_visc = μ_c·gap_rate) that bleeds chatter/snap-through energy in the pounding/rocking/
-    // uplift regime. 0 (default) ⇒ no viscous term (byte-identical). NTS-only in D2.1 (refused on
-    // -mortar — mortar viscous is D2.2); naturally inert in statics (velocity ≡ 0).
+    // uplift regime. 0 (default) ⇒ no viscous term (byte-identical). Works on NTS (D2.1) AND mortar
+    // CONTACT (D2.2); refused with -tie (a bond has no chatter). Naturally inert in statics (v ≡ 0).
     double muc = 0.0;
     while (OPS_GetNumRemainingInputArgs() > 0) {
         const char *opt = OPS_GetString();
@@ -623,20 +623,21 @@ int OPS_LadrunoContact()
                   "(-mu/-cohesion/-tauMax): a mesh-tie has no friction cone\n";
         return -1;
     }
-    if (muc > 0.0 && isMortar) {
-        // ADR-41 D2.1 ships viscous stabilization for the NTS lane only; mortar viscous is D2.2.
-        // Refuse rather than silently ignore so the user knows -visc had no effect.
-        opserr << "WARNING contact -visc is NTS-only in D2.1 (not yet supported with -mortar; "
-                  "mortar viscous stabilization is D2.2)\n";
+    if (muc > 0.0 && isTie) {
+        // ADR-41 D2.2: a mesh-tie is a permanent bond (no contact-status flips ⇒ no chatter to damp).
+        // Refuse -visc with -tie rather than silently ignore it.
+        opserr << "WARNING contact -visc is not allowed with -tie (a bond has no contact-chatter "
+                  "regime); drop -tie for a viscous-stabilized mortar CONTACT\n";
         return -1;
     }
     if (isMortar) {
         // Ladruno ADR-41 C2.0/C2.2/C3.1: the mortar definition (normal ALM + C3.1 Coulomb/Tresca
         // friction via -mu/-epsT/-cohesion/-tauMax). friction params ≤0 ⇒ the frictionless C2 path.
         // C4: -tie ⇒ a permanent mesh-tie bond (full 3-vec r→0; friction refused above).
+        // D2.2: -visc μ_c ⇒ viscous normal stabilization on the mortar contact (refused with -tie above).
         return cd->addMortarContact(idata[0], idata[1], idata[2], kn, knAuto, epsN, epsNAuto,
                                     augTol, maxAug, ngp, hasOutward ? outward : 0, cellFrac,
-                                    mortarMu, epsT, epsTAuto, cohesion, tauMax, consistentTan, isTie);
+                                    mortarMu, epsT, epsTAuto, cohesion, tauMax, consistentTan, isTie, muc);
     }
     // D2: -visc μ_c (NTS viscous normal stabilization; 0 ⇒ off, byte-identical).
     return cd->addContact(idata[0], idata[1], idata[2], kn, kt, mu,
