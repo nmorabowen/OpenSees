@@ -419,13 +419,20 @@ LadrunoContactFE::addMortarFriction(const double D[4][4], const double M[4][4], 
             st.engaged = true;
         }
         double gTeff[3];
-        for (int d = 0; d < 3; d++) gTeff[d] = gbarT[d] - st.gT0[d];
+        // C3.3 augmented-Lagrange: the OFFSET TRICK gTeff_eff = gTeff + λ_T/epsT injects the
+        // committed tangential multiplier so the penalty return map yields the AUGMENTED trial
+        // tT* = λ_T + epsT·(gTeff − gpT). λ_T≡0 ⇒ the C3.1/C3.2 penalty friction (epsT = kt).
+        double invEpsT = (kt > 0.0) ? 1.0 / kt : 0.0;
+        for (int d = 0; d < 3; d++) gTeff[d] = (gbarT[d] - st.gT0[d]) + st.lambdaT[d] * invEpsT;
         double tF[3], gpTtrial[3];
         // N for the cone = the nodal normal pressure; epsT rides kt; trial = pure fn of committed
-        // gpT ⇒ idempotent across re-evals. Returns the APPLIED (negated) traction opposing motion.
+        // gpT/λ_T ⇒ idempotent across re-evals. Returns the APPLIED (negated) traction opposing motion.
         LadrunoFrictionKernel::frictionReturnMap(gTeff, st.gpT, N_I, kt, mu, tF, gpTtrial,
                                                  mortarCohesion, mortarTauMax);
-        for (int d = 0; d < 3; d++) { st.gpTtrial[d] = gpTtrial[d]; tFric[I][d] = tF[d]; }
+        // C3.3 Uzawa trial: λ_T ← −tFric (the returned cone-capped traction); committed in commit().
+        for (int d = 0; d < 3; d++) {
+            st.gpTtrial[d] = gpTtrial[d]; tFric[I][d] = tF[d]; st.lambdaTtrial[d] = -tF[d];
+        }
     }
     // scatter via D (slave) / −M (master), like the normal force but a VECTOR traction
     for (int K = 0; K < npsS; K++)
@@ -576,15 +583,22 @@ LadrunoContactFE::addMortarTang(double fact, bool initialStiff)
             for (int K = 0; K < npsM; K++)
                 for (int d = 0; d < 3; d++) r[d] -= M[I][K] * um[K][d];
             double rn = r[0]*n[0] + r[1]*n[1] + r[2]*n[2];
-            double gTeff[3];
-            for (int d = 0; d < 3; d++) gTeff[d] = (r[d] - rn * n[d]) / aFacet - st.gT0[d];
+            double invEpsT = (kt > 0.0) ? 1.0 / kt : 0.0;
+            double gTeff[3];                          // gTeff_eff = gTeff + λ_T/epsT (same as the residual)
+            for (int d = 0; d < 3; d++)
+                gTeff[d] = (r[d] - rn * n[d]) / aFacet - st.gT0[d] + st.lambdaT[d] * invEpsT;
             // initial-stiffness path ⇒ force the SPD STICK tangent kt·P_t: pass gTeff == gpT so the
             // trial traction is zero (‖tT*‖ ≤ cap ⇒ the kernel returns the stick block). Avoids the
             // rank-deficient slip tangent stalling Modified/Initial-Newton (gate MINOR-1, mirrors SEGMENT).
             const double *gtForKss = initialStiff ? st.gpT : gTeff;
             double Kss[3][3];
+            // C3.3: consistentTan ⇒ the full NON-SYMMETRIC Coulomb tangent (the Csl pressure coupling
+            // −μ·epsN·t̂⊗n scatters through the normal-gap operator via the same b·b/a — kn=epsN).
+            // Needs FullGeneral/UmfPack; default false ⇒ the symmetric tangent (solver-safe). Forced
+            // symmetric on the initial-stiffness path (stick, no slip ⇒ no Csl).
+            bool useConsistent = consistentTan && !initialStiff;
             LadrunoFrictionKernel::frictionTangentBlock(gtForKss, st.gpT, n, N_I, kn, kt, mu,
-                                                        /*consistent=*/false, Kss,
+                                                        useConsistent, Kss,
                                                         mortarCohesion, mortarTauMax);
             // scatter: tang(3A+i,3B+j) += fact·(b_IA b_IB / a_I)·K_ss[i][j]
             for (int A = 0; A < nN; A++) {
