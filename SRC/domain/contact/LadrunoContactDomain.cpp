@@ -25,6 +25,7 @@
 #include "LadrunoContactSurface.h"
 #include <OPS_Globals.h>   // opserr, endln
 #include <cmath>           // sqrt
+#include <algorithm>       // std::min, std::max (C2.2 Uzawa clamp)
 
 LadrunoContactDomain::LadrunoContactDomain()
   : numCommits(0), numReverts(0)
@@ -187,6 +188,95 @@ LadrunoContactDomain::getOrCreateFrictionState(int contactTag, int slaveTag, int
     return theFrictionStates[k];
 }
 
+// ===================================================== ADR-41 C2.2 normal ALM (λ_N)
+LadrunoContactDomain::MortarNormalState &
+LadrunoContactDomain::getOrCreateMortarNormalState(int contactTag, int slaveNodeTag)
+{
+    NodeKey k; k.c = contactTag; k.n = slaveNodeTag;
+    // operator[] default-constructs a zeroed MortarNormalState (λ_N = 0) when absent.
+    return theMortarNormalStates[k];
+}
+
+void
+LadrunoContactDomain::accumulateMortarGap(int contactTag, int slaveNodeTag, int feTag,
+                                          double gtFacet, double aFacet, double epsN)
+{
+    // delta update so a re-eval OVERWRITES (idempotent — the residual may be formed several
+    // times per Newton iterate, and twice on the CDL first step). The node's gtGlobal/aGlobal
+    // stays the running Σ over the facets this node touches (oracle T7(b): == the global g̃,a).
+    PairKey fk; fk.c = contactTag; fk.s = slaveNodeTag; fk.g = feTag;
+    FacetContrib &fc = theMortarFacetContribs[fk];
+    NodeKey nk; nk.c = contactTag; nk.n = slaveNodeTag;
+    MortarNormalState &st = theMortarNormalStates[nk];
+    st.gtGlobal += gtFacet - fc.gt;
+    st.aGlobal += aFacet - fc.a;
+    // epsN for the commit-time Uzawa update at this node. For a fixed `-epsN val` every facet
+    // writes the same value. Under `-epsN auto` the penalty is sized PER MASTER FACET, so a
+    // shared slave node sees several; take the MAX (stiffest) — order-INDEPENDENT (a plain
+    // overwrite would be last-writer-wins, i.e. facet-eval-order dependent). epsN is reset to 0
+    // each handle() (mortarNormalGCEnd) so this max is per-analysis, never a cross-rebuild leak.
+    if (epsN > st.epsN) st.epsN = epsN;
+    fc.gt = gtFacet; fc.a = aFacet;
+}
+
+double
+LadrunoContactDomain::getMaxMortarPenetration(void) const
+{
+    double pen = 0.0;
+    for (std::map<NodeKey, MortarNormalState>::const_iterator it = theMortarNormalStates.begin();
+         it != theMortarNormalStates.end(); ++it) {
+        const MortarNormalState &st = it->second;
+        if (st.aGlobal <= 1e-300) continue;
+        double gbar = st.gtGlobal / st.aGlobal;          // ḡ_I; < 0 ⇒ penetration
+        // KKT-active only: a node held open (λ + epsN·ḡ ≥ 0) is NOT a contact violation even
+        // if its raw ḡ < 0 (it would be clamped to zero pressure), so it does not count here.
+        // NOTE: this uses the GLOBAL gap (the augmentation measure), whereas the per-facet
+        // force/tangent active mask uses each facet's LOCAL gap; the two coincide at equilibrium
+        // (where this query is read — after the converged commit), so the augTol stop criterion
+        // is evaluated consistently with the converged force.
+        if (st.lambdaN + st.epsN * gbar < 0.0 && -gbar > pen)
+            pen = -gbar;
+    }
+    return pen;
+}
+
+void
+LadrunoContactDomain::mortarNormalGCBegin(void)
+{
+    liveNodeKeys.clear();
+}
+
+void
+LadrunoContactDomain::mortarNormalGCMark(int contactTag, int slaveNodeTag)
+{
+    NodeKey k; k.c = contactTag; k.n = slaveNodeTag;
+    liveNodeKeys.insert(k);
+}
+
+void
+LadrunoContactDomain::mortarNormalGCEnd(void)
+{
+    // prune λ_N slots no live mortar pair referenced this handle() (the re-mesh leak class).
+    for (std::map<NodeKey, MortarNormalState>::iterator it = theMortarNormalStates.begin();
+         it != theMortarNormalStates.end(); ) {
+        if (liveNodeKeys.find(it->first) == liveNodeKeys.end())
+            theMortarNormalStates.erase(it++);
+        else
+            ++it;
+    }
+    liveNodeKeys.clear();
+    // FE tags are reassigned each handle(), so the facet-contribution keys are NOT stable —
+    // drop them all and zero the (transient) running gap sums on the survivors. The adapters
+    // re-fill gtGlobal/aGlobal on the next getResidual sweep (delta from 0); only λ_N persists.
+    theMortarFacetContribs.clear();
+    for (std::map<NodeKey, MortarNormalState>::iterator it = theMortarNormalStates.begin();
+         it != theMortarNormalStates.end(); ++it) {
+        it->second.gtGlobal = 0.0;
+        it->second.aGlobal = 0.0;
+        it->second.epsN = 0.0;     // re-established (max over facets) on the next residual sweep
+    }
+}
+
 void
 LadrunoContactDomain::frictionGCBegin(void)
 {
@@ -225,6 +315,20 @@ LadrunoContactDomain::commit(void)
     for (std::map<PairKey, FrictionState>::iterator it = theFrictionStates.begin();
          it != theFrictionStates.end(); ++it)
         for (int d = 0; d < 3; d++) it->second.gpT[d] = it->second.gpTtrial[d];
+
+    // C2.2 — ONE Uzawa augmentation per commit (the EmbeddedRebar::commitState precedent):
+    // λ_I ← min(0, λ_I + epsN·ḡ_I), ḡ_I = g̃_I^global / a_I^global (the just-converged trial
+    // gap, accumulated across facets by the adapters this step). Across load steps this
+    // augments for free on stock Newton; a held-load `analyzeAugmented` proc re-commits at
+    // zero increment to drive ‖ḡ‖→augTol within a step. λ_N is mutated ONLY here, so the
+    // revertToLastCommit path leaves it untouched (the committed-only invariant).
+    for (std::map<NodeKey, MortarNormalState>::iterator it = theMortarNormalStates.begin();
+         it != theMortarNormalStates.end(); ++it) {
+        MortarNormalState &st = it->second;
+        if (st.aGlobal <= 1e-300) continue;          // unreferenced this step
+        double gbar = st.gtGlobal / st.aGlobal;
+        st.lambdaN = std::min(0.0, st.lambdaN + st.epsN * gbar);
+    }
     return 0;
 }
 

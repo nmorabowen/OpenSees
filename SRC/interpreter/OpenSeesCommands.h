@@ -281,6 +281,7 @@ int OPS_LadrunoContactSurface();       // Ladruno: ADR-39 P1b
 int OPS_LadrunoContact();              // Ladruno: ADR-39 P1b
 int OPS_LadrunoContactPlane();         // Ladruno: ADR-39 P2a (rigid plane)
 int OPS_LadrunoContactInfo();          // Ladruno: ADR-39 P1b query
+int OPS_LadrunoMortarPenetration();    // Ladruno: ADR-41 C2.2 query (max ‖ḡ‖ penetration)
 int OPS_nodeEigenvector();
 int OPS_getTime();
 int OPS_eleResponse();

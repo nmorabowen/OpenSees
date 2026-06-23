@@ -744,6 +744,13 @@ static PyObject *Py_ops_LadrunoContactInfo(PyObject *self, PyObject *args)  // L
     return wrapper->getResults();
 }
 
+static PyObject *Py_ops_LadrunoMortarPenetration(PyObject *self, PyObject *args)  // Ladruno ADR-41 C2.2
+{
+    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
+    if (OPS_LadrunoMortarPenetration() < 0) { opserr<<(void*)0; return NULL; }
+    return wrapper->getResults();
+}
+
 static PyObject *Py_ops_nodeReaction(PyObject *self, PyObject *args)
 {
     wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
@@ -3189,6 +3196,7 @@ PythonWrapper::addOpenSeesCommands()
     addCommand("contact", &Py_ops_LadrunoContact);                  // Ladruno ADR-39
     addCommand("contactPlane", &Py_ops_LadrunoContactPlane);        // Ladruno ADR-39 P2a
     addCommand("ladrunoContactInfo", &Py_ops_LadrunoContactInfo);   // Ladruno ADR-39
+    addCommand("ladrunoMortarPenetration", &Py_ops_LadrunoMortarPenetration);  // Ladruno ADR-41 C2.2
     addCommand("eigen", &Py_ops_eigen);
     addCommand("modalProperties", &Py_ops_modalProperties);
     addCommand("responseSpectrumAnalysis", &Py_ops_responseSpectrumAnalysis);

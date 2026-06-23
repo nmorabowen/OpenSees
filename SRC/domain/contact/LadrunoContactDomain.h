@@ -147,6 +147,48 @@ class LadrunoContactDomain
     // lazily create + return the slot for a pair (zeroed, engaged=false if new).
     FrictionState &getOrCreateFrictionState(int contactTag, int slaveTag, int segIndex);
 
+    // --- ADR-41 C2.2: per-GLOBAL-slave-node normal multiplier λ_N (frictionless
+    //     commit-cycle ALM). Keyed (contactTag, slaveNodeTag) — NOT per facet: λ is one
+    //     value per global slave node (per-facet-local λ is variationally inconsistent at
+    //     shared nodes and fails the patch test). The augmented nodal pressure is
+    //     p_I = min(0, λ_I + epsN·ḡ_I), ḡ_I = g̃_I^global / a_I^global where the GLOBAL
+    //     weighted gap g̃_I^global = Σ_facets ∫N_I g_N dΓ and area a_I^global = Σ_facets ∫N_I dΓ
+    //     are accumulated across the facets a shared slave node touches. λ_N is COMMITTED-ONLY
+    //     (mutated solely in commit() ⇒ revertToLastCommit is automatically safe — the
+    //     EmbeddedRebar invariant). One Uzawa step per Domain::commit(): the across-step
+    //     augmentation; the within-step held-load `analyzeAugmented` proc drives ‖ḡ‖→augTol. ---
+    struct MortarNormalState {
+        double lambdaN;   // committed normal multiplier (≤ 0); updated ONLY in commit()
+        double gtGlobal;  // Σ_facets g̃_I^facet at the current trial (incremental — see below)
+        double aGlobal;   // Σ_facets a_I^facet = ∫N_I dΓ (incremental)
+        double epsN;      // the penalty the adapters use at this node (for the commit update)
+        MortarNormalState() : lambdaN(0.0), gtGlobal(0.0), aGlobal(0.0), epsN(0.0) {}
+    };
+    // lazily create + return the per-node slot (zeroed if new).
+    MortarNormalState &getOrCreateMortarNormalState(int contactTag, int slaveNodeTag);
+    // a per-facet adapter reports its contribution g̃_I^facet / a_I^facet to a slave node,
+    // keyed STABLY by the adapter's FE tag so a re-eval OVERWRITES (idempotent, never
+    // double-counts). Maintains the node's gtGlobal/aGlobal as the running Σ over facets via a
+    // delta update (write-then-read: call this BEFORE reading the node's global gap so the
+    // calling facet's own current contribution is included). epsN is stored on the node slot.
+    void accumulateMortarGap(int contactTag, int slaveNodeTag, int feTag,
+                             double gtFacet, double aFacet, double epsN);
+    // ‖ḡ‖_∞ restricted to PENETRATION (max over active nodes of max(0, −ḡ_I)) — the convergence
+    // measure the held-load `analyzeAugmented` proc reads to stop augmenting. 0 if no contact.
+    double getMaxMortarPenetration(void) const;
+    int  getNumMortarNormalStates(void) const { return (int)theMortarNormalStates.size(); }
+
+    // dead-slot GC (mirror frictionGC*): the engine survives domainChanged + across analyze()
+    // calls, so a re-meshed analysis would leak old λ_N node slots. The handler rebuilds the
+    // live node-set each handle(): mortarNormalGCBegin() → mortarNormalGCMark(...) per live slave
+    // node → mortarNormalGCEnd() erases unmarked slots, drops ALL transient facet contributions,
+    // and zeros gtGlobal/aGlobal on survivors (the adapters re-fill them next getResidual; only
+    // λ_N is path-dependent and must survive). FE tags are reassigned each handle(), so the
+    // facet-contribution map MUST be cleared here — its keys are not stable across rebuilds.
+    void mortarNormalGCBegin(void);
+    void mortarNormalGCMark(int contactTag, int slaveNodeTag);
+    void mortarNormalGCEnd(void);
+
     // dead-slot GC (design-gate MAJOR: the engine survives domainChanged AND across
     // analyze() calls, so a re-meshed/re-paired analysis would leak old friction
     // slots — the ADR-30 theEQs leak class). The handler rebuilds the live key-set
@@ -182,6 +224,22 @@ class LadrunoContactDomain
     };
     std::map<PairKey, FrictionState> theFrictionStates;
     std::set<PairKey> liveKeys;                         // GC scratch (per handle())
+
+    // C2.2 normal-ALM state, keyed by (contactTag, slaveNodeTag) — a 2-field key.
+    struct NodeKey {
+        int c, n;
+        bool operator<(const NodeKey &o) const {
+            if (c != o.c) return c < o.c;
+            return n < o.n;
+        }
+    };
+    std::map<NodeKey, MortarNormalState> theMortarNormalStates;
+    std::set<NodeKey> liveNodeKeys;                     // mortar GC scratch (per handle())
+    // transient per-facet contribution g̃_I^facet / a_I^facet keyed (contactTag, nodeTag, feTag);
+    // delta-updated each getResidual, summed into the node slot's gtGlobal/aGlobal. Cleared every
+    // handle() (feTag is not rebuild-stable). PairKey {c,s=nodeTag,g=feTag} reuses the 3-int key.
+    struct FacetContrib { double gt, a; FacetContrib() : gt(0.0), a(0.0) {} };
+    std::map<PairKey, FacetContrib> theMortarFacetContribs;
 };
 
 #endif

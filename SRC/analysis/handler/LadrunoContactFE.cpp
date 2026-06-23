@@ -108,14 +108,16 @@ LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, Node **segNodes,
     npsS = npsM = 0; slaveFacetIndex = 0;
 }
 
-// C2.1 — clipped-GP MORTAR penalty contact (one slave facet vs one master facet).
+// C2.1/C2.2 — clipped-GP MORTAR contact (one slave facet vs one master facet). theDomain
+// (C2.2) reaches the engine for the per-node λ_N + global gap; null ⇒ the C2.1 penalty path.
 LadrunoContactFE::LadrunoContactFE(int tag, Node **slaveNodes, int nps_s,
                                    Node **masterNodes, int nps_m, double epsN,
-                                   const double odir[3], int contactTag_, int slaveFacetIndex_)
+                                   const double odir[3], int contactTag_, int slaveFacetIndex_,
+                                   Domain *dom)
   : FE_Element(tag, /*numDOF_Group=*/nps_s + nps_m, /*ndof=*/3 * (nps_s + nps_m)),
     resid(3 * (nps_s + nps_m)), tang(3 * (nps_s + nps_m), 3 * (nps_s + nps_m)),
     mode(MORTAR), theSlave(0), ndm(3), kn(epsN), nps(0),
-    kt(0.0), mu(0.0), theDomain(0), contactTag(contactTag_), segIndex(0),
+    kt(0.0), mu(0.0), theDomain(dom), contactTag(contactTag_), segIndex(0),
     consistentTan(false), npsS(nps_s), npsM(nps_m), slaveFacetIndex(slaveFacetIndex_)
 {
     // Connectivity = each slave-facet DOF_Group then each master-facet DOF_Group.
@@ -307,30 +309,52 @@ LadrunoContactFE::getResidual(Integrator *)
             }
         }
     } else if (mode == MORTAR) {
+        // C2.2 — augmented Lagrange. The augmented nodal pressure is
+        //   p_I = min(0, λ_I + epsN·ḡ_I^facet),  ḡ_I^facet = g̃_I^facet / a_I^facet,
+        // where λ_I is the per-GLOBAL-slave-node multiplier (committed-only, on the Domain) and
+        // ḡ_I^facet is THIS facet's local normalized gap. Using the LOCAL gap (not a running
+        // global one) keeps the per-facet residual sweep DETERMINISTIC — NewtonRaphson forms the
+        // residual facet-by-facet, so a shared node reading a running global gap would see a
+        // different pressure in each facet (an order-dependent, non-Newton residual). The λ_I
+        // term assembles globally (shared ⇒ Σ_facets D_KI^facet λ_I = D_KI^global λ_I), and the
+        // penalty term → 0 under augmentation, so the converged state is consistent + epsN-
+        // independent (oracle T8). The GLOBAL gap is accumulated here ONLY for the commit-time
+        // Uzawa update of λ_I + the ‖ḡ‖ query — never read back into THIS sweep's force.
+        // Force along n (self-equilibrating ⇒ Σφ=1): F^s_K = −(D·p)_K n, F^m_L = +(Mᵀ·p)_L n.
         double D[4][4], M[4][4], g[4], n[3];
+        LadrunoContactDomain *cd = (theDomain != 0) ? theDomain->getLadrunoContactDomain() : 0;
         if (mortarActive(D, M, g, n)) {
-            // ḡ_I = g̃_I / a_I (a_I = Σ_J D_IJ = ∫N_I dΓ); penalty pressure t_I =
-            // min(0, epsN·ḡ_I) (compression ≤ 0; λ_N Uzawa = C2.2). Force along n:
-            //   F^s_K = −(D·t)_K n ,  F^m_L = +(Mᵀ·t)_L n   (self-equilibrating ⇒ Σφ=1).
-            double t[4] = {0, 0, 0, 0};
+            double p[4] = {0, 0, 0, 0};
             for (int I = 0; I < npsS; I++) {
-                double aI = 0.0;
-                for (int J = 0; J < npsS; J++) aI += D[I][J];
-                if (aI <= 1e-300) continue;               // unreferenced slave node
-                double gbar = g[I] / aI;
-                double p = kn * gbar;                     // kn carries epsN
-                t[I] = (p < 0.0) ? p : 0.0;               // active iff penetrating
+                double aFacet = 0.0;                      // a_I^facet = Σ_J D_IJ = ∫N_I dΓ (this facet)
+                for (int J = 0; J < npsS; J++) aFacet += D[I][J];
+                if (aFacet <= 1e-300) continue;           // unreferenced slave node
+                double lambdaI = 0.0;
+                if (cd != 0) {
+                    // accumulate the GLOBAL weighted gap (for commit/query) + read λ_I.
+                    int nodeTag = mortarSlave[I]->getTag();
+                    cd->accumulateMortarGap(contactTag, nodeTag, this->getTag(), g[I], aFacet, kn);
+                    lambdaI = cd->getOrCreateMortarNormalState(contactTag, nodeTag).lambdaN;
+                }
+                double pr = lambdaI + kn * (g[I] / aFacet);   // λ_I + epsN·ḡ_I^facet (kn = epsN)
+                p[I] = (pr < 0.0) ? pr : 0.0;             // active iff compression (KKT clamp)
             }
-            for (int K = 0; K < npsS; K++) {              // slave block: −(D·t)_K n
-                double Dt = 0.0;
-                for (int I = 0; I < npsS; I++) Dt += D[K][I] * t[I];
-                for (int d = 0; d < 3; d++) resid(3 * K + d) = -Dt * n[d];
+            for (int K = 0; K < npsS; K++) {              // slave block: −(D·p)_K n
+                double Dp = 0.0;
+                for (int I = 0; I < npsS; I++) Dp += D[K][I] * p[I];
+                for (int d = 0; d < 3; d++) resid(3 * K + d) = -Dp * n[d];
             }
-            for (int L = 0; L < npsM; L++) {              // master block: +(Mᵀ·t)_L n
-                double Mt = 0.0;
-                for (int I = 0; I < npsS; I++) Mt += M[I][L] * t[I];
-                for (int d = 0; d < 3; d++) resid(3 * (npsS + L) + d) = Mt * n[d];
+            for (int L = 0; L < npsM; L++) {              // master block: +(Mᵀ·p)_L n
+                double Mp = 0.0;
+                for (int I = 0; I < npsS; I++) Mp += M[I][L] * p[I];
+                for (int d = 0; d < 3; d++) resid(3 * (npsS + L) + d) = Mp * n[d];
             }
+        } else if (cd != 0) {
+            // overlap empty THIS eval (the pair separated / the clip rejected it): zero this
+            // facet's contribution so it stops biasing the shared node's accumulated global gap.
+            for (int I = 0; I < npsS; I++)
+                cd->accumulateMortarGap(contactTag, mortarSlave[I]->getTag(), this->getTag(),
+                                        0.0, 0.0, kn);
         }
     }
     return resid;
@@ -395,21 +419,31 @@ LadrunoContactFE::addKtToTang(double fact)
     }
 }
 
-// C2.1 — K_c = epsN · B̃ᵀ diag(act/a) B̃ ⊗ (n⊗n), B̃ = [D, −M] over [slave|master] nodes.
+// C2.1/C2.2 — K_c = epsN · B̃ᵀ diag(act/a) B̃ ⊗ (n⊗n), B̃ = [D, −M] over [slave|master] nodes.
 // Material/penalty tangent only — the geometric ∂{D,M,n}/∂u terms are the C1 linearization
 // stub, deferred (NTS shipped without ∂n/∂u). SPD on the active set; matches proto_c2_alm.
+// C2.2: the active mask uses the SAME per-facet pressure p_I = min(0, λ_I + epsN·ḡ_I^facet)
+// the residual used (local gap + the global multiplier λ_I), so the tangent is the derivative
+// of the augmented residual at the frozen active set. The λ_I offset only shifts the active
+// SET (∂λ/∂u = 0 within a sweep), so the penalty Gram block is unchanged. theDomain==0 ⇒ the
+// C2.1 fallback (λ≡0).
 void
 LadrunoContactFE::addMortarTang(double fact)
 {
     double D[4][4], M[4][4], g[4], n[3];
     if (!mortarActive(D, M, g, n)) return;
     int nN = npsS + npsM;
-    double W[4] = {0.0, 0.0, 0.0, 0.0};               // act_I / a_I  (a_I = Σ_J D_IJ)
+    LadrunoContactDomain *cd = (theDomain != 0) ? theDomain->getLadrunoContactDomain() : 0;
+    double W[4] = {0.0, 0.0, 0.0, 0.0};               // act_I / a_I^facet
     for (int I = 0; I < npsS; I++) {
-        double aI = 0.0;
-        for (int J = 0; J < npsS; J++) aI += D[I][J];
-        if (aI <= 1e-300) continue;
-        if (kn * (g[I] / aI) < 0.0) W[I] = 1.0 / aI;  // active iff penetrating (kn = epsN)
+        double aFacet = 0.0;
+        for (int J = 0; J < npsS; J++) aFacet += D[I][J];
+        if (aFacet <= 1e-300) continue;
+        double lambdaI = (cd != 0)
+            ? cd->getOrCreateMortarNormalState(contactTag, mortarSlave[I]->getTag()).lambdaN
+            : 0.0;
+        double pr = lambdaI + kn * (g[I] / aFacet);   // same p_I as the residual (kn = epsN)
+        if (pr < 0.0) W[I] = 1.0 / aFacet;            // active iff compression
     }
     for (int A = 0; A < nN; A++) {
         for (int B = 0; B < nN; B++) {
