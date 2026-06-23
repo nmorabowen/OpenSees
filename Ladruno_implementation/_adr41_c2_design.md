@@ -1,7 +1,7 @@
 ---
 title: ADR-41 C2 design / handoff — frictionless commit-cycle ALM (mortar enforcement)
 project: Ladruno
-status: handoff (design, not yet implemented)
+status: in progress — C2.0 #373 + C2.1 #374 shipped; C2.2 (Uzawa-on-commit) is next (see the C2.2 handoff section)
 owner: nmora
 tags:
   - implementation
@@ -175,3 +175,88 @@ The Explore map (verified against source) — mirror these, do **not** invent a 
 
 Only after 1–6 pass in numpy, wire C2.1 then C2.2 into the C++ seams above, re-confirm via a standalone
 `g++` assembly check + Zone-A (C2 is NOT header-only — it links into the build).
+
+---
+
+# C2.2 handoff — Uzawa on the commit cycle (START HERE for C2.2)
+
+> **Status (2026-06-23).** C2.1 shipped (#374): the `MORTAR` `LadrunoContactFE` mode assembles the
+> **penalty** force/tangent (`t_I = min(0, epsN·ḡ_I)`, λ≡0) over brute-force facet pairs; the C2.1
+> ctor already stores `slaveFacetIndex` + `contactTag` for the λ_N state lookup C2.2 adds. The Uzawa
+> mechanics are validated in `proto_c2_alm.py` (18/18: T3 epsN-independent convergence, T4 release).
+> C2.2 turns the penalty into true ALM: penetration → tol at FINITE epsN (the headline accuracy win).
+
+## The crux — per-node `λ_N` but per-facet adapters (resolve THIS first)
+
+The augmented nodal pressure is `p_I = λ_I + epsN·ḡ_I` for each **global slave node** `I`, with
+`ḡ_I = g̃_I^global / a_I^global` where `g̃_I^global = Σ_facets ∫N_I g_N dΓ` and `a_I^global = Σ_facets ∫N_I dΓ`
+(a slave node is shared by several facets). The variational force is a GLOBAL assembly `f = (D^global) p`
+— but C2.1 evaluates one **per-facet** adapter at a time, so when an adapter assembles a shared node's
+force it does **not** yet know the global gap. This is the one non-obvious decision; the others (commit-
+cycle update, active set) follow the shipped `FrictionState` pattern.
+
+**Why summing per-facet forces is correct IF every facet uses the SAME global `p_I`:**
+`f_K = Σ_facets Σ_I D_KI^facet p_I n = Σ_I (Σ_facets D_KI^facet) p_I n = Σ_I D_KI^global p_I n` ✓.
+So the ONLY requirement is that each adapter reads the **global** `p_I` (same value for a shared node
+across its facets). `λ_I` is global and committed (no problem). The trouble is the **global penalty gap**
+`ḡ_I^global` inside `p_I` — it needs the cross-facet sum.
+
+**Recommended resolution — lagged global gap on the Domain (one extra Domain map, no new pass):**
+1. `LadrunoContactDomain` gains a per-global-slave-node map keyed `(contactTag, slaveNodeTag)`:
+   `struct MortarNormalState { double lambdaN; double lambdaNtrial; double gtAccum; double aAccum; double gtGlobal; double aGlobal; }`
+   (`lambdaN` ≤ 0, committed-only — mutated solely in `commit()`, so `revertToLastCommit` is automatically
+   safe, the EmbeddedRebar invariant).
+2. **Adapter `getResidual` (per facet):** for each of its slave nodes `I`, ADD this facet's `g̃_I^facet`
+   and `a_I^facet` into `gtAccum`/`aAccum`. Form the per-node pressure with the **previous** iteration's
+   global gap: `p_I = min(0, λ_I + epsN · gtGlobal_I / aGlobal_I)` (lagged by one residual eval). Assemble
+   `f^s = −(D·p)n`, `f^m = +(Mᵀ·p)n` and the tangent `epsN·B̃ᵀdiag(act/a)B̃⊗(n⊗n)` exactly as C2.1 but with
+   the active mask from `p_I` and `a_I` the **global** `aGlobal_I`.
+3. **End-of-iteration promotion:** when does `gtAccum → gtGlobal`? Each *residual sweep* over all adapters
+   fills `gtAccum`; promote `gtGlobal = gtAccum; aGlobal = aAccum; gtAccum = aAccum = 0` at the START of the
+   next sweep. Cleanest trigger: the FIRST adapter to touch a node in a sweep promotes+zeros it (a per-node
+   `epoch`/`touched` flag reset by `commit`/`revertToLastCommit`), OR (simpler) promote in `commit()` and
+   `revertToLastCommit()` and accept that within-iteration the gap lags — the lag → 0 at convergence (the
+   contact gap is stationary at equilibrium; standard Uzawa-penalty practice). **Start with the simplest:
+   accumulate during getResidual, read `gtGlobal` from the last committed/promoted sweep.** Validate against
+   the oracle's T3 (converged penetration must be epsN-independent — if the lag corrupts it, escalate to a
+   per-node `touched`-flag promotion).
+4. **Uzawa update in `LadrunoContactDomain::commit()`** (the existing `Domain::commit` hook, beside the
+   friction promotion): for every node slot, `λ_I ← min(0, λ_I + epsN · gtGlobal_I / aGlobal_I)`, then
+   promote the accumulators. ONE Uzawa step per commit = the EmbeddedRebar precedent; across load steps this
+   augments for free on stock `Newton`. Within-step augmentation (when a gate needs it) = the held-load
+   `analyzeAugmented` proc (zero-increment re-commits reading `‖ḡ‖_∞` until `< augTol`), a tested Tcl/Py
+   recipe — NOT a custom `EquiSolnAlgo` (Q-DRIVER).
+5. **Active set frozen within an augmentation sweep** (membership from `λ_I + epsN·ḡ_I < 0`, fixed across
+   re-solves between augmentations ⇒ no `domainChanged()` ⇒ **eqn count constant** — a named gate). It
+   changes only between physical steps.
+6. **GC** (mirror `frictionGC*`): `mortarNormalGCBegin/Mark/End` each `handle()` prunes node slots no live
+   mortar pair references.
+
+**Alternative if the lag misbehaves:** a Domain **pre-pass** that, before the residual loop, walks the
+mortar pairs once to fill `gtGlobal`/`aGlobal` at the current trial (no lag). Cleaner numerically but needs
+a hook to run before FE assembly — heavier. Try the lagged version first.
+
+**Do NOT** use a per-facet-local λ (one λ per facet-node copy): it is variationally inconsistent at shared
+nodes and will fail the patch test. λ is per GLOBAL slave node.
+
+## C2.2 deliverables
+
+| File | Change |
+|---|---|
+| `LadrunoContactDomain.{h,cpp}` | `MortarNormalState` map keyed `(contactTag, slaveNodeTag)` + `getOrCreateMortarNormalState` + the Uzawa update in `commit()` + accumulator promotion + `mortarNormalGC*`. |
+| `LadrunoContactFE.{cpp,h}` | MORTAR `getResidual`/`addMortarTang`: read `λ_I` + global `ḡ_I` from the Domain (lazy `theDomain` re-fetch, like friction), accumulate `g̃_I^facet`/`a_I^facet`, use `p_I = min(0, λ_I + epsN·ḡ_I)`. The ctor already carries `theDomain`? — C2.1 passes `contactTag`/`slaveFacetIndex` but NOT `theDomain`; ADD a `Domain*` arg (mirror the SEGMENT ctor) so the adapter can reach the engine. |
+| handler | pass `theDomain` to the MORTAR ctor; `mortarNormalGCMark` per built pair. |
+| `analyzeAugmented` proc | a tested Tcl/Py recipe (held-load zero-increment re-commits to `augTol`). |
+| `proto_c2_alm.py` | already covers the mechanics; add an assembled-multi-facet shared-node check if the lag resolution needs pinning. |
+
+## C2.2 gates (capstone C2 / ADR-41 P2)
+
+- penetration `g̃ → an epsN-INDEPENDENT tol` within `maxAug` (the ALM win penalty can't reach) — the headline;
+- **release/reopen → exact F=0** and `λ→0`;
+- **Hertz** sphere/cylinder `p(r)=p₀√(1−(r/a)²)` peak+radius converge under refinement (a real elastic mesh —
+  the half-space coupling the C2 oracle could not model; this is where the deferred Hertz gate lands);
+- **SOE eqn count CONSTANT across augmentations** (no new DOFs; active set frozen within a sweep);
+- Kratos `ALMFrictionlessMortarContactCondition` trend cross-check (concept-level).
+
+After C2.2: **C3** = friction (adopt the shipped `LadrunoFrictionKernel` on the mortar `λ_T` form); **C4** =
+mesh-tying (`-tie`, zero-gap = active set frozen ON).
