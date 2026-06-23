@@ -1580,7 +1580,11 @@ non-obvious behaviours, all relevant to anyone wiring `-stabilize` into a driver
   approximation at shared nodes" ([[_adr41_c3_design]]). But it is UNGUARDED and untested for non-matched
   friction. **Before C4 / non-matched frictional meshes:** add a shared-node friction regression + either a
   per-(node,feTag) slip reconciliation or an explicit area-weighted blend. Found by the C3.1 adversarial gate
-  (MAJOR-1, #377).
+  (MAJOR-1, #377). **C3.3 update (#379):** the tangential multiplier `λ_T` (committed from `lambdaTtrial`,
+  written per-facet last-writer-wins) and `gpT` BOTH inherit this — unlike the normal `λ_N` Uzawa, which
+  augments from the order-INDEPENDENT global accumulator `gtGlobal/aGlobal`. So the per-node `λ_T`/`gpT`
+  reconciliation is the same single fix for the whole friction state. Still fenced to matched/explicit; the
+  C3.3 gate (MINOR-1) re-confirmed it is inherited, not introduced.
 
 ### Mortar friction gT0/engaged are captured in getResidual and NOT reverted — latent until the C3.2 implicit tangent
 - **Bites:** ADR-41 C3.2 (NOT C3.1). `revertToLastCommit` drops only `gpTtrial=gpT` for mortar slots

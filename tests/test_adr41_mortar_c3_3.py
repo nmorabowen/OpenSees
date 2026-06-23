@@ -127,16 +127,21 @@ def _coulomb_slip(consistent, system):
     ops.algorithm("Newton")
     ops.analysis("Static")
     ops.integrator("LoadControl", 1.0)
-    return ops.analyze(1), ops.nodeDisp(5, 1)
+    rc = ops.analyze(1)
+    return rc, ops.nodeDisp(5, 1), ops.testIter()
 
 
 def test_c3_3_consistanttan_coulomb_converges_same_root():
     """`-consistanttan` (non-symmetric Coulomb Csl) is now FUNCTIONAL for mortar: a slipping Coulomb
     config converges on a non-symmetric solver (FullGeneral) to the SAME converged state as the
     default symmetric tangent (the tangent changes only the Newton path, not the root)."""
-    rc_sym, ux_sym = _coulomb_slip(consistent=False, system="FullGeneral")
-    rc_cons, ux_cons = _coulomb_slip(consistent=True, system="FullGeneral")
+    rc_sym, ux_sym, it_sym = _coulomb_slip(consistent=False, system="FullGeneral")
+    rc_cons, ux_cons, it_cons = _coulomb_slip(consistent=True, system="FullGeneral")
     assert rc_sym == 0, "symmetric-tangent Coulomb slip did not converge"
     assert rc_cons == 0, "-consistanttan Coulomb slip did not converge on FullGeneral"
     assert abs(ux_sym - ux_cons) < 1.0e-7, (
         f"consistent vs symmetric reached different roots: {ux_cons} vs {ux_sym}")
+    # the consistent (non-symmetric Coulomb) tangent is the EXACT derivative ⇒ it must not need
+    # MORE Newton iterations than the symmetric approximation (quadratic vs superlinear) — the
+    # justification for offering -consistanttan at all.
+    assert it_cons <= it_sym, f"consistent tangent took MORE iters ({it_cons}) than symmetric ({it_sym})"
