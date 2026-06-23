@@ -1,7 +1,7 @@
 ---
 title: ADR-41 C3 design / handoff — frictional mortar contact (Coulomb/Tresca on the λ_T form)
 project: Ladruno
-status: in progress — C3.0 design+oracle (#376) + C3.1 force (#377) + C3.2 SYMMETRIC tangent (#PENDING) shipped; C3.3 (optional λ_T Uzawa) + the non-sym mortar Csl remain
+status: in progress — C3.0 design+oracle (#376) + C3.1 force (#377) + C3.2 SYMMETRIC tangent (#378) shipped; C3.3 (optional λ_T Uzawa) + the non-sym mortar Csl remain
 owner: nmora
 tags:
   - implementation
