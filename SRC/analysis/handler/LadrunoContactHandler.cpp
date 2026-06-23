@@ -29,6 +29,7 @@
 #include <LadrunoContactDomain.h>    // Ladruno: ADR-39 (adapter count from the engine)
 #include <LadrunoContactSurface.h>   // Ladruno: ADR-39 P2a (slave node-set)
 #include <LadrunoContactKernel.h>    // Ladruno: ADR-39 P2b-2b (reference normal for -kn auto)
+#include <LadrunoContactProjection.h> // Ladruno: ADR-41 A2 (normalOriented projection geometry)
 #include <LadrunoContactBucketSort.h>// Ladruno: ADR-39 P2.5 (broad-phase pairing)
 #include <Matrix.h>                  // Ladruno: ADR-39 P2b-2b (master getInitialStiff)
 #include <Domain.h>
@@ -98,7 +99,7 @@ ladrunoResolveAutoKn(Domain *theDomain, Node **segNodes, int nps,
     double xiC  = (nps == 4) ? 0.0 : (1.0 / 3.0);
     double etaC = (nps == 4) ? 0.0 : (1.0 / 3.0);
     double n[3];
-    if (!LadrunoContactKernel::normalOriented(nps, xiC, etaC, Xref, orientDir, n))
+    if (!LadrunoContactProjection::normalOriented(nps, xiC, etaC, Xref, orientDir, n))
         return -1.0;
     int segTags[4];
     for (int k = 0; k < nps; k++) segTags[k] = segNodes[k]->getTag();
