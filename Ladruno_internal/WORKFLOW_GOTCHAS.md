@@ -123,10 +123,19 @@ before the final `_<Name>`), so e.g. `ELE_TAG_BezierTri6`=33000 and
   failing G9, and every later PR *inherits* the failure.
 
 **Rules:**
-- After pushing C++ to a fork PR, **watch the Zone-A job**
-  (`gh pr checks <n> --watch`) and fix-forward. Green fast-gate ≠ green build.
-  A fast (~1–2 min) Zone-A fail = compile error; a slow (~5–6 min) fail = test
-  failure. If `ladruno` HEAD is broken, your fix unblocks everyone.
+- After pushing C++ to a fork PR, **watch the Zone-A job** and fix-forward. Green
+  fast-gate ≠ green build. A fast (~1–2 min) Zone-A fail = compile error; a slow
+  (~5–6 min) fail = test failure. If `ladruno` HEAD is broken, your fix unblocks everyone.
+- **`gh pr checks <n> --watch` exits PREMATURELY — do not trust its exit 0 as "Zone-A
+  passed".** It watches only the check-runs registered *at the moment it polls*. Zone-A
+  registers a few seconds after push, so if classTag (fast) has already passed and Zone-B
+  is `skipping`, the watch sees "all known checks done" and exits 0 **before Zone-A even
+  appears** (observed on #384/#385: watch exited 0, then `gh pr checks` showed Zone-A
+  *pending*). For a code PR, confirm the ACTUAL Zone-A run instead:
+  `gh pr checks <n>` must list Zone-A with a terminal `pass`, OR watch the run id directly
+  — `gh run watch <run-id> && gh run view <run-id> --json conclusion`. Merging on a
+  premature watch-exit risks landing a Linux-only break on `ladruno` HEAD (the C4/D2 merges
+  got lucky — Zone-A passed after the fact, but verify, don't assume).
 - **Put the `classTags.h` `#define`, the `manifest.yaml` row, AND the ledger row
   in the SAME commit.** Never a follow-up commit — a failing gate is exactly what
   tempts you to "just push the fix" into the auto-merge race (→ §1 stranding).
