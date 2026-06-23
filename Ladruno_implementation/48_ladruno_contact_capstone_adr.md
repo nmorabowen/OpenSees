@@ -95,7 +95,7 @@ enforcement: penalty (both lanes) + commit-cycle ALM (λ updated in LadrunoConta
 | Mortar per-GP state | `SRC/domain/contact/LadrunoMortarPair.{h,cpp}` | 📋 planned | 41 |
 | Mortar narrow phase | INLINE in `LadrunoContactFE` MORTAR mode + handler pairing loop (no separate `LadrunoMortarSegment` — mirrors the shipped NTS inline pattern) | ✅ shipped (C2.1, #374) | 41 |
 | Commit-cycle ALM + `analyzeAugmented` recipe | `LadrunoContactDomain::MortarNormalState` (λ_N, Uzawa in `commit()`) + `Ladruno_scripts/analyze_augmented.py` + `ladrunoMortarPenetration` query | ✅ shipped (C2.2, #375) | 41 |
-| Mesh-tying (`-tie`, zero-gap) | **degenerate-mortar D/M tie (committed route)** | 📋 planned | 41 |
+| Mesh-tying (`-tie`, zero-gap) | **degenerate-mortar D/M tie (committed route)** — design/handoff [[_adr41_c4_design]] (zero-gap limit of contact: active set frozen ON, FULL 3-vector relative-displacement tie, no KKT/cone, ALM `λ_tie` no-clamp; reuses the shipped mortar machinery) | 📋 planned (C4 = the last ADR-41 mortar track; handoff written) | 41 |
 | Viscous stabilization (`-visc`) | (normal law + `getDamp`) | 📋 funded option | 41 (Q-VISCOUS) |
 | `mu(N,v)` from `frictionModel` wired into contact | — | 🧭 later | 41 (Q-MUDEP) |
 | Custom `LadrunoAugmentedNewton` (global Uzawa) | — | 🧭 deferred/trigger-gated | 41 (Q-DRIVER) |
