@@ -505,6 +505,19 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                     // map would stick at ZERO force (silently inert). Default epsT to the normal
                     // penalty and warn ONCE rather than ship dead friction.
                     bool wantFric = (mc.mu > 0.0 || mc.cohesion > 0.0 || mc.tauMax > 0.0);
+                    // gate MINOR-2: -consistanttan is accepted on the command but the non-symmetric
+                    // mortar friction Csl is deferred (C3.3) — addMortarTang always assembles the
+                    // SYMMETRIC tangent. Warn ONCE rather than silently ignore the flag.
+                    if (wantFric && mc.consistentTan) {
+                        static bool warnedCsl = false;
+                        if (!warnedCsl) {
+                            warnedCsl = true;
+                            opserr << "WARNING LadrunoContactHandler::handle() - mortar contact "
+                                   << mc.tag << ": -consistanttan is not yet implemented for mortar "
+                                      "friction (the symmetric tangent is used; the non-symmetric "
+                                      "Coulomb Csl is deferred to C3.3).\n";
+                        }
+                    }
                     if (wantFric && epsTuse <= 0.0) {
                         epsTuse = epsUse;
                         static bool warnedEpsT = false;

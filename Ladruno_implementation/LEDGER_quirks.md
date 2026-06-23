@@ -1589,5 +1589,6 @@ non-obvious behaviours, all relevant to anyone wiring `-stabilize` into a driver
   config; the retry keeps that stale origin (`engaged` stays true) ⇒ a spurious stick offset. Identical to
   the shipped NTS SEGMENT behavior (which also doesn't revert `engaged`), so NOT a C3.1 regression, and
   **unreachable under C3.1's explicit-only path** (CDL never reverts mid-step). It goes live when the C3.2
-  friction tangent lands and an implicit Newton step is rejected. **C3.2 TODO:** double-buffer `engaged`/`gT0`
-  (committed + trial) and revert them, or re-capture `gT0` on re-engagement. Found by the C3.1 gate (MAJOR-2, #377).
+  friction tangent lands and an implicit Newton step is rejected. **RESOLVED in C3.2 (#378):** `gT0`/`engaged`
+  are double-buffered (`gT0committed`/`engagedCommitted`), promoted in `commit()` and restored in
+  `revertToLastCommit()`. Found by the C3.1 gate (MAJOR-2, #377), fixed in C3.2.

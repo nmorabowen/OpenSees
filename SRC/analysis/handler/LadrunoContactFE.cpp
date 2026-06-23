@@ -510,7 +510,7 @@ LadrunoContactFE::addKtToTang(double fact)
 // SET (∂λ/∂u = 0 within a sweep), so the penalty Gram block is unchanged. theDomain==0 ⇒ the
 // C2.1 fallback (λ≡0).
 void
-LadrunoContactFE::addMortarTang(double fact)
+LadrunoContactFE::addMortarTang(double fact, bool initialStiff)
 {
     double D[4][4], M[4][4], g[4], n[3];
     if (!mortarActive(D, M, g, n)) return;
@@ -540,6 +540,65 @@ LadrunoContactFE::addMortarTang(double fact)
             for (int dA = 0; dA < 3; dA++)
                 for (int dB = 0; dB < 3; dB++)
                     tang(3 * A + dA, 3 * B + dB) += fact * Ks * n[dA] * n[dB];
+        }
+    }
+
+    // --- C3.2 mortar friction TANGENT (the SYMMETRIC consistent tangent) ---
+    // K[A][B] += Σ_I (b_IA b_IB / a_I) K_ss_I, b_IA the B̃=[D,−M] operator row, K_ss_I the 3×3
+    // friction block (LadrunoFrictionKernel::frictionTangentBlock) at the SAME per-node slip the
+    // residual used. Default SYMMETRIC (drop the non-symmetric Coulomb Csl — solver-safe on any
+    // SOE, the ADR-39 P3.5 Q2 rule; the full mortar Csl couples through the normal-gap operator
+    // and is deferred with the geometric ∂{D,M,n}/∂u terms). Makes implicit frictional Newton
+    // converge (singular without it). Oracle proto_c3_mortar_friction.py T6 FD-checks this assembly.
+    if ((mu > 0.0 || mortarCohesion > 0.0 || mortarTauMax > 0.0) && cd != 0) {
+        double us[4][3], um[4][3];
+        for (int i = 0; i < npsS; i++) {
+            const Vector &u = mortarSlave[i]->getTrialDisp();
+            for (int d = 0; d < 3; d++) us[i][d] = u(d);
+        }
+        for (int i = 0; i < npsM; i++) {
+            const Vector &u = mortarMaster[i]->getTrialDisp();
+            for (int d = 0; d < 3; d++) um[i][d] = u(d);
+        }
+        for (int I = 0; I < npsS; I++) {
+            double aFacet = 0.0;
+            for (int J = 0; J < npsS; J++) aFacet += D[I][J];
+            if (aFacet <= 1e-300) continue;
+            LadrunoContactDomain::MortarNormalState &st =
+                cd->getOrCreateMortarNormalState(contactTag, mortarSlave[I]->getTag());
+            double pr = st.lambdaN + kn * (g[I] / aFacet);
+            if (pr >= 0.0) continue;                  // friction only on in-contact nodes
+            double N_I = -pr;
+            // displacement-based tangential slip (same as the residual), engagement-referenced.
+            double r[3] = {0, 0, 0};
+            for (int J = 0; J < npsS; J++)
+                for (int d = 0; d < 3; d++) r[d] += D[I][J] * us[J][d];
+            for (int K = 0; K < npsM; K++)
+                for (int d = 0; d < 3; d++) r[d] -= M[I][K] * um[K][d];
+            double rn = r[0]*n[0] + r[1]*n[1] + r[2]*n[2];
+            double gTeff[3];
+            for (int d = 0; d < 3; d++) gTeff[d] = (r[d] - rn * n[d]) / aFacet - st.gT0[d];
+            // initial-stiffness path ⇒ force the SPD STICK tangent kt·P_t: pass gTeff == gpT so the
+            // trial traction is zero (‖tT*‖ ≤ cap ⇒ the kernel returns the stick block). Avoids the
+            // rank-deficient slip tangent stalling Modified/Initial-Newton (gate MINOR-1, mirrors SEGMENT).
+            const double *gtForKss = initialStiff ? st.gpT : gTeff;
+            double Kss[3][3];
+            LadrunoFrictionKernel::frictionTangentBlock(gtForKss, st.gpT, n, N_I, kn, kt, mu,
+                                                        /*consistent=*/false, Kss,
+                                                        mortarCohesion, mortarTauMax);
+            // scatter: tang(3A+i,3B+j) += fact·(b_IA b_IB / a_I)·K_ss[i][j]
+            for (int A = 0; A < nN; A++) {
+                double bIA = (A < npsS) ? D[I][A] : -M[I][A - npsS];
+                if (bIA == 0.0) continue;
+                for (int B = 0; B < nN; B++) {
+                    double bIB = (B < npsS) ? D[I][B] : -M[I][B - npsS];
+                    double w = fact * bIA * bIB / aFacet;
+                    if (w == 0.0) continue;
+                    for (int i = 0; i < 3; i++)
+                        for (int j = 0; j < 3; j++)
+                            tang(3 * A + i, 3 * B + j) += w * Kss[i][j];
+                }
+            }
         }
     }
 }
@@ -575,7 +634,8 @@ LadrunoContactFE::addKiToTang(double fact)
             }
         }
     } else if (mode == MORTAR) {
-        addMortarTang(fact);   // penalty K_initial == K_current (geometric terms deferred)
+        addMortarTang(fact, /*initialStiff=*/true);  // penalty K_initial == K_current; friction =
+                                                     // the SPD stick tangent (geometric terms deferred)
     }
 }
 

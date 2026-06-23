@@ -335,6 +335,9 @@ LadrunoContactDomain::commit(void)
         // C3.1 — promote the trial tangential slip (penalty friction; the EmbeddedRebar/NTS
         // FrictionState precedent). Done for every slot regardless of normal activity.
         for (int d = 0; d < 3; d++) st.gpT[d] = st.gpTtrial[d];
+        // C3.2 (MAJOR-2) — commit the engagement origin so a later rejected step can revert it.
+        for (int d = 0; d < 3; d++) st.gT0committed[d] = st.gT0[d];
+        st.engagedCommitted = st.engaged;
         if (st.aGlobal <= 1e-300) continue;          // unreferenced this step (no normal Uzawa)
         double gbar = st.gtGlobal / st.aGlobal;
         st.lambdaN = std::min(0.0, st.lambdaN + st.epsN * gbar);
@@ -353,8 +356,13 @@ LadrunoContactDomain::revertToLastCommit(void)
         for (int d = 0; d < 3; d++) it->second.gpTtrial[d] = it->second.gpT[d];
     // C3.1 — mortar friction: drop the trial slip back to committed (λ_N is committed-only ⇒
     // untouched on revert, the C2.2 invariant; only the friction trial needs reverting).
+    // C3.2 (MAJOR-2) — also restore the engagement origin gT0/engaged from the committed copy, so
+    // a rejected implicit step does not latch a stale origin captured at the rejected config.
     for (std::map<NodeKey, MortarNormalState>::iterator it = theMortarNormalStates.begin();
-         it != theMortarNormalStates.end(); ++it)
-        for (int d = 0; d < 3; d++) it->second.gpTtrial[d] = it->second.gpT[d];
+         it != theMortarNormalStates.end(); ++it) {
+        MortarNormalState &st = it->second;
+        for (int d = 0; d < 3; d++) { st.gpTtrial[d] = st.gpT[d]; st.gT0[d] = st.gT0committed[d]; }
+        st.engaged = st.engagedCommitted;
+    }
     return 0;
 }

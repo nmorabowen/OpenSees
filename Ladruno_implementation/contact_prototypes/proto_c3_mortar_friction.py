@@ -281,6 +281,75 @@ Kss_tau_sym = friction_tangent_block(np.array([3e-4, 0.0, 0.0]), np.zeros(3), n,
 check("τmax-controlled branch ⇒ Csl==0 (consistent==symmetric, safe on any solver)",
       np.allclose(Kss_tau, Kss_tau_sym, atol=1e-12))
 
+# --- T6: C3.2 — the ASSEMBLED mortar friction TANGENT vs FD (symmetric) ----------------------
+# The C3.2 C++ assembles K[A][B] = Σ_I (b_IA·b_IB/a_I) K_ss_I (3×3 per slave node I), b_IA the
+# B̃=[D,−M] operator row (slave: D[I][A]; master: −M[I][A−nps]) — structurally the C2 normal block
+# but with the 3×3 friction K_ss replacing epsN·(n⊗n). This pins that the assembled tangent is the
+# derivative of the assembled friction force F_A = Σ_I b_IA tFric_I (so implicit Newton converges).
+print("\nT6  assembled mortar friction tangent K_c == FD(F_fric) (symmetric, slipping config, ≤1e-6)")
+# a SHARED-node config: 2 slave nodes, 2 master nodes (a 1D mortar-like pair) with a non-diagonal D.
+# D (slave-slave Gram), M (slave-master) — small hand-built SPD/partition-of-unity operators.
+Ds = np.array([[2.0, 1.0], [1.0, 3.0]])                # 2×2 slave Gram (non-diagonal)
+Ms = np.array([[1.5, 1.5], [1.0, 3.0]])                # 2×2 slave-master (row sums == Ds row sums)
+aI = Ds.sum(1)                                          # a_I (== M row sums ⇒ partition of unity)
+nT = np.array([0.0, 0.0, 1.0])
+N_nodes = np.array([3.0, 5.0])                          # per-node normal pressure (in contact)
+muT, epsTT = 0.3, 1.0e3
+nS, nM = 2, 2
+nN = nS + nM
+
+
+def bmat(I, A):                                         # B̃ operator entry: slave D[I][A], master −M
+    return Ds[I][A] if A < nS else -Ms[I][A - nS]
+
+
+def slip_at(I, U):                                      # node I tangential slip from all-node disp U (nN×3)
+    r = np.zeros(3)
+    for B in range(nN):
+        r += bmat(I, B) * U[B]
+    r = r / aI[I]
+    return r - np.dot(r, nT) * nT                       # tangential part
+
+
+def Ffric(U, gpT):                                      # assembled friction force (nN×3), committed gpT (nS×3)
+    F = np.zeros((nN, 3))
+    for I in range(nS):
+        tF, _, _ = friction_return_map(slip_at(I, U), gpT[I], N_nodes[I], epsTT, muT)
+        for A in range(nN):
+            F[A] += bmat(I, A) * tF
+    return F
+
+
+# a slipping trial: a large uniform tangential disp on the slave block, master fixed
+U0 = np.zeros((nN, 3))
+U0[0] = U0[1] = np.array([1.0e-2, 3.0e-3, 0.0])         # slave nodes displaced (well past the cone)
+gpT0 = np.zeros((nS, 3))
+# confirm slipping
+slipping = all(friction_return_map(slip_at(I, U0), gpT0[I], N_nodes[I], epsTT, muT)[2] for I in range(nS))
+check("(T6) trial config is SLIPPING at both slave nodes", slipping)
+
+# analytic assembled tangent K[A][B] = Σ_I (b_IA b_IB/a_I) K_ss_I  (symmetric: drop Csl). The element
+# tangent is +∂F_internal/∂u; F_internal = the scattered friction force (the NTS +w_a w_b K_ss sign).
+Kc = np.zeros((nN, 3, nN, 3))
+for I in range(nS):
+    Kss = friction_tangent_block(slip_at(I, U0), gpT0[I], nT, N_nodes[I], kn, epsTT, muT, False)
+    for A in range(nN):
+        for B in range(nN):
+            Kc[A, :, B, :] += (bmat(I, A) * bmat(I, B) / aI[I]) * Kss
+Kc = Kc.reshape(nN * 3, nN * 3)
+
+# central FD of −F_fric (the element tangent is −∂resid/∂u; resid = applied friction force).
+h = 1e-8
+Kfd = np.zeros((nN * 3, nN * 3))
+for j in range(nN * 3):
+    Up = U0.copy().reshape(-1); Up[j] += h; Up = Up.reshape(nN, 3)
+    Um = U0.copy().reshape(-1); Um[j] -= h; Um = Um.reshape(nN, 3)
+    dF = (Ffric(Up, gpT0).reshape(-1) - Ffric(Um, gpT0).reshape(-1)) / (2 * h)
+    Kfd[:, j] = -dF                                     # element tangent = −∂(applied force)/∂u
+relT = np.abs(Kc - Kfd).max() / (np.abs(Kfd).max() + 1e-30)
+check("(T6) assembled K_c == FD(F_fric) (≤1e-6 rel)", relT <= 1e-6, f"max rel = {relT:.2e}")
+check("(T6) assembled symmetric tangent IS symmetric", np.allclose(Kc, Kc.T, atol=1e-9))
+
 print(f"\n{'='*70}\n{'ALL PASS' if _fails == 0 else str(_fails) + ' FAILURE(S)'}  "
       f"(C3 mortar-friction oracle)\n{'='*70}")
 sys.exit(1 if _fails else 0)
