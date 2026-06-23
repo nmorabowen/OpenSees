@@ -99,7 +99,9 @@ int
 LadrunoContactDomain::addMortarContact(int tag, int masterSurfTag, int slaveSurfTag,
                                        double kn, bool knAuto, double epsN, bool epsNAuto,
                                        double augTol, int maxAug, int ngp,
-                                       const double *outward, double cellFrac)
+                                       const double *outward, double cellFrac,
+                                       double mu, double epsT, bool epsTAuto,
+                                       double cohesion, double tauMax, bool consistentTan)
 {
     LadrunoContactSurface *ms = getSurface(masterSurfTag);
     LadrunoContactSurface *ss = getSurface(slaveSurfTag);
@@ -137,6 +139,11 @@ LadrunoContactDomain::addMortarContact(int tag, int masterSurfTag, int slaveSurf
     m.hasOutward = (outward != 0);
     for (int d = 0; d < 3; d++) m.outward[d] = (outward != 0) ? outward[d] : 0.0;
     m.cellFrac = (cellFrac > 0.0) ? cellFrac : 1.0;
+    m.mu = (mu > 0.0) ? mu : 0.0;                     // C3.1 friction (≤0 ⇒ frictionless)
+    m.epsT = epsT; m.epsTAuto = epsTAuto;
+    m.cohesion = (cohesion > 0.0) ? cohesion : 0.0;
+    m.tauMax = tauMax;                                // ≤0 ⇒ no Tresca upper cap
+    m.consistentTan = consistentTan;
     theMortarContacts.push_back(m);
     return 0;
 }
@@ -325,7 +332,10 @@ LadrunoContactDomain::commit(void)
     for (std::map<NodeKey, MortarNormalState>::iterator it = theMortarNormalStates.begin();
          it != theMortarNormalStates.end(); ++it) {
         MortarNormalState &st = it->second;
-        if (st.aGlobal <= 1e-300) continue;          // unreferenced this step
+        // C3.1 — promote the trial tangential slip (penalty friction; the EmbeddedRebar/NTS
+        // FrictionState precedent). Done for every slot regardless of normal activity.
+        for (int d = 0; d < 3; d++) st.gpT[d] = st.gpTtrial[d];
+        if (st.aGlobal <= 1e-300) continue;          // unreferenced this step (no normal Uzawa)
         double gbar = st.gtGlobal / st.aGlobal;
         st.lambdaN = std::min(0.0, st.lambdaN + st.epsN * gbar);
     }
@@ -340,6 +350,11 @@ LadrunoContactDomain::revertToLastCommit(void)
     numReverts++;
     for (std::map<PairKey, FrictionState>::iterator it = theFrictionStates.begin();
          it != theFrictionStates.end(); ++it)
+        for (int d = 0; d < 3; d++) it->second.gpTtrial[d] = it->second.gpT[d];
+    // C3.1 — mortar friction: drop the trial slip back to committed (λ_N is committed-only ⇒
+    // untouched on revert, the C2.2 invariant; only the friction trial needs reverting).
+    for (std::map<NodeKey, MortarNormalState>::iterator it = theMortarNormalStates.begin();
+         it != theMortarNormalStates.end(); ++it)
         for (int d = 0; d < 3; d++) it->second.gpTtrial[d] = it->second.gpT[d];
     return 0;
 }

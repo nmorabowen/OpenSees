@@ -498,9 +498,13 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                             continue;
                         }
                     }
+                    // C3.1 friction: epsT auto ⇒ size from the normal penalty (epsUse); else the
+                    // given value. mu/cohesion/tauMax ≤0 ⇒ the adapter short-circuits (frictionless).
+                    double epsTuse = mc.epsTAuto ? epsUse : mc.epsT;
                     LadrunoContactFE *fe =
                         new LadrunoContactFE(numFe++, sNodes, npsS, mNodes, npsM, epsUse,
-                                             orientDir, mc.tag, sf, theDomain);
+                                             orientDir, mc.tag, sf, theDomain,
+                                             mc.mu, epsTuse, mc.cohesion, mc.tauMax, mc.consistentTan);
                     if (fe == 0) return -5;
                     theModel->addFE_Element(fe);
                     // C2.2: this pair's slave nodes have a live λ_N slot this handle().

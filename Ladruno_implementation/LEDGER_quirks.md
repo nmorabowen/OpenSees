@@ -1544,3 +1544,24 @@ non-obvious behaviours, all relevant to anyone wiring `-stabilize` into a driver
 - **Bites:** the ADR-41 C2.2 Uzawa ALM. The handoff ([[_adr41_c2_design]] §crux) recommended the augmented pressure `p_I = min(0, λ_I + epsN·ḡ_I^global)` read the GLOBAL weighted gap (summed over every facet a slave node touches) "lagged by one iteration." But `LadrunoContactFE` is PER-FACET and `NewtonRaphson::solveCurrentStep` forms the residual sweep **facet-by-facet within one `formUnbalance`**. If each adapter accumulates its facet's `g̃` into a Domain-side running sum and then reads it back, the FIRST facet to touch a shared node sees only its own contribution, the SECOND sees two, etc. — so a shared node gets a DIFFERENT pressure in each facet's force assembly. The residual is then a function of facet **evaluation order**, not just the displacement ⇒ not a clean `R(u)` ⇒ Newton's tangent is inconsistent and the solve goes **singular** (`FullGenLinLapackSolver U(i,i)=0`). Symptom: the matched (1-facet/node) C2.1 test still converged, but the non-matched + coarse-slave/fine-master cases (shared nodes) failed to converge after the C2.2 change.
 - **Why:** the oracle's "lag" (`proto_c2_alm.py` T7c) was a **frozen** per-sweep value — every node read the SAME gap for the whole residual sweep, refreshed once per Newton iteration. Reproducing a frozen-per-sweep value in a per-facet adapter needs sweep-boundary detection (no per-residual-sweep hook exists on the contact engine), and seeding it to zero kills the first sweep's contact (→ singular tangent).
 - **Resolution (shipped C2.2):** keep the force/tangent on each facet's **LOCAL** gap `p_I = min(0, λ_I + epsN·ḡ_I^facet)` — deterministic, exactly the C2.1 penalty — plus the per-GLOBAL-node multiplier `λ_I` (which assembles globally for free: `Σ_facets D_KI^facet λ_I = D_KI^global λ_I`, λ shared). The GLOBAL weighted gap IS still accumulated on the Domain (idempotent delta updates keyed `(contactTag, nodeTag, feTag)`), but ONLY for the once-per-`commit()` Uzawa update `λ_I ← min(0, λ_I + epsN·ḡ_I^global)` and the `ladrunoMortarPenetration` query — never read back into the same sweep's force. At convergence the penalty term → 0 and the consistent global `λ` carries the load, so the result is variationally consistent + epsN-independent. Pinned oracle-first: `proto_c2_alm.py` T8 (local-gap force + global-λ Uzawa → epsN-independent penetration, 28/28). General lesson: a "lag-by-one-iteration" scheme is only well-posed if the lagged quantity is FROZEN across the whole residual sweep; a value mutated *during* the sweep makes the residual order-dependent. Found while transcribing C2.2 (the non-matched battery regression caught it). See [[48_ladruno_contact_capstone_adr]] C2 row, #375.
+
+### Mortar tangential SLIP must come from DISPLACEMENTS, not positions — the closest-point projection makes the weighted relative POSITION purely normal
+- **Bites:** the ADR-41 C3.1 mortar friction. The natural-looking weighted relative position
+  `r_I = Σ_J D_IJ x_s,J − Σ_K M_IK x_m,K` (= `∫N_I(x_s − x_m(ξ̄)) dΓ`) is **purely NORMAL**: `n·r_I = g̃_I`
+  (the weighted normal gap) and its TANGENTIAL part is ≈ 0, because the closest-point projection `ξ̄`
+  places the master point directly "under" the slave point (`x_s − x_m(ξ̄) ∥ n` by construction). So a
+  friction slip built from positions is ~0 even when the slave has slid a finite tangential distance —
+  the return map sees `gTeff ≈ 0`, stays in STICK, and assembles ZERO friction force (symptom: a driven
+  block accelerates at the frictionless `a = Q/m`, friction silently inert, to 1e-13). Verified by a
+  stderr probe: `gTeff=(2.8e-17, …)` at a step where the slave had displaced `x=1e-3`.
+- **Why:** mortar inherits the NTS lesson — the ADR-39 `SEGMENT` path's `segmentActive` ALREADY documents
+  "the closest-point projection makes (x_s − x̄) ∥ n, so POSITIONS carry NO tangential information; the slip
+  is the slave DISPLACEMENT minus the interpolated master DISPLACEMENT at the projection: `d = u_s − Σ N_i u_i`."
+  The C3.1 first draft re-made the position mistake the NTS path had already solved.
+- **Fix (shipped C3.1):** build the slip from DISPLACEMENTS — `r_I = Σ_J D_IJ u_s,J − Σ_K M_IK u_m,K`
+  (`u = getTrialDisp()`), tangential part `/a_I`, minus the engagement origin `gT0_I`. This is the `D/M`-
+  weighted generalisation of the NTS `u_s − Σ N_i u_i`. The normal gap still uses positions (it IS the
+  normal projection); only the tangential slip switches to displacements. General lesson: in any
+  closest-point-projected contact, the normal gap is a POSITION quantity and the tangential slip is a
+  DISPLACEMENT quantity — they are not interchangeable. Found while bringing up C3.1 (the driven-block
+  gate caught it). See [[_adr41_c3_design]] §mechanics step 1, #PENDING.

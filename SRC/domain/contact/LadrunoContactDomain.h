@@ -106,11 +106,21 @@ class LadrunoContactDomain
         bool   hasOutward;
         double outward[3];
         double cellFrac;        // broad-phase bucket-sort cell scale (shared with NTS)
+        // ADR-41 C3.1 — friction (Coulomb/Tresca on the unified cone min(μN+c, τmax)). All ≤ 0 ⇒
+        // the frictionless C2 path. epsT = the tangential penalty (epsTAuto ⇒ = the normal penalty).
+        double mu;              // Coulomb friction coefficient
+        double epsT;            // tangential penalty
+        bool   epsTAuto;        // size epsT from the normal penalty at handle() time
+        double cohesion;        // adhesive intercept c
+        double tauMax;          // Tresca shear cap (≤0 ⇒ no upper cap)
+        bool   consistentTan;   // C3.2: non-symmetric Coulomb friction tangent
     };
     int addMortarContact(int tag, int masterSurfTag, int slaveSurfTag,
                          double kn, bool knAuto, double epsN, bool epsNAuto,
                          double augTol, int maxAug, int ngp,
-                         const double *outward = 0, double cellFrac = 1.0);
+                         const double *outward = 0, double cellFrac = 1.0,
+                         double mu = 0.0, double epsT = 0.0, bool epsTAuto = false,
+                         double cohesion = 0.0, double tauMax = 0.0, bool consistentTan = false);
     int getNumMortarContacts(void) const { return (int)theMortarContacts.size(); }
     const MortarContact &getMortarContact(int i) const { return theMortarContacts[i]; }
 
@@ -162,7 +172,20 @@ class LadrunoContactDomain
         double gtGlobal;  // Σ_facets g̃_I^facet at the current trial (incremental — see below)
         double aGlobal;   // Σ_facets a_I^facet = ∫N_I dΓ (incremental)
         double epsN;      // the penalty the adapters use at this node (for the commit update)
-        MortarNormalState() : lambdaN(0.0), gtGlobal(0.0), aGlobal(0.0), epsN(0.0) {}
+        // ADR-41 C3.1 — frictional mortar (folded into the SAME (contactTag,slaveNodeTag) slot
+        // since it shares the key + lifecycle): per-global-slave-node elastic tangential slip.
+        // gpT survives like lambdaN (committed plastic slip); gpTtrial is the transient trial
+        // (a pure fn of committed state, rewritten each getResidual); gT0 is the engagement-config
+        // tangential origin captured ONCE at first contact (else a late-engaging node's pre-contact
+        // drift becomes a spurious stick traction — the ADR-39 P3 MAJOR-1, reused). λ_T (tangential
+        // Uzawa) is C3.3 — C3.1/C3.2 ship penalty friction (λ_T≡0).
+        double gpT[3];      // committed elastic tangential slip (promoted in commit())
+        double gpTtrial[3]; // trial slip (written each getResidual)
+        double gT0[3];      // engagement-config tangential origin (captured once)
+        bool   engaged;     // has gT0 been captured at first contact activation
+        MortarNormalState() : lambdaN(0.0), gtGlobal(0.0), aGlobal(0.0), epsN(0.0), engaged(false) {
+            for (int d = 0; d < 3; d++) gpT[d] = gpTtrial[d] = gT0[d] = 0.0;
+        }
     };
     // lazily create + return the per-node slot (zeroed if new).
     MortarNormalState &getOrCreateMortarNormalState(int contactTag, int slaveNodeTag);
