@@ -36,7 +36,7 @@ LadrunoContactSurface::~LadrunoContactSurface()
 int
 LadrunoContactSurface::getNumSegments(void) const
 {
-    if (myKind == MASTER_SEGMENTS && nodesPerSeg > 0)
-        return theNodeTags.Size() / nodesPerSeg;
+    if ((myKind == MASTER_SEGMENTS || myKind == SLAVE_SEGMENTS) && nodesPerSeg > 0)
+        return theNodeTags.Size() / nodesPerSeg;   // faceted: count facets
     return theNodeTags.Size();   // SLAVE_NODES: one entry per slave node
 }

@@ -34,11 +34,15 @@
 class LadrunoContactSurface
 {
   public:
-    enum Kind { SLAVE_NODES = 0, MASTER_SEGMENTS = 1 };
+    enum Kind { SLAVE_NODES = 0, MASTER_SEGMENTS = 1, SLAVE_SEGMENTS = 2 };
 
     // SLAVE_NODES: nodeTags are the slave nodes.
     // MASTER_SEGMENTS: nodeTags is the flat connectivity, nodesPerSeg the stride
     //   (3 = tri, 4 = quad); segment s spans nodeTags[s*nodesPerSeg .. +stride).
+    // SLAVE_SEGMENTS (ADR-41 C2.0): a FACETED slave surface — same flat-connectivity
+    //   + nodesPerSeg layout as MASTER_SEGMENTS, but on the slave side. The mortar lane
+    //   integrates the slave-slave matrix D over these facets (the node-set SLAVE_NODES
+    //   carries no facet, so it cannot give D); the NTS lane keeps using SLAVE_NODES.
     LadrunoContactSurface(int tag, Kind kind, const ID &nodeTags, int nodesPerSeg = 0);
     ~LadrunoContactSurface();
 

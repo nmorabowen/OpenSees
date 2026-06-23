@@ -318,11 +318,12 @@ static LadrunoContactDomain *OPS_getOrCreateContactDomain()
     return cd;
 }
 
-// contactSurface tag (-slave | -master nodesPerSeg) nodeTag...
+// contactSurface tag (-slave | -master nodesPerSeg | -slave-segments nodesPerSeg) nodeTag...
 int OPS_LadrunoContactSurface()
 {
     if (OPS_GetNumRemainingInputArgs() < 3) {
-        opserr << "WARNING want - contactSurface tag (-slave | -master nodesPerSeg) nodeTag...\n";
+        opserr << "WARNING want - contactSurface tag (-slave | -master nodesPerSeg | "
+                  "-slave-segments nodesPerSeg) nodeTag...\n";
         return -1;
     }
     int tag, n = 1;
@@ -342,8 +343,16 @@ int OPS_LadrunoContactSurface()
             opserr << "WARNING contactSurface -master - need nodesPerSeg (>=3)\n";
             return -1;
         }
+    } else if (strcmp(kindStr, "-slave-segments") == 0) {
+        // Ladruno ADR-41 C2: a FACETED slave surface (same layout as -master, slave side).
+        kind = LadrunoContactSurface::SLAVE_SEGMENTS;
+        n = 1;
+        if (OPS_GetIntInput(&n, &nodesPerSeg) < 0 || nodesPerSeg < 3) {
+            opserr << "WARNING contactSurface -slave-segments - need nodesPerSeg (>=3)\n";
+            return -1;
+        }
     } else {
-        opserr << "WARNING contactSurface - kind must be -slave or -master\n";
+        opserr << "WARNING contactSurface - kind must be -slave, -master or -slave-segments\n";
         return -1;
     }
     int nrem = OPS_GetNumRemainingInputArgs();
@@ -385,8 +394,11 @@ int OPS_LadrunoContact()
     // omitted entirely (then the next token is the -outward flag, or end-of-args).
     if (OPS_GetNumRemainingInputArgs() >= 1) {
         const char *peek = OPS_GetString();   // consume + classify
-        bool isOutward = (peek != 0 && strcmp(peek, "-outward") == 0);
-        bool isAuto    = (peek != 0 && strcmp(peek, "auto") == 0);
+        // ANY option flag (-outward / -cell / -consistanttan / -mortar / -epsN / ...)
+        // means the numeric kn/kt/mu slot was omitted ⇒ un-read and let the options loop
+        // handle it. (Was: only `-outward` was recognized here — ADR-41 C2 generalized it.)
+        bool isFlag = (peek != 0 && peek[0] == '-');
+        bool isAuto = (peek != 0 && strcmp(peek, "auto") == 0);
         if (isAuto) {
             knAuto = true;                    // 'auto' consumed; kn is resolved at handle()
             // optional kt mu (friction, P3) may follow unless the next token is a flag.
@@ -403,8 +415,8 @@ int OPS_LadrunoContact()
                     kt = d[0]; mu = d[1];
                 }
             }
-        } else if (isOutward) {
-            OPS_ResetCurrentInputArg(-1);     // un-read for the -outward flag loop below
+        } else if (isFlag) {
+            OPS_ResetCurrentInputArg(-1);     // un-read for the option-flag loop below
         } else {
             OPS_ResetCurrentInputArg(-1);     // un-read; read the numeric kn (kt mu)
             // existing form is exactly `kn kt mu`; tolerate a bare `kn` too.
@@ -424,9 +436,57 @@ int OPS_LadrunoContact()
     double outward[3] = {0.0, 0.0, 0.0};
     double cellFrac = 1.0;
     bool consistentTan = false;   // Ladruno ADR-39 P3.5: friction tangent symmetry
+    // Ladruno ADR-41 C2: the mortar lane. `-mortar` selects the clipped-GP mortar +
+    // frictionless commit-cycle ALM formulation; -epsN/-augTol/-maxAug/-ngp tune it.
+    bool isMortar = false;
+    double epsN = 0.0;
+    bool epsNAuto = false;
+    double augTol = 1e-8;
+    int maxAug = 20, ngp = 2;
     while (OPS_GetNumRemainingInputArgs() > 0) {
         const char *opt = OPS_GetString();
-        if (opt != 0 && strcmp(opt, "-outward") == 0) {
+        if (opt != 0 && strcmp(opt, "-mortar") == 0) {
+            isMortar = true;
+        } else if (opt != 0 && strcmp(opt, "-epsN") == 0) {
+            // -epsN auto | <value> : ALM normal penalty (auto => sized like -kn auto).
+            if (OPS_GetNumRemainingInputArgs() < 1) {
+                opserr << "WARNING contact -epsN - need auto or a value\n";
+                return -1;
+            }
+            const char *e = OPS_GetString();
+            if (e != 0 && strcmp(e, "auto") == 0) {
+                epsNAuto = true;
+            } else {
+                OPS_ResetCurrentInputArg(-1);
+                double v[1]; int m = 1;
+                if (OPS_GetDoubleInput(&m, v) < 0) {
+                    opserr << "WARNING contact -epsN - need auto or a value\n";
+                    return -1;
+                }
+                epsN = v[0];
+            }
+        } else if (opt != 0 && strcmp(opt, "-augTol") == 0) {
+            double v[1]; int m = 1;
+            if (OPS_GetDoubleInput(&m, v) < 0) {
+                opserr << "WARNING contact -augTol - need a value\n";
+                return -1;
+            }
+            augTol = v[0];
+        } else if (opt != 0 && strcmp(opt, "-maxAug") == 0) {
+            int v[1]; int m = 1;
+            if (OPS_GetIntInput(&m, v) < 0) {
+                opserr << "WARNING contact -maxAug - need an integer\n";
+                return -1;
+            }
+            maxAug = v[0];
+        } else if (opt != 0 && strcmp(opt, "-ngp") == 0) {
+            int v[1]; int m = 1;
+            if (OPS_GetIntInput(&m, v) < 0) {
+                opserr << "WARNING contact -ngp - need an integer\n";
+                return -1;
+            }
+            ngp = v[0];
+        } else if (opt != 0 && strcmp(opt, "-outward") == 0) {
             double o[3]; int m = 3;
             if (OPS_GetDoubleInput(&m, o) < 0) {
                 opserr << "WARNING contact -outward - need ox oy oz\n";
@@ -471,6 +531,13 @@ int OPS_LadrunoContact()
         opserr << "WARNING contact - define a contactSurface first\n";
         return -1;
     }
+    if (isMortar) {
+        // Ladruno ADR-41 C2.0: the mortar definition is STORED (separate from the NTS
+        // list) but the narrow-phase adapter is wired in C2.1 and the commit-cycle ALM in
+        // C2.2 — so a mortar contact is parsed/validated/inert here. friction (kt/mu) is C3.
+        return cd->addMortarContact(idata[0], idata[1], idata[2], kn, knAuto, epsN, epsNAuto,
+                                    augTol, maxAug, ngp, hasOutward ? outward : 0, cellFrac);
+    }
     return cd->addContact(idata[0], idata[1], idata[2], kn, kt, mu,
                           hasOutward ? outward : 0, knAuto, cellFrac, consistentTan);
 }
@@ -506,21 +573,24 @@ int OPS_LadrunoContactPlane()
     return cd->addRigidPlane(idata[0], idata[1], p0, n, kn);
 }
 
-// ladrunoContactInfo -> [numContacts, numCommits, numReverts] (0,0,0 if no engine)
+// ladrunoContactInfo -> [numContacts, numCommits, numReverts, numMortarContacts]
+// (zeros if no engine). The 4th element (ADR-41 C2) is appended — existing callers that
+// index [0..2] are unaffected.
 int OPS_LadrunoContactInfo()
 {
     Domain *theDomain = OPS_GetDomain();
-    int out[3] = {0, 0, 0};
+    int out[4] = {0, 0, 0, 0};
     if (theDomain != 0) {
         LadrunoContactDomain *cd = theDomain->getLadrunoContactDomain();
         if (cd != 0) {
             out[0] = cd->getNumContacts();
             out[1] = cd->getNumCommits();
             out[2] = cd->getNumReverts();
+            out[3] = cd->getNumMortarContacts();
         }
     }
-    int three = 3;
-    if (OPS_SetIntOutput(&three, out, false) < 0)
+    int four = 4;
+    if (OPS_SetIntOutput(&four, out, false) < 0)
         return -1;
     return 0;
 }

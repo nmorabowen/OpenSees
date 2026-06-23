@@ -134,7 +134,8 @@ def test_p1b_wipe_clears_contact_engine():
     assert ops.ladrunoContactInfo()[0] == 1
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 3)      # fresh model, no contact
-    assert ops.ladrunoContactInfo() == [0, 0, 0], "contact engine leaked across wipe"
+    # [numContacts, numCommits, numReverts, numMortarContacts] (4th added ADR-41 C2)
+    assert ops.ladrunoContactInfo() == [0, 0, 0, 0], "contact engine leaked across wipe"
 
 
 def test_p1b_null_contact_is_pure_plain():
@@ -143,7 +144,7 @@ def test_p1b_null_contact_is_pure_plain():
     ref = _run("Plain", "Newmark")
     con = _run("LadrunoContact", "Newmark")        # no contactSurface/contact calls
     assert con == ref
-    assert ops.ladrunoContactInfo() == [0, 0, 0]
+    assert ops.ladrunoContactInfo() == [0, 0, 0, 0]
 
 
 def test_p1a_handler_runs_and_rebuilds():
