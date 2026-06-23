@@ -1,7 +1,7 @@
 ---
 title: ADR-41 C2 design / handoff — frictionless commit-cycle ALM (mortar enforcement)
 project: Ladruno
-status: C2 COMPLETE — C2.0 #373 + C2.1 #374 + C2.2 #PENDING shipped (frictionless commit-cycle ALM done; see the C2.2 handoff section for the shipped resolution + the deviation from the original recommendation)
+status: C2 COMPLETE — C2.0 #373 + C2.1 #374 + C2.2 #375 shipped (frictionless commit-cycle ALM done; see the C2.2 handoff section for the shipped resolution + the deviation from the original recommendation)
 owner: nmora
 tags:
   - implementation
@@ -239,7 +239,7 @@ a hook to run before FE assembly — heavier. Try the lagged version first.
 **Do NOT** use a per-facet-local λ (one λ per facet-node copy): it is variationally inconsistent at shared
 nodes and will fail the patch test. λ is per GLOBAL slave node.
 
-## SHIPPED resolution (C2.2, #PENDING) — deviates from the recommendation above
+## SHIPPED resolution (C2.2, #375) — deviates from the recommendation above
 
 The recommended "lagged global gap inside the pressure" (§ point 2–3) was **abandoned during transcription**
 for a subtle, decisive reason: `NewtonRaphson::solveCurrentStep` forms the residual sweep **facet-by-facet
