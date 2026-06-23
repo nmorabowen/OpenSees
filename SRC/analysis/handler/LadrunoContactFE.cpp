@@ -36,7 +36,8 @@
 #include <Integrator.h>
 #include <Domain.h>                 // Ladruno: ADR-39 P3 (lazy engine re-fetch)
 #include <LadrunoContactDomain.h>   // Ladruno: ADR-39 P3 (per-pair friction state)
-#include <LadrunoContactKernel.h>   // Ladruno: ADR-39 P2b/P3 (header-only NTS math)
+#include <LadrunoContactKernel.h>     // Ladruno: ADR-39 P2b/P3 (normal-law + friction)
+#include <LadrunoContactProjection.h> // Ladruno: ADR-41 A2 (closest-point projection geometry)
 
 LadrunoContactFE::LadrunoContactFE(int tag)
   : FE_Element(tag, /*numDOF_Group=*/0, /*ndof=*/0),
@@ -120,7 +121,7 @@ LadrunoContactFE::segmentActive(double &gap, double n[3], double N[4], double *B
         const Vector &ui = segNode[i]->getTrialDisp();
         for (int d = 0; d < 3; d++) Xseg[i][d] = Xi(d) + ui(d);
     }
-    if (!LadrunoContactKernel::evalSegment(nps, Xseg, xs, orientDir, gap, n, N))
+    if (!LadrunoContactProjection::evalSegment(nps, Xseg, xs, orientDir, gap, n, N))
         return false;
     // gap operator B (1×ndof) over [u_s | u_1..u_nps]: [ nᵀ | −N_i nᵀ ]
     int ndof = 3 * (1 + nps);
