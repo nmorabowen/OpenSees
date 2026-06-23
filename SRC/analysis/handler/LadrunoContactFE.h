@@ -82,6 +82,15 @@ class LadrunoContactFE : public FE_Element
                      const double orientDir[3], double kt = 0.0, double mu = 0.0,
                      Domain *theDomain = 0, int contactTag = 0, int segIndex = 0,
                      bool consistentTan = false);
+    // C2.1 (ADR-41): clipped-GP MORTAR penalty contact, ONE slave facet vs ONE master
+    // facet (tri-3 / quad-4). Connectivity = {slave facet nodes} ∪ {master facet nodes},
+    // FE_Element(tag, nps_s+nps_m, 3*(nps_s+nps_m)). getResidual integrates the pair via
+    // LadrunoMortarKernel::integratePair (D,M,g̃ at the trial config) and assembles the
+    // penalty force F^s=−(D·t)n, F^m=+(Mᵀ·t)n with t_I=min(0, epsN·ḡ_I) (frictionless;
+    // λ_N Uzawa = C2.2; friction = C3). addKtToTang assembles K_c=epsN·B̃ᵀdiag(act/a)B̃⊗(n⊗n).
+    LadrunoContactFE(int tag, Node **slaveNodes, int nps_s, Node **masterNodes, int nps_m,
+                     double epsN, const double orientDir[3], int contactTag = 0,
+                     int slaveFacetIndex = 0);
     ~LadrunoContactFE();
 
     // self-owned buffers (base buffers are unavailable when myEle == 0)
@@ -132,11 +141,21 @@ class LadrunoContactFE : public FE_Element
     void addFrictionTang(double fact, const double n[3], const double N[4], double tn,
                          const double gTeff[3], const double gpT[3], bool consistent);
 
+    // C2.1: integrate the mortar facet pair at the current trial config. Fills D,M,g̃
+    // (LadrunoMortarKernel::integratePair) + the per-facet master normal n. Returns true
+    // if the overlap is non-empty (status 0); false ⇒ no contribution this evaluation.
+    bool mortarActive(double D[4][4], double M[4][4], double g[4], double n[3]) const;
+    // C2.1: assemble the mortar penalty tangent K_c = epsN·B̃ᵀ diag(act/a) B̃ ⊗ (n⊗n)
+    // into `tang` (material/penalty only — geometric ∂{D,M,n}/∂u deferred). Shared by
+    // addKtToTang / addKiToTang (the penalty K_initial == K_current). Same active mask
+    // as the residual. fact = the integrator's c1 (or 1 for statics).
+    void addMortarTang(double fact);
+
     Vector resid;   // size-0 in P1a; ndm in P2a; ndm*(1+nps) in P2b
     Matrix tang;    // 0x0 in P1a; ndm x ndm in P2a; ndof x ndof in P2b
 
     // P2a rigid-plane binding (mode = RIGID_PLANE); unused/zero in P1a
-    enum Mode { EMPTY = 0, RIGID_PLANE = 1, SEGMENT = 2 };
+    enum Mode { EMPTY = 0, RIGID_PLANE = 1, SEGMENT = 2, MORTAR = 3 };
     Mode mode;
     Node *theSlave;
     int ndm;
@@ -158,6 +177,13 @@ class LadrunoContactFE : public FE_Element
     int contactTag;     // friction-state key: contact definition tag ...
     int segIndex;       // ... and the GLOBAL master-segment ordinal (rebuild-stable)
     bool consistentTan; // P3.5: include the non-symmetric d_TN⊗n column (false ⇒ symmetric)
+
+    // C2.1 MORTAR binding (mode == MORTAR). The penalty epsN rides `kn`. The slave-facet
+    // ordinal `slaveFacetIndex` (+ contactTag) keys the per-node λ_N state in C2.2.
+    Node *mortarSlave[4];   // slave facet nodes  (tri-3 → 3, quad-4 → 4)
+    Node *mortarMaster[4];  // master facet nodes
+    int npsS, npsM;         // slave / master nodes-per-facet
+    int slaveFacetIndex;    // GLOBAL slave-facet ordinal (rebuild-stable; C2.2 λ_N key)
 };
 
 #endif

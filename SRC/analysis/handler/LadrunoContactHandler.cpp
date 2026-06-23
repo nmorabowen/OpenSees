@@ -401,6 +401,126 @@ LadrunoContactHandler::handle(const ID *nodesLast)
         cd->frictionGCEnd();   // prune friction slots no live pair referenced
     }
 
+    // --- ADR-41 C2.1: MORTAR pairing -> ONE clipped-GP penalty adapter per (slave facet,
+    //     candidate master facet). Mirrors the NTS loop but FACET-vs-FACET: broad-phase
+    //     the master facets, query per slave-facet CENTROID, and let the kernel's overlap
+    //     clip reject non-overlapping candidates (status<0 ⇒ the adapter is inert that
+    //     eval). Frictionless penalty (λ_N Uzawa = C2.2; friction = C3). No path state. ---
+    if (cd != 0) {
+        for (int c = 0; c < cd->getNumMortarContacts(); c++) {
+            const LadrunoContactDomain::MortarContact &mc = cd->getMortarContact(c);
+            LadrunoContactSurface *ms = cd->getSurface(mc.masterSurfTag);
+            LadrunoContactSurface *ss = cd->getSurface(mc.slaveSurfTag);
+            if (ms == 0 || ss == 0) {
+                opserr << "WARNING LadrunoContactHandler::handle() - mortar contact " << mc.tag
+                       << ": master/slave surface not defined; skipped\n";
+                continue;
+            }
+            if (ms->getKind() != LadrunoContactSurface::MASTER_SEGMENTS ||
+                ss->getKind() != LadrunoContactSurface::SLAVE_SEGMENTS) {
+                opserr << "WARNING LadrunoContactHandler::handle() - mortar contact " << mc.tag
+                       << ": need a MASTER_SEGMENTS master + SLAVE_SEGMENTS slave; skipped\n";
+                continue;
+            }
+            int npsM = ms->getNodesPerSeg(), npsS = ss->getNodesPerSeg();
+            if (npsM < 3 || npsM > 4 || npsS < 3 || npsS > 4) {
+                opserr << "WARNING LadrunoContactHandler::handle() - mortar contact " << mc.tag
+                       << ": nodesPerSeg must be 3 or 4 (slave " << npsS << ", master " << npsM
+                       << "); skipped\n";
+                continue;
+            }
+            // penalty: epsN if given, else the kn slot; auto-size per pair if requested.
+            bool epsAuto = mc.epsNAuto || mc.knAuto;
+            double epsFixed = (mc.epsN > 0.0) ? mc.epsN : mc.kn;
+            if (!epsAuto && epsFixed <= 0.0) {
+                opserr << "WARNING LadrunoContactHandler::handle() - mortar contact " << mc.tag
+                       << ": needs a penalty (-epsN val|auto or kn > 0); skipped\n";
+                continue;
+            }
+            const ID &mTags = ms->getNodeTags();
+            const ID &sTags = ss->getNodeTags();
+            int nSegM = mTags.Size() / npsM;
+            int nSegS = sTags.Size() / npsS;
+
+            // broad phase: bucket-sort the MASTER facets (reference coords), as in NTS.
+            std::vector<double> segCoords((size_t)nSegM * npsM * 3, 0.0);
+            for (int seg = 0; seg < nSegM; seg++) {
+                double *S = &segCoords[(size_t)seg * npsM * 3];
+                bool haveFirst = false; double first[3] = {0.0, 0.0, 0.0};
+                for (int k = 0; k < npsM; k++) {
+                    Node *mn = theDomain->getNode(mTags(seg * npsM + k));
+                    if (mn != 0) {
+                        const Vector &X = mn->getCrds();
+                        S[k*3+0] = X(0); S[k*3+1] = X(1); S[k*3+2] = X(2);
+                        if (!haveFirst) { first[0]=X(0); first[1]=X(1); first[2]=X(2); haveFirst = true; }
+                    } else { S[k*3+0] = S[k*3+1] = S[k*3+2] = HUGE_VAL; }
+                }
+                for (int k = 0; k < npsM; k++)
+                    if (S[k*3+0] == HUGE_VAL)
+                        for (int d = 0; d < 3; d++) S[k*3+d] = first[d];
+            }
+            LadrunoContactBucketSort::Grid grid(nSegM, npsM, segCoords.data(), mc.cellFrac, 1.0);
+            std::vector<int> cand(nSegM);
+
+            for (int sf = 0; sf < nSegS; sf++) {
+                Node *sNodes[4]; bool ok = true; double scen[3] = {0.0, 0.0, 0.0};
+                for (int k = 0; k < npsS; k++) {
+                    Node *sn = theDomain->getNode(sTags(sf * npsS + k));
+                    if (sn == 0 || sn->getNumberDOF() != 3) {
+                        if (sn != 0)
+                            opserr << "WARNING LadrunoContactHandler::handle() - mortar contact "
+                                   << mc.tag << " slave node " << sTags(sf * npsS + k) << " ndf="
+                                   << sn->getNumberDOF() << " != 3; facet skipped (mortar is 3D)\n";
+                        ok = false; break;
+                    }
+                    sNodes[k] = sn;
+                    const Vector &Xk = sn->getCrds();
+                    for (int d = 0; d < 3; d++) scen[d] += Xk(d);
+                }
+                if (!ok) continue;
+                for (int d = 0; d < 3; d++) scen[d] /= npsS;     // slave-facet centroid
+
+                int nCand = grid.candidates(scen, cand.data());
+                for (int ci = 0; ci < nCand; ci++) {
+                    int seg = cand[ci];
+                    Node *mNodes[4]; ok = true; double mcen[3] = {0.0, 0.0, 0.0};
+                    for (int k = 0; k < npsM; k++) {
+                        Node *mn = theDomain->getNode(mTags(seg * npsM + k));
+                        if (mn == 0 || mn->getNumberDOF() != 3) { ok = false; break; }
+                        mNodes[k] = mn;
+                        const Vector &Xk = mn->getCrds();
+                        for (int d = 0; d < 3; d++) mcen[d] += Xk(d);
+                    }
+                    if (!ok) continue;
+                    for (int d = 0; d < 3; d++) mcen[d] /= npsM;
+                    // orientation toward the slave's allowed half-space: explicit -outward,
+                    // else (slave facet centroid − master facet centroid) at the ref config.
+                    double orientDir[3];
+                    if (mc.hasOutward)
+                        for (int d = 0; d < 3; d++) orientDir[d] = mc.outward[d];
+                    else
+                        for (int d = 0; d < 3; d++) orientDir[d] = scen[d] - mcen[d];
+
+                    double epsUse = epsFixed;
+                    if (epsAuto) {
+                        epsUse = ladrunoResolveAutoKn(theDomain, mNodes, npsM, orientDir);
+                        if (epsUse <= 0.0) {
+                            opserr << "WARNING LadrunoContactHandler::handle() - mortar contact "
+                                   << mc.tag << " slave facet " << sf << " master facet " << seg
+                                   << ": auto penalty could not be sized; pair skipped\n";
+                            continue;
+                        }
+                    }
+                    LadrunoContactFE *fe =
+                        new LadrunoContactFE(numFe++, sNodes, npsS, mNodes, npsM, epsUse,
+                                             orientDir, mc.tag, sf);
+                    if (fe == 0) return -5;
+                    theModel->addFE_Element(fe);
+                }
+            }
+        }
+    }
+
     // P2a: rigid analytical-plane contacts -> ONE bound adapter per slave node
     // (connectivity = that node). ndm derived per-node from its coordinates.
     if (cd != 0) {

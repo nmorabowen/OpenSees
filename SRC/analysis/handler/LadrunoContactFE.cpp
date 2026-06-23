@@ -39,6 +39,7 @@
 #include <LadrunoContactKernel.h>     // Ladruno: ADR-39 P2b (penalty normal-law / traction)
 #include <LadrunoContactProjection.h> // Ladruno: ADR-41 A2 (closest-point projection geometry)
 #include <LadrunoFrictionKernel.h>    // Ladruno: ADR-41 A1 (Coulomb/Tresca friction return map + tangent)
+#include <LadrunoMortarKernel.h>      // Ladruno: ADR-41 C1/C2.1 (clipped-GP mortar D,M,g̃)
 
 LadrunoContactFE::LadrunoContactFE(int tag)
   : FE_Element(tag, /*numDOF_Group=*/0, /*ndof=*/0),
@@ -49,7 +50,8 @@ LadrunoContactFE::LadrunoContactFE(int tag)
     // edges to the DOF graph, so the numberer permutation is untouched and the
     // result is bitwise-identical to no-contact. (P1a)
     for (int d = 0; d < 3; d++) { planeP0[d] = 0.0; planeN[d] = 0.0; orientDir[d] = 0.0; }
-    for (int i = 0; i < 4; i++) segNode[i] = 0;
+    for (int i = 0; i < 4; i++) { segNode[i] = 0; mortarSlave[i] = 0; mortarMaster[i] = 0; }
+    npsS = npsM = 0; slaveFacetIndex = 0;
 }
 
 LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, int ndm_,
@@ -67,7 +69,8 @@ LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, int ndm_,
             myDOF_Groups(0) = dg->getTag();
     }
     for (int d = 0; d < 3; d++) { planeP0[d] = p0[d]; planeN[d] = n[d]; orientDir[d] = 0.0; }
-    for (int i = 0; i < 4; i++) segNode[i] = 0;
+    for (int i = 0; i < 4; i++) { segNode[i] = 0; mortarSlave[i] = 0; mortarMaster[i] = 0; }
+    npsS = npsM = 0; slaveFacetIndex = 0;
 }
 
 LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, Node **segNodes,
@@ -101,6 +104,42 @@ LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, Node **segNodes,
     // correct after the slave penetrates (a fixed direction, not a live position).
     for (int d = 0; d < 3; d++) orientDir[d] = odir[d];
     for (int d = 0; d < 3; d++) { planeP0[d] = 0.0; planeN[d] = 0.0; }
+    for (int i = 0; i < 4; i++) { mortarSlave[i] = 0; mortarMaster[i] = 0; }
+    npsS = npsM = 0; slaveFacetIndex = 0;
+}
+
+// C2.1 — clipped-GP MORTAR penalty contact (one slave facet vs one master facet).
+LadrunoContactFE::LadrunoContactFE(int tag, Node **slaveNodes, int nps_s,
+                                   Node **masterNodes, int nps_m, double epsN,
+                                   const double odir[3], int contactTag_, int slaveFacetIndex_)
+  : FE_Element(tag, /*numDOF_Group=*/nps_s + nps_m, /*ndof=*/3 * (nps_s + nps_m)),
+    resid(3 * (nps_s + nps_m)), tang(3 * (nps_s + nps_m), 3 * (nps_s + nps_m)),
+    mode(MORTAR), theSlave(0), ndm(3), kn(epsN), nps(0),
+    kt(0.0), mu(0.0), theDomain(0), contactTag(contactTag_), segIndex(0),
+    consistentTan(false), npsS(nps_s), npsM(nps_m), slaveFacetIndex(slaveFacetIndex_)
+{
+    // Connectivity = each slave-facet DOF_Group then each master-facet DOF_Group.
+    // setID() fills myID = [slave_0 xyz | … | master_0 xyz | …]; mortarActive()/the
+    // residual + tangent loops below assume this [slave block | master block] layout.
+    // Every node is ndf==3 (the handler guards it) ⇒ exact ndof match.
+    for (int i = 0; i < nps_s; i++) {
+        mortarSlave[i] = slaveNodes[i];
+        if (slaveNodes[i] != 0) {
+            DOF_Group *dg = slaveNodes[i]->getDOF_GroupPtr();
+            if (dg != 0) myDOF_Groups(i) = dg->getTag();
+        }
+    }
+    for (int i = 0; i < nps_m; i++) {
+        mortarMaster[i] = masterNodes[i];
+        if (masterNodes[i] != 0) {
+            DOF_Group *dg = masterNodes[i]->getDOF_GroupPtr();
+            if (dg != 0) myDOF_Groups(nps_s + i) = dg->getTag();
+        }
+    }
+    for (int i = nps_s; i < 4; i++) mortarSlave[i] = 0;
+    for (int i = nps_m; i < 4; i++) mortarMaster[i] = 0;
+    for (int i = 0; i < 4; i++) segNode[i] = 0;
+    for (int d = 0; d < 3; d++) { orientDir[d] = odir[d]; planeP0[d] = 0.0; planeN[d] = 0.0; }
 }
 
 LadrunoContactFE::~LadrunoContactFE()
@@ -183,6 +222,35 @@ LadrunoContactFE::rigidPlaneGap(void) const
     return g;
 }
 
+// C2.1: integrate the mortar facet pair at the CURRENT trial config. Reads slave/master
+// facet node trial positions (X+u), calls LadrunoMortarKernel::integratePair, and (for a
+// non-empty overlap) returns D,M,g̃ + the per-facet master normal n. False ⇒ no overlap.
+bool
+LadrunoContactFE::mortarActive(double D[4][4], double M[4][4], double g[4], double n[3]) const
+{
+    double Xs[4][3], Xm[4][3];
+    for (int i = 0; i < npsS; i++) {
+        const Vector &X = mortarSlave[i]->getCrds();
+        const Vector &u = mortarSlave[i]->getTrialDisp();
+        for (int d = 0; d < 3; d++) Xs[i][d] = X(d) + u(d);
+    }
+    for (int i = 0; i < npsM; i++) {
+        const Vector &X = mortarMaster[i]->getCrds();
+        const Vector &u = mortarMaster[i]->getTrialDisp();
+        for (int d = 0; d < 3; d++) Xm[i][d] = X(d) + u(d);
+    }
+    LadrunoMortarKernel::PairResult pr;
+    if (LadrunoMortarKernel::integratePair(npsS, Xs, npsM, Xm, orientDir, pr) != 0)
+        return false;                                // empty/degenerate overlap
+    for (int i = 0; i < 4; i++) {
+        g[i] = pr.g[i];
+        for (int j = 0; j < 4; j++) { D[i][j] = pr.D[i][j]; M[i][j] = pr.M[i][j]; }
+    }
+    // per-facet master normal (flat facet ⇒ the per-GP projection normal), oriented
+    // toward orientDir — the same n the weighted gap g̃ used inside integratePair.
+    return LadrunoMortarKernel::facetNormal(npsM, Xm, orientDir, n);
+}
+
 const Vector &
 LadrunoContactFE::getResidual(Integrator *)
 {
@@ -236,6 +304,32 @@ LadrunoContactFE::getResidual(Integrator *)
                         for (int d = 0; d < 3; d++)
                             resid(3 * (1 + i) + d) += -N[i] * tFric[d];
                 }
+            }
+        }
+    } else if (mode == MORTAR) {
+        double D[4][4], M[4][4], g[4], n[3];
+        if (mortarActive(D, M, g, n)) {
+            // ḡ_I = g̃_I / a_I (a_I = Σ_J D_IJ = ∫N_I dΓ); penalty pressure t_I =
+            // min(0, epsN·ḡ_I) (compression ≤ 0; λ_N Uzawa = C2.2). Force along n:
+            //   F^s_K = −(D·t)_K n ,  F^m_L = +(Mᵀ·t)_L n   (self-equilibrating ⇒ Σφ=1).
+            double t[4] = {0, 0, 0, 0};
+            for (int I = 0; I < npsS; I++) {
+                double aI = 0.0;
+                for (int J = 0; J < npsS; J++) aI += D[I][J];
+                if (aI <= 1e-300) continue;               // unreferenced slave node
+                double gbar = g[I] / aI;
+                double p = kn * gbar;                     // kn carries epsN
+                t[I] = (p < 0.0) ? p : 0.0;               // active iff penetrating
+            }
+            for (int K = 0; K < npsS; K++) {              // slave block: −(D·t)_K n
+                double Dt = 0.0;
+                for (int I = 0; I < npsS; I++) Dt += D[K][I] * t[I];
+                for (int d = 0; d < 3; d++) resid(3 * K + d) = -Dt * n[d];
+            }
+            for (int L = 0; L < npsM; L++) {              // master block: +(Mᵀ·t)_L n
+                double Mt = 0.0;
+                for (int I = 0; I < npsS; I++) Mt += M[I][L] * t[I];
+                for (int d = 0; d < 3; d++) resid(3 * (npsS + L) + d) = Mt * n[d];
             }
         }
     }
@@ -296,6 +390,41 @@ LadrunoContactFE::addKtToTang(double fact)
                 }
             }
         }
+    } else if (mode == MORTAR) {
+        addMortarTang(fact);
+    }
+}
+
+// C2.1 — K_c = epsN · B̃ᵀ diag(act/a) B̃ ⊗ (n⊗n), B̃ = [D, −M] over [slave|master] nodes.
+// Material/penalty tangent only — the geometric ∂{D,M,n}/∂u terms are the C1 linearization
+// stub, deferred (NTS shipped without ∂n/∂u). SPD on the active set; matches proto_c2_alm.
+void
+LadrunoContactFE::addMortarTang(double fact)
+{
+    double D[4][4], M[4][4], g[4], n[3];
+    if (!mortarActive(D, M, g, n)) return;
+    int nN = npsS + npsM;
+    double W[4] = {0.0, 0.0, 0.0, 0.0};               // act_I / a_I  (a_I = Σ_J D_IJ)
+    for (int I = 0; I < npsS; I++) {
+        double aI = 0.0;
+        for (int J = 0; J < npsS; J++) aI += D[I][J];
+        if (aI <= 1e-300) continue;
+        if (kn * (g[I] / aI) < 0.0) W[I] = 1.0 / aI;  // active iff penetrating (kn = epsN)
+    }
+    for (int A = 0; A < nN; A++) {
+        for (int B = 0; B < nN; B++) {
+            double Ks = 0.0;                           // K_scalar[A][B]
+            for (int I = 0; I < npsS; I++) {
+                double bIA = (A < npsS) ? D[I][A] : -M[I][A - npsS];
+                double bIB = (B < npsS) ? D[I][B] : -M[I][B - npsS];
+                Ks += bIA * W[I] * bIB;
+            }
+            Ks *= kn;                                 // epsN
+            if (Ks == 0.0) continue;
+            for (int dA = 0; dA < 3; dA++)
+                for (int dB = 0; dB < 3; dB++)
+                    tang(3 * A + dA, 3 * B + dB) += fact * Ks * n[dA] * n[dB];
+        }
     }
 }
 
@@ -329,6 +458,8 @@ LadrunoContactFE::addKiToTang(double fact)
                 addFrictionTang(fact, n, N, tn, zero, zero, false);
             }
         }
+    } else if (mode == MORTAR) {
+        addMortarTang(fact);   // penalty K_initial == K_current (geometric terms deferred)
     }
 }
 
