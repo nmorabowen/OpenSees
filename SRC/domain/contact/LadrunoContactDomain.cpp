@@ -67,7 +67,7 @@ LadrunoContactDomain::getSurface(int tag) const
 int
 LadrunoContactDomain::addContact(int tag, int masterSurfTag, int slaveSurfTag,
                                  double kn, double kt, double mu, const double *outward,
-                                 bool knAuto, double cellFrac, bool consistentTan)
+                                 bool knAuto, double cellFrac, bool consistentTan, double muc)
 {
     if (getSurface(masterSurfTag) == 0 || getSurface(slaveSurfTag) == 0) {
         opserr << "WARNING LadrunoContactDomain::addContact() - master/slave surface "
@@ -91,6 +91,7 @@ LadrunoContactDomain::addContact(int tag, int masterSurfTag, int slaveSurfTag,
     for (int d = 0; d < 3; d++) c.outward[d] = (outward != 0) ? outward[d] : 0.0;
     c.cellFrac = (cellFrac > 0.0) ? cellFrac : 1.0;   // P2.5 broad-phase cell scale
     c.consistentTan = consistentTan;                  // P3.5 friction tangent symmetry
+    c.muc = (muc > 0.0) ? muc : 0.0;                  // D2 viscous stabilization (≤0 ⇒ off)
     theContacts.push_back(c);
     return 0;
 }
@@ -159,7 +160,7 @@ LadrunoContactDomain::addMortarContact(int tag, int masterSurfTag, int slaveSurf
 
 int
 LadrunoContactDomain::addRigidPlane(int tag, int slaveSurfTag,
-                                    const double p0[3], const double n[3], double kn)
+                                    const double p0[3], const double n[3], double kn, double muc)
 {
     LadrunoContactSurface *surf = getSurface(slaveSurfTag);
     if (surf == 0) {
@@ -190,6 +191,7 @@ LadrunoContactDomain::addRigidPlane(int tag, int slaveSurfTag,
     }
     RigidPlane rp;
     rp.tag = tag; rp.slaveSurfTag = slaveSurfTag; rp.kn = kn;
+    rp.muc = (muc > 0.0) ? muc : 0.0;                 // D2 viscous stabilization (≤0 ⇒ off)
     for (int d = 0; d < 3; d++) { rp.p0[d] = p0[d]; rp.n[d] = n[d] / nrm; }
     theRigidPlanes.push_back(rp);
     return 0;
