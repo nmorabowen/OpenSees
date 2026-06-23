@@ -1,7 +1,7 @@
 ---
 title: ADR-41 C1 design / handoff — the mortar kernel (clip → Gauss → D, M, g̃)
 project: Ladruno
-status: handoff (design, not yet implemented)
+status: shipped (#369 — oracle proto_c1_mortar.py 24/24, header LadrunoMortarKernel.h)
 owner: nmora
 tags:
   - implementation

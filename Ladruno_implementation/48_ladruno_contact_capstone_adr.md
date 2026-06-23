@@ -91,7 +91,7 @@ enforcement: penalty (both lanes) + commit-cycle ALM (λ updated in LadrunoConta
 | SOFT=1 Courant-stable penalty (explicit) | — | ⏳ pending | 39 (P4) |
 | SOFT=2 segment-based penalty (corner/edge) | — | ⏳ pending | 39 (P5) |
 | `∂n/∂u` consistent normal tangent + Hertz | — | ⏳ pending | 39 (P2b-2c) |
-| Mortar kernel (overlap clip, D/M, g̃) | `SRC/domain/contact/LadrunoMortarKernel.h` | 📋 planned | 41 |
+| Mortar kernel (overlap clip, D/M, g̃) | `SRC/domain/contact/LadrunoMortarKernel.h` | ✅ shipped (C1, #369) | 41 |
 | Mortar per-GP state | `SRC/domain/contact/LadrunoMortarPair.{h,cpp}` | 📋 planned | 41 |
 | Mortar narrow phase | `SRC/domain/contact/LadrunoMortarSegment.{h,cpp}` | 📋 planned | 41 |
 | Commit-cycle ALM + `analyzeAugmented` recipe | (rides commit hooks; Tcl/Py proc) | 📋 planned | 41 |
@@ -162,7 +162,7 @@ lands with C2**; D1 adds only the *within-step* `analyzeAugmented` held-load ref
 | **B** NTS lane | B1 | P4 SOFT=1 Courant-stable penalty (explicit `dt_cr` not throttled by `kₙ`) | explicit stability + energy balance | ⏳ |
 | | B2 | P5 SOFT=2 segment-based penalty (corner/edge/T-intersection) | corner/edge robustness | ⏳ |
 | | B3 | P2b-2c `∂n/∂u` consistent normal tangent + Hertz benchmark | implicit Newton convergence on curved/large-sliding; Hertz `p(r)` | ⏳ |
-| **C** mortar lane | C1 | `LadrunoMortarKernel.h`: overlap clip → sub-tri Gauss → `D`, `M`, weighted gap `g̃` + linearization. **Design/handoff: [[_adr41_c1_design]]** (next-up; A1+A2 unblock it) | partition-of-unity `ΣM=ΣD` to 1e-12; **constant-pressure patch test on a non-matched mesh ≤1e-6** | 📋 next |
+| **C** mortar lane | C1 | `LadrunoMortarKernel.h`: overlap clip → sub-tri Gauss → `D`, `M`, weighted gap `g̃` (+ linearization stub for C2). **Design/handoff: [[_adr41_c1_design]]** | partition-of-unity `ΣM=ΣD` to 1e-12; **constant-pressure patch test on a non-matched mesh ≤1e-6** | ✅ #369 (oracle 24/24: ΣM=ΣD 1e-12, patch test 9.7e-16, clip-blind 43% biased; C++ standalone bit-for-bit) |
 | | C2 | Frictionless **commit-cycle ALM** MVP: `LadrunoMortarPair` per-GP `λ_N`; mortar narrow phase + adapter | across-step converged penetration → tol; release→F=0; **Hertz** converges; eqn count constant across augmentations (within-step `maxAug` convergence is gated in D1) | 📋 |
 | | C3 | Frictional mortar: adopt shared `LadrunoFrictionKernel` (`λ_T`); Coulomb unsymmetric branch | incline `a=g(sinθ−μcosθ)`; Tresca cap; `Csl` FD-checked; Δt-independent converged answer | 📋 |
 | | C4 | Mesh-tying (`-tie`, zero-gap = active set frozen ON) — degenerate-mortar D/M tie. **This is the committed route;** ADR-39 P6's `MP_Constraint`/ADR-30-projection tie is a *separate alternative implementation* of the same `-tie` capability (different kernel, different gate), **superseded by C4 unless the explicit-lane momentum-conserving tie is explicitly scoped in** | uniform/linear traction across non-matched interface = single-block stress (exact patch) | 📋 |
