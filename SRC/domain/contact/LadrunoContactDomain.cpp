@@ -242,6 +242,10 @@ LadrunoContactDomain::getMaxMortarPenetration(void) const
     for (std::map<NodeKey, MortarNormalState>::const_iterator it = theMortarNormalStates.begin();
          it != theMortarNormalStates.end(); ++it) {
         const MortarNormalState &st = it->second;
+        // C4: a TIE slot is not a contact node — it carries no normal gap (gtGlobal/lambdaN stay 0,
+        // so it is already inert here), but skip it EXPLICITLY to mirror getMaxMortarTieResidual's
+        // !isTie guard and keep this query robust if a future track ever writes those fields.
+        if (st.isTie) continue;
         if (st.aGlobal <= 1e-300) continue;
         double gbar = st.gtGlobal / st.aGlobal;          // ḡ_I; < 0 ⇒ penetration
         // KKT-active only: a node held open (λ + epsN·ḡ ≥ 0) is NOT a contact violation even
