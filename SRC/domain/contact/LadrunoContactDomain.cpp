@@ -95,6 +95,52 @@ LadrunoContactDomain::addContact(int tag, int masterSurfTag, int slaveSurfTag,
 }
 
 int
+LadrunoContactDomain::addMortarContact(int tag, int masterSurfTag, int slaveSurfTag,
+                                       double kn, bool knAuto, double epsN, bool epsNAuto,
+                                       double augTol, int maxAug, int ngp,
+                                       const double *outward, double cellFrac)
+{
+    LadrunoContactSurface *ms = getSurface(masterSurfTag);
+    LadrunoContactSurface *ss = getSurface(slaveSurfTag);
+    if (ms == 0 || ss == 0) {
+        opserr << "WARNING LadrunoContactDomain::addMortarContact() - master/slave surface "
+                  "not defined (master " << masterSurfTag << ", slave " << slaveSurfTag << ")\n";
+        return -1;
+    }
+    // The mortar lane integrates D over slave FACETS and M against master FACETS, so both
+    // surfaces must be faceted (a SLAVE_NODES node-set carries no facet ⇒ no D). Reject the
+    // wrong kinds at this choke point (covers Py + Tcl), mirroring addRigidPlane's guard.
+    if (ms->getKind() != LadrunoContactSurface::MASTER_SEGMENTS) {
+        opserr << "WARNING LadrunoContactDomain::addMortarContact() - master surface "
+               << masterSurfTag << " must be -master (MASTER_SEGMENTS)\n";
+        return -1;
+    }
+    if (ss->getKind() != LadrunoContactSurface::SLAVE_SEGMENTS) {
+        opserr << "WARNING LadrunoContactDomain::addMortarContact() - slave surface "
+               << slaveSurfTag << " must be -slave-segments (SLAVE_SEGMENTS); the node-set "
+                  "-slave kind carries no facet, so it cannot give the mortar matrix D\n";
+        return -1;
+    }
+    if (kn < 0.0 || epsN < 0.0) {
+        opserr << "WARNING LadrunoContactDomain::addMortarContact() - kn/epsN must be >= 0 "
+                  "(got kn " << kn << ", epsN " << epsN << ")\n";
+        return -1;
+    }
+    MortarContact m;
+    m.tag = tag; m.masterSurfTag = masterSurfTag; m.slaveSurfTag = slaveSurfTag;
+    m.kn = kn; m.knAuto = knAuto;
+    m.epsN = epsN; m.epsNAuto = epsNAuto;
+    m.augTol = (augTol > 0.0) ? augTol : 1e-8;
+    m.maxAug = (maxAug > 0) ? maxAug : 20;
+    m.ngp = (ngp >= 1) ? ngp : 2;                     // slave-facet Gauss rule order
+    m.hasOutward = (outward != 0);
+    for (int d = 0; d < 3; d++) m.outward[d] = (outward != 0) ? outward[d] : 0.0;
+    m.cellFrac = (cellFrac > 0.0) ? cellFrac : 1.0;
+    theMortarContacts.push_back(m);
+    return 0;
+}
+
+int
 LadrunoContactDomain::addRigidPlane(int tag, int slaveSurfTag,
                                     const double p0[3], const double n[3], double kn)
 {

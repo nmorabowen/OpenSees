@@ -88,6 +88,32 @@ class LadrunoContactDomain
     };
     const Contact &getContact(int i) const { return theContacts[i]; }
 
+    // --- ADR-41 C2: a MORTAR contact references a SLAVE_SEGMENTS surface + a
+    //     MASTER_SEGMENTS surface; the handler (C2.1) builds a clipped-GP mortar
+    //     adapter per (slave facet, master facet) pair and the frictionless
+    //     commit-cycle ALM (C2.2) augments lambda_N here. C2.0 only STORES the
+    //     definition (a separate vector the NTS handler loop does not read), so the
+    //     command surface exists and is byte-identical/inert until C2.1 consumes it. ---
+    struct MortarContact {
+        int tag, masterSurfTag, slaveSurfTag;
+        double kn;              // penalty / epsN seed; knAuto => sized from the solid (C2.1)
+        bool   knAuto;
+        double epsN;            // ALM normal penalty (C2.2); epsNAuto => = kn auto-size
+        bool   epsNAuto;
+        double augTol;          // Uzawa augmentation tolerance on ||g~||_inf (C2.2)
+        int    maxAug;          // max augmentations per step (C2.2)
+        int    ngp;             // slave-facet Gauss rule order (default 2 = 3-pt)
+        bool   hasOutward;
+        double outward[3];
+        double cellFrac;        // broad-phase bucket-sort cell scale (shared with NTS)
+    };
+    int addMortarContact(int tag, int masterSurfTag, int slaveSurfTag,
+                         double kn, bool knAuto, double epsN, bool epsNAuto,
+                         double augTol, int maxAug, int ngp,
+                         const double *outward = 0, double cellFrac = 1.0);
+    int getNumMortarContacts(void) const { return (int)theMortarContacts.size(); }
+    const MortarContact &getMortarContact(int i) const { return theMortarContacts[i]; }
+
     // --- P2a: rigid analytical plane (point p0 + outward unit normal n) vs a
     //     slave node-set; one adapter per slave node, connectivity = {slave}. ---
     struct RigidPlane {
@@ -140,6 +166,7 @@ class LadrunoContactDomain
   private:
     std::vector<LadrunoContactSurface *> theSurfaces;   // owned
     std::vector<Contact> theContacts;
+    std::vector<MortarContact> theMortarContacts;       // ADR-41 C2 (separate from NTS)
     std::vector<RigidPlane> theRigidPlanes;             // P2a
     int numCommits;
     int numReverts;
