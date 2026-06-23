@@ -595,6 +595,25 @@ int OPS_LadrunoContactInfo()
     return 0;
 }
 
+// ladrunoMortarPenetration -> the max KKT-active normal penetration ‖ḡ‖_∞ over all mortar
+// slave nodes (max of max(0, −ḡ_I) on the active set; 0 if no engine / no contact). ADR-41
+// C2.2: the convergence measure a held-load `analyzeAugmented` loop reads to stop augmenting
+// (penetration → an epsN-INDEPENDENT augTol within maxAug = the headline ALM accuracy win).
+int OPS_LadrunoMortarPenetration()
+{
+    Domain *theDomain = OPS_GetDomain();
+    double pen = 0.0;
+    if (theDomain != 0) {
+        LadrunoContactDomain *cd = theDomain->getLadrunoContactDomain();
+        if (cd != 0)
+            pen = cd->getMaxMortarPenetration();
+    }
+    int one = 1;
+    if (OPS_SetDoubleOutput(&one, &pen, true) < 0)
+        return -1;
+    return 0;
+}
+
 
 int OPS_nodeCrd()
 {

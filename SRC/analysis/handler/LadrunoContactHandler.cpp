@@ -407,6 +407,7 @@ LadrunoContactHandler::handle(const ID *nodesLast)
     //     clip reject non-overlapping candidates (status<0 ⇒ the adapter is inert that
     //     eval). Frictionless penalty (λ_N Uzawa = C2.2; friction = C3). No path state. ---
     if (cd != 0) {
+        cd->mortarNormalGCBegin();   // C2.2: rebuild the live λ_N node-set this handle()
         for (int c = 0; c < cd->getNumMortarContacts(); c++) {
             const LadrunoContactDomain::MortarContact &mc = cd->getMortarContact(c);
             LadrunoContactSurface *ms = cd->getSurface(mc.masterSurfTag);
@@ -499,12 +500,16 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                     }
                     LadrunoContactFE *fe =
                         new LadrunoContactFE(numFe++, sNodes, npsS, mNodes, npsM, epsUse,
-                                             orientDir, mc.tag, sf);
+                                             orientDir, mc.tag, sf, theDomain);
                     if (fe == 0) return -5;
                     theModel->addFE_Element(fe);
+                    // C2.2: this pair's slave nodes have a live λ_N slot this handle().
+                    for (int k = 0; k < npsS; k++)
+                        cd->mortarNormalGCMark(mc.tag, sTags(sf * npsS + k));
                 }
             }
         }
+        cd->mortarNormalGCEnd();   // prune λ_N slots no live mortar pair referenced
     }
 
     // P2a: rigid analytical-plane contacts -> ONE bound adapter per slave node

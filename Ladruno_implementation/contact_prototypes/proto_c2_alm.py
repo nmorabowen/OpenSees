@@ -529,6 +529,200 @@ check("Jacobian shape constant across augmentations (no λ-DOFs added/removed)",
 check("system size == #displacement DOFs only (Uzawa keeps λ off the equations)",
       dims[0] == (len(sN2), len(sN2)))
 
+# --- T7: the C2.2 CRUX — per-node λ_N but per-facet adapters --------------------
+# Pins the C++ resolution (the one non-obvious C2.2 decision, [[_adr41_c2_design]] §crux):
+# the variational force is a GLOBAL assembly f = D_global·p with ONE pressure p_I per
+# GLOBAL slave node, but the C++ evaluates one PER-FACET adapter at a time. Three pins:
+#   (a) summing each facet's local force D^facet·p (p indexed by the facet's global nodes)
+#       reproduces D_global·p EXACTLY  ⇒  per-facet assembly with a shared global p is correct;
+#   (b) the Domain-side incremental "write-then-read" global-gap accumulator (delta updates
+#       keyed (node, feTag)) is IDEMPOTENT and lands on g̃_global = Σ_facets g̃^facet;
+#   (c) reading the global gap LAGGED by one sweep (an adapter sees the other facets' PREVIOUS
+#       contribution at a shared node) does NOT corrupt the converged penetration — it is
+#       still epsN-INDEPENDENT (the contact gap is stationary at equilibrium ⇒ the lag → 0).
+print("\nT7  C2.2 crux: per-facet adapters + per-GLOBAL-node λ_N (shared-node assembly + lagged gap)")
+
+# a non-matched interface with SHARED slave nodes (2×2 slave ⇒ the centre node 4 is shared by
+# all four facets, the edge nodes by two) over a 3×3 master.
+sNc, sFc = quad_mesh(2, 2)
+mNc, mFc = quad_mesh(3, 3)
+Dg, Mg, gg = assemble(sNc, sFc, mNc, mFc, RD)
+Nsc, Nmc = len(sNc), len(mNc)
+
+# a non-trivial per-GLOBAL-node pressure (mixed sign before the compression clamp)
+rng_p = np.cos(np.arange(Nsc) * 1.7) - 0.3          # deterministic, some > 0 some < 0
+p_clamped = np.minimum(0.0, rng_p)
+
+# (a) sum per-facet local forces with the GLOBAL p vs the global assembly D_global·p, M_global·p
+Fs_facetsum = np.zeros(Nsc)
+Fm_facetsum = np.zeros(Nmc)
+gtAccum = np.zeros(Nsc)                              # the Domain-side g̃ accumulator
+aAccum = np.zeros(Nsc)
+for sf in sFc:
+    nps_s = len(sf)
+    Xs = np.zeros((4, 3)); Xs[:nps_s] = sNc[list(sf)]
+    for mf in mFc:
+        nps_m = len(mf)
+        Xm = np.zeros((4, 3)); Xm[:nps_m] = mNc[list(mf)]
+        res = mortar_pair(Xs, nps_s, Xm, nps_m, RD)
+        if res is None:
+            continue
+        Dl, Ml, gl = res["D"], res["M"], res["g"]
+        p_loc = p_clamped[list(sf)]                 # the GLOBAL pressure at this facet's nodes
+        Fs_loc = Dl @ p_loc                         # f^s_K = Σ_I D_KI p_I   (per-facet)
+        Fm_loc = -(Ml.T @ p_loc)
+        for a_ in range(nps_s):
+            Fs_facetsum[sf[a_]] += Fs_loc[a_]
+            gtAccum[sf[a_]] += gl[a_]               # write-then-sum: each facet's g̃ contribution
+            aAccum[sf[a_]] += Dl[a_].sum()          # a^facet_I = Σ_J D^facet_IJ = ∫N_I^facet dΓ
+        for k_ in range(nps_m):
+            Fm_facetsum[mf[k_]] += Fm_loc[k_]
+Fs_global = Dg @ p_clamped
+Fm_global = -(Mg.T @ p_clamped)
+check("(a) Σ per-facet F^s == global D·p (shared-node assembly correct)",
+      np.allclose(Fs_facetsum, Fs_global, atol=1e-12),
+      f"max|Δ|={np.abs(Fs_facetsum - Fs_global).max():.2e}")
+check("(a) Σ per-facet F^m == global −Mᵀ·p", np.allclose(Fm_facetsum, Fm_global, atol=1e-12),
+      f"max|Δ|={np.abs(Fm_facetsum - Fm_global).max():.2e}")
+
+# (b) the incremental accumulator lands on the global g̃ and a, and re-writing a facet's
+# contribution (delta update) is IDEMPOTENT (the C++ overwrites per getResidual eval).
+check("(b) accumulated g̃ == global g̃ (Σ_facets ∫N_I g_N)", np.allclose(gtAccum, gg, atol=1e-12),
+      f"max|Δ|={np.abs(gtAccum - gg).max():.2e}")
+check("(b) accumulated a == D row-sum (Σ_J D_IJ = ∫N_I dΓ)", np.allclose(aAccum, Dg.sum(1), atol=1e-12),
+      f"max|Δ|={np.abs(aAccum - Dg.sum(1)).max():.2e}")
+# idempotent delta: store per-(node,facet) contribution, re-applying the SAME value is a no-op
+contrib = {}                                        # (node, facetId) -> (gt, a)
+gt2 = np.zeros(Nsc); a2c = np.zeros(Nsc)
+for fid, sf in enumerate(sFc):
+    nps_s = len(sf)
+    Xs = np.zeros((4, 3)); Xs[:nps_s] = sNc[list(sf)]
+    for _pass in range(2):                          # apply the SAME facet TWICE (re-eval)
+        for mf in mFc:
+            nps_m = len(mf)
+            Xm = np.zeros((4, 3)); Xm[:nps_m] = mNc[list(mf)]
+            res = mortar_pair(Xs, nps_s, Xm, nps_m, RD)
+            if res is None:
+                continue
+            for a_ in range(nps_s):
+                node = sf[a_]
+                newgt = res["g"][a_]; newa = res["D"][a_].sum()
+                oldgt, olda = contrib.get((node, fid, tuple(mf)), (0.0, 0.0))
+                gt2[node] += newgt - oldgt; a2c[node] += newa - olda   # delta update
+                contrib[(node, fid, tuple(mf))] = (newgt, newa)
+check("(b) delta update idempotent across re-eval (g̃ stable, no double-count)",
+      np.allclose(gt2, gg, atol=1e-12), f"max|Δ|={np.abs(gt2 - gg).max():.2e}")
+
+# (c) lagged-gap Uzawa: read the normalized gap from the PREVIOUS Newton iterate (the C++
+# per-facet lag at a shared node), confirm the converged penetration is unchanged + epsN-indep.
+def solve_step_lagged(D, a, z0, k, f_ext, lam, epsN, newton_it=200, tol=1e-13):
+    Ns = len(z0)
+    u = np.zeros(Ns)
+    gb_prev = (D @ z0) / a                          # lag seed = the start-config gap
+    for _ in range(newton_it):
+        t, act = nodal_pressure(lam, gb_prev, epsN) # pressure uses the LAGGED gap
+        R = k * u + D @ t - f_ext
+        if np.linalg.norm(R) < tol and _ > 0:
+            break
+        W = np.where(act, 1.0 / a, 0.0)
+        J = k * np.eye(Ns) + epsN * (D @ (W[:, None] * D))
+        u -= np.linalg.solve(J, R)
+        gb_prev = (D @ (z0 + u)) / a                # refresh the lag for the next iterate
+    return u, (D @ (z0 + u)) / a, act
+
+def uzawa_lagged(D, a, z0, k, f_ext, epsN, augTol=1e-10, maxAug=200):
+    lam = np.zeros(len(z0))
+    for naug in range(1, maxAug + 1):
+        u, gb, act = solve_step_lagged(D, a, z0, k, f_ext, lam, epsN)
+        if np.maximum(0.0, -gb).max() < augTol:
+            break
+        lam = np.minimum(0.0, lam + epsN * gb)
+    return u, gb, lam, naug
+
+u_lag3, gb_lag3, _, n_lag3 = uzawa_lagged(D2, a2, z0, k, f_ext, epsN=1e3)
+u_lag5, gb_lag5, _, n_lag5 = uzawa_lagged(D2, a2, z0, k, f_ext, epsN=1e5)
+check("(c) lagged-gap Uzawa still drives penetration→0 (≤1e-10) at epsN=1e3",
+      np.maximum(0, -gb_lag3).max() < 1e-10, f"pen={np.maximum(0,-gb_lag3).max():.2e} in {n_lag3} aug")
+check("(c) lagged-gap converged disp == non-lagged (lag vanishes at equilibrium, ≤1e-6)",
+      np.allclose(u_lag3, u_lo, atol=1e-6), f"max|Δu|={np.abs(u_lag3 - u_lo).max():.2e}")
+check("(c) lagged-gap converged disp epsN-INDEPENDENT (1e3 vs 1e5, ≤1e-6)",
+      np.allclose(u_lag3, u_lag5, atol=1e-6), f"max|Δu|={np.abs(u_lag3 - u_lag5).max():.2e}")
+
+# --- T8: the SHIPPED C2.2 scheme — LOCAL-gap penalty force + GLOBAL-gap λ Uzawa --------
+# The C++ adapter is PER-FACET and (NewtonRaphson) forms the residual sweep facet-by-facet, so
+# reading a RUNNING global gap would make a shared node see a different pressure in each facet
+# (an order-dependent, non-Newton residual). The shipped resolution keeps the force/tangent on
+# each facet's OWN local gap (deterministic, exactly C2.1) plus the per-GLOBAL-node multiplier
+# λ_I (assembles globally, shared), and uses the GLOBAL gap ONLY for the commit-time Uzawa
+# update of λ_I. This pins that scheme still drives penetration → an epsN-INDEPENDENT tol:
+#   force:   p_I^facet = min(0, λ_I + epsN · g̃_I^facet / a_I^facet)   (LOCAL facet gap)
+#   Uzawa:   λ_I ← min(0, λ_I + epsN · g̃_I^global / a_I^global)        (GLOBAL gap, at commit)
+print("\nT8  shipped scheme: per-facet LOCAL-gap force + per-GLOBAL-node λ (Uzawa on the global gap)")
+sN8, sF8 = quad_mesh(2, 2)
+# per-facet local D (each slave facet matched to itself) and the global assembly:
+Dfac = []
+for sf in sF8:
+    Xf = np.zeros((4, 3)); Xf[:4] = sN8[list(sf)]
+    rf = mortar_pair(Xf, 4, Xf, 4, RD)
+    Dfac.append((list(sf), rf["D"]))
+Dg8, _, _ = assemble(sN8, sF8, sN8, sF8, RD)
+ag8 = Dg8.sum(1)
+Ns8 = len(sN8)
+z08 = np.full(Ns8, 0.10)
+k8 = 50.0
+f8 = -np.array([1, 3, 1, 3, 8, 3, 1, 3, 1], float)
+
+
+def solve_local(lam, epsN, nit=100, tol=1e-13):
+    # mirror T3's verified sign convention (R = k·u + D·t − f_ext, t ≤ 0) but build the contact
+    # term PER FACET from each facet's LOCAL gap, exactly as the C++ adapter does.
+    u = np.zeros(Ns8)
+    for _ in range(nit):
+        R = k8 * u - f8
+        J = k8 * np.eye(Ns8)
+        for nodes, Df in Dfac:
+            af = Df.sum(1)
+            gtf = Df @ (z08 + u)[nodes]                # g̃^facet at the trial config
+            p_loc = np.zeros(4)
+            W = np.zeros(4)
+            for ii, I in enumerate(nodes):
+                if af[ii] <= 1e-300:
+                    continue
+                pp = lam[I] + epsN * gtf[ii] / af[ii]  # LOCAL facet gap + the GLOBAL λ_I
+                if pp < 0.0:                           # active
+                    p_loc[ii] = pp
+                    W[ii] = epsN / af[ii]
+            f_loc = Df @ p_loc                         # f^s_K = (D·p)_K  (T3 convention)
+            Kf = Df @ (W[:, None] * Df)                # ∂f/∂u = epsN·Dᵀ diag(act/a) D
+            for K, I in enumerate(nodes):
+                R[I] += f_loc[K]
+                for L, Jn in enumerate(nodes):
+                    J[I, Jn] += Kf[K, L]
+        if np.linalg.norm(R) < tol:
+            break
+        u -= np.linalg.solve(J, R)
+    return u
+
+
+def uzawa_local(epsN, augTol=1e-10, maxAug=200):
+    lam = np.zeros(Ns8)
+    for naug in range(1, maxAug + 1):
+        u = solve_local(lam, epsN)
+        gb_glob = (Dg8 @ (z08 + u)) / ag8              # GLOBAL gap for the λ update + measure
+        if np.maximum(0.0, -gb_glob).max() < augTol:
+            break
+        lam = np.minimum(0.0, lam + epsN * gb_glob)    # Uzawa on the GLOBAL gap
+    return u, gb_glob, naug
+
+
+u8_lo, gb8_lo, n8_lo = uzawa_local(epsN=1e3)
+u8_hi, gb8_hi, n8_hi = uzawa_local(epsN=1e5)
+check("(T8) local-gap force + global-λ Uzawa drives penetration→0 at epsN=1e3",
+      np.maximum(0, -gb8_lo).max() < 1e-10, f"pen={np.maximum(0,-gb8_lo).max():.2e} in {n8_lo} aug")
+check("(T8) converges at epsN=1e5", np.maximum(0, -gb8_hi).max() < 1e-10, f"in {n8_hi} aug")
+check("(T8) converged displacement epsN-INDEPENDENT (1e3 vs 1e5, ≤1e-6)",
+      np.allclose(u8_lo, u8_hi, atol=1e-6), f"max|Δu|={np.abs(u8_lo - u8_hi).max():.2e}")
+
 print(f"\n{'='*68}\n{'ALL PASS' if _fails == 0 else str(_fails) + ' FAILURE(S)'}  "
       f"(C2 mortar-ALM oracle)\n{'='*68}")
 sys.exit(1 if _fails else 0)

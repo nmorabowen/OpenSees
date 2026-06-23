@@ -82,15 +82,20 @@ class LadrunoContactFE : public FE_Element
                      const double orientDir[3], double kt = 0.0, double mu = 0.0,
                      Domain *theDomain = 0, int contactTag = 0, int segIndex = 0,
                      bool consistentTan = false);
-    // C2.1 (ADR-41): clipped-GP MORTAR penalty contact, ONE slave facet vs ONE master
-    // facet (tri-3 / quad-4). Connectivity = {slave facet nodes} ∪ {master facet nodes},
+    // C2.1/C2.2 (ADR-41): clipped-GP MORTAR contact, ONE slave facet vs ONE master facet
+    // (tri-3 / quad-4). Connectivity = {slave facet nodes} ∪ {master facet nodes},
     // FE_Element(tag, nps_s+nps_m, 3*(nps_s+nps_m)). getResidual integrates the pair via
     // LadrunoMortarKernel::integratePair (D,M,g̃ at the trial config) and assembles the
-    // penalty force F^s=−(D·t)n, F^m=+(Mᵀ·t)n with t_I=min(0, epsN·ḡ_I) (frictionless;
-    // λ_N Uzawa = C2.2; friction = C3). addKtToTang assembles K_c=epsN·B̃ᵀdiag(act/a)B̃⊗(n⊗n).
+    // augmented force F^s=−(D·p)n, F^m=+(Mᵀ·p)n with the per-GLOBAL-slave-node pressure
+    // p_I = min(0, λ_I + epsN·ḡ_I). C2.2: λ_I and the GLOBAL weighted gap ḡ_I live on the
+    // Domain-owned LadrunoContactDomain (looked up lazily via theDomain each getResidual —
+    // wipe deletes the engine, so the adapter must NOT cache its ptr), keyed (contactTag,
+    // slaveNodeTag); the adapter reports its per-facet g̃_I^facet/a_I^facet into that node slot
+    // (accumulateMortarGap) then reads the running global gap. theDomain==0 ⇒ the C2.1 penalty
+    // fallback (λ≡0, facet-local gap). addKtToTang assembles K_c=epsN·B̃ᵀdiag(act/a_global)B̃⊗(n⊗n).
     LadrunoContactFE(int tag, Node **slaveNodes, int nps_s, Node **masterNodes, int nps_m,
                      double epsN, const double orientDir[3], int contactTag = 0,
-                     int slaveFacetIndex = 0);
+                     int slaveFacetIndex = 0, Domain *theDomain = 0);
     ~LadrunoContactFE();
 
     // self-owned buffers (base buffers are unavailable when myEle == 0)

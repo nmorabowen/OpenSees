@@ -1,7 +1,7 @@
 ---
 title: ADR-41 C2 design / handoff — frictionless commit-cycle ALM (mortar enforcement)
 project: Ladruno
-status: in progress — C2.0 #373 + C2.1 #374 shipped; C2.2 (Uzawa-on-commit) is next (see the C2.2 handoff section)
+status: C2 COMPLETE — C2.0 #373 + C2.1 #374 + C2.2 #PENDING shipped (frictionless commit-cycle ALM done; see the C2.2 handoff section for the shipped resolution + the deviation from the original recommendation)
 owner: nmora
 tags:
   - implementation
@@ -238,6 +238,34 @@ a hook to run before FE assembly — heavier. Try the lagged version first.
 
 **Do NOT** use a per-facet-local λ (one λ per facet-node copy): it is variationally inconsistent at shared
 nodes and will fail the patch test. λ is per GLOBAL slave node.
+
+## SHIPPED resolution (C2.2, #PENDING) — deviates from the recommendation above
+
+The recommended "lagged global gap inside the pressure" (§ point 2–3) was **abandoned during transcription**
+for a subtle, decisive reason: `NewtonRaphson::solveCurrentStep` forms the residual sweep **facet-by-facet
+within one `formUnbalance`**, so a per-facet adapter that accumulates `g̃` into a Domain-side running sum and
+then reads it back gives a shared slave node a **different pressure in each facet** (the 1st facet sees 1
+contribution, the 2nd sees 2, …). The residual becomes a function of facet evaluation ORDER, not just `u` —
+not a clean `R(u)` — and the tangent goes inconsistent → **singular solve** (caught immediately: the
+non-matched + coarse-slave battery failed to converge). The oracle's "lag" (T7c) was a value **frozen across
+the whole sweep**; reproducing a frozen-per-sweep value needs sweep-boundary detection (no such hook exists
+on the contact engine) and seeding it to zero kills the first sweep's contact.
+
+**What shipped instead (oracle-pinned by `proto_c2_alm.py` T8, 28/28):**
+- The force AND tangent use each facet's **LOCAL** gap: `p_I = min(0, λ_I + epsN·ḡ_I^facet)` — deterministic,
+  bit-for-bit the C2.1 penalty path — PLUS the per-GLOBAL-node multiplier `λ_I`. The `λ_I` term **assembles
+  globally for free**: `Σ_facets D_KI^facet λ_I = D_KI^global λ_I` because `λ_I` is one shared value. So the
+  load-carrying term is variationally consistent (it is the global `D·λ` assembly); the penalty term → 0 under
+  augmentation, so the converged state is consistent + epsN-independent. (This is NOT the rejected per-facet-
+  local λ — there is still ONE `λ_I` per global node; only the *penalty gap* in `p_I` is facet-local.)
+- The **GLOBAL** weighted gap is still accumulated on the Domain (`accumulateMortarGap`, idempotent delta
+  updates keyed `(contactTag, nodeTag, feTag)`), but **only** for (a) the once-per-`commit()` Uzawa update
+  `λ_I ← min(0, λ_I + epsN·ḡ_I^global)` and (b) the `ladrunoMortarPenetration` `‖ḡ‖_∞` query — never read back
+  into the same sweep's force. The accumulators are zeroed (λ preserved) each `handle()` by `mortarNormalGCEnd`.
+- The held-load within-step augmentation is `Ladruno_scripts/analyze_augmented.py` (zero-increment LoadControl
+  re-commits to `augTol`) — the Q-DRIVER resolution, NO custom `EquiSolnAlgo`.
+
+See [[LEDGER_quirks]] ("Per-facet mortar adapters reading a RUNNING global gap …") for the full lesson.
 
 ## C2.2 deliverables
 
