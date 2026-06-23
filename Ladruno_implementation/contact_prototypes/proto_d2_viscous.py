@@ -198,6 +198,76 @@ ke_loss = ke_in - ke_out
 check("KE lost == dashpot dissipation ∫μ_c ġ² dt (≤2% — viscous removes exactly the dissipated energy)",
       abs(ke_loss - diss) / ke_in < 0.02, f"ΔKE={ke_loss:.4f} diss={diss:.4f} rel={abs(ke_loss-diss)/ke_in:.3%}")
 
+# ===================================== T6: D2.2 — MORTAR viscous (the B̃=[D,−M] normal operator)
+# Mortar viscous reuses the C2 normal-penalty operator with epsN→μ_c, driven by the weighted normal
+# relative VELOCITY: per slave node I the normal gap rate is ḡ̇_I = n·(Σ_J D_IJ v_s,J − Σ_K M_IK v_m,K)/a_I,
+# the viscous pressure p_visc_I = μ_c·ḡ̇_I (NO clamp — a dashpot active while in contact), scattered like
+# the normal force: f^s_K = −(D·p_visc)_K n, f^m_L = +(Mᵀ·p_visc)_L n. The damping matrix is then
+# C_visc = μ_c·B̃ᵀ diag(W) B̃ ⊗ n⊗n (W_I=1/a_I on the contact active set) — the C2 tangent, kn→μ_c.
+print("\nT6  MORTAR viscous (the B̃=[D,−M] normal operator): C_visc=μ_c·B̃ᵀWB̃⊗n⊗n == FD, sym+PSD; "
+      "self-equilibrium; force opposes approach")
+nrm = np.array([0.0, 0.0, 1.0])
+Dm = np.array([[2.0, 1.0], [1.0, 3.0]])               # 2×2 slave Gram (non-diagonal)
+Mm = np.array([[1.5, 1.5], [1.0, 3.0]])               # 2×2 slave-master (row sums == Dm row sums)
+aI = Dm.sum(1)                                          # a_I (== M row sums ⇒ partition of unity)
+mc_m = 80.0
+nS_m, nM_m = 2, 2
+nN_m = nS_m + nM_m
+
+
+def bm(I, A):                                           # B̃ row: slave Dm[I][A]; master −Mm[I][A−nS]
+    return Dm[I][A] if A < nS_m else -Mm[I][A - nS_m]
+
+
+def gdot_node(I, V):                                    # ḡ̇_I = n·(Σ_B b_IB V_B)/a_I  (V: nN×3 velocities)
+    rdot = np.zeros(3)
+    for B in range(nN_m):
+        rdot += bm(I, B) * V[B]
+    return np.dot(rdot, nrm) / aI[I]
+
+
+def fvisc_mortar(V):                                    # assembled viscous force (nN×3)
+    F = np.zeros((nN_m, 3))
+    for I in range(nS_m):
+        pv = mc_m * gdot_node(I, V)                     # p_visc_I = μ_c·ḡ̇_I
+        for A in range(nN_m):
+            F[A] += -bm(I, A) * pv * nrm                # −b_IA·p_visc·n  (the D/−M·n scatter)
+    return F
+
+
+# analytic damping matrix C_visc = μ_c·Σ_I (b_IA b_IB / a_I)·(n⊗n)
+Cm = np.zeros((nN_m, 3, nN_m, 3))
+for I in range(nS_m):
+    for A in range(nN_m):
+        for B in range(nN_m):
+            Cm[A, :, B, :] += mc_m * (bm(I, A) * bm(I, B) / aI[I]) * np.outer(nrm, nrm)
+Cm = Cm.reshape(nN_m * 3, nN_m * 3)
+# C_visc == −∂f_visc/∂V (central FD)
+V0 = np.zeros((nN_m, 3))
+hh = 1e-6
+Cfd_m = np.zeros((nN_m * 3, nN_m * 3))
+for j in range(nN_m * 3):
+    Vp = V0.reshape(-1).copy(); Vp[j] += hh
+    Vm_ = V0.reshape(-1).copy(); Vm_[j] -= hh
+    Cfd_m[:, j] = -(fvisc_mortar(Vp.reshape(nN_m, 3)).reshape(-1)
+                    - fvisc_mortar(Vm_.reshape(nN_m, 3)).reshape(-1)) / (2 * hh)
+relm = np.abs(Cm - Cfd_m).max() / (np.abs(Cfd_m).max() + 1e-30)
+check("(T6) mortar C_visc == −∂f_visc/∂V (FD ≤1e-6)", relm <= 1e-6, f"rel={relm:.2e}")
+check("(T6) mortar C_visc symmetric", np.allclose(Cm, Cm.T, atol=1e-9))
+ev_m = np.linalg.eigvalsh(0.5 * (Cm + Cm.T))
+check("(T6) mortar C_visc PSD (all eig ≥ −tol)", ev_m.min() > -1e-9, f"λ_min={ev_m.min():.2e}")
+# self-equilibrium: the D/−M·n scatter applies zero net force (Σφ=1 ⇒ ΣD rows == ΣM rows)
+V_app = np.zeros((nN_m, 3)); V_app[0] = V_app[1] = np.array([0.0, 0.0, -1.0])   # slave approaching (−z)
+F_app = fvisc_mortar(V_app)
+check("(T6) self-equilibrium ΣF^s + ΣF^m == 0 (≤1e-12)", np.abs(F_app.sum(0)).max() < 1e-12,
+      f"max|ΣF|={np.abs(F_app.sum(0)).max():.2e}")
+check("(T6) slave approaching (−z) ⇒ viscous force on the slave is +z (opposes approach)",
+      F_app[0, 2] > 0 and F_app[1, 2] > 0, f"f_s_z=({F_app[0,2]:.3f},{F_app[1,2]:.3f})")
+# rigid-body normal velocity (slave+master together) ⇒ ḡ̇=0 ⇒ no force (frame-invariant)
+V_rig = np.tile([0.0, 0.0, 0.5], (nN_m, 1))
+check("(T6) rigid normal velocity ⇒ ḡ̇=0 ⇒ no viscous force (frame-invariant)",
+      np.abs(fvisc_mortar(V_rig)).max() < 1e-12)
+
 print(f"\n{'='*70}\n{'ALL PASS' if _fails == 0 else str(_fails) + ' FAILURE(S)'}  "
       f"(D2 viscous-stabilization oracle)\n{'='*70}")
 sys.exit(1 if _fails else 0)

@@ -103,7 +103,7 @@ LadrunoContactDomain::addMortarContact(int tag, int masterSurfTag, int slaveSurf
                                        const double *outward, double cellFrac,
                                        double mu, double epsT, bool epsTAuto,
                                        double cohesion, double tauMax, bool consistentTan,
-                                       bool isTie)
+                                       bool isTie, double muc)
 {
     LadrunoContactSurface *ms = getSurface(masterSurfTag);
     LadrunoContactSurface *ss = getSurface(slaveSurfTag);
@@ -138,6 +138,13 @@ LadrunoContactDomain::addMortarContact(int tag, int masterSurfTag, int slaveSurf
                   "friction cone; -mu/-cohesion/-tauMax are not allowed with -tie\n";
         return -1;
     }
+    if (isTie && muc > 0.0) {
+        // D2.2 — a tie is a permanent bond (no contact-status flips ⇒ no chatter to damp). Refuse
+        // -visc with -tie at this choke point too (the command surface refuses it first).
+        opserr << "WARNING LadrunoContactDomain::addMortarContact() - -visc (viscous contact "
+                  "stabilization) is not allowed with -tie (a bond has no contact-chatter regime)\n";
+        return -1;
+    }
     MortarContact m;
     m.tag = tag; m.masterSurfTag = masterSurfTag; m.slaveSurfTag = slaveSurfTag;
     m.kn = kn; m.knAuto = knAuto;
@@ -154,6 +161,7 @@ LadrunoContactDomain::addMortarContact(int tag, int masterSurfTag, int slaveSurf
     m.tauMax = tauMax;                                // ≤0 ⇒ no Tresca upper cap
     m.consistentTan = consistentTan;
     m.isTie = isTie;                                  // C4 — permanent mesh-tie bond
+    m.muc = (muc > 0.0) ? muc : 0.0;                  // D2.2 viscous stabilization (≤0 ⇒ off)
     theMortarContacts.push_back(m);
     return 0;
 }

@@ -1,7 +1,7 @@
 ---
 title: ADR-41 Track D2 design / handoff — viscous contact stabilization (p_visc = μ_c·v_rel)
 project: Ladruno
-status: IN PROGRESS — D2.1 (NTS: rigid-plane + segment) this session; D2.2 (mortar) a clean follow-on
+status: D2 COMPLETE — D2.1 (NTS: rigid-plane + segment) #385 + D2.2 (mortar contact) #TBD shipped. Viscous stabilization on NTS + mortar; refused on -tie. Battery 83/83.
 owner: nmora
 tags:
   - implementation

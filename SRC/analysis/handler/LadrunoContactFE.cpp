@@ -114,11 +114,11 @@ LadrunoContactFE::LadrunoContactFE(int tag, Node **slaveNodes, int nps_s,
                                    Node **masterNodes, int nps_m, double epsN,
                                    const double odir[3], int contactTag_, int slaveFacetIndex_,
                                    Domain *dom, double mu_, double epsT_, double cohesion_,
-                                   double tauMax_, bool consistentTan_, bool isTie_)
+                                   double tauMax_, bool consistentTan_, bool isTie_, double muc_)
   : FE_Element(tag, /*numDOF_Group=*/nps_s + nps_m, /*ndof=*/3 * (nps_s + nps_m)),
     resid(3 * (nps_s + nps_m)), tang(3 * (nps_s + nps_m), 3 * (nps_s + nps_m)),
     mode(MORTAR), theSlave(0), ndm(3), kn(epsN), nps(0),
-    kt(epsT_), mu(mu_), muc(0.0), theDomain(dom), contactTag(contactTag_), segIndex(0),
+    kt(epsT_), mu(mu_), muc(muc_), theDomain(dom), contactTag(contactTag_), segIndex(0),
     consistentTan(consistentTan_), npsS(nps_s), npsM(nps_m), slaveFacetIndex(slaveFacetIndex_),
     mortarCohesion(cohesion_), mortarTauMax(tauMax_), isTie(isTie_)
 {
@@ -395,6 +395,48 @@ LadrunoContactFE::getResidual(Integrator *)
             // frictionless C2 path (the NTS P3 `mu>0` guard, generalized to the unified cone).
             if ((mu > 0.0 || mortarCohesion > 0.0 || mortarTauMax > 0.0) && cd != 0)
                 addMortarFriction(D, M, n, p, cd);
+
+            // --- D2.2 viscous normal stabilization (force; tangent in addCtoTang) ---
+            // Per IN-CONTACT slave node (p[I]<0, the same KKT mask): the weighted normal gap RATE
+            // ḡ̇_I = n·(Σ_J D_IJ v_s,J − Σ_K M_IK v_m,K)/a_I (v = getTrialVel), the viscous pressure
+            // p_visc_I = μ_c·ḡ̇_I (NO clamp — a dashpot active while in contact), scattered EXACTLY like
+            // the normal penalty force (f^s=−(D·p_visc)n, f^m=+(Mᵀ·p_visc)n). It is the C2 normal
+            // operator with epsN→μ_c, driven by velocity. v≡0 in statics ⇒ inert ⇒ μ_c=0 byte-identical.
+            if (muc > 0.0) {
+                double vs[4][3], vm[4][3];
+                for (int i = 0; i < npsS; i++) {
+                    const Vector &v = mortarSlave[i]->getTrialVel();
+                    for (int d = 0; d < 3; d++) vs[i][d] = v(d);
+                }
+                for (int i = 0; i < npsM; i++) {
+                    const Vector &v = mortarMaster[i]->getTrialVel();
+                    for (int d = 0; d < 3; d++) vm[i][d] = v(d);
+                }
+                double pv[4] = {0, 0, 0, 0};
+                for (int I = 0; I < npsS; I++) {
+                    if (p[I] >= 0.0) continue;            // viscous only on in-contact nodes
+                    double aFacet = 0.0;
+                    for (int J = 0; J < npsS; J++) aFacet += D[I][J];
+                    if (aFacet <= 1e-300) continue;
+                    double rdot[3] = {0, 0, 0};
+                    for (int J = 0; J < npsS; J++)
+                        for (int d = 0; d < 3; d++) rdot[d] += D[I][J] * vs[J][d];
+                    for (int K = 0; K < npsM; K++)
+                        for (int d = 0; d < 3; d++) rdot[d] -= M[I][K] * vm[K][d];
+                    double gdot = (rdot[0]*n[0] + rdot[1]*n[1] + rdot[2]*n[2]) / aFacet;
+                    pv[I] = muc * gdot;                   // p_visc_I = μ_c·ḡ̇_I
+                }
+                for (int K = 0; K < npsS; K++) {          // slave: −(D·p_visc)_K n
+                    double Dp = 0.0;
+                    for (int I = 0; I < npsS; I++) Dp += D[K][I] * pv[I];
+                    for (int d = 0; d < 3; d++) resid(3 * K + d) += -Dp * n[d];
+                }
+                for (int L = 0; L < npsM; L++) {          // master: +(Mᵀ·p_visc)_L n
+                    double Mp = 0.0;
+                    for (int I = 0; I < npsS; I++) Mp += M[I][L] * pv[I];
+                    for (int d = 0; d < 3; d++) resid(3 * (npsS + L) + d) += Mp * n[d];
+                }
+            }
         } else if (cd != 0) {
             // overlap empty THIS eval (the pair separated / the clip rejected it): zero this
             // facet's contribution so it stops biasing the shared node's accumulated global gap.
@@ -789,7 +831,8 @@ LadrunoContactFE::addCtoTang(double fact)
     // transient integrators call formEleTangent → addCtoTang(c2) (Newmark/HHT/CentralDifference),
     // so implicit Newton gets the consistent damping tangent; the fork's mass-only CDL never calls
     // it ⇒ explicit is force-only (the P3 friction explicit/implicit split). muc=0 ⇒ no-op (the
-    // shipped no-damping behavior — byte-identical). RIGID_PLANE + SEGMENT only (mortar = D2.2).
+    // shipped no-damping behavior — byte-identical). RIGID_PLANE + SEGMENT (D2.1) + MORTAR (D2.2);
+    // a tie (isTie) has no contact-chatter regime ⇒ no viscous (refused at the command surface).
     if (muc <= 0.0)
         return;
     if (mode == RIGID_PLANE && rigidPlaneGap() < 0.0) {
@@ -803,6 +846,39 @@ LadrunoContactFE::addCtoTang(double fact)
             for (int i = 0; i < ndof; i++)
                 for (int j = 0; j < ndof; j++)
                     tang(i, j) += fact * muc * B[i] * B[j];
+        }
+    } else if (mode == MORTAR && !isTie) {
+        // D2.2 — C_visc = μ_c · B̃ᵀ diag(W) B̃ ⊗ (n⊗n), B̃=[D,−M], W_I=1/a_I on the contact active
+        // set (p_I<0). The C2 normal-penalty Gram block (addMortarTang) with epsN→μ_c, in C not K.
+        double D[4][4], M[4][4], g[4], n[3];
+        if (!mortarActive(D, M, g, n)) return;
+        int nN = npsS + npsM;
+        LadrunoContactDomain *cd = (theDomain != 0) ? theDomain->getLadrunoContactDomain() : 0;
+        double W[4] = {0.0, 0.0, 0.0, 0.0};
+        for (int I = 0; I < npsS; I++) {
+            double aFacet = 0.0;
+            for (int J = 0; J < npsS; J++) aFacet += D[I][J];
+            if (aFacet <= 1e-300) continue;
+            double lambdaI = (cd != 0)
+                ? cd->getOrCreateMortarNormalState(contactTag, mortarSlave[I]->getTag()).lambdaN
+                : 0.0;
+            double pr = lambdaI + kn * (g[I] / aFacet);   // same p_I as the residual (kn = epsN)
+            if (pr < 0.0) W[I] = 1.0 / aFacet;            // active iff compression
+        }
+        for (int A = 0; A < nN; A++) {
+            for (int B = 0; B < nN; B++) {
+                double Ks = 0.0;
+                for (int I = 0; I < npsS; I++) {
+                    double bIA = (A < npsS) ? D[I][A] : -M[I][A - npsS];
+                    double bIB = (B < npsS) ? D[I][B] : -M[I][B - npsS];
+                    Ks += bIA * W[I] * bIB;
+                }
+                Ks *= muc;
+                if (Ks == 0.0) continue;
+                for (int dA = 0; dA < 3; dA++)
+                    for (int dB = 0; dB < 3; dB++)
+                        tang(3 * A + dA, 3 * B + dB) += fact * Ks * n[dA] * n[dB];
+            }
         }
     }
 }

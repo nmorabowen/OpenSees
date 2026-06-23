@@ -107,7 +107,8 @@ class LadrunoContactFE : public FE_Element
                      double epsN, const double orientDir[3], int contactTag = 0,
                      int slaveFacetIndex = 0, Domain *theDomain = 0,
                      double mu = 0.0, double epsT = 0.0, double cohesion = 0.0,
-                     double tauMax = 0.0, bool consistentTan = false, bool isTie = false);
+                     double tauMax = 0.0, bool consistentTan = false, bool isTie = false,
+                     double muc = 0.0);   // D2.2: viscous normal stabilization on the mortar contact
     ~LadrunoContactFE();
 
     // self-owned buffers (base buffers are unavailable when myEle == 0)
@@ -193,8 +194,8 @@ class LadrunoContactFE : public FE_Element
     double kt;          // tangential penalty
     double mu;          // Coulomb friction coefficient (<=0 ⇒ frictionless P2b path)
     double muc;         // D2: viscous normal-stabilization coeff (p_visc = muc*gap_rate; 0 ⇒ off).
-                        // RIGID_PLANE/SEGMENT only (D2.1); the term is force-only under CDL (explicit),
-                        // force + a C=muc*B Bᵀ damping tangent (addCtoTang) under implicit.
+                        // RIGID_PLANE/SEGMENT (D2.1) + MORTAR contact (D2.2, NOT ties); force-only under
+                        // CDL (explicit), force + a C=muc·(B/B̃)ᵀ(B/B̃) damping tangent (addCtoTang) under implicit.
     Domain *theDomain;  // for the LAZY engine re-fetch (wipe deletes the engine, so
                         // we must not cache LadrunoContactDomain*); null ⇒ no friction
     int contactTag;     // friction-state key: contact definition tag ...
