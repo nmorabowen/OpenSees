@@ -1585,7 +1585,7 @@ non-obvious behaviours, all relevant to anyone wiring `-stabilize` into a driver
   augments from the order-INDEPENDENT global accumulator `gtGlobal/aGlobal`. So the per-node `λ_T`/`gpT`
   reconciliation is the same single fix for the whole friction state. Still fenced to matched/explicit; the
   C3.3 gate (MINOR-1) re-confirmed it is inherited, not introduced.
-- **C4 update (#TBD) — RESOLVED for the TIE path; STILL FENCED for FRICTION.** C4 mesh-tying hits shared
+- **C4 update (#381) — RESOLVED for the TIE path; STILL FENCED for FRICTION.** C4 mesh-tying hits shared
   slave nodes immediately (non-matching meshes are the whole point), so the pre-req had to be discharged
   before relying on it. The tie state (`λ_tie`, the full 3-vec relative displacement `r_I`) does NOT inherit
   the bug, because `r_I = Σ D u_s − Σ M u_m` is a **LINEAR accumulation** — not a return-map OUTPUT — so it
