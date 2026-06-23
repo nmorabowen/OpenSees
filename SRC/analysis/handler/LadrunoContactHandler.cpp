@@ -442,26 +442,14 @@ LadrunoContactHandler::handle(const ID *nodesLast)
             int nSegM = mTags.Size() / npsM;
             int nSegS = sTags.Size() / npsS;
 
-            // broad phase: bucket-sort the MASTER facets (reference coords), as in NTS.
-            std::vector<double> segCoords((size_t)nSegM * npsM * 3, 0.0);
-            for (int seg = 0; seg < nSegM; seg++) {
-                double *S = &segCoords[(size_t)seg * npsM * 3];
-                bool haveFirst = false; double first[3] = {0.0, 0.0, 0.0};
-                for (int k = 0; k < npsM; k++) {
-                    Node *mn = theDomain->getNode(mTags(seg * npsM + k));
-                    if (mn != 0) {
-                        const Vector &X = mn->getCrds();
-                        S[k*3+0] = X(0); S[k*3+1] = X(1); S[k*3+2] = X(2);
-                        if (!haveFirst) { first[0]=X(0); first[1]=X(1); first[2]=X(2); haveFirst = true; }
-                    } else { S[k*3+0] = S[k*3+1] = S[k*3+2] = HUGE_VAL; }
-                }
-                for (int k = 0; k < npsM; k++)
-                    if (S[k*3+0] == HUGE_VAL)
-                        for (int d = 0; d < 3; d++) S[k*3+d] = first[d];
-            }
-            LadrunoContactBucketSort::Grid grid(nSegM, npsM, segCoords.data(), mc.cellFrac, 1.0);
-            std::vector<int> cand(nSegM);
-
+            // C2.1 broad phase = BRUTE FORCE (every master facet a candidate per slave
+            // facet); the kernel's overlap clip rejects non-overlaps (status<0 ⇒ inert).
+            // The NTS bucket-sort superset contract is proven for POINT slaves (slave
+            // NODES) only — a CENTROID query for an EXTENDED slave facet silently drops
+            // overlaps when the slave facet is coarser than the master bucket (gate MAJOR,
+            // C2.1 review: ~44% area lost on a coarse-slave/fine-master pairing). A
+            // slave-aware mortar broad phase (corner-span query / max-diag cell) is a
+            // follow-up ("mortar P2.5"); correctness-first brute force here, like NTS P2b-1.
             for (int sf = 0; sf < nSegS; sf++) {
                 Node *sNodes[4]; bool ok = true; double scen[3] = {0.0, 0.0, 0.0};
                 for (int k = 0; k < npsS; k++) {
@@ -480,9 +468,7 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                 if (!ok) continue;
                 for (int d = 0; d < 3; d++) scen[d] /= npsS;     // slave-facet centroid
 
-                int nCand = grid.candidates(scen, cand.data());
-                for (int ci = 0; ci < nCand; ci++) {
-                    int seg = cand[ci];
+                for (int seg = 0; seg < nSegM; seg++) {
                     Node *mNodes[4]; ok = true; double mcen[3] = {0.0, 0.0, 0.0};
                     for (int k = 0; k < npsM; k++) {
                         Node *mn = theDomain->getNode(mTags(seg * npsM + k));

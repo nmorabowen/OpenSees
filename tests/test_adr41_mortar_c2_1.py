@@ -122,6 +122,44 @@ def test_c2_1_nonmatched_penalty_penetration():
         assert abs(pos - depth) < 1.0e-6, f"node {n} pos {pos} != {depth}"
 
 
+def test_c2_1_coarse_slave_fine_master_full_coverage():
+    """A COARSE slave facet (one big quad) over a FINE master mesh (4×4): brute-force
+    pairing tiles the whole slave facet over all master facets, so the block settles at
+    the FULL-coverage depth δ=P/(epsN·A). (A centroid-only broad phase silently dropped
+    the outer master facets — gate MAJOR, C2.1 review.)"""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    # fine master: 4×4 grid of quads (25 nodes), fixed
+    nm = 4
+    mid = {}
+    k = 1
+    for j in range(nm + 1):
+        for i in range(nm + 1):
+            mid[(i, j)] = k
+            ops.node(k, i / nm, j / nm, 0.0)
+            ops.fix(k, 1, 1, 1)
+            k += 1
+    mflat = []
+    for j in range(nm):
+        for i in range(nm):
+            mflat += [mid[(i, j)], mid[(i + 1, j)], mid[(i + 1, j + 1)], mid[(i, j + 1)]]
+    # coarse slave: ONE quad over the whole [0,1]², seeded penetrating, free z
+    _unit_square([101, 102, 103, 104], -1.0e-4)
+    for t in (101, 102, 103, 104):
+        ops.fix(t, 1, 1, 0)
+    ops.contactSurface(1, "-master", 4, *mflat)
+    ops.contactSurface(2, "-slave-segments", 4, 101, 102, 103, 104)
+    ops.contact(1, 1, 2, "-mortar", "-epsN", EPS, "-outward", 0.0, 0.0, 1.0)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    for t in (101, 102, 103, 104):
+        ops.load(t, 0.0, 0.0, -PTOT / 4.0)
+    assert _solve_static() == 0, "coarse-slave/fine-master Newton did not converge"
+    for t in (101, 102, 103, 104):
+        pos = -1.0e-4 + ops.nodeDisp(t, 3)
+        assert abs(pos - (-PTOT / EPS)) < 1.0e-7, f"node {t} pos {pos} (coverage hole?)"
+
+
 def test_c2_1_disjoint_mortar_is_inert():
     """A mortar pair whose facets do NOT overlap produces no force (the clip rejects it):
     a model with the disjoint mortar contact defined evolves BITWISE identically to the
