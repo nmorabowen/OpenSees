@@ -36,8 +36,9 @@
 #include <Integrator.h>
 #include <Domain.h>                 // Ladruno: ADR-39 P3 (lazy engine re-fetch)
 #include <LadrunoContactDomain.h>   // Ladruno: ADR-39 P3 (per-pair friction state)
-#include <LadrunoContactKernel.h>     // Ladruno: ADR-39 P2b/P3 (normal-law + friction)
+#include <LadrunoContactKernel.h>     // Ladruno: ADR-39 P2b (penalty normal-law / traction)
 #include <LadrunoContactProjection.h> // Ladruno: ADR-41 A2 (closest-point projection geometry)
+#include <LadrunoFrictionKernel.h>    // Ladruno: ADR-41 A1 (Coulomb/Tresca friction return map + tangent)
 
 LadrunoContactFE::LadrunoContactFE(int tag)
   : FE_Element(tag, /*numDOF_Group=*/0, /*ndof=*/0),
@@ -142,7 +143,7 @@ LadrunoContactFE::segmentActive(double &gap, double n[3], double N[4], double *B
             for (int d = 0; d < 3; d++) ubar[d] += N[i] * ui(d);
         }
         double drel[3] = { us(0)-ubar[0], us(1)-ubar[1], us(2)-ubar[2] };
-        LadrunoContactKernel::tangentPart(drel, n, gTvec);
+        LadrunoFrictionKernel::tangentPart(drel, n, gTvec);
     }
     return true;
 }
@@ -156,7 +157,7 @@ LadrunoContactFE::addFrictionTang(double fact, const double n[3], const double N
     // w_a·w_b·K_ss with the scatter weights w = [1, −N_0, …, −N_{nps−1}] over
     // [slave, seg nodes]. Validated assembly: proto_p35_implicit_tangent.py.
     double Kss[3][3];
-    LadrunoContactKernel::frictionTangentBlock(gTeff, gpT, n, tn, kn, kt, mu, consistent, Kss);
+    LadrunoFrictionKernel::frictionTangentBlock(gTeff, gpT, n, tn, kn, kt, mu, consistent, Kss);
     double w[5];
     w[0] = 1.0;
     for (int i = 0; i < nps; i++) w[1 + i] = -N[i];
@@ -222,7 +223,7 @@ LadrunoContactFE::getResidual(Integrator *)
                     for (int d = 0; d < 3; d++) gTeff[d] = gTvec[d] - st.gT0[d];
                     double tFric[3], gpTtrial[3];
                     // N for the cone = current penetration force tn (design MINOR-8).
-                    LadrunoContactKernel::frictionReturnMap(gTeff, st.gpT, tn, kt, mu,
+                    LadrunoFrictionKernel::frictionReturnMap(gTeff, st.gpT, tn, kt, mu,
                                                             tFric, gpTtrial);
                     // trial = PURE fn of committed state (idempotent across the CDL
                     // firstStep double-eval); commit() promotes it.
