@@ -408,6 +408,171 @@ def robust_drive(ops, done, *,
             _log_fh.close()
 
 
+# ==========================================================================
+# W1-I1a (ADR-52): TRANSIENT adaptive-dt lane.
+#
+# A Python re-host of OpenSees' built-in VariableTimeStepDirectIntegrationAnalysis
+# (the 5-arg `ops.analyze(n, dt, dtMin, dtMax, Jd)`): it reproduces that
+# iteration-count step sizing -- grow dt when the last step converged in fewer than
+# `target_iters`, shrink it when it took more -- and adds this driver's
+# algorithm-ladder escalation + honest observability on top, stepping via
+# `ops.analyze(1, dt)` so every decision is visible/loggable.
+# ==========================================================================
+class TransientResult:
+    __slots__ = ("completed", "substeps", "cutbacks", "min_dt_used", "max_dt_used",
+                 "verdict", "algos", "final_time")
+
+    def __init__(self):
+        self.completed = False
+        self.substeps = 0
+        self.cutbacks = 0
+        self.min_dt_used = float("inf")
+        self.max_dt_used = 0.0
+        # integrated | incomplete | aborted
+        self.verdict = "incomplete"
+        self.algos = {}
+        self.final_time = 0.0
+
+    def __bool__(self):
+        # `integrated` = the integration completed convergence-wise. It is NOT an
+        # accuracy certificate (see the W1-I1a caveat in robust_transient): only the
+        # error-gated W1-I1b would make a transient run accuracy-grade.
+        return self.completed and self.verdict == "integrated"
+
+    def __repr__(self):
+        return (f"<TransientResult {self.verdict} completed={self.completed} "
+                f"substeps={self.substeps} cutbacks={self.cutbacks} "
+                f"dt=[{self.min_dt_used:g},{self.max_dt_used:g}] t={self.final_time:g}>")
+
+
+def robust_transient(ops, t_end, dt, *,
+                     dt_min=None,
+                     dt_max=None,
+                     target_iters=5,
+                     done=None,
+                     algorithms=_DEFAULT_LADDER,
+                     grow=2.0,
+                     shrink=0.5,
+                     max_substeps=1_000_000,
+                     time_tol=None,
+                     log_path=None,
+                     verbose=False):
+    """Integrate a TRANSIENT analysis to `t_end` with convergence-driven adaptive dt.
+
+    Re-hosts the built-in variable-step transient analysis in Python so the robust
+    driver can adapt dt across the transient integrators (Newmark/HHT/GeneralizedAlpha
+    /...). On each step it calls `ops.analyze(1, dt)`; on success it sizes the next dt
+    from the iteration count (`ops.testIter()`): factor = target_iters / lastIters,
+    clamped to [shrink, grow], then clamped to [dt_min, dt_max]. On failure it walks
+    the algorithm ladder, then halves dt down to dt_min before aborting.
+
+    IMPORTANT (ADR-52 W1-I1a caveat): iteration-count control is a COST / convergence
+    criterion, NOT an accuracy one. A stiff-but-stable response can converge cheaply
+    and let dt grow PAST where the solution is accurate. The verdict is therefore
+    `integrated` (the integration completed), never an accuracy certificate -- the
+    half-increment-residual ERROR gate (W1-I1b) is what makes a transient run
+    accuracy-grade. `bool(res)` is True for `integrated`; treat it as "ran to t_end",
+    not "is accurate".
+
+    t_end        : integrate until ops.getTime() >= t_end (or done() returns True).
+    dt           : initial / nominal time step.
+    dt_min,dt_max: adaptive bounds (defaults dt/1024 and dt*64).
+    target_iters : Jd-style target iteration count used for sizing (default 5).
+    done         : optional callable() -> bool early-stop predicate (e.g. a DOF target).
+    The C++ equivalent is `ops.analyze(n, dt, dt_min, dt_max, target_iters)`; this lane
+    adds the algorithm ladder + per-step observability + the honest verdict on top.
+    """
+    res = TransientResult()
+    if dt_min is None:
+        dt_min = dt / 1024.0
+    if dt_max is None:
+        dt_max = dt * 64.0
+    if time_tol is None:
+        time_tol = dt_min * 0.5
+
+    _log_fh = open(log_path, "w", encoding="utf-8") if log_path else None
+
+    def log(event, **kw):
+        if _log_fh is not None:
+            rec = {"event": event, "substep": res.substeps, "t": ops.getTime()}
+            rec.update(kw)
+            _log_fh.write(json.dumps(rec) + "\n")
+            _log_fh.flush()
+        if verbose:
+            print(f"  [transient] {event} {kw}")
+
+    def set_algo(i):
+        spec = algorithms[i % len(algorithms)]
+        ops.algorithm(*spec)
+        return spec[0]
+
+    def reached():
+        if done is not None and done():
+            return True
+        return ops.getTime() >= t_end - time_tol
+
+    cur = dt
+    algo_i = 0
+    algo_name = set_algo(0)
+    log("start", t_end=t_end, dt=dt, dt_min=dt_min, dt_max=dt_max,
+        target_iters=target_iters)
+
+    try:
+        while not reached():
+            if res.substeps >= max_substeps:
+                res.verdict = "incomplete"
+                log("budget_exhausted", max_substeps=max_substeps)
+                break
+            step = min(cur, t_end - ops.getTime())   # never overshoot t_end
+            if step <= time_tol:
+                break
+            res.substeps += 1
+            if ops.analyze(1, step) == 0:            # converged
+                res.algos[algo_name] = res.algos.get(algo_name, 0) + 1
+                res.min_dt_used = min(res.min_dt_used, step)
+                res.max_dt_used = max(res.max_dt_used, step)
+                it = 0
+                try:
+                    it = int(ops.testIter())
+                except Exception:
+                    it = 0
+                factor = (target_iters / it) if it > 0 else grow
+                factor = max(shrink, min(grow, factor))
+                cur = min(dt_max, max(dt_min, cur * factor))
+                if algo_i != 0:                      # recovered -> back to easy algo
+                    algo_i = 0
+                    algo_name = set_algo(0)
+                continue
+            # failure: walk the algorithm ladder at this dt (rung 1-2)
+            if algo_i < len(algorithms) - 1:
+                algo_i += 1
+                algo_name = set_algo(algo_i)
+                log("algorithm_switch", to=algo_name, dt=step)
+                continue
+            # rung 0: halve dt, reset to the easy algorithm
+            algo_i = 0
+            algo_name = set_algo(0)
+            cur *= shrink
+            res.cutbacks += 1
+            if cur >= dt_min:
+                log("cutback", dt=cur)
+                continue
+            res.verdict = "aborted"
+            log("dt_floor", dt=cur, dt_min=dt_min)
+            break
+
+        res.final_time = ops.getTime()
+        if reached() and res.verdict != "aborted":
+            res.completed = True
+            res.verdict = "integrated"
+        log("done", verdict=res.verdict, substeps=res.substeps,
+            cutbacks=res.cutbacks, final_time=res.final_time)
+        return res
+    finally:
+        if _log_fh is not None:
+            _log_fh.close()
+
+
 # --------------------------------------------------------------------------
 # self-test: a single softening Concrete02 truss. Load control cannot pass the
 # strength peak; the rung-3 switch traces the softening branch. Mirrors
@@ -459,5 +624,68 @@ def _selftest():
     return 0 if ok else 1
 
 
+# --------------------------------------------------------------------------
+# self-test: a linear SDOF (mass on an elastic truss spring) under a constant
+# load, integrated with Newmark via the W1-I1a transient lane. The linear
+# problem converges in one iteration every step, so the iteration-count sizing
+# grows dt to the cap -- exercising the adaptive-growth path and illustrating
+# the W1-I1a caveat (growth is convergence-driven, not accuracy-driven). The
+# integrator is unconditionally stable, so the run completes regardless.
+# --------------------------------------------------------------------------
+def _selftest_transient():
+    import os
+    import sys
+    DIST = os.environ.get("LADRUNO_DIST",
+                          r"C:\Users\nmb\Documents\Github\OpenSees\dist\bin")
+    if os.path.isdir(DIST):
+        os.add_dll_directory(DIST)
+        sys.path.insert(0, DIST)
+    import opensees as ops
+
+    E, A, L, m, P = 1000.0, 1.0, 1.0, 1.0, 1.0   # k=1000, omega~31.6, T~0.199
+    ops.wipe()
+    ops.model("basic", "-ndm", 1, "-ndf", 1)
+    ops.node(1, 0.0)
+    ops.node(2, L)
+    ops.fix(1, 1)
+    ops.mass(2, m)
+    ops.uniaxialMaterial("Elastic", 1, E)
+    ops.element("Truss", 1, 1, 2, A, 1)
+    ops.timeSeries("Constant", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(2, P)
+    ops.constraints("Plain")
+    ops.numberer("Plain")
+    ops.system("BandGen")
+    ops.test("NormDispIncr", 1e-10, 50, 0)
+    ops.algorithm("Newton")
+    ops.integrator("Newmark", 0.5, 0.25)         # unconditionally stable
+    ops.analysis("Transient")
+
+    dt0, t_end = 0.005, 1.0
+    res = robust_transient(ops, t_end, dt0, verbose=True)
+
+    t = ops.getTime()
+    u = ops.nodeDisp(2, 1)
+    u_static = P / (E * A / L)
+    grew = res.max_dt_used > dt0                  # adaptive growth happened
+    bounded = -0.1 * u_static <= u <= 2.1 * u_static
+    ok = bool(res) and abs(t - t_end) < 1e-6 and grew and bounded
+    print(f"\n{res}")
+    print(f"final t={t:.5f}  u={u:.6e}  u_static={u_static:.6e}  "
+          f"max_dt={res.max_dt_used:g} (dt0={dt0})")
+    print("TRANSIENT SELF-TEST:",
+          "PASS - integrated to t_end with adaptive dt growth"
+          if ok else "FAIL")
+    return 0 if ok else 1
+
+
 if __name__ == "__main__":
-    raise SystemExit(_selftest())
+    import sys
+    which = sys.argv[1] if len(sys.argv) > 1 else "all"
+    rc = 0
+    if which in ("all", "static"):
+        rc |= _selftest()
+    if which in ("all", "transient"):
+        rc |= _selftest_transient()
+    raise SystemExit(rc)
