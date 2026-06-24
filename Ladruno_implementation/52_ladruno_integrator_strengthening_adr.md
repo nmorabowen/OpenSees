@@ -369,5 +369,17 @@ its own PR on `ladruno`.
   (not-accuracy-certified) verdict. Zero vanilla footprint. Self-tested live against
   the dist build (linear SDOF + Newmark; static self-test unaffected). The
   accuracy-grade follow-up is **W1-I1b** (half-increment-residual error gate).
-- *Remaining:* W1-E2 (ExplicitBathe 6→1 collapse — most invasive, do deliberately),
-  W2-E1 (bulk viscosity), W1-I1b, W3-I2, W3-I3-gate.
+- **2026-06-24 — W2-E1 shipped for LadrunoBrick (#399).** Explicit bulk viscosity
+  (`-bulkViscosity b1 b2`, alias `-bv`): viscous volumetric artificial-pressure
+  stress `s=c_bulk·ε̇_vol` into the resisting force only (excluded from reported
+  stress; `c_d` from the initial elastic tangent, `L_e=vol^(1/3)`), dissipative by
+  construction, off-by-default (bit-identical). Guarded to `-geom linear` + std/bbar
+  (warn+zero otherwise). Passed an 18-agent adversarial review (merge-with-fixes:
+  applied corot guard B1, formulation guard B2, initial-tangent S1, hoist S2, doc S5).
+  Validated at runtime by a new `zone_a` test (off-path bit-identity + dissipation/sign)
+  that CI builds-and-runs. Fork-only.
+- *W2-E1 follow-ups (deferred, non-blocking):* **S3** `bvDissipated`/ALLVD recorder
+  channel (energy balance already closes); **S4** one-time warning when material
+  `rho==0`; extend bulk viscosity to **LadrunoQuad/CST** and the uri/ssp/eas paths.
+- *Remaining waves:* W1-E2 (ExplicitBathe 6→1 collapse — most invasive, do
+  deliberately), W1-I1b (error gate), W3-I2 (sensitivity subclasses), W3-I3-gate.
