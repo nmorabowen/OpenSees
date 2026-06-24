@@ -46,5 +46,5 @@ LadrunoDynamicRelaxation — quasi-static DR (Gershgorin mass + kinetic damping)
 LadrunoIndirectControl — indirect/CMOD control (snap-back tracking)
 LadrunoStabilizedUnbalance — true-equilibrium test for -stabilize
 LadrunoProjection — momentum-conserving explicit constraint projection (equalDOF/rigidLink/diaphragm)
-LadrunoContact — NTS + mortar/ALM contact (penalty + commit-cycle Uzawa, Coulomb/Tresca friction, mesh-tying, viscous stabilization, consistent dn/du normal tangent)
+LadrunoContact — NTS + mortar/ALM contact (penalty + commit-cycle Uzawa, Coulomb/Tresca friction, mesh-tying, viscous stabilization, consistent dn/du normal tangent, SOFT=1 Courant-stable explicit penalty)
 Ladruno — modular HDF5 .ladruno recorder

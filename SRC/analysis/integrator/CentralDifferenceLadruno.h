@@ -149,6 +149,14 @@ public:
     // Modal-damping hook: returns the LAGGED half-step velocity (ADR C5).
     const Vector &getVel(void);
 
+    // Ladruno (ADR-39 B1): the current step's Δt, for the SOFT=1 Courant-stable contact
+    // penalty (k_soft = SOFSCL·4·m_eff/Δt²). The contact adapter dynamic_casts the
+    // integrator it is handed in getResidual() to this (explicit-only) class and reads Δt
+    // so the contact's own ω·Δt ≤ 2 ⇒ the contact never throttles dt_cr below the global
+    // step. > 0 only once newStep() has set it; the cast fails under any implicit
+    // integrator ⇒ SOFT is inert there (the configured kn is used ⇒ byte-identical).
+    double getCurrentDeltaT(void) const { return deltaT; }
+
     // Ladruno (ADR-30): LadrunoProjectionConsumer — the handler pushes its
     // (non-owning) acceleration projector here; we project a0 in the starter and
     // a_{n+1} in update() so MP constraints are enforced without penalty/elimination.

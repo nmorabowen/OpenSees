@@ -68,7 +68,7 @@ int
 LadrunoContactDomain::addContact(int tag, int masterSurfTag, int slaveSurfTag,
                                  double kn, double kt, double mu, const double *outward,
                                  bool knAuto, double cellFrac, bool consistentTan, double muc,
-                                 bool consistentNormal)
+                                 bool consistentNormal, double softScale)
 {
     if (getSurface(masterSurfTag) == 0 || getSurface(slaveSurfTag) == 0) {
         opserr << "WARNING LadrunoContactDomain::addContact() - master/slave surface "
@@ -94,6 +94,7 @@ LadrunoContactDomain::addContact(int tag, int masterSurfTag, int slaveSurfTag,
     c.consistentTan = consistentTan;                  // P3.5 friction tangent symmetry
     c.muc = (muc > 0.0) ? muc : 0.0;                  // D2 viscous stabilization (≤0 ⇒ off)
     c.consistentNormal = consistentNormal;            // B3 ∂n/∂u geometric normal tangent
+    c.softScale = (softScale > 0.0) ? softScale : 0.0; // B1 SOFT=1 scale (≤0 ⇒ off, byte-identical)
     theContacts.push_back(c);
     return 0;
 }
@@ -170,7 +171,8 @@ LadrunoContactDomain::addMortarContact(int tag, int masterSurfTag, int slaveSurf
 
 int
 LadrunoContactDomain::addRigidPlane(int tag, int slaveSurfTag,
-                                    const double p0[3], const double n[3], double kn, double muc)
+                                    const double p0[3], const double n[3], double kn, double muc,
+                                    double softScale)
 {
     LadrunoContactSurface *surf = getSurface(slaveSurfTag);
     if (surf == 0) {
@@ -202,6 +204,7 @@ LadrunoContactDomain::addRigidPlane(int tag, int slaveSurfTag,
     RigidPlane rp;
     rp.tag = tag; rp.slaveSurfTag = slaveSurfTag; rp.kn = kn;
     rp.muc = (muc > 0.0) ? muc : 0.0;                 // D2 viscous stabilization (≤0 ⇒ off)
+    rp.softScale = (softScale > 0.0) ? softScale : 0.0; // B1 SOFT=1 scale (≤0 ⇒ off, byte-identical)
     for (int d = 0; d < 3; d++) { rp.p0[d] = p0[d]; rp.n[d] = n[d] / nrm; }
     theRigidPlanes.push_back(rp);
     return 0;
@@ -375,6 +378,29 @@ LadrunoContactDomain::getNtsForce(int slaveTag) const
          it != theNtsForce.end(); ++it)
         if (it->first.s == slaveTag) f += it->second;
     return f;
+}
+
+// B1 (P4) — assembled nodal-mass cache (the SOFT=1 gap-mode effective mass; see the header).
+void
+LadrunoContactDomain::clearNodalMass(void)
+{
+    theNodalMass.clear();
+}
+
+void
+LadrunoContactDomain::setNodalMass(int nodeTag, const double m[3])
+{
+    NodeMass nm; for (int d = 0; d < 3; d++) nm.m[d] = m[d];
+    theNodalMass[nodeTag] = nm;
+}
+
+bool
+LadrunoContactDomain::getNodalMass(int nodeTag, double m[3]) const
+{
+    std::map<int, NodeMass>::const_iterator it = theNodalMass.find(nodeTag);
+    if (it == theNodalMass.end()) return false;
+    for (int d = 0; d < 3; d++) m[d] = it->second.m[d];
+    return true;
 }
 
 void

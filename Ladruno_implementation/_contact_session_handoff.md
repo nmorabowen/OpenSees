@@ -32,7 +32,16 @@ tags:
   SILENTLY; now it emits the `PlainHandler`-style warning pointing at `DisplacementControl` (which
   DOES drive a DOF via the load factor with this handler). Not a regression; full imposed-SP support
   (a Transformation-style contact handler) is deferred — no consumer.
-- **Contact battery: 91/91** — `tests/test_adr39_contact_p*.py` (+ `_p2b2c_hertz.py`) +
+- **B1 SHIPPED** (#_pending) — the LS-DYNA §26.15 **SOFT=1 Courant-stable explicit penalty**
+  (`contact … -soft <SOFSCL>` / `contactPlane … -soft <SOFSCL>`, NTS lane). Under explicit
+  `CentralDifferenceLadruno` the contact kₙ is replaced each step by `k_soft = SOFSCL·4·m_eff/dt²`
+  (SOFSCL default 0.10) so the contact's own `ω·dt = 2√SOFSCL ≤ 2` ⇒ explicit dt_cr is NEVER
+  penalty-throttled — impact/pounding/recontact runs at the STRUCTURAL dt (the 50_/51_ progressive-
+  collapse / element-removal enabler). `m_eff` is the gap-mode generalized mass from the ASSEMBLED
+  nodal mass (nodal `mass` + element-density mass — the handler pre-builds a per-node cache; the B1
+  adversarial gate caught + fixed sourcing it from `Node::getMass()` alone). Explicit-only (dt via
+  `dynamic_cast`→CDL); implicit + `-soft`-absent byte-identical. Battery **91→98/98**.
+- **Contact battery: 98/98** — `tests/test_adr39_contact_p*.py` (+ `_p2b2c_hertz.py`, **`_p4_soft.py`**) +
   `test_adr41_mortar_c2_{0,1,2}.py` + `_c3_{1,2,3}.py` + `_c4_{1,2}.py` + `test_adr41_viscous_d2.py`.
 
 ### Shipped this session
@@ -44,6 +53,7 @@ tags:
 | #387 / #388 | **D2.2 mortar viscous** — extends `-visc` to the mortar contact ⇒ **D2 COMPLETE**. |
 | #389 / #390 | **B3 consistent ∂n/∂u normal tangent** (`-geomtan`) + `ladrunoContactForce` query + Hertz benchmark (#390 = ledger ref backfill). Closes the NTS geometric-tangent deferral; battery 83→91/91. |
 | #392 | **Imposed-disp warning** — `LadrunoContact` now warns (was silent) on a non-homogeneous SP, points at `DisplacementControl` (B3 follow-up). |
+| #_pending | **B1 SOFT=1 Courant-stable explicit penalty** — `-soft <SOFSCL>` (NTS); explicit dt_cr no longer penalty-throttled. Adversarial gate fixed a MAJOR (m_eff must use the assembled, not nodal-only, mass). |
 
 Workflow fix: recorded the `gh pr checks --watch` premature-exit trap in
 [[../Ladruno_internal/WORKFLOW_GOTCHAS]] §3 (verify the actual Zone-A run by id, not the watch exit).
@@ -67,9 +77,10 @@ Workflow fix: recorded the `gh pr checks --watch` premature-exit trap in
 ### 📋 Remaining — COMMITTED (scoped, oracle-first ready)
 
 **Track B — NTS explicit-stability hardening** (the explicit-first lane; independent of mortar):
-- **B1** — P4 `SOFT=1` Courant-stable penalty (explicit `dt_cr` no longer throttled by `kₙ`).
-  Gate: explicit stability + energy balance.
-- **B2** — P5 `SOFT=2` segment-based penalty (corner / edge / T-intersection robustness).
+- ~~**B1** — P4 `SOFT=1` Courant-stable penalty~~ **DONE [#_pending]** (see State above). Follow-ups:
+  source m_eff from the assembled M for the parallel/distributed (row-sum lumped) SOE — serial-only
+  today; a mortar SOFT penalty (currently NTS-only); SOFT applied to the tangential `kt` (normal-only now).
+- **B2** — P5 `SOFT=2` segment-based penalty (corner / edge / T-intersection robustness). **← next.**
 - ~~**B3** — P2b-2c consistent `∂n/∂u` normal tangent + Hertz~~ **DONE [#389]** (see State above).
   Follow-up spun off: a quantitative FE Hertz harness (contact-force recorder ✅ via
   `ladrunoContactForce`; a robust curved-indentation driver — displacement-control or D1
@@ -97,8 +108,8 @@ tested recipe.
 
 ## Recommended next step
 
-**B1/B2** (explicit `SOFT` penalty tiers) — the remaining committed NTS hardening, for explicit
-pounding/uplift robustness (`dt_cr` no longer throttled by `kₙ`). Or **D1** (within-step
+**B2** (P5 `SOFT=2` segment-based penalty — corner/edge/T-intersection robustness; the natural sequel
+to the shipped B1 `SOFT=1`). Or **D1** (within-step
 augmentation sign-off — the `analyze_augmented` proc is shipped + used by C2/C4; what remains is a
 formal `‖g̃‖→augTol` gate without recorder/load corruption, which ALSO unlocks the quantitative
 Hertz follow-up via displacement-control-free curved indentation). After B3, the NTS lane's

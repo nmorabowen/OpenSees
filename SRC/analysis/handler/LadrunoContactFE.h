@@ -61,8 +61,11 @@ class LadrunoContactFE : public FE_Element
     // first ndm translational DOFs). p0 = a point on the plane, n = outward unit
     // normal (toward the slave's allowed half-space), kn = penalty stiffness.
     // D2: muc = viscous normal-stabilization coefficient (p_visc = muc*gap_rate); 0 ⇒ no viscous term.
+    // B1: softScale = SOFT=1 SOFSCL (>0 ⇒ under explicit, kn is replaced by SOFSCL·4·m_eff/dt²);
+    //     theDomain is then needed to reach the engine's assembled nodal-mass cache (m_eff).
     LadrunoContactFE(int tag, Node *slaveNode, int ndm,
-                     const double p0[3], const double n[3], double kn, double muc = 0.0);
+                     const double p0[3], const double n[3], double kn, double muc = 0.0,
+                     double softScale = 0.0, Domain *theDomain = 0);
     // P2b: faceted node-to-segment penalty contact vs ONE master segment (tri-3 or
     // quad-4, nps nodes). Connectivity = {slave} ∪ {segment nodes}; the outward
     // normal is DERIVED per evaluation + oriented toward orientDir (the slave's
@@ -84,11 +87,14 @@ class LadrunoContactFE : public FE_Element
     // P2b). false (default) ⇒ the shipped kn·BᵀB main term only (byte-identical, the flat/
     // fixed-master EXACT tangent). true ⇒ + the geometric block ⇒ quadratic Newton on
     // CURVED / large-sliding interfaces. SYMMETRIC (Hessian of the scalar gap) ⇒ solver-safe.
+    // B1 softScale: SOFT=1 SOFSCL (>0 ⇒ under EXPLICIT only, kn is replaced each step by the
+    // Courant-stable k_soft = SOFSCL·4·m_eff/dt² so the contact never throttles dt_cr; inert under
+    // implicit ⇒ the configured kn ⇒ byte-identical). Requires a base kn (modifier on the penalty).
     LadrunoContactFE(int tag, Node *slaveNode, Node **segNodes, int nps, double kn,
                      const double orientDir[3], double kt = 0.0, double mu = 0.0,
                      Domain *theDomain = 0, int contactTag = 0, int segIndex = 0,
                      bool consistentTan = false, double muc = 0.0,
-                     bool consistentNormal = false);
+                     bool consistentNormal = false, double softScale = 0.0);
     // C2.1/C2.2 (ADR-41): clipped-GP MORTAR contact, ONE slave facet vs ONE master facet
     // (tri-3 / quad-4). Connectivity = {slave facet nodes} ∪ {master facet nodes},
     // FE_Element(tag, nps_s+nps_m, 3*(nps_s+nps_m)). getResidual integrates the pair via
@@ -165,6 +171,14 @@ class LadrunoContactFE : public FE_Element
     void addFrictionTang(double fact, const double n[3], const double N[4], double tn,
                          const double gTeff[3], const double gpT[3], bool consistent);
 
+    // B1 (P4): the SOFT=1 effective penalty for this evaluation. If softScale>0 AND the integrator
+    // is the explicit CentralDifferenceLadruno (dynamic_cast) with a valid dt, returns the Courant-
+    // stable k_soft = softScale·4·m_eff/dt², m_eff = 1/(B M⁻¹ Bᵀ) = 1/(invMproj_slave +
+    // Σ N_i²·invMproj_seg_i) from the nodal masses projected on the gap normal n (N==0 ⇒ RIGID_PLANE,
+    // slave only). Otherwise (soft off / implicit / missing dt-or-mass) returns the configured kn —
+    // so an absent -soft and any implicit run are byte-identical to the shipped penalty.
+    double softKn(class Integrator *theIntegrator, const double n[3], const double N[4]) const;
+
     // B3 (P2b-2c): assemble the consistent ∂n/∂u geometric NORMAL tangent block
     // K_geom = kn·gN·∂²gN/∂u² into `tang` (SEGMENT mode). Re-projects the current config
     // (deterministic ⇒ the SAME ξ̄/n/gap the residual used) and calls the oracle-validated
@@ -216,6 +230,10 @@ class LadrunoContactFE : public FE_Element
     bool consistentTan; // P3.5: include the non-symmetric d_TN⊗n column (false ⇒ symmetric)
     bool consistentNormal; // B3 (P2b-2c): SEGMENT — add the consistent ∂n/∂u geometric normal
                         // tangent (kn·gN·∂²gN/∂u²). false ⇒ shipped kn·BᵀB only (byte-identical).
+    double softScale;   // B1 (P4): SOFT=1 SOFSCL (>0 ⇒ on). RIGID_PLANE + SEGMENT (NTS). Under the
+                        // explicit CentralDifferenceLadruno getResidual replaces kn with the
+                        // Courant-stable k_soft = SOFSCL·4·m_eff/dt² (m_eff from the nodal masses,
+                        // dt from the integrator); inert otherwise ⇒ kn used ⇒ byte-identical.
 
     // C2.1 MORTAR binding (mode == MORTAR). The penalty epsN rides `kn`. The slave-facet
     // ordinal `slaveFacetIndex` (+ contactTag) keys the per-node λ_N state in C2.2.
