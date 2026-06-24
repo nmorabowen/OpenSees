@@ -89,17 +89,14 @@ target_sources(OPS_Analysis
        WilsonTheta.cpp
        StagedNewmark.cpp
        GimmeMCK.cpp                     # MHS
-       ExplicitBathe.cpp                # JAA
-       ExplicitBatheLNVD.cpp            # JAA
+       ExplicitBathe.cpp                # JAA + nmb (ADR-52 W1-E2): collapsed ExplicitBathe* 6->1
+                                        #   (-lnvd / -sms / -consistent flags; was ExplicitBathe{,LNVD,
+                                        #   SMS,SMSConsistent,LNVDSMS,LNVDSMSConsistent})
        LadrunoHHT.cpp                   # nmb - sensitivity/DDM subclass of HHT (ADR-52 W3-I2)
        LadrunoGeneralizedAlpha.cpp      # nmb - sensitivity/DDM subclass of GeneralizedAlpha (ADR-52 W3-I2)
        CentralDifferenceLadruno.cpp     # nmb - explicit leap-frog CD + dt_cr
        CentralDifferenceSMS.cpp         # nmb - selective mass scaling on CDL
        CentralDifferenceSMSConsistent.cpp  # nmb - consistent (Olovsson) mass scaling on CDL
-       ExplicitBatheSMS.cpp             # nmb - lumped mass scaling on Noh-Bathe ExplicitBathe
-       ExplicitBatheSMSConsistent.cpp   # nmb - consistent mass scaling on Noh-Bathe ExplicitBathe
-       ExplicitBatheLNVDSMS.cpp         # nmb - lumped mass scaling on Noh-Bathe+LNVD
-       ExplicitBatheLNVDSMSConsistent.cpp  # nmb - consistent mass scaling on Noh-Bathe+LNVD
        LadrunoMassScalingEnergy.cpp     # nmb - V4 consistent scaling-mass KE conduit (energy recorder)
        LadrunoDynamicRelaxation.cpp     # nmb - quasi-static dynamic relaxation
        CriticalTimeStep.cpp             # nmb - shared dt_cr eigensolve
@@ -148,17 +145,12 @@ target_sources(OPS_Analysis
        WilsonTheta.h
        StagedNewmark.h
        GimmeMCK.h
-       ExplicitBathe.h
-       ExplicitBatheLNVD.h
+       ExplicitBathe.h                  # nmb (ADR-52 W1-E2): unified -lnvd/-sms/-consistent
        LadrunoHHT.h
        LadrunoGeneralizedAlpha.h
        CentralDifferenceLadruno.h
        CentralDifferenceSMS.h
        CentralDifferenceSMSConsistent.h
-       ExplicitBatheSMS.h
-       ExplicitBatheSMSConsistent.h
-       ExplicitBatheLNVDSMS.h
-       ExplicitBatheLNVDSMSConsistent.h
        LadrunoMassLumping.h
        LadrunoMassScaling.h
        LadrunoMassScalingEnergy.h
