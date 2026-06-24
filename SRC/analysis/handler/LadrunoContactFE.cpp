@@ -532,8 +532,9 @@ LadrunoContactFE::getResidual(Integrator *theIntegrator)
         // clipped overlap (no ALM, no λ accumulation) — catching the corner/edge/T-intersection cases
         // the NTS SOFT=1 lane misses while keeping explicit dt_cr un-throttled. Under any implicit
         // integrator the cast fails ⇒ fall through to the shipped penalty/ALM path with the configured
-        // epsN (SOFT=2 is explicit-only ⇒ implicit byte-identical to a plain -mortar penalty). MVP is
-        // frictionless (mu/cohesion/tauMax/-tie/-visc refused with -soft upstream).
+        // epsN (SOFT=2 is explicit-only ⇒ implicit byte-identical to a plain -mortar penalty).
+        // addSoft2Penalty also assembles the SOFT=2 viscous damper (-visc, D2.2) and Courant-stable
+        // Coulomb/Tresca friction (-mu/-cohesion/-tauMax) on the same overlap; only -tie is refused.
         if (softScale > 0.0 &&
             dynamic_cast<CentralDifferenceLadruno *>(theIntegrator) != 0) {
             addSoft2Penalty(theIntegrator);
@@ -805,15 +806,17 @@ LadrunoContactFE::addSoft2Penalty(Integrator *theIntegrator)
     CentralDifferenceLadruno *cdl = dynamic_cast<CentralDifferenceLadruno *>(theIntegrator);
     if (cdl != 0) dt = cdl->getCurrentDeltaT();   // caller guarantees the cast, but be defensive
 
-    // assembled translational masses of the facet nodes, projected on the gap normal n (the B1 helpers)
+    // assembled translational masses of the facet nodes (kept FULL so the friction block below can
+    // re-project them on the surface tangents), and their projection on the gap normal n (B1 helpers)
+    double msF[4][3] = {{0}}, mmF[4][3] = {{0}};
     double invMs[4] = {0.0, 0.0, 0.0, 0.0}, invMm[4] = {0.0, 0.0, 0.0, 0.0};
     for (int I = 0; I < npsS; I++) {
-        double m[3]; ladrunoNodeMass(theDomain, mortarSlave[I], m);
-        invMs[I] = ladrunoInvMassProj(m, n);
+        ladrunoNodeMass(theDomain, mortarSlave[I], msF[I]);
+        invMs[I] = ladrunoInvMassProj(msF[I], n);
     }
     for (int K = 0; K < npsM; K++) {
-        double m[3]; ladrunoNodeMass(theDomain, mortarMaster[K], m);
-        invMm[K] = ladrunoInvMassProj(m, n);      // fixed/massless master node ⇒ 0 (∞ mass)
+        ladrunoNodeMass(theDomain, mortarMaster[K], mmF[K]);
+        invMm[K] = ladrunoInvMassProj(mmF[K], n);  // fixed/massless master node ⇒ 0 (∞ mass)
     }
 
     double p[4] = {0.0, 0.0, 0.0, 0.0};
@@ -901,6 +904,105 @@ LadrunoContactFE::addSoft2Penalty(Integrator *theIntegrator)
             for (int I = 0; I < npsS; I++) Mp += M[I][L] * pv[I];
             for (int d = 0; d < 3; d++) resid(3 * (npsS + L) + d) += Mp * n[d];
         }
+    }
+
+    // --- frictional SOFT=2: Courant-stable Coulomb/Tresca over the segment overlap ---
+    // The SOFT=2 friction analogue of the normal penalty: per IN-CONTACT slave node (soft-penalty mask
+    // p_I<0) run the SHIPPED LadrunoFrictionKernel return map with the SOFT normal pressure N_I = |p_I|
+    // and a Courant-stable STICK penalty k_soft_t,I sized from the SEGMENT-BASED tangential gap-mode
+    // mass m_eff_t,I (the B2 normal m_eff with n→t — the gap operator row B_t,I : slave J → (D_IJ/a_I)t,
+    // master K → −(M_IK/a_I)t), worst-cased over the two basis tangents t1,t2 to n so a stiff friction
+    // kt never throttles dt_cr via the stick mode ω_t=√(kt/m_eff_t) (the B1-kt rule, generalized to the
+    // segment operator; oracle proto_soft2_friction.py). Penalty friction (λ_T≡0, single-pass — the
+    // explicit SOFT=2 philosophy): the slip is the DISPLACEMENT-based weighted tangential gap (the C3.1
+    // closest-point lesson — positions are purely normal), gT0-referenced. tFric scatters via D/−M like
+    // the C3.1 path. μ≤0 ∧ c≤0 ∧ τmax≤0 SHORT-CIRCUITS ⇒ byte-identical to the frictionless SOFT=2.
+    LadrunoContactDomain *cd = (theDomain != 0) ? theDomain->getLadrunoContactDomain() : 0;
+    if ((mu > 0.0 || mortarCohesion > 0.0 || mortarTauMax > 0.0) && cd != 0) {
+        // two orthonormal tangents to n (the softKt construction)
+        int kx = 0; double amin = std::fabs(n[0]);
+        if (std::fabs(n[1]) < amin) { amin = std::fabs(n[1]); kx = 1; }
+        if (std::fabs(n[2]) < amin) { kx = 2; }
+        double e[3] = {0.0, 0.0, 0.0}; e[kx] = 1.0;
+        double en = e[0]*n[0] + e[1]*n[1] + e[2]*n[2];
+        double t1[3], nrm = 0.0;
+        for (int d = 0; d < 3; d++) { t1[d] = e[d] - en * n[d]; nrm += t1[d]*t1[d]; }
+        nrm = std::sqrt(nrm);
+        bool haveT = (nrm > 1e-300);
+        double t2[3] = {0.0, 0.0, 0.0};
+        if (haveT) {
+            for (int d = 0; d < 3; d++) t1[d] /= nrm;
+            t2[0] = n[1]*t1[2] - n[2]*t1[1]; t2[1] = n[2]*t1[0] - n[0]*t1[2]; t2[2] = n[0]*t1[1] - n[1]*t1[0];
+        }
+        // facet node DISPLACEMENTS (the slip is displacement-based — the C3.1 lesson)
+        double us[4][3], um[4][3];
+        for (int i = 0; i < npsS; i++) {
+            const Vector &u = mortarSlave[i]->getTrialDisp();
+            for (int d = 0; d < 3; d++) us[i][d] = u(d);
+        }
+        for (int i = 0; i < npsM; i++) {
+            const Vector &u = mortarMaster[i]->getTrialDisp();
+            for (int d = 0; d < 3; d++) um[i][d] = u(d);
+        }
+        double tFric[4][3] = {{0}};
+        for (int I = 0; I < npsS; I++) {
+            if (p[I] >= 0.0) continue;            // friction only on in-contact nodes (soft mask)
+            double aFacet = 0.0;
+            for (int J = 0; J < npsS; J++) aFacet += D[I][J];
+            if (aFacet <= 1e-300) continue;
+            double N_I = -p[I];                   // soft normal pressure magnitude (≥ 0)
+            // per-node Courant-stable stick penalty: worst-case m_eff_t over the two tangents.
+            double ktEff = kt;                    // fallback: the configured tangential penalty
+            if (haveT && dt > 0.0) {
+                double inv1 = 0.0, inv2 = 0.0;
+                for (int J = 0; J < npsS; J++) {
+                    double c = D[I][J] / aFacet;
+                    inv1 += c*c*ladrunoInvMassProj(msF[J], t1); inv2 += c*c*ladrunoInvMassProj(msF[J], t2);
+                }
+                for (int K = 0; K < npsM; K++) {
+                    double c = M[I][K] / aFacet;
+                    inv1 += c*c*ladrunoInvMassProj(mmF[K], t1); inv2 += c*c*ladrunoInvMassProj(mmF[K], t2);
+                }
+                double invMax = (inv1 > inv2) ? inv1 : inv2;   // MAX inv ⇒ MIN m_eff_t ⇒ binding bound
+                if (invMax > 0.0) ktEff = softScale * 4.0 * (1.0 / invMax) / (dt * dt);
+            }
+            // weighted relative DISPLACEMENT r_I, tangential part / a_I (gT0-referenced)
+            double r[3] = {0, 0, 0};
+            for (int J = 0; J < npsS; J++)
+                for (int d = 0; d < 3; d++) r[d] += D[I][J] * us[J][d];
+            for (int K = 0; K < npsM; K++)
+                for (int d = 0; d < 3; d++) r[d] -= M[I][K] * um[K][d];
+            double rn = r[0]*n[0] + r[1]*n[1] + r[2]*n[2];
+            double gbarT[3];
+            for (int d = 0; d < 3; d++) gbarT[d] = (r[d] - rn * n[d]) / aFacet;
+            LadrunoContactDomain::MortarNormalState &st =
+                cd->getOrCreateMortarNormalState(contactTag, mortarSlave[I]->getTag());
+            if (!st.engaged) {                    // engagement origin captured ONCE (the P3 MAJOR-1)
+                for (int d = 0; d < 3; d++) st.gT0[d] = gbarT[d];
+                st.engaged = true;
+            }
+            double gTeff[3];
+            for (int d = 0; d < 3; d++) gTeff[d] = gbarT[d] - st.gT0[d];   // penalty friction (λ_T≡0)
+            double tF[3], gpTtrial[3];
+            LadrunoFrictionKernel::frictionReturnMap(gTeff, st.gpT, N_I, ktEff, mu, tF, gpTtrial,
+                                                     mortarCohesion, mortarTauMax);
+            for (int d = 0; d < 3; d++) {
+                st.gpTtrial[d] = gpTtrial[d]; st.lambdaTtrial[d] = 0.0; tFric[I][d] = tF[d];
+            }
+        }
+        // scatter via D (slave) / −M (master), like the C3.1 friction force (Σφ=1 self-equilibrating)
+        for (int K = 0; K < npsS; K++)
+            for (int d = 0; d < 3; d++) {
+                double s = 0.0;
+                for (int I = 0; I < npsS; I++) s += D[K][I] * tFric[I][d];
+                resid(3 * K + d) += s;
+            }
+        for (int L = 0; L < npsM; L++)
+            for (int d = 0; d < 3; d++) {
+                double s = 0.0;
+                for (int I = 0; I < npsS; I++) s += M[I][L] * tFric[I][d];
+                resid(3 * (npsS + L) + d) += -s;
+            }
     }
 }
 

@@ -244,10 +244,11 @@ def test_soft2_implicit_byte_identical():
 # GATE 5 — command-surface refusals + the SOFT=1/SOFT=2 selector
 # ===================================================================================
 def test_soft2_command_refusals():
-    """GATE 5 — `-mortar -soft` is the segment-based explicit penalty: still refused with
-    -tie/-mu/-cohesion/-tauMax (friction is a later phase), and needs a base penalty — but -visc IS
-    now allowed (the D2.2 viscous normal damper on the SOFT=2 active set). SOFT=1 (NTS) vs SOFT=2
-    (mortar) is selected by the formulation. OpenSeesPy returns None on success, raises on a parse error."""
+    """GATE 5 — `-mortar -soft` is the segment-based explicit penalty: only `-tie` is refused (a
+    permanent bond is not a soft contact penalty), and it needs a base penalty. `-visc` (D2.2 normal
+    damper) AND `-mu/-cohesion/-tauMax` (Courant-stable Coulomb/Tresca on the SOFT=2 overlap) are now
+    allowed. SOFT=1 (NTS) vs SOFT=2 (mortar) is selected by the formulation. OpenSeesPy returns None on
+    success, raises on a parse error."""
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 3)
     for t, (x, y) in zip((1, 2, 3, 4), [(0, 0), (1, 0), (1, 1), (0, 1)]):
@@ -255,9 +256,6 @@ def test_soft2_command_refusals():
         ops.node(4 + t, float(x), float(y), 0.0)
     ops.contactSurface(1, "-master", 4, 1, 2, 3, 4)
     ops.contactSurface(2, "-slave-segments", 4, 5, 6, 7, 8)
-    # -mortar -soft + friction ⇒ refused (friction with SOFT=2 is a later phase)
-    with pytest.raises(Exception):
-        ops.contact(1, 1, 2, "-mortar", "-epsN", 1.0e6, "-soft", 0.1, "-mu", 0.3)
     # -mortar -soft + -tie ⇒ refused (a permanent bond is not a soft contact penalty)
     with pytest.raises(Exception):
         ops.contact(2, 1, 2, "-mortar", "-soft", 0.1, "-tie", "-epsTie", 1.0e6)
@@ -266,6 +264,9 @@ def test_soft2_command_refusals():
         ops.contact(4, 1, 2, "-mortar", "-soft", 0.1)
     # -mortar -soft + -visc ⇒ ACCEPTED (the D2.2 viscous damper on the SOFT=2 active set)
     ops.contact(3, 1, 2, "-mortar", "-epsN", 1.0e6, "-soft", 0.1, "-visc", 1.0,
+                "-outward", 0.0, 0.0, 1.0)
+    # -mortar -soft + friction ⇒ ACCEPTED (Courant-stable Coulomb/Tresca on the SOFT=2 overlap)
+    ops.contact(1, 1, 2, "-mortar", "-epsN", 1.0e6, "-soft", 0.1, "-mu", 0.3,
                 "-outward", 0.0, 0.0, 1.0)
     # -mortar -soft WITH a base penalty (-epsN auto) ⇒ accepted (SOFT=2)
     ops.contact(5, 1, 2, "-mortar", "-epsN", "auto", "-soft", 0.1, "-outward", 0.0, 0.0, 1.0)

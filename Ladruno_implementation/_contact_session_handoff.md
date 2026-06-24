@@ -139,10 +139,13 @@ indentation. **The committed contact roadmap (Tracks A→D) is now COMPLETE.**
 **The committed contact roadmap (Tracks A→D) is COMPLETE** (D1 shipped this session). What remains is
 all OPTIONAL / deferred:
 - **Small follow-ups** (each its own small PR, oracle-first): ~~viscous SOFT=2~~ **DONE** ([#412](https://github.com/nmorabowen/OpenSees/pull/412) —
-  `-mortar -soft -visc` now allowed; the D2.2 normal damper on the SOFT=2 active set in
-  `addSoft2Penalty`, `μ_c=0` byte-identical; battery 112→114/114); frictional SOFT=2 (add the
-  Coulomb/Tresca cone to the B2 segment-based explicit path, reusing `LadrunoFrictionKernel` over the
-  mortar overlap + a per-node `softKt` tangential sizing — NEXT); assembled/row-sum `m_eff` for the
+  `-mortar -soft -visc`; the D2.2 normal damper on the SOFT=2 active set in `addSoft2Penalty`,
+  `μ_c=0` byte-identical; battery 112→114/114). ~~frictional SOFT=2~~ **DONE** (_pending PR_ —
+  `-mortar -soft -mu/-cohesion/-tauMax`; Courant-stable Coulomb/Tresca via a per-node segment `softKt`
+  [the B1-kt rule, n→t] + the shipped return map over the soft pressure; penalty friction λ_T≡0;
+  reuses the committed `MortarNormalState` slot; only `-tie` still refused; μ=0 byte-identical; oracle
+  `proto_soft2_friction.py` 12/12, `test_adr41_soft2_friction.py` 4/4; battery 114→119/119).
+  **⇒ SOFT=2 now supports viscous + Coulomb/Tresca friction.** assembled/row-sum `m_eff` for the
   parallel/distributed SOE — **BLOCKED, not small**: the contact handler `sendSelf`/`recvSelf` are P1a
   single-process stubs (the whole contact subsystem is serial-only), so parallel `m_eff` requires
   parallelizing the handler first (its own ADR-scale effort, not a follow-up).
