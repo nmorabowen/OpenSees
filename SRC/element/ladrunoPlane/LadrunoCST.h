@@ -54,7 +54,8 @@ class LadrunoCST : public Element
     LadrunoCST(int tag, int nd1, int nd2, int nd3,
                NDMaterial &m, const char *type, double t,
                double rho = 0.0, double b1 = 0.0, double b2 = 0.0,
-               double pressure = 0.0);
+               double pressure = 0.0,
+               double b1bv = 0.0, double b2bv = 0.0);   // Ladruno (W2-E1): bulk-viscosity coeffs
     LadrunoCST();
     ~LadrunoCST();
 
@@ -115,6 +116,8 @@ class LadrunoCST : public Element
     double thickness;
     double pressure;
     double rho;
+    double bulkVisc_b1;          // Ladruno (W2-E1): explicit bulk-viscosity coeffs (0=off)
+    double bulkVisc_b2;
     int planeType;               // 1 = PlaneStrain, 2 = PlaneStress
 
     static double shp[3][3];

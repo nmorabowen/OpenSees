@@ -55,11 +55,12 @@ double LadrunoCST::wts[1];
 
 LadrunoCST::LadrunoCST(int tag, int nd1, int nd2, int nd3,
                        NDMaterial &m, const char *type, double t,
-                       double r, double b1, double b2, double p)
+                       double r, double b1, double b2, double p,
+                       double b1bv, double b2bv)
  :Element(tag, ELE_TAG_LadrunoCST),
   theMaterial(0), connectedExternalNodes(3),
   Q(6), pressureLoad(6), thickness(t), pressure(p), rho(r),
-  planeType(1), Ki(0)
+  bulkVisc_b1(b1bv), bulkVisc_b2(b2bv), planeType(1), Ki(0)
 {
   pts[0][0] = 0.333333333333333;
   pts[0][1] = 0.333333333333333;
@@ -100,7 +101,7 @@ LadrunoCST::LadrunoCST()
  :Element(0, ELE_TAG_LadrunoCST),
   theMaterial(0), connectedExternalNodes(3),
   Q(6), pressureLoad(6), thickness(0.0), pressure(0.0), rho(0.0),
-  planeType(1), Ki(0)
+  bulkVisc_b1(0.0), bulkVisc_b2(0.0), planeType(1), Ki(0)
 {
   pts[0][0] = 0.333333333333333;
   pts[0][1] = 0.333333333333333;
@@ -339,9 +340,39 @@ const Vector &LadrunoCST::getResistingForce(void)
 {
   P.Zero();
   static Vector sigma(3);
+  // Ladruno (W2-E1, ADR-52): explicit bulk viscosity (2D, single-GP CST). L_e is
+  // element-constant -> hoisted; CST is -geom linear only (no theGeom) so no geom
+  // guard. Off (b1=b2=0) skips the block -> default path bit-identical.
+  const bool bvActive = (bulkVisc_b1 > 0.0 || bulkVisc_b2 > 0.0);
+  const double bvLe = bvActive ? this->getCharacteristicLength() : 0.0;
   for (int i = 0; i < numgp; i++) {
     double dvol = this->shapeFunction(pts[i][0], pts[i][1]) * thickness * wts[i];
     sigma = theMaterial[i]->getStress();
+
+    // Ladruno (W2-E1): viscous volumetric stress s=c_bulk*edotV into the normal comps
+    // (xx,yy) of the RESISTING FORCE only -- reported stress queries the material (sigma
+    // is a local copy). c_d from the initial elastic tangent; edotV=trace(D); dissipative.
+    if (bvActive) {
+      double edotV = 0.0;                       // volumetric strain rate, trace(D)
+      for (int a = 0; a < numnodes; a++) {
+        const Vector &va = theNodes[a]->getTrialVel();
+        edotV += shp[0][a]*va(0) + shp[1][a]*va(1);
+      }
+      if (edotV != 0.0) {
+        double rhoBV = theMaterial[i]->getRho();
+        if (rhoBV > 0.0) {
+          const Matrix &ddBV = theMaterial[i]->getInitialTangent();
+          double cd = sqrt(fabs(ddBV(0,0)) / rhoBV);        // elastic dilatational speed
+          double cbulk = bulkVisc_b1 * rhoBV * cd * bvLe;   // linear: both signs
+          if (edotV < 0.0)                                  // quadratic: compression only
+            cbulk += bulkVisc_b2 * bulkVisc_b2 * rhoBV * bvLe * bvLe * (-edotV);
+          double svisc = cbulk * edotV;
+          sigma(0) += svisc;                                // xx
+          sigma(1) += svisc;                                // yy
+        }
+      }
+    }
+
     for (int alpha = 0, ia = 0; alpha < numnodes; alpha++, ia += 2) {
       P(ia)     += dvol * (shp[0][alpha] * sigma(0) + shp[1][alpha] * sigma(2));
       P(ia + 1) += dvol * (shp[1][alpha] * sigma(1) + shp[0][alpha] * sigma(2));
@@ -391,7 +422,7 @@ int LadrunoCST::sendSelf(int commitTag, Channel &theChannel)
   int res = 0;
   int dataTag = this->getDbTag();
 
-  static Vector data(11);
+  static Vector data(13);
   data(0)  = this->getTag();
   data(1)  = thickness;
   data(2)  = b[0];
@@ -403,6 +434,8 @@ int LadrunoCST::sendSelf(int commitTag, Channel &theChannel)
   data(8)  = betaK;
   data(9)  = betaK0;
   data(10) = betaKc;
+  data(11) = bulkVisc_b1;   // Ladruno (W2-E1)
+  data(12) = bulkVisc_b2;
 
   res += theChannel.sendVector(dataTag, commitTag, data);
   if (res < 0) { opserr << "WARNING LadrunoCST::sendSelf - send Vector failed\n"; return res; }
@@ -432,7 +465,7 @@ int LadrunoCST::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &t
   int res = 0;
   int dataTag = this->getDbTag();
 
-  static Vector data(11);
+  static Vector data(13);
   res += theChannel.recvVector(dataTag, commitTag, data);
   if (res < 0) { opserr << "WARNING LadrunoCST::recvSelf - recv Vector failed\n"; return res; }
 
@@ -447,6 +480,8 @@ int LadrunoCST::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &t
   betaK     = data(8);
   betaK0    = data(9);
   betaKc    = data(10);
+  bulkVisc_b1 = data(11);   // Ladruno (W2-E1)
+  bulkVisc_b2 = data(12);
 
   static ID idData(5);
   res += theChannel.recvID(dataTag, commitTag, idData);
@@ -479,6 +514,8 @@ void LadrunoCST::Print(OPS_Stream &s, int flag)
     s << "\nLadrunoCST, element id:  " << this->getTag() << "\n";
     s << "\tConnected external nodes:  " << connectedExternalNodes;
     s << "\ttype: " << typeString() << "  thickness:  " << thickness << "  rho: " << rho << "\n";
+    if (bulkVisc_b1 > 0.0 || bulkVisc_b2 > 0.0)   // Ladruno (W2-E1)
+      s << "\tbulk viscosity: b1=" << bulkVisc_b1 << " b2=" << bulkVisc_b2 << "\n";
     theMaterial[0]->Print(s, flag);
   }
   if (flag == OPS_PRINT_PRINTMODEL_JSON) {

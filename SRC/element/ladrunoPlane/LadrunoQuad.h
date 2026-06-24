@@ -66,7 +66,8 @@ class LadrunoQuad : public Element
                 NDMaterial &m, const char *type, double t,
                 Formulation form,
                 double rho = 0.0, double b1 = 0.0, double b2 = 0.0,
-                double pressure = 0.0);
+                double pressure = 0.0,
+                double b1bv = 0.0, double b2bv = 0.0);   // Ladruno (W2-E1): bulk-viscosity coeffs
     LadrunoQuad();
     ~LadrunoQuad();
 
@@ -131,6 +132,8 @@ class LadrunoQuad : public Element
     double pressure;
     double rho;
     Formulation formulation;
+    double bulkVisc_b1;                 // Ladruno (W2-E1): explicit bulk-viscosity coeffs (0=off)
+    double bulkVisc_b2;
     int planeType;                     // 1 = PlaneStrain, 2 = PlaneStress
 
     static double shp[3][4];           // shp[0/1] = dN/dx,dN/dy ; shp[2] = N

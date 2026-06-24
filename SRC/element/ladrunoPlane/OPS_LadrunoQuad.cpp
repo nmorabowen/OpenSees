@@ -72,6 +72,7 @@ void *OPS_LadrunoQuad()
 
   // defaults
   double thk = 1.0, rho = 0.0, b1 = 0.0, b2 = 0.0, pressure = 0.0;
+  double bvB1 = 0.0, bvB2 = 0.0;   // Ladruno (W2-E1): explicit bulk-viscosity coeffs (off by default)
   char typeBuf[24];
   strcpy(typeBuf, "PlaneStrain");
   LadrunoQuad::Formulation form = LadrunoQuad::Formulation::STD;
@@ -113,6 +114,21 @@ void *OPS_LadrunoQuad()
       num = 1;
       if (OPS_GetDoubleInput(&num, &pressure) < 0) { opserr << "WARNING LadrunoQuad -- bad -pressure\n"; return 0; }
 
+    } else if (strcmp(opt, "-bulkViscosity") == 0 || strcmp(opt, "-bv") == 0) {
+      // Ladruno (W2-E1): explicit bulk viscosity reads TWO doubles (linear b1,
+      // quadratic b2). Both must be >= 0; a negative coeff is warned and ignored.
+      if (OPS_GetNumRemainingInputArgs() < 2) {
+        opserr << "WARNING LadrunoQuad -- -bulkViscosity needs two values (b1 b2)\n";
+        return 0;
+      }
+      double bv[2] = { 0.0, 0.0 };
+      num = 2;
+      if (OPS_GetDoubleInput(&num, bv) < 0) { opserr << "WARNING LadrunoQuad -- bad -bulkViscosity\n"; return 0; }
+      if (bv[0] < 0.0) { opserr << "WARNING LadrunoQuad -- -bulkViscosity b1 < 0; ignoring (b1=0)\n"; bv[0] = 0.0; }
+      if (bv[1] < 0.0) { opserr << "WARNING LadrunoQuad -- -bulkViscosity b2 < 0; ignoring (b2=0)\n"; bv[1] = 0.0; }
+      bvB1 = bv[0];
+      bvB2 = bv[1];
+
     } else {
       opserr << "WARNING LadrunoQuad -- ignoring unknown option " << opt << "\n";
     }
@@ -130,6 +146,20 @@ void *OPS_LadrunoQuad()
     return 0;
   }
 
+  // Ladruno (W2-E1): explicit bulk viscosity is wired only through the std/bbar
+  // kernel (the SSP/EAS single-point lanes do not carry the bv force block). Strip
+  // the coeffs (with a diagnostic) for any other formulation so Print stays honest.
+  // Mirrors the LadrunoBrick guard.
+  if ((bvB1 > 0.0 || bvB2 > 0.0) &&
+      form != LadrunoQuad::Formulation::STD &&
+      form != LadrunoQuad::Formulation::BBAR) {
+    opserr << "WARNING LadrunoQuad " << idata[0]
+           << " -- -bulkViscosity is only supported with -formulation std|bbar; "
+              "ignoring it for this formulation\n";
+    bvB1 = bvB2 = 0.0;
+  }
+
   return new LadrunoQuad(idata[0], idata[1], idata[2], idata[3], idata[4],
-                         *mat, typeBuf, thk, form, rho, b1, b2, pressure);
+                         *mat, typeBuf, thk, form, rho, b1, b2, pressure,
+                         bvB1, bvB2);   // Ladruno (W2-E1): bulk-viscosity coeffs
 }
