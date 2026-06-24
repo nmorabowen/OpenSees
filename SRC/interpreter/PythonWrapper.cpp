@@ -1109,6 +1109,13 @@ static PyObject *Py_ops_printB(PyObject *self, PyObject *args)
     return wrapper->getResults();
 }
 
+static PyObject *Py_ops_LadrunoTrialResidualNorm(PyObject *self, PyObject *args)  // Ladruno ADR-52 W1-I1b
+{
+    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
+    if (OPS_LadrunoTrialResidualNorm() < 0) { opserr<<(void*)0; return NULL; }
+    return wrapper->getResults();
+}
+
 static PyObject *Py_ops_printX(PyObject *self, PyObject *args)
 {
     wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
@@ -1372,6 +1379,13 @@ static PyObject *Py_ops_setNodeAccel(PyObject *self, PyObject *args)
 	return NULL;
     }
 
+    return wrapper->getResults();
+}
+
+static PyObject *Py_ops_LadrunoSetNodeTrial(PyObject *self, PyObject *args)  // Ladruno ADR-52 W1-I1b
+{
+    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
+    if (OPS_LadrunoSetNodeTrial() < 0) { opserr<<(void*)0; return NULL; }
     return wrapper->getResults();
 }
 
@@ -3241,6 +3255,7 @@ PythonWrapper::addOpenSeesCommands()
     addCommand("printModel", &Py_ops_print);
     addCommand("printA", &Py_ops_printA);
     addCommand("printB", &Py_ops_printB);
+    addCommand("ladrunoTrialResidualNorm", &Py_ops_LadrunoTrialResidualNorm);  // Ladruno ADR-52 W1-I1b
     addCommand("printX", &Py_ops_printX);
     addCommand("printGID", &Py_ops_printGID);
     addCommand("testNorm", &Py_ops_getCTestNorms);
@@ -3263,6 +3278,7 @@ PythonWrapper::addOpenSeesCommands()
     addCommand("setNodeVel", &Py_ops_setNodeVel);
     addCommand("nodeAccel", &Py_ops_nodeAccel);
     addCommand("setNodeAccel", &Py_ops_setNodeAccel);
+    addCommand("ladrunoSetNodeTrial", &Py_ops_LadrunoSetNodeTrial);  // Ladruno ADR-52 W1-I1b
     addCommand("nodeResponse", &Py_ops_nodeResponse);
     addCommand("nodeCoord", &Py_ops_nodeCoord);
     addCommand("setNodeCoord", &Py_ops_setNodeCoord);

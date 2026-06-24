@@ -370,6 +370,7 @@ int OPS_buildModel();
 int OPS_setNodeDisp();
 int OPS_setNodeVel();
 int OPS_setNodeAccel();
+int OPS_LadrunoSetNodeTrial();    // Ladruno: ADR-52 W1-I1b full-vector trial setter
 int OPS_setNodeTemperature();
 int OPS_getNodeTemperature();
 int OPS_setElementRayleighDampingFactors();
@@ -452,6 +453,7 @@ int OPS_resetModel();
 int OPS_initializeAnalysis();
 int OPS_printA();
 int OPS_printB();
+int OPS_LadrunoTrialResidualNorm();    // Ladruno: ADR-52 W1-I1b half-increment-residual primitive
 int OPS_printX();
 int OPS_printModel();
 int OPS_Database();
