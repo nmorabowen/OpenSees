@@ -351,5 +351,23 @@ the bulk-viscosity *formula itself* is sound and needed no change.
 
 ## Implementation log
 
-*(filled in as waves execute. Suggested order: W1-E3 → W1-E2 → W1-I1a → W2-E1 →
-W3-I2 → W3-I3-gate. Each wave = its own PR on `ladruno`.)*
+Suggested order: W1-E3 → W1-E2 → W1-I1a → W2-E1 → W3-I2 → W3-I3-gate. Each wave =
+its own PR on `ladruno`.
+
+- **2026-06-24 — W1-E3 shipped (#394).** SMS dt_cr honesty + parallel-safety doc
+  fix. `-cflAbort`/`-recompute` under the 4 SMS integrators
+  (`CentralDifferenceSMS{,Consistent}`, `ExplicitBatheSMS{,Consistent}`) now
+  downgrade to report-only (the pre-scaling dt_cr is surfaced) instead of refusing
+  the run; the stale "consistent variant is NOT parallel-safe" comments were
+  corrected after auditing `LadrunoConsistentRefine.h` (the consistent PCG *is*
+  parallel-safe — global inner products + shared-DOF assembly, ADR-38 V5). Fork-only,
+  no serialization/numerical change. Zone-A green.
+- **2026-06-24 — W1-I1a shipped (#396).** Transient adaptive-Δt lane
+  (`robust_transient()` + `TransientResult`) added to `Ladruno_scripts/robust_drive.py`:
+  a pure-Python re-host of the built-in variable-step transient analysis
+  (iteration-count dt sizing) + the algorithm ladder + honest `integrated`
+  (not-accuracy-certified) verdict. Zero vanilla footprint. Self-tested live against
+  the dist build (linear SDOF + Newmark; static self-test unaffected). The
+  accuracy-grade follow-up is **W1-I1b** (half-increment-residual error gate).
+- *Remaining:* W1-E2 (ExplicitBathe 6→1 collapse — most invasive, do deliberately),
+  W2-E1 (bulk viscosity), W1-I1b, W3-I2, W3-I3-gate.
