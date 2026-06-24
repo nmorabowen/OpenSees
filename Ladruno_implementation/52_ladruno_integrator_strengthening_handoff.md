@@ -1,7 +1,7 @@
 ---
 title: Integrator Strengthening — session handoff
 project: Ladruno
-status: active
+status: complete
 owner: nmora
 tags:
   - handoff
@@ -13,9 +13,38 @@ parent: "[[52_ladruno_integrator_strengthening_adr]]"
 
 # ADR-52 — integrator strengthening: session handoff
 
-Pick-up notes for the next agent continuing [[52_ladruno_integrator_strengthening_adr]]
-(the strengthening roadmap, derived from the [[49_ladruno_integrator_study_workflow_adr]]
-study + [[49a_integrator_scorecard_2026-06-23]] gap analysis).
+Pick-up notes for [[52_ladruno_integrator_strengthening_adr]] (the strengthening roadmap,
+derived from the [[49_ladruno_integrator_study_workflow_adr]] study +
+[[49a_integrator_scorecard_2026-06-23]] gap analysis).
+
+## ✅ ADR-52 COMPLETE (2026-06-24)
+
+**All waves shipped to `ladruno`. Nothing here is blocking.** W1-E3 #394 · W1-I1a #396 ·
+W2-E1 #399/#403 · W1-I1b #407/#408 · W3-I3 GATED→NO-GO #410 · W3-I2 #413+#415+#417 ·
+**W1-E2 (the last wave) #419**. The status snapshot + per-wave notes below are the record.
+
+### Next session — what's left is OPTIONAL (pick only if asked)
+1. **W2-E1 follow-ups (deferred, non-blocking):** `S3` ALLVD/`bvDissipated` recorder channel
+   (mirror `hgDissipated`); `S4` one-time warning when bulk-viscosity coeffs>0 but material
+   `rho==0`; extend bulk viscosity to the **uri/ssp/eas** single-point Brick/Quad paths
+   (currently stripped at parse). Small, self-contained. See the W2-E1 follow-ups section.
+2. **Docs-only cleanups** the ADR explicitly dropped (would touch vanilla — DO NOT edit code):
+   `Newmark1`→`Newmark`, `ArcLength1`→`ArcLength`, the `ExplicitDifference` quality issues →
+   write up in [[ladruno_integrators_guide]] / [[LEDGER_quirks]]. The `ExplicitDifference`
+   fix is a candidate to **upstream** as a real-OpenSees PR (separate from the fork).
+3. **The likely real next priority is NOT this ADR** — it's the concurrent contact/AEM line
+   (per #416: edge-edge contact = new algo; contact-handler parallelization = its own effort,
+   currently BLOCKED on the serial-only handler sendSelf/recvSelf P1a stubs). See the
+   `opensees-contact` memory + the `ladruno-adr41-mortar-c2` project memory.
+
+**Proven workflow (unchanged):** worktree `C:\Users\nmb\Documents\Github\OpenSees-integrators`
+(branch `integ-work` tracks `origin/ladruno`); per change `git checkout -b feat/… origin/ladruno`;
+validate via CI (add a `zone_a` pytest `from _testbed import ops`, `pytestmark=[pytest.mark.zone_a]`
+→ PR → Zone-A builds opensees + runs it; the fast "classTag + manifest gates" job needs a
+`manifest.yaml` row if the classTag set changes); poll `gh pr checks` in a background loop
+(~10 min, NEVER `--watch`, guard against empty output); `g++ -fsyntax-only` with all SRC subdirs
+as `-I` for a fast local check; run the adversarial `Workflow` review on heavy/novel waves; PR
+numbers are NOT sequential (read the gh-assigned number); `gh pr merge --squash --delete-branch`.
 
 ## Status snapshot (2026-06-24)
 
