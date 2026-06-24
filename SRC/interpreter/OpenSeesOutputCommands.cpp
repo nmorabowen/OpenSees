@@ -890,6 +890,28 @@ int OPS_LadrunoContactForce()
     return 0;
 }
 
+// ladrunoBeginAugment / ladrunoEndAugment -> open / close a held-load within-step contact
+// augmentation sweep (ADR-41 D1). Between the two, Domain::commit() performs the contact Uzawa
+// lambda update but fires NO recorders and bumps NO commitTag, so the held-load re-commits the
+// analyze_augmented proc issues at a zero load increment produce no spurious recorder samples and
+// no time advance (the capstone contract #3 "no recorder/load corruption" clause). Outside the
+// pair the flag is OFF => Domain::commit() is byte-identical to stock. Idempotent; no args.
+int OPS_LadrunoBeginAugment()
+{
+    Domain *theDomain = OPS_GetDomain();
+    if (theDomain != 0)
+        theDomain->setContactAugmenting(true);
+    return 0;
+}
+
+int OPS_LadrunoEndAugment()
+{
+    Domain *theDomain = OPS_GetDomain();
+    if (theDomain != 0)
+        theDomain->setContactAugmenting(false);
+    return 0;
+}
+
 
 int OPS_nodeCrd()
 {

@@ -242,6 +242,15 @@ class Domain
     void setLadrunoContactDomain(LadrunoContactDomain *cd);
     LadrunoContactDomain *getLadrunoContactDomain(void) const { return theContactDomain; }
 
+    // Ladruno (ADR-41 D1): within-step contact-augmentation suppression. When ON, Domain::commit()
+    // performs the contact Uzawa lambda update (theContactDomain->commit()) but SKIPS the recorder
+    // loop + commitTag bump, so a held-load augmentation sweep (analyze_augmented at zero load
+    // increment) produces NO spurious recorder samples and advances NO commitTag — the capstone
+    // contract #3 "no recorder/load corruption" clause. Default OFF => commit() byte-identical to
+    // stock. Driven by the ladrunoBeginAugment / ladrunoEndAugment commands.
+    void setContactAugmenting(bool on) { contactAugmenting = on; }
+    bool isContactAugmenting(void) const { return contactAugmenting; }
+
     virtual void Print(OPS_Stream &s, int flag =0);
     virtual void Print(OPS_Stream &s, ID *nodeTags, ID *eleTags, int flag =0);
 
@@ -330,6 +339,8 @@ class Domain
     int numParameters;
 
     LadrunoContactDomain *theContactDomain;   // Ladruno: ADR-39 (owned, nullable; declared last)
+    bool contactAugmenting = false;           // Ladruno: ADR-41 D1 (held-load augmentation suppression; the
+                                              // in-class init is a safety net — every ctor also sets it false)
 };
 
 #endif
