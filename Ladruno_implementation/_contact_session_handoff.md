@@ -41,8 +41,23 @@ tags:
   nodal mass (nodal `mass` + element-density mass — the handler pre-builds a per-node cache; the B1
   adversarial gate caught + fixed sourcing it from `Node::getMass()` alone). Explicit-only (dt via
   `dynamic_cast`→CDL); implicit + `-soft`-absent byte-identical. Battery **91→98/98**.
-- **Contact battery: 98/98** — `tests/test_adr39_contact_p*.py` (+ `_p2b2c_hertz.py`, **`_p4_soft.py`**) +
-  `test_adr41_mortar_c2_{0,1,2}.py` + `_c3_{1,2,3}.py` + `_c4_{1,2}.py` + `test_adr41_viscous_d2.py`.
+- **B2 SHIPPED** ([#406](https://github.com/nmorabowen/OpenSees/pull/406)) — the LS-DYNA §26.15 **SOFT=2 segment-based explicit penalty**
+  (`contact … -mortar -soft <SOFSCL>`). The shipped B1 SOFT=1 is NODE-to-segment ⇒ it MISSES (1) partial
+  facet overlap with no slave node in-bounds, (2) a node sliding off a master segment edge, (3) a
+  T-intersection. B2 REUSES the shipped `LadrunoMortarKernel` clip→Gauss (D,M,g̃,n over the slave∩master
+  overlap) and distributes a Courant-stable penalty `p_I = min(0, k_soft,I·ḡ_I)`, `k_soft,I =
+  SOFSCL·4·m_eff,I/dt²` with the SEGMENT-BASED gap-mode mass `m_eff,I = 1/(B_I M⁻¹ B_Iᵀ)`,
+  `B_I = [D,−M]/a_I` (reuses the B1 assembled nodal-mass cache) ⇒ each contact mode `ω·dt = 2√SOFSCL ≤ 2`,
+  dt_cr un-throttled, while CATCHING the corner/edge/T cases NTS misses. New `LadrunoContactFE::
+  addSoft2Penalty` + an explicit-only fast path at the top of the MORTAR `getResidual`
+  (`softScale>0 && dynamic_cast<CentralDifferenceLadruno*>`; strictly additive ⇒ `softScale=0`
+  byte-identical); implicit falls through to the shipped penalty/ALM (explicit-only, like B1).
+  FRICTIONLESS MVP (⊥ `-tie/-mu/-cohesion/-tauMax/-visc`). 3-reviewer adversarial gate PASS (1 MINOR
+  folded — the per-node Courant bound is necessary-not-sufficient; coupled `K_c` ω·dt ~2× ⇒ a
+  `SOFSCL>0.25` warning + [[LEDGER_quirks]] note; default 0.10 safe). Battery **98→104/104**.
+- **Contact battery: 104/104** — `tests/test_adr39_contact_p*.py` (+ `_p2b2c_hertz.py`, `_p4_soft.py`,
+  **`_p5_soft2.py`**) + `test_adr41_mortar_c2_{0,1,2}.py` + `_c3_{1,2,3}.py` + `_c4_{1,2}.py` +
+  `test_adr41_viscous_d2.py`.
 
 ### Shipped this session
 | PR | What |
@@ -79,8 +94,11 @@ Workflow fix: recorded the `gh pr checks --watch` premature-exit trap in
 **Track B — NTS explicit-stability hardening** (the explicit-first lane; independent of mortar):
 - ~~**B1** — P4 `SOFT=1` Courant-stable penalty~~ **DONE [[#402](https://github.com/nmorabowen/OpenSees/pull/402)]** (see State above). Follow-ups:
   source m_eff from the assembled M for the parallel/distributed (row-sum lumped) SOE — serial-only
-  today; a mortar SOFT penalty (currently NTS-only); SOFT applied to the tangential `kt` (normal-only now).
-- **B2** — P5 `SOFT=2` segment-based penalty (corner / edge / T-intersection robustness). **← next.**
+  today; SOFT applied to the tangential `kt` (normal-only now). (The mortar SOFT penalty B1 listed is
+  now delivered by **B2** below.)
+- ~~**B2** — P5 `SOFT=2` segment-based penalty (corner / edge / T-intersection robustness)~~ **DONE
+  [#406](https://github.com/nmorabowen/OpenSees/pull/406)** (see State above). Follow-ups: frictional / viscous SOFT=2; the perpendicular
+  edge-edge case (cos_t→0 ⇒ the mortar clip degenerates) needs a dedicated edge-edge treatment.
 - ~~**B3** — P2b-2c consistent `∂n/∂u` normal tangent + Hertz~~ **DONE [#389]** (see State above).
   Follow-up spun off: a quantitative FE Hertz harness (contact-force recorder ✅ via
   `ladrunoContactForce`; a robust curved-indentation driver — displacement-control or D1
@@ -108,11 +126,11 @@ tested recipe.
 
 ## Recommended next step
 
-**B2** (P5 `SOFT=2` segment-based penalty — corner/edge/T-intersection robustness; the natural sequel
-to the shipped B1 `SOFT=1`). Or **D1** (within-step
-augmentation sign-off — the `analyze_augmented` proc is shipped + used by C2/C4; what remains is a
-formal `‖g̃‖→augTol` gate without recorder/load corruption, which ALSO unlocks the quantitative
-Hertz follow-up via displacement-control-free curved indentation). After B3, the NTS lane's
-deferred geometric tangent is CLOSED; everything else is ADR-47 (deferred behind triggers).
+**D1** (within-step augmentation sign-off — the `analyze_augmented` proc is shipped + used by C2/C4;
+what remains is a formal `‖g̃‖→augTol` gate without recorder/load corruption, which ALSO unlocks the
+quantitative Hertz follow-up via displacement-control-free curved indentation). The small B1/B2
+follow-ups are optional: assembled-mass for the parallel/row-sum SOE (serial-only today), SOFT on the
+tangential `kt`, and frictional/viscous SOFT=2 + a perpendicular edge-edge treatment. After B2 the
+NTS+segment explicit-stability lane is delivered; everything else is ADR-47 (deferred behind triggers).
 Process per fork standard: oracle-first → C++ → build → adversarial gate → PR on `ladruno`,
 keep the capstone + ledgers current in the same PR.

@@ -106,7 +106,7 @@ LadrunoContactDomain::addMortarContact(int tag, int masterSurfTag, int slaveSurf
                                        const double *outward, double cellFrac,
                                        double mu, double epsT, bool epsTAuto,
                                        double cohesion, double tauMax, bool consistentTan,
-                                       bool isTie, double muc)
+                                       bool isTie, double muc, double softScale)
 {
     LadrunoContactSurface *ms = getSurface(masterSurfTag);
     LadrunoContactSurface *ss = getSurface(slaveSurfTag);
@@ -148,6 +148,15 @@ LadrunoContactDomain::addMortarContact(int tag, int masterSurfTag, int slaveSurf
                   "stabilization) is not allowed with -tie (a bond has no contact-chatter regime)\n";
         return -1;
     }
+    if (softScale > 0.0 && (isTie || mu > 0.0 || cohesion > 0.0 || tauMax > 0.0 || muc > 0.0)) {
+        // B2 (P5) — the SOFT=2 segment-based explicit penalty MVP is FRICTIONLESS, single-pass (no
+        // ALM/tie/friction/viscous). Refuse the combinations at this choke point too (the command
+        // surface refuses them first). Frictional / viscous SOFT=2 is a documented follow-up.
+        opserr << "WARNING LadrunoContactDomain::addMortarContact() - -soft (SOFT=2 segment-based "
+                  "explicit penalty) is the frictionless MVP; it is not allowed with "
+                  "-tie/-mu/-cohesion/-tauMax/-visc\n";
+        return -1;
+    }
     MortarContact m;
     m.tag = tag; m.masterSurfTag = masterSurfTag; m.slaveSurfTag = slaveSurfTag;
     m.kn = kn; m.knAuto = knAuto;
@@ -165,6 +174,7 @@ LadrunoContactDomain::addMortarContact(int tag, int masterSurfTag, int slaveSurf
     m.consistentTan = consistentTan;
     m.isTie = isTie;                                  // C4 — permanent mesh-tie bond
     m.muc = (muc > 0.0) ? muc : 0.0;                  // D2.2 viscous stabilization (≤0 ⇒ off)
+    m.softScale = (softScale > 0.0) ? softScale : 0.0;  // B2 (P5) SOFT=2 segment-based explicit penalty
     theMortarContacts.push_back(m);
     return 0;
 }

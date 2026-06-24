@@ -240,8 +240,10 @@ def test_soft_segment_path_stabilized():
 
 
 def test_soft_command_refusals():
-    """GATE 5 — the command surface: -soft needs a base penalty (a modifier, not standalone), and is
-    NTS-only (refused on -mortar). OpenSeesPy returns None on success and raises on a parse error."""
+    """GATE 5 — the command surface: -soft needs a base penalty (a modifier, not standalone). WITHOUT
+    -mortar it is B1 SOFT=1 (NTS); WITH -mortar it is now B2 SOFT=2 (segment-based — accepted, no
+    longer refused; see test_adr39_contact_p5_soft2.py). OpenSeesPy returns None on success, raises
+    on a parse error."""
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 3)
     for t, (x, y) in zip((1, 2, 3, 4), [(0, 0), (1, 0), (1, 1), (0, 1)]):
@@ -251,9 +253,9 @@ def test_soft_command_refusals():
     ops.contactSurface(1, "-master", 4, 1, 2, 3, 4)
     ops.contactSurface(2, "-slave-segments", 4, 5, 6, 7, 8)
     ops.contactSurface(3, "-slave", 9)
-    # -soft on a mortar contact ⇒ refused (NTS-only)
-    with pytest.raises(Exception):
-        ops.contact(1, 1, 2, "-mortar", "-epsN", 1.0e6, "-soft", 0.1)
+    # -soft on a mortar contact ⇒ now SOFT=2 (B2 segment-based explicit penalty); accepted with a
+    # base penalty (-epsN). (Was refused as "NTS-only" before B2 shipped.)
+    ops.contact(1, 1, 2, "-mortar", "-epsN", 1.0e6, "-soft", 0.1, "-outward", 0.0, 0.0, 1.0)
     # -soft with NO base penalty ⇒ refused (needs a positional auto/kn)
     with pytest.raises(Exception):
         ops.contact(2, 1, 3, "-soft", 0.1)               # no kn, no auto

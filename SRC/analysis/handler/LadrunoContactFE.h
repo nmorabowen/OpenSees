@@ -115,12 +115,21 @@ class LadrunoContactFE : public FE_Element
     // force t_I = λ_tie,I + epsTie·(r_I/a_I) (no clamp) via D/−M + the SPD tangent epsTie·B̃ᵀB̃⊗I₃.
     // epsN carries epsTie; mu/cohesion/tauMax are refused with -tie upstream. theDomain==0 ⇒ a pure
     // penalty tie (λ_tie≡0). Mutually exclusive with the friction args (a tie has no cone).
+    // B2 (P5) softScale: SOFT=2 SOFSCL (>0 ⇒ on). The SEGMENT-BASED explicit penalty — under the
+    // explicit CentralDifferenceLadruno getResidual REPLACES the per-facet epsN with the Courant-
+    // stable k_soft = SOFSCL·4·m_eff/dt² per slave node (m_eff the segment-based gap-mode generalized
+    // mass over the slave+master facet nodes) and assembles a pure single-pass penalty (NO ALM) over
+    // the clipped overlap, so explicit dt_cr stays un-throttled while CATCHING the corner/edge/
+    // T-intersection cases the NTS node-to-segment SOFT=1 lane misses. Inert under implicit (falls
+    // through to the shipped mortar penalty/ALM with the configured epsN ⇒ byte-identical). MVP is
+    // FRICTIONLESS (mu/cohesion/tauMax/-tie/-visc refused with -mortar -soft upstream).
     LadrunoContactFE(int tag, Node **slaveNodes, int nps_s, Node **masterNodes, int nps_m,
                      double epsN, const double orientDir[3], int contactTag = 0,
                      int slaveFacetIndex = 0, Domain *theDomain = 0,
                      double mu = 0.0, double epsT = 0.0, double cohesion = 0.0,
                      double tauMax = 0.0, bool consistentTan = false, bool isTie = false,
-                     double muc = 0.0);   // D2.2: viscous normal stabilization on the mortar contact
+                     double muc = 0.0,    // D2.2: viscous normal stabilization on the mortar contact
+                     double softScale = 0.0);  // B2 (P5): SOFT=2 segment-based explicit penalty (0 ⇒ off)
     ~LadrunoContactFE();
 
     // self-owned buffers (base buffers are unavailable when myEle == 0)
@@ -265,6 +274,18 @@ class LadrunoContactFE : public FE_Element
     // the ‖r‖ query). cd may be null ⇒ a pure penalty tie (λ_tie≡0, no global accumulation).
     void addMortarTieForce(const double D[4][4], const double M[4][4],
                            class LadrunoContactDomain *cd);
+
+    // B2 (P5) — the SOFT=2 segment-based EXPLICIT penalty force (frictionless, single-pass, no ALM).
+    // Re-integrates the facet pair (mortarActive ⇒ clip→Gauss D,M,g̃,n), sizes a Courant-stable
+    // per-slave-node penalty k_soft,I = softScale·4·m_eff,I/dt² from the assembled nodal masses
+    // (m_eff,I = 1/(B_I M⁻¹ B_Iᵀ), B_I = [D,−M]/a_I — the segment-based gap-mode generalized mass),
+    // and scatters p_I = min(0, k_soft,I·ḡ_I) self-equilibratingly along n (f^s = −(D·p)n,
+    // f^m = +(Mᵀ·p)n) — exactly like the C2 normal block but with the SOFT penalty instead of
+    // λ+epsN. Called ONLY from the MORTAR getResidual under the explicit CDL (softScale>0); under
+    // implicit the caller falls through to the shipped penalty/ALM path (configured epsN). dt comes
+    // from the integrator; a contact node with no assembled mass / no dt falls back to the configured
+    // epsN (warn once), mirroring B1's softKn.
+    void addSoft2Penalty(class Integrator *theIntegrator);
 };
 
 #endif
