@@ -286,3 +286,92 @@ def test_soft_default_sofscl_accepted():
     for _ in range(2000):
         assert ops.analyze(1, DT) == 0, "bare -soft (default SOFSCL) should be stable"
         assert abs(ops.nodeDisp(1, 3)) < RUNAWAY, "bare -soft should stay bounded"
+
+
+# ===================================================================================
+# SOFT on the tangential (friction stick) penalty kt (the kt follow-up).
+# softKn sizes only the NORMAL kn; under explicit a stiff friction kt still throttles
+# dt_cr via the tangential STICK mode ω_t = √(kt/m_eff_t). SOFT now sizes kt too
+# (k_soft_t = SOFSCL·4·m_eff_t/dt²), so a stiff configured kt stays stable.
+# ===================================================================================
+def _friction_stick(kt, soft, dt=DT, mu=5.0, Ptang=50.0, P=1.0e3, nsteps=3000):
+    """A slave node on a FIXED master quad, pressed (normal P) with a HIGH friction cone (mu=5 ⇒ the
+    contact stays in continuous STICK) and a sub-cone tangential load Ptang. The tangential x-DOF is
+    FREE. Under explicit central difference a stiff stick penalty kt (ω_t·dt ≫ 2) DIVERGES; -soft sizes
+    kt = SOFSCL·4·m_eff_t/dt² (ω_t·dt = 2√SOFSCL) and stays BOUNDED. Returns (diverged, max|x|)."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for t, (x, y) in zip((1, 2, 3, 4), [(-1, -1), (1, -1), (1, 1), (-1, 1)]):
+        ops.node(t, float(x), float(y), 0.0)
+        ops.fix(t, 1, 1, 1)                               # fixed master quad
+    ops.node(5, 0.0, 0.0, 0.0)                            # slave at the centre, on the surface
+    ops.mass(5, M, M, M)
+    ops.fix(5, 0, 1, 0)                                   # x FREE (tangential), y fixed, z free (normal)
+    ops.contactSurface(1, "-master", 4, 1, 2, 3, 4)
+    ops.contactSurface(2, "-slave", 5)
+    extra = ("-outward", 0.0, 0.0, 1.0) + (("-soft", soft) if soft > 0.0 else ())
+    ops.contact(1, 1, 2, KN_STIFF, kt, mu, *extra)       # kn kt mu  (+ -soft)
+    ops.timeSeries("Constant", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(5, Ptang, 0.0, -P)                          # sub-cone tangential + sustained normal press
+    ops.constraints("LadrunoContact")
+    ops.numberer("Plain")
+    ops.system("Diagonal")
+    ops.integrator("CentralDifferenceLadruno")
+    ops.algorithm("Linear")
+    ops.analysis("Transient")
+    maxabs = 0.0
+    for _ in range(nsteps):
+        if ops.analyze(1, dt) != 0:
+            return True, maxabs
+        maxabs = max(maxabs, abs(ops.nodeDisp(5, 1)))
+        if maxabs > RUNAWAY:
+            return True, maxabs
+    return False, maxabs
+
+
+def test_soft_stabilizes_friction_stick_kt():
+    """The kt follow-up — the headline. With a HIGH cone (continuous stick) a stiff tangential penalty
+    kt (ω_t·dt ≫ 2) DIVERGES under central difference even though the NORMAL is soft-stabilized; -soft
+    now also sizes kt Courant-stably (ω_t·dt = 2√SOFSCL) ⇒ BOUNDED. Same kt + dt across both runs."""
+    div_stiff, _ = _friction_stick(KN_STIFF, 0.0)        # stiff kt, no soft on kt
+    div_soft, maxabs = _friction_stick(KN_STIFF, 0.1)    # SOFT sizes kt too
+    assert div_stiff, "stiff friction kt should DIVERGE in continuous stick at the structural dt"
+    assert not div_soft, f"SOFT must stabilize the stick mode (kt sized; max|x|={maxabs:.3e})"
+    assert maxabs < 0.05, f"soft-kt stick should be bounded near equilibrium (max|x|={maxabs:.3e})"
+
+
+def _friction_stick_static(kt, soft):
+    """Static (implicit) frictional stick: SOFT is explicit-only ⇒ -soft is inert and the configured kt
+    is used ⇒ the implicit solution must be bit-identical with and without -soft. Returns node-5 x."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for t, (x, y) in zip((1, 2, 3, 4), [(-1, -1), (1, -1), (1, 1), (-1, 1)]):
+        ops.node(t, float(x), float(y), 0.0)
+        ops.fix(t, 1, 1, 1)
+    ops.node(5, 0.0, 0.0, -1.0e-4)                       # start slightly penetrated ⇒ contact active iter 1
+    ops.fix(5, 0, 1, 0)
+    ops.contactSurface(1, "-master", 4, 1, 2, 3, 4)
+    ops.contactSurface(2, "-slave", 5)
+    extra = ("-outward", 0.0, 0.0, 1.0) + (("-soft", soft) if soft > 0.0 else ())
+    ops.contact(1, 1, 2, 1.0e6, 1.0e5, 5.0, *extra)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(5, 50.0, 0.0, -1.0e3)
+    ops.constraints("LadrunoContact")
+    ops.numberer("Plain")
+    ops.system("FullGeneral")
+    ops.test("NormDispIncr", 1.0e-12, 50, 0)
+    ops.algorithm("Newton")
+    ops.analysis("Static")
+    ops.integrator("LoadControl", 1.0)
+    assert ops.analyze(1) == 0, "static frictional stick did not converge"
+    return ops.nodeDisp(5, 1)
+
+
+def test_soft_kt_implicit_byte_identical():
+    """SOFT-on-kt is EXPLICIT-ONLY: under implicit the configured kt is used, so a static frictional
+    stick solve with `-soft` is BIT-IDENTICAL to one without it."""
+    x_off = _friction_stick_static(1.0e5, 0.0)
+    x_on = _friction_stick_static(1.0e5, 0.1)
+    assert x_off == x_on, f"-soft perturbed the implicit (explicit-only) kt solution: {x_off!r} vs {x_on!r}"

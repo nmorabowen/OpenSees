@@ -31,6 +31,7 @@
 // See LadrunoContactFE.h for the design rationale.
 
 #include "LadrunoContactFE.h"
+#include <cmath>                    // Ladruno: ADR-39 B1 (softKt tangent-basis fabs/sqrt)
 #include <Node.h>
 #include <DOF_Group.h>
 #include <Integrator.h>
@@ -334,6 +335,22 @@ ladrunoInvMassProj(const double m[3], const double n[3])
 // k_soft = SOFSCL·4·m_eff/dt² (SOFSCL < 1 the safety margin). Validated: proto_b1_soft_penalty.py.
 // Only active under the explicit CentralDifferenceLadruno (dynamic_cast — catches its SMS subclasses
 // too); any implicit integrator fails the cast ⇒ the configured kn is returned ⇒ byte-identical.
+// B1 — gap-mode inverse effective mass B M⁻¹ Bᵀ for unit direction `dir`, B = [dir | −N_i dir] over
+// [slave | seg nodes]; N==0 ⇒ RIGID_PLANE (slave only). A DOF with no mass ⇒ ∞ mass ⇒ 0 contribution
+// (a FIXED master node drops out, leaving m_eff = m_slave). ≤0 ⇒ massless slave (caller cannot size).
+double
+LadrunoContactFE::gapModeInvMass(const double dir[3], const double N[4]) const
+{
+    double ms[3]; ladrunoNodeMass(theDomain, theSlave, ms);
+    double invSum = ladrunoInvMassProj(ms, dir);  // 0 ⇒ massless slave
+    if (invSum > 0.0 && N != 0)                    // SEGMENT: add the shape-projected segment masses
+        for (int i = 0; i < nps; i++) {
+            double mi[3]; ladrunoNodeMass(theDomain, segNode[i], mi);
+            invSum += N[i] * N[i] * ladrunoInvMassProj(mi, dir);
+        }
+    return invSum;
+}
+
 double
 LadrunoContactFE::softKn(Integrator *theIntegrator, const double n[3], const double N[4]) const
 {
@@ -343,13 +360,7 @@ LadrunoContactFE::softKn(Integrator *theIntegrator, const double n[3], const dou
     if (cdl == 0)
         return kn;                                // implicit / non-CDL ⇒ inert (byte-identical)
     double dt = cdl->getCurrentDeltaT();
-    double ms[3]; ladrunoNodeMass(theDomain, theSlave, ms);
-    double invSum = ladrunoInvMassProj(ms, n);    // 0 ⇒ massless slave (fail below)
-    if (invSum > 0.0 && N != 0)                   // SEGMENT: add the shape-projected segment masses
-        for (int i = 0; i < nps; i++) {          // fixed master node ⇒ 0 contribution (∞ mass)
-            double mi[3]; ladrunoNodeMass(theDomain, segNode[i], mi);
-            invSum += N[i] * N[i] * ladrunoInvMassProj(mi, n);
-        }
+    double invSum = gapModeInvMass(n, N);         // 0 ⇒ massless slave (fail below)
     if (dt <= 0.0 || invSum <= 0.0) {            // massless slave or no dt ⇒ cannot soft-size
         static bool warned = false;
         if (!warned) {
@@ -362,6 +373,47 @@ LadrunoContactFE::softKn(Integrator *theIntegrator, const double n[3], const dou
         return kn;
     }
     return softScale * 4.0 * (1.0 / invSum) / (dt * dt);   // k_soft = SOFSCL·4·m_eff/dt²
+}
+
+// B1 (kt follow-up) — the SOFT=1 Courant-stable TANGENTIAL (Coulomb stick) penalty. softKn sizes only
+// the NORMAL kn; under explicit a stiff friction kt still throttles dt_cr via the stick mode
+// ω_t = √(kt/m_eff_t) (continuous stick at a high cone DIVERGES when ω_t·dt > 2). softKt sizes
+// k_soft_t = softScale·4·m_eff_t/dt² (⇒ ω_t·dt = 2√softScale ≤ 2) from the WORST-CASE (largest inverse
+// mass ⇒ smallest m_eff) over the two BASIS tangents t1,t2 to n. EXACT for the isotropic lumped mass
+// `system Diagonal` uses (invMproj direction-independent ⇒ m_eff_t == m_eff_n, off-diagonal of the
+// tangent-plane mass restriction vanishes); for a genuinely ANISOTROPIC nodal mass the binding direction
+// can be a t1/t2 combination, so max(t1,t2) is an approximation (use isotropic lumped mass under explicit)
+// — documented, like the B1 row-sum-SOE caveat. The per-node bound is also necessary-not-sufficient under
+// multi-node coupling (inherited from softKn); the default SOFSCL=0.10 leaves the absorbing margin. Same
+// gate as softKn (soft off / implicit / no dt-or-mass ⇒ the configured kt ⇒ byte-identical; softKn,
+// called first in getResidual, already emits the no-mass warning). SEGMENT (NTS) friction only.
+double
+LadrunoContactFE::softKt(Integrator *theIntegrator, const double n[3], const double N[4]) const
+{
+    if (softScale <= 0.0 || theIntegrator == 0)
+        return kt;
+    CentralDifferenceLadruno *cdl = dynamic_cast<CentralDifferenceLadruno *>(theIntegrator);
+    if (cdl == 0)
+        return kt;                                // implicit / non-CDL ⇒ inert (byte-identical)
+    double dt = cdl->getCurrentDeltaT();
+    // two orthonormal tangents to n: t1 ⟂ n built from the coordinate axis least aligned with n, t2=n×t1
+    int k = 0; double amin = std::fabs(n[0]);
+    if (std::fabs(n[1]) < amin) { amin = std::fabs(n[1]); k = 1; }
+    if (std::fabs(n[2]) < amin) { k = 2; }
+    double e[3] = {0.0, 0.0, 0.0}; e[k] = 1.0;
+    double en = e[0]*n[0] + e[1]*n[1] + e[2]*n[2];
+    double t1[3], nrm = 0.0;
+    for (int d = 0; d < 3; d++) { t1[d] = e[d] - en * n[d]; nrm += t1[d]*t1[d]; }
+    nrm = std::sqrt(nrm);
+    if (nrm < 1e-300) return kt;                  // degenerate (n not unit) ⇒ configured kt
+    for (int d = 0; d < 3; d++) t1[d] /= nrm;
+    double t2[3] = { n[1]*t1[2] - n[2]*t1[1], n[2]*t1[0] - n[0]*t1[2], n[0]*t1[1] - n[1]*t1[0] };
+    // worst case = MAX inverse-mass ⇒ MIN m_eff_t ⇒ HIGHEST stick frequency ⇒ the binding stability bound
+    double inv1 = gapModeInvMass(t1, N), inv2 = gapModeInvMass(t2, N);
+    double invMax = (inv1 > inv2) ? inv1 : inv2;
+    if (dt <= 0.0 || invMax <= 0.0)
+        return kt;                                // massless / no dt ⇒ the configured kt (softKn warned)
+    return softScale * 4.0 * (1.0 / invMax) / (dt * dt);  // k_soft_t = SOFSCL·4·m_eff_t/dt²
 }
 
 const Vector &
@@ -441,8 +493,12 @@ LadrunoContactFE::getResidual(Integrator *theIntegrator)
                     double gTeff[3];
                     for (int d = 0; d < 3; d++) gTeff[d] = gTvec[d] - st.gT0[d];
                     double tFric[3], gpTtrial[3];
-                    // N for the cone = current penetration force tn (design MINOR-8).
-                    LadrunoFrictionKernel::frictionReturnMap(gTeff, st.gpT, tn, kt, mu,
+                    // N for the cone = current penetration force tn (design MINOR-8). B1 (kt): under
+                    // explicit, ktEff is the Courant-stable SOFT tangential stick penalty (so a stiff
+                    // configured kt does not throttle dt_cr via the stick mode); otherwise the
+                    // configured kt (byte-identical). The cone μ·tn already rides the SOFT normal tn.
+                    double ktEff = softKt(theIntegrator, n, N);
+                    LadrunoFrictionKernel::frictionReturnMap(gTeff, st.gpT, tn, ktEff, mu,
                                                             tFric, gpTtrial);
                     // trial = PURE fn of committed state (idempotent across the CDL
                     // firstStep double-eval); commit() promotes it.
