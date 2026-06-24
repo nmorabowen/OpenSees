@@ -79,10 +79,16 @@ class LadrunoContactFE : public FE_Element
     // true assembles the full non-symmetric consistent tangent (quadratic, needs
     // FullGeneral/UmfPack). Only ever assembled under IMPLICIT integrators (addKtToTang);
     // explicit CDL routes to addMtoTang (no-op) ⇒ P3 explicit byte-identical.
+    // B3 (P2b-2c) consistentNormal: assemble the consistent ∂n/∂u geometric NORMAL
+    // tangent K_geom = kn·gN·∂²gN/∂u² (the curvature / large-sliding block deferred since
+    // P2b). false (default) ⇒ the shipped kn·BᵀB main term only (byte-identical, the flat/
+    // fixed-master EXACT tangent). true ⇒ + the geometric block ⇒ quadratic Newton on
+    // CURVED / large-sliding interfaces. SYMMETRIC (Hessian of the scalar gap) ⇒ solver-safe.
     LadrunoContactFE(int tag, Node *slaveNode, Node **segNodes, int nps, double kn,
                      const double orientDir[3], double kt = 0.0, double mu = 0.0,
                      Domain *theDomain = 0, int contactTag = 0, int segIndex = 0,
-                     bool consistentTan = false, double muc = 0.0);
+                     bool consistentTan = false, double muc = 0.0,
+                     bool consistentNormal = false);
     // C2.1/C2.2 (ADR-41): clipped-GP MORTAR contact, ONE slave facet vs ONE master facet
     // (tri-3 / quad-4). Connectivity = {slave facet nodes} ∪ {master facet nodes},
     // FE_Element(tag, nps_s+nps_m, 3*(nps_s+nps_m)). getResidual integrates the pair via
@@ -159,6 +165,13 @@ class LadrunoContactFE : public FE_Element
     void addFrictionTang(double fact, const double n[3], const double N[4], double tn,
                          const double gTeff[3], const double gpT[3], bool consistent);
 
+    // B3 (P2b-2c): assemble the consistent ∂n/∂u geometric NORMAL tangent block
+    // K_geom = kn·gN·∂²gN/∂u² into `tang` (SEGMENT mode). Re-projects the current config
+    // (deterministic ⇒ the SAME ξ̄/n/gap the residual used) and calls the oracle-validated
+    // LadrunoContactProjection::normalGeomTangent. Active mask = penetrating + in-bounds;
+    // for a flat facet the slave block is identically 0 (byte-identity contract). SYMMETRIC.
+    void addNormalGeomTang(double fact);
+
     // C2.1: integrate the mortar facet pair at the current trial config. Fills D,M,g̃
     // (LadrunoMortarKernel::integratePair) + the per-facet master normal n. Returns true
     // if the overlap is non-empty (status 0); false ⇒ no contribution this evaluation.
@@ -201,6 +214,8 @@ class LadrunoContactFE : public FE_Element
     int contactTag;     // friction-state key: contact definition tag ...
     int segIndex;       // ... and the GLOBAL master-segment ordinal (rebuild-stable)
     bool consistentTan; // P3.5: include the non-symmetric d_TN⊗n column (false ⇒ symmetric)
+    bool consistentNormal; // B3 (P2b-2c): SEGMENT — add the consistent ∂n/∂u geometric normal
+                        // tangent (kn·gN·∂²gN/∂u²). false ⇒ shipped kn·BᵀB only (byte-identical).
 
     // C2.1 MORTAR binding (mode == MORTAR). The penalty epsN rides `kn`. The slave-facet
     // ordinal `slaveFacetIndex` (+ contactTag) keys the per-node λ_N state in C2.2.

@@ -1608,3 +1608,49 @@ non-obvious behaviours, all relevant to anyone wiring `-stabilize` into a driver
   friction tangent lands and an implicit Newton step is rejected. **RESOLVED in C3.2 (#378):** `gT0`/`engaged`
   are double-buffered (`gT0committed`/`engagedCommitted`), promoted in `commit()` and restored in
   `revertToLastCommit()`. Found by the C3.1 gate (MAJOR-2, #377), fixed in C3.2.
+
+### B3 (P2b-2c): the LadrunoContact handler does NOT enforce non-zero SP (imposed displacement)
+- **Bites:** any model that drives a `LadrunoContact` analysis by imposed nodal displacement
+  (`ops.sp(node, dof, value)` with a non-zero value in a `pattern`) — e.g. a displacement-controlled
+  indenter. **Verified:** a free-x node with `sp(node,1,0.05)` ends at `ux=0.000` under
+  `constraints LadrunoContact`, vs `ux=0.050` under `constraints Transformation`. The contact handler is
+  Plain-style — it REMOVES the constrained DOF (ID=-1) but never applies the non-homogeneous value (only
+  Transformation/Penalty/Lagrange do). So imposed-displacement DRIVING silently does nothing.
+- **How to drive instead:** external LOAD (`ops.load`, `LoadControl`), `DisplacementControl` on a FREE DOF
+  (it augments the system with the load factor — works with the Plain/contact handler, no SP needed), or a
+  fixed-geometry incompatibility (pre-set node positions, like `block_on_block`'s 1e-8 pre-penetration).
+- **Why fenced:** wiring non-homogeneous SP through the contact handler is a Transformation-handler-class
+  change (out of scope for B3). Found while building the Hertz benchmark (capstone B3 gate 2).
+
+### B3: NTS contact force is NOT in nodeReaction — use the `ladrunoContactForce` query
+- **Bites:** reading per-node contact pressure. The NTS contact traction is assembled by an injected
+  `LadrunoContactFE` adapter (an FE_Element with no backing Domain Element), so it does NOT contribute to
+  `Node::addReactionForce` ⇒ `ops.nodeReaction(slave, 3)` returns 0 for the contact force (only real
+  elements + nodal loads/inertia accumulate into reactions). **Fix shipped (B3):** the SEGMENT adapter
+  reports its `tn = kn·<−gap>₊` into a Domain snapshot (`set/getNtsForce`, cleared each handle in
+  `frictionGCBegin`); query `ladrunoContactForce slaveNodeTag` returns the Σ over the node's pairs. Pure
+  side-channel (no resid/tang effect).
+
+### B3: the geometric ∂n/∂u normal tangent is SYMMETRIC but INDEFINITE — a convergence-basin tradeoff
+- **Bites:** `contact … -geomtan` on large, soft-master contact patches. `K_geom = kn·gN·H` with the gap
+  `gN < 0` in contact, so the geometric block SUBTRACTS from the main `kn·BᵀB` (PSD) ⇒ the contact tangent
+  can be indefinite (still symmetric — it's the Hessian of the scalar gap — so ProfileSPD factors it, but
+  Newton can leave the convergence basin far from the solution). **Observed:** a 749-slave-node fixed-sphere
+  Hertz patch on a soft deformable master DIVERGES with `-geomtan` but CONVERGES without it; a single
+  warped-quad slide (few DOFs) converges FASTER with it (quadratic, 4 vs 7 iters). So the geometric tangent
+  improves LOCAL (near-solution) convergence but can shrink the GLOBAL basin on big soft patches.
+- **Why it's GATED off-default:** exactly this tradeoff. `-geomtan` is an opt-in refinement (like
+  `-consistanttan`), default OFF ⇒ the robust `kn·BᵀB` + byte-identity. Turn it on for curved /
+  large-sliding interfaces where quadratic Newton is wanted and the patch is well-conditioned; pair with a
+  line search / load stepping for robustness on large soft patches. Found by the B3 Hertz study.
+
+### B3: penalty NTS contact bootstrap — a curved indenter starts contact at ONE point
+- **Bites:** driving a curved (sphere/cylinder) indenter into a half-space by force. The first contact is a
+  single point; the not-yet-contacting indenter material/columns are unsupported ⇒ free-fall under load ⇒
+  Newton diverges at step 1 (seen across LoadControl / DisplacementControl / weak-spring-stabilized free
+  indenters AND one-shot full pre-penetration of a fixed rigid sphere). The shipped `block_on_block` test
+  converges only because its interface is FLAT (all slaves engage at once) at a tiny 1e-8 pre-penetration.
+- **What works for a Hertz patch:** a FIXED rigid sphere (slaves pinned at the sphere surface ⇒ no free
+  body) with a MODEST approach δ + moderate penalty kn + a looser convergence tol (1e-10 stalls on the
+  stiff patch), and/or ramping the indentation gently. Robust quantitative 3D Hertz remains sensitive — it
+  motivates pairing B3 with displacement control or D1 within-step augmentation. Found by the B3 gate 2.
