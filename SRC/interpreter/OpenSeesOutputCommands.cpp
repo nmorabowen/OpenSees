@@ -683,10 +683,12 @@ int OPS_LadrunoContact()
         // B2 (P5): `-mortar -soft <SOFSCL>` selects the SOFT=2 SEGMENT-BASED explicit penalty — the
         // segment-to-segment generalization of the NTS SOFT=1 lane that catches the corner/edge/
         // T-intersection cases NTS misses (it integrates the clipped facet overlap, not slave NODES).
-        // MVP is FRICTIONLESS, single-pass (no ALM/tie/friction/viscous): refuse those combos.
-        if (isTie || mortarMu > 0.0 || cohesion > 0.0 || tauMax > 0.0 || muc > 0.0) {
-            opserr << "WARNING contact -soft (SOFT=2 segment-based explicit penalty) is the "
-                      "frictionless MVP; it is not allowed with -tie/-mu/-cohesion/-tauMax/-visc\n";
+        // -tie is REFUSED (a permanent bond is not a soft contact penalty). -visc μ_c IS allowed
+        // (the D2.2 velocity-proportional normal damper on the SOFT=2 active set — chatter/restitution
+        // control for explicit impact). -mu/-cohesion/-tauMax friction with SOFT=2 = a later phase.
+        if (isTie || mortarMu > 0.0 || cohesion > 0.0 || tauMax > 0.0) {
+            opserr << "WARNING contact -soft (SOFT=2 segment-based explicit penalty) does not (yet) "
+                      "support friction; it is not allowed with -tie/-mu/-cohesion/-tauMax (-visc is OK)\n";
             return -1;
         }
         // SOFT=2 still needs a base penalty (the implicit fall-through + byte-identity contract use

@@ -856,6 +856,52 @@ LadrunoContactFE::addSoft2Penalty(Integrator *theIntegrator)
         for (int I = 0; I < npsS; I++) Mp += M[I][L] * p[I];
         for (int d = 0; d < 3; d++) resid(3 * (npsS + L) + d) = Mp * n[d];
     }
+
+    // --- D2.2 viscous normal stabilization on the SOFT=2 explicit path ---
+    // The SAME velocity-proportional normal damper the regular mortar path applies (getResidual,
+    // D2.2 block), here on the SOFT=2 active set: per IN-CONTACT slave node (p[I]<0, the soft-penalty
+    // KKT mask) the weighted normal gap RATE ḡ̇_I = n·(Σ_J D_IJ v_s,J − Σ_K M_IK v_m,K)/a_I (v =
+    // getTrialVel), the viscous pressure p_visc_I = μ_c·ḡ̇_I (NO clamp — a dashpot active while in
+    // contact), scattered EXACTLY like the normal penalty force (f^s += −(D·p_visc)n, f^m += +(Mᵀ·p_visc)n).
+    // It is the C2 normal operator with epsN→μ_c, driven by velocity — the oracle-validated D2.2 operator
+    // (proto_d2_viscous.py T6), unchanged. μ_c=0 ⇒ no viscous term (byte-identical to the plain SOFT=2
+    // penalty). Under explicit CDL this is force-only (the tangent is mass-only); on the implicit
+    // fall-through the regular mortar path's addCtoTang owns the consistent C tangent.
+    if (muc > 0.0) {
+        double vs[4][3], vm[4][3];
+        for (int i = 0; i < npsS; i++) {
+            const Vector &v = mortarSlave[i]->getTrialVel();
+            for (int d = 0; d < 3; d++) vs[i][d] = v(d);
+        }
+        for (int i = 0; i < npsM; i++) {
+            const Vector &v = mortarMaster[i]->getTrialVel();
+            for (int d = 0; d < 3; d++) vm[i][d] = v(d);
+        }
+        double pv[4] = {0, 0, 0, 0};
+        for (int I = 0; I < npsS; I++) {
+            if (p[I] >= 0.0) continue;            // viscous only on in-contact nodes (soft-penalty mask)
+            double aFacet = 0.0;
+            for (int J = 0; J < npsS; J++) aFacet += D[I][J];
+            if (aFacet <= 1e-300) continue;
+            double rdot[3] = {0, 0, 0};
+            for (int J = 0; J < npsS; J++)
+                for (int d = 0; d < 3; d++) rdot[d] += D[I][J] * vs[J][d];
+            for (int K = 0; K < npsM; K++)
+                for (int d = 0; d < 3; d++) rdot[d] -= M[I][K] * vm[K][d];
+            double gdot = (rdot[0]*n[0] + rdot[1]*n[1] + rdot[2]*n[2]) / aFacet;
+            pv[I] = muc * gdot;                   // p_visc_I = μ_c·ḡ̇_I
+        }
+        for (int K = 0; K < npsS; K++) {          // slave: −(D·p_visc)_K n
+            double Dp = 0.0;
+            for (int I = 0; I < npsS; I++) Dp += D[K][I] * pv[I];
+            for (int d = 0; d < 3; d++) resid(3 * K + d) += -Dp * n[d];
+        }
+        for (int L = 0; L < npsM; L++) {          // master: +(Mᵀ·p_visc)_L n
+            double Mp = 0.0;
+            for (int I = 0; I < npsS; I++) Mp += M[I][L] * pv[I];
+            for (int d = 0; d < 3; d++) resid(3 * (npsS + L) + d) += Mp * n[d];
+        }
+    }
 }
 
 const Matrix &
