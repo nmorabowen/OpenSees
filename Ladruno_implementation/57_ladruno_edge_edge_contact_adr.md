@@ -274,26 +274,34 @@ So the detector is specified as **ordered precedence with hysteresis and a
 guaranteed-owner fall-through**, not a partition, and the residual double-count is
 *bounded and gated*, not *zero by construction*:
 
-1. **Pre-classify** on `align_fn` with hysteresis: `> τ_face` (≈cos 50° ≈ 0.64) ⇒ try
-   face-mortar first; `< τ_edge` (≈cos 70° ≈ 0.34) ⇒ try edge-edge first; the band
-   `[τ_edge, τ_face]` damps near-45° flapping.
-2. **Confirm with a guaranteed owner.** Edge-edge **succeeds** iff ≥1 of the 4×4 edge
-   pairs yields a *margin-interior, well-conditioned* closest point with `g_N ∈
-   [−d_pen, +d_band]`. **Face-mortar stands down only if edge-edge succeeds** —
-   `A_clip < τ_A·min(A_s,A_m)` is *necessary but not sufficient* to vacate the mortar
-   lane (closing the coverage hole: a band pair whose edges all clamp/refuse falls back
-   to the sliver-area clip, never to zero force).
-3. **NTS exclusion (the third-lane fix).** A facet-pair routes edge-edge **only if no
-   slave node of that pair projects in-bounds** on the partnered master facet (the
-   condition the NTS lane keys on). When both could fire, **NTS takes precedence**
-   (it is the more local primitive) and edge-edge stands down, so the same physical
-   contact is never double-counted across the edge-edge/NTS boundary.
+0. **Proximity gate.** Facets farther apart than `d_band` own **no** lane (`NONE`) —
+   genuinely separated, no contact primitive. Within `d_band` an owner is **guaranteed**.
+1. **Regime split on `align_fn` (refined oracle-first in E1 — the flat precedence of the
+   draft was wrong).** The E1 oracle showed that a flat "NTS ≻ edge-edge ≻ mortar"
+   *steals facing-facet contact from the mortar lane*: a facing overlap has slave nodes
+   projecting in-bounds (the NTS condition), so flat NTS-precedence would mis-route the
+   whole mortar regime to NTS. Fix: **`align_fn ≥ τ_face` (≈cos 50°) ⇒ FACE-MORTAR owns
+   the pair outright** — its weighted-gap integral already subsumes the in-bounds slave
+   nodes; a separate NTS there would double-count. NTS-vs-edge precedence applies **only
+   in the non-facing regime**.
+2. **Non-facing regime (`align_fn < τ_face`): ordered precedence NTS ≻ edge-edge ≻
+   sliver-mortar.**
+   - **NTS** if a slave **vertex** projects in-bounds on the master face with `g_N ∈
+     [−d_pen, +d_band]` — the more local primitive owns it, so edge-edge cannot
+     double-count a vertex-on-face (the Lens-C third-lane fix).
+   - else **EDGE-EDGE** if ≥1 of the (≤4)×(≤4) edge pairs is a *margin-interior,
+     well-conditioned* (E0-`EE_OK`) crossing with `g_N ≤ d_band`.
+   - else **FACE-MORTAR** — the **guaranteed owner** for everything else in proximity
+     (even a sliver clip). Face-mortar stands down *only if* edge-edge succeeds, so
+     `A_clip < τ_A` is necessary-but-not-sufficient to vacate it: **no coverage hole**.
 
-E1 gates all three: an NTS-vs-edge double-count falsifier, the oblique-band
-no-coverage-hole falsifier, and the hysteresis no-chatter sweep. If precedence proves
-to chatter in the band, a partition-of-force *blend* (a smooth `align_fn` weight) is the
-documented fallback — but the MVP ships hard precedence with the E1 falsifiers, not a
-claimed-clean partition.
+E1 gates the lot (oracle **16/16**): the regime split, the NTS-vs-edge double-count
+falsifier, the oblique-band no-coverage-hole falsifier, the parallel-but-offset facing
+case (caught by mortar, not dropped), and the hysteresis no-chatter sweep (a monotone
+tilt through 45° produced a single EDGE_EDGE→FACE_MORTAR transition). `align_fn` is the
+cheap regime pre-classify, **not** the arbiter — correctness comes from the
+proximity-gated precedence. If precedence ever chatters in the band, a partition-of-force
+*blend* is the documented fallback; the MVP ships hard precedence with the E1 falsifiers.
 
 ### 3. First variation and the B-operator (penalty force + main tangent)
 
@@ -457,7 +465,7 @@ companion) is a later convenience, not the MVP.
 | Phase | Delivers | Oracle (`proto_e*`) + falsifier | C++ gate |
 |---|---|---|---|
 | **E0** ✅ **SHIPPED** | `LadrunoEdgeKernel.h` — segment-segment closest point + edge normal/gap | `proto_e0_closest_point.py` **28/28**: vs an independent scan reference on all **8 Voronoi sub-regions** incl. the **vertex-vertex double-clamp**; **parallel refusal** (denom<τ_∥, τ_∥=sin²15° conditioning-justified) + near-parallel; **zero-length** refusal; conditioning bounded across the band; `|w·n|==‖w‖` only margin-interior (+ its failure clamped); FD `∂g_N/∂coord` == analytic B to **1.1e-9**; committed-sign monotone-through-contact + the buggy-`w·n`-rule penetration-mask demo (the A-4 fix, shown empirically). | `e0_cpp_check.cpp` **13/13** bit-for-bit (B==FD identical 1.13e-9); header compiles warning-free; header-only ⇒ no TU includes it yet ⇒ build byte-identical |
-| **E1** | the **routing detector** | `proto_e1_router.py`: classify T-/L-/X-junction + facing + oblique facet pairs; **ordered-precedence (not partition)** — an **NTS-vs-edge double-count falsifier**, the **oblique-band no-coverage-hole falsifier** (clamped/parallel edges + sub-τ_A clip ⇒ nonzero restraint, never zero), the **parallel-but-offset facing** case caught by face-mortar, hysteresis no-chatter through 45°. | handler unit: edge-on→EDGE_EDGE, facing→MORTAR, slave-node-in-bounds→NTS-precedence; **byte-identity when `-edgeedge` absent** |
+| **E1** ✅ **oracle SHIPPED** (C++ wiring folds into E2) | the **routing detector** | `proto_e1_router.py` **16/16**: the **align_fn regime split** (facing→mortar; non-facing→NTS≻edge≻sliver — oracle-first caught that flat NTS-precedence steals facing-facet contact), X-crossing→EDGE_EDGE, an **NTS-vs-edge double-count falsifier** (non-facing vertex-poke→NTS), the **oblique-band no-coverage-hole falsifier** (in-proximity pair ⇒ non-NONE owner), the **parallel-but-offset facing** case caught by mortar (not dropped), the proximity NONE gate, and the hysteresis no-chatter sweep (1 clean transition through 45°). | handler unit (lands with the E2 wiring — routing without an adapter to inject is inert): edge-on→EDGE_EDGE, facing→MORTAR, slave-vertex-in-bounds→NTS; **byte-identity when `-edgeedge` absent** |
 | **E2** | penalty normal force + main tangent | `proto_e2_penalty.py`: two-bar edge-on test, force ⟂ both edges (along `n`), self-equilibrium `Σf=0`, `K=ε_N BᵀB` FD-checked symmetric PSD, penetration `δ=P/ε_N`; **monotone `g_N` through contact** (drive gap>0 → 0 → penetration, assert no sign flip — the committed-sign-anchor falsifier). | `test_adr57_edge_edge_1`: two crossed bars, gap → tol, Newton converges; NTS-passes-through vs edge-edge-restrained (the headline falsifier — NTS net force ZERO) |
 | **E3** | friction (reuse `LadrunoFrictionKernel`) | `proto_e3_friction.py`: stick/slip on the edge tangent plane, `a = g(sinθ−μcosθ)` incline sign, Tresca cap, slip-from-displacement (the C3.1 trap), `μ=0` byte-identical. | `test_adr57_edge_edge_2`: explicit raking bar (Coulomb opposes motion), implicit stick converges; symmetric tangent solver-safe |
 | **E4** | consistent geometric tangent (`-edgegeomtan`, **gated off**) | `proto_e4_geomtan.py`: `∂n/∂u, ∂s/∂u, ∂t/∂u` analytic == FD on a skew large-sliding pair; symmetric; flat ⇒ byte-identical. | local Newton iter-count improvement on a curved-rake case; ProfileSPD-safe |
@@ -624,5 +632,14 @@ friction-kernel 4th-consumer, SOFT mass-cache, clip-degeneracy probe safety
   Oracle caught one ADR wording imprecision to fold later: the *normal direction* `∂n/∂u`
   conditioning is `1/sinθ_edge`; the closest-point *parameter* `∂(s,t)/∂u` conditioning is
   `1/sin²θ_edge` (the dominant gauge the §1 "1/sin²" refers to) — both bounded at the band.
-- **E1→E7** — pending (design-only above; each lands oracle-first → C++ → gate → PR,
+- **E1 (routing logic) — oracle SHIPPED** (this PR). `proto_e1_router.py` **16/16** pins
+  the routing decision tree. **Design refinement caught oracle-first:** the draft's flat
+  "NTS ≻ edge-edge ≻ mortar" precedence steals facing-facet contact from the mortar lane
+  (a facing overlap has slave nodes in-bounds — the NTS condition); fixed to an
+  **`align_fn` regime split** (facing `align_fn≥τ_face` ⇒ mortar owns; non-facing ⇒
+  NTS≻edge≻sliver), folded back into §2. The proximity-gated precedence is a *guaranteed
+  owner* (no coverage hole) and chatter-free (1 transition through a 45° sweep). The C++
+  realization (the handler routing loop) **folds into E2** — routing without an adapter
+  to inject is inert, so it ships with the `EDGE_EDGE` adapter, not before.
+- **E2→E7** — pending (design-only above; each lands oracle-first → C++ → gate → PR,
   updating the capstone row + ledgers in the same PR).
