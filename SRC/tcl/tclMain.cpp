@@ -179,6 +179,7 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • LadrunoArcLength — adaptive arc-length radius (Ramm desired-iter)\n"
 "        • LadrunoDynamicRelaxation — quasi-static DR (Gershgorin mass + kinetic damping)\n"
 "        • LadrunoIndirectControl — indirect/CMOD control (snap-back tracking)\n"
+"        • LadrunoHHT — sensitivity/DDM HHT (reliability/fragility/FORM on damped α)\n"
 "        • LadrunoStabilizedUnbalance — true-equilibrium test for -stabilize\n"
 "        • LadrunoProjection — momentum-conserving explicit constraint projection (equalDOF/rigidLink/diaphragm)\n"
 "        • LadrunoContact — NTS + mortar/ALM contact (penalty + commit-cycle Uzawa, Coulomb/Tresca friction, mesh-tying, viscous stabilization, consistent dn/du normal tangent, SOFT=1 + SOFT=2 Courant-stable explicit penalty)\n"

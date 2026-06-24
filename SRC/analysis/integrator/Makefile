@@ -10,6 +10,7 @@ OBJS       = AlphaOS.o \
     ExplicitDifferenceStatic.o \
 	ExplicitBathe.o \
 	ExplicitBatheLNVD.o \
+	LadrunoHHT.o \
 	CentralDifferenceLadruno.o \
 	CriticalTimeStep.o \
 	AlphaOSGeneralized_TP.o \
