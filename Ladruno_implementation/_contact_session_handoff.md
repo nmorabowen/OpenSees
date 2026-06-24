@@ -166,7 +166,16 @@ context with the relevant skills loaded, not by extending an implementation sess
 depend on each other — scope them as two separate ADRs/sessions.
 
 **1. Perpendicular edge-edge contact ADR** (the `cos_t→0` mortar-clip degeneration — a NEW algorithm).
-Kickoff prompt:
+✅ **DELIVERED — [[57_ladruno_edge_edge_contact_adr]]** (2026-06-24, design-only): segment-segment
+closest point + common-perpendicular normal `n=(ê_s×ê_m)/‖ê_s×ê_m‖` + the two-stage cos_t routing
+detector (facet-normal alignment routes to edge-edge as →0; edge-direction `sinθ_edge`→0 refuses the
+parallel degeneracy; clip-area is the partition arbiter). New header `LadrunoEdgeKernel.h` + a new
+`LadrunoContactFE` `EDGE_EDGE` mode + `LadrunoContactDomain::EdgeEdgeState`; reuses the bucket sort
+(edge pairs derived inside the near facet neighborhood — zero new spatial structure), the friction
+kernel, the SOFT mass cache, and a one-scalar ALM. Phase gates E0→E7 (oracle-first). Fenced:
+predefined-surface only — self-contact/runtime-discovery edge-edge → ADR-55, smoothing → ADR-47 #4a.
+Capstone B2 row + component table + ADR-47 ledger row #10 updated. **Implementation is a later session.**
+Original kickoff prompt (for reference):
 > Scope the perpendicular edge-edge contact ADR for the Ladruno fork (the `cos_t→0` case where the
 > mortar face-overlap clip degenerates — two facets meeting edge-on, no in-plane overlap to integrate).
 > START by reading `Ladruno_implementation/48_ladruno_contact_capstone_adr.md` (the status-of-record
