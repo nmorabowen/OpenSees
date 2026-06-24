@@ -301,6 +301,88 @@ def t5_stiffness_throttles_dt():
           f"dt); soft-kn is stable, accepting more penetration (the SOFSCL knob).")
 
 
+# ----------------------------------------------------------------------------
+# T6 — SOFT on the tangential (friction stick) penalty kt (the kt follow-up).
+#      softKn sizes only the NORMAL kn; under explicit a stiff friction kt still
+#      throttles dt_cr via the tangential STICK mode ω_t = √(kt/m_eff_t). SOFT sizes
+#      kt = SOFSCL·4·m_eff_t/dt² so ω_t·dt = 2√SOFSCL ≤ 2.  m_eff_t = the gap-mode mass
+#      with the gap operator B_t = [t | −N_i t] for a tangent direction t; for ISOTROPIC
+#      nodal mass it equals the normal m_eff (invMproj direction-independent), and the
+#      adapter sizes from the WORST (smallest) m_eff over the two tangents (conservative).
+# ----------------------------------------------------------------------------
+def t6_tangential_kt():
+    print("T6  SOFT on the friction stick penalty kt: m_eff_t (gap op B_t=[t|−N_i t]); stick stability")
+    n = np.array([0.0, 0.0, 1.0])
+    N = quad_shape(0.2, -0.3)
+    ms = 2.0
+    mseg = np.array([1.0, 1.5, 0.8, 1.2])
+    ndof = 3 * (1 + 4)
+    Mdiag = np.zeros(ndof); Mdiag[0:3] = ms
+    for i in range(4):
+        Mdiag[3*(1+i):3*(1+i)+3] = mseg[i]
+
+    def two_tangents(nv):
+        k = int(np.argmin(np.abs(nv)))
+        e = np.zeros(3); e[k] = 1.0
+        t1 = e - (e @ nv) * nv; t1 /= np.linalg.norm(t1)
+        t2 = np.cross(nv, t1)
+        return t1, t2
+
+    # (a) m_eff_t closed form == B_t M⁻¹ B_tᵀ for a tangent direction t
+    t1, t2 = two_tangents(n)
+    for nm, t in (("t1", t1), ("t2", t2)):
+        B = np.zeros(ndof); B[0:3] = t
+        for i in range(4):
+            B[3*(1+i):3*(1+i)+3] = -N[i] * t
+        meff_op = gap_mode_mass(B, Mdiag)
+        meff_cf = 1.0 / (1.0/ms * (t @ t) + np.sum(N**2 * (np.array([t @ t]*4)) / mseg))
+        # isotropic mass ⇒ invMproj = |t|²/m = 1/m, so the closed form is the SAME as the normal m_eff
+        meff_cf = 1.0 / (1.0/ms + np.sum(N**2 / mseg))
+        check(f"  m_eff_t({nm}) == B_t M⁻¹ B_tᵀ", abs(meff_op - meff_cf) < TOL * meff_cf,
+              f"{meff_op:.10f} vs {meff_cf:.10f}")
+
+    # (b) ISOTROPIC nodal mass ⇒ m_eff_t == m_eff_n exactly (the common `system Diagonal` case)
+    B_n = np.zeros(ndof); B_n[0:3] = n
+    for i in range(4):
+        B_n[3*(1+i):3*(1+i)+3] = -N[i] * n
+    meff_n = gap_mode_mass(B_n, Mdiag)
+    B_t = np.zeros(ndof); B_t[0:3] = t1
+    for i in range(4):
+        B_t[3*(1+i):3*(1+i)+3] = -N[i] * t1
+    meff_t = gap_mode_mass(B_t, Mdiag)
+    check("  isotropic mass ⇒ m_eff_t == m_eff_n (direction-independent invMproj)",
+          abs(meff_t - meff_n) < TOL * meff_n, f"{meff_t:.10f} vs {meff_n:.10f}")
+
+    # (c) ANISOTROPIC nodal mass ⇒ the two tangents give DIFFERENT m_eff; the adapter sizes kt from the
+    #     WORST (smallest m_eff ⇒ largest ω_t) — the binding central-difference bound.
+    Maniso = Mdiag.copy()
+    Maniso[0] = 0.3; Maniso[1] = 5.0   # slave x light, y heavy ⇒ t1≈x compliant, t2≈y stiff
+    inv1 = float(np.sum(B_t * B_t / Maniso))
+    B_t2 = np.zeros(ndof); B_t2[0:3] = t2
+    for i in range(4):
+        B_t2[3*(1+i):3*(1+i)+3] = -N[i] * t2
+    inv2 = float(np.sum(B_t2 * B_t2 / Maniso))
+    check("  anisotropic ⇒ tangents differ; worst-case = max(invMass) ⇒ min m_eff",
+          abs(inv1 - inv2) > 1e-6 and max(inv1, inv2) >= min(inv1, inv2),
+          f"invMass(t1)={inv1:.4f}, invMass(t2)={inv2:.4f} ⇒ size kt from {max(inv1,inv2):.4f}")
+
+    # (d) central-difference STICK stability: a 1-DOF stick spring m_t ẍ = −k_t x. A stiff k_t with
+    #     ω_t·dt ≫ 2 DIVERGES; SOFT picks k_t = SOFSCL·4·m_t/dt² ⇒ ω_t·dt = 2√SOFSCL ≤ 2 ⇒ bounded.
+    m_t, dt, sofscl = 1.0, 1.0e-3, 0.1
+    def stick(kt_):
+        a = lambda u: np.array([kt_ * u[0]])      # restoring (residual) force, continuous stick
+        U, V, A, blew = cd_leapfrog(np.array([m_t]), a, np.array([0.0]),
+                                    np.array([1e-4]), np.array([0.0]), dt, 4000)
+        return blew, (np.max(np.abs(U[:, 0])) if not blew else np.inf)
+    kt_stiff = 1.0e8                              # ω_t·dt = √(1e8)·1e-3 = 10 ≫ 2
+    blew_stiff, _ = stick(kt_stiff)
+    kt_soft = soft_kn(m_t, dt, sofscl)           # ω_t·dt = 2√SOFSCL ≈ 0.63
+    blew_soft, amp = stick(kt_soft)
+    check("  stiff kt (ω_t·dt = 10) central-difference stick DIVERGES", blew_stiff)
+    check("  SOFT kt (ω_t·dt = 2√SOFSCL) stick is BOUNDED", not blew_soft and amp < 1e-3,
+          f"ω_t·dt={np.sqrt(kt_soft/m_t)*dt:.4f}, max|x|={amp:.3e}")
+
+
 def main():
     print("=" * 78)
     print("ADR-39 B1 ORACLE — SOFT=1 Courant-stable penalty  (k_soft = SOFSCL·4·m_eff/dt²)")
@@ -310,6 +392,7 @@ def main():
     t3_mass_vs_wall()
     t4_two_mass_collision()
     t5_stiffness_throttles_dt()
+    t6_tangential_kt()
     print("=" * 78)
     if _fails:
         print(f"FAILED ({len(_fails)}): " + ", ".join(_fails))

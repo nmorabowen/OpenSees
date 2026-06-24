@@ -188,6 +188,19 @@ class LadrunoContactFE : public FE_Element
     // so an absent -soft and any implicit run are byte-identical to the shipped penalty.
     double softKn(class Integrator *theIntegrator, const double n[3], const double N[4]) const;
 
+    // B1: gap-mode INVERSE effective mass B M⁻¹ Bᵀ for unit direction `dir`, with the gap operator
+    // B = [dir | −N_i dir] over [slave | seg nodes] (N==0 ⇒ RIGID_PLANE, slave only) and the ASSEMBLED
+    // nodal masses projected on `dir`. m_eff = 1/(returned value); ≤0 ⇒ massless (caller cannot size).
+    double gapModeInvMass(const double dir[3], const double N[4]) const;
+
+    // B1 (kt follow-up): the SOFT=1 effective TANGENTIAL (Coulomb stick) penalty for this evaluation.
+    // The shipped softKn sizes only the NORMAL kn; under explicit a stiff friction kt still throttles
+    // dt_cr via the tangential STICK mode ω_t = √(kt/m_eff_t). softKt returns the Courant-stable
+    // k_soft_t = softScale·4·m_eff_t/dt² with m_eff_t = the WORST-CASE (smallest) gap-mode mass over
+    // the two tangents to n (conservative; == m_eff_n for ISOTROPIC nodal mass) ⇒ ω_t·dt = 2√softScale
+    // ≤ 2. Same gate as softKn (soft off / implicit / no dt-or-mass ⇒ the configured kt ⇒ byte-identical).
+    double softKt(class Integrator *theIntegrator, const double n[3], const double N[4]) const;
+
     // B3 (P2b-2c): assemble the consistent ∂n/∂u geometric NORMAL tangent block
     // K_geom = kn·gN·∂²gN/∂u² into `tang` (SEGMENT mode). Re-projects the current config
     // (deterministic ⇒ the SAME ξ̄/n/gap the residual used) and calls the oracle-validated
