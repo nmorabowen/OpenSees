@@ -33,6 +33,7 @@
 //           [, '-formulation', <std|bbar|uri|ssp|eas>]   # default std
 //           [, '-geom', <linear|corot|finite>]       # default linear
 //           [, '-hourglass', <viscous|stiffness|physical>, coeff]  # uri only
+//           [, '-bulkViscosity', b1, b2]                # explicit bulk viscosity (alias -bv)
 //           [, '-lumped']
 //           [, '-b', bx, by, bz]
 //           [, '-damp', dampTag])
@@ -87,6 +88,7 @@ void *OPS_LadrunoBrick()
   LadrunoBrick::Formulation formulation = LadrunoBrick::Formulation::STD;
   LadrunoBrick::Hourglass   hgType = LadrunoBrick::Hourglass::STIFFNESS;  // default for uri
   double hgCoeff = 0.0;
+  double bvB1 = 0.0, bvB2 = 0.0;   // Ladruno (W2-E1): explicit bulk-viscosity coeffs (off by default)
   double bf[3] = { 0.0, 0.0, 0.0 };
   int massType = 0;
   Damping *theDamping = 0;
@@ -149,6 +151,34 @@ void *OPS_LadrunoBrick()
           OPS_ResetCurrentInputArg(-1);
       }
     }
+    else if (strcmp(opt, "-bulkViscosity") == 0 || strcmp(opt, "-bv") == 0) {
+      // Ladruno (W2-E1): explicit bulk viscosity reads TWO doubles (linear b1,
+      // quadratic b2). Both must be >= 0; a negative coeff is warned and ignored.
+      if (OPS_GetNumRemainingInputArgs() < 2) {
+        opserr << "WARNING -bulkViscosity needs two values (b1 b2) for LadrunoBrick "
+               << idata[0] << endln;
+        return 0;
+      }
+      int n2 = 2;
+      double bv[2] = { 0.0, 0.0 };
+      if (OPS_GetDoubleInput(&n2, bv) < 0) {
+        opserr << "WARNING invalid -bulkViscosity b1 b2 for LadrunoBrick "
+               << idata[0] << endln;
+        return 0;
+      }
+      if (bv[0] < 0.0) {
+        opserr << "WARNING -bulkViscosity b1 < 0 for LadrunoBrick " << idata[0]
+               << "; ignoring (b1=0)\n";
+        bv[0] = 0.0;
+      }
+      if (bv[1] < 0.0) {
+        opserr << "WARNING -bulkViscosity b2 < 0 for LadrunoBrick " << idata[0]
+               << "; ignoring (b2=0)\n";
+        bv[1] = 0.0;
+      }
+      bvB1 = bv[0];
+      bvB2 = bv[1];
+    }
     else if (strcmp(opt, "-lumped") == 0 || strcmp(opt, "-lump") == 0) {
       massType = 1;
     }
@@ -206,6 +236,26 @@ void *OPS_LadrunoBrick()
            << ": -damp is only supported with -formulation std|bbar; ignoring "
               "the damping object for this formulation\n";
     theDamping = 0;
+  }
+
+  // Ladruno (W2-E1): explicit bulk viscosity is wired only through the std/bbar
+  // kernel and is frame-consistent only for -geom linear. Strip the coeffs (with a
+  // diagnostic) for any other formulation/geometry so Print stays honest and the run
+  // is not silently un-damped. Mirrors the -damp guard above.
+  if ((bvB1 > 0.0 || bvB2 > 0.0) &&
+      formulation != LadrunoBrick::Formulation::STD &&
+      formulation != LadrunoBrick::Formulation::BBAR) {
+    opserr << "WARNING LadrunoBrick " << idata[0]
+           << ": -bulkViscosity is only supported with -formulation std|bbar; "
+              "ignoring it for this formulation\n";
+    bvB1 = bvB2 = 0.0;
+  }
+  if ((bvB1 > 0.0 || bvB2 > 0.0) &&
+      geomMethodID != SolidTransformation::METHOD_LINEAR) {
+    opserr << "WARNING LadrunoBrick " << idata[0]
+           << ": -bulkViscosity is only supported with -geom linear (global-frame "
+              "velocities are frame-consistent only then); ignoring it\n";
+    bvB1 = bvB2 = 0.0;
   }
 
   // -geom finite (v3): updated-Lagrangian. std = plain F; bbar = F-bar (dSNPO
@@ -282,5 +332,6 @@ void *OPS_LadrunoBrick()
                           idata[1], idata[2], idata[3], idata[4],
                           idata[5], idata[6], idata[7], idata[8],
                           *mat, formulation, bf[0], bf[1], bf[2],
-                          massType, hgType, hgCoeff, theDamping, geomMethodID);
+                          massType, hgType, hgCoeff, theDamping, geomMethodID,
+                          bvB1, bvB2);   // Ladruno (W2-E1): bulk-viscosity coeffs
 }
