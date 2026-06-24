@@ -94,7 +94,7 @@ Workflow fix: recorded the `gh pr checks --watch` premature-exit trap in
 **Track B — NTS explicit-stability hardening** (the explicit-first lane; independent of mortar):
 - ~~**B1** — P4 `SOFT=1` Courant-stable penalty~~ **DONE [[#402](https://github.com/nmorabowen/OpenSees/pull/402)]** (see State above). Follow-ups:
   source m_eff from the assembled M for the parallel/distributed (row-sum lumped) SOE — serial-only
-  today. **SOFT on the tangential `kt` is now DONE** ([#_pending_kt] — `softKt` sizes the friction stick
+  today. **SOFT on the tangential `kt` is now DONE** ([#409](https://github.com/nmorabowen/OpenSees/pull/409) — `softKt` sizes the friction stick
   penalty Courant-stably `k_soft_t = SOFSCL·4·m_eff_t/dt²` so a stiff `kt` no longer throttles dt_cr via
   the stick mode; battery 104→106). (The mortar SOFT penalty B1 listed is delivered by **B2** above.)
 - ~~**B2** — P5 `SOFT=2` segment-based penalty (corner / edge / T-intersection robustness)~~ **DONE
