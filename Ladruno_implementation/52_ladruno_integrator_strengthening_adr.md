@@ -476,9 +476,17 @@ its own PR on `ladruno`.
 - **2026-06-24 — W3-I2 PR2 (#415): `LadrunoGeneralizedAlpha`.** DDM subclass of
   `GeneralizedAlpha` (Chung-Hulbert), classTag **33014** — strict superset of `LadrunoHHT`
   with TWO spectral params (αF on K/C at `Ualpha`/`Ualphadot`, αM on M at `Ualphadotdot`).
-  Same header-only `GeneralizedAlpha.h` edit (promotion + inline classTag ctor). The DDM M
-  term is derived **tangent-consistent** (αM·c3·M on the LHS ⇒ inertia sensitivity at
-  `Ualphadotdot`), matching the factored generalized-α tangent; reduces to Newmark DDM at
-  αM=αF=1. Same test battery as PR1. **W3-I2 complete; ADR-52 remaining: W1-E2 only.**
+  Same header-only `GeneralizedAlpha.h` edit (promotion + inline classTag ctor). **Crux
+  discovered by the FD oracle + adversarial review:** OpenSees `GeneralizedAlpha`'s tangent
+  (`αM·c3·M`) is **inconsistent with its own primal residual**, which integrates inertia at
+  the full step `Udotdot` (`update()` sets accel=`Udotdot`) ⇒ effective Jacobian M-coef `c3`.
+  A first cut built the DDM tangent-consistent (`αM`, inertia at `Ualphadotdot`) and the
+  Zone-A FD-vs-DDM oracle FAILED ~2e-3 at αM=0.9. Fix: build the sensitivity residual
+  **primal-consistent** (M at `Udotdot`, no αM — like Newmark) AND **re-form the
+  sensitivity-solve tangent with `c3·M`** (a `sensTangentFlag` branch in
+  `formEleTangent`/`formNodTangent` + `formTangent()` in `computeSensitivities`) rather than
+  reuse the inconsistent factored primal tangent. K/C (αF) terms need no fix. Primal path
+  untouched ⇒ byte-identical. Reduces to Newmark DDM at αM=αF=1. Base-class quirk logged in
+  [[LEDGER_quirks]]. Same test battery as PR1. **W3-I2 complete; ADR-52 remaining: W1-E2 only.**
 - *Remaining waves:* W1-E2 (ExplicitBathe 6→1 collapse — most invasive, do
   deliberately). W3-I2 done (#413 + #415); W3-I3 closed (NO-GO #410).

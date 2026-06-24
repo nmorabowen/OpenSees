@@ -48,6 +48,15 @@ public:
     int formEleResidual(FE_Element *theEle);
     int formNodUnbalance(DOF_Group *theDof);
 
+    // tangent hooks branch on sensTangentFlag: the non-sensitivity path delegates
+    // to the base (byte-identical primal). The sensitivity path emits the
+    // PRIMAL-CONSISTENT Jacobian (M-coef c3, NOT the base's alphaM*c3) so the DDM
+    // solve uses the true ∂R/∂U of the as-implemented generalized-alpha residual
+    // (inertia at Udotdot). See the .cpp header for why the base tangent is
+    // inconsistent and why the sensitivity solve must re-form its own tangent.
+    int formEleTangent(FE_Element *theEle);
+    int formNodTangent(DOF_Group *theDof);
+
     const char *getClassType(void) const;
     void Print(OPS_Stream &s, int flag = 0);
 
@@ -70,6 +79,7 @@ private:
     Vector *dampingMatrixMultiplicator;
     int assemblyFlag;
     Vector independentRHS;
+    int sensTangentFlag;   // 1 while re-forming the consistent tangent for the DDM solve
 };
 
 #endif
