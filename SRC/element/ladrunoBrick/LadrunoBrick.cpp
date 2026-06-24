@@ -123,6 +123,7 @@ LadrunoBrick::LadrunoBrick()
    connectedExternalNodes(8),
    formulation(Formulation::STD),
    hourglassType(Hourglass::PHYSICAL), hourglassCoeff(0.0),
+   bulkVisc_b1(0.0), bulkVisc_b2(0.0),        // Ladruno (W2-E1): bulk viscosity off
    applyLoad(0), load(0), Ki(0), massType(0),
    theGeom(new SolidTransformationLinear()),  // Ladruno — v1 identity geometry
    damageResponse(0),                          // Ladruno — Tier-A Kstab (built in setDomain)
@@ -157,11 +158,13 @@ LadrunoBrick::LadrunoBrick(int tag,
                            int matype,
                            Hourglass hgType, double hgCoeff,
                            Damping *damping,
-                           int geomMethodID)
+                           int geomMethodID,
+                           double b1bv, double b2bv)
   :Element(tag, ELE_TAG_LadrunoBrick),
    connectedExternalNodes(8),
    formulation(form),
    hourglassType(hgType), hourglassCoeff(hgCoeff),
+   bulkVisc_b1(b1bv), bulkVisc_b2(b2bv),      // Ladruno (W2-E1): bulk-viscosity coeffs
    applyLoad(0), load(0), Ki(0), massType(matype),
    theGeom(0),                                // Ladruno — set below from geomMethodID
    damageResponse(0),                          // Ladruno — Tier-A Kstab (built in setDomain)
@@ -424,6 +427,8 @@ void  LadrunoBrick::Print(OPS_Stream &s, int flag)
     s << "Material Information : \n ";
     materialPointers[0]->Print(s, flag);
     s << "Body Forces: " << b[0] << " " << b[1] << " " << b[2] << endln;
+    if (bulkVisc_b1 > 0.0 || bulkVisc_b2 > 0.0)   // Ladruno (W2-E1)
+      s << "  bulk viscosity: b1=" << bulkVisc_b1 << " b2=" << bulkVisc_b2 << endln;
     s << "Resisting Force (no inertia): " << this->getResistingForce();
   }
 
@@ -1024,6 +1029,38 @@ void  LadrunoBrick::formResidAndTangent(int tang_flag)
       theDamping[i]->update(stress);
       dampingStress = theDamping[i]->getDampingForce();
       dampingStress *= dvol[i];
+    }
+
+    // Ladruno (W2-E1, ADR-52): EXPLICIT BULK VISCOSITY. A viscous volumetric
+    // (artificial-pressure) stress s = c_bulk * edotV added to the normal stress
+    // components, feeding the RESISTING FORCE only -- the reported stress
+    // (getResponse "stresses", responseID==3) queries the material directly and is
+    // unaffected, since `stress` here is a local copy. Off (b1=b2=0) by default:
+    // the block is skipped entirely, so the default path is bit-identical.
+    //   linear  (b1): c = b1*rho*c_d*L_e          -> damps ringing (both signs)
+    //   quad    (b2): c += b2^2*rho*L_e^2*|edotV|  -> shock smearing (compression only)
+    // c_d=sqrt(D(0,0)/rho), L_e=vol^(1/3), edotV=trace(D)=sum_q grad N_q . v_q.
+    // Assumes -geom linear (the explicit-dynamics regime); velocities are global.
+    if (bulkVisc_b1 > 0.0 || bulkVisc_b2 > 0.0) {
+      double edotV = 0.0;                       // volumetric strain rate, trace(D)
+      for (int q = 0; q < numberNodes; q++) {
+        const Vector &vq = nodePointers[q]->getTrialVel();
+        edotV += shp[0][q]*vq(0) + shp[1][q]*vq(1) + shp[2][q]*vq(2);
+      }
+      if (edotV != 0.0) {
+        double rhoBV = materialPointers[i]->getRho();
+        if (rhoBV > 0.0) {
+          const Matrix &ddBV = materialPointers[i]->getTangent();
+          double cd = sqrt(fabs(ddBV(0,0)) / rhoBV);   // dilatational wave speed
+          double Le = pow(volume, 1.0/3.0);             // characteristic length
+          double cbulk = bulkVisc_b1 * rhoBV * cd * Le; // linear: both signs
+          if (edotV < 0.0)                              // quadratic: compression only
+            cbulk += bulkVisc_b2 * bulkVisc_b2 * rhoBV * Le * Le * (-edotV);
+          double svisc = cbulk * edotV;                 // dissipative: s*edotV = c*edotV^2 >= 0
+          for (int p = 0; p < 3; p++)                   // normal comps (xx,yy,zz)
+            stress(p) += svisc;
+        }
+      }
     }
 
     stress *= dvol[i];
@@ -2811,7 +2848,7 @@ int  LadrunoBrick::sendSelf(int commitTag, Channel &theChannel)
     return res;
   }
 
-  static Vector dData(9);
+  static Vector dData(11);
   dData(0) = alphaM;
   dData(1) = betaK;
   dData(2) = betaK0;
@@ -2821,6 +2858,8 @@ int  LadrunoBrick::sendSelf(int commitTag, Channel &theChannel)
   dData(6) = b[2];
   dData(7) = hourglassCoeff;
   dData(8) = hgDissipated;   // Ladruno — viscous-hourglass dissipation accumulator
+  dData(9)  = bulkVisc_b1;   // Ladruno (W2-E1): bulk-viscosity coeffs
+  dData(10) = bulkVisc_b2;
 
   if (theChannel.sendVector(dataTag, commitTag, dData) < 0) {
     opserr << "LadrunoBrick::sendSelf() - failed to send double data\n";
@@ -2879,7 +2918,7 @@ int  LadrunoBrick::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker
   // against the live material on the receive side.  // Ladruno
   if (damageResponse) { delete damageResponse; damageResponse = 0; }
 
-  static Vector dData(9);
+  static Vector dData(11);
   if (theChannel.recvVector(dataTag, commitTag, dData) < 0) {
     opserr << "LadrunoBrick::recvSelf() - failed to recv double data\n";
     return -1;
@@ -2898,6 +2937,10 @@ int  LadrunoBrick::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker
   // the migration. uPrevCommit was zeroed by the null constructor.
   hgDissipated = dData(8);
   hgPrevValid  = false;
+
+  // Ladruno (W2-E1): restore bulk-viscosity coeffs
+  bulkVisc_b1 = dData(9);
+  bulkVisc_b2 = dData(10);
 
   for (int i = 0; i < 8; i++)
     connectedExternalNodes(i) = idData(16 + i);

@@ -100,7 +100,8 @@ class LadrunoBrick : public Element {
                Hourglass hgType = Hourglass::PHYSICAL,
                double hgCoeff = 0.0,
                Damping *theDamping = 0,
-               int geomMethodID = 0);   // 0=linear, 2=finite (SolidTransformation method id)
+               int geomMethodID = 0,    // 0=linear, 2=finite (SolidTransformation method id)
+               double b1bv = 0.0, double b2bv = 0.0);   // Ladruno (W2-E1): bulk-viscosity coeffs
 
   virtual ~LadrunoBrick();
 
@@ -176,6 +177,8 @@ class LadrunoBrick : public Element {
   Formulation formulation;            // the -formulation selector
   Hourglass hourglassType;            // uri only
   double hourglassCoeff;              // uri only
+  double bulkVisc_b1;                 // Ladruno (W2-E1): explicit bulk-viscosity coeffs (linear b1, quadratic b2; 0 = off)
+  double bulkVisc_b2;
 
   // Cumulative viscous-hourglass dissipation (uri + Hourglass::VISCOUS only).
   // The FB viscous hourglass force damps the spurious modes and stores NO energy,
