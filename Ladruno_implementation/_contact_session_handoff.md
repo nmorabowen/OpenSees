@@ -23,9 +23,15 @@ tags:
   deferred it). `K_geom = kn·gN·∂²gN/∂u²` ⇒ quadratic Newton on curved/large-sliding; symmetric;
   gated off-default (indefinite → opt-in like `-consistanttan`). Battery **83→91/91**.
   NOTE: quantitative elliptic-Hertz `p(r)` is resolution-bound by NTS-penalty pressure recovery —
-  4 new [[LEDGER_quirks]] entries (handler ignores imposed-disp; contact force not in nodeReaction;
+  4 new [[LEDGER_quirks]] entries (handler imposed-disp; contact force not in nodeReaction;
   geom tangent indefinite; curved-indenter penalty bootstrap). Finer-mesh + displacement-control /
   D1 augmentation is the documented follow-up.
+- **Imposed-displacement under `LadrunoContact` now WARNS** ([#392](https://github.com/nmorabowen/OpenSees/pull/392)) —
+  the contact handler is Plain-style (must inject the FE adapters in `handle()`), so like stock
+  `PlainHandler` it does NOT enforce a non-homogeneous SP (imposed displacement). It was doing so
+  SILENTLY; now it emits the `PlainHandler`-style warning pointing at `DisplacementControl` (which
+  DOES drive a DOF via the load factor with this handler). Not a regression; full imposed-SP support
+  (a Transformation-style contact handler) is deferred — no consumer.
 - **Contact battery: 91/91** — `tests/test_adr39_contact_p*.py` (+ `_p2b2c_hertz.py`) +
   `test_adr41_mortar_c2_{0,1,2}.py` + `_c3_{1,2,3}.py` + `_c4_{1,2}.py` + `test_adr41_viscous_d2.py`.
 
@@ -36,6 +42,8 @@ tags:
 | #384 | Capstone status-of-record sync (C4). |
 | #385 / #386 | **D2.1 viscous stabilization (NTS)** — `-visc μ_c`, RIGID_PLANE + SEGMENT. |
 | #387 / #388 | **D2.2 mortar viscous** — extends `-visc` to the mortar contact ⇒ **D2 COMPLETE**. |
+| #389 / #390 | **B3 consistent ∂n/∂u normal tangent** (`-geomtan`) + `ladrunoContactForce` query + Hertz benchmark (#390 = ledger ref backfill). Closes the NTS geometric-tangent deferral; battery 83→91/91. |
+| #392 | **Imposed-disp warning** — `LadrunoContact` now warns (was silent) on a non-homogeneous SP, points at `DisplacementControl` (B3 follow-up). |
 
 Workflow fix: recorded the `gh pr checks --watch` premature-exit trap in
 [[../Ladruno_internal/WORKFLOW_GOTCHAS]] §3 (verify the actual Zone-A run by id, not the watch exit).
