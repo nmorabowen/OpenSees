@@ -138,11 +138,14 @@ indentation. **The committed contact roadmap (Tracks A→D) is now COMPLETE.**
 
 **The committed contact roadmap (Tracks A→D) is COMPLETE** (D1 shipped this session). What remains is
 all OPTIONAL / deferred:
-- **Small follow-ups** (each its own small PR, oracle-first): frictional SOFT=2 (add the Coulomb/Tresca
-  cone to the B2 segment-based explicit path, reusing `LadrunoFrictionKernel` over the mortar overlap +
-  the B1-kt `softKt` tangential sizing); viscous SOFT=2 (extend the D2.2 mortar viscous damper to the
-  explicit SOFT=2 path — `-mortar -soft -visc` is currently refused); assembled/row-sum `m_eff` for the
-  parallel/distributed SOE (B1 is serial-only today).
+- **Small follow-ups** (each its own small PR, oracle-first): ~~viscous SOFT=2~~ **DONE** (_pending PR_ —
+  `-mortar -soft -visc` now allowed; the D2.2 normal damper on the SOFT=2 active set in
+  `addSoft2Penalty`, `μ_c=0` byte-identical; battery 112→114/114); frictional SOFT=2 (add the
+  Coulomb/Tresca cone to the B2 segment-based explicit path, reusing `LadrunoFrictionKernel` over the
+  mortar overlap + a per-node `softKt` tangential sizing — NEXT); assembled/row-sum `m_eff` for the
+  parallel/distributed SOE — **BLOCKED, not small**: the contact handler `sendSelf`/`recvSelf` are P1a
+  single-process stubs (the whole contact subsystem is serial-only), so parallel `m_eff` requires
+  parallelizing the handler first (its own ADR-scale effort, not a follow-up).
 - **NOT small** — the perpendicular edge-edge treatment (a dedicated edge-to-edge contact for the
   `cos_t→0` case the mortar face-overlap clip degenerates on; a new algorithm — scope it as its own
   ADR-47-adjacent item).

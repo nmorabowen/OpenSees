@@ -148,13 +148,14 @@ LadrunoContactDomain::addMortarContact(int tag, int masterSurfTag, int slaveSurf
                   "stabilization) is not allowed with -tie (a bond has no contact-chatter regime)\n";
         return -1;
     }
-    if (softScale > 0.0 && (isTie || mu > 0.0 || cohesion > 0.0 || tauMax > 0.0 || muc > 0.0)) {
-        // B2 (P5) — the SOFT=2 segment-based explicit penalty MVP is FRICTIONLESS, single-pass (no
-        // ALM/tie/friction/viscous). Refuse the combinations at this choke point too (the command
-        // surface refuses them first). Frictional / viscous SOFT=2 is a documented follow-up.
+    if (softScale > 0.0 && (isTie || mu > 0.0 || cohesion > 0.0 || tauMax > 0.0)) {
+        // B2 (P5) — the SOFT=2 segment-based explicit penalty does NOT (yet) support friction. -tie
+        // is refused (a permanent bond is not a soft contact penalty). -visc IS allowed (the D2.2
+        // velocity-proportional normal damper on the SOFT=2 active set). Refuse the rest at this choke
+        // point too (the command surface refuses them first). Frictional SOFT=2 is a documented follow-up.
         opserr << "WARNING LadrunoContactDomain::addMortarContact() - -soft (SOFT=2 segment-based "
-                  "explicit penalty) is the frictionless MVP; it is not allowed with "
-                  "-tie/-mu/-cohesion/-tauMax/-visc\n";
+                  "explicit penalty) does not support friction; it is not allowed with "
+                  "-tie/-mu/-cohesion/-tauMax (-visc is OK)\n";
         return -1;
     }
     MortarContact m;
