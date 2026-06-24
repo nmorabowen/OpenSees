@@ -133,6 +133,14 @@ class LadrunoContactDomain
         bool   isTie;
         double muc;             // ADR-41 D2.2: viscous normal-stabilization coeff on the mortar contact
                                 // (0 ⇒ off; not allowed with isTie — a bond has no chatter regime).
+        double softScale;       // B2 (P5): LS-DYNA §26.15 SOFT=2 scale SOFSCL (>0 ⇒ on). Under the
+                                // explicit CentralDifferenceLadruno the adapter REPLACES the per-facet
+                                // epsN with the Courant-stable k_soft = SOFSCL·4·m_eff/dt² per slave node
+                                // (segment-based gap-mode mass) and assembles a pure single-pass penalty
+                                // over the clipped overlap — catching the corner/edge/T-intersection
+                                // cases NTS SOFT=1 misses, dt_cr un-throttled. Inert under implicit
+                                // (falls through to the shipped penalty/ALM ⇒ byte-identical). MVP is
+                                // frictionless (refused with mu/cohesion/tauMax/isTie/muc upstream).
     };
     int addMortarContact(int tag, int masterSurfTag, int slaveSurfTag,
                          double kn, bool knAuto, double epsN, bool epsNAuto,
@@ -140,7 +148,7 @@ class LadrunoContactDomain
                          const double *outward = 0, double cellFrac = 1.0,
                          double mu = 0.0, double epsT = 0.0, bool epsTAuto = false,
                          double cohesion = 0.0, double tauMax = 0.0, bool consistentTan = false,
-                         bool isTie = false, double muc = 0.0);
+                         bool isTie = false, double muc = 0.0, double softScale = 0.0);
     int getNumMortarContacts(void) const { return (int)theMortarContacts.size(); }
     const MortarContact &getMortarContact(int i) const { return theMortarContacts[i]; }
 

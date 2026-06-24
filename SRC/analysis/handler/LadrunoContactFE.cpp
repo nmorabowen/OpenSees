@@ -120,12 +120,14 @@ LadrunoContactFE::LadrunoContactFE(int tag, Node **slaveNodes, int nps_s,
                                    Node **masterNodes, int nps_m, double epsN,
                                    const double odir[3], int contactTag_, int slaveFacetIndex_,
                                    Domain *dom, double mu_, double epsT_, double cohesion_,
-                                   double tauMax_, bool consistentTan_, bool isTie_, double muc_)
+                                   double tauMax_, bool consistentTan_, bool isTie_, double muc_,
+                                   double softScale_)
   : FE_Element(tag, /*numDOF_Group=*/nps_s + nps_m, /*ndof=*/3 * (nps_s + nps_m)),
     resid(3 * (nps_s + nps_m)), tang(3 * (nps_s + nps_m), 3 * (nps_s + nps_m)),
     mode(MORTAR), theSlave(0), ndm(3), kn(epsN), nps(0),
     kt(epsT_), mu(mu_), muc(muc_), theDomain(dom), contactTag(contactTag_), segIndex(0),
-    consistentTan(consistentTan_), consistentNormal(false), softScale(0.0),
+    consistentTan(consistentTan_), consistentNormal(false),
+    softScale(softScale_ > 0.0 ? softScale_ : 0.0),   // B2 (P5): SOFT=2 segment-based explicit penalty
     npsS(nps_s), npsM(nps_m), slaveFacetIndex(slaveFacetIndex_),
     mortarCohesion(cohesion_), mortarTauMax(tauMax_), isTie(isTie_)
 {
@@ -468,6 +470,19 @@ LadrunoContactFE::getResidual(Integrator *theIntegrator)
         // independent (oracle T8). The GLOBAL gap is accumulated here ONLY for the commit-time
         // Uzawa update of λ_I + the ‖ḡ‖ query — never read back into THIS sweep's force.
         // Force along n (self-equilibrating ⇒ Σφ=1): F^s_K = −(D·p)_K n, F^m_L = +(Mᵀ·p)_L n.
+        // B2 (P5) — SOFT=2 segment-based EXPLICIT penalty. Under the explicit CentralDifferenceLadruno
+        // ONLY (the same dynamic_cast gate as B1), replace the per-facet epsN with the Courant-stable
+        // k_soft = SOFSCL·4·m_eff/dt² per slave node and assemble a pure single-pass penalty over the
+        // clipped overlap (no ALM, no λ accumulation) — catching the corner/edge/T-intersection cases
+        // the NTS SOFT=1 lane misses while keeping explicit dt_cr un-throttled. Under any implicit
+        // integrator the cast fails ⇒ fall through to the shipped penalty/ALM path with the configured
+        // epsN (SOFT=2 is explicit-only ⇒ implicit byte-identical to a plain -mortar penalty). MVP is
+        // frictionless (mu/cohesion/tauMax/-tie/-visc refused with -soft upstream).
+        if (softScale > 0.0 &&
+            dynamic_cast<CentralDifferenceLadruno *>(theIntegrator) != 0) {
+            addSoft2Penalty(theIntegrator);
+            return resid;
+        }
         double D[4][4], M[4][4], g[4], n[3];
         LadrunoContactDomain *cd = (theDomain != 0) ? theDomain->getLadrunoContactDomain() : 0;
         if (isTie) {
@@ -710,6 +725,81 @@ LadrunoContactFE::addMortarTieForce(const double D[4][4], const double M[4][4],
             for (int I = 0; I < npsS; I++) s += M[I][L] * t[I][d];
             resid(3 * (npsS + L) + d) = s;
         }
+}
+
+// B2 (P5) — SOFT=2 segment-based EXPLICIT penalty force. Re-integrates the facet pair via the
+// shipped clip→Gauss kernel (mortarActive ⇒ D,M,g̃,n over the overlap), then per slave node I sizes
+// the Courant-stable penalty from the SEGMENT-BASED gap-mode generalized mass and assembles a pure
+// single-pass penalty traction (NO ALM/λ — explicit). The gap operator for the area-normalised node-I
+// gap ḡ_I = g̃_I/a_I is B_I : slave node J → (D_IJ/a_I) n, master node K → −(M_IK/a_I) n, so the
+// gap-mode generalized mass is m_eff,I = 1/(B_I M⁻¹ B_Iᵀ) = 1/(Σ_J (D_IJ/a_I)² invMproj_sJ +
+// Σ_K (M_IK/a_I)² invMproj_mK) from the ASSEMBLED nodal masses projected on n (a fixed/massless node
+// ⇒ ∞ mass ⇒ 0 contribution). Then k_soft,I = softScale·4·m_eff,I/dt² ⇒ each contact mode's
+// ω_I·dt = 2√softScale ≤ 2 (Courant-stable; the B1 rule generalized from NTS B=[n|−Nᵢ n] to the
+// segment B_I=[D,−M]/a_I). p_I = min(0, k_soft,I·ḡ_I) scatters self-equilibratingly along n exactly
+// like the C2 normal block: f^s_K = −(D·p)_K n, f^m_L = +(Mᵀ·p)_L n. Validated: proto_b2_soft2_segment.py.
+void
+LadrunoContactFE::addSoft2Penalty(Integrator *theIntegrator)
+{
+    double D[4][4], M[4][4], g[4], n[3];
+    if (!mortarActive(D, M, g, n))
+        return;                                   // no overlap this eval ⇒ zero force (KKT separation)
+
+    double dt = 0.0;
+    CentralDifferenceLadruno *cdl = dynamic_cast<CentralDifferenceLadruno *>(theIntegrator);
+    if (cdl != 0) dt = cdl->getCurrentDeltaT();   // caller guarantees the cast, but be defensive
+
+    // assembled translational masses of the facet nodes, projected on the gap normal n (the B1 helpers)
+    double invMs[4] = {0.0, 0.0, 0.0, 0.0}, invMm[4] = {0.0, 0.0, 0.0, 0.0};
+    for (int I = 0; I < npsS; I++) {
+        double m[3]; ladrunoNodeMass(theDomain, mortarSlave[I], m);
+        invMs[I] = ladrunoInvMassProj(m, n);
+    }
+    for (int K = 0; K < npsM; K++) {
+        double m[3]; ladrunoNodeMass(theDomain, mortarMaster[K], m);
+        invMm[K] = ladrunoInvMassProj(m, n);      // fixed/massless master node ⇒ 0 (∞ mass)
+    }
+
+    double p[4] = {0.0, 0.0, 0.0, 0.0};
+    for (int I = 0; I < npsS; I++) {
+        double aFacet = 0.0;                       // a_I = Σ_J D_IJ = ∫ N_I dΓ (this facet)
+        for (int J = 0; J < npsS; J++) aFacet += D[I][J];
+        if (aFacet <= 1e-300) continue;           // unreferenced slave node
+        double gbar = g[I] / aFacet;              // area-normalised weighted gap (<0 ⇒ penetration)
+        if (gbar >= 0.0) continue;                // separation ⇒ no penalty (KKT clamp)
+        // segment-based gap-mode inverse mass for node I (the oracle-validated closed form)
+        double invMeff = 0.0;
+        for (int J = 0; J < npsS; J++) { double c = D[I][J] / aFacet; invMeff += c * c * invMs[J]; }
+        for (int K = 0; K < npsM; K++) { double c = M[I][K] / aFacet; invMeff += c * c * invMm[K]; }
+        double knEff;
+        if (dt > 0.0 && invMeff > 0.0) {
+            knEff = softScale * 4.0 * (1.0 / invMeff) / (dt * dt);   // k_soft = SOFSCL·4·m_eff/dt²
+        } else {
+            knEff = kn;                           // cannot soft-size ⇒ the configured epsN (+ warn once)
+            static bool warned = false;
+            if (!warned) {
+                warned = true;
+                opserr << "WARNING LadrunoContactFE - contact -mortar -soft (SOFT=2) could not size a "
+                          "segment-based penalty under the explicit integrator (non-positive dt or a "
+                          "contact node with no assembled mass); using the configured epsN. Give the "
+                          "contact nodes mass for the SOFT=2 stable penalty.\n";
+            }
+        }
+        p[I] = knEff * gbar;                       // ≤ 0 (compression)
+    }
+
+    // scatter the penalty pressure: f^s_K = −(D·p)_K n, f^m_L = +(Mᵀ·p)_L n (self-equilibrating,
+    // Σφ=1). resid was zeroed at the top of getResidual and SOFT=2 owns the whole MORTAR residual.
+    for (int K = 0; K < npsS; K++) {
+        double Dp = 0.0;
+        for (int I = 0; I < npsS; I++) Dp += D[K][I] * p[I];
+        for (int d = 0; d < 3; d++) resid(3 * K + d) = -Dp * n[d];
+    }
+    for (int L = 0; L < npsM; L++) {
+        double Mp = 0.0;
+        for (int I = 0; I < npsS; I++) Mp += M[I][L] * p[I];
+        for (int d = 0; d < 3; d++) resid(3 * (npsS + L) + d) = Mp * n[d];
+    }
 }
 
 const Matrix &

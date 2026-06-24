@@ -299,6 +299,10 @@ LadrunoContactHandler::handle(const ID *nodesLast)
             if (cd->getContact(c).softScale > 0.0) anySoft = true;
         for (int p = 0; p < cd->getNumRigidPlanes() && !anySoft; p++)
             if (cd->getRigidPlane(p).softScale > 0.0) anySoft = true;
+        // B2 (P5): a SOFT=2 mortar contact also needs the assembled nodal-mass cache (the segment-
+        // based m_eff). The cache is over ALL nodes (one element pass), shared with the NTS SOFT=1 lane.
+        for (int c = 0; c < cd->getNumMortarContacts() && !anySoft; c++)
+            if (cd->getMortarContact(c).softScale > 0.0) anySoft = true;
         if (anySoft)
             ladrunoBuildNodalMass(theDomain, cd);
     }
@@ -607,7 +611,8 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                         new LadrunoContactFE(numFe++, sNodes, npsS, mNodes, npsM, epsUse,
                                              orientDir, mc.tag, sf, theDomain,
                                              mc.mu, epsTuse, mc.cohesion, mc.tauMax, mc.consistentTan,
-                                             mc.isTie, mc.muc);   // D2.2 mortar viscous (0 ⇒ off)
+                                             mc.isTie, mc.muc,    // D2.2 mortar viscous (0 ⇒ off)
+                                             mc.softScale);       // B2 SOFT=2 segment-based penalty (0 ⇒ off)
                     if (fe == 0) return -5;
                     theModel->addFE_Element(fe);
                     // C2.2: this pair's slave nodes have a live λ_N slot this handle().

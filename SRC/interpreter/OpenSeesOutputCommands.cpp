@@ -460,12 +460,14 @@ int OPS_LadrunoContact()
     // uplift regime. 0 (default) ⇒ no viscous term (byte-identical). Works on NTS (D2.1) AND mortar
     // CONTACT (D2.2); refused with -tie (a bond has no chatter). Naturally inert in statics (v ≡ 0).
     double muc = 0.0;
-    // Ladruno ADR-39 B1 (P4): `-soft <SOFSCL>` opts the NTS lane into the LS-DYNA §26.15 SOFT=1
-    // Courant-stable penalty. Under the explicit CentralDifferenceLadruno the contact stiffness is
-    // sized from the nodal MASS + the timestep (k_soft = SOFSCL·4·m_eff/dt²) instead of from the
-    // material, so the contact never throttles the explicit dt_cr (explicit impact/pounding runs at
-    // the STRUCTURAL dt). A modifier on the penalty: still needs a base -kn (auto|fixed) — that base
-    // kn is what an IMPLICIT run uses (SOFT is explicit-only ⇒ implicit byte-identical). SOFSCL
+    // Ladruno ADR-39 B1/B2 (P4/P5): `-soft <SOFSCL>` opts into the LS-DYNA §26.15 SOFT Courant-stable
+    // explicit penalty. The FORMULATION sets SOFT=1 vs SOFT=2: WITHOUT -mortar it is B1 SOFT=1 (NODE-
+    // to-segment); WITH -mortar it is B2 SOFT=2 (SEGMENT-based — integrates the clipped facet overlap,
+    // catching the corner/edge/T-intersection cases NTS misses). Both size the contact stiffness from
+    // the nodal MASS + the timestep (k_soft = SOFSCL·4·m_eff/dt²) instead of the material, so the
+    // contact never throttles the explicit dt_cr (impact/pounding/recontact runs at the STRUCTURAL dt).
+    // A modifier on the penalty: still needs a base penalty (-kn/auto for NTS; -epsN/auto for mortar) —
+    // that base is what an IMPLICIT run uses (SOFT is explicit-only ⇒ implicit byte-identical). SOFSCL
     // optional (default 0.10, the LS-DYNA SLSFAC default); ≤0 ⇒ off; >1 warns (ω·dt = 2√SOFSCL > 2).
     double softScale = 0.0;
     while (OPS_GetNumRemainingInputArgs() > 0) {
@@ -678,15 +680,35 @@ int OPS_LadrunoContact()
         return -1;
     }
     if (softScale > 0.0 && isMortar) {
-        // B1 (P4) is the NTS lane's explicit Courant-stable penalty; a mortar SOFT penalty is a
-        // SEPARATE (unscoped) item. Refuse rather than silently ignore -soft on a mortar contact.
-        opserr << "WARNING contact -soft is an NTS (node-to-segment) explicit option; it does not "
-                  "apply to -mortar (the mortar SOFT penalty is out of scope)\n";
-        return -1;
-    }
-    if (softScale > 0.0 && !knAuto && kn <= 0.0) {
-        // SOFT is a MODIFIER on the penalty: under explicit it sizes k_soft, but an implicit run
-        // (and the byte-identity contract) needs a real base kn. Refuse a -soft with no penalty.
+        // B2 (P5): `-mortar -soft <SOFSCL>` selects the SOFT=2 SEGMENT-BASED explicit penalty — the
+        // segment-to-segment generalization of the NTS SOFT=1 lane that catches the corner/edge/
+        // T-intersection cases NTS misses (it integrates the clipped facet overlap, not slave NODES).
+        // MVP is FRICTIONLESS, single-pass (no ALM/tie/friction/viscous): refuse those combos.
+        if (isTie || mortarMu > 0.0 || cohesion > 0.0 || tauMax > 0.0 || muc > 0.0) {
+            opserr << "WARNING contact -soft (SOFT=2 segment-based explicit penalty) is the "
+                      "frictionless MVP; it is not allowed with -tie/-mu/-cohesion/-tauMax/-visc\n";
+            return -1;
+        }
+        // SOFT=2 still needs a base penalty (the implicit fall-through + byte-identity contract use
+        // it): -epsN auto|<val>, -epsTie (sets epsNAuto/epsN), or a positional auto|<kn>.
+        if (!epsNAuto && !knAuto && epsN <= 0.0 && kn <= 0.0) {
+            opserr << "WARNING contact -mortar -soft needs a base penalty (-epsN auto|<val> or a "
+                      "positional auto|<kn>): SOFT=2 sizes k_soft under explicit, implicit uses it\n";
+            return -1;
+        }
+        // B2 coupled-stability guard: SOFT=2 sizes a PER-NODE Courant penalty (ω·dt = 2√SOFSCL ≤ 2
+        // for SOFSCL ≤ 1), but the ASSEMBLED segment stiffness K_c = Σ_I k_soft,I B_Iᵀ B_I couples
+        // shared facet nodes, raising the true central-difference limit ~2× — the coupled step can
+        // go unstable near SOFSCL ≈ 0.3 (oracle proto_b2_soft2_segment.py T4 / [[LEDGER_quirks]]).
+        // The per-node `>1` warning below understates this for the segment lane, so warn earlier.
+        if (softScale > 0.25)
+            opserr << "WARNING contact -mortar -soft SOFSCL=" << softScale << ": SOFT=2's per-node "
+                      "Courant bound is necessary-not-sufficient — inter-node coupling in the assembled "
+                      "segment stiffness can make the central-difference step unstable near SOFSCL≈0.3. "
+                      "Use SOFSCL ≤ 0.25 (default 0.1) unless a finer dt margin is verified.\n";
+    } else if (softScale > 0.0 && !knAuto && kn <= 0.0) {
+        // B1 (P4): NTS SOFT=1 is a MODIFIER on the penalty — under explicit it sizes k_soft, but an
+        // implicit run (and the byte-identity contract) needs a real base kn. Refuse -soft with none.
         opserr << "WARNING contact -soft needs a base penalty: give a positional `auto` or `<kn>` "
                   "before the options (SOFT=1 sizes k_soft under explicit, implicit uses the base kn)\n";
         return -1;
@@ -696,9 +718,11 @@ int OPS_LadrunoContact()
         // friction via -mu/-epsT/-cohesion/-tauMax). friction params ≤0 ⇒ the frictionless C2 path.
         // C4: -tie ⇒ a permanent mesh-tie bond (full 3-vec r→0; friction refused above).
         // D2.2: -visc μ_c ⇒ viscous normal stabilization on the mortar contact (refused with -tie above).
+        // B2: softScale>0 ⇒ the SOFT=2 segment-based explicit penalty (off ⇒ byte-identical mortar).
         return cd->addMortarContact(idata[0], idata[1], idata[2], kn, knAuto, epsN, epsNAuto,
                                     augTol, maxAug, ngp, hasOutward ? outward : 0, cellFrac,
-                                    mortarMu, epsT, epsTAuto, cohesion, tauMax, consistentTan, isTie, muc);
+                                    mortarMu, epsT, epsTAuto, cohesion, tauMax, consistentTan, isTie,
+                                    muc, softScale);
     }
     // D2: -visc μ_c (NTS viscous normal stabilization; 0 ⇒ off, byte-identical).
     // B3: -geomtan ⇒ the consistent ∂n/∂u geometric normal tangent (off ⇒ byte-identical).
