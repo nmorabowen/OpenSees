@@ -71,6 +71,7 @@ void *OPS_LadrunoCST()
   }
 
   double thk = 1.0, rho = 0.0, b1 = 0.0, b2 = 0.0, pressure = 0.0;
+  double bvB1 = 0.0, bvB2 = 0.0;   // Ladruno (W2-E1): explicit bulk-viscosity coeffs (off by default)
   char typeBuf[24];
   strcpy(typeBuf, "PlaneStrain");
 
@@ -103,11 +104,27 @@ void *OPS_LadrunoCST()
       num = 1;
       if (OPS_GetDoubleInput(&num, &pressure) < 0) { opserr << "WARNING LadrunoCST -- bad -pressure\n"; return 0; }
 
+    } else if (strcmp(opt, "-bulkViscosity") == 0 || strcmp(opt, "-bv") == 0) {
+      // Ladruno (W2-E1): explicit bulk viscosity reads TWO doubles (linear b1,
+      // quadratic b2). Both must be >= 0; a negative coeff is warned and ignored.
+      if (OPS_GetNumRemainingInputArgs() < 2) {
+        opserr << "WARNING LadrunoCST -- -bulkViscosity needs two values (b1 b2)\n";
+        return 0;
+      }
+      double bv[2] = { 0.0, 0.0 };
+      num = 2;
+      if (OPS_GetDoubleInput(&num, bv) < 0) { opserr << "WARNING LadrunoCST -- bad -bulkViscosity\n"; return 0; }
+      if (bv[0] < 0.0) { opserr << "WARNING LadrunoCST -- -bulkViscosity b1 < 0; ignoring (b1=0)\n"; bv[0] = 0.0; }
+      if (bv[1] < 0.0) { opserr << "WARNING LadrunoCST -- -bulkViscosity b2 < 0; ignoring (b2=0)\n"; bv[1] = 0.0; }
+      bvB1 = bv[0];
+      bvB2 = bv[1];
+
     } else {
       opserr << "WARNING LadrunoCST -- ignoring unknown option " << opt << "\n";
     }
   }
 
   return new LadrunoCST(idata[0], idata[1], idata[2], idata[3],
-                        *mat, typeBuf, thk, rho, b1, b2, pressure);
+                        *mat, typeBuf, thk, rho, b1, b2, pressure,
+                        bvB1, bvB2);   // Ladruno (W2-E1): bulk-viscosity coeffs
 }
