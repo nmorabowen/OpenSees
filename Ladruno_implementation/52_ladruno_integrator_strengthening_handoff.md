@@ -19,7 +19,7 @@ study + [[49a_integrator_scorecard_2026-06-23]] gap analysis).
 
 ## Status snapshot (2026-06-24)
 
-**Shipped to `ladruno` (all fork-only, zero net new vanilla):**
+**Shipped to `ladruno` (fork-only; W1-E3..W1-I1b zero net new vanilla, W3-I2 ledgered header-only vanilla):**
 
 | Wave | What | PR(s) |
 |---|---|---|
@@ -27,10 +27,11 @@ study + [[49a_integrator_scorecard_2026-06-23]] gap analysis).
 | **W1-I1a** | Transient adaptive-Δt lane `robust_transient()` in `Ladruno_scripts/robust_drive.py` (convergence-driven; verdict `integrated`≠accurate) | #396 |
 | **W2-E1** | Explicit bulk viscosity (`-bulkViscosity b1 b2` / `-bv`) on **all 3 fork continuum elements** — LadrunoBrick, LadrunoQuad, LadrunoCST | #399, #403 |
 | **W1-I1b** | Half-increment-residual ACCURACY gate `robust_transient(error_gate=True, haftol=…)` + two read-only fork commands `ladrunoTrialResidualNorm`/`ladrunoSetNodeTrial` (registration-only vanilla, no classTag/header edit). Resolved the open question: NOT Python-only. Exact for elastic, approximate for inelastic/rate-dependent. | #407 |
+| **W3-I2** | DDM sensitivity integrators: **`LadrunoHHT`** (33013, #413) + **`LadrunoGeneralizedAlpha`** (33014, #415). Subclass HHT / GeneralizedAlpha, reuse the algorithm, add the DDM seam (α-/αF,αM-weighted residual + extra `−K·(1−α)·dUₙ`; rest copies Newmark). Header-only ledgered vanilla edit of `HHT.h`/`GeneralizedAlpha.h` (private→protected + protected inline classTag ctor; `.cpp` byte-identical). Unblocks reliability/fragility/FORM on the damped integrators. | #413, #415 |
 
 Docs/log PRs: #391 (ADRs 49/49a/52), #398, #401, #404.
 
-**Remaining waves:** W1-E2, W3-I2 (details below). **W3-I3 closed — NO-GO** (benchmark
+**Remaining waves:** W1-E2 only (details below). **W3-I2 done** (#413 + #415). **W3-I3 closed — NO-GO** (benchmark
 gate, see below).
 
 ## How to work this (the proven loop)

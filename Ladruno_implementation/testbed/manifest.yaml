@@ -1325,3 +1325,34 @@ features:
       formEleResidual/formNodUnbalance carry the alpha-weighting + the extra
       -K*(1-alpha)*dUn term (vanishes at alpha=1). Unblocks reliability/fragility/
       FORM on the numerically-damped HHT. ADR-52 W3-I2.
+
+  - feature: LadrunoGeneralizedAlpha          # ADR-52 W3-I2 sensitivity/DDM generalized-alpha
+    classtag: 33014          # INTEGRATOR family; new class (N. Mora-Bowen).
+    tag_symbol: INTEGRATOR_TAGS_LadrunoGeneralizedAlpha
+    pr: 415
+    feature_class: integrator
+    required_tiers: [dynamics-battery]
+    pytest: tests/test_adr52_w3i2_ladruno_genalpha.py   # sensitivity-off byte-identity vs GeneralizedAlpha + DDM-vs-central-FD (undamped & mass-prop damped) + alphaM=alphaF=1 reduces-to-Newmark-DDM
+    tcl: WAIVED(integrator; Tcl dispatch wired via commands.cpp, validated by the Zone-A pytest through the shared OPS_ factory)
+    core_files:                                    # registration sites (dispatch wiring)
+      - SRC/classTags.h
+      - SRC/analysis/integrator/GeneralizedAlpha.h   # vanilla: private->protected + protected inline classTag ctor (header-only)
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/runtime/runtime/TclPackageClassBroker.cpp
+      - SRC/interpreter/OpenSeesCommands.cpp
+      - SRC/interpreter/OpenSeesCommands.h
+      - SRC/tcl/commands.cpp
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      DDM sensitivity subclass of GeneralizedAlpha (Chung-Hulbert) — strict superset
+      of LadrunoHHT with TWO spectral parameters (alphaF on K/C). The base
+      GeneralizedAlpha tangent (alphaM*c3*M) is INCONSISTENT with its primal residual
+      (inertia at the full-step Udotdot -> effective M-coef c3); so the DDM is built
+      PRIMAL-consistent: K/C carry the alphaF weighting + the -K*(1-alphaF)*dUn term,
+      the mass term is the plain Newmark form (M at Udotdot, no alphaM), and
+      computeSensitivities re-forms the sensitivity-solve tangent with c3*M
+      (sensTangentFlag) instead of reusing the inconsistent factored primal tangent.
+      Header-only vanilla edit of GeneralizedAlpha.h (ledgered). The first
+      tangent-consistent cut failed the Zone-A FD oracle ~2e-3 at alphaM=0.9. Reduces
+      to Newmark DDM at alphaM=alphaF=1. ADR-52 W3-I2 PR2; see LEDGER_quirks.

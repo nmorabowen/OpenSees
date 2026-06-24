@@ -453,5 +453,40 @@ its own PR on `ladruno`.
   use-the-right-tool guidance + a revisit trigger (stiff multi-DOF contact where HHT
   diverges but a composite survives). See the W3-I3 section above. No code shipped (the
   benchmark script is the evidence artifact).
+- **2026-06-24 — W3-I2 PR1 shipped (#413): `LadrunoHHT`.** Sensitivity-carrying (DDM)
+  subclass of `HHT`, classTag **33013** (the lowest free integrator tag — W3-I3's reserved
+  33013 was NO-GO #410, never built; assigned from the top of the free band per the
+  documented rule). Unblocks reliability/fragility/FORM on the numerically-damped HHT (DDM
+  shipped in vanilla only on Newmark/DisplacementControl/ArcLength/MinUnbalDispNorm).
+  **Vanilla footprint was bigger than the ADR predicted but stayed header-only:** besides
+  the `private:`→`protected:` promotion, `HHT`'s ctors hardcode `INTEGRATOR_TAGS_HHT` (no
+  classTag param, unlike `Newmark`), so an extra protected **inline** classTag ctor was
+  added to `HHT.h` — keeping `HHT.cpp` byte-identical. Derivation: HHT's `U/Udot/Udotdot`
+  follow the Newmark recurrence ⇒ `saveSensitivity`/`commitSensitivity`/`formSensitivityRHS`/
+  `formIndependentSensitivityRHS`/`computeSensitivities` are copies of Newmark; only
+  `formEleResidual`/`formNodUnbalance` differ — α-weighted damping multiplicator, `∂C/∂h` on
+  `Ualphadot`, and an EXTRA element-only `−K·(1−α)·dUₙ` term (via `addK_Force`, consistent
+  tangent; vanishes at α=1). FD-vs-DDM oracle (undamped + mass-prop damped, param=E) passed
+  in CI on the first run; 22-agent adversarial review (15 raw → 3 confirmed, 0 blockers).
+  **New CI gate discovered:** `ci/check_manifest.py` (G9) requires every Ladruno classTag to
+  have a row in `Ladruno_implementation/testbed/manifest.yaml`. **Lesson:** `Element` base
+  `getTangentStiffSensitivity`/`getMassSensitivity` return zero + warn (betaK·K DDM not
+  implemented) and Truss doesn't override them ⇒ the `∂C/∂h`-on-`Ualphadot` term can't be
+  FD-tested on a Truss; it's derivation-validated + pinned by the α=1→Newmark reduction.
+- **2026-06-24 — W3-I2 PR2 (#415): `LadrunoGeneralizedAlpha`.** DDM subclass of
+  `GeneralizedAlpha` (Chung-Hulbert), classTag **33014** — strict superset of `LadrunoHHT`
+  with TWO spectral params (αF on K/C at `Ualpha`/`Ualphadot`, αM on M at `Ualphadotdot`).
+  Same header-only `GeneralizedAlpha.h` edit (promotion + inline classTag ctor). **Crux
+  discovered by the FD oracle + adversarial review:** OpenSees `GeneralizedAlpha`'s tangent
+  (`αM·c3·M`) is **inconsistent with its own primal residual**, which integrates inertia at
+  the full step `Udotdot` (`update()` sets accel=`Udotdot`) ⇒ effective Jacobian M-coef `c3`.
+  A first cut built the DDM tangent-consistent (`αM`, inertia at `Ualphadotdot`) and the
+  Zone-A FD-vs-DDM oracle FAILED ~2e-3 at αM=0.9. Fix: build the sensitivity residual
+  **primal-consistent** (M at `Udotdot`, no αM — like Newmark) AND **re-form the
+  sensitivity-solve tangent with `c3·M`** (a `sensTangentFlag` branch in
+  `formEleTangent`/`formNodTangent` + `formTangent()` in `computeSensitivities`) rather than
+  reuse the inconsistent factored primal tangent. K/C (αF) terms need no fix. Primal path
+  untouched ⇒ byte-identical. Reduces to Newmark DDM at αM=αF=1. Base-class quirk logged in
+  [[LEDGER_quirks]]. Same test battery as PR1. **W3-I2 complete; ADR-52 remaining: W1-E2 only.**
 - *Remaining waves:* W1-E2 (ExplicitBathe 6→1 collapse — most invasive, do
-  deliberately), W3-I2 (sensitivity subclasses). W3-I3 is closed (NO-GO).
+  deliberately). W3-I2 done (#413 + #415); W3-I3 closed (NO-GO #410).

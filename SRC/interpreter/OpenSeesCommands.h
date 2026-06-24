@@ -575,6 +575,7 @@ void* OPS_NewmarkHSIncrLimit();
 void* OPS_NewmarkHSFixedNumIter();
 void* OPS_HHT();
 void* OPS_LadrunoHHT();   // Ladruno (ADR-52 W3-I2): sensitivity/DDM HHT
+void* OPS_LadrunoGeneralizedAlpha();   // Ladruno (ADR-52 W3-I2): sensitivity/DDM generalized-alpha
 void* OPS_HHT_TP();
 void* OPS_HHTGeneralized();
 void* OPS_HHTGeneralized_TP();

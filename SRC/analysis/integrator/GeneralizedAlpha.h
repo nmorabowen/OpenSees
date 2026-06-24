@@ -73,19 +73,37 @@ public:
     void Print(OPS_Stream &s, int flag = 0);        
     
 protected:
-    
-private:
+    // Ladruno: protected ctor taking an explicit classTag so the sensitivity
+    // subclass LadrunoGeneralizedAlpha (ADR-52 W3-I2) registers under its own
+    // INTEGRATOR_TAGS_LadrunoGeneralizedAlpha while reusing the full
+    // GeneralizedAlpha algorithm. Inline so GeneralizedAlpha.cpp stays
+    // byte-identical (header-only vanilla edit). Mirrors the classTag-param ctor
+    // pattern in Newmark.h / HHT.h. See Ladruno_implementation/LEDGER_vanilla_files.md.
+    GeneralizedAlpha(int classTag, double _alphaM, double _alphaF,
+                     double _beta, double _gamma)
+        : TransientIntegrator(classTag),
+          alphaM(_alphaM), alphaF(_alphaF), beta(_beta), gamma(_gamma),
+          deltaT(0.0), c1(0.0), c2(0.0), c3(0.0),
+          Ut(0), Utdot(0), Utdotdot(0), U(0), Udot(0), Udotdot(0),
+          Ualpha(0), Ualphadot(0), Ualphadotdot(0) {}
+
+    // Ladruno: promoted from private: to protected: so the sensitivity subclass
+    // LadrunoGeneralizedAlpha (ADR-52 W3-I2, DDM) can reach the integrator state.
+    // No algorithm/.cpp change — pure access-level promotion. See
+    // Ladruno_implementation/LEDGER_vanilla_files.md.
     double alphaM;
     double alphaF;
 
     double beta;
     double gamma;
     double deltaT;
-    
+
     double c1, c2, c3;              // some constants we need to keep
     Vector *Ut, *Utdot, *Utdotdot;  // response quantities at time t
     Vector *U, *Udot, *Udotdot;     // response quantities at time t + deltaT
     Vector *Ualpha, *Ualphadot, *Ualphadotdot;   // response quantities at time t+alpha*deltaT
+
+private:
 };
 
 #endif

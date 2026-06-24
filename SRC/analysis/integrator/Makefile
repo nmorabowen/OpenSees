@@ -11,6 +11,7 @@ OBJS       = AlphaOS.o \
 	ExplicitBathe.o \
 	ExplicitBatheLNVD.o \
 	LadrunoHHT.o \
+	LadrunoGeneralizedAlpha.o \
 	CentralDifferenceLadruno.o \
 	CriticalTimeStep.o \
 	AlphaOSGeneralized_TP.o \
