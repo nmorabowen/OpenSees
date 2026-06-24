@@ -2,9 +2,11 @@
 
 The 2D companions to test_adr52_w2e1_bulk_viscosity.py (Brick). A single plane
 element (PlaneStrain, rho>0) constrained for uniaxial motion -> nonzero volumetric
-strain rate, kicked with an initial velocity. Integrated with Newmark (the bulk-
-viscosity term enters the resisting force from getTrialVel, so any transient drives
-it; Newmark sidesteps 2D lumped-mass/CFL detail and is unconditionally stable).
+strain rate, kicked with an initial velocity. Integrated with EXPLICIT central
+difference (bulk viscosity's intended regime; the lumped element mass + `system
+Diagonal` give the diagonal mass it needs). Implicit Newmark would treat the
+velocity-dependent viscous force explicitly within the implicit step and blow up at
+large b1, so it is deliberately not used here.
 
 Per element, two decisive checks:
   1. OFF-PATH IDENTITY: `-bulkViscosity 0 0` is bit-identical to no option.
@@ -17,17 +19,19 @@ from _testbed import ops
 
 pytestmark = [pytest.mark.zone_a]
 
-E, NU, RHO = 1000.0, 0.0, 1.0           # nu=0 -> D00=E
-DT, NSTEPS, V0 = 5.0e-3, 1400, -1.0
+E, NU, RHO = 1000.0, 0.0, 1.0           # nu=0 -> D00=E, c_d=sqrt(E/rho)=31.6
+DT, NSTEPS, V0 = 1.0e-3, 1600, -1.0     # dt << dt_cr (~0.03); ~11 axial periods
 BV = (1.0, 1.2)                          # strong b1 for an unambiguous decay signal
 
 
 def _analyse(rec_node, rec_dof):
+    # explicit central difference -- bulk viscosity's intended regime; the lumped
+    # element mass (getMass) + `system Diagonal` give the diagonal mass it needs.
     ops.numberer("Plain")
-    ops.system("BandGen")
-    ops.test("NormDispIncr", 1e-10, 50)
+    ops.system("Diagonal")
+    ops.test("NormDispIncr", 1e-12, 10)
     ops.algorithm("Linear")
-    ops.integrator("Newmark", 0.5, 0.25)    # no algorithmic damping
+    ops.integrator("CentralDifferenceLadruno")
     ops.analysis("Transient")
     hist = np.empty(NSTEPS)
     for k in range(NSTEPS):
