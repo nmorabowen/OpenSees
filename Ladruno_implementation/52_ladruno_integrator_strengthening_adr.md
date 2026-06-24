@@ -511,8 +511,21 @@ its own PR on `ladruno`.
   byte-identical to its legacy alias (5 combos); the **LNVD×consistent cross-layer** (the
   previously-untested combo) composes — stable, no nodal-mass mutation, relaxes a loaded bar to
   PL/EA, PCG active; `-lnvd 0.0` / `-consistent`-without-`-sms` reduce to base. The existing
-  per-alias batteries still run under the deprecated names (free byte-identity regression). Ran
-  the 6-lens adversarial Workflow review before merge. Serialization-collapse pattern logged in
+  per-alias batteries still run under the deprecated names (free byte-identity regression).
+  **6-lens adversarial Workflow review (9 agents): 2 confirmed MAJORs, 0 blockers — both fixed
+  before merge, both defects ONLY on the NEW unified command surface (legacy aliases unaffected):**
+  (1) the new `-lnvd <alpha>` optional-value peek used `strtod(OPS_GetString())`, but under
+  openseespy `OPS_GetString` returns `"Invalid String Input!"` for a numeric PyFloat arg → the
+  alpha was silently dropped to the 0.8 default (the test used 0.8 so it passed by coincidence;
+  `-lnvd 0.0` reduce-to-base would have caught it). Fixed by adopting the proven contact `-soft`
+  idiom (classify the peek by leading `-`, read the value with `OPS_GetDoubleInput`); the test now
+  uses alpha=0.6 to expose a dropped alpha. (2) the unified parser did not downgrade
+  `-cflAbort`/`-recompute` to report-only under `-sms` (the SMS aliases do) → `-sms … -cflAbort`
+  would hard-abort at the pre-scaling Noh-Bathe limit, the MF-1 hazard `-sms` exists to avoid +
+  a docstring contradiction. Fixed with a post-loop downgrade; new test asserts `-sms -cflAbort`
+  == plain `-sms`. (Minor, documented intentional: the two LNVD-SMS aliases historically REFUSED
+  `-cflAbort`/`-recompute`; routed through the shared impl they now DOWNGRADE like the other SMS
+  forms — the consistent W1-E3 #394 behavior.) Serialization-collapse pattern logged in
   [[LEDGER_quirks]]. **ADR-52 COMPLETE** (deferred W2-E1 S3/S4/uri-ssp follow-ups optional,
   non-blocking).
 - *Remaining waves:* **NONE — ADR-52 complete.** W1-E2 #419, W3-I2 #413+#415, W3-I3 NO-GO #410,
