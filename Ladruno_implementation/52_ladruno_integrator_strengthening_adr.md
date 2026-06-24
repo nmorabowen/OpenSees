@@ -246,14 +246,39 @@ reliability/fragility/FORM on the numerically-damped integrators.
 *Tests:* FD gradient-check oracle (~1e-6); Zone-A byte-identity on the
 sensitivity-off path.
 
-**W3-I3 — Tunable implicit composite (Bathe-Noh 2012) — GATED.**
+**W3-I3 — Tunable implicit composite (Bathe-Noh 2012) — GATED → NO-GO (2026-06-24).**
 `TRBDF2` **already IS** the Bathe (2007) Trap+BDF2 composite
-(`TRBDF2.cpp:29-30`), with constants hard-coded (`:114-144`). The gap is the
-**user-tunable γ/ρ∞ variant (Bathe & Noh 2012)** — so prefer a **fork subclass
-of `TRBDF2`** overriding the constant-setup block over a from-scratch class.
-First **benchmark `TRBDF2` vs the tunable variant** on a contact/sharp-
-nonlinearity problem; build only if the robustness gap is real. New class →
-standard hooks.
+(`TRBDF2.cpp:29-30`), with constants hard-coded (`:114-144`). The gap would be the
+**user-tunable γ/ρ∞ variant (Bathe & Noh 2012)** — a fork subclass of `TRBDF2`
+overriding the constant-setup block.
+
+**Gate result — DO NOT BUILD (benchmark `Ladruno_scripts/w3i3_bathe_gate_benchmark.py`).**
+Benchmarked the existing integrators as proxies (fixed `TRBDF2` vs tunable monolithic
+`HHT(α)` + trapezoidal) on (1) a mass→ENT-stop impact, dt swept well-resolved→2·Tc;
+(2) a rigid-limit stiffness stress k=1e6→1e12 at fixed dt; (3) a 1-D bar step-load wave
+at Courant 1 and 4. Findings:
+- **No robustness gap.** Every scheme converged everywhere, including the rigid-impact
+  limit (k=1e12, ~3e-3 steps/contact). The composite's headline robustness edge never
+  manifested as an HHT-fails-where-TRBDF2-survives case on these contact problems.
+- **Tunability already covered.** Trapezoidal (ρ∞=1) injects spurious energy on under-
+  resolved impact (E_retain → 7–9×); `HHT(α)` dials that down monotonically and can be
+  tuned to near-ideal energy at each dt — i.e. the fork already spans ρ∞.
+- **The composite's real edge is MAX dissipation, which `TRBDF2` already delivers.** On
+  the under-resolved wave (Courant 4) `TRBDF2` suppressed wavefront ringing best
+  (ripple 0.99 vs HHT's ~1.20 at any α, trapezoidal 1.30). But that is the ρ∞=0 corner —
+  a *tunable* composite (ρ∞>0 = less dissipation) would be *worse* there, not better.
+- So the "composite + partial dissipation" quadrant a Bathe-Noh variant would occupy is
+  **not demonstrated to be needed**: when you want the composite you want its full
+  dissipation (= `TRBDF2`, set-and-forget); when you want partial/tunable dissipation
+  `HHT`/`GeneralizedAlpha` suffice with no robustness penalty.
+
+**Guidance (→ `ladruno_integrators_guide`), not code:** use `TRBDF2` for set-and-forget
+maximal high-frequency dissipation on stiff/contact/wave problems; use `HHT`/
+`GeneralizedAlpha` for dialed/partial dissipation. **Revisit trigger:** a concrete stiff
+multi-DOF contact problem where `HHT`/`GeneralizedAlpha` fail to converge but a composite
+survives *and* full `TRBDF2` dissipation is too much — this gate found no such case.
+(Caveat: the benchmark is SDOF impact + a 1-D bar; it did not exercise large 3-D contact
+with material softening, the composite's most-favorable regime.)
 
 ### Explicitly dropped (documentation, not code)
 
@@ -419,5 +444,14 @@ its own PR on `ladruno`.
   numpy oracle incl. load-at-midpoint; Newmark-consistency check; full-vector-setter vs
   per-dof loss; committed-state-untouched; gate-improves-accuracy vs fine-Δt ref; Maxwell
   rate-dependent regression (guards the `ops_Dt` fix); gate-off == W1-I1a.
+- **2026-06-24 — W3-I3 GATED → NO-GO.** Benchmarked the existing integrators as proxies
+  (fixed `TRBDF2` vs tunable `HHT(α)`/trapezoidal) on impact + rigid-limit + 1-D wave
+  problems (`Ladruno_scripts/w3i3_bathe_gate_benchmark.py`). No robustness gap (all
+  converged to the rigid limit); `HHT` already spans ρ∞; the composite's edge is MAX
+  dissipation which `TRBDF2` already gives. A *tunable* composite's quadrant (composite +
+  partial dissipation) is not demonstrated to be needed → don't build; documented the
+  use-the-right-tool guidance + a revisit trigger (stiff multi-DOF contact where HHT
+  diverges but a composite survives). See the W3-I3 section above. No code shipped (the
+  benchmark script is the evidence artifact).
 - *Remaining waves:* W1-E2 (ExplicitBathe 6→1 collapse — most invasive, do
-  deliberately), W3-I2 (sensitivity subclasses), W3-I3-gate.
+  deliberately), W3-I2 (sensitivity subclasses). W3-I3 is closed (NO-GO).
