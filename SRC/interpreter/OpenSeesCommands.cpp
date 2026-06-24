@@ -2550,6 +2550,77 @@ int OPS_printB()
     return 0;
 }
 
+// Ladruno (ADR-52 W1-I1b): ladrunoTrialResidualNorm <loadTime> -> the inf-norm (max |component|)
+// of the free-DOF dynamic unbalance assembled at the CURRENT nodal TRIAL state. It supplies the
+// one primitive OpenSeesPy lacks for an accuracy gate: setNodeDisp/Vel/Accel set the node trial
+// vectors but trigger NO element->update(), so reactions()/printB() report a residual that
+// ignores the displacement-dependent internal force (measured: |b| stayed 0 at an injected
+// state). This helper calls Domain::update() (the same element-state refresh a Newton iteration
+// performs) THEN the active integrator's formUnbalance() -> the SOE b is P - getResistingForce-
+// IncInertia over the free DOFs, using the node TRIAL disp/vel/accel for ALL terms (internal
+// force via update(), inertia M*a and damping C*v via the node trial accel/vel).
+//   Optional <loadTime>: the external load is otherwise evaluated at the domain's CURRENT time
+// (the just-committed t_{n+1}), but the half-increment residual wants the load at the step
+// MIDPOINT. If given, the loads are re-applied at loadTime (applyLoad) around the assembly and
+// restored to the committed time after -- faithful for time-varying (dynamic/seismic) loads.
+// The Python half-increment-residual gate injects the interpolated half-step state, reads this
+// at the midpoint time, then restores the trial state. READ-ONLY: no commitState, committed
+// history is untouched (the next analyze step's newStep overwrites the trial state regardless).
+int OPS_LadrunoTrialResidualNorm()
+{
+    if (cmds == 0) return -1;
+
+    double loadTime = 0.0;
+    bool reapplyLoad = false;
+    if (OPS_GetNumRemainingInputArgs() > 0) {
+        int one = 1;
+        if (OPS_GetDoubleInput(&one, &loadTime) < 0) {
+            opserr << "WARNING ladrunoTrialResidualNorm - could not read loadTime\n";
+            return -1;
+        }
+        reapplyLoad = true;
+    }
+
+    LinearSOE *theSOE = cmds->getSOE();
+    Domain *theDomain = cmds->getDomain();
+    StaticIntegrator *theStaticIntegrator = cmds->getStaticIntegrator();
+    TransientIntegrator *theTransientIntegrator = cmds->getTransientIntegrator();
+
+    double normVal = 0.0;
+    if (theSOE != 0 && theDomain != 0 &&
+        (theStaticIntegrator != 0 || theTransientIntegrator != 0)) {
+        double committedTime = theDomain->getCurrentTime();
+        // evaluate the external load at the requested (midpoint) time
+        if (reapplyLoad)
+            theDomain->applyLoad(loadTime);
+        // refresh element/material TRIAL state to the current node trial disp (the missing
+        // element->update() that setNodeDisp/reactions/printB never trigger).
+        theDomain->update();
+        // assemble the free-DOF unbalance into the SOE b vector.
+        if (theTransientIntegrator != 0)
+            theTransientIntegrator->formUnbalance();
+        else
+            theStaticIntegrator->formUnbalance();
+        const Vector &b = theSOE->getB();
+        int n = b.Size();
+        for (int i = 0; i < n; i++) {
+            double v = b(i);
+            if (v < 0.0) v = -v;
+            if (v > normVal) normVal = v;
+        }
+        // restore the external load to the committed time (the next step re-applies regardless)
+        if (reapplyLoad)
+            theDomain->applyLoad(committedTime);
+    }
+
+    int one = 1;
+    if (OPS_SetDoubleOutput(&one, &normVal, true) < 0) {
+        opserr << "WARNING ladrunoTrialResidualNorm - failed to set output\n";
+        return -1;
+    }
+    return 0;
+}
+
 int OPS_printX()
 {
     if (cmds == 0) return 0;

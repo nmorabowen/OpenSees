@@ -685,6 +685,12 @@ static int Tcl_ops_printB(ClientData clientData, Tcl_Interp *interp, int argc,  
     return TCL_OK;
 }
 
+static int Tcl_ops_LadrunoTrialResidualNorm(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {  // Ladruno ADR-52 W1-I1b
+    wrapper->resetCommandLine(argc, 1, argv);
+    if (OPS_LadrunoTrialResidualNorm() < 0) return TCL_ERROR;
+    return TCL_OK;
+}
+
 static int Tcl_ops_printGID(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {
     wrapper->resetCommandLine(argc, 1, argv);
 
@@ -828,6 +834,12 @@ static int Tcl_ops_setNodeAccel(ClientData clientData, Tcl_Interp *interp, int a
 
     if (OPS_setNodeAccel() < 0) return TCL_ERROR;
 
+    return TCL_OK;
+}
+
+static int Tcl_ops_LadrunoSetNodeTrial(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {  // Ladruno ADR-52 W1-I1b
+    wrapper->resetCommandLine(argc, 1, argv);
+    if (OPS_LadrunoSetNodeTrial() < 0) return TCL_ERROR;
     return TCL_OK;
 }
 
@@ -1894,6 +1906,7 @@ TclWrapper::addOpenSeesCommands(Tcl_Interp* interp)
     addCommand(interp,"printModel", &Tcl_ops_print);
     addCommand(interp,"printA", &Tcl_ops_printA);
     addCommand(interp,"printB", &Tcl_ops_printB);
+    addCommand(interp,"ladrunoTrialResidualNorm", &Tcl_ops_LadrunoTrialResidualNorm);  // Ladruno ADR-52 W1-I1b
     addCommand(interp,"printGID", &Tcl_ops_printGID);
     addCommand(interp,"getCTestNorms", &Tcl_ops_getCTestNorms);
     addCommand(interp,"getCTestIter", &Tcl_ops_getCTestIter);
@@ -1912,6 +1925,7 @@ TclWrapper::addOpenSeesCommands(Tcl_Interp* interp)
     addCommand(interp,"setNodeVel", &Tcl_ops_setNodeVel);
     addCommand(interp,"nodeAccel", &Tcl_ops_nodeAccel);
     addCommand(interp,"setNodeAccel", &Tcl_ops_setNodeAccel);
+    addCommand(interp,"ladrunoSetNodeTrial", &Tcl_ops_LadrunoSetNodeTrial);  // Ladruno ADR-52 W1-I1b
     addCommand(interp,"nodeResponse", &Tcl_ops_nodeResponse);
     addCommand(interp,"nodeCoord", &Tcl_ops_nodeCoord);
     addCommand(interp,"setNodeCoord", &Tcl_ops_setNodeCoord);

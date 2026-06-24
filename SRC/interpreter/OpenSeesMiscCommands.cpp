@@ -747,6 +747,52 @@ int OPS_setNodeAccel()
     return 0;
 }
 
+// Ladruno (ADR-52 W1-I1b): ladrunoSetNodeTrial nodeTag <ndof disp> <ndof vel> <ndof accel>
+// Sets the FULL trial disp/vel/accel vectors of a node in one call (no commit). Needed because
+// the per-dof setNodeDisp/Vel/Accel each START from the COMMITTED vector and override a single
+// component, so repeated calls do NOT accumulate into a multi-dof trial state (only the last
+// dof differs from committed). The Python half-increment-residual gate uses this to inject the
+// interpolated half-step state for a model with arbitrary node ndof. Committed state untouched.
+int OPS_LadrunoSetNodeTrial()
+{
+    if (OPS_GetNumRemainingInputArgs() < 1) {
+        opserr << "WARNING want - ladrunoSetNodeTrial nodeTag <ndof disp> <ndof vel> <ndof accel>\n";
+        return -1;
+    }
+    int tag = 0, numdata = 1;
+    if (OPS_GetIntInput(&numdata, &tag) < 0) {
+        opserr << "WARNING ladrunoSetNodeTrial - could not read nodeTag\n";
+        return -1;
+    }
+    Domain *theDomain = OPS_GetDomain();
+    if (theDomain == 0) return -1;
+    Node *theNode = theDomain->getNode(tag);
+    if (theNode == 0) {
+        opserr << "WARNING ladrunoSetNodeTrial -- node with tag " << tag << " not found\n";
+        return -1;
+    }
+
+    int ndof = theNode->getNumberDOF();
+    if (OPS_GetNumRemainingInputArgs() < 3 * ndof) {
+        opserr << "WARNING ladrunoSetNodeTrial nodeTag " << tag << " - want 3*ndof (" << 3 * ndof
+               << ") values: <disp><vel><accel>\n";
+        return -1;
+    }
+
+    Vector disp(ndof), vel(ndof), accel(ndof);
+    if (OPS_GetDoubleInput(&ndof, &disp(0)) < 0 ||
+        OPS_GetDoubleInput(&ndof, &vel(0)) < 0 ||
+        OPS_GetDoubleInput(&ndof, &accel(0)) < 0) {
+        opserr << "WARNING ladrunoSetNodeTrial nodeTag " << tag << " - failed to read values\n";
+        return -1;
+    }
+
+    theNode->setTrialDisp(disp);
+    theNode->setTrialVel(vel);
+    theNode->setTrialAccel(accel);
+    return 0;
+}
+
 int OPS_setElementRayleighDampingFactors()
 {
     if (OPS_GetNumRemainingInputArgs() < 5) {
