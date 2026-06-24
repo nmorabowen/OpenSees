@@ -1790,6 +1790,9 @@ int OPS_Integrator()
     } else if (strcmp(type,"LadrunoHHT") == 0) {   // Ladruno (ADR-52 W3-I2): sensitivity/DDM HHT
 	ti = (TransientIntegrator*)OPS_LadrunoHHT();
 
+    } else if (strcmp(type,"LadrunoGeneralizedAlpha") == 0) {   // Ladruno (ADR-52 W3-I2): sensitivity/DDM generalized-alpha
+	ti = (TransientIntegrator*)OPS_LadrunoGeneralizedAlpha();
+
     } else if (strcmp(type,"HHT_TP") == 0) {
 	ti = (TransientIntegrator*)OPS_HHT_TP();
 

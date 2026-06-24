@@ -92,6 +92,7 @@ target_sources(OPS_Analysis
        ExplicitBathe.cpp                # JAA
        ExplicitBatheLNVD.cpp            # JAA
        LadrunoHHT.cpp                   # nmb - sensitivity/DDM subclass of HHT (ADR-52 W3-I2)
+       LadrunoGeneralizedAlpha.cpp      # nmb - sensitivity/DDM subclass of GeneralizedAlpha (ADR-52 W3-I2)
        CentralDifferenceLadruno.cpp     # nmb - explicit leap-frog CD + dt_cr
        CentralDifferenceSMS.cpp         # nmb - selective mass scaling on CDL
        CentralDifferenceSMSConsistent.cpp  # nmb - consistent (Olovsson) mass scaling on CDL
@@ -150,6 +151,7 @@ target_sources(OPS_Analysis
        ExplicitBathe.h
        ExplicitBatheLNVD.h
        LadrunoHHT.h
+       LadrunoGeneralizedAlpha.h
        CentralDifferenceLadruno.h
        CentralDifferenceSMS.h
        CentralDifferenceSMSConsistent.h

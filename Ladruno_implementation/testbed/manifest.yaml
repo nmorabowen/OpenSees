@@ -1325,3 +1325,30 @@ features:
       formEleResidual/formNodUnbalance carry the alpha-weighting + the extra
       -K*(1-alpha)*dUn term (vanishes at alpha=1). Unblocks reliability/fragility/
       FORM on the numerically-damped HHT. ADR-52 W3-I2.
+
+  - feature: LadrunoGeneralizedAlpha          # ADR-52 W3-I2 sensitivity/DDM generalized-alpha
+    classtag: 33014          # INTEGRATOR family; new class (N. Mora-Bowen).
+    tag_symbol: INTEGRATOR_TAGS_LadrunoGeneralizedAlpha
+    pr: 414
+    feature_class: integrator
+    required_tiers: [dynamics-battery]
+    pytest: tests/test_adr52_w3i2_ladruno_genalpha.py   # sensitivity-off byte-identity vs GeneralizedAlpha + DDM-vs-central-FD (undamped & mass-prop damped) + alphaM=alphaF=1 reduces-to-Newmark-DDM
+    tcl: WAIVED(integrator; Tcl dispatch wired via commands.cpp, validated by the Zone-A pytest through the shared OPS_ factory)
+    core_files:                                    # registration sites (dispatch wiring)
+      - SRC/classTags.h
+      - SRC/analysis/integrator/GeneralizedAlpha.h   # vanilla: private->protected + protected inline classTag ctor (header-only)
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/runtime/runtime/TclPackageClassBroker.cpp
+      - SRC/interpreter/OpenSeesCommands.cpp
+      - SRC/interpreter/OpenSeesCommands.h
+      - SRC/tcl/commands.cpp
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      DDM sensitivity subclass of GeneralizedAlpha (Chung-Hulbert) — strict superset
+      of LadrunoHHT with TWO spectral parameters (alphaF on K/C at Ualpha/Ualphadot,
+      alphaM on M at Ualphadotdot). Header-only vanilla edit of GeneralizedAlpha.h
+      (ledgered). saveSensitivity/commitSensitivity/formSensitivityRHS/
+      computeSensitivities identical to Newmark; formEleResidual/formNodUnbalance
+      carry the alphaF/alphaM weighting + the extra -K*(1-alphaF)*dUn term; reduces
+      to Newmark DDM at alphaM=alphaF=1. ADR-52 W3-I2 PR2.
