@@ -488,5 +488,45 @@ its own PR on `ladruno`.
   reuse the inconsistent factored primal tangent. K/C (αF) terms need no fix. Primal path
   untouched ⇒ byte-identical. Reduces to Newmark DDM at αM=αF=1. Base-class quirk logged in
   [[LEDGER_quirks]]. Same test battery as PR1. **W3-I2 complete; ADR-52 remaining: W1-E2 only.**
-- *Remaining waves:* W1-E2 (ExplicitBathe 6→1 collapse — most invasive, do
-  deliberately). W3-I2 done (#413 + #415); W3-I3 closed (NO-GO #410).
+- **2026-06-24 — W1-E2 shipped (#419): `ExplicitBathe*` 6→1 collapse.** The last wave.
+  Folded the six explicit-Bathe class tags into ONE `ExplicitBathe` (33000) selected by
+  orthogonal flags `-lnvd <alpha>` / `-sms <dtTarget>` / `-consistent`. **Architecture
+  correction:** the six were a **2-base × 3-SMS-mode lattice** (`ExplicitBathe` /
+  `ExplicitBatheLNVD` bases, each × {none, sms-lumped, sms-consistent}), NOT 6 flat siblings
+  as the handoff said. The two bases' `newStep`/`update`/`commit` stepping was **byte-
+  identical**; only LNVD's `formUnbalance()`+`addLocalDamping()`+`alpha_flac` and the SMS
+  `domainChanged()` injection differed → both now flag-gated on the one class (LNVD via the
+  unified `formUnbalance` override that reduces to the base when off; SMS via the
+  `domainChanged` branch + the already-present `refineAccel` hook for `-consistent`).
+  **Serialization (the crux):** the flag combo DERIVES the classTag (`tagForFlags`) so a
+  serialized object reports its matching legacy tag; both brokers route all six tags →
+  `ExplicitBathe::makeForBroker(tag)` (flags decoded from the tag) → `recvSelf` fills a
+  fixed-size param superset. **No new tag; no retired tag freed** — 33002/09/10/11/12 stay as
+  deprecated-but-recognized aliases. The five retired command names keep working (each OPS_
+  parser preserves the exact historical positional grammar, forcing a fixed flag set).
+  Footprint (all ledgered): delete 5 `.cpp` + 5 `.h`; rewrite `ExplicitBathe.{h,cpp}`; collapse
+  the broker cases + drop the 5 retired includes (both brokers); drop the 5 build rows
+  (CMakeLists + Makefile); annotate the 5 tags deprecated in `classTags.h`; consolidate the
+  banner. Tests (`tests/test_adr52_w1e2_explicitbathe_collapse.py`, zone_a): each new flag form
+  byte-identical to its legacy alias (5 combos); the **LNVD×consistent cross-layer** (the
+  previously-untested combo) composes — stable, no nodal-mass mutation, relaxes a loaded bar to
+  PL/EA, PCG active; `-lnvd 0.0` / `-consistent`-without-`-sms` reduce to base. The existing
+  per-alias batteries still run under the deprecated names (free byte-identity regression).
+  **6-lens adversarial Workflow review (9 agents): 2 confirmed MAJORs, 0 blockers — both fixed
+  before merge, both defects ONLY on the NEW unified command surface (legacy aliases unaffected):**
+  (1) the new `-lnvd <alpha>` optional-value peek used `strtod(OPS_GetString())`, but under
+  openseespy `OPS_GetString` returns `"Invalid String Input!"` for a numeric PyFloat arg → the
+  alpha was silently dropped to the 0.8 default (the test used 0.8 so it passed by coincidence;
+  `-lnvd 0.0` reduce-to-base would have caught it). Fixed by adopting the proven contact `-soft`
+  idiom (classify the peek by leading `-`, read the value with `OPS_GetDoubleInput`); the test now
+  uses alpha=0.6 to expose a dropped alpha. (2) the unified parser did not downgrade
+  `-cflAbort`/`-recompute` to report-only under `-sms` (the SMS aliases do) → `-sms … -cflAbort`
+  would hard-abort at the pre-scaling Noh-Bathe limit, the MF-1 hazard `-sms` exists to avoid +
+  a docstring contradiction. Fixed with a post-loop downgrade; new test asserts `-sms -cflAbort`
+  == plain `-sms`. (Minor, documented intentional: the two LNVD-SMS aliases historically REFUSED
+  `-cflAbort`/`-recompute`; routed through the shared impl they now DOWNGRADE like the other SMS
+  forms — the consistent W1-E3 #394 behavior.) Serialization-collapse pattern logged in
+  [[LEDGER_quirks]]. **ADR-52 COMPLETE** (deferred W2-E1 S3/S4/uri-ssp follow-ups optional,
+  non-blocking).
+- *Remaining waves:* **NONE — ADR-52 complete.** W1-E2 #419, W3-I2 #413+#415, W3-I3 NO-GO #410,
+  W1-E3 #394, W1-I1a #396, W2-E1 #399+#403, W1-I1b #407.

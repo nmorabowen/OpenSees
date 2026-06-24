@@ -9,7 +9,6 @@ OBJS       = AlphaOS.o \
     ExplicitDifference.o \
     ExplicitDifferenceStatic.o \
 	ExplicitBathe.o \
-	ExplicitBatheLNVD.o \
 	LadrunoHHT.o \
 	LadrunoGeneralizedAlpha.o \
 	CentralDifferenceLadruno.o \

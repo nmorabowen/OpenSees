@@ -721,17 +721,12 @@
 #include "Newmark.h"
 #include "StagedNewmark.h"
 #include "NewmarkExplicit.h"
-#include "ExplicitBathe.h"
-#include "ExplicitBatheLNVD.h"
+#include "ExplicitBathe.h"              // Ladruno (ADR-52 W1-E2): unified ExplicitBathe* 6->1
 #include "LadrunoHHT.h"                 // Ladruno (ADR-52 W3-I2): sensitivity/DDM HHT
 #include "LadrunoGeneralizedAlpha.h"    // Ladruno (ADR-52 W3-I2): sensitivity/DDM generalized-alpha
 #include "CentralDifferenceLadruno.h"
 #include "CentralDifferenceSMS.h"       // Ladruno
 #include "CentralDifferenceSMSConsistent.h"   // Ladruno
-#include "ExplicitBatheSMS.h"           // Ladruno
-#include "ExplicitBatheSMSConsistent.h" // Ladruno
-#include "ExplicitBatheLNVDSMS.h"           // Ladruno
-#include "ExplicitBatheLNVDSMSConsistent.h" // Ladruno
 #include "LadrunoDynamicRelaxation.h"   // Ladruno
 #include "NewmarkHSFixedNumIter.h"
 #include "NewmarkHSIncrLimit.h"
@@ -3176,11 +3171,16 @@ FEM_ObjectBrokerAllClasses::getNewTransientIntegrator(int classTag)
 	case INTEGRATOR_TAGS_CentralDifference:
 	     return new CentralDifference();      // must recvSelf
 
-	case INTEGRATOR_TAGS_ExplicitBathe:
-	     return new ExplicitBathe();          // must recvSelf
-
-	case INTEGRATOR_TAGS_ExplicitBatheLNVD:
-	     return new ExplicitBatheLNVD();      // must recvSelf
+	// Ladruno (ADR-52 W1-E2): the six ExplicitBathe* tags now all reconstruct the ONE
+	// collapsed ExplicitBathe class; makeForBroker decodes the {lnvd,sms,consistent}
+	// flag set from the (possibly retired) tag, then recvSelf fills the parameters.
+	case INTEGRATOR_TAGS_ExplicitBathe:                     // 33000
+	case INTEGRATOR_TAGS_ExplicitBatheLNVD:                 // 33002 (deprecated)
+	case INTEGRATOR_TAGS_ExplicitBatheSMS:                  // 33009 (deprecated)
+	case INTEGRATOR_TAGS_ExplicitBatheSMSConsistent:        // 33010 (deprecated)
+	case INTEGRATOR_TAGS_ExplicitBatheLNVDSMS:              // 33011 (deprecated)
+	case INTEGRATOR_TAGS_ExplicitBatheLNVDSMSConsistent:    // 33012 (deprecated)
+	     return ExplicitBathe::makeForBroker(classTag);     // must recvSelf
 
 	case INTEGRATOR_TAGS_CentralDifferenceLadruno:
 	     return new CentralDifferenceLadruno();   // must recvSelf
@@ -3190,18 +3190,6 @@ FEM_ObjectBrokerAllClasses::getNewTransientIntegrator(int classTag)
 
 	case INTEGRATOR_TAGS_CentralDifferenceSMSConsistent:   // Ladruno
 	     return new CentralDifferenceSMSConsistent();      // must recvSelf
-
-	case INTEGRATOR_TAGS_ExplicitBatheSMS:   // Ladruno
-	     return new ExplicitBatheSMS();       // must recvSelf
-
-	case INTEGRATOR_TAGS_ExplicitBatheSMSConsistent:   // Ladruno
-	     return new ExplicitBatheSMSConsistent();       // must recvSelf
-
-	case INTEGRATOR_TAGS_ExplicitBatheLNVDSMS:   // Ladruno
-	     return new ExplicitBatheLNVDSMS();       // must recvSelf
-
-	case INTEGRATOR_TAGS_ExplicitBatheLNVDSMSConsistent:   // Ladruno
-	     return new ExplicitBatheLNVDSMSConsistent();       // must recvSelf
 
 	case INTEGRATOR_TAGS_LadrunoDynamicRelaxation:   // Ladruno
 	     return new LadrunoDynamicRelaxation();       // must recvSelf
