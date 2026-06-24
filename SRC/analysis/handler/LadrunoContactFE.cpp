@@ -42,6 +42,7 @@
 #include <LadrunoContactProjection.h> // Ladruno: ADR-41 A2 (closest-point projection geometry)
 #include <LadrunoFrictionKernel.h>    // Ladruno: ADR-41 A1 (Coulomb/Tresca friction return map + tangent)
 #include <LadrunoMortarKernel.h>      // Ladruno: ADR-41 C1/C2.1 (clipped-GP mortar D,M,g̃)
+#include <LadrunoEdgeKernel.h>        // Ladruno: ADR-57 E2 (segment-segment closest point + edge gap/B)
 
 LadrunoContactFE::LadrunoContactFE(int tag)
   : FE_Element(tag, /*numDOF_Group=*/0, /*ndof=*/0),
@@ -53,7 +54,7 @@ LadrunoContactFE::LadrunoContactFE(int tag)
     // edges to the DOF graph, so the numberer permutation is untouched and the
     // result is bitwise-identical to no-contact. (P1a)
     for (int d = 0; d < 3; d++) { planeP0[d] = 0.0; planeN[d] = 0.0; orientDir[d] = 0.0; }
-    for (int i = 0; i < 4; i++) { segNode[i] = 0; mortarSlave[i] = 0; mortarMaster[i] = 0; }
+    for (int i = 0; i < 4; i++) { segNode[i] = 0; mortarSlave[i] = 0; mortarMaster[i] = 0; edgeNode[i] = 0; }
     npsS = npsM = 0; slaveFacetIndex = 0; mortarCohesion = mortarTauMax = 0.0; isTie = false;
 }
 
@@ -74,7 +75,7 @@ LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, int ndm_,
             myDOF_Groups(0) = dg->getTag();
     }
     for (int d = 0; d < 3; d++) { planeP0[d] = p0[d]; planeN[d] = n[d]; orientDir[d] = 0.0; }
-    for (int i = 0; i < 4; i++) { segNode[i] = 0; mortarSlave[i] = 0; mortarMaster[i] = 0; }
+    for (int i = 0; i < 4; i++) { segNode[i] = 0; mortarSlave[i] = 0; mortarMaster[i] = 0; edgeNode[i] = 0; }
     npsS = npsM = 0; slaveFacetIndex = 0; mortarCohesion = mortarTauMax = 0.0; isTie = false;
 }
 
@@ -106,6 +107,7 @@ LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, Node **segNodes,
         }
     }
     for (int i = nps; i < 4; i++) segNode[i] = 0;
+    for (int i = 0; i < 4; i++) edgeNode[i] = 0;   // ADR-57: not an edge-edge adapter
     // orientation direction (toward the slave's allowed half-space): the derived
     // normal is flipped to satisfy n·orientDir>0, so it's winding-immune AND stays
     // correct after the slave penetrates (a fixed direction, not a live position).
@@ -152,7 +154,31 @@ LadrunoContactFE::LadrunoContactFE(int tag, Node **slaveNodes, int nps_s,
     }
     for (int i = nps_s; i < 4; i++) mortarSlave[i] = 0;
     for (int i = nps_m; i < 4; i++) mortarMaster[i] = 0;
-    for (int i = 0; i < 4; i++) segNode[i] = 0;
+    for (int i = 0; i < 4; i++) { segNode[i] = 0; edgeNode[i] = 0; }
+    for (int d = 0; d < 3; d++) { orientDir[d] = odir[d]; planeP0[d] = 0.0; planeN[d] = 0.0; }
+}
+
+// ADR-57 E2 — EDGE_EDGE: perpendicular edge-edge penalty contact (one slave edge vs one master
+// edge). theDomain reaches the engine for the per-pair committed sign (EdgeEdgeState); null ⇒ the
+// sign is captured locally each eval from orientDir (deterministic, but not held across re-pairing).
+LadrunoContactFE::LadrunoContactFE(int tag, Node *sNodeA, Node *sNodeB, Node *mNodeA, Node *mNodeB,
+                                   double epsN, const double odir[3], int contactTag_, Domain *dom)
+  : FE_Element(tag, /*numDOF_Group=*/4, /*ndof=*/12),
+    resid(12), tang(12, 12),
+    mode(EDGE_EDGE), theSlave(0), ndm(3), kn(epsN), nps(0),
+    kt(0.0), mu(0.0), muc(0.0), theDomain(dom), contactTag(contactTag_), segIndex(0),
+    consistentTan(false), consistentNormal(false), softScale(0.0),
+    npsS(0), npsM(0), slaveFacetIndex(0), mortarCohesion(0.0), mortarTauMax(0.0), isTie(false)
+{
+    // Connectivity = the 4 edge nodes' DOF_Groups (each ndf==3 ⇒ exact ndof==12). setID() then
+    // fills myID = [sa xyz | sb xyz | ma xyz | mb xyz] — the layout edgeGeom()/the residual assume.
+    edgeNode[0] = sNodeA; edgeNode[1] = sNodeB; edgeNode[2] = mNodeA; edgeNode[3] = mNodeB;
+    for (int i = 0; i < 4; i++)
+        if (edgeNode[i] != 0) {
+            DOF_Group *dg = edgeNode[i]->getDOF_GroupPtr();
+            if (dg != 0) myDOF_Groups(i) = dg->getTag();
+        }
+    for (int i = 0; i < 4; i++) { segNode[i] = 0; mortarSlave[i] = 0; mortarMaster[i] = 0; }
     for (int d = 0; d < 3; d++) { orientDir[d] = odir[d]; planeP0[d] = 0.0; planeN[d] = 0.0; }
 }
 
@@ -292,6 +318,38 @@ LadrunoContactFE::mortarActive(double D[4][4], double M[4][4], double g[4], doub
     // per-facet master normal (flat facet ⇒ the per-GP projection normal), oriented
     // toward orientDir — the same n the weighted gap g̃ used inside integratePair.
     return LadrunoMortarKernel::facetNormal(npsM, Xm, orientDir, n);
+}
+
+// ADR-57 E2 — EDGE_EDGE geometry at the current trial config. Gathers the 4 edge-node positions
+// (X+u), runs the shipped LadrunoEdgeKernel closest-point, and (only for an EE_OK, MARGIN-INTERIOR
+// crossing) fills the signed gap gN, the oriented common-perpendicular normal n, the parameters s,t,
+// and the B-operator rows. A parallel / zero-length / near-vertex / clamped pair ⇒ returns false
+// (no force this eval — routing demoted it). The sign is BODY-FIXED: `committedSign` (±1) is applied
+// verbatim; 0 ⇒ orient from orientDir and return the chosen sign in *outSign for the caller to COMMIT.
+bool
+LadrunoContactFE::edgeGeom(double &gN, double n[3], double &s, double &t, double B[4][3],
+                           int committedSign, int *outSign) const
+{
+    if (mode != EDGE_EDGE) return false;
+    double X[4][3];
+    for (int i = 0; i < 4; i++) {
+        if (edgeNode[i] == 0) return false;
+        const Vector &Xi = edgeNode[i]->getCrds();
+        const Vector &ui = edgeNode[i]->getTrialDisp();
+        for (int d = 0; d < 3; d++) X[i][d] = Xi(d) + ui(d);
+    }
+    LadrunoEdgeKernel::ClosestResult cr =
+        LadrunoEdgeKernel::closestPtSegSeg(X[0], X[1], X[2], X[3]);
+    // only a well-conditioned, MARGIN-INTERIOR crossing is a true edge-edge contact where the
+    // cross-product normal is the connector (gN = ±‖w‖). Parallel (EE_PARALLEL), zero-length
+    // (EE_DEGENERATE), or near-vertex (!interior) ⇒ inert (routing handles those, ADR §1/§2).
+    if (cr.status != LadrunoEdgeKernel::EE_OK || !cr.interior) return false;
+    s = cr.s; t = cr.t;
+    double d1[3], d2[3];
+    for (int d = 0; d < 3; d++) { d1[d] = X[1][d] - X[0][d]; d2[d] = X[3][d] - X[2][d]; }
+    gN = LadrunoEdgeKernel::edgeGap(cr.c1, cr.c2, d1, d2, committedSign, orientDir, n, outSign);
+    LadrunoEdgeKernel::bOperator(n, s, t, B);
+    return true;
 }
 
 // B1 (P4) — the ASSEMBLED translational mass [mx,my,mz] of a node: the engine's pre-computed cache
@@ -636,6 +694,35 @@ LadrunoContactFE::getResidual(Integrator *theIntegrator)
             for (int I = 0; I < npsS; I++)
                 cd->accumulateMortarGap(contactTag, mortarSlave[I]->getTag(), this->getTag(),
                                         0.0, 0.0, kn);
+        }
+    } else if (mode == EDGE_EDGE) {
+        // ADR-57 E2 — perpendicular edge-edge penalty. Run the closest-point geometry at the trial
+        // config, fetch the per-pair body-fixed committed sign (Domain-owned EdgeEdgeState; the §2
+        // A-4 fix so gN cannot flip through contact), and assemble the penalty force f = tN·B,
+        // tN = εN⟨−gN⟩, B = [(1−s)n | s n | −(1−t)n | −t n]. Active ONLY in penetration (gN<0) and
+        // only for a well-conditioned margin-interior crossing (edgeGeom refuses the rest). The
+        // master edge gets the equal-and-opposite reaction (Σf = 0). No friction (E3), no SOFT/ALM
+        // (E5/E6) here — the E2 penalty MVP.
+        LadrunoContactDomain *cd = (theDomain != 0) ? theDomain->getLadrunoContactDomain() : 0;
+        LadrunoContactDomain::EdgeEdgeState *st = 0;
+        int committedSign = 0;
+        if (cd != 0) {
+            st = &cd->getOrCreateEdgeEdgeState(contactTag, edgeNode[0]->getTag(),
+                                               edgeNode[1]->getTag(), edgeNode[2]->getTag(),
+                                               edgeNode[3]->getTag());
+            committedSign = st->signN;
+        }
+        double gN, n[3], s, t, B[4][3]; int usedSign = 0;
+        if (edgeGeom(gN, n, s, t, B, committedSign, &usedSign)) {
+            // capture the body-fixed sign ONCE at first engagement, then hold it committed (the §2
+            // A-4 fix — applied verbatim every eval, never re-derived from w·n which masks penetration).
+            if (st != 0 && st->signN == 0) st->signN = usedSign;
+            if (gN < 0.0) {                              // Macaulay ⟨−gN⟩: active only in penetration
+                double tN = -kn * gN;                    // εN·|gN| > 0 (kn carries epsN)
+                for (int i = 0; i < 4; i++)
+                    for (int d = 0; d < 3; d++)
+                        resid(3 * i + d) = tN * B[i][d];  // f = tN·B (slave +, master − ⇒ Σf=0)
+            }
         }
     }
     return resid;
@@ -1066,6 +1153,28 @@ LadrunoContactFE::addKtToTang(double fact)
         }
     } else if (mode == MORTAR) {
         addMortarTang(fact);
+    } else if (mode == EDGE_EDGE) {
+        // ADR-57 E2 — the main (penalty-Gram) tangent K = εN·BᵀB (12×12, symmetric, rank-1, PSD —
+        // solver-safe on any system, like the NTS/mortar main blocks). EXACT at the closest point
+        // for the frozen-direction linearization; the geometric ∂{n,s,t}/∂u curvature block is E4
+        // (gated off). Same active mask as the residual (penetrating + margin-interior crossing).
+        // The committed sign was captured by getResidual (which runs first in the iterate); read it.
+        int committedSign = 0;
+        if (theDomain != 0) {
+            LadrunoContactDomain *cd = theDomain->getLadrunoContactDomain();
+            if (cd != 0)
+                committedSign = cd->getOrCreateEdgeEdgeState(contactTag, edgeNode[0]->getTag(),
+                                    edgeNode[1]->getTag(), edgeNode[2]->getTag(),
+                                    edgeNode[3]->getTag()).signN;
+        }
+        double gN, n[3], s, t, B[4][3]; int usedSign = 0;
+        if (edgeGeom(gN, n, s, t, B, committedSign, &usedSign) && gN < 0.0) {
+            for (int i = 0; i < 4; i++)
+                for (int di = 0; di < 3; di++)
+                    for (int j = 0; j < 4; j++)
+                        for (int dj = 0; dj < 3; dj++)
+                            tang(3 * i + di, 3 * j + dj) += fact * kn * B[i][di] * B[j][dj];
+        }
     }
 }
 
@@ -1239,6 +1348,26 @@ LadrunoContactFE::addKiToTang(double fact)
     } else if (mode == MORTAR) {
         addMortarTang(fact, /*initialStiff=*/true);  // penalty K_initial == K_current; friction =
                                                      // the SPD stick tangent (geometric terms deferred)
+    } else if (mode == EDGE_EDGE) {
+        // ADR-57 E2 — K_initial == K_current for the edge-edge penalty (the frozen-direction Gram
+        // εN·BᵀB), so mirror addKtToTang; the base addKiToTang early-returns on myEle==0 and would
+        // otherwise silently drop the contact stiffness under Newton -initial / ModifiedNewton.
+        int committedSign = 0;
+        if (theDomain != 0) {
+            LadrunoContactDomain *cd = theDomain->getLadrunoContactDomain();
+            if (cd != 0)
+                committedSign = cd->getOrCreateEdgeEdgeState(contactTag, edgeNode[0]->getTag(),
+                                    edgeNode[1]->getTag(), edgeNode[2]->getTag(),
+                                    edgeNode[3]->getTag()).signN;
+        }
+        double gN, n[3], s, t, B[4][3]; int usedSign = 0;
+        if (edgeGeom(gN, n, s, t, B, committedSign, &usedSign) && gN < 0.0) {
+            for (int i = 0; i < 4; i++)
+                for (int di = 0; di < 3; di++)
+                    for (int j = 0; j < 4; j++)
+                        for (int dj = 0; dj < 3; dj++)
+                            tang(3 * i + di, 3 * j + dj) += fact * kn * B[i][di] * B[j][dj];
+        }
     }
 }
 

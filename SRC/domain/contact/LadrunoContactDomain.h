@@ -141,6 +141,16 @@ class LadrunoContactDomain
                                 // cases NTS SOFT=1 misses, dt_cr un-throttled. Inert under implicit
                                 // (falls through to the shipped penalty/ALM ⇒ byte-identical). MVP is
                                 // frictionless (refused with mu/cohesion/tauMax/isTie/muc upstream).
+        // ADR-57 E2 — `-edgeedge` opt-in: enable the perpendicular edge-edge fallback on this mortar
+        // contact (the cos_t→0 pairs the face-mortar clip degenerates on are routed to a dedicated
+        // segment-segment penalty). OFF by default ⇒ byte-identical. edgeKn = the edge-edge penalty
+        // (≤0 ⇒ default to the resolved mortar penalty; edgeKnAuto ⇒ size per master facet like
+        // -epsN auto). edgeBand = the gap activation band d_band (≤0 ⇒ default from the facet edge
+        // length). Friction (-edgeMu) is E3; SOFT/ALM are E5/E6 — penalty normal only in E2.
+        bool   edgeEdge;
+        double edgeKn;
+        bool   edgeKnAuto;
+        double edgeBand;
     };
     int addMortarContact(int tag, int masterSurfTag, int slaveSurfTag,
                          double kn, bool knAuto, double epsN, bool epsNAuto,
@@ -148,7 +158,9 @@ class LadrunoContactDomain
                          const double *outward = 0, double cellFrac = 1.0,
                          double mu = 0.0, double epsT = 0.0, bool epsTAuto = false,
                          double cohesion = 0.0, double tauMax = 0.0, bool consistentTan = false,
-                         bool isTie = false, double muc = 0.0, double softScale = 0.0);
+                         bool isTie = false, double muc = 0.0, double softScale = 0.0,
+                         bool edgeEdge = false, double edgeKn = 0.0, bool edgeKnAuto = false,
+                         double edgeBand = 0.0);
     int getNumMortarContacts(void) const { return (int)theMortarContacts.size(); }
     const MortarContact &getMortarContact(int i) const { return theMortarContacts[i]; }
 
@@ -285,6 +297,45 @@ class LadrunoContactDomain
     void mortarNormalGCMark(int contactTag, int slaveNodeTag);
     void mortarNormalGCEnd(void);
 
+    // --- ADR-57 E2: per-edge-pair PATH STATE for the perpendicular edge-edge narrow phase.
+    //     Keyed (contactTag, slaveEdge, masterEdge) where each edge is its ORDERED node-tag pair
+    //     (a composite key — never a lossy hash; design Lens-B). The single genuinely path-
+    //     dependent datum E2 carries is the BODY-FIXED committed normal SIGN (signN): the edge
+    //     cross-product normal n = ê_s×ê_m has no intrinsic anchor, so a position-derived (w·n)
+    //     sign FLIPS through gN=0 and masks interpenetration (the §2 A-4 BLOCKER). signN is
+    //     captured ONCE from the orientation reference at first engagement and applied verbatim
+    //     thereafter, so gN stays monotone through contact (the E2 oracle T7). The friction slots
+    //     (gpT/gT0/engaged) and the one-scalar ALM (lambdaN) mirror FrictionState/MortarNormalState
+    //     and are reserved for E3/E6 — ZEROED and inert in the E2 penalty MVP. Committed-only,
+    //     double-buffered for implicit revert (the C3.2 MAJOR-2 pattern). ---
+    struct EdgeEdgeState {
+        int    signN;            // committed body-fixed normal sign (+1/−1); 0 = not yet captured
+        int    signNcommitted;   // double-buffer so a rejected implicit step reverts the capture
+        // friction (E3 — mirrors FrictionState exactly; ZEROED + inert in the E2 penalty MVP)
+        double gpT[3], gpTtrial[3], gT0[3];   bool engaged;
+        double gT0committed[3];               bool engagedCommitted;
+        // optional one-scalar ALM (E6 — point-like, ⇒ no shared-node accumulator; inert in E2)
+        double lambdaN;          // committed normal multiplier (≤0); updated ONLY in commit()
+        double gN_committed;     // committed gap for the E6 Uzawa update + query
+        EdgeEdgeState() : signN(0), signNcommitted(0), engaged(false), engagedCommitted(false),
+                          lambdaN(0.0), gN_committed(0.0) {
+            for (int d = 0; d < 3; d++) gpT[d] = gpTtrial[d] = gT0[d] = gT0committed[d] = 0.0;
+        }
+    };
+    // lazily create + return the slot for an edge pair (zeroed if new). The two slave-edge node
+    // tags + two master-edge node tags are ORDERED into a canonical key inside, so a facet edge
+    // shared by two facets maps to ONE state slot (de-dup) regardless of node order.
+    EdgeEdgeState &getOrCreateEdgeEdgeState(int contactTag, int sNodeA, int sNodeB,
+                                            int mNodeA, int mNodeB);
+    int getNumEdgeEdgeStates(void) const { return (int)theEdgeEdgeStates.size(); }
+    // dead-slot GC (mirror frictionGC* / mortarNormalGC*): the engine survives domainChanged + across
+    // analyze() calls, so a re-meshed/re-paired analysis would leak old edge slots. The handler
+    // rebuilds the live edge-set each handle(): edgeGCBegin() → edgeGCMark(...) per injected edge pair
+    // → edgeGCEnd() erases any slot not marked. Only signN is path-dependent and must survive.
+    void edgeGCBegin(void);
+    void edgeGCMark(int contactTag, int sNodeA, int sNodeB, int mNodeA, int mNodeB);
+    void edgeGCEnd(void);
+
     // --- B3 (P2b-2c) NTS contact-force readout. Each SEGMENT adapter reports its computed
     //     normal penalty traction tn = kn·<−gap>₊ into a per-(contactTag, slaveTag, segIndex)
     //     slot each getResidual (OVERWRITE ⇒ after convergence the slot holds the committed
@@ -355,6 +406,22 @@ class LadrunoContactDomain
     };
     std::map<NodeKey, MortarNormalState> theMortarNormalStates;
     std::set<NodeKey> liveNodeKeys;                     // mortar GC scratch (per handle())
+
+    // ADR-57 E2 edge-edge state, keyed (contactTag, ordered slave edge nodes, ordered master edge
+    // nodes) — a 5-int COMPOSITE key (never a lossy hash; design Lens-B). Ordering the node-tag
+    // pairs in getOrCreateEdgeEdgeState makes a shared facet edge map to one slot (de-dup).
+    struct EdgeKey {
+        int c, sa, sb, ma, mb;
+        bool operator<(const EdgeKey &o) const {
+            if (c != o.c) return c < o.c;
+            if (sa != o.sa) return sa < o.sa;
+            if (sb != o.sb) return sb < o.sb;
+            if (ma != o.ma) return ma < o.ma;
+            return mb < o.mb;
+        }
+    };
+    std::map<EdgeKey, EdgeEdgeState> theEdgeEdgeStates;
+    std::set<EdgeKey> liveEdgeKeys;                     // edge-edge GC scratch (per handle())
     // transient per-facet contribution g̃_I^facet / a_I^facet keyed (contactTag, nodeTag, feTag);
     // delta-updated each getResidual, summed into the node slot's gtGlobal/aGlobal. Cleared every
     // handle() (feTag is not rebuild-stable). PairKey {c,s=nodeTag,g=feTag} reuses the 3-int key.

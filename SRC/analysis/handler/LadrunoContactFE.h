@@ -130,6 +130,21 @@ class LadrunoContactFE : public FE_Element
                      double tauMax = 0.0, bool consistentTan = false, bool isTie = false,
                      double muc = 0.0,    // D2.2: viscous normal stabilization on the mortar contact
                      double softScale = 0.0);  // B2 (P5): SOFT=2 segment-based explicit penalty (0 ⇒ off)
+    // ADR-57 E2 (EDGE_EDGE) — perpendicular edge-edge penalty contact: ONE slave edge (sNodeA→sNodeB)
+    // vs ONE master edge (mNodeA→mNodeB), the cos_t→0 case the mortar clip degenerates on and NTS
+    // misses (the contact is between the INTERIORS of two crossing line features). Connectivity =
+    // {sa, sb, ma, mb}, FE_Element(tag, 4, 12). getResidual runs LadrunoEdgeKernel::closestPtSegSeg
+    // at the trial config → the common-perpendicular normal n=(ê_s×ê_m)/‖·‖ + the signed gap gN with
+    // a BODY-FIXED COMMITTED sign (the §2 A-4 fix — held on the Domain-owned EdgeEdgeState, never the
+    // self-referential w·n that masks interpenetration), and assembles f = tN·B, tN = εN⟨−gN⟩,
+    // B = [(1−s)n | s n | −(1−t)n | −t n] (the NTS B-operator with the master shape fns → the edge
+    // linear weights). addKtToTang assembles the main tangent K = εN·BᵀB (symmetric, rank-1, PSD —
+    // the geometric ∂{n,s,t}/∂u block is E4, gated off; friction is E3; SOFT/ALM are E5/E6). epsN
+    // rides `kn`; orientDir is the first-capture sign reference. A STATELESS view (the §5 EdgeEdgeState
+    // lives on the Domain); pairs that are parallel/zero-length/near-vertex/separated are inert.
+    LadrunoContactFE(int tag, Node *sNodeA, Node *sNodeB, Node *mNodeA, Node *mNodeB,
+                     double epsN, const double orientDir[3], int contactTag = 0,
+                     Domain *theDomain = 0);
     ~LadrunoContactFE();
 
     // self-owned buffers (base buffers are unavailable when myEle == 0)
@@ -224,8 +239,10 @@ class LadrunoContactFE : public FE_Element
     Vector resid;   // size-0 in P1a; ndm in P2a; ndm*(1+nps) in P2b
     Matrix tang;    // 0x0 in P1a; ndm x ndm in P2a; ndof x ndof in P2b
 
-    // P2a rigid-plane binding (mode = RIGID_PLANE); unused/zero in P1a
-    enum Mode { EMPTY = 0, RIGID_PLANE = 1, SEGMENT = 2, MORTAR = 3 };
+    // P2a rigid-plane binding (mode = RIGID_PLANE); unused/zero in P1a.
+    // ADR-57 E2: EDGE_EDGE = a 4th mode of this one adapter (no new class tag — mirrors
+    // RIGID_PLANE/SEGMENT/MORTAR sharing the runtime FE tag; the ADR Where/§classTags decision).
+    enum Mode { EMPTY = 0, RIGID_PLANE = 1, SEGMENT = 2, MORTAR = 3, EDGE_EDGE = 4 };
     Mode mode;
     Node *theSlave;
     int ndm;
@@ -264,6 +281,10 @@ class LadrunoContactFE : public FE_Element
     int npsS, npsM;         // slave / master nodes-per-facet
     int slaveFacetIndex;    // GLOBAL slave-facet ordinal (rebuild-stable; C2.2 λ_N key)
 
+    // ADR-57 E2 EDGE_EDGE binding (mode == EDGE_EDGE). The 4-node edge pair [sa, sb | ma, mb];
+    // epsN rides `kn`, contactTag keys the Domain-owned EdgeEdgeState (with the ordered node tags).
+    Node *edgeNode[4];      // {slave edge node A, slave edge node B, master edge node A, B}
+
     // C3.1 MORTAR friction (active in MORTAR mode when mu>0 ∨ cohesion>0 ∨ tauMax>0). epsT (the
     // tangential penalty) rides `kt`; mu reuses the friction `mu` member. cohesion/tauMax complete
     // the unified cone cap = min(μN+c, τmax). consistentTan reuses the friction member.
@@ -287,6 +308,16 @@ class LadrunoContactFE : public FE_Element
     // the ‖r‖ query). cd may be null ⇒ a pure penalty tie (λ_tie≡0, no global accumulation).
     void addMortarTieForce(const double D[4][4], const double M[4][4],
                            class LadrunoContactDomain *cd);
+
+    // ADR-57 E2 — EDGE_EDGE geometry at the current trial config. Gathers the 4 edge-node positions
+    // (X+u), runs LadrunoEdgeKernel::closestPtSegSeg, and (for an EE_OK, MARGIN-INTERIOR crossing —
+    // a parallel/zero-length/near-vertex pair is REFUSED ⇒ returns false) fills the signed gap gN
+    // (with `committedSign`, or — if 0 — captured from orientDir, the chosen sign returned in
+    // *outSign), the oriented common-perpendicular normal n, the closest-point parameters s,t, and
+    // the B-operator rows B[4][3] = [(1−s)n, s n, −(1−t)n, −t n]. const (the sign CAPTURE / state
+    // mutation is done by the caller in getResidual, mirroring the SEGMENT friction engagement).
+    bool edgeGeom(double &gN, double n[3], double &s, double &t, double B[4][3],
+                  int committedSign, int *outSign) const;
 
     // B2 (P5) — the SOFT=2 segment-based EXPLICIT penalty force (frictionless, single-pass, no ALM).
     // Re-integrates the facet pair (mortarActive ⇒ clip→Gauss D,M,g̃,n), sizes a Courant-stable

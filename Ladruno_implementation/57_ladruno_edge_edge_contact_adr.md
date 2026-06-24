@@ -466,7 +466,7 @@ companion) is a later convenience, not the MVP.
 |---|---|---|---|
 | **E0** ✅ **SHIPPED** | `LadrunoEdgeKernel.h` — segment-segment closest point + edge normal/gap | `proto_e0_closest_point.py` **28/28**: vs an independent scan reference on all **8 Voronoi sub-regions** incl. the **vertex-vertex double-clamp**; **parallel refusal** (denom<τ_∥, τ_∥=sin²15° conditioning-justified) + near-parallel; **zero-length** refusal; conditioning bounded across the band; `|w·n|==‖w‖` only margin-interior (+ its failure clamped); FD `∂g_N/∂coord` == analytic B to **1.1e-9**; committed-sign monotone-through-contact + the buggy-`w·n`-rule penetration-mask demo (the A-4 fix, shown empirically). | `e0_cpp_check.cpp` **13/13** bit-for-bit (B==FD identical 1.13e-9); header compiles warning-free; header-only ⇒ no TU includes it yet ⇒ build byte-identical |
 | **E1** ✅ **oracle SHIPPED** (C++ wiring folds into E2) | the **routing detector** | `proto_e1_router.py` **16/16**: the **align_fn regime split** (facing→mortar; non-facing→NTS≻edge≻sliver — oracle-first caught that flat NTS-precedence steals facing-facet contact), X-crossing→EDGE_EDGE, an **NTS-vs-edge double-count falsifier** (non-facing vertex-poke→NTS), the **oblique-band no-coverage-hole falsifier** (in-proximity pair ⇒ non-NONE owner), the **parallel-but-offset facing** case caught by mortar (not dropped), the proximity NONE gate, and the hysteresis no-chatter sweep (1 clean transition through 45°). | handler unit (lands with the E2 wiring — routing without an adapter to inject is inert): edge-on→EDGE_EDGE, facing→MORTAR, slave-vertex-in-bounds→NTS; **byte-identity when `-edgeedge` absent** |
-| **E2** | penalty normal force + main tangent | `proto_e2_penalty.py`: two-bar edge-on test, force ⟂ both edges (along `n`), self-equilibrium `Σf=0`, `K=ε_N BᵀB` FD-checked symmetric PSD, penetration `δ=P/ε_N`; **monotone `g_N` through contact** (drive gap>0 → 0 → penetration, assert no sign flip — the committed-sign-anchor falsifier). | `test_adr57_edge_edge_1`: two crossed bars, gap → tol, Newton converges; NTS-passes-through vs edge-edge-restrained (the headline falsifier — NTS net force ZERO) |
+| **E2** ✅ **SHIPPED** | penalty normal force + main tangent | `proto_e2_penalty.py` **23/23**: two-bar edge-on test, force ⟂ both edges (along `n`), self-equilibrium `Σf=0`, `K=ε_N BᵀB` FD-checked symmetric PSD rank-1, penetration `δ=P/ε_N`; **monotone `g_N` through contact** driven through a real penalty step (gap>0 → 0 → penetration, no sign flip — the committed-sign-anchor falsifier + the buggy-`w·n`-rule penetration-mask demo). | `test_adr57_edge_edge_1` **3/3**: two crossed bars restrained at `δ≈P/ε_N`, Newton converges (the `K_c` check); **NTS-passes-through vs edge-edge-restrained** (the headline falsifier — same geometry NTS contact transmits ZERO force ⇒ the edge sinks ~10³× deeper); **the EE-1 oblique-band regression** (a 60° pair, non-degenerate clip, edge-edge owns ⇒ single-primitive δ≈P/ε_N — guards the face-mortar stand-down); byte-identity when no pair routes / `-edgeedge` absent. Full contact battery **145 passed** (no regression). 3-reviewer adversarial gate PASS (2 findings folded). |
 | **E3** | friction (reuse `LadrunoFrictionKernel`) | `proto_e3_friction.py`: stick/slip on the edge tangent plane, `a = g(sinθ−μcosθ)` incline sign, Tresca cap, slip-from-displacement (the C3.1 trap), `μ=0` byte-identical. | `test_adr57_edge_edge_2`: explicit raking bar (Coulomb opposes motion), implicit stick converges; symmetric tangent solver-safe |
 | **E4** | consistent geometric tangent (`-edgegeomtan`, **gated off**) | `proto_e4_geomtan.py`: `∂n/∂u, ∂s/∂u, ∂t/∂u` analytic == FD on a skew large-sliding pair; symmetric; flat ⇒ byte-identical. | local Newton iter-count improvement on a curved-rake case; ProfileSPD-safe |
 | **E5** | explicit Courant-stable SOFT | `proto_e5_soft.py`: 4-node edge `m_eff = 1/(B M⁻¹ Bᵀ)` closed form; `ω·dt = 2√SOFSCL`; stiff diverges vs soft bounded; energy restitution. | `test_adr57_edge_edge_3`: edge-on impact at the STRUCTURAL dt; implicit byte-identical |
@@ -641,5 +641,39 @@ friction-kernel 4th-consumer, SOFT mass-cache, clip-degeneracy probe safety
   owner* (no coverage hole) and chatter-free (1 transition through a 45° sweep). The C++
   realization (the handler routing loop) **folds into E2** — routing without an adapter
   to inject is inert, so it ships with the `EDGE_EDGE` adapter, not before.
-- **E2→E7** — pending (design-only above; each lands oracle-first → C++ → gate → PR,
+- **E2 (penalty normal force + main tangent) — SHIPPED** (this PR). The first live C++/build
+  phase: the inert E0 kernel + E1 routing oracle become a real force. **`LadrunoContactFE` gains
+  `Mode EDGE_EDGE = 4`** — a stateless 4-node adapter `[a₀,a₁,b₀,b₁]` (`FE_Element(tag, 4, 12)`,
+  **no new class tag** — a mode of the one adapter like RIGID_PLANE/SEGMENT/MORTAR): `getResidual`
+  runs `LadrunoEdgeKernel::closestPtSegSeg` at the trial config, fetches the body-fixed committed
+  sign from the Domain-owned `EdgeEdgeState`, and assembles `f = t_N·B`, `t_N = ε_N⟨−g_N⟩`;
+  `addKtToTang`/`addKiToTang` assemble `K = ε_N·BᵀB` (symmetric, rank-1, PSD); `addCtoTang` is a
+  no-op (viscous is E5+). **`LadrunoContactDomain::EdgeEdgeState`** (the §5 struct — `signN` + its
+  revert double-buffer carrying; friction E3 + one-scalar ALM E6 fields zeroed/inert) is keyed by a
+  5-int **composite** `(contactTag, ordered slave-edge nodes, ordered master-edge nodes)` — never a
+  lossy hash — with `getOrCreateEdgeEdgeState` + the `edgeGC{Begin,Mark,End}` dead-slot trio; and
+  `commit()`/`revertToLastCommit()` were **extended to iterate `theEdgeEdgeStates`** (the explicit
+  obligation — the shipped hooks iterated only friction + mortar, exactly the §5 trap). The
+  **handler routing loop** (the E1 `align_fn` regime-split precedence, now non-inert) runs over the
+  mortar lane's **brute-force** facet pairing (the §7 fix — *not* the bucket sort): on an EDGE_EDGE
+  route it enumerates the `(≤4)×(≤4)` boundary-edge pairs, keeps the margin-interior/well-conditioned
+  /in-band crossings (the E0 kernel decides), de-dups by the ordered edge-node-tag tuple, and injects
+  one `EDGE_EDGE` adapter per kept pair. The **`-edgeedge`** opt-in modifier on `-mortar`
+  (`-edgeKn auto|val`, `-edgeBand <d>`) is **OFF by default ⇒ byte-identical**; on a perpendicular
+  pair the mortar adapter is geometrically inert (the clip degenerates, the very gap edge-edge fills)
+  so the two never double-count. Oracle `proto_e2_penalty.py` **23/23**; `test_adr57_edge_edge_1`
+  **4/4** (crossed-bars restrained + the NTS-passes-through headline falsifier + the oblique-band
+  EE-1 regression + byte-identity); full contact battery **145 passed** (no regression).
+  **3-reviewer adversarial gate (Gate 2 — refute-by-default) → PASS, 2 findings folded:** **EE-1
+  (MAJOR)** — the mortar lane injected its adapter unconditionally, so in the *oblique* band (50°–90°,
+  the clip is non-degenerate, not just at exactly 90°) the mortar pressure and the edge-edge force
+  superposed (a double-count the "mortar is inert on a perpendicular pair" note over-claimed). Folded:
+  a `ladrunoEdgeEdgeOwns` **single-source-of-truth** routing helper the *mortar* loop now consults to
+  **stand down** when edge-edge owns the pair (the §2 "face-mortar vacates only if edge-edge succeeds",
+  now implemented), + the `test_e2_oblique_no_double_count` regression. **E2-2 (MINOR)** — the default
+  sign-anchor `orientDir` used a centroid difference that can vanish near-coincident centroids; folded
+  to the always-non-degenerate slave **facet normal** (the §2 "orient once from {n̂_s, n̂_m}"). Rejected
+  (sound / out-of-scope): the per-pair rank-deficiency (inherent to penalty contact — NTS/mortar share
+  it; the host elements or a regularizer supply the differential mode) and an unreachable null-deref.
+- **E3→E7** — pending (design-only above; each lands oracle-first → C++ → gate → PR,
   updating the capstone row + ledgers in the same PR).
