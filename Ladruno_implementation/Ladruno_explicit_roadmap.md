@@ -153,7 +153,7 @@ Items ordered for execution feasibility. Each links to a future per-feature plan
 | 5.2 | [[02_batch_element_dispatch\|Batch element dispatch interface]] | M | — | Non-invasive opt-in; defines the contract for fast-path elements. |
 | 5.3 | [[03_soa_native_explicit_hex\|Reference SoA-native explicit hex]] | M | 5.2 | Validates 5.2 with real benchmarks. |
 | 5.4 | [[04_modular_damage_decorator\|Modular damage decorator (GISSMO-style)]] | S | — | Independent track; useful for everyone. |
-| 5.5 | [[05_rigid_body_domain_component\|RigidBody DomainComponent + SO(3) integrator]] | L | — | Heaviest item; gates joints. |
+| 5.5 | [[58_ladruno_rigid_body_adr\|RigidBody DomainComponent + SO(3) integrator]] | L | — | Heaviest item; gates joints. **Scoped → ADR 58.** |
 | 5.6 | [[06_joint_family\|Joint family as MP_Constraint subclasses]] | M | 5.5 | Capability gap closed. |
 | 5.7 | [[07_contact_domain\|ContactDomain subsystem (bucket sort + node-to-segment + segment-to-segment)]] | L | 5.5 helpful | Largest capability gap. |
 | 5.8 | [[08_sph_element_family\|SPH element family (FORM 1/7/8, MLS variant)]] | L | 5.7 (bucket sort) | Major research direction; meshfree story part 1. |
@@ -335,8 +335,9 @@ public:
 
 **Key references**:
 - LS-DYNA Theory §25 (PDF pp. 511–521) — LS-DYNA's rigid-body dynamics.
-- Simo & Vu-Quoc 1986 (Comput. Methods Appl. Mech. Engrg.) — the canonical reference for rigid-body dynamics with large rotations in finite-element context.
-- Betsch & Steinmann 2001 — energy-momentum conserving schemes for rigid bodies.
+- Krysl & Endres 2005 (IJNME) — explicit exp-map/Verlet SO(3) rigid-body integrator (the explicit default for the fork; momentum-conserving). [Corrected: the earlier "Simo & Vu-Quoc 1986" cite here was the geometrically-exact *rod* paper, not rigid-body dynamics — see [[58_ladruno_rigid_body_adr]] §8.]
+- Simo & Wong 1991 (IJNME 31:19–52) / Simo, Tarnow & Wong 1992 — energy-momentum conserving rigid-body schemes (implicit family).
+- Betsch & Steinmann 2001 — energy-momentum conserving schemes for rigid bodies (implicit; out-of-scope for the explicit path).
 - Holzapfel "Nonlinear Solid Mechanics" Ch. 2 for rotation parameterization.
 
 **Where it lives**: `SRC/domain/rigid/RigidBody.{h,cpp}` plus an integrator extension or a side-channel handler in the explicit step.
@@ -344,7 +345,7 @@ public:
 > [!question] Open
 > Should `RigidBody` be a standalone `DomainComponent` (cleanest) or a special `Element` (existing infrastructure handles it more easily)? Standalone is more correct architecturally but requires more framework changes.
 
-→ Future plan: [[05_rigid_body_domain_component]].
+→ Future plan: **[[58_ladruno_rigid_body_adr]]** — promoted to a numbered scoping ADR (2026-06-24; decision-capture, no code).
 
 ---
 
