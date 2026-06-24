@@ -154,12 +154,24 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                   "are present but NOT enforced by the P1a contact handler; use a model with "
                   "SP (fix) constraints only, or 'constraints Transformation' for those models.\n";
 
-    // collect SPs (domain + load-pattern), keyed by node
+    // collect SPs (domain + load-pattern), keyed by node. Like PlainHandler this is a
+    // Plain-style handler: it REMOVES a constrained DOF but cannot enforce a NON-homogeneous
+    // (imposed-displacement) SP value — that needs the Transformation/Penalty/Lagrange family,
+    // which this handler can't be (it must inject the contact FE adapters in handle()). Warn
+    // the same way PlainHandler does so a displacement-driven contact model fails LOUD, not
+    // silently-zero; point the user to the DisplacementControl integrator (works with this
+    // handler — it drives a DOF via the load factor, no imposed SP needed). (B3 follow-up.)
     std::multimap<int, SP_Constraint *> allSPs;
     SP_ConstraintIter &theSPs = theDomain->getDomainAndLoadPatternSPs();
     SP_Constraint *theSP;
-    while ((theSP = theSPs()) != 0)
+    while ((theSP = theSPs()) != 0) {
+        if (theSP->isHomogeneous() == false)
+            opserr << "WARNING LadrunoContactHandler::handle() - non-homogeneous SP (imposed "
+                      "displacement) at node " << theSP->getNodeTag() << " is NOT enforced by "
+                      "the contact handler (Plain-style; homogeneous constraint assumed). Use the "
+                      "DisplacementControl integrator for displacement-driven contact.\n";
         allSPs.insert(std::make_pair(theSP->getNodeTag(), theSP));
+    }
 
     // DOF_Groups: free = -2, single-point-constrained = -1.
     NodeIter &theNod = theDomain->getNodes();
