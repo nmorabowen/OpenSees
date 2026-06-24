@@ -89,6 +89,29 @@ gate, see below).
   (`exp(-ops_Dt/tR)` → growing). W1-I1b's review caught this; fix is to force a positive
   dt and save/restore `ops_Dt` around any off-step residual assembly. Elastic-only tests
   mask it — add a rate-dependent (Maxwell) case when touching residual machinery.
+- **(W3-I2) `ci/check_manifest.py` (G9 gate) requires a `manifest.yaml` row per new classTag.**
+  A new integrator fails the fast "classTag + manifest gates" job until you add a row in
+  `Ladruno_implementation/testbed/manifest.yaml` (`tag_symbol` + `pytest` + `status: active`).
+  Run `python3.12 ci/check_manifest.py` + `ci/check_classtags.py` locally before the PR.
+- **(W3-I2) base integrator ctors may hardcode their classTag.** `HHT`/`GeneralizedAlpha`
+  ctors call `TransientIntegrator(INTEGRATOR_TAGS_HHT)` directly (unlike `Newmark`, which has
+  a classTag param). `getClassTag()` is non-virtual + `classTag` is private with no setter →
+  the only way a subclass reports its own tag is a base ctor that takes one. Add a protected
+  **inline** classTag ctor to the base header (keeps the base `.cpp` byte-identical).
+- **(W3-I2) `GeneralizedAlpha` has an INCONSISTENT tangent for αM≠1** (tangent `αM·c3·M` vs a
+  primal that integrates inertia at the full-step `Udotdot`, effective M-coef `c3`; `update()`
+  sets accel=`Udotdot`). A tangent-reuse DDM gives a biased gradient (FD oracle ~2e-3 at
+  αM=0.9). Build the DDM PRIMAL-consistent (M at `Udotdot`, no αM) AND re-form the
+  sensitivity-solve tangent with `c3·M` (a `sensTangentFlag` branch + `formTangent()` in
+  `computeSensitivities`). HHT is unaffected (no αM). Full note in [[LEDGER_quirks]].
+- **(W3-I2) `Element` base `getTangentStiffSensitivity`/`getMassSensitivity` return ZERO + warn**
+  ("betaK·K DDM not implemented") and Truss doesn't override them ⇒ you CANNOT FD-test a
+  `∂C/∂h` or `∂M/∂h` term on a Truss (a stiffness/mass-proportional Rayleigh case false-fails
+  for the element limit). The M-chain term (`M·dUdotdot/dh`) IS exercised; the matrix-sens
+  terms are derivation-validated + pinned by the αM=αF=1→Newmark reduction.
+- **(this session) PR numbers are NOT sequential** — #414 was a concurrent CONTACT PR, so the
+  genalpha PR landed as #415. Always read the gh-assigned number; don't pre-write it in docs
+  (backfill the previous PR's number in the next PR, the established pattern).
 
 ## Remaining waves — scope + notes
 
@@ -118,17 +141,24 @@ gate, see below).
   `analyze`-without-commit variant; an Abaqus-style HAFTOL auto-scaling from a running
   reference force; an HHT/generalized-α α-weighted midpoint (current uses avg-accel).
 
-### W3-I2 — sensitivity-carrying `LadrunoHHT` / `LadrunoGeneralizedAlpha`
-- **Requires 2 ledgered vanilla base-header edits**: promote the needed members in
-  `HHT.h` / `GeneralizedAlpha.h` from `private:` → `protected:` (no `.cpp`/algorithm
-  change), marked `// Ladruno: protected for sensitivity subclass`, recorded in
-  [[LEDGER_vanilla_files]]. Pure subclassing is impossible (confirmed by the ADR-50
-  review) — Newmark only works because it's already `protected`.
-- The seam is **FIVE virtual overrides**, not three: `formSensitivityRHS`,
-  `saveSensitivity`, `commitSensitivity`, **plus** `formEleResidual`/`formNodUnbalance`
-  branching on `sensitivityFlag` (re-derive the α-weighted M/C terms; the Newmark
-  pattern at `Newmark.cpp:577-747`).
-- classTags 33014 (`LadrunoHHT`), 33015 (`LadrunoGeneralizedAlpha`) — re-confirm.
+### W3-I2 — sensitivity-carrying `LadrunoHHT` / `LadrunoGeneralizedAlpha` (SHIPPED #413 + #415)
+- **Done.** `LadrunoHHT` (classTag **33013**, #413) + `LadrunoGeneralizedAlpha` (classTag
+  **33014**, #415). DDM on the numerically-damped integrators (was Newmark-only).
+- **Vanilla edit was header-only but bigger than the ADR predicted:** besides the
+  `private:`→`protected:` promotion, the base ctors hardcode their classTag (no classTag
+  param, unlike `Newmark`), so each header also got ONE protected **inline** classTag ctor
+  → the `.cpp`s stay byte-identical. (ADR-50 review's "pure promotion" under-scoped this.)
+- **Seam (8 methods, not 5):** `formEleResidual`/`formNodUnbalance` (branch on
+  `sensitivityFlag`) + `formSensitivityRHS`/`formIndependentSensitivityRHS`/`saveSensitivity`/
+  `commitSensitivity`/`computeSensitivities`/`revertToStart`. Because `U/Udot/Udotdot` follow
+  the Newmark recurrence, all but `formEleResidual`/`formNodUnbalance` are **copies of
+  Newmark**; only those two carry the α-weighting + the extra `−K·(1−αF)·dUₙ` term.
+- **classTags were 33013/33014, NOT the ADR's 33014/33015** — W3-I3's reserved 33013 was
+  NO-GO so it was the lowest free tag (assign from the top, re-check `classTags.h`).
+- **GeneralizedAlpha tangent is INCONSISTENT** (αM·c3·M tangent vs Udotdot primal inertia,
+  M-coef c3) → the DDM had to be PRIMAL-consistent (M at Udotdot, no αM) + re-form the
+  sensitivity-solve tangent with c3·M (`sensTangentFlag`). HHT is fine (no αM). See gotchas
+  + [[LEDGER_quirks]]. FD oracle caught the first (tangent-consistent) cut ~2e-3 at αM=0.9.
 
 ### W3-I3 — tunable implicit Bathe (GATED → NO-GO, 2026-06-24)
 - `TRBDF2` already IS the Bathe (2007) composite (`TRBDF2.cpp:29-30`, constants hard-
