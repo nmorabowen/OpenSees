@@ -55,7 +55,7 @@ tags:
   FRICTIONLESS MVP (⊥ `-tie/-mu/-cohesion/-tauMax/-visc`). 3-reviewer adversarial gate PASS (1 MINOR
   folded — the per-node Courant bound is necessary-not-sufficient; coupled `K_c` ω·dt ~2× ⇒ a
   `SOFSCL>0.25` warning + [[LEDGER_quirks]] note; default 0.10 safe). Battery **98→104/104**.
-- **D1 SHIPPED** (_pending PR_) — within-step augmentation sign-off (see Track D1 below): the
+- **D1 SHIPPED** ([#411](https://github.com/nmorabowen/OpenSees/pull/411)) — within-step augmentation sign-off (see Track D1 below): the
   `analyze_augmented` proc is now a first-class no-corruption recipe (`ladrunoBeginAugment`/
   `ladrunoEndAugment` + the `Domain::contactAugmenting` commit guard). Battery **106→112/112**.
 - **Contact battery: 112/112** — `tests/test_adr39_contact_p*.py` (+ `_p2b2c_hertz.py`, `_p4_soft.py`,
@@ -108,7 +108,7 @@ Workflow fix: recorded the `gh pr checks --watch` premature-exit trap in
   `ladrunoContactForce`; a robust curved-indentation driver — displacement-control or D1
   within-step augmentation — for the elliptic-`p(r)` / compliant-radius match).
 
-**Track D1 — within-step augmentation refinement**: ✅ **DONE** (_pending PR_) — the held-load
+**Track D1 — within-step augmentation refinement**: ✅ **DONE** ([#411](https://github.com/nmorabowen/OpenSees/pull/411)) — the held-load
 `analyze_augmented` proc is now a FIRST-CLASS no-corruption recipe. It brackets its zero-increment
 `LoadControl` re-commit loop with new `ladrunoBeginAugment`/`ladrunoEndAugment` commands that set a
 `Domain::contactAugmenting` flag making `Domain::commit()` skip the recorder loop + `commitTag++`
