@@ -107,7 +107,7 @@ Domain::Domain()
  theModalDampingFactors(0), inclModalMatrix(false),
  lastChannel(0),
  paramIndex(0), paramSize(0), numParameters(0),
- theContactDomain(0)   // Ladruno: ADR-39
+ theContactDomain(0), contactAugmenting(false)   // Ladruno: ADR-39 + D1
 {
   
     // init the arrays for storing the domain components
@@ -165,7 +165,7 @@ Domain::Domain(int numNodes, int numElements, int numSPs, int numMPs, int numEQs
  theModalProperties(0),
  theModalDampingFactors(0), inclModalMatrix(false),
  lastChannel(0), paramIndex(0), paramSize(0), numParameters(0),
- theContactDomain(0)   // Ladruno: ADR-39
+ theContactDomain(0), contactAugmenting(false)   // Ladruno: ADR-39 + D1
 {
     // init the arrays for storing the domain components
     theElements = new MapOfTaggedObjects();
@@ -231,7 +231,7 @@ Domain::Domain(TaggedObjectStorage &theNodesStorage,
  theModalProperties(0),
  theModalDampingFactors(0), inclModalMatrix(false),
  lastChannel(0),paramIndex(0), paramSize(0), numParameters(0),
- theContactDomain(0)   // Ladruno: ADR-39
+ theContactDomain(0), contactAugmenting(false)   // Ladruno: ADR-39 + D1
 {
     // init the arrays for storing the domain components
     thePCs      = new MapOfTaggedObjects();
@@ -293,7 +293,7 @@ Domain::Domain(TaggedObjectStorage &theStorage)
  theModalProperties(0),
  theModalDampingFactors(0), inclModalMatrix(false),
  lastChannel(0),paramIndex(0), paramSize(0), numParameters(0),
- theContactDomain(0)   // Ladruno: ADR-39
+ theContactDomain(0), contactAugmenting(false)   // Ladruno: ADR-39 + D1
 {
     // init the arrays for storing the domain components
     theStorage.clearAll(); // clear the storage just in case populated
@@ -2202,13 +2202,22 @@ Domain::commit(void)
     committedTime = currentTime;
     dT = 0.0;
 
-    // invoke record on all recorders
-    for (int i=0; i<numRecorders; i++)
-      if (theRecorders[i] != 0)
-	theRecorders[i]->record(commitTag, currentTime);
+    // Ladruno (ADR-41 D1): a held-load within-step augmentation sweep (analyze_augmented at a
+    // zero load increment) re-commits this Domain once per Uzawa pass to let theContactDomain
+    // augment lambda — but those passes must NOT corrupt the recorder stream. When the flag is
+    // ON, skip the recorder loop + commitTag bump so the augmentation produces NO spurious
+    // recorder samples and advances NO commitTag (committedTime is already a no-op here — a
+    // zero-increment LoadControl holds currentTime constant). The contact lambda update above
+    // STILL runs (that is the point of the pass). Default OFF => byte-identical to stock.
+    if (!contactAugmenting) {
+      // invoke record on all recorders
+      for (int i=0; i<numRecorders; i++)
+        if (theRecorders[i] != 0)
+	  theRecorders[i]->record(commitTag, currentTime);
 
-    // update the commitTag
-    commitTag++;
+      // update the commitTag
+      commitTag++;
+    }
     return 0;
 }
 

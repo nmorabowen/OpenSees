@@ -284,6 +284,8 @@ int OPS_LadrunoContactInfo();          // Ladruno: ADR-39 P1b query
 int OPS_LadrunoMortarPenetration();    // Ladruno: ADR-41 C2.2 query (max ‖ḡ‖ penetration)
 int OPS_LadrunoMortarTieResidual();    // Ladruno: ADR-41 C4 query (max ‖r̄‖ tie bond)
 int OPS_LadrunoContactForce();         // Ladruno: ADR-39 B3 query (NTS nodal contact force)
+int OPS_LadrunoBeginAugment();         // Ladruno: ADR-41 D1 (open held-load augmentation sweep)
+int OPS_LadrunoEndAugment();           // Ladruno: ADR-41 D1 (close held-load augmentation sweep)
 int OPS_nodeEigenvector();
 int OPS_getTime();
 int OPS_eleResponse();
