@@ -138,7 +138,7 @@ indentation. **The committed contact roadmap (Tracks A→D) is now COMPLETE.**
 
 **The committed contact roadmap (Tracks A→D) is COMPLETE** (D1 shipped this session). What remains is
 all OPTIONAL / deferred:
-- **Small follow-ups** (each its own small PR, oracle-first): ~~viscous SOFT=2~~ **DONE** (_pending PR_ —
+- **Small follow-ups** (each its own small PR, oracle-first): ~~viscous SOFT=2~~ **DONE** ([#412](https://github.com/nmorabowen/OpenSees/pull/412) —
   `-mortar -soft -visc` now allowed; the D2.2 normal damper on the SOFT=2 active set in
   `addSoft2Penalty`, `μ_c=0` byte-identical; battery 112→114/114); frictional SOFT=2 (add the
   Coulomb/Tresca cone to the B2 segment-based explicit path, reusing `LadrunoFrictionKernel` over the
