@@ -44,9 +44,10 @@ void *OPS_CentralDifferenceSMS(void)
     // Usage: integrator CentralDifferenceSMS $dtTarget <-maxAddedMass $frac>
     //                                        <-verbose> <-lump rowsum|diagonal|hrz>
     //                                        <-tangent> <-cfl>
-    // NOTE: -cflAbort and -recompute are REJECTED with SMS (ADR-36 MF-1): their
-    // inherited path re-runs the element-mass eigensolve, which cannot see the
-    // nodal augmentation, and would spuriously abort a run that is in fact stable.
+    // NOTE: -cflAbort and -recompute are DOWNGRADED to report-only with SMS (ADR-36
+    // MF-1, ADR-52 W1-E3a): their inherited path re-runs the element-mass eigensolve,
+    // which cannot see the nodal augmentation; rather than reject the run we keep the
+    // integrator and report the pre-scaling dt_cr instead.
     if (OPS_GetNumRemainingInputArgs() < 1) {
         opserr << "WARNING integrator CentralDifferenceSMS $dtTarget <options> "
                   "- needs a target time step\n";
@@ -89,11 +90,17 @@ void *OPS_CentralDifferenceSMS(void)
                             << " (use rowsum|diagonal|hrz; keeping diagonal)\n";
             }
         } else if (strcmp(arg, "-cflAbort") == 0 || strcmp(arg, "-recompute") == 0) {
-            opserr << "WARNING CentralDifferenceSMS - " << arg << " is not supported "
-                      "with mass scaling (it re-runs the element-mass eigensolve, which "
-                      "cannot see the nodal augmentation, and would spuriously abort). "
-                      "Integrator NOT created.\n";
-            return 0;
+            // W1-E3a (ADR-52): do NOT refuse the run. Under SMS these flags cannot do
+            // their job -- the element-mass eigensolve can't see the nodal augmentation,
+            // so an abort/recompute on the un-augmented pencil would be wrong (MF-1).
+            // Instead of rejecting, DOWNGRADE to report-only: keep the integrator and
+            // force the pre-scaling dt_cr to be reported so the user can still
+            // sanity-check the stability margin.
+            opserr << "NOTE CentralDifferenceSMS - " << arg << " is downgraded to "
+                      "REPORT-ONLY under mass scaling (no abort/recompute on the "
+                      "un-augmented element pencil, MF-1); the pre-scaling dt_cr will be "
+                      "reported each domainChanged.\n";
+            verboseSMS = true;
         } else {
             opserr << "WARNING CentralDifferenceSMS - unknown option " << arg
                    << " (ignored)\n";
@@ -193,8 +200,9 @@ int CentralDifferenceSMS::domainChanged(void)
                   "shared/boundary node IS summed across ranks by a distributed/MPI diagonal "
                   "solver (OpenSeesMP `system MPIDiagonal`, OpenSeesSP `system Diagonal`) -- the "
                   "explicit M^-1 solve reads that reduced diagonal (validated bit-identical to "
-                  "serial). The CONSISTENT (Olovsson) variant is NOT parallel-safe: its "
-                  "matrix-free PCG uses rank-local inner products.\n";
+                  "serial). The CONSISTENT (Olovsson) variant is ALSO parallel-safe (ADR-38 V5): "
+                  "its matrix-free PCG uses GLOBAL inner products (globalReduceSum) and shared-DOF "
+                  "assembly under `system MPIDiagonal` (see LadrunoConsistentRefine.h).\n";
     }
 
     Ladruno::MassScalingReport rep =
@@ -209,7 +217,9 @@ int CentralDifferenceSMS::domainChanged(void)
         opserr << "CentralDifferenceSMS: dtTarget=" << dtTarget
                << " scaled " << rep.nScaled << "/" << rep.nElems
                << " elements; added mass " << (100.0 * frac) << "% of model mass"
-               << " (governing un-scaled dt_e=" << rep.minDtScaled << ")\n";
+               << "; PRE-SCALING dt_cr estimate=" << rep.minDtScaled
+               << " (governing un-scaled element step; AFTER scaling the run is stable "
+                  "at dt <= dtTarget=" << dtTarget << ")\n";
     }
     if (rep.nSelfReport > 0)
         opserr << "WARNING CentralDifferenceSMS: " << rep.nSelfReport

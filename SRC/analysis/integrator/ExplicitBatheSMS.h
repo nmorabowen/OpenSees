@@ -45,8 +45,10 @@
 // on every domainChanged and restored on teardown (no permanent Domain mutation).
 //
 // dt_e comes from the shared CriticalTimeStep kernel (self-report aware), via the
-// shared Ladruno::buildMassScaling util. -cflAbort/-recompute are rejected (ADR-36
-// MF-1: they re-run the un-augmented element eigensolve and would spuriously abort).
+// shared Ladruno::buildMassScaling util. -cflAbort/-recompute are DOWNGRADED to
+// report-only with SMS (ADR-36 MF-1, ADR-52 W1-E3a): their inherited path re-runs the
+// un-augmented element eigensolve, so rather than abort we keep the run and report the
+// pre-scaling dt_cr instead.
 //
 // Command:  integrator ExplicitBatheSMS $p $dtTarget <-maxAddedMass f>
 //                      <-lump rowsum|diagonal|hrz> <-tangent> <-verbose>

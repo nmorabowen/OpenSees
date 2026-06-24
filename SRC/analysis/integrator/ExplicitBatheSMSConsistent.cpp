@@ -102,9 +102,17 @@ void *OPS_ExplicitBatheSMSConsistent(void)
                             << " (use rowsum|diagonal|hrz; keeping diagonal)\n";
             }
         } else if (strcmp(arg, "-cflAbort") == 0 || strcmp(arg, "-recompute") == 0) {
-            opserr << "WARNING ExplicitBatheSMSConsistent - " << arg << " is not supported "
-                      "with mass scaling. Integrator NOT created.\n";
-            return 0;
+            // W1-E3a (ADR-52): do NOT refuse the run. Under SMS these flags cannot do
+            // their job -- the element-mass eigensolve can't see the scaling mass, so an
+            // abort/recompute on the un-augmented pencil would be wrong (MF-1). Instead of
+            // rejecting, DOWNGRADE to report-only: keep the integrator and force the
+            // pre-scaling dt_cr to be reported so the user can still sanity-check the
+            // stability margin.
+            opserr << "NOTE ExplicitBatheSMSConsistent - " << arg << " is downgraded to "
+                      "REPORT-ONLY under mass scaling (no abort/recompute on the "
+                      "un-augmented element pencil, MF-1); the pre-scaling dt_cr will be "
+                      "reported each domainChanged.\n";
+            verboseSMS = true;
         } else {
             opserr << "WARNING ExplicitBatheSMSConsistent - unknown option " << arg << " (ignored)\n";
         }
@@ -186,7 +194,9 @@ int ExplicitBatheSMSConsistent::domainChanged(void)
         opserr << "ExplicitBatheSMSConsistent: dtTarget=" << dtTarget
                << " scaled " << rep.nScaled << "/" << rep.nElems
                << " elements (Olovsson); added mass " << (100.0 * frac) << "% of model mass"
-               << " (governing un-scaled dt_e=" << rep.minDtScaled << ")\n";
+               << "; PRE-SCALING dt_cr estimate=" << rep.minDtScaled
+               << " (governing un-scaled element step; AFTER scaling the run is stable "
+                  "at dt <= dtTarget=" << dtTarget << ")\n";
     }
     if (rep.nSelfReport > 0)
         opserr << "WARNING ExplicitBatheSMSConsistent: " << rep.nSelfReport

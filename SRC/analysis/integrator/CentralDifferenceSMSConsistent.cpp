@@ -49,7 +49,10 @@ void *OPS_CentralDifferenceSMSConsistent(void)
     // Usage: integrator CentralDifferenceSMSConsistent $dtTarget <-maxAddedMass $frac>
     //                   <-verbose> <-lump rowsum|diagonal|hrz> <-tangent>
     //                   <-pcgTol $tol> <-pcgMaxIt $n>
-    // NOTE: -cflAbort / -recompute are REJECTED (same MF-1 rationale as the lumped SMS).
+    // NOTE: -cflAbort and -recompute are DOWNGRADED to report-only with SMS (ADR-36 MF-1,
+    // ADR-52 W1-E3a): their inherited path re-runs the element-mass eigensolve, which cannot
+    // see the scaling mass; rather than reject the run we keep the integrator and report the
+    // pre-scaling dt_cr instead.
     if (OPS_GetNumRemainingInputArgs() < 1) {
         opserr << "WARNING integrator CentralDifferenceSMSConsistent $dtTarget <options> "
                   "- needs a target time step\n";
@@ -104,11 +107,17 @@ void *OPS_CentralDifferenceSMSConsistent(void)
                             << " (use rowsum|diagonal|hrz; keeping diagonal)\n";
             }
         } else if (strcmp(arg, "-cflAbort") == 0 || strcmp(arg, "-recompute") == 0) {
-            opserr << "WARNING CentralDifferenceSMSConsistent - " << arg << " is not "
-                      "supported with mass scaling (it re-runs the element-mass eigensolve, "
-                      "which cannot see the scaling mass, and would spuriously abort). "
-                      "Integrator NOT created.\n";
-            return 0;
+            // W1-E3a (ADR-52): do NOT refuse the run. Under SMS these flags cannot do
+            // their job -- the element-mass eigensolve can't see the scaling mass, so an
+            // abort/recompute on the un-augmented pencil would be wrong (MF-1). Instead of
+            // rejecting, DOWNGRADE to report-only: keep the integrator and force the
+            // pre-scaling dt_cr to be reported so the user can still sanity-check the
+            // stability margin.
+            opserr << "NOTE CentralDifferenceSMSConsistent - " << arg << " is downgraded to "
+                      "REPORT-ONLY under mass scaling (no abort/recompute on the "
+                      "un-augmented element pencil, MF-1); the pre-scaling dt_cr will be "
+                      "reported each domainChanged.\n";
+            verboseSMS = true;
         } else {
             opserr << "WARNING CentralDifferenceSMSConsistent - unknown option " << arg
                    << " (ignored)\n";
@@ -201,7 +210,9 @@ int CentralDifferenceSMSConsistent::domainChanged(void)
         opserr << "CentralDifferenceSMSConsistent: dtTarget=" << dtTarget
                << " scaled " << rep.nScaled << "/" << rep.nElems
                << " elements (Olovsson); added mass " << (100.0 * frac) << "% of model mass"
-               << " (governing un-scaled dt_e=" << rep.minDtScaled << ")\n";
+               << "; PRE-SCALING dt_cr estimate=" << rep.minDtScaled
+               << " (governing un-scaled element step; AFTER scaling the run is stable "
+                  "at dt <= dtTarget=" << dtTarget << ")\n";
     }
     if (rep.nSelfReport > 0)
         opserr << "WARNING CentralDifferenceSMSConsistent: " << rep.nSelfReport
