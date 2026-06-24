@@ -41,7 +41,7 @@ tags:
   nodal mass (nodal `mass` + element-density mass — the handler pre-builds a per-node cache; the B1
   adversarial gate caught + fixed sourcing it from `Node::getMass()` alone). Explicit-only (dt via
   `dynamic_cast`→CDL); implicit + `-soft`-absent byte-identical. Battery **91→98/98**.
-- **B2 SHIPPED** ([#_pending] — backfill) — the LS-DYNA §26.15 **SOFT=2 segment-based explicit penalty**
+- **B2 SHIPPED** ([#406](https://github.com/nmorabowen/OpenSees/pull/406)) — the LS-DYNA §26.15 **SOFT=2 segment-based explicit penalty**
   (`contact … -mortar -soft <SOFSCL>`). The shipped B1 SOFT=1 is NODE-to-segment ⇒ it MISSES (1) partial
   facet overlap with no slave node in-bounds, (2) a node sliding off a master segment edge, (3) a
   T-intersection. B2 REUSES the shipped `LadrunoMortarKernel` clip→Gauss (D,M,g̃,n over the slave∩master
@@ -94,9 +94,10 @@ Workflow fix: recorded the `gh pr checks --watch` premature-exit trap in
 **Track B — NTS explicit-stability hardening** (the explicit-first lane; independent of mortar):
 - ~~**B1** — P4 `SOFT=1` Courant-stable penalty~~ **DONE [[#402](https://github.com/nmorabowen/OpenSees/pull/402)]** (see State above). Follow-ups:
   source m_eff from the assembled M for the parallel/distributed (row-sum lumped) SOE — serial-only
-  today; a mortar SOFT penalty (currently NTS-only); SOFT applied to the tangential `kt` (normal-only now).
+  today; SOFT applied to the tangential `kt` (normal-only now). (The mortar SOFT penalty B1 listed is
+  now delivered by **B2** below.)
 - ~~**B2** — P5 `SOFT=2` segment-based penalty (corner / edge / T-intersection robustness)~~ **DONE
-  [#_pending]** (see State above). Follow-ups: frictional / viscous SOFT=2; the perpendicular
+  [#406](https://github.com/nmorabowen/OpenSees/pull/406)** (see State above). Follow-ups: frictional / viscous SOFT=2; the perpendicular
   edge-edge case (cos_t→0 ⇒ the mortar clip degenerates) needs a dedicated edge-edge treatment.
 - ~~**B3** — P2b-2c consistent `∂n/∂u` normal tangent + Hertz~~ **DONE [#389]** (see State above).
   Follow-up spun off: a quantitative FE Hertz harness (contact-force recorder ✅ via
