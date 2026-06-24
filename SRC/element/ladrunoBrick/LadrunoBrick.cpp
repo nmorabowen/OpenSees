@@ -1018,6 +1018,16 @@ void  LadrunoBrick::formResidAndTangent(int tang_flag)
   if (useBbar)
     computeShapeBar(shpBar, Shape, dvol, volume);
 
+  // Ladruno (W2-E1): explicit bulk viscosity is active ONLY for -geom linear -- it
+  // contracts global-frame nodal velocities against reference-frame shape gradients,
+  // consistent only when the core frame == global (linear). For corot/finite the
+  // coeffs are stripped at parse (OPS_LadrunoBrick); this is the belt-and-suspenders
+  // runtime guard. L_e is element-constant -> hoisted out of the Gauss loop.
+  const bool bvActive = (bulkVisc_b1 > 0.0 || bulkVisc_b2 > 0.0)
+                        && theGeom != 0
+                        && theGeom->getMethodID() == SolidTransformation::METHOD_LINEAR;
+  const double bvLe = bvActive ? pow(volume, 1.0 / 3.0) : 0.0;
+
   for (int i = 0; i < numberGauss; i++) {
     for (int p = 0; p < nShape; p++)
       for (int q = 0; q < numberNodes; q++)
@@ -1035,13 +1045,15 @@ void  LadrunoBrick::formResidAndTangent(int tang_flag)
     // (artificial-pressure) stress s = c_bulk * edotV added to the normal stress
     // components, feeding the RESISTING FORCE only -- the reported stress
     // (getResponse "stresses", responseID==3) queries the material directly and is
-    // unaffected, since `stress` here is a local copy. Off (b1=b2=0) by default:
-    // the block is skipped entirely, so the default path is bit-identical.
+    // unaffected, since `stress` here is a local copy. Off (bvActive false: b1=b2=0
+    // OR not -geom linear) the block is skipped, so the default path is bit-identical.
     //   linear  (b1): c = b1*rho*c_d*L_e          -> damps ringing (both signs)
     //   quad    (b2): c += b2^2*rho*L_e^2*|edotV|  -> shock smearing (compression only)
-    // c_d=sqrt(D(0,0)/rho), L_e=vol^(1/3), edotV=trace(D)=sum_q grad N_q . v_q.
-    // Assumes -geom linear (the explicit-dynamics regime); velocities are global.
-    if (bulkVisc_b1 > 0.0 || bulkVisc_b2 > 0.0) {
+    // c_d from the INITIAL (elastic) tangent so the artificial wave speed does not
+    // drift as the material yields (Abaqus uses the elastic dilatational speed).
+    // L_e=vol^(1/3) is the geometric-mean edge length (a proxy; it overestimates the
+    // controlling dimension on sliver/high-aspect elements). edotV=trace(D).
+    if (bvActive) {
       double edotV = 0.0;                       // volumetric strain rate, trace(D)
       for (int q = 0; q < numberNodes; q++) {
         const Vector &vq = nodePointers[q]->getTrialVel();
@@ -1050,14 +1062,13 @@ void  LadrunoBrick::formResidAndTangent(int tang_flag)
       if (edotV != 0.0) {
         double rhoBV = materialPointers[i]->getRho();
         if (rhoBV > 0.0) {
-          const Matrix &ddBV = materialPointers[i]->getTangent();
-          double cd = sqrt(fabs(ddBV(0,0)) / rhoBV);   // dilatational wave speed
-          double Le = pow(volume, 1.0/3.0);             // characteristic length
-          double cbulk = bulkVisc_b1 * rhoBV * cd * Le; // linear: both signs
-          if (edotV < 0.0)                              // quadratic: compression only
-            cbulk += bulkVisc_b2 * bulkVisc_b2 * rhoBV * Le * Le * (-edotV);
-          double svisc = cbulk * edotV;                 // dissipative: s*edotV = c*edotV^2 >= 0
-          for (int p = 0; p < 3; p++)                   // normal comps (xx,yy,zz)
+          const Matrix &ddBV = materialPointers[i]->getInitialTangent();
+          double cd = sqrt(fabs(ddBV(0,0)) / rhoBV);        // elastic dilatational speed
+          double cbulk = bulkVisc_b1 * rhoBV * cd * bvLe;   // linear: both signs
+          if (edotV < 0.0)                                  // quadratic: compression only
+            cbulk += bulkVisc_b2 * bulkVisc_b2 * rhoBV * bvLe * bvLe * (-edotV);
+          double svisc = cbulk * edotV;                     // dissipative: s*edotV = c*edotV^2 >= 0
+          for (int p = 0; p < 3; p++)                       // normal comps (xx,yy,zz)
             stress(p) += svisc;
         }
       }

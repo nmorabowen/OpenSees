@@ -238,6 +238,26 @@ void *OPS_LadrunoBrick()
     theDamping = 0;
   }
 
+  // Ladruno (W2-E1): explicit bulk viscosity is wired only through the std/bbar
+  // kernel and is frame-consistent only for -geom linear. Strip the coeffs (with a
+  // diagnostic) for any other formulation/geometry so Print stays honest and the run
+  // is not silently un-damped. Mirrors the -damp guard above.
+  if ((bvB1 > 0.0 || bvB2 > 0.0) &&
+      formulation != LadrunoBrick::Formulation::STD &&
+      formulation != LadrunoBrick::Formulation::BBAR) {
+    opserr << "WARNING LadrunoBrick " << idata[0]
+           << ": -bulkViscosity is only supported with -formulation std|bbar; "
+              "ignoring it for this formulation\n";
+    bvB1 = bvB2 = 0.0;
+  }
+  if ((bvB1 > 0.0 || bvB2 > 0.0) &&
+      geomMethodID != SolidTransformation::METHOD_LINEAR) {
+    opserr << "WARNING LadrunoBrick " << idata[0]
+           << ": -bulkViscosity is only supported with -geom linear (global-frame "
+              "velocities are frame-consistent only then); ignoring it\n";
+    bvB1 = bvB2 = 0.0;
+  }
+
   // -geom finite (v3): updated-Lagrangian. std = plain F; bbar = F-bar (dSNPO
   // eq 15.5, the volumetric-locking cure for near-incompressible response).
   // uri/ssp/eas + finite are reserved (enhanced-F finite EAS is ADR 19's deferred
