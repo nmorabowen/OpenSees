@@ -32,7 +32,7 @@ tags:
   SILENTLY; now it emits the `PlainHandler`-style warning pointing at `DisplacementControl` (which
   DOES drive a DOF via the load factor with this handler). Not a regression; full imposed-SP support
   (a Transformation-style contact handler) is deferred — no consumer.
-- **B1 SHIPPED** (#_pending) — the LS-DYNA §26.15 **SOFT=1 Courant-stable explicit penalty**
+- **B1 SHIPPED** ([#402](https://github.com/nmorabowen/OpenSees/pull/402)) — the LS-DYNA §26.15 **SOFT=1 Courant-stable explicit penalty**
   (`contact … -soft <SOFSCL>` / `contactPlane … -soft <SOFSCL>`, NTS lane). Under explicit
   `CentralDifferenceLadruno` the contact kₙ is replaced each step by `k_soft = SOFSCL·4·m_eff/dt²`
   (SOFSCL default 0.10) so the contact's own `ω·dt = 2√SOFSCL ≤ 2` ⇒ explicit dt_cr is NEVER
@@ -53,7 +53,7 @@ tags:
 | #387 / #388 | **D2.2 mortar viscous** — extends `-visc` to the mortar contact ⇒ **D2 COMPLETE**. |
 | #389 / #390 | **B3 consistent ∂n/∂u normal tangent** (`-geomtan`) + `ladrunoContactForce` query + Hertz benchmark (#390 = ledger ref backfill). Closes the NTS geometric-tangent deferral; battery 83→91/91. |
 | #392 | **Imposed-disp warning** — `LadrunoContact` now warns (was silent) on a non-homogeneous SP, points at `DisplacementControl` (B3 follow-up). |
-| #_pending | **B1 SOFT=1 Courant-stable explicit penalty** — `-soft <SOFSCL>` (NTS); explicit dt_cr no longer penalty-throttled. Adversarial gate fixed a MAJOR (m_eff must use the assembled, not nodal-only, mass). |
+| [#402](https://github.com/nmorabowen/OpenSees/pull/402) | **B1 SOFT=1 Courant-stable explicit penalty** — `-soft <SOFSCL>` (NTS); explicit dt_cr no longer penalty-throttled. Adversarial gate fixed a MAJOR (m_eff must use the assembled, not nodal-only, mass). |
 
 Workflow fix: recorded the `gh pr checks --watch` premature-exit trap in
 [[../Ladruno_internal/WORKFLOW_GOTCHAS]] §3 (verify the actual Zone-A run by id, not the watch exit).
@@ -77,7 +77,7 @@ Workflow fix: recorded the `gh pr checks --watch` premature-exit trap in
 ### 📋 Remaining — COMMITTED (scoped, oracle-first ready)
 
 **Track B — NTS explicit-stability hardening** (the explicit-first lane; independent of mortar):
-- ~~**B1** — P4 `SOFT=1` Courant-stable penalty~~ **DONE [#_pending]** (see State above). Follow-ups:
+- ~~**B1** — P4 `SOFT=1` Courant-stable penalty~~ **DONE [[#402](https://github.com/nmorabowen/OpenSees/pull/402)]** (see State above). Follow-ups:
   source m_eff from the assembled M for the parallel/distributed (row-sum lumped) SOE — serial-only
   today; a mortar SOFT penalty (currently NTS-only); SOFT applied to the tangential `kt` (normal-only now).
 - **B2** — P5 `SOFT=2` segment-based penalty (corner / edge / T-intersection robustness). **← next.**
