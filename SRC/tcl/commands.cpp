@@ -249,6 +249,7 @@ extern void *OPS_CollocationHSIncrLimit(void);
 extern void *OPS_CollocationHSIncrReduct(void);
 extern void *OPS_GeneralizedAlpha(void);
 extern void *OPS_HHT(void);
+extern void *OPS_LadrunoHHT(void);   // Ladruno (ADR-52 W3-I2): sensitivity/DDM HHT
 extern void *OPS_HHT_TP(void);
 extern void *OPS_HHTExplicit(void);
 extern void *OPS_HHTExplicit_TP(void);
@@ -5367,11 +5368,18 @@ specifyIntegrator(ClientData clientData, Tcl_Interp *interp, int argc,
   
   else if (strcmp(argv[1],"HHT") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_HHT();
-    
+
     if (theTransientAnalysis != 0)
       theTransientAnalysis->setIntegrator(*theTransientIntegrator);
   }
-  
+
+  else if (strcmp(argv[1],"LadrunoHHT") == 0) {   // Ladruno (ADR-52 W3-I2): sensitivity/DDM HHT
+    theTransientIntegrator = (TransientIntegrator *)OPS_LadrunoHHT();
+
+    if (theTransientAnalysis != 0)
+      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+  }
+
   else if (strcmp(argv[1],"HHT_TP") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_HHT_TP();
     

@@ -44,6 +44,7 @@ LadrunoKinematicCoupling — RBE2 rigid kinematic coupling (selectable -dof, tra
 LadrunoArcLength — adaptive arc-length radius (Ramm desired-iter)
 LadrunoDynamicRelaxation — quasi-static DR (Gershgorin mass + kinetic damping)
 LadrunoIndirectControl — indirect/CMOD control (snap-back tracking)
+LadrunoHHT — sensitivity/DDM HHT (reliability/fragility/FORM on damped α)
 LadrunoStabilizedUnbalance — true-equilibrium test for -stabilize
 LadrunoProjection — momentum-conserving explicit constraint projection (equalDOF/rigidLink/diaphragm)
 LadrunoContact — NTS + mortar/ALM contact (penalty + commit-cycle Uzawa, Coulomb/Tresca friction, mesh-tying, viscous stabilization, consistent dn/du normal tangent, SOFT=1 + SOFT=2 Courant-stable explicit penalty)

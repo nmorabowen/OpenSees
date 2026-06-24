@@ -451,6 +451,7 @@ using namespace OpenSees::Hash::literals;
 #include "NewmarkExplicit.h"
 #include "ExplicitBathe.h"
 #include "ExplicitBatheLNVD.h"
+#include "LadrunoHHT.h"                 // Ladruno (ADR-52 W3-I2): sensitivity/DDM HHT
 #include "CentralDifferenceLadruno.h"
 #include "CentralDifferenceSMS.h"       // Ladruno
 #include "CentralDifferenceSMSConsistent.h"   // Ladruno
@@ -1878,6 +1879,9 @@ TclPackageClassBroker::getNewTransientIntegrator(int classTag)
   case INTEGRATOR_TAGS_HHT:
     return new HHT();
 
+  case INTEGRATOR_TAGS_LadrunoHHT:   // Ladruno (ADR-52 W3-I2): sensitivity/DDM HHT
+    return new LadrunoHHT(); // must recvSelf
+
   case INTEGRATOR_TAGS_HHT_TP:
     return new HHT_TP();
 
@@ -1973,6 +1977,9 @@ TclPackageClassBroker::getNewIncrementalIntegrator(int classTag)
 
   case INTEGRATOR_TAGS_Newmark:
     return new Newmark();
+
+  case INTEGRATOR_TAGS_LadrunoHHT:   // Ladruno (ADR-52 W3-I2): sensitivity/DDM HHT
+    return new LadrunoHHT(); // must recvSelf
 
 #ifdef _PARALLEL_PROCESSING
   case INTEGRATOR_TAGS_DistributedDisplacementControl:
