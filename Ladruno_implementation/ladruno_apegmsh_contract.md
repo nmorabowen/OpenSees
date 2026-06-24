@@ -341,7 +341,18 @@ control). **Full grammar, theory, responses, and use cases: [[LadrunoEmbeddedReb
   (`ASDEmbeddedNodeElement` stays a valid **2D-native fallback** where no fork solid host is
   in play, but it is implicit-only and tri/tet-only.)
 
-### General node-to-host embedment (`LadrunoEmbeddedNode`) — **`g.embed` generator TO IMPLEMENT on apeGmsh side**
+### General node-to-host embedment (`LadrunoEmbeddedNode`) — **`g.embed` generator SHIPPED in apeGmsh (apeGmsh#721)**
+
+> **Status (2026-06-24):** `g.embed(host=, nodes=, k=, enforce=, explicit=, staged=)` is
+> **shipped** ([apeGmsh#721], stacked on the backend-resolver/harness PR #720) — the
+> isotropic sibling of `g.reinforce`, reusing the same guarded inverse map. It emits the
+> tag-free `nHost … -shape …` form (numeric `-k`, U-only, g0 birth, `-enforce al`,
+> `-bipenalty -dtcr`; experimental `-rot`/`-pressure`/`-corot` gated off; `-k auto`/`-wcap`
+> deferred with the `-xi` host-query path, same as reinforce). Covered by a `ladruno_fork`
+> live test (LadrunoEmbeddedNode 33006 loads on the fork). The spec below is the original
+> pre-implementation contract, kept for provenance. **Note** the shipped form differs from
+> the idealized `-host -xi -k auto` sketch below — it mirrors reinforce's proven `-shape`
+> path; `-k auto` is a follow-up.
 
 **OpenSees side.** A penalty **coupling** element (ELE **33006**) — the **isotropic** sibling
 of `LadrunoEmbeddedRebar` over the same kernel — that ties one constrained node to a host
