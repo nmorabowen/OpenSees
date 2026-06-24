@@ -1,0 +1,442 @@
+---
+title: "ADR 58 — RigidBody DomainComponent + SO(3) integrator (LS-DYNA / Abaqus aligned)"
+project: Ladruno
+type: ADR / scoping (no code)
+status: scoped — no code; decision-capture for an explicit-only 6-DOF rigid-body object
+related:
+  - "[[Ladruno_explicit_roadmap]]"          # §5.5 (this ADR promotes it) + §5.6 joints + Q1 architecture
+  - "[[24_ladruno_coupling_constraints_adr]]" # CNRB-as-constraint; the deferred condensation integrator
+  - "[[29_ladruno_kinematic_coupling_rbe2_adr]]" # RBE2 penalty rigid tie (the constraint cousin)
+  - "[[51_ladruno_element_removal_adr]]"      # the debris "no home for a free rigid body" gap (H6 FALSIFIED seam)
+  - "[[48_ladruno_contact_capstone_adr]]"
+  - "[[LEDGER_implementations]]"
+tags:
+  - adr
+  - rigid-body
+  - domain-component
+  - so3-integrator
+  - joints
+  - explicit-dynamics
+  - debris
+  - ls-dyna
+  - abaqus
+updated: 2026-06-24
+review: "v2 — strengthened after a 6-lens adversarial review (architecture / SO(3) theory / explicit-mass / citation-fidelity / contact-debris / red-team completeness). Source-verified findings folded into D1–D3, D5; added D7–D9; corrected the slave-map, citations, and P2 gate."
+---
+
+# ADR 58 — RigidBody DomainComponent + SO(3) integrator
+
+**Status:** scoped, **no code**. This ADR promotes roadmap item **§5.5** of
+[[Ladruno_explicit_roadmap]] to a numbered decision-capture. It fixes the
+**architecture** (what kind of object a rigid body is), the **rotational-integration
+family**, the **node-slaving / mass topology**, and the **user-facing I/O surfaces
+(loads, ICs, recorders)** — so that *when* a driver appears (rocking foundations,
+base isolation, multi-body, or AEM debris) the build is a focused extension rather
+than a fresh design. It does **not** commit to a build, it scopes **explicit-only
+v1**, and it does **not** block the edge-edge contact branch in flight
+(`feat/adr57-e1-router`).
+
+> [!info] Four things called "rigid" — keep them apart
+> 1. **`rigidLink` / `rigidDiaphragm`** — `MP_Constraint` *factories* that relate
+>    DOFs of **existing** nodes. No object owns rotational dynamics.
+> 2. **CNRB-as-constraint** ([[24_ladruno_coupling_constraints_adr|ADR 24]] §2.1,
+>    [[29_ladruno_kinematic_coupling_rbe2_adr|ADR 29 / RBE2]]) — a reference node
+>    *rigidly drives* a slave set; shipped in the fork as a **penalty** tie. Rides
+>    on existing nodal DOFs.
+> 3. **`RigidBody` object (THIS ADR)** — a DOF-owning object that integrates its
+>    **own SO(3) rotational dynamics** and kinematically slaves the nodes of its
+>    part. **Closest in-tree precedent: `Joint2D`/`Joint3D`** — an `Element` that
+>    creates a **private internal `Node`** + internal `MP_Constraint`s to slave
+>    external nodes (`SRC/element/joint/Joint3D.cpp:320-327,466`). RigidBody is
+>    *that pattern + finite-rotation SO(3) DOFs on the master + LS-DYNA-style mass
+>    condensation* — **not** a thing with "no analogue."
+> 4. **rigid SURFACE** — a *faceted* boundary rigidly attached to a body frame and
+>    swept to the current config each step. This is the only thing the contact
+>    narrow phase can consume (it reads node coordinates via `getCrds()`); a
+>    point-mass `RigidBody` has **no faces**. The engine's existing `RigidPlane` is
+>    a **static** analytic plane, not a moving rigid master. **A rigid surface is a
+>    distinct, unscoped concept** handed off to the AEM/debris ADR (see D5).
+
+---
+
+## 1. Context & problem
+
+OpenSees has no object that *owns 6 DOFs and integrates rotational dynamics*.
+`rigidLink` / `rigidDiaphragm` are `MP_Constraint` factories; the fork's RBE2/RBE3
+(ADR 28/29) are still **constraints among nodal DOFs**, not a rigid-body *object*.
+
+> [!warning] Honest framing (corrected in v2)
+> An earlier draft claimed OpenSees has "no analogue." That is **false** and was
+> removed. `Joint2D`/`Joint3D` already create a private internal `Node` and slave a
+> node set through internal `MP_Constraint`s; `Subdomain : public Element, public
+> Domain` is an Element that owns internal DOFs; `Pressure_Constraint : public
+> DomainComponent` is already a *new top-level kind* with a bounded Domain quartet.
+> The genuine differentiator for a rigid body is **(i) finite-rotation SO(3) DOFs
+> on the master** and **(ii) LS-DYNA-style mass condensation that keeps the
+> *translational* system diagonal** — not the existence of a node-owning master.
+
+That leaves a class of problems either un-modelable or modeled by proxy:
+
+- **Foundation rocking / uplift** — today a zero-length rotational spring at a base
+  node, which throws away the true tipping kinematics and the *moving* contact
+  point. A rigid body + toe contact recovers the actual rocking response (the
+  headline use case — and the reason **Housner's analytic rocking block** is a
+  named acceptance benchmark in §7).
+- **Base isolation** — a rigid superstructure on a deformable foundation separated
+  by the isolator; the superstructure should not be thousands of wasted DOFs.
+- **Rigid pile caps / footings / anchor & weight blocks.**
+- **Multi-body machine-foundation systems.**
+
+And two structural reasons it is *foundational*, not just one more feature:
+
+- **It gates the joint family (§5.6).** Joints are constraints **between** rigid
+  bodies — the abstraction has to exist first.
+- **It is the missing "home/owner" for contact debris** ([[51_ladruno_element_removal_adr|ADR 51]]).
+  But see D5 / §6 — ADR 51's H6 gate *already falsified* the full debris-handoff
+  seam; a RigidBody supplies the home/owner, **not** the contact "consumer."
+
+---
+
+## 2. Reference-code alignment
+
+| Capability | LS-DYNA | Abaqus | Nastran | OpenSees today | Gap |
+|---|---|---|---|---|---|
+| **Rigid-body object** (owns 6 DOFs, own inertia, own rotational integrator) | `*MAT_RIGID` part + CNRB (Theory, Rigid-Body chapter) | `*RIGID BODY` (ref node + `R3D*`/`RB*` elements; pin vs tie nodes; analytical rigid surfaces) | **RBE2/RBAR** (rigid MPC *elements*; **no** dynamic rigid-body object) | `rigidLink`/`rigidDiaphragm`; **`Joint2D/3D`** (internal-node master) | SO(3) master + condensation |
+| **Node-set rigidified** | `*CONSTRAINED_NODAL_RIGID_BODY` (CNRB) | `*COUPLING, kinematic` | RBE2 | RBE2 penalty (ADR 29) | general 3D 6-DOF object |
+| **Joints between bodies** | `*CONSTRAINED_JOINT_*` | connectors / `*MPC` | RJOINT/CBUSH | `zeroLength` + piecemeal | §5.6 (gated on this) |
+| **Free debris body** | eroding contact → free rigid fragment | — | — | **— (none)** | ADR 51 (seam falsified) |
+
+> [!caution] LS-DYNA citation precision (corrected in v2)
+> The LS-DYNA Theory Manual is **not** in any in-repo / Seafile reference library,
+> so equation/page numbers cannot be verified here. v1 cited `§25, pp.511–521`,
+> `eqs 25.1–25.4 / 25.5–25.8 / 25.17–25.18 / 25.30` with false precision (and
+> ADR-24 disagrees on the joint range, `25.19–25.30`). **Treat these as
+> release-pinned TODOs:** cite a specific LS-DYNA Theory Manual **release**
+> (R7/R11/R13 renumber chapters) and re-verify each equation against that PDF at
+> P1, or attach page images to the implementation log. Do **not** let the joint
+> ADR (§5.6) inherit the penalty-cap formula `k ≤ (2·TSSF/Δt·Ω_max)²` without an
+> independent units/derivation check.
+
+### 2.1 The load-bearing reference fact (verified against ADR-24, not invented)
+
+LS-DYNA integrates a rigid body as a **parallel subsystem**, condensing the
+slaved nodes' masses/inertias **to the body center of mass** so the global mass
+stays manageable — the same insight ADR-24 §2.2 reached: *"transformation-densifies-
+mass is an OpenSees artifact, not a law; LS-DYNA keeps it diagonal by dedicated,
+constraint-specific lumping."* **Crucial v2 caveat (see D3):** that "diagonal"
+lesson is about the **translational** slave masses. It does **not** license a
+diagonal *rotational* inertia — a general 3×3 inertia tensor is dense and cannot
+pass through `DiagonalSOE`. Joints (§5.6) are penalty constraints *between* bodies,
+with the stiffness **capped** so they never control the step.
+
+---
+
+## 3. Goals / non-goals
+
+**Goals.**
+- A DOF-owning **`RigidBody`** (CoM translation + finite-rotation orientation), a
+  mass + 3×3 inertia tensor, and an **explicit, momentum-conserving SO(3)
+  integrator** (default; see D2 for the open scheme choice).
+- **Explicit-only v1.** (v1's "works implicitly" goal from the draft is **removed**
+  — it contradicted the parked implicit-tangent question; implicit is a recorded
+  follow-up. See D2/§6.)
+- **Explicit-safe mass topology**: the **translational** CoM DOFs keep a diagonal
+  mass (DiagonalSOE-valid); the **rotational** state is integrated in the
+  body/principal frame in a **side channel** (D3). Slaved nodes are kinematic
+  followers contributing **no free DOFs**, with a **force/moment gather** back to
+  the CoM (D3).
+- The finite-rotation slave map is the **exact** form
+  **`u_i = u_R + (R − I)·r_i`** (the linearized `u_R + θ_R×r_i` was a v1 error — see
+  the correction note in D3 / §6).
+- A clean seam for the **joint family (§5.6)** and a **non-precluding** hook for
+  contact debris (D5).
+- The **user-facing surfaces a rigid body actually needs to run**: node-to-body
+  assignment (D7), loads/gravity/applied-moment + initial conditions (D8), and
+  recorder/output + restart (D9). Without these, P1/P2 cannot even be set up.
+
+**Non-goals (this ADR).**
+- The **joint catalog** (`*CONSTRAINED_JOINT_*`) — roadmap §5.6, a separate ADR.
+- **Implicit operation** (finite-rotation tangent) — recorded follow-up, not v1.
+- **Contact wiring / a moving rigid-SURFACE / rigid-vs-rigid contact / the
+  broad-phase rewrite** — explicitly fenced out; belongs to the AEM/debris ADR
+  (D5, and ADR-51 `Q-BUCKETSORT-REWRITE`).
+- **Deformable→rigid switching mid-analysis** (`*DEFORMABLE_TO_RIGID`); **flexible
+  multibody / superelement reduction**; **follower (configuration-dependent)
+  loads**; **sensitivity/DDM**.
+
+---
+
+## 4. Decisions
+
+### D1 — `RigidBody` is a standalone `DomainComponent` — argued honestly against the in-tree precedents
+The roadmap chose to pay the architectural cost upfront (Q1, lines 648–669). v2
+keeps the decision but **grounds it against what actually ships**, because the v1
+"no analogue / biggest-risk" framing was false:
+
+- **Precedents that DO exist** (so this is bounded, not open-ended surgery):
+  - `Joint2D/Joint3D` — `Element` + **private internal `Node`** + internal
+    `MP_Constraint`s (`Joint3D.cpp:320-327,466`). The node-owning-master pattern.
+  - `Subdomain : public Element, public Domain` (`Subdomain.h:58`) — an Element
+    that owns internal DOFs; element-iterating paths tolerate it today.
+  - `Pressure_Constraint : public DomainComponent` (`Pressure_Constraint.h:58`) —
+    a **new top-level kind already in `Domain`**, whose entire footprint is a
+    bounded quartet (`add/remove/get/getPCs` + a `TaggedObjectStorage` + an iter
+    class, `Domain.{h,cpp}`). This is the copy-paste template for "a new kind."
+- **The real differentiator** (the honest reason for a dedicated object, not
+  "skip-debt"): finite-rotation **SO(3) DOFs on the master** + the **mass
+  condensation** that keeps the translational system diagonal. The skip-debt
+  argument is a wash (a new kind also needs its *own* recorder/energy/parallel
+  paths), so it is **not** the load-bearing reason.
+- **"DOF ownership without a Node" is resolved, not a headline risk.** DOFs enter
+  the system only through `DOF_Group`s; a node-less `DOF_Group(int tag, int ndof)`
+  already exists (Lagrange multipliers), and the **Joint3D private-internal-`Node`
+  route** makes the numberer/`DOF_Group`/recorder/IC machinery work **unmodified**.
+  **Decision: v1 carries a private internal `Node` for the 6 CoM DOFs.** The
+  residual question is narrower — how SO(3) orientation is carried *alongside* that
+  node's 3 rotational DOFs (the D2 problem), not whether DOFs can exist.
+- **The genuinely new cost** (over `Pressure_Constraint`, which owns no equations):
+  DOF/equation participation + a **`FEM_ObjectBroker` construction arm** for
+  parallel/database `recvSelf` (serial-only v1 — see §6).
+
+> [!decision] Recorded alternative + falsifiable kill-criterion (carried forward from roadmap Q1)
+> Alternative **(b): a zero-stiffness `Element`** (`getResistingForce`/
+> `getTangentStiff` → 0, internal SO(3) state) — the Joint pattern taken further.
+> **P1 gate (roadmap line 669):** if the DomainComponent scaffolding touches **> ~15
+> files in `SRC/` outside `domain/rigid/`**, fall back to (b). D1 is a
+> decision-with-fallback, not an assertion.
+
+### D2 — Rotational integration: **explicit, momentum-conserving exp-map** (open scheme), reuse the in-tree SO(3) kernel
+v2 demotes this from "strategy fixed" to an **open decision with a default**,
+because the two scheme families the draft named together are mutually exclusive:
+
+- **The body-frame EOM** (write it down — the gyroscopic term is the whole
+  difficulty): **`I_body·ω̇ + ω × (I_body·ω) = m_body`**. The `ω×Iω` nonlinearity
+  is exactly what a naive central-difference split gets wrong.
+- **Impossibility note:** no scheme is simultaneously *explicit*,
+  *unconditionally stable*, and *energy-AND-momentum conserving*. The D3
+  diagonal-mass / explicit mandate therefore **forces the momentum-conserving
+  family** and **accepts bounded energy drift** (→0 as Δt→0).
+  - **Default (v1): explicit exponential-map / Verlet on SO(3)** (Krysl & Endres
+    2005) — conserves linear + angular momentum exactly, energy not conserved,
+    conditionally stable.
+  - **Energy-momentum (Simo–Wong 1991 / Betsch–Steinmann 2001) is implicit** — a
+    per-step nonlinear solve. **Out of scope** for the explicit path; an
+    implicit-track follow-up only.
+- **Reuse the fork's own SO(3) toolkit** (the single most effort-relevant fact,
+  omitted in v1): `SRC/matrix/GroupSO3.h` (`ExpSO3`, `LogSO3`, `TExpSO3`,
+  `dExpSO3`, Rodrigues coefficients with small-angle fallbacks) and
+  `SRC/matrix/Versor.h` (unit quaternion, `conj_mult`/`normalize`), already used by
+  the corotational frame elements (Perez–Filippou 2024). Carry orientation as a
+  `Versor`; advance via `ExpSO3`/`TExpSO3`; relative rotations via
+  `Versor::conj_mult`. **This lowers the SO(3)-algebra portion of the "L" effort to
+  reuse, not new code.**
+
+### D3 — Mass topology: translational diagonal (DiagonalSOE-valid) **vs** rotational dense (body-frame side channel)
+This is the **blocker correction** in v2 — the draft's "global mass stays diagonal /
+DiagonalSOE stays valid" is **false for a general 3D body**, verified against the
+solver:
+
+- A rigid body's rotational sub-block **is** the inertia tensor, **dense** in the
+  global frame unless aligned to principal axes — and D2 rotates it every step.
+  `DiagonalSOE::addA` reads only `m(i,i)` and either **row-sums** off-diagonals onto
+  the diagonal (`lumpDiagonal`) or **drops** them (`DiagonalSOE.cpp:194-205`). So
+  `Ixy/Ixz/Iyz` — the gyroscopic/Euler coupling the Dzhanibekov gate exists to test
+  — **cannot survive** a `DiagonalSOE`.
+- **Decision — split the topology:**
+  - The **3 translational CoM DOFs** keep a **diagonal** lumped mass and go through
+    the global (Diagonal)SOE. *This* is where the ADR-24 "keep it diagonal" lesson
+    applies, and it is true.
+  - The **3 rotational DOFs** carry a dense, configuration-dependent inertia and are
+    integrated in the **body/principal frame** (constant **diagonal `I_body`**, the
+    3 principal moments) via the **exp-map side channel** — *not* fed to the global
+    `DiagonalSOE`. `R·I_body·Rᵀ` is used only for spatial-frame output/coupling.
+    This is the **"side-channel handler in the explicit step"** the roadmap already
+    floated (line 342), now committed.
+- **`dt_cr` (reworded — it was crediting condensation for the wrong reason):** the
+  body contributes **no element stiffness**, so it **never appears in the CFL
+  eigensolve** (`CriticalTimeStep` iterates `getElements()` only). The real `dt_cr`
+  coupling enters through **joint/contact penalties** — carry the LS-DYNA penalty
+  **cap** into the joint ADR and the D5 hook, else a stiff joint silently collapses
+  `dt_cr`.
+- **Force/moment gather (the missing dual of slaving):** every external load,
+  gravity, damping, and contact/joint reaction on a slaved node must map to the 6
+  CoM equations via the transpose of the slaving map — **`Σ f_i`** (force),
+  **`Σ r_i × f_i`** (moment). **P3 acceptance gate:** a slaved-node point load
+  produces the correct CoM moment.
+- **SMS interaction (was absent):** the body is invisible to the element-based SMS
+  integrators (`CentralDifferenceSMS`, `LadrunoMassScaling`) and its slaved nodes
+  are the existing **slave-node hazard** the mass-scaler already guards. State that
+  the body neither benefits from nor interferes with SMS, and its CoM DOFs must not
+  gate `dt_target`.
+
+### D4 — The object is canonical; **CNRB / RBE2 stay as the cheap penalty front-end**
+`RigidBody` is the source of truth. A "make these nodes rigid" spelling (CNRB)
+can be **sugar** that builds a `RigidBody` from a node selector (D7) + computes
+CoM/inertia by condensation. The **penalty RBE2 tie (ADR 29)** stays as the
+*no-core-surgery* alternative for users who only need a node set to *move* rigidly;
+the two coexist (penalty tie = cheap, rides existing nodes; `RigidBody` = exact,
+own dynamics, joint-ready).
+
+### D5 — Contact debris: a **non-binding API-shape constraint only** (reconciled with ADR-51)
+v2 reduces this from a forward design hook to an API non-preclusion clause, because
+**ADR-51 H6 already adversarially *falsified* the debris-handoff seam**
+(`51_…:295-308`: *"No home: `LadrunoContactDomain` has no struct/API for a free
+rigid body"* → de-scoped to an inert stub or cut):
+
+- A `RigidBody` legitimately supplies the debris **home/owner** (it owns +
+  integrates the motion) but **not** the **consumer**: the contact engine consumes
+  pre-declared **meshed node-segment surfaces** (it reads `getCrds()` off real
+  Domain nodes); a 6-DOF point-mass body has **no faces**, and its slaved nodes
+  contribute **no free DOFs** for a contact adapter to bind to. `RigidPlane` is a
+  **static** analytic plane, not a moving rigid master.
+- **Decision:** the `RigidBody` API must expose only its **body-frame transform
+  (CoM + orientation + inertia)** so a *future* rigid-**SURFACE** / debris layer can
+  be built on top **without re-opening this object**. **No** contact wiring, **no**
+  surface, **no** broad-phase visibility is designed or promised here.
+- **Fenced out explicitly:** a moving-rigid-body master narrow phase, rigid-vs-rigid
+  contact, and the broad-phase BVH/octree rewrite — all belong to the AEM/pillar-2
+  ADR (`ADR-51 Q-BUCKETSORT-REWRITE`).
+
+### D6 — Behind its own CMake flag, off-by-default
+Per fork convention (roadmap line ~1022): `RigidBody` compiles behind a dedicated
+`Conf.cmake` flag, off by default; flag-off byte-identical.
+
+### D7 — Node-to-body assignment API + over-constrained-node rule (NEW)
+The first thing a user touches, absent in the draft. **Decision:** v1 takes an
+**explicit node-tag list** (region/part-tag as later sugar). **Rule:** a node already
+in another `RigidBody`, an `equalDOF`/RBE2, or a contact `MP_Constraint` is
+**rejected** at `setDomain` with a clear error (no silent precedence) — this is the
+conflict the constraint handler would otherwise resolve wrongly.
+
+### D8 — Loads + initial conditions on a body (NEW)
+No existing load class targets a non-Node/non-Element DOF owner; the P1 "ballistic
+under gravity" and P2 "free-spin" gates are otherwise untestable. **Decision (via the
+D1 private internal `Node`, which makes these mostly free):**
+- **Gravity/self-weight** derived from the condensed CoM mass; **applied
+  force/moment** at the CoM (reuse the `NodalLoad` path on the internal node).
+- **Initial conditions:** initial CoM velocity **and initial angular velocity**
+  (required to set up the Dzhanibekov gate) **and** initial orientation, injected
+  through the internal node's `DOF_Group` IC channel.
+- **Follower (configuration-dependent) loads: deferred** (non-goal).
+
+### D9 — Recorder / output + restart (NEW)
+`Node`/`Element` recorders bind to fixed kinds; the P2 verification *requires*
+recording orientation and angular momentum. **Decision:** expose a response menu —
+CoM `{disp, vel, accel}`, **orientation as a quaternion** (Euler as a derived
+convenience), and **angular velocity / momentum** — readable by `NodeRecorder`
+pointed at the private internal node (free via D1), with a thin `RigidBody` response
+alias. **Restart:** serialize the orientation quaternion and **renormalize on
+`recvSelf`**.
+
+---
+
+## 5. What it unlocks (payoff summary)
+
+- **Modeling capability not correctly doable today**: foundation rocking/uplift with
+  the true moving contact point (Housner regime), base isolation (rigid
+  superstructure), rigid pile caps / footings / anchor blocks, multi-body machine
+  foundations.
+- **The joint family (§5.6)** — revolute / spherical / cylindrical / planar /
+  universal / translational, with the OpenSees constraint-handler swap.
+- **The debris home/owner for AEM** — a separated element can become a free rigid
+  body that *owns and integrates* its motion (the *consumer*/contact side remains
+  the AEM ADR's problem, D5).
+- **Performance** (secondary): stiff parts collapse from a full mesh to 6 DOFs.
+
+Not on the critical path for the edge-edge contact branch — this is the *next
+foundation*, not a current blocker.
+
+---
+
+## 6. Resolved decisions & remaining open questions
+
+**Resolved in v2** (were open in the draft): DOF ownership → **private internal
+`Node`** (D1); implicit-vs-explicit → **explicit-only v1** (D2/§3); mass topology →
+**translational-diagonal + rotational side-channel** (D3); D5 → **API-shape
+constraint only**.
+
+> [!question] SO(3) scheme tuning (D2)
+> Explicit exp-map/Verlet (Krysl–Endres) is the default, but the exact variant,
+> the orientation-storage cadence (`Versor::normalize` frequency), and `LogSO3`
+> degeneracy-band handling near π need a prototype + the §7 P2 gate before lock-in.
+
+> [!question] Integration-loop hook
+> The explicit integrators apply **one** central-difference formula over the flat
+> DOF vector; the body's rotation DOFs must **not** receive that linear update.
+> Decide the hook: either the rotation DOFs are **not** global DOFs and the body
+> self-integrates outside the `DOF_Group` sweep (an analysis-loop call into bodies
+> each step), or the integrator is special-cased. Default leans self-integrating
+> (matches D3's side channel). Cost goes into the effort estimate.
+
+> [!question] Parallel (serial-only v1)
+> The whole contact subsystem is serial-only (`sendSelf/recvSelf` stubs); ADR-51
+> makes OpenSeesMP a *requirement* for the collapse line. So the **debris** use case
+> the body motivates is blocked on parallelizing contact first — an independent
+> effort. v1 `RigidBody` is **serial-only**; state it, don't hide it.
+
+- **Class-tag/broker:** add a **`RIGIDBODY_TAGS`** block in `classTags.h` (ladruno
+  band ≥ 33000) + a `FEM_ObjectBroker` arm; the band is cheap, the broker/parallel
+  arm is the real cost. (If D1 reverses to a special Element, the next free
+  `ELE_TAG` is **~33015** — the band is taken to 33014, not 33002 as the draft said.)
+- **Energy/KE accounting:** the `EnergyBalanceRecorder`/KE path reads mass off
+  Nodes/Elements; the body's translational+rotational KE must be added as a touched
+  surface (or it reads free via the internal node).
+- **Constraint-handler interaction, damping, staged add/remove, sensitivity** —
+  enumerated as touched surfaces; damping (Rayleigh on the CoM) matters for rocking
+  response and must be in the MVP.
+
+---
+
+## 7. Phasing sketch (explicit-only; MVP = rocking foundation, joints/debris excluded)
+
+> [!note] Effort honesty
+> §5.5's single "L" flattens a multi-year program. **P1 alone** is a major
+> framework effort (the new kind + internal-node DOF ownership + condensation).
+> **The headline rocking-foundation MVP = P1+P2+P3 + D7/D8/D9 + toe-contact** —
+> i.e. everything *except* joints (P4) and debris (P5). **P4 and P5 are NOT part of
+> this build** (separate ADRs).
+
+| Phase | Scope | Gate |
+|---|---|---|
+| **P1** (M–L) | `DomainComponent` + private internal `Node` (D1) + node selector (D7) + translational diagonal-mass condensation (D3) + loads/IC/recorder plumbing (D8/D9) | free body under gravity = ballistic; node followers exact; **≤ ~15 files outside `domain/rigid/`** (else fall back to D1(b)); flag-off byte-identical |
+| **P2** (M) | body-frame **SO(3)** exp-map integrator (D2, reuse `GroupSO3`/`Versor`) + side-channel rotational solve | **angular momentum** `‖L(t)−L(0)‖/‖L(0)‖ < 1e-10` over N intermediate-axis flips; **energy drift bounded, →0 as Δt→0** (do NOT require energy conservation); torque-free symmetric-top precession rate vs analytic; **Housner** free-rocking half-period + post-impact ω-ratio vs analytic |
+| **P3** (M) | finite-rotation slaving `u_i = u_R + (R−I)r_i` + **force/moment gather** to CoM + constraint-handler "derived DOF" marking | meshed-part-as-rigid vs stiff-deformable reference within tol; slaved-node point load → correct CoM moment |
+| **P4** (separate ADR) | hand-off seam to the **joint family** (§5.6) | — (not built here) |
+| **P5** (separate ADR) | contact-debris: a moving rigid-**SURFACE** + the AEM consumer | — (not built here; D5 only guarantees the object API does not preclude it) |
+
+---
+
+## 8. References
+
+- **LS-DYNA Theory Manual, Rigid-Body Dynamics chapter** — CNRB mass condensation,
+  6-DOF integration, kinematic slave update, joint penalty cap. **⚠ release-pin and
+  re-verify all equation/page numbers at P1** (manual not in-repo; R7/R11/R13
+  renumber). Reconcile the joint-eq range with ADR-24.
+- **Krysl & Endres 2005**, *Explicit Newmark/Verlet algorithm for the rotational
+  dynamics of rigid bodies*, IJNME — the **explicit exp-map default** (D2).
+- **Simo & Wong 1991**, *Unconditionally stable algorithms for rigid-body dynamics
+  that exactly preserve energy and momentum*, IJNME 31:19–52; **Simo, Tarnow & Wong
+  1992**, CMAME 100:63–116 — the energy-momentum (implicit) family.
+- **Betsch & Steinmann 2001** — energy-momentum conserving schemes (implicit;
+  out-of-scope track). *Pin the exact paper title/journal at P1.*
+- **Housner 1963**, *The behavior of inverted pendulum structures during
+  earthquakes* — analytic rocking-block period + restitution (P2 gate).
+- **Holzapfel**, *Nonlinear Solid Mechanics*, Ch. 2 — rotation parameterization.
+- ~~Simo & Vu-Quoc 1986~~ — **removed**: that is the geometrically-exact *rod* paper
+  (CMAME 58), **not** rigid-body dynamics. (Also fix the same mis-citation at
+  `Ladruno_explicit_roadmap.md:338`.)
+- **In-tree substrate (D2):** `SRC/matrix/GroupSO3.h` (Exp/Log/TExpSO3),
+  `SRC/matrix/Versor.h` (unit quaternion). **Precedent (D1):**
+  `SRC/element/joint/Joint3D.cpp` (internal-node master), `SRC/domain/subdomain/
+  Subdomain.h`, `SRC/domain/constraints/Pressure_Constraint.h` (new-kind quartet).
+- Fork siblings: [[24_ladruno_coupling_constraints_adr|ADR 24]] (CNRB-as-constraint,
+  the diagonal-mass lesson), [[29_ladruno_kinematic_coupling_rbe2_adr|ADR 29]] (RBE2
+  penalty tie), [[51_ladruno_element_removal_adr|ADR 51]] (debris home gap, H6
+  falsified seam).
+
+---
+
+## Implementation log
+
+*(empty — no code. Scoping only. When a driver activates, copy the §7 phasing into
+the implementation log, start P1, and resolve the §6 release-pinned citation TODOs.)*
