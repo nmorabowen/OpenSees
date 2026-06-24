@@ -99,7 +99,7 @@ enforcement: penalty (both lanes) + commit-cycle ALM (λ updated in LadrunoConta
 | Viscous stabilization (`-visc`) | (normal law + `getDamp`) | 📋 funded option | 41 (Q-VISCOUS) |
 | `mu(N,v)` from `frictionModel` wired into contact | — | 🧭 later | 41 (Q-MUDEP) |
 | Custom `LadrunoAugmentedNewton` (global Uzawa) | — | 🧭 deferred/trigger-gated | 41 (Q-DRIVER) |
-| Perpendicular edge-edge (cos_t→0) narrow phase | `SRC/domain/contact/LadrunoEdgeKernel.h` (planned) + `LadrunoContactFE` `EDGE_EDGE` mode + `LadrunoContactDomain::EdgeEdgeState` | 📐 design ADR ([[57_ladruno_edge_edge_contact_adr]], 3-reviewer gate PASS-equiv) — net-new segment-segment algorithm; predefined-surface only (self-contact/runtime discovery fenced to 55, kernel-ownership collision resolved); routing partition + oblique-band arbiter are **open E1 gates** | 57 |
+| Perpendicular edge-edge (cos_t→0) narrow phase | `SRC/domain/contact/LadrunoEdgeKernel.h` (**E0 shipped**) + `LadrunoContactFE` `EDGE_EDGE` mode (E2) + `LadrunoContactDomain::EdgeEdgeState` (E5+) | 🔄 in progress — **E0 (geometry) SHIPPED**: `LadrunoEdgeKernel.h` segment-segment closest point (Ericson clamp ladder) + common-perp normal (body-fixed committed sign) + gap + B-operator; oracle `proto_e0_closest_point.py` 28/28 + `e0_cpp_check.cpp` 13/13 bit-for-bit; header-only ⇒ build byte-identical. E1 routing → E7 integration pending ([[57_ladruno_edge_edge_contact_adr]], 3-reviewer design gate PASS-equiv; predefined-surface only, fenced to 55) | 57 |
 | dual/biorthogonal mortar, true-LM, self-contact, full slide-line smoothing, anisotropic friction | — | 🚫 deferred | 47 |
 
 ## How — definitive contracts + the unified roadmap

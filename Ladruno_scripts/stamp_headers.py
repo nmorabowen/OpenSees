@@ -94,6 +94,7 @@ GLOBS = [
     "SRC/domain/contact/LadrunoFrictionKernel.h",
     "SRC/domain/contact/LadrunoMortarKernel.h",
     "SRC/domain/contact/LadrunoContactBucketSort.h",
+    "SRC/domain/contact/LadrunoEdgeKernel.h",
 ]
 SUFFIXES = {".cpp", ".h", ".hpp", ".cc", ".cxx"}
 
