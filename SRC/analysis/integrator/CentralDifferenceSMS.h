@@ -45,16 +45,17 @@
 //
 // dt_e comes from the shared CriticalTimeStep kernel (self-report aware), so SMS
 // lumps/eigensolves EXACTLY as the dt_cr query. -cflAbort and -recompute are
-// REJECTED with SMS: their inherited path re-runs the element-mass eigensolve
-// (which cannot see the nodal augmentation) and would spuriously hard-abort a run
-// that is in fact stable (ADR-36 MF-1).
+// DOWNGRADED to report-only with SMS (ADR-36 MF-1, ADR-52 W1-E3a): their inherited
+// path re-runs the element-mass eigensolve (which cannot see the nodal augmentation),
+// so rather than abort we keep the run and report the pre-scaling dt_cr instead.
 //
 // Parallel: the injected lumped mass on a shared/boundary node IS reduced across
 // ranks by a distributed/MPI diagonal solver (OpenSeesMP `system MPIDiagonal`,
 // OpenSeesSP `system Diagonal` -> DistributedDiagonalSOE), since the explicit
 // M^-1 solve reads that summed diagonal -- validated bit-identical to serial
-// (ADR-36 T-MPI). The CONSISTENT (Olovsson) sibling is NOT parallel-safe: its
-// matrix-free PCG (LadrunoMassScaling.h) uses rank-local inner products.
+// (ADR-36 T-MPI). The CONSISTENT (Olovsson) sibling is ALSO parallel-safe (ADR-38 V5):
+// its matrix-free PCG uses GLOBAL inner products (globalReduceSum) + shared-DOF
+// assembly under `system MPIDiagonal` (see LadrunoConsistentRefine.h).
 
 #include <CentralDifferenceLadruno.h>
 #include <Vector.h>

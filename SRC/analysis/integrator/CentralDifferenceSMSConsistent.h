@@ -57,7 +57,9 @@
 // lifecycle of the lumped sibling is not needed.
 //
 // Required recipe: `system Diagonal` (preconditioner source), `algorithm Linear`,
-// dt <= dtTarget. -cflAbort / -recompute are rejected (ADR-36 MF-1, inherited rationale).
+// dt <= dtTarget. -cflAbort / -recompute are DOWNGRADED to report-only with SMS (ADR-36
+// MF-1, ADR-52 W1-E3a): their inherited path re-runs the un-augmented element eigensolve,
+// so rather than abort we keep the run and report the pre-scaling dt_cr instead.
 
 #include <CentralDifferenceLadruno.h>
 #include <vector>
