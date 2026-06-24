@@ -88,6 +88,8 @@ UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 #include <CTestPFEM.h>
 #include <PFEMIntegrator.h>
 #include <TransientIntegrator.h>      // Ladruno: profiler dt_cr (getCriticalTimeStep)
+#include <Element.h>                  // Ladruno: ADR-52 W1-I1b trial-state element update()
+#include <ElementIter.h>             // Ladruno: ADR-52 W1-I1b trial-state element update()
 #include <LadrunoArcLength.h>         // Ladruno: Layer-B reduceStep/revert runtime command
 #include <LadrunoDynamicRelaxation.h> // Ladruno: rung-5 DR settling/micro-burst query command
 #include <classTags.h>               // Ladruno: INTEGRATOR_TAGS_LadrunoArcLength guard
@@ -2563,7 +2565,17 @@ int OPS_printB()
 // (the just-committed t_{n+1}), but the half-increment residual wants the load at the step
 // MIDPOINT. If given, the loads are re-applied at loadTime (applyLoad) around the assembly and
 // restored to the committed time after -- faithful for time-varying (dynamic/seismic) loads.
-// The Python half-increment-residual gate injects the interpolated half-step state, reads this
+//   ops_Dt: applyLoad(loadTime) sets the global ops_Dt = loadTime - committedTime, which is
+// NEGATIVE here (the step has committed, so committedTime = t_{n+1} > loadTime = t_{n+1/2}).
+// Rate-dependent materials (Maxwell/ViscousDamper/creep/TDConcrete/...) read ops_Dt inside
+// update(), so a negative value would corrupt their trial force (e.g. exp(-ops_Dt/tR) -> a
+// GROWING exponential). We therefore drive the element update ourselves with a POSITIVE
+// half-step span |committedTime - loadTime| (= dt/2) and restore ops_Dt afterwards.
+//   FIDELITY: the residual is EXACT for rate- and path-INDEPENDENT (elastic) materials. For
+// rate- or path-DEPENDENT (inelastic/viscous) materials it is APPROXIMATE -- it is evaluated
+// AFTER the step commits, so the element reference (committed) state is t_{n+1}, not t_n, and a
+// representative positive dt is imposed. Treat the gate as a heuristic accuracy indicator there.
+//   The Python half-increment-residual gate injects the interpolated half-step state, reads this
 // at the midpoint time, then restores the trial state. READ-ONLY: no commitState, committed
 // history is untouched (the next analyze step's newStep overwrites the trial state regardless).
 int OPS_LadrunoTrialResidualNorm()
@@ -2583,19 +2595,39 @@ int OPS_LadrunoTrialResidualNorm()
 
     LinearSOE *theSOE = cmds->getSOE();
     Domain *theDomain = cmds->getDomain();
-    StaticIntegrator *theStaticIntegrator = cmds->getStaticIntegrator();
-    TransientIntegrator *theTransientIntegrator = cmds->getTransientIntegrator();
+    // Select the integrator from the ACTIVE analysis, not a possibly-stale integrator pointer
+    // (an `analysis Static` after a transient run does NOT null theTransientIntegrator, so
+    // dispatching on the raw pointer could wrongly add inertia/damping in a static query).
+    TransientIntegrator *theTransientIntegrator =
+        (cmds->getTransientAnalysis() != 0) ? cmds->getTransientIntegrator() : 0;
+    StaticIntegrator *theStaticIntegrator =
+        (theTransientIntegrator == 0 && cmds->getStaticAnalysis() != 0) ? cmds->getStaticIntegrator() : 0;
+    if (theTransientIntegrator == 0 && theStaticIntegrator == 0) {   // defensive fallback
+        theTransientIntegrator = cmds->getTransientIntegrator();
+        if (theTransientIntegrator == 0) theStaticIntegrator = cmds->getStaticIntegrator();
+    }
 
     double normVal = 0.0;
     if (theSOE != 0 && theDomain != 0 &&
         (theStaticIntegrator != 0 || theTransientIntegrator != 0)) {
         double committedTime = theDomain->getCurrentTime();
+        double savedOpsDt = ops_Dt;
         // evaluate the external load at the requested (midpoint) time
         if (reapplyLoad)
             theDomain->applyLoad(loadTime);
-        // refresh element/material TRIAL state to the current node trial disp (the missing
-        // element->update() that setNodeDisp/reactions/printB never trigger).
-        theDomain->update();
+        // refresh element/material TRIAL state to the injected node trial -- mirrors
+        // Domain::update() but forces a non-negative ops_Dt (see header note) so rate-dependent
+        // materials see a physical positive time increment, not the negative loadTime - t_{n+1}.
+        double trialDt = reapplyLoad ? (committedTime - loadTime) : savedOpsDt;
+        if (trialDt < 0.0) trialDt = -trialDt;
+        ops_Dt = trialDt;
+        ops_TheActiveDomain = theDomain;
+        ElementIter &theEles = theDomain->getElements();
+        Element *theEle;
+        while ((theEle = theEles()) != 0) {
+            ops_TheActiveElement = theEle;
+            theEle->update();
+        }
         // assemble the free-DOF unbalance into the SOE b vector.
         if (theTransientIntegrator != 0)
             theTransientIntegrator->formUnbalance();
@@ -2608,9 +2640,10 @@ int OPS_LadrunoTrialResidualNorm()
             if (v < 0.0) v = -v;
             if (v > normVal) normVal = v;
         }
-        // restore the external load to the committed time (the next step re-applies regardless)
+        // restore the external load + ops_Dt to the committed step (the next step re-applies)
         if (reapplyLoad)
             theDomain->applyLoad(committedTime);
+        ops_Dt = savedOpsDt;
     }
 
     int one = 1;

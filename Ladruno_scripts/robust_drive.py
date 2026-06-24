@@ -476,7 +476,17 @@ def _half_increment_residual(ops, pre, post, dt):
     (`ladrunoTrialResidualNorm`, which runs the element update() OpenSeesPy otherwise omits).
     The residual is nonzero because the integrator only enforced equilibrium at the step ENDS,
     not the midpoint -- so its size is a local-truncation-error proxy. Trial state is restored
-    to the converged t_{n+1} values; committed state is never touched."""
+    to the converged t_{n+1} values; committed state is never touched.
+
+    FIDELITY (be honest): exact for rate- and path-INDEPENDENT (elastic) materials. For inelastic
+    or rate-dependent (plastic/viscous/creep) materials it is APPROXIMATE -- the residual is
+    formed AFTER the step commits, so the element reference (committed) state is t_{n+1} not t_n,
+    and the helper imposes a representative positive half-step dt for rate terms. Step 1 also
+    leans on the committed initial acceleration a0, which OpenSees leaves at 0 unless the caller
+    established it (no Abaqus-style self-start solve). NOTE: between accepted steps the element
+    trial state is parked at the half-step until the next analyze() refreshes it -- harmless for
+    the committed trajectory and node-level done()/results (nodeDisp etc. read COMMITTED state),
+    but an inter-step eleForce/recorder read would see the half-step forces."""
     for tag, (d0, v0, a0) in pre.items():
         d1, v1, a1 = post[tag]
         n = len(d0)
