@@ -23,8 +23,17 @@ cases, and the gap/effort/priority to wire them. Companion to
 > *fork's* `-area` parser, which apeGmsh correctly sidesteps by emitting explicit `-w`.
 > The pipeline is now **online**: apeGmsh's live runner can target the fork build via a
 > backend-selection seam, with an end-to-end integration harness (see
-> [[ladruno_apegmsh_contract]] → "Backend selection & integration harness"). The
-> genuinely-missing generators remain **`g.embed`** and the **contact pair** (#4/#5).
+> [[ladruno_apegmsh_contract]] → "Backend selection & integration harness").
+>
+> **Update (2026-06-24) — the P0 generators are now SHIPPED.** `g.embed`
+> (`LadrunoEmbeddedNode`, backlog #2) shipped in [apeGmsh#721], and the **`contactSurface`
+> + `contact` pair** (backlog #4/#5) shipped in [apeGmsh#722] — both stacked on the
+> backend/harness PR [apeGmsh#720], each covered by a `ladruno_fork` live test. Contact
+> v1 is **core-first**: NTS penalty + mortar frictionless/friction + auto `-outward`;
+> `-soft`/`-visc`/`-consistanttan`/`-geomtan` + self-contact remain the deferred
+> follow-up. So the three genuinely-missing P0 generators (#2/#4/#5) are all done; what
+> remains is the deferred contact extensions + the lower-priority bulk/robust/cohesive
+> backlog below.
 
 ---
 
@@ -58,9 +67,9 @@ Three headline opportunities:
 | Coupling (RBE2 33012 / RBE3 33011) | ✅ EXPOSED (mature) | Typed emitters + readers ship. Only real gap: RBE3 `-area` silent equal-weights cliff. |
 | Output & recorders (.ladruno / Monitor / EnergyBalance) | ✅ EXPOSED (most mature) | Read-side co-designed with apeGmsh. Remaining work is doc/contract hygiene + additive read paths. |
 | Bulk constitutive (plasticity/concrete) | 🟡 PARTIAL | Materials reach the deck via stringly-typed passthrough; missing the constitutive-*aware* wiring. |
-| Embedded elements (rebar / node ties) | 🟡 PARTIAL | Fork elements shipped; apeGmsh emits only vanilla `ASDEmbeddedNodeElement`. `g.embed`/`g.reinforce` to-build. |
+| Embedded elements (rebar / node ties) | ✅ SHIPPED | `g.reinforce` (LadrunoEmbeddedRebar) + `g.embed` (LadrunoEmbeddedNode, [apeGmsh#721]) both ship; live-tested on the fork. `g.constraints.embedded` (vanilla ASDEmbeddedNode) kept as fallback. |
 | Robust solve & integrators | 🟡 PARTIAL | Explicit lane well-served (auto-dt). Static-robust lane absent (no ArcLength/IndirectControl/DR emitter). |
-| Contact & progressive collapse | 🔴 ABSENT | Zero apeGmsh surface for the fork's headline domain. Build `contactSurface` + `contact`. |
+| Contact & progressive collapse | ✅ SHIPPED (core) | `g.constraints.contact(formulation='nts'\|'mortar')` emits `contactSurface`+`contact`+`LadrunoContact` ([apeGmsh#722]); live-tested. Deferred: `-soft`/`-visc`/`-consistanttan`/`-geomtan` + self-contact. Element-removal stays upstream. |
 
 ---
 
