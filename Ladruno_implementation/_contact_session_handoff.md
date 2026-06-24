@@ -140,7 +140,7 @@ indentation. **The committed contact roadmap (Tracks A→D) is now COMPLETE.**
 all OPTIONAL / deferred:
 - **Small follow-ups** (each its own small PR, oracle-first): ~~viscous SOFT=2~~ **DONE** ([#412](https://github.com/nmorabowen/OpenSees/pull/412) —
   `-mortar -soft -visc`; the D2.2 normal damper on the SOFT=2 active set in `addSoft2Penalty`,
-  `μ_c=0` byte-identical; battery 112→114/114). ~~frictional SOFT=2~~ **DONE** (_pending PR_ —
+  `μ_c=0` byte-identical; battery 112→114/114). ~~frictional SOFT=2~~ **DONE** ([#414](https://github.com/nmorabowen/OpenSees/pull/414) —
   `-mortar -soft -mu/-cohesion/-tauMax`; Courant-stable Coulomb/Tresca via a per-node segment `softKt`
   [the B1-kt rule, n→t] + the shipped return map over the soft pressure; penalty friction λ_T≡0;
   reuses the committed `MortarNormalState` slot; only `-tie` still refused; μ=0 byte-identical; oracle
