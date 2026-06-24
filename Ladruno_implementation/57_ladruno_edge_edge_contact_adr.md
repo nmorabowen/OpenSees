@@ -456,7 +456,7 @@ companion) is a later convenience, not the MVP.
 
 | Phase | Delivers | Oracle (`proto_e*`) + falsifier | C++ gate |
 |---|---|---|---|
-| **E0** | `LadrunoEdgeKernel.h` — segment-segment closest point + edge normal/gap | `proto_e0_closest_point.py`: vs Ericson §5.1.9 on all **8 Voronoi sub-regions** incl. the **vertex-vertex double-clamp**; **parallel refusal** (denom<τ_∥) + the **near-parallel-edge-on clip-cross-check**; **zero-length/coincident-node** refusal; **normal conditioning** `‖∂n/∂u‖` bounded across the admitted angle band; `|w·n| == ‖w‖` only in the margin-interior set; FD `∂g_N/∂coord` to 1e-8. | standalone `e0_cpp_check.cpp` bit-for-bit vs the oracle |
+| **E0** ✅ **SHIPPED** | `LadrunoEdgeKernel.h` — segment-segment closest point + edge normal/gap | `proto_e0_closest_point.py` **28/28**: vs an independent scan reference on all **8 Voronoi sub-regions** incl. the **vertex-vertex double-clamp**; **parallel refusal** (denom<τ_∥, τ_∥=sin²15° conditioning-justified) + near-parallel; **zero-length** refusal; conditioning bounded across the band; `|w·n|==‖w‖` only margin-interior (+ its failure clamped); FD `∂g_N/∂coord` == analytic B to **1.1e-9**; committed-sign monotone-through-contact + the buggy-`w·n`-rule penetration-mask demo (the A-4 fix, shown empirically). | `e0_cpp_check.cpp` **13/13** bit-for-bit (B==FD identical 1.13e-9); header compiles warning-free; header-only ⇒ no TU includes it yet ⇒ build byte-identical |
 | **E1** | the **routing detector** | `proto_e1_router.py`: classify T-/L-/X-junction + facing + oblique facet pairs; **ordered-precedence (not partition)** — an **NTS-vs-edge double-count falsifier**, the **oblique-band no-coverage-hole falsifier** (clamped/parallel edges + sub-τ_A clip ⇒ nonzero restraint, never zero), the **parallel-but-offset facing** case caught by face-mortar, hysteresis no-chatter through 45°. | handler unit: edge-on→EDGE_EDGE, facing→MORTAR, slave-node-in-bounds→NTS-precedence; **byte-identity when `-edgeedge` absent** |
 | **E2** | penalty normal force + main tangent | `proto_e2_penalty.py`: two-bar edge-on test, force ⟂ both edges (along `n`), self-equilibrium `Σf=0`, `K=ε_N BᵀB` FD-checked symmetric PSD, penetration `δ=P/ε_N`; **monotone `g_N` through contact** (drive gap>0 → 0 → penetration, assert no sign flip — the committed-sign-anchor falsifier). | `test_adr57_edge_edge_1`: two crossed bars, gap → tol, Newton converges; NTS-passes-through vs edge-edge-restrained (the headline falsifier — NTS net force ZERO) |
 | **E3** | friction (reuse `LadrunoFrictionKernel`) | `proto_e3_friction.py`: stick/slip on the edge tangent plane, `a = g(sinθ−μcosθ)` incline sign, Tresca cap, slip-from-displacement (the C3.1 trap), `μ=0` byte-identical. | `test_adr57_edge_edge_2`: explicit raking bar (Coulomb opposes motion), implicit stick converges; symmetric tangent solver-safe |
@@ -613,6 +613,16 @@ friction-kernel 4th-consumer, SOFT mass-cache, clip-degeneracy probe safety
 
 ## Implementation log
 
-*(empty — design-only. Filled as E0→E7 land; each phase updates its capstone
-status-of-record row + this log + the three ledgers in the same PR, then moves detailed
-notes to `Ladruno_internal/` per the fork standard.)*
+- **E0 (geometry) — SHIPPED** (this PR). `SRC/domain/contact/LadrunoEdgeKernel.h`
+  (header-only, OpenSees-free): `closestPtSegSeg` (Ericson RTCD §5.1.9 exact clamp
+  ladder + the conditioning-justified `τ_∥=sin²15°` parallel refusal + zero-length
+  DEGENERATE guard), `edgeNormal` (common-perpendicular), `edgeGap` (body-fixed
+  **committed** sign — the A-4 fix), `bOperator` (envelope-theorem-exact first variation).
+  Oracle `proto_e0_closest_point.py` **28/28** + standalone `e0_cpp_check.cpp` **13/13**
+  bit-for-bit (B==FD identical to 1.13e-9). Header-only ⇒ not yet included by any TU ⇒
+  build byte-identical (the kernel is inert until E1/E2 wire it into the handler/adapter).
+  Oracle caught one ADR wording imprecision to fold later: the *normal direction* `∂n/∂u`
+  conditioning is `1/sinθ_edge`; the closest-point *parameter* `∂(s,t)/∂u` conditioning is
+  `1/sin²θ_edge` (the dominant gauge the §1 "1/sin²" refers to) — both bounded at the band.
+- **E1→E7** — pending (design-only above; each lands oracle-first → C++ → gate → PR,
+  updating the capstone row + ledgers in the same PR).
