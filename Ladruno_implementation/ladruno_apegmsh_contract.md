@@ -220,7 +220,11 @@ not matter — `-G energy <regions…>` may be followed by other flags in both
 openseespy and the classic Tcl exe (a Tcl-only cursor bug used to force `-G energy`
 to line end; fixed, guarded by the `TCL FLAG ORDER` regression gate).
 
-**Recommended apeGmsh approach.**
+**Recommended apeGmsh approach.** *(SHIPPED in apeGmsh main as of 2026-06: typed
+`ops.recorder.Ladruno(file=, nodal_responses=, elem_responses=, nodes_pg=, energy=)`
++ `Results.from_ladruno(path)` self-sufficient reader with partition auto-merge and
+region filter (ADR 0064). A live fork emit→run→read round-trip is now gated in the
+integration harness — see the Backend section. Text below kept as the original spec.)*
 - Add a typed `ops.recorder.Ladruno(…)` (apeGmsh-side name; sibling of the existing
   `ops.recorder.MPCO`) and a `Results.from_ladruno(path, *, model=…)` reader
   (sibling of `from_mpco`), keyed on `GENERATOR="Ladruno"` + `FORMAT_VERSION=1` with
@@ -282,7 +286,16 @@ apeGmsh's consumer is not).**
 - **Selection ↔ picker:** the `COLUMNS` labels are authoritative and self-describing;
   drive the viewer's channel picker straight off them (no per-feature shim).
 
-### Embedded reinforcement (`LadrunoEmbeddedRebar` + `LadrunoBondSlip`) — **`g.reinforce` generator TO IMPLEMENT on apeGmsh side**
+### Embedded reinforcement (`LadrunoEmbeddedRebar` + `LadrunoBondSlip`) — **`g.reinforce` generator SHIPPED in apeGmsh main (2026-06)**
+
+> **Status correction (2026-06-24):** verified against apeGmsh `main` (v2.0.0) by
+> reading source: `g.reinforce(host=…, bars=…, bond=…, perfect=…, enforce=…,
+> bipenalty=…, dtcr=…)` is **shipped** (`core/ReinforcementsComposite.py`), backed
+> by the guarded straight-sided **inverse map** (`_kernel/geometry/_inverse_map.py`,
+> tri3/quad4/tet4/hex8) and emitting `element LadrunoEmbeddedRebar -host -xi -dir`
+> via `_internal/build.py:emit_reinforce_ties`. A live fork round-trip now runs in
+> the integration harness (see the Backend section below). The text below is the
+> original pre-implementation spec, kept for provenance.
 
 **OpenSees side.** A penalty **coupling** element (ELE **33005**) that ties one
 discrete rebar node to a solid host element's nodes via shape-function weights, so
@@ -479,3 +492,42 @@ This is a quick reference; the deep specs live next door:
   is **TO IMPLEMENT**. Full grammar/theory/use in the new [[LadrunoEmbeddedRebar_guide]].
   Recorded the routing rule: node-on-continuum ties (frame on a 2D boundary) go to
   upstream `ASDEmbeddedNodeElement`, not this bar-in-solid element.
+- 2026-06-24 — **Pipeline brought online + status reconciliation.** Read apeGmsh
+  `main` (v2.0.0) source directly and corrected this contract: the **inverse map**
+  (`_kernel/geometry/_inverse_map.py`), **`g.reinforce`** (→ `LadrunoEmbeddedRebar`),
+  RBE2/RBE3 **coupling generators**, and the **`.ladruno` recorder + `from_ladruno`
+  reader** are all **shipped**, not TO-IMPLEMENT (RBE3 `weighting="area"` tributary
+  weights are computed apeGmsh-side and emitted as explicit `-w`). Added the
+  **backend-selection seam** so apeGmsh's live runner targets the fork build, and an
+  **end-to-end integration harness**. Genuinely still TO-IMPLEMENT: **`g.embed`**
+  (`LadrunoEmbeddedNode`), the **contact** generators, and `g.absorbing_boundary`.
+  Full scoping in [[apegmsh_fork_scoping]].
+
+## Backend selection & integration harness (apeGmsh ↔ fork, online)
+
+apeGmsh's live runner (`opensees/emitter/live.py`) historically hardcoded
+`import openseespy.opensees` (stock). It now uses an **auto-detect, env-overridable
+resolver** (`_resolve_ops` / `get_backend_name`):
+
+1. `APEGMSH_OPENSEES_BIN` set → load the fork's `opensees.pyd` **by explicit path**
+   from that dir (with `os.add_dll_directory` for the co-located MKL DLLs), bypassing
+   any shadowing top-level `opensees` on `sys.path` → backend `"ladruno-fork"`.
+2. else bare `import opensees` (fork on `PYTHONPATH`) → `"ladruno-fork"`.
+3. else `import openseespy.opensees` (stock) → `"stock-openseespy"`.
+
+Fork detection keys off the fork-only `criticalTimeStep` symbol. **Contract for
+apeGmsh:** never force the fork — stock callers are unaffected; fork features stay
+gated at point-of-use.
+
+**Harness** (apeGmsh repo): `tests/opensees/integration_ladruno/` + the
+`ladruno_fork` pytest marker (root `conftest.py` auto-skips it unless the resolved
+backend is the fork). Run with `tests/run_ladruno_integration.ps1` (sets
+`APEGMSH_OPENSEES_BIN`, runs `py -3.12 -m pytest -m ladruno_fork`). Coverage: backend
+resolves to fork; **keystone** `.ladruno` recorder round-trip (composite/bridge emit
+→ fork run → `from_ladruno`, value-matched to live `nodeDisp`); `LadrunoEmbeddedRebar`
+loads on the fork via `g.reinforce`; `LadrunoDistributingCoupling` (RBE3) loads via
+the generator's emit path. Env: the project's **`opensees_env`** (CPython **3.12** —
+the fork pyd's ABI; apeGmsh editable + gmsh + pytest + the fork `opensees` and stock
+`openseespy`). The runner sets `APEGMSH_OPENSEES_BIN` so the resolver loads the fork
+`opensees.pyd` by explicit path even when a top-level `opensees` shadows it (e.g.
+pytest's `tests/opensees` package under importlib mode).

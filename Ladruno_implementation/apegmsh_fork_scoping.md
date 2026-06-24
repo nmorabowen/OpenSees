@@ -13,6 +13,19 @@ cases, and the gap/effort/priority to wire them. Companion to
 > Priority is P0 (foundational) → P4 (fork-side defer). "Fork-side defer" = do **not**
 > build an apeGmsh generator until the fork ships the underlying feature.
 
+> **Correction (2026-06-24) — read apeGmsh `main` source directly.** This report was
+> built from the (stale) apegmsh-helper skill + fork contract. Verified against apeGmsh
+> v2.0.0 source: the **inverse-map machinery** and **`g.reinforce`** are **already
+> shipped** — so backlog items **#1–#3 are largely done**, not P0 build work. The
+> remaining *embedded* gap is **`g.embed`** (`LadrunoEmbeddedNode`) only. Also: RBE3
+> **`weighting="area"` tributary weights ARE computed apeGmsh-side** (the resolver),
+> contradicting the "#6 silent `-area` cliff" framing here — the cliff is only in the
+> *fork's* `-area` parser, which apeGmsh correctly sidesteps by emitting explicit `-w`.
+> The pipeline is now **online**: apeGmsh's live runner can target the fork build via a
+> backend-selection seam, with an end-to-end integration harness (see
+> [[ladruno_apegmsh_contract]] → "Backend selection & integration harness"). The
+> genuinely-missing generators remain **`g.embed`** and the **contact pair** (#4/#5).
+
 ---
 
 ## 1. Executive summary
