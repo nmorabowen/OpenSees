@@ -30,7 +30,8 @@ study + [[49a_integrator_scorecard_2026-06-23]] gap analysis).
 
 Docs/log PRs: #391 (ADRs 49/49a/52), #398, #401, #404.
 
-**Remaining waves:** W1-E2, W3-I2, W3-I3-gate (details below).
+**Remaining waves:** W1-E2, W3-I2 (details below). **W3-I3 closed — NO-GO** (benchmark
+gate, see below).
 
 ## How to work this (the proven loop)
 
@@ -128,12 +129,19 @@ Docs/log PRs: #391 (ADRs 49/49a/52), #398, #401, #404.
   pattern at `Newmark.cpp:577-747`).
 - classTags 33014 (`LadrunoHHT`), 33015 (`LadrunoGeneralizedAlpha`) — re-confirm.
 
-### W3-I3 — tunable implicit Bathe (GATED)
+### W3-I3 — tunable implicit Bathe (GATED → NO-GO, 2026-06-24)
 - `TRBDF2` already IS the Bathe (2007) composite (`TRBDF2.cpp:29-30`, constants hard-
-  coded at `:114-144`). The gap is the user-tunable γ/ρ∞ variant (Bathe-Noh 2012).
-- **First benchmark** `TRBDF2` vs the tunable variant on a contact/sharp-nonlinearity
-  problem; build a **`LadrunoBatheImplicit` subclass of `TRBDF2`** (classTag 33013) only
-  if the gap is real.
+  coded at `:114-144`); the would-be gap is the user-tunable γ/ρ∞ variant (Bathe-Noh 2012).
+- **Gate result: DON'T BUILD.** Benchmark `Ladruno_scripts/w3i3_bathe_gate_benchmark.py`
+  (impact on an ENT stop swept to the rigid limit + a 1-D wave-propagation bar) showed:
+  no robustness gap (every scheme converged to k=1e12), `HHT(α)` already spans ρ∞ and
+  tames under-resolved-impact energy blowup, and the composite's only real edge is MAX
+  dissipation — which the *fixed* `TRBDF2` already gives (it suppressed wave ringing best
+  at Courant 4). A *tunable* composite (ρ∞>0) would be worse there, so its quadrant isn't
+  needed. Guidance instead: `TRBDF2` = set-and-forget max dissipation; `HHT`/`Gα` =
+  tunable. Revisit only if a stiff multi-DOF contact problem makes `HHT`/`Gα` diverge
+  where a composite survives (caveat: gate was SDOF + 1-D bar, not large 3-D contact).
+- (If ever resurrected: `LadrunoBatheImplicit` subclass of `TRBDF2`, classTag 33013.)
 
 ## W2-E1 follow-ups (deferred, non-blocking)
 - **S3** `bvDissipated`/ALLVD recorder channel — mirror `hgDissipated` (accumulate
