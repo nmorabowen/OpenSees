@@ -1294,3 +1294,34 @@ features:
     dispatch: {tcl: true, functionMap: true}
     status: active
     notes: Demonstrates the T0 rank/zero-energy + constant-strain patch battery.
+
+  - feature: LadrunoHHT                       # ADR-52 W3-I2 sensitivity/DDM HHT
+    classtag: 33013          # INTEGRATOR family; new class (N. Mora-Bowen). NB 33013
+                             # is the lowest free integrator tag (W3-I3's reserved
+                             # 33013 was NO-GO #410, never built).
+    tag_symbol: INTEGRATOR_TAGS_LadrunoHHT
+    pr: 413
+    feature_class: integrator
+    required_tiers: [dynamics-battery]
+    pytest: tests/test_adr52_w3i2_ladruno_hht.py   # sensitivity-off byte-identity vs HHT + DDM-vs-central-FD (undamped & mass-prop damped) + alpha=1 reduces-to-Newmark-DDM
+    tcl: WAIVED(integrator; Tcl dispatch wired via commands.cpp, validated by the Zone-A pytest through the shared OPS_ factory)
+    core_files:                                    # registration sites (dispatch wiring)
+      - SRC/classTags.h
+      - SRC/analysis/integrator/HHT.h            # vanilla: private->protected + protected inline classTag ctor (header-only)
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/runtime/runtime/TclPackageClassBroker.cpp
+      - SRC/interpreter/OpenSeesCommands.cpp
+      - SRC/interpreter/OpenSeesCommands.h
+      - SRC/tcl/commands.cpp
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      Direct Differentiation Method (DDM) sensitivity subclass of HHT — reuses the
+      whole HHT algorithm and adds the sensitivity seam absent from HHT in vanilla
+      OpenSees (DDM ships only on Newmark/DisplacementControl/ArcLength/
+      MinUnbalDispNorm). Header-only vanilla edit of HHT.h (ledgered). Since HHT's
+      U/Udot/Udotdot follow the Newmark recurrence, saveSensitivity/commitSensitivity/
+      formSensitivityRHS/computeSensitivities are identical to Newmark; only
+      formEleResidual/formNodUnbalance carry the alpha-weighting + the extra
+      -K*(1-alpha)*dUn term (vanishes at alpha=1). Unblocks reliability/fragility/
+      FORM on the numerically-damped HHT. ADR-52 W3-I2.

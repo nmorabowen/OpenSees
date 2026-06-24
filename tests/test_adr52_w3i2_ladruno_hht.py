@@ -19,12 +19,23 @@ Decisive checks (alpha != 1 so every HHT-specific term is exercised):
      a central FD of the response. Exercises the stiffness alpha-weighting, the new
      addK_Force term, and the (Newmark-identical) mass terms.
   3. DDM vs CENTRAL FD, mass-proportional Rayleigh damping (C = alphaM*M != 0):
-     additionally exercises the alpha-weighted damping multiplicator and the C-force
-     path. (alphaM is E-independent so dC/dh == 0; the velocity-sensitivity flow
-     through C is what is validated.)
+     additionally exercises the alpha-weighted damping MULTIPLICATOR (the addD_Force
+     term, tmp2) — the velocity-sensitivity flow through a nonzero C. alphaM is
+     E-independent so dC/dh == 0, hence the *dC/dh-on-Ualphadot* term
+     (addD_ForceSensitivity) is exercised but contributes zero here.
   4. REDUCES TO NEWMARK DDM AT alpha == 1: with alpha == 1 the HHT-specific (1-alpha)
      terms drop out, so LadrunoHHT's DDM must equal Newmark's DDM on the same model —
      a cross-check that the alpha-weighting is the *only* difference from Newmark.
+
+Scope note (the one term NOT independently FD-validated): the dC/dh-on-Ualphadot
+contribution (addD_ForceSensitivity, where Ualphadot — not Udot — is the velocity the
+HHT residual evaluates C at) can only be exercised numerically with dC/dh != 0, which
+requires an element implementing getTangentStiffSensitivity / getMassSensitivity. Truss
+implements neither (Element's base returns zero and warns for betaK*K DDM), so a
+stiffness-proportional Rayleigh FD case would false-fail for an element limitation, not
+an integrator bug. That term is therefore validated by derivation + the alpha==1 ->
+Newmark reduction (which pins the surrounding algebra); revisit with a DDM-mass/stiffness
+-capable element if one is added to the fork.
 """
 import pytest
 

@@ -209,6 +209,16 @@ LadrunoHHT::formNodUnbalance(DOF_Group *theDof)
 
         theDof->zeroUnbalance();
 
+        // Safety: the global multiplicators are built in formEleResidual. A model
+        // with nodal mass/damping but ZERO contributing FE_Elements never runs it,
+        // so allocate-and-zero here rather than deref a null pointer (a fresh
+        // Vector(size) is zero-initialized ⇒ the element contribution is correctly
+        // treated as zero). Normal models with elements never hit this branch.
+        if (massMatrixMultiplicator == 0)
+            massMatrixMultiplicator = new Vector(U->Size());
+        if (dampingMatrixMultiplicator == 0)
+            dampingMatrixMultiplicator = new Vector(U->Size());
+
         // nodal contributions carry only M and C (no element stiffness); the
         // global multiplicators were set by formEleResidual (same for all DOFs).
 
@@ -269,7 +279,14 @@ LadrunoHHT::formSensitivityRHS(int passedGradNumber)
     while ((nodePtr = theNodeIter()) != 0)
         nodePtr->zeroUnbalancedLoad();
 
-    // randomness in external load (incl. time series)
+    // randomness in external load (incl. time series).
+    // NOTE on the evaluation time: the HHT dynamic residual is formed at
+    // t_n + alpha*deltaT. With the standard -computeAtEachStep (pre-commit)
+    // sensitivity path, getCurrentTime() returns exactly that, so the load
+    // gradient is consistent with the residual. A post-commit -computeByCommand
+    // caller would instead see t_n + deltaT (off by (1-alpha)*deltaT) — this only
+    // affects RANDOM-LOAD sensitivity (dF/dh != 0); material-parameter sensitivity
+    // (dF/dh == 0, the fragility/FORM-on-material case) is unaffected either way.
     LoadPattern *loadPatternPtr;
     LoadPatternIter &thePatterns = theDomain->getLoadPatterns();
     double time;
