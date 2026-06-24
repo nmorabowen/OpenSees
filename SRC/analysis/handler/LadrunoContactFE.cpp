@@ -34,6 +34,7 @@
 #include <Node.h>
 #include <DOF_Group.h>
 #include <Integrator.h>
+#include <CentralDifferenceLadruno.h> // Ladruno: ADR-39 B1 (explicit dt for the SOFT=1 penalty)
 #include <Domain.h>                 // Ladruno: ADR-39 P3 (lazy engine re-fetch)
 #include <LadrunoContactDomain.h>   // Ladruno: ADR-39 P3 (per-pair friction state)
 #include <LadrunoContactKernel.h>     // Ladruno: ADR-39 P2b (penalty normal-law / traction)
@@ -45,7 +46,7 @@ LadrunoContactFE::LadrunoContactFE(int tag)
   : FE_Element(tag, /*numDOF_Group=*/0, /*ndof=*/0),
     resid(0), tang(0, 0), mode(EMPTY), theSlave(0), ndm(0), kn(0.0), nps(0),
     kt(0.0), mu(0.0), muc(0.0), theDomain(0), contactTag(0), segIndex(0), consistentTan(false),
-    consistentNormal(false)
+    consistentNormal(false), softScale(0.0)
 {
     // myDOF_Groups and myID are size 0 (empty connectivity): the adapter adds NO
     // edges to the DOF graph, so the numberer permutation is untouched and the
@@ -56,12 +57,13 @@ LadrunoContactFE::LadrunoContactFE(int tag)
 }
 
 LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, int ndm_,
-                                   const double p0[3], const double n[3], double kn_, double muc_)
+                                   const double p0[3], const double n[3], double kn_, double muc_,
+                                   double softScale_, Domain *dom)
   : FE_Element(tag, /*numDOF_Group=*/1, /*ndof=*/ndm_),
     resid(ndm_), tang(ndm_, ndm_),
     mode(RIGID_PLANE), theSlave(slaveNode), ndm(ndm_), kn(kn_), nps(0),
-    kt(0.0), mu(0.0), muc(muc_), theDomain(0), contactTag(0), segIndex(0), consistentTan(false),
-    consistentNormal(false)
+    kt(0.0), mu(0.0), muc(muc_), theDomain(dom), contactTag(0), segIndex(0), consistentTan(false),
+    consistentNormal(false), softScale(softScale_ > 0.0 ? softScale_ : 0.0)
 {
     // Connectivity = the slave node's DOF_Group; setID() fills myID with its first
     // ndm equation numbers (the translational DOFs). Same pattern as PenaltySP_FE.
@@ -79,12 +81,13 @@ LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, Node **segNodes,
                                    int nps_, double kn_, const double odir[3],
                                    double kt_, double mu_, Domain *dom,
                                    int contactTag_, int segIndex_, bool consistentTan_, double muc_,
-                                   bool consistentNormal_)
+                                   bool consistentNormal_, double softScale_)
   : FE_Element(tag, /*numDOF_Group=*/1 + nps_, /*ndof=*/3 * (1 + nps_)),
     resid(3 * (1 + nps_)), tang(3 * (1 + nps_), 3 * (1 + nps_)),
     mode(SEGMENT), theSlave(slaveNode), ndm(3), kn(kn_), nps(nps_),
     kt(kt_), mu(mu_), muc(muc_), theDomain(dom), contactTag(contactTag_), segIndex(segIndex_),
-    consistentTan(consistentTan_), consistentNormal(consistentNormal_)
+    consistentTan(consistentTan_), consistentNormal(consistentNormal_),
+    softScale(softScale_ > 0.0 ? softScale_ : 0.0)
 {
     // Connectivity = slave DOF_Group + each segment-node DOF_Group. setID() then
     // fills myID = [slave xyz | seg_1 xyz | ... | seg_nps xyz] (each node ndf==3 ⇒
@@ -122,7 +125,7 @@ LadrunoContactFE::LadrunoContactFE(int tag, Node **slaveNodes, int nps_s,
     resid(3 * (nps_s + nps_m)), tang(3 * (nps_s + nps_m), 3 * (nps_s + nps_m)),
     mode(MORTAR), theSlave(0), ndm(3), kn(epsN), nps(0),
     kt(epsT_), mu(mu_), muc(muc_), theDomain(dom), contactTag(contactTag_), segIndex(0),
-    consistentTan(consistentTan_), consistentNormal(false),
+    consistentTan(consistentTan_), consistentNormal(false), softScale(0.0),
     npsS(nps_s), npsM(nps_m), slaveFacetIndex(slaveFacetIndex_),
     mortarCohesion(cohesion_), mortarTauMax(tauMax_), isTie(isTie_)
 {
@@ -288,14 +291,88 @@ LadrunoContactFE::mortarActive(double D[4][4], double M[4][4], double g[4], doub
     return LadrunoMortarKernel::facetNormal(npsM, Xm, orientDir, n);
 }
 
+// B1 (P4) — the ASSEMBLED translational mass [mx,my,mz] of a node: the engine's pre-computed cache
+// (nodal `mass` + Σ_elements diag(M_e) — what the explicit integrator actually inverts) if present,
+// else the bare nodal `mass` (Node::getMass diagonal) as a fallback. The handler fills the cache once
+// per handle() whenever a SOFT contact exists; without it (e.g. an unexpected call) we still get the
+// nodal mass — correct for lumped-mass models, missing only the element-density contribution.
+static void
+ladrunoNodeMass(Domain *dom, Node *nd, double m[3])
+{
+    m[0] = m[1] = m[2] = 0.0;
+    if (nd == 0) return;
+    if (dom != 0) {
+        LadrunoContactDomain *cd = dom->getLadrunoContactDomain();
+        if (cd != 0 && cd->getNodalMass(nd->getTag(), m)) return;   // assembled (incl. element mass)
+    }
+    const Matrix &M = nd->getMass();
+    int nr = M.noRows();
+    for (int d = 0; d < 3 && d < nr; d++) m[d] = M(d, d);
+}
+
+// inverse mass PROJECTED on the gap normal n: invMproj = Σ_d n_d²/m_d over the 3 translational DOFs.
+// A DOF with no mass (m_d ≤ 0) is treated as INFINITE mass (zero contribution) — the correct gap-mode
+// treatment of a FIXED master node (a Dirichlet BC carries no inertia). So a fixed/rigid master
+// contributes 0, leaving m_eff = m_slave; a fully massless SLAVE returns 0 ⇒ the caller cannot
+// soft-size (handled there).
+static double
+ladrunoInvMassProj(const double m[3], const double n[3])
+{
+    double s = 0.0;
+    for (int d = 0; d < 3; d++)
+        if (m[d] > 0.0) s += n[d] * n[d] / m[d];
+    return s;
+}
+
+// B1 (P4) — SOFT=1 Courant-stable penalty. The gap-mode generalized mass m_eff = 1/(B M⁻¹ Bᵀ),
+// B = [n | −N_i n], reduces (diagonal lumped mass) to m_eff = 1/(invMproj_slave + Σ N_i²·invMproj_i)
+// — the harmonic combination of the slave mass and the shape-projected segment mass; for a rigid
+// plane (N==0) it collapses to the slave mass. Then the contact's own central-difference stability
+// bound ω·dt ≤ 2 (ω = √(k/m_eff)) gives the LARGEST non-throttling penalty 4·m_eff/dt²; SOFT picks
+// k_soft = SOFSCL·4·m_eff/dt² (SOFSCL < 1 the safety margin). Validated: proto_b1_soft_penalty.py.
+// Only active under the explicit CentralDifferenceLadruno (dynamic_cast — catches its SMS subclasses
+// too); any implicit integrator fails the cast ⇒ the configured kn is returned ⇒ byte-identical.
+double
+LadrunoContactFE::softKn(Integrator *theIntegrator, const double n[3], const double N[4]) const
+{
+    if (softScale <= 0.0 || theIntegrator == 0)
+        return kn;
+    CentralDifferenceLadruno *cdl = dynamic_cast<CentralDifferenceLadruno *>(theIntegrator);
+    if (cdl == 0)
+        return kn;                                // implicit / non-CDL ⇒ inert (byte-identical)
+    double dt = cdl->getCurrentDeltaT();
+    double ms[3]; ladrunoNodeMass(theDomain, theSlave, ms);
+    double invSum = ladrunoInvMassProj(ms, n);    // 0 ⇒ massless slave (fail below)
+    if (invSum > 0.0 && N != 0)                   // SEGMENT: add the shape-projected segment masses
+        for (int i = 0; i < nps; i++) {          // fixed master node ⇒ 0 contribution (∞ mass)
+            double mi[3]; ladrunoNodeMass(theDomain, segNode[i], mi);
+            invSum += N[i] * N[i] * ladrunoInvMassProj(mi, n);
+        }
+    if (dt <= 0.0 || invSum <= 0.0) {            // massless slave or no dt ⇒ cannot soft-size
+        static bool warned = false;
+        if (!warned) {
+            warned = true;
+            opserr << "WARNING LadrunoContactFE - contact -soft could not size a penalty under the "
+                      "explicit integrator (non-positive dt or a contact node with no assembled mass "
+                      "— neither a nodal `mass` nor element-density mass); using the configured kn. "
+                      "Give the contact nodes mass for the SOFT=1 stable penalty.\n";
+        }
+        return kn;
+    }
+    return softScale * 4.0 * (1.0 / invSum) / (dt * dt);   // k_soft = SOFSCL·4·m_eff/dt²
+}
+
 const Vector &
-LadrunoContactFE::getResidual(Integrator *)
+LadrunoContactFE::getResidual(Integrator *theIntegrator)
 {
     resid.Zero();
     if (mode == RIGID_PLANE) {
         double g = rigidPlaneGap();
         if (g < 0.0) {                       // penetration -> restoring force +n
-            double tn = -kn * g;             // tn = kn*|g| > 0 (Macaulay <-g>_+)
+            // B1: under explicit, kn → the Courant-stable SOFT=1 k_soft (rigid plane ⇒ m_eff = m_s);
+            // otherwise the configured kn (byte-identical). N==0 ⇒ slave-only effective mass.
+            double knEff = softKn(theIntegrator, planeN, 0);
+            double tn = -knEff * g;          // tn = kn*|g| > 0 (Macaulay <-g>_+)
             for (int d = 0; d < ndm; d++)
                 resid(d) = tn * planeN[d];   // drives the slave toward g=0 (PenaltySP convention)
             // D2 viscous normal stabilization: f_visc = −muc·(n·v_slave)·n, opposing the approach
@@ -311,7 +388,10 @@ LadrunoContactFE::getResidual(Integrator *)
     } else if (mode == SEGMENT) {
         double gap, n[3], N[4], B[15], gTvec[3];   // ndof <= 3*(1+4) = 15
         if (segmentActive(gap, n, N, B, gTvec)) {
-            double tn = LadrunoContactKernel::traction(kn, gap);  // = kn*<-gap>_+ > 0
+            // B1: under explicit, kn → the Courant-stable SOFT=1 k_soft (m_eff from the slave +
+            // shape-projected segment masses on n); otherwise the configured kn (byte-identical).
+            double knEff = softKn(theIntegrator, n, N);
+            double tn = LadrunoContactKernel::traction(knEff, gap);  // = kn*<-gap>_+ > 0
             int ndof = 3 * (1 + nps);
             for (int k = 0; k < ndof; k++)
                 resid(k) = B[k] * tn;        // r = Bᵀ tn (slave +tn n, master −N_i tn n)

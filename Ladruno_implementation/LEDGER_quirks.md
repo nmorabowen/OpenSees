@@ -304,6 +304,49 @@ them. This is observation-only — fixes we actually applied are tracked in
 - **Status:** use mass-proportional (`αM`) damping in explicit; captured in the
   CentralDifferenceLadruno plan (`project_robust_central_difference`).
 
+### `Node::getMass()` returns ONLY the nodal `mass` command value — element-density mass is invisible there
+- **Bites:** any code that reasons about a node's mass by reading `Node::getMass()` —
+  e.g. the ADR-39 B1 SOFT=1 contact penalty, which needs the gap-mode effective mass
+  `m_eff` from the mass the explicit integrator actually inverts. For a model whose mass
+  comes from ELEMENT density (a solid `LadrunoBrick`/truss with `-rho`, no per-node
+  `mass`), `Node::getMass()` returns a **zeroed** matrix (`Node.cpp:1214` — `mass==0 ⇒
+  return a zero matrix`). The first B1 cut sized `m_eff` from `Node::getMass()` and so saw
+  `m=0` for every solid-body contact node → silently fell back to the stiff base kn → the
+  exact divergence SOFT exists to prevent. Tests that set `ops.mass(...)` directly never
+  catch it (found by the B1 adversarial code gate, MAJOR).
+- **Why:** OpenSees keeps nodal mass (the `mass` command, stored on the `Node`) and
+  element mass (each element's `getMass()`) as **separate** contributions. The global mass
+  is assembled from BOTH: the integrator's `formNodTangent → DOF_Group::addMtoTang →
+  Node::getMass()` AND `formEleTangent → Element::addMtoTang() → Element::getMass()`. There
+  is no `Node::addMass` that folds element mass back onto the node. So `Node::getMass()` is
+  the nodal-`mass`-only piece, never the assembled total.
+- **Workaround/status (2026-06-24):** to get the mass the explicit solve inverts (the
+  assembled global diagonal, for `system Diagonal`), reconstruct it: `m[d] = nodal
+  mass(d) + Σ_elements diag(M_e) at that node's translational DOFs`. B1's handler does this
+  once per `handle()` (`ladrunoBuildNodalMass` in `LadrunoContactHandler.cpp`) and caches it
+  on `LadrunoContactDomain` for the stateless adapter. Matches `diag(global M)` for `system
+  Diagonal` (the `DiagonalSOE` default extracts `M(i,i)`, no row-sum); a row-sum/lumped
+  distributed SOE (OpenSeesMP `MPIDiagonal`) would differ — soft contact is serial-only
+  today. Translation-first DOF order (`[u | θ]`) makes a node's first 3 element DOFs
+  translational.
+
+### An explicit SOFT/Courant penalty `k ∝ 1/dt²` keeps the contact event at a CONSTANT step count — energy error converges in SOFSCL, not dt
+- **Bites:** validating the ADR-39 B1 SOFT=1 penalty's energy balance. The instinct is to
+  refine `dt` and watch the impact restitution `e → 1` (energy conservation). It does NOT
+  improve — `1−e` is flat across `dt`. The naive read is "the penalty leaks energy."
+- **Why:** SOFT sizes `k_soft = SOFSCL·4·m_eff/dt²`, so the contact period
+  `T_contact = 2π√(m_eff/k_soft) ∝ dt`. The steps spanning a contact event,
+  `T_contact/dt = π/√SOFSCL`, are **independent of dt** — refining dt shrinks the period
+  and the step in lockstep, so the contact is always resolved by the same ~`π/√SOFSCL`
+  steps. The discrete one-sided-contact engagement error (EITHER sign at coarse
+  resolution — the chatter D2 viscous damps) is therefore a function of **SOFSCL**, not dt.
+- **Workaround/status (2026-06-24):** test energy convergence by refining **SOFSCL** (not
+  dt): `proto_b1_soft_penalty.py` T3/T4 sweep SOFSCL∈{0.1, 0.025, 0.00625} and show
+  `|1−e|`, `|ΔKE/KE₀|` → 0. Frame it as "bounded & SOFSCL-convergent (not a formulation
+  leak)" — NOT "conservative at the shipped SOFSCL=0.1" (there the bounded error is ~1–2%,
+  sign-indefinite; that's the chatter, by design left for `-visc`). SOFSCL is the
+  accuracy/stability knob: smaller = stiffer + better-resolved + less penetration.
+
 ### `partition` needs the METIS 5 API (Patch 9)
 - **Bites:** the openseespy `partition` command fails / mislinks without the
   METIS 5 API path.

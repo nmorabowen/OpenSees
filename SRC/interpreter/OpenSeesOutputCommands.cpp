@@ -460,10 +460,38 @@ int OPS_LadrunoContact()
     // uplift regime. 0 (default) ⇒ no viscous term (byte-identical). Works on NTS (D2.1) AND mortar
     // CONTACT (D2.2); refused with -tie (a bond has no chatter). Naturally inert in statics (v ≡ 0).
     double muc = 0.0;
+    // Ladruno ADR-39 B1 (P4): `-soft <SOFSCL>` opts the NTS lane into the LS-DYNA §26.15 SOFT=1
+    // Courant-stable penalty. Under the explicit CentralDifferenceLadruno the contact stiffness is
+    // sized from the nodal MASS + the timestep (k_soft = SOFSCL·4·m_eff/dt²) instead of from the
+    // material, so the contact never throttles the explicit dt_cr (explicit impact/pounding runs at
+    // the STRUCTURAL dt). A modifier on the penalty: still needs a base -kn (auto|fixed) — that base
+    // kn is what an IMPLICIT run uses (SOFT is explicit-only ⇒ implicit byte-identical). SOFSCL
+    // optional (default 0.10, the LS-DYNA SLSFAC default); ≤0 ⇒ off; >1 warns (ω·dt = 2√SOFSCL > 2).
+    double softScale = 0.0;
     while (OPS_GetNumRemainingInputArgs() > 0) {
         const char *opt = OPS_GetString();
         if (opt != 0 && strcmp(opt, "-mortar") == 0) {
             isMortar = true;
+        } else if (opt != 0 && strcmp(opt, "-soft") == 0) {
+            // optional numeric SOFSCL; default 0.10 if the next token is a flag / end of args.
+            softScale = 0.10;
+            if (OPS_GetNumRemainingInputArgs() > 0) {
+                const char *p = OPS_GetString();          // string read consumes on Tcl AND Py
+                bool isFlag = (p != 0 && p[0] == '-');
+                OPS_ResetCurrentInputArg(-1);
+                if (!isFlag) {
+                    double v[1]; int m = 1;
+                    if (OPS_GetDoubleInput(&m, v) < 0) {
+                        opserr << "WARNING contact -soft - need a SOFSCL value or omit it (default 0.1)\n";
+                        return -1;
+                    }
+                    softScale = v[0];
+                }
+            }
+            if (softScale > 1.0)
+                opserr << "WARNING contact -soft SOFSCL=" << softScale << " > 1: the contact mode "
+                          "ω·dt = 2√SOFSCL > 2 is UNSTABLE under central difference; use SOFSCL ≤ 1 "
+                          "(default 0.1).\n";
         } else if (opt != 0 && strcmp(opt, "-tie") == 0) {
             // ADR-41 C4: a PERMANENT mesh-tie bond (requires -mortar; validated after the loop).
             isTie = true;
@@ -649,6 +677,20 @@ int OPS_LadrunoContact()
                   "apply to -mortar (the mortar geometric tangent is separately deferred)\n";
         return -1;
     }
+    if (softScale > 0.0 && isMortar) {
+        // B1 (P4) is the NTS lane's explicit Courant-stable penalty; a mortar SOFT penalty is a
+        // SEPARATE (unscoped) item. Refuse rather than silently ignore -soft on a mortar contact.
+        opserr << "WARNING contact -soft is an NTS (node-to-segment) explicit option; it does not "
+                  "apply to -mortar (the mortar SOFT penalty is out of scope)\n";
+        return -1;
+    }
+    if (softScale > 0.0 && !knAuto && kn <= 0.0) {
+        // SOFT is a MODIFIER on the penalty: under explicit it sizes k_soft, but an implicit run
+        // (and the byte-identity contract) needs a real base kn. Refuse a -soft with no penalty.
+        opserr << "WARNING contact -soft needs a base penalty: give a positional `auto` or `<kn>` "
+                  "before the options (SOFT=1 sizes k_soft under explicit, implicit uses the base kn)\n";
+        return -1;
+    }
     if (isMortar) {
         // Ladruno ADR-41 C2.0/C2.2/C3.1: the mortar definition (normal ALM + C3.1 Coulomb/Tresca
         // friction via -mu/-epsT/-cohesion/-tauMax). friction params ≤0 ⇒ the frictionless C2 path.
@@ -660,16 +702,18 @@ int OPS_LadrunoContact()
     }
     // D2: -visc μ_c (NTS viscous normal stabilization; 0 ⇒ off, byte-identical).
     // B3: -geomtan ⇒ the consistent ∂n/∂u geometric normal tangent (off ⇒ byte-identical).
+    // B1: -soft SOFSCL ⇒ the explicit SOFT=1 Courant-stable penalty (off ⇒ byte-identical).
     return cd->addContact(idata[0], idata[1], idata[2], kn, kt, mu,
                           hasOutward ? outward : 0, knAuto, cellFrac, consistentTan, muc,
-                          consistentNormal);
+                          consistentNormal, softScale);
 }
 
-// contactPlane tag slaveSurfTag  nx ny nz  px py pz  kn  <-visc μ_c>   (P2a rigid analytical plane)
+// contactPlane tag slaveSurfTag  nx ny nz  px py pz  kn  <-visc μ_c> <-soft SOFSCL>  (P2a rigid plane)
 int OPS_LadrunoContactPlane()
 {
     if (OPS_GetNumRemainingInputArgs() < 9) {
-        opserr << "WARNING want - contactPlane tag slaveSurfTag nx ny nz px py pz kn <-visc muc>\n";
+        opserr << "WARNING want - contactPlane tag slaveSurfTag nx ny nz px py pz kn "
+                  "<-visc muc> <-soft SOFSCL>\n";
         return -1;
     }
     int idata[2], ni = 2;
@@ -688,6 +732,10 @@ int OPS_LadrunoContactPlane()
     double kn = d[6];
     // ADR-41 D2: optional trailing `-visc <μ_c>` viscous normal-stabilization coefficient (0 ⇒ off).
     double muc = 0.0;
+    // ADR-39 B1 (P4): optional `-soft <SOFSCL>` — the explicit SOFT=1 Courant-stable penalty (size
+    // kn from the slave mass + dt under CentralDifferenceLadruno; inert/kn under implicit). The
+    // rigid-plane m_eff = m_s (the plane is fixed). SOFSCL optional (default 0.10); ≤0 ⇒ off.
+    double softScale = 0.0;
     while (OPS_GetNumRemainingInputArgs() > 0) {
         const char *opt = OPS_GetString();
         if (opt != 0 && strcmp(opt, "-visc") == 0) {
@@ -697,9 +745,27 @@ int OPS_LadrunoContactPlane()
                 return -1;
             }
             muc = v[0];
+        } else if (opt != 0 && strcmp(opt, "-soft") == 0) {
+            softScale = 0.10;                          // optional numeric SOFSCL; default 0.10
+            if (OPS_GetNumRemainingInputArgs() > 0) {
+                const char *p = OPS_GetString();
+                bool isFlag = (p != 0 && p[0] == '-');
+                OPS_ResetCurrentInputArg(-1);
+                if (!isFlag) {
+                    double v[1]; int m = 1;
+                    if (OPS_GetDoubleInput(&m, v) < 0) {
+                        opserr << "WARNING contactPlane -soft - need a SOFSCL value or omit it (default 0.1)\n";
+                        return -1;
+                    }
+                    softScale = v[0];
+                }
+            }
+            if (softScale > 1.0)
+                opserr << "WARNING contactPlane -soft SOFSCL=" << softScale << " > 1 is UNSTABLE "
+                          "(ω·dt = 2√SOFSCL > 2); use SOFSCL ≤ 1 (default 0.1).\n";
         } else {
             opserr << "WARNING contactPlane - unexpected token '" << (opt ? opt : "")
-                   << "' (expected -visc or end of arguments)\n";
+                   << "' (expected -visc, -soft, or end of arguments)\n";
             return -1;
         }
     }
@@ -710,7 +776,7 @@ int OPS_LadrunoContactPlane()
         opserr << "WARNING contactPlane - define the slave contactSurface first\n";
         return -1;
     }
-    return cd->addRigidPlane(idata[0], idata[1], p0, n, kn, muc);
+    return cd->addRigidPlane(idata[0], idata[1], p0, n, kn, muc, softScale);
 }
 
 // ladrunoContactInfo -> [numContacts, numCommits, numReverts, numMortarContacts]

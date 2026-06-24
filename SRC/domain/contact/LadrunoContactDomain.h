@@ -68,7 +68,7 @@ class LadrunoContactDomain
                    double kn, double kt, double mu, const double *outward = 0,
                    bool knAuto = false, double cellFrac = 1.0,
                    bool consistentTan = false, double muc = 0.0,
-                   bool consistentNormal = false);
+                   bool consistentNormal = false, double softScale = 0.0);
     int getNumContacts(void) const { return (int)theContacts.size(); }
 
     // --- P2b: faceted node-to-segment penalty contact. A Contact references a
@@ -91,6 +91,12 @@ class LadrunoContactDomain
         bool consistentNormal;  // B3 (P2b-2c): true => assemble the consistent ∂n/∂u geometric
                                 // normal tangent (kn·gN·∂²gN/∂u²) for quadratic Newton on curved /
                                 // large-sliding interfaces. false (default) => kn·BᵀB (byte-identical).
+        double softScale;       // B1 (P4): LS-DYNA §26.15 SOFT=1 scale SOFSCL (>0 ⇒ on). Under the
+                                // explicit CentralDifferenceLadruno the adapter REPLACES kn with the
+                                // Courant-stable k_soft = SOFSCL·4·m_eff/dt² each step (m_eff from the
+                                // nodal masses), so the contact never throttles dt_cr. Inert under any
+                                // implicit integrator (the configured kn is used ⇒ byte-identical).
+                                // Requires a base -kn (auto/fixed) — soft is a modifier on the penalty.
     };
     const Contact &getContact(int i) const { return theContacts[i]; }
 
@@ -145,9 +151,11 @@ class LadrunoContactDomain
         double p0[3], n[3];     // n stored normalized at add time
         double kn;
         double muc;             // ADR-41 D2: viscous normal-stabilization coefficient (0 => none)
+        double softScale;       // B1 (P4): SOFT=1 scale SOFSCL (>0 ⇒ on; explicit-only, see Contact)
     };
     int addRigidPlane(int tag, int slaveSurfTag,
-                      const double p0[3], const double n[3], double kn, double muc = 0.0);
+                      const double p0[3], const double n[3], double kn, double muc = 0.0,
+                      double softScale = 0.0);
     int getNumRigidPlanes(void) const { return (int)theRigidPlanes.size(); }
     const RigidPlane &getRigidPlane(int i) const { return theRigidPlanes[i]; }
 
@@ -279,6 +287,17 @@ class LadrunoContactDomain
     void   setNtsForce(int contactTag, int slaveTag, int segIndex, double tn);
     double getNtsForce(int slaveTag) const;   // Σ over (contactTag, slaveTag, *segIndex)
 
+    // --- B1 (P4) ASSEMBLED nodal mass cache. The SOFT=1 penalty needs the gap-mode effective mass,
+    //     which uses the mass the EXPLICIT integrator actually inverts: the assembled global diagonal
+    //     M = Σ_elements diag(M_e) + the nodal `mass`. Node::getMass() carries ONLY the nodal `mass`
+    //     (element-density mass never reaches the node), so the handler pre-computes the assembled
+    //     translational mass [mx,my,mz] per contact node (one element pass per handle(), only when a
+    //     SOFT contact exists) and stores it here; the stateless adapter reads it in softKn(). Cleared
+    //     + rebuilt each handle() (masses are constant between domain changes, like kn). ---
+    void   clearNodalMass(void);
+    void   setNodalMass(int nodeTag, const double m[3]);
+    bool   getNodalMass(int nodeTag, double m[3]) const;   // false ⇒ not cached (adapter falls back)
+
     // dead-slot GC (design-gate MAJOR: the engine survives domainChanged AND across
     // analyze() calls, so a re-meshed/re-paired analysis would leak old friction
     // slots — the ADR-30 theEQs leak class). The handler rebuilds the live key-set
@@ -315,6 +334,8 @@ class LadrunoContactDomain
     std::map<PairKey, FrictionState> theFrictionStates;
     std::set<PairKey> liveKeys;                         // GC scratch (per handle())
     std::map<PairKey, double> theNtsForce;              // B3: per-pair normal force snapshot
+    struct NodeMass { double m[3]; };                   // B1: assembled translational nodal mass
+    std::map<int, NodeMass> theNodalMass;               // B1: per-node assembled mass (SOFT=1)
 
     // C2.2 normal-ALM state, keyed by (contactTag, slaveNodeTag) — a 2-field key.
     struct NodeKey {

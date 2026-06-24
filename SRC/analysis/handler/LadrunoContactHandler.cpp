@@ -134,6 +134,49 @@ ladrunoResolveAutoKn(Domain *theDomain, Node **segNodes, int nps,
     return -1.0;   // no owning solid element found for this segment
 }
 
+// B1 (P4) — build the ASSEMBLED translational nodal-mass cache the SOFT=1 penalty needs. The explicit
+// integrator inverts the assembled global diagonal M = Σ_elements diag(M_e) + the nodal `mass`, but
+// Node::getMass() holds ONLY the nodal `mass` (element-density mass never reaches the node). So here we
+// reconstruct, per node, m[d] = nodal mass(d) + Σ_e diag(M_e) at that node's translational DOFs (the
+// SAME diagonal `system Diagonal` inverts) and stash it on the engine for the stateless adapter to
+// read. One pass over the elements; called only when a SOFT contact exists (masses are constant
+// between domain changes, so rebuild-per-handle is correct). Translation-first DOF order (OpenSees
+// nodes order [u | θ]) ⇒ a node's first 3 element DOFs are translational.
+static void
+ladrunoBuildNodalMass(Domain *theDomain, LadrunoContactDomain *cd)
+{
+    cd->clearNodalMass();
+    // seed every node with its nodal `mass` (the Node::getMass diagonal, translational DOFs)
+    NodeIter &theNod = theDomain->getNodes();
+    Node *nodPtr;
+    while ((nodPtr = theNod()) != 0) {
+        const Matrix &M = nodPtr->getMass();
+        int nr = M.noRows();
+        double m[3] = {0.0, 0.0, 0.0};
+        for (int d = 0; d < 3 && d < nr; d++) m[d] = M(d, d);
+        cd->setNodalMass(nodPtr->getTag(), m);
+    }
+    // add each element's diagonal mass contribution to its nodes
+    ElementIter &theEle = theDomain->getElements();
+    Element *e;
+    while ((e = theEle()) != 0) {
+        const ID &en = e->getExternalNodes();
+        int nn = en.Size();
+        if (nn <= 0) continue;
+        int ndof = e->getNumDOF();
+        if (ndof <= 0 || ndof % nn != 0) continue;          // non-uniform DOF layout ⇒ cannot map
+        int dpn = ndof / nn;                                // DOFs per node (3 solid, 6 beam/shell)
+        const Matrix &Me = e->getMass();
+        if (Me.noRows() != ndof || Me.noCols() != ndof) continue;   // no/odd mass matrix ⇒ skip
+        for (int k = 0; k < nn; k++) {
+            double m[3];
+            if (!cd->getNodalMass(en(k), m)) { m[0] = m[1] = m[2] = 0.0; }
+            for (int d = 0; d < 3 && d < dpn; d++) m[d] += Me(k * dpn + d, k * dpn + d);
+            cd->setNodalMass(en(k), m);
+        }
+    }
+}
+
 int
 LadrunoContactHandler::handle(const ID *nodesLast)
 {
@@ -245,6 +288,20 @@ LadrunoContactHandler::handle(const ID *nodesLast)
     // --- inject the contact FE adapter(s) ---
     // None if no contact engine is attached (pure Plain -> byte-identical to stock).
     LadrunoContactDomain *cd = theDomain->getLadrunoContactDomain();
+
+    // B1 (P4): if ANY NTS contact / rigid plane requests the SOFT=1 penalty, pre-compute the
+    // assembled translational nodal-mass cache (nodal `mass` + element-density mass) the adapters
+    // read to size k_soft = SOFSCL·4·m_eff/dt². Only when soft is in play ⇒ no cost (and byte-
+    // identical) otherwise. Mortar SOFT is out of scope (refused at the command surface).
+    if (cd != 0) {
+        bool anySoft = false;
+        for (int c = 0; c < cd->getNumContacts() && !anySoft; c++)
+            if (cd->getContact(c).softScale > 0.0) anySoft = true;
+        for (int p = 0; p < cd->getNumRigidPlanes() && !anySoft; p++)
+            if (cd->getRigidPlane(p).softScale > 0.0) anySoft = true;
+        if (anySoft)
+            ladrunoBuildNodalMass(theDomain, cd);
+    }
 
     // P2b: faceted node-to-segment penalty contact. For each contact definition
     // (MASTER_SEGMENTS surface vs SLAVE_NODES surface) build ONE bound adapter per
@@ -402,7 +459,8 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                         new LadrunoContactFE(numFe++, sn, segNodes, nps, knUse, orientDir,
                                              ct.kt, ct.mu, theDomain, ct.tag, seg,
                                              ct.consistentTan, ct.muc,       // D2 viscous (0 ⇒ off)
-                                             ct.consistentNormal);           // B3 ∂n/∂u geom tangent
+                                             ct.consistentNormal,            // B3 ∂n/∂u geom tangent
+                                             ct.softScale);                  // B1 SOFT=1 (0 ⇒ off)
                     if (fe == 0) return -5;
                     theModel->addFE_Element(fe);
                     if (ct.mu > 0.0)
@@ -588,7 +646,10 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                            << " < ndm=" << nd << "; skipped\n";
                     continue;
                 }
-                LadrunoContactFE *fe = new LadrunoContactFE(numFe++, sn, nd, rp.p0, rp.n, rp.kn, rp.muc);   // D2 viscous (0 ⇒ off)
+                LadrunoContactFE *fe = new LadrunoContactFE(numFe++, sn, nd, rp.p0, rp.n, rp.kn,
+                                                            rp.muc,         // D2 viscous (0 ⇒ off)
+                                                            rp.softScale,   // B1 SOFT=1 (0 ⇒ off)
+                                                            theDomain);     // B1 engine mass cache
                 if (fe == 0) return -5;
                 theModel->addFE_Element(fe);
             }
