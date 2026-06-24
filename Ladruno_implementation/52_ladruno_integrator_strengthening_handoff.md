@@ -26,10 +26,11 @@ study + [[49a_integrator_scorecard_2026-06-23]] gap analysis).
 | **W1-E3** | SMS `dt_cr` honesty (`-cflAbort`/`-recompute` → report-only) + corrected the stale "consistent-SMS not parallel-safe" comment (it IS parallel-safe) | #394 |
 | **W1-I1a** | Transient adaptive-Δt lane `robust_transient()` in `Ladruno_scripts/robust_drive.py` (convergence-driven; verdict `integrated`≠accurate) | #396 |
 | **W2-E1** | Explicit bulk viscosity (`-bulkViscosity b1 b2` / `-bv`) on **all 3 fork continuum elements** — LadrunoBrick, LadrunoQuad, LadrunoCST | #399, #403 |
+| **W1-I1b** | Half-increment-residual ACCURACY gate `robust_transient(error_gate=True, haftol=…)` + two read-only fork commands `ladrunoTrialResidualNorm`/`ladrunoSetNodeTrial` (registration-only vanilla, no classTag/header edit). Resolved the open question: NOT Python-only. Exact for elastic, approximate for inelastic/rate-dependent. | #407 |
 
 Docs/log PRs: #391 (ADRs 49/49a/52), #398, #401, #404.
 
-**Remaining waves:** W1-E2, W1-I1b, W3-I2, W3-I3-gate (details below).
+**Remaining waves:** W1-E2, W3-I2, W3-I3-gate (details below).
 
 ## How to work this (the proven loop)
 
@@ -71,6 +72,21 @@ Docs/log PRs: #391 (ADRs 49/49a/52), #398, #401, #404.
   `interpreter/OpenSeesCommands.{cpp,h}`, both brokers (`FEM_ObjectBrokerAllClasses.cpp`,
   `runtime/.../TclPackageClassBroker.cpp`), `classTags.h`, the integrator CMakeLists +
   Makefile. (NOT DirectIntegrationAnalysis/TclWrapper/PythonWrapper — generic wiring.)
+  Adding a new *command* (not integrator) is lighter: `OpenSeesCommands.cpp`(or
+  `OpenSeesMiscCommands.cpp`/`OpenSeesOutputCommands.cpp`) + `OpenSeesCommands.h` decl +
+  `Py_ops_`/`Tcl_ops_` wrappers + `addCommand` in `PythonWrapper.cpp`/`TclWrapper.cpp`.
+  No classTag, no broker. (W1-I1b used this.)
+- **`setNodeDisp/Vel/Accel` do NOT accumulate across dofs** — each call re-reads the
+  COMMITTED vector (`Node::getDisp()`), overrides one dof, and `setTrialDisp`s, so for a
+  multi-dof node only the last-set dof differs from committed. To inject a full multi-dof
+  trial state use the W1-I1b `ladrunoSetNodeTrial` full-vector setter.
+- **`ops_Dt` is a GLOBAL read by rate-dependent materials inside `Element::update()`**
+  (Maxwell/ViscousDamper/creep/TDConcrete...). `Domain::applyLoad(t)` sets it to
+  `t − committedTime`; after a commit `committedTime = t_{n+1}`, so applying loads at a
+  PAST time (e.g. the step midpoint) makes `ops_Dt` NEGATIVE and corrupts those materials
+  (`exp(-ops_Dt/tR)` → growing). W1-I1b's review caught this; fix is to force a positive
+  dt and save/restore `ops_Dt` around any off-step residual assembly. Elastic-only tests
+  mask it — add a rate-dependent (Maxwell) case when touching residual machinery.
 
 ## Remaining waves — scope + notes
 
@@ -87,14 +103,18 @@ Docs/log PRs: #391 (ADRs 49/49a/52), #398, #401, #404.
 - **Do the adversarial review.** Add `zone_a` tests proving each flag combo == its old
   dedicated class (byte-identity).
 
-### W1-I1b — half-increment-residual error gate (upgrades W1-I1a)
-- The accuracy tier: evaluate the residual at t+Δt/2 on the converged step; cut Δt if it
-  exceeds tol. This is the one *true* gap vs Abaqus/LS-DYNA (W1-I1a is convergence-driven,
-  not accuracy-grade).
-- **Open question:** can the half-increment residual be computed from OpenSeesPy alone
-  (`printB`/`setNode*`), or does it need a small *fork-owned read-only* C++ residual
-  helper? Ship the Python form if possible; add the helper only if not.
-- Lives in `Ladruno_scripts/robust_drive.py` alongside `robust_transient()`.
+### W1-I1b — half-increment-residual error gate (SHIPPED #407)
+- Done. `robust_transient(error_gate=True, haftol=…)` in `Ladruno_scripts/robust_drive.py`
+  + `ladrunoTrialResidualNorm <loadTime>` / `ladrunoSetNodeTrial` commands. Open question
+  resolved: NOT Python-only (`setNodeDisp` triggers no `Element::update()`).
+- **Feed-forward** (OpenSees commits on success → sizes the next Δt, no mid-step rejection);
+  verdict `accuracy_gated` iff every committed step met `haftol`, else `integrated`.
+- **Fidelity:** exact for rate-/path-independent (elastic); approximate for inelastic/
+  rate-dependent (post-commit reference is t_{n+1}; representative +dt imposed). See the
+  `ops_Dt` gotcha above.
+- *Possible future polish (non-blocking):* true mid-step rejection would need a C++
+  `analyze`-without-commit variant; an Abaqus-style HAFTOL auto-scaling from a running
+  reference force; an HHT/generalized-α α-weighted midpoint (current uses avg-accel).
 
 ### W3-I2 — sensitivity-carrying `LadrunoHHT` / `LadrunoGeneralizedAlpha`
 - **Requires 2 ledgered vanilla base-header edits**: promote the needed members in
@@ -133,9 +153,11 @@ upstreamed as a *real-OpenSees* PR, separate from the fork.
 ## Key files
 - Roadmap + log: `Ladruno_implementation/52_ladruno_integrator_strengthening_adr.md`
 - Study + scorecard: `49_ladruno_integrator_study_workflow_adr.md`, `49a_integrator_scorecard_2026-06-23.md`
-- Robust driver (W1-I1): `Ladruno_scripts/robust_drive.py`
+- Robust driver (W1-I1a/b): `Ladruno_scripts/robust_drive.py` (`robust_transient`,
+  `_half_increment_residual`); W1-I1b commands in `SRC/interpreter/OpenSeesCommands.cpp`
+  (`OPS_LadrunoTrialResidualNorm`) + `OpenSeesMiscCommands.cpp` (`OPS_LadrunoSetNodeTrial`)
 - SMS (W1-E3): `SRC/analysis/integrator/{CentralDifferenceSMS,ExplicitBatheSMS}{,Consistent}.{h,cpp}`
 - Bulk viscosity (W2-E1): `SRC/element/ladrunoBrick/LadrunoBrick*.{h,cpp}`,
   `SRC/element/ladrunoPlane/{LadrunoQuad,LadrunoCST}*.{h,cpp}` (search `bulkVisc`/`bvActive`)
-- Runtime tests: `tests/test_adr52_w2e1_bulk_viscosity*.py`
+- Runtime tests: `tests/test_adr52_w2e1_bulk_viscosity*.py`, `tests/test_adr52_w1i1b_halfres_gate.py`
 - Memory: `ladruno-integrator-study` (project memory)

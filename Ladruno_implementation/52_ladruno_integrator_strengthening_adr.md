@@ -290,10 +290,12 @@ These would require editing vanilla algorithm files → guidance in
 
 ## Risks / open questions
 
-> [!question]
+> [!done] RESOLVED (#407)
 > W1-I1b: can the half-increment-residual error gate be computed from OpenSeesPy
-> alone, or does it need a small fork-owned C++ residual-query helper? (W1-I1a
-> needs neither — ship that first.)
+> alone? **No** — `setNodeDisp` triggers no `Element::update()`, so the assembled
+> residual ignores the displacement-dependent internal force at an injected state.
+> Shipped two small read-only fork commands (`ladrunoTrialResidualNorm`,
+> `ladrunoSetNodeTrial`); registration-only vanilla, no classTag/header promotion.
 
 > [!question]
 > W1-E2: keep the deprecated dispatch branches for one release (no alias
@@ -391,5 +393,31 @@ its own PR on `ladruno`.
 - *W2-E1 follow-ups (deferred, non-blocking):* **S3** `bvDissipated`/ALLVD recorder
   channel (energy balance already closes); **S4** one-time warning when material
   `rho==0`; extend bulk viscosity to the uri/ssp/eas single-point Brick/Quad paths.
+- **2026-06-24 — W1-I1b shipped (#407).** Half-increment-residual ACCURACY gate —
+  upgrades W1-I1a from convergence-driven to accuracy-grade (the one true gap vs
+  Abaqus/LS-DYNA). **Open question RESOLVED: not Python-only.** Probed the dist build:
+  `setNodeDisp` sets only the node trial vector and triggers no `Element::update()`, so
+  `reactions()`/`printB()` (even after `updateElementDomain`) report a residual that
+  ignores the displacement-dependent internal force (`|b|`=0 at an injected state). So
+  two small fork commands (registration-only vanilla, **no classTag, no header
+  promotion** — much lighter than W3-I2's footprint): **`ladrunoTrialResidualNorm
+  <loadTime>`** (drives the element `update()` loop with a forced POSITIVE half-step dt,
+  then the active integrator's `formUnbalance()` → inf-norm of the free-DOF dynamic
+  unbalance; optional `loadTime` re-applies loads at the midpoint; no commit) and
+  **`ladrunoSetNodeTrial`** (full-vector trial setter — the per-dof `setNodeDisp` cannot
+  build a multi-dof trial state). `robust_transient(error_gate=True, haftol=…)` builds
+  the constant-avg-accel midpoint state, reads the residual, and sizes the next Δt from
+  `min(iter-count, (haftol/r_half)^(1/order))`. **FEED-FORWARD** (OpenSees commits on
+  success → no mid-step rejection); verdict `accuracy_gated` iff every committed step met
+  `haftol`, else `integrated` (`n_overtol`/`halfres_max` carry the evidence). **Fidelity:
+  EXACT for rate-/path-independent (elastic) materials; APPROXIMATE for inelastic/rate-
+  dependent (post-commit reference is t_{n+1}, representative +dt imposed).** Adversarial
+  review (23 agents, 6/17 confirmed) caught a MAJOR the elastic-only test masked: the
+  midpoint `applyLoad` left the global `ops_Dt` NEGATIVE (`t_mid−t_{n+1}`), corrupting
+  rate-dependent materials' relaxation (`exp(-ops_Dt/tR)`→growing) — fixed by the forced
+  positive dt + save/restore. Tests (`tests/test_adr52_w1i1b_halfres_gate.py`, zone_a):
+  numpy oracle incl. load-at-midpoint; Newmark-consistency check; full-vector-setter vs
+  per-dof loss; committed-state-untouched; gate-improves-accuracy vs fine-Δt ref; Maxwell
+  rate-dependent regression (guards the `ops_Dt` fix); gate-off == W1-I1a.
 - *Remaining waves:* W1-E2 (ExplicitBathe 6→1 collapse — most invasive, do
-  deliberately), W1-I1b (error gate), W3-I2 (sensitivity subclasses), W3-I3-gate.
+  deliberately), W3-I2 (sensitivity subclasses), W3-I3-gate.
