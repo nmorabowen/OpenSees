@@ -67,7 +67,8 @@ LadrunoContactDomain::getSurface(int tag) const
 int
 LadrunoContactDomain::addContact(int tag, int masterSurfTag, int slaveSurfTag,
                                  double kn, double kt, double mu, const double *outward,
-                                 bool knAuto, double cellFrac, bool consistentTan, double muc)
+                                 bool knAuto, double cellFrac, bool consistentTan, double muc,
+                                 bool consistentNormal)
 {
     if (getSurface(masterSurfTag) == 0 || getSurface(slaveSurfTag) == 0) {
         opserr << "WARNING LadrunoContactDomain::addContact() - master/slave surface "
@@ -92,6 +93,7 @@ LadrunoContactDomain::addContact(int tag, int masterSurfTag, int slaveSurfTag,
     c.cellFrac = (cellFrac > 0.0) ? cellFrac : 1.0;   // P2.5 broad-phase cell scale
     c.consistentTan = consistentTan;                  // P3.5 friction tangent symmetry
     c.muc = (muc > 0.0) ? muc : 0.0;                  // D2 viscous stabilization (≤0 ⇒ off)
+    c.consistentNormal = consistentNormal;            // B3 ∂n/∂u geometric normal tangent
     theContacts.push_back(c);
     return 0;
 }
@@ -354,6 +356,25 @@ void
 LadrunoContactDomain::frictionGCBegin(void)
 {
     liveKeys.clear();
+    theNtsForce.clear();    // B3: drop last handle()'s NTS force snapshot (keys rebuilt this handle)
+}
+
+// B3 (P2b-2c) — NTS contact-force snapshot for the `ladrunoContactForce` query.
+void
+LadrunoContactDomain::setNtsForce(int contactTag, int slaveTag, int segIndex, double tn)
+{
+    PairKey k; k.c = contactTag; k.s = slaveTag; k.g = segIndex;
+    theNtsForce[k] = tn;        // overwrite ⇒ holds the committed force after convergence
+}
+
+double
+LadrunoContactDomain::getNtsForce(int slaveTag) const
+{
+    double f = 0.0;             // Σ over all (contactTag, slaveTag, segIndex) pairs of this node
+    for (std::map<PairKey, double>::const_iterator it = theNtsForce.begin();
+         it != theNtsForce.end(); ++it)
+        if (it->first.s == slaveTag) f += it->second;
+    return f;
 }
 
 void

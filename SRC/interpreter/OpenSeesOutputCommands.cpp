@@ -436,6 +436,11 @@ int OPS_LadrunoContact()
     double outward[3] = {0.0, 0.0, 0.0};
     double cellFrac = 1.0;
     bool consistentTan = false;   // Ladruno ADR-39 P3.5: friction tangent symmetry
+    // Ladruno ADR-39 B3 (P2b-2c): `-geomtan` opts the NTS SEGMENT lane into the consistent
+    // ∂n/∂u geometric NORMAL tangent (kn·gN·∂²gN/∂u²) ⇒ quadratic Newton on CURVED / large-
+    // sliding interfaces. SYMMETRIC ⇒ solver-safe on any system (unlike the friction Csl). Off
+    // (default) ⇒ the shipped kn·BᵀB main term (byte-identical; EXACT for a flat/fixed master).
+    bool consistentNormal = false;
     // Ladruno ADR-41 C2: the mortar lane. `-mortar` selects the clipped-GP mortar +
     // frictionless commit-cycle ALM formulation; -epsN/-augTol/-maxAug/-ngp tune it.
     bool isMortar = false;
@@ -596,6 +601,12 @@ int OPS_LadrunoContact()
             opserr << "WARNING contact -consistanttan: the non-symmetric consistent "
                       "friction tangent needs a non-symmetric solver (system FullGeneral/"
                       "UmfPack/BandGeneral); symmetric solvers will silently corrupt it.\n";
+        } else if (opt != 0 && strcmp(opt, "-geomtan") == 0) {
+            // Ladruno ADR-39 B3 (P2b-2c): opt the NTS SEGMENT lane into the consistent ∂n/∂u
+            // geometric NORMAL tangent ⇒ quadratic Newton on CURVED / large-sliding interfaces
+            // (the Hertz benchmark). SYMMETRIC ⇒ correct on ANY solver (no -consistanttan needed).
+            // Off ⇒ the shipped kn·BᵀB main term (byte-identical; EXACT for a flat/fixed master).
+            consistentNormal = true;
         } else {
             // Ladruno ADR-39 P2b-2b (gate MINOR-1): error on an unexpected trailing
             // token rather than silently swallowing it (e.g. a stray friction value
@@ -630,6 +641,14 @@ int OPS_LadrunoContact()
                   "regime); drop -tie for a viscous-stabilized mortar CONTACT\n";
         return -1;
     }
+    if (consistentNormal && isMortar) {
+        // B3 (P2b-2c) is the NTS SEGMENT geometric tangent; the mortar lane's geometric
+        // ∂{D,M,n}/∂u block is a SEPARATE deferral (C2 shipped the penalty Gram only). Refuse
+        // rather than silently ignore -geomtan on a mortar contact.
+        opserr << "WARNING contact -geomtan is an NTS (node-to-segment) option; it does not "
+                  "apply to -mortar (the mortar geometric tangent is separately deferred)\n";
+        return -1;
+    }
     if (isMortar) {
         // Ladruno ADR-41 C2.0/C2.2/C3.1: the mortar definition (normal ALM + C3.1 Coulomb/Tresca
         // friction via -mu/-epsT/-cohesion/-tauMax). friction params ≤0 ⇒ the frictionless C2 path.
@@ -640,8 +659,10 @@ int OPS_LadrunoContact()
                                     mortarMu, epsT, epsTAuto, cohesion, tauMax, consistentTan, isTie, muc);
     }
     // D2: -visc μ_c (NTS viscous normal stabilization; 0 ⇒ off, byte-identical).
+    // B3: -geomtan ⇒ the consistent ∂n/∂u geometric normal tangent (off ⇒ byte-identical).
     return cd->addContact(idata[0], idata[1], idata[2], kn, kt, mu,
-                          hasOutward ? outward : 0, knAuto, cellFrac, consistentTan, muc);
+                          hasOutward ? outward : 0, knAuto, cellFrac, consistentTan, muc,
+                          consistentNormal);
 }
 
 // contactPlane tag slaveSurfTag  nx ny nz  px py pz  kn  <-visc μ_c>   (P2a rigid analytical plane)
@@ -748,6 +769,33 @@ int OPS_LadrunoMortarTieResidual()
     }
     int one = 1;
     if (OPS_SetDoubleOutput(&one, &res, true) < 0)
+        return -1;
+    return 0;
+}
+
+// ladrunoContactForce slaveNodeTag -> the total normal contact-force magnitude on an NTS slave
+// node (Σ over its active master-segment pairs of tn = kn·<−gap>₊; 0 if no engine / not in
+// contact). ADR-39 B3 (P2b-2c): direct nodal contact-pressure readout for the Hertz benchmark
+// (the contact traction is computed by an injected FE adapter, so it is NOT in nodeReaction).
+int OPS_LadrunoContactForce()
+{
+    if (OPS_GetNumRemainingInputArgs() < 1) {
+        opserr << "WARNING want - ladrunoContactForce slaveNodeTag\n";
+        return -1;
+    }
+    int tag = 0, one = 1;
+    if (OPS_GetIntInput(&one, &tag) < 0) {
+        opserr << "WARNING ladrunoContactForce - could not read slaveNodeTag\n";
+        return -1;
+    }
+    Domain *theDomain = OPS_GetDomain();
+    double f = 0.0;
+    if (theDomain != 0) {
+        LadrunoContactDomain *cd = theDomain->getLadrunoContactDomain();
+        if (cd != 0)
+            f = cd->getNtsForce(tag);
+    }
+    if (OPS_SetDoubleOutput(&one, &f, true) < 0)
         return -1;
     return 0;
 }

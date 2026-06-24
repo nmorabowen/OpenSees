@@ -67,7 +67,8 @@ class LadrunoContactDomain
     int addContact(int tag, int masterSurfTag, int slaveSurfTag,
                    double kn, double kt, double mu, const double *outward = 0,
                    bool knAuto = false, double cellFrac = 1.0,
-                   bool consistentTan = false, double muc = 0.0);
+                   bool consistentTan = false, double muc = 0.0,
+                   bool consistentNormal = false);
     int getNumContacts(void) const { return (int)theContacts.size(); }
 
     // --- P2b: faceted node-to-segment penalty contact. A Contact references a
@@ -87,6 +88,9 @@ class LadrunoContactDomain
                                 // => the symmetric tangent (solver-safe on any system)
         double muc;             // ADR-41 D2: viscous normal-stabilization coefficient (p_visc =
                                 // muc*gap_rate). 0 (default) => no viscous term (byte-identical).
+        bool consistentNormal;  // B3 (P2b-2c): true => assemble the consistent ∂n/∂u geometric
+                                // normal tangent (kn·gN·∂²gN/∂u²) for quadratic Newton on curved /
+                                // large-sliding interfaces. false (default) => kn·BᵀB (byte-identical).
     };
     const Contact &getContact(int i) const { return theContacts[i]; }
 
@@ -265,6 +269,16 @@ class LadrunoContactDomain
     void mortarNormalGCMark(int contactTag, int slaveNodeTag);
     void mortarNormalGCEnd(void);
 
+    // --- B3 (P2b-2c) NTS contact-force readout. Each SEGMENT adapter reports its computed
+    //     normal penalty traction tn = kn·<−gap>₊ into a per-(contactTag, slaveTag, segIndex)
+    //     slot each getResidual (OVERWRITE ⇒ after convergence the slot holds the committed
+    //     force). getNtsForce sums over a slave node's pairs ⇒ the `ladrunoContactForce` query
+    //     (nodal contact-pressure readout for e.g. the Hertz benchmark). Cleared in
+    //     frictionGCBegin() (handle()-scoped, like the friction live-set). No numerical effect
+    //     on the assembled residual/tangent — a pure side-channel snapshot. ---
+    void   setNtsForce(int contactTag, int slaveTag, int segIndex, double tn);
+    double getNtsForce(int slaveTag) const;   // Σ over (contactTag, slaveTag, *segIndex)
+
     // dead-slot GC (design-gate MAJOR: the engine survives domainChanged AND across
     // analyze() calls, so a re-meshed/re-paired analysis would leak old friction
     // slots — the ADR-30 theEQs leak class). The handler rebuilds the live key-set
@@ -300,6 +314,7 @@ class LadrunoContactDomain
     };
     std::map<PairKey, FrictionState> theFrictionStates;
     std::set<PairKey> liveKeys;                         // GC scratch (per handle())
+    std::map<PairKey, double> theNtsForce;              // B3: per-pair normal force snapshot
 
     // C2.2 normal-ALM state, keyed by (contactTag, slaveNodeTag) — a 2-field key.
     struct NodeKey {

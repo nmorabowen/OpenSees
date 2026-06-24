@@ -218,6 +218,109 @@ inline int projectFull(int nps, const double X[4][3], const double xs[3],
     return st;                                        // 0 in-bounds, 1 out-of-bounds
 }
 
+// ----------------------------------------- consistent ∂n/∂u normal tangent (B3)
+// Second derivatives of the shape functions (CONSTANT in ξ,η for tri-3 / quad-4):
+//   tri-3 (linear) ⇒ all 0; quad-4 (bilinear) ⇒ only the ξη cross term N_{i,ξη}≠0.
+inline void shapeD2(int nps, double Nxx[4], double Nee[4], double Nxe[4]) {
+    for (int i = 0; i < 4; i++) { Nxx[i] = 0.0; Nee[i] = 0.0; Nxe[i] = 0.0; }
+    if (nps == 4) {
+        // ∂²/∂ξ∂η of 0.25(1±ξ)(1±η): +/− 0.25 with the node-corner sign pattern.
+        Nxe[0] =  0.25; Nxe[1] = -0.25; Nxe[2] =  0.25; Nxe[3] = -0.25;
+    }
+    // tri-3: zero (a planar facet; κ ≡ 0)
+}
+
+// The GEOMETRIC block of the consistent frictionless NTS tangent: K_geom = kn·gN·H,
+// H = ∂B/∂u = ∂²gN/∂u² (the ∂n/∂u + ∂N_i/∂u curvature / large-sliding terms the
+// shipped kn·BᵀB main term drops). Derived + FD-validated oracle-first in
+// contact_prototypes/proto_b3_normal_tangent.py (analytic == FD ~1e-10 on a warped
+// quad / tilted large-slide; SYMMETRIC to 1e-17; slave block ≡ 0 for a flat facet ⇒
+// byte-identical to the shipped tangent for a flat/fixed master).
+//
+// Fills Kgeom[ndof][ndof] (ndof = 3·(1+nps) ≤ 15) and returns true iff ACTIVE
+// (projection in-bounds AND penetrating). The caller adds fact·Kgeom to its tangent.
+// X = master segment CURRENT coords (nps×3), xs = slave CURRENT position, refDir
+// orients the normal (n·refDir > 0). Self-contained: re-projects (deterministic ⇒
+// the SAME ξ̄/n/gap the residual used). Frictionless / normal-law only.
+inline bool normalGeomTangent(int nps, const double X[4][3], const double xs[3],
+                              const double refDir[3], double kn, double Kgeom[15][15]) {
+    const int ndof = 3 * (1 + nps);
+    for (int a = 0; a < ndof; a++)
+        for (int b = 0; b < ndof; b++) Kgeom[a][b] = 0.0;
+
+    double xi, eta;
+    if (project(nps, X, xs, xi, eta, 1e-12, 10) != 0) return false;   // oob / no proj
+
+    double N[4], dNxi[4], dNeta[4], Nxx[4], Nee[4], Nxe[4];
+    shape(nps, xi, eta, N, dNxi, dNeta);
+    shapeD2(nps, Nxx, Nee, Nxe);
+    double xbar[3], a1[3], a2[3];
+    interp(nps, N, X, xbar);
+    tangents(nps, dNxi, dNeta, X, a1, a2);
+    double raw[3]; cross3(a1, a2, raw);
+    double jn = norm3(raw);
+    if (jn < 1e-300) return false;
+    double n[3]; for (int d = 0; d < 3; d++) n[d] = raw[d] / jn;
+    double pr = dot3(n, refDir);
+    if (std::fabs(pr) < 1e-12 * (norm3(refDir) + 1e-300)) return false;  // ambiguous
+    if (pr < 0.0) for (int d = 0; d < 3; d++) n[d] = -n[d];
+    double dvec[3] = { xs[0]-xbar[0], xs[1]-xbar[1], xs[2]-xbar[2] };
+    double gN = dot3(n, dvec);
+    if (gN >= 0.0) return false;                       // not penetrating
+
+    // covariant metric m_αβ, inverse, contravariant tangents a^α = m^{αβ} a_β
+    double m00 = dot3(a1,a1), m01 = dot3(a1,a2), m11 = dot3(a2,a2);
+    double detm = m00*m11 - m01*m01;
+    if (std::fabs(detm) < 1e-300) return false;
+    double mi00 = m11/detm, mi01 = -m01/detm, mi11 = m00/detm;
+    double au1[3], au2[3];
+    for (int d = 0; d < 3; d++) {
+        au1[d] = mi00*a1[d] + mi01*a2[d];
+        au2[d] = mi01*a1[d] + mi11*a2[d];
+    }
+    // second fundamental form κ_αβ = n·a_{α,β}, a_{α,β} = Σ N_{i,αβ} X_i
+    double axx[3] = {0,0,0}, aee[3] = {0,0,0}, axe[3] = {0,0,0};
+    for (int i = 0; i < nps; i++)
+        for (int d = 0; d < 3; d++) {
+            axx[d] += Nxx[i]*X[i][d]; aee[d] += Nee[i]*X[i][d]; axe[d] += Nxe[i]*X[i][d];
+        }
+    double k00 = dot3(n,axx), k01 = dot3(n,axe), k11 = dot3(n,aee);   // κ (k10=k01)
+    // projection-sensitivity metric H2_αβ = m_αβ − gN·κ_αβ, and its inverse
+    double H200 = m00 - gN*k00, H201 = m01 - gN*k01, H211 = m11 - gN*k11;
+    double detH2 = H200*H211 - H201*H201;
+    if (std::fabs(detH2) < 1e-300) return false;
+    double Hi00 = H211/detH2, Hi01 = -H201/detH2, Hi11 = H200/detH2;
+
+    // per-DOF projected components Q_β[l], P_β[l] (l = slave xyz, then master nodes)
+    double Q0[15], Q1[15], P0[15], P1[15];
+    for (int l = 0; l < ndof; l++) { Q0[l]=Q1[l]=P0[l]=P1[l]=0.0; }
+    for (int d = 0; d < 3; d++) { Q0[d] = a1[d]; Q1[d] = a2[d]; }      // slave: P=0
+    for (int j = 0; j < nps; j++)
+        for (int d = 0; d < 3; d++) {
+            int l = 3*(1+j) + d;
+            Q0[l] = -N[j]*a1[d]; Q1[l] = -N[j]*a2[d];
+            P0[l] = dNxi[j]*n[d]; P1[l] = dNeta[j]*n[d];
+        }
+    // ∂ξ̄^α/∂u_l = H2^{αβ}(Q_β + gN·P_β); ∂n/∂u_l = −(c0 a^1 + c1 a^2),
+    //   c_g = P_g[l] + κ_g0 ζ0 + κ_g1 ζ1. Then assemble H[:,l] and scale by kn·gN.
+    for (int l = 0; l < ndof; l++) {
+        double r0 = Q0[l] + gN*P0[l], r1 = Q1[l] + gN*P1[l];
+        double Z0 = Hi00*r0 + Hi01*r1, Z1 = Hi01*r0 + Hi11*r1;
+        double c0 = P0[l] + k00*Z0 + k01*Z1;
+        double c1 = P1[l] + k01*Z0 + k11*Z1;
+        double dn[3];
+        for (int d = 0; d < 3; d++) dn[d] = -(c0*au1[d] + c1*au2[d]);
+        double w = kn * gN;
+        for (int d = 0; d < 3; d++) Kgeom[d][l] = w * dn[d];           // slave rows
+        for (int i = 0; i < nps; i++) {
+            double dNil = dNxi[i]*Z0 + dNeta[i]*Z1;
+            for (int d = 0; d < 3; d++)
+                Kgeom[3*(1+i)+d][l] = w * (-dNil*n[d] - N[i]*dn[d]);   // master-i rows
+        }
+    }
+    return true;
+}
+
 } // namespace LadrunoContactProjection
 
 #endif

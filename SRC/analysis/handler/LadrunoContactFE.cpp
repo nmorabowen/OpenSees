@@ -44,7 +44,8 @@
 LadrunoContactFE::LadrunoContactFE(int tag)
   : FE_Element(tag, /*numDOF_Group=*/0, /*ndof=*/0),
     resid(0), tang(0, 0), mode(EMPTY), theSlave(0), ndm(0), kn(0.0), nps(0),
-    kt(0.0), mu(0.0), muc(0.0), theDomain(0), contactTag(0), segIndex(0), consistentTan(false)
+    kt(0.0), mu(0.0), muc(0.0), theDomain(0), contactTag(0), segIndex(0), consistentTan(false),
+    consistentNormal(false)
 {
     // myDOF_Groups and myID are size 0 (empty connectivity): the adapter adds NO
     // edges to the DOF graph, so the numberer permutation is untouched and the
@@ -59,7 +60,8 @@ LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, int ndm_,
   : FE_Element(tag, /*numDOF_Group=*/1, /*ndof=*/ndm_),
     resid(ndm_), tang(ndm_, ndm_),
     mode(RIGID_PLANE), theSlave(slaveNode), ndm(ndm_), kn(kn_), nps(0),
-    kt(0.0), mu(0.0), muc(muc_), theDomain(0), contactTag(0), segIndex(0), consistentTan(false)
+    kt(0.0), mu(0.0), muc(muc_), theDomain(0), contactTag(0), segIndex(0), consistentTan(false),
+    consistentNormal(false)
 {
     // Connectivity = the slave node's DOF_Group; setID() fills myID with its first
     // ndm equation numbers (the translational DOFs). Same pattern as PenaltySP_FE.
@@ -76,12 +78,13 @@ LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, int ndm_,
 LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, Node **segNodes,
                                    int nps_, double kn_, const double odir[3],
                                    double kt_, double mu_, Domain *dom,
-                                   int contactTag_, int segIndex_, bool consistentTan_, double muc_)
+                                   int contactTag_, int segIndex_, bool consistentTan_, double muc_,
+                                   bool consistentNormal_)
   : FE_Element(tag, /*numDOF_Group=*/1 + nps_, /*ndof=*/3 * (1 + nps_)),
     resid(3 * (1 + nps_)), tang(3 * (1 + nps_), 3 * (1 + nps_)),
     mode(SEGMENT), theSlave(slaveNode), ndm(3), kn(kn_), nps(nps_),
     kt(kt_), mu(mu_), muc(muc_), theDomain(dom), contactTag(contactTag_), segIndex(segIndex_),
-    consistentTan(consistentTan_)
+    consistentTan(consistentTan_), consistentNormal(consistentNormal_)
 {
     // Connectivity = slave DOF_Group + each segment-node DOF_Group. setID() then
     // fills myID = [slave xyz | seg_1 xyz | ... | seg_nps xyz] (each node ndf==3 ⇒
@@ -119,7 +122,8 @@ LadrunoContactFE::LadrunoContactFE(int tag, Node **slaveNodes, int nps_s,
     resid(3 * (nps_s + nps_m)), tang(3 * (nps_s + nps_m), 3 * (nps_s + nps_m)),
     mode(MORTAR), theSlave(0), ndm(3), kn(epsN), nps(0),
     kt(epsT_), mu(mu_), muc(muc_), theDomain(dom), contactTag(contactTag_), segIndex(0),
-    consistentTan(consistentTan_), npsS(nps_s), npsM(nps_m), slaveFacetIndex(slaveFacetIndex_),
+    consistentTan(consistentTan_), consistentNormal(false),
+    npsS(nps_s), npsM(nps_m), slaveFacetIndex(slaveFacetIndex_),
     mortarCohesion(cohesion_), mortarTauMax(tauMax_), isTie(isTie_)
 {
     // Connectivity = each slave-facet DOF_Group then each master-facet DOF_Group.
@@ -214,6 +218,35 @@ LadrunoContactFE::addFrictionTang(double fact, const double n[3], const double N
         }
 }
 
+// B3 (P2b-2c) — consistent ∂n/∂u geometric NORMAL tangent. Gathers the slave + master
+// CURRENT positions (exactly like segmentActive), calls the oracle-validated pure
+// function LadrunoContactProjection::normalGeomTangent (which re-projects deterministically
+// ⇒ the SAME ξ̄/n/gap the residual used), and scatters K_geom = kn·gN·∂²gN/∂u² into `tang`.
+// Inert unless penetrating + in-bounds; for a flat facet the slave block is identically 0
+// (the byte-identity contract). SYMMETRIC ⇒ no -consistanttan / non-sym solver needed.
+void
+LadrunoContactFE::addNormalGeomTang(double fact)
+{
+    if (mode != SEGMENT || theSlave == 0) return;
+    double Xseg[4][3], xs[3];
+    const Vector &Xs = theSlave->getCrds();
+    const Vector &us = theSlave->getTrialDisp();
+    for (int d = 0; d < 3; d++) xs[d] = Xs(d) + us(d);
+    for (int i = 0; i < nps; i++) {
+        if (segNode[i] == 0) return;
+        const Vector &Xi = segNode[i]->getCrds();
+        const Vector &ui = segNode[i]->getTrialDisp();
+        for (int d = 0; d < 3; d++) Xseg[i][d] = Xi(d) + ui(d);
+    }
+    double Kg[15][15];
+    if (!LadrunoContactProjection::normalGeomTangent(nps, Xseg, xs, orientDir, kn, Kg))
+        return;                                 // not penetrating / out-of-bounds
+    int ndof = 3 * (1 + nps);
+    for (int a = 0; a < ndof; a++)
+        for (int b = 0; b < ndof; b++)
+            tang(a, b) += fact * Kg[a][b];
+}
+
 double
 LadrunoContactFE::rigidPlaneGap(void) const
 {
@@ -282,6 +315,14 @@ LadrunoContactFE::getResidual(Integrator *)
             int ndof = 3 * (1 + nps);
             for (int k = 0; k < ndof; k++)
                 resid(k) = B[k] * tn;        // r = Bᵀ tn (slave +tn n, master −N_i tn n)
+
+            // B3: report the normal force into the engine snapshot (the `ladrunoContactForce`
+            // query). Pure side-channel — no effect on resid/tang. Overwrites this pair's slot.
+            if (theDomain != 0) {
+                LadrunoContactDomain *cdF = theDomain->getLadrunoContactDomain();
+                if (cdF != 0)
+                    cdF->setNtsForce(contactTag, theSlave->getTag(), segIndex, tn);
+            }
 
             // --- D2 viscous normal stabilization (force; tangent in addCtoTang) ---
             // ġ = B·v (normal relative velocity, B=[n|−Nᵢ n]); f_visc = −muc·ġ·B opposes the
@@ -620,14 +661,18 @@ LadrunoContactFE::addKtToTang(double fact)
             for (int j = 0; j < ndm; j++)
                 tang(i, j) += fact * kn * planeN[i] * planeN[j];
     } else if (mode == SEGMENT) {
-        // K_c = kn BᵀB (main NTS term; ∂n/∂u block deferred to P2b-2 — for a FIXED
-        // master the slave block kn(n⊗n) is exact and the master DOFs are constrained).
+        // K_c = kn BᵀB (main NTS term — EXACT for a flat/fixed master where n is constant).
+        // B3 (P2b-2c): when consistentNormal, ALSO add the consistent ∂n/∂u geometric block
+        // kn·gN·∂²gN/∂u² (curvature / large-sliding) so implicit Newton is QUADRATIC on a
+        // CURVED interface. SYMMETRIC; for a flat facet the geometric block is 0 ⇒ byte-identical.
         double gap, n[3], N[4], B[15], gTvec[3];
         if (segmentActive(gap, n, N, B, gTvec)) {
             int ndof = 3 * (1 + nps);
             for (int i = 0; i < ndof; i++)
                 for (int j = 0; j < ndof; j++)
                     tang(i, j) += fact * kn * B[i] * B[j];
+            if (consistentNormal)
+                addNormalGeomTang(fact);
             // P3.5 friction tangent (IMPLICIT only — CDL never calls addKtToTang).
             // Reads COMMITTED gpT (not gpTtrial) so the tangent is the derivative of the
             // residual evaluated at the same state. Default consistentTan=false ⇒

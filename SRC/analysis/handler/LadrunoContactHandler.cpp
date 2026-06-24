@@ -389,7 +389,8 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                     LadrunoContactFE *fe =
                         new LadrunoContactFE(numFe++, sn, segNodes, nps, knUse, orientDir,
                                              ct.kt, ct.mu, theDomain, ct.tag, seg,
-                                             ct.consistentTan, ct.muc);   // D2 viscous (0 ⇒ off)
+                                             ct.consistentTan, ct.muc,       // D2 viscous (0 ⇒ off)
+                                             ct.consistentNormal);           // B3 ∂n/∂u geom tangent
                     if (fe == 0) return -5;
                     theModel->addFE_Element(fe);
                     if (ct.mu > 0.0)
