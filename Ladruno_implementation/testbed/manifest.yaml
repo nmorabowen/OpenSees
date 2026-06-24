@@ -1329,7 +1329,7 @@ features:
   - feature: LadrunoGeneralizedAlpha          # ADR-52 W3-I2 sensitivity/DDM generalized-alpha
     classtag: 33014          # INTEGRATOR family; new class (N. Mora-Bowen).
     tag_symbol: INTEGRATOR_TAGS_LadrunoGeneralizedAlpha
-    pr: 414
+    pr: 415
     feature_class: integrator
     required_tiers: [dynamics-battery]
     pytest: tests/test_adr52_w3i2_ladruno_genalpha.py   # sensitivity-off byte-identity vs GeneralizedAlpha + DDM-vs-central-FD (undamped & mass-prop damped) + alphaM=alphaF=1 reduces-to-Newmark-DDM

@@ -473,7 +473,7 @@ its own PR on `ladruno`.
   `getTangentStiffSensitivity`/`getMassSensitivity` return zero + warn (betaK·K DDM not
   implemented) and Truss doesn't override them ⇒ the `∂C/∂h`-on-`Ualphadot` term can't be
   FD-tested on a Truss; it's derivation-validated + pinned by the α=1→Newmark reduction.
-- **2026-06-24 — W3-I2 PR2 (#414): `LadrunoGeneralizedAlpha`.** DDM subclass of
+- **2026-06-24 — W3-I2 PR2 (#415): `LadrunoGeneralizedAlpha`.** DDM subclass of
   `GeneralizedAlpha` (Chung-Hulbert), classTag **33014** — strict superset of `LadrunoHHT`
   with TWO spectral params (αF on K/C at `Ualpha`/`Ualphadot`, αM on M at `Ualphadotdot`).
   Same header-only `GeneralizedAlpha.h` edit (promotion + inline classTag ctor). The DDM M
@@ -481,4 +481,4 @@ its own PR on `ladruno`.
   `Ualphadotdot`), matching the factored generalized-α tangent; reduces to Newmark DDM at
   αM=αF=1. Same test battery as PR1. **W3-I2 complete; ADR-52 remaining: W1-E2 only.**
 - *Remaining waves:* W1-E2 (ExplicitBathe 6→1 collapse — most invasive, do
-  deliberately). W3-I2 done (#413 + #414); W3-I3 closed (NO-GO #410).
+  deliberately). W3-I2 done (#413 + #415); W3-I3 closed (NO-GO #410).
