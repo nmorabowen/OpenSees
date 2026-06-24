@@ -28,11 +28,13 @@ study + [[49a_integrator_scorecard_2026-06-23]] gap analysis).
 | **W2-E1** | Explicit bulk viscosity (`-bulkViscosity b1 b2` / `-bv`) on **all 3 fork continuum elements** — LadrunoBrick, LadrunoQuad, LadrunoCST | #399, #403 |
 | **W1-I1b** | Half-increment-residual ACCURACY gate `robust_transient(error_gate=True, haftol=…)` + two read-only fork commands `ladrunoTrialResidualNorm`/`ladrunoSetNodeTrial` (registration-only vanilla, no classTag/header edit). Resolved the open question: NOT Python-only. Exact for elastic, approximate for inelastic/rate-dependent. | #407 |
 | **W3-I2** | DDM sensitivity integrators: **`LadrunoHHT`** (33013, #413) + **`LadrunoGeneralizedAlpha`** (33014, #415). Subclass HHT / GeneralizedAlpha, reuse the algorithm, add the DDM seam (α-/αF,αM-weighted residual + extra `−K·(1−α)·dUₙ`; rest copies Newmark). Header-only ledgered vanilla edit of `HHT.h`/`GeneralizedAlpha.h` (private→protected + protected inline classTag ctor; `.cpp` byte-identical). Unblocks reliability/fragility/FORM on the damped integrators. | #413, #415 |
+| **W1-E2** | **`ExplicitBathe*` 6→1 collapse.** One `ExplicitBathe` (33000) + orthogonal `-lnvd <alpha>` / `-sms <dtTarget>` / `-consistent` flags. The 5 retired `.cpp/.h` deleted; the 5 names+tags (33002/09/10/11/12) kept as deprecated aliases. Flag combo DERIVES the classTag (`tagForFlags`) → both brokers route the six tags to `ExplicitBathe::makeForBroker` → `recvSelf` fills the param superset (no new tag, none freed). The six were a 2-base × 3-SMS-mode lattice (NOT 6 flat siblings); the two bases' stepping was byte-identical, so only LNVD `formUnbalance`+SMS `domainChanged` are flag-gated. 6-lens adversarial review run. | #419 |
 
 Docs/log PRs: #391 (ADRs 49/49a/52), #398, #401, #404.
 
-**Remaining waves:** W1-E2 only (details below). **W3-I2 done** (#413 + #415). **W3-I3 closed — NO-GO** (benchmark
-gate, see below).
+**Remaining waves: NONE — ADR-52 COMPLETE** (W1-E2 #419 was the last). W3-I2 done (#413 + #415);
+W3-I3 closed — NO-GO #410 (benchmark gate, see below). The deferred W2-E1 S3/S4/uri-ssp
+follow-ups are optional, non-blocking.
 
 ## How to work this (the proven loop)
 
@@ -115,18 +117,29 @@ gate, see below).
 
 ## Remaining waves — scope + notes
 
-### W1-E2 — collapse `ExplicitBathe*` 6 → 1 + flags (`-lnvd -sms -consistent`)
-- **Most invasive.** Net-negative line count but NON-zero vanilla (registration
-  deletions across the standard files — rebase-fragile, ledger them).
-- The 6 are **sibling** classes (all `: TransientIntegrator`), not a chain. `-lnvd`
-  routes through a unified `formUnbalance()` override; `-sms`/`-consistent` select the
-  mass path in `domainChanged`.
-- **Keep the broker cases** (route retired tags → `new ExplicitBathe()` and extend
-  `sendSelf/recvSelf` to carry the `{lnvd,sms,consistent}` flag set decoded from the
-  incoming tag) or saved-DB/parallel `recvSelf` breaks. No alias facility exists —
-  during a deprecation window the ~12 strcmp dispatch branches are retained.
-- **Do the adversarial review.** Add `zone_a` tests proving each flag combo == its old
-  dedicated class (byte-identity).
+### W1-E2 — collapse `ExplicitBathe*` 6 → 1 + flags (`-lnvd -sms -consistent`) — SHIPPED #419
+- **DONE.** One `ExplicitBathe` (33000) + orthogonal `-lnvd <alpha>` / `-sms <dtTarget>` /
+  `-consistent`. Net-negative line count; the registration deletions (both brokers, integrator
+  CMakeLists + Makefile, the 5 `classTags.h` deprecation annotations) are ledgered in
+  [[LEDGER_vanilla_files]]; the 5 deleted fork `.cpp/.h` + the unified class in
+  [[LEDGER_implementations]].
+- **Architecture correction:** the six were a **2-base × 3-SMS-mode lattice**
+  (`ExplicitBathe` / `ExplicitBatheLNVD` bases, each × {none, sms-lumped, sms-consistent}),
+  **NOT 6 flat siblings** as this handoff originally said. The two bases' `newStep`/`update`/
+  `commit` stepping was byte-identical; only LNVD's `formUnbalance()`+`addLocalDamping()` and
+  the SMS `domainChanged()` injection differed → flag-gated on the one class (`-consistent`
+  reuses the `refineAccel` hook the base already carried).
+- **Serialization (how the broker keeps working):** NOT "`new ExplicitBathe()` + flags in the
+  payload". Instead the flag combo **derives** the classTag (`tagForFlags`); both brokers route
+  the six tags via a case-fallthrough → `ExplicitBathe::makeForBroker(classTag)` (decodes flags
+  from the tag); `sendSelf`/`recvSelf` carry a fixed-size param superset (flags implied by the
+  tag). **No new tag, none freed.** The ~12 strcmp dispatch branches + the 6 OPS_ parsers are
+  retained (each parser preserves its exact historical grammar, forcing fixed flags). Pattern
+  written up in [[LEDGER_quirks]] ("Collapsing N sibling classes…").
+- **Tests:** `tests/test_adr52_w1e2_explicitbathe_collapse.py` (zone_a) — flag-form ==
+  legacy-alias byte-identity (5 combos), the LNVD×consistent cross-layer validation, and the
+  reduce-to-base gating. The pre-existing per-alias batteries still run under the deprecated
+  names (free regression). 6-lens adversarial Workflow review run before merge.
 
 ### W1-I1b — half-increment-residual error gate (SHIPPED #407)
 - Done. `robust_transient(error_gate=True, haftol=…)` in `Ladruno_scripts/robust_drive.py`
