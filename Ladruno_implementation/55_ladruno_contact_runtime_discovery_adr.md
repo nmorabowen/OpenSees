@@ -66,7 +66,11 @@ structural gaps the review surfaced:
 5. **An edge-edge narrow phase** `[GATE]` — the shipped narrow phase is
    node-to-segment / facet-mortar **only**; edge-edge is **irreducible** (NOT a
    vertex-face special case — `§5`) and tumbling polyhedral fragments hit edge-first
-   constantly. A **new narrow-phase kernel**, currently invisible in the program.
+   constantly. **The kernel itself is now owned by [[57_ladruno_edge_edge_contact_adr]]**
+   (`LadrunoEdgeKernel` + the `EDGE_EDGE` adapter mode, designed discovery-agnostic);
+   ADR-55's job here is **not** to re-build it but to **feed it runtime-discovered edge
+   pairs** (the self-contact / open-universe extension of what ADR-57 designs over
+   *predefined* surfaces).
 6. **A runtime adapter pool + runtime surface registration** `[GATE]` — the deepest
    gap: `addSurface`/`addContact` are **parse-time only**; `LadrunoContactDomain`
    state is keyed by pre-declared `contactTag` and has **no free-body/fragment
@@ -111,7 +115,9 @@ is the *contact* subsystem they all consume. MPI contact decomposition stays def
 - **`SRC/analysis/handler/LadrunoContactFE.*`** + `LadrunoContactHandler` — a
   **runtime adapter pool** (create/destroy adapters as pairs appear/separate), within
   the forced-`domainChanged`/re-handle model (ADR-51).
-- **New:** the edge-edge narrow-phase kernel; the single-surface self-contact path.
+- **New:** the single-surface self-contact path. *(The edge-edge narrow-phase kernel
+  itself is owned by [[57_ladruno_edge_edge_contact_adr]] — ADR-55 consumes it, does not
+  build it.)*
 - Class tags / banner at implementation; [[LEDGER_vanilla_files]] for any Domain seam.
 
 ## Risks / open questions
@@ -146,7 +152,7 @@ is the *contact* subsystem they all consume. MPI contact decomposition stays def
 |---|---|---|
 | **P1** | Current-config proxies + re-emitting broad phase (BVH/hash) over **existing predefined surfaces**; candidate-pair manager with history carry | Large-sliding contact (the bucket-sort "follow-on rung") works without analyst re-analyze; friction history survives re-pairing |
 | **P2** | Runtime surface/adapter registration + free-body struct in `LadrunoContactDomain` | A body added/removed mid-analysis gets contact with no leak; pair-state not aliased |
-| **P3** | Edge-edge narrow-phase kernel | Tumbling polyhedra contact edge-first correctly |
+| **P3** | **Consume** the [[57_ladruno_edge_edge_contact_adr]] edge-edge kernel over runtime-discovered pairs (NOT a new kernel — ADR-57 owns the kinematics) | Tumbling polyhedra contact edge-first correctly, using the ADR-57 `EDGE_EDGE` adapter on discovered edge pairs |
 | **P4** | Single-surface **self-contact** (BVH/hash + adjacency exclusion) | A folding/piling body self-contacts without spurious adjacent-facet forces |
 | → consumers | Removal-recontact (51), FDEM-lite (54), E-FEM (53) all consume P1–P4 | — |
 
