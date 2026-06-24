@@ -378,8 +378,18 @@ its own PR on `ladruno`.
   applied corot guard B1, formulation guard B2, initial-tangent S1, hoist S2, doc S5).
   Validated at runtime by a new `zone_a` test (off-path bit-identity + dissipation/sign)
   that CI builds-and-runs. Fork-only.
+- **2026-06-24 — W2-E1 completed for LadrunoQuad + LadrunoCST (#403).** Same viscous
+  volumetric stress ported to the 2D fork continuum elements: normal comps xx,yy;
+  `L_e=getCharacteristicLength()` (Quad √area, CST √(2·area)); 2D is `-geom linear`
+  only (no geom guard); Quad wired through std/bbar (SSP/EAS warn+zero at parse), CST
+  single-GP std. Off-by-default bit-identical; coeffs threaded through ctors (no
+  body-force collision), sendSelf/recvSelf, Print. Runtime `zone_a` test
+  (`..._2d.py`) covers off-path identity + dissipation/sign for both, under explicit
+  central difference (the runtime gate caught — and rejected — an earlier implicit-
+  Newmark test that blew up at large b1). **Bulk viscosity now on all 3 fork continuum
+  elements.**
 - *W2-E1 follow-ups (deferred, non-blocking):* **S3** `bvDissipated`/ALLVD recorder
   channel (energy balance already closes); **S4** one-time warning when material
-  `rho==0`; extend bulk viscosity to **LadrunoQuad/CST** and the uri/ssp/eas paths.
+  `rho==0`; extend bulk viscosity to the uri/ssp/eas single-point Brick/Quad paths.
 - *Remaining waves:* W1-E2 (ExplicitBathe 6→1 collapse — most invasive, do
   deliberately), W1-I1b (error gate), W3-I2 (sensitivity subclasses), W3-I3-gate.
