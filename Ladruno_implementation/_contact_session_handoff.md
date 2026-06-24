@@ -158,3 +158,36 @@ all OPTIONAL / deferred:
 
 Process per fork standard: oracle-first → C++ → build → adversarial gate → PR on `ladruno`,
 keep the capstone + ledgers current in the same PR.
+
+### ⏭️ Queued for a FRESH session (not this one) — two INDEPENDENT efforts
+
+Both are from-scratch DESIGN work (a new ADR each, not a follow-up PR), so start them in a clean
+context with the relevant skills loaded, not by extending an implementation session. They do NOT
+depend on each other — scope them as two separate ADRs/sessions.
+
+**1. Perpendicular edge-edge contact ADR** (the `cos_t→0` mortar-clip degeneration — a NEW algorithm).
+Kickoff prompt:
+> Scope the perpendicular edge-edge contact ADR for the Ladruno fork (the `cos_t→0` case where the
+> mortar face-overlap clip degenerates — two facets meeting edge-on, no in-plane overlap to integrate).
+> START by reading `Ladruno_implementation/48_ladruno_contact_capstone_adr.md` (the status-of-record
+> table + the B2 "perpendicular edge-edge deferred" note) + `47_ladruno_contact_deferrals_adr.md` +
+> this handoff (`_contact_session_handoff.md`). Use the `opensees-contact` skill (its
+> `broad_phase_collision` edge-edge / self-contact module + `contact_formulations`) and
+> `abaqus-theory-contact-loading` for the closest-point-between-two-segments / edge-edge kinematics.
+> DELIVER a design ADR (NOT code): the governing kinematics (segment-segment closest point, the
+> edge normal + gap, the degenerate-`cos_t` detector that routes a pair to edge-edge vs face-mortar),
+> how it slots into `LadrunoContactBucketSort` + `LadrunoContactDomain` + the `LadrunoContactFE`
+> adapter, the per-phase gates (oracle-first), and an explicit fence vs ADR-47. Number it in the ADR
+> sequence; keep it design-only — implementation is a later session.
+
+**2. Contact handler parallelization** (unblocks parallel/row-sum `m_eff` for OpenSeesMP).
+The `LadrunoContactHandler::sendSelf`/`recvSelf` are P1a single-process stubs ⇒ the whole contact
+subsystem is serial-only. Kickoff: scope an ADR for parallelizing the contact handler under
+`PartitionedDomain`/OpenSeesMP — `sendSelf`/`recvSelf` serialization of the `LadrunoContactDomain`
+state, partition-boundary pairing, and the cross-partition mass reduction the `m_eff` SOFT sizing
+needs. Read the same capstone + handoff; use the `opensees-performance` skill (parallelism /
+`PartitionedDomain` / `ParMETIS`) + `opensees-expert`. Design-only ADR first.
+
+**3. Validation (smaller, could ride an implementation session):** the quantitative elliptic-Hertz
+`p(r)` study, now unblocked by D1's displacement-control-free curved indentation — a finer-mesh harness
++ the `ladrunoContactForce` recorder. Not a new algorithm; lower priority than the two ADRs above.
