@@ -30,7 +30,9 @@ from _testbed import ops
 pytestmark = [pytest.mark.zone_a]
 
 P = 0.54                  # Noh-Bathe sub-step parameter
-ALPHA = 0.8               # FLAC local-damping coefficient (classic default)
+ALPHA = 0.6               # FLAC local-damping coefficient — DELIBERATELY != the 0.8 default,
+                          # so a silently-dropped `-lnvd <alpha>` (e.g. the openseespy
+                          # OPS_GetString-on-a-float quirk) breaks the flag==alias parity check.
 DT_TARGET = 0.012         # SMS target step (throttled by the tiny interior element)
 
 LENGTHS = [1.0] * 5 + [0.05] + [1.0] * 5   # oracle Case-A bar
@@ -204,3 +206,19 @@ def test_consistent_without_sms_is_ignored():
     u_base = _free_vibration(("ExplicitBathe", P), dt, t_end)
     rel = _max_rel_diff(u_cons, u_base)
     assert rel < 1.0e-12, "-consistent without -sms should reduce to plain EB; rel=%.3e" % rel
+
+
+# ---------------------------------------------------------------------------
+# 4. -cflAbort / -recompute are DOWNGRADED to report-only under -sms (MF-1):
+#    the un-augmented element pencil cannot see the scaling mass, so a hard CFL
+#    abort would kill a run that -sms specifically made stable at dt<=dtTarget.
+# ---------------------------------------------------------------------------
+def test_sms_cflabort_downgraded_not_aborted():
+    # plain ExplicitBathe at dtTarget diverges (the un-scaled bar is unstable here),
+    # so -cflAbort on a NON-sms run would (correctly) abort — but with -sms the same dt
+    # is stable and -cflAbort must NOT abort. Byte-identical to the no-cflAbort -sms run.
+    u_guarded = _free_vibration(("ExplicitBathe", P, "-sms", DT_TARGET, "-cflAbort"), DT_TARGET, 4.0)
+    u_plain = _free_vibration(("ExplicitBathe", P, "-sms", DT_TARGET), DT_TARGET, 4.0)
+    assert u_guarded is not None, "-sms -cflAbort hard-aborted at the pre-scaling limit (MF-1 not downgraded)"
+    rel = _max_rel_diff(u_guarded, u_plain)
+    assert rel < 1.0e-12, "-sms -cflAbort must be report-only (== plain -sms); rel=%.3e" % rel

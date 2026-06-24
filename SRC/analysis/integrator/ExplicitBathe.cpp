@@ -218,17 +218,28 @@ void *OPS_ExplicitBathe(void) {
                             << " (use rowsum|diagonal|hrz; keeping rowsum)\n";
             }
         } else if (strcmp(arg, "-lnvd") == 0) {
-            // Ladruno (W1-E2): FLAC local non-viscous damping; optional alpha follows.
-            // Safe optional-value: peek as a STRING (consumes on both Tcl + Py), keep it
-            // only if it is fully numeric, else un-read for the next flag (dodges the
-            // failed-numeric-rewind quirk — see LEDGER_quirks / contact -soft).
+            // Ladruno (W1-E2): FLAC local non-viscous damping; optional alpha follows
+            // (default stays 0.8). Use the PROVEN contact `-soft` optional-value idiom:
+            // peek as a STRING (OPS_GetString advances on BOTH Tcl + Py), classify by the
+            // leading '-' (value vs next flag) — NOT by strtod, because under openseespy
+            // OPS_GetString returns "Invalid String Input!" for a numeric arg, so a strtod
+            // test would mis-classify it as non-numeric and silently DROP the alpha (the
+            // documented "getString mis-reads a numeric Py arg" quirk). Then un-read and, if
+            // it was a value, read it Python-safely with OPS_GetDoubleInput.
             useLNVD = true;
             if (OPS_GetNumRemainingInputArgs() > 0) {
                 const char *peek = OPS_GetString();
-                char *endp = 0;
-                double a = strtod(peek, &endp);
-                if (endp != peek && *endp == '\0') alpha_flac = a;   // fully numeric
-                else OPS_ResetCurrentInputArg(-1);                   // leave for next flag
+                bool isFlag = (peek != 0 && peek[0] == '-');
+                OPS_ResetCurrentInputArg(-1);
+                if (!isFlag) {
+                    int nd = 1; double a;
+                    if (OPS_GetDoubleInput(&nd, &a) < 0) {
+                        opserr << "WARNING ExplicitBathe -lnvd - need an alpha value or omit "
+                                  "it (default 0.8)\n";
+                        return 0;
+                    }
+                    alpha_flac = a;
+                }
             }
         } else if (strcmp(arg, "-sms") == 0) {
             // Ladruno (W1-E2): selective mass scaling; REQUIRES a dtTarget.
@@ -271,7 +282,20 @@ void *OPS_ExplicitBathe(void) {
         opserr << "WARNING ExplicitBathe -sms expects a positive dtTarget\n";
         return 0;
     }
-    if (useSMS) compute_critical_timestep = 1;   // report the pre-scaling dt_cr (as SMS did)
+    if (useSMS) {
+        compute_critical_timestep = 1;   // report the pre-scaling dt_cr (as the SMS aliases do)
+        // W1-E3a (MF-1): under mass scaling the per-element eigensolve cannot see the nodal
+        // augmentation, so -cflAbort/-recompute on the un-augmented pencil would (wrongly)
+        // abort a run that -sms made stable at dt<=dtTarget. DOWNGRADE to report-only —
+        // mirrors OPS_ExplicitBatheSMS_impl and the class docstring — instead of aborting.
+        if (cflAbort || cflRecomputeEvery > 0) {
+            opserr << "NOTE ExplicitBathe - -cflAbort/-recompute are downgraded to REPORT-ONLY "
+                      "under -sms mass scaling (the un-augmented element pencil cannot see the "
+                      "scaling mass, MF-1); the pre-scaling dt_cr is still reported.\n";
+            cflAbort = false;
+            cflRecomputeEvery = 0;
+        }
+    }
 
     TransientIntegrator *theIntegrator =
         new ExplicitBathe(p, compute_critical_timestep, verbose, cflAbort,
