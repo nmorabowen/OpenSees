@@ -164,6 +164,15 @@ class LadrunoContactDomain
         // CentralDifferenceLadruno the edge penalty is replaced by k_soft = SOFSCL·4·m_eff/dt² so
         // edge-on impact runs at the structural dt_cr. Inert under implicit ⇒ byte-identical.
         double edgeSoftScale;
+        // ADR-57 E6 — `-edgeAlm`: the optional one-scalar commit-cycle ALM for the edge-edge fallback.
+        // A per-pair normal multiplier λ_N (Uzawa'd once per commit: λ_N ← min(0, λ_N + εN·gN)) drives
+        // the penetration → an εN-INDEPENDENT tol; the held-load `analyze_augmented` proc reads
+        // `ladrunoEdgePenetration`. OFF by default ⇒ the E2 penalty path (λ_N≡0) ⇒ byte-identical.
+        // Implicit-only (the mass-only explicit tangent degenerates Uzawa to single-pass penalty — the
+        // disclosed ADR-47 limitation, inherited). edgeAugTol = the augmentation tolerance (metadata;
+        // the proc passes its own augTol, mirroring the mortar augTol/maxAug).
+        bool   edgeAlm;
+        double edgeAugTol;
     };
     int addMortarContact(int tag, int masterSurfTag, int slaveSurfTag,
                          double kn, bool knAuto, double epsN, bool epsNAuto,
@@ -175,7 +184,8 @@ class LadrunoContactDomain
                          bool edgeEdge = false, double edgeKn = 0.0, bool edgeKnAuto = false,
                          double edgeBand = 0.0, double edgeMu = 0.0, double edgeKt = 0.0,
                          double edgeCohesion = 0.0, double edgeTauMax = 0.0,
-                         bool edgeConsistentTan = false, double edgeSoftScale = 0.0);
+                         bool edgeConsistentTan = false, double edgeSoftScale = 0.0,
+                         bool edgeAlm = false, double edgeAugTol = 0.0);
     int getNumMortarContacts(void) const { return (int)theMortarContacts.size(); }
     const MortarContact &getMortarContact(int i) const { return theMortarContacts[i]; }
 
@@ -329,11 +339,13 @@ class LadrunoContactDomain
         // friction (E3 — mirrors FrictionState exactly; ZEROED + inert in the E2 penalty MVP)
         double gpT[3], gpTtrial[3], gT0[3];   bool engaged;
         double gT0committed[3];               bool engagedCommitted;
-        // optional one-scalar ALM (E6 — point-like, ⇒ no shared-node accumulator; inert in E2)
+        // optional one-scalar ALM (E6 — point-like, ⇒ no shared-node accumulator; inert when -edgeAlm off)
         double lambdaN;          // committed normal multiplier (≤0); updated ONLY in commit()
-        double gN_committed;     // committed gap for the E6 Uzawa update + query
+        double gN_committed;     // committed gap for the E6 Uzawa update + query (written each getResidual
+                                 // when ALM is on; 0 when off ⇒ the commit Uzawa is a no-op ⇒ λ_N≡0)
+        double epsN;             // the penalty the adapter used at this pair (for the commit Uzawa; 0 off)
         EdgeEdgeState() : signN(0), signNcommitted(0), engaged(false), engagedCommitted(false),
-                          lambdaN(0.0), gN_committed(0.0) {
+                          lambdaN(0.0), gN_committed(0.0), epsN(0.0) {
             for (int d = 0; d < 3; d++) gpT[d] = gpTtrial[d] = gT0[d] = gT0committed[d] = 0.0;
         }
     };
@@ -343,6 +355,12 @@ class LadrunoContactDomain
     EdgeEdgeState &getOrCreateEdgeEdgeState(int contactTag, int sNodeA, int sNodeB,
                                             int mNodeA, int mNodeB);
     int getNumEdgeEdgeStates(void) const { return (int)theEdgeEdgeStates.size(); }
+    // ADR-57 E6 — ‖gN‖_∞ over KKT-active edge-edge ALM pairs (max of −gN_committed where the
+    // augmented pressure λ_N + εN·gN_committed < 0; 0 if no ALM pair). The convergence measure the
+    // held-load `analyze_augmented` proc reads (via `ladrunoEdgePenetration`) to stop augmenting —
+    // the point-like analogue of getMaxMortarPenetration (one scalar gN per pair, no g̃/a). A pair
+    // with -edgeAlm OFF never writes epsN (stays 0) ⇒ skipped here ⇒ the query is 0 (inert).
+    double getMaxEdgePenetration(void) const;
     // dead-slot GC (mirror frictionGC* / mortarNormalGC*): the engine survives domainChanged + across
     // analyze() calls, so a re-meshed/re-paired analysis would leak old edge slots. The handler
     // rebuilds the live edge-set each handle(): edgeGCBegin() → edgeGCMark(...) per injected edge pair

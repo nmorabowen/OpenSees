@@ -879,7 +879,8 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                                                        edgeKnUse, orientDir, mc.tag, theDomain,
                                                        mc.edgeMu, edgeKtUse, mc.edgeCohesion,
                                                        mc.edgeTauMax, mc.edgeConsistentTan,
-                                                       mc.edgeSoftScale);   // E5 explicit SOFT (0 ⇒ off)
+                                                       mc.edgeSoftScale,    // E5 explicit SOFT (0 ⇒ off)
+                                                       mc.edgeAlm);         // E6 one-scalar ALM (off ⇒ penalty)
                             if (fe == 0) return -5;
                             theModel->addFE_Element(fe);
                             cd->edgeGCMark(mc.tag, sat, sbt, mat, mbt);  // live this handle()

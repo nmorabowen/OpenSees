@@ -156,7 +156,7 @@ class LadrunoContactFE : public FE_Element
                      double epsN, const double orientDir[3], int contactTag = 0,
                      Domain *theDomain = 0, double mu = 0.0, double kt = 0.0,
                      double cohesion = 0.0, double tauMax = 0.0, bool consistentTan = false,
-                     double softScale = 0.0);
+                     double softScale = 0.0, bool edgeAlm = false);  // E6 one-scalar commit-cycle ALM
     ~LadrunoContactFE();
 
     // self-owned buffers (base buffers are unavailable when myEle == 0)
@@ -315,6 +315,7 @@ class LadrunoContactFE : public FE_Element
     // ADR-57 E2 EDGE_EDGE binding (mode == EDGE_EDGE). The 4-node edge pair [sa, sb | ma, mb];
     // epsN rides `kn`, contactTag keys the Domain-owned EdgeEdgeState (with the ordered node tags).
     Node *edgeNode[4];      // {slave edge node A, slave edge node B, master edge node A, B}
+    bool  edgeAlm;          // E6: inject the per-pair λ_N (p = min(0, λ_N + εN·gN)); off ⇒ λ_N≡0 (E2 penalty)
 
     // C3.1 MORTAR friction (active in MORTAR mode when mu>0 ∨ cohesion>0 ∨ tauMax>0). epsT (the
     // tangential penalty) rides `kt`; mu reuses the friction `mu` member. cohesion/tauMax complete

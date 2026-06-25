@@ -751,6 +751,13 @@ static PyObject *Py_ops_LadrunoMortarPenetration(PyObject *self, PyObject *args)
     return wrapper->getResults();
 }
 
+static PyObject *Py_ops_LadrunoEdgePenetration(PyObject *self, PyObject *args)  // Ladruno ADR-57 E6
+{
+    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
+    if (OPS_LadrunoEdgePenetration() < 0) { opserr<<(void*)0; return NULL; }
+    return wrapper->getResults();
+}
+
 static PyObject *Py_ops_LadrunoMortarTieResidual(PyObject *self, PyObject *args)  // Ladruno ADR-41 C4
 {
     wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
@@ -3239,6 +3246,7 @@ PythonWrapper::addOpenSeesCommands()
     addCommand("contactPlane", &Py_ops_LadrunoContactPlane);        // Ladruno ADR-39 P2a
     addCommand("ladrunoContactInfo", &Py_ops_LadrunoContactInfo);   // Ladruno ADR-39
     addCommand("ladrunoMortarPenetration", &Py_ops_LadrunoMortarPenetration);  // Ladruno ADR-41 C2.2
+    addCommand("ladrunoEdgePenetration", &Py_ops_LadrunoEdgePenetration);      // Ladruno ADR-57 E6
     addCommand("ladrunoMortarTieResidual", &Py_ops_LadrunoMortarTieResidual);  // Ladruno ADR-41 C4
     addCommand("ladrunoBeginAugment", &Py_ops_LadrunoBeginAugment);            // Ladruno ADR-41 D1
     addCommand("ladrunoEndAugment", &Py_ops_LadrunoEndAugment);                // Ladruno ADR-41 D1

@@ -486,6 +486,12 @@ int OPS_LadrunoContact()
     // the edge penalty is replaced by k_soft = SOFSCL·4·m_eff/dt² so edge-on impact runs at the structural
     // dt_cr. SOFSCL optional (default 0.10); ≤0 ⇒ off; inert under implicit ⇒ byte-identical. Needs -edgeedge.
     double edgeSoftScale = 0.0;
+    // Ladruno ADR-57 E6: `-edgeAlm` opts the edge-edge fallback into the one-scalar commit-cycle ALM
+    // (a per-pair λ_N drives penetration → an εN-independent tol; the held-load analyze_augmented proc
+    // reads ladrunoEdgePenetration). OFF by default ⇒ the E2 penalty path ⇒ byte-identical. Implicit-only.
+    // `-edgeAugTol <tol>` is the augmentation tolerance (metadata; the proc passes its own augTol). Needs -edgeedge.
+    bool edgeAlm = false;
+    double edgeAugTol = 0.0;
     while (OPS_GetNumRemainingInputArgs() > 0) {
         const char *opt = OPS_GetString();
         if (opt != 0 && strcmp(opt, "-mortar") == 0) {
@@ -689,6 +695,14 @@ int OPS_LadrunoContact()
                 opserr << "WARNING contact -edgeSoft SOFSCL=" << edgeSoftScale << " > 1: the edge mode "
                           "ω·dt = 2√SOFSCL > 2 is UNSTABLE under central difference; use SOFSCL ≤ 1 "
                           "(default 0.1).\n";
+        } else if (opt != 0 && strcmp(opt, "-edgeAlm") == 0) {
+            // ADR-57 E6: enable the one-scalar commit-cycle ALM on the edge-edge fallback (a flag).
+            edgeAlm = true;
+        } else if (opt != 0 && strcmp(opt, "-edgeAugTol") == 0) {
+            // ADR-57 E6: the edge-edge ALM augmentation tolerance (metadata; the held-load proc passes it).
+            double v[1]; int m = 1;
+            if (OPS_GetDoubleInput(&m, v) < 0) { opserr << "WARNING contact -edgeAugTol - need a value\n"; return -1; }
+            edgeAugTol = v[0];
         } else if (opt != 0 && strcmp(opt, "-outward") == 0) {
             double o[3]; int m = 3;
             if (OPS_GetDoubleInput(&m, o) < 0) {
@@ -766,9 +780,9 @@ int OPS_LadrunoContact()
     }
     if (!edgeEdge && (edgeKn > 0.0 || edgeKnAuto || edgeBand > 0.0 || edgeMu > 0.0 ||
                       edgeKt > 0.0 || edgeCohesion > 0.0 || edgeTauMax > 0.0 || edgeConsistentTan ||
-                      edgeSoftScale > 0.0))
-        opserr << "WARNING contact -edgeKn/-edgeBand/-edgeMu/-edgeSoft/... given without -edgeedge; "
-                  "ignored (enable the edge-edge fallback with -edgeedge)\n";
+                      edgeSoftScale > 0.0 || edgeAlm || edgeAugTol > 0.0))
+        opserr << "WARNING contact -edgeKn/-edgeBand/-edgeMu/-edgeSoft/-edgeAlm/... given without "
+                  "-edgeedge; ignored (enable the edge-edge fallback with -edgeedge)\n";
     if (edgeEdge && edgeConsistentTan && (edgeMu > 0.0 || edgeCohesion > 0.0 || edgeTauMax > 0.0))
         // the non-symmetric Coulomb Csl tangent needs a non-symmetric solver (FullGeneral/UmfPack/
         // BandGeneral); a symmetric SOE silently drops the lower triangle. Warn once (like -consistanttan).
@@ -828,12 +842,13 @@ int OPS_LadrunoContact()
         // B2: softScale>0 ⇒ the SOFT=2 segment-based explicit penalty (off ⇒ byte-identical mortar).
         // ADR-57 E2/E3: edgeEdge ⇒ the perpendicular edge-edge fallback (+ E3 friction; off ⇒ byte-identical).
         // ADR-57 E5: edgeSoftScale>0 ⇒ the explicit Courant-stable SOFT penalty on the edge fallback.
+        // ADR-57 E6: edgeAlm ⇒ the one-scalar commit-cycle ALM (off ⇒ the E2 penalty path).
         return cd->addMortarContact(idata[0], idata[1], idata[2], kn, knAuto, epsN, epsNAuto,
                                     augTol, maxAug, ngp, hasOutward ? outward : 0, cellFrac,
                                     mortarMu, epsT, epsTAuto, cohesion, tauMax, consistentTan, isTie,
                                     muc, softScale, edgeEdge, edgeKn, edgeKnAuto, edgeBand,
                                     edgeMu, edgeKt, edgeCohesion, edgeTauMax, edgeConsistentTan,
-                                    edgeSoftScale);
+                                    edgeSoftScale, edgeAlm, edgeAugTol);
     }
     // D2: -visc μ_c (NTS viscous normal stabilization; 0 ⇒ off, byte-identical).
     // B3: -geomtan ⇒ the consistent ∂n/∂u geometric normal tangent (off ⇒ byte-identical).
@@ -948,6 +963,26 @@ int OPS_LadrunoMortarPenetration()
         LadrunoContactDomain *cd = theDomain->getLadrunoContactDomain();
         if (cd != 0)
             pen = cd->getMaxMortarPenetration();
+    }
+    int one = 1;
+    if (OPS_SetDoubleOutput(&one, &pen, true) < 0)
+        return -1;
+    return 0;
+}
+
+// ladrunoEdgePenetration -> the max KKT-active normal penetration ‖gN‖_∞ over all edge-edge ALM
+// pairs (max of −gN where λ_N + εN·gN < 0; 0 if no engine / no -edgeAlm pair). ADR-57 E6: the
+// point-like analogue of ladrunoMortarPenetration — the convergence measure a held-load
+// `analyze_augmented` loop reads (pass query=ops.ladrunoEdgePenetration) to drive the edge-edge
+// penetration → an εN-INDEPENDENT augTol via the one-scalar Uzawa.
+int OPS_LadrunoEdgePenetration()
+{
+    Domain *theDomain = OPS_GetDomain();
+    double pen = 0.0;
+    if (theDomain != 0) {
+        LadrunoContactDomain *cd = theDomain->getLadrunoContactDomain();
+        if (cd != 0)
+            pen = cd->getMaxEdgePenetration();
     }
     int one = 1;
     if (OPS_SetDoubleOutput(&one, &pen, true) < 0)
