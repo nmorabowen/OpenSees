@@ -71,10 +71,18 @@ translation — the frozen P1 transport block).
   `test_p2_dzhanibekov.py` (both gate-passing). These are standalone scripts, **not**
   Zone-A pytests yet — the manifest `pytest` row is `PENDING` until a `tests/` port.
 
-## P2 Stage 2 — the plan (start with a design pass)
+## P2 Stage 2 — the plan
 
-The crux is **architectural**, so do a source-grounded design pass (Plan agent) BEFORE
-coding, like P1/P2-S1 — see ADR §6 open questions and §7 P2 gate.
+**Design pass DONE — read [[_adr58_stage2_slaving_design]] first.** It captures the
+recommended mechanism, the verified framework constraints, and **the crux finding**: the
+Transformation handler reconstructs slaves as the homogeneous *incremental* map
+`δu_slave = T·δu_retained` (`TRANSF_INCREMENTAL_MP` is defined) and **overwrites any exact
+`setTrialDisp` done inside `getConstraint()`** — so slaving is the incremental transport
+result, and the real unsolved knot is **driving the internal node's incremental rotation
+`δθ` from the side-channel `q`** (the global solve controls those DOFs; `LogSO3` wraps at
+π). Resolve that with a run-it probe (C1 kinematic-mirror / C2 carrier-node / C3
+element-imposed increments) BEFORE the full build. The moment gather + Housner are
+mechanical once slaving works.
 
 1. **Slave-following under finite rotation (the hard part).** The side-channel `q` must
    drive the slaves' positions, but `MP_Constraint` is **linear/homogeneous**
