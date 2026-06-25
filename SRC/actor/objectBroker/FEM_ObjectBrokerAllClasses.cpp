@@ -484,6 +484,7 @@
 #include "ladrunoPlane/LadrunoCST.h"	// N. Mora-Bowen (Ladruno)
 #include "ladrunoDistributingCoupling/LadrunoDistributingCoupling.h"	// N. Mora-Bowen (Ladruno)
 #include "ladrunoKinematicCoupling/LadrunoKinematicCoupling.h"	// N. Mora-Bowen (Ladruno)
+#include "ladrunoRigidBody/LadrunoRigidBody.h"	// N. Mora-Bowen (Ladruno) ADR 58
 #include "ladrunoDispBeamColumn/LadrunoDispBeamColumn2d.h"	// N. Mora-Bowen (Ladruno)
 #include "ladrunoDispBeamColumn/LadrunoDispBeamColumn3d.h"	// N. Mora-Bowen (Ladruno)
 #include "joint/Joint2D.h"		// Arash
@@ -1103,6 +1104,9 @@ FEM_ObjectBrokerAllClasses::getNewElement(int classTag)
 
     case ELE_TAG_LadrunoKinematicCoupling:	// N. Mora-Bowen (Ladruno)
       return new LadrunoKinematicCoupling();
+
+    case ELE_TAG_LadrunoRigidBody:	// N. Mora-Bowen (Ladruno) ADR 58
+      return new LadrunoRigidBody();
 
     case ELE_TAG_SSPquad:
       return new SSPquad();

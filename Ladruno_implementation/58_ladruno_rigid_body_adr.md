@@ -2,7 +2,7 @@
 title: "ADR 58 — RigidBody DomainComponent + SO(3) integrator (LS-DYNA / Abaqus aligned)"
 project: Ladruno
 type: ADR / scoping (no code)
-status: scoped — no code; decision-capture for an explicit-only 6-DOF rigid-body object
+status: P1 in progress — implemented as a zero-stiffness Element (D1 fallback fired at P1 mapping); see Implementation log
 related:
   - "[[Ladruno_explicit_roadmap]]"          # §5.5 (this ADR promotes it) + §5.6 joints + Q1 architecture
   - "[[24_ladruno_coupling_constraints_adr]]" # CNRB-as-constraint; the deferred condensation integrator
@@ -438,5 +438,72 @@ constraint only**.
 
 ## Implementation log
 
-*(empty — no code. Scoping only. When a driver activates, copy the §7 phasing into
-the implementation log, start P1, and resolve the §6 release-pinned citation TODOs.)*
+### 2026-06-24 — P1 mapping ⇒ **D1 kill-criterion FIRED ⇒ pivot to the Element route (D1b)**
+A source-grounded P1 plan (Plan-agent pass, verified against `SRC/`) flipped the
+headline D1 decision via its own recorded fallback:
+
+- **File budget:** the D1(a) *DomainComponent* route lands at **~15–16 files**
+  outside a new `domain/rigid/` dir — the `Domain` add/remove/get/iter quartet +
+  `TaggedObjectStorage` + iter classes in **both** brokers
+  (`FEM_ObjectBrokerAllClasses` **and** `TclPackageClassBroker`) + the 4-ctor
+  allocation. At/over the **>~15 tripwire**. The D1(b) *Element* route is **6 files**
+  (classTags + 3 interpreter + 2 CMake); all object state rides inside the element
+  (the `Joint3D` precedent touches **zero** Domain/broker quartet files).
+- **The decider (a surprise the scoping ADR did not anticipate):**
+  `Domain::commit()` / `revertToLastCommit()` iterate **Nodes and Elements only**
+  (`Domain.cpp:2183-2237`). A `DomainComponent` gets **no per-step commit/revert/
+  update callback** — so D1(a) would *still* need a custom analysis-loop hook (the
+  open §6 "integration-loop hook" question). An **`Element` inherits all three for
+  free**, which also makes the P2 SO(3) side-channel integration land naturally in
+  `commitState()`/`update()`.
+
+**Decision:** P1 (and the build) is a **zero-stiffness `Element`**:
+`getTangentStiff`/`getResistingForce`/`getMass` → 0; a **private internal 6-DOF CoM
+`Node`** (Joint3D pattern) carries the condensed diagonal translational mass; slaves
+are tied by internal `MP_Constraint`s; SO(3) state self-integrates in `commitState`
+(P2). **This supersedes the D1(a) framing above** — D1's recorded alternative (b)
++ kill-criterion is now the chosen path. Other v2 decisions (D3 mass split, D7–D9,
+the §7 gates) stand unchanged.
+
+- `classTag` reserved: **`ELE_TAG_LadrunoRigidBody = 33015`** (next free ELE slot
+  after 33014; per-registry band).
+- Home: **`SRC/element/ladrunoRigidBody/`** (Element tree — moved from the scoped
+  `SRC/domain/rigid/`, since it is now an Element, matching the
+  `SRC/element/ladrunoKinematicCoupling/` sibling).
+- D6 flag note: the fork has **no compile-time-flag precedent** (ADR-39 contact is
+  compiled unconditionally, runtime-gated). Honoring "flag-off byte-identical" is
+  trivial on the Element route (no edits to shared Domain/broker TUs); a new
+  `option(OPS_Use_RigidBody … OFF)` pattern is introduced in `Conf.cmake`.
+
+**P1 increment 1:** ADR pivot recorded; `classTags.h` tag; the `LadrunoRigidBody.h`
+Element interface (internal-node + MP-slaving lifecycle + condensed mass).
+
+### 2026-06-24 — P1 COMPLETE (gate PASS)
+Full P1 built and verified. `LadrunoRigidBody.{h,cpp}` + `OPS_LadrunoRigidBody.cpp`
++ `CMakeLists.txt` under `SRC/element/ladrunoRigidBody/`; 5 wiring edits (classTags,
+element dispatch Tcl+Py, broker, element CMake); test
+`Ladruno_scripts/rigidbody_tests/test_p1_ballistic.py`.
+
+- **Design:** zero-stiffness Element; private internal 6-DOF CoM `Node` carries the
+  condensed mass (m_body diagonal + body-frame inertia, floored); rigid-link
+  `MP_Constraint` per slave (`u_i=u_R+(R−I)d_i`), rectangular 3×6 (3-DOF solid
+  slaves) or square 6×6 (6-DOF); slaves zeroed to massless followers (D3); cached
+  `Domain*` for teardown (Joint3D pattern).
+- **Pre-build adversarial review (3-lens):** cleared the two real worries (Ccr
+  transport-block signs, mass double-count) and the latent teardown leak; fixes
+  folded in (cached domain + tag-based cleanup, explicit `<string.h>`, doc accuracy).
+- **The bug static review can't catch:** `resolveCentroidAndMass()` set `valid=false`
+  only on failure and left it untouched on success, so the `if(!valid) return` guard
+  fired on the success path too → internal node never created → null `M0` deref →
+  segfault on the first analyze step. Found by **running** the gate (exactly the
+  review's #2 "run it" finding). Fixed: helper returns a status code, not `valid`.
+- **Gate PASS:** ballistic free-fall `z=−½gt²` rel-err **5e-4** (central-difference
+  discretization), node-follower abs-err **0.0** (exact, R=I); both Ccr paths.
+- **Build gotcha (recorded for next session):** `Ladruno_scripts\build.bat` must be
+  invoked via a real cmd/PowerShell (`cmd /c ... | tail` from Git Bash silently
+  no-ops — only the cmd banner prints and nothing recompiles). Verify artifact
+  mtimes (`dist/bin/opensees.pyd`) after every build before trusting a re-run.
+
+**Next (P2):** body-frame SO(3) exp-map integrator in `commitState` (reuse
+`GroupSO3.h`/`Versor.h`), release rotation, re-form the slave-MP transport block as
+R evolves; Dzhanibekov + Housner gates (§7 P2).
