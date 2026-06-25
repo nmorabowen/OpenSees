@@ -48,6 +48,28 @@
 #include <math.h>
 #include <string.h>
 
+// Rotate a vector by a Versor: v' = v + 2 qs (qv×v) + 2 qv×(qv×v). Implemented
+// locally because Versor::rotate uses left-scalar multiplication (2.0*vec /
+// scalar*vec) which VectorND<3> does not provide (only vec*double + one-arg cross).
+static Vector3D rotateVec(const OpenSees::Versor& q, const Vector3D& v)
+{
+  Vector3D c1 = q.vector.cross(v);     // qv × v
+  Vector3D c2 = q.vector.cross(c1);    // qv × (qv × v)
+  Vector3D r;
+  for (int i = 0; i < 3; i++)
+    r[i] = v[i] + 2.0 * q.scalar * c1[i] + 2.0 * c2[i];
+  return r;
+}
+
+// a slave's lumped translational mass = average of the 3 translational diagonals
+// (robust to anisotropic nodal mass; for the usual isotropic mass they are equal)
+static double lumpedTransMass(Node* n)
+{
+  const Matrix& m = n->getMass();
+  if (m.noRows() < 3) return 0.0;
+  return (m(0, 0) + m(1, 1) + m(2, 2)) / 3.0;
+}
+
 LadrunoRigidBody::LadrunoRigidBody(int tag, int ndmIn, const ID& slaveNodes,
                                    double mUserIn, int internalNodeTag)
   : Element(tag, ELE_TAG_LadrunoRigidBody),
@@ -55,10 +77,17 @@ LadrunoRigidBody::LadrunoRigidBody(int tag, int ndmIn, const ID& slaveNodes,
     slaveTags(slaveNodes), theSlaves(0),
     intNodeTag(internalNodeTag), theIntNode(0), theMPs(0), theDomainCache(0),
     mUser(mUserIn), mBody(0.0), xc(3), Ibody(3, 3), slaveMass0(0),
+    haveOmega0(false), IbodyInv(3, 3),
+    lastTimeCommit(0.0), lastTimeTrial(0.0), started(false),
     valid(false), K0(0), M0(0), P0(0), C0(0), dampF(0)
 {
   xc.Zero();
   Ibody.Zero();
+  qCommit.vector[0] = qCommit.vector[1] = qCommit.vector[2] = 0.0;
+  qCommit.scalar = 1.0;
+  qTrial = qCommit;
+  for (int k = 0; k < 3; k++) { Lcommit[k] = Ltrial[k] = L0[k] = omega0[k] = 0.0; }
+  IbodyInv.Zero();
 }
 
 LadrunoRigidBody::LadrunoRigidBody()
@@ -67,10 +96,17 @@ LadrunoRigidBody::LadrunoRigidBody()
     slaveTags(0), theSlaves(0),
     intNodeTag(-1), theIntNode(0), theMPs(0), theDomainCache(0),
     mUser(-1.0), mBody(0.0), xc(3), Ibody(3, 3), slaveMass0(0),
+    haveOmega0(false), IbodyInv(3, 3),
+    lastTimeCommit(0.0), lastTimeTrial(0.0), started(false),
     valid(false), K0(0), M0(0), P0(0), C0(0), dampF(0)
 {
   xc.Zero();
   Ibody.Zero();
+  qCommit.vector[0] = qCommit.vector[1] = qCommit.vector[2] = 0.0;
+  qCommit.scalar = 1.0;
+  qTrial = qCommit;
+  for (int k = 0; k < 3; k++) { Lcommit[k] = Ltrial[k] = L0[k] = omega0[k] = 0.0; }
+  IbodyInv.Zero();
 }
 
 LadrunoRigidBody::~LadrunoRigidBody()
@@ -162,6 +198,22 @@ void LadrunoRigidBody::setDomain(Domain* theDomain)
   if (this->createInternalNode(theDomain) < 0) return;
   if (this->buildSlaveConstraints(theDomain) < 0) return;
 
+  // P2 SO(3) seed: invert the constant body-frame inertia for the side channel,
+  // and set the initial spatial angular momentum from -omega (body frame, q0=I ⇒
+  // L0 = Ibody·omega0). The orientation starts at identity.
+  if (!invert3x3(Ibody, IbodyInv)) {
+    opserr << "WARNING LadrunoRigidBody " << this->getTag()
+           << ": body-frame inertia is not invertible\n";
+    return;
+  }
+  for (int i = 0; i < 3; i++) {
+    double Li = 0.0;
+    for (int j = 0; j < 3; j++) Li += Ibody(i, j) * omega0[j];
+    L0[i] = Li; Lcommit[i] = Li; Ltrial[i] = Li;
+  }
+  lastTimeCommit = lastTimeTrial = theDomain->getCurrentTime();
+  started = false;
+
   valid = true;
 }
 
@@ -176,7 +228,7 @@ int LadrunoRigidBody::resolveCentroidAndMass(void)
     const Vector& xi = theSlaves[i]->getCrds();
     double mi = (mUser >= 0.0)
                   ? mUser / nSlave                       // explicit total mass, split evenly
-                  : theSlaves[i]->getMass()(0, 0);       // slave lumped translational mass
+                  : lumpedTransMass(theSlaves[i]);       // slave lumped translational mass
     M += mi;
     for (int k = 0; k < 3; k++) S(k) += mi * xi(k);
   }
@@ -193,7 +245,7 @@ int LadrunoRigidBody::resolveCentroidAndMass(void)
   double Lc2 = 0.0;
   for (int i = 0; i < nSlave; i++) {
     const Vector& xi = theSlaves[i]->getCrds();
-    double mi = (mUser >= 0.0) ? mUser / nSlave : theSlaves[i]->getMass()(0, 0);
+    double mi = (mUser >= 0.0) ? mUser / nSlave : lumpedTransMass(theSlaves[i]);
     double d0 = xi(0) - xc(0), d1 = xi(1) - xc(1), d2 = xi(2) - xc(2);
     double r2 = d0 * d0 + d1 * d1 + d2 * d2;
     if (r2 > Lc2) Lc2 = r2;
@@ -334,18 +386,123 @@ void LadrunoRigidBody::allocateZeroReturns(void)
   dampF = new Vector(nDOF);    dampF->Zero();
 }
 
-// ---- state (P1: trivial; P2 advances the body-frame SO(3) state here) ------
+// ---- state: body-frame SO(3) integration (ADR 58 D2/D3, P2 Stage 1) --------
 //
-// P1 owns no element-level state: the internal Node commits/reverts itself, so
-// these are no-ops. P2 ADDS body-frame SO(3) state (orientation quaternion +
-// angular velocity) and MUST save it in commitState and restore it in
-// revertToLastCommit/revertToStart (TODO P2 — do not leave these as no-ops once
-// rotational state exists).
+// Once per converged step, advance the rotation OFF the global solve:
+//   ω_body = Ibody⁻¹·(qᵀ·L)        (current body-frame angular velocity)
+//   q      ← q · exp(ω_body·dt)    (orientation, incremental exp-map compose)
+//   L      ← L + m·dt              (spatial angular momentum; torque-free ⇒ L
+//                                   unchanged ⇒ ‖L‖ conserved to machine precision)
+// The Dzhanibekov flip emerges from ω_body re-derived as q rotates, even though L
+// is constant. dt is the domain-time advance since the last commit.
 
-int LadrunoRigidBody::commitState(void)        { return 0; }
-int LadrunoRigidBody::revertToLastCommit(void) { return 0; }
-int LadrunoRigidBody::revertToStart(void)      { return 0; }
+int LadrunoRigidBody::commitState(void)
+{
+  if (valid && theDomainCache != 0) {
+    double t = theDomainCache->getCurrentTime();
+    if (!started) {                  // first commit just seeds the clock (no giant first dt)
+      lastTimeTrial = t;
+      started = true;
+    }
+    double dt = t - lastTimeTrial;
+    if (started && dt > 0.0) {
+      // 2nd-order midpoint orientation update (Krysl–Endres-style): sample ω at the
+      // half-step orientation so energy stays bounded (a forward sample at step-start
+      // is dissipative and spirals a free body to its major axis instead of flipping).
+      Vector3D w0 = this->omegaBodyFrom(qTrial, Ltrial);
+      Vector3D dthH;
+      for (int k = 0; k < 3; k++) dthH[k] = w0[k] * (0.5 * dt);
+      OpenSees::Versor qHalf = qTrial * OpenSees::Versor::from_vector(dthH);
+      qHalf.normalize();
+
+      Vector3D wH = this->omegaBodyFrom(qHalf, Ltrial);      // ω at the midpoint
+      Vector3D dth;
+      for (int k = 0; k < 3; k++) dth[k] = wH[k] * dt;
+      qTrial = qTrial * OpenSees::Versor::from_vector(dth);  // q · exp(ω_mid·dt)
+      qTrial.normalize();
+
+      // Stage 1 is free-spin: gatherCoMTorque()≡0, so L is unchanged. An applied
+      // moment on the body is NOT yet honored (it is gathered in P2 Stage 2); a
+      // user applying a rotational load gets torque-free dynamics until then.
+      Vector3D m = this->gatherCoMTorque();
+      for (int k = 0; k < 3; k++) Ltrial[k] += m[k] * dt;
+      lastTimeTrial = t;
+    }
+  }
+  qCommit = qTrial;
+  Lcommit = Ltrial;
+  lastTimeCommit = lastTimeTrial;
+  return 0;
+}
+
+int LadrunoRigidBody::revertToLastCommit(void)
+{
+  qTrial = qCommit;
+  Ltrial = Lcommit;
+  lastTimeTrial = lastTimeCommit;     // keep the clock in sync with the rolled-back state
+  return 0;
+}
+
+int LadrunoRigidBody::revertToStart(void)
+{
+  qCommit.vector[0] = qCommit.vector[1] = qCommit.vector[2] = 0.0;
+  qCommit.scalar = 1.0;
+  qTrial = qCommit;
+  Lcommit = L0; Ltrial = L0;
+  lastTimeTrial = lastTimeCommit;
+  started = false;                    // re-baseline the clock on the next commit
+  return 0;
+}
+
 int LadrunoRigidBody::update(void)             { return 0; }
+
+// net spatial moment about the CoM. Stage 1 is free-spin (torque-free): returns 0.
+// Stage 2 gathers Σ (R·d_i⁰) × f_i from the slaves' loads/reactions (ADR 58 D3).
+Vector3D LadrunoRigidBody::gatherCoMTorque(void)
+{
+  Vector3D m; m[0] = m[1] = m[2] = 0.0;
+  return m;
+}
+
+// body-frame angular velocity from orientation + spatial momentum: ω = Ibody⁻¹·(qᵀ·L)
+Vector3D LadrunoRigidBody::omegaBodyFrom(const OpenSees::Versor& q, const Vector3D& L) const
+{
+  Vector3D piBody = rotateVec(q.conjugate(), L);
+  Vector3D w;
+  for (int i = 0; i < 3; i++) {
+    double wi = 0.0;
+    for (int j = 0; j < 3; j++) wi += IbodyInv(i, j) * piBody[j];
+    w[i] = wi;
+  }
+  return w;
+}
+
+void LadrunoRigidBody::setOmega0(double wx, double wy, double wz)
+{
+  omega0[0] = wx; omega0[1] = wy; omega0[2] = wz;
+  haveOmega0 = true;
+}
+
+// analytic inverse of a 3×3 (symmetric) matrix; false if ~singular
+bool LadrunoRigidBody::invert3x3(const Matrix& A, Matrix& Ainv)
+{
+  double a = A(0,0), b = A(0,1), c = A(0,2);
+  double d = A(1,0), e = A(1,1), f = A(1,2);
+  double g = A(2,0), h = A(2,1), i = A(2,2);
+  double det = a*(e*i - f*h) - b*(d*i - f*g) + c*(d*h - e*g);
+  if (det == 0.0 || !(det == det)) return false;   // singular / NaN
+  double inv = 1.0 / det;
+  Ainv(0,0) = (e*i - f*h) * inv;
+  Ainv(0,1) = (c*h - b*i) * inv;
+  Ainv(0,2) = (b*f - c*e) * inv;
+  Ainv(1,0) = (f*g - d*i) * inv;
+  Ainv(1,1) = (a*i - c*g) * inv;
+  Ainv(1,2) = (c*d - a*f) * inv;
+  Ainv(2,0) = (d*h - e*g) * inv;
+  Ainv(2,1) = (b*g - a*h) * inv;
+  Ainv(2,2) = (a*e - b*d) * inv;
+  return true;
+}
 
 // ---- matrices / forces: a rigid body assembles none of its own -------------
 
@@ -388,6 +545,14 @@ Response* LadrunoRigidBody::setResponse(const char** argv, int argc, OPS_Stream&
     return new ElementResponse(this, 3, Vector(3));
   if (strcmp(argv[0], "mass")     == 0)
     return new ElementResponse(this, 4, Vector(1));
+  if (strcmp(argv[0], "orientation") == 0 || strcmp(argv[0], "quaternion") == 0)
+    return new ElementResponse(this, 5, Vector(4));   // (qx, qy, qz, qs)
+  if (strcmp(argv[0], "angularVel") == 0 || strcmp(argv[0], "omega") == 0)
+    return new ElementResponse(this, 6, Vector(3));   // spatial ω
+  if (strcmp(argv[0], "angularMom") == 0 || strcmp(argv[0], "L") == 0)
+    return new ElementResponse(this, 7, Vector(3));   // spatial angular momentum
+  if (strcmp(argv[0], "omegaBody") == 0 || strcmp(argv[0], "angularVelBody") == 0)
+    return new ElementResponse(this, 8, Vector(3));   // body-frame ω (flip metric)
   return 0;
 }
 
@@ -414,6 +579,27 @@ int LadrunoRigidBody::getResponse(int responseID, Information& eleInfo)
   case 4: {
     Vector m(1); m(0) = mBody;
     return eleInfo.setVector(m);
+  }
+  case 5: {                                   // orientation quaternion (qx,qy,qz,qs)
+    Vector q4(4);
+    q4(0) = qCommit.vector[0]; q4(1) = qCommit.vector[1];
+    q4(2) = qCommit.vector[2]; q4(3) = qCommit.scalar;
+    return eleInfo.setVector(q4);
+  }
+  case 6: {                                   // spatial angular velocity ω = q·(I⁻¹ qᵀL)
+    Vector3D wBody = this->omegaBodyFrom(qCommit, Lcommit);
+    Vector3D wSpat = rotateVec(qCommit, wBody);
+    for (int k = 0; k < 3; k++) out3(k) = wSpat[k];
+    return eleInfo.setVector(out3);
+  }
+  case 7: {                                   // spatial angular momentum L
+    for (int k = 0; k < 3; k++) out3(k) = Lcommit[k];
+    return eleInfo.setVector(out3);
+  }
+  case 8: {                                   // BODY-frame ω (the Dzhanibekov flip metric)
+    Vector3D wBody = this->omegaBodyFrom(qCommit, Lcommit);
+    for (int k = 0; k < 3; k++) out3(k) = wBody[k];
+    return eleInfo.setVector(out3);
   }
   default:
     return -1;

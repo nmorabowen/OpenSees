@@ -504,6 +504,36 @@ element dispatch Tcl+Py, broker, element CMake); test
   no-ops — only the cmd banner prints and nothing recompiles). Verify artifact
   mtimes (`dist/bin/opensees.pyd`) after every build before trusting a re-run.
 
-**Next (P2):** body-frame SO(3) exp-map integrator in `commitState` (reuse
-`GroupSO3.h`/`Versor.h`), release rotation, re-form the slave-MP transport block as
-R evolves; Dzhanibekov + Housner gates (§7 P2).
+### 2026-06-24 — P2 Stage 1 COMPLETE (Dzhanibekov gate PASS)
+The body-frame SO(3) rotational integrator, **free-spin** (no applied moment yet).
+
+- **Topology (resolves the §6 integration-loop question):** the body integrates its
+  own rotation in `commitState`, OFF the global solve (D3) — the dense inertia can't
+  survive a `DiagonalSOE`, so rotation must be a side channel. The internal node's
+  rotation DOFs stay free-but-unforced; the body's orientation lives in element state.
+- **Scheme (the key move):** carry **spatial angular momentum `L`** as the integrator
+  state, not `ω`. `ω_body = Ibody⁻¹·(qᵀ·L)`; orientation by a **2nd-order midpoint**
+  exp-map `q ← q·exp(ω_mid·dt)` (reuses `Versor::from_vector`); `L ← L + m·dt`. For
+  free spin `L` is never touched ⇒ `‖L‖` conserved to machine precision *by
+  construction*; the Dzhanibekov flip emerges from `ω_body` re-derived as `q` rotates.
+  No eigendecomposition (just the constant `Ibody⁻¹`).
+- **Surprise found by running it:** a *forward* (step-start) `ω` sample is dissipative
+  — energy bled 7% and the free body spiralled to its major axis instead of flipping.
+  The **midpoint** sample fixed it (energy drift 7.2e-2 → 7.6e-7).
+- **`Versor::rotate` gotcha:** it uses left-scalar mult (`2.0*vec`) which `VectorND<3>`
+  lacks; replaced with a local `rotateVec` using only `vec*double` + one-arg `.cross`.
+- **D9 recorder:** `orientation` (quaternion), `omega` (spatial), `omegaBody` (the flip
+  metric), `angularMom` (spatial `L`). IC via `-omega wx wy wz` (body frame).
+- **Gate PASS** (`test_p2_dzhanibekov.py`): `‖L‖` rel-dev 0.0; energy drift 7.6e-7 @
+  dt=1e-3, 1.6e-7 @ dt=5e-4 (2nd-order); **7 intermediate-axis flips**.
+- **Adversarial review (focused):** core math confirmed correct; fixes folded in —
+  `revert`/`revertToStart` now restore the integration clock (B1/N1), a `started` flag
+  guards a giant first-`dt` on a time jump (B3), anisotropic slave mass is averaged
+  (N4). Stage-1 free-spin means **applied moments are ignored** (gathered in Stage 2);
+  made explicit in `commitState`.
+
+**Next (P2 Stage 2):** make the *slaves* track finite rotation (the §6 tension — MP
+constraints are linear/homogeneous; the side-channel `q` must drive the slave
+kinematics). Then the **force/moment gather** (D3, `gatherCoMTorque`) so an applied
+moment / toe-contact reaction drives the spin, and the **Housner rocking** gate.
+Reuse `GroupSO3.h`/`Versor.h`; this is the deferred architectural design pass.

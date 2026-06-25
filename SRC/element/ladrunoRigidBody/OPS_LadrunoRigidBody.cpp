@@ -90,9 +90,19 @@ void* OPS_LadrunoRigidBody(void)
 
   double mUser = -1.0;
   int intNodeTag = -1;
+  double omega0[3] = {0.0, 0.0, 0.0};
+  bool haveOmega0 = false;
   while (OPS_GetNumRemainingInputArgs() > 0) {
     const char* opt = OPS_GetString();
-    if (strcmp(opt, "-mass") == 0) {
+    if (strcmp(opt, "-omega") == 0) {       // initial body-frame angular velocity (P2)
+      n = 3;
+      if (OPS_GetNumRemainingInputArgs() < 3 || OPS_GetDoubleInput(&n, omega0) < 0) {
+        opserr << "WARNING LadrunoRigidBody: -omega wants 3 values (wx wy wz)\n";
+        return 0;
+      }
+      haveOmega0 = true;
+    }
+    else if (strcmp(opt, "-mass") == 0) {
       n = 1;
       if (OPS_GetDoubleInput(&n, &mUser) < 0) {
         opserr << "WARNING LadrunoRigidBody: -mass wants a value\n";
@@ -116,10 +126,11 @@ void* OPS_LadrunoRigidBody(void)
     }
   }
 
-  Element* e = new LadrunoRigidBody(tag, ndm, slaves, mUser, intNodeTag);
+  LadrunoRigidBody* e = new LadrunoRigidBody(tag, ndm, slaves, mUser, intNodeTag);
   if (e == 0) {
     opserr << "WARNING LadrunoRigidBody: could not create element\n";
     return 0;
   }
+  if (haveOmega0) e->setOmega0(omega0[0], omega0[1], omega0[2]);
   return e;
 }
