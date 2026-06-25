@@ -31,6 +31,7 @@
 #include <LadrunoContactKernel.h>    // Ladruno: ADR-39 P2b-2b (reference normal for -kn auto)
 #include <LadrunoContactProjection.h> // Ladruno: ADR-41 A2 (normalOriented projection geometry)
 #include <LadrunoContactBucketSort.h>// Ladruno: ADR-39 P2.5 (broad-phase pairing)
+#include <LadrunoEdgeKernel.h>       // Ladruno: ADR-57 E2 (edge-edge routing + closest point)
 #include <Matrix.h>                  // Ladruno: ADR-39 P2b-2b (master getInitialStiff)
 #include <Domain.h>
 #include <AnalysisModel.h>
@@ -51,6 +52,7 @@
 #include <classTags.h>
 #include <elementAPI.h>
 #include <map>
+#include <set>
 #include <vector>
 #include <cmath>
 
@@ -175,6 +177,118 @@ ladrunoBuildNodalMass(Domain *theDomain, LadrunoContactDomain *cd)
             cd->setNodalMass(en(k), m);
         }
     }
+}
+
+// ============================================================ ADR-57 E2 edge-edge routing geometry
+// Handler-local helpers porting the proto_e1_router oracle (16/16): the facet-normal align_fn regime
+// split + the proximity-gated NTS ≻ edge-edge ≻ face-mortar precedence. Built from REFERENCE coords
+// at handle() (the §7 scoping — large sliding needs re-emission, the inherited subsystem fence).
+
+// Newell unit normal of a planar convex tri/quad facet (orientation-independent; align_fn = |nS·nM|).
+static void ladrunoFacetNormalNewell(int npts, const double X[4][3], double n[3])
+{
+    n[0] = n[1] = n[2] = 0.0;
+    for (int i = 0; i < npts; i++) {
+        const double *a = X[i]; const double *b = X[(i + 1) % npts];
+        n[0] += (a[1] - b[1]) * (a[2] + b[2]);
+        n[1] += (a[2] - b[2]) * (a[0] + b[0]);
+        n[2] += (a[0] - b[0]) * (a[1] + b[1]);
+    }
+    double nn = std::sqrt(n[0]*n[0] + n[1]*n[1] + n[2]*n[2]);
+    if (nn > 1e-300) { n[0] /= nn; n[1] /= nn; n[2] /= nn; }
+}
+
+// does point x project in-bounds onto the convex facet X (npts) with |gap| ≤ band? gap by ref.
+static bool ladrunoPointInFacet(const double x[3], int npts, const double X[4][3],
+                                const double nf[3], double band, double &gap)
+{
+    double c[3] = {0, 0, 0};
+    for (int i = 0; i < npts; i++) for (int d = 0; d < 3; d++) c[d] += X[i][d] / npts;
+    gap = 0.0;
+    for (int d = 0; d < 3; d++) gap += (x[d] - c[d]) * nf[d];
+    double proj[3];
+    for (int d = 0; d < 3; d++) proj[d] = x[d] - gap * nf[d];
+    int sgn = 0;                                   // consistent cross-product sign vs each edge (convex)
+    for (int i = 0; i < npts; i++) {
+        const double *a = X[i]; const double *b = X[(i + 1) % npts];
+        double e[3] = {b[0]-a[0], b[1]-a[1], b[2]-a[2]};
+        double w[3] = {proj[0]-a[0], proj[1]-a[1], proj[2]-a[2]};
+        double cr[3] = {e[1]*w[2]-e[2]*w[1], e[2]*w[0]-e[0]*w[2], e[0]*w[1]-e[1]*w[0]};
+        double dp = cr[0]*nf[0] + cr[1]*nf[1] + cr[2]*nf[2];
+        int s = (dp > 1e-300) ? 1 : ((dp < -1e-300) ? -1 : 0);
+        if (s != 0) { if (sgn == 0) sgn = s; else if (s != sgn) return false; }
+    }
+    return std::fabs(gap) <= band;
+}
+
+// min distance between two facets: vertices-projected-in-other + all boundary edge-edge closest
+// points (the proto_e1 min_facet_dist). Reference coords ⇒ the proximity gate.
+static double ladrunoMinFacetDist(int npS, const double S[4][3], const double nS[3],
+                                  int npM, const double M[4][3], const double nM[3])
+{
+    double dmin = HUGE_VAL, gap;
+    for (int i = 0; i < npS; i++)
+        if (ladrunoPointInFacet(S[i], npM, M, nM, HUGE_VAL, gap)) {
+            double g = std::fabs(gap); if (g < dmin) dmin = g;
+        }
+    for (int i = 0; i < npM; i++)
+        if (ladrunoPointInFacet(M[i], npS, S, nS, HUGE_VAL, gap)) {
+            double g = std::fabs(gap); if (g < dmin) dmin = g;
+        }
+    for (int ie = 0; ie < npS; ie++)
+        for (int je = 0; je < npM; je++) {
+            LadrunoEdgeKernel::ClosestResult cr = LadrunoEdgeKernel::closestPtSegSeg(
+                S[ie], S[(ie + 1) % npS], M[je], M[(je + 1) % npM]);
+            double w[3] = {cr.c1[0]-cr.c2[0], cr.c1[1]-cr.c2[1], cr.c1[2]-cr.c2[2]};
+            double g = std::sqrt(w[0]*w[0] + w[1]*w[1] + w[2]*w[2]);
+            if (g < dmin) dmin = g;
+        }
+    return dmin;
+}
+
+// d_band for a master facet: explicit -edgeBand override, else a fraction of the mean edge length.
+static double ladrunoEdgeBand(int npM, const double M[4][3], double override_)
+{
+    if (override_ > 0.0) return override_;
+    double el = 0.0;
+    for (int k = 0; k < npM; k++) {
+        const double *a = M[k]; const double *b = M[(k + 1) % npM];
+        double dx = b[0]-a[0], dy = b[1]-a[1], dz = b[2]-a[2];
+        el += std::sqrt(dx*dx + dy*dy + dz*dz);
+    }
+    return 0.25 * (el / npM);
+}
+
+// The SINGLE SOURCE OF TRUTH for "edge-edge OWNS this (slave facet, master facet) pair" — the
+// proto_e1 routing decision: in proximity, NON-FACING (align_fn < τ_face), NOT owned by an NTS
+// slave-vertex-on-face poke, AND ≥1 boundary-edge pair is a well-conditioned margin-interior in-band
+// crossing. Called by BOTH the mortar injection loop (which STANDS DOWN when this is true — the ADR §2
+// "face-mortar vacates only if edge-edge succeeds", so the mortar clip and the edge-edge force never
+// superpose in the oblique band where the clip is non-degenerate) AND the edge-edge injection loop
+// (which injects only when this is true). One decision, two consumers ⇒ no double-count (the gate's
+// EE-1 fix). Reference coords (§7 scoping).
+static bool ladrunoEdgeEdgeOwns(int npS, const double S[4][3], int npM, const double M[4][3],
+                                double dBand)
+{
+    const double TAU_FACE = std::cos(50.0 * 3.14159265358979323846 / 180.0);
+    double nS[3], nM[3];
+    ladrunoFacetNormalNewell(npS, S, nS);
+    ladrunoFacetNormalNewell(npM, M, nM);
+    if (ladrunoMinFacetDist(npS, S, nS, npM, M, nM) > dBand) return false;   // separated ⇒ NONE
+    double alignFn = std::fabs(nS[0]*nM[0] + nS[1]*nM[1] + nS[2]*nM[2]);
+    if (alignFn >= TAU_FACE) return false;                                   // facing ⇒ FACE-MORTAR owns
+    double gap;
+    for (int k = 0; k < npS; k++)                                           // slave vertex poke ⇒ NTS owns
+        if (ladrunoPointInFacet(S[k], npM, M, nM, dBand, gap)) return false;
+    for (int ie = 0; ie < npS; ie++)                                        // ≥1 in-band edge crossing
+        for (int je = 0; je < npM; je++) {
+            LadrunoEdgeKernel::ClosestResult cr = LadrunoEdgeKernel::closestPtSegSeg(
+                S[ie], S[(ie + 1) % npS], M[je], M[(je + 1) % npM]);
+            if (cr.status != LadrunoEdgeKernel::EE_OK || !cr.interior) continue;
+            double w[3] = {cr.c1[0]-cr.c2[0], cr.c1[1]-cr.c2[1], cr.c1[2]-cr.c2[2]};
+            if (std::sqrt(w[0]*w[0] + w[1]*w[1] + w[2]*w[2]) <= dBand) return true;
+        }
+    return false;
 }
 
 int
@@ -528,6 +642,7 @@ LadrunoContactHandler::handle(const ID *nodesLast)
             // follow-up ("mortar P2.5"); correctness-first brute force here, like NTS P2b-1.
             for (int sf = 0; sf < nSegS; sf++) {
                 Node *sNodes[4]; bool ok = true; double scen[3] = {0.0, 0.0, 0.0};
+                double Sx[4][3];                                  // ref coords (ADR-57 E2 stand-down)
                 for (int k = 0; k < npsS; k++) {
                     Node *sn = theDomain->getNode(sTags(sf * npsS + k));
                     if (sn == 0 || sn->getNumberDOF() != 3) {
@@ -539,22 +654,32 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                     }
                     sNodes[k] = sn;
                     const Vector &Xk = sn->getCrds();
-                    for (int d = 0; d < 3; d++) scen[d] += Xk(d);
+                    for (int d = 0; d < 3; d++) { Sx[k][d] = Xk(d); scen[d] += Xk(d); }
                 }
                 if (!ok) continue;
                 for (int d = 0; d < 3; d++) scen[d] /= npsS;     // slave-facet centroid
 
                 for (int seg = 0; seg < nSegM; seg++) {
                     Node *mNodes[4]; ok = true; double mcen[3] = {0.0, 0.0, 0.0};
+                    double Mx[4][3];                              // ref coords (ADR-57 E2 stand-down)
                     for (int k = 0; k < npsM; k++) {
                         Node *mn = theDomain->getNode(mTags(seg * npsM + k));
                         if (mn == 0 || mn->getNumberDOF() != 3) { ok = false; break; }
                         mNodes[k] = mn;
                         const Vector &Xk = mn->getCrds();
-                        for (int d = 0; d < 3; d++) mcen[d] += Xk(d);
+                        for (int d = 0; d < 3; d++) { Mx[k][d] = Xk(d); mcen[d] += Xk(d); }
                     }
                     if (!ok) continue;
                     for (int d = 0; d < 3; d++) mcen[d] /= npsM;
+                    // ADR-57 E2 — FACE-MORTAR STANDS DOWN when the edge-edge lane owns this pair (the
+                    // gate EE-1 fix): in the oblique band (50°–90°) the mortar clip is NON-degenerate,
+                    // so without this the clip pressure and the injected edge-edge force would
+                    // SUPERPOSE on the same region. The SAME routing decision the edge-edge loop uses
+                    // (one source of truth) ⇒ exactly one lane owns the pair. mc.edgeEdge off ⇒ the
+                    // shipped mortar behavior, unchanged.
+                    if (mc.edgeEdge &&
+                        ladrunoEdgeEdgeOwns(npsS, Sx, npsM, Mx, ladrunoEdgeBand(npsM, Mx, mc.edgeBand)))
+                        continue;
                     // orientation toward the slave's allowed half-space: explicit -outward,
                     // else (slave facet centroid − master facet centroid) at the ref config.
                     double orientDir[3];
@@ -622,6 +747,128 @@ LadrunoContactHandler::handle(const ID *nodesLast)
             }
         }
         cd->mortarNormalGCEnd();   // prune λ_N slots no live mortar pair referenced
+    }
+
+    // --- ADR-57 E2: perpendicular edge-edge routing + adapter injection (the cos_t→0 fallback) ---
+    // For each -mortar contact with -edgeedge, run the E1 routing detector over the SAME brute-force
+    // (slave facet, master facet) enumeration the mortar lane uses (NOT the bucket sort — that is
+    // NTS point-vs-segment only) and, on an EDGE_EDGE route, inject one EDGE_EDGE adapter per kept
+    // boundary-edge pair. The mortar loop STANDS DOWN on a pair edge-edge owns (the same
+    // ladrunoEdgeEdgeOwns decision), so the mortar clip and the edge-edge force never superpose —
+    // even in the oblique band where the clip is non-degenerate (the gate EE-1 fix). Reference-config
+    // geometry (§7 scoping; large sliding ⇒ re-emit). -edgeedge absent ⇒ zero adapters ⇒ byte-
+    // identical; -edgeedge present but no pair routes ⇒ also zero adapters.
+    if (cd != 0) {
+        cd->edgeGCBegin();
+        for (int c = 0; c < cd->getNumMortarContacts(); c++) {
+            const LadrunoContactDomain::MortarContact &mc = cd->getMortarContact(c);
+            if (!mc.edgeEdge) continue;                 // opt-in off ⇒ skip (byte-identical)
+            LadrunoContactSurface *ms = cd->getSurface(mc.masterSurfTag);
+            LadrunoContactSurface *ss = cd->getSurface(mc.slaveSurfTag);
+            if (ms == 0 || ss == 0) continue;           // already warned by the mortar loop
+            if (ms->getKind() != LadrunoContactSurface::MASTER_SEGMENTS ||
+                ss->getKind() != LadrunoContactSurface::SLAVE_SEGMENTS) continue;
+            int npsM = ms->getNodesPerSeg(), npsS = ss->getNodesPerSeg();
+            if (npsM < 3 || npsM > 4 || npsS < 3 || npsS > 4) continue;
+            bool epsAuto = mc.epsNAuto || mc.knAuto;
+            double epsFixed = (mc.epsN > 0.0) ? mc.epsN : mc.kn;
+            const ID &mTags = ms->getNodeTags();
+            const ID &sTags = ss->getNodeTags();
+            int nSegM = mTags.Size() / npsM;
+            int nSegS = sTags.Size() / npsS;
+            // de-dup: a facet edge is shared by two facets, so key each injected adapter by the
+            // ORDERED (slave edge nodes, master edge nodes) 4-tuple and inject it once (the §7 step-3
+            // set, mirroring the bucket-sort stamp idiom — a NEW handler set, not a reuse).
+            std::set<std::vector<int> > injectedEdges;
+            for (int sf = 0; sf < nSegS; sf++) {
+                Node *sN[4]; bool ok = true; double Scen[3] = {0, 0, 0}, Sx[4][3];
+                for (int k = 0; k < npsS; k++) {
+                    Node *sn = theDomain->getNode(sTags(sf * npsS + k));
+                    if (sn == 0 || sn->getNumberDOF() != 3) { ok = false; break; }
+                    sN[k] = sn;
+                    const Vector &X = sn->getCrds();
+                    for (int d = 0; d < 3; d++) { Sx[k][d] = X(d); Scen[d] += X(d); }
+                }
+                if (!ok) continue;
+                for (int d = 0; d < 3; d++) Scen[d] /= npsS;
+                double nS[3]; ladrunoFacetNormalNewell(npsS, Sx, nS);
+                for (int seg = 0; seg < nSegM; seg++) {
+                    Node *mN[4]; ok = true; double Mcen[3] = {0, 0, 0}, Mx[4][3];
+                    for (int k = 0; k < npsM; k++) {
+                        Node *mn = theDomain->getNode(mTags(seg * npsM + k));
+                        if (mn == 0 || mn->getNumberDOF() != 3) { ok = false; break; }
+                        mN[k] = mn;
+                        const Vector &X = mn->getCrds();
+                        for (int d = 0; d < 3; d++) { Mx[k][d] = X(d); Mcen[d] += X(d); }
+                    }
+                    if (!ok) continue;
+                    for (int d = 0; d < 3; d++) Mcen[d] /= npsM;
+
+                    // does edge-edge OWN this pair? (the single-source-of-truth routing — the SAME
+                    // decision the mortar stand-down uses, so exactly one lane owns the pair). d_band
+                    // from -edgeBand, else the facet edge length.
+                    double dBand = ladrunoEdgeBand(npsM, Mx, mc.edgeBand);
+                    if (!ladrunoEdgeEdgeOwns(npsS, Sx, npsM, Mx, dBand)) continue;
+
+                    // orientation toward the slave's allowed half-space (the §2 first-capture sign
+                    // reference): explicit -outward, else the SLAVE FACET NORMAL (always non-degenerate,
+                    // unlike a centroid difference that can vanish near-coincident centroids — the gate
+                    // E2-2 fix; ADR §2 "orient once from {n̂_s, n̂_m}") flipped from master toward slave.
+                    double orientDir[3];
+                    if (mc.hasOutward) {
+                        for (int d = 0; d < 3; d++) orientDir[d] = mc.outward[d];
+                    } else {
+                        double cdv[3] = {Scen[0]-Mcen[0], Scen[1]-Mcen[1], Scen[2]-Mcen[2]};
+                        double dc = nS[0]*cdv[0] + nS[1]*cdv[1] + nS[2]*cdv[2];
+                        double sgn = (dc >= 0.0) ? 1.0 : -1.0;
+                        for (int d = 0; d < 3; d++) orientDir[d] = sgn * nS[d];
+                    }
+                    // edge penalty: explicit -edgeKn, else auto per master facet (if -edgeKn auto or the
+                    // mortar penalty is auto), else the resolved fixed mortar penalty (the ADR default).
+                    double edgeKnUse = mc.edgeKn;
+                    if (edgeKnUse <= 0.0) {
+                        if (mc.edgeKnAuto || epsAuto)
+                            edgeKnUse = ladrunoResolveAutoKn(theDomain, mN, npsM, orientDir);
+                        else
+                            edgeKnUse = epsFixed;
+                    }
+                    if (edgeKnUse <= 0.0) {
+                        opserr << "WARNING LadrunoContactHandler::handle() - mortar contact " << mc.tag
+                               << " slave facet " << sf << " master facet " << seg
+                               << ": -edgeedge penalty could not be sized; pair skipped\n";
+                        continue;
+                    }
+
+                    // enumerate the (≤4)×(≤4) boundary-edge pairs; inject the margin-interior, well-
+                    // conditioned, in-band crossings (the E0 kernel decides interior + non-parallel).
+                    for (int ie = 0; ie < npsS; ie++) {
+                        Node *sa = sN[ie], *sb = sN[(ie + 1) % npsS];
+                        for (int je = 0; je < npsM; je++) {
+                            Node *ma = mN[je], *mb = mN[(je + 1) % npsM];
+                            LadrunoEdgeKernel::ClosestResult cr = LadrunoEdgeKernel::closestPtSegSeg(
+                                Sx[ie], Sx[(ie + 1) % npsS], Mx[je], Mx[(je + 1) % npsM]);
+                            if (cr.status != LadrunoEdgeKernel::EE_OK || !cr.interior) continue;
+                            double w[3] = {cr.c1[0]-cr.c2[0], cr.c1[1]-cr.c2[1], cr.c1[2]-cr.c2[2]};
+                            double g = std::sqrt(w[0]*w[0] + w[1]*w[1] + w[2]*w[2]);
+                            if (g > dBand) continue;
+                            int sat = sa->getTag(), sbt = sb->getTag();
+                            int mat = ma->getTag(), mbt = mb->getTag();
+                            std::vector<int> key(4);
+                            key[0] = (sat < sbt) ? sat : sbt; key[1] = (sat < sbt) ? sbt : sat;
+                            key[2] = (mat < mbt) ? mat : mbt; key[3] = (mat < mbt) ? mbt : mat;
+                            if (injectedEdges.find(key) != injectedEdges.end()) continue;
+                            injectedEdges.insert(key);
+                            LadrunoContactFE *fe = new LadrunoContactFE(numFe++, sa, sb, ma, mb,
+                                                       edgeKnUse, orientDir, mc.tag, theDomain);
+                            if (fe == 0) return -5;
+                            theModel->addFE_Element(fe);
+                            cd->edgeGCMark(mc.tag, sat, sbt, mat, mbt);  // live this handle()
+                        }
+                    }
+                }
+            }
+        }
+        cd->edgeGCEnd();   // prune edge-edge slots no live pair referenced
     }
 
     // P2a: rigid analytical-plane contacts -> ONE bound adapter per slave node

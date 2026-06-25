@@ -106,7 +106,8 @@ LadrunoContactDomain::addMortarContact(int tag, int masterSurfTag, int slaveSurf
                                        const double *outward, double cellFrac,
                                        double mu, double epsT, bool epsTAuto,
                                        double cohesion, double tauMax, bool consistentTan,
-                                       bool isTie, double muc, double softScale)
+                                       bool isTie, double muc, double softScale,
+                                       bool edgeEdge, double edgeKn, bool edgeKnAuto, double edgeBand)
 {
     LadrunoContactSurface *ms = getSurface(masterSurfTag);
     LadrunoContactSurface *ss = getSurface(slaveSurfTag);
@@ -175,6 +176,10 @@ LadrunoContactDomain::addMortarContact(int tag, int masterSurfTag, int slaveSurf
     m.isTie = isTie;                                  // C4 — permanent mesh-tie bond
     m.muc = (muc > 0.0) ? muc : 0.0;                  // D2.2 viscous stabilization (≤0 ⇒ off)
     m.softScale = (softScale > 0.0) ? softScale : 0.0;  // B2 (P5) SOFT=2 segment-based explicit penalty
+    m.edgeEdge = edgeEdge;                             // ADR-57 E2 edge-edge fallback (off ⇒ byte-identical)
+    m.edgeKn = (edgeKn > 0.0) ? edgeKn : 0.0;          // ≤0 ⇒ default to the resolved mortar penalty
+    m.edgeKnAuto = edgeKnAuto;                         // size the edge penalty per master facet
+    m.edgeBand = (edgeBand > 0.0) ? edgeBand : 0.0;    // ≤0 ⇒ default from the facet edge length
     theMortarContacts.push_back(m);
     return 0;
 }
@@ -365,6 +370,55 @@ LadrunoContactDomain::mortarNormalGCEnd(void)
     }
 }
 
+// ===================================================== ADR-57 E2 edge-edge state
+// canonical key: order each edge's two node tags so a facet edge shared by two facets (and a
+// pair re-discovered with the endpoints swapped) maps to ONE slot (de-dup; never a lossy hash).
+LadrunoContactDomain::EdgeEdgeState &
+LadrunoContactDomain::getOrCreateEdgeEdgeState(int contactTag, int sNodeA, int sNodeB,
+                                               int mNodeA, int mNodeB)
+{
+    EdgeKey k;
+    k.c  = contactTag;
+    k.sa = (sNodeA < sNodeB) ? sNodeA : sNodeB;
+    k.sb = (sNodeA < sNodeB) ? sNodeB : sNodeA;
+    k.ma = (mNodeA < mNodeB) ? mNodeA : mNodeB;
+    k.mb = (mNodeA < mNodeB) ? mNodeB : mNodeA;
+    // operator[] default-constructs a zeroed EdgeEdgeState (signN=0) when absent.
+    return theEdgeEdgeStates[k];
+}
+
+void
+LadrunoContactDomain::edgeGCBegin(void)
+{
+    liveEdgeKeys.clear();
+}
+
+void
+LadrunoContactDomain::edgeGCMark(int contactTag, int sNodeA, int sNodeB, int mNodeA, int mNodeB)
+{
+    EdgeKey k;
+    k.c  = contactTag;
+    k.sa = (sNodeA < sNodeB) ? sNodeA : sNodeB;
+    k.sb = (sNodeA < sNodeB) ? sNodeB : sNodeA;
+    k.ma = (mNodeA < mNodeB) ? mNodeA : mNodeB;
+    k.mb = (mNodeA < mNodeB) ? mNodeB : mNodeA;
+    liveEdgeKeys.insert(k);
+}
+
+void
+LadrunoContactDomain::edgeGCEnd(void)
+{
+    // prune edge-edge slots no live pair referenced this handle() (the re-mesh leak class).
+    for (std::map<EdgeKey, EdgeEdgeState>::iterator it = theEdgeEdgeStates.begin();
+         it != theEdgeEdgeStates.end(); ) {
+        if (liveEdgeKeys.find(it->first) == liveEdgeKeys.end())
+            theEdgeEdgeStates.erase(it++);
+        else
+            ++it;
+    }
+    liveEdgeKeys.clear();
+}
+
 void
 LadrunoContactDomain::frictionGCBegin(void)
 {
@@ -481,6 +535,23 @@ LadrunoContactDomain::commit(void)
         double gbar = st.gtGlobal / st.aGlobal;
         st.lambdaN = std::min(0.0, st.lambdaN + st.epsN * gbar);
     }
+
+    // ADR-57 E2 — edge-edge slots. The shipped commit loop iterates only friction + mortar slots,
+    // so iterating theEdgeEdgeStates here is the EXPLICIT obligation on the edge-edge PR (capstone
+    // contract #1, the same trap the mortar lane had — NOT inherited). For the E2 penalty MVP the
+    // only live datum is the body-fixed sign: promote its committed double-buffer (so a later
+    // rejected step can revert the capture) and promote the inert friction trial. The one-scalar
+    // ALM (lambdaN) Uzawa is E6 — not run here.
+    for (std::map<EdgeKey, EdgeEdgeState>::iterator it = theEdgeEdgeStates.begin();
+         it != theEdgeEdgeStates.end(); ++it) {
+        EdgeEdgeState &st = it->second;
+        st.signNcommitted = st.signN;                // body-fixed sign capture (E2)
+        for (int d = 0; d < 3; d++) {                // friction (E3 — inert/zeroed in E2)
+            st.gpT[d] = st.gpTtrial[d];
+            st.gT0committed[d] = st.gT0[d];
+        }
+        st.engagedCommitted = st.engaged;
+    }
     return 0;
 }
 
@@ -504,6 +575,20 @@ LadrunoContactDomain::revertToLastCommit(void)
             st.gpTtrial[d] = st.gpT[d];
             st.gT0[d] = st.gT0committed[d];
             st.lambdaTtrial[d] = st.lambdaT[d];        // C3.3 — drop the trial multiplier
+        }
+        st.engaged = st.engagedCommitted;
+    }
+    // ADR-57 E2 — edge-edge slots: restore the sign capture + the inert friction trial from the
+    // committed double-buffer, so a rejected implicit step does not latch a sign/origin captured at
+    // the rejected config (the C3.2 MAJOR-2 pattern). signN is mutated in getResidual (the capture),
+    // so it MUST be revertible (unreachable under explicit CDL, live under implicit Newton).
+    for (std::map<EdgeKey, EdgeEdgeState>::iterator it = theEdgeEdgeStates.begin();
+         it != theEdgeEdgeStates.end(); ++it) {
+        EdgeEdgeState &st = it->second;
+        st.signN = st.signNcommitted;
+        for (int d = 0; d < 3; d++) {
+            st.gpTtrial[d] = st.gpT[d];
+            st.gT0[d] = st.gT0committed[d];
         }
         st.engaged = st.engagedCommitted;
     }
