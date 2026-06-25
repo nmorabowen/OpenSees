@@ -537,3 +537,69 @@ constraints are linear/homogeneous; the side-channel `q` must drive the slave
 kinematics). Then the **force/moment gather** (D3, `gatherCoMTorque`) so an applied
 moment / toe-contact reaction drives the spin, and the **Housner rocking** gate.
 Reuse `GroupSO3.h`/`Versor.h`; this is the deferred architectural design pass.
+
+### 2026-06-24 — P2 Stage 2 COMPLETE (slave-following + moment gather + Housner gate PASS)
+The rocking-foundation MVP closes. Three pieces, each validated by **running an
+isolated probe** before the integrated gate (the "run it, don't just review it"
+lesson held a third time — see the Housner penalty/lag finding below).
+
+- **Slave-following — mechanism C3 wins (NOT the time-varying MP).** The §6 crux:
+  the exact map `u_i = u_R + (R−I)d_i⁰` has a finite, nonlinear `(R−I)d_i⁰` term that
+  the Transformation handler's homogeneous `u_c = T·u_r` (and its `TRANSF_INCREMENTAL_MP`
+  `slave += T·δu_retained`) cannot carry — and the side-channel `q` is not a retained
+  DOF. **Resolution: the element imposes each slave's exact trial displacement via
+  `setTrialDisp` in `update()`.** A pre-implementation design pass feared this is
+  overwritten by the handler — but that finding was about `setTrialDisp` *inside a
+  custom MP's `getConstraint()`* (a different path). The element's `update()` hook runs
+  **after** the handler's incremental slave update and **before** residual formation
+  (`CentralDifference::newStep` → `applyLoad`/enforceSPs → `Domain::update`→element
+  `update()` → `formUnbalance`), so the element wins the last write. **A probe
+  (`test_p2_slavetrack.py`) confirmed slaves track `(R−I)d⁰` to 5e-16**, with only a
+  one-step explicit half-step lag (the committed slave reflects the orientation it was
+  imposed at; `q` advances later in `commitState`). The MPs are KEPT (slaves stay
+  derived/non-singular for the solve + the translational force gather). The design
+  pass's time-varying-MP skeleton (`LadrunoMP_RigidOffset.h`) was **discarded** — C3
+  needs no custom MP.
+
+- **Moment gather** `gatherCoMTorque() = Σ (R·d_i⁰) × f_i` with the **current** spatial
+  lever arm (a frozen `d_i⁰` keeps a constant restoring moment and destroys the rocking
+  equilibrium at θ=α — verified catastrophic). `f_i = −P` from `getResistingForce()` of
+  the external elements incident on the slaves (Newton's third law vs the
+  `addResistingForceToNodalReaction` reaction convention). Those elements are **cached
+  by tag at `setDomain`** and re-resolved via `Domain::getElement()` in the gather —
+  reading forces this way avoids `calculateNodalReactions`, which re-walks the **shared**
+  `SingleDomEleIter` that `Domain::commit()` is already iterating (a reentrant
+  `reset()` there silently aborts the commit loop — a real trap, found by source
+  reading). Tag-resolve (not raw pointers) makes a *removed* incident element safe
+  (this fork has runtime element removal). `commitState` reordered so the gather uses
+  the **pre-advance** orientation (the config the toe force was evaluated at): gather →
+  midpoint exp-map advance → `L += m·dt`. Probe `test_p2_gather.py` (a torsional
+  oscillator) confirms the restoring sign, no off-axis leak, clean oscillation.
+
+- **Housner rocking gate (`test_p2_housner.py`) — the headline benchmark.** A slender
+  block released from rest at θ0 = α/2, rocking about a toe **pinned by a stiff elastic
+  `zeroLength`** (an *element*, so the gather reads its reaction; ADR D5 keeps the real
+  contact engine fenced out). The free-rocking quarter-period (release → first upright)
+  matches Housner's `(1/p)cosh⁻¹(1/(1−θ0/α))`, `p=√(W·Rdist/I₀)`, to **1.22%**. This
+  exercises the whole chain AND its consistency: the parallel-axis `M·Rdist²` part of
+  `I₀` emerges from the CoM-translation channel coupling with the `I_cm` side channel.
+  **Run-it finding:** an over-stiff pin injects a parasitic restoring (period biased
+  fast) through the one-step rotation/translation lag; the bias scales `~k·dt` and
+  **converges to the analytic as dt→0** (sweep: k=3e4 gives −5.1%→−2.5%→−1.2% as dt
+  halves). Operating point k=3e4 (toe penetration `W/k≈3e-4` — rigid for the physics),
+  dt=1e-5. **The penalty-impact restitution `(1−1.5 sin²α)` is intentionally NOT gated**
+  — a finite-stiffness toe does not reproduce Housner's instantaneous angular-momentum
+  transfer; the quarter-period (impact-free) is the rigorous, achievable gate.
+
+- **No-regression:** with no incident elements `nIncident==0 ⇒ gatherCoMTorque≡0`, so
+  the P1 ballistic and P2-S1 Dzhanibekov gates are byte-path unchanged (re-verified).
+- **Focused adversarial review:** reentrancy / `f_i=−P` sign / force-vector layout all
+  verified correct against the framework; the one block-worthy finding (dangling
+  incident `Element*` under runtime element removal) was fixed by caching tags +
+  `getElement()` re-resolve. M2 (velocity-dependent incident elements) + 6-DOF-slave
+  rotation follow are documented v1 preconditions.
+
+**Status: still wip** (serial-only, explicit-only, displacement-only incident
+elements). **Remaining for "shipped":** a `tests/` Zone-A pytest port (manifest row is
+PENDING) + the splash-banner feature line. Both are focused follow-ups, not blockers
+on the Stage-2 physics, which is complete and gated.

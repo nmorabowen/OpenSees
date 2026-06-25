@@ -179,6 +179,33 @@ class LadrunoRigidBody : public Element
   // onto the internal CoM node — slaves become massless kinematic followers).
   Matrix** slaveMass0;     // size N (captured copies; 0 if a slave had no mass)
 
+  // exact body-frame lever arms d_i^0 = x_i^0 - xc, captured at setDomain. Used by
+  // both the finite-rotation slave imposition (P2 Stage 2) and the CoM moment gather.
+  Vector3D* slaveOffset0;  // size N (spatial offset of each slave from the CoM at t=0)
+
+  // external elements incident on the slaves, cached at setDomain (P2 Stage 2). The
+  // toe/contact reaction that drives the spin is read straight off their
+  // getResistingForce() in commitState — NOT via Domain::calculateNodalReactions,
+  // which re-iterates the elements through the SHARED SingleDomEleIter that
+  // Domain::commit() is already walking (a reentrant reset would silently skip
+  // committing every element after this body). We cache element TAGS (not raw
+  // pointers) and re-resolve via Domain::getElement() in the gather, so a cached
+  // element that is REMOVED mid-analysis (this fork's `remove element` feature) is
+  // skipped, not dereferenced after free. The cache is rebuilt on every setDomain so
+  // a re-numbered domain (domainChanged) picks up the current element set.
+  //
+  // v1 PRECONDITIONS on incident elements (the toe/contact spring): (a) DEFINE them
+  // on the slave nodes BEFORE this element, else the first cache build misses them
+  // and their reaction silently does not drive the spin; (b) they must be
+  // DISPLACEMENT-only (penalty/gap/zeroLength) — the slaves' trial vel/accel are NOT
+  // re-imposed under finite rotation, so a velocity-dependent incident element
+  // (dashpot, viscous contact) would read an inconsistent slave velocity. Both are
+  // honored by the Housner gate harness.
+  int nIncident;           // number of (element, slave) incidence records
+  int* incidentTag;        // size nIncident: tag of the incident element (re-resolved each gather)
+  int* incidentOff;        // start index of the slave's 3 transl DOFs in the ele force vector
+  int* incidentSlaveIdx;   // size nIncident: which slave (0..N-1) the record feeds
+
   // body-frame SO(3) rotational state (ADR 58 D2, P2 Stage 1). The body integrates
   // its own rotation in commitState OFF the global solve (D3): the primary state is
   // the SPATIAL angular momentum L (conserved exactly under zero torque ⇒ the
@@ -203,9 +230,15 @@ class LadrunoRigidBody : public Element
   Vector* dampF;           // Rayleigh damping force, always zero
 
   // SO(3) helpers (P2)
-  Vector3D gatherCoMTorque(void);      // net spatial moment about the CoM (Stage 1: 0 — free spin)
+  Vector3D gatherCoMTorque(void);      // net spatial moment about the CoM = Σ (R·d_i^0)×f_i
   Vector3D omegaBodyFrom(const OpenSees::Versor& q, const Vector3D& L) const;  // ω_body = Ibody⁻¹·(qᵀ·L)
   static bool invert3x3(const Matrix& A, Matrix& Ainv);  // analytic 3×3 inverse
+
+  // finite-rotation slave following (P2 Stage 2): impose u_i = u_R + (R−I)·d_i^0 on
+  // every slave each step, so external elements (e.g. a toe contact) see the rotated
+  // body geometry. The linear MP can only carry u_R; this supplies the (R−I)d_i^0 term.
+  void imposeSlaveKinematics(void);
+  void buildIncidentCache(Domain* theDomain);  // cache external elements on the slaves
 
   // lifecycle helpers (Joint3D pattern)
   int  resolveCentroidAndMass(void);   // CoM + m_body from slave coords/masses (or mUser); 0 ok, -1 fail
