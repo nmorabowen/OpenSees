@@ -1265,6 +1265,35 @@ features:
       Element-registry tag numerically equals ND_TAG 33014 (StagedStrain) but lives in a
       different registry — not a collision. Plan: 32_ladruno_dispbeamcolumn_regularization_adr.md.
 
+  - feature: LadrunoRigidBody
+    classtag: 33015          # ELE_TAG (element) family; next free ELE slot after LadrunoDispBeamColumn3d=33014 (numerically equals ND_TAG 33015 LadrunoRCConcrete — different registry, not a collision)
+    tag_symbol: ELE_TAG_LadrunoRigidBody
+    pr: 426
+    feature_class: element
+    required_tiers: [T0, T1]
+    pytest: tests/test_ladrunoRigidBody_element.py   # PENDING (P2) — Zone-A port of Ladruno_scripts/rigidbody_tests/test_p1_ballistic.py
+    tcl: WAIVED(element LadrunoRigidBody ...; shared OpenSeesElementCommands functionMap serves Tcl + Python; verified via the standalone P1 gate)
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesElementCommands.cpp
+      - SRC/element/TclElementCommands.cpp
+      - SRC/element/CMakeLists.txt
+      - SRC/element/ladrunoRigidBody/CMakeLists.txt
+    dispatch: {tcl: true, functionMap: true}
+    status: planned
+    notes: >
+      6-DOF rigid-body element (ADR 58), P1 = translation/ballistic. A zero-stiffness
+      Element (K=M=P=C=0) owning a private internal 6-DOF CoM Node (Joint3D pattern)
+      that carries the condensed mass (m_body diagonal + body-frame inertia), with
+      rigid-link MP_Constraints tying each slave (u_i = u_R + (R-I) d_i; rectangular
+      3x6 for 3-DOF solid slaves, square 6x6 for 6-DOF). = LS-DYNA
+      *CONSTRAINED_NODAL_RIGID_BODY / Abaqus *RIGID BODY. ADR-58 D1 fallback (Element,
+      not DomainComponent: >15-file kill-criterion + Domain::commit skips
+      DomainComponents). P1 verified by the standalone gate (ballistic free-fall
+      rel-err 5e-4, exact node-follower); status=planned until P2 lands the SO(3)
+      rotation + a Zone-A pytest. Plan: 58_ladruno_rigid_body_adr.md.
+
   # --- worked examples shipped with the scaffold (existing elements, no new C++) ---
 
   - feature: forceBeamColumn_cantilever     # T1 worked example (existing element)
