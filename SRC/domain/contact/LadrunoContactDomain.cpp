@@ -109,7 +109,8 @@ LadrunoContactDomain::addMortarContact(int tag, int masterSurfTag, int slaveSurf
                                        bool isTie, double muc, double softScale,
                                        bool edgeEdge, double edgeKn, bool edgeKnAuto, double edgeBand,
                                        double edgeMu, double edgeKt, double edgeCohesion,
-                                       double edgeTauMax, bool edgeConsistentTan, double edgeSoftScale)
+                                       double edgeTauMax, bool edgeConsistentTan, double edgeSoftScale,
+                                       bool edgeAlm, double edgeAugTol)
 {
     LadrunoContactSurface *ms = getSurface(masterSurfTag);
     LadrunoContactSurface *ss = getSurface(slaveSurfTag);
@@ -188,6 +189,8 @@ LadrunoContactDomain::addMortarContact(int tag, int masterSurfTag, int slaveSurf
     m.edgeTauMax = edgeTauMax;                         // ≤0 ⇒ no Tresca upper cap
     m.edgeConsistentTan = edgeConsistentTan;
     m.edgeSoftScale = (edgeSoftScale > 0.0) ? edgeSoftScale : 0.0;  // ADR-57 E5 explicit SOFT (≤0 ⇒ off)
+    m.edgeAlm = edgeAlm;                                // ADR-57 E6 one-scalar ALM (off ⇒ byte-identical)
+    m.edgeAugTol = (edgeAugTol > 0.0) ? edgeAugTol : 1e-8;
     theMortarContacts.push_back(m);
     return 0;
 }
@@ -425,6 +428,32 @@ LadrunoContactDomain::edgeGCEnd(void)
             ++it;
     }
     liveEdgeKeys.clear();
+    // E6 — drop the transient ALM Uzawa inputs on the survivors (gN_committed/εN are re-written each
+    // getResidual when -edgeAlm is on; only signN + the friction slip persist). Mirrors
+    // mortarNormalGCEnd zeroing gtGlobal/aGlobal so a re-paired slot's first commit cannot read a
+    // stale gap/penalty from a prior epoch (the gate MAJOR-1 fix; λ_N persists — committed-only).
+    for (std::map<EdgeKey, EdgeEdgeState>::iterator it = theEdgeEdgeStates.begin();
+         it != theEdgeEdgeStates.end(); ++it) {
+        it->second.gN_committed = 0.0;
+        it->second.epsN = 0.0;
+    }
+}
+
+// ADR-57 E6 — ‖gN‖_∞ over KKT-active edge-edge ALM pairs (the point-like getMaxMortarPenetration).
+double
+LadrunoContactDomain::getMaxEdgePenetration(void) const
+{
+    double pen = 0.0;
+    for (std::map<EdgeKey, EdgeEdgeState>::const_iterator it = theEdgeEdgeStates.begin();
+         it != theEdgeEdgeStates.end(); ++it) {
+        const EdgeEdgeState &st = it->second;
+        if (st.epsN <= 0.0) continue;                // not an ALM pair (-edgeAlm off ⇒ epsN never written)
+        // KKT-active only: a pair held open (λ + εN·gN ≥ 0) is not a contact violation even if its raw
+        // gN < 0 (clamped to zero pressure), mirroring getMaxMortarPenetration's active mask.
+        if (st.lambdaN + st.epsN * st.gN_committed < 0.0 && -st.gN_committed > pen)
+            pen = -st.gN_committed;
+    }
+    return pen;
 }
 
 void
@@ -544,21 +573,25 @@ LadrunoContactDomain::commit(void)
         st.lambdaN = std::min(0.0, st.lambdaN + st.epsN * gbar);
     }
 
-    // ADR-57 E2 — edge-edge slots. The shipped commit loop iterates only friction + mortar slots,
+    // ADR-57 E2/E3/E6 — edge-edge slots. The shipped commit loop iterates only friction + mortar slots,
     // so iterating theEdgeEdgeStates here is the EXPLICIT obligation on the edge-edge PR (capstone
-    // contract #1, the same trap the mortar lane had — NOT inherited). For the E2 penalty MVP the
-    // only live datum is the body-fixed sign: promote its committed double-buffer (so a later
-    // rejected step can revert the capture) and promote the inert friction trial. The one-scalar
-    // ALM (lambdaN) Uzawa is E6 — not run here.
+    // contract #1, the same trap the mortar lane had — NOT inherited). Promote the body-fixed sign
+    // committed double-buffer (E2 — so a later rejected step can revert the capture) + the friction
+    // trial (E3). E6 — ONE Uzawa augmentation per commit (the MortarNormalState C2.2 precedent, point-
+    // like ⇒ ONE scalar gN, no shared-node accumulator): λ_N ← min(0, λ_N + εN·gN_committed). The
+    // adapter writes gN_committed + εN ONLY when -edgeAlm is on; with ALM off both stay 0 ⇒ the update
+    // is min(0, λ_N) and λ_N never leaves 0 ⇒ byte-identical to the E2 penalty path. λ_N is mutated
+    // ONLY here ⇒ revertToLastCommit leaves it untouched (the committed-only invariant).
     for (std::map<EdgeKey, EdgeEdgeState>::iterator it = theEdgeEdgeStates.begin();
          it != theEdgeEdgeStates.end(); ++it) {
         EdgeEdgeState &st = it->second;
         st.signNcommitted = st.signN;                // body-fixed sign capture (E2)
-        for (int d = 0; d < 3; d++) {                // friction (E3 — inert/zeroed in E2)
+        for (int d = 0; d < 3; d++) {                // friction (E3)
             st.gpT[d] = st.gpTtrial[d];
             st.gT0committed[d] = st.gT0[d];
         }
         st.engagedCommitted = st.engaged;
+        st.lambdaN = std::min(0.0, st.lambdaN + st.epsN * st.gN_committed);   // E6 one-scalar Uzawa
     }
     return 0;
 }

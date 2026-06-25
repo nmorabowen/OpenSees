@@ -470,7 +470,7 @@ companion) is a later convenience, not the MVP.
 | **E3** ✅ **SHIPPED** | friction (reuse `LadrunoFrictionKernel` — the 4th consumer) | `proto_e3_friction.py` **12/12**: stick/slip on the edge tangent plane, `a = g(sinθ−μcosθ)` incline sign (the cone threshold == the slide criterion `tanθ>μ`), Tresca cap, **slip-from-DISPLACEMENT** (the C3.1 trap — the closest-point relative position is purely normal), self-equilibrium + symmetric tangent FD-checked, the non-sym Csl branch, the `μ=0`-byte-identity contract (the kernel's `cap≤0` returns RAW elastic ⇒ byte-identity is the CALLER's guard). | `test_adr57_edge_edge_2` **4/4**: **explicit raking bar** (Coulomb decelerates the rake / opposes motion, monotone, no energy injection — vs `μ=0` coasting); implicit stick converges (the SPD stick tangent); symmetric tangent solver-safe (ProfileSPD == FullGeneral); `μ=0` byte-identical. Full contact battery **149 passed**; 3-reviewer gate PASS (no findings). |
 | **E4** | consistent geometric tangent (`-edgegeomtan`, **gated off**) | `proto_e4_geomtan.py`: `∂n/∂u, ∂s/∂u, ∂t/∂u` analytic == FD on a skew large-sliding pair; symmetric; flat ⇒ byte-identical. | local Newton iter-count improvement on a curved-rake case; ProfileSPD-safe |
 | **E5** ✅ **SHIPPED** | explicit Courant-stable SOFT | `proto_e5_soft.py` **26/26**: the 4-node edge `m_eff = 1/(B M⁻¹ Bᵀ)` closed form (== the full matrix product, anisotropic + off-center) vs the B1 nodal-mass projection; fixed/massless node ⇒ ∞ mass ⇒ 0; `ω·dt = 2√SOFSCL` independent of dt; a central-difference impact where stiff εN DIVERGES vs SOFT bounded + energy-restituting (rebound ≈ impact speed, penetration == analytic); `softKt` the B1-kt n→t worst-case rule; SOFSCL≤0 / implicit ⇒ the configured εN (byte-identical). | `test_adr57_edge_edge_3` **3/3**: edge-on impact at the STRUCTURAL dt (SOFT bounded + rebounds; the SAME dt with stiff εN DIVERGES — SOFT runs where stiff can't); implicit byte-identical. Full contact battery **130 passed**. |
-| **E6** | optional ALM `λ_N` (one scalar/pair) | `proto_e6_alm.py`: penetration → ε_N-independent tol; release → `λ_N→0`, F=0; eqn count constant across augmentations. | held-load `analyze_augmented` drives `‖g_N‖→augTol`; opt-in byte-identity |
+| **E6** ✅ **SHIPPED** | optional ALM `λ_N` (one scalar/pair) | `proto_e6_alm.py` **24/24**: λ_N≡0 ⇒ the E2 penalty pressure EXACTLY (off-by-default identity); held-load Uzawa drives penetration → an ε_N-INDEPENDENT tol (penalty is O(P/ε_N)); converged traction t_N ≈ P; release → `λ_N→0`, F=0; committed-only (revert leaves λ_N untouched); eqn count constant across augmentations. | `test_adr57_edge_edge_4` **3/3**: held-load `analyze_augmented` (query=`ladrunoEdgePenetration`) drives `‖g_N‖→augTol` ε_N-independently; release opens the contact; first-solve opt-in byte-identity. Full contact battery **133 passed**. |
 | **E7** | integration + regression | — | full battery (a slab corner on a beam edge; cross-stacked bars; an L-junction), **byte-identical when no pair routes edge-edge**, 3-reviewer adversarial gate |
 
 Every `proto_e*` is numpy-only (build-free); Zone-A CI is the C++ no-regression gate;
@@ -715,5 +715,34 @@ friction-kernel 4th-consumer, SOFT mass-cache, clip-degeneracy probe safety
   εN ⇒ **byte-identical**. Oracle `proto_e5_soft.py` **26/26**; `test_adr57_edge_edge_3` **3/3**
   (SOFT impact at the structural dt bounded + rebounds; the SAME dt with stiff εN DIVERGES; implicit
   byte-identical); full contact battery **130 passed** (no regression). 3-reviewer adversarial gate → PASS.
-- **E4 / E6 / E7** — pending (design-only above; each lands oracle-first → C++ → gate → PR,
+- **E6 (one-scalar commit-cycle ALM) — SHIPPED** (this PR). The OPTIONAL per-pair normal multiplier
+  λ_N — the **point-like analogue of the mortar C2.2 Uzawa-on-commit**, but with ONE scalar gN per
+  edge pair instead of the per-node weighted-gap accumulator (the whole simplification: an edge pair's
+  gap is one number, so there is NO shared-node variational-consistency problem). The augmented
+  pressure is `p = min(0, λ_N + εN·gN)`, traction `tN = −p`; `getResidual` injects the committed λ_N
+  and stashes `gN_committed + εN` on the `EdgeEdgeState` (committed-only inputs); `Domain::commit()`
+  runs ONE Uzawa step per commit `λ_N ← min(0, λ_N + εN·gN_committed)` (mirroring the MortarNormalState
+  C2.2 block in the same loop), driving the penetration → an εN-INDEPENDENT tol at FINITE εN. The
+  tangent (`addKtToTang`/`addKiToTang`, implicit-only) uses the SAME augmented active mask
+  `λ_N + εN·gN < 0` and the augmented cone N (the C2.2 frozen-active-set rule; the penalty Gram block
+  is unchanged since ∂λ/∂u=0 within a sweep). λ_N is mutated ONLY in commit() ⇒ `revertToLastCommit`
+  leaves it untouched (the committed-only invariant). New `EdgeEdgeState.epsN` field (the only struct
+  addition — `lambdaN`/`gN_committed` were reserved inert in E2); new `getMaxEdgePenetration()` query +
+  the `ladrunoEdgePenetration` command (Py+Tcl) — the point-like `getMaxMortarPenetration`, read by the
+  **shipped held-load `analyze_augmented` proc (D1) UNCHANGED** (pass `query=ops.ladrunoEdgePenetration`).
+  `-edgeAlm` opt-in (+ `-edgeAugTol`) on `-edgeedge`; **implicit-only** (the mass-only explicit tangent
+  degenerates Uzawa to single-pass penalty — the disclosed ADR-47 limitation, inherited). OFF by default
+  ⇒ λ_N≡0 ⇒ the E2 penalty path (the commit Uzawa is `min(0, λ_N + 0·0)` ≡ no-op when the adapter never
+  writes epsN/gN_committed) ⇒ **byte-identical**. Oracle `proto_e6_alm.py` **24/24**;
+  `test_adr57_edge_edge_4` **3/3** (held-load augmentation drives `ladrunoEdgePenetration` → augTol
+  εN-independently; release opens the contact; first-solve opt-in byte-identity); full contact battery
+  **133 passed** (no regression). **3-reviewer adversarial gate → PASS, 1 finding folded:** a pair that
+  slides OFF its margin-interior crossing mid-step (`edgeGeom`→false — a LARGE-SLIDING case outside the
+  reference-config MVP scope §7) left a STALE `gN_committed`/`εN` that the next commit Uzawa would read;
+  folded a reset-on-inactive in `getResidual` + an `edgeGCEnd` survivor reset (the mortar
+  `accumulateMortarGap(0,0)`/`mortarNormalGCEnd` zeroing pattern, point-like analogue — λ_N held, never
+  corrupted, self-corrects on re-cross). The "uncommitted working tree" BLOCKER was a review artifact
+  (the diff was simply not yet committed); ALM Uzawa/mask-consistency, committed-only/revert, the held-load
+  D1 bracket reuse, and off-by-default byte-identity all verified sound.
+- **E4 / E7** — pending (design-only above; each lands oracle-first → C++ → gate → PR,
   updating the capstone row + ledgers in the same PR).

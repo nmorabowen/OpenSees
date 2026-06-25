@@ -56,6 +56,7 @@ LadrunoContactFE::LadrunoContactFE(int tag)
     for (int d = 0; d < 3; d++) { planeP0[d] = 0.0; planeN[d] = 0.0; orientDir[d] = 0.0; }
     for (int i = 0; i < 4; i++) { segNode[i] = 0; mortarSlave[i] = 0; mortarMaster[i] = 0; edgeNode[i] = 0; }
     npsS = npsM = 0; slaveFacetIndex = 0; mortarCohesion = mortarTauMax = 0.0; isTie = false;
+    edgeAlm = false;   // ADR-57 E6: not an edge-edge adapter
 }
 
 LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, int ndm_,
@@ -77,6 +78,7 @@ LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, int ndm_,
     for (int d = 0; d < 3; d++) { planeP0[d] = p0[d]; planeN[d] = n[d]; orientDir[d] = 0.0; }
     for (int i = 0; i < 4; i++) { segNode[i] = 0; mortarSlave[i] = 0; mortarMaster[i] = 0; edgeNode[i] = 0; }
     npsS = npsM = 0; slaveFacetIndex = 0; mortarCohesion = mortarTauMax = 0.0; isTie = false;
+    edgeAlm = false;   // ADR-57 E6: not an edge-edge adapter
 }
 
 LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, Node **segNodes,
@@ -115,6 +117,7 @@ LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, Node **segNodes,
     for (int d = 0; d < 3; d++) { planeP0[d] = 0.0; planeN[d] = 0.0; }
     for (int i = 0; i < 4; i++) { mortarSlave[i] = 0; mortarMaster[i] = 0; }
     npsS = npsM = 0; slaveFacetIndex = 0; mortarCohesion = mortarTauMax = 0.0; isTie = false;
+    edgeAlm = false;   // ADR-57 E6: not an edge-edge adapter
 }
 
 // C2.1/C2.2 — clipped-GP MORTAR contact (one slave facet vs one master facet). theDomain
@@ -155,6 +158,7 @@ LadrunoContactFE::LadrunoContactFE(int tag, Node **slaveNodes, int nps_s,
     for (int i = nps_s; i < 4; i++) mortarSlave[i] = 0;
     for (int i = nps_m; i < 4; i++) mortarMaster[i] = 0;
     for (int i = 0; i < 4; i++) { segNode[i] = 0; edgeNode[i] = 0; }
+    edgeAlm = false;   // ADR-57 E6: not an edge-edge adapter
     for (int d = 0; d < 3; d++) { orientDir[d] = odir[d]; planeP0[d] = 0.0; planeN[d] = 0.0; }
 }
 
@@ -164,14 +168,15 @@ LadrunoContactFE::LadrunoContactFE(int tag, Node **slaveNodes, int nps_s,
 LadrunoContactFE::LadrunoContactFE(int tag, Node *sNodeA, Node *sNodeB, Node *mNodeA, Node *mNodeB,
                                    double epsN, const double odir[3], int contactTag_, Domain *dom,
                                    double mu_, double kt_, double cohesion_, double tauMax_,
-                                   bool consistentTan_, double softScale_)
+                                   bool consistentTan_, double softScale_, bool edgeAlm_)
   : FE_Element(tag, /*numDOF_Group=*/4, /*ndof=*/12),
     resid(12), tang(12, 12),
     mode(EDGE_EDGE), theSlave(0), ndm(3), kn(epsN), nps(0),
     kt(kt_), mu(mu_), muc(0.0), theDomain(dom), contactTag(contactTag_), segIndex(0),
     consistentTan(consistentTan_), consistentNormal(false),
     softScale(softScale_ > 0.0 ? softScale_ : 0.0),   // E5 SOFT (filter ≤0 like the other ctors)
-    npsS(0), npsM(0), slaveFacetIndex(0), mortarCohesion(cohesion_), mortarTauMax(tauMax_),
+    npsS(0), npsM(0), slaveFacetIndex(0), edgeAlm(edgeAlm_),   // E6 one-scalar ALM (decl-order init)
+    mortarCohesion(cohesion_), mortarTauMax(tauMax_),
     isTie(false)
 {
     // Connectivity = the 4 edge nodes' DOF_Groups (each ndf==3 ⇒ exact ndof==12). setID() then
@@ -815,12 +820,20 @@ LadrunoContactFE::getResidual(Integrator *theIntegrator)
             // capture the body-fixed sign ONCE at first engagement, then hold it committed (the §2
             // A-4 fix — applied verbatim every eval, never re-derived from w·n which masks penetration).
             if (st != 0 && st->signN == 0) st->signN = usedSign;
-            if (gN < 0.0) {                              // Macaulay ⟨−gN⟩: active only in penetration
-                // E5 — under the explicit CDL with -edgeSoft, kn is REPLACED by the Courant-stable
-                // k_soft = SOFSCL·4·m_eff/dt² (the edge gap-mode mass); softScale≤0 / implicit ⇒ kn
-                // (byte-identical). Inert in addKtToTang (CDL never calls it; implicit knEff≡kn).
-                double knEff = softKnEdge(theIntegrator, n, s, t);
-                double tN = -knEff * gN;                 // εN·|gN| > 0 (or k_soft·|gN| under soft)
+            // E5 — under the explicit CDL with -edgeSoft, kn is REPLACED by the Courant-stable
+            // k_soft = SOFSCL·4·m_eff/dt² (the edge gap-mode mass); softScale≤0 / implicit ⇒ kn
+            // (byte-identical). Inert in addKtToTang (CDL never calls it; implicit knEff≡kn).
+            double knEff = softKnEdge(theIntegrator, n, s, t);
+            // E6 — the one-scalar ALM augmented pressure p = min(0, λ_N + εN·gN), traction tN = −p.
+            // -edgeAlm OFF ⇒ λ_N≡0 ⇒ p = εN·gN, active iff gN<0 ⇒ the E2/E5 penalty path EXACTLY
+            // (byte-identical). ON ⇒ inject the committed per-pair λ_N (the MortarNormalState C2.2
+            // Uzawa, point-like) and stash gN + εN for the commit-time Uzawa + the penetration query
+            // (committed-only ⇒ written here, mutated into λ_N only in Domain::commit()).
+            double lambdaN = (edgeAlm && st != 0) ? st->lambdaN : 0.0;
+            double pAug = lambdaN + knEff * gN;          // augmented pressure (≤0 ⇒ active)
+            if (edgeAlm && st != 0) { st->gN_committed = gN; st->epsN = knEff; }
+            if (pAug < 0.0) {                            // KKT-active (penetration, or λ_N-held contact)
+                double tN = -pAug;                       // εN·|gN| (penalty) or |λ_N + εN·gN| (ALM) > 0
                 for (int i = 0; i < 4; i++)
                     for (int d = 0; d < 3; d++)
                         resid(3 * i + d) = tN * B[i][d];  // f = tN·B (slave +, master − ⇒ Σf=0)
@@ -859,6 +872,15 @@ LadrunoContactFE::getResidual(Integrator *theIntegrator)
                             resid(3 * i + d) += w[i] * tFric[d];
                 }
             }
+        } else if (edgeAlm && st != 0) {
+            // E6 — the pair is NOT a current margin-interior crossing (it slid off an endpoint or went
+            // parallel — a LARGE-SLIDING case, outside the reference-config MVP scope §7). Drop the
+            // STALE committed gap/penalty so the commit Uzawa neither augments λ_N from a dead
+            // penetration nor leaves a live εN polluting getMaxEdgePenetration. λ_N is HELD
+            // (min(0, λ_N + 0) = λ_N ≤ 0) until the pair re-crosses, then self-corrects (the mortar
+            // accumulateMortarGap(0,0) / mortarNormalGCEnd reset pattern, point-like analogue).
+            st->gN_committed = 0.0;
+            st->epsN = 0.0;
         }
     }
     return resid;
@@ -1310,7 +1332,13 @@ LadrunoContactFE::addKtToTang(double fact)
             committedSign = st->signN;
         }
         double gN, n[3], s, t, B[4][3]; int usedSign = 0;
-        if (edgeGeom(gN, n, s, t, B, committedSign, &usedSign) && gN < 0.0) {
+        // E6 — the active mask + cone N use the AUGMENTED pressure pAug = λ_N + εN·gN (the C2.2 rule:
+        // the tangent is the derivative of the AUGMENTED residual at the frozen active set; the λ_N
+        // offset only shifts the active SET, ∂λ/∂u=0 within a sweep ⇒ the penalty-Gram block is still
+        // kn·BᵀB). -edgeAlm OFF ⇒ λ_N≡0 ⇒ pAug = kn·gN ⇒ the mask is gN<0 and tN=−kn·gN (byte-identical).
+        // Implicit-only here (CDL never calls addKtToTang), so kn ≡ knEff (the E5 SOFT contract).
+        double lambdaN = (edgeAlm && st != 0) ? st->lambdaN : 0.0;
+        if (edgeGeom(gN, n, s, t, B, committedSign, &usedSign) && lambdaN + kn * gN < 0.0) {
             for (int i = 0; i < 4; i++)
                 for (int di = 0; di < 3; di++)
                     for (int j = 0; j < 4; j++)
@@ -1323,7 +1351,7 @@ LadrunoContactFE::addKtToTang(double fact)
             // consistentTan=false ⇒ symmetric (drop the Coulomb Csl; solver-safe); true ⇒ the full
             // non-symmetric consistent tangent (needs FullGeneral/UmfPack).
             if (st != 0 && (mu > 0.0 || mortarCohesion > 0.0 || mortarTauMax > 0.0)) {
-                double tN = -kn * gN;                    // the normal pressure (the cone's N)
+                double tN = -(lambdaN + kn * gN);        // the AUGMENTED normal pressure (the cone's N)
                 double gTvec[3]; edgeSlip(s, t, n, gTvec);
                 double gTeff[3];
                 for (int d = 0; d < 3; d++) gTeff[d] = st->engaged ? (gTvec[d] - st->gT0[d]) : 0.0;
@@ -1518,16 +1546,22 @@ LadrunoContactFE::addKiToTang(double fact)
         // ADR-57 E2 — K_initial == K_current for the edge-edge penalty (the frozen-direction Gram
         // εN·BᵀB), so mirror addKtToTang; the base addKiToTang early-returns on myEle==0 and would
         // otherwise silently drop the contact stiffness under Newton -initial / ModifiedNewton.
+        LadrunoContactDomain::EdgeEdgeState *st = 0;
         int committedSign = 0;
         if (theDomain != 0) {
             LadrunoContactDomain *cd = theDomain->getLadrunoContactDomain();
-            if (cd != 0)
-                committedSign = cd->getOrCreateEdgeEdgeState(contactTag, edgeNode[0]->getTag(),
+            if (cd != 0) {
+                st = &cd->getOrCreateEdgeEdgeState(contactTag, edgeNode[0]->getTag(),
                                     edgeNode[1]->getTag(), edgeNode[2]->getTag(),
-                                    edgeNode[3]->getTag()).signN;
+                                    edgeNode[3]->getTag());
+                committedSign = st->signN;
+            }
         }
+        // E6 — the augmented active mask + cone N (the C2.2 rule, mirroring addKtToTang). -edgeAlm OFF
+        // ⇒ λ_N≡0 ⇒ mask is gN<0, tN=−kn·gN (byte-identical).
+        double lambdaN = (edgeAlm && st != 0) ? st->lambdaN : 0.0;
         double gN, n[3], s, t, B[4][3]; int usedSign = 0;
-        if (edgeGeom(gN, n, s, t, B, committedSign, &usedSign) && gN < 0.0) {
+        if (edgeGeom(gN, n, s, t, B, committedSign, &usedSign) && lambdaN + kn * gN < 0.0) {
             for (int i = 0; i < 4; i++)
                 for (int di = 0; di < 3; di++)
                     for (int j = 0; j < 4; j++)
@@ -1537,7 +1571,7 @@ LadrunoContactFE::addKiToTang(double fact)
             // Initial-Newton contraction; the SEGMENT addKiToTang rule). Forced stick ⇒ gTeff==gpT
             // (pass zeros) ⇒ K_ss = kt·P_t, symmetric ⇒ consistent=false regardless; no engine slot.
             if (mu > 0.0 || mortarCohesion > 0.0 || mortarTauMax > 0.0) {
-                double tN = -kn * gN;
+                double tN = -(lambdaN + kn * gN);
                 double zero[3] = {0.0, 0.0, 0.0}, Kss[3][3];
                 LadrunoFrictionKernel::frictionTangentBlock(zero, zero, n, tN, kn, kt, mu,
                                                             false, Kss, mortarCohesion, mortarTauMax);
