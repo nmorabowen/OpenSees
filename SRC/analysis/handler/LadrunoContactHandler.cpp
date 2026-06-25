@@ -415,8 +415,10 @@ LadrunoContactHandler::handle(const ID *nodesLast)
             if (cd->getRigidPlane(p).softScale > 0.0) anySoft = true;
         // B2 (P5): a SOFT=2 mortar contact also needs the assembled nodal-mass cache (the segment-
         // based m_eff). The cache is over ALL nodes (one element pass), shared with the NTS SOFT=1 lane.
+        // ADR-57 E5: a -edgeSoft edge-edge contact needs the SAME cache (the edge gap-mode m_eff).
         for (int c = 0; c < cd->getNumMortarContacts() && !anySoft; c++)
-            if (cd->getMortarContact(c).softScale > 0.0) anySoft = true;
+            if (cd->getMortarContact(c).softScale > 0.0 ||
+                cd->getMortarContact(c).edgeSoftScale > 0.0) anySoft = true;
         if (anySoft)
             ladrunoBuildNodalMass(theDomain, cd);
     }
@@ -876,7 +878,8 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                             LadrunoContactFE *fe = new LadrunoContactFE(numFe++, sa, sb, ma, mb,
                                                        edgeKnUse, orientDir, mc.tag, theDomain,
                                                        mc.edgeMu, edgeKtUse, mc.edgeCohesion,
-                                                       mc.edgeTauMax, mc.edgeConsistentTan);
+                                                       mc.edgeTauMax, mc.edgeConsistentTan,
+                                                       mc.edgeSoftScale);   // E5 explicit SOFT (0 ⇒ off)
                             if (fe == 0) return -5;
                             theModel->addFE_Element(fe);
                             cd->edgeGCMark(mc.tag, sat, sbt, mat, mbt);  // live this handle()

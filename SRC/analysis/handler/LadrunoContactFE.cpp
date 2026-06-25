@@ -164,12 +164,13 @@ LadrunoContactFE::LadrunoContactFE(int tag, Node **slaveNodes, int nps_s,
 LadrunoContactFE::LadrunoContactFE(int tag, Node *sNodeA, Node *sNodeB, Node *mNodeA, Node *mNodeB,
                                    double epsN, const double odir[3], int contactTag_, Domain *dom,
                                    double mu_, double kt_, double cohesion_, double tauMax_,
-                                   bool consistentTan_)
+                                   bool consistentTan_, double softScale_)
   : FE_Element(tag, /*numDOF_Group=*/4, /*ndof=*/12),
     resid(12), tang(12, 12),
     mode(EDGE_EDGE), theSlave(0), ndm(3), kn(epsN), nps(0),
     kt(kt_), mu(mu_), muc(0.0), theDomain(dom), contactTag(contactTag_), segIndex(0),
-    consistentTan(consistentTan_), consistentNormal(false), softScale(0.0),
+    consistentTan(consistentTan_), consistentNormal(false),
+    softScale(softScale_ > 0.0 ? softScale_ : 0.0),   // E5 SOFT (filter ≤0 like the other ctors)
     npsS(0), npsM(0), slaveFacetIndex(0), mortarCohesion(cohesion_), mortarTauMax(tauMax_),
     isTie(false)
 {
@@ -494,6 +495,83 @@ LadrunoContactFE::softKt(Integrator *theIntegrator, const double n[3], const dou
     return softScale * 4.0 * (1.0 / invMax) / (dt * dt);  // k_soft_t = SOFSCL·4·m_eff_t/dt²
 }
 
+// ADR-57 E5 — the 4-node edge gap-mode inverse effective mass B M⁻¹ Bᵀ for unit direction `dir`,
+// B = [(1−s)dir, s dir, −(1−t)dir, −t dir] over the edge pair [a0,a1,b0,b1]. Closed form
+// Σ w_i²·invMproj_i, w=[(1−s),s,(1−t),t] (the signs square away) — the B1 gapModeInvMass generalized
+// from the [slave|seg] NTS operator to the 4-node edge operator. A fixed/massless node ⇒ ∞ mass ⇒ 0
+// contribution (ladrunoInvMassProj); a fully massless pair ⇒ 0 (the caller cannot soft-size).
+double
+LadrunoContactFE::edgeGapModeInvMass(const double dir[3], double s, double t) const
+{
+    double w[4] = { 1.0 - s, s, 1.0 - t, t };     // |weights| (squared ⇒ sign-independent)
+    double invSum = 0.0;
+    for (int i = 0; i < 4; i++) {
+        double mi[3]; ladrunoNodeMass(theDomain, edgeNode[i], mi);
+        invSum += w[i] * w[i] * ladrunoInvMassProj(mi, dir);
+    }
+    return invSum;
+}
+
+// ADR-57 E5 — the edge-edge SOFT=1-analogue NORMAL penalty (the B1 softKn for the edge operator).
+// Only active under the explicit CentralDifferenceLadruno (dynamic_cast — catches its SMS subclasses);
+// any implicit integrator fails the cast ⇒ the configured kn is returned ⇒ byte-identical.
+double
+LadrunoContactFE::softKnEdge(Integrator *theIntegrator, const double n[3], double s, double t) const
+{
+    if (softScale <= 0.0 || theIntegrator == 0)
+        return kn;
+    CentralDifferenceLadruno *cdl = dynamic_cast<CentralDifferenceLadruno *>(theIntegrator);
+    if (cdl == 0)
+        return kn;                                // implicit / non-CDL ⇒ inert (byte-identical)
+    double dt = cdl->getCurrentDeltaT();
+    double invSum = edgeGapModeInvMass(n, s, t);  // 0 ⇒ massless pair (fail below)
+    if (dt <= 0.0 || invSum <= 0.0) {            // massless / no dt ⇒ cannot soft-size
+        static bool warned = false;
+        if (!warned) {
+            warned = true;
+            opserr << "WARNING LadrunoContactFE - edge-edge -edgeSoft could not size a penalty under "
+                      "the explicit integrator (non-positive dt or an edge node with no assembled mass "
+                      "— neither a nodal `mass` nor element-density mass); using the configured edgeKn. "
+                      "Give the edge nodes mass for the SOFT stable penalty.\n";
+        }
+        return kn;
+    }
+    return softScale * 4.0 * (1.0 / invSum) / (dt * dt);   // k_soft = SOFSCL·4·m_eff/dt²
+}
+
+// ADR-57 E5 — the edge-edge SOFT TANGENTIAL (Coulomb stick) penalty: the B1-kt n→t rule on the edge
+// operator. Sizes k_soft_t = softScale·4·m_eff_t/dt² from the WORST-CASE (largest inverse mass ⇒
+// smallest m_eff) over the two basis tangents t1,t2 to n ⇒ ω_t·dt = 2√softScale ≤ 2 (kt never
+// throttles dt_cr via the stick mode). Same gate as softKnEdge (soft off / implicit / no dt-or-mass
+// ⇒ the configured kt ⇒ byte-identical; softKnEdge, called first in getResidual, emits any no-mass warning).
+double
+LadrunoContactFE::softKtEdge(Integrator *theIntegrator, const double n[3], double s, double t) const
+{
+    if (softScale <= 0.0 || theIntegrator == 0)
+        return kt;
+    CentralDifferenceLadruno *cdl = dynamic_cast<CentralDifferenceLadruno *>(theIntegrator);
+    if (cdl == 0)
+        return kt;                                // implicit / non-CDL ⇒ inert (byte-identical)
+    double dt = cdl->getCurrentDeltaT();
+    // two orthonormal tangents to n: t1 ⟂ n from the coordinate axis least aligned with n, t2=n×t1
+    int k = 0; double amin = std::fabs(n[0]);
+    if (std::fabs(n[1]) < amin) { amin = std::fabs(n[1]); k = 1; }
+    if (std::fabs(n[2]) < amin) { k = 2; }
+    double e[3] = {0.0, 0.0, 0.0}; e[k] = 1.0;
+    double en = e[0]*n[0] + e[1]*n[1] + e[2]*n[2];
+    double t1[3], nrm = 0.0;
+    for (int d = 0; d < 3; d++) { t1[d] = e[d] - en * n[d]; nrm += t1[d]*t1[d]; }
+    nrm = std::sqrt(nrm);
+    if (nrm < 1e-300) return kt;                  // degenerate (n not unit) ⇒ configured kt
+    for (int d = 0; d < 3; d++) t1[d] /= nrm;
+    double t2[3] = { n[1]*t1[2] - n[2]*t1[1], n[2]*t1[0] - n[0]*t1[2], n[0]*t1[1] - n[1]*t1[0] };
+    double inv1 = edgeGapModeInvMass(t1, s, t), inv2 = edgeGapModeInvMass(t2, s, t);
+    double invMax = (inv1 > inv2) ? inv1 : inv2;  // worst case = MIN m_eff_t = the binding bound
+    if (dt <= 0.0 || invMax <= 0.0)
+        return kt;                                // massless / no dt ⇒ configured kt (softKnEdge warned)
+    return softScale * 4.0 * (1.0 / invMax) / (dt * dt);  // k_soft_t = SOFSCL·4·m_eff_t/dt²
+}
+
 const Vector &
 LadrunoContactFE::getResidual(Integrator *theIntegrator)
 {
@@ -738,7 +816,11 @@ LadrunoContactFE::getResidual(Integrator *theIntegrator)
             // A-4 fix — applied verbatim every eval, never re-derived from w·n which masks penetration).
             if (st != 0 && st->signN == 0) st->signN = usedSign;
             if (gN < 0.0) {                              // Macaulay ⟨−gN⟩: active only in penetration
-                double tN = -kn * gN;                    // εN·|gN| > 0 (kn carries epsN)
+                // E5 — under the explicit CDL with -edgeSoft, kn is REPLACED by the Courant-stable
+                // k_soft = SOFSCL·4·m_eff/dt² (the edge gap-mode mass); softScale≤0 / implicit ⇒ kn
+                // (byte-identical). Inert in addKtToTang (CDL never calls it; implicit knEff≡kn).
+                double knEff = softKnEdge(theIntegrator, n, s, t);
+                double tN = -knEff * gN;                 // εN·|gN| > 0 (or k_soft·|gN| under soft)
                 for (int i = 0; i < 4; i++)
                     for (int d = 0; d < 3; d++)
                         resid(3 * i + d) = tN * B[i][d];  // f = tN·B (slave +, master − ⇒ Σf=0)
@@ -762,8 +844,11 @@ LadrunoContactFE::getResidual(Integrator *theIntegrator)
                     double tFric[3], gpTtrial[3];
                     // N for the cone = the current normal pressure tN; trial slip = PURE fn of committed
                     // gpT ⇒ idempotent across the CDL firstStep double-eval. tFric is already negated
-                    // (motion-opposing). The 4th consumer of the ONE shipped return map.
-                    LadrunoFrictionKernel::frictionReturnMap(gTeff, st->gpT, tN, kt, mu, tFric,
+                    // (motion-opposing). The 4th consumer of the ONE shipped return map. E5 — under the
+                    // explicit CDL with -edgeSoft the STICK penalty kt is replaced by the Courant-stable
+                    // k_soft_t (the B1-kt n→t rule) so a stiff kt never throttles dt_cr; implicit ⇒ kt.
+                    double ktEff = softKtEdge(theIntegrator, n, s, t);
+                    LadrunoFrictionKernel::frictionReturnMap(gTeff, st->gpT, tN, ktEff, mu, tFric,
                                                              gpTtrial, mortarCohesion, mortarTauMax);
                     for (int d = 0; d < 3; d++) st->gpTtrial[d] = gpTtrial[d];
                     // scatter via the SAME edge weights as the normal force (w = [(1−s),s,−(1−t),−t];
@@ -1210,6 +1295,11 @@ LadrunoContactFE::addKtToTang(double fact)
         // for the frozen-direction linearization; the geometric ∂{n,s,t}/∂u curvature block is E4
         // (gated off). Same active mask as the residual (penetrating + margin-interior crossing).
         // The committed sign was captured by getResidual (which runs first in the iterate); read it.
+        // E5 NOTE: this tangent uses `kn` (and friction `kt`) — NOT the SOFT `k_soft`. That is the
+        // shipped B1/B2 SOFT contract: SOFT is RESIDUAL-ONLY, and addKtToTang is assembled ONLY under
+        // implicit integrators (the explicit CentralDifferenceLadruno is mass-only — it never calls
+        // addKtToTang). Under implicit, softKnEdge/softKtEdge return kn/kt (the dynamic_cast to CDL
+        // fails), so the residual's knEff/ktEff ≡ kn/kt here ⇒ the tangent IS the residual derivative.
         LadrunoContactDomain *cd = (theDomain != 0) ? theDomain->getLadrunoContactDomain() : 0;
         LadrunoContactDomain::EdgeEdgeState *st = 0;
         int committedSign = 0;

@@ -149,10 +149,14 @@ class LadrunoContactFE : public FE_Element
     // EdgeEdgeState (the 4th consumer: NTS, mortar, SOFT=2, now edge-edge — no new friction code). All
     // ≤ 0 ⇒ byte-identical to the E2 frictionless path (no slot touch — the NTS `mu>0` short-circuit).
     // consistentTan = the non-symmetric Coulomb Csl tangent (false ⇒ symmetric, solver-safe).
+    // E5 (softScale > 0 ⇒ under the explicit CentralDifferenceLadruno the edge penalty εN is replaced
+    // by the Courant-stable k_soft = SOFSCL·4·m_eff/dt², m_eff = the 4-node edge gap-mode generalized
+    // mass; inert under implicit / SOFT-absent ⇒ byte-identical, exactly the B1/B2 SOFT gate).
     LadrunoContactFE(int tag, Node *sNodeA, Node *sNodeB, Node *mNodeA, Node *mNodeB,
                      double epsN, const double orientDir[3], int contactTag = 0,
                      Domain *theDomain = 0, double mu = 0.0, double kt = 0.0,
-                     double cohesion = 0.0, double tauMax = 0.0, bool consistentTan = false);
+                     double cohesion = 0.0, double tauMax = 0.0, bool consistentTan = false,
+                     double softScale = 0.0);
     ~LadrunoContactFE();
 
     // self-owned buffers (base buffers are unavailable when myEle == 0)
@@ -223,6 +227,25 @@ class LadrunoContactFE : public FE_Element
     // the two tangents to n (conservative; == m_eff_n for ISOTROPIC nodal mass) ⇒ ω_t·dt = 2√softScale
     // ≤ 2. Same gate as softKn (soft off / implicit / no dt-or-mass ⇒ the configured kt ⇒ byte-identical).
     double softKt(class Integrator *theIntegrator, const double n[3], const double N[4]) const;
+
+    // ADR-57 E5 — the edge-edge gap-mode INVERSE effective mass B M⁻¹ Bᵀ for unit direction `dir`,
+    // with the 4-node edge operator B = [(1−s)dir, s dir, −(1−t)dir, −t dir] over [a0,a1,b0,b1] and
+    // the ASSEMBLED nodal masses projected on `dir`. Closed form Σ w_i²·invMproj_i (the signs square
+    // away), w=[(1−s),s,(1−t),t] — the B1 gapModeInvMass generalized from the NTS [slave|seg] operator
+    // to the 4-node edge operator. m_eff = 1/(returned); ≤0 ⇒ massless (caller cannot soft-size).
+    double edgeGapModeInvMass(const double dir[3], double s, double t) const;
+
+    // ADR-57 E5 — the edge-edge SOFT=1-analogue NORMAL penalty. Under the explicit
+    // CentralDifferenceLadruno (dynamic_cast) with a valid dt, returns the Courant-stable
+    // k_soft = softScale·4·m_eff/dt², m_eff = 1/edgeGapModeInvMass(n,s,t); otherwise (soft off /
+    // implicit / no dt-or-mass) returns the configured kn ⇒ byte-identical. The B1 softKn for the edge.
+    double softKnEdge(class Integrator *theIntegrator, const double n[3], double s, double t) const;
+
+    // ADR-57 E5 — the edge-edge SOFT TANGENTIAL (Coulomb stick) penalty, the B1-kt n→t rule on the edge
+    // operator: k_soft_t = softScale·4·m_eff_t/dt², m_eff_t the WORST-CASE (smallest) edge gap-mode mass
+    // over the two basis tangents t1,t2 to n, so a stiff friction kt never throttles dt_cr via the stick
+    // mode ω_t. Same gate as softKnEdge (soft off / implicit / no dt-or-mass ⇒ the configured kt).
+    double softKtEdge(class Integrator *theIntegrator, const double n[3], double s, double t) const;
 
     // B3 (P2b-2c): assemble the consistent ∂n/∂u geometric NORMAL tangent block
     // K_geom = kn·gN·∂²gN/∂u² into `tang` (SEGMENT mode). Re-projects the current config

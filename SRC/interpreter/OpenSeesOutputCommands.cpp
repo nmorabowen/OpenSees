@@ -481,6 +481,11 @@ int OPS_LadrunoContact()
     double edgeKn = 0.0, edgeBand = 0.0;
     double edgeMu = 0.0, edgeKt = 0.0, edgeCohesion = 0.0, edgeTauMax = 0.0;
     bool edgeConsistentTan = false;
+    // Ladruno ADR-57 E5: `-edgeSoft <SOFSCL>` opts the edge-edge fallback into the explicit Courant-stable
+    // SOFT penalty (the B1/B2 SOFT analogue for the edge operator). Under the explicit CentralDifferenceLadruno
+    // the edge penalty is replaced by k_soft = SOFSCL·4·m_eff/dt² so edge-on impact runs at the structural
+    // dt_cr. SOFSCL optional (default 0.10); ≤0 ⇒ off; inert under implicit ⇒ byte-identical. Needs -edgeedge.
+    double edgeSoftScale = 0.0;
     while (OPS_GetNumRemainingInputArgs() > 0) {
         const char *opt = OPS_GetString();
         if (opt != 0 && strcmp(opt, "-mortar") == 0) {
@@ -663,6 +668,27 @@ int OPS_LadrunoContact()
             edgeTauMax = v[0];
         } else if (opt != 0 && strcmp(opt, "-edgeConsistentTan") == 0) {
             edgeConsistentTan = true;
+        } else if (opt != 0 && strcmp(opt, "-edgeSoft") == 0) {
+            // ADR-57 E5: optional numeric SOFSCL; default 0.10 if the next token is a flag / end of args
+            // (mirrors -soft). Under explicit CDL the edge penalty becomes k_soft = SOFSCL·4·m_eff/dt².
+            edgeSoftScale = 0.10;
+            if (OPS_GetNumRemainingInputArgs() > 0) {
+                const char *p = OPS_GetString();          // string read consumes on Tcl AND Py
+                bool isFlag = (p != 0 && p[0] == '-');
+                OPS_ResetCurrentInputArg(-1);
+                if (!isFlag) {
+                    double v[1]; int m = 1;
+                    if (OPS_GetDoubleInput(&m, v) < 0) {
+                        opserr << "WARNING contact -edgeSoft - need a SOFSCL value or omit it (default 0.1)\n";
+                        return -1;
+                    }
+                    edgeSoftScale = v[0];
+                }
+            }
+            if (edgeSoftScale > 1.0)
+                opserr << "WARNING contact -edgeSoft SOFSCL=" << edgeSoftScale << " > 1: the edge mode "
+                          "ω·dt = 2√SOFSCL > 2 is UNSTABLE under central difference; use SOFSCL ≤ 1 "
+                          "(default 0.1).\n";
         } else if (opt != 0 && strcmp(opt, "-outward") == 0) {
             double o[3]; int m = 3;
             if (OPS_GetDoubleInput(&m, o) < 0) {
@@ -739,9 +765,10 @@ int OPS_LadrunoContact()
         return -1;
     }
     if (!edgeEdge && (edgeKn > 0.0 || edgeKnAuto || edgeBand > 0.0 || edgeMu > 0.0 ||
-                      edgeKt > 0.0 || edgeCohesion > 0.0 || edgeTauMax > 0.0 || edgeConsistentTan))
-        opserr << "WARNING contact -edgeKn/-edgeBand/-edgeMu/... given without -edgeedge; ignored "
-                  "(enable the edge-edge fallback with -edgeedge)\n";
+                      edgeKt > 0.0 || edgeCohesion > 0.0 || edgeTauMax > 0.0 || edgeConsistentTan ||
+                      edgeSoftScale > 0.0))
+        opserr << "WARNING contact -edgeKn/-edgeBand/-edgeMu/-edgeSoft/... given without -edgeedge; "
+                  "ignored (enable the edge-edge fallback with -edgeedge)\n";
     if (edgeEdge && edgeConsistentTan && (edgeMu > 0.0 || edgeCohesion > 0.0 || edgeTauMax > 0.0))
         // the non-symmetric Coulomb Csl tangent needs a non-symmetric solver (FullGeneral/UmfPack/
         // BandGeneral); a symmetric SOE silently drops the lower triangle. Warn once (like -consistanttan).
@@ -800,11 +827,13 @@ int OPS_LadrunoContact()
         // D2.2: -visc μ_c ⇒ viscous normal stabilization on the mortar contact (refused with -tie above).
         // B2: softScale>0 ⇒ the SOFT=2 segment-based explicit penalty (off ⇒ byte-identical mortar).
         // ADR-57 E2/E3: edgeEdge ⇒ the perpendicular edge-edge fallback (+ E3 friction; off ⇒ byte-identical).
+        // ADR-57 E5: edgeSoftScale>0 ⇒ the explicit Courant-stable SOFT penalty on the edge fallback.
         return cd->addMortarContact(idata[0], idata[1], idata[2], kn, knAuto, epsN, epsNAuto,
                                     augTol, maxAug, ngp, hasOutward ? outward : 0, cellFrac,
                                     mortarMu, epsT, epsTAuto, cohesion, tauMax, consistentTan, isTie,
                                     muc, softScale, edgeEdge, edgeKn, edgeKnAuto, edgeBand,
-                                    edgeMu, edgeKt, edgeCohesion, edgeTauMax, edgeConsistentTan);
+                                    edgeMu, edgeKt, edgeCohesion, edgeTauMax, edgeConsistentTan,
+                                    edgeSoftScale);
     }
     // D2: -visc μ_c (NTS viscous normal stabilization; 0 ⇒ off, byte-identical).
     // B3: -geomtan ⇒ the consistent ∂n/∂u geometric normal tangent (off ⇒ byte-identical).

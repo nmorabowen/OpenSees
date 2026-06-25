@@ -159,6 +159,11 @@ class LadrunoContactDomain
         double edgeCohesion;
         double edgeTauMax;
         bool   edgeConsistentTan;
+        // ADR-57 E5 — `-edgeSoft <SOFSCL>`: the explicit Courant-stable SOFT penalty for the edge-edge
+        // fallback (the B1/B2 SOFT analogue, edge gap-mode m_eff). >0 ⇒ on; under the explicit
+        // CentralDifferenceLadruno the edge penalty is replaced by k_soft = SOFSCL·4·m_eff/dt² so
+        // edge-on impact runs at the structural dt_cr. Inert under implicit ⇒ byte-identical.
+        double edgeSoftScale;
     };
     int addMortarContact(int tag, int masterSurfTag, int slaveSurfTag,
                          double kn, bool knAuto, double epsN, bool epsNAuto,
@@ -170,7 +175,7 @@ class LadrunoContactDomain
                          bool edgeEdge = false, double edgeKn = 0.0, bool edgeKnAuto = false,
                          double edgeBand = 0.0, double edgeMu = 0.0, double edgeKt = 0.0,
                          double edgeCohesion = 0.0, double edgeTauMax = 0.0,
-                         bool edgeConsistentTan = false);
+                         bool edgeConsistentTan = false, double edgeSoftScale = 0.0);
     int getNumMortarContacts(void) const { return (int)theMortarContacts.size(); }
     const MortarContact &getMortarContact(int i) const { return theMortarContacts[i]; }
 
