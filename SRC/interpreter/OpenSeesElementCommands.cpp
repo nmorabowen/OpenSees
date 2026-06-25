@@ -207,6 +207,7 @@ void* OPS_LadrunoQuad(); // N. Mora-Bowen (Ladruno)
 void* OPS_LadrunoCST(); // N. Mora-Bowen (Ladruno)
 void* OPS_LadrunoDistributingCoupling(); // N. Mora-Bowen (Ladruno)
 void* OPS_LadrunoKinematicCoupling(); // N. Mora-Bowen (Ladruno)
+void* OPS_LadrunoRigidBody(); // N. Mora-Bowen (Ladruno) ADR 58
 void* OPS_LadrunoDispBeamColumn(); // N. Mora-Bowen (Ladruno)
 void* OPS_BbarBrick();
 void* OPS_BbarBrickWithSensitivity();
@@ -682,6 +683,8 @@ namespace {
 	functionMap.insert(std::make_pair("ladrunoDistributingCoupling", &OPS_LadrunoDistributingCoupling));
 	functionMap.insert(std::make_pair("LadrunoKinematicCoupling", &OPS_LadrunoKinematicCoupling)); // N. Mora-Bowen (Ladruno)
 	functionMap.insert(std::make_pair("ladrunoKinematicCoupling", &OPS_LadrunoKinematicCoupling));
+	functionMap.insert(std::make_pair("LadrunoRigidBody", &OPS_LadrunoRigidBody)); // N. Mora-Bowen (Ladruno) ADR 58
+	functionMap.insert(std::make_pair("ladrunoRigidBody", &OPS_LadrunoRigidBody));
 	functionMap.insert(std::make_pair("LadrunoDispBeamColumn", &OPS_LadrunoDispBeamColumn)); // N. Mora-Bowen (Ladruno)
 	functionMap.insert(std::make_pair("ladrunoDispBeamColumn", &OPS_LadrunoDispBeamColumn));
 	functionMap.insert(std::make_pair("bbarBrickUP", &OPS_BBarBrickUP));
