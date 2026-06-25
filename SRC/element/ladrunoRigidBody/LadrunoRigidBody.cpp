@@ -35,6 +35,8 @@
 #include <LadrunoRigidBody.h>
 #include <Domain.h>
 #include <Node.h>
+#include <Element.h>
+#include <ElementIter.h>
 #include <MP_Constraint.h>
 #include <Matrix.h>
 #include <Vector.h>
@@ -77,6 +79,7 @@ LadrunoRigidBody::LadrunoRigidBody(int tag, int ndmIn, const ID& slaveNodes,
     slaveTags(slaveNodes), theSlaves(0),
     intNodeTag(internalNodeTag), theIntNode(0), theMPs(0), theDomainCache(0),
     mUser(mUserIn), mBody(0.0), xc(3), Ibody(3, 3), slaveMass0(0),
+    slaveOffset0(0), nIncident(0), incidentTag(0), incidentOff(0), incidentSlaveIdx(0),
     haveOmega0(false), IbodyInv(3, 3),
     lastTimeCommit(0.0), lastTimeTrial(0.0), started(false),
     valid(false), K0(0), M0(0), P0(0), C0(0), dampF(0)
@@ -96,6 +99,7 @@ LadrunoRigidBody::LadrunoRigidBody()
     slaveTags(0), theSlaves(0),
     intNodeTag(-1), theIntNode(0), theMPs(0), theDomainCache(0),
     mUser(-1.0), mBody(0.0), xc(3), Ibody(3, 3), slaveMass0(0),
+    slaveOffset0(0), nIncident(0), incidentTag(0), incidentOff(0), incidentSlaveIdx(0),
     haveOmega0(false), IbodyInv(3, 3),
     lastTimeCommit(0.0), lastTimeTrial(0.0), started(false),
     valid(false), K0(0), M0(0), P0(0), C0(0), dampF(0)
@@ -122,6 +126,10 @@ LadrunoRigidBody::~LadrunoRigidBody()
       if (slaveMass0[i] != 0) delete slaveMass0[i];
     delete[] slaveMass0;
   }
+  if (slaveOffset0 != 0)    delete[] slaveOffset0;
+  if (incidentTag != 0)     delete[] incidentTag;       // tags, not owned elements
+  if (incidentOff != 0)     delete[] incidentOff;
+  if (incidentSlaveIdx != 0) delete[] incidentSlaveIdx;
   if (K0 != 0)    delete K0;
   if (M0 != 0)    delete M0;
   if (P0 != 0)    delete P0;
@@ -150,9 +158,14 @@ void LadrunoRigidBody::setDomain(Domain* theDomain)
   this->DomainComponent::setDomain(theDomain);
   theDomainCache = theDomain;          // cache for teardown (getDomain() nulls on detach)
 
-  // idempotent: a second setDomain on an already-built body is a no-op
-  if (valid)
+  // idempotent: a second setDomain on an already-built body keeps its state, but
+  // REBUILDS the incident-element cache so a domainChanged after late-added toe/
+  // contact elements still picks them up (M1 — the ordering precondition is then a
+  // best-effort, not the only chance).
+  if (valid) {
+    this->buildIncidentCache(theDomain);
     return;
+  }
 
   if (ndm != 3) {
     opserr << "WARNING LadrunoRigidBody " << this->getTag()
@@ -213,6 +226,16 @@ void LadrunoRigidBody::setDomain(Domain* theDomain)
   }
   lastTimeCommit = lastTimeTrial = theDomain->getCurrentTime();
   started = false;
+
+  // P2 Stage 2: capture each slave's spatial lever arm d_i^0 = x_i^0 − xc (the
+  // body-frame offset at the reference config), and cache the external elements
+  // attached to the slaves so their reactions can drive the spin (moment gather).
+  slaveOffset0 = new Vector3D[nSlave];
+  for (int i = 0; i < nSlave; i++) {
+    const Vector& xi = theSlaves[i]->getCrds();
+    for (int k = 0; k < 3; k++) slaveOffset0[i][k] = xi(k) - xc(k);
+  }
+  this->buildIncidentCache(theDomain);
 
   valid = true;
 }
@@ -406,6 +429,12 @@ int LadrunoRigidBody::commitState(void)
     }
     double dt = t - lastTimeTrial;
     if (started && dt > 0.0) {
+      // P2 Stage 2: gather the external CoM torque at the CURRENT (start-of-step)
+      // orientation — the configuration the slaves sit at and at which the toe/contact
+      // force was just evaluated. Done BEFORE the q advance so the lever arm R·d_i^0
+      // matches the force's config (an explicit forward torque; O(dt) consistent).
+      Vector3D m = this->gatherCoMTorque();
+
       // 2nd-order midpoint orientation update (Krysl–Endres-style): sample ω at the
       // half-step orientation so energy stays bounded (a forward sample at step-start
       // is dissipative and spirals a free body to its major axis instead of flipping).
@@ -421,10 +450,9 @@ int LadrunoRigidBody::commitState(void)
       qTrial = qTrial * OpenSees::Versor::from_vector(dth);  // q · exp(ω_mid·dt)
       qTrial.normalize();
 
-      // Stage 1 is free-spin: gatherCoMTorque()≡0, so L is unchanged. An applied
-      // moment on the body is NOT yet honored (it is gathered in P2 Stage 2); a
-      // user applying a rotational load gets torque-free dynamics until then.
-      Vector3D m = this->gatherCoMTorque();
+      // kick the spatial angular momentum with the gathered torque. Free spin ⇒ m≈0
+      // ⇒ ‖L‖ conserved (the Dzhanibekov gate). A toe reaction / applied moment now
+      // drives the spin (P2 Stage 2, no longer ignored).
       for (int k = 0; k < 3; k++) Ltrial[k] += m[k] * dt;
       lastTimeTrial = t;
     }
@@ -454,13 +482,126 @@ int LadrunoRigidBody::revertToStart(void)
   return 0;
 }
 
-int LadrunoRigidBody::update(void)             { return 0; }
+// update() runs inside Domain::update(), which the integrator calls AFTER the
+// constraint handler imposes the linear MP part (u_i = u_R) and BEFORE the residual
+// is formed (CentralDifference::newStep → applyLoad/enforceSPs → Domain::update).
+// We overwrite the slaves with the exact finite-rotation kinematics so the toe
+// contact sees the rotated geometry when it forms its resisting force.
+int LadrunoRigidBody::update(void)
+{
+  this->imposeSlaveKinematics();
+  return 0;
+}
 
-// net spatial moment about the CoM. Stage 1 is free-spin (torque-free): returns 0.
-// Stage 2 gathers Σ (R·d_i⁰) × f_i from the slaves' loads/reactions (ADR 58 D3).
+// impose u_i = u_R + (R−I)·d_i^0 on every slave (ADR 58 §3, the exact finite-rotation
+// slave map). The per-slave MP already carries the linear u_R; here we ADD the
+// nonlinear (R−I)d_i^0 rotation term that the linear/homogeneous MP cannot represent
+// (the orientation lives in the side channel q, not in any retained DOF).
+void LadrunoRigidBody::imposeSlaveKinematics(void)
+{
+  if (!valid || theIntNode == 0) return;
+  const Vector& uR = theIntNode->getTrialDisp();      // internal CoM node, 6 DOF
+  for (int i = 0; i < nSlave; i++) {
+    Vector3D r = rotateVec(qTrial, slaveOffset0[i]);   // R·d_i^0 (current spatial lever arm)
+    for (int k = 0; k < 3; k++) {
+      double u = uR(k) + (r[k] - slaveOffset0[i][k]);  // u_R + (R−I)·d_i^0
+      theSlaves[i]->setTrialDisp(u, k);
+    }
+    // 6-DOF slaves: also drive the rotational DOFs with the body rotation vector
+    // (the MP rotation block tied them to the off-channel internal-node rotation,
+    // which is ~0). Not exercised by the 3-DOF toe of the Housner gate.
+    if (theSlaves[i]->getNumberDOF() >= 6) {
+      double nv = sqrt(qTrial.vector[0]*qTrial.vector[0]
+                     + qTrial.vector[1]*qTrial.vector[1]
+                     + qTrial.vector[2]*qTrial.vector[2]);
+      double angle = 2.0 * atan2(nv, qTrial.scalar);   // total rotation angle
+      for (int k = 0; k < 3; k++) {
+        double th = (nv > 1.0e-12) ? angle * qTrial.vector[k] / nv : 0.0;
+        theSlaves[i]->setTrialDisp(th, 3 + k);
+      }
+    }
+  }
+}
+
+// cache the external elements attached to the slaves (ADR 58 D3, the dual of slaving):
+// the toe/contact reaction on a slave is read off these elements' getResistingForce()
+// in commitState to drive the spin. Built ONCE here, in the safe setDomain context —
+// NOT lazily from commitState, which runs inside Domain::commit()'s element loop over
+// the shared SingleDomEleIter (a reentrant getElements()→reset() there would abort the
+// commit loop, silently skipping commitState on every later element).
+void LadrunoRigidBody::buildIncidentCache(Domain* theDomain)
+{
+  // free any prior cache (this is re-runnable on a second setDomain)
+  if (incidentTag != 0)      { delete[] incidentTag;      incidentTag = 0; }
+  if (incidentOff != 0)      { delete[] incidentOff;      incidentOff = 0; }
+  if (incidentSlaveIdx != 0) { delete[] incidentSlaveIdx; incidentSlaveIdx = 0; }
+  nIncident = 0;
+
+  for (int pass = 0; pass < 2; pass++) {
+    int count = 0;
+    ElementIter& eiter = theDomain->getElements();
+    Element* e;
+    while ((e = eiter()) != 0) {
+      if (e->getTag() == this->getTag()) continue;     // skip self
+      const ID& enodes = e->getExternalNodes();
+      int off = 0;
+      for (int j = 0; j < enodes.Size(); j++) {
+        Node* nj = theDomain->getNode(enodes(j));
+        int ndj = (nj != 0) ? nj->getNumberDOF() : 0;
+        for (int s = 0; s < nSlave; s++) {
+          if (enodes(j) == slaveTags(s)) {
+            // one record per (element, slave) incidence: if an element spans two
+            // slaves of THIS body it is recorded twice (once per slave), and the
+            // gather sums both r_i × f_i — the correct total moment from that element.
+            if (pass == 1) {
+              incidentTag[count]      = e->getTag();
+              incidentOff[count]      = off;
+              incidentSlaveIdx[count] = s;
+            }
+            count++;
+            break;
+          }
+        }
+        off += ndj;
+      }
+    }
+    if (pass == 0) {
+      nIncident = count;
+      if (nIncident == 0) return;
+      incidentTag      = new int[nIncident];
+      incidentOff      = new int[nIncident];
+      incidentSlaveIdx = new int[nIncident];
+    }
+  }
+}
+
+// net spatial moment about the CoM: m = Σ (R·d_i^0) × f_i, with f_i the EXTERNAL force
+// on slave i (toe/contact reaction). The reaction at a constrained massless slave is
+// the force the rigid-link carries; the force the slave exerts on the BODY is its
+// negative (Newton's third law vs the calculateNodalReactions sign convention, where
+// reaction = Σ getResistingForce). Lever arm uses the CURRENT orientation qTrial
+// (the config at which the slaves were imposed and the toe force evaluated) — a frozen
+// d_i^0 would keep a constant restoring moment and destroy the rocking equilibrium at
+// θ=α. The translational part of f_i is ALREADY gathered to the CoM by the MP
+// transpose (drives CoM translation); only this moment is lost to the side channel.
 Vector3D LadrunoRigidBody::gatherCoMTorque(void)
 {
   Vector3D m; m[0] = m[1] = m[2] = 0.0;
+  if (theIntNode == 0 || theDomainCache == 0) return m;   // detached — no force source
+  for (int rr = 0; rr < nIncident; rr++) {
+    // re-resolve by tag so a removed incident element (this fork's element-removal
+    // feature) is skipped, never dereferenced after free.
+    Element* e = theDomainCache->getElement(incidentTag[rr]);
+    if (e == 0) continue;
+    const Vector& P = e->getResistingForce();    // committed-config resisting force
+    int off = incidentOff[rr];
+    if (off + 2 >= P.Size()) continue;
+    Vector3D f;
+    for (int k = 0; k < 3; k++) f[k] = -P(off + k);    // force ON the body from the slave
+    Vector3D lev = rotateVec(qTrial, slaveOffset0[incidentSlaveIdx[rr]]);  // R·d_i^0
+    Vector3D mi = lev.cross(f);
+    for (int k = 0; k < 3; k++) m[k] += mi[k];
+  }
   return m;
 }
 
