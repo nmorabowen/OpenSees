@@ -83,6 +83,8 @@
 #include <ID.h>
 #include <Vector.h>
 #include <Matrix.h>
+#include <Versor.h>     // OpenSees::Versor — unit-quaternion orientation (P2 SO(3))
+#include <Vector3D.h>   // body-frame angular velocity / momentum (P2)
 
 class Node;
 class Domain;
@@ -109,6 +111,9 @@ class LadrunoRigidBody : public Element
   Node** getNodePtrs(void);
   int getNumDOF(void);
   void setDomain(Domain* theDomain);
+
+  // initial body-frame angular velocity (the -omega IC; sets up free-spin/rocking)
+  void setOmega0(double wx, double wy, double wz);
 
   // state — the Element hooks the DomainComponent route would NOT get for free.
   // P1: trivial (R=I). P2: commitState advances the body-frame SO(3) state and
@@ -174,8 +179,19 @@ class LadrunoRigidBody : public Element
   // onto the internal CoM node — slaves become massless kinematic followers).
   Matrix** slaveMass0;     // size N (captured copies; 0 if a slave had no mass)
 
-  // body-frame SO(3) state (orientation quaternion + angular velocity) is added at
-  // P2; P1 is translation/ballistic with R=I, so no rotational state is carried yet.
+  // body-frame SO(3) rotational state (ADR 58 D2, P2 Stage 1). The body integrates
+  // its own rotation in commitState OFF the global solve (D3): the primary state is
+  // the SPATIAL angular momentum L (conserved exactly under zero torque ⇒ the
+  // Dzhanibekov ‖L‖ gate is met by construction), plus the orientation quaternion.
+  // Each step  ω_body = Ibody⁻¹·(qᵀ·L),  q ← q · exp(ω_body·dt),  L ← L + m·dt.
+  OpenSees::Versor qCommit, qTrial;   // orientation (body→spatial); identity = {{0,0,0},1}
+  Vector3D Lcommit, Ltrial;           // spatial angular momentum
+  Vector3D L0;                        // initial spatial L (for revertToStart)
+  Vector3D omega0;                    // initial body-frame angular velocity (-omega IC)
+  bool haveOmega0;                    // -omega supplied
+  Matrix IbodyInv;                    // 3×3 constant body-frame inertia inverse
+  double lastTimeCommit, lastTimeTrial; // domain time of the last advance (commit/trial, for dt)
+  bool started;                       // first commit seeds lastTime (no giant first-dt on a time jump)
 
   bool valid;              // setDomain succeeded (well-posed body)
 
@@ -185,6 +201,11 @@ class LadrunoRigidBody : public Element
   Vector* P0;              // nDOF, always zero
   Matrix* C0;              // damping, always zero (getDamp bypass)
   Vector* dampF;           // Rayleigh damping force, always zero
+
+  // SO(3) helpers (P2)
+  Vector3D gatherCoMTorque(void);      // net spatial moment about the CoM (Stage 1: 0 — free spin)
+  Vector3D omegaBodyFrom(const OpenSees::Versor& q, const Vector3D& L) const;  // ω_body = Ibody⁻¹·(qᵀ·L)
+  static bool invert3x3(const Matrix& A, Matrix& Ainv);  // analytic 3×3 inverse
 
   // lifecycle helpers (Joint3D pattern)
   int  resolveCentroidAndMass(void);   // CoM + m_body from slave coords/masses (or mUser); 0 ok, -1 fail
