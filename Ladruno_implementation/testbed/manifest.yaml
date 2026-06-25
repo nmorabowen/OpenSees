@@ -1271,7 +1271,7 @@ features:
     pr: 426
     feature_class: element
     required_tiers: [T0, T1]
-    pytest: tests/test_ladrunoRigidBody_element.py   # PENDING (P2) — Zone-A port of Ladruno_scripts/rigidbody_tests/test_p1_ballistic.py
+    pytest: tests/test_ladrunoRigidBody_element.py   # Zone-A: ballistic + Dzhanibekov + slave-tracking + gather-sign + Housner rocking
     tcl: WAIVED(element LadrunoRigidBody ...; shared OpenSeesElementCommands functionMap serves Tcl + Python; verified via the standalone P1 gate)
     core_files:
       - SRC/classTags.h
@@ -1281,18 +1281,21 @@ features:
       - SRC/element/CMakeLists.txt
       - SRC/element/ladrunoRigidBody/CMakeLists.txt
     dispatch: {tcl: true, functionMap: true}
-    status: planned
+    status: shipped
     notes: >
-      6-DOF rigid-body element (ADR 58), P1 = translation/ballistic. A zero-stiffness
-      Element (K=M=P=C=0) owning a private internal 6-DOF CoM Node (Joint3D pattern)
-      that carries the condensed mass (m_body diagonal + body-frame inertia), with
-      rigid-link MP_Constraints tying each slave (u_i = u_R + (R-I) d_i; rectangular
-      3x6 for 3-DOF solid slaves, square 6x6 for 6-DOF). = LS-DYNA
-      *CONSTRAINED_NODAL_RIGID_BODY / Abaqus *RIGID BODY. ADR-58 D1 fallback (Element,
-      not DomainComponent: >15-file kill-criterion + Domain::commit skips
-      DomainComponents). P1 verified by the standalone gate (ballistic free-fall
-      rel-err 5e-4, exact node-follower); status=planned until P2 lands the SO(3)
-      rotation + a Zone-A pytest. Plan: 58_ladruno_rigid_body_adr.md.
+      6-DOF rigid-body element (ADR 58). A zero-stiffness Element (K=M=P=C=0) owning a
+      private internal 6-DOF CoM Node (Joint3D pattern) that carries the condensed mass
+      (m_body diagonal + body-frame inertia), with rigid-link MP_Constraints tying each
+      slave. = LS-DYNA *CONSTRAINED_NODAL_RIGID_BODY / Abaqus *RIGID BODY. ADR-58 D1
+      fallback (Element, not DomainComponent: >15-file kill-criterion + Domain::commit
+      skips DomainComponents). P1 (translation/ballistic) + P2 Stage 1 (free-spin SO(3)
+      rotation, side channel: spatial L + quaternion, midpoint exp-map in commitState) +
+      P2 Stage 2 (finite-rotation slave-following u_i=u_R+(R-I)d_i^0 imposed in update()
+      = "mechanism C3"; moment gather Sum (R*d_i^0) x f_i from incident elements cached
+      by tag; Housner rocking gate 1.22%). Zone-A pytest gates all five. Still wip on the
+      v1 limits (serial-only sendSelf/recvSelf stubs; explicit-only; incident toe/contact
+      elements must be displacement-only + defined before the body). PRs 426/428/432.
+      Plan: 58_ladruno_rigid_body_adr.md.
 
   # --- worked examples shipped with the scaffold (existing elements, no new C++) ---
 
