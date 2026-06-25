@@ -109,7 +109,7 @@ LadrunoContactDomain::addMortarContact(int tag, int masterSurfTag, int slaveSurf
                                        bool isTie, double muc, double softScale,
                                        bool edgeEdge, double edgeKn, bool edgeKnAuto, double edgeBand,
                                        double edgeMu, double edgeKt, double edgeCohesion,
-                                       double edgeTauMax, bool edgeConsistentTan)
+                                       double edgeTauMax, bool edgeConsistentTan, double edgeSoftScale)
 {
     LadrunoContactSurface *ms = getSurface(masterSurfTag);
     LadrunoContactSurface *ss = getSurface(slaveSurfTag);
@@ -187,6 +187,7 @@ LadrunoContactDomain::addMortarContact(int tag, int masterSurfTag, int slaveSurf
     m.edgeCohesion = (edgeCohesion > 0.0) ? edgeCohesion : 0.0;
     m.edgeTauMax = edgeTauMax;                         // ≤0 ⇒ no Tresca upper cap
     m.edgeConsistentTan = edgeConsistentTan;
+    m.edgeSoftScale = (edgeSoftScale > 0.0) ? edgeSoftScale : 0.0;  // ADR-57 E5 explicit SOFT (≤0 ⇒ off)
     theMortarContacts.push_back(m);
     return 0;
 }

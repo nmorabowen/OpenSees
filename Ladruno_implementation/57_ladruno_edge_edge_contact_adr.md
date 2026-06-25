@@ -469,7 +469,7 @@ companion) is a later convenience, not the MVP.
 | **E2** ✅ **SHIPPED** | penalty normal force + main tangent | `proto_e2_penalty.py` **23/23**: two-bar edge-on test, force ⟂ both edges (along `n`), self-equilibrium `Σf=0`, `K=ε_N BᵀB` FD-checked symmetric PSD rank-1, penetration `δ=P/ε_N`; **monotone `g_N` through contact** driven through a real penalty step (gap>0 → 0 → penetration, no sign flip — the committed-sign-anchor falsifier + the buggy-`w·n`-rule penetration-mask demo). | `test_adr57_edge_edge_1` **3/3**: two crossed bars restrained at `δ≈P/ε_N`, Newton converges (the `K_c` check); **NTS-passes-through vs edge-edge-restrained** (the headline falsifier — same geometry NTS contact transmits ZERO force ⇒ the edge sinks ~10³× deeper); **the EE-1 oblique-band regression** (a 60° pair, non-degenerate clip, edge-edge owns ⇒ single-primitive δ≈P/ε_N — guards the face-mortar stand-down); byte-identity when no pair routes / `-edgeedge` absent. Full contact battery **145 passed** (no regression). 3-reviewer adversarial gate PASS (2 findings folded). |
 | **E3** ✅ **SHIPPED** | friction (reuse `LadrunoFrictionKernel` — the 4th consumer) | `proto_e3_friction.py` **12/12**: stick/slip on the edge tangent plane, `a = g(sinθ−μcosθ)` incline sign (the cone threshold == the slide criterion `tanθ>μ`), Tresca cap, **slip-from-DISPLACEMENT** (the C3.1 trap — the closest-point relative position is purely normal), self-equilibrium + symmetric tangent FD-checked, the non-sym Csl branch, the `μ=0`-byte-identity contract (the kernel's `cap≤0` returns RAW elastic ⇒ byte-identity is the CALLER's guard). | `test_adr57_edge_edge_2` **4/4**: **explicit raking bar** (Coulomb decelerates the rake / opposes motion, monotone, no energy injection — vs `μ=0` coasting); implicit stick converges (the SPD stick tangent); symmetric tangent solver-safe (ProfileSPD == FullGeneral); `μ=0` byte-identical. Full contact battery **149 passed**; 3-reviewer gate PASS (no findings). |
 | **E4** | consistent geometric tangent (`-edgegeomtan`, **gated off**) | `proto_e4_geomtan.py`: `∂n/∂u, ∂s/∂u, ∂t/∂u` analytic == FD on a skew large-sliding pair; symmetric; flat ⇒ byte-identical. | local Newton iter-count improvement on a curved-rake case; ProfileSPD-safe |
-| **E5** | explicit Courant-stable SOFT | `proto_e5_soft.py`: 4-node edge `m_eff = 1/(B M⁻¹ Bᵀ)` closed form; `ω·dt = 2√SOFSCL`; stiff diverges vs soft bounded; energy restitution. | `test_adr57_edge_edge_3`: edge-on impact at the STRUCTURAL dt; implicit byte-identical |
+| **E5** ✅ **SHIPPED** | explicit Courant-stable SOFT | `proto_e5_soft.py` **26/26**: the 4-node edge `m_eff = 1/(B M⁻¹ Bᵀ)` closed form (== the full matrix product, anisotropic + off-center) vs the B1 nodal-mass projection; fixed/massless node ⇒ ∞ mass ⇒ 0; `ω·dt = 2√SOFSCL` independent of dt; a central-difference impact where stiff εN DIVERGES vs SOFT bounded + energy-restituting (rebound ≈ impact speed, penetration == analytic); `softKt` the B1-kt n→t worst-case rule; SOFSCL≤0 / implicit ⇒ the configured εN (byte-identical). | `test_adr57_edge_edge_3` **3/3**: edge-on impact at the STRUCTURAL dt (SOFT bounded + rebounds; the SAME dt with stiff εN DIVERGES — SOFT runs where stiff can't); implicit byte-identical. Full contact battery **130 passed**. |
 | **E6** | optional ALM `λ_N` (one scalar/pair) | `proto_e6_alm.py`: penetration → ε_N-independent tol; release → `λ_N→0`, F=0; eqn count constant across augmentations. | held-load `analyze_augmented` drives `‖g_N‖→augTol`; opt-in byte-identity |
 | **E7** | integration + regression | — | full battery (a slab corner on a beam edge; cross-stacked bars; an L-junction), **byte-identical when no pair routes edge-edge**, 3-reviewer adversarial gate |
 
@@ -695,5 +695,25 @@ friction-kernel 4th-consumer, SOFT mass-cache, clip-degeneracy probe safety
   (mechanics, state lifecycle/byte-identity, tangent/solver/rank all verified sound; the point-pair
   tangential rank-deficiency is the inherent point-like-penalty property E2 already ruled non-blocking
   — the static tests regularize it with a soft tangential spring, as E2 did for the normal mode).
-- **E4→E7** — pending (design-only above; each lands oracle-first → C++ → gate → PR,
+- **E5 (explicit Courant-stable SOFT) — SHIPPED** (this PR). The edge-edge analogue of the shipped
+  B1 (NTS) / B2 (mortar) SOFT lane: under the explicit `CentralDifferenceLadruno` (the `dynamic_cast`
+  gate) the edge penalty εN is REPLACED by the Courant-stable `k_soft = SOFSCL·4·m_eff/dt²` so the
+  edge contact's own central-difference mode `ω·dt = 2√SOFSCL ≤ 2` never throttles `dt_cr` —
+  edge-on impact runs at the STRUCTURAL dt (the progressive-collapse enabler, now for the cos_t→0
+  case). `m_eff = 1/(B M⁻¹ Bᵀ)` is the 4-node edge gap-mode generalized mass — the B1 closed form
+  GENERALIZED from the `[slave|seg]` NTS operator to the edge operator `B = [(1−s)n, s n, −(1−t)n,
+  −t n]`: `m_eff = 1/((1−s)²invMproj_a0 + s²invMproj_a1 + (1−t)²invMproj_b0 + t²invMproj_b1)`
+  (the signs square away), reusing the ASSEMBLED `ladrunoBuildNodalMass` cache + `ladrunoNodeMass`/
+  `ladrunoInvMassProj` VERBATIM (a fixed/massless node ⇒ ∞ mass ⇒ 0 — the FIXED-master drop-out).
+  New `LadrunoContactFE` helpers `edgeGapModeInvMass`/`softKnEdge`/`softKtEdge` (the friction `softKt`
+  follows the B1-kt n→t worst-case-tangent rule); `getResidual` swaps `kn→softKnEdge` for the normal
+  traction and `kt→softKtEdge` for the friction stick penalty ONLY (the tangent uses `kn`, assembled
+  solely under implicit where `softKnEdge≡kn` ⇒ byte-identical, exactly the B1/B2 residual-only SOFT).
+  `-edgeSoft <SOFSCL>` opt-in modifier on `-edgeedge` (default 0.10, >1 warns); the handler's `anySoft`
+  detection now also fires on an `-edgeSoft` mortar contact (the SAME shared nodal-mass cache), and
+  passes `edgeSoftScale` to the `EDGE_EDGE` ctor. SOFSCL≤0 / implicit / no dt-or-mass ⇒ the configured
+  εN ⇒ **byte-identical**. Oracle `proto_e5_soft.py` **26/26**; `test_adr57_edge_edge_3` **3/3**
+  (SOFT impact at the structural dt bounded + rebounds; the SAME dt with stiff εN DIVERGES; implicit
+  byte-identical); full contact battery **130 passed** (no regression). 3-reviewer adversarial gate → PASS.
+- **E4 / E6 / E7** — pending (design-only above; each lands oracle-first → C++ → gate → PR,
   updating the capstone row + ledgers in the same PR).
