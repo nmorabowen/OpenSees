@@ -162,13 +162,16 @@ LadrunoContactFE::LadrunoContactFE(int tag, Node **slaveNodes, int nps_s,
 // edge). theDomain reaches the engine for the per-pair committed sign (EdgeEdgeState); null ⇒ the
 // sign is captured locally each eval from orientDir (deterministic, but not held across re-pairing).
 LadrunoContactFE::LadrunoContactFE(int tag, Node *sNodeA, Node *sNodeB, Node *mNodeA, Node *mNodeB,
-                                   double epsN, const double odir[3], int contactTag_, Domain *dom)
+                                   double epsN, const double odir[3], int contactTag_, Domain *dom,
+                                   double mu_, double kt_, double cohesion_, double tauMax_,
+                                   bool consistentTan_)
   : FE_Element(tag, /*numDOF_Group=*/4, /*ndof=*/12),
     resid(12), tang(12, 12),
     mode(EDGE_EDGE), theSlave(0), ndm(3), kn(epsN), nps(0),
-    kt(0.0), mu(0.0), muc(0.0), theDomain(dom), contactTag(contactTag_), segIndex(0),
-    consistentTan(false), consistentNormal(false), softScale(0.0),
-    npsS(0), npsM(0), slaveFacetIndex(0), mortarCohesion(0.0), mortarTauMax(0.0), isTie(false)
+    kt(kt_), mu(mu_), muc(0.0), theDomain(dom), contactTag(contactTag_), segIndex(0),
+    consistentTan(consistentTan_), consistentNormal(false), softScale(0.0),
+    npsS(0), npsM(0), slaveFacetIndex(0), mortarCohesion(cohesion_), mortarTauMax(tauMax_),
+    isTie(false)
 {
     // Connectivity = the 4 edge nodes' DOF_Groups (each ndf==3 ⇒ exact ndof==12). setID() then
     // fills myID = [sa xyz | sb xyz | ma xyz | mb xyz] — the layout edgeGeom()/the residual assume.
@@ -350,6 +353,23 @@ LadrunoContactFE::edgeGeom(double &gN, double n[3], double &s, double &t, double
     gN = LadrunoEdgeKernel::edgeGap(cr.c1, cr.c2, d1, d2, committedSign, orientDir, n, outSign);
     LadrunoEdgeKernel::bOperator(n, s, t, B);
     return true;
+}
+
+// ADR-57 E3 — tangential slip at the closest point, from DISPLACEMENT (the C3.1 trap). The closest-
+// point construction makes the relative POSITION purely normal, so the tangential slip is the
+// relative DISPLACEMENT of the two closest points, tangential part: gT = tangentPart((1−s)u_a0 +
+// s u_a1 − (1−t)u_b0 − t u_b1, n). Same {s,t,n} edgeGeom returns ⇒ one consistent contact point.
+void
+LadrunoContactFE::edgeSlip(double s, double t, const double n[3], double gT[3]) const
+{
+    const Vector &ua0 = edgeNode[0]->getTrialDisp();
+    const Vector &ua1 = edgeNode[1]->getTrialDisp();
+    const Vector &ub0 = edgeNode[2]->getTrialDisp();
+    const Vector &ub1 = edgeNode[3]->getTrialDisp();
+    double drel[3];
+    for (int d = 0; d < 3; d++)
+        drel[d] = ((1.0 - s) * ua0(d) + s * ua1(d)) - ((1.0 - t) * ub0(d) + t * ub1(d));
+    LadrunoFrictionKernel::tangentPart(drel, n, gT);
 }
 
 // B1 (P4) — the ASSEMBLED translational mass [mx,my,mz] of a node: the engine's pre-computed cache
@@ -701,8 +721,8 @@ LadrunoContactFE::getResidual(Integrator *theIntegrator)
         // A-4 fix so gN cannot flip through contact), and assemble the penalty force f = tN·B,
         // tN = εN⟨−gN⟩, B = [(1−s)n | s n | −(1−t)n | −t n]. Active ONLY in penetration (gN<0) and
         // only for a well-conditioned margin-interior crossing (edgeGeom refuses the rest). The
-        // master edge gets the equal-and-opposite reaction (Σf = 0). No friction (E3), no SOFT/ALM
-        // (E5/E6) here — the E2 penalty MVP.
+        // master edge gets the equal-and-opposite reaction (Σf = 0). E3 adds the Coulomb/Tresca
+        // friction on top (SOFT/ALM are E5/E6).
         LadrunoContactDomain *cd = (theDomain != 0) ? theDomain->getLadrunoContactDomain() : 0;
         LadrunoContactDomain::EdgeEdgeState *st = 0;
         int committedSign = 0;
@@ -722,6 +742,37 @@ LadrunoContactFE::getResidual(Integrator *theIntegrator)
                 for (int i = 0; i < 4; i++)
                     for (int d = 0; d < 3; d++)
                         resid(3 * i + d) = tN * B[i][d];  // f = tN·B (slave +, master − ⇒ Σf=0)
+
+                // --- E3 Coulomb/Tresca friction (force; tangent is in addKtToTang) ---
+                // mu≤0 ∧ c≤0 ∧ τmax≤0 SHORT-CIRCUITS before any slot touch ⇒ byte-identical to the
+                // E2 frictionless path (the NTS `mu>0` guard — the kernel's cap≤0 branch returns the
+                // RAW elastic, so byte-identity is the GUARD's job, not the kernel's). Needs the engine
+                // for the per-pair committed slip (gpT) + engagement origin (gT0); cd==0 ⇒ frictionless.
+                if (st != 0 && (mu > 0.0 || mortarCohesion > 0.0 || mortarTauMax > 0.0)) {
+                    double gTvec[3]; edgeSlip(s, t, n, gTvec);
+                    // capture the ENGAGEMENT-config tangential origin ONCE at first activation (else a
+                    // late-engaging pair's pre-contact tangential drift is a spurious stick traction —
+                    // the ADR-39 P3 MAJOR-1, reused).
+                    if (!st->engaged) {
+                        for (int d = 0; d < 3; d++) st->gT0[d] = gTvec[d];
+                        st->engaged = true;
+                    }
+                    double gTeff[3];
+                    for (int d = 0; d < 3; d++) gTeff[d] = gTvec[d] - st->gT0[d];
+                    double tFric[3], gpTtrial[3];
+                    // N for the cone = the current normal pressure tN; trial slip = PURE fn of committed
+                    // gpT ⇒ idempotent across the CDL firstStep double-eval. tFric is already negated
+                    // (motion-opposing). The 4th consumer of the ONE shipped return map.
+                    LadrunoFrictionKernel::frictionReturnMap(gTeff, st->gpT, tN, kt, mu, tFric,
+                                                             gpTtrial, mortarCohesion, mortarTauMax);
+                    for (int d = 0; d < 3; d++) st->gpTtrial[d] = gpTtrial[d];
+                    // scatter via the SAME edge weights as the normal force (w = [(1−s),s,−(1−t),−t];
+                    // Σw = 0 ⇒ Σf = 0). slave a0/a1 += (1−s)/s·tFric, master b0/b1 += −(1−t)/−t·tFric.
+                    double w[4] = { 1.0 - s, s, -(1.0 - t), -t };
+                    for (int i = 0; i < 4; i++)
+                        for (int d = 0; d < 3; d++)
+                            resid(3 * i + d) += w[i] * tFric[d];
+                }
             }
         }
     }
@@ -1159,13 +1210,14 @@ LadrunoContactFE::addKtToTang(double fact)
         // for the frozen-direction linearization; the geometric ∂{n,s,t}/∂u curvature block is E4
         // (gated off). Same active mask as the residual (penetrating + margin-interior crossing).
         // The committed sign was captured by getResidual (which runs first in the iterate); read it.
+        LadrunoContactDomain *cd = (theDomain != 0) ? theDomain->getLadrunoContactDomain() : 0;
+        LadrunoContactDomain::EdgeEdgeState *st = 0;
         int committedSign = 0;
-        if (theDomain != 0) {
-            LadrunoContactDomain *cd = theDomain->getLadrunoContactDomain();
-            if (cd != 0)
-                committedSign = cd->getOrCreateEdgeEdgeState(contactTag, edgeNode[0]->getTag(),
-                                    edgeNode[1]->getTag(), edgeNode[2]->getTag(),
-                                    edgeNode[3]->getTag()).signN;
+        if (cd != 0) {
+            st = &cd->getOrCreateEdgeEdgeState(contactTag, edgeNode[0]->getTag(),
+                                               edgeNode[1]->getTag(), edgeNode[2]->getTag(),
+                                               edgeNode[3]->getTag());
+            committedSign = st->signN;
         }
         double gN, n[3], s, t, B[4][3]; int usedSign = 0;
         if (edgeGeom(gN, n, s, t, B, committedSign, &usedSign) && gN < 0.0) {
@@ -1174,6 +1226,30 @@ LadrunoContactFE::addKtToTang(double fact)
                     for (int j = 0; j < 4; j++)
                         for (int dj = 0; dj < 3; dj++)
                             tang(3 * i + di, 3 * j + dj) += fact * kn * B[i][di] * B[j][dj];
+
+            // --- E3 friction tangent (IMPLICIT only — CDL never calls addKtToTang) ---
+            // K_fric[A][B] += w_A w_B·K_ss, w = [(1−s),s,−(1−t),−t], K_ss = frictionTangentBlock at the
+            // SAME committed slip the residual used (gpT committed, gTeff at the current config). Default
+            // consistentTan=false ⇒ symmetric (drop the Coulomb Csl; solver-safe); true ⇒ the full
+            // non-symmetric consistent tangent (needs FullGeneral/UmfPack).
+            if (st != 0 && (mu > 0.0 || mortarCohesion > 0.0 || mortarTauMax > 0.0)) {
+                double tN = -kn * gN;                    // the normal pressure (the cone's N)
+                double gTvec[3]; edgeSlip(s, t, n, gTvec);
+                double gTeff[3];
+                for (int d = 0; d < 3; d++) gTeff[d] = st->engaged ? (gTvec[d] - st->gT0[d]) : 0.0;
+                double Kss[3][3];
+                LadrunoFrictionKernel::frictionTangentBlock(gTeff, st->gpT, n, tN, kn, kt, mu,
+                                                            consistentTan, Kss, mortarCohesion,
+                                                            mortarTauMax);
+                double w[4] = { 1.0 - s, s, -(1.0 - t), -t };
+                for (int A = 0; A < 4; A++)
+                    for (int Bn = 0; Bn < 4; Bn++) {
+                        double wab = fact * w[A] * w[Bn];
+                        for (int i = 0; i < 3; i++)
+                            for (int j = 0; j < 3; j++)
+                                tang(3 * A + i, 3 * Bn + j) += wab * Kss[i][j];
+                    }
+            }
         }
     }
 }
@@ -1367,6 +1443,23 @@ LadrunoContactFE::addKiToTang(double fact)
                     for (int j = 0; j < 4; j++)
                         for (int dj = 0; dj < 3; dj++)
                             tang(3 * i + di, 3 * j + dj) += fact * kn * B[i][di] * B[j][dj];
+            // E3: the friction INITIAL stiffness is the STICK tangent kt·P_t (SPD ⇒ a Modified/
+            // Initial-Newton contraction; the SEGMENT addKiToTang rule). Forced stick ⇒ gTeff==gpT
+            // (pass zeros) ⇒ K_ss = kt·P_t, symmetric ⇒ consistent=false regardless; no engine slot.
+            if (mu > 0.0 || mortarCohesion > 0.0 || mortarTauMax > 0.0) {
+                double tN = -kn * gN;
+                double zero[3] = {0.0, 0.0, 0.0}, Kss[3][3];
+                LadrunoFrictionKernel::frictionTangentBlock(zero, zero, n, tN, kn, kt, mu,
+                                                            false, Kss, mortarCohesion, mortarTauMax);
+                double w[4] = { 1.0 - s, s, -(1.0 - t), -t };
+                for (int A = 0; A < 4; A++)
+                    for (int Bn = 0; Bn < 4; Bn++) {
+                        double wab = fact * w[A] * w[Bn];
+                        for (int i = 0; i < 3; i++)
+                            for (int j = 0; j < 3; j++)
+                                tang(3 * A + i, 3 * Bn + j) += wab * Kss[i][j];
+                    }
+            }
         }
     }
 }

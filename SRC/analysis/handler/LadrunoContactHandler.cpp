@@ -838,6 +838,21 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                                << ": -edgeedge penalty could not be sized; pair skipped\n";
                         continue;
                     }
+                    // E3 friction: edgeKt (tangential penalty). Friction requested but no -edgeKt ⇒
+                    // the return map would stick at ZERO force (silently inert); default it to the
+                    // edge normal penalty and warn ONCE (mirrors the mortar -epsT auto-default).
+                    double edgeKtUse = mc.edgeKt;
+                    bool edgeFric = (mc.edgeMu > 0.0 || mc.edgeCohesion > 0.0 || mc.edgeTauMax > 0.0);
+                    if (edgeFric && edgeKtUse <= 0.0) {
+                        edgeKtUse = edgeKnUse;
+                        static bool warnedEdgeKt = false;
+                        if (!warnedEdgeKt) {
+                            warnedEdgeKt = true;
+                            opserr << "WARNING LadrunoContactHandler::handle() - mortar contact " << mc.tag
+                                   << ": edge-edge friction requested without -edgeKt; defaulting the "
+                                      "tangential penalty to the edge normal penalty. Set -edgeKt to control it.\n";
+                        }
+                    }
 
                     // enumerate the (≤4)×(≤4) boundary-edge pairs; inject the margin-interior, well-
                     // conditioned, in-band crossings (the E0 kernel decides interior + non-parallel).
@@ -859,7 +874,9 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                             if (injectedEdges.find(key) != injectedEdges.end()) continue;
                             injectedEdges.insert(key);
                             LadrunoContactFE *fe = new LadrunoContactFE(numFe++, sa, sb, ma, mb,
-                                                       edgeKnUse, orientDir, mc.tag, theDomain);
+                                                       edgeKnUse, orientDir, mc.tag, theDomain,
+                                                       mc.edgeMu, edgeKtUse, mc.edgeCohesion,
+                                                       mc.edgeTauMax, mc.edgeConsistentTan);
                             if (fe == 0) return -5;
                             theModel->addFE_Element(fe);
                             cd->edgeGCMark(mc.tag, sat, sbt, mat, mbt);  // live this handle()

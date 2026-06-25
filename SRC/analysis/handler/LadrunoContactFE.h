@@ -139,12 +139,20 @@ class LadrunoContactFE : public FE_Element
     // self-referential w·n that masks interpenetration), and assembles f = tN·B, tN = εN⟨−gN⟩,
     // B = [(1−s)n | s n | −(1−t)n | −t n] (the NTS B-operator with the master shape fns → the edge
     // linear weights). addKtToTang assembles the main tangent K = εN·BᵀB (symmetric, rank-1, PSD —
-    // the geometric ∂{n,s,t}/∂u block is E4, gated off; friction is E3; SOFT/ALM are E5/E6). epsN
-    // rides `kn`; orientDir is the first-capture sign reference. A STATELESS view (the §5 EdgeEdgeState
-    // lives on the Domain); pairs that are parallel/zero-length/near-vertex/separated are inert.
+    // the geometric ∂{n,s,t}/∂u block is E4, gated off; SOFT/ALM are E5/E6). epsN rides `kn`;
+    // orientDir is the first-capture sign reference. A STATELESS view (the §5 EdgeEdgeState lives on
+    // the Domain); pairs that are parallel/zero-length/near-vertex/separated are inert.
+    // E3 friction: mu (Coulomb) / kt (tangential penalty) / cohesion / tauMax form the unified cone
+    // cap = min(μN+c, τmax), N = εN⟨−gN⟩; the slip is the tangential relative DISPLACEMENT of the two
+    // closest points (the C3.1 trap — at the closest point the relative POSITION is purely normal),
+    // run through the SHIPPED LadrunoFrictionKernel return map with the per-pair committed slip on the
+    // EdgeEdgeState (the 4th consumer: NTS, mortar, SOFT=2, now edge-edge — no new friction code). All
+    // ≤ 0 ⇒ byte-identical to the E2 frictionless path (no slot touch — the NTS `mu>0` short-circuit).
+    // consistentTan = the non-symmetric Coulomb Csl tangent (false ⇒ symmetric, solver-safe).
     LadrunoContactFE(int tag, Node *sNodeA, Node *sNodeB, Node *mNodeA, Node *mNodeB,
                      double epsN, const double orientDir[3], int contactTag = 0,
-                     Domain *theDomain = 0);
+                     Domain *theDomain = 0, double mu = 0.0, double kt = 0.0,
+                     double cohesion = 0.0, double tauMax = 0.0, bool consistentTan = false);
     ~LadrunoContactFE();
 
     // self-owned buffers (base buffers are unavailable when myEle == 0)
@@ -318,6 +326,13 @@ class LadrunoContactFE : public FE_Element
     // mutation is done by the caller in getResidual, mirroring the SEGMENT friction engagement).
     bool edgeGeom(double &gN, double n[3], double &s, double &t, double B[4][3],
                   int committedSign, int *outSign) const;
+
+    // ADR-57 E3 — tangential SLIP at the closest point, from DISPLACEMENT not position (the C3.1 trap:
+    // the closest-point construction makes the relative POSITION purely normal). gT = tangentPart(
+    // (1−s)u_a0 + s u_a1 − (1−t)u_b0 − t u_b1, n). Shared by getResidual (force) + addKtToTang (the
+    // friction tangent reads the SAME slip at the committed gpT). const (the engagement capture is the
+    // caller's, on the Domain-owned EdgeEdgeState — mirrors the SEGMENT friction path).
+    void edgeSlip(double s, double t, const double n[3], double gT[3]) const;
 
     // B2 (P5) — the SOFT=2 segment-based EXPLICIT penalty force (frictionless, single-pass, no ALM).
     // Re-integrates the facet pair (mortarActive ⇒ clip→Gauss D,M,g̃,n), sizes a Courant-stable
