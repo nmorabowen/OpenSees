@@ -1,7 +1,7 @@
 ---
 title: Ladruno Contact — perpendicular edge-edge contact (the cos_t→0 degeneracy)
 project: Ladruno
-status: draft (design-only — implementation is a later session)
+status: shipped — E0–E3 + E5 (explicit SOFT) + E6 (one-scalar ALM) + E7 (integration) merged; only E4 (geom tangent) deferred/demand-driven
 priority: medium
 owner: nmora
 tags:
@@ -471,7 +471,7 @@ companion) is a later convenience, not the MVP.
 | **E4** | consistent geometric tangent (`-edgegeomtan`, **gated off**) | `proto_e4_geomtan.py`: `∂n/∂u, ∂s/∂u, ∂t/∂u` analytic == FD on a skew large-sliding pair; symmetric; flat ⇒ byte-identical. | local Newton iter-count improvement on a curved-rake case; ProfileSPD-safe |
 | **E5** ✅ **SHIPPED** | explicit Courant-stable SOFT | `proto_e5_soft.py` **26/26**: the 4-node edge `m_eff = 1/(B M⁻¹ Bᵀ)` closed form (== the full matrix product, anisotropic + off-center) vs the B1 nodal-mass projection; fixed/massless node ⇒ ∞ mass ⇒ 0; `ω·dt = 2√SOFSCL` independent of dt; a central-difference impact where stiff εN DIVERGES vs SOFT bounded + energy-restituting (rebound ≈ impact speed, penetration == analytic); `softKt` the B1-kt n→t worst-case rule; SOFSCL≤0 / implicit ⇒ the configured εN (byte-identical). | `test_adr57_edge_edge_3` **3/3**: edge-on impact at the STRUCTURAL dt (SOFT bounded + rebounds; the SAME dt with stiff εN DIVERGES — SOFT runs where stiff can't); implicit byte-identical. Full contact battery **130 passed**. |
 | **E6** ✅ **SHIPPED** | optional ALM `λ_N` (one scalar/pair) | `proto_e6_alm.py` **24/24**: λ_N≡0 ⇒ the E2 penalty pressure EXACTLY (off-by-default identity); held-load Uzawa drives penetration → an ε_N-INDEPENDENT tol (penalty is O(P/ε_N)); converged traction t_N ≈ P; release → `λ_N→0`, F=0; committed-only (revert leaves λ_N untouched); eqn count constant across augmentations. | `test_adr57_edge_edge_4` **3/3**: held-load `analyze_augmented` (query=`ladrunoEdgePenetration`) drives `‖g_N‖→augTol` ε_N-independently; release opens the contact; first-solve opt-in byte-identity. Full contact battery **133 passed**. |
-| **E7** | integration + regression | — | full battery (a slab corner on a beam edge; cross-stacked bars; an L-junction), **byte-identical when no pair routes edge-edge**, 3-reviewer adversarial gate |
+| **E7** ✅ **SHIPPED** | integration + regression (the trust gate) | — (integration, no oracle) | `test_adr57_edge_edge_5` **8/8** on REAL deformable `LadrunoBrick` bodies (mass + stiffness from the element ⇒ NO artificial springs): cross-stacked bars restrained at the mechanism-specific δ=P/εN; the NTS-passes-through falsifier survives real bodies; **E5 SOFT on assembled element-density mass** (explicit drop bounded vs stiff εN ejecting ≫100×); **E6 ALM on a deformable body** (gap→augTol εN-independently); a **non-axis-aligned crossing** (inclined master, n=(0,−sin30°,cos30°)≠ẑ — stresses the normal/sign/B-operator/routing off-axis); **E3 friction on a real brick** (stick vs the μ=0 slide); **byte-identity at scale** (all 8 brick nodes, bars far apart); and the **reference-config / large-sliding LIMIT** documented as a GRACEFUL release (engaged→slid-off→inert, finite, query→0 — the §7 fence + the E6 stale-gap fold). Full contact battery **141 passed**. 3-reviewer adversarial gate → PASS (folds: mechanism-specific assertions, the off-axis + friction real-body tests, the engaged-then-released proof, all-8-node byte-identity, + the E5/E6/E7 capstone-row backfill). |
 
 Every `proto_e*` is numpy-only (build-free); Zone-A CI is the C++ no-regression gate;
 keep the capstone status-of-record row + the three ledgers current **in the same PR** as
@@ -744,5 +744,36 @@ friction-kernel 4th-consumer, SOFT mass-cache, clip-degeneracy probe safety
   corrupted, self-corrects on re-cross). The "uncommitted working tree" BLOCKER was a review artifact
   (the diff was simply not yet committed); ALM Uzawa/mask-consistency, committed-only/revert, the held-load
   D1 bracket reuse, and off-by-default byte-identity all verified sound.
-- **E4 / E7** — pending (design-only above; each lands oracle-first → C++ → gate → PR,
-  updating the capstone row + ledgers in the same PR).
+- **E7 (integration + regression — the trust gate) — SHIPPED** (this PR). The first validation of the
+  full E2–E6 stack on REAL meshed bodies: a deformable `LadrunoBrick` slave bar (mass from the material ρ,
+  stiffness from E) crosses a fixed master facet edge-on, so the body itself regularizes the point-pair
+  differential mode — NO artificial springs (except where a *no-friction* / *post-release* baseline is
+  genuinely unrestrained). `tests/test_adr57_edge_edge_5.py` **8/8**: (1) cross-stacked bars restrained at
+  the **mechanism-specific** δ=P/εN (the bottom-edge reaction = the applied load by static equilibrium,
+  INDEPENDENT of the brick stiffness — so the assertion pins edge-edge, not "small from the brick"); (2)
+  the NTS-passes-through falsifier survives real bodies; (3) **E5 SOFT sized from the ASSEMBLED
+  element-density mass** (the full ladrunoBuildNodalMass element pass) — an explicit drop stays bounded
+  at the structural dt while the configured stiff εN ejects ≫100× (CFL-unstable); (4) **E6 ALM on a
+  deformable body** closes the edge gap → augTol εN-independently; (5) a **non-axis-aligned crossing**
+  (the master facet inclined about x ⇒ n=(0,−sin30°,cos30°)≠ẑ, facets still ⊥ ⇒ edge-edge routes) — guards
+  against an n-orientation / sign-anchor / B-operator artifact off the canonical axis-aligned case; (6)
+  **E3 friction on a real brick** (held penetration ⇒ constant N; a sub-cone y-drag STICKS vs the μ=0
+  slide — the slip measure reads real brick displacements); (7) **byte-identity at scale** (all 8 brick
+  nodes, bars 10 units apart ⇒ no pair routes ⇒ -edgeedge present == absent, bitwise); (8) the
+  **reference-config / large-sliding LIMIT** validated as a GRACEFUL release — under explicit the bar
+  translates along its axis until its bottom edge slides off the margin-interior band (`edgeGeom`→false ⇒
+  the adapter goes inert, the E6 stale-gap reset clears gN_committed/εN), proven ENGAGED→RELEASED (the
+  query was >0 while crossing, →0 after) with the run staying FINITE (a stale/degenerate pair would inject
+  energy). The contact does NOT track the large slide (the documented re-emission hand-off, §7) — the
+  honest boundary of the supported regime. Full contact battery **141 passed**. **3-reviewer adversarial
+  gate → PASS** (folds: mechanism-specific depth/contrast assertions, the off-axis + real-body-friction
+  tests closing the geometry/lane coverage gaps, the engaged-then-released slide-off proof, all-8-node
+  byte-identity, + the **capstone-row backfill** — E5/E6 had updated `57_`/`LEDGER_implementations.md` but
+  missed the capstone `48_` row, brought current here through E5/E6/E7. Rejected: the "reset redundant
+  with edgeGCEnd" finding — `edgeGCEnd` runs once per `handle()`/re-pairing, NOT per step, so the
+  per-residual reset is the operative per-step cleaner during a slide).
+- **E4 (consistent geometric tangent, `-edgegeomtan`, gated off)** — DEFERRED / demand-driven (lowest
+  value, highest cost: only helps large-sliding IMPLICIT Newton, the regime fenced out of the MVP scope;
+  the B3 NTS analogue showed the geometric block can even shrink the convergence basin). Pull only if a
+  concrete implicit model with a sliding edge pair stalls and nothing cheaper (`-visc`, line search,
+  smaller steps) fixes it. **The edge-edge lane is otherwise COMPLETE** (E0–E3 + E5 + E6 + E7).
