@@ -1292,9 +1292,10 @@ features:
       rotation, side channel: spatial L + quaternion, midpoint exp-map in commitState) +
       P2 Stage 2 (finite-rotation slave-following u_i=u_R+(R-I)d_i^0 imposed in update()
       = "mechanism C3"; moment gather Sum (R*d_i^0) x f_i from incident elements cached
-      by tag; Housner rocking gate 1.22%). Zone-A pytest gates all five. Still wip on the
-      v1 limits (serial-only sendSelf/recvSelf stubs; explicit-only; incident toe/contact
-      elements must be displacement-only + defined before the body). PRs 426/428/432.
+      by tag; Housner rocking gate 1.22%). Zone-A pytest gates all six (incl. M2
+      slave-velocity). v1 limits: serial-only sendSelf/recvSelf stubs; explicit-only;
+      incident toe/contact elements defined before the body (disp + velocity re-imposed
+      under rotation, only accel is not). PRs 426/428/432/435.
       Plan: 58_ladruno_rigid_body_adr.md.
 
   # --- worked examples shipped with the scaffold (existing elements, no new C++) ---

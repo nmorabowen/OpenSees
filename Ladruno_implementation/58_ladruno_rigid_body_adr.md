@@ -599,7 +599,24 @@ lesson held a third time — see the Housner penalty/lag finding below).
   `getElement()` re-resolve. M2 (velocity-dependent incident elements) + 6-DOF-slave
   rotation follow are documented v1 preconditions.
 
-**Status: still wip** (serial-only, explicit-only, displacement-only incident
-elements). **Remaining for "shipped":** a `tests/` Zone-A pytest port (manifest row is
-PENDING) + the splash-banner feature line. Both are focused follow-ups, not blockers
-on the Stage-2 physics, which is complete and gated.
+### 2026-06-24 — SHIPPED: Zone-A pytest + banner + M2 (consistent slave velocity)
+The two "shipped" follow-ups + the cheapest deferred item landed.
+- **Zone-A pytest** `tests/test_ladrunoRigidBody_element.py` (6 cases:
+  ballistic / Dzhanibekov / slave-tracking / slave-velocity / gather-sign / Housner;
+  Housner at dt=2e-5/±4% for CI speed, the standalone keeps dt=1e-5/±3%). Manifest
+  flipped `planned → shipped`; `check_manifest` warns 4 → 3. **Splash-banner** line
+  added via `banner_features.txt` + `patch_banner.py`. ([#435](https://github.com/nmorabowen/OpenSees/pull/435))
+- **M2 — consistent slave velocity** (the recommended deferred item): `update()` now
+  re-imposes `v_i = v_R + ω_spatial × (R·d_i⁰)` alongside the disp, so a
+  velocity-dependent incident element (dashpot / viscous contact) and slave velocity
+  recorders are coherent with the finite-rotation disp (was the M2 review finding).
+  `test_slave_velocity` confirms `v_i = ω×r` to machine precision. **Only slave
+  ACCELERATION is now un-imposed** (accel-dependent incident elements remain
+  inconsistent — a documented, narrow v1 limit).
+
+**Status: SHIPPED** (manifest `shipped` + banner line). Remaining v1 limits:
+serial-only `sendSelf/recvSelf` (stubs), explicit-only (no implicit tangent),
+accel-dependent incident elements. **Deferred to follow-up ADRs:** parallel
+serialization (gated on parallelizing the contact subsystem anyway) and the
+implicit finite-rotation tangent — both large-effort, demand-free; pull when a
+concrete multi-body / quasi-static-rigid / debris use case lands.
