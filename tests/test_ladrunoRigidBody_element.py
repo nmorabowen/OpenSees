@@ -140,6 +140,47 @@ def test_slave_tracking():
     assert maxerr < 1e-9, f"slaves do not track finite rotation (err {maxerr:.2e})"
 
 
+def test_slave_velocity():
+    """Consistent slave velocity (M2): for a torque-free spin (CoM at rest) each slave's
+    velocity equals omega_spatial x (R d_i^0) for the state it was imposed at — so a
+    velocity-dependent incident element / vel recorder stays coherent with the disp."""
+    a, b, c = 2.0, 1.5, 1.0
+    pts = [(a, 0, 0), (-a, 0, 0), (0, b, 0), (0, -b, 0), (0, 0, c), (0, 0, -c)]
+    ops.wipe()
+    ops.model('basic', '-ndm', 3, '-ndf', 3)
+    for i, (x, y, z) in enumerate(pts, start=1):
+        ops.node(i, float(x), float(y), float(z))
+        ops.mass(i, 1.0, 1.0, 1.0)
+    tags = list(range(1, len(pts) + 1))
+    ops.element('LadrunoRigidBody', 100, len(pts), *tags, '-omega', 0.12, 6.0, 0.12)
+    ops.constraints('Transformation')
+    ops.numberer('Plain')
+    ops.system('Diagonal')
+    ops.test('NormDispIncr', 1e-12, 10, 0)
+    ops.algorithm('Linear')
+    ops.integrator('CentralDifference')
+    ops.analysis('Transient')
+
+    d0 = [list(p) for p in pts]
+    maxerr, scale = 0.0, 0.0
+    for s in range(3000):
+        q_before = ops.eleResponse(100, 'orientation')
+        w_before = ops.eleResponse(100, 'omega')           # spatial omega used this step
+        ops.analyze(1, 1.0e-3)
+        if s % 20 == 0:
+            R = _quat_to_R(q_before)
+            for i, tag in enumerate(tags):
+                v = [ops.nodeVel(tag, k + 1) for k in range(3)]
+                r = [sum(R[rr][cc] * d0[i][cc] for cc in range(3)) for rr in range(3)]
+                wxr = [w_before[1]*r[2] - w_before[2]*r[1],
+                       w_before[2]*r[0] - w_before[0]*r[2],
+                       w_before[0]*r[1] - w_before[1]*r[0]]
+                maxerr = max(maxerr, math.sqrt(sum((v[k] - wxr[k])**2 for k in range(3))))
+                scale = max(scale, math.sqrt(sum(x*x for x in wxr)))
+    assert maxerr < 1e-9 * max(scale, 1.0), \
+        f"slave velocity not consistent with omega x r (err {maxerr:.2e}, scale {scale:.2e})"
+
+
 def test_gather_sign():
     """A toe/contact reaction drives the spin: a torsional oscillator (two y-springs at
     opposite slaves) DECELERATES a +z spin (restoring couple), with no off-axis leak."""

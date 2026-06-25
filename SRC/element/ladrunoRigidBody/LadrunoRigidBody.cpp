@@ -501,25 +501,43 @@ void LadrunoRigidBody::imposeSlaveKinematics(void)
 {
   if (!valid || theIntNode == 0) return;
   const Vector& uR = theIntNode->getTrialDisp();      // internal CoM node, 6 DOF
+  const Vector& vR = theIntNode->getTrialVel();        // CoM translational velocity (0..2)
+  // spatial angular velocity at the imposed orientation (M2): ω_s = R·(Ibody⁻¹ qᵀL)
+  Vector3D wSpat = rotateVec(qTrial, this->omegaBodyFrom(qTrial, Ltrial));
+
+  // 6-DOF slaves: body rotation vector from the quaternion log (set once — same body q)
+  double nv = sqrt(qTrial.vector[0]*qTrial.vector[0]
+                 + qTrial.vector[1]*qTrial.vector[1]
+                 + qTrial.vector[2]*qTrial.vector[2]);
+  double angle = 2.0 * atan2(nv, qTrial.scalar);
+
   for (int i = 0; i < nSlave; i++) {
     Vector3D r = rotateVec(qTrial, slaveOffset0[i]);   // R·d_i^0 (current spatial lever arm)
     for (int k = 0; k < 3; k++) {
       double u = uR(k) + (r[k] - slaveOffset0[i][k]);  // u_R + (R−I)·d_i^0
       theSlaves[i]->setTrialDisp(u, k);
     }
-    // 6-DOF slaves: also drive the rotational DOFs with the body rotation vector
-    // (the MP rotation block tied them to the off-channel internal-node rotation,
-    // which is ~0). Not exercised by the 3-DOF toe of the Housner gate.
-    if (theSlaves[i]->getNumberDOF() >= 6) {
-      double nv = sqrt(qTrial.vector[0]*qTrial.vector[0]
-                     + qTrial.vector[1]*qTrial.vector[1]
-                     + qTrial.vector[2]*qTrial.vector[2]);
-      double angle = 2.0 * atan2(nv, qTrial.scalar);   // total rotation angle
+
+    // M2 — consistent slave VELOCITY v_i = v_R + ω × (R·d_i^0), so a velocity-dependent
+    // incident element (dashpot / viscous contact) and a slave vel recorder stay
+    // coherent with the imposed finite-rotation disp (the handler would otherwise leave
+    // the linearized T·v_retained). setTrialVel needs the full nodal vector.
+    int nd = theSlaves[i]->getNumberDOF();
+    Vector3D wxr = wSpat.cross(r);
+    Vector vel(nd); vel.Zero();
+    for (int k = 0; k < 3; k++) vel(k) = vR(k) + wxr[k];
+
+    // 6-DOF slaves: also drive the rotational DOFs (disp = body rotation vector, vel =
+    // spatial ω). The MP rotation block tied them to the off-channel internal-node
+    // rotation (~0); not exercised by the 3-DOF toe of the Housner gate.
+    if (nd >= 6) {
       for (int k = 0; k < 3; k++) {
         double th = (nv > 1.0e-12) ? angle * qTrial.vector[k] / nv : 0.0;
         theSlaves[i]->setTrialDisp(th, 3 + k);
+        vel(3 + k) = wSpat[k];
       }
     }
+    theSlaves[i]->setTrialVel(vel);
   }
 }
 

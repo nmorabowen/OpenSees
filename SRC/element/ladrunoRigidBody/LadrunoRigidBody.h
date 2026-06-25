@@ -196,11 +196,11 @@ class LadrunoRigidBody : public Element
   //
   // v1 PRECONDITIONS on incident elements (the toe/contact spring): (a) DEFINE them
   // on the slave nodes BEFORE this element, else the first cache build misses them
-  // and their reaction silently does not drive the spin; (b) they must be
-  // DISPLACEMENT-only (penalty/gap/zeroLength) — the slaves' trial vel/accel are NOT
-  // re-imposed under finite rotation, so a velocity-dependent incident element
-  // (dashpot, viscous contact) would read an inconsistent slave velocity. Both are
-  // honored by the Housner gate harness.
+  // and their reaction silently does not drive the spin; (b) the slaves' trial disp
+  // AND velocity are re-imposed under finite rotation (u_i and v_i=v_R+ω×(R·d_i^0),
+  // M2), so displacement- and velocity-dependent incident elements (dashpot, viscous
+  // contact) are coherent — but the slave ACCELERATION is NOT re-imposed, so an
+  // acceleration-dependent incident element (a mass on a slave) would be inconsistent.
   int nIncident;           // number of (element, slave) incidence records
   int* incidentTag;        // size nIncident: tag of the incident element (re-resolved each gather)
   int* incidentOff;        // start index of the slave's 3 transl DOFs in the ele force vector
