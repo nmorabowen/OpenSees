@@ -107,7 +107,9 @@ LadrunoContactDomain::addMortarContact(int tag, int masterSurfTag, int slaveSurf
                                        double mu, double epsT, bool epsTAuto,
                                        double cohesion, double tauMax, bool consistentTan,
                                        bool isTie, double muc, double softScale,
-                                       bool edgeEdge, double edgeKn, bool edgeKnAuto, double edgeBand)
+                                       bool edgeEdge, double edgeKn, bool edgeKnAuto, double edgeBand,
+                                       double edgeMu, double edgeKt, double edgeCohesion,
+                                       double edgeTauMax, bool edgeConsistentTan)
 {
     LadrunoContactSurface *ms = getSurface(masterSurfTag);
     LadrunoContactSurface *ss = getSurface(slaveSurfTag);
@@ -180,6 +182,11 @@ LadrunoContactDomain::addMortarContact(int tag, int masterSurfTag, int slaveSurf
     m.edgeKn = (edgeKn > 0.0) ? edgeKn : 0.0;          // ≤0 ⇒ default to the resolved mortar penalty
     m.edgeKnAuto = edgeKnAuto;                         // size the edge penalty per master facet
     m.edgeBand = (edgeBand > 0.0) ? edgeBand : 0.0;    // ≤0 ⇒ default from the facet edge length
+    m.edgeMu = (edgeMu > 0.0) ? edgeMu : 0.0;          // ADR-57 E3 edge-edge friction (≤0 ⇒ frictionless)
+    m.edgeKt = (edgeKt > 0.0) ? edgeKt : 0.0;          // ≤0 ⇒ default to the edge normal penalty
+    m.edgeCohesion = (edgeCohesion > 0.0) ? edgeCohesion : 0.0;
+    m.edgeTauMax = edgeTauMax;                         // ≤0 ⇒ no Tresca upper cap
+    m.edgeConsistentTan = edgeConsistentTan;
     theMortarContacts.push_back(m);
     return 0;
 }

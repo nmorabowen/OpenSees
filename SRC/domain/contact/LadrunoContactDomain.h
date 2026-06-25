@@ -151,6 +151,14 @@ class LadrunoContactDomain
         double edgeKn;
         bool   edgeKnAuto;
         double edgeBand;
+        // ADR-57 E3 — edge-edge friction (Coulomb/Tresca on the unified cone min(μN+c, τmax)). All ≤0
+        // ⇒ the frictionless E2 path. edgeKt = the tangential penalty (≤0 ⇒ defaults to the edge normal
+        // penalty at handle() time, with a warning); edgeConsistentTan ⇒ the non-symmetric Coulomb Csl.
+        double edgeMu;
+        double edgeKt;
+        double edgeCohesion;
+        double edgeTauMax;
+        bool   edgeConsistentTan;
     };
     int addMortarContact(int tag, int masterSurfTag, int slaveSurfTag,
                          double kn, bool knAuto, double epsN, bool epsNAuto,
@@ -160,7 +168,9 @@ class LadrunoContactDomain
                          double cohesion = 0.0, double tauMax = 0.0, bool consistentTan = false,
                          bool isTie = false, double muc = 0.0, double softScale = 0.0,
                          bool edgeEdge = false, double edgeKn = 0.0, bool edgeKnAuto = false,
-                         double edgeBand = 0.0);
+                         double edgeBand = 0.0, double edgeMu = 0.0, double edgeKt = 0.0,
+                         double edgeCohesion = 0.0, double edgeTauMax = 0.0,
+                         bool edgeConsistentTan = false);
     int getNumMortarContacts(void) const { return (int)theMortarContacts.size(); }
     const MortarContact &getMortarContact(int i) const { return theMortarContacts[i]; }
 

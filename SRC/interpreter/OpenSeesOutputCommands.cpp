@@ -474,9 +474,13 @@ int OPS_LadrunoContact()
     // fallback (the cos_t→0 pairs the face-mortar clip degenerates on get a dedicated segment-
     // segment penalty). OFF by default ⇒ byte-identical. `-edgeKn auto|<val>` sets the edge penalty
     // (default = the mortar epsN); `-edgeBand <d>` sets the gap activation band (default from the
-    // facet edge length). Requires -mortar (validated after the loop). Friction (-edgeMu) is E3.
+    // facet edge length). Requires -mortar (validated after the loop).
+    // E3: `-edgeMu`/`-edgeKt`/`-edgeCohesion`/`-edgeTauMax` add edge-edge Coulomb/Tresca friction
+    // (the unified cone min(μN+c, τmax)); `-edgeConsistentTan` opts into the non-symmetric Csl tangent.
     bool edgeEdge = false, edgeKnAuto = false;
     double edgeKn = 0.0, edgeBand = 0.0;
+    double edgeMu = 0.0, edgeKt = 0.0, edgeCohesion = 0.0, edgeTauMax = 0.0;
+    bool edgeConsistentTan = false;
     while (OPS_GetNumRemainingInputArgs() > 0) {
         const char *opt = OPS_GetString();
         if (opt != 0 && strcmp(opt, "-mortar") == 0) {
@@ -641,6 +645,24 @@ int OPS_LadrunoContact()
                 return -1;
             }
             edgeBand = v[0];
+        } else if (opt != 0 && strcmp(opt, "-edgeMu") == 0) {
+            double v[1]; int m = 1;
+            if (OPS_GetDoubleInput(&m, v) < 0) { opserr << "WARNING contact -edgeMu - need a value\n"; return -1; }
+            edgeMu = v[0];
+        } else if (opt != 0 && strcmp(opt, "-edgeKt") == 0) {
+            double v[1]; int m = 1;
+            if (OPS_GetDoubleInput(&m, v) < 0) { opserr << "WARNING contact -edgeKt - need a value\n"; return -1; }
+            edgeKt = v[0];
+        } else if (opt != 0 && strcmp(opt, "-edgeCohesion") == 0) {
+            double v[1]; int m = 1;
+            if (OPS_GetDoubleInput(&m, v) < 0) { opserr << "WARNING contact -edgeCohesion - need a value\n"; return -1; }
+            edgeCohesion = v[0];
+        } else if (opt != 0 && strcmp(opt, "-edgeTauMax") == 0) {
+            double v[1]; int m = 1;
+            if (OPS_GetDoubleInput(&m, v) < 0) { opserr << "WARNING contact -edgeTauMax - need a value\n"; return -1; }
+            edgeTauMax = v[0];
+        } else if (opt != 0 && strcmp(opt, "-edgeConsistentTan") == 0) {
+            edgeConsistentTan = true;
         } else if (opt != 0 && strcmp(opt, "-outward") == 0) {
             double o[3]; int m = 3;
             if (OPS_GetDoubleInput(&m, o) < 0) {
@@ -716,9 +738,16 @@ int OPS_LadrunoContact()
                   "is a mortar-lane modifier)\n";
         return -1;
     }
-    if (!edgeEdge && (edgeKn > 0.0 || edgeKnAuto || edgeBand > 0.0))
-        opserr << "WARNING contact -edgeKn/-edgeBand given without -edgeedge; ignored (enable the "
-                  "edge-edge fallback with -edgeedge)\n";
+    if (!edgeEdge && (edgeKn > 0.0 || edgeKnAuto || edgeBand > 0.0 || edgeMu > 0.0 ||
+                      edgeKt > 0.0 || edgeCohesion > 0.0 || edgeTauMax > 0.0 || edgeConsistentTan))
+        opserr << "WARNING contact -edgeKn/-edgeBand/-edgeMu/... given without -edgeedge; ignored "
+                  "(enable the edge-edge fallback with -edgeedge)\n";
+    if (edgeEdge && edgeConsistentTan && (edgeMu > 0.0 || edgeCohesion > 0.0 || edgeTauMax > 0.0))
+        // the non-symmetric Coulomb Csl tangent needs a non-symmetric solver (FullGeneral/UmfPack/
+        // BandGeneral); a symmetric SOE silently drops the lower triangle. Warn once (like -consistanttan).
+        opserr << "WARNING contact -edgeConsistentTan: the non-symmetric edge-edge Coulomb friction "
+                  "tangent needs a non-symmetric solver (system FullGeneral/UmfPack/BandGeneral); "
+                  "symmetric solvers will silently corrupt it.\n";
     if (consistentNormal && isMortar) {
         // B3 (P2b-2c) is the NTS SEGMENT geometric tangent; the mortar lane's geometric
         // ∂{D,M,n}/∂u block is a SEPARATE deferral (C2 shipped the penalty Gram only). Refuse
@@ -770,11 +799,12 @@ int OPS_LadrunoContact()
         // C4: -tie ⇒ a permanent mesh-tie bond (full 3-vec r→0; friction refused above).
         // D2.2: -visc μ_c ⇒ viscous normal stabilization on the mortar contact (refused with -tie above).
         // B2: softScale>0 ⇒ the SOFT=2 segment-based explicit penalty (off ⇒ byte-identical mortar).
-        // ADR-57 E2: edgeEdge ⇒ the perpendicular edge-edge fallback (off ⇒ byte-identical mortar).
+        // ADR-57 E2/E3: edgeEdge ⇒ the perpendicular edge-edge fallback (+ E3 friction; off ⇒ byte-identical).
         return cd->addMortarContact(idata[0], idata[1], idata[2], kn, knAuto, epsN, epsNAuto,
                                     augTol, maxAug, ngp, hasOutward ? outward : 0, cellFrac,
                                     mortarMu, epsT, epsTAuto, cohesion, tauMax, consistentTan, isTie,
-                                    muc, softScale, edgeEdge, edgeKn, edgeKnAuto, edgeBand);
+                                    muc, softScale, edgeEdge, edgeKn, edgeKnAuto, edgeBand,
+                                    edgeMu, edgeKt, edgeCohesion, edgeTauMax, edgeConsistentTan);
     }
     // D2: -visc μ_c (NTS viscous normal stabilization; 0 ⇒ off, byte-identical).
     // B3: -geomtan ⇒ the consistent ∂n/∂u geometric normal tangent (off ⇒ byte-identical).
