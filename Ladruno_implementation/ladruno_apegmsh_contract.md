@@ -49,8 +49,8 @@ habit as the ledgers, no tooling.
 | **EnergyBalance recorder** | `recorder EnergyBalance -file f [-time] [-region tag ...] [-csv\|-xml\|-binary\|-tcp addr port] [-precision N] [-scientific] [-closeOnWrite]` | recorder emit; per-region columns `KE IE DW ULW RES ERR`. **Text sidecar**, *not* MPCO — route to a text reader. The same energy math now also lands inside `.ladruno` (see MPCO row, ADR D8), so prefer that when MPCO is already on. | shipped |
 | **Ladruno** | `recorder ladruno file -N <nodal...> -E <element...> [-G energy <regionTag...>] -T dt -R region` | `_response_catalog` `IntRule` enum **must match** `ladruno::detail::ElementIntegrationRuleType`; `Results.from_ladruno` reader keyed on `.ladruno` `FORMAT_VERSION`; partition discovery regex `^(?P<stem>.+?)\.part-(?P<idx>\d+)\.ladruno$`; consumes `basisInfo`/`QUADRATURE` self-declaration (new conforming elements need *no* recorder edit). See the schema notes below. | shipped (schema actively evolving — pin to `FORMAT_VERSION`) |
 | **Analysis monitor** (live) | `recorder Monitor -node <n…> -dof <d…> -resp disp\|vel\|accel\|reaction -sink file.h5 [-every K] [-hz H] [-region tag]` → SWMR-HDF5 stream tailable *while the run is live*; stop via `remove recorder $tag` | **apeGmsh must implement a consumer** — a typed `ops.recorder.Monitor(…)` emitter + a live tailing reader (open `swmr=True`, `ds.id.refresh()`) feeding the viewer's live plots. File is self-describing (`COLUMNS` var-strings, `STEP`/`TIME`/`FRAMES`), `FORMAT="ladruno-monitor"` `FORMAT_VERSION=1`. Also a valid at-rest file (read post-run like any results h5). class tag `RECORDER_TAGS_LadrunoMonitorRecorder`=33002. | **shipped (v1, sequential, nodal scalars)** — see [[08_analysis_monitor]] | 
-| **Embedded reinforcement** (`LadrunoEmbeddedRebar` + `LadrunoBondSlip`) | `element LadrunoEmbeddedRebar tag rebarNode {nHost h… \| -host eleTag} {-shape N… \| -xi ξ…} -dir dx dy [dz] (-perfect kAxial \| -bond matTag [-bondScale πd·Ltrib]) [-kt {k\|auto} -ktAlpha a] [-corot -xiB ξ…] [-enforce penalty\|al] [-bipenalty {-dtcr dt \| -wcap β}]`; axial law `uniaxialMaterial LadrunoBondSlip tag τmax s1 s2 s3 τf α [-Gf Gf] [-s0 s0]` | **apeGmsh owns the inverse map** (global bar point → host ξ) and should ship a `g.reinforce(host=<set>, bars=<set>, bond=…, enforce=…, explicit=…)` generator: lay out `corotTruss`/beam rebar along bar paths, locate the host + inverse-map each rebar node to ξ, emit `-host -xi` primitives (host owns the weights via `getInterpolationWeights`). **`-xi` is 3D-only** (LadrunoBrick/BezierTet10 override it); 2D hosts need apeGmsh-computed `-shape`. ELE **33005** / MAT **33002** (read live). | **shipped (element + §10 roadmap); apeGmsh `g.reinforce` generator TO IMPLEMENT** — full grammar/theory in [[LadrunoEmbeddedRebar_guide]] |
-| **Absorbing boundaries** (`ASDAbsorbingBoundary2D/3D` + `LysmerTriangle`) | `element ASDAbsorbingBoundary2D tag n1..n4 G v rho thick btype [-fx tsx] [-fy tsy]`; `element ASDAbsorbingBoundary3D tag n1..n8 G v rho btype [-fx tsx] [-fy tsy] [-fz tsz]`; `element LysmerTriangle tag i j k rho Vp Vs [len] [stage]` | **apeGmsh owns the generator** — a `g.absorbing_boundary(faces=…, soil=…, rayleigh=…, base_input=…)` that extrudes a **conforming one-element-thick ghost layer** outward from the domain faces (inner face = existing soil nodes, outer face = new ghost nodes), emits **one** element per ghost brick with `btype` ORed from face membership (corners/edges combined → single element), sets `G,v,rho` (+`thick` 2D) from the adjacent soil, assigns **Rayleigh on the absorbing elements** (required — free-field column damping), and emits the staging hook `setParameter -val 1 -ele <tags> stage` between gravity and transient. Base input is a **velocity** TimeSeries (within/÷2 motion) on **bottom** elements only. Axis-aligned faces only. Upstream tags **185/219/220**. **No new results reader** (only scalar `eleResponse stage\|G\|v\|rho\|E`); read physics from adjacent soil nodes — just tag absorbers to exclude from contour plots. | **upstream shipped; apeGmsh `g.absorbing_boundary` generator + staging hook TO IMPLEMENT** — full theory/arch/contract in [[lysmer_asd_absorbing_boundaries_guide]] |
+| **Embedded reinforcement** (`LadrunoEmbeddedRebar` + `LadrunoBondSlip`) | `element LadrunoEmbeddedRebar tag rebarNode {nHost h… \| -host eleTag} {-shape N… \| -xi ξ…} -dir dx dy [dz] (-perfect kAxial \| -bond matTag [-bondScale πd·Ltrib]) [-kt {k\|auto} -ktAlpha a] [-corot -xiB ξ…] [-enforce penalty\|al] [-bipenalty {-dtcr dt \| -wcap β}]`; axial law `uniaxialMaterial LadrunoBondSlip tag τmax s1 s2 s3 τf α [-Gf Gf] [-s0 s0]` | **apeGmsh owns the inverse map** (global bar point → host ξ) and should ship a `g.reinforce(host=<set>, bars=<set>, bond=…, enforce=…, explicit=…)` generator: lay out `corotTruss`/beam rebar along bar paths, locate the host + inverse-map each rebar node to ξ, emit `-host -xi` primitives (host owns the weights via `getInterpolationWeights`). **`-xi` is 3D-only** (LadrunoBrick/BezierTet10 override it); 2D hosts need apeGmsh-computed `-shape`. ELE **33005** / MAT **33002** (read live). | **shipped both sides** — apeGmsh `g.reinforce` generator (R0–R3a: #541/#542/#552/#553; `-shape` path, perfect/bond/AL/bipenalty; ties round-trip native `model.h5`). R3c `-corot -shapeB` + partitioned-MPI emit deferred. Full grammar/theory in [[LadrunoEmbeddedRebar_guide]] |
+| **Absorbing boundaries** (`ASDAbsorbingBoundary2D/3D` + `LysmerTriangle`) | `element ASDAbsorbingBoundary2D tag n1..n4 G v rho thick btype [-fx tsx] [-fy tsy]`; `element ASDAbsorbingBoundary3D tag n1..n8 G v rho btype [-fx tsx] [-fy tsy] [-fz tsz]`; `element LysmerTriangle tag i j k rho Vp Vs [len] [stage]` | **apeGmsh owns the generator** — a `g.absorbing_boundary(faces=…, soil=…, rayleigh=…, base_input=…)` that extrudes a **conforming one-element-thick ghost layer** outward from the domain faces (inner face = existing soil nodes, outer face = new ghost nodes), emits **one** element per ghost brick with `btype` ORed from face membership (corners/edges combined → single element), sets `G,v,rho` (+`thick` 2D) from the adjacent soil, assigns **Rayleigh on the absorbing elements** (required — free-field column damping), and emits the staging hook `setParameter -val 1 -ele <tags> stage` between gravity and transient. Base input is a **velocity** TimeSeries (within/÷2 motion) on **bottom** elements only. Axis-aligned faces only. Upstream tags **185/219/220**. **No new results reader** (only scalar `eleResponse stage\|G\|v\|rho\|E`); read physics from adjacent soil nodes — just tag absorbers to exclude from contour plots. | **shipped both sides** — apeGmsh `ops.element.absorbing_boundary` + ghost-skin generators (`g.parts.add_plane_wave_box` / `add_absorbing_shell`, incl. layered) + `s.activate_absorbing()` staging hook (ADR 0054, AB-1..AB-5). Full theory/arch/contract in [[lysmer_asd_absorbing_boundaries_guide]] |
 | **Ladruno plane elements** (`LadrunoQuad` + `LadrunoCST`) | `element LadrunoQuad tag n1 n2 n3 n4 matTag [-formulation std\|bbar\|ssp\|eas] [-type PlaneStrain\|PlaneStress] [-thick t] [-rho r] [-body b1 b2] [-pressure p]`; `element LadrunoCST tag n1 n2 n3 matTag [-type …] [-thick t] [-rho r] [-body b1 b2] [-pressure p]` | Typed primitives `ops.element.LadrunoQuad` / `ops.element.LadrunoCST` (apeGmsh #605 / #606); both in `_FORK_ONLY_ELEMENTS` (live emitter fails loud on stock builds). ELE **33007** / **33008** (read live from `classTags.h`). | **shipped both sides** |
 | **Kinematic coupling / RBE2** (`LadrunoKinematicCoupling`) | `element LadrunoKinematicCoupling tag refNode N s1..sN [-dof c1..cK] [-k {Kt\|auto}] [-kAlpha a] [-host eleTag] [-kr Kr] [-enforce {penalty\|al}] [-bipenalty {-dtcr dt \| -wcap beta}] [-absolute]` | `g.constraints.kinematic_coupling(master, slave, dofs=…, k=…, k_alpha=…, host=<FEM eid>, kr=…, enforce=…, bipenalty_dtcr=…, bipenalty_wcap=…, absolute=…)` — replaced the `equalDOF` expansion (apeGmsh #609); knobs ride a `CouplingControl` (#630), host auto-scalers translate the FEM eid → emitted ops tag at emit time (#635); partitioned emit = **single canonical rank** (every slave present; ref ghost-declared; split set fails loud) (#639); knobs round-trip `model.h5` (neutral schema 2.13.0). ELE **33012**. Fork-only gated via `_FORK_ONLY_ELEMENTS`. | **shipped both sides** |
 | **Distributing coupling / RBE3** (`LadrunoDistributingCoupling`) | `element LadrunoDistributingCoupling tag refNode N i1..iN [-w w1..wN] [-k {Kt\|auto}] [-kAlpha a] [-host eleTag] [-kr Kr] [-enforce {penalty\|al}] [-bipenalty {-dtcr dt \| -wcap beta}] [-absolute]` | `g.constraints.distributing_coupling(master, slave, weighting="uniform"\|"area", …same knobs…)` — replaced the `NotImplementedError` stub (apeGmsh #610); `weighting="area"` computes per-independent **tributary areas** over the slave surface and emits `-w` in the sorted independent order (#637 — matches the `g.loads` surface-tributary lumping, so a force at R distributes like a uniform traction); R is massless ⇒ explicit runs need `bipenalty_dtcr`/`bipenalty_wcap`. ELE **33011**. Fork-only gated via `_FORK_ONLY_ELEMENTS`. | **shipped both sides** |
@@ -245,7 +245,7 @@ to line end; fixed, guarded by the `TCL FLAG ORDER` regression gate).
   `ladruno::detail::ElementIntegrationRuleType`) — don't hardcode. Pin the reader to
   `FORMAT_VERSION` and treat the schema as actively evolving.
 
-### Analysis monitor (live `recorder Monitor`)  — **TO IMPLEMENT on apeGmsh side**
+### Analysis monitor (live `recorder Monitor`)  — **SHIPPED on apeGmsh side (#550)**
 
 **OpenSees side.** A live streaming recorder (`08_analysis_monitor.md`). You pick
 nodes/dofs/response, call `analyze(N)` once, and it streams selected nodal scalars
@@ -282,7 +282,7 @@ apeGmsh's consumer is not).**
 - **Selection ↔ picker:** the `COLUMNS` labels are authoritative and self-describing;
   drive the viewer's channel picker straight off them (no per-feature shim).
 
-### Embedded reinforcement (`LadrunoEmbeddedRebar` + `LadrunoBondSlip`) — **`g.reinforce` generator TO IMPLEMENT on apeGmsh side**
+### Embedded reinforcement (`LadrunoEmbeddedRebar` + `LadrunoBondSlip`) — **`g.reinforce` generator SHIPPED on apeGmsh side**
 
 **OpenSees side.** A penalty **coupling** element (ELE **33005**) that ties one
 discrete rebar node to a solid host element's nodes via shape-function weights, so
@@ -298,7 +298,7 @@ rotation), `-enforce penalty|al` (augmented Lagrangian → near-exact bond at
 moderate stiffness), and `-bipenalty -dtcr|-wcap` (explicit critical-time-step
 control). **Full grammar, theory, responses, and use cases: [[LadrunoEmbeddedRebar_guide]].**
 
-**Recommended apeGmsh approach (the deliverable — element shipped, generator not).**
+**Recommended apeGmsh approach (both element and `g.reinforce` generator now shipped — kept as the design reference).**
 - **Ship a `g.reinforce(host=<set>, bars=<set>, bond=…, enforce=…, explicit=…)`
   generator.** This is naturally apeGmsh-side: the irreducible step is **point
   location / inverse map** (global bar point → host natural coord ξ), which apeGmsh
@@ -328,7 +328,7 @@ control). **Full grammar, theory, responses, and use cases: [[LadrunoEmbeddedReb
   (`ASDEmbeddedNodeElement` stays a valid **2D-native fallback** where no fork solid host is
   in play, but it is implicit-only and tri/tet-only.)
 
-### General node-to-host embedment (`LadrunoEmbeddedNode`) — **`g.embed` generator TO IMPLEMENT on apeGmsh side**
+### General node-to-host embedment (`LadrunoEmbeddedNode`) — **`g.embed` generator SHIPPED on apeGmsh side**
 
 **OpenSees side.** A penalty **coupling** element (ELE **33006**) — the **isotropic** sibling
 of `LadrunoEmbeddedRebar` over the same kernel — that ties one constrained node to a host
@@ -341,7 +341,7 @@ generator.** This is the **drop-in fork upgrade** of the `ASDEmbeddedNodeElement
 already emits for non-matching meshes. **Full grammar, theory, responses, use cases (incl. the
 generator contract): [[LadrunoEmbeddedNode_guide]].**
 
-**Recommended apeGmsh approach (element shipped, generator not).** Ship a
+**Recommended apeGmsh approach (both element and `g.embed` generator now shipped — kept as the design reference).** Ship a
 `g.embed(nodes=<set>, host=<set>, k="auto", enforce="penalty", explicit=None, staged=True)`
 generator. apeGmsh owns the irreducible **point location / inverse map** (global point → host
 ξ). It should:
@@ -361,7 +361,7 @@ generator. apeGmsh owns the irreducible **point location / inverse map** (global
   collapse the step; `ops.criticalTimeStep()` accounts for the ties (host-reduced `μ`) via the
   same `getExplicitCriticalTimeStep` seam as the rebar.
 
-### Absorbing boundaries (`ASDAbsorbingBoundary2D/3D` + `LysmerTriangle`) — **`g.absorbing_boundary` generator TO IMPLEMENT on apeGmsh side**
+### Absorbing boundaries (`ASDAbsorbingBoundary2D/3D` + `LysmerTriangle`) — **`g.absorbing_boundary` generator SHIPPED on apeGmsh side**
 
 **OpenSees side.** Three **upstream** elements (tags 185/219/220). The two ASD
 elements are a FLAC/PLAXIS-style **free-field boundary + compliant base**, *not* bare
@@ -377,7 +377,7 @@ static stress survives the switch. `LysmerTriangle` is the bare dashpot (clean
 diagonal `C` → the explicit-friendly option). **Full theory/architecture/impl with
 `file:line` citations: [[lysmer_asd_absorbing_boundaries_guide]].**
 
-**Recommended apeGmsh approach (the deliverable — elements shipped, generator not).**
+**Recommended apeGmsh approach (both elements and `g.absorbing_boundary` generator now shipped — kept as the design reference).**
 - **Ship `g.absorbing_boundary(faces=…, soil=…, thickness=…, rayleigh=(aM,bK),
   base_input={…})`.** The irreducible step is geometric and apeGmsh-native:
   **extrude a conforming one-element-thick ghost layer** outward from the chosen
@@ -442,6 +442,16 @@ This is a quick reference; the deep specs live next door:
 - [[LEDGER_implementations]] — authoritative class tags + shipping PRs.
 
 ## Maintenance log
+
+- 2026-06-29 — **Status reconcile** — flipped the stale `TO IMPLEMENT` markers
+  for the apeGmsh generators that have since shipped: **`g.reinforce`** (embedded
+  reinforcement, #541/#542/#552/#553), **`g.embed`** (node-to-host embedment,
+  #741/#748), **`g.absorbing_boundary`** (ghost-layer skin + `s.activate_absorbing()`,
+  ADR 0054), and the **analysis monitor** consumer (#550). All four now read
+  *shipped on the apeGmsh side* in both the feature table and the per-feature
+  sections; the prior "TO IMPLEMENT / generator not" recommendation prose is kept
+  as the design reference. Deferred apeGmsh legs noted in-row (g.reinforce R3c
+  `-corot -shapeB` + partitioned-MPI emit).
 
 - 2026-06-07 — Added **Absorbing boundaries** (`ASDAbsorbingBoundary2D/3D` +
   `LysmerTriangle`, upstream tags 219/220/185). Elements are shipped upstream; the
