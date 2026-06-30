@@ -510,8 +510,13 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                     Node *mn = theDomain->getNode(mTags(seg * nps + k));
                     if (mn != 0) {
                         const Vector &X = mn->getCrds();
-                        S[k*3+0] = X(0); S[k*3+1] = X(1); S[k*3+2] = X(2);
-                        if (!haveFirst) { first[0]=X(0); first[1]=X(1); first[2]=X(2); haveFirst = true; }
+                        // ADR-60 P1: feed the broad phase the DEFORMED (committed) config when re-emit
+                        // is on so the rebuilt candidate set tracks the slid geometry. OFF ⇒ X only
+                        // (the assignment below is the verbatim shipped value) ⇒ byte-identical.
+                        double px = X(0), py = X(1), pz = X(2);
+                        if (ct.enableReemit) { const Vector &u = mn->getDisp(); px += u(0); py += u(1); pz += u(2); }
+                        S[k*3+0] = px; S[k*3+1] = py; S[k*3+2] = pz;
+                        if (!haveFirst) { first[0]=px; first[1]=py; first[2]=pz; haveFirst = true; }
                     } else {
                         S[k*3+0] = S[k*3+1] = S[k*3+2] = HUGE_VAL;   // mark missing
                     }
@@ -520,7 +525,12 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                     if (S[k*3+0] == HUGE_VAL)
                         for (int d = 0; d < 3; d++) S[k*3+d] = first[d];
             }
-            LadrunoContactBucketSort::Grid grid(nSeg, nps, segCoords.data(), ct.cellFrac, 1.0);
+            // ADR-60 P1 (BLOCKER-CLIP): the runaway percentile clip targets a STATIC reference
+            // outlier; on the deformed feed a legitimately-diverging node would collapse the grid and
+            // silently drop real pairs. Disable it (clipPct=0) when re-emit is on — the
+            // NX*NY*NZ≤min(nSeg,5000) cap still bounds memory. OFF ⇒ the shipped 1.0 clip (identical).
+            LadrunoContactBucketSort::Grid grid(nSeg, nps, segCoords.data(), ct.cellFrac,
+                                                ct.enableReemit ? 0.0 : 1.0);
             std::vector<int> cand(nSeg);
 
             // ADR-60: register this contact for finite-sliding re-emit (opt-in via -reemit). The
@@ -545,12 +555,13 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                 const Vector &Xs0 = sn->getCrds();
                 double slavePt[3] = { Xs0(0), Xs0(1), Xs0(2) };
                 if (ct.enableReemit) {
-                    // ADR-60: anchor = the slave's COMMITTED position now, so drift resets each
-                    // re-emit and the trigger fires at a sane cadence (P0 still queries the grid at
-                    // reference coords; P1's deformed feed makes the re-emit fix live).
+                    // ADR-60 P1: query the grid at the slave's DEFORMED (committed) position so a slid
+                    // slave finds the segment it is ACTUALLY over (the no-pass-through fix); the SAME
+                    // deformed point is the re-emit anchor (drift resets each re-emit ⇒ sane cadence).
+                    // OFF ⇒ slavePt stays Xs0 ⇒ byte-identical.
                     const Vector &us = sn->getDisp();
-                    double anc[3] = { Xs0(0) + us(0), Xs0(1) + us(1), Xs0(2) + us(2) };
-                    cd->addReemitAnchor(ct.tag, sTags(si), anc);
+                    slavePt[0] = Xs0(0) + us(0); slavePt[1] = Xs0(1) + us(1); slavePt[2] = Xs0(2) + us(2);
+                    cd->addReemitAnchor(ct.tag, sTags(si), slavePt);
                 }
                 int nCand = grid.candidates(slavePt, cand.data());
                 for (int ci = 0; ci < nCand; ci++) {
@@ -562,6 +573,15 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                         segNodes[k] = mn;
                     }
                     if (!ok) continue;   // missing/incompatible master node -> skip pair
+                    // ADR-60 P1 (BLOCKER-SELF-CONTACT): finite-sliding re-emit can pair a slave with a
+                    // segment that CONTAINS it (a folded declared surface). Skip a candidate whose node
+                    // set includes the slave node — a self-penetration guard. Re-emit-only ⇒ identical.
+                    if (ct.enableReemit) {
+                        bool selfSeg = false;
+                        for (int k = 0; k < nps; k++)
+                            if (mTags(seg * nps + k) == sTags(si)) { selfSeg = true; break; }
+                        if (selfSeg) continue;
+                    }
                     // orientation direction toward the slave's allowed half-space:
                     // explicit -outward if given, else auto = (slave ref) − (segment
                     // ref centroid). The derived normal is flipped to n·orientDir>0
