@@ -297,7 +297,7 @@ Flat / `-outward` masters — the shipped + tested path — are unaffected.
 fingerprint + friction-drop/refuse-on-change (R1) and the `Subdomain`/partitioned-host serial-only refusal (R6).
 Built locally (worktree, MUMPS junctioned from the main checkout, `LADRUNO_OPENSEES_QUIET=1` to unbreak the CMake
 Python probe); fingerprint validated build-free (`proto_reemit_selfcheck.cpp`), and the full ADR-39/41/57/60 contact
-battery (141 tests) passes locally ⇒ OFF byte-identical. Then **R4 + R7 (#TBD)** — persistent per-`contactTag`
+battery (141 tests) passes locally ⇒ OFF byte-identical. Then **R4 + R7 (#452)** — persistent per-`contactTag`
 `Trigger` (the floor/hysteresis stop being vestigial) + `-resortEvery` as the forced BSORT cycle-cadence
 (`forceEvery`), floor fixed at 10; build-free forced-cadence cases + a runtime smoke
 (`tests/test_adr60_reemit_p3_cadence.py`); full battery (now 145 tests) green ⇒ OFF byte-identical. Remaining:
