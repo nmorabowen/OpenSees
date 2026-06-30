@@ -45,8 +45,11 @@
 #include <map>
 #include <set>
 
+#include "LadrunoContactReemit.h"   // ADR-60: finite-sliding re-emit metric + trigger (header-only)
+
 class LadrunoContactSurface;
 class ID;
+class Domain;   // ADR-60: needsResort(Domain*) looks up committed slave coords by tag
 
 class LadrunoContactDomain
 {
@@ -68,7 +71,8 @@ class LadrunoContactDomain
                    double kn, double kt, double mu, const double *outward = 0,
                    bool knAuto = false, double cellFrac = 1.0,
                    bool consistentTan = false, double muc = 0.0,
-                   bool consistentNormal = false, double softScale = 0.0);
+                   bool consistentNormal = false, double softScale = 0.0,
+                   bool enableReemit = false, double resortFrac = 0.5, int resortEvery = 0);
     int getNumContacts(void) const { return (int)theContacts.size(); }
 
     // --- P2b: faceted node-to-segment penalty contact. A Contact references a
@@ -97,6 +101,14 @@ class LadrunoContactDomain
                                 // nodal masses), so the contact never throttles dt_cr. Inert under any
                                 // implicit integrator (the configured kn is used ⇒ byte-identical).
                                 // Requires a base -kn (auto/fixed) — soft is a modifier on the penalty.
+        // ADR-60: finite-sliding NTS re-emit. Default-initialized so stack construction can never
+        // flip the feature on (gate Lens-B B4). enableReemit opts in (`-reemit`); resortFrac = the
+        // drift fraction of the search band that triggers a re-sort; resortEvery = min commits
+        // between re-sorts (0 ⇒ the default floor). OFF (default) ⇒ no anchors registered ⇒
+        // needsResort() is O(1)-false ⇒ byte-identical to the shipped path.
+        bool   enableReemit = false;
+        double resortFrac   = 0.5;
+        int    resortEvery  = 0;
     };
     const Contact &getContact(int i) const { return theContacts[i]; }
 
@@ -400,6 +412,21 @@ class LadrunoContactDomain
     void frictionGCEnd(void);
     int  getNumFrictionStates(void) const { return (int)theFrictionStates.size(); }
 
+    // --- ADR-60: finite-sliding NTS re-emit. Per opted-in contact the handler registers, each
+    //     handle(), the committed slave-node positions (anchors) + the search band; needsResort()
+    //     is polled from Domain::commit() and returns true when a slave has drifted past
+    //     resortFrac*band (with hysteresis + a min-commit floor), so the next analysis step
+    //     re-handles and re-emits the candidate set. Registered ONLY when -reemit is on ⇒ OFF ⇒
+    //     theReemit is empty ⇒ needsResort() is O(1)-false ⇒ byte-identical (gate Lens-B). The
+    //     Domain::commit() call site additionally gates on !contactAugmenting (gate GA-1). P0 wires
+    //     the trigger + plumbing (the broad-phase feed is still reference coords); P1 switches the
+    //     feed to the deformed config to make the re-emit effective. ---
+    void clearReemit(void);                              // handle() begin: drop the previous epoch
+    void setReemitContact(int contactTag, double band, double resortFrac, int resortEvery);
+    void addReemitAnchor(int contactTag, int slaveTag, const double anchor[3]);
+    bool needsResort(Domain *theDomain);                 // polled from Domain::commit()
+    int  getNumReemitContacts(void) const { return (int)theReemit.size(); }
+
     // --- lifecycle (driven by Domain::commit / revertToLastCommit) ---
     int commit(void);              // P3: gpT = gpTtrial for every slot (+ counter)
     int revertToLastCommit(void);  // P3: gpTtrial = gpT for every slot (+ counter)
@@ -428,6 +455,17 @@ class LadrunoContactDomain
     std::map<PairKey, double> theNtsForce;              // B3: per-pair normal force snapshot
     struct NodeMass { double m[3]; };                   // B1: assembled translational nodal mass
     std::map<int, NodeMass> theNodalMass;               // B1: per-node assembled mass (SOFT=1)
+
+    // ADR-60 re-emit state (one entry per opted-in contact). Rebuilt each handle(); the Trigger's
+    // arming/cadence persists within an epoch (between handles) so it ticks per Domain::commit().
+    struct ReemitAnchor { int slaveTag; double x[3]; };
+    struct ReemitContact {
+        int contactTag;
+        double band;
+        LadrunoContactReemit::Trigger trig;
+        std::vector<ReemitAnchor> anchors;
+    };
+    std::vector<ReemitContact> theReemit;
 
     // C2.2 normal-ALM state, keyed by (contactTag, slaveNodeTag) — a 2-field key.
     struct NodeKey {

@@ -435,6 +435,12 @@ int OPS_LadrunoContact()
     bool hasOutward = false;
     double outward[3] = {0.0, 0.0, 0.0};
     double cellFrac = 1.0;
+    // Ladruno ADR-60: finite-sliding NTS re-emit (off ⇒ byte-identical). -reemit opts in; -resortFrac
+    // sets the drift fraction of the search band that triggers a re-sort; -resortEvery sets the min
+    // commits between re-sorts (0 ⇒ the default floor). NTS lane only (refused with -mortar below).
+    bool   enableReemit = false;
+    double resortFrac   = 0.5;
+    int    resortEvery  = 0;
     bool consistentTan = false;   // Ladruno ADR-39 P3.5: friction tangent symmetry
     // Ladruno ADR-39 B3 (P2b-2c): `-geomtan` opts the NTS SEGMENT lane into the consistent
     // ∂n/∂u geometric NORMAL tangent (kn·gN·∂²gN/∂u²) ⇒ quadratic Newton on CURVED / large-
@@ -737,6 +743,25 @@ int OPS_LadrunoContact()
             // (the Hertz benchmark). SYMMETRIC ⇒ correct on ANY solver (no -consistanttan needed).
             // Off ⇒ the shipped kn·BᵀB main term (byte-identical; EXACT for a flat/fixed master).
             consistentNormal = true;
+        } else if (opt != 0 && strcmp(opt, "-reemit") == 0) {
+            // Ladruno ADR-60: opt the NTS contact into finite-sliding re-emit (deformed-config
+            // broad-phase re-sort when a slave migrates off its reference-config candidate
+            // segments — the silent pass-through fix). Off ⇒ byte-identical.
+            enableReemit = true;
+        } else if (opt != 0 && strcmp(opt, "-resortFrac") == 0) {
+            double v[1]; int m = 1;
+            if (OPS_GetDoubleInput(&m, v) < 0) {
+                opserr << "WARNING contact -resortFrac - need a positive fraction of the search band\n";
+                return -1;
+            }
+            resortFrac = v[0];
+        } else if (opt != 0 && strcmp(opt, "-resortEvery") == 0) {
+            int v[1]; int m = 1;
+            if (OPS_GetIntInput(&m, v) < 0) {
+                opserr << "WARNING contact -resortEvery - need an integer (min commits between re-sorts)\n";
+                return -1;
+            }
+            resortEvery = v[0];
         } else {
             // Ladruno ADR-39 P2b-2b (gate MINOR-1): error on an unexpected trailing
             // token rather than silently swallowing it (e.g. a stray friction value
@@ -797,6 +822,14 @@ int OPS_LadrunoContact()
                   "apply to -mortar (the mortar geometric tangent is separately deferred)\n";
         return -1;
     }
+    if (enableReemit && isMortar) {
+        // ADR-60: re-emit is an NTS feature. The mortar lane is brute-force (every master facet is
+        // already a candidate per slave facet), so it handles finite sliding without re-emission.
+        // Refuse rather than silently ignore -reemit on a -mortar contact.
+        opserr << "WARNING contact -reemit is an NTS (node-to-segment) option; -mortar is brute-force "
+                  "and already finite-sliding-correct (re-emit not needed)\n";
+        return -1;
+    }
     if (softScale > 0.0 && isMortar) {
         // B2 (P5): `-mortar -soft <SOFSCL>` selects the SOFT=2 SEGMENT-BASED explicit penalty — the
         // segment-to-segment generalization of the NTS SOFT=1 lane that catches the corner/edge/
@@ -855,7 +888,7 @@ int OPS_LadrunoContact()
     // B1: -soft SOFSCL ⇒ the explicit SOFT=1 Courant-stable penalty (off ⇒ byte-identical).
     return cd->addContact(idata[0], idata[1], idata[2], kn, kt, mu,
                           hasOutward ? outward : 0, knAuto, cellFrac, consistentTan, muc,
-                          consistentNormal, softScale);
+                          consistentNormal, softScale, enableReemit, resortFrac, resortEvery);
 }
 
 // contactPlane tag slaveSurfTag  nx ny nz  px py pz  kn  <-visc μ_c> <-soft SOFSCL>  (P2a rigid plane)
