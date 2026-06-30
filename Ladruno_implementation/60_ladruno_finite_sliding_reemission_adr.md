@@ -299,3 +299,8 @@ Built locally (worktree, MUMPS junctioned from the main checkout, `LADRUNO_OPENS
 Python probe); fingerprint validated build-free (`proto_reemit_selfcheck.cpp`), and the full ADR-39/41/57/60 contact
 battery (141 tests) passes locally ⇒ OFF byte-identical. Remaining: R3 (curved orientDir — needs ADR-47 normal
 smoothing, decide before coding), R5, R4, R7, R8.
+
+**Cross-pollination:** [[60a_pfem_crosspollination_amendment]] folds the OpenSees PFEM remesh study into this ADR —
+PFEM independently validates the commit-boundary cadence (it remeshes at commit, never mid-iteration) and supplies
+`PFEMAnalysis::identify()` as the re-attach reference + `BackgroundMesh::remesh` as the P4 re-bucket-without-rebuild
+reference; it offers no template for the one hard part (friction frame-transfer at a crossing — the P4 novelty).
