@@ -502,6 +502,10 @@ LadrunoContactHandler::handle(const ID *nodesLast)
             // gate). Missing master nodes (malformed model) are filled with the
             // segment's first valid coord — superset-preserving, and the narrow loop
             // below re-fetches + skips them anyway.
+            // segCoords is filled with REFERENCE coords first (the shipped P0 path). When re-emit is
+            // on it is shifted to the DEFORMED config IN PLACE below — but the R2 search band is taken
+            // from these REFERENCE coords (deformation-invariant; it must not drift vs the grid the
+            // next re-emit builds — gate D6 + the referenceBand() contract).
             std::vector<double> segCoords((size_t)nSeg * nps * 3, 0.0);
             for (int seg = 0; seg < nSeg; seg++) {
                 double *S = &segCoords[(size_t)seg * nps * 3];
@@ -510,13 +514,8 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                     Node *mn = theDomain->getNode(mTags(seg * nps + k));
                     if (mn != 0) {
                         const Vector &X = mn->getCrds();
-                        // ADR-60 P1: feed the broad phase the DEFORMED (committed) config when re-emit
-                        // is on so the rebuilt candidate set tracks the slid geometry. OFF ⇒ X only
-                        // (the assignment below is the verbatim shipped value) ⇒ byte-identical.
-                        double px = X(0), py = X(1), pz = X(2);
-                        if (ct.enableReemit) { const Vector &u = mn->getDisp(); px += u(0); py += u(1); pz += u(2); }
-                        S[k*3+0] = px; S[k*3+1] = py; S[k*3+2] = pz;
-                        if (!haveFirst) { first[0]=px; first[1]=py; first[2]=pz; haveFirst = true; }
+                        S[k*3+0] = X(0); S[k*3+1] = X(1); S[k*3+2] = X(2);
+                        if (!haveFirst) { first[0]=X(0); first[1]=X(1); first[2]=X(2); haveFirst = true; }
                     } else {
                         S[k*3+0] = S[k*3+1] = S[k*3+2] = HUGE_VAL;   // mark missing
                     }
@@ -525,6 +524,27 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                     if (S[k*3+0] == HUGE_VAL)
                         for (int d = 0; d < 3; d++) S[k*3+d] = first[d];
             }
+
+            // ADR-60 R2: the deformation-invariant re-emit search band = reference median segment
+            // diagonal × cellFrac, from the REFERENCE segCoords ABOVE (before the deformed shift).
+            double reemitBand = ct.enableReemit
+                ? LadrunoContactReemit::referenceBand(nSeg, nps, segCoords.data(), ct.cellFrac) : 0.0;
+
+            // ADR-60 P1: when re-emit is on, shift segCoords to the DEFORMED (committed) config IN
+            // PLACE so the rebuilt candidate set tracks the slid geometry. OFF ⇒ segCoords stays the
+            // reference value (the verbatim shipped path) ⇒ byte-identical. A missing-node slot keeps
+            // its backfilled reference value (the narrow loop skips that pair anyway).
+            if (ct.enableReemit) {
+                for (int seg = 0; seg < nSeg; seg++)
+                    for (int k = 0; k < nps; k++) {
+                        Node *mn = theDomain->getNode(mTags(seg * nps + k));
+                        if (mn == 0) continue;
+                        const Vector &u = mn->getDisp();
+                        double *S = &segCoords[((size_t)seg * nps + k) * 3];
+                        S[0] += u(0); S[1] += u(1); S[2] += u(2);
+                    }
+            }
+
             // ADR-60 P1 (BLOCKER-CLIP): the runaway percentile clip targets a STATIC reference
             // outlier; on the deformed feed a legitimately-diverging node would collapse the grid and
             // silently drop real pairs. Disable it (clipPct=0) when re-emit is on — the
@@ -533,15 +553,10 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                                                 ct.enableReemit ? 0.0 : 1.0);
             std::vector<int> cand(nSeg);
 
-            // ADR-60: register this contact for finite-sliding re-emit (opt-in via -reemit). The
-            // search band is the REFERENCE median segment diagonal (deformation-invariant ⇒ it does
-            // not drift away from the grid the next re-emit builds, gate Lens-D D6). P0 still feeds the
-            // grid REFERENCE coords (the trigger/plumbing rung); P1 flips the feed to the deformed
-            // config to make the re-emit effective. OFF ⇒ nothing registered ⇒ byte-identical.
-            if (ct.enableReemit) {
-                double band = LadrunoContactReemit::referenceBand(nSeg, nps, segCoords.data(), ct.cellFrac);
-                cd->setReemitContact(ct.tag, band, ct.resortFrac, ct.resortEvery);
-            }
+            // ADR-60: register this contact for finite-sliding re-emit (opt-in via -reemit) with the
+            // R2 deformation-invariant reference band. OFF ⇒ nothing registered ⇒ byte-identical.
+            if (ct.enableReemit)
+                cd->setReemitContact(ct.tag, reemitBand, ct.resortFrac, ct.resortEvery);
 
             for (int si = 0; si < sTags.Size(); si++) {
                 Node *sn = theDomain->getNode(sTags(si));
