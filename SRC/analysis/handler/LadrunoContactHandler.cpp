@@ -384,8 +384,15 @@ LadrunoContactHandler::handle(const ID *nodesLast)
     ElementIter &theEle = theDomain->getElements();
     Element *elePtr;
     int numFe = 0;
+    // ADR-60 R6 (D7 serial-only refusal): detect a partitioned host — this Domain is itself a
+    // worker Subdomain (dynamic_cast) OR it owns Subdomain elements (the SP coordinator). Under
+    // either, the finite-sliding migration trigger would re-sort uncoordinated across ranks, so
+    // re-emit reverts to the shipped frozen-config NTS broad phase below (a one-time warning).
+    // Sequential ⇒ false ⇒ every re-emit branch is inert ⇒ byte-identical to the shipped path.
+    bool hostPartitioned = (dynamic_cast<Subdomain *>(theDomain) != 0);
     while ((elePtr = theEle()) != 0) {
         if (elePtr->isSubdomain() == true) {
+            hostPartitioned = true;
             Subdomain *theSub = (Subdomain *)elePtr;
             if (theSub->doesIndependentAnalysis() == false) {
                 FE_Element *fePtr = new FE_Element(numFe++, elePtr);
@@ -494,6 +501,48 @@ LadrunoContactHandler::handle(const ID *nodesLast)
             const ID &sTags = ss->getNodeTags();
             int nSeg = mTags.Size() / nps;
 
+            // ADR-60 R6 (serial-only): one-time warning when -reemit is requested under a
+            // partitioned host. The deformed feed + trigger are disabled below (reemitActive=false
+            // ⇒ the shipped frozen-config NTS path), so this only surfaces the silent downgrade.
+            if (ct.enableReemit && hostPartitioned) {
+                static bool warnedReemitPartition = false;
+                if (!warnedReemitPartition) {
+                    opserr << "WARNING LadrunoContactHandler::handle() - contact " << ct.tag
+                           << ": -reemit is serial-only but the host is partitioned (Subdomain); "
+                              "finite-sliding re-emit DISABLED (reverting to the frozen-config NTS "
+                              "broad phase) to avoid an uncoordinated cross-rank re-sort.\n";
+                    warnedReemitPartition = true;
+                }
+            }
+            // ADR-60 R1 (BLOCKER-MEMBERSHIP): fingerprint this contact's master mTags ORDERING. If
+            // it changed since the last handle (element removal / re-mesh reordered the surface),
+            // the segment-ordinal friction key would alias onto a different physical segment — drop
+            // this contact's friction slots (they re-engage fresh, traction-continuous per D4) and
+            // refuse to ARM the trigger this step (named error). Only evaluated when -reemit is on
+            // ⇒ OFF leaves theReemitFp untouched ⇒ byte-identical.
+            bool membershipChanged = false;
+            if (ct.enableReemit) {
+                std::vector<int> mt((size_t)mTags.Size());
+                for (int i = 0; i < mTags.Size(); i++) mt[i] = mTags(i);
+                unsigned long long fp = LadrunoContactReemit::membershipFingerprint(
+                    mt.empty() ? 0 : &mt[0], (int)mt.size(), nps);
+                if (cd->reemitMembershipChanged(ct.tag, fp)) {
+                    membershipChanged = true;
+                    opserr << "WARNING LadrunoContactHandler::handle() - contact " << ct.tag
+                           << ": master surface node ordering changed since the last handle; the "
+                              "segment-keyed re-emit friction history is invalid. Dropping this "
+                              "contact's friction state (re-engages fresh) and refusing to arm "
+                              "re-emit this step.\n";
+                    cd->dropFrictionForContact(ct.tag);
+                }
+            }
+            // The deformed broad-phase feed is active when -reemit is on AND the host is serial
+            // (R6). The migration TRIGGER additionally needs a STABLE master membership this
+            // handle (R1) — under a membership change we keep the deformed feed (no pass-through)
+            // but do not arm an automatic re-handle off the just-changed mesh.
+            bool reemitActive = ct.enableReemit && !hostPartitioned;
+            bool reemitArmed  = reemitActive && !membershipChanged;
+
             // P2.5 BROAD PHASE: bucket-sort the master segments (reference coords)
             // once, then per slave query only the 27-neighbour candidate segments
             // instead of all nSeg (brute force). The kept set is a SUPERSET of every
@@ -527,14 +576,14 @@ LadrunoContactHandler::handle(const ID *nodesLast)
 
             // ADR-60 R2: the deformation-invariant re-emit search band = reference median segment
             // diagonal × cellFrac, from the REFERENCE segCoords ABOVE (before the deformed shift).
-            double reemitBand = ct.enableReemit
+            double reemitBand = reemitActive
                 ? LadrunoContactReemit::referenceBand(nSeg, nps, segCoords.data(), ct.cellFrac) : 0.0;
 
             // ADR-60 P1: when re-emit is on, shift segCoords to the DEFORMED (committed) config IN
             // PLACE so the rebuilt candidate set tracks the slid geometry. OFF ⇒ segCoords stays the
             // reference value (the verbatim shipped path) ⇒ byte-identical. A missing-node slot keeps
             // its backfilled reference value (the narrow loop skips that pair anyway).
-            if (ct.enableReemit) {
+            if (reemitActive) {
                 for (int seg = 0; seg < nSeg; seg++)
                     for (int k = 0; k < nps; k++) {
                         Node *mn = theDomain->getNode(mTags(seg * nps + k));
@@ -550,12 +599,13 @@ LadrunoContactHandler::handle(const ID *nodesLast)
             // silently drop real pairs. Disable it (clipPct=0) when re-emit is on — the
             // NX*NY*NZ≤min(nSeg,5000) cap still bounds memory. OFF ⇒ the shipped 1.0 clip (identical).
             LadrunoContactBucketSort::Grid grid(nSeg, nps, segCoords.data(), ct.cellFrac,
-                                                ct.enableReemit ? 0.0 : 1.0);
+                                                reemitActive ? 0.0 : 1.0);
             std::vector<int> cand(nSeg);
 
             // ADR-60: register this contact for finite-sliding re-emit (opt-in via -reemit) with the
-            // R2 deformation-invariant reference band. OFF ⇒ nothing registered ⇒ byte-identical.
-            if (ct.enableReemit)
+            // R2 deformation-invariant reference band. Gated on reemitArmed: serial host (R6) AND a
+            // stable master membership this handle (R1). OFF ⇒ nothing registered ⇒ byte-identical.
+            if (reemitArmed)
                 cd->setReemitContact(ct.tag, reemitBand, ct.resortFrac, ct.resortEvery);
 
             for (int si = 0; si < sTags.Size(); si++) {
@@ -569,14 +619,17 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                 }
                 const Vector &Xs0 = sn->getCrds();
                 double slavePt[3] = { Xs0(0), Xs0(1), Xs0(2) };
-                if (ct.enableReemit) {
+                if (reemitActive) {
                     // ADR-60 P1: query the grid at the slave's DEFORMED (committed) position so a slid
                     // slave finds the segment it is ACTUALLY over (the no-pass-through fix); the SAME
                     // deformed point is the re-emit anchor (drift resets each re-emit ⇒ sane cadence).
                     // OFF ⇒ slavePt stays Xs0 ⇒ byte-identical.
                     const Vector &us = sn->getDisp();
                     slavePt[0] = Xs0(0) + us(0); slavePt[1] = Xs0(1) + us(1); slavePt[2] = Xs0(2) + us(2);
-                    cd->addReemitAnchor(ct.tag, sTags(si), slavePt);
+                    // R1: register the anchor only when the trigger is armed (stable membership);
+                    // on a membership-change step we keep the deformed query but do not arm a re-sort.
+                    if (reemitArmed)
+                        cd->addReemitAnchor(ct.tag, sTags(si), slavePt);
                 }
                 int nCand = grid.candidates(slavePt, cand.data());
                 for (int ci = 0; ci < nCand; ci++) {
@@ -591,7 +644,7 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                     // ADR-60 P1 (BLOCKER-SELF-CONTACT): finite-sliding re-emit can pair a slave with a
                     // segment that CONTAINS it (a folded declared surface). Skip a candidate whose node
                     // set includes the slave node — a self-penetration guard. Re-emit-only ⇒ identical.
-                    if (ct.enableReemit) {
+                    if (reemitActive) {
                         bool selfSeg = false;
                         for (int k = 0; k < nps; k++)
                             if (mTags(seg * nps + k) == sTags(si)) { selfSeg = true; break; }
