@@ -277,3 +277,44 @@ def test_mortar_refuse_non_disjoint():
         # reuse master nodes 2,3,7,6 as the slave facet → not node-disjoint
         ops.LadrunoTie("-mortar", "-slaveFacets", 4, 1, 2, 3, 7, 6,
                        "-masterFacets", 4, 1, *MASTER_FACET)
+
+
+def test_mortar_nonaffine_slave_accepted():
+    """Regression guard for the coverage-ratio slack: a NON-AFFINE (trapezoidal) slave
+    facet that spans MULTIPLE master facets is the only configuration where cover
+    (multi-piece overlap clip) and fullCov (single self-clip) differ in quadrature.
+    A fully-covered such facet must still be ACCEPTED (not false-refused) — i.e. the
+    1e-3 slack and the post-solve partition-of-unity backstop both hold off the
+    affine grid. (The shipped patch/split tests use axis-aligned = affine quads, where
+    cover==fullCov exactly, so they never exercise this.)"""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    # master: a 3×3 node grid on x=1 (y,z ∈ {0,0.5,1}) = 4 quad facets, with a
+    # mass-bearing solid behind it so the facet nodes are real.
+    mtag, mnodes = {}, {}
+    t = 1
+    for iy, y in enumerate([0.0, 0.5, 1.0]):
+        for iz, z in enumerate([0.0, 0.5, 1.0]):
+            mtag[(iy, iz)] = t
+            ops.node(t, 1.0, y, z)
+            mnodes[t] = (1.0, y, z)
+            t += 1
+    mfac = []
+    for iy in range(2):
+        for iz in range(2):
+            mfac += [mtag[(iy, iz)], mtag[(iy + 1, iz)], mtag[(iy + 1, iz + 1)], mtag[(iy, iz + 1)]]
+    nmf = len(mfac) // 4
+
+    # slave: ONE non-affine (trapezoidal) quad fully inside the master extent,
+    # spanning all four master facets. Nodes carry mass (no element).
+    sverts = [(1.0, 0.10, 0.15), (1.0, 0.90, 0.20), (1.0, 0.78, 0.85), (1.0, 0.18, 0.92)]
+    stags = []
+    for i, (x, y, z) in enumerate(sverts):
+        tag = 500 + i
+        ops.node(tag, x, y, z)
+        ops.mass(tag, 1.0, 1.0, 1.0)
+        stags.append(tag)
+
+    # must be ACCEPTED (returns without raising) — exercises guard #2 off the affine grid
+    ops.LadrunoTie("-mortar", "-slaveFacets", 4, 1, *stags,
+                   "-masterFacets", 4, nmf, *mfac)
