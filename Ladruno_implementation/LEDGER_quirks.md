@@ -1858,3 +1858,28 @@ Also: the generator drops near-zero shape weights (`|N_i| < 1e-12`) before emitt
 projects onto a facet corner/edge ties only to the master nodes that actually carry a share (a corner
 collocation degenerates to a clean `u_s = u_{m,corner}`, i.e. an `equalDOF`), avoiding spurious group
 connectivity in the handler's connected-component grouping.
+## `LadrunoContactBucketSort::Grid::runawayGuardFired()` is NOT a clean "node ran away" signal (ADR-60 R8)
+
+The broad-phase grid's runaway guard clamps the centroid bbox to the `[clipPct, 100−clipPct]`
+percentiles and sets `guardFired_` whenever that clamp **moves a bound**. With the shipped `clipPct=1.0`
+that is the 1/99 percentile, so for ANY mesh with **>100 segment-centroids** the tails are clipped *by
+design* and `guardFired_` is true — it does not mean a node diverged. So do **not** auto-surface
+`runawayGuardFired()` as a warning (it would fire on every normal large model). ADR-60 R8 deliberately
+leaves it a debug-only accessor. The real instability safety on the finite-sliding re-emit deformed feed
+is `clipPct=0` (clip disabled so a genuinely-diverging node can't collapse the grid and silently drop
+pairs) — a *behavior*, not a warning. Note also: with `clipPct=0` the guard never even computes
+(`clip()` early-returns before the `guardFired_` test), so on the re-emit feed it is always false anyway.
+
+## NTS contact slide-off-the-surface is already safe — no explicit detection needed (ADR-60 R5)
+
+A slave that slides clean off the master (out of every segment's parametric domain) needs **no** special
+"slide-off" code: `LadrunoContactProjection::evalSegment` gates on penetrating-AND-in-bounds, so an
+out-of-bounds slave yields zero force; `project()` returns the out-of-bounds parametric coords
+**UNclamped** (no edge-clamp that could hold spurious traction); the migration trigger + friction-slot GC
+drop the now-stale adapter within a bounded window; and D4 fresh-slot re-engagement keeps any later
+re-pairing traction-continuous. Empirically (`Ladruno_scripts/_probe_r5_slideoff.py` →
+`tests/test_adr60_reemit_p4_slideoff.py`): a frictional slave flung off a finite strip's end departs with
+force→0, falls freely, and retains its tangential velocity. CAVEAT for diagnostics: the `ladrunoContactForce`
+(B3) snapshot is only refreshed on a re-handle (cleared in `frictionGCBegin`), so on the **frozen**
+non-`-reemit` path it can report a STALE force after the slave has left contact; `-reemit` clears it each
+re-emit so the readout is live there.

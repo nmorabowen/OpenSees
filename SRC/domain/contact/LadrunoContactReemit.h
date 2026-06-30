@@ -81,6 +81,27 @@ inline double referenceBand(int nSeg, int nps, const double *segRefCoords, doubl
     return cellFrac * diags[nSeg / 2];
 }
 
+// Master-surface membership fingerprint (R1 / gate BLOCKER-MEMBERSHIP). A 64-bit FNV-1a hash of
+// the ORDERED master node-tag sequence (+ nps + count). The NTS friction state is keyed by the
+// GLOBAL segment ordinal `seg` (an index INTO this mTags vector), so if the master surface's node
+// ordering changes between handles (element removal / re-mesh), ordinal N now names a DIFFERENT
+// physical segment and a committed (contactTag, slaveTag, seg) friction slot would ALIAS. The
+// engine fingerprints mTags each handle and, on a change, drops the contact's friction slots +
+// refuses to arm re-emit that step (named error). FNV-1a mixes each tag with the running hash in
+// sequence, so it is ORDER-sensitive: a pure permutation of the same tags changes the result.
+// (mTags == 0 / n == 0 is well-defined — the empty-surface fingerprint.)
+inline unsigned long long membershipFingerprint(const int *mTags, int n, int nps)
+{
+    const unsigned long long P = 1099511628211ULL;          // FNV-1a 64 prime
+    unsigned long long h = 1469598103934665603ULL;          // FNV-1a 64 offset basis
+    h = (h ^ (unsigned long long)(unsigned int)nps) * P;
+    h = (h ^ (unsigned long long)(unsigned int)n)   * P;
+    if (mTags != 0)
+        for (int i = 0; i < n; i++)
+            h = (h ^ (unsigned long long)(unsigned int)mTags[i]) * P;
+    return h;
+}
+
 // Max migration: max over slaves of |x_current - anchor|. anchors/current are flat
 // nSlave*3 (row-major [slave][xyz]); anchors = the coords fed to the grid at the last
 // handle(), current = the committed coords now. O(nSlave), allocation-free.
@@ -100,28 +121,58 @@ inline double maxMigration(int nSlave, const double *anchors, const double *curr
 
 // Hysteresis + min-steps re-sort trigger (one instance per contact, lives on the
 // engine; ticked once per Domain::commit()). update(dmax, band) returns true exactly
-// when a re-emit should fire THIS commit; it then disarms until the drift falls back
-// below reArmFrac*f*band (so a slave parked at the threshold cannot re-fire every
-// step — gate Lens-A A5) and enforces >= floorSteps commits between fires (the LS-DYNA
-// 5-15-cycle cadence; default 10). band <= 0 (degenerate) never fires.
+// when a re-emit should fire THIS commit. Two independent fire paths:
+//   * MIGRATION (the metric): fires when drift dmax > f*band, then disarms until the
+//     drift falls back below reArmFrac*f*band (so a slave parked at the threshold cannot
+//     re-fire every step — gate Lens-A A5) and enforces >= floorSteps commits between
+//     fires (the migration floor; default 10). band <= 0 (degenerate) never fires here.
+//   * FORCED CADENCE (R7 / D1 = LS-DYNA BSORT): when forceEvery > 0, fires unconditionally
+//     every forceEvery commits regardless of drift/arming (the cycle override `-resortEvery`).
+//     A forced fire rebuilds anchors (drift resets), so it also re-arms the migration path.
+//     forceEvery == 0 (default) ⇒ no forced fires (pure migration trigger).
+//
+// R4: this struct PERSISTS across handle()s (the engine keys one per contactTag and refreshes
+// only its CONFIG each handle via setConfig — NOT a fresh construct), so sinceLast/sinceForce/
+// armed actually accumulate. Previously the engine rebuilt it every handle, making the floor +
+// hysteresis vestigial (the anchor rebuild was the de-facto rate-limiter).
 //
 // IMPORTANT (gate Lens-A A1 / BLOCKER-GA1): the CALLER must NOT invoke update() during
 // a held-load ALM augmentation sweep (Domain::isContactAugmenting()) — both the metric
-// and the step counter must stand still there, else an augmentation re-commit trips the
+// and the step counters must stand still there, else an augmentation re-commit trips the
 // counter and re-handles mid-Uzawa. This struct does not know about augmentation; the
 // engine gates the call.
 struct Trigger {
     double f;          // drift fraction of band that arms a fire (default 0.5)
     double reArmFrac;  // re-arm when dmax < reArmFrac*f*band (default 0.5 -> 0.25*band)
-    int    floorSteps; // min commits between fires (default 10 ~ LS-DYNA cadence)
+    int    floorSteps; // min commits between MIGRATION fires (default 10 ~ LS-DYNA cadence)
+    int    forceEvery; // R7: forced re-sort cadence in commits (LS-DYNA BSORT); 0 ⇒ off
     bool   armed;      // ready to fire (disarms on a fire, re-arms on fall-back)
-    int    sinceLast;  // commits since the last fire
+    int    sinceLast;  // commits since the last MIGRATION fire
+    int    sinceForce; // commits since the last FORCED fire (R7)
 
-    Trigger(double f_ = 0.5, double reArm_ = 0.5, int floor_ = 10)
-      : f(f_), reArmFrac(reArm_), floorSteps(floor_), armed(true), sinceLast(0) {}
+    Trigger(double f_ = 0.5, double reArm_ = 0.5, int floor_ = 10, int forceEvery_ = 0)
+      : f(f_), reArmFrac(reArm_), floorSteps(floor_), forceEvery(forceEvery_),
+        armed(true), sinceLast(0), sinceForce(0) {}
+
+    // R4: refresh CONFIG only (keep armed/sinceLast/sinceForce) — called each handle() so a
+    // re-parsed -resortFrac/-resortEvery takes effect without resetting the accumulated cadence.
+    void setConfig(double f_, double reArm_, int floor_, int forceEvery_) {
+        f = f_; reArmFrac = reArm_; floorSteps = floor_; forceEvery = forceEvery_;
+    }
 
     bool update(double dmax, double band)
     {
+        // R7: forced cadence (BSORT) — independent of drift/band/arming. A forced re-sort
+        // rebuilds anchors, so reset the migration floor + re-arm so the two paths stay coherent.
+        if (forceEvery > 0) {
+            if (sinceForce < forceEvery) sinceForce++;  // saturate (no overflow on long runs)
+            if (sinceForce >= forceEvery) {
+                sinceForce = 0;
+                sinceLast = 0;
+                armed = true;
+                return true;
+            }
+        }
         if (band <= 0.0) return false;
         if (sinceLast < floorSteps) sinceLast++;       // saturate (no overflow on long runs)
         const double thresh = f * band;
@@ -136,9 +187,6 @@ struct Trigger {
         }
         return false;
     }
-
-    // reset the cadence/arming at a fresh handle() (anchors just rebuilt -> drift is 0).
-    void rearmAtHandle(void) { armed = true; sinceLast = 0; }
 };
 
 } // namespace LadrunoContactReemit

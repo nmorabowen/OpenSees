@@ -62,10 +62,45 @@ int main()
         check(fires == 1, "parked-at-threshold fires once, not every step (hysteresis)");
     }
 
-    // --- Trigger: degenerate band never fires ---
+    // --- Trigger: degenerate band never fires (migration path; forceEvery=0) ---
     {
         Trigger t(0.5, 0.5, 1);
         check(t.update(1e9, 0.0) == false, "degenerate band never fires");
+    }
+
+    // --- Trigger: forced cadence (R7 / LS-DYNA BSORT) fires every forceEvery commits ---
+    {
+        Trigger t(0.5, 0.5, 10, 3);   // floor 10, forceEvery 3; zero drift (< thresh) throughout
+        const double B = 2.0;
+        check(t.update(0.0, B) == false, "forced: no fire at commit 1");
+        check(t.update(0.0, B) == false, "forced: no fire at commit 2");
+        check(t.update(0.0, B) == true,  "forced: fires at forceEvery (commit 3) with zero drift");
+        check(t.update(0.0, B) == false, "forced: cadence resets after a forced fire");
+        check(t.update(0.0, B) == false, "forced: still counting (commit 5)");
+        check(t.update(0.0, B) == true,  "forced: fires again every forceEvery (commit 6)");
+    }
+
+    // --- Trigger: forceEvery=0 (default) never forces — pure migration trigger ---
+    {
+        Trigger t(0.5, 0.5, 1, 0);
+        int fires = 0;
+        for (int s = 0; s < 50; s++) if (t.update(0.0, 2.0)) fires++;   // zero drift, no forced path
+        check(fires == 0, "forceEvery=0: a zero-drift run never fires");
+    }
+
+    // --- membershipFingerprint: order-sensitive mTags hash (R1 / BLOCKER-MEMBERSHIP) ---
+    {
+        int a[8] = { 10,11,21,20,  11,12,22,21 };   // 2 quads, nps=4
+        int same[8] = { 10,11,21,20,  11,12,22,21 };
+        int perm[8] = { 11,12,22,21,  10,11,21,20 }; // SAME tags, swapped segment order
+        int chg[8]  = { 10,11,21,20,  11,12,23,21 }; // one tag differs (22 -> 23)
+        unsigned long long f0 = membershipFingerprint(a, 8, 4);
+        check(membershipFingerprint(same, 8, 4) == f0, "fingerprint stable under identical ordering");
+        check(membershipFingerprint(perm, 8, 4) != f0, "fingerprint changes on segment reorder (permutation)");
+        check(membershipFingerprint(chg,  8, 4) != f0, "fingerprint changes on a single tag change");
+        check(membershipFingerprint(a, 8, 3) != f0, "fingerprint changes on nps change");
+        check(membershipFingerprint(a, 4, 4) != f0, "fingerprint changes on count change");
+        check(membershipFingerprint(0, 0, 4) == membershipFingerprint(0, 0, 4), "empty fingerprint well-defined");
     }
 
     std::printf(fails == 0 ? "\nALL PASS\n" : "\n%d FAIL\n", fails);

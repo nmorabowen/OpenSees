@@ -29,6 +29,7 @@
 #include <Domain.h>        // ADR-60: needsResort() looks up committed slave coords by tag
 #include <Node.h>          // ADR-60
 #include <Vector.h>        // ADR-60
+#include <Subdomain.h>     // ADR-60 R6: serial-only refusal — detect a worker Subdomain host
 
 LadrunoContactDomain::LadrunoContactDomain()
   : numCommits(0), numReverts(0)
@@ -121,10 +122,19 @@ LadrunoContactDomain::setReemitContact(int contactTag, double band, double resor
     ReemitContact rc;
     rc.contactTag = contactTag;
     rc.band = band;
-    double f    = (resortFrac > 0.0) ? resortFrac : 0.5;
-    int    fl   = (resortEvery > 0) ? resortEvery : 10;   // default floor ≈ LS-DYNA 5–15-cycle cadence
-    rc.trig = LadrunoContactReemit::Trigger(f, 0.5, fl);
     theReemit.push_back(rc);
+    // R4/R7: ensure a PERSISTENT Trigger for this contact (one per contactTag, survives the
+    // per-handle theReemit rebuild). The migration floor is fixed at the D1 default (10);
+    // -resortEvery is now the FORCED cycle cadence (forceEvery = LS-DYNA BSORT), NOT the floor
+    // it was previously conflated with. A first handle constructs it; later handles only refresh
+    // its config (setConfig) so the accumulated cadence/arming is preserved (the R4 fix).
+    double f          = (resortFrac > 0.0) ? resortFrac : 0.5;
+    int    forceEvery = (resortEvery > 0) ? resortEvery : 0;
+    std::map<int, LadrunoContactReemit::Trigger>::iterator it = theReemitTrig.find(contactTag);
+    if (it == theReemitTrig.end())
+        theReemitTrig[contactTag] = LadrunoContactReemit::Trigger(f, 0.5, 10, forceEvery);
+    else
+        it->second.setConfig(f, 0.5, 10, forceEvery);
 }
 
 void
@@ -141,11 +151,42 @@ LadrunoContactDomain::addReemitAnchor(int contactTag, int slaveTag, const double
 }
 
 bool
+LadrunoContactDomain::reemitMembershipChanged(int contactTag, unsigned long long fingerprint)
+{
+    std::map<int, unsigned long long>::iterator it = theReemitFp.find(contactTag);
+    if (it == theReemitFp.end()) {        // first handle for this contact — nothing to alias yet
+        theReemitFp[contactTag] = fingerprint;
+        return false;
+    }
+    if (it->second == fingerprint) return false;
+    it->second = fingerprint;             // record the new ordering; report the change once
+    return true;
+}
+
+void
+LadrunoContactDomain::dropFrictionForContact(int contactTag)
+{
+    for (std::map<PairKey, FrictionState>::iterator it = theFrictionStates.begin();
+         it != theFrictionStates.end(); ) {
+        if (it->first.c == contactTag)
+            theFrictionStates.erase(it++);    // post-increment keeps the iterator valid past erase
+        else
+            ++it;
+    }
+}
+
+bool
 LadrunoContactDomain::needsResort(Domain *theDomain)
 {
     // O(1)-false when no contact opted in (the byte-identity contract). The Domain::commit()
     // call site also gates on !contactAugmenting (held-load Uzawa must not re-handle, gate GA-1).
     if (theReemit.empty() || theDomain == 0) return false;
+    // R6 (D7 serial-only refusal): under a partitioned host this Domain is itself a worker
+    // Subdomain — the migration trigger would fire uncoordinated on every rank, desyncing the
+    // parallel domainChange. Refuse here too (the handler already skips anchor registration on a
+    // partitioned host, so theReemit is normally empty; this is the belt-and-suspenders guard for
+    // a worker that somehow registered). Sequential ⇒ the cast is null ⇒ inert (byte-identical).
+    if (dynamic_cast<Subdomain *>(theDomain) != 0) return false;
     bool resort = false;
     for (size_t c = 0; c < theReemit.size(); c++) {
         ReemitContact &rc = theReemit[c];
@@ -159,8 +200,11 @@ LadrunoContactDomain::needsResort(Domain *theDomain)
             double d = LadrunoContactReemit::maxMigration(1, rc.anchors[i].x, cur);
             if (d > dmax) dmax = d;
         }
-        // tick EVERY contact's trigger each commit (cadence advances); OR the fire decisions
-        if (rc.trig.update(dmax, rc.band)) resort = true;
+        // tick EVERY contact's PERSISTENT trigger each commit (cadence advances); OR the fires.
+        // The trigger is keyed by contactTag in theReemitTrig (R4) — setReemitContact created it
+        // this handle, so the lookup is present; guard defensively anyway.
+        std::map<int, LadrunoContactReemit::Trigger>::iterator ti = theReemitTrig.find(rc.contactTag);
+        if (ti != theReemitTrig.end() && ti->second.update(dmax, rc.band)) resort = true;
     }
     return resort;
 }
