@@ -31,6 +31,7 @@
 #include <LadrunoContactKernel.h>    // Ladruno: ADR-39 P2b-2b (reference normal for -kn auto)
 #include <LadrunoContactProjection.h> // Ladruno: ADR-41 A2 (normalOriented projection geometry)
 #include <LadrunoContactBucketSort.h>// Ladruno: ADR-39 P2.5 (broad-phase pairing)
+#include <LadrunoContactReemit.h>   // Ladruno: ADR-60 (finite-sliding re-emit band/metric)
 #include <LadrunoEdgeKernel.h>       // Ladruno: ADR-57 E2 (edge-edge routing + closest point)
 #include <Matrix.h>                  // Ladruno: ADR-39 P2b-2b (master getInitialStiff)
 #include <Domain.h>
@@ -434,6 +435,7 @@ LadrunoContactHandler::handle(const ID *nodesLast)
         // GC slots from a previous (re-meshed/re-paired) analysis. Mark every built
         // frictional pair; sweep at the end.
         cd->frictionGCBegin();
+        cd->clearReemit();   // ADR-60: drop last epoch's re-emit anchors (re-registered per opted-in contact below)
 
         // P3 cross-contact shared-slave warning: a slave node in two contacts' slave
         // sets gets two adapters → double traction (a modeling error the engine can't
@@ -521,6 +523,16 @@ LadrunoContactHandler::handle(const ID *nodesLast)
             LadrunoContactBucketSort::Grid grid(nSeg, nps, segCoords.data(), ct.cellFrac, 1.0);
             std::vector<int> cand(nSeg);
 
+            // ADR-60: register this contact for finite-sliding re-emit (opt-in via -reemit). The
+            // search band is the REFERENCE median segment diagonal (deformation-invariant ⇒ it does
+            // not drift away from the grid the next re-emit builds, gate Lens-D D6). P0 still feeds the
+            // grid REFERENCE coords (the trigger/plumbing rung); P1 flips the feed to the deformed
+            // config to make the re-emit effective. OFF ⇒ nothing registered ⇒ byte-identical.
+            if (ct.enableReemit) {
+                double band = LadrunoContactReemit::referenceBand(nSeg, nps, segCoords.data(), ct.cellFrac);
+                cd->setReemitContact(ct.tag, band, ct.resortFrac, ct.resortEvery);
+            }
+
             for (int si = 0; si < sTags.Size(); si++) {
                 Node *sn = theDomain->getNode(sTags(si));
                 if (sn == 0 || sn->getNumberDOF() != 3) {
@@ -532,6 +544,14 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                 }
                 const Vector &Xs0 = sn->getCrds();
                 double slavePt[3] = { Xs0(0), Xs0(1), Xs0(2) };
+                if (ct.enableReemit) {
+                    // ADR-60: anchor = the slave's COMMITTED position now, so drift resets each
+                    // re-emit and the trigger fires at a sane cadence (P0 still queries the grid at
+                    // reference coords; P1's deformed feed makes the re-emit fix live).
+                    const Vector &us = sn->getDisp();
+                    double anc[3] = { Xs0(0) + us(0), Xs0(1) + us(1), Xs0(2) + us(2) };
+                    cd->addReemitAnchor(ct.tag, sTags(si), anc);
+                }
                 int nCand = grid.candidates(slavePt, cand.data());
                 for (int ci = 0; ci < nCand; ci++) {
                     int seg = cand[ci];

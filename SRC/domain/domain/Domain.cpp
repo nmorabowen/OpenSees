@@ -2198,6 +2198,15 @@ Domain::commit(void)
     if (theContactDomain != 0)
       theContactDomain->commit();
 
+    // Ladruno (ADR-60): finite-sliding NTS re-emit. If a slave has migrated past the broad-phase
+    // search band since the last sort, raise the domain-changed flag so the NEXT step re-handles
+    // and re-emits the candidate set from the committed config (the silent pass-through fix). Gated
+    // OFF the held-load augmentation sweep (no real motion there; a re-handle mid-Uzawa would
+    // corrupt augmentation, gate GA-1) and inert unless a contact opted into -reemit (theReemit
+    // empty ⇒ needsResort()==false ⇒ byte-identical to stock + the ADR-39 path).
+    if (theContactDomain != 0 && !contactAugmenting && theContactDomain->needsResort(this))
+      this->domainChange();
+
     // set the new committed time in the domain
     committedTime = currentTime;
     dT = 0.0;

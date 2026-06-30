@@ -26,6 +26,9 @@
 #include <OPS_Globals.h>   // opserr, endln
 #include <cmath>           // sqrt
 #include <algorithm>       // std::min, std::max (C2.2 Uzawa clamp)
+#include <Domain.h>        // ADR-60: needsResort() looks up committed slave coords by tag
+#include <Node.h>          // ADR-60
+#include <Vector.h>        // ADR-60
 
 LadrunoContactDomain::LadrunoContactDomain()
   : numCommits(0), numReverts(0)
@@ -68,7 +71,8 @@ int
 LadrunoContactDomain::addContact(int tag, int masterSurfTag, int slaveSurfTag,
                                  double kn, double kt, double mu, const double *outward,
                                  bool knAuto, double cellFrac, bool consistentTan, double muc,
-                                 bool consistentNormal, double softScale)
+                                 bool consistentNormal, double softScale,
+                                 bool enableReemit, double resortFrac, int resortEvery)
 {
     if (getSurface(masterSurfTag) == 0 || getSurface(slaveSurfTag) == 0) {
         opserr << "WARNING LadrunoContactDomain::addContact() - master/slave surface "
@@ -95,8 +99,70 @@ LadrunoContactDomain::addContact(int tag, int masterSurfTag, int slaveSurfTag,
     c.muc = (muc > 0.0) ? muc : 0.0;                  // D2 viscous stabilization (≤0 ⇒ off)
     c.consistentNormal = consistentNormal;            // B3 ∂n/∂u geometric normal tangent
     c.softScale = (softScale > 0.0) ? softScale : 0.0; // B1 SOFT=1 scale (≤0 ⇒ off, byte-identical)
+    c.enableReemit = enableReemit;                     // ADR-60 finite-sliding re-emit (off ⇒ identical)
+    c.resortFrac   = (resortFrac > 0.0) ? resortFrac : 0.5;
+    c.resortEvery  = (resortEvery > 0) ? resortEvery : 0;
     theContacts.push_back(c);
     return 0;
+}
+
+// --- ADR-60: finite-sliding NTS re-emit (anchors + migration trigger). The handler registers
+//     committed slave positions each handle() for opted-in contacts; Domain::commit() polls
+//     needsResort() and forces a domainChange() when a slave has migrated past the band. ---
+void
+LadrunoContactDomain::clearReemit(void)
+{
+    theReemit.clear();   // handle() begin: drop the previous epoch's anchors + triggers
+}
+
+void
+LadrunoContactDomain::setReemitContact(int contactTag, double band, double resortFrac, int resortEvery)
+{
+    ReemitContact rc;
+    rc.contactTag = contactTag;
+    rc.band = band;
+    double f    = (resortFrac > 0.0) ? resortFrac : 0.5;
+    int    fl   = (resortEvery > 0) ? resortEvery : 10;   // default floor ≈ LS-DYNA 5–15-cycle cadence
+    rc.trig = LadrunoContactReemit::Trigger(f, 0.5, fl);
+    theReemit.push_back(rc);
+}
+
+void
+LadrunoContactDomain::addReemitAnchor(int contactTag, int slaveTag, const double anchor[3])
+{
+    for (size_t c = 0; c < theReemit.size(); c++)
+        if (theReemit[c].contactTag == contactTag) {
+            ReemitAnchor a;
+            a.slaveTag = slaveTag;
+            a.x[0] = anchor[0]; a.x[1] = anchor[1]; a.x[2] = anchor[2];
+            theReemit[c].anchors.push_back(a);
+            return;
+        }
+}
+
+bool
+LadrunoContactDomain::needsResort(Domain *theDomain)
+{
+    // O(1)-false when no contact opted in (the byte-identity contract). The Domain::commit()
+    // call site also gates on !contactAugmenting (held-load Uzawa must not re-handle, gate GA-1).
+    if (theReemit.empty() || theDomain == 0) return false;
+    bool resort = false;
+    for (size_t c = 0; c < theReemit.size(); c++) {
+        ReemitContact &rc = theReemit[c];
+        double dmax = 0.0;
+        for (size_t i = 0; i < rc.anchors.size(); i++) {
+            Node *nd = theDomain->getNode(rc.anchors[i].slaveTag);
+            if (nd == 0) continue;
+            const Vector &X = nd->getCrds();
+            const Vector &u = nd->getDisp();   // committed disp (Domain::commit() committed it first)
+            double cur[3] = { X(0) + u(0), X(1) + u(1), X(2) + u(2) };
+            double d = LadrunoContactReemit::maxMigration(1, rc.anchors[i].x, cur);
+            if (d > dmax) dmax = d;
+        }
+        // tick EVERY contact's trigger each commit (cadence advances); OR the fire decisions
+        if (rc.trig.update(dmax, rc.band)) resort = true;
+    }
+    return resort;
 }
 
 int
