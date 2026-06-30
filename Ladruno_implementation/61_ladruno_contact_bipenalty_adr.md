@@ -1,14 +1,15 @@
 # LadrunoContact — BIPENALTY enforcement (mass+stiffness penalty pair)
 
-> ADR-61. Status: **DESIGNED + P0-GATED → recommend SHELVE (not built) pending user
-> sign-off.** The design is complete and verified sound through 3 adversarial rounds; P0's
-> kill-gates were then run and the feature does **not** clear its own value bar for the
-> general case (see §P0 kill-gate results). Build P1 only for the narrow non-conforming +
-> high-interface-stress + explicit corner.
-> **Revision v5** — adds the P0 kill-gate results + verdict. (v1 sizing math unsound → fixed
-> v2; v2 mis-classified rigid-plane → v3 cut scope to **the mortar mesh-tie only**; v3's
-> energy oracle + SMS-coexistence claims unsound → v4 energy-**conservation** oracle +
-> **defers/refuses SMS+bipenalty**; v5 = P0 measured → SHELVE recommendation.)
+> ADR-61. Status: **SHELVED — designed, gated, NOT built (decision taken 2026-06-30).** The
+> design is complete and verified sound through 4 adversarial rounds; the P0 kill-gates +
+> the P0 sizing oracle then showed the feature is served badly even in its one "unique"
+> niche (deformable–deformable tie ⇒ ~100× two-sided interface-mass inflation), so it was
+> shelved. The §How design is implementation-ready if a hard rigid-master high-stress case
+> ever arrives. See §P0 kill-gate results.
+> **Revision v6** — records the P0 sizing-oracle finding (`bipenalty_validation/`) + the
+> shelve decision. (v1 sizing unsound → v2; v2 mis-classified rigid-plane → v3 mortar-tie
+> only; v3 energy/SMS claims unsound → v4 conservation oracle + refuse SMS; v5 P0 closed
+> form; v6 P0 oracle → ~100× wall → SHELVED.)
 > Family: ADR-39 (ContactDomain / SOFT) · ADR-41 (mortar/ALM / `-tie`) · ADR-57
 > (edge-edge) · ADR-29 (RBE2 bipenalty, the reuse source) · ADR-36/38 (SMS / consistent
 > mass + energy registry). Next free ADR slot is 60 (held for finite-sliding
@@ -63,10 +64,30 @@ at equal stability.** To beat SOFT's floor 10×, you inflate the interface inert
 which corrupts local wave-transmission / impact dynamics across the tie, arguably a *worse*
 trade than SOFT's penetration wherever interface inertia matters.
 
-**Recommendation:** SHELVE as "designed, gated, not built." Build P1 only with a concrete
-use case in the corner where all hold: **non-conforming mesh + explicit + high interface
-stress (ε ≳ 10⁻²) + tight tolerance + SOFSCL forced low by nonlinear stability.** The §How
-design below is ready if that case arrives.
+### Oracle sub-finding — the deformable–deformable niche is even worse (proto_p0)
+
+The build-free P0 sizing oracle (`bipenalty_validation/proto_p0_bipenalty_sizing.py`, run
+green) sharpened the tradeoff into a hard wall. The contact mode's reduced mass obeys the
+**physical bound `μ ≤ min(m_s, m_m)`**, so a stiff `k_p` between two *light* bodies cannot
+be slowed by mass on one side — the lighter side caps `μ`. Consequences measured:
+
+- **Tie to a (near-)rigid/fixed master** (flexible part on a foundation/platen): one-sided
+  `m_p` works cleanly — `ω·Δt` lands exactly at `2·safety`; only the flexible side is
+  perturbed. **The only clean case.**
+- **Deformable–deformable non-conforming tie** (the Gate-2 "unique niche"): slave-only
+  sizing returns **`unfixable` (rhs ≤ 0)** the moment `k_p` exceeds SOFT's stable floor.
+  The fix needs **two-sided `m_p` on BOTH interfaces, measured at ~80–120× the physical
+  nodal mass** (`k_p = 50× k_soft,max`) — a ~100× inertia concentration on the very
+  interface explicit dynamics is meant to resolve. **Far worse than SOFT's sub-% penetration.**
+
+So bipenalty's *only* sound application is the rigid-master tie — and even there SOFT's
+penetration is already sub-% (the master being heavy/rigid makes SOFT's `m_eff` the slave's).
+
+**Recommendation: SHELVE** (DECISION TAKEN — user shelved after this oracle, 2026-06-30).
+The oracle finding removed the last plausible niche: the deformable–deformable tie that
+Gate 2 flagged as unique is served terribly (~100× two-sided inflation), and the
+rigid-master tie is closely covered by SOFT. The §How design remains complete and
+implementation-ready should a hard rigid-master high-stress case ever arrive.
 
 ---
 
