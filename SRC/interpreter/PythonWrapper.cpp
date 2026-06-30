@@ -950,6 +950,18 @@ static PyObject *Py_ops_equationConstraint(PyObject *self, PyObject *args)
     return wrapper->getResults();
 }
 
+static PyObject *Py_ops_LadrunoTie(PyObject *self, PyObject *args)  // Ladruno ADR-62
+{
+    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
+
+    if (OPS_LadrunoTie() < 0) {
+	opserr<<(void*)0;
+	return NULL;
+    }
+
+    return wrapper->getResults();
+}
+
 static PyObject *Py_ops_nodeEigenvector(PyObject *self, PyObject *args)
 {
     wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
@@ -3264,6 +3276,7 @@ PythonWrapper::addOpenSeesCommands()
     addCommand("mass", &Py_ops_mass);
     addCommand("equalDOF", &Py_ops_equalDOF);
     addCommand("equationConstraint", &Py_ops_equationConstraint);
+    addCommand("LadrunoTie", &Py_ops_LadrunoTie);                    // Ladruno ADR-62
     addCommand("nodeEigenvector", &Py_ops_nodeEigenvector);
     addCommand("getTime", &Py_ops_getTime);
     addCommand("setCreep", &Py_ops_setCreep);
