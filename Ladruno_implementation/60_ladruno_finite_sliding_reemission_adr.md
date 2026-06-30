@@ -281,13 +281,21 @@ dispositions that **did not actually land**. Remediation backlog, severity-ranke
 | ID | Sev | Gap | Status |
 |---|---|---|---|
 | **R2** | HIGH | Search band was fed the **deformed** `segCoords` (handler), not reference ⇒ not deformation-invariant (contradicts D6 + the `referenceBand()` contract). | **FIXED (this PR):** fill `segCoords` reference-first → band from reference → shift to deformed in place for the grid. |
-| R1 | HIGH | BLOCKER-MEMBERSHIP absent — no `mTags` fingerprint, so a friction key aliases if `mTags` reorders via element removal / re-mesh. | open |
+| R1 | HIGH | BLOCKER-MEMBERSHIP absent — no `mTags` fingerprint, so a friction key aliases if `mTags` reorders via element removal / re-mesh. | **FIXED:** header-only FNV-1a `membershipFingerprint(mTags,n,nps)` (order-sensitive); the engine stores it per `contactTag` (persists across handles), and on a change drops that contact's friction slots (re-engage fresh = traction-continuous, D4) + refuses to ARM the trigger that step (named error) while keeping the deformed feed (no pass-through). Validated build-free in `proto_reemit_selfcheck.cpp` (6 fingerprint cases). NOTE: `LadrunoContactSurface::theNodeTags` is **immutable at runtime today** (no mutation API), so the aliasing this guards is only reachable once a re-mesh/removal feature (ADR-51/55) mutates surface membership while the engine survives `domainChange()` — i.e. R1 is a **forward guard**; a true end-to-end re-mesh test is deferred to ADR-51/55. |
 | R3 | HIGH (curved) | `orientDir` not persisted; re-derived from reference each handle. Planar-safe (+`-outward` safe), but a sharp convex ridge can flip the normal → silent pass-through. The convex-ridge gate test is absent. **Full fix needs consistent-winding normals or nodal smoothing (ADR-47), not just persistence.** | open — **use `-outward` on curved/non-planar masters** (documented limitation) |
 | R5 | MED | BLOCKER-SLIDE-OFF absent (relies on GC + projection; a stale adapter can persist ≤ floor; an edge clamp can hold spurious traction). | open |
-| R6 | MED | D7 serial-only refusal absent in `needsResort` (the trigger runs on every rank under MP). | open |
+| R6 | MED | D7 serial-only refusal absent in `needsResort` (the trigger runs on every rank under MP). | **FIXED:** `needsResort` hard-returns false when the host `Domain` is a worker `Subdomain` (`dynamic_cast`, RTTI is on); the handler detects a partitioned host (worker Subdomain OR owns Subdomain elements = the SP coordinator) and reverts re-emit to the shipped frozen-config NTS feed (`reemitActive=false`) with a one-time named warning, so no anchors register ⇒ `needsResort` stays O(1)-false on the coordinator too. Sequential ⇒ both checks inert ⇒ byte-identical (the full ADR-39/41/57/60 contact battery, 141 tests, passes locally). |
 | R4 | MED | `Trigger` reborn every handle (`clearReemit` drops it) ⇒ hysteresis/floor vestigial; the anchor-rebuild is the de-facto rate-limiter (so practical impact is low). | open |
 | R7 | MED | `-resortEvery` shipped as a min-floor, not the D1 LS-DYNA-BSORT forced cycle-cadence. | open |
 | R8 | LOW | `runawayGuardFired()` never surfaced (dead warning). | open |
 
-**Exposed combo today:** `-reemit` + `-mu` on a curved / re-meshable master (no guard yet gates friction-under-re-emit
-for those). Flat / `-outward` masters — the shipped + tested path — are unaffected.
+**Exposed combo today:** `-reemit` + `-mu` on a **curved** master (R3 — `orientDir` re-derivation can flip a convex-ridge
+normal; use `-outward`). The re-meshable-master friction-aliasing case is now guarded by R1 (membership fingerprint).
+Flat / `-outward` masters — the shipped + tested path — are unaffected.
+
+**Remediation progress (2026-06-30):** R2 (#448), then **R1 + R6 shipped together** — header-only membership
+fingerprint + friction-drop/refuse-on-change (R1) and the `Subdomain`/partitioned-host serial-only refusal (R6).
+Built locally (worktree, MUMPS junctioned from the main checkout, `LADRUNO_OPENSEES_QUIET=1` to unbreak the CMake
+Python probe); fingerprint validated build-free (`proto_reemit_selfcheck.cpp`), and the full ADR-39/41/57/60 contact
+battery (141 tests) passes locally ⇒ OFF byte-identical. Remaining: R3 (curved orientDir — needs ADR-47 normal
+smoothing, decide before coding), R5, R4, R7, R8.

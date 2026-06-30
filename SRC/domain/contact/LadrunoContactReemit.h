@@ -81,6 +81,27 @@ inline double referenceBand(int nSeg, int nps, const double *segRefCoords, doubl
     return cellFrac * diags[nSeg / 2];
 }
 
+// Master-surface membership fingerprint (R1 / gate BLOCKER-MEMBERSHIP). A 64-bit FNV-1a hash of
+// the ORDERED master node-tag sequence (+ nps + count). The NTS friction state is keyed by the
+// GLOBAL segment ordinal `seg` (an index INTO this mTags vector), so if the master surface's node
+// ordering changes between handles (element removal / re-mesh), ordinal N now names a DIFFERENT
+// physical segment and a committed (contactTag, slaveTag, seg) friction slot would ALIAS. The
+// engine fingerprints mTags each handle and, on a change, drops the contact's friction slots +
+// refuses to arm re-emit that step (named error). FNV-1a mixes each tag with the running hash in
+// sequence, so it is ORDER-sensitive: a pure permutation of the same tags changes the result.
+// (mTags == 0 / n == 0 is well-defined — the empty-surface fingerprint.)
+inline unsigned long long membershipFingerprint(const int *mTags, int n, int nps)
+{
+    const unsigned long long P = 1099511628211ULL;          // FNV-1a 64 prime
+    unsigned long long h = 1469598103934665603ULL;          // FNV-1a 64 offset basis
+    h = (h ^ (unsigned long long)(unsigned int)nps) * P;
+    h = (h ^ (unsigned long long)(unsigned int)n)   * P;
+    if (mTags != 0)
+        for (int i = 0; i < n; i++)
+            h = (h ^ (unsigned long long)(unsigned int)mTags[i]) * P;
+    return h;
+}
+
 // Max migration: max over slaves of |x_current - anchor|. anchors/current are flat
 // nSlave*3 (row-major [slave][xyz]); anchors = the coords fed to the grid at the last
 // handle(), current = the committed coords now. O(nSlave), allocation-free.

@@ -68,6 +68,21 @@ int main()
         check(t.update(1e9, 0.0) == false, "degenerate band never fires");
     }
 
+    // --- membershipFingerprint: order-sensitive mTags hash (R1 / BLOCKER-MEMBERSHIP) ---
+    {
+        int a[8] = { 10,11,21,20,  11,12,22,21 };   // 2 quads, nps=4
+        int same[8] = { 10,11,21,20,  11,12,22,21 };
+        int perm[8] = { 11,12,22,21,  10,11,21,20 }; // SAME tags, swapped segment order
+        int chg[8]  = { 10,11,21,20,  11,12,23,21 }; // one tag differs (22 -> 23)
+        unsigned long long f0 = membershipFingerprint(a, 8, 4);
+        check(membershipFingerprint(same, 8, 4) == f0, "fingerprint stable under identical ordering");
+        check(membershipFingerprint(perm, 8, 4) != f0, "fingerprint changes on segment reorder (permutation)");
+        check(membershipFingerprint(chg,  8, 4) != f0, "fingerprint changes on a single tag change");
+        check(membershipFingerprint(a, 8, 3) != f0, "fingerprint changes on nps change");
+        check(membershipFingerprint(a, 4, 4) != f0, "fingerprint changes on count change");
+        check(membershipFingerprint(0, 0, 4) == membershipFingerprint(0, 0, 4), "empty fingerprint well-defined");
+    }
+
     std::printf(fails == 0 ? "\nALL PASS\n" : "\n%d FAIL\n", fails);
     return fails == 0 ? 0 : 1;
 }
