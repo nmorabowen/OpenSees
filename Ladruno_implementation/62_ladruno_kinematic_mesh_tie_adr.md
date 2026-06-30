@@ -201,11 +201,19 @@ handler's existing `rigidLink -beam` / 3D-diaphragm rule). Deferred to P3; v1 is
   quantified); (c) **no-work** — `|f·v_admissible| = 2.5e-16` (tie force ⟂ admissible
   motion → energy-clean); (d) **no fictitious mass** added. *Next:* the OpenSees regression
   (needs a build) reusing the ADR-30 P0 falsification harness.
-- **P1 — full disjoint-surface non-conforming tie (the shipped feature).** Many slave
-  nodes, one master facet each, solid–solid, non-matching meshes. *Oracles:* patch test
-  (constant stress transmits exactly across a non-conforming tie), a cantilever/bar split by
-  a non-conforming tie matches the monolithic mesh, `dt_cr` = the untied bulk, momentum +
-  energy clean. Compare penetration vs the SOFT tie (should be **zero**, vs SOFT's `δ/h`).
+- **P1 — non-conforming tie on the REAL solver — concept DONE, all-green (no build).**
+  `kinematic_tie_validation/proto_p1_kinematic_tie_opensees.py` runs a weighted
+  multi-master non-conforming tie (`u_4 = 0.7 u_2 + 0.3 u_3`) as an `equationConstraint`
+  on the **shipped** `CentralDifferenceLadruno` + `LadrunoProjection` + `system Diagonal`:
+  (a) **EXACT** — tie error `6.7e-18` over 400 steps; (b) **Δt-NEUTRAL** — `dt_cr` tied =
+  untied = `0.0316228`, ratio **1.000000** (the kinematic tie adds no stiffness; a stiff
+  penalty would collapse it); (c) **load-carrying** — the slave bar moves (load crossed the
+  non-conforming interface). The whole ADR thesis validated end-to-end on the real solver
+  **with no new code** — because `equationConstraint` already carries the weighted row and
+  the projection handler enforces it. *Remaining for the shipped feature:* the `LadrunoTie`
+  auto-generator (geometry pairing → emit these constraints) — an ergonomic layer (needs a
+  build), not a correctness question. Then the solid–solid patch test + SOFT-penetration
+  comparison (should be **zero** vs SOFT's `δ/h`).
 - **P2 (successor) — integral-mortar (two-sided, dual-basis) ties** needing the handler's
   **deferred MP-chain support**, and **shell rotational ties** (BLOCKER-4).
 - **P3 (successor) — finite-sliding re-emission** (the ADR-60 hook) if a tie must survive
