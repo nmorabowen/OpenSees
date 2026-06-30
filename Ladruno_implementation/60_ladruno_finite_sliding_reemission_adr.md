@@ -293,7 +293,7 @@ dispositions that **did not actually land**. Remediation backlog, severity-ranke
 normal; use `-outward`). The re-meshable-master friction-aliasing case is now guarded by R1 (membership fingerprint).
 Flat / `-outward` masters — the shipped + tested path — are unaffected.
 
-**Remediation progress (2026-06-30):** R2 (#448), then **R1 + R6 shipped together** — header-only membership
+**Remediation progress (2026-06-30):** R2 (#448), then **R1 + R6 shipped together (#451)** — header-only membership
 fingerprint + friction-drop/refuse-on-change (R1) and the `Subdomain`/partitioned-host serial-only refusal (R6).
 Built locally (worktree, MUMPS junctioned from the main checkout, `LADRUNO_OPENSEES_QUIET=1` to unbreak the CMake
 Python probe); fingerprint validated build-free (`proto_reemit_selfcheck.cpp`), and the full ADR-39/41/57/60 contact
