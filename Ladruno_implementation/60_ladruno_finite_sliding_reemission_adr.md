@@ -291,3 +291,8 @@ dispositions that **did not actually land**. Remediation backlog, severity-ranke
 
 **Exposed combo today:** `-reemit` + `-mu` on a curved / re-meshable master (no guard yet gates friction-under-re-emit
 for those). Flat / `-outward` masters — the shipped + tested path — are unaffected.
+
+**Cross-pollination:** [[60a_pfem_crosspollination_amendment]] folds the OpenSees PFEM remesh study into this ADR —
+PFEM independently validates the commit-boundary cadence (it remeshes at commit, never mid-iteration) and supplies
+`PFEMAnalysis::identify()` as the re-attach reference + `BackgroundMesh::remesh` as the P4 re-bucket-without-rebuild
+reference; it offers no template for the one hard part (friction frame-transfer at a crossing — the P4 novelty).
