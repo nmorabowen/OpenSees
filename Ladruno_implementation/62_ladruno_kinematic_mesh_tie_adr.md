@@ -192,12 +192,15 @@ handler's existing `rigidLink -beam` / 3D-diaphragm rule). Deferred to P3; v1 is
 
 ## Phased implementation plan (oracle-first, mirroring the fork's method)
 
-- **P0 — single-node tie + projection (build-free + tiny regression).** Emit one
-  `u_s = Σ N_i u_{m,i}` constraint, route through the projection handler. *Oracles:*
-  (a) **exactness** — `u_s − Σ N_i u_{m,i} → 0` to machine precision (numpy + OpenSees);
-  (b) **`dt_cr` unchanged** vs the untied model (no penalty spring); (c) **momentum
-  conserved** through a transient; (d) **energy closes** (no offset). Reuses the ADR-30 P0
-  falsification harness.
+- **P0 — single-node tie + projection (build-free) — DONE, all-green.**
+  `kinematic_tie_validation/proto_p0_kinematic_tie.py` (a real non-conforming axial bar-tie)
+  validates the projection math `a_proj = L(LᵀML)⁻¹LᵀM a_raw`: (a) **exactness** —
+  `G·a_proj = −5.6e-17`, projector idempotent to `1e-16`; (b) **`dt_cr` neutral** —
+  projection `dt_cr ≥` the unconstrained value with **zero penetration**, while a PENALTY
+  enforcing the SAME tie collapses `dt_cr` ~2300× to reach `1e-7` penetration (the thesis,
+  quantified); (c) **no-work** — `|f·v_admissible| = 2.5e-16` (tie force ⟂ admissible
+  motion → energy-clean); (d) **no fictitious mass** added. *Next:* the OpenSees regression
+  (needs a build) reusing the ADR-30 P0 falsification harness.
 - **P1 — full disjoint-surface non-conforming tie (the shipped feature).** Many slave
   nodes, one master facet each, solid–solid, non-matching meshes. *Oracles:* patch test
   (constant stress transmits exactly across a non-conforming tie), a cantilever/bar split by
