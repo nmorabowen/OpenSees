@@ -475,13 +475,17 @@ class LadrunoContactDomain
     struct ReemitContact {
         int contactTag;
         double band;
-        LadrunoContactReemit::Trigger trig;
         std::vector<ReemitAnchor> anchors;
     };
     std::vector<ReemitContact> theReemit;
     // R1 — last-handle master-membership fingerprint per opted-in contactTag. PERSISTS across
     // handles (the engine survives domainChanged), unlike theReemit which is rebuilt each handle.
     std::map<int, unsigned long long> theReemitFp;
+    // R4 — the migration/forced-cadence Trigger, one per opted-in contactTag, PERSISTS across
+    // handles (only its config is refreshed each handle via setReemitContact). Was a per-handle
+    // field of ReemitContact ⇒ its hysteresis/floor reset every handle (vestigial); persisting it
+    // makes the floor + the R7 forced cadence actually accumulate across re-handles.
+    std::map<int, LadrunoContactReemit::Trigger> theReemitTrig;
 
     // C2.2 normal-ALM state, keyed by (contactTag, slaveNodeTag) — a 2-field key.
     struct NodeKey {
