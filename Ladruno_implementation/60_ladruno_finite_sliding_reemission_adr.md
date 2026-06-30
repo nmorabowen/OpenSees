@@ -269,3 +269,25 @@ the surface entirely → **adopted: BLOCKER-SLIDE-OFF.** (E4b, major) self-conta
 gate. (E4e, major) restart/sendSelf of the anchor store → **adopted: reconstructed at next handle (Q-RESTART).** (E4f,
 major) MP re-emit → **adopted: D7 serial-only refusal.** (E5, major) the P1 continuity gate over-promised vs
 faceted-normal chatter → **adopted: split into no-pass-through (tight) + resultant (loose, cite Q-NORMAL).**
+
+## Post-code review + remediation backlog (R1–R8, 2026-06-30)
+
+After P0+P1+P2 shipped (#443/#444/#446/#447) a post-code 5-lens review (recorded in the session memory)
+verified the **core is sound vs source** — OFF byte-identical; D4 fresh-slot re-engagement traction-continuous
+(`gT0` self-capture ⇒ `gTeff−gpT=0`); `segIndex` a stable global `mTags` ordinal (no aliasing under pure re-emit);
+GA-1 holds; `getDisp()` ordering correct; rejected steps don't arm — but found several ADR-promised P0/P1
+dispositions that **did not actually land**. Remediation backlog, severity-ranked (recommended order R2→R1+R6→R3→R5→R4/R7/R8):
+
+| ID | Sev | Gap | Status |
+|---|---|---|---|
+| **R2** | HIGH | Search band was fed the **deformed** `segCoords` (handler), not reference ⇒ not deformation-invariant (contradicts D6 + the `referenceBand()` contract). | **FIXED (this PR):** fill `segCoords` reference-first → band from reference → shift to deformed in place for the grid. |
+| R1 | HIGH | BLOCKER-MEMBERSHIP absent — no `mTags` fingerprint, so a friction key aliases if `mTags` reorders via element removal / re-mesh. | open |
+| R3 | HIGH (curved) | `orientDir` not persisted; re-derived from reference each handle. Planar-safe (+`-outward` safe), but a sharp convex ridge can flip the normal → silent pass-through. The convex-ridge gate test is absent. **Full fix needs consistent-winding normals or nodal smoothing (ADR-47), not just persistence.** | open — **use `-outward` on curved/non-planar masters** (documented limitation) |
+| R5 | MED | BLOCKER-SLIDE-OFF absent (relies on GC + projection; a stale adapter can persist ≤ floor; an edge clamp can hold spurious traction). | open |
+| R6 | MED | D7 serial-only refusal absent in `needsResort` (the trigger runs on every rank under MP). | open |
+| R4 | MED | `Trigger` reborn every handle (`clearReemit` drops it) ⇒ hysteresis/floor vestigial; the anchor-rebuild is the de-facto rate-limiter (so practical impact is low). | open |
+| R7 | MED | `-resortEvery` shipped as a min-floor, not the D1 LS-DYNA-BSORT forced cycle-cadence. | open |
+| R8 | LOW | `runawayGuardFired()` never surfaced (dead warning). | open |
+
+**Exposed combo today:** `-reemit` + `-mu` on a curved / re-meshable master (no guard yet gates friction-under-re-emit
+for those). Flat / `-outward` masters — the shipped + tested path — are unaffected.
