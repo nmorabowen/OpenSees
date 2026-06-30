@@ -1,6 +1,9 @@
 # LadrunoTie — kinematic mortar mesh-tie via constraint emission (the projection handler)
 
-> ADR-62. Status: **PLAN / pre-code — the constructive successor to the shelved ADR-61.**
+> ADR-62. Status: **CONCEPT VALIDATED (P0 numpy + P1 real-solver, both green) — the
+> `LadrunoTie` auto-generator (C++ + build) is the remaining ergonomics.** Usable TODAY via
+> hand-emitted `equationConstraint` + `LadrunoProjection`. Next session: see
+> `kinematic_tie_handoff.md`. The constructive successor to the shelved ADR-61.
 > Family: ADR-30 (LadrunoProjectionHandler — the enforcement, SHIPPED) · ADR-41 (mortar
 > D/M + `-tie` C4 — the pairing) · ADR-39 (ContactDomain bucket-sort + projection) ·
 > ADR-61 (contact bipenalty — SHELVED; the penalty route this replaces). Next free ADR
