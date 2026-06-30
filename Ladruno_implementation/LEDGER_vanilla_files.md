@@ -207,6 +207,9 @@ and re-verify.
 | `SRC/interpreter/OpenSeesUniaxialMaterialCommands.cpp` | `// Ladruno`: fwd-decl `OPS_LadrunoBondSlip()` + `uniaxialMaterialsMap["LadrunoBondSlip"]` | [#168](https://github.com/nmorabowen/OpenSees/pull/168) |
 | `SRC/material/uniaxial/TclModelBuilderUniaxialMaterialCommand.cpp` | `// Ladruno`: extern `OPS_LadrunoBondSlip()` + `strcmp(argv[1],"LadrunoBondSlip")` classic-Tcl dispatch | [#168](https://github.com/nmorabowen/OpenSees/pull/168) |
 | `SRC/material/uniaxial/CMakeLists.txt` | `// Ladruno`: add `LadrunoBondSlip.cpp`/`.h` to `OPS_Material` | [#168](https://github.com/nmorabowen/OpenSees/pull/168) |
+| `SRC/domain/constraints/CMakeLists.txt` | `// Ladruno` ADR-62: add `LadrunoTie.{cpp,h}` to the `OPS_Domain` sources (the kinematic mesh-tie generator) | [#454](https://github.com/nmorabowen/OpenSees/pull/454) |
+| `SRC/interpreter/{OpenSeesCommands.h,PythonWrapper.cpp,TclWrapper.cpp}` | `// Ladruno` ADR-62: add the `LadrunoTie` command — `OPS_LadrunoTie()` decl + `Py_ops_LadrunoTie`/`Tcl_ops_LadrunoTie` wrappers + dual `addCommand` (mirrors the `equationConstraint` registration). Additive; no existing command touched. | [#454](https://github.com/nmorabowen/OpenSees/pull/454) |
+| `SRC/{tcl/tclMain.cpp,interpreter/PythonModule.cpp}` | Splash-banner feature regen via `patch_banner.py` — add the `LadrunoTie` line | [#454](https://github.com/nmorabowen/OpenSees/pull/454) |
 
 > [!note] Upstreamable bugfixes
 > Some PRs fix genuine upstream bugs (not fork-only features) and are candidates
