@@ -181,7 +181,7 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • LadrunoGeneralizedAlpha — sensitivity/DDM Chung-Hulbert generalized-α (DDM)\n"
 "        • LadrunoStabilizedUnbalance — true-equilibrium test for -stabilize\n"
 "        • LadrunoProjection — momentum-conserving explicit constraint projection (equalDOF/rigidLink/diaphragm)\n"
-"        • LadrunoTie — kinematic non-conforming mesh-tie generator (emits EQ-constraints for LadrunoProjection; exact, dt_cr-neutral)\n"
+"        • LadrunoTie — kinematic non-conforming mesh-tie generator (collocation + integral-mortar; emits EQ-constraints for LadrunoProjection; exact, dt_cr-neutral)\n"
 "        • LadrunoContact — NTS + mortar/ALM contact (penalty + commit-cycle Uzawa, Coulomb/Tresca friction, mesh-tying, viscous stabilization, consistent dn/du normal tangent, SOFT=1 + SOFT=2 Courant-stable explicit penalty)\n"
 "        • Ladruno — modular HDF5 .ladruno recorder\n"
 "        • LadrunoRigidBody — 6-DOF rigid body (condensed mass + side-channel SO(3); finite-rotation slaving + moment gather; rocking-foundation MVP)\n"

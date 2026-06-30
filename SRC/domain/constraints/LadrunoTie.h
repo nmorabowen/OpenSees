@@ -74,6 +74,31 @@ int generate(Domain *theDomain,
              const ID &masterFacetNodes, int nps,
              const ID &dofs, double tolFrac);
 
+// P2 — integral-mortar variant. Instead of point collocation, tie the slave
+// SURFACE to the master surface in the weak (integral) sense: assemble the global
+// mortar operators over the clipped overlap
+//        D_IJ = INT N_I^s N_J^s dGamma   (slave-slave, interface consistent mass)
+//        M_IK = INT N_I^s phi_K^m dGamma (slave-master)
+// (reusing LadrunoMortarKernel::integratePair verbatim), CONDENSE once at setup to
+//        u_s = P u_m ,  P = D^{-1} M
+// and emit one EQ_Constraint per slave node per tied DOF (u_s = sum_k P_sk u_{m,k}).
+// Pre-inverting D globally makes every P row tie to MASTER nodes only => no MP-chains
+// => the shipped projection handler enforces it unchanged (variationally consistent,
+// optimal for non-matching interfaces).  Both surfaces are FACETED (tri-3/quad-4).
+//
+//   slaveFacetNodes  : flat tags, npsS per slave facet, row-major [facet][node].
+//   masterFacetNodes : flat tags, npsM per master facet.
+//   outward          : interface outward direction (orients the mortar normal); if 0,
+//                      the average master-facet normal is used.
+//
+// Returns #EQ_Constraints emitted (>= 0), or -1 on a named refusal: surfaces not
+// node-disjoint, an uncovered slave node (=> singular D), a non-conforming gap
+// (surfaces not coincident, OQ-3), or a massless tied DOF.
+int generateMortar(Domain *theDomain,
+                   const ID &slaveFacetNodes, int npsS,
+                   const ID &masterFacetNodes, int npsM,
+                   const ID &dofs, double tolFrac, const double *outward);
+
 } // namespace LadrunoTie
 
 #endif
