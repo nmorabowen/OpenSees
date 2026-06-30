@@ -1,0 +1,146 @@
+// LADRUNO-HEADER-START
+// ==========================================================================
+//
+//   ▄█          ▄████████ ████████▄     ▄████████ ███    █▄  ███▄▄▄▄    ▄██████▄
+//  ███         ███    ███ ███   ▀███   ███    ███ ███    ███ ███▀▀▀██▄ ███    ███
+//  ███         ███    ███ ███    ███   ███    ███ ███    ███ ███   ███ ███    ███
+//  ███         ███    ███ ███    ███  ▄███▄▄▄▄██▀ ███    ███ ███   ███ ███    ███
+//  ███       ▀███████████ ███    ███ ▀▀███▀▀▀▀▀   ███    ███ ███   ███ ███    ███
+//  ███         ███    ███ ███    ███ ▀███████████ ███    ███ ███   ███ ███    ███
+//  ███▌    ▄   ███    ███ ███   ▄███   ███    ███ ███    ███ ███   ███ ███    ███
+//  █████▄▄██   ███    █▀  ████████▀    ███    ███ ████████▀   ▀█   █▀   ▀██████▀
+//  ▀                                   ███    ███
+//
+//  Ladruno — a research fork of OpenSees
+//  Created by:  Nicolas Mora Bowen  ·  Patricio Palacios  ·  José Abell  ·  Guppi
+//
+// Header auto-stamped by Ladruno_scripts/stamp_headers.py (art: banner_ASCII.txt).
+// Do not hand-edit between the markers; edit the script/art and re-run instead.
+// ==========================================================================
+// LADRUNO-HEADER-END
+
+// ADR-60 P0 — LadrunoContactReemit: header-only, OpenSees-free finite-sliding
+// re-emission policy for the NTS bucket-sort broad phase. NO OpenSees types —
+// raw double[] + STL only, so the engine (LadrunoContactDomain) and a build-free
+// oracle (contact_prototypes/proto_reemit.py / a standalone main) share ONE logic.
+//
+// The NTS broad phase (LadrunoContactBucketSort) builds its grid ONCE per handle()
+// from REFERENCE coords, so a slave whose DEFORMED position slides past the search
+// band lands on a non-candidate segment -> no adapter -> silent pass-through
+// (ADR-60 §Why). This header decides WHEN to re-emit (rebuild the candidate set
+// from the committed config) without any geometry/assembly knowledge:
+//
+//   * referenceBand()  — the search tolerance band = cellFrac * median segment
+//     diagonal, computed from REFERENCE coords so it is DEFORMATION-INVARIANT and
+//     cannot drift away from the grid the next re-emit builds (gate Lens-D D6).
+//   * maxMigration()   — max over slaves of |x_committed - anchor|, the drift since
+//     the last sort.
+//   * Trigger          — hysteresis + min-steps-floor state machine that turns a
+//     drift into a "re-sort now" decision (gate Lens-A A5: a bare threshold with a
+//     floor of 1 re-triggers every step for a slave parked at f*band).
+//
+// NO slip-transfer math lives here: ADR-60 D4 re-engages friction on a fresh slot
+// at a crossing (already traction-continuous) rather than rotating committed slip
+// (Reviewer-C HIGH). Sustained-drag continuity is P4's patch adapter, not this file.
+//
+// See Ladruno_implementation/60_ladruno_finite_sliding_reemission_adr.md.
+
+#ifndef LadrunoContactReemit_h
+#define LadrunoContactReemit_h
+
+#include <cmath>
+#include <vector>
+#include <algorithm>
+
+namespace LadrunoContactReemit {
+
+// Search-tolerance band = cellFrac * median segment diagonal, from REFERENCE coords
+// (segRefCoords: flat nSeg*nps*3, row-major [seg][node][xyz] — the SAME layout the
+// bucket-sort Grid consumes). Mirrors LadrunoContactBucketSort's medDiag so the band
+// matches the grid cell size, but is keyed to the undeformed mesh so it stays fixed
+// across re-emits while the grid itself moves to deformed coords. Returns 0 on a
+// degenerate input (caller then never triggers — safe).
+inline double referenceBand(int nSeg, int nps, const double *segRefCoords, double cellFrac)
+{
+    if (nSeg <= 0 || nps <= 0 || segRefCoords == 0) return 0.0;
+    std::vector<double> diags(nSeg);
+    for (int s = 0; s < nSeg; s++) {
+        const double *P = segRefCoords + (size_t)s * nps * 3;
+        double dmax = 0.0;
+        for (int i = 0; i < nps; i++)
+            for (int j = i + 1; j < nps; j++) {
+                double dx = P[i*3+0] - P[j*3+0];
+                double dy = P[i*3+1] - P[j*3+1];
+                double dz = P[i*3+2] - P[j*3+2];
+                double d = std::sqrt(dx*dx + dy*dy + dz*dz);
+                if (d > dmax) dmax = d;
+            }
+        diags[s] = dmax;
+    }
+    std::sort(diags.begin(), diags.end());
+    return cellFrac * diags[nSeg / 2];
+}
+
+// Max migration: max over slaves of |x_current - anchor|. anchors/current are flat
+// nSlave*3 (row-major [slave][xyz]); anchors = the coords fed to the grid at the last
+// handle(), current = the committed coords now. O(nSlave), allocation-free.
+inline double maxMigration(int nSlave, const double *anchors, const double *current)
+{
+    if (nSlave <= 0 || anchors == 0 || current == 0) return 0.0;
+    double dmax = 0.0;
+    for (int i = 0; i < nSlave; i++) {
+        const double *a = anchors + (size_t)i * 3;
+        const double *x = current + (size_t)i * 3;
+        double dx = x[0] - a[0], dy = x[1] - a[1], dz = x[2] - a[2];
+        double d = std::sqrt(dx*dx + dy*dy + dz*dz);
+        if (d > dmax) dmax = d;
+    }
+    return dmax;
+}
+
+// Hysteresis + min-steps re-sort trigger (one instance per contact, lives on the
+// engine; ticked once per Domain::commit()). update(dmax, band) returns true exactly
+// when a re-emit should fire THIS commit; it then disarms until the drift falls back
+// below reArmFrac*f*band (so a slave parked at the threshold cannot re-fire every
+// step — gate Lens-A A5) and enforces >= floorSteps commits between fires (the LS-DYNA
+// 5-15-cycle cadence; default 10). band <= 0 (degenerate) never fires.
+//
+// IMPORTANT (gate Lens-A A1 / BLOCKER-GA1): the CALLER must NOT invoke update() during
+// a held-load ALM augmentation sweep (Domain::isContactAugmenting()) — both the metric
+// and the step counter must stand still there, else an augmentation re-commit trips the
+// counter and re-handles mid-Uzawa. This struct does not know about augmentation; the
+// engine gates the call.
+struct Trigger {
+    double f;          // drift fraction of band that arms a fire (default 0.5)
+    double reArmFrac;  // re-arm when dmax < reArmFrac*f*band (default 0.5 -> 0.25*band)
+    int    floorSteps; // min commits between fires (default 10 ~ LS-DYNA cadence)
+    bool   armed;      // ready to fire (disarms on a fire, re-arms on fall-back)
+    int    sinceLast;  // commits since the last fire
+
+    Trigger(double f_ = 0.5, double reArm_ = 0.5, int floor_ = 10)
+      : f(f_), reArmFrac(reArm_), floorSteps(floor_), armed(true), sinceLast(0) {}
+
+    bool update(double dmax, double band)
+    {
+        if (band <= 0.0) return false;
+        if (sinceLast < floorSteps) sinceLast++;       // saturate (no overflow on long runs)
+        const double thresh = f * band;
+        if (!armed) {                                  // disarmed: wait for fall-back
+            if (dmax < reArmFrac * thresh) armed = true;
+            return false;
+        }
+        if (dmax > thresh && sinceLast >= floorSteps) {
+            armed = false;
+            sinceLast = 0;
+            return true;
+        }
+        return false;
+    }
+
+    // reset the cadence/arming at a fresh handle() (anchors just rebuilt -> drift is 0).
+    void rearmAtHandle(void) { armed = true; sinceLast = 0; }
+};
+
+} // namespace LadrunoContactReemit
+
+#endif
