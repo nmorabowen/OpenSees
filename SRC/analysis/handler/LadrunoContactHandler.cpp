@@ -598,6 +598,12 @@ LadrunoContactHandler::handle(const ID *nodesLast)
             // outlier; on the deformed feed a legitimately-diverging node would collapse the grid and
             // silently drop real pairs. Disable it (clipPct=0) when re-emit is on — the
             // NX*NY*NZ≤min(nSeg,5000) cap still bounds memory. OFF ⇒ the shipped 1.0 clip (identical).
+            // ADR-60 R8: Grid::runawayGuardFired() is intentionally NOT auto-warned. As implemented the
+            // guard fires whenever the 1/99-percentile clamp moves a bound — i.e. for ANY mesh with >100
+            // segment-centroids (the tails are clipped by design) — so it is not a clean "a node ran away"
+            // signal and surfacing it would spam normal large models. The safety Finding-3 cared about (the
+            // grid never collapsing during instability) is provided by clipPct=0 here, not by a warning;
+            // the accessor stays available for debugging/tests.
             LadrunoContactBucketSort::Grid grid(nSeg, nps, segCoords.data(), ct.cellFrac,
                                                 reemitActive ? 0.0 : 1.0);
             std::vector<int> cand(nSeg);
