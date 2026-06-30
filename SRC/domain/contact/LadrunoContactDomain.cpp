@@ -122,10 +122,19 @@ LadrunoContactDomain::setReemitContact(int contactTag, double band, double resor
     ReemitContact rc;
     rc.contactTag = contactTag;
     rc.band = band;
-    double f    = (resortFrac > 0.0) ? resortFrac : 0.5;
-    int    fl   = (resortEvery > 0) ? resortEvery : 10;   // default floor ≈ LS-DYNA 5–15-cycle cadence
-    rc.trig = LadrunoContactReemit::Trigger(f, 0.5, fl);
     theReemit.push_back(rc);
+    // R4/R7: ensure a PERSISTENT Trigger for this contact (one per contactTag, survives the
+    // per-handle theReemit rebuild). The migration floor is fixed at the D1 default (10);
+    // -resortEvery is now the FORCED cycle cadence (forceEvery = LS-DYNA BSORT), NOT the floor
+    // it was previously conflated with. A first handle constructs it; later handles only refresh
+    // its config (setConfig) so the accumulated cadence/arming is preserved (the R4 fix).
+    double f          = (resortFrac > 0.0) ? resortFrac : 0.5;
+    int    forceEvery = (resortEvery > 0) ? resortEvery : 0;
+    std::map<int, LadrunoContactReemit::Trigger>::iterator it = theReemitTrig.find(contactTag);
+    if (it == theReemitTrig.end())
+        theReemitTrig[contactTag] = LadrunoContactReemit::Trigger(f, 0.5, 10, forceEvery);
+    else
+        it->second.setConfig(f, 0.5, 10, forceEvery);
 }
 
 void
@@ -191,8 +200,11 @@ LadrunoContactDomain::needsResort(Domain *theDomain)
             double d = LadrunoContactReemit::maxMigration(1, rc.anchors[i].x, cur);
             if (d > dmax) dmax = d;
         }
-        // tick EVERY contact's trigger each commit (cadence advances); OR the fire decisions
-        if (rc.trig.update(dmax, rc.band)) resort = true;
+        // tick EVERY contact's PERSISTENT trigger each commit (cadence advances); OR the fires.
+        // The trigger is keyed by contactTag in theReemitTrig (R4) — setReemitContact created it
+        // this handle, so the lookup is present; guard defensively anyway.
+        std::map<int, LadrunoContactReemit::Trigger>::iterator ti = theReemitTrig.find(rc.contactTag);
+        if (ti != theReemitTrig.end() && ti->second.update(dmax, rc.band)) resort = true;
     }
     return resort;
 }

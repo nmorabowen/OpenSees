@@ -285,8 +285,8 @@ dispositions that **did not actually land**. Remediation backlog, severity-ranke
 | R3 | HIGH (curved) | `orientDir` not persisted; re-derived from reference each handle. Planar-safe (+`-outward` safe), but a sharp convex ridge can flip the normal → silent pass-through. The convex-ridge gate test is absent. **Full fix needs consistent-winding normals or nodal smoothing (ADR-47), not just persistence.** | open — **use `-outward` on curved/non-planar masters** (documented limitation) |
 | R5 | MED | BLOCKER-SLIDE-OFF absent (relies on GC + projection; a stale adapter can persist ≤ floor; an edge clamp can hold spurious traction). | open |
 | R6 | MED | D7 serial-only refusal absent in `needsResort` (the trigger runs on every rank under MP). | **FIXED:** `needsResort` hard-returns false when the host `Domain` is a worker `Subdomain` (`dynamic_cast`, RTTI is on); the handler detects a partitioned host (worker Subdomain OR owns Subdomain elements = the SP coordinator) and reverts re-emit to the shipped frozen-config NTS feed (`reemitActive=false`) with a one-time named warning, so no anchors register ⇒ `needsResort` stays O(1)-false on the coordinator too. Sequential ⇒ both checks inert ⇒ byte-identical (the full ADR-39/41/57/60 contact battery, 141 tests, passes locally). |
-| R4 | MED | `Trigger` reborn every handle (`clearReemit` drops it) ⇒ hysteresis/floor vestigial; the anchor-rebuild is the de-facto rate-limiter (so practical impact is low). | open |
-| R7 | MED | `-resortEvery` shipped as a min-floor, not the D1 LS-DYNA-BSORT forced cycle-cadence. | open |
+| R4 | MED | `Trigger` reborn every handle (`clearReemit` drops it) ⇒ hysteresis/floor vestigial; the anchor-rebuild is the de-facto rate-limiter (so practical impact is low). | **FIXED:** the `Trigger` now lives in a persistent `std::map<contactTag,Trigger>` on the engine; `setReemitContact` constructs it once and thereafter only refreshes its config (`setConfig`, keeping `armed`/`sinceLast`/`sinceForce`), so the floor + hysteresis accumulate across re-handles instead of resetting. `clearReemit` drops only the per-handle anchor list, not the Trigger. |
+| R7 | MED | `-resortEvery` shipped as a min-floor, not the D1 LS-DYNA-BSORT forced cycle-cadence. | **FIXED:** `Trigger` gained `forceEvery`; `-resortEvery N` now maps to it (a FORCED re-sort every N commits, independent of drift — the BSORT cycle override) while the migration floor is the fixed D1 default (10). A forced fire resets the migration counter + re-arms so the two paths stay coherent. Validated build-free (`proto_reemit_selfcheck.cpp`, 2 forced-cadence cases) + a runtime smoke (`tests/test_adr60_reemit_p3_cadence.py`). |
 | R8 | LOW | `runawayGuardFired()` never surfaced (dead warning). | open |
 
 **Exposed combo today:** `-reemit` + `-mu` on a **curved** master (R3 — `orientDir` re-derivation can flip a convex-ridge
@@ -297,8 +297,13 @@ Flat / `-outward` masters — the shipped + tested path — are unaffected.
 fingerprint + friction-drop/refuse-on-change (R1) and the `Subdomain`/partitioned-host serial-only refusal (R6).
 Built locally (worktree, MUMPS junctioned from the main checkout, `LADRUNO_OPENSEES_QUIET=1` to unbreak the CMake
 Python probe); fingerprint validated build-free (`proto_reemit_selfcheck.cpp`), and the full ADR-39/41/57/60 contact
-battery (141 tests) passes locally ⇒ OFF byte-identical. Remaining: R3 (curved orientDir — needs ADR-47 normal
-smoothing, decide before coding), R5, R4, R7, R8.
+battery (141 tests) passes locally ⇒ OFF byte-identical. Then **R4 + R7 (#TBD)** — persistent per-`contactTag`
+`Trigger` (the floor/hysteresis stop being vestigial) + `-resortEvery` as the forced BSORT cycle-cadence
+(`forceEvery`), floor fixed at 10; build-free forced-cadence cases + a runtime smoke
+(`tests/test_adr60_reemit_p3_cadence.py`); full battery (now 145 tests) green ⇒ OFF byte-identical. Remaining:
+R3 (curved orientDir — needs ADR-47 #4a normal smoothing, deferred by decision; use `-outward` meanwhile),
+R5 (slide-off — verify empirically that projection-inactive + the friction cone clamp + GC already cover it
+before coding), R8 (LOW, surface the runaway-guard warning).
 
 **Cross-pollination:** [[60a_pfem_crosspollination_amendment]] folds the OpenSees PFEM remesh study into this ADR —
 PFEM independently validates the commit-boundary cadence (it remeshes at commit, never mid-iteration) and supplies
