@@ -1,8 +1,8 @@
 ---
-title: "LadrunoTie (ADR-62) — handoff: P1 collocation + P2 integral-mortar SHIPPED; P2.1 + P3 deferred"
+title: "LadrunoTie (ADR-62) — handoff: P1 collocation + P2 integral-mortar + P3 shell/rotational SHIPPED; P2.1 / P3.1 / shell-to-solid deferred"
 project: Ladruno
 type: handoff
-status: P0 (numpy) + P1 (collocation, PR #454) + P2 (integral-mortar, PR #455) MERGED to ladruno. Deferred = P2.1 dual-basis sparsification + P3 shell/rotational ties.
+status: P0 (numpy) + P1 (collocation, PR #454) + P2 (integral-mortar, PR #455) + P3 (shell/rotational ndf-6, PR #459) MERGED to ladruno. Deferred = P2.1 dual-basis sparsification + P3.1 Hermite w–θ shell transfer + shell-to-solid ties.
 related:
   - "[[62_ladruno_kinematic_mesh_tie_adr]]"            # the spec (P1/P2 marked SHIPPED)
   - "[[30_ladruno_explicit_constraint_projection_adr]]" # the enforcement handler (SHIPPED, reused unchanged)
@@ -12,13 +12,15 @@ related:
 tags: [adr, constraints, explicit-dynamics, mesh-tie, projection, kinematic, mortar, handoff]
 ---
 
-# LadrunoTie — handoff (P1 + P2 shipped; P2.1 / P3 next)
+# LadrunoTie — handoff (P1 + P2 + P3 shipped; P2.1 / P3.1 / shell-to-solid next)
 
 ## TL;DR — what exists now (all on `ladruno`)
 
 A non-conforming explicit **mesh-tie**, enforced KINEMATICALLY (not by penalty): the generator
 emits ordinary `EQ_Constraint`s and the **shipped** `LadrunoProjectionHandler` (ADR-30) enforces
-them — exact, `dt_cr`-neutral, momentum-clean, no fictitious mass. ONE command, two modes:
+them — exact, `dt_cr`-neutral, momentum-clean, no fictitious mass. Ties translational DOFs (solids)
+AND the rotational DOFs of ndf-6 shells (**P3**: default `-dof` → 1..6 for a 3D ndf-6 node,
+`θ_s = Σ P_sk θ_{m,k}` with the same P; `-dof`-selectable). ONE command, two modes:
 
 ```
 # P1 — node-to-segment COLLOCATION (each slave node -> one master facet)
@@ -33,10 +35,10 @@ Both register in openseespy and the modern Tcl interpreter (NOT the classic `Ope
 like `equationConstraint`, they live in the `DL_Interpreter`/`TclWrapper` path). **No new class tag**
 (emits `EQ_Constraint`, enforced by handler 33001). **No vanilla source edits** beyond the banner.
 
-- Code: `SRC/domain/constraints/LadrunoTie.{h,cpp}` — `LadrunoTie::generate` (P1) + `::generateMortar` (P2) + `OPS_LadrunoTie`.
-- Oracles: `kinematic_tie_validation/proto_p{0,1}_kinematic_tie*.py` (P1) + `proto_p2_mortar_tie.py` (P2, 13/13).
-- Tests: `tests/test_ladrunoTie_patch.py` (8, P1) + `tests/test_ladrunoTie_mortar.py` (7, P2). Full suite 15/15.
-- PRs: ADR/oracles #449, P1 #454, P2 #455 — all merged.
+- Code: `SRC/domain/constraints/LadrunoTie.{h,cpp}` — `LadrunoTie::generate` (P1) + `::generateMortar` (P2) + `OPS_LadrunoTie`; P3 adds `ltDefaultDofs`/`ltScanMassedDOFs`/`ltCheckTiedDofMass` helpers (per-DOF mass) + a shell-to-solid master-DOF guard in both generators.
+- Oracles: `kinematic_tie_validation/proto_p{0,1}_kinematic_tie*.py` (P1) + `proto_p2_mortar_tie.py` (P2, 13/13) + `proto_p3_rotational_tie.py` (P3, 8/8).
+- Tests: `tests/test_ladrunoTie_patch.py` (8, P1) + `tests/test_ladrunoTie_mortar.py` (7, P2) + `tests/test_ladrunoTie_shell.py` (6, P3). Full suite 21/21.
+- PRs: ADR/oracles #449, P1 #454, P2 #455, P3 shell/rotational #459 — all merged.
 
 ## The architecture (so the next agent doesn't re-derive it)
 
@@ -110,22 +112,35 @@ the whole point of dual vs lumped). Value: only at LARGE interfaces (100s+ of in
 dense path is correct and fine below that. Oracle-first: extend `proto_p2_mortar_tie.py` with a
 `dual_D` (diagonal) variant and show same patch test + sparse P. Low correctness risk, medium effort.
 
-### P3 — shell / rotational ties (ndf 6) — CAPABILITY (likely higher user value)
-Today the generator ties **translational DOFs only** (default `-dof 1..ndm`). A shell-to-shell or
-shell-to-solid tie must also tie the **rotational DOFs** (4,5,6 for an ndf-6 shell node). Open issues
-to resolve (worth an oracle + a short design note, NOT a full ADR):
-- **Rotational transfer weights:** does the rotation field interpolate with the same `N_i`/`P` as the
-  translation field (so `θ_s = Σ P_sk θ_{m,k}`), or does a shell-to-solid tie need the solid's
-  translation field to DRIVE the shell rotation (a `rigidLink -beam`-style `θ = ½∇×u` coupling)?
-  Shell-to-shell is the clean first case (same ndf, same P on rotations).
-- **Rotational lumped mass on tied DOFs:** the projection handler needs nonzero mass on every tied
-  DOF; shell rotational mass is small but present (mirror the `rigidLink -beam` / 3D-diaphragm rule the
-  handler already documents). BLOCKER-2's element-mass scan must pick up the shell's rotational mass
-  diagonal — verify `ShellMITC4`/`ASDShellQ4` `getMass()` has nonzero rotational entries, else refuse.
-- **Drilling DOF** (6th, in-plane rotation) is often near-zero-stiffness — decide whether to tie it
-  or leave it free (likely leave free / tie only the two bending rotations, configurable via `-dof`).
-- Scope first cut: shell-to-shell, same ndf, `θ_s = Σ P_sk θ_{m,k}` (reuse the existing P), gated by a
-  rotational-mass check. Test: a constant-curvature (bending) patch must cross the tie exactly.
+### P3 — shell / rotational ties (ndf 6) — SHIPPED (PR #459)
+The generator now ties the **rotational DOFs** (4,5,6) of an ndf-6 shell node with the SAME per-slave
+transfer `P` (`θ_s = Σ P_sk θ_{m,k}`), in both collocation and mortar modes. Resolutions of the open
+issues that were listed here:
+- **Rotational transfer weights:** shell-to-shell reuses the SAME `N_i` / `D⁻¹M` row as the
+  translations (no new P math). Shell-to-**solid** (which WOULD need the `θ=½∇×u` curl coupling) is
+  OUT of v1 scope — guarded with a named master-DOF-existence refusal in both generators, deferred.
+- **Rotational lumped mass:** **surprise — `ShellMITC4` AND `ASDShellQ4` `getMass()` NEGLECT rotary
+  inertia** (zero on DOFs 4,5,6; verified in source — see `LEDGER_quirks.md`). So BLOCKER-2 was made
+  **PER-DOF**: it names-refuses a tied rotational DOF with no mass and tells the user to add nodal
+  rotary mass (`mass $n 0 0 0 mrx mry mrz`) or tie translations only (`-dof 3 1 2 3`). The default
+  `-dof` becomes 1..6 for a 3D ndf-6 node (`ltDefaultDofs`).
+- **Drilling DOF (OQ-P3, user-decided):** tie ALL 3 rotations (4,5,6) by default, `-dof`-selectable.
+  Rationale: the drilling rotation is the shell LOCAL-normal rotation, a mix of global 4/5/6 unless the
+  shell is in a global plane — so "skip DOF 6" is only correct for a global-Z-normal shell; the mass
+  guard already refuses a massless drilling DOF cleanly.
+- **Honest limit (P3.1):** `P` is linearly complete ⇒ rotations + CYLINDRICAL bending with the
+  curvature axis ∥ the interface cross EXACTLY (the FE patch test in `test_ladrunoTie_shell.py` uses
+  the stock `ShellMITC4`). A curvature varying ALONG the interface leaves an O(h²) residual on the
+  quadratic `w` (never on θ) — the Hermite w–θ transfer is the deferred P3.1 rung.
+- Oracle `proto_p3_rotational_tie.py` (8/8) + `tests/test_ladrunoTie_shell.py` (6/6). Handler
+  UNCHANGED (rotational EQ rows are just more master-only union-find vertices).
+
+### P3.1 — Hermite (rotation-consistent) w–θ shell transfer — CAPABILITY (deferred)
+Make a curvature varying ALONG the interface cross exactly: reconstruct the transverse displacement
+`w` from a Hermite combination of nodal `w` and the interface-tangent rotation (couple w to θ across
+the interface tangent), instead of the straight linear-complete `P`. Removes the O(h²) w-residual
+above; needed only when the interface is not aligned with the bending axis. Also opens **shell-to-solid**
+(the `θ=½∇×u` coupling) as a sibling.
 
 ### Also noted (out of scope for a tie, but adjacent)
 Finite-sliding re-emission (the ADR-60 hook) is for a tie that must survive LARGE interface rotation;
@@ -133,10 +148,10 @@ a tie doesn't slide, so this is only relevant if the frozen-`Ccr` small-rotation
 exceeded. Not a planned increment.
 
 ## Bookkeeping state (all current on `ladruno`)
-- `LEDGER_implementations.md` — LadrunoTie row says "shipped (P1 + P2 mortar)", PRs #454/#455.
-- `LEDGER_vanilla_files.md` — interpreter-wiring + banner-regen rows for #454/#455.
-- `LEDGER_quirks.md` — two entries: the handler-requirements refusal contract, and the mortar
-  global-D⁻¹/dense-P/self-clip-coverage gotcha.
-- `banner_features.txt` — "LadrunoTie — kinematic ... (collocation + integral-mortar; ...)".
+- `LEDGER_implementations.md` — LadrunoTie row says "shipped (P1 + P2 mortar + P3 shell/rotational)", PRs #454/#455/#459.
+- `LEDGER_vanilla_files.md` — interpreter-wiring + banner-regen rows for #454/#455/#459.
+- `LEDGER_quirks.md` — three entries: the handler-requirements refusal contract, the mortar
+  global-D⁻¹/dense-P/self-clip-coverage gotcha, and the shell `getMass()`-neglects-rotary-inertia gotcha (P3).
+- `banner_features.txt` — "LadrunoTie — kinematic ... (collocation + integral-mortar; solid + ndf-6 shell rotational DOFs; ...)".
 - `classTags.h` — unchanged (no tag). Memory: [[project_adr61_bipenalty_shelved]] carries the full
-  LadrunoTie record (P1 + P2).
+  LadrunoTie record (P1 + P2 + P3).

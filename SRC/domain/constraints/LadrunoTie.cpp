@@ -68,6 +68,83 @@ static bool ltNodeCoords3(Domain *dom, int tag, double x[3])
     return true;
 }
 
+// Default tied-DOF set for a slave node: 1..ndm translations, PLUS the 3 rotations
+// (4,5,6) when the node is a 3D ndf-6 shell/beam node (Ladruno ADR-62 P3). This ties
+// the rotation field with the SAME transfer P (theta_s = sum P_sk theta_{m,k}). A 3D
+// ndf-3 solid (ndm 3, ndf 3) and a 2D node are unchanged (translations only). The user
+// can override with -dof (e.g. drop the drilling DOF, or tie translations only).
+static void
+ltDefaultDofs(Node *s0, ID &dofs)
+{
+    int ndm = s0->getCrds().Size();
+    int ndf = s0->getNumberDOF();
+    int nd  = (ndm == 3 && ndf == 6) ? 6 : ndm;      // P3: 3D shell/beam ties its rotations too
+    dofs.resize(nd);
+    for (int d = 0; d < nd; d++) dofs(d) = d + 1;     // 1-based
+}
+
+// Per-node set of 1-based DOFs carrying a nonzero mass diagonal, scanned from ELEMENT
+// mass matrices. At model-build the nodal mass() is still 0 for solids/shells (mass is
+// assembled from the element -rho), so the element scan is the reliable source. P3: the
+// scan is PER-DOF (not per-node) so a shell that lumps TRANSLATIONAL mass but neglects
+// ROTATIONAL inertia (ShellMITC4 / ASDShellQ4 both do — getMass() zeros DOFs 4,5,6) is
+// caught on its tied ROTATIONAL DOFs rather than emitting a singular tie. The element
+// mass matrix orders each node's rows by getNumberDOF() in external-node order, so global
+// DOF d of the node at external position k sits at diagonal (offset + d - 1).
+static void
+ltScanMassedDOFs(Domain *dom, std::map<int, std::set<int> > &massedDOF)
+{
+    ElementIter &eIter = dom->getElements();
+    Element *elePtr;
+    while ((elePtr = eIter()) != 0) {
+        const Matrix &M = elePtr->getMass();
+        int n = M.noRows();
+        if (n == 0) continue;
+        const ID &en = elePtr->getExternalNodes();
+        int off = 0;
+        for (int k = 0; k < en.Size(); k++) {
+            Node *nd = dom->getNode(en(k));
+            int ndf = (nd != 0) ? nd->getNumberDOF() : 0;
+            for (int d = 0; d < ndf && (off + d) < n; d++)
+                if (std::fabs(M(off + d, off + d)) > 0.0)
+                    massedDOF[en(k)].insert(d + 1);      // 1-based DOF index
+            off += ndf;
+        }
+    }
+}
+
+// True if slave node `s` carries lumped mass on EVERY tied DOF; else emit a named
+// refusal (first massless DOF; rotational DOFs get the shell rotary-mass hint) and
+// return false. `massedDOF` is from ltScanMassedDOFs; nodal mass is OR'd in per DOF.
+static bool
+ltCheckTiedDofMass(int s, Node *sNode, const ID &dofs,
+                   std::map<int, std::set<int> > &massedDOF, const char *ctx)
+{
+    std::map<int, std::set<int> >::iterator it = massedDOF.find(s);
+    const std::set<int> *emass = (it != massedDOF.end()) ? &it->second : 0;
+    const Matrix &Mn = sNode->getMass();
+    for (int di = 0; di < dofs.Size(); di++) {
+        int dof1 = dofs(di);                             // 1-based
+        bool massed = (emass != 0 && emass->count(dof1) != 0);
+        if (!massed && (dof1 - 1) < Mn.noRows() && std::fabs(Mn(dof1 - 1, dof1 - 1)) > 0.0)
+            massed = true;
+        if (!massed) {
+            opserr << "WARNING LadrunoTie" << ctx << " - tied slave node " << s
+                   << " carries no mass on DOF " << dof1;
+            if (dof1 >= 4)
+                opserr << " (a ROTATIONAL DOF). ShellMITC4 / ASDShellQ4 getMass() neglect "
+                          "rotational inertia, so a shell tie needs explicit nodal rotary mass "
+                          "(`mass $node 0 0 0 mrx mry mrz`), or tie translations only with "
+                          "-dof (e.g. -dof 3 1 2 3).\n";
+            else
+                opserr << ". Define LadrunoTie AFTER the elements/masses; the projection handler "
+                          "requires lumped mass on every tied DOF.\n";
+            return false;
+        }
+    }
+    return true;
+}
+
 // --------------------------------------------------------------------------- //
 // generator
 // --------------------------------------------------------------------------- //
@@ -97,7 +174,7 @@ LadrunoTie::generate(Domain *dom,
     }
     const int nf = mfn.Size() / nps;
 
-    // tied DOFs: default to the spatial dimension of the first slave node.
+    // tied DOFs: default = 1..ndm translations (+ rotations 4,5,6 for a 3D ndf-6 shell).
     ID dofs = dofsIn;
     if (dofs.Size() == 0) {
         Node *s0 = dom->getNode(slaves(0));
@@ -105,9 +182,7 @@ LadrunoTie::generate(Domain *dom,
             opserr << "WARNING LadrunoTie - slave node " << slaves(0) << " not in domain\n";
             return -1;
         }
-        int ndm = s0->getCrds().Size();
-        dofs.resize(ndm);
-        for (int d = 0; d < ndm; d++) dofs(d) = d + 1;   // 1-based
+        ltDefaultDofs(s0, dofs);
     }
 
     // --- master facets: flat reference coords (nf*nps*3), node-disjoint set, sizes ---
@@ -141,23 +216,13 @@ LadrunoTie::generate(Domain *dom,
     LadrunoContactBucketSort::Grid grid(nf, nps, seg.data());
     std::vector<int> cand(nf);
 
-    // --- BLOCKER-2 pre-scan: nodes carrying lumped mass (nodal mass OR an incident
-    //     element whose mass matrix has a nonzero diagonal). At model-build the
-    //     element mass is already formable from rho+geometry (same call the
-    //     projection handler's consistentMassGuard makes at handle() time). ---
-    std::set<int> massed;
-    ElementIter &eIter = dom->getElements();
-    Element *elePtr;
-    while ((elePtr = eIter()) != 0) {
-        const Matrix &M = elePtr->getMass();
-        int n = M.noRows();
-        if (n == 0) continue;
-        double mx = 0.0;
-        for (int p = 0; p < n; p++) if (std::fabs(M(p,p)) > mx) mx = std::fabs(M(p,p));
-        if (mx <= 0.0) continue;
-        const ID &en = elePtr->getExternalNodes();
-        for (int k = 0; k < en.Size(); k++) massed.insert(en(k));
-    }
+    // --- BLOCKER-2 pre-scan (PER-DOF): the 1-based DOFs each node carries lumped mass on
+    //     (from element mass diagonals; nodal mass OR'd in per DOF at the check site). At
+    //     model-build the element mass is already formable from rho+geometry (same call the
+    //     projection handler's consistentMassGuard makes at handle() time). P3: per-DOF so a
+    //     shell tie's rotational DOFs are checked against the shell's (zero) rotary mass. ---
+    std::map<int, std::set<int> > massedDOF;
+    ltScanMassedDOFs(dom, massedDOF);
 
     std::set<int> doneSlaves;
     int emitted = 0;
@@ -188,19 +253,10 @@ LadrunoTie::generate(Domain *dom,
             return -1;
         }
 
-        // BLOCKER-2: every tied slave DOF must carry lumped mass (the projection keeps
-        // slave DOFs in the equation set, so a massless tied DOF is singular).
-        bool hasMass = massed.count(s) != 0;
-        if (!hasMass) {
-            const Matrix &Mn = sNode->getMass();
-            for (int p = 0; p < Mn.noRows(); p++) if (std::fabs(Mn(p,p)) > 0.0) { hasMass = true; break; }
-        }
-        if (!hasMass) {
-            opserr << "WARNING LadrunoTie - tied slave node " << s << " carries no mass (no nodal mass and "
-                      "no incident element with mass). Define LadrunoTie AFTER the elements/masses; the "
-                      "projection handler requires lumped mass on every tied DOF.\n";
+        // BLOCKER-2 (PER-DOF): every tied slave DOF must carry lumped mass (the projection
+        // keeps slave DOFs in the equation set, so a massless tied DOF is singular).
+        if (!ltCheckTiedDofMass(s, sNode, dofs, massedDOF, ""))
             return -1;
-        }
 
         // --- nearest in-bounds facet (broad phase first, brute-force fallback) ---
         int    bestF = -1;
@@ -260,6 +316,24 @@ LadrunoTie::generate(Domain *dom,
                        << " (numberDOF " << sNode->getNumberDOF() << ")\n";
                 return -1;
             }
+            // P3: shell-to-shell only — every retained master node must actually carry
+            // this DOF. A shell slave (ndf 6) tied to ndf-3 solid master facet nodes would
+            // emit an EQ row on nonexistent master rotational DOFs; that needs a θ=½∇×u
+            // rotation-from-translation coupling (not a straight P), which is out of v1
+            // scope. Refuse cleanly rather than emit an invalid constraint.
+            for (int i = 0; i < nps; i++)
+                if (std::fabs(N[i]) > 1e-12) {
+                    Node *mn = dom->getNode(mfn(bestF * nps + i));
+                    if (mn == 0 || dof1 > mn->getNumberDOF()) {
+                        opserr << "WARNING LadrunoTie - slave node " << s << " tied DOF " << dof1
+                               << " references master node " << mfn(bestF * nps + i)
+                               << " which has no DOF " << dof1 << " (ndf mismatch). v1 ties "
+                                  "shell-to-shell (same ndf); a shell-to-solid tie needs a "
+                                  "rotation-from-translation coupling. Restrict -dof to the DOFs "
+                                  "both sides share (e.g. -dof 3 1 2 3 for translations).\n";
+                        return -1;
+                    }
+                }
             ID rNode(cnt), rDOF(cnt);
             Vector Ccr(cnt);
             int p = 0;
@@ -328,14 +402,12 @@ LadrunoTie::generateMortar(Domain *dom,
             return -1;
         }
 
-    // tied DOFs default = spatial dim of the first slave node.
+    // tied DOFs default = 1..ndm (+ rotations 4,5,6 for a 3D ndf-6 shell node).
     ID dofs = dofsIn;
     if (dofs.Size() == 0) {
         Node *s0 = dom->getNode(sTag[0]);
         if (s0 == 0) { opserr << "WARNING LadrunoTie -mortar - slave node " << sTag[0] << " not in domain\n"; return -1; }
-        int ndm = s0->getCrds().Size();
-        dofs.resize(ndm);
-        for (int d = 0; d < ndm; d++) dofs(d) = d + 1;
+        ltDefaultDofs(s0, dofs);
     }
 
     // --- master facet reference coords (flat nfM*npsM*3) + average outward normal ---
@@ -455,33 +527,15 @@ LadrunoTie::generateMortar(Domain *dom,
         }
     }
 
-    // --- BLOCKER-2: every tied slave node carries lumped mass ---
-    std::set<int> massed;
-    ElementIter &eIter = dom->getElements();
-    Element *elePtr;
-    while ((elePtr = eIter()) != 0) {
-        const Matrix &Me = elePtr->getMass();
-        int n = Me.noRows();
-        if (n == 0) continue;
-        double mx = 0.0;
-        for (int p = 0; p < n; p++) if (std::fabs(Me(p,p)) > mx) mx = std::fabs(Me(p,p));
-        if (mx <= 0.0) continue;
-        const ID &en = elePtr->getExternalNodes();
-        for (int k = 0; k < en.Size(); k++) massed.insert(en(k));
-    }
+    // --- BLOCKER-2 (PER-DOF): every tied slave node carries lumped mass on every tied DOF
+    //     (P3: a shell tie's rotational DOFs are checked against the shell's rotary mass) ---
+    std::map<int, std::set<int> > massedDOF;
+    ltScanMassedDOFs(dom, massedDOF);
     for (int I = 0; I < Ns; I++) {
-        bool hasMass = massed.count(sTag[I]) != 0;
-        if (!hasMass) {
-            Node *nd = dom->getNode(sTag[I]);
-            const Matrix &Mn = nd->getMass();
-            for (int p = 0; p < Mn.noRows(); p++) if (std::fabs(Mn(p,p)) > 0.0) { hasMass = true; break; }
-        }
-        if (!hasMass) {
-            opserr << "WARNING LadrunoTie -mortar - tied slave node " << sTag[I] << " carries no mass "
-                      "(no nodal mass, no incident element with mass). Define LadrunoTie AFTER the "
-                      "elements/masses; the projection handler requires lumped mass on tied DOFs.\n";
+        Node *nd = dom->getNode(sTag[I]);
+        if (nd == 0) { opserr << "WARNING LadrunoTie -mortar - slave node " << sTag[I] << " not in domain\n"; return -1; }
+        if (!ltCheckTiedDofMass(sTag[I], nd, dofs, massedDOF, " -mortar"))
             return -1;
-        }
     }
 
     // --- condense P = D^{-1} M (one SPD solve at setup) ---
@@ -527,6 +581,20 @@ LadrunoTie::generateMortar(Domain *dom,
                 opserr << "WARNING LadrunoTie -mortar - slave node " << s << " has no DOF " << dof1 << "\n";
                 return -1;
             }
+            // P3: shell-to-shell only — every retained master node must carry this DOF (see
+            // the collocation generator; a shell-to-solid ndf mismatch needs θ=½∇×u, not P).
+            for (int k = 0; k < Nm; k++)
+                if (std::fabs(P(I,k)) > 1e-12) {
+                    Node *mn = dom->getNode(mTag[k]);
+                    if (mn == 0 || dof1 > mn->getNumberDOF()) {
+                        opserr << "WARNING LadrunoTie -mortar - slave node " << s << " tied DOF " << dof1
+                               << " references master node " << mTag[k] << " which has no DOF " << dof1
+                               << " (ndf mismatch). v1 ties shell-to-shell; a shell-to-solid tie needs "
+                                  "a rotation-from-translation coupling. Restrict -dof to the shared "
+                                  "DOFs (e.g. -dof 3 1 2 3 for translations).\n";
+                        return -1;
+                    }
+                }
             ID rNode(cnt), rDOF(cnt);
             Vector Ccr(cnt);
             int p = 0;
