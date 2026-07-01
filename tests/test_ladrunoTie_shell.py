@@ -21,7 +21,8 @@ on θ) — deferred as the Hermite w–θ transfer P3.1.
   CONTRAST  tying translations ONLY (-dof 1 2 3) leaves the interface a hinge: the moment
             does NOT cross (the master stays flat) — proving the rotational tie carries it.
   MORTAR    a rigid-body rotation (w linear, θ constant — both linearly complete) crosses
-            a genuinely non-matching mortar shell tie exactly, on ALL 6 DOFs.
+            a genuinely non-matching mortar shell tie exactly, on ALL 6 DOFs — with the
+            standard dense basis AND with the P2.1 dual basis (-dual composition).
   REFUSE    ShellMITC4 / ASDShellQ4 getMass() neglect rotational inertia, so tying a
             rotational DOF without explicit nodal rotary mass is refused (per-DOF
             BLOCKER-2); -dof 1 2 3 (translations only) is still accepted (escape hatch).
@@ -161,11 +162,11 @@ def _shell_grid(n, tag0):
     return nodes, quads
 
 
-def test_mortar_rigid_rotation_crosses_tie():
+def _mortar_rigid_rotation(*tie_extra):
     """Overlapping coplanar shells, GENUINELY non-matching (master 2×2 vs slave 3×3),
-    tied with -mortar. A rigid-body rotation about y (uz=-φx linear, θy=φ constant — both
-    linearly complete) prescribed on the master perimeter must reproduce EXACTLY at every
-    slave node on all 6 DOFs (the mortar rotational transfer)."""
+    tied with -mortar (+ tie_extra flags). A rigid-body rotation about y (uz=-φx linear,
+    θy=φ constant — both linearly complete) prescribed on the master perimeter must
+    reproduce EXACTLY at every slave node on all 6 DOFs (the mortar rotational transfer)."""
     phi = 0.02
     m_nodes, m_quads = _shell_grid(2, 1)               # nodes 1..9, center = 5
     s_nodes, s_quads = _shell_grid(3, 101)             # nodes 101..116 (non-matching)
@@ -185,7 +186,8 @@ def test_mortar_rigid_rotation_crosses_tie():
     sf = [n for q in s_quads for n in q]
     mf = [n for q in m_quads for n in q]
     ops.LadrunoTie("-mortar", "-slaveFacets", 4, len(s_quads), *sf,
-                   "-masterFacets", 4, len(m_quads), *mf, "-outward", 0.0, 0.0, 1.0)
+                   "-masterFacets", 4, len(m_quads), *mf, "-outward", 0.0, 0.0, 1.0,
+                   *tie_extra)
 
     # prescribe the rigid rotation on the master PERIMETER; leave the master center (5) free
     ops.timeSeries("Constant", 1)
@@ -204,6 +206,18 @@ def test_mortar_rigid_rotation_crosses_tie():
         assert abs(ops.nodeDisp(t, THY) - phi) <= tol, f"slave {t} θy wrong"
         for d in (1, 2, 4, 6):                         # ux, uy, θx, θz stay ~0
             assert abs(ops.nodeDisp(t, d)) <= tol, f"slave {t} spurious DOF {d}"
+
+
+def test_mortar_rigid_rotation_crosses_tie():
+    _mortar_rigid_rotation()
+
+
+def test_mortar_dual_rigid_rotation_crosses_tie():
+    """COMPOSITION (P2.1 × P3): -mortar -dual on an ndf-6 shell tie. -dual only changes
+    how P is computed (per-facet biorthogonal transform ⇒ sparse rows); the rotational-DOF
+    defaulting and per-DOF mass guard live in the shared emission path, so the same rigid
+    rotation must cross the dual tie exactly on all 6 DOFs."""
+    _mortar_rigid_rotation("-dual")
 
 
 # --------------------------------------------------------------------------
