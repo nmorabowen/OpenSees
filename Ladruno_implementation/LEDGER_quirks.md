@@ -1965,3 +1965,37 @@ fix = closest-facet / interior facet ownership at a shared edge (a P2 item, rela
 edge-handoff). For P1: the R3 SIGN fix is validated by the quad convex-ridge gate; tri-3 chain coverage
 uses a FLAT patch to avoid the pathology; a slave pressed onto a facet INTERIOR (away from ridges) is
 unaffected.
+
+**ADR-63 P2.1 — the sharp-ridge ownership fix is GAP-AWARE, not a near-edge reject (2026-07-01).** The
+above limitation is RESOLVED, but the obvious fix is a TRAP. A per-segment shared-edge mask
+(`segmentSharedEdges`, topological, cached with σ) is threaded into `evalSegmentSmooth`; but rejecting
+ANY projection that lands within a parametric band of a SHARED edge reproduces EXACTLY the reverted
+blunt fix and causes PASS-THROUGH: a frictionless slave slides UP-slope to the ridge apex (the smoothed
+normal is more vertical than the facet normal, so a facet-perpendicular load tilts up-ridge), and at the
+apex BOTH facets project onto the shared edge ⇒ both rejected ⇒ the slave is driven straight through
+(regressed the P1 ridge gate to min_d=−338). The spurious double-activation is LOAD-BEARING at the apex.
+The working rule is GAP-AWARE: reject a shared-edge projection ONLY when `−gap > edgeGapFrac·(|g1|+|g2|)`
+(`edgeGapFrac=0.05`) — the spurious non-owner reads a penetration ∝ its LATERAL distance from the ridge
+(large), while the true owner AND a genuine at-apex contact read a SMALL gap (kept). `edgeGapFrac`/
+`edgeTol=0.1` are dimensionless (gap-vs-facet-size / parametric) ⇒ robust across ridge angle + scale.
+FREE/boundary edges are never rejected ⇒ R5 slide-off untouched. Residual: near the apex the non-owner
+is still kept (a harmless small force ⇒ mild over-stiffness at the exact ridge, NOT pass-through); full
+closest-facet selection under sliding = ADR-57 #4b, a P2.3 concern.
+
+**ADR-63 P2.1 — an ill-posed R3 test can pass for the WRONG reason (2026-07-01).** The P1 R3 gate
+(`test_p1_smoothnormal_holds_the_ridge_facet`) originally ran the slave LATERALLY FREE and only
+"passed" because the P1 spurious ridge ejection (the very bug) pinned `min_d ≥ 0` early. A frictionless
+slave under a load with a lateral component on a CONVEX ridge has NO equilibrium — it slides up-slope and
+launches — so a laterally-free rig cannot test "held". Once P2.1 removes the ejection the free slave
+correctly slides off (min_d≪0). Lesson: to gate a SIGN/normal claim, constrain the confounding DOF —
+FIX the slave's x,y (only z free) so the test states the well-posed thing (smooth stays repulsive,
+min_d≈−1e-3; faceted flips, min_d≈−318). A "held" assertion over a frictionless free body on a curved
+master is suspect.
+
+**ADR-63 build — a deep worktree path overflows the cl.exe command line (2026-07-01).** Building
+OpenSeesPy inside `…\.claude\worktrees\<name>\` fails at the include-heavy TUs (OpenSeesPy / SparsePython)
+with `CreateProcess failed. The parameter is incorrect.` / `ninja: fatal: CreateProcess` — the long
+absolute path, repeated across ~50 `-I` flags, blows the Windows ~32 KB command-line limit. Fix (in
+`build.bat` configure): `-DCMAKE_NINJA_FORCE_RESPONSE_FILE=ON` pushes include/object/library lists into
+`.rsp` files. Harmless on short paths. NB: adding this flag to an existing build tree triggers a full
+recompile (every compile rule's command hash changes).

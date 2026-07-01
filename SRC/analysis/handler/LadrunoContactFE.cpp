@@ -126,11 +126,15 @@ LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, Node **segNodes,
 // flip onto the smoothed-normal path. nn = nps*3 row-major; a null/non-SEGMENT install is a no-op
 // (keeps the faceted path).
 void
-LadrunoContactFE::setSmoothNormals(const double *nn)
+LadrunoContactFE::setSmoothNormals(const double *nn, const int *se)
 {
     if (nn == 0 || mode != SEGMENT) return;
     for (int i = 0; i < nps; i++)
         for (int d = 0; d < 3; d++) nodalNorm[i][d] = nn[i*3 + d];
+    // ADR-63 P2.1 — install the shared-edge mask for the facet-ownership guard (0 ⇒ leave all-zero
+    // ⇒ guard inert). Only the segment's nps flags are meaningful; the rest stay zero.
+    if (se != 0)
+        for (int k = 0; k < nps; k++) sharedEdge[k] = se[k];
     useSmoothNormal = true;
 }
 
@@ -229,7 +233,8 @@ LadrunoContactFE::segmentActive(double &gap, double n[3], double N[4], double *B
     // closest-point projection + in-bounds/penetration gate (active set unchanged ⇒ R5 slide-off
     // untouched); only the normal DIRECTION changes. orientDir is the degenerate-blend fallback.
     bool active = useSmoothNormal
-        ? LadrunoContactProjection::evalSegmentSmooth(nps, Xseg, xs, nodalNorm, orientDir, gap, n, N)
+        ? LadrunoContactProjection::evalSegmentSmooth(nps, Xseg, xs, nodalNorm, orientDir, gap, n, N,
+                                                      sharedEdge)
         : LadrunoContactProjection::evalSegment(nps, Xseg, xs, orientDir, gap, n, N);
     if (!active)
         return false;

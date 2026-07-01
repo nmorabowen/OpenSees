@@ -203,6 +203,11 @@ LadrunoContactDomain::setNormalField(int masterSurfTag, int nps, const int *mTag
         nf.sigma.assign((size_t)(nSeg > 0 ? nSeg : 1), 0);
         nf.status = LadrunoContactNormalField::propagateOrientation(
             mTags, nSeg, nps, nf.sigma.empty() ? 0 : &nf.sigma[0]);
+        // ADR-63 P2.1 — the per-segment shared-edge mask is topological too; compute it alongside σ
+        // (cached on the same fingerprint). The adapter's facet-ownership guard consumes it.
+        nf.sharedEdge.assign((size_t)(nSeg > 0 ? nSeg * nps : 1), 0);
+        LadrunoContactNormalField::segmentSharedEdges(
+            mTags, nSeg, nps, nf.sharedEdge.empty() ? 0 : &nf.sharedEdge[0]);
         nf.fp = fp; nf.nSeg = nSeg; nf.nps = nps;
         nf.signCaptured = false;            // membership changed ⇒ re-capture the frozen sign
     }
@@ -243,6 +248,17 @@ LadrunoContactDomain::getSegNodalNorm(int masterSurfTag, int segIndex) const
     if (nf.status != LadrunoContactNormalField::OK || nf.segNodalNorm.empty()) return 0;
     if (segIndex < 0 || segIndex >= nf.nSeg) return 0;
     return &nf.segNodalNorm[(size_t)segIndex * nf.nps * 3];
+}
+
+const int *
+LadrunoContactDomain::getSegSharedEdge(int masterSurfTag, int segIndex) const
+{
+    std::map<int, NormalField>::const_iterator it = theNormalFields.find(masterSurfTag);
+    if (it == theNormalFields.end()) return 0;
+    const NormalField &nf = it->second;
+    if (nf.status != LadrunoContactNormalField::OK || nf.sharedEdge.empty()) return 0;
+    if (segIndex < 0 || segIndex >= nf.nSeg) return 0;
+    return &nf.sharedEdge[(size_t)segIndex * nf.nps];
 }
 
 bool
