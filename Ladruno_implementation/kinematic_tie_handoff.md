@@ -1,8 +1,8 @@
 ---
-title: "LadrunoTie (ADR-62) — handoff: P1 collocation + P2 integral-mortar + P2.1 dual + P3 shell/rotational SHIPPED; P3.1 / shell-to-solid deferred"
+title: "LadrunoTie (ADR-62) — handoff: P1 collocation + P2 integral-mortar + P2.1 dual + P3 shell/rotational + P3.1 Hermite SHIPPED; shell-to-solid deferred"
 project: Ladruno
 type: handoff
-status: P0 (numpy) + P1 (collocation, PR #454) + P2 (integral-mortar, PR #455) + P2.1 (dual/sparse mortar, PR #462) + P3 (shell/rotational ndf-6, PR #459) MERGED to ladruno. Deferred = P3.1 Hermite w–θ shell transfer + shell-to-solid ties.
+status: P0 (numpy) + P1 (collocation, PR #454) + P2 (integral-mortar, PR #455) + P2.1 (dual/sparse mortar, PR #462) + P3 (shell/rotational ndf-6, PR #459) + P2.1×P3 composition test (PR #464) + P3.1 (Hermite w–θ edge transfer, -hermite) MERGED to ladruno. Deferred = mortar-Hermite (P3.1b, needs a kernel per-GP hook) + shell-to-solid ties.
 related:
   - "[[62_ladruno_kinematic_mesh_tie_adr]]"            # the spec (P1/P2 marked SHIPPED)
   - "[[30_ladruno_explicit_constraint_projection_adr]]" # the enforcement handler (SHIPPED, reused unchanged)
@@ -24,7 +24,8 @@ AND the rotational DOFs of ndf-6 shells (**P3**: default `-dof` → 1..6 for a 3
 
 ```
 # P1 — node-to-segment COLLOCATION (each slave node -> one master facet)
-LadrunoTie -slaveNodes <ns> s1..  -masterFacets <npsM> <nf> m..  [-dof nd d..] [-tol frac]
+# -hermite = P3.1 rotation-consistent cubic Hermite w–θ transfer (ndf-6 shell EDGE ties)
+LadrunoTie -slaveNodes <ns> s1..  -masterFacets <npsM> <nf> m..  [-dof nd d..] [-tol frac] [-hermite]
 
 # P2 — integral MORTAR (slave SURFACE -> master surface, weak form); -dual = P2.1 sparse basis
 LadrunoTie -mortar -slaveFacets <npsS> <nf> s..  -masterFacets <npsM> <nf> m..
@@ -36,9 +37,9 @@ like `equationConstraint`, they live in the `DL_Interpreter`/`TclWrapper` path).
 (emits `EQ_Constraint`, enforced by handler 33001). **No vanilla source edits** beyond the banner.
 
 - Code: `SRC/domain/constraints/LadrunoTie.{h,cpp}` — `LadrunoTie::generate` (P1) + `::generateMortar` (P2; `dual` param = P2.1) + `OPS_LadrunoTie`; P3 adds `ltDefaultDofs`/`ltScanMassedDOFs`/`ltCheckTiedDofMass` helpers (per-DOF mass) + a shell-to-solid master-DOF guard in both generators.
-- Oracles: `kinematic_tie_validation/proto_p{0,1}_kinematic_tie*.py` (P1) + `proto_p2_mortar_tie.py` (P2, 13/13) + `proto_p2_1_dual_mortar.py` (P2.1, 12/12) + `proto_p3_rotational_tie.py` (P3, 8/8).
-- Tests: `tests/test_ladrunoTie_patch.py` (8, P1) + `tests/test_ladrunoTie_mortar.py` (11 = 7 P2 + 4 P2.1 dual) + `tests/test_ladrunoTie_shell.py` (7 = 6 P3 + 1 P2.1×P3 composition: `-mortar -dual` on an ndf-6 shell tie crosses a rigid rotation on all 6 DOFs). Full suite 26/26.
-- PRs: ADR/oracles #449, P1 #454, P2 #455, P3 shell/rotational #459, P2.1 dual #462, P2.1×P3 composition test #464 — all merged.
+- Oracles: `kinematic_tie_validation/proto_p{0,1}_kinematic_tie*.py` (P1) + `proto_p2_mortar_tie.py` (P2, 13/13) + `proto_p2_1_dual_mortar.py` (P2.1, 12/12) + `proto_p3_rotational_tie.py` (P3, 8/8) + `proto_p3_1_hermite_tie.py` (P3.1, 13/13).
+- Tests: `tests/test_ladrunoTie_patch.py` (8, P1) + `tests/test_ladrunoTie_mortar.py` (11 = 7 P2 + 4 P2.1 dual) + `tests/test_ladrunoTie_shell.py` (13 = 6 P3 + 1 P2.1×P3 composition + 6 P3.1 hermite). Full suite 32/32.
+- PRs: ADR/oracles #449, P1 #454, P2 #455, P3 shell/rotational #459, P2.1 dual #462, P2.1×P3 composition test #464, P3.1 hermite — all merged.
 
 ## The architecture (so the next agent doesn't re-derive it)
 
@@ -143,12 +144,33 @@ issues that were listed here:
 - Oracle `proto_p3_rotational_tie.py` (8/8) + `tests/test_ladrunoTie_shell.py` (6/6). Handler
   UNCHANGED (rotational EQ rows are just more master-only union-find vertices).
 
-### P3.1 — Hermite (rotation-consistent) w–θ shell transfer — CAPABILITY (deferred)
-Make a curvature varying ALONG the interface cross exactly: reconstruct the transverse displacement
-`w` from a Hermite combination of nodal `w` and the interface-tangent rotation (couple w to θ across
-the interface tangent), instead of the straight linear-complete `P`. Removes the O(h²) w-residual
-above; needed only when the interface is not aligned with the bending axis. Also opens **shell-to-solid**
-(the `θ=½∇×u` coupling) as a sibling.
+### P3.1 — Hermite (rotation-consistent) w–θ shell transfer (`-hermite`) — SHIPPED
+Makes a curvature varying ALONG the interface cross exactly (the P3 honest limit): with `-hermite`
+(collocation mode, ndf-6 shell EDGE/butt-joint ties) each slave's shell-NORMAL translation and
+interface-TANGENT slope are reconstructed with the CUBIC HERMITE basis over the master edge nodes'
+`(w, θ_t)` pairs; in-plane translations + non-slope rotations keep the linear weights:
+```
+u_s = (I−n⊗n)·Σ N_k u_k + n·[Σ Hw_k (n·u_k) + Hp_k (e·θ_k)]
+θ_s = (I−e⊗e)·Σ N_k θ_k + e·[Σ dHw_k (n·u_k) + dHp_k (e·θ_k)]      e = t×n, slope = θ·e
+```
+(from `u = θ×r ⇒ ∇w = n×θ ⇒ dw/ds = θ·(t×n)`; the transfer is invariant under n→−n). Exact through
+CUBIC w (O(h⁴) beyond — strict dominance over the linear P's O(h²)); every P3-exact case still crosses.
+**OQ answered (user signed off collocation-only): it stays a LadrunoTie-LEVEL transform** —
+`EQ_Constraint` natively stores per-retained `(node,dof,coef)` triples (EQ_Constraint.h:37-45) and
+`LadrunoProjectionHandler::buildGroups` builds one union-find vertex per (node,dof) with NO
+retained-dof==constrained-dof assumption ⇒ mixed `w←(w,θ)` rows are ordinary EQ rows, NO kernel/handler
+change. **Mortar-Hermite is the exception** (`integratePair` returns only ACCUMULATED D/M — no per-GP
+hook — so the Hermite master basis can't enter the M integral without a kernel extension) ⇒ deferred
+(P3.1b); `-hermite -mortar` is a named refusal. Other named refusals: full 6-DOF tie required (the rows
+couple u↔θ), ndf-6 on BOTH sides, slave must project onto a master facet EDGE (or corner → identity
+rows); interior projections refused (surface-overlap collocation keeps the standard tie). HONEST
+LIMIT: Kirchhoff on the tie line (slope=rotation) — Mindlin/shear-deformable data carries a bounded
+O(γ·h) tie error (γ = shear angle), vanishing thin + on refinement. Oracle
+`proto_p3_1_hermite_tie.py` (13/13: rigid modes, quadratic/cubic exact, O(h⁴)-vs-O(h²) rates,
+3D-inclined global-DOF rows, γ-bound; gotcha: the shear-error test must NOT sample midpoints —
+`H2+H4 ∝ ξ−3ξ²+2ξ³` has a root at ξ=½). FE tests: headline along-interface bending crosses exactly
+at the non-conforming mid-edge node + linear-tie contrast (κ/4 vs exact κ/8) + aligned-bending
+no-regression + 3 refusals. **Shell-to-solid** (the `θ=½∇×u` coupling) remains the open sibling rung.
 
 ### Also noted (out of scope for a tie, but adjacent)
 Finite-sliding re-emission (the ADR-60 hook) is for a tie that must survive LARGE interface rotation;

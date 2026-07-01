@@ -63,16 +63,39 @@ namespace LadrunoTie {
 //   tolFrac           : conforming tolerance — refuse if a slave projects farther
 //                       than tolFrac * facet-size off the master surface (OQ-3:
 //                       require conforming-at-interface geometry, no IC snapping).
+//   hermite           : P3.1 — rotation-consistent CUBIC HERMITE w–θ transfer for
+//                       ndf-6 shell EDGE (butt-joint) ties.  The straight linear-
+//                       complete P leaves an O(h²) residual on the transverse
+//                       displacement w when the bending curvature varies ALONG the
+//                       interface (w quadratic along the tie line; P3's honest
+//                       limit).  With hermite, the shell-normal translation and the
+//                       interface-tangent slope of each slave node are reconstructed
+//                       from a cubic Hermite combination of the master edge nodes'
+//                       (w, θ_t) pairs — exact through cubic w, O(h⁴) beyond, and
+//                       exact for every P3 case (rigid modes, aligned bending).
+//                       In-plane translations and the non-slope rotations keep the
+//                       linear P.  Emission-level only: the mixed w←(w,θ) rows are
+//                       ordinary EQ_Constraints (per-retained (node,dof,coef)
+//                       triples); no kernel or handler change.  Requires ndf-6
+//                       shell nodes on BOTH sides, the full 1..6 tied-DOF set, and
+//                       each slave to project onto a master facet EDGE (or corner).
+//                       Assumes Kirchhoff kinematics on the tie line (slope =
+//                       rotation): shear-deformable states carry a bounded O(γ·h)
+//                       tie error (γ = transverse shear angle).  Oracle:
+//                       kinematic_tie_validation/proto_p3_1_hermite_tie.py.
+//                       Default false = the P1/P3 linear transfer, byte-identical.
 //
 // Returns the number of EQ_Constraints emitted (>= 0) on success, or -1 on a named
 // refusal: BLOCKER-1 (slave/master not node-disjoint, or a slave listed twice =>
 // MP-chain / double-constraint the projection handler refuses), BLOCKER-2 (a tied
-// slave DOF carries no lumped mass), OQ-3 (slave off the master manifold), or a
-// geometry/lookup error.
+// slave DOF carries no lumped mass), OQ-3 (slave off the master manifold), a
+// hermite-precondition violation (non-ndf-6 side, partial -dof, or an interior
+// projection), or a geometry/lookup error.
 int generate(Domain *theDomain,
              const ID &slaveNodes,
              const ID &masterFacetNodes, int nps,
-             const ID &dofs, double tolFrac);
+             const ID &dofs, double tolFrac,
+             bool hermite = false);
 
 // P2 — integral-mortar variant. Instead of point collocation, tie the slave
 // SURFACE to the master surface in the weak (integral) sense: assemble the global
