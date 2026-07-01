@@ -628,15 +628,18 @@ LadrunoContactHandler::handle(const ID *nodesLast)
             double smoothSeed[3] = {0.0, 0.0, 0.0};   // the GLOBAL outward datum (also the fallback orientDir)
             if (ct.smoothNormal) {
                 std::vector<double> segDef((size_t)nSeg * nps * 3, 0.0);
+                std::vector<double> segRef((size_t)nSeg * nps * 3, 0.0);   // REFERENCE master (vote basis, F1)
                 bool missingNode = false;
                 for (int seg = 0; seg < nSeg; seg++)
                     for (int k = 0; k < nps; k++) {
                         Node *mn = theDomain->getNode(mTags(seg * nps + k));
                         double *S = &segDef[((size_t)seg * nps + k) * 3];
+                        double *R = &segRef[((size_t)seg * nps + k) * 3];
                         if (mn != 0) {
                             const Vector &X = mn->getCrds();
                             const Vector &u = mn->getDisp();   // committed/deformed (frozen within step)
                             S[0] = X(0) + u(0); S[1] = X(1) + u(1); S[2] = X(2) + u(2);
+                            R[0] = X(0); R[1] = X(1); R[2] = X(2);   // reference (config-independent vote)
                         } else {
                             missingNode = true;   // a malformed master ⇒ refuse the field (review GAP-4):
                                                   // backfilling a missing node makes a garbage facet normal
@@ -668,9 +671,26 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                 }
                 std::vector<int> mt((size_t)mTags.Size());
                 for (int i = 0; i < mTags.Size(); i++) mt[i] = mTags(i);
+                // ADR-63 auto-sign robustness: on the AUTO path (no -outward) gather the slave
+                // REFERENCE coords (config-independent, captured once — D4) for the per-slave majority
+                // vote. With -outward we skip them: the sign comes from the explicit aggregate seed.
+                std::vector<double> slaveRef;
+                if (!ct.hasOutward) {
+                    slaveRef.reserve((size_t)sTags.Size() * 3);
+                    for (int i = 0; i < sTags.Size(); i++) {
+                        Node *snd = theDomain->getNode(sTags(i));
+                        if (snd != 0) {
+                            const Vector &X = snd->getCrds();
+                            slaveRef.push_back(X(0)); slaveRef.push_back(X(1)); slaveRef.push_back(X(2));
+                        }
+                    }
+                }
+                int nSlaveVote = (int)slaveRef.size() / 3;
                 int st = missingNode ? LadrunoContactNormalField::NON_ORIENTABLE
                        : cd->setNormalField(ct.masterSurfTag, nps, mt.empty() ? 0 : &mt[0], nSeg,
-                                            segDef.data(), smoothSeed);
+                                            segDef.data(), smoothSeed,
+                                            slaveRef.empty() ? 0 : &slaveRef[0], nSlaveVote,
+                                            ct.hasOutward, segRef.data());
                 if (st != LadrunoContactNormalField::OK) {
                     static bool warnedSmoothRefuse = false;
                     if (!warnedSmoothRefuse) {

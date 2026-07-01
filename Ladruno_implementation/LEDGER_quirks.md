@@ -2028,7 +2028,10 @@ slave *starting to the side* of a curved arc votes a near-horizontal seed (slave
 up-field) whose tiny z-component can flip the sign INWARD ⇒ the smoothed field points inward ⇒ pass-through
 even with `-smoothNormal` (the pre-existing F2/F3/F5 low-confidence warning fires). So `-smoothNormal` is NOT
 a blanket lift of `-outward` for curved masters — it lifts it only for slave clouds sitting OVER the master
-(seed ∥ field). Always pass `-outward` for edge-grazing / side-approaching slaves on a curve. (3) The P2.1
+(seed ∥ field). Always pass `-outward` for edge-grazing / side-approaching slaves on a curve. **[SUPERSEDED
+by P2.5 below — the auto sign is now a robust per-slave majority vote that holds for over-the-master edge/
+side-approaching clouds without `-outward`; only a genuinely two-sided or multi-shell cloud still needs it.]**
+(3) The P2.1
 gap-aware guard's near-apex over-stiffness under SLIDING is a mild quality effect (a small extra bump as a
 block crests a SHARP ridge at speed; negligible on realistic shallow arcs, maxpen ~0.01; never diverges),
 not a pass-through — full single-owner selection is ADR-57 #4b.
@@ -2055,3 +2058,34 @@ lateral drive pattern; (c) DisplacementControl is the ONLY implicit displacement
 `constraints LadrunoContact` model — the handler REFUSES a non-homogeneous (imposed-displacement) SP; (d)
 there is NO validated static+`-reemit` path (every ADR-60 reemit test is explicit/CDL), so a FIXED master
 (constant nodal-normal field, no re-handle needed) sidesteps it for the implicit rig.
+
+**ADR-63 P2.5 — the AUTO outward sign is a per-slave MAJORITY vote; a LOCAL closest-point vote beats the
+aggregate-normal·global-chord coin-flip (2026-07-01).** The frozen global sign on the auto (no-`-outward`)
+path used to be `sign(Σ_a σ_a n_a · (slaveCentroid − masterCentroid))` — an AGGREGATE normal (which nearly
+cancels on a curved/domed master) dotted against a GLOBAL chord (which goes ~tangent to the field when the
+slave cloud grazes the master edge-on) ⇒ `vote·seed ≈ 0` is a coin-flip and a tiny wrong-signed component
+flipped the WHOLE field inward → silent pass-through even with `-smoothNormal` (F2/F3/F5). FIX =
+`LadrunoContactProjection::voteSignRobust`: each slave projects onto its NEAREST facet (closest-point,
+clamped) to get that slave's LOCAL coherent unit normal `n̂ = σ_{s*}·newell̂(s*)`, then votes
+`w = n̂·(slave − surfaceCentroid)` (surfaceCentroid = slot-average of the facet nodes, an INTERIOR
+reference for an open convex patch); the surface takes the DISTANCE-WEIGHTED majority `sign(Σ w)`. TWO
+adversarial-forced choices: (i) the LOCAL normal (not the aggregate `Σσn`) supplies the lateral
+component the aggregate lacked at an edge-grazing slave — the actual F2/F3/F5 fix; (ii) the INTERIOR
+CENTROID reference (not the local footpoint separation) keeps a single slave seeded slightly
+PENETRATING voting outward — a footpoint separation points inward for such a slave and with one slave
+there's no majority to protect it (the P1 sign gate does exactly this; adversarial F2). `|w|`-weighting
+then lets a clearly-separated majority dominate. The vote runs on the REFERENCE coords of BOTH master
+and slaves (adversarial F1 — the DEFORMED master vs reference slave mix mis-signs on restart / mid-run
+recapture; `setNormalField` takes `refSegCoords`, the DEFORMED `segCoords` still drives the per-handle
+field). RESIDUAL (LOW): a non-convex open patch whose centroid is not interior ⇒ pass `-outward`.
+KEY POINTS: (1) it decides only the
+ONE frozen sign (D2/F1) — still captured once, still frozen; (2) `-outward` given ⇒ the aggregate
+`sign(vote·outward)` path is UNCHANGED (byte-behavior preserved) — the robust vote runs only on the auto
+path; (3) `nVoted==0` (no slave projected) ⇒ fall back to the aggregate seed vote; (4) a genuinely two-sided
+cloud yields margin≈0 ⇒ the SAME `conf<0.1` handler warning fires (the ambiguity is DETECTED, recommend
+`-outward`); (5) a disconnected multi-shell master is still refused at `propagateOrientation` — a
+per-connected-component vote (run `voteSignRobust` per component vs its own nearest slaves) is the
+Q-MULTISHELL follow-up; (6) the slave coords fed to the vote are the REFERENCE coords (config-independent —
+captured once); (7) RESIDUAL: the degenerate-BLEND fallback still orients by the aggregate seed (review
+GAP-2), so a degenerate blend AND an edge-grazing cloud together can still drop a pair (fails safe) — pass
+`-outward` for that compound corner. `-smoothNormal` OFF stays byte-identical; no classTag; no vanilla touch.

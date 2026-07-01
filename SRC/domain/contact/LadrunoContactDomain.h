@@ -458,8 +458,18 @@ class LadrunoContactDomain
     //     identical (BLOCKER-IDENTITY). The field is FROZEN within a step (D4): rebuilt each handle,
     //     constant through the Newton loop. ---
     void clearNormalFields(void);                          // handle() begin: drop the per-handle field
+    // ADR-63 auto-sign robustness: slaveCoords (nSlaves × 3, REFERENCE) drive a per-slave distance-
+    // weighted majority vote for the frozen global sign on the AUTO path (useOutward=false); with
+    // useOutward=true (an explicit -outward) the sign comes from the aggregate seed vote as before.
+    // slaveCoords==0 / no vote ⇒ fall back to the aggregate voteSign(globalSeed). refSegCoords (nSeg×
+    // nps×3, REFERENCE master coords) is the config-independent basis for BOTH the vote and the
+    // aggregate fallback (D4 / review F1 — never the DEFORMED segCoords, which mis-signs on restart /
+    // mid-run recapture); 0 ⇒ use segCoords (byte-compatible for a step-0 first capture). segCoords
+    // (DEFORMED) still drives the per-handle nodal-normal FIELD. Defaults keep any other caller unchanged.
     int  setNormalField(int masterSurfTag, int nps, const int *mTags, int nSeg,
-                        const double *segCoords, const double globalSeed[3]);
+                        const double *segCoords, const double globalSeed[3],
+                        const double *slaveCoords = 0, int nSlaves = 0, bool useOutward = false,
+                        const double *refSegCoords = 0);
     const double *getSegNodalNorm(int masterSurfTag, int segIndex) const;
     // ADR-63 P2.1 — this segment's nps shared-edge flags (1 = the local edge from node k to
     // (k+1)%nps is an interior/shared edge; 0 = a free/boundary edge). TOPOLOGICAL, cached with σ.
