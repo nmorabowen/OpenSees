@@ -60,12 +60,23 @@ def _right_facet_signed_dist(px, pz):
 def _press_into_right_facet(smooth):
     """Slave on the right facet at (0.5, 0, 0.5-DELTA) (penetrating by DELTA), mass 1, pushed
     INTO the tent along -(1,0,1)/sqrt2 by a constant load. Run explicit; return the min signed
-    distance from the facet over the run (how far the slave is driven in)."""
+    distance from the facet over the run (how far the slave is driven in).
+
+    The slave's x,y DOFs are FIXED (only z free) so this gate isolates the R3 SIGN behaviour — the
+    thing -smoothNormal fixes — from frictionless lateral motion. Rationale: a frictionless slave
+    under a load with a lateral component on a CONVEX ridge has NO equilibrium (it slides up-slope and
+    launches off), so a laterally-free rig can't cleanly test "held". Historically this gate ran
+    laterally-free and only 'passed' because the P1 spurious adjacent-facet ejection happened to pin
+    min_d ≥ 0 early (the bug masquerading as a hold); once P2.1 removes that ejection the free slave
+    correctly slides off. Fixing x,y makes the well-posed statement: with the global-sign field the
+    normal stays REPULSIVE (slave held, min_d≈-DELTA); with the faceted auto sign it FLIPS (slave
+    driven straight down through the master, min_d≪-1). See ADR-63 P2.1."""
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 3)
     mtags = _build_tent()
     x0, z0 = 0.5, 0.5 - DELTA
     ops.node(1, x0, 0.0, z0)
+    ops.fix(1, 1, 1, 0)                 # x,y FIXED, z FREE — isolate the R3 sign (no frictionless slide)
     ops.mass(1, 1.0, 1.0, 1.0)
     ops.contactSurface(10, "-master", 4, *mtags)
     ops.contactSurface(20, "-slave", 1)

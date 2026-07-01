@@ -170,7 +170,8 @@ class LadrunoContactFE : public FE_Element
     // tangent stays the symmetric kn·BᵀB (ADR-63 D4 frozen-field); the faceted B3 ∂n/∂u
     // (consistentNormal) is suppressed under smoothing (its consistent-tangent sibling is the
     // gated P3). NOT called ⇒ useSmoothNormal stays false ⇒ the faceted path ⇒ byte-identical.
-    void setSmoothNormals(const double *nn);
+    // se = this segment's nps shared-edge flags (ADR-63 P2.1 facet-ownership guard); 0 ⇒ no guard.
+    void setSmoothNormals(const double *nn, const int *se = 0);
 
     // getTangent routes through the integrator's formEleTangent so the INTEGRATOR
     // decides what to assemble (CDL -> addMtoTang only -> no contact stiffness in
@@ -302,6 +303,10 @@ class LadrunoContactFE : public FE_Element
     // orientDir is the degenerate-blend fallback. Default false ⇒ the faceted path ⇒ byte-identical.
     bool   useSmoothNormal = false;
     double nodalNorm[4][3];
+    // ADR-63 P2.1 — this segment's nps shared-edge flags (1 = interior/shared edge, 0 = free edge),
+    // from the engine's topological mask. Default all-zero ⇒ the facet-ownership guard never fires
+    // (P1 behaviour); setSmoothNormals installs the real mask. See evalSegmentSmooth().
+    int    sharedEdge[4] = {0, 0, 0, 0};
 
     // P3 friction binding (active only in SEGMENT mode with mu>0)
     double kt;          // tangential penalty

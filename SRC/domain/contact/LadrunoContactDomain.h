@@ -461,6 +461,10 @@ class LadrunoContactDomain
     int  setNormalField(int masterSurfTag, int nps, const int *mTags, int nSeg,
                         const double *segCoords, const double globalSeed[3]);
     const double *getSegNodalNorm(int masterSurfTag, int segIndex) const;
+    // ADR-63 P2.1 — this segment's nps shared-edge flags (1 = the local edge from node k to
+    // (k+1)%nps is an interior/shared edge; 0 = a free/boundary edge). TOPOLOGICAL, cached with σ.
+    // The adapter threads it into evalSegmentSmooth's facet-ownership guard. 0 ⇒ refused/out of range.
+    const int *getSegSharedEdge(int masterSurfTag, int segIndex) const;
     // the frozen global-sign confidence (|cos∠(vote,seed)|, [0,1]) for an OK field, else -1 (no field).
     // The handler warns once when this is below a small floor (fragile auto sign — review F2/F3/F5).
     double getNormalFieldSignConf(int masterSurfTag) const;
@@ -522,6 +526,7 @@ class LadrunoContactDomain
         int nps, nSeg;
         unsigned long long fp;               // fingerprint the cached σ was computed for
         std::vector<int> sigma;              // cached coherent winding signs (topological)
+        std::vector<int> sharedEdge;         // nSeg*nps shared-edge flags (topological, P2.1); cached with σ
         std::vector<double> segNodalNorm;    // nSeg*nps*3 nodal normals (per handle); empty ⇒ none
         // ADR-63 review F1/D2 — the GLOBAL outward sign is captured ONCE (first OK build) and FROZEN
         // (never re-decided from a deformed config, which could flip the field mid-run). signConf =

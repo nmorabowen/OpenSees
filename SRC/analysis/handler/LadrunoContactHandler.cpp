@@ -811,7 +811,10 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                     // keeps the faceted path). orientDir remains the per-query degenerate-blend fallback.
                     if (smoothFieldOK) {
                         const double *nn = cd->getSegNodalNorm(ct.masterSurfTag, seg);
-                        if (nn != 0) fe->setSmoothNormals(nn);
+                        // ADR-63 P2.1: install the segment's shared-edge mask so evalSegmentSmooth
+                        // rejects a projection landing on a SHARED interior edge (facet ownership).
+                        const int *se = cd->getSegSharedEdge(ct.masterSurfTag, seg);
+                        if (nn != 0) fe->setSmoothNormals(nn, se);
                     }
                     theModel->addFE_Element(fe);
                     if (ct.mu > 0.0)

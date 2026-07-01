@@ -206,13 +206,18 @@ if defined CONAN_CMAKE if exist "%BUILD_DIR%\CMakeCache.txt" (
 REM ----- 3. CMake configure ------------------------------------------------
 echo.
 echo === Step 3: CMake configure ===
+REM CMAKE_NINJA_FORCE_RESPONSE_FILE=ON: push include/object/library lists into .rsp files so a
+REM DEEP source path (e.g. a .claude\worktrees\<name> build tree) can't blow a cl.exe command line
+REM past the Windows ~32 KB CreateProcess limit ("CreateProcess failed. The parameter is incorrect"
+REM on the include-heavy OpenSeesPy TUs). Harmless on short paths. — Ladruno build fix.
 pushd "%SRC%"
 cmake --preset conan-release ^
     -DCMAKE_Fortran_COMPILER=ifx ^
     -DCMAKE_INSTALL_PREFIX="%INSTALL%" ^
     -DPython_EXECUTABLE="%PYEXE%" ^
     -DMUMPS_DIR="%MUMPS_INSTALL%/lib" ^
-    -DMUMPS_INCLUDE_DIR="%MUMPS_INSTALL%/include"
+    -DMUMPS_INCLUDE_DIR="%MUMPS_INSTALL%/include" ^
+    -DCMAKE_NINJA_FORCE_RESPONSE_FILE=ON
 set "RC=%errorlevel%"
 popd
 if not "%RC%"=="0" (echo CMake configure failed & exit /b 1)
