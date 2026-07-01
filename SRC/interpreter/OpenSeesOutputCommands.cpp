@@ -441,6 +441,7 @@ int OPS_LadrunoContact()
     bool   enableReemit = false;
     double resortFrac   = 0.5;
     int    resortEvery  = 0;
+    bool   smoothNormal = false;  // Ladruno ADR-63 #4a: averaged nodal-normal smoothing (off ⇒ identical)
     bool consistentTan = false;   // Ladruno ADR-39 P3.5: friction tangent symmetry
     // Ladruno ADR-39 B3 (P2b-2c): `-geomtan` opts the NTS SEGMENT lane into the consistent
     // ∂n/∂u geometric NORMAL tangent (kn·gN·∂²gN/∂u²) ⇒ quadratic Newton on CURVED / large-
@@ -762,6 +763,12 @@ int OPS_LadrunoContact()
                 return -1;
             }
             resortEvery = v[0];
+        } else if (opt != 0 && strcmp(opt, "-smoothNormal") == 0) {
+            // Ladruno ADR-63 #4a: opt the NTS contact into averaged nodal-normal smoothing — a smooth
+            // N(X) master-normal field (coherent winding + a GLOBAL outward sign) that resolves the
+            // ADR-60 R3 curved-master ridge flip + the ADR-41 Q-NORMAL junction chatter. Off ⇒ the
+            // faceted normalOriented() path ⇒ byte-identical. NTS-only (refused with -mortar below).
+            smoothNormal = true;
         } else {
             // Ladruno ADR-39 P2b-2b (gate MINOR-1): error on an unexpected trailing
             // token rather than silently swallowing it (e.g. a stray friction value
@@ -830,6 +837,15 @@ int OPS_LadrunoContact()
                   "and already finite-sliding-correct (re-emit not needed)\n";
         return -1;
     }
+    if (smoothNormal && isMortar) {
+        // ADR-63 #4a: nodal-normal smoothing is wired to the NTS lane only (it resolves the NTS R3
+        // ridge flip + chatter). The mortar lane derives its GP normal from its own facet clip — a
+        // SEPARATE Q-NORMAL instance, a future pass (the header is reusable). Refuse rather than
+        // silently ignore -smoothNormal on a -mortar contact.
+        opserr << "WARNING contact -smoothNormal is an NTS (node-to-segment) option; it does not apply "
+                  "to -mortar (the mortar GP-normal smoothing is a separate, deferred pass)\n";
+        return -1;
+    }
     if (softScale > 0.0 && isMortar) {
         // B2 (P5): `-mortar -soft <SOFSCL>` selects the SOFT=2 SEGMENT-BASED explicit penalty — the
         // segment-to-segment generalization of the NTS SOFT=1 lane that catches the corner/edge/
@@ -888,7 +904,8 @@ int OPS_LadrunoContact()
     // B1: -soft SOFSCL ⇒ the explicit SOFT=1 Courant-stable penalty (off ⇒ byte-identical).
     return cd->addContact(idata[0], idata[1], idata[2], kn, kt, mu,
                           hasOutward ? outward : 0, knAuto, cellFrac, consistentTan, muc,
-                          consistentNormal, softScale, enableReemit, resortFrac, resortEvery);
+                          consistentNormal, softScale, enableReemit, resortFrac, resortEvery,
+                          smoothNormal);
 }
 
 // contactPlane tag slaveSurfTag  nx ny nz  px py pz  kn  <-visc μ_c> <-soft SOFSCL>  (P2a rigid plane)

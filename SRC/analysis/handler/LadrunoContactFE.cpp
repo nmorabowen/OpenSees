@@ -118,6 +118,20 @@ LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, Node **segNodes,
     for (int i = 0; i < 4; i++) { mortarSlave[i] = 0; mortarMaster[i] = 0; }
     npsS = npsM = 0; slaveFacetIndex = 0; mortarCohesion = mortarTauMax = 0.0; isTie = false;
     edgeAlm = false;   // ADR-57 E6: not an edge-edge adapter
+    useSmoothNormal = false;                 // ADR-63 #4a: faceted by default (setSmoothNormals opts in)
+    for (int i = 0; i < 4; i++) for (int d = 0; d < 3; d++) nodalNorm[i][d] = 0.0;
+}
+
+// ADR-63 #4a — install this segment's nps FROZEN nodal normals (the engine's per-handle field) and
+// flip onto the smoothed-normal path. nn = nps*3 row-major; a null/non-SEGMENT install is a no-op
+// (keeps the faceted path).
+void
+LadrunoContactFE::setSmoothNormals(const double *nn)
+{
+    if (nn == 0 || mode != SEGMENT) return;
+    for (int i = 0; i < nps; i++)
+        for (int d = 0; d < 3; d++) nodalNorm[i][d] = nn[i*3 + d];
+    useSmoothNormal = true;
 }
 
 // C2.1/C2.2 — clipped-GP MORTAR contact (one slave facet vs one master facet). theDomain
@@ -210,7 +224,14 @@ LadrunoContactFE::segmentActive(double &gap, double n[3], double N[4], double *B
         const Vector &ui = segNode[i]->getTrialDisp();
         for (int d = 0; d < 3; d++) Xseg[i][d] = Xi(d) + ui(d);
     }
-    if (!LadrunoContactProjection::evalSegment(nps, Xseg, xs, orientDir, gap, n, N))
+    // ADR-63 #4a: smoothed nodal-normal field (frozen at handle time) when installed; else the
+    // shipped faceted normalOriented() (byte-identical). evalSegmentSmooth keeps the SAME facet
+    // closest-point projection + in-bounds/penetration gate (active set unchanged ⇒ R5 slide-off
+    // untouched); only the normal DIRECTION changes. orientDir is the degenerate-blend fallback.
+    bool active = useSmoothNormal
+        ? LadrunoContactProjection::evalSegmentSmooth(nps, Xseg, xs, nodalNorm, orientDir, gap, n, N)
+        : LadrunoContactProjection::evalSegment(nps, Xseg, xs, orientDir, gap, n, N);
+    if (!active)
         return false;
     // gap operator B (1×ndof) over [u_s | u_1..u_nps]: [ nᵀ | −N_i nᵀ ]
     int ndof = 3 * (1 + nps);
@@ -1290,7 +1311,12 @@ LadrunoContactFE::addKtToTang(double fact)
             for (int i = 0; i < ndof; i++)
                 for (int j = 0; j < ndof; j++)
                     tang(i, j) += fact * kn * B[i] * B[j];
-            if (consistentNormal)
+            // ADR-63 #4a: the faceted B3 ∂n/∂u block is derived for the per-segment normal, NOT for
+            // the smoothed nodal-normal field — applying it under smoothing would be inconsistent with
+            // the residual's n_smooth. Suppress it; the smoothed path ships the symmetric frozen-field
+            // kn·BᵀB only (ADR-63 D4). The smoothed-normal consistent tangent (∂n_smooth/∂u) is the
+            // gated P3. The handler emits a one-time silent-downgrade warning when both flags are set.
+            if (consistentNormal && !useSmoothNormal)
                 addNormalGeomTang(fact);
             // P3.5 friction tangent (IMPLICIT only — CDL never calls addKtToTang).
             // Reads COMMITTED gpT (not gpTtrial) so the tangent is the derivative of the

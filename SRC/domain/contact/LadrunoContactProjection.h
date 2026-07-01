@@ -45,6 +45,7 @@
 #define LadrunoContactProjection_h
 
 #include <cmath>
+#include "LadrunoContactNormalField.h"   // ADR-63 #4a: smoothNormal() blend for evalSegmentSmooth()
 
 namespace LadrunoContactProjection {
 
@@ -168,6 +169,35 @@ inline bool evalSegment(int nps, const double X[4][3], const double xs[3],
     if (!normalOriented(nps, xi, eta, X, refDir, n)) return false;
     double dN1[4], dN2[4], xbar[3];
     shape(nps, xi, eta, N, dN1, dN2);
+    interp(nps, N, X, xbar);
+    double d[3] = { xs[0]-xbar[0], xs[1]-xbar[1], xs[2]-xbar[2] };
+    gap = dot3(n, d);
+    return (gap < 0.0);                              // penetrating only
+}
+
+// ADR-63 #4a — smoothed-normal one-shot segment evaluation. Identical to evalSegment() EXCEPT the
+// normal is the averaged nodal-normal field interpolated at the projection (n_smooth = Σ N_i·n_i,
+// normalized) instead of the per-segment faceted normalOriented(). The closest-point projection
+// (x̄, ξ, η) AND the in-bounds + penetration gate are UNCHANGED (the FACET projection) ⇒ the active
+// set is byte-identical to the faceted path: smoothing changes the force DIRECTION, not WHICH pairs
+// are active, so R5 slide-off is untouched (ADR-63 BLOCKER-PROJECTION-CONSISTENCY). nodalNorm = the
+// segment's nps nodal normals (from LadrunoContactNormalField::nodalNormals). refDir is the FALLBACK
+// orientation: on a degenerate query-point blend (‖Σ N_i·n_i‖→0 — antiparallel corner normals across
+// a folded element, or a node left zero by a degenerate nodal normal; BLOCKER-FALLBACK (b)) fall back
+// to the faceted normalOriented(refDir) ⇒ never a garbage normal. Returns ACTIVE (penetrating + in-bounds).
+inline bool evalSegmentSmooth(int nps, const double X[4][3], const double xs[3],
+                              const double nodalNorm[4][3], const double refDir[3],
+                              double &gap, double n[3], double N[4],
+                              double tolR = 1e-12, int maxIt = 10) {
+    double xi, eta;
+    int st = project(nps, X, xs, xi, eta, tolR, maxIt);
+    if (st != 0) return false;                       // oob or no valid projection (same gate as evalSegment)
+    double dN1[4], dN2[4], xbar[3];
+    shape(nps, xi, eta, N, dN1, dN2);
+    // smoothed normal from the nodal field; fall back to the faceted oriented normal on a degenerate blend
+    if (!LadrunoContactNormalField::smoothNormal(nps, N, nodalNorm, n)) {
+        if (!normalOriented(nps, xi, eta, X, refDir, n)) return false;
+    }
     interp(nps, N, X, xbar);
     double d[3] = { xs[0]-xbar[0], xs[1]-xbar[1], xs[2]-xbar[2] };
     gap = dot3(n, d);

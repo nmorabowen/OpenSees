@@ -32,6 +32,7 @@
 #include <LadrunoContactProjection.h> // Ladruno: ADR-41 A2 (normalOriented projection geometry)
 #include <LadrunoContactBucketSort.h>// Ladruno: ADR-39 P2.5 (broad-phase pairing)
 #include <LadrunoContactReemit.h>   // Ladruno: ADR-60 (finite-sliding re-emit band/metric)
+#include <LadrunoContactNormalField.h> // Ladruno: ADR-63 #4a (nodal-normal smoothing status/build)
 #include <LadrunoEdgeKernel.h>       // Ladruno: ADR-57 E2 (edge-edge routing + closest point)
 #include <Matrix.h>                  // Ladruno: ADR-39 P2b-2b (master getInitialStiff)
 #include <Domain.h>
@@ -443,6 +444,7 @@ LadrunoContactHandler::handle(const ID *nodesLast)
         // frictional pair; sweep at the end.
         cd->frictionGCBegin();
         cd->clearReemit();   // ADR-60: drop last epoch's re-emit anchors (re-registered per opted-in contact below)
+        cd->clearNormalFields();  // ADR-63 #4a: drop last handle's nodal-normal fields (rebuilt per opted-in contact below)
 
         // P3 cross-contact shared-slave warning: a slave node in two contacts' slave
         // sets gets two adapters → double traction (a modeling error the engine can't
@@ -614,6 +616,107 @@ LadrunoContactHandler::handle(const ID *nodesLast)
             if (reemitArmed)
                 cd->setReemitContact(ct.tag, reemitBand, ct.resortFrac, ct.resortEvery);
 
+            // ADR-63 #4a: build the smooth nodal-normal field for this master surface (opt-in
+            // -smoothNormal). Once per handle, from the DEFORMED config (frozen within the step),
+            // with the coherent winding cached per the R1 fingerprint. The GLOBAL outward sign is a
+            // SURFACE datum captured here ONCE — explicit -outward if given, else the slave-surface
+            // REFERENCE centroid minus the master centroid (NEVER a per-slave datum: that was the R3
+            // bug). On a refused master (non-manifold / disconnected / non-orientable) a one-time
+            // warning fires and smoothFieldOK stays false ⇒ the adapters keep the faceted path.
+            // OFF (default) ⇒ nothing built ⇒ byte-identical (BLOCKER-IDENTITY).
+            bool smoothFieldOK = false;
+            double smoothSeed[3] = {0.0, 0.0, 0.0};   // the GLOBAL outward datum (also the fallback orientDir)
+            if (ct.smoothNormal) {
+                std::vector<double> segDef((size_t)nSeg * nps * 3, 0.0);
+                bool missingNode = false;
+                for (int seg = 0; seg < nSeg; seg++)
+                    for (int k = 0; k < nps; k++) {
+                        Node *mn = theDomain->getNode(mTags(seg * nps + k));
+                        double *S = &segDef[((size_t)seg * nps + k) * 3];
+                        if (mn != 0) {
+                            const Vector &X = mn->getCrds();
+                            const Vector &u = mn->getDisp();   // committed/deformed (frozen within step)
+                            S[0] = X(0) + u(0); S[1] = X(1) + u(1); S[2] = X(2) + u(2);
+                        } else {
+                            missingNode = true;   // a malformed master ⇒ refuse the field (review GAP-4):
+                                                  // backfilling a missing node makes a garbage facet normal
+                                                  // that pollutes the SHARED nodal normals (no per-pair skip
+                                                  // here, unlike the bucket grid) → fall back to faceted.
+                        }
+                    }
+                // GLOBAL outward seed (captured once, NOT per-slave): -outward, else slave-ref-centroid
+                // − master-ref-centroid over UNIQUE master nodes (the flat mTags double-counts shared
+                // nodes, biasing the centroid toward high-valence ridges — review/bring-up bug).
+                if (ct.hasOutward) {
+                    for (int d = 0; d < 3; d++) smoothSeed[d] = ct.outward[d];
+                } else {
+                    double mc[3] = {0,0,0}; std::set<int> mseen;
+                    for (int i = 0; i < mTags.Size(); i++) {
+                        int tg = mTags(i);
+                        if (mseen.count(tg)) continue;
+                        Node *mn = theDomain->getNode(tg);
+                        if (mn != 0) { const Vector &X = mn->getCrds(); for (int d=0;d<3;d++) mc[d]+=X(d); mseen.insert(tg); }
+                    }
+                    int mcn = (int)mseen.size();
+                    double sc[3] = {0,0,0}; int scn = 0;
+                    for (int i = 0; i < sTags.Size(); i++) {
+                        Node *snd = theDomain->getNode(sTags(i));
+                        if (snd != 0) { const Vector &X = snd->getCrds(); for (int d=0;d<3;d++) sc[d]+=X(d); scn++; }
+                    }
+                    if (mcn > 0 && scn > 0)
+                        for (int d = 0; d < 3; d++) smoothSeed[d] = sc[d]/scn - mc[d]/mcn;
+                }
+                std::vector<int> mt((size_t)mTags.Size());
+                for (int i = 0; i < mTags.Size(); i++) mt[i] = mTags(i);
+                int st = missingNode ? LadrunoContactNormalField::NON_ORIENTABLE
+                       : cd->setNormalField(ct.masterSurfTag, nps, mt.empty() ? 0 : &mt[0], nSeg,
+                                            segDef.data(), smoothSeed);
+                if (st != LadrunoContactNormalField::OK) {
+                    static bool warnedSmoothRefuse = false;
+                    if (!warnedSmoothRefuse) {
+                        opserr << "WARNING LadrunoContactHandler::handle() - contact " << ct.tag
+                               << ": -smoothNormal master surface " << ct.masterSurfTag
+                               << " could not be coherently oriented (non-manifold / disconnected "
+                                  "multi-shell / non-orientable / closed / missing node); falling back to "
+                                  "the faceted normal — NOTE the R3 ridge-flip protection is NOT active on "
+                                  "this surface, prefer an explicit -outward.\n";
+                        warnedSmoothRefuse = true;
+                    }
+                } else {
+                    smoothFieldOK = true;
+                    // ADR-63 review F2/F3/F5: warn once if the FROZEN auto sign is a near coin-flip
+                    // (seed ~⟂ the field — a two-sided / saddle / straddle master). Converts a silent
+                    // wrong-side field into a loud, actionable signal. Skipped when -outward is explicit.
+                    if (!ct.hasOutward) {
+                        double conf = cd->getNormalFieldSignConf(ct.masterSurfTag);
+                        if (conf >= 0.0 && conf < 0.1) {
+                            static bool warnedSmoothSign = false;
+                            if (!warnedSmoothSign) {
+                                opserr << "WARNING LadrunoContactHandler::handle() - contact " << ct.tag
+                                       << ": -smoothNormal auto outward-sign is ILL-CONDITIONED (confidence "
+                                       << conf << " ≪ 1 — the slave cloud is nearly tangent to the master, "
+                                          "e.g. a two-sided / saddle master). The global sign may be wrong; "
+                                          "pass an explicit -outward.\n";
+                                warnedSmoothSign = true;
+                            }
+                        }
+                    }
+                    // ADR-63 (silent-downgrade guard): -smoothNormal + -consistentNormal pre-P3 use the
+                    // frozen-field symmetric kn·BᵀB (the faceted B3 ∂n/∂u is suppressed in the adapter);
+                    // the smoothed-normal consistent tangent is the gated P3. Surface it once.
+                    if (ct.consistentNormal) {
+                        static bool warnedSmoothDowngrade = false;
+                        if (!warnedSmoothDowngrade) {
+                            opserr << "WARNING LadrunoContactHandler::handle() - contact " << ct.tag
+                                   << ": -smoothNormal + -geomtan — the smoothed-normal consistent "
+                                      "tangent (∂n_smooth/∂u) is not yet available (ADR-63 P3); using "
+                                      "the frozen-field symmetric kn·BᵀB tangent.\n";
+                            warnedSmoothDowngrade = true;
+                        }
+                    }
+                }
+            }
+
             for (int si = 0; si < sTags.Size(); si++) {
                 Node *sn = theDomain->getNode(sTags(si));
                 if (sn == 0 || sn->getNumberDOF() != 3) {
@@ -672,6 +775,13 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                         const Vector &Xs = sn->getCrds();
                         for (int d = 0; d < 3; d++) orientDir[d] = Xs(d) - cen[d] / nps;
                     }
+                    // ADR-63 review GAP-2: for a -smoothNormal contact the orientDir is the smoothed
+                    // path's degenerate-blend FALLBACK. The per-pair auto direction above is the
+                    // R3-buggy datum (it flips on a ridge), so a degenerate query would silently fall
+                    // back into R3. Override it with the GLOBAL outward seed (the same surface datum the
+                    // field's frozen sign uses) ⇒ the fallback is also global-sign-correct, no R3 hole.
+                    if (smoothFieldOK)
+                        for (int d = 0; d < 3; d++) orientDir[d] = smoothSeed[d];
                     // P2b-2b: resolve `-kn auto` per (slave, segment) pair from the
                     // owning solid element's stiffness; a fixed `-kn $val` rides ct.kn.
                     double knUse = ct.kn;
@@ -696,6 +806,13 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                                              ct.consistentNormal,            // B3 ∂n/∂u geom tangent
                                              ct.softScale);                  // B1 SOFT=1 (0 ⇒ off)
                     if (fe == 0) return -5;
+                    // ADR-63 #4a: install this segment's FROZEN nodal normals so segmentActive() uses
+                    // the smooth field via evalSegmentSmooth (null ⇒ refused/out-of-range ⇒ the adapter
+                    // keeps the faceted path). orientDir remains the per-query degenerate-blend fallback.
+                    if (smoothFieldOK) {
+                        const double *nn = cd->getSegNodalNorm(ct.masterSurfTag, seg);
+                        if (nn != 0) fe->setSmoothNormals(nn);
+                    }
                     theModel->addFE_Element(fe);
                     if (ct.mu > 0.0)
                         cd->frictionGCMark(ct.tag, sTags(si), seg);  // live this handle()

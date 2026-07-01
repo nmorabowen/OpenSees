@@ -45,7 +45,8 @@
 #include <map>
 #include <set>
 
-#include "LadrunoContactReemit.h"   // ADR-60: finite-sliding re-emit metric + trigger (header-only)
+#include "LadrunoContactReemit.h"      // ADR-60: finite-sliding re-emit metric + trigger (header-only)
+#include "LadrunoContactNormalField.h" // ADR-63 #4a: nodal-normal smoothing field (header-only)
 
 class LadrunoContactSurface;
 class ID;
@@ -72,7 +73,8 @@ class LadrunoContactDomain
                    bool knAuto = false, double cellFrac = 1.0,
                    bool consistentTan = false, double muc = 0.0,
                    bool consistentNormal = false, double softScale = 0.0,
-                   bool enableReemit = false, double resortFrac = 0.5, int resortEvery = 0);
+                   bool enableReemit = false, double resortFrac = 0.5, int resortEvery = 0,
+                   bool smoothNormal = false);   // ADR-63 #4a nodal-normal smoothing (off ⇒ identical)
     int getNumContacts(void) const { return (int)theContacts.size(); }
 
     // --- P2b: faceted node-to-segment penalty contact. A Contact references a
@@ -109,6 +111,11 @@ class LadrunoContactDomain
         bool   enableReemit = false;
         double resortFrac   = 0.5;
         int    resortEvery  = 0;
+        // ADR-63 #4a: averaged nodal-normal smoothing (smooth N(X) master field). Opt in with
+        // `-smoothNormal`. Default-initialized so stack construction can never flip it on (gate
+        // BLOCKER-IDENTITY, mirrors enableReemit). OFF (default) ⇒ no field built ⇒ the faceted
+        // normalOriented() path ⇒ byte-identical to the shipped contact.
+        bool   smoothNormal = false;
     };
     const Contact &getContact(int i) const { return theContacts[i]; }
 
@@ -440,6 +447,24 @@ class LadrunoContactDomain
     // which is traction-continuous by D4 — gT0 self-captures ⇒ zero stick force at re-engagement).
     void dropFrictionForContact(int contactTag);
 
+    // --- ADR-63 #4a: averaged nodal-normal smoothing field, per MASTER surface tag. The handler
+    //     builds it once per handle (gated on -smoothNormal) from the DEFORMED config; setNormalField
+    //     (re)computes the coherent winding σ via flood-fill (TOPOLOGICAL ⇒ cached + only recomputed
+    //     when the R1 membership fingerprint changes) then the area-weighted nodal normals with a
+    //     GLOBAL outward sign, and returns the orientation Status (OK ⇒ field stored; NON_MANIFOLD/
+    //     DISCONNECTED/NON_ORIENTABLE ⇒ REFUSED, no field — the adapter keeps the faceted -outward
+    //     path, BLOCKER-WINDING/FALLBACK). getSegNodalNorm hands an adapter its segment's nps normals
+    //     (0 ⇒ refused / out of range). Built ONLY under -smoothNormal ⇒ OFF ⇒ no field ⇒ byte-
+    //     identical (BLOCKER-IDENTITY). The field is FROZEN within a step (D4): rebuilt each handle,
+    //     constant through the Newton loop. ---
+    void clearNormalFields(void);                          // handle() begin: drop the per-handle field
+    int  setNormalField(int masterSurfTag, int nps, const int *mTags, int nSeg,
+                        const double *segCoords, const double globalSeed[3]);
+    const double *getSegNodalNorm(int masterSurfTag, int segIndex) const;
+    // the frozen global-sign confidence (|cos∠(vote,seed)|, [0,1]) for an OK field, else -1 (no field).
+    // The handler warns once when this is below a small floor (fragile auto sign — review F2/F3/F5).
+    double getNormalFieldSignConf(int masterSurfTag) const;
+
     // --- lifecycle (driven by Domain::commit / revertToLastCommit) ---
     int commit(void);              // P3: gpT = gpTtrial for every slot (+ counter)
     int revertToLastCommit(void);  // P3: gpTtrial = gpT for every slot (+ counter)
@@ -486,6 +511,26 @@ class LadrunoContactDomain
     // field of ReemitContact ⇒ its hysteresis/floor reset every handle (vestigial); persisting it
     // makes the floor + the R7 forced cadence actually accumulate across re-handles.
     std::map<int, LadrunoContactReemit::Trigger> theReemitTrig;
+
+    // ADR-63 #4a — the smooth nodal-normal field per MASTER surface tag. σ (the coherent winding)
+    // is TOPOLOGICAL: cached + recomputed only when the membership fingerprint `fp` changes (a
+    // re-mesh / element removal). segNodalNorm is the per-handle scattered field (nSeg*nps*3, from
+    // current coords), rebuilt each handle (frozen within the step). status<OK ⇒ the surface is
+    // REFUSED (non-manifold/disconnected/non-orientable) ⇒ no field ⇒ faceted fallback.
+    struct NormalField {
+        int status;                          // LadrunoContactNormalField::Status (OK=0); >0 ⇒ refused
+        int nps, nSeg;
+        unsigned long long fp;               // fingerprint the cached σ was computed for
+        std::vector<int> sigma;              // cached coherent winding signs (topological)
+        std::vector<double> segNodalNorm;    // nSeg*nps*3 nodal normals (per handle); empty ⇒ none
+        // ADR-63 review F1/D2 — the GLOBAL outward sign is captured ONCE (first OK build) and FROZEN
+        // (never re-decided from a deformed config, which could flip the field mid-run). signConf =
+        // |cos∠(vote,seed)| at capture (≈0 ⇒ a near coin-flip auto sign — the handler warns).
+        bool   signCaptured;
+        double globalSign;                   // +1/−1, frozen at first capture
+        double signConf;                     // [0,1] confidence of the frozen sign
+    };
+    std::map<int, NormalField> theNormalFields;   // keyed by MASTER surface tag
 
     // C2.2 normal-ALM state, keyed by (contactTag, slaveNodeTag) — a 2-field key.
     struct NodeKey {
