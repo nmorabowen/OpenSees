@@ -1828,6 +1828,74 @@ are never read on this path). Two consequences exploited for the rigid body's fi
    **velocity/accel are not re-imposed**, so velocity-dependent elements on a slave see an inconsistent
    `v` (keep incident elements displacement-only, or also impose `v_i = v_R + ω×(R·d⁰)`).
 
+## A kinematic mesh-tie (LadrunoTie, ADR-62) inherits ALL of the projection handler's requirements; the GENERATOR must refuse-and-hand-off where they aren't met
+
+`LadrunoTie` emits ordinary `EQ_Constraint`s (`u_s = Σ N_i u_{m,i}`) for the **shipped**
+`LadrunoProjectionHandler` (ADR-30) to enforce. So the tie is only as usable as that handler:
+`system Diagonal` only, explicit only, no MP-chains / double-constraints, lumped mass on every tied
+DOF, ICs on the constraint manifold, partition-interior. The generator front-loads the detectable
+violations as **named refusals at model-build** (clearer than a mid-analysis singular solve):
+- **node-disjoint + one-facet-per-slave (BLOCKER-1).** A node that is both a slave and a master
+  facet node, or a slave listed twice, is refused — those are exactly the MP-chain / double-constraint
+  topologies the handler refuses at `handle()`. Collocation (one facet per slave) guarantees disjoint
+  slave sets, so no slave appears in two constraints.
+- **massed tied DOF (BLOCKER-2).** The projection keeps slave DOFs in the equation set (does NOT
+  eliminate them), so a massless tied DOF makes `(LᵀML)` singular. **Subtlety: at the generator's
+  model-build time the nodal `mass()` is usually still zero — solid nodes get their mass from element
+  `-rho`, ASSEMBLED later.** So the generator's mass check must read `Element::getMass()` (formable
+  from rho+geometry at build time, the same call `consistentMassGuard` makes at `handle()`) and mark a
+  node "massed" if it has nodal mass OR belongs to an element with a nonzero mass diagonal. Consequence:
+  **define `LadrunoTie` AFTER the elements/masses** — emitting it before the mass-bearing elements exist
+  trips a false BLOCKER-2 refusal.
+- **conforming-at-interface ICs (OQ-3).** The displacement tie is trivially on-manifold for a fresh
+  model (all `u=0`), so the IC concern is purely geometric: the slave's reference coords must lie on
+  the master surface or the projection/weights are meaningless. The generator refuses a slave whose
+  closest-point projection lands farther than `-tol * facet-size` off the surface (default 1e-6).
+  v1 does **not** snap ICs (`-projectICs` was declined) — non-conforming means different mesh
+  *resolutions* on a *shared* surface, where slave nodes are already on a master facet.
+
+Also: the generator drops near-zero shape weights (`|N_i| < 1e-12`) before emitting, so a slave that
+projects onto a facet corner/edge ties only to the master nodes that actually carry a share (a corner
+collocation degenerates to a clean `u_s = u_{m,corner}`, i.e. an `equalDOF`), avoiding spurious group
+connectivity in the handler's connected-component grouping.
+
+## Integral-mortar ties (LadrunoTie `-mortar`, ADR-62 P2): global D⁻¹ pre-inversion DODGES the "needs handler chain support" wall — but P is dense (one big handler group)
+
+The ADR-62 plan assumed integral-mortar ties would "couple slave nodes ⇒ MP-chains ⇒ need the
+projection handler's deferred chain support." **That premise is avoidable.** The mortar constraint
+`D u_s = M u_m` (D = slave-interface consistent mass, `D_IJ=∫N_I^s N_J^s dΓ`; M = `∫N_I^s φ_K^m dΓ`)
+is condensed **once at model-build** by pre-inverting D over the WHOLE interface: `u_s = P u_m`,
+`P = D⁻¹M`. Each row of P then ties a slave to **master nodes only** (no slave appears as a retainer),
+so it emits as an ordinary `EQ_Constraint` the SHIPPED `LadrunoProjectionHandler` already accepts
+(verified: it allows dense rows + master-only retainers + many slaves sharing masters; only a DOF that
+is both retained-master and constrained-slave, or constrained twice, is a "chain"/"double"). **⇒ P2
+needed NO handler change and NO kernel change** — it reuses `LadrunoMortarKernel::integratePair` verbatim
+and only adds a setup-time generator + one `Matrix::Solve` (DGESV). Confirmed in `proto_p2_mortar_tie.py`
+(P·1=1, linear-completeness patch, master-only rows) + `tests/test_ladrunoTie_mortar.py` (genuinely
+non-matching solid patch test, 6/6).
+
+CONSEQUENCES / gotchas for the standard-basis condensation:
+- **P is DENSE.** `D⁻¹` of a sparse SPD mass is full, so every slave couples to every master in the
+  connected interface ⇒ the handler builds ONE large group (all interface DOFs) and factorizes
+  `(LᵀML)` over all master DOFs once per `domainChanged`. Fine for typical tie interfaces; for a HUGE
+  interface this is the cost a **dual/biorthogonal basis** would remove (diagonal D ⇒ sparse P ⇒ small
+  local groups) — that's the deferred P2.1 optimization. (Row-sum LUMPING D is NOT a shortcut: it keeps
+  partition-of-unity but BREAKS linear completeness ⇒ fails the constant-stress patch.)
+- **DGESV only flags an EXACT zero pivot**, not near-singular/ill-conditioned D. So the generator must
+  guard coverage BEFORE the solve: compute each slave node's FULL tributary area `fullCov[I]=∫N_I^s` over
+  the whole slave surface via a **self-clip** (`integratePair(npsS,Xs,npsS,Xs,...)` — a facet clipped
+  against itself = the full facet, reusing the kernel), then refuse if the master-overlapped `cover[I]` is
+  `< (1−1e-3)·fullCov[I]` (the slave protrudes past the master — a partial/extrapolated bond). A SINGLE
+  slave facet half-overlapping the master does NOT give any node `cover≈0` (its shape fn spans the
+  overlap), so the cover≈0 test alone misses protrusion — the cover/fullCov RATIO is what catches it.
+  Belt-and-braces: a **post-solve partition-of-unity check** (`|Σ_k P_Ik − 1| < 1e-6`) catches any
+  ill-conditioned solve that slipped through (P·1=1 is algebraically exact, so drift ⇒ bad D).
+- **Reference coords, not trial.** Feed `integratePair` the as-built `getCrds()` (NOT X+u): a mesh-tie
+  freezes the bond at the reference config (same as P1).
+- **refDir (mortar normal orientation)** defaults to the average MASTER facet normal; it only orients n
+  (used for the gap g̃ — magnitude only — and the aux plane), so its sign is irrelevant to D/M/P. If the
+  master normals cancel (folded/curved surface) the generator refuses and asks for `-outward ox oy oz`.
+
 ## `LadrunoContactBucketSort::Grid::runawayGuardFired()` is NOT a clean "node ran away" signal (ADR-60 R8)
 
 The broad-phase grid's runaway guard clamps the centroid bbox to the `[clipPct, 100−clipPct]`

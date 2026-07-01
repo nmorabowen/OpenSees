@@ -1,161 +1,142 @@
 ---
-title: "LadrunoTie (ADR-62) — handoff: concept VALIDATED, build the auto-generator next"
+title: "LadrunoTie (ADR-62) — handoff: P1 collocation + P2 integral-mortar SHIPPED; P2.1 + P3 deferred"
 project: Ladruno
 type: handoff
-status: P0 (numpy) + P1 (real-solver) GREEN; the LadrunoTie auto-generator (C++ + build) is the remaining work
+status: P0 (numpy) + P1 (collocation, PR #454) + P2 (integral-mortar, PR #455) MERGED to ladruno. Deferred = P2.1 dual-basis sparsification + P3 shell/rotational ties.
 related:
-  - "[[62_ladruno_kinematic_mesh_tie_adr]]"      # the spec
-  - "[[30_ladruno_explicit_constraint_projection_adr]]"   # the enforcement (SHIPPED handler)
-  - "[[projection_handler_handoff]]"             # the projection handler's API + limits
-  - "[[39_ladruno_contact_domain_adr]]"          # bucket-sort + closest-point projection to reuse
-  - "[[61_ladruno_contact_bipenalty_adr]]"       # the SHELVED penalty route this replaces
-tags: [adr, constraints, explicit-dynamics, mesh-tie, projection, kinematic, handoff]
+  - "[[62_ladruno_kinematic_mesh_tie_adr]]"            # the spec (P1/P2 marked SHIPPED)
+  - "[[30_ladruno_explicit_constraint_projection_adr]]" # the enforcement handler (SHIPPED, reused unchanged)
+  - "[[41_ladruno_mortar_alm_contact_adr]]"            # the mortar D/M kernel reused by P2
+  - "[[39_ladruno_contact_domain_adr]]"                # bucket-sort + projection geometry
+  - "[[projection_handler_handoff]]"                   # handler API + limits
+tags: [adr, constraints, explicit-dynamics, mesh-tie, projection, kinematic, mortar, handoff]
 ---
 
-# LadrunoTie — handoff (next session: build the generator)
+# LadrunoTie — handoff (P1 + P2 shipped; P2.1 / P3 next)
 
-## TL;DR
+## TL;DR — what exists now (all on `ladruno`)
 
-A non-conforming **explicit mesh-tie** is enforced KINEMATICALLY (not by penalty) by emitting
-`u_s = Σ N_i u_{m,i}` as constraints and letting the **shipped** `LadrunoProjectionHandler`
-(ADR-30) enforce them — exact, `dt_cr`-neutral, momentum-clean, no fictitious mass. ADR-61's
-penalty routes (SOFT penetration, bipenalty ~100× mass) are replaced.
+A non-conforming explicit **mesh-tie**, enforced KINEMATICALLY (not by penalty): the generator
+emits ordinary `EQ_Constraint`s and the **shipped** `LadrunoProjectionHandler` (ADR-30) enforces
+them — exact, `dt_cr`-neutral, momentum-clean, no fictitious mass. ONE command, two modes:
 
-**The concept is fully validated (this session, two oracles green):**
-- `Ladruno_implementation/kinematic_tie_validation/proto_p0_kinematic_tie.py` — the projection
-  math (numpy): exact, idempotent, energy-clean, + the penalty-`dt_cr`-collapse contrast.
-- `Ladruno_implementation/kinematic_tie_validation/proto_p1_kinematic_tie_opensees.py` — the
-  REAL solver (shipped binary, no build): a weighted multi-master non-conforming tie
-  `u_4 = 0.7 u_2 + 0.3 u_3`, tie error **6.7e-18** / 400 steps, `dt_cr` tied==untied (ratio
-  **1.000000**), load-carrying.
-
-**It already works TODAY with no new code** (this is the key point): per slave node, hand-emit
-```python
-ops.equationConstraint(s, dof, 1.0, m1, dof, -N1, m2, dof, -N2, m3, dof, -N3)
-ops.constraints("LadrunoProjection"); ops.system("Diagonal")
-ops.integrator("CentralDifferenceLadruno"); ops.algorithm("Linear")
 ```
-**The remaining work = a setup-time C++ generator** that automates the GEOMETRY (pair slave
-nodes → master facet, compute `N_i(ξ̄)`, emit the constraints). Pure ergonomics; correctness
-is settled.
+# P1 — node-to-segment COLLOCATION (each slave node -> one master facet)
+LadrunoTie -slaveNodes <ns> s1..  -masterFacets <npsM> <nf> m..  [-dof nd d..] [-tol frac]
 
----
+# P2 — integral MORTAR (slave SURFACE -> master surface, weak form)
+LadrunoTie -mortar -slaveFacets <npsS> <nf> s..  -masterFacets <npsM> <nf> m..
+           [-dof nd d..] [-tol frac] [-outward ox oy oz]
+```
 
-## The task for next session (P1 productization)
+Both register in openseespy and the modern Tcl interpreter (NOT the classic `OpenSees.exe` shell —
+like `equationConstraint`, they live in the `DL_Interpreter`/`TclWrapper` path). **No new class tag**
+(emits `EQ_Constraint`, enforced by handler 33001). **No vanilla source edits** beyond the banner.
 
-Build **`LadrunoTie`** — a standalone constraint generator (decided: API option **(a)**,
-ADR-62 OQ-1). Scope = **solid–solid, node-to-segment collocation** (ADR-62 OQ-4 = P1 only;
-defer shells + integral-mortar). At model-build it:
+- Code: `SRC/domain/constraints/LadrunoTie.{h,cpp}` — `LadrunoTie::generate` (P1) + `::generateMortar` (P2) + `OPS_LadrunoTie`.
+- Oracles: `kinematic_tie_validation/proto_p{0,1}_kinematic_tie*.py` (P1) + `proto_p2_mortar_tie.py` (P2, 13/13).
+- Tests: `tests/test_ladrunoTie_patch.py` (8, P1) + `tests/test_ladrunoTie_mortar.py` (7, P2). Full suite 15/15.
+- PRs: ADR/oracles #449, P1 #454, P2 #455 — all merged.
 
-1. **Pairs** each slave-surface node to the nearest master facet (closest-point projection).
-2. **Evaluates** the master facet shape functions `N_i(ξ̄)` at the projection point.
-3. **Emits**, per slave node per translational DOF, an `EQ_Constraint`
-   `1·u_s + Σ_i (−N_i)·u_{m,i} = 0` (exactly what `equationConstraint` builds).
+## The architecture (so the next agent doesn't re-derive it)
 
-User then runs `constraints LadrunoProjection` (shipped). Done.
+A mesh-tie is **static** (a permanent, non-sliding bond), so geometry is computed ONCE at model-build
+and frozen into constraints. Both modes condense to a per-slave-node transfer `u_s = P u_m` and emit
+one `EQ_Constraint` per slave node **per translational DOF** with the P row as coefficients (Ccr = P
+row, NO negation — the ModelBuilder `EQ_Constraint` ctor stores the coef vector directly):
 
-### Where to reuse code (do NOT re-derive)
-- **Closest-point projection + facet shape weights** — the contact engine already does this:
-  `SRC/analysis/handler/LadrunoContactFE.cpp::segmentActive(...)` fills the oriented normal,
-  the gap, AND `N[nps]` (the master shape weights at the projection) + the B-operator. That is
-  precisely the per-slave-node geometry the generator needs. The oracle-validated projection
-  is `LadrunoContactProjection` (ADR-39). Lift the projection+`N[]` computation; you do NOT
-  need the penalty force/tangent.
-- **Broad phase** — `SRC/domain/contact/LadrunoContactBucketSort.*` (ADR-39) to find the
-  candidate master facet per slave node (reference config; a tie is static so one pass).
-- **Constraint emission** — `SRC/domain/constraints/EQ_Constraint.{h,cpp}`. Construct one per
-  slave node (coef vector = `[1, −N_1, …, −N_nps]` over DOFs `[s, m_1, …, m_nps]`) and
-  `theDomain->addEQ_Constraint(...)` (mirror what the `equationConstraint` command does —
-  grep `Py_ops_equationConstraint` in `SRC/interpreter/PythonWrapper.cpp:941` and the Tcl
-  twin in `TclWrapper.cpp` for the exact construction + domain-add call).
-- **Command registration** — add `LadrunoTie` to `SRC/interpreter/PythonWrapper.cpp` +
-  `TclWrapper.cpp` (mirror an existing geometry/command pair). Suggested signature:
-  `LadrunoTie -slaveNodes {…} -masterFacets {…}` (or `-masterSurface` by element set);
-  internally resolve facets → nodes.
+- **P1 collocation:** `P_sk = N_k(ξ̄_s)` — the master facet shape functions at the slave node's
+  closest-point projection. Reuses `LadrunoContactProjection` (project + shape) + `LadrunoContactBucketSort`.
+- **P2 mortar:** assemble global `D_IJ=∫N_I^s N_J^s dΓ`, `M_IK=∫N_I^s φ_K^m dΓ` over the clipped
+  overlap (reusing `LadrunoMortarKernel::integratePair` VERBATIM), then `P = D⁻¹M` via one
+  `Matrix::Solve` (DGESV). **KEY INSIGHT: pre-inverting D globally makes every P row tie to MASTER
+  nodes only ⇒ no MP-chains ⇒ the shipped handler accepts it (dense, master-only rows) with NO handler
+  change and NO kernel change.** The ADR's original "P2 needs deferred MP-chain support" premise was
+  WRONG — global D⁻¹ is what dodges it.
 
-### `equationConstraint` signature (verified this session)
-`equationConstraint(cNode, cDOF, cCoef, rNode, rDOF, rCoef, …)` — variadic; enforces
-`cCoef·u_c + Σ rCoef·u_r = 0` ⇒ `u_c = −(Σ rCoef·u_r)/cCoef`. For a tie use `cCoef=1`,
-`rCoef_i = −N_i`. Confirmed enforced to `<1e-12` by the projection handler (it accepts the
-multi-master EQ row — ADR-30 P3, `tests/test_adr30_projection_p3.py::test_EQ_*`).
+Both inherit the handler's requirements (and the generator front-loads them as named refusals):
+`system Diagonal` + explicit (for the projection path; Lagrange/Penalty work for static), every tied
+slave DOF needs LUMPED mass, node-disjoint chain-free surfaces, ICs on the manifold (conforming-at-
+interface geometry — NO snapping).
 
----
+## GOTCHAS already paid for (don't rediscover)
 
-## GOTCHAS hit this session (save the next session the debugging)
-
-1. **`dt_cr` reads ELEMENT mass, not nodal `mass`.** `criticalTimeStep()` returned −1 ("no
-   element produced a finite estimate") with `ops.mass(...)` nodal mass — the CriticalTimeStep
-   kernel uses `element->getMass()`. Give elements density (`-rho`) so they carry mass (the
-   assembled diagonal then also feeds the projection handler's "tied DOFs need lumped mass"
-   requirement). This is the same nodal-vs-element-mass split that motivates the SOFT scheme's
-   `ladrunoBuildNodalMass`.
-2. **`criticalTimeStep()` needs `-cfl` AND a first step.** Pass `integrator
-   CentralDifferenceLadruno -cfl`, then `analyze(1, dt0)` once with a SAFE `dt0` (≪ dt_cr) to
-   trigger `domainChanged` (which computes dt_cr), THEN query. Querying before any step → −1.
-3. **2D Truss defeats the dt_cr eigensolve** (transverse zero-stiffness direction → no finite
-   estimate). Use a pure **1D (ndm=1,ndf=1)** axial chain for the bar oracle, or a real
-   solid/shell for the patch test.
-4. **Projection handler refuses MP-chains + double-constrained DOFs** (`projection_handler_
-   handoff.md`). The generator MUST guarantee node-disjoint slave/master surfaces and ONE
-   facet per slave node (collocation) → no chains. Detect-and-refuse otherwise (hand off to
-   SOFT). This is BLOCKER-1 in ADR-62.
-5. **Tied DOFs need lumped mass** (handler keeps slave DOFs in the equation set). Real solid
-   nodes have it; check + named-refuse a massless tied DOF (BLOCKER-2).
-6. **IC on the manifold** (BLOCKER-3, ADR-62 OQ-3 STILL OPEN): a non-conforming as-built
-   interface starts with the slave off the master facet → the handler aborts unless ICs satisfy
-   `u_s = Σ N_i u_{m,i}`. Decide: snap the slave onto the facet at emission (`-projectICs`
-   semantics) vs require conforming-at-interface geometry. **Needs sign-off before coding the
-   IC path.**
-
----
+1. **Explicit projection needs LUMPED mass on tied DOFs.** `stdBrick` assembles CONSISTENT mass →
+   the handler's R5 guard REFUSES it on a tied DOF. Use **`SSPbrick`** for explicit tie tests/models.
+   (`stdBrick` is fine for the static Lagrange patch tests — no mass there.)
+2. **BLOCKER-2 mass check scans ELEMENT mass.** At model-build the nodal `mass()` is still 0 (solids
+   get mass from element `-rho`, assembled later), so the generator scans `Element::getMass()` and
+   marks a node massed if any incident element has a nonzero mass diagonal. ⇒ **Define `LadrunoTie`
+   AFTER the elements/masses**, or it false-refuses.
+3. **`dt_cr` kernel reads ELEMENT mass** (use `-rho`), not nodal `mass`. And `criticalTimeStep()`
+   needs `integrator CentralDifferenceLadruno -cfl` + one safe `analyze(1, dt0)` before the query.
+4. **Mortar coverage guard must use the per-node FULL tributary ratio, not the interface average.**
+   `cover[I]` (overlap integral) is compared to `fullCov[I]` (= ∫N_I over the WHOLE slave facet,
+   computed by a SELF-CLIP `integratePair(npsS,Xs,npsS,Xs,...)`). A single slave facet half-overlapping
+   the master gives NO node `cover≈0` (its shape fn spans the overlap) — only the `cover/fullCov` RATIO
+   catches a slave protruding past the master. DGESV flags only an EXACT-zero pivot, so a post-solve
+   partition-of-unity check (`|Σ P_Ik − 1| < 1e-6`) backstops a near-singular D.
+5. **Standard-basis P is DENSE** (every slave couples to every master through `D⁻¹`) ⇒ ONE large
+   handler group (`(LᵀML)` over all master DOFs). Correct + fine for typical interfaces; the cost is
+   the P2.1 motivation. **Row-sum LUMPING D is NOT a shortcut** — it keeps partition-of-unity but
+   BREAKS linear completeness ⇒ fails the constant-stress patch.
+6. **Build/run env:** set `LADRUNO_OPENSEES_QUIET=1` when building (else the splash banner pollutes
+   CMake's FindPython version string on a reconfigure → "Invalid character escape '\U'" configure
+   fail). To run tests against THIS worktree's `.pyd`, set `PMI_SIZE=1` (makes the site `.pth` boot
+   module skip its pre-import of another worktree's opensees) + `sys.path.insert(0, dist/bin)` +
+   `os.add_dll_directory(dist/bin)`.
 
 ## Build + run recipe (this machine)
 
-- **Run the validated oracles** (no build): Python 3.12 at
-  `C:\Users\nmora\AppData\Local\Python\pythoncore-3.12-64\python.exe` (has numpy). The real-
-  solver oracle bootstraps the shipped binary itself (`os.add_dll_directory` +
-  `sys.path.insert` on `…\OpenSees\dist\bin`; `LADRUNO_OPENSEES_QUIET=1`;
-  `sys.stdout.reconfigure(encoding="utf-8")` for the Windows console). No oneAPI setvars
-  needed to RUN.
-- **Build** (for the new command): `Ladruno_scripts\build.bat OpenSees OpenSeesSP OpenSeesMP`
-  — invoke via the **PowerShell tool** (`cmd /c …`), NOT the Bash tool (build-gotcha,
-  [[project_bezier_charlen]]). If configure fails with ZLIB-not-found, it's the system
-  CMake-4.3 shadow — use the conan cmake by full path ([[project_build_env_cmake43_conan_zlib]]).
-  ~30 min. The built `opensees.pyd` lands in `dist/bin`.
-- **Test**: add `tests/test_ladrunoTie_*.py` (Zone-A, `pytest.mark.zone_a`, `from _testbed
-  import ops`). Mirror `tests/test_adr30_projection_p3.py`.
+- Python 3.12: `C:\Users\nmora\AppData\Local\Python\pythoncore-3.12-64\python.exe` (numpy + pytest).
+- Build (PowerShell tool, NOT Bash): `set LADRUNO_OPENSEES_QUIET=1 && Ladruno_scripts\build.bat OpenSees OpenSeesSP OpenSeesMP OpenSeesPy`. ~30 min cold; incremental after. ZLIB-not-found ⇒ CMake-4.3 shadow, use conan cmake by full path ([[project_build_env_cmake43_conan_zlib]]). The `.pyd` lands in `dist/bin`.
+- Run a test:
+  ```
+  $env:LADRUNO_OPENSEES_QUIET="1"; $env:PMI_SIZE="1"
+  python -c "import os,sys; D=r'...\dist\bin'; os.add_dll_directory(D); sys.path.insert(0,D); import pytest; sys.exit(pytest.main(['tests/test_ladrunoTie_mortar.py','-v']))"
+  ```
+- Stamp headers after adding source files: `python Ladruno_scripts/stamp_headers.py` (LadrunoTie.* already in GLOBS).
 
----
+## Deferred backlog (pick the next session's target)
 
-## P1 validation to add (after the generator builds)
+### P2.1 — dual / biorthogonal basis (sparsify the mortar transfer) — OPTIMIZATION
+The standard-basis condensation gives a DENSE `P` (one big interface group; `(LᵀML)` over all master
+DOFs). A **dual (biorthogonal) Lagrange-multiplier basis** (Wohlmuth 2000) makes `D` DIAGONAL ⇒
+`P = D⁻¹M` is LOCAL (each slave ties only to masters under its own support) ⇒ sparse rows, small
+local handler groups, cheap projection. Requires constructing the dual shape functions on each slave
+facet (a per-facet linear transform of the standard basis) — a NEW kernel path
+(`LadrunoMortarKernel` currently emits STANDARD-basis `D`/`M`). Preserves linear completeness (that's
+the whole point of dual vs lumped). Value: only at LARGE interfaces (100s+ of interface nodes); the
+dense path is correct and fine below that. Oracle-first: extend `proto_p2_mortar_tie.py` with a
+`dual_D` (diagonal) variant and show same patch test + sparse P. Low correctness risk, medium effort.
 
-- **Solid–solid patch test**: two non-conforming solid blocks tied across a flat interface;
-  a uniform stress field must transmit EXACTLY across the tie (constant-stress patch). Reuse
-  `_testbed/fem_checks.check_constant_stress`.
-- **Split-bar equivalence**: a bar split by a non-conforming tie matches the monolithic mesh
-  (disp + dt_cr).
-- **Penetration vs SOFT**: the kinematic tie gap is **0**; the SOFT tie leaves
-  `δ/h = ε_iface·CFL²/(4·α_m·SOFSCL)` (the ADR-61 P0 closed form). Tabulate the contrast.
-- Momentum + energy are already covered by the shipped projection-handler tests (T8/T9).
+### P3 — shell / rotational ties (ndf 6) — CAPABILITY (likely higher user value)
+Today the generator ties **translational DOFs only** (default `-dof 1..ndm`). A shell-to-shell or
+shell-to-solid tie must also tie the **rotational DOFs** (4,5,6 for an ndf-6 shell node). Open issues
+to resolve (worth an oracle + a short design note, NOT a full ADR):
+- **Rotational transfer weights:** does the rotation field interpolate with the same `N_i`/`P` as the
+  translation field (so `θ_s = Σ P_sk θ_{m,k}`), or does a shell-to-solid tie need the solid's
+  translation field to DRIVE the shell rotation (a `rigidLink -beam`-style `θ = ½∇×u` coupling)?
+  Shell-to-shell is the clean first case (same ndf, same P on rotations).
+- **Rotational lumped mass on tied DOFs:** the projection handler needs nonzero mass on every tied
+  DOF; shell rotational mass is small but present (mirror the `rigidLink -beam` / 3D-diaphragm rule the
+  handler already documents). BLOCKER-2's element-mass scan must pick up the shell's rotational mass
+  diagonal — verify `ShellMITC4`/`ASDShellQ4` `getMass()` has nonzero rotational entries, else refuse.
+- **Drilling DOF** (6th, in-plane rotation) is often near-zero-stiffness — decide whether to tie it
+  or leave it free (likely leave free / tie only the two bending rotations, configurable via `-dof`).
+- Scope first cut: shell-to-shell, same ndf, `θ_s = Σ P_sk θ_{m,k}` (reuse the existing P), gated by a
+  rotational-mass check. Test: a constant-curvature (bending) patch must cross the tie exactly.
 
----
+### Also noted (out of scope for a tie, but adjacent)
+Finite-sliding re-emission (the ADR-60 hook) is for a tie that must survive LARGE interface rotation;
+a tie doesn't slide, so this is only relevant if the frozen-`Ccr` small-rotation limit (~0.1 rad) is
+exceeded. Not a planned increment.
 
-## Bookkeeping (when the generator ships)
-
-- `LEDGER_implementations.md` — row: *LadrunoTie kinematic mesh-tie generator* (emits
-  `EQ_Constraint`s for `LadrunoProjectionHandler`), **no new class tag**, status, PR.
-- `LEDGER_vanilla_files.md` — none expected (public Domain `addEQ_Constraint` API).
-- `LEDGER_quirks.md` — the gotchas above (dt_cr-element-mass; the projection-handler
-  requirements the generator must refuse-and-hand-off on).
-- `classTags.h` — no change (free contact ELE slot is 33016 if a tagged object is ever needed).
-- Banner — a `banner_features.txt` line for LadrunoTie.
-
-## Decided / open
-- **DECIDED**: API = standalone `LadrunoTie` (OQ-1a); collocation node-to-segment (OQ-2);
-  `-dtcr` n/a (no penalty); scope = solid–solid P1 (OQ-4).
-- **OPEN (needs sign-off)**: OQ-3 IC handling (snap vs require-conforming) — gotcha #6.
-
-## Status of the PRs
-- **PR #449** (`guppi/adr62-kinematic-mesh-tie` → `ladruno`): ADR-62 + ADR-61-finalized +
-  the P0/P1 oracles + this handoff. Merge it to land the record. (PR #445 already merged the
-  original ADR-61.)
+## Bookkeeping state (all current on `ladruno`)
+- `LEDGER_implementations.md` — LadrunoTie row says "shipped (P1 + P2 mortar)", PRs #454/#455.
+- `LEDGER_vanilla_files.md` — interpreter-wiring + banner-regen rows for #454/#455.
+- `LEDGER_quirks.md` — two entries: the handler-requirements refusal contract, and the mortar
+  global-D⁻¹/dense-P/self-clip-coverage gotcha.
+- `banner_features.txt` — "LadrunoTie — kinematic ... (collocation + integral-mortar; ...)".
+- `classTags.h` — unchanged (no tag). Memory: [[project_adr61_bipenalty_shelved]] carries the full
+  LadrunoTie record (P1 + P2).

@@ -217,10 +217,18 @@ handler's existing `rigidLink -beam` / 3D-diaphragm rule). Deferred to P3; v1 is
   auto-generator (geometry pairing → emit these constraints) — an ergonomic layer (needs a
   build), not a correctness question. Then the solid–solid patch test + SOFT-penetration
   comparison (should be **zero** vs SOFT's `δ/h`).
-- **P2 (successor) — integral-mortar (two-sided, dual-basis) ties** needing the handler's
-  **deferred MP-chain support**, and **shell rotational ties** (BLOCKER-4).
-- **P3 (successor) — finite-sliding re-emission** (the ADR-60 hook) if a tie must survive
-  large interface rotation.
+- **P2 — integral-mortar ties (`-mortar`) — SHIPPED.** Assemble the global mortar operators
+  `D_IJ=∫N_I^s N_J^s dΓ`, `M_IK=∫N_I^s φ_K^m dΓ` over the clipped overlap (reusing
+  `LadrunoMortarKernel::integratePair` verbatim), condense ONCE at setup `u_s = P u_m`,
+  `P = D⁻¹M`, and emit per-slave `EQ_Constraint`s. **The "needs MP-chain support" premise was
+  WRONG/avoidable:** pre-inverting D globally makes every P row tie to MASTER nodes only ⇒ no
+  chains ⇒ NO handler change and NO kernel change (the shipped projection handler accepts dense,
+  master-only rows). Standard basis ⇒ P dense (one large interface group); a dual/biorthogonal
+  basis (diagonal D ⇒ sparse P) is the deferred large-interface optimization (P2.1). Guards:
+  coverage-ratio (self-clip `fullCov`, refuse a slave protruding past the master), conforming-gap,
+  post-solve partition-of-unity. Oracle `proto_p2_mortar_tie.py` (13/13) + `tests/test_ladrunoTie_mortar.py` (6/6).
+- **P3 (successor) — shell / rotational ties (ndf 6)** and **finite-sliding re-emission** (the
+  ADR-60 hook) if a tie must survive large interface rotation.
 
 ---
 
@@ -230,8 +238,13 @@ handler's existing `rigidLink -beam` / 3D-diaphragm rule). Deferred to P3; v1 is
   projection handler; ADR-41 mortar pairing). The new code is a thin, setup-time constraint
   generator; the BLOCKERs are topology checks with named refusals. The real risk (chains /
   double-constraints) is caught by BLOCKER-1's gate, not novel math.
-- **P2 (integral-mortar + chains) — full gate**, since it requires extending the projection
-  handler's MP-chain handling (genuinely new enforcement math).
+- **P2 (integral-mortar) — full gate DONE.** Two adversarial lenses (mortar math + robustness)
+  + the handler-topology investigation + the numpy oracle. Finding: the condensation math is
+  correct (no bug); the one fix was the coverage guard (key off the per-node full tributary area
+  `cover/fullCov`, not the interface average, + a post-solve partition-of-unity backstop) since
+  DGESV flags only an exact-zero pivot, not near-singular D. The feared "new enforcement math"
+  (handler chain support) turned out unnecessary — global D⁻¹ pre-inversion keeps the topology
+  master-only, so the gate's real risk reduced to the setup-time integral's conditioning.
 
 ---
 

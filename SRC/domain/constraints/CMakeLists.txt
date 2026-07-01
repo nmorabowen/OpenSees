@@ -10,17 +10,19 @@ target_sources(OPS_Domain
     RigidBeam.cpp 
     RigidDiaphragm.cpp
     RigidRod.cpp 
-    SP_Constraint.cpp 
+    SP_Constraint.cpp
     Pressure_Constraint.cpp
-    EQ_Constraint.cpp 
+    EQ_Constraint.cpp
+    LadrunoTie.cpp                # Ladruno: ADR-62 kinematic mesh-tie generator
   PUBLIC
-    MP_Constraint.h 
-    RigidBeam.h 
+    MP_Constraint.h
+    RigidBeam.h
     RigidDiaphragm.h
-    RigidRod.h 
-    SP_Constraint.h 
+    RigidRod.h
+    SP_Constraint.h
     Pressure_Constraint.h
-    EQ_Constraint.h 
+    EQ_Constraint.h
+    LadrunoTie.h                  # Ladruno: ADR-62
 )
 target_sources(OPS_Domain
   PRIVATE
