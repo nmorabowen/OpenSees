@@ -2017,3 +2017,26 @@ a blanket lift of `-outward` for curved masters — it lifts it only for slave c
 gap-aware guard's near-apex over-stiffness under SLIDING is a mild quality effect (a small extra bump as a
 block crests a SHARP ridge at speed; negligible on realistic shallow arcs, maxpen ~0.01; never diverges),
 not a pass-through — full single-owner selection is ADR-57 #4b.
+
+**ADR-63 P2.4 — the frozen-field smoothed tangent CONVERGES implicitly; the dropped `∂n_smooth/∂u` is
+`O(kn·gN)` ⇒ sub-dominant on a penalty contact (2026-07-01).** The Q-IMPLICIT-NEWTON tripwire (does Newton
+converge with the SUPPRESSED `∂n_smooth/∂u`, i.e. the frozen-field symmetric `kn·BᵀB`, on a genuinely
+curved implicit master?) resolved to **outcome (a): converges** — 2 Newton iterations per step, INDEPENDENT
+of load-step coarseness (even a single step dragging a slave across the whole facet = maximal within-step
+normal rotation still converges in 2). The reason is structural: the dropped consistent-tangent term is
+`kn·gN·∂²gN/∂u²`, i.e. scaled by the penalty PENETRATION `gN ≈ press/kn`, which is small in any well-posed
+penalty contact ⇒ it never dominates the kept `kn·BᵀB` (this is the SAME reason the shipped faceted default
+drops its own B3 block by default). The ONLY regime where smoothed Newton iterations climb (a swept
+soft-penalty misuse, `gN ≳ 15%` of the facet) is exactly where the FACETED `-geomtan` consistent tangent
+ALSO diverges (and even the seat step fails) — a penalty-NTS-breakdown, NOT a smoothed-normal defect, so
+P3's full `∂n_smooth/∂u` would not rescue it. **⇒ P3 (`-consistentNormalSmooth`) stays a genuinely-optional,
+evidence-deferred follow-up, not a required item.** Rig gotchas (why the test looks the way it does): (a) a
+lone frictionless slave on a convex master has ZERO lateral contact stiffness at the crest (vertical n ⇒
+`kn·nx²=0`) and no lateral equilibrium off-crest ⇒ the seat solve is singular/runaway — use a weak lateral
+spring (ks≪kn) + seat at the SYMMETRIC centre; (b) a single combined-load `(Fx,0,-P)` under
+DisplacementControl is DEGENERATE for a frictionless slave (one load factor scales both the press and the
+drive ⇒ equilibrium pins to a single slope) — decouple the constant press via `loadConst` + a separate
+lateral drive pattern; (c) DisplacementControl is the ONLY implicit displacement driver for a
+`constraints LadrunoContact` model — the handler REFUSES a non-homogeneous (imposed-displacement) SP; (d)
+there is NO validated static+`-reemit` path (every ADR-60 reemit test is explicit/CDL), so a FIXED master
+(constant nodal-normal field, no re-handle needed) sidesteps it for the implicit rig.
