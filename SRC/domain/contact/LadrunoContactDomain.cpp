@@ -73,7 +73,8 @@ LadrunoContactDomain::addContact(int tag, int masterSurfTag, int slaveSurfTag,
                                  double kn, double kt, double mu, const double *outward,
                                  bool knAuto, double cellFrac, bool consistentTan, double muc,
                                  bool consistentNormal, double softScale,
-                                 bool enableReemit, double resortFrac, int resortEvery)
+                                 bool enableReemit, double resortFrac, int resortEvery,
+                                 bool smoothNormal)
 {
     if (getSurface(masterSurfTag) == 0 || getSurface(slaveSurfTag) == 0) {
         opserr << "WARNING LadrunoContactDomain::addContact() - master/slave surface "
@@ -103,6 +104,7 @@ LadrunoContactDomain::addContact(int tag, int masterSurfTag, int slaveSurfTag,
     c.enableReemit = enableReemit;                     // ADR-60 finite-sliding re-emit (off ⇒ identical)
     c.resortFrac   = (resortFrac > 0.0) ? resortFrac : 0.5;
     c.resortEvery  = (resortEvery > 0) ? resortEvery : 0;
+    c.smoothNormal = smoothNormal;                     // ADR-63 #4a nodal-normal smoothing (off ⇒ identical)
     theContacts.push_back(c);
     return 0;
 }
@@ -173,6 +175,74 @@ LadrunoContactDomain::dropFrictionForContact(int contactTag)
         else
             ++it;
     }
+}
+
+// --- ADR-63 #4a: averaged nodal-normal smoothing field (per master surface). ---
+void
+LadrunoContactDomain::clearNormalFields(void)
+{
+    // Drop the per-handle scattered normals but KEEP the topological σ/fp cache (it survives across
+    // handles; setNormalField recomputes σ only on a fingerprint change). A removed contact's stale
+    // entry then carries no field ⇒ getSegNodalNorm returns 0 ⇒ harmless.
+    for (std::map<int, NormalField>::iterator it = theNormalFields.begin();
+         it != theNormalFields.end(); ++it)
+        it->second.segNodalNorm.clear();
+}
+
+int
+LadrunoContactDomain::setNormalField(int masterSurfTag, int nps, const int *mTags, int nSeg,
+                                     const double *segCoords, const double globalSeed[3])
+{
+    NormalField &nf = theNormalFields[masterSurfTag];
+    unsigned long long fp =
+        LadrunoContactReemit::membershipFingerprint(mTags, nSeg * nps, nps);
+    // (re)compute the COHERENT WINDING only when the membership changed — it is topological, so the
+    // cache survives across handles and a re-mesh / element removal (new fingerprint) recomputes it
+    // (and re-checks the refuse conditions: a re-mesh can change manifold-ness). R1 composes here.
+    if (nf.sigma.empty() || nf.fp != fp || nf.nSeg != nSeg || nf.nps != nps) {
+        nf.sigma.assign((size_t)(nSeg > 0 ? nSeg : 1), 0);
+        nf.status = LadrunoContactNormalField::propagateOrientation(
+            mTags, nSeg, nps, nf.sigma.empty() ? 0 : &nf.sigma[0]);
+        nf.fp = fp; nf.nSeg = nSeg; nf.nps = nps;
+        nf.signCaptured = false;            // membership changed ⇒ re-capture the frozen sign
+    }
+    if (nf.status != LadrunoContactNormalField::OK) {
+        nf.segNodalNorm.clear();            // REFUSED ⇒ no field (the adapter keeps the faceted path)
+        return nf.status;
+    }
+    // ADR-63 F1/D2 — capture the GLOBAL outward sign ONCE (first OK build) and FREEZE it. Re-deciding
+    // it from the (deformed) current config every handle could flip the whole field mid-run (the R3
+    // failure on the temporal axis). The nodal-normal magnitudes/directions still track deformation;
+    // only the scalar sign is frozen. signConf flags a near coin-flip (seed ~⟂ field) for the handler.
+    if (!nf.signCaptured) {
+        nf.globalSign = LadrunoContactNormalField::voteSign(nSeg, nps, segCoords, &nf.sigma[0],
+                                                            globalSeed, &nf.signConf);
+        nf.signCaptured = true;
+    }
+    // rebuild the per-handle nodal-normal field from the current coords + the FROZEN sign
+    nf.segNodalNorm.assign((size_t)nSeg * nps * 3, 0.0);
+    LadrunoContactNormalField::nodalNormals(mTags, nSeg, nps, segCoords,
+                                            &nf.sigma[0], nf.globalSign, &nf.segNodalNorm[0]);
+    return LadrunoContactNormalField::OK;
+}
+
+double
+LadrunoContactDomain::getNormalFieldSignConf(int masterSurfTag) const
+{
+    std::map<int, NormalField>::const_iterator it = theNormalFields.find(masterSurfTag);
+    if (it == theNormalFields.end() || it->second.status != LadrunoContactNormalField::OK) return -1.0;
+    return it->second.signConf;
+}
+
+const double *
+LadrunoContactDomain::getSegNodalNorm(int masterSurfTag, int segIndex) const
+{
+    std::map<int, NormalField>::const_iterator it = theNormalFields.find(masterSurfTag);
+    if (it == theNormalFields.end()) return 0;
+    const NormalField &nf = it->second;
+    if (nf.status != LadrunoContactNormalField::OK || nf.segNodalNorm.empty()) return 0;
+    if (segIndex < 0 || segIndex >= nf.nSeg) return 0;
+    return &nf.segNodalNorm[(size_t)segIndex * nf.nps * 3];
 }
 
 bool

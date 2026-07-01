@@ -1937,3 +1937,31 @@ re-emit so the readout is live there.
   element scan maps global DOF `d` of the node at external position `k` to mass diagonal
   `(Σ preceding-node getNumberDOF()) + d − 1` (standard consecutive-per-node layout). Related:
   [[project_explicit_constraint_projection]] (the handler requires lumped mass on every tied DOF).
+## ADR-63 #4a — averaged nodal-normal smoothing (NTS)
+
+**The auto global-sign vote uses the master-surface centroid over UNIQUE nodes — NOT the flat `mTags`
+connectivity.** `LadrunoContactSurface::getNodeTags()` returns the flat per-segment connectivity, in which
+edge/ridge nodes shared by K segments appear K times. Averaging that flat list double-counts the
+high-valence ridge nodes and biases the "master centroid" toward the ridge; for a `-smoothNormal` master
+whose slave cloud sits near that biased centroid plane the auto seed `slave_centroid − master_centroid` can
+flip sign → the whole nodal-normal field points INWARD → `gap = n_smooth·(x_s−x̄) > 0` reads "not
+penetrating" → silent pass-through (looks exactly like the R3 bug the feature is meant to fix). Caught on the
+convex-ridge gate during P1 bring-up (a 90°-ish tent: flat-list centroid z=0.5 ≈ slave z=0.5 → seed_z≈−1e-3 →
+G=−1). Fix: dedupe master node tags (a `std::set<int>`) before averaging (`LadrunoContactHandler.cpp`,
+ADR-63 field-build block). The auto sign is still fragile when the slave cloud straddles the master centroid
+plane — use `-outward` for such masters (the documented escape). The per-segment Newell area-normal vote
+(`Σ σ_s·newellAreaNormal(s)`) is NOT affected (it sums over SEGMENTS, each once).
+
+**ADR-63 #4a — sharp-ridge facet ownership (a smoothed-normal limitation).** A slave sitting AT a
+sharp convex ridge has its closest-point projection land on the SHARED EDGE of the *adjacent* facet
+(barycentric ≈ 0, marginally in-bounds), so that neighbor reads a large SPURIOUS penetration and
+injects a big ejecting force. This is a pre-existing NTS facet-ownership issue: the FACETED path only
+*incidentally* prunes it (at a 90° ridge the neighbor normal is ~⟂ the per-pair `orientDir`, so
+`normalOriented`'s perpendicular fail-safe kills the pair) — the SMOOTHED path (which does not use the
+per-facet `orientDir` for the normal) has no such prune. A blunt interior-margin gate in
+`evalSegmentSmooth` was tried and REVERTED: it removed a spuriously-*helpful* neighbor force and
+destabilized other geometries (the spurious force helps at some ridge angles, hurts at others). Proper
+fix = closest-facet / interior facet ownership at a shared edge (a P2 item, related to ADR-57 #4b
+edge-handoff). For P1: the R3 SIGN fix is validated by the quad convex-ridge gate; tri-3 chain coverage
+uses a FLAT patch to avoid the pathology; a slave pressed onto a facet INTERIOR (away from ridges) is
+unaffected.
