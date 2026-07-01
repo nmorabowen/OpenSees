@@ -80,7 +80,7 @@ SLAVE_IFACE = [_stag(0, iy, iz) for iy in range(3) for iz in range(3)]   # 9 tie
 _ALL = {**_MASTER, **SLAVE_NODES}
 
 
-def _mesh(E=1000.0, nu=0.0, rho=1.0, tie=True, ele="stdBrick"):
+def _mesh(E=1000.0, nu=0.0, rho=1.0, tie=True, ele="stdBrick", dual=False):
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 3)
     for t, (x, y, z) in _ALL.items():
@@ -91,9 +91,11 @@ def _mesh(E=1000.0, nu=0.0, rho=1.0, tie=True, ele="stdBrick"):
         ops.element(ele, e, *conn, 1)
     if tie:
         sf = _slave_facets()
-        ops.LadrunoTie("-mortar",
-                       "-slaveFacets", 4, len(sf) // 4, *sf,
-                       "-masterFacets", 4, 1, *MASTER_FACET)
+        args = ["-mortar", "-slaveFacets", 4, len(sf) // 4, *sf,
+                "-masterFacets", 4, 1, *MASTER_FACET]
+        if dual:
+            args.append("-dual")            # P2.1 biorthogonal basis => sparse P
+        ops.LadrunoTie(*args)
 
 
 def _gp_stresses(ele):
@@ -198,8 +200,8 @@ def test_mortar_split_bar_equivalence():
 # --------------------------------------------------------------------------
 # EXPLICIT — the mortar tie on the shipped projection path
 # --------------------------------------------------------------------------
-def _build_explicit(with_load):
-    _mesh(E=1000.0, nu=0.0, rho=1.0, tie=True, ele="SSPbrick")
+def _build_explicit(with_load, dual=False):
+    _mesh(E=1000.0, nu=0.0, rho=1.0, tie=True, ele="SSPbrick", dual=dual)
     for t, (x, y, z) in _ALL.items():
         if abs(x) < 1e-12:
             ops.fix(t, 1, 1, 1)
@@ -318,3 +320,82 @@ def test_mortar_nonaffine_slave_accepted():
     # must be ACCEPTED (returns without raising) — exercises guard #2 off the affine grid
     ops.LadrunoTie("-mortar", "-slaveFacets", 4, 1, *stags,
                    "-masterFacets", 4, nmf, *mfac)
+
+
+# --------------------------------------------------------------------------
+# P2.1 — DUAL (biorthogonal) basis: -dual makes D diagonal ⇒ P local/sparse.
+# At the FE level the dual tie must PRESERVE correctness (linear completeness —
+# exactly what row-sum lumping would break); the SPARSITY of P is a structural
+# property of the operator (identical solution for linearly-complete data), proven
+# in the numpy oracle proto_p2_1_dual_mortar.py (D diagonal, dual≠lumped, dual≠dense).
+# --------------------------------------------------------------------------
+def test_mortar_dual_constant_stress_patch():
+    """The DUAL tie must still pass the constant-stress patch across the non-matching
+    interface — this is the linear-completeness a naive diagonal (lumped D) loses."""
+    E, gamma = 1000.0, 1e-3
+    _mesh(E=E, nu=0.0, tie=True, dual=True)
+    ops.timeSeries("Constant", 1)
+    ops.pattern("Plain", 1, 1)
+    for t, (x, y, z) in _ALL.items():
+        if t in SLAVE_IFACE:
+            continue
+        ops.fix(t, 0, 1, 1)
+        ops.sp(t, 1, gamma * float(z))
+    _static_solve("Lagrange")
+
+    allgp = []
+    for e in range(1, 6):
+        allgp += _gp_stresses(e)
+    ref = allgp[0]
+    atol = 1e-7 * E * gamma
+    for v in allgp:
+        for si, ri in zip(v, ref):
+            assert abs(si - ri) <= atol, f"dual mortar non-constant stress: {v} vs {ref}"
+    target = E * gamma / 2.0
+    comps = [abs(c) for c in ref]
+    assert abs(max(comps) - target) <= 1e-5 * target + atol, f"stress {ref} != {target}"
+
+
+def test_mortar_dual_split_bar_equivalence():
+    """The dual-tied non-matching column reproduces the monolithic conforming column."""
+    E, U = 1000.0, 0.02
+    ref_stress = _monolithic_axial(E, U)
+
+    _mesh(E=E, nu=0.0, tie=True, dual=True)
+    ops.timeSeries("Constant", 1)
+    ops.pattern("Plain", 1, 1)
+    for t, (x, y, z) in _ALL.items():
+        if t in SLAVE_IFACE:
+            continue
+        ops.fix(t, 0, 1, 1)
+        if abs(x) < 1e-12:
+            ops.sp(t, 1, 0.0)
+        elif abs(x - 2.0) < 1e-12:
+            ops.sp(t, 1, U)
+    _static_solve("Lagrange")
+
+    mid = ops.nodeDisp(2, 1)
+    assert abs(mid - 0.5 * U) <= 1e-6 * U + 1e-9, f"dual mid-plane {mid} != {0.5 * U}"
+    got = _gp_stresses(1)[0]
+    for gi, ri in zip(got, ref_stress):
+        assert abs(gi - ri) <= 1e-5 * E * U + 1e-9, f"dual stress {got} != {ref_stress}"
+
+
+def test_mortar_dual_explicit_zero_penetration():
+    """The dual tie holds to machine precision on the shipped explicit projection path."""
+    dt0 = 1e-4
+    _build_explicit(with_load=True, dual=True)
+    assert ops.analyze(1, dt0) == 0
+    dt = 0.4 * ops.criticalTimeStep()
+    assert dt > 0
+    for _ in range(150):
+        assert ops.analyze(1, dt) == 0
+    assert abs(ops.nodeDisp(_stag(1, 0, 2), 1)) > 1e-9, "dual slave end did not move — tie inert"
+
+
+def test_dual_requires_mortar():
+    """-dual only applies to the integral-mortar mode (collocation has no D to diagonalize)."""
+    _mesh(E=1000.0, nu=0.0, tie=False)
+    with pytest.raises(Exception):
+        ops.LadrunoTie("-dual", "-slaveNodes", 1, _stag(0, 0, 0),
+                       "-masterFacets", 4, 1, *MASTER_FACET)

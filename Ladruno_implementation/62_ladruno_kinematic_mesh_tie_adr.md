@@ -1,8 +1,8 @@
 # LadrunoTie — kinematic mortar mesh-tie via constraint emission (the projection handler)
 
 > ADR-62. Status: **SHIPPED — P1 (collocation, #454) + P2 (integral-mortar, #455) + P3
-> (shell/rotational ndf-6) all merged; `LadrunoTie` is the auto-generator.** Backlog: P2.1
-> (dual-basis sparse mortar), P3.1 (Hermite w–θ shell transfer), shell-to-solid. See
+> (shell/rotational ndf-6) + P2.1 (`-dual` biorthogonal/sparse mortar) all merged; `LadrunoTie`
+> is the auto-generator.** Backlog: P3.1 (Hermite w–θ shell transfer), shell-to-solid. See
 > `kinematic_tie_handoff.md`. The constructive successor to the shelved ADR-61.
 > Family: ADR-30 (LadrunoProjectionHandler — the enforcement, SHIPPED) · ADR-41 (mortar
 > D/M + `-tie` C4 — the pairing) · ADR-39 (ContactDomain bucket-sort + projection) ·
@@ -233,10 +233,18 @@ displacement `w` (never on θ) — the Hermite w–θ transfer is deferred as P3
   `P = D⁻¹M`, and emit per-slave `EQ_Constraint`s. **The "needs MP-chain support" premise was
   WRONG/avoidable:** pre-inverting D globally makes every P row tie to MASTER nodes only ⇒ no
   chains ⇒ NO handler change and NO kernel change (the shipped projection handler accepts dense,
-  master-only rows). Standard basis ⇒ P dense (one large interface group); a dual/biorthogonal
-  basis (diagonal D ⇒ sparse P) is the deferred large-interface optimization (P2.1). Guards:
+  master-only rows). Standard basis ⇒ P dense (one large interface group); the `-dual` biorthogonal
+  basis (diagonal D ⇒ sparse P) is the shipped large-interface optimization (P2.1, below). Guards:
   coverage-ratio (self-clip `fullCov`, refuse a slave protruding past the master), conforming-gap,
   post-solve partition-of-unity. Oracle `proto_p2_mortar_tie.py` (13/13) + `tests/test_ladrunoTie_mortar.py` (6/6).
+- **P2.1 — dual / biorthogonal basis (`-mortar -dual`). SHIPPED.** ψ=Aᵉ·N per slave facet,
+  `Aᵉ=diag(∫N)·(Dᵉ)⁻¹` ⇒ `D_dual` DIAGONAL ⇒ `P=D_dual⁻¹M` LOCAL/sparse (each slave ties only to
+  masters under its own facet support ⇒ small local handler groups at large interfaces). Built from
+  the SAME `integratePair` Dᵉ/Mᵉ (a per-facet npsS×npsS solve) ⇒ NO kernel change, NO handler change;
+  default OFF = standard dense P byte-identical. Preserves linear completeness (row-sum LUMPING D
+  would break the patch — the oracle measures 0.28 err lumped vs 2e-15 dual). Oracle
+  `proto_p2_1_dual_mortar.py` (12/12: D diagonal, sparse, dual≠lumped) + 4 FE tests in
+  `tests/test_ladrunoTie_mortar.py` (dual patch/split/explicit + `-dual`-requires-`-mortar` refusal).
 - **P3 — shell / rotational ties (ndf 6). SHIPPED.** The rotational DOFs tie with the SAME P
   (`θ_s = Σ P_sk θ_{m,k}`), both modes; default `-dof` → 1..6 for a 3D ndf-6 node; per-DOF BLOCKER-2
   refuses a massless rotational DOF (shells neglect rotary inertia — add nodal rotary mass or drop
@@ -244,9 +252,9 @@ displacement `w` (never on θ) — the Hermite w–θ transfer is deferred as P3
   `θ=½∇×u`). Oracle `proto_p3_rotational_tie.py` (8/8) + `tests/test_ladrunoTie_shell.py` (6/6).
   Linearly complete ⇒ rotations + aligned-cylindrical bending EXACT; along-interface quadratic w
   is O(h²) (Hermite w–θ transfer = P3.1).
-- **Successors** — **P2.1** (dual/biorthogonal basis ⇒ sparse mortar P), **P3.1** (Hermite w–θ
-  shell transfer for along-interface bending), **shell-to-solid** ties, and **finite-sliding
-  re-emission** (the ADR-60 hook) if a tie must survive large interface rotation.
+- **Successors** — **P3.1** (Hermite w–θ shell transfer for along-interface bending),
+  **shell-to-solid** ties, and **finite-sliding re-emission** (the ADR-60 hook) if a tie must
+  survive large interface rotation.
 
 ---
 
@@ -275,6 +283,14 @@ displacement `w` (never on θ) — the Hermite w–θ transfer is deferred as P3
   model-wide, so it is defense-in-depth). The numpy oracle (`proto_p3`, 8/8) proves the rotational
   transfer + the exact/limit boundary; the FE tests (6/6) confirm the constant-moment patch crosses
   a non-conforming ShellMITC4 tie exactly.
+- **P2.1 (dual basis) — oracle + one focused review (novel math, but strong coverage).** The dual
+  condensation is new math, so it earned a numpy oracle (`proto_p2_1`, 12/12: D diagonal, linear
+  completeness, sparsity, dual≠lumped) AND a targeted adversarial pass on the C++ delta. Finding: NO
+  bug — the per-facet accumulation for a multi-facet node is correct, partition of unity holds exactly
+  (`Dᵉ·1 = Mᵉ·1 = cᵉ` over the same clipped overlap, since `Σφ=1` per Gauss point), `De.Solve` is safe
+  for large Nm (work buffers sized by npsS≤4, not the RHS), the coverage guard + `Ddual≤0` refuse leave
+  no partial-facet leak, and the standard path is byte-identical (`P.Zero()` before `D.Solve` is a
+  no-op since Solve does `x=b`). Row-sum lumping was explicitly rejected (breaks the patch — oracle T6).
 
 ---
 

@@ -90,6 +90,14 @@ int generate(Domain *theDomain,
 //   masterFacetNodes : flat tags, npsM per master facet.
 //   outward          : interface outward direction (orients the mortar normal); if 0,
 //                      the average master-facet normal is used.
+//   dual             : P2.1 — use a DUAL (biorthogonal) slave basis so the slave mass
+//                      D_dual is DIAGONAL => P = D_dual^{-1} M is LOCAL/sparse (each
+//                      slave ties only to masters under its own facet support), giving
+//                      small local handler groups at large interfaces. Built from the
+//                      SAME integratePair D^e/M^e via a per-facet transform
+//                      A^e = diag(row-sum D^e) (D^e)^{-1} (no kernel change). Preserves
+//                      linear completeness (unlike row-sum lumping). Default false =
+//                      the standard dense P (byte-identical).
 //
 // Returns #EQ_Constraints emitted (>= 0), or -1 on a named refusal: surfaces not
 // node-disjoint, an uncovered slave node (=> singular D), a non-conforming gap
@@ -97,7 +105,8 @@ int generate(Domain *theDomain,
 int generateMortar(Domain *theDomain,
                    const ID &slaveFacetNodes, int npsS,
                    const ID &masterFacetNodes, int npsM,
-                   const ID &dofs, double tolFrac, const double *outward);
+                   const ID &dofs, double tolFrac, const double *outward,
+                   bool dual = false);
 
 } // namespace LadrunoTie
 
