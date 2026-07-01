@@ -214,7 +214,7 @@ and re-verify.
 | `SRC/{tcl/tclMain.cpp,interpreter/PythonModule.cpp}` | Splash-banner feature regen via `patch_banner.py` — extend the `LadrunoTie` line to note the integral-mortar (`-mortar`) mode (ADR-62 P2) | [#455](https://github.com/nmorabowen/OpenSees/pull/455) |
 | `SRC/{tcl/tclMain.cpp,interpreter/PythonModule.cpp}` | Splash-banner feature regen via `patch_banner.py` — extend the `LadrunoTie` line to note ndf-6 shell rotational-DOF ties (ADR-62 P3). `LadrunoTie.{cpp,h}` themselves are fork-authored (see [[LEDGER_implementations]]); only the banner strings are vanilla. | [#459](https://github.com/nmorabowen/OpenSees/pull/459) |
 | `SRC/{tcl/tclMain.cpp,interpreter/PythonModule.cpp}` | Splash-banner feature regen via `patch_banner.py` — extend the `LadrunoTie` line to note the `-dual` biorthogonal/sparse mortar basis (ADR-62 P2.1). Banner strings only; `LadrunoTie.{cpp,h}` are fork-authored. | [#462](https://github.com/nmorabowen/OpenSees/pull/462) |
-| `SRC/{tcl/tclMain.cpp,interpreter/PythonModule.cpp}` | Splash-banner feature regen via `patch_banner.py` — extend the `LadrunoTie` line to note the `-hermite` rotation-consistent w–θ edge transfer (ADR-62 P3.1). Banner strings only; `LadrunoTie.{cpp,h}` are fork-authored. | P3.1 PR |
+| `SRC/{tcl/tclMain.cpp,interpreter/PythonModule.cpp}` | Splash-banner feature regen via `patch_banner.py` — extend the `LadrunoTie` line to note the `-hermite` rotation-consistent w–θ edge transfer (ADR-62 P3.1). Banner strings only; `LadrunoTie.{cpp,h}` are fork-authored. | [#467](https://github.com/nmorabowen/OpenSees/pull/467) |
 
 > [!note] Upstreamable bugfixes
 > Some PRs fix genuine upstream bugs (not fork-only features) and are candidates

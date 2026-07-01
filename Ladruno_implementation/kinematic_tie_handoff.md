@@ -39,7 +39,7 @@ like `equationConstraint`, they live in the `DL_Interpreter`/`TclWrapper` path).
 - Code: `SRC/domain/constraints/LadrunoTie.{h,cpp}` — `LadrunoTie::generate` (P1) + `::generateMortar` (P2; `dual` param = P2.1) + `OPS_LadrunoTie`; P3 adds `ltDefaultDofs`/`ltScanMassedDOFs`/`ltCheckTiedDofMass` helpers (per-DOF mass) + a shell-to-solid master-DOF guard in both generators.
 - Oracles: `kinematic_tie_validation/proto_p{0,1}_kinematic_tie*.py` (P1) + `proto_p2_mortar_tie.py` (P2, 13/13) + `proto_p2_1_dual_mortar.py` (P2.1, 12/12) + `proto_p3_rotational_tie.py` (P3, 8/8) + `proto_p3_1_hermite_tie.py` (P3.1, 13/13).
 - Tests: `tests/test_ladrunoTie_patch.py` (8, P1) + `tests/test_ladrunoTie_mortar.py` (11 = 7 P2 + 4 P2.1 dual) + `tests/test_ladrunoTie_shell.py` (13 = 6 P3 + 1 P2.1×P3 composition + 6 P3.1 hermite). Full suite 32/32.
-- PRs: ADR/oracles #449, P1 #454, P2 #455, P3 shell/rotational #459, P2.1 dual #462, P2.1×P3 composition test #464, P3.1 hermite — all merged.
+- PRs: ADR/oracles #449, P1 #454, P2 #455, P3 shell/rotational #459, P2.1 dual #462, P2.1×P3 composition test #464, P3.1 hermite #467 — all merged.
 
 ## The architecture (so the next agent doesn't re-derive it)
 
