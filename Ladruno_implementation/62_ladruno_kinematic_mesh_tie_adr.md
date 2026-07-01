@@ -1,8 +1,8 @@
 # LadrunoTie — kinematic mortar mesh-tie via constraint emission (the projection handler)
 
-> ADR-62. Status: **CONCEPT VALIDATED (P0 numpy + P1 real-solver, both green) — the
-> `LadrunoTie` auto-generator (C++ + build) is the remaining ergonomics.** Usable TODAY via
-> hand-emitted `equationConstraint` + `LadrunoProjection`. Next session: see
+> ADR-62. Status: **SHIPPED — P1 (collocation, #454) + P2 (integral-mortar, #455) + P3
+> (shell/rotational ndf-6) all merged; `LadrunoTie` is the auto-generator.** Backlog: P2.1
+> (dual-basis sparse mortar), P3.1 (Hermite w–θ shell transfer), shell-to-solid. See
 > `kinematic_tie_handoff.md`. The constructive successor to the shelved ADR-61.
 > Family: ADR-30 (LadrunoProjectionHandler — the enforcement, SHIPPED) · ADR-41 (mortar
 > D/M + `-tie` C4 — the pairing) · ADR-39 (ContactDomain bucket-sort + projection) ·
@@ -187,9 +187,19 @@ semantics (snap the slave IC onto the facet) OR document that the as-built geome
 conforming-at-the-interface. Decide whether the snap perturbs the initial stress state
 (it moves the slave node) — for a *built-in* tie the snap is part of defining the bond.
 
-**BLOCKER-4 — shells / rotational ties (ndf 6).** Solid–solid (ndf 3, translational) is clean.
-A shell tie must also tie rotational DOFs, which then need a small rotational lumped mass (the
-handler's existing `rigidLink -beam` / 3D-diaphragm rule). Deferred to P3; v1 is solid–solid.
+**BLOCKER-4 — shells / rotational ties (ndf 6). SHIPPED in P3.** A shell tie ties the rotational
+DOFs (4,5,6) with the SAME per-slave transfer P (`θ_s = Σ P_sk θ_{m,k}`) — collocation weights or
+the mortar D⁻¹M row, either mode. The default `-dof` becomes 1..6 for a 3D ndf-6 node
+(`-dof`-selectable). Rotational lumped mass: `ShellMITC4`/`ASDShellQ4` `getMass()` NEGLECT rotary
+inertia (verified in source), so BLOCKER-2 was made **per-DOF** — it refuses (named) a tied
+rotational DOF that carries no mass, and the user adds nodal rotary mass (`mass $n 0 0 0 mrx mry mrz`)
+or drops the rotations with `-dof 3 1 2 3`. The handler needs NO change (every (node,dof) is an
+independent union-find vertex ⇒ master-only rotational rows). Scope = shell-to-shell (same ndf);
+shell-to-solid (ndf mismatch ⇒ needs a `θ=½∇×u` rotation-from-translation coupling, not a straight P)
+is guarded with a named refusal and deferred. **Honest limit:** P is linearly complete, so rotations
+and CYLINDRICAL bending with the curvature axis ∥ the interface cross EXACTLY (the FE patch test);
+a curvature varying ALONG the interface leaves an O(h²) residual on the quadratic transverse
+displacement `w` (never on θ) — the Hermite w–θ transfer is deferred as P3.1.
 
 ---
 
@@ -227,8 +237,16 @@ handler's existing `rigidLink -beam` / 3D-diaphragm rule). Deferred to P3; v1 is
   basis (diagonal D ⇒ sparse P) is the deferred large-interface optimization (P2.1). Guards:
   coverage-ratio (self-clip `fullCov`, refuse a slave protruding past the master), conforming-gap,
   post-solve partition-of-unity. Oracle `proto_p2_mortar_tie.py` (13/13) + `tests/test_ladrunoTie_mortar.py` (6/6).
-- **P3 (successor) — shell / rotational ties (ndf 6)** and **finite-sliding re-emission** (the
-  ADR-60 hook) if a tie must survive large interface rotation.
+- **P3 — shell / rotational ties (ndf 6). SHIPPED.** The rotational DOFs tie with the SAME P
+  (`θ_s = Σ P_sk θ_{m,k}`), both modes; default `-dof` → 1..6 for a 3D ndf-6 node; per-DOF BLOCKER-2
+  refuses a massless rotational DOF (shells neglect rotary inertia — add nodal rotary mass or drop
+  the rotations with `-dof 3 1 2 3`); handler unchanged; shell-to-solid guarded + deferred (needs
+  `θ=½∇×u`). Oracle `proto_p3_rotational_tie.py` (8/8) + `tests/test_ladrunoTie_shell.py` (6/6).
+  Linearly complete ⇒ rotations + aligned-cylindrical bending EXACT; along-interface quadratic w
+  is O(h²) (Hermite w–θ transfer = P3.1).
+- **Successors** — **P2.1** (dual/biorthogonal basis ⇒ sparse mortar P), **P3.1** (Hermite w–θ
+  shell transfer for along-interface bending), **shell-to-solid** ties, and **finite-sliding
+  re-emission** (the ADR-60 hook) if a tie must survive large interface rotation.
 
 ---
 
@@ -245,6 +263,18 @@ handler's existing `rigidLink -beam` / 3D-diaphragm rule). Deferred to P3; v1 is
   DGESV flags only an exact-zero pivot, not near-singular D. The feared "new enforcement math"
   (handler chain support) turned out unnecessary — global D⁻¹ pre-inversion keeps the topology
   master-only, so the gate's real risk reduced to the setup-time integral's conditioning.
+- **P3 (shell / rotational) — targeted verification (not a full loop).** Per the gate-when rule,
+  P3 is a gated, well-tested mechanical extension mirroring a proven sibling (the same P, one extra
+  per-DOF loop) — so a single focused adversarial pass on the C++ delta sufficed. Finding: the
+  per-DOF mass-diagonal index map is exact (cross-checked against `ASDShellQ4::getMass()`, `index=j*6`),
+  no false-accept of a massless rotational DOF, no off-by-one/null-deref/iterator bug. Two flags:
+  (a) an ndf-6 *beam* slave now defaults to tying rotations too ⇒ false-refuses a pre-P3 lumped-mass
+  beam tie (INTENDED default per OQ-P3; escape hatch `-dof 3 1 2 3`, documented); (b) the master-DOF
+  existence was unchecked ⇒ added a named shell-to-solid refusal guard (its happy path is covered by
+  all shell-to-shell/solid-solid tests; the refusal branch is unreachable via openseespy since ndf is
+  model-wide, so it is defense-in-depth). The numpy oracle (`proto_p3`, 8/8) proves the rotational
+  transfer + the exact/limit boundary; the FE tests (6/6) confirm the constant-moment patch crosses
+  a non-conforming ShellMITC4 tie exactly.
 
 ---
 
