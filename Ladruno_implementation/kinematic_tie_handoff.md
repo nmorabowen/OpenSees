@@ -2,7 +2,7 @@
 title: "LadrunoTie (ADR-62) — handoff: P1 collocation + P2 integral-mortar + P2.1 dual + P3 shell/rotational SHIPPED; P3.1 / shell-to-solid deferred"
 project: Ladruno
 type: handoff
-status: P0 (numpy) + P1 (collocation, PR #454) + P2 (integral-mortar, PR #455) + P3 (shell/rotational ndf-6, PR #459) MERGED to ladruno. Deferred = P2.1 dual-basis sparsification + P3.1 Hermite w–θ shell transfer + shell-to-solid ties.
+status: P0 (numpy) + P1 (collocation, PR #454) + P2 (integral-mortar, PR #455) + P2.1 (dual/sparse mortar, PR #PR_P21) + P3 (shell/rotational ndf-6, PR #459) MERGED to ladruno. Deferred = P3.1 Hermite w–θ shell transfer + shell-to-solid ties.
 related:
   - "[[62_ladruno_kinematic_mesh_tie_adr]]"            # the spec (P1/P2 marked SHIPPED)
   - "[[30_ladruno_explicit_constraint_projection_adr]]" # the enforcement handler (SHIPPED, reused unchanged)

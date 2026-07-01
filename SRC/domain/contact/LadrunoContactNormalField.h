@@ -162,6 +162,57 @@ inline int propagateOrientation(const int *mTags, int nSeg, int nps, int *sigma)
     return OK;
 }
 
+// ------------------------------------------------ per-segment shared-edge mask (P2.1)
+// Fill sharedEdge[nSeg*nps] (row-major [seg][localEdge]) with 1 where local edge k of segment s
+// (the edge from local node k to local node (k+1)%nps — the SAME traversal propagateOrientation
+// uses) is SHARED with another segment (an interior edge, used by ≥2 segments), else 0 (a free /
+// boundary edge of an open patch). Reuses the undirected-edge tally; TOPOLOGICAL (connectivity
+// only) ⇒ the engine caches it beside σ and recomputes only on a membership-fingerprint change.
+//
+// The P2.1 FACET-OWNERSHIP guard consumes this: at a sharp convex ridge a slave pressed into one
+// facet has its closest point on the ADJACENT (non-owning) facet land marginally in-bounds ON the
+// SHARED ridge edge, reading a large spurious penetration → a big ejecting force (the faceted path
+// only INCIDENTALLY prunes it via normalOriented's refDir⟂n fail-safe; the smoothed path has no
+// such prune). evalSegmentSmooth rejects a projection landing on a SHARED edge (the neighbour owns
+// it) but KEEPS one on a FREE edge (nobody else owns it). Reject is smoothed-path-only.
+inline void segmentSharedEdges(const int *mTags, int nSeg, int nps, int *sharedEdge) {
+    if (mTags == 0 || sharedEdge == 0 || nSeg <= 0 || (nps != 3 && nps != 4)) return;
+    std::map<std::pair<int,int>, int> useCount;   // undirected edge {lo,hi} -> #segments using it
+    for (int s = 0; s < nSeg; s++)
+        for (int k = 0; k < nps; k++) {
+            int a = mTags[s*nps + k], b = mTags[s*nps + (k + 1) % nps];
+            int lo = a < b ? a : b, hi = a < b ? b : a;
+            useCount[std::make_pair(lo, hi)]++;
+        }
+    for (int s = 0; s < nSeg; s++)
+        for (int k = 0; k < nps; k++) {
+            int a = mTags[s*nps + k], b = mTags[s*nps + (k + 1) % nps];
+            int lo = a < b ? a : b, hi = a < b ? b : a;
+            sharedEdge[s*nps + k] = (useCount[std::make_pair(lo, hi)] >= 2) ? 1 : 0;
+        }
+}
+
+// True if the projection (xi,eta) lies within edgeTol (parametric) of a segment edge that is
+// SHARED (interior). sharedEdge[k] = 1 for the local edge from shape-node k to (k+1)%nps — the
+// SAME node ordering LadrunoContactProjection::shape() uses (shape-node i == mTags local node i),
+// so the local-edge index here matches segmentSharedEdges()'s. Quad edges: k0 η=−1, k1 ξ=+1,
+// k2 η=+1, k3 ξ=−1. Tri edges: k0 η=0, k1 ξ+η=1, k2 ξ=0. sharedEdge==0 ⇒ no guard (returns false).
+inline bool onSharedInteriorEdge(int nps, double xi, double eta,
+                                 const int *sharedEdge, double edgeTol) {
+    if (sharedEdge == 0) return false;
+    if (nps == 4) {
+        if (sharedEdge[0] && eta <= -1.0 + edgeTol) return true;   // k0: η = −1
+        if (sharedEdge[1] && xi  >=  1.0 - edgeTol) return true;   // k1: ξ = +1
+        if (sharedEdge[2] && eta >=  1.0 - edgeTol) return true;   // k2: η = +1
+        if (sharedEdge[3] && xi  <= -1.0 + edgeTol) return true;   // k3: ξ = −1
+        return false;
+    }
+    if (sharedEdge[0] && eta <= edgeTol)            return true;   // k0: η = 0
+    if (sharedEdge[1] && xi + eta >= 1.0 - edgeTol) return true;   // k1: ξ + η = 1
+    if (sharedEdge[2] && xi <= edgeTol)             return true;   // k2: ξ = 0
+    return false;
+}
+
 // ------------------------------------------------------- area-weighted nodal normals
 // Build the smooth nodal-normal field from CURRENT coords + the cached σ_s, with the GLOBAL
 // outward sign, and SCATTER it to a per-segment-per-node layout segNodalNorm[nSeg*nps*3]

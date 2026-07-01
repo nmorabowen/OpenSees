@@ -225,6 +225,79 @@ int main()
         check(!ok, "degenerate blend (antiparallel corners) ⇒ smoothNormal false ⇒ fallback");
     }
 
+    // ============================================================ ADR-63 P2.1 facet ownership
+    // segmentSharedEdges: the mask flags INTERIOR (shared) edges; onSharedInteriorEdge rejects a
+    // projection landing there (the neighbour owns it) but not a FREE edge or an interior point.
+
+    // --- quad tent {L,R} sharing the ridge {10,11} (same geometry as the C0 block above) ---
+    {
+        int mTags[2*4] = { 20,10,11,21,  10,30,31,11 };
+        int se[2*4];
+        segmentSharedEdges(mTags, 2, 4, se);
+        // L=[20,10,11,21]: only local edge k1 (10-11) is the shared ridge; R=[10,30,31,11]: k3 (11-10).
+        const int *seL = se, *seR = se + 4;
+        check(seL[0]==0 && seL[1]==1 && seL[2]==0 && seL[3]==0, "quad ridge: L shared-edge mask = ridge k1 only");
+        check(seR[0]==0 && seR[1]==0 && seR[2]==0 && seR[3]==1, "quad ridge: R shared-edge mask = ridge k3 only");
+        // L's ridge is ξ=+1 (k1): a projection at ξ≈+1 lands on the SHARED edge ⇒ reject.
+        check( onSharedInteriorEdge(4,  0.999, 0.0, seL, 1e-2), "quad: L projection on shared ridge (ξ→+1) ⇒ reject");
+        // R's ridge is ξ=−1 (k3): the owner (probe) projects at ξ≈−0.7 ⇒ NOT on the edge ⇒ keep.
+        check(!onSharedInteriorEdge(4, -0.7,   0.0, seR, 1e-2), "quad: R owner interior (ξ=−0.7) ⇒ keep");
+        check( onSharedInteriorEdge(4, -0.999, 0.0, seR, 1e-2), "quad: R projection on shared ridge (ξ→−1) ⇒ reject");
+        // a FREE eave edge must NOT be rejected: L's k3 (ξ=−1) is free (mask 0).
+        check(!onSharedInteriorEdge(4, -0.999, 0.0, seL, 1e-2), "quad: L free eave edge (ξ→−1, unshared) ⇒ keep");
+    }
+
+    // --- tri pair sharing edge {2,3}: T0=[1,2,3] (shared k1), T1=[2,4,3] (shared k2) ---
+    {
+        int mTags[2*3] = { 1,2,3,  2,4,3 };
+        int se[2*3];
+        segmentSharedEdges(mTags, 2, 3, se);
+        const int *seT0 = se, *seT1 = se + 3;
+        check(seT0[0]==0 && seT0[1]==1 && seT0[2]==0, "tri: T0 shared-edge mask = k1 (2-3) only");
+        check(seT1[0]==0 && seT1[1]==0 && seT1[2]==1, "tri: T1 shared-edge mask = k2 (3-2) only");
+        // T0's shared edge k1 is ξ+η=1: a projection there ⇒ reject; an interior point ⇒ keep.
+        check( onSharedInteriorEdge(3, 0.55, 0.45, seT0, 1e-2), "tri: T0 projection on shared edge (ξ+η→1) ⇒ reject");
+        check(!onSharedInteriorEdge(3, 0.30, 0.30, seT0, 1e-2), "tri: T0 interior (ξ+η=0.6) ⇒ keep");
+        // T0's k0 (η=0) and k2 (ξ=0) are FREE ⇒ never rejected even at the boundary.
+        check(!onSharedInteriorEdge(3, 0.50, 0.0,  seT0, 1e-2), "tri: T0 free edge (η→0, unshared) ⇒ keep");
+    }
+
+    // --- gap-aware ownership via evalSegmentSmooth on the convex tent (the load-bearing P2.1 rule) ---
+    // A slave clearly on the RIGHT roof projects onto the LEFT (non-owning) facet ON the shared ridge
+    // edge with a LARGE gap ⇒ REJECT (neighbour owns it). A slave AT the ridge projects there with a
+    // SMALL gap ⇒ KEEP (the apex still holds — no pass-through). The OWNER (right facet, interior
+    // projection) is always kept.
+    {
+        int mTags[2*4] = { 20,10,11,21,  10,30,31,11 };
+        double X[2*4*3] = {
+            -1,0,0,  0,0,1,  0,1,1,  -1,1,0,    // L (left roof)  x∈[−1,0]
+             0,0,1,  1,0,0,  1,1,0,   0,1,1,    // R (right roof) x∈[0,1], plane x+z=1
+        };
+        int sigma[2]; propagateOrientation(mTags, 2, 4, sigma);
+        int se[2*4];  segmentSharedEdges(mTags, 2, 4, se);
+        double snn[2*4*3]; buildField(mTags, 2, 4, X, sigma, seedUp, snn);
+        // facet coord + nodal-normal helpers
+        double XL[4][3], XR[4][3], nL[4][3], nR[4][3];
+        for (int k = 0; k < 4; k++) for (int d = 0; d < 3; d++) {
+            XL[k][d] = X[(0*4+k)*3+d];  nL[k][d] = snn[(0*4+k)*3+d];
+            XR[k][d] = X[(1*4+k)*3+d];  nR[k][d] = snn[(1*4+k)*3+d];
+        }
+        const double up[3] = {0,0,1};
+        double gap, n[3], N[4];
+        // (1) slave clearly on the right roof (x=0.15, surface z=0.85) → LEFT facet must REJECT it.
+        double sFar[3] = { 0.15, 0.5, 0.85 };
+        bool actL_far = LadrunoContactProjection::evalSegmentSmooth(4, XL, sFar, nL, up, gap, n, N, se+0);
+        check(!actL_far, "tent: non-owner LEFT facet REJECTS a slave clearly on the right roof (large shared-edge gap)");
+        // (2) the OWNER (right facet) keeps that same slave (interior projection, small gap).
+        double sIn[3] = { 0.15, 0.5, 0.85 - 1e-3 };   // δ below the right surface
+        bool actR = LadrunoContactProjection::evalSegmentSmooth(4, XR, sIn, nR, up, gap, n, N, se+4);
+        check(actR && gap < 0.0, "tent: owner RIGHT facet KEEPS the slave it owns (interior, penetrating)");
+        // (3) slave AT the ridge (x≈0), small penetration → LEFT facet KEEPS it (apex holds, no pass-through).
+        double sApex[3] = { 0.0, 0.5, 1.0 - 1e-3 };
+        bool actL_apex = LadrunoContactProjection::evalSegmentSmooth(4, XL, sApex, nL, up, gap, n, N, se+0);
+        check(actL_apex, "tent: LEFT facet KEEPS a slave AT the ridge (small gap ⇒ apex not dropped)");
+    }
+
     std::printf("\n%s — %d failure(s)\n", fails == 0 ? "ALL PASS" : "FAILURES", fails);
     return fails == 0 ? 0 : 1;
 }

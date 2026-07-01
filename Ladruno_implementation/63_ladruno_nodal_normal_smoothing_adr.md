@@ -1,16 +1,28 @@
 # ADR-63 — Averaged Nodal-Normal Smoothing for NTS Contact (smooth `N(X)` master-normal field)
 
-- **Status:** **P0+P1 BUILT + VALIDATED (local, 2026-06-30)** — the design gate (below) is complete and the
-  symmetric-first MVP is implemented and green. **Q-TANGENT RESOLVED:** ship the **symmetric frozen-field
-  `kn·BᵀB`** tangent first; the full `∂n_smooth/∂u` is a conditionally-required, evidence-gated P3 (see
-  §"Gate decision (RESOLVED)"). Validation: build-free oracle `proto_nodal_normal_selfcheck.cpp` **21/21**;
-  in-solver gate `tests/test_adr63_smoothnormal_p1.py` **5/5** (`-smoothNormal` holds a 90° convex ridge
-  where the faceted auto-`orientDir` reproduces the R3 pass-through; flat-master byte-consistent; tri-3
-  chain + consistency); full contact battery (ADR-39/41/57/60, **147**) byte-identical with the feature OFF.
-  **A 4-lens P1 adversarial review** (below) found + fixed a global-sign-freeze BLOCKER (F1) and several
-  silent-sign + coverage gaps; the sharp-ridge facet-ownership pathology is documented + deferred.
-  **Remaining:** P2 (friction + re-emit compose + convergence tripwire + facet ownership), P3 (full
-  `∂n_smooth/∂u`, gated), CI port, banner, PR.
+- **Status:** **P0+P1 SHIPPED (#457); P2.1 facet-ownership SHIPPED (#460); P2.2+P2.3 friction/re-emit VALIDATED (local, 2026-07-01)** — the
+  design gate (below) is complete and the symmetric-first MVP is implemented and green. **Q-TANGENT
+  RESOLVED:** ship the **symmetric frozen-field `kn·BᵀB`** tangent first; the full `∂n_smooth/∂u` is a
+  conditionally-required, evidence-gated P3 (see §"Gate decision (RESOLVED)"). **P2.1 closes the one real P1
+  limitation** — the spurious adjacent-facet activation at a sharp convex ridge (see the "NEW finding at
+  bring-up" §, now RESOLVED, and the "P2.1 implementation notes" § below): a per-segment shared-edge
+  ownership guard, **gap-aware** (reject a smoothed projection on a SHARED interior edge only when its
+  penetration is large vs the facet size ⇒ keeps the owner + the at-apex contact; a blunt near-edge reject
+  reproduced the reverted pass-through). Validation: build-free oracle `proto_nodal_normal_selfcheck.cpp`
+  **35/35**; in-solver `tests/test_adr63_smoothnormal_p1.py` **5/5** + `tests/test_adr63_smoothnormal_p2.py`
+  **2/2** (quad + tri convex-ridge press-into: no spurious ejection); full contact battery
+  (ADR-39/41/57/60/63) **152** with the feature OFF byte-identical. **P2.2+P2.3 (friction + re-emit over a
+  curved master) — VALIDATED, NO engine code**: `segmentActive` already threads the smoothed `n` into the
+  gap operator AND the friction slip (`tangentPart(drel, n, gTvec)`), and `-reemit`/`-smoothNormal`/`-mu`
+  compose with no mutual refusal — so a frictional block dragged across a convex curved master with
+  `-reemit -smoothNormal -mu -outward` sustains contact across the crest, vs pass-through without `-reemit`
+  (the ADR-60 "exposed combo" closed); flat-master friction is smooth==faceted byte-identical
+  (`tests/test_adr63_smoothnormal_p23.py`, 3/3; battery **157**). Documented caveats (not new bugs): the
+  AUTO global sign stays ill-conditioned for edge-grazing slave clouds (F2/F3/F5 → `-outward`); mild
+  near-apex over-stiffness on sharp crests (the P2.1 gap-aware guard keeps the small-gap non-owner;
+  non-destabilizing on realistic arcs; full single-owner = ADR-57 #4b); traction-continuity asserted
+  qualitatively via sustained contact. **Remaining:** the Q-IMPLICIT-NEWTON convergence tripwire (curved
+  IMPLICIT master, gates P3-promotion — a separate focused study), P3 (full `∂n_smooth/∂u`, gated), CI port.
 - **Owner:** Mora Bowen · Palacios · Abell · Guppi
 - **Priority:** high — **resolves the open [[60_ladruno_finite_sliding_reemission_adr]] R3 item** (curved-master
   `orientDir` flip → silent pass-through, today's only `-outward`-caveated combo) and the in-fork
@@ -513,10 +525,92 @@ and injects a big ejecting force. This is a **pre-existing NTS facet-ownership i
 only *incidentally* prunes it — at a 90° ridge the neighbor's normal is ~⟂ the per-pair `orientDir`, so
 the `normalOriented` fail-safe kills it). The smoothed path inherits it and has no such incidental prune;
 a blunt interior-margin fix was tried and rejected (it removed a spuriously-*helpful* neighbor force and
-destabilized other geometries). **Disposition:** DEFERRED — proper facet ownership (closest-facet /
-interior selection at a shared edge) is a separate concern related to [[57_ladruno_edge_edge_contact_adr]]
-#4b edge-handoff, out of P1 scope. The R3 **sign** fix is demonstrated by the quad convex-ridge gate;
-tri-3 chain coverage uses a flat patch to avoid the pathology. → `LEDGER_quirks.md`.
+destabilized other geometries). **Disposition:** ~~DEFERRED~~ **RESOLVED at P2.1 (2026-07-01)** — a
+**gap-aware** shared-edge ownership guard (see "P2.1 implementation notes" below): reject a smoothed
+projection on a SHARED interior edge only when its penetration is large vs the facet size, which drops the
+spurious large-gap non-owner but keeps the true owner AND the at-apex contact. (The literal "reject on a
+shared edge" was tried FIRST and reproduced exactly the reverted blunt fix — apex pass-through — confirming
+the gap-magnitude gate is the load-bearing ingredient.) Full closest-facet / interior selection under
+sliding remains a separate concern related to [[57_ladruno_edge_edge_contact_adr]] #4b edge-handoff.
+→ `LEDGER_quirks.md`.
+
+## P2.1 implementation notes (facet ownership at a sharp convex ridge, 2026-07-01)
+
+**The one real P1 limitation, closed.** A per-segment shared-edge ownership guard, smoothed-path-only; OFF
+and the faceted path stay byte-identical (battery **152**). Files: `LadrunoContactNormalField.h`
+(`segmentSharedEdges` = the per-segment interior/shared-edge mask, reuses `propagateOrientation`'s
+undirected-edge tally, TOPOLOGICAL ⇒ cached with σ; `onSharedInteriorEdge` = the parametric edge test whose
+local-edge→(ξ,η)-boundary map matches `LadrunoContactProjection::shape()`'s node order); `…Projection.h`
+(`evalSegmentSmooth` computes the gap, then if the projection is on a SHARED edge **and**
+`−gap > edgeGapFrac·(|g1|+|g2|)` returns false); `…Domain.{h,cpp}` (`NormalField.sharedEdge` cached beside
+σ; `getSegSharedEdge`); `LadrunoContactFE.{h,cpp}` (`sharedEdge[4]` member default all-zero ⇒ guard inert;
+`setSmoothNormals(nn, se)`); `LadrunoContactHandler.cpp` (installs the mask). No new classTag; no vanilla
+touch.
+
+- **Why gap-aware, not a blunt reject.** A frictionless slave slides UP-slope to the ridge apex (the smoothed
+  normal is more vertical than the facet normal, so a facet-perpendicular load tilts up-ridge). At the apex
+  BOTH facets project onto the shared edge, so a blunt near-edge reject drops both ⇒ **pass-through** (it
+  regressed the P1 ridge gate to min_d=−338 — the same reverted blunt fix). The spurious non-owner is
+  distinguished by its penetration ∝ its LATERAL distance from the ridge, whereas the owner and a genuine
+  at-apex contact read a SMALL gap; so the guard rejects only a LARGE-gap shared-edge projection. Constants
+  `edgeGapFrac=0.05`, `edgeTol=0.1` are dimensionless (gap relative to facet size; parametric edge band) ⇒
+  robust across ridge angle + model scale.
+
+- **P1 R3 gate corrected (ill-posed rig).** `test_p1_smoothnormal_holds_the_ridge_facet` had been passing for
+  the wrong reason — the spurious ejection (the very P1 bug) pinned `min_d`. A frictionless, laterally-free
+  slave under a lateral load on a convex ridge has NO equilibrium (it slides up-slope and launches), so a
+  laterally-free rig cannot test "held". The slave's x,y DOFs are now FIXED (only z free), isolating the R3
+  **sign**: with the global-sign field the normal stays repulsive (min_d≈−1e-3, held); with the faceted auto
+  sign it FLIPS (min_d≈−318, driven through). Both assertions hold; the R3 fix is intact.
+
+- **New gates.** `tests/test_adr63_smoothnormal_p2.py` (quad + tri convex ridge, slave near the ridge with
+  x,y fixed, pressed straight down: NO upward ejection, held). Oracle P2.1 checks: the shared-edge mask on the
+  quad tent + tri pair; reject-large-gap-non-owner / keep-owner / keep-apex / keep-free-edge via
+  `evalSegmentSmooth`.
+
+- **Residual limitation (P2.3 note).** Near the apex, within the small-gap band, the non-owner is still kept
+  (a harmless small force) — mild over-stiffness at the exact ridge, not a pass-through. Full closest-facet
+  selection (one owner even while sliding across an interior edge) is deferred to ADR-57 #4b. This matters for
+  P2.3 (sliding under `-reemit` over a curved master) and should be re-examined there.
+
+## P2.2 + P2.3 notes (friction + re-emit over a curved master, 2026-07-01)
+
+**No engine code — the composition already works.** `LadrunoContactFE::segmentActive` builds the friction
+slip `gTvec` via `LadrunoFrictionKernel::tangentPart(drel, n, gTvec)` with the SAME `n` the gap operator
+uses — the smoothed normal when `useSmoothNormal`. So friction is projected against `n_smooth` for free.
+The parser refuses `-reemit`/`-smoothNormal` only with `-mortar`; they compose with each other and with
+`-mu` on an NTS contact, and the handler fires the field-build (`ct.smoothNormal`) and re-emit
+(`ct.enableReemit`) blocks independently off the SAME deformed feed (D7). Gates
+(`tests/test_adr63_smoothnormal_p23.py`, 3/3):
+
+- **P2.3 — curved crossing sustained.** A frictional block dragged across an 8-facet convex arc with
+  `-reemit -smoothNormal -mu -outward` stays in contact across the crest (maxpen<0.05, reaches the far
+  side); WITHOUT `-reemit` it slides off its reference candidates past the crest and the press drives it
+  through. This closes the ADR-60 "exposed combo" (`-reemit + -mu` on a curved master): smoothing fixes the
+  SIGN (a global datum, no per-slave flip at the ridge — R3), re-emit fixes the SEARCH (deformed re-pair).
+- **P2.2 — flat-friction consistency.** On a flat master `n_smooth == n_facet`, so a frictional slide with
+  `-smoothNormal` is byte-identical to the faceted one (D5, now for friction).
+
+**Caveats folded (documented, not new bugs):**
+
+- **Auto-sign conditioning is UNCHANGED.** The global outward vote is ill-conditioned when the slave cloud
+  grazes the master edge-on (seed ~⟂ the field) — the pre-existing F2/F3/F5 warning. A single slave
+  *starting to the side* of a curved arc votes a near-horizontal seed whose tiny z-component can flip the
+  sign INWARD ⇒ pass-through even with `-smoothNormal`. So the ADR-60 R3 `-outward` caveat is **lifted only
+  when the sign is well-conditioned** (slave cloud over the master) or `-outward` is given — it is NOT a
+  blanket lift. The gates pass `-outward` for determinism.
+- **Near-apex over-stiffness (the P2.1-guard interaction under sliding, re-examined).** On a SHARP crest the
+  gap-aware guard keeps the small-gap non-owner near the apex ⇒ two facets briefly co-active with one
+  smoothed normal ⇒ a mild extra upward bump as a block crests at speed (measured: it crosses slightly less
+  far, never diverges). NEGLIGIBLE on realistic shallow arcs (maxpen 0.0096 frictionless vs 0.0122
+  frictional). It is a *quality* effect, not a pass-through; the proper single-owner fix (closest-facet
+  selection while sliding) is [[57_ladruno_edge_edge_contact_adr]] #4b, deferred. No code change this phase.
+- **Traction continuity** (the C0-normal chatter fix) is a quality property; asserted here only qualitatively
+  via sustained contact — a quantitative junction-traction gate is a follow-up (a clean measurement needs a
+  quasi-static/implicit rig, which overlaps the Q-IMPLICIT-NEWTON tripwire below).
+- **Q-IMPLICIT-NEWTON tripwire NOT yet run.** The curved-IMPLICIT convergence gate (frozen-field Newton on a
+  genuinely curved master, gating P3-promotion) needs an implicit quasi-static rig and is a separate focused
+  study — explicit point-mass-on-curve is too ballistic to double as the implicit convergence probe.
 
 ## Decision log
 

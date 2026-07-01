@@ -178,22 +178,35 @@ inline bool evalSegment(int nps, const double X[4][3], const double xs[3],
 // ADR-63 #4a — smoothed-normal one-shot segment evaluation. Identical to evalSegment() EXCEPT the
 // normal is the averaged nodal-normal field interpolated at the projection (n_smooth = Σ N_i·n_i,
 // normalized) instead of the per-segment faceted normalOriented(). The closest-point projection
-// (x̄, ξ, η) AND the in-bounds + penetration gate are UNCHANGED (the FACET projection) ⇒ the active
-// set is byte-identical to the faceted path: smoothing changes the force DIRECTION, not WHICH pairs
-// are active, so R5 slide-off is untouched (ADR-63 BLOCKER-PROJECTION-CONSISTENCY). nodalNorm = the
-// segment's nps nodal normals (from LadrunoContactNormalField::nodalNormals). refDir is the FALLBACK
-// orientation: on a degenerate query-point blend (‖Σ N_i·n_i‖→0 — antiparallel corner normals across
-// a folded element, or a node left zero by a degenerate nodal normal; BLOCKER-FALLBACK (b)) fall back
-// to the faceted normalOriented(refDir) ⇒ never a garbage normal. Returns ACTIVE (penetrating + in-bounds).
+// (x̄, ξ, η) AND the closest-point projection are UNCHANGED (the FACET projection): smoothing changes
+// the force DIRECTION. nodalNorm = the segment's nps nodal normals (from
+// LadrunoContactNormalField::nodalNormals). refDir is the FALLBACK orientation: on a degenerate
+// query-point blend (‖Σ N_i·n_i‖→0 — antiparallel corner normals across a folded element, or a node
+// left zero by a degenerate nodal normal; BLOCKER-FALLBACK (b)) fall back to the faceted
+// normalOriented(refDir) ⇒ never a garbage normal.
+//
+// ADR-63 P2.1 facet OWNERSHIP guard (the ONE sanctioned smoothed-path active-set change; sharedEdge
+// != 0): at a sharp convex ridge a slave clearly on one facet has its closest point on the ADJACENT
+// (non-owning) facet land ON their SHARED interior edge, reading a penetration ∝ the slave's LATERAL
+// distance from the ridge — a large spurious ejecting force (the faceted path only INCIDENTALLY
+// prunes this via normalOriented's per-pair refDir⟂n fail-safe, which ADR-63 D2 replaced with a
+// global sign). We reject a projection that (a) lands on a SHARED edge AND (b) reads a penetration
+// LARGE relative to the facet size (|gap| > edgeGapFrac·h, h ≈ facet extent). A near-edge projection
+// with a SMALL gap — a slave genuinely AT the ridge, where the true owner ALSO projects near the
+// shared edge with a small gap — is KEPT, so the apex still holds (NO pass-through; a blunt near-edge
+// reject killed the apex and was reverted). A FREE/boundary edge and an interior deep penetration are
+// never rejected (R5 slide-off untouched). sharedEdge==0 ⇒ no guard (P1 behaviour). Faceted
+// evalSegment() is byte-identical. Returns ACTIVE (penetrating + in-bounds + owned).
 inline bool evalSegmentSmooth(int nps, const double X[4][3], const double xs[3],
                               const double nodalNorm[4][3], const double refDir[3],
                               double &gap, double n[3], double N[4],
-                              double tolR = 1e-12, int maxIt = 10) {
+                              const int *sharedEdge = 0, double edgeGapFrac = 0.05,
+                              double edgeTol = 0.1, double tolR = 1e-12, int maxIt = 10) {
     double xi, eta;
     int st = project(nps, X, xs, xi, eta, tolR, maxIt);
     if (st != 0) return false;                       // oob or no valid projection (same gate as evalSegment)
-    double dN1[4], dN2[4], xbar[3];
-    shape(nps, xi, eta, N, dN1, dN2);
+    double dNxi[4], dNeta[4], xbar[3];
+    shape(nps, xi, eta, N, dNxi, dNeta);
     // smoothed normal from the nodal field; fall back to the faceted oriented normal on a degenerate blend
     if (!LadrunoContactNormalField::smoothNormal(nps, N, nodalNorm, n)) {
         if (!normalOriented(nps, xi, eta, X, refDir, n)) return false;
@@ -201,7 +214,16 @@ inline bool evalSegmentSmooth(int nps, const double X[4][3], const double xs[3],
     interp(nps, N, X, xbar);
     double d[3] = { xs[0]-xbar[0], xs[1]-xbar[1], xs[2]-xbar[2] };
     gap = dot3(n, d);
-    return (gap < 0.0);                              // penetrating only
+    if (gap >= 0.0) return false;                    // not penetrating
+    // P2.1 ownership: drop the spurious large-gap non-owner on a shared edge (keeps the owner + apex).
+    if (sharedEdge != 0 &&
+        LadrunoContactNormalField::onSharedInteriorEdge(nps, xi, eta, sharedEdge, edgeTol)) {
+        double g1[3], g2[3];
+        tangents(nps, dNxi, dNeta, X, g1, g2);
+        double h = norm3(g1) + norm3(g2);            // ≈ facet extent (winding-immune length scale)
+        if (-gap > edgeGapFrac * h) return false;    // large penetration on a shared edge ⇒ neighbour owns it
+    }
+    return true;                                     // penetrating, in-bounds, owned
 }
 
 // ------------------------------------------------ rich projection (mortar GP loop)
