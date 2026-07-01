@@ -369,7 +369,8 @@ int
 LadrunoTie::generateMortar(Domain *dom,
                            const ID &sfn, int npsS,
                            const ID &mfn, int npsM,
-                           const ID &dofsIn, double tolFrac, const double *outward)
+                           const ID &dofsIn, double tolFrac, const double *outward,
+                           bool dual)
 {
     if (dom == 0) { opserr << "WARNING LadrunoTie - domain is not defined\n"; return -1; }
     if (npsS != 3 && npsS != 4) {
@@ -538,12 +539,78 @@ LadrunoTie::generateMortar(Domain *dom,
             return -1;
     }
 
-    // --- condense P = D^{-1} M (one SPD solve at setup) ---
+    // --- condense P (= D^{-1} M) ------------------------------------------------
     Matrix P(Ns, Nm);
-    if (D.Solve(M, P) < 0) {
-        opserr << "WARNING LadrunoTie -mortar - failed to solve D P = M (the slave-interface mass D is "
-                  "singular; an uncovered slave node likely slipped the coverage guard).\n";
-        return -1;
+    P.Zero();
+    if (!dual) {
+        // STANDARD basis: one global dense solve. P is dense (every slave couples to
+        // every master through D^{-1}) => one large interface handler group.
+        if (D.Solve(M, P) < 0) {
+            opserr << "WARNING LadrunoTie -mortar - failed to solve D P = M (the slave-interface mass D is "
+                      "singular; an uncovered slave node likely slipped the coverage guard).\n";
+            return -1;
+        }
+    } else {
+        // P2.1 DUAL (biorthogonal) basis: replace the slave TEST functions N_I^s with a
+        // dual basis ψ_I chosen so ∫ψ_I N_J^s = δ_IJ ∫N_I => D_dual is DIAGONAL and
+        // P = D_dual^{-1} M_dual is LOCAL (slave I ties only to the masters under its own
+        // facet support). ψ = A^e N is a per-slave-FACET linear transform with
+        //        A^e = diag(c^e) (D^e)^{-1},  c^e_a = Σ_b D^e_ab = ∫_e N_a  (facet mass row-sum),
+        // so D^e_dual = A^e D^e = diag(c^e) EXACTLY (for any, even distorted, facet). Built
+        // from the SAME integratePair D^e/M^e — no kernel change, no handler change. A second
+        // (setup-time, opt-in) integration pass keeps the standard path above byte-identical.
+        std::vector<double> Ddual(Ns, 0.0);          // diagonal slave mass
+        Matrix Mdual(Ns, Nm);
+        Mdual.Zero();
+        for (int fs = 0; fs < nfS; fs++) {
+            double Xs[4][3];
+            for (int i = 0; i < npsS; i++) {
+                double x[3];
+                if (!ltNodeCoords3(dom, sfn(fs*npsS+i), x)) return -1;   // (already validated above)
+                for (int d = 0; d < 3; d++) Xs[i][d] = x[d];
+            }
+            // this facet's D^e (npsS×npsS) and M^e (npsS×Nm) over the master facets it overlaps
+            Matrix De(npsS, npsS), Me(npsS, Nm);
+            De.Zero(); Me.Zero();
+            for (int fm = 0; fm < nfM; fm++) {
+                double Xm[4][3];
+                for (int i = 0; i < npsM; i++)
+                    for (int d = 0; d < 3; d++) Xm[i][d] = segM[((size_t)fm*npsM+i)*3+d];
+                LadrunoMortarKernel::PairResult pr;
+                if (LadrunoMortarKernel::integratePair(npsS, Xs, npsM, Xm, refDir, pr, 4) != 0)
+                    continue;
+                for (int a = 0; a < npsS; a++) {
+                    for (int b = 0; b < npsS; b++) De(a,b) += pr.D[a][b];
+                    for (int k = 0; k < npsM; k++) Me(a, mIdx[mfn(fm*npsM+k)]) += pr.M[a][k];
+                }
+            }
+            // c^e = row-sum of D^e ; skip an empty facet (no overlap at all)
+            double cRow[4] = {0,0,0,0};
+            double deNorm = 0.0;
+            for (int a = 0; a < npsS; a++)
+                for (int b = 0; b < npsS; b++) { cRow[a] += De(a,b); deNorm += std::fabs(De(a,b)); }
+            if (deNorm < 1e-300) continue;
+            // Y = (D^e)^{-1} M^e ; then M^e_dual = diag(c^e) Y ; scatter into Mdual, Ddual.
+            Matrix Y(npsS, Nm);
+            if (De.Solve(Me, Y) < 0) {
+                opserr << "WARNING LadrunoTie -mortar -dual - a slave facet mass D^e is singular "
+                          "(near-degenerate facet). Check the slave facet geometry.\n";
+                return -1;
+            }
+            for (int a = 0; a < npsS; a++) {
+                int I = sIdx[sfn(fs*npsS+a)];
+                Ddual[I] += cRow[a];
+                for (int k = 0; k < Nm; k++) Mdual(I,k) += cRow[a] * Y(a,k);
+            }
+        }
+        for (int I = 0; I < Ns; I++) {
+            if (Ddual[I] <= 1e-300) {
+                opserr << "WARNING LadrunoTie -mortar -dual - slave node " << sTag[I]
+                       << " has zero dual mass (uncovered). Extend the master surface.\n";
+                return -1;
+            }
+            for (int k = 0; k < Nm; k++) P(I,k) = Mdual(I,k) / Ddual[I];
+        }
     }
     // Post-solve sanity: every transfer row must satisfy partition of unity (Sum_k P_Ik = 1),
     // which is algebraically exact for P = D^{-1}M (D 1 = M 1). A row that drifts from 1 means
@@ -616,9 +683,9 @@ LadrunoTie::generateMortar(Domain *dom,
         }
     }
 
-    opserr << "LadrunoTie (mortar): emitted " << emitted << " EQ_Constraint(s) tying " << Ns
-           << " slave node(s) to " << Nm << " master node(s) over " << nfS << " slave facet(s). "
-              "Enforce with `constraints LadrunoProjection`.\n";
+    opserr << "LadrunoTie (mortar" << (dual ? ", dual" : "") << "): emitted " << emitted
+           << " EQ_Constraint(s) tying " << Ns << " slave node(s) to " << Nm << " master node(s) over "
+           << nfS << " slave facet(s). Enforce with `constraints LadrunoProjection`.\n";
     return emitted;
 }
 
@@ -631,7 +698,8 @@ LadrunoTie::generateMortar(Domain *dom,
 //
 //  P2 (integral mortar):
 //   LadrunoTie -mortar -slaveFacets <npsS> <nfS> s.. -masterFacets <npsM> <nfM> m..
-//              [-dof <nd> d1..] [-tol <frac>] [-outward ox oy oz]
+//              [-dof <nd> d1..] [-tol <frac>] [-outward ox oy oz] [-dual]
+//   (-dual = P2.1 biorthogonal basis => sparse P; default = standard dense P.)
 //
 // Flat token streams (matching equationConstraint/contactSurface); both Tcl and
 // Python pass node tags as separate arguments, not a single braced/list arg.
@@ -692,7 +760,7 @@ int OPS_LadrunoTie()
     if (OPS_GetNumRemainingInputArgs() < 5) {
         opserr << "WARNING want - LadrunoTie -slaveNodes ns s1.. -masterFacets npsM nf m.. "
                   "<-dof nd d1..> <-tol frac>   |   LadrunoTie -mortar -slaveFacets npsS nf s.. "
-                  "-masterFacets npsM nf m.. <-dof..> <-tol..> <-outward ox oy oz>\n";
+                  "-masterFacets npsM nf m.. <-dof..> <-tol..> <-outward ox oy oz> <-dual>\n";
         return -1;
     }
 
@@ -701,12 +769,15 @@ int OPS_LadrunoTie()
     double tolFrac = 1.0e-6;
     double outward[3] = {0.0, 0.0, 0.0};
     bool mortar = false, haveSlaveNodes = false, haveSlaveFacets = false;
-    bool haveMaster = false, haveOutward = false;
+    bool haveMaster = false, haveOutward = false, dual = false;
 
     while (OPS_GetNumRemainingInputArgs() > 0) {
         const char *opt = OPS_GetString();
         if (strcmp(opt, "-mortar") == 0) {
             mortar = true;
+        }
+        else if (strcmp(opt, "-dual") == 0) {   // P2.1: biorthogonal basis => sparse P (mortar only)
+            dual = true;
         }
         else if (strcmp(opt, "-slaveNodes") == 0 || strcmp(opt, "-slave") == 0) {
             if (!ltReadCountedID(slaveNodes, "-slaveNodes")) return -1;
@@ -751,8 +822,13 @@ int OPS_LadrunoTie()
             return -1;
         }
         rc = LadrunoTie::generateMortar(theDomain, slaveFacetNodes, npsS, masterFacetNodes, npsM,
-                                        dofs, tolFrac, haveOutward ? outward : 0);
+                                        dofs, tolFrac, haveOutward ? outward : 0, dual);
     } else {
+        if (dual) {
+            opserr << "WARNING LadrunoTie -dual - the dual/biorthogonal basis applies only to the "
+                      "integral-mortar mode; add -mortar (collocation has no D to diagonalize).\n";
+            return -1;
+        }
         if (!haveSlaveNodes || !haveMaster) {
             opserr << "WARNING LadrunoTie - both -slaveNodes and -masterFacets are required "
                       "(did you mean -mortar with -slaveFacets?)\n";
