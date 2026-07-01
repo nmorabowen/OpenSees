@@ -1,6 +1,6 @@
 # ADR-63 — Averaged Nodal-Normal Smoothing for NTS Contact (smooth `N(X)` master-normal field)
 
-- **Status:** **P0+P1 SHIPPED (#457); P2.1 facet-ownership BUILT + VALIDATED (local, 2026-07-01)** — the
+- **Status:** **P0+P1 SHIPPED (#457); P2.1 facet-ownership SHIPPED (#460); P2.2+P2.3 friction/re-emit VALIDATED (local, 2026-07-01)** — the
   design gate (below) is complete and the symmetric-first MVP is implemented and green. **Q-TANGENT
   RESOLVED:** ship the **symmetric frozen-field `kn·BᵀB`** tangent first; the full `∂n_smooth/∂u` is a
   conditionally-required, evidence-gated P3 (see §"Gate decision (RESOLVED)"). **P2.1 closes the one real P1
@@ -11,9 +11,18 @@
   reproduced the reverted pass-through). Validation: build-free oracle `proto_nodal_normal_selfcheck.cpp`
   **35/35**; in-solver `tests/test_adr63_smoothnormal_p1.py` **5/5** + `tests/test_adr63_smoothnormal_p2.py`
   **2/2** (quad + tri convex-ridge press-into: no spurious ejection); full contact battery
-  (ADR-39/41/57/60/63) **152** with the feature OFF byte-identical. **Remaining:** P2.2 (friction under the
-  smoothed normal), P2.3 (re-emit compose + the convergence tripwire), P3 (full `∂n_smooth/∂u`, gated),
-  CI port.
+  (ADR-39/41/57/60/63) **152** with the feature OFF byte-identical. **P2.2+P2.3 (friction + re-emit over a
+  curved master) — VALIDATED, NO engine code**: `segmentActive` already threads the smoothed `n` into the
+  gap operator AND the friction slip (`tangentPart(drel, n, gTvec)`), and `-reemit`/`-smoothNormal`/`-mu`
+  compose with no mutual refusal — so a frictional block dragged across a convex curved master with
+  `-reemit -smoothNormal -mu -outward` sustains contact across the crest, vs pass-through without `-reemit`
+  (the ADR-60 "exposed combo" closed); flat-master friction is smooth==faceted byte-identical
+  (`tests/test_adr63_smoothnormal_p23.py`, 3/3; battery **157**). Documented caveats (not new bugs): the
+  AUTO global sign stays ill-conditioned for edge-grazing slave clouds (F2/F3/F5 → `-outward`); mild
+  near-apex over-stiffness on sharp crests (the P2.1 gap-aware guard keeps the small-gap non-owner;
+  non-destabilizing on realistic arcs; full single-owner = ADR-57 #4b); traction-continuity asserted
+  qualitatively via sustained contact. **Remaining:** the Q-IMPLICIT-NEWTON convergence tripwire (curved
+  IMPLICIT master, gates P3-promotion — a separate focused study), P3 (full `∂n_smooth/∂u`, gated), CI port.
 - **Owner:** Mora Bowen · Palacios · Abell · Guppi
 - **Priority:** high — **resolves the open [[60_ladruno_finite_sliding_reemission_adr]] R3 item** (curved-master
   `orientDir` flip → silent pass-through, today's only `-outward`-caveated combo) and the in-fork
@@ -563,6 +572,45 @@ touch.
   (a harmless small force) — mild over-stiffness at the exact ridge, not a pass-through. Full closest-facet
   selection (one owner even while sliding across an interior edge) is deferred to ADR-57 #4b. This matters for
   P2.3 (sliding under `-reemit` over a curved master) and should be re-examined there.
+
+## P2.2 + P2.3 notes (friction + re-emit over a curved master, 2026-07-01)
+
+**No engine code — the composition already works.** `LadrunoContactFE::segmentActive` builds the friction
+slip `gTvec` via `LadrunoFrictionKernel::tangentPart(drel, n, gTvec)` with the SAME `n` the gap operator
+uses — the smoothed normal when `useSmoothNormal`. So friction is projected against `n_smooth` for free.
+The parser refuses `-reemit`/`-smoothNormal` only with `-mortar`; they compose with each other and with
+`-mu` on an NTS contact, and the handler fires the field-build (`ct.smoothNormal`) and re-emit
+(`ct.enableReemit`) blocks independently off the SAME deformed feed (D7). Gates
+(`tests/test_adr63_smoothnormal_p23.py`, 3/3):
+
+- **P2.3 — curved crossing sustained.** A frictional block dragged across an 8-facet convex arc with
+  `-reemit -smoothNormal -mu -outward` stays in contact across the crest (maxpen<0.05, reaches the far
+  side); WITHOUT `-reemit` it slides off its reference candidates past the crest and the press drives it
+  through. This closes the ADR-60 "exposed combo" (`-reemit + -mu` on a curved master): smoothing fixes the
+  SIGN (a global datum, no per-slave flip at the ridge — R3), re-emit fixes the SEARCH (deformed re-pair).
+- **P2.2 — flat-friction consistency.** On a flat master `n_smooth == n_facet`, so a frictional slide with
+  `-smoothNormal` is byte-identical to the faceted one (D5, now for friction).
+
+**Caveats folded (documented, not new bugs):**
+
+- **Auto-sign conditioning is UNCHANGED.** The global outward vote is ill-conditioned when the slave cloud
+  grazes the master edge-on (seed ~⟂ the field) — the pre-existing F2/F3/F5 warning. A single slave
+  *starting to the side* of a curved arc votes a near-horizontal seed whose tiny z-component can flip the
+  sign INWARD ⇒ pass-through even with `-smoothNormal`. So the ADR-60 R3 `-outward` caveat is **lifted only
+  when the sign is well-conditioned** (slave cloud over the master) or `-outward` is given — it is NOT a
+  blanket lift. The gates pass `-outward` for determinism.
+- **Near-apex over-stiffness (the P2.1-guard interaction under sliding, re-examined).** On a SHARP crest the
+  gap-aware guard keeps the small-gap non-owner near the apex ⇒ two facets briefly co-active with one
+  smoothed normal ⇒ a mild extra upward bump as a block crests at speed (measured: it crosses slightly less
+  far, never diverges). NEGLIGIBLE on realistic shallow arcs (maxpen 0.0096 frictionless vs 0.0122
+  frictional). It is a *quality* effect, not a pass-through; the proper single-owner fix (closest-facet
+  selection while sliding) is [[57_ladruno_edge_edge_contact_adr]] #4b, deferred. No code change this phase.
+- **Traction continuity** (the C0-normal chatter fix) is a quality property; asserted here only qualitatively
+  via sustained contact — a quantitative junction-traction gate is a follow-up (a clean measurement needs a
+  quasi-static/implicit rig, which overlaps the Q-IMPLICIT-NEWTON tripwire below).
+- **Q-IMPLICIT-NEWTON tripwire NOT yet run.** The curved-IMPLICIT convergence gate (frozen-field Newton on a
+  genuinely curved master, gating P3-promotion) needs an implicit quasi-static rig and is a separate focused
+  study — explicit point-mass-on-curve is too ballistic to double as the implicit convergence probe.
 
 ## Decision log
 

@@ -1999,3 +1999,21 @@ absolute path, repeated across ~50 `-I` flags, blows the Windows ~32 KB command-
 `build.bat` configure): `-DCMAKE_NINJA_FORCE_RESPONSE_FILE=ON` pushes include/object/library lists into
 `.rsp` files. Harmless on short paths. NB: adding this flag to an existing build tree triggers a full
 recompile (every compile rule's command hash changes).
+
+**ADR-63 P2.2/P2.3 — friction composes with `-smoothNormal` for FREE, but the AUTO sign still needs
+`-outward` for curved masters (2026-07-01).** (1) `LadrunoContactFE::segmentActive` builds the friction
+slip via `LadrunoFrictionKernel::tangentPart(drel, n, gTvec)` with the SAME `n` the gap operator uses — the
+smoothed normal when `useSmoothNormal` — so friction is projected against `n_smooth` with NO new code; on a
+flat master (n_smooth==n_facet) a frictional slide is byte-identical smooth-vs-faceted. `-reemit`/
+`-smoothNormal`/`-mu` compose (parser refuses only vs `-mortar`), and `-reemit -smoothNormal -mu -outward`
+sustains a frictional crossing over a convex curved master (the ADR-60 "exposed combo" closed) — WITHOUT
+`-reemit` it still passes through (smoothing fixes the SIGN, re-emit fixes the SEARCH; orthogonal). (2)
+TRAP: the ADR-60 R3 `-outward` caveat is lifted only when the global sign vote is WELL-CONDITIONED. A single
+slave *starting to the side* of a curved arc votes a near-horizontal seed (slave − master-centroid ≈ ⟂ the
+up-field) whose tiny z-component can flip the sign INWARD ⇒ the smoothed field points inward ⇒ pass-through
+even with `-smoothNormal` (the pre-existing F2/F3/F5 low-confidence warning fires). So `-smoothNormal` is NOT
+a blanket lift of `-outward` for curved masters — it lifts it only for slave clouds sitting OVER the master
+(seed ∥ field). Always pass `-outward` for edge-grazing / side-approaching slaves on a curve. (3) The P2.1
+gap-aware guard's near-apex over-stiffness under SLIDING is a mild quality effect (a small extra bump as a
+block crests a SHARP ridge at speed; negligible on realistic shallow arcs, maxpen ~0.01; never diverges),
+not a pass-through — full single-owner selection is ADR-57 #4b.
