@@ -212,7 +212,7 @@ and re-verify.
 | `SRC/interpreter/{OpenSeesCommands.h,PythonWrapper.cpp,TclWrapper.cpp}` | `// Ladruno` ADR-62: add the `LadrunoTie` command — `OPS_LadrunoTie()` decl + `Py_ops_LadrunoTie`/`Tcl_ops_LadrunoTie` wrappers + dual `addCommand` (mirrors the `equationConstraint` registration). Additive; no existing command touched. | [#454](https://github.com/nmorabowen/OpenSees/pull/454) |
 | `SRC/{tcl/tclMain.cpp,interpreter/PythonModule.cpp}` | Splash-banner feature regen via `patch_banner.py` — add the `LadrunoTie` line | [#454](https://github.com/nmorabowen/OpenSees/pull/454) |
 | `SRC/{tcl/tclMain.cpp,interpreter/PythonModule.cpp}` | Splash-banner feature regen via `patch_banner.py` — extend the `LadrunoTie` line to note the integral-mortar (`-mortar`) mode (ADR-62 P2) | [#455](https://github.com/nmorabowen/OpenSees/pull/455) |
-| `SRC/{tcl/tclMain.cpp,interpreter/PythonModule.cpp}` | Splash-banner feature regen via `patch_banner.py` — extend the `LadrunoTie` line to note ndf-6 shell rotational-DOF ties (ADR-62 P3). `LadrunoTie.{cpp,h}` themselves are fork-authored (see [[LEDGER_implementations]]); only the banner strings are vanilla. | [#PR_P3](https://github.com/nmorabowen/OpenSees/pull/PR_P3) |
+| `SRC/{tcl/tclMain.cpp,interpreter/PythonModule.cpp}` | Splash-banner feature regen via `patch_banner.py` — extend the `LadrunoTie` line to note ndf-6 shell rotational-DOF ties (ADR-62 P3). `LadrunoTie.{cpp,h}` themselves are fork-authored (see [[LEDGER_implementations]]); only the banner strings are vanilla. | [#459](https://github.com/nmorabowen/OpenSees/pull/459) |
 
 > [!note] Upstreamable bugfixes
 > Some PRs fix genuine upstream bugs (not fork-only features) and are candidates

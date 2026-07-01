@@ -1,8 +1,8 @@
 ---
-title: "LadrunoTie (ADR-62) — handoff: P1 collocation + P2 integral-mortar SHIPPED; P2.1 + P3 deferred"
+title: "LadrunoTie (ADR-62) — handoff: P1 collocation + P2 integral-mortar + P3 shell/rotational SHIPPED; P2.1 / P3.1 / shell-to-solid deferred"
 project: Ladruno
 type: handoff
-status: P0 (numpy) + P1 (collocation, PR #454) + P2 (integral-mortar, PR #455) + P3 (shell/rotational ndf-6, PR #PR_P3) MERGED to ladruno. Deferred = P2.1 dual-basis sparsification + P3.1 Hermite w–θ shell transfer + shell-to-solid ties.
+status: P0 (numpy) + P1 (collocation, PR #454) + P2 (integral-mortar, PR #455) + P3 (shell/rotational ndf-6, PR #459) MERGED to ladruno. Deferred = P2.1 dual-basis sparsification + P3.1 Hermite w–θ shell transfer + shell-to-solid ties.
 related:
   - "[[62_ladruno_kinematic_mesh_tie_adr]]"            # the spec (P1/P2 marked SHIPPED)
   - "[[30_ladruno_explicit_constraint_projection_adr]]" # the enforcement handler (SHIPPED, reused unchanged)
@@ -38,7 +38,7 @@ like `equationConstraint`, they live in the `DL_Interpreter`/`TclWrapper` path).
 - Code: `SRC/domain/constraints/LadrunoTie.{h,cpp}` — `LadrunoTie::generate` (P1) + `::generateMortar` (P2) + `OPS_LadrunoTie`; P3 adds `ltDefaultDofs`/`ltScanMassedDOFs`/`ltCheckTiedDofMass` helpers (per-DOF mass) + a shell-to-solid master-DOF guard in both generators.
 - Oracles: `kinematic_tie_validation/proto_p{0,1}_kinematic_tie*.py` (P1) + `proto_p2_mortar_tie.py` (P2, 13/13) + `proto_p3_rotational_tie.py` (P3, 8/8).
 - Tests: `tests/test_ladrunoTie_patch.py` (8, P1) + `tests/test_ladrunoTie_mortar.py` (7, P2) + `tests/test_ladrunoTie_shell.py` (6, P3). Full suite 21/21.
-- PRs: ADR/oracles #449, P1 #454, P2 #455, P3 shell/rotational #PR_P3 — all merged.
+- PRs: ADR/oracles #449, P1 #454, P2 #455, P3 shell/rotational #459 — all merged.
 
 ## The architecture (so the next agent doesn't re-derive it)
 
@@ -112,7 +112,7 @@ the whole point of dual vs lumped). Value: only at LARGE interfaces (100s+ of in
 dense path is correct and fine below that. Oracle-first: extend `proto_p2_mortar_tie.py` with a
 `dual_D` (diagonal) variant and show same patch test + sparse P. Low correctness risk, medium effort.
 
-### P3 — shell / rotational ties (ndf 6) — SHIPPED (PR #PR_P3)
+### P3 — shell / rotational ties (ndf 6) — SHIPPED (PR #459)
 The generator now ties the **rotational DOFs** (4,5,6) of an ndf-6 shell node with the SAME per-slave
 transfer `P` (`θ_s = Σ P_sk θ_{m,k}`), in both collocation and mortar modes. Resolutions of the open
 issues that were listed here:
@@ -148,8 +148,8 @@ a tie doesn't slide, so this is only relevant if the frozen-`Ccr` small-rotation
 exceeded. Not a planned increment.
 
 ## Bookkeeping state (all current on `ladruno`)
-- `LEDGER_implementations.md` — LadrunoTie row says "shipped (P1 + P2 mortar + P3 shell/rotational)", PRs #454/#455/#PR_P3.
-- `LEDGER_vanilla_files.md` — interpreter-wiring + banner-regen rows for #454/#455/#PR_P3.
+- `LEDGER_implementations.md` — LadrunoTie row says "shipped (P1 + P2 mortar + P3 shell/rotational)", PRs #454/#455/#459.
+- `LEDGER_vanilla_files.md` — interpreter-wiring + banner-regen rows for #454/#455/#459.
 - `LEDGER_quirks.md` — three entries: the handler-requirements refusal contract, the mortar
   global-D⁻¹/dense-P/self-clip-coverage gotcha, and the shell `getMass()`-neglects-rotary-inertia gotcha (P3).
 - `banner_features.txt` — "LadrunoTie — kinematic ... (collocation + integral-mortar; solid + ndf-6 shell rotational DOFs; ...)".
