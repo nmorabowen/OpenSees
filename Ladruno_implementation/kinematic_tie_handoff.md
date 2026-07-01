@@ -2,7 +2,7 @@
 title: "LadrunoTie (ADR-62) — handoff: P1 collocation + P2 integral-mortar + P2.1 dual + P3 shell/rotational SHIPPED; P3.1 / shell-to-solid deferred"
 project: Ladruno
 type: handoff
-status: P0 (numpy) + P1 (collocation, PR #454) + P2 (integral-mortar, PR #455) + P2.1 (dual/sparse mortar, PR #PR_P21) + P3 (shell/rotational ndf-6, PR #459) MERGED to ladruno. Deferred = P3.1 Hermite w–θ shell transfer + shell-to-solid ties.
+status: P0 (numpy) + P1 (collocation, PR #454) + P2 (integral-mortar, PR #455) + P2.1 (dual/sparse mortar, PR #462) + P3 (shell/rotational ndf-6, PR #459) MERGED to ladruno. Deferred = P3.1 Hermite w–θ shell transfer + shell-to-solid ties.
 related:
   - "[[62_ladruno_kinematic_mesh_tie_adr]]"            # the spec (P1/P2 marked SHIPPED)
   - "[[30_ladruno_explicit_constraint_projection_adr]]" # the enforcement handler (SHIPPED, reused unchanged)
@@ -38,7 +38,7 @@ like `equationConstraint`, they live in the `DL_Interpreter`/`TclWrapper` path).
 - Code: `SRC/domain/constraints/LadrunoTie.{h,cpp}` — `LadrunoTie::generate` (P1) + `::generateMortar` (P2; `dual` param = P2.1) + `OPS_LadrunoTie`; P3 adds `ltDefaultDofs`/`ltScanMassedDOFs`/`ltCheckTiedDofMass` helpers (per-DOF mass) + a shell-to-solid master-DOF guard in both generators.
 - Oracles: `kinematic_tie_validation/proto_p{0,1}_kinematic_tie*.py` (P1) + `proto_p2_mortar_tie.py` (P2, 13/13) + `proto_p2_1_dual_mortar.py` (P2.1, 12/12) + `proto_p3_rotational_tie.py` (P3, 8/8).
 - Tests: `tests/test_ladrunoTie_patch.py` (8, P1) + `tests/test_ladrunoTie_mortar.py` (11 = 7 P2 + 4 P2.1 dual) + `tests/test_ladrunoTie_shell.py` (6, P3). Full suite 25/25.
-- PRs: ADR/oracles #449, P1 #454, P2 #455, P3 shell/rotational #459, P2.1 dual #PR_P21 — all merged.
+- PRs: ADR/oracles #449, P1 #454, P2 #455, P3 shell/rotational #459, P2.1 dual #462 — all merged.
 
 ## The architecture (so the next agent doesn't re-derive it)
 
@@ -101,7 +101,7 @@ interface geometry — NO snapping).
 
 ## Shipped increments + deferred backlog
 
-### P2.1 — dual / biorthogonal basis (`-mortar -dual`) — SHIPPED (PR #PR_P21)
+### P2.1 — dual / biorthogonal basis (`-mortar -dual`) — SHIPPED (PR #462)
 Sparsifies the mortar transfer: a **dual (biorthogonal) basis** (Wohlmuth 2000) makes the slave mass
 `D` DIAGONAL ⇒ `P = D_dual⁻¹M` is LOCAL (each slave ties only to masters under its own facet support)
 ⇒ sparse rows, small local handler groups. **KEY IMPLEMENTATION INSIGHT (avoided the feared "new kernel
@@ -152,8 +152,8 @@ a tie doesn't slide, so this is only relevant if the frozen-`Ccr` small-rotation
 exceeded. Not a planned increment.
 
 ## Bookkeeping state (all current on `ladruno`)
-- `LEDGER_implementations.md` — LadrunoTie row says "shipped (P1 + P2 mortar + P2.1 dual + P3 shell/rotational)", PRs #454/#455/#459/#PR_P21.
-- `LEDGER_vanilla_files.md` — interpreter-wiring + banner-regen rows for #454/#455/#459/#PR_P21.
+- `LEDGER_implementations.md` — LadrunoTie row says "shipped (P1 + P2 mortar + P2.1 dual + P3 shell/rotational)", PRs #454/#455/#459/#462.
+- `LEDGER_vanilla_files.md` — interpreter-wiring + banner-regen rows for #454/#455/#459/#462.
 - `LEDGER_quirks.md` — four entries: the handler-requirements refusal contract, the mortar
   global-D⁻¹/dense-P/self-clip-coverage gotcha, the shell `getMass()`-neglects-rotary-inertia gotcha (P3),
   and the dual-basis-vs-lumping sparsifier note (P2.1).
