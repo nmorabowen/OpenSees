@@ -146,6 +146,21 @@ public:
     int update(const Vector &U);
     int commit(void);
 
+    // Re-sync the integrator with a REVERTED Domain after a failed step. The
+    // analysis calls Domain::revertToLastCommit() (node/element trial state,
+    // time, loads) and then this; the leap-frog advance in newStep() has already
+    // mutated Ut/Vhalf/Aprev by the time any failure exit (incl. the -divergence
+    // and NaN circuit breakers) fires, so without this override an adaptive
+    // driver that halves dt and retries continues from poisoned state. Strategy:
+    // re-seed from the COMMITTED DOF state and re-arm the first-step starter, so
+    // the retry rebuilds v_{-1/2} = v_n - dt_retry/2 a_n for WHATEVER dt it uses
+    // (a literal snapshot restore would hand it a half-step centered for the OLD
+    // dt) — retry-after-abort == fresh restart from the committed state. NOTE
+    // the restart is machine-exact for undamped models; with damping it is a
+    // well-defined second-order restart (the starter evaluates C·v at the
+    // full-step v_n instead of the lagged v_{n+1/2}).
+    int revertToLastStep(void);
+
     // Modal-damping hook: returns the LAGGED half-step velocity (ADR C5).
     const Vector &getVel(void);
 
@@ -222,15 +237,25 @@ private:
     bool   cflAbort;           // abort the step if dt exceeds the CD limit
     double divergenceFactor;   // >0: abort on runaway kinetic-energy growth
     double prevKE;             // previous-step kinetic-energy proxy (0.5 v.v)
+    double committedPrevKE;    // prevKE at newStep() entry — restored by
+                               //   revertToLastStep so the breaker stays armed
+                               //   with the pre-fault baseline (transient; NOT
+                               //   serialized)
 
     // critical-time-step refresh policy
     bool   cflUseTangent;      // use getTangentStiff() instead of getInitialStiff()
     int    cflRecomputeEvery;  // refresh dt_cr every N steps (0 = once); tracks
                                //   stiffening/softening in nonlinear runs
     int    cflStepCount;       // step counter for periodic recompute
+    int    committedCflStepCount; // cflStepCount at newStep() entry (revert cadence)
     bool   cflFirstComputation;// gate the detailed report to the first computation
     CTSLumping lumping;        // element-mass lumping for the dt_cr pencil (-lump)
     bool   betaKWarned;        // emit the beta-K-trap warning at most once
+
+    // Shared DOF-loop: seed Ut/Vhalf/Aprev from the committed node state (used by
+    // domainChanged and revertToLastStep; Vhalf gets the full-step v_n — the
+    // first-step starter re-centers it to v_{-1/2}).
+    void seedFromCommitted(AnalysisModel *theModel);
 
     // Ladruno (ADR-30): explicit constraint projection (null unless the handler is
     // LadrunoProjectionHandler). theProjector is NON-owning (handler owns it).

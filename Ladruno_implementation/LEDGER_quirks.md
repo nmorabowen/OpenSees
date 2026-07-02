@@ -2072,3 +2072,34 @@ lateral drive pattern; (c) DisplacementControl is the ONLY implicit displacement
 `constraints LadrunoContact` model — the handler REFUSES a non-homogeneous (imposed-displacement) SP; (d)
 there is NO validated static+`-reemit` path (every ADR-60 reemit test is explicit/CDL), so a FIXED master
 (constant nodal-normal field, no re-handle needed) sidesteps it for the implicit rig.
+
+**`Vector::pNorm(0)` is NaN-BLIND — never use it for a divergence/NaN check (2026-07-02).** `pNorm(0)`
+implements max via `value = (fabs(data) > value) ? fabs(data) : value`; every comparison against NaN is
+FALSE, so NaN entries are silently SKIPPED and the returned max is never NaN. The explicit integrators'
+circuit breakers (`A_max = U.pNorm(0); if (A_max != A_max || A_max == inf)`) therefore only ever fired on
+±Inf: an all-NaN acceleration (NaN material state, poisoned IC, `inf − inf` residual) sailed through and
+was COMMITTED into the node state. Fixed by `vectorIsFinite()` (`CriticalTimeStep.{h,cpp}`, std::isfinite
+scan) in `CentralDifferenceLadruno`/`ExplicitBathe`/`LadrunoDynamicRelaxation::update()`. Related trap when
+WRITING the test: a *seeded* Inf displacement degenerates to NaN before reaching the breaker
+(`inf + dt·(−inf) = NaN`), so the honest Inf-path fixture is a genuinely divergent run driven to its first
+overflow, and the honest NaN fixture is a NaN committed displacement (`Fint = k·NaN`). See
+`tests/test_explicit_nan_breaker.py`.
+
+**betaKinit/betaKcomm MUST be summed with betaK for any explicit stable-step bound (2026-07-02).**
+`C = αM·M + βK·K + βK0·K_init + βKc·K_commit` — all three β slots are stiffness-proportional and shrink the
+explicit stable step identically (ξ = β·ω/2 grows with ω), and `rayleigh 0 0 βKinit 0` is the MOST COMMON
+form in practice (chosen precisely to avoid the current tangent). Reading `getRayleighDampingFactors()(1)`
+alone made the SMS damped sizing AND the damped dt_cr estimate blind to it → under-scaled → unstable at
+dtTarget for exactly the users the betaK feature targets. Use `stiffnessRayleighBeta(ele)`
+(`CriticalTimeStep.{h,cpp}`): per-slot clamp at 0, then sum. Exact at the initial state (K == K0 == Kc);
+conservative under softening — the right side to err on for a stability bound.
+
+**The `-divergence` KE proxy FALSE-TRIPS on free vibration at velocity troughs (2026-07-02, open).**
+The breaker compares per-step `ke/prevKE` against the factor, with `prevKE` updated every step it is
+positive. In plain free vibration the velocity passes through ~0 every half period; the step nearest the
+zero leaves `prevKE ≈ ε`, and the next steps' quadratic KE regrowth off that near-zero floor produces an
+unbounded ratio — phase luck decides whether a given trough exceeds the factor (observed: an SDOF at
+dt=0.005, ω=10 tripping factor 10 at its second trough). Workaround in tests/models: excite a
+CIRCULAR-motion state (equal springs x+y, quadrature seed) whose total KE is constant, or keep
+`-divergence` for monotonic-divergence detection only. Real fix (PR-3 diagnostics batch candidate):
+compare against a running MAX of KE, not the previous step.
