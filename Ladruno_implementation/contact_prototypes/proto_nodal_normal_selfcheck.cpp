@@ -225,6 +225,138 @@ int main()
         check(!ok, "degenerate blend (antiparallel corners) ⇒ smoothNormal false ⇒ fallback");
     }
 
+    // ================================================ ADR-63 auto-sign robustness (per-slave vote)
+    // The single aggregate vote sign(Σσ_a n_a · (slaveCentroid − masterCentroid)) is a coin-flip when
+    // the slave cloud grazes the master edge-on (seed ~⟂ the aggregate field). voteSignRobust replaces
+    // it on the AUTO path: each slave votes its LOCAL nearest-facet coherent normal against its LOCAL
+    // separation (closest-point ⇒ separation ∥ normal ⇒ |cos|≈1, well-conditioned). Majority wins.
+
+    // --- (A) side-approaching slave on the convex tent: aggregate flips INWARD, robust holds OUTWARD.
+    // A slave above the RIGHT roof but off to the side (x=0.9) sits nearly level with the master
+    // centroid ⇒ the global chord (slave−centroid) is ~horizontal ⇒ aggregate vote·seed < 0 (WRONG,
+    // and conf ~0.15 so the OLD conf<0.1 warning would NOT even fire = silent pass-through). The
+    // per-slave local vote projects it onto R (plane x+z=1), separation ∥ R's outward normal ⇒ +1.
+    {
+        int mTags[2*4] = { 20,10,11,21,  10,30,31,11 };
+        double X[2*4*3] = {
+            -1,0,0,  0,0,1,  0,1,1,  -1,1,0,    // L
+             0,0,1,  1,0,0,  1,1,0,   0,1,1,    // R (plane x+z=1)
+        };
+        int sigma[2]; propagateOrientation(mTags, 2, 4, sigma);
+        // masterCentroid (unique nodes) = (0, 0.5, 1/3); slave above R, off to the +x side.
+        double slave[3] = { 0.9, 0.5, 0.2 };
+        double seed[3] = { slave[0]-0.0, slave[1]-0.5, slave[2]-1.0/3.0 };   // slave − masterCentroid
+        double confAgg;
+        double Gagg = voteSign(2, 4, X, sigma, seed, &confAgg);
+        check(Gagg < 0.0, "auto-sign: AGGREGATE vote flips INWARD for a side-approaching slave (the bug)");
+        double confRob; int nVoted;
+        double Grob = LadrunoContactProjection::voteSignRobust(4, 2, X, sigma, slave, 1, &confRob, &nVoted);
+        check(Grob > 0.0 && nVoted == 1, "auto-sign: ROBUST per-slave vote holds OUTWARD (+1) for it");
+        check(confRob > 0.9, "auto-sign: robust confidence ≈1 (local separation ∥ local normal)");
+    }
+
+    // --- (B) straddling cloud (slaves over L, the ridge, and R): robust votes +1 with high margin.
+    {
+        int mTags[2*4] = { 20,10,11,21,  10,30,31,11 };
+        double X[2*4*3] = {
+            -1,0,0,  0,0,1,  0,1,1,  -1,1,0,
+             0,0,1,  1,0,0,  1,1,0,   0,1,1,
+        };
+        int sigma[2]; propagateOrientation(mTags, 2, 4, sigma);
+        double cloud[3*3] = { -0.5,0.5,0.7,   0.0,0.5,1.2,   0.5,0.5,0.7 };  // above L / ridge / R
+        double conf; int nVoted;
+        double G = LadrunoContactProjection::voteSignRobust(4, 2, X, sigma, cloud, 3, &conf, &nVoted);
+        check(G > 0.0 && nVoted == 3 && conf > 0.8, "auto-sign: straddling cloud votes OUTWARD, high margin");
+    }
+
+    // --- (C) two-sided cloud on a FLAT plate: genuinely ambiguous ⇒ low margin ⇒ handler warns.
+    // Slaves both above (+z) and below (−z) a flat quad: half vote +1, half −1 ⇒ margin ≈ 0. This is
+    // the correctly-DETECTED ambiguity (a single global sign cannot serve both faces) ⇒ pass -outward.
+    {
+        int mTags[1*4] = { 1,2,3,4 };
+        double X[1*4*3] = { 0,0,0, 1,0,0, 1,1,0, 0,1,0 };   // flat, coherent normal +z
+        int sigma[1]; propagateOrientation(mTags, 1, 4, sigma);
+        double cloud[2*3] = { 0.5,0.5, 0.3,   0.5,0.5,-0.3 };   // above / below
+        double conf; int nVoted;
+        LadrunoContactProjection::voteSignRobust(4, 1, X, sigma, cloud, 2, &conf, &nVoted);
+        check(nVoted == 2 && conf < 0.1, "auto-sign: two-sided cloud ⇒ margin≈0 (ambiguity DETECTED)");
+    }
+
+    // --- (D) flat over-master sanity: an above cloud votes +1 with margin 1 (consistency anchor).
+    {
+        int mTags[1*4] = { 1,2,3,4 };
+        double X[1*4*3] = { 0,0,0, 2,0,0, 2,3,0, 0,3,0 };
+        int sigma[1]; propagateOrientation(mTags, 1, 4, sigma);
+        double cloud[2*3] = { 0.5,0.5,0.4,   1.5,2.0,0.4 };
+        double conf; int nVoted;
+        double G = LadrunoContactProjection::voteSignRobust(4, 1, X, sigma, cloud, 2, &conf, &nVoted);
+        check(G > 0.0 && conf > 0.99, "auto-sign: flat over-master cloud ⇒ +1, margin ≈1");
+    }
+
+    // --- (E) empty cloud ⇒ no vote ⇒ nVoted==0 (the caller falls back to the aggregate seed vote).
+    {
+        int mTags[1*4] = { 1,2,3,4 };
+        double X[1*4*3] = { 0,0,0, 1,0,0, 1,1,0, 0,1,0 };
+        int sigma[1]; propagateOrientation(mTags, 1, 4, sigma);
+        double conf = -1.0; int nVoted = -1;
+        LadrunoContactProjection::voteSignRobust(4, 1, X, sigma, 0, 0, &conf, &nVoted);
+        check(nVoted == 0 && conf == 0.0, "auto-sign: empty cloud ⇒ nVoted 0 ⇒ fall back to aggregate");
+    }
+
+    // --- (F) reversed-winding master, above cloud: σ corrects the winding, robust still votes physical
+    // OUTWARD (+z field). Guards that the vote's coherent normal (σ applied) is winding-immune.
+    {
+        int mTags[2*4] = { 1,2,3,4,  2,3,6,5 };            // B reverse-declared (raw −z)
+        double X[2*4*3] = {
+            0,0,0, 1,0,0, 1,1,0, 0,1,0,                    // A CCW (+z)
+            1,0,0, 1,1,0, 2,1,0, 2,0,0,                    // B CW (raw −z)
+        };
+        int sigma[2]; propagateOrientation(mTags, 2, 4, sigma);   // σ = (+1,−1)
+        double cloud[2*3] = { 0.5,0.5,0.3,   1.5,0.5,0.3 };       // above both halves
+        double conf; int nVoted;
+        double G = LadrunoContactProjection::voteSignRobust(4, 2, X, sigma, cloud, 2, &conf, &nVoted);
+        // build the field with this G and confirm both halves point +z (physical outward)
+        double snn[2*4*3];
+        nodalNormals(mTags, 2, 4, X, sigma, G, snn);
+        bool allUp = true;
+        for (int s = 0; s < 2; s++) for (int k = 0; k < 4; k++)
+            if (snn[(size_t)(s*4+k)*3+2] < 0.5) allUp = false;
+        check(nVoted == 2 && allUp, "auto-sign: reversed-winding master ⇒ robust G gives +z field (σ-immune)");
+    }
+
+    // --- (G) distance-weighting (review F2): a minority of slaves seeded slightly PENETRATING at the
+    // reference config must NOT flip the field — the clearly-separated majority (by DISTANCE) wins.
+    // Count-majority would give −1 here (3 penetrating vs 2 above); distance-weighting gives +1.
+    {
+        int mTags[1*4] = { 1,2,3,4 };
+        double X[1*4*3] = { 0,0,0, 1,0,0, 1,1,0, 0,1,0 };   // flat, coherent normal +z
+        int sigma[1]; propagateOrientation(mTags, 1, 4, sigma);
+        double cloud[5*3] = {
+            0.3,0.3,-1e-3,  0.5,0.5,-1e-3,  0.7,0.7,-1e-3,   // 3 barely penetrating (seed noise)
+            0.4,0.6, 0.5,   0.6,0.4, 0.5,                    // 2 clearly above
+        };
+        double conf; int nVoted;
+        double G = LadrunoContactProjection::voteSignRobust(4, 1, X, sigma, cloud, 5, &conf, &nVoted);
+        check(G > 0.0 && nVoted == 5 && conf > 0.9,
+              "auto-sign: distance-weighting — clearly-above majority beats penetrating-seed minority (+1)");
+    }
+
+    // --- (H) SINGLE slave seeded slightly PENETRATING a convex master (review F2, the P1 sign gate):
+    // one slave, DELTA below the right roof surface, no majority to protect it. A local footpoint
+    // separation would point INWARD ⇒ −1 (pass-through); the interior-centroid reference keeps it OUTWARD.
+    {
+        int mTags[2*4] = { 20,10,11,21,  10,30,31,11 };
+        double X[2*4*3] = {
+            -1,0,0,  0,0,1,  0,1,1,  -1,1,0,
+             0,0,1,  1,0,0,  1,1,0,   0,1,1,    // R: plane x+z=1
+        };
+        int sigma[2]; propagateOrientation(mTags, 2, 4, sigma);
+        double slave[3] = { 0.5, 0.5, 0.5 - 0.05 };   // on R (surface z=0.5 at x=0.5), penetrating by 0.05
+        double conf; int nVoted;
+        double G = LadrunoContactProjection::voteSignRobust(4, 2, X, sigma, slave, 1, &conf, &nVoted);
+        check(G > 0.0 && nVoted == 1, "auto-sign: SINGLE penetrating slave still votes OUTWARD (+1) (F2/P1)");
+    }
+
     // ============================================================ ADR-63 P2.1 facet ownership
     // segmentSharedEdges: the mask flags INTERIOR (shared) edges; onSharedInteriorEdge rejects a
     // projection landing there (the neighbour owns it) but not a FREE edge or an interior point.
