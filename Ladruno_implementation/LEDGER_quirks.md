@@ -2136,3 +2136,41 @@ Q-MULTISHELL follow-up; (6) the slave coords fed to the vote are the REFERENCE c
 captured once); (7) RESIDUAL: the degenerate-BLEND fallback still orients by the aggregate seed (review
 GAP-2), so a degenerate blend AND an edge-grazing cloud together can still drop a pair (fails safe) — pass
 `-outward` for that compound corner. `-smoothNormal` OFF stays byte-identical; no classTag; no vanilla touch.
+
+**An ABSOLUTE tolerance on a DIMENSIONAL residual silently killed all contact away from the origin
+(2026-07-02, contact-review fix PR-1).** `LadrunoContactProjection::project()` converged on
+`|R| < 1e-12` where `R = d·g_α` has units **length²**: its floating-point noise floor is `~eps·|X|·|g|`,
+so for coordinates far from the origin the test was UNREACHABLE — e.g. a plain mm-unit building
+(h~500 mm facets at x~5e4 mm, noise ~3e-10) failed **200/200** projections; every pair evaluated
+inactive and contact SILENTLY vanished (slave free-falls, no warning). Never caught because every
+contact gate ran at unit scale near the origin, where the products happen to be exact in binary.
+FIX = a scale-free **parametric-step escape** `|dξ|+|dη| < 1e-8` (parent coords are O(1)) checked AFTER
+the Newton update. HONEST behavior contract (the adversarial gate REFUTED a stronger "bit-preserving"
+claim): NO previously-converging input is ever LOST (0/5M trials), and on a FLAT facet the escape exits
+one iteration early with the IDENTICAL (ξ,η); on a WARPED facet Gauss-Newton contracts only linearly, so
+~19% of converging warped cases exit with a footpoint within ~tolP parametric of the residual-converged
+answer (measured drift ≤ ~1e-9; gap error second-order ⇒ physically nil; the full 199-test contact+tie
+battery, incl. its exact-`==` byte-identity gates, is unchanged) — in-bounds classification can flip ONLY
+for a footpoint within the 1e-9 parent-boundary slack (~1e-10·h of slave positions). Oracle:
+`contact_prototypes/proto_projection_offset.cpp` (13/21 checks fail on the pre-fix header); in-solver:
+`tests/test_contact_projection_offset.py`. THREE general lessons: (1) any tolerance compared against a
+quantity with length units must be RELATIVE to a local metric (the `detK` degeneracy guard had the twin
+disease — length⁴ vs a length² floor — now the pure angle test `detK < 1e-14·K00·K11`, i.e. sin²θ);
+(2) the SAME absolute test is too LOOSE at micro scale: for h≲1e-5 it passes at the INITIAL GUESS
+(R ~ |d||g| < 1e-12 before any iteration), so micro-facets get centre-footpoint "convergence" — gap on a
+flat facet is footpoint-independent so contact stays functional, just parametrically sloppy (documented,
+unchanged; tightening it would break byte-identity for nothing); (3) test meshes at unit scale near the
+origin CANNOT catch dimensional-tolerance bugs — put one offset/scaled case in every geometric oracle.
+Same review pass: the bucket-grid cap arithmetic used 32-bit `long` (LLP64 Windows) — a diverging
+`clipPct=0` re-emit feed with per-axis cell counts in the [~5e4, 2e9] window wrapped the product, exited
+the cap loop early, and `grid_.assign()` could request a ruinous allocation (`bad_alloc` kills the
+process mid-run). FIX = per-axis pre-clamp to 5000.0 IN DOUBLE before the int cast (also removes the
+double→int UB; the total is capped at min(nSeg,5000) cells anyway) + `long long` product arithmetic.
+**OPEN FOLLOW-UP (found by the PR-1 adversarial gate, pre-existing, NOT fixed here):** the mortar
+back-map `LadrunoMortarKernel::inverseIsomap2D` has the SAME disease — `tolR = 1e-13` ABSOLUTE on a
+LENGTH-unit residual (aux-plane UV ~ facet size h, noise floor ~eps·h): measured 0/400 GPs dead at
+h≤500 but **241/400 dead at h=5e3 and 378/400 at h=5e4**, and the caller silently SKIPs a failed GP ⇒
+`-mortar` contact and `LadrunoTie -mortar` quietly lose most of their integration for facet edges
+≳ 2000 length units. Same fix pattern (parametric-step escape or eps-relative tolR) + its own oracle —
+file with the review-fix PR-3 hardening batch. Same-theme, likely benign: `isConvex2` tol=1e-12
+(length²) and `dedupe` tol=1e-12 (length) in the same header.
