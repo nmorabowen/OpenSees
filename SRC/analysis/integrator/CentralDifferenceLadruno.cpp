@@ -158,6 +158,7 @@ CentralDifferenceLadruno::CentralDifferenceLadruno()
       cflUseTangent(false), cflRecomputeEvery(0), cflStepCount(0),
       committedCflStepCount(0),
       cflFirstComputation(true), lumping(CTSLumping::Diagonal), betaKWarned(false),
+      smsEffectiveLimit(0.0),
       theProjector(0), massBuilt(false), Aproj(0)
 {
 }
@@ -194,6 +195,7 @@ CentralDifferenceLadruno::CentralDifferenceLadruno(
       cflRecomputeEvery(cflRecomputeEvery_), cflStepCount(0),
       committedCflStepCount(0),
       cflFirstComputation(true), lumping(lumping_), betaKWarned(false),
+      smsEffectiveLimit(0.0),
       theProjector(0), massBuilt(false), Aproj(0)
 {
 }
@@ -301,6 +303,12 @@ int CentralDifferenceLadruno::domainChanged()
 
     firstStep = true;
     cflStepCount = 0;
+
+    // The KE-proxy divergence baseline is stale across a mesh change (a smaller /
+    // re-numbered model would compare its fresh KE against the old model's) — the
+    // breaker re-arms on the first nonzero KE of the new mesh.
+    prevKE = 0.0;
+    committedPrevKE = 0.0;
 
     // Ladruno (ADR-30): the projected-mass cache is invalid after a domain change;
     // re-read diag(M) at the next starter. Then check (or project) IC compliance of
@@ -475,13 +483,27 @@ int CentralDifferenceLadruno::newStep(double _deltaT)
                                           undamped_minimum_critical_timestep);
         if (cflFirstComputation || verbose) {
             opserr << "CentralDifferenceLadruno: critical time step (2/omega_max)"
-                   << (cflUseTangent ? " (tangent)" : "") << ": " << dt_cr
+                   << (cflUseTangent ? " (tangent)" : "")
+                   << (smsEffectiveLimit > 0.0 ? " [PRE-SCALING estimate]" : "")
+                   << ": " << dt_cr
                    << " @ element #"
                    << ((dt_cr == damped_minimum_critical_timestep)
                            ? damped_critical_element_tag
                            : undamped_critical_element_tag)
                    << "\n";
-            if (dt_cr > 0.0 && deltaT > dt_cr)
+            if (smsEffectiveLimit > 0.0) {
+                // Mass scaling raised every scaled element's stable step to dtTarget;
+                // the pre-scaling pencil is NOT the run's limit (warning against it
+                // cried "expect INSTABILITY" on every correctly-scaled run). Compare
+                // dt against the POST-SCALING effective limit instead (dtTarget
+                // capped by any excluded / self-reported element that still governs).
+                if (deltaT > smsEffectiveLimit)
+                    opserr << "  WARNING dt = " << deltaT
+                           << " exceeds the POST-SCALING effective stable step "
+                           << smsEffectiveLimit
+                           << " (dtTarget capped by excluded/self-reported elements)"
+                              " - expect INSTABILITY.\n";
+            } else if (dt_cr > 0.0 && deltaT > dt_cr)
                 opserr << "  WARNING dt = " << deltaT
                        << " exceeds the central-difference stability limit " << dt_cr
                        << " - expect INSTABILITY.\n";
@@ -635,16 +657,22 @@ int CentralDifferenceLadruno::update(const Vector &U)
         return -6;
     }
 
-    // Optional circuit breaker: abort on runaway kinetic-energy growth.
+    // Optional circuit breaker: abort on runaway kinetic-energy growth. The
+    // baseline is the RUNNING MAX of the KE proxy, NOT the previous step: in
+    // free vibration KE passes through ~0 at every displacement extreme, and a
+    // previous-step baseline left prevKE ~ eps there -- the quadratic regrowth
+    // off that floor is an unbounded ratio (phase-luck false trips, review
+    // 2026-07-02). For monotonic divergence the previous step IS the max, so
+    // the trip behavior there is unchanged.
     if (divergenceFactor > 0.0) {
         double ke = 0.5 * ((*Vfull) ^ (*Vfull));   // velocity-based KE proxy
         if (prevKE > 0.0 && ke > divergenceFactor * prevKE) {
-            opserr << "CentralDifferenceLadruno::update() - ABORT: kinetic-energy proxy grew by "
-                   << (ke / prevKE) << "x in one step (> " << divergenceFactor
+            opserr << "CentralDifferenceLadruno::update() - ABORT: kinetic-energy proxy grew to "
+                   << (ke / prevKE) << "x its running maximum (> " << divergenceFactor
                    << ") - spurious energy growth / instability.\n";
             return -7;
         }
-        if (ke > 0.0) prevKE = ke;
+        if (ke > prevKE) prevKE = ke;   // running max
     }
 
     if (verbose)
@@ -700,6 +728,14 @@ int CentralDifferenceLadruno::commit(void)
 // both evaluated at v_{n-1/2}/v_{n+1/2}, consistent with the explicit scheme.
 const Vector &CentralDifferenceLadruno::getVel(void)
 {
+    if (Vhalf == 0) {
+        // called before domainChanged() allocated the state (integrator swapped in
+        // mid-session and queried immediately) — dereferencing would crash.
+        opserr << "WARNING CentralDifferenceLadruno::getVel() - called before "
+                  "domainChanged(); returning an empty vector\n";
+        static Vector emptyVel(0);
+        return emptyVel;
+    }
     return *Vhalf;
 }
 

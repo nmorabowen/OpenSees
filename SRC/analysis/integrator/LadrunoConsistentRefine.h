@@ -108,11 +108,19 @@ applyConsistentRefine(std::vector<ConsistentBlock> &blocks, LinearSOE *theSOE, V
         if (verbose)
             opserr << "  " << cls << ": PCG " << iters << " iters (parallel), rel.resid "
                    << relResid << "\n";
-        if (relResid > pcgTol && iters >= pcgMaxIt && !warnedPCG) {
+        // Warn on ANY non-converged exit, not just an exhausted maxIt: the pAp<=0
+        // SPD-breakdown guard exits EARLY (iters < maxIt) with relResid > tol, and
+        // the old iters>=maxIt condition silently swallowed it (review 2026-07-01).
+        if (relResid > pcgTol && !warnedPCG) {
             warnedPCG = true;
             opserr << "WARNING " << cls << "::refineAccel - the parallel mass-scaling PCG did NOT "
                       "converge (" << iters << " iters, rel.resid " << relResid << " > tol "
-                   << pcgTol << "); consistent mass solve incomplete this step.\n";
+                   << pcgTol << "); consistent mass solve incomplete this step."
+                   << (iters < pcgMaxIt
+                           ? " The early exit (below -pcgMaxIt) means the pAp<=0 SPD-breakdown "
+                             "guard fired -- a near-singular M_tilde (e.g. a zero-mass free DOF)."
+                           : " Raise -pcgMaxIt or check the mass distribution.")
+                   << "\n";
         }
         return 0;
     }
@@ -146,12 +154,19 @@ applyConsistentRefine(std::vector<ConsistentBlock> &blocks, LinearSOE *theSOE, V
     int iters = consistentPCG(blocks, Ainv, neq, r, a, pcgTol, pcgMaxIt, &relResid);
     if (verbose)
         opserr << "  " << cls << ": PCG " << iters << " iters, rel.resid " << relResid << "\n";
-    if (relResid > pcgTol && iters >= pcgMaxIt && !warnedPCG) {
+    // Warn on ANY non-converged exit (see the parallel-path note above): the pAp<=0
+    // breakdown guard exits early with iters < maxIt, which the old condition missed.
+    if (relResid > pcgTol && !warnedPCG) {
         warnedPCG = true;
         opserr << "WARNING " << cls << "::refineAccel - the mass-scaling PCG did NOT converge ("
                << iters << " iters, rel.resid " << relResid << " > tol " << pcgTol
-               << "); the consistent mass solve is incomplete this step. Likely a near-singular "
-                  "M_tilde (a zero-mass free DOF) -- raise -pcgMaxIt or check the mass distribution.\n";
+               << "); the consistent mass solve is incomplete this step."
+               << (iters < pcgMaxIt
+                       ? " The early exit (below -pcgMaxIt) means the pAp<=0 SPD-breakdown "
+                         "guard fired -- a near-singular M_tilde (e.g. a zero-mass free DOF)."
+                       : " Likely a near-singular M_tilde (a zero-mass free DOF) -- raise "
+                         "-pcgMaxIt or check the mass distribution.")
+               << "\n";
     }
     return 0;
 }

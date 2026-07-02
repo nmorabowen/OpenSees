@@ -2144,7 +2144,7 @@ dtTarget for exactly the users the betaK feature targets. Use `stiffnessRayleigh
 (`CriticalTimeStep.{h,cpp}`): per-slot clamp at 0, then sum. Exact at the initial state (K == K0 == Kc);
 conservative under softening — the right side to err on for a stability bound.
 
-**The `-divergence` KE proxy FALSE-TRIPS on free vibration at velocity troughs (2026-07-02, open).**
+**The `-divergence` KE proxy FALSE-TRIPS on free vibration at velocity troughs (2026-07-02; FIXED review-P3 #475 -- baseline is now the running MAX of KE).**
 The breaker compares per-step `ke/prevKE` against the factor, with `prevKE` updated every step it is
 positive. In plain free vibration the velocity passes through ~0 every half period; the step nearest the
 zero leaves `prevKE ≈ ε`, and the next steps' quadratic KE regrowth off that near-zero floor produces an
@@ -2232,3 +2232,17 @@ equivalence once before). Fixed (review-P2): `-sms` without an explicit `-lump` 
 default to Diagonal. LESSON: when merging commands, enumerate every DEFAULT each retired parser had and
 prove the merged parser reproduces them per mode — and put a rotational-DOF (rowsum≠diagonal) model in
 the byte-identity battery.
+
+**A `pos < n` bounded staged walk can "pass" its own post-check — pre-walk the totals (2026-07-02).**
+The lumped SMS injection walked element nodes with `for (...; pos < n)` and then rejected non-node-major
+layouts with `if (pos != n)`. For an element whose nodes' TOTAL ndf EXCEEDS its mass size n, the bounded
+loop stops MID-NODE at exactly pos == n, the post-check sees n, and the misaligned mass is silently
+committed. The consistent sibling was immune only because its first pass summed ndf UNBOUNDED before
+comparing. Same family of trap next door: the consistent M̄ builder indexed `mdiag[base[a]+d]` for
+d < min-ndm without clamping by each node's OWN ndf — an ndf < ndm node spills the write into the next
+node's block (off the end of Mbar/mdiag on the last node). Fixed (review-P3): pre-walk Σndf and reject
+≠ n up front; clamp `ndmOf[a] = min(ndm_a, ndf_a)`. LESSON: a walk over a matrix whose layout a DIFFERENT
+object (the nodes) defines must validate the FULL mapping before mutating anything — loop bounds are not
+validation. Related: an iterative-solver "did not converge" warning must key on the RESIDUAL, not on
+iters == maxIt — the consistent PCG's pAp≤0 SPD-breakdown guard exits EARLY (iters < maxIt, resid > tol)
+and the old `iters >= maxIt` condition swallowed it silently (also fixed review-P3).

@@ -485,6 +485,14 @@ static void *OPS_ExplicitBatheSMS_impl(const char *name, bool isLNVD, bool isCon
                       "pencil, MF-1); the pre-scaling dt_cr will be reported each "
                       "domainChanged.\n";
             verbose = true;
+            if (strcmp(arg, "-recompute") == 0 && OPS_GetNumRemainingInputArgs() > 0) {
+                // consume the trailing N so it does not fall into the unknown-option
+                // branch (peek-as-string idiom: under openseespy a numeric arg reads
+                // as garbage text, but never as something starting with '-').
+                const char *peek = OPS_GetString();
+                if (peek != 0 && peek[0] == '-')
+                    OPS_ResetCurrentInputArg(-1);   // next flag, not our N — un-read it
+            }
         } else {
             opserr << "WARNING " << name << " - unknown option " << arg << " (ignored)\n";
         }
@@ -573,6 +581,7 @@ ExplicitBathe::ExplicitBathe(int classTag, double _p, int compute_critical_times
       // Ladruno (W1-E2): SMS (consistent requires sms)
       useSMS(useSMS_), useConsistent(useSMS_ && useConsistent_),
       dtTarget(dtTarget_), maxAddedMassFrac(maxAddedMassFrac_),
+      smsEffectiveLimit(0.0),
       lumpingSMS(lumping_), useTangentSMS(cflUseTangent_),
       pcgTol(pcgTol_), pcgMaxIt(pcgMaxIt_),
       injected(), scaled(false), appliedDomain(0), blocks(0),
@@ -664,12 +673,21 @@ int ExplicitBathe::applyMassScalingSMS(void)
         scaled = true;
         appliedDomain = theDomain;
 
+        // POST-SCALING effective stable step for the newStep() dt_cr report:
+        // dtTarget capped by any still-governing excluded/self-reported element.
+        smsEffectiveLimit = dtTarget;
+        if (rep.minDtConstrained > 0.0 && rep.minDtConstrained < smsEffectiveLimit)
+            smsEffectiveLimit = rep.minDtConstrained;
+        if (rep.minDtSelfReport > 0.0 && rep.minDtSelfReport < smsEffectiveLimit)
+            smsEffectiveLimit = rep.minDtSelfReport;
+
         double frac = (rep.modelMass > 0.0) ? rep.addedMass / rep.modelMass : 0.0;
         bool over = (maxAddedMassFrac > 0.0 && frac > maxAddedMassFrac);
         if (verbose || over || rep.nSelfReport > 0 || rep.nMismatch > 0 || rep.nConstrained > 0) {
             opserr << "ExplicitBathe(-sms): dtTarget=" << dtTarget
                    << " scaled " << rep.nScaled << "/" << rep.nElems
-                   << " elements; added mass " << (100.0 * frac) << "% of model mass"
+                   << " elements; added mass " << (100.0 * frac)
+                   << "% of total element (translational) mass"
                    << "; PRE-SCALING dt_cr estimate=" << rep.minDtScaled
                    << " (governing un-scaled element step; AFTER scaling the run is stable "
                       "at dt <= dtTarget=" << dtTarget << ")\n";
@@ -688,7 +706,8 @@ int ExplicitBathe::applyMassScalingSMS(void)
                    << " < dtTarget=" << dtTarget << ".\n";
         if (over)
             opserr << "WARNING ExplicitBathe(-sms): added mass " << (100.0 * frac)
-                   << "% exceeds -maxAddedMass cap " << (100.0 * maxAddedMassFrac)
+                   << "% of total element (translational) mass exceeds -maxAddedMass cap "
+                   << (100.0 * maxAddedMassFrac)
                    << "% (proceeding; the scaled inertia shifts global frequencies)\n";
         return 0;
     }
@@ -710,12 +729,20 @@ int ExplicitBathe::applyMassScalingSMS(void)
         Ladruno::buildMassScalingConsistent(theModel, dtTarget, lumpingSMS,
                                             useTangentSMS, *blocks);
 
+    // POST-SCALING effective stable step (see the lumped branch above).
+    smsEffectiveLimit = dtTarget;
+    if (rep.minDtConstrained > 0.0 && rep.minDtConstrained < smsEffectiveLimit)
+        smsEffectiveLimit = rep.minDtConstrained;
+    if (rep.minDtSelfReport > 0.0 && rep.minDtSelfReport < smsEffectiveLimit)
+        smsEffectiveLimit = rep.minDtSelfReport;
+
     double frac = (rep.modelMass > 0.0) ? rep.addedMass / rep.modelMass : 0.0;
     bool over = (maxAddedMassFrac > 0.0 && frac > maxAddedMassFrac);
     if (verbose || over || rep.nSelfReport > 0 || rep.nMismatch > 0 || rep.nConstrained > 0) {
         opserr << "ExplicitBathe(-sms -consistent): dtTarget=" << dtTarget
                << " scaled " << rep.nScaled << "/" << rep.nElems
-               << " elements (Olovsson); added mass " << (100.0 * frac) << "% of model mass"
+               << " elements (Olovsson); added mass " << (100.0 * frac)
+               << "% of total element (translational) mass"
                << "; PRE-SCALING dt_cr estimate=" << rep.minDtScaled
                << " (governing un-scaled element step; AFTER scaling the run is stable "
                   "at dt <= dtTarget=" << dtTarget << ")\n";
@@ -732,7 +759,8 @@ int ExplicitBathe::applyMassScalingSMS(void)
                   "they still GOVERN at dt_e=" << rep.minDtConstrained << ".\n";
     if (over)
         opserr << "WARNING ExplicitBathe(-sms -consistent): added mass " << (100.0 * frac)
-               << "% exceeds -maxAddedMass cap " << (100.0 * maxAddedMassFrac) << "%\n";
+               << "% of total element (translational) mass exceeds -maxAddedMass cap "
+               << (100.0 * maxAddedMassFrac) << "%\n";
 
     {
         LinearSOE *soe = this->getLinearSOE();
@@ -946,6 +974,12 @@ int ExplicitBathe::domainChanged() {
     }
     cflStepCount = 0;
 
+    // The KE-proxy divergence baseline is stale across a mesh change (a smaller /
+    // re-numbered model would compare its fresh KE against the old model's) — the
+    // breaker re-arms on the first nonzero KE of the new mesh.
+    prevKE = 0.0;
+    committedPrevKE = 0.0;
+
     // Ladruno (W1-E2, -sms): (re)build + apply the selective mass scaling for this mesh.
     if (useSMS) {
         if (applyMassScalingSMS() < 0)
@@ -1039,12 +1073,24 @@ int ExplicitBathe::newStep(double _deltaT) {
         const double dt_nb = EB_NB_STABILITY_FACTOR * damped_minimum_critical_timestep;
         if (cflFirstComputation || verbose) {
             opserr << "ExplicitBathe: critical time step estimate"
-                   << (cflUseTangent ? " (tangent)" : "") << "\n"
+                   << (cflUseTangent ? " (tangent)" : "")
+                   << (useSMS ? " [PRE-SCALING estimate]" : "") << "\n"
                    << "  central-difference limit (conservative): "
                    << damped_minimum_critical_timestep
                    << " @ element #" << damped_critical_element_tag << "\n"
                    << "  Noh-Bathe limit (~" << EB_NB_STABILITY_FACTOR << "x): " << dt_nb << "\n";
-            if (deltaT > dt_nb)
+            if (useSMS && smsEffectiveLimit > 0.0) {
+                // Mass scaling raised every scaled element's CD-limit step to dtTarget;
+                // the pre-scaling pencil is NOT the run's limit (warning against it
+                // cried "expect INSTABILITY" on every correctly-scaled run). Compare
+                // dt against the POST-SCALING Noh-Bathe limit instead.
+                if (deltaT > EB_NB_STABILITY_FACTOR * smsEffectiveLimit)
+                    opserr << "  WARNING dt = " << deltaT
+                           << " exceeds the POST-SCALING Noh-Bathe stability limit "
+                           << (EB_NB_STABILITY_FACTOR * smsEffectiveLimit)
+                           << " (dtTarget capped by excluded/self-reported elements)"
+                              " - expect INSTABILITY.\n";
+            } else if (deltaT > dt_nb)
                 opserr << "  WARNING dt = " << deltaT
                        << " exceeds the Noh-Bathe stability limit - expect INSTABILITY.\n";
             else if (deltaT > damped_minimum_critical_timestep)
@@ -1217,16 +1263,19 @@ int ExplicitBathe::update(const Vector &U) {
         return -5;
     }
 
-    // Circuit breaker 2 (opt-in): abort on runaway kinetic energy growth.
+    // Circuit breaker 2 (opt-in): abort on runaway kinetic energy growth. The
+    // baseline is the RUNNING MAX of the KE proxy, NOT the previous step -- a
+    // previous-step baseline false-tripped on free vibration at velocity
+    // troughs (see CentralDifferenceLadruno::update, review 2026-07-02).
     if (divergenceFactor > 0.0) {
         double ke = 0.5 * ((*V_tpdt) ^ (*V_tpdt));   // velocity-based KE proxy
         if (prevKE > 0.0 && ke > divergenceFactor * prevKE) {
-            opserr << "ExplicitBathe::update() - ABORT: kinetic-energy proxy grew by "
-                   << (ke / prevKE) << "x in one step (> " << divergenceFactor
+            opserr << "ExplicitBathe::update() - ABORT: kinetic-energy proxy grew to "
+                   << (ke / prevKE) << "x its running maximum (> " << divergenceFactor
                    << ") - spurious energy growth / instability.\n";
             return -6;
         }
-        if (ke > 0.0) prevKE = ke;
+        if (ke > prevKE) prevKE = ke;   // running max
     }
 
     if (verbose) {
@@ -1370,6 +1419,14 @@ int ExplicitBathe::commit() {
 
 // Get current velocity (for modal damping interface)
 const Vector &ExplicitBathe::getVel() {
+    if (V_t == 0) {
+        // called before domainChanged() allocated the state (integrator swapped in
+        // mid-session and queried immediately) — dereferencing would crash.
+        opserr << "WARNING ExplicitBathe::getVel() - called before domainChanged(); "
+                  "returning an empty vector\n";
+        static Vector emptyVel(0);
+        return emptyVel;
+    }
     return *V_t;
 }
 
