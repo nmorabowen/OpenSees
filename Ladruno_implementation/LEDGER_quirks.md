@@ -1723,9 +1723,15 @@ non-obvious behaviours, all relevant to anyone wiring `-stabilize` into a driver
   μ=0 WITH cohesion). FIX at two layers: the kernel `cap≤0` branch now FREE-SLIPS (zero traction, slip
   absorbs the motion, zero tangent block — `frictionReturnMap` + `frictionTangentBlock` +
   the numpy mirror in `proto_a1_friction.py`), and the command surface REFUSES `-tauMax`/`-edgeTauMax`
-  without a `-mu`/`-cohesion` (the sanctioned shear-capped BOND is `-cohesion`, optionally + `-tauMax`).
-  cap>0 branches byte-unchanged (oracle byte-guards pass on BOTH pre/post kernels). Oracle:
-  `contact_prototypes/proto_friction_validation.cpp` (12 checks, 6 FAIL pre-fix).
+  without a `-mu`/`-cohesion` (the sanctioned shear-capped BOND is `-cohesion`, optionally + `-tauMax`);
+  on the NTS lane `-tauMax` is refused outright as mortar-only (it was silently INERT there — the
+  positional-μ NTS cone has no shear cap; adversarial-gate MINOR-1, fail-loud like `-geomtan`).
+  cap>0 branches byte-unchanged (166k-case gate fuzz bitwise-identical + oracle byte-guards pass on
+  BOTH pre/post kernels). Oracle: `contact_prototypes/proto_friction_validation.cpp` (12 checks,
+  6 FAIL pre-fix). GATE-SURFACED FOLLOW-UP (pre-existing, not fixed here): mortar AUTO-orientation
+  silently degenerates for COINCIDENT conforming facets — `orientDir = scen − mcen = 0` and the
+  facet-normal flip test never fires, leaving the sign to winding luck; pass `-outward` for coincident
+  interfaces (the shipped c2_1 tests always do). Candidate warn/refuse in the review PR-5 batch.
 - **Validation choke points (previously silent):** duplicate CONTACT tags now refused across
   contact/mortar/contactPlane (`contactTagInUse` — the tag is the leading key of every path-state
   store: a duplicate ALIASED friction slots last-writer-wins and ping-ponged the re-emit fingerprint

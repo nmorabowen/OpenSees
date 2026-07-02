@@ -26,13 +26,15 @@ from _testbed import ops
 pytestmark = [pytest.mark.zone_a]
 
 
-def _two_facets(h):
-    """Matched slave-over-master quad facets of edge h, initially touching (zero gap)."""
+def _two_facets(h, z0=0.0):
+    """Matched slave-over-master quad facets of edge h; slave plane at z0 (seed z0 < 0 =
+    slightly penetrating, the shipped c2_1 idiom — a slave held ONLY by the penalty is
+    singular/inert while separated)."""
     for t, (x, y) in zip((1, 2, 3, 4), [(0, 0), (h, 0), (h, h), (0, h)]):
         ops.node(t, float(x), float(y), 0.0)
         ops.fix(t, 1, 1, 1)
     for t, (x, y) in zip((5, 6, 7, 8), [(0, 0), (h, 0), (h, h), (0, h)]):
-        ops.node(t, float(x), float(y), 0.0)
+        ops.node(t, float(x), float(y), z0)
         ops.mass(t, 1.0, 1.0, 1.0)
         ops.fix(t, 1, 1, 0)
     ops.contactSurface(1, "-master", 4, 1, 2, 3, 4)
@@ -59,6 +61,19 @@ def test_taumax_with_mu_or_cohesion_accepted():
     _fresh()
     _two_facets(1.0)
     ops.contact(10, 1, 2, "-mortar", "-epsN", 1e6, "-cohesion", 100.0, "-tauMax", 1e6)
+
+
+def test_nts_taumax_refused_as_mortar_only():
+    """-tauMax on the NTS lane was silently INERT (the positional-mu NTS cone has no
+    shear cap); now refused outright as a mortar-only option (fail-loud, gate MINOR-1)."""
+    _fresh()
+    ops.node(1, -1.0, -1.0, 0.0); ops.node(2, 1.0, -1.0, 0.0)
+    ops.node(3, 1.0, 1.0, 0.0); ops.node(4, -1.0, 1.0, 0.0)
+    ops.node(5, 0.0, 0.0, 1e-4)
+    ops.contactSurface(1, "-master", 4, 1, 2, 3, 4)
+    ops.contactSurface(2, "-slave", 5)
+    with pytest.raises(Exception):
+        ops.contact(7, 1, 2, 1e6, 1e5, 0.4, "-outward", 0.0, 0.0, 1.0, "-tauMax", 50.0)
 
 
 def test_edge_taumax_only_refused():
@@ -127,40 +142,39 @@ def test_missing_node_contact_skipped_loudly():
 
 # ------------------------------------------------- 3. mortar large-facet (isomap) gate
 def _mortar_press(h):
-    """Slave facet pressed onto a matched master facet (edge h) under -mortar penalty +
-    -visc settling; returns (settled mean penetration, the penalty prediction P_tot/(epsN*A))."""
+    """The shipped c2_1 STATIC rig at facet scale h: slave quad seeded slightly
+    penetrating a coincident fixed master quad, uniform load, LoadControl + Newton.
+    Returns (static penetration, the penalty prediction P_tot/(epsN*A))."""
     _fresh()
-    _two_facets(h)
+    z0 = -1.0e-4 * max(1.0, h)               # seeded slightly penetrating (c2_1 idiom)
+    _two_facets(h, z0)
     A = h * h
     epsN = 1.0e-3
     Ptot = 0.1 * epsN * A                    # target penetration = 0.1 length units
-    # Kelvin-Voigt settling (D2.2): the viscous scatter rides the mortar area weights,
-    # so the per-node dashpot ~ muc*A/4 — size muc for zeta ~ 0.5 on the contact mode
-    # (k_node ~ epsN*A/4, m = 1) so the press SETTLES at every scale.
-    k_node = epsN * A / 4.0
-    muc = math.sqrt(k_node) / (A / 4.0)
-    ops.contact(10, 1, 2, "-mortar", "-epsN", epsN, "-visc", muc)
-    ops.timeSeries("Constant", 1)
+    ops.contact(10, 1, 2, "-mortar", "-epsN", epsN,
+                "-outward", 0.0, 0.0, 1.0)   # coincident facets: explicit orientation
+    ops.timeSeries("Linear", 1)
     ops.pattern("Plain", 1, 1)
     for t in (5, 6, 7, 8):
         ops.load(t, 0.0, 0.0, -Ptot / 4.0)
-    ops.constraints("LadrunoContact"); ops.numberer("Plain"); ops.system("Diagonal")
-    ops.integrator("CentralDifferenceLadruno"); ops.algorithm("Linear")
-    ops.analysis("Transient")
-    dt = 0.25 * 2.0 / math.sqrt(k_node)
-    for _ in range(4000):
-        assert ops.analyze(1, dt) == 0, "mortar press step failed"
-    pen = -(sum(ops.nodeDisp(t, 3) for t in (5, 6, 7, 8)) / 4.0)
+    ops.constraints("LadrunoContact"); ops.numberer("Plain"); ops.system("FullGeneral")
+    ops.integrator("LoadControl", 1.0)
+    ops.test("NormDispIncr", 1.0e-10 * max(1.0, h), 40, 0)
+    ops.algorithm("Newton")
+    ops.analysis("Static")
+    assert ops.analyze(1) == 0, "static mortar press did not converge"
+    pen = -(z0 + sum(ops.nodeDisp(t, 3) for t in (5, 6, 7, 8)) / 4.0)
     return pen, Ptot / (epsN * A)
 
 
 def test_mortar_contact_alive_at_large_facet_scale():
     """h=5e4 facets (mm-unit building scale): pre-fix the inverse isomap's absolute
-    tolerance killed the Gauss points and the slave fell straight through; post-fix the
-    settled penetration matches the penalty prediction at h=1 AND h=5e4."""
+    tolerance killed the Gauss points (contact stiffness vanished — Newton fails or the
+    slave shoots through); post-fix the static penetration equals the penalty prediction
+    δ = P/(epsN·A) at h=1 AND h=5e4."""
     pen1, ref1 = _mortar_press(1.0)
-    assert abs(pen1 - ref1) < 0.25 * ref1, f"h=1 baseline off: pen={pen1} vs {ref1}"
+    assert abs(pen1 - ref1) < 0.05 * ref1, f"h=1 baseline off: pen={pen1} vs {ref1}"
     penL, refL = _mortar_press(5.0e4)
-    assert abs(penL - refL) < 0.25 * refL, (
+    assert abs(penL - refL) < 0.05 * refL, (
         f"mortar contact dead/wrong at h=5e4: pen={penL} vs prediction {refL} "
         "(the isomap absolute-tolerance regression is back)")

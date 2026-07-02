@@ -796,11 +796,18 @@ int OPS_LadrunoContact()
                   "(-mu/-cohesion/-tauMax): a mesh-tie has no friction cone\n";
         return -1;
     }
-    // Ladruno contact-review P3: a τmax-only friction config (no -mu, no -cohesion) is the
-    // unified cone min(μN+c, τmax) = min(0, τmax) = 0 ⇒ FREE SLIP — almost certainly not what
-    // the user wanted (a shear-capped BOND is -cohesion, optionally capped by -tauMax). The old
-    // kernel silently turned this config into an UNBOUNDED elastic bond; refuse it loudly.
-    if (tauMax > 0.0 && mortarMu <= 0.0 && cohesion <= 0.0) {
+    // Ladruno contact-review P3: -tauMax is a MORTAR-lane option (the NTS positional-mu cone
+    // has no shear cap; the flag was previously silently INERT on the NTS lane — fail loud,
+    // the -geomtan/-reemit pattern). On the mortar lane, τmax-only (no -mu, no -cohesion) is
+    // the unified cone min(μN+c, τmax) = min(0, τmax) = 0 ⇒ FREE SLIP — almost certainly not
+    // what the user wanted (a shear-capped BOND is -cohesion, optionally capped by -tauMax).
+    // The old kernel silently turned that config into an UNBOUNDED elastic bond; refuse both.
+    if (!isMortar && tauMax > 0.0) {
+        opserr << "WARNING contact -tauMax is a -mortar option (NTS friction has no shear "
+                  "cap); remove it or use the mortar lane\n";
+        return -1;
+    }
+    if (isMortar && tauMax > 0.0 && mortarMu <= 0.0 && cohesion <= 0.0) {
         opserr << "WARNING contact -tauMax without -mu or -cohesion: the friction cone "
                   "min(mu*N + c, tauMax) = min(0, tauMax) = 0 (frictionless free slip). For a "
                   "shear-capped bond use -cohesion <c> (a Tresca cap), optionally with -tauMax\n";
