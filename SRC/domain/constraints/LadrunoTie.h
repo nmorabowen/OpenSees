@@ -131,6 +131,60 @@ int generateMortar(Domain *theDomain,
                    const ID &dofs, double tolFrac, const double *outward,
                    bool dual = false);
 
+// P4 (ADR-64) — shell-to-solid plane-section tie (`-shellSolid`).  Ties an ndf-6
+// shell EDGE (the MASTER, a 1D polyline of segment node pairs) to an ndf-3 solid
+// FACE (the SLAVES).  Direction is inverted from every other LadrunoTie mode: the
+// solid face nodes are the slaves.  Each slave projects onto the edge polyline at
+// its closest point (closed-form point-to-segment, brute force — edge lists are
+// short; no bucket-sort, no facet projection) with a FROZEN arm d = x_s − x̄(ξ),
+// and THREE translation rows are emitted through ltEmitMixedRow (the P3.1 mixed
+// nk×6 triple shape):
+//
+//        u_{s,i} = Σ_{j=A,B} N_j(ξ) · [ u_{j,i} + (θ_j × d)_i ]        i = 1..3
+//
+// — the linearized rigid plane-section map (Abaqus shell-to-solid coupling, TG
+// §6.6.2/§6.6.6, kinematic/RBE2-flavored).  The arm runs ~along the shell normal,
+// so the drilling (θ·n) coefficient of θ×d is ~zero and is dropped by the 1e-12
+// near-zero filter ⇒ shell drilling stays FREE (the Abaqus behavior).  Tied DOFs
+// are FIXED to the solid translations {1,2,3} (no -dof): BLOCKER-2 is satisfied by
+// the solid's -rho mass — the P3 GENERATOR-level rotary-mass refusal is gone.
+// (Explicit note, measured: LadrunoProjection keeps every group DOF in the explicit
+// equation set, so the master edge θx/θy still need a small nodal rotary mass under
+// the projector — generic to every rotational tie (rigidLink -beam precedent), and
+// shell getMass() must be LUMPED on the tied DOFs: ASDShellQ4 lumps translations,
+// ShellMITC4's consistent mass is refused.  Static Lagrange needs neither.)
+//
+// v1 contract (signed off, ADR-64 OQ-1/OQ-2): statically-exact couple on a FROZEN
+// small-rotation arm (same status as rigidLink -beam; the projection handler's
+// flagRotMonitor auto-arms), through-thickness Poisson stretch SUPPRESSED at the
+// seam (St-Venant boundary layer ∝ ν·t·strain, exact at ν=0), Timoshenko shear
+// warping leaves an O(γ·t) local misfit while resultant transfer stays exact.
+// Collocation-only (the mortar/weak variant needs a kernel per-GP hook — deferred
+// with mortar-Hermite).  Cross-ndf EQ rows are Transformation-INCOMPATIBLE: enforce
+// with Lagrange (static) or LadrunoProjection (explicit).
+//
+//   slaveNodes      : solid FACE node tags (through-thickness patch; each gets one
+//                     3-row set off its closest-point segment).
+//   masterEdgeNodes : flat shell-edge segment node PAIRS, 2 per segment
+//                     (a1 b1 a2 b2 ..) — a polyline, kinks allowed (per-node
+//                     frozen arms; a tie does not slide, no smoothing needed).
+//   thickness       : shell thickness t for the arm guard |d| ≤ (0.5+tolFrac)·t
+//                     (a slave farther off the mid-surface is not this shell's
+//                     through-thickness material).  <= 0 ⇒ omitted: warn and SKIP
+//                     the guard (OQ-3: footgun-catcher, not a correctness
+//                     precondition).
+//   tolFrac         : slack fraction for the arm guard (also -tol).
+//
+// Returns #EQ_Constraints emitted (>= 0), or -1 on a named refusal: BLOCKER-1
+// (duplicate slave / slave on the master edge), BLOCKER-2 (massless tied solid
+// DOF), a master edge node with ndf < 6, a degenerate (zero-length) segment, an
+// out-of-polyline projection, or the arm guard.
+// Oracle: kinematic_tie_validation/proto_p4_shell_solid_tie.py (T1–T8).
+int generateShellSolid(Domain *theDomain,
+                       const ID &slaveNodes,
+                       const ID &masterEdgeNodes,
+                       double thickness, double tolFrac);
+
 } // namespace LadrunoTie
 
 #endif

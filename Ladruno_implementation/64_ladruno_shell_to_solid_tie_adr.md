@@ -1,10 +1,18 @@
 # LadrunoTie shell-to-solid — plane-section rigid-arm coupling of an ndf-6 shell edge to an ndf-3 solid face
 
-> ADR-64. Status: **PLANNED — feasibility gate PASSED (ndf-coexistence probe green on the
-> built `.pyd`), operator decided, awaiting sign-off. NOT shipped.** This is the "P4" rung
-> of the LadrunoTie family (ADR-62): the one remaining seam where the transfer is a
-> genuinely NEW operator, not a reuse of the P row. See `kinematic_tie_handoff.md`
-> (shell-to-solid section) for the probe record.
+> ADR-64. Status: **SHIPPED (PR #PR_ADR64, 2026-07-02).** OQ-1 (operator b-B) and OQ-2
+> (frozen-arm / gated-limits v1 contract) signed off; OQ-3 warn-if-omitted, OQ-4..7
+> confirmed as recommended. P4.0 oracle `proto_p4_shell_solid_tie.py` 22/22 (T1–T8, both
+> honest-limit scalings land exactly on the predicted ν·t and γ·t lines; T7 misfit within
+> 0.3% of the analytic γc/(3√3) bound); `.pyd` pre-flight green (rigid arm-engaged +
+> constant-moment states enforce under Lagrange via hand-emitted `equationConstraint`
+> rows). P4.1+P4.2 `tests/test_ladrunoTie_shellsolid.py` 18/18 (membrane/rigid/section/
+> HEADLINE bending/hinge-contrast + 8 refusals + explicit dt_cr-neutral/zero-violation/
+> momentum kick–coast); full LadrunoTie battery 50/50 + ADR-30 projection battery 49/49
+> no-regression. **One MEASURED correction vs the plan: Decision 1 win 4 — see the
+> struck-through note there.** This is the "P4" rung of the LadrunoTie family (ADR-62):
+> the one remaining seam where the transfer is a genuinely NEW operator, not a reuse of
+> the P row. See `kinematic_tie_handoff.md` (shell-to-solid section) for the probe record.
 > Family: ADR-62 (LadrunoTie — the generator this extends, P1/P2/P2.1/P3/P3.1 SHIPPED) ·
 > ADR-30 (LadrunoProjectionHandler — the explicit enforcement, reused unchanged) ·
 > ADR-41 (mortar D/M) · ADR-39 (ContactDomain projection geometry — deliberately NOT
@@ -185,12 +193,20 @@ RECOMMENDED / DECIDED.** The formula above. Why it wins, point by point:
    **statically exact to the frozen-arm (small-rotation) approximation** — the identical
    status `rigidLink -beam` has always had. The projection handler's frozen-lever-arm
    staleness monitor (`flagRotMonitor`, 0.1 rad) auto-arms for these rows for free.
-4. **No rotary-mass precondition.** The slaves are solid translations — always massed via
-   `-rho`. In the explicit projector the slave masses map through the arms into
-   `CᵀM_ccC`, so **the tied solid SUPPLIES the shell edge's rotary inertia inside the
-   `(LᵀML)` group**. (The shell node's own θ DOFs still need nodal rotary mass to be
-   free explicit DOFs OUTSIDE the projection — a generic explicit-shell requirement, not
-   a tie precondition.)
+4. **No GENERATOR-level rotary-mass precondition.** The slaves are solid translations —
+   always massed via `-rho`, so the P3 per-DOF BLOCKER-2 refusal never fires for this
+   mode and static Lagrange needs no rotary mass anywhere. **MEASURED CORRECTION
+   (P4.2): the original claim that "the tied solid supplies the shell edge's rotary
+   inertia inside the `(LᵀML)` group" is WRONG for the shipped projector** — the
+   handler keeps every group DOF in the explicit equation set, so the master edge's
+   θx/θy still need a small nodal rotary mass under `LadrunoProjection`
+   (`LadrunoConstraintProjector::buildMass` refuses a massless group DOF, and
+   correctly so: a zero-mass DOF has no explicit equation of motion). This is generic
+   to EVERY rotational tie under handler 33001 (`rigidLink -beam` has the identical
+   requirement), not a b-B penalty — b-A would need it too, plus slave-side rotary
+   mass. Additionally the shell element's `getMass()` must be LUMPED on the tied
+   DOFs: `ShellMITC4` assembles a CONSISTENT (off-diagonal) mass and is refused by
+   the handler's element guard; `ASDShellQ4` lumps translational mass and works.
 5. **Closes the whole seam** — every solid face node in the through-thickness patch is
    constrained (no unpinned interior layers), one mode, one flag.
 
@@ -260,11 +276,14 @@ slaves, shell edge nodes are masters; no node on both lists; each slave gets exa
 row set off its closest-point segment. The `generate` guard skeleton already enforces
 this; `generateShellSolid` keeps it verbatim.
 
-**BLOCKER-2 (inherited, SATISFIED by construction) — mass on every tied DOF.** Slave DOFs
-are solid translations; `-rho` mass is always there. `ltCheckTiedDofMass` still runs
-(defense-in-depth: a genuinely massless solid node is still refused, named). The P3
-rotary-mass precondition does not apply — see Decision 1 win 4 for where the shell edge's
-rotary inertia comes from instead (`CᵀM_ccC`).
+**BLOCKER-2 (inherited, SATISFIED by construction at the GENERATOR) — mass on every tied
+DOF.** Slave DOFs are solid translations; `-rho` mass is always there. `ltCheckTiedDofMass`
+still runs (defense-in-depth: a genuinely massless solid node is still refused, named).
+The P3 generator-level rotary-mass refusal does not apply. **Explicit caveat (measured,
+P4.2 — see the Decision 1 win 4 correction): under `LadrunoProjection` the master edge's
+θx/θy still need a small nodal rotary mass (every group DOF stays in the explicit
+equation set; `rigidLink -beam` precedent), and the shell element must lump its mass
+(`ASDShellQ4` yes, `ShellMITC4` consistent → refused).** Static Lagrange needs neither.
 
 **BLOCKER-3 — the frozen arm is a small-rotation operator.** `d` is captured at setup;
 under finite interface rotation the transferred couple lags. Same status and same
@@ -353,13 +372,20 @@ ADR), targeted verification on the C++ delta.**
   `-shellSolid` plane-section coupling, ADR-62 P4 / ADR-64, status per phase, PR.
 - `LEDGER_vanilla_files.md` — one banner-regen row (`tclMain.cpp` + `PythonModule.cpp`
   FEATURES blocks via `patch_banner.py`).
-- `LEDGER_quirks.md` — three sub-points under the LadrunoTie entry:
+- `LEDGER_quirks.md` — sub-points under a new shell-to-solid section:
   (1) cross-ndf EQ rows are **Transformation-incompatible** (`U(i,i)=0`) — use
   `Lagrange`/`LadrunoProjection`; (2) the plane-section tie **suppresses through-thickness
   Poisson stretch** at the seam (St-Venant boundary layer, ∝ ν·t, exact at ν=0) — honest
-  limit, not a bug; (3) the **tied solid supplies the shell edge's rotary inertia**
-  through `CᵀM_ccC` — no nodal rotary mass needed on the tied group (the shell's OWN free
-  θ DOFs outside the projection still need it, generic explicit-shell rule).
+  limit, not a bug; (3) **explicit rotary-mass rule (CORRECTED from the plan)**: the
+  master edge θx/θy need a small nodal rotary mass under the projector (generic
+  rotational-tie rule, `rigidLink -beam` precedent) and the shell element must LUMP mass
+  (`ASDShellQ4` yes, `ShellMITC4` consistent → refused); the GENERATOR precondition is
+  gone and static Lagrange needs nothing; (4) the `mass` command sizes its matrix by the
+  BUILDER's ndf, so mixed-ndf models must re-issue `model -ndf 6` before massing shell
+  nodes; (5) the collocation force patch is exact only for NESTED interfaces (2:1 etc.) —
+  non-nested grids redistribute interface forces at the few-% level (kinematics stay
+  exact on any grid; a consistent transfer on non-nested grids is mortar's territory,
+  deferred with the `-shellSolid -mortar` variant).
 - `banner_features.txt` — extend the LadrunoTie line with `-shellSolid`; rerun
   `patch_banner.py`.
 - `kinematic_tie_handoff.md` — flip the shell-to-solid section from "NEXT RUNG" to
