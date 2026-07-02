@@ -197,8 +197,13 @@ committed) — the gate is **GREEN**:
 headline sign-off items for the next session: (a) curl-synthesis vs Abaqus through-thickness coupling;
 (b) which solid nodes enter the rotation row and with what gradient weights; (c) work-conjugacy /
 symmetry of the coupling (a naive point-curl transfers force but can leak energy / be non-symmetric,
-poisoning the momentum conservation that is the whole point of the projection route). A dedicated ADR
-+ implementation plan is being drafted (Fable) — see the ADR and the next-session kickoff prompt.
+poisoning the momentum conservation that is the whole point of the projection route). The dedicated
+decision record + full implementation plan is **ADR-64** (`64_ladruno_shell_to_solid_tie_adr.md`):
+operator DECIDED = direction b-B (solid face nodes = SLAVES, shell edge = MASTER, rigid plane-section
+arm rows `u_s = Σ N_j(u_j + θ_j×d)` reusing `ltEmitMixedRow` verbatim; drilling falls out free, no
+rotary-mass precondition, curl-synthesis and the shell-slave gradient direction both rejected there
+with named disqualifiers). Awaiting the two headline sign-offs (OQ-1 operator, OQ-2 work-conjugacy
+scope) before P4.0 oracle + code.
 
 ### Also noted (out of scope for a tie, but adjacent)
 Finite-sliding re-emission (the ADR-60 hook) is for a tie that must survive LARGE interface rotation;
