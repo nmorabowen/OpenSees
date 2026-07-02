@@ -800,8 +800,16 @@ LadrunoContactDomain::commit(void)
     // counter (kept from P1b) lets a test confirm the Domain::commit() hook fires.
     numCommits++;
     for (std::map<PairKey, FrictionState>::iterator it = theFrictionStates.begin();
-         it != theFrictionStates.end(); ++it)
-        for (int d = 0; d < 3; d++) it->second.gpT[d] = it->second.gpTtrial[d];
+         it != theFrictionStates.end(); ++it) {
+        FrictionState &st = it->second;
+        for (int d = 0; d < 3; d++) {
+            st.gpT[d] = st.gpTtrial[d];
+            // contact-review P2 — commit the engagement origin (the C3.2 MAJOR-2 pattern,
+            // back-ported from the mortar/edge lanes) so a later rejected step can revert it.
+            st.gT0committed[d] = st.gT0[d];
+        }
+        st.engagedCommitted = st.engaged;
+    }
 
     // C2.2 — ONE Uzawa augmentation per commit (the EmbeddedRebar::commitState precedent):
     // λ_I ← min(0, λ_I + epsN·ḡ_I), ḡ_I = g̃_I^global / a_I^global (the just-converged trial
@@ -869,8 +877,17 @@ LadrunoContactDomain::revertToLastCommit(void)
     // step, or a Python adaptive-step retry that calls Domain::revertToLastCommit()).
     numReverts++;
     for (std::map<PairKey, FrictionState>::iterator it = theFrictionStates.begin();
-         it != theFrictionStates.end(); ++it)
-        for (int d = 0; d < 3; d++) it->second.gpTtrial[d] = it->second.gpT[d];
+         it != theFrictionStates.end(); ++it) {
+        FrictionState &st = it->second;
+        for (int d = 0; d < 3; d++) {
+            st.gpTtrial[d] = st.gpT[d];
+            // contact-review P2 — restore the engagement origin from the committed copy so a
+            // rejected implicit step does not latch gT0/engaged captured at the rejected
+            // config (the C3.2 MAJOR-2 pattern the mortar/edge lanes already ship).
+            st.gT0[d] = st.gT0committed[d];
+        }
+        st.engaged = st.engagedCommitted;
+    }
     // C3.1 — mortar friction: drop the trial slip back to committed (λ_N is committed-only ⇒
     // untouched on revert, the C2.2 invariant; only the friction trial needs reverting).
     // C3.2 (MAJOR-2) — also restore the engagement origin gT0/engaged from the committed copy, so
@@ -899,5 +916,34 @@ LadrunoContactDomain::revertToLastCommit(void)
         }
         st.engaged = st.engagedCommitted;
     }
+    return 0;
+}
+
+int
+LadrunoContactDomain::revertToStart(void)
+{
+    // contact-review P2 (2026-07) — Domain::revertToStart (ops.reset) rewinds every node and
+    // element to the pristine t=0 state, but until this hook the contact engine's path state
+    // SURVIVED it: a re-run after reset started with the previous run's committed friction
+    // slip gpT (⇒ a large spurious stick force at first contact), stale engagement origins,
+    // Uzawa multipliers λ_N/λ_T/λ_tie at their last converged values, and body-fixed edge
+    // signs. Drop ALL of it — every slot is lazily recreated ZEROED at the next handle()/
+    // getResidual (exactly the state of a genuinely fresh run), so clear() is the total,
+    // by-construction-pristine reset. The definitions (surfaces/contacts) are untouched.
+    theFrictionStates.clear();
+    theMortarNormalStates.clear();
+    theEdgeEdgeStates.clear();
+    theMortarFacetContribs.clear();
+    theNtsForce.clear();                // B3 force snapshots (side-channel, re-written per step)
+    theNodalMass.clear();               // B1 assembled-mass cache (rebuilt when soft contacts exist)
+    // ADR-60 re-emit: drop anchors + membership fingerprints + the persistent Trigger —
+    // the handler re-registers everything at the next handle() (one conservative
+    // recompute, the Q-RESTART posture; hysteresis/cadence restart from scratch at t=0).
+    theReemit.clear();
+    theReemitFp.clear();
+    theReemitTrig.clear();
+    // theNormalFields is deliberately KEPT (σ/sharedEdge are topological; the frozen global
+    // sign is a reference-geometry datum voted on REFERENCE coords — re-deriving it would
+    // produce the identical value, so keeping it is both cheaper and byte-equivalent).
     return 0;
 }

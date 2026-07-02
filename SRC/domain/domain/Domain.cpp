@@ -2278,10 +2278,18 @@ Domain::revertToStart(void)
 	nodePtr->revertToStart();
 
     Element *elePtr;
-    ElementIter &theElements = this->getElements();    
+    ElementIter &theElements = this->getElements();
     while ((elePtr = theElements()) != 0) {
 	elePtr->revertToStart();
     }
+
+    // Ladruno (ADR-39, contact-review P2): reset the contact engine's path state too —
+    // committed friction slip + engagement origins, ALM multipliers, edge-edge signs,
+    // re-emit anchors/fingerprints/trigger — so revertToStart (ops.reset) returns contact
+    // to the pristine t=0 state the way nodes/elements rewind. Without this a re-run
+    // after reset silently started from the PREVIOUS run's friction/pressure history.
+    if (theContactDomain != 0)
+      theContactDomain->revertToStart();
 
     // ADDED BY TERJE //////////////////////////////////
     // invoke 'restart' on all recorders

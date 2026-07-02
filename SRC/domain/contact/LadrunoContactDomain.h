@@ -237,8 +237,17 @@ class LadrunoContactDomain
         double gpTtrial[3];   // trial plastic slip (written each getResidual)
         double gT0[3];        // ENGAGEMENT-config tangential origin (captured once)
         bool   engaged;       // has gT0 been captured at first activation
-        FrictionState() : engaged(false) {
-            for (int d = 0; d < 3; d++) gpT[d] = gpTtrial[d] = gT0[d] = 0.0;
+        // contact-review P2 (2026-07) — the C3.2 MAJOR-2 double-buffer, back-ported from
+        // MortarNormalState/EdgeEdgeState to the NTS lane it was copied from: gT0/engaged
+        // are mutated in getResidual (the capture), so a REJECTED implicit trial step must
+        // not latch an origin captured at the rejected config. commit() promotes,
+        // revertToLastCommit() restores. (Unreachable under explicit CDL, live under
+        // implicit Newton — NTS friction is a first-class implicit path since P3.5.)
+        double gT0committed[3];
+        bool   engagedCommitted;
+        FrictionState() : engaged(false), engagedCommitted(false) {
+            for (int d = 0; d < 3; d++)
+                gpT[d] = gpTtrial[d] = gT0[d] = gT0committed[d] = 0.0;
         }
     };
     // lazily create + return the slot for a pair (zeroed, engaged=false if new).
@@ -479,9 +488,19 @@ class LadrunoContactDomain
     // The handler warns once when this is below a small floor (fragile auto sign — review F2/F3/F5).
     double getNormalFieldSignConf(int masterSurfTag) const;
 
-    // --- lifecycle (driven by Domain::commit / revertToLastCommit) ---
+    // --- lifecycle (driven by Domain::commit / revertToLastCommit / revertToStart) ---
     int commit(void);              // P3: gpT = gpTtrial for every slot (+ counter)
     int revertToLastCommit(void);  // P3: gpTtrial = gpT for every slot (+ counter)
+    // contact-review P2 (2026-07) — drop ALL path-dependent state (friction slip +
+    // engagement origins, mortar λ_N/λ_T/λ_tie, edge-edge signs/friction, NTS force
+    // snapshots, re-emit anchors/fingerprints/trigger, nodal-mass cache) so
+    // Domain::revertToStart (ops.reset) returns contact to the pristine t=0 state the
+    // way nodes/elements rewind; slots lazily recreate zeroed at the next handle().
+    // The NormalField store (σ/sharedEdge topological caches + the FROZEN global sign)
+    // is deliberately KEPT: the sign is a topological + REFERENCE-geometry datum
+    // (voted on reference coords — ADR-63 F1/D2), so it is config-independent and
+    // re-deriving it would produce the identical value (Q-RESTART semantics).
+    int revertToStart(void);
     int getNumCommits(void) const { return numCommits; }
     int getNumReverts(void) const { return numReverts; }
 

@@ -103,12 +103,35 @@ inline bool inBounds(int nps, double xi, double eta) {
 
 // ----------------------------------------------------- bounded projection
 // BOUNDED closest-point Newton on (x_s − x̄)·g_α = 0 (design-gate BLOCKER-2):
-// cap maxIt; reject if |detK| < 1e-14*|g1||g2| (degenerate/collinear segment).
+// cap maxIt; reject if |detK| < 1e-14*K00*K11 (degenerate/collinear segment —
+// a pure angle criterion, sin²θ < 1e-14, dimensionless so it survives any
+// coordinate/facet scale; detK and K00*K11 are both length⁴).
 // Gauss-Newton metric K = [[g1·g1,g1·g2],[g2·g1,g2·g2]] (drops the O(d) curvature
 // correction — SPD for non-degenerate segments; the de-risk path).
+//
+// TWO convergence tests, either suffices:
+//   (a) |R| < tolR — the shipped ABSOLUTE residual test. R = d·g_α has units
+//       length², so its floating-point noise floor is ~eps·|X|·|g|: for a model
+//       whose coordinates sit far from the origin (e.g. a mm-unit building at
+//       x~5e4 mm with h~500 mm facets, noise ~3e-10) an absolute 1e-12 is
+//       UNREACHABLE and every projection used to die here → contact silently
+//       vanished (review 2026-07 BLOCKER). Kept as the fast path.
+//   (b) |dξ|+|dη| < tolP after the update — the SCALE-FREE escape. Parent
+//       coordinates are O(1), so tolP is dimensionless; 1e-8 bounds the
+//       footpoint error by ~1e-8·h regardless of where the model sits. Checked
+//       AFTER applying the step: when the residual would pass at the NEXT
+//       iterate this exits one iteration early with the IDENTICAL (ξ,η) (flat
+//       facets — one-step residual collapse). On a WARPED facet Gauss-Newton
+//       contracts only linearly, so the escape can exit with a footpoint within
+//       ~tolP parametric of the residual-converged answer (adversarial gate
+//       2026-07: measured drift ≤ ~1e-9 over 5M trials; gap error second-order
+//       ⇒ physically nil; in-bounds classification can flip ONLY for a footpoint
+//       within the 1e-9 parent-boundary slack — measure ~1e-10·h of slave
+//       positions). NO previously-converging input is ever LOST (0/5M).
 // returns: 0 converged in-bounds, 1 converged out-of-bounds, -1 no valid projection.
 inline int project(int nps, const double X[4][3], const double xs[3],
-                   double &xi, double &eta, double tolR, int maxIt) {
+                   double &xi, double &eta, double tolR, int maxIt,
+                   double tolP = 1e-8) {
     xi = (nps == 4) ? 0.0 : (1.0/3.0);
     eta = (nps == 4) ? 0.0 : (1.0/3.0);
     double N[4], dNxi[4], dNeta[4], xbar[3], g1[3], g2[3];
@@ -122,11 +145,11 @@ inline int project(int nps, const double X[4][3], const double xs[3],
         if (std::sqrt(R0*R0 + R1*R1) < tolR) { converged = true; break; }
         double K00 = dot3(g1,g1), K01 = dot3(g1,g2), K11 = dot3(g2,g2);
         double detK = K00*K11 - K01*K01;
-        double scale = norm3(g1) * norm3(g2);
-        if (std::fabs(detK) < 1e-14 * (scale + 1e-300)) return -1;  // degenerate
+        if (std::fabs(detK) < 1e-14 * (K00*K11 + 1e-300)) return -1;  // degenerate (angle test)
         double dxi  = ( K11*R0 - K01*R1) / detK;
         double deta = (-K01*R0 + K00*R1) / detK;
         xi += dxi; eta += deta;
+        if (std::fabs(dxi) + std::fabs(deta) < tolP) { converged = true; break; }
     }
     if (!converged) return -1;
     return inBounds(nps, xi, eta) ? 0 : 1;
