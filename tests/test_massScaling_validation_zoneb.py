@@ -178,7 +178,7 @@ def _added_mass_pct(capsys=None):
         ops.analyze(1, 0.5 * DT_TARGET)
     import re
     err = buf.getvalue()
-    mf = re.search(r"added mass ([0-9.eE+\-]+)% of model mass", err)
+    mf = re.search(r"added mass ([0-9.eE+\-]+)% of total element \(translational\) mass", err)
     ms = re.search(r"scaled (\d+)/(\d+)", err)
     return (float(mf.group(1)) if mf else float("nan"),
             int(ms.group(1)) if ms else -1,
