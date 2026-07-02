@@ -2,7 +2,7 @@
 title: "LadrunoTie (ADR-62) — handoff: P1 collocation + P2 integral-mortar + P2.1 dual + P3 shell/rotational + P3.1 Hermite SHIPPED; shell-to-solid deferred"
 project: Ladruno
 type: handoff
-status: P0 (numpy) + P1 (collocation, PR #454) + P2 (integral-mortar, PR #455) + P2.1 (dual/sparse mortar, PR #462) + P3 (shell/rotational ndf-6, PR #459) + P2.1×P3 composition test (PR #464) + P3.1 (Hermite w–θ edge transfer, -hermite) MERGED to ladruno. Deferred = mortar-Hermite (P3.1b, needs a kernel per-GP hook) + shell-to-solid ties.
+status: P0 (numpy) + P1 (collocation, PR #454) + P2 (integral-mortar, PR #455) + P2.1 (dual/sparse mortar, PR #462) + P3 (shell/rotational ndf-6, PR #459) + P2.1×P3 composition test (PR #464) + P3.1 (Hermite w–θ edge transfer, -hermite, PR #467) MERGED to ladruno. NEXT = shell-to-solid ties (ndf-6↔ndf-3; feasibility gate PASSED — see the shell-to-solid section; ADR + plan being drafted). Also deferred = mortar-Hermite (P3.1b, needs a kernel per-GP hook).
 related:
   - "[[62_ladruno_kinematic_mesh_tie_adr]]"            # the spec (P1/P2 marked SHIPPED)
   - "[[30_ladruno_explicit_constraint_projection_adr]]" # the enforcement handler (SHIPPED, reused unchanged)
@@ -171,6 +171,34 @@ O(γ·h) tie error (γ = shear angle), vanishing thin + on refinement. Oracle
 `H2+H4 ∝ ξ−3ξ²+2ξ³` has a root at ξ=½). FE tests: headline along-interface bending crosses exactly
 at the non-conforming mid-edge node + linear-tie contrast (κ/4 vs exact κ/8) + aligned-bending
 no-regression + 3 refusals. **Shell-to-solid** (the `θ=½∇×u` coupling) remains the open sibling rung.
+
+### Shell-to-solid ties (ndf-6 shell edge ↔ ndf-3 solid face) — NEXT RUNG (feasibility GATE PASSED)
+The one remaining rung where the transfer is a genuinely NEW operator, not a reuse of `P`: a solid
+face has no rotational DOF, so the shell rotation must be SYNTHESIZED from the solid translation field
+(`θ = ½∇×u`, or an Abaqus-style through-thickness moment-arm coupling). Both generators currently
+name-REFUSE this (the "shell-to-solid needs a rotation-from-translation coupling" guard). Before any
+design effort, a **go/no-go feasibility probe was run against the built `.pyd`** (scratchpad, not
+committed) — the gate is **GREEN**:
+1. **Per-node mixed ndf works:** `model('basic','-ndm',3,'-ndf',3)` then `node(tag,x,y,z,'-ndf',6)`
+   creates an ndf-6 node in a default-ndf-3 model (the `BasicBuilder` per-node `-ndf` override).
+2. **Mixed models assemble + run:** an `SSPbrick` (ndf-3) and a `ShellMITC4` (ndf-6) coexist,
+   assemble, and `analyze(1)` returns 0.
+3. **Cross-ndf `EQ_Constraint` rows construct AND enforce through a real solve** (SSPbrick supplying
+   stiffness, `Lagrange` handler): same-DOF (`shell uz = solid uz`) matched to ~1e-16, AND the
+   **curl-like row** (`shell θ_y = solid uz-gradient`, `equationConstraint(sh,5, 1, a,3, +1, b,3, −1)`)
+   reproduced the gradient EXACTLY. ⇒ the `θ=½∇×u` synthesis is expressible + enforceable as an
+   ORDINARY `EQ_Constraint` — the plumbing is NOT the hard part (as P3.1 already implied).
+4. **HANDLER CAVEAT (paid for):** the `Transformation` handler goes SINGULAR on these cross-ndf EQ
+   rows (`U(i,i)=0` factorization fail); `Lagrange` (static) enforces them cleanly, and the explicit
+   path is the shipped `LadrunoProjection` handler. ⇒ tests use `Lagrange`; Transformation is
+   unsupported/needs-investigation for cross-ndf rows. (Matches the existing shell tests, all Lagrange.)
+
+**So the remaining difficulty is the OPERATOR/work-conjugacy design, not the model mechanics.** The
+headline sign-off items for the next session: (a) curl-synthesis vs Abaqus through-thickness coupling;
+(b) which solid nodes enter the rotation row and with what gradient weights; (c) work-conjugacy /
+symmetry of the coupling (a naive point-curl transfers force but can leak energy / be non-symmetric,
+poisoning the momentum conservation that is the whole point of the projection route). A dedicated ADR
++ implementation plan is being drafted (Fable) — see the ADR and the next-session kickoff prompt.
 
 ### Also noted (out of scope for a tie, but adjacent)
 Finite-sliding re-emission (the ADR-60 hook) is for a tie that must survive LARGE interface rotation;
