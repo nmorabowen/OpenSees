@@ -282,6 +282,12 @@ int CentralDifferenceSMS::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBrok
                                : CTSLumping::RowSum;
     }
     useTangentSMS = (data(4) != 0.0);
+    // If THIS object is live and already scaled (recvSelf on a reused object, not
+    // the usual fresh broker construction), restore the injected nodal mass FIRST —
+    // clearing `injected` below would otherwise leak the fictitious ΔM into the
+    // Domain permanently (review 2026-07-01).
+    if (scaled && appliedDomain != 0 && !injected.empty())
+        Ladruno::applyMassScaling(appliedDomain, injected, -1.0);
     injected.clear();
     scaled = false;
     appliedDomain = 0;

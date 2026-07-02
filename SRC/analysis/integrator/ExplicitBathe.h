@@ -294,7 +294,8 @@ private:
     Vector *R_tdt;      // Forces at time t + dt (unused, kept for compatibility)
 
     // Update counter
-    int updateCount;    // Counts updates per step (should be exactly 2)
+    int updateCount;    // Counts external update() calls per step (exactly ONE —
+                        //   the second Noh-Bathe solve is internal to update())
 
     // Integration coefficients (computed from p)
     double a0;          // = p * dt

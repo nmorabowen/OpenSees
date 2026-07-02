@@ -164,6 +164,7 @@ void *OPS_ExplicitBathe(void) {
     bool cflUseTangent = false;
     int cflRecomputeEvery = 0;
     CTSLumping lumping = CTSLumping::RowSum;
+    bool lumpExplicit = false;   // user gave -lump (else -sms flips the default below)
     // Ladruno (W1-E2): orthogonal capability flags on the unified command.
     bool useLNVD = false;       double alpha_flac = 0.8;     // FLAC default if -lnvd given
     bool useSMS = false, useConsistent = false;
@@ -211,6 +212,7 @@ void *OPS_ExplicitBathe(void) {
         } else if (strcmp(arg, "-lump") == 0) {
             if (OPS_GetNumRemainingInputArgs() > 0) {
                 const char *m = OPS_GetString();
+                lumpExplicit = true;
                 if (strcmp(m, "diagonal") == 0)      lumping = CTSLumping::Diagonal;
                 else if (strcmp(m, "rowsum") == 0)   lumping = CTSLumping::RowSum;
                 else if (strcmp(m, "hrz") == 0)      lumping = CTSLumping::HRZ;
@@ -283,6 +285,15 @@ void *OPS_ExplicitBathe(void) {
         return 0;
     }
     if (useSMS) {
+        // Match the deprecated alias commands' sizing default (Diagonal — "matches the
+        // system Diagonal run") when the user did not choose a -lump explicitly. The
+        // unified command's RowSum default is upstream-compatible for the bare dt_cr
+        // ESTIMATE, but letting it leak into the SMS SIZING made
+        //   `integrator ExplicitBathe p -sms dt`  !=  `integrator ExplicitBatheSMS p dt`
+        // on rotational-DOF (consistent-mass beam/shell) models — 8.5x different
+        // injected mass on the review's beam fixture (review 2026-07-01).
+        if (!lumpExplicit)
+            lumping = CTSLumping::Diagonal;
         compute_critical_timestep = 1;   // report the pre-scaling dt_cr (as the SMS aliases do)
         // W1-E3a (MF-1): under mass scaling the per-element eigensolve cannot see the nodal
         // augmentation, so -cflAbort/-recompute on the un-augmented pencil would (wrongly)
@@ -1096,15 +1107,18 @@ int ExplicitBathe::newStep(double _deltaT) {
     return 0;
 }
 
-// Update the response quantities. Called twice per time step:
-//   1st call: after solving at t + p*dt, prepare for t + dt
-//   2nd call: after solving at t + dt, finalize the time step
+// Update the response quantities. Called ONCE per time step by the algorithm
+// (after its solve at t + p*dt); the second Noh-Bathe solve (t + dt) happens
+// INTERNALLY below. A second external update() means a non-Linear algorithm is
+// iterating: it would advance domain time by an extra (1-p)*dt and overwrite
+// A_tpdt with a stale re-solve — the old `> 2` guard let exactly that through
+// silently for a 2-iteration Newton (review 2026-07-01).
 int ExplicitBathe::update(const Vector &U) {
     updateCount++;
-    if (updateCount > 2) {
-        opserr << "WARNING ExplicitBathe::update() - called more than twice in a step.\n";
+    if (updateCount > 1) {
+        opserr << "WARNING ExplicitBathe::update() - called more than once in a step.\n";
         opserr << "  ExplicitBathe is an explicit scheme and requires 'algorithm Linear' "
-                  "(exactly 2 solves per step).\n";
+                  "(exactly ONE update()/step; the second Noh-Bathe solve is internal).\n";
         return -1;
     }
 
@@ -1167,9 +1181,19 @@ int ExplicitBathe::update(const Vector &U) {
         return -3;
     }
 
-    // Solve for acceleration at t + dt (formUnbalance() adds FLAC damping when -lnvd)
-    this->formUnbalance();
-    theLinSOE->solve();
+    // Solve for acceleration at t + dt (formUnbalance() adds FLAC damping when -lnvd).
+    // Check the return codes: a failed assembly/solve here used to be silently
+    // ignored, leaving the SOE's X holding the sub-step-1 solution -> A_tdt would
+    // alias A_tpdt (finite, so the NaN breaker can't catch it). Failing the step
+    // lets the analysis revert (composes with revertToLastStep).
+    if (this->formUnbalance() < 0) {
+        opserr << "ExplicitBathe::update() - sub-step-2 formUnbalance failed\n";
+        return -7;
+    }
+    if (theLinSOE->solve() < 0) {
+        opserr << "ExplicitBathe::update() - sub-step-2 SOE solve failed\n";
+        return -7;
+    }
     *A_tdt = theLinSOE->getX();
     // Ladruno (W1-E2, -consistent): refine this sub-step-2 accel. The SOE diagonal is
     // still the factored 1/mass (DiagonalDirectSolver factors once; "just solve" reuse),
@@ -1371,7 +1395,11 @@ double ExplicitBathe::getUnbalanceNorm(void) const {
 //  which the broker uses (makeForBroker) to construct the right object before recvSelf.
 // =====================================================================================
 int ExplicitBathe::sendSelf(int cTag, Channel &theChannel) {
-    Vector data(11);
+    // The FULL run-control parameter superset (review 2026-07-01: cflAbort /
+    // divergenceFactor / cflRecomputeEvery / cflUseTangent used to be omitted,
+    // so a recvSelf-reconstructed peer silently lost its circuit breakers and
+    // its -tangent dt_cr policy). Both ends grow together (no cross-version DB).
+    Vector data(15);
     data(0)  = p;
     data(1)  = (double)(int)lumping;          // 0=RowSum, 1=Diagonal, 2=HRZ
     data(2)  = alpha_flac;
@@ -1383,6 +1411,10 @@ int ExplicitBathe::sendSelf(int cTag, Channel &theChannel) {
     data(8)  = (double)pcgMaxIt;
     data(9)  = verbose ? 1.0 : 0.0;
     data(10) = (double)compute_critical_timestep;
+    data(11) = cflAbort ? 1.0 : 0.0;
+    data(12) = divergenceFactor;
+    data(13) = (double)cflRecomputeEvery;
+    data(14) = cflUseTangent ? 1.0 : 0.0;
 
     if (theChannel.sendVector(this->getDbTag(), cTag, data) < 0) {
         opserr << "ExplicitBathe::sendSelf() - could not send data\n";
@@ -1392,12 +1424,20 @@ int ExplicitBathe::sendSelf(int cTag, Channel &theChannel) {
 }
 
 int ExplicitBathe::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBroker) {
-    Vector data(11);
+    Vector data(15);
     if (theChannel.recvVector(this->getDbTag(), cTag, data) < 0) {
         opserr << "ExplicitBathe::recvSelf() - could not receive data\n";
         return -1;
     }
 
+    // Validate p BEFORE the q-coefficient recompute below: a corrupted/zero p
+    // would silently produce q1 = 1/(2*0*1) = inf coefficients (the broker
+    // default-constructs with p=0 and relies on this recv to fix it).
+    if (!(data(0) > 0.0 && data(0) < 1.0)) {
+        opserr << "ExplicitBathe::recvSelf() - received invalid p = " << data(0)
+               << " (must be in (0,1)); rejecting\n";
+        return -2;
+    }
     p = data(0);
     {   // decode lumping; default to RowSum (this integrator's default)
         int lc = (int)data(1);
@@ -1419,9 +1459,18 @@ int ExplicitBathe::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &the
     pcgMaxIt      = (int)data(8);
     verbose       = (data(9) != 0.0);
     compute_critical_timestep = (int)data(10);
+    cflAbort         = (data(11) != 0.0);
+    divergenceFactor = data(12);
+    cflRecomputeEvery = (int)data(13);
+    cflUseTangent    = (data(14) != 0.0);
 
     // The {useLNVD, useSMS, useConsistent} flags are set at construction from the
     // classTag (makeForBroker); a fresh-receive resets the transient SMS bookkeeping.
+    // If THIS object is live and already scaled (recvSelf on a reused object), restore
+    // the injected nodal mass FIRST — clearing `injected` would otherwise leak the
+    // fictitious ΔM into the Domain permanently (review 2026-07-01).
+    if (scaled && appliedDomain != 0 && !injected.empty())
+        Ladruno::applyMassScaling(appliedDomain, injected, -1.0);
     injected.clear();
     scaled = false;
     appliedDomain = 0;

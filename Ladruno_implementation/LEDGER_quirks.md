@@ -2136,3 +2136,15 @@ Q-MULTISHELL follow-up; (6) the slave coords fed to the vote are the REFERENCE c
 captured once); (7) RESIDUAL: the degenerate-BLEND fallback still orients by the aggregate seed (review
 GAP-2), so a degenerate blend AND an edge-grazing cloud together can still drop a pair (fails safe) — pass
 `-outward` for that compound corner. `-smoothNormal` OFF stays byte-identical; no classTag; no vanilla touch.
+
+**Collapsing a command family into flags? DIFF THE DEFAULTS, not just the grammar (2026-07-02).**
+The ADR-52 W1-E2 collapse kept every deprecated alias parsing byte-compatibly, but the UNIFIED command
+carried its own `-lump` default (RowSum, upstream-compatible for the bare dt_cr estimate) while the
+alias impl defaulted Diagonal ("matches the system Diagonal run") — so `ExplicitBathe p -sms dt` and
+`ExplicitBatheSMS p dt` sized the SAME model's scaling with DIFFERENT lumping: 3.73 vs 31.88 injected
+mass (8.5x) on a consistent-mass beam, silently. Per-combo byte-identity tests passed because the test
+elements had rowsum == diagonal (Truss — the [[project_zonea_link_blocker]] CDL battery caught that
+equivalence once before). Fixed (review-P2): `-sms` without an explicit `-lump` flips the sizing
+default to Diagonal. LESSON: when merging commands, enumerate every DEFAULT each retired parser had and
+prove the merged parser reproduces them per mode — and put a rotational-DOF (rowsum≠diagonal) model in
+the byte-identity battery.
