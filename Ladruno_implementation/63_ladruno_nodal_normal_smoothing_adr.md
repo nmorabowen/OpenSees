@@ -21,8 +21,20 @@
   AUTO global sign stays ill-conditioned for edge-grazing slave clouds (F2/F3/F5 → `-outward`); mild
   near-apex over-stiffness on sharp crests (the P2.1 gap-aware guard keeps the small-gap non-owner;
   non-destabilizing on realistic arcs; full single-owner = ADR-57 #4b); traction-continuity asserted
-  qualitatively via sustained contact. **Remaining:** the Q-IMPLICIT-NEWTON convergence tripwire (curved
-  IMPLICIT master, gates P3-promotion — a separate focused study), P3 (full `∂n_smooth/∂u`, gated), CI port.
+  qualitatively via sustained contact. **Q-IMPLICIT-NEWTON RESOLVED — outcome (a), CONVERGES (local,
+  2026-07-01):** the implicit quasi-static rig (`tests/test_adr63_smoothnormal_p24_implicit.py`, 3/3;
+  StaticAnalysis + DisplacementControl dragging a slave across a FLAT middle facet whose *smoothed* normal
+  rotates ~15–22° from steep-neighbour nodal-normal tilt) shows the frozen-field symmetric `kn·BᵀB`
+  Newton converges in **2 iterations every step**, *independently of load-step coarseness* (whole facet
+  in a SINGLE step = maximal within-step rotation ⇒ still 2 iters), and up to steep facets / kn≤1e6 /
+  press≤3000. The dropped `∂n_smooth/∂u` is `O(kn·gN)=O(press)` — scaled by the small penalty penetration
+  `gN≈press/kn` ⇒ sub-dominant to `kn·BᵀB`; it only strains at LARGE penetration (`gN`≳15% of the facet),
+  where the FACETED `-geomtan` consistent tangent diverges too (penalty NTS misused, NOT a smoothed-normal
+  defect ⇒ P3 wouldn't rescue it). So **steelman-B's stall concern is empirically REFUTED and P3 stays
+  deferred WITH EVIDENCE.** The `-smoothNormal`+`-geomtan` silent-downgrade warning is present and fires.
+  Battery **160** OFF byte-identical; test-only, no engine code, no classTag. **Remaining:** P3 (full
+  `∂n_smooth/∂u`, gated — now a genuinely-optional follow-up), CI port; separate follow-ups: an auto-sign
+  robust/per-component vote for edge-grazing slaves, and a quantitative junction-traction-continuity gate.
 - **Owner:** Mora Bowen · Palacios · Abell · Guppi
 - **Priority:** high — **resolves the open [[60_ladruno_finite_sliding_reemission_adr]] R3 item** (curved-master
   `orientDir` flip → silent pass-through, today's only `-outward`-caveated combo) and the in-fork
@@ -611,6 +623,53 @@ The parser refuses `-reemit`/`-smoothNormal` only with `-mortar`; they compose w
 - **Q-IMPLICIT-NEWTON tripwire NOT yet run.** The curved-IMPLICIT convergence gate (frozen-field Newton on a
   genuinely curved master, gating P3-promotion) needs an implicit quasi-static rig and is a separate focused
   study — explicit point-mass-on-curve is too ballistic to double as the implicit convergence probe.
+  *(RESOLVED at P2.4 below, 2026-07-01.)*
+
+## P2.4 notes — Q-IMPLICIT-NEWTON convergence tripwire (2026-07-01)
+
+**Outcome (a): CONVERGES — steelman-B's stall concern empirically REFUTED, P3 stays a deferred option.**
+Test-only, NO engine code, no classTag. File: `tests/test_adr63_smoothnormal_p24_implicit.py` (3/3);
+battery **160** OFF byte-identical.
+
+**The rig (isolating `∂n_smooth/∂u` cleanly).** A symmetric convex bump of THREE quad facets: two steep
+outer facets and a FLAT horizontal middle facet. All master nodes FIXED ⇒ the nodal-normal field `n_a` is
+genuinely CONSTANT (a property of the fixed master geometry) ⇒ **no `-reemit` and no facet migration
+needed** — which matters because there is NO validated static+reemit path (every ADR-60 reemit test is
+explicit/CDL). The middle facet is flat, so its *faceted* normal is a constant vertical (0,0,1), but its
+two shared-edge nodal normals inherit the steep outer facets' ~±22° tilt; so dragging a slave ACROSS the
+flat middle facet rotates the *smoothed* normal `n_smooth(ξ)=ΣN_i(ξ)n_i` from vertical toward the tilt
+while the facet geometry stays flat. The dropped `∂n_smooth/∂u` is therefore ENTIRELY the nodal-blend
+rotation through the moving projection — exactly the P3 term, isolated from facet-projection curvature.
+
+**Drive = StaticAnalysis + DisplacementControl on the slave x-DOF.** This is the only sanctioned
+displacement driver — `LadrunoContactHandler::handle()` REFUSES a non-homogeneous (imposed-displacement)
+SP and names DisplacementControl as the way ("it drives a DOF via the load factor, no imposed SP needed").
+Implicit is also *required*: the explicit lane assembles NO tangent (the contact FE returns the
+integrator-routed zero tangent), so only an implicit integrator's `addKtToTang` exercises the frozen-field
+`kn·BᵀB`. The slave is seated at the flat-facet centre (x=0, where `n_smooth` is vertical by symmetry ⇒ no
+frictionless seat-slide) under a constant press decoupled via `loadConst` (a single combined-load
+DisplacementControl is DEGENERATE for a frictionless slave — the two equilibrium equations share one load
+factor ⇒ equilibrium pins to a single slope), then dragged out. A weak lateral spring (ks≪kn) removes the
+crest's zero-lateral-stiffness singularity at the seat step only (during the drag x is displacement-
+controlled ⇒ non-singular anyway); its force is <0.5% of the contact force.
+
+**Result.** The frozen-field symmetric `kn·BᵀB` Newton converges in **2 iterations every step**, and — the
+load-bearing evidence — *independently of load-step coarseness*: the whole facet crossed in a SINGLE step
+(maximal within-step normal rotation) still converges in 2 iterations. It stays 2 up to steep facets
+(hz≤4), stiff penalty (kn≤1e6), heavy press (≤3000). **Why it never stalls:** the dropped `∂n_smooth/∂u`
+term is `O(kn·gN)=O(press)` — scaled by the small penalty penetration `gN≈press/kn` ⇒ sub-dominant to the
+kept `kn·BᵀB` in any well-posed penalty contact (the same reason the shipped faceted default drops its own
+B3 by default and converges fine). The ONLY regime where iterations climb (a swept `gN≳15%` of the facet,
+i.e. a soft-penalty misuse) is where the FACETED `-geomtan` consistent tangent ALSO diverges (and even the
+seat fails) — a penalty-NTS breakdown, not a smoothed-normal defect, so P3's full `∂n_smooth/∂u` would not
+rescue it either. → `LEDGER_quirks.md`.
+
+**Rig lessons (folded).** (i) A lone frictionless slave on a convex master has zero lateral contact
+stiffness at the crest (vertical n ⇒ `kn·nx²=0`) and no lateral equilibrium off-crest ⇒ the seat solve is
+singular/runaway; the weak lateral spring + seat-at-the-symmetric-centre resolves it. (ii) The
+combined-load DisplacementControl degeneracy (one λ scaling both press and drag) forces the `loadConst`
+two-pattern split. (iii) No static+reemit coverage existed ⇒ the fixed-master constant-field rig sidesteps
+it entirely. These are why the rig looks the way it does — recorded so the next agent doesn't re-derive them.
 
 ## Decision log
 
