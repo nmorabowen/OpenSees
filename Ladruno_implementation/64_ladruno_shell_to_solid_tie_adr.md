@@ -1,6 +1,6 @@
 # LadrunoTie shell-to-solid — plane-section rigid-arm coupling of an ndf-6 shell edge to an ndf-3 solid face
 
-> ADR-64. Status: **SHIPPED (PR #PR_ADR64, 2026-07-02).** OQ-1 (operator b-B) and OQ-2
+> ADR-64. Status: **SHIPPED (PR #478, 2026-07-02).** OQ-1 (operator b-B) and OQ-2
 > (frozen-arm / gated-limits v1 contract) signed off; OQ-3 warn-if-omitted, OQ-4..7
 > confirmed as recommended. P4.0 oracle `proto_p4_shell_solid_tie.py` 22/22 (T1–T8, both
 > honest-limit scalings land exactly on the predicted ν·t and γ·t lines; T7 misfit within

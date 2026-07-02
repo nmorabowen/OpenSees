@@ -2,7 +2,7 @@
 title: "LadrunoTie (ADR-62) — handoff: P1 collocation + P2 integral-mortar + P2.1 dual + P3 shell/rotational + P3.1 Hermite + P4 shell-to-solid (-shellSolid, ADR-64) ALL SHIPPED"
 project: Ladruno
 type: handoff
-status: P0 (numpy) + P1 (collocation, PR #454) + P2 (integral-mortar, PR #455) + P2.1 (dual/sparse mortar, PR #462) + P3 (shell/rotational ndf-6, PR #459) + P2.1×P3 composition test (PR #464) + P3.1 (Hermite w–θ edge transfer, -hermite, PR #467) MERGED to ladruno. P4 shell-to-solid (`-shellSolid`, ADR-64, PR #PR_ADR64) SHIPPED 2026-07-02 — the family is COMPLETE. Deferred = mortar-Hermite (P3.1b) + mortar-shellSolid, both blocked on the same kernel per-GP hook; free-thickness-stretch (Abaqus SLIDER) variant deferred (needs constrain-a-non-global-direction).
+status: P0 (numpy) + P1 (collocation, PR #454) + P2 (integral-mortar, PR #455) + P2.1 (dual/sparse mortar, PR #462) + P3 (shell/rotational ndf-6, PR #459) + P2.1×P3 composition test (PR #464) + P3.1 (Hermite w–θ edge transfer, -hermite, PR #467) MERGED to ladruno. P4 shell-to-solid (`-shellSolid`, ADR-64, PR #478) SHIPPED 2026-07-02 — the family is COMPLETE. Deferred = mortar-Hermite (P3.1b) + mortar-shellSolid, both blocked on the same kernel per-GP hook; free-thickness-stretch (Abaqus SLIDER) variant deferred (needs constrain-a-non-global-direction).
 related:
   - "[[62_ladruno_kinematic_mesh_tie_adr]]"            # the spec (P1/P2 marked SHIPPED)
   - "[[30_ladruno_explicit_constraint_projection_adr]]" # the enforcement handler (SHIPPED, reused unchanged)
@@ -172,7 +172,7 @@ O(γ·h) tie error (γ = shear angle), vanishing thin + on refinement. Oracle
 at the non-conforming mid-edge node + linear-tie contrast (κ/4 vs exact κ/8) + aligned-bending
 no-regression + 3 refusals. **Shell-to-solid** shipped as ADR-64 `-shellSolid` (P4, below) — NOT via curl: the plane-section arm operator.
 
-### Shell-to-solid ties (ndf-6 shell edge ↔ ndf-3 solid face) — SHIPPED (`-shellSolid`, ADR-64, PR #PR_ADR64)
+### Shell-to-solid ties (ndf-6 shell edge ↔ ndf-3 solid face) — SHIPPED (`-shellSolid`, ADR-64, PR #478)
 The one remaining rung where the transfer is a genuinely NEW operator, not a reuse of `P`: a solid
 face has no rotational DOF, so the shell rotation must be SYNTHESIZED from the solid translation field
 (`θ = ½∇×u`, or an Abaqus-style through-thickness moment-arm coupling). Both generators currently
@@ -193,7 +193,7 @@ committed) — the gate is **GREEN**:
    path is the shipped `LadrunoProjection` handler. ⇒ tests use `Lagrange`; Transformation is
    unsupported/needs-investigation for cross-ndf rows. (Matches the existing shell tests, all Lagrange.)
 
-**SHIPPED (PR #PR_ADR64, 2026-07-02).** OQ-1/OQ-2 signed off (b-B operator; frozen-arm +
+**SHIPPED (PR #478, 2026-07-02).** OQ-1/OQ-2 signed off (b-B operator; frozen-arm +
 gated-limits v1 contract), OQ-3 warn-if-omitted `-thickness`, OQ-4..7 as recommended. Direction b-B:
 solid face nodes = SLAVES, shell edge polyline = MASTER (`-masterEdge nseg a1 b1 ..`), three
 plane-section rows per solid node `u_s = Σ N_j(u_j + θ_j×d)` through `ltEmitMixedRow` verbatim
