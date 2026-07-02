@@ -161,8 +161,8 @@ buildMassScaling(AnalysisModel *theModel, double dtTarget, CTSLumping lumping,
         double dt_e = elementCriticalDt(ele, useTangent, mdiag, n);
         if (dt_e <= 0.0) { delete[] mdiag; continue; }
 
-        // --- SMS-BETAK: size against the DAMPED step. Stiffness-proportional (betaK)
-        //     Rayleigh damping shrinks the explicit stable step (xi = betaK*w/2 GROWS with
+        // --- SMS-BETAK: size against the DAMPED step. Stiffness-proportional Rayleigh
+        //     damping shrinks the explicit stable step (xi = betaK*w/2 GROWS with
         //     w), so sizing against the undamped 2/w0 UNDER-scales -> still unstable at
         //     dtTarget. With c = betaK/dt_e (= 0.5*betaK*w0) the betaK-damped step at
         //     mass-scale s is dt_d(s) = (2/w0)(sqrt(s + c^2) - c) -- a CLOSED-FORM that
@@ -171,9 +171,11 @@ buildMassScaling(AnalysisModel *theModel, double dtTarget, CTSLumping lumping,
         //     governs explicit stability, and folding it in across scales is non-monotonic.
         //     Mirrors the betaK term of computeCriticalTimeStep's damped estimate.)
         //     Reduces EXACTLY to the undamped s=(dtTarget/dt_e)^2 when betaK=0 -> no-damping
-        //     models are byte-identical.
-        double betaK = ele->getRayleighDampingFactors()(1);
-        if (betaK < 0.0) betaK = 0.0;
+        //     models are byte-identical. betaK is the TOTAL stiffness-proportional
+        //     coefficient betaK + betaKinit + betaKcomm (stiffnessRayleighBeta): all three
+        //     slots damp identically at high frequency, and reading coefs(1) alone silently
+        //     UNDER-scaled `rayleigh 0 0 betaKinit 0` models.
+        double betaK = stiffnessRayleighBeta(ele);
         double cDamp = betaK / dt_e;                                   // = 0.5*betaK*w0
         double dtDamped = dt_e * (std::sqrt(1.0 + cDamp * cDamp) - cDamp);   // current (s=1) damped step
         if (dtDamped >= dtTarget) { delete[] mdiag; continue; }        // already stable incl. betaK damping
@@ -388,9 +390,9 @@ buildMassScalingConsistent(AnalysisModel *theModel, double dtTarget, CTSLumping 
         double dt_e = elementCriticalDt(ele, useTangent, mdiag, n);
         if (dt_e <= 0.0) { delete[] mdiag; continue; }
 
-        // betaK-damped sizing (identical closed form to the lumped path).
-        double betaK = ele->getRayleighDampingFactors()(1);
-        if (betaK < 0.0) betaK = 0.0;
+        // betaK-damped sizing (identical closed form to the lumped path; betaK is the
+        // summed betaK + betaKinit + betaKcomm, see stiffnessRayleighBeta).
+        double betaK = stiffnessRayleighBeta(ele);
         double cDamp = betaK / dt_e;
         double dtDamped = dt_e * (std::sqrt(1.0 + cDamp * cDamp) - cDamp);
         if (dtDamped >= dtTarget) { delete[] mdiag; continue; }   // already stable

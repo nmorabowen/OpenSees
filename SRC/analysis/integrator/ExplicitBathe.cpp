@@ -552,11 +552,13 @@ ExplicitBathe::ExplicitBathe(int classTag, double _p, int compute_critical_times
       damped_critical_element_tag(0),
       undamped_critical_element_tag(0),
       verbose(verbose_), cflAbort(cflAbort_), divergenceFactor(divergenceFactor_),
-      prevKE(0.0), firstStep(true),
+      prevKE(0.0), committedPrevKE(0.0), firstStep(true),
       cflUseTangent(cflUseTangent_), cflRecomputeEvery(cflRecomputeEvery_),
-      cflStepCount(0), cflFirstComputation(true), lumping(lumping_),
+      cflStepCount(0), committedCflStepCount(0),
+      cflFirstComputation(true), lumping(lumping_),
       // Ladruno (W1-E2): LNVD
       useLNVD(useLNVD_), alpha_flac(alpha_flac_), lastUnbalanceNorm(-1.0),
+      committedUnbalanceNorm(-1.0),
       // Ladruno (W1-E2): SMS (consistent requires sms)
       useSMS(useSMS_), useConsistent(useSMS_ && useConsistent_),
       dtTarget(dtTarget_), maxAddedMassFrac(maxAddedMassFrac_),
@@ -955,6 +957,12 @@ int ExplicitBathe::newStep(double _deltaT) {
         return -1;
     }
 
+    // Snapshot the per-step scalar state for revertToLastStep (the vector state
+    // needs no snapshot — the committed node state IS the restart point).
+    committedPrevKE        = prevKE;
+    committedUnbalanceNorm = lastUnbalanceNorm;
+    committedCflStepCount  = cflStepCount;
+
     // Each step performs exactly two solves; reset here so a failed/retried
     // step cannot poison the next step's update() counter (matches CentralDifference).
     updateCount = 0;
@@ -1175,9 +1183,11 @@ int ExplicitBathe::update(const Vector &U) {
         theProjector->project(*A_tdt);
 
     // Circuit breaker 1: catch a blown-up (NaN/Inf) acceleration before it
-    // silently propagates through the rest of the run.
-    const double A_max = A_tdt->pNorm(0);
-    if (A_max != A_max || A_max == std::numeric_limits<double>::infinity()) {
+    // silently propagates through the rest of the run. NOT via pNorm(0): its
+    // max-compare skips NaN entries, so the old A_max != A_max test only ever
+    // fired on +/-Inf (vectorIsFinite scans with std::isfinite).
+    const double A_max = A_tdt->pNorm(0);   // diagnostics only (verbose print below)
+    if (!vectorIsFinite(*A_tdt)) {
         opserr << "ExplicitBathe::update() - ABORT: non-finite acceleration "
                   "(NaN/Inf) - the integration has diverged (dt likely too large).\n";
         return -5;
@@ -1233,14 +1243,55 @@ int ExplicitBathe::formNodTangent(DOF_Group *theDof) {
     return 0;
 }
 
+// Re-sync with a reverted Domain after a failed step (see the header comment).
+// The analysis calls Domain::revertToLastCommit() first — that restores the node
+// trial state, currentTime (undoing the mid-step p*dt / (1-p)*dt advances) and
+// loads. Noh-Bathe is self-starting from (u,v,a)_t, so re-seeding those from the
+// committed node state fully re-syncs the scheme: a value-preserving no-op for
+// the newStep/update abort paths (the cross-step advance is deferred to a
+// successful commitDomain), and the repair for a commitDomain() failure.
+int ExplicitBathe::revertToLastStep(void)
+{
+    if (U_t == 0)                                 // domainChanged never ran
+        return 0;
+    AnalysisModel *theModel = this->getAnalysisModel();
+    if (theModel == 0)
+        return 0;
+
+    DOF_GrpIter &theDOFs = theModel->getDOFs();
+    DOF_Group *dofPtr;
+    while ((dofPtr = theDOFs()) != nullptr) {
+        const ID &id = dofPtr->getID();
+        int idSize = id.Size();
+        const Vector &disp = dofPtr->getCommittedDisp();
+        const Vector &vel = dofPtr->getCommittedVel();
+        const Vector &accel = dofPtr->getCommittedAccel();
+        for (int i = 0; i < idSize; ++i) {
+            int loc = id(i);
+            if (loc >= 0) {
+                (*U_t)(loc) = disp(i);
+                (*V_t)(loc) = vel(i);
+                (*A_t)(loc) = accel(i);
+            }
+        }
+    }
+
+    // Ladruno (ADR-30 P5): newStep projects the committed a0 only under the
+    // !massBuilt gate, so a retry of a stage's FIRST step would otherwise carry
+    // a re-seeded, unprojected A_t. Projection is idempotent — just redo it.
+    if (theProjector != 0 && massBuilt)
+        theProjector->project(*A_t);
+
+    updateCount = 0;
+    prevKE = committedPrevKE;                     // keep the KE breaker armed
+    lastUnbalanceNorm = committedUnbalanceNorm;   // pre-fault relaxation indicator
+    cflStepCount = committedCflStepCount;         // keep the -recompute cadence
+    return 0;
+}
+
 // Commit the state for this time step
 int ExplicitBathe::commit() {
     updateCount = 0;  // Reset update counter for next step
-
-    // Update state vectors: t+dt becomes new t
-    *U_t = *U_tdt;
-    *V_t = *V_tdt;
-    *A_t = *A_tdt;
 
     AnalysisModel *theModel = this->getAnalysisModel();
     if (theModel == nullptr) {
@@ -1273,7 +1324,24 @@ int ExplicitBathe::commit() {
         }
     }
 
-    return theModel->commitDomain();
+    // Commit the Domain FIRST; only then advance the cross-step state vectors
+    // (t+dt becomes the new t). Advancing before commitDomain() left a failed
+    // commit with (u,v,a)_t already advanced past the (un-committed) Domain —
+    // the revertToLastStep re-seed also repairs that, but state-safe-by-
+    // construction beats repair. The tie-force scatter above stays BEFORE the
+    // commit (recorders fire inside commitDomain and read node state, not these
+    // vectors).
+    int rc = theModel->commitDomain();
+    if (rc < 0) {
+        opserr << "ExplicitBathe::commit() - commitDomain failed\n";
+        return rc;
+    }
+
+    *U_t = *U_tdt;
+    *V_t = *V_tdt;
+    *A_t = *A_tdt;
+
+    return rc;
 }
 
 // Get current velocity (for modal damping interface)

@@ -31,6 +31,7 @@
 class AnalysisModel;
 class Element;
 class Matrix;
+class Vector;
 
 // How the element mass is lumped to the diagonal M of the per-element pencil.
 enum class CTSLumping {
@@ -112,5 +113,23 @@ double elementLambdaMax(Element *ele, bool useTangent,
 // must call to size its per-element scale factor.
 double elementCriticalDt(Element *ele, bool useTangent,
                          const double *mdiag, int n);
+
+// Total STIFFNESS-proportional Rayleigh coefficient of an element, for the
+// damped stable-step estimate and the SMS damped sizing. The element damping is
+// C = alphaM*M + betaK*K + betaK0*K_init + betaKc*K_commit: all three beta slots
+// produce the same high-frequency stiffness-proportional damping force
+// (identical at the initial state, where K == K0 == Kc; conservative under
+// softening), so ALL of them shrink the explicit step and ALL must enter the
+// damped closed form. Reading coefs(1) alone silently UNDER-scaled
+// `rayleigh 0 0 betaKinit 0` models — the most common form in practice, chosen
+// precisely to avoid the current tangent (review 2026-07-01). Each slot is
+// clamped at 0 before summing (matches the old betaK<0 guard).
+double stiffnessRayleighBeta(Element *ele);
+
+// true iff every entry of v is finite. The explicit integrators' divergence
+// circuit breakers MUST use this, not Vector::pNorm(0): pNorm's max-compare
+// `(data > value) ? data : value` is false for NaN entries, so NaN is silently
+// SKIPPED and only +/-Inf ever tripped the old `A_max != A_max` check.
+bool vectorIsFinite(const Vector &v);
 
 #endif

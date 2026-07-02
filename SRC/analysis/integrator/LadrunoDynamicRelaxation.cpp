@@ -41,6 +41,7 @@
 
 #include <LadrunoDynamicRelaxation.h>
 #include <LadrunoFictitiousMass.h>
+#include <CriticalTimeStep.h>   // vectorIsFinite (NaN-safe circuit breaker)
 #include <AnalysisModel.h>
 #include <LinearSOE.h>
 #include <Vector.h>
@@ -375,9 +376,11 @@ LadrunoDynamicRelaxation::update(const Vector &U)
         return -4;
     }
 
-    // U is the solved acceleration a_{n+1}. NaN/Inf circuit breaker.
-    const double A_max = U.pNorm(0);
-    if (A_max != A_max || A_max == std::numeric_limits<double>::infinity()) {
+    // U is the solved acceleration a_{n+1}. NaN/Inf circuit breaker. NOT via
+    // pNorm(0): its max-compare skips NaN entries, so the old A_max != A_max
+    // test only ever fired on +/-Inf (vectorIsFinite scans with std::isfinite).
+    const double A_max = U.pNorm(0);   // diagnostics only (verbose print below)
+    if (!vectorIsFinite(U)) {
         opserr << "LadrunoDynamicRelaxation::update() - ABORT: non-finite acceleration "
                   "(dt likely too large / M* too small)\n";
         return -5;
