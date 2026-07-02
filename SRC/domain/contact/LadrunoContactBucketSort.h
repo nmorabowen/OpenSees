@@ -94,11 +94,17 @@ class Grid {
         clip(cz, clipPct, zmin_, zmax_);
 
         // --- grid resolution, capped NX*NY*NZ <= min(nSeg, 5000) (26.37) ---
-        NX_ = std::max(1, (int)((xmax_ - xmin_) / lmax_) + 1);
-        NY_ = std::max(1, (int)((ymax_ - ymin_) / lmax_) + 1);
-        NZ_ = std::max(1, (int)((zmax_ - zmin_) / lmax_) + 1);
-        long cap = std::min((long)nSeg_, (long)5000);
-        while ((long)NX_ * NY_ * NZ_ > cap) {
+        // Per-axis pre-clamp to 5000.0 IN DOUBLE before the int cast: the total is capped
+        // at min(nSeg,5000) cells anyway, and on the clipPct=0 re-emit feed a diverging
+        // node can make (range/lmax_) exceed INT range — a double→int overflow is UB
+        // (review 2026-07: on LLP64 Windows `long` is 32-bit too, so the old product
+        // test could wrap, exit early, and grid_.assign() would request a huge
+        // allocation → bad_alloc mid-run). long long keeps the product test exact.
+        NX_ = std::max(1, (int)std::min(5000.0, (xmax_ - xmin_) / lmax_) + 1);
+        NY_ = std::max(1, (int)std::min(5000.0, (ymax_ - ymin_) / lmax_) + 1);
+        NZ_ = std::max(1, (int)std::min(5000.0, (zmax_ - zmin_) / lmax_) + 1);
+        long long cap = std::min((long long)nSeg_, (long long)5000);
+        while ((long long)NX_ * NY_ * NZ_ > cap) {
             int m = std::max(NX_, std::max(NY_, NZ_));
             if (NX_ == m && NX_ > 1) NX_--;
             else if (NY_ == m && NY_ > 1) NY_--;
