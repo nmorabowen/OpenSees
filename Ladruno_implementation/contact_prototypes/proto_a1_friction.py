@@ -48,8 +48,10 @@ def tract_3d(gT, gpT, n, N, kt, mu, c=0.0, tmax=0.0):
     tT_tr = kt * (np.asarray(gT, float) - np.asarray(gpT, float))
     cap = friction_cap(N, mu, c, tmax)
     nrm = np.linalg.norm(tT_tr)
-    if cap <= 0.0 or nrm <= cap:
-        return tT_tr                                  # stick (or inactive)
+    if cap <= 0.0:
+        return 0.0 * tT_tr                            # zero cone radius: FREE SLIP (review P3)
+    if nrm <= cap:
+        return tT_tr                                  # stick
     return cap * (tT_tr / nrm)                         # slip: capped at the cone
 
 
@@ -63,7 +65,9 @@ def slave_block_analytic(gT, gpT, n, N, kn, kt, mu, c=0.0, tmax=0.0):
     capped = (tmax > 0.0 and tmax < capC)
     cap = tmax if capped else capC
     nrm = np.linalg.norm(tT_tr)
-    if cap <= 0.0 or nrm <= cap:                      # STICK
+    if cap <= 0.0:                                    # zero cone: FREE SLIP, K_ss = 0 (review P3)
+        return 0.0 * Pt
+    if nrm <= cap:                                    # STICK
         return kt * Pt
     nh = tT_tr / nrm
     D_TT = (cap * kt / nrm) * (Pt - np.outer(nh, nh))

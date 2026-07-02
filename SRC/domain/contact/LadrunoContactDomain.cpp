@@ -56,6 +56,20 @@ LadrunoContactDomain::addSurface(LadrunoContactSurface *surf)
                << surf->getTag() << " already exists\n";
         return -1;
     }
+    // contact-review P3: a faceted surface's flat connectivity must be a whole number of
+    // segments — the handler computes nSeg = size/nps, so a mis-counted tag list silently
+    // DROPPED the trailing partial segment (a missing contact facet = localized silent
+    // pass-through with no diagnostic anywhere).
+    if (surf->getKind() != LadrunoContactSurface::SLAVE_NODES) {
+        int nps = surf->getNodesPerSeg();
+        int n   = surf->getNodeTags().Size();
+        if (nps < 3 || nps > 4 || (n % nps) != 0) {
+            opserr << "WARNING LadrunoContactDomain::addSurface() - surface tag "
+                   << surf->getTag() << ": " << n << " connectivity entries is not a whole "
+                      "number of " << nps << "-node segments (nps must be 3 or 4)\n";
+            return -1;
+        }
+    }
     theSurfaces.push_back(surf);
     return 0;
 }
@@ -69,6 +83,18 @@ LadrunoContactDomain::getSurface(int tag) const
     return 0;
 }
 
+bool
+LadrunoContactDomain::contactTagInUse(int tag) const
+{
+    for (size_t i = 0; i < theContacts.size(); i++)
+        if (theContacts[i].tag == tag) return true;
+    for (size_t i = 0; i < theMortarContacts.size(); i++)
+        if (theMortarContacts[i].tag == tag) return true;
+    for (size_t i = 0; i < theRigidPlanes.size(); i++)
+        if (theRigidPlanes[i].tag == tag) return true;
+    return false;
+}
+
 int
 LadrunoContactDomain::addContact(int tag, int masterSurfTag, int slaveSurfTag,
                                  double kn, double kt, double mu, const double *outward,
@@ -80,6 +106,20 @@ LadrunoContactDomain::addContact(int tag, int masterSurfTag, int slaveSurfTag,
     if (getSurface(masterSurfTag) == 0 || getSurface(slaveSurfTag) == 0) {
         opserr << "WARNING LadrunoContactDomain::addContact() - master/slave surface "
                   "not defined (master " << masterSurfTag << ", slave " << slaveSurfTag << ")\n";
+        return -1;
+    }
+    if (contactTagInUse(tag)) {
+        // contact-review P3: the tag keys ALL path state (friction slots, re-emit
+        // fingerprints, force snapshots) — a duplicate silently aliases physical pairs.
+        opserr << "WARNING LadrunoContactDomain::addContact() - contact tag " << tag
+               << " already exists (tags key the friction/re-emit state stores)\n";
+        return -1;
+    }
+    if (kt < 0.0) {
+        // contact-review P3: a negative stick penalty = negative stick stiffness /
+        // sign-flipped elastic predictor, silently wrong. Mirror the kn guard.
+        opserr << "WARNING LadrunoContactDomain::addContact() - friction stick penalty kt "
+                  "must be >= 0 (got " << kt << ")\n";
         return -1;
     }
     if (kn < 0.0) {
@@ -333,6 +373,13 @@ LadrunoContactDomain::addMortarContact(int tag, int masterSurfTag, int slaveSurf
                   "not defined (master " << masterSurfTag << ", slave " << slaveSurfTag << ")\n";
         return -1;
     }
+    if (contactTagInUse(tag)) {
+        // contact-review P3: the tag keys ALL path state (mortar λ/friction slots, edge
+        // state, re-emit fingerprints) — a duplicate silently aliases physical pairs.
+        opserr << "WARNING LadrunoContactDomain::addMortarContact() - contact tag " << tag
+               << " already exists (tags key the mortar/edge state stores)\n";
+        return -1;
+    }
     // The mortar lane integrates D over slave FACETS and M against master FACETS, so both
     // surfaces must be faceted (a SLAVE_NODES node-set carries no facet ⇒ no D). Reject the
     // wrong kinds at this choke point (covers Py + Tcl), mirroring addRigidPlane's guard.
@@ -418,6 +465,11 @@ LadrunoContactDomain::addRigidPlane(int tag, int slaveSurfTag,
     if (surf == 0) {
         opserr << "WARNING LadrunoContactDomain::addRigidPlane() - slave surface "
                << slaveSurfTag << " not defined\n";
+        return -1;
+    }
+    if (contactTagInUse(tag)) {
+        opserr << "WARNING LadrunoContactDomain::addRigidPlane() - contact tag " << tag
+               << " already exists (tags are unique across contact/contactPlane)\n";
         return -1;
     }
     if (surf->getKind() != LadrunoContactSurface::SLAVE_NODES) {

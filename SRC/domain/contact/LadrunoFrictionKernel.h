@@ -102,7 +102,19 @@ inline bool frictionReturnMap(const double gTeff[3], const double gpT[3],
     for (int d = 0; d < 3; d++) tTtr[d] = kt * (gTeff[d] - gpT[d]);
     double cap  = frictionCap(N, mu, cohesion, tauMax);
     double norm = norm3(tTtr);
-    if (cap <= 0.0 || norm <= cap) {                 // stick (or inactive)
+    if (cap <= 0.0) {
+        // ZERO cone radius while the caller's friction guard let the return map run:
+        // the unified cone min(μN+c, τmax) is 0 (reachable via a τmax-only config —
+        // μ=c=0, min(0,τmax)=0 — or a separated caller) ⇒ FREE SLIP: zero tangential
+        // traction, the slip absorbs the whole tangential motion. The OLD branch
+        // returned the RAW ELASTIC traction here ("byte-identity is the guard's job"),
+        // which silently turned `-tauMax`-without-`-mu`/`-cohesion` into an UNBOUNDED
+        // elastic bond (review 2026-07 HIGH-2); the command surface now also REFUSES
+        // that config, so this branch is the defense-in-depth for future callers.
+        for (int d = 0; d < 3; d++) { tFric[d] = 0.0; gpTtrial[d] = gTeff[d]; }
+        return true;
+    }
+    if (norm <= cap) {                               // stick
         for (int d = 0; d < 3; d++) { tFric[d] = -tTtr[d]; gpTtrial[d] = gpT[d]; }
         return false;
     }
@@ -137,7 +149,16 @@ inline void frictionTangentBlock(const double gTeff[3], const double gpT[3],
     double Pt[3][3];                                 // tangent-plane projector I − n⊗n
     for (int i = 0; i < 3; i++)
         for (int j = 0; j < 3; j++) Pt[i][j] = (i == j ? 1.0 : 0.0) - n[i]*n[j];
-    if (cap <= 0.0 || nrm <= cap) {                  // STICK: K_ss = kt·P_t
+    if (cap <= 0.0) {                                // FREE SLIP (zero cone): K_ss = 0
+        // must mirror frictionReturnMap's cap≤0 free-slip branch (zero traction, slip
+        // absorbs the motion ⇒ zero tangential stiffness) — the OLD stick tangent here
+        // was consistent with the OLD raw-elastic force, i.e. a consistently-assembled
+        // unbounded bond that Newton happily converged to (review 2026-07 HIGH-2).
+        for (int i = 0; i < 3; i++)
+            for (int j = 0; j < 3; j++) Kss[i][j] = 0.0;
+        return;
+    }
+    if (nrm <= cap) {                                // STICK: K_ss = kt·P_t
         for (int i = 0; i < 3; i++)
             for (int j = 0; j < 3; j++) Kss[i][j] = kt * Pt[i][j];
         return;
