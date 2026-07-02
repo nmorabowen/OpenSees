@@ -30,6 +30,7 @@
 #include <Node.h>          // ADR-60
 #include <Vector.h>        // ADR-60
 #include <Subdomain.h>     // ADR-60 R6: serial-only refusal — detect a worker Subdomain host
+#include "LadrunoContactProjection.h"   // ADR-63 auto-sign: voteSignRobust (per-slave majority vote)
 
 LadrunoContactDomain::LadrunoContactDomain()
   : numCommits(0), numReverts(0)
@@ -191,7 +192,9 @@ LadrunoContactDomain::clearNormalFields(void)
 
 int
 LadrunoContactDomain::setNormalField(int masterSurfTag, int nps, const int *mTags, int nSeg,
-                                     const double *segCoords, const double globalSeed[3])
+                                     const double *segCoords, const double globalSeed[3],
+                                     const double *slaveCoords, int nSlaves, bool useOutward,
+                                     const double *refSegCoords)
 {
     NormalField &nf = theNormalFields[masterSurfTag];
     unsigned long long fp =
@@ -220,8 +223,23 @@ LadrunoContactDomain::setNormalField(int masterSurfTag, int nps, const int *mTag
     // failure on the temporal axis). The nodal-normal magnitudes/directions still track deformation;
     // only the scalar sign is frozen. signConf flags a near coin-flip (seed ~⟂ field) for the handler.
     if (!nf.signCaptured) {
-        nf.globalSign = LadrunoContactNormalField::voteSign(nSeg, nps, segCoords, &nf.sigma[0],
-                                                            globalSeed, &nf.signConf);
+        // AUTO path (no -outward): a per-slave MAJORITY vote — each slave votes the LOCAL coherent
+        // facet normal at its nearest-facet projection against its LOCAL separation vector, which is
+        // well-conditioned even for an edge-grazing / side-approaching cloud (the aggregate vote's
+        // F2/F3/F5 coin-flip). Fall back to the aggregate seed vote if no slave projected (nVoted==0).
+        // -outward path (useOutward): keep the aggregate seed vote (sign(vote·outward)) unchanged.
+        // vote on the REFERENCE master coords (config-independent — review F1), not the DEFORMED
+        // segCoords the field build uses; the frozen sign is a topological+reference-geometry datum.
+        const double *voteSeg = (refSegCoords != 0) ? refSegCoords : segCoords;
+        int nVoted = 0;
+        if (!useOutward && slaveCoords != 0 && nSlaves > 0) {
+            nf.globalSign = LadrunoContactProjection::voteSignRobust(
+                nps, nSeg, voteSeg, &nf.sigma[0], slaveCoords, nSlaves, &nf.signConf, &nVoted);
+        }
+        if (nVoted == 0) {
+            nf.globalSign = LadrunoContactNormalField::voteSign(nSeg, nps, voteSeg, &nf.sigma[0],
+                                                                globalSeed, &nf.signConf);
+        }
         nf.signCaptured = true;
     }
     // rebuild the per-handle nodal-normal field from the current coords + the FROZEN sign
