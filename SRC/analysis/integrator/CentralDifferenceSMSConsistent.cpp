@@ -118,6 +118,14 @@ void *OPS_CentralDifferenceSMSConsistent(void)
                       "un-augmented element pencil, MF-1); the pre-scaling dt_cr will be "
                       "reported each domainChanged.\n";
             verboseSMS = true;
+            if (strcmp(arg, "-recompute") == 0 && OPS_GetNumRemainingInputArgs() > 0) {
+                // consume the trailing N so it does not fall into the unknown-option
+                // branch (peek-as-string idiom: under openseespy a numeric arg reads
+                // as garbage text, but never as something starting with '-').
+                const char *peek = OPS_GetString();
+                if (peek != 0 && peek[0] == '-')
+                    OPS_ResetCurrentInputArg(-1);   // next flag, not our N — un-read it
+            }
         } else {
             opserr << "WARNING CentralDifferenceSMSConsistent - unknown option " << arg
                    << " (ignored)\n";
@@ -204,12 +212,24 @@ int CentralDifferenceSMSConsistent::domainChanged(void)
         Ladruno::buildMassScalingConsistent(theModel, dtTarget, lumpingSMS,
                                             useTangentSMS, *blocks);
 
+    // Push the POST-SCALING effective stable step to the base (see the lumped
+    // sibling): dtTarget capped by any still-governing excluded/self-reported step.
+    {
+        double effLimit = dtTarget;
+        if (rep.minDtConstrained > 0.0 && rep.minDtConstrained < effLimit)
+            effLimit = rep.minDtConstrained;
+        if (rep.minDtSelfReport > 0.0 && rep.minDtSelfReport < effLimit)
+            effLimit = rep.minDtSelfReport;
+        this->setSMSEffectiveLimit(effLimit);
+    }
+
     double frac = (rep.modelMass > 0.0) ? rep.addedMass / rep.modelMass : 0.0;
     bool over = (maxAddedMassFrac > 0.0 && frac > maxAddedMassFrac);
     if (verboseSMS || over || rep.nSelfReport > 0 || rep.nMismatch > 0 || rep.nConstrained > 0) {
         opserr << "CentralDifferenceSMSConsistent: dtTarget=" << dtTarget
                << " scaled " << rep.nScaled << "/" << rep.nElems
-               << " elements (Olovsson); added mass " << (100.0 * frac) << "% of model mass"
+               << " elements (Olovsson); added mass " << (100.0 * frac)
+               << "% of total element (translational) mass"
                << "; PRE-SCALING dt_cr estimate=" << rep.minDtScaled
                << " (governing un-scaled element step; AFTER scaling the run is stable "
                   "at dt <= dtTarget=" << dtTarget << ")\n";
@@ -228,7 +248,8 @@ int CentralDifferenceSMSConsistent::domainChanged(void)
                << " < dtTarget=" << dtTarget << ".\n";
     if (over)
         opserr << "WARNING CentralDifferenceSMSConsistent: added mass " << (100.0 * frac)
-               << "% exceeds -maxAddedMass cap " << (100.0 * maxAddedMassFrac)
+               << "% of total element (translational) mass exceeds -maxAddedMass cap "
+               << (100.0 * maxAddedMassFrac)
                << "% (proceeding; Olovsson scaling preserves f1 far better than lumped)\n";
 
     // Up-front (not just per-step) non-Diagonal-SOE check: if scaling is actually needed

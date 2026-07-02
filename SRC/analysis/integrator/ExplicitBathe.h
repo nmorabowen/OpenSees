@@ -344,6 +344,11 @@ private:
     bool   useConsistent;     // consistent (Olovsson) variant (requires useSMS)
     double dtTarget;          // target stable step the scaling sizes to
     double maxAddedMassFrac;  // soft cap on added-mass fraction (warn if exceeded)
+    double smsEffectiveLimit; // POST-SCALING effective stable step (dtTarget capped by
+                              //   still-governing excluded/self-reported elements); set
+                              //   by applyMassScalingSMS, consumed by the newStep()
+                              //   dt_cr report so it stops warning against the
+                              //   PRE-scaling pencil (transient; NOT serialized)
     CTSLumping lumpingSMS;    // lumping used by the scaling sizing
     bool   useTangentSMS;     // size scaling from the tangent stiffness
     double pcgTol;            // consistent PCG tolerance

@@ -205,6 +205,15 @@ protected:
     virtual bool refinesAccel(void) const { return false; }
     virtual int  refineAccel(Vector &a)   { return 0; }
 
+    // Ladruno (ADR-36/52 review 2026-07-01): the SMS subclasses report their
+    // POST-SCALING effective stable step here (dtTarget capped by any excluded /
+    // self-reported element that still governs). > 0 flags "mass scaling active"
+    // to newStep(), which then (a) labels the step-1 dt_cr report a PRE-SCALING
+    // estimate and (b) warns "expect INSTABILITY" only when dt exceeds THIS limit
+    // — the un-augmented element pencil cannot see the injected mass, so warning
+    // against it cried wolf on every correctly-scaled run.
+    void setSMSEffectiveLimit(double lim) { smsEffectiveLimit = lim; }
+
 private:
     // Time step
     double deltaT;
@@ -251,6 +260,9 @@ private:
     bool   cflFirstComputation;// gate the detailed report to the first computation
     CTSLumping lumping;        // element-mass lumping for the dt_cr pencil (-lump)
     bool   betaKWarned;        // emit the beta-K-trap warning at most once
+    double smsEffectiveLimit;  // post-scaling effective stable step pushed by an SMS
+                               //   subclass (0 = no mass scaling); see the protected
+                               //   setter (transient; NOT serialized)
 
     // Shared DOF-loop: seed Ut/Vhalf/Aprev from the committed node state (used by
     // domainChanged and revertToLastStep; Vhalf gets the full-step v_n — the
