@@ -1263,16 +1263,19 @@ int ExplicitBathe::update(const Vector &U) {
         return -5;
     }
 
-    // Circuit breaker 2 (opt-in): abort on runaway kinetic energy growth.
+    // Circuit breaker 2 (opt-in): abort on runaway kinetic energy growth. The
+    // baseline is the RUNNING MAX of the KE proxy, NOT the previous step -- a
+    // previous-step baseline false-tripped on free vibration at velocity
+    // troughs (see CentralDifferenceLadruno::update, review 2026-07-02).
     if (divergenceFactor > 0.0) {
         double ke = 0.5 * ((*V_tpdt) ^ (*V_tpdt));   // velocity-based KE proxy
         if (prevKE > 0.0 && ke > divergenceFactor * prevKE) {
-            opserr << "ExplicitBathe::update() - ABORT: kinetic-energy proxy grew by "
-                   << (ke / prevKE) << "x in one step (> " << divergenceFactor
+            opserr << "ExplicitBathe::update() - ABORT: kinetic-energy proxy grew to "
+                   << (ke / prevKE) << "x its running maximum (> " << divergenceFactor
                    << ") - spurious energy growth / instability.\n";
             return -6;
         }
-        if (ke > 0.0) prevKE = ke;
+        if (ke > prevKE) prevKE = ke;   // running max
     }
 
     if (verbose) {

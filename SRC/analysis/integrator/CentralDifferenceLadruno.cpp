@@ -657,16 +657,22 @@ int CentralDifferenceLadruno::update(const Vector &U)
         return -6;
     }
 
-    // Optional circuit breaker: abort on runaway kinetic-energy growth.
+    // Optional circuit breaker: abort on runaway kinetic-energy growth. The
+    // baseline is the RUNNING MAX of the KE proxy, NOT the previous step: in
+    // free vibration KE passes through ~0 at every displacement extreme, and a
+    // previous-step baseline left prevKE ~ eps there -- the quadratic regrowth
+    // off that floor is an unbounded ratio (phase-luck false trips, review
+    // 2026-07-02). For monotonic divergence the previous step IS the max, so
+    // the trip behavior there is unchanged.
     if (divergenceFactor > 0.0) {
         double ke = 0.5 * ((*Vfull) ^ (*Vfull));   // velocity-based KE proxy
         if (prevKE > 0.0 && ke > divergenceFactor * prevKE) {
-            opserr << "CentralDifferenceLadruno::update() - ABORT: kinetic-energy proxy grew by "
-                   << (ke / prevKE) << "x in one step (> " << divergenceFactor
+            opserr << "CentralDifferenceLadruno::update() - ABORT: kinetic-energy proxy grew to "
+                   << (ke / prevKE) << "x its running maximum (> " << divergenceFactor
                    << ") - spurious energy growth / instability.\n";
             return -7;
         }
-        if (ke > 0.0) prevKE = ke;
+        if (ke > prevKE) prevKE = ke;   // running max
     }
 
     if (verbose)

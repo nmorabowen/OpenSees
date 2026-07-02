@@ -2111,7 +2111,7 @@ dtTarget for exactly the users the betaK feature targets. Use `stiffnessRayleigh
 (`CriticalTimeStep.{h,cpp}`): per-slot clamp at 0, then sum. Exact at the initial state (K == K0 == Kc);
 conservative under softening — the right side to err on for a stability bound.
 
-**The `-divergence` KE proxy FALSE-TRIPS on free vibration at velocity troughs (2026-07-02, open).**
+**The `-divergence` KE proxy FALSE-TRIPS on free vibration at velocity troughs (2026-07-02; FIXED review-P3 #475 -- baseline is now the running MAX of KE).**
 The breaker compares per-step `ke/prevKE` against the factor, with `prevKE` updated every step it is
 positive. In plain free vibration the velocity passes through ~0 every half period; the step nearest the
 zero leaves `prevKE ≈ ε`, and the next steps' quadratic KE regrowth off that near-zero floor produces an

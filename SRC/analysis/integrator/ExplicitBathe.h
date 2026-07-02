@@ -319,7 +319,9 @@ private:
     bool cflAbort;            // abort the step if dt exceeds the Noh-Bathe limit
     double divergenceFactor;  // >0: abort if kinetic energy grows by this factor
                               //     in one step (spurious-energy circuit breaker)
-    double prevKE;            // previous-step kinetic-energy proxy (0.5*v.v)
+    double prevKE;            // RUNNING-MAX kinetic-energy proxy (0.5*v.v) --
+                              //   the breaker baseline (a previous-step baseline
+                              //   false-tripped at free-vibration KE troughs)
     double committedPrevKE;   // prevKE at newStep() entry (revertToLastStep; transient)
     bool firstStep;           // first newStep() seeds prevKE / checks cold start
 

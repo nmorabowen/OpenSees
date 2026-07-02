@@ -245,7 +245,9 @@ private:
     bool   verbose;            // per-step dt/energy reporting (default off)
     bool   cflAbort;           // abort the step if dt exceeds the CD limit
     double divergenceFactor;   // >0: abort on runaway kinetic-energy growth
-    double prevKE;             // previous-step kinetic-energy proxy (0.5 v.v)
+    double prevKE;             // RUNNING-MAX kinetic-energy proxy (0.5 v.v) --
+                               //   the breaker baseline (a previous-step baseline
+                               //   false-tripped at free-vibration KE troughs)
     double committedPrevKE;    // prevKE at newStep() entry — restored by
                                //   revertToLastStep so the breaker stays armed
                                //   with the pre-fault baseline (transient; NOT

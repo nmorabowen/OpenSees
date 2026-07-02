@@ -17,6 +17,13 @@ Failing-first tests for the diagnostics fixes that a Zone-A model can reach:
    the total element (translational) lumped mass (nodal getMass() is zero on
    element-rho models, SMS-CAP-DEAD) -- reworded to match.
 
+4. The -divergence KE-proxy breaker compared each step's KE against the
+   PREVIOUS step's, so plain free vibration false-tripped at velocity troughs
+   (KE ~ 0 near a displacement extreme leaves prevKE ~ eps; the quadratic
+   regrowth off that floor is an unbounded ratio -- phase luck decides).
+   Post-fix the baseline is the RUNNING MAX of KE: identical for monotonic
+   divergence (there the previous step IS the max), immune to troughs.
+
 The kernel-guard hardenings of the same PR (consistent-builder ndf clamp, lumped
 sum-ndf pre-walk) are NOT scriptable from a runnable model: any model that
 assembles has sum(node ndf) == element numDOF by construction, so the guards
@@ -147,7 +154,66 @@ def test_sms_recompute_followed_by_flag(capfd):
 
 
 # --------------------------------------------------------------------------
-# 3. cap warning names the actual denominator
+# 3. -divergence KE breaker must not false-trip at free-vibration troughs
+# --------------------------------------------------------------------------
+def _sdof_divergence(integrator_args, nsteps=200, dt=0.005):
+    """Undamped SDOF (k=100, m=1, omega=10, T=0.628) in free vibration; KE passes
+    through ~0 every half period. Returns ops.analyze rc."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.node(1, 0.0, 0.0)
+    ops.fix(1, 1, 1)
+    ops.node(2, 0.0, 0.0)
+    ops.fix(2, 0, 1)
+    ops.mass(2, 1.0, 0.0)
+    ops.uniaxialMaterial("Elastic", 1, 100.0)
+    ops.element("zeroLength", 1, 1, 2, "-mat", 1, "-dir", 1)
+    ops.setNodeVel(2, 1, 1.0, "-commit")
+    ops.constraints("Plain")
+    ops.numberer("Plain")
+    ops.system("Diagonal")
+    ops.test("NormDispIncr", 1e-12, 1)
+    ops.algorithm("Linear")
+    ops.integrator(*integrator_args)
+    ops.analysis("Transient")
+    return ops.analyze(nsteps, dt)
+
+
+@pytest.mark.parametrize(
+    "integrator_args",
+    [
+        ("CentralDifferenceLadruno", "-divergence", 10.0),
+        ("ExplicitBathe", 0.54, "-divergence", 10.0),
+    ],
+    ids=["cd", "eb"],
+)
+def test_divergence_breaker_no_trough_false_trip(integrator_args, capfd):
+    capfd.readouterr()
+    rc = _sdof_divergence(integrator_args)
+    err = capfd.readouterr().err
+    assert rc == 0 and "ABORT" not in err, (
+        "the -divergence KE breaker false-tripped on plain free vibration (KE "
+        "trough leaves prevKE ~ 0 and the regrowth ratio is unbounded); the "
+        "baseline must be the running MAX of KE, not the previous step; "
+        "rc=%s, stderr:\n%s" % (rc, err)
+    )
+
+
+def test_divergence_breaker_still_trips_on_growth(capfd):
+    # dt above the CD stability limit (dt_cr = 0.2) -> genuine exponential blow-up;
+    # the running-max breaker must still fire (before the NaN breaker sees Inf).
+    capfd.readouterr()
+    rc = _sdof_divergence(("CentralDifferenceLadruno", "-divergence", 10.0),
+                          nsteps=200, dt=0.25)
+    err = capfd.readouterr().err
+    assert rc != 0 and "kinetic-energy proxy" in err, (
+        "a genuinely unstable run (dt=0.25 > dt_cr=0.2) must still trip the "
+        "-divergence KE breaker; rc=%s, stderr:\n%s" % (rc, err)
+    )
+
+
+# --------------------------------------------------------------------------
+# 4. cap warning names the actual denominator
 # --------------------------------------------------------------------------
 def test_cap_warning_names_element_mass_denominator(capfd):
     # dtTarget=4 -> s = (4/1.414)^2 = 8 -> added mass 7x the element mass >> 5% cap.
