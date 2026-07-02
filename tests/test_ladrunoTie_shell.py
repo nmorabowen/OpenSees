@@ -26,6 +26,11 @@ on θ) — deferred as the Hermite w–θ transfer P3.1.
   REFUSE    ShellMITC4 / ASDShellQ4 getMass() neglect rotational inertia, so tying a
             rotational DOF without explicit nodal rotary mass is refused (per-DOF
             BLOCKER-2); -dof 1 2 3 (translations only) is still accepted (escape hatch).
+  HERMITE   P3.1 (-hermite, collocation edge ties): bending that varies ALONG the
+            interface (w quadratic on the tie line) crosses EXACTLY via the cubic
+            Hermite w–θ rows — the case the linear P misses at O(h²) (contrast test);
+            every P3-exact case still crosses; refusals for -mortar / partial -dof /
+            interior projections.
 """
 import pytest
 
@@ -112,12 +117,13 @@ def _monolithic_bending():
 # --------------------------------------------------------------------------
 # BENDING — constant moment crosses the non-conforming shell tie exactly
 # --------------------------------------------------------------------------
-def test_collocation_bending_crosses_tie():
+def _collocation_bending(*tie_extra):
     th_ref, uz_ref, tip_ref = _monolithic_bending()
     assert abs(th_ref) > 1e-6, "reference did not bend — check the BCs"
 
     _mesh_butt(rotary_mass=True)
-    ops.LadrunoTie("-slaveNodes", 3, *SLAVE_IFACE, "-masterFacets", 4, 1, *MASTER_FACET)
+    ops.LadrunoTie("-slaveNodes", 3, *SLAVE_IFACE, "-masterFacets", 4, 1, *MASTER_FACET,
+                   *tie_extra)
     _apply_bending_bcs(_ALL)
     _static_solve("Lagrange")
 
@@ -131,6 +137,16 @@ def test_collocation_bending_crosses_tie():
     assert abs(ops.nodeDisp(14, THY) - th_ref) <= tol, "non-conforming node rotation wrong"
     # the slave free end reproduces the reference tip displacement
     assert abs(ops.nodeDisp(12, UZ) - tip_ref) <= tol, "slave tip disp wrong"
+
+
+def test_collocation_bending_crosses_tie():
+    _collocation_bending()
+
+
+def test_hermite_aligned_bending_still_crosses_tie():
+    """No-regression: -hermite reproduces every P3-exact case (the Hermite basis is a
+    superset of the linear one) — the aligned constant-moment strip still crosses."""
+    _collocation_bending("-hermite")
 
 
 def test_collocation_translations_only_blocks_moment():
@@ -238,6 +254,120 @@ def test_collocation_translations_only_accepted_without_rotary_mass():
     # accepted = returns without raising (mirrors test_mortar_nonaffine_slave_accepted)
     ops.LadrunoTie("-slaveNodes", 3, *SLAVE_IFACE, "-masterFacets", 4, 1, *MASTER_FACET,
                    "-dof", 3, 1, 2, 3)
+
+
+# --------------------------------------------------------------------------
+# P3.1 — HERMITE w–θ transfer (-hermite): bending that varies ALONG the interface
+# (w quadratic along the tie line) crosses exactly, which the linear-complete P
+# provably misses at O(h²) (P3 oracle T5). Oracle: proto_p3_1_hermite_tie.py.
+# --------------------------------------------------------------------------
+KAPPA = 0.04                   # curvature ALONG the interface (y): w = ½κy², θx = κy
+
+
+def _mesh_hermite_headline(*tie_extra):
+    """Master quad [0,1]² + THREE bare slave nodes on the x=1 master edge (y=0, 0.5, 1;
+    the y=0.5 node is mid-edge = the genuinely non-conforming one). The slave nodes get
+    full nodal mass (no slave elements — every slave DOF is tied, none are free), the
+    master is fully prescribed with the exact along-interface bending field, and the tie
+    is what must carry that field to the slaves."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 6)
+    for t, (x, y, z) in _MASTER.items():
+        ops.node(t, float(x), float(y), float(z))
+    slave_tags = {21: (1.0, 0.0), 22: (1.0, 0.5), 23: (1.0, 1.0)}
+    for t, (x, y) in slave_tags.items():
+        ops.node(t, x, y, 0.0)
+        ops.mass(t, MR, MR, MR, MR, MR, MR)            # tied DOFs need mass (BLOCKER-2)
+    _shell_section()
+    ops.element("ShellMITC4", 1, *MASTER_FACET, 1)
+    ops.LadrunoTie("-slaveNodes", 3, 21, 22, 23, "-masterFacets", 4, 1, *MASTER_FACET,
+                   *tie_extra)
+
+    # prescribe the exact bending field on the WHOLE master: w = ½κy², θx = κy, rest 0
+    ops.timeSeries("Constant", 1)
+    ops.pattern("Plain", 1, 1)
+    for t, (x, y, z) in _MASTER.items():
+        if abs(y) < 1e-12:
+            ops.fix(t, 1, 1, 1, 1, 1, 1)               # w = θx = 0 at y=0 — plain clamp
+        else:
+            ops.fix(t, 1, 1, 0, 0, 1, 1)               # uz(3), θx(4) prescribed via sp
+            ops.sp(t, 3, 0.5 * KAPPA * y * y)
+            ops.sp(t, 4, KAPPA * y)
+    _static_solve("Lagrange")
+    return slave_tags
+
+
+def test_hermite_along_interface_bending_crosses_tie():
+    """HEADLINE: with -hermite the quadratic-along-the-interface w crosses EXACTLY at
+    the non-conforming mid-edge slave — the cubic Hermite row reconstructs w from the
+    master edge nodes' (w, θ_tangent) pairs. All 6 DOFs checked at every slave."""
+    slaves = _mesh_hermite_headline("-hermite")
+    tol = 1e-9 * KAPPA
+    for t, (x, y) in slaves.items():
+        assert abs(ops.nodeDisp(t, 3) - 0.5 * KAPPA * y * y) <= tol, f"slave {t} w wrong"
+        assert abs(ops.nodeDisp(t, 4) - KAPPA * y) <= tol, f"slave {t} θx wrong"
+        for d in (1, 2, 5, 6):                         # ux, uy, θy, θz stay 0
+            assert abs(ops.nodeDisp(t, d)) <= tol, f"slave {t} spurious DOF {d}"
+
+
+def test_linear_tie_misses_along_interface_bending():
+    """CONTRAST (the P3 honest limit, now demonstrated at the FE level): the SAME field
+    through the plain linear tie leaves the mid-edge slave at the linear interpolant
+    (w(0)+w(1))/2 = κ/4 instead of the exact ½κ(½)² = κ/8 — a 100% relative error."""
+    slaves = _mesh_hermite_headline()                  # no -hermite
+    w_exact = 0.5 * KAPPA * 0.25                       # κ/8 at y = 0.5
+    w_linear = 0.5 * (0.0 + 0.5 * KAPPA)               # κ/4 — the linear interpolant
+    w_tie = ops.nodeDisp(22, 3)
+    assert abs(w_tie - w_linear) <= 1e-9 * KAPPA, "linear tie should give the interpolant"
+    assert abs(w_tie - w_exact) > 0.9 * abs(w_linear - w_exact), \
+        "linear tie unexpectedly reproduced the quadratic w (did -hermite leak in?)"
+
+
+def test_hermite_requires_collocation():
+    """-hermite is collocation-only (a weak-form mortar Hermite needs a kernel
+    extension — deferred): combining it with -mortar is refused."""
+    m_nodes, m_quads = _shell_grid(2, 1)
+    s_nodes, s_quads = _shell_grid(3, 101)
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 6)
+    for t, (x, y, z) in {**m_nodes, **s_nodes}.items():
+        ops.node(t, x, y, z)
+    _shell_section()
+    eid = 1
+    for conn in m_quads + s_quads:
+        ops.element("ShellMITC4", eid, *conn, 1)
+        eid += 1
+    for t in s_nodes:
+        ops.mass(t, 0.0, 0.0, 0.0, MR, MR, MR)
+    sf = [n for q in s_quads for n in q]
+    mf = [n for q in m_quads for n in q]
+    with pytest.raises(Exception):
+        ops.LadrunoTie("-mortar", "-hermite", "-slaveFacets", 4, len(s_quads), *sf,
+                       "-masterFacets", 4, len(m_quads), *mf, "-outward", 0.0, 0.0, 1.0)
+
+
+def test_hermite_requires_full_dof_set():
+    """-hermite couples translations to rotations, so a partial -dof tie is refused."""
+    _mesh_butt(rotary_mass=True)
+    with pytest.raises(Exception):
+        ops.LadrunoTie("-slaveNodes", 3, *SLAVE_IFACE, "-masterFacets", 4, 1, *MASTER_FACET,
+                       "-hermite", "-dof", 3, 1, 2, 3)
+
+
+def test_hermite_refuses_interior_projection():
+    """v1 Hermite is an EDGE (butt-joint) tie: a slave projecting into a master facet's
+    interior has no unique interface tangent and is refused (named)."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 6)
+    for t, (x, y, z) in _MASTER.items():
+        ops.node(t, float(x), float(y), float(z))
+    ops.node(99, 0.5, 0.5, 0.0)                        # dead-center of the master facet
+    ops.mass(99, MR, MR, MR, MR, MR, MR)
+    _shell_section()
+    ops.element("ShellMITC4", 1, *MASTER_FACET, 1)
+    with pytest.raises(Exception):
+        ops.LadrunoTie("-slaveNodes", 1, 99, "-masterFacets", 4, 1, *MASTER_FACET,
+                       "-hermite")
 
 
 def test_mortar_refuse_missing_rotary_mass():

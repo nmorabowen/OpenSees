@@ -146,6 +146,191 @@ ltCheckTiedDofMass(int s, Node *sNode, const ID &dofs,
 }
 
 // --------------------------------------------------------------------------- //
+// P3.1 — Hermite (rotation-consistent) w–θ emission for a shell EDGE tie
+// --------------------------------------------------------------------------- //
+
+// Emit ONE EQ_Constraint with mixed retained (node, dof, coef) triples, dropping
+// near-zero coefficients. rows: nk retained nodes × 6 DOFs of coefficients.
+static bool
+ltEmitMixedRow(Domain *dom, int s, int slaveDof0, int nk, const int *mTags,
+               const double coef[][6], const char *ctx)
+{
+    int cnt = 0;
+    for (int k = 0; k < nk; k++)
+        for (int j = 0; j < 6; j++)
+            if (std::fabs(coef[k][j]) > 1e-12) cnt++;
+    if (cnt == 0) {
+        opserr << "WARNING LadrunoTie" << ctx << " - slave node " << s << " dof "
+               << slaveDof0 + 1 << " produced an empty Hermite row.\n";
+        return false;
+    }
+    ID rNode(cnt), rDOF(cnt);
+    Vector Ccr(cnt);
+    int p = 0;
+    for (int k = 0; k < nk; k++)
+        for (int j = 0; j < 6; j++)
+            if (std::fabs(coef[k][j]) > 1e-12) {
+                rNode(p) = mTags[k];
+                rDOF(p)  = j;                       // 0-based, stored
+                Ccr(p)   = coef[k][j];
+                p++;
+            }
+    EQ_Constraint *eq = new EQ_Constraint(s, slaveDof0, Ccr, rNode, rDOF);
+    if (eq == 0 || dom->addEQ_Constraint(eq) == false) {
+        opserr << "WARNING LadrunoTie" << ctx << " - failed to add EQ_Constraint for slave node "
+               << s << " dof " << slaveDof0 + 1 << "\n";
+        if (eq != 0) delete eq;
+        return false;
+    }
+    return true;
+}
+
+// P3.1 Hermite rows for ONE slave node projecting onto a master facet EDGE (or a
+// coincident corner). The shell-NORMAL translation and the interface-TANGENT slope
+// are reconstructed with the cubic Hermite basis over the edge nodes' (w, θ_t)
+// pairs; the in-plane translations and the non-slope rotations keep the linear
+// weights. Emits 6 EQ_Constraints (u1..u3, θ4..θ6); returns the count emitted, or
+// -1 on a named refusal. Derivation + gates: proto_p3_1_hermite_tie.py (13/13):
+//   u_s = (I−n⊗n)·Σ N_k u_k + n·[Σ Hw_k (n·u_k) + Hp_k (e·θ_k)]
+//   θ_s = (I−e⊗e)·Σ N_k θ_k + e·[Σ dHw_k (n·u_k) + dHp_k (e·θ_k)]
+// with t the edge tangent, n the facet normal at the projection, e = t×n, and
+// slope = dw/ds = θ·e (Kirchhoff; u = θ×r ⇒ ∇w = n×θ ⇒ t·∇w = θ·(t×n)). The whole
+// transfer is invariant under n→−n (n and e always enter in even products).
+static int
+ltEmitHermiteRows(Domain *dom, int s, Node *sNode,
+                  const ID &mfn, int bestF, int nps,
+                  const double X[4][3], const double N[4],
+                  const double dNx[4], const double dNe[4])
+{
+    // --- ndf-6 preconditions (shell-to-shell, all 6 DOFs) ---
+    if (sNode->getNumberDOF() < 6) {
+        opserr << "WARNING LadrunoTie -hermite - slave node " << s << " has ndf "
+               << sNode->getNumberDOF() << "; the Hermite w-theta transfer needs ndf-6 "
+                  "shell nodes on both sides (it couples translations to rotations).\n";
+        return -1;
+    }
+
+    // --- which master nodes carry weight: corner (1) / edge (2) / interior (3+) ---
+    int nz[4], cnt = 0;
+    for (int i = 0; i < nps; i++)
+        if (std::fabs(N[i]) > 1e-12) nz[cnt++] = i;
+
+    if (cnt == 1) {
+        // coincident with a master corner: the Hermite transfer degenerates to the
+        // identity on that node (w_s=w_a, slope_s=slope_a — edge choice irrelevant).
+        int mt = mfn(bestF * nps + nz[0]);
+        Node *mn = dom->getNode(mt);
+        if (mn == 0 || mn->getNumberDOF() < 6) {
+            opserr << "WARNING LadrunoTie -hermite - master node " << mt << " has ndf "
+                   << (mn ? mn->getNumberDOF() : 0) << " (< 6). The Hermite transfer ties "
+                      "shell-to-shell; a shell-to-solid tie needs a rotation-from-translation "
+                      "coupling (out of scope).\n";
+            return -1;
+        }
+        int emitted = 0;
+        for (int d = 0; d < 6; d++) {
+            double coef[1][6] = {{0, 0, 0, 0, 0, 0}};
+            coef[0][d] = 1.0;
+            if (!ltEmitMixedRow(dom, s, d, 1, &mt, coef, " -hermite")) return -1;
+            emitted++;
+        }
+        return emitted;
+    }
+
+    if (cnt != 2 || ((nz[1] - nz[0]) != 1 && (nz[1] - nz[0]) != nps - 1)) {
+        opserr << "WARNING LadrunoTie -hermite - slave node " << s << " projects into the "
+                  "INTERIOR of a master facet (not onto an edge). The v1 Hermite transfer is "
+                  "an EDGE (butt-joint) tie: slave nodes must lie on master facet edges. Use "
+                  "the standard tie (drop -hermite) for surface-overlap collocation.\n";
+        return -1;
+    }
+    // order the edge (a,b) along the facet winding; for the wrap pair (0, nps-1) the
+    // edge runs (nps-1)->0
+    int ia = nz[0], ib = nz[1];
+    if (ib - ia == nps - 1) { ia = nz[1]; ib = nz[0]; }
+
+    int mA = mfn(bestF * nps + ia), mB = mfn(bestF * nps + ib);
+    for (int k = 0; k < 2; k++) {
+        int mt = (k == 0) ? mA : mB;
+        Node *mn = dom->getNode(mt);
+        if (mn == 0 || mn->getNumberDOF() < 6) {
+            opserr << "WARNING LadrunoTie -hermite - master node " << mt << " has ndf "
+                   << (mn ? mn->getNumberDOF() : 0) << " (< 6). The Hermite transfer ties "
+                      "shell-to-shell; a shell-to-solid tie needs a rotation-from-translation "
+                      "coupling (out of scope).\n";
+            return -1;
+        }
+    }
+
+    // --- the (t, n, e) frame at the projection ---
+    double tv[3], hlen = 0.0;
+    for (int d = 0; d < 3; d++) { tv[d] = X[ib][d] - X[ia][d]; hlen += tv[d] * tv[d]; }
+    hlen = std::sqrt(hlen);
+    if (hlen < 1e-300) {
+        opserr << "WARNING LadrunoTie -hermite - degenerate (zero-length) master edge "
+               << mA << "-" << mB << "\n";
+        return -1;
+    }
+    for (int d = 0; d < 3; d++) tv[d] /= hlen;
+
+    double g1[3] = {0, 0, 0}, g2[3] = {0, 0, 0}, nn[3];
+    for (int i = 0; i < nps; i++)
+        for (int d = 0; d < 3; d++) { g1[d] += dNx[i] * X[i][d]; g2[d] += dNe[i] * X[i][d]; }
+    nn[0] = g1[1]*g2[2] - g1[2]*g2[1];
+    nn[1] = g1[2]*g2[0] - g1[0]*g2[2];
+    nn[2] = g1[0]*g2[1] - g1[1]*g2[0];
+    // strip any tangent component (a warped quad's normal may lean), then normalize
+    double nt = nn[0]*tv[0] + nn[1]*tv[1] + nn[2]*tv[2];
+    for (int d = 0; d < 3; d++) nn[d] -= nt * tv[d];
+    double Ln = std::sqrt(nn[0]*nn[0] + nn[1]*nn[1] + nn[2]*nn[2]);
+    if (Ln < 1e-300) {
+        opserr << "WARNING LadrunoTie -hermite - degenerate master facet normal at slave node "
+               << s << "\n";
+        return -1;
+    }
+    for (int d = 0; d < 3; d++) nn[d] /= Ln;
+    double ee[3] = { tv[1]*nn[2] - tv[2]*nn[1],
+                     tv[2]*nn[0] - tv[0]*nn[2],
+                     tv[0]*nn[1] - tv[1]*nn[0] };
+
+    // --- cubic Hermite basis at the edge parameter xi (slope DOFs carry hlen) ---
+    double xi = N[ib] / (N[ia] + N[ib]);        // linear edge weights: N_a = 1-xi, N_b = xi
+    double x2 = xi * xi, x3 = x2 * xi;
+    double Nlin[2] = { 1.0 - xi, xi };
+    double Hw[2]  = { 1.0 - 3.0*x2 + 2.0*x3,        3.0*x2 - 2.0*x3 };
+    double Hp[2]  = { hlen * (xi - 2.0*x2 + x3),    hlen * (x3 - x2) };
+    double dHw[2] = { (-6.0*xi + 6.0*x2) / hlen,    (6.0*xi - 6.0*x2) / hlen };
+    double dHp[2] = { 1.0 - 4.0*xi + 3.0*x2,        3.0*x2 - 2.0*xi };
+
+    // --- assemble + emit the 6 mixed rows ---
+    int mTags[2] = { mA, mB };
+    int emitted = 0;
+    for (int d = 0; d < 3; d++) {               // translation rows u_s,d
+        double coef[2][6];
+        for (int k = 0; k < 2; k++)
+            for (int j = 0; j < 3; j++) {
+                double dij = (d == j) ? 1.0 : 0.0;
+                coef[k][j]     = (dij - nn[d]*nn[j]) * Nlin[k] + nn[d] * Hw[k] * nn[j];
+                coef[k][3 + j] = nn[d] * Hp[k] * ee[j];
+            }
+        if (!ltEmitMixedRow(dom, s, d, 2, mTags, coef, " -hermite")) return -1;
+        emitted++;
+    }
+    for (int r = 0; r < 3; r++) {               // rotation rows theta_s,r
+        double coef[2][6];
+        for (int k = 0; k < 2; k++)
+            for (int j = 0; j < 3; j++) {
+                double drj = (r == j) ? 1.0 : 0.0;
+                coef[k][j]     = ee[r] * dHw[k] * nn[j];
+                coef[k][3 + j] = (drj - ee[r]*ee[j]) * Nlin[k] + ee[r] * dHp[k] * ee[j];
+            }
+        if (!ltEmitMixedRow(dom, s, 3 + r, 2, mTags, coef, " -hermite")) return -1;
+        emitted++;
+    }
+    return emitted;
+}
+
+// --------------------------------------------------------------------------- //
 // generator
 // --------------------------------------------------------------------------- //
 
@@ -153,7 +338,8 @@ int
 LadrunoTie::generate(Domain *dom,
                      const ID &slaves,
                      const ID &mfn, int nps,
-                     const ID &dofsIn, double tolFrac)
+                     const ID &dofsIn, double tolFrac,
+                     bool hermite)
 {
     if (dom == 0) {
         opserr << "WARNING LadrunoTie - domain is not defined\n";
@@ -183,6 +369,22 @@ LadrunoTie::generate(Domain *dom,
             return -1;
         }
         ltDefaultDofs(s0, dofs);
+    }
+
+    // P3.1: the Hermite transfer couples translations to rotations, so a partial DOF
+    // set would emit an inconsistent (one-sided) coupling — require the full 1..6 tie
+    // (the default for a 3D ndf-6 shell node).
+    if (hermite) {
+        bool full6 = (dofs.Size() == 6);
+        for (int di = 0; full6 && di < 6; di++)
+            if (dofs(di) != di + 1) full6 = false;
+        if (!full6) {
+            opserr << "WARNING LadrunoTie -hermite - the Hermite w-theta transfer couples "
+                      "translations to rotations and needs the FULL 6-DOF tie (1..6, the "
+                      "default for a 3D ndf-6 shell node). Drop -dof, or drop -hermite for "
+                      "a partial tie.\n";
+            return -1;
+        }
     }
 
     // --- master facets: flat reference coords (nf*nps*3), node-disjoint set, sizes ---
@@ -303,6 +505,16 @@ LadrunoTie::generate(Domain *dom,
             for (int d = 0; d < 3; d++) X[i][d] = seg[((size_t)bestF * nps + i) * 3 + d];
         double N[4], dNx[4], dNe[4];
         LadrunoContactProjection::shape(nps, bestXi, bestEta, N, dNx, dNe);
+
+        // P3.1: the Hermite w-theta transfer replaces the per-DOF linear rows entirely
+        // (mixed u<-(u,theta) rows over the projected master EDGE). Off = the code below,
+        // byte-identical.
+        if (hermite) {
+            int e6 = ltEmitHermiteRows(dom, s, sNode, mfn, bestF, nps, X, N, dNx, dNe);
+            if (e6 < 0) return -1;
+            emitted += e6;
+            continue;
+        }
 
         // drop near-zero weights so a corner/edge collocation does not spuriously couple
         // (and group-connect) master nodes that carry no share of this slave.
@@ -694,7 +906,10 @@ LadrunoTie::generateMortar(Domain *dom,
 //
 //  P1 (collocation, default):
 //   LadrunoTie -slaveNodes <ns> s1.. -masterFacets <npsM> <nfM> m..
-//              [-dof <nd> d1..] [-tol <frac>]
+//              [-dof <nd> d1..] [-tol <frac>] [-hermite]
+//   (-hermite = P3.1 rotation-consistent cubic Hermite w-theta transfer for ndf-6
+//    shell EDGE ties: exact for bending that varies ALONG the interface, where the
+//    linear transfer is O(h^2). Requires the full 6-DOF tie; collocation only.)
 //
 //  P2 (integral mortar):
 //   LadrunoTie -mortar -slaveFacets <npsS> <nfS> s.. -masterFacets <npsM> <nfM> m..
@@ -759,7 +974,7 @@ int OPS_LadrunoTie()
     }
     if (OPS_GetNumRemainingInputArgs() < 5) {
         opserr << "WARNING want - LadrunoTie -slaveNodes ns s1.. -masterFacets npsM nf m.. "
-                  "<-dof nd d1..> <-tol frac>   |   LadrunoTie -mortar -slaveFacets npsS nf s.. "
+                  "<-dof nd d1..> <-tol frac> <-hermite>   |   LadrunoTie -mortar -slaveFacets npsS nf s.. "
                   "-masterFacets npsM nf m.. <-dof..> <-tol..> <-outward ox oy oz> <-dual>\n";
         return -1;
     }
@@ -769,7 +984,7 @@ int OPS_LadrunoTie()
     double tolFrac = 1.0e-6;
     double outward[3] = {0.0, 0.0, 0.0};
     bool mortar = false, haveSlaveNodes = false, haveSlaveFacets = false;
-    bool haveMaster = false, haveOutward = false, dual = false;
+    bool haveMaster = false, haveOutward = false, dual = false, hermite = false;
 
     while (OPS_GetNumRemainingInputArgs() > 0) {
         const char *opt = OPS_GetString();
@@ -778,6 +993,9 @@ int OPS_LadrunoTie()
         }
         else if (strcmp(opt, "-dual") == 0) {   // P2.1: biorthogonal basis => sparse P (mortar only)
             dual = true;
+        }
+        else if (strcmp(opt, "-hermite") == 0) { // P3.1: Hermite w-theta shell-edge transfer (collocation only)
+            hermite = true;
         }
         else if (strcmp(opt, "-slaveNodes") == 0 || strcmp(opt, "-slave") == 0) {
             if (!ltReadCountedID(slaveNodes, "-slaveNodes")) return -1;
@@ -817,6 +1035,12 @@ int OPS_LadrunoTie()
 
     int rc;
     if (mortar) {
+        if (hermite) {
+            opserr << "WARNING LadrunoTie -hermite - the Hermite w-theta transfer applies only to "
+                      "the collocation mode (a weak-form mortar Hermite needs the Hermite basis "
+                      "inside the M integral - a kernel extension, deferred). Drop -mortar.\n";
+            return -1;
+        }
         if (!haveSlaveFacets || !haveMaster) {
             opserr << "WARNING LadrunoTie -mortar - both -slaveFacets and -masterFacets are required\n";
             return -1;
@@ -834,7 +1058,8 @@ int OPS_LadrunoTie()
                       "(did you mean -mortar with -slaveFacets?)\n";
             return -1;
         }
-        rc = LadrunoTie::generate(theDomain, slaveNodes, masterFacetNodes, npsM, dofs, tolFrac);
+        rc = LadrunoTie::generate(theDomain, slaveNodes, masterFacetNodes, npsM, dofs, tolFrac,
+                                  hermite);
     }
     return (rc < 0) ? -1 : 0;
 }
