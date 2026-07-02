@@ -34,6 +34,24 @@ code lives, the non-obvious decisions, the validated behavior, and what is left.
 
 ## 0. Current state (2026-06-21) — handoff for the next session
 
+> **ADR-52 addendum (2026-07-02) — read this box before the table below.** The six
+> `ExplicitBathe*` classes listed in this document were **collapsed into ONE flag class**
+> (ADR-52 W1-E2, PR #419): the primary command is now
+> `integrator ExplicitBathe $p <-lnvd <alpha>> <-sms $dtTarget> <-consistent>` (classTag
+> 33000). The five other spellings/tags (`ExplicitBatheLNVD` 33002, `ExplicitBatheSMS`
+> 33009, `ExplicitBatheSMSConsistent` 33010, `ExplicitBatheLNVDSMS` 33011,
+> `ExplicitBatheLNVDSMSConsistent` 33012) remain **deprecated-but-recognized aliases**
+> for one release; both brokers route all six tags through `ExplicitBathe::makeForBroker`.
+> The CentralDifference family kept its classes (33003/33007/33008). The 2026-07-01
+> explicit review then landed three fix PRs on top: **#468** (betaKinit/betaKcomm damped
+> SMS sizing, `revertToLastStep()`, NaN-capable circuit breaker), **#472** (`update()`
+> misuse guard, unified `-sms` Diagonal sizing default, sub-step-2 solve return codes,
+> serialization superset), and the kernel-guard + diagnostics batch PR (consistent-builder
+> ndf clamp, lumped Σndf pre-walk, PRE-/POST-SCALING dt_cr warning reword, `-recompute` N
+> consume, PCG-breakdown warning, DGGEV complex-pair skip, prevKE reset, getVel guards).
+> Shipped log: [[52_ladruno_integrator_strengthening_adr]]. Everything below this box is
+> the pre-collapse per-class picture — still accurate on mechanism, superseded on naming.
+
 **The explicit-integrator SMS axis is COMPLETE and merged to `ladruno`.** Selective mass
 scaling exists in BOTH flavors — **lumped** (conventional/DT2MS, ADR 36) and **consistent**
 (Olovsson, ADR 38) — on ALL THREE Ladruno explicit integrators. Six integrator classTags:

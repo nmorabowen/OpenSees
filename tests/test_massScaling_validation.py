@@ -334,7 +334,7 @@ def _prime_sms(integrator_args, dt=1.0e-4):
     return ops.analyze(1, dt)
 
 
-_ADDED_RE = re.compile(r"added mass\s+([0-9.eE+\-]+)% of model mass")
+_ADDED_RE = re.compile(r"added mass\s+([0-9.eE+\-]+)% of total element \(translational\) mass")
 
 
 # --------------------------------------------------------------------------
@@ -362,16 +362,16 @@ def test_cap_warning_fires_with_real_fraction(capfd):
     # '%' straddles the X<<"% exceeds"<<cap message chunks and is exactly what the openseespy
     # PythonStream format-string bug used to eat. So this leg doubly guards (a) the cap fires
     # and (b) the '%'-roundtrip survives -> a PythonStream regression fails HERE, localized.
-    assert "% exceeds -maxAddedMass cap" in err_small, (
+    assert "% of total element (translational) mass exceeds -maxAddedMass cap" in err_small, (
         "the -maxAddedMass cap WARNING (with its leading '%%') must fire when added mass "
         "exceeds a 0.1%% cap; stderr was:\n%s" % err_small
     )
     # positive control: under a 5000%% cap SMS still RUNS and reports a (sub-cap) fraction
-    # ('% of model mass' line present) but does NOT trip the cap. Proves the cap COMPARES
+    # ('% of total element (translational) mass' line present) but does NOT trip the cap. Proves the cap COMPARES
     # (not always-warns) AND that scaling happened (not a silent no-op that trivially passes
     # the 'not in' check).
     assert _ADDED_RE.search(err_big), (
-        "under a 5000%% cap SMS must still run and report 'added mass X%% of model mass' "
+        "under a 5000%% cap SMS must still run and report 'added mass X%% of total element (translational) mass' "
         "(else the control is a vacuous silence); stderr:\n%s" % err_big
     )
     assert "exceeds -maxAddedMass cap" not in err_big, (
@@ -381,7 +381,7 @@ def test_cap_warning_fires_with_real_fraction(capfd):
     # the reported added-mass % must be the REAL element-mass-denominator value, not the
     # dead 0% (SMS-CAP-DEAD: nodal getMass() is 0 on -rho models -> a 0/0 -> 0% cap).
     m = _ADDED_RE.search(err_small)
-    assert m is not None, "no 'added mass X%% of model mass' line found:\n%s" % err_small
+    assert m is not None, "no 'added mass X%% of total element (translational) mass' line found:\n%s" % err_small
     frac_pct = float(m.group(1))
     assert frac_pct > 0.1, (
         "reported added-mass fraction %.4g%% must be the real (non-zero) value above the "

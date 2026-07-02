@@ -262,8 +262,19 @@ inline bool inverseIsomap2D(int nps, const double UV[4][2], const double q[2],
         if (std::sqrt(rx*rx + ry*ry) < tolR) { conv = true; break; }
         double det = j00*j11 - j01*j10;
         if (std::fabs(det) < 1e-300) break;
-        xi  -= ( j11*rx - j01*ry) / det;
-        eta -= (-j10*rx + j00*ry) / det;
+        double dxi  = ( j11*rx - j01*ry) / det;
+        double deta = (-j10*rx + j00*ry) / det;
+        xi  -= dxi;
+        eta -= deta;
+        // contact-review fix (2026-07, the PR-1 project() pattern): the absolute tolR
+        // (1e-13) operates on a LENGTH-unit residual (aux-plane UV ~ facet size h) whose
+        // noise floor is ~eps·h — for facet edges ≳2000 length units it was UNREACHABLE,
+        // the caller silently SKIPped the GP, and mortar contact / `-mortar` ties quietly
+        // lost most of their integration (378/400 GPs dead at h=5e4). The parametric step
+        // is scale-free (parent coords are O(1)); step-converged returns the identical
+        // (ξ,η) as residual-converged one iteration later for the affine-dominated maps
+        // the convex-facet guard admits.
+        if (std::fabs(dxi) + std::fabs(deta) < 1e-10) { conv = true; break; }
     }
     return conv;
 }

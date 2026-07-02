@@ -1714,6 +1714,53 @@ non-obvious behaviours, all relevant to anyone wiring `-stabilize` into a driver
   pre-penetration). FULL imposed-SP support would need a Transformation-style contact handler (no current
   consumer; deferred). Found while building the Hertz benchmark (capstone B3 gate 2).
 
+### Contact-review P3 (2026-07-02): τmax-only friction was an UNBOUNDED bond; validation choke points; mortar isomap scale fix
+- **τmax-only (HIGH-2):** `-tauMax` without `-mu`/`-cohesion` is the unified cone `min(μN+c, τmax) =
+  min(0, τmax) = 0` — a ZERO cone radius (free slip). The kernel's `cap≤0` branch returned the RAW
+  ELASTIC traction ("byte-identity is the guard's job") with a consistent stick tangent, so the config
+  silently became an UNBOUNDED elastic bond — the FE guards treat `tauMax>0` as a friction REQUEST and
+  the handler auto-defaults `kt`, so it fell exactly between the tested branches (Tresca is tested as
+  μ=0 WITH cohesion). FIX at two layers: the kernel `cap≤0` branch now FREE-SLIPS (zero traction, slip
+  absorbs the motion, zero tangent block — `frictionReturnMap` + `frictionTangentBlock` +
+  the numpy mirror in `proto_a1_friction.py`), and the command surface REFUSES `-tauMax`/`-edgeTauMax`
+  without a `-mu`/`-cohesion` (the sanctioned shear-capped BOND is `-cohesion`, optionally + `-tauMax`);
+  on the NTS lane `-tauMax` is refused outright as mortar-only (it was silently INERT there — the
+  positional-μ NTS cone has no shear cap; adversarial-gate MINOR-1, fail-loud like `-geomtan`).
+  cap>0 branches byte-unchanged (166k-case gate fuzz bitwise-identical + oracle byte-guards pass on
+  BOTH pre/post kernels). Oracle: `contact_prototypes/proto_friction_validation.cpp` (12 checks,
+  6 FAIL pre-fix). GATE-SURFACED FOLLOW-UP (pre-existing, not fixed here): mortar AUTO-orientation
+  silently degenerates for COINCIDENT conforming facets — `orientDir = scen − mcen = 0` and the
+  facet-normal flip test never fires, leaving the sign to winding luck; pass `-outward` for coincident
+  interfaces (the shipped c2_1 tests always do). Candidate warn/refuse in the review PR-5 batch.
+- **Validation choke points (previously silent):** duplicate CONTACT tags now refused across
+  contact/mortar/contactPlane (`contactTagInUse` — the tag is the leading key of every path-state
+  store: a duplicate ALIASED friction slots last-writer-wins and ping-ponged the re-emit fingerprint
+  every handle); `kt<0` refused (mirrors the kn guard); faceted-surface connectivity must be a whole
+  number of segments (`size % nps == 0` — the trailing partial segment was silently DROPPED);
+  a missing node or a 2D (`-ndm 2`) node in a contact surface now SKIPS the whole contact LOUDLY at
+  handle() (`ladrunoSurfaceNodesOk` — previously silent dead pairs, and a 2D node read `getCrds()(2)`
+  OUT OF BOUNDS, unchecked in release).
+- **Mortar `inverseIsomap2D` (the PR-1 gate follow-up):** absolute `tolR=1e-13` on a LENGTH-unit
+  residual (aux-plane UV ~ facet size h, noise floor ~eps·h) ⇒ GPs silently SKIPped for h ≳ 2000
+  (378/400 dead at h=5e4) ⇒ `-mortar` contact and `LadrunoTie -mortar` quietly lost their integration
+  at mm-unit-building scales. FIX = the PR-1 parametric-step escape (`|dξ|+|dη| < 1e-10` after the
+  update). In-solver gate: `tests/test_contact_review_p3_validation.py` mortar press at h=1 AND h=5e4
+  settle to the SAME penalty prediction (pre-fix: free fall at h=5e4).
+
+### Contact-review P4 (2026-07-02): the contact handler silently DROPPED every equationConstraint — LadrunoTie + contact = dead ties
+- **Bites:** any model combining `constraints LadrunoContact` with `equationConstraint` — notably the
+  fork's own **LadrunoTie (ADR-62)**, which emits ordinary EQ rows. The handler REPLICATES PlainHandler's
+  DOF/FE loop (so the contact-FE start tag is knowable), but upstream PlainHandler gained an
+  EQ_Constraint block AFTER the replica was written (enforce trivial-identity ⇒ DOF −4; loudly
+  warn-and-ignore non-trivial); the replica had NEITHER ⇒ ties ran completely dead with NO diagnostic —
+  the exact silent-zero class the handler's non-homogeneous-SP warning guards (review HIGH-3).
+- **FIX (upstream parity, no more):** the EQ block is ported — trivial-identity EQs are ENFORCED
+  (DOF mark −4, the numberer's EQ code) and non-trivial ones are warned NOT-ENFORCED, pointing at
+  `constraints LadrunoProjection`. **RULE: contact + non-trivial ties in ONE analysis remains
+  unsupported** (the handlers are mutually exclusive; actual EQ enforcement is the projection
+  handler's job) — it now says so instead of silently producing a wrong answer. Gate:
+  `tests/test_contact_review_p4_eq_parity.py` (capfd warning assert — FAILS pre-fix on silence).
+
 ### B3: NTS contact force is NOT in nodeReaction — use the `ladrunoContactForce` query
 - **Bites:** reading per-node contact pressure. The NTS contact traction is assembled by an injected
   `LadrunoContactFE` adapter (an FE_Element with no backing Domain Element), so it does NOT contribute to
@@ -2111,7 +2158,7 @@ dtTarget for exactly the users the betaK feature targets. Use `stiffnessRayleigh
 (`CriticalTimeStep.{h,cpp}`): per-slot clamp at 0, then sum. Exact at the initial state (K == K0 == Kc);
 conservative under softening — the right side to err on for a stability bound.
 
-**The `-divergence` KE proxy FALSE-TRIPS on free vibration at velocity troughs (2026-07-02, open).**
+**The `-divergence` KE proxy FALSE-TRIPS on free vibration at velocity troughs (2026-07-02; FIXED review-P3 #475 -- baseline is now the running MAX of KE).**
 The breaker compares per-step `ke/prevKE` against the factor, with `prevKE` updated every step it is
 positive. In plain free vibration the velocity passes through ~0 every half period; the step nearest the
 zero leaves `prevKE ≈ ε`, and the next steps' quadratic KE regrowth off that near-zero floor produces an
@@ -2242,3 +2289,16 @@ node; drilling drops out via the 1e-12 filter). What we paid to learn:
   (linearly dependent) Lagrange multiplier rows → `U(i,i)=0`. Current source is fixed; the
   trap only bites pre-flight scripts run against an outdated binary — one model per process
   there.
+**A `pos < n` bounded staged walk can "pass" its own post-check — pre-walk the totals (2026-07-02).**
+The lumped SMS injection walked element nodes with `for (...; pos < n)` and then rejected non-node-major
+layouts with `if (pos != n)`. For an element whose nodes' TOTAL ndf EXCEEDS its mass size n, the bounded
+loop stops MID-NODE at exactly pos == n, the post-check sees n, and the misaligned mass is silently
+committed. The consistent sibling was immune only because its first pass summed ndf UNBOUNDED before
+comparing. Same family of trap next door: the consistent M̄ builder indexed `mdiag[base[a]+d]` for
+d < min-ndm without clamping by each node's OWN ndf — an ndf < ndm node spills the write into the next
+node's block (off the end of Mbar/mdiag on the last node). Fixed (review-P3): pre-walk Σndf and reject
+≠ n up front; clamp `ndmOf[a] = min(ndm_a, ndf_a)`. LESSON: a walk over a matrix whose layout a DIFFERENT
+object (the nodes) defines must validate the FULL mapping before mutating anything — loop bounds are not
+validation. Related: an iterative-solver "did not converge" warning must key on the RESIDUAL, not on
+iters == maxIt — the consistent PCG's pAp≤0 SPD-breakdown guard exits EARLY (iters < maxIt, resid > tol)
+and the old `iters >= maxIt` condition swallowed it silently (also fixed review-P3).

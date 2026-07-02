@@ -217,6 +217,7 @@ and re-verify.
 | `SRC/{tcl/tclMain.cpp,interpreter/PythonModule.cpp}` | Splash-banner feature regen via `patch_banner.py` — extend the `LadrunoTie` line to note the `-dual` biorthogonal/sparse mortar basis (ADR-62 P2.1). Banner strings only; `LadrunoTie.{cpp,h}` are fork-authored. | [#462](https://github.com/nmorabowen/OpenSees/pull/462) |
 | `SRC/{tcl/tclMain.cpp,interpreter/PythonModule.cpp}` | Splash-banner feature regen via `patch_banner.py` — extend the `LadrunoTie` line to note the `-hermite` rotation-consistent w–θ edge transfer (ADR-62 P3.1). Banner strings only; `LadrunoTie.{cpp,h}` are fork-authored. | [#467](https://github.com/nmorabowen/OpenSees/pull/467) |
 | `SRC/{tcl/tclMain.cpp,interpreter/PythonModule.cpp}` | Splash-banner feature regen via `patch_banner.py` — extend the `LadrunoTie` line to note the `-shellSolid` plane-section shell-edge↔solid-face tie (ADR-64 / ADR-62 P4). Banner strings only; `LadrunoTie.{cpp,h}` are fork-authored. | [#PR_ADR64](https://github.com/nmorabowen/OpenSees/pull/PR_ADR64) |
+| `SRC/interpreter/OpenSeesOutputCommands.cpp` | `// Ladruno` contact-review P3: `OPS_LadrunoContact` REFUSES `-tauMax` without `-mu`/`-cohesion` (and `-edgeTauMax` without `-edgeMu`/`-edgeCohesion`) — the unified cone `min(0, τmax) = 0` is free slip; the old kernel silently made it an UNBOUNDED elastic bond. Valid configs byte-identical. | — |
 
 > [!note] Upstreamable bugfixes
 > Some PRs fix genuine upstream bugs (not fork-only features) and are candidates

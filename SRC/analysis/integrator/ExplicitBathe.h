@@ -319,7 +319,9 @@ private:
     bool cflAbort;            // abort the step if dt exceeds the Noh-Bathe limit
     double divergenceFactor;  // >0: abort if kinetic energy grows by this factor
                               //     in one step (spurious-energy circuit breaker)
-    double prevKE;            // previous-step kinetic-energy proxy (0.5*v.v)
+    double prevKE;            // RUNNING-MAX kinetic-energy proxy (0.5*v.v) --
+                              //   the breaker baseline (a previous-step baseline
+                              //   false-tripped at free-vibration KE troughs)
     double committedPrevKE;   // prevKE at newStep() entry (revertToLastStep; transient)
     bool firstStep;           // first newStep() seeds prevKE / checks cold start
 
@@ -344,6 +346,11 @@ private:
     bool   useConsistent;     // consistent (Olovsson) variant (requires useSMS)
     double dtTarget;          // target stable step the scaling sizes to
     double maxAddedMassFrac;  // soft cap on added-mass fraction (warn if exceeded)
+    double smsEffectiveLimit; // POST-SCALING effective stable step (dtTarget capped by
+                              //   still-governing excluded/self-reported elements); set
+                              //   by applyMassScalingSMS, consumed by the newStep()
+                              //   dt_cr report so it stops warning against the
+                              //   PRE-scaling pencil (transient; NOT serialized)
     CTSLumping lumpingSMS;    // lumping used by the scaling sizing
     bool   useTangentSMS;     // size scaling from the tangent stiffness
     double pcgTol;            // consistent PCG tolerance

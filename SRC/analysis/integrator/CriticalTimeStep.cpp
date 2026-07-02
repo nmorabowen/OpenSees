@@ -170,7 +170,13 @@ static double maxGeneralizedEigenvalue(int n, double *K_data, double *M_data)
 
         for (int i = 0; i < n; ++i) {
             if (std::abs(beta[i]) > betaTol) {
-                double lambda = alphar[i] / beta[i];   // imaginary part ~ 0 for SPD pencil
+                // A genuinely COMPLEX eigenpair cannot come from the symmetric K/M
+                // pencil — it is numerical garbage from the general driver on a
+                // near-defective pencil. Skip it instead of treating its real part
+                // as omega^2 (review 2026-07-01).
+                if (std::abs(alphai[i]) > 1.0e-8 * std::abs(alphar[i]))
+                    continue;
+                double lambda = alphar[i] / beta[i];
                 if (lambda > lambdaMax) lambdaMax = lambda;
             }
         }
