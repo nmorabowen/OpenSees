@@ -59,6 +59,37 @@
 #include <cmath>
 
 // ----------------------------------------------------------------------------
+// contact-review P3: pre-flight a contact's surfaces — every referenced node must
+// exist and carry 3D coordinates. Previously a typo'd node tag was skipped in
+// SILENCE (dead pairs, localized pass-through with no diagnostic), and a 2D node
+// (`-ndm 2 -ndf 3` frame) passed the ndf==3 guards while getCrds()(2) read out of
+// bounds (unchecked in release ⇒ nondeterministic garbage geometry). Refuse the
+// WHOLE contact loudly instead of silently processing a partial surface.
+// ----------------------------------------------------------------------------
+static bool
+ladrunoSurfaceNodesOk(Domain *dom, int ctag, const LadrunoContactSurface *s)
+{
+    const ID &tags = s->getNodeTags();
+    for (int i = 0; i < tags.Size(); i++) {
+        Node *n = dom->getNode(tags(i));
+        if (n == 0) {
+            opserr << "WARNING LadrunoContactHandler::handle() - contact " << ctag
+                   << ": node " << tags(i) << " of contactSurface " << s->getTag()
+                   << " does not exist; contact SKIPPED\n";
+            return false;
+        }
+        if (n->getCrds().Size() < 3) {
+            opserr << "WARNING LadrunoContactHandler::handle() - contact " << ctag
+                   << ": node " << tags(i) << " of contactSurface " << s->getTag()
+                   << " has " << n->getCrds().Size() << "D coordinates (contact needs "
+                      "-ndm 3); contact SKIPPED\n";
+            return false;
+        }
+    }
+    return true;
+}
+
+// ----------------------------------------------------------------------------
 // command factory: constraints LadrunoContact
 // ----------------------------------------------------------------------------
 void *OPS_LadrunoContactHandler(void)
@@ -489,6 +520,9 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                        << ": nodesPerSeg " << nps << " unsupported (need 3 or 4); skipped\n";
                 continue;
             }
+            if (!ladrunoSurfaceNodesOk(theDomain, ct.tag, ms) ||
+                !ladrunoSurfaceNodesOk(theDomain, ct.tag, ss))
+                continue;   // contact-review P3: missing / non-3D node ⇒ loud skip above
             if (!ct.knAuto && ct.kn <= 0.0) {
                 // A SEGMENT contact needs a positive penalty (P2b-1 requires -kn).
                 // kn == 0 (e.g. `contact ... -outward` with the kn omitted) is inert;
@@ -883,6 +917,9 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                        << ": needs a penalty (-epsN val|auto or kn > 0); skipped\n";
                 continue;
             }
+            if (!ladrunoSurfaceNodesOk(theDomain, mc.tag, ms) ||
+                !ladrunoSurfaceNodesOk(theDomain, mc.tag, ss))
+                continue;   // contact-review P3: missing / non-3D node ⇒ loud skip above
             const ID &mTags = ms->getNodeTags();
             const ID &sTags = ss->getNodeTags();
             int nSegM = mTags.Size() / npsM;
@@ -1028,6 +1065,9 @@ LadrunoContactHandler::handle(const ID *nodesLast)
             if (npsM < 3 || npsM > 4 || npsS < 3 || npsS > 4) continue;
             bool epsAuto = mc.epsNAuto || mc.knAuto;
             double epsFixed = (mc.epsN > 0.0) ? mc.epsN : mc.kn;
+            if (!ladrunoSurfaceNodesOk(theDomain, mc.tag, ms) ||
+                !ladrunoSurfaceNodesOk(theDomain, mc.tag, ss))
+                continue;   // contact-review P3: missing / non-3D node ⇒ loud skip above
             const ID &mTags = ms->getNodeTags();
             const ID &sTags = ss->getNodeTags();
             int nSegM = mTags.Size() / npsM;

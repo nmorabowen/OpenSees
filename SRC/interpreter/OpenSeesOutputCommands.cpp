@@ -796,6 +796,22 @@ int OPS_LadrunoContact()
                   "(-mu/-cohesion/-tauMax): a mesh-tie has no friction cone\n";
         return -1;
     }
+    // Ladruno contact-review P3: a τmax-only friction config (no -mu, no -cohesion) is the
+    // unified cone min(μN+c, τmax) = min(0, τmax) = 0 ⇒ FREE SLIP — almost certainly not what
+    // the user wanted (a shear-capped BOND is -cohesion, optionally capped by -tauMax). The old
+    // kernel silently turned this config into an UNBOUNDED elastic bond; refuse it loudly.
+    if (tauMax > 0.0 && mortarMu <= 0.0 && cohesion <= 0.0) {
+        opserr << "WARNING contact -tauMax without -mu or -cohesion: the friction cone "
+                  "min(mu*N + c, tauMax) = min(0, tauMax) = 0 (frictionless free slip). For a "
+                  "shear-capped bond use -cohesion <c> (a Tresca cap), optionally with -tauMax\n";
+        return -1;
+    }
+    if (edgeEdge && edgeTauMax > 0.0 && edgeMu <= 0.0 && edgeCohesion <= 0.0) {
+        opserr << "WARNING contact -edgeTauMax without -edgeMu or -edgeCohesion: the edge friction "
+                  "cone min(mu*N + c, tauMax) = min(0, tauMax) = 0 (frictionless free slip). For a "
+                  "shear-capped bond use -edgeCohesion <c>, optionally with -edgeTauMax\n";
+        return -1;
+    }
     if (muc > 0.0 && isTie) {
         // ADR-41 D2.2: a mesh-tie is a permanent bond (no contact-status flips ⇒ no chatter to damp).
         // Refuse -visc with -tie rather than silently ignore it.

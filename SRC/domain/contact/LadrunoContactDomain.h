@@ -490,6 +490,12 @@ class LadrunoContactDomain
     std::vector<Contact> theContacts;
     std::vector<MortarContact> theMortarContacts;       // ADR-41 C2 (separate from NTS)
     std::vector<RigidPlane> theRigidPlanes;             // P2a
+    // contact-review P3: the contact tag is the LEADING KEY of every path-state store
+    // (FrictionState / MortarNormalState / EdgeEdgeState / re-emit fingerprints / NTS
+    // force snapshots) — a duplicate tag ALIASES state slots across physical contacts
+    // (last-writer-wins friction, re-emit fingerprint ping-pong). Enforce uniqueness
+    // across ALL three definition stores at the add* choke points (covers Py + Tcl).
+    bool contactTagInUse(int tag) const;
     int numCommits;
     int numReverts;
 
