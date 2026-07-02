@@ -44,6 +44,8 @@
 #include <DOF_Group.h>
 #include <SP_Constraint.h>
 #include <SP_ConstraintIter.h>
+#include <EQ_Constraint.h>           // Ladruno: contact-review P4 (upstream-parity EQ handling)
+#include <EQ_ConstraintIter.h>
 #include <MP_Constraint.h>
 #include <MP_ConstraintIter.h>
 #include <Element.h>
@@ -390,6 +392,45 @@ LadrunoContactHandler::handle(const ID *nodesLast)
             } else {
                 opserr << "WARNING LadrunoContactHandler::handle() - invalid/duplicate SP at DOF "
                        << dof << " node " << nodeID << endln;
+            }
+        }
+        // contact-review P4 — EQ_Constraint parity with the CURRENT upstream PlainHandler
+        // (added upstream after this replica was written; review HIGH-3): enforce a
+        // trivial-identity EQ (single-entry constraint == 1.0 ⇒ mark the DOF -4, the
+        // numberer's equation-constraint code) and LOUDLY warn-and-ignore any non-trivial
+        // one. Without this, every equationConstraint — including the fork's own
+        // LadrunoTie (ADR-62) rows — was SILENTLY dropped under `constraints
+        // LadrunoContact`: parts of the structure ran unconnected with no diagnostic.
+        // Actual EQ ENFORCEMENT stays the projection handler's job (`constraints
+        // LadrunoProjection`) — contact + non-trivial ties in one analysis remain
+        // unsupported, but now say so instead of silently producing a wrong answer.
+        {
+            EQ_ConstraintIter &theEQs = theDomain->getEQs();
+            EQ_Constraint *eqPtr;
+            while ((eqPtr = theEQs()) != 0) {
+                if (eqPtr->getNodeConstrained() != nodeID)
+                    continue;
+                if (eqPtr->isTimeVarying() == true)
+                    opserr << "WARNING LadrunoContactHandler::handle() - time-varying "
+                              "EQ_Constraint for node " << nodeID << "; non-varying assumed\n";
+                const Vector &C = eqPtr->getConstraint();
+                if (C.Size() > 1 || C(0) != 1.0) {
+                    opserr << "WARNING LadrunoContactHandler::handle() - EQ_Constraint at node "
+                           << nodeID << " is not a trivial identity: NOT ENFORCED by the "
+                              "contact handler (use `constraints LadrunoProjection` for "
+                              "LadrunoTie / equationConstraint models; contact + non-trivial "
+                              "ties in one analysis is unsupported)\n";
+                } else {
+                    int dof = eqPtr->getConstrainedDOFs();
+                    const ID &cid = dofPtr->getID();
+                    if (dof >= 0 && dof < cid.Size() && cid(dof) == -2) {
+                        dofPtr->setID(dof, -4);
+                        countDOF--;
+                    } else {
+                        opserr << "WARNING LadrunoContactHandler::handle() - EQ_Constraint DOF "
+                               << dof << " already constrained at node " << nodeID << endln;
+                    }
+                }
             }
         }
         nodPtr->setDOF_GroupPtr(dofPtr);
