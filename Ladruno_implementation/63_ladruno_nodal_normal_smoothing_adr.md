@@ -53,7 +53,12 @@
   voting outward); full battery **188** incl. `tests/test_adr63_smoothnormal_p25_autosign.py`
   (edge-grazing held + curved crossing sustained, both WITHOUT `-outward`). **Remaining:** P3 (full
   `∂n_smooth/∂u`, gated — genuinely-optional); Q-MULTISHELL per-connected-component vote (a multi-shell
-  master is still refused w/o `-outward`); a quantitative junction-traction-continuity gate; CI port.
+  master is still refused w/o `-outward`). **P2.6 quantitative junction-traction-continuity gate — DONE
+  (test-only, 2026-07-02):** `tests/test_adr63_smoothnormal_p26_junction.py` measures the contact
+  normal's tilt `n_x/n_z` (via a stiff lateral-hold spring's force ÷ press) across a flat→steep junction
+  — faceted jumps 0→−0.60 in one step at the junction (staircase), smoothed ramps continuously (junction
+  step −0.019, ~31× smaller) ⇒ the C0-normal chatter fix is now QUANTIFIED, not just asserted via
+  sustained contact. CI port already satisfied (the p1/p2/p23/p24/p25/p26 tests are tracked + `zone_a`).
 - **Owner:** Mora Bowen · Palacios · Abell · Guppi
 - **Priority:** high — **resolves the open [[60_ladruno_finite_sliding_reemission_adr]] R3 item** (curved-master
   `orientDir` flip → silent pass-through, today's only `-outward`-caveated combo) and the in-fork
@@ -775,6 +780,36 @@ once-per-capture cost). **Vote-math lens surfaced two HIGH findings — BOTH FIX
   low-conf warning flags an ambiguous vote); a `nVoted==0` fallback onto a zero seed still warns
   (conf=0 trips `conf<0.1`); a broken master where most facets fail to project — out of scope (the
   field already refuses non-manifold/closed).
+
+## P2.6 notes — quantitative junction-traction-continuity gate (test-only, 2026-07-02)
+
+**The C0-normal chatter fix, now measured (not just asserted).** ADR-60/P1 and P2.2/P2.3 asserted the
+continuity benefit only qualitatively (sustained contact). This gate quantifies it. Test-only, no engine
+code. File: `tests/test_adr63_smoothnormal_p26_junction.py` (1/1).
+
+**Observable = the contact normal's tilt `n_x/n_z`.** A frictionless slave pressed with load `P` and held
+laterally at position `x` needs lateral force `F_lat = P·(n_x/n_z)` (the tangential component of the
+normal reaction). So `F_lat/P` is the contact normal's tilt at `x`. A **stiff lateral-hold spring** reads
+`F_lat` directly (its element force) — the clean route, because (a) `reactions()` does NOT expose contact
+forces under the `LadrunoContact` handler (a fixed-DOF probe reads zero), and (b) `DisplacementControl`'s
+load factor is not a usable force readout here (the flat facet's zero lateral stiffness makes it run
+away). Each `x` is an **independent static probe** (rebuild + `LoadControl` seat), so the trace is a
+direct snapshot of the normal FIELD's continuity — no path dependence, no chatter accumulation.
+
+**Rig.** A FLAT middle facet (`z=HZ`) flanked by two STEEP outer facets (all master nodes fixed), so the
+junction at `x=HALF` is a flat→steep transition — the sharpest possible FACETED normal jump (vertical →
+tilted). Slave free in x,z (y fixed) at the surface with a small penetration; a stiff spring (`KLAT≫`
+contact lateral force ⇒ probe-x accurate) holds x to a grounded twin; a constant press seats z.
+Frictionless, explicit `-outward` (this gate is about the normal DIRECTION continuity, not the sign).
+
+**Result.** Faceted tilt = `0` on the flat facet, **jumps to −0.60 in ONE step at the junction**, then
+constant −0.60 (a staircase — the chatter driver). Smoothed tilt ramps **continuously** `0 → −0.30`
+(at the junction) `→ −0.49`, with a junction step of only **−0.019** (~31× smaller than the faceted 0.60)
+and a max per-step jump of 0.024 (~25× smaller). Both reach a comparable steep-facet tilt (continuity, not
+a different converged answer). **Co-activation is transparent** to this metric: near the junction two
+pairs may be active, but with smoothing they share the same C0 `n_smooth`, and the tilt is a force RATIO
+(the two pairs split the normal force but leave `n_x/n_z` unchanged) — so the measurement sees the normal
+DIRECTION, not the pair count. → the ADR-41 Q-NORMAL chatter claim for the NTS lane is now evidence-backed.
 
 ## Decision log
 
