@@ -1,8 +1,8 @@
 ---
-title: "LadrunoTie (ADR-62) — handoff: P1 collocation + P2 integral-mortar + P2.1 dual + P3 shell/rotational + P3.1 Hermite SHIPPED; shell-to-solid deferred"
+title: "LadrunoTie (ADR-62) — handoff: P1 collocation + P2 integral-mortar + P2.1 dual + P3 shell/rotational + P3.1 Hermite + P4 shell-to-solid (-shellSolid, ADR-64) ALL SHIPPED"
 project: Ladruno
 type: handoff
-status: P0 (numpy) + P1 (collocation, PR #454) + P2 (integral-mortar, PR #455) + P2.1 (dual/sparse mortar, PR #462) + P3 (shell/rotational ndf-6, PR #459) + P2.1×P3 composition test (PR #464) + P3.1 (Hermite w–θ edge transfer, -hermite, PR #467) MERGED to ladruno. NEXT = shell-to-solid ties (ndf-6↔ndf-3; feasibility gate PASSED — see the shell-to-solid section; ADR + plan being drafted). Also deferred = mortar-Hermite (P3.1b, needs a kernel per-GP hook).
+status: P0 (numpy) + P1 (collocation, PR #454) + P2 (integral-mortar, PR #455) + P2.1 (dual/sparse mortar, PR #462) + P3 (shell/rotational ndf-6, PR #459) + P2.1×P3 composition test (PR #464) + P3.1 (Hermite w–θ edge transfer, -hermite, PR #467) MERGED to ladruno. P4 shell-to-solid (`-shellSolid`, ADR-64, PR #478) SHIPPED 2026-07-02 — the family is COMPLETE. Deferred = mortar-Hermite (P3.1b) + mortar-shellSolid, both blocked on the same kernel per-GP hook; free-thickness-stretch (Abaqus SLIDER) variant deferred (needs constrain-a-non-global-direction).
 related:
   - "[[62_ladruno_kinematic_mesh_tie_adr]]"            # the spec (P1/P2 marked SHIPPED)
   - "[[30_ladruno_explicit_constraint_projection_adr]]" # the enforcement handler (SHIPPED, reused unchanged)
@@ -12,7 +12,7 @@ related:
 tags: [adr, constraints, explicit-dynamics, mesh-tie, projection, kinematic, mortar, handoff]
 ---
 
-# LadrunoTie — handoff (P1 + P2 + P2.1 + P3 shipped; P3.1 / shell-to-solid next)
+# LadrunoTie — handoff (P1 + P2 + P2.1 + P3 + P3.1 + P4 shell-to-solid ALL shipped)
 
 ## TL;DR — what exists now (all on `ladruno`)
 
@@ -170,9 +170,9 @@ O(γ·h) tie error (γ = shear angle), vanishing thin + on refinement. Oracle
 3D-inclined global-DOF rows, γ-bound; gotcha: the shear-error test must NOT sample midpoints —
 `H2+H4 ∝ ξ−3ξ²+2ξ³` has a root at ξ=½). FE tests: headline along-interface bending crosses exactly
 at the non-conforming mid-edge node + linear-tie contrast (κ/4 vs exact κ/8) + aligned-bending
-no-regression + 3 refusals. **Shell-to-solid** (the `θ=½∇×u` coupling) remains the open sibling rung.
+no-regression + 3 refusals. **Shell-to-solid** shipped as ADR-64 `-shellSolid` (P4, below) — NOT via curl: the plane-section arm operator.
 
-### Shell-to-solid ties (ndf-6 shell edge ↔ ndf-3 solid face) — NEXT RUNG (feasibility GATE PASSED)
+### Shell-to-solid ties (ndf-6 shell edge ↔ ndf-3 solid face) — SHIPPED (`-shellSolid`, ADR-64, PR #478)
 The one remaining rung where the transfer is a genuinely NEW operator, not a reuse of `P`: a solid
 face has no rotational DOF, so the shell rotation must be SYNTHESIZED from the solid translation field
 (`θ = ½∇×u`, or an Abaqus-style through-thickness moment-arm coupling). Both generators currently
@@ -193,17 +193,23 @@ committed) — the gate is **GREEN**:
    path is the shipped `LadrunoProjection` handler. ⇒ tests use `Lagrange`; Transformation is
    unsupported/needs-investigation for cross-ndf rows. (Matches the existing shell tests, all Lagrange.)
 
-**So the remaining difficulty is the OPERATOR/work-conjugacy design, not the model mechanics.** The
-headline sign-off items for the next session: (a) curl-synthesis vs Abaqus through-thickness coupling;
-(b) which solid nodes enter the rotation row and with what gradient weights; (c) work-conjugacy /
-symmetry of the coupling (a naive point-curl transfers force but can leak energy / be non-symmetric,
-poisoning the momentum conservation that is the whole point of the projection route). The dedicated
-decision record + full implementation plan is **ADR-64** (`64_ladruno_shell_to_solid_tie_adr.md`):
-operator DECIDED = direction b-B (solid face nodes = SLAVES, shell edge = MASTER, rigid plane-section
-arm rows `u_s = Σ N_j(u_j + θ_j×d)` reusing `ltEmitMixedRow` verbatim; drilling falls out free, no
-rotary-mass precondition, curl-synthesis and the shell-slave gradient direction both rejected there
-with named disqualifiers). Awaiting the two headline sign-offs (OQ-1 operator, OQ-2 work-conjugacy
-scope) before P4.0 oracle + code.
+**SHIPPED (PR #478, 2026-07-02).** OQ-1/OQ-2 signed off (b-B operator; frozen-arm +
+gated-limits v1 contract), OQ-3 warn-if-omitted `-thickness`, OQ-4..7 as recommended. Direction b-B:
+solid face nodes = SLAVES, shell edge polyline = MASTER (`-masterEdge nseg a1 b1 ..`), three
+plane-section rows per solid node `u_s = Σ N_j(u_j + θ_j×d)` through `ltEmitMixedRow` verbatim
+(drilling dropped by the 1e-12 filter ⇒ free; `ltProjectEdge` closed-form point-to-segment; dofs
+fixed {1,2,3}; `-mortar`/`-hermite`/`-dual`/`-dof` refused, named). Validation: oracle
+`proto_p4_shell_solid_tie.py` 22/22 (T1–T8; ν·t and γ·t honest-limit scalings EXACTLY as predicted),
+FE `tests/test_ladrunoTie_shellsolid.py` 18/18 (membrane patch on a NESTED 2:1 grid — collocation
+force transfer needs nesting, see quirks; rigid; prescribed section state; HEADLINE constant moment
+crossing SSPbrick↔ShellMITC4 with θ_edge ≈ THETA/2 on matched EI; hand-emitted translations-only
+hinge contrast; 8 named refusals; explicit dt_cr-neutral + machine-zero violation + momentum
+kick–coast), full tie battery 50/50 + projection battery 49/49 no-regression. **Field correction to
+the ADR draft:** the explicit projector still needs small nodal rotary mass on the master edge θx/θy
+(every group DOF stays in the explicit equation set — `rigidLink -beam` precedent) and a LUMPED-mass
+shell (`ASDShellQ4` works, `ShellMITC4`'s consistent mass is refused); the GENERATOR-level rotary
+precondition is gone and static Lagrange needs nothing. Deferred rungs: mortar-shellSolid (kernel
+per-GP hook, with P3.1b) and the free-thickness-stretch SLIDER variant (architecture change).
 
 ### Also noted (out of scope for a tie, but adjacent)
 Finite-sliding re-emission (the ADR-60 hook) is for a tie that must survive LARGE interface rotation;

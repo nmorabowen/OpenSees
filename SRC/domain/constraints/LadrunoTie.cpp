@@ -161,7 +161,7 @@ ltEmitMixedRow(Domain *dom, int s, int slaveDof0, int nk, const int *mTags,
             if (std::fabs(coef[k][j]) > 1e-12) cnt++;
     if (cnt == 0) {
         opserr << "WARNING LadrunoTie" << ctx << " - slave node " << s << " dof "
-               << slaveDof0 + 1 << " produced an empty Hermite row.\n";
+               << slaveDof0 + 1 << " produced an empty mixed-coefficient row.\n";
         return false;
     }
     ID rNode(cnt), rDOF(cnt);
@@ -223,8 +223,8 @@ ltEmitHermiteRows(Domain *dom, int s, Node *sNode,
         if (mn == 0 || mn->getNumberDOF() < 6) {
             opserr << "WARNING LadrunoTie -hermite - master node " << mt << " has ndf "
                    << (mn ? mn->getNumberDOF() : 0) << " (< 6). The Hermite transfer ties "
-                      "shell-to-shell; a shell-to-solid tie needs a rotation-from-translation "
-                      "coupling (out of scope).\n";
+                      "shell-to-shell. For a shell EDGE tied to a solid FACE use -shellSolid "
+                      "(ADR-64 plane-section coupling; the SOLID face nodes are the slaves).\n";
             return -1;
         }
         int emitted = 0;
@@ -256,8 +256,8 @@ ltEmitHermiteRows(Domain *dom, int s, Node *sNode,
         if (mn == 0 || mn->getNumberDOF() < 6) {
             opserr << "WARNING LadrunoTie -hermite - master node " << mt << " has ndf "
                    << (mn ? mn->getNumberDOF() : 0) << " (< 6). The Hermite transfer ties "
-                      "shell-to-shell; a shell-to-solid tie needs a rotation-from-translation "
-                      "coupling (out of scope).\n";
+                      "shell-to-shell. For a shell EDGE tied to a solid FACE use -shellSolid "
+                      "(ADR-64 plane-section coupling; the SOLID face nodes are the slaves).\n";
             return -1;
         }
     }
@@ -528,21 +528,25 @@ LadrunoTie::generate(Domain *dom,
                        << " (numberDOF " << sNode->getNumberDOF() << ")\n";
                 return -1;
             }
-            // P3: shell-to-shell only — every retained master node must actually carry
+            // P3: like-to-like only — every retained master node must actually carry
             // this DOF. A shell slave (ndf 6) tied to ndf-3 solid master facet nodes would
-            // emit an EQ row on nonexistent master rotational DOFs; that needs a θ=½∇×u
-            // rotation-from-translation coupling (not a straight P), which is out of v1
-            // scope. Refuse cleanly rather than emit an invalid constraint.
+            // emit an EQ row on nonexistent master rotational DOFs. The shell-to-solid
+            // coupling exists as its own mode (ADR-64 -shellSolid, plane-section rigid
+            // arms with the SOLID face nodes as slaves — the curl route the old refusal
+            // suggested was investigated and rejected there). Refuse cleanly rather than
+            // emit an invalid constraint.
             for (int i = 0; i < nps; i++)
                 if (std::fabs(N[i]) > 1e-12) {
                     Node *mn = dom->getNode(mfn(bestF * nps + i));
                     if (mn == 0 || dof1 > mn->getNumberDOF()) {
                         opserr << "WARNING LadrunoTie - slave node " << s << " tied DOF " << dof1
                                << " references master node " << mfn(bestF * nps + i)
-                               << " which has no DOF " << dof1 << " (ndf mismatch). v1 ties "
-                                  "shell-to-shell (same ndf); a shell-to-solid tie needs a "
-                                  "rotation-from-translation coupling. Restrict -dof to the DOFs "
-                                  "both sides share (e.g. -dof 3 1 2 3 for translations).\n";
+                               << " which has no DOF " << dof1 << " (ndf mismatch). This mode "
+                                  "ties like-to-like (same ndf). For a shell EDGE tied to a "
+                                  "solid FACE use -shellSolid (ADR-64 plane-section coupling: "
+                                  "the SOLID face nodes are the slaves, -masterEdge is the "
+                                  "shell edge), or restrict -dof to the DOFs both sides share "
+                                  "(e.g. -dof 3 1 2 3 for translations).\n";
                         return -1;
                     }
                 }
@@ -860,17 +864,20 @@ LadrunoTie::generateMortar(Domain *dom,
                 opserr << "WARNING LadrunoTie -mortar - slave node " << s << " has no DOF " << dof1 << "\n";
                 return -1;
             }
-            // P3: shell-to-shell only — every retained master node must carry this DOF (see
-            // the collocation generator; a shell-to-solid ndf mismatch needs θ=½∇×u, not P).
+            // P3: like-to-like only — every retained master node must carry this DOF (see
+            // the collocation generator; the shell-to-solid coupling is ADR-64 -shellSolid,
+            // which is COLLOCATION-only — the weak/mortar variant needs a kernel per-GP hook).
             for (int k = 0; k < Nm; k++)
                 if (std::fabs(P(I,k)) > 1e-12) {
                     Node *mn = dom->getNode(mTag[k]);
                     if (mn == 0 || dof1 > mn->getNumberDOF()) {
                         opserr << "WARNING LadrunoTie -mortar - slave node " << s << " tied DOF " << dof1
                                << " references master node " << mTag[k] << " which has no DOF " << dof1
-                               << " (ndf mismatch). v1 ties shell-to-shell; a shell-to-solid tie needs "
-                                  "a rotation-from-translation coupling. Restrict -dof to the shared "
-                                  "DOFs (e.g. -dof 3 1 2 3 for translations).\n";
+                               << " (ndf mismatch). The mortar mode ties like-to-like (same ndf). "
+                                  "For a shell EDGE tied to a solid FACE use -shellSolid (ADR-64 "
+                                  "plane-section coupling, collocation-only: the SOLID face nodes "
+                                  "are the slaves), or restrict -dof to the shared DOFs "
+                                  "(e.g. -dof 3 1 2 3 for translations).\n";
                         return -1;
                     }
                 }
@@ -902,6 +909,214 @@ LadrunoTie::generateMortar(Domain *dom,
 }
 
 // --------------------------------------------------------------------------- //
+// P4 (ADR-64) — shell-to-solid plane-section tie generator (-shellSolid)
+// --------------------------------------------------------------------------- //
+
+// Closest-point projection of a slave onto the master edge POLYLINE (closed-form
+// point-to-segment, brute force over the segments — edge lists are short; the
+// facet-only LadrunoContactProjection / bucket-sort are deliberately NOT used).
+// seg = flat reference coords, 6 doubles per segment (a.xyz b.xyz). In-bounds
+// means the UNCLAMPED parameter lies in [0,1] within a small parametric tol on
+// at least one segment; among those the closest wins. Returns false if the slave
+// projects outside the polyline everywhere (a named refusal at the call site).
+static bool
+ltProjectEdge(int nseg, const double *seg, const double xs[3],
+              int &bestSeg, double &bestXi, double foot[3])
+{
+    const double xitol = 1e-9;
+    bestSeg = -1;
+    double bestDist = 0.0;
+    for (int k = 0; k < nseg; k++) {
+        const double *a = seg + (size_t)k * 6;
+        const double *b = a + 3;
+        double ab[3] = { b[0]-a[0], b[1]-a[1], b[2]-a[2] };
+        double L2 = ab[0]*ab[0] + ab[1]*ab[1] + ab[2]*ab[2];
+        if (L2 <= 0.0) continue;                 // degenerate (refused at setup)
+        double xi = ((xs[0]-a[0])*ab[0] + (xs[1]-a[1])*ab[1] + (xs[2]-a[2])*ab[2]) / L2;
+        if (xi < -xitol || xi > 1.0 + xitol) continue;
+        double xic = (xi < 0.0) ? 0.0 : ((xi > 1.0) ? 1.0 : xi);
+        double f[3] = { a[0]+xic*ab[0], a[1]+xic*ab[1], a[2]+xic*ab[2] };
+        double dd = std::sqrt((xs[0]-f[0])*(xs[0]-f[0]) + (xs[1]-f[1])*(xs[1]-f[1]) +
+                              (xs[2]-f[2])*(xs[2]-f[2]));
+        if (bestSeg < 0 || dd < bestDist) {
+            bestSeg = k; bestDist = dd; bestXi = xic;
+            foot[0] = f[0]; foot[1] = f[1]; foot[2] = f[2];
+        }
+    }
+    return bestSeg >= 0;
+}
+
+int
+LadrunoTie::generateShellSolid(Domain *dom,
+                               const ID &slaves,
+                               const ID &edgeNodes,
+                               double thickness, double tolFrac)
+{
+    if (dom == 0) {
+        opserr << "WARNING LadrunoTie -shellSolid - domain is not defined\n";
+        return -1;
+    }
+    if (slaves.Size() == 0) {
+        opserr << "WARNING LadrunoTie -shellSolid - no slave (solid face) nodes given\n";
+        return -1;
+    }
+    if (edgeNodes.Size() == 0 || (edgeNodes.Size() % 2) != 0) {
+        opserr << "WARNING LadrunoTie -shellSolid - master edge node count " << edgeNodes.Size()
+               << " is not a positive multiple of 2 (segment node pairs a1 b1 a2 b2 ..)\n";
+        return -1;
+    }
+    const int nseg = edgeNodes.Size() / 2;
+
+    // --- master edge segments: reference coords, ndf-6 guard, node-disjoint set ---
+    std::vector<double> seg((size_t)nseg * 6, 0.0);
+    std::set<int> masterSet;
+    for (int k = 0; k < nseg; k++) {
+        for (int i = 0; i < 2; i++) {
+            int tag = edgeNodes(k * 2 + i);
+            Node *mn = dom->getNode(tag);
+            double x[3];
+            if (mn == 0 || !ltNodeCoords3(dom, tag, x)) {
+                opserr << "WARNING LadrunoTie -shellSolid - master edge node " << tag
+                       << " not in domain\n";
+                return -1;
+            }
+            if (mn->getNumberDOF() < 6) {
+                opserr << "WARNING LadrunoTie -shellSolid - master edge node " << tag
+                       << " has ndf " << mn->getNumberDOF() << " (< 6). The plane-section "
+                          "rows put moments on the shell edge; the master edge must be "
+                          "ndf-6 shell nodes (the SOLID face nodes are the slaves).\n";
+                return -1;
+            }
+            masterSet.insert(tag);
+            for (int d = 0; d < 3; d++) seg[((size_t)k * 2 + i) * 3 + d] = x[d];
+        }
+        const double *a = seg.data() + (size_t)k * 6;
+        const double *b = a + 3;
+        double L2 = (b[0]-a[0])*(b[0]-a[0]) + (b[1]-a[1])*(b[1]-a[1]) + (b[2]-a[2])*(b[2]-a[2]);
+        if (L2 <= 1e-300) {
+            opserr << "WARNING LadrunoTie -shellSolid - degenerate (zero-length) master edge "
+                      "segment " << edgeNodes(k*2) << "-" << edgeNodes(k*2+1) << "\n";
+            return -1;
+        }
+    }
+
+    // OQ-3 (signed off): -thickness omitted => warn and skip the arm guard.
+    if (thickness <= 0.0)
+        opserr << "LadrunoTie -shellSolid - NOTE: -thickness not given; the arm guard "
+                  "|d| <= (0.5+tol)*t is SKIPPED. A slave far off the shell mid-surface "
+                  "would get a spurious long lever arm - pass -thickness t to catch that.\n";
+
+    // --- BLOCKER-2 pre-scan (PER-DOF); tied DOFs are FIXED to the solid translations.
+    //     The slaves are solid nodes, so -rho element mass satisfies this out of the
+    //     box - the P3 GENERATOR-level rotary-mass refusal does not apply to this mode.
+    //     (EXPLICIT note: the projection handler keeps every group DOF in the equation
+    //     set, so the master edge's theta_x/theta_y still need a small nodal rotary
+    //     mass under LadrunoProjection - generic to every rotational tie, rigidLink
+    //     -beam precedent; static Lagrange needs none.) ---
+    std::map<int, std::set<int> > massedDOF;
+    ltScanMassedDOFs(dom, massedDOF);
+    ID dofs(3);
+    for (int d = 0; d < 3; d++) dofs(d) = d + 1;
+
+    std::set<int> doneSlaves;
+    int emitted = 0;
+
+    for (int si = 0; si < slaves.Size(); si++) {
+        int s = slaves(si);
+
+        // BLOCKER-1a: a slave listed twice would be doubly constrained.
+        if (doneSlaves.count(s)) {
+            opserr << "WARNING LadrunoTie -shellSolid - slave node " << s << " is listed more "
+                      "than once. Each solid face node gets exactly one plane-section row set. "
+                      "Remove the duplicate.\n";
+            return -1;
+        }
+        doneSlaves.insert(s);
+
+        // BLOCKER-1b: slave and master edge must be node-disjoint (else MP-chain).
+        if (masterSet.count(s)) {
+            opserr << "WARNING LadrunoTie -shellSolid - node " << s << " is BOTH a slave and a "
+                      "master edge node. The projection handler refuses MP-chains; the solid "
+                      "face and the shell edge must be node-disjoint.\n";
+            return -1;
+        }
+
+        Node *sNode = dom->getNode(s);
+        double xs[3];
+        if (sNode == 0 || !ltNodeCoords3(dom, s, xs)) {
+            opserr << "WARNING LadrunoTie -shellSolid - slave node " << s << " not in domain\n";
+            return -1;
+        }
+        if (sNode->getNumberDOF() < 3) {
+            opserr << "WARNING LadrunoTie -shellSolid - slave node " << s << " has ndf "
+                   << sNode->getNumberDOF() << " (< 3); the tie constrains the 3 solid "
+                      "translations.\n";
+            return -1;
+        }
+
+        // BLOCKER-2 (PER-DOF): the tied solid translations must carry lumped mass.
+        if (!ltCheckTiedDofMass(s, sNode, dofs, massedDOF, " -shellSolid"))
+            return -1;
+
+        // --- closest-point edge projection; FROZEN arm d = x_s - xbar(xi) ---
+        int bestSeg_;
+        double xi, foot[3];
+        if (!ltProjectEdge(nseg, seg.data(), xs, bestSeg_, xi, foot)) {
+            opserr << "WARNING LadrunoTie -shellSolid - slave node " << s << " does not project "
+                      "in-bounds onto any master edge segment (parametric xi outside [0,1] "
+                      "everywhere). The shell edge polyline must span the solid face; extend "
+                      "-masterEdge or check the node lists.\n";
+            return -1;
+        }
+        double dv[3] = { xs[0]-foot[0], xs[1]-foot[1], xs[2]-foot[2] };
+        double dlen = std::sqrt(dv[0]*dv[0] + dv[1]*dv[1] + dv[2]*dv[2]);
+
+        // arm guard: a slave farther than half the thickness (+slack) off the shell
+        // mid-surface is not this shell's through-thickness material. This is a LOOSE
+        // footgun-catcher (OQ-3), not a correctness precondition, so its slack floors at
+        // 2% of the thickness — the tight projection tolFrac (default 1e-6) would spuriously
+        // refuse a legit outer-surface node at |d|=0.5t once rounding/curvature nudges it
+        // a few ppm past 0.5t. A larger -tol still widens it.
+        double armSlack = (tolFrac > 0.02) ? tolFrac : 0.02;
+        if (thickness > 0.0 && dlen > (0.5 + armSlack) * thickness) {
+            opserr << "WARNING LadrunoTie -shellSolid - slave node " << s << " sits " << dlen
+                   << " off the master edge, beyond (0.5+slack)*t = "
+                   << (0.5 + armSlack) * thickness << " (t = " << thickness << "). It is not "
+                      "this shell's through-thickness material and would get a spurious long "
+                      "lever arm. Trim the slave list, fix -thickness, or relax -tol.\n";
+            return -1;
+        }
+
+        // --- the 3 plane-section rows: N_j on translations, N_j*(-[d]x) on rotations.
+        //     -[d]x annihilates its own axis, so the drilling (theta.n ~ theta.d) column
+        //     is ~zero and the 1e-12 filter in ltEmitMixedRow DROPS it => shell drilling
+        //     stays FREE (a |d|=0 slave degenerates to identity translation rows). ---
+        int mTags[2] = { edgeNodes(bestSeg_ * 2), edgeNodes(bestSeg_ * 2 + 1) };
+        double Nw[2] = { 1.0 - xi, xi };
+        double B[3][3] = { { 0.0,    dv[2], -dv[1] },     // -skew(d) = d(theta x d)/d(theta)
+                           { -dv[2], 0.0,    dv[0] },
+                           { dv[1], -dv[0],  0.0   } };
+        for (int i = 0; i < 3; i++) {                     // slave translation row u_s,i
+            double coef[2][6];
+            for (int k = 0; k < 2; k++)
+                for (int j = 0; j < 3; j++) {
+                    coef[k][j]     = (i == j) ? Nw[k] : 0.0;
+                    coef[k][3 + j] = Nw[k] * B[i][j];
+                }
+            if (!ltEmitMixedRow(dom, s, i, 2, mTags, coef, " -shellSolid")) return -1;
+            emitted++;
+        }
+    }
+
+    opserr << "LadrunoTie (shellSolid): emitted " << emitted << " EQ_Constraint(s) tying "
+           << (int)doneSlaves.size() << " solid face node(s) to the shell edge ("
+           << nseg << " segment(s), " << (int)masterSet.size() << " node(s)). Enforce with "
+              "`constraints LadrunoProjection` (explicit) or Lagrange (static); cross-ndf "
+              "rows are Transformation-incompatible.\n";
+    return emitted;
+}
+
+// --------------------------------------------------------------------------- //
 // command front-end
 //
 //  P1 (collocation, default):
@@ -915,6 +1130,14 @@ LadrunoTie::generateMortar(Domain *dom,
 //   LadrunoTie -mortar -slaveFacets <npsS> <nfS> s.. -masterFacets <npsM> <nfM> m..
 //              [-dof <nd> d1..] [-tol <frac>] [-outward ox oy oz] [-dual]
 //   (-dual = P2.1 biorthogonal basis => sparse P; default = standard dense P.)
+//
+//  P4 (shell-to-solid, ADR-64):
+//   LadrunoTie -shellSolid -slaveNodes <ns> s1.. -masterEdge <nseg> a1 b1 a2 b2 ..
+//              [-thickness <t>] [-tol <frac>]
+//   (solid FACE nodes = slaves, shell EDGE polyline = master; 3 plane-section
+//    rows per slave, u_s = sum N_j (u_j + theta_j x d). Collocation-only; tied
+//    DOFs fixed to {1,2,3}; -mortar/-hermite/-dual/-dof are refused. Enforce
+//    with Lagrange (static) or LadrunoProjection (explicit) - NOT Transformation.)
 //
 // Flat token streams (matching equationConstraint/contactSurface); both Tcl and
 // Python pass node tags as separate arguments, not a single braced/list arg.
@@ -933,6 +1156,27 @@ static bool ltReadCountedID(ID &id, const char *what)
         int v;
         if (OPS_GetIntInput(&one, &v) < 0) {
             opserr << "WARNING LadrunoTie " << what << " - could not read entry " << i + 1 << "\n";
+            return false;
+        }
+        id(i) = v;
+    }
+    return true;
+}
+
+// read "<nseg> (2*nseg tags)" into id (edge segment node pairs); false on error.
+static bool ltReadEdge(ID &id, const char *what)
+{
+    int one = 1, nseg = 0;
+    if (OPS_GetIntInput(&one, &nseg) < 0 || nseg < 1) {
+        opserr << "WARNING LadrunoTie " << what << " - need a positive segment count\n";
+        return false;
+    }
+    id.resize(nseg * 2);
+    for (int i = 0; i < nseg * 2; i++) {
+        int v;
+        if (OPS_GetIntInput(&one, &v) < 0) {
+            opserr << "WARNING LadrunoTie " << what << " - could not read edge node " << i + 1
+                   << " of " << nseg * 2 << "\n";
             return false;
         }
         id(i) = v;
@@ -975,16 +1219,20 @@ int OPS_LadrunoTie()
     if (OPS_GetNumRemainingInputArgs() < 5) {
         opserr << "WARNING want - LadrunoTie -slaveNodes ns s1.. -masterFacets npsM nf m.. "
                   "<-dof nd d1..> <-tol frac> <-hermite>   |   LadrunoTie -mortar -slaveFacets npsS nf s.. "
-                  "-masterFacets npsM nf m.. <-dof..> <-tol..> <-outward ox oy oz> <-dual>\n";
+                  "-masterFacets npsM nf m.. <-dof..> <-tol..> <-outward ox oy oz> <-dual>   |   "
+                  "LadrunoTie -shellSolid -slaveNodes ns s1.. -masterEdge nseg a1 b1 .. "
+                  "<-thickness t> <-tol frac>\n";
         return -1;
     }
 
-    ID slaveNodes(0), slaveFacetNodes(0), masterFacetNodes(0), dofs(0);
+    ID slaveNodes(0), slaveFacetNodes(0), masterFacetNodes(0), masterEdgeNodes(0), dofs(0);
     int npsM = 0, npsS = 0;
     double tolFrac = 1.0e-6;
     double outward[3] = {0.0, 0.0, 0.0};
+    double thickness = -1.0;
     bool mortar = false, haveSlaveNodes = false, haveSlaveFacets = false;
     bool haveMaster = false, haveOutward = false, dual = false, hermite = false;
+    bool shellSolid = false, haveEdge = false, haveThickness = false;
 
     while (OPS_GetNumRemainingInputArgs() > 0) {
         const char *opt = OPS_GetString();
@@ -996,6 +1244,21 @@ int OPS_LadrunoTie()
         }
         else if (strcmp(opt, "-hermite") == 0) { // P3.1: Hermite w-theta shell-edge transfer (collocation only)
             hermite = true;
+        }
+        else if (strcmp(opt, "-shellSolid") == 0) { // P4 (ADR-64): shell-EDGE <- solid-FACE plane-section tie
+            shellSolid = true;
+        }
+        else if (strcmp(opt, "-masterEdge") == 0) {
+            if (!ltReadEdge(masterEdgeNodes, "-masterEdge")) return -1;
+            haveEdge = true;
+        }
+        else if (strcmp(opt, "-thickness") == 0) {
+            int one = 1;
+            if (OPS_GetDoubleInput(&one, &thickness) < 0 || thickness <= 0.0) {
+                opserr << "WARNING LadrunoTie -thickness - need a positive shell thickness\n";
+                return -1;
+            }
+            haveThickness = true;
         }
         else if (strcmp(opt, "-slaveNodes") == 0 || strcmp(opt, "-slave") == 0) {
             if (!ltReadCountedID(slaveNodes, "-slaveNodes")) return -1;
@@ -1033,8 +1296,57 @@ int OPS_LadrunoTie()
         }
     }
 
+    // -masterEdge / -thickness are -shellSolid vocabulary only.
+    if (!shellSolid && (haveEdge || haveThickness)) {
+        opserr << "WARNING LadrunoTie - -masterEdge/-thickness apply only to the -shellSolid "
+                  "mode (the shell-EDGE <- solid-FACE plane-section tie). Add -shellSolid, or "
+                  "use -masterFacets for the facet-based modes.\n";
+        return -1;
+    }
+
     int rc;
-    if (mortar) {
+    if (shellSolid) {
+        // ADR-64 Decision 6: collocation-only; and the tied-DOF set is fixed by the
+        // operator (solid translations {1,2,3}) - named refusals for the combos.
+        if (mortar || dual) {
+            opserr << "WARNING LadrunoTie -shellSolid - the plane-section shell-to-solid tie is "
+                      "COLLOCATION-only: the weak/mortar variant needs the plane-section basis "
+                      "inside the M integral (a kernel per-GP hook, deferred with mortar-"
+                      "Hermite). Drop -mortar/-dual.\n";
+            return -1;
+        }
+        if (hermite) {
+            opserr << "WARNING LadrunoTie -shellSolid - -hermite is the shell-to-SHELL edge "
+                      "transfer; -shellSolid has its own plane-section transfer. Drop one.\n";
+            return -1;
+        }
+        if (dofs.Size() > 0) {
+            opserr << "WARNING LadrunoTie -shellSolid - the tied DOFs are FIXED to the solid "
+                      "slave translations {1,2,3} by the plane-section operator (shell drilling "
+                      "stays free via the near-zero filter); -dof is not selectable here.\n";
+            return -1;
+        }
+        if (haveMaster || haveSlaveFacets) {
+            opserr << "WARNING LadrunoTie -shellSolid - the master is the shell EDGE polyline "
+                      "(-masterEdge nseg a1 b1 ..) and the slaves are the solid FACE nodes "
+                      "(-slaveNodes); -masterFacets/-slaveFacets do not apply.\n";
+            return -1;
+        }
+        if (haveOutward) {
+            opserr << "WARNING LadrunoTie -shellSolid - -outward orients the mortar surface "
+                      "normal and does not apply here; the plane-section arm direction comes "
+                      "from each slave's closest-point projection onto the shell edge. Drop "
+                      "-outward.\n";
+            return -1;
+        }
+        if (!haveSlaveNodes || !haveEdge) {
+            opserr << "WARNING LadrunoTie -shellSolid - both -slaveNodes (solid face nodes) and "
+                      "-masterEdge (shell edge segment pairs) are required\n";
+            return -1;
+        }
+        rc = LadrunoTie::generateShellSolid(theDomain, slaveNodes, masterEdgeNodes,
+                                            haveThickness ? thickness : -1.0, tolFrac);
+    } else if (mortar) {
         if (hermite) {
             opserr << "WARNING LadrunoTie -hermite - the Hermite w-theta transfer applies only to "
                       "the collocation mode (a weak-form mortar Hermite needs the Hermite basis "
