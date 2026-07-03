@@ -242,9 +242,12 @@ projections (ξ outside [0,1] on every segment beyond tol) are refused, named.
 - Master edge nodes must have **ndf ≥ 6**; slave face nodes **ndf ≥ 3**.
 - `-shellSolid -mortar` refused (Decision 6).
 - Out-of-bounds edge projection refused (Decision 3).
-- **`-thickness <t>` arm guard**: `|d| > (0.5+tol)·t` refused — a slave that far off the
+- **`-thickness <t>` arm guard**: `|d| > (0.5+slack)·t` refused — a slave that far off the
   mid-surface is not this shell's through-thickness material and would get a spurious
-  long lever arm. If `-thickness` is omitted: see OQ-3 (warn vs require).
+  long lever arm. The slack is a LOOSE footgun-catcher, floored at 2% (`slack = max(tol,
+  0.02)`; PR #478 review — the tight projection `tol`=1e-6 would spuriously refuse a legit
+  outer-surface node at `|d|=0.5t` under rounding/curvature). If `-thickness` is omitted:
+  see OQ-3 (warn vs require).
 - Coincident-node degeneracy (`|d| ≈ 0`, slave on the edge): emit identity translation
   rows (`u_s = Σ N_j u_j`, θ columns vanish naturally).
 - BLOCKER-1 topology (node-disjoint, one row set per slave) inherited from `generate`'s
@@ -363,6 +366,24 @@ ADR), targeted verification on the C++ delta.**
   after the oracle is green.
 - Escalate to a full gate only if P4.0's oracle contradicts a predicted scaling (BLOCKER-4)
   or the pre-flight row direction fails on the real solver.
+
+**Post-code review outcome (PR #478, 8-angle targeted pass).** The focused read ran and
+CONFIRMED the emitted-constraint math: `B = -skew(d)` exactly (so `(B·θ)_i = (θ×d)_i`),
+`Nw={1-ξ,ξ}` pairs correctly with `mTags={edge(seg·2), edge(seg·2+1)}`, the mixed-row
+coef shape and 0-based DOF convention match `ltEmitMixedRow`/`EQ_Constraint`, no
+off-by-one in segment indexing, no uninitialized read. **No correctness bug survived
+verification.** Three correctness-flavored candidates were REFUTED: (a) the drilling
+coupling at tangentially-offset / kinked-polyline slaves is rigid-body-EXACT (the
+operator is exact for ANY `d`, not just `d∥n` — oracle T1/T5 pass), not a spurious
+over-stiffening; (b) closest-point projection over independent segments is well-defined
+(kinks supported per OQ-7); (c) an ndf-6 slave is defensible generality (only the 3
+translations are tied, as documented). The projection `xitol` is PARAMETRIC (scale-free)
+— NOT the abs-tol-in-physical-units class the contact PR-1 (#473) fixed. Two low-severity
+hardening nits WERE acted on before merge: a named refusal for `-outward` with
+`-shellSolid` (completes the "every incompatible combo is refused" contract) and a 2%
+floor on the arm-guard slack (it is a loose footgun-catcher per OQ-3, so borrowing the
+tight projection `tolFrac` risked spuriously refusing a legit outer-surface node at
+`|d|=0.5t`). Tie battery 51/51 after the fixes.
 
 ---
 
