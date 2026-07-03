@@ -197,6 +197,11 @@ inline void segmentSharedEdges(const int *mTags, int nSeg, int nps, int *sharedE
 // SAME node ordering LadrunoContactProjection::shape() uses (shape-node i == mTags local node i),
 // so the local-edge index here matches segmentSharedEdges()'s. Quad edges: k0 η=−1, k1 ξ=+1,
 // k2 η=+1, k3 ξ=−1. Tri edges: k0 η=0, k1 ξ+η=1, k2 ξ=0. sharedEdge==0 ⇒ no guard (returns false).
+// contact-review P5: edgeTol is calibrated on the QUAD parametric span of 2 ([−1,1] ⇒ 0.1 = 5% of
+// the span). The tri span is 1 ([0,1]), so the SAME edgeTol made the tri band 2× the fraction of
+// the facet (10%) — the ownership guard fired twice as aggressively on tri meshes. Halve it on
+// the tri branch so both element types use the same fraction-of-span band (quad unchanged —
+// the P2.1 ridge gates that calibrated edgeGapFrac/edgeTol are quad meshes).
 inline bool onSharedInteriorEdge(int nps, double xi, double eta,
                                  const int *sharedEdge, double edgeTol) {
     if (sharedEdge == 0) return false;
@@ -207,9 +212,10 @@ inline bool onSharedInteriorEdge(int nps, double xi, double eta,
         if (sharedEdge[3] && xi  <= -1.0 + edgeTol) return true;   // k3: ξ = −1
         return false;
     }
-    if (sharedEdge[0] && eta <= edgeTol)            return true;   // k0: η = 0
-    if (sharedEdge[1] && xi + eta >= 1.0 - edgeTol) return true;   // k1: ξ + η = 1
-    if (sharedEdge[2] && xi <= edgeTol)             return true;   // k2: ξ = 0
+    double triTol = 0.5 * edgeTol;                                 // tri span 1 vs quad span 2
+    if (sharedEdge[0] && eta <= triTol)            return true;    // k0: η = 0
+    if (sharedEdge[1] && xi + eta >= 1.0 - triTol) return true;    // k1: ξ + η = 1
+    if (sharedEdge[2] && xi <= triTol)             return true;    // k2: ξ = 0
     return false;
 }
 

@@ -581,15 +581,12 @@ LadrunoContactHandler::handle(const ID *nodesLast)
             // ADR-60 R6 (serial-only): one-time warning when -reemit is requested under a
             // partitioned host. The deformed feed + trigger are disabled below (reemitActive=false
             // ⇒ the shipped frozen-config NTS path), so this only surfaces the silent downgrade.
-            if (ct.enableReemit && hostPartitioned) {
-                static bool warnedReemitPartition = false;
-                if (!warnedReemitPartition) {
-                    opserr << "WARNING LadrunoContactHandler::handle() - contact " << ct.tag
-                           << ": -reemit is serial-only but the host is partitioned (Subdomain); "
-                              "finite-sliding re-emit DISABLED (reverting to the frozen-config NTS "
-                              "broad phase) to avoid an uncoordinated cross-rank re-sort.\n";
-                    warnedReemitPartition = true;
-                }
+            if (ct.enableReemit && hostPartitioned &&
+                cd->warnOnce(ct.tag, LadrunoContactDomain::WARN_REEMIT_PARTITION)) {
+                opserr << "WARNING LadrunoContactHandler::handle() - contact " << ct.tag
+                       << ": -reemit is serial-only but the host is partitioned (Subdomain); "
+                          "finite-sliding re-emit DISABLED (reverting to the frozen-config NTS "
+                          "broad phase) to avoid an uncoordinated cross-rank re-sort.\n";
             }
             // ADR-60 R1 (BLOCKER-MEMBERSHIP): fingerprint this contact's master mTags ORDERING. If
             // it changed since the last handle (element removal / re-mesh reordered the surface),
@@ -761,21 +758,21 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                     }
                 }
                 int nSlaveVote = (int)slaveRef.size() / 3;
+                // contact-review P5: the field is keyed by CONTACT tag (per-contact frozen sign /
+                // -outward vote — a second contact sharing the master must not inherit contact A's).
                 int st = missingNode ? LadrunoContactNormalField::NON_ORIENTABLE
-                       : cd->setNormalField(ct.masterSurfTag, nps, mt.empty() ? 0 : &mt[0], nSeg,
+                       : cd->setNormalField(ct.tag, nps, mt.empty() ? 0 : &mt[0], nSeg,
                                             segDef.data(), smoothSeed,
                                             slaveRef.empty() ? 0 : &slaveRef[0], nSlaveVote,
                                             ct.hasOutward, segRef.data());
                 if (st != LadrunoContactNormalField::OK) {
-                    static bool warnedSmoothRefuse = false;
-                    if (!warnedSmoothRefuse) {
+                    if (cd->warnOnce(ct.tag, LadrunoContactDomain::WARN_SMOOTH_REFUSE)) {
                         opserr << "WARNING LadrunoContactHandler::handle() - contact " << ct.tag
                                << ": -smoothNormal master surface " << ct.masterSurfTag
                                << " could not be coherently oriented (non-manifold / disconnected "
                                   "multi-shell / non-orientable / closed / missing node); falling back to "
                                   "the faceted normal — NOTE the R3 ridge-flip protection is NOT active on "
                                   "this surface, prefer an explicit -outward.\n";
-                        warnedSmoothRefuse = true;
                     }
                 } else {
                     smoothFieldOK = true;
@@ -783,31 +780,25 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                     // (seed ~⟂ the field — a two-sided / saddle / straddle master). Converts a silent
                     // wrong-side field into a loud, actionable signal. Skipped when -outward is explicit.
                     if (!ct.hasOutward) {
-                        double conf = cd->getNormalFieldSignConf(ct.masterSurfTag);
-                        if (conf >= 0.0 && conf < 0.1) {
-                            static bool warnedSmoothSign = false;
-                            if (!warnedSmoothSign) {
-                                opserr << "WARNING LadrunoContactHandler::handle() - contact " << ct.tag
-                                       << ": -smoothNormal auto outward-sign is ILL-CONDITIONED (confidence "
-                                       << conf << " ≪ 1 — the slave cloud is nearly tangent to the master, "
-                                          "e.g. a two-sided / saddle master). The global sign may be wrong; "
-                                          "pass an explicit -outward.\n";
-                                warnedSmoothSign = true;
-                            }
+                        double conf = cd->getNormalFieldSignConf(ct.tag);
+                        if (conf >= 0.0 && conf < 0.1 &&
+                            cd->warnOnce(ct.tag, LadrunoContactDomain::WARN_SMOOTH_SIGN)) {
+                            opserr << "WARNING LadrunoContactHandler::handle() - contact " << ct.tag
+                                   << ": -smoothNormal auto outward-sign is ILL-CONDITIONED (confidence "
+                                   << conf << " ≪ 1 — the slave cloud is nearly tangent to the master, "
+                                      "e.g. a two-sided / saddle master). The global sign may be wrong; "
+                                      "pass an explicit -outward.\n";
                         }
                     }
                     // ADR-63 (silent-downgrade guard): -smoothNormal + -consistentNormal pre-P3 use the
                     // frozen-field symmetric kn·BᵀB (the faceted B3 ∂n/∂u is suppressed in the adapter);
                     // the smoothed-normal consistent tangent is the gated P3. Surface it once.
-                    if (ct.consistentNormal) {
-                        static bool warnedSmoothDowngrade = false;
-                        if (!warnedSmoothDowngrade) {
-                            opserr << "WARNING LadrunoContactHandler::handle() - contact " << ct.tag
-                                   << ": -smoothNormal + -geomtan — the smoothed-normal consistent "
-                                      "tangent (∂n_smooth/∂u) is not yet available (ADR-63 P3); using "
-                                      "the frozen-field symmetric kn·BᵀB tangent.\n";
-                            warnedSmoothDowngrade = true;
-                        }
+                    if (ct.consistentNormal &&
+                        cd->warnOnce(ct.tag, LadrunoContactDomain::WARN_SMOOTH_DOWNGRADE)) {
+                        opserr << "WARNING LadrunoContactHandler::handle() - contact " << ct.tag
+                               << ": -smoothNormal + -geomtan — the smoothed-normal consistent "
+                                  "tangent (∂n_smooth/∂u) is not yet available (ADR-63 P3); using "
+                                  "the frozen-field symmetric kn·BᵀB tangent.\n";
                     }
                 }
             }
@@ -905,10 +896,10 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                     // the smooth field via evalSegmentSmooth (null ⇒ refused/out-of-range ⇒ the adapter
                     // keeps the faceted path). orientDir remains the per-query degenerate-blend fallback.
                     if (smoothFieldOK) {
-                        const double *nn = cd->getSegNodalNorm(ct.masterSurfTag, seg);
+                        const double *nn = cd->getSegNodalNorm(ct.tag, seg);
                         // ADR-63 P2.1: install the segment's shared-edge mask so evalSegmentSmooth
                         // rejects a projection landing on a SHARED interior edge (facet ownership).
-                        const int *se = cd->getSegSharedEdge(ct.masterSurfTag, seg);
+                        const int *se = cd->getSegSharedEdge(ct.tag, seg);
                         if (nn != 0) fe->setSmoothNormals(nn, se);
                     }
                     theModel->addFE_Element(fe);
@@ -1017,10 +1008,46 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                     // orientation toward the slave's allowed half-space: explicit -outward,
                     // else (slave facet centroid − master facet centroid) at the ref config.
                     double orientDir[3];
-                    if (mc.hasOutward)
+                    if (mc.hasOutward) {
                         for (int d = 0; d < 3; d++) orientDir[d] = mc.outward[d];
-                    else
+                    } else {
                         for (int d = 0; d < 3; d++) orientDir[d] = scen[d] - mcen[d];
+                        // contact-review P5 (the PR-3 gate follow-up): the kernel signs the facet
+                        // normal by flipping it toward orientDir, so the hazard is the NORMAL
+                        // COMPONENT of the auto orientation vanishing (gate lens-B): a COINCIDENT
+                        // conforming pair (scen − mcen ≈ 0) AND a zero-gap STAGGERED non-conforming
+                        // pair (scen − mcen tangential, O(h) — the canonical mortar interface) both
+                        // leave the flip test to roundoff ⇒ the mortar sign is WINDING LUCK (an
+                        // unlucky winding makes the contact attractive, with no diagnostic). Warn
+                        // once per contact when |n̂_m·orientDir| ≈ 0 at a PROXIMATE pair (|orientDir|
+                        // ≤ 2h; far coplanar pairs the clip rejects anyway stay silent). A -tie pair
+                        // is exempt (its full 3-vec bond r→0 is sign-independent — and ties are the
+                        // COMMON coincident case). Thresholds RELATIVE to the facet size (unit-safe).
+                        if (!mc.isTie) {
+                            double d2 = orientDir[0]*orientDir[0] + orientDir[1]*orientDir[1]
+                                      + orientDir[2]*orientDir[2];
+                            double h2 = 0.0;
+                            for (int k = 0; k < npsM; k++) {
+                                const double *a = Mx[k]; const double *b = Mx[(k + 1) % npsM];
+                                double ex = b[0]-a[0], ey = b[1]-a[1], ez = b[2]-a[2];
+                                double e2 = ex*ex + ey*ey + ez*ez;
+                                if (e2 > h2) h2 = e2;
+                            }
+                            double nM[3];
+                            ladrunoFacetNormalNewell(npsM, Mx, nM);   // unit (zero if degenerate)
+                            double odn = nM[0]*orientDir[0] + nM[1]*orientDir[1]
+                                       + nM[2]*orientDir[2];
+                            if (odn*odn <= 1e-12 * h2 && d2 <= 4.0 * h2 &&
+                                cd->warnOnce(mc.tag, LadrunoContactDomain::WARN_MORTAR_ORIENT)) {
+                                opserr << "WARNING LadrunoContactHandler::handle() - mortar contact "
+                                       << mc.tag << ": auto orientation is DEGENERATE (the slave-to-"
+                                          "master centroid direction has no component along the "
+                                          "master facet normal — a coincident or zero-gap staggered "
+                                          "interface); the contact sign falls to the facet winding "
+                                          "and may be attractive. Pass an explicit -outward.\n";
+                            }
+                        }
+                    }
 
                     double epsUse = epsFixed;
                     if (epsAuto) {
@@ -1043,21 +1070,16 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                     // tangent (Csl), which REQUIRES a non-symmetric solver (system FullGeneral /
                     // UmfPack / BandGeneral); a symmetric SOE silently drops the lower triangle and
                     // corrupts it. The default (symmetric) tangent is correct on any solver. Warn once.
-                    if (wantFric && mc.consistentTan) {
-                        static bool warnedCsl = false;
-                        if (!warnedCsl) {
-                            warnedCsl = true;
-                            opserr << "WARNING LadrunoContactHandler::handle() - mortar contact "
-                                   << mc.tag << ": -consistanttan (non-symmetric Coulomb friction "
-                                      "tangent) needs a non-symmetric solver (system FullGeneral/"
-                                      "UmfPack/BandGeneral); symmetric solvers will silently corrupt it.\n";
-                        }
+                    if (wantFric && mc.consistentTan &&
+                        cd->warnOnce(mc.tag, LadrunoContactDomain::WARN_CSL)) {
+                        opserr << "WARNING LadrunoContactHandler::handle() - mortar contact "
+                               << mc.tag << ": -consistanttan (non-symmetric Coulomb friction "
+                                  "tangent) needs a non-symmetric solver (system FullGeneral/"
+                                  "UmfPack/BandGeneral); symmetric solvers will silently corrupt it.\n";
                     }
                     if (wantFric && epsTuse <= 0.0) {
                         epsTuse = epsUse;
-                        static bool warnedEpsT = false;
-                        if (!warnedEpsT) {
-                            warnedEpsT = true;
+                        if (cd->warnOnce(mc.tag, LadrunoContactDomain::WARN_EPST)) {
                             opserr << "WARNING LadrunoContactHandler::handle() - mortar contact "
                                    << mc.tag << ": friction requested without -epsT; defaulting the "
                                       "tangential penalty to the normal penalty (-epsT auto). Set "
@@ -1182,9 +1204,7 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                     bool edgeFric = (mc.edgeMu > 0.0 || mc.edgeCohesion > 0.0 || mc.edgeTauMax > 0.0);
                     if (edgeFric && edgeKtUse <= 0.0) {
                         edgeKtUse = edgeKnUse;
-                        static bool warnedEdgeKt = false;
-                        if (!warnedEdgeKt) {
-                            warnedEdgeKt = true;
+                        if (cd->warnOnce(mc.tag, LadrunoContactDomain::WARN_EDGEKT)) {
                             opserr << "WARNING LadrunoContactHandler::handle() - mortar contact " << mc.tag
                                    << ": edge-edge friction requested without -edgeKt; defaulting the "
                                       "tangential penalty to the edge normal penalty. Set -edgeKt to control it.\n";
@@ -1257,7 +1277,8 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                 LadrunoContactFE *fe = new LadrunoContactFE(numFe++, sn, nd, rp.p0, rp.n, rp.kn,
                                                             rp.muc,         // D2 viscous (0 ⇒ off)
                                                             rp.softScale,   // B1 SOFT=1 (0 ⇒ off)
-                                                            theDomain);     // B1 engine mass cache
+                                                            theDomain,      // B1 engine mass cache
+                                                            rp.tag);        // P5 warn-latch key
                 if (fe == 0) return -5;
                 theModel->addFE_Element(fe);
             }

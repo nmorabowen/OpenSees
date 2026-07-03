@@ -60,7 +60,12 @@ enum Status { EE_OK = 0, EE_PARALLEL = -1, EE_DEGENERATE = -2 };
 
 // gauges (match the oracle)
 static const double TAU_PAR_DEFAULT = 0.0669872981077807;  // sin^2(15deg): parallel/conditioning gate
-static const double TAU_LEN         = 1e-9;                 // squared-length zero-edge floor
+// contact-review P5: the zero-edge floor is RELATIVE (squared-length ratio vs the LONGER edge of
+// the pair). The old ABSOLUTE floor (1e-9 on a squared length ⇒ edges shorter than ~3e-5 length
+// units) was the PR-1/PR-3 unit-trap class: a model meshed at small length units had every edge
+// silently refused as DEGENERATE (edge-edge contact dead, no diagnostic). An edge is collapsed
+// when it is < 1e-6× the length of its partner (squared ratio 1e-12), or both are exactly zero.
+static const double TAU_LEN_REL     = 1e-12;                // squared-length RATIO zero-edge floor
 static const double EE_MARGIN       = 1e-6;                 // parametric strict-interior margin delta
 
 // ----------------------------------------------------------------- small vec3
@@ -101,8 +106,12 @@ inline ClosestResult closestPtSegSeg(const double p1[3], const double q1[3],
     o.status = EE_OK; o.s = 0.0; o.t = 0.0; o.denom = 0.0; o.a = a; o.e = e; o.interior = false;
     for (int k = 0; k < 3; k++) { o.c1[k] = p1[k]; o.c2[k] = p2[k]; }
 
-    // zero-length / coincident-node guard
-    if (a <= TAU_LEN || e <= TAU_LEN) { o.status = EE_DEGENERATE; return o; }
+    // zero-length / coincident-node guard — RELATIVE to the pair scale (contact-review P5;
+    // unit-safe: a collapsed edge is one vanishingly short vs its partner, or both zero)
+    double lenRef = (a > e) ? a : e;
+    if (lenRef <= 0.0 || a <= TAU_LEN_REL * lenRef || e <= TAU_LEN_REL * lenRef) {
+        o.status = EE_DEGENERATE; return o;
+    }
 
     double c = dot3(d1, r);
     double b = dot3(d1, d2);
@@ -142,6 +151,11 @@ inline bool edgeNormal(const double d1[3], const double d2[3], double n[3]) {
 //   committedSign == 0 with signRef != 0 => orient n so n.signRef >= 0; *outSign returns
 //     that sign to COMMIT once at first engagement (then pass it back as committedSign).
 // (The self-referential n.w rule is intentionally NOT offered here — it masks penetration.)
+// contact-review P5 (H2-style conditioning guard): a first capture with signRef nearly
+// PERPENDICULAR to n is a numerical coin flip that then BINDS the pair for its whole life
+// (the committed body-fixed sign). Mirror LadrunoContactProjection::normalOriented's refusal:
+// |n.signRef| < 1e-12*|signRef| => *outSign = 0 and gN = 0 (the caller DEFERS the capture and
+// treats the eval as no-contact; it retries at the next, better-conditioned config).
 // Writes the oriented normal into n[3]; returns gN. *outSign (optional) gets the chosen sign.
 inline double edgeGap(const double c1[3], const double c2[3], const double d1[3],
                       const double d2[3], int committedSign,
@@ -153,7 +167,12 @@ inline double edgeGap(const double c1[3], const double c2[3], const double d1[3]
     if (committedSign == 1 || committedSign == -1) {
         sign = committedSign;
     } else if (signRef != 0) {
-        sign = (dot3(n, signRef) >= 0.0) ? 1 : -1;
+        double proj = dot3(n, signRef);
+        if (std::fabs(proj) < 1e-12 * (norm3(signRef) + 1e-300)) {   // ill-conditioned: defer
+            if (outSign) *outSign = 0;
+            return 0.0;
+        }
+        sign = (proj >= 0.0) ? 1 : -1;
     } else {
         sign = 1;  // no anchor supplied: leave as the raw cross-product orientation
     }

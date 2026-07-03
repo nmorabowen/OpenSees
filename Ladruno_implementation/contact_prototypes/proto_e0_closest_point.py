@@ -44,7 +44,9 @@ _fails = 0
 # status codes (mirror the future LadrunoEdgeKernel)
 OK, PARALLEL, DEGENERATE = 0, -1, -2
 TAU_PAR = np.sin(np.deg2rad(15.0)) ** 2     # conditioning-justified parallel gate ~0.0670
-TAU_LEN = 1e-9                              # relative zero-length floor (on squared length)
+TAU_LEN_REL = 1e-12                         # RELATIVE zero-edge floor: squared-length RATIO vs the
+                                            # longer edge (contact-review P5 — the absolute 1e-9
+                                            # floor was a unit trap at small length units)
 MARGIN = 1e-6                               # strict-interior margin delta (parametric)
 
 
@@ -72,8 +74,9 @@ def closest_pt_segseg(p1, q1, p2, q2, tau_par=TAU_PAR):
     out = {"status": OK, "s": 0.0, "t": 0.0, "c1": p1.copy(), "c2": p2.copy(),
            "denom": 0.0, "a": a, "e": e, "interior": False}
 
-    # --- zero-length / coincident-node guard (Lens-A NIT) ---
-    if a <= TAU_LEN or e <= TAU_LEN:
+    # --- zero-length / coincident-node guard (Lens-A NIT; RELATIVE — contact-review P5) ---
+    len_ref = max(a, e)
+    if len_ref <= 0.0 or a <= TAU_LEN_REL * len_ref or e <= TAU_LEN_REL * len_ref:
         out["status"] = DEGENERATE
         return out
 

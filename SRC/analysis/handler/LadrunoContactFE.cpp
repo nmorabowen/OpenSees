@@ -35,6 +35,7 @@
 #include <Node.h>
 #include <DOF_Group.h>
 #include <Integrator.h>
+#include <StaticIntegrator.h>       // Ladruno: contact-review P5 (-visc static-integrator gate)
 #include <CentralDifferenceLadruno.h> // Ladruno: ADR-39 B1 (explicit dt for the SOFT=1 penalty)
 #include <Domain.h>                 // Ladruno: ADR-39 P3 (lazy engine re-fetch)
 #include <LadrunoContactDomain.h>   // Ladruno: ADR-39 P3 (per-pair friction state)
@@ -61,11 +62,12 @@ LadrunoContactFE::LadrunoContactFE(int tag)
 
 LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, int ndm_,
                                    const double p0[3], const double n[3], double kn_, double muc_,
-                                   double softScale_, Domain *dom)
+                                   double softScale_, Domain *dom, int contactTag_)
   : FE_Element(tag, /*numDOF_Group=*/1, /*ndof=*/ndm_),
     resid(ndm_), tang(ndm_, ndm_),
     mode(RIGID_PLANE), theSlave(slaveNode), ndm(ndm_), kn(kn_), nps(0),
-    kt(0.0), mu(0.0), muc(muc_), theDomain(dom), contactTag(0), segIndex(0), consistentTan(false),
+    kt(0.0), mu(0.0), muc(muc_), theDomain(dom), contactTag(contactTag_), segIndex(0),
+    consistentTan(false),
     consistentNormal(false), softScale(softScale_ > 0.0 ? softScale_ : 0.0)
 {
     // Connectivity = the slave node's DOF_Group; setID() fills myID with its first
@@ -382,7 +384,27 @@ LadrunoContactFE::edgeGeom(double &gN, double n[3], double &s, double &t, double
     s = cr.s; t = cr.t;
     double d1[3], d2[3];
     for (int d = 0; d < 3; d++) { d1[d] = X[1][d] - X[0][d]; d2[d] = X[3][d] - X[2][d]; }
-    gN = LadrunoEdgeKernel::edgeGap(cr.c1, cr.c2, d1, d2, committedSign, orientDir, n, outSign);
+    // contact-review P5 (H2-style conditioning guard): a first-engagement sign capture with the
+    // reference orientDir nearly PERPENDICULAR to n is a numerical coin flip — and the committed
+    // body-fixed sign then binds the pair for its whole life. edgeGap returns chosen==0 in that
+    // case (and on a degenerate normal): DEFER — treat this eval as no-contact and retry the
+    // capture at the next, better-conditioned config. A committed ±1 sign always passes through.
+    // The defer is LOUD (gate lens-A #6): on a symmetric rig the reference can stay ⟂ n on EVERY
+    // eval (a permanently inert pair would be silent pass-through — worse than the old coin flip),
+    // so surface it once per contact and point at the knob that decides it (-outward).
+    int chosen = 0;
+    gN = LadrunoEdgeKernel::edgeGap(cr.c1, cr.c2, d1, d2, committedSign, orientDir, n, &chosen);
+    if (chosen == 0) {
+        LadrunoContactDomain *cd = (theDomain != 0) ? theDomain->getLadrunoContactDomain() : 0;
+        if (cd != 0 && cd->warnOnce(contactTag, LadrunoContactDomain::WARN_EDGE_SIGN_DEFER))
+            opserr << "WARNING LadrunoContactFE - contact " << contactTag << ": edge-edge sign "
+                      "capture DEFERRED — the orientation reference is (numerically) perpendicular "
+                      "to the edge cross-normal, so the body-fixed contact sign is undecidable; the "
+                      "pair stays inert until the geometry disambiguates. If this persists, pass an "
+                      "-outward with a component along the expected contact normal.\n";
+        return false;
+    }
+    if (outSign != 0) *outSign = chosen;
     LadrunoEdgeKernel::bOperator(n, s, t, B);
     return true;
 }
@@ -461,6 +483,27 @@ LadrunoContactFE::gapModeInvMass(const double dir[3], const double N[4]) const
     return invSum;
 }
 
+// contact-review P5 — is the -visc dashpot live this eval? The old "statics-inert" claim
+// relied on v ≡ 0 under a StaticIntegrator, but trial velocities are STATE, not rates: a
+// static stage AFTER a transient one (or setNodeVel) leaves them non-zero, so the dashpot
+// injected an unphysical velocity-proportional force with NO matching tangent
+// (StaticIntegrator::formEleTangent never calls addCtoTang). Under a StaticIntegrator the
+// dashpot is now OFF (warn once per contact via the engine latch); genuinely-zero
+// velocities made the old force exactly 0, so gating it is byte-identical there.
+bool
+LadrunoContactFE::viscousActive(Integrator *theIntegrator) const
+{
+    if (muc <= 0.0) return false;
+    if (dynamic_cast<StaticIntegrator *>(theIntegrator) == 0) return true;   // transient ⇒ live
+    LadrunoContactDomain *cd = (theDomain != 0) ? theDomain->getLadrunoContactDomain() : 0;
+    if (cd == 0 || cd->warnOnce(contactTag, LadrunoContactDomain::WARN_VISC_STATIC))
+        opserr << "WARNING LadrunoContactFE - contact " << contactTag << ": -visc (viscous "
+                  "contact stabilization) is DISABLED under a static integrator — nodal "
+                  "velocities are stale state (not rates) in statics and the damping tangent "
+                  "is never assembled there; the dashpot re-arms under a transient integrator.\n";
+    return false;
+}
+
 double
 LadrunoContactFE::softKn(Integrator *theIntegrator, const double n[3], const double N[4]) const
 {
@@ -472,14 +515,14 @@ LadrunoContactFE::softKn(Integrator *theIntegrator, const double n[3], const dou
     double dt = cdl->getCurrentDeltaT();
     double invSum = gapModeInvMass(n, N);         // 0 ⇒ massless slave (fail below)
     if (dt <= 0.0 || invSum <= 0.0) {            // massless slave or no dt ⇒ cannot soft-size
-        static bool warned = false;
-        if (!warned) {
-            warned = true;
-            opserr << "WARNING LadrunoContactFE - contact -soft could not size a penalty under the "
-                      "explicit integrator (non-positive dt or a contact node with no assembled mass "
-                      "— neither a nodal `mass` nor element-density mass); using the configured kn. "
-                      "Give the contact nodes mass for the SOFT=1 stable penalty.\n";
-        }
+        // contact-review P5: per-(contact, topic) engine latch, not a process-lifetime static
+        LadrunoContactDomain *cd = (theDomain != 0) ? theDomain->getLadrunoContactDomain() : 0;
+        if (cd == 0 || cd->warnOnce(contactTag, LadrunoContactDomain::WARN_SOFT_NOMASS))
+            opserr << "WARNING LadrunoContactFE - contact " << contactTag << ": -soft could not "
+                      "size a penalty under the explicit integrator (non-positive dt or a contact "
+                      "node with no assembled mass — neither a nodal `mass` nor element-density "
+                      "mass); using the configured kn. Give the contact nodes mass for the SOFT=1 "
+                      "stable penalty.\n";
         return kn;
     }
     return softScale * 4.0 * (1.0 / invSum) / (dt * dt);   // k_soft = SOFSCL·4·m_eff/dt²
@@ -557,14 +600,14 @@ LadrunoContactFE::softKnEdge(Integrator *theIntegrator, const double n[3], doubl
     double dt = cdl->getCurrentDeltaT();
     double invSum = edgeGapModeInvMass(n, s, t);  // 0 ⇒ massless pair (fail below)
     if (dt <= 0.0 || invSum <= 0.0) {            // massless / no dt ⇒ cannot soft-size
-        static bool warned = false;
-        if (!warned) {
-            warned = true;
-            opserr << "WARNING LadrunoContactFE - edge-edge -edgeSoft could not size a penalty under "
-                      "the explicit integrator (non-positive dt or an edge node with no assembled mass "
-                      "— neither a nodal `mass` nor element-density mass); using the configured edgeKn. "
-                      "Give the edge nodes mass for the SOFT stable penalty.\n";
-        }
+        // contact-review P5: per-(contact, topic) engine latch, not a process-lifetime static
+        LadrunoContactDomain *cd = (theDomain != 0) ? theDomain->getLadrunoContactDomain() : 0;
+        if (cd == 0 || cd->warnOnce(contactTag, LadrunoContactDomain::WARN_EDGESOFT_NOMASS))
+            opserr << "WARNING LadrunoContactFE - contact " << contactTag << ": edge-edge -edgeSoft "
+                      "could not size a penalty under the explicit integrator (non-positive dt or an "
+                      "edge node with no assembled mass — neither a nodal `mass` nor element-density "
+                      "mass); using the configured edgeKn. Give the edge nodes mass for the SOFT "
+                      "stable penalty.\n";
         return kn;
     }
     return softScale * 4.0 * (1.0 / invSum) / (dt * dt);   // k_soft = SOFSCL·4·m_eff/dt²
@@ -617,9 +660,10 @@ LadrunoContactFE::getResidual(Integrator *theIntegrator)
             for (int d = 0; d < ndm; d++)
                 resid(d) = tn * planeN[d];   // drives the slave toward g=0 (PenaltySP convention)
             // D2 viscous normal stabilization: f_visc = −muc·(n·v_slave)·n, opposing the approach
-            // rate ġ = n·v_slave. Active only while in contact (g<0); v≡0 in statics ⇒ inert ⇒
-            // byte-identical to muc=0. Force here; the muc·n⊗n damping tangent is in addCtoTang.
-            if (muc > 0.0 && theSlave != 0) {
+            // rate ġ = n·v_slave. Active only while in contact (g<0) and only under a TRANSIENT
+            // integrator (contact-review P5: trial velocities are stale STATE under statics — see
+            // viscousActive). Force here; the muc·n⊗n damping tangent is in addCtoTang.
+            if (theSlave != 0 && viscousActive(theIntegrator)) {
                 const Vector &vs = theSlave->getTrialVel();
                 double gdot = 0.0;
                 for (int d = 0; d < ndm; d++) gdot += planeN[d] * vs(d);
@@ -647,9 +691,10 @@ LadrunoContactFE::getResidual(Integrator *theIntegrator)
 
             // --- D2 viscous normal stabilization (force; tangent in addCtoTang) ---
             // ġ = B·v (normal relative velocity, B=[n|−Nᵢ n]); f_visc = −muc·ġ·B opposes the
-            // approach. Active only in contact (segmentActive); v≡0 in statics ⇒ inert ⇒ muc=0
-            // byte-identical. Force-only under CDL; force + muc·B Bᵀ tangent under implicit.
-            if (muc > 0.0) {
+            // approach. Active only in contact (segmentActive) and only under a TRANSIENT
+            // integrator (contact-review P5 — see viscousActive). Force-only under CDL; force +
+            // muc·B Bᵀ tangent under implicit.
+            if (viscousActive(theIntegrator)) {
                 double gdot = 0.0;
                 const Vector &vs = theSlave->getTrialVel();
                 for (int d = 0; d < 3; d++) gdot += B[d] * vs(d);
@@ -781,8 +826,9 @@ LadrunoContactFE::getResidual(Integrator *theIntegrator)
             // ḡ̇_I = n·(Σ_J D_IJ v_s,J − Σ_K M_IK v_m,K)/a_I (v = getTrialVel), the viscous pressure
             // p_visc_I = μ_c·ḡ̇_I (NO clamp — a dashpot active while in contact), scattered EXACTLY like
             // the normal penalty force (f^s=−(D·p_visc)n, f^m=+(Mᵀ·p_visc)n). It is the C2 normal
-            // operator with epsN→μ_c, driven by velocity. v≡0 in statics ⇒ inert ⇒ μ_c=0 byte-identical.
-            if (muc > 0.0) {
+            // operator with epsN→μ_c, driven by velocity. Transient integrators only (contact-review
+            // P5 — see viscousActive; stale trial velocities are not rates under statics).
+            if (viscousActive(theIntegrator)) {
                 double vs[4][3], vm[4][3];
                 for (int i = 0; i < npsS; i++) {
                     const Vector &v = mortarSlave[i]->getTrialVel();
@@ -1106,14 +1152,14 @@ LadrunoContactFE::addSoft2Penalty(Integrator *theIntegrator)
             knEff = softScale * 4.0 * (1.0 / invMeff) / (dt * dt);   // k_soft = SOFSCL·4·m_eff/dt²
         } else {
             knEff = kn;                           // cannot soft-size ⇒ the configured epsN (+ warn once)
-            static bool warned = false;
-            if (!warned) {
-                warned = true;
-                opserr << "WARNING LadrunoContactFE - contact -mortar -soft (SOFT=2) could not size a "
-                          "segment-based penalty under the explicit integrator (non-positive dt or a "
-                          "contact node with no assembled mass); using the configured epsN. Give the "
-                          "contact nodes mass for the SOFT=2 stable penalty.\n";
-            }
+            // contact-review P5: per-(contact, topic) engine latch, not a process-lifetime static
+            LadrunoContactDomain *cdW = (theDomain != 0) ? theDomain->getLadrunoContactDomain() : 0;
+            if (cdW == 0 || cdW->warnOnce(contactTag, LadrunoContactDomain::WARN_SOFT2_NOMASS))
+                opserr << "WARNING LadrunoContactFE - contact " << contactTag << ": -mortar -soft "
+                          "(SOFT=2) could not size a segment-based penalty under the explicit "
+                          "integrator (non-positive dt or a contact node with no assembled mass); "
+                          "using the configured epsN. Give the contact nodes mass for the SOFT=2 "
+                          "stable penalty.\n";
         }
         p[I] = knEff * gbar;                       // ≤ 0 (compression)
     }

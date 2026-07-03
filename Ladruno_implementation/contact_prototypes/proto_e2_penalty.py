@@ -41,7 +41,7 @@ _fails = 0
 # status codes + gauges (mirror the E0 kernel / LadrunoEdgeKernel)
 OK, PARALLEL, DEGENERATE = 0, -1, -2
 TAU_PAR = np.sin(np.deg2rad(15.0)) ** 2
-TAU_LEN = 1e-9
+TAU_LEN_REL = 1e-12   # relative zero-edge floor (squared-length ratio; contact-review P5)
 MARGIN = 1e-6
 
 
@@ -58,7 +58,8 @@ def closest_pt_segseg(p1, q1, p2, q2, tau_par=TAU_PAR):
     a, e = d1 @ d1, d2 @ d2
     out = {"status": OK, "s": 0.0, "t": 0.0, "c1": p1.copy(), "c2": p2.copy(),
            "denom": 0.0, "interior": False}
-    if a <= TAU_LEN or e <= TAU_LEN:
+    len_ref = max(a, e)
+    if len_ref <= 0.0 or a <= TAU_LEN_REL * len_ref or e <= TAU_LEN_REL * len_ref:
         out["status"] = DEGENERATE
         return out
     c, b, f = d1 @ r, d1 @ d2, d2 @ r
