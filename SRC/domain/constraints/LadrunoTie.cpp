@@ -1072,11 +1072,16 @@ LadrunoTie::generateShellSolid(Domain *dom,
         double dlen = std::sqrt(dv[0]*dv[0] + dv[1]*dv[1] + dv[2]*dv[2]);
 
         // arm guard: a slave farther than half the thickness (+slack) off the shell
-        // mid-surface is not this shell's through-thickness material.
-        if (thickness > 0.0 && dlen > (0.5 + tolFrac) * thickness) {
+        // mid-surface is not this shell's through-thickness material. This is a LOOSE
+        // footgun-catcher (OQ-3), not a correctness precondition, so its slack floors at
+        // 2% of the thickness — the tight projection tolFrac (default 1e-6) would spuriously
+        // refuse a legit outer-surface node at |d|=0.5t once rounding/curvature nudges it
+        // a few ppm past 0.5t. A larger -tol still widens it.
+        double armSlack = (tolFrac > 0.02) ? tolFrac : 0.02;
+        if (thickness > 0.0 && dlen > (0.5 + armSlack) * thickness) {
             opserr << "WARNING LadrunoTie -shellSolid - slave node " << s << " sits " << dlen
-                   << " off the master edge, beyond (0.5+tol)*t = "
-                   << (0.5 + tolFrac) * thickness << " (t = " << thickness << "). It is not "
+                   << " off the master edge, beyond (0.5+slack)*t = "
+                   << (0.5 + armSlack) * thickness << " (t = " << thickness << "). It is not "
                       "this shell's through-thickness material and would get a spurious long "
                       "lever arm. Trim the slave list, fix -thickness, or relax -tol.\n";
             return -1;
@@ -1325,6 +1330,13 @@ int OPS_LadrunoTie()
             opserr << "WARNING LadrunoTie -shellSolid - the master is the shell EDGE polyline "
                       "(-masterEdge nseg a1 b1 ..) and the slaves are the solid FACE nodes "
                       "(-slaveNodes); -masterFacets/-slaveFacets do not apply.\n";
+            return -1;
+        }
+        if (haveOutward) {
+            opserr << "WARNING LadrunoTie -shellSolid - -outward orients the mortar surface "
+                      "normal and does not apply here; the plane-section arm direction comes "
+                      "from each slave's closest-point projection onto the shell edge. Drop "
+                      "-outward.\n";
             return -1;
         }
         if (!haveSlaveNodes || !haveEdge) {

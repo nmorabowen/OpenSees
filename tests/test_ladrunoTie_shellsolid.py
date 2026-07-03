@@ -346,6 +346,16 @@ def test_refuse_dof_combo():
                        "-masterEdge", *MASTER_EDGE, "-dof", 3, 1, 2, 3)
 
 
+def test_refuse_outward_combo():
+    """-outward orients the mortar normal only; the plane-section arm direction comes
+    from the closest-point projection. Completes the named-refusal contract (every
+    incompatible cross-mode option is refused, not silently ignored)."""
+    _mesh(tie=False)
+    with pytest.raises(Exception):
+        ops.LadrunoTie("-shellSolid", "-slaveNodes", 15, *_face_nodes(),
+                       "-masterEdge", *MASTER_EDGE, "-outward", 0.0, 0.0, 1.0)
+
+
 def test_refuse_low_ndf_master_edge():
     """The master edge must be ndf-6 shell nodes (the rows put moments there)."""
     _mesh(tie=False)
