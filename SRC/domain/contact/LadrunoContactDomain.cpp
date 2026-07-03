@@ -83,6 +83,15 @@ LadrunoContactDomain::getSurface(int tag) const
     return 0;
 }
 
+// contact-review P5 — one-time diagnostic latch: true exactly once per (contactTag, topic).
+// Engine-lifetime (reset on wipe via Domain::clearAll deleting the engine), per-contact keyed;
+// replaces the process-lifetime function-local `static bool warned` latches.
+bool
+LadrunoContactDomain::warnOnce(int contactTag, int topic)
+{
+    return theWarnOnce.insert(std::make_pair(contactTag, topic)).second;
+}
+
 bool
 LadrunoContactDomain::contactTagInUse(int tag) const
 {
@@ -231,12 +240,14 @@ LadrunoContactDomain::clearNormalFields(void)
 }
 
 int
-LadrunoContactDomain::setNormalField(int masterSurfTag, int nps, const int *mTags, int nSeg,
+LadrunoContactDomain::setNormalField(int contactTag, int nps, const int *mTags, int nSeg,
                                      const double *segCoords, const double globalSeed[3],
                                      const double *slaveCoords, int nSlaves, bool useOutward,
                                      const double *refSegCoords)
 {
-    NormalField &nf = theNormalFields[masterSurfTag];
+    // contact-review P5: keyed by CONTACT tag (per-contact frozen sign / -outward vote — a
+    // shared master surface must not make a second contact inherit the first one's sign).
+    NormalField &nf = theNormalFields[contactTag];
     unsigned long long fp =
         LadrunoContactReemit::membershipFingerprint(mTags, nSeg * nps, nps);
     // (re)compute the COHERENT WINDING only when the membership changed — it is topological, so the
@@ -290,17 +301,17 @@ LadrunoContactDomain::setNormalField(int masterSurfTag, int nps, const int *mTag
 }
 
 double
-LadrunoContactDomain::getNormalFieldSignConf(int masterSurfTag) const
+LadrunoContactDomain::getNormalFieldSignConf(int contactTag) const
 {
-    std::map<int, NormalField>::const_iterator it = theNormalFields.find(masterSurfTag);
+    std::map<int, NormalField>::const_iterator it = theNormalFields.find(contactTag);
     if (it == theNormalFields.end() || it->second.status != LadrunoContactNormalField::OK) return -1.0;
     return it->second.signConf;
 }
 
 const double *
-LadrunoContactDomain::getSegNodalNorm(int masterSurfTag, int segIndex) const
+LadrunoContactDomain::getSegNodalNorm(int contactTag, int segIndex) const
 {
-    std::map<int, NormalField>::const_iterator it = theNormalFields.find(masterSurfTag);
+    std::map<int, NormalField>::const_iterator it = theNormalFields.find(contactTag);
     if (it == theNormalFields.end()) return 0;
     const NormalField &nf = it->second;
     if (nf.status != LadrunoContactNormalField::OK || nf.segNodalNorm.empty()) return 0;
@@ -309,9 +320,9 @@ LadrunoContactDomain::getSegNodalNorm(int masterSurfTag, int segIndex) const
 }
 
 const int *
-LadrunoContactDomain::getSegSharedEdge(int masterSurfTag, int segIndex) const
+LadrunoContactDomain::getSegSharedEdge(int contactTag, int segIndex) const
 {
-    std::map<int, NormalField>::const_iterator it = theNormalFields.find(masterSurfTag);
+    std::map<int, NormalField>::const_iterator it = theNormalFields.find(contactTag);
     if (it == theNormalFields.end()) return 0;
     const NormalField &nf = it->second;
     if (nf.status != LadrunoContactNormalField::OK || nf.sharedEdge.empty()) return 0;
