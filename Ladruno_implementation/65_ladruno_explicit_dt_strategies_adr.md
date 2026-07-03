@@ -31,8 +31,16 @@ tags:
 > energy-audit epistemics were overstated; triggers made operational; "Route 0 —
 > shipped substitutes" row added; Route B downgraded ACCEPT → **accept-on-trigger**;
 > Olovsson citation corrected (IJNME 63, +Unosson).
+> **Revision v3** (2026-07-03) — ran Route B's P0 headroom oracle (bundle
+> `adr65_headroom_oracle/`). Result: adaptive-*growth* headroom is **nil (1.00× at
+> equal safety)** on reloadable nonlinearity (Concrete01 softening, Steel01 yield),
+> because the safe step is bounded by the *undamaged* tangent — tangent-tracked
+> `criticalTimeStep()` over-reports the safe step by √(E0/E_tan) (7–12× measured) and
+> is a growth *hazard*, not an opportunity. Route B stays accept-on-trigger, growth
+> path measured-out; value reframed to the shrink/safety + non-reloadable-erosion
+> directions (§Route B). Third quirk added to the ledger.
 >
-> **Decisions (v2, 2026-07-02):**
+> **Decisions (v3, 2026-07-03):**
 > - **Route 0 (shipped substitutes): the default.** Consistent SMS (ADR-38),
 >   rigidification (RBE2 33012 / LadrunoTie / ADR-58), mesh repair, whole-model
 >   implicit. Every other route must first defeat this row.
@@ -196,11 +204,48 @@ small dump hook (e.g. a `-dumpDt <file>` option) or an offline script re-derivin
 
 Consistent with the fork's decision culture (ADR-61 shelved a sound design on a P0
 oracle; ADR-63 Q-MULTISHELL not built for zero consumers), Route B does not ship on
-"opportunistically". Build-free oracle: on a named Zone-B softening/contact battery
-case (or the next explicit campaign's model), log `criticalTimeStep()` per step at a
-coarse cadence and integrate the headroom ratio `dt_cr(t) / dt_fixed`. **Trigger:
-oracle shows a variable-Δt run would save ≥2× the steps (or the fixed-Δt run dies and
+"opportunistically". Build-free oracle: on a named softening/contact case, log
+`criticalTimeStep()` per step (`-recompute 1`, tangent-tracked) and compare adaptive
+step-counts against a **constant-safety** fixed baseline. **Trigger: oracle shows a
+variable-Δt run would save ≥2× the steps (or the fixed-Δt run dies and
 restart-babysitting is the current workaround) on at least one named consumer.**
+
+### P0 oracle RUN (2026-07-03) — growth headroom is NIL on reloadable nonlinearity
+
+Ran the oracle on two 1-D bars where the tangent evolves (bundle
+`adr65_headroom_oracle/`): a `Concrete01` softening bar and a `Steel01` (b=0.02)
+yield pulse. Result, at **equal safety factor** (the honest comparison — otherwise
+the "speedup" just measures the safety-factor choice):
+
+| case | max Δt_cr/elastic | SAFE grow (equal safety) | UNSAFE grow-to-tangent |
+|---|:---:|:---:|:---:|
+| concrete softening | 12.51× | **1.00×** | 1.19× (mirage) |
+| steel b=0.02       | 7.07× (=√(1/b), exact) | **1.00×** | 1.05× (mirage) |
+
+The tangent tracking *works* (0 invalid/nonpositive Δt_cr over 2200 steps; the
+softening branch returns a *larger* positive Δt_cr because |tangent| drops) — and
+that is exactly the trap. The **safe** adaptive step never exceeds `Δt_cr,elastic`:
+a reloadable material (plasticity, damage-with-reload) can stiffen back to `E0` in
+one step, so a wave hitting the softened element reloads it elastic and the only
+step safe against reload is the *undamaged* one. Trusting the instantaneous tangent
+Δt_cr over-reports the safe step by **√(E0/E_tan)** (measured 7× steel, 12×
+concrete); a driver that grew to `0.9·criticalTimeStep()` here blows up on the first
+reload wave. **So the growth trigger does NOT fire on the softening/contact regime
+that motivated Route B** — those materials reload elastic and the growth headroom is
+nil.
+
+### Reframed value (what Route B is actually for)
+
+The oracle disproves *adaptive growth* as Route B's value. Its defensible value is:
+1. the **shrink / safety** direction — protecting a fixed run when Δt_cr *drops*
+   mid-run (contact engagement, geometric stiffening); the monotone-softening oracle
+   cases don't exercise this, so a positive trigger must come from a Δt_cr-*dropping*
+   bundle (not yet built); and
+2. **permanent, non-reloadable** stiffness loss (element erosion), where the softened
+   step is genuinely safe because reload can't happen.
+
+Route B stays **accept-on-trigger**, now with the growth path measured-out and the
+shrink/erosion paths named as where a real trigger would originate.
 
 ### Sketch
 
