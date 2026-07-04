@@ -1301,7 +1301,7 @@ features:
   - feature: LadrunoSolidShell
     classtag: 33020          # ELE_TAG family; honored as reserved by ADR 19 — 33016-33019 remain free ELE slots
     tag_symbol: ELE_TAG_LadrunoSolidShell
-    pr: null
+    pr: 482
     feature_class: element
     required_tiers: [T0, T1]
     pytest: tests/test_ladrunoSolidShell_element.py   # Zone-A: affine/interior/thickness patch + slenderness locking sweep (std A/B control) + trapezoidal bending
