@@ -74,7 +74,35 @@ class ProfilerResults:
         hdr = self.header(run)
         rg = self._f["runs"][run]["rollup"]
         roots = list(rg.keys())
-        root = self._read_node(rg[roots[0]], hdr, root_wall_ns=None)
+        top = rg[roots[0]]
+
+        # The C++ engine wraps the tree under an UNTIMED 'root' anchor
+        # (wall_ns=0, calls=0) whose children are the real phases. Its aggregate
+        # wall is the sum of its children — backfill it so `share` normalizes
+        # against a real denominator (not the `wall_ns or 1` == 1 ns fallback,
+        # which made every share astronomically large) and so the flame graph
+        # (Icicle short-circuits on a zero-wall parent) actually lays the phases
+        # out. A natively-timed top node (e.g. synthetic fixtures whose top IS
+        # 'step') already has wall_ns>0 and is used unchanged.
+        top_wall_ns = int(top.attrs.get("wall_ns", 0))
+        eff_root_ns = top_wall_ns
+        if eff_root_ns <= 0:
+            eff_root_ns = sum(
+                int(top[c].attrs.get("wall_ns", 0))
+                for c in top if isinstance(top[c], h5py.Group)
+            )
+
+        root = self._read_node(top, hdr, root_wall_ns=(eff_root_ns or 1))
+
+        # Reflect the aggregate onto the untimed anchor itself so downstream
+        # consumers see a non-zero root: the icicle layout keys on wall_ms, and
+        # share/per-step/per-dof would otherwise report 0 for the whole run.
+        if top_wall_ns <= 0 and eff_root_ns > 0:
+            root["wall_ms"] = eff_root_ns / _NS_PER_MS
+            root["cpu_ms"] = sum(c["cpu_ms"] for c in root["children"])
+            root["share"] = 1.0
+            root["wall_ms_per_step"] = eff_root_ns / _NS_PER_MS / max(hdr["nSteps"], 1)
+            root["wall_ms_per_dof"] = eff_root_ns / _NS_PER_MS / max(hdr["nDOF"], 1)
         return root
 
     def _read_node(self, ng, hdr: dict, root_wall_ns: int | None) -> dict:
