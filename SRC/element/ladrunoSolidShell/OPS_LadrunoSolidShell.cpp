@@ -26,14 +26,14 @@
 
 // Author: N. Mora-Bowen (Ladruno), 07/2026
 //
-// Factory for the LadrunoSolidShell element (Tcl + Python) — ADR 64 P5.1.
+// Factory for the LadrunoSolidShell element (Tcl + Python) — ADR 66 P5.1.
 //
 // Usage:
 //   element('LadrunoSolidShell', tag, n1..n8, matTag
 //           [, '-nz', n]                     # through-thickness points (default 2)
 //           [, '-quadz', 'gauss'|'lobatto']  # default: gauss (nz=2) / lobatto (nz>=3)
 //           [, '-formulation', 'ans'|'std']  # default ans; std = locking A/B control
-//           [, '-geom', 'linear'])           # corot/finite reserved (ADR 64 P5.4)
+//           [, '-geom', 'linear'])           # corot/finite reserved (ADR 66 P5.4)
 //
 // Nodes 1-4 = bottom face (counterclockwise), 5-8 = top face: the node
 // ordering DEFINES the thickness direction. Consumes any 3D NDMaterial
@@ -133,11 +133,11 @@ void *OPS_LadrunoSolidShell()
       }
       const char *g = OPS_GetString();
       if (strcmp(g, "linear") != 0) {
-        // ADR 64 D5: a single nodal-cloud corotation is ill-conditioned for
+        // ADR 66 D5: a single nodal-cloud corotation is ill-conditioned for
         // thin shells (cond(S) ~ (L/t)^2); corot ships GUARDED at P5.4, finite
         // with it. Refuse now rather than run silently wrong.  // Ladruno
         opserr << "WARNING LadrunoSolidShell " << idata[0] << ": -geom '" << g
-               << "' is reserved (ADR 64 P5.4); v1 is -geom linear only\n";
+               << "' is reserved (ADR 66 P5.4); v1 is -geom linear only\n";
         return 0;
       }
     }
@@ -147,7 +147,7 @@ void *OPS_LadrunoSolidShell()
     }
   }
 
-  // default z-rule: gauss for nz=2, lobatto (face points) for nz>=3 (ADR 64 D3)
+  // default z-rule: gauss for nz=2, lobatto (face points) for nz>=3 (ADR 66 D3)
   if (!quadzGiven && nz >= 3)
     quadz = LadrunoSolidShell::QuadZ::LOBATTO;
 
@@ -172,7 +172,7 @@ void *OPS_LadrunoSolidShell()
   if (dynamic_cast<FiniteStrainNDMaterial *>(mat) != 0) {
     opserr << "WARNING LadrunoSolidShell " << idata[0]
            << ": finite-strain NDMaterials (e.g. nDMaterial LogStrain) need "
-              "-geom finite, which is reserved (ADR 64 P5.4)\n";
+              "-geom finite, which is reserved (ADR 66 P5.4)\n";
     return 0;
   }
 

@@ -24,13 +24,13 @@
 // ==========================================================================
 // LADRUNO-HEADER-END
 
-// LadrunoSolidShell — 8-node ANS/EAS solid-shell element (Ladruno fork, ADR 64).
+// LadrunoSolidShell — 8-node ANS/EAS solid-shell element (Ladruno fork, ADR 66).
 //
 // A 3-translational-DOF-per-node solid-shell carrying the full triaxial stress
 // state (sigma_33 != 0) through shell-like geometry: the narrow punching /
 // bearing / 3D-crush specialist the director shell (ASDShellQ4 +
 // LayeredShellFiberSection) structurally cannot be. NOT a co-equal flexural
-// host (ADR 64 D1) — walls/slabs in bending stay on the director shell.
+// host (ADR 66 D1) — walls/slabs in bending stay on the director shell.
 //
 //   element('LadrunoSolidShell', tag, n1..n8, matTag
 //           [, '-nz', n]                   # through-thickness points (default 2)
@@ -43,7 +43,7 @@
 // Nodes 1-4 = bottom face (zeta=-1, counterclockwise), 5-8 = top face; the
 // thickness direction is DEFINED by the node ordering (the 1-5 .. 4-8 fibers).
 //
-// Formulation (covariant, small strain; ADR 64 §5) — 'ans' applies, in order:
+// Formulation (covariant, small strain; ADR 66 §5) — 'ans' applies, in order:
 //  1. ANS transverse shear (Dvorkin-Bathe / MITC4 tying): covariant gamma_13
 //     sampled at (0,-+1,zeta) and interpolated linearly in eta; gamma_23
 //     sampled at (-+1,0,zeta), linear in xi. Cures transverse-shear locking.
@@ -56,7 +56,7 @@
 //     locking. alpha is solved each form pass by an inner Newton on
 //     int G^T sigma dV = 0 against the LIVE material stress, statically
 //     condensed (K* = Kdd - Kda Kaa^-1 Kad), committed (alphaCommit) and
-//     serialized — state-dependent EAS from day one (ADR 64 §3); the
+//     serialized — state-dependent EAS from day one (ADR 66 §3); the
 //     softening-stability gate (G6) is the P5.2 deliverable.
 //
 // The covariant strain E_ij = sym(g_i . u_,j) is transformed to Cartesian
@@ -70,7 +70,7 @@
 //
 // getCharacteristicLength() returns the IN-PLANE projected size
 // sqrt(midsurface area) — never the thickness — so crack-band materials
-// regularize over the dominant in-plane band (ADR 64 D6). Through-thickness
+// regularize over the dominant in-plane band (ADR 66 D6). Through-thickness
 // bands regularize over t/n_elem_z: mesh guidance, not code, in v1.
 //
 // v1 scope: -geom linear only (the SolidTransformation seam is wired at P5.4
@@ -107,7 +107,7 @@ class LadrunoSolidShell : public Element {
   enum class QuadZ { GAUSS, LOBATTO };
 
   static const int NEAS = 1;      // enhanced E33 modes (slots reserved for the
-                                  // bilinear-in-plane extension, ADR 64 O1)
+                                  // bilinear-in-plane extension, ADR 66 O1)
   static const int NZ_MIN = 2;
   static const int NZ_MAX = 7;    // gauss caps at 5; lobatto at 7 (zRule)
 
@@ -141,7 +141,7 @@ class LadrunoSolidShell : public Element {
   int getNumDOF(void);
 
   // In-plane projected characteristic length sqrt(midsurface area) — see the
-  // file header (ADR 64 D6). Never the thickness.  // Ladruno
+  // file header (ADR 66 D6). Never the thickness.  // Ladruno
   double getCharacteristicLength(void);
 
   // state

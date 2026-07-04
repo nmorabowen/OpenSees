@@ -2204,7 +2204,7 @@ lateral drive pattern; (c) DisplacementControl is the ONLY implicit displacement
 there is NO validated static+`-reemit` path (every ADR-60 reemit test is explicit/CDL), so a FIXED master
 (constant nodal-normal field, no re-handle needed) sidesteps it for the implicit rig.
 
-## The `ladruno_opensees.pth` boot module pins ONE worktree's pyd — a fresh build in ANOTHER worktree is silently ignored (ADR-64 P5.1)
+## The `ladruno_opensees.pth` boot module pins ONE worktree's pyd — a fresh build in ANOTHER worktree is silently ignored (ADR-66 P5.1)
 
 `Ladruno_scripts/wire_venv_pth.py` writes `_ladruno_opensees_boot.py` into the py-3.12
 site-packages with the generating checkout's `dist\bin` HARD-CODED, `sys.path.insert(0)`-ed at
@@ -2219,7 +2219,7 @@ MPI guard skips the eager import + aliasing) and `sys.path.insert(0, <your dist\
 (the P5.1 `run_gates.py` pattern). Re-running `wire_venv_pth.py` re-pins instead, but stomps the
 sibling session.
 
-## Solid-shell patch tests on a 1-element-thick mesh: the interior-node patch MUST use a traction-consistent field (ADR-64 P5.1)
+## Solid-shell patch tests on a 1-element-thick mesh: the interior-node patch MUST use a traction-consistent field (ADR-66 P5.1)
 
 Every node of a one-element-thick patch lies ON the free top/bottom faces. A full affine gradient
 carries `sigma·e_z != 0` there, so with no applied face tractions the TRUE solution legitimately
@@ -2232,7 +2232,7 @@ ans and std alike, and the `E33` channel is still exercised (`eps_33 != 0`). Ful
 exactness belongs to the FULLY-PRESCRIBED single-element patches. Corollary for reviewers: a
 solid-shell "patch test failure" report must state the face-traction handling before it counts.
 
-## `getResistingForceIncInertia` MUST snapshot the shared static `resid` before calling `getRayleighDampingForces()` — else stiffness-proportional Rayleigh silently drops element inertia (ADR-64 P5.1)
+## `getResistingForceIncInertia` MUST snapshot the shared static `resid` before calling `getRayleighDampingForces()` — else stiffness-proportional Rayleigh silently drops element inertia (ADR-66 P5.1)
 
 An element that builds its residual in a **static class-member** `Vector resid` (the OpenSees
 norm) and does `formInternal(); formInertia(); resid += getRayleighDampingForces();` has a hidden

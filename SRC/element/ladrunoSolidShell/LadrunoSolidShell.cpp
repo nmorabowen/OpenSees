@@ -24,7 +24,7 @@
 // ==========================================================================
 // LADRUNO-HEADER-END
 
-// LadrunoSolidShell — 8-node ANS/EAS solid-shell element (Ladruno fork, ADR 64).
+// LadrunoSolidShell — 8-node ANS/EAS solid-shell element (Ladruno fork, ADR 66).
 // See LadrunoSolidShell.h for the formulation summary and the file-level docs.
 //
 // Formulation references:
@@ -32,7 +32,7 @@
 //   Betsch & Stein (1995)   — ANS thickness-strain (E33) corner tying
 //   Simo & Rifai (1990)     — EAS; the state-dependent inner-Newton +
 //                             condensation machinery is adapted from
-//                             LadrunoBrick::formEAStrue (ADR 64 §3)
+//                             LadrunoBrick::formEAStrue (ADR 66 §3)
 //   Hauptmann & Schweizerhof (1998), Klinkel-Gruttmann-Wagner (1999) —
 //                             the assembled ANS+EAS solid-shell.  // Ladruno
 
@@ -694,7 +694,7 @@ void LadrunoSolidShell::formANS(int tang_flag, bool useInitialTangent)
     if (Kaa <= 0.0) {
       // an indefinite enhanced block (deep softening) — freeze alpha for this
       // pass rather than stepping through a singular solve; the G6 stability
-      // gate (ADR 64, P5.2) owns the systematic treatment.  // Ladruno
+      // gate (ADR 66, P5.2) owns the systematic treatment.  // Ladruno
       opserr << "LadrunoSolidShell::formANS - element " << this->getTag()
              << ": non-positive Kaa (" << Kaa << "); freezing alpha this pass\n";
       break;
@@ -831,7 +831,7 @@ int LadrunoSolidShell::addLoad(ElementalLoad *theLoad, double loadFactor)
 {
   opserr << "LadrunoSolidShell::addLoad - element " << this->getTag()
          << " does not support elemental loads in v1 (surface pressure is the "
-            "ADR 64 P5.3 deliverable); use nodal loads\n";
+            "ADR 66 P5.3 deliverable); use nodal loads\n";
   return -1;
 }
 
@@ -893,7 +893,7 @@ const Vector &LadrunoSolidShell::getResistingForceIncInertia(void)
 }
 
 //----------------------------------------------------------------------
-// characteristic length — IN-PLANE projected sqrt(midsurface area) (ADR 64 D6)
+// characteristic length — IN-PLANE projected sqrt(midsurface area) (ADR 66 D6)
 //----------------------------------------------------------------------
 double LadrunoSolidShell::getCharacteristicLength(void)
 {
@@ -1107,7 +1107,7 @@ void LadrunoSolidShell::Print(OPS_Stream &s, int flag)
     return;
   }
 
-  s << "LadrunoSolidShell — 8-node ANS/EAS solid-shell (ADR 64)\n";
+  s << "LadrunoSolidShell — 8-node ANS/EAS solid-shell (ADR 66)\n";
   s << "  tag: " << this->getTag() << "\n";
   s << "  formulation: " << (formulation == Formulation::ANS ? "ans" : "std")
     << "   nz: " << nz << " ("

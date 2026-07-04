@@ -1,5 +1,5 @@
 ---
-title: "ADR 64 — LadrunoSolidShell (ELE_TAG 33020): 8-node ANS/EAS solid-shell — the through-thickness σ33 host for punching/bearing"
+title: "ADR 66 — LadrunoSolidShell (ELE_TAG 33020): 8-node ANS/EAS solid-shell — the through-thickness σ33 host for punching/bearing"
 project: Ladruno
 type: ADR / scoping
 status: "P5.1 BUILT + ADVERSARIALLY REVIEWED (2026-07-02/03): element + registration + gates 16/16 green (Concrete3D 28/28 non-regressed). A 5-lens / 89-agent adversarial review found ONE critical defect — getResistingForceIncInertia clobbered the shared static resid during the Rayleigh re-entry, silently dropping element inertia under stiffness-proportional Rayleigh (no dynamic test existed to catch it). FIXED via the LadrunoBrick snapshot pattern + a dynamic-Rayleigh regression gate PROVEN discriminating (fails `analyze -3` on the reverted-buggy binary, passes on the fixed). Also fixed: null-material parse-time probe, recvSelf stream validation + Ki invalidation, Print/broker null guards, one-time center-Jacobian geometry check, constructor nz guard. Test coverage strengthened: rigorous no-re-solve alpha-survival roundtrip, gamma_23 (y-axis) transverse-shear gate, getInitialStiff==getTangentStiff elastic gate, setResponse forwarding. LEDGER_vanilla_files backfilled. Left with skeptic-refutation backing: setDomain-continues-on-bad-node (OpenSees norm, donor same), per-GP-detJ-in-hot-loop (center check added; concave=user error), unknown-option warn-continue (fork idiom).\n\nP5.1 BUILT (2026-07-02): element + registration + gates green on a fresh worktree build (Concrete3D battery 28/28 non-regressed). Corrects one stale ADR-19 risk-register claim (LadrunoBrick now HAS true state-dependent Simo-Rifai EAS — the machinery is an adapt, not net-new). P5.1 deviations: SolidTransformation seam not plumbed (v1 assembles directly in the global frame; parser rejects -geom corot/finite — seam wiring moves to P5.4); state-dependent EAS (committed alpha) shipped in P5.1 rather than P5.2 (the formEAStrue adapt made it cheaper than the initial-tangent stub); G3 pinched-cylinder/Scordelis-Lo deferred to a follow-up test PR. Observed: ~15% stiffening residual on the 27-degree trapezoidal-fiber mesh (in-plane trapezoid coupling; Betsch-Stein removes only the curvature-thickness part) — gate band set accordingly."
@@ -16,7 +16,7 @@ tags: [adr, element, solid-shell, ans, mitc, eas, locking, punching, rc-shell, t
 updated: 2026-07-01
 ---
 
-# ADR 64 — `LadrunoSolidShell` (ELE_TAG 33020)
+# ADR 66 — `LadrunoSolidShell` (ELE_TAG 33020)
 
 **One sentence.** An 8-node, 3-translational-DOF-per-node solid-shell element — ANS transverse-shear
 + ANS thickness-strain + EAS-on-`E33` — that carries the full triaxial stress state (`σ33 ≠ 0`)

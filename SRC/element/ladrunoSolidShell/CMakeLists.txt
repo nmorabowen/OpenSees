@@ -4,7 +4,7 @@
 #                Pacific Earthquake Engineering Research Center
 #
 #==============================================================================
-# LadrunoSolidShell — 8-node ANS/EAS solid-shell element (Ladruno fork, ADR 64).
+# LadrunoSolidShell — 8-node ANS/EAS solid-shell element (Ladruno fork, ADR 66).
 target_sources(OPS_Element
     PRIVATE
     LadrunoSolidShell.cpp

@@ -1326,7 +1326,7 @@ features:
       lobatto 3-7); -formulation std = plain-displacement locking A/B control;
       getCharacteristicLength = in-plane-projected sqrt(midsurface area). v1 = -geom
       linear only (corot cond(S) guard + finite = P5.4); no element loads (P5.3).
-      Plan: 64_ladruno_solidshell_adr.md.
+      Plan: 66_ladruno_solidshell_adr.md.
 
   # --- worked examples shipped with the scaffold (existing elements, no new C++) ---
 

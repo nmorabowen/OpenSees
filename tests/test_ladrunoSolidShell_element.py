@@ -1,4 +1,4 @@
-"""LadrunoSolidShell (ADR 64 P5.1, ELE_TAG 33020) — Zone-A element gates.
+"""LadrunoSolidShell (ADR 66 P5.1, ELE_TAG 33020) — Zone-A element gates.
 
 8-node ANS/EAS solid-shell: Dvorkin-Bathe ANS transverse-shear tying +
 Betsch-Stein ANS thickness-strain (E33) corner tying + state-dependent
@@ -11,7 +11,7 @@ EAS) used by the locking gates as the A/B disease exhibit.
                                           exact for affine on any trilinear geometry)
   G1a  test_affine_patch_ans              ANS tying exact for the flat-face,
                                           in-plane-distorted geometry class
-  G1a  test_thickness_patch_sigma33       the ADR 64 G1 headline: uniform sigma_33
+  G1a  test_thickness_patch_sigma33       the ADR 66 G1 headline: uniform sigma_33
                                           through a distorted mesh (catches a broken
                                           E33 tying / EAS orthogonality)
   G1b  test_interior_node_patch           2x2x1 mesh, boundary-prescribed affine,
@@ -29,7 +29,7 @@ EAS) used by the locking gates as the A/B disease exhibit.
   --   test_database_roundtrip            sendSelf/recvSelf (committed alpha + mats)
   --   test_characteristic_length         in-plane-projected lch (never the thickness)
 
-Deferred (ADR 64): pinched cylinder + Scordelis-Lo (G3, curved-mesh benchmark
+Deferred (ADR 66): pinched cylinder + Scordelis-Lo (G3, curved-mesh benchmark
 PR), softening EAS stability G6 (P5.2), punching headline G8 (P5.3).
 """
 import math
@@ -167,7 +167,7 @@ def test_affine_patch_ans():
 
 
 def test_thickness_patch_sigma33():
-    """ADR 64 G1 headline: a pure through-thickness stretch on the distorted
+    """ADR 66 G1 headline: a pure through-thickness stretch on the distorted
     flat-face element produces the exact UNIFORM sigma_33 at every GP — the
     test that catches a broken E33 tying or a non-orthogonal EAS mode."""
     A = [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 1.0e-3]]
@@ -405,7 +405,7 @@ def test_transverse_shear_both_axes():
 
 
 def test_slenderness_sweep_no_locking():
-    """The ADR 64 G2 gate: tip-deflection ratio vs Timoshenko stays flat over
+    """The ADR 66 G2 gate: tip-deflection ratio vs Timoshenko stays flat over
     t/L = 1e-1 -> 1e-3 (the locking failure mode collapses the thin ratios)."""
     ratios = {t: _cantilever(t) for t in (10.0, 1.0, 0.1)}
     for t, r in ratios.items():
@@ -741,7 +741,7 @@ def _tension_softening_curve(mat_flags):
 
 
 def test_characteristic_length_in_plane():
-    """ADR 64 D6: getCharacteristicLength() = sqrt(midsurface area) — the
+    """ADR 66 D6: getCharacteristicLength() = sqrt(midsurface area) — the
     IN-PLANE projected size, NEVER the thickness. Probed quantitatively via
     LadrunoConcrete3D's crack-band latch: with -autoRegularization the
     softening backbone encodes the element-supplied lch, so the response must
