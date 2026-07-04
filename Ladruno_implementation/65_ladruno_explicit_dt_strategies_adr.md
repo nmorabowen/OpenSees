@@ -417,6 +417,48 @@ fail — and is evaluated standalone unless Route A already shipped a GC interfa
   pattern pointer + stale example name), `LadrunoMassScaling.h` (`minDtSelfReport`;
   per-element pencil computed but not dumpable).
 
+## Addendum v4 (2026-07-04) — advanced-explicit landscape reframe
+
+A broad survey of advanced explicit methods (captured in the new **`explicit-dynamics`
+skill**, repo `explicit-dynamics-skills`, module `advanced_methods_landscape.md`) adds
+two axes this ADR did not name. Neither changes the v3 decisions; both sharpen them.
+
+**1. A dissipation axis, orthogonal to the Δt-bound axis.** ADR-65 (v1–v3) weighed only
+*how to enlarge Δt* (SMS / subcycle / IMEX / adaptive). Separately, spurious
+high-frequency content (contact/hourglass chatter) is a *dissipation* problem, and the
+fork already ships two principled tools for it and under-uses them:
+- `ExplicitBathe` (Noh–Bathe two-sub-step, controllable HF dissipation) — shipped.
+- vanilla `HHTGeneralizedExplicit` (explicit generalized-α, single-knob ρ∞) — present,
+  not exposed/tested in the fork.
+Cheapest real win on this axis: expose + validate `HHTGeneralizedExplicit` for
+contact-release chatter (doc+test, not a build). Tchamwa–Wielgosz is the cheap 1st-order
+HF killer if a heavier hammer is wanted.
+
+**2. A fourth Δt route, and the *right* realization of Route A.**
+- **Route D — model-based unconditionally-stable explicit (KR-α / Chen–Ricles / Chang).**
+  Already in *vanilla* OpenSees (`KRAlphaExplicit`), unwired in the fork. Sidesteps CFL
+  for **moderate-DOF, stiffness-softening** problems, but is **ruled out** for the fork's
+  headline cases: dense **O(N²)** parameter matrices (not the O(N) SSI regime), and
+  unconditional stability is **softening-only** so contact/gap-closing (hardening) breaks
+  it. Good for RTHS/moderate-softening; name it in the matrix so it isn't silently
+  omitted, but don't build for contact/large-SSI.
+- **Route A done right = AVI or DG-clustered subcycling, not naive Belytschko–Neal.**
+  Asynchronous Variational Integrators (Lew–Marsden–Ortiz–West 2003) give per-element Δt
+  in arbitrary ratios with variational/multisymplectic stability — they **avoid Daniel's
+  band instability** by construction (and the fork's central difference is *already* a
+  variational integrator, so it's consistent). AVI is ADR-scale (event-driven core +
+  variational collision for contact). Pragmatic interim: a **DG-informed hardened
+  subcycler** — power-of-two clustered Δt bins (cures the Daniel bands), cluster
+  assignment driven by the existing per-element `Δt_e` from `LadrunoMassScaling`, and
+  interface **momentum conservation as a first-class gate** (the SeisSol/ADER-DG lesson).
+  This upgrades Route A from "deferred, fragile" to "deferred, with a known robust path."
+
+**3. Not worth it (recorded so they aren't re-proposed):** GS4/GSSSS code-consolidation
+of the integrator zoo (organizing lens only); GLL exact-diagonal mass (spectral-element-
+only — a new element family, and CFL shrinks ~1/p²). See the skill's landscape module for
+the full five-family map + citations (all primaries now local in
+`skills/explicit-dynamics-manuals/`).
+
 ## Implementation log
 
 *(Route B only, when its oracle fires; Routes A/C stay here until a trigger fires.)*
