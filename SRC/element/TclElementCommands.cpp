@@ -107,6 +107,7 @@ extern void *OPS_ElasticBeam2d(const ID &info);
 extern void *OPS_ElasticBeam3d(void);
 extern void *OPS_LadrunoIMKBeam(void); // N. Mora-Bowen (Ladruno)
 extern void *OPS_LadrunoBrick(void); // N. Mora-Bowen (Ladruno)
+extern void *OPS_LadrunoSolidShell(void); // N. Mora-Bowen (Ladruno) ADR 66
 extern void *OPS_LadrunoQuad(void); // N. Mora-Bowen (Ladruno)
 extern void *OPS_LadrunoCST(void); // N. Mora-Bowen (Ladruno)
 extern void *OPS_LadrunoDistributingCoupling(void); // N. Mora-Bowen (Ladruno)
@@ -583,6 +584,7 @@ TclModelBuilderElementCommand(ClientData clientData, Tcl_Interp *interp,
     } ladrunoElementTable[] = {
       {"LadrunoIMKBeam",              "ladrunoIMKBeam",              OPS_LadrunoIMKBeam},
       {"LadrunoBrick",                "ladrunoBrick",                OPS_LadrunoBrick},
+      {"LadrunoSolidShell",           "ladrunoSolidShell",           OPS_LadrunoSolidShell},
       {"LadrunoQuad",                 "ladrunoQuad",                 OPS_LadrunoQuad},
       {"LadrunoCST",                  "ladrunoCST",                  OPS_LadrunoCST},
       {"LadrunoDistributingCoupling", "ladrunoDistributingCoupling", OPS_LadrunoDistributingCoupling},
