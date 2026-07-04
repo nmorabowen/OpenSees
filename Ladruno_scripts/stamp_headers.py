@@ -37,6 +37,7 @@ RULE = "// " + "=" * 74
 # Whole directories that are entirely ours, plus specific files in shared dirs.
 GLOBS = [
     "SRC/element/ladrunoBrick/*.cpp", "SRC/element/ladrunoBrick/*.h",
+    "SRC/element/ladrunoSolidShell/*.cpp", "SRC/element/ladrunoSolidShell/*.h",
     "SRC/element/ladrunoIMKBeam/*.cpp", "SRC/element/ladrunoIMKBeam/*.h",
     "SRC/element/ladrunoEmbeddedRebar/*.cpp", "SRC/element/ladrunoEmbeddedRebar/*.h",
     "SRC/element/ladrunoEmbeddedNode/*.cpp", "SRC/element/ladrunoEmbeddedNode/*.h",

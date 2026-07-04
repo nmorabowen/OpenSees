@@ -243,6 +243,11 @@ finite-strain + directional-state + IMPL-EX interactions need careful testing.
 
 ## Phase 5 — `LadrunoSolidShell` (33020) — through-thickness host (the big one)
 
+> [!note] SUPERSEDED by [[64_ladruno_solidshell_adr]] (2026-07-01) — the full scoping ADR.
+> NB the warning below about `LadrunoBrick`'s EAS is **stale**: true state-dependent Simo-Rifai
+> EAS (`formEAStrue`, committed `alphaCommit`) shipped 2026-06-03 under `-formulation eas`; the
+> solid-shell EAS is an *adapt* of that machinery, not net-new. See ADR 64 §3.
+
 **Goal.** The one genuine **elemental** blind spot a director shell cannot represent:
 through-thickness `σ33` for **punching / bearing / 3D-stress crush**. A narrow specialist, **not**
 a co-equal flexural host.

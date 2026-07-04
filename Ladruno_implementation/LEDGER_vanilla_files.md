@@ -214,6 +214,12 @@ and re-verify.
 | `SRC/{tcl/tclMain.cpp,interpreter/PythonModule.cpp}` | Splash-banner feature regen via `patch_banner.py` — extend the `LadrunoTie` line to note the integral-mortar (`-mortar`) mode (ADR-62 P2) | [#455](https://github.com/nmorabowen/OpenSees/pull/455) |
 | `SRC/{tcl/tclMain.cpp,interpreter/PythonModule.cpp}` | Splash-banner feature regen via `patch_banner.py` — extend the `LadrunoTie` line to note ndf-6 shell rotational-DOF ties (ADR-62 P3). `LadrunoTie.{cpp,h}` themselves are fork-authored (see [[LEDGER_implementations]]); only the banner strings are vanilla. | [#459](https://github.com/nmorabowen/OpenSees/pull/459) |
 | `SRC/{tcl/tclMain.cpp,interpreter/PythonModule.cpp}` | Splash-banner feature regen via `patch_banner.py` — extend the `LadrunoTie` line to note the `-dual` biorthogonal/sparse mortar basis (ADR-62 P2.1). Banner strings only; `LadrunoTie.{cpp,h}` are fork-authored. | [#462](https://github.com/nmorabowen/OpenSees/pull/462) |
+| `SRC/classTags.h` | `// Ladruno` ADR-64: `ELE_TAG_LadrunoSolidShell`=33020 (8-node ANS/EAS solid-shell; honored as reserved by ADR 19 — 33016-33019 remain free ELE slots) | ADR-64 P5.1 |
+| `SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp` | `// Ladruno` ADR-64: `getNewElement` case `ELE_TAG_LadrunoSolidShell` → `new LadrunoSolidShell()` (+include) so DB/MPI `recvSelf` can reconstruct it | ADR-64 P5.1 |
+| `SRC/interpreter/OpenSeesElementCommands.cpp` | `// Ladruno` ADR-64: `element` dispatch for `LadrunoSolidShell`/`ladrunoSolidShell` (fwd-decl + `functionMap`), serving both Tcl and openseespy | ADR-64 P5.1 |
+| `SRC/element/TclElementCommands.cpp` | `// Ladruno` ADR-64: classic-Tcl element table entry `{"LadrunoSolidShell","ladrunoSolidShell",OPS_LadrunoSolidShell}` (+extern decl) | ADR-64 P5.1 |
+| `SRC/element/CMakeLists.txt` | `// Ladruno` ADR-64: `add_subdirectory(ladrunoSolidShell)` (classTag 33020) | ADR-64 P5.1 |
+| `SRC/{tcl/tclMain.cpp,interpreter/PythonModule.cpp}` | Splash-banner feature regen via `patch_banner.py` — add the `LadrunoSolidShell` line (ADR-64 P5.1). Banner strings only; the element sources are fork-authored (see [[LEDGER_implementations]]). | ADR-64 P5.1 |
 
 > [!note] Upstreamable bugfixes
 > Some PRs fix genuine upstream bugs (not fork-only features) and are candidates
