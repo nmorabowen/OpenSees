@@ -208,6 +208,17 @@ public:
     int update(const Vector &U);
     int commit(void);
 
+    // Re-sync the integrator with a REVERTED Domain after a failed step. The
+    // analysis calls Domain::revertToLastCommit() (node/element trial state,
+    // time — including the mid-step p*dt / (1-p)*dt advances — and loads) and
+    // then this. Noh-Bathe defers its cross-step (u,v,a)_t advance to commit(),
+    // so newStep/update aborts leave the vectors clean; this override closes the
+    // remaining windows (a commitDomain() failure after the advance, stale
+    // prevKE / lastUnbalanceNorm from the aborted solve) by re-seeding
+    // (u,v,a)_t from the COMMITTED node state and restoring the per-step
+    // scalars. Time is deliberately NOT touched (revertToLastCommit covers it).
+    int revertToLastStep(void);
+
     // Method to obtain current velocity
     const Vector &getVel(void);
 
@@ -283,7 +294,8 @@ private:
     Vector *R_tdt;      // Forces at time t + dt (unused, kept for compatibility)
 
     // Update counter
-    int updateCount;    // Counts updates per step (should be exactly 2)
+    int updateCount;    // Counts external update() calls per step (exactly ONE —
+                        //   the second Noh-Bathe solve is internal to update())
 
     // Integration coefficients (computed from p)
     double a0;          // = p * dt
@@ -307,7 +319,10 @@ private:
     bool cflAbort;            // abort the step if dt exceeds the Noh-Bathe limit
     double divergenceFactor;  // >0: abort if kinetic energy grows by this factor
                               //     in one step (spurious-energy circuit breaker)
-    double prevKE;            // previous-step kinetic-energy proxy (0.5*v.v)
+    double prevKE;            // RUNNING-MAX kinetic-energy proxy (0.5*v.v) --
+                              //   the breaker baseline (a previous-step baseline
+                              //   false-tripped at free-vibration KE troughs)
+    double committedPrevKE;   // prevKE at newStep() entry (revertToLastStep; transient)
     bool firstStep;           // first newStep() seeds prevKE / checks cold start
 
     // critical-time-step refresh policy
@@ -315,6 +330,7 @@ private:
     int cflRecomputeEvery;    // recompute dt_cr every N steps (0 = once); tracks
                               // stiffness changes in nonlinear runs
     int cflStepCount;         // step counter for periodic recompute
+    int committedCflStepCount;// cflStepCount at newStep() entry (revert cadence)
     bool cflFirstComputation; // gate the detailed report to the first computation
     CTSLumping lumping;       // element-mass lumping for the dt_cr pencil (-lump)
 
@@ -322,6 +338,7 @@ private:
     bool   useLNVD;           // route the residual through addLocalDamping()
     double alpha_flac;        // FLAC local damping coefficient (0 <= alpha < 1)
     double lastUnbalanceNorm; // |r|_inf at the most recent solve (-1 until first)
+    double committedUnbalanceNorm; // lastUnbalanceNorm at newStep() entry (revert)
 
     // Ladruno (W1-E2, -sms / -consistent): selective mass scaling (was ExplicitBatheSMS /
     // ExplicitBatheSMSConsistent). Inert unless useSMS.
@@ -329,6 +346,11 @@ private:
     bool   useConsistent;     // consistent (Olovsson) variant (requires useSMS)
     double dtTarget;          // target stable step the scaling sizes to
     double maxAddedMassFrac;  // soft cap on added-mass fraction (warn if exceeded)
+    double smsEffectiveLimit; // POST-SCALING effective stable step (dtTarget capped by
+                              //   still-governing excluded/self-reported elements); set
+                              //   by applyMassScalingSMS, consumed by the newStep()
+                              //   dt_cr report so it stops warning against the
+                              //   PRE-scaling pencil (transient; NOT serialized)
     CTSLumping lumpingSMS;    // lumping used by the scaling sizing
     bool   useTangentSMS;     // size scaling from the tangent stiffness
     double pcgTol;            // consistent PCG tolerance

@@ -1,9 +1,12 @@
 # LadrunoTie — kinematic mortar mesh-tie via constraint emission (the projection handler)
 
 > ADR-62. Status: **SHIPPED — P1 (collocation, #454) + P2 (integral-mortar, #455) + P3
-> (shell/rotational ndf-6) + P2.1 (`-dual` biorthogonal/sparse mortar) all merged; `LadrunoTie`
-> is the auto-generator.** Backlog: P3.1 (Hermite w–θ shell transfer), shell-to-solid. See
-> `kinematic_tie_handoff.md`. The constructive successor to the shelved ADR-61.
+> (shell/rotational ndf-6, #459) + P2.1 (`-dual` biorthogonal/sparse mortar, #462) + P3.1
+> (Hermite w–θ shell edge transfer `-hermite`, #467) all merged; `LadrunoTie` is the
+> auto-generator.** Backlog: shell-to-solid (the P4 rung — its own decision record,
+> **ADR-64** `64_ladruno_shell_to_solid_tie_adr.md`, planned/awaiting sign-off), and
+> mortar-Hermite (P3.1b, needs a kernel per-GP hook). See `kinematic_tie_handoff.md`.
+> The constructive successor to the shelved ADR-61.
 > Family: ADR-30 (LadrunoProjectionHandler — the enforcement, SHIPPED) · ADR-41 (mortar
 > D/M + `-tie` C4 — the pairing) · ADR-39 (ContactDomain bucket-sort + projection) ·
 > ADR-61 (contact bipenalty — SHELVED; the penalty route this replaces). Next free ADR

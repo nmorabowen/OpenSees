@@ -63,9 +63,11 @@ class LadrunoContactFE : public FE_Element
     // D2: muc = viscous normal-stabilization coefficient (p_visc = muc*gap_rate); 0 ⇒ no viscous term.
     // B1: softScale = SOFT=1 SOFSCL (>0 ⇒ under explicit, kn is replaced by SOFSCL·4·m_eff/dt²);
     //     theDomain is then needed to reach the engine's assembled nodal-mass cache (m_eff).
+    // contact-review P5: contactTag = the owning contactPlane tag (keys the per-contact
+    //     one-time warning latches on the engine; 0 kept as the legacy default).
     LadrunoContactFE(int tag, Node *slaveNode, int ndm,
                      const double p0[3], const double n[3], double kn, double muc = 0.0,
-                     double softScale = 0.0, Domain *theDomain = 0);
+                     double softScale = 0.0, Domain *theDomain = 0, int contactTag = 0);
     // P2b: faceted node-to-segment penalty contact vs ONE master segment (tri-3 or
     // quad-4, nps nodes). Connectivity = {slave} ∪ {segment nodes}; the outward
     // normal is DERIVED per evaluation + oriented toward orientDir (the slave's
@@ -216,6 +218,13 @@ class LadrunoContactFE : public FE_Element
     // with w = [1, −N_0, …, −N_nps]. consistent ⇒ include the non-symmetric d_TN⊗n.
     void addFrictionTang(double fact, const double n[3], const double N[4], double tn,
                          const double gTeff[3], const double gpT[3], bool consistent);
+
+    // contact-review P5 — the -visc gate: true iff muc>0 AND the integrator is NOT a
+    // StaticIntegrator. Trial velocities are state, not rates, under statics (a static stage
+    // after a transient one keeps the last transient velocities), and StaticIntegrator never
+    // assembles addCtoTang — so the dashpot force would be unphysical AND tangent-less there.
+    // Warns once per contact (engine latch) when it disables a configured -visc.
+    bool viscousActive(class Integrator *theIntegrator) const;
 
     // B1 (P4): the SOFT=1 effective penalty for this evaluation. If softScale>0 AND the integrator
     // is the explicit CentralDifferenceLadruno (dynamic_cast) with a valid dt, returns the Courant-

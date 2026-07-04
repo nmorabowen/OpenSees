@@ -334,7 +334,7 @@ def _prime_sms(integrator_args, dt=1.0e-4):
     return ops.analyze(1, dt)
 
 
-_ADDED_RE = re.compile(r"added mass\s+([0-9.eE+\-]+)% of model mass")
+_ADDED_RE = re.compile(r"added mass\s+([0-9.eE+\-]+)% of total element \(translational\) mass")
 
 
 # --------------------------------------------------------------------------
@@ -362,16 +362,16 @@ def test_cap_warning_fires_with_real_fraction(capfd):
     # '%' straddles the X<<"% exceeds"<<cap message chunks and is exactly what the openseespy
     # PythonStream format-string bug used to eat. So this leg doubly guards (a) the cap fires
     # and (b) the '%'-roundtrip survives -> a PythonStream regression fails HERE, localized.
-    assert "% exceeds -maxAddedMass cap" in err_small, (
+    assert "% of total element (translational) mass exceeds -maxAddedMass cap" in err_small, (
         "the -maxAddedMass cap WARNING (with its leading '%%') must fire when added mass "
         "exceeds a 0.1%% cap; stderr was:\n%s" % err_small
     )
     # positive control: under a 5000%% cap SMS still RUNS and reports a (sub-cap) fraction
-    # ('% of model mass' line present) but does NOT trip the cap. Proves the cap COMPARES
+    # ('% of total element (translational) mass' line present) but does NOT trip the cap. Proves the cap COMPARES
     # (not always-warns) AND that scaling happened (not a silent no-op that trivially passes
     # the 'not in' check).
     assert _ADDED_RE.search(err_big), (
-        "under a 5000%% cap SMS must still run and report 'added mass X%% of model mass' "
+        "under a 5000%% cap SMS must still run and report 'added mass X%% of total element (translational) mass' "
         "(else the control is a vacuous silence); stderr:\n%s" % err_big
     )
     assert "exceeds -maxAddedMass cap" not in err_big, (
@@ -381,7 +381,7 @@ def test_cap_warning_fires_with_real_fraction(capfd):
     # the reported added-mass % must be the REAL element-mass-denominator value, not the
     # dead 0% (SMS-CAP-DEAD: nodal getMass() is 0 on -rho models -> a 0/0 -> 0% cap).
     m = _ADDED_RE.search(err_small)
-    assert m is not None, "no 'added mass X%% of model mass' line found:\n%s" % err_small
+    assert m is not None, "no 'added mass X%% of total element (translational) mass' line found:\n%s" % err_small
     frac_pct = float(m.group(1))
     assert frac_pct > 0.1, (
         "reported added-mass fraction %.4g%% must be the real (non-zero) value above the "
@@ -677,4 +677,75 @@ def test_betaK_damped_sizing():
     assert abs(got_ratio - pred_ratio) / pred_ratio < 0.05, (
         "betaK injected-mass ratio %.4f != closed-form (T^2+2Tc-1)/(T^2-1)=%.4f -> wrong "
         "betaK-damped scale" % (got_ratio, pred_ratio)
+    )
+
+
+# --------------------------------------------------------------------------
+# T-BETAK-SLOTS: betaKinit / betaKcomm produce the SAME stiffness-proportional
+#   damping force as current-tangent betaK (C = aM*M + bK*K + bK0*K0 + bKc*Kc), so
+#   they shrink the explicit stable step identically and MUST enter the damped
+#   sizing c = (bK + bK0 + bKc)/dt_e. A slot-blind SMS (pre-fix: only coefs(1) was
+#   read) sizes rayleigh(0,0,bKinit,0) models with the UNDAMPED formula ->
+#   under-scales -> still unstable at dtTarget. Two legs:
+#   (1) equivalence: the injected mass is identical whichever slot carries beta
+#       (same closed form, same numbers -> tight tolerance);
+#   (2) skip-test: an element whose UNDAMPED step clears dtTarget but whose
+#       betaKinit-damped step does not MUST be scaled (the damped skip test must
+#       see slot-2/3 damping too).
+# --------------------------------------------------------------------------
+def _betaK_model_slot(beta, slot):
+    """Same single-truss model as _betaK_model, with beta in rayleigh slot 1|2|3
+    (1=betaK current, 2=betaKinit, 3=betaKcomm)."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.node(1, 0.0, 0.0); ops.fix(1, 1, 1)
+    ops.node(2, 0.1, 0.0); ops.fix(2, 0, 1)
+    ops.uniaxialMaterial("Elastic", 1, 1.0e4)
+    ops.element("Truss", 1, 1, 2, 1.0, 1, "-rho", 1.0)
+    args = [0.0, 0.0, 0.0, 0.0]
+    args[slot] = beta
+    ops.rayleigh(*args)
+    ops.constraints("Transformation")
+    ops.numberer("Plain")
+
+
+def _betaK_inject_slot(beta, slot, dtTarget):
+    _betaK_model_slot(beta, slot)
+    _prime_sms((SMS, dtTarget), dt=2.0e-4)
+    return ops.nodeMass(2, 1)
+
+
+def test_betaKinit_betaKcomm_enter_damped_sizing():
+    dtTarget = 0.005
+    dt_e = _betaK_dt_e()
+    assert 0.0 < dt_e < dtTarget, "fixture: truss dt_e=%.4g must be sub-target" % dt_e
+    beta = 5.0e-4
+
+    # (1) slot equivalence: identical injected mass whichever slot carries beta.
+    # At the initial state K == K0 == Kc, so the three sizings are the SAME number
+    # (identical code path after the fix) -> tight tolerance, not a loose band.
+    dm = {slot: _betaK_inject_slot(beta, slot, dtTarget) for slot in (1, 2, 3)}
+    assert dm[1] > 0.0, "current-betaK injection must be positive (fixture)"
+    for slot, name in ((2, "betaKinit"), (3, "betaKcomm")):
+        rel = abs(dm[slot] - dm[1]) / dm[1]
+        assert rel < 1.0e-9, (
+            "%s (slot %d) injected %.6g != current-betaK %.6g (rel %.2e) — the slot is "
+            "invisible to the damped sizing (pre-fix behavior: undamped T^2 under-scale)"
+            % (name, slot, dm[slot], dm[1], rel)
+        )
+
+    # (2) skip-test sees slot-2 damping: pick dtTarget2 slightly BELOW dt_e so the
+    # element is undamped-safe (skip), then add betaKinit large enough that the
+    # damped step dt_e*(sqrt(1+c^2)-c) falls below dtTarget2 -> must be scaled.
+    dtTarget2 = 0.9 * dt_e
+    assert _betaK_inject_slot(0.0, 1, dtTarget2) == 0.0, (
+        "fixture: undamped element must be SKIPPED at dtTarget2=0.9*dt_e (its undamped "
+        "step clears the target)"
+    )
+    beta_big = 0.30 * dt_e            # c = 0.30 -> sqrt(1+c^2)-c ~ 0.744 < 0.9
+    dm_skip = _betaK_inject_slot(beta_big, 2, dtTarget2)
+    assert dm_skip > 0.0, (
+        "an element whose betaKinit-damped step (~%.4g) is below dtTarget2=%.4g MUST be "
+        "scaled; got zero injection — the damped SKIP test is blind to betaKinit"
+        % (dt_e * (math.sqrt(1.0 + 0.09) - 0.3), dtTarget2)
     )

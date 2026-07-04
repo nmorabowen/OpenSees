@@ -24,6 +24,21 @@ them. This is observation-only — fixes we actually applied are tracked in
 
 ## Quirks
 
+### `criticalTimeStep()` under SMS returns the PRE-scaling element pencil — the post-scaling effective limit is report-only with NO getter
+- **Bites:** any driver/script that queries `criticalTimeStep()` on a mass-scaled run (CentralDifferenceSMS/SMSConsistent, ExplicitBathe `-sms`) expecting the stable-Δt after scaling. It gets the un-augmented sliver limit instead — `dt = safety*criticalTimeStep()` collapses Δt to the pre-scaling value and silently defeats SMS (conservative, so it "works", just wastes the entire scaling benefit).
+- **Why:** `CentralDifferenceLadruno::getCriticalTimeStep()` (`CentralDifferenceLadruno.cpp:742–746`) and `ExplicitBathe::getCriticalTimeStep()` (`ExplicitBathe.cpp:1435–1441`) return the raw element-pencil value, which cannot see nodal injected mass (scaling writes `Node::setMass`; the pencil reads `ele->getMass()`). The post-scaling limit exists (`setSMSEffectiveLimit` ← `minDtSelfReport`, P3 #475) but is consumed ONLY by the `newStep()` "[PRE-SCALING estimate]" report — protected setter, no getter, no command plumbing.
+- **Workaround/status (2026-07-02, ADR-65 adversarial gate):** treat the query as a conservative lower bound, or don't query under SMS at all (SMS runs are sized to `dtTarget` at construction — just use `dtTarget`). An SMS-aware adaptive driver needs a new `getSMSEffectiveLimit()` accessor first. See [[65_ladruno_explicit_dt_strategies_adr]] §Route B.
+
+### Changing Δt between explicit `analyze()` calls without `revertToLastStep()` mis-centers the leap-frog by `(Δt_new−Δt_old)/2·a` per change
+- **Bites:** any variable-Δt driver loop over `CentralDifferenceLadruno` (and the SMS subclasses). `newStep(dt_new)` after a step committed at `dt_old` advances `Vhalf += Δt_new·a_n` (`CentralDifferenceLadruno.cpp:574`) with no previous-Δt memory — but `v_{n−1/2}` is staggered for `Δt_old`, so the correct advance is `((Δt_old+Δt_new)/2)·a_n`. Each un-reseeded Δt change injects a systematic velocity error; small per change, compounding during ramps. No warning, nothing fails.
+- **Why:** the leap-frog kernel is uniform-Δt by design; only the failure path was ever exercised with Δt changes, and that path happens to be correct because `revertToLastStep()` re-arms `firstStep` and rebuilds `v_{−1/2}` from committed state at the new Δt (`:420–436`, valid standalone per the `:413–419` comment).
+- **Workaround/status (2026-07-02, ADR-65 adversarial gate):** call `revertToLastStep()` after the last commit before ANY `newStep` at a different Δt — grow or shrink, not just on failure. See [[65_ladruno_explicit_dt_strategies_adr]] §Route B (stagger reseed).
+
+### Tangent-tracked `criticalTimeStep()` (`-recompute`/`-tangent`) OVER-reports the safe explicit step by √(E0/E_tan) for any reloadable material — unsafe as an adaptive-growth target
+- **Bites:** any adaptive-Δt driver that grows the step toward `safety·criticalTimeStep()` on a model with plasticity or damage-with-reload. As the material softens/yields the tangent stiffness drops, so `criticalTimeStep()` returns a *larger* Δt_cr (Δt_cr = 2/ω_max ∝ √(m/k_tan)). Grow into it and the run blows up the instant an elastic-reload wave hits the softened element — because reload happens at the UNDAMAGED modulus E0, not the current tangent.
+- **Why:** the pencil sees only the current (tangent) stiffness; a reloadable material can stiffen back to E0 in one step. Measured over-report = √(E0/E_tan): exactly 7.07× on Steel01 b=0.02 (=√(1/b)) and 12.5× on a Concrete01 softening bar (ADR-65 P0 oracle, `adr65_headroom_oracle/`, 2026-07-03). The tangent tracking itself is CORRECT and stays positive on the softening branch (0 bad samples / 2200 steps) — it's the *interpretation as a safe step* that's wrong.
+- **Workaround/status (2026-07-03, ADR-65 Route B oracle):** an adaptive driver must clamp Δt growth to the UNDAMAGED/elastic Δt_cr, not the instantaneous tangent — which makes growth headroom ~1.00× (nil) for reloadable nonlinearity, i.e. adaptive *growth* buys nothing there. The safe use of the tangent query is the SHRINK direction (Δt_cr dropping mid-run) + permanent non-reloadable stiffness loss (erosion). See [[65_ladruno_explicit_dt_strategies_adr]] §Route B P0 oracle RUN.
+
 ### A held-load augmentation loop that re-enters `Domain::commit()` SILENTLY corrupts the recorder stream + `commitTag` — suppress them, don't try to undo them
 - **Bites:** any "within-step" contact-ALM driver that drives `‖ḡ‖→augTol` at a fixed load by re-`analyze(1)`-ing under a zero-increment `LoadControl` (the shipped `analyze_augmented` proc, ADR-41 C2.2/C4/D1). Each held re-solve commits through `Domain::commit()`, which (a) fires EVERY recorder `theRecorders[i]->record(commitTag, currentTime)` and (b) bumps `commitTag++` — so N augmentation passes inject N SPURIOUS duplicate recorder samples at the SAME pseudo-time and jump `commitTag` by N. A model with a Node/Element recorder gets a corrupted output file (extra rows) the user never asked for, and downstream tooling keyed on `commitTag` mis-indexes.
 - **Why:** `Domain::commit()` is the integrator-agnostic choke point — it is the SOLE recorder-firing path under a static `analyze(1)` (StaticAnalysis has no separate `theDomain->record()`; the record happens INSIDE commit). The contact Uzawa λ update is wired there too (`theContactDomain->commit()`), so you cannot skip the whole commit — you specifically need "commit the contact multiplier, do NOT record / do NOT advance commitTag". You also can't UNDO a recorder sample after the fact: `Recorder::record` may have already flushed to a file/stream, so a "snapshot + restore commitTag" protocol does not un-write the row — the only correct fix is to SUPPRESS the firing, not reverse it.
@@ -1681,6 +1696,20 @@ non-obvious behaviours, all relevant to anyone wiring `-stabilize` into a driver
   friction tangent lands and an implicit Newton step is rejected. **RESOLVED in C3.2 (#378):** `gT0`/`engaged`
   are double-buffered (`gT0committed`/`engagedCommitted`), promoted in `commit()` and restored in
   `revertToLastCommit()`. Found by the C3.1 gate (MAJOR-2, #377), fixed in C3.2.
+- **2026-07-02 (contact-review P2): the SAME fix was finally BACK-PORTED to the NTS lane it was copied
+  from.** The paragraph above ("identical to the shipped NTS SEGMENT behavior") documented the shared flaw
+  but only excused it as not-a-C3.1-regression — and NTS friction is a first-class IMPLICIT path since
+  P3.5 (#361), so the "unreachable under explicit" shield never applied there. NTS `FrictionState` now
+  carries the same `gT0committed`/`engagedCommitted` double-buffer (commit promotes / revert restores).
+  LESSON: when a gate fixes a defect on a COPIED lane, grep for the source lane the copy came from — a
+  ledger sentence acknowledging "the sibling has it too" is a fix obligation, not an absolution. Same PR:
+  `LadrunoContactDomain::revertToStart()` (hooked from `Domain::revertToStart` — `ops.reset()`) drops ALL
+  contact path state (friction slip/origins, ALM λ_N/λ_T/λ_tie, edge signs, re-emit anchors/fp/trigger,
+  NTS-force + nodal-mass caches; NormalField σ+frozen sign KEPT — reference-geometry datum, re-derivable
+  identical). Pre-fix, a re-run after `ops.reset()` started from the previous run's committed slip gpT ⇒ a
+  large spurious backward stick force at first contact — silently different from a fresh model. Gates:
+  `tests/test_contact_review_p2_lifecycle.py` (failed-step retry ≡ never-failed reference bit-tight;
+  reset re-run ≡ first run bit-tight — both FAIL pre-fix).
 
 ### B3 (P2b-2c): the LadrunoContact handler does NOT enforce non-zero SP (imposed displacement) — NOW WARNS
 - **Bites:** any model that drives a `LadrunoContact` analysis by imposed nodal displacement
@@ -1699,6 +1728,105 @@ non-obvious behaviours, all relevant to anyone wiring `-stabilize` into a driver
   needed), or a fixed-geometry incompatibility (pre-set node positions, like `block_on_block`'s 1e-8
   pre-penetration). FULL imposed-SP support would need a Transformation-style contact handler (no current
   consumer; deferred). Found while building the Hertz benchmark (capstone B3 gate 2).
+
+### Contact-review P3 (2026-07-02): τmax-only friction was an UNBOUNDED bond; validation choke points; mortar isomap scale fix
+- **τmax-only (HIGH-2):** `-tauMax` without `-mu`/`-cohesion` is the unified cone `min(μN+c, τmax) =
+  min(0, τmax) = 0` — a ZERO cone radius (free slip). The kernel's `cap≤0` branch returned the RAW
+  ELASTIC traction ("byte-identity is the guard's job") with a consistent stick tangent, so the config
+  silently became an UNBOUNDED elastic bond — the FE guards treat `tauMax>0` as a friction REQUEST and
+  the handler auto-defaults `kt`, so it fell exactly between the tested branches (Tresca is tested as
+  μ=0 WITH cohesion). FIX at two layers: the kernel `cap≤0` branch now FREE-SLIPS (zero traction, slip
+  absorbs the motion, zero tangent block — `frictionReturnMap` + `frictionTangentBlock` +
+  the numpy mirror in `proto_a1_friction.py`), and the command surface REFUSES `-tauMax`/`-edgeTauMax`
+  without a `-mu`/`-cohesion` (the sanctioned shear-capped BOND is `-cohesion`, optionally + `-tauMax`);
+  on the NTS lane `-tauMax` is refused outright as mortar-only (it was silently INERT there — the
+  positional-μ NTS cone has no shear cap; adversarial-gate MINOR-1, fail-loud like `-geomtan`).
+  cap>0 branches byte-unchanged (166k-case gate fuzz bitwise-identical + oracle byte-guards pass on
+  BOTH pre/post kernels). Oracle: `contact_prototypes/proto_friction_validation.cpp` (12 checks,
+  6 FAIL pre-fix). GATE-SURFACED FOLLOW-UP (pre-existing, not fixed here): mortar AUTO-orientation
+  silently degenerates for COINCIDENT conforming facets — `orientDir = scen − mcen = 0` and the
+  facet-normal flip test never fires, leaving the sign to winding luck; pass `-outward` for coincident
+  interfaces (the shipped c2_1 tests always do). Candidate warn/refuse in the review PR-5 batch.
+- **Validation choke points (previously silent):** duplicate CONTACT tags now refused across
+  contact/mortar/contactPlane (`contactTagInUse` — the tag is the leading key of every path-state
+  store: a duplicate ALIASED friction slots last-writer-wins and ping-ponged the re-emit fingerprint
+  every handle); `kt<0` refused (mirrors the kn guard); faceted-surface connectivity must be a whole
+  number of segments (`size % nps == 0` — the trailing partial segment was silently DROPPED);
+  a missing node or a 2D (`-ndm 2`) node in a contact surface now SKIPS the whole contact LOUDLY at
+  handle() (`ladrunoSurfaceNodesOk` — previously silent dead pairs, and a 2D node read `getCrds()(2)`
+  OUT OF BOUNDS, unchecked in release).
+- **Mortar `inverseIsomap2D` (the PR-1 gate follow-up):** absolute `tolR=1e-13` on a LENGTH-unit
+  residual (aux-plane UV ~ facet size h, noise floor ~eps·h) ⇒ GPs silently SKIPped for h ≳ 2000
+  (378/400 dead at h=5e4) ⇒ `-mortar` contact and `LadrunoTie -mortar` quietly lost their integration
+  at mm-unit-building scales. FIX = the PR-1 parametric-step escape (`|dξ|+|dη| < 1e-10` after the
+  update). In-solver gate: `tests/test_contact_review_p3_validation.py` mortar press at h=1 AND h=5e4
+  settle to the SAME penalty prediction (pre-fix: free fall at h=5e4).
+
+### Contact-review P4 (2026-07-02): the contact handler silently DROPPED every equationConstraint — LadrunoTie + contact = dead ties
+- **Bites:** any model combining `constraints LadrunoContact` with `equationConstraint` — notably the
+  fork's own **LadrunoTie (ADR-62)**, which emits ordinary EQ rows. The handler REPLICATES PlainHandler's
+  DOF/FE loop (so the contact-FE start tag is knowable), but upstream PlainHandler gained an
+  EQ_Constraint block AFTER the replica was written (enforce trivial-identity ⇒ DOF −4; loudly
+  warn-and-ignore non-trivial); the replica had NEITHER ⇒ ties ran completely dead with NO diagnostic —
+  the exact silent-zero class the handler's non-homogeneous-SP warning guards (review HIGH-3).
+- **FIX (upstream parity, no more):** the EQ block is ported — trivial-identity EQs are ENFORCED
+  (DOF mark −4, the numberer's EQ code) and non-trivial ones are warned NOT-ENFORCED, pointing at
+  `constraints LadrunoProjection`. **RULE: contact + non-trivial ties in ONE analysis remains
+  unsupported** (the handlers are mutually exclusive; actual EQ enforcement is the projection
+  handler's job) — it now says so instead of silently producing a wrong answer. Gate:
+  `tests/test_contact_review_p4_eq_parity.py` (capfd warning assert — FAILS pre-fix on silence).
+
+### Contact-review P5 (2026-07-02): per-contact NormalField sign re-key + the hygiene batch
+- **Shared-master `-smoothNormal` sign (MED, the headline):** the ADR-63 nodal-normal field was keyed
+  by MASTER SURFACE tag, but its frozen global outward SIGN is a per-CONTACT datum (parity with the
+  faceted per-contact `orientDir`). A SECOND contact sharing the master (a two-sided baffle: slaves on
+  BOTH faces of one declared plate) inherited the FIRST contact's frozen sign — `signCaptured` skipped
+  the whole vote, so even its own explicit `-outward` was IGNORED — and its slaves were read as
+  penetrating from the wrong side and EJECTED through the plate (silent pass-through). FIX =
+  `theNormalFields` keyed by CONTACT tag (each contact votes + freezes its own sign; the topological
+  σ/sharedEdge cache duplicates per contact on a shared master — cheap, fingerprint-cached). Gate:
+  `tests/test_contact_review_p5_percontact.py::test_p5_two_sided_baffle_per_contact_sign`.
+- **One-time warnings were PROCESS-lifetime:** every contact warning latch was a function-local
+  `static bool warned` ⇒ after the first warning anywhere, every later model in the same interpreter
+  (wipe/new model) stayed SILENT, and a second contact with the same defect was silenced by the first.
+  FIX = per-(contactTag, topic) latches on the engine (`LadrunoContactDomain::warnOnce`, reset
+  naturally on wipe since `Domain::clearAll` deletes the engine; kept across `revertToStart` — a reset
+  re-run repeats the same configuration). The rigid-plane adapter now carries its contactPlane tag for
+  the latch key.
+- **`-visc` was NOT statics-inert:** the "v≡0 in statics ⇒ byte-identical" claim ignored that trial
+  velocities are STATE — a static stage AFTER a transient one (or `setNodeVel`) keeps the last
+  committed velocities, so the dashpot injected a constant unphysical force with NO matching tangent
+  (`StaticIntegrator::formEleTangent` never calls `addCtoTang`) and silently shifted the static
+  equilibrium. FIX = the dashpot is DISABLED under a `StaticIntegrator` (dynamic_cast gate in
+  `LadrunoContactFE::viscousActive`, warn once per contact); genuinely-zero velocities made the old
+  force exactly 0.0, so the gate is byte-identical for a pure static run (the shipped D2 static test).
+- **Edge-edge first-capture sign could coin-flip:** the E2 body-fixed sign is captured ONCE from
+  `sign(n·orientDir)` — with the reference nearly ⟂ n the capture was a numerical coin flip that then
+  BOUND the pair for its whole life. FIX = the H2-style conditioning guard (mirrors
+  `normalOriented`'s `|proj| < 1e-12·|ref|` refusal) DEFERS the capture (the eval is treated as
+  no-contact; retried at the next, better-conditioned config) — and the defer is LOUD (gate lens-A):
+  on a symmetric rig the reference can stay ⟂ n forever (e.g. an axis-aligned `-outward` exactly in
+  the crossing plane), so a one-time per-contact warning names the pair inert and points at
+  `-outward`. Also closes the degenerate-normal hole where `edgeGap`'s failure path left `n`
+  uninitialized but the caller kept assembling.
+- **`LadrunoEdgeKernel` TAU_LEN was an absolute floor (the PR-1/PR-3 unit-trap class):** `a ≤ 1e-9` on
+  a SQUARED length ⇒ every edge shorter than ~3e-5 length units was silently DEGENERATE (edge-edge
+  contact dead at small length units). FIX = RELATIVE floor `TAU_LEN_REL = 1e-12` (squared-length
+  ratio vs the LONGER edge of the pair; both-zero ⇒ degenerate). Oracle mirrors
+  (`proto_e0_closest_point.py` / `proto_e2_penalty.py`) updated in lockstep, all green.
+- **Tri/quad shared-edge guard 2× factor:** `onSharedInteriorEdge`'s parametric `edgeTol` (0.1) was
+  calibrated on the QUAD span of 2 (5% of span) but applied verbatim to the TRI span of 1 (10%) — the
+  P2.1 ownership guard fired twice as aggressively on tri meshes. FIX = tri branch uses `edgeTol/2`
+  (same fraction-of-span; quad byte-unchanged — the calibrated P2.1 ridge gates are quad meshes).
+- **Coincident/staggered zero-gap mortar AUTO orientation (the PR-3 gate follow-up):** the kernel
+  signs the facet normal by flipping it toward `orientDir = scen − mcen`, so the hazard is the
+  NORMAL COMPONENT of that vector vanishing — a COINCIDENT conforming pair (`orientDir ≈ 0`) AND a
+  zero-gap STAGGERED non-conforming pair (`orientDir` tangential, O(h) — the canonical mortar
+  interface; gate lens-B) both leave the flip test to roundoff ⇒ the mortar sign is WINDING LUCK
+  (an unlucky winding = attractive contact, no diagnostic). Now WARNS once per contact when
+  `|n̂_m·orientDir| ≤ 1e-6·h` at a proximate pair (`|orientDir| ≤ 2h`; far coplanar pairs stay
+  silent); `-tie` exempt — its full 3-vec bond is sign-independent and coincident is its common
+  case. Pass `-outward` for zero-gap interfaces.
 
 ### B3: NTS contact force is NOT in nodeReaction — use the `ladrunoContactForce` query
 - **Bites:** reading per-node contact pressure. The NTS contact traction is assembled by an injected
@@ -1952,6 +2080,23 @@ re-emit so the readout is live there.
   `Dᵉ` and `Mᵉ` integrate over the SAME overlap (`Dᵉ·1 = Mᵉ·1 = cᵉ`). Keep the default (standard dense P)
   byte-identical — the dual path is a separate post-guard block, opt-in `-dual`.
 
+### Mixed-DOF EQ rows (w←(w,θ)) are ALREADY legal end-to-end — but a mortar basis change needs kernel help
+- **Bites:** anyone extending a tie/constraint transfer beyond same-DOF rows — the ADR-62 P3.1
+  `-hermite` Hermite w–θ shell-edge transfer, and any future shell-to-solid (`θ=½∇×u`) coupling.
+- **Why (the good news, verified in source):** `EQ_Constraint` stores per-retained `(node, dof, coef)`
+  TRIPLES (`rCoef_i·rDOF_i(rNode_i)`, EQ_Constraint.h:37-45) and `LadrunoProjectionHandler::buildGroups`
+  creates one union-find vertex per `(node, dof)` walking arbitrary retained-DOF lists — there is NO
+  retained-dof==constrained-dof assumption anywhere. So a slave-translation row that references master
+  ROTATION DOFs is an ordinary EQ row: no constraint-class, kernel, or handler change (P3.1 shipped as a
+  pure emission-level transform on the collocation path).
+- **The catch:** this dodge is COLLOCATION-only for basis changes. `LadrunoMortarKernel::integratePair`
+  returns only ACCUMULATED `D/M/g̃` (`PairResult` has no per-GP hook), so putting a different master basis
+  (e.g. Hermite functions of `(w, θ_t)`) inside the weak-form `M` integral requires a kernel extension —
+  that is why `-hermite -mortar` is a named refusal (mortar-Hermite = deferred P3.1b).
+- **Bonus oracle gotcha:** when testing a Hermite w-row against slope-inconsistent (Mindlin) data, do NOT
+  sample slaves at edge midpoints — the shear error enters through `H2+H4 ∝ ξ−3ξ²+2ξ³`, which has a root
+  at exactly ξ=½, silently hiding the Kirchhoff-assumption error (proto_p3_1_hermite_tie.py T6).
+
 ## ADR-63 #4a — averaged nodal-normal smoothing (NTS)
 
 **The auto global-sign vote uses the master-surface centroid over UNIQUE nodes — NOT the flat `mTags`
@@ -2028,7 +2173,10 @@ slave *starting to the side* of a curved arc votes a near-horizontal seed (slave
 up-field) whose tiny z-component can flip the sign INWARD ⇒ the smoothed field points inward ⇒ pass-through
 even with `-smoothNormal` (the pre-existing F2/F3/F5 low-confidence warning fires). So `-smoothNormal` is NOT
 a blanket lift of `-outward` for curved masters — it lifts it only for slave clouds sitting OVER the master
-(seed ∥ field). Always pass `-outward` for edge-grazing / side-approaching slaves on a curve. (3) The P2.1
+(seed ∥ field). Always pass `-outward` for edge-grazing / side-approaching slaves on a curve. **[SUPERSEDED
+by P2.5 below — the auto sign is now a robust per-slave majority vote that holds for over-the-master edge/
+side-approaching clouds without `-outward`; only a genuinely two-sided or multi-shell cloud still needs it.]**
+(3) The P2.1
 gap-aware guard's near-apex over-stiffness under SLIDING is a mild quality effect (a small extra bump as a
 block crests a SHARP ridge at speed; negligible on realistic shallow arcs, maxpen ~0.01; never diverges),
 not a pass-through — full single-owner selection is ADR-57 #4b.
@@ -2102,3 +2250,168 @@ transient to a tiny-`betaK` one — light damping must change the peak <5%; the 
 tiny-`betaK` run to quasi-static (or non-convergence). This is INVISIBLE to every static/patch gate
 — a dynamic Rayleigh regression is mandatory for any new element with mass. (Verified by
 reverting the fix + rebuilding: the gate fails `analyze -3` on the buggy binary, passes on the fixed.)
+**`Vector::pNorm(0)` is NaN-BLIND — never use it for a divergence/NaN check (2026-07-02).** `pNorm(0)`
+implements max via `value = (fabs(data) > value) ? fabs(data) : value`; every comparison against NaN is
+FALSE, so NaN entries are silently SKIPPED and the returned max is never NaN. The explicit integrators'
+circuit breakers (`A_max = U.pNorm(0); if (A_max != A_max || A_max == inf)`) therefore only ever fired on
+±Inf: an all-NaN acceleration (NaN material state, poisoned IC, `inf − inf` residual) sailed through and
+was COMMITTED into the node state. Fixed by `vectorIsFinite()` (`CriticalTimeStep.{h,cpp}`, std::isfinite
+scan) in `CentralDifferenceLadruno`/`ExplicitBathe`/`LadrunoDynamicRelaxation::update()`. Related trap when
+WRITING the test: a *seeded* Inf displacement degenerates to NaN before reaching the breaker
+(`inf + dt·(−inf) = NaN`), so the honest Inf-path fixture is a genuinely divergent run driven to its first
+overflow, and the honest NaN fixture is a NaN committed displacement (`Fint = k·NaN`). See
+`tests/test_explicit_nan_breaker.py`.
+
+**betaKinit/betaKcomm MUST be summed with betaK for any explicit stable-step bound (2026-07-02).**
+`C = αM·M + βK·K + βK0·K_init + βKc·K_commit` — all three β slots are stiffness-proportional and shrink the
+explicit stable step identically (ξ = β·ω/2 grows with ω), and `rayleigh 0 0 βKinit 0` is the MOST COMMON
+form in practice (chosen precisely to avoid the current tangent). Reading `getRayleighDampingFactors()(1)`
+alone made the SMS damped sizing AND the damped dt_cr estimate blind to it → under-scaled → unstable at
+dtTarget for exactly the users the betaK feature targets. Use `stiffnessRayleighBeta(ele)`
+(`CriticalTimeStep.{h,cpp}`): per-slot clamp at 0, then sum. Exact at the initial state (K == K0 == Kc);
+conservative under softening — the right side to err on for a stability bound.
+
+**The `-divergence` KE proxy FALSE-TRIPS on free vibration at velocity troughs (2026-07-02; FIXED review-P3 #475 -- baseline is now the running MAX of KE).**
+The breaker compares per-step `ke/prevKE` against the factor, with `prevKE` updated every step it is
+positive. In plain free vibration the velocity passes through ~0 every half period; the step nearest the
+zero leaves `prevKE ≈ ε`, and the next steps' quadratic KE regrowth off that near-zero floor produces an
+unbounded ratio — phase luck decides whether a given trough exceeds the factor (observed: an SDOF at
+dt=0.005, ω=10 tripping factor 10 at its second trough). Workaround in tests/models: excite a
+CIRCULAR-motion state (equal springs x+y, quadrature seed) whose total KE is constant, or keep
+`-divergence` for monotonic-divergence detection only. Real fix (PR-3 diagnostics batch candidate):
+compare against a running MAX of KE, not the previous step.
+**ADR-63 P2.5 — the AUTO outward sign is a per-slave MAJORITY vote; a LOCAL closest-point vote beats the
+aggregate-normal·global-chord coin-flip (2026-07-01).** The frozen global sign on the auto (no-`-outward`)
+path used to be `sign(Σ_a σ_a n_a · (slaveCentroid − masterCentroid))` — an AGGREGATE normal (which nearly
+cancels on a curved/domed master) dotted against a GLOBAL chord (which goes ~tangent to the field when the
+slave cloud grazes the master edge-on) ⇒ `vote·seed ≈ 0` is a coin-flip and a tiny wrong-signed component
+flipped the WHOLE field inward → silent pass-through even with `-smoothNormal` (F2/F3/F5). FIX =
+`LadrunoContactProjection::voteSignRobust`: each slave projects onto its NEAREST facet (closest-point,
+clamped) to get that slave's LOCAL coherent unit normal `n̂ = σ_{s*}·newell̂(s*)`, then votes
+`w = n̂·(slave − surfaceCentroid)` (surfaceCentroid = slot-average of the facet nodes, an INTERIOR
+reference for an open convex patch); the surface takes the DISTANCE-WEIGHTED majority `sign(Σ w)`. TWO
+adversarial-forced choices: (i) the LOCAL normal (not the aggregate `Σσn`) supplies the lateral
+component the aggregate lacked at an edge-grazing slave — the actual F2/F3/F5 fix; (ii) the INTERIOR
+CENTROID reference (not the local footpoint separation) keeps a single slave seeded slightly
+PENETRATING voting outward — a footpoint separation points inward for such a slave and with one slave
+there's no majority to protect it (the P1 sign gate does exactly this; adversarial F2). `|w|`-weighting
+then lets a clearly-separated majority dominate. The vote runs on the REFERENCE coords of BOTH master
+and slaves (adversarial F1 — the DEFORMED master vs reference slave mix mis-signs on restart / mid-run
+recapture; `setNormalField` takes `refSegCoords`, the DEFORMED `segCoords` still drives the per-handle
+field). RESIDUAL (LOW): a non-convex open patch whose centroid is not interior ⇒ pass `-outward`.
+KEY POINTS: (1) it decides only the
+ONE frozen sign (D2/F1) — still captured once, still frozen; (2) `-outward` given ⇒ the aggregate
+`sign(vote·outward)` path is UNCHANGED (byte-behavior preserved) — the robust vote runs only on the auto
+path; (3) `nVoted==0` (no slave projected) ⇒ fall back to the aggregate seed vote; (4) a genuinely two-sided
+cloud yields margin≈0 ⇒ the SAME `conf<0.1` handler warning fires (the ambiguity is DETECTED, recommend
+`-outward`); (5) a disconnected multi-shell master is still refused at `propagateOrientation` — a
+per-connected-component vote (run `voteSignRobust` per component vs its own nearest slaves) is the
+Q-MULTISHELL follow-up; (6) the slave coords fed to the vote are the REFERENCE coords (config-independent —
+captured once); (7) RESIDUAL: the degenerate-BLEND fallback still orients by the aggregate seed (review
+GAP-2), so a degenerate blend AND an edge-grazing cloud together can still drop a pair (fails safe) — pass
+`-outward` for that compound corner. `-smoothNormal` OFF stays byte-identical; no classTag; no vanilla touch.
+
+**An ABSOLUTE tolerance on a DIMENSIONAL residual silently killed all contact away from the origin
+(2026-07-02, contact-review fix PR-1).** `LadrunoContactProjection::project()` converged on
+`|R| < 1e-12` where `R = d·g_α` has units **length²**: its floating-point noise floor is `~eps·|X|·|g|`,
+so for coordinates far from the origin the test was UNREACHABLE — e.g. a plain mm-unit building
+(h~500 mm facets at x~5e4 mm, noise ~3e-10) failed **200/200** projections; every pair evaluated
+inactive and contact SILENTLY vanished (slave free-falls, no warning). Never caught because every
+contact gate ran at unit scale near the origin, where the products happen to be exact in binary.
+FIX = a scale-free **parametric-step escape** `|dξ|+|dη| < 1e-8` (parent coords are O(1)) checked AFTER
+the Newton update. HONEST behavior contract (the adversarial gate REFUTED a stronger "bit-preserving"
+claim): NO previously-converging input is ever LOST (0/5M trials), and on a FLAT facet the escape exits
+one iteration early with the IDENTICAL (ξ,η); on a WARPED facet Gauss-Newton contracts only linearly, so
+~19% of converging warped cases exit with a footpoint within ~tolP parametric of the residual-converged
+answer (measured drift ≤ ~1e-9; gap error second-order ⇒ physically nil; the full 199-test contact+tie
+battery, incl. its exact-`==` byte-identity gates, is unchanged) — in-bounds classification can flip ONLY
+for a footpoint within the 1e-9 parent-boundary slack (~1e-10·h of slave positions). Oracle:
+`contact_prototypes/proto_projection_offset.cpp` (13/21 checks fail on the pre-fix header); in-solver:
+`tests/test_contact_projection_offset.py`. THREE general lessons: (1) any tolerance compared against a
+quantity with length units must be RELATIVE to a local metric (the `detK` degeneracy guard had the twin
+disease — length⁴ vs a length² floor — now the pure angle test `detK < 1e-14·K00·K11`, i.e. sin²θ);
+(2) the SAME absolute test is too LOOSE at micro scale: for h≲1e-5 it passes at the INITIAL GUESS
+(R ~ |d||g| < 1e-12 before any iteration), so micro-facets get centre-footpoint "convergence" — gap on a
+flat facet is footpoint-independent so contact stays functional, just parametrically sloppy (documented,
+unchanged; tightening it would break byte-identity for nothing); (3) test meshes at unit scale near the
+origin CANNOT catch dimensional-tolerance bugs — put one offset/scaled case in every geometric oracle.
+Same review pass: the bucket-grid cap arithmetic used 32-bit `long` (LLP64 Windows) — a diverging
+`clipPct=0` re-emit feed with per-axis cell counts in the [~5e4, 2e9] window wrapped the product, exited
+the cap loop early, and `grid_.assign()` could request a ruinous allocation (`bad_alloc` kills the
+process mid-run). FIX = per-axis pre-clamp to 5000.0 IN DOUBLE before the int cast (also removes the
+double→int UB; the total is capped at min(nSeg,5000) cells anyway) + `long long` product arithmetic.
+**OPEN FOLLOW-UP (found by the PR-1 adversarial gate, pre-existing, NOT fixed here):** the mortar
+back-map `LadrunoMortarKernel::inverseIsomap2D` has the SAME disease — `tolR = 1e-13` ABSOLUTE on a
+LENGTH-unit residual (aux-plane UV ~ facet size h, noise floor ~eps·h): measured 0/400 GPs dead at
+h≤500 but **241/400 dead at h=5e3 and 378/400 at h=5e4**, and the caller silently SKIPs a failed GP ⇒
+`-mortar` contact and `LadrunoTie -mortar` quietly lose most of their integration for facet edges
+≳ 2000 length units. Same fix pattern (parametric-step escape or eps-relative tolR) + its own oracle —
+file with the review-fix PR-3 hardening batch. Same-theme, likely benign: `isConvex2` tol=1e-12
+(length²) and `dedupe` tol=1e-12 (length) in the same header.
+**Collapsing a command family into flags? DIFF THE DEFAULTS, not just the grammar (2026-07-02).**
+The ADR-52 W1-E2 collapse kept every deprecated alias parsing byte-compatibly, but the UNIFIED command
+carried its own `-lump` default (RowSum, upstream-compatible for the bare dt_cr estimate) while the
+alias impl defaulted Diagonal ("matches the system Diagonal run") — so `ExplicitBathe p -sms dt` and
+`ExplicitBatheSMS p dt` sized the SAME model's scaling with DIFFERENT lumping: 3.73 vs 31.88 injected
+mass (8.5x) on a consistent-mass beam, silently. Per-combo byte-identity tests passed because the test
+elements had rowsum == diagonal (Truss — the [[project_zonea_link_blocker]] CDL battery caught that
+equivalence once before). Fixed (review-P2): `-sms` without an explicit `-lump` flips the sizing
+default to Diagonal. LESSON: when merging commands, enumerate every DEFAULT each retired parser had and
+prove the merged parser reproduces them per mode — and put a rotational-DOF (rowsum≠diagonal) model in
+the byte-identity battery.
+
+## Shell-to-solid plane-section tie (ADR-64 `-shellSolid`): the paid-for gotchas
+
+The P4 rung ties an ndf-6 shell EDGE (master polyline) to an ndf-3 solid FACE (slaves) with
+rigid plane-section arm rows `u_s = Σ N_j (u_j + θ_j×d)` (three mixed EQ rows per solid face
+node; drilling drops out via the 1e-12 filter). What we paid to learn:
+
+- **Cross-ndf EQ rows are `Transformation`-INCOMPATIBLE** — the handler's factorization goes
+  singular (`U(i,i)=0`). Enforce with `Lagrange` (static) or `LadrunoProjection` (explicit)
+  only. Documented-unsupported, no investigation planned (ADR-64 OQ-6).
+- **Honest kinematic limits, GATED not hidden (ADR-64 OQ-2):** the 3-translation rigid arm
+  suppresses through-thickness Poisson stretch at the seam (St-Venant boundary layer, misfit
+  = ν·ε·|z| ∝ ν·t, EXACT at ν=0 — oracle T6), and Timoshenko shear warping leaves an O(γ·t)
+  local misfit (analytic max γc/(3√3)) that does NOT shrink with in-plane refinement while
+  resultant transfer stays exact (oracle T7). Model at ν=0/thin seams or accept the layer.
+- **Explicit rotary-mass rule (CORRECTED from the ADR plan):** the generator has NO rotary
+  precondition (slaves are solid translations, `-rho` covers BLOCKER-2; static Lagrange
+  needs nothing) — but under `LadrunoProjection` the master edge's θx/θy still need a small
+  nodal rotary mass (`mass $n 0 0 0 mr mr mr`): the projector keeps every group DOF in the
+  explicit equation set, so a zero-mass DOF has no equation of motion (`rigidLink -beam`
+  has the identical requirement). The "tied solid supplies the edge's rotary inertia via
+  CᵀM_ccC" claim in the ADR draft was measured WRONG for the shipped projector. ALSO: the
+  shell element must LUMP mass on the tied DOFs — `ShellMITC4::getMass()` is CONSISTENT
+  (off-diagonal) and the handler's element guard refuses it; `ASDShellQ4` lumps
+  translational mass and works.
+- **`mass` sizes by the BUILDER's ndf, not the node's** (`OPS_addNodalMass` uses
+  `OPS_GetNDF()`): in a mixed ndf-3/ndf-6 model, `ops.mass(shellNode, 6 values)` after a
+  `model('basic','-ndf',3)` builds a 3×3 and dies with `Node::setMass - incompatible
+  matrices` even though the node was created with the per-node `-ndf 6` override. Re-issue
+  `ops.model('basic','-ndm',3,'-ndf',6)` before creating/massing the shell side.
+- **Collocation force-transfer needs NESTED grids for an exact force patch:** the kinematic
+  rows are exact on ANY grid (oracle T1–T5), but the transmitted interface FORCES only match
+  the receiving side's consistent nodal pattern when the slave grid nests in the master's
+  (2:1 mid-splits etc. — the same property P1's patch test used silently). A non-nested
+  split (e.g. 0.4 vs 0.5) redistributes interface forces at the few-% level and fails a
+  tight stress patch. Consistent transfer on non-nested grids = the mortar variant
+  (deferred: needs the plane-section basis inside the M integral, a kernel per-GP hook).
+- **Testing against a stale `dist/bin` binary: EQ_Constraints survive `wipe()`.** The main
+  checkout's old pyd predates the ADR-30 `theEQs->clearAll()` fix in `Domain::clearAll`, so
+  a second model built in the same process inherits the previous model's EQ rows → duplicate
+  (linearly dependent) Lagrange multiplier rows → `U(i,i)=0`. Current source is fixed; the
+  trap only bites pre-flight scripts run against an outdated binary — one model per process
+  there.
+**A `pos < n` bounded staged walk can "pass" its own post-check — pre-walk the totals (2026-07-02).**
+The lumped SMS injection walked element nodes with `for (...; pos < n)` and then rejected non-node-major
+layouts with `if (pos != n)`. For an element whose nodes' TOTAL ndf EXCEEDS its mass size n, the bounded
+loop stops MID-NODE at exactly pos == n, the post-check sees n, and the misaligned mass is silently
+committed. The consistent sibling was immune only because its first pass summed ndf UNBOUNDED before
+comparing. Same family of trap next door: the consistent M̄ builder indexed `mdiag[base[a]+d]` for
+d < min-ndm without clamping by each node's OWN ndf — an ndf < ndm node spills the write into the next
+node's block (off the end of Mbar/mdiag on the last node). Fixed (review-P3): pre-walk Σndf and reject
+≠ n up front; clamp `ndmOf[a] = min(ndm_a, ndf_a)`. LESSON: a walk over a matrix whose layout a DIFFERENT
+object (the nodes) defines must validate the FULL mapping before mutating anything — loop bounds are not
+validation. Related: an iterative-solver "did not converge" warning must key on the RESIDUAL, not on
+iters == maxIt — the consistent PCG's pAp≤0 SPD-breakdown guard exits EARLY (iters < maxIt, resid > tol)
+and the old `iters >= maxIt` condition swallowed it silently (also fixed review-P3).

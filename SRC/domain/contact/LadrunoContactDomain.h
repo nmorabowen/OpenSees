@@ -237,8 +237,17 @@ class LadrunoContactDomain
         double gpTtrial[3];   // trial plastic slip (written each getResidual)
         double gT0[3];        // ENGAGEMENT-config tangential origin (captured once)
         bool   engaged;       // has gT0 been captured at first activation
-        FrictionState() : engaged(false) {
-            for (int d = 0; d < 3; d++) gpT[d] = gpTtrial[d] = gT0[d] = 0.0;
+        // contact-review P2 (2026-07) — the C3.2 MAJOR-2 double-buffer, back-ported from
+        // MortarNormalState/EdgeEdgeState to the NTS lane it was copied from: gT0/engaged
+        // are mutated in getResidual (the capture), so a REJECTED implicit trial step must
+        // not latch an origin captured at the rejected config. commit() promotes,
+        // revertToLastCommit() restores. (Unreachable under explicit CDL, live under
+        // implicit Newton — NTS friction is a first-class implicit path since P3.5.)
+        double gT0committed[3];
+        bool   engagedCommitted;
+        FrictionState() : engaged(false), engagedCommitted(false) {
+            for (int d = 0; d < 3; d++)
+                gpT[d] = gpTtrial[d] = gT0[d] = gT0committed[d] = 0.0;
         }
     };
     // lazily create + return the slot for a pair (zeroed, engaged=false if new).
@@ -447,7 +456,7 @@ class LadrunoContactDomain
     // which is traction-continuous by D4 — gT0 self-captures ⇒ zero stick force at re-engagement).
     void dropFrictionForContact(int contactTag);
 
-    // --- ADR-63 #4a: averaged nodal-normal smoothing field, per MASTER surface tag. The handler
+    // --- ADR-63 #4a: averaged nodal-normal smoothing field, per CONTACT tag. The handler
     //     builds it once per handle (gated on -smoothNormal) from the DEFORMED config; setNormalField
     //     (re)computes the coherent winding σ via flood-fill (TOPOLOGICAL ⇒ cached + only recomputed
     //     when the R1 membership fingerprint changes) then the area-weighted nodal normals with a
@@ -458,20 +467,69 @@ class LadrunoContactDomain
     //     identical (BLOCKER-IDENTITY). The field is FROZEN within a step (D4): rebuilt each handle,
     //     constant through the Newton loop. ---
     void clearNormalFields(void);                          // handle() begin: drop the per-handle field
-    int  setNormalField(int masterSurfTag, int nps, const int *mTags, int nSeg,
-                        const double *segCoords, const double globalSeed[3]);
-    const double *getSegNodalNorm(int masterSurfTag, int segIndex) const;
+    // ADR-63 auto-sign robustness: slaveCoords (nSlaves × 3, REFERENCE) drive a per-slave distance-
+    // weighted majority vote for the frozen global sign on the AUTO path (useOutward=false); with
+    // useOutward=true (an explicit -outward) the sign comes from the aggregate seed vote as before.
+    // slaveCoords==0 / no vote ⇒ fall back to the aggregate voteSign(globalSeed). refSegCoords (nSeg×
+    // nps×3, REFERENCE master coords) is the config-independent basis for BOTH the vote and the
+    // aggregate fallback (D4 / review F1 — never the DEFORMED segCoords, which mis-signs on restart /
+    // mid-run recapture); 0 ⇒ use segCoords (byte-compatible for a step-0 first capture). segCoords
+    // (DEFORMED) still drives the per-handle nodal-normal FIELD. Defaults keep any other caller unchanged.
+    // contact-review P5 (2026-07) — the field is keyed by CONTACT tag, not master surface tag: a
+    // frozen sign is a per-CONTACT datum (parity with the faceted per-contact orientDir). Keyed per
+    // master surface, a SECOND contact sharing the master (a two-sided baffle) inherited the FIRST
+    // contact's frozen sign — even its own explicit -outward was ignored (signCaptured skipped the
+    // whole vote). Per-contact keying duplicates the topological σ/sharedEdge cache for shared
+    // masters (cheap, fingerprint-cached) and gives each contact its own vote + sign.
+    int  setNormalField(int contactTag, int nps, const int *mTags, int nSeg,
+                        const double *segCoords, const double globalSeed[3],
+                        const double *slaveCoords = 0, int nSlaves = 0, bool useOutward = false,
+                        const double *refSegCoords = 0);
+    const double *getSegNodalNorm(int contactTag, int segIndex) const;
     // ADR-63 P2.1 — this segment's nps shared-edge flags (1 = the local edge from node k to
     // (k+1)%nps is an interior/shared edge; 0 = a free/boundary edge). TOPOLOGICAL, cached with σ.
     // The adapter threads it into evalSegmentSmooth's facet-ownership guard. 0 ⇒ refused/out of range.
-    const int *getSegSharedEdge(int masterSurfTag, int segIndex) const;
+    const int *getSegSharedEdge(int contactTag, int segIndex) const;
     // the frozen global-sign confidence (|cos∠(vote,seed)|, [0,1]) for an OK field, else -1 (no field).
     // The handler warns once when this is below a small floor (fragile auto sign — review F2/F3/F5).
-    double getNormalFieldSignConf(int masterSurfTag) const;
+    double getNormalFieldSignConf(int contactTag) const;
 
-    // --- lifecycle (driven by Domain::commit / revertToLastCommit) ---
+    // --- contact-review P5: one-time diagnostic latches, keyed (contactTag, topic). The old
+    //     function-local `static bool warned` latches were PROCESS-lifetime: after the first
+    //     warning anywhere they stayed silent for every later model in the same interpreter
+    //     (wipe/new model), and a SECOND contact with the same defect was silenced by the first.
+    //     Living on the engine they reset naturally on wipe (Domain::clearAll deletes the engine)
+    //     and latch per contact. Returns true exactly ONCE per (contactTag, topic). ---
+    enum WarnTopic {
+        WARN_REEMIT_PARTITION = 0,  // -reemit under a partitioned host (serial-only downgrade)
+        WARN_SMOOTH_REFUSE,         // -smoothNormal master refused (non-manifold/…): faceted fallback
+        WARN_SMOOTH_SIGN,           // -smoothNormal auto sign ill-conditioned (near coin-flip)
+        WARN_SMOOTH_DOWNGRADE,      // -smoothNormal + -geomtan: consistent tangent not yet available
+        WARN_CSL,                   // -consistanttan needs a non-symmetric solver
+        WARN_EPST,                  // friction without -epsT: defaulted to the normal penalty
+        WARN_EDGEKT,                // edge friction without -edgeKt: defaulted to the edge penalty
+        WARN_SOFT_NOMASS,           // SOFT=1 could not size (no dt / no assembled mass)
+        WARN_EDGESOFT_NOMASS,       // edge SOFT could not size
+        WARN_SOFT2_NOMASS,          // SOFT=2 could not size
+        WARN_VISC_STATIC,           // -visc under a StaticIntegrator: dashpot disabled
+        WARN_MORTAR_ORIENT,         // mortar AUTO orientation degenerate (coincident facets)
+        WARN_EDGE_SIGN_DEFER        // edge-edge sign capture deferred (orientDir ⟂ n)
+    };
+    bool warnOnce(int contactTag, int topic);
+
+    // --- lifecycle (driven by Domain::commit / revertToLastCommit / revertToStart) ---
     int commit(void);              // P3: gpT = gpTtrial for every slot (+ counter)
     int revertToLastCommit(void);  // P3: gpTtrial = gpT for every slot (+ counter)
+    // contact-review P2 (2026-07) — drop ALL path-dependent state (friction slip +
+    // engagement origins, mortar λ_N/λ_T/λ_tie, edge-edge signs/friction, NTS force
+    // snapshots, re-emit anchors/fingerprints/trigger, nodal-mass cache) so
+    // Domain::revertToStart (ops.reset) returns contact to the pristine t=0 state the
+    // way nodes/elements rewind; slots lazily recreate zeroed at the next handle().
+    // The NormalField store (σ/sharedEdge topological caches + the FROZEN global sign)
+    // is deliberately KEPT: the sign is a topological + REFERENCE-geometry datum
+    // (voted on reference coords — ADR-63 F1/D2), so it is config-independent and
+    // re-deriving it would produce the identical value (Q-RESTART semantics).
+    int revertToStart(void);
     int getNumCommits(void) const { return numCommits; }
     int getNumReverts(void) const { return numReverts; }
 
@@ -480,6 +538,14 @@ class LadrunoContactDomain
     std::vector<Contact> theContacts;
     std::vector<MortarContact> theMortarContacts;       // ADR-41 C2 (separate from NTS)
     std::vector<RigidPlane> theRigidPlanes;             // P2a
+    // contact-review P3: the contact tag is the LEADING KEY of every path-state store
+    // (FrictionState / MortarNormalState / EdgeEdgeState / re-emit fingerprints / NTS
+    // force snapshots) — a duplicate tag WITHIN a lane aliases state slots across
+    // physical contacts (last-writer-wins friction, re-emit fingerprint ping-pong).
+    // The per-lane maps do not collide ACROSS lanes; cross-lane uniqueness is enforced
+    // anyway as a namespace rule (queries/diagnostics key by contact tag). Checked at
+    // the add* choke points (covers Py + Tcl).
+    bool contactTagInUse(int tag) const;
     int numCommits;
     int numReverts;
 
@@ -535,7 +601,15 @@ class LadrunoContactDomain
         double globalSign;                   // +1/−1, frozen at first capture
         double signConf;                     // [0,1] confidence of the frozen sign
     };
-    std::map<int, NormalField> theNormalFields;   // keyed by MASTER surface tag
+    // contact-review P5: keyed by CONTACT tag (was master surface tag) — the frozen sign and the
+    // -outward vote are per-CONTACT data; two contacts sharing a master (two-sided baffle) must
+    // each own their sign. The topological σ cache duplicates per contact on a shared master.
+    std::map<int, NormalField> theNormalFields;
+
+    // contact-review P5: one-time warning latches (contactTag, WarnTopic). Engine-lifetime ⇒
+    // reset on wipe (Domain::clearAll deletes the engine); kept across revertToStart (a reset
+    // re-run repeats the same configuration — re-warning it adds noise, not information).
+    std::set<std::pair<int, int> > theWarnOnce;
 
     // C2.2 normal-ALM state, keyed by (contactTag, slaveNodeTag) — a 2-field key.
     struct NodeKey {

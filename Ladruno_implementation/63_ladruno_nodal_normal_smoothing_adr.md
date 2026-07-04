@@ -32,9 +32,33 @@
   where the FACETED `-geomtan` consistent tangent diverges too (penalty NTS misused, NOT a smoothed-normal
   defect ⇒ P3 wouldn't rescue it). So **steelman-B's stall concern is empirically REFUTED and P3 stays
   deferred WITH EVIDENCE.** The `-smoothNormal`+`-geomtan` silent-downgrade warning is present and fires.
-  Battery **160** OFF byte-identical; test-only, no engine code, no classTag. **Remaining:** P3 (full
-  `∂n_smooth/∂u`, gated — now a genuinely-optional follow-up), CI port; separate follow-ups: an auto-sign
-  robust/per-component vote for edge-grazing slaves, and a quantitative junction-traction-continuity gate.
+  Battery **160** OFF byte-identical; test-only, no engine code, no classTag. **P2.5 auto-sign
+  robustness (per-slave majority vote) — BUILT + VALIDATED (local, 2026-07-01):** the frozen global
+  sign on the AUTO path (no `-outward`) is now a **per-slave weighted-majority vote**
+  (`LadrunoContactProjection::voteSignRobust`) — each slave dots its LOCAL nearest-facet coherent
+  normal against the chord from the interior surface centroid (`w = n̂·(slave−centroid)`,
+  distance-weighted majority), replacing the single aggregate vote `sgn(Σσ_a n_a·(slaveCentroid−masterCentroid))`
+  whose one aggregate normal (small/vertical on a curved master) dotted against a ~tangent global chord
+  collapsed to a coin-flip for an edge-grazing cloud (the recurring F2/F3/F5 caveat). The LOCAL normal
+  supplies the lateral component the aggregate lacked; the interior centroid keeps a single
+  slightly-penetrating slave voting outward (no majority to protect it). This **lifts the `-outward` requirement** for side-approaching /
+  edge-grazing slaves on a curved master (over-the-master clouds); a genuinely two-sided cloud still
+  yields a low margin ⇒ the same `conf<0.1` handler warning fires ⇒ the ambiguity is DETECTED, not
+  silently mis-signed. `-outward` stays the explicit override (its path byte-unchanged) + the
+  refuse-fallback; `-smoothNormal` OFF stays byte-identical (battery is the gate). This IS engine code
+  on the R3-critical sign path (projection header + Domain vote branch + handler slave-coord feed) ⇒
+  ran the focused adversarial gate (3-lens; 2 HIGH findings folded — vote on REFERENCE coords, use the
+  interior centroid + local normal — see the P2.5 notes). Oracle **54/54** (10 new auto-sign checks
+  incl. the aggregate provably flipping INWARD where robust holds, and a single penetrating slave still
+  voting outward); full battery **188** incl. `tests/test_adr63_smoothnormal_p25_autosign.py`
+  (edge-grazing held + curved crossing sustained, both WITHOUT `-outward`). **Remaining:** P3 (full
+  `∂n_smooth/∂u`, gated — genuinely-optional); Q-MULTISHELL per-connected-component vote (a multi-shell
+  master is still refused w/o `-outward`). **P2.6 quantitative junction-traction-continuity gate — DONE
+  (test-only, 2026-07-02):** `tests/test_adr63_smoothnormal_p26_junction.py` measures the contact
+  normal's tilt `n_x/n_z` (via a stiff lateral-hold spring's force ÷ press) across a flat→steep junction
+  — faceted jumps 0→−0.60 in one step at the junction (staircase), smoothed ramps continuously (junction
+  step −0.019, ~31× smaller) ⇒ the C0-normal chatter fix is now QUANTIFIED, not just asserted via
+  sustained contact. CI port already satisfied (the p1/p2/p23/p24/p25/p26 tests are tracked + `zone_a`).
 - **Owner:** Mora Bowen · Palacios · Abell · Guppi
 - **Priority:** high — **resolves the open [[60_ladruno_finite_sliding_reemission_adr]] R3 item** (curved-master
   `orientDir` flip → silent pass-through, today's only `-outward`-caveated combo) and the in-fork
@@ -670,6 +694,122 @@ singular/runaway; the weak lateral spring + seat-at-the-symmetric-centre resolve
 combined-load DisplacementControl degeneracy (one λ scaling both press and drag) forces the `loadConst`
 two-pattern split. (iii) No static+reemit coverage existed ⇒ the fixed-master constant-field rig sidesteps
 it entirely. These are why the rig looks the way it does — recorded so the next agent doesn't re-derive them.
+
+## P2.5 notes — auto-sign robustness (per-slave majority vote, 2026-07-01)
+
+**The recurring F2/F3/F5 caveat, closed for over-the-master clouds.** The frozen global outward sign
+on the AUTO path was decided by a single aggregate vote `sign(Σ_a σ_a n_a · (slaveCentroid −
+masterCentroid))` (`LadrunoContactNormalField::voteSign`). That dots an **aggregate** normal — which
+nearly cancels on a curved/domed master (its horizontal components sum to ~0, leaving a small vertical
+resultant) — against a **global chord** slave-centroid−master-centroid, which goes **~tangent** to the
+field when the slave cloud grazes the master edge-on. So `vote·seed ≈ 0` is a coin-flip and a tiny
+wrong-signed component flips the WHOLE field inward → `gap>0` ("not penetrating") → silent
+pass-through even with `-smoothNormal` (ADR-60 R3 on the sign axis). The oracle now demonstrates this
+directly: a slave above the right roof of the tent but off to the +x side makes the aggregate vote
+return **−1 (INWARD)** at confidence ≈0.15 (below the loud-warning floor ⇒ silent-wrong).
+
+**The fix — `LadrunoContactProjection::voteSignRobust`.** On the AUTO path (no `-outward`) the sign is
+now a **per-slave distance-weighted majority**: for each slave, find its NEAREST master facet
+(closest-point projection, clamped) to get that slave's LOCAL coherent unit normal `n̂`, then vote
+`w = n̂ · (slave − surfaceCentroid)` where the surface centroid (slot-average of the facet nodes) is an
+INTERIOR reference for an open convex/manifold patch. The surface sign is `sign(Σw)`, weighted by `|w|`;
+`*conf` = the margin `|Σw|/Σ|w| ∈ [0,1]` (1 ⇒ unanimous, 0 ⇒ a genuinely two-sided cloud). Two design
+choices, each forced by an adversarial finding: the **LOCAL normal** (not the aggregate Σσn) supplies the
+lateral component the aggregate lacked at an edge-grazing slave, curing the coin-flip; the **interior
+centroid** reference (not the local footpoint separation) keeps a single slave seeded slightly
+PENETRATING the surface voting outward — a footpoint separation points inward for such a slave, and with
+one slave there is no majority to protect it (the P1 sign gate is exactly this). The sign is still
+captured **ONCE and frozen** (D2/F1) — this only changes HOW the single sign is decided.
+
+**What it does / doesn't lift.** It **lifts the `-outward` requirement** for side-approaching /
+edge-grazing slaves on a curved master (over-the-master clouds — the P2.3 caveat). A genuinely
+**two-sided** cloud (slaves on both faces of a plate) still yields margin≈0 ⇒ the SAME `conf<0.1`
+handler warning fires ⇒ the ambiguity is **DETECTED** (not silently mis-signed) ⇒ pass `-outward`. A
+disconnected **multi-shell** master is still refused without `-outward` (Q-MULTISHELL — a
+per-connected-component vote is a clean follow-up: run `voteSignRobust` per component against its own
+nearest slaves; not built here since the field already refuses multi-shell at `propagateOrientation`).
+
+**Wiring (engine code on the R3-critical sign path).** `voteSignRobust` + `clampParam` in
+`LadrunoContactProjection.h` (needs `project()` + `newellAreaNormal`); `LadrunoContactDomain::
+setNormalField` grows `(slaveCoords, nSlaves, useOutward)` (defaults preserve any other caller) and
+picks robust vs aggregate at the once-only capture — falls back to the aggregate seed vote when no
+slave projected (`nVoted==0`) or `-outward` is given; `LadrunoContactHandler` gathers the slave
+**reference** coords (config-independent — D4) on the auto path and passes them. `-outward` path is
+byte-unchanged (still `voteSign(vote·outward)`); `-smoothNormal` OFF stays byte-identical (no field
+built). No new classTag; no vanilla touch.
+
+**Fallback-direction residual (documented).** The degenerate-BLEND fallback (antiparallel corner
+normals; BLOCKER-FALLBACK (b)) still orients via the aggregate `smoothSeed` (the reference-centroid
+difference — review GAP-2). In the compound-rare case of a degenerate blend AND an edge-grazing cloud,
+that seed can be ~tangent and the fallback pair drops (fails safe, not wrong-direction). Pass
+`-outward` for that corner. The robust vote fixes the PRIMARY (non-degenerate) sign path, which is the
+F2/F3/F5 target; the degenerate blend needs a folded/cancelling element and is orthogonal.
+
+**Gates.** Oracle `proto_nodal_normal_selfcheck.cpp` **54/54** (10 new auto-sign checks: aggregate flips
+inward vs robust holds; straddling cloud; two-sided ⇒ low margin; flat over-master ⇒ margin 1; empty ⇒
+fall back; reversed-winding σ-immunity; distance-weighting beats a penetrating-seed minority; a SINGLE
+penetrating slave still votes outward).
+In-solver `tests/test_adr63_smoothnormal_p25_autosign.py`: an edge-grazing slave is HELD with the auto
+sign (no `-outward`); the P2.3 curved crossing is sustained WITHOUT `-outward`; the auto sign matches
+the explicit `-outward` result. Full ADR-39/41/57/60/63 + LadrunoTie battery OFF byte-identical.
+
+**Focused adversarial gate (3-lens, folded — 2026-07-01).** The sign-path change ran a 3-lens gate
+(vote math / OFF+`-outward` byte-identity / degeneracy). **Byte-identity lens: CLEAN** — OFF is
+byte-identical (all new code nested under `if(ct.smoothNormal)`), `-outward` is triple-gated unchanged
+(handler skips the slave gather, passes `useOutward=true`, `setNormalField` short-circuits to the
+original `voteSign`), no other `setNormalField` caller, no ABI change. **Degeneracy lens:** all
+crash/UB/NaN/divide vectors REFUTED (guarded: `bestSeg<0` short-circuit, `project` can't emit a
+converged NaN, all divides floored, out-pointers null-checked, `slaveRef` lifetime sound, vote is a
+once-per-capture cost). **Vote-math lens surfaced two HIGH findings — BOTH FIXED:**
+- **F1 (config mixing) — FIXED.** The vote ran on the DEFORMED master (`segDef`) but REFERENCE slaves,
+  so a first capture with `u≠0` (restart / mid-run re-mesh recapture) could vote a confident WRONG sign
+  (conf=1.0, warning silent). FIX: the handler now also builds the REFERENCE master coords `segRef` and
+  `setNormalField` votes on `refSegCoords` (config-independent — D4) for BOTH the robust vote and the
+  aggregate fallback; the DEFORMED `segCoords` still drives the per-handle field. Vote is now fully
+  reference-config (matches the frozen-once intent).
+- **F2 (count vs distance majority, and the single-penetrating-slave hole) — FIXED.** The first cut
+  weighted a normalized cosine of `slave−footpoint` (a COUNT majority), so a minority of slightly-
+  penetrating slaves could outvote the clearly-separated majority; worse, a SINGLE penetrating slave
+  (the P1 sign gate) votes its local footpoint separation INWARD with no majority to correct it. FIX:
+  vote `w = n̂·(slave − surfaceCentroid)` distance-weighted — (i) the interior centroid keeps a
+  penetrating slave voting outward (it is still outside relative to the deep centroid), and (ii) `|w|`
+  weighting lets clearly-separated slaves dominate. Oracle cases (G) 3-penetrating + 2-above ⇒ +1 and
+  (H) a SINGLE penetrating slave ⇒ +1 lock both; the in-solver P1 `test_p1_smoothnormal_holds_the_ridge_facet`
+  (a single slave seeded penetrating, no `-outward`) is the regression witness. Residual (documented
+  LOW): a non-convex open patch whose centroid is not interior ⇒ pass `-outward` (the handler's
+  low-conf warning flags an ambiguous vote); a `nVoted==0` fallback onto a zero seed still warns
+  (conf=0 trips `conf<0.1`); a broken master where most facets fail to project — out of scope (the
+  field already refuses non-manifold/closed).
+
+## P2.6 notes — quantitative junction-traction-continuity gate (test-only, 2026-07-02)
+
+**The C0-normal chatter fix, now measured (not just asserted).** ADR-60/P1 and P2.2/P2.3 asserted the
+continuity benefit only qualitatively (sustained contact). This gate quantifies it. Test-only, no engine
+code. File: `tests/test_adr63_smoothnormal_p26_junction.py` (1/1).
+
+**Observable = the contact normal's tilt `n_x/n_z`.** A frictionless slave pressed with load `P` and held
+laterally at position `x` needs lateral force `F_lat = P·(n_x/n_z)` (the tangential component of the
+normal reaction). So `F_lat/P` is the contact normal's tilt at `x`. A **stiff lateral-hold spring** reads
+`F_lat` directly (its element force) — the clean route, because (a) `reactions()` does NOT expose contact
+forces under the `LadrunoContact` handler (a fixed-DOF probe reads zero), and (b) `DisplacementControl`'s
+load factor is not a usable force readout here (the flat facet's zero lateral stiffness makes it run
+away). Each `x` is an **independent static probe** (rebuild + `LoadControl` seat), so the trace is a
+direct snapshot of the normal FIELD's continuity — no path dependence, no chatter accumulation.
+
+**Rig.** A FLAT middle facet (`z=HZ`) flanked by two STEEP outer facets (all master nodes fixed), so the
+junction at `x=HALF` is a flat→steep transition — the sharpest possible FACETED normal jump (vertical →
+tilted). Slave free in x,z (y fixed) at the surface with a small penetration; a stiff spring (`KLAT≫`
+contact lateral force ⇒ probe-x accurate) holds x to a grounded twin; a constant press seats z.
+Frictionless, explicit `-outward` (this gate is about the normal DIRECTION continuity, not the sign).
+
+**Result.** Faceted tilt = `0` on the flat facet, **jumps to −0.60 in ONE step at the junction**, then
+constant −0.60 (a staircase — the chatter driver). Smoothed tilt ramps **continuously** `0 → −0.30`
+(at the junction) `→ −0.49`, with a junction step of only **−0.019** (~31× smaller than the faceted 0.60)
+and a max per-step jump of 0.024 (~25× smaller). Both reach a comparable steep-facet tilt (continuity, not
+a different converged answer). **Co-activation is transparent** to this metric: near the junction two
+pairs may be active, but with smoothing they share the same C0 `n_smooth`, and the tilt is a force RATIO
+(the two pairs split the normal force but leave `n_x/n_z` unchanged) — so the measurement sees the normal
+DIRECTION, not the pair count. → the ADR-41 Q-NORMAL chatter claim for the NTS lane is now evidence-backed.
 
 ## Decision log
 

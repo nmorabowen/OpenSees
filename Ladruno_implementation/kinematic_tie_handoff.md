@@ -1,8 +1,8 @@
 ---
-title: "LadrunoTie (ADR-62) — handoff: P1 collocation + P2 integral-mortar + P2.1 dual + P3 shell/rotational SHIPPED; P3.1 / shell-to-solid deferred"
+title: "LadrunoTie (ADR-62) — handoff: P1 collocation + P2 integral-mortar + P2.1 dual + P3 shell/rotational + P3.1 Hermite + P4 shell-to-solid (-shellSolid, ADR-64) ALL SHIPPED"
 project: Ladruno
 type: handoff
-status: P0 (numpy) + P1 (collocation, PR #454) + P2 (integral-mortar, PR #455) + P2.1 (dual/sparse mortar, PR #462) + P3 (shell/rotational ndf-6, PR #459) MERGED to ladruno. Deferred = P3.1 Hermite w–θ shell transfer + shell-to-solid ties.
+status: P0 (numpy) + P1 (collocation, PR #454) + P2 (integral-mortar, PR #455) + P2.1 (dual/sparse mortar, PR #462) + P3 (shell/rotational ndf-6, PR #459) + P2.1×P3 composition test (PR #464) + P3.1 (Hermite w–θ edge transfer, -hermite, PR #467) MERGED to ladruno. P4 shell-to-solid (`-shellSolid`, ADR-64, PR #478) SHIPPED 2026-07-02 — the family is COMPLETE. Deferred = mortar-Hermite (P3.1b) + mortar-shellSolid, both blocked on the same kernel per-GP hook; free-thickness-stretch (Abaqus SLIDER) variant deferred (needs constrain-a-non-global-direction).
 related:
   - "[[62_ladruno_kinematic_mesh_tie_adr]]"            # the spec (P1/P2 marked SHIPPED)
   - "[[30_ladruno_explicit_constraint_projection_adr]]" # the enforcement handler (SHIPPED, reused unchanged)
@@ -12,7 +12,7 @@ related:
 tags: [adr, constraints, explicit-dynamics, mesh-tie, projection, kinematic, mortar, handoff]
 ---
 
-# LadrunoTie — handoff (P1 + P2 + P2.1 + P3 shipped; P3.1 / shell-to-solid next)
+# LadrunoTie — handoff (P1 + P2 + P2.1 + P3 + P3.1 + P4 shell-to-solid ALL shipped)
 
 ## TL;DR — what exists now (all on `ladruno`)
 
@@ -24,7 +24,8 @@ AND the rotational DOFs of ndf-6 shells (**P3**: default `-dof` → 1..6 for a 3
 
 ```
 # P1 — node-to-segment COLLOCATION (each slave node -> one master facet)
-LadrunoTie -slaveNodes <ns> s1..  -masterFacets <npsM> <nf> m..  [-dof nd d..] [-tol frac]
+# -hermite = P3.1 rotation-consistent cubic Hermite w–θ transfer (ndf-6 shell EDGE ties)
+LadrunoTie -slaveNodes <ns> s1..  -masterFacets <npsM> <nf> m..  [-dof nd d..] [-tol frac] [-hermite]
 
 # P2 — integral MORTAR (slave SURFACE -> master surface, weak form); -dual = P2.1 sparse basis
 LadrunoTie -mortar -slaveFacets <npsS> <nf> s..  -masterFacets <npsM> <nf> m..
@@ -36,9 +37,9 @@ like `equationConstraint`, they live in the `DL_Interpreter`/`TclWrapper` path).
 (emits `EQ_Constraint`, enforced by handler 33001). **No vanilla source edits** beyond the banner.
 
 - Code: `SRC/domain/constraints/LadrunoTie.{h,cpp}` — `LadrunoTie::generate` (P1) + `::generateMortar` (P2; `dual` param = P2.1) + `OPS_LadrunoTie`; P3 adds `ltDefaultDofs`/`ltScanMassedDOFs`/`ltCheckTiedDofMass` helpers (per-DOF mass) + a shell-to-solid master-DOF guard in both generators.
-- Oracles: `kinematic_tie_validation/proto_p{0,1}_kinematic_tie*.py` (P1) + `proto_p2_mortar_tie.py` (P2, 13/13) + `proto_p2_1_dual_mortar.py` (P2.1, 12/12) + `proto_p3_rotational_tie.py` (P3, 8/8).
-- Tests: `tests/test_ladrunoTie_patch.py` (8, P1) + `tests/test_ladrunoTie_mortar.py` (11 = 7 P2 + 4 P2.1 dual) + `tests/test_ladrunoTie_shell.py` (6, P3). Full suite 25/25.
-- PRs: ADR/oracles #449, P1 #454, P2 #455, P3 shell/rotational #459, P2.1 dual #462 — all merged.
+- Oracles: `kinematic_tie_validation/proto_p{0,1}_kinematic_tie*.py` (P1) + `proto_p2_mortar_tie.py` (P2, 13/13) + `proto_p2_1_dual_mortar.py` (P2.1, 12/12) + `proto_p3_rotational_tie.py` (P3, 8/8) + `proto_p3_1_hermite_tie.py` (P3.1, 13/13).
+- Tests: `tests/test_ladrunoTie_patch.py` (8, P1) + `tests/test_ladrunoTie_mortar.py` (11 = 7 P2 + 4 P2.1 dual) + `tests/test_ladrunoTie_shell.py` (13 = 6 P3 + 1 P2.1×P3 composition + 6 P3.1 hermite). Full suite 32/32.
+- PRs: ADR/oracles #449, P1 #454, P2 #455, P3 shell/rotational #459, P2.1 dual #462, P2.1×P3 composition test #464, P3.1 hermite #467 — all merged.
 
 ## The architecture (so the next agent doesn't re-derive it)
 
@@ -115,6 +116,10 @@ Oracle `proto_p2_1_dual_mortar.py` (12/12: D diagonal, sparse, dual≠lumped, du
 (dual patch/split/explicit + `-dual`-requires-`-mortar`). The RUNTIME win is in the handler (sparse P ⇒
 small groups); the setup does a 2nd integration pass (opt-in, one-time). Value: LARGE interfaces (100s+
 interface nodes) — the dense path is correct and fine below that.
+**Composition with P3 verified:** `-mortar -dual` on an ndf-6 SHELL tie
+(`test_mortar_dual_rigid_rotation_crosses_tie` in `test_ladrunoTie_shell.py`) crosses a rigid rotation
+exactly on all 6 DOFs — as expected, since `-dual` only changes how P is computed while the
+rotational-DOF defaulting / per-DOF mass guard / shell-to-solid guard live in the shared emission path.
 
 ### P3 — shell / rotational ties (ndf 6) — SHIPPED (PR #459)
 The generator now ties the **rotational DOFs** (4,5,6) of an ndf-6 shell node with the SAME per-slave
@@ -139,12 +144,72 @@ issues that were listed here:
 - Oracle `proto_p3_rotational_tie.py` (8/8) + `tests/test_ladrunoTie_shell.py` (6/6). Handler
   UNCHANGED (rotational EQ rows are just more master-only union-find vertices).
 
-### P3.1 — Hermite (rotation-consistent) w–θ shell transfer — CAPABILITY (deferred)
-Make a curvature varying ALONG the interface cross exactly: reconstruct the transverse displacement
-`w` from a Hermite combination of nodal `w` and the interface-tangent rotation (couple w to θ across
-the interface tangent), instead of the straight linear-complete `P`. Removes the O(h²) w-residual
-above; needed only when the interface is not aligned with the bending axis. Also opens **shell-to-solid**
-(the `θ=½∇×u` coupling) as a sibling.
+### P3.1 — Hermite (rotation-consistent) w–θ shell transfer (`-hermite`) — SHIPPED
+Makes a curvature varying ALONG the interface cross exactly (the P3 honest limit): with `-hermite`
+(collocation mode, ndf-6 shell EDGE/butt-joint ties) each slave's shell-NORMAL translation and
+interface-TANGENT slope are reconstructed with the CUBIC HERMITE basis over the master edge nodes'
+`(w, θ_t)` pairs; in-plane translations + non-slope rotations keep the linear weights:
+```
+u_s = (I−n⊗n)·Σ N_k u_k + n·[Σ Hw_k (n·u_k) + Hp_k (e·θ_k)]
+θ_s = (I−e⊗e)·Σ N_k θ_k + e·[Σ dHw_k (n·u_k) + dHp_k (e·θ_k)]      e = t×n, slope = θ·e
+```
+(from `u = θ×r ⇒ ∇w = n×θ ⇒ dw/ds = θ·(t×n)`; the transfer is invariant under n→−n). Exact through
+CUBIC w (O(h⁴) beyond — strict dominance over the linear P's O(h²)); every P3-exact case still crosses.
+**OQ answered (user signed off collocation-only): it stays a LadrunoTie-LEVEL transform** —
+`EQ_Constraint` natively stores per-retained `(node,dof,coef)` triples (EQ_Constraint.h:37-45) and
+`LadrunoProjectionHandler::buildGroups` builds one union-find vertex per (node,dof) with NO
+retained-dof==constrained-dof assumption ⇒ mixed `w←(w,θ)` rows are ordinary EQ rows, NO kernel/handler
+change. **Mortar-Hermite is the exception** (`integratePair` returns only ACCUMULATED D/M — no per-GP
+hook — so the Hermite master basis can't enter the M integral without a kernel extension) ⇒ deferred
+(P3.1b); `-hermite -mortar` is a named refusal. Other named refusals: full 6-DOF tie required (the rows
+couple u↔θ), ndf-6 on BOTH sides, slave must project onto a master facet EDGE (or corner → identity
+rows); interior projections refused (surface-overlap collocation keeps the standard tie). HONEST
+LIMIT: Kirchhoff on the tie line (slope=rotation) — Mindlin/shear-deformable data carries a bounded
+O(γ·h) tie error (γ = shear angle), vanishing thin + on refinement. Oracle
+`proto_p3_1_hermite_tie.py` (13/13: rigid modes, quadratic/cubic exact, O(h⁴)-vs-O(h²) rates,
+3D-inclined global-DOF rows, γ-bound; gotcha: the shear-error test must NOT sample midpoints —
+`H2+H4 ∝ ξ−3ξ²+2ξ³` has a root at ξ=½). FE tests: headline along-interface bending crosses exactly
+at the non-conforming mid-edge node + linear-tie contrast (κ/4 vs exact κ/8) + aligned-bending
+no-regression + 3 refusals. **Shell-to-solid** shipped as ADR-64 `-shellSolid` (P4, below) — NOT via curl: the plane-section arm operator.
+
+### Shell-to-solid ties (ndf-6 shell edge ↔ ndf-3 solid face) — SHIPPED (`-shellSolid`, ADR-64, PR #478)
+The one remaining rung where the transfer is a genuinely NEW operator, not a reuse of `P`: a solid
+face has no rotational DOF, so the shell rotation must be SYNTHESIZED from the solid translation field
+(`θ = ½∇×u`, or an Abaqus-style through-thickness moment-arm coupling). Both generators currently
+name-REFUSE this (the "shell-to-solid needs a rotation-from-translation coupling" guard). Before any
+design effort, a **go/no-go feasibility probe was run against the built `.pyd`** (scratchpad, not
+committed) — the gate is **GREEN**:
+1. **Per-node mixed ndf works:** `model('basic','-ndm',3,'-ndf',3)` then `node(tag,x,y,z,'-ndf',6)`
+   creates an ndf-6 node in a default-ndf-3 model (the `BasicBuilder` per-node `-ndf` override).
+2. **Mixed models assemble + run:** an `SSPbrick` (ndf-3) and a `ShellMITC4` (ndf-6) coexist,
+   assemble, and `analyze(1)` returns 0.
+3. **Cross-ndf `EQ_Constraint` rows construct AND enforce through a real solve** (SSPbrick supplying
+   stiffness, `Lagrange` handler): same-DOF (`shell uz = solid uz`) matched to ~1e-16, AND the
+   **curl-like row** (`shell θ_y = solid uz-gradient`, `equationConstraint(sh,5, 1, a,3, +1, b,3, −1)`)
+   reproduced the gradient EXACTLY. ⇒ the `θ=½∇×u` synthesis is expressible + enforceable as an
+   ORDINARY `EQ_Constraint` — the plumbing is NOT the hard part (as P3.1 already implied).
+4. **HANDLER CAVEAT (paid for):** the `Transformation` handler goes SINGULAR on these cross-ndf EQ
+   rows (`U(i,i)=0` factorization fail); `Lagrange` (static) enforces them cleanly, and the explicit
+   path is the shipped `LadrunoProjection` handler. ⇒ tests use `Lagrange`; Transformation is
+   unsupported/needs-investigation for cross-ndf rows. (Matches the existing shell tests, all Lagrange.)
+
+**SHIPPED (PR #478, 2026-07-02).** OQ-1/OQ-2 signed off (b-B operator; frozen-arm +
+gated-limits v1 contract), OQ-3 warn-if-omitted `-thickness`, OQ-4..7 as recommended. Direction b-B:
+solid face nodes = SLAVES, shell edge polyline = MASTER (`-masterEdge nseg a1 b1 ..`), three
+plane-section rows per solid node `u_s = Σ N_j(u_j + θ_j×d)` through `ltEmitMixedRow` verbatim
+(drilling dropped by the 1e-12 filter ⇒ free; `ltProjectEdge` closed-form point-to-segment; dofs
+fixed {1,2,3}; `-mortar`/`-hermite`/`-dual`/`-dof` refused, named). Validation: oracle
+`proto_p4_shell_solid_tie.py` 22/22 (T1–T8; ν·t and γ·t honest-limit scalings EXACTLY as predicted),
+FE `tests/test_ladrunoTie_shellsolid.py` 18/18 (membrane patch on a NESTED 2:1 grid — collocation
+force transfer needs nesting, see quirks; rigid; prescribed section state; HEADLINE constant moment
+crossing SSPbrick↔ShellMITC4 with θ_edge ≈ THETA/2 on matched EI; hand-emitted translations-only
+hinge contrast; 8 named refusals; explicit dt_cr-neutral + machine-zero violation + momentum
+kick–coast), full tie battery 50/50 + projection battery 49/49 no-regression. **Field correction to
+the ADR draft:** the explicit projector still needs small nodal rotary mass on the master edge θx/θy
+(every group DOF stays in the explicit equation set — `rigidLink -beam` precedent) and a LUMPED-mass
+shell (`ASDShellQ4` works, `ShellMITC4`'s consistent mass is refused); the GENERATOR-level rotary
+precondition is gone and static Lagrange needs nothing. Deferred rungs: mortar-shellSolid (kernel
+per-GP hook, with P3.1b) and the free-thickness-stretch SLIDER variant (architecture change).
 
 ### Also noted (out of scope for a tie, but adjacent)
 Finite-sliding re-emission (the ADR-60 hook) is for a tie that must survive LARGE interface rotation;

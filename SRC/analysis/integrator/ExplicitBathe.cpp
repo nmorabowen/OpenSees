@@ -164,6 +164,7 @@ void *OPS_ExplicitBathe(void) {
     bool cflUseTangent = false;
     int cflRecomputeEvery = 0;
     CTSLumping lumping = CTSLumping::RowSum;
+    bool lumpExplicit = false;   // user gave -lump (else -sms flips the default below)
     // Ladruno (W1-E2): orthogonal capability flags on the unified command.
     bool useLNVD = false;       double alpha_flac = 0.8;     // FLAC default if -lnvd given
     bool useSMS = false, useConsistent = false;
@@ -211,6 +212,7 @@ void *OPS_ExplicitBathe(void) {
         } else if (strcmp(arg, "-lump") == 0) {
             if (OPS_GetNumRemainingInputArgs() > 0) {
                 const char *m = OPS_GetString();
+                lumpExplicit = true;
                 if (strcmp(m, "diagonal") == 0)      lumping = CTSLumping::Diagonal;
                 else if (strcmp(m, "rowsum") == 0)   lumping = CTSLumping::RowSum;
                 else if (strcmp(m, "hrz") == 0)      lumping = CTSLumping::HRZ;
@@ -283,6 +285,15 @@ void *OPS_ExplicitBathe(void) {
         return 0;
     }
     if (useSMS) {
+        // Match the deprecated alias commands' sizing default (Diagonal — "matches the
+        // system Diagonal run") when the user did not choose a -lump explicitly. The
+        // unified command's RowSum default is upstream-compatible for the bare dt_cr
+        // ESTIMATE, but letting it leak into the SMS SIZING made
+        //   `integrator ExplicitBathe p -sms dt`  !=  `integrator ExplicitBatheSMS p dt`
+        // on rotational-DOF (consistent-mass beam/shell) models — 8.5x different
+        // injected mass on the review's beam fixture (review 2026-07-01).
+        if (!lumpExplicit)
+            lumping = CTSLumping::Diagonal;
         compute_critical_timestep = 1;   // report the pre-scaling dt_cr (as the SMS aliases do)
         // W1-E3a (MF-1): under mass scaling the per-element eigensolve cannot see the nodal
         // augmentation, so -cflAbort/-recompute on the un-augmented pencil would (wrongly)
@@ -474,6 +485,14 @@ static void *OPS_ExplicitBatheSMS_impl(const char *name, bool isLNVD, bool isCon
                       "pencil, MF-1); the pre-scaling dt_cr will be reported each "
                       "domainChanged.\n";
             verbose = true;
+            if (strcmp(arg, "-recompute") == 0 && OPS_GetNumRemainingInputArgs() > 0) {
+                // consume the trailing N so it does not fall into the unknown-option
+                // branch (peek-as-string idiom: under openseespy a numeric arg reads
+                // as garbage text, but never as something starting with '-').
+                const char *peek = OPS_GetString();
+                if (peek != 0 && peek[0] == '-')
+                    OPS_ResetCurrentInputArg(-1);   // next flag, not our N — un-read it
+            }
         } else {
             opserr << "WARNING " << name << " - unknown option " << arg << " (ignored)\n";
         }
@@ -552,14 +571,17 @@ ExplicitBathe::ExplicitBathe(int classTag, double _p, int compute_critical_times
       damped_critical_element_tag(0),
       undamped_critical_element_tag(0),
       verbose(verbose_), cflAbort(cflAbort_), divergenceFactor(divergenceFactor_),
-      prevKE(0.0), firstStep(true),
+      prevKE(0.0), committedPrevKE(0.0), firstStep(true),
       cflUseTangent(cflUseTangent_), cflRecomputeEvery(cflRecomputeEvery_),
-      cflStepCount(0), cflFirstComputation(true), lumping(lumping_),
+      cflStepCount(0), committedCflStepCount(0),
+      cflFirstComputation(true), lumping(lumping_),
       // Ladruno (W1-E2): LNVD
       useLNVD(useLNVD_), alpha_flac(alpha_flac_), lastUnbalanceNorm(-1.0),
+      committedUnbalanceNorm(-1.0),
       // Ladruno (W1-E2): SMS (consistent requires sms)
       useSMS(useSMS_), useConsistent(useSMS_ && useConsistent_),
       dtTarget(dtTarget_), maxAddedMassFrac(maxAddedMassFrac_),
+      smsEffectiveLimit(0.0),
       lumpingSMS(lumping_), useTangentSMS(cflUseTangent_),
       pcgTol(pcgTol_), pcgMaxIt(pcgMaxIt_),
       injected(), scaled(false), appliedDomain(0), blocks(0),
@@ -651,12 +673,21 @@ int ExplicitBathe::applyMassScalingSMS(void)
         scaled = true;
         appliedDomain = theDomain;
 
+        // POST-SCALING effective stable step for the newStep() dt_cr report:
+        // dtTarget capped by any still-governing excluded/self-reported element.
+        smsEffectiveLimit = dtTarget;
+        if (rep.minDtConstrained > 0.0 && rep.minDtConstrained < smsEffectiveLimit)
+            smsEffectiveLimit = rep.minDtConstrained;
+        if (rep.minDtSelfReport > 0.0 && rep.minDtSelfReport < smsEffectiveLimit)
+            smsEffectiveLimit = rep.minDtSelfReport;
+
         double frac = (rep.modelMass > 0.0) ? rep.addedMass / rep.modelMass : 0.0;
         bool over = (maxAddedMassFrac > 0.0 && frac > maxAddedMassFrac);
         if (verbose || over || rep.nSelfReport > 0 || rep.nMismatch > 0 || rep.nConstrained > 0) {
             opserr << "ExplicitBathe(-sms): dtTarget=" << dtTarget
                    << " scaled " << rep.nScaled << "/" << rep.nElems
-                   << " elements; added mass " << (100.0 * frac) << "% of model mass"
+                   << " elements; added mass " << (100.0 * frac)
+                   << "% of total element (translational) mass"
                    << "; PRE-SCALING dt_cr estimate=" << rep.minDtScaled
                    << " (governing un-scaled element step; AFTER scaling the run is stable "
                       "at dt <= dtTarget=" << dtTarget << ")\n";
@@ -675,7 +706,8 @@ int ExplicitBathe::applyMassScalingSMS(void)
                    << " < dtTarget=" << dtTarget << ".\n";
         if (over)
             opserr << "WARNING ExplicitBathe(-sms): added mass " << (100.0 * frac)
-                   << "% exceeds -maxAddedMass cap " << (100.0 * maxAddedMassFrac)
+                   << "% of total element (translational) mass exceeds -maxAddedMass cap "
+                   << (100.0 * maxAddedMassFrac)
                    << "% (proceeding; the scaled inertia shifts global frequencies)\n";
         return 0;
     }
@@ -697,12 +729,20 @@ int ExplicitBathe::applyMassScalingSMS(void)
         Ladruno::buildMassScalingConsistent(theModel, dtTarget, lumpingSMS,
                                             useTangentSMS, *blocks);
 
+    // POST-SCALING effective stable step (see the lumped branch above).
+    smsEffectiveLimit = dtTarget;
+    if (rep.minDtConstrained > 0.0 && rep.minDtConstrained < smsEffectiveLimit)
+        smsEffectiveLimit = rep.minDtConstrained;
+    if (rep.minDtSelfReport > 0.0 && rep.minDtSelfReport < smsEffectiveLimit)
+        smsEffectiveLimit = rep.minDtSelfReport;
+
     double frac = (rep.modelMass > 0.0) ? rep.addedMass / rep.modelMass : 0.0;
     bool over = (maxAddedMassFrac > 0.0 && frac > maxAddedMassFrac);
     if (verbose || over || rep.nSelfReport > 0 || rep.nMismatch > 0 || rep.nConstrained > 0) {
         opserr << "ExplicitBathe(-sms -consistent): dtTarget=" << dtTarget
                << " scaled " << rep.nScaled << "/" << rep.nElems
-               << " elements (Olovsson); added mass " << (100.0 * frac) << "% of model mass"
+               << " elements (Olovsson); added mass " << (100.0 * frac)
+               << "% of total element (translational) mass"
                << "; PRE-SCALING dt_cr estimate=" << rep.minDtScaled
                << " (governing un-scaled element step; AFTER scaling the run is stable "
                   "at dt <= dtTarget=" << dtTarget << ")\n";
@@ -719,7 +759,8 @@ int ExplicitBathe::applyMassScalingSMS(void)
                   "they still GOVERN at dt_e=" << rep.minDtConstrained << ".\n";
     if (over)
         opserr << "WARNING ExplicitBathe(-sms -consistent): added mass " << (100.0 * frac)
-               << "% exceeds -maxAddedMass cap " << (100.0 * maxAddedMassFrac) << "%\n";
+               << "% of total element (translational) mass exceeds -maxAddedMass cap "
+               << (100.0 * maxAddedMassFrac) << "%\n";
 
     {
         LinearSOE *soe = this->getLinearSOE();
@@ -933,6 +974,12 @@ int ExplicitBathe::domainChanged() {
     }
     cflStepCount = 0;
 
+    // The KE-proxy divergence baseline is stale across a mesh change (a smaller /
+    // re-numbered model would compare its fresh KE against the old model's) — the
+    // breaker re-arms on the first nonzero KE of the new mesh.
+    prevKE = 0.0;
+    committedPrevKE = 0.0;
+
     // Ladruno (W1-E2, -sms): (re)build + apply the selective mass scaling for this mesh.
     if (useSMS) {
         if (applyMassScalingSMS() < 0)
@@ -954,6 +1001,12 @@ int ExplicitBathe::newStep(double _deltaT) {
         opserr << "ExplicitBathe::newStep() - state variables not initialized\n";
         return -1;
     }
+
+    // Snapshot the per-step scalar state for revertToLastStep (the vector state
+    // needs no snapshot — the committed node state IS the restart point).
+    committedPrevKE        = prevKE;
+    committedUnbalanceNorm = lastUnbalanceNorm;
+    committedCflStepCount  = cflStepCount;
 
     // Each step performs exactly two solves; reset here so a failed/retried
     // step cannot poison the next step's update() counter (matches CentralDifference).
@@ -1020,12 +1073,24 @@ int ExplicitBathe::newStep(double _deltaT) {
         const double dt_nb = EB_NB_STABILITY_FACTOR * damped_minimum_critical_timestep;
         if (cflFirstComputation || verbose) {
             opserr << "ExplicitBathe: critical time step estimate"
-                   << (cflUseTangent ? " (tangent)" : "") << "\n"
+                   << (cflUseTangent ? " (tangent)" : "")
+                   << (useSMS ? " [PRE-SCALING estimate]" : "") << "\n"
                    << "  central-difference limit (conservative): "
                    << damped_minimum_critical_timestep
                    << " @ element #" << damped_critical_element_tag << "\n"
                    << "  Noh-Bathe limit (~" << EB_NB_STABILITY_FACTOR << "x): " << dt_nb << "\n";
-            if (deltaT > dt_nb)
+            if (useSMS && smsEffectiveLimit > 0.0) {
+                // Mass scaling raised every scaled element's CD-limit step to dtTarget;
+                // the pre-scaling pencil is NOT the run's limit (warning against it
+                // cried "expect INSTABILITY" on every correctly-scaled run). Compare
+                // dt against the POST-SCALING Noh-Bathe limit instead.
+                if (deltaT > EB_NB_STABILITY_FACTOR * smsEffectiveLimit)
+                    opserr << "  WARNING dt = " << deltaT
+                           << " exceeds the POST-SCALING Noh-Bathe stability limit "
+                           << (EB_NB_STABILITY_FACTOR * smsEffectiveLimit)
+                           << " (dtTarget capped by excluded/self-reported elements)"
+                              " - expect INSTABILITY.\n";
+            } else if (deltaT > dt_nb)
                 opserr << "  WARNING dt = " << deltaT
                        << " exceeds the Noh-Bathe stability limit - expect INSTABILITY.\n";
             else if (deltaT > damped_minimum_critical_timestep)
@@ -1088,15 +1153,18 @@ int ExplicitBathe::newStep(double _deltaT) {
     return 0;
 }
 
-// Update the response quantities. Called twice per time step:
-//   1st call: after solving at t + p*dt, prepare for t + dt
-//   2nd call: after solving at t + dt, finalize the time step
+// Update the response quantities. Called ONCE per time step by the algorithm
+// (after its solve at t + p*dt); the second Noh-Bathe solve (t + dt) happens
+// INTERNALLY below. A second external update() means a non-Linear algorithm is
+// iterating: it would advance domain time by an extra (1-p)*dt and overwrite
+// A_tpdt with a stale re-solve — the old `> 2` guard let exactly that through
+// silently for a 2-iteration Newton (review 2026-07-01).
 int ExplicitBathe::update(const Vector &U) {
     updateCount++;
-    if (updateCount > 2) {
-        opserr << "WARNING ExplicitBathe::update() - called more than twice in a step.\n";
+    if (updateCount > 1) {
+        opserr << "WARNING ExplicitBathe::update() - called more than once in a step.\n";
         opserr << "  ExplicitBathe is an explicit scheme and requires 'algorithm Linear' "
-                  "(exactly 2 solves per step).\n";
+                  "(exactly ONE update()/step; the second Noh-Bathe solve is internal).\n";
         return -1;
     }
 
@@ -1159,9 +1227,19 @@ int ExplicitBathe::update(const Vector &U) {
         return -3;
     }
 
-    // Solve for acceleration at t + dt (formUnbalance() adds FLAC damping when -lnvd)
-    this->formUnbalance();
-    theLinSOE->solve();
+    // Solve for acceleration at t + dt (formUnbalance() adds FLAC damping when -lnvd).
+    // Check the return codes: a failed assembly/solve here used to be silently
+    // ignored, leaving the SOE's X holding the sub-step-1 solution -> A_tdt would
+    // alias A_tpdt (finite, so the NaN breaker can't catch it). Failing the step
+    // lets the analysis revert (composes with revertToLastStep).
+    if (this->formUnbalance() < 0) {
+        opserr << "ExplicitBathe::update() - sub-step-2 formUnbalance failed\n";
+        return -7;
+    }
+    if (theLinSOE->solve() < 0) {
+        opserr << "ExplicitBathe::update() - sub-step-2 SOE solve failed\n";
+        return -7;
+    }
     *A_tdt = theLinSOE->getX();
     // Ladruno (W1-E2, -consistent): refine this sub-step-2 accel. The SOE diagonal is
     // still the factored 1/mass (DiagonalDirectSolver factors once; "just solve" reuse),
@@ -1175,24 +1253,29 @@ int ExplicitBathe::update(const Vector &U) {
         theProjector->project(*A_tdt);
 
     // Circuit breaker 1: catch a blown-up (NaN/Inf) acceleration before it
-    // silently propagates through the rest of the run.
-    const double A_max = A_tdt->pNorm(0);
-    if (A_max != A_max || A_max == std::numeric_limits<double>::infinity()) {
+    // silently propagates through the rest of the run. NOT via pNorm(0): its
+    // max-compare skips NaN entries, so the old A_max != A_max test only ever
+    // fired on +/-Inf (vectorIsFinite scans with std::isfinite).
+    const double A_max = A_tdt->pNorm(0);   // diagnostics only (verbose print below)
+    if (!vectorIsFinite(*A_tdt)) {
         opserr << "ExplicitBathe::update() - ABORT: non-finite acceleration "
                   "(NaN/Inf) - the integration has diverged (dt likely too large).\n";
         return -5;
     }
 
-    // Circuit breaker 2 (opt-in): abort on runaway kinetic energy growth.
+    // Circuit breaker 2 (opt-in): abort on runaway kinetic energy growth. The
+    // baseline is the RUNNING MAX of the KE proxy, NOT the previous step -- a
+    // previous-step baseline false-tripped on free vibration at velocity
+    // troughs (see CentralDifferenceLadruno::update, review 2026-07-02).
     if (divergenceFactor > 0.0) {
         double ke = 0.5 * ((*V_tpdt) ^ (*V_tpdt));   // velocity-based KE proxy
         if (prevKE > 0.0 && ke > divergenceFactor * prevKE) {
-            opserr << "ExplicitBathe::update() - ABORT: kinetic-energy proxy grew by "
-                   << (ke / prevKE) << "x in one step (> " << divergenceFactor
+            opserr << "ExplicitBathe::update() - ABORT: kinetic-energy proxy grew to "
+                   << (ke / prevKE) << "x its running maximum (> " << divergenceFactor
                    << ") - spurious energy growth / instability.\n";
             return -6;
         }
-        if (ke > 0.0) prevKE = ke;
+        if (ke > prevKE) prevKE = ke;   // running max
     }
 
     if (verbose) {
@@ -1233,14 +1316,55 @@ int ExplicitBathe::formNodTangent(DOF_Group *theDof) {
     return 0;
 }
 
+// Re-sync with a reverted Domain after a failed step (see the header comment).
+// The analysis calls Domain::revertToLastCommit() first — that restores the node
+// trial state, currentTime (undoing the mid-step p*dt / (1-p)*dt advances) and
+// loads. Noh-Bathe is self-starting from (u,v,a)_t, so re-seeding those from the
+// committed node state fully re-syncs the scheme: a value-preserving no-op for
+// the newStep/update abort paths (the cross-step advance is deferred to a
+// successful commitDomain), and the repair for a commitDomain() failure.
+int ExplicitBathe::revertToLastStep(void)
+{
+    if (U_t == 0)                                 // domainChanged never ran
+        return 0;
+    AnalysisModel *theModel = this->getAnalysisModel();
+    if (theModel == 0)
+        return 0;
+
+    DOF_GrpIter &theDOFs = theModel->getDOFs();
+    DOF_Group *dofPtr;
+    while ((dofPtr = theDOFs()) != nullptr) {
+        const ID &id = dofPtr->getID();
+        int idSize = id.Size();
+        const Vector &disp = dofPtr->getCommittedDisp();
+        const Vector &vel = dofPtr->getCommittedVel();
+        const Vector &accel = dofPtr->getCommittedAccel();
+        for (int i = 0; i < idSize; ++i) {
+            int loc = id(i);
+            if (loc >= 0) {
+                (*U_t)(loc) = disp(i);
+                (*V_t)(loc) = vel(i);
+                (*A_t)(loc) = accel(i);
+            }
+        }
+    }
+
+    // Ladruno (ADR-30 P5): newStep projects the committed a0 only under the
+    // !massBuilt gate, so a retry of a stage's FIRST step would otherwise carry
+    // a re-seeded, unprojected A_t. Projection is idempotent — just redo it.
+    if (theProjector != 0 && massBuilt)
+        theProjector->project(*A_t);
+
+    updateCount = 0;
+    prevKE = committedPrevKE;                     // keep the KE breaker armed
+    lastUnbalanceNorm = committedUnbalanceNorm;   // pre-fault relaxation indicator
+    cflStepCount = committedCflStepCount;         // keep the -recompute cadence
+    return 0;
+}
+
 // Commit the state for this time step
 int ExplicitBathe::commit() {
     updateCount = 0;  // Reset update counter for next step
-
-    // Update state vectors: t+dt becomes new t
-    *U_t = *U_tdt;
-    *V_t = *V_tdt;
-    *A_t = *A_tdt;
 
     AnalysisModel *theModel = this->getAnalysisModel();
     if (theModel == nullptr) {
@@ -1273,11 +1397,36 @@ int ExplicitBathe::commit() {
         }
     }
 
-    return theModel->commitDomain();
+    // Commit the Domain FIRST; only then advance the cross-step state vectors
+    // (t+dt becomes the new t). Advancing before commitDomain() left a failed
+    // commit with (u,v,a)_t already advanced past the (un-committed) Domain —
+    // the revertToLastStep re-seed also repairs that, but state-safe-by-
+    // construction beats repair. The tie-force scatter above stays BEFORE the
+    // commit (recorders fire inside commitDomain and read node state, not these
+    // vectors).
+    int rc = theModel->commitDomain();
+    if (rc < 0) {
+        opserr << "ExplicitBathe::commit() - commitDomain failed\n";
+        return rc;
+    }
+
+    *U_t = *U_tdt;
+    *V_t = *V_tdt;
+    *A_t = *A_tdt;
+
+    return rc;
 }
 
 // Get current velocity (for modal damping interface)
 const Vector &ExplicitBathe::getVel() {
+    if (V_t == 0) {
+        // called before domainChanged() allocated the state (integrator swapped in
+        // mid-session and queried immediately) — dereferencing would crash.
+        opserr << "WARNING ExplicitBathe::getVel() - called before domainChanged(); "
+                  "returning an empty vector\n";
+        static Vector emptyVel(0);
+        return emptyVel;
+    }
     return *V_t;
 }
 
@@ -1303,7 +1452,11 @@ double ExplicitBathe::getUnbalanceNorm(void) const {
 //  which the broker uses (makeForBroker) to construct the right object before recvSelf.
 // =====================================================================================
 int ExplicitBathe::sendSelf(int cTag, Channel &theChannel) {
-    Vector data(11);
+    // The FULL run-control parameter superset (review 2026-07-01: cflAbort /
+    // divergenceFactor / cflRecomputeEvery / cflUseTangent used to be omitted,
+    // so a recvSelf-reconstructed peer silently lost its circuit breakers and
+    // its -tangent dt_cr policy). Both ends grow together (no cross-version DB).
+    Vector data(15);
     data(0)  = p;
     data(1)  = (double)(int)lumping;          // 0=RowSum, 1=Diagonal, 2=HRZ
     data(2)  = alpha_flac;
@@ -1315,6 +1468,10 @@ int ExplicitBathe::sendSelf(int cTag, Channel &theChannel) {
     data(8)  = (double)pcgMaxIt;
     data(9)  = verbose ? 1.0 : 0.0;
     data(10) = (double)compute_critical_timestep;
+    data(11) = cflAbort ? 1.0 : 0.0;
+    data(12) = divergenceFactor;
+    data(13) = (double)cflRecomputeEvery;
+    data(14) = cflUseTangent ? 1.0 : 0.0;
 
     if (theChannel.sendVector(this->getDbTag(), cTag, data) < 0) {
         opserr << "ExplicitBathe::sendSelf() - could not send data\n";
@@ -1324,12 +1481,20 @@ int ExplicitBathe::sendSelf(int cTag, Channel &theChannel) {
 }
 
 int ExplicitBathe::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBroker) {
-    Vector data(11);
+    Vector data(15);
     if (theChannel.recvVector(this->getDbTag(), cTag, data) < 0) {
         opserr << "ExplicitBathe::recvSelf() - could not receive data\n";
         return -1;
     }
 
+    // Validate p BEFORE the q-coefficient recompute below: a corrupted/zero p
+    // would silently produce q1 = 1/(2*0*1) = inf coefficients (the broker
+    // default-constructs with p=0 and relies on this recv to fix it).
+    if (!(data(0) > 0.0 && data(0) < 1.0)) {
+        opserr << "ExplicitBathe::recvSelf() - received invalid p = " << data(0)
+               << " (must be in (0,1)); rejecting\n";
+        return -2;
+    }
     p = data(0);
     {   // decode lumping; default to RowSum (this integrator's default)
         int lc = (int)data(1);
@@ -1351,9 +1516,18 @@ int ExplicitBathe::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &the
     pcgMaxIt      = (int)data(8);
     verbose       = (data(9) != 0.0);
     compute_critical_timestep = (int)data(10);
+    cflAbort         = (data(11) != 0.0);
+    divergenceFactor = data(12);
+    cflRecomputeEvery = (int)data(13);
+    cflUseTangent    = (data(14) != 0.0);
 
     // The {useLNVD, useSMS, useConsistent} flags are set at construction from the
     // classTag (makeForBroker); a fresh-receive resets the transient SMS bookkeeping.
+    // If THIS object is live and already scaled (recvSelf on a reused object), restore
+    // the injected nodal mass FIRST — clearing `injected` would otherwise leak the
+    // fictitious ΔM into the Domain permanently (review 2026-07-01).
+    if (scaled && appliedDomain != 0 && !injected.empty())
+        Ladruno::applyMassScaling(appliedDomain, injected, -1.0);
     injected.clear();
     scaled = false;
     appliedDomain = 0;

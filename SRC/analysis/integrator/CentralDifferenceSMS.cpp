@@ -101,6 +101,14 @@ void *OPS_CentralDifferenceSMS(void)
                       "un-augmented element pencil, MF-1); the pre-scaling dt_cr will be "
                       "reported each domainChanged.\n";
             verboseSMS = true;
+            if (strcmp(arg, "-recompute") == 0 && OPS_GetNumRemainingInputArgs() > 0) {
+                // consume the trailing N so it does not fall into the unknown-option
+                // branch (peek-as-string idiom: under openseespy a numeric arg reads
+                // as garbage text, but never as something starting with '-').
+                const char *peek = OPS_GetString();
+                if (peek != 0 && peek[0] == '-')
+                    OPS_ResetCurrentInputArg(-1);   // next flag, not our N — un-read it
+            }
         } else {
             opserr << "WARNING CentralDifferenceSMS - unknown option " << arg
                    << " (ignored)\n";
@@ -131,8 +139,9 @@ CentralDifferenceSMS::CentralDifferenceSMS(double dtTarget_, double maxAddedMass
                                            int compute_critical_timestep_,
                                            bool cflUseTangent_, CTSLumping lumping_)
     // cflAbort=false, divergenceFactor=0, cflRecomputeEvery=0 are HARD-WIRED off:
-    // SMS rejects them at parse so the base never re-aborts on the un-augmented
-    // element pencil (MF-1).
+    // the parser ACCEPTS -cflAbort/-recompute but DOWNGRADES them to report-only
+    // (W1-E3a), so the base never aborts/recomputes on the un-augmented element
+    // pencil (MF-1).
     : CentralDifferenceLadruno(INTEGRATOR_TAGS_CentralDifferenceSMS,
                                compute_critical_timestep_, verboseSMS_, /*cflAbort*/false,
                                /*divergenceFactor*/0.0, cflUseTangent_,
@@ -193,8 +202,9 @@ int CentralDifferenceSMS::domainChanged(void)
                   "they remain governing, so dtTarget is NOT delivered for them -- lower dt or "
                   "remove the constraint (count reported below). SP/fix nodes are fine; RBE2/"
                   "RBE3 couplings are elements handled by the self-report skip, not here. "
-                  "(2) sizing now accounts for stiffness-proportional (betaK) Rayleigh damping "
-                  "(it shrinks the explicit step) via the closed-form s=T^2+2*T*betaK/dt_e; "
+                  "(2) sizing now accounts for stiffness-proportional Rayleigh damping -- ALL "
+                  "three slots betaK+betaKinit+betaKcomm summed -- (it shrinks the explicit "
+                  "step) via the closed-form s=T^2+2*T*betaK/dt_e; "
                   "mass-proportional (alphaM) damping is NOT folded in (it does not reduce the "
                   "high-frequency stable step). (3) in PARALLEL the injected lumped mass on a "
                   "shared/boundary node IS summed across ranks by a distributed/MPI diagonal "
@@ -211,12 +221,26 @@ int CentralDifferenceSMS::domainChanged(void)
     scaled = true;
     appliedDomain = theDomain;   // remember where we committed, for restore (M5)
 
+    // Push the POST-SCALING effective stable step to the base so its step-1 dt_cr
+    // report stops warning "expect INSTABILITY" against the pre-scaling pencil:
+    // dtTarget, capped by any excluded (constrained) or self-reported element that
+    // scaling could not lift and therefore still governs.
+    {
+        double effLimit = dtTarget;
+        if (rep.minDtConstrained > 0.0 && rep.minDtConstrained < effLimit)
+            effLimit = rep.minDtConstrained;
+        if (rep.minDtSelfReport > 0.0 && rep.minDtSelfReport < effLimit)
+            effLimit = rep.minDtSelfReport;
+        this->setSMSEffectiveLimit(effLimit);
+    }
+
     double frac = (rep.modelMass > 0.0) ? rep.addedMass / rep.modelMass : 0.0;
     bool over = (maxAddedMassFrac > 0.0 && frac > maxAddedMassFrac);
     if (verboseSMS || over || rep.nSelfReport > 0 || rep.nMismatch > 0 || rep.nConstrained > 0) {
         opserr << "CentralDifferenceSMS: dtTarget=" << dtTarget
                << " scaled " << rep.nScaled << "/" << rep.nElems
-               << " elements; added mass " << (100.0 * frac) << "% of model mass"
+               << " elements; added mass " << (100.0 * frac)
+               << "% of total element (translational) mass"
                << "; PRE-SCALING dt_cr estimate=" << rep.minDtScaled
                << " (governing un-scaled element step; AFTER scaling the run is stable "
                   "at dt <= dtTarget=" << dtTarget << ")\n";
@@ -236,7 +260,8 @@ int CentralDifferenceSMS::domainChanged(void)
                << " < dtTarget=" << dtTarget << "; lower dt to dt_e or remove the constraint.\n";
     if (over)
         opserr << "WARNING CentralDifferenceSMS: added mass " << (100.0 * frac)
-               << "% exceeds -maxAddedMass cap " << (100.0 * maxAddedMassFrac)
+               << "% of total element (translational) mass exceeds -maxAddedMass cap "
+               << (100.0 * maxAddedMassFrac)
                << "% (proceeding; the scaled inertia shifts global frequencies)\n";
 
     return 0;
@@ -281,6 +306,12 @@ int CentralDifferenceSMS::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBrok
                                : CTSLumping::RowSum;
     }
     useTangentSMS = (data(4) != 0.0);
+    // If THIS object is live and already scaled (recvSelf on a reused object, not
+    // the usual fresh broker construction), restore the injected nodal mass FIRST —
+    // clearing `injected` below would otherwise leak the fictitious ΔM into the
+    // Domain permanently (review 2026-07-01).
+    if (scaled && appliedDomain != 0 && !injected.empty())
+        Ladruno::applyMassScaling(appliedDomain, injected, -1.0);
     injected.clear();
     scaled = false;
     appliedDomain = 0;

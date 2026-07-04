@@ -79,6 +79,8 @@ struct MassScalingReport {
     double minDtScaled;   // smallest un-scaled dt_e that was below target (diagnostic)
     int    nSelfReport;   // throttling elements SKIPPED because their bound is mass-
                           //   independent (self-reported) — scaling can't help them
+    double minDtSelfReport; // smallest self-reported bound below dtTarget (it still
+                          //   GOVERNS after scaling — mass cannot move it; <=0 none)
     int    nMismatch;     // elements skipped due to a non-node-major / DOF mismatch
     int    nConstrained;  // sub-target elements SKIPPED because they touch an MP-constrained
                           //   (slave) node — injected mass would transfer through T^T M T and
@@ -96,7 +98,7 @@ buildMassScaling(AnalysisModel *theModel, double dtTarget, CTSLumping lumping,
 {
     MassScalingReport rep; rep.addedMass = 0.0; rep.modelMass = 0.0;
     rep.nScaled = 0; rep.nElems = 0; rep.minDtScaled = dtTarget;
-    rep.nSelfReport = 0; rep.nMismatch = 0;
+    rep.nSelfReport = 0; rep.minDtSelfReport = -1.0; rep.nMismatch = 0;
     rep.nConstrained = 0; rep.minDtConstrained = -1.0;
     if (theModel == 0 || dtTarget <= 0.0) return rep;
     Domain *theDomain = theModel->getDomainPtr();
@@ -153,7 +155,11 @@ buildMassScaling(AnalysisModel *theModel, double dtTarget, CTSLumping lumping,
         //     pretend to scale it — skip and count it (the integrator warns).
         if (ele->getExplicitCriticalTimeStep() > 0.0) {
             double selfDt = ele->getExplicitCriticalTimeStep();
-            if (selfDt < dtTarget) rep.nSelfReport++;
+            if (selfDt < dtTarget) {
+                rep.nSelfReport++;
+                if (rep.minDtSelfReport < 0.0 || selfDt < rep.minDtSelfReport)
+                    rep.minDtSelfReport = selfDt;
+            }
             delete[] mdiag; continue;
         }
 
@@ -161,8 +167,8 @@ buildMassScaling(AnalysisModel *theModel, double dtTarget, CTSLumping lumping,
         double dt_e = elementCriticalDt(ele, useTangent, mdiag, n);
         if (dt_e <= 0.0) { delete[] mdiag; continue; }
 
-        // --- SMS-BETAK: size against the DAMPED step. Stiffness-proportional (betaK)
-        //     Rayleigh damping shrinks the explicit stable step (xi = betaK*w/2 GROWS with
+        // --- SMS-BETAK: size against the DAMPED step. Stiffness-proportional Rayleigh
+        //     damping shrinks the explicit stable step (xi = betaK*w/2 GROWS with
         //     w), so sizing against the undamped 2/w0 UNDER-scales -> still unstable at
         //     dtTarget. With c = betaK/dt_e (= 0.5*betaK*w0) the betaK-damped step at
         //     mass-scale s is dt_d(s) = (2/w0)(sqrt(s + c^2) - c) -- a CLOSED-FORM that
@@ -171,9 +177,11 @@ buildMassScaling(AnalysisModel *theModel, double dtTarget, CTSLumping lumping,
         //     governs explicit stability, and folding it in across scales is non-monotonic.
         //     Mirrors the betaK term of computeCriticalTimeStep's damped estimate.)
         //     Reduces EXACTLY to the undamped s=(dtTarget/dt_e)^2 when betaK=0 -> no-damping
-        //     models are byte-identical.
-        double betaK = ele->getRayleighDampingFactors()(1);
-        if (betaK < 0.0) betaK = 0.0;
+        //     models are byte-identical. betaK is the TOTAL stiffness-proportional
+        //     coefficient betaK + betaKinit + betaKcomm (stiffnessRayleighBeta): all three
+        //     slots damp identically at high frequency, and reading coefs(1) alone silently
+        //     UNDER-scaled `rayleigh 0 0 betaKinit 0` models.
+        double betaK = stiffnessRayleighBeta(ele);
         double cDamp = betaK / dt_e;                                   // = 0.5*betaK*w0
         double dtDamped = dt_e * (std::sqrt(1.0 + cDamp * cDamp) - cDamp);   // current (s=1) damped step
         if (dtDamped >= dtTarget) { delete[] mdiag; continue; }        // already stable incl. betaK damping
@@ -204,13 +212,31 @@ buildMassScaling(AnalysisModel *theModel, double dtTarget, CTSLumping lumping,
         double T = dtTarget / dt_e;
         double factor = T * T + 2.0 * T * cDamp - 1.0;   // = s - 1 > 0
 
+        // --- SMS-NDF-PREWALK (review 2026-07-02 hardening): reject a non-node-major
+        //     layout UP FRONT. The staging loop below is bounded by pos < n, so an
+        //     element whose nodes' TOTAL ndf exceeds n would stop mid-walk with
+        //     pos == n exactly and COMMIT misaligned mass (the pos != n check after
+        //     the loop cannot see it). Pre-walk the full sum, like the consistent
+        //     builder's first pass, and skip + count unless it maps exactly.
+        Node **nodes = ele->getNodePtrs();
+        int numNodes = ele->getNumExternalNodes();
+        {
+            int sumNdf = 0;
+            bool walkOK = (nodes != 0);
+            for (int a = 0; a < numNodes && walkOK; ++a) {
+                if (nodes[a] == 0) { walkOK = false; break; }
+                sumNdf += nodes[a]->getNumberDOF();
+            }
+            if (!walkOK || sumNdf != n) {
+                rep.nMismatch++; delete[] mdiag; continue;
+            }
+        }
+
         // --- SMS-PARTIAL-INJECT: stage this element's increments LOCALLY, then commit
         //     to the shared `injected` map ONLY if the full DOF walk maps node-by-node
         //     (pos == n). A null node or non-node-major layout aborts the element with
         //     NOTHING committed (vs. the old half-injected, un-rolled-back state).
         std::map<int, Vector> staged;
-        Node **nodes = ele->getNodePtrs();
-        int numNodes = ele->getNumExternalNodes();
         int pos = 0;
         bool ok = (nodes != 0);
         double addedTrans = 0.0;
@@ -322,7 +348,7 @@ buildMassScalingConsistent(AnalysisModel *theModel, double dtTarget, CTSLumping 
 {
     MassScalingReport rep; rep.addedMass = 0.0; rep.modelMass = 0.0;
     rep.nScaled = 0; rep.nElems = 0; rep.minDtScaled = dtTarget;
-    rep.nSelfReport = 0; rep.nMismatch = 0;
+    rep.nSelfReport = 0; rep.minDtSelfReport = -1.0; rep.nMismatch = 0;
     rep.nConstrained = 0; rep.minDtConstrained = -1.0;
     if (theModel == 0 || dtTarget <= 0.0) return rep;
     Domain *theDomain = theModel->getDomainPtr();
@@ -381,16 +407,21 @@ buildMassScalingConsistent(AnalysisModel *theModel, double dtTarget, CTSLumping 
 
         // self-report: mass-independent bound -> scaling can't help; skip + count.
         if (ele->getExplicitCriticalTimeStep() > 0.0) {
-            if (ele->getExplicitCriticalTimeStep() < dtTarget) rep.nSelfReport++;
+            double selfDt = ele->getExplicitCriticalTimeStep();
+            if (selfDt < dtTarget) {
+                rep.nSelfReport++;
+                if (rep.minDtSelfReport < 0.0 || selfDt < rep.minDtSelfReport)
+                    rep.minDtSelfReport = selfDt;
+            }
             delete[] mdiag; continue;
         }
 
         double dt_e = elementCriticalDt(ele, useTangent, mdiag, n);
         if (dt_e <= 0.0) { delete[] mdiag; continue; }
 
-        // betaK-damped sizing (identical closed form to the lumped path).
-        double betaK = ele->getRayleighDampingFactors()(1);
-        if (betaK < 0.0) betaK = 0.0;
+        // betaK-damped sizing (identical closed form to the lumped path; betaK is the
+        // summed betaK + betaKinit + betaKcomm, see stiffnessRayleighBeta).
+        double betaK = stiffnessRayleighBeta(ele);
         double cDamp = betaK / dt_e;
         double dtDamped = dt_e * (std::sqrt(1.0 + cDamp * cDamp) - cDamp);
         if (dtDamped >= dtTarget) { delete[] mdiag; continue; }   // already stable
@@ -423,6 +454,10 @@ buildMassScalingConsistent(AnalysisModel *theModel, double dtTarget, CTSLumping 
         // first pass: per-node DOF base offset + translational dim (node-major layout).
         // pos must reach exactly n (node-major mass), else this element's layout is not
         // node-major -> skip (count nMismatch), consistent with the lumped partial-inject.
+        // ndmOf is clamped per node by the node's OWN ndf (review 2026-07-02 hardening):
+        // a node with ndf < ndm would otherwise let the direction loop below index
+        // base[a]+d past its DOF block — into the next node's block, and off the end of
+        // Mbar/mdiag on the last node. No behavior change for ndf >= ndm (all solids).
         int *base = new int[nn];
         int *ndmOf = new int[nn];
         int pos = 0; bool ok = (nds != 0);
@@ -430,8 +465,10 @@ buildMassScalingConsistent(AnalysisModel *theModel, double dtTarget, CTSLumping 
             Node *ndp = nds[a];
             if (ndp == 0) { ok = false; break; }
             base[a] = pos;
-            ndmOf[a] = ndp->getCrds().Size();
-            pos += ndp->getNumberDOF();
+            int ndmA = ndp->getCrds().Size();
+            int ndfA = ndp->getNumberDOF();
+            ndmOf[a] = (ndfA < ndmA) ? ndfA : ndmA;
+            pos += ndfA;
         }
         if (!ok || pos != n) {
             delete[] base; delete[] ndmOf; delete[] mdiag;

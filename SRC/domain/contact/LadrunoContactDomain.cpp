@@ -30,6 +30,7 @@
 #include <Node.h>          // ADR-60
 #include <Vector.h>        // ADR-60
 #include <Subdomain.h>     // ADR-60 R6: serial-only refusal — detect a worker Subdomain host
+#include "LadrunoContactProjection.h"   // ADR-63 auto-sign: voteSignRobust (per-slave majority vote)
 
 LadrunoContactDomain::LadrunoContactDomain()
   : numCommits(0), numReverts(0)
@@ -55,6 +56,20 @@ LadrunoContactDomain::addSurface(LadrunoContactSurface *surf)
                << surf->getTag() << " already exists\n";
         return -1;
     }
+    // contact-review P3: a faceted surface's flat connectivity must be a whole number of
+    // segments — the handler computes nSeg = size/nps, so a mis-counted tag list silently
+    // DROPPED the trailing partial segment (a missing contact facet = localized silent
+    // pass-through with no diagnostic anywhere).
+    if (surf->getKind() != LadrunoContactSurface::SLAVE_NODES) {
+        int nps = surf->getNodesPerSeg();
+        int n   = surf->getNodeTags().Size();
+        if (nps < 3 || nps > 4 || (n % nps) != 0) {
+            opserr << "WARNING LadrunoContactDomain::addSurface() - surface tag "
+                   << surf->getTag() << ": " << n << " connectivity entries is not a whole "
+                      "number of " << nps << "-node segments (nps must be 3 or 4)\n";
+            return -1;
+        }
+    }
     theSurfaces.push_back(surf);
     return 0;
 }
@@ -68,6 +83,27 @@ LadrunoContactDomain::getSurface(int tag) const
     return 0;
 }
 
+// contact-review P5 — one-time diagnostic latch: true exactly once per (contactTag, topic).
+// Engine-lifetime (reset on wipe via Domain::clearAll deleting the engine), per-contact keyed;
+// replaces the process-lifetime function-local `static bool warned` latches.
+bool
+LadrunoContactDomain::warnOnce(int contactTag, int topic)
+{
+    return theWarnOnce.insert(std::make_pair(contactTag, topic)).second;
+}
+
+bool
+LadrunoContactDomain::contactTagInUse(int tag) const
+{
+    for (size_t i = 0; i < theContacts.size(); i++)
+        if (theContacts[i].tag == tag) return true;
+    for (size_t i = 0; i < theMortarContacts.size(); i++)
+        if (theMortarContacts[i].tag == tag) return true;
+    for (size_t i = 0; i < theRigidPlanes.size(); i++)
+        if (theRigidPlanes[i].tag == tag) return true;
+    return false;
+}
+
 int
 LadrunoContactDomain::addContact(int tag, int masterSurfTag, int slaveSurfTag,
                                  double kn, double kt, double mu, const double *outward,
@@ -79,6 +115,20 @@ LadrunoContactDomain::addContact(int tag, int masterSurfTag, int slaveSurfTag,
     if (getSurface(masterSurfTag) == 0 || getSurface(slaveSurfTag) == 0) {
         opserr << "WARNING LadrunoContactDomain::addContact() - master/slave surface "
                   "not defined (master " << masterSurfTag << ", slave " << slaveSurfTag << ")\n";
+        return -1;
+    }
+    if (contactTagInUse(tag)) {
+        // contact-review P3: the tag keys ALL path state (friction slots, re-emit
+        // fingerprints, force snapshots) — a duplicate silently aliases physical pairs.
+        opserr << "WARNING LadrunoContactDomain::addContact() - contact tag " << tag
+               << " already exists (tags key the friction/re-emit state stores)\n";
+        return -1;
+    }
+    if (kt < 0.0) {
+        // contact-review P3: a negative stick penalty = negative stick stiffness /
+        // sign-flipped elastic predictor, silently wrong. Mirror the kn guard.
+        opserr << "WARNING LadrunoContactDomain::addContact() - friction stick penalty kt "
+                  "must be >= 0 (got " << kt << ")\n";
         return -1;
     }
     if (kn < 0.0) {
@@ -190,10 +240,14 @@ LadrunoContactDomain::clearNormalFields(void)
 }
 
 int
-LadrunoContactDomain::setNormalField(int masterSurfTag, int nps, const int *mTags, int nSeg,
-                                     const double *segCoords, const double globalSeed[3])
+LadrunoContactDomain::setNormalField(int contactTag, int nps, const int *mTags, int nSeg,
+                                     const double *segCoords, const double globalSeed[3],
+                                     const double *slaveCoords, int nSlaves, bool useOutward,
+                                     const double *refSegCoords)
 {
-    NormalField &nf = theNormalFields[masterSurfTag];
+    // contact-review P5: keyed by CONTACT tag (per-contact frozen sign / -outward vote — a
+    // shared master surface must not make a second contact inherit the first one's sign).
+    NormalField &nf = theNormalFields[contactTag];
     unsigned long long fp =
         LadrunoContactReemit::membershipFingerprint(mTags, nSeg * nps, nps);
     // (re)compute the COHERENT WINDING only when the membership changed — it is topological, so the
@@ -220,8 +274,23 @@ LadrunoContactDomain::setNormalField(int masterSurfTag, int nps, const int *mTag
     // failure on the temporal axis). The nodal-normal magnitudes/directions still track deformation;
     // only the scalar sign is frozen. signConf flags a near coin-flip (seed ~⟂ field) for the handler.
     if (!nf.signCaptured) {
-        nf.globalSign = LadrunoContactNormalField::voteSign(nSeg, nps, segCoords, &nf.sigma[0],
-                                                            globalSeed, &nf.signConf);
+        // AUTO path (no -outward): a per-slave MAJORITY vote — each slave votes the LOCAL coherent
+        // facet normal at its nearest-facet projection against its LOCAL separation vector, which is
+        // well-conditioned even for an edge-grazing / side-approaching cloud (the aggregate vote's
+        // F2/F3/F5 coin-flip). Fall back to the aggregate seed vote if no slave projected (nVoted==0).
+        // -outward path (useOutward): keep the aggregate seed vote (sign(vote·outward)) unchanged.
+        // vote on the REFERENCE master coords (config-independent — review F1), not the DEFORMED
+        // segCoords the field build uses; the frozen sign is a topological+reference-geometry datum.
+        const double *voteSeg = (refSegCoords != 0) ? refSegCoords : segCoords;
+        int nVoted = 0;
+        if (!useOutward && slaveCoords != 0 && nSlaves > 0) {
+            nf.globalSign = LadrunoContactProjection::voteSignRobust(
+                nps, nSeg, voteSeg, &nf.sigma[0], slaveCoords, nSlaves, &nf.signConf, &nVoted);
+        }
+        if (nVoted == 0) {
+            nf.globalSign = LadrunoContactNormalField::voteSign(nSeg, nps, voteSeg, &nf.sigma[0],
+                                                                globalSeed, &nf.signConf);
+        }
         nf.signCaptured = true;
     }
     // rebuild the per-handle nodal-normal field from the current coords + the FROZEN sign
@@ -232,17 +301,17 @@ LadrunoContactDomain::setNormalField(int masterSurfTag, int nps, const int *mTag
 }
 
 double
-LadrunoContactDomain::getNormalFieldSignConf(int masterSurfTag) const
+LadrunoContactDomain::getNormalFieldSignConf(int contactTag) const
 {
-    std::map<int, NormalField>::const_iterator it = theNormalFields.find(masterSurfTag);
+    std::map<int, NormalField>::const_iterator it = theNormalFields.find(contactTag);
     if (it == theNormalFields.end() || it->second.status != LadrunoContactNormalField::OK) return -1.0;
     return it->second.signConf;
 }
 
 const double *
-LadrunoContactDomain::getSegNodalNorm(int masterSurfTag, int segIndex) const
+LadrunoContactDomain::getSegNodalNorm(int contactTag, int segIndex) const
 {
-    std::map<int, NormalField>::const_iterator it = theNormalFields.find(masterSurfTag);
+    std::map<int, NormalField>::const_iterator it = theNormalFields.find(contactTag);
     if (it == theNormalFields.end()) return 0;
     const NormalField &nf = it->second;
     if (nf.status != LadrunoContactNormalField::OK || nf.segNodalNorm.empty()) return 0;
@@ -251,9 +320,9 @@ LadrunoContactDomain::getSegNodalNorm(int masterSurfTag, int segIndex) const
 }
 
 const int *
-LadrunoContactDomain::getSegSharedEdge(int masterSurfTag, int segIndex) const
+LadrunoContactDomain::getSegSharedEdge(int contactTag, int segIndex) const
 {
-    std::map<int, NormalField>::const_iterator it = theNormalFields.find(masterSurfTag);
+    std::map<int, NormalField>::const_iterator it = theNormalFields.find(contactTag);
     if (it == theNormalFields.end()) return 0;
     const NormalField &nf = it->second;
     if (nf.status != LadrunoContactNormalField::OK || nf.sharedEdge.empty()) return 0;
@@ -313,6 +382,13 @@ LadrunoContactDomain::addMortarContact(int tag, int masterSurfTag, int slaveSurf
     if (ms == 0 || ss == 0) {
         opserr << "WARNING LadrunoContactDomain::addMortarContact() - master/slave surface "
                   "not defined (master " << masterSurfTag << ", slave " << slaveSurfTag << ")\n";
+        return -1;
+    }
+    if (contactTagInUse(tag)) {
+        // contact-review P3: the tag keys ALL path state (mortar λ/friction slots, edge
+        // state, re-emit fingerprints) — a duplicate silently aliases physical pairs.
+        opserr << "WARNING LadrunoContactDomain::addMortarContact() - contact tag " << tag
+               << " already exists (tags key the mortar/edge state stores)\n";
         return -1;
     }
     // The mortar lane integrates D over slave FACETS and M against master FACETS, so both
@@ -400,6 +476,11 @@ LadrunoContactDomain::addRigidPlane(int tag, int slaveSurfTag,
     if (surf == 0) {
         opserr << "WARNING LadrunoContactDomain::addRigidPlane() - slave surface "
                << slaveSurfTag << " not defined\n";
+        return -1;
+    }
+    if (contactTagInUse(tag)) {
+        opserr << "WARNING LadrunoContactDomain::addRigidPlane() - contact tag " << tag
+               << " already exists (tags are unique across contact/contactPlane)\n";
         return -1;
     }
     if (surf->getKind() != LadrunoContactSurface::SLAVE_NODES) {
@@ -730,8 +811,16 @@ LadrunoContactDomain::commit(void)
     // counter (kept from P1b) lets a test confirm the Domain::commit() hook fires.
     numCommits++;
     for (std::map<PairKey, FrictionState>::iterator it = theFrictionStates.begin();
-         it != theFrictionStates.end(); ++it)
-        for (int d = 0; d < 3; d++) it->second.gpT[d] = it->second.gpTtrial[d];
+         it != theFrictionStates.end(); ++it) {
+        FrictionState &st = it->second;
+        for (int d = 0; d < 3; d++) {
+            st.gpT[d] = st.gpTtrial[d];
+            // contact-review P2 — commit the engagement origin (the C3.2 MAJOR-2 pattern,
+            // back-ported from the mortar/edge lanes) so a later rejected step can revert it.
+            st.gT0committed[d] = st.gT0[d];
+        }
+        st.engagedCommitted = st.engaged;
+    }
 
     // C2.2 — ONE Uzawa augmentation per commit (the EmbeddedRebar::commitState precedent):
     // λ_I ← min(0, λ_I + epsN·ḡ_I), ḡ_I = g̃_I^global / a_I^global (the just-converged trial
@@ -799,8 +888,17 @@ LadrunoContactDomain::revertToLastCommit(void)
     // step, or a Python adaptive-step retry that calls Domain::revertToLastCommit()).
     numReverts++;
     for (std::map<PairKey, FrictionState>::iterator it = theFrictionStates.begin();
-         it != theFrictionStates.end(); ++it)
-        for (int d = 0; d < 3; d++) it->second.gpTtrial[d] = it->second.gpT[d];
+         it != theFrictionStates.end(); ++it) {
+        FrictionState &st = it->second;
+        for (int d = 0; d < 3; d++) {
+            st.gpTtrial[d] = st.gpT[d];
+            // contact-review P2 — restore the engagement origin from the committed copy so a
+            // rejected implicit step does not latch gT0/engaged captured at the rejected
+            // config (the C3.2 MAJOR-2 pattern the mortar/edge lanes already ship).
+            st.gT0[d] = st.gT0committed[d];
+        }
+        st.engaged = st.engagedCommitted;
+    }
     // C3.1 — mortar friction: drop the trial slip back to committed (λ_N is committed-only ⇒
     // untouched on revert, the C2.2 invariant; only the friction trial needs reverting).
     // C3.2 (MAJOR-2) — also restore the engagement origin gT0/engaged from the committed copy, so
@@ -829,5 +927,34 @@ LadrunoContactDomain::revertToLastCommit(void)
         }
         st.engaged = st.engagedCommitted;
     }
+    return 0;
+}
+
+int
+LadrunoContactDomain::revertToStart(void)
+{
+    // contact-review P2 (2026-07) — Domain::revertToStart (ops.reset) rewinds every node and
+    // element to the pristine t=0 state, but until this hook the contact engine's path state
+    // SURVIVED it: a re-run after reset started with the previous run's committed friction
+    // slip gpT (⇒ a large spurious stick force at first contact), stale engagement origins,
+    // Uzawa multipliers λ_N/λ_T/λ_tie at their last converged values, and body-fixed edge
+    // signs. Drop ALL of it — every slot is lazily recreated ZEROED at the next handle()/
+    // getResidual (exactly the state of a genuinely fresh run), so clear() is the total,
+    // by-construction-pristine reset. The definitions (surfaces/contacts) are untouched.
+    theFrictionStates.clear();
+    theMortarNormalStates.clear();
+    theEdgeEdgeStates.clear();
+    theMortarFacetContribs.clear();
+    theNtsForce.clear();                // B3 force snapshots (side-channel, re-written per step)
+    theNodalMass.clear();               // B1 assembled-mass cache (rebuilt when soft contacts exist)
+    // ADR-60 re-emit: drop anchors + membership fingerprints + the persistent Trigger —
+    // the handler re-registers everything at the next handle() (one conservative
+    // recompute, the Q-RESTART posture; hysteresis/cadence restart from scratch at t=0).
+    theReemit.clear();
+    theReemitFp.clear();
+    theReemitTrig.clear();
+    // theNormalFields is deliberately KEPT (σ/sharedEdge are topological; the frozen global
+    // sign is a reference-geometry datum voted on REFERENCE coords — re-deriving it would
+    // produce the identical value, so keeping it is both cheaper and byte-equivalent).
     return 0;
 }

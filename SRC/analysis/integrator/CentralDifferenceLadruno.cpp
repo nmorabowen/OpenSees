@@ -154,8 +154,11 @@ CentralDifferenceLadruno::CentralDifferenceLadruno()
       damped_critical_element_tag(0),
       undamped_critical_element_tag(0),
       verbose(false), cflAbort(false), divergenceFactor(0.0), prevKE(0.0),
+      committedPrevKE(0.0),
       cflUseTangent(false), cflRecomputeEvery(0), cflStepCount(0),
+      committedCflStepCount(0),
       cflFirstComputation(true), lumping(CTSLumping::Diagonal), betaKWarned(false),
+      smsEffectiveLimit(0.0),
       theProjector(0), massBuilt(false), Aproj(0)
 {
 }
@@ -188,9 +191,11 @@ CentralDifferenceLadruno::CentralDifferenceLadruno(
       damped_critical_element_tag(0),
       undamped_critical_element_tag(0),
       verbose(verbose_), cflAbort(cflAbort_), divergenceFactor(divergenceFactor_),
-      prevKE(0.0), cflUseTangent(cflUseTangent_),
+      prevKE(0.0), committedPrevKE(0.0), cflUseTangent(cflUseTangent_),
       cflRecomputeEvery(cflRecomputeEvery_), cflStepCount(0),
+      committedCflStepCount(0),
       cflFirstComputation(true), lumping(lumping_), betaKWarned(false),
+      smsEffectiveLimit(0.0),
       theProjector(0), massBuilt(false), Aproj(0)
 {
 }
@@ -294,31 +299,16 @@ int CentralDifferenceLadruno::domainChanged()
     // from the committed DOF state. The TRUE starter a_0 and v_{-1/2} = v_0 - dt/2 a_0
     // are computed on the first newStep() (ADR C3 / B1) -- NOT here, where there is
     // neither a dt nor a factored SOE.
-    DOF_GrpIter &theDOFs = theModel->getDOFs();
-    DOF_Group *dofPtr;
-    while ((dofPtr = theDOFs()) != 0) {
-        const ID &id = dofPtr->getID();
-        int idSize = id.Size();
-
-        const Vector &disp = dofPtr->getCommittedDisp();
-        for (int i = 0; i < idSize; i++) {
-            int loc = id(i);
-            if (loc >= 0) (*Ut)(loc) = disp(i);
-        }
-        const Vector &vel = dofPtr->getCommittedVel();
-        for (int i = 0; i < idSize; i++) {
-            int loc = id(i);
-            if (loc >= 0) (*Vhalf)(loc) = vel(i);
-        }
-        const Vector &accel = dofPtr->getCommittedAccel();
-        for (int i = 0; i < idSize; i++) {
-            int loc = id(i);
-            if (loc >= 0) (*Aprev)(loc) = accel(i);
-        }
-    }
+    this->seedFromCommitted(theModel);
 
     firstStep = true;
     cflStepCount = 0;
+
+    // The KE-proxy divergence baseline is stale across a mesh change (a smaller /
+    // re-numbered model would compare its fresh KE against the old model's) — the
+    // breaker re-arms on the first nonzero KE of the new mesh.
+    prevKE = 0.0;
+    committedPrevKE = 0.0;
 
     // Ladruno (ADR-30): the projected-mass cache is invalid after a domain change;
     // re-read diag(M) at the next starter. Then check (or project) IC compliance of
@@ -391,6 +381,62 @@ int CentralDifferenceLadruno::domainChanged()
     return 0;
 }
 
+// Shared DOF-loop (domainChanged + revertToLastStep): seed the leap-frog state
+// from the COMMITTED node state. Vhalf receives the full-step v_n; the first-step
+// starter re-centers it to the half-step for whatever dt the next step uses.
+void CentralDifferenceLadruno::seedFromCommitted(AnalysisModel *theModel)
+{
+    DOF_GrpIter &theDOFs = theModel->getDOFs();
+    DOF_Group *dofPtr;
+    while ((dofPtr = theDOFs()) != 0) {
+        const ID &id = dofPtr->getID();
+        int idSize = id.Size();
+
+        const Vector &disp = dofPtr->getCommittedDisp();
+        for (int i = 0; i < idSize; i++) {
+            int loc = id(i);
+            if (loc >= 0) (*Ut)(loc) = disp(i);
+        }
+        const Vector &vel = dofPtr->getCommittedVel();
+        for (int i = 0; i < idSize; i++) {
+            int loc = id(i);
+            if (loc >= 0) (*Vhalf)(loc) = vel(i);
+        }
+        const Vector &accel = dofPtr->getCommittedAccel();
+        for (int i = 0; i < idSize; i++) {
+            int loc = id(i);
+            if (loc >= 0) (*Aprev)(loc) = accel(i);
+        }
+    }
+}
+
+// Re-sync with a reverted Domain after a failed step (see the header comment).
+// Contract: the analysis calls Domain::revertToLastCommit() FIRST (node/element
+// trial state, currentTime, dT, loads — including everything newStep/update
+// scattered via setResponse/updateDomain); here we restore ONLY the private
+// leap-frog state, and we must NOT touch time (that would double-revert). The
+// re-seed is valid even standalone: getCommittedDisp/Vel/Accel read committed
+// values, which a failed (uncommitted) step never touched.
+int CentralDifferenceLadruno::revertToLastStep(void)
+{
+    if (Ut == 0)                                  // domainChanged never ran
+        return 0;
+    AnalysisModel *theModel = this->getAnalysisModel();
+    if (theModel == 0)
+        return 0;
+
+    this->seedFromCommitted(theModel);
+
+    // Re-arm the starter: the next newStep(dt_retry) rebuilds the TRUE
+    // v_{-1/2} = v_n - dt_retry/2 a_n at the retry dt (this also repairs a
+    // starter that failed halfway through, after mutating Vhalf).
+    firstStep = true;
+    updateCount = 0;
+    prevKE = committedPrevKE;                     // keep the -divergence breaker armed
+    cflStepCount = committedCflStepCount;         // keep the -recompute cadence
+    return 0;
+}
+
 int CentralDifferenceLadruno::newStep(double _deltaT)
 {
     deltaT = _deltaT;
@@ -404,6 +450,11 @@ int CentralDifferenceLadruno::newStep(double _deltaT)
         opserr << "CentralDifferenceLadruno::newStep() - domainChanged() failed or not called\n";
         return -2;
     }
+
+    // Snapshot the per-step scalar state for revertToLastStep (the vector state
+    // needs no snapshot — the committed node state IS the restart point).
+    committedPrevKE       = prevKE;
+    committedCflStepCount = cflStepCount;
 
     // Each step performs exactly ONE solve; reset here so a failed/retried step
     // cannot poison the next step's update() counter (ADR: guard at > 1).
@@ -432,13 +483,27 @@ int CentralDifferenceLadruno::newStep(double _deltaT)
                                           undamped_minimum_critical_timestep);
         if (cflFirstComputation || verbose) {
             opserr << "CentralDifferenceLadruno: critical time step (2/omega_max)"
-                   << (cflUseTangent ? " (tangent)" : "") << ": " << dt_cr
+                   << (cflUseTangent ? " (tangent)" : "")
+                   << (smsEffectiveLimit > 0.0 ? " [PRE-SCALING estimate]" : "")
+                   << ": " << dt_cr
                    << " @ element #"
                    << ((dt_cr == damped_minimum_critical_timestep)
                            ? damped_critical_element_tag
                            : undamped_critical_element_tag)
                    << "\n";
-            if (dt_cr > 0.0 && deltaT > dt_cr)
+            if (smsEffectiveLimit > 0.0) {
+                // Mass scaling raised every scaled element's stable step to dtTarget;
+                // the pre-scaling pencil is NOT the run's limit (warning against it
+                // cried "expect INSTABILITY" on every correctly-scaled run). Compare
+                // dt against the POST-SCALING effective limit instead (dtTarget
+                // capped by any excluded / self-reported element that still governs).
+                if (deltaT > smsEffectiveLimit)
+                    opserr << "  WARNING dt = " << deltaT
+                           << " exceeds the POST-SCALING effective stable step "
+                           << smsEffectiveLimit
+                           << " (dtTarget capped by excluded/self-reported elements)"
+                              " - expect INSTABILITY.\n";
+            } else if (dt_cr > 0.0 && deltaT > dt_cr)
                 opserr << "  WARNING dt = " << deltaT
                        << " exceeds the central-difference stability limit " << dt_cr
                        << " - expect INSTABILITY.\n";
@@ -549,9 +614,11 @@ int CentralDifferenceLadruno::update(const Vector &U)
     }
 
     // U is the solved acceleration a_{n+1}. Circuit breaker: catch a blown-up
-    // (NaN/Inf) acceleration before it silently propagates.
-    const double A_max = U.pNorm(0);
-    if (A_max != A_max || A_max == std::numeric_limits<double>::infinity()) {
+    // (NaN/Inf) acceleration before it silently propagates. NOT via pNorm(0):
+    // its max-compare skips NaN entries, so the old A_max != A_max test only
+    // ever fired on +/-Inf (vectorIsFinite scans with std::isfinite).
+    const double A_max = U.pNorm(0);   // diagnostics only (verbose print below)
+    if (!vectorIsFinite(U)) {
         opserr << "CentralDifferenceLadruno::update() - ABORT: non-finite acceleration "
                   "(NaN/Inf) - the integration has diverged (dt likely too large).\n";
         return -5;
@@ -590,16 +657,22 @@ int CentralDifferenceLadruno::update(const Vector &U)
         return -6;
     }
 
-    // Optional circuit breaker: abort on runaway kinetic-energy growth.
+    // Optional circuit breaker: abort on runaway kinetic-energy growth. The
+    // baseline is the RUNNING MAX of the KE proxy, NOT the previous step: in
+    // free vibration KE passes through ~0 at every displacement extreme, and a
+    // previous-step baseline left prevKE ~ eps there -- the quadratic regrowth
+    // off that floor is an unbounded ratio (phase-luck false trips, review
+    // 2026-07-02). For monotonic divergence the previous step IS the max, so
+    // the trip behavior there is unchanged.
     if (divergenceFactor > 0.0) {
         double ke = 0.5 * ((*Vfull) ^ (*Vfull));   // velocity-based KE proxy
         if (prevKE > 0.0 && ke > divergenceFactor * prevKE) {
-            opserr << "CentralDifferenceLadruno::update() - ABORT: kinetic-energy proxy grew by "
-                   << (ke / prevKE) << "x in one step (> " << divergenceFactor
+            opserr << "CentralDifferenceLadruno::update() - ABORT: kinetic-energy proxy grew to "
+                   << (ke / prevKE) << "x its running maximum (> " << divergenceFactor
                    << ") - spurious energy growth / instability.\n";
             return -7;
         }
-        if (ke > 0.0) prevKE = ke;
+        if (ke > prevKE) prevKE = ke;   // running max
     }
 
     if (verbose)
@@ -655,6 +728,14 @@ int CentralDifferenceLadruno::commit(void)
 // both evaluated at v_{n-1/2}/v_{n+1/2}, consistent with the explicit scheme.
 const Vector &CentralDifferenceLadruno::getVel(void)
 {
+    if (Vhalf == 0) {
+        // called before domainChanged() allocated the state (integrator swapped in
+        // mid-session and queried immediately) — dereferencing would crash.
+        opserr << "WARNING CentralDifferenceLadruno::getVel() - called before "
+                  "domainChanged(); returning an empty vector\n";
+        static Vector emptyVel(0);
+        return emptyVel;
+    }
     return *Vhalf;
 }
 

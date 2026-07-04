@@ -103,12 +103,35 @@ inline bool inBounds(int nps, double xi, double eta) {
 
 // ----------------------------------------------------- bounded projection
 // BOUNDED closest-point Newton on (x_s − x̄)·g_α = 0 (design-gate BLOCKER-2):
-// cap maxIt; reject if |detK| < 1e-14*|g1||g2| (degenerate/collinear segment).
+// cap maxIt; reject if |detK| < 1e-14*K00*K11 (degenerate/collinear segment —
+// a pure angle criterion, sin²θ < 1e-14, dimensionless so it survives any
+// coordinate/facet scale; detK and K00*K11 are both length⁴).
 // Gauss-Newton metric K = [[g1·g1,g1·g2],[g2·g1,g2·g2]] (drops the O(d) curvature
 // correction — SPD for non-degenerate segments; the de-risk path).
+//
+// TWO convergence tests, either suffices:
+//   (a) |R| < tolR — the shipped ABSOLUTE residual test. R = d·g_α has units
+//       length², so its floating-point noise floor is ~eps·|X|·|g|: for a model
+//       whose coordinates sit far from the origin (e.g. a mm-unit building at
+//       x~5e4 mm with h~500 mm facets, noise ~3e-10) an absolute 1e-12 is
+//       UNREACHABLE and every projection used to die here → contact silently
+//       vanished (review 2026-07 BLOCKER). Kept as the fast path.
+//   (b) |dξ|+|dη| < tolP after the update — the SCALE-FREE escape. Parent
+//       coordinates are O(1), so tolP is dimensionless; 1e-8 bounds the
+//       footpoint error by ~1e-8·h regardless of where the model sits. Checked
+//       AFTER applying the step: when the residual would pass at the NEXT
+//       iterate this exits one iteration early with the IDENTICAL (ξ,η) (flat
+//       facets — one-step residual collapse). On a WARPED facet Gauss-Newton
+//       contracts only linearly, so the escape can exit with a footpoint within
+//       ~tolP parametric of the residual-converged answer (adversarial gate
+//       2026-07: measured drift ≤ ~1e-9 over 5M trials; gap error second-order
+//       ⇒ physically nil; in-bounds classification can flip ONLY for a footpoint
+//       within the 1e-9 parent-boundary slack — measure ~1e-10·h of slave
+//       positions). NO previously-converging input is ever LOST (0/5M).
 // returns: 0 converged in-bounds, 1 converged out-of-bounds, -1 no valid projection.
 inline int project(int nps, const double X[4][3], const double xs[3],
-                   double &xi, double &eta, double tolR, int maxIt) {
+                   double &xi, double &eta, double tolR, int maxIt,
+                   double tolP = 1e-8) {
     xi = (nps == 4) ? 0.0 : (1.0/3.0);
     eta = (nps == 4) ? 0.0 : (1.0/3.0);
     double N[4], dNxi[4], dNeta[4], xbar[3], g1[3], g2[3];
@@ -122,14 +145,118 @@ inline int project(int nps, const double X[4][3], const double xs[3],
         if (std::sqrt(R0*R0 + R1*R1) < tolR) { converged = true; break; }
         double K00 = dot3(g1,g1), K01 = dot3(g1,g2), K11 = dot3(g2,g2);
         double detK = K00*K11 - K01*K01;
-        double scale = norm3(g1) * norm3(g2);
-        if (std::fabs(detK) < 1e-14 * (scale + 1e-300)) return -1;  // degenerate
+        if (std::fabs(detK) < 1e-14 * (K00*K11 + 1e-300)) return -1;  // degenerate (angle test)
         double dxi  = ( K11*R0 - K01*R1) / detK;
         double deta = (-K01*R0 + K00*R1) / detK;
         xi += dxi; eta += deta;
+        if (std::fabs(dxi) + std::fabs(deta) < tolP) { converged = true; break; }
     }
     if (!converged) return -1;
     return inBounds(nps, xi, eta) ? 0 : 1;
+}
+
+// Clamp (xi,eta) to the parent facet domain so an out-of-bounds Newton result maps to the closest
+// point ON the facet (quad [-1,1]^2; tri {xi>=0, eta>=0, xi+eta<=1}). Only used by voteSignRobust()
+// to get a robust FOOTPOINT for a slave that projects past a facet's edge — a sign vote does not need
+// the exact boundary-closest point, only a footpoint on the correct facet with a sane separation.
+inline void clampParam(int nps, double &xi, double &eta) {
+    if (nps == 4) {
+        if (xi < -1.0) xi = -1.0; else if (xi > 1.0) xi = 1.0;
+        if (eta < -1.0) eta = -1.0; else if (eta > 1.0) eta = 1.0;
+    } else {
+        if (xi < 0.0) xi = 0.0;
+        if (eta < 0.0) eta = 0.0;
+        double s = xi + eta;
+        if (s > 1.0) {                        // project onto the hypotenuse ξ+η=1, then re-clamp ≥0
+            double h = 0.5 * (s - 1.0);
+            xi -= h; eta -= h;
+            if (xi < 0.0) { eta += xi; xi = 0.0; }
+            if (eta < 0.0) { xi += eta; eta = 0.0; }
+        }
+    }
+}
+
+// ADR-63 (auto-sign robustness — the F2/F3/F5 fix) — per-slave DISTANCE-WEIGHTED majority vote for the
+// GLOBAL outward sign, replacing the single aggregate vote for the AUTO (no -outward) path. For each
+// slave: find its NEAREST master facet (closest-point projection, clamped to the facet), take that
+// facet's coherent (σ applied) LOCAL unit normal n̂, and vote
+//   w = n̂ · (slave − surfaceCentroid)         [SIGNED distance from the interior reference, along n̂]
+// where surfaceCentroid is the slot-average of the facet nodes (an INTERIOR reference for an open
+// convex/manifold patch). The surface sign is `sign(Σ w)`, weighted by |w| (a slave far from the
+// centroid carries more authority). Returns the sign (+1/−1); *conf = the margin |Σw|/Σ|w| ∈ [0,1]
+// (1 ⇒ all slaves agree, 0 ⇒ a genuinely two-sided / ambiguous cloud ⇒ the handler warns); *nVoted =
+// how many slaves voted (0 ⇒ nothing projected ⇒ the caller falls back to the aggregate voteSign seed).
+//
+// WHY the LOCAL normal (the actual F2/F3/F5 fix): the aggregate vote sign(Σ_a σ_a n_a · (slaveCentroid −
+// masterCentroid)) dots ONE aggregate normal Σσn — which nearly CANCELS on a curved/domed master
+// (small, ~vertical) — against a global chord that goes ~TANGENT to it when the slave cloud grazes the
+// master edge-on, so vote·seed≈0 is a coin-flip and a tiny wrong-signed component flips the whole field
+// inward → silent pass-through even with -smoothNormal (ADR-60 R3 recurring caveat). Using each slave's
+// LOCAL facet normal cures this: at an edge-grazing slave the local normal HAS the lateral component the
+// aggregate normal lacked, so n̂·chord is well-conditioned wherever the cloud sits.
+//
+// WHY the CENTROID reference (not the local footpoint separation): the vote must survive a slave seeded
+// slightly PENETRATING the surface at the reference config (review F2; the P1 sign gate does exactly
+// this with a SINGLE slave — no majority to protect it). A local footpoint separation points INWARD for
+// such a slave ⇒ wrong sign. The interior centroid is robustly on the inner side of an open convex patch,
+// so slave−centroid still points outward for a barely-penetrating slave. Distance-weighting then lets a
+// clearly-separated majority outweigh a penetrating minority. (A non-convex open patch whose centroid is
+// not interior is the residual case ⇒ pass -outward; the handler's low-conf warning flags an ambiguous vote.)
+//
+// G is captured ONCE and FROZEN (D2/F1); this only changes HOW that single sign is decided on the auto
+// path. `segCoords` and `slaveCoords` MUST be the SAME config — pass REFERENCE for both so the vote is
+// config-independent (D4; review F1 — a deformed-master-vs-reference-slave mix mis-signs on restart / recapture).
+inline double voteSignRobust(int nps, int nSeg, const double *segCoords, const int *sigma,
+                             const double *slaveCoords, int nSlaves,
+                             double *conf, int *nVoted) {
+    if (nVoted != 0) *nVoted = 0;
+    long np = (long)nSeg * nps;
+    if (np <= 0) { if (conf != 0) *conf = 0.0; return +1.0; }
+    // INTERIOR reference = the surface centroid (slot-average of the facet nodes). For an open
+    // convex / manifold patch (the supported ramp / cylinder-section / dome-cap target) this lies on
+    // the CONCAVE (inner) side, so slave−centroid points OUTWARD even for a slave seeded slightly
+    // PENETRATING the surface (review F2 — a single penetrating slave has no majority to protect it, so
+    // the reference must be robustly interior; a local footpoint separation points inward for such a slave).
+    double cen[3] = {0.0, 0.0, 0.0};
+    for (long i = 0; i < np; i++) for (int d = 0; d < 3; d++) cen[d] += segCoords[i*3 + d];
+    for (int d = 0; d < 3; d++) cen[d] /= (double)np;
+
+    double acc = 0.0, wsum = 0.0;
+    int voted = 0;
+    for (int p = 0; p < nSlaves; p++) {
+        const double *xs = slaveCoords + (size_t)p * 3;
+        // nearest facet by clamped closest-point distance — gives this slave's LOCAL outward normal
+        double bestDist2 = 0.0; int bestSeg = -1;
+        for (int s = 0; s < nSeg; s++) {
+            double X[4][3];
+            for (int k = 0; k < nps; k++)
+                for (int d = 0; d < 3; d++) X[k][d] = segCoords[((size_t)s * nps + k) * 3 + d];
+            double xi, eta;
+            if (project(nps, X, xs, xi, eta, 1e-12, 10) < 0) continue;   // degenerate facet ⇒ skip
+            clampParam(nps, xi, eta);
+            double N[4], dNx[4], dNe[4], foot[3];
+            shape(nps, xi, eta, N, dNx, dNe);
+            interp(nps, N, X, foot);
+            double dd[3] = { xs[0]-foot[0], xs[1]-foot[1], xs[2]-foot[2] };
+            double dist2 = dot3(dd, dd);
+            if (bestSeg < 0 || dist2 < bestDist2) { bestDist2 = dist2; bestSeg = s; }
+        }
+        if (bestSeg < 0) continue;                                       // no valid projection anywhere
+        double fn[3];
+        LadrunoContactNormalField::newellAreaNormal(nps, segCoords + (size_t)bestSeg * nps * 3, fn);
+        double sgn = (double)sigma[bestSeg];
+        double nf[3] = { sgn*fn[0], sgn*fn[1], sgn*fn[2] };              // coherent normal (G NOT applied)
+        double nfn = norm3(nf);
+        if (nfn < 1e-300) continue;                                     // sliver facet ⇒ no vote
+        double d2c[3] = { xs[0]-cen[0], xs[1]-cen[1], xs[2]-cen[2] };   // chord from the interior centroid
+        double w = dot3(nf, d2c) / nfn;   // signed distance of the slave from the centroid ALONG n̂_local
+        acc += w; wsum += (w >= 0.0 ? w : -w);
+        voted++;
+    }
+    if (nVoted != 0) *nVoted = voted;
+    if (voted == 0 || wsum < 1e-300) { if (conf != 0) *conf = 0.0; return +1.0; }
+    if (conf != 0) *conf = (acc >= 0.0 ? acc : -acc) / wsum;
+    return (acc < 0.0) ? -1.0 : +1.0;
 }
 
 // derived outward normal, oriented so n·refDir > 0 (refDir points toward the slave's

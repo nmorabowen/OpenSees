@@ -170,7 +170,13 @@ static double maxGeneralizedEigenvalue(int n, double *K_data, double *M_data)
 
         for (int i = 0; i < n; ++i) {
             if (std::abs(beta[i]) > betaTol) {
-                double lambda = alphar[i] / beta[i];   // imaginary part ~ 0 for SPD pencil
+                // A genuinely COMPLEX eigenpair cannot come from the symmetric K/M
+                // pencil — it is numerical garbage from the general driver on a
+                // near-defective pencil. Skip it instead of treating its real part
+                // as omega^2 (review 2026-07-01).
+                if (std::abs(alphai[i]) > 1.0e-8 * std::abs(alphar[i]))
+                    continue;
+                double lambda = alphar[i] / beta[i];
                 if (lambda > lambdaMax) lambdaMax = lambda;
             }
         }
@@ -339,9 +345,11 @@ CTSResult computeCriticalTimeStep(AnalysisModel *theModel,
         if (lambdaMax > 0.0) {
             double w_max = std::sqrt(lambdaMax);
 
+            // betaK here is the TOTAL stiffness-proportional coefficient
+            // (betaK + betaKinit + betaKcomm) — see stiffnessRayleighBeta.
             Vector coefs = ele->getRayleighDampingFactors();
             double alphaM = coefs(0);
-            double betaK  = coefs(1);
+            double betaK  = stiffnessRayleighBeta(ele);
             double xi = 0.5 * (alphaM / w_max + betaK * w_max);
 
             double undamped_dt = 2.0 / w_max;
@@ -377,4 +385,29 @@ CTSResult computeCriticalTimeStep(AnalysisModel *theModel,
 #endif
 
     return r;
+}
+
+// Total stiffness-proportional Rayleigh coefficient (see CriticalTimeStep.h):
+// betaK + betaKinit + betaKcomm, each slot clamped at 0 before summing. All
+// three slots damp through a stiffness-like matrix, so they shrink the explicit
+// stable step identically; the damped estimate and the SMS sizing must see the
+// sum, not coefs(1) alone.
+double stiffnessRayleighBeta(Element *ele)
+{
+    const Vector &coefs = ele->getRayleighDampingFactors();  // (aM, bK, bK0, bKc)
+    double beta = 0.0;
+    if (coefs(1) > 0.0) beta += coefs(1);
+    if (coefs(2) > 0.0) beta += coefs(2);
+    if (coefs(3) > 0.0) beta += coefs(3);
+    return beta;
+}
+
+// NaN-safe finiteness scan (see CriticalTimeStep.h): the divergence circuit
+// breakers must NOT use Vector::pNorm(0), whose max-compare silently skips NaN.
+bool vectorIsFinite(const Vector &v)
+{
+    for (int i = 0; i < v.Size(); i++)
+        if (!std::isfinite(v(i)))
+            return false;
+    return true;
 }
