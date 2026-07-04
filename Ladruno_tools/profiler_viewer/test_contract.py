@@ -24,6 +24,15 @@ def _tiny_rollup(ft_ms):
     ]}
 
 
+def _untimed_root_rollup(ft_ms):
+    # Mirror the REAL C++ engine output: an untimed 'root' anchor (wall_ns=0,
+    # calls=0) wrapping the first real phase. The synthetic _tiny_rollup above
+    # uses 'step' as the top node; the live engine does not.
+    return {"name": "root", "calls": 0, "wall_ns": 0,
+            "wall_ns_min": 0, "wall_ns_max": 0, "cpu_ns": 0,
+            "children": [_tiny_rollup(ft_ms)]}
+
+
 def main():
     path = os.path.join(tempfile.mkdtemp(), "t.h5")
     with h5py.File(path, "w") as f:
@@ -33,6 +42,10 @@ def main():
         write_run(f, "B", meta=dict(integrator="Newmark", algorithm="ModifiedNewton",
                                     nDOF=100, nSteps=5, wall_ms_total=60.0),
                   rollup=_tiny_rollup(50.0))
+        # C mirrors the real engine: an untimed 'root' anchor above 'step'.
+        write_run(f, "C", meta=dict(integrator="LoadControl", algorithm="Newton",
+                                    nDOF=20, nSteps=5, wall_ms_total=110.0),
+                  rollup=_untimed_root_rollup(100.0))
 
     # 1. immutability: re-writing an existing run id must fail (do this before any reader
     #    holds the file open — Windows HDF5 forbids concurrent write + read-only handles)
@@ -47,7 +60,7 @@ def main():
 
     # 2. schema + runs present
     assert pr.schema_version == SCHEMA_VERSION
-    assert set(pr.runs()) == {"A", "B"}
+    assert set(pr.runs()) == {"A", "B", "C"}
 
     # 3. rollup normalization: share of root == 1, per-step = wall/nSteps
     rollA = pr.rollup("A")
@@ -68,8 +81,28 @@ def main():
     assert abs(ft_diff["d_pct"] - (-50.0)) < 1e-6
     assert ft_diff["status"] == "changed"
 
+    # 6. untimed 'root' anchor (real engine shape): the backend must backfill the
+    #    root's aggregate wall from its children so `share` is a real fraction and
+    #    the flame graph has a non-zero parent to lay out. Regression for the
+    #    `wall_ns or 1` (== 1 ns denominator) bug that made every real-run share
+    #    astronomically large and left the icicle empty.
+    rollC = pr.rollup("C")
+    assert rollC["name"] == "root"
+    stepC = rollC["children"][0]
+    assert rollC["wall_ms"] > 0, "untimed root wall must be backfilled from children"
+    assert abs(rollC["wall_ms"] - stepC["wall_ms"]) < 1e-6, "root == sum(children) == step"
+    assert abs(rollC["share"] - 1.0) < 1e-9, "root share must be 1.0"
+    # every descendant share is a sane fraction, NOT the 1-ns-denominator blowup
+    def _all_shares_sane(n):
+        assert 0.0 <= n["share"] <= 1.0 + 1e-9, f"{n['name']} share out of range: {n['share']}"
+        for c in n["children"]:
+            _all_shares_sane(c)
+    _all_shares_sane(rollC)
+    assert abs(rollC["wall_ms_per_step"] - rollC["wall_ms"] / 5) < 1e-6
+
     pr.close()
-    print("OK — contract holds (schema, immutability, normalizers, elem_by_type, diff)")
+    print("OK — contract holds (schema, immutability, normalizers, elem_by_type, "
+          "diff, untimed-root backfill)")
 
 
 if __name__ == "__main__":
