@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Ladruno Monitor</title>
+<style>
+  :root {
+    --bg:#0e1116; --panel:#161b22; --edge:#30363d; --fg:#e6edf3; --muted:#8b949e;
+    --accent:#3fb950; --accent2:#58a6ff; --warn:#d29922; --grid:#21262d;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.45 -apple-system,Segoe UI,Roboto,sans-serif;
+         background:var(--bg); color:var(--fg); }
+  header { display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+           padding:12px 18px; border-bottom:1px solid var(--edge); background:var(--panel); }
+  h1 { font-size:15px; margin:0; font-weight:600; letter-spacing:.2px; }
+  .pill { display:inline-flex; align-items:center; gap:6px; padding:3px 10px;
+          border-radius:999px; font-size:12px; border:1px solid var(--edge); color:var(--muted); }
+  .dot { width:8px; height:8px; border-radius:50%; background:var(--muted); }
+  .pill.live .dot { background:var(--accent); box-shadow:0 0 0 0 var(--accent);
+                    animation:pulse 1.2s infinite; }
+  .pill.idle .dot { background:var(--warn); }
+  @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(63,185,80,.6)} 70%{box-shadow:0 0 0 7px rgba(63,185,80,0)} 100%{box-shadow:0 0 0 0 rgba(63,185,80,0)} }
+  .spacer { flex:1; }
+  button, select { background:#21262d; color:var(--fg); border:1px solid var(--edge);
+          border-radius:6px; padding:5px 10px; font-size:12px; cursor:pointer; }
+  button:hover, select:hover { border-color:var(--accent2); }
+  button.on { border-color:var(--accent); color:var(--accent); }
+  main { padding:16px 18px; }
+  .card { background:var(--panel); border:1px solid var(--edge); border-radius:10px;
+          padding:14px 16px; margin-bottom:16px; }
+  .chartwrap { width:100%; overflow-x:auto; }
+  svg { width:100%; height:auto; display:block; }
+  .axis { stroke:var(--grid); stroke-width:1; }
+  .gl { stroke:var(--grid); stroke-width:1; stroke-dasharray:2 4; }
+  .tick { fill:var(--muted); font-size:11px; }
+  path.series { fill:none; stroke-width:1.6; }
+  table { border-collapse:collapse; width:100%; font-size:13px; }
+  th,td { text-align:left; padding:5px 10px; border-bottom:1px solid var(--grid); }
+  th { color:var(--muted); font-weight:500; }
+  td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  .sw { display:inline-block; width:11px; height:11px; border-radius:3px; margin-right:8px;
+        vertical-align:-1px; }
+  .meta { color:var(--muted); font-size:12px; }
+  code { color:var(--accent2); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Ladruno&nbsp;Monitor</h1>
+  <span id="status" class="pill"><span class="dot"></span><span id="statusText">connecting…</span></span>
+  <span class="meta" id="fileMeta"></span>
+  <span class="spacer"></span>
+  <label class="meta">x-axis
+    <select id="xmode"><option value="time">time</option><option value="step">step</option></select>
+  </label>
+  <button id="followBtn" class="on">Follow</button>
+  <button id="pauseBtn">Pause</button>
+</header>
+
+<main>
+  <div class="card">
+    <div class="chartwrap"><svg id="chart" viewBox="0 0 1000 420" preserveAspectRatio="none"></svg></div>
+  </div>
+  <div class="card">
+    <table>
+      <thead><tr><th>channel</th><th class="num">latest</th><th class="num">min</th><th class="num">max</th></tr></thead>
+      <tbody id="legend"></tbody>
+    </table>
+  </div>
+</main>
+
+<script>
+const COLORS = ["#58a6ff","#3fb950","#d29922","#f778ba","#a371f7","#39c5cf","#ff7b72","#e3b341","#79c0ff","#56d364"];
+const W = 1000, H = 420, PAD = {l:64, r:16, t:14, b:34};
+const state = {
+  cols: [], units: "", cursor: 0, n: 0,
+  xt: [], xs: [], series: [],       // xt=time, xs=step, series[j]=values[]
+  following: true, paused: false, xmode: "time",
+  lastGrowMs: 0, connected: false,
+};
+const $ = id => document.getElementById(id);
+const fmt = v => (v===null||v===undefined||Number.isNaN(v)) ? "—"
+  : (Math.abs(v)>=1e4||(Math.abs(v)<1e-3&&v!==0)) ? v.toExponential(3) : v.toFixed(4);
+
+async function loadMeta() {
+  const r = await fetch("api/meta"); if (!r.ok) throw new Error("meta " + r.status);
+  const m = await r.json();
+  state.cols = m.columns; state.units = m.units || "";
+  state.series = m.columns.map(()=>[]);
+  $("fileMeta").innerHTML = "<code>" + (m.path||"").split(/[\\/]/).pop() + "</code> · "
+    + m.nColumns + " channel(s)" + (m.units? " · units "+m.units : "");
+  state.connected = true;
+}
+
+async function poll() {
+  if (state.paused) return;
+  try {
+    const r = await fetch("api/frames?since=" + state.cursor);
+    if (r.status === 503) { setStatus("waiting"); return; }
+    if (!r.ok) throw new Error("frames " + r.status);
+    const d = await r.json();
+    if (!state.connected) await loadMeta();
+    if (d.step.length) {
+      for (let i=0;i<d.step.length;i++){
+        state.xt.push(d.t[i]); state.xs.push(d.step[i]);
+        const row = d.rows[i];
+        for (let j=0;j<state.series.length;j++) state.series[j].push(row[j]);
+      }
+      state.lastGrowMs = performance.now();
+    }
+    state.cursor = d.n; state.n = d.n;
+    setStatus(performance.now() - state.lastGrowMs < 1500 ? "live" : "idle");
+    render();
+  } catch (e) { setStatus("error", e.message); }
+}
+
+function setStatus(kind, extra) {
+  const el = $("status"), t = $("statusText");
+  el.className = "pill " + (kind==="live"?"live":kind==="idle"?"idle":"");
+  const label = {live:"LIVE", idle:"idle (run at rest)", waiting:"waiting for sink…",
+                 error:"error", connecting:"connecting…"}[kind] || kind;
+  t.textContent = label + "  ·  " + state.n + " frames" + (extra? "  ·  "+extra : "");
+}
+
+function niceTicks(lo, hi, k=4){
+  if (lo===hi){ lo-=1; hi+=1; }
+  const span=hi-lo, step0=span/k, mag=Math.pow(10,Math.floor(Math.log10(step0)));
+  const norm=step0/mag, step=(norm<1.5?1:norm<3?2:norm<7?5:10)*mag;
+  const out=[]; for(let v=Math.ceil(lo/step)*step; v<=hi+1e-9; v+=step) out.push(v);
+  return out;
+}
+
+function render() {
+  const svg = $("chart");
+  const WINDOW = 600;                       // Follow shows the last WINDOW frames
+  const xarr = state.xmode==="time" ? state.xt : state.xs;
+  const N = xarr.length;
+  if (!N) { svg.innerHTML = '<text class="tick" x="20" y="30">no frames yet…</text>'; renderLegend(); return; }
+  const start = (state.following && N > WINDOW) ? N - WINDOW : 0;
+  let xlo = xarr[start], xhi = xarr[N-1];
+  if (xlo===xhi) xhi = xlo + 1;
+  // y auto-scales to the VISIBLE slice so a scrolling window stays readable.
+  let ylo=Infinity, yhi=-Infinity;
+  for (const s of state.series) for (let i=start;i<N;i++){ const v=s[i]; if(v<ylo)ylo=v; if(v>yhi)yhi=v; }
+  if (!isFinite(ylo)){ ylo=-1; yhi=1; }
+  if (ylo===yhi){ ylo-=1; yhi+=1; }
+  const pad=(yhi-ylo)*0.08; ylo-=pad; yhi+=pad;
+  const px = x => PAD.l + (x-xlo)/(xhi-xlo)*(W-PAD.l-PAD.r);
+  const py = y => H-PAD.b - (y-ylo)/(yhi-ylo)*(H-PAD.t-PAD.b);
+
+  let g = "";
+  // y gridlines + ticks
+  for (const yv of niceTicks(ylo,yhi,5)){
+    const Y=py(yv);
+    g += `<line class="gl" x1="${PAD.l}" y1="${Y.toFixed(1)}" x2="${W-PAD.r}" y2="${Y.toFixed(1)}"/>`;
+    g += `<text class="tick" x="${PAD.l-8}" y="${(Y+4).toFixed(1)}" text-anchor="end">${(+yv.toPrecision(4))}</text>`;
+  }
+  // x ticks
+  for (const xv of niceTicks(xlo,xhi,6)){
+    const X=px(xv);
+    g += `<text class="tick" x="${X.toFixed(1)}" y="${H-PAD.b+18}" text-anchor="middle">${(+xv.toPrecision(4))}</text>`;
+  }
+  // zero line
+  if (ylo<0 && yhi>0){ const Y=py(0); g += `<line class="axis" x1="${PAD.l}" y1="${Y}" x2="${W-PAD.r}" y2="${Y}"/>`; }
+  // axes
+  g += `<line class="axis" x1="${PAD.l}" y1="${PAD.t}" x2="${PAD.l}" y2="${H-PAD.b}"/>`;
+  g += `<line class="axis" x1="${PAD.l}" y1="${H-PAD.b}" x2="${W-PAD.r}" y2="${H-PAD.b}"/>`;
+  g += `<text class="tick" x="${(PAD.l+W-PAD.r)/2}" y="${H-4}" text-anchor="middle">${state.xmode==="time"?"pseudo-time":"step index"}</text>`;
+  // series paths
+  for (let j=0;j<state.series.length;j++){
+    const s=state.series[j];
+    let dstr=""; for (let i=start;i<N;i++){ dstr += (i===start?"M":"L")+px(xarr[i]).toFixed(1)+" "+py(s[i]).toFixed(1)+" "; }
+    g += `<path class="series" d="${dstr}" stroke="${COLORS[j%COLORS.length]}"/>`;
+  }
+  svg.innerHTML = g;
+  renderLegend();
+}
+
+function renderLegend(){
+  const tb = $("legend");
+  let rows="";
+  for (let j=0;j<state.cols.length;j++){
+    const s=state.series[j]||[];
+    const last=s.length?s[s.length-1]:null;
+    let mn=Infinity,mx=-Infinity; for(const v of s){ if(v<mn)mn=v; if(v>mx)mx=v; }
+    rows += `<tr><td><span class="sw" style="background:${COLORS[j%COLORS.length]}"></span>${state.cols[j]}</td>`
+      + `<td class="num">${fmt(last)}</td><td class="num">${s.length?fmt(mn):"—"}</td><td class="num">${s.length?fmt(mx):"—"}</td></tr>`;
+  }
+  tb.innerHTML = rows;
+}
+
+$("pauseBtn").onclick = () => {
+  state.paused = !state.paused;
+  $("pauseBtn").textContent = state.paused ? "Resume" : "Pause";
+  $("pauseBtn").classList.toggle("on", state.paused);
+};
+$("followBtn").onclick = () => {
+  state.following = !state.following;
+  $("followBtn").classList.toggle("on", state.following);
+  render();
+};
+$("xmode").onchange = e => { state.xmode = e.target.value; render(); };
+
+setStatus("connecting");
+loadMeta().then(render).catch(()=>setStatus("waiting"));
+setInterval(poll, 500);
+</script>
+</body>
+</html>
