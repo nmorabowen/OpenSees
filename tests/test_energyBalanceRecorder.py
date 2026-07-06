@@ -116,17 +116,26 @@ def _run_lnvd_bar(tmp_path, fname, v2, alpha):
 
 
 # ==========================================================================
-# ADR-69 v2: no-producer layout — time + KE_ele KE_nod IE DW_ele DW_nod ULW
-# RES ERR% (no channel columns), element/nodal KE split sane.
-# NOTE: must run BEFORE any -lnvd test in this module — channel declarations
-# are process-sticky (a later -v2 run would gain a benign zero E_lnvd column).
+# ADR-69 v2 column geometry, order-INDEPENDENT (channel declarations are
+# process-sticky, so earlier test FILES in the battery — e.g. the adr52
+# ExplicitBathe-collapse tests constructing -lnvd — may have declared
+# channels before this file runs; those then appear as benign zero columns).
+# Fixed geometry: time | KE_ele KE_nod IE DW_ele DW_nod ULW | [channels...]
+# | RES ERR%  -> cols 1..6 fixed, RES/ERR always the LAST TWO, channels (if
+# any) sit at 7..ncol-3 with E_lnvd LAST among them (E_inject, E_lnvd order).
 # ==========================================================================
 def test_energybalance_v2_layout_no_producers(tmp_path):
     d = _run_lnvd_bar(tmp_path, "v2_plain.txt", v2=True, alpha=0.0)
-    assert d.shape[1] == 9, (
-        "expected 9 columns (time + 6 split + RES ERR%%) with no producers; got %d"
-        % d.shape[1]
+    ncol = d.shape[1]
+    assert ncol >= 9, (
+        "expected >=9 columns (time + 6 split + RES ERR%%); got %d" % ncol
     )
+    # THIS run has no producer: any channel columns (declared by earlier test
+    # files in the same process) must be identically zero.
+    if ncol > 9:
+        assert np.allclose(d[:, 7:ncol - 2], 0.0, atol=1e-14), (
+            "no-producer run: channel columns must be all-zero"
+        )
     ke_ele, ke_nod = d[0, 1], d[0, 2]
     assert ke_ele > 0.0 and abs(ke_nod) < 1e-12, (
         "element-mass bar: KE must sit in KE_ele (got ele=%g nod=%g)" % (ke_ele, ke_nod)
@@ -147,13 +156,15 @@ def test_energybalance_v2_lnvd_closure(tmp_path):
     res_l = d_legacy[:, 5]
     drift_legacy = res_l[-1] - res_l[0]
 
-    # v2 with LNVD declared: time KE_ele KE_nod IE DW_ele DW_nod ULW E_lnvd RES ERR%
-    assert d_v2.shape[1] == 10, (
-        "expected 10 columns (time + 6 split + E_lnvd + RES ERR%%); got %d"
+    # v2 with LNVD declared: >=10 columns; E_lnvd is the LAST channel column
+    # (just before RES ERR%), regardless of what else got declared earlier
+    # in this process.
+    assert d_v2.shape[1] >= 10, (
+        "expected >=10 columns (time + 6 split + E_lnvd + RES ERR%%); got %d"
         % d_v2.shape[1]
     )
-    e_lnvd = d_v2[:, 7]
-    res_v2 = d_v2[:, 8]
+    e_lnvd = d_v2[:, -3]
+    res_v2 = d_v2[:, -2]
     drift_v2 = res_v2[-1] - res_v2[0]
 
     assert e_lnvd[-1] > 0.0, "LNVD dissipation must accumulate positive work"
