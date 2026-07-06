@@ -77,7 +77,7 @@ void *OPS_CentralDifferenceLadruno(void)
 {
     // Usage: integrator CentralDifferenceLadruno <-cfl> <-cflAbort> <-tangent>
     //                                            <-recompute N> <-lump rowsum|diagonal|hrz>
-    //                                            <-verbose> <-divergence f>
+    //                                            <-verbose> <-divergence f> <-noMassCache>
     // No positional argument and NO -damping flag: this is ONE explicit scheme.
     // (For coupled / implicit-damped CD use `integrator NewmarkExplicit 0.5`.)
     int compute_critical_timestep = 0;
@@ -86,6 +86,8 @@ void *OPS_CentralDifferenceLadruno(void)
     double divergenceFactor = 0.0;
     bool cflUseTangent = false;
     int cflRecomputeEvery = 0;
+    bool massCache = true;    // Ladruno (ADR-67 P-NEW-1): constant-mass tangent cache
+    bool commitSolve = false; // Ladruno (ADR-67 P-NEW-2): skip 2nd constitutive pass
     CTSLumping lumping = CTSLumping::Diagonal;   // explicit default: diagonal-of-
                                                  // consistent is robust for the
                                                  // rotational DOFs of beams/shells
@@ -118,6 +120,14 @@ void *OPS_CentralDifferenceLadruno(void)
                           "integer N (steps between dt_cr refreshes); dt_cr computed once\n";
             cflUseTangent = true;   // recomputing the initial stiffness every N steps is pointless
             compute_critical_timestep = 1;
+        } else if (strcmp(arg, "-noMassCache") == 0) {
+            // Ladruno (ADR-67 P-NEW-1): opt out of the constant-mass tangent
+            // cache (required for mid-run updateParameter on density).
+            massCache = false;
+        } else if (strcmp(arg, "-commitSolveState") == 0) {
+            // Ladruno (ADR-67 P-NEW-2): opt-in — commit element state at the
+            // solve (half-step) velocity, skipping the second constitutive pass.
+            commitSolve = true;
         } else if (strcmp(arg, "-lump") == 0) {
             if (OPS_GetNumRemainingInputArgs() > 0) {
                 const char *m = OPS_GetString();
@@ -133,12 +143,16 @@ void *OPS_CentralDifferenceLadruno(void)
         }
     }
 
-    TransientIntegrator *theIntegrator =
+    CentralDifferenceLadruno *theIntegrator =
         new CentralDifferenceLadruno(compute_critical_timestep, verbose, cflAbort,
                                      divergenceFactor, cflUseTangent,
                                      cflRecomputeEvery, lumping);
-    if (theIntegrator == 0)
+    if (theIntegrator == 0) {
         opserr << "WARNING - out of memory creating CentralDifferenceLadruno integrator\n";
+        return theIntegrator;
+    }
+    theIntegrator->setMassCacheEnabled(massCache);     // Ladruno (ADR-67 P-NEW-1)
+    theIntegrator->setCommitSolveState(commitSolve);   // Ladruno (ADR-67 P-NEW-2)
     return theIntegrator;
 }
 
@@ -159,7 +173,9 @@ CentralDifferenceLadruno::CentralDifferenceLadruno()
       committedCflStepCount(0),
       cflFirstComputation(true), lumping(CTSLumping::Diagonal), betaKWarned(false),
       smsEffectiveLimit(0.0),
-      theProjector(0), massBuilt(false), Aproj(0)
+      theProjector(0), massBuilt(false), Aproj(0),
+      useMassCache(true), massTangentValid(false), massCacheNoted(false),
+      commitSolveState(false), commitSolveStateNoted(false)
 {
 }
 
@@ -196,7 +212,9 @@ CentralDifferenceLadruno::CentralDifferenceLadruno(
       committedCflStepCount(0),
       cflFirstComputation(true), lumping(lumping_), betaKWarned(false),
       smsEffectiveLimit(0.0),
-      theProjector(0), massBuilt(false), Aproj(0)
+      theProjector(0), massBuilt(false), Aproj(0),
+      useMassCache(true), massTangentValid(false), massCacheNoted(false),
+      commitSolveState(false), commitSolveStateNoted(false)
 {
 }
 
@@ -219,11 +237,51 @@ CentralDifferenceLadruno::setConstraintProjector(LadrunoConstraintProjector *p)
 {
     theProjector = p;
     massBuilt = false;
+    // Ladruno (ADR-67 P-NEW-1, gate item 1): keep the two mass-re-read latches
+    // inseparable — a starter running with massBuilt==false but a live cache
+    // would feed buildMass the factored 1/M diagonal.
+    massTangentValid = false;
 }
 
 // Explicit: only the mass matrix on the LHS -> a trivial diagonal M^{-1} solve.
 // Damping is NOT on the LHS (that would be the coupled scheme = NewmarkExplicit);
 // it enters the residual at the lagged half-step velocity set on the nodes.
+// Ladruno (ADR-67 P-NEW-1): constant-mass tangent cache. The assembled tangent
+// is pure M (formEleTangent/formNodTangent below), constant between M-changing /
+// SOE-resizing events — all of which flow through domainChanged() /
+// setConstraintProjector() / revertToLastStep(), where massTangentValid is
+// cleared. Skipping the reassembly leaves the Diagonal SOE's factored-in-place
+// state live, exactly the (measured bit-identical, −17.9% wall) `Linear
+// -factorOnce` behavior, but with safe invalidation. NOTE (gate item 6): "pure
+// mass" also rests on this class inheriting getCFactor()==0, which zero-scales
+// the modal-damping-matrix branch in TransientIntegrator::formTangent — do not
+// give CDL a nonzero cFactor without revisiting this cache.
+int CentralDifferenceLadruno::formTangent(int statFlag)
+{
+    if (useMassCache && massTangentValid) {
+        statusFlag = statFlag;   // hygiene: mirror the base (gate item 5)
+        return 0;
+    }
+    int res = this->TransientIntegrator::formTangent(statFlag);
+    if (res == 0 && useMassCache) {
+        massTangentValid = true;
+        // One-time contract note (gate item 8): updateParameter on a density
+        // changes M without a domainChanged — the ONE event this cache cannot
+        // see. Warn only when the deck actually declares parameters.
+        if (!massCacheNoted) {
+            massCacheNoted = true;
+            AnalysisModel *theModel = this->getAnalysisModel();
+            Domain *theDomain = (theModel != 0) ? theModel->getDomainPtr() : 0;
+            if (theDomain != 0 && theDomain->getNumParameters() > 0)
+                opserr << "CentralDifferenceLadruno: constant-mass tangent cache is ON and "
+                          "the model declares parameters. A mid-run updateParameter that "
+                          "changes a DENSITY will NOT be picked up - use -noMassCache (or "
+                          "trigger a domainChange) for mid-run density updates.\n";
+        }
+    }
+    return res;
+}
+
 int CentralDifferenceLadruno::formEleTangent(FE_Element *theEle)
 {
     theEle->zeroTangent();
@@ -315,6 +373,10 @@ int CentralDifferenceLadruno::domainChanged()
     // the committed (u0, v0) against every constraint group — Ut/Vhalf currently hold
     // them. enforceIC() needs no mass (it uses L, delta only), so it is safe here.
     massBuilt = false;
+    // Ladruno (ADR-67 P-NEW-1): every M-changing / SOE-resizing event funnels
+    // through here (contact re-emission, element removal/birth, staged
+    // activation, SMS injection) — reassemble the mass tangent on the next form.
+    massTangentValid = false;
     if (theProjector != 0) {
         int nViol = theProjector->enforceIC(*Ut, *Vhalf);
         if (nViol > 0) {
@@ -421,6 +483,10 @@ int CentralDifferenceLadruno::revertToLastStep(void)
 {
     if (Ut == 0)                                  // domainChanged never ran
         return 0;
+    // Ladruno (ADR-67 P-NEW-1, gate item 1): the retry re-arms the first-step
+    // starter (below); keep the cache coupled with massBuilt so the starter's
+    // formTangent really assembles before the projector re-reads diag(M).
+    massTangentValid = false;
     AnalysisModel *theModel = this->getAnalysisModel();
     if (theModel == 0)
         return 0;
@@ -651,10 +717,27 @@ int CentralDifferenceLadruno::update(const Vector &U)
     Vfull->addVector(1.0, *Aused, 0.5 * deltaT);
 
     // Push the consistent full-step snapshot (u_{n+1}, v_{n+1}, a_{n+1}) to the nodes.
+    // Ladruno (ADR-67 P-NEW-2): this setResponse is LOAD-BEARING even under
+    // -commitSolveState — it is what keeps committed nodal output, recorders, KE,
+    // contact -visc, and the brick's viscous-hourglass commit reading v_{n+1}.
+    // Only the ELEMENT constitutive re-pass below may be skipped.
     theModel->setResponse(*Ut, *Vfull, *Aused);
-    if (theModel->updateDomain() < 0) {
-        opserr << "CentralDifferenceLadruno::update() - failed to update the domain\n";
-        return -6;
+    if (!commitSolveState) {
+        // Second constitutive pass at the SAME displacement (only v/a changed):
+        // for rate-independent materials this recomputes identical state —
+        // measured ~22% of explicit wall (40b lane-D).
+        if (theModel->updateDomain() < 0) {
+            opserr << "CentralDifferenceLadruno::update() - failed to update the domain\n";
+            return -6;
+        }
+    } else if (!commitSolveStateNoted) {
+        // One-time semantic note (adversarial gate P0): never silent.
+        commitSolveStateNoted = true;
+        opserr << "CentralDifferenceLadruno: -commitSolveState — element state is committed "
+                  "at the solve (half-step) velocity v_{n+1/2}. Bit-identical for "
+                  "rate-independent materials; rate-dependent materials (Viscous-type via "
+                  "ZeroLength/TwoNodeLink/Truss-family/MultipleSpring elements) commit a "
+                  "v_{n+1/2}-rate state.\n";
     }
 
     // Optional circuit breaker: abort on runaway kinetic-energy growth. The
