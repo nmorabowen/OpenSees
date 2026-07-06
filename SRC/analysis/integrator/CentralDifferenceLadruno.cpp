@@ -86,7 +86,8 @@ void *OPS_CentralDifferenceLadruno(void)
     double divergenceFactor = 0.0;
     bool cflUseTangent = false;
     int cflRecomputeEvery = 0;
-    bool massCache = true;   // Ladruno (ADR-67 P-NEW-1): constant-mass tangent cache
+    bool massCache = true;    // Ladruno (ADR-67 P-NEW-1): constant-mass tangent cache
+    bool commitSolve = false; // Ladruno (ADR-67 P-NEW-2): skip 2nd constitutive pass
     CTSLumping lumping = CTSLumping::Diagonal;   // explicit default: diagonal-of-
                                                  // consistent is robust for the
                                                  // rotational DOFs of beams/shells
@@ -123,6 +124,10 @@ void *OPS_CentralDifferenceLadruno(void)
             // Ladruno (ADR-67 P-NEW-1): opt out of the constant-mass tangent
             // cache (required for mid-run updateParameter on density).
             massCache = false;
+        } else if (strcmp(arg, "-commitSolveState") == 0) {
+            // Ladruno (ADR-67 P-NEW-2): opt-in — commit element state at the
+            // solve (half-step) velocity, skipping the second constitutive pass.
+            commitSolve = true;
         } else if (strcmp(arg, "-lump") == 0) {
             if (OPS_GetNumRemainingInputArgs() > 0) {
                 const char *m = OPS_GetString();
@@ -146,7 +151,8 @@ void *OPS_CentralDifferenceLadruno(void)
         opserr << "WARNING - out of memory creating CentralDifferenceLadruno integrator\n";
         return theIntegrator;
     }
-    theIntegrator->setMassCacheEnabled(massCache);   // Ladruno (ADR-67 P-NEW-1)
+    theIntegrator->setMassCacheEnabled(massCache);     // Ladruno (ADR-67 P-NEW-1)
+    theIntegrator->setCommitSolveState(commitSolve);   // Ladruno (ADR-67 P-NEW-2)
     return theIntegrator;
 }
 
@@ -168,7 +174,8 @@ CentralDifferenceLadruno::CentralDifferenceLadruno()
       cflFirstComputation(true), lumping(CTSLumping::Diagonal), betaKWarned(false),
       smsEffectiveLimit(0.0),
       theProjector(0), massBuilt(false), Aproj(0),
-      useMassCache(true), massTangentValid(false), massCacheNoted(false)
+      useMassCache(true), massTangentValid(false), massCacheNoted(false),
+      commitSolveState(false), commitSolveStateNoted(false)
 {
 }
 
@@ -206,7 +213,8 @@ CentralDifferenceLadruno::CentralDifferenceLadruno(
       cflFirstComputation(true), lumping(lumping_), betaKWarned(false),
       smsEffectiveLimit(0.0),
       theProjector(0), massBuilt(false), Aproj(0),
-      useMassCache(true), massTangentValid(false), massCacheNoted(false)
+      useMassCache(true), massTangentValid(false), massCacheNoted(false),
+      commitSolveState(false), commitSolveStateNoted(false)
 {
 }
 
@@ -709,10 +717,27 @@ int CentralDifferenceLadruno::update(const Vector &U)
     Vfull->addVector(1.0, *Aused, 0.5 * deltaT);
 
     // Push the consistent full-step snapshot (u_{n+1}, v_{n+1}, a_{n+1}) to the nodes.
+    // Ladruno (ADR-67 P-NEW-2): this setResponse is LOAD-BEARING even under
+    // -commitSolveState — it is what keeps committed nodal output, recorders, KE,
+    // contact -visc, and the brick's viscous-hourglass commit reading v_{n+1}.
+    // Only the ELEMENT constitutive re-pass below may be skipped.
     theModel->setResponse(*Ut, *Vfull, *Aused);
-    if (theModel->updateDomain() < 0) {
-        opserr << "CentralDifferenceLadruno::update() - failed to update the domain\n";
-        return -6;
+    if (!commitSolveState) {
+        // Second constitutive pass at the SAME displacement (only v/a changed):
+        // for rate-independent materials this recomputes identical state —
+        // measured ~22% of explicit wall (40b lane-D).
+        if (theModel->updateDomain() < 0) {
+            opserr << "CentralDifferenceLadruno::update() - failed to update the domain\n";
+            return -6;
+        }
+    } else if (!commitSolveStateNoted) {
+        // One-time semantic note (adversarial gate P0): never silent.
+        commitSolveStateNoted = true;
+        opserr << "CentralDifferenceLadruno: -commitSolveState — element state is committed "
+                  "at the solve (half-step) velocity v_{n+1/2}. Bit-identical for "
+                  "rate-independent materials; rate-dependent materials (Viscous-type via "
+                  "ZeroLength/TwoNodeLink/Truss-family/MultipleSpring elements) commit a "
+                  "v_{n+1/2}-rate state.\n";
     }
 
     // Optional circuit breaker: abort on runaway kinetic-energy growth. The

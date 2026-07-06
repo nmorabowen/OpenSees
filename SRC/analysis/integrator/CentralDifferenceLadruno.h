@@ -193,6 +193,17 @@ public:
     // updateParameter-on-density decks).
     void setMassCacheEnabled(bool on) { useMassCache = on; if (!on) massTangentValid = false; }
 
+    // Ladruno (ADR-67 P-NEW-2): parser hook for -commitSolveState (OPT-IN,
+    // default OFF). Skips the SECOND element constitutive pass in update() —
+    // element state is committed as the solve actually used it (same strain
+    // u_{n+1}, LAGGED velocity v_{n+1/2}) instead of being recomputed at the
+    // full-step v_{n+1}. Bit-identical for rate-INdependent materials (~22% of
+    // explicit wall, 40b lane-D); a G-EQUIV results change for any element that
+    // passes a velocity rate to its material (ZeroLength/CoupledZeroLength/
+    // ZeroLengthVG_HG, TwoNodeLink, Truss/Truss2/CorotTruss/CorotTruss2,
+    // MultipleShear/NormalSpring + Viscous-type materials) — hence opt-in.
+    void setCommitSolveState(bool on) { commitSolveState = on; }
+
     // Ladruno (ADR-30): LadrunoProjectionConsumer — the handler pushes its
     // (non-owning) acceleration projector here; we project a0 in the starter and
     // a_{n+1} in update() so MP constraints are enforced without penalty/elimination.
@@ -303,6 +314,11 @@ private:
     bool   useMassCache;       // default true; -noMassCache restores every-step assembly
     bool   massTangentValid;   // tangent assembled since the last invalidation?
     bool   massCacheNoted;     // one-time density-parameter contract note emitted?
+
+    // Ladruno (ADR-67 P-NEW-2): skip the second constitutive pass (opt-in).
+    // Transient config — not serialized (per-rank decks re-issue the command).
+    bool   commitSolveState;      // default false
+    bool   commitSolveStateNoted; // one-time semantic note emitted?
 };
 
 #endif
