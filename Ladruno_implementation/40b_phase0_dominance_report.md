@@ -92,6 +92,34 @@ out to be fully scoped.
 5. **factor-vs-solve SOE scope** + ModifiedNewton scopes — before any rank-8 work.
 6. **Drop/park:** T1 (no authorizing lane), T2 (ceiling ~2%), T4/T5 (await their benches).
 
+## Addendum — `elem.update` scope built + frame lanes re-measured (2026-07-06, same day)
+
+The Finding-1 instrument now exists: `Domain::update(void)`'s element loop carries a deep
+`elem.update` per-classTag bucket (`Domain.cpp`, ledgered; raw-`Element*` macro variant
+`OPS_PROFILE_ELEMPTR_SCOPE` in `ProfilerMacros.h`; inert without `profiler start -deep`).
+Lanes A and E re-run on the instrumented build:
+
+- **Lane A (fiber frame) — hypothesis CONFIRMED and quantified.** The formerly opaque `update`
+  phase is now 92% attributed: `ForceBeamColumn2d` (classTag 73) `update()` costs **57.6 µs/ele**
+  (~200× its `getTangent` at 0.28 µs/ele), and summing its three update sites
+  (solveCurrentStep/update 12.9 s + newStep 3.1 s + DisplacementControl direct 2.0 s) books
+  **~82% of step time to classTag-73 state determination**. The fiber lane is force-based-
+  interior-bound, per the classTag record. Optimization of that interior loop is **vanilla,
+  upstream-facing work** (change-budget policy) — but it is now measurable, so any future
+  upstream contribution carries a number.
+- **Lane E (IMK) — hypothesis REFUTED; ADR-68 T6 DEMOTED.** The hinge Newton is **cheap**:
+  `LadrunoIMKBeam2d` `elem.update` = **0.62 µs/ele**, only ~14% of the `update` phase
+  (486 of 3428 ms); total classTag-33004 work across ALL buckets ≈ 12% of step. The 35.4%
+  "update" band is **integrator/domain update machinery OUTSIDE the element loop** (~1.8 ms per
+  update call at 660 DOF — DOF_Group/node trial-state propagation, model-update glue), which the
+  original pass mis-read as hidden element cost. **T6 (hinge warm-start) payoff ceiling < 1% —
+  dropped.** The real lane-E cost structure: linearSolve ~30%, update machinery ~30%,
+  newStep/step glue ~25% — a small-model *per-step fixed overhead* profile, not a kernel profile.
+  New drill-down candidate: what the integrator update spends 1.8 ms/call on at 660 DOF.
+
+Lesson worth keeping: the first pass correctly located the opaque band but **guessed its owner
+wrong on lane E** — attribute, then rank; never optimize an unattributed band.
+
 ## Addendum — MUMPS parallel lane (measured 2026-07-06, same day)
 
 Strong scaling of the implicit parallel path (`openseesmp`, hand-partitioned z-slabs, shared
