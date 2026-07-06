@@ -182,6 +182,107 @@ def test_energybalance_v2_lnvd_closure(tmp_path):
 
 
 # ==========================================================================
+# ADR-69 P1.5: ASDAbsorbingBoundary2D bottom compliant-base injection closes
+# the same way LysmerTriangle's does. addBaseActions() is a pure external
+# source (time-series velocity * fixed coefficients on the SOIL-side nodes,
+# mutually exclusive with the lateral free-field mechanism via BND_BOTTOM)
+# that leaks into the legacy IE integral; -v2 rebuckets it into E_inject.
+# Ghost nodes are explicitly fixed (belt-and-suspenders on top of the
+# element's own internal penalty pin) to keep the system well-posed.
+# ==========================================================================
+def _build_asd_column(amp_scale, n_layers=3):
+    E, nu, rho = 2.0 * 2000.0 * 200.0 ** 2 * 1.25, 0.25, 2000.0
+    G = 2000.0 * 200.0 ** 2
+    dt = 1.0e-3
+    nstep = 60
+    t = np.arange(nstep + 1) * dt
+    f0, t0, amp = 10.0, 0.02, 0.05
+    a = (np.pi * f0 * (t - t0)) ** 2
+    vals = (amp * amp_scale * (1.0 - 2.0 * a) * np.exp(-a)).tolist()
+
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.node(1001, 0.0, -1.0)
+    ops.node(1002, 1.0, -1.0)
+    ops.fix(1001, 1, 1)
+    ops.fix(1002, 1, 1)
+    for row in range(n_layers + 1):
+        ops.node(1 + 2 * row, 0.0, float(row))
+        ops.node(2 + 2 * row, 1.0, float(row))
+    ops.nDMaterial("ElasticIsotropic", 1, E, nu, rho)
+    for row in range(n_layers):
+        n1, n2 = 1 + 2 * row, 2 + 2 * row
+        n3, n4 = 2 + 2 * (row + 1), 1 + 2 * (row + 1)
+        ops.element("quad", 200 + row, n1, n2, n3, n4, 1.0, "PlaneStrain", 1)
+    ops.timeSeries("Path", 1, "-dt", dt, "-values", *vals)
+    ops.element("ASDAbsorbingBoundary2D", 101, 1001, 1002, 2, 1,
+               G, nu, rho, 1.0, "B", "-fx", 1)
+    ops.setParameter("-val", 1, "-ele", 101, "stage")
+    return dt, nstep
+
+
+def _run_asd_column(tmp_path, fname, v2, amp_scale):
+    dt, nstep = _build_asd_column(amp_scale)
+    efile = str(tmp_path / fname)
+    rec = ["EnergyBalance", "-file", efile, "-time"]
+    if v2:
+        rec.append("-v2")
+    ops.recorder(*rec)
+    ops.constraints("Plain")
+    ops.numberer("RCM")
+    ops.system("UmfPack")
+    ops.test("NormDispIncr", 1.0e-10, 10)
+    ops.algorithm("Linear")
+    ops.integrator("Newmark", 0.5, 0.25)
+    ops.analysis("Transient")
+    for _ in range(nstep):
+        assert ops.analyze(1, dt) == 0
+    ops.wipe()
+    return np.atleast_2d(np.loadtxt(efile))
+
+
+def test_energybalance_v2_asd_absorbing_injection_closure(tmp_path):
+    d_legacy = _run_asd_column(tmp_path, "asd_legacy.txt", v2=False, amp_scale=1.0)
+    d_v2 = _run_asd_column(tmp_path, "asd_v2.txt", v2=True, amp_scale=1.0)
+    d_ctl = _run_asd_column(tmp_path, "asd_ctl.txt", v2=True, amp_scale=0.0)
+
+    ie_legacy = d_legacy[-1, 2]
+    eref_legacy = max(np.abs(d_legacy[:, 1:5]).max(), 1e-30)
+    assert abs(ie_legacy) > 0.05 * eref_legacy, (
+        "expected the legacy IE leak to be a significant fraction of E_ref; "
+        "got IE=%g E_ref=%g" % (ie_legacy, eref_legacy)
+    )
+
+    # This model's ASDAbsorbingBoundary2D unconditionally declares ABSORB_LEAK
+    # in setDomain, so chInject is guaranteed true and E_inject sits at the
+    # FIXED front-anchored offset col 7 (right after ULW at col 6) -
+    # regardless of whether an earlier test in this process (or battery run)
+    # also declared LNVD_WORK, which the recorder always writes AFTER
+    # E_inject (see EnergyBalanceRecorder.cpp record(): chInject column is
+    # written before chLnvd). Do NOT locate E_inject from the back like the
+    # LNVD test does - E_lnvd (not E_inject) is what's guaranteed last.
+    assert d_v2.shape[1] >= 10
+    ie_v2 = d_v2[-1, 3]
+    e_inject = d_v2[-1, 7]
+    eref_v2 = max(np.abs(d_v2[:, 1:8]).max(), 1e-30)
+    assert abs(ie_v2) < 0.05 * eref_v2, (
+        "v2 IE should be near-truthful once the leak is rebucketed; got %g "
+        "(E_ref %g)" % (ie_v2, eref_v2)
+    )
+
+    diff = ie_v2 - ie_legacy
+    assert abs(e_inject - diff) < 0.1 * max(abs(diff), 1e-30), (
+        "E_inject (%g) should match IE_v2 - IE_legacy (%g) - the same leak "
+        "measured through two independent paths" % (e_inject, diff)
+    )
+
+    e_inject_ctl = d_ctl[-1, 7]
+    assert abs(e_inject_ctl) < 1e-9, (
+        "zero-amplitude control: E_inject should be ~0, got %g" % e_inject_ctl
+    )
+
+
+# ==========================================================================
 # column layout: with -time, exactly 7 columns (time + KE IE DW ULW RES ERR%)
 # ==========================================================================
 def test_energybalance_time_column_layout(tmp_path):

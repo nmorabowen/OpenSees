@@ -485,3 +485,47 @@ when done)*
   static-stage pseudo-time leak integration (moot — loader inactive at
   gravity, rate = 0); NIT-1 channels declared after first record correct IE/
   RES but emit no column (correct-but-quiet, normal flow unaffected).
+- **2026-07-06 P1.5 BUILT + VERIFIED (same worktree, PR #488 merged first;
+  synced onto `ladruno` before starting):**
+  - **`LysmerTriangle` openseespy dispatch** (`OpenSeesElementCommands.cpp`)
+    + the Python-side `eleLoad -lysmerVelocityLoader <dir>`
+    (`OpenSeesPatternCommands.cpp`) — the element's parser already used
+    interpreter-agnostic `OPS_Get*Input`, so only registration was needed;
+    P0.5's Tcl-only gap is now closed in both languages.
+  - **ASDAbsorbingBoundary2D/3D bottom compliant-base leak publisher.**
+    Traced `addBaseActions()` end-to-end: a pure external source (time-series
+    velocity × fixed coefficients, always additive into `R`, **no**
+    stateful-member hazard unlike Lysmer's stage-3 mutation) — and confirmed
+    from source that `addRff`/`addRffToSoil` (the LATERAL free-field
+    mechanism) both `return` early whenever `m_boundary & BND_BOTTOM`, so the
+    bottom-injection and lateral-injection source terms are **mutually
+    exclusive**: publishing the bottom leak cannot double-count the lateral
+    one. Scoped P1.5 to the bottom mechanism only — the lateral free-field
+    injection remains an open, documented gap (P1.6+; recorder warning
+    reworded to say so precisely rather than claim ASD is wholly
+    uncovered). New `commitState()` override on both classes (neither had
+    one) mirrors Lysmer's publisher exactly: recompute via `addBaseActions`
+    into a scratch `Vector`, dot with `getVelocity()` (confirmed same index
+    space via `m_dof_map`), trapezoid-integrate, publish to `ABSORB_LEAK`.
+  - **ASD Ricker gate ALL PASS** (`p15_asd_ricker_closure.py`, openseespy —
+    a 2D quad soil column on a ghost+real compliant-base pair, mirroring the
+    element's own internal ghost/soil topology; ghost nodes additionally
+    `fix()`-ed as belt-and-suspenders on top of the element's own internal
+    penalty pin): G2 legacy lie reproduced (`IE_end = −82.3 J`); G3 v2 IE
+    truthful (`+3.4e−5`); G4 cross-check `E_inject = 82.296` vs
+    `IE_v2 − IE_legacy = 82.296` (6 sig figs); G5 zero-amplitude control
+    clean.
+  - **Zone-A gained a 5th test**
+    (`test_energybalance_v2_asd_absorbing_injection_closure`) exercising the
+    same gate as a proper pytest. **Caught its own version of the earlier
+    column-location bug before it shipped**: with `LNVD_WORK` also declared
+    by an earlier-sorting test file, `E_inject` is *not* the last channel
+    column (`E_lnvd` always writes after it) — but since this test's element
+    unconditionally declares `ABSORB_LEAK`, `E_inject` is reliably at the
+    **fixed front-anchored offset** (col 7, right after `ULW`), which is what
+    the fixed test asserts. General lesson reinforced: locate a channel by
+    its own guaranteed-write-order position, not by an inherited assumption
+    about what else is last.
+  - **Full regression:** 5/5 (`_run_energy_tests.py` default set) and
+    16/16 in the exact adr52-then-recorder ordering that caught the P1 bug;
+    `_verify_explicit.py` 20/22 unchanged (same 2 pre-existing failures).

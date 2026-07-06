@@ -81,6 +81,7 @@ public:
     int getNumDOF();
 
     // methods dealing with committed state and update
+    int commitState();   // Ladruno (ADR-69 P1.5): publish the base-action injection leak
     int revertToLastCommit();
 
     // methods to return the current linearized stiffness,
@@ -201,6 +202,22 @@ private:
     TimeSeries* m_tsx = nullptr;
     TimeSeries* m_tsy = nullptr;
     TimeSeries* m_tsz = nullptr;
+
+    // Ladruno (ADR-69 P1.5): base-action (compliant-base) incident-injection
+    // leak publisher state. addBaseActions() is a pure external source term
+    // (time-series velocity * fixed coefficients, mutually exclusive with
+    // the lateral free-field mechanisms addRff/addRffToSoil which both
+    // return early when m_boundary & BND_BOTTOM) that pollutes the recorder's
+    // raw IE integral exactly like LysmerTriangle's injection. commitState()
+    // recomputes it (never reads a stateful member) and publishes the
+    // trapezoid-integrated leak to Ladruno::EnergyChannelRegistry. Per-rank
+    // diagnostic state - deliberately NOT serialized in send/recvSelf.
+    // NOTE: the lateral free-field boundary's own injection (addRffToSoil)
+    // is a SEPARATE, still-undocumented-here gap (P1.6+) - only the
+    // bottom compliant-base mechanism is covered.
+    double m_lkPrevRate = 0.0;
+    double m_lkLastTime = 0.0;
+    bool   m_lkSeeded = false;
 
 };
 
