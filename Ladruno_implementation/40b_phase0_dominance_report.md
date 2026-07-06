@@ -92,6 +92,38 @@ out to be fully scoped.
 5. **factor-vs-solve SOE scope** + ModifiedNewton scopes — before any rank-8 work.
 6. **Drop/park:** T1 (no authorizing lane), T2 (ceiling ~2%), T4/T5 (await their benches).
 
+## Addendum — MUMPS parallel lane (measured 2026-07-06, same day)
+
+Strong scaling of the implicit parallel path (`openseesmp`, hand-partitioned z-slabs, shared
+interface planes): fixed 5488-element LadrunoBrick + LadrunoJ2 block, 18 900 DOF, 8 Newton steps,
+`system Mumps` (auto ordering ICNTL7=7, matType 0, **uniform `-ICNTL14 2000`** — see the quirks
+ledger), `numberer ParallelRCM`. 16-logical-core box. Script:
+`Ladruno_files/testbed/perf/phase0/mumps_scaling.py`.
+
+| np | wall (s) | speedup | efficiency | rank-0 linearSolve share | rank-0 formTangent share |
+|----|----------|---------|------------|--------------------------|--------------------------|
+| 1  | 65.3 | 1.00× | 100% | 57% | 35% |
+| 2  | 38.1 | 1.71× | 86%  | 63% | 31% |
+| 4  | 28.2 | 2.32× | 58%  | 74% | 21% |
+| 8  | 33.0 | 1.98× | 25%  | 89% | 9%  |
+
+Tip displacement agrees across np to ~1e-15 relative (partition correct; MUMPS ordering roundoff
+only); all steps converged at every np.
+
+**Verdicts:**
+- **The implicit parallel path is solve-bound and gets MORE so with rank count** (57%→89%):
+  element assembly strong-scales near-ideally (23.1 s → 2.9 s ≈ 8×), the distributed
+  factorization does not — its wall *grows* past np=4 (20.7 → 29.2 s) as communication/fill
+  overhead overtakes the shrinking per-rank arithmetic on a 19k-DOF matrix.
+- **np=4 is the saturation point at this problem size** (2.32×, 58%); np=8 regresses. Bigger
+  matrices will push the knee outward, but the shape confirms ADR-40's framing: parallel speed
+  on the implicit path is a *solver* question, not an element-loop question — consistent with
+  the serial lane-B result and with rank 11's demand-gating (no ParMETIS work is justified by a
+  solver-bound profile at this scale).
+- ADR-30 relevance: numbering/partition quality affects the factorization the profiler bills as
+  `linearSolve`; any parallel-numberer claim must be re-measured against this baseline, at a
+  production problem size, before ranking.
+
 ## Implementation log
 - **2026-07-06 — first measured pass.** 5 lanes, 5 parallel agents, shipped binary, recipe +
   scripts preserved under `Ladruno_files/testbed/perf/phase0/`. h5 artifacts in session scratch
