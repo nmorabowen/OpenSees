@@ -80,7 +80,7 @@ LadrunoSolidShell::LadrunoSolidShell()
     connectedExternalNodes(8),
     materialPointers(0),
     formulation(Formulation::ANS), quadz(QuadZ::GAUSS),
-    nz(0), numGP(0),
+    nz(0), numGP(0), massType(0),
     alpha(NEAS), alphaCommit(NEAS),
     j0det(0.0), easBuilt(false),
     load(0), Ki(0)
@@ -98,12 +98,13 @@ LadrunoSolidShell::LadrunoSolidShell(int tag,
                                      int node1, int node2, int node3, int node4,
                                      int node5, int node6, int node7, int node8,
                                      NDMaterial &theMaterial,
-                                     int nzPts, QuadZ zQuad, Formulation form)
+                                     int nzPts, QuadZ zQuad, Formulation form,
+                                     int matype)
   : Element(tag, ELE_TAG_LadrunoSolidShell),
     connectedExternalNodes(8),
     materialPointers(0),
     formulation(form), quadz(zQuad),
-    nz(nzPts), numGP(4 * nzPts),
+    nz(nzPts), numGP(4 * nzPts), massType(matype),
     alpha(NEAS), alphaCommit(NEAS),
     j0det(0.0), easBuilt(false),
     load(0), Ki(0)
@@ -795,12 +796,34 @@ void LadrunoSolidShell::formInertiaTerms(int tangFlag)
       const double dm = rho * zw[l] * detJ;
 
       if (tangFlag == 1) {
-        for (int a = 0; a < 8; a++)
-          for (int b = 0; b < 8; b++) {
-            const double m = dm * N[a] * N[b];
+        if (massType == 1) {
+          // -lumped: row-sum diagonal m_a = rho * int N_a dV (sum_b N_b = 1
+          // absorbed) == HRZ on the trilinear shape; always positive. The
+          // explicit-path mass (ADR 66 G9): system Diagonal then carries the
+          // FULL element mass instead of the 8/27 the raw consistent diagonal
+          // holds, and the '-lump hrz'/'rowsum' pencil matches the runtime.
+          // The LadrunoBrick donor pattern (LadrunoBrick.cpp:767-773).  // Ladruno
+          for (int a = 0; a < 8; a++) {
+            const double m = dm * N[a];
             for (int k = 0; k < 3; k++)
-              mass(3 * a + k, 3 * b + k) += m;
+              mass(3 * a + k, 3 * a + k) += m;
           }
+        } else {
+          for (int a = 0; a < 8; a++)
+            for (int b = 0; b < 8; b++) {
+              const double m = dm * N[a] * N[b];
+              for (int k = 0; k < 3; k++)
+                mass(3 * a + k, 3 * b + k) += m;
+            }
+        }
+      } else if (massType == 1) {
+        // lumped inertial force: m_a * accel_a (nodal accel, matching the
+        // diagonal mass above)  // Ladruno
+        for (int a = 0; a < 8; a++) {
+          const Vector &aa = nodePointers[a]->getTrialAccel();
+          for (int k = 0; k < 3; k++)
+            resid(3 * a + k) += dm * N[a] * aa(k);
+        }
       } else {
         // inertial force: rho * N_a * (sum_b N_b * accel_b)
         double acc[3] = {0.0, 0.0, 0.0};
@@ -935,7 +958,8 @@ int LadrunoSolidShell::sendSelf(int commitTag, Channel &theChannel)
   idData(3) = static_cast<int>(formulation);
   idData(4) = (alphaM != 0.0 || betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0) ? 1 : 0;
   idData(5) = numGP;
-  idData(6) = 0;   // spare (schema slot)
+  idData(6) = massType;   // was the spare schema slot; 0 == consistent, so
+                          // pre-(-lumped) streams read back byte-compatibly  // Ladruno
 
   for (int i = 0; i < 8; i++)
     idData(7 + i) = connectedExternalNodes(i);
@@ -1005,15 +1029,17 @@ int LadrunoSolidShell::recvSelf(int commitTag, Channel &theChannel,
   // version-skewed record with numGP outside [4*NZ_MIN, 4*NZ_MAX] or a bad enum
   // would otherwise overflow the ID or mis-cast. Refuse the record.  // Ladruno
   if (nzNew < NZ_MIN || nzNew > NZ_MAX || numGPNew != 4 * nzNew ||
-      idData(2) < 0 || idData(2) > 1 || idData(3) < 0 || idData(3) > 1) {
+      idData(2) < 0 || idData(2) > 1 || idData(3) < 0 || idData(3) > 1 ||
+      idData(6) < 0 || idData(6) > 1) {
     opserr << "LadrunoSolidShell::recvSelf - element " << idData(0)
            << ": inconsistent stream (nz=" << nzNew << ", numGP=" << numGPNew
            << ", quadz=" << idData(2) << ", formulation=" << idData(3)
-           << ")\n";
+           << ", massType=" << idData(6) << ")\n";
     return -1;
   }
   quadz              = static_cast<QuadZ>(idData(2));
   formulation        = static_cast<Formulation>(idData(3));
+  massType           = idData(6);
 
   for (int i = 0; i < 8; i++)
     connectedExternalNodes(i) = idData(7 + i);
@@ -1101,6 +1127,7 @@ void LadrunoSolidShell::Print(OPS_Stream &s, int flag)
     s << "\"nz\": " << nz << ", ";
     s << "\"quadz\": \"" << (quadz == QuadZ::GAUSS ? "gauss" : "lobatto") << "\", ";
     s << "\"formulation\": \"" << (formulation == Formulation::ANS ? "ans" : "std") << "\", ";
+    s << "\"mass\": \"" << (massType == 1 ? "lumped" : "consistent") << "\", ";
     s << "\"material\": \"";
     if (haveMat) s << materialPointers[0]->getTag();
     s << "\"}";
@@ -1111,7 +1138,9 @@ void LadrunoSolidShell::Print(OPS_Stream &s, int flag)
   s << "  tag: " << this->getTag() << "\n";
   s << "  formulation: " << (formulation == Formulation::ANS ? "ans" : "std")
     << "   nz: " << nz << " ("
-    << (quadz == QuadZ::GAUSS ? "gauss" : "lobatto") << ")\n";
+    << (quadz == QuadZ::GAUSS ? "gauss" : "lobatto") << ")"
+    << "   mass: " << (massType == 1 ? "lumped (row-sum/HRZ)" : "consistent")
+    << "\n";
   s << "  connected nodes: " << connectedExternalNodes;
   if (haveMat)
     s << "  material: " << materialPointers[0]->getTag() << "\n";
