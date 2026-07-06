@@ -46,6 +46,7 @@
 #include <LinearSOE.h>
 #include <AnalysisModel.h>
 #include <IncrementalIntegrator.h>         // Ladruno (W1-E2, LNVD): base formUnbalance()
+#include <LadrunoEnergyChannels.h>         // Ladruno (ADR-69): LNVD dissipation channel
 #include <Vector.h>
 #include <Matrix.h>                        // Ladruno (W1-E2, consistent): M_bar publish
 #include <ID.h>
@@ -578,6 +579,7 @@ ExplicitBathe::ExplicitBathe(int classTag, double _p, int compute_critical_times
       // Ladruno (W1-E2): LNVD
       useLNVD(useLNVD_), alpha_flac(alpha_flac_), lastUnbalanceNorm(-1.0),
       committedUnbalanceNorm(-1.0),
+      lnvdStepEnergy(0.0), lnvdInSubStep2(false),   // Ladruno (ADR-69)
       // Ladruno (W1-E2): SMS (consistent requires sms)
       useSMS(useSMS_), useConsistent(useSMS_ && useConsistent_),
       dtTarget(dtTarget_), maxAddedMassFrac(maxAddedMassFrac_),
@@ -591,6 +593,12 @@ ExplicitBathe::ExplicitBathe(int classTag, double _p, int compute_critical_times
     q1 = (1.0 - 2.0*p) / (2.0*p*(1.0 - p));
     q2 = 0.5 - p * q1;
     q0 = -q1 - q2 + 0.5;
+
+    // Ladruno (ADR-69): make the LNVD dissipation column visible to any -v2
+    // EnergyBalanceRecorder initialized later (columns fix at first record).
+    if (useLNVD && alpha_flac > 0.0)
+        Ladruno::EnergyChannelRegistry::instance().declare(
+            Ladruno::EnergyChannelRegistry::LNVD_WORK);
 
     if (verbose) {
         opserr << "ExplicitBathe: p = " << p
@@ -841,12 +849,20 @@ void ExplicitBathe::addLocalDamping(void) {
     }
 
     // r_i <- r_i - alpha*|r_i|*sign(v_i)  (opposes motion, vanishes at v->0)
+    // Ladruno (ADR-69): the damping force -alpha*|r_i|*sgn(v_i) dissipates
+    // power alpha*|r_i|*|v_i| >= 0. Accumulate its work over this sub-step
+    // (sub-step 1 spans p*dt, sub-step 2 spans (1-p)*dt) into the per-step
+    // scratch; commit() publishes it (O(dt)-accurate diagnostic).
+    const double dtSub = lnvdInSubStep2 ? (1.0 - p) * deltaT : p * deltaT;
+    double lnvdPower = 0.0;
     Vector damped(B);
     for (int i = 0; i < n; ++i) {
         double v = vglob(i);
         double sgn = (v > 0.0) ? 1.0 : ((v < 0.0) ? -1.0 : 0.0);
         damped(i) = B(i) - alpha_flac * std::abs(B(i)) * sgn;
+        lnvdPower += alpha_flac * std::abs(B(i)) * std::abs(v);   // Ladruno (ADR-69)
     }
+    lnvdStepEnergy += lnvdPower * dtSub;   // Ladruno (ADR-69)
     theSOE->setB(damped);
 }
 
@@ -996,6 +1012,11 @@ int ExplicitBathe::domainChanged() {
 // Advance to a new time step (first Noh-Bathe sub-step: t -> t + p*dt)
 int ExplicitBathe::newStep(double _deltaT) {
     deltaT = _deltaT;
+
+    // Ladruno (ADR-69): fresh per-step LNVD dissipation scratch. A failed /
+    // reverted step re-enters here, so its partial work is never published.
+    lnvdStepEnergy = 0.0;
+    lnvdInSubStep2 = false;
 
     if (!U_t || !V_t || !A_t) {
         opserr << "ExplicitBathe::newStep() - state variables not initialized\n";
@@ -1232,10 +1253,13 @@ int ExplicitBathe::update(const Vector &U) {
     // ignored, leaving the SOE's X holding the sub-step-1 solution -> A_tdt would
     // alias A_tpdt (finite, so the NaN breaker can't catch it). Failing the step
     // lets the analysis revert (composes with revertToLastStep).
+    lnvdInSubStep2 = true;   // Ladruno (ADR-69): attribute (1-p)*dt to this firing
     if (this->formUnbalance() < 0) {
+        lnvdInSubStep2 = false;
         opserr << "ExplicitBathe::update() - sub-step-2 formUnbalance failed\n";
         return -7;
     }
+    lnvdInSubStep2 = false;  // Ladruno (ADR-69)
     if (theLinSOE->solve() < 0) {
         opserr << "ExplicitBathe::update() - sub-step-2 SOE solve failed\n";
         return -7;
@@ -1395,6 +1419,15 @@ int ExplicitBathe::commit() {
                 nodePtr->setProjectionTieForce(tf);
             }
         }
+    }
+
+    // Ladruno (ADR-69): publish this step's LNVD dissipation BEFORE the domain
+    // commit (recorders fire inside commitDomain and read the registry there).
+    // Zero the scratch after publishing so a repeated commit cannot re-count.
+    if (useLNVD && lnvdStepEnergy != 0.0) {
+        Ladruno::EnergyChannelRegistry::instance().addEnergy(
+            Ladruno::EnergyChannelRegistry::LNVD_WORK, lnvdStepEnergy);
+        lnvdStepEnergy = 0.0;
     }
 
     // Commit the Domain FIRST; only then advance the cross-step state vectors
