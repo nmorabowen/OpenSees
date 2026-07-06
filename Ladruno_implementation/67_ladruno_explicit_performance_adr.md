@@ -270,3 +270,30 @@ Recorded so this ADR is self-contained; **not** owned here:
   `CentralDifferenceLadruno.cpp:119`) — so there is no "initial-stiffness `-recompute`" path to
   special-case (this is why the original P1.2 was dropped). Any future skip that *does* touch
   the tangent-recompute path must gate on `!cflUseTangent`.
+
+## Implementation log
+
+- **2026-07-06 — lane-D drill-down closes the 40b Finding-3 items and adds ONE new design item
+  ([[40b_phase0_dominance_report]] §lane-D addendum has the numbers).**
+  - **P-NEW-1 (recipe, SHIPPED as documentation): `algorithm Linear -factorOnce` on plain
+    constant-M fixed-Δt explicit runs.** The per-step tangent reassembly (16.2% of explicit
+    wall) is vanilla `Linear` re-forming the constant lumped-mass effective tangent; the vanilla
+    `-factorOnce` flag skips it. Measured live-wave A/B: **−17.9% wall, md5-bit-identical**
+    (G-BYTE). HAZARD (quirks ledger): no domainChanged reset — never combine with `-reemit`
+    contact / element removal / staged activation / variable Δt. A robust integrator-side
+    tangent cache with domainChanged+Δt invalidation is the follow-up if those combinations
+    ever need the win.
+  - **P-NEW-2 (design item, NOT authorized): skip the second constitutive pass in
+    `CentralDifferenceLadruno::update()`.** The step runs `updateDomain()` twice —
+    `newStep` (trial advance; the real state determination) and `update()`
+    (`:654-655`, full-step (u,v,a) snapshot push at **unchanged displacement**). For
+    rate-independent materials the second pass recomputes identical constitutive state:
+    **~22% of explicit wall**. A skip must gate on rate-dependence / velocity consumers
+    (element damping reads v, LNVD publishes from the residual path, recorders read committed
+    state) — G-BYTE only under a proven "no consumer of the second pass" condition. Scope as
+    its own item with an adversarial gate before any code; combined ceiling with P-NEW-1
+    ≈35-40% of the explicit step.
+  - **newStep is exonerated:** its 22.5% is the leap-frog trial-state constitutive pass
+    (elem.update 5.63 µs/ele), not integrator overhead. With full attribution the explicit lane
+    is **~89% element work** — rank-7 threading (ADR-40) owns the big lever, this ADR owns the
+    two items above.

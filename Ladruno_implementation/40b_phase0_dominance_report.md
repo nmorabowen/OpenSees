@@ -92,6 +92,42 @@ out to be fully scoped.
 5. **factor-vs-solve SOE scope** + ModifiedNewton scopes — before any rank-8 work.
 6. **Drop/park:** T1 (no authorizing lane), T2 (ceiling ~2%), T4/T5 (await their benches).
 
+## Addendum — lane-D CDL drill-down: both Finding-3 items RESOLVED (2026-07-06, same day)
+
+Re-measured on the `elem.update`-instrumented build with a **live wave** (the original lane-D
+pulse was shorter than one Δt — the Path series sampled zero forever and the model never moved;
+`laneD_model.py` fixed; cost *structure* conclusions unchanged, per-µs numbers below supersede).
+Full attribution of the explicit step (2500 steps, 1000 LadrunoBrick + J2, 79.9 s):
+
+| phase | wall | of which element (classTag 33002) |
+|---|---|---|
+| newStep | 18.0 s (22.5%) | **elem.update 14.6 s — 5.63 µs/ele** |
+| formTangent | 12.9 s (16.2%) | elem.tangent 11.0 s — 4.41 µs/ele |
+| formUnbalance | 28.0 s (35.1%) | elem.residual 26.0 s — 10.39 µs/ele |
+| update | 18.7 s (23.4%) | **elem.update 16.5 s — 6.59 µs/ele** |
+| linearSolve | 0.02 s (~0%) | — |
+
+**Element work totals ~89% of the explicit step** once fully attributed (rank 7's >40% gate is
+passed with enormous margin).
+
+- **Finding-3 item 2 RESOLVED (newStep 23.9%):** it is element state determination —
+  `newStep` advances the leap-frog trial state and calls `updateDomain()` (the constitutive
+  pass), now attributed at 5.63 µs/ele. **Not integrator waste; nothing to fix.**
+- **Finding-3 item 1 RESOLVED (per-step tangent forms, 16.2%):** the constant lumped-mass
+  effective tangent is reassembled every step by plain `algorithm Linear`. **The fix is the
+  vanilla `-factorOnce` flag — zero code.** Measured live-wave A/B: **79.9 → 65.6 s (−17.9%),
+  bit-for-bit identical results** (md5 over the full displacement field). Caveats (quirks
+  ledger): constant M + fixed Δt only, and a mid-run `domainChanged` (contact re-emission
+  ADR-60, element removal ADR-51) leaves the skipped tangent stale — do not combine.
+- **NEW (feeds [[67_ladruno_explicit_performance_adr]]):** the explicit step runs the full
+  constitutive pass **twice** — `newStep` (trial advance) and `update()`
+  (`CentralDifferenceLadruno.cpp:654-655` pushes the full-step (u,v,a) snapshot and calls
+  `updateDomain()` again **at unchanged displacement**). For rate-independent materials the
+  second pass recomputes identical state — **~22% of explicit wall**. A skip needs a
+  rate-dependence / velocity-consumer gate (element damping, LNVD, recorders read the committed
+  v) — a scoped ADR-67 design item, NOT a quick patch. Ceiling if it lands: with `-factorOnce`
+  already in, the two together would cut ~35-40% of the explicit step.
+
 ## Addendum — `elem.update` scope built + frame lanes re-measured (2026-07-06, same day)
 
 The Finding-1 instrument now exists: `Domain::update(void)`'s element loop carries a deep
