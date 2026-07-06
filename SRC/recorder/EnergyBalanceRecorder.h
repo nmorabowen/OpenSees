@@ -93,6 +93,14 @@
 // to v1. NOTE: E_inject covers LysmerTriangle only for now — ASDAbsorbing
 // Boundary2D/3D injection still pollutes IE (warned at initialize; ADR-69
 // P1.5).
+//
+// -v2 COLUMN LAYOUT REFLECTS PROCESS HISTORY, not just the current model:
+// channel declarations are process-sticky (monotone, no reset on wipe — the
+// recorder baselines energy DELTAS so totals never corrupt a later model,
+// but the declared set only grows). In a multi-model interpreter session a
+// later -v2 recorder shows a benign all-zero column for any channel a
+// previous model declared (e.g. E_inject after an earlier Lysmer model).
+// Parse -v2 output by the echoed/XML column names, never by position.
 
 
 

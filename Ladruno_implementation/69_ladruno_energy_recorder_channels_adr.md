@@ -473,3 +473,15 @@ when done)*
     ≥5×); `_verify_explicit.py` 20/22 — the two failures (`dt_cr = −1`)
     reproduce EXACTLY on the pre-change main-checkout pyd → pre-existing
     environment issue, not this change.
+- **2026-07-06 adversarial review (Opus 4.8, pre-push): NO CRITICAL/HIGH.**
+  Verified independently: legacy byte-identity PASS (accumulation order,
+  sizing, XML tags, echo, region offset algebra); RES algebra PASS (L cancels
+  exactly, `RES_v2 = RES_v1 − D_lnvd`); producer lifecycles PASS (dt≤0 /
+  revert / double-commit / recvSelf reseed; `updateCount` guard prevents the
+  non-Linear-algorithm sub-step-1 over-count from ever publishing). Findings:
+  MED-1 process-sticky column layout → user-facing doc added to the recorder
+  header ("parse by column names, never by position"); LOW-1 pytest
+  definition-order dependency (accepted, noted in the test file); LOW-2
+  static-stage pseudo-time leak integration (moot — loader inactive at
+  gravity, rate = 0); NIT-1 channels declared after first record correct IE/
+  RES but emit no column (correct-but-quiet, normal flow unaffected).
