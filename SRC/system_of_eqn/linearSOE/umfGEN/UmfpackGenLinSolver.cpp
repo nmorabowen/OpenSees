@@ -43,7 +43,14 @@
 void* OPS_UmfpackGenLinSolver()
 {
     bool useLongIndices = false;
-    if (OPS_GetNumRemainingInputArgs() > 0) {
+    // Ladruno (ADR-40 rank 2): expose UMFPACK strategy + pivot tolerance.
+    // Default strategy AUTO (was hardcoded SYMMETRIC — mis-orders unsymmetric
+    // tangents, e.g. LadrunoConcrete3D); default pivotTol keeps the legacy 1.0
+    // (maximal-threshold partial pivoting). Legacy behavior is exactly
+    //   system UmfPack -strategy symmetric -pivotTol 1.0
+    int strategy = UMFPACK_STRATEGY_AUTO;
+    double pivotTol = 1.0;
+    while (OPS_GetNumRemainingInputArgs() > 0) {
         const char *opt = OPS_GetString();
         if (opt == nullptr) {
             opt = "";
@@ -51,21 +58,47 @@ void* OPS_UmfpackGenLinSolver()
         if (strcmp(opt, "useLongIndices") == 0 ||
             strcmp(opt, "-useLongIndices") == 0) {
             useLongIndices = true;
+        } else if (strcmp(opt, "-strategy") == 0) {
+            if (OPS_GetNumRemainingInputArgs() < 1) {
+                opserr << "WARNING UmfpackGenLinSolver: -strategy requires auto|symmetric|unsymmetric\n";
+                return nullptr;
+            }
+            const char *s = OPS_GetString();
+            if (s == nullptr) s = "";
+            if (strcmp(s, "auto") == 0) {
+                strategy = UMFPACK_STRATEGY_AUTO;
+            } else if (strcmp(s, "symmetric") == 0) {
+                strategy = UMFPACK_STRATEGY_SYMMETRIC;
+            } else if (strcmp(s, "unsymmetric") == 0) {
+                strategy = UMFPACK_STRATEGY_UNSYMMETRIC;
+            } else {
+                opserr << "WARNING UmfpackGenLinSolver: unknown -strategy \"" << s
+                       << "\" (expected auto|symmetric|unsymmetric)\n";
+                return nullptr;
+            }
+        } else if (strcmp(opt, "-pivotTol") == 0) {
+            int numData = 1;
+            if (OPS_GetDoubleInput(&numData, &pivotTol) != 0) {
+                opserr << "WARNING UmfpackGenLinSolver: -pivotTol requires a float\n";
+                return nullptr;
+            }
         } else {
             opserr << "WARNING UmfpackGenLinSolver: unknown option \"" << opt
-                   << "\" (expected useLongIndices or -useLongIndices)\n";
+                   << "\" (expected useLongIndices, -strategy, or -pivotTol)\n";
             return nullptr;
         }
     }
 
-    UmfpackGenLinSolver *theSolver = new UmfpackGenLinSolver(useLongIndices);
+    UmfpackGenLinSolver *theSolver = new UmfpackGenLinSolver(useLongIndices, strategy, pivotTol);
     return new UmfpackGenLinSOE(*theSolver);
 }
 
 UmfpackGenLinSolver::
-UmfpackGenLinSolver(bool useLongIndices)
+UmfpackGenLinSolver(bool useLongIndices, int strategy, double pivotTol)
     : LinearSOESolver(SOLVER_TAGS_UmfpackGenLinSolver),
       useLongIndices(useLongIndices),
+      strategy(strategy),      // Ladruno (ADR-40 rank 2)
+      pivotTol(pivotTol),      // Ladruno (ADR-40 rank 2)
       Symbolic(0),
       theSOE(0)
 {
@@ -202,8 +235,8 @@ UmfpackGenLinSolver::setSize()
 #ifdef _UMFPACK_DLONG
         // set default control parameters
         umfpack_dl_defaults(Control);
-        Control[UMFPACK_PIVOT_TOLERANCE] = 1.0;
-        Control[UMFPACK_STRATEGY] = UMFPACK_STRATEGY_SYMMETRIC;
+        Control[UMFPACK_PIVOT_TOLERANCE] = pivotTol;   // Ladruno (ADR-40 rank 2): was hardcoded 1.0
+        Control[UMFPACK_STRATEGY] = strategy;          // Ladruno (ADR-40 rank 2): was hardcoded SYMMETRIC
 
         syncIndexBuffers();
         SuiteSparse_long *Ap = Ap64.data();
@@ -230,8 +263,8 @@ UmfpackGenLinSolver::setSize()
     } else {
         // set default control parameters
         umfpack_di_defaults(Control);
-        Control[UMFPACK_PIVOT_TOLERANCE] = 1.0;
-        Control[UMFPACK_STRATEGY] = UMFPACK_STRATEGY_SYMMETRIC;
+        Control[UMFPACK_PIVOT_TOLERANCE] = pivotTol;   // Ladruno (ADR-40 rank 2): was hardcoded 1.0
+        Control[UMFPACK_STRATEGY] = strategy;          // Ladruno (ADR-40 rank 2): was hardcoded SYMMETRIC
 
         int *Ap = theSOE->Ap.data();
         int *Ai = theSOE->Ai.data();

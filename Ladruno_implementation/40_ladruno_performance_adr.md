@@ -94,7 +94,18 @@ remaining panel-sourced lines to be confirmed as each clears Phase 0):
   Newton `maxIt=25` (`:304`) × inner 3D scalar return `maxIter=50` (`LadrunoJ2Kernel.h:224`) →
   worst-case ~1250 scalar steps + a full 6×6 rebuilt every outer sweep; `condenseTangent`.
 - **OpenMP (rank 7):** `CMakeLists.txt` (`find_package(OpenMP)`), the element residual loop, `SRC/graph`
-  (coloring, phase 2). Gated on rank 4 (race removed) + the OpenMP-safety open question.
+  (coloring, phase 2). Gated on rank 4 (race removed) + the OpenMP-safety open question. **Scope
+  correction (2026-07-05):** rank 4 (de-static `LadrunoBrick`) is **necessary but far from
+  sufficient**. The *assembly layer itself* shares class-wide static scratch: `FE_Element`
+  (`FE_Element.h:132-133`, `static Matrix **theMatrices / static Vector **theVectors`) and
+  `DOF_Group` (`DOF_Group.h:150-151`) hold pools keyed by DOF size, **shared across all
+  instances of the same size** — so `FE_Element::getResidual/getTangent` races under a threaded
+  element loop even on a pure-`LadrunoBrick` mesh with rank 4 done. On top of that, file-scope
+  static work matrices are the norm across the vanilla element library (`FourNodeQuad.h:121`
+  `static Matrix K`, etc.). A private-buffer reduction fixes only the global `addB` scatter, not
+  these per-class internal workspaces. Rank 7 must therefore either (a) restrict to a verified
+  race-free element set, or (b) carry an assembly-layer + per-element-type de-static audit —
+  that audit, not rank 4, is the true predecessor.
 - **Solver reuse (ranks 8, 10):** UMFPACK **already retains** the `Symbolic` handle across solves
   (member, ctor `Symbolic(0)` at `UmfpackGenLinSolver.cpp:69`, freed only in setSize/dtor) — symbolic
   analysis is **not** the per-solve waste. The waste: the `Numeric` handle is allocated AND freed on
@@ -180,7 +191,7 @@ Two instruments, both reusing what ships:
 | P5 | **One** OpenMP element-loop work item, explicit diagonal path first | Three lenses proposed the same work; the explicit diagonal SOE needs no graph coloring (exact per-thread reduction) | Implicit colored-scatter deferred to phase-2.5; auto-disable below an element-count threshold |
 | P6 | Numeric-factor reuse drives off the **SOE `factored` flag**, not a new algorithm-level flag | The in-tree MUMPS job=3 pattern is the reference; an invented flag risks solving against a stale LU | Scope to ModifiedNewton/InitialStiffness first; guard that A was untouched |
 | P7 | **Defer the ParMETIS/HPC stack** until scaling benches prove a production-scale bottleneck | ADR 30's own gate: nothing changes for today's 66k–1M-DOF runs; ParMETIS is a heavy cross-platform bet that does not touch per-step cost | Rank 11's two halves have **distinct triggers** (ParMETIS partitioning gated on `DomainPartitioner` serial-METIS-on-rank-0; the parallel numberer on ADR-30's measured numbering term) and can land independently — inherit the gate **by reference** to [[30_ladruno_parallel_numberer_adr]], do not copy its numbers here |
-| P8 | Each cleared item spawns its **own sub-ADR** with a validation plan | Matches the fork's per-feature ADR + tiered-test discipline | This ADR is the umbrella; sub-ADRs carry the implementation detail |
+| P8 | Each cleared item spawns its **own sub-ADR** with a validation plan | Matches the fork's per-feature ADR + tiered-test discipline | This ADR is the umbrella; sub-ADRs carry the implementation detail. **First spawned: [[68_ladruno_state_determination_perf_adr]]** — the element/state-determination OPTIMIZE design (ranks 4/5/6 + the §3-40a cost centers), Phase-0-gated, carrying the per-kernel byte-identical-vs-equivalence gate taxonomy |
 | P9 | **RCM/AMD numbering** cuts `BandGeneral/BandSPD/ProfileSPD` bandwidth/profile cost; **~neutral** for UMFPACK/MUMPS (internal reorder) | The numberer choice and the rank-2 UMFPACK STRATEGY fix address **different solver families** and must not be conflated; orthogonal to the *parallel* numberer in [[30_ladruno_parallel_numberer_adr]] (distributed-setup Amdahl term) — do not merge | Item 3b is bench hygiene (default is already RCM; the bench downgrades to Plain), not a code lever; whether AMD beats the RCM default on the fiber-frame bench is an open measurement |
 
 ## Risks / open questions
@@ -234,6 +245,12 @@ Two instruments, both reusing what ships:
 > [!question] **OpenMP safety:** are all Ladruno materials' `setTrialStrain`/commit state
 > strictly per-Gauss-point (specifically `LadrunoConcrete3D` history variables), or is there
 > shared mutable state beyond the identified brick function-local static scratch (rank 4)?
+> **This question is broader than first framed** (2026-07-05): the blocking shared state is not
+> only in Ladruno materials but in the **assembly layer** (`FE_Element`/`DOF_Group` class-wide
+> static matrix/vector pools, `FE_Element.h:132-133`, `DOF_Group.h:150-151`) and in the
+> **vanilla element library**'s file-scope static work matrices — both race under a threaded
+> element loop independent of any Ladruno code. Answering "is the loop thread-safe" requires an
+> audit of the assembly layer + every element type present, not just the Ladruno materials.
 
 > [!question] **Cross-tool ratio:** what is the actual fork-vs-Abaqus (and fork-vs-stock)
 > ratio per model class? The fork-vs-stock arm runs now; the Abaqus arm is license-deferred.
@@ -299,6 +316,17 @@ Per-rank grounding is curated in the `opensees-performance` skill →
   per-GP return map) — the latter a conditional far-future vectorization-track extension, gated on Phase-0
   dominance + roofline + ranks 5–6, with GPU contact out (no general contact; anti-goal regime). Raised by
   the maintainer's question about GPU for material iterations / contact.
+
+- **2026-07-06 — Phase-0 FIRST MEASURED PASS → [[40b_phase0_dominance_report]].** Five lanes
+  profiled with the shipped profiler on the existing binary (zero rebuild). Dominance is per-lane:
+  fiber frame = `update` 64.5% (force-based interior — INVISIBLE to per-classTag buckets);
+  3D solid J2 = **UmfPack solve 66.4%** (rank 2 PROMOTED); plate-fiber shell = element 55.9% but
+  J2 condensation ceiling ≈2% (ADR-68 T2 DEMOTED); explicit CDL = element 48.9% (**rank-7 gate
+  PASSED**; "explicit path unscoped" REFUTED — 99.9% closure; two NEW integrator costs found:
+  per-step tangent forms 15.6% + newStep 23.9%); IMK = hinge Newton hides in opaque `update`
+  (ADR-40a §3.2 confirmed by measurement). **Revised #1 scope gap: `Element::update()` needs a
+  per-classTag `elem.update` bucket** — ahead of the ModifiedNewton + factor-vs-solve gaps listed
+  above. Verdict table + next actions in 40b.
 
 *(filled in as items execute; per-item detail moves to its sub-ADR and to
 `Ladruno_internal/` on completion.)*
