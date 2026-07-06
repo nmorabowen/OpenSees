@@ -1,7 +1,7 @@
 ---
 title: ZFP compression for the Ladruno recorder — feasibility & gains assessment
 project: Ladruno
-status: research
+status: decided — REJECTED (benchmark 2026-07-06, see Implementation log)
 priority: medium
 owner: nmora
 tags:
@@ -38,24 +38,19 @@ LLNL **H5Z-ZFP** HDF5 filter (filter id `32013`). But three facts reshape the de
    present (`pip install hdf5plugin`). The recorder's whole reason to exist is to be read by
    that Python tooling. `-precision f32` has none of this problem (native f32 reads everywhere).
 
-**Where we land (2026-05-31):** a **qualified yes — but not built yet**. The case *for* is
-solid: it's an **opt-in flag, not a new recorder** (sibling to `-precision f32`); performance is
-*favorable* not a trade (ZFP is ~20–60× faster than the gzip stage it replaces → tends to be
-faster **and** smaller); and the read-side plugin dependency — the one real downside — is
-**accepted** (see [§Resolved](#risks--open-questions)). The case for *waiting*: the cheap 2× is
-**already banked** by `f32+gzip` at zero cost, ZFP's *marginal* gain on the **current frozen
-layout** is only **~1.5–3×**, the headline 3–6× needs a `FORMAT_VERSION` v2, and there's real
-correctness (NaN/Inf) + Windows-build work. The magnitude is uncertain and that uncertainty lives
-entirely in *our data + layout*.
-
-**Move:** run the [benchmark](#benchmark-do-this-first) **before** any C++ — and it needs **zero
-recorder code / zero build risk** (re-encode an existing f64 `.h5` run's `DATA` arrays in Python
-via `hdf5plugin`'s ZFP at a few tolerances; measure size + error vs the f64 oracle). That
-half-day offline spike answers the one number the whole decision hinges on. If ZFP beats
-`f32+gzip` by ≳2× at acceptable error → implement the `-compression zfp` flag (fixed-accuracy
-default, per-quantity tolerance, NaN/Inf-guarded, never default-on). If <1.5× → the frozen layout
-is the bottleneck; stick with `f32+gzip` until/unless schema v2 is on the table. **Decision
-deferred until the benchmark runs.**
+**Where we land (2026-07-06, superseding the 2026-05-31 "qualified yes"): REJECTED.**
+The [benchmark](#benchmark-do-this-first) ran (harness + inputs in
+`Ladruno_scripts/zfp_benchmark/`, adversarially reviewed before interpretation) and the answer
+is unambiguous: **no ZFP configuration beats `f32+shuffle+gzip` at matched fidelity — on the
+frozen layout OR on ZFP's preferred component-separated/time-major layout.** Best
+fidelity-matched marginal: **0.65×** (current layout) / **0.97×** (schema-v2 layout) — a 3×
+shortfall against the ≥2× adopt bar, consistent across three models spanning ZFP's optimistic
+case (smooth 3D wave field) to its pessimistic one (fiber hysteresis, where `f32+gzip` hits
+~13:1 and ZFP is 4–8× *bigger*). ZFP-reversible *expands* past raw f64 on all three models.
+SZ3 also loses everywhere it was measured. Even the decision rule's fallback presumption died:
+the frozen interleaved layout is *favorable* to the shipped codec, so there is **no
+compression-motivated FORMAT_VERSION v2** — the question is closed, not deferred. Full numbers,
+eight mandatory caveats, and reopening criteria in the [Implementation log](#implementation-log).
 
 ---
 
@@ -151,9 +146,23 @@ ZFP rides the exact rails `-precision f32` already proved; no new recorder, clas
   compression picks the *filter* (none/gzip/zfp). `-precision f32 -compression zfp` = ZFP over
   f32; `-precision f64 -compression zfp:accuracy=1e-6` = error-bounded ZFP over doubles. ZFP
   handles both single and double.
-- Applies only to the per-step `DATA` arrays — envelopes/coords/metadata untouched, same as f32.
-- More than f32 needed: richer flag parsing (mode + tolerance) and a NaN/Inf guard / reversible
-  fallback for lossy modes.
+- **Scope (updated 2026-07-06 — three exclusions, all structural):**
+  - Applies only to the chunked per-step `DATA` time-series (the `createTimeSeries3d` path) —
+    coords/metadata untouched, same as f32.
+  - **Envelope mode: force-disabled, mirroring f32.** Since this doc was written, `-precision f32`
+    is force-disabled in envelope mode with a warning (`LadrunoRecorder.cpp` ~L530 — envelope
+    datasets are always f64). `-compression zfp` MUST adopt the same contract: envelope mode →
+    warn + stamp `COMPRESSION=none`. Structurally right anyway: `EnvelopeSink` delete-recreates
+    its small leaf datasets on every periodic flush — worst-possible fit for a per-chunk codec.
+  - **Modal/eigen output: excluded by construction.** The eigen fix (post-doc) made
+    `recordModeChannel` bypass the sink entirely — modal `DATA` is a *group* of small contiguous
+    `MODE_<k>` datasets (no dcpl, no filters, `LadrunoRecorder.cpp` ~L1823). ZFP never touches it.
+  - **Monitor sink: MUST stay filter-free.** `LadrunoMonitorRecorder`/`LadrunoMonitorSink`
+    (#485/#487, post-doc) is a separate SWMR live-tail file whose datasets are chunked but
+    deliberately uncompressed — `profiler_monitor.py` and the `monitor_viewer` dashboard tail it
+    with plain h5py, no install. Do NOT wire `-compression` through it "for consistency"; that
+    would break the live-monitoring story.
+- More than f32 needed: richer flag parsing (mode + tolerance) and the NaN/Inf guard below.
 
 ## Dependencies — write side compiles it, read side pip-installs it
 
@@ -235,7 +244,11 @@ correctness guard — both bounded, known-shape work.
 ## Benchmark (do this first)
 
 Before any integration, settle the *marginal* gain empirically on 2–3 representative models
-(a nonlinear transient with many steps; a fiber-section element history; a large nodal field):
+(a nonlinear transient with many steps; a fiber-section element history; a large nodal field).
+**Input files are free (2026-07-06):** the regression battery
+(`Ladruno_scripts/ladruno_recorder_tests/run_regression.bat`, 19 gates) already produces real
+`.ladruno` files from real models — the re-encode spike consumes those (or files freshly written
+by the *installed* Ladruno build via the venv) instead of inventing fixtures. Configs:
 
 1. `f64 + shuffle + gzip(4)`  ← current lossless baseline
 2. `f32 + shuffle + gzip(4)`  ← current lossy baseline (the real thing to beat)
@@ -256,9 +269,12 @@ plugin dependency for our users.
 > `pip install hdf5plugin`.) The benchmark still gates whether the marginal gain over `f32+gzip`
 > justifies adoption.
 
-> [!question]
-> Can result `DATA` ever contain NaN/Inf (diverged steps)? If yes, the lossy path must scrub or
-> fall back to reversible — confirm before shipping lossy-by-default anything.
+> [!check] DECIDED (2026-07-06) — NaN/Inf guard is a requirement, not an open question.
+> The recorder only records on commit, but a falsely-converged step can still carry non-finite
+> values, and one sentinel poisons its whole 4ᵈ ZFP block (UB in lossy modes). Since ZFP runs at
+> ~1–2 GB/s, a per-slab `std::isfinite` scan before compress is noise. Requirement: **scan each
+> slab; on any non-finite value, warn once per dataset + fall back to reversible mode for that
+> dataset.** No scrubbing (never rewrite user data).
 
 > [!question]
 > Do we accept the frozen-layout ratio ceiling, or is a v2 component-separated/time-major schema
@@ -274,4 +290,78 @@ Codebase refs: `SRC/recorder/Ladruno_Hdf5.h`, `Ladruno_Sinks.cpp`, `LadrunoRecor
 
 ## Implementation log
 
-*(empty — research phase)*
+### 2026-07-06 — benchmark ran; DECISION: REJECT `-compression zfp` (and SZ3)
+
+**Harness:** `Ladruno_scripts/zfp_benchmark/` (`reencode_bench.py` + three model
+generators + `check_inputs.py` yield gate + `results.json`). Zero recorder code — re-encodes
+the f64 `DATA` arrays of real `.ladruno` files (written by the installed build) under 16
+configs. Methodology was **adversarially reviewed (Opus 4.8) before any result was
+interpreted**; the review caught and we fixed three blockers: (1) the f32 baseline must be
+re-encoded with *recorder-true* chunking (chunk budget is in on-disk bytes —
+`Ladruno_Hdf5.h::chunkSlabsPerBlock` — so real f32 chunks span 2× the time-slabs of f64;
+copying f64 chunk geometry under-measures the baseline and inflates ZFP's margin on exactly
+the gate metric); (2) the time-major layout prototype needs gzip controls (full 2×2
+codec×layout matrix) or layout-vs-codec is unattributable; (3) the gate must be per-family
+worst-case, not aggregate, so one big smooth nodal field can't mask element-history losses.
+
+**Inputs** (all gated by `check_inputs.py`): **A** nonlinear J2 2D plate, *broadband*
+random-phase 0.5–25 Hz load, 3000 steps, yielded (191.8 MB raw); **B** RC fiber column
+(dispBeamColumn 8×3 IP, Concrete02+Steel02), cyclic to ductility ≈1.1, 2000 steps
+(199.0 MB raw — fiber stress/strain are 756-column datasets); **C** 3D elastic brick
+Ricker wave field, 2601 nodes, 600 steps (112.4 MB raw) — ZFP's optimistic case.
+
+**Result — marginal ratio vs `f32+shuffle+gzip(4)` (>1 = smaller than baseline; adopt bar
+was ≥2×), "aggregate | worst-family":**
+
+| Config | A | B (fiber) | C |
+|---|---|---|---|
+| baseline `f32_gzip4` (abs) | 0.300× raw, rangerel 5.5e-8 | **0.077× raw (13:1)** | 0.187× raw |
+| ZFP acc 1e-6, frozen layout | 0.63 \| 0.21 | 0.22 \| 0.14 | 0.56 \| 0.42 |
+| ZFP **f32-matched** (rr 5.5e-8), frozen | 0.65 \| 0.32 | 0.18 \| 0.17 | 0.47 \| 0.46 |
+| ZFP f32-matched, **time-major (v2)** | 0.97 \| 0.71 | 0.20 \| 0.17 | 0.68 \| 0.62 |
+| ZFP rr 1e-6, time-major | 1.23 \| **0.85** | 0.24 \| 0.21 | 0.86 \| 0.75 |
+| ZFP reversible | 0.26 (1.17× raw!) | 0.07 | 0.17 |
+| SZ3 abs 1e-6 | 0.57 \| 0.30 | 0.47 \| 0.29 | 0.55 \| 0.33 |
+| `f32_gzip4` on time-major layout | 0.76 | 0.20 | 0.87 |
+
+**Grounds for REJECT:** (1) at f32-matched fidelity on the shipped layout ZFP's best is
+0.65× — a 3× shortfall vs the adopt bar; (2) even granting a FORMAT_VERSION v2 layout AND
+oracle-assisted per-quantity tolerances, best f32-matched is 0.97× — still a loss, so
+**v2-for-compression is closed permanently** (the "<1.5× ⇒ layout is the bottleneck"
+presumption is *refuted*: ZFP loses on its preferred layout too, and the interleaved frozen
+layout is actively favorable to shuffle+gzip — decisively so for fiber families, where
+cross-fiber byte redundancy gives gzip ~13:1 and component separation destroys it); (3) at
+every reachable size point, `f32+gzip` offers equal-or-better worst-case range-relative
+error in a smaller file — there is no error-size operating point where ZFP dominates; (4)
+the sole >1 aggregate (1.23×, one model, 5–7× worse realized error, v2 required) fails its
+own worst-family gate at 0.85×.
+
+**Mandatory caveats (from the results-interpretation adversarial pass, all
+verdict-preserving):**
+1. *rr floor:* ZFP's power-of-2 tolerance flooring made rr=5.5e-8 rows realize ~1e-8
+   rangerel (4–5× better than f32); interpolated true-fidelity-matched ≈ 0.72–0.75×
+   (frozen) / ~1.05× (tm) — still decisive losses.
+2. *Oracle-assisted rr:* per-dataset tol used the posterior whole-run max, which a
+   streaming appender can't know — the benchmark bounds real per-quantity plumbing from
+   ABOVE.
+3. *Mixed-unit datasets:* rr matches per-dataset range-relative error only; small
+   components in mixed-unit families keep worse relative fidelity under ZFP-rr than under
+   per-value f32.
+4. *SZ3 rows are not fidelity-matched* (global abs bound: over-tight on stress, loose on
+   strain); SZ3 is rejected on the per-family bound + 10–20× slower encode + same plugin
+   dependency, not those size numbers. Re-proposal requires sz3_rr + sz3_tm_rr,
+   per-family-gated.
+5. *B's 13:1 is the upper end* (mild ductility μ≈1.1 + dispBeamColumn smoothness inflate
+   gzip's cross-fiber win); deep hysteresis would cut it (plausibly 4–6:1) but degrades
+   ZFP's transform at least as much — ranking robust, magnitude not.
+6. *tm-gzip magnitudes* (0.76–0.87×) used untuned (64×1024) chunks — sign is
+   mechanism-backed, magnitude untuned; tm configs should be quoted by file size
+   (storage-sum undercounts ~6% metadata on B's 756-dataset tm layout).
+7. *Timing is Python wall-clock end-to-end* — must not be quoted for/against the
+   literature "20–60× faster than gzip" claim (observed: ZFP ~2–4× faster than f64-gzip
+   encode; SZ3 ~10× slower; order-of-magnitude only).
+8. *Reopening criteria:* a NEW codec class (predictor-based, fidelity-matched, per-family
+   gated) — not a layout change, not a tolerance retune.
+
+**Standing decision: keep `f32 + shuffle + gzip(4)` as the only lossy mode. No new
+dependency, no plugin read-path, no schema change.**

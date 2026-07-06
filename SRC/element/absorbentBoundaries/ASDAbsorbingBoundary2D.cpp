@@ -43,6 +43,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include <LadrunoEnergyChannels.h>   // Ladruno (ADR-69 P1.5): base-action injection leak
+
 
 namespace {
 
@@ -323,6 +325,15 @@ void ASDAbsorbingBoundary2D::setDomain(Domain* theDomain)
         return;
     }
 
+    // Ladruno (ADR-69 P1.5): declare the injection channel so the -v2
+    // recorder emits an E_inject column whenever this element is present
+    // (even if the base-action time series never fires), and (re)sync the
+    // leak clock.
+    Ladruno::EnergyChannelRegistry::instance().declare(
+        Ladruno::EnergyChannelRegistry::ABSORB_LEAK);
+    m_lkLastTime = theDomain->getCurrentTime();
+    m_lkSeeded = false;
+
     // check nodes and sort them in the in-coming order.
     for (std::size_t i = 0; i < m_nodes.size(); ++i) {
 
@@ -431,6 +442,38 @@ int ASDAbsorbingBoundary2D::getNumDOF()
 int ASDAbsorbingBoundary2D::revertToLastCommit()
 {
     return 0;
+}
+
+// Ladruno (ADR-69 P1.5): publish the base-action incident-injection leak.
+// See ASDAbsorbingBoundary3D::commitState() for the full rationale -
+// identical mechanism, 2D geometry.
+int ASDAbsorbingBoundary2D::commitState()
+{
+    if (m_stage != Stage_StaticConstraint && (m_boundary & BND_BOTTOM)) {
+        Domain* dom = getDomain();
+        if (dom != 0) {
+            static Vector Rinj;
+            Rinj.resize(m_num_dofs);
+            Rinj.Zero();
+            addBaseActions(Rinj);
+            const double rate = Rinj ^ getVelocity();
+
+            const double tNow = dom->getCurrentTime();
+            const double dt = tNow - m_lkLastTime;
+            if (dt > 0.0) {
+                const double dE = m_lkSeeded
+                    ? 0.5 * (m_lkPrevRate + rate) * dt
+                    : rate * dt;   // first commit: rectangle
+                Ladruno::EnergyChannelRegistry::instance().addEnergy(
+                    Ladruno::EnergyChannelRegistry::ABSORB_LEAK, dE);
+                m_lkSeeded = true;
+            }
+            m_lkPrevRate = rate;
+            m_lkLastTime = tNow;
+        }
+    }
+
+    return Element::commitState();
 }
 
 const Matrix& ASDAbsorbingBoundary2D::getTangentStiff(void)

@@ -339,6 +339,14 @@ private:
     double alpha_flac;        // FLAC local damping coefficient (0 <= alpha < 1)
     double lastUnbalanceNorm; // |r|_inf at the most recent solve (-1 until first)
     double committedUnbalanceNorm; // lastUnbalanceNorm at newStep() entry (revert)
+    // Ladruno (ADR-69): LNVD dissipation publisher. addLocalDamping()
+    // accumulates sum alpha*|r_i|*|v_i|*dt_substep into a per-step scratch
+    // (sub-step 1 acts over p*dt, sub-step 2 over (1-p)*dt); commit()
+    // publishes the scratch to Ladruno::EnergyChannelRegistry (LNVD_WORK) so
+    // the -v2 EnergyBalanceRecorder can close what v1 leaked into RES. A
+    // failed/reverted step never publishes (scratch zeroed in newStep).
+    double lnvdStepEnergy;    // Ladruno (ADR-69): per-step dissipation scratch
+    bool   lnvdInSubStep2;    // Ladruno (ADR-69): which sub-step is forming
 
     // Ladruno (W1-E2, -sms / -consistent): selective mass scaling (was ExplicitBatheSMS /
     // ExplicitBatheSMSConsistent). Inert unless useSMS.

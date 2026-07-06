@@ -62,6 +62,7 @@
 #include <Matrix.h>
 
 #include <LadrunoMassScalingEnergy.h>   // Ladruno V4: consistent (Olovsson) scaling-mass KE
+#include <LadrunoEnergyChannels.h>      // Ladruno ADR-69: named energy channels (v2)
 
 #include <cmath>
 
@@ -236,6 +237,129 @@ struct EnergyAccumulator {
         out[3] = unbalanced_load_work;
         out[4] = res;
         out[5] = err;
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Ladruno ADR-69 (v2): channel-aware accumulator with element/nodal split.
+//
+// Differences from the V1 EnergyAccumulator above (which is frozen — the
+// legacy 6-column path must stay byte-identical):
+//   * KE and DW are carried as ELEMENT and NODAL parts separately. Under MPI
+//     the element parts reduce correctly by naive cross-rank summation
+//     (elements are uniquely partitioned); the nodal parts are multiply-
+//     counted on shared partition-boundary nodes and are quarantined in
+//     their own columns so an offline reducer can treat them deliberately.
+//   * Reads the ADR-69 energy channels: ABSORB_LEAK L (the resisting-sign
+//     injection work that pollutes the raw IE integral) and LNVD_WORK D.
+//     Both are cumulative registry totals; this struct snapshots a baseline
+//     at the first record and uses deltas, so a fresh recorder starts at
+//     zero regardless of registry history.
+//   * Balance:  IE_display = IE_raw - L        (rebucket: truthful IE)
+//               E_inject   = -L                (source-side, positive = in)
+//               RES = (ULW + E_inject)
+//                     - (KE + IE_display + DW + E_lnvd)
+//     The L terms cancel in RES (rebucketing never fakes closure); the LNVD
+//     term genuinely closes what v1 leaked into RES.
+//
+// Output slot order (fixed; the recorder skips undeclared channel slots when
+// writing): KE_ele KE_nod IE DW_ele DW_nod ULW E_inject E_lnvd RES ERR.
+// ---------------------------------------------------------------------------
+static const int NUM_V2_SLOTS = 10;
+enum V2Slot {
+    V2_KE_ELE = 0, V2_KE_NOD, V2_IE, V2_DW_ELE, V2_DW_NOD, V2_ULW,
+    V2_E_INJECT, V2_E_LNVD, V2_RES, V2_ERR
+};
+
+struct EnergyAccumulatorV2 {
+    double internal_energy;                       // raw IE (may contain leak)
+    double damping_work_ele, damping_work_nod;
+    double unbalanced_load_work;
+    double prev_internal_rate;
+    double prev_damping_rate_ele, prev_damping_rate_nod;
+    double prev_unbalanced_rate;
+    double eref;                                  // running max, this scope
+    bool   baselined;
+    double base_leak, base_lnvd;                  // registry snapshot at first record
+
+    EnergyAccumulatorV2() { reset(); }
+
+    void reset() {
+        internal_energy = 0.0;
+        damping_work_ele = 0.0;
+        damping_work_nod = 0.0;
+        unbalanced_load_work = 0.0;
+        prev_internal_rate = 0.0;
+        prev_damping_rate_ele = 0.0;
+        prev_damping_rate_nod = 0.0;
+        prev_unbalanced_rate = 0.0;
+        eref = 0.0;
+        baselined = false;
+        base_leak = 0.0;
+        base_lnvd = 0.0;
+    }
+
+    // Same integration convention as V1 step(): first recorded step uses the
+    // rectangle rule, thereafter trapezoidal. Channel totals are read from
+    // the registry by the caller and passed in (kernel stays registry-free at
+    // this level so the arithmetic is testable in isolation).
+    void step(double dT, bool firstRecord,
+              double ke_ele, double ke_nod,
+              double internal_rate,
+              double damping_rate_ele, double damping_rate_nod,
+              double unbalanced_rate,
+              double leak_total, double lnvd_total,
+              double out[NUM_V2_SLOTS])
+    {
+        if (firstRecord) {
+            internal_energy      += internal_rate    * dT;
+            damping_work_ele     += damping_rate_ele * dT;
+            damping_work_nod     += damping_rate_nod * dT;
+            unbalanced_load_work += unbalanced_rate  * dT;
+        } else {
+            internal_energy      += 0.5 * (prev_internal_rate    + internal_rate)    * dT;
+            damping_work_ele     += 0.5 * (prev_damping_rate_ele + damping_rate_ele) * dT;
+            damping_work_nod     += 0.5 * (prev_damping_rate_nod + damping_rate_nod) * dT;
+            unbalanced_load_work += 0.5 * (prev_unbalanced_rate  + unbalanced_rate)  * dT;
+        }
+
+        prev_internal_rate    = internal_rate;
+        prev_damping_rate_ele = damping_rate_ele;
+        prev_damping_rate_nod = damping_rate_nod;
+        prev_unbalanced_rate  = unbalanced_rate;
+
+        if (!baselined) {
+            base_leak = leak_total;
+            base_lnvd = lnvd_total;
+            baselined = true;
+        }
+        const double L  = leak_total - base_leak;   // resisting-sign leak
+        const double Dl = lnvd_total - base_lnvd;   // LNVD dissipation (>= 0)
+
+        const double ke      = ke_ele + ke_nod;
+        const double dw      = damping_work_ele + damping_work_nod;
+        const double ie_disp = internal_energy - L;
+        const double e_inj   = -L;
+
+        const double res = (unbalanced_load_work + e_inj)
+                         - (ke + ie_disp + dw + Dl);
+
+        const double mag = std::fabs(ke) + std::fabs(ie_disp) + std::fabs(dw)
+                         + std::fabs(unbalanced_load_work)
+                         + std::fabs(e_inj) + std::fabs(Dl);
+        if (mag > eref) eref = mag;
+        const double err = (eref > 1.0e-16) ? 100.0 * res / eref : 0.0;
+
+        out[V2_KE_ELE]   = ke_ele;
+        out[V2_KE_NOD]   = ke_nod;
+        out[V2_IE]       = ie_disp;
+        out[V2_DW_ELE]   = damping_work_ele;
+        out[V2_DW_NOD]   = damping_work_nod;
+        out[V2_ULW]      = unbalanced_load_work;
+        out[V2_E_INJECT] = e_inj;
+        out[V2_E_LNVD]   = Dl;
+        out[V2_RES]      = res;
+        out[V2_ERR]      = err;
     }
 };
 

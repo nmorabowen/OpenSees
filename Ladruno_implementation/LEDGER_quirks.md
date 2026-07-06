@@ -24,6 +24,11 @@ them. This is observation-only — fixes we actually applied are tracked in
 
 ## Quirks
 
+### MUMPS Error −9 ("work array too small") is RANK-COUNT-dependent and non-monotonic — and ICNTL14 strongly perturbs wall time, so hold it uniform across any np sweep
+- **Bites:** parallel implicit runs (`system Mumps`) that work at np=1/2/8 can **fail at step 0 with INFO(1)=−9 at np=4** (or any specific rank count) — the workspace under-prediction depends on how the partition shapes the distributed factorization, not on problem size alone. Worse for benchmarking: the `-ICNTL14` value needed to survive also changes performance dramatically (measured: np=8 wall 90.5 s at `-ICNTL14 200` vs 33.0 s at `-ICNTL14 2000` on the same model), so a sweep with per-np ICNTL14 values produces meaningless comparisons.
+- **Why:** ICNTL(14) is MUMPS's % workspace relaxation over its analysis-phase estimate; the estimate quality varies with the partition/ordering interaction. OpenSees defaults it to 20 (`OpenSeesCommands.cpp:4252`); the −9 handler prints the "make ICNTL14 larger" hint (`MumpsParallelSolver.cpp:168`). Default-20 failed at np=4 on a plain 5488-hex/18.9k-DOF block; 200 did NOT rescue it; 2000 did.
+- **Workaround/status (2026-07-06, ADR-40 rank-3 MUMPS scaling measurement):** for any np sweep set `-ICNTL14` high (≥200, be ready for 2000) and **uniform across all rank counts**; verify every config actually completed (a DNF leaves stale output/h5 files from prior runs — delete artifacts before a fresh sweep). Measured sweep + table in [[40b_phase0_dominance_report]] §MUMPS addendum.
+
 ### `criticalTimeStep()` under SMS returns the PRE-scaling element pencil — the post-scaling effective limit is report-only with NO getter
 - **Bites:** any driver/script that queries `criticalTimeStep()` on a mass-scaled run (CentralDifferenceSMS/SMSConsistent, ExplicitBathe `-sms`) expecting the stable-Δt after scaling. It gets the un-augmented sliver limit instead — `dt = safety*criticalTimeStep()` collapses Δt to the pre-scaling value and silently defeats SMS (conservative, so it "works", just wastes the entire scaling benefit).
 - **Why:** `CentralDifferenceLadruno::getCriticalTimeStep()` (`CentralDifferenceLadruno.cpp:742–746`) and `ExplicitBathe::getCriticalTimeStep()` (`ExplicitBathe.cpp:1435–1441`) return the raw element-pencil value, which cannot see nodal injected mass (scaling writes `Node::setMass`; the pencil reads `ele->getMass()`). The post-scaling limit exists (`setSMSEffectiveLimit` ← `minDtSelfReport`, P3 #475) but is consumed ONLY by the `newStep()` "[PRE-SCALING estimate]" report — protected setter, no getter, no command plumbing.
@@ -2430,3 +2435,31 @@ and the old `iters >= maxIt` condition swallowed it silently (also fixed review-
 - **Bites:** implicit displacement-ramped runs of a MULTI-element `LadrunoConcrete3D` specimen through localization: plain Newton + step-cutting (the recipe that walks a SINGLE element through its limit point) converges only at micro-steps once several elements carry the indefinite softening tangent simultaneously — the G5 coarse band (4 elements!) took ~2400 micro-steps / 13 min wall; refinement makes it worse.
 - **Why:** the indefinite/non-symmetric tangent cluster around the band throws the global Newton into cut/recover oscillation; no single step fails permanently, so nothing surfaces except wall time.
 - **Workaround/status (2026-07-06, ADR 66 P5.2 G5):** put the MATERIALS in `-implex` and drive with CONSTANT-dlam LoadControl (the uniform-pseudo-time regime IMPL-EX wants; kinematic sp ramp): the SPD-ish secant lets Newton track the full localization at the planned step size (13 min -> 16 s on the G5 coarse mesh; committed states stay implicit-exact). The ADR 66 risk register lists exactly this toolbox row; the `-implex`+DisplacementControl limit-point trap (Concrete3D ledger) does NOT apply because LoadControl dlam is uniform.
+**`LysmerTriangle` stage-3 `getResistingForce()` MUTATES state on every call — any recorder that
+reads element forces perturbs it (2026-07-05, ADR-69).** At stage 3 ("preserve elastic spring
+forces after gravity") `getResistingForce()` executes `internalForces -= springForces` on EVERY
+invocation — it is not idempotent. The EnergyBalanceRecorder (v1 AND v2) calls it once per record
+per element, so each record subtracts `springForces` again from the member the residual path also
+serves (rebuilt only at the next `getResistingForceIncInertia`). Consequences: (a) stage-3 Lysmer
+energy readings are untrustworthy; (b) anything else querying element forces between residual
+formations (nodal reactions, other recorders) compounds it. The ADR-69 leak publisher deliberately
+RECOMPUTES `R_inj = getDamp()*v_gnd` in `commitState` instead of reading the member, so E_inject is
+immune. Upstream-origin behavior — left unfixed (vanilla change budget); avoid stage 3 + per-step
+force recorders in the same model, or accept the drift.
+**Tcl `eleLoad` SILENTLY ACCEPTS unknown `-type` flags (returns TCL_OK, no warning) — a
+no-op that looks like success (2026-07-06, ADR-69 P0.5).** The eleLoad handler's tail falls
+through to `return 0` when no `-type` branch matches, so `eleLoad -type -fooBarBazNotALoad`
+"succeeds". Any deck relying on a loader that is not actually wired (LysmerVelocityLoader was
+exactly this for 15 years) runs unloaded with zero diagnostics. Left unfixed (changing the
+return could break decks); when a load seems dead, FIRST verify the `-type` string exists in
+TclModelBuilder.cpp before debugging the physics.
+
+**Stage-0 `LysmerTriangle` under implicit Newmark realizes only ~HALF the dashpot energy
+(DW = 0.50*ULW measured; 2026-07-06, ADR-69 P0.5 F2).** The element's
+`getResistingForceIncInertia` uses `0*v_node + gnd_velocity` — the node-velocity damping
+force C*v NEVER enters the element residual; under Newmark damping then acts only through the
+a1*C term in the effective tangent, giving an energy-inconsistent solve (the recorder's
+DW = int v'Cv dt books the full ideal dashpot power and RES exposes the ~0.5*W gap). EXPLICIT
+integrators assemble the damping force from getDamp() directly and are consistent. For
+implicit absorbing runs prefer ASDAbsorbingBoundary; for Lysmer prefer explicit. NOT a
+recorder bug — the recorder is the instrument that surfaced it.

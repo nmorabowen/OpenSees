@@ -44,7 +44,12 @@ class UmfpackGenLinSOE;
 class UmfpackGenLinSolver : public LinearSOESolver
 {
   public:
-    UmfpackGenLinSolver(bool useLongIndices = false);
+    // Ladruno (ADR-40 rank 2): strategy + pivot tolerance are configurable.
+    // Default strategy is UMFPACK_STRATEGY_AUTO (was hardcoded SYMMETRIC, which
+    // mis-orders unsymmetric tangents); default pivotTol keeps the legacy 1.0.
+    UmfpackGenLinSolver(bool useLongIndices = false,
+                        int strategy = UMFPACK_STRATEGY_AUTO,
+                        double pivotTol = 1.0);
     ~UmfpackGenLinSolver();
 
     int solve(void);
@@ -62,6 +67,8 @@ class UmfpackGenLinSolver : public LinearSOESolver
     void syncIndexBuffers(void);
 
     bool useLongIndices;
+    int strategy;        // Ladruno (ADR-40 rank 2)
+    double pivotTol;     // Ladruno (ADR-40 rank 2)
     void *Symbolic;
     double Control[UMFPACK_CONTROL], Info[UMFPACK_INFO];
     UmfpackGenLinSOE *theSOE;

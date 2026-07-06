@@ -81,6 +81,210 @@ def test_energybalance_element_mass_ke(tmp_path):
 # ==========================================================================
 # column layout: with -time, exactly 7 columns (time + KE IE DW ULW RES ERR%)
 # ==========================================================================
+def _run_lnvd_bar(tmp_path, fname, v2, alpha):
+    """Free-vibration bar with ExplicitBathe [-lnvd alpha]; returns the data."""
+    N = 10
+    L = 1.0
+    E = 100.0
+    A = 1.0
+    rho = 1.0
+    efile = str(tmp_path / fname)
+    le = build_bar(N, L, E, A, rho)
+    for i in range(1, N + 1):
+        ops.setNodeVel(i + 1, 1, 1.0, "-commit")
+    # NOTE (ADR-69): integrator BEFORE recorder — the -v2 channel columns are
+    # fixed at the recorder's first record from the registry's declared set.
+    ops.constraints("Transformation")
+    ops.numberer("Plain")
+    ops.system("Diagonal")
+    ops.test("NormDispIncr", 1e-12, 1)
+    ops.algorithm("Linear")
+    if alpha > 0.0:
+        ops.integrator("ExplicitBathe", 0.54, "-lnvd", alpha)
+    else:
+        ops.integrator("ExplicitBathe", 0.54)
+    if v2:
+        ops.recorder("EnergyBalance", "-file", efile, "-time", "-v2")
+    else:
+        ops.recorder("EnergyBalance", "-file", efile, "-time")
+    ops.analysis("Transient")
+    c = math.sqrt(E / rho)
+    ops.analyze(400, 0.2 * le / c)
+    ops.wipe()
+    d = np.loadtxt(efile)
+    return np.atleast_2d(d)
+
+
+# ==========================================================================
+# ADR-69 v2 column geometry, order-INDEPENDENT (channel declarations are
+# process-sticky, so earlier test FILES in the battery — e.g. the adr52
+# ExplicitBathe-collapse tests constructing -lnvd — may have declared
+# channels before this file runs; those then appear as benign zero columns).
+# Fixed geometry: time | KE_ele KE_nod IE DW_ele DW_nod ULW | [channels...]
+# | RES ERR%  -> cols 1..6 fixed, RES/ERR always the LAST TWO, channels (if
+# any) sit at 7..ncol-3 with E_lnvd LAST among them (E_inject, E_lnvd order).
+# ==========================================================================
+def test_energybalance_v2_layout_no_producers(tmp_path):
+    d = _run_lnvd_bar(tmp_path, "v2_plain.txt", v2=True, alpha=0.0)
+    ncol = d.shape[1]
+    assert ncol >= 9, (
+        "expected >=9 columns (time + 6 split + RES ERR%%); got %d" % ncol
+    )
+    # THIS run has no producer: any channel columns (declared by earlier test
+    # files in the same process) must be identically zero.
+    if ncol > 9:
+        assert np.allclose(d[:, 7:ncol - 2], 0.0, atol=1e-14), (
+            "no-producer run: channel columns must be all-zero"
+        )
+    ke_ele, ke_nod = d[0, 1], d[0, 2]
+    assert ke_ele > 0.0 and abs(ke_nod) < 1e-12, (
+        "element-mass bar: KE must sit in KE_ele (got ele=%g nod=%g)" % (ke_ele, ke_nod)
+    )
+
+
+# ==========================================================================
+# ADR-69 v2: E_lnvd channel closes what v1 leaks into RES. Free vibration +
+# FLAC local damping: legacy RES drifts by exactly the (unaccounted) LNVD
+# dissipation; v2 publishes it (E_lnvd column) and RES stays put.
+# ==========================================================================
+def test_energybalance_v2_lnvd_closure(tmp_path):
+    alpha = 0.4
+    d_legacy = _run_lnvd_bar(tmp_path, "lnvd_legacy.txt", v2=False, alpha=alpha)
+    d_v2 = _run_lnvd_bar(tmp_path, "lnvd_v2.txt", v2=True, alpha=alpha)
+
+    # legacy: time KE IE DW ULW RES ERR% -> RES col 5
+    res_l = d_legacy[:, 5]
+    drift_legacy = res_l[-1] - res_l[0]
+
+    # v2 with LNVD declared: >=10 columns; E_lnvd is the LAST channel column
+    # (just before RES ERR%), regardless of what else got declared earlier
+    # in this process.
+    assert d_v2.shape[1] >= 10, (
+        "expected >=10 columns (time + 6 split + E_lnvd + RES ERR%%); got %d"
+        % d_v2.shape[1]
+    )
+    e_lnvd = d_v2[:, -3]
+    res_v2 = d_v2[:, -2]
+    drift_v2 = res_v2[-1] - res_v2[0]
+
+    assert e_lnvd[-1] > 0.0, "LNVD dissipation must accumulate positive work"
+    assert np.all(np.diff(e_lnvd) > -1e-14), "E_lnvd must be monotone"
+    # the legacy RES drift IS the unaccounted LNVD dissipation
+    assert drift_legacy > 0.0
+    assert 0.7 * drift_legacy < e_lnvd[-1] < 1.3 * drift_legacy, (
+        "published E_lnvd=%g should match the legacy RES drift=%g"
+        % (e_lnvd[-1], drift_legacy)
+    )
+    # closure: v2 RES drift shrinks by at least 5x
+    assert abs(drift_v2) < 0.2 * abs(drift_legacy), (
+        "v2 RES drift %g should be <<%g (legacy)" % (drift_v2, drift_legacy)
+    )
+
+
+# ==========================================================================
+# ADR-69 P1.5: ASDAbsorbingBoundary2D bottom compliant-base injection closes
+# the same way LysmerTriangle's does. addBaseActions() is a pure external
+# source (time-series velocity * fixed coefficients on the SOIL-side nodes,
+# mutually exclusive with the lateral free-field mechanism via BND_BOTTOM)
+# that leaks into the legacy IE integral; -v2 rebuckets it into E_inject.
+# Ghost nodes are explicitly fixed (belt-and-suspenders on top of the
+# element's own internal penalty pin) to keep the system well-posed.
+# ==========================================================================
+def _build_asd_column(amp_scale, n_layers=3):
+    E, nu, rho = 2.0 * 2000.0 * 200.0 ** 2 * 1.25, 0.25, 2000.0
+    G = 2000.0 * 200.0 ** 2
+    dt = 1.0e-3
+    nstep = 60
+    t = np.arange(nstep + 1) * dt
+    f0, t0, amp = 10.0, 0.02, 0.05
+    a = (np.pi * f0 * (t - t0)) ** 2
+    vals = (amp * amp_scale * (1.0 - 2.0 * a) * np.exp(-a)).tolist()
+
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.node(1001, 0.0, -1.0)
+    ops.node(1002, 1.0, -1.0)
+    ops.fix(1001, 1, 1)
+    ops.fix(1002, 1, 1)
+    for row in range(n_layers + 1):
+        ops.node(1 + 2 * row, 0.0, float(row))
+        ops.node(2 + 2 * row, 1.0, float(row))
+    ops.nDMaterial("ElasticIsotropic", 1, E, nu, rho)
+    for row in range(n_layers):
+        n1, n2 = 1 + 2 * row, 2 + 2 * row
+        n3, n4 = 2 + 2 * (row + 1), 1 + 2 * (row + 1)
+        ops.element("quad", 200 + row, n1, n2, n3, n4, 1.0, "PlaneStrain", 1)
+    ops.timeSeries("Path", 1, "-dt", dt, "-values", *vals)
+    ops.element("ASDAbsorbingBoundary2D", 101, 1001, 1002, 2, 1,
+               G, nu, rho, 1.0, "B", "-fx", 1)
+    ops.setParameter("-val", 1, "-ele", 101, "stage")
+    return dt, nstep
+
+
+def _run_asd_column(tmp_path, fname, v2, amp_scale):
+    dt, nstep = _build_asd_column(amp_scale)
+    efile = str(tmp_path / fname)
+    rec = ["EnergyBalance", "-file", efile, "-time"]
+    if v2:
+        rec.append("-v2")
+    ops.recorder(*rec)
+    ops.constraints("Plain")
+    ops.numberer("RCM")
+    ops.system("UmfPack")
+    ops.test("NormDispIncr", 1.0e-10, 10)
+    ops.algorithm("Linear")
+    ops.integrator("Newmark", 0.5, 0.25)
+    ops.analysis("Transient")
+    for _ in range(nstep):
+        assert ops.analyze(1, dt) == 0
+    ops.wipe()
+    return np.atleast_2d(np.loadtxt(efile))
+
+
+def test_energybalance_v2_asd_absorbing_injection_closure(tmp_path):
+    d_legacy = _run_asd_column(tmp_path, "asd_legacy.txt", v2=False, amp_scale=1.0)
+    d_v2 = _run_asd_column(tmp_path, "asd_v2.txt", v2=True, amp_scale=1.0)
+    d_ctl = _run_asd_column(tmp_path, "asd_ctl.txt", v2=True, amp_scale=0.0)
+
+    ie_legacy = d_legacy[-1, 2]
+    eref_legacy = max(np.abs(d_legacy[:, 1:5]).max(), 1e-30)
+    assert abs(ie_legacy) > 0.05 * eref_legacy, (
+        "expected the legacy IE leak to be a significant fraction of E_ref; "
+        "got IE=%g E_ref=%g" % (ie_legacy, eref_legacy)
+    )
+
+    # This model's ASDAbsorbingBoundary2D unconditionally declares ABSORB_LEAK
+    # in setDomain, so chInject is guaranteed true and E_inject sits at the
+    # FIXED front-anchored offset col 7 (right after ULW at col 6) -
+    # regardless of whether an earlier test in this process (or battery run)
+    # also declared LNVD_WORK, which the recorder always writes AFTER
+    # E_inject (see EnergyBalanceRecorder.cpp record(): chInject column is
+    # written before chLnvd). Do NOT locate E_inject from the back like the
+    # LNVD test does - E_lnvd (not E_inject) is what's guaranteed last.
+    assert d_v2.shape[1] >= 10
+    ie_v2 = d_v2[-1, 3]
+    e_inject = d_v2[-1, 7]
+    eref_v2 = max(np.abs(d_v2[:, 1:8]).max(), 1e-30)
+    assert abs(ie_v2) < 0.05 * eref_v2, (
+        "v2 IE should be near-truthful once the leak is rebucketed; got %g "
+        "(E_ref %g)" % (ie_v2, eref_v2)
+    )
+
+    diff = ie_v2 - ie_legacy
+    assert abs(e_inject - diff) < 0.1 * max(abs(diff), 1e-30), (
+        "E_inject (%g) should match IE_v2 - IE_legacy (%g) - the same leak "
+        "measured through two independent paths" % (e_inject, diff)
+    )
+
+    e_inject_ctl = d_ctl[-1, 7]
+    assert abs(e_inject_ctl) < 1e-9, (
+        "zero-amplitude control: E_inject should be ~0, got %g" % e_inject_ctl
+    )
+
+
+# ==========================================================================
+# column layout: with -time, exactly 7 columns (time + KE IE DW ULW RES ERR%)
+# ==========================================================================
 def test_energybalance_time_column_layout(tmp_path):
     N = 5
     L = 1.0
