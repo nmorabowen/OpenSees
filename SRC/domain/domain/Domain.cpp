@@ -38,6 +38,7 @@
 #include <OPS_Globals.h>
 #include <Domain.h>
 #include <DummyStream.h>
+#include <profiler/ProfilerMacros.h>  // Ladruno (40b): elem.update deep timing
 
 #include <ElementIter.h>
 #include <NodeIter.h>
@@ -2317,13 +2318,22 @@ Domain::update(void)
 
   int ok = 0;
 
+  // Ladruno (40b finding 1): deep per-element-type update timing. The dominant
+  // frame-lane cost (force-based interior iteration, IMK hinge Newton) runs in
+  // element->update() and was invisible to the elem.tangent/elem.residual
+  // buckets. Both scopes are inert unless the profiler deep gate is on.
+  OPS_PROFILE_SCOPE_DEEP_NAMED(_ops_elemUpd, "elem.update");
+
   // invoke update on all the ele's
   ElementIter &theEles = this->getElements();
   Element *theEle;
 
   while ((theEle = theEles()) != 0) {
     ops_TheActiveElement = theEle;
-    ok += theEle->update();
+    {
+      OPS_PROFILE_ELEMPTR_SCOPE(_ops_elemUpd, theEle);   // Ladruno (40b)
+      ok += theEle->update();
+    }
   }
 
   if (ok != 0)
