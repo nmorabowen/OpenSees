@@ -140,6 +140,22 @@ public:
     int formEleTangent(FE_Element *theEle);
     int formNodTangent(DOF_Group *theDof);
 
+    // Ladruno (ADR-67 P-NEW-1): constant-mass tangent cache. The assembled
+    // tangent is PURE MASS (see formEleTangent/formNodTangent above — no K, no C,
+    // no dt; the modal-damping branch in the base formTangent is scaled by the
+    // inherited getCFactor()==0), so it is constant between M-changing /
+    // SOE-resizing events. Once formed, skip the whole assembly loop; the
+    // Diagonal solver's factored-in-place state then persists exactly as under
+    // `algorithm Linear -factorOnce` (measured −17.9% explicit wall,
+    // md5-bit-identical). Invalidated in domainChanged() (contact re-emission,
+    // element removal/birth, staged activation, SMS injection — every SOE resize),
+    // setConstraintProjector() and revertToLastStep() (coupled with massBuilt so
+    // the two mass-re-read latches never disagree). KNOWN EXCLUSION (documented,
+    // adversarial gate item 8): updateParameter on a density changes M WITHOUT a
+    // domainChanged — use -noMassCache (or fire a manual domainChange) for
+    // mid-run density updates.
+    int formTangent(int statFlag);
+
     // Methods to update mesh and define state
     int domainChanged(void);
     int newStep(double deltaT);
@@ -171,6 +187,22 @@ public:
     // step. > 0 only once newStep() has set it; the cast fails under any implicit
     // integrator ⇒ SOFT is inert there (the configured kn is used ⇒ byte-identical).
     double getCurrentDeltaT(void) const { return deltaT; }
+
+    // Ladruno (ADR-67 P-NEW-1): parser hook for -noMassCache (escape hatch —
+    // restores today's every-step mass reassembly; needed for mid-run
+    // updateParameter-on-density decks).
+    void setMassCacheEnabled(bool on) { useMassCache = on; if (!on) massTangentValid = false; }
+
+    // Ladruno (ADR-67 P-NEW-2): parser hook for -commitSolveState (OPT-IN,
+    // default OFF). Skips the SECOND element constitutive pass in update() —
+    // element state is committed as the solve actually used it (same strain
+    // u_{n+1}, LAGGED velocity v_{n+1/2}) instead of being recomputed at the
+    // full-step v_{n+1}. Bit-identical for rate-INdependent materials (~22% of
+    // explicit wall, 40b lane-D); a G-EQUIV results change for any element that
+    // passes a velocity rate to its material (ZeroLength/CoupledZeroLength/
+    // ZeroLengthVG_HG, TwoNodeLink, Truss/Truss2/CorotTruss/CorotTruss2,
+    // MultipleShear/NormalSpring + Viscous-type materials) — hence opt-in.
+    void setCommitSolveState(bool on) { commitSolveState = on; }
 
     // Ladruno (ADR-30): LadrunoProjectionConsumer — the handler pushes its
     // (non-owning) acceleration projector here; we project a0 in the starter and
@@ -276,6 +308,17 @@ private:
     LadrunoConstraintProjector *theProjector;
     bool   massBuilt;          // projector mass read this domainChanged() yet?
     Vector *Aproj;             // projected-acceleration scratch for update()
+
+    // Ladruno (ADR-67 P-NEW-1): constant-mass tangent cache state. ALL transient —
+    // NOT serialized (a recvSelf-built integrator starts invalid and re-forms).
+    bool   useMassCache;       // default true; -noMassCache restores every-step assembly
+    bool   massTangentValid;   // tangent assembled since the last invalidation?
+    bool   massCacheNoted;     // one-time density-parameter contract note emitted?
+
+    // Ladruno (ADR-67 P-NEW-2): skip the second constitutive pass (opt-in).
+    // Transient config — not serialized (per-rank decks re-issue the command).
+    bool   commitSolveState;      // default false
+    bool   commitSolveStateNoted; // one-time semantic note emitted?
 };
 
 #endif

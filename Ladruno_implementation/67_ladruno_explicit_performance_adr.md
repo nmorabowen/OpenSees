@@ -297,3 +297,57 @@ Recorded so this ADR is self-contained; **not** owned here:
     (elem.update 5.63 µs/ele), not integrator overhead. With full attribution the explicit lane
     is **~89% element work** — rank-7 threading (ADR-40) owns the big lever, this ADR owns the
     two items above.
+
+- **2026-07-06 — P-NEW-1 PLANNED + ADVERSARIALLY GATED + BUILT: constant-mass tangent cache,
+  default ON.** Design: `massTangentValid` latch owned by `CentralDifferenceLadruno`;
+  `formTangent(statFlag)` override skips the whole assembly loop when latched (Diagonal SOE
+  keeps its factored-in-place state — exactly the measured `-factorOnce` behavior); cleared in
+  `domainChanged()` (the choke point for contact re-emission / removal / staged activation /
+  SMS injection / every SOE resize), and — per the gate — in `setConstraintProjector()` and
+  `revertToLastStep()`, keeping it inseparable from the ADR-30 `massBuilt` latch. Escape hatch
+  `-noMassCache`. **Adversarial gate verdict (Opus, 10 attack items, all source-verified):
+  default-ON G-BYTE defensible.** Findings folded: (1) latch-coupling guard (projector could
+  read factored 1/M as mass under future reordering — the two extra clear sites); (5)
+  `statusFlag` hygiene mirrored in the skip path; (6) "pure mass" rests on the inherited
+  `getCFactor()==0` zero-scaling the base modal-damping branch — documented in the header, do
+  not give CDL a nonzero cFactor without revisiting; (8) `updateParameter` on DENSITY is the
+  one invisible event — documented exclusion + one-time runtime note when the deck declares
+  parameters (`updateMaterialStage` dropped from the exclusion list: stiffness-only, irrelevant
+  to a mass tangent); (9) flag transient/not serialized, all ctors init false; MPI path
+  verified SAFER than serial (MPIDiagonalSOE is already factor-once by construction; no
+  collective mismatch possible — collectives live in solve(), which every rank calls every
+  step). SMS subclasses inherit; every SMS mass mutation verified bracketed by domainChanged.
+  Gate also added the missing test: **revert-and-retry** (the only path exercising the
+  top-priority guard). Zone-A gate file: `tests/test_cdl_mass_cache.py` (MC-1 quiet-path
+  bit-identity, MC-2 remove-element invalidation, MC-3 failed-step revert+retry — all EXACT
+  float equality vs `-noMassCache`). With this, the `-factorOnce` recipe advice is obsolete:
+  every explicit CDL run gets the ~18% by default, contact/removal models included.
+
+- **2026-07-06 — P-NEW-2 GATED + BUILT: `-commitSolveState` (OPT-IN, default OFF).** Skips the
+  second element constitutive pass in `update()` (~22% of explicit wall, 40b lane-D) while
+  KEEPING `setResponse(u, v_full, a)` — the **load-bearing invariant**: committed nodal output,
+  recorders, KE, contact `-visc`, and the brick viscous-hourglass commit all read node state,
+  which still gets v_{n+1}. Element state is committed as the solve actually used it (same
+  strain u_{n+1}, lagged v_{n+1/2}). **Adversarial gate verdict (Opus, 10 items + inventory,
+  all source-verified): SOUND as opt-in; default-ON NOT defensible** — the G-EQUIV class is
+  non-empty in practice. **The exact G-EQUIV trigger set (gate inventory):** elements whose
+  `update()` passes a velocity-derived rate to `setTrialStrain` — ZeroLength,
+  CoupledZeroLength, ZeroLengthVG_HG, TwoNodeLink, Truss, Truss2, CorotTruss, CorotTruss2,
+  MultipleShearSpring, MultipleNormalSpring — feeding rate-consuming materials
+  (Viscous/ViscousDamper/ViscoelasticGap-type). Their committed state under the flag reflects
+  v_{n+1/2} (arguably MORE consistent — the step's forces were computed there — but a results
+  change). Safe-by-construction findings: TwoNodeLinkSection/TrussSection/ZeroLengthSection
+  pass deformation only; ALL fork materials rate-independent (LadrunoJ2/Finite, Concrete3D —
+  incl. `-eta` Duvaut-Lions: reads the SCALAR ops_Dt, identical in both passes, NOT node
+  velocity — LogStrain, Staged*, Lemaitre); LadrunoBrick `update()` is pure-displacement
+  (bulk viscosity + viscous hourglass read velocity at FORCE time / commit from nodes);
+  contact adapters are FE_Elements outside `Domain::update()` entirely; RemoveRecorder
+  criteria read trial displacement only; recorders run post-commit on committed node state;
+  no-arg `updateDomain()` applies no loads; orthogonal to the P-NEW-1 mass-cache latch; DDM
+  unreachable under explicit. One-time semantic note at first skip (gate P0 — never silent).
+  Zone-A gate file: `tests/test_cdl_commit_solve_state.py` (CS-1 rate-independent
+  bit-identity; CS-2 ZeroLength+Viscous AND Truss+Viscous characterization — delta REQUIRED
+  nonzero and bounded; CS-3 brick `-bulkViscosity` + uri `-hourglass viscous` bit-identity —
+  proves the setResponse invariant on the fork's own velocity-reading element; CS-4
+  remove-element + revert/retry composition with P-NEW-1). Combined with P-NEW-1 the explicit
+  step sheds ~35-40% on rate-independent decks (P-NEW-1 automatic; P-NEW-2 opt-in per deck).
