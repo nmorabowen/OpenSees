@@ -128,6 +128,16 @@ class LysmerTriangle : public Element
 
     Vector gnd_velocity;      //Velocity from ground motions
 
+    // Ladruno (ADR-69): incident-injection leak publisher state. The forcing
+    // R_inj = C*v_gnd pollutes the EnergyBalanceRecorder's raw IE integral
+    // (stage-0 getResistingForce returns the stale internalForces member), so
+    // commitState() integrates the leak rate R_inj^T v trapezoidally and
+    // publishes it to Ladruno::EnergyChannelRegistry (ABSORB_LEAK). Per-rank
+    // diagnostic state - deliberately NOT serialized in send/recvSelf.
+    double lkPrevRate;        // Ladruno (ADR-69): previous committed leak rate
+    double lkLastTime;        // Ladruno (ADR-69): domain time at last commit
+    bool   lkSeeded;          // Ladruno (ADR-69): first-commit rectangle guard
+
     int MyTag;                // what is my name?
 
     static Matrix tangentStiffness;  // Tangent Stiffness matrix

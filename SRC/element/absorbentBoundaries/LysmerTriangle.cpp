@@ -42,7 +42,9 @@
 
 #include <math.h>
 #include <stdlib.h>
-#include <stdio.h> 
+#include <stdio.h>
+
+#include <LadrunoEnergyChannels.h>   // Ladruno (ADR-69): incident-injection leak publisher
 
 double LysmerTriangle :: oneOverRoot3 = 1.0/sqrt(3.0);
 double LysmerTriangle :: GsPts[1][1];
@@ -142,6 +144,11 @@ LysmerTriangle::LysmerTriangle(int tag, int Nd1, int Nd2, int Nd3, double rho_, 
 
 	mLoadFactor = 1.0;
 
+  // Ladruno (ADR-69): leak-publisher state
+  lkPrevRate = 0.0;
+  lkLastTime = 0.0;
+  lkSeeded = false;
+
   // if(stage != 0)
   // {
   //   opserr << "LysmerTriangle::LysmerTriangle - element at tag # " << this->getTag() << " starting at stage = " << stage << " also L = " << element_length <<  endln;
@@ -166,6 +173,10 @@ LysmerTriangle::LysmerTriangle()
     gnd_velocity(3),
     stage(0)
 {
+  // Ladruno (ADR-69): leak-publisher state
+  lkPrevRate = 0.0;
+  lkLastTime = 0.0;
+  lkSeeded = false;
 }
 
 //  destructor:
@@ -216,6 +227,14 @@ LysmerTriangle::setDomain(Domain *theDomain)
     // call the base class method
     this->DomainComponent::setDomain(theDomain);
 
+    // Ladruno (ADR-69): declare the injection channel so the -v2 recorder
+    // emits an E_inject column whenever Lysmer boundaries are present (even
+    // if no velocity load ever arrives), and (re)sync the leak clock.
+    Ladruno::EnergyChannelRegistry::instance().declare(
+        Ladruno::EnergyChannelRegistry::ABSORB_LEAK);
+    lkLastTime = theDomain->getCurrentTime();
+    lkSeeded = false;
+
     UpdateBase(GsPts[0][0], GsPts[0][0]);
 
     Bmat(0,0) = 0.5;
@@ -237,9 +256,56 @@ LysmerTriangle::commitState()
     // call element commitState to do any base class stuff
     if ((retVal = this->Element::commitState()) != 0) {
     	opserr << "LysmerTriangle::commitState () - failed in base class";
-    }    
+    }
 
-    return 0; 
+    // Ladruno (ADR-69): publish the incident-injection "leak". The velocity
+    // loader's forcing R_inj = C*v_gnd is what getResistingForceIncInertia
+    // leaves in the internalForces member, and stage-0 getResistingForce()
+    // returns that stale member - so the EnergyBalanceRecorder's raw IE
+    // integral silently absorbs int R_inj^T v dt. Publish exactly that
+    // quantity (resisting sign, no convention guess) so the -v2 recorder can
+    // rebucket: IE_display = IE_raw - L, E_inject = -L. R_inj is RECOMPUTED
+    // (getDamp()*v_gnd) instead of read from internalForces because stage-3
+    // getResistingForce() mutates that member on every call (reaction hack).
+    // Once per commit (implicit iterations never reach here), trapezoidal in
+    // domain time, rectangle on the first commit; dt<=0 commits (held-load
+    // augmentation sweeps, time resets) publish nothing but resync the clock.
+    {
+        Domain *dom = this->getDomain();
+        if (dom != 0) {
+            double rate = 0.0;
+            if (gnd_velocity.pNorm(0) > 0.0) {
+                const Matrix &C = this->getDamp();   // zero at stage 1
+                static Vector vg(SL_NUM_DOF);
+                static Vector Rinj(SL_NUM_DOF);
+                for (int nd = 0; nd < SL_NUM_NODE; ++nd)
+                    for (int j = 0; j < SL_NUM_NDF; ++j)
+                        vg(nd * SL_NUM_NDF + j) = gnd_velocity(j);
+                Rinj.addMatrixVector(0.0, C, vg, 1.0);
+                int cnt = 0;
+                for (int nd = 0; nd < SL_NUM_NODE; ++nd) {
+                    const Vector &v = theNodes[nd]->getVel();
+                    for (int j = 0; j < SL_NUM_NDF && j < v.Size(); ++j)
+                        rate += Rinj(cnt + j) * v(j);
+                    cnt += SL_NUM_NDF;
+                }
+            }
+            const double tNow = dom->getCurrentTime();
+            const double dt = tNow - lkLastTime;
+            if (dt > 0.0) {
+                const double dE = lkSeeded
+                    ? 0.5 * (lkPrevRate + rate) * dt
+                    : rate * dt;                     // first commit: rectangle
+                Ladruno::EnergyChannelRegistry::instance().addEnergy(
+                    Ladruno::EnergyChannelRegistry::ABSORB_LEAK, dE);
+                lkSeeded = true;
+            }
+            lkPrevRate = rate;
+            lkLastTime = tNow;
+        }
+    }
+
+    return 0;
 }
 
 int

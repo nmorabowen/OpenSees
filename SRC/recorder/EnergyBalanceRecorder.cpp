@@ -61,6 +61,7 @@
 #include <TCP_Stream.h>
 
 #include <elementAPI.h>
+#include <classTags.h>   // Ladruno ADR-69: ASD coverage warning in -v2
 
 #include <string.h>
 #include <stdlib.h>
@@ -71,7 +72,7 @@ OPS_EnergyBalanceRecorder()
 {
     if (OPS_GetNumRemainingInputArgs() < 1) {
         opserr << "WARNING: recorder EnergyBalance -file <fileName> <-time> "
-                  "<-region tag ...>\n";
+                  "<-region tag ...> <-v2>\n";
         return 0;
     }
 
@@ -92,6 +93,7 @@ OPS_EnergyBalanceRecorder()
     bool doScientific = false;
     int precision = 6;
     bool closeOnWrite = false;
+    bool v2Layout = false;   // Ladruno ADR-69
 
     const char *inetAddr = 0;
     int inetPort = 0;
@@ -104,6 +106,10 @@ OPS_EnergyBalanceRecorder()
 
         if (strcmp(option, "-time") == 0) {
             echoTimeFlag = true;
+        }
+        else if (strcmp(option, "-v2") == 0) {
+            // Ladruno ADR-69: channel-aware layout with element/nodal split
+            v2Layout = true;
         }
         else if (strcmp(option, "-scientific") == 0) {
             doScientific = true;
@@ -206,7 +212,7 @@ OPS_EnergyBalanceRecorder()
 #endif
 
     EnergyBalanceRecorder* recorder = new EnergyBalanceRecorder(
-        *domain, *theOutputStream, echoTimeFlag, regions);
+        *domain, *theOutputStream, echoTimeFlag, regions, v2Layout);
 
     return recorder;
 }
@@ -219,6 +225,8 @@ EnergyBalanceRecorder::EnergyBalanceRecorder()
       echoTimeFlag(true), initializationDone(false), firstRecord(true),
       time_last(0.),
       model_acc(),
+      v2Layout(false), chInject(false), chLnvd(false),
+      numModelCols(EBR_NUM_ENERGY_COMPONENTS), model_acc2(),
       regionTags(), numRegions(0),
       region_acc(),
       cacheValid(false), maxNumDOF(0), velScratch()
@@ -231,13 +239,16 @@ EnergyBalanceRecorder::EnergyBalanceRecorder(
     Domain &theDomain_,
     OPS_Stream &theOutputHandler_,
     bool echoTimeFlag_,
-    const ID &regions)
+    const ID &regions,
+    bool v2Layout_)
     : Recorder(RECORDER_TAGS_EnergyBalanceRecorder),
       theDomain(&theDomain_), theOutputHandler(&theOutputHandler_),
       response((echoTimeFlag_ ? 1 : 0) + EBR_NUM_ENERGY_COMPONENTS * (1 + regions.Size())),
       echoTimeFlag(echoTimeFlag_), initializationDone(false), firstRecord(true),
       time_last(0.),
       model_acc(),
+      v2Layout(v2Layout_), chInject(false), chLnvd(false),
+      numModelCols(EBR_NUM_ENERGY_COMPONENTS), model_acc2(),
       regionTags(regions), numRegions(regions.Size()),
       region_acc((size_t)regions.Size()),
       cacheValid(false), maxNumDOF(0), velScratch()
@@ -342,6 +353,10 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
     // into the regions it belongs to.
     //
     double g_ke = 0., g_internal_rate = 0., g_damping_rate = 0., g_unbalanced_rate = 0.;
+    // Ladruno ADR-69 (-v2): element/nodal split sums, accumulated ALONGSIDE
+    // the legacy variables (which keep their exact accumulation order so the
+    // legacy layout stays byte-identical).
+    double v2_ke_ele = 0., v2_ke_nod = 0., v2_dw_ele = 0., v2_dw_nod = 0.;
     std::vector<double> step_region_ke((size_t)numRegions, 0.0);
     std::vector<double> step_region_internal_rate((size_t)numRegions, 0.0);
     std::vector<double> step_region_damping_rate((size_t)numRegions, 0.0);
@@ -354,6 +369,7 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
             double ke = 0., ie = 0., dw = 0.;
             ebkernel::addElementEnergy(ele, velScratch, ke, ie, dw);
             g_ke += ke; g_internal_rate += ie; g_damping_rate += dw;
+            if (v2Layout) { v2_ke_ele += ke; v2_dw_ele += dw; }
 
             if (numRegions > 0) {
                 std::unordered_map<Element*, std::vector<int> >::const_iterator it =
@@ -376,6 +392,7 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
             double ke = 0., dw = 0., ulw = 0.;
             ebkernel::addNodeEnergy(node, ke, dw, ulw);
             g_ke += ke; g_damping_rate += dw; g_unbalanced_rate += ulw;
+            if (v2Layout) { v2_ke_nod += ke; v2_dw_nod += dw; }
 
             if (numRegions > 0) {
                 std::unordered_map<Node*, std::vector<int> >::const_iterator it =
@@ -397,7 +414,35 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
     // are all defined ONCE in ebkernel::EnergyAccumulator::step). Fill the
     // response: whole-model block then one block per region.
     //
-    {
+    if (v2Layout) {
+        // Ladruno ADR-69: channel-aware model block. Channel totals are
+        // cumulative registry reads; the accumulator snapshots its baseline
+        // on the first record so a fresh recorder starts from zero.
+        const Ladruno::EnergyChannelRegistry &reg =
+            Ladruno::EnergyChannelRegistry::instance();
+        double out[ebkernel::NUM_V2_SLOTS];
+        model_acc2.step(dT, firstRecord,
+                        v2_ke_ele, v2_ke_nod,
+                        g_internal_rate, v2_dw_ele, v2_dw_nod,
+                        g_unbalanced_rate,
+                        reg.energy(Ladruno::EnergyChannelRegistry::ABSORB_LEAK),
+                        reg.energy(Ladruno::EnergyChannelRegistry::LNVD_WORK),
+                        out);
+        int col = timeOffset;
+        response(col++) = out[ebkernel::V2_KE_ELE];
+        response(col++) = out[ebkernel::V2_KE_NOD];
+        response(col++) = out[ebkernel::V2_IE];
+        response(col++) = out[ebkernel::V2_DW_ELE];
+        response(col++) = out[ebkernel::V2_DW_NOD];
+        response(col++) = out[ebkernel::V2_ULW];
+        if (chInject)
+            response(col++) = out[ebkernel::V2_E_INJECT];
+        if (chLnvd)
+            response(col++) = out[ebkernel::V2_E_LNVD];
+        response(col++) = out[ebkernel::V2_RES];
+        response(col++) = out[ebkernel::V2_ERR];
+    }
+    else {
         double out[ebkernel::NUM_ENERGY_COMPONENTS];
         model_acc.step(dT, firstRecord,
                        g_ke, g_internal_rate, g_damping_rate, g_unbalanced_rate, out);
@@ -413,7 +458,9 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
                                    step_region_internal_rate[(size_t)r],
                                    step_region_damping_rate[(size_t)r],
                                    step_region_unbalanced_rate[(size_t)r], out);
-        const int col = timeOffset + EBR_NUM_ENERGY_COMPONENTS * (1 + r);
+        // Region blocks keep the legacy 6 columns in both layouts; in v2 the
+        // model block may be wider, so offset by its actual width.
+        const int col = timeOffset + numModelCols + EBR_NUM_ENERGY_COMPONENTS * r;
         for (int c = 0; c < EBR_NUM_ENERGY_COMPONENTS; ++c)
             response(col + c) = out[c];
     }
@@ -473,12 +520,54 @@ EnergyBalanceRecorder::initialize(void)
         return -1;
     }
 
+    // Ladruno ADR-69 (-v2): fix the channel columns from the registry's
+    // declared set. Producers declare at construction/setDomain, and the
+    // first record() happens after the first Domain::commit(), so anything
+    // built before analyze is visible here.
+    if (v2Layout) {
+        const Ladruno::EnergyChannelRegistry &reg =
+            Ladruno::EnergyChannelRegistry::instance();
+        chInject = reg.declared(Ladruno::EnergyChannelRegistry::ABSORB_LEAK);
+        chLnvd   = reg.declared(Ladruno::EnergyChannelRegistry::LNVD_WORK);
+        numModelCols = 6 + (chInject ? 1 : 0) + (chLnvd ? 1 : 0) + 2;
+
+        // Coverage warning (ADR-69 P1.5): ASDAbsorbingBoundary2D/3D now
+        // publish their BOTTOM compliant-base injection (addBaseActions) to
+        // E_inject, same as LysmerTriangle. Their LATERAL free-field
+        // boundary mechanism (addRffToSoil - the free-field column's
+        // response transferred into the soil domain) is a separate source
+        // term that is NOT published and still pollutes IE; there is no
+        // cheap way to tell from here whether a given instance uses the
+        // bottom-only or lateral configuration, so the warning is
+        // unconditional whenever any ASD absorbing element is present.
+        Element *ele;
+        ElementIter &elements = theDomain->getElements();
+        while ((ele = elements()) != 0) {
+            const int ct = ele->getClassTag();
+            if (ct == ELE_TAG_ASDAbsorbingBoundary2D ||
+                ct == ELE_TAG_ASDAbsorbingBoundary3D) {
+                opserr << "EnergyBalanceRecorder (-v2) WARNING: ASDAbsorbing"
+                          "Boundary elements present - their BOTTOM "
+                          "compliant-base injection is published to "
+                          "E_inject, but the LATERAL free-field boundary's "
+                          "injection is NOT and still pollutes IE "
+                          "(ADR-69 P1.6+).\n";
+                break;
+            }
+        }
+    }
+    else {
+        numModelCols = EBR_NUM_ENERGY_COMPONENTS;
+    }
+
     // size and zero the response and all per-scope accumulators
     const int timeOffset = (echoTimeFlag == true) ? 1 : 0;
-    response.resize(timeOffset + EBR_NUM_ENERGY_COMPONENTS * (1 + numRegions));
+    response.resize(timeOffset + numModelCols
+                    + EBR_NUM_ENERGY_COMPONENTS * numRegions);
     response.Zero();
 
     model_acc.reset();
+    model_acc2.reset();
     region_acc.assign((size_t)numRegions, ebkernel::EnergyAccumulator());
 
     // self-describing column metadata (consumed by XML/binary streams; text
@@ -495,8 +584,21 @@ EnergyBalanceRecorder::initialize(void)
 
     theOutputHandler->tag("EnergyOutput");
     theOutputHandler->attr("region", "model");
-    for (int c = 0; c < EBR_NUM_ENERGY_COMPONENTS; ++c)
-        theOutputHandler->tag("ResponseType", comp[c]);
+    if (v2Layout) {
+        theOutputHandler->tag("ResponseType", "KE_ele");
+        theOutputHandler->tag("ResponseType", "KE_nod");
+        theOutputHandler->tag("ResponseType", "IE");
+        theOutputHandler->tag("ResponseType", "DW_ele");
+        theOutputHandler->tag("ResponseType", "DW_nod");
+        theOutputHandler->tag("ResponseType", "ULW");
+        if (chInject) theOutputHandler->tag("ResponseType", "E_inject");
+        if (chLnvd)   theOutputHandler->tag("ResponseType", "E_lnvd");
+        theOutputHandler->tag("ResponseType", "RES");
+        theOutputHandler->tag("ResponseType", "ERR%");
+    } else {
+        for (int c = 0; c < EBR_NUM_ENERGY_COMPONENTS; ++c)
+            theOutputHandler->tag("ResponseType", comp[c]);
+    }
     theOutputHandler->endTag();
 
     for (int r = 0; r < numRegions; ++r) {
@@ -512,7 +614,14 @@ EnergyBalanceRecorder::initialize(void)
     // echo the column layout once for users of the plain-text sidecar
     opserr << "EnergyBalanceRecorder: columns =";
     if (echoTimeFlag == true) opserr << " time";
-    opserr << " [model: KE IE DW ULW RES ERR%]";
+    if (v2Layout) {
+        opserr << " [model: KE_ele KE_nod IE DW_ele DW_nod ULW";
+        if (chInject) opserr << " E_inject";
+        if (chLnvd)   opserr << " E_lnvd";
+        opserr << " RES ERR%]";
+    } else {
+        opserr << " [model: KE IE DW ULW RES ERR%]";
+    }
     for (int r = 0; r < numRegions; ++r)
         opserr << " [region " << regionTags(r) << ": KE IE DW ULW RES ERR%]";
     opserr << endln;

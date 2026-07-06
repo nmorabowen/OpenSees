@@ -2415,3 +2415,31 @@ object (the nodes) defines must validate the FULL mapping before mutating anythi
 validation. Related: an iterative-solver "did not converge" warning must key on the RESIDUAL, not on
 iters == maxIt — the consistent PCG's pAp≤0 SPD-breakdown guard exits EARLY (iters < maxIt, resid > tol)
 and the old `iters >= maxIt` condition swallowed it silently (also fixed review-P3).
+**`LysmerTriangle` stage-3 `getResistingForce()` MUTATES state on every call — any recorder that
+reads element forces perturbs it (2026-07-05, ADR-69).** At stage 3 ("preserve elastic spring
+forces after gravity") `getResistingForce()` executes `internalForces -= springForces` on EVERY
+invocation — it is not idempotent. The EnergyBalanceRecorder (v1 AND v2) calls it once per record
+per element, so each record subtracts `springForces` again from the member the residual path also
+serves (rebuilt only at the next `getResistingForceIncInertia`). Consequences: (a) stage-3 Lysmer
+energy readings are untrustworthy; (b) anything else querying element forces between residual
+formations (nodal reactions, other recorders) compounds it. The ADR-69 leak publisher deliberately
+RECOMPUTES `R_inj = getDamp()*v_gnd` in `commitState` instead of reading the member, so E_inject is
+immune. Upstream-origin behavior — left unfixed (vanilla change budget); avoid stage 3 + per-step
+force recorders in the same model, or accept the drift.
+**Tcl `eleLoad` SILENTLY ACCEPTS unknown `-type` flags (returns TCL_OK, no warning) — a
+no-op that looks like success (2026-07-06, ADR-69 P0.5).** The eleLoad handler's tail falls
+through to `return 0` when no `-type` branch matches, so `eleLoad -type -fooBarBazNotALoad`
+"succeeds". Any deck relying on a loader that is not actually wired (LysmerVelocityLoader was
+exactly this for 15 years) runs unloaded with zero diagnostics. Left unfixed (changing the
+return could break decks); when a load seems dead, FIRST verify the `-type` string exists in
+TclModelBuilder.cpp before debugging the physics.
+
+**Stage-0 `LysmerTriangle` under implicit Newmark realizes only ~HALF the dashpot energy
+(DW = 0.50*ULW measured; 2026-07-06, ADR-69 P0.5 F2).** The element's
+`getResistingForceIncInertia` uses `0*v_node + gnd_velocity` — the node-velocity damping
+force C*v NEVER enters the element residual; under Newmark damping then acts only through the
+a1*C term in the effective tangent, giving an energy-inconsistent solve (the recorder's
+DW = int v'Cv dt books the full ideal dashpot power and RES exposes the ~0.5*W gap). EXPLICIT
+integrators assemble the damping force from getDamp() directly and are consistent. For
+implicit absorbing runs prefer ASDAbsorbingBoundary; for Lysmer prefer explicit. NOT a
+recorder bug — the recorder is the instrument that surfaced it.

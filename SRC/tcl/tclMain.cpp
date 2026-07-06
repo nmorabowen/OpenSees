@@ -144,7 +144,7 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
     static const char *kFeatures =
 "      Ladruno fork — active features:\n"
 "        • OpenSeesPyMP — import openseesmp (MPI-parallel Python)\n"
-"        • EnergyBalance recorder (per-region energy sidecar)\n"
+"        • EnergyBalance recorder (per-region sidecar; -v2 channels: E_inject, E_lnvd, MPI ele/nodal split)\n"
 "        • ExplicitBathe — Noh–Bathe explicit (-lnvd FLAC damping, -sms [-consistent] mass scaling)\n"
 "        • CentralDifferenceLadruno — robust explicit central difference\n"
 "        • CentralDifferenceSMS — selective mass scaling (DT2MS-style, explicit)\n"

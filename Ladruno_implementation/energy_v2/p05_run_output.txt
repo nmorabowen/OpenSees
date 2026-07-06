@@ -1,0 +1,52 @@
+==============================================================================
+ADR-68 P0.5 sign-pinning | installed exe: C:\Program Files\Ladruno\OpenSees\bin\OpenSees.exe
+python: C:\Users\nmora\AppData\Local\Python\pythoncore-3.12-64\python.exe
+------------------------------------------------------------------------------
+[A1] analyze return: 0
+[A1] rows=600  t_end=0.600
+  KE   final= 4.228530e-02  min= 4.578710e-04  max= 2.983870e+00
+  IE   final= 2.728880e-01  min= 2.355310e-01  max= 2.037540e+00
+  DW   final= 1.717230e+00  min= 1.622280e-13  max= 1.717230e+00
+  ULW  final= 0.000000e+00  min= 0.000000e+00  max= 0.000000e+00
+  RES  final=-2.032410e+00  min=-3.634410e+00  max=-2.027810e+00
+  ERR% final=-5.592120e+01  min=-1.000000e+02  max=-5.579460e+01
+------------------------------------------------------------------------------
+[A2] analyze return: 0
+[A2] rows=600  t_end=0.600
+  KE   final= 8.882450e-07  min= 3.297690e-20  max= 3.431860e-02
+  IE   final= 1.686880e-06  min= 7.466460e-21  max= 3.013770e-02
+  DW   final= 3.545440e-02  min= 4.238550e-32  max= 3.545440e-02
+  ULW  final= 7.081970e-02  min= 1.393740e-19  max= 7.136080e-02
+  RES  final= 3.536260e-02  min= 9.893060e-20  max= 3.536260e-02
+  ERR% final= 2.739460e+01  min= 0.000000e+00  max= 2.739460e+01
+------------------------------------------------------------------------------
+[B] LOADER_TRY1_OK
+[B] LOADER_TRY2_OK
+[B] LOADER_TRY3_OK
+[B] console excerpt: 
+------------------------------------------------------------------------------
+[B2] analyze return: 0
+[B2] max |vx| over all nodes/steps under loader-only drive: 0.000e+00
+[B2] => loader is a SILENT NO-OP (zero response; eleLoad accepted the unknown type without creating any load)
+------------------------------------------------------------------------------
+[C] analyze return: 0
+[C] rows=600  t_end=0.600
+  KE   final= 3.667950e-12  min= 1.051690e-25  max= 9.943540e-07
+  IE   final=-7.054770e-07  min=-1.153940e-06  max=-4.228540e-25
+  DW   final= 3.529470e-07  min= 2.179680e-27  max= 3.529470e-07
+  ULW  final= 0.000000e+00  min= 0.000000e+00  max= 0.000000e+00
+  RES  final= 3.525270e-07  min= 3.155060e-25  max= 3.525270e-07
+  ERR% final= 1.582490e+01  min= 0.000000e+00  max= 1.582490e+01
+
+[C] independent W_inject (sum int f.v dt) =  7.055194e-07
+[C] IE_end/W = -0.9999   RES_end/W =  0.4997   DW_end/W =  0.5003   ULW_end/W =  0.0000
+==============================================================================
+VERDICT: (a) -- injection work leaks into IE with NEGATIVE sign
+(leak = -W_inject; IE_end/W above). ULW is blind to the elemental
+load. NOTE: RES here reads ~ +0.5*W (not the textbook 0) because a
+SEPARATE defect superposes: Lysmer stage-0 absorption under implicit
+Newmark books only ~half the absorbed energy in DW (see control A2,
+RES = +0.50*ULW). With energy-consistent absorption (DW -> W) the
+-W_inject leak alone would drive RES -> 0, i.e. hypothesis (a):
+balance accidentally closes while IE trends strongly negative.
+==============================================================================

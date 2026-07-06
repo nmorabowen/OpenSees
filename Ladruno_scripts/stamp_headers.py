@@ -73,6 +73,7 @@ GLOBS = [
     "SRC/analysis/integrator/LadrunoMassScaling.h",
     "SRC/analysis/integrator/LadrunoConsistentRefine.h",
     "SRC/analysis/integrator/LadrunoMassScalingEnergy.*",
+    "SRC/analysis/integrator/LadrunoEnergyChannels.h",
     "SRC/analysis/integrator/LadrunoArcLength.*",
     "SRC/analysis/integrator/LadrunoDynamicRelaxation.*",
     "SRC/analysis/integrator/LadrunoFictitiousMass.h",

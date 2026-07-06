@@ -77,6 +77,7 @@ public:
     int getNumDOF();
 
     // methods dealing with committed state and update
+    int commitState();   // Ladruno (ADR-69 P1.5): publish the base-action injection leak
     int revertToLastCommit();
 
     // methods to return the current linearized stiffness,
@@ -194,6 +195,15 @@ private:
     // time series for base actions
     TimeSeries* m_tsx = nullptr;
     TimeSeries* m_tsy = nullptr;
+
+    // Ladruno (ADR-69 P1.5): base-action (compliant-base) incident-injection
+    // leak publisher state - see ASDAbsorbingBoundary3D.h for the full
+    // rationale (identical mechanism: addBaseActions() is a pure external
+    // source, mutually exclusive with the lateral free-field boundary via
+    // BND_BOTTOM). Per-rank diagnostic state - NOT serialized.
+    double m_lkPrevRate = 0.0;
+    double m_lkLastTime = 0.0;
+    bool   m_lkSeeded = false;
 
 };
 
