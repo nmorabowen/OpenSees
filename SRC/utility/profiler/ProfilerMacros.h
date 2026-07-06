@@ -107,6 +107,14 @@
           ((tmr).engaged() && (fe_elem)->getElement())                           \
               ? (fe_elem)->getElement()->getClassTag() : -1)
 
+  // RAII per-element timer around a raw Element* call (the Domain::update loop —
+  // where force-based interiors and IMK hinge Newtons live; Phase-0 finding 1,
+  // 40b). Same gating as OPS_PROFILE_FE_ELEM_SCOPE; getClassTag() is touched
+  // only when the deep scope is live, so an unprofiled run pays nothing.
+  #define OPS_PROFILE_ELEMPTR_SCOPE(tmr, ele)                                     \
+      ::ops_profiler::ElemScope OPS_PROF_UNIQ(_ops_elem_)(                         \
+          (tmr), (tmr).engaged() ? (ele)->getClassTag() : -1)
+
   // Alloc counters (P4 wires Matrix/Vector/ID ctors/dtors). Runtime-gated on mem().
   // `type` is an ops_profiler::AllocType (ALLOC_MATRIX/ALLOC_VECTOR/ALLOC_ID) for
   // the per-type live split; an out-of-range value counts toward the aggregate only.
@@ -143,6 +151,7 @@
   #define OPS_PROFILE_SCOPE_DEEP_NAMED(tmr, name)     ((void)0)
   #define OPS_PROFILE_ELEM(tmr, classTag, w, fb)      ((void)0)
   #define OPS_PROFILE_FE_ELEM_SCOPE(tmr, fe_elem)     ((void)0)
+  #define OPS_PROFILE_ELEMPTR_SCOPE(tmr, ele)         ((void)0)
   #define OPS_PROFILE_COUNT_ALLOC(bytes, type)        ((void)0)
   #define OPS_PROFILE_COUNT_FREE(bytes, type)         ((void)0)
   #define OPS_PROFILE_STEP(step, t, dt, iters)        ((void)0)

@@ -92,6 +92,70 @@ out to be fully scoped.
 5. **factor-vs-solve SOE scope** + ModifiedNewton scopes — before any rank-8 work.
 6. **Drop/park:** T1 (no authorizing lane), T2 (ceiling ~2%), T4/T5 (await their benches).
 
+## Addendum — lane-D CDL drill-down: both Finding-3 items RESOLVED (2026-07-06, same day)
+
+Re-measured on the `elem.update`-instrumented build with a **live wave** (the original lane-D
+pulse was shorter than one Δt — the Path series sampled zero forever and the model never moved;
+`laneD_model.py` fixed; cost *structure* conclusions unchanged, per-µs numbers below supersede).
+Full attribution of the explicit step (2500 steps, 1000 LadrunoBrick + J2, 79.9 s):
+
+| phase | wall | of which element (classTag 33002) |
+|---|---|---|
+| newStep | 18.0 s (22.5%) | **elem.update 14.6 s — 5.63 µs/ele** |
+| formTangent | 12.9 s (16.2%) | elem.tangent 11.0 s — 4.41 µs/ele |
+| formUnbalance | 28.0 s (35.1%) | elem.residual 26.0 s — 10.39 µs/ele |
+| update | 18.7 s (23.4%) | **elem.update 16.5 s — 6.59 µs/ele** |
+| linearSolve | 0.02 s (~0%) | — |
+
+**Element work totals ~89% of the explicit step** once fully attributed (rank 7's >40% gate is
+passed with enormous margin).
+
+- **Finding-3 item 2 RESOLVED (newStep 23.9%):** it is element state determination —
+  `newStep` advances the leap-frog trial state and calls `updateDomain()` (the constitutive
+  pass), now attributed at 5.63 µs/ele. **Not integrator waste; nothing to fix.**
+- **Finding-3 item 1 RESOLVED (per-step tangent forms, 16.2%):** the constant lumped-mass
+  effective tangent is reassembled every step by plain `algorithm Linear`. **The fix is the
+  vanilla `-factorOnce` flag — zero code.** Measured live-wave A/B: **79.9 → 65.6 s (−17.9%),
+  bit-for-bit identical results** (md5 over the full displacement field). Caveats (quirks
+  ledger): constant M + fixed Δt only, and a mid-run `domainChanged` (contact re-emission
+  ADR-60, element removal ADR-51) leaves the skipped tangent stale — do not combine.
+- **NEW (feeds [[67_ladruno_explicit_performance_adr]]):** the explicit step runs the full
+  constitutive pass **twice** — `newStep` (trial advance) and `update()`
+  (`CentralDifferenceLadruno.cpp:654-655` pushes the full-step (u,v,a) snapshot and calls
+  `updateDomain()` again **at unchanged displacement**). For rate-independent materials the
+  second pass recomputes identical state — **~22% of explicit wall**. A skip needs a
+  rate-dependence / velocity-consumer gate (element damping, LNVD, recorders read the committed
+  v) — a scoped ADR-67 design item, NOT a quick patch. Ceiling if it lands: with `-factorOnce`
+  already in, the two together would cut ~35-40% of the explicit step.
+
+## Addendum — `elem.update` scope built + frame lanes re-measured (2026-07-06, same day)
+
+The Finding-1 instrument now exists: `Domain::update(void)`'s element loop carries a deep
+`elem.update` per-classTag bucket (`Domain.cpp`, ledgered; raw-`Element*` macro variant
+`OPS_PROFILE_ELEMPTR_SCOPE` in `ProfilerMacros.h`; inert without `profiler start -deep`).
+Lanes A and E re-run on the instrumented build:
+
+- **Lane A (fiber frame) — hypothesis CONFIRMED and quantified.** The formerly opaque `update`
+  phase is now 92% attributed: `ForceBeamColumn2d` (classTag 73) `update()` costs **57.6 µs/ele**
+  (~200× its `getTangent` at 0.28 µs/ele), and summing its three update sites
+  (solveCurrentStep/update 12.9 s + newStep 3.1 s + DisplacementControl direct 2.0 s) books
+  **~82% of step time to classTag-73 state determination**. The fiber lane is force-based-
+  interior-bound, per the classTag record. Optimization of that interior loop is **vanilla,
+  upstream-facing work** (change-budget policy) — but it is now measurable, so any future
+  upstream contribution carries a number.
+- **Lane E (IMK) — hypothesis REFUTED; ADR-68 T6 DEMOTED.** The hinge Newton is **cheap**:
+  `LadrunoIMKBeam2d` `elem.update` = **0.62 µs/ele**, only ~14% of the `update` phase
+  (486 of 3428 ms); total classTag-33004 work across ALL buckets ≈ 12% of step. The 35.4%
+  "update" band is **integrator/domain update machinery OUTSIDE the element loop** (~1.8 ms per
+  update call at 660 DOF — DOF_Group/node trial-state propagation, model-update glue), which the
+  original pass mis-read as hidden element cost. **T6 (hinge warm-start) payoff ceiling < 1% —
+  dropped.** The real lane-E cost structure: linearSolve ~30%, update machinery ~30%,
+  newStep/step glue ~25% — a small-model *per-step fixed overhead* profile, not a kernel profile.
+  New drill-down candidate: what the integrator update spends 1.8 ms/call on at 660 DOF.
+
+Lesson worth keeping: the first pass correctly located the opaque band but **guessed its owner
+wrong on lane E** — attribute, then rank; never optimize an unattributed band.
+
 ## Addendum — MUMPS parallel lane (measured 2026-07-06, same day)
 
 Strong scaling of the implicit parallel path (`openseesmp`, hand-partitioned z-slabs, shared

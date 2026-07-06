@@ -136,7 +136,7 @@ frames** — the fork's IMK lane, entirely unscoped by ADR-40's benches.
 | T2 | **DEMOTED** — ceiling ≈2% of wall | elastic-baseline diff on the shell lane; iteration-count inflation, not the material return, owns the cost. The G-EQUIV oracle ceremony is not worth it |
 | T3 | **Conditionally authorized** | brick tangent IS the element cost on solid lanes (40.6 µs/ele, 26.2% implicit / led-by-residual explicit); micro-drill the geometry share first. De-static proceeds now regardless |
 | T4/T5 | Unmeasured | need the EAS + finite-strain benches; Lemaitre bbar-vs-eas dump is prior art |
-| T6 | Lane confirmed top-two consumer, **blocked on instrument** | hinge Newton hides in the opaque `update` scope — build the `elem.update` per-classTag bucket, re-measure, then warm-start |
+| T6 | **DEMOTED — refuted by the `elem.update` instrument (2026-07-06 re-measure)** | hinge Newton = 0.62 µs/ele, ~14% of the update phase, total 33004 work ≈12% of step; the 35.4% band was integrator/domain update MACHINERY, not element work. Warm-start ceiling <1% — dropped. Lane E's real profile = solve ~30% + update machinery ~30% + per-step glue ~25% (small-model fixed-overhead regime) |
 
 ## Phasing (inherits ADR-40 Phase 0 as a hard gate)
 

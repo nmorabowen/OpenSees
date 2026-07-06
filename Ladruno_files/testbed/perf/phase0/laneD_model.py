@@ -76,10 +76,12 @@ nElem = eid
 nNode = (NX + 1) * (NY + 1) * (NZ + 1)
 print(f"model built: {nElem} elements, {nNode} nodes")
 
-# --- impulsive top load: short triangular pulse on the top face (k = NZ) ---
-# push in -z on every top node
-ops.timeSeries("Path", 1, "-dt", 1.0e-5, "-values",
-               0.0, 1.0, 0.0, 0.0, 0.0, 0.0)   # rise then fall over ~2e-5 s, then zero
+# --- impulsive top load: triangular pulse on the top face (k = NZ) ---
+# Pulse must span SEVERAL explicit steps (dt ~1e-4): the original 2e-5 s pulse
+# was shorter than one step, so the Path series sampled zero at every step and
+# the model never moved (elastic-at-rest profile). 2e-3 s = ~20 steps.
+ops.timeSeries("Path", 1, "-dt", 1.0e-3, "-values",
+               0.0, 1.0, 0.0, 0.0, 0.0, 0.0)
 ops.pattern("Plain", 1, 1)
 Pnode = -1.0e7   # N per top node, -z
 for j in range(NY + 1):
