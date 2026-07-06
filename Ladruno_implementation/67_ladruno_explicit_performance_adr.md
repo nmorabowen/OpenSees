@@ -26,6 +26,16 @@ tags:
 > Provenance: 2026-07-04/05 skill-guided review (the `explicit-dynamics` skill's
 > `advanced_methods_landscape.md` "what to pursue" ranking + `stability_and_timestep.md`
 > + `mass_scaling.md`), every claim cross-checked against current source.
+> Revision 2026-07-05: adversarial re-review (F1–F6) corrected the P2.1 closed-form,
+> re-scoped P1.1 to the whole `refineAccel` body, fixed the P3.1 warm-start contract,
+> moved P2.3 off the byte-identical gate, and widened the P1.2 cache-invalidation trigger.
+> Revision 2026-07-05b: independent (Fable) cross-review **DROPPED the original P1.2** — its
+> premise (a periodic initial-stiffness eigensolve) is unreachable, `-recompute` force-upgrades
+> to `-tangent` (`CentralDifferenceLadruno.cpp:119`) — and replaced it with **P1.2′** (massless-
+> element short-circuit, byte-identical, reachable); corrected P2.1 (the element pencil is
+> **fixity-blind**, closed form is `k(1/m₁+1/m₂)`, its massless-spring target belongs to P1.2′);
+> added a required mid-run-topology-change test and the `updateParameter`/`updateMaterialStage`
+> staleness channel.
 
 ## Context — the performance model
 
@@ -56,42 +66,102 @@ vectorization / GPU, ADR-40). The *integrator* can only (a) cut the step count [
 
 ### P1 — accepted (byte-identical or strictly-less-work, low risk)
 
-**P1.1 — Pre-allocate the consistent-SMS PCG scratch.**
+**P1.1 — Pre-allocate the consistent-SMS PCG scratch (whole `refineAccel` body, not just
+`consistentPCG`).**
 `consistentPCG` allocates **five full `neq`-length `Vector`s every step** (`Ax, z, p, Ap,
-res` — `LadrunoMassScaling.h:559-562`), called once per step from `refineAccel`. For a
-100k-DOF model that is ~4 MB malloc/free *per step*, thousands of times — pure allocator
-churn. **Fix:** hoist to reusable buffers owned by the consistent integrator (sized in
-`domainChanged`, reused every step). **Result: byte-identical.** Highest-ROI, lowest-risk
-item; the single cleanest.
+res` — `LadrunoMassScaling.h:559-562`), called once per step from `refineAccel`. But the
+churn is larger than those five: the caller `applyConsistentRefine` **also** allocates
+`Vector r(neq)` every step (`LadrunoConsistentRefine.h:149`), and the **MPI path
+additionally rebuilds** `std::vector<double> w` and `Vector ones(neq)` **every step**
+(`LadrunoConsistentRefine.h:87-91`). A hoist scoped to `consistentPCG` alone leaves ≥1
+(serial) / ≥3 (MPI) `neq`-allocations per step on the table. For a 100k-DOF model the
+five-vector slice alone is ~4 MB malloc/free *per step*, thousands of times — pure
+allocator churn. **Fix:** hoist the *entire* `refineAccel` scratch set (the 5 PCG vectors
+**plus** the caller's `r`, and the MPI `w`/`ones`) to reusable buffers owned by the
+consistent integrator (sized in `domainChanged`, reused every step). The MPI `w` rebuild is
+the one judgment call — the current code rebuilds it each step for robustness to
+re-partition; cache it but invalidate on `domainChanged` (topology/partition change).
+**Result: byte-identical.** Highest-ROI, lowest-risk item; the single cleanest.
 
-**P1.2 — Cache per-element λ_max in initial-stiffness mode; make `-recompute` a no-op there.**
-In `-cfl` **without** `-tangent`, each element's `λ_max` (initial `K`, lumped `M`) is
-**constant** — but `-recompute N` re-runs the full `DSYGVX` on *every* element every N steps
-(`computeCriticalTimeStep`, `CriticalTimeStep.cpp:288-367`), recomputing an unchanged number
-at O(N_elem·n³). **Fix:** in initial-stiffness mode, compute once in `domainChanged`, cache,
-and skip the periodic recompute entirely (or at minimum **warn that `-recompute` without
-`-tangent` is a no-op**). **Result: byte-identical**, eliminates the entire `-recompute`
-cost in the common case. (Under `-tangent` the recompute is genuinely needed — see P2.)
+**P1.2 — ~~Cache per-element λ_max in initial-stiffness mode~~ — DROPPED (premise unreachable).**
+The original P1.2 assumed `-cfl` **without** `-tangent` still runs a *periodic* `-recompute N`
+eigensolve worth caching away. **It does not.** All three parsers **force
+`cflUseTangent = true` the moment `-recompute` is given** (`CentralDifferenceLadruno.cpp:119` —
+source comment: *"recomputing the initial stiffness every N steps is pointless"*;
+`ExplicitBathe.cpp:210,375`), and the SMS parsers downgrade `-recompute` to report-only. In
+pure initial-stiffness `-cfl` the eigensolve already runs **exactly once**, in `domainChanged`
+(`CentralDifferenceLadruno.cpp:338`); there is **no periodic initial-stiffness recompute to
+skip**, and "-recompute without -tangent" cannot be produced from the script interface (the
+flag auto-upgrades). The only residual — reusing `λ_max` across successive `domainChanged`
+events — is both tiny and exactly where the stale-cache instability hazard lives, and the
+safety-required full invalidation on `domainChanged` makes it a literal no-op. **Superseded by
+P1.2′.**
+
+**P1.2′ — Massless-element short-circuit before `DSYGVX`/`DGGEV` (the reachable byte-identical
+win).** An element with all-zero lumped mass (`mdiag[i] ≤ 0 ∀i`) — e.g. a zeroLength
+interface/contact spring whose inertia is carried by its nodes' *other* elements — fails the
+`mPositive` check (`CriticalTimeStep.cpp:92-94`) and falls into the **most expensive** path,
+`DGGEV` (`:140-188`), only to have **every** eigenpair rejected (`β=0` ⇒ `betaTol=0` ⇒ all
+skipped) and return `-1` ("no bound"). **Fix:** pre-check `all mdiag ≤ 0 → return -1`, skipping
+the full general eigensolve. **Byte-identical** (same `-1`, same "contributes no `Δt` bound"
+semantics — a massless element has no inertial timescale), and it targets *exactly* the tiny
+interface springs P2.1 was chasing — but correctly (they have **no finite** `λ_max`, so P2.1's
+"closed form" was never applicable to them; see P2.1). Reachable, safe, and needs no config the
+parser forbids.
 
 ### P2 — conditional (accuracy-neutral fast-paths; small numerical surface, gate on batteries)
 
 **P2.1 — Closed-form `λ_max` fast-path for simple elements.**
-Truss / zeroLength / spring / 1-DOF-pencil elements have `λ_max = k/m` analytically — skip
+Truss / zeroLength / spring / 1-DOF-pencil elements have `λ_max` analytically — skip
 `DSYGVX` and its ~9 per-element `new[]/delete[]` (`elementLambdaMax`, `CriticalTimeStep.cpp:
-256-269`; `maxGeneralizedEigenvalue` allocs `CriticalTimeStep.cpp:97-134`). These are
-*exactly* the tiny stiff interface/contact springs that dominate the models people mass-scale
-and the biggest `-tangent`-mode setup cost. Detect by element class / `n==small` and validate
-the closed form equals the eigensolve on a mixed mesh. Low risk (same number, cheaper route).
+256-269`; `maxGeneralizedEigenvalue` allocs `CriticalTimeStep.cpp:97-134`).
+
+**Two facts reshape this item (2026-07-05 re-review) — read before implementing.**
+
+*(a) The element pencil is fixity-blind, so the closed form is NOT `λ_max = k/m` and NOT
+fixity-dependent.* `elementLambdaMax` builds the pencil from **only** `ele->getInitialStiff()`
+and the lumped element mass (`CriticalTimeStep.cpp:252-265`) — boundary conditions never enter
+it (grounding is applied at the DOF/assembly layer, not the element). So a grounded spring and a
+free–free truss produce the **same** element number. For a 2-node axial pencil
+`K=k[[1,-1],[-1,1]]`, `M=diag(m₁,m₂)` the eigenvalues are `{0, k(1/m₁+1/m₂)}`, i.e.
+**`λ_max = k(1/m₁+1/m₂)`** (= `4k/m_tot` for equal split; `Δt_cr = 2/ω_max = ℓ/c`, the
+`stability_and_timestep.md` element check). Coding the naive `λ_max = k/m_tot` overestimates
+the step by 2× → **unconditionally unstable**. The real variation axes are **unequal nodal
+lumping** and **zero-mass DOFs**, plus which DOF *directions* the zeroLength material couples
+(arbitrary per assigned material) — *not* grounding. The equivalence-gate mesh must vary
+**nodal-mass asymmetry and include zero-mass DOFs**, not fixity (a grounded-vs-free-free mesh
+tests the same number twice — vacuous).
+
+*(b) P2.1's own headline population — tiny interface/contact springs — is mostly massless at
+the element level, so it has NO finite `λ_max`.* Those springs carry no element mass (inertia
+lives on their nodes via other elements) ⇒ they correctly return `-1` (no bound), handled far
+more safely by **P1.2′** (the massless short-circuit) than by any closed form. So P2.1's
+finite-`λ` closed form applies only to the **mass-bearing** simple elements (a truss with its
+own `ρAL`), a much smaller population than the ADR first claimed.
+
+Net: **P2.1 is downgraded** — P1.2′ takes the massless springs (byte-identical, safe); the
+finite closed form is a narrow, must-gate-hard optimization for mass-bearing 1-DOF-pencil
+elements only, worth it only if a profile shows their eigensolve setup actually costs. The
+equivalence gate (closed form == eigensolve, to rounding, over a mass-asymmetric + zero-mass
+mesh) is load-bearing, not a formality — the wrong formula is a silent stability hazard.
 
 **P2.2 — Reuse eigensolve scratch under `-tangent`.**
 `elementLambdaMax` mallocs `K_data`, `M_data` + 7 LAPACK arrays *per element per call*. Under
-`-tangent` (re-eigensolved every step for state-dependent tangent) reuse thread-local scratch.
-Byte-identical.
+`-tangent` (re-eigensolved every step for state-dependent tangent) reuse **a single
+max-`n`-sized scratch set across the element loop** — the loop is serial (`while` at
+`CriticalTimeStep.cpp:307`), so this is one buffer sized to the largest element, not
+thread-local storage (there is no threading here to be local to). Byte-identical.
 
-**P2.3 — `consistentMatVec` inner-loop: precompute lumped diagonal.**
-`consistentMatVec` divides `x(i)/diagMinv[i]` in the hot loop (`LadrunoMassScaling.h:528-529`)
-on *every* matvec of *every* PCG iteration. Precompute `mlump[i] = 1/diagMinv[i]` once per
-step and multiply. Byte-identical (to rounding), removes a division from the innermost loop.
+**P2.3 — `consistentMatVec`: precompute lumped diagonal.**
+`consistentMatVec` divides `x(i)/diagMinv[i]` (`LadrunoMassScaling.h:528-529`) on *every*
+matvec of *every* PCG iteration. Precompute `mlump[i] = 1/diagMinv[i]` once per step and
+multiply. **NOT byte-identical** — `x*(1/d)` is two roundings vs one `x/d`, so the PCG
+follows a slightly different floating-point trajectory and the last bits of the recorder
+output move; this item is gated by the **equivalence/energy-band** gate (with P2.1), **not**
+the byte-identical gate. Scope note: the division sits in the O(`neq`) diagonal-scatter
+loop, **not** the O(Σ`nl²`) element-block inner loop that dominates a matvec — so the saving
+is a per-`neq` division, real but modest; the block matmul is the hot path. Low priority
+relative to P1.
 
 **P2.4 — Optional cheap `-cfl fast` sizing (ℓ/c bound).**
 Belytschko's element-size/wave-speed bound `Δt_e ≈ ℓ_e/c_e` (`stability_and_timestep.md`)
@@ -106,7 +176,23 @@ opt-in `-cfl fast` mode: far cheaper setup, slightly conservative Δt. **Not** b
 (`LadrunoMassScaling.h:557`), 3–21 iters (ADR-38). A **warm-start from the previous step's
 converged `a`** and/or a looser explicit-appropriate `tol` could cut iterations — but both
 move the solution, so gate behind the ADR-38 f₁-preservation + energy-closure batteries and
-prove the drift is below the existing gate bands before shipping. Medium value, real risk.
+prove the drift is below the existing gate bands before shipping.
+
+**Warm-start requires an API change, not just a re-seed — the current signature forbids it.**
+`consistentPCG` overloads its `a` argument as three things at once
+(`LadrunoMassScaling.h:550`): the RHS *source*, the initial *guess*, and the *output*. The
+caller recovers the right-hand side from the **entry** value of `a`:
+`r(i) = a(i) / Ainv[i]` (= `M_lump · a_entry`, `LadrunoConsistentRefine.h:151` serial,
+`:96-98` MPI), relying on `a` entering as the fresh diagonal solve `M_lump⁻¹ r`. If you seed
+`a` with the previous step's `a_prev = M̃⁻¹ r_prev`, the caller computes
+`r = M_lump · a_prev ≠ r_current` and **corrupts the RHS**, not just the guess. A real
+warm-start must decouple the three roles: pass `r` explicitly and add a *separate* guess
+vector — a change to the shared serial+MPI `refineAccel` body (`applyConsistentRefine`,
+`LadrunoConsistentRefine.h:57`) and its two call sites. This raises the effort/risk above a
+tuning knob: **medium value, real risk, and a signature/contract change** — do it only with
+the ADR-38 battery in hand and re-verify the np=1 == np=2 bit-exact after touching the shared
+body. (Adaptive `tol` alone does *not* need the signature change — it is the cheaper half of
+this item and can be tried first.)
 
 ## Fewer-steps levers (cross-ref only — belong to ADR-65 / the skill landscape)
 
@@ -123,25 +209,46 @@ Recorded so this ADR is self-contained; **not** owned here:
 
 ## Decision
 
-- **Do P1.1 + P1.2 first** — byte-identical, self-contained, and they target the two paths
-  that actually cost integrator time (consistent-SMS per-step allocation; `-recompute` /
-  `-tangent` setup). Verify against the existing `test_centralDifferenceSMSConsistent_*`,
-  `test_massScaling_validation*`, and CDL batteries with a **byte-identical assertion** (the
-  no-op-preserving discipline of ADR-05/36/38: default paths must not move).
-- **P2 conditional** — pick up P2.1/P2.3 alongside P1 if cheap; P2.4 only if a user wants the
-  fast estimate.
+- **Do P1.1 + P1.2′ first** — byte-identical, self-contained, reachable. **P1.1** targets the
+  path that actually costs integrator time (consistent-SMS per-step allocation); **P1.2′** (the
+  massless-element short-circuit) skips the wasted `DGGEV` on interface springs. (The original
+  **P1.2 λ_max-cache is DROPPED** — its premise, a periodic initial-stiffness eigensolve, does
+  not exist on any reachable code path: `-recompute` force-upgrades to `-tangent`,
+  `CentralDifferenceLadruno.cpp:119`.) Verify against the existing
+  `test_centralDifferenceSMSConsistent_*`, `test_massScaling_validation*`, and CDL batteries
+  with a **byte-identical assertion** (the no-op-preserving discipline of ADR-05/36/38: default
+  paths must not move) — **plus a new mid-run `remove element` + continue case** so the P1.1
+  buffer-lifetime invariant is actually exercised (see Validation).
+- **P2 conditional** — **P2.2** (reuse eigensolve scratch, byte-identical) is the cheapest and
+  can ride alongside P1. **P2.1 is downgraded** — its massless-spring target is taken (correctly)
+  by P1.2′; the residual finite closed form (`k(1/m₁+1/m₂)`, fixity-*independent*) applies only
+  to mass-bearing 1-DOF-pencil elements, and the wrong form is a silent stability hazard, so it
+  needs the load-bearing equivalence gate — pick it up only if a profile shows those elements'
+  eigensolve setup actually costs. **P2.3** is a modest per-`neq` win and is **not**
+  byte-identical (equivalence gate). P2.4 only if a user wants the fast estimate.
 - **P3 deferred** — only with the ADR-38 accuracy battery in hand.
 - **Fewer-steps work stays in ADR-65**; the one cheap cross-over worth pulling forward is
   exposing `HHTGeneralizedExplicit` (separate small effort).
 
 ## Validation
 
-- **Byte-identical gate** for P1.1/P1.2/P2.2/P2.3: default lumped + consistent runs must be
+- **Byte-identical gate** for P1.1/P1.2′/P2.2: default lumped + consistent runs must be
   bit-for-bit unchanged (compare recorder output pre/post on the SMS + CDL batteries).
-- **Equivalence gate** for P2.1: closed-form `λ_max` == eigensolve `λ_max` (to rounding) on a
-  mixed truss+brick mesh; the governing element/tag must not change.
+  (P2.3 is **excluded** — `x*(1/d)` ≠ `x/d` bit-for-bit; see the equivalence gate.)
+- **Lifetime-invariant gate (NEW, required for P1.1)**: a **mid-run `remove element` +
+  continue** case on a consistent-SMS run — the existing SMS/CDL batteries are all static-mesh
+  (`test_centralDifferenceSMSConsistent_*`, `test_massScaling_*` do **no** mid-run topology
+  change), so without this the P1.1 buffer-resize / MPI-`w`-staleness invariant — the item's
+  *only* real risk — ships untested. The byte-identical gate on a fixed mesh cannot see it.
+- **Equivalence / energy-band gate** for P2.1 **and P2.3**: for P2.1, closed-form `λ_max`
+  == eigensolve `λ_max` (to rounding) on a mesh that varies **nodal-mass asymmetry
+  (`m₁≠m₂`) and includes zero-mass DOFs** (*not* grounding — the pencil is fixity-blind, so a
+  grounded-vs-free-free mesh tests the same number twice), plus a brick; the governing
+  element/tag must not change. For P2.3, the run must stay within the ADR-38 f₁-preservation +
+  energy-closure bands (not bit-exact).
 - **Perf gate**: profile (ADR-40) a large consistent-SMS run pre/post P1.1 (per-step alloc
-  bytes → ~0) and a `-recompute`/`-tangent` run pre/post P1.2/P2.2 (setup time).
+  bytes → ~0) and a setup-heavy interface-spring model pre/post P1.2′/P2.2 (per-element
+  eigensolve time; count of elements taking the massless short-circuit).
 - MPI: re-confirm np=1 == np=2 bit-exact after touching `consistentPCG`/`consistentMatVec`.
 
 ## Gotchas (fold to LEDGER_quirks on ship)
@@ -150,7 +257,16 @@ Recorded so this ADR is self-contained; **not** owned here:
   (`LadrunoConsistentRefine.h`, `consistentParPCG`) — any buffer hoist must keep both the
   serial and MPI paths correct (the serial path must stay the `w==null` reduction of the
   distributed one).
-- Per-element `λ_max` caching must be **invalidated on `domainChanged`** (element
-  add/remove, ADR-51) — a stale cache after topology change is a silent wrong-Δt hazard.
-- `-recompute` no-op-in-initial-stiffness must NOT silently change behavior under `-tangent`
-  (where recompute is load-bearing) — gate the skip on `!cflUseTangent`.
+- Any per-element `λ_max` caching (P2.1, or a future cross-`domainChanged` scheme) must be
+  **invalidated on `domainChanged`** (element add/remove, ADR-51) — a stale cache after a
+  topology change is a silent **wrong-Δt → unstable-run** hazard, strictly worse than the
+  recompute it saves.
+- **`λ_max` staleness has a second channel beyond `domainChanged` and Rayleigh:**
+  `updateParameter` on `E`/stiffness and `updateMaterialStage` (soil-stage switch — squarely
+  this fork's SSI lane) change the **initial** stiffness *without* firing `domainChanged`. Any
+  initial-stiffness `λ_max` cache (P2.1) can therefore go silently stale even when
+  undamped-only. Either don't cache across these events or hook them explicitly.
+- `-recompute` **cannot** be requested without `-tangent` (the parser force-upgrades,
+  `CentralDifferenceLadruno.cpp:119`) — so there is no "initial-stiffness `-recompute`" path to
+  special-case (this is why the original P1.2 was dropped). Any future skip that *does* touch
+  the tangent-recompute path must gate on `!cflUseTangent`.
