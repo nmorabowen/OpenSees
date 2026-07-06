@@ -2443,3 +2443,24 @@ DW = int v'Cv dt books the full ideal dashpot power and RES exposes the ~0.5*W g
 integrators assemble the damping force from getDamp() directly and are consistent. For
 implicit absorbing runs prefer ASDAbsorbingBoundary; for Lysmer prefer explicit. NOT a
 recorder bug — the recorder is the instrument that surfaced it.
+
+**`UniformExcitation` input work HIDES INSIDE the EnergyBalance recorder's IE column (IE = -DW
+exactly, RES accidentally closed; 2026-07-06, ADR-69 P1.6).** Elements that implement
+`addInertiaLoadToUnbalance` (FourNodeQuad etc.) store `-M*ug''` in their element load vector
+`Q`, and `getResistingForce` returns `K*u - Q` — so the recorder's IE integral
+(`int F.v dt`) silently accumulates MINUS the seismic input work. The balance then "closes"
+with IE the negative mirror of the genuine absorbed/damped energy and ULW = 0. Consequence
+for closure gates: NEVER drive an energy-balance validation model with UniformExcitation —
+the input-work pollution drowns whatever leak the gate is trying to isolate (use initial
+velocities: no patterns, Q = 0, IE = pure strain energy). Not a recorder bug per se — a
+consequence of OpenSees folding element loads into the resisting force.
+
+**`ASDAbsorbingBoundary2D/3D::addInertiaLoadToUnbalance` is a deliberate NO-OP ("we don't
+need this!") — free-field columns are NEVER driven by `UniformExcitation` (2026-07-06,
+ADR-69 P1.6).** The FF masses (`addMff`) receive no `-M*ug''` effective load, so under
+uniform excitation the FF column rides rigidly in relative coordinates: zero strain, zero
+`addRffToSoil` transfer, dead lateral boundary. The intended input path for ASD boundaries
+is the BOTTOM compliant base (`"B" -fx/-fy` time series); lateral elements take no
+time-series args at all (parser rejects them for non-bottom). Also note the lateral
+`addClk` dashpot writes only SOIL rows (one-way coupling): the FF column is UNDAMPED unless
+element Rayleigh (`addCff`, alphaM) is set — an undamped FF column rings forever.
