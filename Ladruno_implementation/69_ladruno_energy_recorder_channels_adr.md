@@ -655,3 +655,32 @@ when done)*
     gates); p15/p16 standalone gates re-run ALL PASS on the new pyd (column
     changes disturb nothing — those models declare no modal/hg);
     `_verify_explicit.py` 20/22 unchanged; MPI gate ALL PASS.
+- **2026-07-06 P2.1 — removal safety (the P2 review's flagged latent risk,
+  fixed as its own follow-up).** `remove element` DELETES the Element while
+  recorders never receive `domainChanged()` (Domain::record() calls them
+  directly; `Domain::hasDomainChanged()` is STATEFUL — consumed by the
+  Analysis, off-limits to recorders) — so the P2 `hgCache` made a virtual
+  `getResponse()` through the freed element (use-after-free), and the
+  pre-existing pointer-keyed region maps could silently mis-bin a NEW
+  entity allocated at a reused address. Zero-vanilla fix, per-record
+  structural re-validation: (1) O(1) `getNumElements()/getNumNodes()`
+  sentinels vs cached values; (2) hg cache entries carry the element TAG
+  and record() verifies `getElement(tag)` still returns the SAME pointer
+  before any virtual call — catches remove-and-readd-same-tag, which the
+  count sentinel is blind to; any mismatch rebuilds the cache (Responses
+  deleted + re-probed). (3) ALL membership containers re-keyed by TAG
+  (elemRegions/nodeRegions/ownedNodes) — freed-pointer reuse can no longer
+  alias; (4) per-element `velScratch` growth guard in the sweep (an element
+  swapped in at unchanged counts can exceed the cached max DOF — previously
+  an unchecked Vector overrun). Regression test
+  `test_energybalance_element_removal_safety`: URI-brick cantilever,
+  `remove element` mid-run (the UAF site pre-fix), continue stepping, then
+  re-add a DIFFERENT (std) brick under the SAME tag and step again; asserts
+  survival + all columns finite, legacy and -v2. Energy is deliberately NOT
+  conserved across removal (the element's energy vanishes from the sums;
+  RES jumps) — documented, finiteness only. Pattern quirks-ledgered
+  alongside the LadrunoMonitorRecorder (#489) re-resolve-by-tag precedent.
+  **UAF PROVEN on the pre-fix (P2 #501) pyd**: the new test hard-crashes the
+  interpreter ("Windows fatal exception: access violation", faulthandler
+  frame = the first `analyze` after `remove element`) — same
+  revert-and-reproduce discipline as the SolidShell Rayleigh regression.

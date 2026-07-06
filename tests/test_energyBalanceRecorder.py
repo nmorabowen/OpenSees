@@ -613,6 +613,92 @@ def test_energybalance_v2_hourglass_attribution(tmp_path, capfd):
 
 
 # ==========================================================================
+# ADR-69 P2.1: removal safety. `remove element` DELETES the Element object,
+# and nothing routes domainChanged() to recorders (Domain::record() calls
+# them directly; Domain::hasDomainChanged() is stateful and owned by the
+# Analysis) - before P2.1 the v2 hourglass cache then made a virtual
+# getResponse() call through the freed element (use-after-free), and the
+# region maps / velScratch could go stale. P2.1 re-validates structurally on
+# every record (entity counts + hg tag->pointer identity) and keys all
+# membership by TAG. This test removes a URI brick mid-run (hgCache
+# populated), keeps stepping, then re-adds a DIFFERENT element under the
+# SAME tag (the pointer-identity branch) and steps again - it passes by NOT
+# crashing and keeping every column finite. Energy is NOT conserved across
+# removal (the element's energy vanishes from the sums) - RES jumping is
+# expected; only finiteness is asserted.
+# ==========================================================================
+def _run_removal_cantilever(tmp_path, fname, v2, nx=4):
+    L, E, nu, rho = 10.0, 1000.0, 0.0, 1.0
+    efile = str(tmp_path / fname)
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    dx = L / nx
+
+    def nt(i, j, k):
+        return 1 + i + (nx + 1) * j + (nx + 1) * 2 * k
+
+    for k in range(2):
+        for j in range(2):
+            for i in range(nx + 1):
+                ops.node(nt(i, j, k), i * dx, j * 1.0, k * 1.0)
+                # nodal mass keeps orphaned nodes regular after the removal
+                ops.mass(nt(i, j, k), 0.1, 0.1, 0.1)
+    ops.nDMaterial("ElasticIsotropic", 1, E, nu, rho)
+
+    def brick_nodes(i):
+        return (nt(i, 0, 0), nt(i + 1, 0, 0), nt(i + 1, 1, 0), nt(i, 1, 0),
+                nt(i, 0, 1), nt(i + 1, 0, 1), nt(i + 1, 1, 1), nt(i, 1, 1))
+
+    for i in range(nx):
+        ops.element("LadrunoBrick", 1 + i, *brick_nodes(i), 1,
+                    "-formulation", "uri", "-hourglass", "stiffness")
+    for k in range(2):
+        for j in range(2):
+            ops.fix(nt(0, j, k), 1, 1, 1)
+    for k in range(2):
+        for j in range(2):
+            for i in range(1, nx + 1):
+                ops.setNodeVel(nt(i, j, k), 3, 0.5 * i / nx, "-commit")
+    rec = ["EnergyBalance", "-file", efile, "-time"]
+    if v2:
+        rec.append("-v2")
+    ops.recorder(*rec)
+    ops.constraints("Plain")
+    ops.numberer("RCM")
+    ops.system("FullGeneral")
+    ops.test("NormDispIncr", 1e-10, 10)
+    ops.algorithm("Linear")
+    ops.integrator("Newmark", 0.5, 0.25)
+    ops.analysis("Transient")
+
+    assert ops.analyze(40, 2.0e-3) == 0
+    # runtime removal: the interpreter DELETES the tip element object
+    ops.remove("element", nx)
+    assert ops.analyze(40, 2.0e-3) == 0     # pre-P2.1: UAF here (v2)
+    # tag reuse: a DIFFERENT element (std twin) under the SAME tag - the
+    # count sentinel is blind to this (n_ele back to nx), the hg cache's
+    # tag->pointer identity check is what must catch it
+    ops.element("LadrunoBrick", nx, *brick_nodes(nx - 1), 1,
+                "-formulation", "std")
+    assert ops.analyze(40, 2.0e-3) == 0
+    ops.wipe()
+    return np.atleast_2d(np.loadtxt(efile))
+
+
+def test_energybalance_element_removal_safety(tmp_path, capfd):
+    d_v2 = _run_removal_cantilever(tmp_path, "rm_v2.txt", v2=True)
+    cols = _v2_cols(capfd)
+    assert np.all(np.isfinite(d_v2)), "v2 output must stay finite across removal"
+    assert "E_hg" in cols
+    e_hg = d_v2[:, cols.index("E_hg")]
+    assert np.abs(e_hg[:40]).max() > 0.0, "URI run should publish E_hg pre-removal"
+    assert np.all(np.isfinite(e_hg))
+
+    d_leg = _run_removal_cantilever(tmp_path, "rm_leg.txt", v2=False)
+    assert np.all(np.isfinite(d_leg)), "legacy output must stay finite across removal"
+
+
+# ==========================================================================
 # column layout: with -time, exactly 7 columns (time + KE IE DW ULW RES ERR%)
 # ==========================================================================
 def test_energybalance_time_column_layout(tmp_path):
