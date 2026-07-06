@@ -1,0 +1,942 @@
+[
+ {
+  "file": "C:\\Users\\nmora\\AppData\\Local\\Temp\\claude\\C--Users-nmora-Github-OpenSees-Compile-OpenSees--claude-worktrees-inspiring-gauss-b539e6\\1fb1d439-93ee-4243-bd88-ce17f6c70d39\\scratchpad\\zfp_bench\\bench_a_nonlinear2d.ladruno",
+  "raw_bytes": 191808000,
+  "n_datasets": 6,
+  "configs": {
+   "f64_gzip4": {
+    "bytes": 133392880,
+    "file_bytes": 133447048,
+    "enc_s": 4.079815000004601,
+    "dec_s": 1.3305306999827735,
+    "max_abs": 0.0,
+    "max_range_rel": 0.0,
+    "max_rel": 0.0,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/strain/31-FourNodeQuad[201:0:0]/DATA": 48291213,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/stress/31-FourNodeQuad[201:0:0]/DATA": 52458564,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 8989125,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 7537271,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/REACTION_FORCE/DATA": 7914681,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/VELOCITY/DATA": 8202026
+    },
+    "marginal_agg": 0.4309875309686694,
+    "marginal_worst": 0.38310313851459404,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA"
+   },
+   "f32_gzip4": {
+    "bytes": 57490668,
+    "file_bytes": 57532292,
+    "enc_s": 2.256877199979499,
+    "dec_s": 0.8433745999936946,
+    "max_abs": 0.12494604056701064,
+    "max_range_rel": 5.5097518678519944e-08,
+    "max_rel": 5.959466666506267e-08,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/strain/31-FourNodeQuad[201:0:0]/DATA": 21973526,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/stress/31-FourNodeQuad[201:0:0]/DATA": 22335976,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 3443762,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 3086424,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/REACTION_FORCE/DATA": 3479812,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/VELOCITY/DATA": 3171168
+    }
+   },
+   "zfp_acc_0.0001": {
+    "bytes": 68479479,
+    "file_bytes": 68533647,
+    "enc_s": 1.1524751000106335,
+    "dec_s": 1.4235895000165328,
+    "max_abs": 1.7018283429592884e-05,
+    "max_range_rel": 0.007271809876195595,
+    "max_rel": 2540.459117069314,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/strain/31-FourNodeQuad[201:0:0]/DATA": 4495793,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/stress/31-FourNodeQuad[201:0:0]/DATA": 23613853,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 14043199,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 5584780,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/REACTION_FORCE/DATA": 11471280,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/VELOCITY/DATA": 9270574
+    },
+    "marginal_agg": 0.8395313287941341,
+    "marginal_worst": 0.2452263191599008,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA"
+   },
+   "zfp_acc_1e-06": {
+    "bytes": 91870289,
+    "file_bytes": 91924457,
+    "enc_s": 1.4035545000224374,
+    "dec_s": 1.6674904000246897,
+    "max_abs": 2.853011356052093e-07,
+    "max_range_rel": 0.00012908230676591964,
+    "max_rel": 56.507654393763346,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/strain/31-FourNodeQuad[201:0:0]/DATA": 10793983,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/stress/31-FourNodeQuad[201:0:0]/DATA": 30681252,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 16555692,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 8072571,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/REACTION_FORCE/DATA": 13983771,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/VELOCITY/DATA": 11783020
+    },
+    "marginal_agg": 0.6257808550052564,
+    "marginal_worst": 0.20801075545498188,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA"
+   },
+   "zfp_acc_1e-08": {
+    "bytes": 119999013,
+    "file_bytes": 120053181,
+    "enc_s": 1.6236764000495896,
+    "dec_s": 1.8830661999527365,
+    "max_abs": 2.1687992865916488e-09,
+    "max_range_rel": 1.1025940021853612e-06,
+    "max_rel": 0.5602156305545831,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/strain/31-FourNodeQuad[201:0:0]/DATA": 18953457,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/stress/31-FourNodeQuad[201:0:0]/DATA": 38926692,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 19486929,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 11002659,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/REACTION_FORCE/DATA": 16915012,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/VELOCITY/DATA": 14714264
+    },
+    "marginal_agg": 0.47909284053861345,
+    "marginal_worst": 0.17672163736009916,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA"
+   },
+   "zfp_acc_1e-10": {
+    "bytes": 148210000,
+    "file_bytes": 148264168,
+    "enc_s": 1.8439394000452012,
+    "dec_s": 2.1538406999898143,
+    "max_abs": 1.7008523495870564e-11,
+    "max_range_rel": 8.64694861738336e-09,
+    "max_rel": 0.004450325786610886,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/strain/31-FourNodeQuad[201:0:0]/DATA": 27194046,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/stress/31-FourNodeQuad[201:0:0]/DATA": 47172132,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 22418174,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 13933888,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/REACTION_FORCE/DATA": 19846254,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/VELOCITY/DATA": 17645506
+    },
+    "marginal_agg": 0.38790006072464744,
+    "marginal_worst": 0.1536147413254978,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA"
+   },
+   "zfp_reversible": {
+    "bytes": 224320060,
+    "file_bytes": 224374228,
+    "enc_s": 2.3150072999997064,
+    "dec_s": 2.765286699985154,
+    "max_abs": 0.0,
+    "max_range_rel": 0.0,
+    "max_rel": 0.0,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/strain/31-FourNodeQuad[201:0:0]/DATA": 62409042,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/stress/31-FourNodeQuad[201:0:0]/DATA": 68223765,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 25355746,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 22758094,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/REACTION_FORCE/DATA": 21587718,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/VELOCITY/DATA": 23985695
+    },
+    "marginal_agg": 0.25628857267602373,
+    "marginal_worst": 0.13221080314745934,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_NODES/VELOCITY/DATA"
+   },
+   "sz3_abs_1e-06": {
+    "bytes": 100295787,
+    "file_bytes": 100350147,
+    "enc_s": 21.6161482000025,
+    "dec_s": 2.8590438999817707,
+    "max_abs": 9.999999486254296e-07,
+    "max_range_rel": 0.0005083890730561178,
+    "max_rel": 457.7437127019113,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/strain/31-FourNodeQuad[201:0:0]/DATA": 4263142,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/stress/31-FourNodeQuad[201:0:0]/DATA": 62455267,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 10297028,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 3421069,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/REACTION_FORCE/DATA": 9448994,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/VELOCITY/DATA": 10410287
+    },
+    "marginal_agg": 0.5732111958002782,
+    "marginal_worst": 0.3046186911081318,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_NODES/VELOCITY/DATA"
+   },
+   "zfp_rr_5.5e-08": {
+    "bytes": 88484219,
+    "file_bytes": 88538387,
+    "enc_s": 1.434303699992597,
+    "dec_s": 1.6862972000380978,
+    "max_abs": 0.02360535711341072,
+    "max_range_rel": 1.0036961003775959e-08,
+    "max_rel": 0.007600939035900814,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/strain/31-FourNodeQuad[201:0:0]/DATA": 27194046,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/stress/31-FourNodeQuad[201:0:0]/DATA": 25969566,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 10693210,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 8490783,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/REACTION_FORCE/DATA": 6866040,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/VELOCITY/DATA": 9270574
+    },
+    "marginal_agg": 0.6497279249308852,
+    "marginal_worst": 0.32205128301043373,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA"
+   },
+   "zfp_tm_rr_5.5e-08": {
+    "bytes": 59371669,
+    "file_bytes": 59470045,
+    "enc_s": 1.4068636000156403,
+    "dec_s": 1.8776212999946438,
+    "max_abs": 0.05131355102639645,
+    "max_range_rel": 1.8003817640375723e-08,
+    "max_rel": 0.01701013580378065,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/strain/31-FourNodeQuad[201:0:0]/DATA": 21595966,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/stress/31-FourNodeQuad[201:0:0]/DATA": 21458674,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 4840936,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 3923696,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/REACTION_FORCE/DATA": 3251669,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/VELOCITY/DATA": 4300728
+    },
+    "marginal_agg": 0.9683182057758896,
+    "marginal_worst": 0.7113835010419473,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA"
+   },
+   "zfp_rr_1e-06": {
+    "bytes": 70787164,
+    "file_bytes": 70841332,
+    "enc_s": 1.2811487999861129,
+    "dec_s": 1.506806500023231,
+    "max_abs": 0.4028701769602776,
+    "max_range_rel": 2.561255450379645e-07,
+    "max_rel": 0.1295488088774249,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/strain/31-FourNodeQuad[201:0:0]/DATA": 21305415,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/stress/31-FourNodeQuad[201:0:0]/DATA": 21259280,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 9018237,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 6407061,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/REACTION_FORCE/DATA": 5200958,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/VELOCITY/DATA": 7596213
+    },
+    "marginal_agg": 0.8121623293172191,
+    "marginal_worst": 0.3818664335390609,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA"
+   },
+   "zfp_tm_rr_1e-06": {
+    "bytes": 46762823,
+    "file_bytes": 46861199,
+    "enc_s": 1.2776743000140414,
+    "dec_s": 1.7744376999908127,
+    "max_abs": 0.783757580990823,
+    "max_range_rel": 4.0622534833381644e-07,
+    "max_rel": 0.20939467822473587,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/strain/31-FourNodeQuad[201:0:0]/DATA": 16566049,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/stress/31-FourNodeQuad[201:0:0]/DATA": 17146159,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 4048929,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 3028097,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/REACTION_FORCE/DATA": 2464758,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/VELOCITY/DATA": 3508831
+    },
+    "marginal_agg": 1.2294096958175516,
+    "marginal_worst": 0.8505365245969984,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA"
+   },
+   "zfp_tm_acc_1e-06": {
+    "bytes": 53509862,
+    "file_bytes": 53608238,
+    "enc_s": 1.2564626000239514,
+    "dec_s": 1.7788886000053026,
+    "max_abs": 4.1604593681299207e-07,
+    "max_range_rel": 0.00019296005719414948,
+    "max_rel": 92.36669196473777,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/strain/31-FourNodeQuad[201:0:0]/DATA": 6430294,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/stress/31-FourNodeQuad[201:0:0]/DATA": 24158492,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 7646391,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 3540339,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/REACTION_FORCE/DATA": 6431616,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/VELOCITY/DATA": 5302730
+    },
+    "marginal_agg": 1.0743938752822797,
+    "marginal_worst": 0.4503774395005435,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA"
+   },
+   "zfp_tm_acc_1e-08": {
+    "bytes": 73843928,
+    "file_bytes": 73942304,
+    "enc_s": 1.4013584000058472,
+    "dec_s": 2.0488851999980398,
+    "max_abs": 3.42245152010201e-09,
+    "max_range_rel": 1.7399371819072133e-06,
+    "max_rel": 0.9672888348847006,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/strain/31-FourNodeQuad[201:0:0]/DATA": 13537234,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/stress/31-FourNodeQuad[201:0:0]/DATA": 31718523,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 9111600,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 4925727,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/REACTION_FORCE/DATA": 7862114,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/VELOCITY/DATA": 6688730
+    },
+    "marginal_agg": 0.7785429290814541,
+    "marginal_worst": 0.37795359761183545,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA"
+   },
+   "f32_gzip4_tm": {
+    "bytes": 75639166,
+    "file_bytes": 75737542,
+    "enc_s": 2.9278439999907278,
+    "dec_s": 0.9903618000098504,
+    "max_abs": 0.12494604056701064,
+    "max_range_rel": 5.5097518678519944e-08,
+    "max_rel": 5.959466666506267e-08,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/strain/31-FourNodeQuad[201:0:0]/DATA": 27228243,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/stress/31-FourNodeQuad[201:0:0]/DATA": 27476969,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 5343045,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 5057509,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/REACTION_FORCE/DATA": 5386389,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/VELOCITY/DATA": 5147011
+    },
+    "marginal_agg": 0.7600648055796914,
+    "marginal_worst": 0.6102656465860961,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA"
+   },
+   "f64_gzip4_tm": {
+    "bytes": 157462945,
+    "file_bytes": 157561321,
+    "enc_s": 6.072807400021702,
+    "dec_s": 1.480816999974195,
+    "max_abs": 0.0,
+    "max_range_rel": 0.0,
+    "max_rel": 0.0,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/strain/31-FourNodeQuad[201:0:0]/DATA": 55068022,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/stress/31-FourNodeQuad[201:0:0]/DATA": 58894854,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 11285113,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 11026244,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/REACTION_FORCE/DATA": 10048874,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/VELOCITY/DATA": 11139838
+    },
+    "marginal_agg": 0.36510601271937343,
+    "marginal_worst": 0.2799161709100579,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA"
+   }
+  }
+ },
+ {
+  "file": "C:\\Users\\nmora\\AppData\\Local\\Temp\\claude\\C--Users-nmora-Github-OpenSees-Compile-OpenSees--claude-worktrees-inspiring-gauss-b539e6\\1fb1d439-93ee-4243-bd88-ce17f6c70d39\\scratchpad\\zfp_bench\\bench_b_fiber_column.ladruno",
+  "raw_bytes": 199008000,
+  "n_datasets": 7,
+  "configs": {
+   "f64_gzip4": {
+    "bytes": 50565026,
+    "file_bytes": 50634874,
+    "enc_s": 2.4686323999776505,
+    "dec_s": 1.0537679000408389,
+    "max_abs": 0.0,
+    "max_range_rel": 0.0,
+    "max_rel": 0.0,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/localForce/64-DispBeamColumn3d[1000:1:0]/DATA": 892424,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.deformation/64-DispBeamColumn3d[1000:1:0]/DATA": 1146632,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.strain/64-DispBeamColumn3d[1000:1:0]/DATA": 22024995,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.stress/64-DispBeamColumn3d[1000:1:0]/DATA": 24818320,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.force/64-DispBeamColumn3d[1000:1:0]/DATA": 953305,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 369038,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 360312
+    },
+    "marginal_agg": 0.30362816386171737,
+    "marginal_worst": 0.2798261526162931,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.stress/64-DispBeamColumn3d[1000:1:0]/DATA"
+   },
+   "f32_gzip4": {
+    "bytes": 15352966,
+    "file_bytes": 15403998,
+    "enc_s": 0.962705800018739,
+    "dec_s": 0.681484000000637,
+    "max_abs": 31.959649205207825,
+    "max_range_rel": 5.4424167908778415e-08,
+    "max_rel": 5.9540938868757685e-08,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/localForce/64-DispBeamColumn3d[1000:1:0]/DATA": 415061,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.deformation/64-DispBeamColumn3d[1000:1:0]/DATA": 533177,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.strain/64-DispBeamColumn3d[1000:1:0]/DATA": 6641079,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.stress/64-DispBeamColumn3d[1000:1:0]/DATA": 6944815,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.force/64-DispBeamColumn3d[1000:1:0]/DATA": 469424,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 180386,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 169024
+    }
+   },
+   "zfp_acc_0.0001": {
+    "bytes": 46167152,
+    "file_bytes": 46237000,
+    "enc_s": 1.1133513000095263,
+    "dec_s": 1.2643490000045858,
+    "max_abs": 1.6206849062783135e-05,
+    "max_range_rel": 0.025040360076751332,
+    "max_rel": 11074.6062495563,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/localForce/64-DispBeamColumn3d[1000:1:0]/DATA": 984091,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.deformation/64-DispBeamColumn3d[1000:1:0]/DATA": 117601,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.strain/64-DispBeamColumn3d[1000:1:0]/DATA": 6768635,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.stress/64-DispBeamColumn3d[1000:1:0]/DATA": 36645706,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.force/64-DispBeamColumn3d[1000:1:0]/DATA": 1036414,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 416064,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 198641
+    },
+    "marginal_agg": 0.3325517242215851,
+    "marginal_worst": 0.18951238106860324,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.stress/64-DispBeamColumn3d[1000:1:0]/DATA"
+   },
+   "zfp_acc_1e-06": {
+    "bytes": 69561087,
+    "file_bytes": 69630935,
+    "enc_s": 1.3566158999456093,
+    "dec_s": 1.4799177999957465,
+    "max_abs": 2.4503770390538193e-07,
+    "max_range_rel": 0.0004944765436196794,
+    "max_rel": 223.06395358284163,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/localForce/64-DispBeamColumn3d[1000:1:0]/DATA": 1129041,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.deformation/64-DispBeamColumn3d[1000:1:0]/DATA": 260669,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.strain/64-DispBeamColumn3d[1000:1:0]/DATA": 16539919,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.stress/64-DispBeamColumn3d[1000:1:0]/DATA": 49698891,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.force/64-DispBeamColumn3d[1000:1:0]/DATA": 1181362,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 484314,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 266891
+    },
+    "marginal_agg": 0.2207119908865139,
+    "marginal_worst": 0.13973782634304657,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.stress/64-DispBeamColumn3d[1000:1:0]/DATA"
+   },
+   "zfp_acc_1e-08": {
+    "bytes": 98040465,
+    "file_bytes": 98110313,
+    "enc_s": 1.5845752999885008,
+    "dec_s": 1.7226287000230514,
+    "max_abs": 3.4231900632198505e-09,
+    "max_range_rel": 3.804090170401282e-06,
+    "max_rel": 2.236208458163407,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/localForce/64-DispBeamColumn3d[1000:1:0]/DATA": 1297741,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.deformation/64-DispBeamColumn3d[1000:1:0]/DATA": 429777,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.strain/64-DispBeamColumn3d[1000:1:0]/DATA": 29106974,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.stress/64-DispBeamColumn3d[1000:1:0]/DATA": 64945518,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.force/64-DispBeamColumn3d[1000:1:0]/DATA": 1350000,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 563939,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 346516
+    },
+    "marginal_agg": 0.15659825766840252,
+    "marginal_worst": 0.1069329372351761,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.stress/64-DispBeamColumn3d[1000:1:0]/DATA"
+   },
+   "zfp_acc_1e-10": {
+    "bytes": 126445372,
+    "file_bytes": 126515220,
+    "enc_s": 1.8779268999933265,
+    "dec_s": 1.9919733999995515,
+    "max_abs": 3.4231900632198505e-09,
+    "max_range_rel": 3.116804154221439e-08,
+    "max_rel": 0.017182396940924032,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/localForce/64-DispBeamColumn3d[1000:1:0]/DATA": 1384163,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.deformation/64-DispBeamColumn3d[1000:1:0]/DATA": 598885,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.strain/64-DispBeamColumn3d[1000:1:0]/DATA": 41797223,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.stress/64-DispBeamColumn3d[1000:1:0]/DATA": 80200026,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.force/64-DispBeamColumn3d[1000:1:0]/DATA": 1395370,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 643564,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 426141
+    },
+    "marginal_agg": 0.12141975429515918,
+    "marginal_worst": 0.08659367516913274,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.stress/64-DispBeamColumn3d[1000:1:0]/DATA"
+   },
+   "zfp_reversible": {
+    "bytes": 219176259,
+    "file_bytes": 219246107,
+    "enc_s": 2.6049247999908403,
+    "dec_s": 2.654415800003335,
+    "max_abs": 0.0,
+    "max_range_rel": 0.0,
+    "max_rel": 0.0,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/localForce/64-DispBeamColumn3d[1000:1:0]/DATA": 1558243,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.deformation/64-DispBeamColumn3d[1000:1:0]/DATA": 1554564,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.strain/64-DispBeamColumn3d[1000:1:0]/DATA": 98044187,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.stress/64-DispBeamColumn3d[1000:1:0]/DATA": 115094351,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.force/64-DispBeamColumn3d[1000:1:0]/DATA": 1482424,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 732005,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 710485
+    },
+    "marginal_agg": 0.07004849006023048,
+    "marginal_worst": 0.060340189936863194,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.stress/64-DispBeamColumn3d[1000:1:0]/DATA"
+   },
+   "sz3_abs_1e-06": {
+    "bytes": 32575526,
+    "file_bytes": 32645566,
+    "enc_s": 12.261433800042141,
+    "dec_s": 2.5009202000219375,
+    "max_abs": 9.999999999999974e-07,
+    "max_range_rel": 0.0021168873361501576,
+    "max_rel": 1839.7004600258576,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/localForce/64-DispBeamColumn3d[1000:1:0]/DATA": 492464,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.deformation/64-DispBeamColumn3d[1000:1:0]/DATA": 90134,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.strain/64-DispBeamColumn3d[1000:1:0]/DATA": 6371501,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.stress/64-DispBeamColumn3d[1000:1:0]/DATA": 24311760,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.force/64-DispBeamColumn3d[1000:1:0]/DATA": 742590,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 279738,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 287339
+    },
+    "marginal_agg": 0.47130370204920097,
+    "marginal_worst": 0.2856566122732373,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.stress/64-DispBeamColumn3d[1000:1:0]/DATA"
+   },
+   "zfp_rr_5.5e-08": {
+    "bytes": 83318034,
+    "file_bytes": 83387882,
+    "enc_s": 1.281085099966731,
+    "dec_s": 1.4161659000092186,
+    "max_abs": 8.079223871231079,
+    "max_range_rel": 1.3758130876756966e-08,
+    "max_rel": 0.007799432267587033,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/localForce/64-DispBeamColumn3d[1000:1:0]/DATA": 525084,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.deformation/64-DispBeamColumn3d[1000:1:0]/DATA": 647201,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.strain/64-DispBeamColumn3d[1000:1:0]/DATA": 39983425,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.stress/64-DispBeamColumn3d[1000:1:0]/DATA": 40992962,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.force/64-DispBeamColumn3d[1000:1:0]/DATA": 577407,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 325064,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 266891
+    },
+    "marginal_agg": 0.18426942239179575,
+    "marginal_worst": 0.16609580094751764,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.strain/64-DispBeamColumn3d[1000:1:0]/DATA"
+   },
+   "zfp_tm_rr_5.5e-08": {
+    "bytes": 78302344,
+    "file_bytes": 83099272,
+    "enc_s": 1.475997599947732,
+    "dec_s": 1.9366088000242598,
+    "max_abs": 11.517929630354047,
+    "max_range_rel": 1.928080555819688e-08,
+    "max_rel": 0.006947130374075132,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/localForce/64-DispBeamColumn3d[1000:1:0]/DATA": 525099,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.deformation/64-DispBeamColumn3d[1000:1:0]/DATA": 453464,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.strain/64-DispBeamColumn3d[1000:1:0]/DATA": 37969650,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.stress/64-DispBeamColumn3d[1000:1:0]/DATA": 38474984,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.force/64-DispBeamColumn3d[1000:1:0]/DATA": 469761,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 218604,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 190782
+    },
+    "marginal_agg": 0.1960728787378319,
+    "marginal_worst": 0.17490493064855747,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.strain/64-DispBeamColumn3d[1000:1:0]/DATA"
+   },
+   "zfp_rr_1e-06": {
+    "bytes": 66975361,
+    "file_bytes": 67045209,
+    "enc_s": 1.1919025999959558,
+    "dec_s": 1.2780552000040188,
+    "max_abs": 149.99264252185822,
+    "max_range_rel": 2.5697087923510036e-07,
+    "max_rel": 0.1480106608104011,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/localForce/64-DispBeamColumn3d[1000:1:0]/DATA": 428452,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.deformation/64-DispBeamColumn3d[1000:1:0]/DATA": 526410,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.strain/64-DispBeamColumn3d[1000:1:0]/DATA": 32730336,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.stress/64-DispBeamColumn3d[1000:1:0]/DATA": 32308434,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.force/64-DispBeamColumn3d[1000:1:0]/DATA": 480774,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 279564,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 221391
+    },
+    "marginal_agg": 0.22923304586592672,
+    "marginal_worst": 0.20290286662501722,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.strain/64-DispBeamColumn3d[1000:1:0]/DATA"
+   },
+   "zfp_tm_rr_1e-06": {
+    "bytes": 65186099,
+    "file_bytes": 69983027,
+    "enc_s": 1.372308999998495,
+    "dec_s": 1.8509793999837711,
+    "max_abs": 195.47408747673035,
+    "max_range_rel": 3.6766229336175496e-07,
+    "max_rel": 0.13303035439912828,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/localForce/64-DispBeamColumn3d[1000:1:0]/DATA": 439100,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.deformation/64-DispBeamColumn3d[1000:1:0]/DATA": 373467,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.strain/64-DispBeamColumn3d[1000:1:0]/DATA": 31345650,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.stress/64-DispBeamColumn3d[1000:1:0]/DATA": 32298984,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.force/64-DispBeamColumn3d[1000:1:0]/DATA": 387763,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 184479,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 156656
+    },
+    "marginal_agg": 0.23552515391356676,
+    "marginal_worst": 0.21186604839906015,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.strain/64-DispBeamColumn3d[1000:1:0]/DATA"
+   },
+   "zfp_tm_acc_1e-06": {
+    "bytes": 55706049,
+    "file_bytes": 60502262,
+    "enc_s": 1.251912200008519,
+    "dec_s": 1.695894500007853,
+    "max_abs": 3.903123550464381e-07,
+    "max_range_rel": 0.0008000866317118782,
+    "max_rel": 180.95588602891996,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/localForce/64-DispBeamColumn3d[1000:1:0]/DATA": 519335,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.deformation/64-DispBeamColumn3d[1000:1:0]/DATA": 76939,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.strain/64-DispBeamColumn3d[1000:1:0]/DATA": 16153376,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.stress/64-DispBeamColumn3d[1000:1:0]/DATA": 38082984,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.force/64-DispBeamColumn3d[1000:1:0]/DATA": 550710,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 211422,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 111283
+    },
+    "marginal_agg": 0.27560680169580865,
+    "marginal_worst": 0.18236005350841206,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.stress/64-DispBeamColumn3d[1000:1:0]/DATA"
+   },
+   "zfp_tm_acc_1e-08": {
+    "bytes": 77265472,
+    "file_bytes": 82062409,
+    "enc_s": 1.4051123000099324,
+    "dec_s": 1.9867817999911495,
+    "max_abs": 3.725290298461914e-09,
+    "max_range_rel": 6.121224230638852e-06,
+    "max_rel": 3.236871363559612,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/localForce/64-DispBeamColumn3d[1000:1:0]/DATA": 634212,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.deformation/64-DispBeamColumn3d[1000:1:0]/DATA": 151765,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.strain/64-DispBeamColumn3d[1000:1:0]/DATA": 26737650,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.stress/64-DispBeamColumn3d[1000:1:0]/DATA": 48666984,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.force/64-DispBeamColumn3d[1000:1:0]/DATA": 675761,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 251067,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 148033
+    },
+    "marginal_agg": 0.19870409903145353,
+    "marginal_worst": 0.14270074759512527,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.stress/64-DispBeamColumn3d[1000:1:0]/DATA"
+   },
+   "f32_gzip4_tm": {
+    "bytes": 76345853,
+    "file_bytes": 81142921,
+    "enc_s": 2.344005200022366,
+    "dec_s": 1.0977551999967545,
+    "max_abs": 31.959649205207825,
+    "max_range_rel": 5.4424167908778415e-08,
+    "max_rel": 5.9540938868757685e-08,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/localForce/64-DispBeamColumn3d[1000:1:0]/DATA": 511095,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.deformation/64-DispBeamColumn3d[1000:1:0]/DATA": 459947,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.strain/64-DispBeamColumn3d[1000:1:0]/DATA": 37266008,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.stress/64-DispBeamColumn3d[1000:1:0]/DATA": 37419930,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.force/64-DispBeamColumn3d[1000:1:0]/DATA": 371619,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 162580,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 154674
+    },
+    "marginal_agg": 0.20109757631498335,
+    "marginal_worst": 0.17820741625987951,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.strain/64-DispBeamColumn3d[1000:1:0]/DATA"
+   },
+   "f64_gzip4_tm": {
+    "bytes": 165951193,
+    "file_bytes": 170747749,
+    "enc_s": 5.256101500010118,
+    "dec_s": 1.4323834999813698,
+    "max_abs": 0.0,
+    "max_range_rel": 0.0,
+    "max_rel": 0.0,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/localForce/64-DispBeamColumn3d[1000:1:0]/DATA": 1075786,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.deformation/64-DispBeamColumn3d[1000:1:0]/DATA": 976059,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.strain/64-DispBeamColumn3d[1000:1:0]/DATA": 81195540,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.stress/64-DispBeamColumn3d[1000:1:0]/DATA": 81319213,
+     "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.force/64-DispBeamColumn3d[1000:1:0]/DATA": 717332,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 340398,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 326865
+    },
+    "marginal_agg": 0.09251494805463677,
+    "marginal_worst": 0.08179117966331648,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.fiber.strain/64-DispBeamColumn3d[1000:1:0]/DATA"
+   }
+  }
+ },
+ {
+  "file": "C:\\Users\\nmora\\AppData\\Local\\Temp\\claude\\C--Users-nmora-Github-OpenSees-Compile-OpenSees--claude-worktrees-inspiring-gauss-b539e6\\1fb1d439-93ee-4243-bd88-ce17f6c70d39\\scratchpad\\zfp_bench\\bench_c_brick_field.ladruno",
+  "raw_bytes": 112363200,
+  "n_datasets": 3,
+  "configs": {
+   "f64_gzip4": {
+    "bytes": 58512249,
+    "file_bytes": 58552353,
+    "enc_s": 2.2864762999815866,
+    "dec_s": 0.6459744000458159,
+    "max_abs": 0.0,
+    "max_range_rel": 0.0,
+    "max_rel": 0.0,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 20052435,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 18516013,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/VELOCITY/DATA": 19943801
+    },
+    "marginal_agg": 0.3593657799754031,
+    "marginal_worst": 0.34680370105979297,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_NODES/VELOCITY/DATA"
+   },
+   "f32_gzip4": {
+    "bytes": 21027300,
+    "file_bytes": 21057996,
+    "enc_s": 0.9927005000063218,
+    "dec_s": 0.4135435000061989,
+    "max_abs": 3.8144748941704165e-06,
+    "max_range_rel": 5.7709417576406306e-08,
+    "max_rel": 5.95781059163549e-08,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 7368070,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 6742646,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/VELOCITY/DATA": 6916584
+    }
+   },
+   "zfp_acc_0.0001": {
+    "bytes": 25404939,
+    "file_bytes": 25445043,
+    "enc_s": 0.4917577999876812,
+    "dec_s": 0.6008231000159867,
+    "max_abs": 1.8077746446465426e-05,
+    "max_range_rel": 0.00014623989505447327,
+    "max_rel": 91.29262509643655,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 13254889,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 4183490,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/VELOCITY/DATA": 7966560
+    },
+    "marginal_agg": 0.8276855142222542,
+    "marginal_worst": 0.5558756470914241,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA"
+   },
+   "zfp_acc_1e-06": {
+    "bytes": 37406652,
+    "file_bytes": 37446756,
+    "enc_s": 0.5954584999708459,
+    "dec_s": 0.7811294000130147,
+    "max_abs": 2.641154430767928e-07,
+    "max_range_rel": 3.111976640758396e-06,
+    "max_rel": 2.003533083937268,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 17422564,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 7850859,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/VELOCITY/DATA": 12133229
+    },
+    "marginal_agg": 0.5621272922259923,
+    "marginal_worst": 0.42290388487021774,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA"
+   },
+   "zfp_acc_1e-08": {
+    "bytes": 51975453,
+    "file_bytes": 52015557,
+    "enc_s": 0.6236321000033058,
+    "dec_s": 0.771814199979417,
+    "max_abs": 2.160382371949343e-09,
+    "max_range_rel": 2.6605908200547445e-08,
+    "max_rel": 0.02333955852644397,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 22284850,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 12695082,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/VELOCITY/DATA": 16995521
+    },
+    "marginal_agg": 0.4045621305118784,
+    "marginal_worst": 0.3306313482029271,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA"
+   },
+   "zfp_acc_1e-10": {
+    "bytes": 66562210,
+    "file_bytes": 66602314,
+    "enc_s": 0.6862333999597467,
+    "dec_s": 0.8434968999936245,
+    "max_abs": 1.6990409648859686e-11,
+    "max_range_rel": 2.0924318087236087e-10,
+    "max_rel": 0.00014647963485976584,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 27147139,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 17557262,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/VELOCITY/DATA": 21857809
+    },
+    "marginal_agg": 0.31590447492653867,
+    "marginal_worst": 0.2714123945068392,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA"
+   },
+   "zfp_reversible": {
+    "bytes": 124271761,
+    "file_bytes": 124311865,
+    "enc_s": 0.9868573999847285,
+    "dec_s": 1.1771888000075705,
+    "max_abs": 0.0,
+    "max_range_rel": 0.0,
+    "max_rel": 0.0,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 40525139,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 41721168,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/VELOCITY/DATA": 42025454
+    },
+    "marginal_agg": 0.16920416859627507,
+    "marginal_worst": 0.1616121101882862,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA"
+   },
+   "sz3_abs_1e-06": {
+    "bytes": 38203126,
+    "file_bytes": 38243326,
+    "enc_s": 8.305089900037274,
+    "dec_s": 1.4542866999981925,
+    "max_abs": 1e-06,
+    "max_range_rel": 1.2315369976167952e-05,
+    "max_rel": 12.306506088473187,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 22121125,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 4262801,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/VELOCITY/DATA": 11819200
+    },
+    "marginal_agg": 0.5504078383533326,
+    "marginal_worst": 0.3330784487678633,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA"
+   },
+   "zfp_rr_5.5e-08": {
+    "bytes": 44334629,
+    "file_bytes": 44374733,
+    "enc_s": 0.40467909997096285,
+    "dec_s": 0.503053699969314,
+    "max_abs": 1.0602611266730122e-06,
+    "max_range_rel": 1.3212726461063445e-08,
+    "max_rel": 0.010478262231748133,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 16033339,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 13389606,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/VELOCITY/DATA": 14911684
+    },
+    "marginal_agg": 0.4742861387201413,
+    "marginal_worst": 0.45954682302918937,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA"
+   },
+   "zfp_tm_rr_5.5e-08": {
+    "bytes": 30846528,
+    "file_bytes": 30874936,
+    "enc_s": 0.40095530002145097,
+    "dec_s": 0.59608859999571,
+    "max_abs": 1.6321781686201575e-06,
+    "max_range_rel": 2.015244527255719e-08,
+    "max_rel": 0.008936549402912209,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 11888433,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 8847045,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/VELOCITY/DATA": 10111050
+    },
+    "marginal_agg": 0.6816747738999994,
+    "marginal_worst": 0.6197679711026676,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA"
+   },
+   "zfp_rr_1e-06": {
+    "bytes": 35305685,
+    "file_bytes": 35345789,
+    "enc_s": 0.3587100000004284,
+    "dec_s": 0.4629175000009127,
+    "max_abs": 1.8077746446465426e-05,
+    "max_range_rel": 2.6992815983394473e-07,
+    "max_rel": 0.20247181817009827,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 13254889,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 10612168,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/VELOCITY/DATA": 11438628
+    },
+    "marginal_agg": 0.5955783041739595,
+    "marginal_worst": 0.5558756470914241,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA"
+   },
+   "zfp_tm_rr_1e-06": {
+    "bytes": 24521269,
+    "file_bytes": 24549677,
+    "enc_s": 0.3708263000007719,
+    "dec_s": 0.5473126000142656,
+    "max_abs": 2.564774740676512e-05,
+    "max_range_rel": 3.718952922658658e-07,
+    "max_rel": 0.21466953338464456,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 9837629,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 6797025,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/VELOCITY/DATA": 7886615
+    },
+    "marginal_agg": 0.8575127168173882,
+    "marginal_worst": 0.7489680694403092,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA"
+   },
+   "zfp_tm_acc_1e-06": {
+    "bytes": 23171976,
+    "file_bytes": 23200384,
+    "enc_s": 0.33140659995842725,
+    "dec_s": 0.5459353000042029,
+    "max_abs": 4.061648724018596e-07,
+    "max_range_rel": 4.400826141043643e-06,
+    "max_rel": 3.178995674849946,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 11905233,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 3875720,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/VELOCITY/DATA": 7391023
+    },
+    "marginal_agg": 0.9074452692338366,
+    "marginal_worst": 0.6188933891508045,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA"
+   },
+   "zfp_tm_acc_1e-08": {
+    "bytes": 33806193,
+    "file_bytes": 33834601,
+    "enc_s": 0.47944269998697564,
+    "dec_s": 0.6839050999842584,
+    "max_abs": 3.2269812923972196e-09,
+    "max_range_rel": 3.9741468522044374e-08,
+    "max_rel": 0.02958529556304406,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 15499226,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 7327418,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/VELOCITY/DATA": 10979549
+    },
+    "marginal_agg": 0.6219955024217012,
+    "marginal_worst": 0.4753830933234989,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA"
+   },
+   "f32_gzip4_tm": {
+    "bytes": 24058362,
+    "file_bytes": 24086770,
+    "enc_s": 0.6935727000236511,
+    "dec_s": 0.35913389996858314,
+    "max_abs": 3.8144748941704165e-06,
+    "max_range_rel": 5.7709417576406306e-08,
+    "max_rel": 5.95781059163549e-08,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 8633346,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 7533728,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/VELOCITY/DATA": 7891288
+    },
+    "marginal_agg": 0.8740121210246982,
+    "marginal_worst": 0.8534431493884295,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA"
+   },
+   "f64_gzip4_tm": {
+    "bytes": 61677825,
+    "file_bytes": 61706233,
+    "enc_s": 1.6637605999712832,
+    "dec_s": 0.4899026000057347,
+    "max_abs": 0.0,
+    "max_range_rel": 0.0,
+    "max_rel": 0.0,
+    "per_dataset": {
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/ACCELERATION/DATA": 21305905,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA": 19399251,
+     "MODEL_STAGE[1]/RESULTS/ON_NODES/VELOCITY/DATA": 20972669
+    },
+    "marginal_agg": 0.3409215548700039,
+    "marginal_worst": 0.3297903571548285,
+    "marginal_worst_dataset": "MODEL_STAGE[1]/RESULTS/ON_NODES/VELOCITY/DATA"
+   }
+  }
+ }
+]
