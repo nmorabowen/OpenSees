@@ -75,6 +75,7 @@
 #include <Beam3dPartialUniformLoad.h>
 #include <BrickSelfWeight.h>
 #include <SurfaceLoader.h>
+#include <LysmerVelocityLoader.h>   // Ladruno (ADR-69): expose the compliant-base loader
 #include <SelfWeight.h>
 #include <LoadPattern.h>
 
@@ -2283,6 +2284,47 @@ TclCommand_addElementalLoad(ClientData clientData, Tcl_Interp *interp, int argc,
 	  return TCL_ERROR;
 	}
 	eleLoadTag++;
+      }
+      return 0;
+  }
+  // Ladruno (ADR-69): eleLoad hook for LysmerVelocityLoader — the class
+  // existed (C.McGann 02.2011, LOAD_TAG 651-era) but NO interpreter path
+  // created it, so LysmerTriangle's compliant-base incident-velocity input
+  // was unreachable (P0.5 finding: eleLoad's tail silently returns TCL_OK
+  // for unknown -type flags, so decks that "used" it were no-ops). Usage:
+  //   pattern Plain pt seriesTag { eleLoad -ele <tags> -type -lysmerVelocityLoader <dir> }
+  // dir = 1|2|3 (global x|y|z); the pattern's time-series value at t is the
+  // incident velocity amplitude (the element forms R_inj = C * v_gnd).
+  else if ((strcmp(argv[count],"-lysmerVelocityLoader") == 0) ||
+           (strcmp(argv[count],"-LysmerVelocityLoader") == 0)) {
+      count++;
+      int lvDir = 0;
+      if (count >= argc || Tcl_GetInt(interp, argv[count], &lvDir) != TCL_OK ||
+          lvDir < 1 || lvDir > 3) {
+          opserr << "WARNING eleLoad - -lysmerVelocityLoader requires a "
+                    "direction 1|2|3 (global x|y|z)\n";
+          return TCL_ERROR;
+      }
+
+      for (int i = 0; i < theEleTags.Size(); i++) {
+          theLoad = new LysmerVelocityLoader(eleLoadTag, theEleTags(i), lvDir);
+
+          if (theLoad == 0) {
+              opserr << "WARNING eleLoad - out of memory creating load of type " << argv[count];
+              return TCL_ERROR;
+          }
+
+          // get the current pattern tag if no tag given in i/p
+          int loadPatternTag = theTclLoadPattern->getTag();
+
+          // add the load to the domain
+          if (theTclDomain->addElementalLoad(theLoad, loadPatternTag) == false) {
+              opserr << "WARNING eleLoad - could not add following load to domain:\n ";
+              opserr << theLoad;
+              delete theLoad;
+              return TCL_ERROR;
+          }
+          eleLoadTag++;
       }
       return 0;
   }

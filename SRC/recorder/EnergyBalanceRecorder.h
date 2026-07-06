@@ -79,6 +79,20 @@
 // Time integration of the three work integrals is trapezoidal
 // (1/2 (rate_{n-1}+rate_n) dt); the first record() only seeds the rate so
 // no spurious increment is taken over the initial time jump.
+//
+// Ladruno ADR-69 (-v2, opt-in): channel-aware layout. Model block becomes
+//   KE_ele KE_nod IE DW_ele DW_nod ULW [E_inject] [E_lnvd] RES ERR%
+// where the element/nodal split quarantines the MPI-unsafe nodal terms
+// (element terms reduce correctly across ranks; nodal terms are multiply-
+// counted on shared boundary nodes), E_inject is the absorbing-boundary
+// incident injection (derived from the published resisting-sign leak L:
+// IE shown = IE_raw - L, E_inject = -L), and E_lnvd is the FLAC local
+// non-viscous damping dissipation. Channel columns appear only when a
+// producer declared them (LadrunoEnergyChannels.h). Region blocks keep the
+// legacy 6 columns in both modes. Without -v2 the output is byte-identical
+// to v1. NOTE: E_inject covers LysmerTriangle only for now — ASDAbsorbing
+// Boundary2D/3D injection still pollutes IE (warned at initialize; ADR-69
+// P1.5).
 
 
 
@@ -107,7 +121,8 @@ public:
         Domain &theDomain,
         OPS_Stream &theOutputHandler,
         bool echoTimeFlag = true,
-        const ID &regions = ID());
+        const ID &regions = ID(),
+        bool v2Layout = false);   // Ladruno ADR-69: channel-aware split layout
 
     ~EnergyBalanceRecorder();
 
@@ -142,6 +157,18 @@ private:
     // The KE/IE/DW/ULW/RES/ERR math lives ONLY in ebkernel (one source of
     // truth, ADR D8); the recorder owns the per-scope accumulator state.
     ebkernel::EnergyAccumulator model_acc;
+
+    // ---- Ladruno ADR-69 v2 layout (opt-in via -v2) ----
+    // Legacy layout above stays byte-identical; the v2 path uses its own
+    // accumulator with the element/nodal split + energy channels. Which
+    // channel columns exist is fixed at initialize() from the registry's
+    // declared set (producers declare at construction/setDomain — define the
+    // integrator before the first analyze so -lnvd is visible by then).
+    bool v2Layout;
+    bool chInject;               // ABSORB_LEAK declared -> E_inject column
+    bool chLnvd;                 // LNVD_WORK declared  -> E_lnvd column
+    int  numModelCols;           // model-block width (6 legacy or v2 width)
+    ebkernel::EnergyAccumulatorV2 model_acc2;
 
     // ---- per-region accumulators ----
     ID regionTags;
