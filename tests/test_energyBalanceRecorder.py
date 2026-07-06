@@ -17,6 +17,7 @@ fix the element KE came out ~0; afterwards it tracks 0.5 * M * v^2. This recorde
 already runs green on Zone-A CI (CDL-10 exercises the same KE/IE columns).
 """
 import math
+import re
 
 import numpy as np
 import pytest
@@ -24,6 +25,19 @@ import pytest
 from _testbed import ops
 
 pytestmark = [pytest.mark.zone_a]
+
+
+def _v2_cols(capfd):
+    """Column names from the recorder's echoed header (the documented way to
+    parse -v2 output — 'parse by column names, never by position'). Reads the
+    output captured since the last readouterr(), so call once right after the
+    run whose layout you need."""
+    cap = capfd.readouterr()
+    text = cap.out + cap.err
+    m = re.findall(r"columns =( time)? \[model: ([^\]]+)\]", text)
+    assert m, "no EnergyBalanceRecorder column echo captured"
+    has_time, names = m[-1]
+    return (["time"] if has_time else []) + names.split()
 
 
 def build_bar(N, L, E, A, rho):
@@ -147,24 +161,27 @@ def test_energybalance_v2_layout_no_producers(tmp_path):
 # FLAC local damping: legacy RES drifts by exactly the (unaccounted) LNVD
 # dissipation; v2 publishes it (E_lnvd column) and RES stays put.
 # ==========================================================================
-def test_energybalance_v2_lnvd_closure(tmp_path):
+def test_energybalance_v2_lnvd_closure(tmp_path, capfd):
     alpha = 0.4
     d_legacy = _run_lnvd_bar(tmp_path, "lnvd_legacy.txt", v2=False, alpha=alpha)
+    capfd.readouterr()   # drop the legacy run's echo
     d_v2 = _run_lnvd_bar(tmp_path, "lnvd_v2.txt", v2=True, alpha=alpha)
+    cols = _v2_cols(capfd)
 
     # legacy: time KE IE DW ULW RES ERR% -> RES col 5
     res_l = d_legacy[:, 5]
     drift_legacy = res_l[-1] - res_l[0]
 
-    # v2 with LNVD declared: >=10 columns; E_lnvd is the LAST channel column
-    # (just before RES ERR%), regardless of what else got declared earlier
-    # in this process.
+    # v2 with LNVD declared: locate E_lnvd BY NAME from the echoed header.
+    # (Back-indexing d[:, -3] broke the moment a later channel — E_modal,
+    # ADR-69 P2 — could be declared by an earlier test in the same process;
+    # name lookup is the documented parse contract and is order-proof.)
     assert d_v2.shape[1] >= 10, (
         "expected >=10 columns (time + 6 split + E_lnvd + RES ERR%%); got %d"
         % d_v2.shape[1]
     )
-    e_lnvd = d_v2[:, -3]
-    res_v2 = d_v2[:, -2]
+    e_lnvd = d_v2[:, cols.index("E_lnvd")]
+    res_v2 = d_v2[:, cols.index("RES")]
     drift_v2 = res_v2[-1] - res_v2[0]
 
     assert e_lnvd[-1] > 0.0, "LNVD dissipation must accumulate positive work"
@@ -408,6 +425,190 @@ def test_energybalance_v2_asd_lateral_freefield_closure(tmp_path):
     e_inject_ctl = d_ctl[-1, 7]
     assert abs(e_inject_ctl) < 1e-9, (
         "zero-amplitude control: E_inject should be ~0, got %g" % e_inject_ctl
+    )
+
+
+# ==========================================================================
+# ADR-69 P2: E_modal channel closes what v1 leaks into RES. Modal damping is
+# applied by the integrator straight into the SOE B vector (-C_modal*v via
+# setB) - it never touches an element/node damping matrix, so the recorder's
+# DW path is structurally blind to it: legacy RES drifts by exactly the
+# unaccounted modal dissipation. IncrementalIntegrator::commit() publishes
+# the trapezoid of v'C_modal v (captured at the last converged formUnbalance
+# iterate) to MODAL_WORK; -v2 shows it as E_modal and RES stays put. Use
+# modalDamping (matrix-consistent), NOT modalDampingQ - Q applies the force
+# off the lagged velocity with no tangent term and can ANTI-damp light free
+# vibration. FullGeneral: the modal damping matrix is dense.
+# ==========================================================================
+def _run_modal_bar(tmp_path, fname, v2, zeta):
+    N = 20
+    L = 10.0
+    E = 100.0
+    A = 1.0
+    rho = 1.0
+    v0 = 2.0
+    efile = str(tmp_path / fname)
+    build_bar(N, L, E, A, rho)
+    for i in range(1, N + 1):
+        ops.setNodeVel(i + 1, 1, v0, "-commit")
+    ops.eigen(1)
+    ops.modalDamping(zeta)
+    rec = ["EnergyBalance", "-file", efile, "-time"]
+    if v2:
+        rec.append("-v2")
+    ops.recorder(*rec)
+    ops.constraints("Transformation")
+    ops.numberer("Plain")
+    ops.system("FullGeneral")
+    ops.test("NormDispIncr", 1e-10, 10)
+    ops.algorithm("Linear")
+    ops.integrator("Newmark", 0.5, 0.25)
+    ops.analysis("Transient")
+    c = math.sqrt(E / rho)
+    le = L / N
+    assert ops.analyze(400, 0.2 * le / c) == 0
+    ops.wipe()
+    return np.atleast_2d(np.loadtxt(efile))
+
+
+def test_energybalance_v2_modal_closure(tmp_path, capfd):
+    zeta = 0.05
+    d_legacy = _run_modal_bar(tmp_path, "modal_legacy.txt", v2=False, zeta=zeta)
+    capfd.readouterr()
+    d_v2 = _run_modal_bar(tmp_path, "modal_v2.txt", v2=True, zeta=zeta)
+    cols = _v2_cols(capfd)
+
+    # legacy: time KE IE DW ULW RES ERR% -> RES col 5 drifts by the
+    # unaccounted modal dissipation
+    res_l = d_legacy[:, 5]
+    drift_legacy = res_l[-1] - res_l[0]
+    assert drift_legacy > 0.0, (
+        "legacy RES should drift positive by the modal dissipation; got %g"
+        % drift_legacy
+    )
+
+    assert "E_modal" in cols, "E_modal column missing from -v2 layout"
+    e_modal = d_v2[:, cols.index("E_modal")]
+    res_v2 = d_v2[:, cols.index("RES")]
+    drift_v2 = res_v2[-1] - res_v2[0]
+
+    assert e_modal[-1] > 0.0, "modal dissipation must accumulate positive work"
+    assert np.all(np.diff(e_modal) > -1e-9), (
+        "E_modal must be monotone (trapezoid of v'Cv >= 0 rates)"
+    )
+    # the legacy RES drift IS the unaccounted modal dissipation
+    assert 0.7 * drift_legacy < e_modal[-1] < 1.3 * drift_legacy, (
+        "published E_modal=%g should match the legacy RES drift=%g"
+        % (e_modal[-1], drift_legacy)
+    )
+    # closure: v2 RES drift shrinks by at least 5x
+    assert abs(drift_v2) < 0.2 * abs(drift_legacy), (
+        "v2 RES drift %g should be <<%g (legacy)" % (drift_v2, drift_legacy)
+    )
+
+
+# ==========================================================================
+# ADR-69 P2: E_hg hourglass attribution (mechanism C recorder-pull). The URI
+# LadrunoBrick's stabilization force is inside getResistingForce, so its
+# work is booked in IE as if it were physical strain energy; the recorder
+# probes elements for the "hourglassEnergy" response at initialize and
+# rebuckets IE_display = IE_raw - E_hg with E_hg its own column. E_hg is the
+# INSTANTANEOUS stored stabilization energy for the stiffness flavour (can
+# oscillate - no monotonicity assert), and the rebucket cancels in RES by
+# kernel algebra, so E_hg == IE_legacy - IE_v2 exactly (deterministic
+# reruns) and RES is invariant. Dynamic bending cantilever from an initial
+# transverse tip velocity excites the hourglass modes.
+# ==========================================================================
+def _run_hg_cantilever(tmp_path, fname, v2, form_args, nx=4):
+    L, E, nu, rho = 10.0, 1000.0, 0.0, 1.0
+    efile = str(tmp_path / fname)
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    dx = L / nx
+
+    def nt(i, j, k):
+        return 1 + i + (nx + 1) * j + (nx + 1) * 2 * k
+
+    for k in range(2):
+        for j in range(2):
+            for i in range(nx + 1):
+                ops.node(nt(i, j, k), i * dx, j * 1.0, k * 1.0)
+    ops.nDMaterial("ElasticIsotropic", 1, E, nu, rho)
+    for i in range(nx):
+        ops.element("LadrunoBrick", 1 + i,
+                    nt(i, 0, 0), nt(i + 1, 0, 0), nt(i + 1, 1, 0), nt(i, 1, 0),
+                    nt(i, 0, 1), nt(i + 1, 0, 1), nt(i + 1, 1, 1), nt(i, 1, 1),
+                    1, *form_args)
+    for k in range(2):
+        for j in range(2):
+            ops.fix(nt(0, j, k), 1, 1, 1)
+    # initial transverse velocity, linear in x (bending-dominated start)
+    for k in range(2):
+        for j in range(2):
+            for i in range(1, nx + 1):
+                ops.setNodeVel(nt(i, j, k), 3, 0.5 * i / nx, "-commit")
+    # precision 12: the attribution identity below compares E_hg against the
+    # NEAR-CANCELLING difference IE_legacy - IE_v2; at the default 6 sig figs
+    # the file quantization (~1e-7 of IE) dwarfs the identity tolerance.
+    rec = ["EnergyBalance", "-file", efile, "-time", "-precision", 12]
+    if v2:
+        rec.append("-v2")
+    ops.recorder(*rec)
+    ops.constraints("Plain")
+    ops.numberer("RCM")
+    ops.system("FullGeneral")
+    ops.test("NormDispIncr", 1e-10, 10)
+    ops.algorithm("Linear")
+    ops.integrator("Newmark", 0.5, 0.25)
+    ops.analysis("Transient")
+    assert ops.analyze(150, 2.0e-3) == 0
+    ops.wipe()
+    return np.atleast_2d(np.loadtxt(efile))
+
+
+def test_energybalance_v2_hourglass_attribution(tmp_path, capfd):
+    uri = ["-formulation", "uri", "-hourglass", "stiffness"]
+    d_legacy = _run_hg_cantilever(tmp_path, "hg_legacy.txt", v2=False,
+                                  form_args=uri)
+    capfd.readouterr()
+    d_v2 = _run_hg_cantilever(tmp_path, "hg_v2.txt", v2=True, form_args=uri)
+    cols = _v2_cols(capfd)
+
+    assert "E_hg" in cols, "E_hg column missing from -v2 layout"
+    e_hg = d_v2[:, cols.index("E_hg")]
+    ie_v2 = d_v2[:, cols.index("IE")]
+    res_v2 = d_v2[:, cols.index("RES")]
+
+    # the URI cantilever genuinely hourglasses: nonzero stored stabilization
+    # energy along the run (instantaneous - check the running max, not the
+    # final sample, which may sit near a zero crossing)
+    assert np.abs(e_hg).max() > 0.0, "URI bending run published no E_hg"
+
+    # attribution identity: E_hg == IE_legacy - IE_v2 at every sample
+    # (deterministic reruns of the same model; exact by kernel algebra)
+    ie_legacy = d_legacy[:, 2]
+    scale = max(np.abs(ie_legacy).max(), 1e-30)
+    assert np.allclose(e_hg, ie_legacy - ie_v2, atol=1e-9 * scale), (
+        "E_hg must equal IE_legacy - IE_v2 (the rebucket, measured through "
+        "two independent paths)"
+    )
+
+    # RES invariance: the rebucket cancels in RES (attribution, not closure)
+    res_legacy = d_legacy[:, 5]
+    assert np.allclose(res_v2, res_legacy, atol=1e-9 * max(scale, 1.0)), (
+        "rebucketing E_hg must not change RES"
+    )
+
+    # control: fully-integrated std twin -> the response exists (column
+    # present) but the stored stabilization energy is identically zero
+    capfd.readouterr()
+    d_std = _run_hg_cantilever(tmp_path, "hg_std.txt", v2=True,
+                               form_args=["-formulation", "std"])
+    cols_std = _v2_cols(capfd)
+    assert "E_hg" in cols_std
+    e_hg_std = d_std[:, cols_std.index("E_hg")]
+    assert np.abs(e_hg_std).max() < 1e-12, (
+        "std formulation must publish zero hourglass energy"
     )
 
 

@@ -574,3 +574,84 @@ when done)*
     compressed); battery 17/17 in the adr52-then-recorder trap-catching
     ordering; `_verify_explicit.py` 20/22 unchanged (same 2 pre-existing
     `dt_cr = -1` environment failures).
+- **2026-07-06 P2 BUILT + VERIFIED (same worktree): modal channel + hourglass
+  attribution + MPI ownership gate — three parallel Opus-4.8 scoping passes
+  first (modal trace / mechanism-C design / MPI options), then one PR.**
+  - **E_modal (closure, mechanism A).** Source trace confirmed modal damping
+    is LNVD-shaped: the force `-C_modal·v` is built in
+    `IncrementalIntegrator::addModalDampingForce` and enters the solve ONLY
+    via `theSOE->setB()` (`TransientIntegrator::formUnbalance` calls it
+    before the element residual) — no element/node damping matrix
+    involvement, so the recorder's DW path is structurally blind and the
+    dissipation polluted RES. Publisher: `addModalDampingForce` captures the
+    rate `v'C_modal v` per iterate (OVERWRITE — last iterate of a step = the
+    converged one), `IncrementalIntegrator::commit()` trapezoid-integrates
+    over the domain-time delta and publishes to `MODAL_WORK` before
+    `commitDomain()`, declaring the channel at the first valid commit (which
+    precedes the recorder's first-record column fixing). First valid commit
+    seeds only. **COVERAGE CAVEAT (documented in header + ledger):** 35
+    integrators override `commit()` without chaining to the base (HHT
+    family, `*_TP` explicit) — they apply modal forces but do not publish;
+    their modal dissipation stays in RES. The canonical pairing (Newmark)
+    does not override commit and is covered. `modalDampingQ` shares the
+    force path (differs only in the tangent term) so it publishes too — but
+    the gate uses matrix-consistent `modalDamping` (Q can anti-damp light
+    free vibration, prior memory finding). Gate
+    (`test_energybalance_v2_modal_closure`): free-vibration bar + eigen +
+    modalDamping(0.05) + Newmark/FullGeneral; legacy RES drift == published
+    E_modal (0.7–1.3×), E_modal monotone, v2 RES drift shrinks ≥5×.
+  - **E_hg (attribution, mechanism C — recorder-PULL, zero vanilla, zero
+    producer code).** Key discovery of the scoping pass: the element side
+    ALREADY SHIPPED — `LadrunoBrick` has `hourglassEnergy()` (responseID 8,
+    stored ½κΣq² for uri-stiffness / ½uᵀKstab·u·damageScale for ssp /
+    cumulative `hgDissipated` at commit cadence for uri-viscous, serialized,
+    own test battery). P2 is only the recorder pull: `buildCache()` probes
+    every element with `setResponse({"hourglassEnergy"},1,DummyStream)` and
+    caches the non-null hits; `record()` sums `getResponse` over the cache;
+    `initialize()` builds the cache first so `chHourglass = !hgCache.empty()`
+    reflects the CURRENT model (no process-sticky wart — this is a pull
+    channel, no registry). Rebucket `IE_display = IE_raw − L − E_hg` with
+    E_hg cancelling in RES (attribution, not closure) — uniform with
+    E_inject. Semantics documented: exact cumulative for viscous;
+    instantaneous stored (snapshot, can decrease on unload) for
+    stiffness/ssp. Gate (`test_energybalance_v2_hourglass_attribution`):
+    dynamic URI bending cantilever; E_hg == IE_legacy − IE_v2 at EVERY
+    sample (exact by kernel algebra; needs `-precision 12` — at the default
+    6 sig figs the near-cancelling difference is quantization-dominated,
+    caught live); RES invariant; std-twin control publishes exactly 0. At
+    the gate's end state E_hg ≈ 83% of raw IE — the URI single-element-deep
+    cantilever is hourglass-dominated, as expected.
+  - **MPI ownership (option scoping → (c)+(d), (a)/(b) REJECTED).** Scoping
+    verified the fork's openseesmp is flat-per-rank (`_PARALLEL_INTERPRETERS`,
+    plain `Domain`, no PartitionedDomain/Subdomain, METIS partition path not
+    built) — so a vanilla `Node` owner field has NO in-kernel authority to
+    populate it, and in-recorder MPI collectives would drag MPI into the
+    sequentially-compiled OPS_Recorder lib. Shipped instead: (1)
+    `-ownedNodes <regionTag>` — nodal terms (KE_nod/DW_nod/ULW) counted only
+    for nodes in the region (zero vanilla; missing region warns and counts
+    NOTHING — loud); (2) per-rank output files `stem.part-<rank>.ext` under
+    a detected launcher (PMI/OMPI/SLURM env probe, LadrunoRecorder
+    precedent) so ranks stop racing one file; (3) the offline-dedup contract
+    documented in the recorder header.
+  - **G2 MEASURED FINDING (corrects this ADR's own multiply-count claim):**
+    in the flat-per-rank SPLIT-MASS idiom (the upstream example's
+    `mass(4,m,m)` on both ranks; parallel assembly SUMS duplicates → the
+    assembled system has 2m), the naive cross-rank nodal sum is **CORRECT**
+    (gate: naive==serial exactly, NOT 2×) — each rank books only its own
+    mass share. The multiply-count hazard exists only for FULL-MIRROR
+    conventions (PartitionedDomain external-node mirrors, or an emitter
+    writing the full nodal value on every touching rank) — which is exactly
+    what `-ownedNodes` dedups. Gate `p2_mpi_owned_nodes.py` (2-rank
+    mpiexec): G1 element block sums == serial; G2 nodal semantics
+    characterized (split-mass correct); G3 `-ownedNodes` drops exactly the
+    non-owner's nodal share, element block untouched; G4 own-all control
+    byte-identical to naive. ALL PASS.
+  - **Pre-existing test-fragility fixed:** the LNVD closure test back-indexed
+    `E_lnvd` at `d[:, -3]`, which breaks the moment `E_modal` is declared by
+    an earlier test in the same process. Replaced with NAME-based lookup
+    parsing the recorder's echoed column header (the documented `-v2` parse
+    contract) via capfd — order-proof.
+  - **Batteries:** 19/19 in the adr52-then-recorder ordering (incl. the 2 new
+    gates); p15/p16 standalone gates re-run ALL PASS on the new pyd (column
+    changes disturb nothing — those models declare no modal/hg);
+    `_verify_explicit.py` 20/22 unchanged; MPI gate ALL PASS.

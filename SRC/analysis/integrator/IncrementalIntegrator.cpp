@@ -42,6 +42,7 @@
 #include <cmath>
 #include <Element.h>                  // Ladruno P3: getClassTag() on the assembled element
 #include <profiler/ProfilerMacros.h>  // Ladruno P3: deep per-element-type timing
+#include <LadrunoEnergyChannels.h>    // Ladruno ADR-69 P2: modal-damping energy channel
 
 IncrementalIntegrator::IncrementalIntegrator(int clasTag)
 :Integrator(clasTag),
@@ -211,16 +212,47 @@ IncrementalIntegrator::initialize(void)
 }
 
 int
-IncrementalIntegrator::commit(void) 
+IncrementalIntegrator::commit(void)
 {
     if (theAnalysisModel == 0) {
 	opserr << "WARNING IncrementalIntegrator::commit() -";
-	opserr << "no AnalysisModel object associated with this object\n";	
+	opserr << "no AnalysisModel object associated with this object\n";
 	return -1;
-    }    
+    }
+
+    // Ladruno ADR-69 P2: publish the modal-damping dissipation of the step
+    // being committed. mdRate was captured at the last (converged)
+    // formUnbalance iterate; integrate over the domain-time delta (same
+    // trapezoid machinery as the Lysmer/ASD commitState publishers) and
+    // publish BEFORE commitDomain() so recorders reading the registry inside
+    // see this step's total. The first valid commit only seeds the clock/
+    // rate (the step's start time predates the first modal formUnbalance
+    // and is unknowable here) and DECLARES the channel - the recorder fixes
+    // its columns at the first record, which happens inside this same
+    // commitDomain(). COVERAGE: integrators that override commit() without
+    // chaining to this base (HHT family, *_TP explicit) do not publish -
+    // their modal dissipation stays in RES (documented gap, ADR-69 P2); the
+    // canonical modal-damping pairing (Newmark) uses this base commit.
+    if (mdRateValid) {
+	Ladruno::EnergyChannelRegistry::instance().declare(
+	    Ladruno::EnergyChannelRegistry::MODAL_WORK);
+	const double tNow = theAnalysisModel->getCurrentDomainTime();
+	if (mdSeeded) {
+	    const double dt = tNow - mdLastTime;
+	    if (dt > 0.0) {
+		Ladruno::EnergyChannelRegistry::instance().addEnergy(
+		    Ladruno::EnergyChannelRegistry::MODAL_WORK,
+		    0.5 * (mdPrevRate + mdRate) * dt);
+	    }
+	}
+	mdSeeded = true;
+	mdPrevRate = mdRate;
+	mdLastTime = tNow;
+	mdRateValid = false;
+    }
 
     return theAnalysisModel->commitDomain();
-}   
+}
 
 
 int
@@ -548,6 +580,8 @@ IncrementalIntegrator::addModalDampingForce(const Vector *modalDampingValues)
 
   dampingForces->Zero();
 
+  bool anyModeActive = false;   // Ladruno ADR-69 P2
+
   for (int i=0; i<numModes; i++) {
 
     double eigenvalue = (*eigenValues)(i);
@@ -557,7 +591,7 @@ IncrementalIntegrator::addModalDampingForce(const Vector *modalDampingValues)
 
       double *eigenVectorI = &eigenVectors[numDOF*i];
       double beta = 0.0;
-      
+
       for (int j=0; j<numDOF; j++) {
 	double eij = eigenVectorI[j];
 	if (eij != 0) {
@@ -572,11 +606,26 @@ IncrementalIntegrator::addModalDampingForce(const Vector *modalDampingValues)
 	if (eij != 0)
 	  (*dampingForces)(j) += beta * eij;
       }
+
+      anyModeActive = true;   // Ladruno ADR-69 P2
     }
   }
 
   theSOE->setB(*dampingForces);
-  
+
+  // Ladruno ADR-69 P2: capture the modal dissipation rate at this iterate.
+  // dampingForces = -C_modal*v, so the dissipation power is -(F . v) =
+  // v'C_modal v >= 0. OVERWRITE, never accumulate - this runs once per
+  // equilibrium iteration and only the last (converged) iterate of the step
+  // must survive to commit(), where it is trapezoid-integrated + published.
+  if (anyModeActive) {
+    double p = 0.0;
+    for (int j=0; j<numDOF; j++)
+      p -= (*dampingForces)(j) * vel(j);
+    mdRate = p;
+    mdRateValid = true;
+  }
+
   return res;
 }
 

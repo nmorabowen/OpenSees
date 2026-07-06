@@ -81,18 +81,41 @@
 // no spurious increment is taken over the initial time jump.
 //
 // Ladruno ADR-69 (-v2, opt-in): channel-aware layout. Model block becomes
-//   KE_ele KE_nod IE DW_ele DW_nod ULW [E_inject] [E_lnvd] RES ERR%
+//   KE_ele KE_nod IE DW_ele DW_nod ULW [E_inject] [E_lnvd] [E_modal] [E_hg]
+//   RES ERR%
 // where the element/nodal split quarantines the MPI-unsafe nodal terms
 // (element terms reduce correctly across ranks; nodal terms are multiply-
 // counted on shared boundary nodes), E_inject is the absorbing-boundary
 // incident injection (derived from the published resisting-sign leak L:
-// IE shown = IE_raw - L, E_inject = -L), and E_lnvd is the FLAC local
-// non-viscous damping dissipation. Channel columns appear only when a
-// producer declared them (LadrunoEnergyChannels.h). Region blocks keep the
-// legacy 6 columns in both modes. Without -v2 the output is byte-identical
-// to v1. NOTE: E_inject covers LysmerTriangle only for now — ASDAbsorbing
-// Boundary2D/3D injection still pollutes IE (warned at initialize; ADR-69
-// P1.5).
+// IE shown = IE_raw - L - E_hg, E_inject = -L), E_lnvd is the FLAC local
+// non-viscous damping dissipation, E_modal (P2) is the integrator-published
+// modal-damping dissipation (published from IncrementalIntegrator::commit();
+// integrators that override commit() without chaining - HHT family, *_TP
+// explicit - do not publish and their modal dissipation stays in RES), and
+// E_hg (P2) is the recorder-PULLED hourglass-stabilization energy (summed
+// element "hourglassEnergy" responses; present iff the model contains an
+// element exposing that response at first record). Channel columns appear
+// only when a producer declared them (LadrunoEnergyChannels.h) or, for
+// E_hg, when the response probe hit. Region blocks keep the legacy 6
+// columns in both modes. Without -v2 the output is byte-identical to v1.
+// E_inject covers LysmerTriangle and ASDAbsorbingBoundary2D/3D (bottom +
+// lateral) in full.
+//
+// Ladruno ADR-69 P2 (-ownedNodes <regionTag>, opt-in): count NODAL terms
+// (nodal-mass KE, nodal alphaM Rayleigh DW, nodal-load ULW) only for nodes
+// in the given MeshRegion. Under flat-per-rank MPI (openseesmp) shared
+// boundary nodes are constructed on every touching rank and their nodal
+// terms would be multiply-counted in a cross-rank sum; passing each rank
+// the set of nodes it OWNS (canonical-rank convention - apeGmsh emits
+// this) makes the per-rank nodal blocks sum exactly. Applies to BOTH
+// layouts' nodal terms. Absent flag = all nodes owned (byte-identical).
+// A missing region warns and counts NO nodes (loud, visible misconfig).
+//
+// Ladruno ADR-69 P2: under a detected MPI launcher (PMI_SIZE/
+// OMPI_COMM_WORLD_SIZE/SLURM_NTASKS > 1) file-based outputs are suffixed
+// per rank ("energy.txt" -> "energy.part-<rank>.txt") so ranks never race
+// on one file; stitch offline (element block sums exactly; nodal block
+// per the -ownedNodes contract).
 //
 // -v2 COLUMN LAYOUT REFLECTS PROCESS HISTORY, not just the current model:
 // channel declarations are process-sticky (monotone, no reset on wipe — the
@@ -112,12 +135,14 @@
 
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>   // Ladruno ADR-69 P2: -ownedNodes membership
 
 class Domain;
 class FE_Datastore;
 class Node;
 class Element;
 class MeshRegion;
+class Response;   // Ladruno ADR-69 P2: hourglassEnergy pull cache
 
 #define EBR_NUM_ENERGY_COMPONENTS 6
 
@@ -130,7 +155,8 @@ public:
         OPS_Stream &theOutputHandler,
         bool echoTimeFlag = true,
         const ID &regions = ID(),
-        bool v2Layout = false);   // Ladruno ADR-69: channel-aware split layout
+        bool v2Layout = false,        // Ladruno ADR-69: channel-aware split layout
+        int ownedNodesRegion = -1);   // Ladruno ADR-69 P2: -ownedNodes region (-1 = all)
 
     ~EnergyBalanceRecorder();
 
@@ -175,8 +201,20 @@ private:
     bool v2Layout;
     bool chInject;               // ABSORB_LEAK declared -> E_inject column
     bool chLnvd;                 // LNVD_WORK declared  -> E_lnvd column
+    bool chModal;                // Ladruno ADR-69 P2: MODAL_WORK -> E_modal
+    bool chHourglass;            // Ladruno ADR-69 P2: response probe hit -> E_hg
     int  numModelCols;           // model-block width (6 legacy or v2 width)
     ebkernel::EnergyAccumulatorV2 model_acc2;
+
+    // Ladruno ADR-69 P2: hourglass "energy" pull (mechanism C) - Response*
+    // objects resolved by probing every element for a "hourglassEnergy"
+    // response; rebuilt (and the old ones deleted) with the cache.
+    std::vector<std::pair<Element*, Response*> > hgCache;
+
+    // Ladruno ADR-69 P2: -ownedNodes. Region tag (-1 = inactive) and the
+    // resolved node set; nodal terms are only counted for members.
+    int ownedRegionTag;
+    std::unordered_set<Node*> ownedNodes;
 
     // ---- per-region accumulators ----
     ID regionTags;

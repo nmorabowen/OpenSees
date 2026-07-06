@@ -125,6 +125,19 @@ class IncrementalIntegrator : public Integrator
     Vector *mV;
     Vector *tmpV1;
     Vector *tmpV2;
+
+    // Ladruno ADR-69 P2: modal-damping energy publisher scratch. The
+    // dissipation rate v'C_modal v is captured (overwritten, never summed)
+    // at each addModalDampingForce() call - the last call of a step is the
+    // converged iterate - and commit() trapezoid-integrates it over the
+    // domain-time delta and publishes to the MODAL_WORK energy channel.
+    // mdRateValid is cleared after each commit so an integrator that stops
+    // applying modal forces can never re-publish a stale rate.
+    double mdRate = 0.0;
+    double mdPrevRate = 0.0;
+    double mdLastTime = 0.0;
+    bool   mdRateValid = false;
+    bool   mdSeeded = false;
     
   private:
     LinearSOE *theSOE;
