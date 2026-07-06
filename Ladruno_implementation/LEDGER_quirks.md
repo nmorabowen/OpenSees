@@ -2490,3 +2490,27 @@ is the BOTTOM compliant base (`"B" -fx/-fy` time series); lateral elements take 
 time-series args at all (parser rejects them for non-bottom). Also note the lateral
 `addClk` dashpot writes only SOIL rows (one-way coupling): the FF column is UNDAMPED unless
 element Rayleigh (`addCff`, alphaM) is set — an undamped FF column rings forever.
+
+**openseesmp flat-per-rank nodal-term summation is convention-dependent — the split-mass idiom
+sums CORRECTLY, only full-mirror emits double-count (2026-07-06, ADR-69 P2, measured).** The
+upstream MPI example declares `mass(4, m, m)` for a shared node on BOTH ranks; the parallel
+diagonal assembly SUMS duplicate contributions, so the assembled system has `2m` and each
+rank's EnergyBalance recorder books only its own share — the naive cross-rank sum of the nodal
+columns equals the serial (2m) reference EXACTLY (gate `energy_v2/p2_mpi_owned_nodes.py`, G2).
+The "nodal terms multiply-counted on shared boundary nodes" hazard (ADR-69) applies only to
+FULL-MIRROR conventions: PartitionedDomain-style external-node mirrors, or an emitter writing
+the full nodal mass/load on every touching rank (which also changes the assembled physics
+unless the solver dedups). Consequence: don't "fix" per-rank energy sums blindly — first
+determine which convention the model uses; `-ownedNodes <regionTag>` is the dedup tool for
+mirror conventions and a no-op burden otherwise. Also note per-rank output files
+(`stem.part-<rank>.ext`) are auto-suffixed under a detected MPI launcher since ADR-69 P2 —
+ranks racing a single recorder file was the previous (corrupting) behavior.
+
+**Modal-damping energy is published only by integrators using the BASE
+`IncrementalIntegrator::commit()` (2026-07-06, ADR-69 P2).** 35 integrators override
+`commit()` without chaining (HHT family, `*_TP` explicit): they still APPLY modal forces (via
+`TransientIntegrator::formUnbalance` / their own `addModalDampingForce` calls) but never reach
+the publish site, so their modal dissipation stays in RES and no `E_modal` column appears
+(declare-on-first-publish prevents a silent zero column). Newmark does not override commit and
+is fully covered. If you need E_modal under HHT: either chain the override to the base commit
+(vanilla edit, ledger it) or accept the documented RES drift.

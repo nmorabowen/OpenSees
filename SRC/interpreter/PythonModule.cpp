@@ -585,7 +585,7 @@ initopensees(void)
         static const char *kFeatures =
 "      Ladruno fork — active features:\n"
 "        • OpenSeesPyMP — import openseesmp (MPI-parallel Python)\n"
-"        • EnergyBalance recorder (per-region sidecar; -v2 channels: E_inject, E_lnvd, MPI ele/nodal split)\n"
+"        • EnergyBalance recorder (per-region sidecar; -v2 channels: E_inject, E_lnvd, E_modal, E_hg; -ownedNodes MPI gate + per-rank files)\n"
 "        • ExplicitBathe — Noh–Bathe explicit (-lnvd FLAC damping, -sms [-consistent] mass scaling)\n"
 "        • CentralDifferenceLadruno — robust explicit central difference\n"
 "        • CentralDifferenceSMS — selective mass scaling (DT2MS-style, explicit)\n"

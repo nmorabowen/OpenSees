@@ -20,17 +20,23 @@ log**: [[69_ladruno_energy_recorder_channels_adr]]. This is the short version.
 | **P0.5** — sign-pinning (Lysmer injection leaks into `IE` w/ resisting-force sign; outcome (a) confirmed empirically) | ✅ done, no code | — |
 | **P1** — `EnergyChannelRegistry`, `-v2` recorder layout, `ExplicitBathe -lnvd` publisher, `LysmerTriangle` Tcl publisher + `eleLoad -lysmerVelocityLoader` (Tcl) | ✅ merged on `ladruno` | [#488](https://github.com/nmorabowen/OpenSees/pull/488) |
 | **P1.5** — `LysmerTriangle` + loader openseespy dispatch, `ASDAbsorbingBoundary2D/3D` bottom compliant-base publisher | ✅ merged on `ladruno` | [#491](https://github.com/nmorabowen/OpenSees/pull/491) |
-| **P1.6** — ASD **lateral** free-field injection (`addRffToSoil`) publish | ✅ done (this session's PR) | — |
-| **P2** — modal-damping publisher, hourglass energy via `getResponse`, count-where-owned MPI gate | ⬜ not started | — |
+| **P1.6** — ASD **lateral** free-field injection (`addRffToSoil`) publish | ✅ merged on `ladruno` | [#496](https://github.com/nmorabowen/OpenSees/pull/496) |
+| **P2** — `E_modal` publisher, `E_hg` hourglass pull, `-ownedNodes` MPI gate + per-rank files | ✅ done (this session's PR) | — |
 | **P3** — mass-scaling fidelity advisory column | ⬜ not started | — |
 
 The recorder today (`recorder EnergyBalance ... -v2`): legacy 6-column output
 is byte-identical when the flag is omitted. With `-v2`: `KE_ele KE_nod IE
-DW_ele DW_nod ULW [E_inject] [E_lnvd] RES ERR%`. `E_inject` covers **Lysmer**
-(full) and **ASD** (full: bottom compliant-base `addBaseActions` + lateral
-free-field `addRffToSoil`; the coverage warning is deleted). `E_lnvd` covers
-`ExplicitBathe -lnvd` FLAC dissipation. Modal damping still pollutes `RES`
-(P2).
+DW_ele DW_nod ULW [E_inject] [E_lnvd] [E_modal] [E_hg] RES ERR%` (parse by
+the echoed column NAMES, never position). `E_inject` covers **Lysmer** and
+**ASD** in full. `E_lnvd` covers `ExplicitBathe -lnvd`. `E_modal` covers
+modal damping for integrators on the base `IncrementalIntegrator::commit()`
+(Newmark; HHT-family overrides = documented gap). `E_hg` is the
+recorder-pulled hourglass attribution (`IE_display = IE_raw − L − E_hg`,
+RES-invariant; LadrunoBrick today, any element exposing `hourglassEnergy`
+tomorrow). `-ownedNodes <regionTag>` filters nodal terms for MPI dedup;
+file outputs auto-suffix `part-<rank>` under a launcher. KEY P2 finding:
+flat-per-rank split-mass models sum nodal terms CORRECTLY naively — the
+multiply-count hazard is full-mirror-convention-only (quirks ledger).
 
 ## Where to work
 
@@ -96,15 +102,33 @@ driven by uniform excitation (drive closure gates with initial velocities +
 alphaM Rayleigh instead — the lateral FF column is otherwise undamped).
 Gate evidence: `energy_v2/p16_asd_lateral_closure.py`.
 
-## P2 starting points
+## P2 outcome (all three items — DONE)
 
-- **Modal damping publisher:** site is `TransientIntegrator.cpp`
-  (`modalDampingFactors`, application inside the solve) — not yet
-  read end-to-end this line; start there.
-- **Hourglass via `getResponse`:** preferred zero-vanilla route identified in
-  the ADR (§ Mechanism C) — the recorder resolves `Response*` objects once in
-  `buildCache()`, fork elements (`LadrunoBrick`) add an `"energy"` response.
-  Not started.
-- **Count-where-owned MPI gate:** needs a `Node` owner/rank query that
-  doesn't exist yet (`Node.cpp` has no `processID` field) — the harder,
-  more invasive item; likely wants its own scoping pass before code.
+- **E_modal:** published from `IncrementalIntegrator::commit()` (rate
+  captured per-iterate in `addModalDampingForce`, trapezoid at commit,
+  declare-on-first-publish). COVERAGE: base-commit integrators only
+  (Newmark ✓; HHT family / `*_TP` override commit without chaining —
+  documented gap, quirks-ledgered).
+- **E_hg:** the element side had ALREADY SHIPPED (`LadrunoBrick`
+  `hourglassEnergy` response, responseID 8) — P2 is recorder-pull only
+  (probe cache in `buildCache`, `chHourglass` from the CURRENT model at
+  initialize, no registry). Rebucket uniform with E_inject. Gate needs
+  `-precision 12` (near-cancelling identity vs 6-digit file quantization).
+  Fast-follow candidate: add the same response to `LadrunoQuad` (ssp Kstab
+  exists there); the recorder picks it up by name automatically.
+- **MPI:** `-ownedNodes <regionTag>` + auto `part-<rank>` file suffixing;
+  Node-owner-field and in-recorder-MPI options REJECTED (flat-per-rank has
+  no ownership authority; OPS_Recorder lib compiles without MPI). MEASURED:
+  split-mass idiom sums nodal terms correctly naively; the hazard is
+  full-mirror conventions only (see quirks). Gate:
+  `energy_v2/p2_mpi_owned_nodes.py` (needs `dist/openseesmp`, build target
+  `OpenSeesPyMP`).
+
+## P3 starting point (mass-scaling fidelity advisory column)
+
+The last open ADR-69 item. ADR § "Proposed column schema" sketches an
+advisory column for mass-scaling KE fidelity (the consistent-SMS energy
+conduit already closes the BALANCE — this is about surfacing the added-mass
+kinetic-energy fraction as a quality metric, LS-DYNA GLSTAT-style). Read the
+ADR schema section + `LadrunoMassScalingEnergy.h` (registry already feeds
+the kernel's KE via `elementScalingKE`) before scoping.

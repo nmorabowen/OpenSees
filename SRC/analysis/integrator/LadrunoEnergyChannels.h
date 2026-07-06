@@ -76,8 +76,11 @@
 //     E_inject column truthful.
 //   * LNVD_WORK stores the cumulative FLAC local-damping dissipation
 //     sum alpha*|r_i|*|v_i|*dt >= 0 (a true sink; reduces |RES|).
-//   * MODAL_WORK is reserved for the modal-damping publisher (ADR-69 P2);
-//     nothing declares it yet.
+//   * MODAL_WORK stores the cumulative modal-damping dissipation
+//     v'C_modal v integrated per commit (a true sink; reduces |RES|).
+//     Published by IncrementalIntegrator::commit() (ADR-69 P2) - covers
+//     integrators on the base commit path (Newmark); commit()-overriding
+//     integrators (HHT family, *_TP explicit) do not publish.
 //
 // Single-threaded like the rest of the analysis core; header-only so the
 // energy kernel and producers include it without CMake changes.

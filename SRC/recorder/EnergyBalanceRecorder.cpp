@@ -63,9 +63,16 @@
 #include <elementAPI.h>
 #include <classTags.h>   // Ladruno: RECORDER_TAGS_EnergyBalanceRecorder
 
+#include <Response.h>      // Ladruno ADR-69 P2: hourglassEnergy pull
+#include <Information.h>   // Ladruno ADR-69 P2: response data access
+#include <DummyStream.h>   // Ladruno ADR-69 P2: silent setResponse probe
+
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
+#include <string>    // Ladruno ADR-69 P2: per-rank filename suffix
+#include <sstream>   // Ladruno ADR-69 P2
+#include <cstdlib>   // Ladruno ADR-69 P2: std::getenv
 
 void*
 OPS_EnergyBalanceRecorder()
@@ -93,7 +100,8 @@ OPS_EnergyBalanceRecorder()
     bool doScientific = false;
     int precision = 6;
     bool closeOnWrite = false;
-    bool v2Layout = false;   // Ladruno ADR-69
+    bool v2Layout = false;        // Ladruno ADR-69
+    int ownedNodesRegion = -1;    // Ladruno ADR-69 P2: -ownedNodes region tag
 
     const char *inetAddr = 0;
     int inetPort = 0;
@@ -178,6 +186,53 @@ OPS_EnergyBalanceRecorder()
                 regions[regions.Size()] = tag;
             }
         }
+        else if (strcmp(option, "-ownedNodes") == 0) {
+            // Ladruno ADR-69 P2: count nodal terms (KE_nod, DW_nod, ULW)
+            // only for nodes in this MeshRegion - the per-rank ownership
+            // gate for flat-per-rank MPI (see header). -1 stays "all".
+            if (OPS_GetNumRemainingInputArgs() > 0) {
+                int num = 1;
+                if (OPS_GetIntInput(&num, &ownedNodesRegion) < 0) {
+                    opserr << "WARNING: EnergyBalance -ownedNodes requires an "
+                              "integer region tag\n";
+                    return 0;
+                }
+            }
+        }
+    }
+
+    // Ladruno ADR-69 P2: per-rank filename suffix under a detected MPI
+    // launcher, so flat-per-rank (openseesmp) processes never race on one
+    // file. Same env probe order as LadrunoRecorder (Intel/MS-MPI, OpenMPI,
+    // then SLURM last - sbatch exports SLURM_NTASKS into the batch shell
+    // itself, so a real launcher's own variables take precedence).
+    // "energy.txt" -> "energy.part-<rank>.txt" (suffix before the last
+    // extension; appended when there is none).
+    std::string partFilename;
+    if (filename != 0) {
+        static const char* const size_rank_env[][2] = {
+            { "PMI_SIZE",             "PMI_RANK" },
+            { "OMPI_COMM_WORLD_SIZE", "OMPI_COMM_WORLD_RANK" },
+            { "SLURM_NTASKS",         "SLURM_PROCID" },
+        };
+        for (size_t i = 0; i < sizeof(size_rank_env)/sizeof(size_rank_env[0]); ++i) {
+            const char* size_env = std::getenv(size_rank_env[i][0]);
+            if (size_env != 0 && std::atoi(size_env) > 1) {
+                const char* rank_env = std::getenv(size_rank_env[i][1]);
+                const int rank = (rank_env != 0) ? std::atoi(rank_env) : 0;
+                std::string stem(filename), ext;
+                const size_t dot = stem.find_last_of('.');
+                if (dot != std::string::npos && dot > 0) {
+                    ext = stem.substr(dot);
+                    stem.erase(dot);
+                }
+                std::stringstream ss;
+                ss << stem << ".part-" << rank << ext;
+                partFilename = ss.str();
+                filename = partFilename.c_str();
+                break;
+            }
+        }
     }
 
     // data handler
@@ -212,7 +267,8 @@ OPS_EnergyBalanceRecorder()
 #endif
 
     EnergyBalanceRecorder* recorder = new EnergyBalanceRecorder(
-        *domain, *theOutputStream, echoTimeFlag, regions, v2Layout);
+        *domain, *theOutputStream, echoTimeFlag, regions, v2Layout,
+        ownedNodesRegion);
 
     return recorder;
 }
@@ -226,7 +282,9 @@ EnergyBalanceRecorder::EnergyBalanceRecorder()
       time_last(0.),
       model_acc(),
       v2Layout(false), chInject(false), chLnvd(false),
+      chModal(false), chHourglass(false),
       numModelCols(EBR_NUM_ENERGY_COMPONENTS), model_acc2(),
+      hgCache(), ownedRegionTag(-1), ownedNodes(),
       regionTags(), numRegions(0),
       region_acc(),
       cacheValid(false), maxNumDOF(0), velScratch()
@@ -240,7 +298,8 @@ EnergyBalanceRecorder::EnergyBalanceRecorder(
     OPS_Stream &theOutputHandler_,
     bool echoTimeFlag_,
     const ID &regions,
-    bool v2Layout_)
+    bool v2Layout_,
+    int ownedNodesRegion)
     : Recorder(RECORDER_TAGS_EnergyBalanceRecorder),
       theDomain(&theDomain_), theOutputHandler(&theOutputHandler_),
       response((echoTimeFlag_ ? 1 : 0) + EBR_NUM_ENERGY_COMPONENTS * (1 + regions.Size())),
@@ -248,7 +307,9 @@ EnergyBalanceRecorder::EnergyBalanceRecorder(
       time_last(0.),
       model_acc(),
       v2Layout(v2Layout_), chInject(false), chLnvd(false),
+      chModal(false), chHourglass(false),
       numModelCols(EBR_NUM_ENERGY_COMPONENTS), model_acc2(),
+      hgCache(), ownedRegionTag(ownedNodesRegion), ownedNodes(),
       regionTags(regions), numRegions(regions.Size()),
       region_acc((size_t)regions.Size()),
       cacheValid(false), maxNumDOF(0), velScratch()
@@ -259,6 +320,11 @@ EnergyBalanceRecorder::EnergyBalanceRecorder(
 
 EnergyBalanceRecorder::~EnergyBalanceRecorder()
 {
+    // Ladruno ADR-69 P2: the hourglass pull cache owns its Response objects
+    for (size_t i = 0; i < hgCache.size(); ++i)
+        delete hgCache[i].second;
+    hgCache.clear();
+
     if (theOutputHandler != 0) {
         if (initializationDone)
             theOutputHandler->endTag(); // closes the "Data" tag opened in initialize()
@@ -303,6 +369,15 @@ EnergyBalanceRecorder::buildCache(void)
     }
 
     // size the velocity scratch to the largest element DOF count
+    // Ladruno ADR-69 P2: in the same sweep, probe every element for a
+    // "hourglassEnergy" response (mechanism C recorder-pull); the non-null
+    // hits form the E_hg cache. The probe stream is a DummyStream so the
+    // setResponse tag machinery never touches the real output.
+    for (size_t i = 0; i < hgCache.size(); ++i)
+        delete hgCache[i].second;
+    hgCache.clear();
+    static DummyStream probeStream;
+    static const char *hgArgv[1] = { "hourglassEnergy" };
     maxNumDOF = 0;
     Element *ele;
     ElementIter &elements = theDomain->getElements();
@@ -310,9 +385,35 @@ EnergyBalanceRecorder::buildCache(void)
         const int n = ele->getNumDOF();
         if (n > maxNumDOF)
             maxNumDOF = n;
+        if (v2Layout) {
+            Response *hgRes = ele->setResponse(hgArgv, 1, probeStream);
+            if (hgRes != 0)
+                hgCache.push_back(std::make_pair(ele, hgRes));
+        }
     }
     if (velScratch.Size() < maxNumDOF)
         velScratch.resize(maxNumDOF);
+
+    // Ladruno ADR-69 P2: resolve the -ownedNodes region into a node set.
+    // A missing region warns and owns NO nodes (loud, visible misconfig -
+    // the nodal columns go to zero rather than silently double-counting).
+    ownedNodes.clear();
+    if (ownedRegionTag >= 0) {
+        MeshRegion *owned = theDomain->getRegion(ownedRegionTag);
+        if (owned == 0) {
+            opserr << "EnergyBalanceRecorder - WARNING -ownedNodes region "
+                   << ownedRegionTag << " not found; NO nodal terms will be "
+                      "counted on this rank\n";
+        }
+        else {
+            const ID &onodes = owned->getNodes();
+            for (int i = 0; i < onodes.Size(); ++i) {
+                Node *node = theDomain->getNode(onodes(i));
+                if (node != 0)
+                    ownedNodes.insert(node);
+            }
+        }
+    }
 
     cacheValid = true;
 }
@@ -389,6 +490,11 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
         Node *node;
         NodeIter &nodes = theDomain->getNodes();
         while ((node = nodes()) != 0) {
+            // Ladruno ADR-69 P2: -ownedNodes gate - nodal terms are only
+            // counted for owned nodes (both layouts; see header contract)
+            if (ownedRegionTag >= 0 &&
+                ownedNodes.find(node) == ownedNodes.end())
+                continue;
             double ke = 0., dw = 0., ulw = 0.;
             ebkernel::addNodeEnergy(node, ke, dw, ulw);
             g_ke += ke; g_damping_rate += dw; g_unbalanced_rate += ulw;
@@ -420,6 +526,20 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
         // on the first record so a fresh recorder starts from zero.
         const Ladruno::EnergyChannelRegistry &reg =
             Ladruno::EnergyChannelRegistry::instance();
+
+        // Ladruno ADR-69 P2: pull the hourglass-stabilization energy total
+        // (mechanism C) - the element accumulates at commit cadence, the
+        // recorder just samples the running scalar, so no aliasing.
+        double hg_total = 0.0;
+        for (size_t i = 0; i < hgCache.size(); ++i) {
+            Response *hgRes = hgCache[i].second;
+            if (hgRes->getResponse() >= 0) {
+                const Information &info = hgRes->getInformation();
+                if (info.theVector != 0 && info.theVector->Size() > 0)
+                    hg_total += (*info.theVector)(0);
+            }
+        }
+
         double out[ebkernel::NUM_V2_SLOTS];
         model_acc2.step(dT, firstRecord,
                         v2_ke_ele, v2_ke_nod,
@@ -427,6 +547,8 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
                         g_unbalanced_rate,
                         reg.energy(Ladruno::EnergyChannelRegistry::ABSORB_LEAK),
                         reg.energy(Ladruno::EnergyChannelRegistry::LNVD_WORK),
+                        reg.energy(Ladruno::EnergyChannelRegistry::MODAL_WORK),
+                        hg_total,
                         out);
         int col = timeOffset;
         response(col++) = out[ebkernel::V2_KE_ELE];
@@ -439,6 +561,10 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
             response(col++) = out[ebkernel::V2_E_INJECT];
         if (chLnvd)
             response(col++) = out[ebkernel::V2_E_LNVD];
+        if (chModal)
+            response(col++) = out[ebkernel::V2_E_MODAL];
+        if (chHourglass)
+            response(col++) = out[ebkernel::V2_E_HG];
         response(col++) = out[ebkernel::V2_RES];
         response(col++) = out[ebkernel::V2_ERR];
     }
@@ -521,15 +647,24 @@ EnergyBalanceRecorder::initialize(void)
     }
 
     // Ladruno ADR-69 (-v2): fix the channel columns from the registry's
-    // declared set. Producers declare at construction/setDomain, and the
-    // first record() happens after the first Domain::commit(), so anything
-    // built before analyze is visible here.
+    // declared set. Producers declare at construction/setDomain (or, for
+    // MODAL_WORK, at the first base commit - which precedes this initialize
+    // since the first record() runs inside that same commitDomain), so
+    // anything built before analyze is visible here. E_hg is decided from
+    // the response-probe cache instead of the registry - the column
+    // reflects the CURRENT model, so it must be probed before the widths
+    // are fixed (buildCache here; record() skips its lazy rebuild).
     if (v2Layout) {
+        if (cacheValid == false)
+            this->buildCache();
         const Ladruno::EnergyChannelRegistry &reg =
             Ladruno::EnergyChannelRegistry::instance();
         chInject = reg.declared(Ladruno::EnergyChannelRegistry::ABSORB_LEAK);
         chLnvd   = reg.declared(Ladruno::EnergyChannelRegistry::LNVD_WORK);
-        numModelCols = 6 + (chInject ? 1 : 0) + (chLnvd ? 1 : 0) + 2;
+        chModal  = reg.declared(Ladruno::EnergyChannelRegistry::MODAL_WORK);
+        chHourglass = !hgCache.empty();
+        numModelCols = 6 + (chInject ? 1 : 0) + (chLnvd ? 1 : 0)
+                     + (chModal ? 1 : 0) + (chHourglass ? 1 : 0) + 2;
 
         // Coverage (ADR-69 P1.5/P1.6): ASDAbsorbingBoundary2D/3D publish
         // both their BOTTOM compliant-base injection (addBaseActions) and
@@ -574,6 +709,8 @@ EnergyBalanceRecorder::initialize(void)
         theOutputHandler->tag("ResponseType", "ULW");
         if (chInject) theOutputHandler->tag("ResponseType", "E_inject");
         if (chLnvd)   theOutputHandler->tag("ResponseType", "E_lnvd");
+        if (chModal)  theOutputHandler->tag("ResponseType", "E_modal");
+        if (chHourglass) theOutputHandler->tag("ResponseType", "E_hg");
         theOutputHandler->tag("ResponseType", "RES");
         theOutputHandler->tag("ResponseType", "ERR%");
     } else {
@@ -599,6 +736,8 @@ EnergyBalanceRecorder::initialize(void)
         opserr << " [model: KE_ele KE_nod IE DW_ele DW_nod ULW";
         if (chInject) opserr << " E_inject";
         if (chLnvd)   opserr << " E_lnvd";
+        if (chModal)  opserr << " E_modal";
+        if (chHourglass) opserr << " E_hg";
         opserr << " RES ERR%]";
     } else {
         opserr << " [model: KE IE DW ULW RES ERR%]";

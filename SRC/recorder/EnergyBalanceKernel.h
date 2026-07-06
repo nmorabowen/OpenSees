@@ -251,24 +251,35 @@ struct EnergyAccumulator {
 //     counted on shared partition-boundary nodes and are quarantined in
 //     their own columns so an offline reducer can treat them deliberately.
 //   * Reads the ADR-69 energy channels: ABSORB_LEAK L (the resisting-sign
-//     injection work that pollutes the raw IE integral) and LNVD_WORK D.
-//     Both are cumulative registry totals; this struct snapshots a baseline
-//     at the first record and uses deltas, so a fresh recorder starts at
-//     zero regardless of registry history.
-//   * Balance:  IE_display = IE_raw - L        (rebucket: truthful IE)
+//     injection work that pollutes the raw IE integral), LNVD_WORK D and
+//     MODAL_WORK M (P2 - integrator-published modal-damping dissipation,
+//     invisible to the element/nodal getDamp() paths). All are cumulative
+//     registry totals; this struct snapshots a baseline at the first record
+//     and uses deltas, so a fresh recorder starts at zero regardless of
+//     registry history. The hourglass total Hg (P2) is recorder-PULLED
+//     (summed element "hourglassEnergy" responses, ADR-69 mechanism C) but
+//     baselined identically.
+//   * Balance:  IE_display = IE_raw - L - Hg   (rebucket: truthful IE,
+//                                               "of which hourglass" split out)
 //               E_inject   = -L                (source-side, positive = in)
 //               RES = (ULW + E_inject)
-//                     - (KE + IE_display + DW + E_lnvd)
-//     The L terms cancel in RES (rebucketing never fakes closure); the LNVD
-//     term genuinely closes what v1 leaked into RES.
+//                     - (KE + IE_display + DW + E_lnvd + E_modal + E_hg)
+//     The L and Hg terms cancel in RES (rebucketing never fakes closure);
+//     the LNVD and MODAL terms genuinely close what v1 leaked into RES.
+//     NOTE on E_hg semantics: for the viscous hourglass flavour the element
+//     total is cumulative dissipation (rebucket exact); for stiffness/ssp it
+//     is the instantaneous STORED stabilization energy (exact under
+//     monotonic loading, snapshot-approximate under cyclic; can decrease on
+//     unload) - a GLSTAT-style diagnostic, per the element's own contract.
 //
 // Output slot order (fixed; the recorder skips undeclared channel slots when
-// writing): KE_ele KE_nod IE DW_ele DW_nod ULW E_inject E_lnvd RES ERR.
+// writing): KE_ele KE_nod IE DW_ele DW_nod ULW E_inject E_lnvd E_modal E_hg
+// RES ERR.
 // ---------------------------------------------------------------------------
-static const int NUM_V2_SLOTS = 10;
+static const int NUM_V2_SLOTS = 12;
 enum V2Slot {
     V2_KE_ELE = 0, V2_KE_NOD, V2_IE, V2_DW_ELE, V2_DW_NOD, V2_ULW,
-    V2_E_INJECT, V2_E_LNVD, V2_RES, V2_ERR
+    V2_E_INJECT, V2_E_LNVD, V2_E_MODAL, V2_E_HG, V2_RES, V2_ERR
 };
 
 struct EnergyAccumulatorV2 {
@@ -281,6 +292,7 @@ struct EnergyAccumulatorV2 {
     double eref;                                  // running max, this scope
     bool   baselined;
     double base_leak, base_lnvd;                  // registry snapshot at first record
+    double base_modal, base_hg;                   // Ladruno ADR-69 P2 baselines
 
     EnergyAccumulatorV2() { reset(); }
 
@@ -297,6 +309,8 @@ struct EnergyAccumulatorV2 {
         baselined = false;
         base_leak = 0.0;
         base_lnvd = 0.0;
+        base_modal = 0.0;
+        base_hg = 0.0;
     }
 
     // Same integration convention as V1 step(): first recorded step uses the
@@ -309,6 +323,7 @@ struct EnergyAccumulatorV2 {
               double damping_rate_ele, double damping_rate_nod,
               double unbalanced_rate,
               double leak_total, double lnvd_total,
+              double modal_total, double hg_total,
               double out[NUM_V2_SLOTS])
     {
         if (firstRecord) {
@@ -331,22 +346,27 @@ struct EnergyAccumulatorV2 {
         if (!baselined) {
             base_leak = leak_total;
             base_lnvd = lnvd_total;
+            base_modal = modal_total;   // Ladruno ADR-69 P2
+            base_hg = hg_total;         // Ladruno ADR-69 P2
             baselined = true;
         }
-        const double L  = leak_total - base_leak;   // resisting-sign leak
-        const double Dl = lnvd_total - base_lnvd;   // LNVD dissipation (>= 0)
+        const double L  = leak_total - base_leak;    // resisting-sign leak
+        const double Dl = lnvd_total - base_lnvd;    // LNVD dissipation (>= 0)
+        const double Dm = modal_total - base_modal;  // modal dissipation (>= 0)
+        const double Hg = hg_total - base_hg;        // hourglass split of IE
 
         const double ke      = ke_ele + ke_nod;
         const double dw      = damping_work_ele + damping_work_nod;
-        const double ie_disp = internal_energy - L;
+        const double ie_disp = internal_energy - L - Hg;
         const double e_inj   = -L;
 
         const double res = (unbalanced_load_work + e_inj)
-                         - (ke + ie_disp + dw + Dl);
+                         - (ke + ie_disp + dw + Dl + Dm + Hg);
 
         const double mag = std::fabs(ke) + std::fabs(ie_disp) + std::fabs(dw)
                          + std::fabs(unbalanced_load_work)
-                         + std::fabs(e_inj) + std::fabs(Dl);
+                         + std::fabs(e_inj) + std::fabs(Dl)
+                         + std::fabs(Dm) + std::fabs(Hg);
         if (mag > eref) eref = mag;
         const double err = (eref > 1.0e-16) ? 100.0 * res / eref : 0.0;
 
@@ -358,6 +378,8 @@ struct EnergyAccumulatorV2 {
         out[V2_ULW]      = unbalanced_load_work;
         out[V2_E_INJECT] = e_inj;
         out[V2_E_LNVD]   = Dl;
+        out[V2_E_MODAL]  = Dm;
+        out[V2_E_HG]     = Hg;
         out[V2_RES]      = res;
         out[V2_ERR]      = err;
     }
