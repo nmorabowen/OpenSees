@@ -444,18 +444,21 @@ int ASDAbsorbingBoundary2D::revertToLastCommit()
     return 0;
 }
 
-// Ladruno (ADR-69 P1.5): publish the base-action incident-injection leak.
+// Ladruno (ADR-69 P1.5/P1.6): publish the absorbing-boundary injection leak.
 // See ASDAbsorbingBoundary3D::commitState() for the full rationale -
 // identical mechanism, 2D geometry.
 int ASDAbsorbingBoundary2D::commitState()
 {
-    if (m_stage != Stage_StaticConstraint && (m_boundary & BND_BOTTOM)) {
+    if (m_stage != Stage_StaticConstraint) {
         Domain* dom = getDomain();
         if (dom != 0) {
             static Vector Rinj;
             Rinj.resize(m_num_dofs);
             Rinj.Zero();
-            addBaseActions(Rinj);
+            if (m_boundary & BND_BOTTOM)
+                addBaseActions(Rinj);   // P1.5: compliant-base incident injection
+            else
+                addRffToSoil(Rinj);     // P1.6: lateral free-field transfer
             const double rate = Rinj ^ getVelocity();
 
             const double tNow = dom->getCurrentTime();

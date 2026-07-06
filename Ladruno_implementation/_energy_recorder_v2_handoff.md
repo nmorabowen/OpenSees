@@ -20,17 +20,17 @@ log**: [[69_ladruno_energy_recorder_channels_adr]]. This is the short version.
 | **P0.5** — sign-pinning (Lysmer injection leaks into `IE` w/ resisting-force sign; outcome (a) confirmed empirically) | ✅ done, no code | — |
 | **P1** — `EnergyChannelRegistry`, `-v2` recorder layout, `ExplicitBathe -lnvd` publisher, `LysmerTriangle` Tcl publisher + `eleLoad -lysmerVelocityLoader` (Tcl) | ✅ merged on `ladruno` | [#488](https://github.com/nmorabowen/OpenSees/pull/488) |
 | **P1.5** — `LysmerTriangle` + loader openseespy dispatch, `ASDAbsorbingBoundary2D/3D` bottom compliant-base publisher | ✅ merged on `ladruno` | [#491](https://github.com/nmorabowen/OpenSees/pull/491) |
-| **P1.6** — ASD **lateral** free-field injection (`addRffToSoil`) publish | ⬜ not started | — |
+| **P1.6** — ASD **lateral** free-field injection (`addRffToSoil`) publish | ✅ done (this session's PR) | — |
 | **P2** — modal-damping publisher, hourglass energy via `getResponse`, count-where-owned MPI gate | ⬜ not started | — |
 | **P3** — mass-scaling fidelity advisory column | ⬜ not started | — |
 
 The recorder today (`recorder EnergyBalance ... -v2`): legacy 6-column output
 is byte-identical when the flag is omitted. With `-v2`: `KE_ele KE_nod IE
 DW_ele DW_nod ULW [E_inject] [E_lnvd] RES ERR%`. `E_inject` covers **Lysmer**
-(full) and **ASD bottom compliant-base** (full) — **not** ASD's lateral
-free-field boundary (documented gap, recorder warns when ASD elements are
-present). `E_lnvd` covers `ExplicitBathe -lnvd` FLAC dissipation. Modal
-damping still pollutes `RES` (P2).
+(full) and **ASD** (full: bottom compliant-base `addBaseActions` + lateral
+free-field `addRffToSoil`; the coverage warning is deleted). `E_lnvd` covers
+`ExplicitBathe -lnvd` FLAC dissipation. Modal damping still pollutes `RES`
+(P2).
 
 ## Where to work
 
@@ -81,23 +81,20 @@ damping still pollutes `RES` (P2).
   (sign-pin), `p1_ricker_closure.py` (Lysmer, Tcl), `p15_asd_ricker_closure.py`
   (ASD, openseespy) — all runnable standalone against the worktree build.
 
-## P1.6 starting point (ASD lateral free-field injection)
+## P1.6 outcome (ASD lateral free-field injection — DONE)
 
-`addRffToSoil()` (2D: `ASDAbsorbingBoundary2D.cpp` ~line 1416; 3D: `~line
-2291`) transfers the free-field column's response into the soil domain —
-physically a source term like `addBaseActions`, but unlike it, its magnitude
-depends on the free-field column's own internal kinematic state (built up
-over the whole run via `addKff`/`addMff`/`addCff`), not just a time-series
-lookup. That's **why P1.5 scoped this out**: recomputing it "for free" at
-commit time is not obviously safe the way `addBaseActions` was — need to
-verify whether calling it a second time (outside the normal
-`getResistingForce`/`getResistingForceIncInertia` call sites) reads any
-state that could have already advanced, before assuming the same "recompute
-into a scratch Vector, dot with getVelocity()" pattern applies unchanged.
-Start by reading `addRffToSoil` end-to-end (both dims) the way P1.5 read
-`addBaseActions`, then re-run the mutual-exclusion argument in reverse (does
-publishing this term double-count anything `addRff`/`addBaseActions`
-already covers?).
+The P1.5 worry was **refuted by source verification**: `addRffToSoil` is a
+pure, stateless function of `getTrialDisp()` (no accumulated internal state
+— `addKff`/`addMff`/`addCff` build the FF column's *dynamics*, not a cached
+state the transfer reads), so the recompute-at-commit pattern applied
+unchanged as a `BND_BOTTOM ? addBaseActions : addRffToSoil` branch in the
+existing publisher. Full mechanism trace + gate numbers in the ADR's
+implementation log. Two NEW gate-design quirks ledgered: UniformExcitation
+input work hides in the recorder's IE via element load vectors (`F = K*u −
+Q`), and ASD's `addInertiaLoadToUnbalance` no-op means FF columns are never
+driven by uniform excitation (drive closure gates with initial velocities +
+alphaM Rayleigh instead — the lateral FF column is otherwise undamped).
+Gate evidence: `energy_v2/p16_asd_lateral_closure.py`.
 
 ## P2 starting points
 

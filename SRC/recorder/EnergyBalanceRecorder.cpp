@@ -61,7 +61,7 @@
 #include <TCP_Stream.h>
 
 #include <elementAPI.h>
-#include <classTags.h>   // Ladruno ADR-69: ASD coverage warning in -v2
+#include <classTags.h>   // Ladruno: RECORDER_TAGS_EnergyBalanceRecorder
 
 #include <string.h>
 #include <stdlib.h>
@@ -531,30 +531,11 @@ EnergyBalanceRecorder::initialize(void)
         chLnvd   = reg.declared(Ladruno::EnergyChannelRegistry::LNVD_WORK);
         numModelCols = 6 + (chInject ? 1 : 0) + (chLnvd ? 1 : 0) + 2;
 
-        // Coverage warning (ADR-69 P1.5): ASDAbsorbingBoundary2D/3D now
-        // publish their BOTTOM compliant-base injection (addBaseActions) to
-        // E_inject, same as LysmerTriangle. Their LATERAL free-field
-        // boundary mechanism (addRffToSoil - the free-field column's
-        // response transferred into the soil domain) is a separate source
-        // term that is NOT published and still pollutes IE; there is no
-        // cheap way to tell from here whether a given instance uses the
-        // bottom-only or lateral configuration, so the warning is
-        // unconditional whenever any ASD absorbing element is present.
-        Element *ele;
-        ElementIter &elements = theDomain->getElements();
-        while ((ele = elements()) != 0) {
-            const int ct = ele->getClassTag();
-            if (ct == ELE_TAG_ASDAbsorbingBoundary2D ||
-                ct == ELE_TAG_ASDAbsorbingBoundary3D) {
-                opserr << "EnergyBalanceRecorder (-v2) WARNING: ASDAbsorbing"
-                          "Boundary elements present - their BOTTOM "
-                          "compliant-base injection is published to "
-                          "E_inject, but the LATERAL free-field boundary's "
-                          "injection is NOT and still pollutes IE "
-                          "(ADR-69 P1.6+).\n";
-                break;
-            }
-        }
+        // Coverage (ADR-69 P1.5/P1.6): ASDAbsorbingBoundary2D/3D publish
+        // both their BOTTOM compliant-base injection (addBaseActions) and
+        // their LATERAL free-field transfer (addRffToSoil) to E_inject,
+        // same channel as LysmerTriangle - no unaccounted ASD injection
+        // path remains, so no coverage warning is needed here.
     }
     else {
         numModelCols = EBR_NUM_ENERGY_COMPONENTS;

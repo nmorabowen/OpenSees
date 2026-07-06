@@ -896,29 +896,36 @@ int ASDAbsorbingBoundary3D::revertToLastCommit()
     return 0;
 }
 
-// Ladruno (ADR-69 P1.5): publish the base-action incident-injection leak.
-// addBaseActions() computes a pure external source force from time series
-// evaluated at the domain's (not-yet-committed) current time - the SAME
-// value it used to form the final residual of the step just finished, since
-// nothing changes currentTime between the last residual formation and this
-// commit. Recomputed fresh (never read from a stateful member, unlike
+// Ladruno (ADR-69 P1.5/P1.6): publish the absorbing-boundary injection leak.
+// Bottom instances (BND_BOTTOM): addBaseActions() computes a pure external
+// source force from time series evaluated at the domain's (not-yet-committed)
+// current time - the SAME value it used to form the final residual of the
+// step just finished, since nothing changes currentTime between the last
+// residual formation and this commit. Lateral instances (no BND_BOTTOM):
+// addRffToSoil() transfers the free-field column response onto the soil-side
+// dofs; it is a pure function of getTrialDisp(), which likewise does not
+// change between the last residual formation and this commit (the
+// trial->committed swap happens downstream in Node::commitState). The two
+// mechanisms are mutually exclusive per instance (complementary BND_BOTTOM
+// early-returns in addBaseActions/addRffToSoil), so one branch selects the
+// active source. Recomputed fresh (never read from a stateful member, unlike
 // Lysmer's stage-3 getResistingForce() mutation - ASD has no such hazard)
 // and dotted with the committed nodal velocity (getVelocity(), the SAME
-// index space addBaseActions writes into via m_dof_map), giving the
-// injection power with resisting-force sign - exactly the quantity that
-// pollutes the recorder's raw IE integral. Only active on the bottom
-// compliant-base boundary (addRff/addRffToSoil, the lateral free-field
-// mechanism, are mutually exclusive with BND_BOTTOM and remain an open,
-// undocumented-here gap).
+// index space both sources write into via m_dof_map), giving the injection
+// power with resisting-force sign - exactly the quantity that pollutes the
+// recorder's raw IE integral.
 int ASDAbsorbingBoundary3D::commitState()
 {
-    if (m_stage != Stage_StaticConstraint && (m_boundary & BND_BOTTOM)) {
+    if (m_stage != Stage_StaticConstraint) {
         Domain* dom = getDomain();
         if (dom != 0) {
             static Vector Rinj;
             Rinj.resize(m_num_dofs);
             Rinj.Zero();
-            addBaseActions(Rinj);
+            if (m_boundary & BND_BOTTOM)
+                addBaseActions(Rinj);   // P1.5: compliant-base incident injection
+            else
+                addRffToSoil(Rinj);     // P1.6: lateral free-field transfer
             const double rate = Rinj ^ getVelocity();
 
             const double tNow = dom->getCurrentTime();

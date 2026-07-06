@@ -529,3 +529,48 @@ when done)*
   - **Full regression:** 5/5 (`_run_energy_tests.py` default set) and
     16/16 in the exact adr52-then-recorder ordering that caught the P1 bug;
     `_verify_explicit.py` 20/22 unchanged (same 2 pre-existing failures).
+- **2026-07-06 P1.6 BUILT + VERIFIED (same worktree): ASD LATERAL free-field
+  injection published — the ASD gap is CLOSED.**
+  - **Pre-implementation source verification (Opus 4.8 agent) REFUTED the
+    P1.5 worry:** `addRffToSoil` is a *pure, stateless function of
+    `getTrialDisp()`* (2D closed-form 4-term, 3D Gauss-integrated H8
+    condensation; every static scratch fully overwritten per call, no
+    stateful members, no integrator-stage hazard) — trial disp does not
+    change between the last residual formation and commit, so the
+    recompute-at-commit pattern applies unchanged. Confirmed bottom-XOR-
+    lateral per instance (complementary `BND_BOTTOM` early-returns), so the
+    P1.5 publisher extends with a branch, not a second pipeline; force
+    writes only SOIL dofs (zeros on FF-column dofs) so the full
+    `^ getVelocity()` dot picks up exactly the soil-transfer power; routing
+    through the same `ABSORB_LEAK` channel keeps the rebucket RES-invariant
+    by the existing kernel algebra. Independently re-verified in-session by
+    direct source read (2D:1419-1446, 3D:2291-2374).
+  - **Code:** `commitState` in both classes now selects the force source by
+    `m_boundary & BND_BOTTOM` (`addBaseActions` vs `addRffToSoil`) into the
+    same scratch-Vector + trapezoid + `m_lk*` machinery (per-instance state
+    can't collide: an instance is bottom XOR lateral). Recorder's ASD
+    coverage warning DELETED — no unaccounted ASD injection path remains.
+  - **Gate-design findings (both ledgered as quirks):** first gate attempt
+    (UniformExcitation Ricker) failed and exposed (1) ASD's
+    `addInertiaLoadToUnbalance` is a deliberate no-op → FF columns are
+    never driven by uniform excitation (dead boundary, G1 fail); (2) quads
+    fold `-M*ug''` into their element load vector `Q` and
+    `getResistingForce = K*u - Q` → seismic input work hides in IE
+    (observed IE = -DW *exactly*, RES accidentally closed) — an IE polluter
+    the v2 rebucket deliberately does not touch, which would drown any
+    closure gate driven this way. Final gate drives by INITIAL VELOCITY
+    (both DOFs — the transfer pairs cross-axis: mu-term soil-y ∝ FF Δu_x,
+    lambda-term soil-x ∝ FF Δu_y) with alphaM Rayleigh so the FF column
+    (undamped by design: lateral `addClk` writes only soil rows) settles.
+  - **Lateral gate ALL PASS** (`p16_asd_lateral_closure.py`, openseespy —
+    soil quad column + FF node column at x=-1, one "L" element per layer,
+    FF base fixed / upper FF nodes FREE): G1 FF live (8.1e-3); G2 legacy
+    lie (`IE_end = -6.43e3`, E_ref 1.01e4); G3 v2 IE truthful (73.8 =
+    0.7% of E_ref); G4 cross-check `E_inject = 6.5086e3` vs
+    `IE_v2 - IE_legacy = 6.5086e3` (5 sig figs); G5 zero-velocity control
+    exact 0.
+  - **Zone-A gained a 6th test**
+    (`test_energybalance_v2_asd_lateral_freefield_closure`, same design
+    compressed); battery 17/17 in the adr52-then-recorder trap-catching
+    ordering; `_verify_explicit.py` 20/22 unchanged (same 2 pre-existing
+    `dt_cr = -1` environment failures).
