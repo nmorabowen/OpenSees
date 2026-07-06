@@ -2420,6 +2420,21 @@ object (the nodes) defines must validate the FULL mapping before mutating anythi
 validation. Related: an iterative-solver "did not converge" warning must key on the RESIDUAL, not on
 iters == maxIt — the consistent PCG's pAp≤0 SPD-breakdown guard exits EARLY (iters < maxIt, resid > tol)
 and the old `iters >= maxIt` condition swallowed it silently (also fixed review-P3).
+
+### Isotropic sqrt(A) `getCharacteristicLength` regularizes a mesh-objectivity band ONLY on in-plane-SQUARE elements (dx == dy)
+- **Bites:** any crack-band/energy mesh-objectivity study (or user model) with `LadrunoSolidShell` (and any element whose lch is the isotropic sqrt of the midsurface/element area) meshed with in-plane rectangles. The crack band localizes in ONE element column, so the physical band width is the element size ALONG the band normal (dx) — but the material regularizes with lch = sqrt(dx*dy). For dx != dy the dissipated energy is off by sqrt(dy/dx), and a "refinement" that changes the aspect ratio reads as spurious energy drift even with `-autoRegularization` working perfectly.
+- **Why:** the scalar lch has no direction; sqrt(A) == dx only when dx == dy. The through-thickness projection is already excluded by design (ADR 66 D6), but the in-plane anisotropy is not.
+- **Workaround/status (2026-07-06, ADR 66 P5.2 G5):** keep localization-band meshes in-plane square (the G5 gate enforces dx == dy at all three densities: spread 0.9% across a 4x size range, vs the fixed-lch control at ~4x energy error). A directional `lch(n)` API is the ADR 66 O4 backlog item (shared with ADR 19's sqrt(2)-strut residual).
+
+### A hairline-weakened localization band (ft_band ~ 0.95 ft) drives BULK GPs into the Concrete3D return-map apex — seed bands with >= 20% strength margin
+- **Bites:** weakened-band localization tests/models with `LadrunoConcrete3D`: with the band only 5% weaker, the bulk sits at ~95% of its own tensile onset at band peak, and the global Newton's trial excursions through the localization transition push bulk GPs past onset into the deep-tension apex regime — the run drowns in "return map did not converge -> step-cut" (the kernel's safe fallback), grinding to a crawl without ever failing outright.
+- **Why:** Newton iterates are not monotone: mid-iteration trial strains overshoot the converged state by far more than the 5% margin; the Concrete3D apex regime is exactly where the return map is trajectory-fragile (documented handoff §6 gap).
+- **Workaround/status (2026-07-06, ADR 66 P5.2 G5):** seed localization with ft_band = 0.8*ft (dissipation is Gf-governed, so energy gates are unaffected by the seed strength); the churn disappears entirely.
+
+### Multi-element Concrete3D softening under implicit Newton cut-crawls even where single elements pass — use `-implex` (uniform LoadControl) for band/localization runs
+- **Bites:** implicit displacement-ramped runs of a MULTI-element `LadrunoConcrete3D` specimen through localization: plain Newton + step-cutting (the recipe that walks a SINGLE element through its limit point) converges only at micro-steps once several elements carry the indefinite softening tangent simultaneously — the G5 coarse band (4 elements!) took ~2400 micro-steps / 13 min wall; refinement makes it worse.
+- **Why:** the indefinite/non-symmetric tangent cluster around the band throws the global Newton into cut/recover oscillation; no single step fails permanently, so nothing surfaces except wall time.
+- **Workaround/status (2026-07-06, ADR 66 P5.2 G5):** put the MATERIALS in `-implex` and drive with CONSTANT-dlam LoadControl (the uniform-pseudo-time regime IMPL-EX wants; kinematic sp ramp): the SPD-ish secant lets Newton track the full localization at the planned step size (13 min -> 16 s on the G5 coarse mesh; committed states stay implicit-exact). The ADR 66 risk register lists exactly this toolbox row; the `-implex`+DisplacementControl limit-point trap (Concrete3D ledger) does NOT apply because LoadControl dlam is uniform.
 **`LysmerTriangle` stage-3 `getResistingForce()` MUTATES state on every call — any recorder that
 reads element forces perturbs it (2026-07-05, ADR-69).** At stage 3 ("preserve elastic spring
 forces after gravity") `getResistingForce()` executes `internalForces -= springForces` on EVERY
