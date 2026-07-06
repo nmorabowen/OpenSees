@@ -82,8 +82,11 @@ private:
 
     ID theDofs;            // 0-based dof indices
     ID theNodalTags;
-    std::vector<Node *> theNodes;   // resolved valid nodes (parallel to labels)
-    int dataFlag;          // 0 disp, 1 vel, 2 accel, 7 reaction
+    std::vector<int> theNodeTags;   // tags of resolved nodes that became columns;
+                                    // re-looked-up each emit so a mid-run node
+                                    // removal cannot dangle (see record()).
+    int dataFlag;          // 0 disp, 1 vel, 2 accel; 7/8/9 reaction
+                           // (static / inclInertia / +Rayleigh)
     std::string respName;
     std::string filename;
     Domain *theDomain;
