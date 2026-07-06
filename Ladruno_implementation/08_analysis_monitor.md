@@ -218,3 +218,20 @@ second viewer; "live" is just "tail instead of read-all."
   `PerfClock`, with an overhead microbench as acceptance gate; (3) network kept
   outside C++ — single local sink impl, sidecar-next-to-engine + SSE for remote.
   Plan is now decision-complete and ready to implement.
+- 2026-07-05 — **Review follow-ups fixed (2 engine findings).**
+  (A) **Node-removal safety.** `record()` previously read from a `std::vector<Node*>`
+  resolved once at first commit, and `domainChanged()` was a no-op — so removing a
+  monitored node mid-run (progressive collapse / `remove node`) dereferenced freed
+  memory. Now the recorder stores the resolved node **tags** (`theNodeTags`) and
+  re-looks-up each node by tag on every emit (`Domain::getNode`); a vanished node's
+  columns stay (SWMR fixes the channel set) and stream `0.0` until it reappears.
+  `domainChanged()` stays a no-op *by design* now (record() self-heals) with a
+  comment saying so. Re-resolve cost is one tagged-storage lookup per monitored
+  node per *emitted* frame — negligible behind the `-every`/`-hz` gates.
+  (B) **Inertia-aware reactions.** `-resp reaction` called `calculateNodalReactions(0)`
+  (static part only) — misleading in a dynamic run. Added `reactionIncInertia`
+  (`reactionInclInertia`/`reactionIncludingInertia`) → `calculateNodalReactions(1)`
+  (+ mass·accel) and `rayleighForces` (`rayleighDampingForces`) →
+  `calculateNodalReactions(2)` (+ Rayleigh damping), matching `NodeRecorder`'s naming
+  and dataFlag→flag convention (7/8/9). No parser change (resp is a free string);
+  the column labels self-describe via `respName`.

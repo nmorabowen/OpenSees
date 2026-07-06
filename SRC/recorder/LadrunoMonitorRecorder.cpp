@@ -46,6 +46,15 @@ static int respToDataFlag(const char *resp)
     if (strcmp(resp, "vel") == 0) return 1;
     if (strcmp(resp, "accel") == 0) return 2;
     if (strcmp(resp, "reaction") == 0) return 7;
+    // reaction including inertia (mass*accel); + Rayleigh damping. Names + flag
+    // meaning mirror NodeRecorder (dataFlag 8 -> calculateNodalReactions(1),
+    // dataFlag 9 -> (2)) so a dynamic run streams true reactions, not the
+    // static part only.
+    if (strcmp(resp, "reactionIncInertia") == 0 ||
+        strcmp(resp, "reactionInclInertia") == 0 ||
+        strcmp(resp, "reactionIncludingInertia") == 0) return 8;
+    if (strcmp(resp, "rayleighForces") == 0 ||
+        strcmp(resp, "rayleighDampingForces") == 0) return 9;
     return -1; // unsupported in v1
 }
 
@@ -97,7 +106,7 @@ int LadrunoMonitorRecorder::initialize(void)
     }
     if (dataFlag < 0) {
         opserr << "LadrunoMonitorRecorder: unsupported -resp '" << respName.c_str()
-               << "' (v1 supports disp|vel|accel|reaction)\n";
+               << "' (supports disp|vel|accel|reaction|reactionIncInertia|rayleighForces)\n";
         initFailed = true;
         return -1;
     }
@@ -110,7 +119,7 @@ int LadrunoMonitorRecorder::initialize(void)
     // Resolve valid nodes and build self-describing channel labels. Channels
     // are ordered node-major, dof-minor -- the exact order record() emits.
     std::vector<std::string> columns;
-    theNodes.clear();
+    theNodeTags.clear();
     char buf[128];
     for (int i = 0; i < theNodalTags.Size(); ++i) {
         int tag = theNodalTags(i);
@@ -119,7 +128,7 @@ int LadrunoMonitorRecorder::initialize(void)
             opserr << "LadrunoMonitorRecorder: node " << tag << " not found, skipped\n";
             continue;
         }
-        theNodes.push_back(nd);
+        theNodeTags.push_back(tag);
         for (int j = 0; j < theDofs.Size(); ++j) {
             snprintf(buf, sizeof(buf), "node%d.%s.dof%d",
                      tag, respName.c_str(), theDofs(j) + 1);
@@ -170,21 +179,35 @@ int LadrunoMonitorRecorder::record(int commitTag, double timeStamp)
             return 0;
     }
 
+    // Reaction modes: ask the domain to (re)compute nodal reactions. flag 0 =
+    // static part only; 1 = + inertia (mass*accel); 2 = + inertia + Rayleigh
+    // damping. Mirrors NodeRecorder so a dynamic run streams true reactions.
     if (dataFlag == 7)
         theDomain->calculateNodalReactions(0);
+    else if (dataFlag == 8)
+        theDomain->calculateNodalReactions(1);
+    else if (dataFlag == 9)
+        theDomain->calculateNodalReactions(2);
 
-    // Gather selected scalars in channel order (node-major, dof-minor).
+    // Gather selected scalars in channel order (node-major, dof-minor). Nodes
+    // are re-resolved by tag on every emit, so a node removed mid-run
+    // (progressive collapse / `remove node`) can never leave a dangling Node*:
+    // its columns stay (SWMR fixes the channel set at open) and stream 0.0 until
+    // the node reappears. This replaces the old cached-pointer path whose
+    // domainChanged() no-op would dereference freed memory after a removal.
     size_t k = 0;
     const int numDOF = theDofs.Size();
-    for (size_t n = 0; n < theNodes.size(); ++n) {
-        Node *nd = theNodes[n];
+    for (size_t n = 0; n < theNodeTags.size(); ++n) {
+        Node *nd = theDomain->getNode(theNodeTags[n]);
         const Vector *r = 0;
-        switch (dataFlag) {
-        case 0: r = &nd->getTrialDisp();  break;
-        case 1: r = &nd->getTrialVel();   break;
-        case 2: r = &nd->getTrialAccel(); break;
-        case 7: r = &nd->getReaction();   break;
-        default: break;
+        if (nd != 0) {
+            switch (dataFlag) {
+            case 0: r = &nd->getTrialDisp();  break;
+            case 1: r = &nd->getTrialVel();   break;
+            case 2: r = &nd->getTrialAccel(); break;
+            case 7: case 8: case 9: r = &nd->getReaction(); break;
+            default: break;
+            }
         }
         for (int j = 0; j < numDOF; ++j) {
             int dof = theDofs(j);
@@ -211,6 +234,10 @@ int LadrunoMonitorRecorder::restart(void)
 
 int LadrunoMonitorRecorder::domainChanged(void)
 {
+    // No-op by design: record() re-resolves every monitored node by tag on each
+    // emit, so a domain change (node/element add or remove) needs no cached-state
+    // refresh here. The channel set is fixed at first record() (SWMR cannot add
+    // or drop channels), so a removed node's columns remain and stream 0.0.
     return 0;
 }
 
