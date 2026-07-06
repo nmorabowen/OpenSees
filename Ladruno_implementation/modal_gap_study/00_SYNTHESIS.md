@@ -160,7 +160,7 @@ that ride them.
  unlocks   feeds limit-point detection
  beyond    into arc-length (ADR 20/22)
  modal ↓
- ROM / Craig-Bampton substructuring (candidate ADR 47)
+ ROM / Craig-Bampton substructuring (candidate ADR, number TBD)
 ```
 
 ### 6.3 The strongest "everything depends on it" argument
@@ -190,13 +190,14 @@ the weight shifts toward **43 (infrastructure)** and **46 (domain)**:
   family (and large-model NLTHA) usable; the SP/MP fix has value independent of modal analysis.
 - **42 and 44 are opportunistic** — build when a specific project asks.
 
-### 6.6 Forward note — the biggest genuine unlock (candidate ADR 47)
+### 6.6 Forward note — the biggest genuine unlock (candidate ROM ADR)
 
 The single capability that would most strengthen the load-bearing case is **reduced-order modeling /
 Craig–Bampton component-mode substructuring** (flagged as future in §2b of the Abaqus dossier). It
 rides directly on this family (needs a trustworthy modal basis + parallel eigen) and is the enabler
-for fast large SSI / real-time hybrid simulation. **Proposed as a candidate ADR 47 — not yet
-written; pending decision.**
+for fast large SSI / real-time hybrid simulation. **Proposed as a candidate ADR — not yet
+written; pending decision.** (Number assigned at drafting — the originally-penciled "47" was
+since taken by the contact-deferrals ADR; see [[45_ladruno_modal_family_roadmap_adr]] §9.)
 
 ---
 
