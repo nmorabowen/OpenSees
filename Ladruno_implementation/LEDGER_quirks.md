@@ -2524,3 +2524,20 @@ the publish site, so their modal dissipation stays in RES and no `E_modal` colum
 (declare-on-first-publish prevents a silent zero column). Newmark does not override commit and
 is fully covered. If you need E_modal under HHT: either chain the override to the base commit
 (vanilla edit, ledger it) or accept the documented RES drift.
+
+**Recorders NEVER receive domainChanged() — any recorder caching pointers is a
+use-after-free waiting for `remove element`/`remove node` (2026-07-06, ADR-69 P2.1).**
+`Domain::removeElement` calls `domainChange()` (sets a flag) but `Domain::record()` invokes
+recorders directly with no invalidation hook, and the analysis propagates domain changes only
+to its own components (handler/numberer/integrator/algorithm). Worse, a recorder CANNOT poll
+`Domain::hasDomainChanged()` — it is STATEFUL (consumes the flag, increments currentGeoTag,
+resets graph-built flags) and belongs to the Analysis; calling it from a recorder would eat
+the analysis's own change detection. `getDomainChangeFlag()` is a pure read but is usually
+already consumed by the time record() runs. The working patterns (both in-tree): (1)
+re-resolve entities BY TAG on every emit (LadrunoMonitorRecorder, #489); (2) structural
+re-validation per record — compare `getNumElements()/getNumNodes()` (O(1)) against cached
+sentinels + verify cached tag→pointer identity before any virtual call through a cached
+object, rebuild on mismatch (EnergyBalanceRecorder P2.1). Key ALL membership maps by TAG,
+never by pointer — a freed pointer can be REUSED by a new allocation and silently inherit the
+old binning. Note the count sentinel alone is blind to remove-then-readd-same-tag (counts
+restore); the tag→pointer identity check is what catches it.

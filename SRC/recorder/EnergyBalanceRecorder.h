@@ -209,12 +209,25 @@ private:
     // Ladruno ADR-69 P2: hourglass "energy" pull (mechanism C) - Response*
     // objects resolved by probing every element for a "hourglassEnergy"
     // response; rebuilt (and the old ones deleted) with the cache.
-    std::vector<std::pair<Element*, Response*> > hgCache;
+    // P2.1 removal safety: each entry keeps the element TAG so record() can
+    // verify getElement(tag) still returns the cached pointer before the
+    // virtual getResponse() call - `remove element` deletes the Element the
+    // cached ElementResponse wraps, and nothing routes domainChanged() to
+    // recorders (Domain::hasDomainChanged() is stateful/consumed by the
+    // Analysis, so the recorder cannot poll it; re-validate by tag instead,
+    // the LadrunoMonitorRecorder pattern).
+    struct HgEntry {
+        int tag;
+        Element *ele;
+        Response *res;
+    };
+    std::vector<HgEntry> hgCache;
 
     // Ladruno ADR-69 P2: -ownedNodes. Region tag (-1 = inactive) and the
-    // resolved node set; nodal terms are only counted for members.
+    // resolved node set (by TAG - removal/pointer-reuse safe, P2.1); nodal
+    // terms are only counted for members.
     int ownedRegionTag;
-    std::unordered_set<Node*> ownedNodes;
+    std::unordered_set<int> ownedNodes;
 
     // ---- per-region accumulators ----
     ID regionTags;
@@ -222,9 +235,16 @@ private:
     std::vector<ebkernel::EnergyAccumulator> region_acc;
 
     // ---- caching (rebuilt on domainChanged): region membership + scratch --
+    // Ladruno ADR-69 P2.1: keyed by TAG, not pointer - a removed entity's
+    // freed pointer could be reused by a new allocation and silently inherit
+    // the old region binning; tags cannot alias. cachedNumElements/Nodes are
+    // structural staleness sentinels checked every record() (domainChanged()
+    // is never delivered to recorders; see HgEntry note above).
     bool cacheValid;
-    std::unordered_map<Element*, std::vector<int> > elemRegions;
-    std::unordered_map<Node*, std::vector<int> > nodeRegions;
+    std::unordered_map<int, std::vector<int> > elemRegions;
+    std::unordered_map<int, std::vector<int> > nodeRegions;
+    int cachedNumElements;
+    int cachedNumNodes;
     int maxNumDOF;
     Vector velScratch;
 };
