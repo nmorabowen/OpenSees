@@ -188,8 +188,68 @@ only); all steps converged at every np.
   `linearSolve`; any parallel-numberer claim must be re-measured against this baseline, at a
   production problem size, before ranking.
 
+## Addendum — ADR-68 T3 micro-drill: brick tangent split MEASURED, cache KILLED-as-designed (2026-07-07)
+
+Temporary sub-element deep scopes (`brick.geo` = `computeBasis`+8×`shp3d`, `brick.kin` = B
+assembly + B·D·Bᵀ, `brick.mat` = material calls, `brick.inertia` = `formInertiaTerms`) in
+`LadrunoBrick.cpp`, lanes B (implicit Newton/UmfPack, 3375 ele) and D (explicit CDL, 1000 ele)
+re-run on the instrumented build. The per-call `brick.geo`/`brick.inertia` scopes are SHIPPED
+(deep-gated); the per-GP kin/mat scopes were measured once and REMOVED — see methodology caveat.
+
+**Implicit tangent split (lane B, 40.6 µs/ele clean):** geometry ≈ **2-3%** (1.99 µs measured
+of 75.8 µs/call contaminated-run values; ratio robust); **B·D·Bᵀ kinematic loop ≈ 95%**;
+material `getTangent`/`getStress` copies ≈ 2%. The 64-node-pair triple product owns the brick
+tangent outright.
+
+**Explicit split (lane D, per element per step):** each constitutive pass pays geometry
+~0.9-1.4 µs (**≈11-17%** of the 5.6-8.7 µs pass); the residual call additionally runs
+`formInertiaTerms` ≈ 3.3-4.3 µs (**~22-30% of the residual call**) — which under CDL computes
+**exact zeros**: the solve is posed at trial accel ≡ 0 (`Azero`), so momentum = Σ N_j·a_j = 0
+and the whole block (including its OWN geometry recompute) contributes nothing. Geometry is
+recomputed 4× per element per step (newStep-update, residual-stiffness, residual-inertia,
+update-pass; 3× under `-commitSolveState`).
+
+**Verdicts:**
+- **T3 shape-gradient cache: KILLED as designed.** Its authorizing lane was the implicit brick
+  tangent (26.2% of lane B) — geometry is 2-3% of that tangent, so the cache ceiling is ~0.7%
+  of implicit step wall, against a 2.1 KB/element G-BYTE footprint (23 GB at emit-scale 11M
+  hex). PARK a possible explicit-only opt-in variant (~9-11% of explicit element work) behind
+  the two cheaper moves below; the **de-static half of T3 proceeds regardless** (thread-safety
+  predecessor of rank 7, ADR-40a C16 carve-out).
+- **NEW ADR-68 candidate (T7): CDL inertia no-op skip** — in `getResistingForceIncInertia`/
+  `formInertiaTerms`, skip the block when every nodal trial accel is exactly zero (24-double
+  check ≈ 20 ns) ≈ **~11% of explicit element work for zero bytes**. G-BYTE gate note: the
+  skipped adds are `x += temp·0.0`, exact in IEEE except the `-0.0 + (+0.0) = +0.0` sign edge —
+  the gate test must use exact-float comparison on a deck that can exercise it.
+- **The solid-lane optimization axis shifts to the B·D·Bᵀ kernel itself** (symmetry — assemble
+  the upper triangle only, ~2× ceiling; blocking/SIMD) and to **factorization reuse at the SOE
+  layer** (see the rank-8/10 scopes below) — not to geometry caching.
+
+**Methodology caveat (recorded for every future micro-drill):** a deep-scope instance costs
+~0.5 µs (name lookup + 2×QPC); leaves timing sub-µs work are TIMER-BOUND — the lane-D
+`getStress` 6-double copy (~20 ns real) read 564 ns. Per-GP scopes (8-16/call) doubled the
+profiled wall and made kin/mat leaves unusable; only per-CALL scopes give trustworthy numbers.
+Overhead-corrected ratios were cross-checked against unprofiled phase totals before any verdict.
+
+## Addendum — rank 8/10 instruments BUILT + first factor-vs-solve numbers (2026-07-07)
+
+`ModifiedNewton.cpp` now carries the five phase scopes (parity with NewtonRaphson — it
+previously produced ZERO attribution), and `UmfpackGenLinSolver.cpp` splits `linearSolve` into
+`soe.factor` / `soe.trisolve` (+ `soe.symbolic` in `setSize`). First numbers:
+- **Lane B (full Newton): factorization = 89-90% of linearSolve = 37-41% of total step wall;**
+  triangular solve ≈ 4-5% of step.
+- **UmfPack refactorizes inside EVERY `solve()` call and frees `Numeric` immediately** — a
+  ModifiedNewton smoke run (10 steps, 2 it/step) shows `formTangent` 10 calls but `soe.factor`
+  20 calls: **tangent reuse currently buys ZERO factorization reuse on this SOE.** The rank-8/10
+  lever is now precisely named: persist `Numeric` across solves while the tangent is unchanged
+  (invalidate on `setSize`/new assembly), delivering ModifiedNewton-style reuse its actual win.
+  Design + gate next; the instrument is in.
+
 ## Implementation log
 - **2026-07-06 — first measured pass.** 5 lanes, 5 parallel agents, shipped binary, recipe +
   scripts preserved under `Ladruno_files/testbed/perf/phase0/`. h5 artifacts in session scratch
   (regenerate via the scripts — deterministic models). Numbers above are single-run wall_ns splits;
   re-run median-of-7 via the rank-3 bench extension before locking baselines.
+- **2026-07-07 — P-NEW-1/2 real-wall confirmation** (see ADR-67 log: −18.2% cache / −30%
+  combined, median-of-5, bit-identical), **T3 micro-drill** + **rank-8/10 scopes** (addenda
+  above). Machine-noise protocol added to `PHASE0_RECIPE.md`.

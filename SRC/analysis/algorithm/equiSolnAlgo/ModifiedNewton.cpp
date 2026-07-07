@@ -48,6 +48,7 @@
 #include <ConvergenceTest.h>
 //#include <Timer.h>
 #include <elementAPI.h>
+#include <profiler/ProfilerMacros.h>  // Ladruno (ADR-40 rank 8/10): phase scopes, parity with NewtonRaphson
 
 void* OPS_ModifiedNewton()
 {
@@ -126,23 +127,26 @@ ModifiedNewton::solveCurrentStep(void)
     //    Timer timer1;
     // timer1.start();
 
+    { OPS_PROFILE_SCOPE("formUnbalance");   // Ladruno (ADR-40 rank 8/10)
     if (theIncIntegratorr->formUnbalance() < 0) {
       opserr << "WARNING ModifiedNewton::solveCurrentStep() -";
-      opserr << "the Integrator failed in formUnbalance()\n";	
+      opserr << "the Integrator failed in formUnbalance()\n";
       return -2;
-    }	
+    }
+    }
 
     SOLUTION_ALGORITHM_tangentFlag = tangent;
     if (factorOnce!=2) {
+      OPS_PROFILE_SCOPE("formTangent");   // Ladruno (ADR-40 rank 8/10)
       if (theIncIntegratorr->formTangent(tangent, iFactor, cFactor) < 0){
         opserr << "WARNING ModifiedNewton::solveCurrentStep() -";
         opserr << "the Integrator failed in formTangent()\n";
         return -1;
-      }	
+      }
       if (factorOnce==1) {
         factorOnce =2;
       }
-    }	    
+    }
 
     // set itself as the ConvergenceTest objects EquiSolnAlgo
     theTest->setEquiSolnAlgo(*this);
@@ -158,28 +162,34 @@ ModifiedNewton::solveCurrentStep(void)
     do {
       //Timer timer2;
       //timer2.start();
+	{ OPS_PROFILE_SCOPE("linearSolve");   // Ladruno (ADR-40 rank 8/10)
 	if (theSOE->solve() < 0) {
 	    opserr << "WARNING ModifiedNewton::solveCurrentStep() -";
-	    opserr << "the LinearSysOfEqn failed in solve()\n";	
+	    opserr << "the LinearSysOfEqn failed in solve()\n";
 	    return -3;
-	}	    
+	}
+	}
 	//timer2.pause();
 	//opserr << "TIMER::SOLVE()- " << timer2;
-	
+
+	{ OPS_PROFILE_SCOPE("update");   // Ladruno (ADR-40 rank 8/10)
 	if (theIncIntegratorr->update(theSOE->getX()) < 0) {
 	    opserr << "WARNING ModifiedNewton::solveCurrentStep() -";
-	    opserr << "the Integrator failed in update()\n";	
+	    opserr << "the Integrator failed in update()\n";
 	    return -4;
-	}	        
+	}
+	}
 
+	{ OPS_PROFILE_SCOPE("formUnbalance");   // Ladruno (ADR-40 rank 8/10)
 	if (theIncIntegratorr->formUnbalance() < 0) {
 	    opserr << "WARNING ModifiedNewton::solveCurrentStep() -";
-	    opserr << "the Integrator failed in formUnbalance()\n";	
+	    opserr << "the Integrator failed in formUnbalance()\n";
 	    return -2;
-	}	
+	}
+	}
 
 	this->record(numIterations++);
-	result = theTest->test();
+	{ OPS_PROFILE_SCOPE("convTest"); result = theTest->test(); }   // Ladruno (ADR-40 rank 8/10)
 
 
     } while (result == -1);
