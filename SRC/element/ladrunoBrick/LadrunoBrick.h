@@ -107,6 +107,10 @@ class LadrunoBrick : public Element {
 
   const char *getClassType(void) const { return "LadrunoBrick"; };
 
+  // Ladruno (ADR-68 T7): toggle the residual inertia no-op skip (default on).
+  // Transient perf flag, set by the parser (-noInertiaSkip); NOT serialized.
+  void setInertiaSkip(bool s) { inertiaSkip = s; }
+
   // domain
   void setDomain(Domain *theDomain);
   int  setDamping(Domain *theDomain, Damping *theDamping);
@@ -199,6 +203,7 @@ class LadrunoBrick : public Element {
   Vector *load;
   Matrix *Ki;
   int massType;                       // 0 consistent, 1 lumped
+  bool inertiaSkip;                   // Ladruno (ADR-68 T7): skip the residual (tangFlag==0) inertia pass when every nodal trial accel is exactly 0 (CDL Azero); default true, not serialized
 
   Damping *theDamping[8];
 
