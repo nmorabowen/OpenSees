@@ -2,7 +2,7 @@
 title: "ADR 46 — Complex / state-space modal analysis for non-classically-damped systems (LadrunoComplexEigen): design spec"
 project: Ladruno
 type: ADR / design spec
-status: in progress — P0 MERGED (#506), P1 MERGED (#507), P2 Route-B assembled projection built; P3 pending
+status: shipped — P0 (#506), P1 (#507), P2 (#510) merged; P3 (v1 ship: complex shapes + recorder + banner + G-A gate) in PR. §5.3 modalProperties-`-complex`/participation DEFERRED to ADR 44 runway (D4)
 priority: high
 owner: nmora
 related:

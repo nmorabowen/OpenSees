@@ -523,6 +523,12 @@ Node::~Node()
     if (theEigenvectors != 0)
       delete theEigenvectors;
 
+    // Ladruno ADR46 P3
+    if (theComplexEigenRe != 0)
+      delete theComplexEigenRe;
+    if (theComplexEigenIm != 0)
+      delete theComplexEigenIm;
+
     // AddingSensitivity:BEGIN ///////////////////////////////////////
     if (dispSensitivity != 0)
       delete dispSensitivity;
@@ -1451,6 +1457,66 @@ int
 Node::getNumEigenvectors(void) const
 {
   return (theEigenvectors == 0) ? 0 : theEigenvectors->noCols();
+}
+
+// Ladruno ADR46 P3: complex (phased) mode-shape storage — mirrors the real
+// eigenvector pair above; Re/Im matrices sized numberDOF x numModes.
+int
+Node::setNumComplexEigenvectors(int numVectorsToStore)
+{
+  if (numVectorsToStore <= 0) {
+    opserr << "Node::setNumComplexEigenvectors() - " << numVectorsToStore
+	   << " <= 0\n";
+    return -1;
+  }
+  if (theComplexEigenRe == 0 ||
+      theComplexEigenRe->noCols() != numVectorsToStore) {
+    if (theComplexEigenRe != 0) delete theComplexEigenRe;
+    if (theComplexEigenIm != 0) delete theComplexEigenIm;
+    theComplexEigenRe = new Matrix(numberDOF, numVectorsToStore);
+    theComplexEigenIm = new Matrix(numberDOF, numVectorsToStore);
+  } else {
+    theComplexEigenRe->Zero();
+    theComplexEigenIm->Zero();
+  }
+  return 0;
+}
+
+int
+Node::setComplexEigenvector(int mode, const Vector &re, const Vector &im)
+{
+  if (theComplexEigenRe == 0 || theComplexEigenRe->noCols() < mode ||
+      mode < 1) {
+    opserr << "Node::setComplexEigenvector() - mode " << mode << " invalid\n";
+    return -1;
+  }
+  if (re.Size() != numberDOF || im.Size() != numberDOF) {
+    opserr << "Node::setComplexEigenvector() - vector of incorrect size\n";
+    return -2;
+  }
+  for (int i = 0; i < numberDOF; i++) {
+    (*theComplexEigenRe)(i, mode - 1) = re(i);
+    (*theComplexEigenIm)(i, mode - 1) = im(i);
+  }
+  return 0;
+}
+
+int
+Node::getNumComplexEigenvectors(void) const
+{
+  return (theComplexEigenRe == 0) ? 0 : theComplexEigenRe->noCols();
+}
+
+const Matrix *
+Node::getComplexEigenvectorsRe(void) const
+{
+  return theComplexEigenRe;
+}
+
+const Matrix *
+Node::getComplexEigenvectorsIm(void) const
+{
+  return theComplexEigenIm;
 }
 
 

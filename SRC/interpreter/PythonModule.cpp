@@ -627,6 +627,7 @@ initopensees(void)
 "        • Ladruno — modular HDF5 .ladruno recorder\n"
 "        • LadrunoRigidBody — 6-DOF rigid body (condensed mass + side-channel SO(3); finite-rotation slaving + moment gather; rocking-foundation MVP)\n"
 "        • LadrunoSolidShell — 8-node ANS/EAS solid-shell (through-thickness σ33 punching/bearing host; Dvorkin-Bathe + Betsch-Stein + state-EAS)\n"
+"        • LadrunoComplexEigen — complexEigen: complex/state-space modal for non-classical damping (true per-mode zeta + omega_d + phased mode shapes; assembled getDamp() projection, QZ reduced pencil)\n"
 "\n";
         // FEATURES-END
         PySys_FormatStdout("%s\n", kFeatures);

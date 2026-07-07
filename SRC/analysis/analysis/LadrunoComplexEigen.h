@@ -125,6 +125,13 @@ class LadrunoComplexEigen
                                std::vector<ComplexMode> &modes,
                                double tol = 1.0e-8,
                                bool closedForm = false);
+
+    // P3: distribute the complex (phased) mode shapes psi_k = Phi z_k onto
+    // the nodes (Node::setComplexEigenvector), one column per REPORTED mode
+    // (underdamped pairs collapsed, so the count can differ from p). Called
+    // by solveFromDomain on success; exposed for reuse/testing.
+    static int pushComplexShapes(Domain &theDomain, int p,
+                                 const std::vector<ComplexMode> &modes);
 };
 
 #endif

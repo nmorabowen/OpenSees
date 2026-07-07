@@ -129,6 +129,16 @@ class Node : public DomainComponent
     // Ladruno ADR46: non-exiting presence probe — getEigenvectors() exit(0)s
     // when unset (e.g. fully-fixed nodes outside the eigen analysis)
     virtual int getNumEigenvectors(void) const;
+    // Ladruno ADR46 P3: complex (phased) mode shapes psi = Phi z from
+    // complexEigen, stored per node like the real eigenvectors (Re/Im
+    // pair). Non-exiting getters return 0/nullptr semantics via the count.
+    // NOT serialized (sendSelf untouched): complexEigen is serial-only.
+    virtual int setNumComplexEigenvectors(int numVectorsToStore);
+    virtual int setComplexEigenvector(int mode, const Vector &re,
+				      const Vector &im);
+    virtual int getNumComplexEigenvectors(void) const;
+    virtual const Matrix *getComplexEigenvectorsRe(void) const;
+    virtual const Matrix *getComplexEigenvectorsIm(void) const;
     
     // public methods for output
     virtual int sendSelf(int commitTag, Channel &theChannel);
@@ -213,6 +223,11 @@ class Node : public DomainComponent
     double alphaM;                    // rayleigh damping factor
     
     Matrix *theEigenvectors;
+
+    // Ladruno ADR46 P3: complex mode shapes (Re/Im), in-class-initialized so
+    // the four constructors stay untouched
+    Matrix *theComplexEigenRe = 0;
+    Matrix *theComplexEigenIm = 0;
 
     // AddingSensitivity:BEGIN /////////////////////////////////////////
     Matrix *dispSensitivity;

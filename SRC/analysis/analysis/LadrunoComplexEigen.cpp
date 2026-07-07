@@ -36,6 +36,8 @@
 #include <Vector.h>
 #include <Element.h>
 #include <ElementIter.h>
+#include <Node.h>
+#include <NodeIter.h>
 
 #include <cmath>
 #include <algorithm>
@@ -324,6 +326,7 @@ LadrunoComplexEigen::solveFromDomain(Domain &theDomain, int numModes,
         return -11;
     }
 
+    int rc;
     if (!closedForm) {
         // P2 Route B: element-by-element projection of the true M and C.
         // D1 umbrella policy — warn (never silently absorb) on damping
@@ -342,7 +345,10 @@ LadrunoComplexEigen::solveFromDomain(Domain &theDomain, int numModes,
         if (LadrunoDampingAssembler::projectReduced(theDomain, p,
                                                     Mt, Ct, Kt) < 0)
             return -14;
-        return solveReducedPencil(Mt, Ct, Kt, modes, tol);
+        rc = solveReducedPencil(Mt, Ct, Kt, modes, tol);
+        if (rc < 0)
+            return rc;
+        return pushComplexShapes(theDomain, p, modes);
     }
 
     double aM, bK, bK0, bKc;
@@ -405,5 +411,73 @@ LadrunoComplexEigen::solveFromDomain(Domain &theDomain, int numModes,
         Ct(a, a) = aM + bK * w2;
     }
 
-    return solveReducedPencil(Mt, Ct, Kt, modes, tol);
+    rc = solveReducedPencil(Mt, Ct, Kt, modes, tol);
+    if (rc < 0)
+        return rc;
+    return pushComplexShapes(theDomain, p, modes);
+}
+
+int
+LadrunoComplexEigen::pushComplexShapes(Domain &theDomain, int p,
+                                       const std::vector<ComplexMode> &modes)
+{
+    // psi_k = Phi z_k, distributed node-wise: this node's psi rows are
+    // nodeEig(:, 0..p-1) * z_k. Nodes without stored real eigenvectors
+    // (fully fixed) hold no complex shapes either — their psi is zero.
+    //
+    // Phase convention (ADR 46 §4.7): the largest-|psi| PHYSICAL entry of
+    // each mode is made real-positive. The kernel normalizes z (reduced
+    // space) for -qz reproducibility, but psi = Phi z does not inherit that
+    // — so pass 1 finds each mode's largest-magnitude physical entry and
+    // pass 2 writes the rotated psi * conj(psi_max)/|psi_max|.
+    const int nModes = static_cast<int>(modes.size());
+    if (nModes < 1)
+        return 0;
+
+    std::vector<double> bestMag(static_cast<size_t>(nModes), 0.0);
+    std::vector<double> rotRe(static_cast<size_t>(nModes), 1.0);
+    std::vector<double> rotIm(static_cast<size_t>(nModes), 0.0);
+
+    for (int pass = 0; pass < 2; pass++) {
+        Node *nodePtr;
+        NodeIter &theNodeIter = theDomain.getNodes();
+        while ((nodePtr = theNodeIter()) != 0) {
+            const int stored = nodePtr->getNumEigenvectors();
+            if (stored < p)
+                continue;   // guarded earlier for analysis nodes; skip others
+            const Matrix &vecs = nodePtr->getEigenvectors();  // ndf x stored
+            const int ndf = nodePtr->getNumberDOF();
+            if (pass == 1 && nodePtr->setNumComplexEigenvectors(nModes) < 0)
+                return -20;
+            Vector re(ndf), im(ndf);
+            for (int k = 0; k < nModes; k++) {
+                const ComplexMode &mk = modes[static_cast<size_t>(k)];
+                const size_t ks = static_cast<size_t>(k);
+                for (int i = 0; i < ndf; i++) {
+                    double sr = 0.0, si = 0.0;
+                    for (int a = 0; a < p; a++) {
+                        const double phi = vecs(i, a);
+                        sr += phi * mk.zRe[static_cast<size_t>(a)];
+                        si += phi * mk.zIm[static_cast<size_t>(a)];
+                    }
+                    if (pass == 0) {
+                        const double mag = std::hypot(sr, si);
+                        if (mag > bestMag[ks]) {
+                            bestMag[ks] = mag;
+                            rotRe[ks] = sr / mag;    // e^{i arg psi_max}
+                            rotIm[ks] = si / mag;
+                        }
+                    } else {
+                        // psi * conj(rot): rotates psi_max onto the real axis
+                        re(i) = sr * rotRe[ks] + si * rotIm[ks];
+                        im(i) = -sr * rotIm[ks] + si * rotRe[ks];
+                    }
+                }
+                if (pass == 1 &&
+                    nodePtr->setComplexEigenvector(k + 1, re, im) < 0)
+                    return -21;
+            }
+        }
+    }
+    return 0;
 }
