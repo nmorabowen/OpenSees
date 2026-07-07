@@ -2717,3 +2717,12 @@ is immune (uses eigenvalues only, never Φ).
   prescribed DOFs then STAY in the system (size > 0) and the penalty violation at
   1e15 vs typical stiffness is ~1e-10 relative, invisible to material-response
   checks. Alternatively leave at least one genuinely free DOF in the model.
+- **Fix (SHIPPED, ADR 43 P3a):** `setCommunicator(MPI_Comm)` on the solver stores the
+  comm, `MPI_Comm_c2f`s *it* (not WORLD) into `id.comm_fortran`, uses it for the
+  rank/size probe, tears down any live MUMPS instance, and clears the SOE's
+  `factored` flag. Test hook: `system('Mumps', '-commSplit', color)` (collective —
+  every rank must call it). Gate: `feast_d2_spike/p3a_commsplit_gate.py` (4 ranks,
+  2 concurrent groups vs serial oracles). **Residual subtlety:** `MPI_Channel`
+  hardcodes WORLD/tag-0, so only the MUMPS factor/solve is comm-isolated — the SOE's
+  B/X exchange rides WORLD envelopes, safe today via disjoint (src,dst) pairs +
+  MPI non-overtaking with phase ordering; true envelope isolation is a P3c item.

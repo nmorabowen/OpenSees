@@ -43,7 +43,11 @@ updated: 2026-06-22
 PARDISO on the SOE's own CSR + banner) MERGED
 ([#517](https://github.com/nmorabowen/OpenSees/pull/517)); gates G-A/G-B CLOSED. D2 spike
 RUN 2026-07-07 — see §5.2/§9 R1: MKL FEAST confirmed as the P3 driver, no PFEAST vendoring;
-P3 scoped into P3a/P3b/P3c below.** classTags **33022**
+P3 scoped into P3a/P3b/P3c below. P3a (sub-communicator plumbing: `setCommunicator` on
+`MumpsParallelSolver` + `system Mumps -commSplit` hook) BUILT + gated same day —
+4-rank/2-group concurrent-solve gate green (`feast_d2_spike/p3a_commsplit_gate.py`),
+Opus adversarial gate clean (no blockers; WORLD/tag-0 channel-envelope subtlety
+documented in [[LEDGER_quirks]], true envelope isolation deferred to P3c).** classTags **33022**
 (`FeastEigenSOE`) + **33023** (`FeastEigenSolver`) **ACTIVE in `SRC/classTags.h`**. P1 deviations
 from this draft (deliberate, ledgered): the packed CSR driver `dfeast_scsrgv` instead of the §5.2
 RCI seam — the RCI's complex shifted solves cannot route through a *real* inner `LinearSOE`, so
