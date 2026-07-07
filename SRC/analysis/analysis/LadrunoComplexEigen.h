@@ -105,18 +105,26 @@ class LadrunoComplexEigen
                                   std::vector<ComplexMode> &modes,
                                   double tol = 1.0e-8);
 
-    // P1 Route A — closed-form Rayleigh projection on the domain's last
-    // `eigen` result. numModes <= 0 means "all available real modes"; a
-    // positive numModes uses only the first numModes of them. Refuses to run
-    // (returns < 0 with an opserr message) when: no prior eigen result is
-    // available, numModes exceeds it, or the domain's Rayleigh factors
-    // include betaK0/betaKc terms (those require the ADR 46 P2 assembled-C
-    // path — silently projecting only part of C would misreport zeta).
-    // NOTE: element/material dampers (getDamp overrides) are NOT captured at
-    // P1 by design; the result is exact for pure global-Rayleigh models.
+    // Domain-coupled solve on the last `eigen` result. numModes <= 0 means
+    // "all available real modes"; a positive numModes uses only the first
+    // numModes of them.
+    //
+    // DEFAULT (closedForm = false, P2 Route B): project M and C
+    // element-by-element via LadrunoDampingAssembler — captures per-element/
+    // region Rayleigh, betaK0/betaKc, material dampers (Viscous-in-zeroLength
+    // etc.), and nodal alphaM damping: exactly the C the transient feels.
+    //
+    // closedForm = true (P1 Route A): the diagonal Rayleigh closed form
+    // Ct=diag(aM+bK*w^2) from the domain-level GLOBAL factors — kept as the
+    // fast path / oracle. Refuses betaK0/betaKc (not proportional to the
+    // eigen K) and warns when scoped Rayleigh bypasses the global factors.
+    //
+    // Both refuse when no prior eigen result is available or numModes
+    // exceeds it (returns < 0 with an opserr message).
     static int solveFromDomain(Domain &theDomain, int numModes,
                                std::vector<ComplexMode> &modes,
-                               double tol = 1.0e-8);
+                               double tol = 1.0e-8,
+                               bool closedForm = false);
 };
 
 #endif

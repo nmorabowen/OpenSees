@@ -2,7 +2,7 @@
 title: "ADR 46 — Complex / state-space modal analysis for non-classically-damped systems (LadrunoComplexEigen): design spec"
 project: Ladruno
 type: ADR / design spec
-status: in progress — P0 kernel MERGED (#506), P1 Route-A domain path built; P2/P3 pending
+status: in progress — P0 MERGED (#506), P1 MERGED (#507), P2 Route-B assembled projection built; P3 pending
 priority: high
 owner: nmora
 related:
@@ -36,7 +36,14 @@ updated: 2026-07-07
 ([#506](https://github.com/nmorabowen/OpenSees/pull/506)) — implementing it refuted this ADR's
 original §4.2/§4.4 pencil (roles swapped; corrected in #505, the kernel implements the corrected
 form) and the Opus adversarial gate added the β<0 conjugate-vector fix + per-mode `resid`.
-**P1 (domain-coupled Route-A closed form + Domain Rayleigh getter) built, in PR.** classTag
+**P1 (domain-coupled Route-A closed form + Domain Rayleigh getter) MERGED**
+([#507](https://github.com/nmorabowen/OpenSees/pull/507)) — its Opus gate found 3 CRITICALs
+(clearAll leaks + a dead `exit(-1)` guard) recorded in [[LEDGER_quirks]]. **P2 (Route B assembled
+projection) built** — deliberate deviation from §4.6's sketch: `LadrunoDampingAssembler`
+accumulates `C̃`/`M̃` element-by-element from `getDamp()`/`getMass()` + nodal terms (no global
+matrix, no SOE, no `ComplexEigenIntegrator`), synthesizes `K̃=sym(M̃·diag(ω²))` exactly, and feeds
+the FULL `M̃` to the QZ kernel — exact in any normalization and for repeated eigenvalues by
+construction. Route B is the command DEFAULT; `-closedForm` keeps Route A. classTag
 **33019 (`LADRUNO_TAG_ComplexEigen`) ACTIVE in `SRC/classTags.h` since P1** (band note: after ND
 33018, before ELE 33020 LadrunoSolidShell).
 

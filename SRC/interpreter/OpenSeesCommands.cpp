@@ -4191,15 +4191,22 @@ int OPS_complexEigen()
 
     } else {
 
-    // P1 domain path: complexEigen [numModes] [-numModes p] [-tol eps]
+    // domain path: complexEigen [numModes] [-numModes p] [-tol eps]
+    //                           [-closedForm]
+    // default = P2 Route B (assembled projection: scoped Rayleigh,
+    // betaK0/betaKc, material dampers, nodal alphaM all captured);
+    // -closedForm = P1 Route A (global-Rayleigh diagonal closed form).
     int numModes = 0;   // 0 = all modes from the last eigen run
     double tol = 1.0e-8;
+    bool closedForm = false;
     while (true) {
 	if (opt == nullptr) {
 	    if (OPS_GetNumRemainingInputArgs() <= 0) break;
 	    opt = OPS_GetStringFromAll(optBuf, 64);
 	}
-	if (strcmp(opt, "-numModes") == 0 &&
+	if (strcmp(opt, "-closedForm") == 0) {
+	    closedForm = true;
+	} else if (strcmp(opt, "-numModes") == 0 &&
 	    OPS_GetNumRemainingInputArgs() > 0) {
 	    numdata = 1;
 	    if (OPS_GetIntInput(&numdata, &numModes) < 0 || numModes < 1) {
@@ -4235,7 +4242,7 @@ int OPS_complexEigen()
 	return -1;
     }
     if (LadrunoComplexEigen::solveFromDomain(*theDomain, numModes,
-					     cmodes, tol) < 0)
+					     cmodes, tol, closedForm) < 0)
 	return -1;
 
     }
