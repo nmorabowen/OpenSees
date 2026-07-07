@@ -73,6 +73,7 @@ class FeastEigenSOE : public EigenSOE
     void setTol(double eps);        // MKL fpm[2] = stopping exponent 10^-eps
     void setVerbose(bool verbose);  // MKL fpm[0] runtime print
     void setCertify(bool certify);  // P2: Sturm/inertia completeness check
+    void setBlockZGate(bool g);     // P3b: block-real complex-shift self-test
 
     // found-mode count from the last solve (the band defines the count;
     // the command layer reconciles the domain's list to this)
@@ -86,6 +87,7 @@ class FeastEigenSOE : public EigenSOE
     int    getTol(void) const;
     bool   getVerbose(void) const;
     bool   getCertify(void) const;
+    bool   getBlockZGate(void) const;
 
     int sendSelf(int commitTag, Channel &theChannel);
     int recvSelf(int commitTag, Channel &theChannel,
@@ -118,6 +120,7 @@ class FeastEigenSOE : public EigenSOE
     int tolExp;          // stopping exponent (fpm[2] = 10^-tolExp)
     bool verbose;
     bool certifyFlag;    // P2: assert FEAST m == Sturm/inertia band count
+    bool blockZGateFlag; // P3b: block-real complex-shift solve self-test
 };
 
 #endif

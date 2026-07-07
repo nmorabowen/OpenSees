@@ -2224,6 +2224,7 @@ static int OPS_eigenFeast()
     double tolExp = 0.0;
     bool verbose = false;
     bool certify = false;
+    bool blockZGate = false;   // Ladruno ADR43 P3b
     while (OPS_GetNumRemainingInputArgs() > 0) {
 	const char* flag = OPS_GetString();
 	if (strcmp(flag, "-m0") == 0 && OPS_GetNumRemainingInputArgs() > 0) {
@@ -2258,6 +2259,11 @@ static int OPS_eigenFeast()
 	    verbose = true;
 	} else if (strcmp(flag, "-certify") == 0) {
 	    certify = true;
+	} else if (strcmp(flag, "-blockZGate") == 0) {
+	    // Ladruno ADR43 P3b: block-real complex-shift solve self-test
+	    // (sweeps the contour flattening Im(z) -> 0 on the SOE's own CSR
+	    // and refuses if the 2n block-real solve degrades; see the ADR)
+	    blockZGate = true;
 	} else {
 	    opserr << "WARNING eigen -feast: unknown option '" << flag
 		   << "'\n";
@@ -2277,6 +2283,7 @@ static int OPS_eigenFeast()
     if (maxRefine > 0) theSOE->setMaxRefine(maxRefine);
     theSOE->setVerbose(verbose);
     theSOE->setCertify(certify);
+    theSOE->setBlockZGate(blockZGate);   // Ladruno ADR43 P3b
 
     // analysis-side mode-loop cap; the reconcile trims to the found count.
     // NOT tied to m0: m0 is the FEAST subspace SEED (auto-enlarged on

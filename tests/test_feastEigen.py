@@ -264,3 +264,60 @@ def test_feast_bad_input():
         ops.eigen("-feast", 5.0)              # missing fmax
     with pytest.raises(Exception):
         ops.eigen("-feast", 10.0, 5.0)        # inverted band
+
+
+# ------------------------------------------------------------- P3b blockZGate
+def test_blockzgate_frame(capfd):
+    """P3b: the block-real complex-shift solve kernel (the FEAST-RCI inner
+    solve of P3c) self-tests on the frame's own CSR — for a shift at the
+    widest spectral gap it sweeps the contour flattening b/r down to 1e-6,
+    recovering a KNOWN complex solution through the symmetric 2n block-real
+    LDL^T path, and REFUSES if the error exceeds 1e-8. The native
+    complex-symmetric PARDISO baseline runs beside it (the D2-review cost/
+    accuracy record), and the a-on-eigenvalue degradation regime is reported.
+    The eigen call succeeding IS the gate."""
+    _frame()
+    lam = np.asarray(ops.eigen("-feast", 0.0, 30.0, "-blockZGate"))
+    assert lam.size >= 1
+    err = capfd.readouterr().err
+    assert "-blockZGate PASS" in err
+    assert "degradation regime" in err
+
+
+def test_blockzgate_small_model(capfd):
+    """P3b on the small frame with a band that holds a handful of modes —
+    exercises the gap-placement logic with interior eigenvalues present."""
+    _frame(nx=1, ny=3)
+    lam_all = np.asarray(ops.eigen("-fullGenLapack", 8))
+    f = np.array([_hz(l) for l in lam_all])
+    hi = 0.5 * (f[5] + f[6])
+    lam = np.asarray(ops.eigen("-feast", 0.0, hi, "-blockZGate"))
+    assert lam.size == 6
+    assert "-blockZGate PASS" in capfd.readouterr().err
+
+
+def test_blockzgate_empty_band(capfd):
+    """P3b on an empty band (info=1, m=0): the gate must still run — the
+    empty-band path falls THROUGH to the hook rather than returning early —
+    self-testing a band-midpoint shift with no interior eigenvalues."""
+    _frame(nx=1, ny=3)
+    lam_all = np.asarray(ops.eigen("-fullGenLapack", 6))
+    f = np.array([_hz(l) for l in lam_all])
+    out = ops.eigen("-feast", f[2] * 1.02, f[3] * 0.98, "-blockZGate")
+    empty = (out is None or out == 0 or
+             (hasattr(out, "__len__") and len(out) == 0))
+    assert empty
+    assert "-blockZGate PASS" in capfd.readouterr().err
+
+
+def test_blockzgate_composes_with_certify(capfd):
+    """-certify and -blockZGate on the same run: both diagnostics fire and
+    the eigenpairs are unchanged vs the plain band solve."""
+    _frame(nx=1, ny=3)
+    lam_plain = np.asarray(ops.eigen("-feast", 0.0, 50.0))
+    lam_gated = np.asarray(ops.eigen("-feast", 0.0, 50.0, "-certify",
+                                     "-blockZGate"))
+    np.testing.assert_allclose(lam_gated, lam_plain, rtol=1e-12)
+    err = capfd.readouterr().err
+    assert "certified complete" in err
+    assert "-blockZGate PASS" in err

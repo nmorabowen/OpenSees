@@ -29,6 +29,7 @@
 
 #include <FeastEigenSolver.h>
 #include <FeastEigenSOE.h>
+#include <LadrunoBlockZKernel.h>   // Ladruno ADR43 P3b: -blockZGate kernel
 #include <Vector.h>
 #include <Channel.h>
 #include <FEM_ObjectBroker.h>
@@ -128,6 +129,134 @@ inertiaBelow(int n, const int *rowPtr, const int *colInd,
         return error;
     negOut = neg;
     perturbedOut = perturbed;
+    return 0;
+}
+
+// P3b -blockZGate: self-test of the block-real complex-shift solve kernel
+// (the FEAST-RCI inner solve of P3c) on the SOE's own CSR. For a shift a
+// placed at the widest spectral gap (bounded conditioning by construction)
+// it sweeps the contour flattening b = r*frac down to frac = 1e-6, solving
+// (zM - K) X = B for a KNOWN X via both the symmetric 2n block-real path
+// and the native complex-symmetric PARDISO baseline, and REFUSES if the
+// block path's recovered-solution error exceeds 1e-8. A second sweep with
+// a ON the lowest found eigenvalue is reported (not asserted) — that is the
+// documented equivalent-real degradation regime (D2 review follow-up).
+// Timings per factorization are printed for the cost record.
+int
+runBlockZGate(int n, const int *rowPtr, const int *colInd,
+              const double *Kvals, const double *Mvals,
+              double emin, double emax, const double *e, int m)
+{
+    LadrunoBlockZKernel kern(n, rowPtr, colInd, Kvals, Mvals);
+
+    const double r = 0.5 * (emax - emin) > 0.0 ? 0.5 * (emax - emin)
+                     : std::max(std::fabs(emax), 1.0);
+
+    // shift placement: midpoint of the widest gap between adjacent found
+    // eigenvalues (band edges included), so dist(a, spectrum) >= gap/2 stays
+    // bounded away from zero for the asserted sweep
+    std::vector<double> pts;
+    pts.push_back(emin);
+    for (int k = 0; k < m; k++)
+        if (e[k] > emin && e[k] < emax)
+            pts.push_back(e[k]);
+    pts.push_back(emax);
+    std::sort(pts.begin(), pts.end());
+    double a = 0.5 * (emin + emax), widest = -1.0;
+    for (size_t k = 0; k + 1 < pts.size(); k++) {
+        const double gap = pts[k + 1] - pts[k];
+        if (gap > widest) {
+            widest = gap;
+            a = 0.5 * (pts[k] + pts[k + 1]);
+        }
+    }
+
+    // two known solutions: one real, one genuinely complex
+    const int nrhs = 2;
+    std::vector<double> xkr(static_cast<size_t>(n) * nrhs);
+    std::vector<double> xki(static_cast<size_t>(n) * nrhs);
+    for (int i = 0; i < n; i++) {
+        xkr[i] = std::sin(1.0 + i);
+        xki[i] = 0.0;
+        xkr[static_cast<size_t>(n) + i] = std::cos(0.5 + i);
+        xki[static_cast<size_t>(n) + i] = 0.7 * std::sin(2.0 + i);
+    }
+    std::vector<double> br(xkr.size()), bi(xkr.size());
+    std::vector<double> xr(xkr.size()), xi(xkr.size());
+
+    auto solveAndMeasure = [&](bool blockPath, double aa, double bb,
+                               double &errOut, double &tFacOut) -> int {
+        for (int c = 0; c < nrhs; c++)
+            kern.matvecZ(aa, bb, &xkr[static_cast<size_t>(c) * n],
+                         &xki[static_cast<size_t>(c) * n],
+                         &br[static_cast<size_t>(c) * n],
+                         &bi[static_cast<size_t>(c) * n]);
+        int rc = blockPath ? kern.setShiftBlock(aa, bb)
+                           : kern.setShiftComplex(aa, bb);
+        if (rc != 0)
+            return rc;
+        tFacOut = kern.lastFactorSeconds();
+        rc = blockPath
+                 ? kern.solveBlock(nrhs, br.data(), bi.data(), xr.data(),
+                                   xi.data())
+                 : kern.solveComplex(nrhs, br.data(), bi.data(), xr.data(),
+                                     xi.data());
+        if (rc != 0)
+            return rc;
+        double num = 0.0, den = 0.0;
+        for (size_t p = 0; p < xkr.size(); p++) {
+            const double dr = xr[p] - xkr[p], di = xi[p] - xki[p];
+            num = std::max(num, std::sqrt(dr * dr + di * di));
+            const double mag = std::sqrt(xkr[p] * xkr[p] + xki[p] * xki[p]);
+            den = std::max(den, mag);
+        }
+        errOut = num / std::max(den, 1e-30);
+        return 0;
+    };
+
+    const double fracs[] = {1.0, 0.3, 0.1, 1e-2, 1e-3, 1e-4, 1e-6};
+    double maxErrBlk = 0.0;
+    opserr << "FeastEigenSolver -- -blockZGate sweep (a at widest gap = "
+           << a << ", r = " << r << "):\n";
+    opserr << "    b/r        err(block)    err(complex)  tFac(blk)  tFac(z)\n";
+    for (double frac : fracs) {
+        const double b = r * frac;
+        double errB = 0.0, errZ = 0.0, tB = 0.0, tZ = 0.0;
+        if (solveAndMeasure(true, a, b, errB, tB) != 0 ||
+            solveAndMeasure(false, a, b, errZ, tZ) != 0) {
+            opserr << "FeastEigenSolver -- -blockZGate: kernel failure at "
+                   << "b/r = " << frac << "\n";
+            return -1;
+        }
+        maxErrBlk = std::max(maxErrBlk, errB);
+        opserr << "    " << frac << "    " << errB << "    " << errZ
+               << "    " << tB << "    " << tZ << "\n";
+    }
+
+    // degradation regime (report-only): a ON a found eigenvalue (e[] is
+    // unsorted at this point — any in-band eigenvalue works for this test)
+    if (m > 0) {
+        opserr << "  degradation regime (a on found eigenvalue " << e[0]
+               << ", report-only):\n";
+        for (double frac : {1e-2, 1e-4, 1e-6}) {
+            const double b = r * frac;
+            double errB = 0.0, errZ = 0.0, tB = 0.0, tZ = 0.0;
+            const int rcB = solveAndMeasure(true, e[0], b, errB, tB);
+            const int rcZ = solveAndMeasure(false, e[0], b, errZ, tZ);
+            opserr << "    b/r = " << frac << ": err(block) = "
+                   << (rcB == 0 ? errB : -1.0) << ", err(complex) = "
+                   << (rcZ == 0 ? errZ : -1.0) << "\n";
+        }
+    }
+
+    if (maxErrBlk > 1.0e-8) {
+        opserr << "FeastEigenSolver -- -blockZGate FAILED: block-real "
+               << "recovered-solution error " << maxErrBlk
+               << " exceeds 1e-8 on the bounded-conditioning sweep\n";
+        return -1;
+    }
+    opserr << "FeastEigenSolver -- -blockZGate PASS: max block-real error "
+           << maxErrBlk << " over the b/r sweep down to 1e-6\n";
     return 0;
 }
 
@@ -422,6 +551,16 @@ FeastEigenSolver::solve(int numModesRequested, bool generalized, bool findSmalle
     opserr << "FeastEigenSolver::solve() -- -certify: inertia count "
            << certified << " == FEAST count " << m
            << "; band content certified complete\n";
+  }
+
+  // ---- P3b -blockZGate: block-real complex-shift solve self-test ---------
+  if (theSOE->blockZGateFlag) {
+    if (runBlockZGate(n, theSOE->rowPtr, theSOE->colInd,
+                      theSOE->Kvals, theSOE->Mvals, emin, emax, e, m) != 0) {
+      delete [] e; delete [] x; delete [] res;
+      numModes = 0;
+      return -7;
+    }
   }
 
   // sort the m accepted eigenvalues ascending, carrying a vector permutation

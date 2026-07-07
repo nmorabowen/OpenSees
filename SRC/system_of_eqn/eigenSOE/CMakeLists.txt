@@ -12,6 +12,7 @@ target_sources(OPS_SysOfEqn
         EigenSolver.cpp
         FeastEigenSOE.cpp
         FeastEigenSolver.cpp
+        LadrunoBlockZKernel.cpp
         FullGenEigenSOE.cpp
         FullGenEigenSolver.cpp
         SymBandEigenSOE.cpp
@@ -25,6 +26,7 @@ target_sources(OPS_SysOfEqn
         EigenSolver.h
         FeastEigenSOE.h
         FeastEigenSolver.h
+        LadrunoBlockZKernel.h
         FullGenEigenSOE.h
         FullGenEigenSolver.h
         SymBandEigenSOE.h
