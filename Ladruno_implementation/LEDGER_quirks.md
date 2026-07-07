@@ -2694,6 +2694,29 @@ is immune (uses eigenvalues only, never Φ).
   Windows/oneAPI build), `0` (MUMPS's own WORLD) under `_OPENMPI`; the rank/size probe
   two lines later also reads `MPI_COMM_WORLD` directly. Dead parameter, not a config
   toggle.
+- **Fix (ADR 43 P3a, not yet built):** store the passed communicator on the solver,
+  `MPI_Comm_c2f` *it* (not WORLD) into `id.comm_fortran`, and use it for the
+  `MPI_Comm_rank/size` probe too; thread it through `MumpsParallelSOE`'s constructor,
+  which today never passes one either.
+
+### A fully-prescribed model (zero free DOFs) under `constraints Transformation` FATALLY exits the process — `FullGenLinSOE::getX - vectX == 0`
+
+- **Bites:** any prescribed-displacement rig that pins/`sp()`s EVERY DOF of a small
+  patch model (single-element material-response probes are the classic case: all x
+  fixed for uniaxial strain, bottom y fixed, top y driven by `ops.sp` in a pattern).
+  Under `constraints Transformation` the sp-handled DOFs are condensed OUT, the
+  equation count hits 0, and `FullGenLinSOE::getX()` hits a raw
+  `opserr << "FATAL ..."; exit()` — killing the whole Python kernel/pytest run with
+  no traceback (surfaced 2026-07-07 while building `tests/test_planestrain_sigma_zz.py`,
+  PR #525). Other SOEs have sibling zero-size exits; this is not FullGeneral-specific.
+- **Why:** Transformation removes constrained DOFs from the numbered system; a model
+  where every DOF is fixed or sp-prescribed leaves size-0 vectors that the SOE treats
+  as an allocation failure, and OpenSees's error path is `exit`, not a recoverable
+  analysis error.
+- **Fix:** for fully-prescribed rigs use `constraints("Penalty", 1e15, 1e15)` — the
+  prescribed DOFs then STAY in the system (size > 0) and the penalty violation at
+  1e15 vs typical stiffness is ~1e-10 relative, invisible to material-response
+  checks. Alternatively leave at least one genuinely free DOF in the model.
 - **Fix (SHIPPED, ADR 43 P3a):** `setCommunicator(MPI_Comm)` on the solver stores the
   comm, `MPI_Comm_c2f`s *it* (not WORLD) into `id.comm_fortran`, uses it for the
   rank/size probe, tears down any live MUMPS instance, and clears the SOE's
