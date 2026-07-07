@@ -1531,10 +1531,13 @@ Response *BezierTri6::setResponse(const char **argv, int argc,
             output.attr("classType", theMaterial[i]->getClassTag());
             output.attr("tag", theMaterial[i]->getTag());
 
-            output.tag("ResponseType", "sigma_xx");
-            output.tag("ResponseType", "sigma_yy");
-            output.tag("ResponseType", "sigma_xy");
-            output.tag("ResponseType", "sigma_zz");
+            // sigma11-style names (not the legacy sigma_xx of "stresses"):
+            // the 4-comp plane-strain token is named uniformly across ALL
+            // plane elements so recorder readers see one convention
+            output.tag("ResponseType", "sigma11");
+            output.tag("ResponseType", "sigma22");
+            output.tag("ResponseType", "sigma12");
+            output.tag("ResponseType", "sigma33");
 
             output.endTag();  // NdMaterialOutput
             output.endTag();  // GaussPoint
