@@ -48,14 +48,16 @@
 #include <ID.h>
 
 UmfpackGenLinSOE::UmfpackGenLinSOE(UmfpackGenLinSolver &the_Solver)
-    :LinearSOE(the_Solver, LinSOE_TAGS_UmfpackGenLinSOE), X(), B(), Ap(), Ai(), Ax()
+    :LinearSOE(the_Solver, LinSOE_TAGS_UmfpackGenLinSOE), X(), B(), Ap(), Ai(), Ax(),
+     factored(false)   // Ladruno (ADR-40 rank 8/10)
 {
     the_Solver.setLinearSOE(*this);
 }
 
 
 UmfpackGenLinSOE::UmfpackGenLinSOE()
-    :LinearSOE(LinSOE_TAGS_UmfpackGenLinSOE), X(), B(), Ap(), Ai(), Ax()
+    :LinearSOE(LinSOE_TAGS_UmfpackGenLinSOE), X(), B(), Ap(), Ai(), Ax(),
+     factored(false)   // Ladruno (ADR-40 rank 8/10)
 {
 }
 
@@ -74,6 +76,12 @@ UmfpackGenLinSOE::getNumEqn(void) const
 int
 UmfpackGenLinSOE::setSize(Graph &theGraph)
 {
+    // Ladruno (ADR-40 rank 8/10): the sparsity structure is about to be rebuilt
+    // (new Symbolic) -> any persisted Numeric is stale. Reset here at the top so
+    // even the early-error returns below leave the safe (unfactored) state; the
+    // solver's setSize() frees the persisted Numeric before rebuilding Symbolic.
+    factored = false;
+
     int size = theGraph.getNumVertex();
     if (size < 0) {
 	opserr<<"size of soe < 0\n";
@@ -131,6 +139,11 @@ UmfpackGenLinSOE::setSize(Graph &theGraph)
 	// set Ap
 	Ap.push_back(Ap[a]+col.Size());
     }
+
+    // Ladruno (ADR-40 rank 8/10): structure rebuilt (new Symbolic) -> any
+    // persisted Numeric is stale; mark unfactored. The solver's setSize() frees
+    // the persisted Numeric before rebuilding Symbolic.
+    factored = false;
 
     // invoke setSize() on the Solver
     LinearSOESolver *the_Solver = this->getSolver();
@@ -280,6 +293,10 @@ void
 UmfpackGenLinSOE::zeroA(void)
 {
     Ax.assign(Ax.size(),0.0);
+    // Ladruno (ADR-40 rank 8/10): A is being reassembled (zeroA always precedes
+    // the addA loop in IncrementalIntegrator::formTangent) -> the persisted
+    // factorization is invalid. Matches BandGenLinSOE::zeroA().
+    factored = false;
 }
 
 void
@@ -418,6 +435,11 @@ UmfpackGenLinSOE::getSparseA(std::vector<int>& rowIndices, std::vector<int>& col
 int
 UmfpackGenLinSOE::setUmfpackGenLinSolver(UmfpackGenLinSolver &newSolver)
 {
+    // Ladruno (ADR-40 rank 8/10): a swapped-in solver holds no factorization for
+    // this matrix. The solver's Numeric==0 guard already forces a refactor, but
+    // reset the flag here too so the factored<->Numeric invariant is locally
+    // self-evident (newSolver.setSize() below also frees any Numeric).
+    factored = false;
     newSolver.setLinearSOE(*this);
     if (X.Size() != 0) {
 	int solverOK = newSolver.setSize();

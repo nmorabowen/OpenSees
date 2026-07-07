@@ -35,3 +35,6 @@ for label, Areal in [("non-symmetric", Areal_ns), ("symmetric (SYM=2 target)", A
     print(f"[{label}] relative error vs true complex solve: {err:.3e}"
           f" | real: {np.isrealobj(Areal)} | shape: {Areal.shape} (orig n={n})"
           f" | symmetric: {np.allclose(Areal, Areal.T)}")
+    assert err < 1e-12, f"{label} block-real form diverged from the complex solve: {err:.3e}"
+assert np.allclose(Areal_sym, Areal_sym.T), "SYM=2 target form lost symmetry"
+print("OK: both block-real forms reproduce the complex solve (asserted < 1e-12)")

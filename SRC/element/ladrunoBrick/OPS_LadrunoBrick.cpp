@@ -66,7 +66,7 @@ void *OPS_LadrunoBrick()
     opserr << "WARNING insufficient arguments\n";
     opserr << "Want: element LadrunoBrick eleTag? n1? ... n8? matTag? "
               "<-formulation std|bbar|uri|ssp|eas> <-hourglass type coeff> "
-              "<-lumped> <-b bx by bz> <-damp dampTag>\n";
+              "<-lumped> <-b bx by bz> <-damp dampTag> <-noInertiaSkip>\n";
     return 0;
   }
 
@@ -91,6 +91,7 @@ void *OPS_LadrunoBrick()
   double bvB1 = 0.0, bvB2 = 0.0;   // Ladruno (W2-E1): explicit bulk-viscosity coeffs (off by default)
   double bf[3] = { 0.0, 0.0, 0.0 };
   int massType = 0;
+  bool inertiaSkip = true;   // Ladruno (ADR-68 T7): residual inertia no-op skip, default on
   Damping *theDamping = 0;
   int geomMethodID = SolidTransformation::METHOD_LINEAR;   // -geom (default linear)
 
@@ -181,6 +182,9 @@ void *OPS_LadrunoBrick()
     }
     else if (strcmp(opt, "-lumped") == 0 || strcmp(opt, "-lump") == 0) {
       massType = 1;
+    }
+    else if (strcmp(opt, "-noInertiaSkip") == 0) {
+      inertiaSkip = false;   // Ladruno (ADR-68 T7): disable the residual inertia no-op skip (A/B escape)
     }
     else if (strcmp(opt, "-geom") == 0 || strcmp(opt, "-geometry") == 0) {
       if (OPS_GetNumRemainingInputArgs() < 1) {
@@ -328,10 +332,12 @@ void *OPS_LadrunoBrick()
     return 0;
   }
 
-  return new LadrunoBrick(idata[0],
+  LadrunoBrick *theEle = new LadrunoBrick(idata[0],
                           idata[1], idata[2], idata[3], idata[4],
                           idata[5], idata[6], idata[7], idata[8],
                           *mat, formulation, bf[0], bf[1], bf[2],
                           massType, hgType, hgCoeff, theDamping, geomMethodID,
                           bvB1, bvB2);   // Ladruno (W2-E1): bulk-viscosity coeffs
+  theEle->setInertiaSkip(inertiaSkip);   // Ladruno (ADR-68 T7): not a ctor arg (transient, unserialized)
+  return theEle;
 }

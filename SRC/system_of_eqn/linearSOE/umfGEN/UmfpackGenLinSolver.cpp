@@ -51,6 +51,9 @@ void* OPS_UmfpackGenLinSolver()
     //   system UmfPack -strategy symmetric -pivotTol 1.0
     int strategy = UMFPACK_STRATEGY_AUTO;
     double pivotTol = 1.0;
+    // Ladruno (ADR-40 rank 8/10): persist the Numeric LU across solves by
+    // default; -noNumericPersist restores the legacy free-every-solve behavior.
+    bool persist = true;
     while (OPS_GetNumRemainingInputArgs() > 0) {
         const char *opt = OPS_GetString();
         if (opt == nullptr) {
@@ -59,6 +62,8 @@ void* OPS_UmfpackGenLinSolver()
         if (strcmp(opt, "useLongIndices") == 0 ||
             strcmp(opt, "-useLongIndices") == 0) {
             useLongIndices = true;
+        } else if (strcmp(opt, "-noNumericPersist") == 0) {
+            persist = false;   // Ladruno (ADR-40 rank 8/10)
         } else if (strcmp(opt, "-strategy") == 0) {
             if (OPS_GetNumRemainingInputArgs() < 1) {
                 opserr << "WARNING UmfpackGenLinSolver: -strategy requires auto|symmetric|unsymmetric\n";
@@ -85,28 +90,31 @@ void* OPS_UmfpackGenLinSolver()
             }
         } else {
             opserr << "WARNING UmfpackGenLinSolver: unknown option \"" << opt
-                   << "\" (expected useLongIndices, -strategy, or -pivotTol)\n";
+                   << "\" (expected useLongIndices, -noNumericPersist, -strategy, or -pivotTol)\n";
             return nullptr;
         }
     }
 
-    UmfpackGenLinSolver *theSolver = new UmfpackGenLinSolver(useLongIndices, strategy, pivotTol);
+    UmfpackGenLinSolver *theSolver = new UmfpackGenLinSolver(useLongIndices, strategy, pivotTol, persist);
     return new UmfpackGenLinSOE(*theSolver);
 }
 
 UmfpackGenLinSolver::
-UmfpackGenLinSolver(bool useLongIndices, int strategy, double pivotTol)
+UmfpackGenLinSolver(bool useLongIndices, int strategy, double pivotTol, bool persist)
     : LinearSOESolver(SOLVER_TAGS_UmfpackGenLinSolver),
       useLongIndices(useLongIndices),
       strategy(strategy),      // Ladruno (ADR-40 rank 2)
       pivotTol(pivotTol),      // Ladruno (ADR-40 rank 2)
+      persist(persist),        // Ladruno (ADR-40 rank 8/10)
       Symbolic(0),
+      Numeric(0),              // Ladruno (ADR-40 rank 8/10)
       theSOE(0)
 {
 }
 
 UmfpackGenLinSolver::~UmfpackGenLinSolver()
 {
+    this->freeNumeric();   // Ladruno (ADR-40 rank 8/10)
     if (Symbolic != 0) {
         if (useLongIndices) {
 #ifdef _UMFPACK_DLONG
@@ -115,6 +123,22 @@ UmfpackGenLinSolver::~UmfpackGenLinSolver()
         } else {
             umfpack_di_free_symbolic(&Symbolic);
         }
+    }
+}
+
+// Ladruno (ADR-40 rank 8/10): free the persisted Numeric LU (both index modes).
+void
+UmfpackGenLinSolver::freeNumeric(void)
+{
+    if (Numeric != 0) {
+        if (useLongIndices) {
+#ifdef _UMFPACK_DLONG
+            umfpack_dl_free_numeric(&Numeric);
+#endif
+        } else {
+            umfpack_di_free_numeric(&Numeric);
+        }
+        Numeric = 0;
     }
 }
 
@@ -152,79 +176,91 @@ UmfpackGenLinSolver::solve(void)
         return -1;
     }
 
-    void* Numeric = 0;
+    // Ladruno (ADR-40 rank 8/10): reuse the persisted Numeric LU while the
+    // assembled matrix is unchanged. theSOE->factored is the standard direct-
+    // solver invalidation flag (reset by zeroA/setSize, i.e. every tangent
+    // reassembly). We refactor iff persistence is off, the matrix was
+    // reassembled, or we hold no valid Numeric (fresh/swapped-in solver).
+    // The Numeric!=0 guard makes a spuriously-true factored flag harmless.
+    const bool needFactor = (!persist) || (!theSOE->factored) || (Numeric == 0);
 
     if (useLongIndices) {
 #ifdef _UMFPACK_DLONG
-        // numeric analysis
         SuiteSparse_long *Ap = Ap64.data();
         SuiteSparse_long *Ai = Ai64.data();
         SuiteSparse_long status;
-        { OPS_PROFILE_SCOPE("soe.factor");   // Ladruno (ADR-40 rank 8/10)
-        status =
-            umfpack_dl_numeric(Ap, Ai, Ax, Symbolic, &Numeric, Control, Info);
+
+        if (needFactor) {
+            this->freeNumeric();   // drop any stale factorization first
+            { OPS_PROFILE_SCOPE("soe.factor");   // Ladruno (ADR-40 rank 8/10)
+            status =
+                umfpack_dl_numeric(Ap, Ai, Ax, Symbolic, &Numeric, Control, Info);
+            }
+            if (status != UMFPACK_OK) {
+                opserr << "WARNING: numeric analysis returns "
+                       << static_cast<int>(status)
+                       << " -- Umfpackgenlinsolver::solve\n";
+                this->freeNumeric();
+                theSOE->factored = false;
+                return -1;
+            }
+            theSOE->factored = true;
         }
 
-        // check error
-        if (status != UMFPACK_OK) {
-            opserr << "WARNING: numeric analysis returns "
-                   << static_cast<int>(status)
-                   << " -- Umfpackgenlinsolver::solve\n";
-            return -1;
-        }
-
-        // solve
+        // solve (always) using the current/persisted factorization
         { OPS_PROFILE_SCOPE("soe.trisolve");   // Ladruno (ADR-40 rank 8/10)
         status = umfpack_dl_solve(UMFPACK_A, Ap, Ai, Ax, X, B, Numeric, Control,
                                   Info);
         }
-        
-        // delete Numeric
-        if (Numeric != 0) {
-            umfpack_dl_free_numeric(&Numeric);
-        }
 
-        // check error
         if (status != UMFPACK_OK) {
             opserr << "WARNING: solving returns " << static_cast<int>(status)
                    << " -- Umfpackgenlinsolver::solve\n";
+            this->freeNumeric();
+            theSOE->factored = false;
             return -1;
         }
+
+        // legacy free-every-solve behavior when persistence is disabled
+        if (!persist) { this->freeNumeric(); theSOE->factored = false; }
 #endif
     } else {
-        // numeric analysis
         int *Ap = theSOE->Ap.data();
         int *Ai = theSOE->Ai.data();
         int status;
-        { OPS_PROFILE_SCOPE("soe.factor");   // Ladruno (ADR-40 rank 8/10)
-        status =
-            umfpack_di_numeric(Ap, Ai, Ax, Symbolic, &Numeric, Control, Info);
+
+        if (needFactor) {
+            this->freeNumeric();   // drop any stale factorization first
+            { OPS_PROFILE_SCOPE("soe.factor");   // Ladruno (ADR-40 rank 8/10)
+            status =
+                umfpack_di_numeric(Ap, Ai, Ax, Symbolic, &Numeric, Control, Info);
+            }
+            if (status != UMFPACK_OK) {
+                opserr << "WARNING: numeric analysis returns " << status
+                       << " -- Umfpackgenlinsolver::solve\n";
+                this->freeNumeric();
+                theSOE->factored = false;
+                return -1;
+            }
+            theSOE->factored = true;
         }
 
-        // check error
-        if (status != UMFPACK_OK) {
-            opserr << "WARNING: numeric analysis returns " << status
-                   << " -- Umfpackgenlinsolver::solve\n";
-            return -1;
-        }
-
-        // solve
+        // solve (always) using the current/persisted factorization
         { OPS_PROFILE_SCOPE("soe.trisolve");   // Ladruno (ADR-40 rank 8/10)
         status = umfpack_di_solve(UMFPACK_A, Ap, Ai, Ax, X, B, Numeric, Control,
                                   Info);
         }
 
-        // delete Numeric
-        if (Numeric != 0) {
-            umfpack_di_free_numeric(&Numeric);
-        }
-        
-        // check error
         if (status != UMFPACK_OK) {
             opserr << "WARNING: solving returns " << status
                    << " -- Umfpackgenlinsolver::solve\n";
+            this->freeNumeric();
+            theSOE->factored = false;
             return -1;
         }
+
+        // legacy free-every-solve behavior when persistence is disabled
+        if (!persist) { this->freeNumeric(); theSOE->factored = false; }
     }
 
     return 0;
@@ -233,6 +269,11 @@ UmfpackGenLinSolver::solve(void)
 int
 UmfpackGenLinSolver::setSize()
 {
+    // Ladruno (ADR-40 rank 8/10): the sparsity structure (and thus Symbolic) is
+    // about to be rebuilt -> any persisted Numeric is stale. Free it here; the
+    // SOE has already reset factored=false.
+    this->freeNumeric();
+
     int n = theSOE->X.Size();
     int nnz = (int)theSOE->Ai.size();
     if (n == 0 || nnz == 0) {
