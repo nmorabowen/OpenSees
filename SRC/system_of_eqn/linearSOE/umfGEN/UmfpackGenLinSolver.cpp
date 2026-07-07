@@ -39,6 +39,7 @@
 #include <Channel.h>
 #include <FEM_ObjectBroker.h>
 #include <elementAPI.h>
+#include <profiler/ProfilerMacros.h>  // Ladruno (ADR-40 rank 8/10): factor-vs-trisolve split
 
 void* OPS_UmfpackGenLinSolver()
 {
@@ -158,9 +159,12 @@ UmfpackGenLinSolver::solve(void)
         // numeric analysis
         SuiteSparse_long *Ap = Ap64.data();
         SuiteSparse_long *Ai = Ai64.data();
-        SuiteSparse_long status =
+        SuiteSparse_long status;
+        { OPS_PROFILE_SCOPE("soe.factor");   // Ladruno (ADR-40 rank 8/10)
+        status =
             umfpack_dl_numeric(Ap, Ai, Ax, Symbolic, &Numeric, Control, Info);
-        
+        }
+
         // check error
         if (status != UMFPACK_OK) {
             opserr << "WARNING: numeric analysis returns "
@@ -170,8 +174,10 @@ UmfpackGenLinSolver::solve(void)
         }
 
         // solve
+        { OPS_PROFILE_SCOPE("soe.trisolve");   // Ladruno (ADR-40 rank 8/10)
         status = umfpack_dl_solve(UMFPACK_A, Ap, Ai, Ax, X, B, Numeric, Control,
                                   Info);
+        }
         
         // delete Numeric
         if (Numeric != 0) {
@@ -189,10 +195,12 @@ UmfpackGenLinSolver::solve(void)
         // numeric analysis
         int *Ap = theSOE->Ap.data();
         int *Ai = theSOE->Ai.data();
-        int status =
+        int status;
+        { OPS_PROFILE_SCOPE("soe.factor");   // Ladruno (ADR-40 rank 8/10)
+        status =
             umfpack_di_numeric(Ap, Ai, Ax, Symbolic, &Numeric, Control, Info);
-        
-        
+        }
+
         // check error
         if (status != UMFPACK_OK) {
             opserr << "WARNING: numeric analysis returns " << status
@@ -201,8 +209,10 @@ UmfpackGenLinSolver::solve(void)
         }
 
         // solve
+        { OPS_PROFILE_SCOPE("soe.trisolve");   // Ladruno (ADR-40 rank 8/10)
         status = umfpack_di_solve(UMFPACK_A, Ap, Ai, Ax, X, B, Numeric, Control,
                                   Info);
+        }
 
         // delete Numeric
         if (Numeric != 0) {
@@ -247,6 +257,7 @@ UmfpackGenLinSolver::setSize()
         if (Symbolic != 0) {
             umfpack_dl_free_symbolic(&Symbolic);
         }
+        OPS_PROFILE_SCOPE("soe.symbolic");   // Ladruno (ADR-40 rank 8/10)
         SuiteSparse_long status = umfpack_dl_symbolic(
             (SuiteSparse_long)n, (SuiteSparse_long)n, Ap, Ai, Ax, &Symbolic,
             Control, Info);
@@ -274,6 +285,7 @@ UmfpackGenLinSolver::setSize()
         if (Symbolic != 0) {
             umfpack_di_free_symbolic(&Symbolic);
         }
+        OPS_PROFILE_SCOPE("soe.symbolic");   // Ladruno (ADR-40 rank 8/10)
         int status =
             umfpack_di_symbolic(n, n, Ap, Ai, Ax, &Symbolic, Control, Info);
         

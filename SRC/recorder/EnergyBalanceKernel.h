@@ -78,10 +78,15 @@ static const int NUM_ENERGY_COMPONENTS = 6;
 //   kinetic       += 1/2 v^T M v   (instantaneous kinetic energy)
 //   internal_rate += F^T v         (internal power; caller integrates over dt)
 //   damping_rate  += v^T C v       (damping power;  caller integrates over dt)
+// Ladruno ADR-69 P3: when `msKE` is non-null, the consistent-SMS scaling-mass
+// share 1/2 v^T M_bar_e v (the term added to `kinetic` below) is ALSO
+// accumulated into *msKE — the KE_ms advisory split. Passing null (every V1
+// caller) leaves the legacy numerics byte-identical.
 inline void addElementEnergy(Element *ele, Vector &vel,
                              double &kinetic,
                              double &internal_rate,
-                             double &damping_rate)
+                             double &damping_rate,
+                             double *msKE = 0)
 {
     // COPY the mass: many elements return a reference to a shared static matrix
     // from BOTH getMass() and getDamp() (and getDamp() internally calls getMass/
@@ -122,8 +127,12 @@ inline void addElementEnergy(Element *ele, Vector &vel,
     {
         const Ladruno::MassScalingEnergyRegistry &reg =
             Ladruno::MassScalingEnergyRegistry::instance();
-        if (reg.active())
-            kinetic += reg.elementScalingKE(ele->getTag(), vel, numDOF);
+        if (reg.active()) {
+            const double mbarKE = reg.elementScalingKE(ele->getTag(), vel, numDOF);
+            kinetic += mbarKE;
+            if (msKE != 0)
+                *msKE += mbarKE;   // Ladruno ADR-69 P3: KE_ms advisory split
+        }
     }
 
     if (haveDamp)
@@ -143,10 +152,15 @@ inline void addElementEnergy(Element *ele, Vector &vel,
 // Rayleigh damping (alphaM * nodalMass), and the work rate of the external
 // applied nodal load. M is fully consumed before getDamp() is called because
 // Node::getMass()/getDamp() can share the same scratch matrix when massless.
+// Ladruno ADR-69 P3: when `msKE` is non-null and a lumped-SMS integrator has
+// published its injected ΔM, the fictitious share 1/2 v^T ΔM v is accumulated
+// into *msKE. MEASURE-only: the injected ΔM is already inside Node::getMass()
+// (counted in `kinetic` above), so nothing is ever added to the balance here.
 inline void addNodeEnergy(Node *node,
                           double &kinetic,
                           double &damping_rate,
-                          double &unbalanced_rate)
+                          double &unbalanced_rate,
+                          double *msKE = 0)
 {
     const Vector &vel = node->getVel();
     const int n = vel.Size();
@@ -166,6 +180,15 @@ inline void addNodeEnergy(Node *node,
     const Vector &Pext = node->getUnbalancedLoad();
     if (Pext.Size() == n)
         unbalanced_rate += vel ^ Pext;
+
+    // Ladruno ADR-69 P3: lumped-SMS fictitious-KE share (advisory KE_ms split;
+    // see the function comment — never added to `kinetic`).
+    if (msKE != 0) {
+        const Ladruno::MassScalingEnergyRegistry &reg =
+            Ladruno::MassScalingEnergyRegistry::instance();
+        if (reg.activeNodal())
+            *msKE += reg.nodalScalingKE(node->getTag(), vel);
+    }
 }
 
 // Per-scope accumulator: encapsulates the trapezoidal work integrals + the
@@ -271,15 +294,24 @@ struct EnergyAccumulator {
 //     is the instantaneous STORED stabilization energy (exact under
 //     monotonic loading, snapshot-approximate under cyclic; can decrease on
 //     unload) - a GLSTAT-style diagnostic, per the element's own contract.
+//   * KE_ms (P3) is the PURELY ADVISORY mass-scaling fidelity split: the
+//     instantaneous kinetic energy riding on FICTITIOUS (SMS-added) mass —
+//     1/2 v^T ΔM v (lumped nodal injection) + sum_e 1/2 v^T M_bar_e v
+//     (consistent). That energy legitimately belongs in KE for the numerical
+//     system's balance (the scaled inertia really carries it), so KE_ms is
+//     NOT rebucketed out of KE, does NOT enter RES, and does NOT enter the
+//     ERR scale — it only surfaces the fraction KE_ms/(KE_ele+KE_nod) as an
+//     LS-DYNA-GLSTAT-style quality metric (large => the run's kinetics are
+//     dominated by fictitious inertia; distrust periods/wave speeds).
 //
 // Output slot order (fixed; the recorder skips undeclared channel slots when
 // writing): KE_ele KE_nod IE DW_ele DW_nod ULW E_inject E_lnvd E_modal E_hg
-// RES ERR.
+// KE_ms RES ERR.
 // ---------------------------------------------------------------------------
-static const int NUM_V2_SLOTS = 12;
+static const int NUM_V2_SLOTS = 13;
 enum V2Slot {
     V2_KE_ELE = 0, V2_KE_NOD, V2_IE, V2_DW_ELE, V2_DW_NOD, V2_ULW,
-    V2_E_INJECT, V2_E_LNVD, V2_E_MODAL, V2_E_HG, V2_RES, V2_ERR
+    V2_E_INJECT, V2_E_LNVD, V2_E_MODAL, V2_E_HG, V2_KE_MS, V2_RES, V2_ERR
 };
 
 struct EnergyAccumulatorV2 {
@@ -316,7 +348,9 @@ struct EnergyAccumulatorV2 {
     // Same integration convention as V1 step(): first recorded step uses the
     // rectangle rule, thereafter trapezoidal. Channel totals are read from
     // the registry by the caller and passed in (kernel stays registry-free at
-    // this level so the arithmetic is testable in isolation).
+    // this level so the arithmetic is testable in isolation). `ms_ke` (P3) is
+    // the caller-summed instantaneous fictitious-mass KE — advisory passthrough
+    // (no integration, no baseline, no balance participation).
     void step(double dT, bool firstRecord,
               double ke_ele, double ke_nod,
               double internal_rate,
@@ -324,6 +358,7 @@ struct EnergyAccumulatorV2 {
               double unbalanced_rate,
               double leak_total, double lnvd_total,
               double modal_total, double hg_total,
+              double ms_ke,
               double out[NUM_V2_SLOTS])
     {
         if (firstRecord) {
@@ -380,6 +415,7 @@ struct EnergyAccumulatorV2 {
         out[V2_E_LNVD]   = Dl;
         out[V2_E_MODAL]  = Dm;
         out[V2_E_HG]     = Hg;
+        out[V2_KE_MS]    = ms_ke;   // advisory (ADR-69 P3): inside KE, not in RES/ERR
         out[V2_RES]      = res;
         out[V2_ERR]      = err;
     }

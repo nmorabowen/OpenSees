@@ -2542,6 +2542,50 @@ never by pointer — a freed pointer can be REUSED by a new allocation and silen
 old binning. Note the count sentinel alone is blind to remove-then-readd-same-tag (counts
 restore); the tag→pointer identity check is what catches it.
 
+### `-implex` looks INERT under ASDShellQ4 in fully-prescribed rigs — it is not: ASDShellQ4 reports the POST-COMMIT state, and IMPL-EX re-integrates implicitly at commit
+
+- **Bites:** A/B-ing `-implex` on/off (LadrunoRCConcrete) with a fully prescribed
+  (every-DOF `sp`) single-element bending rig under `ASDShellQ4` + `LayeredShell`:
+  the recorded responses are BIT-IDENTICAL (rel 4.7e-16 over 60 softening steps) —
+  it looks like the flag is dropped somewhere in the section copy chain. It isn't:
+  the same rig under `ShellMITC4` (same section) or `LadrunoSolidShell` (3D view)
+  shows the expected ~3.5% IMPL-EX extrapolation difference.
+- **Why:** LadrunoRCConcrete's IMPL-EX `commitState` re-integrates implicitly to
+  advance the TRUE thresholds (the ASDConcrete3D pattern), so the post-commit
+  material state is the implicit one. ASDShellQ4's reported element forces reflect
+  the post-commit section state; in a rig with NO free DOFs the extrapolated trial
+  stresses are never consulted by any equilibrium iteration, so the recorded curve
+  collapses exactly onto the implicit run. ShellMITC4 / LadrunoSolidShell report
+  the converged TRIAL state, where the extrapolation lives.
+- **Workaround/status (measured 2026-07-07, ADR-66 G7):** not a defect on either
+  side, but three consequences: (1) never "verify implex engaged" with a prescribed
+  probe under ASDShellQ4 — it is structurally invisible there; (2) cross-element
+  parity benchmarks must run implicit-vs-implicit (as G7 does) or accept a
+  reporting-path asymmetry masquerading as element deviation (~2% here); (3) on
+  free-DOF problems implex under ASDShellQ4 IS active (0.7% path shift measured on
+  the G7b rig) — the wall-harness usage is fine. Pinned discriminatingly by
+  `tests/test_ladrunoSolidShell_flexure.py::test_implex_reporting_paths`.
+
+### `section LayeredShell` bending is exact only on its own midpoint rule — a predictable Σ h³/12 stiffness deficit vs the continuum (≈2% at 5 uniform layers)
+
+- **Bites:** elastic cylindrical bending of a LayeredShell with n uniform layers
+  undershoots `E·t³/12(1−ν²)` by `Σ E_i·h_i³/12` (each layer is ONE fiber at its
+  centroid: the midpoint rule loses the layer's self-inertia). Compared against
+  LadrunoSolidShell — whose `-nz` gauss/lobatto rule integrates z² EXACTLY — this
+  reads as "the solid-shell is too stiff". It is the layered quadrature, on both
+  the concrete AND the displaced-by-rebar bookkeeping.
+- **Workaround/status (measured 2026-07-07, ADR-66 G7):** predict it (the G7
+  elastic anchor asserts the layered arm to 1e-4 against the midpoint-rule closed
+  form, deficit 2.07% at 5 core layers) or halve the layer thickness (error ∝ h²;
+  0.5% at the G7 production layering of 3+10+3).
+
+### `equationConstraint` refuses zero coefficients ("WARNING invalid rcoef inputs") — skip the zero-arm terms when emitting plane-section rows
+
+- **Bites:** emitting `u_i − u0 − θ·z_i = 0` rows for a node ON the reference
+  plane (z_i = 0) fails parse: the EQ parser hard-rejects `coef == 0.0`.
+- **Workaround (2026-07-07, ADR-66 G7):** drop the θ term when `|z_i| < tol`
+  (the row degenerates to `u_i = u0`, which is exactly right) — the same filter
+  the LadrunoTie shell-solid tests use for near-zero shape weights.
 ## `wipe()` does NOT recreate the Domain — new domain-level state MUST be reset in `Domain::clearAll()` (ADR 46 P1)
 
 `ops.wipe()` calls `Domain::clearAll()` on the SAME Domain object; nothing is
