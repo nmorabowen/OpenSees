@@ -58,7 +58,8 @@ class ElasticIsotropicPlaneStrain2D : public ElasticIsotropicMaterial
 
     const Vector &getStress (void);
     const Vector &getStrain (void);
-    
+    double getStressZZ (void);   // Ladruno: sigma_zz = lambda*(eps_xx + eps_yy)
+
     int commitState (void);
     int revertToLastCommit (void);
     int revertToStart (void);
