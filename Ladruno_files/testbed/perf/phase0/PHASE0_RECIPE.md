@@ -27,6 +27,12 @@ ops.profiler("report", OUT_H5_ABS_PATH)
   `elem_by_type` buckets (count, wall ms, us/ele).
 
 ## Known caveats (do not re-discover)
+- **Walls on this box swing ±30%+** from background compiles (foreign `cl.exe` from other
+  agent sessions can eat 8 cores mid-round), Dropbox sync bursts, and laptop DVFS. Before any
+  wall you intend to publish: `tasklist | findstr /i "cl.exe ninja"` must be empty AND sample
+  per-process CPU over ~3 s (Dropbox etc.). Run interleaved rounds (A/B/A/B...) and report the
+  MEDIAN of ≥5 rounds; never trust a single run (2026-07-07 lane-D re-run: one contaminated
+  round showed +67% on one config).
 - `cpu_ms_total` is a Win32 stub — unreliable. Trust wall_ns and RELATIVE splits.
 - `nElem`/`nNode` read 0 on this binary (pre-patch) — expected, ignore.
 - The binary is `dist\bin\opensees.pyd` (2026-06-18). Do NOT rebuild anything.

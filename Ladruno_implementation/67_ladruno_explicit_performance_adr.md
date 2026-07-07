@@ -351,3 +351,26 @@ Recorded so this ADR is self-contained; **not** owned here:
   proves the setResponse invariant on the fork's own velocity-reading element; CS-4
   remove-element + revert/retry composition with P-NEW-1). Combined with P-NEW-1 the explicit
   step sheds ~35-40% on rate-independent decks (P-NEW-1 automatic; P-NEW-2 opt-in per deck).
+
+- **2026-07-07 — P-NEW-1/2 CONFIRMED on clean real walls (healthy machine, median-of-5).**
+  Yesterday's absolute walls were suspect (machine degraded ~2× mid-session); re-measured
+  today on the merged #502 binary vs a pre-#502 control (element/material sources verified
+  identical — the A/B isolates the CDL change), 5 interleaved rounds of the 40b lane-D live-wave
+  model (1000 LadrunoBrick `-lumped` + J2, 2500 steps @ 0.8·dt_cr), profiler OFF, threads pinned:
+
+  | config | median wall | Δ |
+  |---|---|---|
+  | control (pre-#502) | 65.7 s | — |
+  | #502 `-noMassCache` | 66.1 s | +0.6% (cache-off parity: no regression from the latch code) |
+  | #502 default (cache ON) | 54.1 s | **−18.2%** vs cache-off (matches the profiled −17.9% `-factorOnce` A/B) |
+  | #502 + `-commitSolveState` | 45.9 s | **−15%** further; **−30% combined** vs control |
+
+  All 20 runs returned the top-center displacement **bit-identical to 17 digits** (incl. control
+  — P-NEW-1's G-BYTE claim and P-NEW-2's rate-independent G-EQUIV claim both hold on this deck).
+  The honest combined number on real walls is **≈−30%** (per-round −21%…−36%): the earlier
+  "~35-40%" ceiling counted the second constitutive pass at its *profiled* share (23.4%), which
+  profiler overhead inflates; the unprofiled share is ≈15%. Bench-methodology lesson (recorded
+  in `PHASE0_RECIPE.md`): this box swings walls ±30%+ from background compiles (a foreign
+  `cl.exe` was eating 8 cores during one round), Dropbox sync, and laptop DVFS — check
+  `tasklist` for `cl.exe`/`ninja` and sample per-process CPU before trusting any wall; use
+  interleaved rounds + medians, never single runs.

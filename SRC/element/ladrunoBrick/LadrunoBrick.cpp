@@ -60,6 +60,7 @@
 #include <elementAPI.h>
 #include <Response.h>        // Ladruno — cached material "damage" query (Tier-A Kstab)
 #include <Information.h>
+#include <profiler/ProfilerMacros.h>  // Ladruno (ADR-68 T3 drill): brick.geo/brick.inertia deep scopes
 #include <DummyStream.h>
 
 // Ladruno — Tier-A damage-scaled hourglass stabilization: residual fraction of
@@ -719,7 +720,11 @@ void   LadrunoBrick::formInertiaTerms(int tangFlag)
 
   double temp, rho, massJK;
 
+  OPS_PROFILE_SCOPE_DEEP("brick.inertia");   // Ladruno (ADR-68 T3 drill): inertia-path share, deep-gated
   mass.Zero();
+
+  {
+  OPS_PROFILE_SCOPE_DEEP("brick.geo");   // Ladruno (ADR-68 T3 drill): geometry recompute share, deep-gated
   computeBasis();
 
   int count = 0;
@@ -735,6 +740,7 @@ void   LadrunoBrick::formInertiaTerms(int tangFlag)
         count++;
       }
     }
+  }
   }
 
   for (int i = 0; i < numberGauss; i++) {
@@ -899,6 +905,8 @@ LadrunoBrick::update(void)
 
   const bool useBbar = (formulation == Formulation::BBAR);
 
+  {
+  OPS_PROFILE_SCOPE_DEEP("brick.geo");   // Ladruno (ADR-68 T3 drill): geometry recompute share, deep-gated
   computeBasis();
 
   int count = 0;
@@ -919,6 +927,7 @@ LadrunoBrick::update(void)
 
   if (useBbar)
     computeShapeBar(shpBar, Shape, dvol, volume);
+  }
 
   const Vector &uCore = this->computeLocalDisp();   // seam 0+2 (identity for linear)
   static Vector ulj(3);
@@ -997,6 +1006,9 @@ void  LadrunoBrick::formResidAndTangent(int tang_flag)
   stiff.Zero();
   resid.Zero();
   bodyForce.Zero();
+
+  {
+  OPS_PROFILE_SCOPE_DEEP("brick.geo");   // Ladruno (ADR-68 T3 drill): geometry recompute share, deep-gated
   computeBasis();
 
   int count = 0;
@@ -1017,6 +1029,7 @@ void  LadrunoBrick::formResidAndTangent(int tang_flag)
 
   if (useBbar)
     computeShapeBar(shpBar, Shape, dvol, volume);
+  }
 
   // Ladruno (W2-E1): explicit bulk viscosity is active ONLY for -geom linear -- it
   // contracts global-frame nodal velocities against reference-frame shape gradients,
