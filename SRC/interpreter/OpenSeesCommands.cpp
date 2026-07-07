@@ -2194,7 +2194,10 @@ int OPS_analyze() {
 }
 
 // Ladruno ADR43: eigen -feast fmin fmax [-m0 n] [-nq n] [-tol exp]
-//                       [-maxiter n] [-verbose]
+//                       [-maxiter n] [-verbose] [-certify]
+// -certify (P2): also count the band content via Sturm/inertia (PARDISO
+// LDL^T negative pivots at the two band edges) and REFUSE on mismatch with
+// FEAST's count — the independent completeness certificate.
 // Band-targeted FEAST eigen: returns ALL modes with f in [fmin, fmax] Hz
 // (lambda band = (2*pi*f)^2 internally). The band defines the count — the
 // found-mode reconcile lives in OpenSeesCommands::eigen. The subspace cap
@@ -2219,6 +2222,7 @@ static int OPS_eigenFeast()
     int m0 = 0, nq = 0, maxRefine = 0;
     double tolExp = 0.0;
     bool verbose = false;
+    bool certify = false;
     while (OPS_GetNumRemainingInputArgs() > 0) {
 	const char* flag = OPS_GetString();
 	if (strcmp(flag, "-m0") == 0 && OPS_GetNumRemainingInputArgs() > 0) {
@@ -2251,6 +2255,8 @@ static int OPS_eigenFeast()
 	    }
 	} else if (strcmp(flag, "-verbose") == 0) {
 	    verbose = true;
+	} else if (strcmp(flag, "-certify") == 0) {
+	    certify = true;
 	} else {
 	    opserr << "WARNING eigen -feast: unknown option '" << flag
 		   << "'\n";
@@ -2269,6 +2275,7 @@ static int OPS_eigenFeast()
     if (tolExp > 0.0)  theSOE->setTol(tolExp);
     if (maxRefine > 0) theSOE->setMaxRefine(maxRefine);
     theSOE->setVerbose(verbose);
+    theSOE->setCertify(certify);
 
     // analysis-side mode-loop cap; the reconcile trims to the found count.
     // NOT tied to m0: m0 is the FEAST subspace SEED (auto-enlarged on

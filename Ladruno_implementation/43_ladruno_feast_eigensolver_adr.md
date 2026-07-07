@@ -38,7 +38,9 @@ updated: 2026-06-22
 > large-model NLTHA — actually trustworthy at scale. **The strategic investment** (large build);
 > sequence after the cheap ADR-46 proof.
 
-**Status:** in progress — **P1 (serial MKL-FEAST, `eigen -feast`) built, in PR.** classTags **33022**
+**Status:** in progress — **P1 (serial MKL-FEAST, `eigen -feast`) MERGED
+([#515](https://github.com/nmorabowen/OpenSees/pull/515)); P2 (`-certify` Sturm/inertia via
+PARDISO on the SOE's own CSR + banner) built, in PR.** classTags **33022**
 (`FeastEigenSOE`) + **33023** (`FeastEigenSolver`) **ACTIVE in `SRC/classTags.h`**. P1 deviations
 from this draft (deliberate, ledgered): the packed CSR driver `dfeast_scsrgv` instead of the §5.2
 RCI seam — the RCI's complex shifted solves cannot route through a *real* inner `LinearSOE`, so
