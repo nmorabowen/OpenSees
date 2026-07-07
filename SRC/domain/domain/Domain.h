@@ -195,6 +195,13 @@ class Domain
     virtual void  unsetLoadConstant(void);
     virtual  int  initialize(void);    
     virtual  int  setRayleighDampingFactors(double alphaM, double betaK, double betaK0, double betaKc);
+    // Ladruno ADR46: the factors are cascaded to elements/nodes and were never
+    // kept at domain level; complex-modal (and later frequency-domain) drivers
+    // need to read them back to project Rayleigh damping in closed form.
+    virtual  void getRayleighDampingFactors(double &alphaM, double &betaK,
+					    double &betaK0, double &betaKc) const;
+    // Ladruno ADR46: 0 when no eigen has run (getEigenvalues would exit(-1))
+    virtual  int  getNumEigenvalues(void) const;
 
     virtual  int  commit(void);
     virtual  int  revertToLastCommit(void);
@@ -327,6 +334,10 @@ class Domain
     DomainModalProperties* theModalProperties;
     Vector *theModalDampingFactors;
     bool inclModalMatrix;
+
+    // Ladruno ADR46: last factors passed to setRayleighDampingFactors (the
+    // cascade discards them; complex-modal projection reads them back)
+    double dmpAlphaM = 0.0, dmpBetaK = 0.0, dmpBetaK0 = 0.0, dmpBetaKc = 0.0;
 
     int lastChannel;
 

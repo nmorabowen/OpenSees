@@ -4105,35 +4105,39 @@ int OPS_criticalTimeStep()
 }
 
 // Ladruno ADR46: complex/state-space modal analysis (LadrunoComplexEigen).
-// P0 exposes ONLY the reduced-pencil QZ kernel for oracle verification:
+// Two entries, one engine:
+//   complexEigen [numModes] [-numModes p] [-tol eps]
+//     P1 domain path — closed-form Rayleigh (alphaM/betaK) projection on the
+//     last `eigen` result (requires a prior 'eigen N' and 'rayleigh' with
+//     betaKinit == betaKcomm == 0; element/material dampers arrive at P2).
 //   complexEigen -qz p <p*p Mt> <p*p Ct> <p*p Kt> [-tol eps]   (row-major)
-// returning 7 doubles per reported mode:
+//     P0 kernel/debug path — solve an explicitly-given reduced pencil
+//     (the oracle-verification entry; also Tier-2 of the test battery).
+// Both return 7 doubles per reported mode:
 //   {omega0, omegaD, zeta, Re(lambda), Im(lambda), kind, resid}
 // with kind 0=underdamped (one entry per conjugate pair), 1=overdamped,
 // 2=rigid, and resid = ||(lambda^2 Mt + lambda Ct + Kt) z|| the per-mode
 // quality metric (ties the reported lambda to ITS eigenvector — catches
-// conjugate-pairing mistakes). The domain-coupled projection path (no -qz)
-// lands at P1; see Ladruno_implementation/46_ladruno_complex_modal_adr.md.
+// conjugate-pairing mistakes). See
+// Ladruno_implementation/46_ladruno_complex_modal_adr.md.
 int OPS_complexEigen()
 {
     if (cmds == 0) return 0;
 
-    if (OPS_GetNumRemainingInputArgs() < 2) {
-	opserr << "WARNING complexEigen: expected 'complexEigen -qz p Mt Ct Kt "
-	       << "[-tol eps]' (ADR 46 P0 kernel); the domain-coupled form "
-	       << "arrives at P1\n";
-	return -1;
-    }
+    std::vector<LadrunoComplexEigen::ComplexMode> cmodes;
+    int numdata = 1;
 
-    const char* opt = OPS_GetString();
-    if (strcmp(opt, "-qz") != 0) {
-	opserr << "WARNING complexEigen: only the '-qz' kernel mode is "
-	       << "available until ADR 46 P1; got '" << opt << "'\n";
-	return -1;
-    }
+    // peek the first token (if any) to pick the entry. NOTE: must be
+    // OPS_GetStringFromAll — under openseespy a bare-int arg (complexEigen(2))
+    // makes OPS_GetString return "Invalid String Input!" instead of the token.
+    char optBuf[64];
+    const char* opt = nullptr;
+    if (OPS_GetNumRemainingInputArgs() > 0)
+	opt = OPS_GetStringFromAll(optBuf, 64);
+
+    if (opt != nullptr && strcmp(opt, "-qz") == 0) {
 
     int p = 0;
-    int numdata = 1;
     if (OPS_GetIntInput(&numdata, &p) < 0 || p < 1 || p > 500) {
 	opserr << "WARNING complexEigen -qz: cannot read a valid pencil size p "
 	       << "(1..500)\n";
@@ -4180,10 +4184,60 @@ int OPS_complexEigen()
 	}
     }
 
-    std::vector<LadrunoComplexEigen::ComplexMode> cmodes;
     if (LadrunoComplexEigen::solveReducedPencil(Mt, Ct, Kt, cmodes, tol) < 0) {
 	opserr << "WARNING complexEigen -qz: reduced-pencil solve failed\n";
 	return -1;
+    }
+
+    } else {
+
+    // P1 domain path: complexEigen [numModes] [-numModes p] [-tol eps]
+    int numModes = 0;   // 0 = all modes from the last eigen run
+    double tol = 1.0e-8;
+    while (true) {
+	if (opt == nullptr) {
+	    if (OPS_GetNumRemainingInputArgs() <= 0) break;
+	    opt = OPS_GetStringFromAll(optBuf, 64);
+	}
+	if (strcmp(opt, "-numModes") == 0 &&
+	    OPS_GetNumRemainingInputArgs() > 0) {
+	    numdata = 1;
+	    if (OPS_GetIntInput(&numdata, &numModes) < 0 || numModes < 1) {
+		opserr << "WARNING complexEigen: cannot read a valid "
+		       << "-numModes value\n";
+		return -1;
+	    }
+	} else if (strcmp(opt, "-tol") == 0 &&
+		   OPS_GetNumRemainingInputArgs() > 0) {
+	    numdata = 1;
+	    if (OPS_GetDoubleInput(&numdata, &tol) < 0) {
+		opserr << "WARNING complexEigen: cannot read -tol value\n";
+		return -1;
+	    }
+	} else {
+	    // bare positive integer = numModes (eigen-style ergonomics)
+	    char* end = nullptr;
+	    const long v = strtol(opt, &end, 10);
+	    if (end != nullptr && *end == '\0' && v > 0) {
+		numModes = static_cast<int>(v);
+	    } else {
+		opserr << "WARNING complexEigen: unknown option '" << opt
+		       << "'\n";
+		return -1;
+	    }
+	}
+	opt = nullptr;
+    }
+
+    Domain* theDomain = cmds->getDomain();
+    if (theDomain == 0) {
+	opserr << "WARNING complexEigen: no domain\n";
+	return -1;
+    }
+    if (LadrunoComplexEigen::solveFromDomain(*theDomain, numModes,
+					     cmodes, tol) < 0)
+	return -1;
+
     }
 
     std::vector<double> out;

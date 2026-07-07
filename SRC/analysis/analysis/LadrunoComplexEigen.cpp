@@ -31,6 +31,10 @@
 
 #include <Matrix.h>
 #include <OPS_Globals.h>
+#include <Domain.h>
+#include <Vector.h>
+#include <Element.h>
+#include <ElementIter.h>
 
 #include <cmath>
 #include <algorithm>
@@ -294,4 +298,89 @@ int LadrunoComplexEigen::solveReducedPencil(const Matrix &Mt, const Matrix &Ct,
               });
 
     return 0;
+}
+
+int
+LadrunoComplexEigen::solveFromDomain(Domain &theDomain, int numModes,
+                                     std::vector<ComplexMode> &modes,
+                                     double tol)
+{
+    modes.clear();
+
+    // presence probe FIRST: getEigenvalues() exit(-1)s when never set
+    const int pAvail = theDomain.getNumEigenvalues();
+    if (pAvail < 1) {
+        opserr << "LadrunoComplexEigen::solveFromDomain - no eigenvalues in "
+               << "the domain; run 'eigen <N>' before 'complexEigen'\n";
+        return -10;
+    }
+    const Vector &eigenvalues = theDomain.getEigenvalues();
+    const int p = (numModes <= 0) ? pAvail : numModes;
+    if (p > pAvail) {
+        opserr << "LadrunoComplexEigen::solveFromDomain - requested "
+               << p << " modes but the last eigen run produced only "
+               << pAvail << "\n";
+        return -11;
+    }
+
+    double aM, bK, bK0, bKc;
+    theDomain.getRayleighDampingFactors(aM, bK, bK0, bKc);
+
+    // region-/element-scoped Rayleigh ('region ... -rayleigh', per-element
+    // '-rayleigh') writes factors straight onto elements WITHOUT touching the
+    // domain copy (MeshRegion::setRayleighDampingFactors) — the closed form
+    // below would silently use the global factors only. Detect and warn
+    // (D1 umbrella policy: warn, never silently absorb); the assembled-C
+    // path (ADR 46 P2) is the correct tool for scoped damping.
+    {
+        bool warned = false;
+        Element *elePtr;
+        ElementIter &theElemIter = theDomain.getElements();
+        while (!warned && (elePtr = theElemIter()) != 0) {
+            const Vector f = elePtr->getRayleighDampingFactors();
+            if (f.Size() >= 4 &&
+                (f(0) != aM || f(1) != bK || f(2) != bK0 || f(3) != bKc)) {
+                opserr << "WARNING LadrunoComplexEigen: element "
+                       << elePtr->getTag() << " carries Rayleigh factors that "
+                       << "differ from the last global 'rayleigh' call "
+                       << "(region-/element-scoped damping). The closed-form "
+                       << "projection uses the GLOBAL factors only - the "
+                       << "reported zeta ignores the scoped damping. Use the "
+                       << "assembled-C path (ADR 46 P2) when it lands\n";
+                warned = true;
+            }
+        }
+    }
+
+    if (bK0 != 0.0 || bKc != 0.0) {
+        opserr << "LadrunoComplexEigen::solveFromDomain - betaKinit/betaKcomm "
+               << "Rayleigh terms are set; the closed-form projection covers "
+               << "only alphaM/betaK (K_init/K_commit are not proportional to "
+               << "the eigen K). The assembled-C path (ADR 46 P2) will handle "
+               << "them - refusing rather than misreporting zeta\n";
+        return -12;
+    }
+
+    // Route A closed form: since K phi_a = omega_a^2 M phi_a, in ANY
+    // normalization Phi^T M Phi = diag(g_a) and Phi^T K Phi = diag(g_a w_a^2),
+    // so after the g_a^{-1/2} re-normalization the reduced pencil is exactly
+    //   Mt = I,  Kt = diag(w_a^2),  Ct = diag(aM + bK w_a^2)
+    // with no matrix ever assembled. Negative computed eigenvalues (possible
+    // from a shifted / indefinite prior state) are refused - the closed form
+    // presumes a genuine undamped spectrum.
+    Matrix Mt(p, p), Ct(p, p), Kt(p, p);
+    for (int a = 0; a < p; a++) {
+        const double w2 = eigenvalues(a);
+        if (w2 < 0.0) {
+            opserr << "LadrunoComplexEigen::solveFromDomain - eigenvalue "
+                   << a + 1 << " is negative (" << w2 << "); the Rayleigh "
+                   << "closed form needs a genuine undamped spectrum\n";
+            return -13;
+        }
+        Mt(a, a) = 1.0;
+        Kt(a, a) = w2;
+        Ct(a, a) = aM + bK * w2;
+    }
+
+    return solveReducedPencil(Mt, Ct, Kt, modes, tol);
 }

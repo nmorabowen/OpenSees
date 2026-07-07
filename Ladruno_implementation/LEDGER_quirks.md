@@ -2541,3 +2541,30 @@ object, rebuild on mismatch (EnergyBalanceRecorder P2.1). Key ALL membership map
 never by pointer — a freed pointer can be REUSED by a new allocation and silently inherit the
 old binning. Note the count sentinel alone is blind to remove-then-readd-same-tag (counts
 restore); the tag→pointer identity check is what catches it.
+
+## `wipe()` does NOT recreate the Domain — new domain-level state MUST be reset in `Domain::clearAll()` (ADR 46 P1)
+
+`ops.wipe()` calls `Domain::clearAll()` on the SAME Domain object; nothing is
+reconstructed. Any new domain-level member you add therefore leaks across model
+generations unless you reset it in `clearAll()` yourself (the ADR-30 `theEQs` and
+ADR-39 contact-engine cleanups are the same lesson). ADR 46 P1 hit this twice in
+one PR: (1) the new Rayleigh-factor domain copy survived wipe → the NEXT model
+reported phantom damping; (2) the UPSTREAM `theEigenvalues`/`theEigenvalueSetTime`
+also survive wipe — latent forever because nothing read the spectrum across a wipe
+until `complexEigen` did (a stale spectrum from the previous model silently answers
+for the new one). Both now reset in `clearAll()` (`// Ladruno ADR46`).
+
+Related trap: `Domain::getEigenvalues()` **exit(-1)s** (kernel-killer, MPCO class)
+when the spectrum was never set — any graceful-failure caller must probe via the
+additive `Domain::getNumEigenvalues()` (ADR 46) BEFORE calling it.
+
+Related trap: `region ... -rayleigh` and per-element `-rayleigh` write factors
+straight onto elements via `MeshRegion::setRayleighDampingFactors` / element
+`setRayleighDampingFactors` and NEVER touch `Domain::setRayleighDampingFactors` —
+the domain-level copy reflects only the last GLOBAL `rayleigh` call. `complexEigen`
+scans elements and warns on mismatch (D1 policy: warn, never silently absorb).
+
+ADR 46 P2 pre-warning (from the P1 Opus gate): once Route B projects a full
+`ΦᵀCΦ` and emits `ψ=Φz`, REPEATED eigenvalues need the basis M-orthonormalized
+WITHIN each repeated eigenspace (ARPACK does not guarantee it); the P1 closed form
+is immune (uses eigenvalues only, never Φ).

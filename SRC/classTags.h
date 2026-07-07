@@ -585,6 +585,7 @@
 // 33016 reserved for LogStrain2D (ADR 25) — not yet in this header
 #define ND_TAG_LadrunoConcrete3D 33017 // N. Mora-Bowen (Ladruno) — CDPM2-grade solid-concrete plastic-damage (Menétrey-Willam 3-invariant surface + non-associated flow + confinement-aware hardening + dual scalar omega_t/omega_c damage with crack-band Gf/Gc + auto unilateral); header-only LadrunoConcrete3DKernel.h; 3D-only v1; NON-symmetric tangent (unsymmetric solver); ADR 31
 #define ND_TAG_LadrunoRCFiniteStrain 33018 // N. Mora-Bowen (Ladruno) — finite-strain (Hencky) view of the RC plastic-damage material (B=F Fᵀ -> ½ln B -> shared LadrunoRCKernel -> Cauchy + spatial tangent); isotropic-objective, directional crack state xfail under large rotation (dSNPO §14.11); ADR 19 Phase 4b
+#define LADRUNO_TAG_ComplexEigen 33019 // N. Mora-Bowen (Ladruno) — complex/state-space modal analysis driver (project M,C,K onto the real undamped basis, solve the 2p×2p QZ pencil via dggev); analysis-side object, not a MovableObject — tag reserved per-registry so siblings never collide; ADR 46
 
 
 #define FIBER_TAG_Uniaxial2d	1
