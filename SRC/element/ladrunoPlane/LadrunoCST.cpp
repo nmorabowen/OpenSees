@@ -569,7 +569,24 @@ Response *LadrunoCST::setResponse(const char **argv, int argc, OPS_Stream &outpu
   } else if (strcmp(argv[0], "stresses") == 0 || strcmp(argv[0], "stress") == 0) {
     theResponse = new ElementResponse(this, 3, Vector(3));
   } else if (strcmp(argv[0], "stressesPlaneStrain") == 0 || strcmp(argv[0], "stressPlaneStrain") == 0) {
-    // plane-strain stress incl. out-of-plane sigma_zz (NaN when the material doesn't expose it)
+    // plane-strain stress incl. out-of-plane sigma_zz (NaN when the material doesn't
+    // expose it); full GaussPoint/NdMaterialOutput tags so XML-driven recorders
+    // (Ladruno/MPCO) get real component names instead of the C1..C4 fallback
+    output.tag("GaussPoint");
+    output.attr("number", 1);
+
+    output.tag("NdMaterialOutput");
+    output.attr("classType", theMaterial[0]->getClassTag());
+    output.attr("tag", theMaterial[0]->getTag());
+
+    output.tag("ResponseType", "sigma11");
+    output.tag("ResponseType", "sigma22");
+    output.tag("ResponseType", "sigma12");
+    output.tag("ResponseType", "sigma33");
+
+    output.endTag(); // NdMaterialOutput
+    output.endTag(); // GaussPoint
+
     theResponse = new ElementResponse(this, 21, Vector(4));
   } else if (strcmp(argv[0], "strains") == 0 || strcmp(argv[0], "strain") == 0) {
     theResponse = new ElementResponse(this, 4, Vector(3));
