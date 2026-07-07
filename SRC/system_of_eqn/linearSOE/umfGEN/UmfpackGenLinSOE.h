@@ -81,6 +81,12 @@ private:
     Vector X,B;
     std::vector<int> Ap, Ai;
     std::vector<double> Ax;
+    // Ladruno (ADR-40 rank 8/10): standard direct-solver factorization-reuse
+    // contract. factored==true  <=>  the solver's persisted UMFPACK Numeric is
+    // the LU of the CURRENT Ax. Reset false by zeroA() (which always precedes a
+    // tangent reassembly) and setSize(); set true by the solver after a
+    // successful factorization. See BandGenLinSOE::factored for the idiom.
+    bool factored;
 };
 
 
