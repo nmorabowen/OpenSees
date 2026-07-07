@@ -1108,6 +1108,19 @@ Domain::clearAll(void) {
 
   this->setModalDampingFactors(0);
 
+  // Ladruno ADR46: a wiped model has no damping and no spectrum. The Rayleigh
+  // copy is new at ADR46 (upstream had nothing to reset — factors lived only
+  // on the destroyed elements); theEigenvalues surviving wipe() was a latent
+  // upstream leak that ADR46's domain-coupled complexEigen turned observable
+  // (stale spectrum from the PREVIOUS model answers for the new one, and
+  // getEigenvalues() exit(-1)s when genuinely unset — see getNumEigenvalues).
+  dmpAlphaM = 0.0;  dmpBetaK = 0.0;  dmpBetaK0 = 0.0;  dmpBetaKc = 0.0;
+  if (theEigenvalues != 0) {
+    delete theEigenvalues;
+    theEigenvalues = 0;
+  }
+  theEigenvalueSetTime = 0.0;
+
   // set the bounds around the origin
   initBounds = true;
   theBounds(0) = 0;
@@ -2143,10 +2156,14 @@ Domain::initialize(void)
 int
 Domain::setRayleighDampingFactors(double alphaM, double betaK, double betaK0, double betaKc)
 {
+  // Ladruno ADR46: keep a domain-level copy (the element/node cascade below
+  // discards the factors; complex-modal projection reads them back)
+  dmpAlphaM = alphaM;  dmpBetaK = betaK;  dmpBetaK0 = betaK0;  dmpBetaKc = betaKc;
+
   int result = 0;
   Element *elePtr;
-  ElementIter &theElemIter = this->getElements();    
-  while ((elePtr = theElemIter()) != 0) 
+  ElementIter &theElemIter = this->getElements();
+  while ((elePtr = theElemIter()) != 0)
     result += elePtr->setRayleighDampingFactors(alphaM, betaK, betaK0, betaKc);
 
   Node *nodePtr;
@@ -2156,6 +2173,23 @@ Domain::setRayleighDampingFactors(double alphaM, double betaK, double betaK0, do
   }
 
   return result;
+}
+
+// Ladruno ADR46
+void
+Domain::getRayleighDampingFactors(double &alphaM, double &betaK,
+				  double &betaK0, double &betaKc) const
+{
+  alphaM = dmpAlphaM;  betaK = dmpBetaK;  betaK0 = dmpBetaK0;  betaKc = dmpBetaKc;
+}
+
+// Ladruno ADR46: non-exiting presence probe — getEigenvalues() exit(-1)s when
+// the spectrum was never set, so callers that want to fail gracefully (the
+// complexEigen command) must be able to ask first.
+int
+Domain::getNumEigenvalues(void) const
+{
+  return (theEigenvalues == 0) ? 0 : theEigenvalues->Size();
 }
 
 

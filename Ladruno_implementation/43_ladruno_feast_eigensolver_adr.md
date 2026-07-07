@@ -31,7 +31,7 @@ updated: 2026-06-22
 
 > **Strategic role (load-bearing assessment — see [[modal_gap_study/00_SYNTHESIS]] §6).**
 > **The substrate — highest load-bearing of the family.** This is infrastructure, not a feature:
-> (1) it is the eigensolver every other modal capability (46/41/43) rides; (2) the SP/MP
+> (1) it is the eigensolver every other modal capability (46/42/44) rides; (2) the SP/MP
 > parallel-composition fix is *general* parallel infrastructure that helps any large partitioned
 > analysis, not just modal. Combined with the fact that modal eigen sits upstream of every damped
 > time-history run (Rayleigh-damping calibration), this ADR is what makes the whole family — and
@@ -201,7 +201,7 @@ so a sibling ADR cannot collide.
 
 **NOT in scope (handed to siblings / later):**
 - **Full complex-contour damped eigen** — re-host of [[46_ladruno_complex_modal_adr|ADR
-  40]]'s state-space complex modal at scale. FEAST's complex contours
+  46]]'s state-space complex modal at scale. FEAST's complex contours
   (`zfeast_*`) are the *mechanism*; the quadratic-pencil linearization is ADR 46's.
   P5 coordinates with ADR 46; not built here.
 - **AMLS / component-mode synthesis** (the EIGMTH=101-class "thousands of NVH modes"
@@ -538,7 +538,7 @@ precedents.
   `FEM_ObjectBroker.cpp` — the `getNewEigenSOE` switch), the two `eigen` parsers
   (`analysis.cpp`, `OpenSeesCommands.cpp`), `BasicAnalysisBuilder.cpp`
   (`newEigenAnalysis`), and at P4 the `_PARALLEL_*` guard in `OpenSeesCommands.cpp` +
-  parallel mains. Mark each edit in-source with a `// Ladruno ADR42 …` comment so the
+  parallel mains. Mark each edit in-source with a `// Ladruno ADR43 …` comment so the
   table is reconstructable via `grep -rn "Ladruno" SRC/`.
 - **`LEDGER_quirks.md`** — record: ArpackSOE `sendSelf` ships only a handshake ID not
   the matrices (the distributed-assembly contract FEAST must follow); MUMPS symbolic-

@@ -1,0 +1,304 @@
+"""LadrunoComplexEigen (ADR 46, tag 33019) — P0 kernel + P1 domain gates.
+
+P0: the reduced-pencil QZ kernel behind the debug entry
+`complexEigen -qz p Mt Ct Kt [-tol eps]`: solve the small quadratic
+eigenproblem (lambda^2 Mt + lambda Ct + Kt) z = 0 via the state-space
+symmetric-block pencil + LAPACK dggev, and recover (omega0, omegaD, zeta,
+lambda, kind) per physical mode.
+
+P1: the domain-coupled Route-A closed form `complexEigen [numModes] [-tol]`:
+after a real `eigen N` and a `rayleigh aM bK 0 0`, project the Rayleigh
+FACTORS (never assemble C): Ct~ = diag(aM + bK*w_a^2) — exact in any eigen
+normalization because K phi = w^2 M phi. betaKinit/betaKcomm and
+element/material dampers are refused (they need the P2 assembled-C path).
+
+Gates (ADR 46 §7): P0 — eigenvalues match an INDEPENDENT companion-form
+numpy.linalg.eig oracle to 1e-10 on hand-built and seeded-random pencils,
+plus the analytic SDOF branches. P1 — the classical oracle
+zeta_a = aM/(2 w_a) + bK w_a/2 and w_d = w sqrt(1-zeta^2) to 1e-8 on a
+multi-DOF frame, against the frequencies the domain's own `eigen` returned.
+
+  test_sdof_underdamped        analytic lambda = -zeta*w +- i*w*sqrt(1-zeta^2)
+  test_sdof_overdamped         two real roots, kind=overdamped, zeta -> 1
+  test_rigid_plus_decay        k=0: lambda=0 (rigid) + lambda=-c/m (overdamped)
+  test_classical_rayleigh      Ct = aM*I + bK*diag(w^2): zeta_k analytic
+  test_2dof_nonclassical       damper on ONE dof: both pairs vs oracle
+  test_random_pencils_vs_numpy seeded p=3/8 pencils vs companion-form eig
+  test_bad_input_rejected      wrong entry count / unknown option -> error
+  test_p1_classical_frame      cantilever frame: zeta/omegaD oracle @1e-8
+  test_p1_undamped_domain      no rayleigh: zeta == 0, omega0 == sqrt(eigen)
+  test_p1_mode_subset          bare-int and -numModes spellings
+  test_p1_guards               no prior eigen / betaKinit / betaKcomm refused
+"""
+import math
+
+import numpy as np
+import pytest
+
+from _testbed import ops
+from _testbed.complex_eigen_ref import (
+    expand_cpp_modes,
+    modes_table,
+    sorted_roots,
+)
+
+pytestmark = [pytest.mark.zone_a]
+
+
+def qz(M, C, K, tol=None):
+    """Call the C++ kernel; returns the flat -qz output list."""
+    M = np.atleast_2d(np.asarray(M, dtype=float))
+    C = np.atleast_2d(np.asarray(C, dtype=float))
+    K = np.atleast_2d(np.asarray(K, dtype=float))
+    p = M.shape[0]
+    ops.wipe()
+    args = ["-qz", p]
+    args += [float(x) for x in M.flatten()]
+    args += [float(x) for x in C.flatten()]
+    args += [float(x) for x in K.flatten()]
+    if tol is not None:
+        args += ["-tol", float(tol)]
+    out = ops.complexEigen(*args)
+    if isinstance(out, float):
+        out = (out,)
+    return out
+
+
+def assert_roots_match(flat, M, C, K, rtol=1e-10):
+    got = expand_cpp_modes(flat)
+    ref = sorted_roots(M, C, K)
+    assert len(got) == len(ref)
+    scale = max(np.max(np.abs(ref)), 1.0)
+    np.testing.assert_allclose(got, ref, rtol=0.0, atol=rtol * scale)
+
+
+def assert_residuals_small(flat, M, C, K, rtol=1e-9):
+    """Every reported mode must satisfy its OWN quadratic residual — this
+    ties the reported lambda to the reported eigenvector (catches
+    conjugate-pairing mistakes the eigenvalue-only comparison cannot see)."""
+    K = np.atleast_2d(np.asarray(K, dtype=float))
+    scale = max(np.linalg.norm(K, ord=np.inf), 1.0)
+    for m in modes_table(flat):
+        assert m["resid"] <= rtol * scale, \
+            f"mode lambda={m['lambda']}: resid {m['resid']} > {rtol * scale}"
+
+
+# ------------------------------------------------------------------ analytic
+def test_sdof_underdamped():
+    w = 2.0 * math.pi * 1.7
+    zeta = 0.05
+    flat = qz([[1.0]], [[2.0 * zeta * w]], [[w * w]])
+    modes = modes_table(flat)
+    assert len(modes) == 1
+    m = modes[0]
+    assert m["kind"] == "underdamped"
+    assert m["omega0"] == pytest.approx(w, rel=1e-10)
+    assert m["zeta"] == pytest.approx(zeta, rel=1e-10)
+    assert m["omegaD"] == pytest.approx(w * math.sqrt(1 - zeta**2), rel=1e-10)
+    assert m["lambda"].real == pytest.approx(-zeta * w, rel=1e-10)
+
+
+def test_sdof_overdamped():
+    w = 3.0
+    zeta = 1.5
+    flat = qz([[1.0]], [[2.0 * zeta * w]], [[w * w]])
+    modes = modes_table(flat)
+    assert len(modes) == 2
+    lam_exact = sorted([-zeta * w + w * math.sqrt(zeta**2 - 1),
+                        -zeta * w - w * math.sqrt(zeta**2 - 1)])
+    lam_got = sorted(m["lambda"].real for m in modes)
+    for got, exact in zip(lam_got, lam_exact):
+        assert got == pytest.approx(exact, rel=1e-10)
+    for m in modes:
+        assert m["kind"] == "overdamped"
+        assert m["omegaD"] == 0.0
+        assert m["zeta"] == pytest.approx(1.0, rel=1e-12)  # -Re/|lambda|
+
+
+def test_rigid_plus_decay():
+    c = 0.3
+    flat = qz([[1.0]], [[c]], [[0.0]])
+    modes = modes_table(flat)
+    assert len(modes) == 2
+    kinds = sorted(m["kind"] for m in modes)
+    assert kinds == ["overdamped", "rigid"]
+    rigid = next(m for m in modes if m["kind"] == "rigid")
+    decay = next(m for m in modes if m["kind"] == "overdamped")
+    assert rigid["omega0"] == 0.0
+    assert abs(rigid["lambda"]) <= 1e-10 * c
+    assert decay["lambda"].real == pytest.approx(-c, rel=1e-10)
+
+
+# ----------------------------------------------------- classical / oracle
+def test_classical_rayleigh():
+    """Rayleigh-only reduced matrices are the classical case: every mode
+    stays 'real' (a plain damped oscillator per mode) with the textbook
+    zeta_k = aM/(2 w_k) + bK w_k / 2 — the P1 Route-A oracle, checked here
+    directly on the kernel."""
+    w = np.array([2.1, 5.3, 9.8, 17.2])
+    aM, bK = 0.35, 0.004
+    Mt = np.eye(4)
+    Kt = np.diag(w**2)
+    Ct = aM * Mt + bK * Kt
+    flat = qz(Mt, Ct, Kt)
+    modes = modes_table(flat)
+    assert len(modes) == 4
+    for m, wk in zip(modes, w):
+        zk = aM / (2 * wk) + bK * wk / 2
+        assert m["kind"] == "underdamped"
+        assert m["omega0"] == pytest.approx(wk, rel=1e-10)
+        assert m["zeta"] == pytest.approx(zk, rel=1e-10)
+    assert_roots_match(flat, Mt, Ct, Kt)
+    assert_residuals_small(flat, Mt, Ct, Kt)
+
+
+def test_2dof_nonclassical():
+    """Two-mass chain with a dashpot on ONE dof — the canonical
+    non-classical problem (C not simultaneously diagonalizable)."""
+    M = np.eye(2)
+    K = np.array([[5.0, -1.0], [-1.0, 1.0]])
+    C = np.array([[0.0, 0.0], [0.0, 0.4]])
+    flat = qz(M, C, K)
+    modes = modes_table(flat)
+    assert len(modes) == 2
+    assert all(m["kind"] == "underdamped" for m in modes)
+    # non-classical: the two damping ratios are NOT a Rayleigh pair's
+    # signature; just require both positive and distinct
+    z1, z2 = modes[0]["zeta"], modes[1]["zeta"]
+    assert z1 > 0 and z2 > 0 and abs(z1 - z2) > 1e-4
+    assert_roots_match(flat, M, C, K)
+    assert_residuals_small(flat, M, C, K)
+
+
+def test_random_pencils_vs_numpy():
+    rng = np.random.default_rng(4600)
+    for p in (3, 8):
+        for _ in range(3):
+            w = np.sort(rng.uniform(1.0, 30.0, size=p))
+            Mt = np.eye(p)
+            Kt = np.diag(w**2)
+            # symmetric PSD damping with off-diagonal (non-classical) coupling
+            R = rng.uniform(-1.0, 1.0, size=(p, p))
+            Ct = 0.05 * (R @ R.T) + 0.02 * np.diag(w)
+            flat = qz(Mt, Ct, Kt)
+            assert_roots_match(flat, Mt, Ct, Kt)
+            # the residual assertion ties each reported lambda to ITS
+            # eigenvector — the check that catches beta<0 conjugate
+            # mis-pairing (adversarial-review finding M1)
+            assert_residuals_small(flat, Mt, Ct, Kt)
+            # Ct is PSD by construction, so all modes decay
+            for m in modes_table(flat):
+                if m["kind"] == "underdamped":
+                    assert -1e-12 < m["zeta"] < 1.0
+
+
+# ------------------------------------------------------------------- guards
+def test_bad_input_rejected():
+    with pytest.raises(Exception):
+        ops.complexEigen("-qz", 2, 1.0, 2.0, 3.0)  # far too few entries
+    with pytest.raises(Exception):
+        ops.complexEigen("-notAMode", 1, 1.0, 1.0, 1.0)
+
+
+# ---------------------------------------------------------------- P1 domain
+def _cantilever(n_ele=4, n_eigen=4):
+    """2D elastic cantilever with lumped translational masses; returns the
+    undamped circular frequencies from the domain's own `eigen` run."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 3)
+    L, E, A, Iz, m = 3.0, 30.0e9, 0.09, 6.75e-4, 8.0e3
+    for i in range(n_ele + 1):
+        ops.node(i + 1, 0.0, i * L)
+    ops.fix(1, 1, 1, 1)
+    ops.geomTransf("Linear", 1)
+    for i in range(n_ele):
+        ops.element("elasticBeamColumn", i + 1, i + 1, i + 2, A, E, Iz, 1)
+    for i in range(2, n_ele + 2):
+        ops.mass(i, m, m, 0.0)
+    lam = ops.eigen(n_eigen)
+    return np.sqrt(np.asarray(lam))
+
+
+def test_p1_classical_frame():
+    """The P1 ship gate: on a pure global-Rayleigh model the complex solve
+    must reproduce the classical zeta_a = aM/(2 w_a) + bK w_a / 2 and
+    w_d = w_a sqrt(1 - zeta^2) against the domain's own eigen frequencies."""
+    w = _cantilever()
+    aM, bK = 0.25, 0.0008
+    ops.rayleigh(aM, bK, 0.0, 0.0)
+    modes = modes_table(ops.complexEigen())
+    assert len(modes) == len(w)
+    for m, wk in zip(modes, w):
+        zk = aM / (2 * wk) + bK * wk / 2
+        assert m["kind"] == "underdamped"
+        assert m["omega0"] == pytest.approx(wk, rel=1e-8)
+        assert m["zeta"] == pytest.approx(zk, rel=1e-8)
+        assert m["omegaD"] == pytest.approx(wk * math.sqrt(1 - zk**2),
+                                            rel=1e-8)
+        assert m["lambda"].real == pytest.approx(-zk * wk, rel=1e-8)
+        assert m["resid"] <= 1e-9 * max(w) ** 2
+
+
+def test_p1_undamped_domain():
+    """No rayleigh call: factors are zero, so lambda = +- i w exactly.
+
+    Doubles as the clearAll regression (P1 Opus gate CRITICAL-1/2): the
+    preceding test set rayleigh(0.25, ...) — if wipe() did not reset the
+    domain Rayleigh copy, zeta here would be ~0.06, not 0."""
+    w = _cantilever()
+    modes = modes_table(ops.complexEigen())
+    assert len(modes) == len(w)
+    for m, wk in zip(modes, w):
+        assert m["kind"] == "underdamped"
+        assert m["omega0"] == pytest.approx(wk, rel=1e-10)
+        assert abs(m["zeta"]) <= 1e-12
+        assert m["omegaD"] == pytest.approx(wk, rel=1e-10)
+
+
+def test_p1_mode_subset():
+    w = _cantilever(n_eigen=4)
+    ops.rayleigh(0.1, 0.001, 0.0, 0.0)
+    got2 = modes_table(ops.complexEigen(2))
+    assert len(got2) == 2
+    got3 = modes_table(ops.complexEigen("-numModes", 3, "-tol", 1.0e-9))
+    assert len(got3) == 3
+    for m, wk in zip(got3, w[:3]):
+        assert m["omega0"] == pytest.approx(wk, rel=1e-8)
+    # requesting more modes than eigen produced must be refused, not padded
+    with pytest.raises(Exception):
+        ops.complexEigen(5)
+
+
+def test_p1_scoped_rayleigh_warns(capfd):
+    """region -rayleigh writes factors straight onto elements and bypasses
+    the domain copy; the closed form must WARN (D1 policy), not silently
+    report a zeta that ignores the scoped damping."""
+    _cantilever()
+    ops.rayleigh(0.1, 0.001, 0.0, 0.0)
+    modes_table(ops.complexEigen())
+    assert "differ from the last global" not in capfd.readouterr().err
+    ops.region(1, "-ele", 1, 2, "-rayleigh", 0.5, 0.0, 0.0, 0.0)
+    modes = modes_table(ops.complexEigen())
+    assert len(modes) == 4  # still answers (global factors), but flagged:
+    assert "differ from the last global" in capfd.readouterr().err
+
+
+def test_p1_guards():
+    # no prior eigen result in the domain
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 3)
+    with pytest.raises(Exception):
+        ops.complexEigen()
+    # betaKinit / betaKcomm are not covered by the closed form -> refused
+    _cantilever()
+    ops.rayleigh(0.1, 0.0, 0.001, 0.0)
+    with pytest.raises(Exception):
+        ops.complexEigen()
+    _cantilever()
+    ops.rayleigh(0.1, 0.0, 0.0, 0.001)
+    with pytest.raises(Exception):
+        ops.complexEigen()
+    # ...and setting them back to zero un-refuses (domain copy tracks the
+    # LAST rayleigh call, matching what the elements actually carry)
+    ops.rayleigh(0.1, 0.002, 0.0, 0.0)
+    assert len(modes_table(ops.complexEigen())) == 4
