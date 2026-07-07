@@ -270,9 +270,21 @@ stamps + schema round-trip (non-default values).
   battery itself (three new LEDGER_quirks recorded).
 - **P5.3 — validation + integration.** G7–G10: benchmarks, connection recipe, explicit demo,
   user guide (`LadrunoSolidShell_guide.md`), banner line.
+  **[G9 LANDED 2026-07-06, #504]** `-lumped` + explicit/SMS battery (see §7 and LEDGER_quirks).
+  **[G7 LANDED 2026-07-07, test-only]** `tests/test_ladrunoSolidShell_flexure.py` — the D1
+  flexural gate PASSED with the deviation quantified: same RC wall section (t=200,
+  ρ_tot=0.6% at z=±80) as ASDShellQ4+LayeredShell/PlateRebar vs a solid-shell
+  through-thickness stack (3D RCConcrete at the GPs, Steel01 interface trusses); elastic
+  anchor exact both arms (layered midpoint-rule Σh³/12 deficit predicted, ≈2% at 5 layers);
+  classic M–κ (dummy-node `equationConstraint` section driver, N held exactly): dM ≤ 2.2% of
+  Mmax through deep cracking + steel yield at N=0 and at N=−0.1·fc·Ag, ε₀-migration ≤ 5%;
+  restrained (ε₀=0) resultants on a 6-element stack: dM 2.1%, dN 16% of ft·t·b. The IMPL-EX
+  reporting quirk (ASDShellQ4 = post-commit state ⇒ implex invisible to prescribed rigs;
+  trial-state hosts show it) is pinned discriminatingly — parity gates run implicit-both.
+  Remaining: G8 (blocked on the O5 specimen decision), G10, guide, banner.
 - **P5.4 (optional, demand-gated) — kinematic upgrades.** `-geom corot` beyond the guard
-  (shell-aware corotation), `-geom finite` validation with `LadrunoRCFiniteStrain`, per-layer
-  material assignment if G7 demands it.
+  (shell-aware corotation), `-geom finite` validation with `LadrunoRCFiniteStrain`; per-layer
+  material assignment is OFF the list (G7/O2 decided against it — see §9).
 
 Effort: **L overall** (unchanged from the handout) but P5.2 shrinks materially via the
 `formEAStrue` adapt (§3). Multi-PR, one phase ≈ one PR, all `--base ladruno`.
@@ -281,8 +293,14 @@ Effort: **L overall** (unchanged from the handout) but P5.2 shrinks materially v
 
 - **O1 (P5.2):** EAS mode count — does the single `ζ·α₁` mode clear G2/G4 at `ν = 0.2`, or do the
   bilinear in-plane thickness modes earn their 3 extra α? Start at 1, let the gates decide.
-- **O2 (P5.3, G7):** per-GP-layer material assignment vs element stacking for RC through-thickness
-  resolution (D3 deferral).
+- **O2 (P5.3, G7): DECIDED 2026-07-07 — element stacking; per-GP-layer assignment is not
+  needed.** Measured on the G7 restrained-section rig: with ONE core element through
+  [−80, 80] the resultant-N parity error vs the layered reference is ≈62% of ft·t·b deep
+  post-crack (a single EAS ζ-mode + the nodal-uz mean cannot relax the kinked cracked-state
+  σ₃₃ profile), while a 6-element stack (nz=3 lobatto each) converges it to 16% (≈4%
+  relative); M(κ) is forgiving either way (≤3% vs ≤2%). Stacking both resolves the
+  through-thickness state AND is where interface rebar naturally attaches — per-layer
+  assignment would add serialization complexity without addressing the σ₃₃ kinematics.
 - **O3 (backlog):** in-plane EAS/incompatible modes for distortion insensitivity — only if a G3
   distorted-mesh variant shows unacceptable in-plane stiffness.
 - **O4 (cross-cutting, own ADR if pursued):** directional `lch(n)` API for crack-band materials —
