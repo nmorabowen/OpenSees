@@ -41,7 +41,7 @@
 
 MumpsParallelSolver::MumpsParallelSolver(int ICNTL7, int ICNTL14)
   :LinearSOESolver(SOLVER_TAGS_MumpsParallelSolver),
-   theMumpsSOE(0), rank(0), np(0)
+   theMumpsSOE(0), rank(0), np(0), theComm(MPI_COMM_WORLD)  // Ladruno ADR43 P3a
 {
   memset(&id, 0, sizeof(id));
 
@@ -53,7 +53,7 @@ MumpsParallelSolver::MumpsParallelSolver(int ICNTL7, int ICNTL14)
 
 MumpsParallelSolver::MumpsParallelSolver(int mpi_comm, int ICNTL7, int ICNTL14)
   :LinearSOESolver(SOLVER_TAGS_MumpsParallelSolver),
-   theMumpsSOE(0), rank(0), np(0)
+   theMumpsSOE(0), rank(0), np(0), theComm(MPI_COMM_WORLD)  // Ladruno ADR43 P3a
 {
   memset(&id, 0, sizeof(id));
 
@@ -61,6 +61,35 @@ MumpsParallelSolver::MumpsParallelSolver(int mpi_comm, int ICNTL7, int ICNTL14)
   icntl7 = ICNTL7;
   init = false;
   needsSetSize = false;
+}
+
+// Ladruno ADR43 P3a: point MUMPS at an arbitrary communicator. Any existing
+// MUMPS instance is torn down so the next solve re-initializes on the new comm.
+int
+MumpsParallelSolver::setCommunicator(MPI_Comm comm)
+{
+  if (comm == MPI_COMM_NULL) {
+    opserr << "WARNING MumpsParallelSolver::setCommunicator - MPI_COMM_NULL "
+	   << "(this rank is not a member of the sub-communicator); ignored\n";
+    return -1;
+  }
+
+  if (init == true) {
+    id.job = -2;
+    dmumps_c(&id); /* Terminate instance on the old comm */
+    init = false;
+  }
+
+  theComm = comm;
+  needsSetSize = true;
+
+  // A factorization from the old comm is meaningless on the new one; without
+  // this, a reconfigure-after-solve with no intervening zeroA() would issue a
+  // solve-only JOB=3 on a re-analyzed-but-unfactored instance.
+  if (theMumpsSOE != 0)
+    theMumpsSOE->factored = false;
+
+  return 0;
 }
 
 
@@ -90,19 +119,25 @@ MumpsParallelSolver::initializeMumps()
     id.par = 1; // host involved in calcs
     id.sym = theMumpsSOE->matType;
     
-#ifdef _OPENMPI    
+    // Ladruno ADR43 P3a: honor a sub-communicator set via setCommunicator().
+    // The historical _OPENMPI "0" magic value means "MUMPS's own COMM_WORLD",
+    // so it is only valid when we are actually running on the world comm.
+#ifdef _OPENMPI
     //    id.comm_fortran=-987654;
-    id.comm_fortran = 0;
+    if (theComm == MPI_COMM_WORLD)
+      id.comm_fortran = 0;
+    else
+      id.comm_fortran = MPI_Comm_c2f(theComm);
 #else
-    id.comm_fortran = MPI_Comm_c2f(MPI_COMM_WORLD);
+    id.comm_fortran = MPI_Comm_c2f(theComm);
 #endif
-    
+
     id.ICNTL(5) = 0; id.ICNTL(18) = 3;
 
     dmumps_c(&id);
-    
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &np);
+
+    MPI_Comm_rank(theComm, &rank);   // Ladruno ADR43 P3a
+    MPI_Comm_size(theComm, &np);     // Ladruno ADR43 P3a
     
     init = true;
     
