@@ -49,3 +49,27 @@ def _zone_b_headless(request):
             os.environ["APEGMSH_SKIP_VIEWER"] = prev
     else:
         yield
+
+
+# ---- Windows native-PATH self-heal --------------------------------------
+# gmsh.initialize() REPLACES the process's native Win32 PATH with a short
+# stub (system dirs + sys.prefix) and never restores it. Python's os.environ
+# is a startup snapshot, so python code never notices — but every child
+# process inherits the nuked native block: bare-name CreateProcess lookups
+# fail (WinError 2: "g++" not found) and freshly-built MinGW exes die at
+# load with 0xC0000135 (libstdc++ not on the inherited PATH). Bit us via a
+# module-level gmsh mesh in a zone_b file (import-time = pytest collection),
+# breaking the g++ checker tests battery-wide; zone_b tests legitimately
+# running gmsh mid-battery would do the same. Re-sync the native PATH from
+# os.environ before every test. Cost: one GetEnvironmentVariableW per test.
+if os.name == "nt":
+    import ctypes as _ct
+
+    @pytest.fixture(autouse=True)
+    def _native_path_resync():
+        want = os.environ.get("PATH", "")
+        buf = _ct.create_unicode_buffer(65536)
+        n = _ct.windll.kernel32.GetEnvironmentVariableW("PATH", buf, 65536)
+        if (buf.value if n else "") != want:
+            _ct.windll.kernel32.SetEnvironmentVariableW("PATH", want)
+        yield

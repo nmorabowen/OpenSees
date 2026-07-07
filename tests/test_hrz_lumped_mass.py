@@ -155,7 +155,7 @@ def test_explicitbathe_accepts_hrz():
 #        guards) flagged as untracked/un-CI'd by the milestone review. Skips
 #        gracefully where g++ is unavailable.
 # --------------------------------------------------------------------------
-def test_hrz_standalone_kernel():
+def test_hrz_standalone_kernel(tmp_path):
     gpp = shutil.which("g++")
     if gpp is None:
         pytest.skip("g++ not available")
@@ -164,12 +164,18 @@ def test_hrz_standalone_kernel():
     if not os.path.isfile(src):
         pytest.skip("standalone source not present")
     inc = os.path.join(here, "..", "SRC", "analysis", "integrator")
-    exe = os.path.join(here, "_hrz_verify",
-                       "hrz_standalone_ci" + (".exe" if os.name == "nt" else ""))
+    # tmp_path (was a fixed path in the repo tree: dirtied the checkout and
+    # shared an artifact across runs); env=os.environ.copy() so the children
+    # inherit the intact PATH snapshot even if a native lib (gmsh) nuked the
+    # process's live Win32 env earlier in the battery — the MinGW exe needs
+    # PATH to resolve libstdc++/libgcc at load (0xC0000135 otherwise).
+    exe = str(tmp_path / ("hrz_standalone_ci" + (".exe" if os.name == "nt" else "")))
     comp = subprocess.run(
         [gpp, "-std=c++14", "-I", inc, "-DLADRUNO_MASSLUMPING_STANDALONE", src, "-o", exe],
-        capture_output=True, text=True,
+        capture_output=True, text=True, env=os.environ.copy(),
     )
     assert comp.returncode == 0, "standalone compile failed:\n" + comp.stderr
-    run = subprocess.run([exe], capture_output=True, text=True)
-    assert run.returncode == 0, "standalone HRZ self-test failed:\n" + run.stdout
+    run = subprocess.run([exe], capture_output=True, text=True, env=os.environ.copy())
+    assert run.returncode == 0, (
+        "standalone HRZ self-test failed (returncode %s):\n%s\n%s"
+        % (hex(run.returncode & 0xFFFFFFFF), run.stdout, run.stderr))

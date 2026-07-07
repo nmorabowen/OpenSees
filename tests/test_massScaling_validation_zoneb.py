@@ -76,11 +76,27 @@ def _mesh():
         gmsh.finalize()
 
 
-# build once, reuse the connectivity (meshing is the slow part)
-_NODES, _HEXES = _mesh()
+# Build once per SESSION, lazily, and reuse the connectivity (meshing is the
+# slow part). LAZY on purpose — this used to run at MODULE level, i.e. during
+# pytest COLLECTION of the full battery: gmsh.initialize() REPLACES the
+# process's native Win32 PATH (os.environ keeps the original snapshot, so
+# python code never notices), after which every later test that spawns a
+# child process breaks — bare-name CreateProcess lookups (WinError 2) and
+# MinGW-exe DLL resolution (0xC0000135) both search the NATIVE path. The
+# conftest _native_path_resync guard heals the env between tests, but gmsh
+# must still never run at import time. See LEDGER_quirks.
+_MESH_CACHE = None
+
+
+def _mesh_once():
+    global _MESH_CACHE
+    if _MESH_CACHE is None:
+        _MESH_CACHE = _mesh()
+    return _MESH_CACHE
 
 
 def _build(seed=False):
+    _NODES, _HEXES = _mesh_once()
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 3)
     used = set(n for hx in _HEXES for n in hx)
@@ -189,6 +205,7 @@ def _added_mass_pct(capsys=None):
 # T-ZONEB: SMS on a real gmsh-meshed refined 3D bar — necessity + fidelity + report
 # ==========================================================================
 def test_zoneb_refined_bar_sms_fidelity():
+    _NODES, _HEXES = _mesh_once()
     assert len(_HEXES) > 40, "mesh too small (%d hexes)" % len(_HEXES)
     dtcr = _dt_cr()
     # the fine band genuinely governs the global step, well below the bulk target
