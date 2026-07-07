@@ -59,8 +59,11 @@ class DruckerPragerPlaneStrain : public DruckerPrager {
   //send back the strain
   const Vector& getStrain();
 
-  //send back the stress 
+  //send back the stress
   const Vector& getStress();
+
+  // Ladruno: out-of-plane sigma_zz from the internal 6-component stress
+  double getStressZZ();
 
   //send back the tangent 
   const Matrix& getTangent();

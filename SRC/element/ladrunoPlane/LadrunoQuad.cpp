@@ -873,6 +873,9 @@ Response *LadrunoQuad::setResponse(const char **argv, int argc, OPS_Stream &outp
       theResponse = theMaterial[idx]->setResponse(&argv[2], argc - 2, output);
   } else if (strcmp(argv[0], "stresses") == 0 || strcmp(argv[0], "stress") == 0) {
     theResponse = new ElementResponse(this, 3, Vector(12));
+  } else if (strcmp(argv[0], "stressesPlaneStrain") == 0 || strcmp(argv[0], "stressPlaneStrain") == 0) {
+    // plane-strain stress incl. out-of-plane sigma_zz (NaN when the material doesn't expose it)
+    theResponse = new ElementResponse(this, 21, Vector(16));
   } else if (strcmp(argv[0], "strains") == 0 || strcmp(argv[0], "strain") == 0) {
     theResponse = new ElementResponse(this, 4, Vector(12));
   } else if (strcmp(argv[0], "charLength") == 0 || strcmp(argv[0], "characteristicLength") == 0) {
@@ -900,6 +903,21 @@ int LadrunoQuad::getResponse(int responseID, Information &eleInfo)
       cnt += 3;
     }
     return eleInfo.setVector(v);
+  }
+
+  if (responseID == 21) {
+    // 4-component plane-strain stress [sxx, syy, sxy, szz] per Gauss point
+    static Vector v4(16);
+    const bool sp = this->isSinglePoint();
+    int cnt = 0;
+    for (int i = 0; i < 4; i++) {
+      int idx = sp ? 0 : i;   // SSP: mirror the single centroid material
+      const Vector &s = theMaterial[idx]->getStress();
+      v4(cnt) = s(0); v4(cnt + 1) = s(1); v4(cnt + 2) = s(2);
+      v4(cnt + 3) = theMaterial[idx]->getStressZZ();
+      cnt += 4;
+    }
+    return eleInfo.setVector(v4);
   }
 
   if (responseID == 5)

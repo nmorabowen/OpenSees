@@ -113,8 +113,15 @@ DruckerPragerPlaneStrain::getStress()
 	stress(0) = mSigma(0);
 	stress(1) = mSigma(1);
 	stress(2) = mSigma(3);
-	
+
  	return stress;
+}
+
+// Ladruno: sigma_zz lives in the full 6-component internal stress
+double
+DruckerPragerPlaneStrain::getStressZZ()
+{
+	return mSigma(2);
 }
 
 //send back the tangent 

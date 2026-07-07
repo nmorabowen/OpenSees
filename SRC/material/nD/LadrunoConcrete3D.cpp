@@ -482,6 +482,14 @@ const Vector& LadrunoConcrete3D::getStress(void)
   return stressOut;
 }
 
+double LadrunoConcrete3D::getStressZZ(void)
+{
+  // plane strain drops sigma_zz from getStress(); it lives in stress6[2]
+  if (dim == DIM_PSTRAIN)
+    return stress6[2];
+  return NDMaterial::getStressZZ();   // NaN = not applicable
+}
+
 const Vector& LadrunoConcrete3D::getStrain(void)
 {
   for (int a = 0; a < ncomp; a++) {

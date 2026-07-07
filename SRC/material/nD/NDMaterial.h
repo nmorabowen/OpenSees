@@ -72,6 +72,11 @@ class NDMaterial : public Material
     virtual const Vector &getStress(void);
     virtual const Vector &getStrain(void);
 
+    // Ladruno: out-of-plane normal stress sigma_zz for plane-strain materials.
+    // Default returns quiet NaN = "not available"; plane-strain materials that
+    // carry the full tensor internally override to expose the true value.
+    virtual double getStressZZ(void);
+
     virtual int commitState(void) = 0;
     virtual int revertToLastCommit(void) = 0;
     virtual int revertToStart(void) = 0;
