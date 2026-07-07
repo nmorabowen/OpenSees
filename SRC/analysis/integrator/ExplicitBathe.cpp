@@ -615,6 +615,8 @@ ExplicitBathe::~ExplicitBathe() {
     // Ladruno (W1-E2, -sms lumped): undo the additive nodal injection on teardown.
     if (scaled && appliedDomain != 0 && !injected.empty())
         Ladruno::applyMassScaling(appliedDomain, injected, -1.0);
+    // Ladruno ADR-69 P3: retire the published ΔM (owner-guarded).
+    Ladruno::MassScalingEnergyRegistry::instance().clearNodal(this);
     // Ladruno (W1-E2, -consistent): release the energy-recorder blocks (owner-guarded).
     if (useConsistent)
         Ladruno::MassScalingEnergyRegistry::instance().clear(this);
@@ -652,6 +654,8 @@ void ExplicitBathe::removeScaling(void)
     injected.clear();
     scaled = false;
     appliedDomain = 0;
+    // Ladruno ADR-69 P3: the registry must never outlive the Domain injection.
+    Ladruno::MassScalingEnergyRegistry::instance().clearNodal(this);
 }
 
 int ExplicitBathe::applyMassScalingSMS(void)
@@ -680,6 +684,10 @@ int ExplicitBathe::applyMassScalingSMS(void)
         Ladruno::applyMassScaling(theDomain, injected, +1.0);
         scaled = true;
         appliedDomain = theDomain;
+
+        // Ladruno ADR-69 P3: publish the committed ΔM for the -v2 recorder's KE_ms
+        // advisory column (measure-only; the injection is already in Node mass).
+        Ladruno::MassScalingEnergyRegistry::instance().publishNodal(this, injected);
 
         // POST-SCALING effective stable step for the newStep() dt_cr report:
         // dtTarget capped by any still-governing excluded/self-reported element.
@@ -1564,6 +1572,7 @@ int ExplicitBathe::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &the
     injected.clear();
     scaled = false;
     appliedDomain = 0;
+    Ladruno::MassScalingEnergyRegistry::instance().clearNodal(this);   // Ladruno ADR-69 P3
     if (blocks != 0) blocks->clear();
     if (useConsistent)
         Ladruno::MassScalingEnergyRegistry::instance().clear(this);

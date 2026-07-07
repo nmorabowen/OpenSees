@@ -94,12 +94,22 @@
 // explicit - do not publish and their modal dissipation stays in RES), and
 // E_hg (P2) is the recorder-PULLED hourglass-stabilization energy (summed
 // element "hourglassEnergy" responses; present iff the model contains an
-// element exposing that response at first record). Channel columns appear
-// only when a producer declared them (LadrunoEnergyChannels.h) or, for
-// E_hg, when the response probe hit. Region blocks keep the legacy 6
-// columns in both modes. Without -v2 the output is byte-identical to v1.
-// E_inject covers LysmerTriangle and ASDAbsorbingBoundary2D/3D (bottom +
-// lateral) in full.
+// element exposing that response at first record), and KE_ms (P3) is the
+// PURELY ADVISORY mass-scaling fidelity split: the instantaneous kinetic
+// energy riding on FICTITIOUS (SMS-added) mass — 1/2 v^T dM v over the
+// lumped nodal injection (CentralDifferenceSMS / ExplicitBathe -sms) plus
+// sum_e 1/2 v^T M_bar_e v over the consistent (Olovsson) blocks — read from
+// Ladruno::MassScalingEnergyRegistry. KE_ms is INSIDE KE_ele/KE_nod (the
+// scaled inertia really carries that energy, so the balance is untouched:
+// no rebucket, no RES/ERR participation); the fidelity metric is the
+// fraction KE_ms/(KE_ele+KE_nod), LS-DYNA GLSTAT-style — a large fraction
+// means the kinetics are dominated by fictitious inertia (distrust periods
+// and wave speeds). Present iff an SMS integrator holds published scaling
+// mass at first record. Channel columns appear only when a producer
+// declared them (LadrunoEnergyChannels.h) or, for E_hg/KE_ms, when the
+// probe/registry hit. Region blocks keep the legacy 6 columns in both
+// modes. Without -v2 the output is byte-identical to v1. E_inject covers
+// LysmerTriangle and ASDAbsorbingBoundary2D/3D (bottom + lateral) in full.
 //
 // Ladruno ADR-69 P2 (-ownedNodes <regionTag>, opt-in): count NODAL terms
 // (nodal-mass KE, nodal alphaM Rayleigh DW, nodal-load ULW) only for nodes
@@ -203,6 +213,7 @@ private:
     bool chLnvd;                 // LNVD_WORK declared  -> E_lnvd column
     bool chModal;                // Ladruno ADR-69 P2: MODAL_WORK -> E_modal
     bool chHourglass;            // Ladruno ADR-69 P2: response probe hit -> E_hg
+    bool chMassScale;            // Ladruno ADR-69 P3: SMS registry active -> KE_ms
     int  numModelCols;           // model-block width (6 legacy or v2 width)
     ebkernel::EnergyAccumulatorV2 model_acc2;
 

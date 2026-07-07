@@ -699,6 +699,164 @@ def test_energybalance_element_removal_safety(tmp_path, capfd):
 
 
 # ==========================================================================
+# ADR-69 P3 — KE_ms mass-scaling fidelity advisory column (-v2).
+#
+# KE_ms = instantaneous kinetic energy riding on FICTITIOUS (SMS-added) mass:
+#   lumped SMS      -> 1/2 v^T dM v  over the published per-node injection
+#   consistent SMS  -> sum_e 1/2 v^T M_bar_e v  over the published blocks
+# Purely advisory: it is INSIDE KE_ele/KE_nod (no rebucket) and never enters
+# RES/ERR%. Column present iff the SMS registry holds blocks at first record.
+#
+# Model: the ADR-38 Case-A axial bar (5 bulk L=1, one tiny L=0.05, 5 bulk;
+# Truss -rho so ALL physical mass is ELEMENT mass) with dtTarget above every
+# element's dt_e -> every element is scaled. Two exact oracles:
+#   lumped:     nodes carry NO physical mass, so ALL nodal mass is injected
+#               dM  =>  KE_ms == KE_nod at every sample (cross-checks the
+#               publisher against the actual Domain mutation).
+#   consistent: KE_ms == the closed-form Olovsson M_bar KE
+#               sum_e 1/2 beta_e (m_a/2)(v_a - v_b)^2, beta_e = (dtT/dt_e)^2-1
+#               (same analytic oracle as test_massScaling_consistent_energy).
+# Control: a non-SMS integrator after wipe() -> NO KE_ms column (teardown
+# clears the registry; the column reflects the live model, not history).
+# ==========================================================================
+MS_LENGTHS = [1.0] * 5 + [0.05] + [1.0] * 5
+MS_E, MS_RHO, MS_A = 1.0e4, 1.0, 1.0
+MS_C = math.sqrt(MS_E / MS_RHO)      # axial wave speed -> truss dt_e = L / c
+MS_DTT = 0.012                       # above even the bulk dt_e (~0.01) -> all scaled
+
+
+def _build_ms_bar():
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.node(1, 0.0, 0.0)
+    ops.fix(1, 1, 1)
+    x = 0.0
+    for i, L in enumerate(MS_LENGTHS):
+        x += L
+        ops.node(i + 2, x, 0.0)
+        ops.fix(i + 2, 0, 1)         # axial only
+    ops.uniaxialMaterial("Elastic", 1, MS_E)
+    for i in range(len(MS_LENGTHS)):
+        ops.element("Truss", i + 1, i + 1, i + 2, MS_A, 1, "-rho", MS_RHO)
+    ops.constraints("Transformation")
+    ops.numberer("Plain")
+    ops.system("Diagonal")
+    ops.test("NormDispIncr", 1e-12, 1)
+    ops.algorithm("Linear")
+
+
+def _ms_ke_mbar_analytic(vmap):
+    """Closed-form Olovsson M_bar KE: 1/2 beta_e (m_a/2)(v_a-v_b)^2 per element,
+    beta_e = (dtTarget/dt_e)^2 - 1, dt_e = L/c, m_a = rho*L/2 (Truss -rho is
+    mass/length, A-independent)."""
+    ke = 0.0
+    for i, L in enumerate(MS_LENGTHS):
+        dt_e = L / MS_C
+        if dt_e >= MS_DTT:
+            continue
+        beta = (MS_DTT / dt_e) ** 2 - 1.0
+        m_a = MS_RHO * L / 2.0
+        dv = vmap.get(i + 1, 0.0) - vmap.get(i + 2, 0.0)
+        ke += 0.5 * beta * (m_a / 2.0) * dv * dv
+    return ke
+
+
+def _run_ms_bar(tmp_path, fname, integrator_args, dt, nsteps):
+    """Alternating (deformation-rich) velocity IC + free vibration with a -v2
+    recorder at -precision 12. Returns (rows, per-step nodeVel maps)."""
+    efile = str(tmp_path / fname)
+    _build_ms_bar()
+    nnodes = len(MS_LENGTHS) + 1
+    for nd in range(2, nnodes + 1):
+        ops.setNodeVel(nd, 1, ((-1) ** nd) * 1.0, "-commit")
+    ops.recorder("EnergyBalance", "-file", efile, "-time", "-v2",
+                 "-precision", 12)
+    ops.integrator(*integrator_args)
+    ops.analysis("Transient")
+    vmaps = []
+    for _ in range(nsteps):
+        assert ops.analyze(1, dt) == 0
+        vmaps.append({nd: ops.nodeVel(nd, 1) for nd in range(1, nnodes + 1)})
+    ops.wipe()
+    return np.atleast_2d(np.loadtxt(efile)), vmaps
+
+
+def test_energybalance_v2_mass_scaling_lumped_advisory(tmp_path, capfd):
+    capfd.readouterr()
+    d, _ = _run_ms_bar(tmp_path, "ms_lumped.txt",
+                       ("CentralDifferenceSMS", MS_DTT), 0.002, 8)
+    cols = _v2_cols(capfd)
+    assert "KE_ms" in cols, "lumped SMS active but no KE_ms column"
+
+    ke_ms = d[:, cols.index("KE_ms")]
+    ke_nod = d[:, cols.index("KE_nod")]
+    assert ke_ms.max() > 0.0, "KE_ms never lit up under lumped SMS"
+
+    # EXACT identity: no `mass` commands anywhere, so every gram of nodal mass
+    # is the SMS injection -> the advisory equals the whole nodal KE. This
+    # cross-checks the published dM against what applyMassScaling actually
+    # committed to the Domain (a publisher/mutation mismatch breaks it).
+    scale = ke_nod.max()
+    assert scale > 0.0
+    np.testing.assert_allclose(ke_ms, ke_nod, rtol=1e-9, atol=1e-9 * scale,
+                               err_msg="KE_ms != KE_nod on a model whose only "
+                                       "nodal mass is the SMS injection")
+
+    # advisory contract: KE_ms must not perturb the closure arithmetic. With a
+    # velocity IC and no loads, ULW = DW = 0 so RES = -(KE + IE) = -E0: a
+    # CONSTANT (ERR% pins near -100 by construction — the seeded KE was never
+    # recorded as external work). Flat RES == mechanical energy conserved; an
+    # ms_ke term leaking into the balance would make it oscillate with v(t).
+    res = d[:, cols.index("RES")]
+    drift = (res.max() - res.min()) / abs(res.mean())
+    assert drift < 0.05, (
+        "lumped-SMS RES drifts %.1f%% — KE_ms is perturbing the closure "
+        "arithmetic (it must be advisory-only)" % (100 * drift)
+    )
+
+
+def test_energybalance_v2_mass_scaling_consistent_advisory(tmp_path, capfd):
+    capfd.readouterr()
+    d, vmaps = _run_ms_bar(tmp_path, "ms_cons.txt",
+                           ("CentralDifferenceSMSConsistent", MS_DTT), 0.002, 8)
+    cols = _v2_cols(capfd)
+    assert "KE_ms" in cols, "consistent SMS active but no KE_ms column"
+
+    ke_ms = d[:, cols.index("KE_ms")]
+    n = min(len(ke_ms), len(vmaps))
+    assert n >= 5
+    for k in range(n):
+        ke_pred = _ms_ke_mbar_analytic(vmaps[k])
+        assert ke_pred > 0.0
+        rel = abs(ke_ms[k] - ke_pred) / ke_pred
+        assert rel < 1.0e-2, (
+            "step %d: KE_ms %.6e != analytic M_bar KE %.6e (rel %.2e) — the "
+            "advisory is not the consistent scaling-mass share" % (k, ke_ms[k], ke_pred, rel)
+        )
+
+    # non-vacuity: on this deformation-rich IC the fictitious share is a large
+    # fraction of the total KE, so a KE_ms wired to the wrong quantity fails loudly
+    ke_tot = d[:n, cols.index("KE_ele")] + d[:n, cols.index("KE_nod")]
+    assert (ke_ms[:n] / ke_tot).min() > 0.30
+
+
+def test_energybalance_v2_no_sms_no_kems_column(tmp_path, capfd):
+    # teardown control: the prior tests' wipe() destroyed their SMS integrator
+    # (owner-guarded registry clear); a non-publishing integrator on the same
+    # bar must NOT get a KE_ms column. Plain CDL needs dt below the tiny
+    # element's dt_cr (~5e-4).
+    capfd.readouterr()
+    d, _ = _run_ms_bar(tmp_path, "ms_none.txt",
+                       ("CentralDifferenceLadruno",), 2.0e-4, 8)
+    cols = _v2_cols(capfd)
+    assert "KE_ms" not in cols, (
+        "KE_ms column present without an SMS publisher — stale registry blocks "
+        "survived integrator teardown (clearNodal/clear owner guard broken)"
+    )
+    assert np.all(np.isfinite(d))
+
+
+# ==========================================================================
 # column layout: with -time, exactly 7 columns (time + KE IE DW ULW RES ERR%)
 # ==========================================================================
 def test_energybalance_time_column_layout(tmp_path):

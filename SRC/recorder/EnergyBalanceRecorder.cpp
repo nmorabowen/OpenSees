@@ -282,7 +282,7 @@ EnergyBalanceRecorder::EnergyBalanceRecorder()
       time_last(0.),
       model_acc(),
       v2Layout(false), chInject(false), chLnvd(false),
-      chModal(false), chHourglass(false),
+      chModal(false), chHourglass(false), chMassScale(false),
       numModelCols(EBR_NUM_ENERGY_COMPONENTS), model_acc2(),
       hgCache(), ownedRegionTag(-1), ownedNodes(),
       regionTags(), numRegions(0),
@@ -308,7 +308,7 @@ EnergyBalanceRecorder::EnergyBalanceRecorder(
       time_last(0.),
       model_acc(),
       v2Layout(v2Layout_), chInject(false), chLnvd(false),
-      chModal(false), chHourglass(false),
+      chModal(false), chHourglass(false), chMassScale(false),
       numModelCols(EBR_NUM_ENERGY_COMPONENTS), model_acc2(),
       hgCache(), ownedRegionTag(ownedNodesRegion), ownedNodes(),
       regionTags(regions), numRegions(regions.Size()),
@@ -485,8 +485,11 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
     double g_ke = 0., g_internal_rate = 0., g_damping_rate = 0., g_unbalanced_rate = 0.;
     // Ladruno ADR-69 (-v2): element/nodal split sums, accumulated ALONGSIDE
     // the legacy variables (which keep their exact accumulation order so the
-    // legacy layout stays byte-identical).
+    // legacy layout stays byte-identical). v2_ms_ke (P3) is the fictitious
+    // added-mass KE share, accumulated by the kernel through the optional
+    // out-param (null on the legacy path -> zero extra work there).
     double v2_ke_ele = 0., v2_ke_nod = 0., v2_dw_ele = 0., v2_dw_nod = 0.;
+    double v2_ms_ke = 0.;
     std::vector<double> step_region_ke((size_t)numRegions, 0.0);
     std::vector<double> step_region_internal_rate((size_t)numRegions, 0.0);
     std::vector<double> step_region_damping_rate((size_t)numRegions, 0.0);
@@ -501,7 +504,8 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
             if (ele->getNumDOF() > velScratch.Size())
                 velScratch.resize(ele->getNumDOF());
             double ke = 0., ie = 0., dw = 0.;
-            ebkernel::addElementEnergy(ele, velScratch, ke, ie, dw);
+            ebkernel::addElementEnergy(ele, velScratch, ke, ie, dw,
+                                       v2Layout ? &v2_ms_ke : 0);
             g_ke += ke; g_internal_rate += ie; g_damping_rate += dw;
             if (v2Layout) { v2_ke_ele += ke; v2_dw_ele += dw; }
 
@@ -529,7 +533,8 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
                 ownedNodes.find(node->getTag()) == ownedNodes.end())
                 continue;
             double ke = 0., dw = 0., ulw = 0.;
-            ebkernel::addNodeEnergy(node, ke, dw, ulw);
+            ebkernel::addNodeEnergy(node, ke, dw, ulw,
+                                    v2Layout ? &v2_ms_ke : 0);
             g_ke += ke; g_damping_rate += dw; g_unbalanced_rate += ulw;
             if (v2Layout) { v2_ke_nod += ke; v2_dw_nod += dw; }
 
@@ -582,6 +587,7 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
                         reg.energy(Ladruno::EnergyChannelRegistry::LNVD_WORK),
                         reg.energy(Ladruno::EnergyChannelRegistry::MODAL_WORK),
                         hg_total,
+                        v2_ms_ke,
                         out);
         int col = timeOffset;
         response(col++) = out[ebkernel::V2_KE_ELE];
@@ -598,6 +604,8 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
             response(col++) = out[ebkernel::V2_E_MODAL];
         if (chHourglass)
             response(col++) = out[ebkernel::V2_E_HG];
+        if (chMassScale)
+            response(col++) = out[ebkernel::V2_KE_MS];
         response(col++) = out[ebkernel::V2_RES];
         response(col++) = out[ebkernel::V2_ERR];
     }
@@ -696,8 +704,17 @@ EnergyBalanceRecorder::initialize(void)
         chLnvd   = reg.declared(Ladruno::EnergyChannelRegistry::LNVD_WORK);
         chModal  = reg.declared(Ladruno::EnergyChannelRegistry::MODAL_WORK);
         chHourglass = !hgCache.empty();
+        // Ladruno ADR-69 P3: KE_ms gated on the SMS registry's CURRENT blocks
+        // (pull-style, like E_hg — the registry clears on integrator teardown,
+        // so this reflects the live model, not process history). The SMS
+        // integrator's domainChanged has published by the first record; an
+        // integrator defined after the first record misses its column (same
+        // documented limitation as the registry channels).
+        chMassScale =
+            Ladruno::MassScalingEnergyRegistry::instance().anyActive();
         numModelCols = 6 + (chInject ? 1 : 0) + (chLnvd ? 1 : 0)
-                     + (chModal ? 1 : 0) + (chHourglass ? 1 : 0) + 2;
+                     + (chModal ? 1 : 0) + (chHourglass ? 1 : 0)
+                     + (chMassScale ? 1 : 0) + 2;
 
         // Coverage (ADR-69 P1.5/P1.6): ASDAbsorbingBoundary2D/3D publish
         // both their BOTTOM compliant-base injection (addBaseActions) and
@@ -744,6 +761,7 @@ EnergyBalanceRecorder::initialize(void)
         if (chLnvd)   theOutputHandler->tag("ResponseType", "E_lnvd");
         if (chModal)  theOutputHandler->tag("ResponseType", "E_modal");
         if (chHourglass) theOutputHandler->tag("ResponseType", "E_hg");
+        if (chMassScale) theOutputHandler->tag("ResponseType", "KE_ms");
         theOutputHandler->tag("ResponseType", "RES");
         theOutputHandler->tag("ResponseType", "ERR%");
     } else {
@@ -771,6 +789,7 @@ EnergyBalanceRecorder::initialize(void)
         if (chLnvd)   opserr << " E_lnvd";
         if (chModal)  opserr << " E_modal";
         if (chHourglass) opserr << " E_hg";
+        if (chMassScale) opserr << " KE_ms";
         opserr << " RES ERR%]";
     } else {
         opserr << " [model: KE IE DW ULW RES ERR%]";
