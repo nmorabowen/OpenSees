@@ -125,7 +125,8 @@ class LadrunoSolidShell : public Element {
                     NDMaterial &theMaterial,
                     int nzPts = 2,
                     QuadZ zQuad = QuadZ::GAUSS,
-                    Formulation formulation = Formulation::ANS);
+                    Formulation formulation = Formulation::ANS,
+                    int matype = 0);
 
   virtual ~LadrunoSolidShell();
 
@@ -183,6 +184,9 @@ class LadrunoSolidShell : public Element {
   QuadZ quadz;
   int nz;                           // through-thickness point count
   int numGP;                        // = 4*nz
+  int massType;                     // 0 consistent (default), 1 row-sum lumped
+                                    // (== HRZ on the trilinear shape; the
+                                    // explicit-path mass, ADR 66 G9)  // Ladruno
 
   Vector alpha;                     // NEAS enhanced parameters (trial)
   Vector alphaCommit;               // committed enhanced parameters (serialized)

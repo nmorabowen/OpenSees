@@ -33,6 +33,9 @@
 //           [, '-nz', n]                     # through-thickness points (default 2)
 //           [, '-quadz', 'gauss'|'lobatto']  # default: gauss (nz=2) / lobatto (nz>=3)
 //           [, '-formulation', 'ans'|'std']  # default ans; std = locking A/B control
+//           [, '-lumped']                    # row-sum/HRZ diagonal mass (the
+//                                            # explicit-path mass, ADR 66 G9);
+//                                            # default = consistent
 //           [, '-geom', 'linear'])           # corot/finite reserved (ADR 66 P5.4)
 //
 // Nodes 1-4 = bottom face (counterclockwise), 5-8 = top face: the node
@@ -54,7 +57,7 @@ void *OPS_LadrunoSolidShell()
     opserr << "WARNING insufficient arguments\n";
     opserr << "Want: element LadrunoSolidShell eleTag? n1? ... n8? matTag? "
               "<-nz n> <-quadz gauss|lobatto> <-formulation ans|std> "
-              "<-geom linear>\n";
+              "<-lumped> <-geom linear>\n";
     return 0;
   }
 
@@ -75,6 +78,7 @@ void *OPS_LadrunoSolidShell()
 
   int nz = 2;
   bool quadzGiven = false;
+  int massType = 0;                 // 0 consistent (default), 1 row-sum/HRZ lumped
   LadrunoSolidShell::QuadZ quadz = LadrunoSolidShell::QuadZ::GAUSS;
   LadrunoSolidShell::Formulation formulation =
       LadrunoSolidShell::Formulation::ANS;
@@ -124,6 +128,9 @@ void *OPS_LadrunoSolidShell()
                << "' for LadrunoSolidShell " << idata[0] << " (use ans|std)\n";
         return 0;
       }
+    }
+    else if (strcmp(opt, "-lumped") == 0) {
+      massType = 1;                 // row-sum == HRZ on the trilinear shape (ADR 66 G9)
     }
     else if (strcmp(opt, "-geom") == 0 || strcmp(opt, "-geometry") == 0) {
       if (OPS_GetNumRemainingInputArgs() < 1) {
@@ -193,5 +200,5 @@ void *OPS_LadrunoSolidShell()
   return new LadrunoSolidShell(idata[0],
                                idata[1], idata[2], idata[3], idata[4],
                                idata[5], idata[6], idata[7], idata[8],
-                               *mat, nz, quadz, formulation);
+                               *mat, nz, quadz, formulation, massType);
 }

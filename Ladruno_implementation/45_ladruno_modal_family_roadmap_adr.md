@@ -12,12 +12,12 @@ related:
   - "[[43_ladruno_feast_eigensolver_adr]]"        # member: band-targeted parallel eigensolver (33022/33023) — the substrate
   - "[[44_ladruno_frequency_domain_adr]]"         # member: FRF/SSD/random + modal transient (33024)
   - "[[modal_gap_study/01_opensees_current_state]]" # ground-truth file:line audit
-  - "[[19_ladruno_rc_shell_adr]]"                 # classTag boundary: 33020 reserved for LadrunoSolidShell (we skip it)
+  - "[[66_ladruno_solidshell_adr]]"               # classTag boundary: 33020 taken by LadrunoSolidShell (shipped #482; we skip it)
   - "[[Ladruno_explicit_roadmap]]"                # sibling precedent: a program roadmap spanning several ADRs
   - "[[LEDGER_implementations]]"
   - "[[LEDGER_vanilla_files]]"
 tags: [adr, program-plan, roadmap, modal, eigen, complex-modes, buckling, feast, parallel, frequency-domain, sequencing]
-updated: 2026-06-22
+updated: 2026-07-06
 ---
 
 # ADR 45 — Modal-analysis family: implementation roadmap & sequencing plan
@@ -61,10 +61,20 @@ Precedent: [[Ladruno_explicit_roadmap]] plays the same umbrella role for the exp
 | **46** | `LadrunoComplexEigen` — complex/state-space modal (non-classical damping) | 33019 | **S** | Domain-enabling (SSI/DRM/isolation/dampers) |
 | **42** | `LadrunoBuckle` — prestressed modal + linear buckling | 33021 | **S–M** | Standalone analysis (modest) |
 | **43** | `FeastEigenSOE`/`FeastEigenSolver` — band-targeted **parallel** eigensolver | 33022/33023 | **L** | **Substrate (highest)** + general SP/MP fix |
-| **44** | `LadrunoModalResponse` — FRF/SSD/random + modal transient | 33024 | **M** | Deliverable (none downstream) |
-| *(47)* | *ROM / Craig–Bampton substructuring (candidate, future)* | *TBD* | *L* | *Rides the family; biggest forward unlock* |
+| **44** | `LadrunoModalResponse` — FRF/SSD/random + modal transient | 33024 | **M**¹ | Deliverable (none downstream) |
+| *(ROM)* | *ROM / Craig–Bampton substructuring (candidate, future; ADR number assigned when drafted)²* | *TBD* | *L* | *Rides the family; biggest forward unlock* |
 
-`33020` is **deliberately skipped** — reserved for `LadrunoSolidShell` ([[19_ladruno_rc_shell_adr]]).
+¹ ADR 44's "M" reflects *breadth* (three sub-deliverables: FRF, SSD/random, modal transient), not
+core risk — per-core-risk it is the cheapest member ("almost zero new core", ADR 44 §2).
+² Originally "candidate ADR 47"; **47 has since been taken** by
+[[47_ladruno_contact_deferrals_adr]] (the family's third numbering collision — see §9). We no
+longer pre-assign numbers to unwritten ADRs; the ROM candidate gets the next free number when its
+ADR is actually drafted.
+
+`33020` is **deliberately skipped** — taken by `LadrunoSolidShell`, which has since **shipped**
+([[66_ladruno_solidshell_adr]], [#482](https://github.com/nmorabowen/OpenSees/pull/482);
+`classTags.h:939`). The family's own tags 33019/33021–33024 remain undefined in `SRC/classTags.h`
+(re-verified 2026-07-06).
 ADR **41** is the unrelated mortar/ALM contact ADR already on `ladruno`.
 
 ---
@@ -78,15 +88,15 @@ ADR **41** is the unrelated mortar/ALM contact ADR already on `ladruno`.
    │ (serial eigen already enough)             │ (parallel + complex contours)
    ▼              ▼                             ▼
  ADR 46        ADR 42                        ADR 46 @ scale
- complex       buckling/Kg                   (re-host via complex FEAST)
- (serial OK)   (serial OK)                        │
+ complex       buckling/Kg                   (= P-E, ADR 43 P5 complex contours —
+ (serial OK)   (serial OK)                    NOT delivered by the real-parallel P-C)
    │              │                               │
    └──────┬───────┘                               │
           ▼                                       ▼
         ADR 44  frequency domain (FRF/SSD/random) — consumes 46 + the eigensolver
           │
           ▼
-        ADR 47  ROM / Craig–Bampton (future) — needs trustworthy basis + parallel eigen
+        ROM / Craig–Bampton (future, ADR number TBD) — needs trustworthy basis + parallel eigen
 ```
 
 Key reading: **46, 42, 44 can each ship on the *existing* serial ARPACK `eigen`.** ADR 43 is not a
@@ -113,7 +123,7 @@ Two defensible orders (synthesis §5 vs §6.5):
 | **P-D** | **ADR 42** — prestressed modal + linear buckling | Opportunistic; rides serial eigen, gains band/Sturm from P-B; can jump ahead of P-C if a project needs it | corot/PDelta Kg, `eigen` |
 | **P-E** | **ADR 43 P5** — complex contours (re-host ADR 46 at scale) | Unifies the complex case onto the parallel substrate | P-A, P-C |
 | **P-F** | **ADR 44** — frequency domain (FRF/SSD/random, modal transient) | Deliverable layer; build when a project asks | P-A, eigen |
-| *(P-G)* | *ADR 47 — ROM / Craig–Bampton* | *Future; the biggest forward unlock* | *whole family* |
+| *(P-G)* | *ROM / Craig–Bampton (candidate; ADR number TBD — see §2 note ²)* | *Future; the biggest forward unlock* | *whole family* |
 
 **Rationale.** P-A buys confidence + an immediately useful research deliverable for ~S effort. P-B
 starts the substrate at *zero dependency cost* (the most-load-bearing work that carries no build
@@ -127,11 +137,18 @@ sequenced after the substrate is proven serially. P-D/P-F are demand-driven.
 These appear in multiple ADRs; resolving them at the program level prevents divergent choices.
 
 ### D1 — Assembled-`C` accessor (from ADR 46; reused by 44, 43-complex)
-OpenSees has **no assembled damping-matrix accessor** (audit: no `addC`/`formEleTangC`; only
-`Element::getDamp()`). **Decision:** build a single `LadrunoDampingAssembler` path in P-A (Rayleigh
-projected in closed form as `αM̃+βK̃`; element/material dampers via `getDamp()`), and **reuse it
-verbatim** in ADR 44 and ADR 43's complex contours. v1 contract = *exactly* `getDamp()` + Rayleigh;
-**warn** (don't silently absorb) when `modalDamping`/HHT numerical damping is active. Owner: P-A.
+OpenSees has **no accessor that returns an isolated assembled global `C`**. Precise audit
+(2026-07-06): `FE_Element::addCtoTang()` *does* exist (`FE_Element.cpp:383` — folds
+`Element::getDamp()` into the tangent), but only ever into the **combined** transient effective
+tangent `aM+bC+cK`; there is no path that exports a standalone `C` the way `EigenSOE` gets `K`
+and `M`, and no `formEleTangC` anywhere in `SRC/`. (Don't state this as "no `addC`" — a reviewer
+grepping `addC` will find `addCtoTang` and reject the premise.) **Decision:** build a single
+`LadrunoDampingAssembler` path in P-A and **reuse it verbatim** in ADR 44 and ADR 43's complex
+contours. v1 contract = *exactly* `getDamp()` + Rayleigh; **warn** (don't silently absorb) when
+`modalDamping`/HHT numerical damping is active. Note the closed form `C̃=αM̃+βK̃` applies to the
+**Rayleigh part only**, and only because the projection basis is the real undamped modes
+(`M̃=I`, `K̃=diag(ω²)`); element/material dampers require the full `ΦᵀCΦ` projection (ADR 46
+§4.6 Route B), never a closed form. Owner: P-A.
 
 ### D2 — MKL-FEAST vs vendored PFEAST (from ADR 43 — the big build call)
 Intel MKL's Extended Eigensolver **is** FEAST and the build already links MKL → **serial P-B costs
@@ -142,30 +159,41 @@ identical either way). If MKL's distributed layer resists user sub-communicators
 into `OTHER/FEAST/` (ARPACK precedent in `OTHER/ARPACK/`). Owner: P-C gate.
 
 ### D3 — `eigen` `-shift` exposure (from ADR 42)
-Buckling needs a non-zero shift (`ΔK` indefinite) but `eigen` currently hard-zeros the shift.
+Buckling needs a non-zero shift (`ΔK` indefinite) but `eigen` currently hard-zeros the shift
+(`shift = 0.0` at `OpenSeesCommands.cpp:2187`, no `-shift` token in the option loop). The plumbing
+below is complete and unreachable: `ArpackSOE(shift)` stores and applies a non-zero shift
+correctly (`ArpackSOE.cpp:47,215,264`) — so exposure is parser-only work, no solver change.
 **Decision:** expose `-shift` on the new `buckling` command in P-D; **only** un-hard-zero the shared
 `eigen` path if P-D shows a concrete need (minimize vanilla touch). Owner: P-D.
 
 ### D4 — Vanilla-footprint policy (from ADR 44 + ADR 43)
-ADR 44's CQC/SRSS edits Petracca's upstream `ResponseSpectrumAnalysis`; ADR 43 touches the
-`EigenSOE` base + parallel mains (the SP/MP gate). **Decision:** prefer **fork-authored siblings**
-that *read* committed state where feasible (ADR 44 path); where an upstream edit is unavoidable
-(ADR 43 SP/MP build-flag), mark with `// Ladruno` and record in [[LEDGER_vanilla_files]] **in the
-same PR**. Owner: each phase.
+ADR 44's CQC/SRSS touches Petracca's upstream `ResponseSpectrumAnalysis`; ADR 43 touches the
+`EigenSOE` base + parallel mains (the SP/MP gate). Sharpening (source audit 2026-07-06): the
+upstream `ResponseSpectrumAnalysis` deliberately performs **no combination at all** — it computes
+per-mode modal displacements and explicitly defers SRSS/CQC to the user
+(`SRC/runtime/commands/analysis/modal/ResponseSpectrumAnalysis.cpp:96-100`, mirrored in
+`SRC/analysis/analysis/ResponseSpectrumAnalysis.cpp:362`). ADR 44 would therefore be **adding**
+combination logic, not editing existing math — which makes the fork-authored-sibling route even
+cheaper than the ADR assumed. **Decision:** prefer **fork-authored siblings** that *read* committed
+state where feasible (ADR 44 path); where an upstream edit is unavoidable (ADR 43 SP/MP
+build-flag), mark with `// Ladruno ADR43` and record in [[LEDGER_vanilla_files]] **in the same
+PR**. Owner: each phase.
 
 ---
 
 ## 6. Milestones & exit gates (program view; details in each ADR)
 
-| Gate | Proven by |
+| Gate (phase) | Proven by |
 |---|---|
-| **G-A** complex modal correct (serial) | 2-DOF non-classical closed-form complex modes; base-isolated stick model; vs `scipy.linalg.eig` on projected matrices; vs log-dec from a decay history |
-| **G-B** FEAST serial = ARPACK | Same eigenpairs on a medium model; band-targeting counts *all* modes in `[f₁,f₂]`; Sturm/inertia completeness |
-| **G-C** parallel scaling + SP/MP unified | Strong/weak scaling on a partitioned model; identical spectrum SP vs MP vs serial |
-| **G-D** buckling/prestressed | Euler `P_cr=π²EI/(KL)²` (multiple BCs), plate buckling, string-tension frequency shift |
-| **G-F** frequency domain | SDOF/2-DOF FRF vs analytic; modal transient == direct Newmark (linear); random RMS vs Monte-Carlo |
+| **G-A** (P-A) complex modal correct (serial) | 2-DOF non-classical closed-form complex modes; base-isolated stick model; vs `scipy.linalg.eig` on projected matrices; vs log-dec from a decay history |
+| **G-B** (P-B) FEAST serial = ARPACK | Same eigenpairs on a medium model; band-targeting counts *all* modes in `[f₁,f₂]`; Sturm/inertia completeness |
+| **G-C** (P-C) parallel scaling + SP/MP unified | Strong/weak scaling on a partitioned model; identical spectrum SP vs MP vs serial |
+| **G-D** (P-D) buckling/prestressed | Euler `P_cr=π²EI/(KL)²` (multiple BCs), plate buckling, string-tension frequency shift |
+| **G-E** (P-E) complex modes at scale | Complex-FEAST eigenpairs (λ, ψ up to scaling/phase) match ADR 46's serial projection result on a non-classically-damped model within the projection's own convergence envelope; conjugate-pair completeness (every λ paired with λ̄, no orphans in the contour); serial complex-contour == parallel complex-contour spectrum |
+| **G-F** (P-F) frequency domain | SDOF/2-DOF FRF vs analytic; modal transient == direct Newmark (linear); random RMS vs Monte-Carlo; CQC reproduces a published closely-spaced-modes example (ADR 44 P1c); `-combine`-absent path **byte-identical** to current `responseSpectrumAnalysis` (ADR 44 P1d — protects the D4 vanilla surface) |
 
-Each gate is the ship gate for its phase. No phase merges without its gate green.
+Each gate is the ship gate for its phase (P-G's gate is defined when its ADR is drafted). No phase
+merges without its gate green.
 
 ---
 
@@ -177,7 +205,7 @@ Each gate is the ship gate for its phase. No phase merges without its gate green
 | R2 | **SP/MP build-flag surgery** (`_PARALLEL_PROCESSING` vs `_PARALLEL_INTERPRETERS`) is general-infra risk | Land serially first (P-B); isolate the gate change; test SP==MP==serial spectrum |
 | R3 | **MKL ABI** (MPI integer size, threading model) | Pin in [[Ladruno_internal]] compilation journal at P-C; mirror existing MKL usage |
 | R4 | **Assembled-`C` scope creep** (D1) | v1 = exactly `getDamp()`+Rayleigh; warn on others; widen only with sign-off |
-| R5 | **classTag collision** during the open window | Re-verify 33019/33021/33022/33023/33024 vs fresh `ladruno` HEAD before each merge ([[feedback_stale_pr_ledger_ci]]) |
+| R5 | **classTag OR ADR-number collision** during the open window (it has happened **three times**: 41→42 shift, 40→46 shift, and "candidate 47" taken by [[47_ladruno_contact_deferrals_adr]]) | Re-verify 33019/33021/33022/33023/33024 vs fresh `ladruno` HEAD before each merge ([[feedback_stale_pr_ledger_ci]]); **never pre-assign ADR numbers to unwritten ADRs** — take the next free number at drafting time |
 | R6 | **Adversarial-gate need** | Run the full multi-agent gate for the *novel math* phases (P-A complex projection, P-C parallel); skip for mechanical phases per [[feedback_adversarial_gate_when]] |
 
 ---
@@ -186,7 +214,8 @@ Each gate is the ship gate for its phase. No phase merges without its gate green
 
 - **classTag reservations** (this PR, docs-only): 33019 (46), 33021 (42), 33022/33023 (43),
   33024 (44) — RESERVED in [[LEDGER_implementations]]; **enter `SRC/classTags.h` only when each
-  implementation merges**. 33020 skipped (LadrunoSolidShell).
+  implementation merges**. 33020 skipped — now occupied by the shipped LadrunoSolidShell
+  ([[66_ladruno_solidshell_adr]], `classTags.h:939`).
 - **Per-shipping-phase:** add the `SRC/classTags.h` define; flip the ledger row RESERVED→active;
   stamp the LADRUNO header on new source ([[feedback_always_stamp_header]]); add a
   `Ladruno_scripts/banner_features.txt` line **only when the feature actually ships**; record any
@@ -210,6 +239,25 @@ Each gate is the ship gate for its phase. No phase merges without its gate green
   landed on `ladruno`, colliding on 40 → complex-modal moved 40→46 and the ROM candidate 46→47.**
 - This ADR + the four feature ADRs + the theory study ship together as a **docs-only PR**
   ([#351](https://github.com/nmorabowen/OpenSees/pull/351)); no `SRC/` change, no banner line yet.
+- **2026-07-06 — adversarial review applied** (source-verified against `SRC/` + all four member
+  ADRs; all 8 code-state premises held, 2 needed rewording):
+  - **Added the missing G-E gate** — P-E (complex contours at scale, the riskiest math phase) had
+    no ship criterion; the gate table also skipped from G-D to G-F.
+  - **G-F extended** with ADR 44's P1c (CQC closely-spaced) + P1d (byte-identical `-combine`-absent
+    regression) so the program gate protects the one sensitive vanilla surface.
+  - **D1 reworded**: "no `addC`" was refutable — `FE_Element::addCtoTang()` exists
+    (`FE_Element.cpp:383`) but only folds C into the combined effective tangent; the true gap is
+    the absence of an *isolated* assembled-C export. Also pinned that the closed form is
+    Rayleigh-only (undamped-mode basis); dampers need full `ΦᵀCΦ`.
+  - **D3/D4 strengthened with file:line ground truth**: `eigen` shift hard-zeroed at
+    `OpenSeesCommands.cpp:2187` with complete unreachable plumbing in `ArpackSOE`; upstream
+    `ResponseSpectrumAnalysis` performs **no** SRSS/CQC (defers to user) — ADR 44 *adds*
+    combination, it doesn't edit it.
+  - **Staleness swept**: LadrunoSolidShell shipped and occupies 33020 under its own
+    [[66_ladruno_solidshell_adr]] (was cited via ADR 19); "candidate ADR 47" collided with the
+    contact-deferrals ADR → ROM candidate is now number-TBD-at-drafting (R5 widened to cover
+    ADR-number collisions); fixed ADR 43's renumbering leftovers ("46/41/43" banner, "ADR 40"
+    re-host reference, `// Ladruno ADR42` marker → ADR43).
 
 ---
 
@@ -217,5 +265,5 @@ Each gate is the ship gate for its phase. No phase merges without its gate green
 
 [[modal_gap_study/00_SYNTHESIS]] (theory + load-bearing) · [[46_ladruno_complex_modal_adr]] ·
 [[42_ladruno_buckling_adr]] · [[43_ladruno_feast_eigensolver_adr]] ·
-[[44_ladruno_frequency_domain_adr]] · candidate ADR 47 (ROM/Craig–Bampton) ·
+[[44_ladruno_frequency_domain_adr]] · ROM/Craig–Bampton candidate (ADR number TBD, §2 note ²) ·
 [[Ladruno_explicit_roadmap]] (umbrella-ADR precedent).

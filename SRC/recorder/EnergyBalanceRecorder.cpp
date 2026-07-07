@@ -282,12 +282,13 @@ EnergyBalanceRecorder::EnergyBalanceRecorder()
       time_last(0.),
       model_acc(),
       v2Layout(false), chInject(false), chLnvd(false),
-      chModal(false), chHourglass(false),
+      chModal(false), chHourglass(false), chMassScale(false),
       numModelCols(EBR_NUM_ENERGY_COMPONENTS), model_acc2(),
       hgCache(), ownedRegionTag(-1), ownedNodes(),
       regionTags(), numRegions(0),
       region_acc(),
-      cacheValid(false), maxNumDOF(0), velScratch()
+      cacheValid(false), cachedNumElements(-1), cachedNumNodes(-1),
+      maxNumDOF(0), velScratch()
 {
 
 }
@@ -307,12 +308,13 @@ EnergyBalanceRecorder::EnergyBalanceRecorder(
       time_last(0.),
       model_acc(),
       v2Layout(v2Layout_), chInject(false), chLnvd(false),
-      chModal(false), chHourglass(false),
+      chModal(false), chHourglass(false), chMassScale(false),
       numModelCols(EBR_NUM_ENERGY_COMPONENTS), model_acc2(),
       hgCache(), ownedRegionTag(ownedNodesRegion), ownedNodes(),
       regionTags(regions), numRegions(regions.Size()),
       region_acc((size_t)regions.Size()),
-      cacheValid(false), maxNumDOF(0), velScratch()
+      cacheValid(false), cachedNumElements(-1), cachedNumNodes(-1),
+      maxNumDOF(0), velScratch()
 {
     response.Zero();
 }
@@ -322,7 +324,7 @@ EnergyBalanceRecorder::~EnergyBalanceRecorder()
 {
     // Ladruno ADR-69 P2: the hourglass pull cache owns its Response objects
     for (size_t i = 0; i < hgCache.size(); ++i)
-        delete hgCache[i].second;
+        delete hgCache[i].res;
     hgCache.clear();
 
     if (theOutputHandler != 0) {
@@ -356,15 +358,14 @@ EnergyBalanceRecorder::buildCache(void)
         }
         const ID &elems = region->getElements();
         for (int i = 0; i < elems.Size(); ++i) {
-            Element *ele = theDomain->getElement(elems(i));
-            if (ele != 0)
-                elemRegions[ele].push_back(r);
+            // keyed by TAG (removal-safe, no pointer reuse aliasing)
+            if (theDomain->getElement(elems(i)) != 0)
+                elemRegions[elems(i)].push_back(r);
         }
         const ID &rnodes = region->getNodes();
         for (int i = 0; i < rnodes.Size(); ++i) {
-            Node *node = theDomain->getNode(rnodes(i));
-            if (node != 0)
-                nodeRegions[node].push_back(r);
+            if (theDomain->getNode(rnodes(i)) != 0)
+                nodeRegions[rnodes(i)].push_back(r);
         }
     }
 
@@ -374,7 +375,7 @@ EnergyBalanceRecorder::buildCache(void)
     // hits form the E_hg cache. The probe stream is a DummyStream so the
     // setResponse tag machinery never touches the real output.
     for (size_t i = 0; i < hgCache.size(); ++i)
-        delete hgCache[i].second;
+        delete hgCache[i].res;
     hgCache.clear();
     static DummyStream probeStream;
     static const char *hgArgv[1] = { "hourglassEnergy" };
@@ -387,12 +388,20 @@ EnergyBalanceRecorder::buildCache(void)
             maxNumDOF = n;
         if (v2Layout) {
             Response *hgRes = ele->setResponse(hgArgv, 1, probeStream);
-            if (hgRes != 0)
-                hgCache.push_back(std::make_pair(ele, hgRes));
+            if (hgRes != 0) {
+                HgEntry e = { ele->getTag(), ele, hgRes };
+                hgCache.push_back(e);
+            }
         }
     }
     if (velScratch.Size() < maxNumDOF)
         velScratch.resize(maxNumDOF);
+
+    // Ladruno ADR-69 P2.1: structural staleness sentinels - record() compares
+    // these against the live domain every call and rebuilds on any change
+    // (recorders never receive domainChanged(); see header).
+    cachedNumElements = theDomain->getNumElements();
+    cachedNumNodes = theDomain->getNumNodes();
 
     // Ladruno ADR-69 P2: resolve the -ownedNodes region into a node set.
     // A missing region warns and owns NO nodes (loud, visible misconfig -
@@ -408,9 +417,8 @@ EnergyBalanceRecorder::buildCache(void)
         else {
             const ID &onodes = owned->getNodes();
             for (int i = 0; i < onodes.Size(); ++i) {
-                Node *node = theDomain->getNode(onodes(i));
-                if (node != 0)
-                    ownedNodes.insert(node);
+                if (theDomain->getNode(onodes(i)) != 0)
+                    ownedNodes.insert(onodes(i));   // by TAG (P2.1)
             }
         }
     }
@@ -437,6 +445,27 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
         }
     }
 
+    // Ladruno ADR-69 P2.1: removal/addition safety. Nothing routes
+    // domainChanged() to recorders (Domain::record() calls them directly;
+    // the analysis propagates domain changes only to its own components),
+    // and Domain::hasDomainChanged() is stateful (the Analysis consumes it),
+    // so re-validate structurally on every record: entity-count change or
+    // any hourglass cache entry whose tag no longer resolves to the SAME
+    // Element* (removed, or removed-and-replaced) forces a cache rebuild
+    // BEFORE the hgCache getResponse() virtual calls below could touch a
+    // freed element.
+    if (cacheValid == true) {
+        if (theDomain->getNumElements() != cachedNumElements ||
+            theDomain->getNumNodes() != cachedNumNodes)
+            cacheValid = false;
+        else
+            for (size_t i = 0; i < hgCache.size(); ++i)
+                if (theDomain->getElement(hgCache[i].tag) != hgCache[i].ele) {
+                    cacheValid = false;
+                    break;
+                }
+    }
+
     if (cacheValid == false)
         this->buildCache();
 
@@ -456,8 +485,11 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
     double g_ke = 0., g_internal_rate = 0., g_damping_rate = 0., g_unbalanced_rate = 0.;
     // Ladruno ADR-69 (-v2): element/nodal split sums, accumulated ALONGSIDE
     // the legacy variables (which keep their exact accumulation order so the
-    // legacy layout stays byte-identical).
+    // legacy layout stays byte-identical). v2_ms_ke (P3) is the fictitious
+    // added-mass KE share, accumulated by the kernel through the optional
+    // out-param (null on the legacy path -> zero extra work there).
     double v2_ke_ele = 0., v2_ke_nod = 0., v2_dw_ele = 0., v2_dw_nod = 0.;
+    double v2_ms_ke = 0.;
     std::vector<double> step_region_ke((size_t)numRegions, 0.0);
     std::vector<double> step_region_internal_rate((size_t)numRegions, 0.0);
     std::vector<double> step_region_damping_rate((size_t)numRegions, 0.0);
@@ -467,14 +499,19 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
         Element *ele;
         ElementIter &elements = theDomain->getElements();
         while ((ele = elements()) != 0) {
+            // Ladruno ADR-69 P2.1: an element swapped in at unchanged counts
+            // can exceed the cached max DOF - grow the scratch, never overrun
+            if (ele->getNumDOF() > velScratch.Size())
+                velScratch.resize(ele->getNumDOF());
             double ke = 0., ie = 0., dw = 0.;
-            ebkernel::addElementEnergy(ele, velScratch, ke, ie, dw);
+            ebkernel::addElementEnergy(ele, velScratch, ke, ie, dw,
+                                       v2Layout ? &v2_ms_ke : 0);
             g_ke += ke; g_internal_rate += ie; g_damping_rate += dw;
             if (v2Layout) { v2_ke_ele += ke; v2_dw_ele += dw; }
 
             if (numRegions > 0) {
-                std::unordered_map<Element*, std::vector<int> >::const_iterator it =
-                    elemRegions.find(ele);
+                std::unordered_map<int, std::vector<int> >::const_iterator it =
+                    elemRegions.find(ele->getTag());
                 if (it != elemRegions.end())
                     for (size_t k = 0; k < it->second.size(); ++k) {
                         const int r = it->second[k];
@@ -493,16 +530,17 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
             // Ladruno ADR-69 P2: -ownedNodes gate - nodal terms are only
             // counted for owned nodes (both layouts; see header contract)
             if (ownedRegionTag >= 0 &&
-                ownedNodes.find(node) == ownedNodes.end())
+                ownedNodes.find(node->getTag()) == ownedNodes.end())
                 continue;
             double ke = 0., dw = 0., ulw = 0.;
-            ebkernel::addNodeEnergy(node, ke, dw, ulw);
+            ebkernel::addNodeEnergy(node, ke, dw, ulw,
+                                    v2Layout ? &v2_ms_ke : 0);
             g_ke += ke; g_damping_rate += dw; g_unbalanced_rate += ulw;
             if (v2Layout) { v2_ke_nod += ke; v2_dw_nod += dw; }
 
             if (numRegions > 0) {
-                std::unordered_map<Node*, std::vector<int> >::const_iterator it =
-                    nodeRegions.find(node);
+                std::unordered_map<int, std::vector<int> >::const_iterator it =
+                    nodeRegions.find(node->getTag());
                 if (it != nodeRegions.end())
                     for (size_t k = 0; k < it->second.size(); ++k) {
                         const int r = it->second[k];
@@ -532,7 +570,7 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
         // recorder just samples the running scalar, so no aliasing.
         double hg_total = 0.0;
         for (size_t i = 0; i < hgCache.size(); ++i) {
-            Response *hgRes = hgCache[i].second;
+            Response *hgRes = hgCache[i].res;
             if (hgRes->getResponse() >= 0) {
                 const Information &info = hgRes->getInformation();
                 if (info.theVector != 0 && info.theVector->Size() > 0)
@@ -549,6 +587,7 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
                         reg.energy(Ladruno::EnergyChannelRegistry::LNVD_WORK),
                         reg.energy(Ladruno::EnergyChannelRegistry::MODAL_WORK),
                         hg_total,
+                        v2_ms_ke,
                         out);
         int col = timeOffset;
         response(col++) = out[ebkernel::V2_KE_ELE];
@@ -565,6 +604,8 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
             response(col++) = out[ebkernel::V2_E_MODAL];
         if (chHourglass)
             response(col++) = out[ebkernel::V2_E_HG];
+        if (chMassScale)
+            response(col++) = out[ebkernel::V2_KE_MS];
         response(col++) = out[ebkernel::V2_RES];
         response(col++) = out[ebkernel::V2_ERR];
     }
@@ -663,8 +704,17 @@ EnergyBalanceRecorder::initialize(void)
         chLnvd   = reg.declared(Ladruno::EnergyChannelRegistry::LNVD_WORK);
         chModal  = reg.declared(Ladruno::EnergyChannelRegistry::MODAL_WORK);
         chHourglass = !hgCache.empty();
+        // Ladruno ADR-69 P3: KE_ms gated on the SMS registry's CURRENT blocks
+        // (pull-style, like E_hg — the registry clears on integrator teardown,
+        // so this reflects the live model, not process history). The SMS
+        // integrator's domainChanged has published by the first record; an
+        // integrator defined after the first record misses its column (same
+        // documented limitation as the registry channels).
+        chMassScale =
+            Ladruno::MassScalingEnergyRegistry::instance().anyActive();
         numModelCols = 6 + (chInject ? 1 : 0) + (chLnvd ? 1 : 0)
-                     + (chModal ? 1 : 0) + (chHourglass ? 1 : 0) + 2;
+                     + (chModal ? 1 : 0) + (chHourglass ? 1 : 0)
+                     + (chMassScale ? 1 : 0) + 2;
 
         // Coverage (ADR-69 P1.5/P1.6): ASDAbsorbingBoundary2D/3D publish
         // both their BOTTOM compliant-base injection (addBaseActions) and
@@ -711,6 +761,7 @@ EnergyBalanceRecorder::initialize(void)
         if (chLnvd)   theOutputHandler->tag("ResponseType", "E_lnvd");
         if (chModal)  theOutputHandler->tag("ResponseType", "E_modal");
         if (chHourglass) theOutputHandler->tag("ResponseType", "E_hg");
+        if (chMassScale) theOutputHandler->tag("ResponseType", "KE_ms");
         theOutputHandler->tag("ResponseType", "RES");
         theOutputHandler->tag("ResponseType", "ERR%");
     } else {
@@ -738,6 +789,7 @@ EnergyBalanceRecorder::initialize(void)
         if (chLnvd)   opserr << " E_lnvd";
         if (chModal)  opserr << " E_modal";
         if (chHourglass) opserr << " E_hg";
+        if (chMassScale) opserr << " KE_ms";
         opserr << " RES ERR%]";
     } else {
         opserr << " [model: KE IE DW ULW RES ERR%]";

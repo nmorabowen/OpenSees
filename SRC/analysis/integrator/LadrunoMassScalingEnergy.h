@@ -60,6 +60,18 @@
 // cannot wipe a newer one's blocks. NOT parallel-shared-node aware — that is the
 // separate T-MPI work item; the registry mirrors the sequential per-rank blocks.
 //
+// ADR-69 P3 (KE_ms advisory). The registry ALSO carries the LUMPED (DT2MS-style)
+// SMS injection: the per-node additive diagonal ΔM the lumped integrators commit
+// to Node mass (CentralDifferenceSMS / ExplicitBathe -sms). Unlike the consistent
+// M_bar (which the recorder's getMass() CANNOT see, so its KE is ADDED to the
+// balance), the lumped ΔM is already inside Node::getMass() — the recorder's KE
+// is correct and nothing is added. The nodal side exists so the -v2 recorder can
+// MEASURE the fictitious added-mass kinetic-energy share as the KE_ms advisory
+// column (LS-DYNA GLSTAT-style fidelity metric): KE_ms = 1/2 v^T ΔM v (nodal,
+// lumped) + sum_e 1/2 v^T M_bar_e v (element, consistent). Same owner-guarded
+// publish/clear lifecycle, kept on its own owner token because the lumped and
+// consistent publishers are different integrator objects.
+//
 // Header pulls only <map>, <Matrix.h>, <Vector.h> (no Domain/Element) so it is cheap
 // to include from the header-only energy kernel without a dependency cycle.
 
@@ -91,13 +103,34 @@ public:
     // builds it). Returns 0.0 if the element carries no scaling mass.
     double elementScalingKE(int eleTag, const Vector &vel, int numDOF) const;
 
+    // ---- ADR-69 P3: lumped (DT2MS-style) SMS nodal injection ----
+    // Publish/replace the active lumped-SMS integrator's per-node additive diagonal
+    // ΔM (node tag -> Vector(ndf)), exactly the `injected` map it committed to the
+    // Domain via applyMassScaling(+1). Same wholesale-replace + owner-guard
+    // semantics as publish()/clear() above, on an independent owner token.
+    void publishNodal(const void *owner, const std::map<int, Vector> &diag);
+    void clearNodal(const void *owner);
+
+    // Fast guard for the recorder's nodal loop (mirrors active()).
+    bool activeNodal() const { return !theNodalDiag.empty(); }
+
+    // True iff EITHER side holds blocks — the -v2 recorder's KE_ms column gate.
+    bool anyActive() const { return active() || activeNodal(); }
+
+    // 1/2 v^T ΔM v for node `nodeTag` (diagonal quadratic in the node's own
+    // velocity). Returns 0.0 if the node carries no injected mass.
+    double nodalScalingKE(int nodeTag, const Vector &vel) const;
+
 private:
-    MassScalingEnergyRegistry() : owner(0) {}
+    MassScalingEnergyRegistry() : owner(0), nodalOwner(0) {}
     MassScalingEnergyRegistry(const MassScalingEnergyRegistry &);
     MassScalingEnergyRegistry &operator=(const MassScalingEnergyRegistry &);
 
     const void *owner;                 // current publisher (clear() is owner-guarded)
     std::map<int, Matrix> theBlocks;   // element tag -> node-major M_bar
+
+    const void *nodalOwner;            // current lumped publisher (ADR-69 P3)
+    std::map<int, Vector> theNodalDiag; // node tag -> injected diagonal ΔM
 };
 
 } // namespace Ladruno

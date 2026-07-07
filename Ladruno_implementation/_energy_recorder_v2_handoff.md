@@ -21,13 +21,19 @@ log**: [[69_ladruno_energy_recorder_channels_adr]]. This is the short version.
 | **P1** — `EnergyChannelRegistry`, `-v2` recorder layout, `ExplicitBathe -lnvd` publisher, `LysmerTriangle` Tcl publisher + `eleLoad -lysmerVelocityLoader` (Tcl) | ✅ merged on `ladruno` | [#488](https://github.com/nmorabowen/OpenSees/pull/488) |
 | **P1.5** — `LysmerTriangle` + loader openseespy dispatch, `ASDAbsorbingBoundary2D/3D` bottom compliant-base publisher | ✅ merged on `ladruno` | [#491](https://github.com/nmorabowen/OpenSees/pull/491) |
 | **P1.6** — ASD **lateral** free-field injection (`addRffToSoil`) publish | ✅ merged on `ladruno` | [#496](https://github.com/nmorabowen/OpenSees/pull/496) |
-| **P2** — `E_modal` publisher, `E_hg` hourglass pull, `-ownedNodes` MPI gate + per-rank files | ✅ done (this session's PR) | — |
-| **P3** — mass-scaling fidelity advisory column | ⬜ not started | — |
+| **P2** — `E_modal` publisher, `E_hg` hourglass pull, `-ownedNodes` MPI gate + per-rank files | ✅ merged on `ladruno` | [#501](https://github.com/nmorabowen/OpenSees/pull/501) |
+| **P2.1** — removal-safe caches (UAF fix) | ✅ merged on `ladruno` | [#503](https://github.com/nmorabowen/OpenSees/pull/503) |
+| **P3** — `KE_ms` mass-scaling fidelity advisory column | ✅ done — **ADR-69 runway CLOSED** | — |
 
 The recorder today (`recorder EnergyBalance ... -v2`): legacy 6-column output
 is byte-identical when the flag is omitted. With `-v2`: `KE_ele KE_nod IE
-DW_ele DW_nod ULW [E_inject] [E_lnvd] [E_modal] [E_hg] RES ERR%` (parse by
-the echoed column NAMES, never position). `E_inject` covers **Lysmer** and
+DW_ele DW_nod ULW [E_inject] [E_lnvd] [E_modal] [E_hg] [KE_ms] RES ERR%`
+(parse by the echoed column NAMES, never position). `KE_ms` (P3) is the
+PURELY ADVISORY fictitious-added-mass KE (lumped ΔM published by
+`CentralDifferenceSMS`/`ExplicitBathe -sms` + consistent M̄ share split out
+of the V4 kernel term) — inside KE, no RES/ERR participation; fidelity
+fraction = KE_ms/(KE_ele+KE_nod), GLSTAT-style; column reflects the LIVE
+model (SMS registry clears on integrator teardown, no process-sticky wart). `E_inject` covers **Lysmer** and
 **ASD** in full. `E_lnvd` covers `ExplicitBathe -lnvd`. `E_modal` covers
 modal damping for integrators on the base `IncrementalIntegrator::commit()`
 (Newmark; HHT-family overrides = documented gap). `E_hg` is the
@@ -124,11 +130,16 @@ Gate evidence: `energy_v2/p16_asd_lateral_closure.py`.
   `energy_v2/p2_mpi_owned_nodes.py` (needs `dist/openseesmp`, build target
   `OpenSeesPyMP`).
 
-## P3 starting point (mass-scaling fidelity advisory column)
+## P3 outcome (KE_ms advisory — DONE, runway CLOSED)
 
-The last open ADR-69 item. ADR § "Proposed column schema" sketches an
-advisory column for mass-scaling KE fidelity (the consistent-SMS energy
-conduit already closes the BALANCE — this is about surfacing the added-mass
-kinetic-energy fraction as a quality metric, LS-DYNA GLSTAT-style). Read the
-ADR schema section + `LadrunoMassScalingEnergy.h` (registry already feeds
-the kernel's KE via `elementScalingKE`) before scoping.
+`MassScalingEnergyRegistry` grew a nodal side (`publishNodal`/`clearNodal`/
+`nodalScalingKE`, independent owner token): the lumped SMS integrators
+publish the exact `injected` ΔM they commit to Node mass and retire it
+wherever the injection is removed (removeScaling/dtor/recvSelf); the
+consistent M̄ share is split out of the kernel's existing V4 term via an
+optional `double *msKE` out-param (null on every legacy caller ⇒
+byte-identity structural). Three gates in
+`tests/test_energyBalanceRecorder.py`: lumped exact identity
+(KE_ms == KE_nod on a bar whose ONLY nodal mass is the injection),
+consistent vs the closed-form Olovsson oracle, and the no-SMS teardown
+control (no column). Full detail in the ADR implementation log.

@@ -2437,6 +2437,16 @@ and the old `iters >= maxIt` condition swallowed it silently (also fixed review-
 - **Why:** Newton iterates are not monotone: mid-iteration trial strains overshoot the converged state by far more than the 5% margin; the Concrete3D apex regime is exactly where the return map is trajectory-fragile (documented handoff §6 gap).
 - **Workaround/status (2026-07-06, ADR 66 P5.2 G5):** seed localization with ft_band = 0.8*ft (dissipation is Gf-governed, so energy gates are unaffected by the seed strength); the churn disappears entirely.
 
+### Mass scaling multiplies the support-motion START SHOCK by sqrt(s) — a Linear sp ramp that is harmless unscaled can crack elements at the moving support under SMS
+- **Bites:** quasi-static explicit runs driven by prescribed support motion (`sp` + timeSeries, the #333 recipe) under `CentralDifferenceSMS`. A `Linear` series applies a velocity STEP v at t=0; the wave it launches carries sigma ~ rho'*c'*v = sqrt(rho'*E)*v — and mass scaling inflates rho' by s = (dtTarget/dt_e)^2, so the shock stress grows by sqrt(s) = the dtTarget factor. Measured (ADR 66 G9c): a rate whose unscaled shock is a trivial 0.35 MPa hit 3.5 MPa > ft at the 10x target and cracked the pulled-face concrete element outright (omega_t -> 0.97) before any real loading happened.
+- **Why:** impedance rho*c = sqrt(rho*E); uniform scaling multiplies rho by s and leaves E alone. The shock rides the SCALED impedance while the "quasi-static" rate was budgeted against the unscaled one.
+- **Workaround/status (2026-07-06, ADR 66 G9):** drive support motion with a SMOOTHSTEP displacement protocol (lam_end * u^2(3-2u), zero start/end velocity — a ~60-point Path series), never a raw Linear ramp, whenever mass scaling is on; budget the ramp against the SCALED wave speed c' = c/sqrt(s). Same discipline applies to any velocity IC under SMS.
+
+### A consistent-mass element under the explicit recipe (`system Diagonal`) runs 8/27 mass-deficient — and the CDL `-lump` flag lumps only the PENCIL, not the runtime
+- **Bites:** any explicit run of an element whose `getMass()` returns the CONSISTENT matrix (LadrunoSolidShell pre-G9; any vanilla brick/solid without a lumping option). `system Diagonal` keeps just the raw diagonal — for a trilinear solid that is `rho*int N_a^2 dV` = 1/27 of the mass per node, 8/27 total — so the dynamics run 3.375x light (frequencies 1.84x high) with NO warning. Worse, `integrator CentralDifferenceLadruno ... -lump hrz` does NOT fix it: the `-lump` flag selects the model for the `criticalTimeStep()` PENCIL only (`CentralDifferenceLadruno.cpp:338/475` pass it to `computeCriticalTimeStep`); the runtime mass is whatever `getMass()` feeds the SOE. The combination is the trap: the hrz pencil reports the full-mass thickness CFL `t/c` while the run evolves on the light diagonal — the step is over-reported by sqrt(27/8) = 1.84x and the run BLOWS UP at 0.9x the reported dt_cr (measured on the P5.1 solid-shell: true boundary ~0.54x = exactly the consistent-eig value).
+- **Why:** lumping is an ELEMENT property in this architecture (LadrunoBrick `-lumped`, truss default-diagonal); the integrator flag exists so the pencil can MATCH whatever the element does, not to impose it. The CDL default `-lump diagonal` (diagonal-of-consistent) is self-consistent with a consistent-mass element under `system Diagonal` — but then the physics is the 8/27-deficient one.
+- **Workaround/status (2026-07-06, ADR 66 G9):** give the element a row-sum/HRZ `-lumped` flag (LadrunoSolidShell has one as of G9; LadrunoBrick always had it) and pair it with `-lump hrz`/`rowsum` on the integrator — then pencil == runtime == full mass (solid-shell gates: period == 4L/c to 5%, pencil == t/c, bisection-validated). RULE: under `system Diagonal`, every element in the model should provide a genuinely lumped `getMass()`.
+
 ### Multi-element Concrete3D softening under implicit Newton cut-crawls even where single elements pass — use `-implex` (uniform LoadControl) for band/localization runs
 - **Bites:** implicit displacement-ramped runs of a MULTI-element `LadrunoConcrete3D` specimen through localization: plain Newton + step-cutting (the recipe that walks a SINGLE element through its limit point) converges only at micro-steps once several elements carry the indefinite softening tangent simultaneously — the G5 coarse band (4 elements!) took ~2400 micro-steps / 13 min wall; refinement makes it worse.
 - **Why:** the indefinite/non-symmetric tangent cluster around the band throws the global Newton into cut/recover oscillation; no single step fails permanently, so nothing surfaces except wall time.
@@ -2514,3 +2524,109 @@ the publish site, so their modal dissipation stays in RES and no `E_modal` colum
 (declare-on-first-publish prevents a silent zero column). Newmark does not override commit and
 is fully covered. If you need E_modal under HHT: either chain the override to the base commit
 (vanilla edit, ledger it) or accept the documented RES drift.
+
+**Recorders NEVER receive domainChanged() — any recorder caching pointers is a
+use-after-free waiting for `remove element`/`remove node` (2026-07-06, ADR-69 P2.1).**
+`Domain::removeElement` calls `domainChange()` (sets a flag) but `Domain::record()` invokes
+recorders directly with no invalidation hook, and the analysis propagates domain changes only
+to its own components (handler/numberer/integrator/algorithm). Worse, a recorder CANNOT poll
+`Domain::hasDomainChanged()` — it is STATEFUL (consumes the flag, increments currentGeoTag,
+resets graph-built flags) and belongs to the Analysis; calling it from a recorder would eat
+the analysis's own change detection. `getDomainChangeFlag()` is a pure read but is usually
+already consumed by the time record() runs. The working patterns (both in-tree): (1)
+re-resolve entities BY TAG on every emit (LadrunoMonitorRecorder, #489); (2) structural
+re-validation per record — compare `getNumElements()/getNumNodes()` (O(1)) against cached
+sentinels + verify cached tag→pointer identity before any virtual call through a cached
+object, rebuild on mismatch (EnergyBalanceRecorder P2.1). Key ALL membership maps by TAG,
+never by pointer — a freed pointer can be REUSED by a new allocation and silently inherit the
+old binning. Note the count sentinel alone is blind to remove-then-readd-same-tag (counts
+restore); the tag→pointer identity check is what catches it.
+
+### `-implex` looks INERT under ASDShellQ4 in fully-prescribed rigs — it is not: ASDShellQ4 reports the POST-COMMIT state, and IMPL-EX re-integrates implicitly at commit
+
+- **Bites:** A/B-ing `-implex` on/off (LadrunoRCConcrete) with a fully prescribed
+  (every-DOF `sp`) single-element bending rig under `ASDShellQ4` + `LayeredShell`:
+  the recorded responses are BIT-IDENTICAL (rel 4.7e-16 over 60 softening steps) —
+  it looks like the flag is dropped somewhere in the section copy chain. It isn't:
+  the same rig under `ShellMITC4` (same section) or `LadrunoSolidShell` (3D view)
+  shows the expected ~3.5% IMPL-EX extrapolation difference.
+- **Why:** LadrunoRCConcrete's IMPL-EX `commitState` re-integrates implicitly to
+  advance the TRUE thresholds (the ASDConcrete3D pattern), so the post-commit
+  material state is the implicit one. ASDShellQ4's reported element forces reflect
+  the post-commit section state; in a rig with NO free DOFs the extrapolated trial
+  stresses are never consulted by any equilibrium iteration, so the recorded curve
+  collapses exactly onto the implicit run. ShellMITC4 / LadrunoSolidShell report
+  the converged TRIAL state, where the extrapolation lives.
+- **Workaround/status (measured 2026-07-07, ADR-66 G7):** not a defect on either
+  side, but three consequences: (1) never "verify implex engaged" with a prescribed
+  probe under ASDShellQ4 — it is structurally invisible there; (2) cross-element
+  parity benchmarks must run implicit-vs-implicit (as G7 does) or accept a
+  reporting-path asymmetry masquerading as element deviation (~2% here); (3) on
+  free-DOF problems implex under ASDShellQ4 IS active (0.7% path shift measured on
+  the G7b rig) — the wall-harness usage is fine. Pinned discriminatingly by
+  `tests/test_ladrunoSolidShell_flexure.py::test_implex_reporting_paths`.
+
+### `section LayeredShell` bending is exact only on its own midpoint rule — a predictable Σ h³/12 stiffness deficit vs the continuum (≈2% at 5 uniform layers)
+
+- **Bites:** elastic cylindrical bending of a LayeredShell with n uniform layers
+  undershoots `E·t³/12(1−ν²)` by `Σ E_i·h_i³/12` (each layer is ONE fiber at its
+  centroid: the midpoint rule loses the layer's self-inertia). Compared against
+  LadrunoSolidShell — whose `-nz` gauss/lobatto rule integrates z² EXACTLY — this
+  reads as "the solid-shell is too stiff". It is the layered quadrature, on both
+  the concrete AND the displaced-by-rebar bookkeeping.
+- **Workaround/status (measured 2026-07-07, ADR-66 G7):** predict it (the G7
+  elastic anchor asserts the layered arm to 1e-4 against the midpoint-rule closed
+  form, deficit 2.07% at 5 core layers) or halve the layer thickness (error ∝ h²;
+  0.5% at the G7 production layering of 3+10+3).
+
+### `equationConstraint` refuses zero coefficients ("WARNING invalid rcoef inputs") — skip the zero-arm terms when emitting plane-section rows
+
+- **Bites:** emitting `u_i − u0 − θ·z_i = 0` rows for a node ON the reference
+  plane (z_i = 0) fails parse: the EQ parser hard-rejects `coef == 0.0`.
+- **Workaround (2026-07-07, ADR-66 G7):** drop the θ term when `|z_i| < tol`
+  (the row degenerates to `u_i = u0`, which is exactly right) — the same filter
+  the LadrunoTie shell-solid tests use for near-zero shape weights.
+## `wipe()` does NOT recreate the Domain — new domain-level state MUST be reset in `Domain::clearAll()` (ADR 46 P1)
+
+`ops.wipe()` calls `Domain::clearAll()` on the SAME Domain object; nothing is
+reconstructed. Any new domain-level member you add therefore leaks across model
+generations unless you reset it in `clearAll()` yourself (the ADR-30 `theEQs` and
+ADR-39 contact-engine cleanups are the same lesson). ADR 46 P1 hit this twice in
+one PR: (1) the new Rayleigh-factor domain copy survived wipe → the NEXT model
+reported phantom damping; (2) the UPSTREAM `theEigenvalues`/`theEigenvalueSetTime`
+also survive wipe — latent forever because nothing read the spectrum across a wipe
+until `complexEigen` did (a stale spectrum from the previous model silently answers
+for the new one). Both now reset in `clearAll()` (`// Ladruno ADR46`).
+
+Related trap: `Domain::getEigenvalues()` **exit(-1)s** (kernel-killer, MPCO class)
+when the spectrum was never set — any graceful-failure caller must probe via the
+additive `Domain::getNumEigenvalues()` (ADR 46) BEFORE calling it.
+
+Related trap: `region ... -rayleigh` and per-element `-rayleigh` write factors
+straight onto elements via `MeshRegion::setRayleighDampingFactors` / element
+`setRayleighDampingFactors` and NEVER touch `Domain::setRayleighDampingFactors` —
+the domain-level copy reflects only the last GLOBAL `rayleigh` call. `complexEigen`
+scans elements and warns on mismatch (D1 policy: warn, never silently absorb).
+
+ADR 46 P2 pre-warning (from the P1 Opus gate): once Route B projects a full
+`ΦᵀCΦ` and emits `ψ=Φz`, REPEATED eigenvalues need the basis M-orthonormalized
+WITHIN each repeated eigenspace (ARPACK does not guarantee it); the P1 closed form
+is immune (uses eigenvalues only, never Φ).
+
+### `rigidLink beam` across an ndf mismatch (6-DOF master, 3-DOF slave) WARNS and silently adds NOTHING — the model solves DISCONNECTED
+
+- **Bites:** the natural first attempt at a shell↔solid seam — `rigidLink('beam',
+  shellNode, solidNode)` per matched node column — prints
+  `RigidBeam - mismatch in numDOF between constrained Node ... and Retained node ...`
+  to opserr and returns WITHOUT adding any constraint and WITHOUT raising. The
+  analysis then runs to completion with the two meshes disconnected: under a
+  moment the shell rides freely as a hinge and the solid stays unloaded — easy
+  to read as "the connection is just flexible".
+- **Why:** vanilla `RigidBeam` builds a square ndf×ndf constraint matrix and
+  hard-requires matching DOF counts; the failure path is a warning + early
+  return, and the interpreter command does not convert it into an error.
+- **Workaround/status (measured 2026-07-07, ADR-66 G10):** the seam recipe is
+  `LadrunoTie -shellSolid` (exact plane-section rows, works on non-matched
+  grids, dt_cr-neutral under the explicit projector). The disconnect trap is
+  pinned by `tests/test_ladrunoSolidShell_seam.py::test_rigidlink_cross_ndf_silently_disconnects`
+  so a future rigidLink behavior change surfaces loudly.
