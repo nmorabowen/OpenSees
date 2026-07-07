@@ -1419,3 +1419,34 @@ features:
       Header-only vanilla edit of GeneralizedAlpha.h (ledgered). The first
       tangent-consistent cut failed the Zone-A FD oracle ~2e-3 at alphaM=0.9. Reduces
       to Newmark DDM at alphaM=alphaF=1. ADR-52 W3-I2 PR2; see LEDGER_quirks.
+
+  - feature: LadrunoComplexEigen               # ADR 46 complex/state-space modal
+    classtag: 33019          # LADRUNO_TAG family; analysis-side driver (not a MovableObject); after ND 33018, before ELE 33020 LadrunoSolidShell (per-registry band)
+    tag_symbol: LADRUNO_TAG_ComplexEigen
+    pr: null
+    feature_class: derivative
+    required_tiers: [T1]
+    pytest: tests/test_ladrunoComplexEigen.py   # P0 QZ kernel vs independent companion-form numpy oracle @1e-10 + analytic SDOF branches; P1 domain Route-A classical zeta/omegaD oracle @1e-8 on a cantilever frame + guards
+    tcl: WAIVED(command `complexEigen` registered in BOTH TclWrapper and PythonWrapper via the shared OPS_complexEigen; validated through the Zone-A pytest)
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+      - SRC/interpreter/OpenSeesCommands.cpp
+      - SRC/interpreter/OpenSeesCommands.h
+      - SRC/interpreter/PythonWrapper.cpp
+      - SRC/interpreter/TclWrapper.cpp
+      - SRC/domain/domain/Domain.h               # vanilla: Rayleigh-factor domain copy + getter (additive)
+      - SRC/domain/domain/Domain.cpp
+      - SRC/analysis/analysis/CMakeLists.txt
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      ADR 46 (modal family, umbrella ADR 45). P0 = reduced-pencil QZ kernel
+      (state-space symmetric-block linearization, LAPACK dggev on (-B, A) so the
+      eigenvalue IS lambda; +Im conjugate-pair collapse with the beta<0 vector
+      conjugation fix from the Opus adversarial review). P1 = domain-coupled
+      Route-A closed form: project the RAYLEIGH FACTORS onto the last eigen run
+      (Ct~=diag(aM+bK w^2) exact in any normalization), refusing betaKinit/
+      betaKcomm and leaving element/material dampers to P2 (assembled C via
+      getDamp / LadrunoDampingAssembler). Plan/ADR:
+      Ladruno_implementation/46_ladruno_complex_modal_adr.md.
