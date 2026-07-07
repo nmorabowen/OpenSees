@@ -281,7 +281,18 @@ stamps + schema round-trip (non-default values).
   restrained (ε₀=0) resultants on a 6-element stack: dM 2.1%, dN 16% of ft·t·b. The IMPL-EX
   reporting quirk (ASDShellQ4 = post-commit state ⇒ implex invisible to prescribed rigs;
   trial-state hosts show it) is pinned discriminatingly — parity gates run implicit-both.
-  Remaining: G8 (blocked on the O5 specimen decision), G10, guide, banner.
+  **[G10 LANDED 2026-07-07, test-only]** `tests/test_ladrunoSolidShell_seam.py` — the 6-DOF/3-DOF
+  connection RECIPE, validated at elastic-exactness grade: ASDShellQ4 panel ↔ solid-shell patch
+  via `LadrunoTie -shellSolid` (Lagrange static / LadrunoProjection + `-lumped` + master-θ
+  rotary mass explicit). The constant-moment state crosses the seam EXACTLY (interface rotation
+  = θ/2 to 1e-9, station moment = θEI/L to machine precision on both sides, GP σxx = M·z/I at
+  every solid GP — no seam boundary layer in this state class); membrane at 1e-14; explicit
+  dt_cr-neutral with 1.7e-17 tie violation over 300 CDL steps. Candidates rejected with the
+  failure mode quantified: translations-only rows = moment hinge; `rigidLink beam` = cross-ndf
+  SILENT-DISCONNECT trap (warns, adds nothing, solves disconnected — LEDGER_quirks); `-hermite`
+  = shell-edge↔shell-edge vocabulary, refused. Generic tie machinery (nesting, arm guard,
+  momentum) certified in `tests/test_ladrunoTie_shellsolid.py`.
+  Remaining: G8 (blocked on the O5 specimen decision), guide, banner refresh if needed.
 - **P5.4 (optional, demand-gated) — kinematic upgrades.** `-geom corot` beyond the guard
   (shell-aware corotation), `-geom finite` validation with `LadrunoRCFiniteStrain`; per-layer
   material assignment is OFF the list (G7/O2 decided against it — see §9).

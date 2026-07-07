@@ -245,6 +245,31 @@ previously produced ZERO attribution), and `UmfpackGenLinSolver.cpp` splits `lin
   (invalidate on `setSize`/new assembly), delivering ModifiedNewton-style reuse its actual win.
   Design + gate next; the instrument is in.
 
+## Addendum — lane-E "update machinery" IDENTIFIED: a hidden second factorization (2026-07-07)
+
+The 2026-07-06 addendum guessed the 35.4% lane-E `update` band was "DOF_Group/node trial-state
+propagation, model-update glue" — **REFUTED by the new `soe.factor` scope.** Lane E re-run on
+the instrumented build (641 steps, 1648 iterations):
+
+| site | soe.factor | soe.trisolve | note |
+|---|---|---|---|
+| `linearSolve` (algorithm) | 1253 ms | 181 ms | the visible solve |
+| **`update` (DisplacementControl)** | **1227 ms** | 183 ms | `update()` calls `setB(phat); solve()` for the reference displacement dUhat — a FULL refactorization of the SAME K the algorithm factored moments earlier in the same iteration |
+| `newStep` (DisplacementControl) | 541 ms | 82 ms | same dUhat solve once per step |
+
+The `update` phase is 1.07 ms/call of which 80% is that hidden SOE solve; `elem.update` is 14%.
+**Total: 59% of the lane-E step is UmfPack numeric factorization, two-thirds of it booked
+outside `linearSolve`** — invisible before the factor/trisolve split existed. (Also visible:
+`soe.symbolic` runs once per analyze step — the per-step `integrator DisplacementControl`
+re-creation pattern forces domainChanged/setSize every step; minor at 660 DOF, not at scale.)
+
+**Consequence for rank 8/10:** factorization reuse (persist `Numeric` while the tangent is
+unchanged, invalidate on assembly/setSize) is now the top implicit lever on BOTH measured
+implicit lanes — lane B ~40% of step (ModifiedNewton-style reuse) and lane E ~35% of step
+(intra-iteration reuse: dUhat becomes a trisolve, no algorithm change, exact same numbers).
+The lane-E "small-model fixed-overhead regime" framing is retired: it was a solver-cost regime
+all along. Drill-down candidate CLOSED.
+
 ## Implementation log
 - **2026-07-06 — first measured pass.** 5 lanes, 5 parallel agents, shipped binary, recipe +
   scripts preserved under `Ladruno_files/testbed/perf/phase0/`. h5 artifacts in session scratch
