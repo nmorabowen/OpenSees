@@ -10,23 +10,27 @@ target_sources(OPS_SysOfEqn
         ArpackSolver.cpp
         EigenSOE.cpp
         EigenSolver.cpp
+        FeastEigenSOE.cpp
+        FeastEigenSolver.cpp
         FullGenEigenSOE.cpp
         FullGenEigenSolver.cpp
         SymBandEigenSOE.cpp
         SymBandEigenSolver.cpp
 	SymmGeneralizedEigenSOE.cpp
-	SymmGeneralizedEigenSolver.cpp	
+	SymmGeneralizedEigenSolver.cpp
     PUBLIC
         ArpackSOE.h
         ArpackSolver.h
         EigenSOE.h
         EigenSolver.h
+        FeastEigenSOE.h
+        FeastEigenSolver.h
         FullGenEigenSOE.h
         FullGenEigenSolver.h
         SymBandEigenSOE.h
         SymBandEigenSolver.h
 	SymmGeneralizedEigenSOE.h
-	SymmGeneralizedEigenSolver.h	
+	SymmGeneralizedEigenSolver.h
 )
 
 target_sources(OPS_SysOfEqn
