@@ -1,7 +1,7 @@
 ---
 title: EnergyBalanceRecorder v2 — explicit energy channels + parallel-safe reduction
 project: Ladruno
-status: draft
+status: implemented (P0–P3 complete; see Implementation log)
 priority: medium
 owner: nmora
 tags:
@@ -684,3 +684,47 @@ when done)*
   interpreter ("Windows fatal exception: access violation", faulthandler
   frame = the first `analyze` after `remove element`) — same
   revert-and-reproduce discipline as the SolidShell Rayleigh regression.
+- **2026-07-07 P3 BUILT — `KE_ms` mass-scaling fidelity advisory column. The
+  ADR's LAST open item; the runway is CLOSED with this.**
+  - **Semantics (LS-DYNA GLSTAT-style):** `KE_ms` = the instantaneous kinetic
+    energy riding on FICTITIOUS (SMS-added) mass —
+    `½ vᵀΔM v` (lumped DT2MS nodal injection) + `Σ_e ½ vᵀM̄_e v` (consistent
+    Olovsson blocks). PURELY advisory: the scaled inertia genuinely carries
+    that energy in the numerical system, so KE_ms stays INSIDE
+    `KE_ele`/`KE_nod` — no rebucket, no RES participation, not in the ERR
+    scale. The fidelity metric is the fraction
+    `KE_ms/(KE_ele+KE_nod)`; large ⇒ the run's kinetics are dominated by
+    fictitious inertia (distrust periods/wave speeds), exactly the
+    accounting-map row "MS fidelity — not energy, period/wave-speed error".
+  - **Mechanism — the SMS registry grew a nodal side, not a new channel.**
+    `Ladruno::MassScalingEnergyRegistry` (the proven ADR-38 conduit) gains
+    `publishNodal/clearNodal/activeNodal/nodalScalingKE` on an independent
+    owner token: the lumped publishers (`CentralDifferenceSMS::domainChanged`,
+    `ExplicitBathe::applyMassScalingSMS` lumped branch) publish the exact
+    `injected` map they committed via `applyMassScaling(+1)`, and clear it
+    wherever the injection is removed (removeScaling / destructor /
+    recvSelf) so the registry NEVER outlives the Domain mutation. The
+    consistent side needed zero producer code — the kernel already computed
+    `½ vᵀM̄_e v` (V4); it is now split out through an optional out-param on
+    `addElementEnergy`/`addNodeEnergy` (`double *msKE = 0`; every V1 caller
+    passes null ⇒ legacy numerics byte-identical by construction). KE_ms is
+    an instantaneous quantity like KE — no baseline, no trapezoid, no
+    cumulative-publish machinery (that is why it is registry-pull, NOT an
+    `EnergyChannelRegistry` channel: it is not work, and the SMS registry
+    clears on teardown so the column has NO process-sticky wart — it
+    reflects the live model, like `E_hg`).
+  - **Column:** `-v2` model block only, written after `E_hg`, before
+    `RES ERR%` (existing front-anchored offsets untouched — the P1.5 lesson);
+    present iff `MassScalingEnergyRegistry::anyActive()` at first record.
+    Regions keep the legacy 6 columns. `-ownedNodes` gates the nodal KE_ms
+    share with the other nodal terms (same MPI dedup contract; the element
+    share reduces safely like all element terms).
+  - **Gates (tests/test_energyBalanceRecorder.py, ADR-38 Case-A bar, all
+    elements scaled at dtTarget=0.012):** (1) lumped EXACT identity — the
+    model's only nodal mass is the injection, so `KE_ms == KE_nod` at every
+    sample to 1e-9 (cross-checks the published ΔM against the actual Domain
+    mutation) + ERR% still closes; (2) consistent — `KE_ms` matches the
+    closed-form Olovsson oracle `Σ ½β_e(m_a/2)(v_a−v_b)²` per step (the
+    TV4-ORACLE math), fictitious share >30% of KE (non-vacuous); (3)
+    teardown control — a plain CDL run after wipe() must NOT get a KE_ms
+    column (owner-guarded clearNodal proven, mirrors TV4-TEARDOWN).

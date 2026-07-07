@@ -60,6 +60,42 @@ MassScalingEnergyRegistry::clear(const void *o)
     }
 }
 
+// ---- ADR-69 P3: lumped (DT2MS-style) SMS nodal injection ----
+
+void
+MassScalingEnergyRegistry::publishNodal(const void *o, const std::map<int, Vector> &diag)
+{
+    // Wholesale replace, mirroring publish(): every domainChanged re-baselines and
+    // rebuilds `injected` from scratch, so the newest publish is authoritative.
+    nodalOwner = o;
+    theNodalDiag = diag;
+}
+
+void
+MassScalingEnergyRegistry::clearNodal(const void *o)
+{
+    if (o == nodalOwner) {
+        theNodalDiag.clear();
+        nodalOwner = 0;
+    }
+}
+
+double
+MassScalingEnergyRegistry::nodalScalingKE(int nodeTag, const Vector &vel) const
+{
+    std::map<int, Vector>::const_iterator it = theNodalDiag.find(nodeTag);
+    if (it == theNodalDiag.end())
+        return 0.0;
+
+    const Vector &dm = it->second;
+    const int n = (dm.Size() < vel.Size()) ? dm.Size() : vel.Size();
+
+    double ke = 0.0;
+    for (int i = 0; i < n; ++i)
+        ke += 0.5 * dm(i) * vel(i) * vel(i);
+    return ke;
+}
+
 double
 MassScalingEnergyRegistry::elementScalingKE(int eleTag, const Vector &vel, int numDOF) const
 {

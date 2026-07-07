@@ -29,6 +29,7 @@
 
 #include <CentralDifferenceSMS.h>
 #include <LadrunoMassScaling.h>
+#include <LadrunoMassScalingEnergy.h>   // Ladruno ADR-69 P3: publish injected ΔM (KE_ms advisory)
 #include <AnalysisModel.h>
 #include <Domain.h>
 #include <Channel.h>
@@ -162,6 +163,8 @@ CentralDifferenceSMS::~CentralDifferenceSMS()
     // node-mass correctness is moot.
     if (scaled && appliedDomain != 0 && !injected.empty())
         Ladruno::applyMassScaling(appliedDomain, injected, -1.0);
+    // Ladruno ADR-69 P3: retire the published ΔM (owner-guarded).
+    Ladruno::MassScalingEnergyRegistry::instance().clearNodal(this);
 }
 
 void CentralDifferenceSMS::removeScaling(void)
@@ -171,6 +174,8 @@ void CentralDifferenceSMS::removeScaling(void)
     injected.clear();
     scaled = false;
     appliedDomain = 0;
+    // Ladruno ADR-69 P3: the registry must never outlive the Domain injection.
+    Ladruno::MassScalingEnergyRegistry::instance().clearNodal(this);
 }
 
 int CentralDifferenceSMS::domainChanged(void)
@@ -220,6 +225,12 @@ int CentralDifferenceSMS::domainChanged(void)
     Ladruno::applyMassScaling(theDomain, injected, +1.0);
     scaled = true;
     appliedDomain = theDomain;   // remember where we committed, for restore (M5)
+
+    // Ladruno ADR-69 P3: publish the committed ΔM so the -v2 EnergyBalanceRecorder
+    // can report the fictitious added-mass KE share (KE_ms advisory column). The
+    // injection is already inside Node::getMass() — the recorder MEASURES, never
+    // adds. Empty map when nothing scaled -> registry side stays inactive.
+    Ladruno::MassScalingEnergyRegistry::instance().publishNodal(this, injected);
 
     // Push the POST-SCALING effective stable step to the base so its step-1 dt_cr
     // report stops warning "expect INSTABILITY" against the pre-scaling pencil:
@@ -315,6 +326,7 @@ int CentralDifferenceSMS::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBrok
     injected.clear();
     scaled = false;
     appliedDomain = 0;
+    Ladruno::MassScalingEnergyRegistry::instance().clearNodal(this);   // Ladruno ADR-69 P3
     warnedLimitations = false;
     return 0;
 }
