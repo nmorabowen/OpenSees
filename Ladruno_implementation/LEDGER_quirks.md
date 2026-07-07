@@ -2694,7 +2694,12 @@ is immune (uses eigenvalues only, never Φ).
   Windows/oneAPI build), `0` (MUMPS's own WORLD) under `_OPENMPI`; the rank/size probe
   two lines later also reads `MPI_COMM_WORLD` directly. Dead parameter, not a config
   toggle.
-- **Fix (ADR 43 P3a, not yet built):** store the passed communicator on the solver,
-  `MPI_Comm_c2f` *it* (not WORLD) into `id.comm_fortran`, and use it for the
-  `MPI_Comm_rank/size` probe too; thread it through `MumpsParallelSOE`'s constructor,
-  which today never passes one either.
+- **Fix (SHIPPED, ADR 43 P3a):** `setCommunicator(MPI_Comm)` on the solver stores the
+  comm, `MPI_Comm_c2f`s *it* (not WORLD) into `id.comm_fortran`, uses it for the
+  rank/size probe, tears down any live MUMPS instance, and clears the SOE's
+  `factored` flag. Test hook: `system('Mumps', '-commSplit', color)` (collective —
+  every rank must call it). Gate: `feast_d2_spike/p3a_commsplit_gate.py` (4 ranks,
+  2 concurrent groups vs serial oracles). **Residual subtlety:** `MPI_Channel`
+  hardcodes WORLD/tag-0, so only the MUMPS factor/solve is comm-isolated — the SOE's
+  B/X exchange rides WORLD envelopes, safe today via disjoint (src,dst) pairs +
+  MPI non-overtaking with phase ordering; true envelope isolation is a P3c item.

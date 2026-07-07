@@ -72,6 +72,11 @@ class MumpsParallelSolver : public LinearSOESolver
 
   int setLinearSOE(MumpsParallelSOE &theSOE);
 
+  // Ladruno ADR43 P3a: run MUMPS on an arbitrary communicator (e.g. an
+  // MPI_Comm_split sub-communicator) instead of the hardwired MPI_COMM_WORLD.
+  // Must be called before the first solve; forces re-initialization.
+  int setCommunicator(MPI_Comm comm);
+
  protected:
 
  private:
@@ -86,6 +91,8 @@ class MumpsParallelSolver : public LinearSOESolver
   int np;
   int icntl14;
   int icntl7;
+
+  MPI_Comm theComm;  // Ladruno ADR43 P3a: defaults to MPI_COMM_WORLD
 
   DMUMPS_STRUC_C id;
 
