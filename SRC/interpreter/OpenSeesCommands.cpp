@@ -86,6 +86,9 @@ UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 #include <SymmGeneralizedEigenSolver.h>
 #include <SymmGeneralizedEigenSOE.h>
 #include <ArpackSOE.h>
+// Ladruno ADR43: FEAST band-targeted eigensolver
+#include <FeastEigenSOE.h>
+#include <FeastEigenSolver.h>
 #include <LoadControl.h>
 #include <CTestPFEM.h>
 #include <PFEMIntegrator.h>
@@ -382,6 +385,25 @@ OpenSeesCommands::eigen(int typeSolver, double shift,
     if (newanalysis) {
 	delete theTransientAnalysis;
 	theTransientAnalysis = 0;
+    }
+
+    // Ladruno ADR43: FEAST — the BAND defines how many modes exist, but the
+    // analysis loop above ran with a requested cap. Reconcile: trim the
+    // domain's eigenvalue list to the found count so scripts and
+    // modalProperties see exactly the modes in the band (entries beyond the
+    // found count are silent zeros from the solver, never real modes).
+    if (result == 0 && theEigenSOE != 0 &&
+	theEigenSOE->getClassTag() == EigenSOE_TAGS_FeastEigenSOE) {
+	FeastEigenSOE *fsoe = static_cast<FeastEigenSOE *>(theEigenSOE);
+	const int mFound = fsoe->getNumFoundModes();
+	if (mFound < numEigen) {
+	    const Vector &lam = theDomain->getEigenvalues();
+	    Vector trimmed(mFound);
+	    for (int i = 0; i < mFound; i++)
+		trimmed(i) = lam(i);
+	    theDomain->setEigenvalues(trimmed);
+	    numEigen = mFound;
+	}
     }
 
     if (result == 0) {
@@ -2171,6 +2193,97 @@ int OPS_analyze() {
   return 0;
 }
 
+// Ladruno ADR43: eigen -feast fmin fmax [-m0 n] [-nq n] [-tol exp]
+//                       [-maxiter n] [-verbose]
+// Band-targeted FEAST eigen: returns ALL modes with f in [fmin, fmax] Hz
+// (lambda band = (2*pi*f)^2 internally). The band defines the count — the
+// found-mode reconcile lives in OpenSeesCommands::eigen. The subspace cap
+// m0 (0 = stochastic auto-seed) also caps the analysis-side mode loop.
+static int OPS_eigenFeast()
+{
+    double fmin, fmax;
+    int numdata = 1;
+    if (OPS_GetDoubleInput(&numdata, &fmin) < 0 ||
+	OPS_GetNumRemainingInputArgs() < 1 ||
+	OPS_GetDoubleInput(&numdata, &fmax) < 0) {
+	opserr << "WARNING eigen -feast fmin fmax - need the frequency band "
+	       << "(Hz)\n";
+	return -1;
+    }
+    if (fmin < 0.0 || fmax <= fmin) {
+	opserr << "WARNING eigen -feast: invalid band [" << fmin << ", "
+	       << fmax << "] Hz - need 0 <= fmin < fmax\n";
+	return -1;
+    }
+
+    int m0 = 0, nq = 0, maxRefine = 0;
+    double tolExp = 0.0;
+    bool verbose = false;
+    while (OPS_GetNumRemainingInputArgs() > 0) {
+	const char* flag = OPS_GetString();
+	if (strcmp(flag, "-m0") == 0 && OPS_GetNumRemainingInputArgs() > 0) {
+	    if (OPS_GetIntInput(&numdata, &m0) < 0 || m0 < 1) {
+		opserr << "WARNING eigen -feast: bad -m0 value\n";
+		return -1;
+	    }
+	} else if (strcmp(flag, "-nq") == 0 &&
+		   OPS_GetNumRemainingInputArgs() > 0) {
+	    if (OPS_GetIntInput(&numdata, &nq) < 0 || nq < 2) {
+		opserr << "WARNING eigen -feast: bad -nq value\n";
+		return -1;
+	    }
+	} else if (strcmp(flag, "-tol") == 0 &&
+		   OPS_GetNumRemainingInputArgs() > 0) {
+	    // the value is the stopping EXPONENT (fpm[2] = 10^-exp): a raw
+	    // tolerance like 1e-8 would int-truncate to 0 and silently mean
+	    // 10^0 = 1 — refuse anything below 1
+	    if (OPS_GetDoubleInput(&numdata, &tolExp) < 0 || tolExp < 1.0) {
+		opserr << "WARNING eigen -feast: -tol takes the stopping "
+		       << "EXPONENT (e.g. 12 for a 1e-12 trace tolerance), "
+		       << "not a raw tolerance\n";
+		return -1;
+	    }
+	} else if (strcmp(flag, "-maxiter") == 0 &&
+		   OPS_GetNumRemainingInputArgs() > 0) {
+	    if (OPS_GetIntInput(&numdata, &maxRefine) < 0 || maxRefine < 1) {
+		opserr << "WARNING eigen -feast: bad -maxiter value\n";
+		return -1;
+	    }
+	} else if (strcmp(flag, "-verbose") == 0) {
+	    verbose = true;
+	} else {
+	    opserr << "WARNING eigen -feast: unknown option '" << flag
+		   << "'\n";
+	    return -1;
+	}
+    }
+
+    FeastEigenSolver* theSolver = new FeastEigenSolver();
+    FeastEigenSOE* theSOE = new FeastEigenSOE(*theSolver);
+    const double twoPi = 8.0 * atan(1.0);
+    const double eminL = (twoPi * fmin) * (twoPi * fmin);
+    const double emaxL = (twoPi * fmax) * (twoPi * fmax);
+    theSOE->setBand(eminL, emaxL);
+    if (m0 > 0)        theSOE->setSubspaceSize(m0);
+    if (nq > 0)        theSOE->setNumQuad(nq);
+    if (tolExp > 0.0)  theSOE->setTol(tolExp);
+    if (maxRefine > 0) theSOE->setMaxRefine(maxRefine);
+    theSOE->setVerbose(verbose);
+
+    // analysis-side mode-loop cap; the reconcile trims to the found count.
+    // NOT tied to m0: m0 is the FEAST subspace SEED (auto-enlarged on
+    // saturation) — capping the report at a small user m0 would silently
+    // defeat the enlargement (found by the saturation gate test).
+    cmds->setNumEigen((m0 > 128) ? m0 : 128);
+
+    if (cmds->eigen(EigenSOE_TAGS_FeastEigenSOE, 0.0, true, true,
+		    theSOE) < 0) {
+	opserr << "WARNING eigen -feast: analysis failed\n";
+	return -1;
+    }
+    return 0;
+}
+
 int OPS_eigenAnalysis()
 {
     static bool warning_displayed = false;
@@ -2237,6 +2350,12 @@ int OPS_eigenAnalysis()
             warning_displayed = true;
 		}
         typeSolver = EigenSOE_TAGS_FullGenEigenSOE;
+    }
+
+    else if ((strcmp(type,"-feast") == 0) || (strcmp(type,"feast") == 0)) {
+        // Ladruno ADR43: band-targeted FEAST — its own argument flow
+        // (a frequency band instead of a mode count)
+        return OPS_eigenFeast();
     }
 
     else if (strcmp(type,"PythonSparse") == 0) {

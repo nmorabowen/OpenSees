@@ -38,8 +38,12 @@ updated: 2026-06-22
 > large-model NLTHA — actually trustworthy at scale. **The strategic investment** (large build);
 > sequence after the cheap ADR-46 proof.
 
-**Status:** DRAFT. Design only — **no code has landed.** classTags **33022**
-(`FeastEigenSOE`) + **33023** (`FeastEigenSolver`) are **RESERVED, not yet built**.
+**Status:** in progress — **P1 (serial MKL-FEAST, `eigen -feast`) built, in PR.** classTags **33022**
+(`FeastEigenSOE`) + **33023** (`FeastEigenSolver`) **ACTIVE in `SRC/classTags.h`**. P1 deviations
+from this draft (deliberate, ledgered): the packed CSR driver `dfeast_scsrgv` instead of the §5.2
+RCI seam — the RCI's complex shifted solves cannot route through a *real* inner `LinearSOE`, so
+that seam moves to P3 alongside the D2 MPI spike; and `solve()` is `_WIN32`-guarded (Ubuntu Zone-A
+CI links reference LAPACK, no MKL — root CMake's MKL branch defines no macro to gate on).
 This is the strategic unifier of the modal-analysis effort: it simultaneously closes
 the *distributed-eigen-at-scale*, the *SP/MP-don't-compose*, the *no-band-targeting*,
 and the *no-completeness-guarantee* gaps identified in

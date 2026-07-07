@@ -1453,3 +1453,49 @@ features:
       betaKcomm and leaving element/material dampers to P2 (assembled C via
       getDamp / LadrunoDampingAssembler). Plan/ADR:
       Ladruno_implementation/46_ladruno_complex_modal_adr.md.
+
+  - feature: FeastEigenSOE                     # ADR 43 P1 band-targeted FEAST eigen
+    classtag: 33022          # EigenSOE_TAGS family; self-assembling CSR K,M SOE for the MKL Extended Eigensolver; twin solver 33023
+    tag_symbol: EigenSOE_TAGS_FeastEigenSOE
+    pr: null
+    feature_class: derivative
+    required_tiers: [T1]
+    pytest: tests/test_feastEigen.py   # G-B gate: ARPACK parity (lambda 1e-6 + MAC 0.999) + band-targeting vs fullGenLapack full spectrum + saturation auto-grow; skipif non-win32 (MKL only on the Windows/oneAPI build)
+    tcl: WAIVED(command `eigen -feast fmin fmax` registered via the shared OPS_eigenAnalysis in OpenSeesCommands.cpp; validated through the Zone-A pytest on Windows)
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+      - SRC/interpreter/OpenSeesCommands.cpp
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      ADR 43 P1 (modal family, umbrella ADR 45 P-B). Serial band-targeted
+      eigensolver: `eigen -feast fmin fmax [-m0][-nq][-tol][-maxiter][-verbose]`
+      answers "ALL modes in the band" via MKL dfeast_scsrgv on the SOE's own
+      shared-pattern CSR K,M (full pattern, 1-based, diagonal forced present).
+      solve() is _WIN32-guarded: Ubuntu Zone-A CI has no MKL (conan reference
+      LAPACK) and root CMake's MKL branch defines no macro - classes compile
+      everywhere, FEAST runs on the Windows/oneAPI build. The band defines the
+      mode count: the command layer reconciles the domain eigenvalue list to
+      the found m post-solve. RCI-through-inner-LinearSOE deliberately NOT
+      built at P1 (complex shifted solves cannot route through a real
+      LinearSOE) - that seam is P3 with the D2 MPI spike.
+      Plan/ADR: Ladruno_implementation/43_ladruno_feast_eigensolver_adr.md.
+
+  - feature: FeastEigenSolver                  # twin of 33022
+    classtag: 33023          # EigenSOLVER_TAGS family; drives dfeast_scsrgv + m0 auto-seed/saturation-enlarge; stores accepted pairs ascending
+    tag_symbol: EigenSOLVER_TAGS_FeastEigenSolver
+    pr: null
+    feature_class: derivative
+    required_tiers: [T1]
+    pytest: tests/test_feastEigen.py   # shared with FeastEigenSOE (one battery gates the pair)
+    tcl: WAIVED(no separate command surface - constructed by the `eigen -feast` branch alongside the SOE)
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      See FeastEigenSOE (33022) - one feature, two registry tags per the
+      EigenSOE/EigenSolver pairing convention (ArpackSOE/ArpackSolver
+      precedent). ADR 43 P1.
