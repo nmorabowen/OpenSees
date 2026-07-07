@@ -366,9 +366,13 @@ protocol*: FEAST's RCI `ijob` replaces ARPACK's `ido`; the body is the same
 > $A_z=z_jM-K$ — every individual contour solve is complex, full stop. The Hermitian
 > conjugate-pairing (`fpm(2)`) only **halves the count of solves** (skip $\bar z_j$,
 > conjugate the result) — it does not make any *one* solve real. `dfeast_scsrgv`'s
-> convenience form doesn't dodge this either: internally MKL calls **complex PARDISO**
-> (`mtype=6`, complex-symmetric) per contour point. There is no real-only-$n\times n$
-> path in FEAST, reference or vendor. See §9 R1 for the corrected decision.
+> convenience form doesn't dodge this either: the observable behavior is consistent
+> with MKL performing a **complex PARDISO** factorization (`mtype=6`,
+> complex-symmetric) per contour point internally — an inference about undocumented
+> MKL internals, but the documented RCI contract (complex `zwork`, complex $A_z$
+> factorization requested from the caller) is sufficient on its own. There is no
+> real-only-$n\times n$ path in FEAST, reference or vendor. See §9 R1 for the
+> corrected decision.
 
 ### 5.3 MPI communicator splitting
 
@@ -444,7 +448,7 @@ distributed *eigen* coordinate iteration to gate. Concretely:
 |---|---|---|
 | **P1 — serial MKL-FEAST EigenSolver** | `FeastEigenSOE`/`FeastEigenSolver` (33022/33023) using MKL `dfeast_scsrgv` (or `dfeast_srci` RCI through the existing inner `LinearSOE`); `eigen -feast fmin fmax`; band → ellipse contour → quadrature → Rayleigh–Ritz | **same eigenpairs as ARPACK** on a medium serial model within $\le10^{-6}$ on $\lambda$ and MAC $\ge0.999$ on $\phi$ for every mode in the band (§8.1) |
 | **P2 — Sturm/inertia certification** | expose negative-pivot/inertia count from the Band/Mumps factorization; `-certify` asserts FEAST $m$ == inertia($\lambda_2$)−inertia($\lambda_1$) | hand-built model with **known closely-spaced modes straddling the band edge**: FEAST $m$ equals the inertia count; deliberately under-sized $m_0$ is **detected** (saturation flagged), not silently wrong (§8.2) |
-| **P3 — MPI per-contour parallel** | Three sub-phases (D2-driven, §9 R1): **P3a** fix `MumpsParallelSolver`/`SOE` to honor a passed sub-communicator instead of hardcoded `MPI_COMM_WORLD`; **P3b** new symmetric $2n\times2n$ block-real inner SOE for the complex contour solve (LDLᵀ via existing `dmumps`, `SYM=2`); **P3c** `FeastEigenSolver` orchestration — `MPI_Comm_split` into per-quadrature sub-comms, each hosting a P3a/P3b inner SOE, `Allreduce`-sum the projector | P3a: 2+ sub-comms solve independent systems concurrently, no cross-talk; P3b: block-real solve matches a direct complex solve (numpy oracle) to solver precision; P3c: **strong + weak scaling** on a partitioned model; bit-comparable eigenpairs to the P1 serial run (§8.3) |
+| **P3 — MPI per-contour parallel** | Three sub-phases (D2-driven, §9 R1): **P3a** fix `MumpsParallelSolver`/`SOE` to honor a passed sub-communicator instead of hardcoded `MPI_COMM_WORLD`; **P3b** new symmetric $2n\times2n$ block-real inner SOE for the complex contour solve (LDLᵀ via existing `dmumps`, `SYM=2`); **P3c** `FeastEigenSolver` orchestration — `MPI_Comm_split` into per-quadrature sub-comms, each hosting a P3a/P3b inner SOE, `Allreduce`-sum the projector | P3a: 2+ sub-comms solve independent systems concurrently, no cross-talk; P3b: block-real solve matches a direct complex solve (numpy oracle) to solver precision **including a contour aspect-ratio sweep asserting residuals as Im(z)→0** (equivalent-real conditioning degrades near the real axis), plus a measured cost comparison vs zmumps; P3c: **strong + weak scaling** on a partitioned model; bit-comparable eigenpairs to the P1 serial run (§8.3) |
 | **P4 — unify SP/MP build gating** | one coherent build where `MumpsParallelSOE` + the contour orchestrator compile together; comm-split orthogonal to partition/replication | the *impossible-today* combination — partitioned/replicated assembly + distributed solve + contour-parallel eigen — runs green in **one** binary (`OpenSeesSP` and/or `OpenSeesMP`); LEDGER_vanilla_files documents the guard change |
 | **P5 — complex contours** *(coordinate with [[46_ladruno_complex_modal_adr|ADR 46]])* | `zfeast_*` complex contour for the damped/non-symmetric pencil; needs a complex inner SOE | re-host ADR 46's complex/state-space modal at scale; gated on ADR 46's quadratic-pencil linearization landing first |
 
@@ -529,11 +533,15 @@ precedents.
 >       $\begin{bmatrix}aM-K & -bM\\-bM & -(aM-K)\end{bmatrix}\begin{bmatrix}X_r\\X_i\end{bmatrix}=\begin{bmatrix}B\\0\end{bmatrix}$,
 >       symmetric indefinite (MUMPS `SYM=2`/LDLᵀ), reusing the existing real `dmumps` —
 >       **zero new external dependency**, at the cost of a new inner-SOE class and
->       ~2× factorization work per contour point (2n×2n, roughly 2× the nnz). The
->       zmumps alternative (build complex MUMPS + a `ComplexMumpsParallelSOE`) is the
->       fallback if the block-real factorization proves too slow in practice — record
->       that comparison in the P3 validation bundle, don't assume block-real wins on
->       cost alone.
+>       ~2× the factorization work of a hypothetical *complex* $n\times n$ solve
+>       (~8× the current *real* $n\times n$ solve in dense-flop terms; sparse fill is
+>       a third number — measure it). The zmumps alternative (build complex MUMPS + a
+>       `ComplexMumpsParallelSOE`) is the fallback if block-real proves too slow or
+>       too ill-conditioned in practice — the P3 validation bundle must record BOTH a
+>       cost comparison AND a conditioning sweep: the equivalent-real formulation is
+>       known to degrade vs the native complex system as $\mathrm{Im}(z_j)\to0$
+>       (flattened-ellipse contour points near the real axis), so assert residuals
+>       across the contour aspect-ratio range, not just mid-contour.
 > This is de-risked exactly as planned: P1–P2 (serial) are unaffected either way.
 
 > [!question] **R2 — MPI integer size / MKL threading model (ABI).**

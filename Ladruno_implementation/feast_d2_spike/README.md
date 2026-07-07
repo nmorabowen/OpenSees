@@ -85,10 +85,19 @@ dependency. Instead, P3 splits into three sub-phases:
   instead of a throwaway spike).
 - **P3b** — new inner SOE for the complex contour solve. Recommended: the symmetric
   real $2n\times2n$ block-augmentation (Finding 3), LDLᵀ via the existing real `dmumps`
-  (`SYM=2`) — **zero new external dependency**. Record a cost comparison against a
-  `zmumps`-based alternative in the P3 validation bundle before committing (block-real
-  costs ~2× factorization work per contour point; don't assume it wins without
-  measuring).
+  (`SYM=2`) — **zero new external dependency**. Two measurements are mandatory in the
+  P3 validation bundle before committing to it over a `zmumps` build:
+  - **Cost** (baseline stated explicitly): vs a hypothetical *complex* $n\times n$
+    factorization the block form is ~2× dense flops (real $(2n)^3$ vs complex
+    $\approx4n^3$) and ~2× memory; vs the *current real* $n\times n$
+    `MumpsParallelSOE` solve it is ~8× dense flops — and sparse fill of the $2n$
+    block pattern is a third number entirely, so measure, don't extrapolate.
+  - **Conditioning**: the equivalent-real ("K-formulation") system is known in the
+    complex-symmetric-solver literature to be worse-conditioned than the native
+    complex system when $\mathrm{Im}(z)$ is small — exactly the regime of a flattened
+    FEAST ellipse (high aspect ratio, contour points hugging the real axis near band
+    edges). The P3b gate must sweep the contour aspect ratio and assert the block-real
+    residuals hold as $b\to0$, not just at the comfortable mid-contour points.
 - **P3c** — `FeastEigenSolver` orchestration: `MPI_Comm_split` into per-quadrature
   sub-comms, each hosting a P3a/P3b inner SOE; `Allreduce`-sum the projector. Gate:
   strong/weak scaling, bit-comparable eigenpairs to the P1 serial run.
