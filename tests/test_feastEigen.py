@@ -296,6 +296,20 @@ def test_blockzgate_small_model(capfd):
     assert "-blockZGate PASS" in capfd.readouterr().err
 
 
+def test_blockzgate_empty_band(capfd):
+    """P3b on an empty band (info=1, m=0): the gate must still run — the
+    empty-band path falls THROUGH to the hook rather than returning early —
+    self-testing a band-midpoint shift with no interior eigenvalues."""
+    _frame(nx=1, ny=3)
+    lam_all = np.asarray(ops.eigen("-fullGenLapack", 6))
+    f = np.array([_hz(l) for l in lam_all])
+    out = ops.eigen("-feast", f[2] * 1.02, f[3] * 0.98, "-blockZGate")
+    empty = (out is None or out == 0 or
+             (hasattr(out, "__len__") and len(out) == 0))
+    assert empty
+    assert "-blockZGate PASS" in capfd.readouterr().err
+
+
 def test_blockzgate_composes_with_certify(capfd):
     """-certify and -blockZGate on the same run: both diagnostics fire and
     the eigenpairs are unchanged vs the plain band solve."""

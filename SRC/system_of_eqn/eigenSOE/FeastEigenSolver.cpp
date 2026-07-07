@@ -233,9 +233,10 @@ runBlockZGate(int n, const int *rowPtr, const int *colInd,
                << "    " << tB << "    " << tZ << "\n";
     }
 
-    // degradation regime (report-only): a ON the lowest found eigenvalue
+    // degradation regime (report-only): a ON a found eigenvalue (e[] is
+    // unsorted at this point — any in-band eigenvalue works for this test)
     if (m > 0) {
-        opserr << "  degradation regime (a on eigenvalue " << e[0]
+        opserr << "  degradation regime (a on found eigenvalue " << e[0]
                << ", report-only):\n";
         for (double frac : {1e-2, 1e-4, 1e-6}) {
             const double b = r * frac;
