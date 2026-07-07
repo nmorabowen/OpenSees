@@ -57,7 +57,7 @@ distributes; driver-parity gate λ ≤1e-8 rel + MAC ≥0.999 + `-certify`
 composition; MKL RCI QUIRK: `dfeast_srci` SHRINKS its in/out `m0` in place
 when the band holds fewer modes than the subspace — keep the caller's m0
 by value or the saturation-enlargement compare plateaus and refuses)
-MERGED (PR-P3C-SERIAL).** classTags **33022**
+MERGED ([#530](https://github.com/nmorabowen/OpenSees/pull/530)).** classTags **33022**
 (`FeastEigenSOE`) + **33023** (`FeastEigenSolver`) **ACTIVE in `SRC/classTags.h`**. P1 deviations
 from this draft (deliberate, ledgered): the packed CSR driver `dfeast_scsrgv` instead of the §5.2
 RCI seam — the RCI's complex shifted solves cannot route through a *real* inner `LinearSOE`, so
