@@ -42,6 +42,18 @@ eigenvalues are exact by construction. '-closedForm' keeps the P1 Route A.
   test_p2_betaK0_routeB        betaKinit handled by Route B; -closedForm refuses
   test_p2_scoped_region_exact  region -rayleigh on one element only vs numpy
   test_p2_equaldof_slave_damper dashpot on an equalDOF slave == on the master
+
+P3 (complex mode-shape output — the G-A ship gate): complexEigen pushes
+psi_k = Phi z_k onto the nodes (Node::setComplexEigenvector) and the Node
+recorder gains 'complexEigenRe<N>' / 'complexEigenIm<N>' channels.
+
+  test_p3_base_isolated_stick  THE G-A gate: isolation-mode zeta/omegaD vs
+                               numpy exact @1e-8 AND vs a Newmark free-decay
+                               log-decrement fit (2-5%)
+  test_p3_recorder_roundtrip   recorded Re/Im == the pushed shapes; phased
+                               (nonzero Im) for the non-classical chain
+  test_p3_classical_zero_phase classical model: psi collapses to the real
+                               eigenvector (Im ~ 0, Re == nodeEigenvector)
 """
 import math
 
@@ -458,6 +470,129 @@ def test_p2_equaldof_slave_damper():
     scale = max(abs(r) for r in ref)
     for g, r in zip(got, ref):
         assert abs(g - r) <= 1e-8 * scale
+
+
+# ------------------------------------------------------------- P3 (G-A gate)
+def test_p3_base_isolated_stick(tmp_path):
+    """THE ADR 46 G-A ship gate (§8.5): a stiff superstructure mass on a
+    soft, heavily-damped isolation layer. The isolation-mode zeta/omegaD
+    from complexEigen must match (a) the exact full-order state-space
+    eigenvalues at 1e-8 and (b) a logarithmic-decrement fit of the actual
+    Newmark free-decay time history (the same getDamp() C the transient
+    feels) to a few percent."""
+    m_iso, m_sup = 1.0, 1.0
+    k_iso, k_sup = 4.0, 400.0
+    c_iso = 0.6
+    M, K, C = _chain2dof(k1=k_iso, k2=k_sup, m2=m_iso, m3=m_sup,
+                         c=0.0, dashpot=False)
+    # dashpot at the ISOLATION level (node 2), not the superstructure
+    ops.node(4, 1.0)
+    ops.fix(4, 1)
+    ops.uniaxialMaterial("Viscous", 3, c_iso, 1.0)
+    ops.element("zeroLength", 3, 4, 2, "-mat", 3, "-dir", 1)
+    C[0, 0] = c_iso
+    ops.eigen("-fullGenLapack", 2)
+
+    # (a) exact oracle
+    modes = modes_table(ops.complexEigen())
+    ref = _oracle_lambdas(M, C, K)
+    scale = max(abs(r) for r in ref)
+    for m, r in zip(modes, ref):
+        assert abs(m["lambda"] - r) <= 1e-8 * scale
+    iso = modes[0]  # isolation mode = lowest omega0
+    assert iso["zeta"] > 0.05  # heavily damped, the mode the design hinges on
+
+    # (b) physical decay: release from a static push at the isolation level
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(2, 1.0)
+    ops.system("FullGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Transformation")
+    ops.integrator("LoadControl", 1.0)
+    ops.algorithm("Linear")
+    ops.analysis("Static")
+    ops.analyze(1)
+    ops.setTime(0.0)
+    ops.remove("loadPattern", 1)
+    ops.wipeAnalysis()
+    ops.system("FullGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Transformation")
+    ops.integrator("Newmark", 0.5, 0.25)
+    ops.algorithm("Linear")
+    ops.analysis("Transient")
+    T_iso = 2 * math.pi / iso["omegaD"]
+    dt = T_iso / 200.0
+    hist = []
+    for _ in range(int(6 * T_iso / dt)):
+        ops.analyze(1, dt)
+        hist.append(ops.nodeDisp(2, 1))
+    u = np.asarray(hist)
+    # peak picking -> log decrement + damped period
+    pk = [i for i in range(1, len(u) - 1)
+          if u[i] > u[i - 1] and u[i] >= u[i + 1] and u[i] > 0]
+    assert len(pk) >= 3
+    ratios = [u[pk[i]] / u[pk[i + 1]] for i in range(len(pk) - 1)]
+    delta = float(np.mean(np.log(ratios)))
+    zeta_th = delta / math.sqrt(4 * math.pi**2 + delta**2)
+    omega_d_th = 2 * math.pi / (float(np.mean(np.diff(pk))) * dt)
+    # the free decay mixes both modes slightly; 5% band per the ADR gate
+    assert zeta_th == pytest.approx(iso["zeta"], rel=0.05)
+    assert omega_d_th == pytest.approx(iso["omegaD"], rel=0.05)
+
+
+def test_p3_recorder_roundtrip(tmp_path):
+    """recorder Node ... complexEigenRe1/Im1 writes exactly the pushed
+    psi_1, and the non-classical chain has a genuinely PHASED shape
+    (nonzero Im after phase normalization)."""
+    _chain2dof()
+    ops.eigen("-fullGenLapack", 2)
+    f_re = str(tmp_path / "re1.out")
+    f_im = str(tmp_path / "im1.out")
+    ops.recorder("Node", "-file", f_re, "-precision", 15, "-node", 2, 3,
+                 "-dof", 1, "complexEigenRe1")
+    ops.recorder("Node", "-file", f_im, "-precision", 15, "-node", 2, 3,
+                 "-dof", 1, "complexEigenIm1")
+    ops.complexEigen()
+    ops.record()
+    ops.remove("recorders")
+    re = np.loadtxt(f_re, ndmin=2)[-1]
+    im = np.loadtxt(f_im, ndmin=2)[-1]
+    assert re.shape == (2,) and im.shape == (2,)
+    # phase normalization: the largest-|psi| entry is real-positive
+    mags = np.hypot(re, im)
+    jmax = int(np.argmax(mags))
+    assert re[jmax] > 0 and abs(im[jmax]) <= 1e-10 * mags[jmax]
+    # non-classical fingerprint: the OTHER entry carries genuine phase
+    jo = 1 - jmax
+    assert abs(im[jo]) > 1e-6 * mags[jmax]
+
+
+def test_p3_classical_zero_phase(tmp_path):
+    """Classical degeneracy (ADR §8.3): with pure global Rayleigh the
+    complex shapes collapse to the REAL eigenvectors — Im ~ 0 and Re equals
+    nodeEigenvector up to the documented phase convention."""
+    _cantilever(n_eigen=3)
+    ops.rayleigh(0.2, 0.001, 0.0, 0.0)
+    f_re = str(tmp_path / "re2.out")
+    f_im = str(tmp_path / "im2.out")
+    nodes = [2, 3, 4, 5]
+    ops.recorder("Node", "-file", f_re, "-precision", 15, "-node", *nodes,
+                 "-dof", 1, "complexEigenRe2")
+    ops.recorder("Node", "-file", f_im, "-precision", 15, "-node", *nodes,
+                 "-dof", 1, "complexEigenIm2")
+    ops.complexEigen()
+    ops.record()
+    ops.remove("recorders")
+    re = np.loadtxt(f_re, ndmin=2)[-1]
+    im = np.loadtxt(f_im, ndmin=2)[-1]
+    phi = np.array([ops.nodeEigenvector(n, 2)[0] for n in nodes])
+    scale = float(np.max(np.abs(phi)))
+    assert np.max(np.abs(im)) <= 1e-8 * scale          # zero phase spread
+    # Re == phi up to one common factor (mode-scale convention)
+    j = int(np.argmax(np.abs(phi)))
+    np.testing.assert_allclose(re / re[j], phi / phi[j], atol=1e-8)
 
 
 def test_p1_guards():

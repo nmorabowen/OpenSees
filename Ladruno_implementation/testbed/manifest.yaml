@@ -1437,6 +1437,9 @@ features:
       - SRC/interpreter/TclWrapper.cpp
       - SRC/domain/domain/Domain.h               # vanilla: Rayleigh-factor domain copy + getter (additive)
       - SRC/domain/domain/Domain.cpp
+      - SRC/domain/node/Node.h                   # P2/P3: eigenvector probes + complex mode-shape storage (additive)
+      - SRC/domain/node/Node.cpp
+      - SRC/recorder/NodeRecorder.cpp            # P3: complexEigenRe<N>/Im<N> channels
       - SRC/analysis/analysis/CMakeLists.txt
     dispatch: {tcl: true, functionMap: true}
     status: active
