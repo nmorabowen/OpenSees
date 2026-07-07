@@ -1245,6 +1245,15 @@ static int Tcl_ops_criticalTimeStep(ClientData clientData, Tcl_Interp *interp, i
     return TCL_OK;
 }
 
+// Ladruno ADR46
+static int Tcl_ops_complexEigen(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {
+    wrapper->resetCommandLine(argc, 1, argv);
+
+    if (OPS_complexEigen() < 0) return TCL_ERROR;
+
+    return TCL_OK;
+}
+
 static int Tcl_ops_systemSize(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {
     wrapper->resetCommandLine(argc, 1, argv);
 
@@ -2002,6 +2011,7 @@ TclWrapper::addOpenSeesCommands(Tcl_Interp* interp)
     addCommand(interp,"numFact", &Tcl_ops_numFact);
     addCommand(interp,"numIter", &Tcl_ops_numIter);
     addCommand(interp,"criticalTimeStep", &Tcl_ops_criticalTimeStep);
+    addCommand(interp,"complexEigen", &Tcl_ops_complexEigen);   // Ladruno ADR46
     addCommand(interp,"systemSize", &Tcl_ops_systemSize);
     addCommand(interp,"version", &Tcl_ops_version);
     addCommand(interp,"setMaxOpenFiles", &Tcl_ops_setMaxOpenFiles);

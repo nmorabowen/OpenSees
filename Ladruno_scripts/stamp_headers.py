@@ -49,6 +49,7 @@ GLOBS = [
     "SRC/element/bezierTetrahedron/*.cpp", "SRC/element/bezierTetrahedron/*.h",
     "SRC/element/solidTransformation/*.cpp", "SRC/element/solidTransformation/*.h",
     "SRC/utility/profiler/*.cpp", "SRC/utility/profiler/*.h",
+    "SRC/analysis/analysis/LadrunoComplexEigen.*",
     "SRC/material/nD/LadrunoJ2.*", "SRC/material/nD/LadrunoJ2Kernel.h",
     "SRC/material/nD/LadrunoJ2Finite.*",
     "SRC/material/nD/LadrunoRCConcrete.*", "SRC/material/nD/LadrunoRCKernel.h",

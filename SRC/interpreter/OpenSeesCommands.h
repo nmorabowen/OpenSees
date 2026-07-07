@@ -475,6 +475,7 @@ int OPS_accelCPU();
 int OPS_numFact();
 int OPS_numIter();
 int OPS_criticalTimeStep();
+int OPS_complexEigen();   // Ladruno ADR46: complex/state-space modal (P0: -qz kernel only)
 int* OPS_GetNumEigen();
 int OPS_systemSize();
 int OPS_domainCommitTag();
