@@ -46,7 +46,7 @@ FeastEigenSOE::FeastEigenSOE(FeastEigenSolver &theSolvr)
  size(0), nnz(0), csrCapacity(0),
  rowPtr(0), colInd(0), Kvals(0), Mvals(0),
  emin(0.0), emax(0.0), m0(0), nq(8), maxRefine(20), tolExp(12), verbose(false),
- certifyFlag(false), blockZGateFlag(false)
+ certifyFlag(false), blockZGateFlag(false), rciFlag(false)
 {
   theSolvr.setEigenSOE(*this);
 }
@@ -253,6 +253,7 @@ void FeastEigenSOE::setTol(double eps)             { tolExp = (int)eps; }
 void FeastEigenSOE::setVerbose(bool v)             { verbose = v; }
 void FeastEigenSOE::setCertify(bool c)             { certifyFlag = c; }
 void FeastEigenSOE::setBlockZGate(bool g)          { blockZGateFlag = g; }
+void FeastEigenSOE::setRci(bool r)                 { rciFlag = r; }
 
 int
 FeastEigenSOE::getNumFoundModes(void) const
@@ -271,6 +272,7 @@ int    FeastEigenSOE::getTol(void) const           { return tolExp; }
 bool   FeastEigenSOE::getVerbose(void) const       { return verbose; }
 bool   FeastEigenSOE::getCertify(void) const       { return certifyFlag; }
 bool   FeastEigenSOE::getBlockZGate(void) const    { return blockZGateFlag; }
+bool   FeastEigenSOE::getRci(void) const           { return rciFlag; }
 
 int
 FeastEigenSOE::sendSelf(int commitTag, Channel &theChannel)

@@ -2195,7 +2195,8 @@ int OPS_analyze() {
 }
 
 // Ladruno ADR43: eigen -feast fmin fmax [-m0 n] [-nq n] [-tol exp]
-//                       [-maxiter n] [-verbose] [-certify]
+//                       [-maxiter n] [-verbose] [-certify] [-blockZGate]
+//                       [-rci]
 // -certify (P2): also count the band content via Sturm/inertia (PARDISO
 // LDL^T negative pivots at the two band edges) and REFUSE on mismatch with
 // FEAST's count — the independent completeness certificate.
@@ -2225,6 +2226,7 @@ static int OPS_eigenFeast()
     bool verbose = false;
     bool certify = false;
     bool blockZGate = false;   // Ladruno ADR43 P3b
+    bool rci = false;          // Ladruno ADR43 P3c
     while (OPS_GetNumRemainingInputArgs() > 0) {
 	const char* flag = OPS_GetString();
 	if (strcmp(flag, "-m0") == 0 && OPS_GetNumRemainingInputArgs() > 0) {
@@ -2264,6 +2266,11 @@ static int OPS_eigenFeast()
 	    // (sweeps the contour flattening Im(z) -> 0 on the SOE's own CSR
 	    // and refuses if the 2n block-real solve degrades; see the ADR)
 	    blockZGate = true;
+	} else if (strcmp(flag, "-rci") == 0) {
+	    // Ladruno ADR43 P3c: drive FEAST through the dfeast_srci RCI with
+	    // the block-real kernel as the inner contour solve (the seam the
+	    // MPI rung distributes); eigenpairs match the driver path
+	    rci = true;
 	} else {
 	    opserr << "WARNING eigen -feast: unknown option '" << flag
 		   << "'\n";
@@ -2284,6 +2291,7 @@ static int OPS_eigenFeast()
     theSOE->setVerbose(verbose);
     theSOE->setCertify(certify);
     theSOE->setBlockZGate(blockZGate);   // Ladruno ADR43 P3b
+    theSOE->setRci(rci);                 // Ladruno ADR43 P3c
 
     // analysis-side mode-loop cap; the reconcile trims to the found count.
     // NOT tied to m0: m0 is the FEAST subspace SEED (auto-enlarged on

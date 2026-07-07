@@ -74,6 +74,7 @@ class FeastEigenSOE : public EigenSOE
     void setVerbose(bool verbose);  // MKL fpm[0] runtime print
     void setCertify(bool certify);  // P2: Sturm/inertia completeness check
     void setBlockZGate(bool g);     // P3b: block-real complex-shift self-test
+    void setRci(bool r);            // P3c: dfeast_srci RCI orchestration
 
     // found-mode count from the last solve (the band defines the count;
     // the command layer reconciles the domain's list to this)
@@ -88,6 +89,7 @@ class FeastEigenSOE : public EigenSOE
     bool   getVerbose(void) const;
     bool   getCertify(void) const;
     bool   getBlockZGate(void) const;
+    bool   getRci(void) const;
 
     int sendSelf(int commitTag, Channel &theChannel);
     int recvSelf(int commitTag, Channel &theChannel,
@@ -121,6 +123,8 @@ class FeastEigenSOE : public EigenSOE
     bool verbose;
     bool certifyFlag;    // P2: assert FEAST m == Sturm/inertia band count
     bool blockZGateFlag; // P3b: block-real complex-shift solve self-test
+    bool rciFlag;        // P3c: route the solve through the dfeast_srci RCI
+                         // with LadrunoBlockZKernel as the inner solve
 };
 
 #endif
