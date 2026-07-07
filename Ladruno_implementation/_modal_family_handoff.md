@@ -32,19 +32,26 @@ adversarial gates ran; every finding is fixed-with-regression or in
 
 ## What the next session picks up (in umbrella order)
 
-### 1. The D2 spike (BEFORE any P-C work — decision gate, not a PR)
-Question: can MKL FEAST **RCI** (`dfeast_srci`) run its contour solves through a
-`MumpsParallelSOE` on an `MPI_Comm_split` sub-communicator? Launch package:
-- Toy: ~1k-DOF frame, 2–4 ranks, split into 2 sub-comms; per sub-comm factor
-  `(z_j M - K)` with MUMPS (**complex** shift — MUMPS must run its complex
-  build, or exploit the conjugate-pair trick in ADR 43 §5.2 if it survives
-  scrutiny; this is exactly what P1 dodged by using `dfeast_scsrgv`).
-- Outcome A (works) → P3 per-contour MPI + P4 SP/MP build-flag unification
-  (`_PARALLEL_PROCESSING` vs `_PARALLEL_INTERPRETERS` surgery — full
-  adversarial gate, touches the parallel mains).
-- Outcome B (MKL resists) → vendor PFEAST 4.0 into `OTHER/FEAST/` behind a
-  CMake gate (ARPACK precedent); pin MPI-int/threading ABI in
-  [[Ladruno_internal]]'s compilation journal.
+### 1. The D2 spike — RUN 2026-07-07, decision made (see ADR 43 §5.2/§9 R1, umbrella §5 D2,
+[[feast_d2_spike/README]]). No MPI toy build was needed — reading
+`MumpsParallelSolver`/`MumpsParallelSOE` plus the local MUMPS build state settled it:
+1. **`MumpsParallelSolver` hardcodes `MPI_COMM_WORLD`** — the `mpi_comm` constructor
+   arg is accepted and silently discarded (`MumpsParallelSolver.cpp:54-64,97,104-105`).
+   Bounded plumbing bug, now [[LEDGER_quirks|ledgered]].
+2. **ADR 43 §5.2's "real solver per conjugate pair" claim was wrong** — refuted against
+   the FEAST v3/v4 User Guides and MKL's `?feast_srci` reference (Opus
+   cross-check): every contour solve is genuinely complex. The fork's local MUMPS is
+   real-only (`arith=d`, no `zmumps.lib`) anyway.
+3. Numerically verified (numpy, 1e-15 rel. error) that a symmetric real $2n\times2n$
+   block-augmented system reproduces the complex solve exactly and can be factored
+   LDLᵀ (`SYM=2`) with the *existing* real `dmumps` — zero new dependency.
+
+**Decision: stay on MKL FEAST, no PFEAST vendoring.** P3 (next session, per ADR 43's
+phased roadmap) splits into P3a (sub-communicator plumbing fix) → P3b (new symmetric
+2n×2n block-real inner SOE) → P3c (`MPI_Comm_split` orchestration + `Allreduce`-sum
+projector), then P4 SP/MP build-flag unification unchanged. P3a/b/c and P4 are all
+core/parallel-build edits → full adversarial gate (per
+[[feedback_adversarial_gate_when]]).
 
 ### 2. Demand-driven lanes (build when a project asks)
 - **ADR 42 buckling** (33021): rides serial eigen; `-shift` exposure is

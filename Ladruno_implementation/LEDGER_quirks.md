@@ -2679,3 +2679,22 @@ is immune (uses eigenvalues only, never Φ).
   `subprocess.run`, exe outputs under `tmp_path`.
 - **General rule:** in any long-lived process that touched gmsh, pass
   `env=os.environ.copy()` and absolute executable paths to `subprocess`.
+
+### `MumpsParallelSolver` accepts an `mpi_comm` constructor argument and silently ignores it — always binds to `MPI_COMM_WORLD`
+
+- **Bites:** ADR 43 P3 (FEAST-over-sub-communicator, D2 spike, 2026-07-07). Anyone
+  assuming `MumpsParallelSOE`/`MumpsParallelSolver` can be pointed at an
+  `MPI_Comm_split` sub-communicator today by passing a comm handle — it compiles and
+  runs, but silently uses `MPI_COMM_WORLD` for the factorization anyway (wrong ranks
+  participate, or it deadlocks/hangs on a partial-world sub-comm).
+- **Why:** `MumpsParallelSolver::MumpsParallelSolver(int mpi_comm, int ICNTL7, int
+  ICNTL14)` (`MumpsParallelSolver.cpp:54-64`) takes the parameter but never stores it —
+  no member is set. `initializeMumps()` (`:93-105`) hardcodes
+  `id.comm_fortran = MPI_Comm_c2f(MPI_COMM_WORLD)` on the Intel-MPI path (this fork's
+  Windows/oneAPI build), `0` (MUMPS's own WORLD) under `_OPENMPI`; the rank/size probe
+  two lines later also reads `MPI_COMM_WORLD` directly. Dead parameter, not a config
+  toggle.
+- **Fix (ADR 43 P3a, not yet built):** store the passed communicator on the solver,
+  `MPI_Comm_c2f` *it* (not WORLD) into `id.comm_fortran`, and use it for the
+  `MPI_Comm_rank/size` probe too; thread it through `MumpsParallelSOE`'s constructor,
+  which today never passes one either.

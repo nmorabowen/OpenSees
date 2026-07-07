@@ -150,13 +150,23 @@ contours. v1 contract = *exactly* `getDamp()` + Rayleigh; **warn** (don't silent
 (`M̃=I`, `K̃=diag(ω²)`); element/material dampers require the full `ΦᵀCΦ` projection (ADR 46
 §4.6 Route B), never a closed form. Owner: P-A.
 
-### D2 — MKL-FEAST vs vendored PFEAST (from ADR 43 — the big build call)
+### D2 — MKL-FEAST vs vendored PFEAST (from ADR 43 — the big build call) — **RESOLVED 2026-07-07**
 Intel MKL's Extended Eigensolver **is** FEAST and the build already links MKL → **serial P-B costs
-zero new dependency.** Open question is whether MKL's RCI form lets each contour solve run as an
-OpenSees `MumpsParallelSOE` solve on an arbitrary MPI sub-communicator. **Decision:** stay on
-**MKL-FEAST for P-B**; **defer the MKL-vs-vendored-PFEAST call to the P-C gate** (P-B/P-A are
-identical either way). If MKL's distributed layer resists user sub-communicators, vendor PFEAST 4.0
-into `OTHER/FEAST/` (ARPACK precedent in `OTHER/ARPACK/`). Owner: P-C gate.
+zero new dependency.** The open question was whether MKL's RCI form lets each contour solve run as an
+OpenSees `MumpsParallelSOE` solve on an arbitrary MPI sub-communicator. **D2 spike run** (source read
++ numerical check + Opus literature cross-check, full record [[_modal_family_handoff]] and ADR 43
+§5.2/§9 R1): found two independent, concrete facts, neither of which favors vendoring PFEAST.
+(1) `MumpsParallelSolver` **hardcodes `MPI_COMM_WORLD`** — the `mpi_comm` constructor argument is
+silently discarded (`MumpsParallelSolver.cpp:54-64,97,104-105`) — a bounded plumbing bug, not an
+architectural wall. (2) **Every FEAST contour solve is genuinely complex**, refuting ADR 43's old
+§5.2 claim that a real solver suffices "per conjugate pair" (checked against the FEAST v3/v4 User
+Guides and MKL's `?feast_srci` reference — even MKL's own convenience driver calls complex PARDISO
+internally); the fork's local MUMPS build is real-only (`arith=d`, no `zmumps.lib`). **Decision:
+stay on MKL FEAST — no PFEAST vendoring.** P-C/P3 must instead ship two OpenSees-side fixes: (a) make
+`MumpsParallelSolver`/`SOE` honor a passed sub-communicator, and (b) a complex inner solve —
+recommended as a symmetric real $2n\times2n$ block-augmented system (LDLᵀ via the existing real
+`dmumps`, `SYM=2`, numerically verified exact to 1e-15) rather than building `zmumps`. Zero new
+external dependency either way. Owner: P-C (now unblocked — see ADR 43 phased roadmap P3a/b/c).
 
 ### D3 — `eigen` `-shift` exposure (from ADR 42)
 Buckling needs a non-zero shift (`ΔK` indefinite) but `eigen` currently hard-zeros the shift
@@ -201,7 +211,7 @@ merges without its gate green.
 
 | # | Risk | Mitigation |
 |---|---|---|
-| R1 | **FEAST build dependency** (MKL RCI sub-communicator limits → vendoring PFEAST) | Defer to P-C gate; P-A/P-B unaffected; ARPACK vendoring precedent |
+| R1 | **FEAST build dependency** — **RESOLVED**: no vendoring; MKL FEAST stays, gated on two OpenSees-side P3 fixes (D2 spike, 2026-07-07) | P3a comm-split plumbing fix in `MumpsParallelSolver`; P3b symmetric 2n×2n block-real inner SOE (existing `dmumps`, zero new dep); both unit-tested before P3c orchestration |
 | R2 | **SP/MP build-flag surgery** (`_PARALLEL_PROCESSING` vs `_PARALLEL_INTERPRETERS`) is general-infra risk | Land serially first (P-B); isolate the gate change; test SP==MP==serial spectrum |
 | R3 | **MKL ABI** (MPI integer size, threading model) | Pin in [[Ladruno_internal]] compilation journal at P-C; mirror existing MKL usage |
 | R4 | **Assembled-`C` scope creep** (D1) | v1 = exactly `getDamp()`+Rayleigh; warn on others; widen only with sign-off |
