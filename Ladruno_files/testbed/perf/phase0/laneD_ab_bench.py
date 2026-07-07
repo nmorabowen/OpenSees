@@ -5,6 +5,8 @@ included). Env knobs:
   OPS_DIST   - dir containing opensees.pyd (REQUIRED)
   CDL_FLAGS  - extra integrator flags, space-separated (e.g. "-commitSolveState")
   ALGO_FLAGS - extra algorithm Linear flags (e.g. "-factorOnce")
+  ELE_FLAGS  - extra LadrunoBrick element flags (e.g. "-noInertiaSkip"; ADR-68 T7)
+  NSTEPS     - number of timed steps (default 2500)
   PROF_OUT   - h5 report path; empty/unset = profiler OFF (clean wall)
 Prints one machine-parseable RESULT line.
 """
@@ -24,6 +26,7 @@ assert _got.startswith(_want), f"WRONG PYD: {ops.__file__}"
 
 CDL_FLAGS = os.environ.get("CDL_FLAGS", "").split()
 ALGO_FLAGS = os.environ.get("ALGO_FLAGS", "").split()
+ELE_FLAGS = os.environ.get("ELE_FLAGS", "").split()   # Ladruno (ADR-68 T7)
 PROF_OUT = os.environ.get("PROF_OUT", "")
 
 ops.wipe()
@@ -56,7 +59,7 @@ for k in range(NZ):
             ops.element("LadrunoBrick", eid,
                         nid(i, j, k), nid(i+1, j, k), nid(i+1, j+1, k), nid(i, j+1, k),
                         nid(i, j, k+1), nid(i+1, j, k+1), nid(i+1, j+1, k+1), nid(i, j+1, k+1),
-                        1, "-lumped")
+                        1, "-lumped", *ELE_FLAGS)
 
 ops.timeSeries("Path", 1, "-dt", 1.0e-3, "-values", 0.0, 1.0, 0.0, 0.0, 0.0, 0.0)
 ops.pattern("Plain", 1, 1)
@@ -78,7 +81,7 @@ ops.analyze(1, dt_est)
 dtcr = ops.criticalTimeStep()
 dt = 0.8 * dtcr if (dtcr and dtcr > 0) else dt_est
 
-NSTEPS = 2500
+NSTEPS = int(os.environ.get("NSTEPS", "2500"))
 if PROF_OUT:
     if os.path.exists(PROF_OUT):
         os.remove(PROF_OUT)
@@ -98,4 +101,4 @@ top = nid(NX // 2, NY // 2, NZ)
 uz = ops.nodeDisp(top, 3)
 print(f"RESULT wall={t1-t0:.3f} nfail={nfail} dt={dt:.6e} uz={uz:.17e} "
       f"dist={DIST} cdl='{' '.join(CDL_FLAGS)}' algo='{' '.join(ALGO_FLAGS)}' "
-      f"prof={'on' if PROF_OUT else 'off'}")
+      f"ele='{' '.join(ELE_FLAGS)}' prof={'on' if PROF_OUT else 'off'}")

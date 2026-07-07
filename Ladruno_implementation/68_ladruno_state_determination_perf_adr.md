@@ -139,6 +139,43 @@ frames** — the fork's IMK lane, entirely unscoped by ADR-40's benches.
 | T4/T5 | Unmeasured | need the EAS + finite-strain benches; Lemaitre bbar-vs-eas dump is prior art |
 | T6 | **DEMOTED — refuted by the `elem.update` instrument (2026-07-06 re-measure)** | hinge Newton = 0.62 µs/ele, ~14% of the update phase, total 33004 work ≈12% of step; the 35.4% band was integrator/domain update MACHINERY, not element work. Warm-start ceiling <1% — dropped. Lane E's real profile = solve ~30% + update machinery ~30% + per-step glue ~25% (small-model fixed-overhead regime) |
 
+## T7 — SHIPPED (2026-07-07): CDL inertia no-op skip · G-BYTE
+
+`LadrunoBrick::formInertiaTerms(tangFlag)` now returns immediately when
+`tangFlag==0 && inertiaSkip` and **every** nodal trial-accel component is exactly
+`0.0` (8 nodes × 3 dof, ~24 exact-float compares). Under CDL the residual is posed
+at trial accel ≡ 0, so the skipped block contributes only zeros; the mass matrix
+(`tangFlag==1`, from `getMass`/`addInertiaLoadToUnbalance`) is never skipped.
+Escape: `element LadrunoBrick … -noInertiaSkip` (a transient, **unserialized**
+per-element flag set via `setInertiaSkip()` — both settings are G-BYTE-identical,
+so a broker-reconstructed element defaulting to skip-ON is correct).
+
+**Adversarial gate (Opus) → G-BYTE DEFENSIBLE, and STRONGER than ==-identical.**
+The reviewer refuted the design's own conceded `-0.0` edge: `resid` is
+`Zero()`-primed and its **last** write in every formulation is `resid += bodyForce`
+(or the finite inline body subtraction), which renormalizes any `-0.0` to `+0.0`
+*before* `getResistingForceIncInertia` reads it — so the skipped `resid += temp·(+0.0)`
+is a provable no-op with **no** sign-of-zero divergence. It is bit-identical, not
+merely value-equal.
+- **LOAD-BEARING INVARIANT (recorded per the gate):** the `resid.Zero()`-prime +
+  trailing `resid += bodyForce` normalization is what makes the skip bit-identical.
+  Do **not** optimize away the trailing bodyForce add when `bodyForce==0`, nor
+  reorder `globalizeForce` after it — either weakens bit-identity to `==`-identity.
+- `mass.Zero()` side effect: benign — `mass` is read only by `getMass`/
+  `addInertiaLoadToUnbalance`, both of which call `formInertiaTerms(1)` first (which
+  re-zeros); `Element::getRayleighDampingForces` uses the virtual `getMass()`, not
+  the member. Implicit integrators pass through untouched (nonzero trial accel).
+
+**Validation:** Zone-A `tests/test_brick_inertia_skip.py` — IS-1 CDL-wave
+displacement bit-identity, **IS-2 signbit lock** (recorded nodal accel compared
+byte-for-byte via `struct.pack`, catching any `-0.0/+0.0` a value-`==` gate would
+miss — the gate-recommended assertion), IS-3 Newmark implicit passthrough, IS-4
+Rayleigh `-alphaM` under CDL — **4/4 PASS**. Perf: lane-D A/B (`laneD_ab_bench.py`
++ new `ELE_FLAGS`/`NSTEPS` knobs, median-of-5 interleaved, 10³ LadrunoBrick+J2,
+1000 CDL steps): **−8.2%** wall (21.93 s skip vs 23.89 s `-noInertiaSkip`), in the
+predicted ~5–10% band; **uz bit-identical to 17 digits** across configs. Fork-owned
+file (no vanilla footprint, no class tag).
+
 ## Phasing (inherits ADR-40 Phase 0 as a hard gate)
 
 - **Phase 0 (ADR-40, prerequisite — not owned here):** publish the attributed per-phase breakdown

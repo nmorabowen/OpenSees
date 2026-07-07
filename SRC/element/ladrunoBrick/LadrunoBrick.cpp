@@ -126,6 +126,7 @@ LadrunoBrick::LadrunoBrick()
    hourglassType(Hourglass::PHYSICAL), hourglassCoeff(0.0),
    bulkVisc_b1(0.0), bulkVisc_b2(0.0),        // Ladruno (W2-E1): bulk viscosity off
    applyLoad(0), load(0), Ki(0), massType(0),
+   inertiaSkip(true),                          // Ladruno (ADR-68 T7)
    theGeom(new SolidTransformationLinear()),  // Ladruno — v1 identity geometry
    damageResponse(0),                          // Ladruno — Tier-A Kstab (built in setDomain)
    sspBnot(0), sspKstab(0), sspVol(0.0),      // Ladruno — ssp (built in setDomain)
@@ -167,6 +168,7 @@ LadrunoBrick::LadrunoBrick(int tag,
    hourglassType(hgType), hourglassCoeff(hgCoeff),
    bulkVisc_b1(b1bv), bulkVisc_b2(b2bv),      // Ladruno (W2-E1): bulk-viscosity coeffs
    applyLoad(0), load(0), Ki(0), massType(matype),
+   inertiaSkip(true),                          // Ladruno (ADR-68 T7)
    theGeom(0),                                // Ladruno — set below from geomMethodID
    damageResponse(0),                          // Ladruno — Tier-A Kstab (built in setDomain)
    sspBnot(0), sspKstab(0), sspVol(0.0),      // Ladruno — ssp (built in setDomain)
@@ -719,6 +721,33 @@ void   LadrunoBrick::formInertiaTerms(int tangFlag)
   static Vector momentum(ndf);
 
   double temp, rho, massJK;
+
+  // Ladruno (ADR-68 T7): CDL inertia no-op skip. Under CentralDifferenceLadruno
+  // the residual is formed at trial accel == 0 (the Azero solve): momentum =
+  // Sum_j N_j * a_j = 0 exactly, so the whole tangFlag==0 pass adds only zeros to
+  // resid -- yet still pays computeBasis() + 8x shp3d() (~11% of explicit element
+  // work). Skip it when every nodal trial accel is exactly 0.0 (~24 exact-float
+  // compares). The mass matrix (tangFlag==1, from getMass/addInertiaLoadToUnbalance)
+  // is NEVER skipped.
+  //
+  // Gate = G-BYTE (bit-identical), and stronger than ==-identical: resid is
+  // Zero()-primed and its LAST write in every formulation is `resid += bodyForce`
+  // (or the finite inline body subtraction), which renormalizes any -0.0 to +0.0
+  // BEFORE this function is reached -- so the skipped `resid += temp*(+0.0)` is a
+  // provable no-op with no sign-of-zero divergence. That normalization is a
+  // LOAD-BEARING INVARIANT: do not drop the trailing bodyForce add nor reorder
+  // globalizeForce after it, or bit-identity weakens to ==-identity. Correct for
+  // ANY integrator (it fires only where the contribution is provably zero).
+  // Escape: element ... -noInertiaSkip.
+  if (tangFlag == 0 && inertiaSkip) {
+    bool allZero = true;
+    for (int j = 0; j < numberNodes && allZero; j++) {
+      const Vector &aj = nodePointers[j]->getTrialAccel();
+      for (int p = 0; p < ndf; p++)
+        if (aj(p) != 0.0) { allZero = false; break; }
+    }
+    if (allZero) return;
+  }
 
   OPS_PROFILE_SCOPE_DEEP("brick.inertia");   // Ladruno (ADR-68 T3 drill): inertia-path share, deep-gated
   mass.Zero();
