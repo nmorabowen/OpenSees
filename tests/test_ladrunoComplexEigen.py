@@ -29,6 +29,19 @@ multi-DOF frame, against the frequencies the domain's own `eigen` returned.
   test_p1_undamped_domain      no rayleigh: zeta == 0, omega0 == sqrt(eigen)
   test_p1_mode_subset          bare-int and -numModes spellings
   test_p1_guards               no prior eigen / betaKinit / betaKcomm refused
+
+P2 (Route B, the non-classical core): the DEFAULT path projects M and C
+element-by-element from getDamp()/getMass() + nodal mass/damping
+(LadrunoDampingAssembler) and synthesizes Kt = sym(Mt diag(w^2)); the full
+projected Mt goes to the QZ kernel, so ANY eigen normalization and repeated
+eigenvalues are exact by construction. '-closedForm' keeps the P1 Route A.
+
+  test_p2_routeB_equals_routeA default == -closedForm on pure global Rayleigh
+  test_p2_2dof_nonclassical_domain  THE oracle: dashpot on one DOF vs numpy
+  test_p2_doRayleigh_quirk     zeroLength ignores betaK (doRayleigh=0) vs numpy
+  test_p2_betaK0_routeB        betaKinit handled by Route B; -closedForm refuses
+  test_p2_scoped_region_exact  region -rayleigh on one element only vs numpy
+  test_p2_equaldof_slave_damper dashpot on an equalDOF slave == on the master
 """
 import math
 
@@ -275,12 +288,176 @@ def test_p1_scoped_rayleigh_warns(capfd):
     report a zeta that ignores the scoped damping."""
     _cantilever()
     ops.rayleigh(0.1, 0.001, 0.0, 0.0)
-    modes_table(ops.complexEigen())
+    modes_table(ops.complexEigen("-closedForm"))
     assert "differ from the last global" not in capfd.readouterr().err
     ops.region(1, "-ele", 1, 2, "-rayleigh", 0.5, 0.0, 0.0, 0.0)
-    modes = modes_table(ops.complexEigen())
+    modes = modes_table(ops.complexEigen("-closedForm"))
     assert len(modes) == 4  # still answers (global factors), but flagged:
     assert "differ from the last global" in capfd.readouterr().err
+    # the DEFAULT assembled path handles scoped damping exactly -> no warning
+    modes_table(ops.complexEigen())
+    assert "differ from the last global" not in capfd.readouterr().err
+
+
+# ---------------------------------------------------------------- P2 Route B
+def _chain2dof(k1=400.0, k2=150.0, m2=2.0, m3=1.0, c=1.2, dashpot=True):
+    """1D two-DOF spring-mass chain, optional grounded dashpot on DOF 2
+    (node 3) — the canonical non-classical textbook system. Returns the
+    exact (M, K, C_dashpot_only) numpy operators for oracle use."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 1, "-ndf", 1)
+    ops.node(1, 0.0)
+    ops.node(2, 1.0)
+    ops.node(3, 2.0)
+    ops.fix(1, 1)
+    ops.mass(2, m2)
+    ops.mass(3, m3)
+    # truss springs: k = EA/L with A=L=1 -> E=k
+    ops.uniaxialMaterial("Elastic", 1, k1)
+    ops.uniaxialMaterial("Elastic", 2, k2)
+    # -doRayleigh 1 EXPLICIT: Truss (like the zeroLength family) defaults the
+    # flag to 0, i.e. by default trusses feel NO global Rayleigh damping —
+    # Route B faithfully reproduces that transient reality (the assembled C
+    # is exactly getDamp()), so the oracle must model elements that DO carry
+    # the factors. Discovered by this very test: with default trusses the
+    # assembled zeta was (correctly!) zero while the closed form claimed
+    # bK*w/2 — the closed form is the one that diverges from the transient.
+    ops.element("Truss", 1, 1, 2, 1.0, 1, "-doRayleigh", 1)
+    ops.element("Truss", 2, 2, 3, 1.0, 2, "-doRayleigh", 1)
+    if dashpot:
+        ops.node(4, 2.0)
+        ops.fix(4, 1)
+        ops.uniaxialMaterial("Viscous", 3, c, 1.0)
+        ops.element("zeroLength", 3, 4, 3, "-mat", 3, "-dir", 1)
+    M = np.diag([m2, m3])
+    K = np.array([[k1 + k2, -k2], [-k2, k2]])
+    C = np.zeros((2, 2))
+    if dashpot:
+        C[1, 1] = c
+    return M, K, C
+
+
+def _domain_lambdas(flat):
+    """Reported physical lambdas (+Im representative) sorted by omega0."""
+    return [m["lambda"] for m in modes_table(flat)]
+
+
+def _oracle_lambdas(M, C, K):
+    """Independent full-order state-space eig; one root per physical mode
+    (the +Im representative of each conjugate pair), sorted by |lambda|."""
+    n = M.shape[0]
+    A = np.block([[np.zeros((n, n)), np.eye(n)],
+                  [-np.linalg.solve(M, K), -np.linalg.solve(M, C)]])
+    lams = np.linalg.eigvals(A)
+    keep = [l for l in lams if l.imag > 1e-12]
+    keep += [l.real + 0j for l in lams if abs(l.imag) <= 1e-12]
+    return sorted(keep, key=lambda l: (abs(l), l.real))
+
+
+def test_p2_routeB_equals_routeA():
+    """On a pure GLOBAL-Rayleigh model the assembled projection must
+    reproduce the closed form to near machine precision — pins the element
+    AND nodal-mass/nodal-alphaM loops at once (cantilever mass is nodal)."""
+    _cantilever()
+    ops.rayleigh(0.3, 0.0006, 0.0, 0.0)
+    routeB = modes_table(ops.complexEigen())
+    routeA = modes_table(ops.complexEigen("-closedForm"))
+    assert len(routeB) == len(routeA) == 4
+    for b, a in zip(routeB, routeA):
+        assert b["lambda"].real == pytest.approx(a["lambda"].real, rel=1e-10)
+        assert b["lambda"].imag == pytest.approx(a["lambda"].imag, rel=1e-10)
+        assert b["zeta"] == pytest.approx(a["zeta"], rel=1e-10)
+        assert b["resid"] <= 1e-8
+
+
+def test_p2_2dof_nonclassical_domain():
+    """THE P2 gate (ADR 46 §8.2): a dashpot on ONE dof of a 2-DOF chain —
+    C is not simultaneously diagonalizable with M and K. With p = N = 2 the
+    projection is EXACT, so the domain solve must match the full-order
+    state-space oracle to 1e-8."""
+    M, K, C = _chain2dof()
+    ops.eigen("-fullGenLapack", 2)
+    got = _domain_lambdas(ops.complexEigen())
+    ref = _oracle_lambdas(M, C, K)
+    assert len(got) == 2
+    scale = max(abs(r) for r in ref)
+    for g, r in zip(got, ref):
+        assert abs(g - r) <= 1e-8 * scale
+    # non-classical fingerprint: the two zetas are distinct and both nonzero
+    z = [m["zeta"] for m in modes_table(ops.complexEigen())]
+    assert z[0] > 1e-4 and z[1] > 1e-4 and abs(z[0] - z[1]) > 1e-4
+
+
+def test_p2_doRayleigh_quirk():
+    """LEDGER_quirks: zeroLength -doRayleigh defaults 0 — global betaK adds
+    stiffness damping to the TRUSSES but NOT to the dashpot's zeroLength.
+    The assembled C must equal bK*K_trusses + C_dashpot exactly."""
+    bK = 0.002
+    M, K, C = _chain2dof()
+    ops.rayleigh(0.0, bK, 0.0, 0.0)
+    ops.eigen("-fullGenLapack", 2)
+    got = _domain_lambdas(ops.complexEigen())
+    # oracle: trusses carry bK*K (zeroLength has NO stiffness and doRayleigh=0
+    # so it contributes only the material dashpot)
+    ref = _oracle_lambdas(M, C + bK * K, K)
+    scale = max(abs(r) for r in ref)
+    for g, r in zip(got, ref):
+        assert abs(g - r) <= 1e-8 * scale
+
+
+def test_p2_betaK0_routeB():
+    """betaKinit is refused by the closed form but handled by Route B; on a
+    LINEAR elastic model K0 == Kt so zeta = bK0*w/2 classically."""
+    bK0 = 0.0012
+    w = _cantilever()
+    ops.rayleigh(0.0, 0.0, bK0, 0.0)
+    modes = modes_table(ops.complexEigen())
+    for m, wk in zip(modes, w):
+        assert m["zeta"] == pytest.approx(bK0 * wk / 2, rel=1e-8)
+    with pytest.raises(Exception):
+        ops.complexEigen("-closedForm")
+
+
+def test_p2_scoped_region_exact():
+    """region -rayleigh on ONE element: silently wrong under -closedForm
+    (P1 warns), EXACT under the assembled default."""
+    bKa = 0.004
+    M, K, C = _chain2dof(dashpot=False)
+    k1 = 400.0
+    ops.region(1, "-ele", 1, "-rayleigh", 0.0, bKa, 0.0, 0.0)
+    ops.eigen("-fullGenLapack", 2)
+    got = _domain_lambdas(ops.complexEigen())
+    # element 1 stiffness matrix restricted to free DOFs: k1 on DOF (2,2)...
+    # truss 1 connects fixed node 1 to node 2 -> contributes k1 at (0,0)
+    Kel1 = np.array([[k1, 0.0], [0.0, 0.0]])
+    ref = _oracle_lambdas(M, bKa * Kel1, K)
+    scale = max(abs(r) for r in ref)
+    for g, r in zip(got, ref):
+        assert abs(g - r) <= 1e-8 * scale
+
+
+def test_p2_equaldof_slave_damper():
+    """MP-constraint regression (P2 Opus gate 'nice'): a dashpot attached to
+    an equalDOF SLAVE of node 3 must damp exactly like one on node 3 itself —
+    pins that the (default Transformation) handler distributes eigenvectors
+    to slave nodes, so the assembler projects with the physical slave shape.
+    ('constraints Plain' + MP would write zero slave rows and lose the
+    damper — documented in LadrunoDampingAssembler.h.)"""
+    c = 1.2
+    M, K, C = _chain2dof(dashpot=False)
+    ops.node(5, 2.0)
+    ops.equalDOF(3, 5, 1)
+    ops.node(4, 2.0)
+    ops.fix(4, 1)
+    ops.uniaxialMaterial("Viscous", 3, c, 1.0)
+    ops.element("zeroLength", 3, 4, 5, "-mat", 3, "-dir", 1)
+    ops.eigen("-fullGenLapack", 2)
+    C[1, 1] = c  # physically identical to the dashpot-on-master system
+    got = _domain_lambdas(ops.complexEigen())
+    ref = _oracle_lambdas(M, C, K)
+    scale = max(abs(r) for r in ref)
+    for g, r in zip(got, ref):
+        assert abs(g - r) <= 1e-8 * scale
 
 
 def test_p1_guards():
@@ -289,16 +466,17 @@ def test_p1_guards():
     ops.model("basic", "-ndm", 2, "-ndf", 3)
     with pytest.raises(Exception):
         ops.complexEigen()
-    # betaKinit / betaKcomm are not covered by the closed form -> refused
+    # betaKinit / betaKcomm are not covered by the CLOSED FORM -> refused
+    # there (the default assembled path handles them: test_p2_betaK0_routeB)
     _cantilever()
     ops.rayleigh(0.1, 0.0, 0.001, 0.0)
     with pytest.raises(Exception):
-        ops.complexEigen()
+        ops.complexEigen("-closedForm")
     _cantilever()
     ops.rayleigh(0.1, 0.0, 0.0, 0.001)
     with pytest.raises(Exception):
-        ops.complexEigen()
+        ops.complexEigen("-closedForm")
     # ...and setting them back to zero un-refuses (domain copy tracks the
     # LAST rayleigh call, matching what the elements actually carry)
     ops.rayleigh(0.1, 0.002, 0.0, 0.0)
-    assert len(modes_table(ops.complexEigen())) == 4
+    assert len(modes_table(ops.complexEigen("-closedForm"))) == 4

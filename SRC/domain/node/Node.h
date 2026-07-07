@@ -126,6 +126,9 @@ class Node : public DomainComponent
     virtual int setNumEigenvectors(int numVectorsToStore);
     virtual int setEigenvector(int mode, const Vector &eigenVector);
     virtual const Matrix &getEigenvectors(void);
+    // Ladruno ADR46: non-exiting presence probe — getEigenvectors() exit(0)s
+    // when unset (e.g. fully-fixed nodes outside the eigen analysis)
+    virtual int getNumEigenvectors(void) const;
     
     // public methods for output
     virtual int sendSelf(int commitTag, Channel &theChannel);

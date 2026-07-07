@@ -28,6 +28,7 @@
 // See LadrunoComplexEigen.h for the linearization and sign conventions.
 
 #include "LadrunoComplexEigen.h"
+#include "LadrunoDampingAssembler.h"
 
 #include <Matrix.h>
 #include <OPS_Globals.h>
@@ -303,7 +304,7 @@ int LadrunoComplexEigen::solveReducedPencil(const Matrix &Mt, const Matrix &Ct,
 int
 LadrunoComplexEigen::solveFromDomain(Domain &theDomain, int numModes,
                                      std::vector<ComplexMode> &modes,
-                                     double tol)
+                                     double tol, bool closedForm)
 {
     modes.clear();
 
@@ -321,6 +322,27 @@ LadrunoComplexEigen::solveFromDomain(Domain &theDomain, int numModes,
                << p << " modes but the last eigen run produced only "
                << pAvail << "\n";
         return -11;
+    }
+
+    if (!closedForm) {
+        // P2 Route B: element-by-element projection of the true M and C.
+        // D1 umbrella policy — warn (never silently absorb) on damping
+        // channels that do NOT flow through getDamp(): modalDamping lives in
+        // the integrator, so the assembled C cannot see it. (Element-level
+        // damping OBJECTS ('damping' framework folded into
+        // getResistingForceIncInertia, e.g. ElasticBeam2d theDamping) and
+        // HHT-alpha numerical damping are likewise invisible - documented in
+        // the ADR; no cheap generic probe exists for those.)
+        if (theDomain.getModalDampingFactors() != 0)
+            opserr << "WARNING LadrunoComplexEigen: modalDamping is active; "
+                   << "it is applied by the integrator, NOT by element "
+                   << "getDamp(), so the assembled projection cannot include "
+                   << "it - the reported zeta EXCLUDES the modal damping\n";
+        Matrix Mt(p, p), Ct(p, p), Kt(p, p);
+        if (LadrunoDampingAssembler::projectReduced(theDomain, p,
+                                                    Mt, Ct, Kt) < 0)
+            return -14;
+        return solveReducedPencil(Mt, Ct, Kt, modes, tol);
     }
 
     double aM, bK, bK0, bKc;
@@ -345,8 +367,9 @@ LadrunoComplexEigen::solveFromDomain(Domain &theDomain, int numModes,
                        << "differ from the last global 'rayleigh' call "
                        << "(region-/element-scoped damping). The closed-form "
                        << "projection uses the GLOBAL factors only - the "
-                       << "reported zeta ignores the scoped damping. Use the "
-                       << "assembled-C path (ADR 46 P2) when it lands\n";
+                       << "reported zeta ignores the scoped damping. Drop "
+                       << "'-closedForm': the default assembled path "
+                       << "captures scoped damping exactly\n";
                 warned = true;
             }
         }
@@ -354,10 +377,10 @@ LadrunoComplexEigen::solveFromDomain(Domain &theDomain, int numModes,
 
     if (bK0 != 0.0 || bKc != 0.0) {
         opserr << "LadrunoComplexEigen::solveFromDomain - betaKinit/betaKcomm "
-               << "Rayleigh terms are set; the closed-form projection covers "
-               << "only alphaM/betaK (K_init/K_commit are not proportional to "
-               << "the eigen K). The assembled-C path (ADR 46 P2) will handle "
-               << "them - refusing rather than misreporting zeta\n";
+               << "Rayleigh terms are set; the closed form covers only "
+               << "alphaM/betaK (K_init/K_commit are not proportional to the "
+               << "eigen K). Drop '-closedForm': the default assembled path "
+               << "handles them - refusing rather than misreporting zeta\n";
         return -12;
     }
 

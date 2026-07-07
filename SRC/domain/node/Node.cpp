@@ -1442,8 +1442,15 @@ Node::getEigenvectors(void)
     opserr << "Node::getEigenvectors() - eigenvectors have not been set\n";
 	exit(0);
 	}
-  
+
   return *theEigenvectors;
+}
+
+// Ladruno ADR46: non-exiting presence probe (getEigenvectors exit(0)s when unset)
+int
+Node::getNumEigenvectors(void) const
+{
+  return (theEigenvectors == 0) ? 0 : theEigenvectors->noCols();
 }
 
 
