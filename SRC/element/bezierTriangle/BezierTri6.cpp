@@ -1371,6 +1371,8 @@ int BezierTri6::displaySelf(Renderer &theViewer, int displayMode,
 //    "force" / "forces"       → 12 resisting force components
 //    "stiff" / "stiffness"    → 12×12 stiffness matrix
 //    "stress" / "stresses"    → σ_xx, σ_yy, σ_xy at each GP (9 values)
+//    "stressesPlaneStrain"    → σ_xx, σ_yy, σ_xy, σ_zz at each GP (12 values;
+//                               σ_zz NaN when the material doesn't expose it)
 //    "strain" / "strains"     → ε_xx, ε_yy, γ_xy at each GP (9 values)
 //    "gaussPoint"             → x, y coordinates of each GP (6 values)
 //    "material" $gpNum <args> → delegate to material at GP
@@ -1515,6 +1517,32 @@ Response *BezierTri6::setResponse(const char **argv, int argc,
         theResponse = new ElementResponse(this, 3, Vector(NSTRESS * NGAUSS));
     }
 
+    // ─── Plane-strain stresses incl. σ_zz at ALL Gauss points ─
+    // Returns: σ_xx1, σ_yy1, σ_xy1, σ_zz1, σ_xx2, ... (NaN σ_zz when
+    // the material doesn't expose it, e.g. plane stress)
+    else if (strcmp(argv[0], "stressesPlaneStrain") == 0 ||
+             strcmp(argv[0], "stressPlaneStrain") == 0) {
+
+        for (int i = 0; i < NGAUSS; i++) {
+            output.tag("GaussPoint");
+            output.attr("number", i + 1);
+
+            output.tag("NdMaterialOutput");
+            output.attr("classType", theMaterial[i]->getClassTag());
+            output.attr("tag", theMaterial[i]->getTag());
+
+            output.tag("ResponseType", "sigma_xx");
+            output.tag("ResponseType", "sigma_yy");
+            output.tag("ResponseType", "sigma_xy");
+            output.tag("ResponseType", "sigma_zz");
+
+            output.endTag();  // NdMaterialOutput
+            output.endTag();  // GaussPoint
+        }
+
+        theResponse = new ElementResponse(this, 21, Vector(4 * NGAUSS));
+    }
+
     // ─── Strains at ALL Gauss points ──────────────────────────
     // Returns: ε_xx1, ε_yy1, γ_xy1, ε_xx2, ε_yy2, γ_xy2, ...
     else if (strcmp(argv[0], "strain") == 0 ||
@@ -1595,6 +1623,18 @@ int BezierTri6::getResponse(int responseID, Information &eleInfo)
                 stressVec(i * NSTRESS + j) = sigma(j);
         }
         return eleInfo.setVector(stressVec);
+    }
+
+    case 21: {
+        // ─── Plane-strain stresses incl. σ_zz at all Gauss points ──
+        static Vector stressVec4(4 * NGAUSS);
+        for (int i = 0; i < NGAUSS; i++) {
+            const Vector &sigma = theMaterial[i]->getStress();
+            for (int j = 0; j < NSTRESS; j++)
+                stressVec4(i * 4 + j) = sigma(j);
+            stressVec4(i * 4 + 3) = theMaterial[i]->getStressZZ();
+        }
+        return eleInfo.setVector(stressVec4);
     }
 
     case 4: {

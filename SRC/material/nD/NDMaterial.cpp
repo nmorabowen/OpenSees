@@ -47,6 +47,7 @@
 #include <BeamFiberMaterial2dPS.h>
 #include <PlateFiberMaterial.h>
 #include <string.h>
+#include <limits>   // Ladruno: quiet_NaN for getStressZZ default
 #include <TaggedObject.h>
 #include <MapOfTaggedObjects.h>
 
@@ -217,7 +218,14 @@ const Vector &
 NDMaterial::getStrain(void)
 {
    opserr << "NDMaterial::getStrain -- subclass responsibility\n";
-   return errVector;    
+   return errVector;
+}
+
+// Ladruno: sigma_zz accessor -- NaN default means "material does not expose it"
+double
+NDMaterial::getStressZZ(void)
+{
+   return std::numeric_limits<double>::quiet_NaN();
 }
 
 //Functions for obtaining and updating temperature-dependent information Added by L.Jiang [SIF]
