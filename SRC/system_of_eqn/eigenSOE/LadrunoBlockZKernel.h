@@ -53,7 +53,11 @@
 #ifndef LadrunoBlockZKernel_h
 #define LadrunoBlockZKernel_h
 
-class LadrunoBlockZKernel
+#include <LadrunoFeastInnerSolve.h>
+
+// Serial FEAST-RCI inner solve (P3c-serial): implements LadrunoFeastInnerSolve
+// via MKL PARDISO. The distributed twin (P3c-MPI, L3) is LadrunoDistBlockZKernel.
+class LadrunoBlockZKernel : public LadrunoFeastInnerSolve
 {
   public:
     // CSR views borrowed from FeastEigenSOE: n equations, FULL symmetric
@@ -67,14 +71,14 @@ class LadrunoBlockZKernel
     // (Re)assemble + numerically factor for shift z = a + i*b.
     // First call also runs the (reused) PARDISO analysis phase.
     // Returns 0, or the PARDISO error code.
-    int setShiftBlock(double a, double b);      // 2n block-real, mtype -2
+    int setShiftBlock(double a, double b) override;  // 2n block-real, mtype -2
     int setShiftComplex(double a, double b);    // n complex-sym, mtype  6
 
     // Solve (zM - K) X = B for nrhs columns (column-major, length n each).
     // Uses whichever factorization setShift*() produced last for that path.
     // Xr/Xi may alias nothing; Bi == 0 (nullptr) means a real B.
     int solveBlock(int nrhs, const double *Br, const double *Bi,
-                   double *Xr, double *Xi);
+                   double *Xr, double *Xi) override;
     int solveComplex(int nrhs, const double *Br, const double *Bi,
                      double *Xr, double *Xi);
 
