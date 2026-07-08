@@ -462,7 +462,7 @@ distributed *eigen* coordinate iteration to gate. Concretely:
 |---|---|---|
 | **P1 — serial MKL-FEAST EigenSolver** | `FeastEigenSOE`/`FeastEigenSolver` (33022/33023) using MKL `dfeast_scsrgv` (or `dfeast_srci` RCI through the existing inner `LinearSOE`); `eigen -feast fmin fmax`; band → ellipse contour → quadrature → Rayleigh–Ritz | **same eigenpairs as ARPACK** on a medium serial model within $\le10^{-6}$ on $\lambda$ and MAC $\ge0.999$ on $\phi$ for every mode in the band (§8.1) |
 | **P2 — Sturm/inertia certification** | expose negative-pivot/inertia count from the Band/Mumps factorization; `-certify` asserts FEAST $m$ == inertia($\lambda_2$)−inertia($\lambda_1$) | hand-built model with **known closely-spaced modes straddling the band edge**: FEAST $m$ equals the inertia count; deliberately under-sized $m_0$ is **detected** (saturation flagged), not silently wrong (§8.2) |
-| **P3 — MPI per-contour parallel** | Three sub-phases (D2-driven, §9 R1): **P3a** fix `MumpsParallelSolver`/`SOE` to honor a passed sub-communicator instead of hardcoded `MPI_COMM_WORLD`; **P3b** new symmetric $2n\times2n$ block-real inner SOE for the complex contour solve (LDLᵀ via existing `dmumps`, `SYM=2`); **P3c** `FeastEigenSolver` orchestration, two rungs — **P3c-serial** (`-rci`): the `dfeast_srci` RCI ijob loop (10=factorize z_jM−K, 11=solve, 30/40 matvecs) with ONE `LadrunoBlockZKernel` per solve (setShiftBlock per contour node, PARDISO analysis phase reused across nodes/refinement-loops/saturation-retries); **P3c-MPI**: `MPI_Comm_split` into per-quadrature sub-comms via the P3a plumbing, each hosting a distributed MUMPS SYM=2 block-real solve of the P3b formulation, `Allreduce`-sum the projector + true envelope isolation for the SOE B/X exchange (the deferred P3a residual) | P3a: 2+ sub-comms solve independent systems concurrently, no cross-talk; P3b: block-real solve matches a direct complex solve (numpy oracle) to solver precision **including a contour aspect-ratio sweep asserting residuals as Im(z)→0** (equivalent-real conditioning degrades near the real axis), plus a measured cost comparison vs zmumps; P3c-serial: `-rci` reproduces the `dfeast_scsrgv` driver-path eigenpairs (λ ≤1e-8 rel, MAC ≥0.999) on the frame battery + `-certify` composition; P3c-MPI: sub-comm run == serial `-rci` spectrum bit-comparable at 2–4 ranks, plus **strong + weak scaling** on a partitioned model (§8.3) |
+| **P3 — MPI per-contour parallel** | Three sub-phases (D2-driven, §9 R1): **P3a** fix `MumpsParallelSolver`/`SOE` to honor a passed sub-communicator instead of hardcoded `MPI_COMM_WORLD`; **P3b** new symmetric $2n\times2n$ block-real inner SOE for the complex contour solve (LDLᵀ via existing `dmumps`, `SYM=2`); **P3c** `FeastEigenSolver` orchestration, two rungs — **P3c-serial** (`-rci`): the `dfeast_srci` RCI ijob loop (10=factorize z_jM−K, 11=solve, 30/40 matvecs) with ONE `LadrunoBlockZKernel` per solve (setShiftBlock per contour node, PARDISO analysis phase reused across nodes/refinement-loops/saturation-retries); **P3c-MPI (L3-only, per R0 panel decision)**: a distributed 2n×2n SYM=2 block-real `dmumps` solve on ONE sub-communicator (P3a plumbing), wired as the `dfeast_srci` inner solve; the validated `runFeastRci` outer loop runs REPLICATED across the sub-comm; solution broadcast to all ranks (lockstep RCI); symbolic analysis reused across shifts; + the scoped envelope-isolation fix. **L2 deferred** (§R0): `MPI_Comm_split` per-quadrature sub-comms + `Allreduce`-projector is a later multiplier, not this rung | P3a: 2+ sub-comms solve independent systems concurrently, no cross-talk; P3b: block-real solve matches a direct complex solve (numpy oracle) to solver precision **including a contour aspect-ratio sweep asserting residuals as Im(z)→0** (equivalent-real conditioning degrades near the real axis), plus a measured cost comparison vs zmumps; P3c-serial: `-rci` reproduces the `dfeast_scsrgv` driver-path eigenpairs (λ ≤1e-8 rel, MAC ≥0.999) on the frame battery + `-certify` composition; P3c-MPI: `mpiexec -n 2/4` distributed run == serial `-rci` spectrum bit-comparable (differential test vs the shipped oracle) + MUMPS strong-scaling instrumented on a representative mesh (§8.3) |
 | **P4 — unify SP/MP build gating** | one coherent build where `MumpsParallelSOE` + the contour orchestrator compile together; comm-split orthogonal to partition/replication | the *impossible-today* combination — partitioned/replicated assembly + distributed solve + contour-parallel eigen — runs green in **one** binary (`OpenSeesSP` and/or `OpenSeesMP`); LEDGER_vanilla_files documents the guard change |
 | **P5 — complex contours** *(coordinate with [[46_ladruno_complex_modal_adr|ADR 46]])* | `zfeast_*` complex contour for the damped/non-symmetric pencil; needs a complex inner SOE | re-host ADR 46's complex/state-space modal at scale; gated on ADR 46's quadratic-pencil linearization landing first |
 
@@ -507,6 +507,58 @@ precedents.
 ---
 
 ## 9. Risk register
+
+> [!important] **R0 — DECIDED 2026-07-08 (design review panel): the P3c-MPI rung is
+> L3-only (distributed inner solve on the validated `dfeast_srci` outer loop); true
+> L2 quadrature parallelism is a deferred follow-on, not this rung.**
+> After P3c-serial shipped (#530), building the MPI rung surfaced a hard fact: MKL's
+> `dfeast_srci` visits the $N_q$ contour nodes **sequentially inside its RCI loop and
+> accumulates the projector internally** (confirmed against Intel's canonical
+> `dfeast_sparse_rci.c`). There is **no seam** to hand different quadrature nodes to
+> different communicators — so the §5.3 "`MPI_Comm_split` per quadrature point,
+> `Allreduce` the projector" (L2) is achievable **only by abandoning `dfeast_srci`
+> and re-implementing FEAST's entire contour outer loop** (Gauss–Legendre ellipse
+> nodes/weights + Jacobian, projector, Rayleigh–Ritz, refinement, trace convergence,
+> $m_0$ management, spurious-mode filtering). A three-seat expert panel (FEAST/PFEAST
+> authority "PET-CE", parallel-HPC/MUMPS-scaling, OpenSees-fork architecture) was
+> **unanimous for L3-only** as this rung. Load-bearing reasons:
+> 1. **L3 is the unavoidable foundation for BOTH.** Pure-L2 caps at $N_q$ ranks
+>    ($\le 8$, and $\sim\times4$ after half-contour conjugate symmetry); to spend
+>    more ranks L2 must nest L3 *inside* each sub-comm — which is exactly the
+>    distributed-MUMPS work L3-only builds. So L3 is on the critical path regardless;
+>    L2 is a later *multiplier* on top (the PFEAST $L2\times L3$ nest), and P3a's
+>    `setCommunicator(MPI_Comm)` already parameterizes L3 on an arbitrary sub-comm so
+>    the composition is not foreclosed.
+> 2. **L3 owns the target regime.** For $n\sim10^5$–$10^6$ structural models the
+>    dominant cost is one big sparse symmetric factorization (the PFEAST paper
+>    foregrounds the *distributed linear solver*, not L2); the 2n block augmentation
+>    (P3b) doubles the factored dimension, pushing harder toward L3. L2-without-L3 is
+>    useless at $n\sim10^6$ — a single node's LDLᵀ factor won't fit in one rank's RAM.
+>    L3's scaling ceiling *grows with n* and covers the 16–64-rank budget; L2's is
+>    pinned at $\sim\times4$.
+> 3. **Memory:** L3-only holds ONE distributed factorization at a time (sequential
+>    nodes, reused buffers); L2 holds $N_q$ simultaneous 2n factorizations spread
+>    across the machine — the difference between "runs" and "OOM" for a $2n=2\times10^6$
+>    3D factor.
+> 4. **Gate & reuse:** L3-only reuses the shipped `runFeastRci` **verbatim** and its
+>    correctness gate is a **bit-for-bit differential test against the serial `-rci`
+>    oracle** (same MKL outer loop, same arithmetic; only the inner solve swaps
+>    PARDISO→distributed MUMPS, whose residual FEAST's refinement absorbs). L2 would
+>    discard `runFeastRci` and demand a full from-scratch numerical qualification of
+>    a novel contour engine — the fork's largest novel-math surface. B's one genuine
+>    edge (dropping MKL FEAST would let the distributed path run on the Linux MP
+>    build too) buys only a *secondary* target: the blessed MP build is Windows/oneAPI
+>    with MKL already linked (verified — `dist/openseesmp/` ships `mkl_core` +
+>    `impi.dll`, so `dfeast_srci` is callable there).
+> **P3c-MPI (L3) scope:** a distributed block-real complex-shift solve (2n×2n SYM=2
+> `dmumps` on a sub-communicator via the P3a plumbing, distributed triplet input,
+> solution broadcast to all ranks so the replicated RCI stays in lockstep, symbolic
+> analysis reused across shifts) wired as the `dfeast_srci` inner solve; the
+> replicated RCI runs on one sub-comm; plus the scoped envelope-isolation fix and an
+> `mpiexec -n 2/4` differential test vs the serial `-rci` spectrum. **L2 (deferred):**
+> `MPI_Comm_split` the world into $N_q$ node-groups, run the L3 kernel inside each,
+> `Allreduce` the projector — pursued only if a profiled workload shows a $>\times4$
+> quadrature win L3 can't deliver.
 
 > [!question]- **R1 — RESOLVED 2026-07-07 (D2 spike): stay on MKL FEAST + build two
 > OpenSees-side inner-solve fixes; do not vendor PFEAST.**
