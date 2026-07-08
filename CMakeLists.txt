@@ -543,10 +543,12 @@ message(STATUS "SCALAPACK_LIBRARIES=${SCALAPACK_LIBRARIES}")
 # The FEAST/PARDISO paths in FeastEigenSolver.cpp + LadrunoBlockZKernel.cpp are
 # historically gated on _WIN32 (MKL was Windows/oneAPI-only on this fork). With
 # LADRUNO_MKL_FEAST_LINUX=ON on a non-Windows host that HAS MKL, define
-# _LADRUNO_MKL_FEAST (flips those guards on) and expose libmkl_rt (the single
-# dynamic dispatcher carrying dfeast_srci/dfeast_scsrgv/feastinit/pardiso) via
-# LADRUNO_MKL_FEAST_LIBS for the parallel targets to link. Default OFF => the
-# Windows/oneAPI and Ubuntu Zone-A reference-LAPACK builds are byte-identical.
+# _LADRUNO_MKL_FEAST (flips those guards on) and link the explicit LP64/
+# sequential/core 3-layer (carrying dfeast_srci/dfeast_scsrgv/feastinit/pardiso)
+# via LADRUNO_MKL_FEAST_LIBS for the parallel targets — NOT the single libmkl_rt
+# dispatcher, whose runtime kernel selection is fragile (see the find block).
+# Default OFF => the Windows/oneAPI and Ubuntu Zone-A reference-LAPACK builds
+# are byte-identical.
 # ---------------------------------------------------------------------------
 option(LADRUNO_MKL_FEAST_LINUX "Enable MKL FEAST on a non-Windows host" OFF)
 set(LADRUNO_MKL_FEAST_LIBS "")
@@ -566,7 +568,14 @@ if(LADRUNO_MKL_FEAST_LINUX AND NOT WIN32)
     HINTS ${MKL_RT_HINT} ENV MKLROOT PATHS /usr/lib/x86_64-linux-gnu
     PATH_SUFFIXES lib lib/intel64)
   if(LADRUNO_MKL_LP64 AND LADRUNO_MKL_SEQ AND LADRUNO_MKL_CORE)
-    add_compile_definitions(_LADRUNO_MKL_FEAST)
+    # Macro + libs are attached to the OPS_SysOfEqn object library once it is
+    # created (below), NOT globally: the FEAST/PARDISO sources
+    # (FeastEigenSolver.cpp, LadrunoBlockZKernel.cpp) live ONLY in OPS_SysOfEqn,
+    # so a dir-global add_compile_definitions would make every target compile the
+    # MKL path while only the parallel exes carried the libs -> the serial/Py/PyMP
+    # targets fail to link (adversarial-review CRITICAL). PUBLIC libs on the object
+    # library propagate MKL to every consumer (OpenSeesLIB -> all exes) in lockstep.
+    set(LADRUNO_MKL_FEAST_ON TRUE)
     # --start-group resolves the circular deps among the three MKL layers.
     set(LADRUNO_MKL_FEAST_LIBS
         -Wl,--start-group ${LADRUNO_MKL_LP64} ${LADRUNO_MKL_SEQ} ${LADRUNO_MKL_CORE} -Wl,--end-group
@@ -621,6 +630,18 @@ add_library(OPS_ModelBuilder       OBJECT)
 add_library(OPS_Domain             OBJECT)
 add_library(OPS_SysOfEqn           OBJECT)
 add_library(OPS_SysOfEqnPython     OBJECT)
+
+# Ladruno ADR43 L2: attach the MKL FEAST macro + libs to the ONE object library
+# that compiles the FEAST/PARDISO sources (FeastEigenSolver.cpp,
+# LadrunoBlockZKernel.cpp live only in OPS_SysOfEqn). PRIVATE macro => only these
+# sources see the MKL path; PUBLIC libs => every consumer (OpenSeesLIB -> all
+# exes + the openseesmp module) links MKL in lockstep, so there is no
+# macro-global/libs-partial skew (adversarial-review CRITICAL). Gated OFF by
+# default (LADRUNO_MKL_FEAST_ON set only when the opt-in flag + MKL are present).
+if(LADRUNO_MKL_FEAST_ON)
+  target_compile_definitions(OPS_SysOfEqn PRIVATE _LADRUNO_MKL_FEAST)
+  target_link_libraries(OPS_SysOfEqn PUBLIC ${LADRUNO_MKL_FEAST_LIBS})
+endif()
 #add_library(OPS_SysOfEqnSP        OBJECT)
 add_library(OPS_Analysis           OBJECT)
 add_library(OPS_ConvergenceTest    OBJECT)
@@ -948,7 +969,6 @@ if(MPI_FOUND)
        ${SCALAPACK_LIBRARIES}
        ${MPI_Fortran_LIBRARIES}
        ${MPI_CXX_LINK_FLAGS}
-       ${LADRUNO_MKL_FEAST_LIBS}   # Ladruno ADR43 L2: MKL FEAST on Linux (opt-in)
     )
 
 endif()
@@ -1023,7 +1043,6 @@ if(MPI_FOUND)
        ${SCALAPACK_LIBRARIES}
        ${MPI_Fortran_LIBRARIES}
        ${MPI_CXX_LINK_FLAGS}
-       ${LADRUNO_MKL_FEAST_LIBS}   # Ladruno ADR43 L2: MKL FEAST on Linux (opt-in)
     )
 
 endif()
