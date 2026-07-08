@@ -150,6 +150,7 @@ bool setMPIDSOEFlag = false;
 #ifdef _MUMPS
 #include <MumpsParallelSOE.h>
 #include <MumpsParallelSolver.h>
+#include <MPI_Channel.h>   // Ladruno ADR43 P3a: -commSplit sub-comm channel wiring
 #endif
 #elif _PARALLEL_PROCESSING
 #include <mpi.h>
@@ -2194,7 +2195,10 @@ int OPS_analyze() {
 }
 
 // Ladruno ADR43: eigen -feast fmin fmax [-m0 n] [-nq n] [-tol exp]
-//                       [-maxiter n] [-verbose]
+//                       [-maxiter n] [-verbose] [-certify]
+// -certify (P2): also count the band content via Sturm/inertia (PARDISO
+// LDL^T negative pivots at the two band edges) and REFUSE on mismatch with
+// FEAST's count — the independent completeness certificate.
 // Band-targeted FEAST eigen: returns ALL modes with f in [fmin, fmax] Hz
 // (lambda band = (2*pi*f)^2 internally). The band defines the count — the
 // found-mode reconcile lives in OpenSeesCommands::eigen. The subspace cap
@@ -2219,6 +2223,8 @@ static int OPS_eigenFeast()
     int m0 = 0, nq = 0, maxRefine = 0;
     double tolExp = 0.0;
     bool verbose = false;
+    bool certify = false;
+    bool blockZGate = false;   // Ladruno ADR43 P3b
     while (OPS_GetNumRemainingInputArgs() > 0) {
 	const char* flag = OPS_GetString();
 	if (strcmp(flag, "-m0") == 0 && OPS_GetNumRemainingInputArgs() > 0) {
@@ -2251,6 +2257,13 @@ static int OPS_eigenFeast()
 	    }
 	} else if (strcmp(flag, "-verbose") == 0) {
 	    verbose = true;
+	} else if (strcmp(flag, "-certify") == 0) {
+	    certify = true;
+	} else if (strcmp(flag, "-blockZGate") == 0) {
+	    // Ladruno ADR43 P3b: block-real complex-shift solve self-test
+	    // (sweeps the contour flattening Im(z) -> 0 on the SOE's own CSR
+	    // and refuses if the 2n block-real solve degrades; see the ADR)
+	    blockZGate = true;
 	} else {
 	    opserr << "WARNING eigen -feast: unknown option '" << flag
 		   << "'\n";
@@ -2269,6 +2282,8 @@ static int OPS_eigenFeast()
     if (tolExp > 0.0)  theSOE->setTol(tolExp);
     if (maxRefine > 0) theSOE->setMaxRefine(maxRefine);
     theSOE->setVerbose(verbose);
+    theSOE->setCertify(certify);
+    theSOE->setBlockZGate(blockZGate);   // Ladruno ADR43 P3b
 
     // analysis-side mode-loop cap; the reconcile trims to the found count.
     // NOT tied to m0: m0 is the FEAST subspace SEED (auto-enlarged on
@@ -4536,7 +4551,12 @@ void* OPS_MumpsSolver() {
     int icntl14 = 20;
     int icntl7 = 7;
     int matType = 0; // 0: unsymmetric, 1: symmetric positive definite, 2: symmetric general
-    while (OPS_GetNumRemainingInputArgs() > 2) {
+    int commColor = -1;        // Ladruno ADR43 P3a: -commSplit color (>=0 enables)
+    // Ladruno ADR43 P3a: loop guard was "> 2", which silently skipped parsing
+    // when exactly one "-opt value" pair remained (the common openseespy
+    // system('Mumps','-ICNTL14',n) spelling) — every option needs opt+value,
+    // so "> 1" is the correct bound.
+    while (OPS_GetNumRemainingInputArgs() > 1) {
         const char* opt = OPS_GetString();
         int num = 1;
         if (strcmp(opt, "-ICNTL14") == 0) {
@@ -4558,6 +4578,21 @@ void* OPS_MumpsSolver() {
                 opserr << "Mumps Warning: wrong -matrixType value (" << matType << "). Unsymmetric matrix assumed\n";
                 matType = 0;
             }
+        } else if (strcmp(opt, "-commSplit") == 0) {
+            // Ladruno ADR43 P3a: split MPI_COMM_WORLD by color; this rank's
+            // MUMPS factor/solve then runs on the sub-communicator. The SOE's
+            // B/X exchange stays on WORLD/tag-0 MPI_Channels (see the wiring
+            // note below). Ranks passing the same color form one solve group;
+            // every rank must call system() with SOME color (MPI_Comm_split
+            // is collective over the world comm — a rank that skips it hangs).
+            if (OPS_GetIntInput(&num, &commColor) < 0) {
+                opserr << "WARNING: failed to get -commSplit color\n";
+                return 0;
+            }
+            if (commColor < 0) {
+                opserr << "WARNING: -commSplit color must be >= 0\n";
+                return 0;
+            }
         }
     }
 
@@ -4567,6 +4602,58 @@ void* OPS_MumpsSolver() {
 
     MumpsParallelSolver *solver= new MumpsParallelSolver(icntl7, icntl14);
     soe = new MumpsParallelSOE(*solver, matType);
+
+    if (commColor >= 0) {
+        // Ladruno ADR43 P3a: sub-communicator group wiring. The group's
+        // local rank 0 acts as the MUMPS host and the SOE channel hub
+        // (mirroring the world-comm layout below: P0 holds a channel per
+        // subordinate, each subordinate holds one channel to P0).
+        int worldRank;
+        MPI_Comm_rank(MPI_COMM_WORLD, &worldRank);
+        MPI_Comm subComm;
+        MPI_Comm_split(MPI_COMM_WORLD, commColor, worldRank, &subComm);
+        solver->setCommunicator(subComm);
+
+        int localRank, localSize;
+        MPI_Comm_rank(subComm, &localRank);
+        MPI_Comm_size(subComm, &localSize);
+
+        // world ranks of the group, indexed by local rank (key=worldRank
+        // makes MPI_Comm_split order the group by world rank)
+        int* groupWorldRanks = new int[localSize];
+        MPI_Allgather(&worldRank, 1, MPI_INT, groupWorldRanks, 1, MPI_INT,
+                      subComm);
+
+        // Wiring note: MPI_Channel hardcodes MPI_COMM_WORLD and tag 0, so
+        // the SOE's B/X exchange is NOT comm-isolated — only the MUMPS
+        // factor/solve is. Cross-group safety rests on (a) disjoint (src,dst)
+        // pairs between groups and (b) MPI's per-envelope non-overtaking
+        // guarantee where a group channel shares a (src,dst) pair with an
+        // interpreter WORLD channel (numbering completes before any solve
+        // starts, so the FIFO order is deterministic). True envelope
+        // isolation (routing the exchange through the sub-comm) is a P3c
+        // item if the FEAST orchestrator ever interleaves phases.
+        // The SOE only stores the channel POINTERS (its destructor frees
+        // just the array), so these MPI_Channel objects are
+        // process-lifetime by design.
+        if (localRank == 0) {
+            int nCh = localSize - 1;
+            Channel** channels = new Channel*[nCh > 0 ? nCh : 1];
+            for (int i = 0; i < nCh; i++)
+                channels[i] = new MPI_Channel(groupWorldRanks[i + 1]);
+            soe->setProcessID(0);
+            soe->setChannels(nCh, channels);
+            delete[] channels;
+        } else {
+            Channel** channels = new Channel*[1];
+            channels[0] = new MPI_Channel(groupWorldRanks[0]);
+            soe->setProcessID(localRank);
+            soe->setChannels(1, channels);
+            delete[] channels;
+        }
+        delete[] groupWorldRanks;
+        return soe;
+    }
 
     MachineBroker* machine = cmds->getMachineBroker();
     Channel** channels = cmds->getChannels();

@@ -72,8 +72,11 @@ class PlaneStrainMaterial: public NDMaterial{
     //send back the strain
     const Vector& getStrain( ) ;
 
-    //send back the stress 
+    //send back the stress
     const Vector& getStress( ) ;
+
+    // Ladruno: exact sigma_zz from the wrapped 3D material's 6-vector
+    double getStressZZ( ) ;
 
     //send back the tangent 
     const Matrix& getTangent( ) ;

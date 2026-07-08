@@ -38,7 +38,16 @@ updated: 2026-06-22
 > large-model NLTHA — actually trustworthy at scale. **The strategic investment** (large build);
 > sequence after the cheap ADR-46 proof.
 
-**Status:** in progress — **P1 (serial MKL-FEAST, `eigen -feast`) built, in PR.** classTags **33022**
+**Status:** in progress — **P1 (serial MKL-FEAST, `eigen -feast`) MERGED
+([#515](https://github.com/nmorabowen/OpenSees/pull/515)); P2 (`-certify` Sturm/inertia via
+PARDISO on the SOE's own CSR + banner) MERGED
+([#517](https://github.com/nmorabowen/OpenSees/pull/517)); gates G-A/G-B CLOSED. D2 spike
+RUN 2026-07-07 — see §5.2/§9 R1: MKL FEAST confirmed as the P3 driver, no PFEAST vendoring;
+P3 scoped into P3a/P3b/P3c below. P3a (sub-communicator plumbing: `setCommunicator` on
+`MumpsParallelSolver` + `system Mumps -commSplit` hook) BUILT + gated same day —
+4-rank/2-group concurrent-solve gate green (`feast_d2_spike/p3a_commsplit_gate.py`),
+Opus adversarial gate clean (no blockers; WORLD/tag-0 channel-envelope subtlety
+documented in [[LEDGER_quirks]], true envelope isolation deferred to P3c).** classTags **33022**
 (`FeastEigenSOE`) + **33023** (`FeastEigenSolver`) **ACTIVE in `SRC/classTags.h`**. P1 deviations
 from this draft (deliberate, ledgered): the packed CSR driver `dfeast_scsrgv` instead of the §5.2
 RCI seam — the RCI's complex shifted solves cannot route through a *real* inner `LinearSOE`, so
@@ -349,11 +358,25 @@ $(z_jM-K)X=B$. The caller assembles the shifted matrix into the inner SOE and ca
 `theInnerSOE->solve()` — **the same delegation ArpackSolver does** at
 `ArpackSolver.cpp:258,276`. The difference from the ARPACK RC loop is only the *flag
 protocol*: FEAST's RCI `ijob` replaces ARPACK's `ido`; the body is the same
-"assemble → `theInnerSOE->solve()` → hand X back" pattern. The complex shift means the
-shifted system is complex — for the real-symmetric band case FEAST's `srci` keeps the
-real-arithmetic structure (it pairs $z_j$ and $\bar z_j$), so a **real** distributed
-solver (MUMPS) can be used per conjugate pair; the complex case (P5) needs a complex
-inner SOE (deferred, ADR 46 territory).
+"assemble → `theInnerSOE->solve()` → hand X back" pattern.
+
+> [!warning] **CORRECTED 2026-07-07 (D2 spike, [[_modal_family_handoff]]).** This
+> paragraph previously claimed "for the real-symmetric band case FEAST's `srci` keeps
+> the real-arithmetic structure (it pairs $z_j$ and $\bar z_j$), so a real distributed
+> solver (MUMPS) can be used per conjugate pair" — **refuted by an adversarial
+> literature check (Opus, cross-referencing the FEAST v3/v4 User Guides and the MKL
+> `?feast_srci` reference)**. At `ijob=10/11` FEAST hands the caller a **genuinely
+> complex** workspace (`zwork`) and asks for a complex factorization/solve of
+> $A_z=z_jM-K$ — every individual contour solve is complex, full stop. The Hermitian
+> conjugate-pairing (`fpm(2)`) only **halves the count of solves** (skip $\bar z_j$,
+> conjugate the result) — it does not make any *one* solve real. `dfeast_scsrgv`'s
+> convenience form doesn't dodge this either: the observable behavior is consistent
+> with MKL performing a **complex PARDISO** factorization (`mtype=6`,
+> complex-symmetric) per contour point internally — an inference about undocumented
+> MKL internals, but the documented RCI contract (complex `zwork`, complex $A_z$
+> factorization requested from the caller) is sufficient on its own. There is no
+> real-only-$n\times n$ path in FEAST, reference or vendor. See §9 R1 for the
+> corrected decision.
 
 ### 5.3 MPI communicator splitting
 
@@ -429,7 +452,7 @@ distributed *eigen* coordinate iteration to gate. Concretely:
 |---|---|---|
 | **P1 — serial MKL-FEAST EigenSolver** | `FeastEigenSOE`/`FeastEigenSolver` (33022/33023) using MKL `dfeast_scsrgv` (or `dfeast_srci` RCI through the existing inner `LinearSOE`); `eigen -feast fmin fmax`; band → ellipse contour → quadrature → Rayleigh–Ritz | **same eigenpairs as ARPACK** on a medium serial model within $\le10^{-6}$ on $\lambda$ and MAC $\ge0.999$ on $\phi$ for every mode in the band (§8.1) |
 | **P2 — Sturm/inertia certification** | expose negative-pivot/inertia count from the Band/Mumps factorization; `-certify` asserts FEAST $m$ == inertia($\lambda_2$)−inertia($\lambda_1$) | hand-built model with **known closely-spaced modes straddling the band edge**: FEAST $m$ equals the inertia count; deliberately under-sized $m_0$ is **detected** (saturation flagged), not silently wrong (§8.2) |
-| **P3 — MPI per-contour parallel** | `MPI_Comm_split` into per-quadrature sub-comms; each inner solve = `MumpsParallelSOE` on its sub-comm; `Allreduce`-sum the projector | **strong + weak scaling** on a partitioned model; bit-comparable eigenpairs to the P1 serial run (§8.3) |
+| **P3 — MPI per-contour parallel** | Three sub-phases (D2-driven, §9 R1): **P3a** fix `MumpsParallelSolver`/`SOE` to honor a passed sub-communicator instead of hardcoded `MPI_COMM_WORLD`; **P3b** new symmetric $2n\times2n$ block-real inner SOE for the complex contour solve (LDLᵀ via existing `dmumps`, `SYM=2`); **P3c** `FeastEigenSolver` orchestration — `MPI_Comm_split` into per-quadrature sub-comms, each hosting a P3a/P3b inner SOE, `Allreduce`-sum the projector | P3a: 2+ sub-comms solve independent systems concurrently, no cross-talk; P3b: block-real solve matches a direct complex solve (numpy oracle) to solver precision **including a contour aspect-ratio sweep asserting residuals as Im(z)→0** (equivalent-real conditioning degrades near the real axis), plus a measured cost comparison vs zmumps; P3c: **strong + weak scaling** on a partitioned model; bit-comparable eigenpairs to the P1 serial run (§8.3) |
 | **P4 — unify SP/MP build gating** | one coherent build where `MumpsParallelSOE` + the contour orchestrator compile together; comm-split orthogonal to partition/replication | the *impossible-today* combination — partitioned/replicated assembly + distributed solve + contour-parallel eigen — runs green in **one** binary (`OpenSeesSP` and/or `OpenSeesMP`); LEDGER_vanilla_files documents the guard change |
 | **P5 — complex contours** *(coordinate with [[46_ladruno_complex_modal_adr|ADR 46]])* | `zfeast_*` complex contour for the damped/non-symmetric pencil; needs a complex inner SOE | re-host ADR 46's complex/state-space modal at scale; gated on ADR 46's quadratic-pencil linearization landing first |
 
@@ -475,15 +498,55 @@ precedents.
 
 ## 9. Risk register
 
-> [!question] **R1 — THE KEY OPEN DECISION: MKL FEAST vs vendored PFEAST.**
-> MKL's Extended Eigensolver *is* FEAST (zero new dep, already linked). But MKL's
-> *distributed* FEAST uses MKL Cluster (CPardiso), **not** PFEAST's clean
-> MPI-subgroup model. Does MKL's **RCI** FEAST (`?feast_srci`) cleanly let each
+> [!question]- **R1 — RESOLVED 2026-07-07 (D2 spike): stay on MKL FEAST + build two
+> OpenSees-side inner-solve fixes; do not vendor PFEAST.**
+> Original question: does MKL's **RCI** FEAST (`?feast_srci`) cleanly let each
 > quadrature solve be an *OpenSees* `MumpsParallelSOE` solve on an arbitrary MPI
-> sub-communicator? If yes → stay on MKL (no vendoring). If the MKL parallel layer
-> resists user sub-communicators → vendor PFEAST 4.0 into `OTHER/FEAST/`. **Decide at
-> the P3 gate** — P1–P2 are identical either way (serial MKL FEAST), so this is
-> de-risked, not blocking.
+> sub-communicator? **D2 spike findings** (code read + numerical check + Opus
+> literature cross-check, full record in [[_modal_family_handoff]] and the D2 bundle):
+>
+> 1. **`MumpsParallelSolver` hardcodes `MPI_COMM_WORLD`, not an arbitrary sub-comm.**
+>    The `mpi_comm`-taking constructor (`MumpsParallelSolver.cpp:54-64`) accepts the
+>    parameter and **discards it** — no member stores it. `initializeMumps()`
+>    (`:93-105`) sets `id.comm_fortran = MPI_Comm_c2f(MPI_COMM_WORLD)` unconditionally
+>    on the Intel-MPI path this fork builds (`_OPENMPI` path is `0`, MUMPS's own
+>    WORLD), and the rank/size probe two lines later reads `MPI_COMM_WORLD` directly.
+>    **This is a real, bounded plumbing bug**, not an architectural dead end: store the
+>    passed communicator, `MPI_Comm_c2f` it, thread it through `MumpsParallelSOE`
+>    construction (which today never passes one either).
+> 2. **Every contour solve is genuinely complex — the §5.2 "real solver per conjugate
+>    pair" claim was wrong**, refuted against the FEAST v3/v4 User Guides and the MKL
+>    `?feast_srci` reference (§5.2 above has the corrected paragraph and citations).
+>    `dfeast_scsrgv`'s convenience driver doesn't dodge this either — it calls complex
+>    PARDISO internally. The fork's local MUMPS build is real-only
+>    (`mumps-build/CMakeCache.txt:417` `arith=d`; `mumps-install/lib/` has `dmumps.lib`
+>    only, no `zmumps.lib`) and `MumpsParallelSolver.{h,cpp}` `#include <dmumps_c.h>`
+>    exclusively — there is no complex code path in the SRC mumps wrapper today.
+>
+> **Decision — "Outcome A-prime"**: neither the clean "yes" (Outcome A, ship as-is) nor
+> vendoring PFEAST (Outcome B) is correct. MKL FEAST's RCI is architecturally fine and
+> stays the driver (**no PFEAST vendoring** — it would buy nothing these two fixes
+> don't, and adds a Fortran build dependency); but P3 must build:
+>   (a) the sub-communicator plumbing fix in `MumpsParallelSolver`/`MumpsParallelSOE`
+>       (item 1), verified with 2+ independent sub-comms each solving a distinct real
+>       system concurrently — the actual "D2 spike toy" test, now a P3 unit test
+>       instead of a throwaway experiment; and
+>   (b) a complex inner solve. **Recommended: the symmetric real $2n\times 2n$
+>       block-augmentation** (numerically verified exact to 1e-15 relative error, see
+>       [[_modal_family_handoff]]): for $z=a+bi$, $(zM-K)X=B$ (real $B$) is equivalent to
+>       $\begin{bmatrix}aM-K & -bM\\-bM & -(aM-K)\end{bmatrix}\begin{bmatrix}X_r\\X_i\end{bmatrix}=\begin{bmatrix}B\\0\end{bmatrix}$,
+>       symmetric indefinite (MUMPS `SYM=2`/LDLᵀ), reusing the existing real `dmumps` —
+>       **zero new external dependency**, at the cost of a new inner-SOE class and
+>       ~2× the factorization work of a hypothetical *complex* $n\times n$ solve
+>       (~8× the current *real* $n\times n$ solve in dense-flop terms; sparse fill is
+>       a third number — measure it). The zmumps alternative (build complex MUMPS + a
+>       `ComplexMumpsParallelSOE`) is the fallback if block-real proves too slow or
+>       too ill-conditioned in practice — the P3 validation bundle must record BOTH a
+>       cost comparison AND a conditioning sweep: the equivalent-real formulation is
+>       known to degrade vs the native complex system as $\mathrm{Im}(z_j)\to0$
+>       (flattened-ellipse contour points near the real axis), so assert residuals
+>       across the contour aspect-ratio range, not just mid-contour.
+> This is de-risked exactly as planned: P1–P2 (serial) are unaffected either way.
 
 > [!question] **R2 — MPI integer size / MKL threading model (ABI).**
 > FEAST/MKL are Fortran; MUMPS and MKL each have LP64 vs ILP64 builds. A mismatch

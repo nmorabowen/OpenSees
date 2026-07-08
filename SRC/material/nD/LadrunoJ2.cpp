@@ -404,6 +404,14 @@ const Vector& LadrunoJ2::getStress(void)
   return stressOut;
 }
 
+double LadrunoJ2::getStressZZ(void)
+{
+  // plane strain drops sigma_zz from getStress(); it lives in stress6[2]
+  if (dim == DIM_PSTRAIN)
+    return stress6[2];
+  return NDMaterial::getStressZZ();   // NaN = not applicable
+}
+
 const Vector& LadrunoJ2::getStrain(void)
 {
   for (int a = 0; a < ncomp; a++) {

@@ -15,6 +15,16 @@ flagged and auto-enlarged, never silently truncated.
   test_feast_band_empty         no modes in band -> empty result, no crash
   test_feast_saturation_grows   -m0 too small -> warns + still complete
   test_feast_bad_input          malformed band rejected
+
+P2 (-certify, the Sturm/inertia completeness certificate — ADR 43 §8.4):
+count the band content independently via the negative-pivot inertia of the
+LDL^T factorization of (K - sigma*M) at the two band edges (MKL PARDISO on
+the SOE's own CSR); refuse on mismatch with FEAST's count.
+
+  test_certify_matches          certified == FEAST count on the frame band
+  test_certify_closely_spaced   near-degenerate pair straddling a band edge:
+                                exactly one counted, one excluded (§8.2)
+  test_certify_empty_band       0 == 0 certifies
 """
 import math
 import sys
@@ -170,9 +180,144 @@ def test_feast_mass_orthonormal():
     np.testing.assert_allclose(gram, np.eye(p), atol=1e-8)
 
 
+# ---------------------------------------------------------------- P2 certify
+def test_certify_matches(capfd):
+    """-certify: the inertia count must equal FEAST's m on a normal band,
+    and say so."""
+    _frame()
+    lam_ref = np.asarray(ops.eigen(8))
+    f_hi = 0.5 * (_hz(lam_ref[6]) + _hz(lam_ref[7]))
+    lam = np.asarray(ops.eigen("-feast", 0.0, f_hi, "-certify"))
+    assert lam.shape == (7,)
+    err = capfd.readouterr().err
+    assert "certified complete" in err
+
+
+def test_certify_closely_spaced(capfd):
+    """ADR 43 §8.2/§8.4: two nearly-identical uncoupled oscillators; a band
+    edge cutting BETWEEN the close pair must certify exactly one of them —
+    the inertia count is exact where a loose contour could smear."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 1, "-ndf", 1)
+    k, m, split = 100.0, 1.0, 1.0e-3
+    # two independent SDOFs: k and k*(1+split)
+    ops.node(1, 0.0); ops.fix(1, 1)
+    ops.node(2, 1.0); ops.mass(2, m)
+    ops.node(3, 2.0); ops.fix(3, 1)
+    ops.node(4, 3.0); ops.mass(4, m)
+    ops.uniaxialMaterial("Elastic", 1, k)
+    ops.uniaxialMaterial("Elastic", 2, k * (1.0 + split))
+    ops.element("Truss", 1, 1, 2, 1.0, 1)
+    ops.element("Truss", 2, 3, 4, 1.0, 2)
+    f1 = _hz(k / m)
+    f2 = _hz(k * (1.0 + split) / m)
+    f_cut = 0.5 * (f1 + f2)          # between the close pair
+    lam = np.asarray(ops.eigen("-feast", 0.0, f_cut, "-certify"))
+    assert lam.shape == (1,)
+    assert lam[0] == pytest.approx(k / m, rel=1e-10)
+    assert "certified complete" in capfd.readouterr().err
+    # and the full band certifies both
+    lam2 = np.asarray(ops.eigen("-feast", 0.0, f2 * 1.1, "-certify"))
+    assert lam2.shape == (2,)
+
+
+def test_certify_edge_on_eigenvalue(capfd):
+    """Adversarial-gate fix: a band edge sitting numerically ON an
+    eigenvalue makes (K - sigma*M) singular at the shift — the crossing
+    pivot emerges near-zero in the ELIMINATION (a coupled model: an
+    isolated diagonal zero would be normalized away by PARDISO's scaling),
+    gets perturbed, and the inertia sign is no longer guaranteed. The
+    certificate must detect the perturbed pivots and REFUSE rather than
+    certify a possibly off-by-one count."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 1, "-ndf", 1)
+    # coupled 2-DOF chain (NOT uncoupled oscillators — see docstring)
+    ops.node(1, 0.0); ops.fix(1, 1)
+    ops.node(2, 1.0); ops.mass(2, 2.0)
+    ops.node(3, 2.0); ops.mass(3, 1.0)
+    ops.uniaxialMaterial("Elastic", 1, 400.0)
+    ops.uniaxialMaterial("Elastic", 2, 150.0)
+    ops.element("Truss", 1, 1, 2, 1.0, 1)
+    ops.element("Truss", 2, 2, 3, 1.0, 2)
+    lam = np.asarray(ops.eigen("-fullGenLapack", 2))
+    f1 = _hz(lam[0])                # edge EXACTLY on the first eigenvalue
+    with pytest.raises(Exception):
+        ops.eigen("-feast", 0.0, f1, "-certify")
+    assert "perturbed pivot" in capfd.readouterr().err
+
+
+def test_certify_empty_band(capfd):
+    """0 == 0 certifies (no modes in the band, inertia agrees)."""
+    _frame(nx=1, ny=3)
+    lam_all = np.asarray(ops.eigen("-fullGenLapack", 6))
+    f = np.array([_hz(l) for l in lam_all])
+    out = ops.eigen("-feast", f[2] * 1.02, f[3] * 0.98, "-certify")
+    empty = (out is None or out == 0 or
+             (hasattr(out, "__len__") and len(out) == 0))
+    assert empty
+    assert "certified complete" in capfd.readouterr().err
+
+
 def test_feast_bad_input():
     _frame(nx=1, ny=3)
     with pytest.raises(Exception):
         ops.eigen("-feast", 5.0)              # missing fmax
     with pytest.raises(Exception):
         ops.eigen("-feast", 10.0, 5.0)        # inverted band
+
+
+# ------------------------------------------------------------- P3b blockZGate
+def test_blockzgate_frame(capfd):
+    """P3b: the block-real complex-shift solve kernel (the FEAST-RCI inner
+    solve of P3c) self-tests on the frame's own CSR — for a shift at the
+    widest spectral gap it sweeps the contour flattening b/r down to 1e-6,
+    recovering a KNOWN complex solution through the symmetric 2n block-real
+    LDL^T path, and REFUSES if the error exceeds 1e-8. The native
+    complex-symmetric PARDISO baseline runs beside it (the D2-review cost/
+    accuracy record), and the a-on-eigenvalue degradation regime is reported.
+    The eigen call succeeding IS the gate."""
+    _frame()
+    lam = np.asarray(ops.eigen("-feast", 0.0, 30.0, "-blockZGate"))
+    assert lam.size >= 1
+    err = capfd.readouterr().err
+    assert "-blockZGate PASS" in err
+    assert "degradation regime" in err
+
+
+def test_blockzgate_small_model(capfd):
+    """P3b on the small frame with a band that holds a handful of modes —
+    exercises the gap-placement logic with interior eigenvalues present."""
+    _frame(nx=1, ny=3)
+    lam_all = np.asarray(ops.eigen("-fullGenLapack", 8))
+    f = np.array([_hz(l) for l in lam_all])
+    hi = 0.5 * (f[5] + f[6])
+    lam = np.asarray(ops.eigen("-feast", 0.0, hi, "-blockZGate"))
+    assert lam.size == 6
+    assert "-blockZGate PASS" in capfd.readouterr().err
+
+
+def test_blockzgate_empty_band(capfd):
+    """P3b on an empty band (info=1, m=0): the gate must still run — the
+    empty-band path falls THROUGH to the hook rather than returning early —
+    self-testing a band-midpoint shift with no interior eigenvalues."""
+    _frame(nx=1, ny=3)
+    lam_all = np.asarray(ops.eigen("-fullGenLapack", 6))
+    f = np.array([_hz(l) for l in lam_all])
+    out = ops.eigen("-feast", f[2] * 1.02, f[3] * 0.98, "-blockZGate")
+    empty = (out is None or out == 0 or
+             (hasattr(out, "__len__") and len(out) == 0))
+    assert empty
+    assert "-blockZGate PASS" in capfd.readouterr().err
+
+
+def test_blockzgate_composes_with_certify(capfd):
+    """-certify and -blockZGate on the same run: both diagnostics fire and
+    the eigenpairs are unchanged vs the plain band solve."""
+    _frame(nx=1, ny=3)
+    lam_plain = np.asarray(ops.eigen("-feast", 0.0, 50.0))
+    lam_gated = np.asarray(ops.eigen("-feast", 0.0, 50.0, "-certify",
+                                     "-blockZGate"))
+    np.testing.assert_allclose(lam_gated, lam_plain, rtol=1e-12)
+    err = capfd.readouterr().err
+    assert "certified complete" in err
+    assert "-blockZGate PASS" in err

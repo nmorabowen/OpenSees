@@ -47,9 +47,13 @@ class UmfpackGenLinSolver : public LinearSOESolver
     // Ladruno (ADR-40 rank 2): strategy + pivot tolerance are configurable.
     // Default strategy is UMFPACK_STRATEGY_AUTO (was hardcoded SYMMETRIC, which
     // mis-orders unsymmetric tangents); default pivotTol keeps the legacy 1.0.
+    // Ladruno (ADR-40 rank 8/10): persist=true (default) reuses the Numeric LU
+    // across solves while theSOE->factored stays true; -noNumericPersist sets it
+    // false to restore the legacy free-every-solve behavior (bit-for-bit).
     UmfpackGenLinSolver(bool useLongIndices = false,
                         int strategy = UMFPACK_STRATEGY_AUTO,
-                        double pivotTol = 1.0);
+                        double pivotTol = 1.0,
+                        bool persist = true);
     ~UmfpackGenLinSolver();
 
     int solve(void);
@@ -66,10 +70,14 @@ class UmfpackGenLinSolver : public LinearSOESolver
   private:
     void syncIndexBuffers(void);
 
+    void freeNumeric(void);   // Ladruno (ADR-40 rank 8/10)
+
     bool useLongIndices;
     int strategy;        // Ladruno (ADR-40 rank 2)
     double pivotTol;     // Ladruno (ADR-40 rank 2)
+    bool persist;        // Ladruno (ADR-40 rank 8/10): reuse Numeric across solves
     void *Symbolic;
+    void *Numeric;       // Ladruno (ADR-40 rank 8/10): persisted LU factorization
     double Control[UMFPACK_CONTROL], Info[UMFPACK_INFO];
     UmfpackGenLinSOE *theSOE;
     std::vector<SuiteSparse_long> Ap64;

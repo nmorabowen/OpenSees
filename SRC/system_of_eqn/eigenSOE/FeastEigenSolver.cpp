@@ -29,6 +29,7 @@
 
 #include <FeastEigenSolver.h>
 #include <FeastEigenSOE.h>
+#include <LadrunoBlockZKernel.h>   // Ladruno ADR43 P3b: -blockZGate kernel
 #include <Vector.h>
 #include <Channel.h>
 #include <FEM_ObjectBroker.h>
@@ -55,7 +56,211 @@ extern "C" {
                      const double *emin, const double *emax,
                      int *m0, double *e, double *x, int *m,
                      double *res, int *info);
+  // P2: PARDISO LDL^T for the Sturm/inertia certificate (mkl_pardiso.h;
+  // _MKL_DSS_HANDLE_t is an opaque void*[64], MKL_INT = int under LP64)
+  void pardiso(void *pt, const int *maxfct, const int *mnum,
+               const int *mtype, const int *phase, const int *n,
+               const void *a, const int *ia, const int *ja,
+               int *perm, const int *nrhs, int *iparm,
+               const int *msglvl, void *b, void *x, int *error);
 }
+
+namespace {
+
+// Number of eigenvalues of the pencil (K, M) strictly below sigma =
+// the number of NEGATIVE pivots of the LDL^T factorization of (K - sigma*M)
+// (Sylvester inertia). Assembles the UPPER triangle of A = K - sigma*M from
+// the SOE's shared full CSR pattern and factors it with MKL PARDISO
+// (mtype = -2, real symmetric indefinite); the count is iparm[22]
+// (1-based Fortran iparm(23): "number of negative eigenvalues").
+// Returns 0 on success (negOut filled), non-zero PARDISO error otherwise.
+int
+inertiaBelow(int n, const int *rowPtr, const int *colInd,
+             const double *Kvals, const double *Mvals, double sigma,
+             int &negOut, int &perturbedOut)
+{
+    // upper-triangle 1-based CSR of A = K - sigma*M
+    std::vector<int> ia(static_cast<size_t>(n) + 1);
+    std::vector<int> ja;
+    std::vector<double> a;
+    ja.reserve((static_cast<size_t>(rowPtr[n]) - 1 + n) / 2 + n);
+    a.reserve(ja.capacity());
+    ia[0] = 1;
+    for (int row = 0; row < n; row++) {
+        for (int k = rowPtr[row] - 1; k < rowPtr[row + 1] - 1; k++) {
+            const int col = colInd[k] - 1;
+            if (col >= row) {
+                ja.push_back(col + 1);
+                a.push_back(Kvals[k] - sigma * Mvals[k]);
+            }
+        }
+        ia[static_cast<size_t>(row) + 1] = static_cast<int>(ja.size()) + 1;
+    }
+
+    void *pt[64] = {0};
+    int iparm[64] = {0};
+    iparm[0]  = 1;    // user-supplied iparm
+    iparm[1]  = 2;    // METIS fill-reduction
+    iparm[9]  = 8;    // pivot perturbation 1e-8 (indefinite default)
+    iparm[10] = 1;    // scaling (congruence — inertia-preserving); reduces
+    iparm[12] = 1;    // matching (ditto) how often perturbation triggers
+    const int maxfct = 1, mnum = 1, mtype = -2, nrhs = 0, msglvl = 0;
+    int phase = 12;   // analysis + numerical factorization
+    int error = 0;
+    double ddum = 0.0;
+    int idum = 0;
+
+    pardiso(pt, &maxfct, &mnum, &mtype, &phase, &n,
+            a.data(), ia.data(), ja.data(), &idum, &nrhs, iparm,
+            &msglvl, &ddum, &ddum, &error);
+    const int neg = iparm[22];        // 1-based iparm(23): negative eigenvalues
+    const int perturbed = iparm[13];  // 1-based iparm(14): perturbed pivots —
+                                      // nonzero means a pivot sat below the
+                                      // 1e-8 perturbation floor and its SIGN
+                                      // (hence the inertia) is not guaranteed
+
+    phase = -1;       // release PARDISO memory regardless of the outcome
+    int relErr = 0;
+    pardiso(pt, &maxfct, &mnum, &mtype, &phase, &n,
+            a.data(), ia.data(), ja.data(), &idum, &nrhs, iparm,
+            &msglvl, &ddum, &ddum, &relErr);
+
+    if (error != 0)
+        return error;
+    negOut = neg;
+    perturbedOut = perturbed;
+    return 0;
+}
+
+// P3b -blockZGate: self-test of the block-real complex-shift solve kernel
+// (the FEAST-RCI inner solve of P3c) on the SOE's own CSR. For a shift a
+// placed at the widest spectral gap (bounded conditioning by construction)
+// it sweeps the contour flattening b = r*frac down to frac = 1e-6, solving
+// (zM - K) X = B for a KNOWN X via both the symmetric 2n block-real path
+// and the native complex-symmetric PARDISO baseline, and REFUSES if the
+// block path's recovered-solution error exceeds 1e-8. A second sweep with
+// a ON the lowest found eigenvalue is reported (not asserted) — that is the
+// documented equivalent-real degradation regime (D2 review follow-up).
+// Timings per factorization are printed for the cost record.
+int
+runBlockZGate(int n, const int *rowPtr, const int *colInd,
+              const double *Kvals, const double *Mvals,
+              double emin, double emax, const double *e, int m)
+{
+    LadrunoBlockZKernel kern(n, rowPtr, colInd, Kvals, Mvals);
+
+    const double r = 0.5 * (emax - emin) > 0.0 ? 0.5 * (emax - emin)
+                     : std::max(std::fabs(emax), 1.0);
+
+    // shift placement: midpoint of the widest gap between adjacent found
+    // eigenvalues (band edges included), so dist(a, spectrum) >= gap/2 stays
+    // bounded away from zero for the asserted sweep
+    std::vector<double> pts;
+    pts.push_back(emin);
+    for (int k = 0; k < m; k++)
+        if (e[k] > emin && e[k] < emax)
+            pts.push_back(e[k]);
+    pts.push_back(emax);
+    std::sort(pts.begin(), pts.end());
+    double a = 0.5 * (emin + emax), widest = -1.0;
+    for (size_t k = 0; k + 1 < pts.size(); k++) {
+        const double gap = pts[k + 1] - pts[k];
+        if (gap > widest) {
+            widest = gap;
+            a = 0.5 * (pts[k] + pts[k + 1]);
+        }
+    }
+
+    // two known solutions: one real, one genuinely complex
+    const int nrhs = 2;
+    std::vector<double> xkr(static_cast<size_t>(n) * nrhs);
+    std::vector<double> xki(static_cast<size_t>(n) * nrhs);
+    for (int i = 0; i < n; i++) {
+        xkr[i] = std::sin(1.0 + i);
+        xki[i] = 0.0;
+        xkr[static_cast<size_t>(n) + i] = std::cos(0.5 + i);
+        xki[static_cast<size_t>(n) + i] = 0.7 * std::sin(2.0 + i);
+    }
+    std::vector<double> br(xkr.size()), bi(xkr.size());
+    std::vector<double> xr(xkr.size()), xi(xkr.size());
+
+    auto solveAndMeasure = [&](bool blockPath, double aa, double bb,
+                               double &errOut, double &tFacOut) -> int {
+        for (int c = 0; c < nrhs; c++)
+            kern.matvecZ(aa, bb, &xkr[static_cast<size_t>(c) * n],
+                         &xki[static_cast<size_t>(c) * n],
+                         &br[static_cast<size_t>(c) * n],
+                         &bi[static_cast<size_t>(c) * n]);
+        int rc = blockPath ? kern.setShiftBlock(aa, bb)
+                           : kern.setShiftComplex(aa, bb);
+        if (rc != 0)
+            return rc;
+        tFacOut = kern.lastFactorSeconds();
+        rc = blockPath
+                 ? kern.solveBlock(nrhs, br.data(), bi.data(), xr.data(),
+                                   xi.data())
+                 : kern.solveComplex(nrhs, br.data(), bi.data(), xr.data(),
+                                     xi.data());
+        if (rc != 0)
+            return rc;
+        double num = 0.0, den = 0.0;
+        for (size_t p = 0; p < xkr.size(); p++) {
+            const double dr = xr[p] - xkr[p], di = xi[p] - xki[p];
+            num = std::max(num, std::sqrt(dr * dr + di * di));
+            const double mag = std::sqrt(xkr[p] * xkr[p] + xki[p] * xki[p]);
+            den = std::max(den, mag);
+        }
+        errOut = num / std::max(den, 1e-30);
+        return 0;
+    };
+
+    const double fracs[] = {1.0, 0.3, 0.1, 1e-2, 1e-3, 1e-4, 1e-6};
+    double maxErrBlk = 0.0;
+    opserr << "FeastEigenSolver -- -blockZGate sweep (a at widest gap = "
+           << a << ", r = " << r << "):\n";
+    opserr << "    b/r        err(block)    err(complex)  tFac(blk)  tFac(z)\n";
+    for (double frac : fracs) {
+        const double b = r * frac;
+        double errB = 0.0, errZ = 0.0, tB = 0.0, tZ = 0.0;
+        if (solveAndMeasure(true, a, b, errB, tB) != 0 ||
+            solveAndMeasure(false, a, b, errZ, tZ) != 0) {
+            opserr << "FeastEigenSolver -- -blockZGate: kernel failure at "
+                   << "b/r = " << frac << "\n";
+            return -1;
+        }
+        maxErrBlk = std::max(maxErrBlk, errB);
+        opserr << "    " << frac << "    " << errB << "    " << errZ
+               << "    " << tB << "    " << tZ << "\n";
+    }
+
+    // degradation regime (report-only): a ON a found eigenvalue (e[] is
+    // unsorted at this point — any in-band eigenvalue works for this test)
+    if (m > 0) {
+        opserr << "  degradation regime (a on found eigenvalue " << e[0]
+               << ", report-only):\n";
+        for (double frac : {1e-2, 1e-4, 1e-6}) {
+            const double b = r * frac;
+            double errB = 0.0, errZ = 0.0, tB = 0.0, tZ = 0.0;
+            const int rcB = solveAndMeasure(true, e[0], b, errB, tB);
+            const int rcZ = solveAndMeasure(false, e[0], b, errZ, tZ);
+            opserr << "    b/r = " << frac << ": err(block) = "
+                   << (rcB == 0 ? errB : -1.0) << ", err(complex) = "
+                   << (rcZ == 0 ? errZ : -1.0) << "\n";
+        }
+    }
+
+    if (maxErrBlk > 1.0e-8) {
+        opserr << "FeastEigenSolver -- -blockZGate FAILED: block-real "
+               << "recovered-solution error " << maxErrBlk
+               << " exceeds 1e-8 on the bounded-conditioning sweep\n";
+        return -1;
+    }
+    opserr << "FeastEigenSolver -- -blockZGate PASS: max block-real error "
+           << maxErrBlk << " over the b/r sweep down to 1e-6\n";
+    return 0;
+}
+
+} // namespace
 #endif
 
 FeastEigenSolver::FeastEigenSolver()
@@ -289,6 +494,74 @@ FeastEigenSolver::solve(int numModesRequested, bool generalized, bool findSmalle
 
   // ---- store accepted pairs ascending, capped at numModesRequested -------
   if (m < 0) m = 0;
+
+  // ---- P2 -certify: the Sturm/inertia completeness certificate -----------
+  // certified band count = neg(K - emax*M) - neg(K - emin*M), an EXACT count
+  // from the factorization itself, independent of FEAST's own bookkeeping
+  // (the LS-DYNA BCSLIB-EXT guarantee). Edges are nudged outward by a
+  // relative delta so a mode sitting numerically ON an edge (which FEAST's
+  // closed contour includes) is counted rather than left ill-posed.
+  if (theSOE->certifyFlag) {
+    const double eref = std::max(std::max(std::fabs(emin), std::fabs(emax)),
+                                 1.0);
+    const double delta = 1.0e-10 * eref;
+    int negLo = 0, negHi = 0, pertLo = 0, pertHi = 0;
+    const int errLo = inertiaBelow(n, theSOE->rowPtr, theSOE->colInd,
+                                   theSOE->Kvals, theSOE->Mvals,
+                                   emin - delta, negLo, pertLo);
+    const int errHi = inertiaBelow(n, theSOE->rowPtr, theSOE->colInd,
+                                   theSOE->Kvals, theSOE->Mvals,
+                                   emax + delta, negHi, pertHi);
+    if (errLo != 0 || errHi != 0) {
+      opserr << "FeastEigenSolver::solve() -- -certify: PARDISO inertia "
+             << "factorization failed (error " << errLo << "/" << errHi
+             << "); cannot certify the band count\n";
+      delete [] e; delete [] x; delete [] res;
+      numModes = 0;
+      return -4;
+    }
+    // adversarial-gate fix: a PERTURBED pivot means (K - sigma*M) had a
+    // pivot below the perturbation floor — the shift sits numerically ON an
+    // eigenvalue and the pivot's sign (hence the count) is NOT guaranteed.
+    // The outward nudge (1e-10 relative, lambda-units) is SMALLER than the
+    // perturbation floor (1e-8 relative, stiffness-units), so it cannot
+    // protect against this — detect and refuse instead of certifying a
+    // possibly-off-by-one count.
+    if (pertLo > 0 || pertHi > 0) {
+      opserr << "FeastEigenSolver::solve() -- -certify: the factorization "
+             << "used " << pertLo << "/" << pertHi << " perturbed pivot(s) "
+             << "at the band edges - an eigenvalue sits numerically ON an "
+             << "edge and the inertia count is not guaranteed exact. Move "
+             << "the band edge away from the eigenvalue and re-run\n";
+      delete [] e; delete [] x; delete [] res;
+      numModes = 0;
+      return -6;
+    }
+    const int certified = negHi - negLo;
+    if (certified != m) {
+      opserr << "FeastEigenSolver::solve() -- -certify FAILED: the "
+             << "factorization inertia counts " << certified
+             << " eigenvalue(s) in the band but FEAST returned " << m
+             << " - the result is NOT complete; refusing. (Raise -m0/-nq "
+             << "or tighten -tol and re-run)\n";
+      delete [] e; delete [] x; delete [] res;
+      numModes = 0;
+      return -5;
+    }
+    opserr << "FeastEigenSolver::solve() -- -certify: inertia count "
+           << certified << " == FEAST count " << m
+           << "; band content certified complete\n";
+  }
+
+  // ---- P3b -blockZGate: block-real complex-shift solve self-test ---------
+  if (theSOE->blockZGateFlag) {
+    if (runBlockZGate(n, theSOE->rowPtr, theSOE->colInd,
+                      theSOE->Kvals, theSOE->Mvals, emin, emax, e, m) != 0) {
+      delete [] e; delete [] x; delete [] res;
+      numModes = 0;
+      return -7;
+    }
+  }
 
   // sort the m accepted eigenvalues ascending, carrying a vector permutation
   std::vector<int> perm(m);

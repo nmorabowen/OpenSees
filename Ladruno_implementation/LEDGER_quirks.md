@@ -2679,3 +2679,50 @@ is immune (uses eigenvalues only, never Φ).
   `subprocess.run`, exe outputs under `tmp_path`.
 - **General rule:** in any long-lived process that touched gmsh, pass
   `env=os.environ.copy()` and absolute executable paths to `subprocess`.
+
+### `MumpsParallelSolver` accepts an `mpi_comm` constructor argument and silently ignores it — always binds to `MPI_COMM_WORLD`
+
+- **Bites:** ADR 43 P3 (FEAST-over-sub-communicator, D2 spike, 2026-07-07). Anyone
+  assuming `MumpsParallelSOE`/`MumpsParallelSolver` can be pointed at an
+  `MPI_Comm_split` sub-communicator today by passing a comm handle — it compiles and
+  runs, but silently uses `MPI_COMM_WORLD` for the factorization anyway (wrong ranks
+  participate, or it deadlocks/hangs on a partial-world sub-comm).
+- **Why:** `MumpsParallelSolver::MumpsParallelSolver(int mpi_comm, int ICNTL7, int
+  ICNTL14)` (`MumpsParallelSolver.cpp:54-64`) takes the parameter but never stores it —
+  no member is set. `initializeMumps()` (`:93-105`) hardcodes
+  `id.comm_fortran = MPI_Comm_c2f(MPI_COMM_WORLD)` on the Intel-MPI path (this fork's
+  Windows/oneAPI build), `0` (MUMPS's own WORLD) under `_OPENMPI`; the rank/size probe
+  two lines later also reads `MPI_COMM_WORLD` directly. Dead parameter, not a config
+  toggle.
+- **Fix (ADR 43 P3a, not yet built):** store the passed communicator on the solver,
+  `MPI_Comm_c2f` *it* (not WORLD) into `id.comm_fortran`, and use it for the
+  `MPI_Comm_rank/size` probe too; thread it through `MumpsParallelSOE`'s constructor,
+  which today never passes one either.
+
+### A fully-prescribed model (zero free DOFs) under `constraints Transformation` FATALLY exits the process — `FullGenLinSOE::getX - vectX == 0`
+
+- **Bites:** any prescribed-displacement rig that pins/`sp()`s EVERY DOF of a small
+  patch model (single-element material-response probes are the classic case: all x
+  fixed for uniaxial strain, bottom y fixed, top y driven by `ops.sp` in a pattern).
+  Under `constraints Transformation` the sp-handled DOFs are condensed OUT, the
+  equation count hits 0, and `FullGenLinSOE::getX()` hits a raw
+  `opserr << "FATAL ..."; exit()` — killing the whole Python kernel/pytest run with
+  no traceback (surfaced 2026-07-07 while building `tests/test_planestrain_sigma_zz.py`,
+  PR #525). Other SOEs have sibling zero-size exits; this is not FullGeneral-specific.
+- **Why:** Transformation removes constrained DOFs from the numbered system; a model
+  where every DOF is fixed or sp-prescribed leaves size-0 vectors that the SOE treats
+  as an allocation failure, and OpenSees's error path is `exit`, not a recoverable
+  analysis error.
+- **Fix:** for fully-prescribed rigs use `constraints("Penalty", 1e15, 1e15)` — the
+  prescribed DOFs then STAY in the system (size > 0) and the penalty violation at
+  1e15 vs typical stiffness is ~1e-10 relative, invisible to material-response
+  checks. Alternatively leave at least one genuinely free DOF in the model.
+- **Fix (SHIPPED, ADR 43 P3a):** `setCommunicator(MPI_Comm)` on the solver stores the
+  comm, `MPI_Comm_c2f`s *it* (not WORLD) into `id.comm_fortran`, uses it for the
+  rank/size probe, tears down any live MUMPS instance, and clears the SOE's
+  `factored` flag. Test hook: `system('Mumps', '-commSplit', color)` (collective —
+  every rank must call it). Gate: `feast_d2_spike/p3a_commsplit_gate.py` (4 ranks,
+  2 concurrent groups vs serial oracles). **Residual subtlety:** `MPI_Channel`
+  hardcodes WORLD/tag-0, so only the MUMPS factor/solve is comm-isolated — the SOE's
+  B/X exchange rides WORLD envelopes, safe today via disjoint (src,dst) pairs +
+  MPI non-overtaking with phase ordering; true envelope isolation is a P3c item.

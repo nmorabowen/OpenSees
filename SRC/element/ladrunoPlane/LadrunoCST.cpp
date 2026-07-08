@@ -568,6 +568,26 @@ Response *LadrunoCST::setResponse(const char **argv, int argc, OPS_Stream &outpu
       theResponse = theMaterial[0]->setResponse(&argv[2], argc - 2, output);
   } else if (strcmp(argv[0], "stresses") == 0 || strcmp(argv[0], "stress") == 0) {
     theResponse = new ElementResponse(this, 3, Vector(3));
+  } else if (strcmp(argv[0], "stressesPlaneStrain") == 0 || strcmp(argv[0], "stressPlaneStrain") == 0) {
+    // plane-strain stress incl. out-of-plane sigma_zz (NaN when the material doesn't
+    // expose it); full GaussPoint/NdMaterialOutput tags so XML-driven recorders
+    // (Ladruno/MPCO) get real component names instead of the C1..C4 fallback
+    output.tag("GaussPoint");
+    output.attr("number", 1);
+
+    output.tag("NdMaterialOutput");
+    output.attr("classType", theMaterial[0]->getClassTag());
+    output.attr("tag", theMaterial[0]->getTag());
+
+    output.tag("ResponseType", "sigma11");
+    output.tag("ResponseType", "sigma22");
+    output.tag("ResponseType", "sigma12");
+    output.tag("ResponseType", "sigma33");
+
+    output.endTag(); // NdMaterialOutput
+    output.endTag(); // GaussPoint
+
+    theResponse = new ElementResponse(this, 21, Vector(4));
   } else if (strcmp(argv[0], "strains") == 0 || strcmp(argv[0], "strain") == 0) {
     theResponse = new ElementResponse(this, 4, Vector(3));
   } else if (strcmp(argv[0], "charLength") == 0 || strcmp(argv[0], "characteristicLength") == 0) {
@@ -584,6 +604,14 @@ int LadrunoCST::getResponse(int responseID, Information &eleInfo)
     return eleInfo.setVector(this->getResistingForce());
   if (responseID == 3)
     return eleInfo.setVector(theMaterial[0]->getStress());
+  if (responseID == 21) {
+    // 4-component plane-strain stress [sxx, syy, sxy, szz] at the single point
+    static Vector v4(4);
+    const Vector &s = theMaterial[0]->getStress();
+    v4(0) = s(0); v4(1) = s(1); v4(2) = s(2);
+    v4(3) = theMaterial[0]->getStressZZ();
+    return eleInfo.setVector(v4);
+  }
   if (responseID == 4)
     return eleInfo.setVector(theMaterial[0]->getStrain());
   if (responseID == 5)

@@ -82,6 +82,7 @@ class LadrunoJ2 : public NDMaterial {
   const Matrix& getInitialTangent(void);
   const Vector& getStress(void);
   const Vector& getStrain(void);
+  double getStressZZ(void);      // plane-strain sigma_zz (NaN in other dims)
 
   int commitState(void);
   int revertToLastCommit(void);

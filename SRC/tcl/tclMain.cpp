@@ -183,10 +183,12 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • LadrunoProjection — momentum-conserving explicit constraint projection (equalDOF/rigidLink/diaphragm)\n"
 "        • LadrunoTie — kinematic non-conforming mesh-tie generator (collocation + integral-mortar, -dual sparse biorthogonal basis; solid + ndf-6 shell rotational DOFs, -hermite rotation-consistent w–θ edge transfer, -shellSolid plane-section shell-edge↔solid-face tie; emits EQ-constraints for LadrunoProjection; exact, dt_cr-neutral)\n"
 "        • LadrunoContact — NTS + mortar/ALM contact (penalty + commit-cycle Uzawa, Coulomb/Tresca friction, mesh-tying, viscous stabilization, consistent dn/du normal tangent, SOFT=1 + SOFT=2 Courant-stable explicit penalty, finite-sliding re-emit, averaged nodal-normal smoothing -smoothNormal w/ convex-ridge facet ownership)\n"
+"        • stressesPlaneStrain — exact out-of-plane σ_zz element response (plane strain)\n"
 "        • Ladruno — modular HDF5 .ladruno recorder\n"
 "        • LadrunoRigidBody — 6-DOF rigid body (condensed mass + side-channel SO(3); finite-rotation slaving + moment gather; rocking-foundation MVP)\n"
 "        • LadrunoSolidShell — 8-node ANS/EAS solid-shell (through-thickness σ33 punching/bearing host; Dvorkin-Bathe + Betsch-Stein + state-EAS)\n"
 "        • LadrunoComplexEigen — complexEigen: complex/state-space modal for non-classical damping (true per-mode zeta + omega_d + phased mode shapes; assembled getDamp() projection, QZ reduced pencil)\n"
+"        • FeastEigen — band-targeted eigensolver: eigen -feast fmin fmax (ALL modes in the band, MKL contour integration; -certify = Sturm/inertia completeness certificate)\n"
 "\n";
     // FEATURES-END
 
