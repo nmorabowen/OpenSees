@@ -548,20 +548,35 @@ message(STATUS "SCALAPACK_LIBRARIES=${SCALAPACK_LIBRARIES}")
 # LADRUNO_MKL_FEAST_LIBS for the parallel targets to link. Default OFF => the
 # Windows/oneAPI and Ubuntu Zone-A reference-LAPACK builds are byte-identical.
 # ---------------------------------------------------------------------------
-option(LADRUNO_MKL_FEAST_LINUX "Enable MKL FEAST on a non-Windows host (link libmkl_rt)" OFF)
+option(LADRUNO_MKL_FEAST_LINUX "Enable MKL FEAST on a non-Windows host" OFF)
 set(LADRUNO_MKL_FEAST_LIBS "")
 if(LADRUNO_MKL_FEAST_LINUX AND NOT WIN32)
-  find_library(LADRUNO_MKL_RT NAMES mkl_rt
-    HINTS ${MKL_RT_HINT} ENV MKLROOT
-    PATHS /usr/lib/x86_64-linux-gnu /usr/lib
+  # Prefer the explicit LP64/sequential/core 3-layer (the canonical robust MKL
+  # link) over the single libmkl_rt dispatcher, which does fragile runtime
+  # kernel selection (observed on esmeralda: apt libmkl_rt fails to load its
+  # libmkl_def kernel). MKL_RT_HINT points at the MKL lib dir (e.g. a spack
+  # oneAPI mkl/<ver>/lib). LP64 => MKL_INT==int, matching the FEAST code.
+  find_library(LADRUNO_MKL_LP64 NAMES mkl_intel_lp64
+    HINTS ${MKL_RT_HINT} ENV MKLROOT PATHS /usr/lib/x86_64-linux-gnu
     PATH_SUFFIXES lib lib/intel64)
-  if(NOT LADRUNO_MKL_RT)
-    message(FATAL_ERROR "LADRUNO_MKL_FEAST_LINUX=ON but libmkl_rt not found; "
-                        "pass -DMKL_RT_HINT=<dir containing libmkl_rt.so>")
+  find_library(LADRUNO_MKL_SEQ NAMES mkl_sequential
+    HINTS ${MKL_RT_HINT} ENV MKLROOT PATHS /usr/lib/x86_64-linux-gnu
+    PATH_SUFFIXES lib lib/intel64)
+  find_library(LADRUNO_MKL_CORE NAMES mkl_core
+    HINTS ${MKL_RT_HINT} ENV MKLROOT PATHS /usr/lib/x86_64-linux-gnu
+    PATH_SUFFIXES lib lib/intel64)
+  if(LADRUNO_MKL_LP64 AND LADRUNO_MKL_SEQ AND LADRUNO_MKL_CORE)
+    add_compile_definitions(_LADRUNO_MKL_FEAST)
+    # --start-group resolves the circular deps among the three MKL layers.
+    set(LADRUNO_MKL_FEAST_LIBS
+        -Wl,--start-group ${LADRUNO_MKL_LP64} ${LADRUNO_MKL_SEQ} ${LADRUNO_MKL_CORE} -Wl,--end-group
+        pthread m dl)
+    message(STATUS "Ladruno: MKL FEAST on Linux ENABLED (3-layer: ${LADRUNO_MKL_LP64})")
+  else()
+    message(FATAL_ERROR "LADRUNO_MKL_FEAST_LINUX=ON but the MKL 3-layer "
+      "(mkl_intel_lp64/mkl_sequential/mkl_core) was not all found; "
+      "pass -DMKL_RT_HINT=<MKL lib dir>")
   endif()
-  add_compile_definitions(_LADRUNO_MKL_FEAST)
-  set(LADRUNO_MKL_FEAST_LIBS ${LADRUNO_MKL_RT})
-  message(STATUS "Ladruno: MKL FEAST on Linux ENABLED (${LADRUNO_MKL_RT})")
 endif()
 
 #get_cmake_property(_variableNames VARIABLES)
