@@ -112,7 +112,11 @@ def _run(nranks, ne, want_modes, mkl_threads):
     cmd = [MPIEXEC, "-n", str(nranks), *mpi_flags, PYTHON, "-S",
            os.path.abspath(__file__), "--driver", str(ne), str(want_modes), outdir]
     t0 = time.perf_counter()
-    r = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=3600)
+    # esmeralda wall time is effectively unlimited (internally-controlled cluster,
+    # partition MaxTime=INFINITE) -> default the per-point cap high so large models
+    # don't self-kill; override with L2_TIMEOUT (seconds).
+    _to = int(os.environ.get("L2_TIMEOUT", "14400"))
+    r = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=_to)
     wall = time.perf_counter() - t0
     if r.returncode != 0:
         print(r.stdout); print(r.stderr, file=sys.stderr)
