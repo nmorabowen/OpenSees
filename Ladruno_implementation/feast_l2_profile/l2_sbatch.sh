@@ -1,0 +1,40 @@
+#!/bin/bash
+# ADR-43 L2 profiler — SLURM batch submission for the esmeralda cluster.
+# Runs the L3-only distributed-FEAST strong-scaling sweep on ONE exclusive
+# compute node (node* = 32 CPUs / 60 GB — 2x the head node's RAM). The profiler
+# spawns `mpirun -n {np}` internally per data point, using this allocation's
+# slots. Submit from the repo's feast_l2_profile dir:
+#     sbatch l2_sbatch.sh            # defaults: ne=32, np=2,4,8,16
+#     NE=40 NPS=2,4,8,16,32 sbatch l2_sbatch.sh
+# Multi-node (for the np=32-64 "real budget" regime), override the header:
+#     sbatch --nodes=2 --ntasks-per-node=32 l2_sbatch.sh
+#
+#SBATCH --job-name=feast-l2
+#SBATCH --partition=computes
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=32
+#SBATCH --exclusive
+#SBATCH --output=%x_%j.log
+set -e
+
+SPACK_MKL=/mnt/nfshare/software/spack/opt/spack/linux-zen3/intel-oneapi-mkl-2024.2.2-4olf4bnrh4yzaqbhq742doqvnim6yynl/mkl/2024.2/lib
+export PATH=/opt/openmpi/bin:$PATH
+export TMPDIR=$HOME/ladruno_build_test/tmp
+export L2_MODDIR=$HOME/ladruno_build_test/OpenSees/build/Release
+export L2_MPIEXEC=/opt/openmpi/bin/mpirun
+export L2_LDPATH=$SPACK_MKL:/opt/openmpi/lib:/mnt/nfshare/lib
+export L2_TMPDIR=$HOME/ladruno_build_test/tmp
+# inside a SLURM allocation OpenMPI maps -n ranks onto the allotted slots;
+# --oversubscribe lets np exceed physical cores if needed; keep MPI tmp off /tmp
+export L2_MPI_FLAGS="--oversubscribe --mca orte_tmpdir_base $HOME/ladruno_build_test/tmp"
+export L2_M0=${L2_M0:-16}
+
+NE=${NE:-32}
+NPS=${NPS:-2,4,8,16}
+WANT=${WANT:-8}
+
+cd "$HOME/ladruno_build_test/OpenSees/Ladruno_implementation/feast_l2_profile"
+echo "host=$(hostname) ne=$NE nps=$NPS want=$WANT m0=$L2_M0"
+date
+python3.10 l2_profile.py "$NE" "$NPS" "$WANT"
+date
