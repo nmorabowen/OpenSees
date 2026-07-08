@@ -116,6 +116,8 @@ extern void *OPS_LadrunoRigidBody(void); // N. Mora-Bowen (Ladruno) ADR 58
 extern void *OPS_LadrunoDispBeamColumn(void); // N. Mora-Bowen (Ladruno)
 extern void *OPS_LadrunoEmbeddedNode(void); // N. Mora-Bowen (Ladruno)
 extern void *OPS_LadrunoEmbeddedRebar(void); // N. Mora-Bowen (Ladruno)
+extern void *OPS_BezierTri6(void);  // Ladruno (fork element; also wired into the Python functionMap)
+extern void *OPS_BezierTet10(void); // Ladruno (fork element; also wired into the Python functionMap)
 extern void *OPS_ElasticTimoshenkoBeam2d(void);
 extern void *OPS_ElasticTimoshenkoBeam3d(void);
 extern void *OPS_TPB1D(void);
@@ -570,13 +572,17 @@ TclModelBuilderElementCommand(ClientData clientData, Tcl_Interp *interp,
       opserr << "TclElementCommand -- unable to create element of type : " << argv[1] << endln;
       return TCL_ERROR;
     }
-  } else if ((strncmp(argv[1], "Ladruno", 7) == 0) || (strncmp(argv[1], "ladruno", 7) == 0)) {
-    // N. Mora-Bowen (Ladruno) — ONE chain slot for the whole Ladruno element
-    // band, dispatched through a flat factory table. Each additional
-    // `else if` in this function deepens MSVC's lexically-nested-block count
-    // (the chain already sits at the C1061 "blocks nested too deeply" limit:
-    // one branch per element here broke the Windows build), and the table
-    // also keeps future Ladruno elements a one-line addition.
+  } else if ((strncmp(argv[1], "Ladruno", 7) == 0) || (strncmp(argv[1], "ladruno", 7) == 0) ||
+             (strncmp(argv[1], "Bezier", 6) == 0)  || (strncmp(argv[1], "bezier", 6) == 0)) {
+    // N. Mora-Bowen (Ladruno) — ONE chain slot for the whole fork element
+    // band (Ladruno* plus the Bezier* Bernstein elements), dispatched through
+    // a flat factory table. Each additional `else if` in this function deepens
+    // MSVC's lexically-nested-block count (the chain already sits at the C1061
+    // "blocks nested too deeply" limit: one branch per element here broke the
+    // Windows build), so new fork elements are added as a one-line table row
+    // here, NOT as a new branch. The Bezier* elements were already in the
+    // Python functionMap (OpenSeesElementCommands.cpp); this slot mirrors that
+    // registration for the Tcl `element` command.
     static const struct {
       const char *name;
       const char *alias;
@@ -593,6 +599,8 @@ TclModelBuilderElementCommand(ClientData clientData, Tcl_Interp *interp,
       {"LadrunoDispBeamColumn",       "ladrunoDispBeamColumn",       OPS_LadrunoDispBeamColumn},
       {"LadrunoEmbeddedNode",         "ladrunoEmbeddedNode",         OPS_LadrunoEmbeddedNode},
       {"LadrunoEmbeddedRebar",        "ladrunoEmbeddedRebar",        OPS_LadrunoEmbeddedRebar},
+      {"BezierTri6",                  "bezierTri6",                  OPS_BezierTri6},   // Ladruno (fork)
+      {"BezierTet10",                 "bezierTet10",                 OPS_BezierTet10},  // Ladruno (fork)
     };
     const int nLadruno = (int)(sizeof(ladrunoElementTable) / sizeof(ladrunoElementTable[0]));
     Element *theEle = 0;
