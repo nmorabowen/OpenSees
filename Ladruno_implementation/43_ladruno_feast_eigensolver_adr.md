@@ -562,7 +562,17 @@ precedents.
 > solution broadcast to all ranks so the replicated RCI stays in lockstep, symbolic
 > analysis reused across shifts) wired as the `dfeast_srci` inner solve; the
 > replicated RCI runs on one sub-comm; plus the scoped envelope-isolation fix and an
-> `mpiexec -n 2/4` differential test vs the serial `-rci` spectrum. **L2 (deferred):**
+> `mpiexec -n 2/4` differential test vs the serial `-rci` spectrum.
+> **Lockstep determinism (adversarial-gate MAJOR-1):** the replicated `dfeast_srci`
+> must issue the identical `ijob`/`ze`/`m0` sequence on every rank or a collective
+> inner solve deadlocks. The obvious fix — `mkl_set_num_threads_local(1)` — **segfaults
+> at runtime in this MP MKL DLL layout** (so does the global setter). Resolved without
+> MKL thread control: broadcast the stochastic auto-seed `m0` across ranks
+> (`agreeInt` → `MPI_Bcast`) so the first solve's block width matches; the reduced
+> m0×m0 eig is too small for MKL to thread, so the loop stays bit-identical from there.
+> **Proven** at `MKL_NUM_THREADS=4` (multi-threaded) with only the broadcast; very
+> large bands should set `MKL_NUM_THREADS=1` (documented, not enforceable — the
+> enforcement API crashes). See [[LEDGER_quirks]]. **L2 (deferred):**
 > `MPI_Comm_split` the world into $N_q$ node-groups, run the L3 kernel inside each,
 > `Allreduce` the projector — pursued only if a profiled workload shows a $>\times4$
 > quadrature win L3 can't deliver.

@@ -65,6 +65,15 @@ class LadrunoFeastInnerSolve
     // stays in lockstep.
     virtual int solveBlock(int nrhs, const double *Br, const double *Bi,
                            double *Xr, double *Xi) = 0;
+
+    // Force every rank to agree on an integer by taking rank 0's value
+    // (collective; must be called in lockstep on all ranks). Serial default is
+    // the identity. Used to pin the stochastic auto-seed m0 across ranks so the
+    // FIRST distributed solve's block width (hence its MPI_Bcast length) is
+    // identical everywhere — the catastrophic desync the replicated RCI must
+    // avoid without relying on MKL thread-count control (which segfaults in the
+    // MP MKL DLL layout). See FeastEigenSolver::solve() and the ADR R0 note.
+    virtual int agreeInt(int v) { return v; }
 };
 
 // Factory hook for the DISTRIBUTED inner solve (ADR 43 P3c-MPI, L3-only).

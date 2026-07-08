@@ -95,12 +95,12 @@ def driver(outdir):
     sys.path.insert(0, DIST_MP)
     os.add_dll_directory(DIST_MP)
     os.environ["LADRUNO_OPENSEES_QUIET"] = "1"
-    # Determinism + no thread oversubscription under MPI (ADR R2): the
-    # replicated dfeast_srci must issue the SAME ijob sequence on every rank
-    # for the collective inner solves to line up — single-threaded MKL LAPACK
-    # keeps the internal reduced-eig arithmetic bit-identical across ranks.
-    os.environ["MKL_NUM_THREADS"] = "1"
-    os.environ["OMP_NUM_THREADS"] = "1"
+    # DELIBERATELY leave MKL multi-threaded (env=4 in _mpi_run): the MAJOR-1 fix
+    # broadcasts the stochastic auto-seed m0 across ranks (agreeInt) so the
+    # replicated dfeast_srci starts identically everywhere; the tiny reduced eig
+    # runs single-threaded regardless, so lockstep holds WITHOUT pinning MKL
+    # threads (the MKL thread-count setters segfault in this MP DLL layout). If
+    # this stays in lockstep under multi-threaded MKL, the broadcast fix works.
     import openseesmp as ops
 
     world = ops.getPID()
@@ -141,8 +141,12 @@ def _mpi_run(nranks):
     mpiexec = os.path.join(DIST_MP, "mpiexec.exe")
     env = dict(os.environ)
     env["PATH"] = DIST_MP + os.pathsep + env.get("PATH", "")
-    env["MKL_NUM_THREADS"] = "1"
-    env["OMP_NUM_THREADS"] = "1"
+    # Force MULTI-threaded MKL: the replicated dfeast_srci must stay in lockstep
+    # anyway (agreeInt pins m0; the reduced eig is too small for MKL to thread).
+    # If lockstep survives here, the broadcast fix works with no caller env pin.
+    env["MKL_NUM_THREADS"] = "4"
+    env["OMP_NUM_THREADS"] = "4"
+    env["LADRUNO_FEAST_MPI_DEBUG"] = "1"   # emit per-rank distribution proof
     outdir = tempfile.mkdtemp(prefix=f"p3c_n{nranks}_")
     cmd = [mpiexec, "-n", str(nranks), PYTHON, "-S",
            os.path.abspath(__file__), "--driver", outdir]
@@ -151,6 +155,30 @@ def _mpi_run(nranks):
         print(r.stdout)
         print(r.stderr, file=sys.stderr)
         raise RuntimeError(f"mpi run n={nranks} failed rc={r.returncode}")
+
+    # G0 (proof-of-distribution): the DISTRIBUTED kernel actually ran on every
+    # rank with a disjoint triplet slice — a silent serial fallback would make
+    # G1/G2/G3 pass vacuously. Parse the kernel's debug lines; require one per
+    # rank per solve, np matching, and the per-rank nzLoc slices to PARTITION
+    # the 2n block nnz (they must sum to the same total on every solve).
+    import re
+    seen = {}   # rank -> list of nzLoc across the solves it hosted
+    for m in re.finditer(r"LADRUNO_FEAST_MPI rank=(\d+) np=(\d+) nBlk=\d+ "
+                         r"nzLoc=(\d+)", r.stderr):
+        rk, npr_dbg, nz = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        assert npr_dbg == nranks, f"n={nranks} G0: kernel saw np={npr_dbg}"
+        seen.setdefault(rk, []).append(nz)
+    assert set(seen.keys()) == set(range(nranks)), (
+        f"n={nranks} G0 FAIL: distributed kernel did NOT run on all ranks "
+        f"(saw ranks {sorted(seen)}); the -rci path fell back to serial")
+    # per solve, the slices must sum to a constant (the full block nnz) and be
+    # a genuine split (>1 rank => not all mass on one rank)
+    totals = [sum(seen[rk][s] for rk in range(nranks))
+              for s in range(len(seen[0]))]
+    assert len(set(totals)) == 1, f"n={nranks} G0: slice sums vary {totals}"
+    if nranks > 1:
+        assert max(seen[rk][0] for rk in range(nranks)) < totals[0], (
+            f"n={nranks} G0: one rank holds the whole matrix — not distributed")
     res = []
     for w in range(nranks):
         fp = os.path.join(outdir, f"rank_{w}.json")

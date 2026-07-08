@@ -473,6 +473,30 @@ FeastEigenSolver::solve(int numModesRequested, bool generalized, bool findSmalle
   int tolExp    = theSOE->tolExp;
   int fpmPrint  = theSOE->verbose ? 1 : 0;
 
+  // ---- RCI inner-solve kernel (created BEFORE the auto-seed) --------------
+  // -rci routes the solve through the dfeast_srci RCI with a block-real kernel
+  // as the inner (zM-K) solve. ONE kernel for the whole solve: the analysis
+  // phase runs once and is reused across every contour node, refinement loop,
+  // AND saturation retry (block pattern depends only on the (K,M) sparsity, R5).
+  // ADR 43 P3c-MPI (L3-only, R0): if the parallel target registered a
+  // distributed inner-solve factory that accepts this run (comm size > 1), the
+  // contour solves factor/solve the 2n block system across ranks (dmumps SYM=2);
+  // else the serial PARDISO kernel. Either way the SAME dfeast_srci outer loop
+  // runs — replicated across ranks under MPI — so the distributed spectrum is a
+  // bit-for-bit differential of the serial -rci run. Built here (before the
+  // auto-seed) so agreeInt() can pin the auto-seed m0 across ranks.
+  const bool useRci = theSOE->rciFlag;
+  std::unique_ptr<LadrunoFeastInnerSolve> rciKern;
+  if (useRci) {
+    LadrunoFeastInnerSolve *dist = 0;
+    if (ladrunoFeastDistFactory != 0)
+      dist = ladrunoFeastDistFactory(n, isa, jsa, sa, sb);
+    if (dist != 0)
+      rciKern.reset(dist);
+    else
+      rciKern.reset(new LadrunoBlockZKernel(n, isa, jsa, sa, sb));
+  }
+
   // ---- seed the subspace size m0 -----------------------------------------
   // 0 => auto: use FEAST's stochastic estimate (fpm[13]=2) to count the modes
   // in the band without factorizing, then over-provision (Kratos heuristic).
@@ -512,38 +536,25 @@ FeastEigenSolver::solve(int numModesRequested, bool generalized, bool findSmalle
   if (m0 > n) m0 = n;
   if (m0 < 1) m0 = 1;
 
+  // MAJOR-1 (P3c-MPI adversarial gate): pin the auto-seed m0 across ranks. The
+  // stochastic estimate above can round differently per rank under (default)
+  // multi-threaded MKL; a divergent m0 gives the FIRST distributed solve a
+  // different block width per rank -> mismatched MPI_Bcast length -> DEADLOCK.
+  // Broadcasting rank 0's m0 makes the whole replicated RCI start identically.
+  // (The reduced m0xm0 eig inside dfeast_srci is tiny -> MKL runs it
+  // single-threaded, so the loop stays in lockstep from there; the enlargement
+  // decisions key off the collective solve's m/info, identical on every rank.
+  // We do NOT call mkl_set_num_threads* here: both segfault at runtime in this
+  // MP MKL DLL layout. For very large bands set MKL_NUM_THREADS=1 — see R0.)
+  if (useRci && rciKern != 0)
+    m0 = rciKern->agreeInt(m0);
+
   // ---- saturation-enlargement loop ---------------------------------------
   const int maxEnlarge = 4;
   int enlarge = 0;
   int m = 0;
   int info = 0;
   double *e = 0, *x = 0, *res = 0;
-
-  // P3c-serial: -rci routes the solve through the dfeast_srci RCI with the
-  // block-real kernel as the inner solve (the seam the MPI rung distributes).
-  // ONE kernel for the whole solve: the PARDISO analysis phase runs once and
-  // is reused across every contour node, refinement loop, AND saturation
-  // retry (the block pattern depends only on the (K,M) sparsity — ADR R5).
-  // The m0 auto-seed estimate above deliberately stays on the driver path:
-  // it is a count heuristic, not a solve, and keeping it shared makes the
-  // -rci/driver eigenpair comparison seed identically.
-  // ADR 43 P3c-MPI (L3-only, R0): if the parallel executable target registered
-  // a distributed inner-solve factory AND it accepts this run (comm size > 1),
-  // the RCI's contour solves factor/solve the 2n block system across ranks
-  // (dmumps SYM=2); otherwise the serial PARDISO kernel. Either way the SAME
-  // dfeast_srci outer loop runs (replicated across the ranks under MPI), so the
-  // distributed spectrum is a bit-for-bit differential of the serial -rci run.
-  const bool useRci = theSOE->rciFlag;
-  std::unique_ptr<LadrunoFeastInnerSolve> rciKern;
-  if (useRci) {
-    LadrunoFeastInnerSolve *dist = 0;
-    if (ladrunoFeastDistFactory != 0)
-      dist = ladrunoFeastDistFactory(n, isa, jsa, sa, sb);
-    if (dist != 0)
-      rciKern.reset(dist);
-    else
-      rciKern.reset(new LadrunoBlockZKernel(n, isa, jsa, sa, sb));
-  }
 
   while (true) {
     if (m0 > n) m0 = n;

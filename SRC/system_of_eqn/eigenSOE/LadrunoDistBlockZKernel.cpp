@@ -31,6 +31,8 @@
 #include <OPS_Globals.h>
 
 #include <cstring>
+#include <cstdio>
+#include <cstdlib>
 
 #define ICNTL(I) icntl[(I)-1]   // MUMPS 1-based control indices (as elsewhere)
 
@@ -129,6 +131,14 @@ LadrunoDistBlockZKernel::LadrunoDistBlockZKernel(int nEqn, const int *ia,
     id.ICNTL(18) = 3;                    // distributed matrix structure/values
     id.ICNTL(14) = 20;                   // workspace headroom %
     id.ICNTL(7) = 7;                     // ordering: automatic
+    // NOTE (P3c-MPI gate MINOR-1): unlike the serial PARDISO kernel (1e-8 pivot
+    // perturbation, iparm[9]=8) this leaves MUMPS null-pivot detection (ICNTL24)
+    // and static pivoting (CNTL) at defaults. Harmless for normal FEAST use --
+    // Gauss contour nodes carry Im(z)!=0 so (zM-K) stays nonsingular -- but a
+    // mode landing on a contour node could fail JOB=2 here where the serial
+    // path's perturbation survives. Failure is symmetric (broadcast INFOG) so
+    // it refuses cleanly, never deadlocks. Matching the cushion (ICNTL24=1 +
+    // CNTL(3)) is a deferred robustness follow-up.
 
     id.n = nBlk;                         // GLOBAL size, set on every rank
     id.nz_loc = nzLoc;
@@ -145,6 +155,14 @@ LadrunoDistBlockZKernel::LadrunoDistBlockZKernel(int nEqn, const int *ia,
     }
     analyzed = true;
     healthy = true;
+
+    // proof-of-distribution hook (opt-in): lets a test confirm the DISTRIBUTED
+    // kernel actually ran — a silent fallback to the serial PARDISO kernel
+    // would otherwise pass a same-run differential gate unnoticed. Emits this
+    // rank's disjoint triplet-slice size; the slices partition the 2n block nnz.
+    if (getenv("LADRUNO_FEAST_MPI_DEBUG"))
+        fprintf(stderr, "LADRUNO_FEAST_MPI rank=%d np=%d nBlk=%d nzLoc=%d\n",
+                rank, np, nBlk, nzLoc);
 }
 
 LadrunoDistBlockZKernel::~LadrunoDistBlockZKernel()
@@ -203,7 +221,9 @@ LadrunoDistBlockZKernel::solveBlock(int nrhs, const double *Br,
 {
     if (!healthy) return -1;
 
-    const int need = nBlk * nrhs;
+    // size_t for the allocation (2n*nrhs can exceed INT_MAX at extreme scale);
+    // the MPI_Bcast count below is int-limited, which is the real scale ceiling.
+    const size_t need = static_cast<size_t>(nBlk) * nrhs;
     if (nrhs > rhsHostCols) {
         delete[] rhsHost;
         rhsHost = new double[need > 0 ? need : 1];
@@ -234,7 +254,7 @@ LadrunoDistBlockZKernel::solveBlock(int nrhs, const double *Br,
     }
 
     // solution is centralized on the host — broadcast so all ranks agree
-    MPI_Bcast(rhsHost, need, MPI_DOUBLE, 0, comm);
+    MPI_Bcast(rhsHost, static_cast<int>(need), MPI_DOUBLE, 0, comm);
 
     for (int c = 0; c < nrhs; c++) {
         const double *col = &rhsHost[static_cast<size_t>(c) * nBlk];
@@ -244,6 +264,15 @@ LadrunoDistBlockZKernel::solveBlock(int nrhs, const double *Br,
         }
     }
     return 0;
+}
+
+int
+LadrunoDistBlockZKernel::agreeInt(int v)
+{
+    // rank 0's value wins on every rank — pins the stochastic auto-seed m0 so
+    // the first solve's block width is identical everywhere (lockstep).
+    MPI_Bcast(&v, 1, MPI_INT, 0, comm);
+    return v;
 }
 
 // ---------------------------------------------------------------------------

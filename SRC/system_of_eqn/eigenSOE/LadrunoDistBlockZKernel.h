@@ -78,6 +78,7 @@ class LadrunoDistBlockZKernel : public LadrunoFeastInnerSolve
     int setShiftBlock(double a, double b) override;
     int solveBlock(int nrhs, const double *Br, const double *Bi,
                    double *Xr, double *Xi) override;
+    int agreeInt(int v) override;      // MPI_Bcast v from rank 0 over the comm
 
     bool ok(void) const {return healthy;}
 
