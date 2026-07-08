@@ -17,7 +17,7 @@ related:
   - "[[LEDGER_implementations]]"
   - "[[LEDGER_vanilla_files]]"
 tags: [adr, program-plan, roadmap, modal, eigen, complex-modes, buckling, feast, parallel, frequency-domain, sequencing]
-updated: 2026-07-06
+updated: 2026-07-08
 ---
 
 # ADR 45 — Modal-analysis family: implementation roadmap & sequencing plan
@@ -82,8 +82,8 @@ ADR **41** is the unrelated mortar/ALM contact ADR already on `ladruno`.
 ## 3. Dependency graph (what blocks what)
 
 ```
-                ADR 43  FEAST eigensolver + SP/MP fix          ← SUBSTRATE
-                  │   (band-target · Sturm · MPI via MumpsParallelSOE)
+                ADR 43  FEAST eigensolver (MP-parallel)        ← SUBSTRATE
+                  │   (band-target · Sturm · distributed dmumps under MP; SP unsupported)
    ┌──────────────┼───────────────────────────┐
    │ (serial eigen already enough)             │ (parallel + complex contours)
    ▼              ▼                             ▼
@@ -119,7 +119,7 @@ Two defensible orders (synthesis §5 vs §6.5):
 |---|---|---|---|
 | **P-A** | **ADR 46 P0–P3** — complex modal, *serial*, on existing `eigen` | Cheapest, directly serves the research portfolio (isolation/dampers/SSI); de-risks the projection+QZ approach before any big build | existing `eigen`, `modalProperties` |
 | **P-B** | **ADR 43 P1–P2** — serial **MKL-FEAST** eigensolver (band-target + Sturm) | The substrate; **zero new build dep** (MKL already linked); validated vs ARPACK | MKL |
-| **P-C** | **ADR 43 P3–P4** — **parallel** (MPI per-contour via `MumpsParallelSOE`) + **SP/MP unification** | The strategic payoff: large-model modal + the *general* parallel-composition fix | P-B, `MumpsParallelSOE`, PartitionedDomain |
+| **P-C** | **ADR 43 P3** — **distributed inner solve under MP** (per-contour `(z_jM−K)` via distributed `dmumps` on the MP communicator) — **SHIPPED #532**; MP is the single blessed parallel config, **P4 SP/MP-unification DE-SCOPED** | The strategic payoff: large-model modal in the MP build; the reusable distributed-inner-solve seam | P-B, `dmumps`, `OpenSeesMP`/PyMP |
 | **P-D** | **ADR 42** — prestressed modal + linear buckling | Opportunistic; rides serial eigen, gains band/Sturm from P-B; can jump ahead of P-C if a project needs it | corot/PDelta Kg, `eigen` |
 | **P-E** | **ADR 43 P5** — complex contours (re-host ADR 46 at scale) | Unifies the complex case onto the parallel substrate | P-A, P-C |
 | **P-F** | **ADR 44** — frequency domain (FRF/SSD/random, modal transient) | Deliverable layer; build when a project asks | P-A, eigen |
@@ -127,8 +127,12 @@ Two defensible orders (synthesis §5 vs §6.5):
 
 **Rationale.** P-A buys confidence + an immediately useful research deliverable for ~S effort. P-B
 starts the substrate at *zero dependency cost* (the most-load-bearing work that carries no build
-risk). P-C is the one large, build-risky step (MPI + build-flag surgery) and is deliberately
-sequenced after the substrate is proven serially. P-D/P-F are demand-driven.
+risk). P-C is the one large, build-risky step (MPI distributed inner solve) and is deliberately
+sequenced after the substrate is proven serially. **De-scope note (2026-07-08):** P-C originally
+bundled a P4 "SP/MP build-flag unification"; that was **dropped**. MP (`OpenSeesMP`/PyMP) is the
+single blessed parallel configuration, the distributed FEAST solve already runs there (#532), and
+there is no partitioned-SP + distributed-solve combination anyone wants — so the high-blast-radius
+build-flag surgery is *not* built. SP is explicitly unsupported for FEAST. P-D/P-F are demand-driven.
 
 ---
 
@@ -197,7 +201,7 @@ PR**. Owner: each phase.
 |---|---|
 | **G-A** (P-A) complex modal correct (serial) | 2-DOF non-classical closed-form complex modes; base-isolated stick model; vs `scipy.linalg.eig` on projected matrices; vs log-dec from a decay history |
 | **G-B** (P-B) FEAST serial = ARPACK | Same eigenpairs on a medium model; band-targeting counts *all* modes in `[f₁,f₂]`; Sturm/inertia completeness |
-| **G-C** (P-C) parallel scaling + SP/MP unified | Strong/weak scaling on a partitioned model; identical spectrum SP vs MP vs serial |
+| **G-C** (P-C) distributed MP solve = serial | **MET by #532** (L3-only MP distributed `dmumps` inner solve): `mpiexec -n 2/4` distributed spectrum == serial `-rci` oracle (1.5–3.3e-13, MAC≥0.999), lockstep + ΦᵀMΦ=I. **Scope narrowed** to MP-vs-serial (SP de-scoped); "SP vs MP" identity no longer a gate criterion. Optional L2 quadrature scaling deferred (demand-driven) |
 | **G-D** (P-D) buckling/prestressed | Euler `P_cr=π²EI/(KL)²` (multiple BCs), plate buckling, string-tension frequency shift |
 | **G-E** (P-E) complex modes at scale | Complex-FEAST eigenpairs (λ, ψ up to scaling/phase) match ADR 46's serial projection result on a non-classically-damped model within the projection's own convergence envelope; conjugate-pair completeness (every λ paired with λ̄, no orphans in the contour); serial complex-contour == parallel complex-contour spectrum |
 | **G-F** (P-F) frequency domain | SDOF/2-DOF FRF vs analytic; modal transient == direct Newmark (linear); random RMS vs Monte-Carlo; CQC reproduces a published closely-spaced-modes example (ADR 44 P1c); `-combine`-absent path **byte-identical** to current `responseSpectrumAnalysis` (ADR 44 P1d — protects the D4 vanilla surface) |
@@ -212,7 +216,7 @@ merges without its gate green.
 | # | Risk | Mitigation |
 |---|---|---|
 | R1 | **FEAST build dependency** — **RESOLVED**: no vendoring; MKL FEAST stays, gated on two OpenSees-side P3 fixes (D2 spike, 2026-07-07) | P3a comm-split plumbing fix in `MumpsParallelSolver`; P3b symmetric 2n×2n block-real inner SOE (existing `dmumps`, zero new dep); both unit-tested before P3c orchestration |
-| R2 | **SP/MP build-flag surgery** (`_PARALLEL_PROCESSING` vs `_PARALLEL_INTERPRETERS`) is general-infra risk | Land serially first (P-B); isolate the gate change; test SP==MP==serial spectrum |
+| R2 | **SP/MP build-flag surgery** (`_PARALLEL_PROCESSING` vs `_PARALLEL_INTERPRETERS`) — **RETIRED 2026-07-08**: P4 de-scoped, so the surgery is never performed | MP is the single blessed parallel config; distributed FEAST inner solve compiles into the MP targets only behind the `LadrunoFeastInnerSolve` seam (#532), upstream guards untouched; SP unsupported for FEAST — no gate change to isolate |
 | R3 | **MKL ABI** (MPI integer size, threading model) | Pin in [[Ladruno_internal]] compilation journal at P-C; mirror existing MKL usage |
 | R4 | **Assembled-`C` scope creep** (D1) | v1 = exactly `getDamp()`+Rayleigh; warn on others; widen only with sign-off |
 | R5 | **classTag OR ADR-number collision** during the open window (it has happened **three times**: 41→42 shift, 40→46 shift, and "candidate 47" taken by [[47_ladruno_contact_deferrals_adr]]) | Re-verify 33019/33021/33022/33023/33024 vs fresh `ladruno` HEAD before each merge ([[feedback_stale_pr_ledger_ci]]); **never pre-assign ADR numbers to unwritten ADRs** — take the next free number at drafting time |
@@ -229,9 +233,12 @@ merges without its gate green.
 - **Per-shipping-phase:** add the `SRC/classTags.h` define; flip the ledger row RESERVED→active;
   stamp the LADRUNO header on new source ([[feedback_always_stamp_header]]); add a
   `Ladruno_scripts/banner_features.txt` line **only when the feature actually ships**; record any
-  upstream edit in [[LEDGER_vanilla_files]] (expect: `EigenSOE` base + parallel mains for ADR 43;
-  `ResponseSpectrumAnalysis` for ADR 44 if D4 takes the edit path).
-- **Build deps:** ADR 43 P-C may add FEAST/PFEAST — note in [[Ladruno_internal]] compilation journal.
+  upstream edit in [[LEDGER_vanilla_files]] (for ADR 43: `getNewEigenSOE` broker switch + the two
+  `eigen` parsers + `BasicAnalysisBuilder` — **not** the parallel mains, since P4 is de-scoped and
+  the distributed inner solve sits behind the `LadrunoFeastInnerSolve` seam; `ResponseSpectrumAnalysis`
+  for ADR 44 if D4 takes the edit path).
+- **Build deps:** ADR 43 links MKL FEAST (already on the link line) — no PFEAST vendoring (D2 resolved);
+  note the MP distributed-solve recipe in [[Ladruno_internal]] compilation journal.
 - **PRs:** one logical phase per PR; base on `ladruno`; verify branch is current before each push
   ([[feedback_stranded_commits_after_automerge]]).
 
@@ -249,6 +256,15 @@ merges without its gate green.
   landed on `ladruno`, colliding on 40 → complex-modal moved 40→46 and the ROM candidate 46→47.**
 - This ADR + the four feature ADRs + the theory study ship together as a **docs-only PR**
   ([#351](https://github.com/nmorabowen/OpenSees/pull/351)); no `SRC/` change, no banner line yet.
+- **2026-07-08 — P-C shipped + FEAST runway closed.** ADR 43 P3 landed across #524 (P3a
+  comm-split) / #527 (P3b block-real kernel) / #530 (P3c-serial RCI) / #532 (P3c-MPI-L3 distributed
+  `dmumps` inner solve). **Decision: MP (`OpenSeesMP`/PyMP) is the single blessed parallel
+  configuration; SP (`_PARALLEL_PROCESSING`) is explicitly unsupported for FEAST; the P4 SP/MP
+  build-flag unification is DE-SCOPED** (not deferred) — the distributed solve already runs in MP,
+  so the "impossible-today" partitioned-SP + distributed-solve combination P4 targeted is not
+  wanted. Gate **G-C is MET by #532** rather than pending an SP-unification PR; program risk R2
+  retired. The only open ADR-43 item is the optional, demand-driven L2 quadrature-parallel
+  multiplier (ADR 43 §9 R0). The FEAST substrate line is functionally complete.
 - **2026-07-06 — adversarial review applied** (source-verified against `SRC/` + all four member
   ADRs; all 8 code-state premises held, 2 needed rewording):
   - **Added the missing G-E gate** — P-E (complex contours at scale, the riskiest math phase) had
