@@ -54,6 +54,8 @@ GLOBS = [
     "SRC/system_of_eqn/eigenSOE/FeastEigenSOE.*",
     "SRC/system_of_eqn/eigenSOE/FeastEigenSolver.*",
     "SRC/system_of_eqn/eigenSOE/LadrunoBlockZKernel.*",
+    "SRC/system_of_eqn/eigenSOE/LadrunoFeastInnerSolve.*",
+    "SRC/system_of_eqn/eigenSOE/LadrunoDistBlockZKernel.*",
     "SRC/material/nD/LadrunoJ2.*", "SRC/material/nD/LadrunoJ2Kernel.h",
     "SRC/material/nD/LadrunoJ2Finite.*",
     "SRC/material/nD/LadrunoRCConcrete.*", "SRC/material/nD/LadrunoRCKernel.h",

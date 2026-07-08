@@ -30,6 +30,7 @@
 #include <FeastEigenSolver.h>
 #include <FeastEigenSOE.h>
 #include <LadrunoBlockZKernel.h>   // Ladruno ADR43 P3b: -blockZGate kernel
+#include <LadrunoFeastInnerSolve.h> // Ladruno ADR43 P3c: RCI inner-solve seam
 #include <Vector.h>
 #include <Channel.h>
 #include <FEM_ObjectBroker.h>
@@ -309,7 +310,7 @@ runBlockZGate(int n, const int *rowPtr, const int *colInd,
 // same codes as dfeast_scsrgv), -1 on a kernel/protocol failure (message
 // already printed).
 int
-runFeastRci(LadrunoBlockZKernel &kern, int n,
+runFeastRci(LadrunoFeastInnerSolve &kern, int n,
             const int *rowPtr, const int *colInd,
             const double *Kvals, const double *Mvals,
             int *fpm, double *epsout, int *loop,
@@ -526,10 +527,23 @@ FeastEigenSolver::solve(int numModesRequested, bool generalized, bool findSmalle
   // The m0 auto-seed estimate above deliberately stays on the driver path:
   // it is a count heuristic, not a solve, and keeping it shared makes the
   // -rci/driver eigenpair comparison seed identically.
+  // ADR 43 P3c-MPI (L3-only, R0): if the parallel executable target registered
+  // a distributed inner-solve factory AND it accepts this run (comm size > 1),
+  // the RCI's contour solves factor/solve the 2n block system across ranks
+  // (dmumps SYM=2); otherwise the serial PARDISO kernel. Either way the SAME
+  // dfeast_srci outer loop runs (replicated across the ranks under MPI), so the
+  // distributed spectrum is a bit-for-bit differential of the serial -rci run.
   const bool useRci = theSOE->rciFlag;
-  std::unique_ptr<LadrunoBlockZKernel> rciKern;
-  if (useRci)
-    rciKern.reset(new LadrunoBlockZKernel(n, isa, jsa, sa, sb));
+  std::unique_ptr<LadrunoFeastInnerSolve> rciKern;
+  if (useRci) {
+    LadrunoFeastInnerSolve *dist = 0;
+    if (ladrunoFeastDistFactory != 0)
+      dist = ladrunoFeastDistFactory(n, isa, jsa, sa, sb);
+    if (dist != 0)
+      rciKern.reset(dist);
+    else
+      rciKern.reset(new LadrunoBlockZKernel(n, isa, jsa, sa, sb));
+  }
 
   while (true) {
     if (m0 > n) m0 = n;

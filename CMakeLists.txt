@@ -933,6 +933,9 @@ if(MPI_FOUND)
       ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/MumpsSolver.cpp
       ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/MumpsParallelSOE.cpp
       ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/MumpsParallelSolver.cpp
+      # Ladruno ADR43 P3c-MPI: distributed FEAST inner solve (self-registers
+      # the LadrunoFeastInnerSolve factory; _PARALLEL_INTERPRETERS targets only)
+      ${OPS_SRC_DIR}/system_of_eqn/eigenSOE/LadrunoDistBlockZKernel.cpp
       ${OPS_SRC_DIR}/domain/subdomain/ActorSubdomain.cpp
       ${OPS_SRC_DIR}/domain/subdomain/ShadowSubdomain.cpp
       ${OPS_INTERP_TCL_PER_TARGET_SOURCES}
@@ -1034,6 +1037,9 @@ add_library(OpenSeesPyMP SHARED EXCLUDE_FROM_ALL
   ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/MumpsSolver.cpp
   ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/MumpsParallelSOE.cpp
   ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/MumpsParallelSolver.cpp
+  # Ladruno ADR43 P3c-MPI: distributed FEAST inner solve (self-registers the
+  # LadrunoFeastInnerSolve factory; _PARALLEL_INTERPRETERS targets only)
+  ${OPS_SRC_DIR}/system_of_eqn/eigenSOE/LadrunoDistBlockZKernel.cpp
   ${OPS_SRC_DIR}/domain/subdomain/ActorSubdomain.cpp
   ${OPS_SRC_DIR}/domain/subdomain/ShadowSubdomain.cpp
 )
