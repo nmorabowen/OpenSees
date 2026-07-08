@@ -19,6 +19,14 @@ set -e
 
 SPACK_MKL=/mnt/nfshare/software/spack/opt/spack/linux-zen3/intel-oneapi-mkl-2024.2.2-4olf4bnrh4yzaqbhq742doqvnim6yynl/mkl/2024.2/lib
 export PATH=/opt/openmpi/bin:$PATH
+# The profiler spawns `mpirun -n {np}` internally. When this script itself runs
+# ON a compute node (launched via `srun ... bash l2_sbatch.sh`), force the inner
+# mpirun to launch ranks LOCALLY on that node (rsh/local launcher) rather than
+# opening a nested SLURM step, which conflicts with the enclosing srun step.
+# Result: all np ranks run on the srun-assigned compute node. Override with
+# OMPI_MCA_plm=slurm for a true multi-node sbatch run.
+export OMPI_MCA_plm=${OMPI_MCA_plm:-rsh}
+export OMPI_MCA_rmaps_base_oversubscribe=1
 export TMPDIR=$HOME/ladruno_build_test/tmp
 export L2_MODDIR=$HOME/ladruno_build_test/OpenSees/build/Release
 export L2_MPIEXEC=/opt/openmpi/bin/mpirun
