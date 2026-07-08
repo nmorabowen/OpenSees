@@ -48,7 +48,7 @@
 // Windows build links the LP64 interface (-DMKL_INTERFACE_FULL=intel_lp64);
 // the C-callable FEAST names carry no trailing underscore.
 // ---------------------------------------------------------------------------
-#ifdef _WIN32
+#if defined(_WIN32) || defined(_LADRUNO_MKL_FEAST)
 // P3c: MKL_Complex16-layout struct for the dfeast_srci RCI (mkl_types.h is
 // not included here — same minimal-declaration style as the kernels below)
 typedef struct { double real; double imag; } FeastComplex16;
@@ -439,7 +439,7 @@ FeastEigenSolver::solve(int numModesRequested, bool generalized, bool findSmalle
     return -1;
   }
 
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(_LADRUNO_MKL_FEAST)
   opserr << "FeastEigenSolver::solve() -- FEAST requires the MKL Extended "
          << "Eigensolver, available only on the Windows/oneAPI build "
          << "(ADR 43 P1)\n";

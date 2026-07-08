@@ -538,6 +538,32 @@ endif()
 
 message(STATUS "SCALAPACK_LIBRARIES=${SCALAPACK_LIBRARIES}")
 
+# ---------------------------------------------------------------------------
+# Ladruno ADR43 L2-profile: opt-in MKL FEAST on a non-Windows host (esmeralda).
+# The FEAST/PARDISO paths in FeastEigenSolver.cpp + LadrunoBlockZKernel.cpp are
+# historically gated on _WIN32 (MKL was Windows/oneAPI-only on this fork). With
+# LADRUNO_MKL_FEAST_LINUX=ON on a non-Windows host that HAS MKL, define
+# _LADRUNO_MKL_FEAST (flips those guards on) and expose libmkl_rt (the single
+# dynamic dispatcher carrying dfeast_srci/dfeast_scsrgv/feastinit/pardiso) via
+# LADRUNO_MKL_FEAST_LIBS for the parallel targets to link. Default OFF => the
+# Windows/oneAPI and Ubuntu Zone-A reference-LAPACK builds are byte-identical.
+# ---------------------------------------------------------------------------
+option(LADRUNO_MKL_FEAST_LINUX "Enable MKL FEAST on a non-Windows host (link libmkl_rt)" OFF)
+set(LADRUNO_MKL_FEAST_LIBS "")
+if(LADRUNO_MKL_FEAST_LINUX AND NOT WIN32)
+  find_library(LADRUNO_MKL_RT NAMES mkl_rt
+    HINTS ${MKL_RT_HINT} ENV MKLROOT
+    PATHS /usr/lib/x86_64-linux-gnu /usr/lib
+    PATH_SUFFIXES lib lib/intel64)
+  if(NOT LADRUNO_MKL_RT)
+    message(FATAL_ERROR "LADRUNO_MKL_FEAST_LINUX=ON but libmkl_rt not found; "
+                        "pass -DMKL_RT_HINT=<dir containing libmkl_rt.so>")
+  endif()
+  add_compile_definitions(_LADRUNO_MKL_FEAST)
+  set(LADRUNO_MKL_FEAST_LIBS ${LADRUNO_MKL_RT})
+  message(STATUS "Ladruno: MKL FEAST on Linux ENABLED (${LADRUNO_MKL_RT})")
+endif()
+
 #get_cmake_property(_variableNames VARIABLES)
 #list (SORT _variableNames)
 #foreach (_variableName ${_variableNames})
@@ -907,6 +933,7 @@ if(MPI_FOUND)
        ${SCALAPACK_LIBRARIES}
        ${MPI_Fortran_LIBRARIES}
        ${MPI_CXX_LINK_FLAGS}
+       ${LADRUNO_MKL_FEAST_LIBS}   # Ladruno ADR43 L2: MKL FEAST on Linux (opt-in)
     )
 
 endif()
@@ -981,6 +1008,7 @@ if(MPI_FOUND)
        ${SCALAPACK_LIBRARIES}
        ${MPI_Fortran_LIBRARIES}
        ${MPI_CXX_LINK_FLAGS}
+       ${LADRUNO_MKL_FEAST_LIBS}   # Ladruno ADR43 L2: MKL FEAST on Linux (opt-in)
     )
 
 endif()
