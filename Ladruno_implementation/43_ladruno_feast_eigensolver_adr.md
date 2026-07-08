@@ -57,7 +57,14 @@ distributes; driver-parity gate λ ≤1e-8 rel + MAC ≥0.999 + `-certify`
 composition; MKL RCI QUIRK: `dfeast_srci` SHRINKS its in/out `m0` in place
 when the band holds fewer modes than the subspace — keep the caller's m0
 by value or the saturation-enlargement compare plateaus and refuses)
-MERGED ([#530](https://github.com/nmorabowen/OpenSees/pull/530)).** classTags **33022**
+MERGED ([#530](https://github.com/nmorabowen/OpenSees/pull/530)). P3c-MPI (L3-only
+per R0): `eigen -feast … -rci` under openseesmp routes the RCI inner solve
+through `LadrunoDistBlockZKernel` — distributed `dmumps` SYM=2 of the 2n block
+system across the ranks (via a new `LadrunoFeastInnerSolve` seam + self-registering
+factory) with the `dfeast_srci` outer loop replicated + solution broadcast for
+lockstep; gate `feast_d2_spike/p3c_mpi_gate.py` green at mpiexec −n 2/4 (dist
+spectrum == serial oracle to 3–5e-13, all ranks agree, ΦᵀMΦ==I); Opus gate +
+PR pending.** classTags **33022**
 (`FeastEigenSOE`) + **33023** (`FeastEigenSolver`) **ACTIVE in `SRC/classTags.h`**. P1 deviations
 from this draft (deliberate, ledgered): the packed CSR driver `dfeast_scsrgv` instead of the §5.2
 RCI seam — the RCI's complex shifted solves cannot route through a *real* inner `LinearSOE`, so
