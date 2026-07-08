@@ -30,7 +30,15 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WT = os.path.abspath(os.path.join(HERE, "..", ".."))
-DIST_MP = os.path.join(WT, "dist", "openseesmp")
+# Module dir (where openseesmp.pyd/.so lives) + launcher are platform-specific:
+#   Windows: dist/openseesmp/{openseesmp.pyd, mpiexec.exe}
+#   Linux (esmeralda): build/Release/openseesmp.so, mpirun on PATH
+# Override via env: L2_MODDIR (module dir), L2_MPIEXEC (launcher), L2_LDPATH
+# (extra LD_LIBRARY_PATH dirs for the Linux run, ':'-joined).
+MODDIR = os.environ.get("L2_MODDIR", os.path.join(WT, "dist", "openseesmp"))
+MPIEXEC = os.environ.get(
+    "L2_MPIEXEC",
+    os.path.join(MODDIR, "mpiexec.exe") if os.name == "nt" else "mpirun")
 PYTHON = sys.executable
 
 sys.path.insert(0, HERE)
@@ -39,8 +47,9 @@ sys.path.insert(0, HERE)
 def driver(ne, want_modes, outdir):
     """Under mpiexec: build the box, calibrate the band, TIME the distributed
     -rci solve, write rank_<world>.json."""
-    sys.path.insert(0, DIST_MP)
-    os.add_dll_directory(DIST_MP)
+    sys.path.insert(0, MODDIR)
+    if hasattr(os, "add_dll_directory"):      # Windows-only DLL search dir
+        os.add_dll_directory(MODDIR)
     os.environ["LADRUNO_OPENSEES_QUIET"] = "1"
     import openseesmp as ops
     import solid_box as sb
@@ -81,14 +90,26 @@ def driver(ne, want_modes, outdir):
 
 def _run(nranks, ne, want_modes, mkl_threads):
     import tempfile
-    mpiexec = os.path.join(DIST_MP, "mpiexec.exe")
     env = dict(os.environ)
-    env["PATH"] = DIST_MP + os.pathsep + env.get("PATH", "")
     env["MKL_NUM_THREADS"] = str(mkl_threads)
     env["OMP_NUM_THREADS"] = str(mkl_threads)
     env["LADRUNO_FEAST_MPI_DEBUG"] = "1"
-    outdir = tempfile.mkdtemp(prefix=f"l2_ne{ne}_n{nranks}_")
-    cmd = [mpiexec, "-n", str(nranks), PYTHON, "-S",
+    if os.name == "nt":
+        env["PATH"] = MODDIR + os.pathsep + env.get("PATH", "")
+    else:
+        # Linux: openseesmp.so needs its runtime deps on LD_LIBRARY_PATH
+        # (OpenMPI, netlib scalapack, MKL). Pass extras via L2_LDPATH.
+        ld = [MODDIR] + os.environ.get("L2_LDPATH", "").split(os.pathsep)
+        ld.append(env.get("LD_LIBRARY_PATH", ""))
+        env["LD_LIBRARY_PATH"] = os.pathsep.join(p for p in ld if p)
+        # single-dynamic-lib MKL: pin LP64 (MKL_INT==int, matches the code) +
+        # sequential threading (avoid OpenMP oversubscription under MPI).
+        env.setdefault("MKL_INTERFACE_LAYER", "LP64")
+        env.setdefault("MKL_THREADING_LAYER", "SEQUENTIAL")
+    outdir = tempfile.mkdtemp(prefix=f"l2_ne{ne}_n{nranks}_",
+                              dir=os.environ.get("L2_TMPDIR") or None)
+    mpi_flags = os.environ.get("L2_MPI_FLAGS", "").split()
+    cmd = [MPIEXEC, "-n", str(nranks), *mpi_flags, PYTHON, "-S",
            os.path.abspath(__file__), "--driver", str(ne), str(want_modes), outdir]
     t0 = time.perf_counter()
     r = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=3600)
