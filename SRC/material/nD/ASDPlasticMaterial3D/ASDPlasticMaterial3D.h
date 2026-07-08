@@ -57,6 +57,7 @@
 #include <tuple>
 #include <utility> // For std::pair
 #include <map> // For std::pair
+#include <cstdio> // Ladruno: snprintf for internal-variable ResponseType names
 #include <limits>
 #include <type_traits>
 
@@ -1090,22 +1091,58 @@ public:
 
         static Vector return_vector(6);
 
-        if (strcmp(argv[0], "stress") == 0 || strcmp(argv[0], "stresses") == 0)
+        if (argc < 1)
+            return 0;
+
+        // Ladruno: emit NdMaterialOutput + ResponseType XML so recorders
+        // (MPCO / LadrunoRecorder) label the per-Gauss-point material columns
+        // with real component names instead of the generic C1..CN fallback.
+        // Requested via `-E material.<token>` (the `material.` prefix makes the
+        // recorder iterate Gauss points and forward here); a bare `-E <token>`
+        // never reaches the material and records nothing.
+        s.tag("NdMaterialOutput");
+        s.attr("matType", this->getClassType());
+        s.attr("matTag", this->getTag());
+
+        static const char *TENSOR_STRESS[6] =
+            {"sigma11", "sigma22", "sigma33", "sigma12", "sigma23", "sigma13"};
+        static const char *TENSOR_STRAIN[6] =
+            {"eps11", "eps22", "eps33", "eps12", "eps23", "eps13"};
+        static const char *TENSOR_PSTRAIN[6] =
+            {"epsP11", "epsP22", "epsP33", "epsP12", "epsP23", "epsP13"};
+
+        if (strcmp(argv[0], "stress") == 0 || strcmp(argv[0], "stresses") == 0) {
+            for (int i = 0; i < 6; ++i) s.tag("ResponseType", TENSOR_STRESS[i]);
             return new MaterialResponse(this, 1, this->getStress());
-        else if (strcmp(argv[0], "strain") == 0 || strcmp(argv[0], "strains") == 0)
+        }
+        else if (strcmp(argv[0], "strain") == 0 || strcmp(argv[0], "strains") == 0) {
+            for (int i = 0; i < 6; ++i) s.tag("ResponseType", TENSOR_STRAIN[i]);
             return new MaterialResponse(this, 2, this->getStrain());
-        else if (strcmp(argv[0], "pstrain") == 0 || strcmp(argv[0], "pstrains") == 0)
+        }
+        else if (strcmp(argv[0], "pstrain") == 0 || strcmp(argv[0], "pstrains") == 0) {
+            for (int i = 0; i < 6; ++i) s.tag("ResponseType", TENSOR_PSTRAIN[i]);
             return new MaterialResponse(this, 3, this->getPstrain());
-        else if (strcmp(argv[0], "eqpstrain") == 0 )
-            return new MaterialResponse(this, 4, this->getEQPstrain());        
-        else if (strcmp(argv[0], "PStress") == 0 )
-            return new MaterialResponse(this, 5, this->getPStress());        
-        else if (strcmp(argv[0], "J2Stress") == 0 )
-            return new MaterialResponse(this, 6, this->getJ2Stress());        
-        else if (strcmp(argv[0], "VolStrain") == 0 )
-            return new MaterialResponse(this, 7, this->getVolStrain());        
-        else if (strcmp(argv[0], "J2Strain") == 0 )
+        }
+        else if (strcmp(argv[0], "eqpstrain") == 0 ) {
+            s.tag("ResponseType", "eqpstrain");
+            return new MaterialResponse(this, 4, this->getEQPstrain());
+        }
+        else if (strcmp(argv[0], "PStress") == 0 ) {
+            s.tag("ResponseType", "p");                  // mean (hydrostatic) stress
+            return new MaterialResponse(this, 5, this->getPStress());
+        }
+        else if (strcmp(argv[0], "J2Stress") == 0 ) {
+            s.tag("ResponseType", "J2stress");           // 2nd deviatoric stress invariant
+            return new MaterialResponse(this, 6, this->getJ2Stress());
+        }
+        else if (strcmp(argv[0], "VolStrain") == 0 ) {
+            s.tag("ResponseType", "epsVol");             // volumetric strain (I1 of strain)
+            return new MaterialResponse(this, 7, this->getVolStrain());
+        }
+        else if (strcmp(argv[0], "J2Strain") == 0 ) {
+            s.tag("ResponseType", "J2strain");           // 2nd deviatoric strain invariant
             return new MaterialResponse(this, 8, this->getJ2Strain());
+        }
         else
         {
             const char *iv_name = argv[0];
@@ -1113,6 +1150,24 @@ public:
             int iv_size = this->getInternalVariableSizeByName(iv_name);
             int pos = this->getInternalVariableIndexByName(iv_name);
 
+            // Ladruno: an unrecognized token (pos < 0) previously fell through to
+            // MaterialResponse(1000+pos, Vector(iv_size)) with iv_size == -1 -- a
+            // malformed response. Return 0 so the recorder records nothing for the
+            // bad token (e.g. `material.plasticStrain`, which is spelled `pstrain`
+            // here) instead of a garbage bucket.
+            if (pos < 0 || iv_size <= 0)
+                return 0;
+
+            // label each internal-variable component <ivName> or <ivName>_<i>
+            if (iv_size == 1) {
+                s.tag("ResponseType", iv_name);
+            } else {
+                char buf[64];
+                for (int i = 0; i < iv_size; ++i) {
+                    snprintf(buf, sizeof(buf), "%s_%d", iv_name, i + 1);
+                    s.tag("ResponseType", buf);
+                }
+            }
             return new MaterialResponse(this, 1000 + pos, Vector(iv_size));
         }
 
