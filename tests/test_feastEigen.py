@@ -420,6 +420,21 @@ def test_rci_composes_with_certify(capfd):
     assert "certified complete" in capfd.readouterr().err
 
 
+def test_rci_actually_runs_the_rci_path(capfd):
+    """Opus-gate MAJOR fix: pin that -rci EXECUTES the RCI branch. Every
+    other P3c test would pass if -rci were silently ignored (both calls
+    would be the driver path). The RCI branch's unique fingerprint is the
+    verbose 'dfeast_srci finished' banner — assert it fires under -rci and
+    does NOT fire on the driver path."""
+    _frame()
+    lam_ref = np.asarray(ops.eigen(8))
+    f_hi = 0.5 * (_hz(lam_ref[6]) + _hz(lam_ref[7]))
+    ops.eigen("-feast", 0.0, f_hi, "-rci", "-verbose")
+    assert "dfeast_srci finished" in capfd.readouterr().err
+    ops.eigen("-feast", 0.0, f_hi, "-verbose")
+    assert "dfeast_srci finished" not in capfd.readouterr().err
+
+
 def test_rci_composes_with_blockzgate(capfd):
     """All three diagnostics on one run (-rci -certify -blockZGate):
     eigenpairs unchanged vs the plain driver solve."""

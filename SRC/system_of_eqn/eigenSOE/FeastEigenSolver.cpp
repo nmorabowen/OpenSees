@@ -671,6 +671,11 @@ FeastEigenSolver::solve(int numModesRequested, bool generalized, bool findSmalle
   // ---- store accepted pairs ascending, capped at numModesRequested -------
   if (m < 0) m = 0;
 
+  // the RCI kernel's factorization is dead weight past this point — release
+  // it before -blockZGate builds ITS kernel (avoids transiently holding two
+  // 2n block LDL^T factorizations; Opus gate MINOR)
+  rciKern.reset();
+
   // ---- P2 -certify: the Sturm/inertia completeness certificate -----------
   // certified band count = neg(K - emax*M) - neg(K - emin*M), an EXACT count
   // from the factorization itself, independent of FEAST's own bookkeeping
