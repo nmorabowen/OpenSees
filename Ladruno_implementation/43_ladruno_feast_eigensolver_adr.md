@@ -2,7 +2,7 @@
 title: "ADR 43 — FEAST/PFEAST band-targeted parallel eigensolver: design spec"
 project: Ladruno
 type: ADR / design spec
-status: draft
+status: FEAST line COMPLETE (P1–P3 shipped; MP the single blessed parallel config; SP + P4 de-scoped)
 priority: high
 owner: nmora
 related:
@@ -24,21 +24,29 @@ tags:
   - feast
   - mpi
   - mumps
-updated: 2026-06-22
+updated: 2026-07-08
 ---
 
 # ADR 43 — `FeastEigenSOE` / `FeastEigenSolver` (band-targeted parallel eigensolver)
 
 > **Strategic role (load-bearing assessment — see [[modal_gap_study/00_SYNTHESIS]] §6).**
 > **The substrate — highest load-bearing of the family.** This is infrastructure, not a feature:
-> (1) it is the eigensolver every other modal capability (46/42/44) rides; (2) the SP/MP
-> parallel-composition fix is *general* parallel infrastructure that helps any large partitioned
-> analysis, not just modal. Combined with the fact that modal eigen sits upstream of every damped
+> (1) it is the eigensolver every other modal capability (46/42/44) rides; (2) the distributed
+> inner-solve plumbing (sub-communicator-aware `dmumps`, the `LadrunoFeastInnerSolve` seam) is
+> *general* parallel infrastructure reusable by any MP-build distributed solve, not just modal.
+> *(Note: the once-envisioned SP/MP build unification (P4) was de-scoped 2026-07-08 — MP is the
+> single blessed parallel config; see §3/§5.5/§7/§9 R6.)* Combined with the fact that modal eigen
+> sits upstream of every damped
 > time-history run (Rayleigh-damping calibration), this ADR is what makes the whole family — and
 > large-model NLTHA — actually trustworthy at scale. **The strategic investment** (large build);
 > sequence after the cheap ADR-46 proof.
 
-**Status:** in progress — **P1 (serial MKL-FEAST, `eigen -feast`) MERGED
+**Status:** **FEAST line COMPLETE (2026-07-08).** Blessed baseline shipped: serial P1/P2
++ distributed MP P3 (P3a/P3b/P3c-serial/P3c-MPI-L3). **MP (`OpenSeesMP`/PyMP) is the single
+blessed parallel configuration; SP (`_PARALLEL_PROCESSING`) is explicitly unsupported for
+FEAST; P4 (SP/MP build-flag unification) is DE-SCOPED — gate G-C is MET by #532.** Only the
+optional, demand-driven L2 quadrature-parallel MULTIPLIER (§9 R0) remains, un-started.
+Phase history — **P1 (serial MKL-FEAST, `eigen -feast`) MERGED
 ([#515](https://github.com/nmorabowen/OpenSees/pull/515)); P2 (`-certify` Sturm/inertia via
 PARDISO on the SOE's own CSR + banner) MERGED
 ([#517](https://github.com/nmorabowen/OpenSees/pull/517)); gates G-A/G-B CLOSED. D2 spike
@@ -63,8 +71,25 @@ through `LadrunoDistBlockZKernel` — distributed `dmumps` SYM=2 of the 2n block
 system across the ranks (via a new `LadrunoFeastInnerSolve` seam + self-registering
 factory) with the `dfeast_srci` outer loop replicated + solution broadcast for
 lockstep; gate `feast_d2_spike/p3c_mpi_gate.py` green at mpiexec −n 2/4 (dist
-spectrum == serial oracle to 3–5e-13, all ranks agree, ΦᵀMΦ==I); Opus gate +
-PR pending.** classTags **33022**
+spectrum == serial oracle to 3–5e-13, all ranks agree, ΦᵀMΦ==I) — MERGED
+([#532](https://github.com/nmorabowen/OpenSees/pull/532)), full Opus adversarial
+gate clean (2 MAJORs fixed: lockstep-determinism via broadcast auto-seed m0, and
+a gate blind-spot on silent serial fallback).**
+>
+> **RUNWAY CLOSED 2026-07-08 — MP is the single blessed parallel configuration;
+> SP (`_PARALLEL_PROCESSING`) is explicitly UNSUPPORTED for FEAST; P4 (SP/MP
+> build-flag unification) is DE-SCOPED, not deferred.** The distributed FEAST
+> solve already compiles + runs in the MP build (`OpenSeesMP`/PyMP,
+> `_PARALLEL_INTERPRETERS`, replicated interpreters), which ships MKL + Intel-MPI
+> and reaches `dfeast_srci` + the distributed `dmumps` inner solve. The
+> "impossible-today combination" P4 targeted — partitioned-domain SP assembly +
+> distributed contour solve in one binary — is **not wanted**: MP is the one
+> parallel config we bless, so there is nothing to unify. **Gate G-C is MET by
+> the L3-only MP work (#532)** — see §7 — not pending an SP-unification PR. The
+> ADR-43 FEAST line is therefore functionally COMPLETE; the only remaining item
+> is the *optional, demand-driven* L2 quadrature-parallel MULTIPLIER (§9 R0),
+> pursued only if a profiled large-model workload shows the L3 per-node
+> saturation is the bottleneck. classTags **33022**
 (`FeastEigenSOE`) + **33023** (`FeastEigenSolver`) **ACTIVE in `SRC/classTags.h`**. P1 deviations
 from this draft (deliberate, ledgered): the packed CSR driver `dfeast_scsrgv` instead of the §5.2
 RCI seam — the RCI's complex shifted solves cannot route through a *real* inner `LinearSOE`, so
@@ -226,8 +251,17 @@ so a sibling ADR cannot collide.
 - **Sturm/inertia certification** (P2): expose the negative-pivot count of the
   factorized $(K-\sigma M)$ from the Mumps/Band solvers so any shift-invert path can
   certify no modes were missed — and use it to cross-check FEAST's subspace count.
-- **Unify the SP/MP build gating** (P4): a single coherent
-  partitioned-domain + distributed-solve + contour-parallel model in one build.
+- **Distributed inner solve under MP** (P3): per-contour `(z_jM−K)` solves routed
+  through a distributed `dmumps` on the MP build's communicator — **MP
+  (`OpenSeesMP`/PyMP, `_PARALLEL_INTERPRETERS`) is the single blessed parallel
+  configuration.**
+
+**NOT in scope (explicitly EXCLUDED):**
+- **SP (`_PARALLEL_PROCESSING`) support / SP-MP build unification** (was "P4").
+  **DE-SCOPED 2026-07-08.** MP is the one blessed parallel config; the distributed
+  FEAST solve already runs there (#532). There is no partitioned-SP + distributed-
+  solve combination to build, so the P4 build-flag surgery is *not wanted* — not
+  merely deferred. SP is explicitly UNSUPPORTED for FEAST. See §5.5, §7, §9 R6.
 
 **NOT in scope (handed to siblings / later):**
 - **Full complex-contour damped eigen** — re-host of [[46_ladruno_complex_modal_adr|ADR
@@ -425,25 +459,38 @@ Parsers: the band path is **added** beside the existing flag map in **both**
 `SRC/interpreter/OpenSeesCommands.cpp:270` (legacy/parallel) — selecting
 `EigenSOE_TAGS_FeastEigenSOE` and stashing `fmin/fmax/m0` on the SOE.
 
-### 5.5 How this unifies the SP/MP split (the concrete fix)
+### 5.5 The SP/MP split — resolved by de-scoping SP, not by unifying it
 
-The incoherence ([[modal_gap_study/01_opensees_current_state|dossier 01]] §C.4) is:
-`MumpsParallelSOE` is `_PARALLEL_INTERPRETERS`-only (`OpenSeesCommands.cpp:4079`) while
-the subdomain `ArpackSOE` distribution is `_PARALLEL_PROCESSING`. FEAST dissolves it
-because **its only distributed need is the inner linear solve** — there is no
-distributed *eigen* coordinate iteration to gate. Concretely:
+> [!important] **DECISION 2026-07-08: MP is the single blessed parallel
+> configuration; SP is explicitly unsupported for FEAST; the P4 build-flag
+> unification is DE-SCOPED.**
 
-- The contour-parallel orchestration (L1/L2) is **eigensolver-internal MPI**
-  (`MPI_Comm_split`), independent of which OpenSees parallel-build macro is set.
-- The inner solve (L3) is `MumpsParallelSOE`, which already works under MP.
-- So a **single build** that exposes `MumpsParallelSOE` + the FEAST orchestrator gives
-  *partitioned-or-replicated assembly + distributed solve + contour-parallel eigen* —
-  the combination that is impossible today. P4 is the build-flag surgery that makes
-  `MumpsParallelSOE` reachable alongside the contour orchestrator in one coherent
-  configuration (candidate: a `_PARALLEL_FEAST`/unified guard that compiles the Mumps
-  parallel SOE + the comm-splitting without requiring the full replicated-interpreter
-  model). Because the eigen coordinate work is *not* distributed, the choice of
-  SP-style partition vs MP-style replication becomes orthogonal to the eigensolve.
+The historical incoherence ([[modal_gap_study/01_opensees_current_state|dossier 01]]
+§C.4) is: `MumpsParallelSOE` is `_PARALLEL_INTERPRETERS`-only
+(`OpenSeesCommands.cpp:4079`) while the subdomain `ArpackSOE` distribution is
+`_PARALLEL_PROCESSING`. Earlier drafts of this ADR proposed **P4** — a build-flag
+surgery (a `_PARALLEL_FEAST`/unified guard) so that partitioned-SP assembly +
+distributed solve + contour-parallel eigen could coexist in *one* binary.
+
+**We are not building P4.** FEAST already dissolves the part of the incoherence that
+mattered: **its only distributed need is the inner linear solve** — there is no
+distributed *eigen* coordinate iteration to gate. And that distributed inner solve
+**already runs in the MP build** — P3c-MPI (#532) drives a distributed `dmumps` on the
+MP communicator under `_PARALLEL_INTERPRETERS`, with the `dfeast_srci` outer loop
+replicated across ranks. Concretely:
+
+- The distributed inner solve (L3) runs in `OpenSeesMP`/PyMP today (MKL + Intel-MPI
+  linked, `dfeast_srci` + `LadrunoDistBlockZKernel` reachable — verified, #532).
+- The optional contour-parallel MULTIPLIER (L2) is **eigensolver-internal MPI**
+  (`MPI_Comm_split`), independent of any parallel-build macro — but is *deferred*
+  and demand-driven (§9 R0), not part of the blessed baseline.
+- **SP (`_PARALLEL_PROCESSING`, partitioned-domain) is not a target.** The one
+  combination P4 would have unlocked — partitioned-SP assembly + distributed contour
+  solve — is not wanted, because MP is the single config we bless. Nothing to unify.
+
+Net: the SP/MP question is closed by **narrowing the supported surface to MP**, not by
+the (larger, higher-blast-radius) build-flag rewrite P4 envisioned. Users who want
+distributed FEAST use `OpenSeesMP`/PyMP.
 
 ---
 
@@ -454,7 +501,7 @@ distributed *eigen* coordinate iteration to gate. Concretely:
 | **The RC loop to mirror** | `SRC/system_of_eqn/eigenSOE/ArpackSolver.cpp:221-291` (`ido` while-loop; `ido=-1`→solve `:247-262`, `ido=1`→solve `:264-282`) | `FeastEigenSolver::solve()` replicates this as a FEAST-RCI `ijob` loop: same "assemble shifted system → `theInnerSOE->solve()` → return X" body |
 | **The `(K−σM)⁻¹` delegation** | `ArpackSolver.cpp:258` (`ido=-1`), `:276` (`ido=1`); SOE wrap at `ArpackSOE.h:77`, `ArpackSOE::setLinearSOE` `ArpackSOE.cpp:382-386` | `FeastEigenSOE` wraps the same `LinearSOE*`; contour solve = assemble $(z_jM-K)$ + `theInnerSOE->solve()` |
 | **MumpsParallelSOE reuse** | `SRC/system_of_eqn/linearSOE/mumps/MumpsParallelSOE.{h,cpp}`, `MumpsParallelSolver.{h,cpp}`; constructed at `OpenSeesCommands.cpp:4079-4094` | each L2 sub-comm hosts one of these as the inner SOE (no change to Mumps itself) |
-| **`_PARALLEL_PROCESSING` vs `_PARALLEL_INTERPRETERS` gating** | `OpenSeesCommands.cpp:4079` (`#ifdef _PARALLEL_INTERPRETERS` around Mumps**Parallel**SOE); SP main `SRC/tcl/mpiMain.cpp:184-291`; MP main `SRC/tcl/mpiParameterMain.cpp:222-349` | P4: introduce a coherent guard so `MumpsParallelSOE` + contour comm-split compile together (LEDGER_vanilla_files row) |
+| **`_PARALLEL_PROCESSING` vs `_PARALLEL_INTERPRETERS` gating** | `OpenSeesCommands.cpp:4079` (`#ifdef _PARALLEL_INTERPRETERS` around Mumps**Parallel**SOE); SP main `SRC/tcl/mpiMain.cpp:184-291`; MP main `SRC/tcl/mpiParameterMain.cpp:222-349` | **No change (P4 DE-SCOPED).** MP (`_PARALLEL_INTERPRETERS`) is the blessed config; the distributed FEAST inner solve compiles into `OpenSeesMP`/PyMP only (via the `LadrunoFeastInnerSolve` seam + factory, #532). SP is unsupported; the guard is left as upstream ships it |
 | **Command registration** | xara parser `SRC/runtime/commands/analysis/analysis.cpp:250` (flag map `:277-308`, build at `:326-328`); legacy/parallel `SRC/interpreter/OpenSeesCommands.cpp:270`; SOE construction `SRC/runtime/runtime/BasicAnalysisBuilder.cpp:871-910` | add `-feast` branch in both parsers + `newEigenAnalysis` case building `FeastEigenSOE` and wiring inner SOE (`setLinearSOE`) |
 | **EigenSOE registration for parallel send** | `FEM_ObjectBrokerAllClasses::getNewEigenSOE` `SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp:3378-3396` (switch currently only `ArpackSOE`); also `TclPackageClassBroker.cpp:2027`, `FEM_ObjectBroker.cpp:366` | add `case EigenSOE_TAGS_FeastEigenSOE: return new FeastEigenSOE();` so `ActorSubdomain::getNewEigenSOE` (`ActorSubdomain.cpp:751`) can reconstruct it remotely |
 | **sendSelf/recvSelf** | precedent `ArpackSOE::sendSelf/recvSelf` `ArpackSOE.cpp:269-372` (sends only a `processID`/channel-handshake ID — **not** the matrices; `checkSameInt` `:388-426` syncs the RC flag) | `FeastEigenSOE::sendSelf/recvSelf` follows the same contract **plus** marshals the scalar contour params (`fmin,fmax,m0,Nq,tol`); matrices stay distributed, assembled locally per rank |
@@ -470,13 +517,14 @@ distributed *eigen* coordinate iteration to gate. Concretely:
 | **P1 — serial MKL-FEAST EigenSolver** | `FeastEigenSOE`/`FeastEigenSolver` (33022/33023) using MKL `dfeast_scsrgv` (or `dfeast_srci` RCI through the existing inner `LinearSOE`); `eigen -feast fmin fmax`; band → ellipse contour → quadrature → Rayleigh–Ritz | **same eigenpairs as ARPACK** on a medium serial model within $\le10^{-6}$ on $\lambda$ and MAC $\ge0.999$ on $\phi$ for every mode in the band (§8.1) |
 | **P2 — Sturm/inertia certification** | expose negative-pivot/inertia count from the Band/Mumps factorization; `-certify` asserts FEAST $m$ == inertia($\lambda_2$)−inertia($\lambda_1$) | hand-built model with **known closely-spaced modes straddling the band edge**: FEAST $m$ equals the inertia count; deliberately under-sized $m_0$ is **detected** (saturation flagged), not silently wrong (§8.2) |
 | **P3 — MPI per-contour parallel** | Three sub-phases (D2-driven, §9 R1): **P3a** fix `MumpsParallelSolver`/`SOE` to honor a passed sub-communicator instead of hardcoded `MPI_COMM_WORLD`; **P3b** new symmetric $2n\times2n$ block-real inner SOE for the complex contour solve (LDLᵀ via existing `dmumps`, `SYM=2`); **P3c** `FeastEigenSolver` orchestration, two rungs — **P3c-serial** (`-rci`): the `dfeast_srci` RCI ijob loop (10=factorize z_jM−K, 11=solve, 30/40 matvecs) with ONE `LadrunoBlockZKernel` per solve (setShiftBlock per contour node, PARDISO analysis phase reused across nodes/refinement-loops/saturation-retries); **P3c-MPI (L3-only, per R0 panel decision)**: a distributed 2n×2n SYM=2 block-real `dmumps` solve on ONE sub-communicator (P3a plumbing), wired as the `dfeast_srci` inner solve; the validated `runFeastRci` outer loop runs REPLICATED across the sub-comm; solution broadcast to all ranks (lockstep RCI); symbolic analysis reused across shifts; + the scoped envelope-isolation fix. **L2 deferred** (§R0): `MPI_Comm_split` per-quadrature sub-comms + `Allreduce`-projector is a later multiplier, not this rung | P3a: 2+ sub-comms solve independent systems concurrently, no cross-talk; P3b: block-real solve matches a direct complex solve (numpy oracle) to solver precision **including a contour aspect-ratio sweep asserting residuals as Im(z)→0** (equivalent-real conditioning degrades near the real axis), plus a measured cost comparison vs zmumps; P3c-serial: `-rci` reproduces the `dfeast_scsrgv` driver-path eigenpairs (λ ≤1e-8 rel, MAC ≥0.999) on the frame battery + `-certify` composition; P3c-MPI: `mpiexec -n 2/4` distributed run == serial `-rci` spectrum bit-comparable (differential test vs the shipped oracle) + MUMPS strong-scaling instrumented on a representative mesh (§8.3) |
-| **P4 — unify SP/MP build gating** | one coherent build where `MumpsParallelSOE` + the contour orchestrator compile together; comm-split orthogonal to partition/replication | the *impossible-today* combination — partitioned/replicated assembly + distributed solve + contour-parallel eigen — runs green in **one** binary (`OpenSeesSP` and/or `OpenSeesMP`); LEDGER_vanilla_files documents the guard change |
+| **~~P4 — unify SP/MP build gating~~** | **DE-SCOPED 2026-07-08 — will not be built.** MP is the single blessed parallel config; the distributed FEAST solve already runs there (#532), so there is no partitioned-SP + distributed-solve combination left to unify. SP is explicitly unsupported for FEAST. **Gate G-C (parallel) is MET by the L3-only MP work (#532)**, not pending an SP-unification PR | — (no gate; runway closed) |
 | **P5 — complex contours** *(coordinate with [[46_ladruno_complex_modal_adr|ADR 46]])* | `zfeast_*` complex contour for the damped/non-symmetric pencil; needs a complex inner SOE | re-host ADR 46's complex/state-space modal at scale; gated on ADR 46's quadratic-pencil linearization landing first |
 
 Adversarial-gate policy (per [[feedback_adversarial_gate_when]]): **P1–P2 warrant the
 full multi-agent gate** (novel-to-the-fork contour math + a completeness *claim*);
-**P3–P4 are core/parallel-build edits → also gated** (touching the parallel mains is
-exactly the "core-or-vanilla edit" trigger).
+**P3 is a core/parallel-build edit → also gated** (the P3c-MPI work touched the parallel
+inner-solve seam — done, #532). **P4 is de-scoped** (SP unsupported), so its
+build-flag-surgery gate no longer applies.
 
 ---
 
@@ -655,11 +703,15 @@ precedents.
 > for every numeric factorization (`JOB=2`). This is a real, large speedup and a
 > design requirement on the inner-SOE reuse, not an afterthought.
 
-> [!question] **R6 — SP/MP build-flag surgery risk (P4).**
-> Touching `OpenSeesCommands.cpp:4079`'s `_PARALLEL_INTERPRETERS` guard and the
-> parallel mains is core/vanilla territory — high blast radius (it gates *all* of
-> OpenSeesMP). Must be additive (a new coherent configuration), not a rewrite of the
-> existing SP/MP behavior; full adversarial gate + LEDGER_vanilla_files row mandatory.
+> [!done] **R6 — SP/MP build-flag surgery risk (P4) — RETIRED 2026-07-08 by
+> de-scoping P4.** The risk was: touching `OpenSeesCommands.cpp:4079`'s
+> `_PARALLEL_INTERPRETERS` guard and the parallel mains is core/vanilla territory with
+> high blast radius (it gates *all* of OpenSeesMP). **We no longer take that risk.** MP
+> is the single blessed parallel configuration; the distributed FEAST inner solve
+> compiles into `OpenSeesMP`/PyMP only (via the `LadrunoFeastInnerSolve` seam +
+> self-registering factory, #532) with **no** edit to the existing `_PARALLEL_*` guard
+> or the parallel mains. SP is unsupported for FEAST. There is no build-flag surgery to
+> gate, so this risk is closed by scope, not mitigated.
 
 - **Backwards compatibility:** purely additive — a new `-feast` branch + two new
   classTags. Existing `eigen`, ARPACK, `modalProperties` untouched; default behavior
@@ -683,8 +735,10 @@ precedents.
   `FEM_ObjectBrokerAllClasses.cpp` (+ `TclPackageClassBroker.cpp`,
   `FEM_ObjectBroker.cpp` — the `getNewEigenSOE` switch), the two `eigen` parsers
   (`analysis.cpp`, `OpenSeesCommands.cpp`), `BasicAnalysisBuilder.cpp`
-  (`newEigenAnalysis`), and at P4 the `_PARALLEL_*` guard in `OpenSeesCommands.cpp` +
-  parallel mains. Mark each edit in-source with a `// Ladruno ADR43 …` comment so the
+  (`newEigenAnalysis`). **No `_PARALLEL_*` guard / parallel-main edit — P4 is
+  de-scoped; the distributed inner solve lives behind the `LadrunoFeastInnerSolve`
+  seam compiled into the MP targets only, leaving the upstream guards untouched.**
+  Mark each edit in-source with a `// Ladruno ADR43 …` comment so the
   table is reconstructable via `grep -rn "Ladruno" SRC/`.
 - **`LEDGER_quirks.md`** — record: ArpackSOE `sendSelf` ships only a handshake ID not
   the matrices (the distributed-assembly contract FEAST must follow); MUMPS symbolic-
