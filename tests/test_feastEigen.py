@@ -321,3 +321,128 @@ def test_blockzgate_composes_with_certify(capfd):
     err = capfd.readouterr().err
     assert "certified complete" in err
     assert "-blockZGate PASS" in err
+
+
+# ------------------------------------------------------------------ P3c -rci
+# dfeast_srci RCI orchestration with LadrunoBlockZKernel as the inner
+# complex-shift solve (the seam the MPI rung distributes). Gate: the RCI
+# path reproduces the dfeast_scsrgv driver-path eigenpairs (lambda <=1e-8
+# rel, MAC >=0.999) on the frame battery, plus -certify composition.
+
+def test_rci_matches_driver_frame():
+    """P3c gate: -rci eigenpairs == driver-path eigenpairs on the frame
+    (lambda <=1e-8 rel, MAC >=0.999 per mode)."""
+    _frame()
+    lam_ref = np.asarray(ops.eigen(10))
+    f_hi = 0.5 * (_hz(lam_ref[7]) + _hz(lam_ref[8]))
+
+    lam_drv = np.asarray(ops.eigen("-feast", 0.0, f_hi))
+    nodes = _free_nodes()
+    phi_drv = [_mode_matrix(nodes, k + 1) for k in range(8)]
+
+    lam_rci = np.asarray(ops.eigen("-feast", 0.0, f_hi, "-rci"))
+    assert lam_rci.shape == lam_drv.shape == (8,)
+    np.testing.assert_allclose(lam_rci, lam_drv, rtol=1e-8)
+    for k in range(8):
+        phi_r = _mode_matrix(nodes, k + 1)
+        assert _mac(phi_r, phi_drv[k]) >= 0.999, f"MAC mode {k + 1}"
+
+
+def test_rci_band_interior():
+    """-rci band-targeting: exactly the enclosed modes of the full spectrum
+    (interior and edge-straddling cuts), like the driver path."""
+    _frame(nx=1, ny=3)
+    lam_all = np.asarray(ops.eigen("-fullGenLapack", 12))
+    f = np.array([_hz(l) for l in lam_all])
+    lo = 0.5 * (f[1] + f[2])
+    hi = 0.5 * (f[5] + f[6])
+    lam_band = np.asarray(ops.eigen("-feast", lo, hi, "-rci"))
+    np.testing.assert_allclose(lam_band, lam_all[2:6], rtol=1e-6)
+    hi_cut = 0.5 * (f[3] + f[4])
+    lam_cut = np.asarray(ops.eigen("-feast", lo, hi_cut, "-rci"))
+    np.testing.assert_allclose(lam_cut, lam_all[2:4], rtol=1e-6)
+
+
+def test_rci_empty_band():
+    """-rci on an empty band: graceful empty result (info=1 path through
+    the RCI termination)."""
+    _frame(nx=1, ny=3)
+    lam_all = np.asarray(ops.eigen("-fullGenLapack", 6))
+    f = np.array([_hz(l) for l in lam_all])
+    out = ops.eigen("-feast", f[2] * 1.02, f[3] * 0.98, "-rci")
+    empty = (out is None or out == 0 or
+             (hasattr(out, "__len__") and len(out) == 0))
+    assert empty, f"expected no modes, got {out}"
+
+
+def test_rci_saturation_grows(capfd):
+    """-rci with a deliberately undersized -m0: the saturation loop must
+    enlarge (rebuilding the RCI workspace at the new m0) and return the
+    complete band, exactly like the driver path."""
+    _frame(nx=1, ny=3)
+    lam_all = np.asarray(ops.eigen("-fullGenLapack", 8))
+    f = np.array([_hz(l) for l in lam_all])
+    hi = 0.5 * (f[6] + f[7])          # band holds 7 modes
+    lam = np.asarray(ops.eigen("-feast", 0.0, hi, "-m0", 3, "-rci"))
+    err = capfd.readouterr().err.lower()
+    assert lam.shape == (7,)
+    np.testing.assert_allclose(lam, lam_all[:7], rtol=1e-6)
+    assert "m0" in err or "subspace" in err or "enlarg" in err
+
+
+def test_rci_mass_orthonormal():
+    """Phi^T M Phi == I through the RCI path — the CSR-scatter- and
+    projector-accumulation-sensitive check (a wrong ijob=30/40 matvec or a
+    wrong ijob=11 solve shows up here before it shows up in lambda)."""
+    _frame()
+    m = 5.0e3
+    lam_ref = np.asarray(ops.eigen(8))
+    f_hi = 0.5 * (_hz(lam_ref[6]) + _hz(lam_ref[7]))
+    lam = np.asarray(ops.eigen("-feast", 0.0, f_hi, "-rci"))
+    p = lam.shape[0]
+    assert p == 7
+    nodes = _free_nodes()
+    phi = np.array([[c for n in nodes
+                     for c in ops.nodeEigenvector(n, k + 1)[:2]]
+                    for k in range(p)])
+    gram = m * (phi @ phi.T)
+    np.testing.assert_allclose(gram, np.eye(p), atol=1e-8)
+
+
+def test_rci_composes_with_certify(capfd):
+    """P3c gate composition: -rci -certify — the Sturm/inertia certificate
+    must certify the RCI-found band content."""
+    _frame()
+    lam_ref = np.asarray(ops.eigen(8))
+    f_hi = 0.5 * (_hz(lam_ref[6]) + _hz(lam_ref[7]))
+    lam = np.asarray(ops.eigen("-feast", 0.0, f_hi, "-rci", "-certify"))
+    assert lam.shape == (7,)
+    assert "certified complete" in capfd.readouterr().err
+
+
+def test_rci_actually_runs_the_rci_path(capfd):
+    """Opus-gate MAJOR fix: pin that -rci EXECUTES the RCI branch. Every
+    other P3c test would pass if -rci were silently ignored (both calls
+    would be the driver path). The RCI branch's unique fingerprint is the
+    verbose 'dfeast_srci finished' banner — assert it fires under -rci and
+    does NOT fire on the driver path."""
+    _frame()
+    lam_ref = np.asarray(ops.eigen(8))
+    f_hi = 0.5 * (_hz(lam_ref[6]) + _hz(lam_ref[7]))
+    ops.eigen("-feast", 0.0, f_hi, "-rci", "-verbose")
+    assert "dfeast_srci finished" in capfd.readouterr().err
+    ops.eigen("-feast", 0.0, f_hi, "-verbose")
+    assert "dfeast_srci finished" not in capfd.readouterr().err
+
+
+def test_rci_composes_with_blockzgate(capfd):
+    """All three diagnostics on one run (-rci -certify -blockZGate):
+    eigenpairs unchanged vs the plain driver solve."""
+    _frame(nx=1, ny=3)
+    lam_plain = np.asarray(ops.eigen("-feast", 0.0, 50.0))
+    lam_gated = np.asarray(ops.eigen("-feast", 0.0, 50.0, "-rci",
+                                     "-certify", "-blockZGate"))
+    np.testing.assert_allclose(lam_gated, lam_plain, rtol=1e-8)
+    err = capfd.readouterr().err
+    assert "certified complete" in err
+    assert "-blockZGate PASS" in err

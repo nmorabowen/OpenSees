@@ -37,6 +37,7 @@
 #include <vector>
 #include <algorithm>
 #include <cmath>
+#include <memory>
 
 // ---------------------------------------------------------------------------
 // MKL Extended Eigensolver (FEAST). MKL is on the link line only on the
@@ -47,6 +48,10 @@
 // the C-callable FEAST names carry no trailing underscore.
 // ---------------------------------------------------------------------------
 #ifdef _WIN32
+// P3c: MKL_Complex16-layout struct for the dfeast_srci RCI (mkl_types.h is
+// not included here — same minimal-declaration style as the kernels below)
+typedef struct { double real; double imag; } FeastComplex16;
+
 extern "C" {
   void feastinit(int *fpm);
   void dfeast_scsrgv(const char *uplo, const int *n,
@@ -56,6 +61,16 @@ extern "C" {
                      const double *emin, const double *emax,
                      int *m0, double *e, double *x, int *m,
                      double *res, int *info);
+  // P3c: FEAST reverse-communication interface (mkl_solvers_ee.h contract,
+  // LP64: MKL_INT == int). No matrices cross this seam — the caller owns
+  // the factorize/solve/matvec tasks the ijob protocol requests.
+  void dfeast_srci(int *ijob, const int *n, FeastComplex16 *ze,
+                   double *work, FeastComplex16 *workc,
+                   double *aq, double *sq, int *fpm,
+                   double *epsout, int *loop,
+                   const double *emin, const double *emax,
+                   int *m0, double *e, double *x, int *m,
+                   double *res, int *info);
   // P2: PARDISO LDL^T for the Sturm/inertia certificate (mkl_pardiso.h;
   // _MKL_DSS_HANDLE_t is an opaque void*[64], MKL_INT = int under LP64)
   void pardiso(void *pt, const int *maxfct, const int *mnum,
@@ -260,6 +275,138 @@ runBlockZGate(int n, const int *rowPtr, const int *colInd,
     return 0;
 }
 
+// P3c-serial: drive MKL FEAST through its reverse-communication interface
+// (dfeast_srci) with LadrunoBlockZKernel as the inner complex-shift solve —
+// the orchestration seam the MPI rung swaps a distributed kernel into.
+//
+// The ijob protocol (MKL mkl_solvers_ee.h + Intel's dfeast_sparse_rci.c
+// canonical example; Fortran fpm(k) == C fpm[k-1]):
+//   -1 on entry, then loop until ijob == 0:
+//   10 -> factorize (ze*M - K) for the contour node ze (complex);
+//         LadrunoBlockZKernel::setShiftBlock — the symmetric 2n block-real
+//         LDL^T, PARDISO analysis phase reused across ALL nodes and
+//         refinement loops (ADR R5).
+//   11 -> solve (ze*M - K) Y = workc(n, m0), solution back INTO workc;
+//         the m0 right-hand sides are genuinely complex (D2 Finding 3).
+//   30 -> work(:, i:j) = K * q(:, i:j), i = fpm[23]-1 (1-based Fortran
+//         fpm(24)), j-i+1 = fpm[24] columns (Fortran fpm(25)).
+//   40 -> same with M.
+//   -2 -> new refinement loop, nothing to do.
+// The half-contour conjugate handling (skip conj(ze), conjugate the
+// accumulated projector term) is INTERNAL to MKL FEAST — the caller only
+// ever factorizes/solves the ze values it is handed, never a conjugate.
+//
+// m0 is passed BY VALUE: dfeast_srci's m0 argument is in/out and MKL
+// SHRINKS it in place when the band holds fewer modes than the requested
+// subspace (observed on the P3c battery: m0 15 -> 5 when the band held 5).
+// The shrunken value is RCI-session bookkeeping, not a saturation verdict —
+// leaking it back to the caller made the saturation-enlargement loop compare
+// m against the shrunken m0 (false "saturated", plateaued retries, refusal).
+// The caller's m0 stays the REQUESTED subspace size, exactly like the
+// driver path's compare.
+//
+// Returns 0 when the RCI ran to termination (info carries FEAST's verdict,
+// same codes as dfeast_scsrgv), -1 on a kernel/protocol failure (message
+// already printed).
+int
+runFeastRci(LadrunoBlockZKernel &kern, int n,
+            const int *rowPtr, const int *colInd,
+            const double *Kvals, const double *Mvals,
+            int *fpm, double *epsout, int *loop,
+            const double &emin, const double &emax,
+            const int m0v, double *e, double *x, int *m, double *res,
+            int *info)
+{
+    std::vector<double> work(static_cast<size_t>(n) * m0v);
+    std::vector<FeastComplex16> workc(static_cast<size_t>(n) * m0v);
+    std::vector<double> aq(static_cast<size_t>(m0v) * m0v);
+    std::vector<double> sq(static_cast<size_t>(m0v) * m0v);
+    // split-complex staging for the kernel's (Br,Bi)->(Xr,Xi) interface
+    std::vector<double> br(static_cast<size_t>(n) * m0v);
+    std::vector<double> bi(static_cast<size_t>(n) * m0v);
+    std::vector<double> xr(static_cast<size_t>(n) * m0v);
+    std::vector<double> xi(static_cast<size_t>(n) * m0v);
+
+    int ijob = -1;
+    FeastComplex16 ze = {0.0, 0.0};
+    int m0Rci = m0v;        // the RCI's own (shrinkable) in/out copy
+    *info = 0;
+
+    while (true) {
+        dfeast_srci(&ijob, &n, &ze, work.data(), workc.data(),
+                    aq.data(), sq.data(), fpm, epsout, loop,
+                    &emin, &emax, &m0Rci, e, x, m, res, info);
+        if (ijob == 0)
+            break;              // finished — info carries FEAST's verdict
+        if (*info != 0)
+            break;              // FEAST aborted mid-protocol; report info
+
+        switch (ijob) {
+        case -2:                // new refinement loop
+            break;
+        case 10: {              // factorize (ze*M - K) for this contour node
+            if (kern.setShiftBlock(ze.real, ze.imag) != 0) {
+                opserr << "FeastEigenSolver -- -rci: block-real factorization "
+                       << "failed at contour node (" << ze.real << ", "
+                       << ze.imag << "i)\n";
+                return -1;
+            }
+            break;
+        }
+        case 11: {              // solve (ze*M - K) Y = workc, back into workc
+            // m0Rci (not m0v): after an MKL-side subspace shrink the live
+            // right-hand sides are the first m0Rci columns only
+            const size_t tot = static_cast<size_t>(n) * m0Rci;
+            for (size_t p = 0; p < tot; p++) {
+                br[p] = workc[p].real;
+                bi[p] = workc[p].imag;
+            }
+            if (kern.solveBlock(m0Rci, br.data(), bi.data(),
+                                xr.data(), xi.data()) != 0) {
+                opserr << "FeastEigenSolver -- -rci: block-real solve failed "
+                       << "at contour node (" << ze.real << ", " << ze.imag
+                       << "i)\n";
+                return -1;
+            }
+            for (size_t p = 0; p < tot; p++) {
+                workc[p].real = xr[p];
+                workc[p].imag = xi[p];
+            }
+            break;
+        }
+        case 30:                // work(:, i:j) = K * q(:, i:j)
+        case 40: {              // work(:, i:j) = M * q(:, i:j)
+            const double *vals = (ijob == 30) ? Kvals : Mvals;
+            const int c0 = fpm[23] - 1;   // first column, 1-based fpm(24)
+            const int nc = fpm[24];       // column count,          fpm(25)
+            if (c0 < 0 || nc < 0 || c0 + nc > m0v) {
+                opserr << "FeastEigenSolver -- -rci: matvec column window ["
+                       << c0 << ", " << c0 + nc << ") outside the m0=" << m0v
+                       << " subspace\n";
+                return -1;
+            }
+            for (int c = c0; c < c0 + nc; c++) {
+                const double *xc = &x[static_cast<size_t>(c) * n];
+                double *yc = &work[static_cast<size_t>(c) * n];
+                for (int i = 0; i < n; i++) {
+                    double s = 0.0;
+                    for (int k = rowPtr[i] - 1; k < rowPtr[i + 1] - 1; k++)
+                        s += vals[k] * xc[colInd[k] - 1];
+                    yc[i] = s;
+                }
+            }
+            break;
+        }
+        default:
+            opserr << "FeastEigenSolver -- -rci: unexpected ijob " << ijob
+                   << " from dfeast_srci\n";
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
 } // namespace
 #endif
 
@@ -371,6 +518,19 @@ FeastEigenSolver::solve(int numModesRequested, bool generalized, bool findSmalle
   int info = 0;
   double *e = 0, *x = 0, *res = 0;
 
+  // P3c-serial: -rci routes the solve through the dfeast_srci RCI with the
+  // block-real kernel as the inner solve (the seam the MPI rung distributes).
+  // ONE kernel for the whole solve: the PARDISO analysis phase runs once and
+  // is reused across every contour node, refinement loop, AND saturation
+  // retry (the block pattern depends only on the (K,M) sparsity — ADR R5).
+  // The m0 auto-seed estimate above deliberately stays on the driver path:
+  // it is a count heuristic, not a solve, and keeping it shared makes the
+  // -rci/driver eigenpair comparison seed identically.
+  const bool useRci = theSOE->rciFlag;
+  std::unique_ptr<LadrunoBlockZKernel> rciKern;
+  if (useRci)
+    rciKern.reset(new LadrunoBlockZKernel(n, isa, jsa, sa, sb));
+
   while (true) {
     if (m0 > n) m0 = n;
 
@@ -392,9 +552,25 @@ FeastEigenSolver::solve(int numModesRequested, bool generalized, bool findSmalle
     int loop = 0;
     m = 0; info = 0;
 
-    dfeast_scsrgv(&uplo, &n, sa, isa, jsa, sb, isa, jsa,
-                  fpm, &epsout, &loop, &emin, &emax, &m0,
-                  e, x, &m, res, &info);
+    if (useRci) {
+      if (runFeastRci(*rciKern, n, isa, jsa, sa, sb,
+                      fpm, &epsout, &loop, emin, emax, m0,
+                      e, x, &m, res, &info) != 0) {
+        opserr << "FeastEigenSolver::solve() -- -rci: inner-solve/protocol "
+               << "failure; refusing\n";
+        delete [] e; delete [] x; delete [] res;
+        numModes = 0;
+        return -8;
+      }
+      if (theSOE->verbose)
+        opserr << "FeastEigenSolver::solve() -- -rci: dfeast_srci finished, "
+               << loop << " refinement loop(s), trace eps " << epsout
+               << ", info " << info << "\n";
+    } else {
+      dfeast_scsrgv(&uplo, &n, sa, isa, jsa, sb, isa, jsa,
+                    fpm, &epsout, &loop, &emin, &emax, &m0,
+                    e, x, &m, res, &info);
+    }
 
     if (info == 0 || info == 4) {
       // success (info==4: only a stochastic estimate was possible -> treat
@@ -494,6 +670,11 @@ FeastEigenSolver::solve(int numModesRequested, bool generalized, bool findSmalle
 
   // ---- store accepted pairs ascending, capped at numModesRequested -------
   if (m < 0) m = 0;
+
+  // the RCI kernel's factorization is dead weight past this point — release
+  // it before -blockZGate builds ITS kernel (avoids transiently holding two
+  // 2n block LDL^T factorizations; Opus gate MINOR)
+  rciKern.reset();
 
   // ---- P2 -certify: the Sturm/inertia completeness certificate -----------
   // certified band count = neg(K - emax*M) - neg(K - emin*M), an EXACT count

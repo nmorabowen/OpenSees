@@ -33,6 +33,10 @@
 // inside MKL FEAST; this class only marshals the arrays, runs the subspace-
 // saturation enlargement loop, and stores the accepted pairs ascending.
 //
+// P3c-serial (-rci): alternatively drives the FEAST RCI (dfeast_srci) with
+// LadrunoBlockZKernel as the inner complex-shift solve — same eigenpairs as
+// the driver path; the orchestration seam the MPI rung distributes.
+//
 // MKL provides the FEAST kernels; on this fork's build matrix MKL is present
 // only on the Windows/oneAPI build, so the solve body is guarded on _WIN32.
 // Every other platform compiles a stub that reports "FEAST requires MKL".
