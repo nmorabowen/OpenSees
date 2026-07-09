@@ -681,6 +681,37 @@ features:
       getSpatialTangentTensor (#76) since c=(1/2J)[D:L:B] is non-minor-symmetric and the
       6x6 getTangent is a lossy projection. Driven end-to-end by LadrunoBrick -geom finite.
 
+  - feature: LogStrain2D
+    classtag: 33016          # ND_TAG family; 2D (plane) Hencky finite-strain adaptor (ADR 25 P5); after LadrunoRCConcrete=33015
+    tag_symbol: ND_TAG_LogStrain2D
+    pr: 536
+    feature_class: material
+    required_tiers: [T0m]
+    pytest: tests/test_logstrain2d_reference.py    # numpy oracle: textbook plane-strain/plane-stress elastic matrices, closed-form thickness stretch, objectivity, plastic eps33 (8)
+    tcl: WAIVED(nDMaterial LogStrain2D $tag $innerTag <-planeStrain|-planeStress>; shared OpenSeesNDMaterialCommands registry serves Tcl + Python; verified by the numpy oracle + C++-kernel-vs-oracle + openseespy construction gate, no separate Tcl battery)
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesNDMaterialCommands.cpp
+      - SRC/material/nD/CMakeLists.txt
+    dispatch: {tcl: false, functionMap: true}
+    status: active
+    notes: >
+      2D (plane) sibling of LogStrainNDMaterial (33010): order-3 PlaneStrain/PlaneStress
+      face over a 3D order-6 inner, composing an internal LogStrainNDMaterial (reuses the
+      verified MATISU kernel + b^e state + plastic protocol). Plane strain lifts the 2x2 F
+      to 3x3 with F33=1 (full 3x3 b^e tracks plastic eps33!=0); plane stress solves the
+      thickness stretch lambda=F33 from sigma33=0 (local Newton) + static tangent
+      condensation (dSNPO 14.7). New fork-local base FiniteStrainND2DMaterial locks the
+      ADR-25 P5 element seam (2x2 setTrialF, order-3 face, getSpatialTangentTensor2D).
+      MATERIAL-ONLY: verified WITHOUT building OpenSees by the numpy oracle
+      (test_logstrain2d_reference.py, 8) + C++-kernel-vs-oracle (test_logstrain2d_kernel_cpp.py,
+      sigma + full 16-comp c2 to 1e-9 incl degeneracy) + openseespy construction gate
+      (test_logstrain2d.py). Opus adversarial gate clean; 3 robustness fixes applied
+      (condensation pivot a2222->0 guard, Newton final-iterate residual check, revert lambda
+      reset). Element -geom finite wiring (LadrunoQuad/CST P5) is a follow-up.
+
   - feature: LadrunoJ2
     classtag: 33011          # ND_TAG family; combined iso + Chaboche AF kinematic von Mises J2
     tag_symbol: ND_TAG_LadrunoJ2
