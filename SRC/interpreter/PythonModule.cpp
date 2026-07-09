@@ -626,6 +626,7 @@ initopensees(void)
 "        • LadrunoContact — NTS + mortar/ALM contact (penalty + commit-cycle Uzawa, Coulomb/Tresca friction, mesh-tying, viscous stabilization, consistent dn/du normal tangent, SOFT=1 + SOFT=2 Courant-stable explicit penalty, finite-sliding re-emit, averaged nodal-normal smoothing -smoothNormal w/ convex-ridge facet ownership)\n"
 "        • stressesPlaneStrain — exact out-of-plane σ_zz element response (plane strain)\n"
 "        • Ladruno — modular HDF5 .ladruno recorder\n"
+"        • LadrunoMonitor — live SWMR-HDF5 analysis monitor (recorder Monitor; -every/-hz gated streaming)\n"
 "        • LadrunoRigidBody — 6-DOF rigid body (condensed mass + side-channel SO(3); finite-rotation slaving + moment gather; rocking-foundation MVP)\n"
 "        • LadrunoSolidShell — 8-node ANS/EAS solid-shell (through-thickness σ33 punching/bearing host; Dvorkin-Bathe + Betsch-Stein + state-EAS)\n"
 "        • LadrunoComplexEigen — complexEigen: complex/state-space modal for non-classical damping (true per-mode zeta + omega_d + phased mode shapes; assembled getDamp() projection, QZ reduced pencil)\n"
