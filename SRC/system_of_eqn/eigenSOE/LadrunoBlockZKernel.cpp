@@ -33,7 +33,7 @@
 #include <cstring>
 #include <chrono>
 
-#ifdef _WIN32
+#if defined(_WIN32) || defined(_LADRUNO_MKL_FEAST)
 extern "C" {
   // mkl_pardiso.h contract, LP64 (MKL_INT == int on this fork's build)
   void pardiso(void *pt, const int *maxfct, const int *mnum,
@@ -174,7 +174,7 @@ LadrunoBlockZKernel::~LadrunoBlockZKernel()
 void
 LadrunoBlockZKernel::releaseBlock(void)
 {
-#ifdef _WIN32
+#if defined(_WIN32) || defined(_LADRUNO_MKL_FEAST)
     if (!analyzedBlk)
         return;
     int phase = -1, error = 0, idum = 0;
@@ -190,7 +190,7 @@ LadrunoBlockZKernel::releaseBlock(void)
 void
 LadrunoBlockZKernel::releaseComplex(void)
 {
-#ifdef _WIN32
+#if defined(_WIN32) || defined(_LADRUNO_MKL_FEAST)
     if (!analyzedZ)
         return;
     int phase = -1, error = 0, idum = 0;
@@ -206,7 +206,7 @@ LadrunoBlockZKernel::releaseComplex(void)
 int
 LadrunoBlockZKernel::setShiftBlock(double a, double b)
 {
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(_LADRUNO_MKL_FEAST)
     (void)a; (void)b;
     opserr << "LadrunoBlockZKernel -- requires MKL (Windows/oneAPI build)\n";
     return -1;
@@ -253,7 +253,7 @@ LadrunoBlockZKernel::setShiftBlock(double a, double b)
 int
 LadrunoBlockZKernel::setShiftComplex(double a, double b)
 {
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(_LADRUNO_MKL_FEAST)
     (void)a; (void)b;
     opserr << "LadrunoBlockZKernel -- requires MKL (Windows/oneAPI build)\n";
     return -1;
@@ -300,7 +300,7 @@ int
 LadrunoBlockZKernel::solveBlock(int nrhs, const double *Br, const double *Bi,
                                 double *Xr, double *Xi)
 {
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(_LADRUNO_MKL_FEAST)
     (void)nrhs; (void)Br; (void)Bi; (void)Xr; (void)Xi;
     return -1;
 #else
@@ -354,7 +354,7 @@ int
 LadrunoBlockZKernel::solveComplex(int nrhs, const double *Br,
                                   const double *Bi, double *Xr, double *Xi)
 {
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(_LADRUNO_MKL_FEAST)
     (void)nrhs; (void)Br; (void)Bi; (void)Xr; (void)Xi;
     return -1;
 #else

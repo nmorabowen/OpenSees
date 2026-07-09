@@ -68,6 +68,7 @@ GLOBS = [
     "SRC/material/uniaxial/LadrunoBondSlip.*",
     "SRC/material/nD/LogStrainNDMaterial.*", "SRC/material/nD/LogStrainKernel.h",
     "SRC/material/nD/FiniteStrainNDMaterial.h",
+    "SRC/material/nD/LogStrain2D.*", "SRC/material/nD/FiniteStrainND2DMaterial.h",
     "SRC/material/nD/InitDefGradNDMaterial.*",
     "SRC/material/nD/StagedStrainNDMaterial.*",
     "SRC/analysis/integrator/CentralDifferenceLadruno.*",

@@ -27,7 +27,13 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WT = os.path.abspath(os.path.join(HERE, "..", ".."))
-DIST_MP = os.path.join(WT, "dist", "openseesmp")
+# Module dir + launcher are platform-specific (Windows dist/openseesmp + mpiexec.exe
+# vs Linux build/Release + mpirun). Override via env for a non-Windows host
+# (esmeralda): L2_MODDIR, L2_MPIEXEC, L2_LDPATH, L2_TMPDIR, L2_MPI_FLAGS.
+DIST_MP = os.environ.get("L2_MODDIR", os.path.join(WT, "dist", "openseesmp"))
+MPIEXEC = os.environ.get(
+    "L2_MPIEXEC",
+    os.path.join(DIST_MP, "mpiexec.exe") if os.name == "nt" else "mpirun")
 PYTHON = sys.executable
 
 TWO_PI = 2.0 * math.pi
@@ -93,7 +99,8 @@ def driver(outdir):
     Each rank writes its result to outdir/rank_<world>.json (files, not stdout,
     so the large mode-shape payloads can't interleave across ranks)."""
     sys.path.insert(0, DIST_MP)
-    os.add_dll_directory(DIST_MP)
+    if hasattr(os, "add_dll_directory"):
+        os.add_dll_directory(DIST_MP)
     os.environ["LADRUNO_OPENSEES_QUIET"] = "1"
     # DELIBERATELY leave MKL multi-threaded (env=4 in _mpi_run): the MAJOR-1 fix
     # broadcasts the stochastic auto-seed m0 across ranks (agreeInt) so the
@@ -138,17 +145,24 @@ def _mac(a, b):
 
 def _mpi_run(nranks):
     import tempfile
-    mpiexec = os.path.join(DIST_MP, "mpiexec.exe")
     env = dict(os.environ)
-    env["PATH"] = DIST_MP + os.pathsep + env.get("PATH", "")
     # Force MULTI-threaded MKL: the replicated dfeast_srci must stay in lockstep
     # anyway (agreeInt pins m0; the reduced eig is too small for MKL to thread).
     # If lockstep survives here, the broadcast fix works with no caller env pin.
     env["MKL_NUM_THREADS"] = "4"
     env["OMP_NUM_THREADS"] = "4"
     env["LADRUNO_FEAST_MPI_DEBUG"] = "1"   # emit per-rank distribution proof
-    outdir = tempfile.mkdtemp(prefix=f"p3c_n{nranks}_")
-    cmd = [mpiexec, "-n", str(nranks), PYTHON, "-S",
+    if os.name == "nt":
+        env["PATH"] = DIST_MP + os.pathsep + env.get("PATH", "")
+    else:
+        ld = [DIST_MP] + os.environ.get("L2_LDPATH", "").split(os.pathsep)
+        ld.append(env.get("LD_LIBRARY_PATH", ""))
+        env["LD_LIBRARY_PATH"] = os.pathsep.join(p for p in ld if p)
+        env.setdefault("MKL_INTERFACE_LAYER", "LP64")
+    outdir = tempfile.mkdtemp(prefix=f"p3c_n{nranks}_",
+                              dir=os.environ.get("L2_TMPDIR") or None)
+    mpi_flags = os.environ.get("L2_MPI_FLAGS", "").split()
+    cmd = [MPIEXEC, "-n", str(nranks), *mpi_flags, PYTHON, "-S",
            os.path.abspath(__file__), "--driver", outdir]
     r = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=600)
     if r.returncode != 0:
