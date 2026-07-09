@@ -26,11 +26,15 @@ export PATH=/opt/openmpi/bin:$PATH
 # Result: all np ranks run on the srun-assigned compute node. Override with
 # OMPI_MCA_plm=slurm for a true multi-node sbatch run.
 export OMPI_MCA_plm=${OMPI_MCA_plm:-rsh}
-export OMPI_MCA_rmaps_base_oversubscribe=1
-# PMIX shared-memory dstore hits "NO-PERMISSIONS in dstore_base.c" when the rsh
-# launcher oversubscribes many ranks on one node (seen at np=16). `hash` avoids
-# the shared segment.
+# PMIX shared-memory dstore hits "NO-PERMISSIONS in dstore_base.c" on this node;
+# `hash` avoids the shared segment.
 export PMIX_MCA_gds=${PMIX_MCA_gds:-hash}
+# CLEAN strong-scaling needs each rank on its OWN physical core. --oversubscribe
+# + no binding piled ranks onto shared cores -> np=4 came out SLOWER than np=2
+# (a binding artifact, not dmumps scaling). Bind to core, one rank per core; the
+# node has 16 physical cores (32 HT) so np<=16 fits without oversubscription.
+export OMPI_MCA_rmaps_base_oversubscribe=0
+export OMPI_MCA_hwloc_base_binding_policy=core
 export TMPDIR=$HOME/ladruno_build_test/tmp
 export L2_MODDIR=$HOME/ladruno_build_test/OpenSees/build/Release
 export L2_MPIEXEC=/opt/openmpi/bin/mpirun
@@ -41,7 +45,7 @@ export L2_TMPDIR=$HOME/ladruno_build_test/tmp
 # -x forwards the runtime env to REMOTE-node ranks (OpenMPI does NOT forward
 # LD_LIBRARY_PATH/MKL vars by default — without this, compute-node ranks can't
 # load MKL/openseesmp). Works for salloc (this node) and sbatch multi-node alike.
-export L2_MPI_FLAGS="--oversubscribe --mca orte_tmpdir_base $HOME/ladruno_build_test/tmp -x LD_LIBRARY_PATH -x MKL_INTERFACE_LAYER -x MKL_THREADING_LAYER -x MKL_NUM_THREADS -x OMP_NUM_THREADS -x LADRUNO_FEAST_MPI_DEBUG -x LADRUNO_OPENSEES_QUIET -x LADRUNO_FEAST_PHI"
+export L2_MPI_FLAGS="--bind-to core --map-by core --mca orte_tmpdir_base $HOME/ladruno_build_test/tmp -x LD_LIBRARY_PATH -x MKL_INTERFACE_LAYER -x MKL_THREADING_LAYER -x MKL_NUM_THREADS -x OMP_NUM_THREADS -x LADRUNO_FEAST_MPI_DEBUG -x LADRUNO_OPENSEES_QUIET -x LADRUNO_FEAST_PHI"
 export L2_M0=${L2_M0:-16}
 
 NE=${NE:-32}
