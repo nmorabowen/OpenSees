@@ -163,7 +163,7 @@ class LadrunoQuad : public Element
     double damageScale(void);                      // Tier-A: max(floor, 1 - max(dt,dc)); 1 if no damage channel
     void buildEAStrue(void);                        // cache centroid easJ0inv/easJ0det
     void computeMenh(double xi, double eta, double jdet, Matrix &M);  // 3x4 enhanced operator
-    void formEAStrue(int tang_flag, bool useInitialTangent);          // inner-Newton + condensation
+    int formEAStrue(int tang_flag, bool useInitialTangent);           // inner-Newton + condensation; nonzero on failure
     bool isSinglePoint(void) const { return formulation == Formulation::SSP; }
     void setPressureLoadAtNodes(void);
     const char *typeString(void) const;
