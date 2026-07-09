@@ -80,7 +80,7 @@ LadrunoQuad::LadrunoQuad(int tag, int nd1, int nd2, int nd3, int nd4,
   Q(8), pressureLoad(8), thickness(t), pressure(p), rho(r),
   formulation(form), bulkVisc_b1(b1bv), bulkVisc_b2(b2bv), planeType(1),
   Mmem(3, 8), Kstab(8, 8), J0(0.0), J1(0.0), J2(0.0), damageResponse(0),
-  alpha(4), alphaCommit(4), easJ0inv(2, 2), easJ0det(0.0), Ki(0)
+  alpha(4), alphaCommit(4), easJ0inv(2, 2), easJ0det(0.0), easDegenerate(false), Ki(0)
 {
   pts[0][0] = -0.5773502691896258; pts[0][1] = -0.5773502691896258;
   pts[1][0] =  0.5773502691896258; pts[1][1] = -0.5773502691896258;
@@ -126,7 +126,7 @@ LadrunoQuad::LadrunoQuad()
   Q(8), pressureLoad(8), thickness(0.0), pressure(0.0), rho(0.0),
   formulation(Formulation::STD), bulkVisc_b1(0.0), bulkVisc_b2(0.0), planeType(1),
   Mmem(3, 8), Kstab(8, 8), J0(0.0), J1(0.0), J2(0.0), damageResponse(0),
-  alpha(4), alphaCommit(4), easJ0inv(2, 2), easJ0det(0.0), Ki(0)
+  alpha(4), alphaCommit(4), easJ0inv(2, 2), easJ0det(0.0), easDegenerate(false), Ki(0)
 {
   pts[0][0] = -0.5773502691896258; pts[0][1] = -0.5773502691896258;
   pts[1][0] =  0.5773502691896258; pts[1][1] = -0.5773502691896258;
@@ -332,11 +332,24 @@ void LadrunoQuad::buildEAStrue(void)
   double J11 = 0.25 * (-nd1(1) - nd2(1) + nd3(1) + nd4(1));
 
   easJ0det = J00 * J11 - J01 * J10;
-  if (fabs(easJ0det) < 1.0e-12) {
+
+  // Scale-invariant degeneracy test: the dimensionless volume ratio
+  // |det J0| / (||col0|| ||col1||) is 1 for an orthogonal Jacobian and ->0 only
+  // as the two natural axes become collinear (a genuinely flat/degenerate
+  // element), independent of element SIZE. An absolute threshold on |det J0|
+  // alone would false-positive a valid but small element (det scales as L^2),
+  // hard-failing e.g. a sub-mm quad in SI-metre coordinates.
+  double col0 = sqrt(J00 * J00 + J10 * J10);
+  double col1 = sqrt(J01 * J01 + J11 * J11);
+  double scale = col0 * col1;
+  easDegenerate = (scale <= 0.0) || (fabs(easJ0det) < 1.0e-10 * scale);
+  if (easDegenerate) {
     opserr << "WARNING LadrunoQuad::buildEAStrue() - element " << this->getTag()
            << ": near-degenerate centroid Jacobian (det=" << easJ0det
-           << "); -formulation eas results will be unreliable for this element\n";
+           << ", volume-ratio=" << (scale > 0.0 ? fabs(easJ0det) / scale : 0.0)
+           << "); -formulation eas will refuse to form terms for this element\n";
   }
+
   double inv = 1.0 / easJ0det;
   easJ0inv(0, 0) =  J11 * inv;
   easJ0inv(1, 1) =  J00 * inv;
@@ -410,6 +423,18 @@ int LadrunoQuad::formEAStrue(int tang_flag, bool useInitialTangent)
   K.Zero();
   P.Zero();
   int status = 0;
+
+  // buildEAStrue() flags a (scale-invariant) near-degenerate centroid Jacobian
+  // but can't report failure itself -- it's called from setDomain() with no
+  // status channel. Thread that flag into THIS status-propagation chain instead
+  // of silently baking inf/NaN from computeMenh's 1/jdet into every
+  // enhanced-strain operator below. K/P are already zeroed above so this returns
+  // a clean (not stale) result.
+  if (easDegenerate) {
+    opserr << "WARNING LadrunoQuad::formEAStrue() - element " << this->getTag()
+           << ": refusing to form eas terms on a near-degenerate element\n";
+    return -1;
+  }
 
   // -------- precompute the geometry-only layer once (4 Gauss points) ---------
   static double jdetGP[4], dvolGP[4], Ngp[4][4];

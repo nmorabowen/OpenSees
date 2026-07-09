@@ -155,6 +155,7 @@ class LadrunoQuad : public Element
     Vector alphaCommit;                // committed enhanced parameters (serialized)
     Matrix easJ0inv;                   // 2x2 centroid Jacobian inverse (mode map; cached)
     double easJ0det;                   // centroid Jacobian determinant j0 (cached)
+    bool easDegenerate;                // scale-invariant degeneracy flag (set in buildEAStrue)
 
     double shapeFunction(double xi, double eta);  // returns detJ, fills shp
     void computeShapeBar(void);                    // fills shpBar (B-bar)
