@@ -29,24 +29,25 @@ export OMPI_MCA_plm=${OMPI_MCA_plm:-rsh}
 # PMIX shared-memory dstore hits "NO-PERMISSIONS in dstore_base.c" on this node;
 # `hash` avoids the shared segment.
 export PMIX_MCA_gds=${PMIX_MCA_gds:-hash}
-# CLEAN strong-scaling needs each rank on its OWN physical core. --oversubscribe
-# + no binding piled ranks onto shared cores -> np=4 came out SLOWER than np=2
-# (a binding artifact, not dmumps scaling). Bind to core, one rank per core; the
-# node has 16 physical cores (32 HT) so np<=16 fits without oversubscription.
-export OMPI_MCA_rmaps_base_oversubscribe=0
-export OMPI_MCA_hwloc_base_binding_policy=core
+# CLEAN strong-scaling needs each rank on its OWN physical core (an early run with
+# --oversubscribe + no binding piled ranks onto shared cores => np=4 SLOWER than
+# np=2, an artifact not dmumps scaling). Solved below with a hostfile (real slot
+# count) + --bind-to core.
 export TMPDIR=$HOME/ladruno_build_test/tmp
 export L2_MODDIR=$HOME/ladruno_build_test/OpenSees/build/Release
 export L2_MPIEXEC=/opt/openmpi/bin/mpirun
 export L2_LDPATH=$SPACK_MKL:/opt/openmpi/lib:/mnt/nfshare/lib
 export L2_TMPDIR=$HOME/ladruno_build_test/tmp
-# inside a SLURM allocation OpenMPI maps -n ranks onto the allotted slots;
-# --oversubscribe lets np exceed physical cores if needed; keep MPI tmp off /tmp.
-# -x forwards the runtime env to REMOTE-node ranks (OpenMPI does NOT forward
-# LD_LIBRARY_PATH/MKL vars by default — without this, compute-node ranks can't
-# load MKL/openseesmp). Works for salloc (this node) and sbatch multi-node alike.
-export L2_MPI_FLAGS="--bind-to core --map-by core --mca orte_tmpdir_base $HOME/ladruno_build_test/tmp -x LD_LIBRARY_PATH -x MKL_INTERFACE_LAYER -x MKL_THREADING_LAYER -x MKL_NUM_THREADS -x OMP_NUM_THREADS -x LADRUNO_FEAST_MPI_DEBUG -x LADRUNO_OPENSEES_QUIET -x LADRUNO_FEAST_PHI"
 export L2_M0=${L2_M0:-16}
+# -x (in L2_MPI_FLAGS below) forwards the runtime env to ranks (OpenMPI does NOT
+# forward LD_LIBRARY_PATH/MKL vars by default — without it ranks can't load MKL).
+
+# Inside a `srun --ntasks=1` step OpenMPI sees 1 slot. Give it the node's real
+# core count via a hostfile (slots=16 = physical cores) so `mpirun -n {2..16}`
+# launches WITHOUT oversubscribe and --bind-to core puts one rank per core.
+HF="$HOME/ladruno_build_test/tmp/l2_hostfile_$$"
+echo "localhost slots=16" > "$HF"   # local fork-launch on this compute node
+export L2_MPI_FLAGS="--hostfile $HF --bind-to core --map-by core --mca orte_tmpdir_base $HOME/ladruno_build_test/tmp -x LD_LIBRARY_PATH -x MKL_INTERFACE_LAYER -x MKL_THREADING_LAYER -x MKL_NUM_THREADS -x OMP_NUM_THREADS -x LADRUNO_FEAST_MPI_DEBUG -x LADRUNO_OPENSEES_QUIET -x LADRUNO_FEAST_PHI"
 
 NE=${NE:-32}
 NPS=${NPS:-2,4,8,16}
