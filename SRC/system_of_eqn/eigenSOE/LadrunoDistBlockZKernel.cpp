@@ -129,7 +129,7 @@ LadrunoDistBlockZKernel::LadrunoDistBlockZKernel(int nEqn, const int *ia,
     id.ICNTL(1) = -1; id.ICNTL(2) = -1; id.ICNTL(3) = -1; id.ICNTL(4) = 0;
     id.ICNTL(5) = 0;                     // assembled format
     id.ICNTL(18) = 3;                    // distributed matrix structure/values
-    id.ICNTL(14) = 20;                   // workspace headroom %
+    id.ICNTL(14) = 35;                   // workspace headroom % (retry grows it on -8/-9)
     id.ICNTL(7) = 7;                     // ordering: automatic
     // NOTE (P3c-MPI gate MINOR-1): unlike the serial PARDISO kernel (1e-8 pivot
     // perturbation, iparm[9]=8) this leaves MUMPS null-pivot detection (ICNTL24)
@@ -203,6 +203,31 @@ LadrunoDistBlockZKernel::setShiftBlock(double a, double b)
     id.a_loc = aLoc;
     id.job = 2;                          // numeric factorization (reuses JOB=1)
     dmumps_c(&id);
+
+    // MUMPS INFOG(1) = -9 (real) / -8 (integer) => the internal work array is too
+    // small; the documented remedy is to raise ICNTL(14) (workspace headroom %)
+    // and re-run the numeric factorization. Indefinite SYM=2 3D block-real fill is
+    // hard to predict (grows with rank count as the frontal tree is distributed),
+    // so the fixed 20% headroom under-provisions at higher np (observed:
+    // infog(1)=-9 at np=8). Retry with geometrically-growing headroom. This is
+    // COLLECTIVE — every rank sees the same global INFOG(1) and retries in
+    // lockstep, so it can never deadlock. ICNTL(14) is restored to the default
+    // afterwards so a one-off hard shift doesn't inflate every later factor.
+    const int icntl14_default = 35;
+    int tries = 0;
+    while ((id.infog[0] == -9 || id.infog[0] == -8) && tries < 5) {
+        const int prev = id.ICNTL(14);
+        id.ICNTL(14) = (prev < 60) ? 100 : prev * 2;   // 35 -> 100 -> 200 -> ...
+        if (id.ICNTL(14) > 4000) break;
+        opserr << "LadrunoDistBlockZKernel::setShiftBlock -- MUMPS workspace short "
+               << "(infog(1)=" << id.infog[0] << ", need infog(2)=" << id.infog[1]
+               << "); retrying with ICNTL(14)=" << id.ICNTL(14) << "\n";
+        id.job = 2;
+        dmumps_c(&id);
+        tries++;
+    }
+    id.ICNTL(14) = icntl14_default;      // reset headroom for subsequent shifts
+
     if (id.infog[0] < 0) {
         opserr << "LadrunoDistBlockZKernel::setShiftBlock -- MUMPS factor "
                << "failed, infog(1)=" << id.infog[0] << " infog(2)="
