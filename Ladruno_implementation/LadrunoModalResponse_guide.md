@@ -80,6 +80,39 @@ discriminant `Δ = ω² − (d/2)²`. Response is recovered `u = Σ_a ψ_a q_a` 
   Mass-proportional (`alphaM`) Rayleigh and `modalDamping` agree with the exact
   modal solution.
 
+## Response-spectrum combination — `responseSpectrumAnalysis -combine` (P1b)
+
+OpenSees's `responseSpectrumAnalysis` computes per-mode modal displacements and
+commits one step per mode, **leaving the SRSS/CQC/… combination to you**. P1b adds an
+opt-in combination stage that writes a single combined nodal-displacement field:
+
+```python
+ops.eigen('-fullGenLapack', nModes)
+ops.modalProperties()
+# CQC (closely-spaced modes) — needs modal damping:
+ops.responseSpectrumAnalysis(dir, '-Tn', *Tn, '-Sa', *Sa, '-combine', 'CQC', '-damp', 0.05)
+# or SRSS / ABS / TenPercent (no damping needed for these):
+ops.responseSpectrumAnalysis(dir, '-Tn', *Tn, '-Sa', *Sa, '-combine', 'SRSS')
+# read the combined design displacements:
+u = ops.nodeDisp(node, dof)
+```
+
+| rule | formula | use |
+|---|---|---|
+| `ABS` | `Σ|R_a|` | most conservative upper bound |
+| `SRSS` | `√(Σ R_a²)` | well-separated modes |
+| `TenPercent` | SRSS + `2Σ|R_iR_j|` over pairs within 10% period (Reg. Guide 1.92) | some closely-spaced |
+| `CQC` | `√(ΣΣ ρ_ij R_iR_j)`, Der Kiureghian ρ_ij | closely-spaced modes (needs `-damp`/`-modalDamp`) |
+
+- `-combine` absent ⇒ **byte-identical** to the stock per-mode behavior.
+- `-combine` and `-mode` are mutually exclusive (combination needs all modes).
+- **Combination is per-quantity and nonlinear**: this combines the nodal
+  **displacement** field. Combined element forces/drifts are *not* obtained by
+  deriving them from the combined displacements — combine those quantities' own
+  per-mode peaks instead (record per-mode with `-mode k`, then combine).
+- Known stock quirk: the `-scale` factor is ignored by the per-mode recovery
+  (`solveMode` never applies it); the combined path matches that behavior.
+
 ## Scope
 
 P1a covers **uniform base-acceleration** excitation with classical (diagonal) modal

@@ -2841,3 +2841,10 @@ is immune (uses eigenvalues only, never Φ).
 - **Recorder text precision.** Node recorders default to ~6 significant figures;
   a modal-transient vs analytic assert at 1e-8 is dominated by that rounding.
   Add `-precision 15`/`16` to the recorder (already noted for ADR-46; re-bitten here).
+
+- **`responseSpectrumAnalysis -scale` is a dead knob (stock).** The Petracca
+  `ResponseSpectrumAnalysis::solveMode` computes `u = V*Vscale*MPF*Sa/λ` and never
+  multiplies by `m_scale`, so the `-scale` factor the command parses is silently
+  ignored. Not our bug (upstream); the ADR-44 P1b `-combine` path matches this
+  behavior (no scale) for consistency rather than silently diverging. Flagged
+  during the P1b wiring.
