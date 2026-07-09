@@ -2180,6 +2180,19 @@ static PyObject *Py_ops_complexEigen(PyObject *self, PyObject *args)
     return wrapper->getResults();
 }
 
+// Ladruno ADR44: modal-superposition transient (modalResponseHistory)
+static PyObject *Py_ops_modalResponseHistory(PyObject *self, PyObject *args)
+{
+    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
+
+    if (OPS_LadrunoModalResponseHistory() < 0) {
+	opserr<<(void*)0;
+	return NULL;
+    }
+
+    return wrapper->getResults();
+}
+
 static PyObject *Py_ops_systemSize(PyObject *self, PyObject *args)
 {
     wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
@@ -3392,6 +3405,7 @@ PythonWrapper::addOpenSeesCommands()
     addCommand("numIter", &Py_ops_numIter);
     addCommand("criticalTimeStep", &Py_ops_criticalTimeStep);
     addCommand("complexEigen", &Py_ops_complexEigen);   // Ladruno ADR46
+    addCommand("modalResponseHistory", &Py_ops_modalResponseHistory); // Ladruno ADR44
     addCommand("systemSize", &Py_ops_systemSize);
     addCommand("version", &Py_ops_version);
     addCommand("pyversion", &Py_ops_pyversion);
