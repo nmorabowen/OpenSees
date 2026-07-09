@@ -271,6 +271,20 @@ enum class Formulation { STD, BBAR, SSP, EAS };
 > the `LadrunoJ2` dimensional-view pattern)? Views avoid a new tag and reuse the
 > 3D return map; a separate class is cleaner for the 2×2-native **F** path.
 > Decide at P5 after the geometry seam is wired.
+>
+> **DECIDED 2026-07-09 → NEW CLASS (33016).** The 3D `FiniteStrainNDMaterial`
+> seam is rigidly 3D (`setTrialF(3×3)`, `getType()=="ThreeDimensional"`, order 6),
+> so a 2D face genuinely needs its own contract — a chameleon `dimMode` bolted
+> onto the shipped-and-verified 3D class would risk regressing it for no real
+> saving. The DRY win is captured differently: `LogStrain2D` **composes** an
+> internal `LogStrainNDMaterial`, reusing the verified MATISU kernel + bᵉ state +
+> plastic protocol verbatim, rather than reimplementing the return map. A new
+> fork-local base `FiniteStrainND2DMaterial` (2×2 `setTrialF`, order-3
+> PlaneStrain/PlaneStress face, `getSpatialTangentTensor2D`) locks the seam the
+> `-geom finite` element will call. Plane strain lifts F to 3×3 with F₃₃=1
+> (the full 3×3 bᵉ tracks plastic ε₃₃≠0 exactly); plane stress solves λ=F₃₃ from
+> σ₃₃=0 (local Newton) and statically condenses the tangent (§14.7). Shipped
+> material-only + oracle-verified; the element P5 wiring is a follow-up.
 
 > [!question]
 > **EAS + finite hourglassing.** Simo-Rifai Q1/E4 develops spurious hourglass
