@@ -31,6 +31,7 @@ target_sources(OPS_Analysis
       LadrunoComplexEigen.h
       LadrunoDampingAssembler.h
       LadrunoModalResponse.h
+      LadrunoModalCombination.h
       ResponseSpectrumAnalysis.h
       StaticAnalysis.h 
       StaticDomainDecompositionAnalysis.h 

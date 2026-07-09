@@ -52,6 +52,7 @@ GLOBS = [
     "SRC/analysis/analysis/LadrunoComplexEigen.*",
     "SRC/analysis/analysis/LadrunoDampingAssembler.*",
     "SRC/analysis/analysis/LadrunoModalResponse.*",
+    "SRC/analysis/analysis/LadrunoModalCombination.*",
     "SRC/system_of_eqn/eigenSOE/FeastEigenSOE.*",
     "SRC/system_of_eqn/eigenSOE/FeastEigenSolver.*",
     "SRC/system_of_eqn/eigenSOE/LadrunoBlockZKernel.*",

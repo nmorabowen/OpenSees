@@ -54,6 +54,13 @@ public:
 	int analyze();
 	int analyze(int mode_id);
 
+	// Ladruno ADR44 P1b: opt-in modal combination (CQC/SRSS/ABS/TenPercent).
+	// rule = LadrunoModalCombination::Rule; xi = per-mode damping ratios (used by
+	// CQC; a single value is broadcast to all modes). Committing ONE combined
+	// nodal-displacement field instead of the per-mode states.
+	void setCombination(int rule, const std::vector<double>& xi);
+	int analyzeCombined();
+
 private:
 	int check();
 	int beginMode();
@@ -74,6 +81,10 @@ private:
 	double m_scale;
 	// current mode
 	int m_current_mode;
+	// Ladruno ADR44 P1b: combination rule (-1 = none => stock per-mode behavior)
+	// and per-mode damping ratios (for CQC).
+	int m_combine = -1;
+	std::vector<double> m_xi;
 };
 
 #endif
