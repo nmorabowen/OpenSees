@@ -2807,3 +2807,37 @@ is immune (uses eigenvalues only, never Φ).
   (row n+i ≥ n > j, wholly lower, supplied in full, its transpose block NOT
   supplied); `(n+i, n+j) j≤i` = −(aM−K). Verified transpose-consistent by the
   P3c-MPI adversarial gate.
+
+### ADR-44 modalResponseHistory — modal-transient gotchas
+
+- **Element-level stiffness-proportional (`betaK`) Rayleigh damping ≠ assembled
+  `a1·K` (Truss).** A direct `Newmark` run with `rayleigh 0 0 0 a1` (or `betaKcurr`
+  / `betaKinit` — all three identical) on a linear Truss chain differs from the
+  EXACT classical-modal solution of `M ü + a1 K u̇ + K u = −MR ü_g` by **several
+  percent, dt-INVARIANT** (measured 4.4% on a 2-DOF chain; does NOT shrink as
+  dt→0, so it is NOT Newmark truncation). The exact modal answer was pinned three
+  ways (numpy modal-superposition 1e-18, numpy full-matrix Newmark of (M,a1K,K)
+  ~9e-5, and `modalResponseHistory` itself). Mass-proportional (`alphaM`) Rayleigh
+  DOES match OpenSees-Newmark to truncation (~1e-4). **Consequence for validation:**
+  never oracle an exact modal-damping feature against an OpenSees direct-`Newmark`
+  run that uses `betaK` — use `alphaM`-only, `modalDamping`, or an explicit
+  full-matrix Newmark reference. (Root cause: element `getRayleighDampingForces`
+  builds the damping force from a per-element stiffness that is not the same as the
+  globally-assembled `K` for the truss basic-system mapping — not chased further.)
+
+- **`Path` timeSeries `getFactor(t)` returns 0 at exactly the record end.** For a
+  transient whose last station time `t = nsteps·dt` coincides with the final
+  abscissa, floating-point round-off of `nsteps·dt` lands just past the last
+  sample ⇒ `getFactor` returns 0, not the last value. Symptom: the FINAL committed
+  station is slightly off (all earlier stations exact). Fix in models/tests: pad
+  the record with ≥1 trailing sample so the analysis window is strictly interior.
+  (This is inherent to any getFactor-sampling integrator, incl. UniformExcitation.)
+
+- **`eigen` on a tiny model needs `-fullGenLapack`.** The default ARPACK path
+  requires `NEV < N` (NCV must be > NEV and ≤ N); a 1- or 2-DOF model with
+  `eigen 1`/`eigen 2` fails `_saupd info = -3`. Use `eigen -fullGenLapack N`
+  (dense) for small verification models.
+
+- **Recorder text precision.** Node recorders default to ~6 significant figures;
+  a modal-transient vs analytic assert at 1e-8 is dominated by that rounding.
+  Add `-precision 15`/`16` to the recorder (already noted for ADR-46; re-bitten here).

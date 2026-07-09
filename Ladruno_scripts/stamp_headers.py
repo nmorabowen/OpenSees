@@ -51,6 +51,7 @@ GLOBS = [
     "SRC/utility/profiler/*.cpp", "SRC/utility/profiler/*.h",
     "SRC/analysis/analysis/LadrunoComplexEigen.*",
     "SRC/analysis/analysis/LadrunoDampingAssembler.*",
+    "SRC/analysis/analysis/LadrunoModalResponse.*",
     "SRC/system_of_eqn/eigenSOE/FeastEigenSOE.*",
     "SRC/system_of_eqn/eigenSOE/FeastEigenSolver.*",
     "SRC/system_of_eqn/eigenSOE/LadrunoBlockZKernel.*",

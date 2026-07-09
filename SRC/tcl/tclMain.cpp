@@ -189,6 +189,7 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • LadrunoSolidShell — 8-node ANS/EAS solid-shell (through-thickness σ33 punching/bearing host; Dvorkin-Bathe + Betsch-Stein + state-EAS)\n"
 "        • LadrunoComplexEigen — complexEigen: complex/state-space modal for non-classical damping (true per-mode zeta + omega_d + phased mode shapes; assembled getDamp() projection, QZ reduced pencil)\n"
 "        • FeastEigen — band-targeted eigensolver: eigen -feast fmin fmax (ALL modes in the band, MKL contour integration; -certify = Sturm/inertia completeness; -rci = dfeast_srci RCI, distributed dmumps inner solve under openseesmp)\n"
+"        • LadrunoModalResponse — modalResponseHistory: exact PWL modal-superposition transient (per-mode Nigam-Jennings recurrence, base-accel; -damp/-rayleigh/-modalDamp; commits per step so recorders capture the history)\n"
 "\n";
     // FEATURES-END
 
