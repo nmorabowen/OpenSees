@@ -32,17 +32,39 @@ So the achievable **L2-over-L3 speedup**, in the factorization-dominated limit, 
                  =  E(P/G) / E(P).
 ```
 
-**This is the whole decision, and it needs no L2 code.** `E(P/G)/E(P)` is read
-straight off the L3 strong-scaling curve:
+`E(P/G)/E(P)` is read straight off the L3 strong-scaling curve — BUT it is only an
+**optimistic upper bound**, because it assumes the *whole* cost is the distributed
+factor+solve. It is not.
 
-- **Perfect L3 scaling** (`E` flat) ⇒ ratio `= 1` ⇒ **L2 buys nothing** (concurrent
-  small-group solves take exactly as long as sequential full-comm solves).
-- **L3 saturated** at the budget (`E(P)` collapsed, `E(P/G)` still healthy) ⇒ ratio
-  `≫ 1` ⇒ that wasted efficiency is exactly what L2 recovers, up to `≈ 1/E(P)` but
-  bounded by `N_q_eff`.
+### The Amdahl correction (adversarial-review CRITICAL)
 
-Rule of thumb: `E(P/G)/E(P) ≳ 2×` on a **real** rank budget ⇒ L2 is worth the build;
-`~1×` ⇒ it is not (spend ranks on L3, i.e. bigger per-node factorizations).
+FEAST's `dfeast_srci` outer loop runs **replicated on every rank**; only the
+factor/solve (`ijob=10/11`) is distributed. The full-CSR matvecs (`ijob=30/40`) and
+the reduced-eig/orthogonalization *inside* `dfeast_srci` are **replicated** per-rank
+work that L2 does **not** parallelize (and L2 even replicates it `G`-fold + adds an
+`Allreduce`). Split the measured per-solve-set time into `f(P)` = distributed
+factor+solve (`t_inner`) and `r` = replicated (`t_rest`, ~constant in `P`):
+
+```
+  T_L3(P)  = f(P)      + r
+  T_L2(P) ≈ f(P/G)/G  + r          (G groups of P/G ranks, each 1/G of the solves)
+  speedup_L2/L3 = [f(P)+r] / [f(P/G)/G + r]          ← the REAL number
+```
+
+With `φ = r/(f+r)` the replicated fraction: `φ=0` recovers the raw `E(P/G)/E(P)`
+ceiling; `φ=1` ⇒ speedup `=1` (all replicated, L2 useless). Since `E(P/G)/E(P) > 1`,
+any `r>0` pulls the real speedup **toward 1** — and `φ` *grows* with `P` (the
+distributed term shrinks while `r` stays fixed), so the raw ceiling is **least**
+representative exactly in the saturated regime where it looks biggest.
+
+`l2_profile.py` measures `f` and `r` directly (the `LADRUNO_FEAST_PHI tInner/tTotal`
+line the instrumented `runFeastRci` emits) and reports **both** the raw ceiling and
+the corrected `[f(P)+r]/[f(P/G)/G + r]`.
+
+Rule of thumb (on the **corrected** number, at a **real** rank budget): `≳ 2×` ⇒ L2
+worth the build; `~1×` ⇒ not (spend ranks on L3 / bigger per-node factorizations).
+A raw ceiling `~1×` is already conclusive "don't build" (the real number is ≤ it);
+a raw ceiling `>2×` proves nothing until `φ` is applied.
 
 ## Method
 
