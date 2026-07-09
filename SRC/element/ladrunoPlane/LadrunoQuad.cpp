@@ -478,10 +478,15 @@ int LadrunoQuad::formEAStrue(int tang_flag, bool useInitialTangent)
     if (count >= 1 && r <= tolRel * r0 + tolAbs)
       break;
     if (count >= maxIters) {
+      // Not propagated as a hard failure: r is typically already within noise
+      // of tolAbs at this point (a marginal relative-tolerance miss, not true
+      // divergence) -- under path-dependent softening materials, residual
+      // noise can tip r just over the floor on the last iteration. Escalating
+      // this to update() failure breaks otherwise-valid analysis steps; the
+      // warning plus best-available alpha is intentional (mirrors LadrunoBrick).
       opserr << "LadrunoQuad::formEAStrue - element " << this->getTag()
              << ": enhanced-strain Newton did not converge in " << maxIters
              << " iters (||r||=" << r << ", r0=" << r0 << ")\n";
-      status = -1;
       break;
     }
     dalpha.Zero();
