@@ -238,7 +238,7 @@ area), **√(2A)** for the CST — the 2D analogues of the brick's ∛V and Bezi
 |---|---|---|
 | **P1** | `LadrunoQuad` std/bbar + `LadrunoCST` std, `-geom linear` | byte-reduce to `FourNodeQuad` / `ConstantPressureVolumeQuad` / `Tri31` ~1e-9; constant-strain patch; rank/3-rbm |
 | **P2** | `ssp` + damage-scaled `Kstab` + crack-band `lch` (Quad) | `↔ SSPquad` ~1e-6 across ν∈{0,0.3,0.45,0.499}; mesh-objectivity (dissipation ∝ crack length); Tier-A scale == max(floor,1−d) |
-| **P3** | `eas` (Quad, small strain) | distorted-mesh patch (∫M dV=0); reduce-to-std (α→0); bending-beats-std→Euler; near-incompressible non-locking |
+| **P3** — shipped | `eas` (Quad, small strain) — Q1/E4 Simo-Rifai, 4 enhanced parameters (2 natural bubbles × 2 dofs); ported from `EnhancedQuad::computeBenhanced`, wired through the same inner-Newton + static-condensation machinery as `LadrunoBrick`'s E9 (`LadrunoQuad::{buildEAStrue,computeMenh,formEAStrue}`). No artificial stabilization (ADR 20's β-Tikhonov was refuted for the brick, not ported) | distorted-mesh patch (∫M dV=0); reduce-to-std (α→0); bending-beats-std→Euler (comparative fine-mesh reference); rank/3-rbm — see `tests/test_ladrunoQuad_eas.py` |
 | **P4** | `-geom corot` (both) | rigid-rotation >π objectivity; linear-bit-identical seam; FD-tangent-gap→0; load-driven cantilever vs finite <1% |
 | **P5** | `-geom finite` + `LogStrain2D` (both) + 2D F-bar | FD consistent-tangent (unsym-aware); homogeneous-**F** patch vs oracle; reduce-to-linear at small strain; det F≤0 step-cut; volumetric-locking cantilever (std locks ν→0.5, F-bar doesn't) |
 
