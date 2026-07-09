@@ -26,6 +26,10 @@ export PATH=/opt/openmpi/bin:$PATH
 # Result: all np ranks run on the srun-assigned compute node. Override with
 # OMPI_MCA_plm=slurm for a true multi-node sbatch run.
 export OMPI_MCA_plm=${OMPI_MCA_plm:-rsh}
+# Disable OpenMPI's SLURM resource detector: inside a `srun --ntasks=1` step it
+# reports 1 slot and OVERRIDES the hostfile. With ^slurm, the hostfile
+# (localhost slots=16) is authoritative -> mpirun -n {2..16} launches clean.
+export OMPI_MCA_ras=${OMPI_MCA_ras:-^slurm}
 # PMIX shared-memory dstore hits "NO-PERMISSIONS in dstore_base.c" on this node;
 # `hash` avoids the shared segment.
 export PMIX_MCA_gds=${PMIX_MCA_gds:-hash}
