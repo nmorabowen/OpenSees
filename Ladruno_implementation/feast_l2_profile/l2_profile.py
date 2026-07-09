@@ -94,6 +94,7 @@ def _run(nranks, ne, want_modes, mkl_threads):
     env["MKL_NUM_THREADS"] = str(mkl_threads)
     env["OMP_NUM_THREADS"] = str(mkl_threads)
     env["LADRUNO_FEAST_MPI_DEBUG"] = "1"
+    env["LADRUNO_FEAST_PHI"] = "1"        # emit tInner/tTotal for the Amdahl phi
     if os.name == "nt":
         env["PATH"] = MODDIR + os.pathsep + env.get("PATH", "")
     else:
@@ -132,11 +133,22 @@ def _run(nranks, ne, want_modes, mkl_threads):
     distributed = (nranks == 1) or (set(solves.keys()) == set(range(nranks)))
     nsolves = len(solves.get(0, [])) if solves else 0
 
+    # phi split: tInner = distributed factor+solve, tTotal = whole RCI loop.
+    # Every (replicated) rank prints ~the same values; take the medians.
+    tin, ttot = [], []
+    for m in re.finditer(r"LADRUNO_FEAST_PHI tInner=([\d.eE+-]+) "
+                         r"tTotal=([\d.eE+-]+)", r.stderr):
+        tin.append(float(m.group(1))); ttot.append(float(m.group(2)))
+    tin.sort(); ttot.sort()
+    t_inner = tin[len(tin) // 2] if tin else float("nan")
+    t_total = ttot[len(ttot) // 2] if ttot else float("nan")
+
     with open(os.path.join(outdir, "rank_0.json")) as fh:
         r0 = json.load(fh)
     return dict(np=nranks, t_rci=r0["t_rci"], wall=wall, ndof=r0["ndof"],
                 nmodes=r0["nmodes"], fmax=r0["fmax"], nnode=r0["nnode"],
-                nele=r0["nele"], nsolves=nsolves, distributed=distributed)
+                nele=r0["nele"], nsolves=nsolves, distributed=distributed,
+                t_inner=t_inner, t_total=t_total)
 
 
 def main():
@@ -163,44 +175,56 @@ def main():
     hdr = base and rows[0]
     print("\n=== RESULT ===")
     print(f"  model: ne={ne}^3  ndof={rows[0]['ndof']:,}  nele={rows[0]['nele']:,}"
-          f"  nmodes={rows[0]['nmodes']}  fmax={rows[0]['fmax']:.4g} Hz"
-          f"  nsolves(rank0)={rows[0]['nsolves']}")
-    print(f"  {'np':>3} {'t_rci(s)':>10} {'speedup':>8} {'effic':>7} "
-          f"{'t/solve(s)':>11} {'dist':>5}")
+          f"  nmodes={rows[0]['nmodes']}  fmax={rows[0]['fmax']:.4g} Hz")
+    # t_inner = distributed factor+solve (what L2 parallelizes); t_rest =
+    # replicated matvec + reduced-eig (constant in np, the Amdahl floor);
+    # phi = t_rest/t_total. E_fac = strong-scaling efficiency of t_inner ONLY.
+    print(f"  {'np':>3} {'t_rci':>9} {'t_inner':>9} {'t_rest':>8} {'phi':>6} "
+          f"{'E_fac':>6} {'dist':>5}")
+    fin, frest = {}, {}
     for row in rows:
-        sp = base / row["t_rci"] if row["t_rci"] else float("nan")
-        eff = sp / row["np"]
-        tps = row["t_rci"] / row["nsolves"] if row["nsolves"] else float("nan")
-        print(f"  {row['np']:>3} {row['t_rci']:>10.3f} {sp:>8.2f} {eff:>7.2f} "
-              f"{tps:>11.4f} {str(row['distributed']):>5}")
+        ti, tt = row.get("t_inner"), row.get("t_total")
+        tr = (tt - ti) if (ti == ti and tt == tt) else float("nan")
+        phi = (tr / tt) if (tt and tt == tt) else float("nan")
+        fin[row["np"]] = ti
+        frest[row["np"]] = tr
+        efac = ((rows[0].get("t_inner") / ti) / row["np"]
+                if (ti and ti == ti and rows[0].get("t_inner")) else float("nan"))
+        print(f"  {row['np']:>3} {row['t_rci']:>9.2f} "
+              f"{(ti if ti==ti else float('nan')):>9.2f} "
+              f"{(tr if tr==tr else float('nan')):>8.2f} {phi:>6.3f} "
+              f"{efac:>6.2f} {str(row['distributed']):>5}")
 
     outp = os.path.join(HERE, f"scaling_ne{ne}.json")
     with open(outp, "w") as fh:
         json.dump(rows, fh, indent=2)
     print(f"\n  wrote {outp}")
 
-    # --- L2 ceiling from the L3 curve (derivation in README) ---
-    # In the factorization-dominated limit, running N_q_eff contour solves
-    # CONCURRENTLY on P/G-rank groups (L2) vs SEQUENTIALLY on P ranks (L3) gives
-    #   speedup_L2/L3  ~=  E(P/G) / E(P)          (G = N_q_eff groups)
-    # E = strong-scaling efficiency. Flat E (perfect L3) => 1 => L2 useless;
-    # E collapsing over the last factor-of-G of ranks => that's the L2 recovery.
-    eff = {}
-    for row in rows:
-        sp = base / row["t_rci"] if row["t_rci"] else 0.0
-        eff[row["np"]] = sp / row["np"]
+    # --- L2 verdict: RAW ceiling (optimistic) vs Amdahl-CORRECTED speedup ---
+    # RAW (upper bound): speedup_L2/L3 ~= E(P/G)/E(P) using whole-call t_rci.
+    # CORRECTED (real): only t_inner (=f) is run concurrently by L2's G groups;
+    # the replicated t_rest (=r) is NOT sped up (and L2 replicates it G-fold).
+    #   T_L3(P)  = f(P)      + r
+    #   T_L2(P) ~= f(P/G)/G  + r        (G groups of P/G ranks, each 1/G of solves)
+    #   speedup  = [f(P)+r] / [f(P/G)/G + r]
     P = rows[-1]["np"]
-    print(f"\n  L3 strong-scaling efficiency at np={P}: {eff[P]:.0%}")
+    effr = {row["np"]: (base / row["t_rci"]) / row["np"]
+            for row in rows if row["t_rci"]}
+    print(f"\n  target P=np{P}   phi(P)={frest.get(P, float('nan')) / (fin.get(P,0)+frest.get(P,0)) if fin.get(P) else float('nan'):.3f}"
+          f"   (phi->1 = all replicated = L2 useless)")
     for G in (4, 8):                      # N_q_eff after half-contour (4), full (8)
         Pg = P // G
-        if Pg in eff and eff[P] > 0:
-            ceil_ = eff[Pg] / eff[P]
-            print(f"  L2 ceiling estimate (G={G} groups, P/G={Pg} ranks/group): "
-                  f"E({Pg})/E({P}) = {eff[Pg]:.2f}/{eff[P]:.2f} = {ceil_:.2f}x")
-    print("\n  READING: L2-over-L3 speedup ceiling is E(P/G)/E(P). >~2x on a real "
-          "rank budget => L2 worth the (largest novel-math) build; ~1x => not. "
-          "This LOCAL np<=8 run is a first estimate; the real budget is esmeralda "
-          "np=16-64 (push P until E(P) collapses, then E(P/G)/E(P) is the L2 win).")
+        raw = (effr[Pg] / effr[P]) if (Pg in effr and effr.get(P)) else float("nan")
+        fP, fPg, r = fin.get(P), fin.get(Pg), frest.get(P)
+        corr = ((fP + r) / (fPg / G + r)
+                if (fP == fP and fPg == fPg and r == r and (fPg / G + r) > 0)
+                else float("nan"))
+        print(f"  G={G} (P/G={Pg}): RAW ceiling E({Pg})/E({P})={raw:.2f}x   "
+              f"CORRECTED [f({P})+r]/[f({Pg})/{G}+r]={corr:.2f}x")
+    print("\n  READING: the CORRECTED number is the real L2-over-L3 speedup. "
+          ">~2x on a real budget => L2 worth the build; ~1x => not. RAW is the "
+          "phi=0 optimistic upper bound (whole-call). Watch phi: if the replicated "
+          "fraction dominates, even a big RAW ceiling collapses to ~1x corrected.")
 
 
 if __name__ == "__main__":

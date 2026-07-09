@@ -37,7 +37,7 @@ export L2_TMPDIR=$HOME/ladruno_build_test/tmp
 # -x forwards the runtime env to REMOTE-node ranks (OpenMPI does NOT forward
 # LD_LIBRARY_PATH/MKL vars by default — without this, compute-node ranks can't
 # load MKL/openseesmp). Works for salloc (this node) and sbatch multi-node alike.
-export L2_MPI_FLAGS="--oversubscribe --mca orte_tmpdir_base $HOME/ladruno_build_test/tmp -x LD_LIBRARY_PATH -x MKL_INTERFACE_LAYER -x MKL_THREADING_LAYER -x MKL_NUM_THREADS -x OMP_NUM_THREADS -x LADRUNO_FEAST_MPI_DEBUG -x LADRUNO_OPENSEES_QUIET"
+export L2_MPI_FLAGS="--oversubscribe --mca orte_tmpdir_base $HOME/ladruno_build_test/tmp -x LD_LIBRARY_PATH -x MKL_INTERFACE_LAYER -x MKL_THREADING_LAYER -x MKL_NUM_THREADS -x OMP_NUM_THREADS -x LADRUNO_FEAST_MPI_DEBUG -x LADRUNO_OPENSEES_QUIET -x LADRUNO_FEAST_PHI"
 export L2_M0=${L2_M0:-16}
 
 NE=${NE:-32}

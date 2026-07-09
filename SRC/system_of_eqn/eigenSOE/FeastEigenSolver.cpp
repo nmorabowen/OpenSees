@@ -39,6 +39,9 @@
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <chrono>   // Ladruno ADR43 L2: phi (replicated-fraction) instrumentation
+#include <cstdio>
+#include <cstdlib>
 
 // ---------------------------------------------------------------------------
 // MKL Extended Eigensolver (FEAST). MKL is on the link line only on the
@@ -333,6 +336,17 @@ runFeastRci(LadrunoFeastInnerSolve &kern, int n,
     int m0Rci = m0v;        // the RCI's own (shrinkable) in/out copy
     *info = 0;
 
+    // Ladruno ADR43 L2: measure the DISTRIBUTED fraction. tInner accumulates only
+    // the inner-solve kernel calls (ijob 10 factorize + 11 solve) — the work L3
+    // parallelizes and L2 would run concurrently. Everything else in tTotal (the
+    // ijob 30/40 full-CSR matvecs + the reduced-eig/orthogonalization INSIDE
+    // dfeast_srci) is replicated per rank and is NOT sped up by L2. The Amdahl
+    // "replicated fraction" phi = (tTotal - tInner)/tTotal decides whether the
+    // raw E(P/G)/E(P) ceiling is real or optimistic. Emitted on LADRUNO_FEAST_PHI.
+    double tInner = 0.0;
+    int    nSolve = 0;
+    auto   tWall0 = std::chrono::steady_clock::now();
+
     while (true) {
         dfeast_srci(&ijob, &n, &ze, work.data(), workc.data(),
                     aq.data(), sq.data(), fpm, epsout, loop,
@@ -346,7 +360,11 @@ runFeastRci(LadrunoFeastInnerSolve &kern, int n,
         case -2:                // new refinement loop
             break;
         case 10: {              // factorize (ze*M - K) for this contour node
-            if (kern.setShiftBlock(ze.real, ze.imag) != 0) {
+            auto _t0 = std::chrono::steady_clock::now();
+            int _rc = kern.setShiftBlock(ze.real, ze.imag);
+            tInner += std::chrono::duration<double>(
+                          std::chrono::steady_clock::now() - _t0).count();
+            if (_rc != 0) {
                 opserr << "FeastEigenSolver -- -rci: block-real factorization "
                        << "failed at contour node (" << ze.real << ", "
                        << ze.imag << "i)\n";
@@ -362,8 +380,13 @@ runFeastRci(LadrunoFeastInnerSolve &kern, int n,
                 br[p] = workc[p].real;
                 bi[p] = workc[p].imag;
             }
-            if (kern.solveBlock(m0Rci, br.data(), bi.data(),
-                                xr.data(), xi.data()) != 0) {
+            auto _ts0 = std::chrono::steady_clock::now();
+            int _src = kern.solveBlock(m0Rci, br.data(), bi.data(),
+                                       xr.data(), xi.data());
+            tInner += std::chrono::duration<double>(
+                          std::chrono::steady_clock::now() - _ts0).count();
+            ++nSolve;
+            if (_src != 0) {
                 opserr << "FeastEigenSolver -- -rci: block-real solve failed "
                        << "at contour node (" << ze.real << ", " << ze.imag
                        << "i)\n";
@@ -405,6 +428,18 @@ runFeastRci(LadrunoFeastInnerSolve &kern, int n,
         }
     }
 
+    // Ladruno ADR43 L2: emit the distributed-vs-replicated split for phi.
+    // tInner = distributed factor+solve; tTotal-tInner = replicated (matvec +
+    // dfeast_srci internal). Every (replicated) rank prints ~the same values.
+    if (std::getenv("LADRUNO_FEAST_PHI") != 0) {
+        double tTotal = std::chrono::duration<double>(
+                            std::chrono::steady_clock::now() - tWall0).count();
+        std::fprintf(stderr,
+            "LADRUNO_FEAST_PHI tInner=%.6f tTotal=%.6f nsolve=%d phi=%.4f\n",
+            tInner, tTotal, nSolve,
+            tTotal > 0.0 ? (tTotal - tInner) / tTotal : 0.0);
+        std::fflush(stderr);
+    }
     return 0;
 }
 
