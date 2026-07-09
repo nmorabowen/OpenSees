@@ -250,6 +250,7 @@
 #include "ElasticIsotropicAxiSymm.h"
 #include "ElasticIsotropicThreeDimensional.h"
 #include "LogStrainNDMaterial.h"   // Ladruno — Hencky finite-strain adaptor (seam 3)
+#include "LogStrain2D.h"           // Ladruno — 2D (plane) Hencky finite-strain adaptor (ADR 25 P5)
 #include "LadrunoCohesiveHingeBiaxial.h"  // Ladruno — coupled biaxial cohesive Mz-My hinge (ADR 34)
 #include "LadrunoJ2.h"             // Ladruno — combined iso + Chaboche AF kinematic J2
 #include "LadrunoJ2Finite.h"       // Ladruno — finite-strain-native combined-hardening J2 (co-rotating backstress)
@@ -2374,6 +2375,9 @@ FEM_ObjectBrokerAllClasses::getNewNDMaterial(int classTag)
 
   case ND_TAG_LogStrainNDMaterial:               // Ladruno — Hencky finite-strain adaptor (seam 3)
     return new LogStrainNDMaterial();
+
+  case ND_TAG_LogStrain2D:                        // Ladruno — 2D (plane) Hencky finite-strain adaptor (ADR 25 P5)
+    return new LogStrain2D();
 
   case ND_TAG_LadrunoCohesiveHingeBiaxial:        // Ladruno — coupled biaxial cohesive Mz-My hinge (ADR 34)
     return new LadrunoCohesiveHingeBiaxial();

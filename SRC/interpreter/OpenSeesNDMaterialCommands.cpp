@@ -19,6 +19,7 @@ void* OPS_InitStressNDMaterial();
 void* OPS_InitStrainNDMaterial();
 void* OPS_MinMaxNDMaterial();
 void* OPS_LogStrainNDMaterial();  // Ladruno — Hencky finite-strain adaptor
+void* OPS_LogStrain2D();          // Ladruno — 2D (plane) Hencky finite-strain adaptor (ADR 25 P5)
 void* OPS_LadrunoCohesiveHingeBiaxial(); // Ladruno — coupled biaxial cohesive Mz-My hinge (ADR 34)
 void* OPS_LadrunoJ2();            // Ladruno — combined iso + Chaboche AF kinematic J2
 void* OPS_LadrunoJ2Finite();      // Ladruno — finite-strain-native combined-hardening J2 (co-rotating backstress)
@@ -134,6 +135,7 @@ namespace {
 	nDMaterialsMap.insert(std::make_pair("MinMax", &OPS_MinMaxNDMaterial));
 	nDMaterialsMap.insert(std::make_pair("LogStrain", &OPS_LogStrainNDMaterial));        // Ladruno — Hencky finite-strain adaptor
 	nDMaterialsMap.insert(std::make_pair("LogStrainNDMaterial", &OPS_LogStrainNDMaterial));
+	nDMaterialsMap.insert(std::make_pair("LogStrain2D", &OPS_LogStrain2D));               // Ladruno — 2D (plane) Hencky finite-strain adaptor (ADR 25 P5)
 	nDMaterialsMap.insert(std::make_pair("LadrunoCohesiveHingeBiaxial", &OPS_LadrunoCohesiveHingeBiaxial)); // Ladruno — coupled biaxial cohesive Mz-My hinge (ADR 34)
 	nDMaterialsMap.insert(std::make_pair("LadrunoJ2", &OPS_LadrunoJ2));                    // Ladruno — combined iso + Chaboche AF kinematic J2
 	nDMaterialsMap.insert(std::make_pair("LadrunoJ2Finite", &OPS_LadrunoJ2Finite));        // Ladruno — finite-strain-native combined-hardening J2 (co-rotating backstress)

@@ -59,6 +59,7 @@ target_sources(OPS_Material
     InitStrainNDMaterial.cpp
     MinMaxNDMaterial.cpp
     LogStrainNDMaterial.cpp
+    LogStrain2D.cpp
     InitDefGradNDMaterial.cpp
     StagedStrainNDMaterial.cpp
     LadrunoCohesiveHingeBiaxial.cpp
@@ -146,6 +147,8 @@ target_sources(OPS_Material
     MinMaxNDMaterial.h
     LogStrainNDMaterial.h
     LogStrainKernel.h
+    LogStrain2D.h
+    FiniteStrainND2DMaterial.h
     InitDefGradNDMaterial.h
     StagedStrainNDMaterial.h
     LadrunoCohesiveHingeBiaxial.h
