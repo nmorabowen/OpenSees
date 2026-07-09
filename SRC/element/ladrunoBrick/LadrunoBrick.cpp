@@ -839,10 +839,13 @@ LadrunoBrick::update(void)
   // the correct converged state under ANY algorithm — including a single-pass
   // 'Linear' step, where no force/tangent form runs at the final u. (The residual
   // it also assembles is harmless; getResistingForce recomputes it.)  // Ladruno
-  if (formulation == Formulation::EAS) {
-    formEAStrue(0, false);
-    return 0;
-  }
+  // Propagate failure (rejected trial strain, non-converged inner Newton, or a
+  // singular Kaa) like the other formulations' update() paths do via
+  // setTrialStrain's own return code -- lets the analysis algorithm see the
+  // failure and retry/step-cut instead of silently accepting an inconsistent
+  // state.  // Ladruno
+  if (formulation == Formulation::EAS)
+    return formEAStrue(0, false);
 
   if (formulation == Formulation::SSP) {
     if (sspBnot == 0) buildSSP();   // safety (normally built in setDomain)
@@ -2621,6 +2624,11 @@ LadrunoBrick::buildEAStrue(void)
   easJ0det = J0(0,0) * (J0(1,1)*J0(2,2) - J0(1,2)*J0(2,1))
            - J0(0,1) * (J0(1,0)*J0(2,2) - J0(1,2)*J0(2,0))
            + J0(0,2) * (J0(1,0)*J0(2,1) - J0(1,1)*J0(2,0));
+  if (fabs(easJ0det) < 1.0e-12) {
+    opserr << "WARNING LadrunoBrick::buildEAStrue() - element " << this->getTag()
+           << ": near-degenerate centroid Jacobian (det=" << easJ0det
+           << "); -formulation eas results will be unreliable for this element\n";
+  }
 }
 
 //----------------------------------------------------------------------
@@ -2663,9 +2671,13 @@ LadrunoBrick::computeMenh(const double gp[3], double jdet, Matrix &M)
 // useInitialTangent path condenses the INITIAL elastic tangent at alpha=0 (no
 // Newton), mirroring EnhancedQuad::getInitialStiff.  // Ladruno
 //----------------------------------------------------------------------
-void
+// Returns nonzero on failure (material setTrialStrain rejection, Newton
+// non-convergence, or a singular Kaa from Matrix::Solve) so update() can
+// propagate it -- mirrors the LadrunoQuad eas hardening pass.  // Ladruno
+int
 LadrunoBrick::formEAStrue(int tang_flag, bool useInitialTangent)
 {
+  int status = 0;
   static const int    maxIters = 12;
   // RELATIVE inner-Newton tolerance: converge when ||int M^T sigma|| drops to
   // tolRel of its first-iteration value (+ a tiny absolute floor for the case where
@@ -2719,6 +2731,7 @@ LadrunoBrick::formEAStrue(int tang_flag, bool useInitialTangent)
 
   // -------- getInitialStiff: condensed initial elastic tangent at alpha=0 --------
   if (useInitialTangent) {
+    static Vector zeroF(24);
     Kaa.Zero(); Kda.Zero(); Kad.Zero();
     for (int g = 0; g < 8; g++) {
       for (int p = 0; p < 4; p++) for (int q = 0; q < 8; q++) shp[p][q] = Shape[p][q][g];
@@ -2737,11 +2750,16 @@ LadrunoBrick::formEAStrue(int tang_flag, bool useInitialTangent)
       Kad.addMatrixTransposeProduct(1.0, M, DB, 1.0);     //     += M^T dd B
       Kaa.addMatrixTransposeProduct(1.0, M, DM, 1.0);     //     += M^T dd M
     }
-    Kaa.Solve(Kad, KaaInvKad);
+    if (Kaa.Solve(Kad, KaaInvKad) != 0) {
+      opserr << "WARNING LadrunoBrick::formEAStrue() - element " << this->getTag()
+             << ": singular enhanced-stiffness Kaa in getInitialStiff (returning "
+                "uncondensed Kdd)\n";
+      theGeom->globalizeStiff(stiff, zeroF, stiff);
+      return -1;
+    }
     stiff.addMatrixProduct(1.0, Kda, KaaInvKad, -1.0);    // K* = Kdd - Kda Kaa^-1 Kad
-    static Vector zeroF(24);
     theGeom->globalizeStiff(stiff, zeroF, stiff);
-    return;
+    return 0;
   }
 
   // -------- inner Newton: solve alpha s.t. int M^T sigma = 0 (d fixed) --------
@@ -2760,7 +2778,11 @@ LadrunoBrick::formEAStrue(int tang_flag, bool useInitialTangent)
       computeMenh(gpNat[g], jdetGP[g], M);
       strain.addMatrixVector(0.0, B, uCore, 1.0);     // eps = B*u
       strain.addMatrixVector(1.0, M, alpha, 1.0);     //     + M*alpha
-      materialPointers[g]->setTrialStrain(strain);
+      if (materialPointers[g]->setTrialStrain(strain) != 0) {
+        opserr << "WARNING LadrunoBrick::formEAStrue() - element " << this->getTag()
+               << ": material " << g << " rejected trial strain\n";
+        status = -1;
+      }
       stress = materialPointers[g]->getStress();
       stress *= dvol[g];
       dd = materialPointers[g]->getTangent();
@@ -2776,13 +2798,24 @@ LadrunoBrick::formEAStrue(int tang_flag, bool useInitialTangent)
     if (count >= 1 && r <= tolRel * r0 + tolAbs)
       break;
     if (count >= maxIters) {
+      // Not propagated as a hard failure: r is typically already within noise
+      // of tolAbs at this point (a marginal relative-tolerance miss, not true
+      // divergence) -- e.g. under path-dependent softening (J2 + Lemaitre
+      // damage) residual noise can tip r just over the floor on the last
+      // iteration. Escalating this to update() failure breaks otherwise-valid
+      // analysis steps; the warning plus best-available alpha is intentional.
       opserr << "LadrunoBrick::formEAStrue - element " << this->getTag()
              << ": enhanced-strain Newton did not converge in " << maxIters
              << " iters (||r||=" << r << ", r0=" << r0 << ")\n";
       break;
     }
     dalpha.Zero();
-    Kaa.Solve(residE, dalpha);     // dalpha = -Kaa^-1 h  (residE = -h)
+    if (Kaa.Solve(residE, dalpha) != 0) {     // dalpha = -Kaa^-1 h  (residE = -h)
+      opserr << "WARNING LadrunoBrick::formEAStrue() - element " << this->getTag()
+             << ": singular enhanced-stiffness Kaa in the inner Newton loop\n";
+      status = -1;
+      break;
+    }
     alpha += dalpha;
     count++;
   }
@@ -2820,8 +2853,14 @@ LadrunoBrick::formEAStrue(int tang_flag, bool useInitialTangent)
   }
 
   if (tang_flag == 1) {
-    Kaa.Solve(Kad, KaaInvKad);                            // Kaa from the inner loop
-    stiff.addMatrixProduct(1.0, Kda, KaaInvKad, -1.0);    // K* = Kdd - Kda Kaa^-1 Kad
+    if (Kaa.Solve(Kad, KaaInvKad) != 0) {                 // Kaa from the inner loop
+      opserr << "WARNING LadrunoBrick::formEAStrue() - element " << this->getTag()
+             << ": singular enhanced-stiffness Kaa in final condensation (returning "
+                "uncondensed Kdd)\n";
+      status = -1;
+    } else {
+      stiff.addMatrixProduct(1.0, Kda, KaaInvKad, -1.0);  // K* = Kdd - Kda Kaa^-1 Kad
+    }
   }
 
   // seam 3: globalize core-frame f/K to global DOFs (identity for -geom linear)
@@ -2829,6 +2868,8 @@ LadrunoBrick::formEAStrue(int tang_flag, bool useInitialTangent)
     theGeom->globalizeStiff(stiff, resid, stiff);
   theGeom->globalizeForce(resid, resid);
   resid += bodyForce;
+
+  return status;
 }
 
 //----------------------------------------------------------------------

@@ -337,7 +337,7 @@ class LadrunoBrick : public Element {
   // (alphaCommit); commit/revert/sendSelf carry it. v1 = small strain only
   // (-geom corot/finite + eas are parser-reserved).  // Ladruno
   void buildEAStrue(void);                                 // cache centroid J0inv/j0
-  void formEAStrue(int tang_flag, bool useInitialTangent); // inner-Newton + condensation
+  int  formEAStrue(int tang_flag, bool useInitialTangent); // inner-Newton + condensation; nonzero on failure
   void computeMenh(const double gp[3], double jdet, Matrix &M);  // 6x9 enhanced operator
   Vector alpha;        // 9 enhanced parameters (trial; solved each form pass)
   Vector alphaCommit;  // committed enhanced parameters (serialized)
