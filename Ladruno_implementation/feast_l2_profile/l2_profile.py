@@ -166,10 +166,26 @@ def main():
     print(f"ADR-43 L2 profiler — solid box ne={ne}^3, band holds ~{want_modes} "
           f"modes, MKL_THREADS={mkl_threads}")
     print(f"  np list: {nps}\n")
+    outp = os.path.join(HERE, f"scaling_ne{ne}.json")
     rows = []
     for npr in nps:
         print(f"  running np={npr} ...", flush=True)
-        rows.append(_run(npr, ne, want_modes, mkl_threads))
+        try:
+            row = _run(npr, ne, want_modes, mkl_threads)
+        except Exception as e:            # a late point failing must not wipe
+            print(f"  np={npr} FAILED ({e}); keeping {len(rows)} completed point(s)",
+                  flush=True)
+            break
+        rows.append(row)
+        ti, tt = row.get("t_inner"), row.get("t_total")
+        phi = (tt - ti) / tt if (ti == ti and tt and tt == tt) else float("nan")
+        print(f"    np={npr}: t_rci={row['t_rci']:.1f}s  t_inner={ti:.1f}  "
+              f"phi={phi:.3f}", flush=True)
+        with open(outp, "w") as fh:       # checkpoint after every point
+            json.dump(rows, fh, indent=2)
+    if len(rows) < 2:
+        print(f"\n  only {len(rows)} point(s) — need >=2 for a ratio; stopping.")
+        return
 
     base = rows[0]["t_rci"]
     hdr = base and rows[0]

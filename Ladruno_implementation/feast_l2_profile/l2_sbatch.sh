@@ -27,6 +27,10 @@ export PATH=/opt/openmpi/bin:$PATH
 # OMPI_MCA_plm=slurm for a true multi-node sbatch run.
 export OMPI_MCA_plm=${OMPI_MCA_plm:-rsh}
 export OMPI_MCA_rmaps_base_oversubscribe=1
+# PMIX shared-memory dstore hits "NO-PERMISSIONS in dstore_base.c" when the rsh
+# launcher oversubscribes many ranks on one node (seen at np=16). `hash` avoids
+# the shared segment.
+export PMIX_MCA_gds=${PMIX_MCA_gds:-hash}
 export TMPDIR=$HOME/ladruno_build_test/tmp
 export L2_MODDIR=$HOME/ladruno_build_test/OpenSees/build/Release
 export L2_MPIEXEC=/opt/openmpi/bin/mpirun
