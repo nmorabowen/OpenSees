@@ -79,7 +79,8 @@ LadrunoQuad::LadrunoQuad(int tag, int nd1, int nd2, int nd3, int nd4,
   theMaterial(0), connectedExternalNodes(4),
   Q(8), pressureLoad(8), thickness(t), pressure(p), rho(r),
   formulation(form), bulkVisc_b1(b1bv), bulkVisc_b2(b2bv), planeType(1),
-  Mmem(3, 8), Kstab(8, 8), J0(0.0), J1(0.0), J2(0.0), damageResponse(0), Ki(0)
+  Mmem(3, 8), Kstab(8, 8), J0(0.0), J1(0.0), J2(0.0), damageResponse(0),
+  alpha(4), alphaCommit(4), easJ0inv(2, 2), easJ0det(0.0), easDegenerate(false), Ki(0)
 {
   pts[0][0] = -0.5773502691896258; pts[0][1] = -0.5773502691896258;
   pts[1][0] =  0.5773502691896258; pts[1][1] = -0.5773502691896258;
@@ -124,7 +125,8 @@ LadrunoQuad::LadrunoQuad()
   theMaterial(0), connectedExternalNodes(4),
   Q(8), pressureLoad(8), thickness(0.0), pressure(0.0), rho(0.0),
   formulation(Formulation::STD), bulkVisc_b1(0.0), bulkVisc_b2(0.0), planeType(1),
-  Mmem(3, 8), Kstab(8, 8), J0(0.0), J1(0.0), J2(0.0), damageResponse(0), Ki(0)
+  Mmem(3, 8), Kstab(8, 8), J0(0.0), J1(0.0), J2(0.0), damageResponse(0),
+  alpha(4), alphaCommit(4), easJ0inv(2, 2), easJ0det(0.0), easDegenerate(false), Ki(0)
 {
   pts[0][0] = -0.5773502691896258; pts[0][1] = -0.5773502691896258;
   pts[1][0] =  0.5773502691896258; pts[1][1] = -0.5773502691896258;
@@ -183,6 +185,11 @@ void LadrunoQuad::setDomain(Domain *theDomain)
   // side here too, so sendSelf carries nothing extra.
   if (formulation == Formulation::SSP)
     this->computeSSP();
+
+  // EAS: cache the centroid Jacobian inverse/determinant (geometry-fixed,
+  // small-strain) once; rebuilt on the receive side too.
+  if (formulation == Formulation::EAS)
+    this->buildEAStrue();
 
   // Tier-A: cache the centroid material's "damage" probe so the constant elastic
   // Kstab can degrade under softening (ssp only). Materials with no "damage"
@@ -307,11 +314,274 @@ void LadrunoQuad::computeSSP(void)
   Kstab.addMatrixTripleProduct(1.0, Mben, FCF, 1.0);
 }
 
+// eas (Q1/E4 Simo-Rifai) -- buildEAStrue: cache the centroid Jacobian inverse
+// and determinant for the (j0/j) sym[J0^-T E_i] enhanced-mode map. Geometry-only
+// and (small strain) constant, so computed once in setDomain and rebuilt on the
+// receive side. The 2D analogue of LadrunoBrick::buildEAStrue.  // Ladruno
+void LadrunoQuad::buildEAStrue(void)
+{
+  const Vector &nd1 = theNodes[0]->getCrds();
+  const Vector &nd2 = theNodes[1]->getCrds();
+  const Vector &nd3 = theNodes[2]->getCrds();
+  const Vector &nd4 = theNodes[3]->getCrds();
+
+  // centroid Jacobian (xi = eta = 0)
+  double J00 = 0.25 * (-nd1(0) + nd2(0) + nd3(0) - nd4(0));
+  double J01 = 0.25 * (-nd1(0) - nd2(0) + nd3(0) + nd4(0));
+  double J10 = 0.25 * (-nd1(1) + nd2(1) + nd3(1) - nd4(1));
+  double J11 = 0.25 * (-nd1(1) - nd2(1) + nd3(1) + nd4(1));
+
+  easJ0det = J00 * J11 - J01 * J10;
+
+  // Scale-invariant degeneracy test: the dimensionless volume ratio
+  // |det J0| / (||col0|| ||col1||) is 1 for an orthogonal Jacobian and ->0 only
+  // as the two natural axes become collinear (a genuinely flat/degenerate
+  // element), independent of element SIZE. An absolute threshold on |det J0|
+  // alone would false-positive a valid but small element (det scales as L^2),
+  // hard-failing e.g. a sub-mm quad in SI-metre coordinates.
+  double col0 = sqrt(J00 * J00 + J10 * J10);
+  double col1 = sqrt(J01 * J01 + J11 * J11);
+  double scale = col0 * col1;
+  easDegenerate = (scale <= 0.0) || (fabs(easJ0det) < 1.0e-10 * scale);
+  if (easDegenerate) {
+    opserr << "WARNING LadrunoQuad::buildEAStrue() - element " << this->getTag()
+           << ": near-degenerate centroid Jacobian (det=" << easJ0det
+           << ", volume-ratio=" << (scale > 0.0 ? fabs(easJ0det) / scale : 0.0)
+           << "); -formulation eas will refuse to form terms for this element\n";
+  }
+
+  // Only build the mode-map inverse for a healthy element. When easDegenerate,
+  // skip the 1/easJ0det so easJ0inv never holds inf/NaN -- defense-in-depth: the
+  // formEAStrue guard already refuses before any read of easJ0inv, but keeping it
+  // finite protects any future reader added outside that guarded path.  // Ladruno
+  if (!easDegenerate) {
+    double inv = 1.0 / easJ0det;
+    easJ0inv(0, 0) =  J11 * inv;
+    easJ0inv(1, 1) =  J00 * inv;
+    easJ0inv(0, 1) = -J01 * inv;
+    easJ0inv(1, 0) = -J10 * inv;
+  } else {
+    easJ0inv.Zero();
+  }
+}
+
+// eas -- computeMenh: the 3x4 enhanced-strain operator M at a Gauss point
+// (Voigt {xx,yy,xy}, engineering shear -- matches formB's convention). E4 = 2
+// natural-direction incompatible bubbles (xi, eta) x 2 dofs -- exactly
+// EnhancedQuad::computeBenhanced (Simo-Rifai 1990), the 2D parent of the
+// brick's E9. For bubble b the physical mode gradient is
+//   g_k = J0inv(b,k) * (xi_b / j)      (ADR 19 eq E.8, the one-sided J0^-T map)
+// and column (2b+i) is the symmetric gradient of the displacement e_i * N_b.
+// jdet is the Gauss-point (not centroid) Jacobian determinant.  // Ladruno
+void LadrunoQuad::computeMenh(double xi, double eta, double jdet, Matrix &M)
+{
+  M.Zero();
+  const double natCoord[2] = {xi, eta};
+  for (int b = 0; b < 2; b++) {           // bubble = natural direction xi/eta
+    double scale = natCoord[b] / jdet;    // (j0 folded into dvol, as in EnhancedQuad)
+    double g0 = easJ0inv(b, 0) * scale;
+    double g1 = easJ0inv(b, 1) * scale;
+    int col = 2 * b;
+    M(0, col)     = g0;   // eps_xx = du_x/dx
+    M(1, col + 1) = g1;   // eps_yy = du_y/dy
+    M(2, col)     = g1;   // gamma_xy contribution from du_x/dy
+    M(2, col + 1) = g0;   // gamma_xy contribution from du_y/dx
+  }
+}
+
+// eas -- formEAStrue: true Simo-Rifai assembly. Full 2x2 integration; at each
+// GP the total strain is eps = B*u + M*alpha. An inner Newton solves the 4
+// enhanced parameters alpha so the internal condition int M^T sigma = 0 holds
+// (d fixed), then the parameters are statically condensed:
+//   K* = Kdd - Kda Kaa^-1 Kad,   f* = int B^T sigma   (the inner Newton drives
+// h = int M^T sigma -> 0 so the f* condensation term vanishes -- the
+// EnhancedQuad contract). No artificial stabilization (ADR 20's beta-Tikhonov
+// regularization was refuted for the brick; not ported here). The
+// useInitialTangent path condenses the INITIAL elastic tangent at alpha=0 (no
+// Newton), mirroring EnhancedQuad::getInitialStiff / LadrunoBrick's own
+// useInitialTangent branch. Bulk viscosity (W2-E1) is not wired into this
+// lane, mirroring the SSP guard in OPS_LadrunoQuad.
+//
+// The geometry-only per-GP quantities (jdet, dvol, N, B, M) do not depend on
+// alpha/stress, so they are precomputed ONCE below instead of being
+// recomputed on every inner-Newton iteration (up to maxIters=12x redundant
+// otherwise) -- mirrors LadrunoBrick's own Shape[]/dvol[]/jdetGP[] cache.
+//
+// Returns nonzero on failure (material setTrialStrain rejection, Newton
+// non-convergence, or a singular Kaa from Matrix::Solve) so update() can
+// propagate it like the std/bbar/ssp paths do; getResistingForce/
+// getTangentStiff/getInitialStiff already warn internally and otherwise
+// return their best-effort (possibly degraded) K/P, same as a failed
+// Matrix::Solve would silently do without this check.  // Ladruno
+int LadrunoQuad::formEAStrue(int tang_flag, bool useInitialTangent)
+{
+  static const int    maxIters = 12;
+  static const double tolRel = 1.0e-8;
+  static const double tolAbs = 1.0e-12;
+
+  if (easJ0det == 0.0) this->buildEAStrue();   // safety (normally cached in setDomain)
+
+  static Vector u(8);
+  for (int a = 0; a < 4; a++) {
+    const Vector &d = theNodes[a]->getTrialDisp();
+    u(2 * a)     = d(0);
+    u(2 * a + 1) = d(1);
+  }
+
+  K.Zero();
+  P.Zero();
+  int status = 0;
+
+  // buildEAStrue() flags a (scale-invariant) near-degenerate centroid Jacobian
+  // but can't report failure itself -- it's called from setDomain() with no
+  // status channel. Thread that flag into THIS status-propagation chain instead
+  // of silently baking inf/NaN from computeMenh's 1/jdet into every
+  // enhanced-strain operator below. K/P are already zeroed above so this returns
+  // a clean (not stale) result.
+  if (easDegenerate) {
+    opserr << "WARNING LadrunoQuad::formEAStrue() - element " << this->getTag()
+           << ": refusing to form eas terms on a near-degenerate element\n";
+    return -1;
+  }
+
+  // -------- precompute the geometry-only layer once (4 Gauss points) ---------
+  static double jdetGP[4], dvolGP[4], Ngp[4][4];
+  static Matrix Bgp[4] = { Matrix(3, 8), Matrix(3, 8), Matrix(3, 8), Matrix(3, 8) };
+  static Matrix Mgp[4] = { Matrix(3, 4), Matrix(3, 4), Matrix(3, 4), Matrix(3, 4) };
+  for (int i = 0; i < 4; i++) {
+    jdetGP[i] = this->shapeFunction(pts[i][0], pts[i][1]);
+    dvolGP[i] = jdetGP[i] * thickness * wts[i];
+    for (int a = 0; a < 4; a++)
+      Ngp[i][a] = shp[2][a];
+    this->formB(Bgp[i]);
+    this->computeMenh(pts[i][0], pts[i][1], jdetGP[i], Mgp[i]);
+  }
+
+  static Matrix dd(3, 3), DB(3, 8), DM(3, 4);
+  static Matrix Kaa(4, 4), Kda(8, 4), Kad(4, 8), KaaInvKad(4, 8);
+  static Vector residE(4), dalpha(4), strain(3), stress(3);
+
+  // -------- getInitialStiff: condensed initial elastic tangent at alpha=0 -----
+  if (useInitialTangent) {
+    Kaa.Zero(); Kda.Zero(); Kad.Zero();
+    for (int i = 0; i < 4; i++) {
+      dd = theMaterial[i]->getInitialTangent();
+      dd *= dvolGP[i];
+      DB.addMatrixProduct(0.0, dd, Bgp[i], 1.0);
+      DM.addMatrixProduct(0.0, dd, Mgp[i], 1.0);
+      K.addMatrixTransposeProduct(1.0, Bgp[i], DB, 1.0);     // Kdd += B^T dd B
+      Kda.addMatrixTransposeProduct(1.0, Bgp[i], DM, 1.0);   //     += B^T dd M
+      Kad.addMatrixTransposeProduct(1.0, Mgp[i], DB, 1.0);   //     += M^T dd B
+      Kaa.addMatrixTransposeProduct(1.0, Mgp[i], DM, 1.0);   //     += M^T dd M
+    }
+    if (Kaa.Solve(Kad, KaaInvKad) != 0) {
+      opserr << "WARNING LadrunoQuad::formEAStrue() - element " << this->getTag()
+             << ": singular enhanced-stiffness Kaa in getInitialStiff (returning "
+                "uncondensed Kdd)\n";
+      return -1;
+    }
+    K.addMatrixProduct(1.0, Kda, KaaInvKad, -1.0);      // K* = Kdd - Kda Kaa^-1 Kad
+    return 0;
+  }
+
+  // -------- inner Newton: solve alpha s.t. int M^T sigma = 0 (d fixed) --------
+  int count = 0;
+  double r0 = -1.0;
+  while (true) {
+    residE.Zero();
+    Kaa.Zero();
+    for (int i = 0; i < 4; i++) {
+      strain.addMatrixVector(0.0, Bgp[i], u, 1.0);       // eps = B*u
+      strain.addMatrixVector(1.0, Mgp[i], alpha, 1.0);   //     + M*alpha
+      if (theMaterial[i]->setTrialStrain(strain) != 0) {
+        opserr << "WARNING LadrunoQuad::formEAStrue() - element " << this->getTag()
+               << ": material " << i << " rejected trial strain\n";
+        status = -1;
+      }
+      stress = theMaterial[i]->getStress();
+      stress *= dvolGP[i];
+      dd = theMaterial[i]->getTangent();
+      dd *= dvolGP[i];
+      residE.addMatrixTransposeVector(1.0, Mgp[i], stress, -1.0);   // residE += -(M^T sigma)
+      DM.addMatrixProduct(0.0, dd, Mgp[i], 1.0);
+      Kaa.addMatrixTransposeProduct(1.0, Mgp[i], DM, 1.0);          // Kaa += M^T dd M
+    }
+    double r = residE.Norm();
+    if (count == 0) r0 = r;
+    if (count >= 1 && r <= tolRel * r0 + tolAbs)
+      break;
+    if (count >= maxIters) {
+      // Not propagated as a hard failure: r is typically already within noise
+      // of tolAbs at this point (a marginal relative-tolerance miss, not true
+      // divergence) -- under path-dependent softening materials, residual
+      // noise can tip r just over the floor on the last iteration. Escalating
+      // this to update() failure breaks otherwise-valid analysis steps; the
+      // warning plus best-available alpha is intentional (mirrors LadrunoBrick).
+      opserr << "LadrunoQuad::formEAStrue - element " << this->getTag()
+             << ": enhanced-strain Newton did not converge in " << maxIters
+             << " iters (||r||=" << r << ", r0=" << r0 << ")\n";
+      break;
+    }
+    dalpha.Zero();
+    if (Kaa.Solve(residE, dalpha) != 0) {
+      opserr << "WARNING LadrunoQuad::formEAStrue() - element " << this->getTag()
+             << ": singular enhanced-stiffness Kaa in the inner Newton loop\n";
+      status = -1;
+      break;
+    }
+    alpha += dalpha;
+    count++;
+  }
+
+  // -------- final assembly at converged alpha (Kaa preserved from the loop) ---
+  Kda.Zero(); Kad.Zero();
+  for (int i = 0; i < 4; i++) {
+    stress = theMaterial[i]->getStress();
+    stress *= dvolGP[i];
+    P.addMatrixTransposeVector(1.0, Bgp[i], stress, 1.0);   // f_int += B^T sigma
+
+    for (int a = 0, ia = 0; a < 4; a++, ia += 2) {
+      if (applyLoad == 0) {
+        P(ia)     -= dvolGP[i] * Ngp[i][a] * b[0];
+        P(ia + 1) -= dvolGP[i] * Ngp[i][a] * b[1];
+      } else {
+        P(ia)     -= dvolGP[i] * Ngp[i][a] * appliedB[0];
+        P(ia + 1) -= dvolGP[i] * Ngp[i][a] * appliedB[1];
+      }
+    }
+
+    if (tang_flag == 1) {
+      dd = theMaterial[i]->getTangent();
+      dd *= dvolGP[i];
+      DB.addMatrixProduct(0.0, dd, Bgp[i], 1.0);
+      DM.addMatrixProduct(0.0, dd, Mgp[i], 1.0);
+      K.addMatrixTransposeProduct(1.0, Bgp[i], DB, 1.0);     // Kdd
+      Kda.addMatrixTransposeProduct(1.0, Bgp[i], DM, 1.0);
+      Kad.addMatrixTransposeProduct(1.0, Mgp[i], DB, 1.0);
+    }
+  }
+
+  if (tang_flag == 1) {
+    if (Kaa.Solve(Kad, KaaInvKad) != 0) {                 // Kaa from the inner loop
+      opserr << "WARNING LadrunoQuad::formEAStrue() - element " << this->getTag()
+             << ": singular enhanced-stiffness Kaa in final condensation (returning "
+                "uncondensed Kdd)\n";
+      status = -1;
+    } else {
+      K.addMatrixProduct(1.0, Kda, KaaInvKad, -1.0);      // K* = Kdd - Kda Kaa^-1 Kad
+    }
+  }
+
+  return status;
+}
+
 int LadrunoQuad::commitState(void)
 {
   int retVal = 0;
   if ((retVal = this->Element::commitState()) != 0)
     opserr << "LadrunoQuad::commitState() - failed in base class\n";
+  if (formulation == Formulation::EAS)
+    alphaCommit = alpha;
   for (int i = 0; i < 4; i++)
     retVal += theMaterial[i]->commitState();
   return retVal;
@@ -320,6 +590,8 @@ int LadrunoQuad::commitState(void)
 int LadrunoQuad::revertToLastCommit(void)
 {
   int retVal = 0;
+  if (formulation == Formulation::EAS)
+    alpha = alphaCommit;
   for (int i = 0; i < 4; i++)
     retVal += theMaterial[i]->revertToLastCommit();
   return retVal;
@@ -328,6 +600,10 @@ int LadrunoQuad::revertToLastCommit(void)
 int LadrunoQuad::revertToStart(void)
 {
   int retVal = 0;
+  if (formulation == Formulation::EAS) {
+    alpha.Zero();
+    alphaCommit.Zero();
+  }
   for (int i = 0; i < 4; i++)
     retVal += theMaterial[i]->revertToStart();
   return retVal;
@@ -379,6 +655,19 @@ void LadrunoQuad::formB(Matrix &B)
 
 int LadrunoQuad::update(void)
 {
+  // EAS: formEAStrue(0,...) solves the enhanced parameters alpha by an inner
+  // Newton and strains each GP to B*u + M*alpha, so commitState captures the
+  // correct converged state under ANY algorithm -- including a single-pass
+  // 'Linear' step, where no separate force/tangent form runs at the final u.
+  // (Mirrors LadrunoBrick's update() contract; the residual/tangent it also
+  // assembles here is harmless -- getResistingForce/getTangentStiff recompute it.)
+  // Propagate failure (rejected trial strain, non-converged inner Newton, or a
+  // singular Kaa) like the std/bbar/ssp paths below do via setTrialStrain's
+  // own return code -- lets the analysis algorithm see the failure and retry/
+  // step-cut instead of silently accepting an inconsistent state.
+  if (formulation == Formulation::EAS)
+    return this->formEAStrue(0, false);
+
   static Vector u(8);
   for (int a = 0; a < 4; a++) {
     const Vector &d = theNodes[a]->getTrialDisp();
@@ -412,6 +701,11 @@ const Matrix &LadrunoQuad::getTangentStiff(void)
 {
   K.Zero();
 
+  if (formulation == Formulation::EAS) {
+    this->formEAStrue(1, false);
+    return K;
+  }
+
   if (formulation == Formulation::SSP) {
     // K = s*Kstab + 4*J0*t * Mmem^T C Mmem  (s = Tier-A damage scale)
     const Matrix &C = theMaterial[0]->getTangent();
@@ -439,6 +733,12 @@ const Matrix &LadrunoQuad::getInitialStiff(void)
     return *Ki;
 
   K.Zero();
+
+  if (formulation == Formulation::EAS) {
+    this->formEAStrue(1, true);
+    Ki = new Matrix(K);
+    return *Ki;
+  }
 
   if (formulation == Formulation::SSP) {
     const Matrix &C = theMaterial[0]->getInitialTangent();
@@ -555,6 +855,16 @@ const Vector &LadrunoQuad::getResistingForce(void)
 {
   P.Zero();
   static Vector sigma(3);
+
+  if (formulation == Formulation::EAS) {
+    // formEAStrue assembles P = int B^T sigma dV + body force (the Kaa-condensed
+    // enhanced part vanishes identically once alpha satisfies int M^T sigma = 0).
+    this->formEAStrue(0, false);
+    if (pressure != 0.0)
+      P.addVector(1.0, pressureLoad, -1.0);
+    P.addVector(1.0, Q, -1.0);
+    return P;
+  }
 
   if (formulation == Formulation::SSP) {
     // fint = s*Kstab*d + 4*t*J0*Mmem^T*sigma - body - Q
@@ -733,6 +1043,17 @@ int LadrunoQuad::sendSelf(int commitTag, Channel &theChannel)
       return res;
     }
   }
+
+  // EAS: ship the committed enhanced parameters (non-EAS streams stay
+  // byte-identical -- formulation was already decoded above by the receiver).
+  if (formulation == Formulation::EAS) {
+    res += theChannel.sendVector(dataTag, commitTag, alphaCommit);
+    if (res < 0) {
+      opserr << "WARNING LadrunoQuad::sendSelf() - failed to send alphaCommit\n";
+      return res;
+    }
+  }
+
   return res;
 }
 
@@ -804,6 +1125,18 @@ int LadrunoQuad::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
       if (res < 0) return res;
     }
   }
+
+  // EAS: receive the committed enhanced parameters (guarded on formulation,
+  // decoded from data(6) above); non-EAS streams never sent this Vector.
+  if (formulation == Formulation::EAS) {
+    res += theChannel.recvVector(dataTag, commitTag, alphaCommit);
+    if (res < 0) {
+      opserr << "WARNING LadrunoQuad::recvSelf() - failed to receive alphaCommit\n";
+      return res;
+    }
+    alpha = alphaCommit;
+  }
+
   return res;
 }
 
