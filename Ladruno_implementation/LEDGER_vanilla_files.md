@@ -287,6 +287,7 @@ and re-verify.
 | `SRC/tcl/commands.cpp` | `// Ladruno` ADR44 P3: classic-Tcl bridge for `randomResponse` — `extern OPS_LadrunoRandomResponse` + handler + `Tcl_CreateCommand`, mirroring the #546 pattern (scalar/stats return via `OPS_SetDoubleOutput`→`Tcl_SetObjResult`). Additive. | [#552](https://github.com/nmorabowen/OpenSees/pull/552) |
 | `SRC/tcl/commands.h` | `// Ladruno` ADR44 P3: forward declaration for the `randomResponse` handler. Additive. | [#552](https://github.com/nmorabowen/OpenSees/pull/552) |
 | `SRC/{tcl/tclMain.cpp,interpreter/PythonModule.cpp}` | Splash-banner feature regen via `patch_banner.py` — extend the `modal frequency domain` line with `randomResponse` (ADR44 P3). Banner strings only. | [#552](https://github.com/nmorabowen/OpenSees/pull/552) |
+| `SRC/{tcl/tclMain.cpp,interpreter/PythonModule.cpp}` | Splash-banner feature regen via `patch_banner.py` — note the `-load` nodal-force excitation channel on the `modal frequency domain` line (ADR44 -load follow-up). Banner strings only; the `-load` code itself lives entirely in fork-authored `LadrunoModalResponse.{h,cpp}` (zero other vanilla edits). | [#553](https://github.com/nmorabowen/OpenSees/pull/553) |
 
 > [!note] Upstreamable bugfixes
 > Some PRs fix genuine upstream bugs (not fork-only features) and are candidates

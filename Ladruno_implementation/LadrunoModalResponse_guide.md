@@ -159,8 +159,9 @@ amp = ops.steadyStateDynamics('-freq', 0.1, 20.0, 400, '-biased',
 |---|---|
 | `-freq $fmin $fmax $nf` | sweep bounds **in Hz** and point count (`Ω = 2π f`) |
 | `-lin` / `-log` / `-biased` | grid: uniform in `f` / geometric / linear + a ±5% cluster of points around each in-band modal frequency to resolve sharp peaks (default `-lin`) |
-| `-baseAccel -dir $dir` | uniform harmonic base acceleration along global dir (no `timeSeries` — the sweep is per unit/`-amp` amplitude) |
-| `-amp $a` | base-acceleration amplitude (default 1 → `frequencyResponse` is the pure transfer function) |
+| `-baseAccel -dir $dir` | uniform harmonic base acceleration along global dir (no `timeSeries` — the sweep is per unit/`-amp` amplitude); **relative** response |
+| `-load $patternTag` | harmonic **nodal forces** `amp·P·e^{iΩt}` — `P` is the pattern's plain `NodalLoad` reference values (the pattern's own `timeSeries` is **ignored**; patterns carrying eleLoads/sp constraints, thermal nodal loads, or loads on nodes without eigenvectors are refused); **absolute** response. Mutually exclusive with `-baseAccel` |
+| `-amp $a` | excitation amplitude (default 1 → `frequencyResponse` is the pure transfer function) |
 | `-damp`/`-rayleigh`/`-modalDamp` | same damping channels as P1a |
 | `-node $tag -dof $dof` | the response DOF whose FRF is reported |
 | `-resp disp\|vel\|accel` | response quantity (relative); `vel = iΩ·û`, `accel = −Ω²·û` (default `disp`) |
@@ -175,9 +176,15 @@ amp = ops.steadyStateDynamics('-freq', 0.1, 20.0, 400, '-biased',
 - **Sign convention is `e^{+iΩt}`** — the response lags 90° at resonance. Verified
   end-to-end against the direct complex solve `(K−Ω²M+iΩC)⁻¹(−MR)` in
   `modal_response_p2_spike/frf_oracle.py`.
-- **Relative response.** For base excitation the reported disp/vel/accel are relative
-  to the moving base (the P1a relative formulation); absolute acceleration would add
-  the input back.
+- **Relative vs absolute.** For base excitation the reported disp/vel/accel are
+  relative to the moving base (the P1a relative formulation); absolute acceleration
+  would add the input back. For `-load` the response is absolute.
+- **`-load` normalization.** The modal load is `f_a = ψ_aᵀP/m̃_a` with
+  `ψ_a = evec·Vscale` and `m̃_a = generalizedMasses()(a)` — the exact basis
+  `modalProperties` computes its products in, so the result is identical under
+  default and `-unorm` normalization (pinned by test + the spike
+  `modal_response_p3_spike/load_frf_oracle.py`; `-baseAccel` is the special case
+  `P = −M·R`). Static limit: `u(Ω→0) = K⁻¹P` with all modes retained.
 - Low-damping resonances are sharp — use `-biased` (or a fine `-log`) so the peak is
   not stepped over; an *undamped* mode sampled exactly at `Ω=ω_a` gives an infinite
   FRF by construction.
@@ -211,7 +218,7 @@ rms, nu0, m0, m2, peak = ops.randomResponse(..., '-stats', '-duration', 600.0)
 
 | flag | meaning |
 |---|---|
-| `-inputPSD $tsTag` | **required** — one-sided base-accel PSD `G(f)` [Hz], a `timeSeries` sampled at `f` (Path with `f→G` breakpoints, Constant for white noise) |
+| `-inputPSD $tsTag` | **required** — one-sided PSD `G(f)` [Hz], a `timeSeries` sampled at `f` (Path with `f→G` breakpoints, Constant for white noise). With `-baseAccel`: PSD of the base acceleration. With `-load $patternTag`: PSD of the scalar `s(t)` multiplying the pattern's nodal-load shape (`P(t)=s(t)·P`, fully correlated; SDOF anchor `σ_u²=G_F/(8ξω³m²)`) |
 | `-stats` | return `[rms, ν₀, m0, m2]` instead of the scalar RMS |
 | `-duration $T` | append the Davenport expected peak as a 5th entry (implies the `-stats` list form even without `-stats`; the entry is **NaN** when `ν₀·T ≤ 1`, and the estimate is flagged unreliable for `ν₀·T < 2`) |
 | `-out $file` | write `{f, G_in, G_xx}` rows |
@@ -238,11 +245,12 @@ rms, nu0, m0, m2, peak = ops.randomResponse(..., '-stats', '-duration', 600.0)
 ## Scope
 
 P1a covers **uniform base-acceleration** transient excitation; P2 (`frequencyResponse`
-/ `steadyStateDynamics`) covers **harmonic base-acceleration** frequency response;
-P3 (`randomResponse`) covers **stationary random base-acceleration** (single
-auto-PSD input → RMS/ν₀/peak) — all with classical (diagonal) modal damping.
-General load-pattern / nodal-force modal loads and cross-PSD (matrix `S_PP`) input
-are follow-ups; non-classical damping → ADR 46 `complexEigen`.
+/ `steadyStateDynamics`) covers **harmonic** frequency response and P3
+(`randomResponse`) **stationary random** response (single auto-PSD input →
+RMS/ν₀/peak) — each for **base acceleration or a nodal-force `-load` pattern**
+(the `-load` follow-up), all with classical (diagonal) modal damping.
+Remaining follow-ups: `-load` excitation for the P1a *transient*, cross-PSD
+(matrix `S_PP`) input; non-classical damping → ADR 46 `complexEigen`.
 
 Validation: `tests/test_ladrunoModalResponse.py` (SDOF exact vs numpy PWL across all
 damping branches; multi-mode vs OpenSees Newmark and vs an independent full-matrix

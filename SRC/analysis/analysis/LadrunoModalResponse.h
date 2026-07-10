@@ -160,18 +160,41 @@ private:
 //   Ladruno_implementation/modal_response_p2_spike/frf_oracle.py.
 //
 //   Frequencies are in Hz (Om = 2 pi f) throughout, in and out.
+//
+//   Excitation channels (ADR 44 §5.2, -load follow-up):
+//     EX_BASE_ACCEL  uniform base accel, modal load  -Gamma_a  (P2, above)
+//     EX_LOAD        nodal-force pattern P e^{+iOm t}: the spatial shape P is
+//                    assembled from the pattern's plain NodalLoads (reference
+//                    values; the pattern's own TimeSeries is IGNORED — the
+//                    sweep replaces it) and the modal load is
+//
+//                        f_a = psi_a^T P / m~_a,   m~_a = psi_a^T M psi_a,
+//
+//                    where psi_a = evec_a*Vscale_a is EXACTLY the basis
+//                    DomainModalProperties computes generalizedMasses() in
+//                    (the -unorm scaling is applied to its local V BEFORE the
+//                    GM/MPF products — DomainModalProperties.cpp ~:636-772),
+//                    so m~_a == generalizedMasses()(a) directly.  -baseAccel
+//                    is the special case P = -M R (then f_a == -Gamma_a).
+//                    Normalization pinned vs the direct solve in
+//                    modal_response_p3_spike/load_frf_oracle.py.
 // ===========================================================================
 class LadrunoFrequencyResponse
 {
 public:
     enum SweepKind { SWEEP_LIN, SWEEP_LOG, SWEEP_BIASED };
     enum RespKind  { RESP_DISP, RESP_VEL, RESP_ACCEL };
+    enum ExKind    { EX_BASE_ACCEL, EX_LOAD };
 
     explicit LadrunoFrequencyResponse(AnalysisModel* theModel);
     ~LadrunoFrequencyResponse();
 
     // excitation: uniform base acceleration of amplitude amp along a global dir
-    void setBaseAccel(int direction, double amp) { m_direction = direction; m_amp = amp; }
+    void setBaseAccel(int direction, double amp)
+    { m_ex = EX_BASE_ACCEL; m_direction = direction; m_amp = amp; }
+    // excitation: harmonic nodal-force pattern, amp * P * e^{+iOm t}
+    void setLoadPattern(int patternTag, double amp)
+    { m_ex = EX_LOAD; m_patternTag = patternTag; m_amp = amp; }
     // frequency sweep in Hz
     void setSweep(double fmin, double fmax, int nf, SweepKind k)
     { m_fmin = fmin; m_fmax = fmax; m_nf = nf; m_sweep = k; }
@@ -191,7 +214,9 @@ private:
     int  buildGrid(std::vector<double>& freqs) const; // Hz sample points
 
     AnalysisModel*      m_model;
-    int                 m_direction; // 1-based global excitation dir
+    ExKind              m_ex;        // excitation channel
+    int                 m_direction; // 1-based global excitation dir (EX_BASE_ACCEL)
+    int                 m_patternTag;// load pattern tag (EX_LOAD)
     double              m_amp;
     double              m_fmin, m_fmax;
     int                 m_nf;
@@ -236,6 +261,13 @@ private:
 //   returned would be meaningless (and a -biased grid samples exactly on the
 //   resonance -> inf row).  Zero-damped modes strictly outside the band keep a
 //   finite in-band integrand and are legal.
+//
+//   -load channel (follow-up): the excitation is P(t) = s(t) * P with P the
+//   pattern's nodal-load shape and s(t) a stationary scalar of one-sided PSD
+//   G_s(f) [Hz] (all loads fully correlated); H_x is then the -load FRF and
+//   everything downstream (G_xx = |H_x|^2 G_s, moments, stats) is unchanged.
+//   SDOF anchor: white force PSD G_F -> sigma_u^2 = G_F/(8 xi w^3 m^2)
+//   (modal_response_p3_spike/load_frf_oracle.py check 4).
 // ===========================================================================
 class LadrunoRandomResponse
 {
@@ -254,7 +286,12 @@ public:
 
     // excitation: uniform base acceleration along a global dir, with one-sided
     // PSD G(f) [Hz] sampled from the time series (getFactor(f), f in Hz)
-    void setBaseAccel(int direction)     { m_direction = direction; }
+    void setBaseAccel(int direction)
+    { m_ex = LadrunoFrequencyResponse::EX_BASE_ACCEL; m_direction = direction; }
+    // excitation: nodal-force pattern shape P scaled by a stationary scalar
+    // s(t) with one-sided PSD G_s(f) [Hz]: P(t) = s(t)*P (fully correlated)
+    void setLoadPattern(int patternTag)
+    { m_ex = LadrunoFrequencyResponse::EX_LOAD; m_patternTag = patternTag; }
     void setInputPSD(TimeSeries* psd)    { m_psd = psd; }
     void setSweep(double fmin, double fmax, int nf,
                   LadrunoFrequencyResponse::SweepKind k)
@@ -274,7 +311,9 @@ public:
 private:
     AnalysisModel*      m_model;
     TimeSeries*         m_psd;
+    LadrunoFrequencyResponse::ExKind m_ex;
     int                 m_direction;
+    int                 m_patternTag;
     double              m_fmin, m_fmax;
     int                 m_nf;
     LadrunoFrequencyResponse::SweepKind m_sweep;
