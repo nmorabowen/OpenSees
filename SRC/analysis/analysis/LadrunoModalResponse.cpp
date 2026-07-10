@@ -489,6 +489,13 @@ OPS_LadrunoModalResponseHistory(void)
             if (OPS_GetNumRemainingInputArgs() < 1 || OPS_GetDouble(&numData, &xi) < 0) {
                 opserr << "modalResponseHistory - -damp requires a value.\n"; return -1;
             }
+            // Ladruno (ADR 44 review): refuse negative damping family-wide. A
+            // negative ratio is un-physical (grows the modal response) — a typo
+            // trap. xi==0 stays legal (undamped modal history).
+            if (xi < 0.0) {
+                opserr << "modalResponseHistory - -damp xi must be >= 0 (got "
+                       << xi << ").\n"; return -1;
+            }
             dampKind = 0;
         }
         else if (strcmp(opt, "-rayleigh") == 0) {
@@ -512,6 +519,13 @@ OPS_LadrunoModalResponseHistory(void)
             }
             if (xilist.empty()) {
                 opserr << "modalResponseHistory - -modalDamp requires >=1 ratio.\n"; return -1;
+            }
+            // Ladruno (ADR 44 review): every per-mode ratio must be >= 0.
+            for (size_t j = 0; j < xilist.size(); ++j) {
+                if (xilist[j] < 0.0) {
+                    opserr << "modalResponseHistory - -modalDamp entry " << (int)j
+                           << " = " << xilist[j] << " must be >= 0.\n"; return -1;
+                }
             }
             dampKind = 2;
         }
@@ -909,6 +923,16 @@ OPS_FreqResponseImpl(bool ampOnly, const char* cmd)
             if (OPS_GetNumRemainingInputArgs() < 1 || OPS_GetDouble(&one, &xi) < 0) {
                 opserr << cmd << " - -damp requires a value.\n"; return -1;
             }
+            // Ladruno (ADR 44 review): refuse negative damping. d_a=2 xi w_a<0
+            // silently CONJUGATES the FRF (H -> H*) — identical |H|, only the phase
+            // sign flips — so a typo'd '-0.05' passes every magnitude test. xi==0 is
+            // legal (the honest undamped singularity, documented in the guide).
+            if (xi < 0.0) {
+                opserr << cmd << " - -damp xi must be >= 0 (got " << xi
+                       << "); negative damping conjugates the FRF (same magnitude, "
+                          "flipped phase). Use xi=0 for the undamped case.\n";
+                return -1;
+            }
             damp.kind = LadrunoModalDamping::UNIFORM; damp.xi = xi; haveDamp = true;
         }
         else if (strcmp(opt, "-rayleigh") == 0) {
@@ -933,6 +957,16 @@ OPS_FreqResponseImpl(bool ampOnly, const char* cmd)
             }
             if (damp.xis.empty()) {
                 opserr << cmd << " - -modalDamp requires >=1 ratio.\n"; return -1;
+            }
+            // Ladruno (ADR 44 review): every per-mode ratio must be >= 0 (same
+            // negative-damping FRF-conjugation trap as -damp).
+            for (size_t j = 0; j < damp.xis.size(); ++j) {
+                if (damp.xis[j] < 0.0) {
+                    opserr << cmd << " - -modalDamp entry " << (int)j << " = "
+                           << damp.xis[j] << " must be >= 0 (negative damping "
+                              "conjugates the FRF).\n";
+                    return -1;
+                }
             }
             damp.kind = LadrunoModalDamping::MODAL_LIST; haveDamp = true;
         }
@@ -973,6 +1007,27 @@ OPS_FreqResponseImpl(bool ampOnly, const char* cmd)
     if (!haveDamp) {
         opserr << cmd << " - a damping channel is required "
                   "(-damp | -rayleigh | -modalDamp).\n"; return -1;
+    }
+
+    // Ladruno (ADR 44 review): a -biased grid places k=0 EXACTLY on each in-band
+    // resonance f_a=w_a/2pi (f = fa + halfw*(k/NCLUST), k=0 => f=fa). With an
+    // exactly-zero d_a the denominator w_a^2-Om^2+i Om d_a is real and hits 0
+    // there => an inf/NaN FRF row. That is an honest singularity (not guarded),
+    // but -biased manufactures it deliberately, so warn once — the user almost
+    // never wants a zero-damping resonance-biased sweep.
+    if (sweep == LadrunoFrequencyResponse::SWEEP_BIASED) {
+        bool zeroDamp = false;
+        if (damp.kind == LadrunoModalDamping::UNIFORM)       zeroDamp = (damp.xi == 0.0);
+        else if (damp.kind == LadrunoModalDamping::RAYLEIGH) zeroDamp = (damp.a0 == 0.0 && damp.a1 == 0.0);
+        else if (damp.kind == LadrunoModalDamping::MODAL_LIST) {
+            for (size_t j = 0; j < damp.xis.size(); ++j)
+                if (damp.xis[j] == 0.0) { zeroDamp = true; break; }
+        }
+        if (zeroDamp)
+            opserr << "WARNING " << cmd << " - -biased with zero damping samples "
+                      "EXACTLY on an undamped resonance (f_a=w_a/2pi) => inf/NaN "
+                      "FRF row at that mode. Use a positive damping ratio or a "
+                      "-lin/-log grid.\n";
     }
 
     LadrunoFrequencyResponse fr(theModel);

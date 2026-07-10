@@ -277,6 +277,15 @@ extern int OPS_DomainModalProperties(void);
 extern int OPS_ResponseSpectrumAnalysis(void);
 extern int OPS_sdfResponse(void);
 
+// Ladruno (ADR 44): modal-superposition transient + frequency-domain commands.
+// The classic exes (built from SRC/tcl/) advertise these in the splash banner but
+// commands.cpp never registered them — they were only wired in the unbuilt
+// TclInterpreter (TclWrapper.cpp), so classic .tcl users hit "invalid command
+// name". Register them here, mirroring the responseSpectrumAnalysis bridge.
+extern int OPS_LadrunoModalResponseHistory(void);   // P1a: modalResponseHistory
+extern int OPS_LadrunoFrequencyResponse(void);      // P2:  frequencyResponse
+extern int OPS_LadrunoSteadyStateDynamics(void);    // P2:  steadyStateDynamics
+
 extern void OPS_SetReliabilityDomain(ReliabilityDomain *);
 
 #include <Newmark.h>
@@ -1042,7 +1051,15 @@ int OpenSeesAppInit(Tcl_Interp *interp) {
         (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
     Tcl_CreateCommand(interp, "responseSpectrumAnalysis", &responseSpectrumAnalysis,
         (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
-    Tcl_CreateCommand(interp, "video", &videoPlayer, 
+    // Ladruno (ADR 44): modal-response family into classic-Tcl dispatch (the
+    // splash banner already advertised these; wiring was missing here).
+    Tcl_CreateCommand(interp, "modalResponseHistory", &modalResponseHistory,
+        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
+    Tcl_CreateCommand(interp, "frequencyResponse", &frequencyResponse,
+        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
+    Tcl_CreateCommand(interp, "steadyStateDynamics", &steadyStateDynamics,
+        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
+    Tcl_CreateCommand(interp, "video", &videoPlayer,
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);       
     Tcl_CreateCommand(interp, "remove", &removeObject, 
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);       
@@ -6191,6 +6208,40 @@ responseSpectrumAnalysis(ClientData clientData, Tcl_Interp* interp, int argc, TC
 {
     OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
     if (OPS_ResponseSpectrumAnalysis() < 0)
+	    return TCL_ERROR;
+    return TCL_OK;
+}
+
+// Ladruno (ADR 44): classic-Tcl bridges for the modal-response family. Each
+// mirrors responseSpectrumAnalysis exactly — OPS_ResetInputNoBuilder plumbs the
+// argv into the elementAPI arg cursor (and pins the static theInterp), then the
+// OPS_* entry point parses/runs. The frequency-domain commands publish their
+// {f, ...} result table via OPS_SetDoubleListsOutput, whose classic-Tcl backend
+// (elementAPI_TCL.cpp) calls Tcl_SetObjResult(theInterp, ...) — so the returned
+// list IS delivered to the interpreter here, just as `-out` writes the file.
+int
+modalResponseHistory(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
+{
+    OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
+    if (OPS_LadrunoModalResponseHistory() < 0)
+	    return TCL_ERROR;
+    return TCL_OK;
+}
+
+int
+frequencyResponse(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
+{
+    OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
+    if (OPS_LadrunoFrequencyResponse() < 0)
+	    return TCL_ERROR;
+    return TCL_OK;
+}
+
+int
+steadyStateDynamics(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
+{
+    OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
+    if (OPS_LadrunoSteadyStateDynamics() < 0)
 	    return TCL_ERROR;
     return TCL_OK;
 }

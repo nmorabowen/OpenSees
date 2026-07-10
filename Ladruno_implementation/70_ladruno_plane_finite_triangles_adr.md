@@ -1,6 +1,6 @@
 ---
 title: "ADR 70 — Plane finite-strain continuum family: shared 2D finite-strain kernel + LadrunoCST -geom finite + new LadrunoLST (T6)"
-status: draft — planning, NO code
+status: in progress — P0 shipped (#540), P1 (LadrunoQuad -geom finite) landing
 ---
 
 # ADR 70 — Plane finite-strain triangles on a shared 2D finite-strain kernel
@@ -308,3 +308,55 @@ Each phase is one PR off `ladruno`. P1 also closes ADR-25 P5 for the quad.
 ## 9. Implementation log
 
 *(filled in as phases land; move to `Ladruno_internal/` when complete)*
+
+### P0 — shared kernel + oracle (#540, merged)
+
+`LadrunoFiniteStrain2DKernel.h` + numpy oracle + C++-vs-oracle diff. See the PR
+and [[LEDGER_implementations]]. Reserves `ELE_TAG_LadrunoLST = 33016`.
+
+### P1 — `LadrunoQuad std+bbar -geom finite`
+
+Wires the quad (33007) as the kernel's first consumer, closing ADR-25 P5 for the
+quad. No new class tag; no vanilla files touched (all edits are fork-owned
+`ladrunoPlane/` + the fork test dir).
+
+**What landed**
+
+- **Geometry axis.** New `enum class Geom { LINEAR = 0, FINITE = 2 }` (values mirror
+  `LadrunoBrick`), a `geom` member, `-geom linear|finite` parser flag, and `Geom`
+  carried in `sendSelf`/`recvSelf` (data vector 14 → 15; default LINEAR ⇒ existing
+  models unchanged in value). `Print` reports the axis.
+- **`updateFinite()`.** Per GP: reference gradients ∂Nₐ/∂X straight from the existing
+  `shapeFunction` (it already differentiates w.r.t. the *reference* nodal coords),
+  `F = I + Σ uₐ⊗∂Nₐ/∂X` via the kernel, F-bar scale `(J₀/J)^{1/2}` for `bbar`
+  (kernel n = 2, **not** the brick's ⅓), det-F ≤ 0 / J₀ ≤ 0 step-cut guards, then
+  `setTrialF(2×2 F)` on the material cast to `FiniteStrainND2DMaterial`.
+- **`formFinite(tang_flag)`.** Recomputes the *unbarred* F per GP for the spatial
+  gradients `∂Nₐ/∂x = ∂Nₐ/∂X·F⁻¹` and current volume `dv = J·detJ₀·t·w`; assembles
+  `f = ∫σ̄ g dv` (kernel `addInternalForce2D`) and, for the tangent, `a = c − σδ`
+  (`spatialTangent2D`) → `addTangent2D` + the unsymmetric F-bar G₀ coupling
+  (`addFbarCoupling2D`, using the centroid spatial-gradient operator g₀). σ̄ and c
+  come from the material set in `updateFinite` (dSNPO Remark 15.2: the F-bar residual
+  is the standard resid at σ̄ with the unbarred config).
+- **Row-major → column-major.** The kernel writes a row-major `Kloc[64]`; it is copied
+  element-wise into the shared column-major `Matrix K` (a blind memcpy would
+  **transpose** the genuinely-unsymmetric F-bar tangent — deliberately avoided).
+- **`getInitialStiff` unchanged.** The reference-config `BᵀD₀B` seed *is* the finite
+  tangent at F = I (σ = 0, F-bar coupling vanishes when g₀ = g), and stays symmetric
+  for Rayleigh βK0 / `-initial` / eigen seeding — same rationale `LadrunoBrick`
+  documents. `getMass` (reference-config consistent) also unchanged.
+- **Guards.** ssp/eas + finite refused at parse; a non-`FiniteStrainND2DMaterial`
+  under `-geom finite` is caught once in `setDomain` with a clear message; explicit
+  bulk-viscosity is stripped (diagnostic) under finite (its force block lives only
+  in the small-strain path).
+
+**Verification.** The finite-strain *assembly math* is already gated building-free by
+P0 (the C++ kernel diff covers exactly the Q4 std+F-bar f/K this element assembles).
+P1 adds `tests/test_ladrunoquad_finite.py` (openseespy) for the element integration
+the build alone can prove: reduce-to-linear (std+bbar collapse to `-geom linear` at
+ε→0), a homogeneous finite-stretch patch whose GP Cauchy stress matches the LogStrain2D
+oracle σ(F) at the solved F, large-strain Newton convergence over elastic and a 3D J2
+inner, F-bar volumetric-locking relief at ν→0.5, and the parse/material guards.
+
+**Next:** P2 = `LadrunoCST std -geom finite` (F-bar is a no-op on the constant-strain
+T3 — honest over-stiff baseline); P3 = new `LadrunoLST` (T6).

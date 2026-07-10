@@ -33,6 +33,8 @@
 // 1/3) — PlaneStrain only.
 
 #include <LadrunoQuad.h>
+#include <LadrunoFiniteStrain2DKernel.h>   // Ladruno (ADR 70): shared 2D finite-strain kernel
+#include <FiniteStrainND2DMaterial.h>      // Ladruno (ADR 70): setTrialF(F) seam
 #include <Node.h>
 #include <NDMaterial.h>
 #include <Matrix.h>
@@ -73,12 +75,12 @@ double LadrunoQuad::wts[4];
 
 LadrunoQuad::LadrunoQuad(int tag, int nd1, int nd2, int nd3, int nd4,
                          NDMaterial &m, const char *type, double t,
-                         Formulation form, double r, double b1, double b2,
+                         Formulation form, Geom g, double r, double b1, double b2,
                          double p, double b1bv, double b2bv)
  :Element(tag, ELE_TAG_LadrunoQuad),
   theMaterial(0), connectedExternalNodes(4),
   Q(8), pressureLoad(8), thickness(t), pressure(p), rho(r),
-  formulation(form), bulkVisc_b1(b1bv), bulkVisc_b2(b2bv), planeType(1),
+  formulation(form), geom(g), bulkVisc_b1(b1bv), bulkVisc_b2(b2bv), planeType(1),
   Mmem(3, 8), Kstab(8, 8), J0(0.0), J1(0.0), J2(0.0), damageResponse(0),
   alpha(4), alphaCommit(4), easJ0inv(2, 2), easJ0det(0.0), easDegenerate(false), Ki(0)
 {
@@ -124,7 +126,7 @@ LadrunoQuad::LadrunoQuad()
  :Element(0, ELE_TAG_LadrunoQuad),
   theMaterial(0), connectedExternalNodes(4),
   Q(8), pressureLoad(8), thickness(0.0), pressure(0.0), rho(0.0),
-  formulation(Formulation::STD), bulkVisc_b1(0.0), bulkVisc_b2(0.0), planeType(1),
+  formulation(Formulation::STD), geom(Geom::LINEAR), bulkVisc_b1(0.0), bulkVisc_b2(0.0), planeType(1),
   Mmem(3, 8), Kstab(8, 8), J0(0.0), J1(0.0), J2(0.0), damageResponse(0),
   alpha(4), alphaCommit(4), easJ0inv(2, 2), easJ0det(0.0), easDegenerate(false), Ki(0)
 {
@@ -180,6 +182,21 @@ void LadrunoQuad::setDomain(Domain *theDomain)
              << " must have 2 DOFs\n";
       return;
     }
+
+  // -geom finite (ADR 70): the material must speak the setTrialF(F) seam. Warn
+  // once here for a clear early diagnostic; the per-step dynamic_cast in
+  // updateFinite/formFinite is what actually keeps a misuse from casting UB —
+  // so we do NOT return early (the element stays fully set up and simply fails
+  // the analysis gracefully via update() returning < 0).
+  if (this->isFinite()) {
+    for (int i = 0; i < 4; i++)
+      if (dynamic_cast<FiniteStrainND2DMaterial *>(theMaterial[i]) == 0) {
+        opserr << "LadrunoQuad::setDomain -- element " << this->getTag()
+               << " uses -geom finite but its material is not a "
+                  "FiniteStrainND2DMaterial (e.g. LogStrain2D); the analysis will fail\n";
+        break;
+      }
+  }
 
   // SSP: build the (geometry-fixed) stabilization once; rebuilt on the receive
   // side here too, so sendSelf carries nothing extra.
@@ -655,6 +672,9 @@ void LadrunoQuad::formB(Matrix &B)
 
 int LadrunoQuad::update(void)
 {
+  if (this->isFinite())            // -geom finite (ADR 70): F-driven updated-Lagrangian
+    return this->updateFinite();
+
   // EAS: formEAStrue(0,...) solves the enhanced parameters alpha by an inner
   // Newton and strains each GP to B*u + M*alpha, so commitState captures the
   // correct converged state under ANY algorithm -- including a single-pass
@@ -699,6 +719,11 @@ int LadrunoQuad::update(void)
 
 const Matrix &LadrunoQuad::getTangentStiff(void)
 {
+  if (this->isFinite()) {          // -geom finite (ADR 70): consistent spatial tangent
+    this->formFinite(1);
+    return K;
+  }
+
   K.Zero();
 
   if (formulation == Formulation::EAS) {
@@ -748,6 +773,15 @@ const Matrix &LadrunoQuad::getInitialStiff(void)
     return *Ki;
   }
 
+  // Ladruno (ADR 70 review): getInitialStiff always returns the SYMMETRIC
+  // small-strain reference tangent ∑ B̄ᵀ D₀ B̄ dV, even under -geom finite/bbar.
+  // This is deliberate, not an F=I simplification: at F=I the Cauchy stress σ=0,
+  // but the F-bar geometric term q=½ c:I is NOT zero and g0≠g for any non-affine
+  // (distorted) map, so the TRUE consistent F-bar tangent is unsymmetric even in
+  // the undeformed state. We do not seed with that unsymmetric operator — the
+  // symmetric B̄ᵀD₀B̄ form is a well-posed symmetric seed for Rayleigh damping and
+  // eigen/modal use (which assume symmetry). The exact unsymmetric consistent
+  // tangent is assembled only in formFinite (getTangentStiff) during Newton.
   if (formulation == Formulation::BBAR)
     this->computeShapeBar();
 
@@ -853,6 +887,14 @@ int LadrunoQuad::addInertiaLoadToUnbalance(const Vector &accel)
 
 const Vector &LadrunoQuad::getResistingForce(void)
 {
+  if (this->isFinite()) {          // -geom finite (ADR 70): spatial internal force
+    this->formFinite(0);           // fills P with ∫ σ g dv − body force
+    if (pressure != 0.0)
+      P.addVector(1.0, pressureLoad, -1.0);
+    P.addVector(1.0, Q, -1.0);
+    return P;
+  }
+
   P.Zero();
   static Vector sigma(3);
 
@@ -897,9 +939,9 @@ const Vector &LadrunoQuad::getResistingForce(void)
     this->computeShapeBar();
 
   // Ladruno (W2-E1, ADR-52): explicit bulk viscosity (2D). L_e is element-constant
-  // -> hoisted. 2D fork elements are -geom linear only (no theGeom), so no geom
-  // guard is needed; SSP is stripped at parse (OPS_LadrunoQuad). Off (b1=b2=0) skips
-  // the in-loop block -> default path bit-identical.
+  // -> hoisted. This is the small-strain branch (finite returns above; bv+finite is
+  // stripped at parse); SSP is stripped at parse (OPS_LadrunoQuad). Off (b1=b2=0)
+  // skips the in-loop block -> default path bit-identical.
   const bool bvActive = (bulkVisc_b1 > 0.0 || bulkVisc_b2 > 0.0);
   const double bvLe = bvActive ? this->getCharacteristicLength() : 0.0;
 
@@ -987,12 +1029,195 @@ const Vector &LadrunoQuad::getResistingForceIncInertia(void)
   return P;
 }
 
+// ======================================================================= //
+//  -geom finite (ADR 70 P1): updated-Lagrangian large-strain assembly.     //
+//  Mechanics are the shared LadrunoFiniteStrain2DKernel (a faithful 2D     //
+//  restriction of LadrunoBrick's proven 3D finite path). This element      //
+//  supplies only the reference shape gradients ∂Nₐ/∂X (from shapeFunction, //
+//  which differentiates w.r.t. the REFERENCE nodal coordinates) and the    //
+//  GP rule; the kernel does F, F-bar, push-forward, resid and tangent.     //
+// ======================================================================= //
+
+// update — finite: per GP compute F, apply the F-bar scale (bbar), guard det F,
+// and drive the material via setTrialF(F). bbar+finite = 2D F-bar: every GP
+// shares the centroid dilatation J0 through Fbar = (J0/J)^{1/2} F (kernel n=2,
+// NOT the brick's ⅓). Returns < 0 so the solver cuts the step on det F ≤ 0.
+int LadrunoQuad::updateFinite(void)
+{
+  using namespace ladruno_fs2d;
+
+  static double u[8];
+  for (int a = 0; a < 4; a++) {
+    const Vector &d = theNodes[a]->getTrialDisp();
+    u[2 * a]     = d(0);
+    u[2 * a + 1] = d(1);
+  }
+
+  const bool useFbar = (formulation == Formulation::BBAR);
+
+  // centroid dilatation J0 (F-bar). shapeFunction(0,0) fills shp = ∂Nₐ/∂X|centroid.
+  double J0 = 1.0;
+  if (useFbar) {
+    this->shapeFunction(0.0, 0.0);
+    double gradRef0[8], F0[4];
+    for (int a = 0; a < 4; a++) { gradRef0[a] = shp[0][a]; gradRef0[4 + a] = shp[1][a]; }
+    J0 = deformationGradient2D(gradRef0, u, 4, F0);
+    if (J0 <= 0.0) {
+      opserr << "LadrunoQuad::updateFinite - non-positive centroid det F0 = " << J0
+             << " (element " << this->getTag() << ", F-bar)\n";
+      return -1;
+    }
+  }
+
+  static Matrix Fm(2, 2);
+  for (int i = 0; i < 4; i++) {
+    this->shapeFunction(pts[i][0], pts[i][1]);       // shp = ∂Nₐ/∂X at GP i
+    double gradRef[8], F[4];
+    for (int a = 0; a < 4; a++) { gradRef[a] = shp[0][a]; gradRef[4 + a] = shp[1][a]; }
+    double J = deformationGradient2D(gradRef, u, 4, F);
+
+    if (useFbar) {
+      if (J <= 0.0) {
+        opserr << "LadrunoQuad::updateFinite - non-positive det F = " << J
+               << " at GP " << i << " (element " << this->getTag() << ", F-bar)\n";
+        return -1;
+      }
+      double s = fbarScale2D(J0, J);                 // (J0/J)^{1/2}
+      for (int n = 0; n < 4; n++) F[n] *= s;
+    }
+
+    Fm(0, 0) = F[0]; Fm(0, 1) = F[1];
+    Fm(1, 0) = F[2]; Fm(1, 1) = F[3];
+
+    // dynamic_cast (not static) so a -geom finite element built on a non-finite
+    // material fails gracefully here instead of casting UB (setDomain only warns).
+    FiniteStrainND2DMaterial *fsm =
+      dynamic_cast<FiniteStrainND2DMaterial *>(theMaterial[i]);
+    if (fsm == 0) {
+      opserr << "LadrunoQuad::updateFinite - material at GP " << i
+             << " is not a FiniteStrainND2DMaterial (element " << this->getTag()
+             << ", -geom finite)\n";
+      return -1;
+    }
+    // setTrialF guards det F ≤ 0 internally too (LogStrain2D), so the std path
+    // (no explicit J guard above) still cuts the step on inversion.
+    if (fsm->setTrialF(Fm) < 0) {
+      opserr << "LadrunoQuad::updateFinite - setTrialF failed at GP " << i
+             << " (element " << this->getTag() << ", det F<=0?)\n";
+      return -1;
+    }
+  }
+  return 0;
+}
+
+// formFinite — fills the shared scratch P (residual) always and, when tang_flag
+// == 1, K (consistent tangent). Recomputes F per GP (unbarred) for the spatial
+// gradients / current volume, and consumes the material's Cauchy σ̄ and full
+// spatial modulus c set by updateFinite's setTrialF. dSNPO Remark 15.2: the
+// F-bar residual is the standard resid evaluated with σ̄ and the UNBARRED F.
+void LadrunoQuad::formFinite(int tang_flag)
+{
+  using namespace ladruno_fs2d;
+
+  double Kloc[64];
+  double Ploc[8];
+  for (int n = 0; n < 64; n++) Kloc[n] = 0.0;
+  for (int n = 0; n < 8; n++)  Ploc[n] = 0.0;
+
+  static double u[8];
+  for (int a = 0; a < 4; a++) {
+    const Vector &d = theNodes[a]->getTrialDisp();
+    u[2 * a]     = d(0);
+    u[2 * a + 1] = d(1);
+  }
+
+  const bool useFbar = (formulation == Formulation::BBAR);
+
+  // F-bar (eq 15.10) couples to the centroid spatial-gradient operator g0. The
+  // residual is unchanged; g0 is element-wide, compute it once (tangent only).
+  double g0[8];
+  if (useFbar && tang_flag == 1) {
+    this->shapeFunction(0.0, 0.0);
+    double gradRef0[8], F0[4], F0i[4];
+    for (int a = 0; a < 4; a++) { gradRef0[a] = shp[0][a]; gradRef0[4 + a] = shp[1][a]; }
+    deformationGradient2D(gradRef0, u, 4, F0);
+    inv2(F0, F0i);
+    spatialGradients2D(gradRef0, F0i, 4, g0);
+  }
+
+  const double bx = (applyLoad == 0) ? b[0] : appliedB[0];
+  const double by = (applyLoad == 0) ? b[1] : appliedB[1];
+
+  static Vector sigma(3);
+  for (int i = 0; i < 4; i++) {
+    double detJ0 = this->shapeFunction(pts[i][0], pts[i][1]);   // reference detJ
+    double gradRef[8], F[4], Finv[4], g[8];
+    for (int a = 0; a < 4; a++) { gradRef[a] = shp[0][a]; gradRef[4 + a] = shp[1][a]; }
+    double J = deformationGradient2D(gradRef, u, 4, F);          // unbarred F
+    inv2(F, Finv);
+    spatialGradients2D(gradRef, Finv, 4, g);                     // ∂Nₐ/∂x_j
+
+    double dv = J * detJ0 * thickness * wts[i];                  // current volume
+
+    sigma = theMaterial[i]->getStress();                        // Cauchy σ̄ {11,22,12}
+    double sig[2][2];
+    sig[0][0] = sigma(0); sig[1][1] = sigma(1);
+    sig[0][1] = sig[1][0] = sigma(2);
+
+    // internal force f_{a,i} = ∫ σ_ij g_j^a dv
+    addInternalForce2D(sig, g, 4, dv, Ploc);
+
+    // body force (reference config, dead load per reference volume — matches
+    // the reference-config consistent mass in getMass)
+    double bw = detJ0 * thickness * wts[i];
+    for (int a = 0, ia = 0; a < 4; a++, ia += 2) {
+      Ploc[ia]     -= bw * shp[2][a] * bx;
+      Ploc[ia + 1] -= bw * shp[2][a] * by;
+    }
+
+    if (tang_flag == 1) {
+      FiniteStrainND2DMaterial *fsm =
+        dynamic_cast<FiniteStrainND2DMaterial *>(theMaterial[i]);
+      double c2[2][2][2][2];
+      if (fsm == 0 || fsm->getSpatialTangentTensor2D(c2) != 0) {
+        opserr << "LadrunoQuad::formFinite - material at GP " << i
+               << " is not a FiniteStrainND2DMaterial / gave no full 2D spatial "
+                  "tangent (getSpatialTangentTensor2D); element " << this->getTag() << "\n";
+        // Ladruno (ADR 70 review): K and P are SHARED static scratch. Bailing out
+        // without clearing them would hand the caller a stale sibling element's
+        // matrix/residual. Zero both so an error can never leak another element's
+        // state into the assembly.
+        K.Zero();
+        P.Zero();
+        return;
+      }
+      double a4[2][2][2][2];
+      spatialTangent2D(c2, sig, a4);                            // a = c − σ_il δ_jk
+      addTangent2D(a4, g, 4, dv, Kloc, 8);
+      if (useFbar)
+        addFbarCoupling2D(a4, sig, g, g0, 4, dv, Kloc, 8);      // eq 15.10 (unsym)
+    }
+  }
+
+  // publish into the shared scratch. Kloc is ROW-major (kernel convention); the
+  // OpenSees Matrix is column-major, so copy element-wise (the F-bar tangent is
+  // UNsymmetric — a blind memcpy would transpose it).
+  P.Zero();
+  for (int r = 0; r < 8; r++) P(r) = Ploc[r];
+  if (tang_flag == 1) {
+    K.Zero();
+    for (int r = 0; r < 8; r++)
+      for (int cc = 0; cc < 8; cc++)
+        K(r, cc) = Kloc[r * 8 + cc];
+  }
+}
+
 int LadrunoQuad::sendSelf(int commitTag, Channel &theChannel)
 {
   int res = 0;
   int dataTag = this->getDbTag();
 
-  static Vector data(14);
+  static Vector data(15);
   data(0)  = this->getTag();
   data(1)  = thickness;
   data(2)  = b[0];
@@ -1007,6 +1232,7 @@ int LadrunoQuad::sendSelf(int commitTag, Channel &theChannel)
   data(11) = betaKc;
   data(12) = bulkVisc_b1;   // Ladruno (W2-E1)
   data(13) = bulkVisc_b2;
+  data(14) = static_cast<int>(geom);   // Ladruno (ADR 70)
 
   res += theChannel.sendVector(dataTag, commitTag, data);
   if (res < 0) {
@@ -1062,7 +1288,7 @@ int LadrunoQuad::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
   int res = 0;
   int dataTag = this->getDbTag();
 
-  static Vector data(14);
+  static Vector data(15);
   res += theChannel.recvVector(dataTag, commitTag, data);
   if (res < 0) {
     opserr << "WARNING LadrunoQuad::recvSelf() - failed to receive Vector\n";
@@ -1083,6 +1309,7 @@ int LadrunoQuad::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
   betaKc      = data(11);
   bulkVisc_b1 = data(12);   // Ladruno (W2-E1)
   bulkVisc_b2 = data(13);
+  geom        = static_cast<Geom>((int)data(14));   // Ladruno (ADR 70)
 
   static ID idData(12);
   res += theChannel.recvID(dataTag, commitTag, idData);
@@ -1145,7 +1372,8 @@ void LadrunoQuad::Print(OPS_Stream &s, int flag)
   if (flag == OPS_PRINT_CURRENTSTATE) {
     s << "\nLadrunoQuad, element id:  " << this->getTag() << "\n";
     s << "\tConnected external nodes:  " << connectedExternalNodes;
-    s << "\tformulation:  " << static_cast<int>(formulation) << "  type: " << typeString() << "\n";
+    s << "\tformulation:  " << static_cast<int>(formulation) << "  type: " << typeString()
+      << "  geom: " << (this->isFinite() ? "finite" : "linear") << "\n";
     s << "\tthickness:  " << thickness << "  rho: " << rho << "\n";
     if (bulkVisc_b1 > 0.0 || bulkVisc_b2 > 0.0)   // Ladruno (W2-E1)
       s << "\tbulk viscosity: b1=" << bulkVisc_b1 << " b2=" << bulkVisc_b2 << "\n";
