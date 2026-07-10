@@ -6,8 +6,10 @@
 //       tests/ladruno_up_cases.txt), drives the matching shape provider over its
 //       PINNED GP rule, folds dv = w·detJ·thick, accumulates Q/H/S/H̃/f_seep via
 //       the kernel API into zeroed buffers, runs dofMap, and compares EVERYTHING
-//       against the case's stored values to ≤1e-9 (worst delta per block per
-//       case; nonzero exit on any failure);
+//       against the case's stored values — per-BLOCK relative gate
+//       |Δ|/max|want| ≤ 1e-9 (absolute ≤1e-12 on all-zero blocks), per-entry
+//       NaN-aware fail COUNT (0.E-F2/F3), worst deltas reported per block per
+//       case; nonzero exit on any failure;
 //   (2) always runs self-tests independent of the cases file — provider
 //       invariants (partition of unity, Σ∇N = 0, Σ w·detJ = volume, detJ > 0,
 //       TH pressure partition) plus the scalar kernel helpers stabAlphaAuto /
@@ -19,11 +21,16 @@
 // Independence: this file NEVER reads the numpy oracle (ladruno_up_reference.py);
 // two independent implementations agreeing IS the verification (WP0.D, MAIN).
 //
-// CONTRACT NOTE (flagged for MAIN): the plan addendum §5 folds dv = w·detJ·thick
-// with the literal (signed) detJ the provider returns. For all canonical
-// (properly-oriented, detJ > 0) cases this equals w·|detJ|·thick; a negatively-
-// wound element would sign-flip every block identically on both sides, so the
-// cross-check still holds. Self-test geometries are positively oriented.
+// CONTRACT NOTES (flagged for MAIN):
+//  * dv sign: the plan addendum §5 folds dv = w·detJ·thick with the literal
+//    (signed) detJ the provider returns. For all canonical (properly-oriented,
+//    detJ > 0) cases this equals w·|detJ|·thick; a negatively-wound element
+//    would sign-flip every block identically on both sides, so the cross-check
+//    still holds. Self-test geometries are positively oriented.
+//  * missing END: a case whose END line is missing mid-file swallows the next
+//    case's CASE token as an unknown section keyword — the merged case then
+//    fails loudly on size mismatch and the parsed-case count drops (the pytest
+//    guards count >= 12), but the swallowed case is not individually reported.
 
 #include <cstdio>
 #include <cstdlib>
@@ -37,7 +44,8 @@
 
 using namespace ladruno_up;
 
-static const double BLOCK_TOL = 1e-9;   // mixed abs/rel gate on stored blocks
+static const double BLOCK_TOL = 1e-9;       // per-BLOCK relative gate (0.E-F3)
+static const double ZERO_BLOCK_TOL = 1e-12; // absolute gate when max|want| == 0
 static int g_fail = 0;
 
 // ------------------------------------------------------------------ parsing -- //
@@ -58,35 +66,114 @@ struct Case {
   std::vector<double> FSEEP;
 };
 
-static Matrix readMat(std::istream& in) {
-  // rows cols then rows*cols floats (token stream)
-  Matrix m;
-  in >> m.rows >> m.cols;
-  m.v.resize((size_t)m.rows * m.cols);
-  for (auto& x : m.v) in >> x;
-  return m;
+// ---- token cursor (0.E-F4) ------------------------------------------------ //
+// The whole file is tokenized as strings first, then converted via strtod /
+// strtol. Rationale: (a) truncation and garbage become graceful per-case
+// failures instead of segfaults / stuck streams; (b) strtod accepts "nan" and
+// "inf" (C99), so a NaN stored in the cases file reaches the NaN-aware
+// comparator instead of wedging MinGW's operator>> (whose failed extraction
+// proved unrecoverable even after clear()).
+struct TokCursor {
+  const std::vector<std::string>* toks = nullptr;
+  size_t i = 0;
+  bool ok = true;
+  bool next(std::string& s) {
+    if (!ok || i >= toks->size()) { ok = false; return false; }
+    s = (*toks)[i++];
+    return true;
+  }
+  bool getD(double& d) {
+    std::string s;
+    if (!next(s)) return false;
+    const char* p = s.c_str();
+    char* e = nullptr;
+    d = strtod(p, &e);
+    if (e == p || *e != '\0') { ok = false; return false; }
+    return true;
+  }
+  bool getI(int& v) {
+    std::string s;
+    if (!next(s)) return false;
+    const char* p = s.c_str();
+    char* e = nullptr;
+    long l = strtol(p, &e, 10);
+    if (e == p || *e != '\0') { ok = false; return false; }
+    v = (int)l;
+    return true;
+  }
+};
+
+// rows cols then rows*cols floats. Returns false on truncated input or absurd
+// dims (0.E-F4: was an uncaught length_error / OOM on garbage).
+static bool readMat(TokCursor& tc, Matrix& m) {
+  if (!tc.getI(m.rows) || !tc.getI(m.cols)) return false;
+  if (m.rows < 0 || m.cols < 0 || m.rows > 1024 || m.cols > 1024) return false;
+  m.v.assign((size_t)m.rows * m.cols, 0.0);
+  for (auto& x : m.v)
+    if (!tc.getD(x)) return false;
+  return true;
 }
 
-// Report the worst mismatch of a computed buffer vs a stored one.
+static bool readVec(TokCursor& tc, std::vector<double>& v, size_t n) {
+  v.assign(n, 0.0);
+  for (auto& x : v)
+    if (!tc.getD(x)) return false;
+  return true;
+}
+
+// Case completeness/consistency gate before driving (0.E-F4): converts what
+// were segfaults on truncated/malformed files into a graceful per-case FAIL.
+static bool validateCase(const Case& c, std::string& why) {
+  if (c.ndm != 2 && c.ndm != 3) { why = "NDM must be 2 or 3"; return false; }
+  if (c.nNodes < 1 || c.nNodes > 16) { why = "NNODES out of [1,16]"; return false; }
+  if (c.coords.size() != (size_t)c.nNodes * c.ndm) { why = "COORDS missing or wrong size"; return false; }
+  if (c.kbar.size() != (size_t)c.ndm) { why = "PARAMS missing or kbar wrong size"; return false; }
+  if (c.drive.size() != (size_t)c.ndm) { why = "DRIVE missing or wrong size"; return false; }
+  if (c.uOff.size() != (size_t)c.nNodes || c.pOff.size() != (size_t)c.nNodes) { why = "DOFMAP missing or wrong size"; return false; }
+  if (c.totalDof <= 0) { why = "DOFMAP totalDof not positive"; return false; }
+  if (c.Q.rows < 0 || c.H.rows < 0 || c.S.rows < 0 || c.HT.rows < 0) { why = "negative matrix dims"; return false; }
+  return true;
+}
+
+// Per-ENTRY comparison of a computed buffer vs a stored one (0.E-F2/F3).
+//   metric   = |Δ| / blockMaxAbs, blockMaxAbs = max|want| over the block
+//              (per-BLOCK relative — a %-scale bug on small-magnitude blocks
+//              like S/H/H̃ can no longer hide under an absolute floor);
+//   gate     = 1e-9; when blockMaxAbs == 0 (legit all-zero H̃ on TH cases)
+//              fall back to absolute |Δ| <= 1e-12.
+// NaN-safe: pass/fail is decided per entry with a fail COUNT — an entry FAILS
+// if got is non-finite or want is NaN (never "worst-tracking" through NaN,
+// whose comparisons are all false and previously printed "ok").
 static void compare(const char* tag, const Case& c, const std::vector<double>& got,
                     const std::vector<double>& want) {
   if (got.size() != want.size()) {
-    printf("  [%s] %s SIZE MISMATCH got=%zu want=%zu\n", c.name.c_str(), tag,
-           got.size(), want.size());
+    printf("  [%s] %s SIZE MISMATCH got=%zu want=%zu  FAIL\n", c.name.c_str(),
+           tag, got.size(), want.size());
     g_fail++;
     return;
   }
+  double blockMaxAbs = 0.0;
+  for (double w : want)
+    if (std::isfinite(w) && std::fabs(w) > blockMaxAbs) blockMaxAbs = std::fabs(w);
+
+  int nBad = 0;
   double worstAbs = 0.0, worstMetric = 0.0;
   for (size_t i = 0; i < got.size(); i++) {
+    if (!std::isfinite(got[i]) || !std::isfinite(want[i])) {   // NaN/inf = FAIL
+      nBad++;
+      continue;
+    }
     double a = std::fabs(got[i] - want[i]);
-    double metric = a / (1.0 + std::fabs(want[i]));
+    double metric = (blockMaxAbs > 0.0) ? a / blockMaxAbs : a;
+    double tol = (blockMaxAbs > 0.0) ? BLOCK_TOL : ZERO_BLOCK_TOL;
+    if (!(metric <= tol)) nBad++;              // NaN metric would fail here too
     if (a > worstAbs) worstAbs = a;
     if (metric > worstMetric) worstMetric = metric;
   }
-  const char* verdict = (worstMetric <= BLOCK_TOL) ? "ok" : "FAIL";
-  if (worstMetric > BLOCK_TOL) g_fail++;
-  printf("  [%s] %-6s worstAbs=%.3e worstMetric=%.3e  %s\n",
-         c.name.c_str(), tag, worstAbs, worstMetric, verdict);
+  if (nBad > 0) g_fail++;
+  printf("  [%s] %-6s worstAbs=%.3e worstRel=%.3e blockMax=%.3e bad=%d  %s\n",
+         c.name.c_str(), tag, worstAbs, worstMetric, blockMaxAbs, nBad,
+         nBad == 0 ? "ok" : "FAIL");
 }
 
 // ----------------------------------------------------------- provider driver -- //
@@ -160,47 +247,81 @@ static int parseCases(const std::string& path) {
            "(sibling emits it; WP0.D cross-checks)\n", path.c_str());
     return 0;
   }
+  // tokenize the whole file (string extraction never wedges the stream)
+  std::vector<std::string> toks;
+  {
+    std::string tok;
+    while (f >> tok) toks.push_back(tok);
+  }
+
   int nCases = 0;
+  TokCursor tc{&toks, 0, true};
   std::string tok;
-  while (f >> tok) {
+  while (tc.i < toks.size()) {
+    tok = toks[tc.i++];
     if (tok != "CASE") continue;
+    tc.ok = true;
     Case c;
     std::string kw;
-    f >> c.name >> kw >> c.shape >> kw >> c.porder >> kw >> c.ndm >> kw >> c.nNodes;
-    while (f >> tok && tok != "END") {
+    bool ioOK = true, sawEnd = false;
+    ioOK = tc.next(c.name) && tc.next(kw) && tc.next(c.shape) && tc.next(kw) &&
+           tc.next(c.porder) && tc.next(kw) && tc.getI(c.ndm) && tc.next(kw) &&
+           tc.getI(c.nNodes);
+    if (!ioOK) {
+      printf("CASE %s  MALFORMED (truncated header)  FAIL\n",
+             c.name.empty() ? "<unnamed>" : c.name.c_str());
+      g_fail++;
+      nCases++;
+      break;                     // header ate the remaining tokens — stop
+    }
+    // pre-gate NNODES/NDM so section reads can't size buffers from garbage
+    bool headerOK = (c.ndm == 2 || c.ndm == 3) && c.nNodes >= 1 && c.nNodes <= 16;
+    while (tc.next(tok)) {
+      if (tok == "END") { sawEnd = true; break; }
+      if (!headerOK) continue;   // skip sections; validateCase reports below
       if (tok == "COORDS") {
-        c.coords.resize((size_t)c.nNodes * c.ndm);
-        for (auto& x : c.coords) f >> x;
+        ioOK = readVec(tc, c.coords, (size_t)c.nNodes * c.ndm);
       } else if (tok == "PARAMS") {
-        f >> c.biotAlpha >> c.oneOverQbar >> c.rhoF >> c.stabAlpha >> c.thick;
-        c.kbar.resize(c.ndm);
-        for (auto& x : c.kbar) f >> x;
+        ioOK = tc.getD(c.biotAlpha) && tc.getD(c.oneOverQbar) && tc.getD(c.rhoF) &&
+               tc.getD(c.stabAlpha) && tc.getD(c.thick) &&
+               readVec(tc, c.kbar, (size_t)c.ndm);
       } else if (tok == "DRIVE") {
-        c.drive.resize(c.ndm);
-        for (auto& x : c.drive) f >> x;
+        ioOK = readVec(tc, c.drive, (size_t)c.ndm);
       } else if (tok == "DOFMAP") {
-        f >> c.totalDof;
-        c.uOff.resize(c.nNodes);
-        c.pOff.resize(c.nNodes);
-        for (auto& x : c.uOff) f >> x;
-        for (auto& x : c.pOff) f >> x;
+        ioOK = tc.getI(c.totalDof);
+        c.uOff.assign(c.nNodes, -2);
+        c.pOff.assign(c.nNodes, -2);
+        for (auto& x : c.uOff) ioOK = ioOK && tc.getI(x);
+        for (auto& x : c.pOff) ioOK = ioOK && tc.getI(x);
       } else if (tok == "Q") {
-        c.Q = readMat(f);
+        ioOK = readMat(tc, c.Q);
       } else if (tok == "H") {
-        c.H = readMat(f);
+        ioOK = readMat(tc, c.H);
       } else if (tok == "S") {
-        c.S = readMat(f);
+        ioOK = readMat(tc, c.S);
       } else if (tok == "HT") {
-        c.HT = readMat(f);
+        ioOK = readMat(tc, c.HT);
       } else if (tok == "FSEEP") {
-        int len;
-        f >> len;
-        c.FSEEP.resize(len);
-        for (auto& x : c.FSEEP) f >> x;
+        int len = -1;
+        ioOK = tc.getI(len) && len >= 0 && len <= 1024;
+        if (ioOK) ioOK = readVec(tc, c.FSEEP, (size_t)len);
       }
+      if (!ioOK) break;          // cursor desynced — bail out of this case
+    }
+    nCases++;
+    std::string why;
+    if (!ioOK || !sawEnd) {
+      printf("CASE %s  MALFORMED (%s)  FAIL\n", c.name.c_str(),
+             !ioOK ? "truncated/non-numeric section" : "missing END");
+      g_fail++;
+      continue;                  // cursor scans on for the next CASE token
+    }
+    if (!validateCase(c, why)) {
+      printf("CASE %s  MALFORMED (%s)  FAIL\n", c.name.c_str(), why.c_str());
+      g_fail++;
+      continue;
     }
     runCase(c);
-    nCases++;
   }
   printf("[cases] parsed %d case(s) from %s\n", nCases, path.c_str());
   return nCases;
@@ -284,18 +405,18 @@ static void selfTests() {
   providerInvariants<shapes::BT6>("BT6", xyBT6, true, 0.5);
   providerInvariants<shapes::BTET10>("BTET10", xyTet, true, 1.0 / 6.0);
 
-  // --- elemSizeH (largest vertex-pair distance) ----------------------------- //
+  // --- elemSizeH (largest EDGE length — side not diagonal, 0.E-F1) ---------- //
   chk("T3 elemSizeH", std::fabs(shapes::T3::elemSizeH(xyT3) - std::sqrt(2.0)) < 1e-12,
-      shapes::T3::elemSizeH(xyT3), std::sqrt(2.0));                 // hypotenuse
-  chk("Q4 elemSizeH", std::fabs(shapes::Q4::elemSizeH(xyQ4) - std::sqrt(2.0)) < 1e-12,
-      shapes::Q4::elemSizeH(xyQ4), std::sqrt(2.0));                 // diagonal
-  chk("H8 elemSizeH", std::fabs(shapes::H8::elemSizeH(xyH8) - std::sqrt(3.0)) < 1e-12,
-      shapes::H8::elemSizeH(xyH8), std::sqrt(3.0));                 // body diagonal
+      shapes::T3::elemSizeH(xyT3), std::sqrt(2.0));                 // hypotenuse edge
+  chk("Q4 elemSizeH", std::fabs(shapes::Q4::elemSizeH(xyQ4) - 1.0) < 1e-12,
+      shapes::Q4::elemSizeH(xyQ4), 1.0);                            // side, NOT √2 diagonal
+  chk("H8 elemSizeH", std::fabs(shapes::H8::elemSizeH(xyH8) - 1.0) < 1e-12,
+      shapes::H8::elemSizeH(xyH8), 1.0);                            // edge, NOT √3 body diag
   chk("BT6 elemSizeH", std::fabs(shapes::BT6::elemSizeH(xyBT6) - std::sqrt(2.0)) < 1e-12,
-      shapes::BT6::elemSizeH(xyBT6), std::sqrt(2.0));               // vertex-only
+      shapes::BT6::elemSizeH(xyBT6), std::sqrt(2.0));               // vertex edges only
   chk("BTET10 elemSizeH",
       std::fabs(shapes::BTET10::elemSizeH(xyTet) - std::sqrt(2.0)) < 1e-12,
-      shapes::BTET10::elemSizeH(xyTet), std::sqrt(2.0));            // vertex-only
+      shapes::BTET10::elemSizeH(xyTet), std::sqrt(2.0));            // vertex edges only
 
   // --- scalar kernel helpers vs hand-computed contract formulas ------------- //
   // oneOverQbar: n/Kf (+ (alpha-n)/Ks when Ks>0)

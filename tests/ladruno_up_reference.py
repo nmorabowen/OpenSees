@@ -38,6 +38,7 @@ Pure numpy + scipy only (no opensees import).
 from __future__ import annotations
 
 import argparse
+import itertools
 import sys
 
 import numpy as np
@@ -375,18 +376,29 @@ def one_over_qbar(n, Kf, alpha, Ks_grain):
     return val
 
 
+# Element edges (vertex-index pairs) for the h definition.  On simplices every
+# vertex pair IS an edge; Q4/H8 exclude the diagonals.
+_EDGES = {
+    "T3": [(0, 1), (1, 2), (2, 0)],
+    "Q4": [(0, 1), (1, 2), (2, 3), (3, 0)],
+    "H8": [(0, 1), (1, 2), (2, 3), (3, 0),
+           (4, 5), (5, 6), (6, 7), (7, 4),
+           (0, 4), (1, 5), (2, 6), (3, 7)],
+    "BT6": [(0, 1), (1, 2), (2, 0)],
+    "BTET10": [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)],
+}
+
+
 def elem_size_h(shape, coords):
-    """Largest vertex-pair distance (ADR section 3.3)."""
-    if shape in TH_VERTICES:
-        verts = coords[TH_VERTICES[shape], :]
-    else:
-        verts = coords
+    """Largest EDGE length (ADR section 3.3 "largest element dimension").
+
+    Contract amendment (0.E panel, FIX 1 — adjudicated by MAIN): the plan's
+    "largest vertex-pair distance" mis-cited the ADR.  The B4 calibration
+    (10x10 mesh of 30 m => h = 3 m = cell SIDE) reproduces only with the edge,
+    not the diagonal.  Simplices unchanged (every vertex pair is an edge)."""
     hmax = 0.0
-    m = verts.shape[0]
-    for i in range(m):
-        for j in range(i + 1, m):
-            d = np.linalg.norm(verts[i] - verts[j])
-            hmax = max(hmax, d)
+    for i, j in _EDGES[shape]:
+        hmax = max(hmax, float(np.linalg.norm(coords[i] - coords[j])))
     return hmax
 
 
@@ -395,30 +407,63 @@ def elem_size_h(shape, coords):
 #  Built from scratch here so the ODE / Schur gates do not reuse kernel code.    #
 # ============================================================================ #
 
-def plane_strain_D(E, nu):
-    c = E / ((1 + nu) * (1 - 2 * nu))
-    return c * np.array([[1 - nu, nu, 0.0],
-                         [nu, 1 - nu, 0.0],
-                         [0.0, 0.0, (1 - 2 * nu) / 2.0]])
+def elastic_D(ndm, E, nu):
+    """Isotropic elasticity, Voigt: plane strain (2D) or full 3D."""
+    if ndm == 2:
+        c = E / ((1 + nu) * (1 - 2 * nu))
+        return c * np.array([[1 - nu, nu, 0.0],
+                             [nu, 1 - nu, 0.0],
+                             [0.0, 0.0, (1 - 2 * nu) / 2.0]])
+    lam = E * nu / ((1 + nu) * (1 - 2 * nu))
+    mu = E / (2 * (1 + nu))
+    D = np.zeros((6, 6))
+    D[:3, :3] = lam
+    for i in range(3):
+        D[i, i] += 2 * mu
+    for i in range(3, 6):
+        D[i, i] = mu
+    return D
 
 
-def elem_K_Q_2d(shape, porder, coords, E, nu, alpha, thick, pts, ws):
-    """Independent K (Voigt B^T D B) and Q (B^T alpha m Np) for a 2D element."""
-    nNu = NNODES[shape]
-    nNp = n_pressure(shape, porder)
-    D = plane_strain_D(E, nu)
-    m = np.array([1.0, 1.0, 0.0])
-    K = np.zeros((2 * nNu, 2 * nNu))
-    Q = np.zeros((2 * nNu, nNp))
-    for p, w in zip(pts, ws):
-        N, dNdx, detJ, Np, dNpdx = eval_gp(shape, porder, coords, p)
-        dv = w * detJ * thick
+def _bmat(dNdx, ndm, nNu):
+    """Voigt strain-displacement matrix (engineering shear)."""
+    if ndm == 2:
         B = np.zeros((3, 2 * nNu))
         for a in range(nNu):
             B[0, 2 * a] = dNdx[a, 0]
             B[1, 2 * a + 1] = dNdx[a, 1]
             B[2, 2 * a] = dNdx[a, 1]
             B[2, 2 * a + 1] = dNdx[a, 0]
+        return B
+    B = np.zeros((6, 3 * nNu))
+    for a in range(nNu):
+        bx, by, bz = dNdx[a]
+        B[0, 3 * a] = bx
+        B[1, 3 * a + 1] = by
+        B[2, 3 * a + 2] = bz
+        B[3, 3 * a] = by          # gamma_xy
+        B[3, 3 * a + 1] = bx
+        B[4, 3 * a + 1] = bz      # gamma_yz
+        B[4, 3 * a + 2] = by
+        B[5, 3 * a] = bz          # gamma_zx
+        B[5, 3 * a + 2] = bx
+    return B
+
+
+def elem_K_Q(shape, porder, coords, E, nu, alpha, thick, pts, ws):
+    """Independent K (B^T D B) and Q (B^T alpha m Np) for any shape (2D/3D)."""
+    ndm = NDM[shape]
+    nNu = NNODES[shape]
+    nNp = n_pressure(shape, porder)
+    D = elastic_D(ndm, E, nu)
+    m = np.array([1.0, 1.0, 0.0]) if ndm == 2 else np.array([1, 1, 1, 0, 0, 0], float)
+    K = np.zeros((ndm * nNu, ndm * nNu))
+    Q = np.zeros((ndm * nNu, nNp))
+    for p, w in zip(pts, ws):
+        N, dNdx, detJ, Np, dNpdx = eval_gp(shape, porder, coords, p)
+        assert detJ > 0.0, f"elem_K_Q: non-positive detJ {detJ:.3e} ({shape})"
+        dv = w * detJ * (thick if ndm == 2 else 1.0)
+        B = _bmat(dNdx, ndm, nNu)
         K += B.T @ D @ B * dv
         Q += np.outer(B.T @ (alpha * m), Np) * dv
     return K, Q
@@ -438,14 +483,17 @@ def _relerr(A, B):
 def gate_overkill(report):
     """Gate (a): contractual-rule blocks vs degree-overkill on exact combos.
 
-    Provably-exact combos (documented derivation in comments):
-      - T3        : Q, H, FSEEP exact (affine map, const dNu) ; S quadratic -> inexact.
-      - Q4 affine : Q, H, S, FSEEP exact (const Jac) ; distorted (trapezoid) inexact.
+    Provably-exact combos (documented derivation in comments; HT is exact
+    wherever H is — identical integrand family with scalar stab vs diag k;
+    FSEEP on equal-order Bezier shapes is a degree-1 integrand vs the degree-2
+    contractual rules, hence exact — 0.E FIX 5):
+      - T3        : Q, H, HT, FSEEP exact (affine, const dNu) ; S quadratic -> inexact.
+      - Q4 affine : all exact (const Jac) ; distorted (trapezoid) inexact.
       - H8 cube   : all exact ; distorted inexact.
-      - BT6 TH    : Q, H, S, FSEEP exact (affine, Np linear, integrand <= deg2).
-      - BT6 equal : H exact (dNp linear) ; Q (cubic), S (quartic) -> inexact.
+      - BT6 TH    : all exact (affine, Np linear, integrand <= deg2).
+      - BT6 equal : H, HT, FSEEP exact ; Q (cubic), S (quartic) -> inexact.
       - BTET10 TH : all exact.
-      - BTET10 eq : H exact ; Q, S -> inexact.
+      - BTET10 eq : H, HT, FSEEP exact ; Q, S -> inexact.
     """
     print("\n[gate a] overkill-vs-contractual quadrature on provably-exact combos")
     worst = 0.0
@@ -470,25 +518,26 @@ def gate_overkill(report):
     cube = _unit_cube()
     v = np.array([[0.0, 0.0], [1.4, 0.2], [0.3, 1.1]])
     bt6 = _bt6_coords(v)
-    tetv = np.array([[0.1, 0.0, 0.0], [1.2, 0.1, 0.0],
+    # positively oriented under the pinned node<->L map (0.E FIX 2)
+    tetv = np.array([[1.2, 0.1, 0.0], [0.1, 0.0, 0.0],
                      [0.2, 1.1, 0.1], [0.0, 0.2, 1.3]])
     btet = _btet10_coords(tetv)
 
     combos = [
-        ("T3 (Q,H,FSEEP exact)", "T3", "equal", tri, mk("T3", tri),
-         ["Q", "H", "fseep"], ["S"]),
+        ("T3 (Q,H,HT,FSEEP exact)", "T3", "equal", tri, mk("T3", tri),
+         ["Q", "H", "HT", "fseep"], ["S"]),
         ("Q4 parallelogram (all exact)", "Q4", "equal", quad_par, mk("Q4", quad_par),
-         ["Q", "H", "S", "fseep"], []),
+         ["Q", "H", "HT", "S", "fseep"], []),
         ("H8 cube (all exact)", "H8", "equal", cube, mk("H8", cube),
-         ["Q", "H", "S", "fseep"], []),
+         ["Q", "H", "HT", "S", "fseep"], []),
         ("BT6 TH (all exact)", "BT6", "th", bt6, mk("BT6", bt6),
-         ["Q", "H", "S", "fseep"], []),
-        ("BT6 equal (H exact)", "BT6", "equal", bt6, mk("BT6", bt6),
-         ["H"], ["Q", "S"]),
+         ["Q", "H", "HT", "S", "fseep"], []),
+        ("BT6 equal (H,HT,FSEEP exact)", "BT6", "equal", bt6, mk("BT6", bt6),
+         ["H", "HT", "fseep"], ["Q", "S"]),
         ("BTET10 TH (all exact)", "BTET10", "th", btet, mk("BTET10", btet),
-         ["Q", "H", "S", "fseep"], []),
-        ("BTET10 equal (H exact)", "BTET10", "equal", btet, mk("BTET10", btet),
-         ["H"], ["Q", "S"]),
+         ["Q", "H", "HT", "S", "fseep"], []),
+        ("BTET10 equal (H,HT,FSEEP exact)", "BTET10", "equal", btet, mk("BTET10", btet),
+         ["H", "HT", "fseep"], ["Q", "S"]),
     ]
     for name, shape, porder, coords, pr, exact, inexact in combos:
         pc, wc = gp_contract(shape)
@@ -548,30 +597,43 @@ def gate_symmetry():
 
 
 def gate_consolidation():
-    """Gate (c): 1-element consolidation ODE from oracle blocks vs closed form.
+    """Gate (c): 1-element consolidation ODE from oracle blocks (semi-discrete).
 
     Oedometer Q4 (unit square, plane strain): confined laterally (u_x=0 all
     nodes), base fixed (u_y=0 bottom nodes), drained top (p=0 top nodes),
-    sealed elsewhere.  Quasi-static (drop M,C):
-        K u - Q p = f_u ;   Q^T u_dot + S p_dot + H p = 0
+    sealed elsewhere.  Quasi-static (drop M,C), with the stabilized storage
+    bracket per the plan's "[S+Htilde, H, Q^T]":
+        K u - Q p = f_u ;   Q^T u_dot + (S+HT) p_dot + H p = 0
     Eliminate u (u_dot = K^-1 Q p_dot):
-        (S + Q^T K^-1 Q) p_dot = -H p    ->    A p_dot = -H p
-    Closed form p(t) = expm(-A^-1 H t) p0 ; compare scipy.integrate ; assert
-    A SPD, H SPD (drained node present), eig(A^-1 H) > 0 (dissipative decay).
+        ((S+HT) + Q^T K^-1 Q) p_dot = -H p    ->    A p_dot = -H p
+    Closed form p(t) = expm(-A^-1 H t) p0 vs scipy.integrate.
+
+    HONESTY (0.E FIX 6): this is a STRUCTURAL sanity check — it verifies the
+    assembled bracket is SPD, the coupled system is dissipative (all decay
+    rates real-positive), the pressure norm decays monotonically, and the
+    closed form matches the integrated ODE.  It CANNOT catch a Q sign flip
+    (Q enters as Q^T K^-1 Q, sign-invariant) or an S scale factor (rescales
+    the rates but stays dissipative).  Block *correctness* is carried by the
+    C++ cross-check (0.D), the overkill gate (a), the hydrostatic sign gate
+    (g), and the PSD/orientation asserts in the case loop.
     """
     print("\n[gate c] 1-element consolidation ODE (blocks -> decay vs scipy/expm)")
     shape, porder = "Q4", "equal"
     coords = np.array([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
     E, nu, alpha, thick = 1.0e4, 0.3, 1.0, 1.0
     n, Kf = 0.4, 2.2e5
+    # McGann auto stabilization from THIS gate's skeleton moduli (FIX 6: HT
+    # genuinely enters the assembled bracket)
+    Ks = E / (3 * (1 - 2 * nu))
+    Gs = E / (2 * (1 + nu))
+    stab = stab_alpha_auto(elem_size_h(shape, coords), Ks, Gs, 0.25)
     pr = dict(biotAlpha=alpha, oneOverQbar=one_over_qbar(n, Kf, alpha, -1.0),
-              rhoF=1.0, stabAlpha=0.0, thick=thick, kbar=[1e-4, 1e-4],
+              rhoF=1.0, stabAlpha=stab, thick=thick, kbar=[1e-4, 1e-4],
               drive=[0.0, 0.0])
     pc, wc = gp_contract(shape)
     blk = assemble_blocks(shape, porder, coords, pr, pc, wc)
-    S, H = blk["S"], blk["H"]
-    _, Q = elem_K_Q_2d(shape, porder, coords, E, nu, alpha, thick, pc, wc)
-    K, _ = elem_K_Q_2d(shape, porder, coords, E, nu, alpha, thick, pc, wc)
+    S, H, HT = blk["S"], blk["H"], blk["HT"]
+    K, Q = elem_K_Q(shape, porder, coords, E, nu, alpha, thick, pc, wc)
 
     # DOF bookkeeping: nodes 0,1,2,3 CCW.  u dofs (2 per node), p dofs (1 per node).
     # BC: u_x=0 all ; u_y=0 nodes 0,1 (bottom) ; top nodes 2,3 u_y free.
@@ -580,7 +642,7 @@ def gate_consolidation():
     free_p = [0, 1]
     Kff = K[np.ix_(free_u, free_u)]
     Qfp = Q[np.ix_(free_u, free_p)]
-    Sff = S[np.ix_(free_p, free_p)]
+    Sff = (S + HT)[np.ix_(free_p, free_p)]
     Hff = H[np.ix_(free_p, free_p)]
 
     A = Sff + Qfp.T @ np.linalg.solve(Kff, Qfp)
@@ -613,91 +675,168 @@ def gate_consolidation():
     print("  -> consolidation gate PASS")
 
 
-def _structured_quad_mesh(nx, ny, lx=1.0, ly=1.0):
-    xs = np.linspace(0, lx, nx + 1)
-    ys = np.linspace(0, ly, ny + 1)
-    nodes = np.array([[x, y] for y in ys for x in xs])
-    nid = lambda i, j: j * (nx + 1) + i
+def _kuhn_tets(origin, dx):
+    """Six-tet Kuhn subdivision of the cube at `origin` with side dx.  Each tet
+    is re-wound (v0<->v1 swap) if needed so detJ > 0 under the pinned
+    node<->L map (0.E FIX 2 orientation discipline)."""
+    tets = []
+    for perm in itertools.permutations((0, 1, 2)):
+        v = [np.array(origin, float)]
+        q = np.array(origin, float)
+        for ax in perm:
+            q = q.copy()
+            q[ax] += dx
+            v.append(q)
+        verts = np.array(v)
+        d = np.linalg.det(np.column_stack([verts[0] - verts[3],
+                                           verts[1] - verts[3],
+                                           verts[2] - verts[3]]))
+        if d < 0:
+            verts[[0, 1]] = verts[[1, 0]]
+        tets.append(verts)
+    return tets
+
+
+def build_patch(shape, ncells, L=1.0):
+    """Structured patch of `shape` elements on [0,L]^ndm with ncells per axis.
+
+    Returns (nodes, elems, boundary_node_set).  Triangles = single-diagonal
+    (ll->ur) split of each quad cell; tets = Kuhn 6-tet split of each cube;
+    Bezier shapes get straight-side edge midpoints (shared via a registry).
+    """
+    reg = {}
+    pts_list = []
+
+    def get(pt):
+        key = tuple(round(float(c), 12) for c in pt)
+        if key not in reg:
+            reg[key] = len(pts_list)
+            pts_list.append([float(c) for c in pt])
+        return reg[key]
+
+    dx = L / ncells
     elems = []
-    for j in range(ny):
-        for i in range(nx):
-            elems.append([nid(i, j), nid(i + 1, j),
-                          nid(i + 1, j + 1), nid(i, j + 1)])
-    boundary = set()
-    for j in range(ny + 1):
-        for i in range(nx + 1):
-            if i in (0, nx) or j in (0, ny):
-                boundary.add(nid(i, j))
+    if shape in ("Q4", "T3", "BT6"):
+        for j in range(ncells):
+            for i in range(ncells):
+                ll = np.array([i * dx, j * dx])
+                lr = np.array([(i + 1) * dx, j * dx])
+                ur = np.array([(i + 1) * dx, (j + 1) * dx])
+                ul = np.array([i * dx, (j + 1) * dx])
+                if shape == "Q4":
+                    elems.append([get(ll), get(lr), get(ur), get(ul)])
+                    continue
+                for tri in ((ll, lr, ur), (ll, ur, ul)):   # CCW both
+                    if shape == "T3":
+                        elems.append([get(t) for t in tri])
+                    else:
+                        v0, v1, v2 = tri
+                        elems.append([get(v0), get(v1), get(v2),
+                                      get(0.5 * (v0 + v1)),
+                                      get(0.5 * (v1 + v2)),
+                                      get(0.5 * (v2 + v0))])
+    elif shape == "H8":
+        for k in range(ncells):
+            for j in range(ncells):
+                for i in range(ncells):
+                    corners = [(i, j, k), (i + 1, j, k), (i + 1, j + 1, k),
+                               (i, j + 1, k), (i, j, k + 1), (i + 1, j, k + 1),
+                               (i + 1, j + 1, k + 1), (i, j + 1, k + 1)]
+                    elems.append([get((a * dx, b * dx, c * dx))
+                                  for a, b, c in corners])
+    elif shape == "BTET10":
+        for k in range(ncells):
+            for j in range(ncells):
+                for i in range(ncells):
+                    for verts in _kuhn_tets((i * dx, j * dx, k * dx), dx):
+                        elems.append([get(pt) for pt in _btet10_coords(verts)])
+    else:
+        raise ValueError(shape)
+    nodes = np.array(pts_list)
+    tol = 1e-9
+    boundary = {a for a in range(len(nodes))
+                if any(abs(c) < tol or abs(c - L) < tol for c in nodes[a])}
     return nodes, elems, boundary
 
 
-def _infsup_count(shape, porder, stabilize):
-    """Assemble Schur S_p = Q^T K^-1 Q (+HT if stabilize) on a 4x4 patch;
-    return (#near-zero eigs, total p dofs)."""
+def _infsup_pair(shape, porder, ncells, stabilize):
+    """Assemble the pressure Schur complement S_p = Q^T K^-1 Q (+HT if
+    stabilize) on a structured patch, u fixed on the whole boundary, p free.
+    Returns (#eigs < 1e-10*lambda_max, total p dofs)."""
+    nodes, elems, boundary = build_patch(shape, ncells)
+    ndm = NDM[shape]
+    nn = len(nodes)
     E, nu, alpha = 1.0e4, 0.3, 1.0
-    n, Kf = 0.4, 2.2e5
-    # McGann stab alpha for a single cell (h = cell diagonal)
-    if shape == "Q4":
-        nodes, elems, boundary = _structured_quad_mesh(4, 4)
-        nn = len(nodes)
-        p_of_node = list(range(nn))       # equal-order: every node carries p
-        np_dof = nn
-        elem_nodes = elems
-        pcs = {(e_i): "Q4" for e_i in range(len(elems))}
-    else:
-        raise ValueError("infsup patch only implemented for Q4 here")
-    pts, ws = gp_contract("Q4")
-    Ndof_u = 2 * nn
-    Kg = np.zeros((Ndof_u, Ndof_u))
-    Qg = np.zeros((Ndof_u, np_dof))
-    HTg = np.zeros((np_dof, np_dof))
     Ks = E / (3 * (1 - 2 * nu))
     Gs = E / (2 * (1 + nu))
-    for en in elem_nodes:
-        coords = nodes[en]
-        h = elem_size_h("Q4", coords)
-        stab = stab_alpha_auto(h, Ks, Gs, 0.25) if stabilize else 0.0
-        Ke, Qe = elem_K_Q_2d("Q4", "equal", coords, E, nu, alpha, 1.0, pts, ws)
-        pr = dict(biotAlpha=alpha, oneOverQbar=one_over_qbar(n, Kf, alpha, -1.0),
-                  rhoF=1.0, stabAlpha=stab, thick=1.0, kbar=[1e-5, 1e-5],
-                  drive=[0.0, 0.0])
-        blk = assemble_blocks("Q4", "equal", coords, pr, pts, ws)
-        HTe = blk["HT"]
-        u_idx = []
-        for a in en:
-            u_idx += [2 * a, 2 * a + 1]
-        p_idx = [p_of_node[a] for a in en]
+    if porder == "equal":
+        carriers = sorted({a for e in elems for a in e})
+    else:
+        carriers = sorted({e[i] for e in elems for i in TH_VERTICES[shape]})
+    pmap = {a: s for s, a in enumerate(carriers)}
+    npdof = len(carriers)
+    Kg = np.zeros((ndm * nn, ndm * nn))
+    Qg = np.zeros((ndm * nn, npdof))
+    HTg = np.zeros((npdof, npdof))
+    pts, ws = gp_contract(shape)
+    for e in elems:
+        coords = nodes[list(e)]
+        Ke, Qe = elem_K_Q(shape, porder, coords, E, nu, alpha, 1.0, pts, ws)
+        stab = (stab_alpha_auto(elem_size_h(shape, coords), Ks, Gs, 0.25)
+                if stabilize else 0.0)
+        pr = dict(biotAlpha=alpha, oneOverQbar=1.0e-3, rhoF=1.0, stabAlpha=stab,
+                  thick=1.0, kbar=[1e-5] * ndm, drive=[0.0] * ndm)
+        HTe = assemble_blocks(shape, porder, coords, pr, pts, ws)["HT"]
+        u_idx = [ndm * a + i for a in e for i in range(ndm)]
+        pl = ([pmap[a] for a in e] if porder == "equal"
+              else [pmap[e[i]] for i in TH_VERTICES[shape]])
         Kg[np.ix_(u_idx, u_idx)] += Ke
-        Qg[np.ix_(u_idx, p_idx)] += Qe
-        HTg[np.ix_(p_idx, p_idx)] += HTe
-    # fix all boundary u dofs
-    fixed = set()
-    for a in boundary:
-        fixed.update((2 * a, 2 * a + 1))
-    free_u = [d for d in range(Ndof_u) if d not in fixed]
+        Qg[np.ix_(u_idx, pl)] += Qe
+        HTg[np.ix_(pl, pl)] += HTe
+    fixed = {ndm * a + i for a in boundary for i in range(ndm)}
+    free_u = [d for d in range(ndm * nn) if d not in fixed]
     Kff = Kg[np.ix_(free_u, free_u)]
-    Qf = Qg[np.ix_(free_u, range(np_dof))]
+    Qf = Qg[free_u, :]
     Sp = Qf.T @ np.linalg.solve(Kff, Qf)
     if stabilize:
         Sp = Sp + HTg
     ev = np.linalg.eigvalsh(0.5 * (Sp + Sp.T))
     lam_max = np.max(np.abs(ev))
-    nzero = int(np.sum(ev < 1e-10 * lam_max))
-    return nzero, np_dof, ev
+    return int(np.sum(ev < 1e-10 * lam_max)), npdof
 
 
 def gate_infsup():
-    """Gate (d): inf-sup smoke per ADR section 7 P0."""
-    print("\n[gate d] inf-sup smoke (4x4 Q4 patch, Schur S_p eigencount)")
-    n_nostab, ndof, ev0 = _infsup_count("Q4", "equal", stabilize=False)
-    n_stab, _, ev1 = _infsup_count("Q4", "equal", stabilize=True)
-    print(f"  equal-order, no stab : {n_nostab} near-zero eigs of {ndof} "
-          f"(expect >=2: constant + checkerboard)")
-    print(f"  equal-order, +Htilde : {n_stab} near-zero eigs of {ndof} "
-          f"(expect ==1: physical constant mode)")
-    assert n_nostab >= 2, f"expected >=2 spurious modes, got {n_nostab}"
-    assert n_stab == 1, f"stabilized should leave exactly 1, got {n_stab}"
-    print("  -> inf-sup gate PASS")
+    """Gate (d): inf-sup smoke per ADR section 7 P0 — ALL pairs (0.E FIX 3).
+
+    Equal-order pairs (Q4, T3, H8, BT6, BTET10): >=2 spurious near-zero Schur
+    modes without stabilization; exactly 1 (the physical constant) with HT.
+    Taylor-Hood pairs (BT6, BTET10): exactly 1 with NO stabilization.
+    Patch sizes: 2D = 4x4 cells (T3/BT6 single-diagonal split, 32 elems);
+    H8 = 4x4x4 (ADR-literal); BTET10 = 2x2x2 Kuhn (48 tets — the quadratic
+    tet patch already has 125 nodes; free-u count 84 >= nNp-1 = 26, so the
+    TH Schur rank is not patch-size-limited).  K from the oracle's own
+    elastic B-matrix (plane strain in 2D; the D choice does not affect the
+    null count).
+    """
+    print("\n[gate d] inf-sup smoke (structured patches, Schur S_p eigencount)")
+    eq_pairs = [("Q4", 4), ("T3", 4), ("H8", 4), ("BT6", 4), ("BTET10", 2)]
+    results = []
+    for shape, nc in eq_pairs:
+        n0, npd = _infsup_pair(shape, "equal", nc, stabilize=False)
+        n1, _ = _infsup_pair(shape, "equal", nc, stabilize=True)
+        print(f"  {shape:7s} equal patch={nc}^{NDM[shape]}: "
+              f"no-stab {n0:3d}/{npd}  +Htilde {n1}/{npd}")
+        assert n0 >= 2, f"{shape} equal no-stab: expected >=2, got {n0}"
+        assert n1 == 1, f"{shape} equal stabilized: expected ==1, got {n1}"
+        results.append((shape, "equal", n0, n1, npd))
+    for shape, nc in (("BT6", 4), ("BTET10", 2)):
+        n0, npd = _infsup_pair(shape, "th", nc, stabilize=False)
+        print(f"  {shape:7s} TH    patch={nc}^{NDM[shape]}: "
+              f"no-stab {n0:3d}/{npd}  (expect ==1, LBB-stable)")
+        assert n0 == 1, f"{shape} TH: expected exactly 1, got {n0}"
+        results.append((shape, "th", n0, None, npd))
+    print("  -> inf-sup gate PASS (all pairs)")
+    return results
 
 
 def gate_fd_dynseepage():
@@ -764,6 +903,35 @@ def gate_fd_dynseepage():
     print("  -> dyn-seepage FD gate PASS")
 
 
+def gate_hydrostatic():
+    """Gate (g): hydrostatic identity H*p = f_seep (0.E FIX 7).
+
+    For nodal p_a = -rhoF*g*y_a with drive = (0,-g), the interpolated pressure
+    gradient is exactly rhoF*drive at every point (linear completeness of the
+    isoparametric basis), so the H*p and fseep weak-form integrands coincide
+    GP-by-GP — any quadrature rule, any (even distorted) geometry, any
+    (diagonal) kbar.  Pins the end-to-end sign orientation of H vs fseep.
+    """
+    print("\n[gate g] hydrostatic identity H*p = fseep (sign orientation)")
+    g = 9.81
+    rhoF = 1.3
+    q_unit = np.array([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
+    q_trap = np.array([[0.0, 0.0], [2.0, 0.0], [1.5, 1.0], [0.3, 1.0]])
+    worst = 0.0
+    for name, coords in (("unit square", q_unit), ("trapezoid", q_trap)):
+        pr = dict(biotAlpha=1.0, oneOverQbar=1e-3, rhoF=rhoF, stabAlpha=0.0,
+                  thick=1.4, kbar=[1e-5, 4e-6], drive=[0.0, -g])
+        pts, ws = gp_contract("Q4")
+        blk = assemble_blocks("Q4", "equal", coords, pr, pts, ws)
+        p_nodal = -rhoF * g * coords[:, 1]
+        resid = blk["H"] @ p_nodal - blk["fseep"]
+        rel = np.max(np.abs(resid)) / max(np.max(np.abs(blk["fseep"])), 1e-30)
+        worst = max(worst, rel)
+        print(f"  Q4 {name:12s}: max|H*p - fseep|/max|fseep| = {rel:.3e}")
+        assert rel <= 1e-12, f"hydrostatic identity broken on {name}: {rel:.3e}"
+    print(f"  -> hydrostatic gate PASS (worst {worst:.2e})")
+
+
 # ============================================================================ #
 #  Canonical case geometry helpers                                              #
 # ============================================================================ #
@@ -804,7 +972,9 @@ def _canonical_coords(shape):
     if shape == "BT6":
         return _bt6_coords(np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]))
     if shape == "BTET10":
-        return _btet10_coords(np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0],
+        # positively oriented under the pinned node<->L map (0.E FIX 2): the
+        # conventionally right-handed ordering gives detJ<0 here — v0/v1 wound.
+        return _btet10_coords(np.array([[1.0, 0.0, 0.0], [0.0, 0.0, 0.0],
                                         [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]))
     raise ValueError(shape)
 
@@ -856,7 +1026,8 @@ def build_cases():
     d2 = [0.0, -9.81]
     d3 = [0.0, 0.0, -9.81]
 
-    # --- Q4 (5 cases: baseline, trapezoid, alpha=0.79, aniso, thick=2.5) ---
+    # --- Q4 (6 cases: baseline, trapezoid, alpha=0.79, aniso, thick=2.5,
+    #     distorted+aniso+inclined-drive+rhoF!=1 [0.E FIX 4 a/b/c]) ---
     q_unit = np.array([[0, 0], [1, 0], [1, 1], [0, 1]], float)
     q_trap = np.array([[0, 0], [2.0, 0], [1.5, 1.0], [0.3, 1.0]], float)
     add("Q4_unit_a1_iso_t1", "Q4", "equal", q_unit, 1.0, a1, iso2, 1.0, d2)
@@ -864,6 +1035,8 @@ def build_cases():
     add("Q4_unit_a079_iso_t1", "Q4", "equal", q_unit, 0.79, a079, iso2, 1.0, d2)
     add("Q4_unit_a1_aniso_t1", "Q4", "equal", q_unit, 1.0, a1, ani2, 1.0, d2)
     add("Q4_unit_a1_iso_t25", "Q4", "equal", q_unit, 1.0, a1, iso2, 2.5, d2)
+    add("Q4_trap_a1_aniso_incl_rhoF25", "Q4", "equal", q_trap, 1.0, a1, ani2,
+        1.0, [3.0, -9.81], rhoF=2.5)
 
     # --- T3 (3 cases: unit, skewed, skewed thick=2.5) ---
     t_unit = np.array([[0, 0], [1, 0], [0, 1]], float)
@@ -872,7 +1045,8 @@ def build_cases():
     add("T3_skew_a1_iso_t1", "T3", "equal", t_skew, 1.0, a1, iso2, 1.0, d2)
     add("T3_skew_a1_iso_t25", "T3", "equal", t_skew, 1.0, a1, iso2, 2.5, d2)
 
-    # --- H8 (3 cases: cube, distorted, cube aniso) ---
+    # --- H8 (4 cases: cube, distorted, cube aniso,
+    #     distorted+aniso+inclined-drive [0.E FIX 4 b/c in 3D]) ---
     cube = _unit_cube()
     dist = cube.copy()
     dist[6] = [1.2, 1.15, 1.1]
@@ -880,16 +1054,22 @@ def build_cases():
     add("H8_cube_a1_iso", "H8", "equal", cube, 1.0, a1, iso3, 1.0, d3)
     add("H8_dist_a1_iso", "H8", "equal", dist, 1.0, a1, iso3, 1.0, d3)
     add("H8_cube_a1_aniso", "H8", "equal", cube, 1.0, a1, ani3, 1.0, d3)
+    add("H8_dist_a1_aniso_incl", "H8", "equal", dist, 1.0, a1, ani3, 1.0,
+        [2.0, 1.5, -9.81])
 
-    # --- BT6 (3 cases: equal, TH, TH alpha=0.79) straight-sided ---
+    # --- BT6 (4 cases: equal, TH, TH alpha=0.79,
+    #     TH inclined-drive + rhoF!=1 [0.E FIX 4 a/b on a simplex/TH]) ---
     bv = np.array([[0.0, 0.0], [1.4, 0.2], [0.3, 1.1]])
     bt6 = _bt6_coords(bv)
     add("BT6_straight_equal_a1_iso_t1", "BT6", "equal", bt6, 1.0, a1, iso2, 1.0, d2)
     add("BT6_straight_th_a1_iso_t1", "BT6", "th", bt6, 1.0, a1, iso2, 1.0, d2)
     add("BT6_straight_th_a079_iso_t1", "BT6", "th", bt6, 0.79, a079, iso2, 1.0, d2)
+    add("BT6_straight_th_a1_iso_incl_rhoF25", "BT6", "th", bt6, 1.0, a1, iso2,
+        1.0, [4.0, -9.81], rhoF=2.5)
 
     # --- BTET10 (2 cases: equal, TH) straight-sided ---
-    tv = np.array([[0.1, 0.0, 0.0], [1.2, 0.1, 0.0],
+    # vertices wound for detJ>0 under the pinned node<->L map (0.E FIX 2)
+    tv = np.array([[1.2, 0.1, 0.0], [0.1, 0.0, 0.0],
                    [0.2, 1.1, 0.1], [0.0, 0.2, 1.3]])
     btet = _btet10_coords(tv)
     add("BTET10_straight_equal_a1_iso", "BTET10", "equal", btet, 1.0, a1, iso3, 1.0, d3)
@@ -969,14 +1149,34 @@ def self_check():
     gate_consolidation()
     gate_infsup()
     gate_fd_dynseepage()
-    # sanity: emit-able cases build and blocks are finite
+    gate_hydrostatic()
+    # permanent case-level asserts (0.E FIX 2): finite blocks, per-GP detJ > 0,
+    # S/H/HT positive-semidefinite — an inverted/mis-wound canonical case can
+    # never ship silently again.
     cases = build_cases()
+    print(f"\n[cases] per-case asserts: detJ>0 per GP, S/H/HT PSD, finite blocks")
     for name, shape, porder, coords, params in cases:
         pc, wc = gp_contract(shape)
         blk = assemble_blocks(shape, porder, coords, params, pc, wc)
         for k in ("Q", "H", "S", "HT", "fseep"):
             assert np.all(np.isfinite(blk[k])), f"{name} {k} non-finite"
-    print(f"\n[cases] {len(cases)} canonical cases build cleanly")
+        assert np.all(blk["detJ"] > 0.0), \
+            f"{name}: non-positive detJ at a GP: {blk['detJ']}"
+        for mkey in ("S", "H", "HT"):
+            M = blk[mkey]
+            ev = np.linalg.eigvalsh(0.5 * (M + M.T))
+            scale = max(np.max(np.abs(ev)), 1e-30)
+            assert ev.min() >= -1e-12 * scale, \
+                f"{name} {mkey} not PSD (min eig {ev.min():.3e})"
+        if shape == "BTET10":
+            vol_quad = float(np.sum(np.asarray(wc) * blk["detJ"]))
+            v = coords[:4]
+            vol_true = abs(np.linalg.det(
+                np.column_stack([v[1] - v[0], v[2] - v[0], v[3] - v[0]]))) / 6.0
+            print(f"  {name}: sum(w*detJ) = {vol_quad:.12g} "
+                  f"(= +volume {vol_true:.12g})")
+            assert vol_quad > 0.0 and abs(vol_quad - vol_true) <= 1e-12 * vol_true
+    print(f"[cases] {len(cases)} canonical cases build cleanly, all asserts hold")
     print("\n" + "=" * 74)
     print(f"SELF-CHECK GREEN  (worst exact-combo relerr {worst:.2e} <= 1e-12)")
     print("=" * 74)

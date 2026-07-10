@@ -4,6 +4,27 @@
 **                                                                    **
 ** ****************************************************************** */
 
+// LADRUNO-HEADER-START
+// ==========================================================================
+//
+//   ▄█          ▄████████ ████████▄     ▄████████ ███    █▄  ███▄▄▄▄    ▄██████▄
+//  ███         ███    ███ ███   ▀███   ███    ███ ███    ███ ███▀▀▀██▄ ███    ███
+//  ███         ███    ███ ███    ███   ███    ███ ███    ███ ███   ███ ███    ███
+//  ███         ███    ███ ███    ███  ▄███▄▄▄▄██▀ ███    ███ ███   ███ ███    ███
+//  ███       ▀███████████ ███    ███ ▀▀███▀▀▀▀▀   ███    ███ ███   ███ ███    ███
+//  ███         ███    ███ ███    ███ ▀███████████ ███    ███ ███   ███ ███    ███
+//  ███▌    ▄   ███    ███ ███   ▄███   ███    ███ ███    ███ ███   ███ ███    ███
+//  █████▄▄██   ███    █▀  ████████▀    ███    ███ ████████▀   ▀█   █▀   ▀██████▀
+//  ▀                                   ███    ███
+//
+//  Ladruno — a research fork of OpenSees
+//  Created by:  Nicolas Mora Bowen  ·  Patricio Palacios  ·  José Abell  ·  Guppi
+//
+// Header auto-stamped by Ladruno_scripts/stamp_headers.py (art: banner_ASCII.txt).
+// Do not hand-edit between the markers; edit the script/art and re-run instead.
+// ==========================================================================
+// LADRUNO-HEADER-END
+
 // Authors: Nicolas Mora Bowen, Guppi (Ladruño)
 // Created: 07/2026
 //
@@ -142,16 +163,28 @@ inline void addFseep(const double* dNp, int nNp, int ndm, const double* kbar,
 // --------------------------------------------------------------------------- //
 //  Auto stabilization coefficient (McGann et al. 2012 eq 73 / 2015 eq 74):    //
 //    α = α₀ · h² / (K_s + 4·G_s/3)                                            //
-//  h = largest element dimension (Provider::elemSizeH); K_s, G_s = DRAINED    //
-//  skeleton bulk & shear from the material's initial isotropic tangent.       //
+//  h = largest element dimension = longest EDGE (Provider::elemSizeH, 0.E-F1).//
+//  KsDrained, GsDrained = DRAINED SKELETON bulk & shear moduli from the       //
+//  material's initial isotropic tangent — NOT the grain bulk K_s that         //
+//  oneOverQbar() takes below (name-collision trap: same letter in the papers, //
+//  two different physical moduli).                                            //
+//  PRECONDITION: KsDrained + 4·GsDrained/3 > 0. A ≤0 denominator returns inf  //
+//  or a NEGATIVE α — anti-stabilization that silently DEstabilizes addHtilde. //
+//  Guarding is the ELEMENT's job (P1 parser/setup); the kernel stays silent.  //
 // --------------------------------------------------------------------------- //
-inline double stabAlphaAuto(double h, double Ks, double Gs, double alpha0) {
-  return alpha0 * h * h / (Ks + 4.0 * Gs / 3.0);
+inline double stabAlphaAuto(double h, double KsDrained, double GsDrained,
+                            double alpha0) {
+  return alpha0 * h * h / (KsDrained + 4.0 * GsDrained / 3.0);
 }
 
 // --------------------------------------------------------------------------- //
 //  Storage coefficient 1/Q̄ = n/K_f + (α − n)/K_s   (ADR §3.1, Book eq 2.17).  //
-//  Ks <= 0 encodes incompressible grains (K_s → ∞): the second term vanishes. //
+//  Ks here is the GRAIN bulk modulus (cf. the drained-skeleton KsDrained in   //
+//  stabAlphaAuto above). Ks <= 0 encodes incompressible grains (K_s → ∞):     //
+//  the second term vanishes.                                                  //
+//  Expected domain (policed by the P1 parser, not here): 0 < n <= biotAlpha   //
+//  <= 1 and Kf > 0 — outside it the formula returns a physically meaningless  //
+//  (possibly negative) storage coefficient.                                   //
 // --------------------------------------------------------------------------- //
 inline double oneOverQbar(double n, double Kf, double biotAlpha, double Ks) {
   double val = n / Kf;

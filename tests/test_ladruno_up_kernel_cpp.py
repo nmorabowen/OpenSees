@@ -21,6 +21,7 @@ oracle (ladruno_up_reference.py). The authoritative oracle-emit -> C++-check
 cross-run is MAIN's WP0.D; here we only assert the harness's own gate passes.
 """
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -30,6 +31,8 @@ import pytest
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _SRC_UP = os.path.normpath(os.path.join(_HERE, "..", "SRC", "element", "ladrunoUP"))
 _CASES = os.path.join(_HERE, "ladruno_up_cases.txt")
+_MIN_CASES = 12  # plan contract: >= 12 canonical cases — guards a formatting
+                 # glitch silently shrinking coverage (0.E-F4)
 
 
 @pytest.mark.zone_a
@@ -41,6 +44,8 @@ def test_cpp_ladruno_up_kernel_selfcheck():
     src = os.path.join(_HERE, "ladruno_up_kernel_check.cpp")
     with tempfile.TemporaryDirectory() as td:
         exe = os.path.join(td, "up_check.exe")
+        # -std=c++17 is LOAD-BEARING: LadrunoUPShapes.h uses inline constexpr
+        # static data members; c++11/14 compiles but fails to link.
         cc = subprocess.run(
             [gpp, "-O2", "-std=c++17", "-Wall", "-Wextra", "-I", _SRC_UP, src, "-o", exe],
             capture_output=True, text=True,
@@ -51,3 +56,9 @@ def test_cpp_ladruno_up_kernel_selfcheck():
         rr = subprocess.run([exe, _CASES], capture_output=True, text=True)
         assert rr.returncode == 0, f"kernel check failed:\n{rr.stdout}\n{rr.stderr}"
         assert "RESULT: PASS" in rr.stdout, rr.stdout
+        m = re.search(r"\[cases\] parsed (\d+) case", rr.stdout)
+        assert m, f"no parsed-case count in output:\n{rr.stdout}"
+        assert int(m.group(1)) >= _MIN_CASES, (
+            f"only {m.group(1)} cases parsed (>= {_MIN_CASES} required — "
+            f"cases-file formatting glitch?):\n{rr.stdout}"
+        )

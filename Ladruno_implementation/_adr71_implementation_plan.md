@@ -109,7 +109,10 @@ struct Provider {
   // pressure basis: equal-order => same as Nu; TH => barycentric-linear L_i on
   // the vertex carriers (NOT the Bernstein vertex subset — ADR §3.3 ⟨UP-8⟩)
   void evalP(int gp, const double* xy, bool taylorHood, double* Np, double* dNp);
-  double elemSizeH(const double* xy);  // largest vertex-pair distance (ADR §3.3)
+  double elemSizeH(const double* xy);  // largest EDGE length (ADR §3.3 "largest
+                                       // element dimension"; 0.E-F1 adjudication —
+                                       // side not diagonal on Q4/H8; == vertex-pair
+                                       // max on simplices)
 };
 ```
 
@@ -241,3 +244,44 @@ MAIN does a focused self-review of 1.B's Rayleigh/IncInertia code against the
 ## Log
 
 - 2026-07-10 — plan created (P0 contract frozen; ADR locked via PR #547).
+- 2026-07-10 — 0.A addendum committed (GP/basis pins, contractual-rule emission).
+- 2026-07-10 — 0.B/0.C landed (twin Opus agents); 0.D cross-run green first try:
+  16 cases, 96/96 blocks + 16/16 dofMaps ≤1e-16 (gate 1e-9).
+- 2026-07-10 — 0.E panel (3 Opus critics, all PASS-WITH-FIXES; independence
+  verdict INDEPENDENT with content-level evidence). **Adjudications:**
+  - **h-definition (C1-F1, MAJOR)**: plan contract's "largest vertex-pair
+    distance" mis-cited ADR §3.3 "largest element dimension" (B4 calibration
+    ⇒ side, not diagonal). FIXED both sides: h = largest EDGE length.
+    Correlated-error class the twin-agent gate can't see — caught by panel.
+  - **BTET10 case orientation (C2-A1, MAJOR)**: canonical tets negatively
+    oriented (detJ<0, inverted blocks emitted). FIXED + permanent detJ>0 and
+    S/H-PSD asserts added. Signed-detJ fold (addendum §5) STANDS for P0;
+    orientation legality is element-side (P1/P3).
+  - **TH inf-sup leg missing (C1-F2 = C2-A5, MAJOR)**: ADR §7 P0 demands
+    per-pair eigencounts incl. TH = exactly 1. FIXED: generic patch assembler,
+    all equal-order pairs (no-stab ≥2 / stab =1) + BT6-TH/BTET10-TH (=1).
+  - **Harness NaN-blindness (C3-F1, MAJOR)**: comparator accepted all-NaN
+    blocks as "ok". FIXED + per-block relative tolerance (C1-F3) + parser
+    hardening (C3-F2/F3) + case-count assert in pytest.
+  - **Coverage gaps (C2-B3, MAJOR/MINOR)**: ρ_f≡1 and vertical-only drive in
+    every case; aniso k̄ never on distorted geometry. FIXED: new cases.
+  - Doc/nit batch: stabAlphaAuto precondition + KsDrained/GsDrained rename
+    (grain-vs-skeleton Ks collision, C1-F5/C3-F4), oneOverQbar domain,
+    zero-gradient wording, C++17 pin, consolidation-gate honesty (C2-A3:
+    structural sanity check, not a block discriminator), overkill-gate
+    missed-exact combos, hydrostatic H·p=f_seep sign assert.
+  - **P1/P3 TRAP (record, no P0 action)**: under the pinned BTET10 node↔L map,
+    detJ = det[v0−v3, v1−v3, v2−v3] = −det[v1−v0, v2−v0, v3−v0] — positive
+    detJ requires the conventionally LEFT-handed vertex winding. A P1/P3
+    element-side detJ>0 guard would reject standard right-handed tets; the
+    element must either normalize winding, use |detJ| for the measure (donor
+    O11 convention), or define its guard against the map-consistent sign.
+    Decide at P3 (BTET10 element lane). Cross-check unaffected (both sides
+    share the map; canonical cases re-wound positive).
+  - **Refuted / no-action**: inf-sup count 8 on Q4 patch = mathematically
+    expected (rank argument verified, C2-A4), not an assembly bug; D-matrix
+    choice immaterial to null count; sliver over-stabilization is the ADR's
+    deliberate pinned definition (C3 attack 5); inverted-element gradient
+    behavior better-defined than the BezierTri6 donor's (C3 attack 2);
+    collapsed-quad-to-triangle is legitimate usage, not a defect; ld-semantics
+    and dofMap survived hostile-input experiments (C3 attacks 3/4).

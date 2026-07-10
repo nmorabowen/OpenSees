@@ -4,6 +4,27 @@
 **                                                                    **
 ** ****************************************************************** */
 
+// LADRUNO-HEADER-START
+// ==========================================================================
+//
+//   ▄█          ▄████████ ████████▄     ▄████████ ███    █▄  ███▄▄▄▄    ▄██████▄
+//  ███         ███    ███ ███   ▀███   ███    ███ ███    ███ ███▀▀▀██▄ ███    ███
+//  ███         ███    ███ ███    ███   ███    ███ ███    ███ ███   ███ ███    ███
+//  ███         ███    ███ ███    ███  ▄███▄▄▄▄██▀ ███    ███ ███   ███ ███    ███
+//  ███       ▀███████████ ███    ███ ▀▀███▀▀▀▀▀   ███    ███ ███   ███ ███    ███
+//  ███         ███    ███ ███    ███ ▀███████████ ███    ███ ███   ███ ███    ███
+//  ███▌    ▄   ███    ███ ███   ▄███   ███    ███ ███    ███ ███   ███ ███    ███
+//  █████▄▄██   ███    █▀  ████████▀    ███    ███ ████████▀   ▀█   █▀   ▀██████▀
+//  ▀                                   ███    ███
+//
+//  Ladruno — a research fork of OpenSees
+//  Created by:  Nicolas Mora Bowen  ·  Patricio Palacios  ·  José Abell  ·  Guppi
+//
+// Header auto-stamped by Ladruno_scripts/stamp_headers.py (art: banner_ASCII.txt).
+// Do not hand-edit between the markers; edit the script/art and re-run instead.
+// ==========================================================================
+// LADRUNO-HEADER-END
+
 // Authors: Nicolas Mora Bowen, Guppi (Ladruño)
 // Created: 07/2026
 //
@@ -43,8 +64,18 @@
 // TH-stability requirement, ADR §3.3). The element-level straight-side guard
 // arrives in P3; these providers ASSUME it and are silent on violation.
 //
-// GUARDS: none here (the *Kernel.h idiom) — a singular / inverted Jacobian
-// yields garbage gradients silently; the consuming element must reject detJ ≤ 0.
+// elemSizeH = largest EDGE length (ADR §3.3 "h = largest element dimension" —
+// 0.E-F1 adjudication: the McGann B4 calibration reproduces only with the
+// element SIDE, not the diagonal; on simplices every vertex pair is an edge so
+// their value is unchanged; mid-edge nodes are never h candidates).
+//
+// GUARDS: none here (the *Kernel.h idiom, silent on failure): a singular
+// Jacobian makes inv2x2/inv3x3 return an ALL-ZERO inverse ⇒ ZERO cartesian
+// gradients ⇒ silently zero/singular Q/H/H̃ blocks and zero f_seep, no error —
+// the same trap class as LadrunoFiniteStrain2DKernel.h's inv2(). The consuming
+// element MUST reject detJ ≤ 0 at every GP BEFORE assembling.
+//
+// Requires C++17 (inline constexpr static data members); C++11/14 fails to link.
 
 #ifndef LadrunoUPShapes_h
 #define LadrunoUPShapes_h
@@ -83,19 +114,22 @@ inline double inv3x3(const double J[9], double Jm1[9]) {
   return det;
 }
 
-// largest vertex-pair distance over the listed vertex node indices (ADR §3.3).
-inline double maxVertexPairDist(const double* xy, int ndm,
-                                const int* vtx, int nvtx) {
+// largest EDGE length over the listed vertex-index pairs — the pinned meaning
+// of ADR §3.3 "h = largest element dimension" (0.E-F1 adjudication: the papers'
+// B4 calibration — 10×10 mesh of 30 m ⇒ h = 3 m = cell SIDE — reproduces only
+// with the edge, not the diagonal). On simplices every vertex pair is an edge,
+// so T3/BT6/BTET10 values are unchanged; mid-edge nodes are NEVER candidates.
+inline double maxEdgeLen(const double* xy, int ndm,
+                         const int (*edges)[2], int nEdges) {
   double hmax = 0.0;
-  for (int p = 0; p < nvtx; p++)
-    for (int q = p + 1; q < nvtx; q++) {
-      double d2 = 0.0;
-      for (int i = 0; i < ndm; i++) {
-        double dd = xy[vtx[p] * ndm + i] - xy[vtx[q] * ndm + i];
-        d2 += dd * dd;
-      }
-      if (d2 > hmax) hmax = d2;
+  for (int e = 0; e < nEdges; e++) {
+    double d2 = 0.0;
+    for (int i = 0; i < ndm; i++) {
+      double dd = xy[edges[e][0] * ndm + i] - xy[edges[e][1] * ndm + i];
+      d2 += dd * dd;
     }
+    if (d2 > hmax) hmax = d2;
+  }
   return sqrt(hmax);
 }
 
@@ -145,8 +179,8 @@ struct T3 {
     eval(gp, xy, Np, dNp, &detJ);           // p ≡ u
   }
   static double elemSizeH(const double* xy) {
-    static const int vtx[3] = {0, 1, 2};
-    return maxVertexPairDist(xy, ndm, vtx, 3);
+    static const int edges[3][2] = {{0, 1}, {1, 2}, {2, 0}};   // all vertex pairs
+    return maxEdgeLen(xy, ndm, edges, 3);
   }
 };
 
@@ -200,8 +234,9 @@ struct Q4 {
     eval(gp, xy, Np, dNp, &detJ);
   }
   static double elemSizeH(const double* xy) {
-    static const int vtx[4] = {0, 1, 2, 3};
-    return maxVertexPairDist(xy, ndm, vtx, 4);
+    // 4 SIDES only — the diagonal is NOT an h candidate (0.E-F1).
+    static const int edges[4][2] = {{0, 1}, {1, 2}, {2, 3}, {3, 0}};
+    return maxEdgeLen(xy, ndm, edges, 4);
   }
 };
 
@@ -263,8 +298,12 @@ struct H8 {
     eval(gp, xy, Np, dNp, &detJ);
   }
   static double elemSizeH(const double* xy) {
-    static const int vtx[8] = {0, 1, 2, 3, 4, 5, 6, 7};
-    return maxVertexPairDist(xy, ndm, vtx, 8);
+    // 12 EDGES only — face/body diagonals are NOT h candidates (0.E-F1).
+    static const int edges[12][2] = {
+        {0, 1}, {1, 2}, {2, 3}, {3, 0},     // bottom face
+        {4, 5}, {5, 6}, {6, 7}, {7, 4},     // top face
+        {0, 4}, {1, 5}, {2, 6}, {3, 7}};    // verticals
+    return maxEdgeLen(xy, ndm, edges, 12);
   }
 };
 
@@ -342,8 +381,9 @@ struct BT6 {
     }
   }
   static double elemSizeH(const double* xy) {
-    static const int vtx[3] = {0, 1, 2};       // vertex nodes only
-    return maxVertexPairDist(xy, ndm, vtx, 3);
+    // vertex-to-vertex edges only (never mid-edge nodes) — 0.E-F1.
+    static const int edges[3][2] = {{0, 1}, {1, 2}, {2, 0}};
+    return maxEdgeLen(xy, ndm, edges, 3);
   }
 };
 
@@ -438,8 +478,10 @@ struct BTET10 {
     }
   }
   static double elemSizeH(const double* xy) {
-    static const int vtx[4] = {0, 1, 2, 3};    // vertex nodes only
-    return maxVertexPairDist(xy, ndm, vtx, 4);
+    // all 6 vertex-pair edges of the tet (never mid-edge nodes) — 0.E-F1.
+    static const int edges[6][2] = {
+        {0, 1}, {0, 2}, {0, 3}, {1, 2}, {1, 3}, {2, 3}};
+    return maxEdgeLen(xy, ndm, edges, 6);
   }
 };
 
