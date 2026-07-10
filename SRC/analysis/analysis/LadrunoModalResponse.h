@@ -60,11 +60,32 @@
 #define LadrunoModalResponse_h
 
 #include <vector>
+#include <string>
 
 class AnalysisModel;
 class Domain;
 class TimeSeries;
 class DomainModalProperties;
+
+// ---------------------------------------------------------------------------
+// Shared modal damping specification: how the per-mode d_a = c_a/m_a (= 2 xi w
+// for w>0) is obtained.  Reused by the P2 frequency-domain post-processors; the
+// P1a transient carries its own equivalent copy (kept byte-stable / untouched).
+// ---------------------------------------------------------------------------
+struct LadrunoModalDamping
+{
+    enum Kind { UNIFORM, RAYLEIGH, MODAL_LIST };
+    Kind                kind = UNIFORM;
+    double              xi   = 0.0;   // uniform ratio
+    double              a0   = 0.0;   // Rayleigh mass factor
+    double              a1   = 0.0;   // Rayleigh stiffness factor
+    std::vector<double> xis;          // per absolute-mode ratios (MODAL_LIST)
+
+    // d_a = c_a/m_a for absolute 0-based mode index at circular frequency w.
+    // Rayleigh: a0 + a1 w^2 (rigid mode w=0 -> a0). Ratio channels: 2 xi w
+    // (rigid mode -> 0, stiffness-proportional damping vanishing there).
+    double coeff(int mode0, double w) const;
+};
 
 class LadrunoModalResponse
 {
@@ -116,6 +137,71 @@ private:
     std::vector<double> m_xi_list; // per absolute-mode ratios
 
     std::vector<int>    m_modes;   // absolute 0-based mode indices to include
+};
+
+// ===========================================================================
+// ADR 44 P2: modal frequency-response / steady-state dynamics.
+//
+//   Once `eigen` + `modalProperties` have run, the steady harmonic response of
+//   a LINEAR structure to a uniform base acceleration u_g''(t) = amp e^{+iOm t}
+//   (relative formulation, ADR 44 §4.3-§4.4) is the modal sum
+//
+//       u_hat(Om) = amp * sum_a (phi_a Vscale_a) (-Gamma_a) H_a(Om),
+//       H_a(Om)   = 1 / (w_a^2 - Om^2 + i Om d_a),   d_a = c_a/m_a.
+//
+//   This is the frequency-domain image of the P1a transient recovery (same
+//   psi_a = phi_a Vscale_a and Gamma_a = participation factor, both validated
+//   there vs direct Newmark), so it inherits P1a's mass-normalization exactly.
+//   Velocity FRF = i Om u_hat; relative-acceleration FRF = -Om^2 u_hat.
+//
+//   Sign convention is PINNED to e^{+iOm t} (the +i Om d_a term gives the
+//   physical -90 deg response lag at resonance).  Verified end-to-end vs the
+//   direct complex solve (K - Om^2 M + i Om C)^{-1}(-M R) in
+//   Ladruno_implementation/modal_response_p2_spike/frf_oracle.py.
+//
+//   Frequencies are in Hz (Om = 2 pi f) throughout, in and out.
+// ===========================================================================
+class LadrunoFrequencyResponse
+{
+public:
+    enum SweepKind { SWEEP_LIN, SWEEP_LOG, SWEEP_BIASED };
+    enum RespKind  { RESP_DISP, RESP_VEL, RESP_ACCEL };
+
+    explicit LadrunoFrequencyResponse(AnalysisModel* theModel);
+    ~LadrunoFrequencyResponse();
+
+    // excitation: uniform base acceleration of amplitude amp along a global dir
+    void setBaseAccel(int direction, double amp) { m_direction = direction; m_amp = amp; }
+    // frequency sweep in Hz
+    void setSweep(double fmin, double fmax, int nf, SweepKind k)
+    { m_fmin = fmin; m_fmax = fmax; m_nf = nf; m_sweep = k; }
+    void setDamping(const LadrunoModalDamping& d) { m_damp = d; }
+    void setModeSubset(const std::vector<int>& modes_1based);
+    void setResponse(int nodeTag, int dof, RespKind r)
+    { m_nodeTag = nodeTag; m_dof = dof; m_resp = r; }
+    void setOutputFile(const char* fname) { m_outfile = fname ? fname : ""; }
+
+    // Evaluate the sweep.  Fills `rows`, one per frequency:
+    //   ampOnly==false -> {f, Re, Im}   (full complex FRF)
+    //   ampOnly==true  -> {f, |H|}      (steady-state amplitude, SSD)
+    // Also writes `rows` to the output file if one was set. Returns 0 / -1.
+    int run(std::vector<std::vector<double> >& rows, bool ampOnly);
+
+private:
+    int  buildGrid(std::vector<double>& freqs) const; // Hz sample points
+
+    AnalysisModel*      m_model;
+    int                 m_direction; // 1-based global excitation dir
+    double              m_amp;
+    double              m_fmin, m_fmax;
+    int                 m_nf;
+    SweepKind           m_sweep;
+    LadrunoModalDamping m_damp;
+    std::vector<int>    m_modes;     // absolute 0-based mode subset (empty=all)
+    int                 m_nodeTag;
+    int                 m_dof;       // 1-based response DOF
+    RespKind            m_resp;
+    std::string         m_outfile;
 };
 
 #endif

@@ -1,4 +1,9 @@
-# `modalResponseHistory` — exact modal-superposition transient (ADR 44 P1a)
+# `LadrunoModalResponse` — modal-superposition response toolkit (ADR 44)
+
+Commands: `modalResponseHistory` (P1a, transient) · `responseSpectrumAnalysis
+-combine` (P1b, CQC/SRSS) · `frequencyResponse` / `steadyStateDynamics` (P2, FRF/SSD).
+
+## `modalResponseHistory` — exact modal-superposition transient (ADR 44 P1a)
 
 `LadrunoModalResponse` (classTag 33024) computes a **linear** time-history response
 by exact modal superposition instead of a direct Newmark/HHT run. After you have a
@@ -113,12 +118,70 @@ u = ops.nodeDisp(node, dof)
 - Known stock quirk: the `-scale` factor is ignored by the per-mode recovery
   (`solveMode` never applies it); the combined path matches that behavior.
 
+## Frequency response & steady-state dynamics — `frequencyResponse` / `steadyStateDynamics` (P2)
+
+For a **harmonic** base acceleration `ü_g(t) = amp·e^{iΩt}`, the steady response of
+a linear structure is a small dense post-processor on the same mode basis — no time
+stepping. Each mode has the complex transfer function
+
+```
+H_a(Ω) = 1 / (ω_a² − Ω² + i·Ω·d_a),   d_a = c_a/m_a,
+```
+
+and the physical (relative) displacement FRF is the modal sum
+`û(Ω) = amp · Σ_a (ψ_a)(−Γ_a) H_a(Ω)` — the frequency-domain image of the P1a
+recovery, so it inherits the same participation / eigenvector-scale normalization.
+
+```python
+ops.eigen('-fullGenLapack', nModes)
+ops.modalProperties()
+# full complex FRF of node `roof` dof 1 over 0.1..20 Hz, resonance-biased grid:
+rows = ops.frequencyResponse('-freq', 0.1, 20.0, 400, '-biased',
+                             '-baseAccel', '-dir', 1, '-rayleigh', a0, a1,
+                             '-node', roof, '-dof', 1, '-out', 'frf.out')
+# rows[k] = [f_Hz, Re, Im]
+
+# steady-state harmonic amplitude (|response|) instead of the complex value:
+amp = ops.steadyStateDynamics('-freq', 0.1, 20.0, 400, '-biased',
+                              '-baseAccel', '-dir', 1, '-damp', 0.02,
+                              '-node', roof, '-dof', 1, '-out', 'ssd.out')
+# amp[k] = [f_Hz, |response|]
+```
+
+| flag | meaning |
+|---|---|
+| `-freq $fmin $fmax $nf` | sweep bounds **in Hz** and point count (`Ω = 2π f`) |
+| `-lin` / `-log` / `-biased` | grid: uniform in `f` / geometric / linear + a ±5% cluster of points around each in-band modal frequency to resolve sharp peaks (default `-lin`) |
+| `-baseAccel -dir $dir` | uniform harmonic base acceleration along global dir (no `timeSeries` — the sweep is per unit/`-amp` amplitude) |
+| `-amp $a` | base-acceleration amplitude (default 1 → `frequencyResponse` is the pure transfer function) |
+| `-damp`/`-rayleigh`/`-modalDamp` | same damping channels as P1a |
+| `-node $tag -dof $dof` | the response DOF whose FRF is reported |
+| `-resp disp\|vel\|accel` | response quantity (relative); `vel = iΩ·û`, `accel = −Ω²·û` (default `disp`) |
+| `-modes $m1 …` | 1-based mode subset (default all) |
+| `-out $file` | write the table to an ASCII file (whitespace columns); the table is also returned to the interpreter |
+
+- `frequencyResponse` returns `[f, Re, Im]` per row; `steadyStateDynamics` returns
+  `[f, |·|]`. Both also write `-out` if given.
+- **Frequencies are Hz throughout** (in `-freq` and in the output `f` column). The
+  FRF magnitude peaks at each damped modal frequency `f_a = ω_a/2π`; at `Ω→0` the
+  response equals the static displacement under the load amplitude.
+- **Sign convention is `e^{+iΩt}`** — the response lags 90° at resonance. Verified
+  end-to-end against the direct complex solve `(K−Ω²M+iΩC)⁻¹(−MR)` in
+  `modal_response_p2_spike/frf_oracle.py`.
+- **Relative response.** For base excitation the reported disp/vel/accel are relative
+  to the moving base (the P1a relative formulation); absolute acceleration would add
+  the input back.
+- Low-damping resonances are sharp — use `-biased` (or a fine `-log`) so the peak is
+  not stepped over; an *undamped* mode sampled exactly at `Ω=ω_a` gives an infinite
+  FRF by construction.
+
 ## Scope
 
-P1a covers **uniform base-acceleration** excitation with classical (diagonal) modal
-damping. General load-pattern modal loads, non-classical damping (see ADR 46
-`complexEigen`), CQC/SRSS response-spectrum combination (P1b), FRF/steady-state
-dynamics (P2), and random/PSD→RMS (P3) are separate phases of ADR 44.
+P1a covers **uniform base-acceleration** transient excitation; P2 (`frequencyResponse`
+/ `steadyStateDynamics`) covers **harmonic base-acceleration** frequency response —
+both with classical (diagonal) modal damping. General load-pattern / nodal-force modal
+loads, non-classical damping (see ADR 46 `complexEigen`), CQC/SRSS response-spectrum
+combination (P1b), and random/PSD→RMS (P3) are separate phases of ADR 44.
 
 Validation: `tests/test_ladrunoModalResponse.py` (SDOF exact vs numpy PWL across all
 damping branches; multi-mode vs OpenSees Newmark and vs an independent full-matrix

@@ -1263,6 +1263,23 @@ static int Tcl_ops_modalResponseHistory(ClientData clientData, Tcl_Interp *inter
     return TCL_OK;
 }
 
+// Ladruno ADR44 P2
+static int Tcl_ops_frequencyResponse(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {
+    wrapper->resetCommandLine(argc, 1, argv);
+
+    if (OPS_LadrunoFrequencyResponse() < 0) return TCL_ERROR;
+
+    return TCL_OK;
+}
+
+static int Tcl_ops_steadyStateDynamics(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {
+    wrapper->resetCommandLine(argc, 1, argv);
+
+    if (OPS_LadrunoSteadyStateDynamics() < 0) return TCL_ERROR;
+
+    return TCL_OK;
+}
+
 static int Tcl_ops_systemSize(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {
     wrapper->resetCommandLine(argc, 1, argv);
 
@@ -2022,6 +2039,8 @@ TclWrapper::addOpenSeesCommands(Tcl_Interp* interp)
     addCommand(interp,"criticalTimeStep", &Tcl_ops_criticalTimeStep);
     addCommand(interp,"complexEigen", &Tcl_ops_complexEigen);   // Ladruno ADR46
     addCommand(interp,"modalResponseHistory", &Tcl_ops_modalResponseHistory); // Ladruno ADR44
+    addCommand(interp,"frequencyResponse", &Tcl_ops_frequencyResponse);        // Ladruno ADR44 P2
+    addCommand(interp,"steadyStateDynamics", &Tcl_ops_steadyStateDynamics);    // Ladruno ADR44 P2
     addCommand(interp,"systemSize", &Tcl_ops_systemSize);
     addCommand(interp,"version", &Tcl_ops_version);
     addCommand(interp,"setMaxOpenFiles", &Tcl_ops_setMaxOpenFiles);

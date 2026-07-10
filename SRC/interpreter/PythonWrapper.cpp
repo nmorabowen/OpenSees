@@ -2193,6 +2193,32 @@ static PyObject *Py_ops_modalResponseHistory(PyObject *self, PyObject *args)
     return wrapper->getResults();
 }
 
+// Ladruno ADR44 P2: modal FRF sweep (frequencyResponse)
+static PyObject *Py_ops_frequencyResponse(PyObject *self, PyObject *args)
+{
+    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
+
+    if (OPS_LadrunoFrequencyResponse() < 0) {
+	opserr<<(void*)0;
+	return NULL;
+    }
+
+    return wrapper->getResults();
+}
+
+// Ladruno ADR44 P2: steady-state dynamics amplitude sweep (steadyStateDynamics)
+static PyObject *Py_ops_steadyStateDynamics(PyObject *self, PyObject *args)
+{
+    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
+
+    if (OPS_LadrunoSteadyStateDynamics() < 0) {
+	opserr<<(void*)0;
+	return NULL;
+    }
+
+    return wrapper->getResults();
+}
+
 static PyObject *Py_ops_systemSize(PyObject *self, PyObject *args)
 {
     wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
@@ -3406,6 +3432,8 @@ PythonWrapper::addOpenSeesCommands()
     addCommand("criticalTimeStep", &Py_ops_criticalTimeStep);
     addCommand("complexEigen", &Py_ops_complexEigen);   // Ladruno ADR46
     addCommand("modalResponseHistory", &Py_ops_modalResponseHistory); // Ladruno ADR44
+    addCommand("frequencyResponse", &Py_ops_frequencyResponse);       // Ladruno ADR44 P2
+    addCommand("steadyStateDynamics", &Py_ops_steadyStateDynamics);   // Ladruno ADR44 P2
     addCommand("systemSize", &Py_ops_systemSize);
     addCommand("version", &Py_ops_version);
     addCommand("pyversion", &Py_ops_pyversion);

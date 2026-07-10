@@ -1,0 +1,425 @@
+"""LadrunoFrequencyResponse (ADR 44 P2, tag 33024) — frequencyResponse /
+steadyStateDynamics gates.
+
+Once `eigen` + `modalProperties` have run, the steady harmonic response of a
+LINEAR structure to a uniform base acceleration u_g''(t)=amp*e^{+iOmt} (relative
+formulation) is the modal sum
+
+    u_hat(Om) = amp * sum_a (phi_a Vscale_a)(-Gamma_a) H_a(Om),
+    H_a(Om)   = 1/(w_a^2 - Om^2 + i Om d_a),   d_a = c_a/m_a.
+
+`frequencyResponse` reports the full complex FRF {f, Re, Im}; `steadyStateDynamics`
+reports the harmonic amplitude {f, |.|}.  Frequencies are in Hz (Om=2pi f).
+
+Gates (ADR 44 §7/§8):
+  test_mdof_frf_vs_direct[disp/vel/accel]
+        THE headline gate: OpenSees frequencyResponse (Rayleigh C=a0 M+a1 K) vs an
+        INDEPENDENT numpy DIRECT complex solve (K-Om^2 M+i Om C)^{-1}(-M R).  This
+        does NOT reuse the modal formula, so it pins sign + normalization + the
+        H_a form end-to-end.  Covers gate (a) magnitude+phase.
+  test_sdof_frf_closed_form
+        1-DOF |H| and phase vs the closed form, incl the resonant peak 1/(2 xi w^2)
+        and +90deg response phase at resonance.
+  test_frf_peaks_at_modal_freqs  (gate b)
+        -biased sweep: |FRF| local maxima sit within 1% of the eigen frequencies.
+  test_ssd_static_limit          (gate c)
+        steadyStateDynamics at Om->0 equals the static response |K^{-1} M R|.
+  test_ssd_equals_frf_magnitude / test_damping_channel_equiv / grid + guards.
+
+Small models use `eigen -fullGenLapack` (ARPACK needs NEV<N).
+"""
+import math
+
+import numpy as np
+import pytest
+
+from _testbed import ops
+
+pytestmark = [pytest.mark.zone_a]
+
+TWO_PI = 2.0 * math.pi
+
+
+# ---------------------------------------------------------------------------
+# numpy references
+# ---------------------------------------------------------------------------
+def modal_eig(M, K):
+    """Mass-normalized undamped modes: phi^T M phi = I, K phi = M phi diag(w^2)."""
+    Lam, Q = np.linalg.eigh(M)
+    Mis = Q @ np.diag(1.0 / np.sqrt(Lam)) @ Q.T
+    w2, U = np.linalg.eigh(Mis @ K @ Mis)
+    Phi = Mis @ U
+    return np.sqrt(np.clip(w2, 0.0, None)), Phi
+
+
+def frf_direct(M, K, C, R, freqs, dof, resp="disp", amp=1.0):
+    """Physical relative-response FRF via the DIRECT complex solve."""
+    out = []
+    for f in freqs:
+        Om = TWO_PI * f
+        D = K - Om * Om * M + 1j * Om * C
+        u = np.linalg.solve(D, -(M @ R))[dof]
+        if resp == "vel":
+            u *= 1j * Om
+        elif resp == "accel":
+            u *= -Om * Om
+        out.append(amp * u)
+    return np.array(out)
+
+
+def frf_modal(M, K, dfun, R, freqs, dof, resp="disp", amp=1.0):
+    """Modal-sum FRF with an arbitrary per-mode d_a=dfun(w_a) (covers uniform xi)."""
+    w, Phi = modal_eig(M, K)
+    out = []
+    for f in freqs:
+        Om = TWO_PI * f
+        uc = 0.0 + 0.0j
+        for a in range(Phi.shape[1]):
+            phi = Phi[:, a]
+            Gam = phi @ (M @ R)
+            H = 1.0 / (w[a] * w[a] - Om * Om + 1j * Om * dfun(w[a]))
+            uc += phi[dof] * (-Gam) * H
+        if resp == "vel":
+            uc *= 1j * Om
+        elif resp == "accel":
+            uc *= -Om * Om
+        out.append(amp * uc)
+    return np.array(out)
+
+
+# ---------------------------------------------------------------------------
+# model builders (1-D axial chain, ndf=1) — mirror the P1a battery
+# ---------------------------------------------------------------------------
+def _build_sdof(m, k):
+    ops.wipe()
+    ops.model('basic', '-ndm', 1, '-ndf', 1)
+    ops.node(1, 0.0); ops.fix(1, 1)
+    ops.node(2, 1.0); ops.mass(2, m)
+    ops.uniaxialMaterial('Elastic', 1, k)
+    ops.element('Truss', 1, 1, 2, 1.0, 1)
+
+
+def _build_chain(masses, ks):
+    ops.wipe()
+    ops.model('basic', '-ndm', 1, '-ndf', 1)
+    ops.node(1, 0.0); ops.fix(1, 1)
+    for i, mm in enumerate(masses, start=2):
+        ops.node(i, float(i - 1)); ops.mass(i, mm)
+    for e, kk in enumerate(ks, start=1):
+        ops.uniaxialMaterial('Elastic', e, kk)
+        ops.element('Truss', e, e, e + 1, 1.0, e)
+
+
+def _chain_MK(masses, ks):
+    n = len(masses)
+    M = np.diag(np.asarray(masses, float))
+    K = np.zeros((n, n))
+    for i, kk in enumerate(ks):
+        lo = i - 1
+        if lo >= 0:
+            K[lo, lo] += kk
+        K[i, i] += kk
+        if lo >= 0:
+            K[lo, i] -= kk; K[i, lo] -= kk
+    return M, K
+
+
+def _run(cmd, path, **_):
+    """Call a P2 command, return the {f, ...} table as an (nf, ncol) array.
+
+    Reads the -out file (source of truth) and cross-checks the returned list.
+    """
+    res = cmd()
+    arr = np.loadtxt(str(path))
+    if arr.ndim == 1:
+        arr = arr.reshape(1, -1)
+    if res:  # returned table should carry the same values as the -out file
+        r = np.array(res, dtype=float).ravel()
+        assert r.size == arr.size, (r.size, arr.size)
+        assert np.allclose(r, arr.ravel(), rtol=1e-9, atol=0), "return != -out file"
+    return arr
+
+
+# ---------------------------------------------------------------------------
+# THE headline gate: FRF vs direct complex solve
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("resp", ["disp", "vel", "accel"])
+def test_mdof_frf_vs_direct(tmp_path, resp):
+    masses = [2.0, 3.0, 1.5]; ks = [1200.0, 900.0, 600.0]
+    a0, a1 = 0.30, 2.0e-3
+    fmin, fmax, nf = 0.05, 5.0, 220
+
+    _build_chain(masses, ks)
+    ops.eigen('-fullGenLapack', 3)
+    ops.modalProperties()
+    path = tmp_path / f"frf_{resp}.out"
+    arr = _run(lambda: ops.frequencyResponse(
+        '-freq', fmin, fmax, nf, '-lin', '-baseAccel', '-dir', 1,
+        '-rayleigh', a0, a1, '-node', 4, '-dof', 1, '-resp', resp,
+        '-out', str(path)), path)
+
+    freqs = np.linspace(fmin, fmax, nf)
+    assert np.allclose(arr[:, 0], freqs, rtol=0, atol=1e-9)
+
+    M, K = _chain_MK(masses, ks)
+    C = a0 * M + a1 * K
+    ref = frf_direct(M, K, C, np.ones(3), freqs, dof=2, resp=resp)  # node4 = dof 2
+
+    got = arr[:, 1] + 1j * arr[:, 2]
+    scale = np.max(np.abs(ref))
+    err = np.max(np.abs(got - ref)) / scale
+    assert scale > 1e-8
+    assert err < 1e-8, f"{resp}: FRF vs direct rel err {err:.2e}"
+
+
+# ---------------------------------------------------------------------------
+# SDOF closed form: resonant peak height + phase
+# ---------------------------------------------------------------------------
+def test_sdof_frf_closed_form(tmp_path):
+    m, k, xi = 2.0, 800.0, 0.05
+    w0 = math.sqrt(k / m)
+    f0 = w0 / TWO_PI
+
+    _build_sdof(m, k)
+    ops.eigen('-fullGenLapack', 1)
+    ops.modalProperties()
+    # sample exactly at resonance and at DC
+    path = tmp_path / "sdof.out"
+    arr = _run(lambda: ops.frequencyResponse(
+        '-freq', f0, f0, 1, '-baseAccel', '-dir', 1, '-damp', xi,
+        '-node', 2, '-dof', 1, '-out', str(path)), path)
+    u_res = arr[0, 1] + 1j * arr[0, 2]
+
+    peak_analytic = 1.0 / (2.0 * xi * w0 * w0)        # |H(w0)| = 1/(2 xi w0^2)
+    assert abs(abs(u_res) - peak_analytic) / peak_analytic < 1e-6
+    # response phase at resonance is +90 deg (u = +i/(w0 d); see the spike)
+    assert abs(math.degrees(math.atan2(u_res.imag, u_res.real)) - 90.0) < 1e-4
+
+    # static limit u(0) = -m/k
+    p0 = tmp_path / "sdof0.out"
+    a0 = _run(lambda: ops.frequencyResponse(
+        '-freq', 1e-6, 1e-6, 1, '-baseAccel', '-dir', 1, '-damp', xi,
+        '-node', 2, '-dof', 1, '-out', str(p0)), p0)
+    assert abs((a0[0, 1] + 1j * a0[0, 2]).real - (-m / k)) < 1e-8
+
+
+# ---------------------------------------------------------------------------
+# gate (b): FRF magnitude peaks at the modal frequencies (resonance-biased grid)
+# ---------------------------------------------------------------------------
+def test_frf_peaks_at_modal_freqs(tmp_path):
+    masses = [2.0, 3.0, 1.5]; ks = [1200.0, 900.0, 600.0]
+    _build_chain(masses, ks)
+    lam = ops.eigen('-fullGenLapack', 3)
+    ops.modalProperties()
+    modal_hz = np.sort([math.sqrt(l) / TWO_PI for l in lam])
+
+    path = tmp_path / "biased.out"
+    arr = _run(lambda: ops.steadyStateDynamics(
+        '-freq', 0.05, 6.0, 300, '-biased', '-baseAccel', '-dir', 1,
+        '-damp', 0.02, '-node', 4, '-dof', 1, '-out', str(path)), path)
+    f, mag = arr[:, 0], arr[:, 1]
+
+    peaks = [f[i] for i in range(1, len(f) - 1)
+             if mag[i] > mag[i - 1] and mag[i] > mag[i + 1]]
+    assert len(peaks) >= 3, f"expected >=3 resonances, found {len(peaks)}"
+    for mf in modal_hz:
+        assert min(abs(np.array(peaks) - mf)) / mf < 0.01, f"no peak near {mf:.3f} Hz"
+
+
+# ---------------------------------------------------------------------------
+# gate (c): SSD static limit
+# ---------------------------------------------------------------------------
+def test_ssd_static_limit(tmp_path):
+    masses = [2.0, 3.0, 1.5]; ks = [1200.0, 900.0, 600.0]
+    _build_chain(masses, ks)
+    ops.eigen('-fullGenLapack', 3)
+    ops.modalProperties()
+    path = tmp_path / "ssd0.out"
+    arr = _run(lambda: ops.steadyStateDynamics(
+        '-freq', 1e-6, 1e-6, 1, '-baseAccel', '-dir', 1, '-damp', 0.03,
+        '-node', 4, '-dof', 1, '-out', str(path)), path)
+
+    M, K = _chain_MK(masses, ks)
+    ustat = np.linalg.solve(K, -(M @ np.ones(3)))
+    assert abs(arr[0, 1] - abs(ustat[2])) / abs(ustat[2]) < 1e-6
+
+
+# ---------------------------------------------------------------------------
+# SSD amplitude == |frequencyResponse|
+# ---------------------------------------------------------------------------
+def test_ssd_equals_frf_magnitude(tmp_path):
+    masses = [2.0, 1.5]; ks = [800.0, 500.0]
+    _build_chain(masses, ks)
+    ops.eigen('-fullGenLapack', 2)
+    ops.modalProperties()
+    common = dict(node=3)
+    pf = tmp_path / "frf.out"; ps = tmp_path / "ssd.out"
+    frf = _run(lambda: ops.frequencyResponse(
+        '-freq', 0.1, 4.0, 60, '-baseAccel', '-dir', 1, '-damp', 0.04,
+        '-node', 3, '-dof', 1, '-out', str(pf)), pf)
+    ssd = _run(lambda: ops.steadyStateDynamics(
+        '-freq', 0.1, 4.0, 60, '-baseAccel', '-dir', 1, '-damp', 0.04,
+        '-node', 3, '-dof', 1, '-out', str(ps)), ps)
+    mag = np.hypot(frf[:, 1], frf[:, 2])
+    assert np.allclose(ssd[:, 1], mag, rtol=1e-12, atol=0)
+
+
+# ---------------------------------------------------------------------------
+# damping-channel equivalence: rayleigh == equivalent per-mode modalDamp
+# ---------------------------------------------------------------------------
+def test_damping_channel_equiv(tmp_path):
+    masses = [2.0, 1.5]; ks = [800.0, 500.0]
+    a0, a1 = 0.25, 1.5e-3
+    _build_chain(masses, ks)
+    lam = ops.eigen('-fullGenLapack', 2)
+    ops.modalProperties()
+    xis = [a0 / (2.0 * math.sqrt(l)) + a1 * math.sqrt(l) / 2.0 for l in lam]
+
+    pr = tmp_path / "ray.out"; pm = tmp_path / "mod.out"
+    r = _run(lambda: ops.frequencyResponse(
+        '-freq', 0.1, 4.0, 80, '-baseAccel', '-dir', 1, '-rayleigh', a0, a1,
+        '-node', 3, '-dof', 1, '-out', str(pr)), pr)
+    m = _run(lambda: ops.frequencyResponse(
+        '-freq', 0.1, 4.0, 80, '-baseAccel', '-dir', 1, '-modalDamp', *xis,
+        '-node', 3, '-dof', 1, '-out', str(pm)), pm)
+    assert np.allclose(r, m, rtol=1e-10, atol=1e-14)
+
+
+# ---------------------------------------------------------------------------
+# uniform-xi channel vs the modal reference (covers -damp against numpy)
+# ---------------------------------------------------------------------------
+def test_uniform_damping_vs_modal_reference(tmp_path):
+    masses = [2.0, 3.0, 1.5]; ks = [1200.0, 900.0, 600.0]
+    xi = 0.05
+    fmin, fmax, nf = 0.05, 5.0, 150
+    _build_chain(masses, ks)
+    ops.eigen('-fullGenLapack', 3)
+    ops.modalProperties()
+    path = tmp_path / "uni.out"
+    arr = _run(lambda: ops.frequencyResponse(
+        '-freq', fmin, fmax, nf, '-baseAccel', '-dir', 1, '-damp', xi,
+        '-node', 4, '-dof', 1, '-out', str(path)), path)
+
+    M, K = _chain_MK(masses, ks)
+    freqs = np.linspace(fmin, fmax, nf)
+    ref = frf_modal(M, K, lambda w: 2.0 * xi * w, np.ones(3), freqs, dof=2)
+    got = arr[:, 1] + 1j * arr[:, 2]
+    assert np.max(np.abs(got - ref)) / np.max(np.abs(ref)) < 1e-8
+
+
+# ---------------------------------------------------------------------------
+# grid checks: log spacing + biased superset
+# ---------------------------------------------------------------------------
+def test_log_grid_and_biased_superset(tmp_path):
+    masses = [2.0, 1.5]; ks = [800.0, 500.0]
+    _build_chain(masses, ks)
+    ops.eigen('-fullGenLapack', 2)
+    ops.modalProperties()
+
+    pl = tmp_path / "log.out"
+    lg = _run(lambda: ops.frequencyResponse(
+        '-freq', 0.1, 10.0, 25, '-log', '-baseAccel', '-dir', 1, '-damp', 0.03,
+        '-node', 3, '-dof', 1, '-out', str(pl)), pl)
+    f = lg[:, 0]
+    assert abs(f[0] - 0.1) < 1e-12 and abs(f[-1] - 10.0) < 1e-9
+    ratios = f[1:] / f[:-1]
+    assert np.allclose(ratios, ratios[0], rtol=1e-9)  # geometric
+
+    pb = tmp_path / "bias.out"
+    bi = _run(lambda: ops.frequencyResponse(
+        '-freq', 0.1, 10.0, 25, '-biased', '-baseAccel', '-dir', 1, '-damp', 0.03,
+        '-node', 3, '-dof', 1, '-out', str(pb)), pb)
+    assert bi.shape[0] > 25                      # clustered extras added
+    assert np.all(np.diff(bi[:, 0]) > 0)         # strictly sorted, de-duped
+
+
+# ---------------------------------------------------------------------------
+# refuse-loudly guards
+# ---------------------------------------------------------------------------
+def test_guard_no_modalproperties():
+    _build_sdof(2.0, 500.0)
+    ops.eigen('-fullGenLapack', 1)
+    with pytest.raises(Exception):
+        ops.frequencyResponse('-freq', 0.1, 5.0, 10, '-baseAccel', '-dir', 1,
+                              '-damp', 0.05, '-node', 2, '-dof', 1)
+
+
+def test_guard_bad_dof():
+    _build_sdof(2.0, 500.0)
+    ops.eigen('-fullGenLapack', 1); ops.modalProperties()
+    with pytest.raises(Exception):
+        ops.frequencyResponse('-freq', 0.1, 5.0, 10, '-baseAccel', '-dir', 1,
+                              '-damp', 0.05, '-node', 2, '-dof', 3)  # ndf==1
+
+
+def test_guard_bad_node():
+    _build_sdof(2.0, 500.0)
+    ops.eigen('-fullGenLapack', 1); ops.modalProperties()
+    with pytest.raises(Exception):
+        ops.frequencyResponse('-freq', 0.1, 5.0, 10, '-baseAccel', '-dir', 1,
+                              '-damp', 0.05, '-node', 99, '-dof', 1)
+
+
+def test_guard_missing_freq():
+    _build_sdof(2.0, 500.0)
+    ops.eigen('-fullGenLapack', 1); ops.modalProperties()
+    with pytest.raises(Exception):
+        ops.frequencyResponse('-baseAccel', '-dir', 1, '-damp', 0.05,
+                              '-node', 2, '-dof', 1)
+
+
+def test_guard_missing_damping():
+    _build_sdof(2.0, 500.0)
+    ops.eigen('-fullGenLapack', 1); ops.modalProperties()
+    with pytest.raises(Exception):
+        ops.frequencyResponse('-freq', 0.1, 5.0, 10, '-baseAccel', '-dir', 1,
+                              '-node', 2, '-dof', 1)
+
+
+def test_guard_duplicate_modes():
+    _build_chain([2.0, 1.5], [800.0, 500.0])
+    ops.eigen('-fullGenLapack', 2); ops.modalProperties()
+    with pytest.raises(Exception):
+        ops.frequencyResponse('-freq', 0.1, 5.0, 10, '-baseAccel', '-dir', 1,
+                              '-damp', 0.05, '-node', 3, '-dof', 1, '-modes', 1, 1)
+
+
+def test_guard_bad_resp():
+    _build_sdof(2.0, 500.0)
+    ops.eigen('-fullGenLapack', 1); ops.modalProperties()
+    with pytest.raises(Exception):
+        ops.frequencyResponse('-freq', 0.1, 5.0, 10, '-baseAccel', '-dir', 1,
+                              '-damp', 0.05, '-node', 2, '-dof', 1, '-resp', 'bogus')
+
+
+# NOTE: the element-wise stale-`modalProperties` guard in run() (mirroring P1a's
+# check()) is intentionally NOT unit-tested here: `modalProperties()` installs a
+# DirectIntegrationAnalysis that shadows `eigen`, so a second same-NEV `eigen`
+# fails ("no EigenSOE") before a stale snapshot can be constructed via openseespy.
+# The guard never false-positives on the in-sync path (all compute tests above run
+# eigen -> modalProperties -> frequencyResponse and pass), and matches the shipped,
+# validated P1a staleness check byte-for-byte.
+
+
+def test_guard_degenerate_sweep():
+    # fmax==fmin with nf>1 would emit nf identical rows -> refuse (use nf==1).
+    _build_sdof(2.0, 500.0)
+    ops.eigen('-fullGenLapack', 1); ops.modalProperties()
+    with pytest.raises(Exception):
+        ops.frequencyResponse('-freq', 3.0, 3.0, 5, '-baseAccel', '-dir', 1,
+                              '-damp', 0.05, '-node', 2, '-dof', 1)
+
+
+def test_fixed_response_node_is_zero(tmp_path):
+    # A fully fixed node still gets a (zero) eigenvector row, so getNumEigenvectors
+    # is >=1 and the non-exiting probe passes; the FRF is then identically zero
+    # (the node cannot move). The key point: we must NOT hit Node::getEigenvectors()
+    # exit(0) — that path is reserved for a genuine orphan node (no eigenvector at
+    # all), which the probe would refuse. Here the run completes and returns 0.
+    _build_sdof(2.0, 500.0)
+    ops.eigen('-fullGenLapack', 1); ops.modalProperties()
+    path = tmp_path / "fixed.out"
+    arr = _run(lambda: ops.frequencyResponse(
+        '-freq', 0.1, 5.0, 5, '-baseAccel', '-dir', 1, '-damp', 0.05,
+        '-node', 1, '-dof', 1, '-out', str(path)), path)
+    assert np.allclose(arr[:, 1:], 0.0)
