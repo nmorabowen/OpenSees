@@ -27,10 +27,11 @@
 // Parser/factory for LadrunoQuad (Ladruno fork). Flag-based:
 //   element LadrunoQuad tag n1 n2 n3 n4 matTag
 //       <-formulation std|bbar|ssp|eas> <-type PlaneStrain|PlaneStress>
-//       <-thick t> <-rho r> <-body b1 b2> <-pressure p>
+//       <-geom linear|finite> <-thick t> <-rho r> <-body b1 b2> <-pressure p>
 
 #include <LadrunoQuad.h>
 #include <NDMaterial.h>
+#include <FiniteStrainND2DMaterial.h>   // Ladruno (ADR 70): -geom finite material check
 #include <elementAPI.h>
 #include <string.h>
 
@@ -47,7 +48,7 @@ void *OPS_LadrunoQuad()
     opserr << "WARNING insufficient arguments\n";
     opserr << "Want: element LadrunoQuad tag n1 n2 n3 n4 matTag "
               "<-formulation std|bbar|ssp|eas> <-type PlaneStrain|PlaneStress> "
-              "<-thick t> <-rho r> <-body b1 b2> <-pressure p>\n";
+              "<-geom linear|finite> <-thick t> <-rho r> <-body b1 b2> <-pressure p>\n";
     return 0;
   }
 
@@ -76,6 +77,7 @@ void *OPS_LadrunoQuad()
   char typeBuf[24];
   strcpy(typeBuf, "PlaneStrain");
   LadrunoQuad::Formulation form = LadrunoQuad::Formulation::STD;
+  LadrunoQuad::Geom geom = LadrunoQuad::Geom::LINEAR;   // Ladruno (ADR 70)
 
   while (OPS_GetNumRemainingInputArgs() > 0) {
     const char *opt = OPS_GetString();
@@ -99,6 +101,13 @@ void *OPS_LadrunoQuad()
       else if (strcmp(f, "ssp") == 0)  form = LadrunoQuad::Formulation::SSP;
       else if (strcmp(f, "eas") == 0)  form = LadrunoQuad::Formulation::EAS;
       else { opserr << "WARNING LadrunoQuad -- unknown -formulation " << f << "\n"; return 0; }
+
+    } else if (strcmp(opt, "-geom") == 0) {
+      const char *gopt = OPS_GetString();
+      if (strcmp(gopt, "linear") == 0)      geom = LadrunoQuad::Geom::LINEAR;
+      else if (strcmp(gopt, "finite") == 0) geom = LadrunoQuad::Geom::FINITE;
+      else { opserr << "WARNING LadrunoQuad -- unknown -geom " << gopt
+                    << " (want linear|finite)\n"; return 0; }
 
     } else if (strcmp(opt, "-rho") == 0) {
       num = 1;
@@ -146,6 +155,28 @@ void *OPS_LadrunoQuad()
     return 0;
   }
 
+  // Ladruno (ADR 70): -geom finite is wired only for std/bbar (ssp/eas single-point
+  // finite lanes stay reserved). The material must be a FiniteStrainND2DMaterial —
+  // checked at setDomain for a clear runtime error.
+  if (geom == LadrunoQuad::Geom::FINITE &&
+      form != LadrunoQuad::Formulation::STD &&
+      form != LadrunoQuad::Formulation::BBAR) {
+    opserr << "WARNING LadrunoQuad -- '-geom finite' is supported only with "
+              "-formulation std|bbar (ssp/eas + finite are reserved, ADR 70)\n";
+    return 0;
+  }
+
+  // Ladruno (ADR 70): -geom finite drives the material by the deformation gradient
+  // (setTrialF), so the material MUST be a FiniteStrainND2DMaterial (e.g.
+  // LogStrain2D). Reject here — before the element exists — so a misuse can never
+  // reach the assembly with a non-finite material.
+  if (geom == LadrunoQuad::Geom::FINITE &&
+      dynamic_cast<FiniteStrainND2DMaterial *>(mat) == 0) {
+    opserr << "WARNING LadrunoQuad -- '-geom finite' needs a FiniteStrainND2DMaterial "
+              "(e.g. LogStrain2D); material " << matTag << " is not one\n";
+    return 0;
+  }
+
   // Ladruno (W2-E1): explicit bulk viscosity is wired only through the std/bbar
   // kernel (the SSP/EAS single-point lanes do not carry the bv force block). Strip
   // the coeffs (with a diagnostic) for any other formulation so Print stays honest.
@@ -159,7 +190,16 @@ void *OPS_LadrunoQuad()
     bvB1 = bvB2 = 0.0;
   }
 
+  // Ladruno (ADR 70): the explicit bulk-viscosity force block lives only in the
+  // small-strain resisting-force path; strip it (with a diagnostic) under -geom
+  // finite so Print stays honest.
+  if ((bvB1 > 0.0 || bvB2 > 0.0) && geom == LadrunoQuad::Geom::FINITE) {
+    opserr << "WARNING LadrunoQuad " << idata[0]
+           << " -- -bulkViscosity is not applied with -geom finite; ignoring it\n";
+    bvB1 = bvB2 = 0.0;
+  }
+
   return new LadrunoQuad(idata[0], idata[1], idata[2], idata[3], idata[4],
-                         *mat, typeBuf, thk, form, rho, b1, b2, pressure,
-                         bvB1, bvB2);   // Ladruno (W2-E1): bulk-viscosity coeffs
+                         *mat, typeBuf, thk, form, geom, rho, b1, b2, pressure,
+                         bvB1, bvB2);   // Ladruno (ADR 70) geom; (W2-E1) bulk-viscosity
 }
