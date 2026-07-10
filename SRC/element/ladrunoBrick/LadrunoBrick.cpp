@@ -2620,7 +2620,6 @@ LadrunoBrick::buildEAStrue(void)
 
   Matrix J0(3, 3);
   J0 = mNodeCrd * dNloc;       // J0(i,j) = dx_i/dxi_j at the centroid
-  J0.Invert(easJ0inv);         // easJ0inv(b,k) = dxi_b/dx_k
   easJ0det = J0(0,0) * (J0(1,1)*J0(2,2) - J0(1,2)*J0(2,1))
            - J0(0,1) * (J0(1,0)*J0(2,2) - J0(1,2)*J0(2,0))
            + J0(0,2) * (J0(1,0)*J0(2,1) - J0(1,1)*J0(2,0));
@@ -2641,6 +2640,11 @@ LadrunoBrick::buildEAStrue(void)
            << ": near-degenerate centroid Jacobian (det=" << easJ0det
            << ", volume-ratio=" << (scale > 0.0 ? fabs(easJ0det) / scale : 0.0)
            << "); -formulation eas will refuse to form terms for this element\n";
+    easJ0inv.Zero();           // never read (formEAStrue guard refuses first);
+                               // avoid J0.Invert on a singular J0 (undefined
+                               // contents) so easJ0inv stays finite.  // Ladruno
+  } else {
+    J0.Invert(easJ0inv);       // easJ0inv(b,k) = dxi_b/dx_k
   }
 }
 

@@ -350,11 +350,19 @@ void LadrunoQuad::buildEAStrue(void)
            << "); -formulation eas will refuse to form terms for this element\n";
   }
 
-  double inv = 1.0 / easJ0det;
-  easJ0inv(0, 0) =  J11 * inv;
-  easJ0inv(1, 1) =  J00 * inv;
-  easJ0inv(0, 1) = -J01 * inv;
-  easJ0inv(1, 0) = -J10 * inv;
+  // Only build the mode-map inverse for a healthy element. When easDegenerate,
+  // skip the 1/easJ0det so easJ0inv never holds inf/NaN -- defense-in-depth: the
+  // formEAStrue guard already refuses before any read of easJ0inv, but keeping it
+  // finite protects any future reader added outside that guarded path.  // Ladruno
+  if (!easDegenerate) {
+    double inv = 1.0 / easJ0det;
+    easJ0inv(0, 0) =  J11 * inv;
+    easJ0inv(1, 1) =  J00 * inv;
+    easJ0inv(0, 1) = -J01 * inv;
+    easJ0inv(1, 0) = -J10 * inv;
+  } else {
+    easJ0inv.Zero();
+  }
 }
 
 // eas -- computeMenh: the 3x4 enhanced-strain operator M at a Gauss point
