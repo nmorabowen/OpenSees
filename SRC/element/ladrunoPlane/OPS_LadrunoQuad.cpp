@@ -160,6 +160,20 @@ void *OPS_LadrunoQuad()
     return 0;
   }
 
+  // Ladruno (ADR 70): -geom finite is plane-strain only. formFinite's current
+  // volume weight dv = J·detJ0·thickness·w carries the in-plane Jacobian J but
+  // holds the thickness fixed — it omits the out-of-plane stretch λ = F_33 that a
+  // finite plane-stress state develops (thickness thins under stretch). Under
+  // PlaneStrain λ ≡ 1 so the weight is exact; under PlaneStress it is not. Refuse
+  // here — before the element exists — rather than assemble a silently wrong
+  // finite plane-stress residual/tangent.
+  if (geom == LadrunoQuad::Geom::FINITE && strcmp(typeBuf, "PlaneStress") == 0) {
+    opserr << "WARNING LadrunoQuad -- '-geom finite' is PlaneStrain only "
+              "(finite plane-stress omits the thickness stretch lambda in the "
+              "volume weight; use -type PlaneStrain, ADR 70)\n";
+    return 0;
+  }
+
   // Ladruno (ADR 70): -geom finite drives the material by the deformation gradient
   // (setTrialF), so the material MUST be a FiniteStrainND2DMaterial (e.g.
   // LogStrain2D). Reject here — before the element exists — so a misuse can never
