@@ -18,6 +18,7 @@ import tempfile
 import numpy as np
 import pytest
 
+pytest.importorskip("sympy")  # oracle derives symbolically; skip (not collection-error) without it
 import hex20_reference as ref
 
 _HERE = os.path.dirname(os.path.abspath(__file__))

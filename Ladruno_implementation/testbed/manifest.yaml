@@ -1530,3 +1530,23 @@ features:
       See FeastEigenSOE (33022) - one feature, two registry tags per the
       EigenSOE/EigenSolver pairing convention (ArpackSOE/ArpackSolver
       precedent). ADR 43 P1.
+
+  - feature: LadrunoBrick20                    # ADR 72 second-order brick (H20)
+    classtag: 33018          # ELE_TAG family; after LadrunoLST=33016 (reserved) + 33017 (claimed by the ADR-71 LadrunoUP draft); 33019 pencilled for the H27 sibling
+    tag_symbol: ELE_TAG_LadrunoBrick20
+    pr: 548
+    feature_class: element
+    required_tiers: [T0]
+    pytest: tests/test_hex20_kernel_cpp.py   # P0 kernel gate: standalone g++ driver vs the sympy oracle (hex20_reference.py) - N/dN/J/B/K/M + GP tables + row-sum/HRZ fractions; P1 adds tests/test_ladrunoBrick20_element.py (reduce-to Twenty_Node_Brick)
+    tcl: WAIVED(P0 ships the pure kernel + tag reservation only - no element/command surface until P1)
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+      - SRC/element/ladrunoBrick/LadrunoHex20Shape.h
+    dispatch: {tcl: false, functionMap: false}
+    status: planned
+    notes: >
+      20-node serendipity quadratic hex, ADR 72. P0 (PR #548) = pure
+      LadrunoHex20Shape.h kernel + sympy oracle + g++ cross-check + 33018
+      reservation; R1 blind ordering verify + R2 oracle-independence audit
+      both PASS. Element (-formulation std|uri, HRZ-only -lumped) lands P1+.
