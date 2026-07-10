@@ -51,6 +51,7 @@
 
 #include <string>
 #include <vector>
+#include <unordered_set>  // Ladruno ADR-71 (FW-F4): PressureSource node-contract cache
 
 namespace ladruno {
 
@@ -157,6 +158,16 @@ namespace ladruno {
 		void build();
 	};
 
+	// Ladruno ADR-71 (FW-F4): PRESSURE is contract-aware. Upstream *UP elements
+	// (FourNodeQuadUP, brickUP, SSP*UP, ...) carry DOF ndm = INTEGRAL(p dt), so the
+	// physical pressure is the VEL slot ndm (the historical hardcoded behavior,
+	// preserved verbatim for upstream parity). LadrunoUP (class tag 33017) uses the
+	// honest-p contract: DOF ndm IS p, so pressure is the DISP slot ndm. The
+	// decision is per-node, flag-free and automatic: a one-time reverse scan over
+	// the domain's elements caches the set of node tags attached to >=1 LadrunoUP
+	// element (record() is hot; the scan runs once, on first evaluate()). Mixed
+	// nodes (both element families attached — pathological but possible) prefer
+	// the LadrunoUP disp reading and emit a one-time opserr warning.
 	class PressureSource : public NodeResultSource {
 	public:
 		explicit PressureSource(const detail::ProcessInfo& info);
@@ -164,6 +175,10 @@ namespace ladruno {
 		void evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer) override;
 	private:
 		void build();
+		// Ladruno ADR-71 (FW-F4): one-time domain scan -> m_ladruno_up_nodes cache.
+		void scanUPContract(const detail::ProcessInfo& info);
+		bool m_up_scan_done = false;                 // scan ran (even if domain empty)
+		std::unordered_set<int> m_ladruno_up_nodes;  // node tags on >=1 LadrunoUP element
 	};
 
 	/* ===================================================================== */

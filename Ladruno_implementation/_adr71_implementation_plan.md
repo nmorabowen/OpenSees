@@ -272,8 +272,9 @@ setDomain. uOff/pOff int vectors from kernel dofMap.
 kernel dofMap. p slot = index ndm within each node block.
 
 **Response IDs (setResponse, pinned):** 1 = `stresses` (effective, per-GP,
-material stress vector); 2 = `stressesTotal` (effective + α·p on the normal
-components, per-GP); 3 = `porePressure` (per-GP scalar, Np·p_nodal);
+material stress vector); 2 = `stressesTotal` (σ_total = σ′ − α·p on the normal
+components per ADR §3.1 — tension-positive σ′, compression-positive p; pin
+wording corrected at 1.G, agent flag adjudicated); 3 = `porePressure` (per-GP scalar, Np·p_nodal);
 4 = `flux` (per-GP Darcy flux vector, −k̄·(∇p − ρ_f(b_f − ü)) — ndm comps);
 plus `material $gpNum …` forwarding (family idiom). IDs 1–4 chosen to avoid
 the plane-family's 21 (`stressZZ`) namespace; anything else → null response.
