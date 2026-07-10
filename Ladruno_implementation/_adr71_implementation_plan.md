@@ -220,6 +220,90 @@ No separate adversarial panel at P1 (ADR §7 policy — the battery carries it);
 MAIN does a focused self-review of 1.B's Rayleigh/IncInertia code against the
 §3.2 obligations before the PR.
 
+### WP1.A pins (FROZEN 2026-07-10 — agents implement exactly this)
+
+**Scope guard.** P1 = the unified element with the Q4 lane gated end-to-end.
+The element is shape-generic over the P0 providers, but the PARSER at P1
+rejects nNodes ∈ {6,10} with a named error ("Bézier Taylor–Hood lanes land at
+P3 — heterogeneous-ndf plumbing not yet built"); T3/H8 parse and run (their
+gates arrive P2). All nodes must have ndf = ndm+1 at P1 (equal-order only);
+`setDomain` errors loudly otherwise.
+
+**Files/ownership.** 1.B owns `SRC/element/ladrunoUP/LadrunoUP.{h,cpp}` ONLY.
+1.C owns `SRC/element/ladrunoUP/OPS_LadrunoUP.cpp` + the registration edits
+(`classTags.h`, `OpenSeesElementCommands.cpp`, `TclElementCommands.cpp`,
+`FEM_ObjectBrokerAllClasses.cpp`, `ladrunoUP/CMakeLists.txt`) + vanilla-ledger
+rows. 1.D (wave 2) owns the `sendSelf/recvSelf` bodies inside LadrunoUP.cpp +
+`tests/test_ladruno_up_mp_smoke.py`. 1.E owns `Ladruno_NodeResults.cpp` only.
+1.F owns `tests/test_ladruno_up_element_analytic.py` (i) and
+`tests/test_ladruno_up_element_equiv.py` (ii).
+
+**Ctor signature (C++, pinned):**
+
+```cpp
+LadrunoUP(int tag, int ndm, const ID& nodeTags,        // 3|4|8 nodes at P1
+          NDMaterial& theMaterial,                     // copied per GP via getCopy(ndm==2?"PlaneStrain":"ThreeDimensional")
+          double thickness,                            // 2D only; 1.0 in 3D
+          double Kf, double poro, double rhoF,
+          const Vector& perm,                          // ndm entries, k_hydraulic/gammaW
+          double biotAlpha, double Ks,                 // Ks<=0 => infinite grains
+          const Vector& body, const Vector& fluidBody, // ndm entries each
+          int formulation,                             // 0=std, 1=bbar
+          int pOrder,                                  // 0=equal (P1); 1=TH reserved P3
+          bool lumped,
+          int stabMode, double stabValue,              // 0=off,1=auto(stabValue=alpha0),2=manual(stabValue=alpha)
+          bool dynSeepage);                            // default true
+```
+
+Default ctor `LadrunoUP()` for the broker (tag 0, null members) as family idiom.
+
+**Member layout (pinned, per-instance — NO class statics, ADR-40):** provider
+selected by (ndm,nNodes) into a small tagged union/switch (no virtual provider
+class — the P0 structs are stateless); `NDMaterial** theMaterials[nGP]`;
+per-instance `Matrix K_, damp_, mass_` sized totalDof×totalDof at setDomain via
+kernel `dofMap` + persistent `Vector resid_`; committed-solid-K copy
+(`Matrix KcSolid_`) maintained at `commitState` for βKc Rayleigh; caches:
+`Matrix K0_` + `bool k0Dirty_`, `double stabAlpha_` + `bool stabDirty_`
+(both dirtied by `updateMaterialStage`/perm `setParameter`); GP scratch arrays
+(Nu/dNu/Np/dNp/dv) as per-instance std::vector<double>, sized once in
+setDomain. uOff/pOff int vectors from kernel dofMap.
+
+**DOF order:** per-node-interleaved [ux uy (uz) p] — identical to the P0
+kernel dofMap. p slot = index ndm within each node block.
+
+**Response IDs (setResponse, pinned):** 1 = `stresses` (effective, per-GP,
+material stress vector); 2 = `stressesTotal` (effective + α·p on the normal
+components, per-GP); 3 = `porePressure` (per-GP scalar, Np·p_nodal);
+4 = `flux` (per-GP Darcy flux vector, −k̄·(∇p − ρ_f(b_f − ü)) — ndm comps);
+plus `material $gpNum …` forwarding (family idiom). IDs 1–4 chosen to avoid
+the plane-family's 21 (`stressZZ`) namespace; anything else → null response.
+
+**The six §3.2 APIs (contract table verbatim from the ADR):** getTangentStiff
+[K,−Q;0,H]; getInitialStiff [K₀,−Q;0,H] cached+dirty; getDamp [C_Ray,0;Qᵀ,S+H̃]
+solid-only Rayleigh (own committed copy; never base helpers); getMass [M,0;0,0]
+(consistent or HRZ row-sum if `-lumped`, solid block only);
+getResistingForce [∫BᵀσdV − Q·p − body; H·p − f_seep] (NO rate terms);
+getResistingForceIncInertia = resisting + M·ü + getDamp()·v̇-terms (rates from
+trial vel/accel); addInertiaLoadToUnbalance −M·(R·üg), p-slots zeroed;
+getRayleighDampingForces override (solid-only). `update()` = strains→
+setTrialStrain only, p never enters the material. zeroLoad/addLoad:
+LOAD_TAG_SelfWeight REPLACES scaled body+fluidBody; all other elemental loads
+rejected with named error; zeroLoad restores ctor values.
+
+**Parser (1.C) pins:** surface per ADR §4.1 verbatim (incl. `-permH/-gammaW`
+sugar, `-stab auto <alpha0>` default-on for equal-order with one-line notice,
+unknown-flag-FATAL, solver notice at creation, `-geom linear` only-value,
+`-dynSeepage on|off`). classTags.h: `#define ELE_TAG_LadrunoUP 33017` with
+cross-registry comment; FIX the stale line-943 "33016–33019 free" note.
+`-stab` on TH → fatal (moot at P1, TH rejected anyway — keep the check for P3).
+stabAlphaAuto consumes h = provider elemSizeH (largest edge) + skeleton
+moduli from the MATERIAL INITIAL TANGENT (probe D0: Gs from D0 shear diag,
+Ks from λ+2G/3 — document extraction in code).
+
+**1.E pin:** `Ladruno_NodeResults.cpp` PressureSource: if the node carries a
+LadrunoUP element (query via node's element list class tags == 33017) read
+disp-slot ndm; else legacy vel-slot ndm. Flag-free, automatic. ⟨FW-F4⟩.
+
 ---
 
 ## P2–P4 sketch (each = own branch/PR; agents pinned at phase start)
@@ -244,6 +328,7 @@ MAIN does a focused self-review of 1.B's Rayleigh/IncInertia code against the
 ## Log
 
 - 2026-07-10 — plan created (P0 contract frozen; ADR locked via PR #547).
+- 2026-07-10 — **P0 SHIPPED** (PR #551 merged, squash b2ac3ba04). WP1.A pins frozen; P1 branch `feature/adr71-p1`.
 - 2026-07-10 — 0.A addendum committed (GP/basis pins, contractual-rule emission).
 - 2026-07-10 — 0.B/0.C landed (twin Opus agents); 0.D cross-run green first try:
   16 cases, 96/96 blocks + 16/16 dofMaps ≤1e-16 (gate 1e-9).
