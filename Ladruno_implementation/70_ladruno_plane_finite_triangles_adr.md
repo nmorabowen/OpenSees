@@ -1,6 +1,6 @@
 ---
 title: "ADR 70 — Plane finite-strain continuum family: shared 2D finite-strain kernel + LadrunoCST -geom finite + new LadrunoLST (T6)"
-status: in progress — P0 shipped (#540), P1 shipped (LadrunoQuad -geom finite, #543 + review fixes #545); NEXT P2 (CST) / P3 (LST)
+status: in progress — P0 shipped (#540), P1 shipped (LadrunoQuad -geom finite, #543 + review fixes #545), P2 (LadrunoCST -geom finite) landing; NEXT P3 (LST)
 ---
 
 # ADR 70 — Plane finite-strain triangles on a shared 2D finite-strain kernel
@@ -377,3 +377,45 @@ transposed K or a wrong-sign G₀ because Newton still converges to the right an
 
 **Next:** P2 = `LadrunoCST std -geom finite` (F-bar is a no-op on the constant-strain
 T3 — honest over-stiff baseline); P3 = new `LadrunoLST` (T6).
+
+### P2 — `LadrunoCST std -geom finite`
+
+Wires the T3 (33008) as the kernel's second consumer. No new class tag; no
+vanilla files touched (fork-owned `ladrunoPlane/` + the fork test dir + the
+banner regen). A mechanical mirror of P1 restricted to the single centroid GP,
+per the ADR gate policy (tests carry P2; no separate adversarial gate).
+
+**What landed**
+
+- **Geometry axis.** Same `enum class Geom { LINEAR = 0, FINITE = 2 }` as the
+  quad, `-geom linear|finite` parser flag, `Geom` carried in `sendSelf`/`recvSelf`
+  (data vector 13 → 14; default LINEAR ⇒ existing models unchanged in value).
+  `Print` reports the axis.
+- **`updateFinite()` / `formFinite()`.** The T3 is one centroid GP with constant
+  reference gradients: F once per element via the kernel, `setTrialF(2×2 F)` on
+  the material cast to `FiniteStrainND2DMaterial` (dynamic_cast, graceful fail),
+  then the kernel residual `∫σ g dv` + consistent tangent `a = c − σδ` with
+  `dv = J·detJ₀·t·w`. **No F-bar lane at all** — on the constant-strain T3,
+  J ≡ J₀ so F̄ = F identically (§3.2); CST-finite is the deliberate, honest,
+  volumetrically over-stiff baseline. det F ≤ 0 cuts the step through the
+  LogStrain2D `setTrialF` guard. Row-major kernel K copied element-wise into the
+  column-major shared Matrix (convention kept exact even though the T3 std
+  tangent is symmetric); shared static K/P zeroed on the error path (P1 review
+  lesson).
+- **Guards.** PlaneStress + finite refused at parse (thickness-stretch λ omitted
+  from the volume weight — plane-strain only, mirrors the quad); a
+  non-`FiniteStrainND2DMaterial` refused at parse + re-checked in `setDomain`
+  for broker-built elements; explicit bulk-viscosity stripped (diagnostic) under
+  finite. `getInitialStiff` stays the symmetric reference `BᵀD₀B` seed.
+
+**Verification.** `tests/test_ladrunocst_finite.py` (openseespy): reduce-to-linear
+at ε→0; homogeneous finite-stretch patch on a two-triangle unit square (both
+centroid stresses vs the LogStrain2D oracle σ(F) at the solved F, plus the
+deformed-config equilibrium check σxx·(1+b)·t = applied Fx); large-strain Newton
+convergence over elastic and a 3D J2 inner; an element-inverting one-step gate
+(det F ≤ 0 → analyze fails gracefully, interpreter survives); the **honest-
+baseline pin** — the CST/F-bar-quad response ratio collapses as ν→0.5 (locking),
+so a future fake per-element T3 "F-bar" (or a quad F-bar regression) trips it;
+and the parse guards.
+
+**Next:** P3 = new `LadrunoLST` (T6, 33016) — the F-bar-friendly triangle.
