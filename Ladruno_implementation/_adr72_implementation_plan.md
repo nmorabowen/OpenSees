@@ -75,7 +75,7 @@ element code exists. ADR §6 P0 row = the gate list; this section = the how.
 | 0.7 | Tag reservation `#define ELE_TAG_LadrunoBrick20 33018` + comment; adjust the "33017-33019 free" comment; LEDGER_vanilla_files row. **Frontier re-check vs ADR-71 first.** | **[FABLE]** |
 | 0.8 | PR-1 assembly, CI watch, plan-file checkbox update. | **[FABLE]** |
 
-- [x] P0 built + gated (R1 ✔ ordering blind-verify; R2 ✔ oracle audit incl. Patch-1 hardening; oracle 7/7; C++ cross-check 8/8; 14-pt verdict: rank-sufficient, `i14` note stands) — PR # backfilled below
+- [x] P0 landed via [PR #548](https://github.com/nmorabowen/OpenSees/pull/548) (R1 ✔ ordering blind-verify; R2 ✔ oracle audit incl. Patch-1 hardening; oracle 7/7; C++ cross-check 8/8; 14-pt verdict: rank-sufficient, `i14` note stands)
 
 ---
 
