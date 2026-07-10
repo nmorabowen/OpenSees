@@ -2,7 +2,7 @@
 title: "ADR 44 — Frequency-domain & modal-superposition response (FRF / SSD / random / LadrunoModalResponse): design spec"
 project: Ladruno
 type: ADR / design spec
-status: P1a+P1b+P2+P3 SHIPPED (modalResponseHistory #537, RSA -combine #539, frequencyResponse/steadyStateDynamics #544 + classic-Tcl #546, randomResponse [#552](https://github.com/nmorabowen/OpenSees/pull/552)) + -load nodal-force channel on FRF/SSD/random (this PR); remaining = -load on the P1a transient + cross-PSD follow-ups
+status: P1a+P1b+P2+P3 SHIPPED (modalResponseHistory #537, RSA -combine #539, frequencyResponse/steadyStateDynamics #544 + classic-Tcl #546, randomResponse [#552](https://github.com/nmorabowen/OpenSees/pull/552)) + -load nodal-force channel on FRF/SSD/random [#553](https://github.com/nmorabowen/OpenSees/pull/553); remaining = -load on the P1a transient + cross-PSD follow-ups
 priority: medium
 owner: nmora
 related:
