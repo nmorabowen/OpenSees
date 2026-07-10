@@ -38,8 +38,15 @@ constant-strain-triangle** sibling: `std` only (a 1-point triangle is
 rank-sufficient — there is nothing to stabilize), shipped as the baseline /
 triangular-mesh fallback / future E-FEM carrier.
 
-Both are **small-strain, geometrically linear** in v1 (ADR 25 Phase 1/2). They are
-careful ports of the upstream plane elements and reduce to them bit-for-bit:
+Both shipped **small-strain, geometrically linear** in v1 (ADR 25 Phase 1/2) and
+are careful ports of the upstream plane elements that reduce to them bit-for-bit
+(table below). Since ADR 70 both also carry an **updated-Lagrangian `-geom
+finite`** axis (std|bbar on the quad, std on the CST; PlaneStrain only, over a
+`FiniteStrainND2DMaterial` such as `LogStrain2D`) — see
+[[70_ladruno_plane_finite_triangles_adr]]. NOTE the CST-finite caveat: element-
+level F-bar is a no-op on the constant-strain T3, so it locks volumetrically
+near incompressibility (honest baseline; the usable finite triangle is the
+planned `LadrunoLST`).
 
 | Ladruno | `-formulation` | reduces to (upstream) | to |
 |---|---|---|---|
@@ -282,7 +289,9 @@ per-point `material`/`integrPoint` response (§7).
   warn-and-ignored unknown option (the parser has no such flag).
 - **Mass is lumped, not consistent** (§5.1) — a dynamic cross-check against
   `FourNodeQuad` will differ.
-- **Small strain only** in v1 — no `-geom corot/finite` yet (§8).
+- **`-geom finite` is PlaneStrain-only** (the volume weight omits the
+  plane-stress thickness stretch) and needs a `FiniteStrainND2DMaterial`;
+  `-geom corot` is still deferred (§8).
 - **Material must support the requested plane view** or construction fails.
 
 ---
@@ -308,9 +317,10 @@ per-point `material`/`integrPoint` response (§7).
 
 | Feature | Status |
 |---|---|
-| `-geom corot` / `-geom finite` (large displacement / finite strain) | deferred — drops in via the 2D [[solid_transformation_wrapper]] seam (ADR 25 P4/P5: `SolidTransformation2DCorot` / `2DFinite`, F-bar power **½**) |
+| `-geom finite` (finite strain) | **SHIPPED** (ADR 70 P1 quad std\|bbar w/ 2D F-bar power **½**; P2 CST std) via the shared `LadrunoFiniteStrain2DKernel` |
+| `-geom corot` (large rotation / small strain) | deferred — 2D EICR seam (`SolidTransformation2DCorot`, ADR 25 P4) |
 | `-formulation eas` (Simo–Rifai Q1/E4) | reserved, parser-refused (ADR 25 P3) |
-| `LogStrain2D` finite-strain material adaptor (`33016`) | draft / reserved (may ship as `PlaneStrain`/`PlaneStress` views of `LogStrainNDMaterial 33010`) |
+| `LogStrain2D` finite-strain material adaptor (`33016`) | **SHIPPED** (#536) — the `setTrialF` seam `-geom finite` drives |
 | Gradient-damage / phase-field localization (T1/T2) | research frontier — [[26_ladruno_plane_frontier_adr]] |
 | Element-level `-initStrain` | not planned — use `InitStrainNDMaterial` / `StagedStrain` (§5.4) |
 
