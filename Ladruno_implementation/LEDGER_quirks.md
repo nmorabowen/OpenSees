@@ -2879,9 +2879,14 @@ is immune (uses eigenvalues only, never Φ).
 
 - **An UNDAMPED mode sampled exactly at `Ω=ω_a` gives an infinite FRF.** With
   `d_a=0` the denominator `ω_a²−Ω²+iΩd_a` is real and hits 0 at resonance → `inf`.
-  Harmless with any real damping (imag part ≠ 0). The `-biased` grid clusters points
-  AROUND each `ω_a/2π` (±5%), not ON it, so it does not manufacture this; a `-lin`
-  grid landing exactly on an undamped resonance would. The same singularity appears
+  Harmless with any real damping (imag part ≠ 0). **CORRECTION (ADR-44 P2 review):**
+  the `-biased` grid clusters points in a ±5% window around each in-band `ω_a/2π`
+  AND its `k=0` sample lands **EXACTLY ON** `ω_a/2π` (`f = fa + halfw·(k/NCLUST)`,
+  k=0 ⇒ f=fa — `LadrunoModalResponse.cpp:632-634`). So a `-biased` sweep with
+  **zero** damping DOES manufacture this singularity (inf/NaN row at every in-band
+  mode) — the parser now emits a one-line WARNING when `-biased` is combined with an
+  exactly-zero `d_a`. A `-lin` grid landing exactly on an undamped resonance would
+  do the same. The same singularity appears
   at `Ω=0` (the `f=0` sample of a `fmin=0` sweep) if a RIGID mode is retained
   (`ω_a=0` → denom `0+0i`) — an unrestrained base-excited structure genuinely has an
   undefined DC steady displacement. Both are honest physical singularities (NaN/inf

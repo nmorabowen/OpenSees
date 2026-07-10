@@ -135,7 +135,19 @@ modalProperties(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** 
 int
 responseSpectrumAnalysis(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
 
-int 
+// Ladruno (ADR 44): modal-response family classic-Tcl handlers (bridges to the
+// OPS_Ladruno* entry points). Declared here so the Tcl_CreateCommand registration
+// block resolves them before their definitions later in commands.cpp.
+int
+modalResponseHistory(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
+
+int
+frequencyResponse(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
+
+int
+steadyStateDynamics(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
+
+int
 videoPlayer(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);
 
 int 
