@@ -43,6 +43,7 @@
 #include <complex>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 
 #if defined(_WIN32)
 #ifndef NOMINMAX
@@ -1048,3 +1049,410 @@ OPS_FreqResponseImpl(bool ampOnly, const char* cmd)
 
 int OPS_LadrunoFrequencyResponse(void)  { return OPS_FreqResponseImpl(false, "frequencyResponse"); }
 int OPS_LadrunoSteadyStateDynamics(void){ return OPS_FreqResponseImpl(true,  "steadyStateDynamics"); }
+
+// ===========================================================================
+// ADR 44 P3: stationary random response (PSD -> RMS)
+// ===========================================================================
+LadrunoRandomResponse::LadrunoRandomResponse(AnalysisModel* theModel)
+    : m_model(theModel)
+    , m_psd(0)
+    , m_direction(0)
+    , m_fmin(0.0), m_fmax(0.0)
+    , m_nf(0)
+    , m_sweep(LadrunoFrequencyResponse::SWEEP_LIN)
+    , m_nodeTag(0)
+    , m_dof(0)
+    , m_resp(LadrunoFrequencyResponse::RESP_DISP)
+    , m_duration(0.0)
+{
+}
+
+LadrunoRandomResponse::~LadrunoRandomResponse() {}
+
+int
+LadrunoRandomResponse::run(std::vector<std::vector<double> >& rows, Stats& out)
+{
+    rows.clear();
+    out = Stats();
+
+    if (m_psd == 0) {
+        opserr << "randomResponse - an input-PSD time series is required "
+                  "(-inputPSD).\n";
+        return -1;
+    }
+    // RMS is a band INTEGRAL: a single-frequency "grid" has zero measure, so
+    // unlike the P2 FRF (where nf==1 is a legitimate point query) refuse it.
+    if (m_nf < 2) {
+        opserr << "randomResponse - the sweep needs nf >= 2 points to carry a "
+                  "band integral (got nf=" << m_nf << ").\n";
+        return -1;
+    }
+
+    // The complex FRF sweep does ALL the shared validation (eigen/modalProperties
+    // freshness, node/dof, mode subset, damping-list length, negative eigenvalue)
+    // and emits H_x(f) rows {f, Re, Im} — the exact operator the PSD propagates
+    // through.  amp stays 1: the input PSD carries the excitation scale.
+    LadrunoFrequencyResponse fr(m_model);
+    fr.setBaseAccel(m_direction, 1.0);
+    fr.setSweep(m_fmin, m_fmax, m_nf, m_sweep);
+    fr.setDamping(m_damp);
+    fr.setResponse(m_nodeTag, m_dof, m_resp);
+    if (!m_modes_1based.empty())
+        fr.setModeSubset(m_modes_1based);
+
+    std::vector<std::vector<double> > frf;
+    if (fr.run(frf, false) < 0)
+        return -1; // (the FRF layer already reported why, prefixed
+                   //  "frequencyResponse -"; randomResponse rides it)
+
+    // zero-damped in-band mode -> the variance integral diverges; refuse rather
+    // than integrate a finite-but-meaningless (or inf-poisoned, under -biased)
+    // sample of a divergent integrand.  Out-of-band zero-damped modes keep a
+    // finite in-band integrand and pass.
+    {
+        Domain* domain = m_model->getDomainPtr();
+        const Vector& ev = domain->getEigenvalues();
+        std::vector<int> modes0;
+        if (m_modes_1based.empty())
+            for (int i = 0; i < ev.Size(); ++i) modes0.push_back(i);
+        else
+            for (int m : m_modes_1based) modes0.push_back(m - 1);
+        for (int mode0 : modes0) {
+            const double lam = ev(mode0);
+            const double wa = (lam > 0.0) ? std::sqrt(lam) : 0.0;
+            const double da = m_damp.coeff(mode0, wa);
+            const double fa = wa / (2.0 * M_PI);
+            const bool inBand = (fa >= m_fmin && fa <= m_fmax);
+            // a RIGID mode's FRF diverges at its own f=0 for ANY damping
+            // (denominator -Om^2 + i Om d -> 0 as Om -> 0), so d>0 does not
+            // rescue it: with f=0 in the band the variance integral diverges
+            // regardless of the Rayleigh a0 the P1a transient legitimately
+            // carries there.  (Opus gate MAJOR: the da<=0 test alone waved a
+            // w=0, -rayleigh a0>0 mode through to a silent inf/NaN RMS.)
+            if (inBand && wa == 0.0) {
+                opserr << "randomResponse - mode " << (mode0 + 1) << " is a "
+                          "rigid-body mode (w=0) and f=0 lies inside the sweep "
+                          "band: its response-variance integral diverges for "
+                          "any damping. Use fmin > 0 or exclude the mode "
+                          "(-modes).\n";
+                return -1;
+            }
+            if (inBand && da <= 0.0) {
+                opserr << "randomResponse - mode " << (mode0 + 1) << " (f="
+                       << fa << " Hz) lies inside the sweep band with ZERO "
+                          "damping: its response-variance integral diverges. "
+                          "Give the mode a positive damping ratio or exclude "
+                          "its resonance from the band.\n";
+                return -1;
+            }
+        }
+    }
+
+    // propagate: G_xx(f) = |H_x(f)|^2 * G_in(f), G_in sampled at f [Hz]
+    rows.reserve(frf.size());
+    for (const std::vector<double>& r : frf) {
+        const double f   = r[0];
+        const double gin = m_psd->getFactor(f);
+        if (gin < 0.0) {
+            opserr << "randomResponse - the input PSD is negative at f=" << f
+                   << " Hz (G=" << gin << "); a PSD must be >= 0 everywhere "
+                      "on the sweep.\n";
+            rows.clear();
+            return -1;
+        }
+        const double h2 = r[1] * r[1] + r[2] * r[2];
+        std::vector<double> row;
+        row.push_back(f);
+        row.push_back(gin);
+        row.push_back(h2 * gin);
+        rows.push_back(row);
+    }
+
+    // band moments (trapezoid on the — sorted — sweep grid)
+    double m0 = 0.0, m2 = 0.0;
+    for (size_t i = 1; i < rows.size(); ++i) {
+        const double f0 = rows[i - 1][0], f1 = rows[i][0];
+        const double g0 = rows[i - 1][2], g1 = rows[i][2];
+        const double df = f1 - f0;
+        m0 += 0.5 * df * (g0 + g1);
+        m2 += 0.5 * df * (f0 * f0 * g0 + f1 * f1 * g1);
+    }
+    out.m0  = m0;
+    out.m2  = m2;
+    out.rms = std::sqrt(m0);
+    if (m0 > 0.0)
+        out.nu0 = std::sqrt(m2 / m0);
+
+    // Davenport expected peak over a duration (optional)
+    if (m_duration > 0.0) {
+        const double nT = out.nu0 * m_duration;
+        if (nT <= 1.0) {
+            opserr << "WARNING randomResponse - nu0*T = " << nT << " <= 1: the "
+                      "Davenport peak factor needs many upcrossings (nu0*T >> 1); "
+                      "the peak entry is reported as NaN.\n";
+        } else {
+            if (nT < 2.0)
+                opserr << "WARNING randomResponse - nu0*T = " << nT << " is "
+                          "barely above 1: the Davenport asymptotic factor is "
+                          "unreliable this close to its validity edge (needs "
+                          "nu0*T >> 1); treat the peak estimate as indicative "
+                          "only.\n";
+            const double lnt = std::sqrt(2.0 * std::log(nT));
+            out.peak = (lnt + 0.5772 / lnt) * out.rms;
+            out.hasPeak = true;
+        }
+    }
+
+    // optional file output: {f, G_in, G_xx} rows
+    if (!m_outfile.empty()) {
+        std::ofstream os(m_outfile.c_str());
+        if (!os) {
+            opserr << "randomResponse - cannot open output file '"
+                   << m_outfile.c_str() << "'.\n";
+            return -1;
+        }
+        os << std::scientific << std::setprecision(15);
+        for (const std::vector<double>& r : rows) {
+            for (size_t j = 0; j < r.size(); ++j)
+                os << (j ? " " : "") << r[j];
+            os << "\n";
+        }
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Command entry point.
+//
+//   randomResponse -freq fmin fmax nf [-lin|-log|-biased]
+//       -baseAccel -dir $dir -inputPSD $tsTag
+//       (-damp $xi | -rayleigh $a0 $a1 | -modalDamp $xi1 ...)
+//       -node $tag -dof $dof [-resp disp|vel|accel] [-modes ...]
+//       [-out $file] [-stats] [-duration $T]
+//
+//   -inputPSD: ONE-SIDED PSD of the base acceleration, G(f) in Hz, supplied as
+//       a timeSeries sampled at f (e.g. Path with f->G points, or Constant).
+//   Returns the RMS (scalar).  With -stats: the list {rms, nu0, m0, m2}.
+//   -duration T IMPLIES the stats list form (even without -stats) and appends
+//   a 5th entry E[peak] — NaN when the estimate is invalid (nu0*T <= 1), so
+//   the shape is always stable at 5.  -out writes {f, G_in, G_xx}.
+//
+// Requires a prior `eigen N` and `modalProperties` (same seam as P1a/P2).
+// ---------------------------------------------------------------------------
+int
+OPS_LadrunoRandomResponse(void)
+{
+    const char* cmd = "randomResponse";
+    AnalysisModel* theModel = *OPS_GetAnalysisModel();
+    if (theModel == 0 || theModel->getDomainPtr() == 0) {
+        opserr << cmd << " - no AnalysisModel/Domain available.\n";
+        return -1;
+    }
+
+    double fmin = 0.0, fmax = 0.0, duration = 0.0;
+    int nf = 0, dir = 0, nodeTag = 0, dof = 0;
+    LadrunoFrequencyResponse::SweepKind sweep = LadrunoFrequencyResponse::SWEEP_LIN;
+    LadrunoFrequencyResponse::RespKind  resp  = LadrunoFrequencyResponse::RESP_DISP;
+    bool haveFreq = false, haveBase = false, haveDamp = false, haveNode = false;
+    bool wantStats = false;
+    TimeSeries* psd = 0;
+    LadrunoModalDamping damp;
+    std::vector<int> modes;
+    std::string outfile;
+    int one = 1;
+
+    while (OPS_GetNumRemainingInputArgs() > 0) {
+        const char* opt = OPS_GetString();
+
+        if (strcmp(opt, "-freq") == 0) {
+            double fv[2]; int nd = 2;
+            if (OPS_GetNumRemainingInputArgs() < 3 || OPS_GetDoubleInput(&nd, fv) < 0
+                    || OPS_GetIntInput(&one, &nf) < 0) {
+                opserr << cmd << " - -freq requires fmin fmax nf.\n"; return -1;
+            }
+            fmin = fv[0]; fmax = fv[1]; haveFreq = true;
+        }
+        else if (strcmp(opt, "-lin") == 0)    sweep = LadrunoFrequencyResponse::SWEEP_LIN;
+        else if (strcmp(opt, "-log") == 0)    sweep = LadrunoFrequencyResponse::SWEEP_LOG;
+        else if (strcmp(opt, "-biased") == 0) sweep = LadrunoFrequencyResponse::SWEEP_BIASED;
+        else if (strcmp(opt, "-baseAccel") == 0) haveBase = true;
+        else if (strcmp(opt, "-dir") == 0) {
+            if (OPS_GetNumRemainingInputArgs() < 1 || OPS_GetInt(&one, &dir) < 0) {
+                opserr << cmd << " - -dir requires a value.\n"; return -1;
+            }
+        }
+        else if (strcmp(opt, "-inputPSD") == 0) {
+            int tag;
+            if (OPS_GetNumRemainingInputArgs() < 1 || OPS_GetInt(&one, &tag) < 0) {
+                opserr << cmd << " - -inputPSD requires a timeSeries tag.\n"; return -1;
+            }
+            psd = OPS_getTimeSeries(tag);
+            if (psd == 0) {
+                opserr << cmd << " - no timeSeries with tag " << tag << ".\n"; return -1;
+            }
+        }
+        else if (strcmp(opt, "-node") == 0) {
+            if (OPS_GetNumRemainingInputArgs() < 1 || OPS_GetInt(&one, &nodeTag) < 0) {
+                opserr << cmd << " - -node requires a tag.\n"; return -1;
+            }
+            haveNode = true;
+        }
+        else if (strcmp(opt, "-dof") == 0) {
+            if (OPS_GetNumRemainingInputArgs() < 1 || OPS_GetInt(&one, &dof) < 0) {
+                opserr << cmd << " - -dof requires a value.\n"; return -1;
+            }
+        }
+        else if (strcmp(opt, "-resp") == 0 || strcmp(opt, "-response") == 0) {
+            if (OPS_GetNumRemainingInputArgs() < 1) {
+                opserr << cmd << " - -resp requires disp|vel|accel.\n"; return -1;
+            }
+            const char* rname = OPS_GetString();
+            if (strcmp(rname, "disp") == 0)       resp = LadrunoFrequencyResponse::RESP_DISP;
+            else if (strcmp(rname, "vel") == 0)   resp = LadrunoFrequencyResponse::RESP_VEL;
+            else if (strcmp(rname, "accel") == 0) resp = LadrunoFrequencyResponse::RESP_ACCEL;
+            else {
+                opserr << cmd << " - unknown -resp '" << rname
+                       << "' (use disp|vel|accel).\n"; return -1;
+            }
+        }
+        else if (strcmp(opt, "-damp") == 0) {
+            double xi;
+            if (OPS_GetNumRemainingInputArgs() < 1 || OPS_GetDouble(&one, &xi) < 0) {
+                opserr << cmd << " - -damp requires a value.\n"; return -1;
+            }
+            // Ladruno (ADR 44 review): negative damping is refused family-wide
+            // (P3: |H|^2 hides the conjugation entirely — a negative xi gives a
+            // byte-identical RMS, so it could NEVER be caught downstream).
+            if (xi < 0.0) {
+                opserr << cmd << " - -damp xi must be >= 0 (got " << xi << ").\n";
+                return -1;
+            }
+            damp.kind = LadrunoModalDamping::UNIFORM; damp.xi = xi; haveDamp = true;
+        }
+        else if (strcmp(opt, "-rayleigh") == 0) {
+            double v[2]; int nd = 2;
+            if (OPS_GetNumRemainingInputArgs() < 2 || OPS_GetDoubleInput(&nd, v) < 0) {
+                opserr << cmd << " - -rayleigh requires a0 a1.\n"; return -1;
+            }
+            damp.kind = LadrunoModalDamping::RAYLEIGH; damp.a0 = v[0]; damp.a1 = v[1];
+            haveDamp = true;
+        }
+        else if (strcmp(opt, "-modalDamp") == 0 || strcmp(opt, "-modalDamping") == 0) {
+            damp.xis.clear();
+            while (OPS_GetNumRemainingInputArgs() > 0) {
+                double item;
+                int rem_before = OPS_GetNumRemainingInputArgs();
+                if (OPS_GetDoubleInput(&one, &item) < 0) {
+                    if (OPS_GetNumRemainingInputArgs() < rem_before)
+                        OPS_ResetCurrentInputArg(-1);
+                    break;
+                }
+                damp.xis.push_back(item);
+            }
+            if (damp.xis.empty()) {
+                opserr << cmd << " - -modalDamp requires >=1 ratio.\n"; return -1;
+            }
+            for (size_t j = 0; j < damp.xis.size(); ++j) {
+                if (damp.xis[j] < 0.0) {
+                    opserr << cmd << " - -modalDamp entry " << (int)j << " = "
+                           << damp.xis[j] << " must be >= 0.\n";
+                    return -1;
+                }
+            }
+            damp.kind = LadrunoModalDamping::MODAL_LIST; haveDamp = true;
+        }
+        else if (strcmp(opt, "-modes") == 0) {
+            modes.clear();
+            while (OPS_GetNumRemainingInputArgs() > 0) {
+                int item;
+                int rem_before = OPS_GetNumRemainingInputArgs();
+                if (OPS_GetIntInput(&one, &item) < 0) {
+                    if (OPS_GetNumRemainingInputArgs() < rem_before)
+                        OPS_ResetCurrentInputArg(-1);
+                    break;
+                }
+                modes.push_back(item);
+            }
+            if (modes.empty()) {
+                opserr << cmd << " - -modes requires >=1 mode index.\n"; return -1;
+            }
+        }
+        else if (strcmp(opt, "-out") == 0) {
+            if (OPS_GetNumRemainingInputArgs() < 1) {
+                opserr << cmd << " - -out requires a filename.\n"; return -1;
+            }
+            outfile = OPS_GetString();
+        }
+        else if (strcmp(opt, "-stats") == 0) wantStats = true;
+        else if (strcmp(opt, "-duration") == 0) {
+            if (OPS_GetNumRemainingInputArgs() < 1 || OPS_GetDouble(&one, &duration) < 0) {
+                opserr << cmd << " - -duration requires a value.\n"; return -1;
+            }
+            if (duration <= 0.0) {
+                opserr << cmd << " - -duration must be > 0 (got " << duration
+                       << ").\n"; return -1;
+            }
+            wantStats = true; // the peak estimate rides the stats output
+        }
+        else {
+            opserr << cmd << " - unknown option '" << opt << "'.\n"; return -1;
+        }
+    }
+
+    if (!haveFreq) { opserr << cmd << " - -freq fmin fmax nf is required.\n"; return -1; }
+    if (!haveBase || dir < 1) {
+        opserr << cmd << " - -baseAccel -dir <1..ndf> is required (P3).\n"; return -1;
+    }
+    if (psd == 0) {
+        opserr << cmd << " - -inputPSD <tsTag> is required.\n"; return -1;
+    }
+    if (!haveNode || dof < 1) {
+        opserr << cmd << " - -node <tag> -dof <1..ndf> are required.\n"; return -1;
+    }
+    if (!haveDamp) {
+        opserr << cmd << " - a damping channel is required "
+                  "(-damp | -rayleigh | -modalDamp).\n"; return -1;
+    }
+
+    LadrunoRandomResponse rr(theModel);
+    rr.setBaseAccel(dir);
+    rr.setInputPSD(psd);
+    rr.setSweep(fmin, fmax, nf, sweep);
+    rr.setDamping(damp);
+    rr.setResponse(nodeTag, dof, resp);
+    if (!modes.empty())   rr.setModeSubset(modes);
+    if (!outfile.empty()) rr.setOutputFile(outfile.c_str());
+    if (duration > 0.0)   rr.setDuration(duration);
+
+    std::vector<std::vector<double> > rows;
+    LadrunoRandomResponse::Stats st;
+    if (rr.run(rows, st) < 0)
+        return -1;
+
+    if (wantStats) {
+        std::vector<double> vals;
+        vals.push_back(st.rms);
+        vals.push_back(st.nu0);
+        vals.push_back(st.m0);
+        vals.push_back(st.m2);
+        // with -duration the return shape is ALWAYS 5 entries — a peak that
+        // could not be estimated (nu0*T <= 1, e.g. a zero response) is NaN,
+        // never silently dropped (a 4-vs-5 shape would crash caller unpacks
+        // at runtime depending on the response; Opus gate MINOR).
+        if (duration > 0.0)
+            vals.push_back(st.hasPeak
+                               ? st.peak
+                               : std::numeric_limits<double>::quiet_NaN());
+        int n = static_cast<int>(vals.size());
+        if (OPS_SetDoubleOutput(&n, vals.data(), false) < 0) {
+            opserr << cmd << " - failed to set the stats output.\n"; return -1;
+        }
+    } else {
+        int n = 1;
+        double rms = st.rms;
+        if (OPS_SetDoubleOutput(&n, &rms, true) < 0) {
+            opserr << cmd << " - failed to set the RMS output.\n"; return -1;
+        }
+    }
+    return 0;
+}

@@ -204,4 +204,87 @@ private:
     std::string         m_outfile;
 };
 
+// ===========================================================================
+// ADR 44 P3: stationary random response (PSD -> RMS).
+//
+//   For a stationary base-acceleration excitation given as a ONE-SIDED power
+//   spectral density G(f) in Hz (sigma_ug^2 = int_0^inf G df — the engineering
+//   spec convention for wind / floor-vibration / equipment curves), the
+//   response auto-PSD of the requested quantity rides the P2-validated FRF:
+//
+//       G_xx(f) = |H_x(f)|^2 G(f),
+//
+//   where H_x(f) is EXACTLY what LadrunoFrequencyResponse::run() emits for the
+//   same node/dof/resp (relative disp / vel / accel).  The engineering outputs
+//   are then band integrals over the sweep grid [fmin, fmax] (trapezoid):
+//
+//       m_k  = int f^k G_xx(f) df                (spectral moments, k = 0, 2)
+//       RMS  = sqrt(m_0)                         (zero-mean stationary response)
+//       nu_0 = sqrt(m_2/m_0)  [Hz]               (mean zero-upcrossing rate)
+//       E[peak] = g * RMS  over a duration T     (Davenport peak factor,
+//           g = sqrt(2 ln(nu0 T)) + 0.5772/sqrt(2 ln(nu0 T)), needs nu0*T > 1)
+//
+//   CONVENTION PIN (the classic silent bug is a one-sided/two-sided or Hz /
+//   rad-per-s factor): vs the textbook TWO-SIDED rad/s PSD, G(f) = 4 pi S(Om).
+//   White-noise SDOF anchor in this convention: sigma_x^2 = G0/(8 xi w^3).
+//   Pinned empirically (Monte-Carlo synthetic realization, 0.6% agreement) in
+//   Ladruno_implementation/modal_response_p3_spike/psd_rms_oracle.py — a wrong
+//   one-sided factor would read ~41% (sqrt 2), a Hz/rad mixup ~150%.
+//
+//   A zero-damped mode whose resonance lies INSIDE the sweep band is refused:
+//   its white-noise variance integral diverges, so any finite number the grid
+//   returned would be meaningless (and a -biased grid samples exactly on the
+//   resonance -> inf row).  Zero-damped modes strictly outside the band keep a
+//   finite in-band integrand and are legal.
+// ===========================================================================
+class LadrunoRandomResponse
+{
+public:
+    struct Stats {
+        double rms  = 0.0;   // sqrt(m0)
+        double m0   = 0.0;   // int   G_xx df   over the band
+        double m2   = 0.0;   // int f^2 G_xx df over the band
+        double nu0  = 0.0;   // sqrt(m2/m0), Hz
+        double peak = 0.0;   // Davenport expected peak (valid iff hasPeak)
+        bool   hasPeak = false;
+    };
+
+    explicit LadrunoRandomResponse(AnalysisModel* theModel);
+    ~LadrunoRandomResponse();
+
+    // excitation: uniform base acceleration along a global dir, with one-sided
+    // PSD G(f) [Hz] sampled from the time series (getFactor(f), f in Hz)
+    void setBaseAccel(int direction)     { m_direction = direction; }
+    void setInputPSD(TimeSeries* psd)    { m_psd = psd; }
+    void setSweep(double fmin, double fmax, int nf,
+                  LadrunoFrequencyResponse::SweepKind k)
+    { m_fmin = fmin; m_fmax = fmax; m_nf = nf; m_sweep = k; }
+    void setDamping(const LadrunoModalDamping& d) { m_damp = d; }
+    void setModeSubset(const std::vector<int>& modes_1based)
+    { m_modes_1based = modes_1based; }
+    void setResponse(int nodeTag, int dof, LadrunoFrequencyResponse::RespKind r)
+    { m_nodeTag = nodeTag; m_dof = dof; m_resp = r; }
+    void setOutputFile(const char* fname) { m_outfile = fname ? fname : ""; }
+    void setDuration(double T)            { m_duration = T; } // for E[peak]
+
+    // Evaluate: FRF sweep -> G_xx rows {f, G_in, G_xx} -> band moments/stats.
+    // Also writes `rows` to the output file if one was set. Returns 0 / -1.
+    int run(std::vector<std::vector<double> >& rows, Stats& out);
+
+private:
+    AnalysisModel*      m_model;
+    TimeSeries*         m_psd;
+    int                 m_direction;
+    double              m_fmin, m_fmax;
+    int                 m_nf;
+    LadrunoFrequencyResponse::SweepKind m_sweep;
+    LadrunoModalDamping m_damp;
+    std::vector<int>    m_modes_1based;  // pass-through to the FRF (empty=all)
+    int                 m_nodeTag;
+    int                 m_dof;
+    LadrunoFrequencyResponse::RespKind  m_resp;
+    std::string         m_outfile;
+    double              m_duration;      // <=0: no peak estimate
+};
+
 #endif

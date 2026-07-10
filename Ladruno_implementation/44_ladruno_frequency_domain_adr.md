@@ -2,7 +2,7 @@
 title: "ADR 44 — Frequency-domain & modal-superposition response (FRF / SSD / random / LadrunoModalResponse): design spec"
 project: Ladruno
 type: ADR / design spec
-status: draft — design only, NO code
+status: P1a+P1b+P2+P3 SHIPPED (modalResponseHistory #537, RSA -combine #539, frequencyResponse/steadyStateDynamics #544 + classic-Tcl #546, randomResponse P3 PR); remaining = nodal-force -load + cross-PSD follow-ups
 priority: medium
 owner: nmora
 related:
@@ -28,8 +28,18 @@ updated: 2026-06-22
 > vibration, fast modal transient) that monetizes the infrastructure. Genuinely useful, but **build
 > it last — or only when a specific project needs it.**
 
-**Status:** draft. **Design only — no code has landed.** classTag **33024 (RESERVED, not yet
-built)** for the `LadrunoModalResponse` analysis/post-processor object. This ADR specifies the
+**Status (2026-07-10): P1a + P1b + P2 + P3 SHIPPED.** classTag **33024 ACTIVE**
+(`LadrunoModalResponse`). P1a `modalResponseHistory` [#537](https://github.com/nmorabowen/OpenSees/pull/537);
+P1b `responseSpectrumAnalysis -combine` [#539](https://github.com/nmorabowen/OpenSees/pull/539);
+P2 `frequencyResponse`/`steadyStateDynamics` [#544](https://github.com/nmorabowen/OpenSees/pull/544)
+(+ classic-Tcl wiring [#546](https://github.com/nmorabowen/OpenSees/pull/546));
+P3 `randomResponse` (PSD→RMS, one-sided-Hz input PSD, ν₀ + Davenport peak `-stats`) —
+this PR. Implementation record: `LEDGER_implementations` LadrunoModalResponse row +
+`LadrunoModalResponse_guide.md`. Deviations from the sketch below: P3's input is a
+single base-accel **auto**-PSD (`-inputPSD $tsTag`, one-sided, Hz) — the §5.3
+`-crossPSD` matrix input and `-load` pattern excitation are follow-ups; §4.5's
+full `H* S_PP Hᵀ` collapses to `G_xx=|H|²G` in that scope; stats are `ν₀=√(m2/m0)`
+(one-sided Hz moments) + Davenport peak with `-duration`. This ADR specifies the
 modal-superposition *frequency-domain toolkit* that rides on the existing `eigen` +
 `modalProperties` infrastructure. It is the fork's realization of [[modal_gap_study/00_SYNTHESIS]]
 **ADR-D ("Frequency domain")** and is the cheap, low-core-risk member of the modal ADR family

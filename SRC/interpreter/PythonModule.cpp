@@ -633,7 +633,7 @@ initopensees(void)
 "        • FeastEigen — band-targeted eigensolver: eigen -feast fmin fmax (ALL modes in the band, MKL contour integration; -certify = Sturm/inertia completeness; -rci = dfeast_srci RCI, distributed dmumps inner solve under openseesmp)\n"
 "        • LadrunoModalResponse — modalResponseHistory: exact PWL modal-superposition transient (per-mode Nigam-Jennings recurrence, base-accel; -damp/-rayleigh/-modalDamp; commits per step so recorders capture the history)\n"
 "        • modal combination — responseSpectrumAnalysis -combine SRSS|CQC|ABS|TenPercent (native CQC/SRSS/ABS/Ten-Percent of the per-mode response-spectrum fields; -damp/-modalDamp for CQC zeta)\n"
-"        • modal frequency domain — frequencyResponse / steadyStateDynamics: modal FRF H_a(Om) sweep + steady-state harmonic amplitude (base-accel; lin/log/resonance-biased grid; disp/vel/accel; -damp/-rayleigh/-modalDamp)\n"
+"        • modal frequency domain — frequencyResponse / steadyStateDynamics / randomResponse: modal FRF H_a(Om) sweep, steady-state harmonic amplitude + stationary random response PSD->RMS (one-sided Hz input PSD; RMS/nu0/Davenport peak -stats; base-accel; lin/log/resonance-biased grid; disp/vel/accel)\n"
 "\n";
         // FEATURES-END
         PySys_FormatStdout("%s\n", kFeatures);

@@ -182,13 +182,67 @@ amp = ops.steadyStateDynamics('-freq', 0.1, 20.0, 400, '-biased',
   not stepped over; an *undamped* mode sampled exactly at `Ω=ω_a` gives an infinite
   FRF by construction.
 
+## Random response — `randomResponse` (P3)
+
+For a **stationary random** base acceleration given as a **one-sided PSD `G(f)` in
+Hz** ((accel)²/Hz — the engineering-spec convention: `σ_üg² = ∫₀^∞ G df`; vs the
+textbook *two-sided rad/s* PSD, `G(f) = 4π·S(Ω)`), the response auto-PSD rides the
+P2 FRF unchanged:
+
+```
+G_xx(f) = |H_x(f)|² · G(f),
+m_k = ∫ f^k G_xx df  →  RMS = √m0,   ν₀ = √(m2/m0) [Hz],
+E[peak] = (√(2·ln(ν₀T)) + 0.5772/√(2·ln(ν₀T))) · RMS   (with -duration T)
+```
+
+```python
+ops.eigen('-fullGenLapack', nModes)
+ops.modalProperties()
+# input PSD as a timeSeries SAMPLED AT f IN Hz — e.g. band-limited flat:
+ops.timeSeries('Path', 1, '-time', 0.0, 0.999*f1, f1, f2,
+               '-values', 0.0, 0.0, G0, G0)
+rms = ops.randomResponse('-freq', f1, f2, 800, '-biased',
+                         '-baseAccel', '-dir', 1, '-inputPSD', 1,
+                         '-damp', 0.03, '-node', roof, '-dof', 1)
+
+# with statistics (and the Davenport expected peak over a 600 s exposure):
+rms, nu0, m0, m2, peak = ops.randomResponse(..., '-stats', '-duration', 600.0)
+```
+
+| flag | meaning |
+|---|---|
+| `-inputPSD $tsTag` | **required** — one-sided base-accel PSD `G(f)` [Hz], a `timeSeries` sampled at `f` (Path with `f→G` breakpoints, Constant for white noise) |
+| `-stats` | return `[rms, ν₀, m0, m2]` instead of the scalar RMS |
+| `-duration $T` | append the Davenport expected peak as a 5th entry (implies the `-stats` list form even without `-stats`; the entry is **NaN** when `ν₀·T ≤ 1`, and the estimate is flagged unreliable for `ν₀·T < 2`) |
+| `-out $file` | write `{f, G_in, G_xx}` rows |
+| *(rest)* | `-freq/-lin/-log/-biased`, `-baseAccel -dir`, damping channels, `-node/-dof`, `-resp`, `-modes` — same as P2 (no `-amp`: the PSD carries the excitation scale) |
+
+- **Convention pin.** White-noise SDOF anchor in this convention:
+  `σ_x² = G0/(8ξω³)` (and `σ_v = ω·σ_x`). Pinned analytically AND by a Monte-Carlo
+  synthetic realization in `modal_response_p3_spike/psd_rms_oracle.py` — a
+  one-sided/two-sided mixup reads ~41% (√2), an Hz/rad mixup ~150% (√2π).
+- **Use `-biased`.** The RMS is a band integral; a 200-pt `-lin` grid mis-integrates
+  a ξ=0.5% resonance by ~14% where the biased grid reads 0.05%.
+- **Refusals.** `nf ≥ 2` is required (a single point has zero measure); `G(f) < 0`
+  anywhere on the grid is refused; a **zero-damped mode inside the band is refused**
+  (its variance integral diverges — either damp it or exclude its resonance from
+  the band; undamped modes strictly *outside* the band are legal). A **rigid-body
+  mode (ω=0) with `fmin = 0`** is refused for *any* damping — its FRF diverges at
+  its own `f=0` even with Rayleigh `a0 > 0` (use `fmin > 0` or `-modes` to drop it).
+- The band is `[fmin, fmax]` — energy outside it is *not* counted. Make the band
+  cover both the input's support and every resonant peak that carries response
+  power (the white-noise tests use `fmax ≈ 30·fn` for sub-0.2% truncation).
+- `ν₀` is the mean zero-upcrossing rate (narrow-band response: `ν₀ ≈ f_n`); the
+  Davenport factor assumes a stationary Gaussian process over the exposure `T`.
+
 ## Scope
 
 P1a covers **uniform base-acceleration** transient excitation; P2 (`frequencyResponse`
-/ `steadyStateDynamics`) covers **harmonic base-acceleration** frequency response —
-both with classical (diagonal) modal damping. General load-pattern / nodal-force modal
-loads, non-classical damping (see ADR 46 `complexEigen`), CQC/SRSS response-spectrum
-combination (P1b), and random/PSD→RMS (P3) are separate phases of ADR 44.
+/ `steadyStateDynamics`) covers **harmonic base-acceleration** frequency response;
+P3 (`randomResponse`) covers **stationary random base-acceleration** (single
+auto-PSD input → RMS/ν₀/peak) — all with classical (diagonal) modal damping.
+General load-pattern / nodal-force modal loads and cross-PSD (matrix `S_PP`) input
+are follow-ups; non-classical damping → ADR 46 `complexEigen`.
 
 Validation: `tests/test_ladrunoModalResponse.py` (SDOF exact vs numpy PWL across all
 damping branches; multi-mode vs OpenSees Newmark and vs an independent full-matrix

@@ -2892,3 +2892,30 @@ is immune (uses eigenvalues only, never Φ).
   undefined DC steady displacement. Both are honest physical singularities (NaN/inf
   row), documented not guarded; fully-supported base-excitation models never carry a
   rigid mode.
+
+## `randomResponse` PSD convention is ONE-SIDED in Hz — the factor bugs have unmistakable signatures (ADR 44 P3)
+
+The `-inputPSD` time series is sampled at **f in Hz** and read as the **one-sided**
+PSD `G(f)` of the base acceleration (`σ_üg² = ∫₀^∞ G df` — the wind / floor-vibration
+/ equipment-spec convention). Against the random-vibration-textbook **two-sided
+rad/s** PSD `S(Ω)`: `G(f) = 4π·S(Ω=2πf)`, and the white-noise SDOF anchor becomes
+`σ_x² = G0/(8ξω³)` (NOT the textbook `πS0/(2ξω³)`). If a future edit scrambles the
+convention, the Monte-Carlo gate reads it immediately: a one-sided/two-sided mixup
+shows as a ~41 % (√2) RMS error, an Hz/rad mixup as ~150 % (√2π) — both pinned in
+`modal_response_p3_spike/psd_rms_oracle.py` (0.6 % agreement when correct). Related
+trap in the same spike: a synthetic realization `Σ√(2G·df)·cos(2πf_k t+φ_k)` has
+EXACT variance only over a full period `T = 1/df` — validate over whole periods or
+the input-variance check itself wobbles.
+
+## Staleness guards cannot see a stale `DomainModalProperties` that reproduces the SAME spectrum — write guard tests with unique stiffnesses (ADR 44 P3)
+
+`DomainModalProperties` survives `wipe()` (the [[#`wipe()` does NOT recreate the
+Domain — new domain-level state MUST be reset in `Domain::clearAll()` (ADR 46 P1)|
+clearAll leak]] family). The P1a/P2/P3 staleness guards compare eigenvalue count +
+element-wise values between the Domain and the snapshot — so a
+`wipe(); rebuild-IDENTICAL-model; eigen` sequence leaves a stale-but-equal snapshot
+the guard legitimately CANNOT distinguish (same spectrum ⇒ same Γ/Vscale up to sign
+⇒ numerically the same answer, so it is also harmless). The trap is in TESTS: a
+`guard_no_modalproperties` pytest that rebuilds the same `m,k` as any earlier test
+in the file will NOT raise. Give guard-test models a stiffness unique within the
+file (`test_ladrunoRandomResponse.py` uses k=512 for exactly this reason).
