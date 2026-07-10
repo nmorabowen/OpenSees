@@ -66,6 +66,25 @@
 #include <string.h>
 #include <stdlib.h>
 
+// OPS_GetStringFromAll portability shim — the two interpreter backends
+// disagree on the buffer contract: the modern-interpreter version
+// (OpenSeesCommands.cpp:1185) copies the token into `buf` AND returns it,
+// but the classic-Tcl version (elementAPI_TCL.cpp:494) just returns
+// OPS_GetString() and NEVER touches `buf`. Reading `buf` after the call —
+// the family idiom — therefore reads garbage under classic Tcl. Always go
+// through the RETURN VALUE, normalized into the caller's buffer here.
+static const char *upGetTok(char *buf, int len)
+{
+  const char *s = OPS_GetStringFromAll(buf, len);
+  if (s == 0)
+    return 0;
+  if (s != buf) {
+    strncpy(buf, s, (size_t)len - 1);
+    buf[len - 1] = '\0';
+  }
+  return buf;
+}
+
 void *OPS_LadrunoUP()
 {
   int ndm = OPS_GetNDM();
@@ -98,7 +117,7 @@ void *OPS_LadrunoUP()
   int nLead = 0;
   while (OPS_GetNumRemainingInputArgs() > 0 && nLead < maxLead) {
     char tok[64];
-    OPS_GetStringFromAll(tok, sizeof(tok));
+    upGetTok(tok, sizeof(tok));
     char *endp = 0;
     long v = strtol(tok, &endp, 10);
     if (endp == tok || *endp != '\0') {     // not an integer — first flag
@@ -170,7 +189,7 @@ void *OPS_LadrunoUP()
   // ---- flag loop (UNKNOWN FLAGS FATAL) --------------------------------------
   while (OPS_GetNumRemainingInputArgs() > 0) {
     char opt[64];
-    OPS_GetStringFromAll(opt, sizeof(opt));
+    upGetTok(opt, sizeof(opt));
 
     if (strcmp(opt, "-thick") == 0 || strcmp(opt, "-thickness") == 0) {
       if (ndm == 3) {
@@ -308,7 +327,7 @@ void *OPS_LadrunoUP()
 
     } else if (strcmp(opt, "-formulation") == 0 || strcmp(opt, "-form") == 0) {
       char f[32];
-      OPS_GetStringFromAll(f, sizeof(f));
+      upGetTok(f, sizeof(f));
       if (strcmp(f, "std") == 0)       formulation = 0;
       else if (strcmp(f, "bbar") == 0) formulation = 1;
       else {
@@ -320,7 +339,7 @@ void *OPS_LadrunoUP()
 
     } else if (strcmp(opt, "-pOrder") == 0) {
       char p[32];
-      OPS_GetStringFromAll(p, sizeof(p));
+      upGetTok(p, sizeof(p));
       if (strcmp(p, "equal") == 0) {
         pOrder = 0;
       } else if (strcmp(p, "linear") == 0) {
@@ -344,7 +363,7 @@ void *OPS_LadrunoUP()
         return 0;
       }
       char sTok[64];
-      OPS_GetStringFromAll(sTok, sizeof(sTok));
+      upGetTok(sTok, sizeof(sTok));
       if (strcmp(sTok, "off") == 0) {
         stabMode = 0;
         stabValue = 0.0;
@@ -353,7 +372,7 @@ void *OPS_LadrunoUP()
         stabValue = 0.25;                      // papers' pinned default alpha0
         if (OPS_GetNumRemainingInputArgs() > 0) {
           char aTok[64];                       // optional alpha0 — peek
-          OPS_GetStringFromAll(aTok, sizeof(aTok));
+          upGetTok(aTok, sizeof(aTok));
           char *endp = 0;
           double a0 = strtod(aTok, &endp);
           if (endp == aTok || *endp != '\0') {
@@ -393,7 +412,7 @@ void *OPS_LadrunoUP()
 
     } else if (strcmp(opt, "-dynSeepage") == 0) {
       char d[32];
-      OPS_GetStringFromAll(d, sizeof(d));
+      upGetTok(d, sizeof(d));
       if (strcmp(d, "on") == 0)       dynSeepage = true;
       else if (strcmp(d, "off") == 0) dynSeepage = false;
       else {
@@ -404,7 +423,7 @@ void *OPS_LadrunoUP()
 
     } else if (strcmp(opt, "-geom") == 0) {
       char g[32];
-      OPS_GetStringFromAll(g, sizeof(g));
+      upGetTok(g, sizeof(g));
       if (strcmp(g, "linear") != 0) {
         opserr << "ERROR LadrunoUP " << tag << " -- -geom '" << g
                << "' not supported: only 'linear' is accepted (the axis is "
