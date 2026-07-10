@@ -16,6 +16,7 @@ target_sources(OPS_Element
     PUBLIC
     LadrunoQuad.h
     LadrunoCST.h
+    LadrunoFiniteStrain2DKernel.h   # Ladruno (ADR 70): shared 2D finite-strain kernel (header-only)
 )
 
 target_include_directories(OPS_Element PUBLIC ${CMAKE_CURRENT_LIST_DIR})

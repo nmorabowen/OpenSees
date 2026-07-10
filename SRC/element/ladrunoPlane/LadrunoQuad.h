@@ -31,6 +31,7 @@
 //   element('LadrunoQuad', tag, n1,n2,n3,n4, matTag,
 //           '-formulation', <std|bbar|ssp|eas>,   (default std)
 //           '-type', <PlaneStrain|PlaneStress>,    (default PlaneStrain)
+//           '-geom', <linear|finite>,              (default linear)
 //           '-thick', t, '-rho', r, '-body', b1, b2, '-pressure', p)
 //
 // small-strain (geometrically linear) kinematics, three formulations:
@@ -43,10 +44,17 @@
 //          (2 natural bubbles xi/eta x 2 dofs), the 2D sibling of LadrunoBrick's
 //          E9 (ADR 25 Phase 3); small-strain only, no artificial stabilization
 //          (ADR 20's beta-regularization was refuted for the brick - not ported)
-// the geometry layer (-geom corot/finite) drops in later via the
-// SolidTransformation seam (ADR 25 P4/P5).
 //
-// See Ladruno_implementation/25_ladruno_plane_elements_adr.md
+// -geom finite (ADR 70 P1, updated-Lagrangian large-strain) is available with
+//   std | bbar and a FiniteStrainND2DMaterial (e.g. LogStrain2D). It drives the
+//   material by the TOTAL 2x2 deformation gradient via setTrialF(F) and assembles
+//   the spatial internal force + full consistent tangent (a_ijkl = c_ijkl −
+//   σ_il δ_jk) through the shared LadrunoFiniteStrain2DKernel. bbar+finite = 2D
+//   F-bar (scale (J0/J)^{1/2}, NOT the brick's ⅓). ssp/eas + finite stay reserved.
+//   corot (large-rotation/small-strain) is out of scope here (ADR 70 §1 note).
+//
+// See Ladruno_implementation/25_ladruno_plane_elements_adr.md and
+// Ladruno_implementation/70_ladruno_plane_finite_triangles_adr.md
 
 #ifndef LadrunoQuad_h
 #define LadrunoQuad_h
@@ -64,10 +72,13 @@ class LadrunoQuad : public Element
 {
   public:
     enum class Formulation { STD = 0, BBAR = 1, SSP = 2, EAS = 3 };
+    // geometry axis (ADR 70). LINEAR = small strain; FINITE = updated-Lagrangian
+    // large strain (setTrialF path). Values mirror LadrunoBrick (2 = finite).
+    enum class Geom { LINEAR = 0, FINITE = 2 };
 
     LadrunoQuad(int tag, int nd1, int nd2, int nd3, int nd4,
                 NDMaterial &m, const char *type, double t,
-                Formulation form,
+                Formulation form, Geom geom = Geom::LINEAR,
                 double rho = 0.0, double b1 = 0.0, double b2 = 0.0,
                 double pressure = 0.0,
                 double b1bv = 0.0, double b2bv = 0.0);   // Ladruno (W2-E1): bulk-viscosity coeffs
@@ -135,6 +146,7 @@ class LadrunoQuad : public Element
     double pressure;
     double rho;
     Formulation formulation;
+    Geom geom;                         // Ladruno (ADR 70): LINEAR / FINITE geometry axis
     double bulkVisc_b1;                 // Ladruno (W2-E1): explicit bulk-viscosity coeffs (0=off)
     double bulkVisc_b2;
     int planeType;                     // 1 = PlaneStrain, 2 = PlaneStress
@@ -166,6 +178,11 @@ class LadrunoQuad : public Element
     void computeMenh(double xi, double eta, double jdet, Matrix &M);  // 3x4 enhanced operator
     int formEAStrue(int tang_flag, bool useInitialTangent);           // inner-Newton + condensation; nonzero on failure
     bool isSinglePoint(void) const { return formulation == Formulation::SSP; }
+
+    // --- -geom finite (ADR 70 P1): updated-Lagrangian large strain ------------ //
+    bool isFinite(void) const { return geom == Geom::FINITE; }
+    int  updateFinite(void);              // per GP: F (+F-bar scale) → setTrialF(F)
+    void formFinite(int tang_flag);       // fills static P (resid) + K (tangent) via kernel
     void setPressureLoadAtNodes(void);
     const char *typeString(void) const;
 
