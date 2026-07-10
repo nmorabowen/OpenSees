@@ -45,8 +45,11 @@ finite`** axis (std|bbar on the quad, std on the CST; PlaneStrain only, over a
 `FiniteStrainND2DMaterial` such as `LogStrain2D`) — see
 [[70_ladruno_plane_finite_triangles_adr]]. NOTE the CST-finite caveat: element-
 level F-bar is a no-op on the constant-strain T3, so it locks volumetrically
-near incompressibility (honest baseline; the usable finite triangle is the
-planned `LadrunoLST`).
+near incompressibility (honest baseline). `LadrunoLST` (T6, ADR 70 P3) adds
+the quadratic triangle — but std-only: element-level F-bar/B-bar was REFUTED
+on the T6 at P3 (rank-deficient, 2 conformal zero-energy modes); the
+triangle volumetric cure is ADR 70 P4. Near-incompressible plane problems
+should use the quad `bbar` lanes.
 
 | Ladruno | `-formulation` | reduces to (upstream) | to |
 |---|---|---|---|
