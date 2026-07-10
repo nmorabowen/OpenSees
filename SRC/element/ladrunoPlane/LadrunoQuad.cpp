@@ -773,6 +773,15 @@ const Matrix &LadrunoQuad::getInitialStiff(void)
     return *Ki;
   }
 
+  // Ladruno (ADR 70 review): getInitialStiff always returns the SYMMETRIC
+  // small-strain reference tangent ∑ B̄ᵀ D₀ B̄ dV, even under -geom finite/bbar.
+  // This is deliberate, not an F=I simplification: at F=I the Cauchy stress σ=0,
+  // but the F-bar geometric term q=½ c:I is NOT zero and g0≠g for any non-affine
+  // (distorted) map, so the TRUE consistent F-bar tangent is unsymmetric even in
+  // the undeformed state. We do not seed with that unsymmetric operator — the
+  // symmetric B̄ᵀD₀B̄ form is a well-posed symmetric seed for Rayleigh damping and
+  // eigen/modal use (which assume symmetry). The exact unsymmetric consistent
+  // tangent is assembled only in formFinite (getTangentStiff) during Newton.
   if (formulation == Formulation::BBAR)
     this->computeShapeBar();
 
@@ -1174,6 +1183,12 @@ void LadrunoQuad::formFinite(int tang_flag)
         opserr << "LadrunoQuad::formFinite - material at GP " << i
                << " is not a FiniteStrainND2DMaterial / gave no full 2D spatial "
                   "tangent (getSpatialTangentTensor2D); element " << this->getTag() << "\n";
+        // Ladruno (ADR 70 review): K and P are SHARED static scratch. Bailing out
+        // without clearing them would hand the caller a stale sibling element's
+        // matrix/residual. Zero both so an error can never leak another element's
+        // state into the assembly.
+        K.Zero();
+        P.Zero();
         return;
       }
       double a4[2][2][2][2];

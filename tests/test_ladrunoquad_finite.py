@@ -147,6 +147,21 @@ def test_homogeneous_stretch_matches_oracle():
     F = np.array([[1.0 + a, 0.0], [0.0, 1.0 + b]])
     assert a > 0.1, f"test should reach a genuinely finite stretch (a={a})"
 
+    # External equilibrium on the DEFORMED config: the applied traction resultant
+    # on the right face (total Fx = 60+60 = 120 at load factor 1.0) must balance
+    # the Cauchy stress acting over the DEFORMED cross-section. Plane strain keeps
+    # the out-of-plane thickness at t, and the deformed face height is (1+b), so
+    # σ_xx · (1+b) · t == applied Fx. This is a genuine current-config force
+    # balance — it fails if formFinite drops the J volume weight (small-strain
+    # area) or reports σ in the wrong (reference/PK) measure.
+    applied_fx = 120.0
+    smag_r = list(ops.eleResponse(1, "stresses"))[0]      # GP0 σ_xx (homogeneous)
+    deformed_face = (1.0 + b) * t                          # deformed area normal to x
+    assert abs(smag_r * deformed_face - applied_fx) <= 1e-3 * applied_fx, (
+        f"external equilibrium: σxx·(1+b)·t = {smag_r * deformed_face:.4f} "
+        f"!= applied Fx = {applied_fx} (a J volume weight is likely missing)"
+    )
+
     res = l2.plane_strain_step(F, I3.copy(), I3.copy(), "elastic", K=K, G=G)
     s_ref = res["sigma_voigt"]                            # [sxx, syy, sxy] Cauchy
     smag = max(abs(v) for v in s_ref)
@@ -273,6 +288,57 @@ def test_fbar_relieves_locking_finite():
 
 
 # --------------------------------------------------------------------------
+# Newton iteration-count gate: a large single-step bbar-finite solve must
+# converge in few iterations. A transposed tangent or wrong-sign F-bar G0
+# coupling is often still convergent (the residual is exact and independent of
+# the tangent), just SLOWLY / non-quadratically — a norm-check on the answer
+# would pass while Newton crawls. Gating the iteration count catches that.
+# Ceiling calibrated below: observed count on the correct build; the gate is set
+# to ~2x that so a healthy quadratic solve passes with margin but a degraded
+# (linear-rate) tangent trips it.
+# --------------------------------------------------------------------------
+_NEWTON_ITER_CEIL = 12  # calibrated: 6 iters observed on the correct consistent
+#                         tangent (|u3|~0.58, a genuinely finite step); gate = 2x.
+
+
+def test_bbar_finite_newton_iterations_gate():
+    """One big load step, bbar + -geom finite, over a distorted quad. Assert the
+    consistent (unsymmetric F-bar) tangent gives a fast Newton solve — the
+    iteration count stays under a calibrated ceiling. A transposed K or wrong-sign
+    G0 coupling still converges (exact residual) but at a linear rate, blowing
+    past the ceiling."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    for tag, (x, y) in _QN.items():
+        ops.node(tag, x, y)
+    ops.nDMaterial("ElasticIsotropic", 1, 1000.0, 0.3)
+    ops.nDMaterial("LogStrain2D", 2, 1)
+    ops.element("LadrunoQuad", 1, *_QC, 2, "-thick", _THK,
+                "-type", "PlaneStrain", "-formulation", "bbar", "-geom", "finite")
+    ops.fix(1, 1, 1)
+    ops.fix(2, 1, 1)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(3, 32.0, -12.0)                              # large -> genuinely finite
+    ops.load(4, 10.0, 22.0)                               # (|u3|~0.58 in one step)
+    ops.system("FullGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.integrator("LoadControl", 1.0)                    # ONE big step
+    ops.algorithm("Newton")
+    ops.test("NormDispIncr", 1e-10, 60)
+    ops.analysis("Static")
+    assert ops.analyze(1) == 0, "bbar-finite single big step failed to converge"
+    iters = ops.testIter()
+    # sanity: the step must actually reach a finite stretch (not a trivial solve)
+    assert _norm(ops.nodeDisp(3)) > 0.05, "step did not reach a finite deformation"
+    assert iters <= _NEWTON_ITER_CEIL, (
+        f"bbar-finite Newton took {iters} iters (> {_NEWTON_ITER_CEIL}); a "
+        "transposed tangent / wrong-sign F-bar coupling degrades the rate"
+    )
+
+
+# --------------------------------------------------------------------------
 # parse / material guards
 # --------------------------------------------------------------------------
 def _fresh():
@@ -297,6 +363,27 @@ def test_finite_refused_for_ssp_eas(form):
     # a valid std-finite element still constructs afterwards
     ops.element("LadrunoQuad", 1, *_QC, 2, "-type", "PlaneStrain",
                 "-formulation", "std", "-geom", "finite")
+
+
+def test_finite_refused_for_plane_stress():
+    """PlaneStress + -geom finite is refused at the FACTORY (ADR 70 review): the
+    finite volume weight omits the out-of-plane thickness stretch λ, so finite
+    plane-stress would be silently wrong. The element must never be created, and
+    the interpreter must survive so a valid PlaneStrain finite element still
+    builds."""
+    _fresh()
+    ops.nDMaterial("ElasticIsotropic", 1, 1000.0, 0.3)
+    ops.nDMaterial("LogStrain2D", 2, 1)
+    try:
+        ops.element("LadrunoQuad", 99, *_QC, 2, "-type", "PlaneStress",
+                    "-formulation", "std", "-geom", "finite")
+    except Exception:
+        pass
+    assert 99 not in ops.getEleTags(), "PlaneStress + finite must be refused at parse"
+    # a valid PlaneStrain-finite element still constructs afterwards
+    ops.element("LadrunoQuad", 1, *_QC, 2, "-type", "PlaneStrain",
+                "-formulation", "std", "-geom", "finite")
+    assert 1 in ops.getEleTags()
 
 
 def test_finite_rejects_non_finite_material():
