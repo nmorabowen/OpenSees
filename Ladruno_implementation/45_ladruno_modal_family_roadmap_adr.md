@@ -122,7 +122,7 @@ Two defensible orders (synthesis §5 vs §6.5):
 | **P-C** | **ADR 43 P3** — **distributed inner solve under MP** (per-contour `(z_jM−K)` via distributed `dmumps` on the MP communicator) — **SHIPPED #532**; MP is the single blessed parallel config, **P4 SP/MP-unification DE-SCOPED** | The strategic payoff: large-model modal in the MP build; the reusable distributed-inner-solve seam | P-B, `dmumps`, `OpenSeesMP`/PyMP |
 | **P-D** | **ADR 42** — prestressed modal + linear buckling | Opportunistic; rides serial eigen, gains band/Sturm from P-B; can jump ahead of P-C if a project needs it | corot/PDelta Kg, `eigen` |
 | **P-E** | **ADR 43 P5** — complex contours (re-host ADR 46 at scale) | Unifies the complex case onto the parallel substrate | P-A, P-C |
-| **P-F** | **ADR 44** — frequency domain (FRF/SSD/random, modal transient) | Deliverable layer; build when a project asks | P-A, eigen |
+| **P-F** | **ADR 44** — frequency domain (FRF/SSD/random, modal transient) — **SHIPPED**: P1a `modalResponseHistory` #537, P1b RSA `-combine` #539, P2 `frequencyResponse`/`steadyStateDynamics` #544 (+ classic-Tcl #546), P3 `randomResponse` PSD→RMS [#552](https://github.com/nmorabowen/OpenSees/pull/552); **gate G-F MET** (all five items, incl. random-vs-Monte-Carlo). Remaining follow-ups: nodal-force `-load`, cross-PSD input | Deliverable layer; ~~build when a project asks~~ built | P-A, eigen |
 | *(P-G)* | *ROM / Craig–Bampton (candidate; ADR number TBD — see §2 note ²)* | *Future; the biggest forward unlock* | *whole family* |
 
 **Rationale.** P-A buys confidence + an immediately useful research deliverable for ~S effort. P-B
