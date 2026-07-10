@@ -13,8 +13,8 @@ On top of that:
     quad's ``bbar`` is strictly more flexible than ``std`` (std locks);
   * constant-strain patch: every Gauss point reports the closed-form stress;
   * ``ssp`` (stabilized single-point, ADR 25 P2) is implemented and cross-checked
-    against upstream ``SSPquad``; ``eas`` is still refused at the factory (P3) and
-    ``bbar`` is PlaneStrain-only.
+    against upstream ``SSPquad``; ``eas`` (Q1/E4 Simo-Rifai, ADR 25 P3) is
+    implemented -- see test_ladrunoQuad_eas.py; ``bbar`` is PlaneStrain-only.
 
 Plan: Ladruno_implementation/25_ladruno_plane_elements_adr.md.
 """
@@ -259,10 +259,6 @@ def test_formulation_ssp_builds():
     assert not _quad_refused("-formulation", "ssp"), "ssp must build (ADR 25 P2)"
 
 
-def test_formulation_eas_reserved():
-    assert _quad_refused("-formulation", "eas"), "eas must be refused (ADR 25 P3)"
-
-
 def test_bbar_planestress_refused():
     assert _quad_refused("-type", "PlaneStress", "-formulation", "bbar"), (
         "bbar is PlaneStrain-only"
@@ -322,7 +318,7 @@ def _charlen(place_fn, nodes):
     return ops.eleResponse(1, "charLength")[0]
 
 
-@pytest.mark.parametrize("formulation", ["std", "bbar", "ssp"])
+@pytest.mark.parametrize("formulation", ["std", "bbar", "ssp", "eas"])
 def test_quad_charlen_sqrt_area(formulation):
     a, b = 2.0, 3.0
     nodes = {1: (0, 0), 2: (a, 0), 3: (a, b), 4: (0, b)}

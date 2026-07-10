@@ -337,12 +337,13 @@ class LadrunoBrick : public Element {
   // (alphaCommit); commit/revert/sendSelf carry it. v1 = small strain only
   // (-geom corot/finite + eas are parser-reserved).  // Ladruno
   void buildEAStrue(void);                                 // cache centroid J0inv/j0
-  void formEAStrue(int tang_flag, bool useInitialTangent); // inner-Newton + condensation
+  int  formEAStrue(int tang_flag, bool useInitialTangent); // inner-Newton + condensation; nonzero on failure
   void computeMenh(const double gp[3], double jdet, Matrix &M);  // 6x9 enhanced operator
   Vector alpha;        // 9 enhanced parameters (trial; solved each form pass)
   Vector alphaCommit;  // committed enhanced parameters (serialized)
   Matrix easJ0inv;     // 3x3 centroid Jacobian inverse (mode map; cached)
   double easJ0det;     // centroid Jacobian determinant j0 (cached)
+  bool easDegenerate;  // scale-invariant degeneracy flag (set in buildEAStrue)
   // Fill the assumed-strain B (Bbar[node][6][3], Voigt {xx,yy,zz,xy,yz,zx}) at a
   // Gauss point; returns |J|. gamma/bC are the (precomputed) hourglass vectors
   // and centroid gradients. Implements eq 8.7.26.

@@ -143,12 +143,6 @@ void *OPS_LadrunoQuad()
     }
   }
 
-  if (form == LadrunoQuad::Formulation::EAS) {
-    opserr << "WARNING LadrunoQuad -- formulation 'eas' is reserved but not yet "
-              "implemented (ADR 25 Phase 3); use std, bbar, or ssp\n";
-    return 0;
-  }
-
   if (form == LadrunoQuad::Formulation::BBAR && strcmp(typeBuf, "PlaneStress") == 0) {
     opserr << "WARNING LadrunoQuad -- '-formulation bbar' is for PlaneStrain only "
               "(volumetric locking is a plane-strain/incompressible issue)\n";

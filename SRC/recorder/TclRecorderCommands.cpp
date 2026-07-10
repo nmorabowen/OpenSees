@@ -67,6 +67,7 @@ extern void* OPS_GmshRecorder();
 #ifdef _HDF5
 extern void* OPS_MPCORecorder();
 extern void* OPS_LadrunoRecorder(); // Ladruno: modular HDF5 .ladruno recorder
+extern void* OPS_LadrunoMonitorRecorder(); // Ladruno: live SWMR-HDF5 analysis monitor
 extern void* OPS_VTKHDF_Recorder();
 #endif // _HDF5
 extern void* OPS_VTK_Recorder();
@@ -1940,6 +1941,10 @@ enum outputMode  {STANDARD_STREAM, DATA_STREAM, XML_STREAM, DATABASE_STREAM, BIN
      else if (strcmp(argv[1], "ladruno") == 0) { // Ladruno: classic-Tcl wiring (mirror of mpco)
        OPS_ResetInputNoBuilder(clientData, interp, 2, argc, argv, &theDomain);
        (*theRecorder) = (Recorder*)OPS_LadrunoRecorder();
+     }
+     else if (strcmp(argv[1], "Monitor") == 0) { // Ladruno: classic-Tcl wiring (mirror of ladruno)
+       OPS_ResetInputNoBuilder(clientData, interp, 2, argc, argv, &theDomain);
+       (*theRecorder) = (Recorder*)OPS_LadrunoMonitorRecorder();
      }
 	 else if (strcmp(argv[1], "vtkhdf") == 0 || strcmp(argv[1], "VTKHDF") == 0) {
 		 OPS_ResetInputNoBuilder(clientData, interp, 2, argc, argv, &theDomain);

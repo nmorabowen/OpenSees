@@ -40,7 +40,10 @@
 //          volumetric locking
 //   ssp  — stabilized single-point (port of SSPquad::GetStab) + Tier-A
 //          damage-scaled hourglass Kstab  (ADR 25 Phase 2)
-// eas is RESERVED (parser errors with a "not yet implemented" hint, ADR 25 P3).
+//   eas  — Q1/E4 Simo-Rifai enhanced assumed strain, 4 enhanced parameters
+//          (2 natural bubbles xi/eta x 2 dofs), the 2D sibling of LadrunoBrick's
+//          E9 (ADR 25 Phase 3); small-strain only, no artificial stabilization
+//          (ADR 20's beta-regularization was refuted for the brick - not ported)
 //
 // -geom finite (ADR 70 P1, updated-Lagrangian large-strain) is available with
 //   std | bbar and a FiniteStrainND2DMaterial (e.g. LogStrain2D). It drives the
@@ -159,11 +162,21 @@ class LadrunoQuad : public Element
     double J0, J1, J2;                 // jacobian terms (SSPquad convention)
     Response *damageResponse;          // cached "damage" probe on slot-0 material (Tier-A)
 
+    // --- EAS (Q1/E4 Simo-Rifai) state (formulation == EAS) ---
+    Vector alpha;                      // 4 enhanced parameters (trial)
+    Vector alphaCommit;                // committed enhanced parameters (serialized)
+    Matrix easJ0inv;                   // 2x2 centroid Jacobian inverse (mode map; cached)
+    double easJ0det;                   // centroid Jacobian determinant j0 (cached)
+    bool easDegenerate;                // scale-invariant degeneracy flag (set in buildEAStrue)
+
     double shapeFunction(double xi, double eta);  // returns detJ, fills shp
     void computeShapeBar(void);                    // fills shpBar (B-bar)
     void formB(Matrix &B);                         // 3x8 strain-disp from shp/shpBar
     void computeSSP(void);                         // fills J0/J1/J2, Mmem, Kstab (port of SSPquad::GetStab)
     double damageScale(void);                      // Tier-A: max(floor, 1 - max(dt,dc)); 1 if no damage channel
+    void buildEAStrue(void);                        // cache centroid easJ0inv/easJ0det
+    void computeMenh(double xi, double eta, double jdet, Matrix &M);  // 3x4 enhanced operator
+    int formEAStrue(int tang_flag, bool useInitialTangent);           // inner-Newton + condensation; nonzero on failure
     bool isSinglePoint(void) const { return formulation == Formulation::SSP; }
 
     // --- -geom finite (ADR 70 P1): updated-Lagrangian large strain ------------ //
