@@ -488,10 +488,13 @@ Each phase is one PR off `ladruno`.
 > [!question]
 > **Softening materials on H20 — warn or allow silently?** lch = ∛V
 > regularizes consistently, but crack-band theory on quadratic fields is
-> shaky (§3.7). Options: (a) docs-only guidance (current lean — matches how
-> the fork treats other honest-baseline combinations, e.g. CST-finite), or
-> (b) a one-time `opserr` advisory when a material with a "damage" response is
-> attached. Decide at P1 review.
+> shaky (§3.7). Options: (a) docs-only guidance, or (b) a one-time `opserr`
+> advisory when a material with a "damage" response is attached.
+> **RESOLVED 2026-07-10 (user, U1): BOTH** — the guide documents the caveat
+> AND the element emits a one-time `opserr` advisory at `setDomain` when the
+> attached material exposes a "damage" response channel (the cached-Response
+> probe pattern from `LadrunoBrick::damageResponse`). Advisory, not a
+> rejection — the run proceeds. Lands with P1.
 
 - **Node-ordering verification is a P0 gate, not an assumption.** The corner/
   mid-edge pattern (bottom ring 9–12, top 13–16, vertical 17–20) is common to

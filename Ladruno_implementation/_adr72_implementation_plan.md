@@ -92,7 +92,7 @@ Goal: the 27-pt element, correctness anchored by the **reduce-to
 | 1.4 | **Zone-A battery `tests/test_ladrunoBrick20_element.py`** — the ADR §6 P1 gates: reduce-to (K, resisting force, consistent M ~1e-12, distorted hex, mixed loads, per-GP stress pairing), 2-element distorted patch test (all 6 strain components), rank-54/6-RBM, SelfWeight/`-b` vs closed form **incl. the corner-share sign assertion**, lch=∛V, LadrunoRecorder round-trip (GP coords vs `GLOBAL_GP_COORDS`), sendSelf/recvSelf round-trip, parser-rejection cases (`-hourglass`, `uri`, `-lumped`). | **[OPUS]** |
 | 1.5 | **Diff review before PR**: `/code-review` (medium) + the vanilla-footprint checklist (every vanilla file additive-only + ledgered + `// Ladruno`; serialization ordinal freeze noted in the header comment). Per [[feedback_adversarial_gate_when]] NO full adversarial gate — the reduce-to anchor is stronger than a reviewer here. | **[FABLE]** (runs the review; findings back to the Opus implementer) |
 | 1.6 | Banner line + LEDGER_implementations row + guide stub (`LadrunoBrick20` section in [[LadrunoBrick_reference]] or its own guide — decide by size); apeGmsh contract row TBD→command+ordering note. | **[OPUS]** |
-| 1.7 | **[USER] decision** (ADR §7 open question, due with this PR): softening-material advisory — docs-only (lean) or one-time `opserr` when the attached material exposes a "damage" response? | **[USER]** |
+| 1.7 | **[USER] decision — RESOLVED 2026-07-10: BOTH.** Guide documents the softening caveat AND the element emits a one-time `opserr` advisory at `setDomain` when the attached material exposes a "damage" response (probe via the cached-Response pattern from `LadrunoBrick::damageResponse`; advisory only, run proceeds). Folded into tasks 1.1 (element) + 1.4 (a test asserting the advisory fires once for ASDConcrete3D-class materials and never for elastic/J2) + 1.6 (guide). | ~~[USER]~~ done |
 | 1.8 | PR-2 assembly, build + battery green locally, CI watch. | **[FABLE]** |
 
 - [ ] P1 landed (PR #___)
@@ -158,6 +158,31 @@ due at P1). U2 — PR merges are auto once CI is green; no other user gate.
 ---
 
 ## Orchestration log (loop state — newest first)
+
+- **2026-07-10, iteration 7: P0 MERGED (#548, squash 564eda1a6) → P1 launched.**
+  CI round 2 all green (Zone-A 14m incl. the hex20 g++ cross-check on Linux;
+  manifest gate 22s). Squash-merged; branch `guppi/xenodochial-lamarr-adr72-p1`
+  cut from updated ladruno (carries the U1 doc edits, uncommitted). **P1
+  implementer agent RUNNING** (tasks 1.1-1.4 + 1.6: element + factory +
+  registrations + battery + bookkeeping incl. the manifest-row update and the
+  U1 one-time advisory; build+test loop on the Windows worktree). NEXT on its
+  report: R3 = /code-review (medium) + vanilla-footprint checklist, then PR-2.
+  NB PR #549 (ADR-70 docs) also landed on ladruno meanwhile — no overlap.
+
+- **2026-07-10, iteration 6: PR #548 opened; first CI round FAILED → fixed.**
+  Two failures, both diagnosed + fixed in 42da0bcf0: (1) **G9 manifest gate**
+  — every Ladruno classTag needs a `testbed/manifest.yaml` row (NEW standing
+  constraint: add the manifest row in the SAME commit as any classTags.h tag;
+  §0 should be read as including this) → added LadrunoBrick20 row
+  (status=planned, pytest=test_hex20_kernel_cpp.py, tcl WAIVED until P1);
+  (2) **Zone-A collection ImportError** — CI env had no `sympy` → added to
+  the Zone-A pip line (ladruno.yml) + `pytest.importorskip("sympy")` guard in
+  the harness. Local gates re-verified: check_manifest OK, check_classtags
+  OK, harness 8/8. U1 RESOLVED by user: **BOTH** (guide caveat + one-time
+  opserr advisory; folded into P1 tasks 1.1/1.4/1.6; ADR §7 updated,
+  uncommitted — rides with the P1 branch). CI re-watch armed. NEXT: on green
+  + merge, cut the P1 branch from updated ladruno and spawn the P1
+  implementer.
 
 - **2026-07-10, iteration 5: R2 PASS → PR-1 assembled.** R2 audit verdict:
   PASS on all five items — formula independence (mutation-tested: an injected
