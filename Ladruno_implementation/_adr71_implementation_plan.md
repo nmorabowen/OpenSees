@@ -155,6 +155,44 @@ equal-order-no-stab ≥ 2, TH/stab = 1) — K from a plain-elastic B-matrix the
 oracle builds itself; (iii) FD quantification of the dropped dynamic-seepage
 tangent (ADR §3.1); (iv) symmetry (H, S, H̃) + pattern (Q sign layout) asserts.
 
+### 0.A addendum — emission & convention pins (MAIN, 2026-07-10)
+
+Adjudicated before agent launch; both P0 agents implement exactly this.
+
+1. **Cases = contractual-rule evaluation, not overkill.** Emitted blocks in
+   `ladruno_up_cases.txt` are integrated with the shape's CONTRACTUAL GP rule
+   (T3 1-pt, Q4 2×2, H8 2×2×2, BT6 3-pt, BTET10 4-pt). Rationale: several
+   integrands are not exactly integrated by those rules (T3 S-block is
+   quadratic vs the 1-pt rule; distorted-Q4 cartesian gradients are rational;
+   equal-order BT6 S-block is quartic vs the degree-2 rule), so a true-integral
+   oracle would legitimately differ from the kernel far above 1e-9.
+   Independence lives in the implementation (independent numpy basis/Jacobian/
+   assembly code), not in the GP points, which are contract data. The oracle
+   MUST additionally self-check contractual-rule blocks against degree-overkill
+   or exact-affine integration for case/block combos where the contractual rule
+   is provably exact (e.g. T3 Q/H/FSEEP blocks, rectangular/parallelogram Q4,
+   TH-linear blocks on straight Bézier shapes), assert ≤1e-12 there, and
+   document known-inexact combos as expected quadrature deviation, not error.
+2. **Pinned GP rules** (kernel agent verifies the donor code agrees and reports
+   any discrepancy to MAIN rather than silently diverging):
+   T3 = 1 pt at barycentric (⅓,⅓), w=½. Q4 = 2×2 Gauss (±1/√3, w=1).
+   H8 = 2×2×2 Gauss. BT6 = 3-pt interior (ξ₁,ξ₂) ∈ {(⅙,⅙),(⅔,⅙),(⅙,⅔)},
+   w=⅙ each (donor `BezierTri6.cpp` GP3). BTET10 = 4-pt, (L1,L2,L3) = perms of
+   a=0.585410196624968 / b=0.138196601125011, w=1/24 each (donor
+   `BezierTet10.cpp` GP4).
+3. **Pinned basis order.** BT6 (ξ₃=1−ξ₁−ξ₂): N0=ξ₃², N1=ξ₁², N2=ξ₂²,
+   N3=2ξ₁ξ₃, N4=2ξ₁ξ₂, N5=2ξ₂ξ₃ — vertices are nodes 0,1,2 (node0↔ξ₃,
+   node1↔ξ₁, node2↔ξ₂). BTET10 (L4=1−L1−L2−L3): N0..N3 = L1²..L4²,
+   N4=2L1L2, N5=2L2L3, N6=2L1L3, N7=2L1L4, N8=2L3L4, N9=2L2L4 — vertices are
+   nodes 0–3. T3/Q4/H8: standard CCW orderings per the donor elements.
+4. **TH pressure compaction.** `Np`/`dNp` are COMPACTED over carriers:
+   nNp = #carriers, ordered by element node order restricted to carriers
+   (BT6 TH: Np = [ξ₃, ξ₁, ξ₂]; BTET10 TH: Np = [L1, L2, L3, L4] per the
+   vertex↔coordinate map above). Q/H/S/HT/FSEEP dims use this nNp; the case
+   DOFMAP (pOff = −1 on non-carriers) carries assembly placement.
+5. **dv folding.** Case harness computes dv = w·detJ·thick (2D) or w·detJ (3D)
+   with `thick` from PARAMS; 3D cases set thick = 1.0.
+
 ### P0 exit = ADR §7 P0 gate row, verbatim.
 
 ---
