@@ -2808,7 +2808,7 @@ is immune (uses eigenvalues only, never Φ).
   supplied); `(n+i, n+j) j≤i` = −(aM−K). Verified transpose-consistent by the
   P3c-MPI adversarial gate.
 
-### ADR-44 modalResponseHistory — modal-transient gotchas
+### ADR-44 LadrunoModalResponse — modal-transient (P1a) + FRF/SSD (P2) gotchas
 
 - **Element-level stiffness-proportional (`betaK`) Rayleigh damping ≠ assembled
   `a1·K` (Truss).** A direct `Newmark` run with `rayleigh 0 0 0 a1` (or `betaKcurr`
@@ -2848,3 +2848,42 @@ is immune (uses eigenvalues only, never Φ).
   ignored. Not our bug (upstream); the ADR-44 P1b `-combine` path matches this
   behavior (no scale) for consistency rather than silently diverging. Flagged
   during the P1b wiring.
+
+- **FRF sign convention (P2) is `e^{+iΩt}` — pin it or the phase silently flips.**
+  `frequencyResponse`/`steadyStateDynamics` use `H_a(Ω)=1/(ω_a²−Ω²+iΩd_a)` with a
+  `+iΩd_a` imaginary part, i.e. the `e^{+iΩt}` time convention → the response LAGS
+  90° at resonance (`u=+i/(ωd)` for the mass-normalized SDOF, `angle=+90°` because
+  the base-accel modal load carries the extra `−Γ`). The opposite (`e^{−iΩt}`,
+  `−iΩd_a`) magnitude is IDENTICAL and only the phase sign differs, so a flipped
+  convention passes every |·|/RMS test and is invisible until someone reads phase —
+  the classic frequency-domain bug. Pinned two ways: the resonance-phase assert in
+  `test_sdof_frf_closed_form`, and the end-to-end match to the direct complex solve
+  `(K−Ω²M+iΩC)⁻¹(−MR)` (same convention on both sides) in `test_mdof_frf_vs_direct`
+  and `modal_response_p2_spike/frf_oracle.py`. Magnitude gates alone would NOT catch
+  a sign flip.
+
+- **P2 frequencies are Hz, not rad/s.** `-freq fmin fmax nf` bounds and the output
+  `f` column are Hz; internally `Ω=2πf`. So the FRF magnitude peaks at `f_a=ω_a/2π`,
+  not at `ω_a`. (A `-radps` option was deliberately NOT added in v1 to keep the knob
+  count down; documented in the guide.) Reusing the P1a `LadrunoModalDamping.coeff`
+  gives `d_a=2ξ_aω_a` with `ω_a` in rad/s, consistent with the internal `Ω`.
+
+- **P2 reuses P1a's normalization by construction — do NOT re-derive it.** The FRF
+  recovery weight is `ψ_a(node,dof)·(−Γ_a)` with `ψ_a=eigenvector·Vscale` and `Γ_a`
+  the `modalProperties` participation factor — byte-for-byte the P1a per-mode
+  recovery ingredients, so the frequency-domain result is the analytic steady state
+  of the exact same modal ODE P1a integrates in time. This is WHY the numpy oracle
+  can use clean mass-normalized modes (`m_a=1`, `ψ=φ`, `Γ=φᵀMR`) while the C++ uses
+  OpenSees' Vscale/Γ: P1a already proved the two normalizations agree physically
+  (it matched direct Newmark), so P2 inherits that instead of re-validating it.
+
+- **An UNDAMPED mode sampled exactly at `Ω=ω_a` gives an infinite FRF.** With
+  `d_a=0` the denominator `ω_a²−Ω²+iΩd_a` is real and hits 0 at resonance → `inf`.
+  Harmless with any real damping (imag part ≠ 0). The `-biased` grid clusters points
+  AROUND each `ω_a/2π` (±5%), not ON it, so it does not manufacture this; a `-lin`
+  grid landing exactly on an undamped resonance would. The same singularity appears
+  at `Ω=0` (the `f=0` sample of a `fmin=0` sweep) if a RIGID mode is retained
+  (`ω_a=0` → denom `0+0i`) — an unrestrained base-excited structure genuinely has an
+  undefined DC steady displacement. Both are honest physical singularities (NaN/inf
+  row), documented not guarded; fully-supported base-excitation models never carry a
+  rigid mode.
