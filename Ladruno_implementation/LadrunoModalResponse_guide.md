@@ -3,6 +3,13 @@
 Commands: `modalResponseHistory` (P1a, transient) · `responseSpectrumAnalysis
 -combine` (P1b, CQC/SRSS) · `frequencyResponse` / `steadyStateDynamics` (P2, FRF/SSD).
 
+> **Availability.** All three commands work in **openseespy** *and* in the classic
+> Tcl exes (`OpenSees.exe` / `OpenSeesSP.exe` / `OpenSeesMP.exe`) — wired into
+> `SRC/tcl/commands.cpp` dispatch. In Tcl the `{f, …}` result table is returned as
+> a Tcl list *and* written to `-out <file>` (identical values); e.g.
+> `set frf [frequencyResponse -freq 0.1 4.0 20 -baseAccel -dir 1 -damp 0.04 -node 3 -dof 1 -out frf.out]`.
+> Smoke test: `Ladruno_scripts/verify_modal_classic_tcl.tcl`.
+
 ## `modalResponseHistory` — exact modal-superposition transient (ADR 44 P1a)
 
 `LadrunoModalResponse` (classTag 33024) computes a **linear** time-history response

@@ -401,6 +401,26 @@ def test_guard_bad_resp():
 # validated P1a staleness check byte-for-byte.
 
 
+def test_guard_negative_damp():
+    # negative -damp xi is refused: d_a=2 xi w<0 CONJUGATES the FRF (same |H|,
+    # flipped phase), so a '-0.05' typo would pass every magnitude gate. (xi=0 is
+    # legal, the honest undamped singularity — covered elsewhere.)
+    _build_sdof(2.0, 500.0)
+    ops.eigen('-fullGenLapack', 1); ops.modalProperties()
+    with pytest.raises(Exception):
+        ops.frequencyResponse('-freq', 0.1, 5.0, 10, '-baseAccel', '-dir', 1,
+                              '-damp', -0.05, '-node', 2, '-dof', 1)
+
+
+def test_guard_negative_modaldamp_entry():
+    # a single negative entry in the -modalDamp list is refused (same trap).
+    _build_chain([2.0, 1.5], [800.0, 500.0])
+    ops.eigen('-fullGenLapack', 2); ops.modalProperties()
+    with pytest.raises(Exception):
+        ops.frequencyResponse('-freq', 0.1, 5.0, 10, '-baseAccel', '-dir', 1,
+                              '-modalDamp', 0.03, -0.01, '-node', 3, '-dof', 1)
+
+
 def test_guard_degenerate_sweep():
     # fmax==fmin with nf>1 would emit nf identical rows -> refuse (use nf==1).
     _build_sdof(2.0, 500.0)
