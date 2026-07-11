@@ -1196,7 +1196,7 @@ features:
   - feature: LadrunoLST
     classtag: 33016          # ELE_TAG family (distinct registry from ND_TAG_LogStrain2D=33016)
     tag_symbol: ELE_TAG_LadrunoLST
-    pr: null
+    pr: 554
     feature_class: element
     required_tiers: [T0, T1]
     pytest: tests/test_ladrunolst_element.py   # reduce-to tri6n (SixNodeTri), rank/3-rbm, bbar-refusal refutation pin, linear-strain-field patch, HRZ mass, pressure closure; finite lane in tests/test_ladrunolst_finite.py
