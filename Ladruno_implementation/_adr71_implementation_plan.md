@@ -309,6 +309,51 @@ disp-slot ndm; else legacy vel-slot ndm. Flag-free, automatic. ⟨FW-F4⟩.
 
 ## P2–P4 sketch (each = own branch/PR; agents pinned at phase start)
 
+### WP2.A pins (FROZEN 2026-07-11 — P2 agents implement exactly this)
+
+P2 = the H8 and T3 lanes GATED (both already parse+run since P1 — this phase
+is battery work; element-source edits are NOT in agent scope: bugs get
+REPORTED to MAIN for adjudication). Branch `feature/adr71-p2`.
+
+**Ownership.** OPUS-H8 owns `tests/test_ladruno_up_element_h8.py` ONLY.
+OPUS-T3 owns `tests/test_ladruno_up_element_t3.py` ONLY. Style/bootstrap donor
+for both: `tests/test_ladruno_up_element_analytic.py` + `_equiv.py` (hermetic
+py -3.12 bootstrap, printA order='F', zone_b markers, tolerances rationale).
+
+**OPUS-H8 gates (ADR §7 P2 row):**
+1. brickUP two-leg equivalence, P1 methodology: leg 1 tight (γ=½/β=¼,
+   `-dynSeepage off -stab off`, consistent mass, NormUnbalance, ≤1e-6 —
+   expect machine-level) + leg 2 production (γ=0.6/β=0.3025, Δt-halving
+   mutual first-order convergence). Upstream = `brickUP` (bulk = pre-combined
+   Q̄ ≈ Kf/n like quadUP — agent verifies the arg mapping in upstream source
+   and pins it in the docstring). PLUS the `-lumped` leg both ways (inspect
+   how upstream brickUP lumps; if it has no lumped option, run OUR -lumped
+   vs consistent as a Δt-convergence pair instead and document).
+2. 3D Terzaghi: H8 1×1×10 column vs the series (Tv sweep as P1, 3D BCs:
+   sealed sides via no-p-fix, drained top).
+3. B4-3D (McGann 2015 cube-footing analog): 30 m cube quarter-model, 10³
+   mesh h=3 m, strip→square footing load ramped+held, drained top only,
+   CB_lap 3D (face-interior Laplacian roughness) + α₀ ∈ {off, 0.25}:
+   monotone CB suppression + auto-α twin-run identity (P1 trick), α value
+   = 0.25·9/(Ks+4Gs/3) pinned ±5%. Keep runtime sane (≤10³ mesh, ≤60 s).
+**OPUS-T3 gates (ADR §7 P2 row ⟨scope-F12⟩):**
+1. B4-T3: the P1 B4 footing re-meshed with CROSSED-diagonal T3 split (each
+   quad → 4 triangles, center node), CB gate + α₀-sweep {off, 0.05, 0.25,
+   0.5} — pins that the §3.3 α transfer to simplices holds with h = largest
+   triangle edge; auto-vs-manual twin-run identity.
+2. T3 honest-baseline documentation gate: measured undrained locking —
+   drained vs undrained footing settlement T3-mesh vs Q4-mesh reference;
+   ASSERT the direction (T3 stiffer, worse under undrained constraint,
+   inherited CST pathology) and PIN the measured ratios in the docstring
+   (documentation assert, generous bands).
+3. T3 Terzaghi consolidation smoke on the crossed mesh (loose gates — the
+   point is no-blowup + right decay class, not accuracy records).
+
+**Run mechanics (both):** existing `dist/bin` pyd is current for this branch
+(tip = #557 squash; NO rebuild needed unless MAIN says so). Same bootstrap
+as the P1 batteries. Battery target runtime ≤90 s per file.
+
+
 | Phase | Notable WPs (owner) |
 |---|---|
 | **P2** H8+T3 | providers already exist → element lanes + gates (OPUS); B4-3D + B4-T3 crossed-diagonal CB gates (OPUS); brickUP two-leg equivalence w/ `-lumped` (OPUS); 3D Terzaghi (OPUS) |
@@ -354,6 +399,33 @@ disp-slot ndm; else legacy vel-slot ndm. Flag-free, automatic. ⟨FW-F4⟩.
   - 1.D `configureSizing()` ctor/recvSelf shared helper: APPROVED (anti-drift).
   - Rayleigh shadow of non-virtual getRayleighDampingForces: verified safe —
     zero external callers in SRC/domain + SRC/analysis (element-internal only).
+- 2026-07-11 — **P1 SHIPPED** (PR #557 merged, squash 94dcf9b8d; manifest-row
+  CI gate learned: every new ELE_TAG #define needs a testbed/manifest.yaml
+  row). P2 branch `feature/adr71-p2`; WP2.A pins frozen.
+- 2026-07-11 — **P2 EXECUTED** (2 Opus agents, H8 + T3 lanes; 14 new tests,
+  full suite 36 pass + 1 xfail). H8: brickUP tight-leg equivalence 1.1e-15,
+  3D Terzaghi in the P1 ladder, B4-3D CB ratio 3.20 + auto-α twin bit-exact
+  (6.686e-5 = ADR pin ±2%). T3: crossed B4 CB_cell suppression 8.23 monotone
+  + α-transfer-to-simplices pinned (h = largest edge = 3 m), Terzaghi smoke
+  <0.1%. **MAIN adjudications:**
+  - **brickUP `-lumped` also row-sum-lumps S** (BrickUP.cpp:916); ours lumps
+    solid mass only (ADR §3.2 "solid block only") ⇒ lumped legs gated as a
+    Δt-convergence pair (1.2e-6 finest), not operator identity. Contract
+    difference, not a bug — documented in the H8 test docstring.
+  - **Crossed-T3 spurious mode is CENTER-NODE-localized**, not the corner
+    checkerboard: corner-lattice CB stays smooth (off/0.25 = 1.34,
+    non-monotone) while the cell-center metric CB_cell shows the instability
+    (0.80 → 0.10, ratio 8.23). WP2.A's corner-lattice gate literalism was
+    wrong for this topology; CB_cell APPROVED as the primary suppression
+    gate, corner metric computed + documented for Q4 comparability.
+  - **ADR ⟨scope-F12⟩ locking direction REFUTED vs std-Q4**: crossed-T3
+    locks LESS than full-integration Q4 (T3x/Q4std settlement ratio 0.998 →
+    1.262 as ν→0.49; the union-jack center bubble relieves dilatation;
+    Q4std/Q4bbar itself drops to 0.751). The pin's spirit holds only vs the
+    locking-free bbar reference (0.960 → 0.948). ADR/guide wording at P4:
+    "T3 crossed locks, but LESS than full-integration Q4"; honest-baseline
+    framing survives, the vs-Q4 direction does not.
+
 - 2026-07-10 — 0.A addendum committed (GP/basis pins, contractual-rule emission).
 - 2026-07-10 — 0.B/0.C landed (twin Opus agents); 0.D cross-run green first try:
   16 cases, 96/96 blocks + 16/16 dofMaps ≤1e-16 (gate 1e-9).
