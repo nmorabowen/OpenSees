@@ -402,6 +402,30 @@ as the P1 batteries. Battery target runtime ≤90 s per file.
 - 2026-07-11 — **P1 SHIPPED** (PR #557 merged, squash 94dcf9b8d; manifest-row
   CI gate learned: every new ELE_TAG #define needs a testbed/manifest.yaml
   row). P2 branch `feature/adr71-p2`; WP2.A pins frozen.
+- 2026-07-11 — **P2 EXECUTED** (2 Opus agents, H8 + T3 lanes; 14 new tests,
+  full suite 36 pass + 1 xfail). H8: brickUP tight-leg equivalence 1.1e-15,
+  3D Terzaghi in the P1 ladder, B4-3D CB ratio 3.20 + auto-α twin bit-exact
+  (6.686e-5 = ADR pin ±2%). T3: crossed B4 CB_cell suppression 8.23 monotone
+  + α-transfer-to-simplices pinned (h = largest edge = 3 m), Terzaghi smoke
+  <0.1%. **MAIN adjudications:**
+  - **brickUP `-lumped` also row-sum-lumps S** (BrickUP.cpp:916); ours lumps
+    solid mass only (ADR §3.2 "solid block only") ⇒ lumped legs gated as a
+    Δt-convergence pair (1.2e-6 finest), not operator identity. Contract
+    difference, not a bug — documented in the H8 test docstring.
+  - **Crossed-T3 spurious mode is CENTER-NODE-localized**, not the corner
+    checkerboard: corner-lattice CB stays smooth (off/0.25 = 1.34,
+    non-monotone) while the cell-center metric CB_cell shows the instability
+    (0.80 → 0.10, ratio 8.23). WP2.A's corner-lattice gate literalism was
+    wrong for this topology; CB_cell APPROVED as the primary suppression
+    gate, corner metric computed + documented for Q4 comparability.
+  - **ADR ⟨scope-F12⟩ locking direction REFUTED vs std-Q4**: crossed-T3
+    locks LESS than full-integration Q4 (T3x/Q4std settlement ratio 0.998 →
+    1.262 as ν→0.49; the union-jack center bubble relieves dilatation;
+    Q4std/Q4bbar itself drops to 0.751). The pin's spirit holds only vs the
+    locking-free bbar reference (0.960 → 0.948). ADR/guide wording at P4:
+    "T3 crossed locks, but LESS than full-integration Q4"; honest-baseline
+    framing survives, the vs-Q4 direction does not.
+
 - 2026-07-10 — 0.A addendum committed (GP/basis pins, contractual-rule emission).
 - 2026-07-10 — 0.B/0.C landed (twin Opus agents); 0.D cross-run green first try:
   16 cases, 96/96 blocks + 16/16 dofMaps ≤1e-16 (gate 1e-9).
