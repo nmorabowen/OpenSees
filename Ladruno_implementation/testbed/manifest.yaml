@@ -1209,6 +1209,24 @@ features:
       - SRC/element/ladrunoPlane/CMakeLists.txt
     dispatch: {tcl: true, functionMap: true}
     status: active
+
+  - feature: LadrunoUP                         # ADR 71 Biot u-p family (P1: element live on Q4; T3/H8 gates P2, Bezier TH P3)
+    classtag: 33017          # ELE_TAG family; numerically = ND 33017 LadrunoConcrete3D (per-registry, not a collision)
+    tag_symbol: ELE_TAG_LadrunoUP
+    pr: 557
+    feature_class: element
+    required_tiers: [T0, T1]
+    pytest: tests/test_ladruno_up_element_analytic.py   # Zone-B analytic gates (Terzaghi/ZS84/Boone-Ingraffea/steady-seepage/wrong-solver/Rayleigh-contract/FD); siblings: test_ladruno_up_element_equiv.py (quadUP two-leg + SSPquadUP + B4 CB sweep + bbar), test_ladruno_up_mp_smoke.py (sendSelf/recvSelf DB round-trip + 2-rank MP), test_ladruno_up_kernel_cpp.py (P0 kernel vs independent numpy oracle)
+    tcl: WAIVED(element LadrunoUP ...; shared OpenSeesElementCommands functionMap + TclElementCommands ladrunoElementTable row serve both interpreters; verified via the Zone-B pytest battery + Tcl parse smoke)
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesElementCommands.cpp
+      - SRC/element/TclElementCommands.cpp
+      - SRC/element/ladrunoUP/CMakeLists.txt
+      - SRC/recorder/Ladruno_NodeResults.cpp
+    dispatch: {tcl: true, functionMap: true}
+    status: active
     notes: >
       6-node linear-strain triangle (T6, ADR 70 P3): quadratic N / linear strain,
       3-pt interior rule, reduce-to upstream SixNodeTri (tri6n); std x -geom

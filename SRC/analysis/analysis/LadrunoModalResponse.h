@@ -43,11 +43,17 @@
 //   station so ordinary recorders capture displacement / velocity /
 //   acceleration / element / reaction histories exactly as in a direct run.
 //
-//   Excitation (P1a): uniform base acceleration u_g''(t) along a global
-//   direction, relative formulation, modal load f_a = -Gamma_a u_g''(t) with
-//   Gamma_a the participation factor already computed by modalProperties.
-//   General load-pattern modal loads and the FRF/SSD/random post-processors
-//   (P2/P3) are separate phases.
+//   Excitation channels:
+//     base accel (P1a): uniform u_g''(t) along a global direction, relative
+//         formulation, modal load f_a = -Gamma_a u_g''(t) with Gamma_a the
+//         participation factor already computed by modalProperties.
+//     -load (follow-up): nodal forces P(t) = s(t) * P — P is a load pattern's
+//         plain-NodalLoad shape (shared #553 assembly helper; the pattern's
+//         own TimeSeries is IGNORED) and s(t) the ctor's time series sampled
+//         at the stations; modal load f_a(t) = (psi_a^T P / m~_a) s(t) with
+//         the #553-pinned normalization (psi = evec*Vscale, m~ =
+//         generalizedMasses()).  Response is ABSOLUTE for -load (the relative
+//         formulation is a base-motion concept).
 //
 //   The (w, d) parametrization (rather than (w, xi)) unifies all four damping
 //   branches by the discriminant Delta = w^2 - (d/2)^2 (under/critical/over)
@@ -109,6 +115,12 @@ public:
     // optional 1-based mode subset (default: all modes from the last eigen run)
     void setModeSubset(const std::vector<int>& modes_1based);
 
+    // switch the excitation to a nodal-force pattern P(t) = s(t)*P, where P is
+    // the pattern's plain-NodalLoad shape and s(t) is the ctor's time series
+    // (the `baseAccel` ctor argument doubles as s; `direction` is unused)
+    void setLoadPattern(int patternTag)
+    { m_useLoad = true; m_patternTag = patternTag; }
+
     // run the whole transient, committing one domain step per time station
     int analyze();
 
@@ -125,11 +137,13 @@ private:
 
 private:
     AnalysisModel* m_model;
-    TimeSeries*    m_baseAccel;   // ground acceleration time series (base motion)
-    int            m_direction;   // 1-based global excitation direction
+    TimeSeries*    m_baseAccel;   // excitation series: u_g''(t), or s(t) w/ -load
+    int            m_direction;   // 1-based global excitation direction (base)
+    bool           m_useLoad = false; // excitation = nodal-force pattern
+    int            m_patternTag = 0;  // load-pattern tag (m_useLoad)
     double         m_dt;
     int            m_nsteps;
-    double         m_t0;          // start time (base-accel sampled at t0 + n*dt)
+    double         m_t0;          // start time (series sampled at t0 + n*dt)
 
     DampingKind         m_damp_kind;
     double              m_xi;      // uniform ratio

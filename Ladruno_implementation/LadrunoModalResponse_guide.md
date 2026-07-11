@@ -32,7 +32,8 @@ one-time eigensolve you already paid for.
 ## Command
 
 ```
-modalResponseHistory -dt $dt -nsteps $n -baseAccel $tsTag -dir $dir
+modalResponseHistory -dt $dt -nsteps $n
+    (-baseAccel $tsTag -dir $dir | -load $patternTag -series $tsTag)
     (-damp $xi | -rayleigh $a0 $a1 | -modalDamp $xi1 $xi2 ...)
     [-modes $m1 $m2 ...] [-t0 $t0]
 ```
@@ -53,8 +54,9 @@ ops.modalResponseHistory('-dt', dt, '-nsteps', n,
 |---|---|
 | `-dt $dt` | time step (must equal the recurrence step; sampled from `-baseAccel`) |
 | `-nsteps $n` | number of steps; the run commits `n+1` stations (`t0 … t0+n·dt`) |
-| `-baseAccel $tsTag` | `timeSeries` tag giving the ground acceleration `ü_g(t)` |
-| `-dir $dir` | global excitation direction (1…ndf), matching `modalProperties` |
+| `-baseAccel $tsTag` | `timeSeries` tag giving the ground acceleration `ü_g(t)`; **relative** response |
+| `-dir $dir` | global excitation direction (1…ndf), matching `modalProperties` (base-accel channel) |
+| `-load $patternTag -series $tsTag` | nodal-force transient `P(t)=s(t)·P` — `P` from the pattern's plain `NodalLoad`s (its own `timeSeries` is **ignored**), `s(t)` from `-series` sampled at the stations; modal load `f_a=(ψ_aᵀP/m̃_a)s(t)` (the #553-pinned normalization); **absolute** response. Mutually exclusive with `-baseAccel` |
 | `-damp $xi` | one modal damping ratio applied to every mode |
 | `-rayleigh $a0 $a1` | Rayleigh factors → per-mode `ξ_a = a0/(2ω_a) + a1·ω_a/2` |
 | `-modalDamp $xi1 …` | explicit per-mode ratios (absolute mode order) |
@@ -244,13 +246,13 @@ rms, nu0, m0, m2, peak = ops.randomResponse(..., '-stats', '-duration', 600.0)
 
 ## Scope
 
-P1a covers **uniform base-acceleration** transient excitation; P2 (`frequencyResponse`
-/ `steadyStateDynamics`) covers **harmonic** frequency response and P3
-(`randomResponse`) **stationary random** response (single auto-PSD input →
-RMS/ν₀/peak) — each for **base acceleration or a nodal-force `-load` pattern**
-(the `-load` follow-up), all with classical (diagonal) modal damping.
-Remaining follow-ups: `-load` excitation for the P1a *transient*, cross-PSD
-(matrix `S_PP`) input; non-classical damping → ADR 46 `complexEigen`.
+Every command in the family supports **both excitation channels**: uniform base
+acceleration (`-baseAccel`) or a nodal-force `-load` pattern — the P1a transient
+(`modalResponseHistory`, with `-series` for `s(t)`), the P2 harmonic sweep
+(`frequencyResponse`/`steadyStateDynamics`), and the P3 stationary random
+response (`randomResponse`) — all with classical (diagonal) modal damping.
+Remaining follow-up: cross-PSD (matrix `S_PP`) input; non-classical damping →
+ADR 46 `complexEigen`.
 
 Validation: `tests/test_ladrunoModalResponse.py` (SDOF exact vs numpy PWL across all
 damping branches; multi-mode vs OpenSees Newmark and vs an independent full-matrix

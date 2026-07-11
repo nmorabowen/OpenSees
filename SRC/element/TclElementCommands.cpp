@@ -110,6 +110,7 @@ extern void *OPS_LadrunoBrick(void); // N. Mora-Bowen (Ladruno)
 extern void *OPS_LadrunoSolidShell(void); // N. Mora-Bowen (Ladruno) ADR 66
 extern void *OPS_LadrunoQuad(void); // N. Mora-Bowen (Ladruno)
 extern void *OPS_LadrunoCST(void); // N. Mora-Bowen (Ladruno)
+extern void *OPS_LadrunoUP(void); // N. Mora-Bowen (Ladruno) ADR 71
 extern void *OPS_LadrunoLST(void); // N. Mora-Bowen (Ladruno)
 extern void *OPS_LadrunoCSTPair(void); // N. Mora-Bowen (Ladruno) ADR 70 P4a
 extern void *OPS_LadrunoDistributingCoupling(void); // N. Mora-Bowen (Ladruno)
@@ -595,6 +596,7 @@ TclModelBuilderElementCommand(ClientData clientData, Tcl_Interp *interp,
       {"LadrunoSolidShell",           "ladrunoSolidShell",           OPS_LadrunoSolidShell},
       {"LadrunoQuad",                 "ladrunoQuad",                 OPS_LadrunoQuad},
       {"LadrunoCST",                  "ladrunoCST",                  OPS_LadrunoCST},
+      {"LadrunoUP",                   "ladrunoUP",                   OPS_LadrunoUP},   // N. Mora-Bowen (Ladruno) ADR 71
       {"LadrunoLST",                  "ladrunoLST",                  OPS_LadrunoLST}, // N. Mora-Bowen (Ladruno)
       {"LadrunoCSTPair",              "ladrunoCSTPair",              OPS_LadrunoCSTPair}, // N. Mora-Bowen (Ladruno) ADR 70 P4a
       {"LadrunoDistributingCoupling", "ladrunoDistributingCoupling", OPS_LadrunoDistributingCoupling},

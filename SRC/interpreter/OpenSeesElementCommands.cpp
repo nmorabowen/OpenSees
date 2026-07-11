@@ -206,6 +206,7 @@ void* OPS_LadrunoEmbeddedRebar(); // N. Mora-Bowen (Ladruno)
 void* OPS_LadrunoEmbeddedNode(); // N. Mora-Bowen (Ladruno)
 void* OPS_LadrunoQuad(); // N. Mora-Bowen (Ladruno)
 void* OPS_LadrunoCST(); // N. Mora-Bowen (Ladruno)
+void* OPS_LadrunoUP(); // N. Mora-Bowen (Ladruno) ADR 71
 void* OPS_LadrunoLST(); // N. Mora-Bowen (Ladruno)
 void* OPS_LadrunoCSTPair(); // N. Mora-Bowen (Ladruno) ADR 70 P4a
 void* OPS_LadrunoDistributingCoupling(); // N. Mora-Bowen (Ladruno)
@@ -685,6 +686,8 @@ namespace {
 	functionMap.insert(std::make_pair("ladrunoQuad", &OPS_LadrunoQuad));
 	functionMap.insert(std::make_pair("LadrunoCST", &OPS_LadrunoCST)); // N. Mora-Bowen (Ladruno)
 	functionMap.insert(std::make_pair("ladrunoCST", &OPS_LadrunoCST));
+	functionMap.insert(std::make_pair("LadrunoUP", &OPS_LadrunoUP)); // N. Mora-Bowen (Ladruno) ADR 71
+	functionMap.insert(std::make_pair("ladrunoUP", &OPS_LadrunoUP));
 	functionMap.insert(std::make_pair("LadrunoLST", &OPS_LadrunoLST)); // N. Mora-Bowen (Ladruno)
 	functionMap.insert(std::make_pair("ladrunoLST", &OPS_LadrunoLST));
 	functionMap.insert(std::make_pair("LadrunoCSTPair", &OPS_LadrunoCSTPair)); // N. Mora-Bowen (Ladruno) ADR 70 P4a
