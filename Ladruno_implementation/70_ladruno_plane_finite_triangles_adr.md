@@ -1,6 +1,6 @@
 ---
 title: "ADR 70 — Plane finite-strain continuum family: shared 2D finite-strain kernel + LadrunoCST -geom finite + new LadrunoLST (T6)"
-status: in progress — P0 shipped (#540), P1 shipped (LadrunoQuad -geom finite, #543 + #545), P2 shipped (LadrunoCST -geom finite, #550), P3 (new LadrunoLST T6) landing; P4 (F-bar-Patch) optional/by-demand
+status: in progress — P0 shipped (#540), P1 shipped (LadrunoQuad -geom finite, #543 + #545), P2 shipped (LadrunoCST -geom finite, #550), P3 shipped (LadrunoLST T6 std-only, #554); P4 design spike DECIDED 2026-07-11 (disjoint 2-triangle patch macro-element, exact patch-local unsymmetric tangent — see §9 P4 spike), implementation pending
 ---
 
 # ADR 70 — Plane finite-strain triangles on a shared 2D finite-strain kernel
@@ -85,9 +85,10 @@ grounded **per-element F-bar strategy**.
 
 3. **`LadrunoCST -geom finite`** (T3) — `std` only. **F-bar is a no-op on T3**
    (constant J), so v1 CST-finite is the honest over-stiff baseline; the real
-   volumetric cure for the simplex is **F-bar-Patch** (nodal-averaged dilatation,
-   dSNPO §15.1.9), scoped as a later phase (P4) because it is a cross-element
-   (nodal-patch) operation the element cannot do alone.
+   volumetric cure for the simplex is **F-bar-Patch** (disjoint 2-triangle
+   patches sharing J̄ = v_patch/V_patch, dSNPO §15.1.9), scoped as a later phase
+   (P4) because it is a cross-element operation a lone element cannot do —
+   though the P4 spike showed it fits a patch **macro-element** exactly (§9).
 
 4. **New `LadrunoLST`** (T6, `ELE_TAG_LadrunoLST = 33016`, ELE registry — a
    different registry from `ND_TAG_LogStrain2D = 33016`, no collision):
@@ -102,8 +103,8 @@ grounded **per-element F-bar strategy**.
    | Element | strain field | element-level F-bar | volumetric cure |
    |---|---|---|---|
    | Q4 `LadrunoQuad` | bilinear (J varies) | **works** | `bbar`+`finite` (this ADR) |
-   | T6 `LadrunoLST`  | linear (J varies)  | ~~works~~ **REFUTED at P3** | F-bar-Patch / projected dilatation (P4) |
-   | T3 `LadrunoCST`  | constant (J const) | **no-op**  | F-bar-Patch, nodal (P4) |
+   | T6 `LadrunoLST`  | linear (J varies)  | ~~works~~ **REFUTED at P3** | pair macro-element, patch-P1 dilatation (P4b, by demand) |
+   | T3 `LadrunoCST`  | constant (J const) | **no-op**  | pair macro-element, patch-constant J̄ per dSNPO §15.1.9 (P4a) |
 
    > [!warning] P3 amendment (2026-07-10) — the T6 row above was WRONG.
    > "J varies so F-bar can average" is true but insufficient: constant
@@ -116,9 +117,14 @@ grounded **per-element F-bar strategy**.
    > analytically, by numpy rank, and by `eigen` on the compiled element. The
    > Q4 is immune only because z²-type fields are not in the bilinear space.
    > Consequence: `LadrunoLST` ships **std-only** (`-formulation bbar`
-   > parser-refused with this rationale); the triangle volumetric cure is P4
-   > (nodal F-bar-Patch, or an element-local **P1-projected** dilatation —
-   > which restores rank but is the LBB-delicate P2/P1disc pair; decide at P4).
+   > parser-refused with this rationale); the triangle volumetric cure is P4.
+   > **P4 spike (2026-07-11) decided the cure** — disjoint 2-triangle patch
+   > macro-element (patch-constant J̄ for T3 per dSNPO §15.1.9; patch-P1
+   > projected dilatation for T6), exact patch-local unsymmetric tangent.
+   > Both candidates named above were refuted as stated: patch-constant J̄
+   > does NOT cure the T6 (the conformal modes re-center at the patch
+   > centroid), and an element-local P1 projection at the 3-pt rule is the
+   > identity (a formulation no-op). See the §9 P4 design-spike log.
 
 ---
 
@@ -168,11 +174,16 @@ coupling to the centroid gradient operator (dSNPO eq. 15.10) — the kernel carr
 - **Q4 / T6**: J varies over the element ⇒ (J₀/J) ≠ 1 ⇒ F-bar is **effective**.
 - **T3 (CST)**: J is **constant** over the element ⇒ J₀ ≡ J ⇒ **F̄ = F**, a **no-op**.
   A constant-strain simplex has "nothing to average" (ADR-26; Belytschko Ch. 8).
-  The correct cure is **F-bar-Patch** (dSNPO §15.1.9): compute a **nodal** patch-
-  averaged J̄ by volume-averaging J over the elements sharing each node, then
-  F̄ = (J̄/J)^{1/2} F per element. This is a *nodal/cross-element* operation → it
-  cannot live in a single element's Gauss loop; it needs a domain-level J̄ assembly
-  pass. Deferred to **P4** (see §6), keeping CST-finite v1 an honest baseline.
+  The correct cure is **F-bar-Patch** (dSNPO §15.1.9): split the mesh into
+  **non-overlapping patches** of simplices (2 triangles suffice in 2D, eq. 15.34 +
+  p. 667 guidance) and give every element of a patch the shared patch dilatation
+  J̄ = v_patch/V_patch, i.e. F̄ = (J̄/J)^{1/2} F per element. *(Earlier drafts of
+  this ADR glossed §15.1.9 as a "nodal" average — wrong: the book method is
+  disjoint-patch, and that distinction is exactly what makes its consistent
+  tangent patch-local, eqs. 15.37–15.38.)* This is still a cross-element
+  operation → it cannot live in a single element's Gauss loop, but because the
+  patches are disjoint it CAN live in a patch **macro-element** (P4 decision, §9).
+  Deferred to **P4** (see §6), keeping CST-finite v1 an honest baseline.
 
 ### 3.3 The linear-strain triangle (LST / T6)
 
@@ -261,7 +272,8 @@ supplying its Bézier gradients — **zero new mechanics** (ties into
 | **P1** | `LadrunoQuad std+bbar -geom finite` (ADR-25 P5 for the quad) | element FD consistent-tangent (unsym-aware); homogeneous-F patch vs oracle; small-strain reduce-to-`-geom linear`; det F≤0 step-cut; **volumetric-locking cantilever** — `std` locks at ν→0.5, `bbar`(F-bar) does not; end-to-end `LogStrain2D` over `LadrunoJ2`/elastic |
 | **P2** | `LadrunoCST std -geom finite` | homogeneous-F patch vs oracle; reduce-to-linear; det-F step-cut; documents (and pins) the F-bar no-op + over-stiff volumetric response as the honest baseline |
 | **P3** | new `LadrunoLST` (T6): `std+bbar` × `-geom {linear,finite}` | **reduce-to `SixNodeTri`** at `linear/std` (~1e-9); rank/3-rbm; inclined-band (localizes off mesh lines, vs CST); finite patch vs oracle; **F-bar effective** on T6 (near-incompressible cantilever: `std` locks, `bbar` doesn't) |
-| **P4** *(optional / frontier)* | **F-bar-Patch** nodal dilatation for simplices (CST + future tets) | mesh-objective near-incompressible T3 patch (dSNPO §15.1.9); domain-level J̄ pass; compare CST-patch vs LST — quantify whether the patch closes the gap enough to matter |
+| **P4a** | **T3 pair macro-element** — dSNPO §15.1.9 F-bar-Patch on disjoint 2-triangle patches, exact patch-local unsymmetric tangent (design DECIDED, see §9 spike) | free-pair rank = exactly 3 RBM; FD consistent-tangent on the 8-DOF pair (unsym-aware, at finite stress — the cross blocks vanish at F=I); mesh-objective near-incompressible T3 patch vs the F-bar quad (dSNPO Fig 15.8 localization + necking anchors); conforming-mesh assert; honest-baseline pin flips (pair no longer locks where std T3 does) |
+| **P4b** *(optional / by demand)* | **T6 pair macro-element** — patch-P1 projected dilatation over the 2-element patch (novel/off-label; rank + inf-sup evidence in §9 spike) | free-pair rank = exactly 3 RBM incl. distorted + conforming-curved pairs; pressure/checkerboard gate on structured AND alternating-diagonal/unstructured meshes (inf-sup only measured on straight structured so far); FD consistent tangent at finite stress; full adversarial gate (novel math) |
 
 Adversarial-gate policy (per [[feedback_adversarial_gate_when]]): **full Opus gate at
 P0** (novel shared math: the unsym F-bar G₀ term + the non-minor-symmetric tangent
@@ -280,13 +292,15 @@ Each phase is one PR off `ladruno`. P1 also closes ADR-25 P5 for the quad.
 > up, promote the pure kernel to a neutral `SRC/element/` location. Decide when the
 > first non-`ladrunoPlane` consumer (BezierTri6) actually wires in.
 
-> [!question]
-> **F-bar-Patch appetite (P4).** The nodal-patch dilatation is the *only* thing that
-> makes a plain T3 usable near incompressibility, but it is genuinely heavier
-> (domain-level J̄ assembly, patch bookkeeping, an added state pass). Given `LadrunoLST`
-> already delivers a usable F-bar triangle in P3, is CST-patch worth building, or does
-> CST stay the deliberate baseline and LST become the recommended triangle? Lean:
-> **ship P0–P3, decide P4 by demand** (matches the ADR-26 "CST is a dead end" stance).
+> [!question]- **F-bar-Patch appetite (P4). RESOLVED by the 2026-07-11 spike.**
+> The premise shifted twice: (a) P3 refuted element-level F-bar on the T6, so the
+> patch is no longer just a T3 nicety — it is the family's ONLY triangle
+> volumetric cure; (b) the spike showed the cure needs **no** domain-level J̄
+> assembly — disjoint 2-triangle patches make the exact tangent patch-local, so
+> the whole thing is an ordinary 4-node (T3) / 9-node (T6) macro-element.
+> Decision: **build P4a (T3 pair, published method); P4b (T6 pair, novel
+> patch-P1) stays by-demand.** See the §9 spike log for the refutations,
+> rank/inf-sup evidence, and the rejected tangent strategies.
 
 > [!question]
 > **LST corot.** This ADR does the *finite* (large-strain) axis. Large-rotation/
@@ -498,8 +512,89 @@ deformed-config equilibrium; finite Newton convergence (elastic + J2);
 std-finite Newton iteration ceiling; det-F step-cut; parse guards
 (PlaneStress+finite, non-finite material, bbar, bbar+finite, ssp/eas).
 
-**P4 (now load-bearing):** the family's triangle volumetric cure — nodal
-F-bar-Patch (dSNPO §15.1.9) for T3+T6, or an element-local P1-projected
-dilatation for the T6 (restores rank; LBB-delicate P2/P1disc — needs its own
-gate battery). Until then: quads (`bbar`) where near-incompressibility
-matters; triangles are std.
+**P4 (now load-bearing):** the family's triangle volumetric cure — design
+decided by the spike below. Until it ships: quads (`bbar`) where
+near-incompressibility matters; triangles are std.
+
+### P4 design spike (2026-07-11) — triangle volumetric cure DECIDED, no code
+
+Design-first spike, as flagged at P3: decide the **tangent strategy** for the
+triangle volumetric cure before writing code. Method: dSNPO §15.1.9 read
+against the primary text (pp. 665–669), small-strain (F = I) rank analysis in
+numpy (`adr70_p4_spike/p4_rank_spike.py`), and a full adversarial gate (novel
+math) — an independent twin rebuild of all machinery + distorted/curved/
+inf-sup attacks (`p4_adversarial.py`, `p4_infsup_clean.py`,
+`p4_curved_conforming.py`). All five spike claims **CONFIRMED** by the gate;
+the gate's two apparent refutations were bugs in its own extensions
+(a cracked-mesh dof map; a pinv-polluted free-mesh inf-sup), both self-caught.
+
+**DECISION — the tangent strategy.** The cure is built on **disjoint
+2-triangle patches implemented as a single macro-element** (union node set:
+4 nodes/8 DOF for a T3 pair, 9 nodes/18 DOF for a T6 pair) carrying the
+**exact, patch-local, generally unsymmetric consistent tangent** through the
+standard element-local assembly interface. dSNPO eqs. 15.37–15.38 give
+K^(ee) plus cross blocks K^(es) **only for s in the same patch** — rows/cols
+never leave the patch, so a macro-element assembles the exact Newton operator
+with zero assembler surgery (no domain-level J̄ pass, no injected FE_Elements,
+no ContactDomain-style machinery). Kernel reuse: `fbarScale2D` with the patch
+J̄ and a generalized `addFbarCoupling2D` whose substitute gradient row is the
+patch operator (patch-mean for T3, per-GP patch-P1 row for T6) instead of the
+centroid g₀.
+
+**Per-triangle formulation inside the macro:**
+- **T3 pair (P4a):** patch-constant J̄ = v_patch/V_patch — dSNPO §15.1.9
+  verbatim (their 2D recommendation IS 2-element patches; published anchors:
+  Fig 15.8 localization, Fig 15.9 necking). Free-pair rank: exactly 3 RBM ✔.
+- **T6 pair (P4b, by demand):** dilatation projected onto **P1 over the
+  2-element patch** (L2, same quadrature, 6 GPs vs 3 P1 modes — a genuine
+  least-squares smoothing). Free-pair rank: exactly 3 RBM, robust on
+  distorted and conforming-curved pairs ✔. This lane is **novel/off-label**
+  (equivalent mixed pair: P2 displacement / P1-per-macro pressure) → full
+  adversarial gate + pressure battery when built.
+
+**Findings that killed the alternatives (all numerically pinned):**
+
+| # | Finding | Evidence |
+|---|---|---|
+| F1 | **dSNPO §15.1.9 is a disjoint-patch method, not nodal averaging** — the ADR's earlier "nodal" gloss conflated it with Bonet–Burton average-nodal-pressure. Disjointness is what makes the exact tangent patch-local (15.37/15.38). | book text pp. 665–669 |
+| F2 | **F-bar-Patch (patch-constant J̄) does NOT cure the T6** — the P3 conformal modes re-center: u = a(z−z_p)², z_p = patch centroid, has ε_dev ≡ 0 pointwise and patch-mean dilatation 4Re(a(z̄_patch−z_p)) = 0 ⇒ zero energy under ANY constant-mean projection over ANY region. Free T6 pair: **5** zero modes (3 RBM + 2). Enlarging the averaging region can never fix the T6. | rank C4 = 5; energy injection E ≈ 1e-31 on distorted pairs |
+| F3 | **Element-local P1 projection on the T6 is the identity** at the shipped 3-pt rule: #GP = dim(P1) = 3 and the interior points are P1-unisolvent, so the quadrature L2 projection interpolates ⇒ b̃ ≡ b at the GPs (max diff ~4e-15, straight AND curved — weights and curvature cancel algebraically). "‑formulation p1proj" would silently ship std. Corollary: **no element-local projection at this quadrature can yield any volumetric relief** — the cross-element coupling is the entire mechanism, not an implementation nuisance. | C6; twin reproduced incl. curved |
+| F4 | **Patch-P1 over the pair restores full rank**: exactly 3 zero modes (symmetric, distorted, conforming-curved). Analytic proof (affine elements): ε_dev ≡ 0 piecewise + C0 on the shared edge ⇒ the two per-element analytic quadratics agree on a segment ⇒ identical (a degree-2 complex polynomial with >2 roots is null) ⇒ globally conformal ⇒ dilatation is a global linear field ⇒ reproduced exactly by patch-P1 ⇒ full volumetric energy. (Curved: result holds numerically; the written proof covers affine only.) | C5 = 3; twin distorted/curved = 3 |
+| F5 | **Constraint counts** (T6 pair): std 6, patch-const 1 (over-relaxed → F2's 2 spurious modes), patch-P1 3 (= 1.5/element; mesh ratio r ≈ 2.67 vs std's locking 1.33). Heuristic only — the load-bearing evidence is F4 + F6. | C8 |
+| F6 | **Inf-sup (T6 patch-P1)**: Dirichlet-pinned, mean-zero-pressure β_h **plateaus ≈ 0.46** for N = 2..5 structured pair-meshes, zero spurious pressure modes. Measured on straight structured meshes ONLY — no theoretical LBB proof exists for this pair; alternating-diagonal/unstructured/curved meshes unproven → P4b carries a pressure gate. | `p4_infsup_clean.py` |
+| F7 | **patch-P2 is the same trap as F3 one level up**: 6 GPs = dim(P2) ⇒ identity ⇒ std ⇒ locks. Not a usable richer fallback. | twin ATTACK 2 |
+
+**Rejected tangent strategies** (the original P4 shortlist, for the record):
+1. *Nodal (overlapping) averaged dilatation* — cures both triangles but the
+   exact tangent couples every vertex-sharing neighbor: needs domain-level
+   injected FE_Elements (ADR-39-style) or an inexact tangent; κ-scaled dropped
+   terms wreck Newton exactly where the cure matters; MP partitioning pain;
+   plus the equal-order T3 pressure-oscillation record. Strictly dominated by
+   the disjoint-patch macro, which gets exactness for free.
+2. *Element-local P1disc projection (T6)* — dead three ways: F3 (identity at
+   the shipped rule), no constraint relief even with a richer rule (still 3
+   constraints/element), and P2/P1disc is the classically LBB-deficient pair.
+3. *Lagged/staggered J̄* (freeze from last iteration) — destroys quadratic
+   convergence and makes the consistent-tangent FD gate fail by design;
+   against fork policy (no untestable mechanism ships).
+
+**Implementation traps pinned for P4a/P4b** (from the adversarial gate):
+- The K^(es) cross blocks are **stress-proportional** — they vanish at F = I,
+  so the FD consistent-tangent gate MUST run at finite stress, and the element
+  must declare an unsymmetric tangent (never symmetrize).
+- **Conforming mesh assert**: a shared edge whose mid-nodes don't coincide
+  silently cracks the patch and re-opens spurious modes (bit the twin's own
+  curved test).
+- **Patch partition policy**: leftover lone triangles = std (they lock);
+  ≥3-element patches over-relax (F2 direction); user-facing form is a pair
+  element (`element LadrunoXXX 4-or-9 nodes`) — apeGmsh emits natural pairs
+  from split-quad meshing. Candidate ELE tag: **33021** (33019 pencilled H27,
+  33020 SolidShell).
+- F-bar power stays **½** (plane), as everywhere in this family.
+
+Spike artifacts: `Ladruno_implementation/adr70_p4_spike/` — `p4_rank_spike.py`
+(primary), `p4_adversarial.py` (independent twin: distorted pairs, energy
+injection, 4-element over-relaxation trend, patch-P2 trap),
+`p4_infsup_clean.py` (F6; NB its curved lane is degenerate — ignore, curved
+inf-sup is genuinely open), `p4_curved_conforming.py` (F4 curved + the
+cracked-mesh trap demo).
