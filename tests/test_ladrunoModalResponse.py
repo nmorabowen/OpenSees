@@ -376,3 +376,173 @@ def test_guard_duplicate_modes():
     with pytest.raises(Exception):
         ops.modalResponseHistory('-dt', 0.01, '-nsteps', 2, '-damp', 0.05,
                                  '-baseAccel', 1, '-dir', 1, '-modes', 1, 1)
+
+
+# ===========================================================================
+# -load channel: nodal-force transient P(t) = s(t)*P (ADR 44 follow-up)
+#
+#   f_a(t) = (psi_a^T P / m~_a) s(t) through the same exact PWL recurrence;
+#   the P assembly + normalization is the #553-shipped shared helper (pinned
+#   in modal_response_p3_spike/load_frf_oracle.py). Response is ABSOLUTE.
+# ===========================================================================
+def _add_force_pattern(tag, ts_tag, loads):
+    ops.pattern('Plain', tag, ts_tag)
+    for n, v in loads.items():
+        ops.load(n, v)
+
+
+def _record_mrh_load(node, dt, nsteps, damp_args, pattern_tag, series_tag,
+                     path):
+    ops.recorder('Node', '-file', str(path), '-time', '-precision', 16,
+                 '-node', node, '-dof', 1, 'disp')
+    ops.modalResponseHistory('-dt', dt, '-nsteps', nsteps, *damp_args,
+                             '-load', pattern_tag, '-series', series_tag)
+    ops.remove('recorders')
+    data = np.loadtxt(str(path))
+    return data[:, 0], data[:, 1]
+
+
+def test_load_sdof_force_exact(tmp_path):
+    # SDOF under F(t) = P*s(t): m u'' + c u' + k u = P s  <=>  the sdof_pwl
+    # oracle with ag = -(P/m) s. Pins fcoef = psi^T P/m~ end-to-end at 1e-9.
+    m, k, xi, P = 2.0, 500.0, 0.05, 3.0
+    dt, N = 0.004, 500
+    s = _ground_motion(N, dt, seed=11)
+
+    w = _build_sdof(m, k)
+    _timeseries(1, dt, s)
+    ops.eigen('-fullGenLapack', 1)
+    ops.modalProperties()
+    _add_force_pattern(2, 1, {2: P})
+    _, u = _record_mrh_load(2, dt, N, ['-damp', xi], 2, 1,
+                            tmp_path / "lsdof.out")
+
+    u_ref = sdof_pwl(w, xi, dt, -(P / m) * s)
+    err = np.max(np.abs(u - u_ref))
+    peak = np.max(np.abs(u_ref))
+    assert peak > 1e-6
+    assert err < 1e-9, f"-load SDOF max|u-u_ref|={err:.2e} (peak {peak:.3e})"
+
+
+def test_load_mdof_vs_opensees_newmark(tmp_path):
+    # THE -load transient headline: multi-node force history vs a direct
+    # OpenSees Newmark run driving the SAME pattern (independent of the modal
+    # machinery end-to-end).
+    masses = [2.0, 1.5]; ks = [800.0, 500.0]
+    dt, N = 0.0015, 700
+    a0 = 0.30                      # mass-proportional only (betaK quirk)
+    s = _ground_motion(N, dt, seed=13)
+    loads = {2: 4.0, 3: -1.5}
+
+    # direct Newmark with the pattern active
+    _build_chain(masses, ks)
+    _timeseries(1, dt, s)
+    _add_force_pattern(2, 1, loads)
+    ops.rayleigh(a0, 0.0, 0.0, 0.0)
+    nk_path = tmp_path / "lnewmark.out"
+    ops.recorder('Node', '-file', str(nk_path), '-time', '-precision', 16,
+                 '-node', 3, '-dof', 1, 'disp')
+    ops.constraints('Plain'); ops.numberer('Plain'); ops.system('BandGeneral')
+    ops.test('NormDispIncr', 1e-12, 20); ops.algorithm('Linear')
+    ops.integrator('Newmark', 0.5, 0.25); ops.analysis('Transient')
+    for _ in range(N):
+        ops.analyze(1, dt)
+    ops.remove('recorders')
+    nk = np.loadtxt(str(nk_path))
+
+    # modal -load transient (all modes; same pattern shape + series)
+    _build_chain(masses, ks)
+    _timeseries(1, dt, s)
+    ops.eigen('-fullGenLapack', 2)
+    ops.modalProperties()
+    _add_force_pattern(2, 1, loads)
+    mt, mu = _record_mrh_load(3, dt, N, ['-rayleigh', a0, 0.0], 2, 1,
+                              tmp_path / "lmodal.out")
+
+    ui = np.interp(nk[:, 0], mt, mu)
+    peak = np.max(np.abs(nk[:, 1]))
+    rel = np.max(np.abs(ui - nk[:, 1])) / peak
+    assert peak > 1e-6
+    assert rel < 2e-3, f"-load modal vs OpenSees-Newmark rel err {rel:.2e}"
+
+
+def test_load_equals_baseaccel_channel(tmp_path):
+    # -baseAccel -dir 1 == -load with P = -M R and the SAME series: the modal
+    # loads are identical (Gamma = psi^T M R/m~), so the histories must match
+    # to machine precision.
+    masses = [2.0, 1.5]; ks = [800.0, 500.0]
+    dt, N = 0.004, 300
+    ag = _ground_motion(N, dt, seed=17)
+
+    _build_chain(masses, ks)
+    _timeseries(1, dt, ag)
+    ops.eigen('-fullGenLapack', 2)
+    ops.modalProperties()
+    _, ub = _record_mrh(3, 1, dt, N, ['-damp', 0.04],
+                        path=tmp_path / "chan_base.out")
+
+    _build_chain(masses, ks)
+    _timeseries(1, dt, ag)
+    ops.eigen('-fullGenLapack', 2)
+    ops.modalProperties()
+    _add_force_pattern(2, 1, {2: -2.0, 3: -1.5})   # P = -M R
+    _, ul = _record_mrh_load(3, dt, N, ['-damp', 0.04], 2, 1,
+                             tmp_path / "chan_load.out")
+    assert np.allclose(ub, ul, rtol=1e-10, atol=1e-14)
+
+
+def test_load_unorm_invariance_transient(tmp_path):
+    # default vs -unorm modalProperties: psi^T P/m~ is normalization-invariant,
+    # so the committed history must be identical (the sole pin on the second
+    # Vscale factor — default normalization has Vscale=1 and cannot see it).
+    masses = [2.0, 1.5]; ks = [800.0, 500.0]
+    dt, N = 0.004, 300
+    s = _ground_motion(N, dt, seed=19)
+    loads = {2: 1.0, 3: 3.0}
+
+    _build_chain(masses, ks)
+    _timeseries(1, dt, s)
+    ops.eigen('-fullGenLapack', 2)
+    ops.modalProperties()
+    _add_force_pattern(2, 1, loads)
+    _, ud = _record_mrh_load(3, dt, N, ['-damp', 0.03], 2, 1,
+                             tmp_path / "un_def.out")
+
+    _build_chain(masses, ks)
+    _timeseries(1, dt, s)
+    ops.eigen('-fullGenLapack', 2)
+    ops.modalProperties('-unorm')
+    _add_force_pattern(2, 1, loads)
+    _, uu = _record_mrh_load(3, dt, N, ['-damp', 0.03], 2, 1,
+                             tmp_path / "un_un.out")
+    assert np.allclose(ud, uu, rtol=1e-10, atol=1e-14)
+
+
+def test_guard_load_without_series():
+    _build_sdof(2.0, 500.0)
+    _timeseries(1, 0.01, np.array([0.0, 1.0, 0.0]))
+    ops.eigen('-fullGenLapack', 1); ops.modalProperties()
+    _add_force_pattern(2, 1, {2: 1.0})
+    with pytest.raises(Exception):
+        ops.modalResponseHistory('-dt', 0.01, '-nsteps', 2, '-damp', 0.05,
+                                 '-load', 2)
+
+
+def test_guard_load_and_baseaccel_exclusive_transient():
+    _build_sdof(2.0, 500.0)
+    _timeseries(1, 0.01, np.array([0.0, 1.0, 0.0]))
+    ops.eigen('-fullGenLapack', 1); ops.modalProperties()
+    _add_force_pattern(2, 1, {2: 1.0})
+    with pytest.raises(Exception):
+        ops.modalResponseHistory('-dt', 0.01, '-nsteps', 2, '-damp', 0.05,
+                                 '-baseAccel', 1, '-dir', 1,
+                                 '-load', 2, '-series', 1)
+
+
+def test_guard_series_without_load():
+    _build_sdof(2.0, 500.0)
+    _timeseries(1, 0.01, np.array([0.0, 1.0, 0.0]))
+    ops.eigen('-fullGenLapack', 1); ops.modalProperties()
+    with pytest.raises(Exception):
+        ops.modalResponseHistory('-dt', 0.01, '-nsteps', 2, '-damp', 0.05,
+                                 '-baseAccel', 1, '-dir', 1, '-series', 1)

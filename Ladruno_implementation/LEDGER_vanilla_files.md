@@ -293,6 +293,8 @@ and re-verify.
 | `SRC/{tcl/tclMain.cpp,interpreter/PythonModule.cpp}` | Splash-banner feature regen via `patch_banner.py` — extend the `modal frequency domain` line with `randomResponse` (ADR44 P3). Banner strings only. | [#552](https://github.com/nmorabowen/OpenSees/pull/552) |
 | `SRC/{tcl/tclMain.cpp,interpreter/PythonModule.cpp}` | Splash-banner feature regen via `patch_banner.py` — note the `-load` nodal-force excitation channel on the `modal frequency domain` line (ADR44 -load follow-up). Banner strings only; the `-load` code itself lives entirely in fork-authored `LadrunoModalResponse.{h,cpp}` (zero other vanilla edits). | [#553](https://github.com/nmorabowen/OpenSees/pull/553) |
 
+| `SRC/{tcl/tclMain.cpp,interpreter/PythonModule.cpp}` | Splash-banner feature regen via `patch_banner.py` — note the `-load`/`-series` transient channel on the `modalResponseHistory` line (ADR44 transient -load). Banner strings only; the code lives in fork-authored `LadrunoModalResponse.{h,cpp}` (zero other vanilla edits). | [#555](https://github.com/nmorabowen/OpenSees/pull/555) |
+
 > [!note] Upstreamable bugfixes
 > Some PRs fix genuine upstream bugs (not fork-only features) and are candidates
 > to send back to OpenSeesFramework. Track those in the table below so we know
