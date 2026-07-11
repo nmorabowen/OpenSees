@@ -10,8 +10,12 @@ target_sources(OPS_Element
     PRIVATE
     LadrunoBrick.cpp
     OPS_LadrunoBrick.cpp
+    LadrunoBrick20.cpp
+    OPS_LadrunoBrick20.cpp
     PUBLIC
     LadrunoBrick.h
+    LadrunoBrick20.h
+    LadrunoHex20Shape.h
 )
 
 target_include_directories(OPS_Element PUBLIC ${CMAKE_CURRENT_LIST_DIR})

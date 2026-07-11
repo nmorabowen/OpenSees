@@ -1536,17 +1536,34 @@ features:
     tag_symbol: ELE_TAG_LadrunoBrick20
     pr: 548
     feature_class: element
-    required_tiers: [T0]
-    pytest: tests/test_hex20_kernel_cpp.py   # P0 kernel gate: standalone g++ driver vs the sympy oracle (hex20_reference.py) - N/dN/J/B/K/M + GP tables + row-sum/HRZ fractions; P1 adds tests/test_ladrunoBrick20_element.py (reduce-to Twenty_Node_Brick)
-    tcl: WAIVED(P0 ships the pure kernel + tag reservation only - no element/command surface until P1)
+    required_tiers: [T0, T1]
+    pytest: tests/test_ladrunoBrick20_element.py   # P1 element gate: reduce-to Twenty_Node_Brick ~1e-12 (disp/force/per-GP stress/K/K+c3M), 2-ele distorted patch, rank-54/6-RBM, SelfWeight corner-share sign, lch=cbrt(V), DB round-trip, parser rejections, U1 damage advisory, LadrunoRecorder GP round-trip. (The P0 kernel gate tests/test_hex20_kernel_cpp.py stays green as the kernel anchor.)
+    tcl: WAIVED(element LadrunoBrick20 ...; shared OpenSeesElementCommands functionMap serves Tcl + Python; verified via the Zone-A pytest battery)
     zone_b: []
     core_files:
       - SRC/classTags.h
       - SRC/element/ladrunoBrick/LadrunoHex20Shape.h
-    dispatch: {tcl: false, functionMap: false}
-    status: planned
+      - SRC/element/ladrunoBrick/LadrunoBrick20.h
+      - SRC/element/ladrunoBrick/LadrunoBrick20.cpp
+      - SRC/element/ladrunoBrick/OPS_LadrunoBrick20.cpp
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesElementCommands.cpp
+      - SRC/element/TclElementCommands.cpp
+      - SRC/recorder/VTK_Recorder.cpp
+      - SRC/recorder/VTKHDF_Recorder.cpp
+      - SRC/recorder/PVDRecorder.cpp
+      - SRC/recorder/GmshRecorder.cpp
+      - SRC/recorder/Ladruno_ElementResults.h
+    dispatch: {tcl: true, functionMap: true}
+    status: active
     notes: >
       20-node serendipity quadratic hex, ADR 72. P0 (PR #548) = pure
       LadrunoHex20Shape.h kernel + sympy oracle + g++ cross-check + 33018
       reservation; R1 blind ordering verify + R2 oracle-independence audit
-      both PASS. Element (-formulation std|uri, HRZ-only -lumped) lands P1+.
+      both PASS. P1 = the element (-formulation std, 27-pt full) + factory +
+      broker/interpreter/Tcl registrations + 4 viz-recorder vtktypes +
+      Ladruno_ElementResults rule reuse (Hexahedron_GaussLegendre_3 / 20N
+      basis, brcshl GP pairing) + the Zone-A element battery; headline gate =
+      reduce-to Twenty_Node_Brick ~1e-12. uri (2x2x2 C3D20R analog) lands P2;
+      HRZ -lumped lands P3 (flag parsed + serialized, getMass errors honestly).
+      U1 RESOLVED BOTH: one-time opserr damage-channel advisory at setDomain.

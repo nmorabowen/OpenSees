@@ -475,6 +475,7 @@
 #include "brick/Brick.h"
 #include "brick/BbarBrick.h"
 #include "ladrunoBrick/LadrunoBrick.h"	// N. Mora-Bowen (Ladruno)
+#include "ladrunoBrick/LadrunoBrick20.h"	// N. Mora-Bowen (Ladruno) ADR 72
 #include "ladrunoSolidShell/LadrunoSolidShell.h"	// N. Mora-Bowen (Ladruno)
 #include "bezierTriangle/BezierTri6.h"		// Ladruno (broker reconstruction)
 #include "bezierTetrahedron/BezierTet10.h"	// Ladruno (broker reconstruction)
@@ -1070,6 +1071,9 @@ FEM_ObjectBrokerAllClasses::getNewElement(int classTag)
 
     case ELE_TAG_LadrunoBrick:		// N. Mora-Bowen (Ladruno)
       return new LadrunoBrick();
+
+    case ELE_TAG_LadrunoBrick20:	// N. Mora-Bowen (Ladruno) ADR 72
+      return new LadrunoBrick20();
 
     case ELE_TAG_LadrunoSolidShell:	// N. Mora-Bowen (Ladruno)
       return new LadrunoSolidShell();

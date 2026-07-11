@@ -159,6 +159,68 @@ due at P1). U2 — PR merges are auto once CI is green; no other user gate.
 
 ## Orchestration log (loop state — newest first)
 
+- **2026-07-10, iteration 9b: Gmsh hex20 side-fix COMPLETE (user-fired chip).**
+  Isolated-worktree agent, commit `ac63a879a` on LOCAL branch
+  `guppi/gmsh-hex20-fix` (based on origin/ladruno b530f0854, NOT pushed):
+  GmshRecorder 20-node hex → MSH type 17 (`GMSH_HEXAHEDRON_20`) + write-order
+  permutation [8,11,16,9,17,10,18,19,12,15,13,14] (independently re-derived
+  from shp3dv L/M/N + the Gmsh reference manual; corners pass-through), for
+  BOTH `Twenty_Node_Brick` and 33018; round-trip pytest 2/2 green + real-gmsh
+  oracle (detJ ≡ 1/8, volume 1.0); ledger rows incl. upstreamable table.
+  Siblings TwentyNodeBrick / _u_p_U / TotalLagrangianFD20NodeBrick still carry
+  the type-12 bug (documented, out of scope). SEQUENCING: after PR-2 merges →
+  rebase (ledger-row conflict expected, keep-both), push, open PR-3.
+
+- **2026-07-10, iteration 9: R3 review DONE → fix round in flight.**
+  R3 = 8-angle review (line-scan / copy-strip audit / cross-file tracer /
+  reuse / simplification / efficiency / altitude / conventions), all reported.
+  Implementer deviations adjudicated: dual-scalar U1 probe ACCEPTED (ADR §7
+  noted incl. lazy-allocation limitation), loud getMass fallback ACCEPTED,
+  printA-based gates ACCEPTED, guide WRITTEN by orchestrator. Verified
+  findings → fix-round agent (Opus, running) applying F1–F17: headline **F1
+  per-GP detJ≤0 guard** (dropped vs the upstream anchor — silent dv sign-flip
+  on curved second-order meshes), F2 factory 3D-capability probe (null-clone
+  segfault), F3 advisories per-element→process-static (O(N) opserr flood),
+  F4 parse-time `-lumped` notice, F5 argv guard, F6 trailing `-damp` error,
+  F7 updateParameter aggregation, F8 URI wire-coercion guard, F9 setDomain
+  ordering, **F10 GmshRecorder 33018 line REMOVED** (MSH type 12 = 27-node
+  hex per GmshRecorder.h's own comment + gmsh hex20 node-order mismatch →
+  H20 gmsh output deferred; task chip spawned for the identical upstream
+  `Twenty_Node_Brick` bug), F11 per-instance geometry cache, F12 M0 mass
+  cache + momentum-pass separation, F13 residual-path gating, F14 massless
+  early-out, F15 getInitialStiff dedup, F16 dead-code sweep, F17 marker.
+  Deferred-with-teeth: ADR §6 P2 row now carries the basisInfo recorder seam,
+  blocked BᵀDB, and battery-oracle-import debts; guide rows added (gmsh,
+  embedment). NEXT: fixer report → verify gates (reduce-to must stay ≤1e-12)
+  → PR-2 assembly (commit all incl. U1 docs, push, `gh pr create --base
+  ladruno`, CI watch, stranded-commit discipline).
+
+- **2026-07-10, iteration 8: P1 IMPLEMENTED — all gates green, awaiting R3.**
+  Implementer delivered tasks 1.1–1.4 + 1.6 on branch
+  `guppi/xenodochial-lamarr-adr72-p1` (uncommitted — R3 review first). New:
+  `LadrunoBrick20.{h,cpp}` (std-only, 27-pt, P0-kernel-consuming; URI ordinal 1
+  reserved+parser-rejected; U1 advisory at setDomain), `OPS_LadrunoBrick20.cpp`
+  (-hourglass hard error; -lumped parsed, getMass errors "lands in P3" + falls
+  back consistent), registrations (broker + functionMap + classic-Tcl table +
+  CMakeLists + 4 viz vtktypes + Ladruno_ElementResults 33018 in the 20N/GL3
+  dispatch), `tests/test_ladrunoBrick20_element.py` (18/18 PASS). **Reduce-to
+  residuals (rel-max): disp 6.8e-15, force 5.5e-15, per-GP stress 3.2e-15,
+  K 8.1e-16, Newmark K+c3M 8.0e-16** — three orders below the ~1e-12 gate.
+  Rank: exactly 6 zero modes, λ6/λ7 separation 6e13. Corner-share sign
+  pathology asserted (−V/8 corners / +V/6 mids). Classic-Tcl smoke PASS
+  (OpenSees.exe). P0 kernel harness still 8/8 (local box needed
+  `pip install sympy`); sibling LadrunoBrick battery 20/20;
+  check_manifest/check_classtags OK. Bookkeeping: banner line + patch_banner,
+  LEDGER_implementations row, 8 LEDGER_vanilla rows (_PR pending_), manifest
+  row planned→active + dispatch{tcl,functionMap}=true + LadrunoQuad-style tcl
+  WAIVED wording; headers stamped. **DEVIATION for R3:** the U1 probe
+  discriminates on the damage-channel SHAPE (advise only for dual-scalar
+  size≥2 = ASDConcrete3D {d+,d−} / LadrunoConcrete3D {ω_t,ω_c}); plain
+  LadrunoJ2 exposes a size-1 Lemaitre "damage" response even with the law OFF,
+  so a bare present/absent probe would violate the "never for LadrunoJ2" gate —
+  LadrunoJ2 itself untouched. NEXT: R3 (/code-review medium + vanilla-footprint
+  checklist), then commit + PR off ladruno.
+
 - **2026-07-10, iteration 7: P0 MERGED (#548, squash 564eda1a6) → P1 launched.**
   CI round 2 all green (Zone-A 14m incl. the hex20 g++ cross-check on Linux;
   manifest gate 22s). Squash-merged; branch `guppi/xenodochial-lamarr-adr72-p1`

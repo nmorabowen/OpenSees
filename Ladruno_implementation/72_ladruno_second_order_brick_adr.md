@@ -444,7 +444,7 @@ note when P1 lands.
 |---|---|---|
 | **P0** | `LadrunoHex20Shape.h` + numpy oracle (standalone g++, no OpenSees build); tag reservation | N: partition of unity, Kronecker-delta at nodes, Σ∂N = 0, degree-2 completeness vs symbolic; J/detJ on a distorted hex vs numpy; K assembled from the kernel: **rank 54 @ 27-pt, rank 48 @ 8-pt (6 spurious modes, eigenvectors dumped & catalogued)**; 14-pt note verified or dropped; consistent-mass diagonals > 0; **HRZ cube fractions == 7/248 & 2/31; row-sum corner negativity −M/8 demonstrated** (the pin that justifies HRZ-only); GP tables match brcshl (27) / Brick (8) orders |
 | **P1** | element `-formulation std` (27-pt) + registration + factory + recorder wiring | **reduce-to `Twenty_Node_Brick`**: K, resisting force, consistent M to ~1e-12 on a distorted hex under mixed loads; constant-strain patch (distorted 2-element mesh); rank/6-RBM; SelfWeight/`-b` vs closed form (corner shares near-zero/negative — asserted, documented); lch = ∛V; per-GP recorder round-trip via LadrunoRecorder (rule reuse, GP coords vs `GLOBAL_GP_COORDS` oracle); sendSelf/recvSelf round-trip; ledger + banner |
-| **P2** | `-formulation uri` (8-pt) | single element: rank 48, exactly 6 zero-energy modes; restrained ≥2×2×2 block: zero spurious global modes (non-communicability pin); **single-stack pathology case demonstrated & documented** (the honest counter-example); coarse bending: 1-layer cantilever tip disp ≥ 0.98·analytic where `LadrunoBrick std` locks and `eas` needs refinement (Oñate Fig. 8.23 replication); ν = 0.4999 confined block: `uri` relieves, `std` locks (both documented); Barlow check: `uri` GP stresses beat `std` GP stresses vs the analytic bending field; cost: assembly time ratio ≈ 0.3–0.4× std |
+| **P2** | `-formulation uri` (8-pt) | single element: rank 48, exactly 6 zero-energy modes; restrained ≥2×2×2 block: zero spurious global modes (non-communicability pin); **single-stack pathology case demonstrated & documented** (the honest counter-example); coarse bending: 1-layer cantilever tip disp ≥ 0.98·analytic where `LadrunoBrick std` locks and `eas` needs refinement (Oñate Fig. 8.23 replication); ν = 0.4999 confined block: `uri` relieves, `std` locks (both documented); Barlow check: `uri` GP stresses beat `std` GP stresses vs the analytic bending field; cost: assembly time ratio ≈ 0.3–0.4× std. **R3-deferred debts due here**: (a) recorder metadata seam — the legacy `getGeometryAndIntRuleByClassTag` arm hardwires 33018→`Hexahedron_GaussLegendre_3` (27 GPs); `uri` (8 material points, same classTag) MUST answer the `basisInfo`/CustomIntegrationRule probe instead, and the P1 battery's unconditional `NUM_GP==27` pin must become formulation-aware; (b) blocked/sparse BᵀDB assembly (per-node 3×3 blocks from `dNdx`, symmetry exploited — upstream uses `addMatrixTripleProduct`) — do it when the assembly is touched for `uri` anyway, re-anchored by the reduce-to gate; (c) battery table dedup — `test_ladrunoBrick20_element.py` re-transcribes `NODE_XI`/GP27/edges from the oracle; import `tests/hex20_reference.py` (sympy now in Zone-A) so ordering corrections can't drift. |
 | **P3** | dynamics: `-lumped` (HRZ), explicit proof-of-life | eigen: consistent brackets from above, HRZ below, both → analytic bar/beam frequencies; HRZ mass vector matches P0 fractions through the element path; wave bar under `CentralDifferenceLadruno` runs stably at the pencil Δt (measured Δt ratio vs equal-node H8 mesh reported, ≈ 0.8 rod-theory ballpark); `criticalTimeStep()` returns the 60-DOF pencil value; energy-balance channels close (no hourglass channel — asserted zero) |
 | **P4** *(deferred, demand-gated — each its own mini-ADR/PR)* | `-geom finite` on a shared 3D kernel extracted from `LadrunoBrick`; `bbar`/H27 sibling (33019) if incompressibility or contact demand materializes; `i14` rule; embedded-host APIs (`getInterpolationWeights/Gradients` sized 20 + `LadrunoEmbeddedKernel` dispatch); quadratic tie/mortar faces | (scoped when opened) |
 
@@ -495,6 +495,21 @@ Each phase is one PR off `ladruno`.
 > attached material exposes a "damage" response channel (the cached-Response
 > probe pattern from `LadrunoBrick::damageResponse`). Advisory, not a
 > rejection — the run proceeds. Lands with P1.
+> *P1 implementation note*: the probe requires a **dual-scalar** damage
+> channel (response Size ≥ 2, the {d⁺,d⁻} / {ω_t,ω_c} crack-band concrete
+> family: ASDConcrete3D, LadrunoConcrete3D). Rationale: `LadrunoJ2` answers
+> the `"damage"` probe with a size-1 Lemaitre channel even when its damage
+> law is OFF, so a mere-presence probe would false-positive on every J2
+> metal. Consequence accepted: a Lemaitre-configured LadrunoJ2 (scalar
+> ductile damage, not crack-band) does not trigger the advisory — its
+> regularization story is the (F)-family's, documented there, not here.
+> Known limitations (R3): the probe runs on the virgin material at `setDomain`
+> — a material that lazily allocates its damage vector on first strain would
+> silently skip the advisory (none of the current family does); and the
+> probe+`Size≥2` discriminator is inline in `LadrunoBrick20::setDomain` — when
+> the H27 sibling (33019) or another consumer lands, hoist it to a shared
+> `isCrackBandMaterial(NDMaterial*)` predicate beside the H8
+> `damageResponse` pattern instead of a third copy.
 
 - **Node-ordering verification is a P0 gate, not an assumption.** The corner/
   mid-edge pattern (bottom ring 9–12, top 13–16, vertical 17–20) is common to

@@ -200,6 +200,7 @@ void* OPS_BBarFourNodeQuadUP();
 void* OPS_BBarBrickUP();
 void* OPS_Brick();
 void* OPS_LadrunoBrick(); // N. Mora-Bowen (Ladruno)
+void* OPS_LadrunoBrick20(); // N. Mora-Bowen (Ladruno) ADR 72
 void* OPS_LadrunoSolidShell(); // N. Mora-Bowen (Ladruno)
 void* OPS_LadrunoIMKBeam(); // N. Mora-Bowen (Ladruno)
 void* OPS_LadrunoEmbeddedRebar(); // N. Mora-Bowen (Ladruno)
@@ -671,6 +672,8 @@ namespace {
 	functionMap.insert(std::make_pair("stdBrick", &OPS_Brick));
 	functionMap.insert(std::make_pair("LadrunoBrick", &OPS_LadrunoBrick)); // N. Mora-Bowen (Ladruno)
 	functionMap.insert(std::make_pair("ladrunoBrick", &OPS_LadrunoBrick));
+	functionMap.insert(std::make_pair("LadrunoBrick20", &OPS_LadrunoBrick20)); // N. Mora-Bowen (Ladruno) ADR 72
+	functionMap.insert(std::make_pair("ladrunoBrick20", &OPS_LadrunoBrick20)); // Ladruno ADR 72
 	functionMap.insert(std::make_pair("LadrunoSolidShell", &OPS_LadrunoSolidShell)); // N. Mora-Bowen (Ladruno)
 	functionMap.insert(std::make_pair("ladrunoSolidShell", &OPS_LadrunoSolidShell));
 	functionMap.insert(std::make_pair("LadrunoIMKBeam", &OPS_LadrunoIMKBeam)); // N. Mora-Bowen (Ladruno)
