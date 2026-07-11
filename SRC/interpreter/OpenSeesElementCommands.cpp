@@ -207,6 +207,7 @@ void* OPS_LadrunoEmbeddedNode(); // N. Mora-Bowen (Ladruno)
 void* OPS_LadrunoQuad(); // N. Mora-Bowen (Ladruno)
 void* OPS_LadrunoCST(); // N. Mora-Bowen (Ladruno)
 void* OPS_LadrunoUP(); // N. Mora-Bowen (Ladruno) ADR 71
+void* OPS_LadrunoLST(); // N. Mora-Bowen (Ladruno)
 void* OPS_LadrunoDistributingCoupling(); // N. Mora-Bowen (Ladruno)
 void* OPS_LadrunoKinematicCoupling(); // N. Mora-Bowen (Ladruno)
 void* OPS_LadrunoRigidBody(); // N. Mora-Bowen (Ladruno) ADR 58
@@ -686,6 +687,8 @@ namespace {
 	functionMap.insert(std::make_pair("ladrunoCST", &OPS_LadrunoCST));
 	functionMap.insert(std::make_pair("LadrunoUP", &OPS_LadrunoUP)); // N. Mora-Bowen (Ladruno) ADR 71
 	functionMap.insert(std::make_pair("ladrunoUP", &OPS_LadrunoUP));
+	functionMap.insert(std::make_pair("LadrunoLST", &OPS_LadrunoLST)); // N. Mora-Bowen (Ladruno)
+	functionMap.insert(std::make_pair("ladrunoLST", &OPS_LadrunoLST));
 	functionMap.insert(std::make_pair("LadrunoDistributingCoupling", &OPS_LadrunoDistributingCoupling)); // N. Mora-Bowen (Ladruno)
 	functionMap.insert(std::make_pair("ladrunoDistributingCoupling", &OPS_LadrunoDistributingCoupling));
 	functionMap.insert(std::make_pair("LadrunoKinematicCoupling", &OPS_LadrunoKinematicCoupling)); // N. Mora-Bowen (Ladruno)

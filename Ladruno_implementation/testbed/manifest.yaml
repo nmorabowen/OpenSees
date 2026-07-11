@@ -1193,6 +1193,33 @@ features:
       baseline / triangular-mesh fallback / future E-FEM carrier. Plan:
       25_ladruno_plane_elements_adr.md.
 
+  - feature: LadrunoLST
+    classtag: 33016          # ELE_TAG family (distinct registry from ND_TAG_LogStrain2D=33016)
+    tag_symbol: ELE_TAG_LadrunoLST
+    pr: null
+    feature_class: element
+    required_tiers: [T0, T1]
+    pytest: tests/test_ladrunolst_element.py   # reduce-to tri6n (SixNodeTri), rank/3-rbm, bbar-refusal refutation pin, linear-strain-field patch, HRZ mass, pressure closure; finite lane in tests/test_ladrunolst_finite.py
+    tcl: WAIVED(element LadrunoLST ...; shared OpenSeesElementCommands functionMap serves Tcl + Python; verified via the Zone-A pytest battery)
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesElementCommands.cpp
+      - SRC/element/TclElementCommands.cpp
+      - SRC/element/ladrunoPlane/CMakeLists.txt
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      6-node linear-strain triangle (T6, ADR 70 P3): quadratic N / linear strain,
+      3-pt interior rule, reduce-to upstream SixNodeTri (tri6n); std x -geom
+      {linear|finite} on the shared LadrunoFiniteStrain2DKernel. bbar/F-bar was
+      REFUTED at P3 — constant element-mean dilatation is rank-deficient on the
+      T6 (2 conformal zero-energy modes) — so bbar is parser-refused and the
+      triangle volumetric cure is ADR 70 P4. Deliberate upstream divergences:
+      HRZ lumped mass (upstream N-lumping = zero/negative corner masses) and
+      the consistent-pressure side-61 typo fix. Plan:
+      70_ladruno_plane_finite_triangles_adr.md.
+
   - feature: LadrunoDistributingCoupling
     classtag: 33011          # ELE_TAG (element) family; after LadrunoCST=33008 (33009/33010 reserved VEM/SBFEM)
     tag_symbol: ELE_TAG_LadrunoDistributingCoupling

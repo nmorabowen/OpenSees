@@ -479,6 +479,7 @@ int OPS_complexEigen();   // Ladruno ADR46: complex/state-space modal (P0: -qz k
 int OPS_LadrunoModalResponseHistory(); // Ladruno ADR44: modal-superposition transient
 int OPS_LadrunoFrequencyResponse();    // Ladruno ADR44 P2: modal FRF sweep
 int OPS_LadrunoSteadyStateDynamics();  // Ladruno ADR44 P2: steady-state amplitude sweep
+int OPS_LadrunoRandomResponse();       // Ladruno ADR44 P3: stationary random response (PSD->RMS)
 int* OPS_GetNumEigen();
 int OPS_systemSize();
 int OPS_domainCommitTag();

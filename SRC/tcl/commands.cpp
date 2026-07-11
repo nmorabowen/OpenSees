@@ -285,6 +285,7 @@ extern int OPS_sdfResponse(void);
 extern int OPS_LadrunoModalResponseHistory(void);   // P1a: modalResponseHistory
 extern int OPS_LadrunoFrequencyResponse(void);      // P2:  frequencyResponse
 extern int OPS_LadrunoSteadyStateDynamics(void);    // P2:  steadyStateDynamics
+extern int OPS_LadrunoRandomResponse(void);         // P3:  randomResponse
 
 extern void OPS_SetReliabilityDomain(ReliabilityDomain *);
 
@@ -1058,6 +1059,8 @@ int OpenSeesAppInit(Tcl_Interp *interp) {
     Tcl_CreateCommand(interp, "frequencyResponse", &frequencyResponse,
         (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
     Tcl_CreateCommand(interp, "steadyStateDynamics", &steadyStateDynamics,
+        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
+    Tcl_CreateCommand(interp, "randomResponse", &randomResponse,
         (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
     Tcl_CreateCommand(interp, "video", &videoPlayer,
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);       
@@ -6242,6 +6245,15 @@ steadyStateDynamics(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Cha
 {
     OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
     if (OPS_LadrunoSteadyStateDynamics() < 0)
+	    return TCL_ERROR;
+    return TCL_OK;
+}
+
+int
+randomResponse(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
+{
+    OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
+    if (OPS_LadrunoRandomResponse() < 0)
 	    return TCL_ERROR;
     return TCL_OK;
 }

@@ -443,3 +443,223 @@ def test_fixed_response_node_is_zero(tmp_path):
         '-freq', 0.1, 5.0, 5, '-baseAccel', '-dir', 1, '-damp', 0.05,
         '-node', 1, '-dof', 1, '-out', str(path)), path)
     assert np.allclose(arr[:, 1:], 0.0)
+
+
+# ===========================================================================
+# -load channel (nodal-force FRF, ADR 44 P2 follow-up)
+#
+#   u(Om) = amp * sum_a psi_a H_a(Om) (psi_a^T P)/m~_a,  psi_a = evec*Vscale,
+#   m~_a = generalizedMasses()(a)  — normalization-invariant (any Vscale).
+#   Oracle: modal_response_p3_spike/load_frf_oracle.py.
+# ===========================================================================
+def frf_direct_load(M, K, C, P, freqs, dof, resp="disp", amp=1.0):
+    """Independent direct complex solve (K - Om^2 M + i Om C)^{-1} P."""
+    out = []
+    for f in freqs:
+        Om = TWO_PI * f
+        u = np.linalg.solve(K - Om * Om * M + 1j * Om * C, P)[dof]
+        if resp == "vel":
+            u *= 1j * Om
+        elif resp == "accel":
+            u *= -Om * Om
+        out.append(amp * u)
+    return np.array(out)
+
+
+def _add_load_pattern(tag, loads):
+    """Plain pattern holding nodal loads {nodeTag: value} (ndf=1 chains)."""
+    ops.timeSeries('Constant', 100 + tag)
+    ops.pattern('Plain', tag, 100 + tag)
+    for n, v in loads.items():
+        ops.load(n, v)
+
+
+@pytest.mark.parametrize("resp", ["disp", "vel", "accel"])
+def test_load_frf_vs_direct(tmp_path, resp):
+    # THE -load headline gate: multi-node force shape vs the independent
+    # direct complex solve (does NOT reuse the modal formula).
+    masses = [2.0, 3.0, 1.5]; ks = [1200.0, 900.0, 600.0]
+    a0, a1 = 0.30, 2.0e-3
+    fmin, fmax, nf = 0.05, 5.0, 220
+
+    _build_chain(masses, ks)
+    ops.eigen('-fullGenLapack', 3)
+    ops.modalProperties()
+    _add_load_pattern(1, {3: 5.0, 4: -2.0})   # nodes 3,4 = dofs 1,2
+    path = tmp_path / f"lfrf_{resp}.out"
+    arr = _run(lambda: ops.frequencyResponse(
+        '-freq', fmin, fmax, nf, '-lin', '-load', 1,
+        '-rayleigh', a0, a1, '-node', 4, '-dof', 1, '-resp', resp,
+        '-out', str(path)), path)
+
+    freqs = np.linspace(fmin, fmax, nf)
+    M, K = _chain_MK(masses, ks)
+    C = a0 * M + a1 * K
+    P = np.array([0.0, 5.0, -2.0])
+    ref = frf_direct_load(M, K, C, P, freqs, dof=2, resp=resp)
+
+    got = arr[:, 1] + 1j * arr[:, 2]
+    scale = np.max(np.abs(ref))
+    assert scale > 1e-12
+    err = np.max(np.abs(got - ref)) / scale
+    assert err < 1e-8, f"{resp}: -load FRF vs direct rel err {err:.2e}"
+
+
+def test_load_frf_unorm_invariance(tmp_path):
+    # modalProperties -unorm rescales the eigenvectors (Vscale != 1); the
+    # psi(psi^T P)/m~ weight must be EXACTLY invariant. This is the pin that a
+    # missing/extra Vscale factor (a Vscale^2 mistake) cannot survive.
+    masses = [2.0, 3.0, 1.5]; ks = [1200.0, 900.0, 600.0]
+    _build_chain(masses, ks)
+    ops.eigen('-fullGenLapack', 3)
+    ops.modalProperties()
+    _add_load_pattern(1, {2: 1.0, 4: 3.0})
+    args = ('-freq', 0.05, 5.0, 120, '-lin', '-load', 1, '-damp', 0.04,
+            '-node', 4, '-dof', 1)
+    p1 = tmp_path / "def.out"
+    a_def = _run(lambda: ops.frequencyResponse(*args, '-out', str(p1)), p1)
+
+    _build_chain(masses, ks)
+    ops.eigen('-fullGenLapack', 3)
+    ops.modalProperties('-unorm')
+    _add_load_pattern(1, {2: 1.0, 4: 3.0})
+    p2 = tmp_path / "unorm.out"
+    a_un = _run(lambda: ops.frequencyResponse(*args, '-out', str(p2)), p2)
+
+    assert np.allclose(a_def, a_un, rtol=1e-10, atol=1e-14)
+
+
+def test_load_static_limit(tmp_path):
+    # SSD at Om->0 equals the static solution |K^-1 P| (spectral identity,
+    # exact with all modes retained).
+    masses = [2.0, 3.0, 1.5]; ks = [1200.0, 900.0, 600.0]
+    _build_chain(masses, ks)
+    ops.eigen('-fullGenLapack', 3)
+    ops.modalProperties()
+    _add_load_pattern(1, {2: 4.0, 3: -1.0})
+    path = tmp_path / "lstat.out"
+    arr = _run(lambda: ops.steadyStateDynamics(
+        '-freq', 1e-6, 1e-6, 1, '-load', 1, '-damp', 0.03,
+        '-node', 4, '-dof', 1, '-out', str(path)), path)
+    M, K = _chain_MK(masses, ks)
+    ustat = np.linalg.solve(K, np.array([4.0, -1.0, 0.0]))
+    assert abs(arr[0, 1] - abs(ustat[2])) / abs(ustat[2]) < 1e-6
+
+
+def test_load_equals_baseaccel_for_P_minus_MR(tmp_path):
+    # -baseAccel -dir 1 is the special case P = -M R: the two channels must
+    # agree row-for-row on the same model (the spike check 3, end-to-end).
+    masses = [2.0, 1.5]; ks = [800.0, 500.0]
+    _build_chain(masses, ks)
+    ops.eigen('-fullGenLapack', 2)
+    ops.modalProperties()
+    _add_load_pattern(1, {2: -2.0, 3: -1.5})  # P = -M R (unit base accel)
+    args = ('-freq', 0.1, 4.0, 80, '-damp', 0.04, '-node', 3, '-dof', 1)
+    pb = tmp_path / "ba.out"; pl = tmp_path / "ld.out"
+    a_b = _run(lambda: ops.frequencyResponse(
+        *args, '-baseAccel', '-dir', 1, '-out', str(pb)), pb)
+    a_l = _run(lambda: ops.frequencyResponse(
+        *args, '-load', 1, '-out', str(pl)), pl)
+    assert np.allclose(a_b, a_l, rtol=1e-10, atol=1e-14)
+
+
+def test_load_amp_scaling(tmp_path):
+    _build_sdof(2.0, 800.0)
+    ops.eigen('-fullGenLapack', 1)
+    ops.modalProperties()
+    _add_load_pattern(1, {2: 3.0})
+    args = ('-freq', 0.5, 4.0, 40, '-load', 1, '-damp', 0.05,
+            '-node', 2, '-dof', 1)
+    p1 = tmp_path / "a1.out"; p2 = tmp_path / "a2.out"
+    a1 = _run(lambda: ops.frequencyResponse(*args, '-out', str(p1)), p1)
+    a2 = _run(lambda: ops.frequencyResponse(
+        *args, '-amp', 2.5, '-out', str(p2)), p2)
+    assert np.allclose(a2[:, 1:], 2.5 * a1[:, 1:], rtol=1e-12, atol=0)
+
+
+def test_guard_load_and_baseaccel_exclusive():
+    _build_sdof(2.0, 800.0)
+    ops.eigen('-fullGenLapack', 1); ops.modalProperties()
+    _add_load_pattern(1, {2: 1.0})
+    with pytest.raises(Exception):
+        ops.frequencyResponse('-freq', 0.1, 5.0, 10, '-baseAccel', '-dir', 1,
+                              '-load', 1, '-damp', 0.05, '-node', 2, '-dof', 1)
+
+
+def test_guard_load_missing_pattern():
+    _build_sdof(2.0, 800.0)
+    ops.eigen('-fullGenLapack', 1); ops.modalProperties()
+    with pytest.raises(Exception):
+        ops.frequencyResponse('-freq', 0.1, 5.0, 10, '-load', 99,
+                              '-damp', 0.05, '-node', 2, '-dof', 1)
+
+
+def test_guard_load_pattern_without_nodal_loads():
+    _build_sdof(2.0, 800.0)
+    ops.eigen('-fullGenLapack', 1); ops.modalProperties()
+    ops.timeSeries('Constant', 105)
+    ops.pattern('Plain', 5, 105)              # empty pattern
+    with pytest.raises(Exception):
+        ops.frequencyResponse('-freq', 0.1, 5.0, 10, '-load', 5,
+                              '-damp', 0.05, '-node', 2, '-dof', 1)
+
+
+def test_load_moment_on_rotational_dof_vs_direct(tmp_path):
+    # Closes the review's coverage note: a MOMENT load on a rotational DOF
+    # (ndf=3 beam node) vs the independent direct solve — the ndf=1 chains
+    # above never exercise a rotational load entry.
+    E, A, Iz, L = 30000.0, 20.0, 800.0, 100.0
+    m, J = 3.0, 40.0                      # tip mass + rotary inertia
+    xi = 0.04
+    ops.wipe()
+    ops.model('basic', '-ndm', 2, '-ndf', 3)
+    ops.node(1, 0.0, 0.0); ops.fix(1, 1, 1, 1)
+    ops.node(2, L, 0.0);   ops.mass(2, m, m, J)
+    ops.geomTransf('Linear', 1)
+    ops.element('elasticBeamColumn', 1, 1, 2, A, E, Iz, 1)
+    ops.eigen('-fullGenLapack', 3)
+    ops.modalProperties()
+    ops.timeSeries('Constant', 120)
+    ops.pattern('Plain', 20, 120)
+    ops.load(2, 0.0, 2.0, 5.0)            # shear + tip MOMENT
+    path = tmp_path / "moment.out"
+    fmin, fmax, nf = 0.05, 4.0, 150
+    arr = _run(lambda: ops.frequencyResponse(
+        '-freq', fmin, fmax, nf, '-lin', '-load', 20, '-damp', xi,
+        '-node', 2, '-dof', 3, '-out', str(path)), path)
+
+    # cantilever free-node operator (Ux, Uy, Rz at the tip)
+    K = np.array([[E * A / L, 0.0, 0.0],
+                  [0.0, 12 * E * Iz / L ** 3, -6 * E * Iz / L ** 2],
+                  [0.0, -6 * E * Iz / L ** 2, 4 * E * Iz / L]])
+    M = np.diag([m, m, J])
+    P = np.array([0.0, 2.0, 5.0])
+    freqs = np.linspace(fmin, fmax, nf)
+    # modal-load reference with uniform xi (same channel as -damp)
+    Lam, Q = np.linalg.eigh(M)
+    Mis = Q @ np.diag(1.0 / np.sqrt(Lam)) @ Q.T
+    w2, U = np.linalg.eigh(Mis @ K @ Mis)
+    Phi = Mis @ U
+    w = np.sqrt(np.clip(w2, 0.0, None))
+    ref = np.array([
+        sum(Phi[2, a] * (Phi[:, a] @ P)
+            / (w[a] ** 2 - (TWO_PI * f) ** 2 + 1j * (TWO_PI * f) * 2 * xi * w[a])
+            for a in range(3))
+        for f in freqs])
+    got = arr[:, 1] + 1j * arr[:, 2]
+    err = np.max(np.abs(got - ref)) / np.max(np.abs(ref))
+    assert err < 1e-8, f"moment-load FRF vs direct rel err {err:.2e}"
+
+
+def test_guard_load_pattern_with_sp():
+    # a pattern carrying sp constraints does not define a pure force shape ->
+    # refused loudly rather than silently dropping the sp part.
+    _build_sdof(2.0, 800.0)
+    ops.eigen('-fullGenLapack', 1); ops.modalProperties()
+    ops.timeSeries('Constant', 106)
+    ops.pattern('Plain', 6, 106)
+    ops.load(2, 1.0)
+    ops.sp(2, 1, 0.01)
+    with pytest.raises(Exception):
+        ops.frequencyResponse('-freq', 0.1, 5.0, 10, '-load', 6,
+                              '-damp', 0.05, '-node', 2, '-dof', 1)
