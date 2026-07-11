@@ -309,6 +309,82 @@ disp-slot ndm; else legacy vel-slot ndm. Flag-free, automatic. ⟨FW-F4⟩.
 
 ## P2–P4 sketch (each = own branch/PR; agents pinned at phase start)
 
+### WP3.A pins (FROZEN 2026-07-11 — P3 agents implement exactly this)
+
+P3 = Taylor-Hood on Bezier BT6/BTET10 (vertex-p, heterogeneous ndf). Branch
+`feature/adr71-p3`. Full adversarial panel #2 runs before the PR (ADR policy).
+
+**Ownership.** 3.B owns SRC/element/ladrunoUP/LadrunoUP.{h,cpp} +
+OPS_LadrunoUP.cpp (all three, one agent — the changes interlock). 3.C-B1 owns
+tests/test_ladruno_up_element_th_b1.py. 3.C-PL owns
+tests/test_ladruno_up_element_th.py. Waves: 3.B -> MAIN build -> {3.C-B1 ||
+3.C-PL} -> panel x3 -> PR.
+
+**3.B pins:**
+1. Parser flip: (2,6)/(3,10) now ACCEPTED and REQUIRE `-pOrder linear`
+   (omitted or `equal` on a quadratic shape = FATAL naming the reserved
+   equal-order-quadratic axis). `-stab` on TH stays fatal. Linear shapes
+   unchanged.
+2. Heterogeneous-ndf validation (setDomain, STRICT): vertex/carrier nodes
+   ndf == ndm+1 exactly; mid-edge nodes ndf == ndm exactly; anything else =
+   loud error naming node + expectation. (Rationale: a uniform-ndf model
+   would leave floating mid-edge p-DOFs -> silent singularity; the fork
+   philosophy is loud. The equalDOF mixed-ndf example in 3.C-PL shows the
+   modeling pattern.)
+3. TH assembly: dofMap fed the provider pCarrierTH (pOrder==1); nP_ =
+   #carriers; evalP(taylorHood=true); Htilde NEVER assembled on TH.
+4. Straight-side guard (setDomain, BT6+BTET10, both pOrders): every mid-edge
+   node must satisfy ||x_m - (x_a+x_b)/2|| <= 1e-6 * ||x_b-x_a|| for its
+   edge (a,b); violation = loud error naming element/node/distance.
+   (Provider affine-map precondition, ADR section 3.3.)
+5. **BTET10 winding ADJUDICATION (the P0 trap, decided):** the pinned node<->L
+   map makes conventionally RIGHT-handed tets evaluate detJ < 0. The element
+   accepts BOTH windings: at setDomain, if all GPs have detJ < 0 the element
+   folds dv = w*|detJ| (gradients from the signed J are orientation-correct;
+   the measure must be positive) and prints a ONE-TIME informational note;
+   all-positive proceeds as-is; mixed sign or |detJ| ~ 0 = loud error.
+   T3/Q4/H8/BT6 keep the P1 detJ>0-per-GP rejection (their standard
+   CCW/right-handed winding IS map-positive).
+6. recvSelf/configureSizing must reproduce the TH sizing (pCarrier path) —
+   extend the existing helper, no hand-copies. sendSelf already ships pOrder.
+7. Responses on TH: porePressure/flux use the carrier-compacted Np (nP_
+   values); stresses/stressesTotal unchanged (u-side quadratic).
+
+**3.C-B1 pins (B1 ZCB80 phasor gate, ADR section 7.1 verbatim):** BT6-TH
+column 30 m x 1 m (crossed or strip mesh of BT6 — agent picks the cleanest
+straight-sided triangulation and documents it), q(t)=100*sin(3.379t) Pa top,
+drained top, rigid impermeable base, E=7.492e8 Pa, nu=0.2, n=0.333,
+k'=1e-7 m/s (kbar = k'/(rho_w*g)), rho_s=2000, rho_w=1000; TWO legs:
+Qbar=1e4 MPa (compressible; 1/Qbar via equivalent Kf = n*Qbar) and Qbar=1e9
+MPa (undrained-limit checkerboard stressor). FE realization per ADR: ring-up
+until per-cycle amplitude drift < 0.5%, LS-fit A*sin+B*cos per node over the
+last cycle, compare |p(z)|, arg p(z), |u(z)| vs the ZCB80 closed form
+(eqs 12-30 — implement independently in numpy from the Book/paper formulas;
+document the equations used). Gates: Q1e4 leg L2-rel <= 2%; Q1e9 leg:
+no-checkerboard (CB metric ~ 0 on the p field) + pressure L2 mesh-refinement
+convergence (2 refinements) + quadratic-u rate preserved (u L2 error order
+~3 or at least >2 on refinement); one dt-halving check pins dt <= T/100
+adequacy. gamma=0.6/beta=0.3025.
+
+**3.C-PL pins (TH plumbing battery):** (i) sendSelf/recvSelf DB round-trip
+on a BT6-TH AND a BTET10-TH element (non-default args; mirror the 1.D serial
+gate; exact restore + re-solve); (ii) recorders: node disp-slot p on
+carriers, eleResponse porePressure/flux lengths = nP_/carrier-consistent,
+PressureSource disp-slot on TH carriers; (iii) numberers: same tiny TH model
+solved under Plain vs RCM numberer -> identical results (mixed-ndf
+renumbering proof); (iv) equalDOF mixed-ndf interface example: dry region
+(ndf=2 solid elements) + saturated BT6-TH region sharing an interface,
+explicit-DOF-list equalDOF on shared u-DOFs (ADR FW-F10 — bare form
+mis-sizes), static+transient smoke, THE example the P4 guide will cite;
+(v) BTET10 winding acceptance: same one-element problem right-handed vs
+left-handed input -> identical p/u (1e-12) + the one-time note observed;
+(vi) straight-side guard: curved mid-edge node -> loud error (assert message,
+not crash); (vii) BT6-TH static steady seepage exactness (P1 gate 4 analog);
+(viii) BTET10-TH consolidation smoke vs series (loose 5%).
+
+**Run mechanics:** hermetic bootstrap donors as P2; UmfPack; batteries
+target <= 120 s each. MAIN rebuilds after 3.B before batteries run.
+
 ### WP2.A pins (FROZEN 2026-07-11 — P2 agents implement exactly this)
 
 P2 = the H8 and T3 lanes GATED (both already parse+run since P1 — this phase
