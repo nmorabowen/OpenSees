@@ -302,3 +302,8 @@ and re-verify.
 |---|---|---|
 | Lagrange quad/tri elements (`SRC/element/...`) | Fix `setResponse` NdMaterialOutput tags so MPCO sees material output | [#7](https://github.com/nmorabowen/OpenSees/pull/7) |
 | `SRC/interpreter/PythonStream.h` | `// Ladruno`: format-string bug in `err_out` — the already-formatted message was passed as the *format* to `PySys_FormatStderr(msg.c_str())`, so any literal `%` in an `opserr` message (e.g. `"% of model mass"`, `"exceeds -maxAddedMass cap 5%"`) was consumed as a bogus printf conversion and silently dropped/garbled under **openseespy** (Tcl `StandardStream` path unaffected). Fix: `PySys_FormatStderr("%s", msg.c_str())`. Surfaced by the SMS cap-warning validation (T-CAP). | [#306](https://github.com/nmorabowen/OpenSees/pull/306) |
+| `SRC/classTags.h` | `// Ladruno` (ADR-70 P4a): register `ELE_TAG_LadrunoCSTPair`=33021 (disjoint 2-triangle F-bar-Patch macro-element, dSNPO 15.1.9) after the SolidShell 33020 row | _PR pending_ |
+| `SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp` | `// Ladruno` (ADR-70 P4a): include + `case ELE_TAG_LadrunoCSTPair` broker constructor | _PR pending_ |
+| `SRC/interpreter/OpenSeesElementCommands.cpp` | `// Ladruno` (ADR-70 P4a): fwd-decl + `functionMap` entries `LadrunoCSTPair`/`ladrunoCSTPair` | _PR pending_ |
+| `SRC/element/TclElementCommands.cpp` | `// Ladruno` (ADR-70 P4a): extern + classic-Tcl dispatch row `LadrunoCSTPair`/`ladrunoCSTPair` | _PR pending_ |
+| `SRC/tcl/tclMain.cpp` + `SRC/interpreter/PythonModule.cpp` | banner FEATURES block regen (`patch_banner.py`) — plane-family line now lists `LadrunoCSTPair` (F-bar-Patch macro) | _PR pending_ |

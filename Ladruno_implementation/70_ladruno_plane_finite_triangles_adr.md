@@ -1,6 +1,6 @@
 ---
 title: "ADR 70 — Plane finite-strain continuum family: shared 2D finite-strain kernel + LadrunoCST -geom finite + new LadrunoLST (T6)"
-status: in progress — P0 shipped (#540), P1 shipped (LadrunoQuad -geom finite, #543 + #545), P2 shipped (LadrunoCST -geom finite, #550), P3 shipped (LadrunoLST T6 std-only, #554); P4 design spike DECIDED 2026-07-11 (disjoint 2-triangle patch macro-element, exact patch-local unsymmetric tangent — see §9 P4 spike), implementation pending
+status: in progress — P0 shipped (#540), P1 shipped (LadrunoQuad -geom finite, #543 + #545), P2 shipped (LadrunoCST -geom finite, #550), P3 shipped (LadrunoLST T6 std-only, #554); P4 spike DECIDED + P4a SHIPPED (LadrunoCSTPair 33021, disjoint 2-triangle F-bar-Patch macro — see §9); P4b (T6 pair, patch-P1) stays by-demand
 ---
 
 # ADR 70 — Plane finite-strain triangles on a shared 2D finite-strain kernel
@@ -598,3 +598,56 @@ injection, 4-element over-relaxation trend, patch-P2 trap),
 `p4_infsup_clean.py` (F6; NB its curved lane is degenerate — ignore, curved
 inf-sup is genuinely open), `p4_curved_conforming.py` (F4 curved + the
 cracked-mesh trap demo).
+
+### P4a — `LadrunoCSTPair` (33021): the T3 pair macro-element, SHIPPED
+
+Implements the spike decision verbatim. One new element, zero kernel changes.
+
+**What landed**
+
+- **`LadrunoCSTPair.{h,cpp}` + `OPS_LadrunoCSTPair.cpp`** in `ladrunoPlane/`:
+  4-node CCW quad split along the n1-n3 diagonal into T1=(n1,n2,n3) /
+  T2=(n1,n3,n4), one centroid GP + one material copy per triangle.
+  `updatePair()` computes both constant F's, J̄ = (J₁V₁+J₂V₂)/(V₁+V₂)
+  (eq 15.36), drives each material at F̄_e = (J̄/J_e)^{1/2} F_e via `setTrialF`
+  (det F ≤ 0 per triangle → step cut BEFORE any setTrialF — the F-bar scale
+  needs both J's and is NaN on a negative ratio). `formPair()` assembles the
+  residual (σ̄ on the UNBARRED spatial config, Remark 15.2) and the exact
+  tangent per triangle through the shared kernel **in 4-node zero-padded
+  rows**: `addTangent2D` + ONE `addFbarCoupling2D` call with the volume-
+  weighted patch row ḡ = Σ_s (v_s/v_p) g_s substituted for the centroid g₀ —
+  algebraically identical to the eq 15.37 (v_e/v_p − 1) own block + the
+  eq 15.38 (v_s/v_p) cross block (the oracle pins the identity). Row-major →
+  column-major element-wise copy (the P1 no-transpose lesson); shared static
+  K/P zeroed on error paths.
+- **Finite-strain + PlaneStrain only** — the element IS the volumetric cure;
+  parser refuses PlaneStress, non-`FiniteStrainND2DMaterial` materials, and
+  `-geom linear` (`-geom finite` accepted as a no-op). `getInitialStiff` =
+  symmetric reference BᵀD₀B seed (family convention). Lumped mass per
+  triangle /3; reference-config body force; `Jbar` element response (the
+  patch dilatation — the pressure diagnostic); `charLength = √(A₁+A₂)`
+  (mean-triangle convention). `sendSelf`/`recvSelf` carry 2 materials.
+- **Registration** (vanilla, additive `// Ladruno`): `classTags.h` 33021,
+  broker case, both element-command registries, `ladrunoPlane/CMakeLists.txt`,
+  banner plane-family line.
+
+**Verification (oracle-anchored, 16 + 89 regression green)**
+
+- `tests/cstpair_reference.py` — independent numpy oracle: FD-exact tangent
+  at finite stress in BOTH algebraic forms, row-form ≡ dSNPO-split to 1e-12,
+  reduce-to-2-CSTs under homogeneous F, 3-RBM rank, unsymmetry pin.
+- `tests/test_ladrunocstpair.py` — the **crown gate**: `printA` assembled
+  free-DOF tangent vs the oracle 8×8 at a finite, INHOMOGENEOUS state —
+  agrees to ~1e-15 incl. the unsymmetric cross blocks (would catch a
+  transposed copy, a symmetrized K, wrong v-weights). NB `FullGenLinSOE`
+  stores A **column-major** — the test reshapes with `order="F"`; a C-order
+  reshape silently transposes the comparison (quirk-worthy trap, caught
+  during this phase). Plus: homogeneous stretch ≡ 2 CST-finite + oracle σ(F)
+  + deformed-config equilibrium + Jbar=det F; **the locking-relief FLIP** —
+  on the P2 cantilever at ν=0.4999 the pair holds ~1× the F-bar quad
+  (dSNPO Fig 15.8 "virtually coincide") and beats plain CST > 5×; free-pair
+  zero-energy = exactly 3 RBM; Newton iteration-ceiling gates (elastic + J2);
+  det-F step-cut; parse guards.
+
+**Next:** P4b (T6 pair, patch-P1) stays by-demand — novel/off-label pair,
+needs its own full adversarial gate + pressure battery (§9 spike F6).
