@@ -107,38 +107,6 @@ LadrunoUP::LadrunoUP(int tag, int ndm, const ID &nodeTags,
     appliedFluidBody_[i] = 0.0;
   }
 
-  // ---- provider selection by (ndm, nNodes) — WP1.A pin -----------------------
-  if      (ndm_ == 2 && nNodes_ == 3)  shapeKind_ = SHAPE_T3;
-  else if (ndm_ == 2 && nNodes_ == 4)  shapeKind_ = SHAPE_Q4;
-  else if (ndm_ == 2 && nNodes_ == 6)  shapeKind_ = SHAPE_BT6;
-  else if (ndm_ == 3 && nNodes_ == 8)  shapeKind_ = SHAPE_H8;
-  else if (ndm_ == 3 && nNodes_ == 10) shapeKind_ = SHAPE_BTET10;
-  else {
-    opserr << "LadrunoUP::LadrunoUP - element " << tag
-           << ": no shape provider for (ndm=" << ndm_ << ", nNodes=" << nNodes_
-           << "); legal pairs are (2,3) (2,4) (2,6) (3,8) (3,10)\n";
-    return;   // shapeKind_ stays SHAPE_NONE; setDomain refuses loudly
-  }
-
-  nGP_  = this->shapeNGP();
-  nU_   = nNodes_ * ndm_;
-  nStr_ = (ndm_ == 2) ? 3 : 6;
-
-  // pressure carriers: equal-order = every node; TH = the provider's vertex set
-  int pCarrier[UP_MAX_NODES];
-  const int *carrTH = this->shapePCarrierTH();
-  for (int n = 0; n < nNodes_; n++)
-    pCarrier[n] = (pOrder_ == 1) ? carrTH[n] : 1;
-
-  uOff_.assign(nNodes_, 0);
-  pOff_.assign(nNodes_, -1);
-  nDof_ = ladruno_up::dofMap(nNodes_, ndm_, pCarrier, uOff_.data(), pOff_.data());
-  carrierNodes_.clear();
-  for (int n = 0; n < nNodes_; n++)
-    if (pCarrier[n])
-      carrierNodes_.push_back(n);
-  nP_ = (int)carrierNodes_.size();
-
   for (int n = 0; n < nNodes_; n++)
     connectedExternalNodes_(n) = nodeTags(n);
 
@@ -161,6 +129,14 @@ LadrunoUP::LadrunoUP(int tag, int ndm, const ID &nodeTags,
     oneOverQbar_ = 0.0;
   }
 
+  // ---- provider dispatch + dofMap + size-derived members + buffers ----------
+  // (shared with recvSelf — see configureSizing; on a bad (ndm,nNodes) it
+  // leaves shapeKind_ == SHAPE_NONE and we bail before touching materials,
+  // exactly as the pre-refactor inline block did — WP1.A pin.)
+  this->configureSizing();
+  if (shapeKind_ == SHAPE_NONE)
+    return;   // configureSizing printed the reason; setDomain refuses loudly too
+
   // ---- per-GP material copies (effective-stress seam) -----------------------
   const char *matType = (ndm_ == 2) ? "PlaneStrain" : "ThreeDimensional";
   theMaterials_ = new NDMaterial *[nGP_];
@@ -173,37 +149,6 @@ LadrunoUP::LadrunoUP(int tag, int ndm, const ID &nodeTags,
       exit(-1);   // family idiom (LadrunoQuad); parser pre-validates
     }
   }
-
-  // ---- size the per-instance algebra (NO class statics — ADR-40) ------------
-  Qload_.resize(nDof_);            Qload_.Zero();
-  K_.resize(nDof_, nDof_);         K_.Zero();
-  damp_.resize(nDof_, nDof_);      damp_.Zero();
-  mass_.resize(nDof_, nDof_);      mass_.Zero();
-  resid_.resize(nDof_);            resid_.Zero();
-  rayForce_.resize(nDof_);         rayForce_.Zero();
-  K0_.resize(nDof_, nDof_);        K0_.Zero();
-  KinitSolid_.resize(nU_, nU_);    KinitSolid_.Zero();
-  KcSolid_.resize(nU_, nU_);       KcSolid_.Zero();
-  Bscratch_.resize(nStr_, nU_);    Bscratch_.Zero();
-  KsolScratch_.resize(nU_, nU_);   KsolScratch_.Zero();
-  CRayScratch_.resize(nU_, nU_);   CRayScratch_.Zero();
-  MsolScratch_.resize(nU_, nU_);   MsolScratch_.Zero();
-  epsScratch_.resize(nStr_);       epsScratch_.Zero();
-  uSolScratch_.resize(nU_);        uSolScratch_.Zero();
-  fuScratch_.resize(nU_);          fuScratch_.Zero();
-  pScratch_.resize(nP_);           pScratch_.Zero();
-
-  xy_.assign(nNodes_ * ndm_, 0.0);
-  NuAll_.assign(nGP_ * nNodes_, 0.0);
-  dNuAll_.assign(nGP_ * nNodes_ * ndm_, 0.0);
-  NpAll_.assign(nGP_ * nP_, 0.0);
-  dNpAll_.assign(nGP_ * nP_ * ndm_, 0.0);
-  dv_.assign(nGP_, 0.0);
-  dNuBar_.assign(nNodes_ * ndm_, 0.0);
-  Qblk_.assign(nU_ * nP_, 0.0);
-  Hblk_.assign(nP_ * nP_, 0.0);
-  Sblk_.assign(nP_ * nP_, 0.0);
-  HtUnit_.assign(nP_ * nP_, 0.0);
 }
 
 LadrunoUP::LadrunoUP()
@@ -240,6 +185,86 @@ LadrunoUP::~LadrunoUP()
         delete theMaterials_[i];
     delete[] theMaterials_;
   }
+}
+
+// ===========================================================================
+//  construction / reconstruction sizing (ctor + recvSelf share this)
+// ===========================================================================
+
+// Provider dispatch by (ndm_, nNodes_), dofMap, every size-derived member and
+// the full per-instance algebra/cache allocation — the block the ctor used to
+// inline. Serialization (recvSelf) reconstructs a polymorphic element (the
+// shape family varies with ndm/nNodes), so it MUST reproduce this sizing; a
+// hand-copy in recvSelf would be the exact drift-bug class ADR 71 §3.5 logs
+// against upstream (BrickUP/SSPbrickUP never (re)initialize massType). One
+// helper, two callers, zero drift. Precondition: ndm_, nNodes_, pOrder_ and the
+// physical params (Kf_/poro_/… → oneOverQbar_ is computed by the CALLER) are
+// already set. On an illegal (ndm_, nNodes_): prints, leaves SHAPE_NONE, bails
+// before allocating (caller returns without building materials).
+void LadrunoUP::configureSizing(void)
+{
+  if      (ndm_ == 2 && nNodes_ == 3)  shapeKind_ = SHAPE_T3;
+  else if (ndm_ == 2 && nNodes_ == 4)  shapeKind_ = SHAPE_Q4;
+  else if (ndm_ == 2 && nNodes_ == 6)  shapeKind_ = SHAPE_BT6;
+  else if (ndm_ == 3 && nNodes_ == 8)  shapeKind_ = SHAPE_H8;
+  else if (ndm_ == 3 && nNodes_ == 10) shapeKind_ = SHAPE_BTET10;
+  else {
+    opserr << "LadrunoUP::configureSizing - element " << this->getTag()
+           << ": no shape provider for (ndm=" << ndm_ << ", nNodes=" << nNodes_
+           << "); legal pairs are (2,3) (2,4) (2,6) (3,8) (3,10)\n";
+    shapeKind_ = SHAPE_NONE;
+    return;   // caller (ctor/recvSelf) bails; setDomain refuses loudly too
+  }
+
+  nGP_  = this->shapeNGP();
+  nU_   = nNodes_ * ndm_;
+  nStr_ = (ndm_ == 2) ? 3 : 6;
+
+  // pressure carriers: equal-order = every node; TH = the provider's vertex set
+  int pCarrier[UP_MAX_NODES];
+  const int *carrTH = this->shapePCarrierTH();
+  for (int n = 0; n < nNodes_; n++)
+    pCarrier[n] = (pOrder_ == 1) ? carrTH[n] : 1;
+
+  uOff_.assign(nNodes_, 0);
+  pOff_.assign(nNodes_, -1);
+  nDof_ = ladruno_up::dofMap(nNodes_, ndm_, pCarrier, uOff_.data(), pOff_.data());
+  carrierNodes_.clear();
+  for (int n = 0; n < nNodes_; n++)
+    if (pCarrier[n])
+      carrierNodes_.push_back(n);
+  nP_ = (int)carrierNodes_.size();
+
+  // ---- size the per-instance algebra (NO class statics — ADR-40) ------------
+  Qload_.resize(nDof_);            Qload_.Zero();
+  K_.resize(nDof_, nDof_);         K_.Zero();
+  damp_.resize(nDof_, nDof_);      damp_.Zero();
+  mass_.resize(nDof_, nDof_);      mass_.Zero();
+  resid_.resize(nDof_);            resid_.Zero();
+  rayForce_.resize(nDof_);         rayForce_.Zero();
+  K0_.resize(nDof_, nDof_);        K0_.Zero();
+  KinitSolid_.resize(nU_, nU_);    KinitSolid_.Zero();
+  KcSolid_.resize(nU_, nU_);       KcSolid_.Zero();
+  Bscratch_.resize(nStr_, nU_);    Bscratch_.Zero();
+  KsolScratch_.resize(nU_, nU_);   KsolScratch_.Zero();
+  CRayScratch_.resize(nU_, nU_);   CRayScratch_.Zero();
+  MsolScratch_.resize(nU_, nU_);   MsolScratch_.Zero();
+  epsScratch_.resize(nStr_);       epsScratch_.Zero();
+  uSolScratch_.resize(nU_);        uSolScratch_.Zero();
+  fuScratch_.resize(nU_);          fuScratch_.Zero();
+  pScratch_.resize(nP_);           pScratch_.Zero();
+
+  xy_.assign(nNodes_ * ndm_, 0.0);
+  NuAll_.assign(nGP_ * nNodes_, 0.0);
+  dNuAll_.assign(nGP_ * nNodes_ * ndm_, 0.0);
+  NpAll_.assign(nGP_ * nP_, 0.0);
+  dNpAll_.assign(nGP_ * nP_ * ndm_, 0.0);
+  dv_.assign(nGP_, 0.0);
+  dNuBar_.assign(nNodes_ * ndm_, 0.0);
+  Qblk_.assign(nU_ * nP_, 0.0);
+  Hblk_.assign(nP_ * nP_, 0.0);
+  Sblk_.assign(nP_ * nP_, 0.0);
+  HtUnit_.assign(nP_ * nP_, 0.0);
 }
 
 // ===========================================================================
@@ -1327,24 +1352,219 @@ void LadrunoUP::Print(OPS_Stream &s, int flag)
   }
 }
 
-// P1 wave-1 STUBS — the full serialization (EVERY ctor arg incl. -lumped /
-// alpha0 / dynSeepage) + MP smoke test is WP1.D (wave 2). Returning -1 keeps
-// any premature MP/database use loudly broken instead of silently wrong.
+// ---------------------------------------------------------------------------
+// Serialization (WP1.D). Ships EVERY ctor argument + the analysis-relevant
+// scalar state, the topology, and the per-GP materials (class/db tag + their
+// own sendSelf → committed constitutive state). Exercised by `database File`
+// save/restore (Domain::sendSelf/recvSelf drive Element::send/recvSelf through
+// FileDatastore-as-Channel) and by any element-migrating parallel channel.
+//
+// What is NOT serialized, and why (each a deliberate, documented choice — the
+// opposite of the §3.5 upstream holes where massType/stab-α just went missing):
+//   * geometry + kernel blocks (xy_, Nu/dNu caches, Q/H/S/H̃, dv_, dNuBar_,
+//     charLen_, elemH_) — pure functions of the node coordinates; setDomain
+//     rebuilds them on the receiver (recvSelf leaves geomValid_ = false).
+//   * solid-K Rayleigh caches (K0_, KinitSolid_, KcSolid_) — pure functions of
+//     geometry + material tangent, both restored; rebuilt LAZILY after
+//     setDomain (buildCRaySolid / commitState). The Rayleigh FACTORS
+//     (alphaM/betaK/betaK0/betaKc) ARE shipped so the rebuild is triggered
+//     correctly; between restore and the first commit, betaKc uses the
+//     "committed == current trial" fallback already coded in buildCRaySolid.
+//   * transient load state (applyLoad_, appliedB_/appliedFluidBody_, Qload_) —
+//     regenerated every step by zeroLoad + addLoad + addInertiaLoadToUnbalance
+//     (family precedent: LadrunoQuad ships none of it). Reset to the null-ctor
+//     baseline on the receiver.
+// oneOverQbar_ is shipped (not recomputed) for exact identity across the wire.
+static const int UP_NDATA = 29;   // scalar payload width (see layout below)
+
 int LadrunoUP::sendSelf(int commitTag, Channel &theChannel)
 {
-  (void)commitTag;
-  (void)theChannel;
-  opserr << "LadrunoUP::sendSelf - element " << this->getTag()
-         << ": not implemented yet — P1 wave-2 (WP1.D)\n";
-  return -1;
+  int res = 0;
+  int dataTag = this->getDbTag();
+
+  // ---- scalar/config payload: every ctor arg + Rayleigh + storage coeff -----
+  Vector data(UP_NDATA);
+  data(0)  = this->getTag();
+  data(1)  = ndm_;
+  data(2)  = nNodes_;
+  data(3)  = thickness_;
+  data(4)  = Kf_;
+  data(5)  = poro_;
+  data(6)  = rhoF_;
+  data(7)  = biotAlpha_;
+  data(8)  = Ks_;
+  data(9)  = kbar_[0];
+  data(10) = kbar_[1];
+  data(11) = kbar_[2];
+  data(12) = b_[0];
+  data(13) = b_[1];
+  data(14) = b_[2];
+  data(15) = fluidBody_[0];
+  data(16) = fluidBody_[1];
+  data(17) = fluidBody_[2];
+  data(18) = formulation_;
+  data(19) = pOrder_;
+  data(20) = lumpedMass_ ? 1.0 : 0.0;
+  data(21) = stabMode_;
+  data(22) = stabValue_;
+  data(23) = dynSeepage_ ? 1.0 : 0.0;
+  data(24) = oneOverQbar_;
+  data(25) = alphaM;
+  data(26) = betaK;
+  data(27) = betaK0;
+  data(28) = betaKc;
+
+  res = theChannel.sendVector(dataTag, commitTag, data);
+  if (res < 0) {
+    opserr << "WARNING LadrunoUP::sendSelf - element " << this->getTag()
+           << ": failed to send data Vector\n";
+    return res;
+  }
+
+  // ---- topology + per-GP material class/db tags in one ID -------------------
+  // layout: [0..nNodes_-1]              node tags
+  //         [nNodes_ .. +nGP_-1]        material class tags
+  //         [nNodes_+nGP_ .. +nGP_-1]   material db tags
+  ID idData(nNodes_ + 2 * nGP_);
+  for (int n = 0; n < nNodes_; n++)
+    idData(n) = connectedExternalNodes_(n);
+  for (int g = 0; g < nGP_; g++) {
+    idData(nNodes_ + g) = theMaterials_[g]->getClassTag();
+    int matDbTag = theMaterials_[g]->getDbTag();
+    if (matDbTag == 0) {                       // family idiom: assign on demand
+      matDbTag = theChannel.getDbTag();
+      if (matDbTag != 0)
+        theMaterials_[g]->setDbTag(matDbTag);
+    }
+    idData(nNodes_ + nGP_ + g) = matDbTag;
+  }
+  res = theChannel.sendID(dataTag, commitTag, idData);
+  if (res < 0) {
+    opserr << "WARNING LadrunoUP::sendSelf - element " << this->getTag()
+           << ": failed to send ID\n";
+    return res;
+  }
+
+  // ---- per-GP materials (their own committed constitutive state) ------------
+  for (int g = 0; g < nGP_; g++) {
+    res = theMaterials_[g]->sendSelf(commitTag, theChannel);
+    if (res < 0) {
+      opserr << "WARNING LadrunoUP::sendSelf - element " << this->getTag()
+             << ": failed to send material at GP " << g << "\n";
+      return res;
+    }
+  }
+  return 0;
 }
 
 int LadrunoUP::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
 {
-  (void)commitTag;
-  (void)theChannel;
-  (void)theBroker;
-  opserr << "LadrunoUP::recvSelf - element " << this->getTag()
-         << ": not implemented yet — P1 wave-2 (WP1.D)\n";
-  return -1;
+  int res = 0;
+  int dataTag = this->getDbTag();
+
+  Vector data(UP_NDATA);
+  res = theChannel.recvVector(dataTag, commitTag, data);
+  if (res < 0) {
+    opserr << "WARNING LadrunoUP::recvSelf - failed to receive data Vector\n";
+    return res;
+  }
+
+  this->setTag((int)data(0));
+  ndm_          = (int)data(1);
+  nNodes_       = (int)data(2);
+  thickness_    = data(3);
+  Kf_           = data(4);
+  poro_         = data(5);
+  rhoF_         = data(6);
+  biotAlpha_    = data(7);
+  Ks_           = data(8);
+  kbar_[0]      = data(9);
+  kbar_[1]      = data(10);
+  kbar_[2]      = data(11);
+  b_[0]         = data(12);
+  b_[1]         = data(13);
+  b_[2]         = data(14);
+  fluidBody_[0] = data(15);
+  fluidBody_[1] = data(16);
+  fluidBody_[2] = data(17);
+  formulation_  = (int)data(18);
+  pOrder_       = (int)data(19);
+  lumpedMass_   = (data(20) != 0.0);
+  stabMode_     = (int)data(21);
+  stabValue_    = data(22);
+  dynSeepage_   = (data(23) != 0.0);
+  oneOverQbar_  = data(24);
+  alphaM        = data(25);   // solid-only Rayleigh factors (base-class members)
+  betaK         = data(26);
+  betaK0        = data(27);
+  betaKc        = data(28);
+
+  // rebuild every size-derived member + per-instance buffer (the SAME helper
+  // the ctor uses — no drift). This sizes uOff_/pOff_/carrierNodes_/nGP_ so the
+  // ID (nNodes_ + 2*nGP_) can be sized below.
+  this->configureSizing();
+  if (shapeKind_ == SHAPE_NONE) {
+    opserr << "WARNING LadrunoUP::recvSelf - element " << this->getTag()
+           << ": illegal (ndm=" << ndm_ << ", nNodes=" << nNodes_
+           << ") in the incoming stream\n";
+    return -1;
+  }
+
+  // transient / cache state → null-ctor baseline (setDomain + first commit
+  // rebuild geometry, kernel blocks and the solid-K Rayleigh caches).
+  applyLoad_ = 0;
+  for (int i = 0; i < 3; i++) {
+    appliedB_[i] = 0.0;
+    appliedFluidBody_[i] = 0.0;
+  }
+  Qload_.Zero();
+  geomValid_ = false;
+  k0Valid_ = false;  k0Dirty_ = true;
+  stabDirty_ = true;
+  kInitSolidValid_ = false;  kcSolidValid_ = false;
+  for (int n = 0; n < UP_MAX_NODES; n++)
+    theNodes_[n] = 0;
+
+  // ---- topology + material class/db tags ------------------------------------
+  ID idData(nNodes_ + 2 * nGP_);
+  res = theChannel.recvID(dataTag, commitTag, idData);
+  if (res < 0) {
+    opserr << "WARNING LadrunoUP::recvSelf - element " << this->getTag()
+           << ": failed to receive ID\n";
+    return res;
+  }
+  connectedExternalNodes_.resize(nNodes_);   // null ctor sized it to 0
+  for (int n = 0; n < nNodes_; n++)
+    connectedExternalNodes_(n) = idData(n);
+
+  // ---- per-GP materials via the broker --------------------------------------
+  if (theMaterials_ != 0) {                   // re-recv into a live element
+    for (int g = 0; g < nGP_; g++)
+      if (theMaterials_[g])
+        delete theMaterials_[g];
+    delete[] theMaterials_;
+    theMaterials_ = 0;
+  }
+  theMaterials_ = new NDMaterial *[nGP_];
+  for (int g = 0; g < nGP_; g++)
+    theMaterials_[g] = 0;
+  for (int g = 0; g < nGP_; g++) {
+    int matClassTag = idData(nNodes_ + g);
+    int matDbTag    = idData(nNodes_ + nGP_ + g);
+    theMaterials_[g] = theBroker.getNewNDMaterial(matClassTag);
+    if (theMaterials_[g] == 0) {
+      opserr << "LadrunoUP::recvSelf - element " << this->getTag()
+             << ": broker could not create NDMaterial classTag " << matClassTag
+             << " at GP " << g << "\n";
+      return -1;
+    }
+    theMaterials_[g]->setDbTag(matDbTag);
+    res = theMaterials_[g]->recvSelf(commitTag, theChannel, theBroker);
+    if (res < 0) {
+      opserr << "WARNING LadrunoUP::recvSelf - element " << this->getTag()
+             << ": failed to receive material at GP " << g << "\n";
+      return res;
+    }
+  }
+  return 0;
 }

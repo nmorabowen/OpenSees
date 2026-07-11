@@ -384,10 +384,17 @@ void *OPS_LadrunoUP()
                      << "; a non-positive alpha0 DEstabilizes)\n";
               return 0;
             }
-            if (a0 < 0.1 || a0 > 0.5)
-              opserr << "WARNING LadrunoUP " << tag << " -- -stab auto alpha0="
-                     << a0 << " is outside the papers' supported range "
-                        "[0.1, 0.5] (McGann 2012/2015)\n";
+            if (a0 < 0.1 || a0 > 0.5) {
+              // once per process, like the solver/stab notices — per-element
+              // repetition spams large meshes (1.F-ii finding)
+              static bool a0RangeWarned = false;
+              if (!a0RangeWarned) {
+                a0RangeWarned = true;
+                opserr << "WARNING LadrunoUP " << tag << " -- -stab auto alpha0="
+                       << a0 << " is outside the papers' supported range "
+                          "[0.1, 0.5] (McGann 2012/2015) (printed once)\n";
+              }
+            }
             stabValue = a0;
           }
         }

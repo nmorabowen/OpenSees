@@ -330,6 +330,30 @@ disp-slot ndm; else legacy vel-slot ndm. Flag-free, automatic. ⟨FW-F4⟩.
 
 - 2026-07-10 — plan created (P0 contract frozen; ADR locked via PR #547).
 - 2026-07-10 — **P0 SHIPPED** (PR #551 merged, squash b2ac3ba04). WP1.A pins frozen; P1 branch `feature/adr71-p1`.
+- 2026-07-11 — **P1 EXECUTED** (waves 1+2, five Opus agents). Battery: analytic
+  10 pass + 1 documented xfail; equivalence 9/9; MP smoke + serial DB
+  round-trip green. Highlights: quadUP two-leg equivalence machine-identical
+  at γ=½/β=¼ (3.6e-15); B4 checkerboard monotone suppression, auto-α within
+  1.7% of the ADR pin; Rayleigh contract bit-exact; FD tangent 1e-10 class.
+  **MAIN adjudications:**
+  - `stressesTotal` sign = ADR §3.1 (σ_total = σ′ − α·p on normals); pin
+    wording was loose, corrected.
+  - **ADR "loud singularity" claim REFUTED** (1.F-i finding 5): all-impervious
+    static returns rc=0 with a consistent-Neumann arbitrary p level
+    (solver-dependent); pinned as strict xfail; guide/P4 must say "silently
+    arbitrary p level", not "loud failure". σ_min/σ_max < 1e-12 confirmed.
+  - **`-dynSeepage on` diverges under Δt-refinement in QUASI-static
+    consolidation** (noise-fed ü term): default stays `on` per LOCKED ADR;
+    quirks row + guide rule "consolidation runs use -dynSeepage off"; P4 B5
+    revisits the default.
+  - **Transformation + staged nonzero p-`sp` = silently wrong steady state**
+    (Penalty/Lagrange correct): quirks row; init recipe (P4) must specify
+    Penalty.
+  - `printA -ret` is COLUMN-major: quirks row (false transposed-Q alarms).
+  - α₀ out-of-range warning made once-per-process (was per-element spam).
+  - 1.D `configureSizing()` ctor/recvSelf shared helper: APPROVED (anti-drift).
+  - Rayleigh shadow of non-virtual getRayleighDampingForces: verified safe —
+    zero external callers in SRC/domain + SRC/analysis (element-internal only).
 - 2026-07-10 — 0.A addendum committed (GP/basis pins, contractual-rule emission).
 - 2026-07-10 — 0.B/0.C landed (twin Opus agents); 0.D cross-run green first try:
   16 cases, 96/96 blocks + 16/16 dofMaps ≤1e-16 (gate 1e-9).

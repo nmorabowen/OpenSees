@@ -2912,3 +2912,42 @@ token in a local buffer, normalize:
 (see `upGetTok()` in `SRC/element/ladrunoUP/OPS_LadrunoUP.cpp`). Fix the vanilla
 shim only via an ADR — several upstream parsers may depend on the current
 behavior.
+
+## Symmetric-storage solvers silently DROP one u-p coupling block on LadrunoUP models — ProfileSPD (the no-`system`-command DEFAULT) returns rc = 0 with garbage pore pressures
+
+**Symptom** (ADR-71 P1, 2026-07-11): a LadrunoUP transient run without a
+`system` command (or with `system ProfileSPD` / any symmetric-storage SOE)
+"succeeds" — `analyze()` returns 0 every step, displacements look plausible —
+but the pore-pressure field is wrong by ~87 orders of magnitude. Measured on
+the identical Terzaghi 1×10 Q4 column script: `system UmfPack` gives
+p ∈ [0, 5] kPa (matches the Terzaghi series); `system ProfileSPD` gives
+p ~ 1e88–1e89 with every `analyze()` still returning 0. Nothing fails loudly.
+
+**Cause**: the honest-p contract (ADR-71 §3.2 ⟨FW-F1⟩) makes the effective
+transient tangent UNSYMMETRIC — −Q lives in `getTangentStiff()` (u-rows) and
++Qᵀ in `getDamp()` (p-rows), so c₁K + c₂C never has matching off-diagonal
+pairs. Symmetric-profile assembly stores only upper-triangle-in-profile
+entries: one Q block is silently discarded at `addA()` time, and the solver
+then factors and solves the mutilated (still well-conditioned-looking) system
+cleanly. No framework hook lets an element reject an SOE.
+
+**Rule**: every LadrunoUP model MUST name a general solver — `system UmfPack`
+/ `SuperLU` / `FullGeneral` / `BandGeneral` (serial), MUMPS with `SYM=0` in
+the MPI targets. The parser prints a one-line notice at element creation; the
+Zone-B battery pins the divergence
+(`tests/test_ladruno_up_element_analytic.py::test_wrong_solver_divergence_profilespd_vs_umfpack`).
+
+### `ops.printA('-ret')` returns the raw OpenSees Matrix buffer, which is COLUMN-major — read row-major, an unsymmetric tangent looks transposed and FD-vs-tangent tests false-fail at exactly the asymmetry magnitude
+- **Bites:** any test/tool that reshapes `printA('-ret')` into `(neq, neq)` C-order and compares against an oracle or FD residual. On symmetric tangents the bug is invisible; on LadrunoUP's unsymmetric [K,−Q;0,H] the −Q block appears in the p-row/u-col slot and the check fails at |Q|/|K| (measured 2.6e-5 — small enough to chase as a "tolerance problem" for hours).
+- **Why:** `OpenSeesCommands.cpp:2590` hands back `&A(0,0)` flat; OpenSees `Matrix` storage is column-major (Fortran order).
+- **Workaround:** reshape Fortran-order or transpose after reshape (`np.array(ret).reshape(neq, neq, order='F')`). Pinned in `tests/test_ladruno_up_element_equiv.py` helper (ADR-71 P1, 2026-07-11).
+
+### Staged NONZERO pressure `sp` added mid-analysis under `constraints('Transformation')` converges cleanly to a WRONG steady state on LadrunoUP (interior p wildly off; Penalty/Lagrange correct)
+- **Bites:** the ADR-71 §3.2 initialization recipe — run a stage, then add `sp p=<head>` and continue. Under Transformation the model converges (rc=0) to interior p ≈ −73 for a top head of +1 on a sealed 4-element column (measured); the identical `sp` present from step 1 is handled correctly by all three handlers, and Penalty/Lagrange are correct in both sequences.
+- **Why (suspected):** Transformation condenses constrained DOFs at analysis-setup time; a mid-analysis `sp` after `wipeAnalysis` re-setup interacts with the committed-but-unconstrained p state; exact mechanism not chased (P4 revisit alongside the gravity/hydrostatic init recipe).
+- **Rule for the guide:** staged prescribed-head sequences use `constraints('Penalty', ...)` (or Lagrange); mirrors the existing fully-prescribed-rig Transformation trap. Repro pinned in `tests/test_ladruno_up_element_analytic.py` (ADR-71 P1, 2026-07-11).
+
+### LadrunoUP `-dynSeepage on` (the default) DIVERGES under Δt-refinement in quasi-static consolidation runs — the ü-term feeds integrator noise into the seepage source
+- **Bites:** ZS84-class consolidation column, Newmark γ=0.6: with `-dynSeepage off` the error converges 1.3e-3 → 7e-4 as Δt shrinks 0.08 → 0.005; with the default `on` it GROWS 1.8e-2 → 8.7e-1. Smaller Δt is WORSE: trial accelerations of numerically-damped compressible-wave modes are noise, and f_seep integrates them.
+- **Why:** the dynamic-seepage drive (b − ü) is physically right for genuine dynamics (B5-class, P4-gated) but quasi-static consolidation has no meaningful ü — the term is pure noise amplification there.
+- **Rule:** quasi-static/consolidation runs set `-dynSeepage off` (this is also the upstream-parity leg). Default stays `on` per the LOCKED ADR (deliberate SWANDYNE restore); P4's B5 Simon gate revisits whether the default should flip. Measured in `tests/test_ladruno_up_element_analytic.py` sweep (ADR-71 P1, 2026-07-11).

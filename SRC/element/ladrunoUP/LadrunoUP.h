@@ -162,6 +162,16 @@ class LadrunoUP : public Element
     const Vector &getRayleighDampingForces(void);
 
   private:
+    // ---- construction / reconstruction (ctor + recvSelf share this) --------
+    // provider dispatch + dofMap + all size-derived members + per-instance
+    // algebra/cache allocation, driven purely from {ndm_, nNodes_, pOrder_} and
+    // the physical params already set as members. Called by the real ctor AND
+    // by recvSelf so the two paths can never drift (ADR 71 §3.5 anti-drift).
+    // On an illegal (ndm_, nNodes_) it leaves shapeKind_ == SHAPE_NONE (caller
+    // guards). Does NOT touch connectedExternalNodes_, the materials, or the
+    // ctor-object params (perm/body/fluidBody) — those are set by the caller.
+    void configureSizing(void);
+
     // ---- shape-provider dispatch (switch on shapeKind_) --------------------
     int  shapeNGP(void) const;
     void shapeEval(int gp, double *Nu, double *dNu, double *detJ) const;
