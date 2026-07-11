@@ -368,21 +368,6 @@ void LadrunoUP::setDomain(Domain *theDomain)
     return;
   }
 
-  // ---- P1 scope guard (WP1.A pin): equal-order lanes only -------------------
-  // The parser already rejects 6/10-node input; guard anyway (belt-and-braces).
-  if (shapeKind_ == SHAPE_BT6 || shapeKind_ == SHAPE_BTET10) {
-    opserr << "LadrunoUP::setDomain - element " << this->getTag()
-           << ": Bézier Taylor–Hood lanes land at P3 — heterogeneous-ndf "
-              "plumbing not yet built; element not activated\n";
-    return;
-  }
-  if (pOrder_ != 0) {
-    opserr << "LadrunoUP::setDomain - element " << this->getTag()
-           << ": -pOrder linear (Taylor–Hood) is reserved until P3; "
-              "P1 supports equal-order only; element not activated\n";
-    return;
-  }
-
   for (int n = 0; n < nNodes_; n++) {
     theNodes_[n] = theDomain->getNode(connectedExternalNodes_(n));
     if (theNodes_[n] == 0) {
@@ -392,13 +377,23 @@ void LadrunoUP::setDomain(Domain *theDomain)
     }
   }
 
-  // P1: every node carries [u..., p] — ndf = ndm+1 (equal-order pin)
+  // ---- heterogeneous-ndf validation (WP3.A pin 2, STRICT) -------------------
+  // Carrier nodes (dofMap gave them a p slot, pOff_>=0) need ndf = ndm+1;
+  // non-carrier mid-edge nodes need ndf = ndm exactly. Equal-order lanes are
+  // all-carrier so this collapses to the P1 ndf==ndm+1 check; Taylor–Hood is
+  // the mixed case. A uniform-ndf TH model would leave floating mid-edge p-DOFs
+  // → silent singularity — the fork rejects loudly, naming node + expectation.
   for (int n = 0; n < nNodes_; n++) {
-    if (theNodes_[n]->getNumberDOF() != ndm_ + 1) {
+    bool carrier = (pOff_[n] >= 0);
+    int need = carrier ? (ndm_ + 1) : ndm_;
+    if (theNodes_[n]->getNumberDOF() != need) {
       opserr << "LadrunoUP::setDomain - element " << this->getTag()
              << ": node " << connectedExternalNodes_(n) << " has ndf = "
-             << theNodes_[n]->getNumberDOF() << " but the u-p element needs ndf = "
-             << ndm_ + 1 << " (u" << ndm_ << " + p); element not activated\n";
+             << theNodes_[n]->getNumberDOF() << " but this "
+             << (carrier ? "vertex/carrier" : "mid-edge")
+             << " node needs ndf = " << need << " (u" << ndm_
+             << (carrier ? " + p)" : ", no p)")
+             << "; element not activated\n";
       return;
     }
   }
@@ -418,22 +413,125 @@ void LadrunoUP::setDomain(Domain *theDomain)
       xy_[a * ndm_ + i] = crd(i);
   }
 
-  double measure = 0.0;   // area (2D) | volume (3D), thickness NOT folded
+  // ---- straight-side guard (WP3.A pin 4, Bézier shapes, both pOrders) --------
+  // The BT6/BTET10 providers assume an AFFINE geometry map (∇L_i exact
+  // constants) — the Taylor–Hood inf-sup precondition (ADR §3.3). That holds
+  // iff every mid-edge node sits at its edge midpoint. Enforce it here (the
+  // providers are silent on violation). Edge→mid-edge pairing is DERIVED from
+  // the Bernstein cross terms in LadrunoUPShapes.h:
+  //   BT6:    N3=2ξ₁ξ₃→node3 on edge(0,1); N4=2ξ₁ξ₂→node4 on edge(1,2);
+  //           N5=2ξ₂ξ₃→node5 on edge(2,0)   (node0↔ξ₃,node1↔ξ₁,node2↔ξ₂)
+  //   BTET10: N4=2L1L2→node4 on (0,1); N5=2L2L3→node5 on (1,2);
+  //           N6=2L1L3→node6 on (0,2); N7=2L1L4→node7 on (0,3);
+  //           N8=2L3L4→node8 on (2,3); N9=2L2L4→node9 on (1,3)
+  //           (node k ↔ L_{k+1}, k=0..3)
+  if (shapeKind_ == SHAPE_BT6 || shapeKind_ == SHAPE_BTET10) {
+    static const int bt6Edges[3][3]     = {{3,0,1},{4,1,2},{5,2,0}};
+    static const int btet10Edges[6][3]  = {{4,0,1},{5,1,2},{6,0,2},
+                                           {7,0,3},{8,2,3},{9,1,3}};
+    const int (*edges)[3] = (shapeKind_ == SHAPE_BT6) ? bt6Edges : btet10Edges;
+    int nEdge = (shapeKind_ == SHAPE_BT6) ? 3 : 6;
+    for (int e = 0; e < nEdge; e++) {
+      int m = edges[e][0], a = edges[e][1], b = edges[e][2];
+      double d2 = 0.0, len2 = 0.0;
+      for (int i = 0; i < ndm_; i++) {
+        double mid = 0.5 * (xy_[a * ndm_ + i] + xy_[b * ndm_ + i]);
+        double dm  = xy_[m * ndm_ + i] - mid;
+        double ab  = xy_[b * ndm_ + i] - xy_[a * ndm_ + i];
+        d2   += dm * dm;
+        len2 += ab * ab;
+      }
+      double dist = sqrt(d2), edgeLen = sqrt(len2);
+      if (dist > 1.0e-6 * edgeLen) {
+        opserr << "LadrunoUP::setDomain - element " << this->getTag()
+               << ": mid-edge node " << connectedExternalNodes_(m)
+               << " is off the midpoint of edge ("
+               << connectedExternalNodes_(a) << ", " << connectedExternalNodes_(b)
+               << ") by " << dist << " (tol " << 1.0e-6 * edgeLen
+               << " = 1e-6 * edge length " << edgeLen << "). The Bézier "
+                  "Taylor–Hood providers require STRAIGHT sides (affine map); "
+                  "element not activated\n";
+        geomValid_ = false;
+        return;
+      }
+    }
+  }
+
+  // ---- Jacobian sign / winding adjudication (WP3.A pin 5) --------------------
+  // The providers are silent on singular Jacobians (kernel idiom) — the element
+  // is the mandated guard. T3/Q4/H8/BT6: standard CCW/right-handed winding is
+  // map-positive, so keep the P1 detJ>0-per-GP rejection. BTET10 is the
+  // exception: the pinned node↔L map (detJ = det[v0−v3,v1−v3,v2−v3] =
+  // −det[v1−v0,v2−v0,v3−v0]) makes conventionally RIGHT-handed tets evaluate
+  // detJ < 0. We accept BOTH windings — the signed-J gradients (dNuAll_/dNpAll_)
+  // are orientation-correct either way; only the integration MEASURE must be
+  // positive, so an all-negative tet folds dv = w·|detJ|. Mixed sign or a
+  // near-zero detJ (degenerate/curved) is a loud error.
+  double detJall[16];
   for (int gp = 0; gp < nGP_; gp++) {
     double detJ = 0.0;
     this->shapeEval(gp, &NuAll_[gp * nNodes_], &dNuAll_[gp * nNodes_ * ndm_], &detJ);
-    // the providers are silent on singular Jacobians (kernel idiom) — the
-    // element is the mandated guard: reject detJ <= 0 BEFORE assembling.
-    if (detJ <= 0.0) {
+    detJall[gp] = detJ;
+  }
+
+  double windingSign = 1.0;   // multiply detJ by this to get |detJ|
+  if (shapeKind_ == SHAPE_BTET10) {
+    double maxAbs = 0.0;
+    for (int gp = 0; gp < nGP_; gp++)
+      if (fabs(detJall[gp]) > maxAbs) maxAbs = fabs(detJall[gp]);
+    if (maxAbs <= 0.0) {
       opserr << "LadrunoUP::setDomain - element " << this->getTag()
-             << ": non-positive Jacobian detJ = " << detJ << " at GP " << gp
-             << " (bad node ordering or degenerate geometry); element not activated\n";
+             << ": degenerate BTET10 (all Gauss-point Jacobians ~ 0); "
+                "element not activated\n";
       geomValid_ = false;
       return;
     }
+    double eps = 1.0e-10 * maxAbs;
+    int nPos = 0, nNeg = 0, nZero = 0;
+    for (int gp = 0; gp < nGP_; gp++) {
+      if      (detJall[gp] >  eps) nPos++;
+      else if (detJall[gp] < -eps) nNeg++;
+      else                         nZero++;
+    }
+    if (nZero > 0 || (nPos > 0 && nNeg > 0)) {
+      opserr << "LadrunoUP::setDomain - element " << this->getTag()
+             << ": BTET10 Jacobian is mixed-sign or near-zero across Gauss "
+                "points (" << nPos << " positive, " << nNeg << " negative, "
+             << nZero << " near-zero) — degenerate or curved geometry; "
+                "element not activated\n";
+      geomValid_ = false;
+      return;
+    }
+    if (nNeg == nGP_) {
+      windingSign = -1.0;   // all-negative: fold the measure to |detJ|
+      static bool windingNoteShown = false;
+      if (!windingNoteShown) {
+        windingNoteShown = true;
+        opserr << "LadrunoUP: BTET10 element(s) supplied in the conventionally "
+                  "right-handed winding evaluate detJ < 0 under the pinned "
+                  "node↔barycentric map — folding the integration measure to "
+                  "|detJ| (gradients are orientation-correct; printed once)\n";
+      }
+    }
+  } else {
+    for (int gp = 0; gp < nGP_; gp++) {
+      if (detJall[gp] <= 0.0) {
+        opserr << "LadrunoUP::setDomain - element " << this->getTag()
+               << ": non-positive Jacobian detJ = " << detJall[gp] << " at GP "
+               << gp << " (bad node ordering or degenerate geometry); element "
+                  "not activated\n";
+        geomValid_ = false;
+        return;
+      }
+    }
+  }
+
+  double measure = 0.0;   // area (2D) | volume (3D), thickness NOT folded
+  for (int gp = 0; gp < nGP_; gp++) {
+    double absDetJ = windingSign * detJall[gp];   // = |detJ| (>0 by the guards)
     double w = this->shapeGPWeight(gp);
-    measure += w * detJ;
-    dv_[gp] = w * detJ * ((ndm_ == 2) ? thickness_ : 1.0);
+    measure += w * absDetJ;
+    dv_[gp] = w * absDetJ * ((ndm_ == 2) ? thickness_ : 1.0);
     this->shapeEvalP(gp, (pOrder_ == 1), &NpAll_[gp * nP_], &dNpAll_[gp * nP_ * ndm_]);
   }
 
@@ -500,7 +598,11 @@ void LadrunoUP::buildStaticBlocks(void)
                      Qblk_.data(), nP_);
     ladruno_up::addH(dNp, nP_, ndm_, kbar_, dv_[gp], Hblk_.data(), nP_);
     ladruno_up::addS(Np, nP_, oneOverQbar_, dv_[gp], Sblk_.data(), nP_);
-    ladruno_up::addHtilde(dNp, nP_, ndm_, 1.0, dv_[gp], HtUnit_.data(), nP_);
+    // H̃ stabilization is an EQUAL-ORDER cure only — never assembled on
+    // Taylor–Hood pairs (inf-sup stable without it; WP3.A pin 3). HtUnit_
+    // stays zero for TH; stabAlphaValue() also returns 0 (belt-and-braces).
+    if (pOrder_ != 1)
+      ladruno_up::addHtilde(dNp, nP_, ndm_, 1.0, dv_[gp], HtUnit_.data(), nP_);
   }
 }
 
@@ -1005,7 +1107,10 @@ int LadrunoUP::addInertiaLoadToUnbalance(const Vector &accel)
   double buf[UP_MAX_DOF];
   for (int a = 0; a < nNodes_; a++) {
     const Vector &Raccel = theNodes_[a]->getRV(accel);
-    if (Raccel.Size() != ndm_ + 1) {
+    // per-node ndf: carrier (vertex) nodes ndm+1, mid-edge nodes ndm (TH). A
+    // uniform ndm+1 check would spuriously reject every mid-edge node.
+    int need = (pOff_[a] >= 0) ? (ndm_ + 1) : ndm_;
+    if (Raccel.Size() != need) {
       opserr << "LadrunoUP::addInertiaLoadToUnbalance - element " << this->getTag()
              << ": matrix and vector sizes are incompatible\n";
       return -1;
@@ -1312,7 +1417,9 @@ void LadrunoUP::Print(OPS_Stream &s, int flag)
     s << "\tConnected external nodes:  " << connectedExternalNodes_;
     s << "\tshape: " << shapeNames[shapeKind_]
       << "  formulation: " << (formulation_ == 1 ? "bbar" : "std")
-      << "  pOrder: " << (pOrder_ == 1 ? "linear(TH)" : "equal") << "\n";
+      << "  pOrder: " << (pOrder_ == 1 ? "linear(TH)" : "equal")
+      << "  nP(carriers): " << nP_ << " / " << nNodes_ << " nodes"
+      << "  nDof: " << nDof_ << "\n";
     if (ndm_ == 2)
       s << "\tthickness: " << thickness_ << "\n";
     s << "\tKf: " << Kf_ << "  poro: " << poro_ << "  rhoF: " << rhoF_

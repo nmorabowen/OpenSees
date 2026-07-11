@@ -43,9 +43,12 @@
 //       <-dynSeepage on|off>                 ;# default on
 //       <-geom linear>                       ;# only accepted value (axis reserved)
 //
-// (ndm, k) selects the shape provider: (2,3) T3 · (2,4) Q4 · (3,8) H8.
-// P1 scope guard: (2,6) / (3,10) — the Bézier Taylor–Hood lanes — are rejected
-// with a named error (heterogeneous-ndf plumbing lands at P3).
+// (ndm, k) selects the shape provider: (2,3) T3 · (2,4) Q4 · (2,6) Bézier T6 ·
+// (3,8) H8 · (3,10) Bézier Tet10. The quadratic Bézier shapes (2,6)/(3,10) are
+// Taylor–Hood only and REQUIRE -pOrder linear (quadratic u, linear vertex p);
+// -pOrder equal (or omitted) on a quadratic shape is fatal — equal-order
+// quadratic is a reserved axis with no theory/gate (ADR §3.3, §4.1 legality
+// matrix). Linear shapes accept equal (linear is a documented synonym).
 //
 // UNKNOWN FLAGS ARE FATAL — a deliberate break from the family's
 // warn-and-continue idiom (ADR 71 §4.1): a mistyped u-p flag silently changes
@@ -90,13 +93,15 @@ void *OPS_LadrunoUP()
   int ndm = OPS_GetNDM();
   int ndf = OPS_GetNDF();
 
-  // ndm/ndf gate — the u-p element needs the pressure slot: ndf = ndm+1
-  // (FourNodeQuadUP/brickUP precedent: 2D/3, 3D/4). P1 is equal-order only,
-  // every node carries p (setDomain re-checks per node, loudly).
-  if (!((ndm == 2 && ndf == 3) || (ndm == 3 && ndf == 4))) {
-    opserr << "ERROR LadrunoUP -- model ndm/ndf must be 2/3 (2D u-p) or 3/4 "
-              "(3D u-p); got " << ndm << "/" << ndf
-           << ". The pressure DOF needs ndf = ndm+1.\n";
+  // ndm gate only, here. The model-builder NDF check is DEFERRED until the
+  // node count is known (below): the Taylor–Hood modeling pattern necessarily
+  // toggles the builder between ndf=ndm+1 (vertex carriers) and ndf=ndm
+  // (mid-edge nodes), so at element-command time the builder can legally sit
+  // in either state — setDomain does the strict per-node validation. Linear
+  // (equal-order) shapes keep the early builder gate for a clear P1-style
+  // error. (3.B integration fix, WP3.A pin 2 rationale.)
+  if (ndm != 2 && ndm != 3) {
+    opserr << "ERROR LadrunoUP -- model ndm must be 2 or 3, got " << ndm << "\n";
     return 0;
   }
 
@@ -138,18 +143,26 @@ void *OPS_LadrunoUP()
   int nNodes = nLead - 2;
 
   // ---- (ndm, nNodes) provider legality (ADR 71 §4.1) -----------------------
-  // P1 scope guard: the quadratic Bézier shapes are named-rejected.
-  if ((ndm == 2 && nNodes == 6) || (ndm == 3 && nNodes == 10)) {
-    opserr << "ERROR LadrunoUP " << tag << " -- " << nNodes
-           << " nodes: Bézier Taylor–Hood lanes land at P3 — heterogeneous-ndf "
-              "plumbing not yet built\n";
-    return 0;
-  }
-  if (!((ndm == 2 && (nNodes == 3 || nNodes == 4)) ||
-        (ndm == 3 && nNodes == 8))) {
+  // P3 opens the quadratic Bézier shapes (Taylor–Hood). isQuadratic gates the
+  // -pOrder handling below (they demand -pOrder linear; equal-order quadratic
+  // is a reserved axis).
+  bool isQuadratic = (ndm == 2 && nNodes == 6) || (ndm == 3 && nNodes == 10);
+  if (!((ndm == 2 && (nNodes == 3 || nNodes == 4 || nNodes == 6)) ||
+        (ndm == 3 && (nNodes == 8 || nNodes == 10)))) {
     opserr << "ERROR LadrunoUP " << tag << " -- no shape provider for ndm="
            << ndm << " with " << nNodes
-           << " nodes (want (2,3) T3, (2,4) Q4, or (3,8) H8)\n";
+           << " nodes (want (2,3) T3, (2,4) Q4, (2,6) Bézier T6, (3,8) H8, "
+              "or (3,10) Bézier Tet10)\n";
+    return 0;
+  }
+
+  // Deferred builder-NDF gate (see the ndm-gate comment above): equal-order
+  // linear shapes demand ndf = ndm+1 at the builder; Taylor–Hood quadratic
+  // shapes skip it (mixed-ndf pattern) — setDomain validates per node.
+  if (!isQuadratic && ndf != ndm + 1) {
+    opserr << "ERROR LadrunoUP " << tag << " -- model ndm/ndf must be 2/3 "
+              "(2D u-p) or 3/4 (3D u-p) for the equal-order shapes; got "
+           << ndm << "/" << ndf << ". The pressure DOF needs ndf = ndm+1.\n";
     return 0;
   }
 
@@ -177,7 +190,8 @@ void *OPS_LadrunoUP()
   Vector body(ndm);        // zero-initialized by Vector
   Vector fluidBody(ndm);   bool fluidBodyGiven = false;
   int formulation = 0;     // 0 = std, 1 = bbar
-  int pOrder = 0;          // 0 = equal (P1); 1 = TH (reserved, P3)
+  int pOrder = 0;          // 0 = equal-order; 1 = Taylor–Hood (linear vertex p)
+  bool pOrderGiven = false;
   bool lumped = false;
   int stabMode = 1;        // 0 = off, 1 = auto, 2 = manual — default auto
   double stabValue = 0.25; // auto: alpha0; manual: alpha
@@ -343,15 +357,16 @@ void *OPS_LadrunoUP()
       if (strcmp(p, "equal") == 0) {
         pOrder = 0;
       } else if (strcmp(p, "linear") == 0) {
-        // On the P1 linear shapes every node is a vertex — 'linear' is a
-        // documented synonym of 'equal' (identical interpolation). Its
-        // Taylor–Hood meaning arrives with the Bézier shapes at P3.
-        pOrder = 0;
+        // On a linear shape every node is a vertex — 'linear' is a documented
+        // synonym of 'equal' (identical interpolation). On a quadratic Bézier
+        // shape 'linear' is the Taylor–Hood cure: quadratic u, linear vertex p.
+        pOrder = isQuadratic ? 1 : 0;
       } else {
         opserr << "ERROR LadrunoUP " << tag << " -- unknown -pOrder '" << p
                << "' (want equal|linear)\n";
         return 0;
       }
+      pOrderGiven = true;
 
     } else if (strcmp(opt, "-lumped") == 0) {
       lumped = true;
@@ -479,8 +494,21 @@ void *OPS_LadrunoUP()
     return 0;
   }
 
-  // -stab on a Taylor–Hood pair is fatal (TH needs no stabilization). Dead at
-  // P1 (TH shapes are rejected above) — kept for the P3 lanes.
+  // Quadratic Bézier shapes are Taylor–Hood ONLY: they REQUIRE -pOrder linear.
+  // Omitted or -pOrder equal on a quadratic shape is fatal — equal-order
+  // quadratic is a reserved axis with no theory or gate (ADR §3.3, §4.1).
+  if (isQuadratic && pOrder != 1) {
+    opserr << "ERROR LadrunoUP " << tag << " -- the " << nNodes
+           << "-node Bézier shape is Taylor–Hood only and requires '-pOrder "
+              "linear' (quadratic u, linear vertex p)"
+           << (pOrderGiven ? "; '-pOrder equal'"
+                           : "; -pOrder was omitted, which")
+           << " selects equal-order quadratic — a reserved axis with no theory "
+              "or gate\n";
+    return 0;
+  }
+
+  // -stab on a Taylor–Hood pair is fatal (TH is inf-sup stable without it).
   if (pOrder == 1 && stabGiven) {
     opserr << "ERROR LadrunoUP " << tag
            << " -- -stab is not accepted on Taylor–Hood pairs (they are "

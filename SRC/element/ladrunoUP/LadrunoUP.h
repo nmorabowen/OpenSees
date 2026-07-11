@@ -33,9 +33,13 @@
 // ONE element class covers the whole geometry family through the stateless
 // shape providers of LadrunoUPShapes.h — (ndm, nNodes) selects the provider:
 //   (2,3) T3 · (2,4) Q4 · (3,8) H8 · (2,6) Bézier T6 · (3,10) Bézier Tet10
-// P1 gates the Q4 lane end-to-end; T3/H8 parse and run (gates at P2); the
-// Bézier Taylor–Hood lanes are guarded off until P3 (heterogeneous-ndf
-// plumbing). All coupled-block math (Q/H/S/H̃/f_seep) lives in the shared
+// P1 gates the Q4 lane end-to-end; T3/H8 gate at P2; the Bézier Taylor–Hood
+// lanes (BT6/BTET10, quadratic u + linear vertex p) land at P3 with the
+// heterogeneous-ndf plumbing — vertex/carrier nodes run ndf = ndm+1, mid-edge
+// nodes ndf = ndm; setDomain validates the split, enforces straight sides
+// (affine-map TH precondition), and accepts either BTET10 winding (folding
+// dv = w·|detJ| when the pinned node↔L map yields all-negative detJ). All
+// coupled-block math (Q/H/S/H̃/f_seep) lives in the shared
 // pure kernel LadrunoUPKernel.h — this class does material handling, block
 // placement into the OpenSees element APIs, loads/responses/parameters.
 //
