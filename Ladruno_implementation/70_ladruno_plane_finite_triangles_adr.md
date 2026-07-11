@@ -649,5 +649,41 @@ Implements the spike decision verbatim. One new element, zero kernel changes.
   zero-energy = exactly 3 RBM; Newton iteration-ceiling gates (elastic + J2);
   det-F step-cut; parse guards.
 
+### P4a post-merge adversarial gate (2026-07-11) — 1 CRITICAL found + fixed family-wide
+
+Full Opus gate on the merged element (user-requested). **Mechanics CONFIRMED
+CLEAN** — the reviewer independently re-derived the patch linearization,
+verified by FD that the current-volume-weighted ḡ IS exactly δ(ln J̄) (the
+feared missing δ(v_s/v_p) weight-linearization terms are second-order — not
+part of the exact tangent), confirmed q's derivation is projection-agnostic,
+and cleared the oracle-FD gate of tautology (independent residual coding +
+the openseespy equilibrium anchor). Serialization structure, static-scratch
+aliasing (beyond the finding below), geometry/parser guards, and body-force
+conventions: CLEAN.
+
+**CRITICAL (found + fixed):** `getResistingForceIncInertia` built
+f_int − Q + M·a in the shared static `P`, then called
+`getRayleighDampingForces()` — which under stiffness-proportional `betaK`
+re-enters `getTangentStiff()` → `formPair(1)` → `P.Zero()`+refill, silently
+dropping the inertia AND ground-motion (−Q) terms while Newton still
+converges (wrong dynamic solution). The known ADR-66 quirk, recurred: the
+**whole plane family** (`Quad`/`CST`/`LST` `-geom finite` + the pair) carried
+the unsnapshotted pattern. Fixed with the LadrunoBrick donor snapshot in all
+four elements.
+
+**MAJOR (found + fixed):** zero dynamics/serialization coverage — the blind
+spot that hid the CRITICAL. Remediated with
+`tests/test_ladrunoplane_dynamics.py`: the self-validating dynamic-Rayleigh
+gate parametrized over all four finite paths (undamped step-load overshoot
+≈2× proves the rig, tiny-betaK peak shift <5% is the discriminator), a
+pair-vs-2-CST loose eigen comparison + a sharp 2×ρ ⇒ ×½-eigenvalue
+lumped-mass invariance, and a FileDatastore save/restore roundtrip
+(sendSelf/recvSelf).
+
+**MINOR (documented, not changed):** degenerate/CW geometry is warned at
+setDomain and step-cut in analysis, but a pure eigen run on a mis-ordered
+element sees silent zero mass/initial stiffness; `Ki` is cached forever
+(family convention).
+
 **Next:** P4b (T6 pair, patch-P1) stays by-demand — novel/off-label pair,
 needs its own full adversarial gate + pressure battery (§9 spike F6).
