@@ -475,7 +475,6 @@
 #include "brick/Brick.h"
 #include "brick/BbarBrick.h"
 #include "ladrunoBrick/LadrunoBrick.h"	// N. Mora-Bowen (Ladruno)
-#include "ladrunoBrick/LadrunoBrick20.h"	// N. Mora-Bowen (Ladruno) ADR 72
 #include "ladrunoSolidShell/LadrunoSolidShell.h"	// N. Mora-Bowen (Ladruno)
 #include "bezierTriangle/BezierTri6.h"		// Ladruno (broker reconstruction)
 #include "bezierTetrahedron/BezierTet10.h"	// Ladruno (broker reconstruction)
@@ -485,6 +484,10 @@
 #include "ladrunoEmbeddedNode/LadrunoEmbeddedNode.h"	// N. Mora-Bowen (Ladruno)
 #include "ladrunoPlane/LadrunoQuad.h"	// N. Mora-Bowen (Ladruno)
 #include "ladrunoPlane/LadrunoCST.h"	// N. Mora-Bowen (Ladruno)
+#include "ladrunoUP/LadrunoUP.h"	// N. Mora-Bowen (Ladruno) ADR 71
+#include "ladrunoPlane/LadrunoLST.h"	// N. Mora-Bowen (Ladruno)
+#include "ladrunoPlane/LadrunoCSTPair.h"	// N. Mora-Bowen (Ladruno) ADR 70 P4a
+#include "ladrunoBrick/LadrunoBrick20.h"	// N. Mora-Bowen (Ladruno) ADR 72
 #include "ladrunoDistributingCoupling/LadrunoDistributingCoupling.h"	// N. Mora-Bowen (Ladruno)
 #include "ladrunoKinematicCoupling/LadrunoKinematicCoupling.h"	// N. Mora-Bowen (Ladruno)
 #include "ladrunoRigidBody/LadrunoRigidBody.h"	// N. Mora-Bowen (Ladruno) ADR 58
@@ -1072,9 +1075,6 @@ FEM_ObjectBrokerAllClasses::getNewElement(int classTag)
     case ELE_TAG_LadrunoBrick:		// N. Mora-Bowen (Ladruno)
       return new LadrunoBrick();
 
-    case ELE_TAG_LadrunoBrick20:	// N. Mora-Bowen (Ladruno) ADR 72
-      return new LadrunoBrick20();
-
     case ELE_TAG_LadrunoSolidShell:	// N. Mora-Bowen (Ladruno)
       return new LadrunoSolidShell();
 
@@ -1107,6 +1107,17 @@ FEM_ObjectBrokerAllClasses::getNewElement(int classTag)
 
     case ELE_TAG_LadrunoCST:		// N. Mora-Bowen (Ladruno)
       return new LadrunoCST();
+
+    case ELE_TAG_LadrunoUP:		// N. Mora-Bowen (Ladruno) ADR 71
+      return new LadrunoUP();
+    case ELE_TAG_LadrunoLST:		// N. Mora-Bowen (Ladruno)
+      return new LadrunoLST();
+
+    case ELE_TAG_LadrunoCSTPair:	// N. Mora-Bowen (Ladruno) ADR 70 P4a
+      return new LadrunoCSTPair();
+
+    case ELE_TAG_LadrunoBrick20:	// N. Mora-Bowen (Ladruno) ADR 72
+      return new LadrunoBrick20();
 
     case ELE_TAG_LadrunoDistributingCoupling:	// N. Mora-Bowen (Ladruno)
       return new LadrunoDistributingCoupling();

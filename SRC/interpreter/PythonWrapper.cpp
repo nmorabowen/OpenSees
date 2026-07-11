@@ -2219,6 +2219,19 @@ static PyObject *Py_ops_steadyStateDynamics(PyObject *self, PyObject *args)
     return wrapper->getResults();
 }
 
+// Ladruno ADR44 P3: stationary random response, PSD->RMS (randomResponse)
+static PyObject *Py_ops_randomResponse(PyObject *self, PyObject *args)
+{
+    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
+
+    if (OPS_LadrunoRandomResponse() < 0) {
+	opserr<<(void*)0;
+	return NULL;
+    }
+
+    return wrapper->getResults();
+}
+
 static PyObject *Py_ops_systemSize(PyObject *self, PyObject *args)
 {
     wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
@@ -3434,6 +3447,7 @@ PythonWrapper::addOpenSeesCommands()
     addCommand("modalResponseHistory", &Py_ops_modalResponseHistory); // Ladruno ADR44
     addCommand("frequencyResponse", &Py_ops_frequencyResponse);       // Ladruno ADR44 P2
     addCommand("steadyStateDynamics", &Py_ops_steadyStateDynamics);   // Ladruno ADR44 P2
+    addCommand("randomResponse", &Py_ops_randomResponse);             // Ladruno ADR44 P3
     addCommand("systemSize", &Py_ops_systemSize);
     addCommand("version", &Py_ops_version);
     addCommand("pyversion", &Py_ops_pyversion);

@@ -107,10 +107,13 @@ extern void *OPS_ElasticBeam2d(const ID &info);
 extern void *OPS_ElasticBeam3d(void);
 extern void *OPS_LadrunoIMKBeam(void); // N. Mora-Bowen (Ladruno)
 extern void *OPS_LadrunoBrick(void); // N. Mora-Bowen (Ladruno)
-extern void *OPS_LadrunoBrick20(void); // N. Mora-Bowen (Ladruno) ADR 72
 extern void *OPS_LadrunoSolidShell(void); // N. Mora-Bowen (Ladruno) ADR 66
 extern void *OPS_LadrunoQuad(void); // N. Mora-Bowen (Ladruno)
 extern void *OPS_LadrunoCST(void); // N. Mora-Bowen (Ladruno)
+extern void *OPS_LadrunoUP(void); // N. Mora-Bowen (Ladruno) ADR 71
+extern void *OPS_LadrunoLST(void); // N. Mora-Bowen (Ladruno)
+extern void *OPS_LadrunoCSTPair(void); // N. Mora-Bowen (Ladruno) ADR 70 P4a
+extern void *OPS_LadrunoBrick20(void); // N. Mora-Bowen (Ladruno) ADR 72
 extern void *OPS_LadrunoDistributingCoupling(void); // N. Mora-Bowen (Ladruno)
 extern void *OPS_LadrunoKinematicCoupling(void); // N. Mora-Bowen (Ladruno)
 extern void *OPS_LadrunoRigidBody(void); // N. Mora-Bowen (Ladruno) ADR 58
@@ -591,10 +594,13 @@ TclModelBuilderElementCommand(ClientData clientData, Tcl_Interp *interp,
     } ladrunoElementTable[] = {
       {"LadrunoIMKBeam",              "ladrunoIMKBeam",              OPS_LadrunoIMKBeam},
       {"LadrunoBrick",                "ladrunoBrick",                OPS_LadrunoBrick},
-      {"LadrunoBrick20",              "ladrunoBrick20",              OPS_LadrunoBrick20},   // Ladruno ADR 72
       {"LadrunoSolidShell",           "ladrunoSolidShell",           OPS_LadrunoSolidShell},
       {"LadrunoQuad",                 "ladrunoQuad",                 OPS_LadrunoQuad},
       {"LadrunoCST",                  "ladrunoCST",                  OPS_LadrunoCST},
+      {"LadrunoUP",                   "ladrunoUP",                   OPS_LadrunoUP},   // N. Mora-Bowen (Ladruno) ADR 71
+      {"LadrunoLST",                  "ladrunoLST",                  OPS_LadrunoLST}, // N. Mora-Bowen (Ladruno)
+      {"LadrunoCSTPair",              "ladrunoCSTPair",              OPS_LadrunoCSTPair}, // N. Mora-Bowen (Ladruno) ADR 70 P4a
+      {"LadrunoBrick20",              "ladrunoBrick20",              OPS_LadrunoBrick20}, // N. Mora-Bowen (Ladruno) ADR 72
       {"LadrunoDistributingCoupling", "ladrunoDistributingCoupling", OPS_LadrunoDistributingCoupling},
       {"LadrunoKinematicCoupling",    "ladrunoKinematicCoupling",    OPS_LadrunoKinematicCoupling},
       {"LadrunoRigidBody",            "ladrunoRigidBody",            OPS_LadrunoRigidBody},
