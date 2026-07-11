@@ -1,6 +1,6 @@
 ---
 title: "ADR 70 — Plane finite-strain continuum family: shared 2D finite-strain kernel + LadrunoCST -geom finite + new LadrunoLST (T6)"
-status: in progress — P0 shipped (#540), P1 shipped (LadrunoQuad -geom finite, #543 + review fixes #545), P2 (LadrunoCST -geom finite) landing; NEXT P3 (LST)
+status: in progress — P0 shipped (#540), P1 shipped (LadrunoQuad -geom finite, #543 + #545), P2 shipped (LadrunoCST -geom finite, #550), P3 (new LadrunoLST T6) landing; P4 (F-bar-Patch) optional/by-demand
 ---
 
 # ADR 70 — Plane finite-strain triangles on a shared 2D finite-strain kernel
@@ -102,8 +102,23 @@ grounded **per-element F-bar strategy**.
    | Element | strain field | element-level F-bar | volumetric cure |
    |---|---|---|---|
    | Q4 `LadrunoQuad` | bilinear (J varies) | **works** | `bbar`+`finite` (this ADR) |
-   | T6 `LadrunoLST`  | linear (J varies)  | **works** | `bbar`+`finite` (this ADR) |
+   | T6 `LadrunoLST`  | linear (J varies)  | ~~works~~ **REFUTED at P3** | F-bar-Patch / projected dilatation (P4) |
    | T3 `LadrunoCST`  | constant (J const) | **no-op**  | F-bar-Patch, nodal (P4) |
+
+   > [!warning] P3 amendment (2026-07-10) — the T6 row above was WRONG.
+   > "J varies so F-bar can average" is true but insufficient: constant
+   > element-mean dilatation (B-bar, or the centroid F-bar scale (J₀/J)^½) is
+   > **rank-deficient on the T6**. The two quadratic **conformal** modes
+   > (Re/Im z²) have identically zero deviatoric strain, and their linear
+   > dilatation has zero element mean — the averaged operator assigns them
+   > **zero energy**. A free element shows **5** zero-energy modes (3 RBM + 2
+   > spurious; stacked-B̄ rank 7 of the required 9). Verified three ways at P3:
+   > analytically, by numpy rank, and by `eigen` on the compiled element. The
+   > Q4 is immune only because z²-type fields are not in the bilinear space.
+   > Consequence: `LadrunoLST` ships **std-only** (`-formulation bbar`
+   > parser-refused with this rationale); the triangle volumetric cure is P4
+   > (nodal F-bar-Patch, or an element-local **P1-projected** dilatation —
+   > which restores rank but is the LBB-delicate P2/P1disc pair; decide at P4).
 
 ---
 
@@ -419,3 +434,72 @@ so a future fake per-element T3 "F-bar" (or a quad F-bar regression) trips it;
 and the parse guards.
 
 **Next:** P3 = new `LadrunoLST` (T6, 33016) — the F-bar-friendly triangle.
+
+### P3 — new `LadrunoLST` (T6, `ELE_TAG_LadrunoLST` = 33016) + the F-bar-on-T6 refutation
+
+Quadratic N ⇒ **linear** strain ⇒ an inclined band is representable and
+convergence is quadratic. Third consumer of the shared kernel. **The headline
+P3 finding, however, is negative:** the planned `bbar`/F-bar lane was
+**refuted by the rank gate** (see the §2.5 amendment) — `LadrunoLST` ships
+**std-only**, and the triangle volumetric cure moves squarely to P4.
+
+**The refutation (how it was caught).** The canonical single-free-element
+zero-energy gate (`assert_zero_energy`, locked T0) returned **5** zero modes
+for the as-built B-bar T6 (3 RBM + 2 spurious). Diagnosis: the two quadratic
+conformal modes (Re/Im z²) satisfy ε_dev ≡ 0 pointwise while their linear
+dilatation has zero element mean, so ANY constant-mean averaging (B-bar, or
+the centroid F-bar scale) sees zero strain — stacked-B̄ rank is 7 of the 9
+required. Confirmed independently by numpy rank and analytically. Per fork
+policy (no uncontrolled mechanism ships; cf. SSP's `Kstab`, the ADR-20
+refusal), the lane was removed rather than papered over.
+
+**What landed**
+
+- **`LadrunoLST.{h,cpp}` + `OPS_LadrunoLST.cpp`** in `ladrunoPlane/`:
+  **std** × `-geom {linear|finite}` × `-type` (finite PlaneStrain-only,
+  mirroring the family), `-thick/-rho/-body/-pressure/-bv`. Node order and the
+  **3-point interior rule** match upstream `SixNodeTri` (corners n1-n3 CCW,
+  midsides n4=(1-2), n5=(2-3), n6=(3-1)); `shapeFunction` is a faithful mirror
+  of `SixNodeTri::shapeFunction` (the reduce-to anchor). `-formulation bbar`
+  is **parser-refused with the rank rationale** (the message cites the two
+  conformal modes and points at P4).
+- `getInitialStiff` uses the clean indexed assembly — upstream `SixNodeTri`'s
+  version carries FourNodeQuad's 8-stride `matrixData` indexing (latent
+  upstream bug, not ported). Consistent quadratic-edge `-pressure` (corner ⅓ /
+  midside ⅔ halves) — fixes upstream's side-61 `x4-x6` typo (documented
+  divergence). **HRZ lumped mass** (∫ρN² rescaled to the exact total, strictly
+  positive) — a second deliberate divergence: upstream's plain N-lumping gives
+  exactly ZERO corner masses on the T6 (negative when distorted), unusable for
+  explicit dynamics; same decision as the H20 (ADR-72). `charLength = √(2A)`.
+- **Finite path (std)**: `updateFinite`/`formFinite` on the kernel — per-GP F,
+  `setTrialF`, spatial residual + consistent `a = c − σδ` tangent, det-F
+  step-cut via the LogStrain2D guard, error-path K/P zeroing, element-wise
+  row-major→column-major copy — the P1/P2 conventions kept (structure mirrors
+  `LadrunoCST` with 6 nodes / 3 GPs).
+- **Registration** (vanilla, additive `// Ladruno`): `classTags.h` 33016 define
+  (replaces the P0 reservation comment; ELE registry, no collision with
+  `ND_TAG_LogStrain2D`), broker case, `OpenSeesElementCommands` map +
+  classic-Tcl dispatch, `ladrunoPlane/CMakeLists.txt`.
+- Note for openseespy cross-checks: upstream `SixNodeTri` registers as
+  **`tri6n`** in the shared functionMap (not "SixNodeTri").
+
+**Verification** (`tests/test_ladrunolst_element.py` + `test_ladrunolst_finite.py`;
+kernel T6 std math was already gated building-free by the P0 oracle's T6 lane):
+reduce-to `SixNodeTri` (~1e-9, PlaneStrain + PlaneStress); rank/3-RBM (std);
+**the B-bar refutation pin** (bbar parser-refused — trips if re-enabled without
+a rank-sufficient projection); constant-stress patch + **linear-strain-field
+reproduction** under a quadratic displacement patch (the CST-impossible field —
+the mechanism behind off-mesh-line bands; both on an exact Transformation-
+condensed prescribed-field rig with a dummy free DOF — penalty sp constraints
+plateau at ~k/α ≈ 1e-7 and cannot meet the locked 1e-9 patch rtol);
+reduce-to-linear at ε→0; homogeneous finite-stretch patch vs the LogStrain2D
+oracle on a 2-LST square with consistent quadratic-edge loads (⅙, ⅔, ⅙) +
+deformed-config equilibrium; finite Newton convergence (elastic + J2);
+std-finite Newton iteration ceiling; det-F step-cut; parse guards
+(PlaneStress+finite, non-finite material, bbar, bbar+finite, ssp/eas).
+
+**P4 (now load-bearing):** the family's triangle volumetric cure — nodal
+F-bar-Patch (dSNPO §15.1.9) for T3+T6, or an element-local P1-projected
+dilatation for the T6 (restores rank; LBB-delicate P2/P1disc — needs its own
+gate battery). Until then: quads (`bbar`) where near-incompressibility
+matters; triangles are std.
