@@ -309,6 +309,51 @@ disp-slot ndm; else legacy vel-slot ndm. Flag-free, automatic. ⟨FW-F4⟩.
 
 ## P2–P4 sketch (each = own branch/PR; agents pinned at phase start)
 
+### WP2.A pins (FROZEN 2026-07-11 — P2 agents implement exactly this)
+
+P2 = the H8 and T3 lanes GATED (both already parse+run since P1 — this phase
+is battery work; element-source edits are NOT in agent scope: bugs get
+REPORTED to MAIN for adjudication). Branch `feature/adr71-p2`.
+
+**Ownership.** OPUS-H8 owns `tests/test_ladruno_up_element_h8.py` ONLY.
+OPUS-T3 owns `tests/test_ladruno_up_element_t3.py` ONLY. Style/bootstrap donor
+for both: `tests/test_ladruno_up_element_analytic.py` + `_equiv.py` (hermetic
+py -3.12 bootstrap, printA order='F', zone_b markers, tolerances rationale).
+
+**OPUS-H8 gates (ADR §7 P2 row):**
+1. brickUP two-leg equivalence, P1 methodology: leg 1 tight (γ=½/β=¼,
+   `-dynSeepage off -stab off`, consistent mass, NormUnbalance, ≤1e-6 —
+   expect machine-level) + leg 2 production (γ=0.6/β=0.3025, Δt-halving
+   mutual first-order convergence). Upstream = `brickUP` (bulk = pre-combined
+   Q̄ ≈ Kf/n like quadUP — agent verifies the arg mapping in upstream source
+   and pins it in the docstring). PLUS the `-lumped` leg both ways (inspect
+   how upstream brickUP lumps; if it has no lumped option, run OUR -lumped
+   vs consistent as a Δt-convergence pair instead and document).
+2. 3D Terzaghi: H8 1×1×10 column vs the series (Tv sweep as P1, 3D BCs:
+   sealed sides via no-p-fix, drained top).
+3. B4-3D (McGann 2015 cube-footing analog): 30 m cube quarter-model, 10³
+   mesh h=3 m, strip→square footing load ramped+held, drained top only,
+   CB_lap 3D (face-interior Laplacian roughness) + α₀ ∈ {off, 0.25}:
+   monotone CB suppression + auto-α twin-run identity (P1 trick), α value
+   = 0.25·9/(Ks+4Gs/3) pinned ±5%. Keep runtime sane (≤10³ mesh, ≤60 s).
+**OPUS-T3 gates (ADR §7 P2 row ⟨scope-F12⟩):**
+1. B4-T3: the P1 B4 footing re-meshed with CROSSED-diagonal T3 split (each
+   quad → 4 triangles, center node), CB gate + α₀-sweep {off, 0.05, 0.25,
+   0.5} — pins that the §3.3 α transfer to simplices holds with h = largest
+   triangle edge; auto-vs-manual twin-run identity.
+2. T3 honest-baseline documentation gate: measured undrained locking —
+   drained vs undrained footing settlement T3-mesh vs Q4-mesh reference;
+   ASSERT the direction (T3 stiffer, worse under undrained constraint,
+   inherited CST pathology) and PIN the measured ratios in the docstring
+   (documentation assert, generous bands).
+3. T3 Terzaghi consolidation smoke on the crossed mesh (loose gates — the
+   point is no-blowup + right decay class, not accuracy records).
+
+**Run mechanics (both):** existing `dist/bin` pyd is current for this branch
+(tip = #557 squash; NO rebuild needed unless MAIN says so). Same bootstrap
+as the P1 batteries. Battery target runtime ≤90 s per file.
+
+
 | Phase | Notable WPs (owner) |
 |---|---|
 | **P2** H8+T3 | providers already exist → element lanes + gates (OPUS); B4-3D + B4-T3 crossed-diagonal CB gates (OPUS); brickUP two-leg equivalence w/ `-lumped` (OPUS); 3D Terzaghi (OPUS) |
@@ -354,6 +399,9 @@ disp-slot ndm; else legacy vel-slot ndm. Flag-free, automatic. ⟨FW-F4⟩.
   - 1.D `configureSizing()` ctor/recvSelf shared helper: APPROVED (anti-drift).
   - Rayleigh shadow of non-virtual getRayleighDampingForces: verified safe —
     zero external callers in SRC/domain + SRC/analysis (element-internal only).
+- 2026-07-11 — **P1 SHIPPED** (PR #557 merged, squash 94dcf9b8d; manifest-row
+  CI gate learned: every new ELE_TAG #define needs a testbed/manifest.yaml
+  row). P2 branch `feature/adr71-p2`; WP2.A pins frozen.
 - 2026-07-10 — 0.A addendum committed (GP/basis pins, contractual-rule emission).
 - 2026-07-10 — 0.B/0.C landed (twin Opus agents); 0.D cross-run green first try:
   16 cases, 96/96 blocks + 16/16 dofMaps ≤1e-16 (gate 1e-9).
