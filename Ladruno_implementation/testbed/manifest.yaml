@@ -1220,6 +1220,34 @@ features:
       the consistent-pressure side-61 typo fix. Plan:
       70_ladruno_plane_finite_triangles_adr.md.
 
+  - feature: LadrunoCSTPair                    # ADR 70 P4a triangle volumetric cure
+    classtag: 33021          # ELE_TAG family; after LadrunoSolidShell=33020 (33019 pencilled H27)
+    tag_symbol: ELE_TAG_LadrunoCSTPair
+    pr: 558
+    feature_class: element
+    required_tiers: [T0, T1]
+    pytest: tests/test_ladrunocstpair.py   # crown gate: printA assembled tangent vs numpy oracle (cstpair_reference.py) ~1e-15 at a finite inhomogeneous state incl. the UNSYMMETRIC cross blocks; free-pair 3-RBM, locking-relief FLIP vs F-bar quad + plain CST, homogeneous reduce-to-2-CSTs + oracle sigma(F), Newton iteration ceilings (elastic+J2), det-F step-cut, parse guards; oracle self-gates in tests/test_cstpair_reference.py
+    tcl: WAIVED(element LadrunoCSTPair ...; shared OpenSeesElementCommands functionMap serves Tcl + Python; verified via the Zone-A pytest battery)
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesElementCommands.cpp
+      - SRC/element/TclElementCommands.cpp
+      - SRC/element/ladrunoPlane/CMakeLists.txt
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      Disjoint 2-triangle F-bar-Patch macro-element (ADR 70 P4a, dSNPO 15.1.9):
+      4-node CCW quad split along the n1-n3 diagonal; both T3s share the patch
+      dilatation J-bar = v_patch/V_patch, F-bar_e = (J-bar/J_e)^(1/2) F_e. Exact
+      patch-local consistent tangent incl. the stress-proportional cross blocks
+      (eqs 15.37/15.38) — generally UNSYMMETRIC — via the shared
+      LadrunoFiniteStrain2DKernel in 4-node zero-padded rows (patch row g-bar
+      substituted for the centroid g0; zero kernel changes). Finite-strain +
+      PlaneStrain only (FiniteStrainND2DMaterial). The T3 volumetric cure the
+      P4 design spike decided; P4b (T6 pair, patch-P1) stays by-demand. Plan:
+      70_ladruno_plane_finite_triangles_adr.md (section 9).
+
   - feature: LadrunoDistributingCoupling
     classtag: 33011          # ELE_TAG (element) family; after LadrunoCST=33008 (33009/33010 reserved VEM/SBFEM)
     tag_symbol: ELE_TAG_LadrunoDistributingCoupling
