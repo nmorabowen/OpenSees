@@ -159,6 +159,35 @@ due at P1). U2 — PR merges are auto once CI is green; no other user gate.
 
 ## Orchestration log (loop state — newest first)
 
+- **2026-07-13, iteration 11: #564 MERGED (8e8b623b3) — P0+P1+Gmsh runway
+  COMPLETE, loop CLOSED.** Shipped this loop: #548 (P0 kernel+oracle+33018),
+  #561 (P1 std element + battery + R3 hardening), #564 (GmshRecorder hex20
+  type-17 + permutation, incl. upstream Twenty_Node_Brick). Small debt: the
+  two #564 ledger rows still read "_PR pending (GmshRecorder hex20 fix)_" —
+  fold into the next ledger-backfill batch (the #560 convention). Remote
+  branches guppi/xenodochial-lamarr-adr72-p1 + guppi/gmsh-hex20-fix left in
+  place (squash-merged). **P2 (`uri`) is NOT started** — fresh phase, gates +
+  R3-deferred debts pinned in ADR §6 P2 row; P3 dynamics gates incl. the
+  betaK-Rayleigh clobber assert; P4 demand-gated.
+
+- **2026-07-13, iteration 10: P1 MERGED (#561, squash 4fa7b8ff2) → Gmsh PR-3 = #564 in CI.**
+  Three CI rounds on #561: (r1) stale-branch conflict vs 8 landed PRs →
+  merged ladruno, keep-both broker/Tcl rows, banner regen — NB the 4
+  "whole-file conflicts" were line-ending artifacts, resolved by taking
+  --theirs + re-applying our additive lines; (r2) Zone-A FAIL =
+  **ASDConcrete3D HardeningLawStorage poisoning** (static store-if-absent
+  registry keyed by material TAG, survives wipe(); our advisory test's tag-1
+  toy law poisoned test_ladrunoBrick_asdconcrete's mesh-objectivity ratio to
+  7.03 — repro'd locally by test-order sequencing, fixed with file-unique tag
+  337218 + LEDGER_quirks entry; rule: file-unique ASD tags in every test
+  file); (r3) merged #562/#563 cleanly (pinned a betaK-Rayleigh clobber gate
+  into the ADR P3 row — Brick20 should be structurally immune post-F12/F13),
+  all green → squash-merged (repo does NOT allow gh auto-merge). Then
+  guppi/gmsh-hex20-fix merged onto new ladruno (clean), pushed, **PR #564**
+  opened (delta: GmshRecorder.{h,cpp} + ledger + round-trip test), CI watch
+  armed. NEXT: #564 green → squash-merge → phase pause; P2 uri is a fresh
+  phase (R3-deferred debts pinned in ADR §6 P2 row).
+
 - **2026-07-10, iteration 9b: Gmsh hex20 side-fix COMPLETE (user-fired chip).**
   Isolated-worktree agent, commit `ac63a879a` on LOCAL branch
   `guppi/gmsh-hex20-fix` (based on origin/ladruno b530f0854, NOT pushed):
