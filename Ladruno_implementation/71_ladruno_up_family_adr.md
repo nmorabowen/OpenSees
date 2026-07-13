@@ -945,4 +945,17 @@ transcripts). Confirmed defects, all repaired in-place (⟨tags⟩ mark the edit
 
 ## 12. Implementation log
 
+- 2026-07-13 (P4) — **`-dynSeepage` default AMENDED to `off`** (the §4.1 draft
+  said `on`; the P1 log pre-authorized this revisit at B5). Evidence, both
+  regimes measured: quasi-static consolidation DIVERGES under Δt-refinement
+  (P1 ZS84 sweep, err 1.8e-2 → 8.7e-1 as Δt 0.08 → 0.005) and genuine
+  dynamics misbehaves on B5 (wandering post-front p level 1.7–2.0 vs β=0.973;
+  unbounded shallow-station growth ~1.7e4 by τ=100) — trial-acceleration
+  noise feeds f_seep. `-dynSeepage on` stays available (SWANDYNE-parity
+  research axis; the +G residual term remains FD-gated in the batteries).
+  Companion B5 finding: `-stab auto` injects ~10% spurious deep-station p
+  ringing on fast-wave propagation — guide rule: wave-propagation runs use
+  `-stab off` (stabilization targets the undrained/checkerboard limit, not
+  wave physics).
+
 *(filled as phases land; move to `Ladruno_internal/` when complete)*

@@ -159,6 +159,14 @@ class LadrunoUP : public Element
     // updateMaterialStage transport + xPerm/yPerm/zPerm (contract obligation 3)
     int setParameter(const char **argv, int argc, Parameter &param);
     int updateParameter(int parameterID, Information &info);
+    // Stage-flip cache invalidation, PUBLIC for the sibling broadcast (P4
+    // fix): MaterialStageParameter's domain scan stops at the FIRST accepting
+    // element (MaterialStageParameter.cpp:76 "only need to find one" — valid
+    // for the materials' shared static stage slot, WRONG for per-element
+    // caches), so only one LadrunoUP co-registers. That element's
+    // updateParameter(1) broadcasts this to every LadrunoUP in the domain.
+    // Only sets dirty flags (lazy recompute) — over-dirtying is harmless.
+    void dirtyStageCaches(void);
 
   protected:
     // shadows the (non-virtual) base helper: SOLID-ONLY Rayleigh forces,

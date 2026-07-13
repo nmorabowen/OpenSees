@@ -309,6 +309,97 @@ disp-slot ndm; else legacy vel-slot ndm. Flag-free, automatic. ⟨FW-F4⟩.
 
 ## P2–P4 sketch (each = own branch/PR; agents pinned at phase start)
 
+### WP4.A pins (FROZEN 2026-07-13 — P4 agents implement exactly this)
+
+P4 = dynamics validation + ecosystem; the family's closing phase. Branch
+`feature/adr71-p4`. No adversarial panel (ADR policy: P4 is validation, not
+new math); MAIN reviews the guide + oracle protocol before the PR.
+
+**Ownership (all parallel, disjoint):** 4.B owns
+tests/test_ladruno_up_element_b5.py; 4.C owns
+tests/test_ladruno_up_element_pdmy.py; 4.D owns
+tests/test_ladruno_up_init_recorders.py; 4.E owns
+Ladruno_implementation/LadrunoUP_guide.md (new doc). MAIN (4.F): banner line
++ patch_banner.py + rebuild, ledger status→shipped, PR, CI.
+
+**4.B pins (B5 Simon + Newmark oscillation):** ADR §7.1 B5 VERBATIM — exact
+full-Biot closed form in numpy (no numerical inversion), the FOUR errata
+KEPT (eq43 +f; eq44 σ′=σ−π; spike branch σ₀(2Δ−t)/Δ; Table II Q values not
+p.390/Fig-3), dynamically-compatible material construction (ακ=β ⇒ K_f
+derived), mats 1/2/3 α ∈ {1.0, 0.667, 0.333}. Hard gates at stations ξ>40
+ONLY (u-p drops the slow-P-wave boundary layer ξ≲40 by construction): σ̂
+front = 50%-of-plateau crossing within ±2Δz of τ−ξ; π̂ plateau = β ±2% over
+τ∈[50,150] (mat 2 β=0.9730). û(0,τ) is MEASURED-FIRST ⟨UP-5⟩: pre-run a 1D
+u-p semi-discrete numpy oracle (assemble the same blocks 1D) to quantify the
+full-Biot-vs-u-p discrepancy at û(0,50); if >0.5% demote û to a
+documented-comparison (no hard gate) — record the measured number either
+way. FE: uniform mesh ≥10 elements per v₂·τ_gate, column > V_c·T (no base
+reflection), Δt ≈ CFL/2 of the fast wave, Q4 equal-order lane (-stab auto),
+one Δz,Δt-halving convergence leg. PLUS the step-load p-oscillation pinning
+under BOTH Newmark sets (γ=0.6/β=0.3025 and γ=0.51/β=0.2575, ADR §3.6):
+document overshoot/period ratios, assert the 0.51 set is less damped +
+both stable (documentation gate, generous bands).
+
+**4.C pins (PDMY liquefaction column):** free-field 1D column, upstream
+quadUP reference vs LadrunoUP Q4 (-dynSeepage off leg for parity),
+PressureDependMultiYield (PDMY) material both sides, gravity stage elastic
+(updateMaterialStage 0) → plastic switch (updateMaterialStage 1) → base
+shaking (UniformExcitation); THE POINT is the §3.2 setParameter transport:
+the stage flip must reach the materials THROUGH the element and dirty the
+K₀/stabAlpha caches — gate (a) two-leg equivalence methodology (tight
+γ=½/β=¼ leg vs quadUP ≤1e-6 pre-shake static/gravity states; production
+γ=0.6 response-level band during shaking), (b) excess-pore-pressure ratio
+r_u rises toward 1 in the loose layer (liquefaction onset, band not exact),
+(c) an explicit cache-dirty gate: stabAlpha/auto-α BEFORE vs AFTER the
+stage flip differ (probe via twin-run: -stab auto vs -stab <manual value
+computed from the POST-STAGE moduli> — identical post-stage fields proves
+the cache refreshed; mirror the P2 twin-identity trick). If PDMY quirks
+block a leg, document + gate what physics allows (report to MAIN).
+
+**4.D pins (init recipe + recorder channels):** (i) the three §3.2 init
+routes as passing gates on one 2×10 Q4 column: (a) static steady-seepage
+stage → transient continuation; (b) gravity-stage transient (γ=0.6, big Δt)
+→ hydrostatic p profile ±1% → shaking continuation; (c) scripted
+setNodeDisp p -commit; each asserts the post-init p field AND that a
+follow-on transient starts WITHOUT a pressure shock (first-step Δp bounded);
+(ii) sequencing trap regression: InitialStateAnalysis/displacement-zeroing
+interplay — demonstrate the documented order (zero displacements BEFORE
+establishing p) works and the wrong order visibly zeroes p (documentation
+gate); (iii) PressureSource: gate the Ladruno_NodeResults PRESSURE channel
+end-to-end on a LadrunoUP model (disp-slot read, P1 wiring) — write a
+LadrunoRecorder/whatever-channel-is-lightest recording, assert values ==
+nodeDisp p; include one upstream quadUP node in the same model to prove the
+per-node vel-slot fallback still works (mixed model); (iv) Monitor channel
+smoke if cheap (LadrunoMonitorRecorder on p), else note for by-demand.
+
+**4.E pins (LadrunoUP_guide.md):** audience = fork users; sections: (1)
+element command surface + legality matrix + defaults (ADR §4.1, incl.
+-permH/-gammaW sugar, unknown-flag-FATAL rationale); (2) THE SOLVER
+REQUIREMENT (ProfileSPD silent-drop, general-solver list, MP MUMPS SYM=0);
+(3) DOF/BC semantics (honest-p: p = disp slot; drained = p-fix; impervious
+= no fix; ≥1 drained node per connected region for statics — REWORDED per
+P1 finding: all-impervious static returns rc=0 with a solver-dependent
+arbitrary p level, NOT a loud failure); (4) init recipes (the three routes,
+sequencing trap, Penalty-not-Transformation for staged p-sp per quirks);
+(5) analysis guidance: γ≥0.6 rider, -dynSeepage OFF for quasi-static
+consolidation (P1 divergence finding) / ON for genuine dynamics, Δt
+guidance, penalty-vs-NormUnbalance stall note; (6) shapes & pOrder: the TH
+modeling dance (ndf toggling, vertices-then-midedges, straight sides,
+equalDOF mixed-ndf example from test (iv) verbatim), BTET10 winding
+acceptance note, -stab off fatal on TH (arg-list sharing caveat), T3
+honesty REWORDED (locks LESS than std-Q4, holds vs bbar — P2 refutation),
+h = largest edge; (7) stabilization: auto-α formula, α₀ range, B4
+calibration lineage, sliver over-stabilization caveat; (8) responses &
+recorders (porePressure = per-GP, stressesTotal sign σ−αp, flux, PressureSource
+disp-slot); (9) benchmarks table (B1-B5 one-liners incl. B1 density note +
+graded-mesh requirement, B5 errata pointer); (10) limitations/roadmap
+(equal-order-quadratic reserved, hybrid mode 2, explicit P7, bbar-on-TH
+ungated). Cite tests as living examples. Style: match the family's guide
+docs (find one, e.g. solid-shell guide, mirror headings tone/length).
+
+Run mechanics: hermetic bootstrap as P2/P3; UmfPack; batteries ≤150 s each
+(B5 dynamics may need it).
+
 ### WP3.A pins (FROZEN 2026-07-11 — P3 agents implement exactly this)
 
 P3 = Taylor-Hood on Bezier BT6/BTET10 (vertex-p, heterogeneous ndf). Branch
@@ -448,6 +539,37 @@ as the P1 batteries. Battery target runtime ≤90 s per file.
   — 0.D-style cross-checks or the phase battery must pass first.
 
 ## Log
+
+- 2026-07-13 — **P4 EXECUTED** (4 Opus agents + MAIN adjudications; the
+  family's closing phase). B5 Simon: independent full-Biot closed form (modal
+  diagonalization; analytic Bessel Laplace inverse) validated against every
+  ADR hard pin incl. all FOUR errata; û(0,50) u-p discrepancy MEASURED 2.2% >
+  0.5% ⇒ û DEMOTED per ⟨UP-5⟩; FE gates green (front 0.73Δz, plateau 1.06%);
+  both Newmark sets pinned. PDMY: two-leg equivalence (tight 2.9e-15;
+  production ≤5.4e-4), r_u = 0.914 onset, cache-dirty instrument (exact α
+  read from tangent p-p scale) — twin 2.4e-8 vs pre-stage control 1.1e-1.
+  Init/recorders: three routes shock-free, sequencing trap reproduced via
+  ops.reset(), PressureSource mixed-model BOTH slots exact, Monitor smoke.
+  Guide: LadrunoUP_guide.md (10 sections, all P0–P3 refutations folded).
+  **MAIN adjudications + fixes:**
+  - **`-dynSeepage` default FLIPPED to `off`** (ADR §12 log amendment,
+    pre-authorized by the P1 log): measured failure in BOTH regimes
+    (quasi-static Δt-refinement divergence + B5 wandering plateau/unbounded
+    shallow growth). Opt-in retained; +G stays FD-gated.
+  - **Guide rule: `-stab off` for wave propagation** (B5 measured ~10%
+    spurious ringing from the α-Laplacian on the traveling p wave).
+  - **BUG FIXED (4.C finding): multi-element stage-flip cache staleness** —
+    MaterialStageParameter registers only the first accepting element, so
+    only ONE LadrunoUP refreshed auto-α (f2 stale 1.0000 vs 1.4051).
+    Fix: updateParameter(1) sibling-broadcasts dirtyStageCaches() to every
+    LadrunoUP in the domain (flags only, lazy recompute). Strict xfail
+    flipped to the positive regression gate.
+  - **UPSTREAM BUG documented, fix deferred (ask-first)**:
+    `InitialStateAnalysis on|off` heap-corrupts — the interpreter command
+    deletes the parameter the domain stored (dangling pointer, ANY element).
+    Quirks row + guide danger box; workaround ops.reset(). User is running
+    an independent investigation.
+  - Banner line added (patch_banner.py); ledger status → SHIPPED.
 
 - 2026-07-10 — plan created (P0 contract frozen; ADR locked via PR #547).
 - 2026-07-10 — **P0 SHIPPED** (PR #551 merged, squash b2ac3ba04). WP1.A pins frozen; P1 branch `feature/adr71-p1`.

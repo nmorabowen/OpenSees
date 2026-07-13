@@ -46,6 +46,7 @@
 #include <Vector.h>
 #include <ID.h>
 #include <Domain.h>
+#include <ElementIter.h>   // stage-flip sibling broadcast (P4)
 #include <Information.h>
 #include <Parameter.h>
 #include <Channel.h>
@@ -1272,19 +1273,42 @@ int LadrunoUP::setParameter(const char **argv, int argc, Parameter &param)
   return res;
 }
 
+void LadrunoUP::dirtyStageCaches(void)
+{
+  stabDirty_ = true;
+  k0Dirty_ = true;
+  kInitSolidValid_ = false;
+}
+
 int LadrunoUP::updateParameter(int parameterID, Information &info)
 {
   switch (parameterID) {
     case -1:
       return -1;
-    case 1:
+    case 1: {
       // updateMaterialStage flipped the materials' constitutive stage: the
       // initial tangent (→ K₀, initial solid K, auto-α skeleton moduli) is
       // stale. Recomputed lazily at next use.
-      stabDirty_ = true;
-      k0Dirty_ = true;
-      kInitSolidValid_ = false;
+      this->dirtyStageCaches();
+      // SIBLING BROADCAST (P4 4.C bug fix): MaterialStageParameter registers
+      // only the FIRST accepting element (its domain scan stops there —
+      // MaterialStageParameter.cpp:76), but the stage flip lands in the
+      // materials' shared static slot, i.e. EVERY LadrunoUP sharing the
+      // matTag changed. Measured un-fixed: on a 2-element stack only the
+      // scan-found element refreshed auto-α (f2 stayed 1.0000 vs the correct
+      // 1.4051 — tests/test_ladruno_up_element_pdmy.py). Dirty every
+      // LadrunoUP in the domain: flags only, lazily recomputed, so
+      // over-dirtying elements of other matTags costs one cache rebuild.
+      Domain *dom = this->getDomain();
+      if (dom != 0) {
+        ElementIter &els = dom->getElements();
+        Element *el;
+        while ((el = els()) != 0)
+          if (el != this && el->getClassTag() == ELE_TAG_LadrunoUP)
+            static_cast<LadrunoUP *>(el)->dirtyStageCaches();
+      }
       return 0;
+    }
     case 3:
     case 4:
     case 5: {
