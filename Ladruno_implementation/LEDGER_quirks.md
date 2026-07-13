@@ -2267,6 +2267,18 @@ transient to a tiny-`betaK` one — light damping must change the peak <5%; the 
 tiny-`betaK` run to quasi-static (or non-convergence). This is INVISIBLE to every static/patch gate
 — a dynamic Rayleigh regression is mandatory for any new element with mass. (Verified by
 reverting the fix + rebuilding: the gate fails `analyze -3` on the buggy binary, passes on the fixed.)
+
+**2026-07-11 recurrence (ADR-70 P4a adversarial gate): the WHOLE plane family had it.**
+`LadrunoQuad`/`LadrunoCST`/`LadrunoLST` under `-geom finite` and `LadrunoCSTPair` all used the
+unsnapshotted pattern; their `getTangentStiff()` → `formFinite`/`formPair(1)` refills the shared
+static `P` (small-strain paths are safe — those fill only `K`). Extra sting on the pair: the
+re-entry also wiped `−Q`, so UniformExcitation ground-motion loads were dropped too. All four fixed
+with the donor snapshot in the same PR; parametrized regression gate
+`tests/test_ladrunoplane_dynamics.py::test_dynamic_rayleigh_preserves_inertia[pair|cst|quad|lst]`.
+LESSON: the quirk was already in this ledger and the P4a author even reasoned about it in a code
+comment — and still missed that the clobber happens INSIDE `getRayleighDampingForces()`. When a
+quirk names a pattern, grep for the pattern (`P += this->getRayleighDampingForces`), don't reason
+about the instance.
 **`Vector::pNorm(0)` is NaN-BLIND — never use it for a divergence/NaN check (2026-07-02).** `pNorm(0)`
 implements max via `value = (fabs(data) > value) ? fabs(data) : value`; every comparison against NaN is
 FALSE, so NaN entries are silently SKIPPED and the returned max is never NaN. The explicit integrators'
