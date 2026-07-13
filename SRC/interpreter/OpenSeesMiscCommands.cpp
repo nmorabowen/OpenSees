@@ -1349,9 +1349,11 @@ int OPS_InitialStateAnalysis()
 	// FMK changes for parallel:
 	// ops_InitialStateAnalysis = true;
 
-	Parameter *theP = new InitialStateParameter(true);
-	theDomain->addParameter(theP);
-	delete theP;
+	// Ladruno: backport upstream 191c67c2d — addParameter stored the pointer, the
+	// delete left the domain map dangling (double free at wipe); setDomain only
+	// flips the ops_InitialStateAnalysis global, nothing needs to stay registered
+	InitialStateParameter theP(true);
+	theP.setDomain(theDomain);
 
 	return 0;
 
@@ -1364,9 +1366,9 @@ int OPS_InitialStateAnalysis()
 	// set global variable to false
 	// FMK changes for parallel
 	// ops_InitialStateAnalysis = false;
-	Parameter *theP = new InitialStateParameter(false);
-	theDomain->addParameter(theP);
-	delete theP;
+	// Ladruno: backport upstream 191c67c2d (see "on" branch above)
+	InitialStateParameter theP(false);
+	theP.setDomain(theDomain);
 
 	return 0;
 
