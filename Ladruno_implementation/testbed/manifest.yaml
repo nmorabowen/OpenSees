@@ -1216,7 +1216,7 @@ features:
     pr: 557
     feature_class: element
     required_tiers: [T0, T1]
-    pytest: tests/test_ladruno_up_element_analytic.py   # Zone-B analytic gates (Terzaghi/ZS84/Boone-Ingraffea/steady-seepage/wrong-solver/Rayleigh-contract/FD); siblings: test_ladruno_up_element_equiv.py (quadUP two-leg + SSPquadUP + B4 CB sweep + bbar), test_ladruno_up_mp_smoke.py (sendSelf/recvSelf DB round-trip + 2-rank MP), test_ladruno_up_kernel_cpp.py (P0 kernel vs independent numpy oracle), test_ladruno_up_element_h8.py + test_ladruno_up_element_t3.py (P2 H8/T3 lanes)
+    pytest: tests/test_ladruno_up_element_analytic.py   # Zone-B analytic gates (Terzaghi/ZS84/Boone-Ingraffea/steady-seepage/wrong-solver/Rayleigh-contract/FD); siblings: test_ladruno_up_element_equiv.py (quadUP two-leg + SSPquadUP + B4 CB sweep + bbar), test_ladruno_up_mp_smoke.py (sendSelf/recvSelf DB round-trip + 2-rank MP), test_ladruno_up_kernel_cpp.py (P0 kernel vs independent numpy oracle), test_ladruno_up_element_h8.py + test_ladruno_up_element_t3.py (P2 H8/T3 lanes), test_ladruno_up_element_th.py + test_ladruno_up_element_th_b1.py (P3 Bezier TH lanes + B1 ZCB80)
     tcl: WAIVED(element LadrunoUP ...; shared OpenSeesElementCommands functionMap + TclElementCommands ladrunoElementTable row serve both interpreters; verified via the Zone-B pytest battery + Tcl parse smoke)
     core_files:
       - SRC/classTags.h
