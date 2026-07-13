@@ -395,9 +395,24 @@ GmshRecorder::write_mesh()
         
                 const ID& elenodes = theEle->getExternalNodes();
                 int nnodes = elenodes.Size();
-                for (int j = 0; j < nnodes; j++) 
+                if (gmsheletype == GMSH_HEXAHEDRON_20 && nnodes == 20) // Ladruno — MSH type 17 needs reordering
                 {
-                    theFile << elenodes(j) << " ";
+                    // Ladruno — OpenSees serendipity hex ordering (shp3dv.cpp "Local Node Pattern"):
+                    // Ladruno   corners 0-7 (bottom ring CCW, then top ring CCW), mid-edges 8-19 on edges
+                    // Ladruno   (0-1)(1-2)(2-3)(3-0)(4-5)(5-6)(6-7)(7-4)(0-4)(1-5)(2-6)(3-7).
+                    // Ladruno — Gmsh hex20 (ref. manual "Node ordering"): same corners, mid-edges on edges
+                    // Ladruno   (0-1)(0-3)(0-4)(1-2)(1-5)(2-3)(2-6)(3-7)(4-5)(4-7)(5-6)(6-7).
+                    static const int hex20perm[20] = {0,1,2,3,4,5,6,7,
+                        8,11,16,9,17,10,18,19,12,15,13,14}; // Ladruno — gmsh position j <- OpenSees node hex20perm[j]
+                    for (int j = 0; j < 20; j++) // Ladruno
+                        theFile << elenodes(hex20perm[j]) << " "; // Ladruno
+                }
+                else // Ladruno — all other element types keep the raw getExternalNodes() order
+                {
+                    for (int j = 0; j < nnodes; j++)
+                    {
+                        theFile << elenodes(j) << " ";
+                    }
                 }
                 theFile << '\n';
         }
@@ -1300,7 +1315,8 @@ GmshRecorder::setGMSHType()
     gmshtypes[ELE_TAG_BrickUP] = GMSH_HEXAHEDRON;
     gmshtypes[ELE_TAG_Nine_Four_Node_QuadUP] = GMSH_POLY_VERTEX;
     gmshtypes[ELE_TAG_Twenty_Eight_Node_BrickUP] = GMSH_POLY_VERTEX;
-    gmshtypes[ELE_TAG_Twenty_Node_Brick] = GMSH_QUADRATIC_HEXAHEDRON;
+    gmshtypes[ELE_TAG_Twenty_Node_Brick] = GMSH_HEXAHEDRON_20; // Ladruno — was type 12 (27-node hex); 20-node serendipity hex is MSH type 17
+    gmshtypes[ELE_TAG_LadrunoBrick20] = GMSH_HEXAHEDRON_20; // Ladruno — H20 hex (33018), same shp3dv node ordering as Twenty_Node_Brick
     gmshtypes[ELE_TAG_BBarFourNodeQuadUP] = GMSH_QUAD;
     gmshtypes[ELE_TAG_BBarBrickUP] = GMSH_QUAD;
     gmshtypes[ELE_TAG_PlateMITC4] = GMSH_QUAD;
