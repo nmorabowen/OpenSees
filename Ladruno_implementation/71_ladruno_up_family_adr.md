@@ -983,4 +983,10 @@ transcripts). Confirmed defects, all repaired in-place (⟨tags⟩ mark the edit
   meshless as the starting point (meshless stays the large-deformation
   upgrade path).
 
+- 2026-07-13 — **P7 OPENED as [[73_ladruno_porous_overlay_adr]]**
+  (LadrunoPorousOverlay, PATTERN 33022 reserved): fixed-stress staggered
+  overlay carrying the §6 staggered route; fractional-step subsumed via L;
+  fully-explicit-both-fields rejected for v1. This element stays the
+  primary implicit u-p tool; the overlay owns the removal/explicit lanes.
+
 *(filled as phases land; move to `Ladruno_internal/` when complete)*
