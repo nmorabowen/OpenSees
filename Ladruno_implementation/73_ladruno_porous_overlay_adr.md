@@ -244,6 +244,9 @@ pattern LadrunoPorousOverlay $tag \
     -Kf $Kf -poro $n -rhoF $rhof \
     -perm $k1 $k2 <$k3>                       ;# k̄ = k_hydraulic/γw (ADR-71 convention)
     <-permH $k1 ... -gammaW $gw>              ;# sugar, divides internally
+    <-permRegion {$eleSet} $k1 $k2 <$k3>>     ;# per-layer override, repeatable —
+                                              ;#   layered profiles are ONE overlay
+                                              ;#   (assembly is per-cell; free)
     <-alpha $biotAlpha> <-Ks $Ks> \
     -drained {$nd1 $nd2 ...}                  ;# p-fixed set (≥1 per connected region
                                               ;#   for statics — ADR-71 §3.2 rider)
@@ -374,6 +377,14 @@ Each phase is one PR off `ladruno`, ledgers updated in-PR.
 - **Solid gravity convention**: user applies mixture-ρ self-weight on solid
   elements (unchanged family convention); the overlay adds only seepage
   body terms. The guide repeats ADR-71's quadUP `<b1 b2>` 2×-trap note.
+- **One overlay per hydraulically connected water body** (modeling rule,
+  guide-normative): separate overlays own separate p fields — there is no
+  flow between them by construction. A layered soil profile (the common
+  apeGmsh emission case, flagged in the 2026-07-13 review) is therefore ONE
+  overlay spanning all layers, with per-layer k via `-permRegion`; the L and
+  α-stab moduli are already per-element (material initial tangent), so
+  heterogeneity costs nothing. Deliberately-separate aquifers/perched zones
+  are the legitimate multi-overlay case.
 
 ---
 
