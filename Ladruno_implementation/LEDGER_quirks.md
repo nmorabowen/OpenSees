@@ -3058,3 +3058,8 @@ twin-verified in `Ladruno_implementation/adr70_p4_spike/`):
    tangent. Also: a shared edge whose mid-nodes don't exactly coincide silently
    cracks the patch and re-opens spurious modes (bit the adversarial twin's own
    curved test — assert conformity).
+
+### `InitialStateAnalysis on|off` (openseespy/interpreter path) heap-corrupts the process (0xc0000374) on the NEXT model operation — UPSTREAM dangling-parameter bug, any element
+- **Bites:** `ops.InitialStateAnalysis("off")` appears to work (prints its notice, `revertToStart` runs, displacements AND honest-p pressures zero correctly) — then the next `ops.wipe()` / model build crashes with a Windows heap-corruption fault. Found while gating the ADR-71 init-sequencing recipe (P4).
+- **Why (upstream, verified in source):** `OPS_InitialStateAnalysis` (SRC/interpreter/OpenSeesMiscCommands.cpp:1352-1354 and :1367-1369) does `theDomain->addParameter(theP); delete theP;` — but `Domain::addParameter` STORES the pointer in the parameter container (Domain.cpp:897). The container now holds freed memory; the wipe-time parameter cleanup double-frees. Not element-specific and not a Ladruno defect — the MSVC/ucrt heap checker is just the first to notice.
+- **Workaround:** use `ops.reset()` (→ the same `Domain::revertToStart`) for the displacement-zeroing step of staged sequences; it has no parameter side-effect and is crash-free. Pinned in `tests/test_ladruno_up_init_recorders.py` (ADR-71 P4, 2026-07-13). Fixing upstream = deleting the two `delete theP;` lines (ownership transfer) — vanilla edit, ask-first per change-budget policy.
