@@ -73,6 +73,10 @@ for flag in ("off", "on"):
     build_quad()
     ops.InitialStateAnalysis(flag)
     ops.InitialStateAnalysis(flag)     # pre-fix: 'parameter with tag 0 already exists'
+    # structural repeat-toggle guard, independent of opserr message wording:
+    # post-backport NOTHING may stay registered in the parameter container.
+    tags = ops.getParamTags()
+    assert not tags, f"ISA left a Parameter registered in the domain: {tags}"
     ops.wipe()                          # pre-fix: heap corruption HERE
 
 # at-exit surface: establish ISA state and do NOT wipe — the fixed build must
@@ -93,7 +97,9 @@ def test_isa_survives_wipe_and_repeat(tmp_path):
             [sys.executable, "-S", str(driver), _DIST],
             capture_output=True, text=True, timeout=120, env=env)
     except subprocess.TimeoutExpired as exc:  # heap corruption can hang, not crash
-        pytest.fail(f"ISA lifetime child hung (>120s) — likely heap corruption:\n{exc}")
+        pytest.fail(
+            f"ISA lifetime child hung (>120s) — likely heap corruption:\n{exc}\n"
+            f"--- partial stdout ---\n{exc.stdout}\n--- partial stderr ---\n{exc.stderr}")
 
     combined = (proc.stdout or "") + "\n" + (proc.stderr or "")
     rc = proc.returncode
