@@ -595,6 +595,8 @@ initopensees(void)
 "        • BezierTri6 — quadratic Bézier triangle (Kadapa 2018)\n"
 "        • BezierTet10 — quadratic Bézier tetrahedron (Kadapa 2018)\n"
 "        • LadrunoBrick — unified hex (std/bbar/uri/ssp/eas + hourglass)\n"
+"        • LadrunoBrick20 — 20-node serendipity quadratic hex (std 27-pt, reduce-to 20NodeBrick)\n"
+"        • LadrunoQuad/LadrunoCST — 2D continuum (Quad std/bbar/ssp/eas; CST std)\n"
 "        • LadrunoQuad/LadrunoCST/LadrunoLST/LadrunoCSTPair — 2D continuum (Quad std/bbar/ssp/eas; CST + LST-T6 std; -geom finite via shared 2D F-kernel; CSTPair = 2-tri F-bar-Patch macro dSNPO 15.1.9)\n"
 "        • Solid geometry methods — -geom linear/corot/finite (+ F-bar)\n"
 "        • LadrunoJ2 — combined iso + Chaboche AF kinematic J2\n"
