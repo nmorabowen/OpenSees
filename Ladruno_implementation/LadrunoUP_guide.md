@@ -35,7 +35,7 @@ element LadrunoUP $tag $n1 … $nk $matTag \
     <-fluidBody $f1 $f2 <$f3>>  ;# defaults to -body; drives the seepage source
     <-formulation std|bbar> <-pOrder equal|linear> <-lumped> \
     <-stab auto <$alpha0> | off | $alpha>   ;# equal-order default: auto (alpha0=0.25)
-    <-dynSeepage on|off>        ;# default on; off = quasi-static / upstream-parity
+    <-dynSeepage on|off>        ;# default OFF (P4 B5 adjudication); on = research opt-in
     <-geom linear>              ;# only accepted value (axis reserved)
 ```
 
@@ -213,10 +213,19 @@ first-step Δp is bounded — a gate in the init battery).
   in a quasi-static run: trial accelerations of numerically-damped compressible-wave
   modes are noise, and `f_seep` integrates them. **Measured (ZS84 column, γ=0.6):**
   with `-dynSeepage off` the error *converges* 1.3e-3 → 7e-4 as Δt shrinks
-  0.08 → 0.005; with the default `on` it **grows** 1.8e-2 → 8.7e-1 (smaller Δt is
-  worse). The default stays `on` (deliberate SWANDYNE restore for genuine
-  dynamics); **turn it off for consolidation** (this is also the upstream-parity
-  leg). Pinned: `tests/test_ladruno_up_element_analytic.py` sweep; LEDGER_quirks row.
+  0.08 → 0.005; with `on` it **grows** 1.8e-2 → 8.7e-1 (smaller Δt is
+  worse). And the B5 dynamic column showed `on` misbehaves **in genuine dynamics
+  too** (wandering post-front p ≈ 1.7–2.0 vs the exact β = 0.973 plateau;
+  unbounded shallow-station growth) — so since P4 the **default is `off`**;
+  `-dynSeepage on` is an explicit research opt-in (SWANDYNE parity; its +G
+  residual term stays FD-gated). Pinned: `tests/test_ladruno_up_element_analytic.py`
+  sweep, `tests/test_ladruno_up_element_b5.py` documentation gate; LEDGER_quirks
+  row; ADR §12 log 2026-07-13.
+- **`-stab off` for wave propagation.** The auto-α Laplacian (h² on ṗ) targets the
+  undrained/checkerboard limit; on the B5 fast-wave column it injects ~10%
+  spurious deep-station p ringing (measured p = 1.08 at ξ=40 vs β = 0.973).
+  Consolidation/footing runs keep `-stab auto`; **wave-propagation runs opt out
+  explicitly** with `-stab off`.
 - **Δt guidance.** For dynamics use ≈ CFL/2 of the fast (undrained P) wave; for
   consolidation resolve `T/100` at the target `Tv`. Under u-p, refining Δt does
   *not* refine the p field beyond the mesh — the boundary layer is spatial.

@@ -40,7 +40,8 @@ Panel-hardening additions (P3 adversarial panel, post-battery):
         AND p-cols zero (-dynSeepage off), Muu symmetric with x-direction total
         == rho*Area*thick. Makes the compacted-basis Q^T/S/M correctness self-
         contained instead of riding on the B1 physics gate.
-  (x)   '-dynSeepage on' (the element DEFAULT) TH gate: same FD rig; the
+  (x)   '-dynSeepage on' (explicit opt-in; default off since P4 B5) TH gate:
+        same FD rig; the
         dR/da p-rows now carry +G = int dNp^T kbar rhoF Nu dV (checked against
         the ANALYTIC G — every Bernstein Nu integrates to A/6) while the
         transient printA effective tangent keeps A[p,u] == c2*Q^T exactly (G
@@ -1187,7 +1188,8 @@ def test_ix_th_transient_block_fd_gate():
 
 @pytest.mark.t1
 def test_x_th_dynseepage_on_default_config():
-    """(panel hardening 2) The element-DEFAULT '-dynSeepage on' configuration —
+    """(panel hardening 2) The '-dynSeepage on' configuration (explicit opt-in;
+    default flipped to OFF by the P4 B5 adjudication) —
     the only P3 test exercising it. Same FD rig: the dR/da p-rows must now carry
     the +G dynamic-seepage residual coupling (∫ dNp^T k̄ ρf Nu dV, checked
     against the ANALYTIC block — every Bernstein u-shape integrates to A/6)

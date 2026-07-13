@@ -736,7 +736,11 @@ def test_rayleigh_alpha_m_free_vibration_decays():
 _FD_NODES = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]
 _FD_MAT = ("ElasticIsotropic", 1, 1.0e4, 0.2, 2.0)
 _FD_ELE = ("LadrunoUP", 1, 1, 2, 3, 4, 1, "-Kf", 5000.0, "-poro", 0.4,
-           "-rhoF", 1.0, "-perm", 1e-4, 1e-4, "-stab", "off")
+           "-rhoF", 1.0, "-perm", 1e-4, 1e-4, "-stab", "off",
+           # explicit: the FD gate MEASURES the +G dynamic-seepage residual
+           # coupling, so it opts in (P4 B5 flipped the element default to
+           # off after the genuine-dynamics divergence evidence)
+           "-dynSeepage", "on")
 
 
 def _fd_model_prescribed(xvec):
@@ -837,7 +841,8 @@ def test_fd_inc_inertia_damp_and_mass_blocks():
     cross-checked against the independent numpy oracle:
       dR/dv = C = [0, 0; Q^T, S]     (no Rayleigh set, stab off)
       dR/da = [M_solid, 0; +G, 0],   G = int dNp^T kbar rhoF Nu dV
-    The +G p-row block is the '-dynSeepage on' (default) RESIDUAL term of
+    The +G p-row block is the '-dynSeepage on' (explicit opt-in; default off
+    since the P4 B5 adjudication) RESIDUAL term of
     ADR §3.1 — deliberately kept out of the TANGENT (test 7 shows the
     assembled A[p,u] is exactly c2*Q^T with no c3*G) — so this FD leg both
     verifies M and MEASURES the omitted-tangent term the ADR §7 P0 row asks

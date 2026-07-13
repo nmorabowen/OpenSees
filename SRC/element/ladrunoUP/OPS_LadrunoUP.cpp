@@ -40,7 +40,7 @@
 //       <-fluidBody $f1 $f2 <$f3>>           ;# defaults to -body
 //       <-formulation std|bbar> <-pOrder equal|linear> <-lumped>
 //       <-stab auto <$alpha0> | off | $alpha>   ;# equal-order default: auto (a0=0.25)
-//       <-dynSeepage on|off>                 ;# default on
+//       <-dynSeepage on|off>                 ;# default OFF (P4 B5 adjudication)
 //       <-geom linear>                       ;# only accepted value (axis reserved)
 //
 // (ndm, k) selects the shape provider: (2,3) T3 · (2,4) Q4 · (2,6) Bézier T6 ·
@@ -196,7 +196,14 @@ void *OPS_LadrunoUP()
   int stabMode = 1;        // 0 = off, 1 = auto, 2 = manual — default auto
   double stabValue = 0.25; // auto: alpha0; manual: alpha
   bool stabGiven = false;
-  bool dynSeepage = true;
+  bool dynSeepage = false;  // P4 B5 adjudication: default OFF. The u-p
+                            // dynamic-seepage drive (b - u_ddot) diverges under
+                            // quasi-static dt-refinement (P1, ZS84 sweep) AND
+                            // misbehaves in genuine dynamics (P4 B5: wandering
+                            // pressure plateau, unbounded shallow-station
+                            // growth) - trial-accel noise feeds f_seep. Opt-in
+                            // '-dynSeepage on' retained (research/SWANDYNE
+                            // parity; the +G residual term stays FD-gated).
 
   int num;
 
