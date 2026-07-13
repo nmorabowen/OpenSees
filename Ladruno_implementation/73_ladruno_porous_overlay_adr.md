@@ -35,10 +35,22 @@ discontinuities** target:
    liquefaction failure). No removal-based workflow (sand boils, gap flow,
    progressive collapse below the water table, staged excavation) is honest
    today.
-2. **Explicit dynamics is structurally impossible.** The p-rows carry zero
-   mass and the pressure equation is parabolic (ADR-71 §6): the existing
-   explicit stack (CentralDifferenceLadruno / SMS) cannot advance them, and
-   the fork's flagship runs are explicit (18.6 M-element class).
+2. **Explicit u-p at fork scale is impossible today** (claim sharpened
+   2026-07-13 after NMB's field observation — verified in-tree). Upstream UP
+   elements DO run under upstream `CentralDifference`: the rate-DOF trick
+   parks S in `getMass()` (p-rows have "mass") and Q/H in `getDamp()`, and
+   that integrator factors the full coupled LHS c₂C + c₃M
+   (CentralDifference.cpp:155–156) — so it marches, conditionally (needs
+   S > 0; dies at the incompressible limit), at the price of a **factored
+   non-diagonal matrix + back-solve every step**. That price is the point:
+   the fork's explicit stack (CentralDifferenceLadruno / SMS, `system
+   Diagonal`, criticalTimeStep, mass scaling — the 18.6 M-element machinery)
+   is **matrix-free diagonal-solve** (CentralDifferenceLadruno.cpp:246), and
+   no monolithic u-p element can ride it: upstream's S is consistent and its
+   coupling lives in damp (never on the diagonal LHS); honest-p LadrunoUP
+   has zero-mass p-rows outright — and under *upstream* CentralDifference
+   its damp-resident p-row leapfrogs pure diffusion = Richardson-class
+   unconditional instability (quirks-ledger row at P1: users will try it).
 
 ### 1.2 What the pre-study proved (and refuted)
 
@@ -208,6 +220,16 @@ hyperbolic part. **Which wave speed governs the CFL under the split
 (drained vs undrained) is MEASURED at P3, not assumed** — the P0 toy
 extension emulates the explicit lane first and pins the envelope cheaply.
 
+Positioning vs the existing "explicit UP" practice (§1.1): the overlay lane
+keeps the solid solve **matrix-free diagonal** (the fork stack untouched,
+mass scaling and criticalTimeStep semantics intact) and adds one small SPD
+fluid back-solve per commit (subcyclable); the upstream
+CentralDifference-with-UP route factors the full coupled c₂C+c₃M and
+back-solves the whole model every step, needs S > 0, and owns no removal or
+staging story. P3's gate table includes a head-to-head cost/accuracy leg
+against that route on the B2 column (it is the honest incumbent, not a straw
+man).
+
 ### 3.5 Initialization — better than the monolithic recipe
 
 The overlay owns H, so it can solve its own steady state: `-pInit steady`
@@ -340,7 +362,7 @@ commit hook if taken.
 | **P0** | toy extension E7 (numpy, no OpenSees build) | exact v1 sequencing pinned: fs1-without-final-resolve error vs monolithic measured over Δt-halving (expect O(Δt); pins the P1 default); explicit-lane emulation (CD solid + implicit fluid): stability envelope measured — drained-vs-undrained CFL governance answered with numbers + subcycle-N degradation curve; removal-step jump consistency (Q mask flips mid-march, no spurious p transient beyond the physical Mandel-Cryer dip); L-floor sweep reproduced on the dynamic path |
 | **P1** | `LadrunoPorousOverlay` fs1 implicit end-to-end (Q4/T3/H8 regions) | Terzaghi vs analytic ≤ pinned tol at production Δt; **two-leg gate vs monolithic LadrunoUP** (ADR-71 methodology: mutual Δt-convergence, observed order ≥ 1; the exact-equality leg belongs to P2's iterated driver); **E4-in-OpenSees**: real `remove element` crack, both `-onRemoval` policies, curves vs the toy reference; **sequencing contract test** (step-load column p(0⁺) ≈ q — kills the fluid-first p≡0 trap class); L auto twin-checked vs oracle incl. `updateMaterialStage` dirty path; pattern-timing verification (forces bit-constant across a step's Newton iterations); serial DB round-trip; **full adversarial panel** (per [[feedback_adversarial_gate_when]]: core-touch — Domain hook + pattern semantics — and novel framework integration; the split math itself is spike-validated) |
 | **P2** | iterated driver `LadrunoStaggeredAnalyze` (fs-k) | fixed-point gate: iterated staggered ≡ monolithic LadrunoUP same-Δt (E6 leg, target ≤ 1e-6 rel); B4 footing staggered (CB gate under stab); PDMY staged liquefaction column vs the ADR-71 P4 monolithic reference (stage transport → L/stab cache dirty); iteration-count telemetry (mean/max per step) exposed |
-| **P3** | explicit lane | CD + overlay on B2/ZS84 column vs implicit monolithic (two-leg); measured CFL envelope vs the P0 pins (criticalTimeStep interplay with ADR-65 machinery documented); `-subcycle` N-sweep gate; energy-balance advisory channel (ADR-69: overlay work terms enter the closure residual — documented, not silently absent) |
+| **P3** | explicit lane | CD + overlay on B2/ZS84 column vs implicit monolithic (two-leg); **incumbent head-to-head** (§3.4): same column under upstream CentralDifference + FourNodeQuadUP — accuracy AND per-step cost/scaling vs the overlay's diagonal-solid + small-SPD-fluid path, plus the S→0 failure demo; measured CFL envelope vs the P0 pins (criticalTimeStep interplay with ADR-65 machinery documented); `-subcycle` N-sweep gate; **LEDGER_quirks row**: honest-p LadrunoUP + upstream CentralDifference = Richardson-unstable p (leapfrogged diffusion) — loud test pinning the symptom; energy-balance advisory channel (ADR-69: overlay work terms enter the closure residual — documented, not silently absent) |
 | **P4** | ecosystem | overlay p-field recorder channels (own response surface — nodal-DOF recorders can't see it; LadrunoRecorder/Monitor topology rows per [[06_quadrature_global_gp_plan]]); user guide (`LadrunoPorousOverlay_guide.md`) incl. division-of-labor table vs LadrunoUP + init recipes; banner line + ledgers → shipped; apeGmsh emitter runway note (companion repo item) |
 | **P5** *(reserved)* | meshless/MPM fluid realization (large-deformation upgrade path); MP/partitioned-domain story | own mini-ADR; the spike's E1–E3 refutations bound what any meshless realization must prove first |
 
