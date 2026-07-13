@@ -479,6 +479,16 @@ _TS = [_FT, 1.0, 0.05]
 _TD = [0.0, 1.0 - 1.0 / (E * 1.0e-3), 1.0 - 0.05 / (E * 8.0e-3)]
 
 
+# UNIQUE process-wide tag: ASDConcrete3D keeps a STATIC HardeningLawStorage
+# keyed by material tag with store-if-absent semantics
+# (ASDConcrete3DMaterial.cpp::HardeningLawStorage::store) — it survives
+# ops.wipe(), so the FIRST material built with a tag pins that tag's hardening
+# law for the whole pytest process. Reusing a common tag (e.g. 1) here would
+# poison test_ladrunoBrick_asdconcrete.py's tag-1 material (different Gf) and
+# break its mesh-objectivity gate. See LEDGER_quirks.md.
+_ASD_TAG = 337218
+
+
 def _asdconcrete(tag):
     ops.nDMaterial("ASDConcrete3D", tag, E, NU, "-rho", 0.0,
                    "-Te", *_TE, "-Ts", *_TS, "-Td", *_TD,
@@ -530,9 +540,9 @@ def test_damage_advisory_fires_once_for_asdconcrete(capfd):
     ops.model("basic", "-ndm", 3, "-ndf", 3)
     for tag, (x, y, z) in _NODES.items():
         ops.node(tag, x, y, z)
-    _asdconcrete(1)
+    _asdconcrete(_ASD_TAG)
     capfd.readouterr()
-    ops.element("LadrunoBrick20", 1, *_CONN, 1)   # setDomain fires the probe
+    ops.element("LadrunoBrick20", 1, *_CONN, _ASD_TAG)   # setDomain fires the probe
     out = capfd.readouterr()
     text = out.out + out.err
     assert _advisory_count(text) == 1, (
@@ -551,9 +561,9 @@ def test_damage_advisory_fires_once_for_asdconcrete(capfd):
     ops.model("basic", "-ndm", 3, "-ndf", 3)
     for tag, (x, y, z) in _NODES.items():
         ops.node(tag, x, y, z)
-    _asdconcrete(1)
+    _asdconcrete(_ASD_TAG)
     capfd.readouterr()
-    ops.element("LadrunoBrick20", 1, *_CONN, 1)
+    ops.element("LadrunoBrick20", 1, *_CONN, _ASD_TAG)
     out = capfd.readouterr()
     text = out.out + out.err
     assert _advisory_count(text) == 0, (
