@@ -38,6 +38,13 @@
 #include "OPS_Globals.h"   // opserr
 #include "Matrix.h"        // Node::getEigenvectors() returns const Matrix&
 
+// Ladruno ADR-71 (FW-F4): PressureSource contract scan needs the element list
+// and the upstream *UP class tags.
+#include "Element.h"
+#include "ElementIter.h"
+#include "ID.h"
+#include "classTags.h"
+
 #include <cmath>
 #include <sstream>
 
@@ -391,23 +398,90 @@ namespace ladruno {
 		m_schema.result_type = detail::ResultType::Generic;
 	}
 
+	// Ladruno ADR-71 (FW-F4): LadrunoUP element class tag.
+	// TODO(P1): switch to the ELE_TAG_LadrunoUP macro once a sibling worktree
+	// lands the #define in SRC/classTags.h (line ~943 currently only carries the
+	// reservation comment for 33017).
+	static constexpr int LADRUNO_UP_ELE_TAG = ELE_TAG_LadrunoUP; // Ladruno ADR-71: macro landed with P1 registration
+
+	// Ladruno ADR-71 (FW-F4): one-time reverse scan over the domain's elements,
+	// caching the node tags attached to >=1 LadrunoUP element (honest-p contract:
+	// nodal DOF ndm IS p -> read the DISP slot). Nodes attached only to upstream
+	// *UP elements (DOF ndm = INTEGRAL(p dt) -> physical p is the VEL slot) keep
+	// the legacy reading. Mixed nodes prefer LadrunoUP + a one-time warning.
+	// Cached because record() is hot; the node->contract map is fixed at first
+	// record for the life of this source (elements added later are not re-scanned,
+	// matching the source's fixed node set).
+	void PressureSource::scanUPContract(const detail::ProcessInfo& info)
+	{
+		m_up_scan_done = true;
+		m_ladruno_up_nodes.clear();
+		if (info.domain == 0)
+			return;
+		std::unordered_set<int> upstream_up_nodes;
+		ElementIter& eit = info.domain->getElements();
+		Element* ele = 0;
+		while ((ele = eit()) != 0) {
+			const int ct = ele->getClassTag();
+			const bool is_ladruno_up = (ct == LADRUNO_UP_ELE_TAG);
+			const bool is_upstream_up =
+				(ct == ELE_TAG_FourNodeQuadUP ||
+				 ct == ELE_TAG_BrickUP ||
+				 ct == ELE_TAG_Nine_Four_Node_QuadUP ||
+				 ct == ELE_TAG_Twenty_Eight_Node_BrickUP ||
+				 ct == ELE_TAG_BBarFourNodeQuadUP ||
+				 ct == ELE_TAG_BBarBrickUP ||
+				 ct == ELE_TAG_SSPquadUP ||
+				 ct == ELE_TAG_SSPbrickUP);
+			if (!is_ladruno_up && !is_upstream_up)
+				continue;
+			const ID& enodes = ele->getExternalNodes();
+			for (int i = 0; i < enodes.Size(); i++) {
+				if (is_ladruno_up)
+					m_ladruno_up_nodes.insert(enodes(i));
+				else
+					upstream_up_nodes.insert(enodes(i));
+			}
+		}
+		// One-time mixed-node warning (both families share >=1 node).
+		for (std::unordered_set<int>::const_iterator it = m_ladruno_up_nodes.begin();
+		     it != m_ladruno_up_nodes.end(); ++it) {
+			if (upstream_up_nodes.count(*it)) {
+				opserr << "LadrunoRecorder PRESSURE warning: node " << *it
+				       << " (and possibly others) is attached to both a LadrunoUP element"
+				       << " (honest-p: pressure = disp DOF " << m_ndim << ") and an upstream"
+				       << " u-p element (pressure = vel DOF " << m_ndim << "). Recording the"
+				       << " LadrunoUP disp-slot reading for such nodes.\n";
+				break;
+			}
+		}
+	}
+
 	void PressureSource::evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer)
 	{
 		buffer.assign(m_ids.size() * m_schema.num_components, 0.0);
-		// Pressure is the extra velocity DOF: idx 2 (2D u-p) or idx 3 (3D u-p).
+		// Ladruno ADR-71 (FW-F4): build the per-node contract cache once.
+		if (!m_up_scan_done)
+			scanUPContract(info);
+		// Pressure is the extra DOF: idx 2 (2D u-p) or idx 3 (3D u-p) — read from
+		// the VEL vector for upstream u-p elements (their DOF is INTEGRAL(p dt),
+		// so physical p is the vel slot; legacy behavior preserved verbatim), or
+		// from the DISP vector for LadrunoUP honest-p nodes (ADR-71 FW-F4).
 		for (size_t i = 0; i < m_ids.size(); i++) {
 			double pressure = 0.0;
 			Node* inode = getNode(info, m_ids[i]);
 			if (inode) {
-				const Vector& vel = inode->getTrialVel();
+				// Ladruno ADR-71 (FW-F4): pick the response vector per the node's contract.
+				const bool honest_p = (m_ladruno_up_nodes.count(inode->getTag()) != 0);
+				const Vector& resp = honest_p ? inode->getTrialDisp() : inode->getTrialVel();
 				if (inode->getCrds().Size() == 2) {
-					if (vel.Size() == 3) {
-						pressure = vel[2];
+					if (resp.Size() == 3) {
+						pressure = resp[2];
 					}
 				}
 				else if (inode->getCrds().Size() == 3) {
-					if (vel.Size() == 4) {
-						pressure = vel[3];
+					if (resp.Size() == 4) {
+						pressure = resp[3];
 					}
 				}
 			}

@@ -2267,6 +2267,18 @@ transient to a tiny-`betaK` one — light damping must change the peak <5%; the 
 tiny-`betaK` run to quasi-static (or non-convergence). This is INVISIBLE to every static/patch gate
 — a dynamic Rayleigh regression is mandatory for any new element with mass. (Verified by
 reverting the fix + rebuilding: the gate fails `analyze -3` on the buggy binary, passes on the fixed.)
+
+**2026-07-11 recurrence (ADR-70 P4a adversarial gate): the WHOLE plane family had it.**
+`LadrunoQuad`/`LadrunoCST`/`LadrunoLST` under `-geom finite` and `LadrunoCSTPair` all used the
+unsnapshotted pattern; their `getTangentStiff()` → `formFinite`/`formPair(1)` refills the shared
+static `P` (small-strain paths are safe — those fill only `K`). Extra sting on the pair: the
+re-entry also wiped `−Q`, so UniformExcitation ground-motion loads were dropped too. All four fixed
+with the donor snapshot in the same PR; parametrized regression gate
+`tests/test_ladrunoplane_dynamics.py::test_dynamic_rayleigh_preserves_inertia[pair|cst|quad|lst]`.
+LESSON: the quirk was already in this ledger and the P4a author even reasoned about it in a code
+comment — and still missed that the clobber happens INSIDE `getRayleighDampingForces()`. When a
+quirk names a pattern, grep for the pattern (`P += this->getRayleighDampingForces`), don't reason
+about the instance.
 **`Vector::pNorm(0)` is NaN-BLIND — never use it for a divergence/NaN check (2026-07-02).** `pNorm(0)`
 implements max via `value = (fabs(data) > value) ? fabs(data) : value`; every comparison against NaN is
 FALSE, so NaN entries are silently SKIPPED and the returned max is never NaN. The explicit integrators'
@@ -2893,6 +2905,101 @@ is immune (uses eigenvalues only, never Φ).
   row), documented not guarded; fully-supported base-excitation models never carry a
   rigid mode.
 
+## `OPS_GetStringFromAll` buffer contract differs between interpreters (classic-Tcl reads garbage)
+
+**Symptom** (ADR-71 P1, 2026-07-10): `element LadrunoUP ...` in classic Tcl fails
+with "got 0 leading integers" while the identical command works in openseespy.
+
+**Cause**: the two backends implement `OPS_GetStringFromAll(buf, len)` with
+DIFFERENT buffer semantics. The modern interpreter
+(`OpenSeesCommands.cpp:1185`) copies the token into `buf` and returns it; the
+classic-Tcl shim (`elementAPI_TCL.cpp:494`) just does `return OPS_GetString();`
+— **it never touches `buf`**. Any parser that calls the function and then reads
+`buf` (a common family idiom) parses garbage under classic Tcl and silently
+"works" everywhere else.
+
+**Rule**: always consume the RETURN VALUE, never the buffer. If you need the
+token in a local buffer, normalize:
+`const char* s = OPS_GetStringFromAll(buf,len); if (s && s != buf) strncpy(...)`
+(see `upGetTok()` in `SRC/element/ladrunoUP/OPS_LadrunoUP.cpp`). Fix the vanilla
+shim only via an ADR — several upstream parsers may depend on the current
+behavior.
+
+## Symmetric-storage solvers silently DROP one u-p coupling block on LadrunoUP models — ProfileSPD (the no-`system`-command DEFAULT) returns rc = 0 with garbage pore pressures
+
+**Symptom** (ADR-71 P1, 2026-07-11): a LadrunoUP transient run without a
+`system` command (or with `system ProfileSPD` / any symmetric-storage SOE)
+"succeeds" — `analyze()` returns 0 every step, displacements look plausible —
+but the pore-pressure field is wrong by ~87 orders of magnitude. Measured on
+the identical Terzaghi 1×10 Q4 column script: `system UmfPack` gives
+p ∈ [0, 5] kPa (matches the Terzaghi series); `system ProfileSPD` gives
+p ~ 1e88–1e89 with every `analyze()` still returning 0. Nothing fails loudly.
+
+**Cause**: the honest-p contract (ADR-71 §3.2 ⟨FW-F1⟩) makes the effective
+transient tangent UNSYMMETRIC — −Q lives in `getTangentStiff()` (u-rows) and
++Qᵀ in `getDamp()` (p-rows), so c₁K + c₂C never has matching off-diagonal
+pairs. Symmetric-profile assembly stores only upper-triangle-in-profile
+entries: one Q block is silently discarded at `addA()` time, and the solver
+then factors and solves the mutilated (still well-conditioned-looking) system
+cleanly. No framework hook lets an element reject an SOE.
+
+**Rule**: every LadrunoUP model MUST name a general solver — `system UmfPack`
+/ `SuperLU` / `FullGeneral` / `BandGeneral` (serial), MUMPS with `SYM=0` in
+the MPI targets. The parser prints a one-line notice at element creation; the
+Zone-B battery pins the divergence
+(`tests/test_ladruno_up_element_analytic.py::test_wrong_solver_divergence_profilespd_vs_umfpack`).
+
+### `ops.printA('-ret')` returns the raw OpenSees Matrix buffer, which is COLUMN-major — read row-major, an unsymmetric tangent looks transposed and FD-vs-tangent tests false-fail at exactly the asymmetry magnitude
+- **Bites:** any test/tool that reshapes `printA('-ret')` into `(neq, neq)` C-order and compares against an oracle or FD residual. On symmetric tangents the bug is invisible; on LadrunoUP's unsymmetric [K,−Q;0,H] the −Q block appears in the p-row/u-col slot and the check fails at |Q|/|K| (measured 2.6e-5 — small enough to chase as a "tolerance problem" for hours).
+- **Why:** `OpenSeesCommands.cpp:2590` hands back `&A(0,0)` flat; OpenSees `Matrix` storage is column-major (Fortran order).
+- **Workaround:** reshape Fortran-order or transpose after reshape (`np.array(ret).reshape(neq, neq, order='F')`). Pinned in `tests/test_ladruno_up_element_equiv.py` helper (ADR-71 P1, 2026-07-11).
+
+### Staged NONZERO pressure `sp` added mid-analysis under `constraints('Transformation')` converges cleanly to a WRONG steady state on LadrunoUP (interior p wildly off; Penalty/Lagrange correct)
+- **Bites:** the ADR-71 §3.2 initialization recipe — run a stage, then add `sp p=<head>` and continue. Under Transformation the model converges (rc=0) to interior p ≈ −73 for a top head of +1 on a sealed 4-element column (measured); the identical `sp` present from step 1 is handled correctly by all three handlers, and Penalty/Lagrange are correct in both sequences.
+- **Why (suspected):** Transformation condenses constrained DOFs at analysis-setup time; a mid-analysis `sp` after `wipeAnalysis` re-setup interacts with the committed-but-unconstrained p state; exact mechanism not chased (P4 revisit alongside the gravity/hydrostatic init recipe).
+- **Rule for the guide:** staged prescribed-head sequences use `constraints('Penalty', ...)` (or Lagrange); mirrors the existing fully-prescribed-rig Transformation trap. Repro pinned in `tests/test_ladruno_up_element_analytic.py` (ADR-71 P1, 2026-07-11).
+
+### LadrunoUP `-dynSeepage on` (the default) DIVERGES under Δt-refinement in quasi-static consolidation runs — the ü-term feeds integrator noise into the seepage source
+- **Bites:** ZS84-class consolidation column, Newmark γ=0.6: with `-dynSeepage off` the error converges 1.3e-3 → 7e-4 as Δt shrinks 0.08 → 0.005; with the default `on` it GROWS 1.8e-2 → 8.7e-1. Smaller Δt is WORSE: trial accelerations of numerically-damped compressible-wave modes are noise, and f_seep integrates them.
+- **Why:** the dynamic-seepage drive (b − ü) is physically right for genuine dynamics (B5-class, P4-gated) but quasi-static consolidation has no meaningful ü — the term is pure noise amplification there.
+- **Rule:** quasi-static/consolidation runs set `-dynSeepage off` (this is also the upstream-parity leg). Default stays `on` per the LOCKED ADR (deliberate SWANDYNE restore); P4's B5 Simon gate revisits whether the default should flip. Measured in `tests/test_ladruno_up_element_analytic.py` sweep (ADR-71 P1, 2026-07-11).
+
+## T6 quirks: constant-mean B-bar/F-bar is RANK-DEFICIENT; nodal-lumped corner masses are ZERO (ADR 70 P3)
+
+Two hard-won T6 (quadratic triangle) facts from building `LadrunoLST`:
+
+1. **Constant element-mean dilatation (B-bar / centroid-sampled F-bar) loses
+   rank on the T6.** The two quadratic CONFORMAL displacement modes (Re/Im of
+   z²: u=(x²−y², −2xy)-type) have identically zero deviatoric strain, and
+   their linear dilatation has zero element mean (mean over the 3-interior-
+   point rule = centroid value for a linear integrand). Any constant-mean
+   averaging therefore assigns them ZERO energy: a free element shows **5**
+   zero-energy modes (3 RBM + 2 spurious; stacked-B̄ rank 7 of the required 9).
+   The Q4 is immune only because z² fields are not in its bilinear space —
+   "J varies so F-bar can average" is NOT sufficient for rank. Caught by the
+   locked single-free-element `assert_zero_energy` T0 gate; confirmed by numpy
+   rank and compiled `eigen`. Cure DECIDED by the ADR-70 P4 spike (2026-07-11):
+   disjoint 2-triangle patch macro-element — patch-constant J̄ for T3 (dSNPO
+   §15.1.9), patch-P1 projected dilatation for T6 (see the [[#Volumetric-
+   projection traps on triangles (ADR 70 P4 spike)|P4 quirk entry]]). Until it
+   ships, triangles are `std` and near-incompressible plane problems use the
+   quad `bbar`.
+
+2. **SixNodeTri-style plain N-lumping gives EXACTLY ZERO corner masses on the
+   T6** — ∫N_corner over the 3-interior-point rule integrates to 0, and goes
+   NEGATIVE on distorted elements (adversarial gate verified both). Unusable
+   for explicit dynamics (diagonal M⁻¹). `LadrunoLST::getMass` therefore
+   deliberately DIVERGES from upstream and uses **HRZ lumping** (∫ρN²_a dV
+   rescaled to the exact total — strictly positive), the same call ADR-72 made
+   for the H20 (row-sum corners were −M/8 there). The reduce-to-`SixNodeTri`
+   gate is static, so the anchor is unaffected. Documented in `LadrunoLST.h`;
+   gated by a free-free finite-eigenvalue test.
+
+Also: upstream `SixNodeTri` registers in the shared functionMap as **`tri6n`**
+(not "SixNodeTri"), and its `setPressureLoadAtNodes` carries a side-61
+`dx61 = x4-x6` copy-paste typo that breaks closed-contour equilibrium of the
+consistent pressure load — `LadrunoLST` fixes it (`x1-x6`) and pins the fix
+with a zero-net-resultant test.
 ## `randomResponse` PSD convention is ONE-SIDED in Hz — the factor bugs have unmistakable signatures (ADR 44 P3)
 
 The `-inputPSD` time series is sampled at **f in Hz** and read as the **one-sided**
@@ -2919,3 +3026,52 @@ the guard legitimately CANNOT distinguish (same spectrum ⇒ same Γ/Vscale up t
 `guard_no_modalproperties` pytest that rebuilds the same `m,k` as any earlier test
 in the file will NOT raise. Give guard-test models a stiffness unique within the
 file (`test_ladrunoRandomResponse.py` uses k=512 for exactly this reason).
+
+## Volumetric-projection traps on triangles (ADR 70 P4 spike)
+
+Three traps from the P4 design spike (all numpy-pinned + adversarially
+twin-verified in `Ladruno_implementation/adr70_p4_spike/`):
+
+1. **A quadrature L2 projection is the IDENTITY whenever #GP = dim(projection
+   space) at unisolvent points.** On the T6's 3-interior-point rule, projecting
+   the dilatation onto P1 (3 modes, 3 samples) interpolates — b̃ ≡ b at the GPs
+   to ~4e-15, straight OR curved (weights and detJ cancel algebraically). An
+   "element-local P1-projected dilatation" formulation flag would silently ship
+   `std`. Same trap one level up: patch-P2 over a 2-T6 patch (6 GPs = dim P2)
+   is also the identity. Volumetric relief on the triangle REQUIRES coupling
+   beyond the element's own quadrature — there is no element-local escape.
+
+2. **Enlarging the constant-mean averaging region can never fix the T6.** The
+   P3 conformal modes re-center: u = a(z−z_p)² about the REGION centroid z_p
+   has ε_dev ≡ 0 pointwise and zero region-mean dilatation, for any region. So
+   dSNPO §15.1.9 F-bar-Patch (one J̄ per patch) cures the T3 pair (exactly 3
+   RBM) but leaves the T6 pair with 5 zero-energy modes. The T6 cure must see
+   the LINEAR variation of the dilatation (patch-P1 does; rank exactly 3,
+   robust distorted + conforming-curved, inf-sup β_h ≈ 0.46 plateau on straight
+   structured pair-meshes — unstructured/curved inf-sup unproven).
+
+3. **F-bar-Patch cross-element tangent blocks are STRESS-PROPORTIONAL** (dSNPO
+   eqs. 15.37–15.38): K^(es) vanishes at F = I / zero prestress, where the
+   macro tangent is symmetric. An FD consistent-tangent gate run at zero
+   stress CANNOT catch a wrong/missing/symmetrized cross block — the gate must
+   run at finite stress, and the pair element must declare an unsymmetric
+   tangent. Also: a shared edge whose mid-nodes don't exactly coincide silently
+   cracks the patch and re-opens spurious modes (bit the adversarial twin's own
+   curved test — assert conformity).
+
+## ASDConcrete3D's HardeningLawStorage is a process-global store-if-absent registry keyed by MATERIAL TAG — it survives `ops.wipe()` (ADR 72 P1)
+
+`ASDConcrete3DMaterial.cpp::HardeningLawStorage::store` (static singleton;
+`if (item == nullptr) item = make_shared(hl)`) latches the FIRST hardening law
+ever constructed for a given material tag, for the life of the process;
+`recover(tag, type)` hands that original law to every later material with the
+same tag. `ops.wipe()` does not clear it. Consequence in a shared pytest
+process (Zone-A runs the whole battery in ONE process): a test file that
+builds `ASDConcrete3D` with a common tag (e.g. 1) and *different parameters*
+than another file silently poisons the latter — the ADR-72 P1 battery's
+advisory test (tag 1, toy Gf) drove `test_ladrunoBrick_asdconcrete.py`'s
+mesh-objectivity dissipation ratio from ≈4 to 7.03 with zero diagnostic,
+alphabetical test order deciding the victim. **Rule: every test file gives its
+ASDConcrete3D materials a file-unique tag** (ADR-72 uses 337218). Same class
+of static-registry risk: `CrackPlanesStorage` (same file). Upstream ASDEA
+code — fix-on-touch only.

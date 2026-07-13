@@ -1193,6 +1193,79 @@ features:
       baseline / triangular-mesh fallback / future E-FEM carrier. Plan:
       25_ladruno_plane_elements_adr.md.
 
+  - feature: LadrunoLST
+    classtag: 33016          # ELE_TAG family (distinct registry from ND_TAG_LogStrain2D=33016)
+    tag_symbol: ELE_TAG_LadrunoLST
+    pr: 554
+    feature_class: element
+    required_tiers: [T0, T1]
+    pytest: tests/test_ladrunolst_element.py   # reduce-to tri6n (SixNodeTri), rank/3-rbm, bbar-refusal refutation pin, linear-strain-field patch, HRZ mass, pressure closure; finite lane in tests/test_ladrunolst_finite.py
+    tcl: WAIVED(element LadrunoLST ...; shared OpenSeesElementCommands functionMap serves Tcl + Python; verified via the Zone-A pytest battery)
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesElementCommands.cpp
+      - SRC/element/TclElementCommands.cpp
+      - SRC/element/ladrunoPlane/CMakeLists.txt
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+
+  - feature: LadrunoUP                         # ADR 71 Biot u-p family (P1: element live on Q4; T3/H8 gates P2, Bezier TH P3)
+    classtag: 33017          # ELE_TAG family; numerically = ND 33017 LadrunoConcrete3D (per-registry, not a collision)
+    tag_symbol: ELE_TAG_LadrunoUP
+    pr: 557
+    feature_class: element
+    required_tiers: [T0, T1]
+    pytest: tests/test_ladruno_up_element_analytic.py   # Zone-B analytic gates (Terzaghi/ZS84/Boone-Ingraffea/steady-seepage/wrong-solver/Rayleigh-contract/FD); siblings: test_ladruno_up_element_equiv.py (quadUP two-leg + SSPquadUP + B4 CB sweep + bbar), test_ladruno_up_mp_smoke.py (sendSelf/recvSelf DB round-trip + 2-rank MP), test_ladruno_up_kernel_cpp.py (P0 kernel vs independent numpy oracle), test_ladruno_up_element_h8.py + test_ladruno_up_element_t3.py (P2 H8/T3 lanes), test_ladruno_up_element_th.py + test_ladruno_up_element_th_b1.py (P3 Bezier TH lanes + B1 ZCB80)
+    tcl: WAIVED(element LadrunoUP ...; shared OpenSeesElementCommands functionMap + TclElementCommands ladrunoElementTable row serve both interpreters; verified via the Zone-B pytest battery + Tcl parse smoke)
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesElementCommands.cpp
+      - SRC/element/TclElementCommands.cpp
+      - SRC/element/ladrunoUP/CMakeLists.txt
+      - SRC/recorder/Ladruno_NodeResults.cpp
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      6-node linear-strain triangle (T6, ADR 70 P3): quadratic N / linear strain,
+      3-pt interior rule, reduce-to upstream SixNodeTri (tri6n); std x -geom
+      {linear|finite} on the shared LadrunoFiniteStrain2DKernel. bbar/F-bar was
+      REFUTED at P3 — constant element-mean dilatation is rank-deficient on the
+      T6 (2 conformal zero-energy modes) — so bbar is parser-refused and the
+      triangle volumetric cure is ADR 70 P4. Deliberate upstream divergences:
+      HRZ lumped mass (upstream N-lumping = zero/negative corner masses) and
+      the consistent-pressure side-61 typo fix. Plan:
+      70_ladruno_plane_finite_triangles_adr.md.
+
+  - feature: LadrunoCSTPair                    # ADR 70 P4a triangle volumetric cure
+    classtag: 33021          # ELE_TAG family; after LadrunoSolidShell=33020 (33019 pencilled H27)
+    tag_symbol: ELE_TAG_LadrunoCSTPair
+    pr: 558
+    feature_class: element
+    required_tiers: [T0, T1]
+    pytest: tests/test_ladrunocstpair.py   # crown gate: printA assembled tangent vs numpy oracle (cstpair_reference.py) ~1e-15 at a finite inhomogeneous state incl. the UNSYMMETRIC cross blocks; free-pair 3-RBM, locking-relief FLIP vs F-bar quad + plain CST, homogeneous reduce-to-2-CSTs + oracle sigma(F), Newton iteration ceilings (elastic+J2), det-F step-cut, parse guards; oracle self-gates in tests/test_cstpair_reference.py
+    tcl: WAIVED(element LadrunoCSTPair ...; shared OpenSeesElementCommands functionMap serves Tcl + Python; verified via the Zone-A pytest battery)
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesElementCommands.cpp
+      - SRC/element/TclElementCommands.cpp
+      - SRC/element/ladrunoPlane/CMakeLists.txt
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      Disjoint 2-triangle F-bar-Patch macro-element (ADR 70 P4a, dSNPO 15.1.9):
+      4-node CCW quad split along the n1-n3 diagonal; both T3s share the patch
+      dilatation J-bar = v_patch/V_patch, F-bar_e = (J-bar/J_e)^(1/2) F_e. Exact
+      patch-local consistent tangent incl. the stress-proportional cross blocks
+      (eqs 15.37/15.38) — generally UNSYMMETRIC — via the shared
+      LadrunoFiniteStrain2DKernel in 4-node zero-padded rows (patch row g-bar
+      substituted for the centroid g0; zero kernel changes). Finite-strain +
+      PlaneStrain only (FiniteStrainND2DMaterial). The T3 volumetric cure the
+      P4 design spike decided; P4b (T6 pair, patch-P1) stays by-demand. Plan:
+      70_ladruno_plane_finite_triangles_adr.md (section 9).
+
   - feature: LadrunoDistributingCoupling
     classtag: 33011          # ELE_TAG (element) family; after LadrunoCST=33008 (33009/33010 reserved VEM/SBFEM)
     tag_symbol: ELE_TAG_LadrunoDistributingCoupling
@@ -1536,17 +1609,34 @@ features:
     tag_symbol: ELE_TAG_LadrunoBrick20
     pr: 548
     feature_class: element
-    required_tiers: [T0]
-    pytest: tests/test_hex20_kernel_cpp.py   # P0 kernel gate: standalone g++ driver vs the sympy oracle (hex20_reference.py) - N/dN/J/B/K/M + GP tables + row-sum/HRZ fractions; P1 adds tests/test_ladrunoBrick20_element.py (reduce-to Twenty_Node_Brick)
-    tcl: WAIVED(P0 ships the pure kernel + tag reservation only - no element/command surface until P1)
+    required_tiers: [T0, T1]
+    pytest: tests/test_ladrunoBrick20_element.py   # P1 element gate: reduce-to Twenty_Node_Brick ~1e-12 (disp/force/per-GP stress/K/K+c3M), 2-ele distorted patch, rank-54/6-RBM, SelfWeight corner-share sign, lch=cbrt(V), DB round-trip, parser rejections, U1 damage advisory, LadrunoRecorder GP round-trip. (The P0 kernel gate tests/test_hex20_kernel_cpp.py stays green as the kernel anchor.)
+    tcl: WAIVED(element LadrunoBrick20 ...; shared OpenSeesElementCommands functionMap serves Tcl + Python; verified via the Zone-A pytest battery)
     zone_b: []
     core_files:
       - SRC/classTags.h
       - SRC/element/ladrunoBrick/LadrunoHex20Shape.h
-    dispatch: {tcl: false, functionMap: false}
-    status: planned
+      - SRC/element/ladrunoBrick/LadrunoBrick20.h
+      - SRC/element/ladrunoBrick/LadrunoBrick20.cpp
+      - SRC/element/ladrunoBrick/OPS_LadrunoBrick20.cpp
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesElementCommands.cpp
+      - SRC/element/TclElementCommands.cpp
+      - SRC/recorder/VTK_Recorder.cpp
+      - SRC/recorder/VTKHDF_Recorder.cpp
+      - SRC/recorder/PVDRecorder.cpp
+      - SRC/recorder/GmshRecorder.cpp
+      - SRC/recorder/Ladruno_ElementResults.h
+    dispatch: {tcl: true, functionMap: true}
+    status: active
     notes: >
       20-node serendipity quadratic hex, ADR 72. P0 (PR #548) = pure
       LadrunoHex20Shape.h kernel + sympy oracle + g++ cross-check + 33018
       reservation; R1 blind ordering verify + R2 oracle-independence audit
-      both PASS. Element (-formulation std|uri, HRZ-only -lumped) lands P1+.
+      both PASS. P1 = the element (-formulation std, 27-pt full) + factory +
+      broker/interpreter/Tcl registrations + 4 viz-recorder vtktypes +
+      Ladruno_ElementResults rule reuse (Hexahedron_GaussLegendre_3 / 20N
+      basis, brcshl GP pairing) + the Zone-A element battery; headline gate =
+      reduce-to Twenty_Node_Brick ~1e-12. uri (2x2x2 C3D20R analog) lands P2;
+      HRZ -lumped lands P3 (flag parsed + serialized, getMass errors honestly).
+      U1 RESOLVED BOTH: one-time opserr damage-channel advisory at setDomain.

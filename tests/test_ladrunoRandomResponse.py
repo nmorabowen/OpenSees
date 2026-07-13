@@ -508,3 +508,71 @@ def test_guard_no_modalproperties():
     with pytest.raises(Exception):
         ops.randomResponse('-freq', 0.1, 5.0, 100, '-baseAccel', '-dir', 1,
                            '-inputPSD', 1, '-damp', 0.05, '-node', 2, '-dof', 1)
+
+
+# ===========================================================================
+# -load channel: stationary nodal-force excitation P(t) = s(t)*P, G_s(f) input
+# ===========================================================================
+def test_force_psd_white_noise_sdof():
+    # white force PSD G_F through an SDOF: sigma_u = sqrt(G_F/(8 xi w^3 m^2))
+    # (load_frf_oracle.py check 4).
+    m, k, xi = 2.0, 800.0, 0.05
+    w = math.sqrt(k / m); fn = w / TWO_PI
+    GF = 0.4
+    _build_sdof(m, k)
+    ops.eigen('-fullGenLapack', 1)
+    ops.modalProperties()
+    ops.timeSeries('Constant', 1, '-factor', GF)
+    ops.timeSeries('Constant', 111)
+    ops.pattern('Plain', 11, 111)
+    ops.load(2, 1.0)                     # unit force shape; PSD carries scale
+    rms = ops.randomResponse('-freq', 1e-3, 30.0 * fn, 2500, '-biased',
+                             '-load', 11, '-inputPSD', 1,
+                             '-damp', xi, '-node', 2, '-dof', 1)
+    ref = math.sqrt(GF / (8.0 * xi * w ** 3 * m * m))
+    assert abs(rms - ref) / ref < 2e-3, f"RMS {rms:.6e} vs analytic {ref:.6e}"
+
+
+def test_load_random_vs_direct(tmp_path):
+    # {f, Gin, Gxx} rows vs the independent direct solve |(K-Om^2 M+iOm C)^-1 P|^2 G
+    masses = [2.0, 3.0, 1.5]; ks = [1200.0, 900.0, 600.0]
+    a0, a1 = 0.30, 2.0e-3
+    f1, f2, G0 = 0.2, 6.0, 0.05
+    _build_chain(masses, ks)
+    ops.eigen('-fullGenLapack', 3)
+    ops.modalProperties()
+    _band_psd(1, f1, f2, G0)
+    ops.timeSeries('Constant', 112)
+    ops.pattern('Plain', 12, 112)
+    ops.load(3, 5.0); ops.load(4, -2.0)
+    path = tmp_path / "lpsd.out"
+    rms = ops.randomResponse('-freq', f1, f2, 400, '-biased',
+                             '-load', 12, '-inputPSD', 1,
+                             '-rayleigh', a0, a1, '-node', 4, '-dof', 1,
+                             '-out', str(path))
+    rows = np.loadtxt(str(path))
+    f, gin, gxx = rows[:, 0], rows[:, 1], rows[:, 2]
+
+    M, K = _chain_MK(masses, ks)
+    C = a0 * M + a1 * K
+    P = np.array([0.0, 5.0, -2.0])
+    H = np.array([np.linalg.solve(K - (TWO_PI * ff) ** 2 * M
+                                  + 1j * (TWO_PI * ff) * C, P)[2] for ff in f])
+    gxx_ref = np.abs(H) ** 2 * gin
+    assert np.max(np.abs(gxx - gxx_ref)) / gxx_ref.max() < 1e-8
+    m0_ref = np.trapezoid(gxx_ref, f)
+    assert abs(rms - math.sqrt(m0_ref)) / rms < 1e-8
+
+
+def test_guard_random_load_and_baseaccel_exclusive():
+    _build_sdof(2.0, 800.0)
+    ops.eigen('-fullGenLapack', 1)
+    ops.modalProperties()
+    _flat_psd(1, 0.02)
+    ops.timeSeries('Constant', 113)
+    ops.pattern('Plain', 13, 113)
+    ops.load(2, 1.0)
+    with pytest.raises(Exception):
+        ops.randomResponse('-freq', 0.5, 5.0, 100, '-baseAccel', '-dir', 1,
+                           '-load', 13, '-inputPSD', 1, '-damp', 0.05,
+                           '-node', 2, '-dof', 1)

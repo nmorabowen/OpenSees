@@ -35,6 +35,12 @@
 #include <TimeSeries.h>
 #include <Node.h>
 #include <NodeIter.h>
+#include <LoadPattern.h>
+#include <NodalLoad.h>
+#include <NodalLoadIter.h>
+#include <ElementalLoadIter.h>
+#include <SP_ConstraintIter.h>
+#include <classTags.h>
 #include <Vector.h>
 #include <Matrix.h>
 #include <elementAPI.h>
@@ -163,6 +169,91 @@ LadrunoModalResponse::recurrenceBlocks(double w, double d, double dt,
 }
 
 // ---------------------------------------------------------------------------
+// Shared -load helper (ADR 44): raw-eigenvector modal load sums
+//   psiTP_raw[a] = sum_nodes sum_i evec(i, modes[a]) * P_node(i)
+// from a load pattern holding ONLY plain NodalLoads (reference values; the
+// pattern's own TimeSeries is deliberately NOT read — the caller supplies the
+// time/frequency dependence).  The Vscale factor is applied by the callers
+// together with the recovery psi so the pair matches the basis
+// DomainModalProperties computed generalizedMasses() in (normalization pin:
+// modal_response_p3_spike/load_frf_oracle.py).  Refuse-loudly rules shipped +
+// adversarially reviewed in #553.  `modes` = active 0-based indices.
+// ---------------------------------------------------------------------------
+static int
+LadrunoAssembleModalLoadShape(Domain* domain, int patternTag, int ndf,
+                              const std::vector<int>& modes, const char* cmd,
+                              std::vector<double>& psiTP)
+{
+    const int nm = static_cast<int>(modes.size());
+    LoadPattern* pat = domain->getLoadPattern(patternTag);
+    if (pat == 0) {
+        opserr << cmd << " - -load: no loadPattern with tag "
+               << patternTag << ".\n";
+        return -1;
+    }
+    // only plain nodal loads define the spatial shape P — refuse patterns
+    // carrying element loads or sp constraints rather than silently dropping
+    // part of the excitation.
+    if (pat->getElementalLoads()() != 0 || pat->getSPs()() != 0) {
+        opserr << cmd << " - -load: pattern " << patternTag
+               << " carries elemental loads and/or sp constraints; only "
+                  "plain nodal loads define the load shape P (build a "
+                  "separate pattern holding just the nodal loads).\n";
+        return -1;
+    }
+    psiTP.assign(nm, 0.0);
+    bool anyLoad = false;
+    NodalLoadIter& nlIter = pat->getNodalLoads();
+    NodalLoad* nl;
+    while ((nl = nlIter()) != 0) {
+        // getData() returns the reference load vector only for a PLAIN
+        // NodalLoad; derived types (e.g. thermal actions) overload it with
+        // other semantics — refuse them.
+        if (nl->getClassTag() != LOAD_TAG_NodalLoad) {
+            opserr << cmd << " - -load: pattern " << patternTag
+                   << " holds a non-plain nodal load (classTag "
+                   << nl->getClassTag() << "); only plain 'load' nodal "
+                      "loads are supported.\n";
+            return -1;
+        }
+        Node* lnode = domain->getNode(nl->getNodeTag());
+        if (lnode == 0 || lnode->getNumEigenvectors() < 1) {
+            // a load on a node with NO eigenvector (orphan / outside the
+            // eigen analysis) would silently vanish from the modal
+            // projection — refuse loudly. (A fully-fixed node HAS a zero
+            // eigenvector and legitimately contributes nothing.)
+            opserr << cmd << " - -load: nodal load on node "
+                   << nl->getNodeTag() << " which has no eigenvector "
+                      "(unknown node, or not part of the last eigen "
+                      "analysis).\n";
+            return -1;
+        }
+        int ltype = 0;
+        const Vector& Pn = nl->getData(ltype);
+        const Matrix& lev = lnode->getEigenvectors();
+        const int lndf = lev.noRows();
+        const int nd = std::min(std::min(lndf, Pn.Size()), ndf);
+        anyLoad = true;
+        for (int a = 0; a < nm; ++a) {
+            double s = 0.0;
+            for (int i = 0; i < nd; ++i) {
+                // pressure-DOF skip, same heuristic as the recovery
+                if (ndf == 6 && lndf == 4 && i == 3)
+                    continue;
+                s += lev(i, modes[a]) * Pn(i);
+            }
+            psiTP[a] += s;
+        }
+    }
+    if (!anyLoad) {
+        opserr << cmd << " - -load: pattern " << patternTag
+               << " has no nodal loads (the load shape P is empty).\n";
+        return -1;
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
 LadrunoModalResponse::LadrunoModalResponse(AnalysisModel* theModel,
                                            TimeSeries*    baseAccel,
                                            int            direction,
@@ -249,8 +340,9 @@ int LadrunoModalResponse::analyze()
     Domain* domain = m_model->getDomainPtr();
 
     if (m_baseAccel == 0) {
-        opserr << "LadrunoModalResponse - a base-acceleration time series is "
-                  "required (-baseAccel).\n";
+        opserr << "LadrunoModalResponse - an excitation time series is "
+                  "required (-baseAccel <tsTag>, or -series <tsTag> with "
+                  "-load).\n";
         return -1;
     }
     if (m_dt <= 0.0 || m_nsteps < 1) {
@@ -269,12 +361,15 @@ int LadrunoModalResponse::analyze()
 
     const int num_eigen = domain->getEigenvalues().Size();
     const int ndf = mp.totalMass().Size();
-    if (m_direction < 1 || m_direction > ndf) {
-        opserr << "LadrunoModalResponse - direction (" << m_direction
-               << ") must be in 1.." << ndf << ".\n";
-        return -1;
+    int exdof = 0;
+    if (!m_useLoad) {
+        if (m_direction < 1 || m_direction > ndf) {
+            opserr << "LadrunoModalResponse - direction (" << m_direction
+                   << ") must be in 1.." << ndf << ".\n";
+            return -1;
+        }
+        exdof = m_direction - 1;
     }
-    const int exdof = m_direction - 1;
 
     // active mode list (default: all)
     std::vector<int> modes = m_modes;
@@ -320,8 +415,18 @@ int LadrunoModalResponse::analyze()
         maxAbsLambda = std::max(maxAbsLambda, std::abs(mp.eigenvalues()(m)));
     const double negTol = std::max(1.0e-12, 1.0e-8 * maxAbsLambda);
 
-    // per-mode precompute
-    std::vector<double> w(nm), Gamma(nm), Vscale(nm), dcoef(nm);
+    // -load channel: raw-eigenvector modal load sums via the shared #553 helper
+    std::vector<double> psiTP;
+    if (m_useLoad) {
+        if (LadrunoAssembleModalLoadShape(domain, m_patternTag, ndf, modes,
+                                          "modalResponseHistory", psiTP) < 0)
+            return -1;
+    }
+
+    // per-mode precompute.  fcoef is the modal-load coefficient:
+    //   base accel:  f_a(t) = fcoef_a * ug''(t),  fcoef_a = -Gamma_a
+    //   nodal load:  f_a(t) = fcoef_a * s(t),     fcoef_a = (psi_a^T P)/m~_a
+    std::vector<double> w(nm), fcoef(nm), Vscale(nm), dcoef(nm);
     std::vector<double> Amat(nm * 4), Bmat(nm * 4);
     std::vector<double> q(nm, 0.0), qd(nm, 0.0), qdd(nm, 0.0);
     for (int a = 0; a < nm; ++a) {
@@ -335,8 +440,20 @@ int LadrunoModalResponse::analyze()
         }
         const double wa = (lambda > 0.0) ? std::sqrt(lambda) : 0.0; // clamp rigid
         w[a] = wa;
-        Gamma[a] = mp.modalParticipationFactors()(mode0, exdof);
         Vscale[a] = mp.eigenVectorScaleFactors()(mode0);
+        if (m_useLoad) {
+            const double ma = mp.generalizedMasses()(mode0);
+            if (!(ma > 0.0)) {
+                opserr << "LadrunoModalResponse - mode " << (mode0 + 1)
+                       << " has a non-positive generalized mass (" << ma
+                       << "); the modal load f_a = psi^T P / m_a is "
+                          "undefined.\n";
+                return -1;
+            }
+            fcoef[a] = (psiTP[a] * Vscale[a]) / ma;
+        } else {
+            fcoef[a] = -mp.modalParticipationFactors()(mode0, exdof);
+        }
         dcoef[a] = dampingCoeff(mode0, wa);
         double A[2][2], B[2][2];
         recurrenceBlocks(wa, dcoef[a], m_dt, A, B);
@@ -354,7 +471,7 @@ int LadrunoModalResponse::analyze()
 
         // modal accelerations q'' from the ODE (for the accel recovery)
         for (int a = 0; a < nm; ++a) {
-            const double f_a = -Gamma[a] * ug;
+            const double f_a = fcoef[a] * ug;
             qdd[a] = f_a - dcoef[a] * qd[a] - w[a] * w[a] * q[a];
         }
 
@@ -411,8 +528,8 @@ int LadrunoModalResponse::analyze()
             const double t_next = m_t0 + (n + 1) * m_dt;
             const double ug_next = m_baseAccel->getFactor(t_next);
             for (int a = 0; a < nm; ++a) {
-                const double f0 = -Gamma[a] * ug;
-                const double f1 = -Gamma[a] * ug_next;
+                const double f0 = fcoef[a] * ug;
+                const double f1 = fcoef[a] * ug_next;
                 const double q0 = q[a], qd0 = qd[a];
                 q[a]  = Amat[a * 4 + 0] * q0 + Amat[a * 4 + 1] * qd0
                       + Bmat[a * 4 + 0] * f0 + Bmat[a * 4 + 1] * f1;
@@ -429,9 +546,16 @@ int LadrunoModalResponse::analyze()
 // Command entry point (openseespy + Tcl share this via the interpreter
 // wrappers, mirroring OPS_ResponseSpectrumAnalysis).
 //
-//   modalResponseHistory -dt $dt -nsteps $n -baseAccel $tsTag -dir $dir
+//   modalResponseHistory -dt $dt -nsteps $n
+//       (-baseAccel $tsTag -dir $dir | -load $patternTag -series $tsTag)
 //       (-damp $xi | -rayleigh $a0 $a1 | -modalDamp $xi1 $xi2 ...)
 //       [-modes $m1 $m2 ...] [-t0 $t0]
+//
+//   Excitation is exactly ONE of:
+//     -baseAccel $tsTag -dir k   uniform base accel ug''(t) (RELATIVE response)
+//     -load $patternTag -series $tsTag   nodal forces P(t) = s(t)*P — P from
+//         the pattern's plain NodalLoads (its own TimeSeries is IGNORED), s(t)
+//         the -series time series sampled at the stations (ABSOLUTE response)
 //
 // Requires a prior `eigen N` and `modalProperties`.
 // ---------------------------------------------------------------------------
@@ -445,8 +569,10 @@ OPS_LadrunoModalResponseHistory(void)
     }
 
     double dt = 0.0, t0 = 0.0;
-    int nsteps = 0, dir = 0;
-    TimeSeries* ts = 0;
+    int nsteps = 0, dir = 0, loadPatternTag = 0;
+    bool haveLoad = false;
+    TimeSeries* ts = 0;          // -baseAccel series
+    TimeSeries* seriesTs = 0;    // -series scalar s(t) for -load
     int dampKind = -1;              // 0 uniform, 1 rayleigh, 2 modal-list
     double xi = 0.0, a0 = 0.0, a1 = 0.0;
     std::vector<double> xilist;
@@ -483,6 +609,22 @@ OPS_LadrunoModalResponseHistory(void)
             }
             ts = OPS_getTimeSeries(tag);
             if (ts == 0) {
+                opserr << "modalResponseHistory - no timeSeries with tag " << tag << ".\n"; return -1;
+            }
+        }
+        else if (strcmp(opt, "-load") == 0) {
+            if (OPS_GetNumRemainingInputArgs() < 1 || OPS_GetInt(&numData, &loadPatternTag) < 0) {
+                opserr << "modalResponseHistory - -load requires a loadPattern tag.\n"; return -1;
+            }
+            haveLoad = true;
+        }
+        else if (strcmp(opt, "-series") == 0) {
+            int tag;
+            if (OPS_GetNumRemainingInputArgs() < 1 || OPS_GetInt(&numData, &tag) < 0) {
+                opserr << "modalResponseHistory - -series requires a timeSeries tag.\n"; return -1;
+            }
+            seriesTs = OPS_getTimeSeries(tag);
+            if (seriesTs == 0) {
                 opserr << "modalResponseHistory - no timeSeries with tag " << tag << ".\n"; return -1;
             }
         }
@@ -552,12 +694,34 @@ OPS_LadrunoModalResponseHistory(void)
         }
     }
 
-    // required arguments
-    if (ts == 0) {
-        opserr << "modalResponseHistory - -baseAccel <tsTag> is required (P1a).\n"; return -1;
+    // required arguments — exactly one excitation channel
+    if (haveLoad && ts != 0) {
+        opserr << "modalResponseHistory - -baseAccel and -load are mutually "
+                  "exclusive (one excitation channel per run).\n"; return -1;
     }
-    if (dir < 1) {
-        opserr << "modalResponseHistory - -dir <1..ndf> is required.\n"; return -1;
+    if (haveLoad) {
+        if (seriesTs == 0) {
+            opserr << "modalResponseHistory - -load requires -series <tsTag> "
+                      "(the scalar s(t) multiplying the pattern's load shape).\n";
+            return -1;
+        }
+        if (dir != 0)
+            opserr << "WARNING modalResponseHistory - -dir is ignored with "
+                      "-load (the pattern's nodal loads define the shape).\n";
+    } else {
+        if (seriesTs != 0) {
+            opserr << "modalResponseHistory - -series is only meaningful with "
+                      "-load (use -baseAccel <tsTag> for base motion).\n";
+            return -1;
+        }
+        if (ts == 0) {
+            opserr << "modalResponseHistory - an excitation channel is required: "
+                      "-baseAccel <tsTag> -dir <1..ndf>, or -load <patternTag> "
+                      "-series <tsTag>.\n"; return -1;
+        }
+        if (dir < 1) {
+            opserr << "modalResponseHistory - -dir <1..ndf> is required.\n"; return -1;
+        }
     }
     if (dt <= 0.0 || nsteps < 1) {
         opserr << "modalResponseHistory - -dt >0 and -nsteps >=1 are required.\n"; return -1;
@@ -567,7 +731,9 @@ OPS_LadrunoModalResponseHistory(void)
                   "(-damp | -rayleigh | -modalDamp).\n"; return -1;
     }
 
-    LadrunoModalResponse mrh(theModel, ts, dir, dt, nsteps, t0);
+    LadrunoModalResponse mrh(theModel, haveLoad ? seriesTs : ts,
+                             haveLoad ? 0 : dir, dt, nsteps, t0);
+    if (haveLoad)           mrh.setLoadPattern(loadPatternTag);
     if (dampKind == 0)      mrh.setDampingUniform(xi);
     else if (dampKind == 1) mrh.setDampingRayleigh(a0, a1);
     else                    mrh.setDampingModalList(xilist);
@@ -581,7 +747,9 @@ OPS_LadrunoModalResponseHistory(void)
 // ===========================================================================
 LadrunoFrequencyResponse::LadrunoFrequencyResponse(AnalysisModel* theModel)
     : m_model(theModel)
+    , m_ex(EX_BASE_ACCEL)
     , m_direction(0)
+    , m_patternTag(0)
     , m_amp(1.0)
     , m_fmin(0.0), m_fmax(0.0)
     , m_nf(0)
@@ -698,12 +866,15 @@ LadrunoFrequencyResponse::run(std::vector<std::vector<double> >& rows, bool ampO
     }
     const int num_eigen = ev.Size();
     const int ndf = mp.totalMass().Size();
-    if (m_direction < 1 || m_direction > ndf) {
-        opserr << "frequencyResponse - -dir (" << m_direction << ") must be in 1.."
-               << ndf << ".\n";
-        return -1;
+    int exdof = 0;
+    if (m_ex == EX_BASE_ACCEL) {
+        if (m_direction < 1 || m_direction > ndf) {
+            opserr << "frequencyResponse - -dir (" << m_direction
+                   << ") must be in 1.." << ndf << ".\n";
+            return -1;
+        }
+        exdof = m_direction - 1;
     }
-    const int exdof = m_direction - 1;
 
     // response node/dof
     Node* rnode = domain->getNode(m_nodeTag);
@@ -768,8 +939,21 @@ LadrunoFrequencyResponse::run(std::vector<std::vector<double> >& rows, bool ampO
         maxAbsLambda = std::max(maxAbsLambda, std::abs(mp.eigenvalues()(m)));
     const double negTol = std::max(1.0e-12, 1.0e-8 * maxAbsLambda);
 
+    // -load channel: assemble the RAW-eigenvector modal load sums
+    //   psiTP_raw[a] = sum_nodes sum_i evec(i, mode_a) * P_node(i)
+    // via the shared helper (Vscale applied with the recovery psi below so the
+    // pair matches the basis generalizedMasses() was computed in).
+    std::vector<double> psiTP;
+    if (m_ex == EX_LOAD) {
+        if (LadrunoAssembleModalLoadShape(domain, m_patternTag, ndf, modes,
+                                          "frequencyResponse", psiTP) < 0)
+            return -1;
+    }
+
     // per-mode precompute: w, d, and the scalar recovery weight
-    //   c_a = psi_a(node,dof) * (-Gamma_a),   psi_a = revec(rdof,mode)*Vscale
+    //   base accel:  c_a = psi_a(node,dof) * (-Gamma_a)
+    //   nodal load:  c_a = psi_a(node,dof) * (psi_a^T P) / m~_a
+    // with psi_a = evec*Vscale and m~_a = generalizedMasses()(a) (same basis).
     std::vector<double> w(nm), d(nm), cw(nm);
     for (int a = 0; a < nm; ++a) {
         const int mode0 = modes[a];
@@ -782,10 +966,22 @@ LadrunoFrequencyResponse::run(std::vector<std::vector<double> >& rows, bool ampO
         const double wa = (lambda > 0.0) ? std::sqrt(lambda) : 0.0;
         w[a] = wa;
         d[a] = m_damp.coeff(mode0, wa);
-        const double Gamma  = mp.modalParticipationFactors()(mode0, exdof);
         const double Vscale = mp.eigenVectorScaleFactors()(mode0);
         const double psi    = revec(rdof, mode0) * Vscale;
-        cw[a] = psi * (-Gamma);
+        if (m_ex == EX_LOAD) {
+            const double ma = mp.generalizedMasses()(mode0);
+            if (!(ma > 0.0)) {
+                opserr << "frequencyResponse - mode " << (mode0 + 1)
+                       << " has a non-positive generalized mass (" << ma
+                       << "); the modal load f_a = psi^T P / m_a is "
+                          "undefined.\n";
+                return -1;
+            }
+            cw[a] = psi * (psiTP[a] * Vscale) / ma;
+        } else {
+            const double Gamma = mp.modalParticipationFactors()(mode0, exdof);
+            cw[a] = psi * (-Gamma);
+        }
     }
 
     std::vector<double> freqs;
@@ -842,11 +1038,17 @@ LadrunoFrequencyResponse::run(std::vector<std::vector<double> >& rows, bool ampO
 // Shared parser for frequencyResponse / steadyStateDynamics.
 //
 //   frequencyResponse -freq fmin fmax nf [-lin|-log|-biased]
-//       -baseAccel -dir $dir [-amp $a]
+//       (-baseAccel -dir $dir | -load $patternTag) [-amp $a]
 //       (-damp $xi | -rayleigh $a0 $a1 | -modalDamp $xi1 ...)
 //       -node $tag -dof $dof [-resp disp|vel|accel] [-modes ...] [-out $file]
 //
 //   steadyStateDynamics ...same... (reports |response| instead of Re/Im)
+//
+//   Excitation is exactly ONE of:
+//     -baseAccel -dir k   uniform base accel amp*e^{+iOm t} (relative response)
+//     -load $patternTag   nodal forces amp*P*e^{+iOm t}, P = the pattern's
+//                         plain NodalLoad reference values (the pattern's own
+//                         TimeSeries is IGNORED; absolute response)
 //
 // Requires a prior `eigen N` and `modalProperties`.  Returns the table to the
 // interpreter via OPS_SetDoubleListsOutput (and writes -out if given).
@@ -861,10 +1063,11 @@ OPS_FreqResponseImpl(bool ampOnly, const char* cmd)
     }
 
     double fmin = 0.0, fmax = 0.0, amp = 1.0;
-    int nf = 0, dir = 0, nodeTag = 0, dof = 0;
+    int nf = 0, dir = 0, nodeTag = 0, dof = 0, loadPatternTag = 0;
     LadrunoFrequencyResponse::SweepKind sweep = LadrunoFrequencyResponse::SWEEP_LIN;
     LadrunoFrequencyResponse::RespKind  resp  = LadrunoFrequencyResponse::RESP_DISP;
-    bool haveFreq = false, haveBase = false, haveDamp = false, haveNode = false;
+    bool haveFreq = false, haveBase = false, haveLoad = false;
+    bool haveDamp = false, haveNode = false;
     LadrunoModalDamping damp;
     std::vector<int> modes;
     std::string outfile;
@@ -885,6 +1088,12 @@ OPS_FreqResponseImpl(bool ampOnly, const char* cmd)
         else if (strcmp(opt, "-log") == 0)    sweep = LadrunoFrequencyResponse::SWEEP_LOG;
         else if (strcmp(opt, "-biased") == 0) sweep = LadrunoFrequencyResponse::SWEEP_BIASED;
         else if (strcmp(opt, "-baseAccel") == 0) haveBase = true;
+        else if (strcmp(opt, "-load") == 0) {
+            if (OPS_GetNumRemainingInputArgs() < 1 || OPS_GetInt(&one, &loadPatternTag) < 0) {
+                opserr << cmd << " - -load requires a loadPattern tag.\n"; return -1;
+            }
+            haveLoad = true;
+        }
         else if (strcmp(opt, "-dir") == 0) {
             if (OPS_GetNumRemainingInputArgs() < 1 || OPS_GetInt(&one, &dir) < 0) {
                 opserr << cmd << " - -dir requires a value.\n"; return -1;
@@ -999,8 +1208,18 @@ OPS_FreqResponseImpl(bool ampOnly, const char* cmd)
     }
 
     if (!haveFreq) { opserr << cmd << " - -freq fmin fmax nf is required.\n"; return -1; }
-    if (!haveBase || dir < 1) {
-        opserr << cmd << " - -baseAccel -dir <1..ndf> is required (P2).\n"; return -1;
+    if (haveBase && haveLoad) {
+        opserr << cmd << " - -baseAccel and -load are mutually exclusive "
+                  "(one excitation channel per sweep).\n"; return -1;
+    }
+    if (haveLoad) {
+        if (dir != 0)
+            opserr << "WARNING " << cmd << " - -dir is ignored with -load "
+                      "(the pattern's nodal loads define the shape).\n";
+    }
+    else if (!haveBase || dir < 1) {
+        opserr << cmd << " - an excitation channel is required: "
+                  "-baseAccel -dir <1..ndf>, or -load <patternTag>.\n"; return -1;
     }
     if (!haveNode || dof < 1) {
         opserr << cmd << " - -node <tag> -dof <1..ndf> are required.\n"; return -1;
@@ -1032,7 +1251,8 @@ OPS_FreqResponseImpl(bool ampOnly, const char* cmd)
     }
 
     LadrunoFrequencyResponse fr(theModel);
-    fr.setBaseAccel(dir, amp);
+    if (haveLoad) fr.setLoadPattern(loadPatternTag, amp);
+    else          fr.setBaseAccel(dir, amp);
     fr.setSweep(fmin, fmax, nf, sweep);
     fr.setDamping(damp);
     fr.setResponse(nodeTag, dof, resp);
@@ -1056,7 +1276,9 @@ int OPS_LadrunoSteadyStateDynamics(void){ return OPS_FreqResponseImpl(true,  "st
 LadrunoRandomResponse::LadrunoRandomResponse(AnalysisModel* theModel)
     : m_model(theModel)
     , m_psd(0)
+    , m_ex(LadrunoFrequencyResponse::EX_BASE_ACCEL)
     , m_direction(0)
+    , m_patternTag(0)
     , m_fmin(0.0), m_fmax(0.0)
     , m_nf(0)
     , m_sweep(LadrunoFrequencyResponse::SWEEP_LIN)
@@ -1093,7 +1315,10 @@ LadrunoRandomResponse::run(std::vector<std::vector<double> >& rows, Stats& out)
     // and emits H_x(f) rows {f, Re, Im} — the exact operator the PSD propagates
     // through.  amp stays 1: the input PSD carries the excitation scale.
     LadrunoFrequencyResponse fr(m_model);
-    fr.setBaseAccel(m_direction, 1.0);
+    if (m_ex == LadrunoFrequencyResponse::EX_LOAD)
+        fr.setLoadPattern(m_patternTag, 1.0);
+    else
+        fr.setBaseAccel(m_direction, 1.0);
     fr.setSweep(m_fmin, m_fmax, m_nf, m_sweep);
     fr.setDamping(m_damp);
     fr.setResponse(m_nodeTag, m_dof, m_resp);
@@ -1225,13 +1450,16 @@ LadrunoRandomResponse::run(std::vector<std::vector<double> >& rows, Stats& out)
 // Command entry point.
 //
 //   randomResponse -freq fmin fmax nf [-lin|-log|-biased]
-//       -baseAccel -dir $dir -inputPSD $tsTag
+//       (-baseAccel -dir $dir | -load $patternTag) -inputPSD $tsTag
 //       (-damp $xi | -rayleigh $a0 $a1 | -modalDamp $xi1 ...)
 //       -node $tag -dof $dof [-resp disp|vel|accel] [-modes ...]
 //       [-out $file] [-stats] [-duration $T]
 //
-//   -inputPSD: ONE-SIDED PSD of the base acceleration, G(f) in Hz, supplied as
-//       a timeSeries sampled at f (e.g. Path with f->G points, or Constant).
+//   -inputPSD: ONE-SIDED PSD G(f) in Hz supplied as a timeSeries sampled at f
+//       (e.g. Path with f->G points, or Constant).  With -baseAccel it is the
+//       PSD of the base acceleration; with -load it is the PSD of the scalar
+//       s(t) multiplying the pattern's nodal-load shape P (P(t)=s(t)*P, all
+//       loads fully correlated).
 //   Returns the RMS (scalar).  With -stats: the list {rms, nu0, m0, m2}.
 //   -duration T IMPLIES the stats list form (even without -stats) and appends
 //   a 5th entry E[peak] — NaN when the estimate is invalid (nu0*T <= 1), so
@@ -1250,10 +1478,11 @@ OPS_LadrunoRandomResponse(void)
     }
 
     double fmin = 0.0, fmax = 0.0, duration = 0.0;
-    int nf = 0, dir = 0, nodeTag = 0, dof = 0;
+    int nf = 0, dir = 0, nodeTag = 0, dof = 0, loadPatternTag = 0;
     LadrunoFrequencyResponse::SweepKind sweep = LadrunoFrequencyResponse::SWEEP_LIN;
     LadrunoFrequencyResponse::RespKind  resp  = LadrunoFrequencyResponse::RESP_DISP;
-    bool haveFreq = false, haveBase = false, haveDamp = false, haveNode = false;
+    bool haveFreq = false, haveBase = false, haveLoad = false;
+    bool haveDamp = false, haveNode = false;
     bool wantStats = false;
     TimeSeries* psd = 0;
     LadrunoModalDamping damp;
@@ -1276,6 +1505,12 @@ OPS_LadrunoRandomResponse(void)
         else if (strcmp(opt, "-log") == 0)    sweep = LadrunoFrequencyResponse::SWEEP_LOG;
         else if (strcmp(opt, "-biased") == 0) sweep = LadrunoFrequencyResponse::SWEEP_BIASED;
         else if (strcmp(opt, "-baseAccel") == 0) haveBase = true;
+        else if (strcmp(opt, "-load") == 0) {
+            if (OPS_GetNumRemainingInputArgs() < 1 || OPS_GetInt(&one, &loadPatternTag) < 0) {
+                opserr << cmd << " - -load requires a loadPattern tag.\n"; return -1;
+            }
+            haveLoad = true;
+        }
         else if (strcmp(opt, "-dir") == 0) {
             if (OPS_GetNumRemainingInputArgs() < 1 || OPS_GetInt(&one, &dir) < 0) {
                 opserr << cmd << " - -dir requires a value.\n"; return -1;
@@ -1400,8 +1635,18 @@ OPS_LadrunoRandomResponse(void)
     }
 
     if (!haveFreq) { opserr << cmd << " - -freq fmin fmax nf is required.\n"; return -1; }
-    if (!haveBase || dir < 1) {
-        opserr << cmd << " - -baseAccel -dir <1..ndf> is required (P3).\n"; return -1;
+    if (haveBase && haveLoad) {
+        opserr << cmd << " - -baseAccel and -load are mutually exclusive "
+                  "(one excitation channel per run).\n"; return -1;
+    }
+    if (haveLoad) {
+        if (dir != 0)
+            opserr << "WARNING " << cmd << " - -dir is ignored with -load "
+                      "(the pattern's nodal loads define the shape).\n";
+    }
+    else if (!haveBase || dir < 1) {
+        opserr << cmd << " - an excitation channel is required: "
+                  "-baseAccel -dir <1..ndf>, or -load <patternTag>.\n"; return -1;
     }
     if (psd == 0) {
         opserr << cmd << " - -inputPSD <tsTag> is required.\n"; return -1;
@@ -1415,7 +1660,8 @@ OPS_LadrunoRandomResponse(void)
     }
 
     LadrunoRandomResponse rr(theModel);
-    rr.setBaseAccel(dir);
+    if (haveLoad) rr.setLoadPattern(loadPatternTag);
+    else          rr.setBaseAccel(dir);
     rr.setInputPSD(psd);
     rr.setSweep(fmin, fmax, nf, sweep);
     rr.setDamping(damp);

@@ -1859,6 +1859,7 @@ PVDRecorder::setVTKType()
     vtktypes[ELE_TAG_Nine_Four_Node_QuadUP] = VTK_POLY_VERTEX;
     vtktypes[ELE_TAG_Twenty_Eight_Node_BrickUP] = VTK_POLY_VERTEX;
     vtktypes[ELE_TAG_Twenty_Node_Brick] = VTK_QUADRATIC_HEXAHEDRON;
+    vtktypes[ELE_TAG_LadrunoBrick20] = VTK_QUADRATIC_HEXAHEDRON;   // Ladruno ADR 72
     vtktypes[ELE_TAG_BBarFourNodeQuadUP] = VTK_QUAD;
     vtktypes[ELE_TAG_BBarBrickUP] = VTK_QUAD;
     vtktypes[ELE_TAG_PlateMITC4] = VTK_QUAD;

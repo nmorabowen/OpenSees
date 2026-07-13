@@ -1005,10 +1005,20 @@ const Vector &LadrunoQuad::getResistingForceIncInertia(void)
     sum += rhoi[i];
   }
 
+  // SNAPSHOT the shared static P into a local BEFORE getRayleighDampingForces():
+  // under -geom finite with stiffness-proportional Rayleigh (betaK) that call
+  // re-enters getTangentStiff() -> formFinite(1) -> P.Zero()+refill, silently
+  // destroying the f_int − Q + M·a just accumulated (adversarial gate, ADR 70
+  // P4a review; LadrunoBrick donor pattern; LEDGER_quirks
+  // "getResistingForceIncInertia MUST snapshot").  // Ladruno
+  static Vector res(8);
+
   if (sum == 0.0) {
     this->getResistingForce();
+    res = P;
     if (betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0)
-      P += this->getRayleighDampingForces();
+      res += this->getRayleighDampingForces();
+    P = res;
     return P;
   }
 
@@ -1024,8 +1034,10 @@ const Vector &LadrunoQuad::getResistingForceIncInertia(void)
   for (int i = 0; i < 8; i++)
     P(i) += K(i, i) * a[i];
 
+  res = P;
   if (alphaM != 0.0 || betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0)
-    P += this->getRayleighDampingForces();
+    res += this->getRayleighDampingForces();
+  P = res;
   return P;
 }
 

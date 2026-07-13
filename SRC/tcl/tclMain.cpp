@@ -154,7 +154,9 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • BezierTri6 — quadratic Bézier triangle (Kadapa 2018)\n"
 "        • BezierTet10 — quadratic Bézier tetrahedron (Kadapa 2018)\n"
 "        • LadrunoBrick — unified hex (std/bbar/uri/ssp/eas + hourglass)\n"
-"        • LadrunoQuad/LadrunoCST — 2D continuum (Quad std/bbar/ssp/eas; CST std; -geom finite via shared 2D F-kernel)\n"
+"        • LadrunoBrick20 — 20-node serendipity quadratic hex (std 27-pt, reduce-to 20NodeBrick)\n"
+"        • LadrunoQuad/LadrunoCST — 2D continuum (Quad std/bbar/ssp/eas; CST std)\n"
+"        • LadrunoQuad/LadrunoCST/LadrunoLST/LadrunoCSTPair — 2D continuum (Quad std/bbar/ssp/eas; CST + LST-T6 std; -geom finite via shared 2D F-kernel; CSTPair = 2-tri F-bar-Patch macro dSNPO 15.1.9)\n"
 "        • Solid geometry methods — -geom linear/corot/finite (+ F-bar)\n"
 "        • LadrunoJ2 — combined iso + Chaboche AF kinematic J2\n"
 "        • LadrunoJ2Finite — finite-strain J2, co-rotating backstress (+IMPL-EX)\n"
@@ -190,9 +192,9 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • LadrunoSolidShell — 8-node ANS/EAS solid-shell (through-thickness σ33 punching/bearing host; Dvorkin-Bathe + Betsch-Stein + state-EAS)\n"
 "        • LadrunoComplexEigen — complexEigen: complex/state-space modal for non-classical damping (true per-mode zeta + omega_d + phased mode shapes; assembled getDamp() projection, QZ reduced pencil)\n"
 "        • FeastEigen — band-targeted eigensolver: eigen -feast fmin fmax (ALL modes in the band, MKL contour integration; -certify = Sturm/inertia completeness; -rci = dfeast_srci RCI, distributed dmumps inner solve under openseesmp)\n"
-"        • LadrunoModalResponse — modalResponseHistory: exact PWL modal-superposition transient (per-mode Nigam-Jennings recurrence, base-accel; -damp/-rayleigh/-modalDamp; commits per step so recorders capture the history)\n"
+"        • LadrunoModalResponse — modalResponseHistory: exact PWL modal-superposition transient (per-mode Nigam-Jennings recurrence, base-accel or -load nodal-force pattern w/ -series; -damp/-rayleigh/-modalDamp; commits per step so recorders capture the history)\n"
 "        • modal combination — responseSpectrumAnalysis -combine SRSS|CQC|ABS|TenPercent (native CQC/SRSS/ABS/Ten-Percent of the per-mode response-spectrum fields; -damp/-modalDamp for CQC zeta)\n"
-"        • modal frequency domain — frequencyResponse / steadyStateDynamics / randomResponse: modal FRF H_a(Om) sweep, steady-state harmonic amplitude + stationary random response PSD->RMS (one-sided Hz input PSD; RMS/nu0/Davenport peak -stats; base-accel; lin/log/resonance-biased grid; disp/vel/accel)\n"
+"        • modal frequency domain — frequencyResponse / steadyStateDynamics / randomResponse: modal FRF H_a(Om) sweep, steady-state harmonic amplitude + stationary random response PSD->RMS (one-sided Hz input PSD; RMS/nu0/Davenport peak -stats; base-accel or -load nodal-force pattern; lin/log/resonance-biased grid; disp/vel/accel)\n"
 "\n";
     // FEATURES-END
 
