@@ -3063,3 +3063,19 @@ twin-verified in `Ladruno_implementation/adr70_p4_spike/`):
 - **Bites:** `ops.InitialStateAnalysis("off")` appears to work (prints its notice, `revertToStart` runs, displacements AND honest-p pressures zero correctly) — then the next `ops.wipe()` / model build crashes with a Windows heap-corruption fault. Found while gating the ADR-71 init-sequencing recipe (P4).
 - **Why (upstream, verified in source):** `OPS_InitialStateAnalysis` (SRC/interpreter/OpenSeesMiscCommands.cpp:1352-1354 and :1367-1369) does `theDomain->addParameter(theP); delete theP;` — but `Domain::addParameter` STORES the pointer in the parameter container (Domain.cpp:897). The container now holds freed memory; the wipe-time parameter cleanup double-frees. Not element-specific and not a Ladruno defect — the MSVC/ucrt heap checker is just the first to notice.
 - **Workaround:** use `ops.reset()` (→ the same `Domain::revertToStart`) for the displacement-zeroing step of staged sequences; it has no parameter side-effect and is crash-free. Pinned in `tests/test_ladruno_up_init_recorders.py` (ADR-71 P4, 2026-07-13). Fixing upstream = deleting the two `delete theP;` lines (ownership transfer) — vanilla edit, ask-first per change-budget policy.
+## ASDConcrete3D's HardeningLawStorage is a process-global store-if-absent registry keyed by MATERIAL TAG — it survives `ops.wipe()` (ADR 72 P1)
+
+`ASDConcrete3DMaterial.cpp::HardeningLawStorage::store` (static singleton;
+`if (item == nullptr) item = make_shared(hl)`) latches the FIRST hardening law
+ever constructed for a given material tag, for the life of the process;
+`recover(tag, type)` hands that original law to every later material with the
+same tag. `ops.wipe()` does not clear it. Consequence in a shared pytest
+process (Zone-A runs the whole battery in ONE process): a test file that
+builds `ASDConcrete3D` with a common tag (e.g. 1) and *different parameters*
+than another file silently poisons the latter — the ADR-72 P1 battery's
+advisory test (tag 1, toy Gf) drove `test_ladrunoBrick_asdconcrete.py`'s
+mesh-objectivity dissipation ratio from ≈4 to 7.03 with zero diagnostic,
+alphabetical test order deciding the victim. **Rule: every test file gives its
+ASDConcrete3D materials a file-unique tag** (ADR-72 uses 337218). Same class
+of static-registry risk: `CrackPlanesStorage` (same file). Upstream ASDEA
+code — fix-on-touch only.

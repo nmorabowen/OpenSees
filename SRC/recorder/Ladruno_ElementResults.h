@@ -1938,6 +1938,10 @@ namespace detail {
 				else if (
 					// ./brick
 					elem_class_tag == ELE_TAG_Twenty_Node_Brick ||
+					// ./ladrunoBrick — LadrunoBrick20 std shares the brcshl 27-pt rule +
+					// serendipity node order with Twenty_Node_Brick BY DESIGN (ADR 72 §2.5:
+					// materialPointers[L] pairs with Ladruno::hex20::GP27[L])  // Ladruno
+					elem_class_tag == ELE_TAG_LadrunoBrick20 ||
 					// ./up
 					elem_class_tag == ELE_TAG_Twenty_Eight_Node_BrickUP
 					)
