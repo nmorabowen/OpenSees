@@ -9,7 +9,10 @@ closed-form response (the paper's "dynamically compatible" special case) provide
 the reference. OpenSees is real-valued/time-domain, so the FE realisation is a
 long column (no base reflection into the gated stations) run transiently.
 
-PINNED-CONFIG ADJUDICATION (measured, REPORTED to MAIN): WP4.B pins the FE lane
+PINNED-CONFIG ADJUDICATION — DECIDED by MAIN 2026-07-13: the element default
+flipped to '-dynSeepage off' (ADR sec-12 log; parser OPS_LadrunoUP.cpp) and the
+guide adds the "-stab off for wave propagation" rule, on exactly the evidence
+below. Original agent report follows. WP4.B pins the FE lane
 as "-stab auto, -dynSeepage on". MEASURED on this build, that config CANNOT
 represent the benchmark: '-dynSeepage on' gives a wrong pore-pressure level
 behind the fast front (p = 1.44 vs beta = 0.973) and then grows without bound

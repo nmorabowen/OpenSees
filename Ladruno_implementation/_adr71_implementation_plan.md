@@ -540,6 +540,37 @@ as the P1 batteries. Battery target runtime ≤90 s per file.
 
 ## Log
 
+- 2026-07-13 — **P4 EXECUTED** (4 Opus agents + MAIN adjudications; the
+  family's closing phase). B5 Simon: independent full-Biot closed form (modal
+  diagonalization; analytic Bessel Laplace inverse) validated against every
+  ADR hard pin incl. all FOUR errata; û(0,50) u-p discrepancy MEASURED 2.2% >
+  0.5% ⇒ û DEMOTED per ⟨UP-5⟩; FE gates green (front 0.73Δz, plateau 1.06%);
+  both Newmark sets pinned. PDMY: two-leg equivalence (tight 2.9e-15;
+  production ≤5.4e-4), r_u = 0.914 onset, cache-dirty instrument (exact α
+  read from tangent p-p scale) — twin 2.4e-8 vs pre-stage control 1.1e-1.
+  Init/recorders: three routes shock-free, sequencing trap reproduced via
+  ops.reset(), PressureSource mixed-model BOTH slots exact, Monitor smoke.
+  Guide: LadrunoUP_guide.md (10 sections, all P0–P3 refutations folded).
+  **MAIN adjudications + fixes:**
+  - **`-dynSeepage` default FLIPPED to `off`** (ADR §12 log amendment,
+    pre-authorized by the P1 log): measured failure in BOTH regimes
+    (quasi-static Δt-refinement divergence + B5 wandering plateau/unbounded
+    shallow growth). Opt-in retained; +G stays FD-gated.
+  - **Guide rule: `-stab off` for wave propagation** (B5 measured ~10%
+    spurious ringing from the α-Laplacian on the traveling p wave).
+  - **BUG FIXED (4.C finding): multi-element stage-flip cache staleness** —
+    MaterialStageParameter registers only the first accepting element, so
+    only ONE LadrunoUP refreshed auto-α (f2 stale 1.0000 vs 1.4051).
+    Fix: updateParameter(1) sibling-broadcasts dirtyStageCaches() to every
+    LadrunoUP in the domain (flags only, lazy recompute). Strict xfail
+    flipped to the positive regression gate.
+  - **UPSTREAM BUG documented, fix deferred (ask-first)**:
+    `InitialStateAnalysis on|off` heap-corrupts — the interpreter command
+    deletes the parameter the domain stored (dangling pointer, ANY element).
+    Quirks row + guide danger box; workaround ops.reset(). User is running
+    an independent investigation.
+  - Banner line added (patch_banner.py); ledger status → SHIPPED.
+
 - 2026-07-10 — plan created (P0 contract frozen; ADR locked via PR #547).
 - 2026-07-10 — **P0 SHIPPED** (PR #551 merged, squash b2ac3ba04). WP1.A pins frozen; P1 branch `feature/adr71-p1`.
 - 2026-07-11 — **P1 EXECUTED** (waves 1+2, five Opus agents). Battery: analytic
