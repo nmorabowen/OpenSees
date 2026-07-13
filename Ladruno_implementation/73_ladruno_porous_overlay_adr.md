@@ -230,6 +230,39 @@ staging story. P3's gate table includes a head-to-head cost/accuracy leg
 against that route on the B2 column (it is the honest incumbent, not a straw
 man).
 
+**Explicit-lane upgrades (added 2026-07-13 review; P3/P3b below):**
+
+1. **`-fluidUpdate explicit` — the fully matrix-free option (P3b).** The
+   *diffusion* CFL of a lumped-S\* forward p-update is Δt ≤ h²/(2c_v), and
+   for real soils it is enormously slack: k′ = 10⁻⁷ m/s, M_oed = 100 MPa,
+   h = 0.5 m ⇒ Δt_diff ≈ 125 s vs a solid explicit Δt ~ 10⁻⁴ s — six orders
+   of margin (even clean gravel at k′ = 10⁻³ clears it by orders). The real
+   price sits elsewhere: with the fluid explicit, the *coupled* staggered
+   scheme's stability is governed by the **undrained** wave speed (the
+   Q·S⁻¹·Qᵀ stiffening — the Xu et al. 2021 route ADR-71 §6 catalogued), so
+   the solid Δt_cr shrinks by ≈ √((M_oed+K_f/n)/M_oed) ≈ 5–8×. What that
+   buys: **no factorization anywhere in the run** — the fluid step is a
+   local axpy + one halo exchange — making the 18.6 M-class saturated
+   explicit run feasible and **dissolving most of the §8 MP risk on this
+   lane** (a local update parallelizes trivially; a global SPD solve does
+   not). Implicit stays the default; explicit is a gated option (measured
+   envelope, mass-scaling composability, L not needed — no iteration).
+2. **Pipelined implicit fluid (P3 design note).** fs1 tolerates O(Δt) lag by
+   construction, so the implicit fluid solve may run on its own thread over
+   the next subcycle window, forces updating one window late — the overlay
+   owns all its data structures (no Domain locks), so this is natural
+   concurrency. Combined with `-subcycle`, the fluid wall-clock approaches
+   zero.
+3. **Overlay-aware Δt_cr advisory (P3 gate item).** criticalTimeStep/SMS
+   price the pencil from the *drained* skeleton and cannot see the overlay;
+   if the split's stability is undrained-governed (P0 measures this), the
+   advisory is 5–8× optimistic ⇒ mysterious blow-ups. The overlay exposes a
+   per-element undrained stiffening factor √((M+K_f/n)/M) that the ADR-65
+   advisory machinery multiplies in; SMS then scales against the correct
+   pencil.
+4. **`-subcycle auto`**: N computed at setup from the diffusion time scale
+   (h²/c_v vs Δt_explicit) instead of asked of the user.
+
 ### 3.5 Initialization — better than the monolithic recipe
 
 The overlay owns H, so it can solve its own steady state: `-pInit steady`
@@ -280,7 +313,12 @@ pattern LadrunoPorousOverlay $tag \
     <-stab auto <$alpha0> | off | $alpha>     ;# H̃ in S*, ADR-71 §3.3 semantics
     <-fsL auto <$scale>>                      ;# L floor = oedometric; no off
     <-onRemoval keep | drain $kFactor>        ;# fluid life-cycle policy
-    <-subcycle $N>                            ;# fluid advance every N commits (explicit lane)
+    <-fluidUpdate implicit | explicit>        ;# default implicit (SPD solve);
+                                              ;#   explicit = lumped-S* forward step,
+                                              ;#   matrix-free (P3b, §3.4 — undrained
+                                              ;#   CFL governs the SOLID Δt then)
+    <-subcycle auto | $N>                     ;# fluid advance every N commits
+                                              ;#   (auto: N from h²/c_v vs Δt)
     <-fluidBody $b1 $b2 <$b3>> <-dynSeepage on|off>   ;# default off (ADR-71 §12)
 ```
 
@@ -347,9 +385,10 @@ commit hook if taken.
   §6") is this document. The three §6 routes map: staggered partitioning →
   §3.1/§3.4 (adopted, ZPC-1988 realization); fractional-step → subsumed (the
   overlay's split adds the same stabilizing Laplacian through L);
-  fully-explicit-both-fields (Xu 2021) → rejected for v1 (lumped-S CFL +
-  diffusion limit interacting with ADR-65 machinery; revisit only on
-  measured need).
+  fully-explicit-both-fields (Xu 2021) → **adopted as the gated P3b option**
+  `-fluidUpdate explicit` (§3.4: diffusion CFL measured slack by orders for
+  real soils; the honest price is the undrained-speed CFL on the solid,
+  priced into the ADR-65 advisory) — not the v1 default.
 - **Monolithic LadrunoUP is not deprecated by this**: implicit statics,
   steady seepage, Taylor–Hood, and the validated B1–B5 battery stay on the
   element. The overlay's gates cross-check against it (it is the reference
@@ -366,7 +405,8 @@ commit hook if taken.
 | **P0** | toy extension E7 (numpy, no OpenSees build) | exact v1 sequencing pinned: fs1-without-final-resolve error vs monolithic measured over Δt-halving (expect O(Δt); pins the P1 default); explicit-lane emulation (CD solid + implicit fluid): stability envelope measured — drained-vs-undrained CFL governance answered with numbers + subcycle-N degradation curve; removal-step jump consistency (Q mask flips mid-march, no spurious p transient beyond the physical Mandel-Cryer dip); L-floor sweep reproduced on the dynamic path |
 | **P1** | `LadrunoPorousOverlay` fs1 implicit end-to-end (Q4/T3/H8 regions) | Terzaghi vs analytic ≤ pinned tol at production Δt; **two-leg gate vs monolithic LadrunoUP** (ADR-71 methodology: mutual Δt-convergence, observed order ≥ 1; the exact-equality leg belongs to P2's iterated driver); **E4-in-OpenSees**: real `remove element` crack, both `-onRemoval` policies, curves vs the toy reference; **sequencing contract test** (step-load column p(0⁺) ≈ q — kills the fluid-first p≡0 trap class); L auto twin-checked vs oracle incl. `updateMaterialStage` dirty path; pattern-timing verification (forces bit-constant across a step's Newton iterations); serial DB round-trip; **full adversarial panel** (per [[feedback_adversarial_gate_when]]: core-touch — Domain hook + pattern semantics — and novel framework integration; the split math itself is spike-validated) |
 | **P2** | iterated driver `LadrunoStaggeredAnalyze` (fs-k) | fixed-point gate: iterated staggered ≡ monolithic LadrunoUP same-Δt (E6 leg, target ≤ 1e-6 rel); B4 footing staggered (CB gate under stab); PDMY staged liquefaction column vs the ADR-71 P4 monolithic reference (stage transport → L/stab cache dirty); iteration-count telemetry (mean/max per step) exposed |
-| **P3** | explicit lane | CD + overlay on B2/ZS84 column vs implicit monolithic (two-leg); **incumbent head-to-head** (§3.4): same column under upstream CentralDifference + FourNodeQuadUP — accuracy AND per-step cost/scaling vs the overlay's diagonal-solid + small-SPD-fluid path, plus the S→0 failure demo; measured CFL envelope vs the P0 pins (criticalTimeStep interplay with ADR-65 machinery documented); `-subcycle` N-sweep gate; **LEDGER_quirks row**: honest-p LadrunoUP + upstream CentralDifference = Richardson-unstable p (leapfrogged diffusion) — loud test pinning the symptom; energy-balance advisory channel (ADR-69: overlay work terms enter the closure residual — documented, not silently absent) |
+| **P3** | explicit lane | CD + overlay on B2/ZS84 column vs implicit monolithic (two-leg); **incumbent head-to-head** (§3.4): same column under upstream CentralDifference + FourNodeQuadUP — accuracy AND per-step cost/scaling vs the overlay's diagonal-solid + small-SPD-fluid path, plus the S→0 failure demo; measured CFL envelope vs the P0 pins; **overlay-aware Δt_cr advisory gated** (§3.4 item 3: per-element undrained factor √((M+K_f/n)/M) wired into the ADR-65 machinery — naive drained advisory demonstrated 5–8× optimistic, then corrected); `-subcycle auto|$N` sweep gate; pipelined-fluid design note carried (§3.4 item 2 — implementation may land here or P3b); **LEDGER_quirks row**: honest-p LadrunoUP + upstream CentralDifference = Richardson-unstable p (leapfrogged diffusion) — loud test pinning the symptom; energy-balance advisory channel (ADR-69: overlay work terms enter the closure residual — documented, not silently absent) |
+| **P3b** *(option)* | `-fluidUpdate explicit` — fully matrix-free lane (§3.4 item 1, Xu-2021 class) | dual-CFL gate: diffusion limit verified slack by orders on realistic k′ sweep; measured undrained-CFL envelope vs the √((M+K_f/n)/M) prediction; equivalence vs implicit-fluid lane at matched Δt (both are O(Δt) splits); mass-scaling composability (SMS against the undrained pencil); MP smoke on the halo-exchange update (the §8 MP-risk dissolution demonstrated, not asserted) |
 | **P4** | ecosystem | overlay p-field recorder channels (own response surface — nodal-DOF recorders can't see it; LadrunoRecorder/Monitor topology rows per [[06_quadrature_global_gp_plan]]); user guide (`LadrunoPorousOverlay_guide.md`) incl. division-of-labor table vs LadrunoUP + init recipes; banner line + ledgers → shipped; apeGmsh emitter runway note (companion repo item) |
 | **P5** *(reserved)* | meshless/MPM fluid realization (large-deformation upgrade path); MP/partitioned-domain story | own mini-ADR; the spike's E1–E3 refutations bound what any meshless realization must prove first |
 
@@ -383,10 +423,13 @@ Each phase is one PR off `ladruno`, ledgers updated in-PR.
   contact-engine mechanism (backing-element-less FE_Elements contributing
   residual-only forces — ADR-39 precedent, incl. its
   `integrator->formEleTangent` routing quirk).
-- **MP absent in v1** — honest and painful: the fork's largest explicit runs
-  are MP. A per-partition overlay needs interface flux exchange
-  (Schur/Neumann-Neumann class) — genuinely research, parked in P5. Serial
-  explicit (the 60 GB emit-host class) is still served.
+- **MP absent in v1** — honest but now lane-dependent: the *implicit*-fluid
+  overlay needs interface flux exchange across partitions
+  (Schur/Neumann-Neumann class) — genuinely research, parked in P5. The
+  **explicit-fluid lane (P3b) largely dissolves this**: a local lumped
+  update + halo exchange is the same communication pattern the explicit
+  solid already uses — P3b's MP smoke demonstrates it rather than asserting
+  it. Serial implicit (the 60 GB emit-host class) is served either way.
 - **UniformExcitation**: üg enters the solid row via the standard R·üg
   path; the fluid row's ρ_f·üg seepage drive stays omitted (Chan-1988
   class, consistent with ADR-71 P4's `-dynSeepage off` default) — guide
