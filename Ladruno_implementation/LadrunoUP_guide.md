@@ -182,12 +182,16 @@ first-step Δp is bounded — a gate in the init battery).
 > **Sequence any displacement-zeroing step BEFORE you establish the p field**, or
 > you erase it. See `project_initdefgrad_staged` for the staged-analysis interplay.
 
-> [!danger] Do not use `InitialStateAnalysis` from openseespy — use `ops.reset()`
+> [!warning] `InitialStateAnalysis` requires a build with the upstream-`191c67c2d` backport
+> On builds predating the backport (see the LEDGER_quirks row),
 > `ops.InitialStateAnalysis("on"|"off")` heap-corrupts the process on the NEXT
-> model operation — an **upstream** dangling-parameter bug in the interpreter
-> command (it `delete`s the parameter the domain just stored; see the
-> LEDGER_quirks row). `ops.reset()` performs the same `Domain::revertToStart`
-> zeroing safely and is what `tests/test_ladruno_up_init_recorders.py` gates.
+> `wipe()`/model build (upstream dangling-parameter bug) **and** repeat calls
+> silently never flip the `ops_InitialStateAnalysis` flag — on those builds use
+> `ops.reset()` for the zeroing step (what
+> `tests/test_ladruno_up_init_recorders.py` gates) and avoid ISA entirely with
+> the UW soil materials. Fixed builds pass
+> `tests/test_initial_state_analysis_lifetime.py`; `ops.reset()` remains the
+> recommended honest-p sequencing recipe either way.
 
 > [!warning] Staged prescribed-head `sp` uses Penalty (or Lagrange), never Transformation
 > Adding a nonzero pressure `sp` **mid-analysis** under

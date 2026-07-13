@@ -9013,12 +9013,14 @@ InitialStateAnalysis(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Ch
     opserr << "InitialStateAnalysis ON" << endln;
 
     // set global variable to true
-    // FMK changes for parallel: 
+    // FMK changes for parallel:
     // ops_InitialStateAnalysis = true;
 
-    Parameter *theP = new InitialStateParameter(true);
-    theDomain.addParameter(theP);
-    delete theP;
+    // Ladruno: backport upstream 191c67c2d — addParameter stored the pointer, the
+    // delete left the domain map dangling (double free at wipe); setDomain only
+    // flips the ops_InitialStateAnalysis global, nothing needs to stay registered
+    InitialStateParameter theP(true);
+    theP.setDomain(&theDomain);
 
     return TCL_OK;
     
@@ -9031,9 +9033,9 @@ InitialStateAnalysis(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Ch
     // set global variable to false
     // FMK changes for parallel
     // ops_InitialStateAnalysis = false;
-    Parameter *theP = new InitialStateParameter(false);
-    theDomain.addParameter(theP);
-    delete theP;
+    // Ladruno: backport upstream 191c67c2d (see "on" branch above)
+    InitialStateParameter theP(false);
+    theP.setDomain(&theDomain);
 
     return TCL_OK;
     
