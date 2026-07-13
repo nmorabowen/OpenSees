@@ -63,9 +63,15 @@ explicit-lane pins are dynamic questions.
   fluid absorbs the undrained stiffening). Sweep Δt across
   [0.5·Δt_drained, 1.2·Δt_undrained⁻¹-scaled] and locate the empirical
   boundary. THE load-bearing P3 pin.
-- **E7.3 — subcycle degradation curve.** N ∈ {1, 2, 5, 10, 20, 50}: accuracy
-  vs monolithic + stability. Prediction: error grows ~linearly in N·Δt while
-  N·Δt ≪ the diffusion time h²/c_v; pins the `-subcycle auto` formula.
+- **E7.3 — multirate curves, BOTH directions.** (a) Subcycle N ∈
+  {1, 2, 5, 10, 20, 50} (fluid slower — explicit lane): accuracy vs
+  monolithic + stability; prediction: error ~linear in the sync interval
+  N·Δt while N·Δt ≪ h²/c_v; pins the `-subcycle auto` formula. (b) Substep
+  M ∈ {1, 2, 5, 10} (fluid faster — implicit consolidation lane): coarse-Δt
+  Terzaghi with a step load, M BE fluid sub-steps per solid step, Δu
+  injected as a linear ramp; prediction: recovers the early-time pressure
+  transient a single BE step smears, at reused-factor cost. Pins the
+  `-substep` accuracy claim.
 - **E7.4 — fully-explicit fluid (P3b).** Lumped S*, forward p-step.
   Predictions: diffusion CFL slack by orders (numbers in ADR §3.4); coupled
   stability at the UNDRAINED-speed CFL, factor √((M_oed+K_f/n)/M_oed) vs the
@@ -105,9 +111,19 @@ pattern LadrunoPorousOverlay $tag -region {$e1 ...} -Kf $Kf -rhoF $rf \
     -perm $k1 $k2 <$k3> -poro $n -moduli $E $nu \
     <-layer {$eles} -perm ... <-poro $n> <-moduli $E $nu>> ... \
     -drained {$n1 ...} <-pInit ...> <-stab ...> <-fsL auto <$s>> \
-    <-onRemoval keep|drain $kF> <-fluidUpdate implicit> <-subcycle $N> \
+    <-onRemoval keep|drain $kF> <-fluidUpdate implicit> \
+    <-subcycle auto|$N | -substep $M> \
     <-record $file <$everyN>> <-fluidBody ...> <-dynSeepage on|off>
 ```
+
+- **Multirate, both directions** (adjudicated surface addition, 2026-07-13 —
+  fold into the ADR §4.1 at the next amendment): `-subcycle N` = fluid
+  advanced every N solid commits with the accumulated Δu (explicit lane;
+  fluid slower); `-substep M` = M backward-Euler fluid sub-steps per solid
+  commit with Δu linearly ramped, factored operator reused (implicit
+  consolidation lane; fluid faster — recovers the early-time transient a
+  single coarse BE step smears). Mutually exclusive flags; removal events
+  force a sync regardless of N; E7.3 pins both curves.
 
 - **v1 `-moduli $E $nu` is REQUIRED** (global or per-layer): the overlay does
   not own the solids' materials, so L and α-stab moduli come from explicit
