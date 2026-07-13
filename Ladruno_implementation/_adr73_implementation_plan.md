@@ -59,21 +59,36 @@ explicit-lane pins are dynamic questions.
   and "overlay needs a driver from day one").
 - **E7.2 — explicit solid + implicit fluid (the P3 lane), stability
   envelope.** CD solid (lumped M) with overlay forces; fluid advanced at
-  commit. Prediction (ADR §3.4): stable at the DRAINED-speed CFL (the implicit
-  fluid absorbs the undrained stiffening). Sweep Δt across
+  commit. Prediction (ADR §3.4; hedged ⟨A-7⟩ — the ZPC-1988 proof covers
+  their scheme, not our frozen-force variant): stable at the DRAINED-speed
+  CFL (the implicit fluid absorbs the undrained stiffening). Sweep Δt across
   [0.5·Δt_drained, 1.2·Δt_undrained⁻¹-scaled] and locate the empirical
-  boundary. THE load-bearing P3 pin.
-- **E7.3 — subcycle degradation curve.** N ∈ {1, 2, 5, 10, 20, 50}: accuracy
-  vs monolithic + stability. Prediction: error grows ~linearly in N·Δt while
-  N·Δt ≪ the diffusion time h²/c_v; pins the `-subcycle auto` formula.
+  boundary. THE load-bearing P3 pin — if the boundary lands at the undrained
+  speed instead, the P3 lane's Δt advisory defaults change, not the
+  architecture.
+- **E7.3 — multirate curves, BOTH directions.** (a) Subcycle N ∈
+  {1, 2, 5, 10, 20, 50} (fluid slower — explicit lane): accuracy vs
+  monolithic + stability; prediction: error ~linear in the sync interval
+  N·Δt while N·Δt ≪ h²/c_v; pins the `-subcycle auto` formula. (b) Substep
+  M ∈ {1, 2, 5, 10} (fluid faster — implicit consolidation lane): coarse-Δt
+  Terzaghi with a step load, M BE fluid sub-steps per solid step, Δu
+  injected as a linear ramp; prediction: recovers the early-time pressure
+  transient a single BE step smears, at reused-factor cost. Pins the
+  `-substep` accuracy claim.
 - **E7.4 — fully-explicit fluid (P3b).** Lumped S*, forward p-step.
   Predictions: diffusion CFL slack by orders (numbers in ADR §3.4); coupled
   stability at the UNDRAINED-speed CFL, factor √((M_oed+K_f/n)/M_oed) vs the
   drained pencil measured within ±20 %; L not needed (no iteration).
 - **E7.5 — removal-step consistency on the dynamic path.** Crack opens
   mid-CD-march (E4 scenario + inertia): prediction — physical stress-wave
-  transient only, no numerical artifact scaling with 1/Δt; `-onRemoval drain`
+  transient only, artifact quantified as the p-jump component that scales
+  with 1/Δt (gate: none above solver tolerance); `-onRemoval drain`
   kFactor sweep {1, 10, 100} monotone in drainage time.
+- **E7.6 — L-variant decision data ⟨A-2⟩.** classic α²/K_dr vs oedometric on
+  BOTH geometries (constrained column AND footing), compressible and
+  near-undrained: iters mean/max + any divergence. Prediction: classic never
+  diverges (KTJ proof); oedometric converges on both at ~3× fewer iters.
+  This is the number pair behind the `-fsL` default/opt-in split.
 
 **P0 exit:** ADR §7 P0 row verbatim + the FROZEN-constants block appended to
 this doc (E7.1 default, E7.2 envelope, E7.3 auto-N formula, E7.4 factor).
@@ -104,10 +119,27 @@ core touch).
 pattern LadrunoPorousOverlay $tag -region {$e1 ...} -Kf $Kf -rhoF $rf \
     -perm $k1 $k2 <$k3> -poro $n -moduli $E $nu \
     <-layer {$eles} -perm ... <-poro $n> <-moduli $E $nu>> ... \
-    -drained {$n1 ...} <-pInit ...> <-stab ...> <-fsL auto <$s>> \
-    <-onRemoval keep|drain $kF> <-fluidUpdate implicit> <-subcycle $N> \
+    <-alpha $biotAlpha> <-Ks $Ks>            \;# defaults 1.0 / infinite ⟨A-4⟩
+    <-thick $t>                              \;# 2D regions, default 1.0 ⟨A-4⟩
+    -drained {$n1 ...} <-pInit ...> <-stab ...> \
+    <-fsL classic | oedometric | $scale>     \;# default classic α²/K_dr ⟨A-2⟩;
+                                              ;#   $scale floors at oedometric
+    <-staticMode hold | steady>              \;# static commits: domain "time" is
+                                              ;#   the load factor ⟨A-3⟩ — never
+                                              ;#   march the fluid on Δλ
+    <-onRemoval keep|drain $kF> <-fluidUpdate implicit> \
+    <-subcycle auto|$N | -substep $M> \
     <-record $file <$everyN>> <-fluidBody ...> <-dynSeepage on|off>
 ```
+
+- **Multirate, both directions** (adjudicated surface addition, 2026-07-13 —
+  fold into the ADR §4.1 at the next amendment): `-subcycle N` = fluid
+  advanced every N solid commits with the accumulated Δu (explicit lane;
+  fluid slower); `-substep M` = M backward-Euler fluid sub-steps per solid
+  commit with Δu linearly ramped, factored operator reused (implicit
+  consolidation lane; fluid faster — recovers the early-time transient a
+  single coarse BE step smears). Mutually exclusive flags; removal events
+  force a sync regardless of N; E7.3 pins both curves.
 
 - **v1 `-moduli $E $nu` is REQUIRED** (global or per-layer): the overlay does
   not own the solids' materials, so L and α-stab moduli come from explicit
@@ -139,25 +171,51 @@ pattern LadrunoPorousOverlay $tag -region {$e1 ...} -Kf $Kf -rhoF $rf \
   uSnapshot_), `revertFluid()` (drop trial). fs1 = advanceTrial+commitFluid
   back-to-back inside the Domain::commit hook. The P2 iterated driver calls
   advanceTrial repeatedly before one commitFluid — no P2 rewrite.
-- **Force application:** override `applyLoad(time)` → per region node
-  `node->addUnbalancedLoad(+Q·p_committed slice)` with factor 1 (pattern
-  TimeSeries/factor ignored — one-line notice at creation). Sign: force =
-  **+Q·p** on the skeleton (compression-positive p; toy convention
-  `u = K⁻¹(f + Q p)`; the sequencing contract test pins it physically).
-- **Hook:** `Domain::commit()` gains one guarded block (classTag == 33022 →
-  static_cast → `overlay->onDomainCommit()`), following the
+  Serialization pin ⟨A-10⟩: `pCommitted_` travels in sendSelf; `uSnapshot_`
+  is NOT serialized — recvSelf re-derives it from committed node
+  displacements (they travel with the nodes), keeping restart exact.
+- **Region-overlap guards ⟨A-13⟩:** at snapshot, fatal if (i) any region
+  element is claimed by another LadrunoPorousOverlay (overlays discoverable
+  via Domain::getLoadPatterns — classTag 33022 scan), or (ii) any region
+  element is a monolithic u-p element (classTag 33017 LadrunoUP or upstream
+  UP tags) — double-counted fluid. Battery covers both fatals.
+- **Force application** ⟨A-5 verified mechanics⟩: override `applyLoad(time)`
+  → per region node `node->addUnbalancedLoad(+Q·p_committed slice)` — the
+  exact H5DRM mechanism (H5DRMLoadPattern.cpp:897). Call-path facts (pinned,
+  verified): transient integrators apply loads ONCE per step via
+  `AnalysisModel::updateDomain(time,dT)` → `Domain::update(newTime,dT)` →
+  `applyLoad` (Domain.cpp:2381); iteration-time `updateDomain()` skips load
+  application; `formUnbalance` only READS nodal unbalance
+  (IncrementalIntegrator.cpp:145–165); `Domain::applyLoad` zeroes all nodal
+  unbalance first (Domain.cpp:2060–2074). So commit-refreshed forces reach
+  the solid at the NEXT newStep — no re-application assumption anywhere.
+  ArcLength-family integrators call applyLoadDomain mid-step → documented
+  UNSUPPORTED with the overlay at P1 (parser cannot see the integrator; the
+  guide + a battery smoke own it). Sign: force = **+Q·p** on the skeleton
+  (compression-positive p; toy convention `u = K⁻¹(f + Q p)`; the
+  sequencing contract test pins it physically). Bit-constancy test observes
+  `ops.nodeUnbalance` between iterations under Static, Newmark, AND CD.
+- **Hook:** `Domain::commit()` gains one guarded block at the ADR-39
+  contact-hook slot (Domain.cpp:2233 — AFTER node/element commitState,
+  BEFORE `committedTime = currentTime; dT = 0` at :2246–2247, so committed
+  disps are final and Δt is still readable there ⟨A-5⟩), following the
   `LadrunoContactDomain` include precedent (Domain.cpp:82). Honors
-  `-subcycle`: advance every Nth commit, else only re-snapshot removal state.
-  Fallback if the panel kills it: applyLoad new-step detection (documented,
-  not implemented speculatively).
+  `-subcycle`; under a STATIC analysis (detected per `-staticMode`, ⟨A-3⟩)
+  it never marches the fluid — `hold` keeps p, `steady` re-solves
+  H·p = f_seep. Fallback if the panel kills the hook: applyLoad new-step
+  detection (documented, not implemented speculatively).
 - **Removal rescan:** at each hook firing, region elements checked against the
   Domain; newly-dead cells → Q_e dropped, H/S per `-onRemoval` (drain →
   k×kFactor in those cells, refactor/re-setup CG operator). Dead-cell GP set
   never shrinks the fluid measure under `keep`.
 - **`-record $file <$everyN>`**: CSV `time, p(node1..nodeN)` — the gate-facing
   output until P4's proper channels. Region node order written once as a
-  header row.
+  header row; file opened truncate (restart overwrites — documented).
 - **dynSeepage default off** (ADR-71 §12 amendment inherited).
+- **Test files ⟨A-11⟩:** `tests/test_ladruno_overlay_physics.py` (1.E-i),
+  `tests/test_ladruno_overlay_framework.py` (1.E-ii) — Zone-B (fork-local)
+  per the testbed convention; `python -S` runner discipline. New C++ files
+  into `stamp_headers.py` GLOBS — owned by 1.C.
 
 **LEDGER_quirks rows queued at P1:** (i) overlay pattern factor/TimeSeries
 ignored by design; (ii) honest-p LadrunoUP + upstream CentralDifference =
