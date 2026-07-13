@@ -505,10 +505,20 @@ const Vector &LadrunoCSTPair::getResistingForceIncInertia(void)
   for (int t = 0; t < numtri && !haveRho; t++)
     haveRho = (theMaterial[t]->getRho() != 0.0);
 
+  // SNAPSHOT the shared static P into a local BEFORE getRayleighDampingForces():
+  // with stiffness-proportional Rayleigh (betaK) that call re-enters
+  // getTangentStiff() -> formPair(1) -> P.Zero()+refill, silently destroying the
+  // f_int − Q + M·a just accumulated (inertia + ground-motion load dropped —
+  // Newton converges to a WRONG dynamic solution). LadrunoBrick/SolidShell donor
+  // pattern; see LEDGER_quirks "getResistingForceIncInertia MUST snapshot".  // Ladruno
+  static Vector res(ndf);
+
   if (!haveRho) {
     this->getResistingForce();
+    res = P;
     if (betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0)
-      P += this->getRayleighDampingForces();
+      res += this->getRayleighDampingForces();
+    P = res;
     return P;
   }
 
@@ -519,15 +529,13 @@ const Vector &LadrunoCSTPair::getResistingForceIncInertia(void)
     a[2 * n + 1] = accel(1);
   }
   this->getResistingForce();
-  // P is the shared static scratch getMass() also writes through K — snapshot
-  // pattern not needed here because getMass writes K, not P; but Rayleigh
-  // MUST come after the inertia add (getRayleighDampingForces reuses P? no —
-  // it returns its own vector). Keep the LadrunoCST ordering exactly.
   this->getMass();
   for (int i = 0; i < ndf; i++)
     P(i) += K(i, i) * a[i];
+  res = P;
   if (alphaM != 0.0 || betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0)
-    P += this->getRayleighDampingForces();
+    res += this->getRayleighDampingForces();
+  P = res;
   return P;
 }
 
