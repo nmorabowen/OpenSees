@@ -26,9 +26,26 @@ gate. Eight gates, the 3.C-PL pins verbatim:
   (vi)  straight-side guard: a curved mid-edge node -> loud setDomain error and
         a deactivated (singular) element, not a crash.
   (vii) BT6-TH static steady-seepage exactness: a linear-p patch test recovers
-        the manufactured linear field at the free interior vertex to ~machine
-        and the Darcy flux == -k̄·∇p exactly (the P1 gate-4 analog).
+        the manufactured linear field at the free interior vertex to ~machine,
+        the Darcy flux == -k̄·∇p exactly, AND the per-GP porePressure values ==
+        the field at the 3-pt rule points (the P1 gate-4 analog).
   (viii)BTET10-TH 1D consolidation smoke vs the Terzaghi series (loose 5%).
+
+Panel-hardening additions (P3 adversarial panel, post-battery):
+  (ix)  TH transient-block FD gate (the P1 test-8 pattern ported to one BT6-TH):
+        central-FD of reactions('-dynamic') w.r.t. nodal vel/accel on a fully-
+        penalty-prescribed 15-DOF element. Gates: Cpu == (-Kup)^T (the honest-p
+        transpose relation, Kup from a free-floating static printA), Cpp == the
+        ANALYTIC compacted storage S, Cuu/Cup ~ 0 without Rayleigh, mass p-rows
+        AND p-cols zero (-dynSeepage off), Muu symmetric with x-direction total
+        == rho*Area*thick. Makes the compacted-basis Q^T/S/M correctness self-
+        contained instead of riding on the B1 physics gate.
+  (x)   '-dynSeepage on' (the element DEFAULT) TH gate: same FD rig; the
+        dR/da p-rows now carry +G = int dNp^T kbar rhoF Nu dV (checked against
+        the ANALYTIC G — every Bernstein Nu integrates to A/6) while the
+        transient printA effective tangent keeps A[p,u] == c2*Q^T exactly (G
+        stays OUT of the tangent, mirroring the P1 dyn-seepage quantification).
+        The only P3 test exercising the element-default configuration.
 
 --------------------------------------------------------------------------
 THE TH MODELING DANCE (verified working, this build):
@@ -636,7 +653,15 @@ def test_vii_bt6_steady_seepage_linear_exact():
     vertices; the interior vertex p is left FREE. The P1 vertex-pressure Laplacian
     reproduces a linear field exactly, so the solved interior p == field(0.5,0.5)
     = 3.5 to ~machine, and the per-GP Darcy flux == -k̄·∇p = -1e-4*(2,3) exactly
-    at every Gauss point (the P1 gate-4 steady-seepage exactness analog)."""
+    at every Gauss point (the P1 gate-4 steady-seepage exactness analog).
+
+    Panel addition: the eleResponse('porePressure') VALUES are gated against the
+    exact field at the 3-pt interior rule points. BT6 GP g carries barycentric
+    weight 2/3 on element-node g and 1/6 on the other two (LadrunoUPShapes.h
+    pinned rule {(1/6,1/6),(2/3,1/6),(1/6,2/3)}), so under the affine map
+    x_gp(g) = 2/3*v_g + 1/6*v_{g+1} + 1/6*v_{g+2} and the expected value is
+    pfield(x_gp). Measured on element 1 (v=(0,0),(1,0),(.5,.5)):
+    [1.75, 2.75, 3.0] — matching the GP-g <-> node-g convention."""
     def pfield(x, y):
         return 1.0 + 2.0 * x + 3.0 * y
 
@@ -698,6 +723,20 @@ def test_vii_bt6_steady_seepage_linear_exact():
             qx, qy = fx[2 * gp], fx[2 * gp + 1]
             assert abs(qx - (-kx * 2.0)) <= 1e-9 * abs(kx * 2.0) + 1e-15, (e, gp, qx)
             assert abs(qy - (-ky * 3.0)) <= 1e-9 * abs(ky * 3.0) + 1e-15, (e, gp, qy)
+    # panel addition: porePressure VALUES == the exact linear field at the 3-pt
+    # rule points (GP g: barycentric 2/3 on node g, 1/6 on the others)
+    for e, (a, b, c) in enumerate(tris, start=1):
+        pp = ops.eleResponse(e, "porePressure")
+        assert len(pp) == 3
+        verts = [np.array(V[a]), np.array(V[b]), np.array(V[c])]
+        for gp in range(3):
+            xgp = (2.0 / 3.0) * verts[gp] \
+                + (1.0 / 6.0) * verts[(gp + 1) % 3] \
+                + (1.0 / 6.0) * verts[(gp + 2) % 3]
+            expect = pfield(xgp[0], xgp[1])
+            assert abs(pp[gp] - expect) <= 1e-9 * max(1.0, abs(expect)), (
+                f"ele {e} GP {gp}: porePressure {pp[gp]} != field {expect} "
+                f"at {tuple(xgp)}")
 
 
 # ==========================================================================
@@ -920,3 +959,268 @@ def test_viii_btet10_terzaghi_consolidation_smoke():
         assert abs(U_fem[Tv] - terzaghi_U(Tv)) < 0.12, (
             f"U(Tv={Tv}) fem {U_fem[Tv]:.4f} vs series {terzaghi_U(Tv):.4f} "
             "outside the loose 0.12 smoke band")
+
+
+# ==========================================================================
+# (ix)/(x) TH transient-block FD gates — the P1 test-8 pattern on one BT6-TH
+# ==========================================================================
+# Single BT6-TH on the unit right triangle v1=(0,0) v2=(1,0) v3=(0,1);
+# mid-edges m12=(.5,0) m23=(.5,.5) m31=(0,.5). 15 DOFs, node-major under the
+# Plain numberer: n1(ux,uy,p) n2(ux,uy,p) n3(ux,uy,p) n4(ux,uy) n5(ux,uy)
+# n6(ux,uy) -> u-DOF slots _THU, carrier-p slots _THP (the COMPACTED basis).
+_THU = [0, 1, 3, 4, 6, 7, 9, 10, 11, 12, 13, 14]
+_THP = [2, 5, 8]
+_TH_KF, _TH_PORO, _TH_RHOF, _TH_KBAR = 5000.0, 0.4, 1.0, 1.0e-4
+_TH_RHO = 2.0
+_TH_AREA = 0.5                     # unit right triangle
+_TH_THICK = 1.0
+
+# state points for the FD probes (order: n1 u,u,p | n2 u,u,p | n3 u,u,p |
+# n4 u,u | n5 u,u | n6 u,u) — random-ish, nonzero everywhere it matters
+_THX0 = np.array([0.0, 0.0, 0.5, 0.01, -0.005, 2.0, 0.008, 0.012, 3.0,
+                  -0.003, 0.009, 0.004, -0.006, 0.002, 0.007])
+_THV0 = np.array([0.001, -0.002, 0.03, 0.002, 0.001, -0.02, -0.001, 0.003,
+                  0.05, 0.0, -0.001, 0.002, 0.001, -0.002, 0.001])
+_THA0 = np.array([0.01, -0.02, 0.3, 0.02, 0.01, -0.2, -0.01, 0.03, 0.5,
+                  0.0, -0.01, 0.02, 0.01, -0.02, 0.01])
+
+_TH_FD_DOFS = [(1, 3), (2, 3), (3, 3), (4, 2), (5, 2), (6, 2)]  # (node, ndf)
+
+
+def _bt6_th_blocks_analytic():
+    """Independent numpy oracle for the BT6-TH compacted blocks on the unit
+    right triangle (thick t, area A):
+      dNp   — constant gradients of the linear barycentric carrier basis
+              [L1, L2, L3] (carrier order == element node order):
+              grad L1 = (-1,-1), grad L2 = (1,0), grad L3 = (0,1).
+      S     = (1/Qbar) * t * (A/12) * [[2,1,1],[1,2,1],[1,1,2]]
+              (exact: ∫ Li Lj dA = A/12 off-diagonal, A/6 diagonal; the 3-pt
+              interior rule integrates quadratics exactly).
+      G     = ∫ dNp^T k̄ ρf Nu dV: every Bernstein-quadratic u-shape (Li² and
+              2LiLj alike) integrates to A/6, so
+              G[b, (a,i)] = k̄_i * ρf * dNp[b,i] * t * A/6  (independent of a).
+    """
+    A, t = _TH_AREA, _TH_THICK
+    ooQ = _TH_PORO / _TH_KF        # alpha=1, Ks infinite -> 1/Qbar = n/Kf
+    dNp = np.array([[-1.0, -1.0], [1.0, 0.0], [0.0, 1.0]])
+    S = ooQ * t * (A / 12.0) * np.array([[2.0, 1.0, 1.0],
+                                         [1.0, 2.0, 1.0],
+                                         [1.0, 1.0, 2.0]])
+    G = np.zeros((3, 12))
+    for b in range(3):
+        for a in range(6):
+            for i in range(2):
+                G[b, 2 * a + i] = _TH_KBAR * _TH_RHOF * dNp[b, i] * t * A / 6.0
+    return S, G
+
+
+def _bt6_th_args(dyn):
+    return ["-Kf", _TH_KF, "-poro", _TH_PORO, "-rhoF", _TH_RHOF,
+            "-perm", _TH_KBAR, _TH_KBAR, "-pOrder", "linear",
+            "-dynSeepage", dyn]
+
+
+def _bt6_th_fd_build(xvec, dyn):
+    """One BT6-TH with EVERY one of the 15 DOFs penalty-prescribed to xvec and
+    one static step solved (constraints('Penalty') — Transformation on a fully-
+    prescribed rig leaves zero free equations and FullGenLinSOE dies; P1 donor
+    pattern)."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 3)
+    ops.node(1, 0.0, 0.0)
+    ops.node(2, 1.0, 0.0)
+    ops.node(3, 0.0, 1.0)
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.node(4, 0.5, 0.0)
+    ops.node(5, 0.5, 0.5)
+    ops.node(6, 0.0, 0.5)
+    ops.nDMaterial("ElasticIsotropic", 1, 1.0e4, 0.2, _TH_RHO)
+    ops.element("LadrunoUP", 1, 1, 2, 3, 4, 5, 6, 1, *_bt6_th_args(dyn))
+    ops.timeSeries("Constant", 1)
+    ops.pattern("Plain", 1, 1)
+    k = 0
+    for nd, nf in _TH_FD_DOFS:
+        for d in range(1, nf + 1):
+            ops.sp(nd, d, float(xvec[k]))
+            k += 1
+    ops.system("FullGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Penalty", 1e12, 1e12)
+    ops.integrator("LoadControl", 1.0)
+    ops.algorithm("Linear")
+    ops.analysis("Static")
+    assert ops.analyze(1) == 0
+
+
+def _bt6_th_dyn_resid(xvec, vvec, avec, dyn):
+    """getResistingForceIncInertia residual (15-vector): static state from
+    xvec, trial rates imposed, reactions('-dynamic') gathered node-major."""
+    _bt6_th_fd_build(xvec, dyn)
+    k = 0
+    for nd, nf in _TH_FD_DOFS:
+        for d in range(1, nf + 1):
+            ops.setNodeVel(nd, d, float(vvec[k]), "-commit")
+            ops.setNodeAccel(nd, d, float(avec[k]), "-commit")
+            k += 1
+    ops.reactions("-dynamic")
+    R = np.zeros(15)
+    k = 0
+    for nd, nf in _TH_FD_DOFS:
+        rr = ops.nodeReaction(nd)
+        for d in range(nf):
+            R[k] = rr[d]
+            k += 1
+    return R
+
+
+def _bt6_th_printA(dyn, transient, dt=0.1, gamma=0.6, beta=0.3025):
+    """Assembled tangent of the free-floating single BT6-TH via printA under
+    Plain numbering (equation order == node-major DOF order; donor pattern).
+    static    -> A = [Kuu, -Q; 0, H]
+    transient -> A = Ktot + c2*C + c3*M (Newmark)."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 3)
+    ops.node(1, 0.0, 0.0)
+    ops.node(2, 1.0, 0.0)
+    ops.node(3, 0.0, 1.0)
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.node(4, 0.5, 0.0)
+    ops.node(5, 0.5, 0.5)
+    ops.node(6, 0.0, 0.5)
+    ops.nDMaterial("ElasticIsotropic", 1, 1.0e4, 0.2, _TH_RHO)
+    ops.element("LadrunoUP", 1, 1, 2, 3, 4, 5, 6, 1, *_bt6_th_args(dyn))
+    ops.timeSeries("Constant", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(3, 0.0, 0.0, 0.0)
+    ops.system("FullGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    if transient:
+        ops.integrator("Newmark", gamma, beta)
+        ops.algorithm("Linear")
+        ops.analysis("Transient")
+        assert ops.analyze(1, dt) == 0
+    else:
+        ops.integrator("LoadControl", 1.0)
+        ops.algorithm("Linear")
+        ops.analysis("Static")
+        assert ops.analyze(1) == 0
+    A = np.array(ops.printA("-ret"))
+    N = int(round(len(A) ** 0.5))
+    assert N == 15
+    return A.reshape(N, N).T          # printA is COLUMN-major -> transpose
+
+
+def _bt6_th_fd_C_M(dyn, h=1e-5):
+    """Central-FD of the '-dynamic' reactions w.r.t. nodal velocities (-> C)
+    and accelerations (-> M), 15x15 each."""
+    Cfd = np.zeros((15, 15))
+    for j in range(15):
+        vp = _THV0.copy()
+        vp[j] += h
+        vm = _THV0.copy()
+        vm[j] -= h
+        Cfd[:, j] = (_bt6_th_dyn_resid(_THX0, vp, _THA0, dyn)
+                     - _bt6_th_dyn_resid(_THX0, vm, _THA0, dyn)) / (2 * h)
+    Mfd = np.zeros((15, 15))
+    for j in range(15):
+        ap = _THA0.copy()
+        ap[j] += h
+        am = _THA0.copy()
+        am[j] -= h
+        Mfd[:, j] = (_bt6_th_dyn_resid(_THX0, _THV0, ap, dyn)
+                     - _bt6_th_dyn_resid(_THX0, _THV0, am, dyn)) / (2 * h)
+    return Cfd, Mfd
+
+
+@pytest.mark.t1
+def test_ix_th_transient_block_fd_gate():
+    """(panel hardening 1) The P1 FD pattern on one BT6-TH, -dynSeepage OFF:
+    central-FD of reactions('-dynamic') w.r.t. vel/accel on the fully-penalty-
+    prescribed 15-DOF rig, cross-checked against the free-floating static
+    printA and the independent numpy oracle. Gates:
+      * Cpu == (-Kup)^T          — the honest-p transpose relation on the
+        COMPACTED carrier basis (Q assembled from the same Np both places);
+        1e-6 rel (panel critic measured 6.2e-8).
+      * Cpp == S (analytic)      — compacted storage present and exact.
+      * Cuu == Cup == 0          — no Rayleigh set, no stab on TH.
+      * mass p-rows AND p-cols 0 — dynSeepage off: the p-equation carries no
+        acceleration term at all.
+      * Muu symmetric, x-direction total == rho*Area*thick (Bernstein
+        partition of unity; critic measured 3e-9 rel).
+    Makes the TH compacted-basis Q^T/S/M correctness self-contained instead of
+    riding on the B1 physics gate."""
+    S_ex, _ = _bt6_th_blocks_analytic()
+    Ka = _bt6_th_printA("off", transient=False)
+    Kup = Ka[np.ix_(_THU, _THP)]                    # = -Q (honest-p static)
+    assert np.max(np.abs(Ka[np.ix_(_THP, _THU)])) == 0.0   # static pu block = 0
+    qs = np.max(np.abs(Kup))
+    assert qs > 0.0
+
+    Cfd, Mfd = _bt6_th_fd_C_M("off")
+
+    # --- damping blocks ---
+    cs = max(qs, float(np.max(np.abs(S_ex))))
+    rel_t = np.max(np.abs(Cfd[np.ix_(_THP, _THU)] - (-Kup).T)) / qs
+    assert rel_t < 1e-6, f"honest-p transpose relation Cpu != (-Kup)^T: {rel_t:.2e} rel"
+    rel_s = np.max(np.abs(Cfd[np.ix_(_THP, _THP)] - S_ex)) / np.max(np.abs(S_ex))
+    assert rel_s < 1e-6, f"compacted storage Cpp != S analytic: {rel_s:.2e} rel"
+    assert np.max(np.abs(Cfd[np.ix_(_THU, _THU)])) < 1e-6 * cs   # no Rayleigh
+    assert np.max(np.abs(Cfd[np.ix_(_THU, _THP)])) < 1e-6 * cs   # damp up = 0
+
+    # --- mass blocks ---
+    Muu = Mfd[np.ix_(_THU, _THU)]
+    ms = float(np.max(np.abs(Muu)))
+    assert ms > 0.0
+    assert np.max(np.abs(Mfd[:, _THP])) < 1e-9 * ms, "mass p-cols not zero"
+    assert np.max(np.abs(Mfd[np.ix_(_THP, _THU)])) < 1e-9 * ms, (
+        "mass p-rows not zero with -dynSeepage off")
+    # symmetry is FD-measured, so the floor is ulp(R)/(2h) ~ 1e-10 abs
+    # (measured 1.8e-10 = 2.7e-9 rel), not the analytic 0 — gate at 1e-6 rel
+    assert np.max(np.abs(Muu - Muu.T)) < 1e-6 * ms, "Muu not symmetric"
+    xsl = slice(0, 12, 2)                            # x-direction u-DOF slots
+    total_x = float(np.sum(Muu[xsl, xsl]))
+    m_exact = _TH_RHO * _TH_AREA * _TH_THICK
+    assert abs(total_x - m_exact) < 1e-6 * m_exact, (
+        f"Muu x-total {total_x} != rho*A*t = {m_exact}")
+
+
+@pytest.mark.t1
+def test_x_th_dynseepage_on_default_config():
+    """(panel hardening 2) The element-DEFAULT '-dynSeepage on' configuration —
+    the only P3 test exercising it. Same FD rig: the dR/da p-rows must now carry
+    the +G dynamic-seepage residual coupling (∫ dNp^T k̄ ρf Nu dV, checked
+    against the ANALYTIC block — every Bernstein u-shape integrates to A/6)
+    while G stays OUT of the assembled tangent: the transient printA p-row/u-col
+    block equals c2*Q^T exactly, with the mismatch bound far below the c3*G
+    footprint a leaked G would leave (the P1 dyn-seepage quantification,
+    TH edition). Mass p-COLS stay zero either way."""
+    S_ex, G_ex = _bt6_th_blocks_analytic()
+    gs = float(np.max(np.abs(G_ex)))
+    assert gs > 0.0
+
+    _, Mfd = _bt6_th_fd_C_M("on")
+    Gfd = Mfd[np.ix_(_THP, _THU)]
+    rel_g = np.max(np.abs(Gfd - G_ex)) / gs
+    assert rel_g < 1e-6, (
+        f"dyn-seepage accel coupling != analytic G: {rel_g:.2e} rel "
+        f"(FD max {np.max(np.abs(Gfd)):.3e}, analytic max {gs:.3e})")
+    ms = float(np.max(np.abs(Mfd[np.ix_(_THU, _THU)])))
+    assert np.max(np.abs(Mfd[:, _THP])) < 1e-9 * ms, "mass p-cols not zero"
+
+    # G stays OUT of the tangent: transient effective A = Ktot + c2*C + c3*M
+    # has A[p,u] == c2*Q^T (no c3*G term). Q from the static printA (-Kup).
+    dt, gamma, beta = 0.1, 0.6, 0.3025
+    c2 = gamma / (beta * dt)
+    c3 = 1.0 / (beta * dt * dt)
+    Ka = _bt6_th_printA("on", transient=False)
+    Q = -Ka[np.ix_(_THU, _THP)]
+    At = _bt6_th_printA("on", transient=True, dt=dt, gamma=gamma, beta=beta)
+    dev = np.max(np.abs(At[np.ix_(_THP, _THU)] - c2 * Q.T))
+    scal = float(np.max(np.abs(At)))
+    assert dev < 1e-8 * scal, (
+        f"transient A[p,u] != c2*Q^T (G leaked into the tangent?): dev {dev:.3e}")
+    # and the gate is DISCRIMINATING: a leaked G would move A[p,u] by ~c3*|G|,
+    # orders above the accepted mismatch
+    assert dev < 0.01 * c3 * gs, (
+        f"gate not discriminating: dev {dev:.3e} vs c3*Gmax {c3 * gs:.3e}")

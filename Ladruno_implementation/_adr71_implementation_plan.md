@@ -475,6 +475,39 @@ as the P1 batteries. Battery target runtime ≤90 s per file.
   - 1.D `configureSizing()` ctor/recvSelf shared helper: APPROVED (anti-drift).
   - Rayleigh shadow of non-virtual getRayleighDampingForces: verified safe —
     zero external callers in SRC/domain + SRC/analysis (element-internal only).
+- 2026-07-11 — **P3 EXECUTED** (3.B element TH enablement + 2 battery agents +
+  MAIN integration fix: builder-NDF gate deferred past shape detection — the
+  TH modeling dance legally leaves the builder at ndf=ndm). Suite 50+1xfail.
+  B1 ZCB80 gate: independent u-p closed form (per-mode exponential
+  referencing), graded BT6-TH column — Q̄=1e4 leg |p̂| L2 1.47% / |û| 0.06%;
+  Q̄=1e9 leg no-checkerboard + monotone convergence; Bernstein edge-thirds
+  consistent loading; uniform meshes CANNOT pass B1 (5 cm boundary layer —
+  graded mesh is load-bearing).
+- 2026-07-11 — **P3 adversarial panel #2 (3 Opus critics): ALL PASS, zero
+  defects.** Highlights: C1 re-derived the dispersion quadratic + independent
+  FD solver confirming the B1 oracle (<0.5%); winding-fold reasoning airtight
+  (only the measure folds; signed-J gradients are true spatial gradients);
+  C2 — the ADR-70 βK-Rayleigh P-clobber class is STRUCTURALLY ABSENT
+  (distinct resid_/rayForce_, experiment 3.2e-30) and the |detJ| fold is
+  measure-exact (ΣRz = ρgV at 0 relerr on a folded RH tet); C3 — three-route
+  oracle cross-check table all ✓, element-level TH transient blocks correct
+  (honest-p transpose Cpu=(−Kup)ᵀ at 6.2e-8). **Adjudications:**
+  - "quadratic-u rate > 2" pin REFUTED for B1 (u inherits the pressure
+    boundary-layer rate ~1.0–1.2 through coupling); replaced by the STRONGER
+    parabola-exactness proof (1.5e-14; exact P2 reproduction) — C1 concurs;
+    ADR/guide rewording lands with the P4 guide.
+  - porePressure response = per-GP (matches ADR §4.4 "porePressure (GP)");
+    WP1.A pin wording corrected; note for future shapes where nGP ≠ nP.
+  - B1 density literalism (ρ=2000 as mixture, ADR lists grain+water):
+    self-consistent, gated quantities ρ-insensitive; one-line note for the
+    P4 guide when citing B1.
+  - Panel-recommended hardening APPLIED (3.C-PL amendment): TH transient-
+    block FD gate, -dynSeepage-on default-config smoke, porePressure value
+    gate on the linear-field patch.
+  - Guide notes for P4: -stab off is fatal on TH (arg lists can't be shared
+    across mixed meshes); re-recv different-shape material-leak wrinkle
+    (unreachable via broker path); bbar-on-TH legal but ungated (formulation
+    axis is P1/P2 scope).
 - 2026-07-11 — **P1 SHIPPED** (PR #557 merged, squash 94dcf9b8d; manifest-row
   CI gate learned: every new ELE_TAG #define needs a testbed/manifest.yaml
   row). P2 branch `feature/adr71-p2`; WP2.A pins frozen.
