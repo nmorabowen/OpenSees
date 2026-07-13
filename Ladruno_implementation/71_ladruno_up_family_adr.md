@@ -958,4 +958,29 @@ transcripts). Confirmed defects, all repaired in-place (⟨tags⟩ mark the edit
   `-stab off` (stabilization targets the undrained/checkerboard limit, not
   wave physics).
 
+- 2026-07-13 (P7 pre-study) — **meshless-p / staggered-seam spike**
+  (`adr71_meshless_p_spike/`, numpy-oracle idiom, RESULTS.md + 6 plots).
+  Question probed: replace the FE pressure interpolation with a meshless
+  (MLS) field. Verdicts: **GP-cloud p REFUTED structurally** (pressure space
+  4× richer than u ⇒ nP−nU_free = 158 spurious Schur modes at every support
+  radius; skeleton locks to 9–27% of reference settlement); node-cloud MLS =
+  expensive non-cure (checkerboard persists); centroid cloud = rediscovered
+  weaker stabilization. **Genuine payoff isolated and measured**: a fluid
+  measure decoupled from solid element life-cycle — after element removal,
+  monolithic u-p traps p (0.35q at Tv=1.5) vs persistent fluid drains
+  (0.025q, Tv90=0.99). **The staggered architecture was then tried
+  end-to-end and works**: fixed-stress split (solid-first sweep + final
+  momentum resolve; oedometric L = α²/(K_dr+4G/3)·M_p — 3 iters vs 11 for
+  classic α²/K_dr, 0.5× oedometric diverges; naive drained split diverges
+  in 4 steps at soil coupling) + persistent FEM pressure overlay ≡
+  monolithic BE (crack curve 0.00%, Terzaghi 2.8e-8); both sub-solves SPD
+  (symmetric solvers return — offsets the honest-p unsymmetric-tangent
+  cost), factorization ×3.3 cheaper, per-step ~2× at 3 iters (3–9
+  problem-dependent, degrades toward the incompressible-impermeable limit).
+  Implementation trap pinned: a fluid-first sweep with a stale-u predictor
+  self-"converges" to p≡0 on the first iterate — any P7 staggered
+  integrator must gate against it. Feeds §6/P7; overlay realization beats
+  meshless as the starting point (meshless stays the large-deformation
+  upgrade path).
+
 *(filled as phases land; move to `Ladruno_internal/` when complete)*
