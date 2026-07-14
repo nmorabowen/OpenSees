@@ -235,6 +235,9 @@ class LadrunoPorousOverlay : public LoadPattern
   // restart carriers (recvSelf → remapped in buildSnapshot by node tag)
   std::vector<int>    loadedPNodeTags_;
   std::vector<double> loadedP_, loadedDp_;
+  int    dbTag2_;                            // payload Vector's own channel tag
+                                             // (FileDatastore same-size clobber
+                                             //  guard — see OV_NDATA note)
 
   // CSR (region-node × region-node; single shared pattern for H, S*, L)
   std::vector<int>    rowptr_;
@@ -249,6 +252,10 @@ class LadrunoPorousOverlay : public LoadPattern
   std::vector<double> dpCommitted_;          // previous committed increment (rate ref)
   std::vector<double> pTrial_;
   std::vector<double> uSnapshot_;            // region u at last fluid advance (N*ndm)
+  bool   uSnapshotValid_;                    // false after DB restore: re-derive
+                                             // LAZILY at first use (⟨A-10⟩ —
+                                             // restore-time node state is not
+                                             // ordering-safe, measured 1.E-ii)
 
   // subcycle / record bookkeeping
   bool   subcycleResolved_;

@@ -127,12 +127,13 @@ LadrunoPorousOverlay::LadrunoPorousOverlay(
    pInitListNodes_(pInitListNodes), pInitListVals_(pInitListVals),
    layers_(layers),
    recordFile_(recordFile ? recordFile : ""), recordEveryN_(recordEveryN),
-   snapshotOk_(false), pLoadedFromRestart_(false),
+   snapshotOk_(false), uSnapshotValid_(false), pLoadedFromRestart_(false),
    nRegionNodes_(0),
    minEdge_(0.0), maxCv_(0.0),
    subcycleResolved_(subcycleMode == SC_FIXED),
    commitsSinceSync_(0), dtAccum_(0.0), recordCount_(0),
-   seriesNoticeShown_(false), fsLFloorWarned_(false), hasSeries_(false)
+   seriesNoticeShown_(false), fsLFloorWarned_(false), hasSeries_(false),
+   dbTag2_(0)
 {
   for (int i = 0; i < 3; i++) {
     permGlobal_[i] = permGlobal[i];
@@ -153,10 +154,11 @@ LadrunoPorousOverlay::LadrunoPorousOverlay()
    dynSeepage_(0),
    pInitMode_(PI_ZERO), pInitGw_(0.0), pInitZw_(0.0),
    recordEveryN_(1),
-   snapshotOk_(false), pLoadedFromRestart_(false),
+   snapshotOk_(false), uSnapshotValid_(false), pLoadedFromRestart_(false),
    nRegionNodes_(0), minEdge_(0.0), maxCv_(0.0),
    subcycleResolved_(true), commitsSinceSync_(0), dtAccum_(0.0), recordCount_(0),
-   seriesNoticeShown_(false), fsLFloorWarned_(false), hasSeries_(false)
+   seriesNoticeShown_(false), fsLFloorWarned_(false), hasSeries_(false),
+   dbTag2_(0)
 {
   for (int i = 0; i < 3; i++) { permGlobal_[i] = 0.0; fluidBody_[i] = 0.0; }
 }
@@ -389,9 +391,18 @@ int LadrunoPorousOverlay::buildSnapshot(void)
   }
   pTrial_ = pCommitted_;
 
-  // uSnapshot_ = current committed region displacements (⟨A-10⟩ re-derived on
-  // restart from the committed disps that travel with the nodes).
-  this->readRegionDisp(uSnapshot_);
+  // uSnapshot_ = current committed region displacements. On a DB restore the
+  // node state is NOT guaranteed restored yet at snapshot time (measured
+  // non-deterministic divergence, 1.E-ii finding) — defer the ⟨A-10⟩
+  // re-derivation to the first use (applyLoad/onDomainCommit), when the
+  // committed disps are reliably the restore-instant values.
+  if (pLoadedFromRestart_) {
+    uSnapshot_.assign((size_t)nRegionNodes_ * ndm_, 0.0);
+    uSnapshotValid_ = false;
+  } else {
+    this->readRegionDisp(uSnapshot_);
+    uSnapshotValid_ = true;
+  }
 
   commitsSinceSync_ = 0;
   dtAccum_ = 0.0;
@@ -829,6 +840,27 @@ int LadrunoPorousOverlay::advanceTrial(bool firstOfStep, double dt)
   for (int i = 0; i < N; i++)
     rhs[i] = SLp0[i] + Ldp[i] - QtDu[i] + dt * fseep_[i];
 
+  if (getenv("LADRUNO_OVERLAY_DEBUG") != 0) {
+    double nq = 0, nd = 0, np0 = 0, nu = 0, nuc = 0;
+    std::vector<double> ucur;
+    this->readRegionDisp(ucur);
+    for (size_t i = 0; i < uSnapshot_.size(); i++) {
+      nu += uSnapshot_[i] * uSnapshot_[i];
+      nuc += ucur[i] * ucur[i];
+    }
+    for (int i = 0; i < N; i++) {
+      nq += QtDu[i] * QtDu[i];
+      nd += dpref[i] * dpref[i];
+      np0 += pCommitted_[i] * pCommitted_[i];
+    }
+    opserr << "OVDBG advanceTrial first=" << (firstOfStep ? 1 : 0)
+           << " dt=" << dt << " |p0|=" << sqrt(np0)
+           << " |dpref|=" << sqrt(nd) << " |QtDu|=" << sqrt(nq)
+           << " |uSnap|=" << sqrt(nu) << " |ucur|=" << sqrt(nuc)
+           << " p0[0..2]=" << pCommitted_[0] << "," << pCommitted_[1]
+           << "," << pCommitted_[2] << "\n";
+  }
+
   // warm start = last trial; drained rows carry the prescribed (committed) value
   std::vector<double> x = pTrial_;
   for (int i = 0; i < N; i++) if (isDrained_[i]) x[i] = pCommitted_[i];
@@ -894,6 +926,10 @@ int LadrunoPorousOverlay::onDomainCommit(double domainTime, double dT)
     opserr << "ERROR LadrunoPorousOverlay " << this->getTag()
            << " -- onDomainCommit on an INVALID overlay (snapshot failed)\n";
     return -1;
+  }
+  if (!uSnapshotValid_) {          // restore happened and no applyLoad yet:
+    this->readRegionDisp(uSnapshot_);   // committed disps = restore instant
+    uSnapshotValid_ = true;
   }
   if (fluidUpdate_ == FU_EXPLICIT) {
     opserr << "ERROR LadrunoPorousOverlay " << this->getTag()
@@ -970,6 +1006,10 @@ void LadrunoPorousOverlay::applyLoad(double time)
 {
   (void)time;
   if (!snapshotOk_) return;
+  if (!uSnapshotValid_) {          // deferred post-restore baseline (⟨A-10⟩)
+    this->readRegionDisp(uSnapshot_);
+    uSnapshotValid_ = true;
+  }
 
   if (hasSeries_ && !seriesNoticeShown_) {
     seriesNoticeShown_ = true;
@@ -999,6 +1039,14 @@ void LadrunoPorousOverlay::applyLoad(double time)
       nd->addUnbalancedLoad(load);
     }
     (void)nrows;
+  }
+
+  if (getenv("LADRUNO_OVERLAY_DEBUG") != 0) {
+    double np = 0;
+    for (int i = 0; i < nRegionNodes_; i++)
+      np += pCommitted_[i] * pCommitted_[i];
+    opserr << "OVDBG applyLoad t=" << time << " |pC|=" << np
+           << " uSnapValid=" << (uSnapshotValid_ ? 1 : 0) << "\n";
   }
 }
 
@@ -1052,7 +1100,13 @@ void LadrunoPorousOverlay::recordRow(double t)
 //  pCommitted_ AND dpCommitted_ (⟨A-10⟩: dpCommitted_ is NOT re-derivable;
 //  uSnapshot_ is NOT serialized — re-derived from committed node disps).
 // ===========================================================================
-static const int OV_NDATA = 38;
+// 38 config/count slots + slot 38 = the payload Vector's OWN dbTag.
+// FileDatastore keys stored objects by (dbTag, commitTag, size) per type: two
+// Vectors on ONE dbTag whose sizes coincide silently overwrite each other
+// (measured: a payload of exactly 38 doubles clobbered this scalar block on
+// restore — 1.E-ii pInit-list crash). The payload therefore travels under its
+// own channel dbTag, transmitted here (the upstream matDbTag idiom).
+static const int OV_NDATA = 39;
 
 int LadrunoPorousOverlay::sendSelf(int commitTag, Channel& theChannel)
 {
@@ -1105,6 +1159,9 @@ int LadrunoPorousOverlay::sendSelf(int commitTag, Channel& theChannel)
   data(35) = nRN;
   data(36) = fLen;
   data(37) = sumLayEle;
+  if (dbTag2_ == 0)
+    dbTag2_ = theChannel.getDbTag();        // payload Vector's own tag (see OV_NDATA note)
+  data(38) = dbTag2_;
   if (theChannel.sendVector(dbTag, commitTag, data) < 0) {
     opserr << "WARNING LadrunoPorousOverlay::sendSelf " << this->getTag()
            << " -- failed to send scalar data\n";
@@ -1145,7 +1202,7 @@ int LadrunoPorousOverlay::sendSelf(int commitTag, Channel& theChannel)
   }
   for (int i = 0; i < nRN; i++) vdata(v++) = pCommitted_[i];
   for (int i = 0; i < nRN; i++) vdata(v++) = dpCommitted_[i];
-  if (vSize > 0 && theChannel.sendVector(dbTag, commitTag, vdata) < 0) {
+  if (vSize > 0 && theChannel.sendVector(dbTag2_, commitTag, vdata) < 0) {
     opserr << "WARNING LadrunoPorousOverlay::sendSelf " << this->getTag()
            << " -- failed to send Vector payload\n";
     return -1;
@@ -1201,6 +1258,7 @@ int LadrunoPorousOverlay::recvSelf(int commitTag, Channel& theChannel,
   int nRN  = (int)data(35);
   int fLen = (int)data(36);
   int sumLayEle = (int)data(37);          // transmitted so the ID is exactly sized
+  dbTag2_  = (int)data(38);               // payload Vector's own tag
   if (recordEveryN_ < 1) recordEveryN_ = 1;
   if (subcycleN_ < 1)    subcycleN_ = 1;
 
@@ -1235,7 +1293,7 @@ int LadrunoPorousOverlay::recvSelf(int commitTag, Channel& theChannel,
   // ---- Vector payload -------------------------------------------------------
   int vSize = nPI + 6 * nLay + 2 * nRN;
   Vector vdata(vSize > 0 ? vSize : 1);
-  if (vSize > 0 && theChannel.recvVector(dbTag, commitTag, vdata) < 0) {
+  if (vSize > 0 && theChannel.recvVector(dbTag2_, commitTag, vdata) < 0) {
     opserr << "WARNING LadrunoPorousOverlay::recvSelf -- failed to recv Vector\n";
     return -1;
   }
