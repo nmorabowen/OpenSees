@@ -80,6 +80,12 @@ void* OPS_TimeSeriesIntegrator();
 // so ops.pattern('H5DRM', ...) returned "unknown pattern type" (Tcl-only before).
 void* OPS_H5DRMLoadPattern();
 #endif
+// Ladruno (ADR-73): expose LadrunoPorousOverlay to openseespy. Same OPS_ factory
+// as the Tcl path (OPS_LadrunoPorousOverlay.cpp); here the interpreter has already
+// reset the arg cursor and OPS_GetString() below consumes the type token, so the
+// cursor sits on the tag when the factory runs (identical to the H5DRM wiring).
+// Always built (no _H5DRM-style guard) — the overlay is a core fork feature.
+void* OPS_LadrunoPorousOverlay();
 
 namespace {
     static LoadPattern* theActiveLoadPattern = 0;
@@ -128,6 +134,12 @@ int OPS_Pattern()
 
     }
 #endif
+    // Ladruno (ADR-73): persistent-fluid staggered u-p overlay pattern.
+    else if (strcmp(type, "LadrunoPorousOverlay") == 0) {
+	theActiveLoadPattern = (LoadPattern*)OPS_LadrunoPorousOverlay();
+	pattern = theActiveLoadPattern;
+
+    }
     else {
 	opserr<<"WARNING unknown pattern type"<<type<<"\n";
 	return -1;
