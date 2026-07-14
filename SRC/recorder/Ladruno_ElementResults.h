@@ -1581,6 +1581,23 @@ namespace detail {
 					int custom_rule_dimension;
 					getGeometryAndIntRuleByClassTag(elem_type, geom_type, int_rule_type, custom_rule_dimension);
 					/*
+					Ladruno — ADR 72 P2 (debt a): LadrunoBrick20 carries TWO GP
+					layouts under ONE class tag (-formulation std = 27-pt brcshl
+					= Hexahedron_GaussLegendre_3; uri = 8-pt z-fastest
+					lexicographic = exactly the Hexahedron_GaussLegendre_2 /
+					Brick table). The class-tag table above cannot discriminate,
+					so honor the element's basisInfo self-description PER
+					ELEMENT here: numGP == 8 reroutes to GL2; anything else
+					(27, or an element that doesn't answer) keeps the legacy
+					GL3 path byte-identical. Mixed std/uri meshes are fine —
+					elements group by rule WITHIN the class-tag collection.
+					*/
+					if (elem_type == ELE_TAG_LadrunoBrick20) {
+						BasisInfo uri_probe = getElementBasisInfo(current_element);
+						if (uri_probe.valid && uri_probe.num_gp == 8)
+							int_rule_type = ElementIntegrationRuleType::Hexahedron_GaussLegendre_2;
+					}
+					/*
 					map by class tag
 					*/
 					ElementWithSameClassTagCollection &elem_coll_by_tag = items[elem_type];
@@ -1940,7 +1957,10 @@ namespace detail {
 					elem_class_tag == ELE_TAG_Twenty_Node_Brick ||
 					// ./ladrunoBrick — LadrunoBrick20 std shares the brcshl 27-pt rule +
 					// serendipity node order with Twenty_Node_Brick BY DESIGN (ADR 72 §2.5:
-					// materialPointers[L] pairs with Ladruno::hex20::GP27[L])  // Ladruno
+					// materialPointers[L] pairs with Ladruno::hex20::GP27[L]). NB: this
+					// class-tag arm is the STD default; a uri element is rerouted to
+					// GaussLegendre_2 per element via its basisInfo probe at the mapping
+					// site (ADR 72 P2 debt a).  // Ladruno
 					elem_class_tag == ELE_TAG_LadrunoBrick20 ||
 					// ./up
 					elem_class_tag == ELE_TAG_Twenty_Eight_Node_BrickUP

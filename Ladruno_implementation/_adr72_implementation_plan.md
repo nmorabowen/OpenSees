@@ -95,7 +95,7 @@ Goal: the 27-pt element, correctness anchored by the **reduce-to
 | 1.7 | **[USER] decision — RESOLVED 2026-07-10: BOTH.** Guide documents the softening caveat AND the element emits a one-time `opserr` advisory at `setDomain` when the attached material exposes a "damage" response (probe via the cached-Response pattern from `LadrunoBrick::damageResponse`; advisory only, run proceeds). Folded into tasks 1.1 (element) + 1.4 (a test asserting the advisory fires once for ASDConcrete3D-class materials and never for elastic/J2) + 1.6 (guide). | ~~[USER]~~ done |
 | 1.8 | PR-2 assembly, build + battery green locally, CI watch. | **[FABLE]** |
 
-- [ ] P1 landed (PR #___)
+- [x] P1 landed ([PR #561](https://github.com/nmorabowen/OpenSees/pull/561), squash 4fa7b8ff2; Gmsh hex20 side-fix [PR #564](https://github.com/nmorabowen/OpenSees/pull/564))
 
 ---
 
@@ -158,6 +158,55 @@ due at P1). U2 — PR merges are auto once CI is green; no other user gate.
 ---
 
 ## Orchestration log (loop state — newest first)
+
+- **2026-07-13, iteration 13: P2 VERIFIED LOCALLY — all gates green, PR
+  assembly.** Build green (full + banner-TU incremental). Batteries:
+  uri 25/25 + P1 std regression 23/23 + sibling LadrunoBrick 20/20 + ASD
+  mesh-objectivity 8/8 + Gmsh hex20 round-trip 2/2 + P0 kernel harness 8/8.
+  TWO adjudications during the run (both re-signed, spec amendment 5 +
+  quirk ledger): (1) **S5 pins were over-tight, NOT an ADR errata** — probe
+  sweep n=4/8/16: at ν=0.3 both formulations share the ~3.5% coarse-mesh +
+  beam-reference shortfall (gap 0.012, both →~0.99 refined) → contrast
+  gates (both ≥0.95, gap ≤0.03); at ν=0.4999 std LOCKS exactly as predicted
+  (0.749 ≤ 0.90 — escalation pin untouched) and uri relieves partially
+  (0.891; halves the error) → uri ≥ 0.85 + uri−std ≥ 0.10, consistent with
+  §3.4's own "not a mixed element" wording. Guide numbers updated to
+  measured values. (2) **S8 Print-JSON test mechanism**: bare
+  `printModel('-JSON')` emits NOTHING (upstream interpreter treats -JSON as
+  flag-only; Domain::Print only runs in the filename branch) → test rewritten
+  to `-file` + read-back; LEDGER_quirks entry added. Task 2.4 escalation:
+  NOT triggered (census 12 modes + oracle-subspace 3e-8, block clean,
+  stack pathology 3e-13, std locks, Barlow 3.7e-10 vs 3.9e-2, S9 0.63
+  diluted). Task 2.5 /code-review low: no findings. NEXT: commit + PR off
+  ladruno + CI watch.
+
+- **2026-07-13, iteration 12: P2 `uri` STAGED (branch
+  guppi/second-order-elements-290952) — build + battery run pending.**
+  Task 2.2 DONE FIRST per the review map: five test specs signed as
+  `_adr72_p2_test_specs.md` (S0–S9; S0 = the P2 anchor is the P0 sympy
+  oracle, NOT an upstream reduce-to — no reduced H20 exists upstream; 4
+  amendments re-signed during implementation, see the spec header). NB an
+  Opus-classifier outage blocked Agent/PowerShell for most of the session
+  (the iteration-1 failure mode) — the orchestrator implemented 2.1 + 2.3
+  solo per the iteration-2 staging precedent. Task 2.1 staged: uri path in
+  `LadrunoBrick20.{h,cpp}` (NGPU=8 + `nGP()` single source, uri second
+  geometry cache at GP8, mass/body/volume pinned 27-pt with uri rho from
+  point 0, blocked per-node BᵀDB = debt b, basisInfo/integrationPoints/
+  integrationWeights probes IDs 101–103, wire: fixed 27-slot layout streams
+  nGP() materials + stale-slot cleanup + Ki drop, coerce-guard retargeted to
+  unknown ordinals); factory accepts uri|reduced; recorder seam (debt a) =
+  per-element basisInfo probe at the mapping site reroutes 33018-uri to the
+  EXISTING `Hexahedron_GaussLegendre_2` (order == GP8 z-fastest — no custom
+  rule needed; std byte-identical). Task 2.3 staged:
+  `tests/test_ladrunoBrick20_uri.py` (S0–S9), P1 battery retrofitted (debt
+  c: oracle imports replace `_shape_h20`/`_gp27_brcshl`/`_NODE_XI`; uri
+  acceptance replaces the rejection test). Bookkeeping: guide selection
+  table + response/scope updates (incl. the stale Gmsh row → #564 fixed),
+  ledger row, manifest notes, banner line (patch_banner regen pending).
+  NEXT: build green → `python -S` battery (new + P1 + sibling + kernel) →
+  S3/S5 escalation check (task 2.4) → /code-review low (2.5) → commit + PR
+  off ladruno (2.6, one PR this branch) + measured S4/S5/S9 numbers into the
+  guide.
 
 - **2026-07-13, iteration 11: #564 MERGED (8e8b623b3) — P0+P1+Gmsh runway
   COMPLETE, loop CLOSED.** Shipped this loop: #548 (P0 kernel+oracle+33018),
