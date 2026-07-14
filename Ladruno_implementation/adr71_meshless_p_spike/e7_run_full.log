@@ -1,0 +1,129 @@
+==============================================================================
+E7.1  fs1 sequencing: no-resolve vs resolve vs monolithic (dt-halving)
+==============================================================================
+  PREDICTION (plan): no-resolve O(dt), factor <= 2x vs resolve.
+  Pre-run caveats: resolve+classic floors (du=0 degeneracy);
+  plain (fixed-point L) floors for EITHER L (double-counted
+  compliance).  Pre-registered repair: fs1_extrap (KTJ rate form)
+  predicted O(dt) both L variants, stable, plain-analyze flow.
+  -- compressible (Kf=2.2e+09), t_end=Tv0.1, L classic=1.500e-07 oed=8.333e-08
+     fs1_plain    L=classic  err(dt-halving): 6.080e-01  6.105e-01  6.117e-01  6.123e-01  6.127e-01   order: -0.01 -0.00 -0.00 -0.00
+                  late-window(Tv>.02): 6.068e-01  6.063e-01  6.064e-01  6.064e-01  6.064e-01   order: +0.00 -0.00 -0.00 -0.00
+     fs1_resolve  L=classic  err(dt-halving): 4.125e-01  4.131e-01  4.135e-01  4.136e-01  4.137e-01   order: -0.00 -0.00 -0.00 -0.00
+                  late-window(Tv>.02): 4.057e-01  4.063e-01  4.066e-01  4.067e-01  4.068e-01   order: -0.00 -0.00 -0.00 -0.00
+     fs1_extrap   L=classic  err(dt-halving): 1.136e-01  8.185e-02  5.856e-02  4.172e-02  2.964e-02   order: +0.47 +0.48 +0.49 +0.49
+                  late-window(Tv>.02): 1.910e-02  9.428e-03  4.588e-03  2.266e-03  1.126e-03   order: +1.02 +1.04 +1.02 +1.01
+     fs1_plain    L=oed      err(dt-halving): 6.741e-01  6.683e-01  6.396e-01  5.975e-01  5.503e-01   order: +0.01 +0.06 +0.10 +0.12
+                  late-window(Tv>.02): 6.896e-01  6.602e-01  6.238e-01  5.710e-01  5.143e-01   order: +0.06 +0.08 +0.13 +0.15
+     fs1_resolve  L=oed      err(dt-halving): 1.045e-03  1.209e-03  1.356e-03  1.469e-03  1.544e-03   order: -0.21 -0.17 -0.12 -0.07
+                  late-window(Tv>.02): 5.544e-04  5.640e-04  5.692e-04  5.718e-04  5.732e-04   order: -0.02 -0.01 -0.01 -0.00
+     fs1_extrap   L=oed      err(dt-halving): 9.720e-04  1.040e-03  1.036e-03  9.434e-04  7.888e-04   order: -0.10 +0.01 +0.13 +0.26
+                  late-window(Tv>.02): 9.177e-05  4.530e-05  2.254e-05  1.125e-05  5.618e-06   order: +1.02 +1.01 +1.00 +1.00
+     anchor vs E6 (fs1-resolve, oed, 400 steps): 8.88e-04  (E6 recorded 9e-4 class)
+  -- near-undrained (Kf=2.2e+12), t_end=Tv0.1, L classic=1.500e-07 oed=8.333e-08
+     fs1_plain    L=classic  err(dt-halving): 6.085e-01  6.109e-01  6.122e-01  6.128e-01  6.131e-01   order: -0.01 -0.00 -0.00 -0.00
+                  late-window(Tv>.02): 6.072e-01  6.068e-01  6.068e-01  6.069e-01  6.069e-01   order: +0.00 -0.00 -0.00 -0.00
+     fs1_resolve  L=classic  err(dt-halving): 4.130e-01  4.136e-01  4.139e-01  4.141e-01  4.142e-01   order: -0.00 -0.00 -0.00 -0.00
+                  late-window(Tv>.02): 4.062e-01  4.068e-01  4.070e-01  4.072e-01  4.072e-01   order: -0.00 -0.00 -0.00 -0.00
+     fs1_extrap   L=classic  err(dt-halving): 1.138e-01  8.199e-02  5.866e-02  4.180e-02  2.969e-02   order: +0.47 +0.48 +0.49 +0.49
+                  late-window(Tv>.02): 1.917e-02  9.460e-03  4.603e-03  2.273e-03  1.130e-03   order: +1.02 +1.04 +1.02 +1.01
+     fs1_plain    L=oed      err(dt-halving): 6.838e-01  6.862e-01  6.697e-01  6.411e-01  5.994e-01   order: -0.01 +0.04 +0.06 +0.10
+                  late-window(Tv>.02): 7.015e-01  6.828e-01  6.619e-01  6.262e-01  5.741e-01   order: +0.04 +0.04 +0.08 +0.13
+     fs1_resolve  L=oed      err(dt-halving): 1.046e-03  1.210e-03  1.357e-03  1.470e-03  1.545e-03   order: -0.21 -0.17 -0.12 -0.07
+                  late-window(Tv>.02): 5.552e-04  5.648e-04  5.699e-04  5.726e-04  5.739e-04   order: -0.02 -0.01 -0.01 -0.00
+     fs1_extrap   L=oed      err(dt-halving): 9.727e-04  1.041e-03  1.036e-03  9.442e-04  7.895e-04   order: -0.10 +0.01 +0.13 +0.26
+                  late-window(Tv>.02): 9.184e-05  4.534e-05  2.256e-05  1.126e-05  5.623e-06   order: +1.02 +1.01 +1.00 +1.00
+  ADJUDICATION:
+    fs1_plain|classic O(dt) convergent: False (plan predicted True)
+    fs1_resolve|classic error floor (caveat 1): True
+    fs1_extrap convergent/accurate (late window), compressible: True; near-undrained: True
+    (full-history extrap|classic order ~0.5 = step-load initial layer, one-step O(1) effect in an L2-of-history norm)
+    verdict: plan 'O(dt), <=2x' prediction REFUTED for BOTH plan flavors (fixed-point-L fs1 carries an O(1) storage floor; resolve+classic floors too; resolve+oed is a special-case match).  The consistent v1 single-pass is fs1_extrap -- the KTJ RATE-form L in the plain-analyze flow: O(dt) confirmed, no driver, no extra solid solve.
+==============================================================================
+E7.2  CD solid + implicit fluid at commit: stability envelope
+==============================================================================
+  discrete pencils: dt_dr=6.4600e-03  dt_und=4.2060e-04  ratio=15.36  (material formula sqrt(1+Kf/(n*Moed))=21.43)
+  PREDICTION: boundary/dt_dr in [0.8,1.2] for L=classic; L=0 boundary near dt_und (=0.065x); extrapolated rate-form (_x) expected to keep the large-L boundary (damping preserved) -- measured, not assumed
+    L=classic  boundary dt_cr=6.3746e-03  = 0.987 x dt_dr  = 15.16 x dt_und
+    L=oed      boundary dt_cr=6.0321e-03  = 0.934 x dt_dr  = 14.34 x dt_und
+    L=halfoed  boundary dt_cr=5.0369e-03  = 0.780 x dt_dr  = 11.98 x dt_und
+    L=zero     boundary dt_cr=4.1975e-04  = 0.065 x dt_dr  = 1.00 x dt_und
+    !! endpoint check failed (L=classic_x): stable(lo=2.103e-04)=False, stable(hi=9.690e-03)=False
+    L=classic_x boundary dt_cr=nan  = nan x dt_dr  = nan x dt_und
+    !! endpoint check failed (L=oed_x): stable(lo=2.103e-04)=False, stable(hi=9.690e-03)=False
+    L=oed_x    boundary dt_cr=nan  = nan x dt_dr  = nan x dt_und
+  ADJUDICATION:
+    classic-L boundary = 0.987 x drained pencil -> DRAINED-speed CFL CONFIRMED
+    L=0 boundary = 0.065 x drained (= 1.00 x undrained) -> undrained-governed as predicted
+    rate-form (implicit_x): UNSTABLE in the dynamic lane (endpoint check failed even at 0.5 x dt_und) -- the E7.1-consistent quasi-static form does NOT transfer to CD
+    NOTE: the drained-CFL stability of the fixed-point-L lane is a STABILITY result only -- E7.3 measures its O(1) diffusion-rate artifact; accuracy pins the dynamic default to L=0 at the undrained pencil.
+==============================================================================
+E7.3  multirate: (a) -subcycle N  (b) -substep M
+==============================================================================
+  (a) dt=2.103e-04s (=0.5 dt_und)  h^2/cv=4.206e-03s (=20.0 steps)  kbar inflated to 4.95e-06 (stated)
+  PREDICTION: L=0 lane -- err ~ linear in N (small N); stability at large N hedged (du grows with sync window); theta pin at err=2x err(N=1).  Artifact refs at N=1: fixed-point classic L (predicted large err) and rate form (predicted unstable).
+     [artifact ref] fixed-point classic-L N=1: stable=True  relL2=6.730e-01
+     [artifact ref] rate-form classic-L N=1: stable=True  relL2=6.681e+01
+     N=  1  stable=True  relL2(p vs exact @syncs)=1.470e-03  N*dt/tdiff=0.050
+     N=  2  stable=True  relL2(p vs exact @syncs)=3.357e-03  N*dt/tdiff=0.100
+     N=  5  stable=True  relL2(p vs exact @syncs)=1.008e-02  N*dt/tdiff=0.250
+     N= 10  stable=True  relL2(p vs exact @syncs)=2.264e-02  N*dt/tdiff=0.500
+     N= 20  stable=True  relL2(p vs exact @syncs)=5.321e-02  N*dt/tdiff=1.000
+     N= 50  stable=True  relL2(p vs exact @syncs)=2.464e-01  N*dt/tdiff=2.500
+     slopes(N): +1.19 +1.20 +1.17 +1.23 +1.67
+     theta pin: err doubles at N~1.8 -> theta = N*dt/(h^2/cv) = 0.089
+  ADJUDICATION (a): linear-in-N regime CONFIRMED; all-N stable=True
+  (b) coarse dt: Tv=0.05/step, 10 steps; reference: monolithic at dt/40
+  PREDICTION: error(M) monotone down; err(M=10) <= 0.4 x err(M=1)
+     M= 1  relL2(p vs fine monolithic @commits)=2.452e-01
+     M= 2  relL2(p vs fine monolithic @commits)=2.489e-01
+     M= 5  relL2(p vs fine monolithic @commits)=2.521e-01
+     M=10  relL2(p vs fine monolithic @commits)=2.534e-01
+  ADJUDICATION (b): monotone=False, err(M=10)/err(M=1)=1.03 -> prediction NOT met as stated
+==============================================================================
+E7.4  fully-explicit fluid: dual CFL
+==============================================================================
+  soil E10MPa: factor pred=21.43  dt_dr=6.460e-03  dt_und(pencil)=4.206e-04  pred dt_cr=3.014e-04
+    fluid diffusion CFL dt_diff=2.169e+00s -> slack = 7.2e+03 x the predicted coupled dt_cr
+    measured dt_cr=5.5672e-04 = 1.847 x prediction (measured factor 11.60 vs formula 21.43)  within +/-20%: False
+    measured/undrained-PENCIL = 1.324 (the scale the boundary actually tracks)
+  soil E25MPa: factor pred=12.82  dt_dr=3.857e-03  dt_und(pencil)=4.196e-04  pred dt_cr=3.008e-04
+    fluid diffusion CFL dt_diff=2.169e+00s -> slack = 7.2e+03 x the predicted coupled dt_cr
+    measured dt_cr=5.5314e-04 = 1.839 x prediction (measured factor 6.97 vs formula 12.82)  within +/-20%: False
+    measured/undrained-PENCIL = 1.318 (the scale the boundary actually tracks)
+  ADJUDICATION: undrained-factor formula REFUTED -- see ratios; diffusion slack by orders: True; L not needed below the boundary (scheme ran with lfac=0 throughout)
+==============================================================================
+E7.5  removal-jump consistency under inertia (E4 + CD)
+==============================================================================
+  dt0=4.197e-04s  kbar inflated to 6.07e-07 (stated) -> cv=20.42 m2/s, Tv=1.2 in 14000 steps
+  PREDICTION (i): no impulsive artifact -- commit jump must NOT grow as dt shrinks (d log|J|/d log dt >= 0); jump over the fixed window 20*dt0 must be dt-independent (spread < 10%).  [First-run formulation -- dt-independent COMMIT jump -- already REFUTED benignly: J_commit ~ dt^2.4, it vanishes instead.]
+     dt=dt0/1:  p(before)=0.8523 q   J_commit=-0.14807 q   J_window(20dt0)=-0.87162 q
+     dt=dt0/2:  p(before)=0.8523 q   J_commit=-0.02793 q   J_window(20dt0)=-0.87916 q
+     dt=dt0/4:  p(before)=0.8522 q   J_commit=-0.00387 q   J_window(20dt0)=-0.88447 q
+     commit-jump scaling: |J| ~ dt^2.63; window-jump spread = 1.47%
+  ADJUDICATION (i): no 1/dt artifact (J vanishes as dt^2.63) and the fixed-window jump is dt-consistent (1.47%) -> CONFIRMED (revised metric)
+  PREDICTION (ii): drainage time strictly monotone down in kFactor {1,10,100}
+     kFactor=  1:  Tv @ p(probe)<=0.1q = 1.004
+     kFactor= 10:  Tv @ p(probe)<=0.1q = 0.938
+     kFactor=100:  Tv @ p(probe)<=0.1q = 0.933
+  ADJUDICATION (ii): monotone in kFactor: CONFIRMED
+==============================================================================
+E7.6  -fsL decision data: classic vs oedometric, both geometries
+==============================================================================
+  PREDICTION: classic never diverges; oedometric ~3x fewer iters
+  column/compressible        L=classic  iters mean=  11.2 max= 18  diverged=False  maxit-hit=False
+  column/compressible        L=oed      iters mean=   3.3 max=  6  diverged=False  maxit-hit=False
+  column/compressible        L=halfoed  iters mean= 500.0 max=500  diverged=False  maxit-hit=True
+  footing/compressible       L=classic  iters mean=   4.3 max= 17  diverged=False  maxit-hit=False
+  footing/compressible       L=oed      iters mean=   2.8 max= 10  diverged=False  maxit-hit=False
+  column/near-undrained      L=classic  iters mean=  11.3 max= 18  diverged=False  maxit-hit=False
+  column/near-undrained      L=oed      iters mean=   3.3 max=  6  diverged=False  maxit-hit=False
+  footing/near-undrained     L=classic  iters mean=   4.3 max= 17  diverged=False  maxit-hit=False
+  footing/near-undrained     L=oed      iters mean=   2.8 max= 10  diverged=False  maxit-hit=False
+  ADJUDICATION:
+    classic divergence/maxit anywhere: False (prediction: False)
+    oedometric divergence/maxit anywhere: False
+    classic/oed iteration ratio: column/compressible=3.4x  footing/compressible=1.6x  column/near-undrained=3.4x  footing/near-undrained=1.6x
+    0.5x-oed cliff anchor (column/compressible): diverged=False maxit-hit=True (E6 recorded: diverges)
+==============================================================================
+done -- numbers: e7_summary.json; plots: e71_sequencing.png, e72_cfl_envelope.png, e73_multirate.png, e74_explicit_fluid.png, e75_removal_dynamic.png, e76_lvariant_iters.png

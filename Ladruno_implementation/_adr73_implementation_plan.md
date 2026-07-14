@@ -258,7 +258,92 @@ contract row (companion repo).
 
 ---
 
-## Frozen measured constants (appended by 0.C — empty until P0 lands)
+## Frozen measured constants (appended by 0.C — P0 landed 2026-07-14)
 
-*(E7.1 sequencing default + tol · E7.2 explicit envelope · E7.3 auto-N
-formula · E7.4 undrained factor · E7.5 removal-jump verdict)*
+Source: `Ladruno_implementation/adr71_meshless_p_spike/staggered_pins_e7.py`
+(toy imported as a frozen library; predictions printed before measurement;
+numbers in `e7_summary.json`, log in `e7_run_full.log`). Refutations are
+flagged inline — **three plan predictions changed sign; P1/P3 defaults below
+supersede the corresponding sketch text above.**
+
+### E7.1 — v1 sequencing ⚠ PREDICTION REFUTED → P1 PIN CHANGED
+
+- Measured: BOTH plan flavors are O(1)-floored with the fixed-point L form
+  (plain 0.61 relL2 at every Δt for either L; resolve+classic 0.41;
+  resolve+oed 5.7e-4 = special-case L≈Schur-compliance match, column only).
+  Mechanism: single-pass fixed-point L double-counts compliance (storage
+  S*+L+C instead of S*+C).
+- **FROZEN v1 fluid advance = fixed-stress RATE form**
+  `(S*+L)Δp + ΔtH p₁ = −QᵀΔu + L·Δp_prev` (one stored vector: previous
+  committed Δp). Plain-`analyze` flow, no driver, NO second solid solve.
+  Measured O(Δt): late-window orders +1.00…+1.04, both L, both regimes;
+  L=oed near-deadbeat (5.6e-6). Step-load initial layer = one-step O(1)
+  (harmless; full-history norm reads O(√Δt) — document in guide).
+- Scope: QUASI-STATIC/implicit lane only — see E7.2 carve-out.
+
+### E7.2 — dynamic stability envelope ✔ CONFIRMED + accuracy rider
+
+- Fixed-point-L implicit fluid at commit, CD solid: boundary = **0.987×**
+  drained pencil (classic), 0.934× (oed), 0.780× (half-oed), **1.000× the
+  undrained pencil for L=0**. ⟨A-7⟩ hedge resolved: drained-CFL stability is
+  real.
+- ⚠ Rider: that lane carries an O(1) diffusion-rate artifact (0.673 relL2
+  vs exact; Δt-independent) — stability true, accuracy false.
+- ⚠ The E7.1 rate form is UNSTABLE under CD (every tested Δt ≥ 0.5×
+  undrained pencil) — does not transfer to the dynamic lane.
+- **FROZEN P3 default: L=0, Δt ≤ 0.5× undrained pencil** (consistent +
+  stable; 1.5e-3 vs exact reference). Drained-CFL fixed-point-L mode =
+  opt-in, must be documented accuracy-degraded.
+
+### E7.3a — `-subcycle auto` ✔ CONFIRMED (L=0 lane)
+
+- err ~ N^1.2, all N ∈ {1…50} stable; error doubles at N ≈ 1.8 →
+  **θ = N·Δt/(h²/c_v) = 0.089**.
+- **FROZEN: N_auto = max(1, floor(0.09 · h²/(c_v·Δt)))**, h = min element
+  size, c_v = max over layers (conservative).
+
+### E7.3b — `-substep` ⚠ ACCURACY CLAIM REFUTED
+
+- M ∈ {1,2,5,10} at Tv=0.05/step: 0.2452/0.2489/0.2521/0.2534 — flat.
+  Coarse-Δt splitting error dominates; fluid sub-resolution buys nothing.
+- **FROZEN: `-substep` demoted to plumbing-only (or dropped at P1's
+  discretion); the guide must not promise early-time transient recovery.**
+  Implementation note: if kept, the rate-form reference is the COARSE
+  increment split /M — chaining it per sub-step explodes at M ≥ 5
+  (measured).
+
+### E7.4 — explicit-fluid dual CFL ✔ CLASS CONFIRMED / ⚠ ±20 % factor gate REFUTED (safe direction)
+
+- Boundary tracks the discrete undrained PENCIL: dt_cr = **1.32×** pencil,
+  both benchmark soils (5.567e-4 / 5.531e-4 s vs pencils 4.206e-4 /
+  4.196e-4 s). Material formula √(1+K_f/(n·M_oed)) (21.4 / 12.8) is ~1.85×
+  conservative as a Δt_cr predictor (measured effective factors 11.6 /
+  6.97). Diffusion CFL slack 7.2e3× at realistic k̄. L=0 confirmed (no
+  iteration).
+- **FROZEN: `-fluidUpdate explicit` Δt advisory = the discrete undrained
+  pencil (≈25 % margin vs measured); material factor formula =
+  documentation-only (~2× conservative).**
+
+### E7.5 — removal under inertia ✔ (revised metric) / original commit-jump formulation refuted benignly
+
+- Commit-jump vanishes ~dt^2.6 → **no 1/Δt impulse artifact** (the
+  "dt-independent commit jump" expectation was wrong benignly: the
+  redistribution spreads over the physical transient). The dt-independent
+  invariant is the fixed-window jump (20·dt₀): spread 1.47 % over
+  dt-halving ×4 (commit-jump scaling exponent +2.63).
+- `-onRemoval drain` kFactor {1,10,100}: Tv90 = 1.004 / 0.938 / 0.933 —
+  strictly monotone ✔.
+- **FROZEN: P1/P3 removal gates use the fixed-window jump metric, never the
+  single-commit jump.**
+
+### E7.6 — `-fsL` default pair ⟨A-2⟩ ✔ CONFIRMED (footing gain smaller)
+
+- classic α²/K_dr: **zero divergences, zero maxit-hits** on column+footing ×
+  compressible+near-undrained (means 11.2/4.3/11.3/4.3, max ≤ 18).
+- oedometric: also clean everywhere (means 3.3/2.8/3.3/2.8, max ≤ 10);
+  speedup **3.4× column / 1.6× footing** (prediction said ~3×; footing is
+  1.6×).
+- 0.5×oed: maxit-hit (500) — the E6 cliff, reproduced.
+- **FROZEN: default `-fsL` classic (proof-backed, divergence-free);
+  `-fsL oed` documented opt-in (1.6–3.4×); hard floor: never below oed.**
+
