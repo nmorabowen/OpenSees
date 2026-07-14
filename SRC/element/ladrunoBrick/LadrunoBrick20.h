@@ -32,18 +32,23 @@
 // (H8 = LadrunoBrick, quadratic Bezier simplex = BezierTet10). ADR 72.
 //
 //   element('LadrunoBrick20', tag, n1..n20, matTag,
-//           ['-formulation', <std|uri>]     # default std (v1: std only live)
+//           ['-formulation', <std|uri>]     # default std
 //           ['-lumped']                      # HRZ lumped mass (lands P3)
 //           ['-b', bx, by, bz]               # body force
 //           ['-damp', dampTag])              # Damping objects, per GP
 //
-// v1 (P1) scope — small strain, geometrically linear:
+// Small strain, geometrically linear:
 //   std  — full 3x3x3 (27-pt) Gauss displacement element. Reduce-to anchor:
 //          reproduces upstream Twenty_Node_Brick stiffness / resisting force /
 //          consistent mass to ~1e-12 on a distorted hex.
-//   uri  — uniform 2x2x2 (8-pt) reduced integration (the C3D20R analog). The
-//          enum ordinal (URI=1) is DECLARED and SERIALIZED now (append-only
-//          forever), but the formulation is parser-REJECTED until P2.
+//   uri  — uniform 2x2x2 (8-pt) reduced integration (the C3D20R analog; P2).
+//          8 material points at the Barlow (superconvergent-stress) points;
+//          MASS, body force and volume/lch stay 27-pt (formulation-independent
+//          BY DESIGN — ADR 72 §2.3/§3.5). Rank 48: 6 zero-energy modes on a
+//          lone element, non-communicable in any >=2-element 3D assembly but
+//          able to propagate down a single-element-thick stack — use std for
+//          eigen / single-stack / point-loaded / soft-support cases
+//          (ADR 72 §3.2 contract, pinned by the P2 battery).
 //
 // Deliberately NOT here (vs LadrunoBrick): no geom seam (linear only, no
 // SolidTransformation), no hourglass/ssp/eas machinery, no bulk viscosity.
@@ -74,8 +79,7 @@ class LadrunoBrick20 : public Element {
 
   // Formulation selector. Ordinals are SERIALIZED (packed into idData by
   // sendSelf) — append-only forever: STD keeps ordinal 0, URI keeps ordinal 1.
-  // v1 ships STD only; URI is parser-rejected until P2 but the ordinal is
-  // reserved now so a future stream loads back as the same element.  // Ladruno
+  // Both live since P2.  // Ladruno
   enum class Formulation { STD, URI };
 
   // null constructor (broker)
@@ -150,10 +154,17 @@ class LadrunoBrick20 : public Element {
 
   // -------- sizes (single source of truth; loop bounds derive from these) --
   static const int NEN  = 20;   // nodes
-  static const int NGP  = 27;   // Gauss points (std, full 27-pt)
+  static const int NGP  = 27;   // Gauss points, std full 27-pt (= array CAPACITY)
+  static const int NGPU = 8;    // Gauss points, uri reduced 2x2x2 (P2)
   static const int NDF  = 3;    // dofs per node
   static const int NDOF = 60;   // element dofs
   static const int NSTR = 6;    // stress/strain components (Voigt)
+
+  // Number of MATERIAL points of the active formulation. Every loop over
+  // materialPointers / theDamping / the stiffness-residual GP set derives its
+  // bound from here; the 27-pt MASS / body-force / volume integrals do NOT —
+  // they always run the full NGP rule (formulation-independent, ADR 72 §2.3).  // Ladruno
+  int nGP(void) const { return (formulation == Formulation::URI) ? NGPU : NGP; }
 
   // -------- private attributes --------
   ID connectedExternalNodes;          // 20 node numbers
@@ -189,6 +200,13 @@ class LadrunoBrick20 : public Element {
   double cachedDNdx[NGP][NEN][3];     // cartesian gradients at the 27 GPs
   double cachedDV[NGP];               // w_L * detJ_L
 
+  // uri-only second cache: the 8 reduced (Barlow) stiffness/residual points.
+  // The 27-pt cache above is ALWAYS built (mass / body force / volume / the
+  // detJ>0 gate run the full rule regardless of formulation); these ~4 KB are
+  // filled only when formulation == URI.  // Ladruno
+  double cachedDNdx8[NGPU][NEN][3];   // cartesian gradients at the 8 uri GPs
+  double cachedDV8[NGPU];             // w_L * detJ_L at the 8 uri GPs
+
   // U1 advisory (ADR 72 §3.7, RESOLVED BOTH): softening/crack-band materials on
   // quadratic elements are theory-shaky (lch = cbrt(V) mis-sizes a sub-cell
   // band). At setDomain, probe materialPointers[0] for a dual-scalar "damage"
@@ -204,10 +222,10 @@ class LadrunoBrick20 : public Element {
   // Not serialized.  // Ladruno
   static bool warnedLumped;
 
-  // URI ordinal defense (C++/wire surface): the parser rejects 'uri' until P2,
-  // but the public constructor and recvSelf coerce any non-STD ordinal to STD
-  // with a process-once notice, so Print/recorder metadata can never claim uri
-  // while computing std. Not serialized.  // Ladruno
+  // Formulation ordinal defense (wire surface): URI is live since P2, so the
+  // guard now only catches ordinals BEYOND the known set (a corrupt or
+  // future-version stream) — recvSelf coerces those to STD with a
+  // process-once notice instead of computing garbage. Not serialized.  // Ladruno
   static bool warnedUriCoerce;
 
   // -------- static workspace (sized 60) --------
@@ -218,7 +236,7 @@ class LadrunoBrick20 : public Element {
   // -------- private methods --------
   void buildGeometryCache(void);                 // fill N/dNdx/dv + detJ>0 gate (F1/F11)
   bool cacheUsable(const char *where);           // guard: emit-once + false when bad
-  void coerceFormulationToStd(const char *where);// URI ordinal defense (F8)
+  void coerceFormulationToStd(const char *where);// unknown-ordinal wire defense
   void formResidual(void);                       // B^T sigma (+ damping + body) Gauss loop
   void formStiffness(int initialFlag);           // shared B^T D B assembly (tangent/initial)
   void computeConsistentMass(void);              // 27-pt consistent mass into `mass`

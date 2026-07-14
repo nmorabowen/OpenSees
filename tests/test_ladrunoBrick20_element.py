@@ -22,7 +22,8 @@ On top of that (ADR 72 §6 P1 row):
     hand-lumping gravity onto quadratic-mesh nodes get the wrong answer,
   * lch = cbrt(V),
   * sendSelf/recvSelf database round-trip,
-  * parser rejections: 'uri' (lands P2), '-hourglass' (never, by design),
+  * parser surface: 'uri' ACCEPTED (P2 — contract battery in
+    test_ladrunoBrick20_uri.py), '-hourglass' rejected (never, by design),
     '-lumped' (accepted at parse with a process-once NOTICE; getMass errors
     "lands P3" once per process and falls back), trailing '-damp' (refused),
   * U1 advisory: a PROCESS-once opserr advisory when a "damage"-channel material
@@ -38,7 +39,6 @@ Plan: Ladruno_implementation/72_ladruno_second_order_brick_adr.md (+ the
 _adr72_implementation_plan companion).
 """
 import glob
-import math
 import os
 
 import pytest
@@ -437,8 +437,17 @@ def _refused(*extra):
     return 1 not in tags
 
 
-def test_formulation_uri_rejected_until_p2():
-    assert _refused("-formulation", "uri"), "'uri' must be refused (lands P2)"
+def test_formulation_uri_accepted_since_p2():
+    """P2: '-formulation uri' is LIVE — the element builds and exposes the
+    8-station response tree (the full uri contract lives in
+    test_ladrunoBrick20_uri.py)."""
+    _build_common()
+    ops.element("LadrunoBrick20", 1, *_CONN, 1, "-formulation", "uri")
+    tags = ops.getEleTags() or []
+    if isinstance(tags, int):
+        tags = [tags]
+    assert 1 in tags, "'uri' must be ACCEPTED (P2 shipped)"
+    assert len(ops.eleResponse(1, "stresses")) == 8 * 6
 
 
 def test_hourglass_hard_error_by_design():
@@ -575,45 +584,14 @@ def test_damage_advisory_fires_once_for_asdconcrete(capfd):
 # ==========================================================================
 # 9. LadrunoRecorder round-trip — GP rule + GLOBAL_GP_COORDS oracle
 # ==========================================================================
-# Independent Python serendipity H20 basis (transcribed from the ADR formulas,
-# not the C++), brcshl node order — used to predict x(xi_L) = sum N_i(xi_L) X_i.
-_NODE_XI = [
-    (-1, -1, -1), (1, -1, -1), (1, 1, -1), (-1, 1, -1),
-    (-1, -1, 1), (1, -1, 1), (1, 1, 1), (-1, 1, 1),
-    (0, -1, -1), (1, 0, -1), (0, 1, -1), (-1, 0, -1),
-    (0, -1, 1), (1, 0, 1), (0, 1, 1), (-1, 0, 1),
-    (-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0),
-]
-
-
-def _shape_h20(xi, eta, zeta):
-    N = []
-    for (xa, ya, za) in _NODE_XI:
-        if xa != 0 and ya != 0 and za != 0:      # corner
-            N.append(0.125 * (1 + xi * xa) * (1 + eta * ya) * (1 + zeta * za)
-                     * (xi * xa + eta * ya + zeta * za - 2.0))
-        elif xa == 0:
-            N.append(0.25 * (1 - xi * xi) * (1 + eta * ya) * (1 + zeta * za))
-        elif ya == 0:
-            N.append(0.25 * (1 - eta * eta) * (1 + xi * xa) * (1 + zeta * za))
-        else:
-            N.append(0.25 * (1 - zeta * zeta) * (1 + xi * xa) * (1 + eta * ya))
-    return N
-
-
-def _gp27_brcshl():
-    """The brcshl 27-pt table: 8 corners, 12 edge-mids (node-pattern order),
-    6 faces (+x,+y,+z,-x,-y,-z), centroid; coords at +-sqrt(3/5)."""
-    g = math.sqrt(3.0 / 5.0)
-    pts = [(xa * g, ya * g, za * g) for (xa, ya, za) in _NODE_XI]
-    pts += [(g, 0, 0), (0, g, 0), (0, 0, g), (-g, 0, 0), (0, -g, 0), (0, 0, -g)]
-    pts += [(0.0, 0.0, 0.0)]
-    return pts
-
-
+# The independent basis / GP tables come from the P0 sympy oracle
+# tests/hex20_reference.py (ADR 72 §6 P2 debt c: import, never re-transcribe —
+# ordering corrections can't drift). sympy is in the Zone-A env; without it
+# only this oracle-backed test skips.
 def test_ladruno_recorder_gp_roundtrip(tmp_path):
     h5py = pytest.importorskip("h5py")
     np = pytest.importorskip("numpy")
+    ref = pytest.importorskip("hex20_reference")
     os.environ.setdefault("HDF5_USE_FILE_LOCKING", "FALSE")
     out = str(tmp_path / "lb20.ladruno")
 
@@ -667,14 +645,13 @@ def test_ladruno_recorder_gp_roundtrip(tmp_path):
 
         # GP_PARAM == the brcshl 27-pt table (rule reuse: Hexahedron_GaussLegendre_3)
         gp = np.asarray(mg["QUADRATURE"]["GP_PARAM"][...], dtype=float).reshape(27, 3)
-        exp = np.asarray(_gp27_brcshl(), dtype=float)
-        assert np.allclose(gp, exp, atol=1e-14), "GP_PARAM != brcshl table"
+        assert np.allclose(gp, ref.GP27_F[:, :3], atol=1e-14), "GP_PARAM != brcshl table"
 
-        # GLOBAL_GP_COORDS == sum N_i(xi_L) X_i (independent serendipity eval)
+        # GLOBAL_GP_COORDS == sum N_i(xi_L) X_i (oracle sympy-derived basis)
         ggp = np.asarray(mg["GLOBAL_GP_COORDS"][...], dtype=float).reshape(27, 3)
         X = np.asarray([_NODES[t] for t in _CONN], dtype=float)
-        for L, (xi, eta, zeta) in enumerate(_gp27_brcshl()):
-            N = np.asarray(_shape_h20(xi, eta, zeta))
+        for L in range(27):
+            N, _ = ref.shape_numeric(tuple(ref.GP27_F[L, :3]))
             xg = N @ X
             assert np.allclose(ggp[L], xg, atol=1e-12), (
                 f"GLOBAL_GP_COORDS[{L}] {ggp[L]} != {xg}"
