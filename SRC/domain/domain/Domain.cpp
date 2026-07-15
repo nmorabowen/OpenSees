@@ -80,6 +80,7 @@
 #include <Recorder.h>
 #include <MeshRegion.h>
 #include <LadrunoContactDomain.h>   // Ladruno: ADR-39
+#include <LadrunoPorousOverlay.h>   // Ladruno: ADR-73
 #include <Analysis.h>
 #include <FE_Datastore.h>
 #include <FEM_ObjectBroker.h>
@@ -2241,6 +2242,31 @@ Domain::commit(void)
     // empty ⇒ needsResort()==false ⇒ byte-identical to stock + the ADR-39 path).
     if (theContactDomain != 0 && !contactAugmenting && theContactDomain->needsResort(this))
       this->domainChange();
+
+    // Ladruno (ADR-73): drive each LadrunoPorousOverlay pattern's staggered fluid
+    // advance at this same integrator-agnostic choke point. Placed AFTER the
+    // node/element commitState loops (committed displacements are final, so
+    // Delta-u = u^{n+1} - u^n is exact) and BEFORE the dT = 0.0 reset below (the
+    // fluid backward-Euler step still needs the timestep). A negative return code
+    // is a hard fluid-solve failure -> abort the commit with that code. Inert
+    // unless a 33022 pattern is present (a cheap scan of the load-pattern list;
+    // no overlay => byte-identical to stock).
+    {
+      LoadPatternIter &theOverlayPatterns = this->getLoadPatterns();
+      LoadPattern *theOverlayPattern;
+      while ((theOverlayPattern = theOverlayPatterns()) != 0) {
+        if (theOverlayPattern->getClassTag() == PATTERN_TAG_LadrunoPorousOverlay) {
+          int overlayRes =
+            ((LadrunoPorousOverlay *)theOverlayPattern)->onDomainCommit(currentTime, dT);
+          if (overlayRes < 0) {
+            opserr << "Domain::commit() - LadrunoPorousOverlay (tag "
+                   << theOverlayPattern->getTag()
+                   << ") onDomainCommit() FAILED, returned " << overlayRes << endln;
+            return overlayRes;
+          }
+        }
+      }
+    }
 
     // set the new committed time in the domain
     committedTime = currentTime;

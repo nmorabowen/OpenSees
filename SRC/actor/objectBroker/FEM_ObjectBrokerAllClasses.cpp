@@ -766,6 +766,8 @@
 #include "drm/H5DRMLoadPattern.h"
 #endif
 
+#include "ladrunoPorousOverlay/LadrunoPorousOverlay.h"	// N. Mora-Bowen (Ladruno) ADR 73
+
 #include "Parameter.h"
 #include "ElementParameter.h"
 #include "MaterialStageParameter.h"
@@ -2733,6 +2735,12 @@ FEM_ObjectBrokerAllClasses::getNewLoadPattern(int classTag)
     case PATTERN_TAG_H5DRM:
          return new H5DRMLoadPattern();
 #endif
+
+	// N. Mora-Bowen (Ladruno) ADR 73: reconstruct the pore-fluid overlay for
+	// DB/MPI restore. Requires a default (tag-less) LadrunoPorousOverlay() ctor.
+	case PATTERN_TAG_LadrunoPorousOverlay:
+	     return new LadrunoPorousOverlay();
+
 	default:
 	     opserr << "FEM_ObjectBrokerAllClasses::getPtrLoadPattern - ";
 	     opserr << " - no Load type exists for class tag ";

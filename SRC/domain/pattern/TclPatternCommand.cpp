@@ -71,6 +71,16 @@
 #include <H5DRMLoadPattern.h>
 #endif
 
+// Ladruno (ADR-73): the LadrunoPorousOverlay pattern is parsed by an elementAPI-
+// style OPS_ factory (in OPS_LadrunoPorousOverlay.cpp). We reach it through the
+// same reset/dispatch idiom TclSeriesCommand/TclElementCommands use — position
+// the arg cursor at the pattern tag, then call the factory, which returns a
+// LoadPattern* (or 0 on error).
+extern "C" int OPS_ResetInputNoBuilder(ClientData clientData, Tcl_Interp *interp,
+                                       int cArg, int mArg, TCL_Char **argv,
+                                       Domain *domain);
+extern void *OPS_LadrunoPorousOverlay();
+
 #include <string.h>
 
 #include <SimulationInformation.h>
@@ -593,6 +603,27 @@ TclPatternCommand(ClientData clientData, Tcl_Interp *interp,
       return TCL_OK;
     }
 #endif
+
+  // Ladruno (ADR-73): pattern LadrunoPorousOverlay $tag <flags...>. Self-contained
+  // (parses, adds, returns) like the H5DRM branch above. cArg = 2 puts the OPS_
+  // cursor on argv[2] = the pattern tag (element-command convention), so the
+  // factory reads the tag first, then the -region/-Kf/... flags.
+  else if (strcmp(argv[1],"LadrunoPorousOverlay") == 0) {
+      OPS_ResetInputNoBuilder(clientData, interp, 2, argc, argv, theDomain);
+      void *theResult = OPS_LadrunoPorousOverlay();
+      if (theResult == 0) {
+          opserr << "WARNING could not create LadrunoPorousOverlay pattern " << patternID << endln;
+          return TCL_ERROR;
+      }
+      thePattern = (LoadPattern *)theResult;
+      if (theDomain->addLoadPattern(thePattern) == false) {
+          opserr << "WARNING could not add LadrunoPorousOverlay pattern to the domain\n";
+          delete thePattern;
+          return TCL_ERROR;
+      }
+      theTclLoadPattern = thePattern;
+      return TCL_OK;
+  }
 
   //////// //////// ///////// ////////// /////  // DRMLoadPattern add BEGIN
   else if (strcmp(argv[1],"DRMLoadPattern") == 0) {
