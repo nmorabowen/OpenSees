@@ -370,7 +370,7 @@ FourNodeQuad::FourNodeQuad(int tag, int nd1, int nd2, int nd3, int nd4,
 FourNodeQuad::FourNodeQuad()
 :Element (0,ELE_TAG_FourNodeQuad),
   theMaterial(0), connectedExternalNodes(4), 
- Q(8), pressureLoad(8), thickness(0.0), applyLoad(0), pressure(0.0), Ki(0)
+ Q(8), pressureLoad(8), thickness(0.0), applyLoad(0), pressure(0.0), rho(0.0), Ki(0) // Ladruno: init rho (upstream DB/parallel restart mass bug)
 {
   pts[0][0] = -0.577350269189626;
   pts[0][1] = -0.577350269189626;
@@ -989,7 +989,7 @@ FourNodeQuad::sendSelf(int commitTag, Channel &theChannel)
   
   // Quad packs its data into a Vector and sends this to theChannel
   // along with its dbTag and the commitTag passed in the arguments
-  static Vector data(11);
+  static Vector data(12); // Ladruno: grew 11->12 to carry element rho
   data(0) = this->getTag();
   data(1) = thickness;
   data(2) = b[0];
@@ -1014,6 +1014,8 @@ FourNodeQuad::sendSelf(int commitTag, Channel &theChannel)
 	  }
     data(10) = dbTag;
   }
+
+  data(11) = rho; // Ladruno: serialize element rho
 
   res += theChannel.sendVector(dataTag, commitTag, data);
   if (res < 0) {
@@ -1085,7 +1087,7 @@ FourNodeQuad::recvSelf(int commitTag, Channel &theChannel,
 
   // Quad creates a Vector, receives the Vector and then sets the 
   // internal data with the data in the Vector
-  static Vector data(11);
+  static Vector data(12); // Ladruno: grew 11->12 to carry element rho
   res += theChannel.recvVector(dataTag, commitTag, data);
   if (res < 0) {
     opserr << "WARNING FourNodeQuad::recvSelf() - failed to receive Vector\n";
@@ -1102,6 +1104,8 @@ FourNodeQuad::recvSelf(int commitTag, Channel &theChannel,
   betaK = data(6);
   betaK0 = data(7);
   betaKc = data(8);
+
+  rho = data(11); // Ladruno: restore element rho
 
   static ID idData(12);
   // Quad now receives the tags of its four external nodes
