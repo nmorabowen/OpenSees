@@ -107,7 +107,7 @@ core touch).
 | 1.B | OPUS | `SRC/domain/pattern/ladrunoPorousOverlay/LadrunoPorousOverlay.{h,cpp}` — pattern class per pins (snapshot, blocks via the ADR-71 kernel headers, CSR+CG fluid solve, advanceTrial/commitFluid/revertFluid, applyLoad via addUnbalancedLoad, removal rescan, `-record` CSV) |
 | 1.C | OPUS | `OPS_LadrunoPorousOverlay.cpp` parser (surface per ADR §4.1 incl. `-layer` blocks + v1 `-moduli`; unknown-flag-FATAL; factor-ignored notice) + registration: classTags.h `PATTERN_TAG_LadrunoPorousOverlay 33022` + cross-registry comment, pattern dispatch (Tcl + OPS), FEM_ObjectBrokerAllClasses, CMakeLists, Domain::commit hook (one guarded `// Ladruno` block, contact-engine include precedent) + vanilla-ledger rows + stamps |
 | 1.D | OPUS | sendSelf/recvSelf (every ctor arg + region + layers + committed p) + serial DB round-trip test |
-| 1.E | OPUS ×2 ∥ | battery, split: **(i) physics** — Terzaghi vs analytic (E7.1-pinned tol); two-leg vs monolithic LadrunoUP (mutual Δt-convergence, order ≥ 1); E4-in-OpenSees: real `remove element` crack, both `-onRemoval` policies, curves vs toy reference; sequencing contract test (step-load column: p(0⁺) ≈ q — kills the fluid-first p≡0 class); L-floor loud-warning test; **(ii) framework** — pattern-timing bit-constancy (forces identical across Newton iterations of one step, Static AND Newmark AND CD); factor-ignored semantics; revertToLastCommit consistency (fluid state rolls with the domain); region validation errors (unsupported cell, empty drained set, overlapping overlays on one element → fatal); pInit steady/hydrostatic vs closed form |
+| 1.E | OPUS ×2 ∥ | battery, split: **(i) physics** — Terzaghi vs analytic (tol from the E7.1 rate-form curve: late-window relL2 ≤ 2× the toy value at matched Δt, `e7_summary.json` e71 */late keys, + O(Δt) mutual-convergence order ≥ 0.9); two-leg vs monolithic LadrunoUP (mutual Δt-convergence, order ≥ 1); E4-in-OpenSees: real `remove element` crack, both `-onRemoval` policies, curves vs toy reference — **removal gates use the FIXED-WINDOW jump (E7.5: 20·Δt window, spread ≤ 10 %), never the single-commit jump**; sequencing contract test (step-load column: p(0⁺) ≈ q — kills the fluid-first p≡0 class); rate-form-vs-fixed-point contract test (fixed-point single-pass error ≥ 10× rate-form on the same march — pins that the reference rule is wired); L-floor loud-warning test; **(ii) framework** — pattern-timing bit-constancy (forces identical across Newton iterations of one step, Static AND Newmark AND CD); factor-ignored semantics; revertToLastCommit consistency (fluid state rolls with the domain, incl. dpCommitted_); region validation errors (unsupported cell, empty drained set, overlapping overlays on one element → fatal); pInit steady/hydrostatic vs closed form |
 | 1.F | OPUS panel ×3 | adversarial gate: (1) **framework-reality critic** — applyLoad/addUnbalancedLoad semantics across integrators, commit ordering, revert paths, hook placement, Rayleigh non-interaction; (2) **math/contract critic** — per-cell Q sign (force = +Q·p, compression-positive p), L assembly, S*/H̃ per-layer, sequencing vs E7 pins, BE window Δu = committed-minus-stored; (3) **robustness critic** — removal edge cases (all cells dead, drained node on dead cell, re-add?), restart from DB, zero-k layer, single-element region, mixed 2D/3D rejection |
 | 1.G | MAIN | build, run battery (`python -S`), integrate, ledger amend (33017-row untouched; 33022 row → P1 landed), LEDGER_quirks rows, PR, CI watch |
 
@@ -128,18 +128,18 @@ pattern LadrunoPorousOverlay $tag -region {$e1 ...} -Kf $Kf -rhoF $rf \
                                               ;#   the load factor ⟨A-3⟩ — never
                                               ;#   march the fluid on Δλ
     <-onRemoval keep|drain $kF> <-fluidUpdate implicit> \
-    <-subcycle auto|$N | -substep $M> \
+    <-subcycle auto|$N> \
     <-record $file <$everyN>> <-fluidBody ...> <-dynSeepage on|off>
 ```
 
-- **Multirate, both directions** (adjudicated surface addition, 2026-07-13 —
-  fold into the ADR §4.1 at the next amendment): `-subcycle N` = fluid
-  advanced every N solid commits with the accumulated Δu (explicit lane;
-  fluid slower); `-substep M` = M backward-Euler fluid sub-steps per solid
-  commit with Δu linearly ramped, factored operator reused (implicit
-  consolidation lane; fluid faster — recovers the early-time transient a
-  single coarse BE step smears). Mutually exclusive flags; removal events
-  force a sync regardless of N; E7.3 pins both curves.
+- **Multirate (amended at 1.A per E7.3):** `-subcycle N` = fluid advanced
+  every N solid commits with the accumulated Δu (explicit lane; fluid
+  slower) — E7.3a confirmed (err ~ N^1.2, θ = 0.089 pins
+  `-subcycle auto` → N = max(1, floor(0.09·h²/(c_v·Δt)))); removal events
+  force a sync regardless of N. **`-substep M` is REMOVED from the surface**
+  (E7.3b refuted the accuracy claim: error flat over M = 1…10; the parser
+  rejects it with a pointer to the ADR §12 P0 entry — unknown-flag-FATAL
+  covers it naturally, no special case).
 
 - **v1 `-moduli $E $nu` is REQUIRED** (global or per-layer): the overlay does
   not own the solids' materials, so L and α-stab moduli come from explicit
@@ -159,21 +159,34 @@ pattern LadrunoPorousOverlay $tag -region {$e1 ...} -Kf $Kf -rhoF $rf \
   per-cell dense Q_e (via kernel `addQ`). **No global Q matrix** — coupling is
   applied cell-wise both directions.
 - **Fluid system:** CSR over region nodes; H, S* = (n/K_f per layer)·M_p +
-  α_stab·H̃, L = (1/(K_dr+4G/3) per layer)·M_p via kernel addH/addS/addHtilde.
+  α_stab·H̃, **L per `-fsL`: default classic (α²/K_dr per layer)·M_p,
+  opt-in oedometric (α²/(K_dr+4G/3))·M_p** via kernel addH/addS/addHtilde.
   Drained BCs by row/col elimination. **Solver pin: CG + Jacobi, rel tol
   1e-10, warm-started from the previous p** — numbering-independent, zero new
   dependencies; direct-factor upgrade only on profile evidence (ADR-40
   discipline).
-- **State discipline (P2-proofed now):** `pCommitted_`, `uSnapshot_`
-  (region u at last fluid advance), and THREE methods —
-  `advanceTrial()` (solve fluid from current committed/trial u, refresh
-  forces, do NOT commit), `commitFluid()` (pTrial→pCommitted, refresh
-  uSnapshot_), `revertFluid()` (drop trial). fs1 = advanceTrial+commitFluid
-  back-to-back inside the Domain::commit hook. The P2 iterated driver calls
-  advanceTrial repeatedly before one commitFluid — no P2 rewrite.
-  Serialization pin ⟨A-10⟩: `pCommitted_` travels in sendSelf; `uSnapshot_`
-  is NOT serialized — recvSelf re-derives it from committed node
-  displacements (they travel with the nodes), keeping restart exact.
+- **Fluid advance = the RATE form (P0 E7.1 pin — ADR §12 P0 entry
+  governs):** `(S* + L + ΔtH)·p_trial = (S* + L)·p₀ + L·Δp_ref − Qᵀ·Δu
+  + Δt·f_seep`. **Reference rule:** the FIRST advance of a step uses
+  `Δp_ref = dpCommitted_` (previous committed fluid increment → rate form =
+  fs1, O(Δt)); any REPEATED advance within the same step uses the last
+  trial increment `p_trial_prev − p₀` (→ the ADR §3.1 fixed-point
+  iteration; L cancels at convergence = monolithic BE). The fixed-POINT
+  form must never run single-pass (O(1) storage error, measured 41–61 %).
+- **State discipline (P2-proofed now):** `pCommitted_`, `dpCommitted_`
+  (previous committed fluid increment — the rate-form reference),
+  `uSnapshot_` (region u at last fluid advance), and THREE methods —
+  `advanceTrial()` (solve fluid from current committed/trial u per the
+  reference rule above, refresh forces, do NOT commit), `commitFluid()`
+  (dpCommitted_ ← pTrial − pCommitted_, then pTrial→pCommitted_, refresh
+  uSnapshot_), `revertFluid()` (drop trial, reference rule resets to
+  committed). fs1 = advanceTrial+commitFluid back-to-back inside the
+  Domain::commit hook. The P2 iterated driver calls advanceTrial repeatedly
+  before one commitFluid — no P2 rewrite.
+  Serialization pin ⟨A-10, amended 1.A⟩: `pCommitted_` AND `dpCommitted_`
+  travel in sendSelf (dpCommitted_ is NOT re-derivable); `uSnapshot_` is NOT
+  serialized — recvSelf re-derives it from committed node displacements
+  (they travel with the nodes), keeping restart exact.
 - **Region-overlap guards ⟨A-13⟩:** at snapshot, fatal if (i) any region
   element is claimed by another LadrunoPorousOverlay (overlays discoverable
   via Domain::getLoadPatterns — classTag 33022 scan), or (ii) any region

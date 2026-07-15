@@ -433,7 +433,7 @@ commit hook if taken.
 
 | Phase | Scope | Gate |
 |---|---|---|
-| **P0** | toy extension E7 (numpy, no OpenSees build) | exact v1 sequencing pinned: fs1-without-final-resolve error vs monolithic measured over Δt-halving (expect O(Δt); pins the P1 default); explicit-lane emulation (CD solid + implicit fluid): stability envelope measured — drained-vs-undrained CFL governance answered with numbers + subcycle-N degradation curve; removal-step jump consistency (Q mask flips mid-march, no spurious p transient beyond the physical Mandel-Cryer dip); L-floor sweep reproduced on the dynamic path |
+| **P0** | toy extension E7 (numpy, no OpenSees build) | exact v1 sequencing pinned: fs1-without-final-resolve error vs monolithic measured over Δt-halving (expect O(Δt); pins the P1 default); explicit-lane emulation (CD solid + implicit fluid): stability envelope measured — drained-vs-undrained CFL governance answered with numbers + subcycle-N degradation curve; removal-step jump consistency (Q mask flips mid-march, no spurious p transient beyond the physical Mandel-Cryer dip); L-floor sweep reproduced on the dynamic path — **DONE, PR #575 (2026-07-14): three predictions flipped, §12 P0 entry governs (rate-form fs1; `-substep` removed; P3 L=0 @ undrained pencil)** |
 | **P1** | `LadrunoPorousOverlay` fs1 implicit end-to-end (Q4/T3/H8 regions) | Terzaghi vs analytic ≤ pinned tol at production Δt; **two-leg gate vs monolithic LadrunoUP** (ADR-71 methodology: mutual Δt-convergence, observed order ≥ 1; the exact-equality leg belongs to P2's iterated driver); **E4-in-OpenSees**: real `remove element` crack, both `-onRemoval` policies, curves vs the toy reference; **sequencing contract test** (step-load column p(0⁺) ≈ q — kills the fluid-first p≡0 trap class); L auto twin-checked vs oracle incl. `updateMaterialStage` dirty path; pattern-timing verification (forces bit-constant across a step's Newton iterations); serial DB round-trip; **full adversarial panel** (per [[feedback_adversarial_gate_when]]: core-touch — Domain hook + pattern semantics — and novel framework integration; the split math itself is spike-validated) |
 | **P2** | iterated driver `LadrunoStaggeredAnalyze` (fs-k) | fixed-point gate: iterated staggered ≡ monolithic LadrunoUP same-Δt (E6 leg, target ≤ 1e-6 rel); B4 footing staggered (CB gate under stab); PDMY staged liquefaction column vs the ADR-71 P4 monolithic reference (stage transport → L/stab cache dirty); iteration-count telemetry (mean/max per step) exposed |
 | **P3** | explicit lane | CD + overlay on B2/ZS84 column vs implicit monolithic (two-leg); **incumbent head-to-head** (§3.4): same column under upstream CentralDifference + FourNodeQuadUP — accuracy AND per-step cost/scaling vs the overlay's diagonal-solid + small-SPD-fluid path, plus the S→0 failure demo; measured CFL envelope vs the P0 pins; **overlay-aware Δt_cr advisory gated** (§3.4 item 3: per-element undrained factor √((M+K_f/n)/M) wired into the ADR-65 machinery — naive drained advisory demonstrated 5–8× optimistic, then corrected); `-subcycle auto|$N` sweep gate; pipelined-fluid design note carried (§3.4 item 2 — implementation may land here or P3b); **LEDGER_quirks row**: honest-p LadrunoUP + upstream CentralDifference = Richardson-unstable p (leapfrogged diffusion) — loud test pinning the symptom; energy-balance advisory channel (ADR-69: overlay work terms enter the closure residual — documented, not silently absent) |
@@ -596,6 +596,107 @@ mark the edits):
   (FEM_ObjectBrokerAllClasses.cpp:2717); fixed-point algebra; sign
   conventions consistent ADR/plan/toy; element removal retains nodes.
 
+**2026-07-14 — P1 code panel (Opus ×3, on the built module)**. Batteries green
+first (physics 6/6, framework 8/8 + one xfail); then the three critics.
+Verdicts: **math/contract PASS** (no bug; its one hypothesis — removal-forced
+partial-window `dpCommitted_` mis-scale — REFUTED by direct measurement: the
+unscaled reference holds error below the surrounding splitting error, and the
+"corrected" rescale it proposed BLOWS UP → the literal contract rule is right).
+**framework-reality** and **robustness** both PASS-WITH-FIXES; all fixes landed
+this PR:
+
+- **P-1 (MAJOR, framework — ⟨A-3⟩ trap NOT covered by the shipped guard)**: the
+  earlier code assumed a static run yields commit `dt<=0`; FALSE — `LoadControl`
+  hands `dT = Δλ > 0` (LoadControl.cpp:127-130 → Domain.cpp:2065-2066), so
+  default `SM_MARCH` silently consolidates the fluid on load-factor pseudo-time
+  during a gravity stage (reproduced: node p 24.8→49.9 over λ 0.1→1.0, no
+  warning). A LoadPattern cannot see the integrator, so auto-detect is
+  impossible. FIX: loud one-time advisory on the FIRST real march (per-instance
+  `marchNoticeShown_`) naming dt + `-staticMode hold|steady`; the false
+  `dt<=0`-detects-static comment/branch rewritten.
+- **P-2 (MAJOR, robustness)**: a repeated tag in `-region` built TWO cells for
+  one element → silent 2× stiffness/force/storage. FIX: fatal on duplicate
+  region tag; also fatal on an element in two `-layer` blocks and on a `-layer`
+  element outside `-region`; per-cell `poro > α` fatal (the global check missed
+  per-layer `-poro`).
+- **P-3 (MINOR)**: setDomain claimed "INERT" but `onDomainCommit` returned −1
+  (aborts every commit) — message corrected to state the analysis aborts until
+  the region is fixed (fail-loud kept). recvSelf now rejects negative/short
+  payload counts (corrupt-datastore guard). Per-instance advisory latch
+  replaces the process-`static dtWarned`.
+- **1.D BLOCKER RESOLVED — upstream, not overlay** (deformable DB restart
+  non-reproducible, test 6c): reproduced overlay-FREE — a body-force solid +
+  ONE ordinary `Plain` pattern with a nodal load restarts non-deterministically
+  (3/8 fresh procs, rel up to 3e-2; restored operator eigenvalues go NEGATIVE),
+  while the same model with NO load pattern is bit-exact 8/8. The overlay's own
+  restored state (p/dp/uSnapshot values, per-node d/v/a, SPs) is verified exact
+  in diverging runs — it merely AMPLIFIES the upstream FileDatastore/Domain
+  transient-restart corruption through its large +Q·p forces. Deformable
+  transient DB restart documented UNSUPPORTED pending an upstream-fix decision
+  (LEDGER_quirks); frozen-skeleton restart is bit-exact (proves overlay
+  serialization incl. `dpCommitted_` is correct). Also fixed en route: a
+  same-size FileDatastore clobber (two Vectors on one dbTag) via a second
+  payload dbTag (`dbTag2_`), and moved uSnapshot_ re-derivation to lazy
+  first-use (restore-time node state is not ordering-safe).
+- **Refuted at P1 panel**: revertToLastCommit fluid-rollback (committed fluid
+  state mutates only inside a successful commit; test 3 bit-identical);
+  per-Newton force re-application (applyLoad once/newStep; bit-constancy green
+  Static/Newmark/CD); hook ordering (Domain.cpp:2254, before the dT reset);
+  near-incompressible ν=0.4999 divergence (L=α²/K_dr scales WITH the split it
+  stabilizes); all-cells-dead / k̄=0 / re-added-tag / detJ≤0 (loud SPD abort or
+  sentinel-inert, never NaN).
+
 ## 12. Implementation log
 
-*(filled as phases land)*
+### P0 — E7 dynamic pins measured (PR #575, merged 2026-07-14)
+
+`adr71_meshless_p_spike/staggered_pins_e7.py` (toy imported as a frozen
+library; predictions printed before measurement). Full numbers: the plan's
+frozen-constants block + spike `RESULTS.md` §E7. **Three predictions flipped;
+the entries below AMEND §3/§4 — where they conflict with the drafted text
+above, this log governs:**
+
+1. **fs1 single-pass is NOT "one sweep of the §3.1 iteration."** The
+   fixed-POINT L form (RHS `+L·p⁽ᵏ⁻¹⁾`) is O(1)-wrong when run single-pass —
+   compliance double-count, effective storage S\*+L+C instead of S\*+C
+   (measured: plain 61 % relL2 at every Δt, either L; +resolve classic 41 %;
+   E6's "fs1 O(Δt) 0.09 %" was the resolve+oedometric special case — Δu = 0
+   lets L impersonate the true Schur compliance, column only). **The v1
+   fluid advance is the fixed-stress RATE form**
+   `(S* + L + ΔtH)·p₁ = (S* + L)·p₀ + L·Δp_ref − Qᵀ·Δu + Δt·f_seep`,
+   with `Δp_ref` = the previous **committed** fluid increment. Measured
+   O(Δt) on both L variants and both regimes (late-window order ≥ +1.00;
+   L=oed near-deadbeat 5.6e-6). **Unified reference rule (P2-proof):** the
+   FIRST fluid advance of a step references the committed Δp (rate form =
+   fs1); repeated advances within one step reference the last TRIAL Δp —
+   which recovers §3.1 verbatim, so the iterated driver still converges to
+   the monolithic BE fixed point with L cancelling. Costs one extra state
+   vector (`dpCommitted_`), which must serialize.
+2. **`-substep M` is REMOVED from the command surface** (E7.3b refutation:
+   error flat 0.2452→0.2534 over M = 1…10 — the coarse-Δt splitting lag
+   dominates; fluid sub-resolution buys nothing). `-subcycle N` stays
+   (E7.3a: err ~ N^1.2, all N ≤ 50 stable on the L=0 lane; error doubles at
+   N·Δt/(h²/c_v) = **θ = 0.089**, pinning `-subcycle auto`).
+3. **§3.4 dynamic lane re-pinned.** Fixed-point-L implicit fluid at commit
+   is stable to **0.987×** the drained pencil (the ⟨A-7⟩ hedge resolves in
+   ZPC's favor) — but carries a Δt-independent O(1) diffusion-rate artifact
+   (0.67 relL2 vs exact): stability true, accuracy false. The rate form is
+   **CD-unstable at any Δt** (extrapolation = negative damping on
+   oscillatory p) — quasi-static/implicit lane only. **P3 default = L = 0
+   at Δt ≤ 0.5× the discrete undrained pencil** (consistent + stable;
+   the L=0 boundary measured exactly 1.000× the pencil; err 1.5e-3 vs the
+   exact reference). The drained-CFL L-lane remains as a documented
+   accuracy-degraded opt-in. Explicit fluid (P3b): boundary = **1.32×** the
+   pencil on both benchmark soils; the ⟨A-1⟩ material factor
+   √(1+K_f/(n·M_oed)) is ~1.85× conservative as a Δt predictor — the Δt_cr
+   advisory uses the DISCRETE pencil; the formula is documentation-only.
+4. **Removal gates use the fixed-window jump** (window 20·Δt₀ after the
+   removal commit; spread 1.47 % across Δt-halving ×4). The single-commit
+   jump VANISHES ~Δt^2.6 — no 1/Δt impulse artifact, and no meaningful
+   commit-jump invariant to gate on. `-onRemoval drain` kFactor {1,10,100}
+   strictly monotone in drainage time ✓.
+5. **⟨A-2⟩ confirmed with the footing pair:** classic α²/K_dr — zero
+   divergences, zero maxit-hits on column+footing × compressible+
+   near-undrained (max 18 iters); oedometric clean too, 3.4× (column) /
+   1.6× (footing) fewer iters; 0.5×oed hits maxit (the E6 cliff). Default
+   `-fsL classic` frozen; oed opt-in; floor at oed.
