@@ -72,8 +72,16 @@ from pathlib import Path
 # --------------------------------------------------------------------------
 _DIST = str(Path(__file__).resolve().parents[1] / "dist" / "bin")
 if not os.path.isfile(os.path.join(_DIST, "opensees.pyd")):
-    print(f"SKIP: worktree engine not built: {_DIST}")
-    sys.exit(0)
+    # Collection-safe skip. Under pytest (e.g. Zone-A `-m zone_a` still IMPORTS
+    # every module before filtering) a module-level sys.exit raises SystemExit
+    # during collection and crashes the WHOLE session — use pytest's module-
+    # level skip there; only a direct `python -S` run exits.
+    _msg = f"worktree engine not built: {_DIST}"
+    if "pytest" in sys.modules:
+        import pytest
+        pytest.skip(_msg, allow_module_level=True)
+    print(f"SKIP: {_msg}")
+    raise SystemExit(0)
 
 os.environ["PATH"] = _DIST + os.pathsep + os.environ.get("PATH", "")
 try:
