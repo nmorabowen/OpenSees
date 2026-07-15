@@ -268,6 +268,7 @@ class LadrunoPorousOverlay : public LoadPattern
   bool   seriesNoticeShown_;
   bool   fsLFloorWarned_;
   bool   hasSeries_;
+  bool   marchNoticeShown_;      // per-instance ⟨A-3⟩ first-march advisory latch
 
   // shape-kind codes
   enum { SHK_NONE = 0, SHK_T3 = 1, SHK_Q4 = 2, SHK_H8 = 3 };

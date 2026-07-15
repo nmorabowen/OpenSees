@@ -596,6 +596,56 @@ mark the edits):
   (FEM_ObjectBrokerAllClasses.cpp:2717); fixed-point algebra; sign
   conventions consistent ADR/plan/toy; element removal retains nodes.
 
+**2026-07-14 — P1 code panel (Opus ×3, on the built module)**. Batteries green
+first (physics 6/6, framework 8/8 + one xfail); then the three critics.
+Verdicts: **math/contract PASS** (no bug; its one hypothesis — removal-forced
+partial-window `dpCommitted_` mis-scale — REFUTED by direct measurement: the
+unscaled reference holds error below the surrounding splitting error, and the
+"corrected" rescale it proposed BLOWS UP → the literal contract rule is right).
+**framework-reality** and **robustness** both PASS-WITH-FIXES; all fixes landed
+this PR:
+
+- **P-1 (MAJOR, framework — ⟨A-3⟩ trap NOT covered by the shipped guard)**: the
+  earlier code assumed a static run yields commit `dt<=0`; FALSE — `LoadControl`
+  hands `dT = Δλ > 0` (LoadControl.cpp:127-130 → Domain.cpp:2065-2066), so
+  default `SM_MARCH` silently consolidates the fluid on load-factor pseudo-time
+  during a gravity stage (reproduced: node p 24.8→49.9 over λ 0.1→1.0, no
+  warning). A LoadPattern cannot see the integrator, so auto-detect is
+  impossible. FIX: loud one-time advisory on the FIRST real march (per-instance
+  `marchNoticeShown_`) naming dt + `-staticMode hold|steady`; the false
+  `dt<=0`-detects-static comment/branch rewritten.
+- **P-2 (MAJOR, robustness)**: a repeated tag in `-region` built TWO cells for
+  one element → silent 2× stiffness/force/storage. FIX: fatal on duplicate
+  region tag; also fatal on an element in two `-layer` blocks and on a `-layer`
+  element outside `-region`; per-cell `poro > α` fatal (the global check missed
+  per-layer `-poro`).
+- **P-3 (MINOR)**: setDomain claimed "INERT" but `onDomainCommit` returned −1
+  (aborts every commit) — message corrected to state the analysis aborts until
+  the region is fixed (fail-loud kept). recvSelf now rejects negative/short
+  payload counts (corrupt-datastore guard). Per-instance advisory latch
+  replaces the process-`static dtWarned`.
+- **1.D BLOCKER RESOLVED — upstream, not overlay** (deformable DB restart
+  non-reproducible, test 6c): reproduced overlay-FREE — a body-force solid +
+  ONE ordinary `Plain` pattern with a nodal load restarts non-deterministically
+  (3/8 fresh procs, rel up to 3e-2; restored operator eigenvalues go NEGATIVE),
+  while the same model with NO load pattern is bit-exact 8/8. The overlay's own
+  restored state (p/dp/uSnapshot values, per-node d/v/a, SPs) is verified exact
+  in diverging runs — it merely AMPLIFIES the upstream FileDatastore/Domain
+  transient-restart corruption through its large +Q·p forces. Deformable
+  transient DB restart documented UNSUPPORTED pending an upstream-fix decision
+  (LEDGER_quirks); frozen-skeleton restart is bit-exact (proves overlay
+  serialization incl. `dpCommitted_` is correct). Also fixed en route: a
+  same-size FileDatastore clobber (two Vectors on one dbTag) via a second
+  payload dbTag (`dbTag2_`), and moved uSnapshot_ re-derivation to lazy
+  first-use (restore-time node state is not ordering-safe).
+- **Refuted at P1 panel**: revertToLastCommit fluid-rollback (committed fluid
+  state mutates only inside a successful commit; test 3 bit-identical);
+  per-Newton force re-application (applyLoad once/newStep; bit-constancy green
+  Static/Newmark/CD); hook ordering (Domain.cpp:2254, before the dT reset);
+  near-incompressible ν=0.4999 divergence (L=α²/K_dr scales WITH the split it
+  stabilizes); all-cells-dead / k̄=0 / re-added-tag / detJ≤0 (loud SPD abort or
+  sentinel-inert, never NaN).
+
 ## 12. Implementation log
 
 ### P0 — E7 dynamic pins measured (PR #575, merged 2026-07-14)

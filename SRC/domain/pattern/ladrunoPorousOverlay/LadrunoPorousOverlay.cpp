@@ -59,6 +59,7 @@
 #include <stdlib.h>
 #include <float.h>
 #include <algorithm>
+#include <set>
 
 using namespace ladruno_up;
 
@@ -133,6 +134,7 @@ LadrunoPorousOverlay::LadrunoPorousOverlay(
    subcycleResolved_(subcycleMode == SC_FIXED),
    commitsSinceSync_(0), dtAccum_(0.0), recordCount_(0),
    seriesNoticeShown_(false), fsLFloorWarned_(false), hasSeries_(false),
+   marchNoticeShown_(false),
    dbTag2_(0)
 {
   for (int i = 0; i < 3; i++) {
@@ -158,6 +160,7 @@ LadrunoPorousOverlay::LadrunoPorousOverlay()
    nRegionNodes_(0), minEdge_(0.0), maxCv_(0.0),
    subcycleResolved_(true), commitsSinceSync_(0), dtAccum_(0.0), recordCount_(0),
    seriesNoticeShown_(false), fsLFloorWarned_(false), hasSeries_(false),
+   marchNoticeShown_(false),
    dbTag2_(0)
 {
   for (int i = 0; i < 3; i++) { permGlobal_[i] = 0.0; fluidBody_[i] = 0.0; }
@@ -181,8 +184,9 @@ void LadrunoPorousOverlay::setDomain(Domain* theDomain)
   snapshotOk_ = false;
   if (this->buildSnapshot() < 0) {
     opserr << "ERROR LadrunoPorousOverlay " << this->getTag()
-           << " -- geometry snapshot failed; the overlay is INERT (applyLoad "
-              "and the commit hook will do nothing). Fix the errors above.\n";
+           << " -- geometry snapshot failed; the overlay is INVALID and every "
+              "commit will ABORT the analysis until the region is corrected "
+              "(see the errors above).\n";
     return;
   }
   snapshotOk_ = true;
@@ -256,11 +260,41 @@ int LadrunoPorousOverlay::buildSnapshot(void)
   regionNodePtrs_.clear();
   cells_.reserve(regionEleTags_.size());
 
-  // per-element layer lookup
+  // per-element layer lookup (fatal on the same element in two layers)
   std::map<int,int> eleToLayer;
   for (size_t L = 0; L < layers_.size(); L++)
-    for (size_t k = 0; k < layers_[L].eleTags.size(); k++)
-      eleToLayer[layers_[L].eleTags[k]] = (int)L;
+    for (size_t k = 0; k < layers_[L].eleTags.size(); k++) {
+      int et = layers_[L].eleTags[k];
+      if (eleToLayer.count(et)) {
+        opserr << "ERROR LadrunoPorousOverlay " << this->getTag()
+               << " -- element " << et << " is assigned to two -layer blocks "
+                  "(" << eleToLayer[et] << " and " << (int)L << ")\n";
+        return -1;
+      }
+      eleToLayer[et] = (int)L;
+    }
+
+  // duplicate-in-region guard (robustness panel 1.F MAJOR): a repeated tag
+  // would build TWO cells for one element → 2× stiffness/force/storage, all
+  // silent. Fatal, not dedup — a repeat is always a user error.
+  std::set<int> seenEle;
+  for (size_t e = 0; e < regionEleTags_.size(); e++) {
+    if (!seenEle.insert(regionEleTags_[e]).second) {
+      opserr << "ERROR LadrunoPorousOverlay " << this->getTag()
+             << " -- region element " << regionEleTags_[e] << " listed more "
+                "than once in -region (would double-count that cell)\n";
+      return -1;
+    }
+  }
+
+  // -layer elements must live in the region (else silently material-mismatched)
+  for (std::map<int,int>::iterator it = eleToLayer.begin();
+       it != eleToLayer.end(); ++it)
+    if (!seenEle.count(it->first)) {
+      opserr << "ERROR LadrunoPorousOverlay " << this->getTag()
+             << " -- -layer element " << it->first << " is not in -region\n";
+      return -1;
+    }
 
   ndm_ = 0;
   for (size_t e = 0; e < regionEleTags_.size(); e++) {
@@ -308,6 +342,18 @@ int LadrunoPorousOverlay::buildSnapshot(void)
     c.poro = (Ly && Ly->poro > 0.0) ? Ly->poro : poroGlobal_;
     c.E    = (Ly && Ly->E   > 0.0) ? Ly->E    : EGlobal_;
     c.nu   = (Ly && Ly->nu  > 0.0) ? Ly->nu   : nuGlobal_;
+
+    // per-cell poro vs Biot α (robustness panel 1.F MINOR): the global check
+    // is in the parser, but a per-layer -poro slips past it. n > α makes the
+    // storage 1/Q̄ = n/Kf + (α−n)/Ks physically wrong (and, with finite Ks,
+    // can push S* indefinite → a downstream SPD abort). Catch it here, named.
+    if (c.poro > biotAlpha_ + 1e-12) {
+      opserr << "ERROR LadrunoPorousOverlay " << this->getTag()
+             << " -- element " << etag << " porosity " << c.poro
+             << " exceeds Biot alpha " << biotAlpha_
+             << " (n must be <= alpha)\n";
+      return -1;
+    }
 
     // region-node numbering + resolved node pointers
     c.rIdx.resize(nn);
@@ -840,27 +886,6 @@ int LadrunoPorousOverlay::advanceTrial(bool firstOfStep, double dt)
   for (int i = 0; i < N; i++)
     rhs[i] = SLp0[i] + Ldp[i] - QtDu[i] + dt * fseep_[i];
 
-  if (getenv("LADRUNO_OVERLAY_DEBUG") != 0) {
-    double nq = 0, nd = 0, np0 = 0, nu = 0, nuc = 0;
-    std::vector<double> ucur;
-    this->readRegionDisp(ucur);
-    for (size_t i = 0; i < uSnapshot_.size(); i++) {
-      nu += uSnapshot_[i] * uSnapshot_[i];
-      nuc += ucur[i] * ucur[i];
-    }
-    for (int i = 0; i < N; i++) {
-      nq += QtDu[i] * QtDu[i];
-      nd += dpref[i] * dpref[i];
-      np0 += pCommitted_[i] * pCommitted_[i];
-    }
-    opserr << "OVDBG advanceTrial first=" << (firstOfStep ? 1 : 0)
-           << " dt=" << dt << " |p0|=" << sqrt(np0)
-           << " |dpref|=" << sqrt(nd) << " |QtDu|=" << sqrt(nq)
-           << " |uSnap|=" << sqrt(nu) << " |ucur|=" << sqrt(nuc)
-           << " p0[0..2]=" << pCommitted_[0] << "," << pCommitted_[1]
-           << "," << pCommitted_[2] << "\n";
-  }
-
   // warm start = last trial; drained rows carry the prescribed (committed) value
   std::vector<double> x = pTrial_;
   for (int i = 0; i < N; i++) if (isDrained_[i]) x[i] = pCommitted_[i];
@@ -971,20 +996,28 @@ int LadrunoPorousOverlay::onDomainCommit(double domainTime, double dT)
 
   double dt = dtAccum_;
   if (dt <= 0.0) {
-    // non-positive step (likely a static analysis run WITHOUT -staticMode ⟨A-3⟩)
-    // — cannot march; freeze p and warn once.
-    static bool dtWarned = false;
-    if (!dtWarned) {
-      dtWarned = true;
-      opserr << "WARNING LadrunoPorousOverlay " << this->getTag()
-             << " -- commit dt<=0 (accumulated " << dt << "); NOT marching the "
-                "fluid. If this is a static stage, set -staticMode hold|steady "
-                "(the domain 'time' is the load factor there) ⟨A-3⟩ (printed "
-                "once)\n";
-    }
+    // non-positive step — cannot march; freeze p (no warning: a genuinely
+    // static run is caught by the loud advisory below on the FIRST march;
+    // a dt<=0 is just a degenerate step to skip).
     commitsSinceSync_ = 0;
     dtAccum_ = 0.0;
     return 0;
+  }
+
+  // ⟨A-3⟩ silent-static-march guard (panel 1.F MAJOR): a LoadPattern cannot see
+  // the integrator, and a static LoadControl step hands us dT = Δλ > 0 (NOT
+  // dt<=0 as an earlier comment wrongly assumed) — so SM_MARCH would silently
+  // consolidate the fluid on load-factor pseudo-time during a gravity/initial-
+  // stress stage. Convert silent-wrong to a loud one-time advisory on the first
+  // real march; the user sets -staticMode hold|steady if that stage is static.
+  if (!marchNoticeShown_) {
+    marchNoticeShown_ = true;
+    opserr << "LadrunoPorousOverlay " << this->getTag()
+           << ": marching the pore fluid with dt=" << dt << " (domain-time "
+              "increment). If this is a STATIC / load-factor stage (e.g. a "
+              "LoadControl gravity stage), the fluid is consolidating on "
+              "pseudo-time — set -staticMode hold or steady for that stage "
+              "⟨A-3⟩. (printed once)\n";
   }
 
   if (this->advanceTrial(true, dt) < 0) return -1;   // fs1: advance ...
@@ -1039,14 +1072,6 @@ void LadrunoPorousOverlay::applyLoad(double time)
       nd->addUnbalancedLoad(load);
     }
     (void)nrows;
-  }
-
-  if (getenv("LADRUNO_OVERLAY_DEBUG") != 0) {
-    double np = 0;
-    for (int i = 0; i < nRegionNodes_; i++)
-      np += pCommitted_[i] * pCommitted_[i];
-    opserr << "OVDBG applyLoad t=" << time << " |pC|=" << np
-           << " uSnapValid=" << (uSnapshotValid_ ? 1 : 0) << "\n";
   }
 }
 
@@ -1262,11 +1287,26 @@ int LadrunoPorousOverlay::recvSelf(int commitTag, Channel& theChannel,
   if (recordEveryN_ < 1) recordEveryN_ = 1;
   if (subcycleN_ < 1)    subcycleN_ = 1;
 
+  // corruption guard (robustness panel 1.F MINOR): a negative/garbage count
+  // from a damaged datastore would blow up the resize()/index below. Truncation
+  // itself is caught by recvID/recvVector<0; this catches non-truncation garbage.
+  if (nEle < 0 || nDr < 0 || nLay < 0 || nPI < 0 || nRN < 0 || fLen < 0 ||
+      sumLayEle < 0) {
+    opserr << "WARNING LadrunoPorousOverlay::recvSelf -- negative payload count "
+              "(corrupt datastore); aborting restore\n";
+    return -1;
+  }
+
   // ---- ID payload (exact size known from the scalar block) ------------------
   int idSize = nEle + nDr + nPI + nLay + sumLayEle + nRN + fLen;
   ID idData(idSize > 0 ? idSize : 1);
   if (idSize > 0 && theChannel.recvID(dbTag, commitTag, idData) < 0) {
     opserr << "WARNING LadrunoPorousOverlay::recvSelf -- failed to recv ID\n";
+    return -1;
+  }
+  if (idData.Size() < idSize) {           // received fewer than the header claims
+    opserr << "WARNING LadrunoPorousOverlay::recvSelf -- ID payload short ("
+           << idData.Size() << " < " << idSize << "); corrupt datastore\n";
     return -1;
   }
   int q = 0;
