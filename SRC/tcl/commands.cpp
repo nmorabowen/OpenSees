@@ -392,6 +392,13 @@ extern void OPS_SetReliabilityDomain(ReliabilityDomain *);
 #include <SymBandEigenSolver.h>
 #include <FullGenEigenSOE.h>
 #include <FullGenEigenSolver.h>
+// Ladruno ADR-43 (apeGmsh ADR 0077): classic-Tcl parity for band-targeted
+// FEAST — reachable from OpenSees.exe / OpenSeesMP.exe (the interpreter
+// parser OPS_eigenFeast was openseespy/PyMP-only). Under _PARALLEL_INTERPRETERS
+// (OpenSeesMP) the inner contour solve routes through the distributed
+// LadrunoDistBlockZKernel (dmumps L3), exactly as the interpreter path.
+#include <FeastEigenSOE.h>
+#include <FeastEigenSolver.h>
 
 #ifdef _CUDA
 #include <BandGenLinSOE_Single.h>
@@ -5987,7 +5994,91 @@ eigenAnalysis(ClientData clientData, Tcl_Interp *interp, int argc,
   int loc = 1;
   double shift = 0.0;
   bool findSmallest = true;
-  
+
+  // Ladruno ADR-43 (apeGmsh ADR 0077): band-targeted FEAST classic-Tcl parity.
+  //   eigen -feast fmin fmax [-m0 n][-nq n][-tol exp][-maxiter n]
+  //         [-verbose][-certify][-blockZGate][-rci]
+  // Mirrors OPS_eigenFeast (SRC/interpreter/OpenSeesCommands.cpp): the band
+  // (Hz) defines the mode count (no trailing numModes), so it cannot share the
+  // ARPACK "eigen [flags] numModes" arg shape and is parsed up front.
+  bool   feast = false;
+  double feastFmin = 0.0, feastFmax = 0.0;
+  int    feastM0 = 0, feastNq = 0, feastMaxRefine = 0;
+  double feastTolExp = 0.0;
+  bool   feastVerbose = false, feastCertify = false;
+  bool   feastBlockZGate = false, feastRci = false;
+  for (int fl = 1; fl < argc; fl++) {
+    if (strcmp(argv[fl], "-feast") == 0 || strcmp(argv[fl], "feast") == 0) {
+      feast = true;
+      break;
+    }
+  }
+
+  if (feast) {
+    typeSolver = EigenSOE_TAGS_FeastEigenSOE;
+    int p = 1;
+    while (p < argc) {
+      if (strcmp(argv[p], "-feast") == 0 || strcmp(argv[p], "feast") == 0) {
+        if (p + 2 >= argc ||
+            Tcl_GetDouble(interp, argv[p+1], &feastFmin) != TCL_OK ||
+            Tcl_GetDouble(interp, argv[p+2], &feastFmax) != TCL_OK) {
+          opserr << "WARNING eigen -feast fmin fmax - need the frequency band (Hz)\n";
+          return TCL_ERROR;
+        }
+        p += 3;
+      } else if (strcmp(argv[p], "-m0") == 0 && p + 1 < argc) {
+        if (Tcl_GetInt(interp, argv[p+1], &feastM0) != TCL_OK || feastM0 < 1) {
+          opserr << "WARNING eigen -feast: bad -m0 value\n";
+          return TCL_ERROR;
+        }
+        p += 2;
+      } else if (strcmp(argv[p], "-nq") == 0 && p + 1 < argc) {
+        if (Tcl_GetInt(interp, argv[p+1], &feastNq) != TCL_OK || feastNq < 2) {
+          opserr << "WARNING eigen -feast: bad -nq value\n";
+          return TCL_ERROR;
+        }
+        p += 2;
+      } else if (strcmp(argv[p], "-tol") == 0 && p + 1 < argc) {
+        // the value is the stopping EXPONENT (fpm[2] = 10^-exp); a raw
+        // tolerance like 1e-8 would truncate to 0 and silently mean 10^0 = 1.
+        if (Tcl_GetDouble(interp, argv[p+1], &feastTolExp) != TCL_OK ||
+            feastTolExp < 1.0) {
+          opserr << "WARNING eigen -feast: -tol takes the stopping EXPONENT "
+                 << "(e.g. 12 for a 1e-12 trace tolerance), not a raw tolerance\n";
+          return TCL_ERROR;
+        }
+        p += 2;
+      } else if (strcmp(argv[p], "-maxiter") == 0 && p + 1 < argc) {
+        if (Tcl_GetInt(interp, argv[p+1], &feastMaxRefine) != TCL_OK ||
+            feastMaxRefine < 1) {
+          opserr << "WARNING eigen -feast: bad -maxiter value\n";
+          return TCL_ERROR;
+        }
+        p += 2;
+      } else if (strcmp(argv[p], "-verbose") == 0) {
+        feastVerbose = true;    p += 1;
+      } else if (strcmp(argv[p], "-certify") == 0) {
+        feastCertify = true;    p += 1;
+      } else if (strcmp(argv[p], "-blockZGate") == 0) {
+        feastBlockZGate = true; p += 1;
+      } else if (strcmp(argv[p], "-rci") == 0) {
+        feastRci = true;        p += 1;
+      } else {
+        opserr << "WARNING eigen -feast: unknown option '" << argv[p] << "'\n";
+        return TCL_ERROR;
+      }
+    }
+    if (feastFmin < 0.0 || feastFmax <= feastFmin) {
+      opserr << "WARNING eigen -feast: invalid band [" << feastFmin << ", "
+             << feastFmax << "] Hz - need 0 <= fmin < fmax\n";
+      return TCL_ERROR;
+    }
+    // analysis-side mode-loop cap; the reconcile below trims to the found
+    // count. NOT tied to m0 (the FEAST subspace seed auto-enlarges on
+    // saturation, so a small user m0 must not cap the report).
+    numEigen = (feastM0 > 128) ? feastM0 : 128;
+
+  } else {
   // Check type of eigenvalue analysis
   while (loc < (argc-1)) {
     if ((strcmp(argv[loc],"frequency") == 0) || 
@@ -6031,9 +6122,10 @@ eigenAnalysis(ClientData clientData, Tcl_Interp *interp, int argc,
     // check argv[loc] for number of modes
   //    int numEigen;
     if ((Tcl_GetInt(interp, argv[loc], &numEigen) != TCL_OK) || numEigen < 0) {
-      opserr << "WARNING eigen numModes?  - illegal numModes\n";    
-      return TCL_ERROR;	
+      opserr << "WARNING eigen numModes?  - illegal numModes\n";
+      return TCL_ERROR;
     }
+    } // end else (non-FEAST arg parse)
 
     //
     // create a transient analysis if no analysis exists
@@ -6103,9 +6195,29 @@ eigenAnalysis(ClientData clientData, Tcl_Interp *interp, int argc,
 	FullGenEigenSolver *theEigenSolver = new FullGenEigenSolver();
 	theEigenSOE = new FullGenEigenSOE(*theEigenSolver, *theAnalysisModel);
 
+      } else if (typeSolver == EigenSOE_TAGS_FeastEigenSOE) {
+
+	// Ladruno ADR-43 (apeGmsh ADR 0077): band-targeted FEAST. Mirrors
+	// OPS_eigenFeast; under _PARALLEL_INTERPRETERS (OpenSeesMP) the -rci
+	// inner contour solve routes through the distributed dmumps kernel.
+	FeastEigenSolver *theFeastSolver = new FeastEigenSolver();
+	FeastEigenSOE *theFeastSOE = new FeastEigenSOE(*theFeastSolver);
+	const double twoPi = 8.0 * atan(1.0);
+	theFeastSOE->setBand((twoPi*feastFmin)*(twoPi*feastFmin),
+			     (twoPi*feastFmax)*(twoPi*feastFmax));
+	if (feastM0 > 0)        theFeastSOE->setSubspaceSize(feastM0);
+	if (feastNq > 0)        theFeastSOE->setNumQuad(feastNq);
+	if (feastTolExp > 0.0)  theFeastSOE->setTol(feastTolExp);
+	if (feastMaxRefine > 0) theFeastSOE->setMaxRefine(feastMaxRefine);
+	theFeastSOE->setVerbose(feastVerbose);
+	theFeastSOE->setCertify(feastCertify);
+	theFeastSOE->setBlockZGate(feastBlockZGate);
+	theFeastSOE->setRci(feastRci);
+	theEigenSOE = theFeastSOE;
+
       } else {
 
-	theEigenSOE = new ArpackSOE(shift);    
+	theEigenSOE = new ArpackSOE(shift);
 
       }
       
@@ -6160,11 +6272,30 @@ eigenAnalysis(ClientData clientData, Tcl_Interp *interp, int argc,
     if (theStaticAnalysis != 0) {
       result = theStaticAnalysis->eigen(numEigen, generalizedAlgo, findSmallest);      
     } else if (theTransientAnalysis != 0) {
-      result = theTransientAnalysis->eigen(numEigen, generalizedAlgo, findSmallest);      
+      result = theTransientAnalysis->eigen(numEigen, generalizedAlgo, findSmallest);
+    }
+
+    // Ladruno ADR-43 (apeGmsh ADR 0077): FEAST — the band defines the count,
+    // but the analysis loop ran with a requested cap. Trim the domain's
+    // eigenvalue list to the found count (mirrors OpenSeesCommands::eigen) so
+    // scripts and modalProperties see exactly the modes in the band; entries
+    // beyond the found count are solver zeros, never real modes.
+    if (result == 0 && theEigenSOE != 0 &&
+	theEigenSOE->getClassTag() == EigenSOE_TAGS_FeastEigenSOE) {
+      FeastEigenSOE *fsoe = static_cast<FeastEigenSOE *>(theEigenSOE);
+      const int mFound = fsoe->getNumFoundModes();
+      if (mFound < numEigen) {
+	const Vector &lam = theDomain.getEigenvalues();
+	Vector trimmed(mFound);
+	for (int i = 0; i < mFound; i++)
+	  trimmed(i) = lam(i);
+	theDomain.setEigenvalues(trimmed);
+	numEigen = mFound;
+      }
     }
 
     if (result == 0) {
-      //      char *eigenvalueS = new char[15 * numEigen];    
+      //      char *eigenvalueS = new char[15 * numEigen];
       const Vector &eigenvalues = theDomain.getEigenvalues();
       int cnt = 0;
       for (int i=0; i<numEigen; i++) {
