@@ -434,7 +434,7 @@ commit hook if taken.
 | Phase | Scope | Gate |
 |---|---|---|
 | **P0** | toy extension E7 (numpy, no OpenSees build) | exact v1 sequencing pinned: fs1-without-final-resolve error vs monolithic measured over Δt-halving (expect O(Δt); pins the P1 default); explicit-lane emulation (CD solid + implicit fluid): stability envelope measured — drained-vs-undrained CFL governance answered with numbers + subcycle-N degradation curve; removal-step jump consistency (Q mask flips mid-march, no spurious p transient beyond the physical Mandel-Cryer dip); L-floor sweep reproduced on the dynamic path — **DONE, PR #575 (2026-07-14): three predictions flipped, §12 P0 entry governs (rate-form fs1; `-substep` removed; P3 L=0 @ undrained pencil)** |
-| **P1** | `LadrunoPorousOverlay` fs1 implicit end-to-end (Q4/T3/H8 regions) | Terzaghi vs analytic ≤ pinned tol at production Δt; **two-leg gate vs monolithic LadrunoUP** (ADR-71 methodology: mutual Δt-convergence, observed order ≥ 1; the exact-equality leg belongs to P2's iterated driver); **E4-in-OpenSees**: real `remove element` crack, both `-onRemoval` policies, curves vs the toy reference; **sequencing contract test** (step-load column p(0⁺) ≈ q — kills the fluid-first p≡0 trap class); L auto twin-checked vs oracle incl. `updateMaterialStage` dirty path; pattern-timing verification (forces bit-constant across a step's Newton iterations); serial DB round-trip; **full adversarial panel** (per [[feedback_adversarial_gate_when]]: core-touch — Domain hook + pattern semantics — and novel framework integration; the split math itself is spike-validated) |
+| **P1** | `LadrunoPorousOverlay` fs1 implicit end-to-end (Q4/T3/H8 regions) | Terzaghi vs analytic ≤ pinned tol at production Δt; **two-leg gate vs monolithic LadrunoUP** (ADR-71 methodology: mutual Δt-convergence, observed order ≥ 1; the exact-equality leg belongs to P2's iterated driver); **E4-in-OpenSees**: real `remove element` crack, both `-onRemoval` policies, curves vs the toy reference; **sequencing contract test** (step-load column p(0⁺) ≈ q — kills the fluid-first p≡0 trap class); L auto twin-checked vs oracle incl. `updateMaterialStage` dirty path; pattern-timing verification (forces bit-constant across a step's Newton iterations); serial DB round-trip; **full adversarial panel** (per [[feedback_adversarial_gate_when]]: core-touch — Domain hook + pattern semantics — and novel framework integration; the split math itself is spike-validated) — **DONE, PR #576 (2026-07-15): all gates green, panel PASS (§11 + §12 P1 entries); xfail-6c tripwire → upstream rho bug found+fixed #577, 6c now a hard gate** |
 | **P2** | iterated driver `LadrunoStaggeredAnalyze` (fs-k) | fixed-point gate: iterated staggered ≡ monolithic LadrunoUP same-Δt (E6 leg, target ≤ 1e-6 rel); B4 footing staggered (CB gate under stab); PDMY staged liquefaction column vs the ADR-71 P4 monolithic reference (stage transport → L/stab cache dirty); iteration-count telemetry (mean/max per step) exposed |
 | **P3** | explicit lane | CD + overlay on B2/ZS84 column vs implicit monolithic (two-leg); **incumbent head-to-head** (§3.4): same column under upstream CentralDifference + FourNodeQuadUP — accuracy AND per-step cost/scaling vs the overlay's diagonal-solid + small-SPD-fluid path, plus the S→0 failure demo; measured CFL envelope vs the P0 pins; **overlay-aware Δt_cr advisory gated** (§3.4 item 3: per-element undrained factor √((M+K_f/n)/M) wired into the ADR-65 machinery — naive drained advisory demonstrated 5–8× optimistic, then corrected); `-subcycle auto|$N` sweep gate; pipelined-fluid design note carried (§3.4 item 2 — implementation may land here or P3b); **LEDGER_quirks row**: honest-p LadrunoUP + upstream CentralDifference = Richardson-unstable p (leapfrogged diffusion) — loud test pinning the symptom; energy-balance advisory channel (ADR-69: overlay work terms enter the closure residual — documented, not silently absent) |
 | **P3b** *(option)* | `-fluidUpdate explicit` — fully matrix-free lane (§3.4 item 1, Xu-2021 class) | dual-CFL gate: diffusion limit verified slack by orders on realistic k′ sweep; measured undrained-CFL envelope vs the √((M+K_f/n)/M) prediction; equivalence vs implicit-fluid lane at matched Δt (both are O(Δt) splits); mass-scaling composability (SMS against the undrained pencil); MP smoke on the halo-exchange update (the §8 MP-risk dissolution demonstrated, not asserted) |
@@ -638,6 +638,14 @@ this PR:
   same-size FileDatastore clobber (two Vectors on one dbTag) via a second
   payload dbTag (`dbTag2_`), and moved uSnapshot_ re-derivation to lazy
   first-use (restore-time node state is not ordering-safe).
+  **→ RESOLVED 2026-07-15 (PR #577)**: root cause = quad/tri elements never
+  serialized their ELEMENT-LEVEL `rho` + uninitialized broker ctor → garbage
+  mass matrix on every DB/MPI-restored element (the "LoadPattern in the
+  stream" correlate was an artifact — the no-pattern control was nearly
+  motionless, so the corrupt M went unexercised). The overlay-exoneration
+  adjudication above stands verified. Test 6c promoted xfail → HARD GATE per
+  its XPASS contract (reconcile PR after #577); deformable transient DB
+  restart is SUPPORTED again fork-wide.
 - **Refuted at P1 panel**: revertToLastCommit fluid-rollback (committed fluid
   state mutates only inside a successful commit; test 3 bit-identical);
   per-Newton force re-application (applyLoad once/newStep; bit-constancy green
@@ -647,6 +655,24 @@ this PR:
   sentinel-inert, never NaN).
 
 ## 12. Implementation log
+
+### P1 — fs1 rate-form implicit overlay end-to-end (PR #576, merged 2026-07-15)
+
+`LadrunoPorousOverlay` live: PATTERN 33022 landed in classTags.h; Tcl + python
+dispatch, broker, guarded `Domain::commit()` hook; T3/Q4/H8 snapshot over the
+ADR-71 kernel; RATE-form advance with the unified reference rule (§12 P0
+pin 1); Jacobi-PCG; `-onRemoval keep|drain`; `-subcycle auto` (θ=0.089);
+`-staticMode hold|steady` with the loud ⟨A-3⟩ first-march advisory;
+`-record`; full send/recvSelf (incl. `dpCommitted_`, payload under its own
+`dbTag2_`). Batteries: physics 6/6 (headline anchor: overlay ≡ frozen-toy
+`fs1_extrap` to 3.46e-7 under a massless solid; splitting error 1.00× the
+frozen `e7_summary` value) + framework 8/8. Opus ×3 adversarial panel PASS
+(§11 2026-07-14 entry). Banner + ledgers + manifest row.
+**Post-P1 follow-up (PR #577 + reconcile)**: the P1 xfail 6c tripwire led to
+the upstream quad/tri element-`rho` serialization bug (garbage restored mass);
+fixed in #577, 6c promoted to a hard gate, deformable transient DB restart
+supported again. Deferred: P2 iterated driver, P3/P3b explicit lanes, P4
+recorder channels + guide.
 
 ### P0 — E7 dynamic pins measured (PR #575, merged 2026-07-14)
 

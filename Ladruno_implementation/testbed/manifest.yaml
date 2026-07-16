@@ -1244,7 +1244,7 @@ features:
     pr: 576
     feature_class: loadpattern
     required_tiers: [T0, T1]
-    pytest: tests/test_ladruno_overlay_physics.py   # Zone-B physics: Terzaghi/analytic + toy fs1_extrap anchor (3.5e-7), two-leg vs monolithic LadrunoUP (order>=1), sequencing contract p(0+)=0.55q (kills fluid-first p=0 trap), rate-vs-fixed-point contract, E4 remove-element crack (both -onRemoval + subcycle-forced sync), -fsL floor warning. Sibling: tests/test_ladruno_overlay_framework.py (bit-constancy Static/Newmark/CD, revert consistency, 8 region-validation fatals, pInit hydro/steady node-exact, DB round-trip of pCommitted_ AND dpCommitted_, -record everyN; 1 xfail = upstream FileDatastore transient-restart bug, reproduced overlay-free)
+    pytest: tests/test_ladruno_overlay_physics.py   # Zone-B physics: Terzaghi/analytic + toy fs1_extrap anchor (3.5e-7), two-leg vs monolithic LadrunoUP (order>=1), sequencing contract p(0+)=0.55q (kills fluid-first p=0 trap), rate-vs-fixed-point contract, E4 remove-element crack (both -onRemoval + subcycle-forced sync), -fsL floor warning. Sibling: tests/test_ladruno_overlay_framework.py (bit-constancy Static/Newmark/CD, revert consistency, 8 region-validation fatals, pInit hydro/steady node-exact, DB round-trip of pCommitted_ AND dpCommitted_, -record everyN; 6c deformable-restart = HARD GATE since #577 fixed the upstream quad/tri rho serialization bug)
     tcl: WAIVED(pattern LadrunoPorousOverlay ...; TclPatternCommand.cpp + OpenSeesPatternCommands.cpp OPS_LadrunoPorousOverlay dispatch serve both interpreters; verified via the Zone-B pytest batteries + Tcl parse smoke)
     core_files:
       - SRC/classTags.h
@@ -1269,8 +1269,8 @@ features:
       math PASS (partial-window rescale hypothesis refuted by measurement),
       framework+robustness PASS-with-fixes (A-3 advisory, region-dedup +
       poro/alpha fatals, INERT-message reconcile, recvSelf clamps) all landed.
-      Deformable transient DB restart UNSUPPORTED = upstream FileDatastore bug
-      (reproduced overlay-free with one Plain pattern; LEDGER_quirks). Deferred:
+      Deformable transient DB restart SUPPORTED + hard-gated since #577 (upstream
+      quad/tri element-rho serialization bug; LEDGER_quirks). Deferred:
       P2 iterated driver LadrunoStaggeredAnalyze, P3 explicit lane, P4 recorder
       channels + guide.
 

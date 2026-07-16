@@ -21,8 +21,8 @@ overlay's plumbing rather than its consolidation accuracy:
      profile.
   6. serial DB round-trip (the 1.D gate)  -- committed p AND dpCommitted_ round-trip
      bit-exact (isolated with a rigid skeleton); a rich config restores without
-     crashing and the overlay stays active; the uSnapshot_-on-restore gap is
-     pinned as a KNOWN-FAIL (xfail).
+     crashing and the overlay stays active; deformable transient restart
+     reproduces the continuous run (hard gate since #577).
   7. -record everyN semantics             -- everyN=2 writes every other commit;
      the header row is the region node-tag set.
 
@@ -40,23 +40,20 @@ MEASURED FINDINGS (2026-07-14, reported upward - see the WP1.E-ii handoff):
   * FileDatastore does NOT restore a sibling Plain LoadPattern's nodal loads
     (base reaction collapses post-restore) - a framework limitation, so the DB
     gate is driven purely by the overlay (self-contained), never an external load.
-  * DB round-trip of a DEFORMABLE model is NON-DETERMINISTIC - RESOLVED as an
-    UPSTREAM FileDatastore/Domain-restore bug, NOT overlay state (adjudicated
-    2026-07-14 by the main session): (i) the overlay's restored state was
-    verified in-situ exact in diverging runs (p/dp/uSnapshot norms AND values,
-    per-node committed d/v/a, SP sets - all identical; the first post-restore
-    solid solve diverges anyway); (ii) the restored operator itself is corrupt
-    in bad runs (generalized eigenvalues went NEGATIVE with identical analysis
-    setups); (iii) the minimal overlay-free reproducer - element-body-force
-    solid + ONE ordinary Plain pattern with a nodal load - diverges
-    non-deterministically too (3/8 fresh processes, rel 5e-3..3e-2), while the
-    same model WITHOUT any load pattern restarts bit-exact 8/8. Any LoadPattern
-    in the DB stream of a transient restart triggers it; divergence scales with
-    the force amplitude (the overlay's big +Q*p forces amplified it to O(1)).
-    A FROZEN skeleton round-trips BIT-EXACT (test 6a) - the overlay's own
-    serialization incl. dpCommitted_ is correct. Deformable transient DB
-    restart is documented UNSUPPORTED pending the upstream-fix decision
-    (ask-first per the fork change-budget); pinned as xfail test 6c.
+  * DB round-trip of a DEFORMABLE model was NON-DETERMINISTIC - RESOLVED:
+    root cause was UPSTREAM (#577, landed 2026-07-15): quad/tri elements never
+    serialized their ELEMENT-LEVEL rho and the broker ctor left it
+    uninitialized, so every DB/MPI-restored element rebuilt its mass matrix
+    from heap garbage (overriding the correctly-restored material density via
+    the `if (rho==0)` gate). The P1 adjudication that exonerated the overlay
+    stands verified: its restored state (p/dp/uSnapshot, per-node d/v/a, SPs)
+    was in-situ exact in diverging runs; the overlay only amplified the
+    wrong-M response through its +Q*p forces. (The P1-era "any LoadPattern in
+    the DB stream triggers it" attribution was an artifact - the no-pattern
+    control was nearly motionless, so the corrupt M went unexercised; the true
+    trigger is mass-driven response after restore.) Test 6c is now a HARD
+    GATE (promoted per its XPASS contract): 6/6 fresh-process deformable
+    restarts must reproduce the continuous run.
   * A -pInit list (explicit $nd $val ...) overlay additionally crashes the
     process on FileDatastore restore (observed with a frozen rig); hydrostatic
     pInit is crash-free. Reported, not separately gated.
@@ -102,17 +99,8 @@ assert os.path.normcase(os.path.dirname(ops.__file__)) == os.path.normcase(_DIST
 try:
     import pytest  # noqa: F401
     pytestmark = [pytest.mark.zone_b]
-
-    def _xfail(fn):
-        return pytest.mark.xfail(
-            reason="UPSTREAM FileDatastore transient-restart bug (pattern in "
-                   "DB stream); overlay exonerated - see module docstring",
-            strict=False)(fn)
 except Exception:  # pragma: no cover
     pytest = None
-
-    def _xfail(fn):
-        return fn
 
 _SCRATCH = tempfile.mkdtemp(prefix="ov_fw_")
 
@@ -772,8 +760,8 @@ def test_db_roundtrip_committed_p_and_dp():
 
     Isolation on TWO axes: (i) FREEZE every solid DOF (Penalty) so u==0 exactly ->
     uSnapshot_ / Qt*Du vanish and the round-trip depends ONLY on the overlay's
-    serialized fluid state (this cleanly separates the p/dp gate from the
-    u-restart bug that test 6c pins); (ii) a fresh child process runs a single
+    serialized fluid state (this cleanly separates the p/dp gate from any
+    mass/solid-path restore defect (the #577 rho class that test 6c now gates)); (ii) a fresh child process runs a single
     save/restore cycle, removing FileDatastore cross-invocation state. The fluid
     diffuses from a hydrostatic pInit under a rich serialized surface (-layer,
     per-layer perm/poro, -alpha, -Ks, -fsL oedometric, -onRemoval drain).
@@ -794,9 +782,8 @@ def test_db_roundtrip_rich_config_survives_and_active():
     hydrostatic pInit, alpha/Ks), march 3, save, wipe, restore, rebuild the
     analysis, march 3 more; assert crash-free restore, the overlay keeps recording
     (3 rows), elements survive, and p stays finite (no NaN / no 1e88 blow-up).
-    A gentle pInit (gw=100) keeps the deformable restart numerically stable so
-    this robustness gate is not perturbed by the u-restart bug that 6c pins;
-    exact deformable continuity is the KNOWN-FAIL below."""
+    A gentle pInit (gw=100) keeps this robustness gate mild; exact deformable
+    continuity is the HARD GATE below (6c; upstream rho bug fixed in #577)."""
     gw, L, nely = 100.0, 6.0, 6
     rec = _tmp("db_rich.csv")
     nid, eles, top, _, _ = _column(L=L, nely=nely)
@@ -829,29 +816,30 @@ def test_db_roundtrip_rich_config_survives_and_active():
     return "rich config restore crash-free; overlay active; p finite"
 
 
-@_xfail
-def test_db_roundtrip_deformable_nonreproducible_KNOWNFAIL():
-    """KNOWN-FAIL (xfail) - UPSTREAM FileDatastore transient-restart bug, NOT
-    overlay state (adjudicated 2026-07-14; see the module docstring MEASURED
-    FINDINGS). Reproduced overlay-free: a body-force solid + one Plain pattern
-    with a nodal load restarts non-deterministically (3/8 fresh processes,
-    rel up to 3e-2), while the same model with NO load pattern is bit-exact
-    8/8; in bad runs the restored operator's generalized eigenvalues go
-    negative. The overlay's restored state was verified in-situ exact in
-    diverging runs (p/dp/uSnapshot, per-node d/v/a, SPs). The overlay merely
-    amplifies the upstream corruption through its large +Q*p forces.
-    Deformable transient DB restart = documented UNSUPPORTED until the
-    upstream fix decision (LEDGER_quirks row).
+def test_db_roundtrip_deformable():
+    """HARD GATE (promoted from xfail 2026-07-15, per its own XPASS contract):
+    a DEFORMABLE overlay model's transient DB restart reproduces the
+    continuous run across SEVERAL fresh child processes.
 
-    This test runs the deformable round-trip in SEVERAL fresh child processes
-    and xfails while the upstream bug manifests. If ALL runs come back
-    bit-exact AND stable the harness reports XPASS - the upstream path got
-    fixed and this must be promoted to a hard gate."""
+    History: shipped at P1 (#576) as a KNOWN-FAIL pinning what looked like an
+    upstream FileDatastore/Domain restore corruption (non-deterministic across
+    fresh processes, restored-operator eigenvalues going negative, all
+    python-visible restored state exact). ROOT CAUSE found + fixed in #577:
+    quad/tri elements' ELEMENT-LEVEL rho was never serialized and the broker
+    ctor left it uninitialized -> garbage heap value overriding the
+    (correctly restored) material density via the `if (rho==0)` gate ->
+    corrupt mass matrix on every DB/MPI-restored element. The overlay was
+    exonerated (its p/dp/uSnapshot round-trip was verified exact in diverging
+    runs); it merely amplified the wrong-M response through its +Q*p forces.
+
+    The multi-fresh-process structure is retained deliberately - it is the
+    regression net for exactly this class of uninitialized-serialization bug
+    (a single in-process run can land on benign heap garbage and pass)."""
     rels = []
     for _ in range(6):
         out, rc = _run_child(_db_child_src(1e4, 1e4, 3, 3, rich=False))
         if rc != 0:
-            rels.append(float("inf"))     # restart-induced instability = bug
+            rels.append(float("inf"))     # restart-induced instability
             continue
         try:
             _, rel = _child_dmax(out)
@@ -860,14 +848,14 @@ def test_db_roundtrip_deformable_nonreproducible_KNOWNFAIL():
             continue
         rels.append(rel)
     worst = max(rels)
-    # xfail: this asserts the DESIRED behaviour (bit-exact continuity). While the
-    # bug exists `worst` is large -> this raises -> recorded xfail. When the
-    # u-restart path is fixed all runs are exact -> this passes -> XPASS = promote.
     assert worst <= 0.01, (
         f"deformable DB restart diverges from continuous - worst rel={worst:.2e} "
         f"over 6 fresh processes (rels={['%.2e' % r for r in rels]}). "
-        "NON-DETERMINISTIC u-coupling restart bug (uSnapshot_ / FileDatastore "
-        "transient-state restore); P1 blocker for the 1.D gate.")
+        "The #577 class of bug (unserialized element state corrupting the "
+        "restored operator) has REGRESSED - check element sendSelf/recvSelf "
+        "completeness before suspecting the overlay.")
+    return (f"deformable restart reproduces continuous in 6/6 fresh processes "
+            f"(worst rel={worst:.2e}; upstream rho bug fixed in #577)")
 
 
 # ==========================================================================
@@ -924,7 +912,7 @@ _TESTS = [
     ("5  pInit hydrostatic/steady",         test_pinit_hydrostatic_and_steady_closed_form, False),
     ("6a DB p/dp round-trip (frozen)",      test_db_roundtrip_committed_p_and_dp, False),
     ("6b DB rich config active",            test_db_roundtrip_rich_config_survives_and_active, False),
-    ("6c DB deformable non-reprod [xfail]", test_db_roundtrip_deformable_nonreproducible_KNOWNFAIL, True),
+    ("6c DB deformable restart reproduces", test_db_roundtrip_deformable, False),
     ("7  -record everyN semantics",         test_record_everyN_and_header, False),
 ]
 
