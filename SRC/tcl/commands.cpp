@@ -6180,6 +6180,30 @@ eigenAnalysis(ClientData clientData, Tcl_Interp *interp, int argc,
 	//	delete theEigenSOE;
 	theEigenSOE = 0;
 	setEigen = true;
+      } else if (typeSolver == EigenSOE_TAGS_FeastEigenSOE) {
+	// Ladruno ADR-43: FEAST carries per-call command parameters (the
+	// band, m0, nq, tol, flags) on the SOE, unlike ARPACK/SymBand/
+	// FullGen. The classic reuse-on-classTag-match pattern would
+	// silently solve a SECOND `eigen -feast` with the FIRST call's
+	// band. Forcing a fresh SOE is a TRAP: the persistent analysis's
+	// setEigenSOE also keeps its OLD SOE on classTag match, silently
+	// dropping (and leaking) the new one while solve() runs stale.
+	// Correct minimal fix: MUTATE the existing SOE in place —
+	// re-apply every parameter, using the constructor defaults
+	// (FeastEigenSOE.cpp) for flags absent from this call so call-1
+	// settings cannot bleed into call 2.
+	FeastEigenSOE *f = static_cast<FeastEigenSOE *>(theEigenSOE);
+	const double twoPi = 8.0 * atan(1.0);
+	f->setBand((twoPi*feastFmin)*(twoPi*feastFmin),
+		   (twoPi*feastFmax)*(twoPi*feastFmax));
+	f->setSubspaceSize(feastM0);                        // 0 = auto seed
+	f->setNumQuad(feastNq > 0 ? feastNq : 8);
+	f->setTol(feastTolExp > 0.0 ? feastTolExp : 12.0);
+	f->setMaxRefine(feastMaxRefine > 0 ? feastMaxRefine : 20);
+	f->setVerbose(feastVerbose);
+	f->setCertify(feastCertify);
+	f->setBlockZGate(feastBlockZGate);
+	f->setRci(feastRci);
       }
     }
 
@@ -6301,14 +6325,29 @@ eigenAnalysis(ClientData clientData, Tcl_Interp *interp, int argc,
       for (int i=0; i<numEigen; i++) {
 	cnt += sprintf(&resDataPtr[cnt], "%35.20f  ", eigenvalues[i]);
       }
-      
+      // Ladruno ADR-43: terminate even when ZERO modes printed (an empty
+      // FEAST band trims numEigen to 0 — the loop then never runs and the
+      // '\n'-prefilled buffer has no NUL, so Tcl_SetResult reads past it
+      // into heap garbage). A no-op overwrite for every non-empty case.
+      resDataPtr[cnt] = '\0';
+
       Tcl_SetResult(interp, resDataPtr, TCL_STATIC);
     }
-    
+
+    // Ladruno ADR-43: a FEAST failure (including a -certify Sturm/inertia
+    // REFUSE) must stop the deck — mirroring OPS_eigenFeast's "analysis
+    // failed" error. Upstream classic swallows ARPACK failures (falls
+    // through to TCL_OK); that behavior is kept byte-identical for the
+    // non-FEAST solvers.
+    if (result != 0 && typeSolver == EigenSOE_TAGS_FeastEigenSOE) {
+      opserr << "WARNING eigen -feast: analysis failed\n";
+      return TCL_ERROR;
+    }
+
     return TCL_OK;
 }
 
-int 
+int
 modalProperties(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
 {
     OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
