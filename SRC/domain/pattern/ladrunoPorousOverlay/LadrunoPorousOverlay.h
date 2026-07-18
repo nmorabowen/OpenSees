@@ -198,6 +198,23 @@ class LadrunoPorousOverlay : public LoadPattern
   // <0 on advance failure. Keeps the subcycle counters private to the overlay.
   int    catchUpPendingWindow(void);
 
+  // ---- ADR-73 P4 recorder-channel seam (const reads only; ADR §4.1 pins) ----
+  // The overlay p-field recorder channels (recorder ladruno -overlay / Monitor
+  // -overlay) read the committed field through these trivial const accessors.
+  // Zero physics, nothing mutates, nothing serializes. getRegionNodeTags() is
+  // THE canonical id order for every channel; getCommittedP() is aligned to it.
+  const std::vector<int>&    getRegionNodeTags() const { return regionNodeTags_; }
+  const std::vector<double>& getCommittedP()     const { return pCommitted_; }
+  const std::vector<int>&    getDrainedNodeTags() const { return drainedNodeTags_; }
+  // Committed p at one region node tag. Returns 0.0 (and sets no error) for a
+  // non-region tag: callers MUST pre-validate against getRegionNodeTags() (the
+  // Monitor parser fatals at construction on a non-region tag).
+  double pAtNodeTag(int nodeTag) const;
+  // The lazy geometry snapshot has completed. The recorder must NOT fire the
+  // snapshot from registration/writeModel (timing pin 4.3) — it guards every
+  // channel build with this instead.
+  bool   snapshotReady() const { return snapshotOk_; }
+
  private:
   struct Cell;                               // defined below (used in decls)
 

@@ -41,6 +41,7 @@
 #include "Ladruno_NodeResults.h"
 #include "Ladruno_ElementResults.h"
 #include "Ladruno_DomainResults.h"
+#include "Ladruno_OverlayResults.h"   // Ladruno (ADR-73 P4): -overlay channels
 #include "Ladruno_Sinks.h"
 
 // OpenSees
@@ -75,6 +76,9 @@
 #include <MeshRegion.h>
 #include <Pressure_ConstraintIter.h>
 #include <Pressure_Constraint.h>
+#include <LoadPattern.h>              // Ladruno (ADR-73 P4): overlay discovery
+#include <LoadPatternIter.h>
+#include <LadrunoPorousOverlay.h>
 #include "section/SectionForceDeformation.h"
 
 #include <string>
@@ -114,6 +118,10 @@ public:
 		, elem_set()
 		, energy_requested(false)
 		, energy_region_tags()
+		, overlay_requested(false)
+		, overlay_all(false)
+		, overlay_tags()
+		, overlay_ptrs()
 		, stage_kind("static")
 		, envelope_mode(false)
 		, nodal_results_requests()
@@ -154,6 +162,17 @@ public:
 	// -G energy balance (ADR D8): whole-model and/or per-region energy.
 	bool energy_requested;               // -G energy   -> whole-model ON_DOMAIN
 	std::vector<int> energy_region_tags; // -G <tag...> -> per-region ON_REGIONS
+
+	// -overlay (ADR-73 P4): pore-pressure channels for LadrunoPorousOverlay
+	// patterns (PATTERN_TAG 33022). overlay_requested = the flag was given;
+	// overlay_all = bare -overlay (every 33022 pattern at writeModel time,
+	// fatal if none); overlay_tags = the explicit tag list (validated at parse
+	// time, empty when overlay_all). overlay_ptrs are re-resolved from the
+	// domain at each writeModel (not owned, not serialized).
+	bool overlay_requested;
+	bool overlay_all;
+	std::vector<int> overlay_tags;
+	std::vector<LadrunoPorousOverlay*> overlay_ptrs;
 
 	// -kind <transient|static|eigen>: the MODEL_STAGE/KIND attr. apeGmsh knows the
 	// analysis type when it emits the recorder command (the domain can't be relied
@@ -212,6 +231,14 @@ public:
 		DomainChannel() : source(0), sink(0) {}
 	};
 	std::vector<DomainChannel> domain_channels;
+
+	/* --- overlay p-field sources/sinks (ADR-73 P4) --- */
+	struct OverlayChannel {
+		ladrunons::ResultSource* source;   // owned (OverlayPressureSource)
+		ladrunons::ResultSink* sink;       // owned (Streaming or Envelope, OnNodes)
+		OverlayChannel() : source(0), sink(0) {}
+	};
+	std::vector<OverlayChannel> overlay_channels;
 };
 
 /* ===================================================================== */
@@ -269,6 +296,11 @@ int LadrunoRecorder::clearSources()
 		delete m_data->domain_channels[i].sink;
 	}
 	m_data->domain_channels.clear();
+	for (size_t i = 0; i < m_data->overlay_channels.size(); ++i) {
+		delete m_data->overlay_channels[i].source;
+		delete m_data->overlay_channels[i].sink;
+	}
+	m_data->overlay_channels.clear();
 	// element responses are owned here (frozen clearElementRecorders)
 	for (size_t i = 0; i < m_data->elemental_responses.size(); ++i) {
 		if (m_data->elemental_responses[i])
@@ -291,6 +323,9 @@ void LadrunoRecorder::finalizeAllSinks()
 	for (size_t i = 0; i < m_data->domain_channels.size(); ++i)
 		if (m_data->domain_channels[i].sink)
 			m_data->domain_channels[i].sink->finalize(info);
+	for (size_t i = 0; i < m_data->overlay_channels.size(); ++i)
+		if (m_data->overlay_channels[i].sink)
+			m_data->overlay_channels[i].sink->finalize(info);
 
 	// Element ENVELOPES carry the same structured per-column COLUMN_MAP as the
 	// time-series ON_ELEMENTS path (gauss/section/fiber column structure, beyond
@@ -393,6 +428,8 @@ int LadrunoRecorder::record(int commitTag, double timeStamp)
 	if (recordResultsOnElements() != 0)
 		return -1;
 	if (recordResultsOnDomain() != 0)
+		return -1;
+	if (recordResultsOnOverlays() != 0)
 		return -1;
 
 	// Envelope mode defers all output to finalize(); rewrite the (small) ENVELOPES
@@ -621,6 +658,8 @@ int LadrunoRecorder::writeModel()
 		return -1;
 	if (writeModelSets() != 0)
 		return -1;
+	if (writeModelOverlays() != 0)   // Ladruno (ADR-73 P4): resolves overlay list
+		return -1;
 	if (writeModelLocalAxes() != 0)
 		return -1;
 	if (writeSections() != 0)
@@ -638,6 +677,8 @@ int LadrunoRecorder::writeModel()
 	if (initElementSources() != 0)
 		return -1;
 	if (initDomainSources() != 0)
+		return -1;
+	if (initOverlaySources() != 0)   // Ladruno (ADR-73 P4)
 		return -1;
 
 	return 0;
@@ -1022,6 +1063,109 @@ int LadrunoRecorder::writeModelSets()
 	}
 
 	ladrunons::h5::group::close(h_sets);
+	return 0;
+}
+
+int LadrunoRecorder::writeModelOverlays()
+{
+	// MODEL/OVERLAYS/OVERLAY_<tag>/{REGION_NODES, DRAINED_NODES} + TAG attr —
+	// write-once topology for the -overlay pressure channels (ADR-73 P4),
+	// mirroring writeModelSets(). Also THE place the overlay pattern list is
+	// resolved for this stage (stored in overlay_ptrs, consumed by
+	// initOverlaySources). Region nodes are ordinary solid nodes already in
+	// MODEL/NODES — no node-writing changes. No NDIR/NUM_GP/COLUMN_MAP: this is
+	// a nodal scalar, not an element result.
+	ladrunons::detail::ProcessInfo& info = m_data->info;
+
+	// re-resolved fresh each stage (a stage rebuild may add/remove patterns)
+	m_data->overlay_ptrs.clear();
+
+	if (!m_data->overlay_requested)
+		return 0;
+
+	// --- resolve the overlay pattern list (P2 driver / Domain.cpp:2248 idiom:
+	//     scan load patterns for PATTERN_TAG_LadrunoPorousOverlay) ------------
+	std::vector<LadrunoPorousOverlay*> resolved;
+	if (m_data->overlay_all) {
+		// bare -overlay: every 33022 pattern in the domain (fatal if none).
+		LoadPatternIter& lps = info.domain->getLoadPatterns();
+		LoadPattern* lp;
+		while ((lp = lps()) != 0) {
+			if (lp->getClassTag() == PATTERN_TAG_LadrunoPorousOverlay)
+				resolved.push_back((LadrunoPorousOverlay*)lp);
+		}
+		if (resolved.empty()) {
+			opserr << "LadrunoRecorder error: bare -overlay was requested but no "
+			          "LadrunoPorousOverlay (pattern tag "
+			       << PATTERN_TAG_LadrunoPorousOverlay
+			       << ") exists in the domain\n";
+			return -1;
+		}
+	}
+	else {
+		// explicit tags (validated at parse time); re-resolve for this stage.
+		for (size_t t = 0; t < m_data->overlay_tags.size(); ++t) {
+			int tag = m_data->overlay_tags[t];
+			LoadPattern* lp = info.domain->getLoadPattern(tag);
+			if (lp == 0 || lp->getClassTag() != PATTERN_TAG_LadrunoPorousOverlay) {
+				opserr << "LadrunoRecorder error: -overlay tag " << tag
+				       << " is not a LadrunoPorousOverlay in the domain at record "
+				          "time\n";
+				return -1;
+			}
+			resolved.push_back((LadrunoPorousOverlay*)lp);
+		}
+	}
+
+	// --- topology rows for the ready overlays (snapshotReady guard, pin 4.3) --
+	// writeModel() runs lazily at the first record() — after the first
+	// Domain::commit — so an overlay added at model-build time is snapshotted by
+	// now. A not-ready overlay (e.g. a failed snapshot, which already aborts its
+	// own commits) is skipped with a LOUD warning, never silently streamed empty.
+	hid_t h_overlays = ladrunons::HID_INVALID; // created lazily on the first ready overlay
+	for (size_t i = 0; i < resolved.size(); ++i) {
+		LadrunoPorousOverlay* ov = resolved[i];
+		if (!ov->snapshotReady()) {
+			opserr << "LadrunoRecorder WARNING: overlay " << ov->getTag()
+			       << " has no completed geometry snapshot at record time; its "
+			          "-overlay pressure channel is skipped (no snapshot => no "
+			          "field to record)\n";
+			continue;
+		}
+		m_data->overlay_ptrs.push_back(ov);
+
+		if (h_overlays == ladrunons::HID_INVALID) {
+			std::stringstream ss_ov;
+			ss_ov << "MODEL_STAGE[" << info.current_model_stage_id
+			      << "]/MODEL/OVERLAYS";
+			h_overlays = ladrunons::h5::group::create(
+				info.h_file_id, ss_ov.str().c_str(), H5P_DEFAULT,
+				info.h_group_proplist, H5P_DEFAULT);
+		}
+
+		std::stringstream ss;
+		ss << "MODEL_STAGE[" << info.current_model_stage_id
+		   << "]/MODEL/OVERLAYS/OVERLAY_" << ov->getTag();
+		hid_t h = ladrunons::h5::group::create(
+			info.h_file_id, ss.str().c_str(), H5P_DEFAULT,
+			info.h_group_proplist, H5P_DEFAULT);
+		ladrunons::h5::attribute::write(h, "TAG", ov->getTag());
+
+		hid_t d_rn = ladrunons::h5::dataset::createAndWrite(
+			h, "REGION_NODES", ov->getRegionNodeTags());
+		if (d_rn != ladrunons::HID_INVALID)
+			ladrunons::h5::dataset::close(d_rn);
+		hid_t d_dn = ladrunons::h5::dataset::createAndWrite(
+			h, "DRAINED_NODES", ov->getDrainedNodeTags());
+		if (d_dn != ladrunons::HID_INVALID)
+			ladrunons::h5::dataset::close(d_dn);
+
+		ladrunons::h5::group::close(h);
+	}
+
+	if (h_overlays != ladrunons::HID_INVALID)
+		ladrunons::h5::group::close(h_overlays);
+
 	return 0;
 }
 
@@ -1957,6 +2101,42 @@ int LadrunoRecorder::recordResultsOnDomain()
 	return 0;
 }
 
+/* ===================================================================== */
+/* overlay p-field sources (ADR-73 P4)                                   */
+/* ===================================================================== */
+
+int LadrunoRecorder::initOverlaySources()
+{
+	// One OverlayPressureSource per resolved+ready overlay (overlay_ptrs, filled
+	// by writeModelOverlays this stage). Sinks are OnNodes so the field lands in
+	// RESULTS/ON_NODES/overlayPressure_<tag>/{ID,DATA,STEP,TIME} via the untouched
+	// generic StreamingSink/EnvelopeSink. -envelope honored like every other
+	// channel (envelope |p|max is the liquefaction use case).
+	for (size_t i = 0; i < m_data->overlay_ptrs.size(); ++i) {
+		private_data::OverlayChannel ch;
+		ch.source = new ladrunons::OverlayPressureSource(
+			m_data->info, m_data->overlay_ptrs[i]);
+		ch.sink = m_data->envelope_mode
+			? (ladrunons::ResultSink*)new ladrunons::EnvelopeSink(ladrunons::ResultFamily::OnNodes)
+			: (ladrunons::ResultSink*)new ladrunons::StreamingSink(ladrunons::ResultFamily::OnNodes);
+		m_data->overlay_channels.push_back(ch);
+	}
+	return 0;
+}
+
+int LadrunoRecorder::recordResultsOnOverlays()
+{
+	ladrunons::detail::ProcessInfo& info = m_data->info;
+
+	std::vector<double> buffer;
+	for (size_t i = 0; i < m_data->overlay_channels.size(); ++i) {
+		private_data::OverlayChannel& ch = m_data->overlay_channels[i];
+		ch.source->evaluate(info, buffer);
+		ch.sink->accept(info, *ch.source, buffer);
+	}
+	return 0;
+}
+
 /* Write the COLUMN_MAP child group + SECTION_MAP under the element result group
    (schema §7.2). Called once, after the StreamingSink has created
    ON_ELEMENTS/<display>/<bucket>. */
@@ -2103,6 +2283,9 @@ int LadrunoRecorder::sendSelf(int commitTag, Channel& theChannel)
 	ser.put_vi(m_data->elem_set);
 	ser.put_i(m_data->energy_requested ? 1 : 0);
 	ser.put_vi(m_data->energy_region_tags);
+	ser.put_i(m_data->overlay_requested ? 1 : 0);   // Ladruno (ADR-73 P4)
+	ser.put_i(m_data->overlay_all ? 1 : 0);
+	ser.put_vi(m_data->overlay_tags);
 	ser.put_s(m_data->stage_kind);
 	{
 		std::vector<int> nr;
@@ -2181,6 +2364,9 @@ int LadrunoRecorder::recvSelf(int commitTag, Channel& theChannel,
 	m_data->elem_set = de.get_vi();
 	m_data->energy_requested = de.get_i() != 0;
 	m_data->energy_region_tags = de.get_vi();
+	m_data->overlay_requested = de.get_i() != 0;   // Ladruno (ADR-73 P4)
+	m_data->overlay_all = de.get_i() != 0;
+	m_data->overlay_tags = de.get_vi();
 	m_data->stage_kind = de.get_s();
 	{
 		std::vector<int> nr = de.get_vi();
@@ -2221,7 +2407,7 @@ void* OPS_LadrunoRecorder()
 		opserr << "LadrunoRecorder error: insufficient args; expected a filename\n"
 		       << "  usage: recorder ladruno <file> [-N <res...>] [-NS <res...> <grad>] "
 		          "[-E <res...>] [-R <regionTag>] [-G energy <regionTag...>] "
-		          "[-T dt|nsteps <v>]\n";
+		          "[-overlay <tag...>] [-T dt|nsteps <v>]\n";
 		return 0;
 	}
 
@@ -2247,6 +2433,9 @@ void* OPS_LadrunoRecorder()
 	std::set<int> elem_set;
 	bool energy_requested = false;       // -G energy
 	std::vector<int> energy_region_tags; // -G <regionTag...>
+	bool overlay_requested_opt = false;  // -overlay (ADR-73 P4)
+	bool overlay_all_opt = false;        // bare -overlay = all 33022 patterns
+	std::vector<int> overlay_tags_opt;   // explicit -overlay tags
 	std::string stage_kind_opt = "static"; // -kind <transient|static|eigen>
 	bool envelope_opt = false;             // -envelope flag
 	bool store_data_f32 = false;           // -precision f32 (lossy) | f64 (default)
@@ -2342,6 +2531,56 @@ void* OPS_LadrunoRecorder()
 					       << " not found in the domain; skipping its energy block\n";
 				else
 					energy_region_tags.push_back(tag);
+			}
+		}
+		else if (strcmp(data, "-overlay") == 0) {
+			// -overlay <tag...> : LadrunoPorousOverlay (33022) pressure channels
+			// (ADR-73 P4). Bare (no tags) = every overlay in the domain at
+			// writeModel time (fatal-if-none checked then). Explicit tags are
+			// validated NOW — unknown / non-33022 => parser-time fatal (the
+			// unknown-flag-FATAL house rule). Greedy int-parse like -G: stop at
+			// the first non-int and hand it back to the outer loop.
+			overlay_requested_opt = true;
+			while (numdata > 0) {
+				int tag = 0; int n = 1;
+				int oldn = OPS_GetNumRemainingInputArgs();
+				if (OPS_GetIntInput(&n, &tag) < 0) {
+					if (OPS_GetNumRemainingInputArgs() < oldn)
+						OPS_ResetCurrentInputArg(-1);
+					break;
+				}
+				numdata--;
+				LoadPattern* lp = domain->getLoadPattern(tag);
+				if (lp == 0 ||
+				    lp->getClassTag() != PATTERN_TAG_LadrunoPorousOverlay) {
+					opserr << "LadrunoRecorder error: -overlay tag " << tag
+					       << " is not a LadrunoPorousOverlay (pattern tag "
+					       << PATTERN_TAG_LadrunoPorousOverlay
+					       << ") in the domain\n";
+					return 0;
+				}
+				overlay_tags_opt.push_back(tag);
+			}
+			overlay_all_opt = overlay_tags_opt.empty();
+			if (overlay_all_opt) {
+				// fail-fast at parse (house style; writeModelOverlays re-checks
+				// as the backstop): bare -overlay needs a 33022 pattern NOW.
+				bool anyOverlay = false;
+				LoadPatternIter& lps = domain->getLoadPatterns();
+				LoadPattern* lp;
+				while ((lp = lps()) != 0) {
+					if (lp->getClassTag() == PATTERN_TAG_LadrunoPorousOverlay) {
+						anyOverlay = true;
+						break;
+					}
+				}
+				if (!anyOverlay) {
+					opserr << "LadrunoRecorder error: bare -overlay was requested "
+					          "but no LadrunoPorousOverlay (pattern tag "
+					       << PATTERN_TAG_LadrunoPorousOverlay
+					       << ") exists in the domain\n";
+					return 0;
+				}
 			}
 		}
 		else if (strcmp(data, "-kind") == 0) {
@@ -2552,6 +2791,9 @@ void* OPS_LadrunoRecorder()
 		recorder->m_data->elem_set.push_back(*it);
 	recorder->m_data->energy_requested = energy_requested;
 	recorder->m_data->energy_region_tags.swap(energy_region_tags);
+	recorder->m_data->overlay_requested = overlay_requested_opt;   // Ladruno (ADR-73 P4)
+	recorder->m_data->overlay_all = overlay_all_opt;
+	recorder->m_data->overlay_tags.swap(overlay_tags_opt);
 	recorder->m_data->stage_kind = stage_kind_opt;
 	recorder->m_data->envelope_mode = envelope_opt;
 	// -precision: carried on ProcessInfo (read by StreamingSink::begin and stamped
