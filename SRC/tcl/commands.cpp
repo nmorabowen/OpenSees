@@ -102,6 +102,7 @@ extern "C" int         OPS_ResetInputNoBuilder(ClientData clientData, Tcl_Interp
 
 #include <Timer.h>
 #include <Profiler.h>   // Ladruno stack profiler (HDF5 writer comes via Profiler.h)
+#include <LadrunoStaggeredDriver.h>   // Ladruno (ADR-73 P2): iterated fixed-stress overlay driver
 #include <ModelBuilder.h>
 #include "commands.h"
 
@@ -941,6 +942,86 @@ TclCommand_profiler(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Cha
   return TCL_ERROR;
 }
 
+// Ladruno (ADR-73 P2): classic-Tcl bridge for the iterated fixed-stress overlay
+// driver. Forms:
+//   LadrunoStaggeredAnalyze $n $dt <-tol $t> <-maxIter $k> <-pScale $s> <-verbose>
+//     -> integer result (0 / negative, the `analyze` convention)
+//   LadrunoStaggeredAnalyze -stats
+//     -> {nSteps totalFluidSolves meanIters maxIters lastResidual maxResidual}
+// TRANSIENT-only; uses the classic analysis globals theTransientAnalysis /
+// theStaticAnalysis and the global theDomain.
+int
+TclCommand_ladrunoStaggeredAnalyze(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
+{
+  if (argc >= 2 && strcmp(argv[1], "-stats") == 0) {
+    const ladruno_overlay::LadrunoStaggeredStats& st =
+        ladruno_overlay::LadrunoStaggeredLastStats();
+    char buffer[512];
+    sprintf(buffer, "%ld %ld %.17g %ld %.17g %.17g",
+            st.nSteps, st.totalFluidSolves, st.meanIters,
+            st.maxIters, st.lastResidual, st.maxResidual);
+    Tcl_SetResult(interp, buffer, TCL_VOLATILE);
+    return TCL_OK;
+  }
+
+  if (argc < 3) {
+    opserr << "WARNING LadrunoStaggeredAnalyze $n $dt <-tol $t> <-maxIter $k> "
+              "<-pScale $s> <-verbose> | -stats\n";
+    return TCL_ERROR;
+  }
+  int nSteps;
+  if (Tcl_GetInt(interp, argv[1], &nSteps) != TCL_OK)
+    return TCL_ERROR;
+  double dt;
+  if (Tcl_GetDouble(interp, argv[2], &dt) != TCL_OK)
+    return TCL_ERROR;
+
+  double tol = 1e-6, pScale = 1.0;
+  int    maxIter = 500;
+  bool   verbose = false;
+  for (int i = 3; i < argc; i++) {
+    if (strcmp(argv[i], "-tol") == 0 && i + 1 < argc) {
+      if (Tcl_GetDouble(interp, argv[++i], &tol) != TCL_OK) return TCL_ERROR;
+    } else if (strcmp(argv[i], "-maxIter") == 0 && i + 1 < argc) {
+      if (Tcl_GetInt(interp, argv[++i], &maxIter) != TCL_OK) return TCL_ERROR;
+    } else if (strcmp(argv[i], "-pScale") == 0 && i + 1 < argc) {
+      if (Tcl_GetDouble(interp, argv[++i], &pScale) != TCL_OK) return TCL_ERROR;
+    } else if (strcmp(argv[i], "-verbose") == 0) {
+      verbose = true;
+    } else {
+      opserr << "WARNING LadrunoStaggeredAnalyze -- unknown option '"
+             << argv[i] << "'\n";
+      return TCL_ERROR;
+    }
+  }
+
+  if (theStaticAnalysis != 0) {
+    opserr << "ERROR LadrunoStaggeredAnalyze -- a static analysis is active. The "
+              "driver is TRANSIENT-only: under a static analysis the domain "
+              "\"time\" is the load factor and an iterated dLambda fluid march is "
+              "silently wrong physics (ADR-73 A-3). Build a transient analysis, "
+              "or use -staticMode hold|steady on the overlay.\n";
+    return TCL_ERROR;
+  }
+  if (theTransientAnalysis == 0) {
+    opserr << "ERROR LadrunoStaggeredAnalyze -- no transient analysis has been "
+              "constructed (need an `analysis Transient` first)\n";
+    return TCL_ERROR;
+  }
+
+  int result = ladruno_overlay::LadrunoStaggeredRun(
+      theTransientAnalysis, &theDomain, nSteps, dt, tol, maxIter, pScale, verbose);
+
+  if (result < 0)
+    opserr << "OpenSees > LadrunoStaggeredAnalyze failed, returned: " << result
+           << " error flag\n";
+
+  char buffer[16];
+  sprintf(buffer, "%d", result);
+  Tcl_SetResult(interp, buffer, TCL_VOLATILE);
+  return TCL_OK;
+}
+
 
 int OpenSeesAppInit(Tcl_Interp *interp) {
 
@@ -987,6 +1068,9 @@ int OpenSeesAppInit(Tcl_Interp *interp) {
 
     Tcl_CreateCommand(interp, "profiler", &TclCommand_profiler,
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL); // Ladruno
+
+    Tcl_CreateCommand(interp, "LadrunoStaggeredAnalyze", &TclCommand_ladrunoStaggeredAnalyze,
+		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL); // Ladruno (ADR-73 P2)
 
     Tcl_CreateCommand(interp, "wipe", &wipeModel,
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);

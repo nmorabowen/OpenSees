@@ -465,6 +465,7 @@ int OPS_restore();
 int OPS_startTimer();
 int OPS_stopTimer();
 int OPS_profiler();
+int OPS_LadrunoStaggeredAnalyze();   // Ladruno (ADR-73 P2): iterated fixed-stress overlay driver
 int OPS_modalDamping();
 int OPS_modalDampingQ();
 int OPS_neesMetaData();

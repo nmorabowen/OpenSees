@@ -973,6 +973,15 @@ static int Tcl_ops_profiler(ClientData clientData, Tcl_Interp *interp, int argc,
     return TCL_OK;
 }
 
+// Ladruno (ADR-73 P2): the iterated fixed-stress overlay driver command.
+static int Tcl_ops_LadrunoStaggeredAnalyze(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {
+    wrapper->resetCommandLine(argc, 1, argv);
+
+    if (OPS_LadrunoStaggeredAnalyze() < 0) return TCL_ERROR;
+
+    return TCL_OK;
+}
+
 static int Tcl_ops_modalDamping(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {
     wrapper->resetCommandLine(argc, 1, argv);
 
@@ -2012,6 +2021,7 @@ TclWrapper::addOpenSeesCommands(Tcl_Interp* interp)
     addCommand(interp,"start", &Tcl_ops_startTimer);
     addCommand(interp,"stop", &Tcl_ops_stopTimer);
     addCommand(interp,"profiler", &Tcl_ops_profiler);
+    addCommand(interp,"LadrunoStaggeredAnalyze", &Tcl_ops_LadrunoStaggeredAnalyze); // Ladruno (ADR-73 P2)
     addCommand(interp,"modalDamping", &Tcl_ops_modalDamping);
     addCommand(interp,"modalDampingQ", &Tcl_ops_modalDampingQ);
     addCommand(interp,"setElementRayleighDampingFactors", &Tcl_ops_setElementRayleighDampingFactors);

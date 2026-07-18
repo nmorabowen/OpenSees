@@ -304,8 +304,13 @@ count = number of fluid advances, `nit` in e76):
    e76's first iterate used Δp_ref = 0), repeats use the trial increment
    (§3.1 fixed point; L cancels at convergence).
    Residual = max over driven overlays of
-   `‖p_k − p_{k−1}‖₂ / (‖p_k‖₂ + pScale)` (toy `dcon` verbatim, computed
-   inside `advanceTrial`, exposed as `lastAdvanceRelChange()`).
+   `‖p_k − p_{k−1}‖₂ / (‖p_k‖₂ + pScale)` over the FREE (non-drained) rows —
+   the toy `dcon` on the reduced system (amended at 2.E per panel math-6:
+   including prescribed drained values in the denominator would under-report
+   the residual). Computed inside `advanceTrial`, exposed as
+   `lastAdvanceRelChange()`. The first-of-step advance is the rate-form warm
+   start, NOT the toy fs_iter's cold Δp_ref = 0 first iterate (panel math-2:
+   same fixed point, typically fewer iterations — gate (b)'s band absorbs it).
 4. While residual ≥ tol and nit < maxIter:
    `domain->revertToLastCommit()`; `integrator->revertToLastStep()`;
    `newStep(dt)`; `solveCurrentStep()` (solid now sees `+Q·p_k`);

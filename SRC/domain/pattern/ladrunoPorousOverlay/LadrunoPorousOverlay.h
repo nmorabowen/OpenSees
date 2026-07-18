@@ -76,6 +76,8 @@ class Element;
 class Channel;
 class FEM_ObjectBroker;
 class OPS_Stream;
+class Parameter;
+class Information;
 
 class LadrunoPorousOverlay : public LoadPattern
 {
@@ -135,6 +137,12 @@ class LadrunoPorousOverlay : public LoadPattern
   void   Print(OPS_Stream& s, int flag = 0);
   LoadPattern* getCopy(void);
 
+  // ---- moduli / stage transport (ADR-73 P2 §2.4, parameter route) -----------
+  // Reached via `parameter $p loadPattern $overlay E|nu|layerE $i|layerNu $i`.
+  int    setParameter(const char** argv, int argc, Parameter& param);
+  int    updateParameter(int parameterID, Information& info);
+  int    activateParameter(int parameterID);
+
   // ---- ADR-73 seam (called by the sibling's guarded Domain::commit block) ---
   // 0 on success, negative = fatal (printed loudly). Honors -subcycle, applies
   // -staticMode semantics, rescans element removal, then advanceTrial+commitFluid.
@@ -149,6 +157,24 @@ class LadrunoPorousOverlay : public LoadPattern
   // region-overlap discovery ⟨A-13⟩: does this overlay claim eleTag?
   bool   ownsElement(int eleTag) const;
 
+  // ---- ADR-73 P2 driver seam (LadrunoStaggeredAnalyze, LadrunoStaggeredDriver) --
+  // The iterated fixed-stress driver latches the overlay into external-stepping
+  // mode: applyLoad then injects +Q·pTrial_ (the current iterate's forces, not
+  // the committed ones) and the driver's converged Domain::commit only SYNCS the
+  // already-advanced fluid (NO extra advanceTrial → no double-march). The driver
+  // reads lastAdvanceRelChange() (the toy `dcon` residual) after each
+  // advanceTrial and transports staged moduli through the parameter route.
+  void   setExternalStepping(bool on);
+  bool   externalStepping(void) const;
+  void   setResidualPScale(double s);        // toy `dcon` denominator offset
+  double lastAdvanceRelChange(void) const;   // residual of the last advanceTrial
+  int    staticModeCode(void) const;         // driven-set filter (== SM_MARCH?)
+  int    fluidUpdateCode(void) const;        // driven-set filter (== FU_IMPLICIT?)
+  // Early fs1 sync of a pending -subcycle window before the driver takes over
+  // (catch-up, plan §2.2 step 0). Returns 1 if it fired, 0 if nothing pending,
+  // <0 on advance failure. Keeps the subcycle counters private to the overlay.
+  int    catchUpPendingWindow(void);
+
  private:
   struct Cell;                               // defined below (used in decls)
 
@@ -156,14 +182,27 @@ class LadrunoPorousOverlay : public LoadPattern
   int    buildSnapshot(void);                // 0 ok, <0 fatal (prints)
   int    classifyCell(Element* ele, int& shapeKind, int& nNodes) const;
   int    assembleCell(int ci);               // per-cell blocks via the kernel
-  template <class SH> void fillCell(Cell& c);// templated per-shape assembly
+  template <class SH> void fillCell(Cell& c);// templated per-shape geometry+H/Q/f
+  // per-cell E/nu resolution (layer override or global) — the ONE resolution
+  // logic shared by the snapshot and the parameter-route rebuild.
+  void   resolveCellModuli(Cell& c) const;
+  // assemble the moduli-dependent aS_ (S + αstab·H̃) and aL_ (L) blocks from the
+  // retained per-GP snapshot data (Np/dNp/dv). Called by fillCell at snapshot
+  // AND by rebuildModuliCaches — the ONE storage/L assembly path (no drift).
+  void   assembleStorageAndL(Cell& c);
+  // parameter-route moduli transport: re-resolve E/nu, re-derive α_stab / L, and
+  // re-scatter aS_/aL_; aH_/fseep_/Qe untouched (perm/α only). Lazy at next use.
+  void   rebuildModuliCaches(void);
   void   buildSparsity(void);                // CSR pattern from region connectivity
   int    csrPos(int i, int j) const;         // CSR index of (i,j) or -1
   void   scatterMat(const Cell& c, const double* blk, std::vector<double>& tgt);
   void   scatterVecN(const Cell& c, const double* v, std::vector<double>& tgt);
   void   rebuildHFseep(void);                // reassemble H/f_seep (drain-removal)
   void   applyPInit(void);                   // -pInit: zero/steady/hydro/list
-  void   readRegionDisp(std::vector<double>& u) const;  // committed region u
+  // region u: committed by default. trial=true reads the solid's TRIAL disp —
+  // needed by the P2 driver's coupling term mid-step (pre-commit, the current
+  // solve iterate); post-commit trial==committed so the P1 hook is unaffected.
+  void   readRegionDisp(std::vector<double>& u, bool trial = false) const;
   bool   rescanRemoval(void);                // true if any cell newly died
   void   resolveSubcycleN(double dt);        // -subcycle auto formula
 
@@ -189,6 +228,7 @@ class LadrunoPorousOverlay : public LoadPattern
     double kbar[3];
     double poro;
     double E, nu;
+    double hEdge;                 // element size h (for -stab auto α; geometry)
     std::vector<int>    rIdx;      // local node -> region-node index
     std::vector<Node*>  nodes;     // resolved at snapshot
     std::vector<double> Np;        // nGP*nNp
@@ -196,7 +236,7 @@ class LadrunoPorousOverlay : public LoadPattern
     std::vector<double> dv;        // nGP
     std::vector<double> Qe;        // (nNu*ndm) x nNp, row-major, ld = nNp
     Cell() : eleTag(0), shapeKind(0), nNodes(0), nGP(0), alive(true),
-             layerIndex(-1), poro(0.0), E(0.0), nu(0.0)
+             layerIndex(-1), poro(0.0), E(0.0), nu(0.0), hEdge(0.0)
     { kbar[0] = kbar[1] = kbar[2] = 0.0; }
   };
 
@@ -269,6 +309,13 @@ class LadrunoPorousOverlay : public LoadPattern
   bool   fsLFloorWarned_;
   bool   hasSeries_;
   bool   marchNoticeShown_;      // per-instance ⟨A-3⟩ first-march advisory latch
+
+  // ---- ADR-73 P2 driver latch (transient; NOT serialized; recvSelf → defaults) --
+  bool   externalStepping_;      // driver latch (applyLoad→pTrial_, commit=sync)
+  double pScale_;                // residual denominator offset (toy `dcon`)
+  double relChange_;             // relative change of the last advanceTrial
+  bool   moduliDirty_;           // parameter route touched E/nu → rebuild lazily
+  bool   driverSubcycleNoticeShown_;  // one-time "driver overrides -subcycle"
 
   // shape-kind codes
   enum { SHK_NONE = 0, SHK_T3 = 1, SHK_Q4 = 2, SHK_H8 = 3 };
