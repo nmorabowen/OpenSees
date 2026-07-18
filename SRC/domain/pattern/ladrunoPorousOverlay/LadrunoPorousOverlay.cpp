@@ -49,6 +49,7 @@
 #include <Channel.h>
 #include <FEM_ObjectBroker.h>
 #include <Vector.h>
+#include <Matrix.h>     // Ladruno (ADR-73 P3): getUndrainedAugmentation Kadd
 #include <ID.h>
 #include <Parameter.h>
 #include <Information.h>
@@ -139,6 +140,7 @@ LadrunoPorousOverlay::LadrunoPorousOverlay(
    marchNoticeShown_(false),
    externalStepping_(false), pScale_(1.0), relChange_(0.0),
    moduliDirty_(false), driverSubcycleNoticeShown_(false),
+   augSingularWarned_(false),
    dbTag2_(0)
 {
   for (int i = 0; i < 3; i++) {
@@ -167,6 +169,7 @@ LadrunoPorousOverlay::LadrunoPorousOverlay()
    marchNoticeShown_(false),
    externalStepping_(false), pScale_(1.0), relChange_(0.0),
    moduliDirty_(false), driverSubcycleNoticeShown_(false),
+   augSingularWarned_(false),
    dbTag2_(0)
 {
   for (int i = 0; i < 3; i++) { permGlobal_[i] = 0.0; fluidBody_[i] = 0.0; }
@@ -264,6 +267,11 @@ int LadrunoPorousOverlay::buildSnapshot(void)
   regionNodeTags_.clear();
   nodeTagToIndex_.clear();
   regionNodePtrs_.clear();
+  // Ladruno (ADR-73 P3): a rebuilt snapshot may keep the cell COUNT (e.g. a DB
+  // restore onto the same instance) — the lazy size check alone would miss it.
+  augBlocks_.clear();
+  augState_.clear();
+  augIndex_.clear();
   cells_.reserve(regionEleTags_.size());
 
   // per-element layer lookup (fatal on the same element in two layers)
@@ -574,19 +582,18 @@ void LadrunoPorousOverlay::assembleStorageAndL(Cell& c)
   this->resolveCellModuli(c);                    // pick up E/nu (layer/global)
   double Kdr, G, Moed;
   moduliOf(c.E, c.nu, Kdr, G, Moed);
-  double ooq = ladruno_up::oneOverQbar(c.poro, Kf_, biotAlpha_, Ks_);
-
-  double stabAlpha = 0.0;
-  if (stabMode_ == STAB_AUTO)
-    stabAlpha = ladruno_up::stabAlphaAuto(c.hEdge, Kdr, G, stabValue_);
-  else if (stabMode_ == STAB_MANUAL)
-    stabAlpha = stabValue_;
 
   double a2 = biotAlpha_ * biotAlpha_;
   double Lclassic = a2 / Kdr;
   double Loed     = a2 / Moed;
   double Lcoef;
-  if (fsLMode_ == FSL_OEDOMETRIC)      Lcoef = Loed;
+  if (fsLMode_ == FSL_ZERO) {
+    // Ladruno (ADR-73 P3 §3.1): the explicit lane — L ≡ 0, the shipped rate
+    // form with aL_ = 0 (both L terms vanish; the reference rule is inert).
+    // The oedometric floor below guards the fs1/iterated lanes only.
+    Lcoef = 0.0;
+  }
+  else if (fsLMode_ == FSL_OEDOMETRIC) Lcoef = Loed;
   else if (fsLMode_ == FSL_MANUAL) {
     Lcoef = fsLScale_ * Lclassic;                 // $scale multiplies the classic L
     if (Lcoef < Loed) {                           // floor at oedometric ⟨A-2⟩
@@ -608,7 +615,36 @@ void LadrunoPorousOverlay::assembleStorageAndL(Cell& c)
   double cv = kmax * Moed;
   if (cv > maxCv_) maxCv_ = cv;
 
-  std::vector<double> Se(nNp * nNp, 0.0), Le(nNp * nNp, 0.0);
+  std::vector<double> Se, Le(nNp * nNp, 0.0);
+  this->buildCellStorageBlock(c, Se);            // S* = S + αstab·H̃ (shared build)
+  for (int g = 0; g < c.nGP; g++) {
+    const double* NpG = &c.Np[g * nNp];
+    double dv = c.dv[g];
+    ladruno_up::addS(NpG, nNp, Lcoef, dv, &Le[0], nNp);      // L block
+  }
+  this->scatterMat(c, &Se[0], aS_);
+  this->scatterMat(c, &Le[0], aL_);
+}
+
+// dense per-cell S* block (S + αstab·H̃) from retained per-GP data — the ONE S*
+// definition, shared by the CSR scatter above and the ADR-73 P3 undrained
+// augmentation (per-cell dense factor; never read back from CSR). Requires
+// c.E/c.nu already resolved (assembleStorageAndL / rebuildModuliCaches did).
+void LadrunoPorousOverlay::buildCellStorageBlock(const Cell& c,
+                                                 std::vector<double>& Se) const
+{
+  const int nNp = c.nNodes;
+  double Kdr, G, Moed;
+  moduliOf(c.E, c.nu, Kdr, G, Moed);
+  double ooq = ladruno_up::oneOverQbar(c.poro, Kf_, biotAlpha_, Ks_);
+
+  double stabAlpha = 0.0;
+  if (stabMode_ == STAB_AUTO)
+    stabAlpha = ladruno_up::stabAlphaAuto(c.hEdge, Kdr, G, stabValue_);
+  else if (stabMode_ == STAB_MANUAL)
+    stabAlpha = stabValue_;
+
+  Se.assign(nNp * nNp, 0.0);
   for (int g = 0; g < c.nGP; g++) {
     const double* NpG  = &c.Np[g * nNp];
     const double* dNpG = &c.dNp[(g * nNp) * ndm_];
@@ -616,10 +652,7 @@ void LadrunoPorousOverlay::assembleStorageAndL(Cell& c)
     ladruno_up::addS(NpG, nNp, ooq, dv, &Se[0], nNp);        // S storage
     if (stabAlpha != 0.0)
       ladruno_up::addHtilde(dNpG, nNp, ndm_, stabAlpha, dv, &Se[0], nNp); // + αstab H̃
-    ladruno_up::addS(NpG, nNp, Lcoef, dv, &Le[0], nNp);      // L block
   }
-  this->scatterMat(c, &Se[0], aS_);
-  this->scatterMat(c, &Le[0], aL_);
 }
 
 int LadrunoPorousOverlay::assembleCell(int ci)
@@ -652,6 +685,14 @@ void LadrunoPorousOverlay::rebuildModuliCaches(void)
   for (size_t ci = 0; ci < cells_.size(); ci++)
     this->assembleStorageAndL(cells_[ci]);
   moduliDirty_ = false;
+  // Ladruno (ADR-73 P3): S* changed (moduli → α-stab) — drop the cached
+  // undrained-augmentation blocks (rebuilt lazily on the next request).
+  // NOTE removal does NOT invalidate: -onRemoval drain touches only H/f_seep
+  // (rebuildHFseep; storage untouched), and dead cells are refused by the
+  // alive check in getUndrainedAugmentation — live-cell blocks stay valid.
+  augBlocks_.clear();
+  augState_.clear();
+  augIndex_.clear();
 }
 
 int LadrunoPorousOverlay::csrPos(int i, int j) const
@@ -1199,6 +1240,117 @@ bool LadrunoPorousOverlay::ownsElement(int eleTag) const
 }
 
 // ===========================================================================
+//  ADR-73 P3 — per-element undrained stiffness augmentation ΔK_e = Q_e·S_e⁻¹·Q_eᵀ
+//  (the element-local undrained condensation; yields the DISCRETE undrained
+//  pencil the Δt_cr advisory is pinned to — plan §3.2, E7.4). Cached lazily
+//  per cell; invalidated by rebuildModuliCaches. Dead cells refuse (post-
+//  removal the drained skeleton pencil is the honest bound for that cell).
+// ===========================================================================
+bool LadrunoPorousOverlay::getUndrainedAugmentation(int eleTag, Matrix& Kadd) const
+{
+  if (!snapshotOk_) return false;
+  // parameter-route staleness: the SAME lazy-rebuild idiom advanceTrial uses —
+  // a stale S* here would silently mis-price the pencil after a stage flip.
+  if (moduliDirty_)
+    const_cast<LadrunoPorousOverlay*>(this)->rebuildModuliCaches();
+
+  // lazy (re)size — also covers a snapshot rebuild (cells_ changed size).
+  if (augState_.size() != cells_.size()) {
+    augState_.assign(cells_.size(), 0);
+    augBlocks_.assign(cells_.size(), std::vector<double>());
+    augIndex_.clear();
+    for (size_t ci = 0; ci < cells_.size(); ci++)
+      augIndex_[cells_[ci].eleTag] = (int)ci;
+  }
+
+  std::map<int,int>::const_iterator it = augIndex_.find(eleTag);
+  if (it == augIndex_.end()) return false;       // not an owned cell
+  const Cell& c = cells_[it->second];
+  if (!c.alive || c.nGP <= 0) return false;      // dead/poisoned cell
+  if (augState_[it->second] == 2) return false;  // singular S_e (already warned)
+
+  const int nNp = c.nNodes;
+  const int m   = nNp * ndm_;                    // node-major, first-ndm layout
+
+  if (augState_[it->second] == 0) {
+    // ---- factor the dense per-cell S* (SPD; small: nNp <= 8) ---------------
+    std::vector<double> A;                       // S* row-major; becomes chol L
+    this->buildCellStorageBlock(c, A);
+
+    double maxDiag = 0.0;
+    for (int i = 0; i < nNp; i++)
+      if (A[i * nNp + i] > maxDiag) maxDiag = A[i * nNp + i];
+    const double pivFloor = 1.0e-14 * maxDiag;   // relative pivot floor
+
+    bool singular = (maxDiag <= 0.0);
+    for (int k = 0; k < nNp && !singular; k++) {
+      double d = A[k * nNp + k];
+      for (int j = 0; j < k; j++) d -= A[k * nNp + j] * A[k * nNp + j];
+      if (d <= pivFloor) { singular = true; break; }
+      double Lkk = sqrt(d);
+      A[k * nNp + k] = Lkk;
+      for (int i = k + 1; i < nNp; i++) {
+        double s = A[i * nNp + k];
+        for (int j = 0; j < k; j++) s -= A[i * nNp + j] * A[k * nNp + j];
+        A[i * nNp + k] = s / Lkk;
+      }
+    }
+    if (singular) {
+      augState_[it->second] = 2;
+      if (!augSingularWarned_) {
+        augSingularWarned_ = true;
+        opserr << "LadrunoPorousOverlay " << this->getTag()
+               << ": undrained Dt_cr augmentation SKIPPED for element "
+               << eleTag << " -- cell storage S* is singular/ill-conditioned "
+                  "(Kf -> infinity with -stab off?). The reported pencil is "
+                  "the DRAINED one for such cells -- OPTIMISTIC; the material "
+                  "bound sqrt(1+Kf/(n*M_oed)) is effectively infinite there. "
+                  "(printed once)\n";
+      }
+      return false;
+    }
+
+    // ---- ΔK_e = Q_e·S_e⁻¹·Q_eᵀ: y_s = S_e⁻¹ q_s per Qe row, then dot -------
+    // Qe is (nNu*ndm) x nNp row-major (ld = nNp): row r is q_r (length nNp).
+    std::vector<double> Y((size_t)m * nNp, 0.0);
+    for (int r = 0; r < m; r++) {
+      double* y = &Y[(size_t)r * nNp];
+      const double* q = &c.Qe[(size_t)r * nNp];
+      for (int i = 0; i < nNp; i++) {            // forward: L z = q
+        double s = q[i];
+        for (int j = 0; j < i; j++) s -= A[i * nNp + j] * y[j];
+        y[i] = s / A[i * nNp + i];
+      }
+      for (int i = nNp - 1; i >= 0; i--) {       // backward: Lᵀ y = z
+        double s = y[i];
+        for (int j = i + 1; j < nNp; j++) s -= A[j * nNp + i] * y[j];
+        y[i] = s / A[i * nNp + i];
+      }
+    }
+    std::vector<double>& blk = augBlocks_[it->second];
+    blk.assign((size_t)m * m, 0.0);
+    for (int r = 0; r < m; r++) {
+      const double* q = &c.Qe[(size_t)r * nNp];
+      for (int s = r; s < m; s++) {              // symmetric: fill both halves
+        const double* y = &Y[(size_t)s * nNp];
+        double v = 0.0;
+        for (int b = 0; b < nNp; b++) v += q[b] * y[b];
+        blk[(size_t)r * m + s] = v;
+        blk[(size_t)s * m + r] = v;
+      }
+    }
+    augState_[it->second] = 1;
+  }
+
+  const std::vector<double>& blk = augBlocks_[it->second];
+  Kadd.resize(m, m);
+  for (int r = 0; r < m; r++)
+    for (int s = 0; s < m; s++)
+      Kadd(r, s) = blk[(size_t)r * m + s];
+  return true;
+}
+
+// ===========================================================================
 //  ADR-73 P2 driver seam (LadrunoStaggeredAnalyze / LadrunoStaggeredDriver)
 // ===========================================================================
 void   LadrunoPorousOverlay::setExternalStepping(bool on) { externalStepping_ = on; }
@@ -1207,6 +1359,7 @@ void   LadrunoPorousOverlay::setResidualPScale(double s)  { pScale_ = s; }
 double LadrunoPorousOverlay::lastAdvanceRelChange(void) const { return relChange_; }
 int    LadrunoPorousOverlay::staticModeCode(void) const   { return staticMode_; }
 int    LadrunoPorousOverlay::fluidUpdateCode(void) const  { return fluidUpdate_; }
+int    LadrunoPorousOverlay::fsLModeCode(void) const      { return fsLMode_; }
 
 // Early fs1 sync of a pending -subcycle window before the driver takes over
 // (plan §2.2 step 0) — otherwise the first driver advance would pair a
@@ -1635,7 +1788,8 @@ void LadrunoPorousOverlay::Print(OPS_Stream& s, int flag)
   s << "  Kf=" << Kf_ << " rhoF=" << rhoF_ << " alpha=" << biotAlpha_
     << " Ks=" << Ks_ << "  moduli E=" << EGlobal_ << " nu=" << nuGlobal_ << "\n";
   const char* fsL = (fsLMode_ == FSL_CLASSIC) ? "classic" :
-                    (fsLMode_ == FSL_OEDOMETRIC) ? "oedometric" : "manual";
+                    (fsLMode_ == FSL_OEDOMETRIC) ? "oedometric" :
+                    (fsLMode_ == FSL_ZERO) ? "zero" : "manual";
   const char* sm  = (staticMode_ == SM_MARCH) ? "march" :
                     (staticMode_ == SM_HOLD) ? "hold" : "steady";
   const char* rm  = (onRemovalMode_ == RM_KEEP) ? "keep" : "drain";

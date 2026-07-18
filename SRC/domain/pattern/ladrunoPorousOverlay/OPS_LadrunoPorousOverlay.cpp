@@ -41,7 +41,7 @@
 //       <-alpha $biotAlpha> <-Ks $Ks> <-thick $t> \
 //       <-layer $e1 ... -perm $k1 $k2 <$k3> <-poro $n> <-moduli $E $nu>> ...
 //       <-stab auto <$a0> | off | $alpha> \
-//       <-fsL classic | oedometric | $scale> \
+//       <-fsL classic | oedometric | zero | $scale> \  ;# zero = explicit lane (P3)
 //       <-staticMode hold | steady> \
 //       <-onRemoval keep | drain $kF> \
 //       <-fluidUpdate implicit | explicit> \  ;# explicit = fatal-NYI (P3b)
@@ -360,12 +360,28 @@ void* OPS_LadrunoPorousOverlay()
         fsLMode = LadrunoPorousOverlay::FSL_CLASSIC;
       } else if (strcmp(s, "oedometric") == 0 || strcmp(s, "oed") == 0) {
         fsLMode = LadrunoPorousOverlay::FSL_OEDOMETRIC;
+      } else if (strcmp(s, "zero") == 0) {
+        // Ladruno (ADR-73 P3 §3.1): the EXPLICIT-lane setting. Bypasses the
+        // oedometric floor (the floor guards the fs1/iterated lanes).
+        fsLMode = LadrunoPorousOverlay::FSL_ZERO;
+        static bool fsLZeroAdvisoryShown = false;      // one-time, process-wide
+        if (!fsLZeroAdvisoryShown) {
+          fsLZeroAdvisoryShown = true;
+          opserr << "LadrunoPorousOverlay: -fsL zero is the EXPLICIT-lane "
+                    "setting (ADR-73 P3): run under an explicit integrator "
+                    "(e.g. CentralDifferenceLadruno) at dt <= 0.5x the "
+                    "UNDRAINED critical-step pencil (criticalTimeStep is "
+                    "overlay-aware). A quasi-static implicit fs1 march with "
+                    "L = 0 is the naive drained split and diverges in ~4 "
+                    "steps at soil coupling (measured) -- it will fail "
+                    "loudly, not wrongly. (printed once)\n";
+        }
       } else {
         char* endp = 0; double v = strtod(s, &endp);
         if (endp == s || *endp != '\0' || v <= 0.0) {
           opserr << "ERROR LadrunoPorousOverlay " << tag
                  << " -- bad -fsL '" << s
-                 << "' (want classic|oedometric|a positive scale)\n";
+                 << "' (want classic|oedometric|zero|a positive scale)\n";
           return 0;
         }
         fsLMode = LadrunoPorousOverlay::FSL_MANUAL; fsLScale = v;

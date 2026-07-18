@@ -57,6 +57,16 @@ struct CTSResult {
     int    undamped_tag;   // governing element tag (undamped); -1 if none
     int    n_contributing; // elements that produced a finite, positive estimate
     int    n_scanned;      // elements iterated
+    // Ladruno (ADR-73 P3): overlay-aware undrained pencil. When a
+    // LadrunoPorousOverlay owns elements of the domain, their per-element
+    // pencils are augmented by dK_e = Q_e S_e^-1 Q_e^T (the element-local
+    // undrained condensation), so undamped_dt/damped_dt above are the
+    // UNDRAINED (corrected) limits. governing_drained_dt is the governing
+    // (undamped) element's skeleton-only value, kept so reports can print
+    // both and the implied factor; +inf when unknown (no augmentation, or
+    // the governing element lives on another MPI rank).
+    bool   overlayAugmented;      // any element's pencil was augmented
+    double governing_drained_dt;  // drained 2/omega_max of the governing element
 };
 
 // Scan all elements of theModel's domain and return the governing critical step.
@@ -100,8 +110,13 @@ void lumpElementMass(Element *ele, const Matrix &M, CTSLumping lumping,
 // account for an element's self-reported bound (getExplicitCriticalTimeStep);
 // callers that need the authoritative per-element step must use
 // elementCriticalDt (below), not this directly.
+//   Kadd (Ladruno, ADR-73 P3): optional state-independent ADDITIVE stiffness
+//   (n x n) folded into K before the eigensolve — the porous-overlay undrained
+//   augmentation dK_e = Q_e S_e^-1 Q_e^T. Null (the default) preserves the
+//   drained pencil bit-exactly for every pre-P3 call site.
 double elementLambdaMax(Element *ele, bool useTangent,
-                        const double *mdiag, int n);
+                        const double *mdiag, int n,
+                        const Matrix *Kadd = 0);
 
 // Authoritative UNDAMPED per-element critical step, with the same precedence
 // computeCriticalTimeStep applies: a positive self-reported bound
@@ -111,8 +126,19 @@ double elementLambdaMax(Element *ele, bool useTangent,
 // returns 2/sqrt(lambda_max). Returns < 0 if neither is available. This is the
 // accessor the selective mass-scaling integrator (CentralDifferenceSMS, ADR 36)
 // must call to size its per-element scale factor.
+//   Kadd (Ladruno, ADR-73 P3): same optional additive stiffness as
+//   elementLambdaMax, threaded through so overlay-aware callers exist as a
+//   seam. NO current caller passes it — so SMS sizing prices the DRAINED
+//   pencil for overlay-owned elements and can certify a dtTarget that is
+//   ~sqrt(1+Kf/(n*M_oed)) LARGER than the cells' true undrained limit:
+//   certified-stable-but-actually-unstable. SMS + LadrunoPorousOverlay is
+//   therefore UNSUPPORTED until the P3b composability gate wires this seam
+//   (LadrunoMassScaling warns loudly at sizing when an overlay is present;
+//   ADR-73 §12 P3 entry + LEDGER_quirks row). A positive self-report still
+//   wins UNCORRECTED.
 double elementCriticalDt(Element *ele, bool useTangent,
-                         const double *mdiag, int n);
+                         const double *mdiag, int n,
+                         const Matrix *Kadd = 0);
 
 // Total STIFFNESS-proportional Rayleigh coefficient of an element, for the
 // damped stable-step estimate and the SMS damped sizing. The element damping is

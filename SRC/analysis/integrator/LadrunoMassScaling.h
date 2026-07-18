@@ -54,6 +54,9 @@
 #include <NodeIter.h>
 #include <MP_Constraint.h>      // Ladruno: constraint-exclusion guard (slave-node hazard)
 #include <MP_ConstraintIter.h>
+#include <LoadPattern.h>        // Ladruno (ADR-73 P3): SMS+overlay unsupported warning
+#include <LoadPatternIter.h>
+#include <classTags.h>          // PATTERN_TAG_LadrunoPorousOverlay
 #include <FE_Element.h>         // Ladruno: consistent (Olovsson) path — element eqn map
 #include <FE_EleIter.h>
 #include <ID.h>
@@ -90,6 +93,43 @@ struct MassScalingReport {
 };
 
 // Build the per-node fictitious-mass increment (additive diagonal) into `injected`
+// --- Ladruno (ADR-73 P3, panel H + adversarial-verifier claim 2): SMS sizing
+//     prices the DRAINED per-element pencil (elementCriticalDt receives no
+//     overlay augmentation), but a LadrunoPorousOverlay stiffens its cells to
+//     the UNDRAINED pencil. The material formula sqrt(1+Kf/(n*M_oed)) is a
+//     LOWER bound on the discrete per-element factor (measured ~26x on the e72
+//     soft soil, ABOVE the 13-21x material range — mode-shape excess, ADR-73
+//     §12 P3 item 1). SMS would certify dtTarget as stable while the overlay
+//     cells' real limit is dtTarget/factor: certified-stable-but-actually-
+//     unstable. UNSUPPORTED until the P3b composability gate wires the
+//     augmentation through the elementCriticalDt Kadd seam. Shared by BOTH
+//     builders (lumped and consistent — the verifier caught the consistent
+//     path silent); one process-wide print. The CentralDifferenceLadruno
+//     dt_cr report remains overlay-aware and shows the true augmented pencil.
+inline void warnIfOverlayPresentSMS(Domain *theDomain)
+{
+    static bool smsOverlayWarned = false;
+    if (smsOverlayWarned || theDomain == 0) return;
+    LoadPattern *lp;
+    LoadPatternIter &lps = theDomain->getLoadPatterns();
+    while ((lp = lps()) != 0)
+        if (lp->getClassTag() == PATTERN_TAG_LadrunoPorousOverlay) {
+            smsOverlayWarned = true;
+            opserr << "WARNING LadrunoMassScaling -- a LadrunoPorousOverlay "
+                      "(tag " << lp->getTag() << ") is active but SMS sizing "
+                      "prices the DRAINED element pencil: the scaled model "
+                      "can be certified stable at dtTarget while overlay "
+                      "cells' true (undrained) limit is AT LEAST "
+                      "sqrt(1+Kf/(n*M_oed)) smaller (the material formula is "
+                      "a LOWER bound on the discrete per-element factor -- "
+                      "measured ~26x on soft soil). SMS + porous overlay is "
+                      "UNSUPPORTED until ADR-73 P3b -- choose dtTarget against "
+                      "the overlay-aware criticalTimeStep() report instead. "
+                      "(printed once)\n";
+            return;
+        }
+}
+
 // (node tag -> Vector(ndf)) for the given target step. Does NOT touch the Domain;
 // call applyMassScaling to commit. `injected` must be empty (freshly re-baselined).
 inline MassScalingReport
@@ -118,6 +158,8 @@ buildMassScaling(AnalysisModel *theModel, double dtTarget, CTSLumping lumping,
         while ((theMP = mps()) != 0)
             constrainedNodes.insert(theMP->getNodeConstrained());
     }
+
+    warnIfOverlayPresentSMS(theDomain);   // Ladruno (ADR-73 P3): SMS+overlay unsupported
 
     Element *ele;
     ElementIter &elements = theDomain->getElements();
@@ -353,6 +395,9 @@ buildMassScalingConsistent(AnalysisModel *theModel, double dtTarget, CTSLumping 
     if (theModel == 0 || dtTarget <= 0.0) return rep;
     Domain *theDomain = theModel->getDomainPtr();
     if (theDomain == 0) return rep;
+
+    warnIfOverlayPresentSMS(theDomain);   // Ladruno (ADR-73 P3): SMS+overlay unsupported
+                                          // (verifier claim 2: consistent path was silent)
 
     // MP-constrained node tags — STRICTER than the lumped path: exclude any sub-target
     // element touching EITHER a slave (getNodeConstrained) OR a master/retained
