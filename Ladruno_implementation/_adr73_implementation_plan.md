@@ -615,13 +615,201 @@ design note (§3.4 item 2) stays a documented note — no code.
 - P3b: `-fluidUpdate explicit` per ADR §3.4 item 1 — dual-CFL gate, implicit-
   lane equivalence at matched Δt, SMS composability, MP halo-exchange smoke.
 
-## P4 — ecosystem (sketch)
+## P4 — ecosystem (PINNED at 4.A, 2026-07-18)
 
-Overlay p-field recorder channels (LadrunoRecorder/Monitor topology rows),
-`LadrunoPorousOverlay_guide.md` (division-of-labor table vs LadrunoUP, init
-recipes, one-overlay-per-water-body, layered `-layer` examples, mixture-ρ
-gravity note), banner line + `patch_banner.py`, ledger → shipped, apeGmsh
-contract row (companion repo).
+The sketch is superseded by these pins. Scope: overlay p-field recorder
+channels (LadrunoRecorder + LadrunoMonitorRecorder), the user guide, family
+close-out (banner/ledgers/ADR). NO physics/driver/advisory code changes.
+
+| WP | Owner | Deliverable |
+|---|---|---|
+| 4.A | MAIN | these pins committed |
+| 4.B | OPUS | recorder channels: overlay getters + `Ladruno_OverlayResults.{h,cpp}` + LadrunoRecorder `-overlay` + Monitor `-overlay` |
+| 4.C | OPUS | battery `tests/test_ladruno_overlay_recorder.py` (gates a–g below) |
+| 4.D | OPUS | `Ladruno_implementation/LadrunoPorousOverlay_guide.md` per the outline below |
+| 4.E | OPUS panel | adversarial gate: recorder-wiring critic (core-adjacent) + guide documentation-fidelity critic |
+| 4.F | MAIN | build, batteries, banner/ledgers, ADR §7 P4 close + §12 entry, PR |
+
+### 4.1 Overlay accessor seam (FROZEN — const getters only, zero physics)
+
+Added to `LadrunoPorousOverlay.h` public block (all trivial const reads of
+existing private state; nothing mutates, nothing serializes):
+
+- `const std::vector<int>&    getRegionNodeTags() const;`  (region-node order —
+  THE canonical ID order for every channel below)
+- `const std::vector<double>& getCommittedP() const;`      (aligned to that order)
+- `double pAtNodeTag(int nodeTag) const;`  (via `nodeTagToIndex_`; returns 0.0
+  AND sets no error for a non-region tag — callers must pre-validate; the
+  Monitor parser fatals at construction on a non-region tag)
+- `const std::vector<int>&    getDrainedNodeTags() const;` (as-declared list)
+- `bool snapshotReady() const;` (recorder registration must not fire the lazy
+  snapshot — see timing pin 4.3)
+
+### 4.2 LadrunoRecorder channels (FROZEN)
+
+- **Command surface:** `recorder ladruno $file ... -overlay <$tag1 $tag2 ...>`
+  — bare `-overlay` = every 33022 pattern in the domain at writeModel time
+  (fatal if none); explicit tags = exactly those (unknown/non-33022 tag =
+  parser-time fatal, the unknown-flag-FATAL house rule). Repeatable/combinable
+  with all existing flags (`-N/-E/-G/-kind/-envelope/...`).
+- **Discovery idiom:** scan `domain->getLoadPatterns()` for
+  `getClassTag() == PATTERN_TAG_LadrunoPorousOverlay` (the P2 driver /
+  Domain.cpp:2248 idiom).
+- **Source:** new `OverlayPressureSource : ladruno::ResultSource` in
+  `SRC/recorder/Ladruno_OverlayResults.{h,cpp}` (modeled on
+  `Ladruno_DomainResults`): `ids()` = `getRegionNodeTags()`; schema
+  `name = overlayPressure_<patternTag>`, `components_csv = "p"`,
+  `num_components = 1`; `evaluate()` copies `getCommittedP()`;
+  `requiresPartitionReduction() = false` (overlay is per-process serial v1).
+- **Channel plumbing:** dedicated `overlay_channels` vector +
+  `initOverlaySources()` (called from `writeModel()` after the domain-source
+  init, LadrunoRecorder.cpp:640 block) + `recordResultsOnOverlays()` (called
+  in `record()` after `recordResultsOnDomain()`, :395) — sinks constructed
+  with `ResultFamily::OnNodes` so datasets land in
+  `RESULTS/ON_NODES/overlayPressure_<tag>/{ID,DATA,STEP,TIME}` with the
+  standard self-describing attrs, written by the UNTOUCHED generic
+  `StreamingSink`/`EnvelopeSink`. `-envelope`/`-kind` honored exactly like
+  other channels (envelope |p|max is the liquefaction use case). Cleanup in
+  `clearSources()`/`finalizeAllSinks()` mirrored.
+- **Write-once topology rows:** new `writeModelOverlays()` in the
+  `writeModel()` block (:618–627), mirroring `writeModelSets()` (:953):
+  `MODEL/OVERLAYS/OVERLAY_<tag>/{REGION_NODES, DRAINED_NODES}` int datasets +
+  `TAG` attr. Region nodes are ordinary solid nodes already in `MODEL/NODES`
+  — no node writing changes. NO `NDIR/NUM_GP/COLUMN_MAP` (element-only
+  conventions; this is a nodal scalar).
+- **Schema stance:** strictly ADDITIVE under FORMAT_VERSION = 1 (new optional
+  groups only; no existing dataset/attr changes; the ladruno_schema_v1
+  validator must stay green on non-overlay files unchanged — extend
+  `ladruno_format.py` ONLY if it hard-fails on the new groups, warn-tolerant
+  preferred, the QUADRATURE-tolerance precedent).
+- **Serialization:** the new overlay-tags config field travels in the
+  recorder's sendSelf/recvSelf next to the existing request lists (pattern at
+  :2085/:2180). MP semantics of the overlay itself remain out of scope (v1
+  per-process; documented).
+
+### 4.3 Timing pin (VERIFIED at 4.A — the ordering fact the channels rest on)
+
+`Domain::commit()` fires the overlay hook (`onDomainCommit`, Domain.cpp:2260)
+BEFORE the recorder loop (`theRecorders[i]->record`, Domain.cpp:2285) — so
+`getCommittedP()` at record time is the freshly committed pⁿ⁺¹ paired with the
+step's committed uⁿ⁺¹. Under `-subcycle N>1` the recorder therefore reads the
+last SYNCED p between windows (matches the physics — those ARE the forces the
+skeleton feels); gate (e) pins the cadence. Under the P2 driver the latched
+commit syncs the converged iterate before recorders run — same invariant, no
+special case. Registration/writeModel must NOT trigger the overlay's lazy
+snapshot (`snapshotReady()` guard: overlays not yet snapshotted at writeModel
+time get their topology rows written lazily at first record — or recorder
+construction after `analyze` begins is simply documented; agent picks the
+simpler honest behavior and the battery pins it).
+
+### 4.4 LadrunoMonitorRecorder channel (FROZEN)
+
+- `recorder Monitor -overlay $tag <-nodes {$n1 ...}> -sink $file <-every $N>
+  <-hz $hz>` — overlay mode is EXCLUSIVE of `-node/-nodes/-region/-dof/-resp`
+  (parser fatal on mixing; SWMR columns are frozen at open, keep the modes
+  disjoint). `-nodes` subset must be region nodes (fatal otherwise); default =
+  all region nodes. One overlay per Monitor instance (spawn two recorders for
+  two overlays).
+- Columns `overlay<tag>.p.node<n>` (node-major, the existing label
+  convention), values via `pAtNodeTag()` (committed p — the Monitor records
+  post-commit like today's channels). New dataFlag branch in
+  `respToDataFlag`/`record()` (LadrunoMonitorRecorder.cpp:43/:204).
+  sendSelf/recvSelf stay stubs (sequential-only, as today).
+
+### 4.5 Battery `tests/test_ladruno_overlay_recorder.py` (Zone-B, python -S)
+
+Runner bootstrap copied verbatim from `test_ladruno_overlay_physics.py`
+(site-packages re-add, dist/bin pyd eviction + `assert opensees.__file__`,
+module-level `pytest.skip(allow_module_level=True)` when unbuilt, h5py reads
+with `HDF5_USE_FILE_LOCKING=FALSE`). Gates:
+
+- **(a) CSV-twin gate (THE gate):** one Terzaghi column run with BOTH
+  `-record` CSV and `recorder ladruno -overlay`: HDF5 `DATA[k]` ==
+  CSV row k to ≤1e-12, `ID` == the CSV header node order ==
+  `REGION_NODES`; row count == commit count. Proves the 4.3 ordering AND the
+  channel end-to-end.
+- **(b) topology rows:** `MODEL/OVERLAYS/OVERLAY_<tag>/{REGION_NODES,
+  DRAINED_NODES}` match the model as built; drained rows identically 0 in
+  DATA.
+- **(c) multi-overlay:** two disjoint overlays → two groups + two topology
+  rows, values segregated (cross-check vs per-overlay CSVs).
+- **(d) fatals:** unknown tag after `-overlay`; bare `-overlay` with no
+  overlay in the domain; Monitor `-overlay` mixed with `-node`; Monitor
+  `-nodes` containing a non-region node.
+- **(e) subcycle cadence:** `-subcycle 4` run — recorded p piecewise-constant
+  between syncs, changes exactly at sync commits.
+- **(f) Monitor twin:** Monitor SWMR file (post-run h5py read): columns ==
+  `overlay<tag>.p.node<n>`, FRAMES rows == CSV rows at matched commits;
+  `-nodes` subset selects the right columns.
+- **(g) no-regression:** the existing recorder regression battery
+  (`Ladruno_scripts/ladruno_recorder_tests/` harness) green; P1 physics
+  battery smoke (gate 1 anchor) green.
+- **(h) envelope:** `-kind`/`-envelope` overlay channel == hand-computed
+  running max over the CSV (skip-with-note if envelope wiring turns out
+  family-gated — adjudicate, never silently drop).
+
+### 4.6 Guide `Ladruno_implementation/LadrunoPorousOverlay_guide.md` (outline FROZEN)
+
+Every claim must trace to shipped behavior, an ADR §12 entry, or a
+LEDGER_quirks row — NO invented numbers (the fidelity critic enforces).
+Sections:
+
+1. **What / when** — division-of-labor table vs LadrunoUP (ADR §2.6/§6:
+   monolithic = implicit statics/TH/B1–B5; overlay = discontinuity/explicit/
+   companion lane).
+2. **Quick start** — minimal Terzaghi column (Tcl + openseespy).
+3. **Command reference** — the full shipped surface (§4.1 as-built incl.
+   `-fsL classic|oedometric|$scale|zero`, `-staticMode`, `-subcycle`,
+   `-layer`, `-pInit`, `-onRemoval`, `-record`, fatal-NYI `-fluidUpdate
+   explicit`), factor/TimeSeries ignored-by-design.
+4. **Initialization recipes** — gravity staging with `-staticMode steady|hold`
+   (the ⟨A-3⟩ static-time trap: static "time" = load factor, never march on
+   Δλ), `-pInit steady|hydrostatic|list`; mixture-ρ gravity convention + the
+   staggered-twin BODY-FORCE trap (quad `b` = FORCE/VOLUME = ρ_mix·accel vs
+   `LadrunoUP -body` = ACCELERATION — LEDGER_quirks 2026-07-18 row).
+5. **Layered profiles** — `-layer` examples; ONE overlay per hydraulically
+   connected water body (per-layer k/poro/moduli inside one overlay; separate
+   overlays = separate aquifers only).
+6. **The iterated driver (P2)** — `LadrunoStaggeredAnalyze` usage + `-stats`;
+   integrator WHITELIST Newmark/HHT/GeneralizedAlpha (TRBDF2 two-step-history
+   / explicit no-op revertToLastStep = fatal); stage-flip moduli recipe
+   (`updateMaterialStage` CANNOT reach the overlay — re-set via
+   `parameter ... loadPattern E|nu|layerE|layerNu`); the raise-vs-negative-int
+   failure-surface split in openseespy.
+7. **The explicit lane (P3)** — `-fsL zero` under CentralDifferenceLadruno at
+   Δt ≤ 0.5× the overlay-aware `criticalTimeStep()`; the advisory prints the
+   undrained pencil (per-element factor legitimately EXCEEDS the material
+   formula — documentation-only, ~1.85× conservative); **zero-drainage
+   secular-pumping advisory** (undamped zero-k column has NO asymptotically
+   stable Δt — the 0.5× pin is HORIZON-relative there; any physical drainage
+   or damping absorbs it — §12 P3 item 3); **SMS + overlay UNSUPPORTED until
+   P3b** (sizing prices drained pencils; loud warning ships); quasi-static
+   `-fsL zero` diverges by design (~4 steps); `-subcycle` under CD.
+8. **Why not CD + u-p elements** — the Richardson quirk incl. the ~1300-step
+   INCUBATION warning (tracks the reference then dies; a 400-step validation
+   "passes"); upstream CD+quadUP head-to-head numbers (§12 P3 item 4, cited
+   not re-measured).
+9. **Recording p** — the P4 channels (`-overlay` recorder + Monitor) +
+   `-record` CSV; energy accounting note (+Q·p work rides ADR-69 ULW,
+   closure holds, attribution merged).
+10. **Element removal** — `-onRemoval keep|drain $kF`, fluid survives
+    `remove element`, forced sync under `-subcycle`.
+11. **Quirks / troubleshooting** — table of the LEDGER_quirks rows with
+    one-line symptoms + pointers.
+
+### 4.7 Registration / ledgers / close-out
+
+- No new classTag. New files: `Ladruno_OverlayResults.{h,cpp}` (stamped, into
+  `stamp_headers.py` GLOBS + recorder CMakeLists), the battery, the guide.
+  Touched fork-owned: overlay .h/.cpp (getters), LadrunoRecorder.{h,cpp},
+  LadrunoMonitorRecorder.{h,cpp}. NO vanilla touches expected (recorder
+  dispatch already routes `ladruno`/`Monitor`); if one appears, ledger row +
+  `// Ladruno` mark.
+- Banner 33022 line amended: `+ p-field recorder channels (recorder ladruno
+  -overlay / Monitor -overlay)`; `patch_banner.py` re-run.
+- LEDGER_implementations 33022 row → **shipped** (P4 files/PR appended).
+- ADR §7 P4 row closed + §12 P4 entry; any new quirks → LEDGER_quirks.
+- apeGmsh contract row = companion-repo follow-up, noted in the PR body only.
 
 ---
 
