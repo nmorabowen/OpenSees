@@ -464,14 +464,154 @@ default 1.0). Under the latch:
 - LEDGER_implementations 33022 row → P2; LEDGER_quirks: driver-overrides-
   subcycle, updateMaterialStage-cannot-reach-overlay, rider outcome.
 
-## P3 / P3b — explicit lanes (sketch)
+## P3 — explicit lane (PINNED at 3.A, 2026-07-18)
 
-- P3: CD + overlay vs implicit monolithic two-leg on B2/ZS84; incumbent
-  head-to-head (upstream CentralDifference + FourNodeQuadUP) incl. S→0 demo;
-  E7.2 envelope confirmed in C++; overlay-aware Δt_cr advisory — overlay
-  exposes per-element undrained factor; integration point into the ADR-65
-  advisory machinery pinned at phase start (integrator queries Domain for
-  overlay presence); `-subcycle auto` gate; ADR-69 energy-channel advisory.
+The P3b sketch (below) is untouched. P0's §12 amendments GOVERN the lane:
+**L = 0 at Δt ≤ 0.5× the discrete undrained pencil** (the rate form is
+CD-unstable at any Δt; the drained-CFL fixed-point-L mode is a documented
+accuracy-degraded opt-in NOT built here — refusing speculative surface).
+
+| WP | Owner | Deliverable |
+|---|---|---|
+| 3.A | MAIN | these pins |
+| 3.B | OPUS | `-fsL zero` lane + Δt_cr advisory augmentation + driver refusal + quirks/banner/ledgers |
+| 3.C | OPUS | battery `tests/test_ladruno_overlay_explicit.py` (a–g below) |
+| 3.D | OPUS ×3 | panel (charter below — advisory-correctness critic is load-bearing) |
+| 3.E | MAIN | build, battery, adjudication, ADR §7/§12, PR |
+
+### 3.1 Lane selection (FROZEN): `-fsL zero`
+
+- `-fsL` gains keyword `zero` → `FSL_ZERO = 3` (enum + serialization
+  compatible; values already travel). L ≡ 0: `advanceTrial`'s existing RHS
+  degenerates to plain BE fluid `(S* + ΔtH)p₁ = S*p₀ − QᵀΔu + Δt·f_seep`
+  (both L terms vanish; the reference rule becomes inert). NO new advance
+  code path — the shipped formula with aL_ = 0.
+- Parser: `zero` bypasses the oedometric floor (the floor guards the
+  fs1/iterated lanes) and prints a ONE-TIME loud advisory: this is the
+  EXPLICIT-lane setting; a quasi-static implicit fs1 march with L = 0 is the
+  naive drained split and diverges in ~4 steps at soil coupling (measured,
+  §3.2) — it will fail loudly, not wrongly.
+- **P2 driver refusal (FROZEN):** `LadrunoStaggeredAnalyze` excludes
+  `FSL_ZERO` overlays from the driven set with a LOUD FATAL (not a silent
+  skip): iterating with L = 0 IS the drained split (KTJ-divergent at soil
+  coupling). New const accessor `fsLModeCode()`.
+- `-subcycle auto|$N` works unchanged under the lane (θ = 0.089 formula was
+  MEASURED on the L=0 lane — E7.3a; the hook path already accumulates Δu
+  across the window).
+
+### 3.2 Overlay-aware Δt_cr advisory (FROZEN — the discrete undrained pencil)
+
+- P0 pin: the advisory uses the **DISCRETE undrained pencil** (e74: material
+  formula √(1+K_f/(n·M_oed)) is ~1.85× conservative, docs-only; discrete
+  pencil ≈ 25 % margin vs the measured 1.32× boundary; e72: the L=0
+  implicit-fluid boundary = 1.000× the pencil, frozen default 0.5×).
+- Mechanism: per-cell **undrained stiffness augmentation**
+  ΔK_e = Q_e·S_e⁻¹·Q_eᵀ (the element-local undrained condensation — dense
+  nNp-rank block from the overlay's retained Qe + storage data; this is the
+  only implementation that yields the DISCRETE pencil rather than the
+  material formula). Overlay exposes
+  `bool getUndrainedAugmentation(int eleTag, Matrix& Kadd) const`
+  (node-major, first-ndm-DOFs layout — the same assumption the HRZ lumping
+  makes; returns false for unowned/dead cells).
+- Integration point: `CriticalTimeStep.cpp::computeCriticalTimeStep` (the
+  SHARED per-element scan — CentralDifferenceLadruno report AND the ADR-36
+  SMS pencil both consume it, so SMS scales against the corrected pencil
+  exactly as §3.4 item 3 intends). Once per call: scan domain load patterns
+  for 33022 overlays (classTag check, the P2 driver idiom); per element,
+  if owned, fetch ΔK_e and add into the eigensolve's K. Fork-owned file —
+  no vanilla ledger row. Report prints drained vs undrained governing
+  pencil + implied factor + the material formula as documentation when any
+  overlay contributed.
+- Guards: element K size ≠ nNodes·ndm (exotic ndf) → LOUD one-time advisory
+  + skip that element's augmentation (never silently optimistic); near-
+  singular S_e (Kf → ∞ with stab off) → loud advisory naming the cell, skip
+  augmentation, report the material formula as the (infinite) bound. S_e
+  factor: dense Cholesky per cell with a rel-pivot floor; computed lazily
+  ONCE and cached (moduli-dirty invalidates — S_e depends on α-stab).
+- v1 scope: the augmentation reflects the overlay's CURRENT storage
+  (post-removal rescan: dead cells return false). `useTangent` semantics
+  unchanged (augmentation is state-independent).
+
+### 3.3 Energy advisory (ADR-69, measured not asserted)
+
+- Fact (verified 3.A): EnergyBalanceKernel's ULW = ∫vᵀP_ext dt reads
+  `Node::getUnbalancedLoad` — the overlay's `+Q·p` forces are INSIDE the
+  external-work channel by construction, so the closure residual accounts
+  the coupling work as external load work.
+- Deliverable: battery gate (g) MEASURES closure (ERR stays within the
+  ADR-69 bound on a CD+overlay run — "documented, not silently absent");
+  guide-queued note + LEDGER_quirks row stating the accounting (pore-
+  coupling work rides ULW, not a separate channel; P4 may split it out).
+  NO recorder code change at P3.
+
+### 3.4 Battery `tests/test_ladruno_overlay_explicit.py` (gates)
+
+- **(a) two-leg vs implicit monolithic on the B2/ZS84 column**: CD
+  (CentralDifferenceLadruno, Δt = 0.4× advisory) + quad + overlay(-fsL
+  zero) vs implicit Newmark LadrunoUP same mesh (ZS84 config from
+  `tests/test_ladruno_up_element_analytic.py` B2, ~line 289): mutual
+  Δt-convergence, order ≥ 0.9 (the P1/P2 methodology — exact equality is
+  not expected across integrators).
+- **(b) measured CFL envelope vs the P0 pin**: Δt sweep across
+  [0.6, 1.4]× the DISCRETE undrained pencil on the toy-matched column:
+  stable below ~1.0×, unstable above (boundary within ±25 % of 1.0×,
+  the e72 spread); the DRAINED pencil demonstrably optimistic (a run at
+  0.9× drained pencil ≫ undrained pencil diverges).
+- **(c) advisory gate**: `criticalTimeStep()` WITH the overlay returns the
+  undrained pencil (ratio to the no-overlay drained value in the direction
+  and magnitude of the per-cell material-formula band — loose band, the
+  point is direction+magnitude); naive-advisory demonstration = the (b)
+  divergence at 0.9× drained. Augmentation twin-check vs a python oracle
+  where extractable — else the (b) boundary IS the oracle.
+- **(d) incumbent head-to-head**: same ZS84 column, upstream
+  `CentralDifference` + `FourNodeQuadUP` vs the overlay lane: accuracy vs
+  the implicit reference at matched Δt + per-step wall-clock (report,
+  no hard perf gate — numbers to the PR) + **S→0 demo**: Kf ↑ ×1e3
+  (near-incompressible): quadUP's coupled route degrades/diverges while
+  the overlay lane (stab on) survives — pin the SYMPTOM, whatever it
+  measures to be, loudly in the output.
+- **(e) Richardson quirk pin**: honest-p LadrunoUP + upstream
+  `CentralDifference` on the same column → unstable/garbage p (leapfrogged
+  diffusion): loud EXPECTED-BAD gate (the run must NOT track the
+  reference — if it ever starts passing, the quirks row is stale) +
+  LEDGER_quirks row.
+- **(f) `-subcycle` sweep under CD**: N ∈ {1, 2, 5, 10}: all stable, error
+  vs N=1 grows ~monotonically (slope band 0.8–1.6 per E7.3a's ~N^1.2),
+  `-subcycle auto` resolves N within ±1 of the θ-formula hand-count.
+- **(g) energy closure**: ADR-69 EnergyBalanceRecorder on the (a) run:
+  |ERR| ≤ the ADR-69 battery bound (read its gates for the number; else
+  ≤ 2 %) — proves overlay work rides ULW.
+- Runner discipline: python -S bootstrap copied from the P2 battery; e76
+  protocol constants where reused; ZS84 config imported/adapted from the
+  ADR-71 analytic battery.
+
+### 3.5 Panel charter (Opus ×3)
+
+1. **advisory-correctness critic (load-bearing):** the ΔK_e augmentation
+   algebra (is Q S⁻¹ Qᵀ the right element-local undrained condensation for
+   the pencil? sign/layout/DOF-map), the shared-kernel touch (SMS pencil,
+   -lump variants, damped branch, useTangent), cache invalidation
+   (moduli/removal), the S_e-singular guard, cost (per-call augmentation on
+   large regions).
+2. **lane critic:** `-fsL zero` reachability of every advance path (fs1
+   hook, catch-up, SM_STEADY, P2-driver refusal completeness), the parser
+   floor bypass, serialization of FSL_ZERO, the divergence advisory
+   honesty.
+3. **battery critic:** gate design vs the frozen e72/e74 numbers,
+   ZS84-config fidelity, the incumbent leg's fairness (is upstream
+   CD+quadUP configured at ITS best?), Richardson-pin correctness.
+
+### 3.6 Registration / ledgers
+
+No new classTag. Touched files (all fork-owned): overlay .h/.cpp +
+OPS_ parser, LadrunoStaggeredDriver.cpp (refusal), CriticalTimeStep.cpp/.h
+(augmentation hook). LEDGER_implementations 33022 → P3;
+LEDGER_quirks rows: Richardson (e), energy-ULW accounting (3.3),
+`-fsL zero` quasi-static divergence; banner line amended; pipelined-fluid
+design note (§3.4 item 2) stays a documented note — no code.
+
+## P3b — `-fluidUpdate explicit` (sketch, unchanged)
+
 - P3b: `-fluidUpdate explicit` per ADR §3.4 item 1 — dual-CFL gate, implicit-
   lane equivalence at matched Δt, SMS composability, MP halo-exchange smoke.
 
