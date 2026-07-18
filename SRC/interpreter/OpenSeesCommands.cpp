@@ -97,6 +97,7 @@ UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 #include <ElementIter.h>             // Ladruno: ADR-52 W1-I1b trial-state element update()
 #include <LadrunoArcLength.h>         // Ladruno: Layer-B reduceStep/revert runtime command
 #include <LadrunoDynamicRelaxation.h> // Ladruno: rung-5 DR settling/micro-burst query command
+#include <LadrunoStaggeredDriver.h>   // Ladruno (ADR-73 P2): iterated fixed-stress overlay driver
 #include <classTags.h>               // Ladruno: INTEGRATOR_TAGS_LadrunoArcLength guard
 #include <PFEMSolver.h>
 #include <PFEMLinSOE.h>
@@ -3761,6 +3762,133 @@ int OPS_profiler()
 
     opserr << "WARNING profiler - unknown subcommand '" << sub << "'\n";
     return -1;
+}
+
+// Ladruno (ADR-73 P2): LadrunoStaggeredAnalyze — the iterated fixed-stress driver
+// for LadrunoPorousOverlay. TRANSIENT-only. Two forms:
+//   LadrunoStaggeredAnalyze $n $dt <-tol $t> <-maxIter $k> <-pScale $s> <-verbose>
+//     -> int return (0 / negative, the `analyze` convention)
+//   LadrunoStaggeredAnalyze -stats
+//     -> {nSteps totalFluidSolves meanIters maxIters lastResidual maxResidual}
+//        (last run's telemetry; zeros before any run)
+int OPS_LadrunoStaggeredAnalyze()
+{
+    if (cmds == 0) return 0;
+    if (OPS_GetNumRemainingInputArgs() < 1) {
+        opserr << "WARNING LadrunoStaggeredAnalyze -- expected `$n $dt "
+                  "<-tol $t> <-maxIter $k> <-pScale $s> <-verbose>` or `-stats`\n";
+        return -1;
+    }
+
+    // peek the first token (must be OPS_GetStringFromAll — under openseespy a
+    // bare-int arg makes OPS_GetString return "Invalid String Input!").
+    char firstBuf[64];
+    const char* first = OPS_GetStringFromAll(firstBuf, 64);
+    if (first == 0) {
+        opserr << "WARNING LadrunoStaggeredAnalyze -- could not read the first argument\n";
+        return -1;
+    }
+
+    // ---- `-stats` form: return the last run's telemetry list -----------------
+    if (strcmp(first, "-stats") == 0) {
+        const ladruno_overlay::LadrunoStaggeredStats& st =
+            ladruno_overlay::LadrunoStaggeredLastStats();
+        double out[6];
+        out[0] = (double)st.nSteps;
+        out[1] = (double)st.totalFluidSolves;
+        out[2] = st.meanIters;
+        out[3] = (double)st.maxIters;
+        out[4] = st.lastResidual;
+        out[5] = st.maxResidual;
+        int numdata = 6;
+        if (OPS_SetDoubleOutput(&numdata, out, false) < 0) {
+            opserr << "WARNING LadrunoStaggeredAnalyze -stats -- failed to set output\n";
+            return -1;
+        }
+        return 0;
+    }
+
+    // ---- analyze form: the first token was $n; put it back and read it as int --
+    OPS_ResetCurrentInputArg(-1);
+    int nSteps = 0;
+    int numdata = 1;
+    if (OPS_GetIntInput(&numdata, &nSteps) < 0) {
+        opserr << "WARNING LadrunoStaggeredAnalyze -- invalid numSteps\n";
+        return -1;
+    }
+    if (OPS_GetNumRemainingInputArgs() < 1) {
+        opserr << "WARNING LadrunoStaggeredAnalyze -- need `$n $dt ...` (dt missing)\n";
+        return -1;
+    }
+    double dt = 0.0;
+    if (OPS_GetDoubleInput(&numdata, &dt) < 0) {
+        opserr << "WARNING LadrunoStaggeredAnalyze -- invalid dt\n";
+        return -1;
+    }
+
+    double tol = 1e-6, pScale = 1.0;
+    int    maxIter = 500;
+    bool   verbose = false;
+    while (OPS_GetNumRemainingInputArgs() > 0) {
+        const char* opt = OPS_GetString();
+        if (strcmp(opt, "-tol") == 0) {
+            if (OPS_GetNumRemainingInputArgs() < 1 ||
+                OPS_GetDoubleInput(&numdata, &tol) < 0) {
+                opserr << "WARNING LadrunoStaggeredAnalyze -tol needs a value\n";
+                return -1;
+            }
+        } else if (strcmp(opt, "-maxIter") == 0) {
+            if (OPS_GetNumRemainingInputArgs() < 1 ||
+                OPS_GetIntInput(&numdata, &maxIter) < 0) {
+                opserr << "WARNING LadrunoStaggeredAnalyze -maxIter needs a value\n";
+                return -1;
+            }
+        } else if (strcmp(opt, "-pScale") == 0) {
+            if (OPS_GetNumRemainingInputArgs() < 1 ||
+                OPS_GetDoubleInput(&numdata, &pScale) < 0) {
+                opserr << "WARNING LadrunoStaggeredAnalyze -pScale needs a value\n";
+                return -1;
+            }
+        } else if (strcmp(opt, "-verbose") == 0) {
+            verbose = true;
+        } else {
+            opserr << "WARNING LadrunoStaggeredAnalyze -- unknown option '"
+                   << opt << "'\n";
+            return -1;
+        }
+    }
+
+    // TRANSIENT-only (⟨A-3⟩): a static analysis is a hard fatal. Mirror
+    // OPS_analyze's dispatch — creating a transient analysis nulls the static one.
+    if (cmds->getStaticAnalysis() != 0) {
+        opserr << "ERROR LadrunoStaggeredAnalyze -- a static analysis is active. "
+                  "The driver is TRANSIENT-only: under a static analysis the domain "
+                  "\"time\" is the load factor and an iterated dLambda fluid march is "
+                  "silently wrong physics (ADR-73 A-3). Build a transient analysis, "
+                  "or use -staticMode hold|steady on the overlay.\n";
+        return -1;
+    }
+    DirectIntegrationAnalysis* dia = cmds->getTransientAnalysis();
+    if (dia == 0) {
+        opserr << "ERROR LadrunoStaggeredAnalyze -- no transient analysis has been "
+                  "constructed (need `analysis Transient` first)\n";
+        return -1;
+    }
+    Domain* domain = cmds->getDomain();
+
+    int result = ladruno_overlay::LadrunoStaggeredRun(
+        dia, domain, nSteps, dt, tol, maxIter, pScale, verbose);
+
+    if (result < 0)
+        opserr << "OpenSees > LadrunoStaggeredAnalyze failed, returned: " << result
+               << " error flag\n";
+
+    numdata = 1;
+    if (OPS_SetIntOutput(&numdata, &result, true) < 0) {
+        opserr << "WARNING LadrunoStaggeredAnalyze -- failed to set output\n";
+        return -1;
+    }
+    return 0;
 }
 
 int OPS_modalDamping()

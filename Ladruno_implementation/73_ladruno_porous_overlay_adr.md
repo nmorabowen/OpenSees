@@ -435,7 +435,7 @@ commit hook if taken.
 |---|---|---|
 | **P0** | toy extension E7 (numpy, no OpenSees build) | exact v1 sequencing pinned: fs1-without-final-resolve error vs monolithic measured over Δt-halving (expect O(Δt); pins the P1 default); explicit-lane emulation (CD solid + implicit fluid): stability envelope measured — drained-vs-undrained CFL governance answered with numbers + subcycle-N degradation curve; removal-step jump consistency (Q mask flips mid-march, no spurious p transient beyond the physical Mandel-Cryer dip); L-floor sweep reproduced on the dynamic path — **DONE, PR #575 (2026-07-14): three predictions flipped, §12 P0 entry governs (rate-form fs1; `-substep` removed; P3 L=0 @ undrained pencil)** |
 | **P1** | `LadrunoPorousOverlay` fs1 implicit end-to-end (Q4/T3/H8 regions) | Terzaghi vs analytic ≤ pinned tol at production Δt; **two-leg gate vs monolithic LadrunoUP** (ADR-71 methodology: mutual Δt-convergence, observed order ≥ 1; the exact-equality leg belongs to P2's iterated driver); **E4-in-OpenSees**: real `remove element` crack, both `-onRemoval` policies, curves vs the toy reference; **sequencing contract test** (step-load column p(0⁺) ≈ q — kills the fluid-first p≡0 trap class); L auto twin-checked vs oracle incl. `updateMaterialStage` dirty path; pattern-timing verification (forces bit-constant across a step's Newton iterations); serial DB round-trip; **full adversarial panel** (per [[feedback_adversarial_gate_when]]: core-touch — Domain hook + pattern semantics — and novel framework integration; the split math itself is spike-validated) — **DONE, PR #576 (2026-07-15): all gates green, panel PASS (§11 + §12 P1 entries); xfail-6c tripwire → upstream rho bug found+fixed #577, 6c now a hard gate** |
-| **P2** | iterated driver `LadrunoStaggeredAnalyze` (fs-k) | fixed-point gate: iterated staggered ≡ monolithic LadrunoUP same-Δt (E6 leg, target ≤ 1e-6 rel); B4 footing staggered (CB gate under stab); PDMY staged liquefaction column vs the ADR-71 P4 monolithic reference (stage transport → L/stab cache dirty); iteration-count telemetry (mean/max per step) exposed |
+| **P2** | iterated driver `LadrunoStaggeredAnalyze` (fs-k) | fixed-point gate: iterated staggered ≡ monolithic LadrunoUP same-Δt (E6 leg, target ≤ 1e-6 rel); B4 footing staggered (CB gate under stab); PDMY staged liquefaction column vs the ADR-71 P4 monolithic reference (stage transport → L/stab cache dirty); iteration-count telemetry (mean/max per step) exposed — **DONE, PR #580 (2026-07-18): all gates green with ONE gate transposition (§12 P2 entry item 1 — the ≤1e-6 exact-equality leg is against monolithic BE = the frozen toy `qs_mono` [measured 3.4e-7 p / 1.1e-8 u, both regimes]; vs the real LadrunoUP it is a mutual-Δt-convergence leg [orders 0.99/0.99], because NO stock integrator reproduces BE rates on the fluid row); Opus ×3 panel PASS-WITH-FIXES, all landed; rider: `-pInit` list DB restore CLEAN post-#577 → promoted to hard gate** |
 | **P3** | explicit lane | CD + overlay on B2/ZS84 column vs implicit monolithic (two-leg); **incumbent head-to-head** (§3.4): same column under upstream CentralDifference + FourNodeQuadUP — accuracy AND per-step cost/scaling vs the overlay's diagonal-solid + small-SPD-fluid path, plus the S→0 failure demo; measured CFL envelope vs the P0 pins; **overlay-aware Δt_cr advisory gated** (§3.4 item 3: per-element undrained factor √((M+K_f/n)/M) wired into the ADR-65 machinery — naive drained advisory demonstrated 5–8× optimistic, then corrected); `-subcycle auto|$N` sweep gate; pipelined-fluid design note carried (§3.4 item 2 — implementation may land here or P3b); **LEDGER_quirks row**: honest-p LadrunoUP + upstream CentralDifference = Richardson-unstable p (leapfrogged diffusion) — loud test pinning the symptom; energy-balance advisory channel (ADR-69: overlay work terms enter the closure residual — documented, not silently absent) |
 | **P3b** *(option)* | `-fluidUpdate explicit` — fully matrix-free lane (§3.4 item 1, Xu-2021 class) | dual-CFL gate: diffusion limit verified slack by orders on realistic k′ sweep; measured undrained-CFL envelope vs the √((M+K_f/n)/M) prediction; equivalence vs implicit-fluid lane at matched Δt (both are O(Δt) splits); mass-scaling composability (SMS against the undrained pencil); MP smoke on the halo-exchange update (the §8 MP-risk dissolution demonstrated, not asserted) |
 | **P4** | ecosystem | overlay p-field recorder channels (own response surface — nodal-DOF recorders can't see it; LadrunoRecorder/Monitor topology rows per [[06_quadrature_global_gp_plan]]); user guide (`LadrunoPorousOverlay_guide.md`) incl. division-of-labor table vs LadrunoUP + init recipes; banner line + ledgers → shipped; apeGmsh emitter runway note (companion repo item) |
@@ -655,6 +655,84 @@ this PR:
   sentinel-inert, never NaN).
 
 ## 12. Implementation log
+
+### P2 — iterated driver `LadrunoStaggeredAnalyze` + stage transport (PR #580, 2026-07-18)
+
+`LadrunoStaggeredAnalyze $n $dt <-tol $t> <-maxIter $k> <-pScale $s> <-verbose>`
+(+ `-stats` telemetry query) live in BOTH interpreters; shared core
+`LadrunoStaggeredDriver.{h,cpp}` decomposes analyzeStep (analysisStep /
+checkDomainChange / newStep / solveCurrentStep) with an inner
+{revertToLastCommit + revertToLastStep + re-solve + advanceTrial(false)} loop,
+final momentum resolve, all-or-nothing abort. Overlay gained the
+external-stepping latch (applyLoad→`+Q·pTrial_`; latched commit =
+commitFluid-only sync — the double-advance guard), the free-system residual
+(`lastAdvanceRelChange`), and parameter-route moduli transport
+(`parameter $p loadPattern $tag E|nu|layerE $i|layerNu $i` →
+`moduliDirty_` → lazy `rebuildModuliCaches` re-assembling aS_/aL_ through the
+SAME `assembleStorageAndL` path the snapshot uses). Battery
+`tests/test_ladruno_overlay_driver.py` 12/12 green; P1 batteries re-run green
+(anchor bit-preserved 3.46e-7). **Adjudications/refutations (this entry
+governs where it amends §3/§7 wording):**
+
+1. **§7's "iterated ≡ monolithic LadrunoUP same-Δt ≤ 1e-6" is unattainable
+   as written and was TRANSPOSED.** The driver's fixed point is single-step
+   backward-Euler (§3.1, L cancels — confirmed in-code by the panel), but NO
+   Newmark parameterization reproduces BE rates on the fluid row (γ/β = 1
+   and γ/2β = 1 are inconsistent), and in-tree `BackwardEuler` is actually
+   BDF2 with a trapezoidal bootstrap. The exact-equality leg therefore gates
+   against monolithic BE = the frozen toy `qs_mono` on the same stabilized
+   operators: **measured 3.44e-7/3.39e-7 (p) and 1.1e-8 (u), compressible /
+   near-undrained, at `-tol 1e-10`** — the honest E6 transposition. The real
+   LadrunoUP is covered by the P1 mutual-Δt-convergence methodology
+   (orders 0.99/0.99, diffs shrinking 6.8e-3 → 1.7e-3).
+2. **Driver iteration counts land slightly ABOVE the frozen e76 means, within
+   band** — column classic 11.47 mean / 19 max (e76 11.25/18), column oed
+   4.25 (e76 3.29), footing classic 5.05 (e76 4.35); no divergence, no
+   maxIter hits anywhere. The pins' "the rate-form warm start may only
+   IMPROVE on e76" expectation was NOT borne out: the driver's residual is
+   the free-system (drained-rows-excluded) norm — STRICTER than the toy's
+   full-vector denominator (panel math-6 fix) — and the C++ models are not
+   the toy meshes. Bands (≤1.3×) hold with margin.
+3. **The unstabilized near-undrained checkerboard STALLS the fixed-point
+   iteration** (new measurement): `-stab off` on the B4-like footing plateaus
+   the residual at ~1.5e-5 > tol 1e-6, so the all-or-nothing driver refuses
+   every step at production tol — itself a loud symptom of the CB mode. The
+   CB gate's control runs at tol 1e-4 (above the stall floor); stab-auto vs
+   stab-off roughness ratio 5.3× ≥ 3.
+4. **PDMY staged column tracks the monolithic ADR-71 P4 reference to
+   rel_p 6.1e-3 / rel_u 5.5e-3** at the same Δt (gravity elastic stage →
+   `updateMaterialStage` flip → parameter-route `E` re-set scaled by the
+   probed constrained-modulus ratio → response march). The parameter-route
+   bit-twin gate (update-before-march vs constructed-with-E₂) is exactly
+   0.0. MODELING TRAP promoted to LEDGER_quirks: plain quad `b1 b2` is body
+   FORCE/VOLUME while `LadrunoUP -body` is an ACCELERATION (×ρ_mix inside
+   the element) — the staggered twin's quad needs `b = ρ_mix·accel`, else
+   the overlay's hydrostatic `+Q·p` cancels the under-scaled weight to ~zero
+   (first battery run measured settlement 1e-9 vs 3.5e-4, rel_u exactly 1.0).
+5. **Opus ×3 panel: PASS-WITH-FIXES ×3, all fixes landed:** integrator
+   classTag WHITELIST (Newmark/HHT/GeneralizedAlpha; TRBDF2's unrestored
+   two-step history silently degrades to trapezoidal per iteration and the
+   explicit family inherits a no-op revertToLastStep — loud fatal now),
+   free-system residual denominator, NaN-rejecting parameter guards,
+   `tol/maxIter/pScale` validation + non-finite-residual abort (a degenerate
+   `pScale ≤ 0` could previously NaN-converge silently), catch-up sync
+   record row, `layerNu = 0` sentinel-collision rejection. Driver omissions
+   documented (not supported): `_RELIABILITY` per-step sensitivities,
+   `numSubLevels` subdivision.
+6. **2.B implementation deviation (upheld, panel-verified):** the coupling
+   term reads TRIAL displacements under the latch (`readRegionDisp(u,
+   trial)`) — mid-step `getDisp()` returns the PREVIOUS committed disp, so
+   the pinned seam as-frozen would have produced Qᵀ·Δu ≈ 0 and a dead
+   fixed point. Unlatched paths still read committed (P1 bit-identical;
+   anchor re-measured 3.46e-7 post-driver in-process).
+7. **Rider RESOLVED:** `-pInit` list FileDatastore restore is CLEAN
+   post-#577 (the P1-era crash was the same upstream element-rho corruption)
+   — promoted from observation to a HARD gate (battery (f)); the P1
+   framework battery's MEASURED FINDINGS note updated.
+
+Deferred: P3/P3b explicit lanes, P4 recorder channels + guide (the guide
+inherits the staggered-twin body-force recipe and the stage-flip moduli
+recipe from this entry).
 
 ### P1 — fs1 rate-form implicit overlay end-to-end (PR #576, merged 2026-07-15)
 

@@ -50,6 +50,8 @@
 #include <FEM_ObjectBroker.h>
 #include <Vector.h>
 #include <ID.h>
+#include <Parameter.h>
+#include <Information.h>
 #include <classTags.h>
 #include <OPS_Globals.h>
 #include <OPS_Stream.h>
@@ -135,6 +137,8 @@ LadrunoPorousOverlay::LadrunoPorousOverlay(
    commitsSinceSync_(0), dtAccum_(0.0), recordCount_(0),
    seriesNoticeShown_(false), fsLFloorWarned_(false), hasSeries_(false),
    marchNoticeShown_(false),
+   externalStepping_(false), pScale_(1.0), relChange_(0.0),
+   moduliDirty_(false), driverSubcycleNoticeShown_(false),
    dbTag2_(0)
 {
   for (int i = 0; i < 3; i++) {
@@ -161,6 +165,8 @@ LadrunoPorousOverlay::LadrunoPorousOverlay()
    subcycleResolved_(true), commitsSinceSync_(0), dtAccum_(0.0), recordCount_(0),
    seriesNoticeShown_(false), fsLFloorWarned_(false), hasSeries_(false),
    marchNoticeShown_(false),
+   externalStepping_(false), pScale_(1.0), relChange_(0.0),
+   moduliDirty_(false), driverSubcycleNoticeShown_(false),
    dbTag2_(0)
 {
   for (int i = 0; i < 3; i++) { permGlobal_[i] = 0.0; fluidBody_[i] = 0.0; }
@@ -340,8 +346,7 @@ int LadrunoPorousOverlay::buildSnapshot(void)
     for (int i = 0; i < 3; i++)
       c.kbar[i] = (Ly ? Ly->perm[i] : permGlobal_[i]);
     c.poro = (Ly && Ly->poro > 0.0) ? Ly->poro : poroGlobal_;
-    c.E    = (Ly && Ly->E   > 0.0) ? Ly->E    : EGlobal_;
-    c.nu   = (Ly && Ly->nu  > 0.0) ? Ly->nu   : nuGlobal_;
+    this->resolveCellModuli(c);              // c.E / c.nu (layer override or global)
 
     // per-cell poro vs Biot α (robustness panel 1.F MINOR): the global check
     // is in the parser, but a per-layer -poro slips past it. n > α makes the
@@ -481,7 +486,19 @@ void LadrunoPorousOverlay::buildSparsity(void)
   }
 }
 
-// per-cell block assembly via the ADR-71 kernel (templated on the shape struct).
+// per-cell E/nu resolution — the ONE resolution logic (snapshot + rebuild).
+void LadrunoPorousOverlay::resolveCellModuli(Cell& c) const
+{
+  const Layer* Ly = (c.layerIndex >= 0) ? &layers_[c.layerIndex] : 0;
+  c.E  = (Ly && Ly->E  > 0.0) ? Ly->E  : EGlobal_;
+  c.nu = (Ly && Ly->nu > 0.0) ? Ly->nu : nuGlobal_;
+}
+
+// per-cell geometry + the MODULI-INDEPENDENT blocks (H, Q, f_seep) via the
+// ADR-71 kernel (templated on the shape struct). Stores Np/dNp/dv/hEdge so the
+// moduli-dependent aS_/aL_ can be (re)assembled from retained data by
+// assembleStorageAndL — called by assembleCell right after this, and again by
+// rebuildModuliCaches on the parameter route (no shape re-evaluation).
 template <class SH>
 void LadrunoPorousOverlay::fillCell(Cell& c)
 {
@@ -497,56 +514,19 @@ void LadrunoPorousOverlay::fillCell(Cell& c)
       xy[a * ndm + i] = X(i);
   }
 
-  // moduli-derived cell constants
-  double Kdr, G, Moed;
-  moduliOf(c.E, c.nu, Kdr, G, Moed);
-  double ooq = ladruno_up::oneOverQbar(c.poro, Kf_, biotAlpha_, Ks_);
-  double hEdge = SH::elemSizeH(xy);
-
-  double stabAlpha = 0.0;
-  if (stabMode_ == STAB_AUTO)
-    stabAlpha = ladruno_up::stabAlphaAuto(hEdge, Kdr, G, stabValue_);
-  else if (stabMode_ == STAB_MANUAL)
-    stabAlpha = stabValue_;
-
-  double a2 = biotAlpha_ * biotAlpha_;
-  double Lclassic = a2 / Kdr;
-  double Loed     = a2 / Moed;
-  double Lcoef;
-  if (fsLMode_ == FSL_OEDOMETRIC)      Lcoef = Loed;
-  else if (fsLMode_ == FSL_MANUAL) {
-    Lcoef = fsLScale_ * Lclassic;                 // $scale multiplies the classic L
-    if (Lcoef < Loed) {                           // floor at oedometric ⟨A-2⟩
-      Lcoef = Loed;
-      if (!fsLFloorWarned_) {
-        fsLFloorWarned_ = true;
-        opserr << "WARNING LadrunoPorousOverlay " << this->getTag()
-               << " -- manual -fsL scale drove L below the oedometric floor "
-                  "alpha^2/(K_dr+4G/3); clamped to the floor (printed once)\n";
-      }
-    }
-  } else {
-    Lcoef = Lclassic;                             // FSL_CLASSIC (default)
-  }
-
-  // consolidation coefficient for the -subcycle auto formula (worst = largest)
-  double kmax = c.kbar[0];
-  for (int i = 1; i < ndm; i++) if (c.kbar[i] > kmax) kmax = c.kbar[i];
-  double cv = kmax * Moed;
-  if (cv > maxCv_)   maxCv_   = cv;
-  if (hEdge < minEdge_) minEdge_ = hEdge;
+  c.hEdge = SH::elemSizeH(xy);                   // for -stab auto α (geometry)
+  if (c.hEdge < minEdge_) minEdge_ = c.hEdge;
 
   double drive[3] = {fluidBody_[0], fluidBody_[1], fluidBody_[2]};
 
-  // per-GP storage + dense cell blocks
+  // per-GP storage + dense cell blocks (H, Q, f_seep — no S*/L here)
   c.nGP = nGP;
   c.Np.assign(nGP * nNp, 0.0);
   c.dNp.assign(nGP * nNp * ndm, 0.0);
   c.dv.assign(nGP, 0.0);
   c.Qe.assign(nNp * ndm * nNp, 0.0);            // (nNu*ndm) x nNp
 
-  std::vector<double> He(nNp * nNp, 0.0), Se(nNp * nNp, 0.0),
-                      Le(nNp * nNp, 0.0), fse(nNp, 0.0);
+  std::vector<double> He(nNp * nNp, 0.0), fse(nNp, 0.0);
 
   double Nu[SH::nNodes], dNu[SH::nNodes * SH::ndm];
   double NpG[SH::nNodes], dNpG[SH::nNodes * SH::ndm];
@@ -573,18 +553,73 @@ void LadrunoPorousOverlay::fillCell(Cell& c)
 
     ladruno_up::addQ(dNu, NpG, nNp, nNp, ndm, biotAlpha_, dv, &c.Qe[0], nNp);
     ladruno_up::addH(dNpG, nNp, ndm, c.kbar, dv, &He[0], nNp);
-    ladruno_up::addS(NpG, nNp, ooq, dv, &Se[0], nNp);        // S storage
-    if (stabAlpha != 0.0)
-      ladruno_up::addHtilde(dNpG, nNp, ndm, stabAlpha, dv, &Se[0], nNp); // + αstab H̃
-    ladruno_up::addS(NpG, nNp, Lcoef, dv, &Le[0], nNp);      // L block
     ladruno_up::addFseep(dNpG, nNp, ndm, c.kbar, rhoF_, drive, dv, &fse[0]);
   }
 
-  // scatter dense cell blocks into the shared CSR value arrays
+  // scatter the moduli-independent blocks into the shared CSR value arrays
   this->scatterMat(c, &He[0], aH_);
+  this->scatterVecN(c, &fse[0], fseep_);
+}
+
+// (re)assemble the moduli-dependent aS_ (S + αstab·H̃) and aL_ (L) blocks for one
+// cell from its retained per-GP data (Np/dNp/dv/hEdge). The ONE storage/L path:
+// fillCell calls it at snapshot; rebuildModuliCaches calls it on the parameter
+// route. Also owns the moduli-dependent maxCv_ reduction. Assumes the target
+// CSR values were zeroed by the caller before the first cell.
+void LadrunoPorousOverlay::assembleStorageAndL(Cell& c)
+{
+  if (c.nGP <= 0) return;                        // poisoned/empty cell
+  const int nNp = c.nNodes;
+
+  this->resolveCellModuli(c);                    // pick up E/nu (layer/global)
+  double Kdr, G, Moed;
+  moduliOf(c.E, c.nu, Kdr, G, Moed);
+  double ooq = ladruno_up::oneOverQbar(c.poro, Kf_, biotAlpha_, Ks_);
+
+  double stabAlpha = 0.0;
+  if (stabMode_ == STAB_AUTO)
+    stabAlpha = ladruno_up::stabAlphaAuto(c.hEdge, Kdr, G, stabValue_);
+  else if (stabMode_ == STAB_MANUAL)
+    stabAlpha = stabValue_;
+
+  double a2 = biotAlpha_ * biotAlpha_;
+  double Lclassic = a2 / Kdr;
+  double Loed     = a2 / Moed;
+  double Lcoef;
+  if (fsLMode_ == FSL_OEDOMETRIC)      Lcoef = Loed;
+  else if (fsLMode_ == FSL_MANUAL) {
+    Lcoef = fsLScale_ * Lclassic;                 // $scale multiplies the classic L
+    if (Lcoef < Loed) {                           // floor at oedometric ⟨A-2⟩
+      Lcoef = Loed;
+      if (!fsLFloorWarned_) {
+        fsLFloorWarned_ = true;
+        opserr << "WARNING LadrunoPorousOverlay " << this->getTag()
+               << " -- manual -fsL scale drove L below the oedometric floor "
+                  "alpha^2/(K_dr+4G/3); clamped to the floor (printed once)\n";
+      }
+    }
+  } else {
+    Lcoef = Lclassic;                             // FSL_CLASSIC (default)
+  }
+
+  // consolidation coefficient for the -subcycle auto formula (worst = largest)
+  double kmax = c.kbar[0];
+  for (int i = 1; i < ndm_; i++) if (c.kbar[i] > kmax) kmax = c.kbar[i];
+  double cv = kmax * Moed;
+  if (cv > maxCv_) maxCv_ = cv;
+
+  std::vector<double> Se(nNp * nNp, 0.0), Le(nNp * nNp, 0.0);
+  for (int g = 0; g < c.nGP; g++) {
+    const double* NpG  = &c.Np[g * nNp];
+    const double* dNpG = &c.dNp[(g * nNp) * ndm_];
+    double dv = c.dv[g];
+    ladruno_up::addS(NpG, nNp, ooq, dv, &Se[0], nNp);        // S storage
+    if (stabAlpha != 0.0)
+      ladruno_up::addHtilde(dNpG, nNp, ndm_, stabAlpha, dv, &Se[0], nNp); // + αstab H̃
+    ladruno_up::addS(NpG, nNp, Lcoef, dv, &Le[0], nNp);      // L block
+  }
   this->scatterMat(c, &Se[0], aS_);
   this->scatterMat(c, &Le[0], aL_);
-  this->scatterVecN(c, &fse[0], fseep_);
 }
 
 int LadrunoPorousOverlay::assembleCell(int ci)
@@ -601,7 +636,22 @@ int LadrunoPorousOverlay::assembleCell(int ci)
   }
   if (c.nGP < 0)      // detJ<=0 sentinel from fillCell
     return -1;
+  this->assembleStorageAndL(c);   // moduli-dependent aS_/aL_ from stored per-GP data
   return 0;
+}
+
+// parameter-route moduli transport (ADR-73 P2 §2.4): re-resolve per-cell E/nu,
+// re-derive α_stab / L, re-scatter aS_/aL_ from the retained per-GP snapshot
+// data; aH_/fseep_/Qe untouched (perm/α only). maxCv_ recomputed. Honored
+// LAZILY at the next fluid use (advanceTrial / SM_STEADY solve).
+void LadrunoPorousOverlay::rebuildModuliCaches(void)
+{
+  std::fill(aS_.begin(), aS_.end(), 0.0);
+  std::fill(aL_.begin(), aL_.end(), 0.0);
+  maxCv_ = 0.0;
+  for (size_t ci = 0; ci < cells_.size(); ci++)
+    this->assembleStorageAndL(cells_[ci]);
+  moduliDirty_ = false;
 }
 
 int LadrunoPorousOverlay::csrPos(int i, int j) const
@@ -700,14 +750,18 @@ void LadrunoPorousOverlay::applyPInit(void)
   }
 }
 
-void LadrunoPorousOverlay::readRegionDisp(std::vector<double>& u) const
+void LadrunoPorousOverlay::readRegionDisp(std::vector<double>& u, bool trial) const
 {
   u.assign((size_t)nRegionNodes_ * ndm_, 0.0);
   for (int i = 0; i < nRegionNodes_; i++) {
-    const Vector& disp = regionNodePtrs_[i]->getDisp();   // committed disp
-    int nd = disp.Size();
+    // committed disp by default; trial disp under the driver latch (the mid-step
+    // solve iterate). regionNodePtrs_ holds Node* (mutable target through a const
+    // method), so the non-const getTrialDisp()/getDisp() accessors are legal here.
+    Node* nd = regionNodePtrs_[i];
+    const Vector& disp = trial ? nd->getTrialDisp() : nd->getDisp();
+    int nc = disp.Size();
     for (int c = 0; c < ndm_; c++)
-      u[(size_t)i * ndm_ + c] = (c < nd) ? disp(c) : 0.0;
+      u[(size_t)i * ndm_ + c] = (c < nc) ? disp(c) : 0.0;
   }
 }
 
@@ -838,7 +892,12 @@ void LadrunoPorousOverlay::assembleQtDu(std::vector<double>& QtDu) const
 {
   QtDu.assign(nRegionNodes_, 0.0);
   std::vector<double> ucur;
-  this->readRegionDisp(ucur);
+  // Under the driver latch, advanceTrial runs MID-STEP (after solveCurrentStep,
+  // before commit): read the solid's TRIAL disp so Δu = u_iterate − uSnapshot_ is
+  // the current fixed-point increment. Unlatched (P1), advanceTrial runs at the
+  // commit hook (post-commit, trial==committed) → identical to the old committed
+  // read, so P1 is bit-untouched.
+  this->readRegionDisp(ucur, externalStepping_);
   for (size_t ci = 0; ci < cells_.size(); ci++) {
     const Cell& c = cells_[ci];
     if (!c.alive) continue;                     // dead cells drop their Q coupling
@@ -864,6 +923,7 @@ void LadrunoPorousOverlay::assembleQtDu(std::vector<double>& QtDu) const
 int LadrunoPorousOverlay::advanceTrial(bool firstOfStep, double dt)
 {
   if (!snapshotOk_) return -1;
+  if (moduliDirty_) this->rebuildModuliCaches();   // lazy parameter-route refresh
   if (dt <= 0.0) {
     opserr << "ERROR LadrunoPorousOverlay " << this->getTag()
            << " -- advanceTrial called with non-positive dt=" << dt << "\n";
@@ -892,6 +952,27 @@ int LadrunoPorousOverlay::advanceTrial(bool firstOfStep, double dt)
 
   if (!this->solveFluid(rhs, 1.0, 1.0, dt, x))
     return -1;
+
+  // relative change of this advance (toy `dcon` on the FREE system; the
+  // driver's residual). Reference = pTrial_ BEFORE the solve (the previous
+  // iterate / step-start p). Drained rows are excluded from BOTH sums: their
+  // numerator term is 0 by construction, and including their (possibly large
+  // prescribed) values in the denominator would under-report the residual
+  // relative to the toy's reduced-system norm (panel 2.D math-6). NOTE the
+  // first-of-step advance references dpCommitted_ (rate-form warm start), a
+  // deliberate improvement over the toy fs_iter's cold Δp_ref = 0 first
+  // iterate — same fixed point, typically fewer iterations (panel 2.D math-2).
+  {
+    double num = 0.0, den = 0.0;
+    for (int i = 0; i < N; i++) {
+      if (isDrained_[i]) continue;
+      double d = x[i] - pTrial_[i];
+      num += d * d;
+      den += x[i] * x[i];
+    }
+    relChange_ = sqrt(num) / (sqrt(den) + pScale_);
+  }
+
   pTrial_ = x;
   return 0;
 }
@@ -970,6 +1051,7 @@ int LadrunoPorousOverlay::onDomainCommit(double domainTime, double dT)
     return 0;
   }
   if (staticMode_ == SM_STEADY) {
+    if (moduliDirty_) this->rebuildModuliCaches();   // lazy parameter-route refresh
     std::vector<double> x = pCommitted_;         // warm start; drained held
     if (!this->solveFluid(fseep_, 0.0, 0.0, 1.0, x)) return -1;
     for (int i = 0; i < nRegionNodes_; i++)
@@ -985,6 +1067,29 @@ int LadrunoPorousOverlay::onDomainCommit(double domainTime, double dT)
   }
 
   // ---- transient march (SM_MARCH) -------------------------------------------
+  // Driver latch (ADR-73 P2 §2.3): the fluid trial is ALREADY the converged
+  // iterate (the driver ran advanceTrial to convergence this step); this commit
+  // only SYNCS it. No advanceTrial (would double-march), no window accumulation.
+  // rescanRemoval above already updated c.alive / H for the next step. This is
+  // the ONLY commit that fires while latched.
+  if (externalStepping_) {
+    if (!driverSubcycleNoticeShown_ &&
+        (subcycleN_ > 1 || subcycleMode_ == SC_AUTO)) {
+      driverSubcycleNoticeShown_ = true;
+      opserr << "LadrunoPorousOverlay " << this->getTag()
+             << ": LadrunoStaggeredAnalyze overrides -subcycle while driving "
+                "(single sync per driver step; printed once)\n";
+    }
+    this->commitFluid();
+    commitsSinceSync_ = 0;
+    dtAccum_ = 0.0;
+    if (!recordFile_.empty()) {
+      recordCount_++;
+      if ((recordCount_ % recordEveryN_) == 0) this->recordRow(domainTime);
+    }
+    return 0;
+  }
+
   if (subcycleMode_ == SC_AUTO && !subcycleResolved_)
     this->resolveSubcycleN(dT);
 
@@ -1051,7 +1156,12 @@ void LadrunoPorousOverlay::applyLoad(double time)
               "(the overlay manages its own pore-pressure force amplitudes)\n";
   }
 
-  // +Q·p_committed, applied cell-wise into the nodal unbalance (no global Q).
+  // +Q·p, applied cell-wise into the nodal unbalance (no global Q). Under the
+  // driver latch the iterate's TRIAL pressure drives the forces (+Q·pTrial_);
+  // outside iteration pTrial_ == pCommitted_ (commitFluid syncs) so the unlatched
+  // P1 path is bit-identical. Covers Domain::revertToLastCommit's re-applyLoad too
+  // (harmless — unbalance is zeroed and re-applied at the next newStep).
+  const std::vector<double>& pSrc = externalStepping_ ? pTrial_ : pCommitted_;
   for (size_t ci = 0; ci < cells_.size(); ci++) {
     const Cell& c = cells_[ci];
     if (!c.alive) continue;
@@ -1066,7 +1176,7 @@ void LadrunoPorousOverlay::applyLoad(double time)
         int row = a * ndm_ + i;
         double f = 0.0;
         for (int b = 0; b < nNp; b++)
-          f += c.Qe[row * nNp + b] * pCommitted_[c.rIdx[b]];
+          f += c.Qe[row * nNp + b] * pSrc[c.rIdx[b]];
         if (i < ndf) load(i) = f;
       }
       nd->addUnbalancedLoad(load);
@@ -1086,6 +1196,149 @@ bool LadrunoPorousOverlay::ownsElement(int eleTag) const
   for (size_t e = 0; e < regionEleTags_.size(); e++)
     if (regionEleTags_[e] == eleTag) return true;
   return false;
+}
+
+// ===========================================================================
+//  ADR-73 P2 driver seam (LadrunoStaggeredAnalyze / LadrunoStaggeredDriver)
+// ===========================================================================
+void   LadrunoPorousOverlay::setExternalStepping(bool on) { externalStepping_ = on; }
+bool   LadrunoPorousOverlay::externalStepping(void) const { return externalStepping_; }
+void   LadrunoPorousOverlay::setResidualPScale(double s)  { pScale_ = s; }
+double LadrunoPorousOverlay::lastAdvanceRelChange(void) const { return relChange_; }
+int    LadrunoPorousOverlay::staticModeCode(void) const   { return staticMode_; }
+int    LadrunoPorousOverlay::fluidUpdateCode(void) const  { return fluidUpdate_; }
+
+// Early fs1 sync of a pending -subcycle window before the driver takes over
+// (plan §2.2 step 0) — otherwise the first driver advance would pair a
+// multi-commit Δu window with the driver's single dt. Returns 1 if it fired,
+// 0 if nothing was pending (or a degenerate dt), <0 on advance failure.
+int LadrunoPorousOverlay::catchUpPendingWindow(void)
+{
+  if (!snapshotOk_)            return 0;
+  if (commitsSinceSync_ <= 0)  return 0;         // nothing accumulated
+  double dt = dtAccum_;
+  if (dt <= 0.0) {                               // degenerate window: just reset
+    commitsSinceSync_ = 0;
+    dtAccum_ = 0.0;
+    return 0;
+  }
+  if (this->advanceTrial(true, dt) < 0) return -1;   // fs1 sync (committed ref)
+  this->commitFluid();
+  commitsSinceSync_ = 0;
+  dtAccum_ = 0.0;
+  // mirror the window-end sync's record row (panel 2.D framework-5: a caught-up
+  // window must not leave a gap in the -record CSV). Driver runs between steps,
+  // so current == committed time here.
+  if (!recordFile_.empty()) {
+    recordCount_++;
+    Domain* d = this->getDomain();
+    if ((recordCount_ % recordEveryN_) == 0 && d != 0)
+      this->recordRow(d->getCurrentTime());
+  }
+  return 1;
+}
+
+// ===========================================================================
+//  Moduli / stage transport — the parameter route (ADR-73 P2 §2.4)
+//    parameter $p loadPattern $overlay  E | nu | layerE $i | layerNu $i
+//  updateMaterialStage does NOT and CANNOT reach a LoadPattern
+//  (MaterialStageParameter registers only the first accepting ELEMENT and never
+//  scans load patterns); the user re-sets overlay moduli here after a stage flip.
+// ===========================================================================
+int LadrunoPorousOverlay::setParameter(const char** argv, int argc, Parameter& param)
+{
+  if (argc < 1)
+    return -1;
+
+  if (strcmp(argv[0], "E") == 0)
+    return param.addObject(1, this);
+  if (strcmp(argv[0], "nu") == 0)
+    return param.addObject(2, this);
+
+  // per-layer moduli: layerE $i / layerNu $i (1-based -layer declaration index)
+  if (strcmp(argv[0], "layerE") == 0 || strcmp(argv[0], "layerNu") == 0) {
+    if (argc < 2) {
+      opserr << "WARNING LadrunoPorousOverlay " << this->getTag()
+             << " -- parameter " << argv[0] << " needs a 1-based layer index\n";
+      return -1;
+    }
+    int i = atoi(argv[1]);
+    if (i < 1 || i > (int)layers_.size()) {
+      opserr << "WARNING LadrunoPorousOverlay " << this->getTag()
+             << " -- parameter " << argv[0] << " layer index " << i
+             << " out of range (1.." << (int)layers_.size() << ")\n";
+      return -1;
+    }
+    int base = (strcmp(argv[0], "layerE") == 0) ? 100 : 200;
+    return param.addObject(base + i, this);      // encode E:100+i / nu:200+i
+  }
+
+  return -1;                                     // unrecognized target
+}
+
+int LadrunoPorousOverlay::updateParameter(int parameterID, Information& info)
+{
+  double val = info.theDouble;
+
+  if (parameterID == 1) {                        // global E
+    if (!(val > 0.0)) {                          // NaN-rejecting form (panel 2.D)
+      opserr << "WARNING LadrunoPorousOverlay " << this->getTag()
+             << " -- E must be > 0 (got " << val << "); ignored\n";
+      return -1;
+    }
+    EGlobal_ = val;
+    moduliDirty_ = true;
+    return 0;
+  }
+  if (parameterID == 2) {                        // global nu
+    if (!(val >= 0.0 && val < 0.5)) {            // NaN-rejecting form (panel 2.D)
+      opserr << "WARNING LadrunoPorousOverlay " << this->getTag()
+             << " -- nu must satisfy 0 <= nu < 0.5 (got " << val << "); ignored\n";
+      return -1;
+    }
+    nuGlobal_ = val;
+    moduliDirty_ = true;
+    return 0;
+  }
+  if (parameterID >= 200) {                       // layer nu (id = 200 + i)
+    int i = parameterID - 200;
+    if (i < 1 || i > (int)layers_.size()) return -1;
+    // NaN-rejecting form; STRICTLY positive: the layer-override storage encodes
+    // "inherit global" as nu <= 0 (the P1 sentinel), so a layer nu of exactly
+    // 0.0 would be silently re-interpreted as "unset" by resolveCellModuli —
+    // reject it loudly instead of no-opting (panel 2.D robustness-7; quirks row).
+    if (!(val > 0.0 && val < 0.5)) {
+      opserr << "WARNING LadrunoPorousOverlay " << this->getTag()
+             << " -- layerNu " << i << " must satisfy 0 < nu < 0.5 via the "
+                "parameter route (nu = 0 collides with the inherit-global "
+                "sentinel; set the global nu instead) (got " << val
+             << "); ignored\n";
+      return -1;
+    }
+    layers_[i - 1].nu = val;                      // establishes/updates the override
+    moduliDirty_ = true;
+    return 0;
+  }
+  if (parameterID >= 100) {                       // layer E (id = 100 + i)
+    int i = parameterID - 100;
+    if (i < 1 || i > (int)layers_.size()) return -1;
+    if (val <= 0.0) {
+      opserr << "WARNING LadrunoPorousOverlay " << this->getTag()
+             << " -- layerE " << i << " must be > 0 (got " << val
+             << "); ignored\n";
+      return -1;
+    }
+    layers_[i - 1].E = val;                       // establishes/updates the override
+    moduliDirty_ = true;
+    return 0;
+  }
+  return -1;
+}
+
+int LadrunoPorousOverlay::activateParameter(int parameterID)
+{
+  (void)parameterID;
+  return 0;
 }
 
 // ===========================================================================
@@ -1356,6 +1609,15 @@ int LadrunoPorousOverlay::recvSelf(int commitTag, Channel& theChannel,
   nRegionNodes_ = nRN;
   pLoadedFromRestart_ = (nRN > 0);
   snapshotOk_ = false;                    // setDomain rebuilds geometry + remaps p
+
+  // transient driver latch is NEVER serialized (a driver run is synchronous, so
+  // no send can observe it true; pinned defensively). moduliDirty_ is transient
+  // too — the restore rebuilds the snapshot from the config values anyway.
+  externalStepping_ = false;
+  pScale_ = 1.0;
+  relChange_ = 0.0;
+  moduliDirty_ = false;
+  driverSubcycleNoticeShown_ = false;
   return 0;
 }
 

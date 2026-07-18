@@ -237,18 +237,232 @@ the test needs only monolithic pieces); (iii) one-overlay-per-water-body rule.
 
 ---
 
-## P2 — iterated driver + stage transport (sketch; pins at phase start)
+## P2 — iterated driver + stage transport (PINNED at 2.A, 2026-07-17)
 
-- `LadrunoStaggeredAnalyze $n $dt <-tol $t> <-maxIter $k>` command:
-  per step — analyze(1,dt) via the existing analysis, then loop
-  {revertToLastCommit, overlay advanceTrial, re-analyze} until ‖Δp‖ test,
-  then commit (overlay commitFluid rides the hook). Iteration telemetry
-  (mean/max) printed and queryable.
-- Moduli/stage transport: overlay `setParameter("updateMaterialStage"…)` or
-  explicit re-set of `-moduli` via parameter path; dirties L/α-stab/CG
-  operator. PDMY staged column gate (vs ADR-71 P4 monolithic reference).
-- Fixed-point gate: iterated staggered ≡ monolithic LadrunoUP same-Δt ≤ 1e-6.
-- B4 footing staggered CB gate.
+The sketch is superseded by these pins. The overlay seam
+(`advanceTrial(firstOfStep, dt)` / `commitFluid` / `revertFluid` with the
+unified reference rule) is ALREADY BUILT and battery-pinned at P1 — P2 drives
+it; no seam re-derivation.
+
+| WP | Owner | Deliverable |
+|---|---|---|
+| 2.A | MAIN | these pins committed |
+| 2.B | OPUS | `LadrunoStaggeredDriver.{h,cpp}` shared core + overlay latch/param seam + registration (both interpreters) |
+| 2.C | OPUS | battery `tests/test_ladruno_overlay_driver.py` (a–f below) |
+| 2.D | OPUS ×3 | adversarial panel (framework-reality / math-contract / robustness) |
+| 2.E | MAIN | build, battery, panel adjudication, ledgers, ADR §7/§12, PR |
+
+### 2.1 Command surface (FROZEN)
+
+```tcl
+LadrunoStaggeredAnalyze $n $dt <-tol $t> <-maxIter $k> <-pScale $s> <-verbose>
+LadrunoStaggeredAnalyze -stats
+```
+
+- Defaults: `tol = 1e-6`, `maxIter = 500`, `pScale = 1.0` (the e76 protocol
+  values; e76 itself used pScale = q — batteries pass `-pScale` to mirror).
+- Registered in BOTH interpreters (profiler-command precedent): classic
+  `SRC/tcl/commands.cpp` `Tcl_CreateCommand`; interpreter
+  `OPS_LadrunoStaggeredAnalyze()` in `OpenSeesCommands.cpp/.h` + wrappers in
+  `TclWrapper.cpp` / `PythonWrapper.cpp`. Shared core = free functions in
+  `SRC/domain/pattern/ladrunoPorousOverlay/LadrunoStaggeredDriver.{h,cpp}`
+  (stamped; CMakeLists of that dir).
+- **TRANSIENT-only v1.** Requires the active DirectIntegrationAnalysis
+  (classic global `theTransientAnalysis`; interpreter
+  `cmds->getTransientAnalysis()`). A static analysis → loud fatal citing
+  ⟨A-3⟩ (static domain "time" is the load factor — an iterated Δλ fluid
+  march is silently wrong physics). VariableTimeStep analysis drives fine
+  through the base API (fixed driver dt).
+- Analyze form returns 0 / negative (the `analyze` convention). `-stats`
+  returns the LAST run's telemetry as a list
+  `{nSteps totalFluidSolves meanIters maxIters lastResidual maxResidual}`
+  (Tcl list / Python list of floats; zeros before any run).
+- Driven set = every load pattern in the domain with classTag
+  `PATTERN_TAG_LadrunoPorousOverlay` AND `staticMode == SM_MARCH` AND
+  `fluidUpdate == FU_IMPLICIT`. Empty driven set → loud fatal (misuse).
+  HOLD/STEADY overlays are NOT driven and keep their normal hook semantics.
+
+### 2.2 Step recipe (FROZEN — decomposed analyzeStep + toy `fs_iter` verbatim)
+
+Per driver step (toy `qs_staggered(mode="fs_iter")` semantics; iteration
+count = number of fluid advances, `nit` in e76):
+
+0. **Catch-up**: before step 1, any driven overlay with a pending
+   `-subcycle` window (`commitsSinceSync_ > 0`) gets an early fs1 sync
+   (`advanceTrial(true, dtAccum_)` + `commitFluid` + counter reset), one-time
+   notice — otherwise the first driver advance would pair a multi-commit Δu
+   window with the driver's single dt.
+1. Latch ON for the driven set (`setExternalStepping(true)`,
+   `setResidualPScale(pScale)`); RAII guard clears it on EVERY exit path.
+2. `model->analysisStep(dt)`; `dia->checkDomainChange()`;
+   `integrator->newStep(dt)`; `algorithm->solveCurrentStep()` — the
+   iteration-1 solid solve (overlay forces `+Q·pTrial`, and
+   `pTrial == pCommitted` at step start).
+3. `advanceTrial(firstOfStep = (nit==1), dt)` on each driven overlay.
+   First advance of a step uses the committed-increment reference
+   (`dpCommitted_` — the unified reference rule; a better-than-toy start:
+   e76's first iterate used Δp_ref = 0), repeats use the trial increment
+   (§3.1 fixed point; L cancels at convergence).
+   Residual = max over driven overlays of
+   `‖p_k − p_{k−1}‖₂ / (‖p_k‖₂ + pScale)` over the FREE (non-drained) rows —
+   the toy `dcon` on the reduced system (amended at 2.E per panel math-6:
+   including prescribed drained values in the denominator would under-report
+   the residual). Computed inside `advanceTrial`, exposed as
+   `lastAdvanceRelChange()`. The first-of-step advance is the rate-form warm
+   start, NOT the toy fs_iter's cold Δp_ref = 0 first iterate (panel math-2:
+   same fixed point, typically fewer iterations — gate (b)'s band absorbs it).
+4. While residual ≥ tol and nit < maxIter:
+   `domain->revertToLastCommit()`; `integrator->revertToLastStep()`;
+   `newStep(dt)`; `solveCurrentStep()` (solid now sees `+Q·p_k`);
+   `advanceTrial(false, dt)`; recompute residual.
+5. Converged: **final momentum resolve** (§3.1 step 3 / toy line 219 —
+   revert; `newStep`; `solveCurrentStep` with `p_K` forces), then
+   `integrator->commit()` → `Domain::commit` → hook fires LATCHED (2.3).
+6. `-verbose`: per-step `step i: iters=k residual=r`. `flushRecorders()` on
+   the success path (the `analyze` convention).
+
+**Abort semantics (all-or-nothing per step, FROZEN):** on newStep /
+solveCurrentStep / advanceTrial failure at ANY iteration, or maxIter reached
+unconverged: `domain->revertToLastCommit()`; `integrator->revertToLastStep()`;
+`revertFluid()` on all driven overlays; latch cleared; loud print (step, nit,
+residual); return negative (−2 newStep, −3 solve — the analyzeStep codes;
+−6 fluid solve; −7 maxIter). Prior committed steps stand. e76 says classic-L
+never hits maxIter on sane problems — a hit is pathology, never silently
+accepted.
+
+Mechanics verified in-tree at 2.A: `checkDomainChange()` public
+(DirectIntegrationAnalysis.cpp:619) = the analyzeStep stamp check;
+`Domain::revertToLastCommit()` (Domain.cpp:2295) resets
+`currentTime = committedTime`, re-applies loads (unbalance zeroed on every
+`Domain::applyLoad` — no `+Q·p` accumulation) and does NOT touch overlay
+fluid trial state (no overlay hook there — exactly what the iteration
+needs); `Newmark::newStep/revertToLastStep` (Newmark.cpp:157/270) form a
+consistent repeat-same-step pair (`Ut ← U` after restore keeps the committed
+predictor base); `Domain::analysisStep` is a base no-op.
+
+### 2.3 The overlay latch (FROZEN — the double-advance guard)
+
+New overlay state `externalStepping_` (transient bool, false in both ctors,
+NOT serialized, `recvSelf` forces false — a driver run is synchronous, no
+send can observe it true; pinned defensively) plus `pScale_` (transient,
+default 1.0). Under the latch:
+
+- `applyLoad` injects `+Q·pTrial_` (the iterate's forces) instead of
+  `+Q·pCommitted_`. Outside iteration the two are equal (`commitFluid`
+  syncs), so unlatched P1 behavior is bit-untouched. The latched path also
+  covers `Domain::revertToLastCommit`'s internal re-applyLoad (harmless —
+  zeroed and re-applied at the next newStep).
+- `onDomainCommit` SM_MARCH path = `rescanRemoval` (unchanged) +
+  `commitFluid()` + record row + subcycle-counter reset — **NO
+  advanceTrial** (the fluid trial is already the converged iterate; an
+  advance here would double-march) and NO window accumulation. The ONLY
+  commit that fires while latched is the driver's converged commit.
+  HOLD/STEADY paths unchanged (those overlays are never latched).
+- `-subcycle` interplay: the driver syncs every step by construction;
+  configured N > 1 → one-time advisory ("driver overrides -subcycle").
+  Counters zeroed at each latched commit so post-driver plain `analyze`
+  restarts its window cleanly.
+- `revertFluid()` semantics unchanged.
+
+### 2.4 Moduli / stage transport (FROZEN — the parameter route)
+
+- `LadrunoPorousOverlay::setParameter/updateParameter` reached via the
+  EXISTING `parameter $ptag loadPattern $overlayTag <arg>` surface — both
+  interpreters already dispatch loadPattern targets
+  (OpenSeesParameterCommands.cpp:156, TclParameterCommands.cpp:235; no
+  vanilla parameter-command touch needed):
+  - `E` / `nu` — overlay-global moduli;
+  - `layerE $i` / `layerNu $i` — 1-based `-layer` declaration index; setting
+    one establishes a layer override where the layer inherited global.
+  - `updateParameter` validates with the parser gates (E > 0, 0 ≤ ν < 0.5),
+    sets, marks `moduliDirty_`.
+- `moduliDirty_` is honored LAZILY at the next fluid use (advanceTrial /
+  steady solve): re-resolve per-cell E/ν (global/layer), re-derive per-cell
+  L factor (per `-fsL` mode incl. manual-scale floor) and `-stab auto`
+  α per cell, REASSEMBLE `aS_` (S + α_stab·H̃) and `aL_` from the retained
+  per-GP snapshot data. `aH_`/`fseep_` untouched (perm-only). The CG
+  operator is a (cS,cL,cH) combination of those arrays → refreshed for
+  free. `maxCv_` recomputed; an already-resolved `-subcycle auto` N stays
+  (resolve is once-per-run, documented; the driver bypasses subcycle
+  anyway).
+- **`updateMaterialStage` does NOT and CANNOT reach the overlay**
+  (MaterialStageParameter registers only the first accepting element and
+  never scans load patterns — the ADR-71 sibling-broadcast trap,
+  family-documented). The transport contract: after a stage flip the USER
+  re-sets overlay moduli via the parameter route (PDMY battery + guide pin
+  the recipe). A flip without a re-set keeps stage-0 L — stable but
+  convergence-degraded; LEDGER_quirks row.
+- Serialization: moduli values already travel in config; the dirty flag is
+  transient (restore rebuilds the snapshot anyway).
+
+### 2.5 Battery `tests/test_ladruno_overlay_driver.py` (Zone-B, python -S discipline)
+
+- **(a) FIXED-POINT GATE (the gate of the phase):** driver at `-tol 1e-10`
+  ≡ monolithic LadrunoUP at the SAME dt on the Terzaghi column (Q4;
+  compressible AND near-undrained): relL2(p) and relL2(u) ≤ 1e-6 over the
+  march (the E6 exact-equality leg, measured 2.8e-8/4.5e-7 in the toy).
+- **(b) e76 telemetry gate:** e76 protocol (tol 1e-6, maxIter 500,
+  pScale = q) on the column and a B4-like footing: classic-L no divergence,
+  no maxIter hit, mean iters ≤ 1.3× the frozen e76 means (column 11.25 /
+  footing 4.35); `-fsL oed` ≤ 1.3× (3.29 / 2.8). The driver's
+  rate-form first iterate may only IMPROVE on e76's Δp_ref = 0 start —
+  measured means reported in the PR either way (adjudication duty if the
+  band breaks).
+- **(c) B4 footing CB gate under stab:** driver on the near-undrained
+  footing with `-stab auto` — checkerboard metric clean (vs the unstabbed
+  control dirty), the ADR-71 B4 methodology.
+- **(d) stage/moduli transport:** (i) BIT-TWIN gate: construct with E₁,
+  update to E₂ via the parameter route BEFORE marching → p history
+  bit-identical (≤ 1e-14) to a control overlay constructed with E₂ — gates
+  the full L/α-stab/operator recompute path; (ii) PDMY staged liquefaction
+  column (plain-ndf solids + PDMY + overlay + driver; `updateMaterialStage`
+  flip mid-analysis + parameter-route moduli re-set) vs the ADR-71 P4
+  monolithic reference (`tests/test_ladruno_up_element_pdmy.py` model);
+  agreement band adjudicated from measurement, refutations recorded;
+  (iii) mid-march L refresh twin-checked vs an oracle recompute.
+- **(e) driver/hook interplay:** (i) fresh-model plain `analyze` after a
+  driver run in the same process reproduces the P1 anchor (global-state
+  leak guard); (ii) same model: plain segment → driver segment → plain
+  segment — fluid state continuous, counters clean, record rows == syncs,
+  march advisory printed once; (iii) abort path (forced maxIter fail):
+  domain time/state rolled back to the last committed step,
+  `pTrial == pCommitted`, subsequent plain analyze clean; (iv) `-stats`
+  matches a hand-count on a tiny run; (v) driver under a static analysis →
+  fatal, and driver with no qualifying overlay → fatal.
+- **(f) RIDER:** re-verify the P1 observation "-pInit list overlay crashes
+  on FileDatastore restore" post-#577 (may have been the same rho
+  corruption). Clean → the list variant joins the DB gate family; still
+  crashing → LEDGER_quirks row + report.
+
+### 2.6 Panel (Opus ×3 — core-adjacent control flow, [[feedback_adversarial_gate_when]])
+
+1. **framework-reality critic (load-bearing):** revertToLastCommit inside
+   the loop, integrator state across repeated same-step newStep (Newmark
+   family verified at 2.A; generality documented), latch coverage of every
+   applyLoad path, abort paths incl. inner-analyze failure mid-iteration,
+   recorder/commit counts, catch-up sync, sensitivity/subLevel
+   non-interaction.
+2. **math/contract critic:** driver loop ≡ toy `fs_iter` (residual norm,
+   iteration counting, final-resolve placement), reference-rule legality of
+   the rate-form first iterate, L cancellation at convergence, moduli
+   reassembly vs kernel.
+3. **robustness critic:** multi-overlay domains, maxIter edges, `-stats`
+   before any run, param validation, latch serialization contract, PDMY
+   staging edges, driver re-entry.
+
+### 2.7 Registration / ledgers
+
+- **No new classTag** → no classTags.h edit, no manifest.yaml row
+  (check_manifest.py keys on ledger classTag rows — verified by running the
+  CI checks locally).
+- Vanilla touches (all already-Ladruno-marked upstream files):
+  `SRC/tcl/commands.cpp`, `SRC/interpreter/OpenSeesCommands.{cpp,h}`,
+  `TclWrapper.cpp`, `PythonWrapper.cpp` → LEDGER_vanilla_files rows.
+- New files stamped + in `stamp_headers.py` GLOBS (dir glob may already
+  cover); banner ADR-73 line amended to mention the driver
+  (`banner_features.txt` → `patch_banner.py`).
+- LEDGER_implementations 33022 row → P2; LEDGER_quirks: driver-overrides-
+  subcycle, updateMaterialStage-cannot-reach-overlay, rider outcome.
 
 ## P3 / P3b — explicit lanes (sketch)
 

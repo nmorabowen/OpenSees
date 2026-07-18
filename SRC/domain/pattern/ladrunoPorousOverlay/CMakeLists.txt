@@ -17,8 +17,10 @@ target_sources(OPS_Domain
     PRIVATE
     LadrunoPorousOverlay.cpp        # Ladruno (ADR 73 P1): the overlay engine
     OPS_LadrunoPorousOverlay.cpp    # Ladruno (ADR 73 P1): pattern parser/factory
+    LadrunoStaggeredDriver.cpp      # Ladruno (ADR 73 P2): iterated fixed-stress driver
     PUBLIC
     LadrunoPorousOverlay.h
+    LadrunoStaggeredDriver.h
 )
 
 target_include_directories(OPS_Domain PUBLIC ${CMAKE_CURRENT_LIST_DIR})

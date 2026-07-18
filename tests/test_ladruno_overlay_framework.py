@@ -56,7 +56,9 @@ MEASURED FINDINGS (2026-07-14, reported upward - see the WP1.E-ii handoff):
     restarts must reproduce the continuous run.
   * A -pInit list (explicit $nd $val ...) overlay additionally crashes the
     process on FileDatastore restore (observed with a frozen rig); hydrostatic
-    pInit is crash-free. Reported, not separately gated.
+    pInit is crash-free. RESOLVED at P2 (2026-07-18): re-verified CLEAN
+    post-#577 (same upstream rho corruption class) and promoted to a HARD
+    gate — tests/test_ladruno_overlay_driver.py gate (f).
 """
 import os
 import subprocess
