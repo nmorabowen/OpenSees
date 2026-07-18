@@ -64,8 +64,8 @@ static int respToDataFlag(const char *resp)
 
 LadrunoMonitorRecorder::LadrunoMonitorRecorder()
     : Recorder(RECORDER_TAGS_LadrunoMonitorRecorder),
-      theDofs(0), theNodalTags(0), dataFlag(0), overlayTag(-1), respName("disp"),
-      filename(), theDomain(0),
+      theDofs(0), theNodalTags(0), dataFlag(0), overlayMode(false), overlayTag(-1),
+      respName("disp"), filename(), theDomain(0),
       everyK(1), minIntervalSec(0.0), recordCallCount(0),
       haveEmitted(false), sink(0), initialized(false), initFailed(false)
 {
@@ -80,7 +80,7 @@ LadrunoMonitorRecorder::LadrunoMonitorRecorder(const ID &dofs,
                                                double hz)
     : Recorder(RECORDER_TAGS_LadrunoMonitorRecorder),
       theDofs(dofs), theNodalTags(nodalTags),
-      dataFlag(respToDataFlag(resp)), overlayTag(-1),
+      dataFlag(respToDataFlag(resp)), overlayMode(false), overlayTag(-1),
       respName(resp ? resp : "disp"),
       filename(fname ? fname : ""), theDomain(&dom),
       everyK(every < 1 ? 1 : every),
@@ -91,7 +91,7 @@ LadrunoMonitorRecorder::LadrunoMonitorRecorder(const ID &dofs,
 }
 
 // Overlay-pressure mode (ADR-73 P4). dataFlag is unused in this mode (p is a
-// nodal scalar); overlayTag>=0 selects the branch in initialize()/record().
+// nodal scalar); overlayMode selects the branch in initialize()/record().
 LadrunoMonitorRecorder::LadrunoMonitorRecorder(int ovTag,
                                                const ID &nodalSubsetTags,
                                                Domain &dom,
@@ -100,7 +100,7 @@ LadrunoMonitorRecorder::LadrunoMonitorRecorder(int ovTag,
                                                double hz)
     : Recorder(RECORDER_TAGS_LadrunoMonitorRecorder),
       theDofs(0), theNodalTags(nodalSubsetTags),
-      dataFlag(0), overlayTag(ovTag), respName("p"),
+      dataFlag(0), overlayMode(true), overlayTag(ovTag), respName("p"),
       filename(fname ? fname : ""), theDomain(&dom),
       everyK(every < 1 ? 1 : every),
       minIntervalSec(hz > 0.0 ? 1.0 / hz : 0.0),
@@ -132,7 +132,7 @@ int LadrunoMonitorRecorder::initialize(void)
     // Columns overlay<tag>.p.node<n>, one scalar per region node (subset or all).
     // The subset was validated against the region nodes at parse time; here we
     // just resolve the overlay and freeze the SWMR columns.
-    if (overlayTag >= 0) {
+    if (overlayMode) {
         if (filename.empty()) {
             opserr << "LadrunoMonitorRecorder: no -sink file given\n";
             initFailed = true;
@@ -272,7 +272,7 @@ int LadrunoMonitorRecorder::record(int commitTag, double timeStamp)
     // Overlay pressure mode (ADR-73 P4): gather committed p at each column node
     // via the overlay pattern. Re-resolved by tag each emit (same removal-robust
     // idiom as the node path); an absent overlay streams 0.0 rather than dangling.
-    if (overlayTag >= 0) {
+    if (overlayMode) {
         LoadPattern *lp = theDomain->getLoadPattern(overlayTag);
         LadrunoPorousOverlay *ov =
             (lp != 0 && lp->getClassTag() == PATTERN_TAG_LadrunoPorousOverlay)
@@ -381,7 +381,7 @@ void *OPS_LadrunoMonitorRecorder()
     int everyK = 1;
     double hz = 0.0;
 
-    // -overlay (ADR-73 P4): pore-pressure mode. overlayTag>=0 once seen.
+    // -overlay (ADR-73 P4): pore-pressure mode (sawOverlay once seen).
     // Exclusive of -node/-region/-dof/-resp; -nodes is repurposed as the
     // region-node subset. The `saw*` flags detect illegal mixing (gate d).
     int overlayTag = -1;

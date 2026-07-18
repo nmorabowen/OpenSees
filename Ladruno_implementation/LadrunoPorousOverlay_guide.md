@@ -545,9 +545,24 @@ recorder Monitor -overlay $tag <-nodes {$n1 ...}> -sink $file -every $N
 
 An unknown/non-33022 tag after `-overlay`, a bare `-overlay` with no overlay in the
 domain, mixing Monitor `-overlay` with `-node`, or a Monitor `-nodes` containing a
-non-region node are all parser-time fatals (unknown-flag-FATAL house rule). Recorders
+non-region node are all parser-time fatals (unknown-flag-FATAL house rule). A
+consequence: **create the overlay pattern BEFORE the recorder command** — both
+`-overlay` forms validate against the domain at parse time. Recorders
 read the freshly-committed pⁿ⁺¹; under `-subcycle N>1` they read the last synced p
 between windows (those are the forces the skeleton actually feels).
+
+Further semantics, all by design:
+
+- **Serial-only v1.** The overlay is per-process; under OpenSeesMP a partition
+  without the 33022 pattern cannot serve `-overlay` channels (the recorder
+  prints a loud error and writes no overlay data on that partition — the
+  analysis itself is unaffected).
+- **Static stages:** recorder rows appear per static commit and their `TIME`
+  axis carries the domain "time" = the **load factor λ** there (the ⟨A-3⟩
+  convention, same as every static recorder channel).
+- **Pattern removed mid-run** (`remove loadPattern`): the `-overlay` channel
+  and the Monitor both keep their frozen column set and stream **0.0** for the
+  vanished overlay (advisory live-tail semantics — the run is never stalled).
 
 ### Energy accounting note
 

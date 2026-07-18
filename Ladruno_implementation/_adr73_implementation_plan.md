@@ -648,10 +648,17 @@ existing private state; nothing mutates, nothing serializes):
 ### 4.2 LadrunoRecorder channels (FROZEN)
 
 - **Command surface:** `recorder ladruno $file ... -overlay <$tag1 $tag2 ...>`
-  — bare `-overlay` = every 33022 pattern in the domain at writeModel time
-  (fatal if none); explicit tags = exactly those (unknown/non-33022 tag =
-  parser-time fatal, the unknown-flag-FATAL house rule). Repeatable/combinable
-  with all existing flags (`-N/-E/-G/-kind/-envelope/...`).
+  — bare `-overlay` = every 33022 pattern in the domain; explicit tags =
+  exactly those (unknown/non-33022 tag = parser-time fatal, the
+  unknown-flag-FATAL house rule). Repeatable/combinable with all existing
+  flags (`-N/-E/-G/-kind/-envelope/...`). Duplicate tags deduped with a
+  notice (panel F-3). **Amended at 4.F (panel adjudication):** BOTH forms
+  fail-fast at PARSE time when unsatisfiable (bare with no 33022 in the
+  domain; unknown explicit tag) — the original "fatal at writeModel time"
+  wording is unobservable in practice because `Domain::commit` swallows the
+  recorder's `record()` return; writeModel re-checks remain as the backstop.
+  Consequence (documented, accepted): the overlay pattern must exist BEFORE
+  the recorder command — recorder-before-pattern ordering is rejected loudly.
 - **Discovery idiom:** scan `domain->getLoadPatterns()` for
   `getClassTag() == PATTERN_TAG_LadrunoPorousOverlay` (the P2 driver /
   Domain.cpp:2248 idiom).
@@ -705,9 +712,11 @@ simpler honest behavior and the battery pins it).
 ### 4.4 LadrunoMonitorRecorder channel (FROZEN)
 
 - `recorder Monitor -overlay $tag <-nodes {$n1 ...}> -sink $file <-every $N>
-  <-hz $hz>` — overlay mode is EXCLUSIVE of `-node/-nodes/-region/-dof/-resp`
+  <-hz $hz>` — overlay mode is EXCLUSIVE of `-node/-region/-dof/-resp`
   (parser fatal on mixing; SWMR columns are frozen at open, keep the modes
-  disjoint). `-nodes` subset must be region nodes (fatal otherwise); default =
+  disjoint; `-nodes` is the permitted region-node SUBSET selector — the
+  earlier inclusion of `-nodes` in this exclusivity list contradicted the
+  grammar line and is corrected here, panel F-3-schema). `-nodes` subset must be region nodes (fatal otherwise); default =
   all region nodes. One overlay per Monitor instance (spawn two recorders for
   two overlays).
 - Columns `overlay<tag>.p.node<n>` (node-major, the existing label

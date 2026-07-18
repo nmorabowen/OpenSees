@@ -97,9 +97,11 @@ private:
                                     // removal cannot dangle (see record()).
     int dataFlag;          // 0 disp, 1 vel, 2 accel; 7/8/9 reaction
                            // (static / inclInertia / +Rayleigh)
-    // -overlay mode (ADR-73 P4): >=0 => stream LadrunoPorousOverlay pattern
-    // `overlayTag`'s committed p at theNodalTags (empty => all region nodes).
-    // -1 => the ordinary disp/vel/accel/reaction node mode above.
+    // -overlay mode (ADR-73 P4): overlayMode selects the branch (an explicit
+    // bool, not the sign of the tag — panel F-2: a negative pattern tag is
+    // pathological but legal); overlayTag = the LadrunoPorousOverlay pattern
+    // whose committed p is streamed at theNodalTags (empty => all region nodes).
+    bool overlayMode;
     int overlayTag;
     std::string respName;
     std::string filename;

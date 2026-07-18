@@ -722,6 +722,39 @@ def test_h_envelope():
           f"({r_min:.1e}/{r_max:.1e}/{r_abs:.1e}) over {ns} steps")
 
 
+def test_i_pattern_removal():
+    """Gate (i) — P4 panel F-1 pin: `remove loadPattern` mid-run must NOT dangle
+    the recorder channel (pattern deletion fires no domainChange — the source
+    re-resolves by tag each step and zero-fills). Rows after removal are
+    identically 0.0, rows before are untouched, the file stays readable."""
+    tag, ns_pre, ns_post = 83, 5, 3
+    dt = _dt_for(ns_pre + ns_post)
+    csv, h5 = _p("i.csv"), _p("i.ladruno")
+    _rm(csv, h5)
+    _build_single(2, 8, tag, csv_path=csv)
+    ops.recorder("ladruno", h5, "-overlay", tag)
+    for _ in range(ns_pre):
+        assert ops.analyze(1, dt) == 0
+    ops.remove("loadPattern", tag)      # deletes the overlay; no domainChange fires
+    for _ in range(ns_post):
+        assert ops.analyze(1, dt) == 0, "post-removal analyze failed"
+    ops.wipe()
+
+    _, cP, _, _ = _read_record(csv)     # CSV stops at removal: ns_pre rows
+    with h5py.File(h5, "r") as f:
+        got = _read_overlay(f, tag)
+    assert got is not None, "overlay group missing"
+    _, d2, _, _, _ = got
+    assert d2.shape[0] == ns_pre + ns_post, \
+        f"rows {d2.shape[0]} != commits {ns_pre + ns_post}"
+    r_pre = _relmax(d2[:ns_pre, :], cP[:ns_pre, :])
+    assert r_pre <= 1e-12, f"pre-removal rows drifted from CSV: relL2 {r_pre:.2e}"
+    post = np.abs(d2[ns_pre:, :]).max()
+    assert post == 0.0, f"post-removal rows not zero-filled (max |p| {post:.3e})"
+    print(f"PASS (i) pattern removal: {ns_pre} live rows CSV-exact ({r_pre:.1e}), "
+          f"{ns_post} post-removal rows identically 0.0, file readable")
+
+
 # ==========================================================================
 # standalone runner + fatal-subprocess dispatch
 # ==========================================================================
@@ -734,6 +767,7 @@ _ALL = [
     ("test_f_monitor_twin", test_f_monitor_twin),
     ("test_g_regression_smoke", test_g_regression_smoke),
     ("test_h_envelope", test_h_envelope),
+    ("test_i_pattern_removal", test_i_pattern_removal),
 ]
 
 

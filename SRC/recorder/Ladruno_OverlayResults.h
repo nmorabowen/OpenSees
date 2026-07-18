@@ -55,6 +55,12 @@ namespace ladruno {
 	so a copy never goes stale within a stage). evaluate() copies the overlay's
 	committed p (freshly committed at Domain::commit BEFORE recorders run — the
 	4.3 ordering pin), row-major over ids() x 1 component.
+
+	Removal robustness (P4 panel F-1): `remove loadPattern` DELETES the pattern
+	without firing a domain change (no owned SPs), so a cached pointer would
+	dangle for the rest of the stage. evaluate() therefore re-resolves the
+	overlay BY TAG through info.domain each step (the Monitor idiom) and
+	zero-fills when it is gone — never a stale deref.
 	*/
 	class OverlayPressureSource : public ResultSource {
 	public:
@@ -76,7 +82,7 @@ namespace ladruno {
 		void buildSchema(int patternTag);
 
 	private:
-		LadrunoPorousOverlay* m_overlay;   // not owned
+		int m_patternTag;                  // re-resolved by tag in evaluate() (F-1)
 		std::vector<int> m_ids;            // region-node tags (copy, construction-time)
 		ResultSchema m_schema;
 	};

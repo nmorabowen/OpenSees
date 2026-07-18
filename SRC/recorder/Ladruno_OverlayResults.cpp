@@ -32,6 +32,10 @@
 
 #include "LadrunoPorousOverlay.h"
 
+#include <Domain.h>
+#include <LoadPattern.h>
+#include <classTags.h>
+
 #include <cstddef>
 #include <sstream>
 
@@ -43,18 +47,17 @@ namespace ladruno {
 
 	OverlayPressureSource::OverlayPressureSource(const detail::ProcessInfo& /*info*/,
 	                                             LadrunoPorousOverlay* overlay)
-		: m_overlay(overlay)
+		: m_patternTag(0)
 		, m_ids()
 		, m_schema()
 	{
-		int patternTag = 0;
-		if (m_overlay != 0) {
+		if (overlay != 0) {
 			// Snapshot the region-node id order (the canonical order for this
 			// channel — matches the -record CSV header exactly).
-			m_ids = m_overlay->getRegionNodeTags();
-			patternTag = m_overlay->getTag();
+			m_ids = overlay->getRegionNodeTags();
+			m_patternTag = overlay->getTag();
 		}
-		buildSchema(patternTag);
+		buildSchema(m_patternTag);
 	}
 
 	void OverlayPressureSource::buildSchema(int patternTag)
@@ -62,7 +65,9 @@ namespace ladruno {
 		std::stringstream ss;
 		ss << "overlayPressure_" << patternTag;
 		m_schema.name = ss.str();
-		m_schema.display_name = ss.str();
+		std::stringstream ssd;
+		ssd << "Overlay pore pressure " << patternTag;
+		m_schema.display_name = ssd.str();
 		m_schema.components_csv = "p";
 		m_schema.num_components = 1;
 		m_schema.dimension = "F/L^2";
@@ -72,16 +77,23 @@ namespace ladruno {
 		m_schema.result_type = detail::ResultType::Generic;
 	}
 
-	void OverlayPressureSource::evaluate(const detail::ProcessInfo& /*info*/,
+	void OverlayPressureSource::evaluate(const detail::ProcessInfo& info,
 	                                     std::vector<double>& buffer)
 	{
 		buffer.assign(m_ids.size(), 0.0);
-		if (m_overlay == 0)
+		// Re-resolve BY TAG every step (F-1): `remove loadPattern` deletes the
+		// pattern without a domainChange (no owned SPs), so a cached pointer
+		// would dangle. Absent/replaced overlay => zero rows, never a deref.
+		if (info.domain == 0)
 			return;
+		LoadPattern* lp = info.domain->getLoadPattern(m_patternTag);
+		if (lp == 0 || lp->getClassTag() != PATTERN_TAG_LadrunoPorousOverlay)
+			return;
+		LadrunoPorousOverlay* ov = (LadrunoPorousOverlay*)lp;
 		// Committed p aligned to getRegionNodeTags() order. Copy up to the id
-		// count; a size mismatch (never expected within a stage) leaves the
-		// remainder at 0.0 rather than reading out of bounds.
-		const std::vector<double>& p = m_overlay->getCommittedP();
+		// count; a size mismatch (a re-added same-tag overlay with a different
+		// region) leaves the remainder at 0.0 rather than reading out of bounds.
+		const std::vector<double>& p = ov->getCommittedP();
 		const size_t n = (p.size() < m_ids.size()) ? p.size() : m_ids.size();
 		for (size_t i = 0; i < n; ++i)
 			buffer[i] = p[i];

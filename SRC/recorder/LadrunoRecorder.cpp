@@ -1118,10 +1118,11 @@ int LadrunoRecorder::writeModelOverlays()
 	}
 
 	// --- topology rows for the ready overlays (snapshotReady guard, pin 4.3) --
-	// writeModel() runs lazily at the first record() — after the first
-	// Domain::commit — so an overlay added at model-build time is snapshotted by
-	// now. A not-ready overlay (e.g. a failed snapshot, which already aborts its
-	// own commits) is skipped with a LOUD warning, never silently streamed empty.
+	// The overlay builds its snapshot EAGERLY in setDomain (pattern-add), and
+	// parse-time validation requires the pattern to exist — so readiness holds
+	// by construction here. A not-ready overlay (a failed snapshot, which
+	// already aborts its own commits) is skipped with a LOUD warning, never
+	// silently streamed empty.
 	hid_t h_overlays = ladrunons::HID_INVALID; // created lazily on the first ready overlay
 	for (size_t i = 0; i < resolved.size(); ++i) {
 		LadrunoPorousOverlay* ov = resolved[i];
@@ -2558,6 +2559,16 @@ void* OPS_LadrunoRecorder()
 					       << PATTERN_TAG_LadrunoPorousOverlay
 					       << ") in the domain\n";
 					return 0;
+				}
+				// dedupe (panel F-3): a repeated tag would double-register the
+				// channel — two sinks on one group => HDF5 error spam + 2x rows.
+				bool dup = false;
+				for (size_t di = 0; di < overlay_tags_opt.size(); ++di)
+					if (overlay_tags_opt[di] == tag) { dup = true; break; }
+				if (dup) {
+					opserr << "LadrunoRecorder notice: -overlay tag " << tag
+					       << " listed more than once; ignoring the repeat\n";
+					continue;
 				}
 				overlay_tags_opt.push_back(tag);
 			}
