@@ -10,8 +10,7 @@ import os
 import sys
 
 TMP, OUT = sys.argv[1], sys.argv[2]
-DIST = r"C:\Users\nmora\Github\OpenSees_Compile\OpenSees\.claude\worktrees\nifty-pasteur-c1ad8f\dist\bin"
-os.add_dll_directory(DIST)
+os.add_dll_directory(TMP)   # pyd dir passed by run_regression.bat (was a dead hardcoded worktree path)
 sys.path.insert(0, TMP)
 import opensees as ops  # noqa: E402
 

@@ -1361,6 +1361,19 @@ int    LadrunoPorousOverlay::staticModeCode(void) const   { return staticMode_; 
 int    LadrunoPorousOverlay::fluidUpdateCode(void) const  { return fluidUpdate_; }
 int    LadrunoPorousOverlay::fsLModeCode(void) const      { return fsLMode_; }
 
+// ===========================================================================
+//  ADR-73 P4 recorder-channel seam — committed p at one region node tag.
+//  Non-region tag => 0.0, no error (callers pre-validate; ADR §4.1 pin).
+// ===========================================================================
+double LadrunoPorousOverlay::pAtNodeTag(int nodeTag) const
+{
+  std::map<int,int>::const_iterator it = nodeTagToIndex_.find(nodeTag);
+  if (it == nodeTagToIndex_.end()) return 0.0;
+  int idx = it->second;
+  if (idx < 0 || idx >= (int)pCommitted_.size()) return 0.0;
+  return pCommitted_[(size_t)idx];
+}
+
 // Early fs1 sync of a pending -subcycle window before the driver takes over
 // (plan §2.2 step 0) — otherwise the first driver advance would pair a
 // multi-commit Δu window with the driver's single dt. Returns 1 if it fired,
@@ -1508,6 +1521,9 @@ void LadrunoPorousOverlay::openRecord(void)
            << "'; recording disabled\n";
     return;
   }
+  // full-f64 rows (max_digits10): the CSV doubles as the recorder-channel twin
+  // oracle (ADR-73 P4 battery gate a) — default 6-sig-fig text cannot gate 1e-12
+  recordStream_.precision(17);
   recordStream_ << "time";
   for (int i = 0; i < nRegionNodes_; i++)
     recordStream_ << "," << regionNodeTags_[i];

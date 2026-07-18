@@ -64,6 +64,7 @@ if(HDF5_FOUND)
           Ladruno_NodeResults.cpp
           Ladruno_ElementResults.cpp
           Ladruno_DomainResults.cpp
+          Ladruno_OverlayResults.cpp
           Ladruno_Sinks.cpp
           VTKHDF_Recorder.cpp
         PUBLIC
@@ -77,6 +78,7 @@ if(HDF5_FOUND)
          Ladruno_NodeResults.h
          Ladruno_ElementResults.h
          Ladruno_DomainResults.h
+         Ladruno_OverlayResults.h
          Ladruno_Sinks.h
          EnergyBalanceKernel.h
          VTKHDF_Recorder.h

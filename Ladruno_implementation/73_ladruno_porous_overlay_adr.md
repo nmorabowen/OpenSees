@@ -1,11 +1,13 @@
 ---
 title: "ADR 73 — LadrunoPorousOverlay: persistent-fluid staggered u-p (the overlay architecture; opens ADR-71 P7)"
-status: draft — planning, NO code
+status: SHIPPED — P0–P4 complete (PRs #575/#576/#580/#581/#582); P3b by-demand; §12 log governs over drafted text
 ---
 
 # ADR 73 — LadrunoPorousOverlay: a pore-fluid field with its own life-cycle
 
-**Status:** draft. Planning only — no code yet. Opens the ADR-71 §6 / P7
+**Status:** SHIPPED — P0–P4 complete (family closed 2026-07-18, PR #582; the
+§12 implementation log GOVERNS wherever it amends the drafted text below;
+P3b `-fluidUpdate explicit` remains by-demand). Opened the ADR-71 §6 / P7
 runway (staggered & explicit u-p) with a measured numerical prototype behind
 every load-bearing claim: the 2026-07-13 pre-study spike
 (`Ladruno_implementation/adr71_meshless_p_spike/` — `meshless_p_toy.py`,
@@ -438,7 +440,7 @@ commit hook if taken.
 | **P2** | iterated driver `LadrunoStaggeredAnalyze` (fs-k) | fixed-point gate: iterated staggered ≡ monolithic LadrunoUP same-Δt (E6 leg, target ≤ 1e-6 rel); B4 footing staggered (CB gate under stab); PDMY staged liquefaction column vs the ADR-71 P4 monolithic reference (stage transport → L/stab cache dirty); iteration-count telemetry (mean/max per step) exposed — **DONE, PR #580 (2026-07-18): all gates green with ONE gate transposition (§12 P2 entry item 1 — the ≤1e-6 exact-equality leg is against monolithic BE = the frozen toy `qs_mono` [measured 3.4e-7 p / 1.1e-8 u, both regimes]; vs the real LadrunoUP it is a mutual-Δt-convergence leg [orders 0.99/0.99], because NO stock integrator reproduces BE rates on the fluid row); Opus ×3 panel PASS-WITH-FIXES, all landed; rider: `-pInit` list DB restore CLEAN post-#577 → promoted to hard gate** |
 | **P3** | explicit lane | CD + overlay on B2/ZS84 column vs implicit monolithic (two-leg); **incumbent head-to-head** (§3.4): same column under upstream CentralDifference + FourNodeQuadUP — accuracy AND per-step cost/scaling vs the overlay's diagonal-solid + small-SPD-fluid path, plus the S→0 failure demo; measured CFL envelope vs the P0 pins; **overlay-aware Δt_cr advisory gated** (§3.4 item 3: per-element undrained factor √((M+K_f/n)/M) wired into the ADR-65 machinery — naive drained advisory demonstrated 5–8× optimistic, then corrected); `-subcycle auto|$N` sweep gate; pipelined-fluid design note carried (§3.4 item 2 — implementation may land here or P3b); **LEDGER_quirks row**: honest-p LadrunoUP + upstream CentralDifference = Richardson-unstable p (leapfrogged diffusion) — loud test pinning the symptom; energy-balance advisory channel (ADR-69: overlay work terms enter the closure residual — documented, not silently absent) — **DONE, PR #581 (2026-07-18): battery 8/8 (§12 P3 entry); `-fsL zero` lane + discrete-pencil advisory (per-cell Q·S*⁻¹·Qᵀ augmentation, measured factor 26.24 = 1.22× material, stab-invariant to 1.3e-14); two-leg ZS84 orders 1.05/1.01; incumbent head-to-head measured (overlay 2.2× less error at 2.4× less cost/step); Richardson pin holds WITH a ~1300-step incubation trap; NEW measured refutation — the zero-drainage undamped column has NO asymptotically stable dt (secular pumping, ⟨A-7⟩ hedge lands; "0.5× stable" is horizon-relative there); SMS+overlay = UNSUPPORTED until P3b (loud warning)** |
 | **P3b** *(option)* | `-fluidUpdate explicit` — fully matrix-free lane (§3.4 item 1, Xu-2021 class) | dual-CFL gate: diffusion limit verified slack by orders on realistic k′ sweep; measured undrained-CFL envelope vs the √((M+K_f/n)/M) prediction; equivalence vs implicit-fluid lane at matched Δt (both are O(Δt) splits); mass-scaling composability (SMS against the undrained pencil); MP smoke on the halo-exchange update (the §8 MP-risk dissolution demonstrated, not asserted) |
-| **P4** | ecosystem | overlay p-field recorder channels (own response surface — nodal-DOF recorders can't see it; LadrunoRecorder/Monitor topology rows per [[06_quadrature_global_gp_plan]]); user guide (`LadrunoPorousOverlay_guide.md`) incl. division-of-labor table vs LadrunoUP + init recipes; banner line + ledgers → shipped; apeGmsh emitter runway note (companion repo item) |
+| **P4** | ecosystem | overlay p-field recorder channels (own response surface — nodal-DOF recorders can't see it; LadrunoRecorder/Monitor topology rows per [[06_quadrature_global_gp_plan]]); user guide (`LadrunoPorousOverlay_guide.md`) incl. division-of-labor table vs LadrunoUP + init recipes; banner line + ledgers → shipped; apeGmsh emitter runway note (companion repo item) — **DONE, PR #582 (2026-07-18): `recorder ladruno -overlay` + `Monitor -overlay` channels (CSV-twin EXACT), guide fidelity-critic PASS, battery 9/9, Opus ×3 panel PASS-WITH-FIXES (CRITICAL removeLoadPattern-UAF fixed); §12 P4 entry governs; 33022 ledger row → shipped** |
 | **P5** *(reserved)* | meshless/MPM fluid realization (large-deformation upgrade path); MP/partitioned-domain story | own mini-ADR; the spike's E1–E3 refutations bound what any meshless realization must prove first |
 
 Each phase is one PR off `ladruno`, ledgers updated in-PR.
@@ -655,6 +657,73 @@ this PR:
   sentinel-inert, never NaN).
 
 ## 12. Implementation log
+
+### P4 — ecosystem: recorder channels + user guide, family close-out (PR #582, 2026-07-18)
+
+Recorder channels per the 4.A-pinned schema (plan §"P4 — ecosystem (PINNED)",
+frozen BEFORE any agent wrote code — the 2.A/3.A precedent): five const overlay
+getters (zero physics; `getRegionNodeTags` order is THE canonical channel
+order), `OverlayPressureSource` (OnNodes) → `RESULTS/ON_NODES/
+overlayPressure_<tag>/{ID,DATA,STEP,TIME}` through the untouched generic
+sinks (`-envelope` legal), write-once `MODEL/OVERLAYS/OVERLAY_<tag>/
+{REGION_NODES,DRAINED_NODES}` topology rows, `Monitor -overlay $tag
+<-nodes {subset}>` SWMR columns `overlay<tag>.p.node<n>`. Timing pin VERIFIED
+in-code: the overlay hook fires at Domain.cpp:2260, recorders at :2285 — the
+channels always read the freshly committed pⁿ⁺¹ (under `-subcycle`: the last
+synced p; under the P2 driver: the converged iterate — no special case). The
+`-record` CSV now writes full-f64 rows (`precision(17)`) and doubles as the
+battery's twin oracle. Schema strictly ADDITIVE under FORMAT_VERSION = 1
+(validator confirmed to actively validate the new groups). Battery
+`tests/test_ladruno_overlay_recorder.py` 9/9 — every CSV-twin gate EXACT
+(relL2 = 0.0e+00); recorder regression suite ALL PASS (en-route fix: the
+`precision_model.py` runner had shipped with a hardcoded dead-worktree path);
+P1/P2/P3 batteries re-run green (6/6, 9/9, 12/12, 8/8). Guide
+`LadrunoPorousOverlay_guide.md` shipped, documentation-fidelity critic PASS
+(every measured number verified character-for-character against this log +
+LEDGER_quirks; both quick-start snippets parse-checked). Opus ×3 wiring panel
+(framework-reality / schema-contract / robustness): **PASS-WITH-FIXES ×3, all
+landed. Adjudications (this entry governs):**
+
+1. **CRITICAL (robustness critic, MEASURED): `remove loadPattern` deletes the
+   pattern WITHOUT firing domainChange** (Domain::removeLoadPattern marks the
+   domain changed only when the pattern owned SP_Constraints — the overlay
+   owns none), so the recorder's stage-cached pattern pointer dangled and
+   wrote subnormal garbage (9.9e-312) into every post-removal row. Fixed:
+   `OverlayPressureSource::evaluate` re-resolves BY TAG each step
+   (info.domain → classTag check) and zero-fills when absent — the Monitor
+   idiom; battery gate (i) pins it; LEDGER_quirks row generalizes the audit
+   (never cache a LoadPattern* across commits).
+2. **Bare-`-overlay` fail-fast TRANSPOSED to parse time (pin 4.2 amended).**
+   The pinned "fatal at writeModel time if none" is unobservable in practice:
+   `Domain::commit` invokes `theRecorders[i]->record()` WITHOUT checking the
+   return (Domain.cpp:2285), so a writeModel-time abort is stderr-only.
+   Both `-overlay` forms therefore validate at parse time (loud, catchable in
+   openseespy); writeModel re-checks remain the backstop. Consequence,
+   documented in the guide: the overlay pattern must exist before the
+   recorder command (recorder-before-pattern is rejected loudly).
+3. Minor panel fixes landed: duplicate `-overlay` tags deduped with a notice
+   (was per-step HDF5-DIAG spam + 2× rows on one group); Monitor overlay
+   branch keyed on an explicit `overlayMode` bool (a negative-tagged overlay
+   would have mis-routed to the disp branch); Monitor streams 0.0 for a
+   vanished overlay (adjudicated acceptable — advisory live-tail semantics,
+   the authoritative recorder is loud); static stages stamp the channel TIME
+   axis with the load factor λ (the ⟨A-3⟩ convention, guide-documented);
+   MP: a partition without the 33022 pattern serves no overlay channels
+   (loud stderr, analysis unaffected) — serial-only v1, guide-documented.
+4. **Refuted by the panel** (attacks that did not survive): clearSources
+   wiping the freshly resolved overlay list (channels-vs-ptrs separation is
+   correct); driver-latched commits exposing half-advanced fluid (commitFluid
+   syncs before recorders run); element removal truncating the region field
+   (snapshot + regionNodeTags_ frozen; removal fires a domain change and the
+   stage rebuild re-resolves — 2 stages, 16 commits, twin-exact); the schema
+   validator choking on the new groups (it validates them as ordinary §7.1
+   nodal scalars); double rows under the driver (15 commits = 15 rows,
+   twin-exact vs the converged-iterate CSV).
+
+Family status: **P0–P4 COMPLETE, 33022 ledger row → shipped.** Open
+BY-DEMAND: P3b `-fluidUpdate explicit` + the SMS composability fix through
+the `elementCriticalDt` Kadd seam (§7 P3b row). apeGmsh emitter/contract row
+= companion-repo follow-up (noted in PR #582).
 
 ### P3 — explicit lane `-fsL zero` + overlay-aware Δt_cr advisory (PR #581, 2026-07-18)
 
