@@ -610,10 +610,227 @@ LEDGER_quirks rows: Richardson (e), energy-ULW accounting (3.3),
 `-fsL zero` quasi-static divergence; banner line amended; pipelined-fluid
 design note (§3.4 item 2) stays a documented note — no code.
 
-## P3b — `-fluidUpdate explicit` (sketch, unchanged)
+## P3b — `-fluidUpdate explicit` + SMS composability (PINNED at 3b.A, 2026-07-18)
 
-- P3b: `-fluidUpdate explicit` per ADR §3.4 item 1 — dual-CFL gate, implicit-
-  lane equivalence at matched Δt, SMS composability, MP halo-exchange smoke.
+The sketch is superseded by these pins. E7.4 GOVERNS the lane (frozen
+constants block): boundary = **1.32×** the discrete undrained pencil on both
+benchmark soils; material factor ~1.85× conservative (documentation-only);
+diffusion CFL slack **7.2e3×** at realistic k̄; **L not needed** (no
+iteration — the reference rule is inert). The advisory pencil (P3 §3.2
+augmentation) applies UNCHANGED — the measured explicit-fluid boundary sits
+~32 % ABOVE it, so the shipped advisory is conservative for this lane too.
+
+| WP | Owner | Deliverable |
+|---|---|---|
+| 3b.A | MAIN | these pins |
+| 3b.B | OPUS | explicit advance branch + dual-CFL advisory + SMS Kadd wiring + warning retirement |
+| 3b.C | OPUS | battery `tests/test_ladruno_overlay_explicit_fluid.py` (gates a–g below) |
+| 3b.D | OPUS ×3 | panel (stability/advisory critic load-bearing; lane-reachability; battery) |
+| 3b.E | MAIN | build, battery, adjudication, guide/quirks/banner/ledgers, ADR §7/§12, PR |
+
+### 3b.1 Command semantics (FROZEN)
+
+- Parser: `-fluidUpdate explicit` → `FU_EXPLICIT` (the fatal-NYI branch is
+  removed; `fluidUpdate_` already serializes — data(20) — so NO wire change).
+  The hook's FU_EXPLICIT abort is removed with it.
+- **`-fsL` is INERT under FU_EXPLICIT** (no L anywhere in the update; no
+  iteration). A non-default `-fsL` alongside `-fluidUpdate explicit` gets a
+  one-time notice (not a fatal — model migration must not require flag
+  surgery). The oedometric floor / FSL_ZERO advisory logic is untouched (it
+  fires only on lanes that use L).
+- **`-staticMode hold|steady` stay legal.** SM_STEADY keeps its CG solve of
+  H·p = f_seep at static commits — the matrix-free claim is about the
+  TRANSIENT march (the gravity-init recipe must keep working; a CG solve per
+  static commit is not a march cost). Same for `-pInit steady` (setup-time).
+  Documented in the guide.
+- **`-subcycle auto|$N` unchanged** (window accumulation already ships; the
+  fluid step is dtAccum_). The window is additionally bounded by the
+  diffusion CFL — N·Δt ≤ Δt_diff — which the advisory prints; at realistic
+  k̄ the slack is ~7e3× so it never binds in practice.
+- **`-stab` is march-inert under FU_EXPLICIT** (pinned semantics, toy-exact):
+  the lumped diagonal is the ROW-SUM of S* and H̃·1 = 0 exactly, so
+  rowsum(S*) = rowsum(S_phys) — the stab matrix cannot enter the explicit
+  march. This is the E7.4 oracle's own semantics (`slump = S.sum(axis=1)` on
+  the stabilized S). `-stab` still affects the ADVISORY S*_e (measured
+  stab-invariant, P3 §12 item 2) and nothing else on this lane. Documented,
+  no notice (harmless in both directions).
+- **P2 driver refusal already shipped** (FU_EXPLICIT excluded from the driven
+  set — LadrunoStaggeredDriver.cpp:118); battery re-pins it as a fatal when
+  the driven set comes up empty.
+- `-onRemoval keep|drain` unchanged (drain's rebuildHFseep touches H/f_seep
+  only; the storage lump is S-side and unaffected — see 3b.2 cache rule).
+
+### 3b.2 The explicit advance (FROZEN — toy `cd_march(fluid="explicit")` verbatim)
+
+- **Storage lump `sLump_`** (size N): per-row sum of the assembled S* CSR
+  rows (= lumped physical S since H̃ annihilates constants). Built once when
+  assembleStorageAndL completes (snapshot) and rebuilt by
+  rebuildModuliCaches (moduli change S). NOT touched by removal rescan
+  (fluid measure never shrinks — P1 pin). Guard at build: any row-sum ≤ 0 →
+  loud fatal naming the node (the toy's `slump.min() > 0` assert).
+- **Update** (inside `advanceTrial` as the FU_EXPLICIT branch — commitFluid /
+  revertFluid / record / hook plumbing untouched):
+  `pTrial_[i] = pCommitted_[i] + (−dt·(H·p₀)_i − QtDu_i + dt·fseep_i) / sLump_[i]`
+  on FREE rows; drained rows hold their prescribed committed value (the
+  implicit lane's convention). H·p₀ via the existing applyOp(0,0,1,·);
+  QtDu via the existing assembleQtDu (window semantics identical). **NO
+  solveFluid call — no CG, no factorization in the march.**
+- **The branch always advances from COMMITTED state and ignores
+  firstOfStep** (there is no reference increment; dpCommitted_ keeps being
+  maintained by commitFluid for serialization compatibility but is never
+  read). Consequence, pinned deliberately: a repeated advanceTrial within
+  one step is IDEMPOTENT (re-derives the same pTrial_), not a double-march —
+  defensive, since no shipped path calls it twice (driver refuses the lane).
+- relChange_ still computed (harmless; nothing consumes it on this lane).
+- Serialization: zero format changes (fluidUpdate_ travels; sLump_ is
+  derived state, rebuilt at snapshot).
+
+### 3b.3 Dual-CFL advisory (FROZEN)
+
+- Overlay accessor `double explicitFluidDiffusionDt() const`: the
+  per-fluid-advance forward-Euler diffusion bound
+  **Δt_diff = minEdge_² / (2·ndm_·maxCv_)** (the toy's dt_diff formula;
+  conservative — min-edge with max-c_v). Returns −1 when not FU_EXPLICIT or
+  snapshot not ready. Zero new state (minEdge_/maxCv_ already exist for
+  `-subcycle auto`).
+- `CTSResult` gains `bool explicitFluid` + `double fluid_diffusion_dt`
+  (defaults false / +inf). `computeCriticalTimeStep` (already collecting
+  33022 overlays once per call): FU_EXPLICIT overlays with a finite
+  diffusion bound set explicitFluid and min-fold fluid_diffusion_dt; the
+  bound is then **min-folded into BOTH damped_dt and undamped_dt** (if
+  diffusion ever governs — absurd k̄ — the returned advisory is honest;
+  governing tags stay the solid element's, the report clarifies). MPI
+  reduction: min-reduce fluid_diffusion_dt, OR-reduce explicitFluid
+  alongside the existing block.
+- Reports (CentralDifferenceLadruno ×2 sites + ExplicitBathe sites — the
+  overlayAugmented print blocks): when explicitFluid, append one line:
+  explicit-fluid diffusion limit Δt_diff, the slack factor
+  Δt_diff/undamped_dt, and the note that `-subcycle N` must keep
+  N·Δt ≤ Δt_diff. Governing = min is already reflected in the folded
+  numbers.
+
+### 3b.4 SMS composability fix (FROZEN — the Kadd seam wired)
+
+- BOTH builders (`buildMassScaling` AND `buildMassScalingConsistent`)
+  collect 33022 overlays once per build (the computeCriticalTimeStep idiom)
+  and, per element, sum `getUndrainedAugmentation` blocks into a dense
+  Matrix passed to `elementCriticalDt(…, &Kaug)` — SMS then sizes against
+  the UNDRAINED per-element pencil. The closed-form scale s = T² + 2Tc is
+  UNCHANGED and remains exact: ΔK_e is mass-independent and
+  state-independent, so λ_max still scales as 1/s under mass injection —
+  the augmented dt_e is the correct sizing input with zero formula changes.
+  Size-mismatch (exotic ndf) → skip augmentation for that element with a
+  one-time loud note (the CTS behavior, mirrored); self-reported bounds
+  keep winning UNCORRECTED (the CTS scan already warns loudly for that
+  combo; SMS's self-report skip path is untouched).
+- **The blanket `warnIfOverlayPresentSMS` warning is RETIRED** (function
+  removed; both call sites replaced by the overlay collection). Replaced
+  by: (i) a one-time INFO line when sizing augmented ≥ 1 element (`SMS
+  sizing priced the UNDRAINED pencil for N overlay-owned elements
+  (ADR-73 P3b)`) — battery-greppable honesty; (ii) the residual
+  not-augmented cases keep their existing LOUD per-case advisories, which
+  are exactly getUndrainedAugmentation's refusals (singular S_e, size
+  mismatch) — never silently optimistic; (iii) a defensive loud warning if
+  any 33022 overlay is present with `!snapshotReady()` at sizing time
+  (unreachable in practice — the snapshot fires in setDomain at pattern
+  creation, long before analysis setup; a FAILED snapshot aborts every
+  commit anyway).
+- **No LADRUNO/vanilla boundary change**: all touched files are fork-owned
+  (LadrunoMassScaling.h, CriticalTimeStep.{h,cpp}, overlay .h/.cpp, OPS_
+  parser, CentralDifferenceLadruno.cpp, ExplicitBathe.cpp) — no
+  vanilla-ledger rows.
+
+### 3b.5 Battery `tests/test_ladruno_overlay_explicit_fluid.py` (gates)
+
+Runner discipline copied VERBATIM from `tests/test_ladruno_overlay_explicit.py`
+(machine python `C:\Users\nmora\AppData\Local\Python\pythoncore-3.12-64\
+python.exe`, `-S` + dist\bin pyd eviction + `assert opensees.__file__`,
+collection-safe `pytest.skip(allow_module_level=True)`, never module-level
+sys.exit). e74 config constants where reused.
+
+- **(a) diffusion-slack sweep**: realistic k̄ sweep (1e-7 … 1e-3 m/s class)
+  on the e74-matched column: the advisory's Δt_diff matches the
+  h²/(2d·c_v) hand formula, and the slack vs the solid undrained pencil is
+  ≥ 1e2× at every realistic point (toy: 7.2e3× at k̄ = 1e-7-class; the gate
+  band is loose — the POINT is orders of slack, direction pinned).
+- **(b) coupled CFL envelope vs the 1.32× pin**: Δt bisection sweep on the
+  e74-matched DRAINING column (NOT the zero-k pathology — fixed-horizon
+  honesty per §12 P3 item 3): measured boundary / discrete undrained pencil
+  ∈ 1.32× ± 25 % (the e72/e74 spread convention → [0.99, 1.65]); a run at
+  0.8× the pencil marches the full horizon stable.
+- **(c) equivalence vs the implicit-fluid lane**: same column, FU_EXPLICIT
+  vs FU_IMPLICIT + `-fsL zero` at matched Δt (both O(Δt) splits — the
+  family's mutual-convergence methodology): inter-lane diff shrinks with
+  Δt at observed order ≥ 0.9.
+- **(d) SMS composability (THE gate — the inverted P3 quirk)**: overlay
+  column where the certified dtTarget under DRAINED pricing provably blows
+  up (the P3 quirks scenario): with the fix, (i) the SMS report prices the
+  undrained pencil (scaled-element count / added mass reflects the ~26×
+  class factor vs a no-overlay control), (ii) a march at the certified
+  dtTarget is STABLE over the fixed horizon, (iii) the blanket UNSUPPORTED
+  warning no longer prints, the INFO line does. BOTH builders exercised
+  (lumped CentralDifferenceSMS + consistent variant).
+- **(e) MP — TRANSPOSED at 3b.A (adjudication recorded in §12)**: the
+  overlay is per-process serial v1 (P4 §12: a partition without the
+  pattern serves no channels); there is NO halo exchange in-tree to smoke.
+  The gate becomes: (i) the update is demonstrably partition-LOCAL (axpy on
+  overlay-owned CSR state, no Domain-global reduction — code-audited by the
+  panel, not run under MPI); (ii) the halo DESIGN for a future
+  partitioned overlay is documented in the ADR §8 amendment (QᵀΔu
+  contributions summed at shared region nodes + p halo — the explicit
+  solid's own nearest-neighbor pattern). NO MP run claimed; the §8
+  "dissolution" stays design-demonstrated. DO NOT overclaim in guide/PR.
+- **(f) P4 recorder transparency**: the recorder battery's CSV-twin gate
+  re-run under FU_EXPLICIT (`recorder ladruno -overlay` HDF5 DATA ==
+  `-record` CSV rows, exact; region/drained topology rows intact).
+- **(g) zero-drainage secular pumping under fully-explicit fluid —
+  MEASURED**: the P3 quirks scenario (k̄ ~ 1e-11, undamped) re-run with
+  FU_EXPLICIT at 0.4×/0.5×/1.0× pencil: steps-to-blowup recorded and the
+  quirks row amended either way (same pathology class expected — frozen
+  forces + no dissipation — but the fluid-side dynamics differ; measure,
+  never assume).
+- Smokes: driver refusal fatal on an FU_EXPLICIT-only domain; `-fsL
+  classic` + explicit → one-time inert notice, march unchanged vs default;
+  SM_STEADY gravity-init recipe under FU_EXPLICIT then transient march;
+  DB round-trip (send/recv) of an FU_EXPLICIT overlay mid-march.
+- No-regression net: P1 physics 6/6, framework 9/9, driver 12/12, explicit
+  8/8, recorder 9/9 re-run green.
+
+### 3b.6 Panel charter (Opus ×3)
+
+1. **stability/advisory critic (load-bearing)**: explicit update vs the toy
+   oracle (signs, dt placement, window dtAccum, drained-row handling),
+   row-sum lumping semantics (H̃ annihilation — is rowsum(S*) really
+   stab-free in the C++ assembly given per-layer scatter?), the dual-CFL
+   fold (does min-folding damped_dt break any existing consumer?), SMS
+   Kadd algebra (scale-invariance of s = T²+2Tc under augmentation;
+   betaK-damped form; consistent-builder M_bar interplay), warning
+   retirement honesty (enumerate every config that still prices drained —
+   is each one loud?).
+2. **lane-reachability critic**: every FU_EXPLICIT path — hook (SM_MARCH /
+   HOLD / STEADY), subcycle window + removal-forced sync, drain rebuild,
+   restart (recvSelf → snapshot → sLump_), getCopy, parser round-trip,
+   driver refusal completeness, catchUpPendingWindow, external-stepping
+   latch defensiveness, Print output, the P4 channels under the lane.
+3. **battery critic**: gate design vs the frozen e74 numbers (is the ±25 %
+   band anchored to the right pencil?), fixed-horizon honesty on (b)/(g),
+   SMS gate (does (d) actually refute the OLD pathology — would it fail on
+   pre-fix code?), recorder-twin fidelity, runner discipline.
+
+### 3b.7 Close-out / ledgers
+
+No new classTag; no vanilla touches expected. Guide §7: SMS caveat LIFTED
+(replaced by the composability statement + INFO line), explicit-fluid
+recipe + inherited advisories (zero-drainage, incubation, dual-CFL);
+LEDGER_quirks: SMS row amended (fixed at P3b, warning retired), secular-
+pumping row amended per gate (g), any new rows; banner 33022 line amended
+(`-fluidUpdate explicit` + SMS composability) via banner_features.txt →
+patch_banner.py; LEDGER_implementations 33022 row appended (P3b, stays
+shipped); ADR §7 P3b row closed + §12 P3b entry (record the MP gate
+transposition + every refutation — adjudication duty); **pipelined-fluid
+design note (§3.4 item 2) stays a documented note — no code** (re-affirmed
+from P3 §3.6). apeGmsh emitter/contract row = companion-repo follow-up,
+PR-body note only.
 
 ## P4 — ecosystem (PINNED at 4.A, 2026-07-18)
 
