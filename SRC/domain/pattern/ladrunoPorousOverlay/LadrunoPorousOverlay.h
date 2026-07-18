@@ -78,13 +78,19 @@ class FEM_ObjectBroker;
 class OPS_Stream;
 class Parameter;
 class Information;
+class Matrix;
 
 class LadrunoPorousOverlay : public LoadPattern
 {
  public:
   // ---- option enumerations (also the serialized integer codes) --------------
   enum StabMode     { STAB_OFF = 0, STAB_AUTO = 1, STAB_MANUAL = 2 };
-  enum FsLMode      { FSL_CLASSIC = 0, FSL_OEDOMETRIC = 1, FSL_MANUAL = 2 };
+  // FSL_ZERO (ADR-73 P3 §3.1): L ≡ 0 — the EXPLICIT-lane setting (CD at
+  // Δt ≤ 0.5× the discrete undrained pencil). Bypasses the oedometric floor
+  // (the floor guards the fs1/iterated lanes); refused by the P2 driver
+  // (iterating with L = 0 IS the drained split, KTJ-divergent at soil coupling).
+  enum FsLMode      { FSL_CLASSIC = 0, FSL_OEDOMETRIC = 1, FSL_MANUAL = 2,
+                      FSL_ZERO = 3 };
   // SM_MARCH is the default (flag absent): the overlay marches the fluid at each
   // qualifying transient commit using dT. The -staticMode flag selects HOLD
   // (freeze p, forces still applied from committed p) or STEADY (re-solve
@@ -157,6 +163,22 @@ class LadrunoPorousOverlay : public LoadPattern
   // region-overlap discovery ⟨A-13⟩: does this overlay claim eleTag?
   bool   ownsElement(int eleTag) const;
 
+  // ---- ADR-73 P3 overlay-aware Δt_cr advisory seam (CriticalTimeStep.cpp) ----
+  // Per-element UNDRAINED stiffness augmentation ΔK_e = Q_e·S_e⁻¹·Q_eᵀ, the
+  // element-local undrained condensation that turns the drained per-element
+  // pencil into the DISCRETE undrained pencil (plan §3.2 pins; E7.4: material
+  // formula √(1+K_f/(n·M_oed)) is documentation-only, ~1.85× conservative).
+  // S_e = this cell's dense storage block S* (= S + αstab·H̃) — the SAME block
+  // assembleStorageAndL scatters (built per-cell on demand, never read back
+  // from CSR). Kadd is resized to (nNodes·ndm)² — node-major, first-ndm-DOFs
+  // layout (the cell's own Qe layout, the same assumption HRZ lumping makes).
+  // Returns false for unowned or dead cells, and (with a loud one-time
+  // advisory naming the cell) for a singular/ill-conditioned S_e — never
+  // silently optimistic. Blocks are cached lazily per cell; the cache is
+  // invalidated by rebuildModuliCaches (S* depends on moduli via α-stab).
+  // State-independent: valid for both useTangent and initial-stiff pencils.
+  bool   getUndrainedAugmentation(int eleTag, Matrix& Kadd) const;
+
   // ---- ADR-73 P2 driver seam (LadrunoStaggeredAnalyze, LadrunoStaggeredDriver) --
   // The iterated fixed-stress driver latches the overlay into external-stepping
   // mode: applyLoad then injects +Q·pTrial_ (the current iterate's forces, not
@@ -170,6 +192,7 @@ class LadrunoPorousOverlay : public LoadPattern
   double lastAdvanceRelChange(void) const;   // residual of the last advanceTrial
   int    staticModeCode(void) const;         // driven-set filter (== SM_MARCH?)
   int    fluidUpdateCode(void) const;        // driven-set filter (== FU_IMPLICIT?)
+  int    fsLModeCode(void) const;            // driver refusal (== FSL_ZERO? ADR-73 P3)
   // Early fs1 sync of a pending -subcycle window before the driver takes over
   // (catch-up, plan §2.2 step 0). Returns 1 if it fired, 0 if nothing pending,
   // <0 on advance failure. Keeps the subcycle counters private to the overlay.
@@ -190,6 +213,11 @@ class LadrunoPorousOverlay : public LoadPattern
   // retained per-GP snapshot data (Np/dNp/dv). Called by fillCell at snapshot
   // AND by rebuildModuliCaches — the ONE storage/L assembly path (no drift).
   void   assembleStorageAndL(Cell& c);
+  // dense per-cell S* block (S + αstab·H̃) from the retained per-GP data —
+  // hoisted out of assembleStorageAndL so getUndrainedAugmentation can build
+  // the SAME block for ONE cell on demand (ADR-73 P3; never read back from
+  // CSR). Requires c.E/c.nu already resolved (resolveCellModuli).
+  void   buildCellStorageBlock(const Cell& c, std::vector<double>& Se) const;
   // parameter-route moduli transport: re-resolve E/nu, re-derive α_stab / L, and
   // re-scatter aS_/aL_; aH_/fseep_/Qe untouched (perm/α only). Lazy at next use.
   void   rebuildModuliCaches(void);
@@ -316,6 +344,14 @@ class LadrunoPorousOverlay : public LoadPattern
   double relChange_;             // relative change of the last advanceTrial
   bool   moduliDirty_;           // parameter route touched E/nu → rebuild lazily
   bool   driverSubcycleNoticeShown_;  // one-time "driver overrides -subcycle"
+
+  // ---- ADR-73 P3 undrained-augmentation cache (transient; lazily sized; ------
+  // invalidated by rebuildModuliCaches — S* depends on moduli via α-stab).
+  // augState_: 0 = unset, 1 = cached block valid, 2 = S_e singular (warned).
+  mutable std::vector<std::vector<double> > augBlocks_;   // per-cell dense ΔK_e
+  mutable std::vector<char> augState_;
+  mutable std::map<int,int> augIndex_;                    // eleTag → cell index
+  mutable bool   augSingularWarned_;   // one-time singular-S_e advisory latch
 
   // shape-kind codes
   enum { SHK_NONE = 0, SHK_T3 = 1, SHK_Q4 = 2, SHK_H8 = 3 };

@@ -29,6 +29,17 @@
 #include <Vector.h>
 #include <OPS_Globals.h>
 
+// Ladruno (ADR-73 P3): overlay-aware undrained pencil — the porous overlay
+// contributes a per-element additive stiffness dK_e = Q_e S_e^-1 Q_e^T so the
+// eigensolve prices the DISCRETE undrained pencil, not the (optimistic)
+// drained skeleton (E7.4: drained advisory is ~sqrt(1+Kf/(n*M_oed)) low on
+// soft soils). Discovery is the P2 driver idiom (classTag scan, once/call).
+#include <LoadPattern.h>
+#include <LoadPatternIter.h>
+#include <LadrunoPorousOverlay.h>
+#include <classTags.h>
+#include <vector>
+
 #include <cmath>
 #include <limits>
 
@@ -247,17 +258,22 @@ void lumpElementMass(Element *ele, const Matrix &M, CTSLumping lumping,
 }
 
 double elementLambdaMax(Element *ele, bool useTangent,
-                        const double *mdiag, int n)
+                        const double *mdiag, int n,
+                        const Matrix *Kadd)
 {
     const Matrix &K = useTangent ? ele->getTangentStiff() : ele->getInitialStiff();
     if (K.noRows() != n) return -1.0;
+    // Ladruno (ADR-73 P3): additive augmentation must match the pencil size;
+    // callers pre-check and advise — this is the last-line guard.
+    if (Kadd != 0 && (Kadd->noRows() != n || Kadd->noCols() != n))
+        Kadd = 0;
 
     // pack column-major for LAPACK
     double *K_data = new double[n * n];
     double *M_data = new double[n * n];
     for (int j = 0; j < n; ++j) {
         for (int i = 0; i < n; ++i) {
-            K_data[j * n + i] = K(i, j);
+            K_data[j * n + i] = K(i, j) + (Kadd ? (*Kadd)(i, j) : 0.0);
             M_data[j * n + i] = (i == j) ? mdiag[i] : 0.0;
         }
     }
@@ -270,16 +286,20 @@ double elementLambdaMax(Element *ele, bool useTangent,
 }
 
 double elementCriticalDt(Element *ele, bool useTangent,
-                         const double *mdiag, int n)
+                         const double *mdiag, int n,
+                         const Matrix *Kadd)
 {
     // self-reported bound takes precedence over the eigensolve (mirrors the
     // self-report stage in computeCriticalTimeStep: an element may carry a
     // stability limit its per-element K v = lambda M v pencil cannot express,
     // e.g. a bipenalty coupling whose host DOFs slave out -> lambda_max ~ 0).
+    // Ladruno (ADR-73 P3): the self-report wins UNCORRECTED even when Kadd is
+    // supplied (a self-reporting element owns its bound; overlay correction of
+    // self-reports is out of scope — computeCriticalTimeStep advises once).
     double selfDt = ele->getExplicitCriticalTimeStep();
     if (selfDt > 0.0)
         return selfDt;
-    double lambdaMax = elementLambdaMax(ele, useTangent, mdiag, n);
+    double lambdaMax = elementLambdaMax(ele, useTangent, mdiag, n, Kadd);
     if (lambdaMax > 0.0)
         return 2.0 / std::sqrt(lambdaMax);
     return -1.0;
@@ -296,10 +316,26 @@ CTSResult computeCriticalTimeStep(AnalysisModel *theModel,
     r.undamped_tag   = -1;
     r.n_contributing = 0;
     r.n_scanned      = 0;
+    r.overlayAugmented     = false;
+    r.governing_drained_dt = std::numeric_limits<double>::infinity();
 
     if (theModel == 0) return r;
     Domain *theDomain = theModel->getDomainPtr();
     if (theDomain == 0) return r;
+
+    // --- Ladruno (ADR-73 P3): collect porous overlays once per call ----------
+    // (the P2 driver idiom: classTag scan of the load patterns). An empty list
+    // keeps the no-overlay path BIT-identical to pre-P3.
+    std::vector<LadrunoPorousOverlay*> overlays;
+    {
+        LoadPatternIter &lps = theDomain->getLoadPatterns();
+        LoadPattern *lp;
+        while ((lp = lps()) != 0)
+            if (lp->getClassTag() == PATTERN_TAG_LadrunoPorousOverlay)
+                overlays.push_back(static_cast<LadrunoPorousOverlay*>(lp));
+    }
+    static bool augSizeMismatchWarned = false;  // one-time advisory latches
+    static bool augSelfReportWarned   = false;
 
     Element *ele;
     ElementIter &elements = theDomain->getElements();
@@ -315,9 +351,28 @@ CTSResult computeCriticalTimeStep(AnalysisModel *theModel,
         // bound (it refuses Rayleigh damping), so damped and undamped coincide.
         double selfDt = ele->getExplicitCriticalTimeStep();
         if (selfDt > 0.0) {
+            // Ladruno (ADR-73 P3): a self-reported bound bypasses the
+            // eigensolve, so it cannot receive the overlay augmentation —
+            // advise once instead of silently trusting a drained bound.
+            if (!augSelfReportWarned)
+                for (size_t ov = 0; ov < overlays.size(); ov++)
+                    if (overlays[ov]->ownsElement(ele->getTag())) {
+                        augSelfReportWarned = true;
+                        opserr << "CriticalTimeStep - NOTE element " << ele->getTag()
+                               << " self-reports its critical step AND is owned by "
+                                  "porous overlay " << overlays[ov]->getTag()
+                               << ": the self-reported bound is NOT overlay-"
+                                  "corrected (drained) - it may be optimistic "
+                                  "under the undrained pencil. (printed once)\n";
+                        break;
+                    }
             r.n_scanned++;
             r.n_contributing++;
-            if (selfDt < r.undamped_dt) { r.undamped_dt = selfDt; r.undamped_tag = ele->getTag(); }
+            if (selfDt < r.undamped_dt) {
+                r.undamped_dt = selfDt; r.undamped_tag = ele->getTag();
+                // self-reports are never augmented: drained == reported.
+                r.governing_drained_dt = selfDt;
+            }
             if (selfDt < r.damped_dt)   { r.damped_dt   = selfDt; r.damped_tag   = ele->getTag(); }
             continue;
         }
@@ -337,10 +392,48 @@ CTSResult computeCriticalTimeStep(AnalysisModel *theModel,
         double *mdiag = new double[n];
         lumpElementMass(ele, M, lumping, mdiag);
 
-        double lambdaMax = elementLambdaMax(ele, useTangent, mdiag, n);
+        // --- Ladruno (ADR-73 P3): fold in the overlay undrained augmentation.
+        // dK_e is state-independent, so it applies to BOTH the useTangent and
+        // initial-stiffness pencils. Overlapping overlays (⟨A-13⟩) sum. A
+        // size mismatch (exotic ndf layout) advises once and skips — the
+        // drained pencil is then reported for that element, never a silently
+        // wrong augmented one.
+        Matrix Kaug;
+        bool augmented = false;
+        for (size_t ov = 0; ov < overlays.size(); ov++) {
+            Matrix Kadd;
+            if (!overlays[ov]->getUndrainedAugmentation(ele->getTag(), Kadd))
+                continue;
+            if (Kadd.noRows() != n) {
+                if (!augSizeMismatchWarned) {
+                    augSizeMismatchWarned = true;
+                    opserr << "CriticalTimeStep - NOTE overlay "
+                           << overlays[ov]->getTag() << " augmentation for element "
+                           << ele->getTag() << " is " << Kadd.noRows()
+                           << "x" << Kadd.noRows() << " but the element pencil is "
+                           << n << "x" << n << " (non-first-ndm DOF layout?): "
+                              "augmentation SKIPPED for such elements - their "
+                              "reported pencil stays DRAINED (optimistic). "
+                              "(printed once)\n";
+                }
+                continue;
+            }
+            if (!augmented) { Kaug = Kadd; augmented = true; }
+            else              Kaug += Kadd;
+        }
+
+        double lambdaMax = elementLambdaMax(ele, useTangent, mdiag, n,
+                                            augmented ? &Kaug : 0);
+        // drained (skeleton-only) pencil of the SAME element, for the report's
+        // undrained-vs-drained line (only when this element was augmented —
+        // otherwise its drained value IS lambdaMax).
+        double lambdaDrained = augmented
+            ? elementLambdaMax(ele, useTangent, mdiag, n)
+            : lambdaMax;
 
         delete[] mdiag;
         r.n_scanned++;
+        if (augmented) r.overlayAugmented = true;
 
         if (lambdaMax > 0.0) {
             double w_max = std::sqrt(lambdaMax);
@@ -363,6 +456,11 @@ CTSResult computeCriticalTimeStep(AnalysisModel *theModel,
             if (undamped_dt < r.undamped_dt) {
                 r.undamped_dt  = undamped_dt;
                 r.undamped_tag = ele->getTag();
+                // Ladruno (ADR-73 P3): remember the governing element's
+                // drained value so reports can print both + the factor.
+                r.governing_drained_dt = (lambdaDrained > 0.0)
+                    ? 2.0 / std::sqrt(lambdaDrained)
+                    : std::numeric_limits<double>::infinity();
             }
         }
     }
@@ -379,6 +477,16 @@ CTSResult computeCriticalTimeStep(AnalysisModel *theModel,
         // not the global critical element -> mark it unknown to avoid lying.
         if (global[0] != r.damped_dt)   r.damped_tag   = -1;
         if (global[1] != r.undamped_dt) r.undamped_tag = -1;
+        // Ladruno (ADR-73 P3): the drained twin of the governing element is
+        // rank-local knowledge; if the governing element lives elsewhere, mark
+        // it unknown (never report another element's drained value). The
+        // augmented FLAG is global (any rank augmenting makes the reported
+        // pencil overlay-aware).
+        if (global[1] != r.undamped_dt)
+            r.governing_drained_dt = std::numeric_limits<double>::infinity();
+        int augLocal = r.overlayAugmented ? 1 : 0, augGlobal = augLocal;
+        MPI_Allreduce(&augLocal, &augGlobal, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        r.overlayAugmented = (augGlobal != 0);
         r.damped_dt   = global[0];
         r.undamped_dt = global[1];
     }

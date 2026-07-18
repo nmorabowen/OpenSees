@@ -115,8 +115,21 @@ int LadrunoStaggeredRun(DirectIntegrationAnalysis* dia, Domain* domain,
       if (lp->getClassTag() != PATTERN_TAG_LadrunoPorousOverlay) continue;
       LadrunoPorousOverlay* ov = static_cast<LadrunoPorousOverlay*>(lp);
       if (ov->staticModeCode()  == LadrunoPorousOverlay::SM_MARCH &&
-          ov->fluidUpdateCode() == LadrunoPorousOverlay::FU_IMPLICIT)
+          ov->fluidUpdateCode() == LadrunoPorousOverlay::FU_IMPLICIT) {
+        // Ladruno (ADR-73 P3 §3.1): -fsL zero is a LOUD FATAL, not a silent
+        // skip — iterating with L = 0 IS the naive drained split (KTJ-
+        // divergent at soil coupling tau ~ 1e3, measured ~4 steps).
+        if (ov->fsLModeCode() == LadrunoPorousOverlay::FSL_ZERO) {
+          opserr << "ERROR LadrunoStaggeredAnalyze -- overlay "
+                 << ov->getTag() << " uses -fsL zero: iterating with L = 0 "
+                    "IS the drained split and diverges at soil coupling "
+                    "(ADR-73 P3). Use -fsL classic|oedometric with this "
+                    "driver, or plain `analyze` under an explicit integrator "
+                    "for the L = 0 lane.\n";
+          return -1;
+        }
         driven.push_back(ov);
+      }
     }
   }
   if (driven.empty()) {
