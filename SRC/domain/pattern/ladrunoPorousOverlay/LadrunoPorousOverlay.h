@@ -55,7 +55,7 @@
 // measured 41–61 %).
 //
 // Fluid-update lanes (-fluidUpdate): the default fs1 single-pass IMPLICIT lane
-// above, and the P3b EXPLICIT lane (plan §3b.2, toy-exact vs the E7.4 oracle):
+// above, and the P3b EXPLICIT lane (toy-exact vs the E7.4 oracle):
 // lumped S* (sLump_ = row-sum of the assembled S*; H̃·1 = 0 so the stab matrix
 // cannot enter the lump) and a forward p-step from COMMITTED state,
 //
@@ -66,6 +66,23 @@
 // (no iteration; -fsL gets a one-time notice). SM_STEADY keeps its CG solve at
 // static commits (setup/gravity-init, not a march cost). The dual-CFL advisory
 // (explicitFluidDiffusionDt below) bounds the -subcycle window: N·Δt ≤ Δt_diff.
+//
+// SEQUENCING (ADR-73 §12 P3b entry — the hook-time pin was REFUTED, measured):
+// the explicit lane advances at LOAD-APPLICATION time (applyLoad), on the
+// TRIAL window Δu, and the Domain::commit hook only SYNCS. Why: the CD-family
+// integrators (CentralDifferenceLadruno) advance u in newStep with the
+// PREVIOUS step's solve acceleration, so a hook-time (post-commit) fluid
+// advance pairs the solid with a TWO-commit-stale p — one force lag beyond the
+// toy/ZPC contract, and the explicit fluid is unconditionally unstable with it
+// (growth ∝ dt, no stable dt; toy replica reproduces the C++ divergence to 7
+// digits with exactly one added lag step). Advancing inside applyLoad — after
+// newStep set the trial u, before the residual forms — restores the toy
+// pairing. The advance stays FROM COMMITTED and idempotent, so repeated
+// applyLoads within one step (Noh-Bathe sub-steps, revert re-applies) simply
+// recompute the same window with the latest trial Δu; the last one before
+// commit wins. CAVEAT: under an IMPLICIT integrator the applyLoad-time trial
+// is the predictor state, so the explicit fluid would pair with predictor Δu —
+// the CD family is the supported lane (the guide owns this).
 // See Ladruno_implementation/73_ladruno_porous_overlay_adr.md and
 // Ladruno_implementation/_adr73_implementation_plan.md (WP1 + §3b pins).
 
@@ -110,8 +127,11 @@ class LadrunoPorousOverlay : public LoadPattern
   // the FLAG, never the integrator.
   enum StaticMode   { SM_MARCH = 0, SM_HOLD = 1, SM_STEADY = 2 };
   enum RemovalMode  { RM_KEEP = 0, RM_DRAIN = 1 };
-  // FU_EXPLICIT (ADR-73 P3b §3b.2): lumped-S* forward p-step, matrix-free
-  // transient march (no CG). -fsL / L are inert; SM_STEADY keeps its CG solve.
+  // FU_EXPLICIT (ADR-73 P3b §3b.2 + §12 P3b): lumped-S* forward p-step,
+  // matrix-free transient march (no CG). Advances at LOAD-APPLICATION time on
+  // the trial window Δu (the hook only syncs — see the top-doc; the hook-time
+  // advance was refuted, one force lag = unconditionally unstable). -fsL / L
+  // are inert; SM_STEADY keeps its CG solve.
   enum FluidUpdate  { FU_IMPLICIT = 0, FU_EXPLICIT = 1 };
   enum SubcycleMode { SC_FIXED = 0, SC_AUTO = 1 };
   enum PInitMode    { PI_ZERO = 0, PI_STEADY = 1, PI_HYDRO = 2, PI_LIST = 3 };
@@ -273,6 +293,13 @@ class LadrunoPorousOverlay : public LoadPattern
   // Returns 0 ok; <0 (loud fatal naming the node tag) on any row-sum ≤ 0 —
   // the toy's slump.min() > 0 assert.
   int    buildStorageLump(void);
+  // ADR-73 P3b (§12 P3b sequencing fix): the explicit lane's load-application-
+  // time advance. Called from applyLoad under (FU_EXPLICIT && SM_MARCH &&
+  // !externalStepping_). Owns the window bookkeeping (dtW = time − tLastSync_),
+  // the -subcycle auto resolution, the ⟨A-3⟩ march advisory, and the
+  // advancedThisStep_ selector applyLoad's injection reads. Every exit sets
+  // advancedThisStep_ explicitly (no stale selector after aborted steps).
+  void   explicitAdvanceAtApplyLoad(double time);
   void   buildSparsity(void);                // CSR pattern from region connectivity
   int    csrPos(int i, int j) const;         // CSR index of (i,j) or -1
   void   scatterMat(const Cell& c, const double* blk, std::vector<double>& tgt);
@@ -394,6 +421,24 @@ class LadrunoPorousOverlay : public LoadPattern
   bool   fsLFloorWarned_;
   bool   hasSeries_;
   bool   marchNoticeShown_;      // per-instance ⟨A-3⟩ first-march advisory latch
+
+  // ---- ADR-73 P3b explicit-lane march state (transient; NOT serialized; -----
+  // recvSelf → invalid; tLastSync_ re-derived at first applyLoad — the
+  // uSnapshotValid_ pattern). The explicit lane advances at LOAD-APPLICATION
+  // time (top-doc / ADR-73 §12 P3b): tLastSync_ anchors the window
+  // dtW = time − tLastSync_; advancedThisStep_ selects the +Q·pTrial_
+  // injection and tells the hook to sync; removalSyncPending_ forces the next
+  // applyLoad advance after a removal commit regardless of the window.
+  double tLastSync_;
+  bool   tLastSyncValid_;
+  bool   advancedThisStep_;
+  bool   removalSyncPending_;
+  // set by recvSelf ONLY: the first applyLoad anchors at time − Domain::getDT()
+  // (the restored committed time — saves happen at sync commits) instead of at
+  // `time`, so a restored explicit march continues bit-exactly with no
+  // one-step hold. Dedicated flag — uSnapshotValid_ is re-derived by applyLoad
+  // BEFORE the helper runs and cannot key this.
+  bool   anchorFromRestore_;
 
   // ---- ADR-73 P2 driver latch (transient; NOT serialized; recvSelf → defaults) --
   bool   externalStepping_;      // driver latch (applyLoad→pTrial_, commit=sync)

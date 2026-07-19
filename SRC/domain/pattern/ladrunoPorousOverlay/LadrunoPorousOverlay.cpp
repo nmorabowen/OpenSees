@@ -138,6 +138,8 @@ LadrunoPorousOverlay::LadrunoPorousOverlay(
    commitsSinceSync_(0), dtAccum_(0.0), recordCount_(0),
    seriesNoticeShown_(false), fsLFloorWarned_(false), hasSeries_(false),
    marchNoticeShown_(false),
+   tLastSync_(0.0), tLastSyncValid_(false),
+   advancedThisStep_(false), removalSyncPending_(false),
    externalStepping_(false), pScale_(1.0), relChange_(0.0),
    moduliDirty_(false), driverSubcycleNoticeShown_(false),
    augSingularWarned_(false),
@@ -167,6 +169,8 @@ LadrunoPorousOverlay::LadrunoPorousOverlay()
    subcycleResolved_(true), commitsSinceSync_(0), dtAccum_(0.0), recordCount_(0),
    seriesNoticeShown_(false), fsLFloorWarned_(false), hasSeries_(false),
    marchNoticeShown_(false),
+   tLastSync_(0.0), tLastSyncValid_(false),
+   advancedThisStep_(false), removalSyncPending_(false),
    externalStepping_(false), pScale_(1.0), relChange_(0.0),
    moduliDirty_(false), driverSubcycleNoticeShown_(false),
    augSingularWarned_(false),
@@ -989,7 +993,14 @@ void LadrunoPorousOverlay::assembleQtDu(std::vector<double>& QtDu) const
   // the current fixed-point increment. Unlatched (P1), advanceTrial runs at the
   // commit hook (post-commit, trial==committed) → identical to the old committed
   // read, so P1 is bit-untouched.
-  this->readRegionDisp(ucur, externalStepping_);
+  // ADR-73 P3b (§12 P3b): the EXPLICIT lane ALWAYS reads trial — its advance
+  // runs at load-application time (between newStep and commit, exactly where
+  // trial ≠ committed) and must see the trial window Δu. Every other explicit-
+  // lane use (SM_STEADY solve, post-commit reads) happens where trial ==
+  // committed, so the unconditional trial read is safe lane-wide; the
+  // unlatched IMPLICIT paths keep committed reads, bit-untouched.
+  this->readRegionDisp(ucur,
+                       externalStepping_ || fluidUpdate_ == FU_EXPLICIT);
   for (size_t ci = 0; ci < cells_.size(); ci++) {
     const Cell& c = cells_[ci];
     if (!c.alive) continue;                     // dead cells drop their Q coupling
@@ -1023,15 +1034,19 @@ int LadrunoPorousOverlay::advanceTrial(bool firstOfStep, double dt)
   }
   int N = nRegionNodes_;
 
-  // ---- ADR-73 P3b: the EXPLICIT lane (plan §3b.2 — toy cd_march
-  // fluid="explicit" verbatim, generalized by +Δt·f_seep and drained-row
-  // holds). Lumped forward step, ALWAYS from COMMITTED state — firstOfStep is
-  // deliberately ignored (no reference increment on this lane), so a repeated
-  // advance within one step is IDEMPOTENT (re-derives the same pTrial_), not a
-  // double-march — defensive; no shipped path calls it twice (the P2 driver
-  // refuses FU_EXPLICIT). dpCommitted_ keeps being maintained by commitFluid
-  // for serialization compatibility but is never read here. L is inert (no
-  // iteration). NO solveFluid — no CG, no factorization in the march.
+  // ---- ADR-73 P3b: the EXPLICIT lane (toy cd_march fluid="explicit"
+  // verbatim, generalized by +Δt·f_seep and drained-row holds). Invoked from
+  // explicitAdvanceAtApplyLoad at LOAD-APPLICATION time on the TRIAL window
+  // Δu (assembleQtDu reads trial under this lane — §12 P3b: a hook-time
+  // advance is one force lag behind the CD pairing and unconditionally
+  // unstable). Lumped forward step, ALWAYS from COMMITTED state — firstOfStep
+  // is deliberately ignored (no reference increment on this lane), so a
+  // repeated advance within one step is IDEMPOTENT given the same trial state
+  // (re-derives pTrial_ from committed with the LATEST trial Δu — exactly
+  // what makes Noh-Bathe sub-step and revert re-applyLoads safe: the last
+  // advance before commit wins). dpCommitted_ keeps being maintained by
+  // commitFluid for serialization compatibility but is never read here. L is
+  // inert (no iteration). NO solveFluid — no CG, no factorization in the march.
   if (fluidUpdate_ == FU_EXPLICIT) {
     if ((int)sLump_.size() != N) {           // defensive: lump built at snapshot
       opserr << "ERROR LadrunoPorousOverlay " << this->getTag()
@@ -1174,9 +1189,11 @@ int LadrunoPorousOverlay::onDomainCommit(double domainTime, double dT)
     this->readRegionDisp(uSnapshot_);   // committed disps = restore instant
     uSnapshotValid_ = true;
   }
-  // (ADR-73 P3b: FU_EXPLICIT flows through the SAME hook — the lane branch
-  //  lives inside advanceTrial; SM_HOLD / SM_STEADY semantics are lane-blind
-  //  per the §3b.1 pins, STEADY keeping its CG solve at static commits.)
+  // (ADR-73 P3b: FU_EXPLICIT flows through the SAME hook, but SYNC-ONLY —
+  //  the advance runs at load-application time (explicitAdvanceAtApplyLoad,
+  //  §12 P3b); the SM_MARCH branch below commits the already-advanced trial.
+  //  SM_HOLD / SM_STEADY semantics are lane-blind per the §3b.1 pins, STEADY
+  //  keeping its CG solve at static commits.)
 
   bool removal = this->rescanRemoval();
 
@@ -1222,6 +1239,44 @@ int LadrunoPorousOverlay::onDomainCommit(double domainTime, double dT)
       recordCount_++;
       if ((recordCount_ % recordEveryN_) == 0) this->recordRow(domainTime);
     }
+    return 0;
+  }
+
+  // ---- ADR-73 P3b (§12 P3b): EXPLICIT lane — this hook is SYNC-ONLY. The
+  // advance already ran at load-application time on the trial window Δu
+  // (explicitAdvanceAtApplyLoad; a hook-time advance is one force lag behind
+  // the CD pairing and unconditionally unstable, measured). If this step
+  // advanced, commit the fluid and re-anchor the window; a mid-window step
+  // just counts (p and forces stay frozen; uSnapshot_ is NOT refreshed —
+  // commitFluid owns the refresh). A removal commit forces the NEXT applyLoad
+  // advance regardless of the window (rescanRemoval above already rebuilt
+  // H/f_seep for -onRemoval drain; the storage lump is S-side, untouched).
+  if (fluidUpdate_ == FU_EXPLICIT) {
+    if (advancedThisStep_) {
+      this->commitFluid();                     // sync p + refresh uSnapshot_
+      tLastSync_ = domainTime;
+      tLastSyncValid_ = true;
+      commitsSinceSync_ = 0;
+      dtAccum_ = 0.0;
+      advancedThisStep_ = false;
+      removalSyncPending_ = false;             // any forced sync just landed
+      if (!recordFile_.empty()) {
+        recordCount_++;
+        if ((recordCount_ % recordEveryN_) == 0) this->recordRow(domainTime);
+      }
+    } else {
+      // mid-window: count this commit toward the window — EXCEPT the anchor
+      // step itself (domainTime == tLastSync_, the first applyLoad after a
+      // fresh start/restore anchored the window at this very step's time; it
+      // spans zero window time and must not inflate the -subcycle count or
+      // the auto-resolution denominator).
+      if (!tLastSyncValid_ || domainTime > tLastSync_) {
+        commitsSinceSync_++;
+        dtAccum_ += dT;                        // kept for diagnostics only
+      }
+    }
+    if (removal)
+      removalSyncPending_ = true;              // force the next applyLoad advance
     return 0;
   }
 
@@ -1273,11 +1328,89 @@ int LadrunoPorousOverlay::onDomainCommit(double domainTime, double dT)
 }
 
 // ===========================================================================
+//  ADR-73 P3b — explicit-lane advance at LOAD-APPLICATION time (§12 P3b).
+//  The hook-time advance of the original §3b.2 pin is REFUTED for this lane:
+//  CentralDifferenceLadruno::newStep moves u with the PREVIOUS step's solve
+//  acceleration, so a post-commit fluid advance pairs the solid with a
+//  TWO-commit-stale p — one force lag beyond the toy/ZPC contract, and the
+//  explicit fluid is unconditionally unstable with it (measured: a toy
+//  replica reproduces the C++ divergence to 7 digits with exactly one added
+//  lag step; growth ∝ dt, no stable dt). Here the advance runs inside
+//  applyLoad — after newStep set the trial u, before the residual forms — on
+//  the TRIAL window Δu, restoring the toy pairing. Idempotent from committed:
+//  repeated applyLoads within one step (Noh-Bathe sub-steps, revert
+//  re-applies) recompute the same window with the latest trial Δu; the last
+//  one before commit wins. The commit hook is SYNC-ONLY for this lane
+//  (onDomainCommit). Every exit sets advancedThisStep_ explicitly, so an
+//  aborted step can never leave a stale +Q·pTrial_ selector behind.
+// ===========================================================================
+void LadrunoPorousOverlay::explicitAdvanceAtApplyLoad(double time)
+{
+  // (caller guards: FU_EXPLICIT && SM_MARCH && snapshotOk_ && !externalStepping_)
+  if (!tLastSyncValid_) {                  // first use (fresh run or restore):
+    tLastSync_ = time;                     // anchor the window here; the march
+    tLastSyncValid_ = true;                // starts at the NEXT load application
+  }
+  double dtW = time - tLastSync_;
+
+  if (dtW < 0.0) {
+    // time moved BACKWARDS past the anchor: the anchor was a trial time whose
+    // step aborted (revertToLastStep + smaller-dt retry re-enters here below
+    // the stale anchor). A committed sync anchor can never sit in the future,
+    // so re-anchor at the current time — otherwise the fluid would stall
+    // frozen until the march re-passes the phantom anchor.
+    tLastSync_ = time;
+    dtW = 0.0;
+  }
+  if (dtW <= 0.0) {
+    // starter's t0 applyLoad / revertToLastCommit re-apply / non-advancing
+    // time: clear any aborted-step trial staleness, inject committed forces.
+    this->revertFluid();
+    advancedThisStep_ = false;
+    return;
+  }
+
+  // -subcycle auto: resolve at the first would-be advance from the observed
+  // per-commit step (dtW spans commitsSinceSync_+1 solid steps).
+  if (subcycleMode_ == SC_AUTO && !subcycleResolved_)
+    this->resolveSubcycleN(dtW / (double)(commitsSinceSync_ + 1));
+
+  // window completes with THIS step? (a removal commit forces the sync)
+  if (!removalSyncPending_ && (commitsSinceSync_ + 1) < subcycleN_) {
+    advancedThisStep_ = false;             // mid-window: forces stay frozen at
+    return;                                // committed p (unchanged semantics)
+  }
+
+  // ⟨A-3⟩ silent-static-march guard — the same one-time advisory the implicit
+  // hook path fires; this lane's first real march happens here instead.
+  if (!marchNoticeShown_) {
+    marchNoticeShown_ = true;
+    opserr << "LadrunoPorousOverlay " << this->getTag()
+           << ": marching the pore fluid with dt=" << dtW << " (domain-time "
+              "increment). If this is a STATIC / load-factor stage (e.g. a "
+              "LoadControl gravity stage), the fluid is consolidating on "
+              "pseudo-time — set -staticMode hold or steady for that stage "
+              "⟨A-3⟩. (printed once)\n";
+  }
+
+  if (this->advanceTrial(true, dtW) < 0) {
+    // no abort channel here (applyLoad returns void): loud + fall back to
+    // committed forces. Unreachable in practice — snapshotOk_ is checked by
+    // the caller, dtW > 0 here, and the lump is built at snapshot.
+    opserr << "ERROR LadrunoPorousOverlay " << this->getTag()
+           << " -- explicit fluid advance FAILED at load application; forces "
+              "stay at the committed p for this step\n";
+    advancedThisStep_ = false;
+    return;
+  }
+  advancedThisStep_ = true;                // applyLoad injects +Q·pTrial_; the
+}                                          // commit hook will sync
+
+// ===========================================================================
 //  Force injection — applyLoad (once per step at newStep, ⟨A-5⟩)
 // ===========================================================================
 void LadrunoPorousOverlay::applyLoad(double time)
 {
-  (void)time;
   if (!snapshotOk_) return;
   if (!uSnapshotValid_) {          // deferred post-restore baseline (⟨A-10⟩)
     this->readRegionDisp(uSnapshot_);
@@ -1291,12 +1424,24 @@ void LadrunoPorousOverlay::applyLoad(double time)
               "(the overlay manages its own pore-pressure force amplitudes)\n";
   }
 
+  // Ladruno (ADR-73 P3b, §12 P3b): the EXPLICIT lane advances HERE, at load-
+  // application time, on the trial window Δu — the commit hook only syncs
+  // (see explicitAdvanceAtApplyLoad above). Sets advancedThisStep_, which
+  // routes the injection below to +Q·pTrial_ for the advanced step.
+  if (fluidUpdate_ == FU_EXPLICIT && staticMode_ == SM_MARCH &&
+      !externalStepping_)
+    this->explicitAdvanceAtApplyLoad(time);
+
   // +Q·p, applied cell-wise into the nodal unbalance (no global Q). Under the
   // driver latch the iterate's TRIAL pressure drives the forces (+Q·pTrial_);
   // outside iteration pTrial_ == pCommitted_ (commitFluid syncs) so the unlatched
   // P1 path is bit-identical. Covers Domain::revertToLastCommit's re-applyLoad too
   // (harmless — unbalance is zeroed and re-applied at the next newStep).
-  const std::vector<double>& pSrc = externalStepping_ ? pTrial_ : pCommitted_;
+  // ADR-73 P3b: the explicit lane's advanced step also injects the TRIAL p
+  // (advancedThisStep_ — this step's freshly marched field); mid-window and
+  // non-advancing explicit steps inject committed, unchanged.
+  const std::vector<double>& pSrc =
+      (externalStepping_ || advancedThisStep_) ? pTrial_ : pCommitted_;
   for (size_t ci = 0; ci < cells_.size(); ci++) {
     const Cell& c = cells_[ci];
     if (!c.alive) continue;
@@ -1881,6 +2026,14 @@ int LadrunoPorousOverlay::recvSelf(int commitTag, Channel& theChannel,
   relChange_ = 0.0;
   moduliDirty_ = false;
   driverSubcycleNoticeShown_ = false;
+  // ADR-73 P3b explicit-lane march state is transient too: the sync anchor is
+  // re-derived at the first post-restore applyLoad (the uSnapshotValid_
+  // pattern), so the first restored step injects committed forces and the
+  // march resumes one step later — restart-benign, documented.
+  tLastSync_ = 0.0;
+  tLastSyncValid_ = false;
+  advancedThisStep_ = false;
+  removalSyncPending_ = false;
   return 0;
 }
 

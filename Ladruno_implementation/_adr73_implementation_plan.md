@@ -662,6 +662,24 @@ augmentation) applies UNCHANGED — the measured explicit-fluid boundary sits
 
 ### 3b.2 The explicit advance (FROZEN — toy `cd_march(fluid="explicit")` verbatim)
 
+> **AMENDED at 3b.E run-1 (MEASURED REFUTATION — this block governs over the
+> "advance at the commit hook" wording below).** The commit-hook advance is
+> TWO-commit-stale under CentralDifferenceLadruno: CDL's newStep advances u
+> with `Aprev` (the previous step's solve acceleration), so the acceleration
+> moving u at step k+1 was formed with Q·p^(k−1) — one step later than the
+> toy/ZPC pairing. Toy-lag replica reproduces the C++ divergence to 7
+> significant digits (step-10 max|p| 2.797604e+05 both; blowup 520 vs 506;
+> vertical p-checkerboard; growth ∝ dt, NO stable dt). Implicit lanes
+> tolerate the lag (shipped, gated, untouched). **Fix (the shipped
+> semantics): under FU_EXPLICIT + SM_MARCH the fluid advances at
+> LOAD-APPLICATION time on the trial window Δu (advance-from-committed,
+> idempotent — re-applies/reverts recompute the same window) and applyLoad
+> injects +Q·pTrial_; the commit hook only syncs (commitFluid + record +
+> counters + removal rescan). The sLump_ full-CSR-row convention (drained
+> columns included) was adversarially cleared: the full-rowsum replica is
+> bounded — kept, documented as a benign deviation-from-toy at
+> drained-adjacent rows.** Full record → ADR §12 P3b entry.
+
 - **Storage lump `sLump_`** (size N): per-row sum of the assembled S* CSR
   rows (= lumped physical S since H̃ annihilates constants). Built once when
   assembleStorageAndL completes (snapshot) and rebuilt by
