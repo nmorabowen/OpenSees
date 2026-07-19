@@ -129,7 +129,7 @@ ADR §6 P3 row = gates.
 | 3.3 | Guide finalize: the "explicit permitted-but-discouraged" wording (ADR §3.6), HRZ accuracy caveat (Cook p. 373), pointer to Bézier/H8-uri for real explicit work. `/code-review` (low). | **[OPUS]** impl, **[FABLE]** review |
 | 3.4 | PR-4 assembly + CI watch; move ADR §9 log entries; consider the ADR → `Ladruno_internal/implemented_*` move once P4 items are formally parked. | **[FABLE]** |
 
-- [ ] P3 landed (PR #___)
+- [x] P3 landed (PR #___ — fill at merge; implemented 2026-07-14, deviations 1–4 adjudicated ACCEPTED, see iteration-15 log)
 
 ---
 
@@ -159,7 +159,31 @@ due at P1). U2 — PR merges are auto once CI is green; no other user gate.
 
 ## Orchestration log (loop state — newest first)
 
-- **2026-07-14, iteration 14: P2 MERGED (#573, user-merged) + post-merge
+- **2026-07-14, iteration 15: P3 IMPLEMENTED (Opus agent, resumed once after
+  an API stall) — 120/120 green, PR assembly.** F-1 landed first (#583,
+  user-merged) — `refreshMassState()` rho-signature mass cache; P3 composes
+  with it: ONE `M0` cache holds whichever mass model is active (massType 0 =
+  27-pt consistent / 1 = HRZ via shared `Ladruno::hrzLump`), built by
+  `ensureMassCache()`, and under `-lumped` the inertia residual applies the
+  SAME cached diagonal — tangent ≡ residual operator by construction.
+  Battery `test_ladrunoBrick20_dynamics.py` (16): HRZ fractions through the
+  element path 7/248 & 2/31 at ~3e-15; `ops.criticalTimeStep()` == numpy
+  60-DOF pencil at ~3e-16 ({cube,distorted}×{std,uri}); eigen bracketing
+  (axial strict, bending shear-aware); explicit wave bar 2500 steps @
+  0.9×pencil stable, **measured Δt ratio vs equal-node H8 = 0.50** (not the
+  1-D 0.82 ballpark — 3-D HRZ corner masses push ω_max; guide documents);
+  energy closure 0.28% drift / no E_hg channel by design; betaK clobber ×4.
+  DEVIATIONS ADJUDICATED (all ACCEPTED): (1) NO element-side
+  criticalTimeStep() override — ADR-65 architecture computes the exact
+  60-DOF pencil centrally and the override contract REPLACES (not
+  min-folds); gate met semantically via ops.criticalTimeStep()==pencil;
+  (2) bending consistent-mass bracket relaxed to shear-aware (cons/EB
+  0.99982 is Timoshenko physics, not a mass artifact; strict from-above kept
+  on axial); (3) betaK vacuity floor 1.3× (measured 1.39 on the quadratic
+  tip-face rig); (4) single M0 cache instead of a separate lumped vector.
+  Banner line extended "+ HRZ -lumped"; guide/ledger/manifest updated.
+  NEXT: orchestrator verify run + /code-review low (task 3.3) → commit + PR
+  (user merges) → ADR §9 close-out + P4 parking (task 3.4).
   adversarial gate (user-requested) + F-1 fix staged.** #573 squash-merged
   by the USER — the auto-mode classifier now refuses agent-authored
   self-merges (new standing constraint: ask the user to merge or to say

@@ -1646,7 +1646,7 @@ features:
     pr: 548
     feature_class: element
     required_tiers: [T0, T1]
-    pytest: tests/test_ladrunoBrick20_element.py   # P1 element gate: reduce-to Twenty_Node_Brick ~1e-12 (disp/force/per-GP stress/K/K+c3M), 2-ele distorted patch, rank-54/6-RBM, SelfWeight corner-share sign, lch=cbrt(V), DB round-trip, parser rejections, U1 damage advisory, LadrunoRecorder GP round-trip. (The P0 kernel gate tests/test_hex20_kernel_cpp.py stays green as the kernel anchor.)
+    pytest: tests/test_ladrunoBrick20_element.py   # P1 element gate: reduce-to Twenty_Node_Brick ~1e-12 (disp/force/per-GP stress/K/K+c3M), 2-ele distorted patch, rank-54/6-RBM, SelfWeight corner-share sign, lch=cbrt(V), DB round-trip, parser rejections, U1 damage advisory, LadrunoRecorder GP round-trip. Companions: tests/test_ladrunoBrick20_uri.py (P2 uri contract S0-S9), tests/test_ladrunoBrick20_dynamics.py (P3 HRZ -lumped fractions 7/248 & 2/31, eigen bracketing, criticalTimeStep==numpy pencil, CDL wave bar + ADR-69 energy closure, betaK clobber x4, massType DB round-trip), tests/test_hex20_kernel_cpp.py (P0 kernel anchor).
     tcl: WAIVED(element LadrunoBrick20 ...; shared OpenSeesElementCommands functionMap serves Tcl + Python; verified via the Zone-A pytest battery)
     zone_b: []
     core_files:
@@ -1677,6 +1677,8 @@ features:
       analog, alias 'reduced'): oracle-anchored contract battery
       tests/test_ladrunoBrick20_uri.py (S0-S9 per the signed
       _adr72_p2_test_specs) + the recorder basisInfo seam (uri elements
-      rerouted per element to Hexahedron_GaussLegendre_2). HRZ -lumped lands
-      P3 (flag parsed + serialized, getMass errors honestly).
+      rerouted per element to Hexahedron_GaussLegendre_2). P3 = HRZ -lumped
+      live (positive-by-construction diagonal via Ladruno::hrzLump; one M0
+      cache drives getMass + inertia unbalance + inertia residual) + explicit
+      proof-of-life battery tests/test_ladrunoBrick20_dynamics.py.
       U1 RESOLVED BOTH: one-time opserr damage-channel advisory at setDomain.

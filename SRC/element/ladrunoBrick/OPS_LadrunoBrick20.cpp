@@ -31,7 +31,7 @@
 // Usage:
 //   element('LadrunoBrick20', tag, n1..n20, matTag
 //           [, '-formulation', <std|uri>]   # default std
-//           [, '-lumped']                   # HRZ lumped mass (lands P3)
+//           [, '-lumped']                   # HRZ lumped mass (P3; default consistent)
 //           [, '-b', bx, by, bz]
 //           [, '-damp', dampTag])
 //
@@ -129,17 +129,10 @@ void *OPS_LadrunoBrick20()
       return 0;
     }
     else if (strcmp(opt, "-lumped") == 0 || strcmp(opt, "-lump") == 0) {
+      // HRZ lumped mass (ADR 72 §3.5, P3): positive-by-construction diagonal
+      // lump of the 27-pt consistent mass. Row-sum lumping of an H20 gives
+      // NEGATIVE corner masses, so HRZ is the ONLY lumping this element offers.  // Ladruno
       massType = 1;
-      // F4: parse-time honesty so static-only runs (which never call getMass)
-      // learn immediately. Process-once.  // Ladruno
-      static bool noticedLumped = false;
-      if (!noticedLumped) {
-        noticedLumped = true;
-        opserr << "NOTICE LadrunoBrick20: -lumped is accepted for API "
-                  "stability, but the HRZ lumped-mass path lands P3 (ADR 72) - "
-                  "THIS BUILD USES THE CONSISTENT MASS. (printed once per "
-                  "process)\n";
-      }
     }
     else if (strcmp(opt, "-b") == 0 || strcmp(opt, "-bodyForce") == 0) {
       int n3 = 3;

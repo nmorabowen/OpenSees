@@ -52,6 +52,7 @@
 #include <Domain.h>
 #include <LadrunoBrick20.h>
 #include <LadrunoHex20Shape.h>            // Ladruno — P0 pure H20 kernel (shape/GP/B/mass)
+#include <LadrunoMassLumping.h>           // Ladruno — shared HRZ lumper (ADR 35, -lumped path)
 #include <Renderer.h>
 #include <ElementResponse.h>
 #include <Parameter.h>
@@ -516,34 +517,20 @@ const Matrix &  LadrunoBrick20::getInitialStiff(void)
   return *Ki;
 }
 
-//mass — consistent, integrated ONCE from the geometry cache and reused (F12);
-//massless meshes early-out (F14); the momentum (inertia-residual) pass NEVER
-//runs from here — it belongs to the residual path only.
+//mass — the mass model in use (consistent 27-pt, or HRZ diagonal under
+//-lumped), integrated ONCE from the geometry cache and reused (F12); massless
+//meshes early-out (F14); the momentum (inertia-residual) pass NEVER runs from
+//here — it belongs to the residual path only.
 const Matrix &  LadrunoBrick20::getMass(void)
 {
-  if (massType == 1 && !warnedLumped) {
-    // P1 keeps the -lumped flag API-stable (parsed + serialized) but the HRZ
-    // path lands P3. Fail loud-but-safe: error clearly (once per process), then
-    // fall back to consistent so the run never uses an unbuilt lumped matrix.  // Ladruno
-    warnedLumped = true;
-    opserr << "ERROR LadrunoBrick20 (element " << this->getTag() << "): -lumped "
-              "(HRZ lumped mass) is NOT yet implemented - it lands in P3 "
-              "(ADR 72). Falling back to the CONSISTENT mass; results will not "
-              "reflect a lumped-mass model. (printed once per process)\n";
-  }
-
   this->refreshMassState();             // F-1: follow live rho parameter updates
   if (!hasMass || !cacheUsable("getMass")) {
     mass.Zero();
     return mass;
   }
 
-  if (M0 == 0) {
-    computeConsistentMass();
-    M0 = new Matrix(mass);
-  } else {
-    mass = *M0;
-  }
+  this->ensureMassCache();
+  mass = *M0;
   return mass;
 }
 
@@ -587,11 +574,9 @@ LadrunoBrick20::addInertiaLoadToUnbalance(const Vector &accel)
   if (!hasMass) return 0;               // F14 massless early-out
   if (!cacheUsable("addInertiaLoadToUnbalance")) return 0;
 
-  // reuse the cached consistent mass (integrates once, F12)
-  if (M0 == 0) {
-    computeConsistentMass();
-    M0 = new Matrix(mass);
-  }
+  // reuse the cached mass in use (consistent or HRZ diagonal; built once, F12).
+  // A diagonal M0 makes addMatrixVector below a per-DOF scaling — correct.  // Ladruno
+  this->ensureMassCache();
 
   int count = 0;
   for (int i = 0; i < NEN; i++) {
@@ -801,9 +786,73 @@ LadrunoBrick20::computeConsistentMass(void)
 }
 
 //----------------------------------------------------------------------
-// formInertiaResidual — the momentum pass rho N_a N_b a_b, ACCUMULATED into
-// `resid` on the residual path only (getResistingForceIncInertia); never runs
-// from getMass (F12). Massless meshes early-out (F14).  // Ladruno
+// computeLumpedMass — HRZ (Hinton-Rock-Zienkiewicz) diagonal lump of the 27-pt
+// consistent mass, into the static `mass` workspace (diagonal only). ADR 72
+// §3.5: row-sum lumping of an H20 gives NEGATIVE corner masses (-M/8) and is
+// FORBIDDEN; HRZ scales the (strictly positive) consistent diagonal so it
+// conserves directional mass, so every produced entry is positive by
+// construction (cube fractions: corners 7/248*M, mid-edges 2/31*M). The
+// all-translational dofDir ({0,1,2} per node) is built once. A guard failure
+// (never expected for a properly integrated consistent mass) falls back to
+// diagonal-of-consistent with a process-once warning.  // Ladruno
+//----------------------------------------------------------------------
+void
+LadrunoBrick20::computeLumpedMass(void)
+{
+  computeConsistentMass();              // 27-pt consistent block into `mass`
+
+  static ID dofDir(NDOF);
+  static bool dirBuilt = false;
+  if (!dirBuilt) {
+    int d[NDOF];
+    Ladruno::hex20::dofDirs(d);
+    for (int i = 0; i < NDOF; i++) dofDir(i) = d[i];
+    dirBuilt = true;
+  }
+
+  double mdiag[NDOF];
+  int rc = Ladruno::hrzLump(mass, dofDir, mdiag, NDOF);
+  if (rc != Ladruno::HRZ_OK && !warnedLumped) {
+    warnedLumped = true;
+    opserr << "WARNING LadrunoBrick20 (element " << this->getTag() << "): HRZ "
+              "lumping guard fell back to diagonal-of-consistent (mass not "
+              "conserved). This should not happen for a properly integrated "
+              "consistent mass. (printed once per process)\n";
+  }
+
+  mass.Zero();
+  for (int i = 0; i < NDOF; i++)
+    mass(i, i) = mdiag[i];
+}
+
+//----------------------------------------------------------------------
+// ensureMassCache — build the M0 cache ONCE with the mass model in use
+// (massType 0 = 27-pt consistent, massType 1 = HRZ lumped diagonal). Every mass
+// consumer (getMass tangent, addInertiaLoadToUnbalance, the lumped inertia
+// residual) reads M0, so the mass TANGENT and the inertia RESIDUAL can never
+// disagree (the F-1 class of bug: a lumped tangent with a consistent residual).
+// refreshMassState() drops M0 on a live rho update, so the next call rebuilds
+// it.  // Ladruno
+//----------------------------------------------------------------------
+void
+LadrunoBrick20::ensureMassCache(void)
+{
+  if (M0 != 0)
+    return;
+  if (massType == 1)
+    computeLumpedMass();
+  else
+    computeConsistentMass();
+  M0 = new Matrix(mass);
+}
+
+//----------------------------------------------------------------------
+// formInertiaResidual — the inertia (momentum) pass, ACCUMULATED into `resid`
+// on the residual path only (getResistingForceIncInertia); never runs from
+// getMass (F12). Massless meshes early-out (F14). Under -lumped (massType 1) it
+// applies the SAME HRZ diagonal mass getMass returns (M0), so tangent and
+// residual agree (F-1); under consistent mass it is the 27-pt rho N_a N_b a_b
+// momentum pass.  // Ladruno
 //----------------------------------------------------------------------
 void
 LadrunoBrick20::formInertiaResidual(void)
@@ -813,6 +862,22 @@ LadrunoBrick20::formInertiaResidual(void)
     return;
   if (!cacheUsable("getResistingForceIncInertia"))
     return;
+
+  if (massType == 1) {
+    // HRZ lumped: resid += M_lumped(diag) * a. Use the cached M0 (the identical
+    // diagonal getMass returns) so the mass tangent and this residual are the
+    // same operator — never the F-1 tangent/residual mismatch.  // Ladruno
+    this->ensureMassCache();
+    int c = 0;
+    for (int a = 0; a < NEN; a++) {
+      const Vector &acc = nodePointers[a]->getTrialAccel();
+      for (int p = 0; p < NDF; p++) {
+        resid(c) += (*M0)(c, c) * acc(p);
+        c++;
+      }
+    }
+    return;
+  }
 
   static Vector momentum(NDF);
 
