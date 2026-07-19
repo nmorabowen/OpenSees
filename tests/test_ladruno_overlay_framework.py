@@ -555,16 +555,31 @@ print("SHOULD_NOT_REACH")
 sys.exit(0)
 """, "-moduli"))
 
-    # (bonus) -fluidUpdate explicit is fatal-NYI until P3b
-    cases.append(("fluidupdate_explicit_nyi", f"""
+    # (bonus, AMENDED at P3b) -fluidUpdate explicit is LIVE since ADR-73 P3b —
+    # the pre-P3b fatal-NYI expectation is retired. The lane's own battery is
+    # tests/test_ladruno_overlay_explicit_fluid.py; here we only pin that the
+    # parser ACCEPTS it (a bad value still fatals, covered by the message
+    # check on the accepted branch never printing an error).
+    return cases
+
+
+def test_fluidupdate_explicit_accepted_p3b():
+    """AMENDED at P3b: `-fluidUpdate explicit` constructs (was fatal-NYI at
+    P1–P4; the P3b lane battery owns its physics gates). Child must exit 0
+    and reach the post-pattern print."""
+    boot, ov = _boot_src(), _ov_src()
+    out, rc = _run_child(f"""
 {boot}
 nid,eles,top,L,nely = column()
 ops.pattern("LadrunoPorousOverlay",1,"-region",*eles,{ov},"-drained",*top,
             "-fluidUpdate","explicit")
-print("SHOULD_NOT_REACH")
+print("EXPLICIT_ACCEPTED")
 sys.exit(0)
-""", "-fluidUpdate explicit is NYI"))
-    return cases
+""")
+    assert rc == 0 and "EXPLICIT_ACCEPTED" in out, (
+        f"-fluidUpdate explicit no longer constructs (P3b regression); "
+        f"rc={rc}; output:\n{out}")
+    return "explicit accepted (P3b)"
 
 
 def test_region_validation_fatals():
@@ -911,6 +926,7 @@ _TESTS = [
     ("2  factor-ignored semantics",         test_factor_ignored_semantics, False),
     ("3  revertToLastCommit consistency",   test_revert_to_last_commit_consistency, False),
     ("4  region-validation fatals",         test_region_validation_fatals, False),
+    ("4b -fluidUpdate explicit accepted (P3b)", test_fluidupdate_explicit_accepted_p3b, False),
     ("5  pInit hydrostatic/steady",         test_pinit_hydrostatic_and_steady_closed_form, False),
     ("6a DB p/dp round-trip (frozen)",      test_db_roundtrip_committed_p_and_dp, False),
     ("6b DB rich config active",            test_db_roundtrip_rich_config_survives_and_active, False),
