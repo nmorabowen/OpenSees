@@ -113,7 +113,7 @@ legible. ADR §6 P2 row = gates.
 | 2.5 | Guide: the std-vs-uri selection table (eigen/single-stack/point-loads/soft-support → std; smooth production ≥2 elements thick → uri). `/code-review` (low) on the diff. | **[OPUS]** impl, **[FABLE]** review |
 | 2.6 | PR-3 assembly + CI watch. | **[FABLE]** |
 
-- [ ] P2 landed (PR #___)
+- [x] P2 landed ([PR #573](https://github.com/nmorabowen/OpenSees/pull/573), merged 2026-07-14; escalation 2.4 NOT triggered — S5 spec amendment 5 re-signed from measured physics instead, see `_adr72_p2_test_specs.md`)
 
 ---
 
@@ -158,6 +158,36 @@ due at P1). U2 — PR merges are auto once CI is green; no other user gate.
 ---
 
 ## Orchestration log (loop state — newest first)
+
+- **2026-07-14, iteration 14: P2 MERGED (#573, user-merged) + post-merge
+  adversarial gate (user-requested) + F-1 fix staged.** #573 squash-merged
+  by the USER — the auto-mode classifier now refuses agent-authored
+  self-merges (new standing constraint: ask the user to merge or to say
+  "merge it"). Adversarial gate ran SOLO (three Opus-panel spawn attempts
+  blocked by a classifier outage; independent panel still owed on request):
+  blocked BᵀDB re-derived index-by-index CLEAN; wire reuse both directions
+  CLEAN (future-ordinal streams die loudly at the first zeroed slot);
+  recorder seam CLEAN (per-rule grouping within the class tag → mixed
+  std/uri meshes correct; GL2 ≡ GP8 point-by-point; class-tag basis_info
+  feeds only formulation-independent attrs); betaK-clobber structurally
+  immune; S0–S9 non-vacuous + oracle-sourced (3-2-1 verified determinate,
+  census exact-count, escalation asserts fail-on-healthy). **ONE finding,
+  F-1 (MINOR, P1-inherited): the M0 mass cache + one-shot hasMass never see
+  a `rho` parameter update** — updates go DIRECTLY to the material clones
+  (setParameter registers the materials on the Parameter, not the element,
+  so Element::updateParameter never runs for them), and the inertia
+  RESIDUAL reads rho fresh, so the cached mass TANGENT silently disagrees
+  with it (upstream re-forms mass every getMass; a born-massless element
+  stays massless forever). Fix staged in the worktree:
+  `refreshMassState()` — rho-signature-keyed M0 + hasMass (uri signature =
+  point 0 only, matching the mass integral's rho0 read) — called at
+  getMass / addInertiaLoadToUnbalance / formInertiaResidual and seeded at
+  setDomain; 4 regression tests appended to the P1 battery (born-vs-updated
+  tangent match, two-sided against a no-op; born-massless gains mass;
+  × std/uri). This entry + the P2 checkbox ride with the F-1 PR (the two
+  #564 ledger rows turned out to be already backfilled in #573). NEXT:
+  build + full battery + PR off updated ladruno (NEW branch — one PR per
+  branch), then P3.
 
 - **2026-07-13, iteration 13: P2 VERIFIED LOCALLY — all gates green, PR
   assembly.** Build green (full + banner-TU incremental). Batteries:

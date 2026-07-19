@@ -96,6 +96,7 @@ LadrunoBrick20::LadrunoBrick20()
   for (int i = 0; i < NGP; i++) {
     materialPointers[i] = 0;
     theDamping[i] = 0;
+    cachedRho[i] = 0.0;
   }
   b[0] = 0.0; b[1] = 0.0; b[2] = 0.0;
   appliedB[0] = 0.0; appliedB[1] = 0.0; appliedB[2] = 0.0;
@@ -137,7 +138,7 @@ LadrunoBrick20::LadrunoBrick20(int tag,
   // capability (F2); this is the defensive backstop for direct-C++
   // construction — a failed clone marks the element dead (badGeom kill
   // switch) instead of exit(-1) (fork policy).  // Ladruno
-  for (int i = 0; i < NGP; i++) materialPointers[i] = 0;
+  for (int i = 0; i < NGP; i++) { materialPointers[i] = 0; cachedRho[i] = 0.0; }
   for (int i = 0; i < this->nGP(); i++) {
     materialPointers[i] = theMaterial.getCopy("ThreeDimensional");
     if (materialPointers[i] == 0) {
@@ -238,14 +239,37 @@ void  LadrunoBrick20::setDomain(Domain *theDomain)
   // setDomain-time validation covers every later call).  // Ladruno
   this->buildGeometryCache();
 
-  // F14: cache the massless flag so the inertia paths can early-out.  // Ladruno
-  hasMass = false;
-  for (int i = 0; i < this->nGP(); i++)
-    if (materialPointers[i] != 0 && materialPointers[i]->getRho() != 0.0)
-      hasMass = true;
-
   // node set may have changed — drop the cached consistent mass
+  // unconditionally, then seed the rho signature + hasMass (F14/F-1).  // Ladruno
   if (M0 != 0) { delete M0; M0 = 0; }
+  this->refreshMassState();
+}
+
+//----------------------------------------------------------------------
+// refreshMassState — F-1 (post-P2 adversarial gate). rho is a live NDMaterial
+// parameter (e.g. ElasticIsotropic param ID 3) and a parameter update goes
+// DIRECTLY to the material clones: LadrunoBrick20::setParameter forwards to
+// the materials, which register THEMSELVES on the Parameter — the element's
+// updateParameter never runs for it. A one-shot hasMass flag / M0 cache would
+// therefore go stale (and the inertia RESIDUAL, which reads rho fresh, would
+// silently disagree with the cached mass TANGENT). So every mass-path entry
+// re-reads the mass-relevant densities — std: all 27 points; uri: point 0
+// only, matching the mass integral's rho0 read — and drops M0 when the
+// signature moved. Cost: nGP() virtual getRho() calls per entry, trivial
+// against the 27-pt integration it guards.  // Ladruno
+//----------------------------------------------------------------------
+void
+LadrunoBrick20::refreshMassState(void)
+{
+  const int n = (formulation == Formulation::URI) ? 1 : NGP;
+  bool any = false, moved = false;
+  for (int i = 0; i < n; i++) {
+    const double r = (materialPointers[i] != 0) ? materialPointers[i]->getRho() : 0.0;
+    if (r != 0.0) any = true;
+    if (r != cachedRho[i]) { moved = true; cachedRho[i] = r; }
+  }
+  hasMass = any;
+  if (moved && M0 != 0) { delete M0; M0 = 0; }
 }
 
 //----------------------------------------------------------------------
@@ -508,6 +532,7 @@ const Matrix &  LadrunoBrick20::getMass(void)
               "reflect a lumped-mass model. (printed once per process)\n";
   }
 
+  this->refreshMassState();             // F-1: follow live rho parameter updates
   if (!hasMass || !cacheUsable("getMass")) {
     mass.Zero();
     return mass;
@@ -558,7 +583,8 @@ LadrunoBrick20::addLoad(ElementalLoad *theLoad, double loadFactor)
 int
 LadrunoBrick20::addInertiaLoadToUnbalance(const Vector &accel)
 {
-  if (!hasMass) return 0;               // F14 massless early-out (cached flag)
+  this->refreshMassState();             // F-1: follow live rho parameter updates
+  if (!hasMass) return 0;               // F14 massless early-out
   if (!cacheUsable("addInertiaLoadToUnbalance")) return 0;
 
   // reuse the cached consistent mass (integrates once, F12)
@@ -782,6 +808,7 @@ LadrunoBrick20::computeConsistentMass(void)
 void
 LadrunoBrick20::formInertiaResidual(void)
 {
+  this->refreshMassState();             // F-1: follow live rho parameter updates
   if (!hasMass)
     return;
   if (!cacheUsable("getResistingForceIncInertia"))

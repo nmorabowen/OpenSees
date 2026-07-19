@@ -195,7 +195,16 @@ class LadrunoBrick20 : public Element {
   bool badGeom;                       // dead element: non-positive detJ (or failed
                                       // material clone — same kill switch)
   bool warnedBadUse;                  // emit-once flag for use-after-bad paths
-  bool hasMass;                       // any GP rho != 0 (cached at setDomain)
+  bool hasMass;                       // any mass-relevant rho != 0 (refreshed on every mass-path entry)
+  // F-1 (post-P2 adversarial gate): rho is a live NDMaterial parameter and a
+  // parameter update goes DIRECTLY to the material clones (setParameter
+  // registers the materials on the Parameter, not the element), so the element
+  // never sees it. The M0 cache is therefore keyed on this rho signature:
+  // refreshMassState() re-reads the mass-relevant densities (std: all 27;
+  // uri: point 0 only — the mass integral reads rho0) on every mass-path
+  // entry and drops M0/hasMass when they moved. Upstream re-integrates every
+  // getMass; we keep the F12 cache but make it honest.  // Ladruno
+  double cachedRho[NGP];              // rho signature backing the M0 cache
   double cachedN[NGP][NEN];           // shape functions at the 27 GPs
   double cachedDNdx[NGP][NEN][3];     // cartesian gradients at the 27 GPs
   double cachedDV[NGP];               // w_L * detJ_L
@@ -240,6 +249,7 @@ class LadrunoBrick20 : public Element {
   void formResidual(void);                       // B^T sigma (+ damping + body) Gauss loop
   void formStiffness(int initialFlag);           // shared B^T D B assembly (tangent/initial)
   void computeConsistentMass(void);              // 27-pt consistent mass into `mass`
+  void refreshMassState(void);                   // rho-signature check: refresh hasMass, drop stale M0 (F-1)
   void formInertiaResidual(void);                // rho N_a N_b accel momentum pass (residual only)
   double computeVolume(void);                    // sum of cached dv
   void gatherCoords(double X[NEN][3]);           // reference nodal coords -> X[20][3]
