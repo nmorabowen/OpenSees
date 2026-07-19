@@ -54,9 +54,13 @@
 #include <NodeIter.h>
 #include <MP_Constraint.h>      // Ladruno: constraint-exclusion guard (slave-node hazard)
 #include <MP_ConstraintIter.h>
-#include <LoadPattern.h>        // Ladruno (ADR-73 P3): SMS+overlay unsupported warning
+#include <LoadPattern.h>        // Ladruno (ADR-73 P3b): overlay collection (Kadd seam)
 #include <LoadPatternIter.h>
 #include <classTags.h>          // PATTERN_TAG_LadrunoPorousOverlay
+#include <LadrunoPorousOverlay.h>  // Ladruno (ADR-73 P3b): getUndrainedAugmentation
+                                   // (no cycle: the overlay header includes only
+                                   //  LoadPattern/Vector/ID; CriticalTimeStep.cpp
+                                   //  already includes it the same way)
 #include <FE_Element.h>         // Ladruno: consistent (Olovsson) path — element eqn map
 #include <FE_EleIter.h>
 #include <ID.h>
@@ -92,44 +96,92 @@ struct MassScalingReport {
                           //   step that still governs because they were not scaled; <=0 none)
 };
 
-// Build the per-node fictitious-mass increment (additive diagonal) into `injected`
-// --- Ladruno (ADR-73 P3, panel H + adversarial-verifier claim 2): SMS sizing
-//     prices the DRAINED per-element pencil (elementCriticalDt receives no
-//     overlay augmentation), but a LadrunoPorousOverlay stiffens its cells to
-//     the UNDRAINED pencil. The material formula sqrt(1+Kf/(n*M_oed)) is a
-//     LOWER bound on the discrete per-element factor (measured ~26x on the e72
-//     soft soil, ABOVE the 13-21x material range — mode-shape excess, ADR-73
-//     §12 P3 item 1). SMS would certify dtTarget as stable while the overlay
-//     cells' real limit is dtTarget/factor: certified-stable-but-actually-
-//     unstable. UNSUPPORTED until the P3b composability gate wires the
-//     augmentation through the elementCriticalDt Kadd seam. Shared by BOTH
-//     builders (lumped and consistent — the verifier caught the consistent
-//     path silent); one process-wide print. The CentralDifferenceLadruno
-//     dt_cr report remains overlay-aware and shows the true augmented pencil.
-inline void warnIfOverlayPresentSMS(Domain *theDomain)
+// --- Ladruno (ADR-73 P3b §3b.4): SMS + porous-overlay composability — FIXED.
+//     BOTH builders (lumped and consistent) collect the LadrunoPorousOverlay
+//     patterns once per build and, per element, sum the getUndrainedAugmentation
+//     blocks dK_e = Q_e S_e^-1 Q_e^T into a dense Matrix passed to
+//     elementCriticalDt(..., &Kaug) — SMS then sizes against the UNDRAINED
+//     per-element pencil. The closed-form scale s = T^2 + 2*T*c is UNCHANGED and
+//     remains exact: dK_e is mass- and state-independent, so lambda_max still
+//     scales as 1/s under mass injection — the augmented dt_e is the correct
+//     sizing input with zero formula changes. Residual not-augmented cases stay
+//     loud: size mismatch advises once + sizes DRAINED (mirroring
+//     computeCriticalTimeStep), self-reported bounds win UNCORRECTED (the CTS
+//     scan already advises for that combo), and a not-ready snapshot warns
+//     loudly below (unreachable in practice — the snapshot fires in setDomain at
+//     pattern creation, long before analysis setup; a FAILED snapshot aborts
+//     every commit anyway). History: pre-P3b no caller passed Kadd and SMS +
+//     overlay was UNSUPPORTED (blanket warnIfOverlayPresentSMS, RETIRED here) —
+//     the discrete undrained factor measured ~26x on the e72 soft soil, ABOVE
+//     the 13-21x material range (mode-shape excess) — see ADR-73 §12 P3/P3b.
+inline void collectPorousOverlaysSMS(Domain *theDomain,
+                                     std::vector<LadrunoPorousOverlay*> &overlays)
 {
-    static bool smsOverlayWarned = false;
-    if (smsOverlayWarned || theDomain == 0) return;
+    overlays.clear();
+    if (theDomain == 0) return;
     LoadPattern *lp;
     LoadPatternIter &lps = theDomain->getLoadPatterns();
     while ((lp = lps()) != 0)
         if (lp->getClassTag() == PATTERN_TAG_LadrunoPorousOverlay) {
-            smsOverlayWarned = true;
-            opserr << "WARNING LadrunoMassScaling -- a LadrunoPorousOverlay "
-                      "(tag " << lp->getTag() << ") is active but SMS sizing "
-                      "prices the DRAINED element pencil: the scaled model "
-                      "can be certified stable at dtTarget while overlay "
-                      "cells' true (undrained) limit is AT LEAST "
-                      "sqrt(1+Kf/(n*M_oed)) smaller (the material formula is "
-                      "a LOWER bound on the discrete per-element factor -- "
-                      "measured ~26x on soft soil). SMS + porous overlay is "
-                      "UNSUPPORTED until ADR-73 P3b -- choose dtTarget against "
-                      "the overlay-aware criticalTimeStep() report instead. "
-                      "(printed once)\n";
-            return;
+            LadrunoPorousOverlay *ov = static_cast<LadrunoPorousOverlay*>(lp);
+            if (!ov->snapshotReady())
+                opserr << "WARNING LadrunoMassScaling -- porous overlay "
+                       << ov->getTag()
+                       << " has NO completed geometry snapshot at SMS sizing "
+                          "time: its elements are sized against the DRAINED "
+                          "pencil (optimistic). This should be unreachable -- "
+                          "check the overlay snapshot errors above.\n";
+            overlays.push_back(ov);
         }
 }
 
+// Per-element augmentation fold: sum dK_e over the overlays that own `ele`
+// (overlapping overlays sum, ⟨A-13⟩). Returns true if Kaug holds >= 1 block.
+// A size mismatch (exotic ndf layout) advises once and skips that block — the
+// element is then sized against its DRAINED pencil, never a silently wrong
+// augmented one (the computeCriticalTimeStep behavior, mirrored).
+inline bool overlayAugmentationSMS(const std::vector<LadrunoPorousOverlay*> &overlays,
+                                   Element *ele, int n, Matrix &Kaug)
+{
+    static bool sizeMismatchWarned = false;   // one-time, process-wide
+    bool augmented = false;
+    for (size_t ov = 0; ov < overlays.size(); ++ov) {
+        Matrix Kadd;
+        if (!overlays[ov]->getUndrainedAugmentation(ele->getTag(), Kadd))
+            continue;
+        if (Kadd.noRows() != n) {
+            if (!sizeMismatchWarned) {
+                sizeMismatchWarned = true;
+                opserr << "LadrunoMassScaling - NOTE overlay "
+                       << overlays[ov]->getTag() << " augmentation for element "
+                       << ele->getTag() << " is " << Kadd.noRows() << "x"
+                       << Kadd.noRows() << " but the element pencil is "
+                       << n << "x" << n << " (non-first-ndm DOF layout?): "
+                          "augmentation SKIPPED for such elements - they are "
+                          "sized against the DRAINED pencil (optimistic). "
+                          "(printed once)\n";
+            }
+            continue;
+        }
+        if (!augmented) { Kaug = Kadd; augmented = true; }
+        else              Kaug += Kadd;
+    }
+    return augmented;
+}
+
+// One-time INFO line when sizing augmented >= 1 element (battery-greppable
+// honesty, pins §3b.4; static latch like the retired warning — one
+// process-wide print).
+inline void noteOverlayAugmentedSMS(int nAugmented)
+{
+    static bool infoShown = false;
+    if (infoShown || nAugmented <= 0) return;
+    infoShown = true;
+    opserr << "LadrunoMassScaling: SMS sizing priced the UNDRAINED pencil for "
+           << nAugmented << " overlay-owned elements (ADR-73 P3b)\n";
+}
+
+// Build the per-node fictitious-mass increment (additive diagonal) into `injected`
 // (node tag -> Vector(ndf)) for the given target step. Does NOT touch the Domain;
 // call applyMassScaling to commit. `injected` must be empty (freshly re-baselined).
 inline MassScalingReport
@@ -159,7 +211,11 @@ buildMassScaling(AnalysisModel *theModel, double dtTarget, CTSLumping lumping,
             constrainedNodes.insert(theMP->getNodeConstrained());
     }
 
-    warnIfOverlayPresentSMS(theDomain);   // Ladruno (ADR-73 P3): SMS+overlay unsupported
+    // Ladruno (ADR-73 P3b §3b.4): collect porous overlays once per build (the
+    // computeCriticalTimeStep idiom) — sizing prices the UNDRAINED pencil below.
+    std::vector<LadrunoPorousOverlay*> overlays;
+    collectPorousOverlaysSMS(theDomain, overlays);
+    int nAugmented = 0;
 
     Element *ele;
     ElementIter &elements = theDomain->getElements();
@@ -205,8 +261,17 @@ buildMassScaling(AnalysisModel *theModel, double dtTarget, CTSLumping lumping,
             delete[] mdiag; continue;
         }
 
+        // --- Ladruno (ADR-73 P3b §3b.4): fold the overlay UNDRAINED augmentation
+        //     into the sizing pencil (Kadd seam). Sizing math below is unchanged —
+        //     the closed form s = T^2 + 2*T*c is scale-exact under the state-
+        //     independent augmentation.
+        Matrix Kaug;
+        bool augmented = overlayAugmentationSMS(overlays, ele, n, Kaug);
+        if (augmented) nAugmented++;
+
         // self-report-aware per-element UNDAMPED stable step (= 2/w0, w0 = sqrt(lambdaMax))
-        double dt_e = elementCriticalDt(ele, useTangent, mdiag, n);
+        double dt_e = elementCriticalDt(ele, useTangent, mdiag, n,
+                                        augmented ? &Kaug : 0);
         if (dt_e <= 0.0) { delete[] mdiag; continue; }
 
         // --- SMS-BETAK: size against the DAMPED step. Stiffness-proportional Rayleigh
@@ -314,6 +379,7 @@ buildMassScaling(AnalysisModel *theModel, double dtTarget, CTSLumping lumping,
         rep.nScaled++;
         if (dtDamped < rep.minDtScaled) rep.minDtScaled = dtDamped;   // governing (damped) step
     }
+    noteOverlayAugmentedSMS(nAugmented);   // Ladruno (ADR-73 P3b): one-time INFO
     return rep;
 }
 
@@ -396,8 +462,12 @@ buildMassScalingConsistent(AnalysisModel *theModel, double dtTarget, CTSLumping 
     Domain *theDomain = theModel->getDomainPtr();
     if (theDomain == 0) return rep;
 
-    warnIfOverlayPresentSMS(theDomain);   // Ladruno (ADR-73 P3): SMS+overlay unsupported
-                                          // (verifier claim 2: consistent path was silent)
+    // Ladruno (ADR-73 P3b §3b.4): collect porous overlays once per build — the
+    // consistent path prices the SAME undrained pencil as the lumped one (the
+    // pre-P3b verifier caught this path silently drained-priced too).
+    std::vector<LadrunoPorousOverlay*> overlays;
+    collectPorousOverlaysSMS(theDomain, overlays);
+    int nAugmented = 0;
 
     // MP-constrained node tags — STRICTER than the lumped path: exclude any sub-target
     // element touching EITHER a slave (getNodeConstrained) OR a master/retained
@@ -461,7 +531,14 @@ buildMassScalingConsistent(AnalysisModel *theModel, double dtTarget, CTSLumping 
             delete[] mdiag; continue;
         }
 
-        double dt_e = elementCriticalDt(ele, useTangent, mdiag, n);
+        // Ladruno (ADR-73 P3b §3b.4): fold the overlay UNDRAINED augmentation
+        // (Kadd seam) — identical to the lumped builder.
+        Matrix Kaug;
+        bool augmented = overlayAugmentationSMS(overlays, ele, n, Kaug);
+        if (augmented) nAugmented++;
+
+        double dt_e = elementCriticalDt(ele, useTangent, mdiag, n,
+                                        augmented ? &Kaug : 0);
         if (dt_e <= 0.0) { delete[] mdiag; continue; }
 
         // betaK-damped sizing (identical closed form to the lumped path; betaK is the
@@ -558,6 +635,7 @@ buildMassScalingConsistent(AnalysisModel *theModel, double dtTarget, CTSLumping 
         rep.nScaled++;
         if (dtDamped < rep.minDtScaled) rep.minDtScaled = dtDamped;
     }
+    noteOverlayAugmentedSMS(nAugmented);   // Ladruno (ADR-73 P3b): one-time INFO
     return rep;
 }
 

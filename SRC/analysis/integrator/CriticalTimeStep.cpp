@@ -318,6 +318,8 @@ CTSResult computeCriticalTimeStep(AnalysisModel *theModel,
     r.n_scanned      = 0;
     r.overlayAugmented     = false;
     r.governing_drained_dt = std::numeric_limits<double>::infinity();
+    r.explicitFluid        = false;
+    r.fluid_diffusion_dt   = std::numeric_limits<double>::infinity();
 
     if (theModel == 0) return r;
     Domain *theDomain = theModel->getDomainPtr();
@@ -465,6 +467,25 @@ CTSResult computeCriticalTimeStep(AnalysisModel *theModel,
         }
     }
 
+    // --- Ladruno (ADR-73 P3b §3b.3): dual-CFL fold for the EXPLICIT fluid
+    // lane. FU_EXPLICIT overlays report the forward-Euler diffusion bound
+    // Δt_diff = h_min²/(2·ndm·c_v,max) (−1 when not applicable); min-fold it
+    // into BOTH damped_dt and undamped_dt so the returned advisory is honest
+    // even if diffusion ever governs (absurd k̄ — realistic slack is ~7e3×,
+    // E7.4). Governing TAGS stay the solid element's; the integrator report
+    // prints the diffusion line separately.
+    for (size_t ov = 0; ov < overlays.size(); ov++) {
+        double dtDiff = overlays[ov]->explicitFluidDiffusionDt();
+        if (dtDiff > 0.0) {
+            r.explicitFluid = true;
+            if (dtDiff < r.fluid_diffusion_dt) r.fluid_diffusion_dt = dtDiff;
+        }
+    }
+    if (r.explicitFluid) {
+        if (r.fluid_diffusion_dt < r.damped_dt)   r.damped_dt   = r.fluid_diffusion_dt;
+        if (r.fluid_diffusion_dt < r.undamped_dt) r.undamped_dt = r.fluid_diffusion_dt;
+    }
+
     // --- parallel: governing step is the global minimum over all ranks ----
     // (ADR item 7). The element tags stay rank-local; only the scalar limits are
     // reduced. No-op in the sequential build.
@@ -487,6 +508,16 @@ CTSResult computeCriticalTimeStep(AnalysisModel *theModel,
         int augLocal = r.overlayAugmented ? 1 : 0, augGlobal = augLocal;
         MPI_Allreduce(&augLocal, &augGlobal, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
         r.overlayAugmented = (augGlobal != 0);
+        // Ladruno (ADR-73 P3b): dual-CFL advisory — min-reduce the diffusion
+        // bound, OR-reduce the flag (any rank's FU_EXPLICIT overlay makes the
+        // reported advisory fluid-aware). damped/undamped were folded locally
+        // BEFORE the min-reduce above, so the global mins already honor it.
+        double fdLocal = r.fluid_diffusion_dt, fdGlobal = fdLocal;
+        MPI_Allreduce(&fdLocal, &fdGlobal, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
+        r.fluid_diffusion_dt = fdGlobal;
+        int efLocal = r.explicitFluid ? 1 : 0, efGlobal = efLocal;
+        MPI_Allreduce(&efLocal, &efGlobal, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        r.explicitFluid = (efGlobal != 0);
         r.damped_dt   = global[0];
         r.undamped_dt = global[1];
     }

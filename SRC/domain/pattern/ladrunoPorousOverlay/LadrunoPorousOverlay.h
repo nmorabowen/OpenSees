@@ -54,9 +54,20 @@
 // flow. Never run the fixed-POINT form single-pass (O(1) storage error,
 // measured 41–61 %).
 //
-// v1 lane: fs1 single-pass implicit. -fluidUpdate explicit is fatal-NYI (P3b).
+// Fluid-update lanes (-fluidUpdate): the default fs1 single-pass IMPLICIT lane
+// above, and the P3b EXPLICIT lane (plan §3b.2, toy-exact vs the E7.4 oracle):
+// lumped S* (sLump_ = row-sum of the assembled S*; H̃·1 = 0 so the stab matrix
+// cannot enter the lump) and a forward p-step from COMMITTED state,
+//
+//   p_trial = p₀ + (−Δt·H·p₀ − Qᵀ·Δu + Δt·f_seep) / sLump    (free rows;
+//                                                drained rows hold committed)
+//
+// — no CG, no factorization in the transient march. L is INERT on this lane
+// (no iteration; -fsL gets a one-time notice). SM_STEADY keeps its CG solve at
+// static commits (setup/gravity-init, not a march cost). The dual-CFL advisory
+// (explicitFluidDiffusionDt below) bounds the -subcycle window: N·Δt ≤ Δt_diff.
 // See Ladruno_implementation/73_ladruno_porous_overlay_adr.md and
-// Ladruno_implementation/_adr73_implementation_plan.md (WP1 pins).
+// Ladruno_implementation/_adr73_implementation_plan.md (WP1 + §3b pins).
 
 #ifndef LadrunoPorousOverlay_h
 #define LadrunoPorousOverlay_h
@@ -99,7 +110,9 @@ class LadrunoPorousOverlay : public LoadPattern
   // the FLAG, never the integrator.
   enum StaticMode   { SM_MARCH = 0, SM_HOLD = 1, SM_STEADY = 2 };
   enum RemovalMode  { RM_KEEP = 0, RM_DRAIN = 1 };
-  enum FluidUpdate  { FU_IMPLICIT = 0, FU_EXPLICIT = 1 };  // explicit = P3b NYI
+  // FU_EXPLICIT (ADR-73 P3b §3b.2): lumped-S* forward p-step, matrix-free
+  // transient march (no CG). -fsL / L are inert; SM_STEADY keeps its CG solve.
+  enum FluidUpdate  { FU_IMPLICIT = 0, FU_EXPLICIT = 1 };
   enum SubcycleMode { SC_FIXED = 0, SC_AUTO = 1 };
   enum PInitMode    { PI_ZERO = 0, PI_STEADY = 1, PI_HYDRO = 2, PI_LIST = 3 };
 
@@ -179,6 +192,21 @@ class LadrunoPorousOverlay : public LoadPattern
   // State-independent: valid for both useTangent and initial-stiff pencils.
   bool   getUndrainedAugmentation(int eleTag, Matrix& Kadd) const;
 
+  // ---- ADR-73 P3b dual-CFL advisory seam (CriticalTimeStep.cpp) --------------
+  // Per-fluid-advance forward-Euler diffusion bound for the EXPLICIT fluid lane:
+  // Δt_diff = minEdge² / (2·ndm·c_v,max) (plan §3b.3 pin; conservative —
+  // min-edge with max-c_v; ~7e3× slack vs the solid pencil at realistic k̄, so
+  // it advises rather than governs). The -subcycle window must keep
+  // N·Δt ≤ Δt_diff. Returns −1.0 unless this overlay is FU_EXPLICIT with a
+  // completed snapshot and finite positive minEdge_/maxCv_ (zero new state:
+  // both already exist for -subcycle auto).
+  double explicitFluidDiffusionDt() const {
+    if (fluidUpdate_ != FU_EXPLICIT || !snapshotOk_ ||
+        maxCv_ <= 0.0 || minEdge_ <= 0.0)
+      return -1.0;
+    return minEdge_ * minEdge_ / (2.0 * (double)ndm_ * maxCv_);
+  }
+
   // ---- ADR-73 P2 driver seam (LadrunoStaggeredAnalyze, LadrunoStaggeredDriver) --
   // The iterated fixed-stress driver latches the overlay into external-stepping
   // mode: applyLoad then injects +Q·pTrial_ (the current iterate's forces, not
@@ -238,6 +266,13 @@ class LadrunoPorousOverlay : public LoadPattern
   // parameter-route moduli transport: re-resolve E/nu, re-derive α_stab / L, and
   // re-scatter aS_/aL_; aH_/fseep_/Qe untouched (perm/α only). Lazy at next use.
   void   rebuildModuliCaches(void);
+  // ADR-73 P3b: (re)build sLump_ = per-row sums of the assembled aS_ CSR rows
+  // (= lumped physical S; H̃·1 = 0 exactly so rowsum(S*) = rowsum(S_phys) —
+  // the stab matrix cannot enter the explicit march, plan §3b.1 pin). Called
+  // at snapshot completion and by rebuildModuliCaches, FU_EXPLICIT only.
+  // Returns 0 ok; <0 (loud fatal naming the node tag) on any row-sum ≤ 0 —
+  // the toy's slump.min() > 0 assert.
+  int    buildStorageLump(void);
   void   buildSparsity(void);                // CSR pattern from region connectivity
   int    csrPos(int i, int j) const;         // CSR index of (i,j) or -1
   void   scatterMat(const Cell& c, const double* blk, std::vector<double>& tgt);
@@ -331,6 +366,11 @@ class LadrunoPorousOverlay : public LoadPattern
   std::vector<double> aH_, aS_, aL_;         // H, S* (=S+αstab·H̃), L values
   std::vector<double> fseep_;                // seepage source vector (size N)
   std::vector<char>   isDrained_;            // size N
+  // ADR-73 P3b explicit-lane storage lump (size N; FU_EXPLICIT only, else
+  // empty). DERIVED state — never serialized; rebuilt at snapshot and by
+  // rebuildModuliCaches (buildStorageLump). NOT touched by removal rescan
+  // (the fluid measure never shrinks — P1 pin).
+  std::vector<double> sLump_;
 
   // fluid unknowns (size N) — internal double storage (packed to Vector on wire)
   std::vector<double> pCommitted_;

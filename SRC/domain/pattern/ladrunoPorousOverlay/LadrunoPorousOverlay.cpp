@@ -466,6 +466,17 @@ int LadrunoPorousOverlay::buildSnapshot(void)
   commitsSinceSync_ = 0;
   dtAccum_ = 0.0;
   subcycleResolved_ = (subcycleMode_ == SC_FIXED);
+
+  // Ladruno (ADR-73 P3b): the explicit lane's storage lump — built once the
+  // assembled aS_ rows are complete (derived state, never serialized; restart
+  // rebuilds it right here via recvSelf → setDomain → buildSnapshot). The
+  // implicit lanes never read it (kept empty — no new fatal on shipped lanes).
+  if (fluidUpdate_ == FU_EXPLICIT) {
+    if (this->buildStorageLump() < 0)
+      return -1;
+  } else {
+    sLump_.clear();
+  }
   return 0;
 }
 
@@ -693,6 +704,46 @@ void LadrunoPorousOverlay::rebuildModuliCaches(void)
   augBlocks_.clear();
   augState_.clear();
   augIndex_.clear();
+  // Ladruno (ADR-73 P3b): S* re-scattered — rebuild the explicit lane's storage
+  // lump from the fresh rows (row-sums are moduli-independent in exact
+  // arithmetic — H̃·1 = 0 — but rebuilding keeps the lump bit-consistent with
+  // the assembled aS_). A failed lump INVALIDATES the overlay (loud; every
+  // commit aborts) — the same contract as a failed snapshot.
+  if (fluidUpdate_ == FU_EXPLICIT) {
+    if (this->buildStorageLump() < 0)
+      snapshotOk_ = false;
+  }
+}
+
+// ===========================================================================
+//  ADR-73 P3b — explicit-lane storage lump (plan §3b.2 pin)
+//  sLump_[i] = Σ_j S*_ij, the per-row sum of the assembled aS_ CSR rows
+//  (= lumped PHYSICAL S: H̃·1 = 0 exactly, so rowsum(S*) = rowsum(S_phys) and
+//  the α-stab matrix cannot enter the explicit march — the E7.4 oracle's own
+//  semantics, slump = S.sum(axis=1) on the stabilized S). NOT touched by the
+//  removal rescan (the fluid measure never shrinks — P1 pin). Any row-sum ≤ 0
+//  is a loud fatal naming the node (the toy's slump.min() > 0 assert).
+// ===========================================================================
+int LadrunoPorousOverlay::buildStorageLump(void)
+{
+  int N = nRegionNodes_;
+  sLump_.assign(N, 0.0);
+  for (int i = 0; i < N; i++) {
+    double s = 0.0;
+    for (int k = rowptr_[i]; k < rowptr_[i + 1]; k++)
+      s += aS_[k];
+    if (s <= 0.0) {
+      opserr << "ERROR LadrunoPorousOverlay " << this->getTag()
+             << " -- explicit-lane storage lump: non-positive S* row-sum ("
+             << s << ") at region node " << regionNodeTags_[i]
+             << " (the lumped-storage assumption is violated; check "
+                "Kf/poro/biotAlpha/Ks)\n";
+      sLump_.clear();
+      return -1;
+    }
+    sLump_[i] = s;
+  }
+  return 0;
 }
 
 int LadrunoPorousOverlay::csrPos(int i, int j) const
@@ -972,6 +1023,51 @@ int LadrunoPorousOverlay::advanceTrial(bool firstOfStep, double dt)
   }
   int N = nRegionNodes_;
 
+  // ---- ADR-73 P3b: the EXPLICIT lane (plan §3b.2 — toy cd_march
+  // fluid="explicit" verbatim, generalized by +Δt·f_seep and drained-row
+  // holds). Lumped forward step, ALWAYS from COMMITTED state — firstOfStep is
+  // deliberately ignored (no reference increment on this lane), so a repeated
+  // advance within one step is IDEMPOTENT (re-derives the same pTrial_), not a
+  // double-march — defensive; no shipped path calls it twice (the P2 driver
+  // refuses FU_EXPLICIT). dpCommitted_ keeps being maintained by commitFluid
+  // for serialization compatibility but is never read here. L is inert (no
+  // iteration). NO solveFluid — no CG, no factorization in the march.
+  if (fluidUpdate_ == FU_EXPLICIT) {
+    if ((int)sLump_.size() != N) {           // defensive: lump built at snapshot
+      opserr << "ERROR LadrunoPorousOverlay " << this->getTag()
+             << " -- explicit advance without a storage lump (internal error)\n";
+      return -1;
+    }
+    std::vector<double> Hp0(N, 0.0), QtDu(N, 0.0);
+    this->applyOp(0.0, 0.0, 1.0, pCommitted_, Hp0);   // H p₀
+    this->assembleQtDu(QtDu);                         // Qᵀ Δu (window semantics
+                                                      //  identical to fs1)
+    std::vector<double> x(N, 0.0);
+    for (int i = 0; i < N; i++) {
+      if (isDrained_[i])
+        x[i] = pCommitted_[i];               // drained rows hold the prescribed
+      else                                   // committed value (implicit-lane
+        x[i] = pCommitted_[i]                //  convention)
+             + (-dt * Hp0[i] - QtDu[i] + dt * fseep_[i]) / sLump_[i];
+    }
+
+    // relChange_ still computed (same reduced-system norm as the implicit
+    // lane; harmless — nothing consumes it on this lane).
+    {
+      double num = 0.0, den = 0.0;
+      for (int i = 0; i < N; i++) {
+        if (isDrained_[i]) continue;
+        double d = x[i] - pTrial_[i];
+        num += d * d;
+        den += x[i] * x[i];
+      }
+      relChange_ = sqrt(num) / (sqrt(den) + pScale_);
+    }
+
+    pTrial_ = x;
+    return 0;
+  }
+
   // reference increment: first advance of a step → committed increment (rate
   // form = fs1); a repeated advance → last trial increment (fixed-point / P2).
   std::vector<double> dpref(N, 0.0);
@@ -1078,11 +1174,9 @@ int LadrunoPorousOverlay::onDomainCommit(double domainTime, double dT)
     this->readRegionDisp(uSnapshot_);   // committed disps = restore instant
     uSnapshotValid_ = true;
   }
-  if (fluidUpdate_ == FU_EXPLICIT) {
-    opserr << "ERROR LadrunoPorousOverlay " << this->getTag()
-           << " -- -fluidUpdate explicit is not implemented until P3b\n";
-    return -1;
-  }
+  // (ADR-73 P3b: FU_EXPLICIT flows through the SAME hook — the lane branch
+  //  lives inside advanceTrial; SM_HOLD / SM_STEADY semantics are lane-blind
+  //  per the §3b.1 pins, STEADY keeping its CG solve at static commits.)
 
   bool removal = this->rescanRemoval();
 
