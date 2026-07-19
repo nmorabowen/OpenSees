@@ -36,19 +36,44 @@ THE GATE MAP (plan §3b.5; letters match the pins):
       returned advisory == the hand dt_diff (diffusion governs, fold honest);
       PLUS the report line: the CDL "-cfl" report prints a diffusion line whose
       dt_diff matches the hand value.
-  (b) coupled CFL envelope vs the 1.32x pin: fixed-horizon (4500-step) Dt
-      bisection on the e74-matched DRAINING column; boundary/undrained-pencil
-      in [0.99, 1.65]; 0.8x pencil marches a 3000-step horizon stable.
-  (c) implicit-lane equivalence: FU_EXPLICIT vs FU_IMPLICIT + `-fsL zero` at a
-      matched Dt sequence (both O(Dt) splits — mutual-convergence): inter-lane
-      diff shrinks with observed order >= 0.9 (ZS84 column, P3 methodology).
-  (d) SMS composability, BOTH builders (THE gate — the inverted P3 quirk): the
-      pre-fix pathology (unscaled march at the drained-priced-certified
-      dtTarget) provably blows up; with the fix the SMS-certified dtTarget
-      march is stable over a 4000-step horizon, the report prices the
-      undrained pencil (scaled-count direction vs a drained/no-overlay
-      control), the old UNSUPPORTED warning is absent and the exact INFO line
-      present. Lumped CentralDifferenceSMS + CentralDifferenceSMSConsistent.
+  (b) coupled CFL envelope vs the 1.32x pin — e74-VERBATIM protocol (MAIN
+      adjudication after run 2: a smooth step load does not seed the critical
+      mode within any affordable horizon; the toy used NOISE IC + zero load):
+      zero external load, deterministic LCG pseudo-noise committed initial
+      velocities on every free solid DOF, 6000-step horizon, blow-up criterion
+      |u_y| > 1e6 x (V0*dt) at the probe nodes; bisection boundary/pencil in
+      [0.99, 1.65]; endpoints 0.9x survives / 2.5x dies.
+  (c) TRANSPOSED per MAIN adjudication (run 2) — inter-lane matched-dt
+      equivalence is REFUTED as a gate: the two lanes converge to DIFFERENT
+      spatial semi-discretizations (lumped vs consistent storage), so the
+      inter-lane diff at matched dt tends to an O(1) mesh-level constant
+      (~2e-2 here), not O(dt). Replaced by:
+      (c1) TOY-TWIN: numpy replica of the e72 explicit scheme in the parent
+           (exact Q4 K/S/Q/H/lumped-m, leapfrog CD with the dt/2*a0 starter,
+           p <- p - (dt*(H p) + Qt du)/slump_full_rowsum, drained rows held);
+           C++ march with -record every commit == replica, relL2 <= 1e-6
+           over 500 steps at 0.5x pencil. Calibration pins from MAIN's
+           debugging: sLump is the FULL CSR row-sum (drained columns
+           INCLUDED); the post-fix pairing is a(u_k, p_k) with p advanced on
+           du_k = u_k - u_{k-1}; the CDL starter's half-kick equals the naive
+           v = v + dt/2*a first step for v0 = 0.
+      (c2) per-lane self-convergence: each lane vs its OWN finest-dt
+           trajectory, Richardson order >= 0.9 over {0.4, 0.2, 0.1}x.
+  (d) SMS composability (THE gate — the inverted P3 quirk): the pre-fix
+      pathology (unscaled march at the drained-priced-certified dtTarget)
+      provably blows up; the LUMPED CentralDifferenceSMS certified march is
+      HARD-stable over a 4000-step horizon, the report prices the undrained
+      pencil (scaled-count direction vs a drained/no-overlay control), the
+      old UNSUPPORTED warning is absent and the exact INFO line present.
+      CONSISTENT leg TRANSPOSED per MAIN adjudication (run 2): Olovsson
+      centroid-preserving blocks don't scale the rigid-translation component
+      of the volumetric coupling mode, so the consistent-certified march
+      measurably under-delivers (uniform divergence ratio ~1.83/step). The
+      consistent leg asserts the new one-time loud warning ("the Olovsson
+      centroid-preserving blocks under-scale the undrained COUPLING mode")
+      fires at SIZING (before the march), plus INFO present / UNSUPPORTED
+      absent; the certified march is EXPECTED-LIMITED — its outcome is
+      RECORDED, not stability-asserted.
   (e) MP — TRANSPOSED at 3b.A: NO test. The overlay is per-process serial v1;
       the gate became (i) a partition-locality code audit (panel duty, not
       run under MPI) and (ii) the halo DESIGN documented in the ADR §8
@@ -409,11 +434,20 @@ assert os.path.normcase(os.path.dirname(ops.__file__)) == os.path.normcase(_D)
 '''
 
 
-def _run_child(body, timeout=300):
+def _run_child(body, timeout=300, merge=False):
+    """merge=True interleaves the child's C++ stderr with its Python stdout in
+    CHRONOLOGICAL order (single pipe) — needed when a gate asserts ordering
+    between an opserr warning and a march marker; the default keeps the P3
+    battery's stdout+stderr concatenation."""
     fd, path = tempfile.mkstemp(suffix=".py", dir=_TMP)
     os.close(fd)
     with open(path, "w") as f:
         f.write(body)
+    if merge:
+        proc = subprocess.run([sys.executable, "-S", "-u", path],
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                              text=True, timeout=timeout)
+        return proc.stdout, proc.returncode
     proc = subprocess.run([sys.executable, "-S", "-u", path],
                           capture_output=True, text=True, timeout=timeout)
     return proc.stdout + proc.stderr, proc.returncode
@@ -686,126 +720,322 @@ def test_a_diffusion_slack():
 
 
 # ==========================================================================
-# (b) coupled CFL envelope vs the 1.32x pin (fixed-horizon bisection)
+# (b) coupled CFL envelope vs the 1.32x pin — e74-VERBATIM noise-IC protocol
 # ==========================================================================
-_B_HORIZON = 4500       # divergence-detection horizon per probe (P3's upward cap)
+_B_HORIZON = 6000       # e74 toy horizon (cd_march legs were 6000 steps)
+_B_V0 = 1.0e-3          # noise velocity scale
+
+# e74-verbatim probe child: ZERO external load, deterministic LCG pseudo-noise
+# committed initial velocities on every free solid y-DOF (fixed seed — children
+# are numpy-free; x & 0x7FFFFFFF == x mod 2^31 for the classic LCG), blow-up
+# criterion |u_y| > UCAP = 1e6 * V0 * dt at probe nodes {5, 9, 13, 17} (the
+# bounded free-oscillation amplitude is ~V0/omega1 ~ 1e-7 — UCAP is ~1e5x
+# grotesque above it, and exponential CFL growth crosses it in O(100) steps).
+_NOISE_CH = _BOOT_CH + '''
+DT = %(dt)r
+NST = %(nst)d
+V0 = %(v0)r
+ops.wipe(); ops.model("basic", "-ndm", 2, "-ndf", 2)
+for j in range(9):
+    for i in range(2):
+        ops.node(2 * j + i + 1, float(i), float(j))
+ops.nDMaterial("ElasticIsotropic", 1, 1.0e7, 0.25, 2.0)
+eles = list(range(1, 9))
+for j in range(8):
+    ops.element("quad", j + 1, 2 * j + 1, 2 * j + 2, 2 * j + 4, 2 * j + 3,
+                1.0, "PlaneStrain", 1)
+for j in range(9):
+    for i in range(2):
+        ops.fix(2 * j + i + 1, 1, 1 if j == 0 else 0)
+ops.pattern("LadrunoPorousOverlay", 77, "-region", *eles, "-Kf", 2.2e9,
+            "-rhoF", 1000.0, "-perm", 1.0e-11, 1.0e-11, "-poro", 0.4,
+            "-moduli", 1.0e7, 0.25, "-drained", 17, 18,
+            "-stab", "auto", 0.25, "-fluidUpdate", "explicit")
+_s = 20260718
+def _lcg():
+    global _s
+    _s = (1103515245 * _s + 12345) & 0x7FFFFFFF
+    return _s / 2147483648.0
+for j in range(1, 9):
+    for i in range(2):
+        ops.setNodeVel(2 * j + i + 1, 2, (_lcg() - 0.5) * 2.0 * V0, "-commit")
+ops.constraints("Transformation"); ops.numberer("RCM"); ops.system("ProfileSPD")
+ops.algorithm("Linear"); ops.integrator("CentralDifferenceLadruno")
+ops.analysis("Transient")
+UCAP = 1.0e6 * V0 * DT
+PROBES = (5, 9, 13, 17)
+for st in range(NST):
+    try:
+        rc = ops.analyze(1, DT)
+    except BaseException as ex:
+        print("RESULT DIVERGED step", st, "exc", type(ex).__name__); sys.exit(0)
+    um = max(abs(ops.nodeDisp(pn, 2)) for pn in PROBES)
+    if rc != 0 or not math.isfinite(um) or um > UCAP:
+        print("RESULT DIVERGED step", st, "u", um); sys.exit(0)
+print("RESULT BOUNDED")
+sys.exit(0)
+'''
 
 
 def _probe_b(mult, und, nst=_B_HORIZON):
-    out, rc = _run_child(_march_child_src(
-        mult * und, nst, ["-fluidUpdate", "explicit"]))
+    out, rc = _run_child(_NOISE_CH % dict(
+        dist=_DIST, dt=float(mult * und), nst=int(nst), v0=float(_B_V0)))
     if _bounded(out, rc):
         return True, -1
     return False, _div_step(out)
 
 
 def test_b_cfl_envelope():
-    """PREDICTION (before assert): the explicit-fluid coupled boundary on the
-    e74-matched column sits at 1.32x the DISCRETE undrained pencil (E7.4,
-    both benchmark soils; band = the e72/e74 +-25% spread convention ->
-    [0.99, 1.65]). Bisection is FIXED-HORIZON (4500 steps — the P3 upward-leg
-    cap; slow-onset divergence just above the true boundary is absorbed by
-    the band's upper end, honestly documented per §12 P3 item 3), endpoints:
-    0.99x must survive the horizon (the P3 implicit-lane secular pumping at
-    1.0x needed 7761 steps — margin ~1.7x; a faster explicit-lane pumping
-    would fail here LOUDLY for MAIN adjudication), 2.0x must diverge inside
-    it (P3 implicit lane: 1904 steps at 2.0x). A 0.8x march survives a
-    3000-step horizon (implicit lane blew at 11789 there)."""
+    """PREDICTION (before assert), TRANSPOSED at MAIN run-3 adjudication:
+    the load-bearing production claim is ADVISORY-CONSERVATIVE — a march at
+    1.0x the DISCRETE undrained pencil (the criticalTimeStep advisory) is
+    BOUNDED over the horizon under the e74-verbatim broadband noise IC (zero
+    load, fixed-seed LCG committed initial velocities, 6000 steps, blow-up =
+    |u_y| > 1e6 x V0*dt at probes {5,9,13,17}). The E7.4 "boundary = 1.32x
+    the pencil" is a FROZEN TOY CONSTANT that is config-specific and does
+    NOT transfer to this column: gate (c1) proves the C++ lane IS the toy
+    scheme to 7e-14, so a differing boundary is pure configuration — the
+    per-element pencil is BC-BLIND (full element eigenproblem) while this
+    column fixes EVERY x-DOF, so the assembled system cannot express the
+    pencil's governing mode and the true coupled boundary sits ABOVE the
+    advisory (measured run-2/run-3: bounded at 2.0x and 2.5x) — the SAFE
+    direction, the E7.4 "±20% gate REFUTED (safe direction)" precedent.
+    Gate: 1.0x BOUNDED (hard) + boundary swept upward and RECORDED (either a
+    measured value or ">= cap", never asserted into the toy band); a
+    boundary BELOW 0.99x would be the UNSAFE direction and fails hard.
+    Panel verifies the BC-expressiveness mechanism; §12 records the
+    transposition."""
     und = _pencil("e72_exp")
 
-    lo, hi = 0.99, 2.0
-    ok_lo, _ = _probe_b(lo, und)
+    ok_adv, _ = _probe_b(1.0, und)
+    assert ok_adv, (
+        f"1.0x the undrained pencil (the advisory) DIVERGED within "
+        f"{_B_HORIZON} steps under the noise IC — the advisory is NOT "
+        f"conservative on this column: UNSAFE direction, MAIN must adjudicate")
+    ok_lo, _ = _probe_b(0.9, und)
     assert ok_lo, (
-        f"0.99x the undrained pencil DIVERGED within {_B_HORIZON} steps — the "
-        f"boundary sits below the [0.99, 1.65] band (or the explicit-fluid "
-        f"secular pumping is far faster than the implicit lane's 7761-step "
-        f"1.0x horizon): MAIN must adjudicate")
-    ok_hi, step_hi = _probe_b(hi, und)
-    assert not ok_hi, (
-        f"2.0x the undrained pencil BOUNDED for {_B_HORIZON} steps — no "
-        f"upper divergence: the boundary claim (1.32x) is unmeasurable here")
+        f"0.9x the undrained pencil DIVERGED within {_B_HORIZON} steps under "
+        f"the noise IC — boundary below the advisory: UNSAFE direction, "
+        f"MAIN must adjudicate")
 
-    probes = [f"0.99x=B", f"2.0x=D@{step_hi}"]
-    for _ in range(6):
-        mid = 0.5 * (lo + hi)
-        ok, st = _probe_b(mid, und)
-        probes.append(f"{mid:.3f}x=" + ("B" if ok else f"D@{st}"))
-        if ok:
-            lo = mid
-        else:
-            hi = mid
-    boundary = 0.5 * (lo + hi)
-    assert 0.99 <= boundary <= 1.65, (
-        f"measured explicit-fluid boundary {boundary:.3f}x the undrained "
-        f"pencil outside [0.99, 1.65] (E7.4 pin 1.32x +-25%); probes: "
-        f"{' '.join(probes)}")
-
-    # 0.8x pencil full-horizon leg
-    out, rc = _run_child(_march_child_src(
-        0.8 * und, 3000, ["-fluidUpdate", "explicit"]))
-    assert _bounded(out, rc), (
-        f"0.8x the pencil did NOT march the 3000-step horizon stable:\n"
-        + out[-1000:])
+    # upward sweep: record the boundary if it exists below the cap; a capped
+    # sweep is the safe direction and is RECORDED, not failed.
+    probes = ["0.9x=B", "1.0x=B"]
+    boundary_txt = None
+    ratios = [1.5, 2.0, 2.5, 3.0, 4.0]
+    prev = 1.0
+    for r in ratios:
+        ok, st = _probe_b(r, und)
+        probes.append(f"{r}x=" + ("B" if ok else f"D@{st}"))
+        if not ok:
+            boundary_txt = f"in ({prev}x, {r}x]"
+            break
+        prev = r
+    if boundary_txt is None:
+        boundary_txt = f">= {ratios[-1]}x (sweep cap; safe direction)"
 
     print("=" * 74)
-    print("LOUD (b) EXPLICIT-FLUID CFL RECORD (fixed-horizon, 4500 steps):")
-    print(f"   boundary = {boundary:.3f}x the discrete undrained pencil "
-          f"(pencil {und:.4e} s; E7.4 pin 1.32x, band [0.99, 1.65])")
+    print("LOUD (b) EXPLICIT-FLUID CFL RECORD (e74-verbatim noise IC, "
+          f"{_B_HORIZON}-step horizon) — GATE TRANSPOSED (advisory-"
+          "conservative hard assert; boundary recorded, not banded):")
+    print(f"   advisory (1.0x pencil {und:.4e} s): BOUNDED")
+    print(f"   boundary {boundary_txt} the discrete undrained pencil "
+          f"(frozen TOY constant 1.32x is config-specific; this column is "
+          f"all-x-fixed -> per-element pencil mode inexpressible -> margin "
+          f"above the advisory, SAFE direction)")
     print(f"   probes: {' '.join(probes)}")
-    print("   0.8x marched 3000 steps bounded")
     print("=" * 74)
-    info = f"boundary {boundary:.3f}x in [0.99, 1.65]; {' '.join(probes)}"
+    info = f"advisory-conservative HARD PASS; boundary {boundary_txt}; {' '.join(probes)}"
     print(f"PASS (b) CFL envelope: {info}")
     return info
 
 
 # ==========================================================================
-# (c) implicit-lane equivalence (mutual convergence, order >= 0.9)
+# (c1) TOY-TWIN: numpy replica of the e72 explicit scheme (parent process)
+# (c2) per-lane self-convergence (Richardson vs own finest dt)
+# — the inter-lane matched-dt gate is TRANSPOSED (REFUTED as a gate: the two
+#   lanes converge to DIFFERENT spatial semi-discretizations, lumped vs
+#   consistent storage; matched-dt diff -> O(1) mesh constant ~2e-2).
 # ==========================================================================
 _ZS84_PROBES_J = (15, 24, 27, 29)      # mid-column + the active drainage front
 
 
-def test_c_lane_equivalence():
-    """PREDICTION (before assert): FU_EXPLICIT (lumped-S* forward step) and
-    FU_IMPLICIT + `-fsL zero` (backward-Euler fluid, L = 0) are BOTH O(Dt)
-    splits of the same monolith, so their inter-lane p difference on the
-    DRAINING ZS84 column shrinks ~linearly with Dt: matched-Dt runs at
-    {0.4, 0.2, 0.1}x the advisory give diffs with observed order >= 0.9
-    (log2 of successive ratios — the family's mutual-convergence
-    methodology; exact equality is NOT expected at finite Dt)."""
+def _q4_blocks():
+    """Exact Q4 plane-strain unit-cell blocks matching the C++: K (2x2 GP,
+    B^T D B), Q[a*2+d, b] = sum_gp dNa/dx_d * Npb * dv (alpha = 1),
+    H = kbar * sum_gp dNp dNp^T dv, S = (poro/Kf) * sum_gp Np Np^T dv
+    (oneOverQbar with default alpha=1, Ks<=0 -> n/Kf), lumped nodal mass
+    rho*V/4 (FourNodeQuad's lumped mass, = rho*sum_gp N_a dv for the unit
+    square). Element node order (i,j),(i+1,j),(i+1,j+1),(i,j+1) — CCW,
+    matching _build_e72's quad connectivity."""
+    E, nu, rho = _E72["E"], _E72["nu"], _E72["rho"]
+    cD = E / ((1.0 + nu) * (1.0 - 2.0 * nu))
+    D = cD * np.array([[1.0 - nu, nu, 0.0],
+                       [nu, 1.0 - nu, 0.0],
+                       [0.0, 0.0, (1.0 - 2.0 * nu) / 2.0]])
+    g = 1.0 / math.sqrt(3.0)
+    gps = [(-g, -g), (g, -g), (g, g), (-g, g)]
+    xa = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
+    detJ = 0.25                                    # unit square, J = I/2
+    ooq = _E72["poro"] / _E72["Kf"]
+    kbar = _E72["kbar"]
+    Ke = np.zeros((8, 8))
+    Qe = np.zeros((8, 4))
+    He = np.zeros((4, 4))
+    Se = np.zeros((4, 4))
+    for (xi, eta) in gps:
+        N = np.array([0.25 * (1.0 + xi * a) * (1.0 + eta * b) for a, b in xa])
+        dN = np.array([[0.25 * a * (1.0 + eta * b) * 2.0,
+                        0.25 * b * (1.0 + xi * a) * 2.0] for a, b in xa])
+        B = np.zeros((3, 8))
+        for a4 in range(4):
+            B[0, 2 * a4] = dN[a4, 0]
+            B[1, 2 * a4 + 1] = dN[a4, 1]
+            B[2, 2 * a4] = dN[a4, 1]
+            B[2, 2 * a4 + 1] = dN[a4, 0]
+        Ke += B.T @ D @ B * detJ
+        for a4 in range(4):
+            for d in range(2):
+                Qe[2 * a4 + d, :] += dN[a4, d] * N * detJ
+        He += (dN @ dN.T) * kbar * detJ
+        Se += np.outer(N, N) * ooq * detJ
+    return Ke, Qe, He, Se, _E72["rho"] * 0.25
+
+
+def _replica_march(nsteps, dt):
+    """The e72 column FU_EXPLICIT march, numpy-exact (MAIN's calibration
+    pins): leapfrog CD on lumped m with the naive half-kick starter
+    (v = dt/2*a at step 1, v0 = 0), a(u_k, p_k) from the CURRENT committed
+    pair, then u advance, then the fluid forward step on du_k = u_k - u_{k-1}:
+    p <- p - (dt*(H p) + Qt du)/slump with slump = FULL S row-sum (drained
+    columns INCLUDED — the C++ sLump_ is the raw CSR row-sum; H-tilde
+    annihilates constants so physical-S row sums are the stab-invariant
+    twin), drained rows held at 0 (pInit zero). Returns P[nsteps, 18] in
+    node-TAG order (tag-1 columns)."""
+    nely = _E72["nely"]
+    Ke, Qe, He, Se, me = _q4_blocks()
+    K = np.zeros((36, 36))
+    Q = np.zeros((36, 18))
+    H = np.zeros((18, 18))
+    S = np.zeros((18, 18))
+    m = np.zeros(36)
+    for j in range(nely):
+        tags = [_nt(0, j), _nt(1, j), _nt(1, j + 1), _nt(0, j + 1)]
+        idxu = []
+        for t in tags:
+            idxu += [2 * (t - 1), 2 * (t - 1) + 1]
+        idxp = [t - 1 for t in tags]
+        K[np.ix_(idxu, idxu)] += Ke
+        Q[np.ix_(idxu, idxp)] += Qe
+        H[np.ix_(idxp, idxp)] += He
+        S[np.ix_(idxp, idxp)] += Se
+        for t in tags:
+            m[2 * (t - 1)] += me
+            m[2 * (t - 1) + 1] += me
+    free = np.array(sorted(2 * (_nt(i, j) - 1) + 1
+                           for j in range(1, nely + 1) for i in range(2)))
+    ff = np.zeros(36)
+    for i in range(2):
+        ff[2 * (_nt(i, nely) - 1) + 1] = -_E72["q"] / 2.0
+    slump = S.sum(axis=1)
+    assert slump.min() > 0.0, "replica bug: non-positive storage row-sum"
+    drained = [_nt(0, nely) - 1, _nt(1, nely) - 1]
+    u = np.zeros(36)
+    v = np.zeros(len(free))
+    p = np.zeros(18)
+    usync = u.copy()
+    half = False
+    P = np.zeros((nsteps, 18))
+    for st in range(nsteps):
+        F = ff + Q @ p - K @ u
+        a = F[free] / m[free]
+        if not half:
+            v = 0.5 * dt * a
+            half = True
+        else:
+            v = v + dt * a
+        u[free] = u[free] + dt * v
+        du = u - usync
+        p = p - (dt * (H @ p) + Q.T @ du) / slump
+        p[drained] = 0.0
+        usync = u.copy()
+        P[st] = p
+    return P
+
+
+def test_c1_toy_twin():
+    """PREDICTION (before assert): the C++ FU_EXPLICIT march IS the toy
+    cd_march(fluid='explicit') verbatim (3b.2 FROZEN), so a numpy replica of
+    the e72 column — exact Q4 K/S/Q/H, quad's lumped mass, the calibrated
+    pairing a(u_k, p_k) -> u advance -> p forward step on du_k, FULL-row-sum
+    slump, drained rows held — reproduces the C++ `-record` p trajectory to
+    relL2 <= 1e-6 over 500 commits at 0.5x the pencil (FP-ordering noise
+    only; a sign/pairing/lumping drift shows up as O(1))."""
+    dt = 0.5 * _pencil("e72_exp")
+    ns = 500
+    rp = _rec("c1_twin.csv")
+    _build_e72(fluid="explicit", record=rp)
+    _march_guard(ns, dt, _nt(0, _E72["nely"] - 1), chunks=4)
+    ops.wipe()
+    _t, cP, t2c = _read_record(rp)
+    assert cP.shape[0] == ns, f"{cP.shape[0]} record rows != {ns} commits"
+    Prep = _replica_march(ns, dt)
+    cols = [t2c[tag] for tag in range(1, 19)]      # CSV cols in tag order
+    rel = _relL2(cP[:, cols], Prep)
+    assert np.max(np.abs(Prep)) > 0.0, "replica produced an all-zero p trajectory"
+    assert rel <= 1.0e-6, (
+        f"C++ FU_EXPLICIT march vs numpy toy-twin relL2 {rel:.3e} > 1e-6 over "
+        f"{ns} steps — the explicit advance drifted from the FROZEN 3b.2 toy "
+        f"(check sign/pairing/du reference/slump lumping)")
+    info = f"relL2 {rel:.2e} over {ns} commits at dt {dt:.4e}"
+    print(f"PASS (c1) toy twin: {info}")
+    return info
+
+
+def test_c2_self_convergence():
+    """PREDICTION (before assert): each lane (FU_EXPLICIT; FU_IMPLICIT +
+    -fsL zero) is O(Dt)-consistent to ITS OWN spatial semi-discretization
+    limit, so Richardson against its OWN finest-dt trajectory (0.05x, with
+    levels {0.4, 0.2, 0.1}x the advisory, ZS84 draining column) gives
+    observed order >= 0.9 per lane (finite-reference bias pushes a clean
+    order-1 scheme UP, ~1.2/1.6 — the floor only catches broken
+    convergence). Replaces the REFUTED inter-lane matched-dt gate (module
+    docstring records the transposition)."""
     adv = _pencil("zs84_exp")
     t_end = 1.5
     n0 = int(8 * math.ceil(t_end / (0.4 * adv) / 8))
-    if n0 > 1600:                       # runtime guard: shrink horizon, keep dt
-        t_end = t_end * 1600.0 / n0
-        n0 = 1600
+    if n0 > 1200:                       # runtime guard: shrink horizon, keep dt
+        t_end = t_end * 1200.0 / n0
+        n0 = 1200
     probes = [_nt(0, j) for j in _ZS84_PROBES_J]
-    diffs = []
-    for lev in range(3):
-        n = n0 * 2 ** lev
-        dt = t_end / n
-        P_lane = {}
-        for lane in ("explicit", "implicit_fsl0"):
-            rp = _rec(f"c_{lane}{lev}.csv")
+    infos = []
+    for lane in ("explicit", "implicit_fsl0"):
+        samp = {}
+        for lev, mult in enumerate((1, 2, 4, 8)):   # 0.4x .. 0.05x the advisory
+            n = n0 * mult
+            dt = t_end / n
+            rp = _rec(f"c2_{lane}{lev}.csv")
             _build_zs84_lane(lane, record=rp)
             _march_guard(n, dt, _nt(0, _Z["nely"] - 1))
             _t, P, t2c = _read_record(rp)
             assert len(P) == n, (
                 f"{lane} level {lev}: {len(P)} record rows != {n} commits")
             rows = [k * n // 8 - 1 for k in range(1, 9)]
-            cols = [t2c[p] for p in probes]
-            P_lane[lane] = P[np.ix_(rows, cols)]
-            assert np.all(np.isfinite(P_lane[lane])), (
+            cols = [t2c[pn] for pn in probes]
+            samp[lev] = P[np.ix_(rows, cols)]
+            assert np.all(np.isfinite(samp[lev])), (
                 f"{lane} level {lev}: non-finite p")
-        diffs.append(_relL2(P_lane["explicit"], P_lane["implicit_fsl0"]))
-    orders = [math.log2(diffs[i] / diffs[i + 1]) for i in range(len(diffs) - 1)]
-    assert diffs[-1] < diffs[0], f"inter-lane diffs did not shrink: {diffs}"
-    assert min(orders) >= 0.9, (
-        f"inter-lane mutual order < 0.9: orders={[round(o, 2) for o in orders]} "
-        f"diffs={[f'{d:.3e}' for d in diffs]}")
-    info = (f"advisory {adv:.4e}s dt0 {t_end / n0:.4e}s diffs "
-            f"{[f'{d:.2e}' for d in diffs]} orders {[round(o, 2) for o in orders]}")
-    print(f"PASS (c) lane equivalence: {info}")
+        errs = [_relL2(samp[lev], samp[3]) for lev in range(3)]
+        orders = [math.log2(errs[i] / errs[i + 1]) for i in range(2)]
+        assert errs[2] < errs[0], f"{lane}: errors did not shrink: {errs}"
+        assert min(orders) >= 0.9, (
+            f"{lane}: self-convergence order < 0.9: "
+            f"orders={[round(o, 2) for o in orders]} "
+            f"errs={[f'{e:.3e}' for e in errs]}")
+        infos.append(f"{lane}: errs {[f'{e:.2e}' for e in errs]} orders "
+                     f"{[round(o, 2) for o in orders]}")
+    info = "; ".join(infos) + f" [adv {adv:.4e}s dt0 {t_end / n0:.4e}s]"
+    print(f"PASS (c2) self-convergence: {info}")
     return info
 
 
@@ -815,6 +1045,10 @@ def test_c_lane_equivalence():
 _SMS_INFO = "priced the UNDRAINED pencil"     # frozen 3b.4 INFO fragment
 _SMS_INFO_TAG = "(ADR-73 P3b)"
 _SMS_OLD = "UNSUPPORTED"                       # retired blanket warning marker
+# MAIN run-2 adjudication: the consistent/Olovsson builder's one-time loud
+# under-delivery warning (exact fragment to assert)
+_SMS_CONS_WARN = ("the Olovsson centroid-preserving blocks under-scale the "
+                  "undrained COUPLING mode")
 _D_KBAR = 1.0e-8       # DRAINING (pumping absorbed; diffusion slack still ~1e5)
 _D_ALPHAM = 400.0      # ~2% xi at the column fundamental — quirks-row absorber
 _D_HORIZON = 4000      # the P3 Richardson-battery step class
@@ -831,15 +1065,21 @@ def test_d_sms_composability():
     the quirks-row scenario), DRAINED pricing sees every drained dt_e >>
     dtTarget and scales NOTHING (the no-overlay control measures exactly
     that), so a pre-fix march at the 'certified' dtTarget blows up fast
-    (> 1.32x the true limit — the pathology child). With the P3b Kadd seam,
-    BOTH builders price the UNDRAINED per-element pencil: all 8 overlay cells
-    scale (loose gate >= 4 — direction pinned), the injected mass is large
-    (s ~ T^2 = 9 per cell), the 4000-step march at dtTarget is STABLE
-    (draining kbar=1e-8 + alphaM=400 absorb the lane-inherited secular
-    pumping, which is gate (g)'s subject, not an SMS defect), the retired
-    'UNSUPPORTED' text never prints, and the exact one-time INFO line
-    'SMS sizing priced the UNDRAINED pencil for N overlay-owned elements
-    (ADR-73 P3b)' does."""
+    (> 1.32x the true limit — the pathology child). LUMPED builder (HARD
+    gate): prices the UNDRAINED per-element pencil, all 8 overlay cells
+    scale (loose gate >= 4 — direction pinned), the 4000-step march at
+    dtTarget is STABLE (draining kbar=1e-8 + alphaM=400 absorb the
+    lane-inherited secular pumping — gate (g)'s subject, not an SMS defect),
+    'UNSUPPORTED' never prints, the exact INFO line does. CONSISTENT builder
+    (TRANSPOSED per MAIN run-2 adjudication): Olovsson centroid-preserving
+    blocks under-scale the rigid-translation component of the volumetric
+    coupling mode (measured uniform divergence ratio ~1.83/step at the
+    certified dtTarget), so the leg asserts the one-time loud warning
+    '...the Olovsson centroid-preserving blocks under-scale the undrained
+    COUPLING mode...' fires at SIZING (chronologically before the march —
+    merged-stream child), plus INFO present / UNSUPPORTED absent; the
+    certified march is EXPECTED-LIMITED and its outcome is RECORDED, never
+    stability-asserted."""
     und = _pencil("e72_exp_k8")
     dtT = 3.0 * und
     ov = ["-fluidUpdate", "explicit"]
@@ -854,31 +1094,69 @@ def test_d_sms_composability():
     step_p = _div_step(out_p)
 
     reports = [f"unscaled@dtT=D@{step_p}"]
-    for name in ("CentralDifferenceSMS", "CentralDifferenceSMSConsistent"):
-        out, rc = _run_child(_march_child_src(
-            dtT, _D_HORIZON, ov, intg=(name, dtT, "-verbose"),
-            kbar=_D_KBAR, alpham=_D_ALPHAM), timeout=420)
-        assert _bounded(out, rc), (
-            f"{name}: the SMS-certified dtTarget march DIVERGED "
-            f"(step {_div_step(out)}) — undrained pricing did not make the "
-            f"certification honest:\n{out[-1200:]}")
-        assert _SMS_OLD not in out, (
-            f"{name}: the retired blanket '...UNSUPPORTED...' warning still "
-            f"prints (3b.4: warnIfOverlayPresentSMS must be REMOVED):\n"
-            + out[-1200:])
-        assert _SMS_INFO in out and _SMS_INFO_TAG in out, (
-            f"{name}: the one-time INFO line 'SMS sizing priced the UNDRAINED "
-            f"pencil for N overlay-owned elements (ADR-73 P3b)' is MISSING "
-            f"(battery-greppable honesty, 3b.4):\n{out[-1200:]}")
-        k, n = _scaled_count(out)
-        assert k is not None, (
-            f"{name}: no 'scaled k/n' report line found (-verbose):\n"
-            + out[-1200:])
-        assert k >= 4, (
-            f"{name}: only {k}/{n} elements scaled at dtTarget = 3x the "
-            f"undrained pencil — undrained pricing should catch (all) 8 "
-            f"overlay cells (~26x factor class)")
-        reports.append(f"{name}: scaled {k}/{n}, bounded@{_D_HORIZON}")
+
+    # ---- LUMPED builder: the HARD certified-stable leg ----------------------
+    name = "CentralDifferenceSMS"
+    out, rc = _run_child(_march_child_src(
+        dtT, _D_HORIZON, ov, intg=(name, dtT, "-verbose"),
+        kbar=_D_KBAR, alpham=_D_ALPHAM), timeout=420)
+    assert _bounded(out, rc), (
+        f"{name}: the SMS-certified dtTarget march DIVERGED "
+        f"(step {_div_step(out)}) — undrained pricing did not make the "
+        f"certification honest:\n{out[-1200:]}")
+    assert _SMS_OLD not in out, (
+        f"{name}: the retired blanket '...UNSUPPORTED...' warning still "
+        f"prints (3b.4: warnIfOverlayPresentSMS must be REMOVED):\n"
+        + out[-1200:])
+    assert _SMS_INFO in out and _SMS_INFO_TAG in out, (
+        f"{name}: the one-time INFO line 'SMS sizing priced the UNDRAINED "
+        f"pencil for N overlay-owned elements (ADR-73 P3b)' is MISSING "
+        f"(battery-greppable honesty, 3b.4):\n{out[-1200:]}")
+    k, n = _scaled_count(out)
+    assert k is not None, (
+        f"{name}: no 'scaled k/n' report line found (-verbose):\n"
+        + out[-1200:])
+    assert k >= 4, (
+        f"{name}: only {k}/{n} elements scaled at dtTarget = 3x the "
+        f"undrained pencil — undrained pricing should catch (all) 8 "
+        f"overlay cells (~26x factor class)")
+    reports.append(f"{name}: scaled {k}/{n}, bounded@{_D_HORIZON} (HARD)")
+
+    # ---- CONSISTENT builder: EXPECTED-LIMITED (warning + record, no ---------
+    #      stability assert; merged streams for the fired-before-march order)
+    name = "CentralDifferenceSMSConsistent"
+    out_c2, rc_c2 = _run_child(_march_child_src(
+        dtT, _D_HORIZON, ov, intg=(name, dtT, "-verbose"),
+        kbar=_D_KBAR, alpham=_D_ALPHAM), timeout=420, merge=True)
+    assert _SMS_CONS_WARN in out_c2, (
+        f"{name}: the one-time loud under-delivery warning "
+        f"('...{_SMS_CONS_WARN}...') is MISSING when a consistent build "
+        f"scales overlay-owned elements (MAIN run-2 adjudication):\n"
+        + out_c2[-1500:])
+    assert "RESULT" in out_c2, f"{name}: child produced no RESULT marker:\n" + out_c2[-800:]
+    assert out_c2.index(_SMS_CONS_WARN) < out_c2.index("RESULT"), (
+        f"{name}: the under-delivery warning did NOT fire before the march "
+        f"ended (must print at SIZING, not post-mortem)")
+    assert _SMS_OLD not in out_c2, (
+        f"{name}: the retired blanket '...UNSUPPORTED...' warning still "
+        f"prints:\n{out_c2[-1200:]}")
+    assert _SMS_INFO in out_c2 and _SMS_INFO_TAG in out_c2, (
+        f"{name}: INFO line missing:\n{out_c2[-1200:]}")
+    kc2, nc2 = _scaled_count(out_c2)
+    cons_outcome = ("BOUNDED@%d (under-delivery did not manifest at this "
+                    "config — reported honestly)" % _D_HORIZON
+                    if _bounded(out_c2, rc_c2)
+                    else f"DIVERGED at step {_div_step(out_c2)}")
+    print("=" * 74)
+    print("LOUD (d) CONSISTENT-BUILDER RECORD (EXPECTED-LIMITED, MAIN run-2):")
+    print(f"   {name} @ certified dtTarget {dtT:.4e}: {cons_outcome}")
+    print(f"   scaled {kc2}/{nc2}; warning fired at sizing; adjudicated "
+          f"mechanism: centroid-preserving blocks skip the rigid-translation")
+    print("   component of the volumetric coupling mode (uniform divergence")
+    print("   ratio ~1.83/step measured at adjudication).")
+    print("=" * 74)
+    reports.append(f"{name}: scaled {kc2}/{nc2}, warning fired, "
+                   f"{cons_outcome} (RECORDED, not asserted)")
 
     # drained/no-overlay control: same dtTarget scales NOTHING, no INFO line
     out_c, rc_c = _run_child(_march_child_src(
@@ -1219,9 +1497,11 @@ def test_s4_db_roundtrip_midmarch():
 # ==========================================================================
 _ALL = [
     ("a  diffusion slack + fold + report line", test_a_diffusion_slack),
-    ("b  coupled CFL envelope (1.32x pin)", test_b_cfl_envelope),
-    ("c  implicit-lane equivalence (order>=0.9)", test_c_lane_equivalence),
-    ("d  SMS composability BOTH builders", test_d_sms_composability),
+    ("b  coupled CFL envelope (noise IC, 1.32x pin)", test_b_cfl_envelope),
+    ("c1 toy twin (numpy replica == C++ march)", test_c1_toy_twin),
+    ("c2 per-lane self-convergence (order>=0.9)", test_c2_self_convergence),
+    ("d  SMS composability (lumped HARD, consistent RECORDED)",
+     test_d_sms_composability),
     ("f  recorder CSV-twin under FU_EXPLICIT", test_f_recorder_csv_twin),
     ("g  secular pumping MEASURED", test_g_secular_pumping_measured),
     ("s1 driver refusal", test_s1_driver_refusal),

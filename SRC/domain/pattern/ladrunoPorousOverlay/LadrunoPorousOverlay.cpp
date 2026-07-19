@@ -140,6 +140,7 @@ LadrunoPorousOverlay::LadrunoPorousOverlay(
    marchNoticeShown_(false),
    tLastSync_(0.0), tLastSyncValid_(false),
    advancedThisStep_(false), removalSyncPending_(false),
+   anchorFromRestore_(false),
    externalStepping_(false), pScale_(1.0), relChange_(0.0),
    moduliDirty_(false), driverSubcycleNoticeShown_(false),
    augSingularWarned_(false),
@@ -171,6 +172,7 @@ LadrunoPorousOverlay::LadrunoPorousOverlay()
    marchNoticeShown_(false),
    tLastSync_(0.0), tLastSyncValid_(false),
    advancedThisStep_(false), removalSyncPending_(false),
+   anchorFromRestore_(false),
    externalStepping_(false), pScale_(1.0), relChange_(0.0),
    moduliDirty_(false), driverSubcycleNoticeShown_(false),
    augSingularWarned_(false),
@@ -1347,9 +1349,25 @@ int LadrunoPorousOverlay::onDomainCommit(double domainTime, double dT)
 void LadrunoPorousOverlay::explicitAdvanceAtApplyLoad(double time)
 {
   // (caller guards: FU_EXPLICIT && SM_MARCH && snapshotOk_ && !externalStepping_)
-  if (!tLastSyncValid_) {                  // first use (fresh run or restore):
-    tLastSync_ = time;                     // anchor the window here; the march
-    tLastSyncValid_ = true;                // starts at the NEXT load application
+  if (!tLastSyncValid_) {                  // first use:
+    // fresh run: anchor at THIS time (the CDL starter's t0 applyLoad, or the
+    // first step's trial time) — the march starts at the next load application.
+    tLastSync_ = time;
+    if (anchorFromRestore_) {
+      // RESTORE path only (recvSelf): saves happen at sync commits, so the
+      // last sync time is the restored COMMITTED time = time − getDT()
+      // (Domain::getDT() returns the current step's dT during applyLoad).
+      // Anchoring there makes the restored march continue BIT-EXACTLY — no
+      // one-step hold. Never applied on a fresh run (it would double the
+      // first window). Subcycle windows do not survive restore: the window
+      // restarts here, at the restored committed time (P1-consistent).
+      Domain* d = this->getDomain();
+      double dT = (d != 0) ? d->getDT() : 0.0;
+      if (dT > 0.0)
+        tLastSync_ = time - dT;
+    }
+    anchorFromRestore_ = false;
+    tLastSyncValid_ = true;
   }
   double dtW = time - tLastSync_;
 
@@ -2027,13 +2045,17 @@ int LadrunoPorousOverlay::recvSelf(int commitTag, Channel& theChannel,
   moduliDirty_ = false;
   driverSubcycleNoticeShown_ = false;
   // ADR-73 P3b explicit-lane march state is transient too: the sync anchor is
-  // re-derived at the first post-restore applyLoad (the uSnapshotValid_
-  // pattern), so the first restored step injects committed forces and the
-  // march resumes one step later — restart-benign, documented.
+  // re-derived at the first post-restore applyLoad. anchorFromRestore_ makes
+  // that anchor time − Domain::getDT() (= the restored COMMITTED time — saves
+  // happen at sync commits), so the restored march continues bit-exactly with
+  // no one-step hold. Subcycle windows do NOT survive restore: the window
+  // restarts at the restored committed time (counters reset by buildSnapshot),
+  // consistent with P1.
   tLastSync_ = 0.0;
   tLastSyncValid_ = false;
   advancedThisStep_ = false;
   removalSyncPending_ = false;
+  anchorFromRestore_ = true;
   return 0;
 }
 

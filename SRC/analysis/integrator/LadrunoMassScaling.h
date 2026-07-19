@@ -96,8 +96,16 @@ struct MassScalingReport {
                           //   step that still governs because they were not scaled; <=0 none)
 };
 
-// --- Ladruno (ADR-73 P3b §3b.4): SMS + porous-overlay composability — FIXED.
-//     BOTH builders (lumped and consistent) collect the LadrunoPorousOverlay
+// --- Ladruno (ADR-73 P3b §3b.4): SMS + porous-overlay composability.
+//     LUMPED builder = the composability DELIVERABLE: it prices the UNDRAINED
+//     pencil AND delivers dtTarget (real nodal mass injection scales the full
+//     coupled mode; certified march measured stable). CONSISTENT builder =
+//     PRICED-BUT-WARNED: it prices the same undrained pencil (strictly better
+//     reporting) but the Olovsson centroid-preserving M_bar leaves the
+//     undrained coupling mode's rigid-translation component unscaled, so it
+//     under-delivers dtTarget on overlay cells — a one-time LOUD warning fires
+//     when any overlay-owned element is scaled (ADR-73 §12 P3b, measured).
+//     BOTH builders collect the LadrunoPorousOverlay
 //     patterns once per build and, per element, sum the getUndrainedAugmentation
 //     blocks dK_e = Q_e S_e^-1 Q_e^T into a dense Matrix passed to
 //     elementCriticalDt(..., &Kaug) — SMS then sizes against the UNDRAINED
@@ -464,10 +472,13 @@ buildMassScalingConsistent(AnalysisModel *theModel, double dtTarget, CTSLumping 
 
     // Ladruno (ADR-73 P3b §3b.4): collect porous overlays once per build — the
     // consistent path prices the SAME undrained pencil as the lumped one (the
-    // pre-P3b verifier caught this path silently drained-priced too).
+    // pre-P3b verifier caught this path silently drained-priced too). NOTE the
+    // consistent path prices-but-WARNS: delivery is not honored for overlay
+    // cells (see the under-delivery warning at the end of this builder).
     std::vector<LadrunoPorousOverlay*> overlays;
     collectPorousOverlaysSMS(theDomain, overlays);
     int nAugmented = 0;
+    int nAugScaled = 0;   // augmented AND sub-target (received an M_bar block)
 
     // MP-constrained node tags — STRICTER than the lumped path: exclude any sub-target
     // element touching EITHER a slave (getNodeConstrained) OR a master/retained
@@ -631,9 +642,32 @@ buildMassScalingConsistent(AnalysisModel *theModel, double dtTarget, CTSLumping 
         // store the block with this element's tag (Ladruno V4 energy conduit) and
         // equation-number map.
         blocks.push_back(ConsistentBlock(ele->getTag(), feID, Mbar));
+        if (augmented) nAugScaled++;   // overlay-owned element actually scaled
         rep.addedMass += addedTrans;
         rep.nScaled++;
         if (dtDamped < rep.minDtScaled) rep.minDtScaled = dtDamped;
+    }
+    // Ladruno (ADR-73 §12 P3b, measured): consistent-SMS UNDER-DELIVERY on
+    // overlay cells. The Olovsson centroid-preserving M_bar scales only the
+    // non-rigid element modes, but the overlay's undrained coupling mode
+    // carries a large rigid-translation component that stays UNSCALED — the
+    // coupled frequency scales by LESS than sqrt(s), so consistent SMS cannot
+    // deliver dtTarget against the undrained pencil (the certified march
+    // diverges geometrically from step 1). The lumped builder injects real
+    // nodal mass and CAN deliver. Pricing stays undrained above (strictly
+    // better reporting); delivery is warned loudly here.
+    if (nAugScaled > 0) {
+        static bool consistentUnderDeliveryWarned = false;   // one-time latch
+        if (!consistentUnderDeliveryWarned) {
+            consistentUnderDeliveryWarned = true;
+            opserr << "WARNING LadrunoMassScaling (consistent) -- " << nAugScaled
+                   << " overlay-owned element(s) scaled: the Olovsson "
+                      "centroid-preserving blocks under-scale the undrained "
+                      "COUPLING mode (measured under-delivery, ADR-73 §12 P3b) "
+                      "-- the certified dtTarget is NOT honored for them; use "
+                      "lumped SMS (CentralDifferenceSMS) or size dt from the "
+                      "overlay-aware criticalTimeStep() report. (printed once)\n";
+        }
     }
     noteOverlayAugmentedSMS(nAugmented);   // Ladruno (ADR-73 P3b): one-time INFO
     return rep;
