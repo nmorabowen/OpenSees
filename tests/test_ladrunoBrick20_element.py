@@ -757,3 +757,59 @@ def test_material_response_without_gp_number_is_guarded():
     except Exception:
         res = None  # a clean interpreter-level refusal is fine; a crash is not
     assert not res
+
+
+# ==========================================================================
+# 11. F-1 (post-P2 adversarial gate) — the M0 mass cache follows live rho
+#     parameter updates. rho updates go DIRECTLY to the material clones
+#     (setParameter registers the materials on the Parameter, not the
+#     element), so the element re-reads a rho signature on every mass-path
+#     entry; without that, the Newmark mass TANGENT would keep the stale rho
+#     while the inertia RESIDUAL (fresh getRho) already sees the new one.
+# ==========================================================================
+def _newmark_tangent_with_rho_update(extra_args, rho0, rho1, dt=1.0e-2):
+    """Newmark tangent K + c3*M after building with rho0 and (optionally)
+    updating the material rho parameter to rho1 mid-analysis."""
+    _build_common(rho=rho0)
+    for n in _BOTTOM:
+        ops.fix(n, 1, 1, 1)
+    ops.element("LadrunoBrick20", 1, *_CONN, 1, *extra_args)
+    ops.constraints("Plain")
+    ops.numberer("Plain")
+    ops.system("FullGeneral")
+    ops.algorithm("Linear")
+    ops.integrator("Newmark", 0.5, 0.25)
+    ops.analysis("Transient")
+    assert ops.analyze(1, dt) == 0          # builds + caches M0 at rho0
+    if rho1 is not None:
+        ops.parameter(1, "element", 1, "rho")
+        ops.updateParameter(1, rho1)
+        assert ops.analyze(1, dt) == 0      # must rebuild M0 at rho1
+    return list(ops.printA("-ret"))
+
+
+@pytest.mark.parametrize("extra", [[], ["-formulation", "uri"]],
+                         ids=["std", "uri"])
+def test_f1_mass_follows_rho_parameter_update(extra):
+    """Born-at-rho and updated-to-rho tangents must MATCH; and the updated
+    tangent must differ from the stale one (two-sided so a no-op
+    updateParameter cannot pass silently)."""
+    born = _newmark_tangent_with_rho_update(extra, 2.0 * RHO, None)
+    stale = _newmark_tangent_with_rho_update(extra, RHO, None)
+    updated = _newmark_tangent_with_rho_update(extra, RHO, 2.0 * RHO)
+    _assert_matrix_close(updated, born, "K+c3M after rho update", rtol=5e-13)
+    ref = max(abs(x) for x in born)
+    assert max(abs(x - y) for x, y in zip(updated, stale)) > 1e-6 * ref, (
+        "update had no effect on the tangent — vacuous test"
+    )
+
+
+@pytest.mark.parametrize("extra", [[], ["-formulation", "uri"]],
+                         ids=["std", "uri"])
+def test_f1_born_massless_gains_mass_on_update(extra):
+    """A born-massless element must GAIN mass when rho is parameter-updated
+    from zero (a one-shot hasMass flag would keep it massless forever)."""
+    born = _newmark_tangent_with_rho_update(extra, RHO, None)
+    updated = _newmark_tangent_with_rho_update(extra, 0.0, RHO)
+    _assert_matrix_close(updated, born, "K+c3M born-massless then updated",
+                         rtol=5e-13)
