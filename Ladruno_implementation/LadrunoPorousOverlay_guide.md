@@ -174,7 +174,7 @@ pattern LadrunoPorousOverlay $tag \
     <-fsL classic | oedometric | zero | $scale>  ;# split modulus; default classic (§3, §6, §7)
     <-staticMode hold | steady>               ;# static-analysis commit policy (§4); DEFAULT MARCHES
     <-onRemoval keep | drain $kFactor>        ;# fluid life-cycle at element death; default keep (§10)
-    <-fluidUpdate implicit>                   ;# default implicit; 'explicit' parses but is fatal-NYI (P3b)
+    <-fluidUpdate implicit|explicit>          ;# default implicit; explicit = P3b matrix-free lane (§7)
     <-subcycle auto | $N>                     ;# fluid advance every N commits; default 1 (§7, §10)
     <-pInit steady | hydrostatic $gw <$zw> | $nd $val ...>   ;# initial p (§4)
     <-fluidBody $b1 $b2 <$b3>>                ;# seepage body drive (acceleration form)
@@ -201,8 +201,9 @@ Key defaults and gotchas, all verified in the parser:
 - **`-substep` was REMOVED** (its accuracy claim was refuted at P0 E7.3b — error
   flat over M = 1…10). The parser rejects it with a pointer to the ADR §12 P0 entry.
   Use `-subcycle` for the explicit lane.
-- **`-fluidUpdate explicit`** parses but is a fatal-NYI (the fully-matrix-free
-  Xu-2021-class lane is P3b, not yet built). `-fluidUpdate implicit` is the default.
+- **`-fluidUpdate explicit`** — the fully-matrix-free Xu-2021-class lane, shipped
+  at P3b (lumped-S* forward p-step at load-application time; §7 owns the recipe
+  and advisories). `-fluidUpdate implicit` is the default.
 
 **The pattern's load factor / TimeSeries is ignored by design.** The overlay owns
 its own force amplitudes — the applied nodal force is always `+Q·p_committed` at
@@ -447,17 +448,24 @@ input**: the drained control stays bounded, the ZS84 two-leg gate marches clean 
 near-zero-k undamped model: add any small `alphaM` Rayleigh, or use the implicit
 lane. See §11.
 
-### SMS + overlay = UNSUPPORTED
+### SMS + overlay: LUMPED SMS composes (P3b); consistent Olovsson is warned
 
-**Do not size selective mass scaling (`CentralDifferenceSMS`, lumped or consistent
-Olovsson) against an overlay model.** SMS sizing reads the per-element
-`elementCriticalDt` kernel directly, which receives **no** overlay augmentation — so
-it prices the *drained* pencil and can certify a `dtTarget` the overlay cells cannot
-carry: **certified-stable-but-actually-unstable** (ADR §12 P3 item 6). Both
-`LadrunoMassScaling` builders now print a loud one-time warning when an overlay is
-present. Pick `dtTarget` from the overlay-aware `criticalTimeStep()` **report**
-(× the 0.5 margin), not the SMS certification. The `criticalTimeStep()` report stays
-overlay-aware even under SMS. The composability fix is the P3b runway. See §11.
+**Fixed at P3b (ADR §12 P3b item 5).** Both `LadrunoMassScaling` builders now pass
+the per-element undrained augmentation through the `elementCriticalDt` Kadd seam,
+so SMS sizing prices the **undrained** pencil for overlay-owned cells (a one-time
+INFO line — `SMS sizing priced the UNDRAINED pencil for N overlay-owned elements
+(ADR-73 P3b)` — replaces the old blanket UNSUPPORTED warning).
+
+- **Lumped `CentralDifferenceSMS` is the supported combination**: the certified
+  `dtTarget` march is battery-hard-gated stable (gate (d): 8/8 elements scaled,
+  4000-step march bounded; the unscaled control at the same `dtTarget` diverges
+  at step 31).
+- **Consistent `CentralDifferenceSMSConsistent` under-delivers on overlay cells**
+  (measured ~×1.83/step divergence at the certified `dtTarget`): the Olovsson
+  centroid-preserving blocks scale only non-rigid element modes, and the undrained
+  coupling mode carries a rigid-translation component that stays unscaled. It now
+  prints a loud one-time warning when it scales overlay-owned elements — use
+  lumped SMS instead, or size dt from the `criticalTimeStep()` report. See §11.
 
 ### Subcycling
 
@@ -467,8 +475,53 @@ overlay-aware even under SMS. The composability fix is the P3b runway. See §11.
 θ = 0.089 (error doubles at that θ; ADR §12 P0 E7.3a). Error grows ~N^1.2, all N ≤
 50 stable on the L=0 lane. Removal events force a sync regardless of N (§10).
 
-`-fluidUpdate explicit` (the fully matrix-free fluid step) is **fatal-NYI** — it is
-the P3b lane, not built. Only the implicit-fluid-at-commit explicit lane ships.
+### `-fluidUpdate explicit` — the fully matrix-free fluid step (P3b)
+
+Shipped at P3b: the fluid advances by a **lumped-S\* forward step** — no CG, no
+factorization anywhere in the transient march (the fluid step is a local axpy).
+Recipe:
+
+```tcl
+pattern LadrunoPorousOverlay 77 -region {...} -Kf $Kf -rhoF $rf -perm $k $k \
+    -poro $n -moduli $E $nu -drained {...} -stab auto 0.25 \
+    -fluidUpdate explicit
+integrator CentralDifferenceLadruno -cfl
+set dtcr [criticalTimeStep]          ;# undrained pencil, min-folded with the
+analyze $nsteps [expr {0.5*$dtcr}]   ;#   fluid diffusion limit (dual CFL)
+```
+
+What to know (every claim measured — ADR §12 P3b):
+
+- **Pairing/sequencing**: the explicit fluid advances at *load-application*
+  time on the trial window Δu (the commit hook only syncs). This is invisible
+  to you but load-bearing: a commit-time advance is one force lag behind the
+  CD pairing and unconditionally unstable. The shipped lane is the frozen-toy
+  E7.4 scheme to machine precision (twin gate 6.7e-14). **CD-family
+  integrators are the supported lane** (under an implicit integrator the
+  advance pairs with the predictor state — not gated, not recommended).
+- **Dual CFL**: the report prints the explicit-fluid diffusion limit
+  `h²/(2·ndm·c_v)` and its slack factor (measured 1.5e4×–1.5e8× across
+  realistic k̄ — it never governs on real soils); `-subcycle N` must keep
+  N·Δt below it. The governing value returned by `criticalTimeStep()` already
+  min-folds it.
+- **Δt margin**: run at ≤ 0.5× the advisory as usual. The advisory is
+  *conservative* for this lane: the measured boundary sits above the pencil
+  (toy constant 1.32×; ≥ 2.5× on the battery's all-x-fixed column — the
+  per-element pencil is BC-blind, so constrained meshes gain margin).
+- **`-fsL` is inert** (no L, no iteration — one-time notice if you pass a
+  non-default value); `-stab` is march-inert (row-sum lumping annihilates the
+  stab Laplacian) but still shapes the advisory (stab-invariant anyway);
+  `-staticMode steady` keeps its small CG solve at static commits (gravity
+  init recipes unchanged); `-subcycle`, `-onRemoval`, `-pInit`, `-record`,
+  and the P4 recorder channels (`recorder ladruno -overlay`, `Monitor
+  -overlay`) work unchanged (CSV-twin gate exact under the lane).
+- **Zero-drainage pathology largely dissolves**: the §11 secular-pumping
+  legs that kill the implicit `-fsL zero` lane at 48k/30k/7.8k steps are
+  bounded to 60k/45k/15k caps under this lane — near-zero-k undamped models
+  are better served by `-fluidUpdate explicit`.
+- `LadrunoStaggeredAnalyze` **refuses** FU_EXPLICIT overlays (nothing to
+  iterate); MP remains per-process serial v1 (the halo design is documented
+  in ADR §8, not built).
 
 ---
 
@@ -615,7 +668,7 @@ Every row traces to a `LEDGER_quirks.md` entry or an ADR §12 log entry.
 | Staggered twin of a `LadrunoUP` model: solid barely settles (or double-loads) | Copied monolithic `-body` (ACCELERATION) into plain quad `b1 b2` (FORCE/VOLUME); with hydrostatic `+Q·p` the net can cancel to ~zero. | Quad gets `b2 = rho_mix * bY_accel`; overlay `-fluidBody` keeps the acceleration form (§4). |
 | Honest-p `LadrunoUP` under `CentralDifference` blows up — but only after ~1300 steps | CD leapfrogs the mass-less (first-order) fluid row = Richardson/DuFort-Frankel diffusion = unconditionally unstable. Tracks the reference (~1e-4) first, then dies. | Structural — no Δt/damping fixes it. Use the overlay explicit lane, or keep `LadrunoUP` implicit. A 400-step validation lies; march thousands (§8). |
 | No "pore-coupling work" channel in the energy breakdown; ULW looks inflated | The `+Q·p` forces ride the ADR-69 ULW (external-load-work) channel by construction. | Closure ERR is trustworthy; per-channel attribution of coupling work is not separable (P4 may split it) (§9). |
-| SMS certifies a `dtTarget` that then blows up | SMS sizes against the DRAINED per-element pencil (`elementCriticalDt` gets no overlay augmentation); overlay cells need the UNDRAINED pencil (≥ √(1+K_f/(n·M_oed)) smaller, measured ~26× on soft soil). | UNSUPPORTED until P3b. Size from the overlay-aware `criticalTimeStep()` report × 0.5, not the SMS certification. Loud warning ships (§7). |
+| SMS certifies a `dtTarget` that then blows up (CONSISTENT builder) | Fixed at P3b for lumped `CentralDifferenceSMS` (Kadd seam wired — sizing prices the undrained pencil; certified march hard-gated stable). `CentralDifferenceSMSConsistent` still under-delivers: the Olovsson centroid-preserving blocks don't scale the coupling mode's rigid-translation component (measured ×1.83/step at the certified dtTarget). | Use lumped SMS with overlays, or size from the `criticalTimeStep()` report × 0.5. The consistent builder warns loudly when it scales overlay cells (§7, §11). |
 | `-fsL zero` undamped near-zero-k column diverges no matter how small Δt | No dissipation channel to absorb the frozen-force O(Δt) splitting energy → secular pumping; no asymptotically stable Δt (blow-up horizon 48k @ 0.4× … 855 @ 3.0× pencil). | Add any small `alphaM` Rayleigh, or use the implicit lane. Real soils drain/damp and are fine (§7). |
 | `ops.LadrunoStaggeredAnalyze(...)` sometimes raises, sometimes returns a negative int | Setup misuse (static active / no transient analysis) raises `OpenSeesError`; run-time aborts (empty driven set, solve/fluid fail, maxIter) return −1/−2/−3/−6/−7. | Check for both: `assert rc == 0` catches only the run-time class (§6). |
 | Deformable transient DB (FileDatastore) restart used to diverge non-deterministically | Was an upstream quad/tri element-`rho` serialization bug (garbage restored mass), amplified by the overlay's large `+Q·p`. | FIXED in #577 (rho serialized + zero-init, all six quad/tri elements); deformable transient DB restart is supported again fork-wide. |
@@ -626,9 +679,10 @@ Every row traces to a `LEDGER_quirks.md` entry or an ADR §12 log entry.
 
 All numbers and behaviors above trace to: the shipped parser
 (`OPS_LadrunoPorousOverlay.cpp`) and driver (`LadrunoStaggeredDriver.cpp`); ADR-73
-§12 implementation-log entries (P0 #575, P1 #576, P2 #580, P3 #581); the frozen
+§12 implementation-log entries (P0 #575, P1 #576, P2 #580, P3 #581, P3b); the frozen
 measured constants block (`_adr73_implementation_plan.md` E7.1–E7.6); and the
-`LEDGER_quirks.md` rows dated 2026-07-14 through 2026-07-18. Where a behavior is
-unsupported (SMS+overlay, `-fluidUpdate explicit`, deformable ArcLength) or a
+`LEDGER_quirks.md` rows dated 2026-07-14 through 2026-07-19. Where a behavior is
+unsupported (consistent-SMS+overlay, implicit-integrator explicit-fluid pairing,
+deformable ArcLength) or a
 pathology has no stable Δt (undamped zero-drainage), the guide says so plainly
 rather than softening it.
