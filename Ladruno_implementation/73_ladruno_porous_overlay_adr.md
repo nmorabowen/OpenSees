@@ -758,6 +758,48 @@ one pin refutation):**
 7. Deferred/unchanged: pipelined-fluid note (§3.4 item 2) stays a
    documented note (re-affirmed); apeGmsh emitter/contract row =
    companion-repo follow-up (PR-body note).
+8. **Opus ×3 adversarial panel: PASS ×3 — zero CRITICAL, zero MAJOR from
+   the stability and reachability critics** (the battery critic's three
+   MAJORs were gate-strength items, all landed: gate (g) gained the
+   positive dissolution anchor — every explicit leg must outlive the
+   implicit-lane reference blowup step; new s5 gate covers the
+   FU_EXPLICIT + `-subcycle` window path; the consistent-SMS integrator
+   report now QUALIFIES its "stable after scaling" line via
+   `MassScalingReport::nOverlayAugScaled` instead of contradicting the
+   under-delivery warning). Both load-bearing adjudication theories were
+   quantitatively CONFIRMED by the stability critic: (a) the Olovsson M̄
+   zero-row-sum nullspace reproduces the measured ×1.83/step (implied
+   s_eff ≈ 8.24 vs target 9 — ~8 % modal-mass leakage into rigid
+   translation); (b) the gate-(b) margin is the per-element bound theorem
+   (Irons–Treharne: the BC-blind element pencil is a rigorous lower bound
+   on the assembled critical step) — safe direction, generalizes.
+   Reachability: 14 constructed attacks all refuted (starter double-apply,
+   Bathe sub-steps, removal-sync loss, dtW<0 retry, restore edges, hostile
+   latch, ADR-41 Uzawa same-time re-commits, moduli-failure aborts,
+   getCopy/serialize, recorder/ULW cadence, UAF class); minor hardening
+   landed (Print shows the lane; catchUpPendingWindow refuses
+   FU_EXPLICIT). Known non-coded caveats (documented, not gated): an
+   implicit-integrator plain-analyze march pairs the advance with the
+   predictor Δu (a LoadPattern cannot see the integrator — the ⟨A-3⟩
+   class; guide states CD-family-only); ExplicitBathe is stable-but-not-
+   toy-anchored (guide hedge); `-subcycle auto` N is resolved once and not
+   re-resolved on an adaptive-dt change (advisory-only); the diffusion CFL
+   has no hard abort (advisory-only by design, 7e3× realistic slack).
+9. **`-subcycle` on the explicit lane: the UNDRAINED CFL binds the SYNC
+   interval N·Δt (MEASURED — found by the panel-mandated s5 gate; the
+   3b.A "`-subcycle` unchanged" pin is REFUTED for this lane).** N=4 at
+   0.4× pencil (sync 1.6×) diverges at C++ step 395 / toy step 408 on the
+   exact battery column — where N=1 at the same Δt is bounded 60k; N=4 at
+   0.1× (sync 0.4×) is bounded. E7.3a's "all N ≤ 50 stable" was measured
+   on the IMPLICIT lane (the implicit fluid absorbs the sync-interval
+   stiffening) and does not transfer. Disposition: `-subcycle auto` under
+   FU_EXPLICIT resolves N=1 with a notice (the θ formula is
+   diffusion-accuracy math, and the explicit fluid step is an axpy —
+   there is no solve to amortize, so subcycling buys nothing on this
+   lane); manual N>1 stays legal with a loud one-time sync-CFL warning;
+   battery s5 pins all three behaviors (expected-diverge demo at the
+   toy-matched step class, bounded sync-0.4× leg with sync-cadence record
+   rows, auto→1 notice). Quirks row added.
 
 ### P4 — ecosystem: recorder channels + user guide, family close-out (PR #582, 2026-07-18)
 

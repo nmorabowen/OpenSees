@@ -143,6 +143,7 @@ LadrunoPorousOverlay::LadrunoPorousOverlay(
    anchorFromRestore_(false),
    externalStepping_(false), pScale_(1.0), relChange_(0.0),
    moduliDirty_(false), driverSubcycleNoticeShown_(false),
+   explicitSubcycleWarned_(false),
    augSingularWarned_(false),
    dbTag2_(0)
 {
@@ -175,6 +176,7 @@ LadrunoPorousOverlay::LadrunoPorousOverlay()
    anchorFromRestore_(false),
    externalStepping_(false), pScale_(1.0), relChange_(0.0),
    moduliDirty_(false), driverSubcycleNoticeShown_(false),
+   explicitSubcycleWarned_(false),
    augSingularWarned_(false),
    dbTag2_(0)
 {
@@ -1152,6 +1154,21 @@ void LadrunoPorousOverlay::revertFluid(void)
 void LadrunoPorousOverlay::resolveSubcycleN(double dt)
 {
   subcycleResolved_ = true;
+  // Ladruno (ADR-73 §12 P3b item 9, MEASURED): on the EXPLICIT-fluid lane the
+  // UNDRAINED coupled CFL binds the SYNC interval N·Δt (toy + C++ twin: N=4 at
+  // 0.4× pencil diverges ~step 400 where N=1 is bounded 60k) — the θ-formula
+  // below is diffusion-ACCURACY-based (E7.3a, implicit lane) and would resolve
+  // a dangerously large N here. Subcycling also buys ~nothing on this lane
+  // (the fluid step is an axpy; there is no solve to amortize). Auto = 1.
+  if (fluidUpdate_ == FU_EXPLICIT) {
+    subcycleN_ = 1;
+    opserr << "LadrunoPorousOverlay " << this->getTag()
+           << ": -subcycle auto under -fluidUpdate explicit resolves N=1 "
+              "(the undrained CFL binds the sync interval N*dt on this lane, "
+              "and the explicit fluid step has no solve to amortize; "
+              "ADR-73 §12 P3b)\n";
+    return;
+  }
   if (dt <= 0.0 || maxCv_ <= 0.0 || minEdge_ <= 0.0) { subcycleN_ = 1; return; }
   double val = 0.089 * minEdge_ * minEdge_ / (maxCv_ * dt);
   int N = (int)floor(val);
@@ -1392,6 +1409,22 @@ void LadrunoPorousOverlay::explicitAdvanceAtApplyLoad(double time)
   // per-commit step (dtW spans commitsSinceSync_+1 solid steps).
   if (subcycleMode_ == SC_AUTO && !subcycleResolved_)
     this->resolveSubcycleN(dtW / (double)(commitsSinceSync_ + 1));
+
+  // Ladruno (ADR-73 §12 P3b item 9, MEASURED): manual -subcycle N>1 stays
+  // legal on this lane but the UNDRAINED coupled CFL applies to the SYNC
+  // interval N·Δt — the implicit lane's E7.3a freedom (all N ≤ 50 stable)
+  // does NOT transfer (toy + C++ twin: N=4 at 0.4× pencil diverges ~step
+  // 400 where N=1 is bounded 60k). Warn loudly once.
+  if (subcycleN_ > 1 && !explicitSubcycleWarned_) {
+    explicitSubcycleWarned_ = true;
+    opserr << "WARNING LadrunoPorousOverlay " << this->getTag()
+           << ": -subcycle " << subcycleN_ << " under -fluidUpdate explicit "
+              "-- the UNDRAINED stability limit applies to the SYNC interval "
+              "N*dt on this lane (keep N*dt within the same margin you would "
+              "use for dt at N=1; the implicit lane's large-N freedom does "
+              "NOT transfer -- measured, ADR-73 §12 P3b). The explicit fluid "
+              "step is an axpy: subcycling buys ~nothing here. (printed once)\n";
+  }
 
   // window completes with THIS step? (a removal commit forces the sync)
   if (!removalSyncPending_ && (commitsSinceSync_ + 1) < subcycleN_) {
@@ -1638,6 +1671,12 @@ double LadrunoPorousOverlay::pAtNodeTag(int nodeTag) const
 int LadrunoPorousOverlay::catchUpPendingWindow(void)
 {
   if (!snapshotOk_)            return 0;
+  // Ladruno (ADR-73 P3b, panel reachability M-2, defensive): the P2 driver
+  // excludes FU_EXPLICIT overlays from the driven set, so no shipped caller
+  // reaches here on this lane — but a future direct caller would advance/
+  // commit WITHOUT moving tLastSync_ (it is commitFluid-owned only on the
+  // sync path), inflating the next applyLoad window. Refuse cleanly.
+  if (fluidUpdate_ == FU_EXPLICIT) return 0;
   if (commitsSinceSync_ <= 0)  return 0;         // nothing accumulated
   double dt = dtAccum_;
   if (dt <= 0.0) {                               // degenerate window: just reset
@@ -2044,6 +2083,7 @@ int LadrunoPorousOverlay::recvSelf(int commitTag, Channel& theChannel,
   relChange_ = 0.0;
   moduliDirty_ = false;
   driverSubcycleNoticeShown_ = false;
+  explicitSubcycleWarned_ = false;
   // ADR-73 P3b explicit-lane march state is transient too: the sync anchor is
   // re-derived at the first post-restore applyLoad. anchorFromRestore_ makes
   // that anchor time − Domain::getDT() (= the restored COMMITTED time — saves
@@ -2078,6 +2118,10 @@ void LadrunoPorousOverlay::Print(OPS_Stream& s, int flag)
   const char* sm  = (staticMode_ == SM_MARCH) ? "march" :
                     (staticMode_ == SM_HOLD) ? "hold" : "steady";
   const char* rm  = (onRemovalMode_ == RM_KEEP) ? "keep" : "drain";
+  // Ladruno (ADR-73 P3b, panel reachability M-1): the lane materially changes
+  // the physics (-fsL inert, load-application-time advance) — show it.
+  const char* fuStr = (fluidUpdate_ == FU_EXPLICIT) ? "explicit" : "implicit";
+  s << "  fluidUpdate=" << fuStr << "\n";
   s << "  fsL=" << fsL << " staticMode=" << sm << " onRemoval=" << rm
     << " subcycleN=" << subcycleN_ << " snapshotOk=" << (snapshotOk_ ? 1 : 0) << "\n";
 }

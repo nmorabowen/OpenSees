@@ -446,6 +446,8 @@ class LadrunoPorousOverlay : public LoadPattern
   double relChange_;             // relative change of the last advanceTrial
   bool   moduliDirty_;           // parameter route touched E/nu → rebuild lazily
   bool   driverSubcycleNoticeShown_;  // one-time "driver overrides -subcycle"
+  bool   explicitSubcycleWarned_;     // one-time FU_EXPLICIT N>1 sync-CFL warning
+                                      //   (ADR-73 §12 P3b item 9; transient)
 
   // ---- ADR-73 P3 undrained-augmentation cache (transient; lazily sized; ------
   // invalidated by rebuildModuliCaches — S* depends on moduli via α-stab).

@@ -499,11 +499,23 @@ What to know (every claim measured — ADR §12 P3b):
   E7.4 scheme to machine precision (twin gate 6.7e-14). **CD-family
   integrators are the supported lane** (under an implicit integrator the
   advance pairs with the predictor state — not gated, not recommended).
+  `ExplicitBathe` runs stable (the two sub-step re-advances are idempotent
+  from committed and panel-audited) but is **not toy-anchored** — the E7.4
+  boundary and the twin gate were measured on the CD march; prefer
+  `CentralDifferenceLadruno` for validated margins.
 - **Dual CFL**: the report prints the explicit-fluid diffusion limit
   `h²/(2·ndm·c_v)` and its slack factor (measured 1.5e4×–1.5e8× across
-  realistic k̄ — it never governs on real soils); `-subcycle N` must keep
-  N·Δt below it. The governing value returned by `criticalTimeStep()` already
-  min-folds it.
+  realistic k̄ — it never governs on real soils). The governing value
+  returned by `criticalTimeStep()` already min-folds it.
+- **`-subcycle` behaves differently on this lane (measured — §12 P3b
+  item 9)**: the UNDRAINED stability limit applies to the **sync interval
+  N·Δt**, not the solid step — N=4 at 0.4× the pencil (sync 1.6×) diverges
+  in ~400 steps where N=1 is bounded for 60k. The implicit lane's
+  large-N freedom (E7.3a, N ≤ 50) does NOT transfer. There is also no
+  reason to subcycle here: the explicit fluid step is an axpy, there is no
+  solve to amortize. `-subcycle auto` therefore resolves N=1 with a
+  notice; a manual N>1 prints a loud one-time warning — keep N·Δt within
+  the same margin you would use for Δt at N=1.
 - **Δt margin**: run at ≤ 0.5× the advisory as usual. The advisory is
   *conservative* for this lane: the measured boundary sits above the pencil
   (toy constant 1.32×; ≥ 2.5× on the battery's all-x-fixed column — the

@@ -15,7 +15,8 @@ overlay's plumbing rather than its consolidation accuracy:
      rate-form reference used at the NEXT step) is bit-identical to a clean run.
   4. region-validation fatals <A-13>      -- each in a fresh subprocess: unsupported
      cell, empty -drained, overlapping overlays, LadrunoUP in region, unknown
-     flag (-substep / -bogus), missing -moduli, -fluidUpdate explicit NYI.
+     flag (-substep / -bogus), missing -moduli. (4b: -fluidUpdate explicit is
+     ACCEPTED since ADR-73 P3b -- the old fatal-NYI case is retired.)
   5. pInit steady/hydrostatic closed form -- hydrostatic gamma_w*(z_w - z) clipped
      at 0 is node-exact; steady seepage under -fluidBody is a node-exact linear
      profile.

@@ -94,6 +94,10 @@ struct MassScalingReport {
                           //   the dt boost would not land; they remain GOVERNING (see below)
     double minDtConstrained; // smallest dt_e among the excluded constrained elements (the
                           //   step that still governs because they were not scaled; <=0 none)
+    int    nOverlayAugScaled; // Ladruno (ADR-73 P3b): overlay-owned (undrained-augmented)
+                          //   elements that actually received scaling. The CONSISTENT
+                          //   integrator qualifies its "stable after scaling" report line
+                          //   when > 0 (Olovsson under-delivery, ADR-73 SS12 P3b item 5).
 };
 
 // --- Ladruno (ADR-73 P3b §3b.4): SMS + porous-overlay composability.
@@ -199,7 +203,7 @@ buildMassScaling(AnalysisModel *theModel, double dtTarget, CTSLumping lumping,
     MassScalingReport rep; rep.addedMass = 0.0; rep.modelMass = 0.0;
     rep.nScaled = 0; rep.nElems = 0; rep.minDtScaled = dtTarget;
     rep.nSelfReport = 0; rep.minDtSelfReport = -1.0; rep.nMismatch = 0;
-    rep.nConstrained = 0; rep.minDtConstrained = -1.0;
+    rep.nConstrained = 0; rep.minDtConstrained = -1.0; rep.nOverlayAugScaled = 0;
     if (theModel == 0 || dtTarget <= 0.0) return rep;
     Domain *theDomain = theModel->getDomainPtr();
     if (theDomain == 0) return rep;
@@ -385,6 +389,7 @@ buildMassScaling(AnalysisModel *theModel, double dtTarget, CTSLumping lumping,
         }
         rep.addedMass += addedTrans;
         rep.nScaled++;
+        if (augmented) rep.nOverlayAugScaled++;   // Ladruno (ADR-73 P3b)
         if (dtDamped < rep.minDtScaled) rep.minDtScaled = dtDamped;   // governing (damped) step
     }
     noteOverlayAugmentedSMS(nAugmented);   // Ladruno (ADR-73 P3b): one-time INFO
@@ -465,7 +470,7 @@ buildMassScalingConsistent(AnalysisModel *theModel, double dtTarget, CTSLumping 
     MassScalingReport rep; rep.addedMass = 0.0; rep.modelMass = 0.0;
     rep.nScaled = 0; rep.nElems = 0; rep.minDtScaled = dtTarget;
     rep.nSelfReport = 0; rep.minDtSelfReport = -1.0; rep.nMismatch = 0;
-    rep.nConstrained = 0; rep.minDtConstrained = -1.0;
+    rep.nConstrained = 0; rep.minDtConstrained = -1.0; rep.nOverlayAugScaled = 0;
     if (theModel == 0 || dtTarget <= 0.0) return rep;
     Domain *theDomain = theModel->getDomainPtr();
     if (theDomain == 0) return rep;
@@ -642,7 +647,7 @@ buildMassScalingConsistent(AnalysisModel *theModel, double dtTarget, CTSLumping 
         // store the block with this element's tag (Ladruno V4 energy conduit) and
         // equation-number map.
         blocks.push_back(ConsistentBlock(ele->getTag(), feID, Mbar));
-        if (augmented) nAugScaled++;   // overlay-owned element actually scaled
+        if (augmented) { nAugScaled++; rep.nOverlayAugScaled++; }   // overlay-owned element actually scaled (ADR-73 P3b)
         rep.addedMass += addedTrans;
         rep.nScaled++;
         if (dtDamped < rep.minDtScaled) rep.minDtScaled = dtDamped;

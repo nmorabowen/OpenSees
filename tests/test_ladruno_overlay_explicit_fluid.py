@@ -1244,7 +1244,8 @@ def test_f_recorder_csv_twin():
     _build_e72(fluid="explicit", record=csv)
     ops.recorder("ladruno", h5p, "-overlay", 77)
     dt = 0.5 * _pencil("e72_exp")
-    # NB: _pencil wiped; rebuild (pencil is memoized so this is the only rebuild)
+    # NB: _pencil("e72_exp") is memoized (built at gate (a)), so this call does
+    # NOT wipe/rebuild — the build below is the live model for this gate.
     _build_e72(fluid="explicit", record=csv)
     ops.recorder("ladruno", h5p, "-overlay", 77)
     for _ in range(ns):
@@ -1315,6 +1316,24 @@ def test_g_secular_pumping_measured():
                 + out[-800:])
             results.append((mult, cap, True, st))
 
+    # POSITIVE anchor (panel battery-critic M-1 — the run-2/3 measurement made
+    # this falsifiable): the explicit lane must survive strictly BEYOND the
+    # implicit `-fsL zero` lane's measured blowup step on every leg
+    # (48344/30018/7761 — the quirks-row reference). This pins the
+    # secular-pumping DISSOLUTION as an assert, not just a record; a
+    # regression re-introducing the pumping (e.g. the sequencing lag) fails
+    # here even if each leg still parses cleanly.
+    _IMPLICIT_REF = {0.4: 48344, 0.5: 30018, 1.0: 7761}
+    for mult, cap, d, st in results:
+        ref = _IMPLICIT_REF.get(mult)
+        if ref is None:
+            continue
+        survived_to = cap if not d else st
+        assert survived_to > ref, (
+            f"{mult}x explicit leg survived only {survived_to} steps — NOT "
+            f"beyond the implicit-lane reference blowup at {ref}: the "
+            f"secular-pumping dissolution (ADR §12 P3b item 2) has regressed")
+
     # honest coherence gates
     div = [(m, s) for m, c, d, s in results if d]
     for (m1, s1), (m2, s2) in zip(div, div[1:]):
@@ -1343,10 +1362,6 @@ def test_g_secular_pumping_measured():
     print("   drained control fact (P3): same solid without the overlay "
           "bounded 30k steps")
     print("=" * 74)
-    info = "; ".join(
-        f"{m}x=" + (f"D@{s}" for _ in (0,)).__next__() if d else f"{m}x=B@{c}"
-        for m, c, d, s in results)
-    # (readable rebuild of the same string)
     info = "; ".join((f"{m}x=D@{s}" if d else f"{m}x=B@{c}")
                      for m, c, d, s in results)
     print(f"PASS (g) secular pumping measured: {info}")
@@ -1494,6 +1509,73 @@ def test_s4_db_roundtrip_midmarch():
 
 # ==========================================================================
 # standalone runner (table-driven, the family pattern)
+def test_s5_subcycle_under_explicit():
+    """PREDICTION (TRANSPOSED at MAIN run-5 adjudication — the first draft of
+    this gate expected N=4 @ 0.4x bounded and FOUND A REAL LANE PROPERTY):
+    on the EXPLICIT-fluid lane the UNDRAINED coupled CFL applies to the SYNC
+    interval N*dt, not the solid step — the implicit lane's E7.3a freedom
+    (all N <= 50 stable) does NOT transfer. Toy-verified on this exact
+    column: N=4 @ 0.4x pencil (sync 1.6x) diverges at toy step 408 / C++
+    step 395; N=4 @ 0.1x (sync 0.4x) bounded. Legs:
+      (i)  N=4 @ 0.4x pencil: EXPECTED-DIVERGE (the sync-CFL demonstration;
+           divergence step in the toy-matched few-hundred class) + the
+           one-time loud sync-CFL WARNING printed before it dies;
+      (ii) N=4 @ 0.1x pencil (sync 0.4x): BOUNDED 4000 steps; `-record`
+           rows == sync cadence ~nsteps/4 (the explicit lane records at
+           ADVANCING syncs only);
+      (iii) `-subcycle auto` under FU_EXPLICIT resolves N=1 with the
+           notice (the theta formula is implicit-lane accuracy math and
+           subcycling has no solve to amortize here)."""
+    und = _pencil("e72_exp")
+
+    # (i) sync-CFL demonstration: N=4 at 0.4x MUST diverge, with the warning
+    out, rc = _run_child(_march_child_src(
+        0.4 * und, 3000, ["-fluidUpdate", "explicit", "-subcycle", 4]),
+        timeout=300)
+    assert not _bounded(out, rc), (
+        "N=4 @ 0.4x pencil (sync 1.6x) BOUNDED — the measured sync-interval "
+        "CFL property (ADR §12 P3b item 9) has vanished; re-adjudicate")
+    st = _div_step(out)
+    assert 50 <= st <= 2500, (
+        f"N=4 @ 0.4x diverged at step {st}, outside the toy-matched "
+        f"few-hundred class (toy 408 / C++ 395)")
+    assert "the UNDRAINED stability limit applies to the SYNC interval" in out, (
+        "the one-time sync-CFL warning did not print before the divergence")
+
+    # (ii) N=4 at 0.1x (sync 0.4x): bounded + sync-cadence record rows
+    rec = os.path.join(_TMP, "s5_subcycle_explicit.csv")
+    if os.path.exists(rec):
+        os.remove(rec)
+    out2, rc2 = _run_child(_march_child_src(
+        0.1 * und, 4000,
+        ["-fluidUpdate", "explicit", "-subcycle", 4,
+         "-record", rec.replace("\\", "/"), 1]), timeout=300)
+    assert _bounded(out2, rc2), (
+        "N=4 @ 0.1x pencil (sync 0.4x) did not stay bounded:\n" + out2[-800:])
+    with open(rec) as fh:
+        nrows = sum(1 for ln in fh if ln.strip()) - 1   # minus header
+    expect = 4000 // 4
+    assert abs(nrows - expect) <= 2, (
+        f"-record rows {nrows} != sync cadence ~{expect} (±2): the explicit "
+        f"lane must record at ADVANCING syncs only")
+
+    # (iii) -subcycle auto resolves N=1 on this lane (notice + per-commit rows)
+    out3, rc3 = _run_child(_march_child_src(
+        0.4 * und, 400, ["-fluidUpdate", "explicit", "-subcycle", "auto"]),
+        timeout=300)
+    assert _bounded(out3, rc3), (
+        "-subcycle auto under FU_EXPLICIT did not march bounded:\n"
+        + out3[-800:])
+    assert "resolves N=1" in out3, (
+        "-subcycle auto under FU_EXPLICIT did not print the N=1 resolution "
+        "notice")
+
+    info = (f"sync-CFL demo N=4@0.4x D@{st} (warned); N=4@0.1x bounded, "
+            f"rows {nrows}~{expect}; auto->N=1")
+    print(f"PASS (s5) -subcycle under FU_EXPLICIT: {info}")
+    return info
+
+
 # ==========================================================================
 _ALL = [
     ("a  diffusion slack + fold + report line", test_a_diffusion_slack),
@@ -1508,6 +1590,7 @@ _ALL = [
     ("s2 -fsL inert + notice", test_s2_fsl_inert_under_explicit),
     ("s3 SM_STEADY then transient", test_s3_steady_then_transient),
     ("s4 DB round-trip mid-march", test_s4_db_roundtrip_midmarch),
+    ("s5 -subcycle window under FU_EXPLICIT", test_s5_subcycle_under_explicit),
 ]
 
 

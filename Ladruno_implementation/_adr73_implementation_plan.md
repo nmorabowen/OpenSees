@@ -647,6 +647,11 @@ augmentation) applies UNCHANGED — the measured explicit-fluid boundary sits
   fluid step is dtAccum_). The window is additionally bounded by the
   diffusion CFL — N·Δt ≤ Δt_diff — which the advisory prints; at realistic
   k̄ the slack is ~7e3× so it never binds in practice.
+  > **AMENDED at 3b.E run-5 (MEASURED — §12 P3b item 9 governs):** on this
+  > lane the UNDRAINED CFL binds the SYNC interval N·Δt (N=4 @ 0.4× pencil
+  > diverges ~step 400, toy-twinned; E7.3a's N≤50 freedom is
+  > implicit-lane-only). Shipped: auto → N=1 with notice; manual N>1 legal
+  > with a loud one-time sync-CFL warning; battery s5 pins it.
 - **`-stab` is march-inert under FU_EXPLICIT** (pinned semantics, toy-exact):
   the lumped diagonal is the ROW-SUM of S* and H̃·1 = 0 exactly, so
   rowsum(S*) = rowsum(S_phys) — the stab matrix cannot enter the explicit
