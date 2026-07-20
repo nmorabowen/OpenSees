@@ -56,6 +56,7 @@ habit as the ledgers, no tooling.
 | **Distributing coupling / RBE3** (`LadrunoDistributingCoupling`) | `element LadrunoDistributingCoupling tag refNode N i1..iN [-w w1..wN] [-k {Kt\|auto}] [-kAlpha a] [-host eleTag] [-kr Kr] [-enforce {penalty\|al}] [-bipenalty {-dtcr dt \| -wcap beta}] [-absolute]` | `g.constraints.distributing_coupling(master, slave, weighting="uniform"\|"area", …same knobs…)` — replaced the `NotImplementedError` stub (apeGmsh #610); `weighting="area"` computes per-independent **tributary areas** over the slave surface and emits `-w` in the sorted independent order (#637 — matches the `g.loads` surface-tributary lumping, so a force at R distributes like a uniform traction); R is massless ⇒ explicit runs need `bipenalty_dtcr`/`bipenalty_wcap`. ELE **33011**. Fork-only gated via `_FORK_ONLY_ELEMENTS`. | **shipped both sides** |
 | **Contact** (`contactSurface` + `contact` + `contactPlane` + `LadrunoContact` handler; ADR-41 / ADR-57) | `contactSurface tag (-slave \| -master nps \| -slave-segments nps) nodeTag…`; `contact tag masterTag slaveTag [kn kt mu \| auto] [-mortar -epsN auto\|v -mu -epsT -cohesion -tauMax -augTol -maxAug -ngp -tie] [-soft [S]] [-visc μ] [-consistanttan] [-geomtan] [-cell f] [-edgeedge … -edge*] [-outward ox oy oz]`; `contactPlane tag slaveSurfTag nx ny nz px py pz kn [-visc μ] [-soft [S]]`; `constraints LadrunoContact` | `g.constraints.contact(master, slave, formulation="nts"\|"mortar", kn/kt/mu \| eps_n/eps_t/cohesion/tau_max/aug_tol/max_aug/ngp, tie, soft, visc, consistent_tan, geom_tan, cell, edge_edge/edge_kn/edge_band/edge_mu/edge_kt/edge_cohesion/edge_tau_max/edge_consistent_tan/edge_soft/edge_alm/edge_aug_tol, outward)` — NTS node-to-segment penalty or mortar segment-to-segment ALM; **face-to-face friction fully exposed** (Coulomb `mu`, Tresca `tau_max`, `cohesion`, `eps_t`, `consistanttan`, `geomtan`); the **mortar-only edge-edge fallback** (`edge_*`, ADR-57 E2–E7) is exposed (edge_edge requires `formulation="mortar"`; the edge_* params require `edge_edge=True`). `g.constraints.mortar(...)` = deprecated alias → `contact(formulation="mortar", tie=True)`. `g.constraints.contact_plane(slave, normal=, point=, kn=, visc=, soft=)` = rigid analytical plane (frictionless; `kn` REQUIRED numeric, no `auto`). apeGmsh **auto-emits the `LadrunoContact` handler** when contacts/contact_planes are present; **serial-only** (partitioned/MPI emit fails loud). Round-trips `model.h5` via neutral `/contacts` (schema 2.25.0; edge-edge columns added 2.24.0→2.25.0) + `/contact_planes` (2.24.0); the `-cell` broad-phase knob + edge-edge fallback ride the contact row. Fork-only, gated at point-of-use. | **shipped both sides** — apeGmsh #722/#741/#744/#745/#746/#748 (contact + soft/visc/consistanttan/geomtan extensions + mortar alias + H5) / #760 (`-cell` broad-phase knob) / #761 (`contact_plane`) / #766 (**edge-edge lane** `-edgeedge` + `-edge*`, ADR-57 E2–E7 — the last substantial contact piece). The whole contact subsystem is now exposed apeGmsh-side. |
 | **Plane-strain σ_zz response** (`stressesPlaneStrain`) | `eleResponse tag stressesPlaneStrain` / `recorder Element ... stressesPlaneStrain` → `[σxx, σyy, σxy, σzz]` per GP (4th slot `ResponseType sigma33` from the new `NDMaterial::getStressZZ()`); on `quad` (FourNodeQuad), `Tri31`, `LadrunoQuad`, `LadrunoCST`, `BezierTri6`. Legacy 3-comp `"stresses"` untouched. | apeGmsh post-processing should prefer this token for plane-strain models — exact von Mises / triaxiality / principal stresses without the elastic ν(σxx+σyy) guess (which is WRONG once plastic). **Contract: finite σ_zz = authoritative; NaN = material doesn't expose it → fall back to the elastic estimate (plane-stress materials report NaN, never 0). MSVC text recorders print NaN as `-nan(ind)` — treat any non-finite token as NaN.** Materials covered: ElasticIsotropic, J2Plasticity, `PlaneStrain`-wrapper (any 3D material), DruckerPrager, LadrunoJ2, LadrunoConcrete3D. **`.ladruno` recorder: works with ZERO recorder edits** — the `-E` verb is generic (`recorder ladruno f -E stressesPlaneStrain`), verified end-to-end on all 5 elements: bucket `RESULTS/ON_ELEMENTS/stressesPlaneStrain/<tag>-<Class>[...]` with `NUM_COLUMNS = 4·nGP` and `COLUMN_MAP` `COMP_NAMES = "sigma11,sigma22,sigma12,sigma33"` per GP — `Results.from_ladruno` just needs the result name in its catalog. | **shipped OpenSees-side** ([#525](https://github.com/nmorabowen/OpenSees/pull/525)) — apeGmsh consumer pending |
+| **LadrunoPorousOverlay family** (persistent-fluid staggered u-p) | `pattern LadrunoPorousOverlay tag -region e1... -Kf Kf -rhoF rf -perm k1 k2 [k3] -poro n -moduli E nu -drained n1... [-layer {eles} -perm ... [-poro n] [-moduli E nu]]... [-alpha a] [-Ks Ks] [-thick t] [-stab off|auto a0|manual v] [-fsL classic|oedometric|scale|zero] [-staticMode hold|steady] [-onRemoval keep|drain kF] [-subcycle auto|N] [-pInit steady|hydrostatic gw [zw]|list ...] [-record f [everyN]] [-fluidUpdate implicit|explicit]`; driver `LadrunoStaggeredAnalyze n dt [-tol t] [-maxIter k] [-pScale s] [-verbose]` / `-stats`; p-field recording `recorder ladruno f -overlay [tags]` + `recorder Monitor -overlay tag [-nodes {...}] -sink f.h5` | **apeGmsh should ship a typed `ops.pattern.LadrunoPorousOverlay(pg=..., drained=<selection>, ...)` primitive + a `LadrunoStaggeredAnalyze` verb** (follow-up ADR on the apeGmsh side — join the ADR 0074 porous-media emission family; the overlay is the ELEMENT-FREE sibling of LadrunoUP: plain `ndf=ndm` solids, region = element PG, drained = node selection). Results side is nearly free: `-overlay` channels land as ordinary `RESULTS/ON_NODES/overlayPressure_<tag>` nodal scalars + `MODEL/OVERLAYS/OVERLAY_<tag>/{REGION_NODES,DRAINED_NODES}` topology rows (FORMAT_VERSION=1, additive). PATTERN **33022** (read live). | **shipped P0–P4+P3b** (fork PRs #575/#576/#580/#581/#582/#585); **apeGmsh emitter TO IMPLEMENT (follow-up ADR)** — normative detail in [[LadrunoPorousOverlay_guide]] |
 | **Ladruno brick element(s)** | TBD — higher-order hex, sibling to BezierTri6 on the solid side; will self-declare via the element contract | not yet — heads-up for the apeGmsh element registry. | draft (no plan file yet) |
 | **OpenSeesPyMP** | `import openseesmp` (per-rank MPI Python module) | affects which engine `Results.run()` drives (`openseespy` vs `openseesmp`). | shipped |
 
@@ -421,6 +422,54 @@ diagonal `C` → the explicit-friendly option). **Full theory/architecture/impl 
   `BandSPD`) when an absorbing layer is present, and avoid extra `fix`/`equalDOF` on
   boundary DOFs.
 
+### LadrunoPorousOverlay family (ADR-73, PATTERN 33022) — **apeGmsh emitter TO IMPLEMENT (follow-up ADR)**
+
+A pore-pressure field with its own life-cycle: a `LoadPattern` that owns a
+separately-solved p-field over a snapshot of EXISTING solid elements
+(`quad`/`SSPquad`/`stdBrick`/Ladruno solids at `ndf = ndm`, zero element
+changes) and pushes `+Q*p` back on the skeleton each step. Shipped complete on
+`ladruno` (P0-P4 + P3b). What apeGmsh needs to know:
+
+- **Division of labor vs `LadrunoUP`** (apeGmsh ADR 0074's subject): the
+  monolithic element is THE tool for implicit statics/consolidation on an
+  intact mesh; the overlay owns element removal below the water table (fluid
+  survives `remove element`), the explicit lanes, and companion-field use on
+  meshes you don't want to re-mesh with u-p elements. An apeGmsh emitter ADR
+  should treat 0074 + this as one porous-media family decision.
+- **Emitter shape (recommended)**: `ops.pattern.LadrunoPorousOverlay(pg="Soil",
+  drained=<node selection>, Kf=..., rhoF=..., perm=(...), poro=...,
+  moduli=(E, nu), layers=[...], ...)` — region from an element PG, drained
+  set from the `.select()` chain, `-layer` blocks from per-PG material zones.
+  Plus a `ops.analyze`-family verb for `LadrunoStaggeredAnalyze` and Monitor/
+  recorder `-overlay` pass-throughs. Gate at point of use (fork-only,
+  `ops.capabilities()`).
+- **THE modeling rules to enforce/document in the emitter** (each is a
+  measured trap, [[LadrunoPorousOverlay_guide]] SS4/SS7/SS11):
+  1. **ONE overlay per hydraulically connected water body** — layered deposits
+     = ONE overlay + `-layer` blocks, never one overlay per layer (no flow
+     between overlays; two overlays on one element = snapshot fatal).
+  2. **Body-force convention**: plain `quad` `b1 b2` is FORCE/VOLUME — the
+     saturated column needs `b = rho_mix * accel` (vs `LadrunoUP -body` =
+     ACCELERATION). Emitting the wrong convention makes `+Q*p` cancel the
+     under-scaled weight to ~zero settlement.
+  3. `-moduli E nu` is REQUIRED (v1); stage flips re-set via
+     `parameter $p loadPattern $tag E|nu|layerE i|layerNu i`
+     (`updateMaterialStage` cannot reach a LoadPattern).
+- **Two explicit lanes** (both CD-family only — `CentralDifferenceLadruno`):
+  `-fsL zero` (implicit fluid solve at commit) and `-fluidUpdate explicit`
+  (fully matrix-free lumped forward fluid step — no factorization anywhere).
+  Under the explicit-fluid lane: `-fsL` is inert; the undrained CFL binds the
+  SYNC interval `N*dt` for `-subcycle` (auto resolves N=1 — an emitter must
+  not "helpfully" set N>1 there); `criticalTimeStep()` is overlay-aware
+  (undrained pencil, dual-CFL folded) — size dt <= 0.5x its report; lumped
+  `CentralDifferenceSMS` is the supported mass-scaling combination
+  (consistent Olovsson under-delivers on the coupling mode and warns).
+- **Results**: `-overlay` channels are ordinary nodal scalars
+  (`overlayPressure_<tag>`, components `p`) + write-once `MODEL/OVERLAYS`
+  topology; the Monitor overlay columns are `overlay<tag>.p.node<n>` in the
+  standard SWMR stream. The generic `.ladruno`/Monitor readers should need
+  zero or near-zero changes — verify against a sample file, don't assume.
+
 ## Related docs (the normative detail)
 
 This is a quick reference; the deep specs live next door:
@@ -441,9 +490,23 @@ This is a quick reference; the deep specs live next door:
 - [[lysmer_asd_absorbing_boundaries_guide]] — Lysmer/ASD free-field absorbing
   boundaries: full theory, OpenSees architecture/implementation, and the §9
   `g.absorbing_boundary` ghost-layer generator contract.
+- [[LadrunoPorousOverlay_guide]] — the persistent-fluid staggered overlay
+  (PATTERN 33022): full command reference, init recipes, driver, explicit
+  lanes, recorder channels, quirks table.
 - [[LEDGER_implementations]] — authoritative class tags + shipping PRs.
 
 ## Maintenance log
+
+- 2026-07-20 — Added the **LadrunoPorousOverlay family** (ADR-73, PATTERN
+  33022; fork PRs #575/#576/#580/#581/#582/#585 — P0-P4 + P3b all merged):
+  pattern + `LadrunoStaggeredAnalyze` driver + `-overlay` recorder/Monitor
+  channels + two explicit lanes (`-fsL zero`, `-fluidUpdate explicit`
+  matrix-free). apeGmsh **typed emitter TO IMPLEMENT via a follow-up ADR**
+  (recommended: fold into the apeGmsh ADR 0074 porous-media emission family
+  next to LadrunoUP). Carried the three emitter-facing traps (one overlay per
+  water body; quad `b1 b2` = FORCE/VOLUME = rho_mix*accel; parameter-route
+  moduli after stage flips) and the explicit-fluid lane rules (sync-interval
+  CFL under `-subcycle`, lumped-SMS-only mass scaling).
 
 - 2026-06-29 — Added the **Contact** row (`contactSurface`/`contact`/`contactPlane`
   + `LadrunoContact` handler, ADR-41 / ADR-57). The whole contact subsystem was
