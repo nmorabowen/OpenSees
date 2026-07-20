@@ -289,3 +289,171 @@ def test_quad_eas_relieves_bending_locking_vs_std():
         f"eas={eas_coarse:.6e} (err={err_eas:.3e}), "
         f"std={std_coarse:.6e} (err={err_std:.3e}), ref={reference:.6e}"
     )
+
+
+# --------------------------------------------------------------------------
+# post-merge adversarial-review regressions (2026-07-19): the 8716c4cec /
+# 2eb3261e1 degeneracy-guard behaviors previously had NO direct coverage —
+# a revert to an ABSOLUTE det(J0) threshold would have passed every test
+# above (det(J0) scales as L^2, so a valid 1e-6-scale element trips an
+# absolute 1e-12 gate while a genuinely flat one at metre scale may pass it).
+# --------------------------------------------------------------------------
+def _scaled_square(scale):
+    return {1: (0.0, 0.0), 2: (scale, 0.0),
+            3: (scale, scale), 4: (0.0, scale)}
+
+
+@pytest.mark.parametrize("scale", [1.0e-6, 1.0, 1.0e6])
+def test_quad_eas_degeneracy_check_is_scale_invariant(scale, capfd):
+    """A healthy square at 1e-6 / 1 / 1e+6 metre scale must build and solve
+    under eas with NO degeneracy warning. At scale 1e-6, det(J0) = 2.5e-13:
+    the pre-8716c4cec absolute 1e-12 threshold refused exactly this element;
+    the dimensionless volume-ratio (== 1.0 for any rectangle) must not."""
+    nodes = _scaled_square(scale)
+    capfd.readouterr()
+    disps, _, _ = _static_solve(
+        nodes, _QCONN, _QBASE, _QLOADS,
+        lambda mat: ops.element("LadrunoQuad", 1, *_QCONN, mat, "-thick",
+                                _THK, "-type", "PlaneStress",
+                                "-formulation", "eas"))
+    out = capfd.readouterr()
+    text = (out.out + out.err).lower()
+    assert "degenerate" not in text, (
+        f"healthy scale-{scale} quad flagged degenerate:\n{text[:400]}"
+    )
+    assert all(math.isfinite(d) for d in disps)
+    assert _norm(disps) > 0.0
+
+
+def test_quad_eas_high_aspect_ratio_is_not_degenerate(capfd):
+    """Aspect ratio is NOT degeneracy: a healthy 100:1 rectangle has
+    orthogonal J0 columns (volume-ratio == 1) and must not be refused."""
+    nodes = {1: (0.0, 0.0), 2: (100.0, 0.0), 3: (100.0, 1.0), 4: (0.0, 1.0)}
+    capfd.readouterr()
+    disps, _, _ = _static_solve(
+        nodes, _QCONN, _QBASE, _QLOADS,
+        lambda mat: ops.element("LadrunoQuad", 1, *_QCONN, mat, "-thick",
+                                _THK, "-type", "PlaneStress",
+                                "-formulation", "eas"))
+    out = capfd.readouterr()
+    assert "degenerate" not in (out.out + out.err).lower()
+    assert all(math.isfinite(d) for d in disps)
+
+
+_DEGENERATE_QUADS = {
+    # COLLAPSE mode: all nodes on a line -> the xi J0-column is an fp residue
+    # (~1e-17). The pre-2026-07-20 |det|/(||c0|| ||c1||) ratio stayed ~1 here
+    # (det and the column product shrink TOGETHER) -> silent NaN with
+    # analyze() rc=0 — the bug this test was written against.
+    "collapsed-line": {1: (0.0, 0.0), 2: (1.0, 0.1),
+                       3: (2.0, 0.2), 4: (3.0, 0.3)},
+    # COLLINEAR mode: healthy-length but nearly parallel J0 columns (flattened
+    # parallelogram) — the mode the original ratio DID catch; kept so neither
+    # mode can regress independently.
+    "collinear-parallelogram": {1: (0.0, 0.0), 2: (2.0, 1.0),
+                                3: (4.0, 2.0 + 1e-12), 4: (2.0, 1.0 + 1e-12)},
+}
+
+
+@pytest.mark.parametrize("mode", list(_DEGENERATE_QUADS))
+def test_quad_eas_degenerate_element_refused_loudly(mode, capfd):
+    """BOTH degeneracy modes (axis collapse AND axis collinearity) must warn
+    'near-degenerate' at setDomain and FAIL the analysis (zeroed eas block ->
+    singular SOE), never run silently wrong. The guard metric is
+    |det J0| / max||col||^2 = (||c_min||/||c_max||)·|sin angle|."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    for tag, (x, y) in _DEGENERATE_QUADS[mode].items():
+        ops.node(tag, x, y)
+    ops.nDMaterial("ElasticIsotropic", 1, 1000.0, 0.3)
+    for n in _QBASE:
+        ops.fix(n, 1, 1)
+    capfd.readouterr()
+    ops.element("LadrunoQuad", 1, *_QCONN, 1, "-thick", _THK,
+                "-type", "PlaneStress", "-formulation", "eas")
+    out = capfd.readouterr()
+    assert "near-degenerate" in (out.out + out.err), (
+        "collinear quad must be flagged near-degenerate at setDomain"
+    )
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(3, 1.0, 0.0)
+    ops.system("FullGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.integrator("LoadControl", 1.0)
+    ops.algorithm("Linear")
+    ops.analysis("Static")
+    assert ops.analyze(1) != 0, (
+        "analysis over a degenerate eas element must FAIL, not run silently"
+    )
+
+
+def test_quad_eas_state_survives_db_restart_continuation():
+    """sendSelf/recvSelf pin: formulation ordinal + alphaCommit + material
+    state ship over the wire. Gate = the #577 CONTINUATION pattern: a
+    straight N-step run must match (4 steps -> save -> wipe -> rebuild the
+    UNANALYZED skeleton -> restore -> 1 more step). A dropped alphaCommit /
+    material state would derail the continuation step on this J2
+    plane-strain quad loaded past first yield. (A probe that compares
+    trial-state reads across a re-analyzed rebuild instead measures
+    inner-Newton re-solve scatter — ~2.4e-4 near the plastic knee — and
+    says nothing about the wire; hence continuation, not state-compare.)"""
+    import os
+    import tempfile
+
+    def build(analyze_steps):
+        ops.wipe()
+        ops.model("basic", "-ndm", 2, "-ndf", 2)
+        for tag, (x, y) in _QNODES.items():
+            ops.node(tag, x, y)
+        ops.nDMaterial("J2Plasticity", 91, 1.0e5, 4.0e4, 30.0, 60.0, 0.1, 0.0)
+        ops.nDMaterial("PlaneStrain", 1, 91)
+        for n in _QBASE:
+            ops.fix(n, 1, 1)
+        ops.element("LadrunoQuad", 1, *_QCONN, 1, "-thick", _THK,
+                    "-type", "PlaneStrain", "-formulation", "eas")
+        ops.timeSeries("Linear", 1)
+        ops.pattern("Plain", 1, 1)
+        ops.load(3, 8.0, -3.0)     # past first yield on the distorted quad
+        ops.load(4, 2.0, 5.0)
+        ops.system("FullGeneral")
+        ops.numberer("Plain")
+        ops.constraints("Plain")
+        ops.integrator("LoadControl", 0.2)
+        ops.test("NormDispIncr", 1e-10, 50)
+        ops.algorithm("Newton")
+        ops.analysis("Static")
+        if analyze_steps:
+            assert ops.analyze(analyze_steps) == 0
+
+    # reference: unbroken 5-step run
+    build(5)
+    ref_disp = list(ops.nodeDisp(3)) + list(ops.nodeDisp(4))
+    ref_sig = list(ops.eleResponse(1, "stresses"))
+
+    with tempfile.TemporaryDirectory(prefix="quad_eas_rt_",
+                                     ignore_cleanup_errors=True) as td:
+        db = os.path.join(td, "quad_eas_rt")
+        build(4)
+        try:
+            ops.database("File", db)
+        except Exception as exc:  # noqa: BLE001
+            pytest.skip(f"database() unsupported in this build: {exc}")
+        saved = ops.save(1)
+        if saved is not None and saved < 0:
+            pytest.skip("database save returned failure on this build")
+
+        ops.wipe()
+        build(0)                    # skeleton only — NO analyze before restore
+        ops.database("File", db)
+        ops.restore(1)
+        assert ops.analyze(1) == 0, "continuation step after restore failed"
+        got_disp = list(ops.nodeDisp(3)) + list(ops.nodeDisp(4))
+        got_sig = list(ops.eleResponse(1, "stresses"))
+        ops.wipe()
+
+    _assert_close(got_disp, ref_disp, "restart-continuation disp",
+                  rtol=1e-6, atol=1e-12)
+    _assert_close(got_sig, ref_sig, "restart-continuation stresses",
+                  rtol=1e-5, atol=1e-9)

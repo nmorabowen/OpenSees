@@ -350,15 +350,21 @@ void LadrunoQuad::buildEAStrue(void)
 
   easJ0det = J00 * J11 - J01 * J10;
 
-  // Scale-invariant degeneracy test: the dimensionless volume ratio
-  // |det J0| / (||col0|| ||col1||) is 1 for an orthogonal Jacobian and ->0 only
-  // as the two natural axes become collinear (a genuinely flat/degenerate
-  // element), independent of element SIZE. An absolute threshold on |det J0|
-  // alone would false-positive a valid but small element (det scales as L^2),
-  // hard-failing e.g. a sub-mm quad in SI-metre coordinates.
+  // Scale-invariant degeneracy test — normalize by max-column SQUARED, not the
+  // column product. |det| / (||c0|| ||c1||) = |sin(angle)| detects only axis
+  // COLLINEARITY and is BLIND to axis COLLAPSE: a quad squashed onto a line has
+  // one microscopic (fp-residue) column, so det and the column product shrink
+  // TOGETHER and the old ratio stays ~1 while easJ0inv = adj/det blows up to
+  // ~1/||c_min|| and the enhanced Newton silently NaNs (found by the post-merge
+  // adversarial battery, 2026-07-20 — analyze() even returned 0 on the NaN).
+  // |det| / max(||c0||,||c1||)^2 = (||c_min||/||c_max||) * |sin(angle)| catches
+  // BOTH modes, stays size-invariant, and still passes healthy high-aspect
+  // elements (100:1 rectangle -> 1e-2 >> 1e-10; the ratio is then an honest
+  // conditioning estimate of the eas mode map).  // Ladruno
   double col0 = sqrt(J00 * J00 + J10 * J10);
   double col1 = sqrt(J01 * J01 + J11 * J11);
-  double scale = col0 * col1;
+  double cmax = (col0 > col1) ? col0 : col1;
+  double scale = cmax * cmax;
   easDegenerate = (scale <= 0.0) || (fabs(easJ0det) < 1.0e-10 * scale);
   if (easDegenerate) {
     opserr << "WARNING LadrunoQuad::buildEAStrue() - element " << this->getTag()
