@@ -2624,16 +2624,22 @@ LadrunoBrick::buildEAStrue(void)
            - J0(0,1) * (J0(1,0)*J0(2,2) - J0(1,2)*J0(2,0))
            + J0(0,2) * (J0(1,0)*J0(2,1) - J0(1,1)*J0(2,0));
 
-  // Scale-invariant degeneracy test: the dimensionless volume ratio
-  // |det J0| / (||col0|| ||col1|| ||col2||) is 1 for an orthogonal Jacobian and
-  // ->0 only as the three natural axes become coplanar/collinear (a genuinely
-  // flat/degenerate element), independent of element SIZE. An absolute threshold
-  // on |det J0| alone would false-positive a valid but small element (det scales
-  // as L^3), hard-failing e.g. a sub-mm brick in SI-metre coordinates.
+  // Scale-invariant degeneracy test — normalize by max-column CUBED, not the
+  // column product. |det| / (||c0|| ||c1|| ||c2||) detects only axis
+  // collinearity/coplanarity of DIRECTIONS and is BLIND to axis COLLAPSE: a
+  // brick squashed flat leaves one microscopic (fp-residue) column, det and
+  // the column product shrink TOGETHER, the old ratio stays ~1, and
+  // easJ0inv ~ 1/||c_min|| silently NaNs the enhanced Newton (2D twin found by
+  // the post-merge adversarial battery, 2026-07-20; analyze() returned 0 on
+  // NaN). |det| / max_i(||c_i||)^3 = (||c_min|| ||c_mid|| / ||c_max||^2) *
+  // |angle factor| catches collapse AND coplanarity, stays size-invariant, and
+  // passes healthy thin slabs (1e-8-thickness ratio -> 1e-8 >> 1e-10).  // Ladruno
   double col0 = sqrt(J0(0,0)*J0(0,0) + J0(1,0)*J0(1,0) + J0(2,0)*J0(2,0));
   double col1 = sqrt(J0(0,1)*J0(0,1) + J0(1,1)*J0(1,1) + J0(2,1)*J0(2,1));
   double col2 = sqrt(J0(0,2)*J0(0,2) + J0(1,2)*J0(1,2) + J0(2,2)*J0(2,2));
-  double scale = col0 * col1 * col2;
+  double cmax = (col0 > col1) ? col0 : col1;
+  if (col2 > cmax) cmax = col2;
+  double scale = cmax * cmax * cmax;
   easDegenerate = (scale <= 0.0) || (fabs(easJ0det) < 1.0e-10 * scale);
   if (easDegenerate) {
     opserr << "WARNING LadrunoBrick::buildEAStrue() - element " << this->getTag()
