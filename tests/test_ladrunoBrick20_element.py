@@ -24,8 +24,9 @@ On top of that (ADR 72 §6 P1 row):
   * sendSelf/recvSelf database round-trip,
   * parser surface: 'uri' ACCEPTED (P2 — contract battery in
     test_ladrunoBrick20_uri.py), '-hourglass' rejected (never, by design),
-    '-lumped' (accepted at parse with a process-once NOTICE; getMass errors
-    "lands P3" once per process and falls back), trailing '-damp' (refused),
+    '-lumped' (accepted at parse; getMass builds a positive HRZ diagonal since
+    P3 — full dynamics contract in test_ladrunoBrick20_dynamics.py), trailing
+    '-damp' (refused),
   * U1 advisory: a PROCESS-once opserr advisory when a "damage"-channel material
     (ASDConcrete3D-class) is attached; NEVER for ElasticIsotropic/LadrunoJ2,
   * R3 hardening: non-positive detJ (mid-edge node past the quarter point)
@@ -458,9 +459,11 @@ def test_hourglass_hard_error_by_design():
     assert _refused("-hourglass", "viscous"), "-hourglass (any flavour) refused"
 
 
-def test_lumped_accepted_at_parse_but_getmass_errors(capfd):
-    """'-lumped' parses (API stable) but getMass errors 'lands P3' and falls
-    back to consistent — asserted via the opserr channel (capfd, not capsys)."""
+def test_lumped_accepted_and_getmass_does_not_error(capfd):
+    """'-lumped' parses (API stable) and, since P3, getMass builds the HRZ
+    lumped mass WITHOUT the retired 'lands P3' error — asserted via the opserr
+    channel (capfd, not capsys). The HRZ fraction / positivity / conservation
+    contract lives in test_ladrunoBrick20_dynamics.py."""
     _build_common(rho=RHO)
     ops.element("LadrunoBrick20", 1, *_CONN, 1, "-lumped")
     tags = ops.getEleTags() or []
@@ -469,13 +472,11 @@ def test_lumped_accepted_at_parse_but_getmass_errors(capfd):
     assert 1 in tags, "'-lumped' must be ACCEPTED at parse time"
 
     capfd.readouterr()                      # drop construction chatter
-    for n in _CONN:
-        ops.mass(n, 1e-12, 1e-12, 1e-12)    # tiny floor so eigen is well posed
-    ops.eigen("-fullGenLapack", 6)          # triggers getMass
+    ops.eigen("-fullGenLapack", 6)          # triggers getMass (element mass now present)
     out = capfd.readouterr()
     text = out.out + out.err
-    assert "lands in P3" in text and "-lumped" in text, (
-        f"getMass with massType=1 must error clearly; got: {text[:400]!r}"
+    assert "lands in P3" not in text, (
+        f"getMass with massType=1 must no longer error 'lands P3'; got: {text[:400]!r}"
     )
 
 

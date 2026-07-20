@@ -33,7 +33,7 @@
 //
 //   element('LadrunoBrick20', tag, n1..n20, matTag,
 //           ['-formulation', <std|uri>]     # default std
-//           ['-lumped']                      # HRZ lumped mass (lands P3)
+//           ['-lumped']                      # HRZ lumped mass (P3; default consistent)
 //           ['-b', bx, by, bz]               # body force
 //           ['-damp', dampTag])              # Damping objects, per GP
 //
@@ -178,8 +178,8 @@ class LadrunoBrick20 : public Element {
 
   Vector *load;
   Matrix *Ki;
-  Matrix *M0;                         // cached consistent mass (integrated once)
-  int massType;                       // 0 consistent, 1 lumped (HRZ; lands P3)
+  Matrix *M0;                         // cached mass in use (consistent or HRZ diagonal), built once
+  int massType;                       // 0 consistent (27-pt), 1 lumped (HRZ diagonal, P3)
 
   Damping *theDamping[NGP];
 
@@ -225,9 +225,11 @@ class LadrunoBrick20 : public Element {
   // dual-scalar damage channel. Not serialized.  // Ladruno
   static bool advisedDamage;
 
-  // -lumped honesty guard: massType==1 is parsed + serialized (API stable) but
-  // the HRZ path lands P3 — getMass errors clearly ONCE (per process) and falls
-  // back to the consistent mass so the run is never silently wrong-but-quiet.
+  // HRZ lump guard (P3): massType==1 builds the positive-by-construction HRZ
+  // diagonal lump of the 27-pt consistent mass (ADR 72 §3.5). The consistent
+  // diagonals are Gram entries > 0, so the hrzLumpRaw guards pass by
+  // construction; this flag only fires (once per process) in the never-expected
+  // case that a guard trips and the lump falls back to diagonal-of-consistent.
   // Not serialized.  // Ladruno
   static bool warnedLumped;
 
@@ -249,8 +251,10 @@ class LadrunoBrick20 : public Element {
   void formResidual(void);                       // B^T sigma (+ damping + body) Gauss loop
   void formStiffness(int initialFlag);           // shared B^T D B assembly (tangent/initial)
   void computeConsistentMass(void);              // 27-pt consistent mass into `mass`
+  void computeLumpedMass(void);                  // HRZ diagonal lump of the 27-pt consistent mass (P3)
+  void ensureMassCache(void);                    // build M0 once with the mass model in use (consistent/HRZ)
   void refreshMassState(void);                   // rho-signature check: refresh hasMass, drop stale M0 (F-1)
-  void formInertiaResidual(void);                // rho N_a N_b accel momentum pass (residual only)
+  void formInertiaResidual(void);                // inertia residual: consistent momentum pass or lumped M*a (residual only)
   double computeVolume(void);                    // sum of cached dv
   void gatherCoords(double X[NEN][3]);           // reference nodal coords -> X[20][3]
 
