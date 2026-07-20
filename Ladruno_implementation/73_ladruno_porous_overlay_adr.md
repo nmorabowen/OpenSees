@@ -439,7 +439,7 @@ commit hook if taken.
 | **P1** | `LadrunoPorousOverlay` fs1 implicit end-to-end (Q4/T3/H8 regions) | Terzaghi vs analytic ≤ pinned tol at production Δt; **two-leg gate vs monolithic LadrunoUP** (ADR-71 methodology: mutual Δt-convergence, observed order ≥ 1; the exact-equality leg belongs to P2's iterated driver); **E4-in-OpenSees**: real `remove element` crack, both `-onRemoval` policies, curves vs the toy reference; **sequencing contract test** (step-load column p(0⁺) ≈ q — kills the fluid-first p≡0 trap class); L auto twin-checked vs oracle incl. `updateMaterialStage` dirty path; pattern-timing verification (forces bit-constant across a step's Newton iterations); serial DB round-trip; **full adversarial panel** (per [[feedback_adversarial_gate_when]]: core-touch — Domain hook + pattern semantics — and novel framework integration; the split math itself is spike-validated) — **DONE, PR #576 (2026-07-15): all gates green, panel PASS (§11 + §12 P1 entries); xfail-6c tripwire → upstream rho bug found+fixed #577, 6c now a hard gate** |
 | **P2** | iterated driver `LadrunoStaggeredAnalyze` (fs-k) | fixed-point gate: iterated staggered ≡ monolithic LadrunoUP same-Δt (E6 leg, target ≤ 1e-6 rel); B4 footing staggered (CB gate under stab); PDMY staged liquefaction column vs the ADR-71 P4 monolithic reference (stage transport → L/stab cache dirty); iteration-count telemetry (mean/max per step) exposed — **DONE, PR #580 (2026-07-18): all gates green with ONE gate transposition (§12 P2 entry item 1 — the ≤1e-6 exact-equality leg is against monolithic BE = the frozen toy `qs_mono` [measured 3.4e-7 p / 1.1e-8 u, both regimes]; vs the real LadrunoUP it is a mutual-Δt-convergence leg [orders 0.99/0.99], because NO stock integrator reproduces BE rates on the fluid row); Opus ×3 panel PASS-WITH-FIXES, all landed; rider: `-pInit` list DB restore CLEAN post-#577 → promoted to hard gate** |
 | **P3** | explicit lane | CD + overlay on B2/ZS84 column vs implicit monolithic (two-leg); **incumbent head-to-head** (§3.4): same column under upstream CentralDifference + FourNodeQuadUP — accuracy AND per-step cost/scaling vs the overlay's diagonal-solid + small-SPD-fluid path, plus the S→0 failure demo; measured CFL envelope vs the P0 pins; **overlay-aware Δt_cr advisory gated** (§3.4 item 3: per-element undrained factor √((M+K_f/n)/M) wired into the ADR-65 machinery — naive drained advisory demonstrated 5–8× optimistic, then corrected); `-subcycle auto|$N` sweep gate; pipelined-fluid design note carried (§3.4 item 2 — implementation may land here or P3b); **LEDGER_quirks row**: honest-p LadrunoUP + upstream CentralDifference = Richardson-unstable p (leapfrogged diffusion) — loud test pinning the symptom; energy-balance advisory channel (ADR-69: overlay work terms enter the closure residual — documented, not silently absent) — **DONE, PR #581 (2026-07-18): battery 8/8 (§12 P3 entry); `-fsL zero` lane + discrete-pencil advisory (per-cell Q·S*⁻¹·Qᵀ augmentation, measured factor 26.24 = 1.22× material, stab-invariant to 1.3e-14); two-leg ZS84 orders 1.05/1.01; incumbent head-to-head measured (overlay 2.2× less error at 2.4× less cost/step); Richardson pin holds WITH a ~1300-step incubation trap; NEW measured refutation — the zero-drainage undamped column has NO asymptotically stable dt (secular pumping, ⟨A-7⟩ hedge lands; "0.5× stable" is horizon-relative there); SMS+overlay = UNSUPPORTED until P3b (loud warning)** |
-| **P3b** *(option)* | `-fluidUpdate explicit` — fully matrix-free lane (§3.4 item 1, Xu-2021 class) | dual-CFL gate: diffusion limit verified slack by orders on realistic k′ sweep; measured undrained-CFL envelope vs the √((M+K_f/n)/M) prediction; equivalence vs implicit-fluid lane at matched Δt (both are O(Δt) splits); mass-scaling composability (SMS against the undrained pencil); MP smoke on the halo-exchange update (the §8 MP-risk dissolution demonstrated, not asserted) |
+| **P3b** *(option)* | `-fluidUpdate explicit` — fully matrix-free lane (§3.4 item 1, Xu-2021 class) | dual-CFL gate: diffusion limit verified slack by orders on realistic k′ sweep; measured undrained-CFL envelope vs the √((M+K_f/n)/M) prediction; equivalence vs implicit-fluid lane at matched Δt (both are O(Δt) splits); mass-scaling composability (SMS against the undrained pencil); MP smoke on the halo-exchange update (the §8 MP-risk dissolution demonstrated, not asserted) — **DONE (2026-07-19): battery 11/11 with THREE gate transpositions + ONE pin refutation, §12 P3b entry GOVERNS (advance moved to load-application time — the commit-hook advance is two-commit-stale under CDL's Aprev pairing and unconditionally unstable for explicit fluid; toy-twin 6.7e-14 = the C++ lane IS the E7.4 scheme; boundary closed SAFE-direction, advisory-conservative hard gate; matched-Δt inter-lane equivalence refuted → toy-twin + per-lane self-convergence; LUMPED SMS = composability deliverable with certified-stable hard gate, consistent/Olovsson = priced-but-WARNED measured under-delivery; MP transposed to partition-locality + §8 halo design, no MPI run claimed); zero-drainage secular pumping DISSOLVES under the explicit lane (bounded at 60k/45k/15k caps where implicit died at 48k/30k/7.8k)** |
 | **P4** | ecosystem | overlay p-field recorder channels (own response surface — nodal-DOF recorders can't see it; LadrunoRecorder/Monitor topology rows per [[06_quadrature_global_gp_plan]]); user guide (`LadrunoPorousOverlay_guide.md`) incl. division-of-labor table vs LadrunoUP + init recipes; banner line + ledgers → shipped; apeGmsh emitter runway note (companion repo item) — **DONE, PR #582 (2026-07-18): `recorder ladruno -overlay` + `Monitor -overlay` channels (CSV-twin EXACT), guide fidelity-critic PASS, battery 9/9, Opus ×3 panel PASS-WITH-FIXES (CRITICAL removeLoadPattern-UAF fixed); §12 P4 entry governs; 33022 ledger row → shipped** |
 | **P5** *(reserved)* | meshless/MPM fluid realization (large-deformation upgrade path); MP/partitioned-domain story | own mini-ADR; the spike's E1–E3 refutations bound what any meshless realization must prove first |
 
@@ -473,10 +473,21 @@ Each phase is one PR off `ladruno`, ledgers updated in-PR.
 - **MP absent in v1** — honest but now lane-dependent: the *implicit*-fluid
   overlay needs interface flux exchange across partitions
   (Schur/Neumann-Neumann class) — genuinely research, parked in P5. The
-  **explicit-fluid lane (P3b) largely dissolves this**: a local lumped
-  update + halo exchange is the same communication pattern the explicit
-  solid already uses — P3b's MP smoke demonstrates it rather than asserting
-  it. Serial implicit (the 60 GB emit-host class) is served either way.
+  **explicit-fluid lane (P3b) largely dissolves this** — but at P3b the
+  claim is DESIGN-demonstrated only (§12 P3b item 6; the MP-smoke gate was
+  transposed — the overlay is per-process serial v1, there is no halo
+  exchange in-tree to smoke). What P3b DID establish: the shipped explicit
+  update is partition-LOCAL by construction (an axpy on overlay-owned CSR
+  state — sLump division, H·p product, QᵀΔu gather — with no Domain-global
+  reduction; panel-audited). **Halo design for a future partitioned
+  overlay** (documented, not built): each partition owns the region cells
+  of its elements; shared region nodes need (i) a sum-reduction of the
+  QᵀΔu and H·p contributions at interface nodes and (ii) a p halo so
+  neighbor cells read consistent committed p — one nearest-neighbor
+  exchange per fluid sync, the identical pattern the explicit solid's
+  nodal-force assembly already uses. No factorization appears anywhere in
+  that path. Serial implicit (the 60 GB emit-host class) is served either
+  way.
 - **UniformExcitation**: üg enters the solid row via the standard R·üg
   path; the fluid row's ρ_f·üg seepage drive stays omitted (Chan-1988
   class, consistent with ADR-71 P4's `-dynSeepage off` default) — guide
@@ -657,6 +668,138 @@ this PR:
   sentinel-inert, never NaN).
 
 ## 12. Implementation log
+
+### P3b — `-fluidUpdate explicit` matrix-free lane + SMS composability (2026-07-19)
+
+`-fluidUpdate explicit` live: lumped-S* forward p-step (row-sum of the
+assembled S* CSR rows — H̃·1 = 0 exactly, so the stab matrix cannot enter the
+march diagonal; `-stab` is march-inert, advisory-only), NO CG/factorization in
+the transient march; `-fsL` inert (one-time notice); SM_STEADY keeps its CG
+solve at static commits (the matrix-free claim is the march); dual-CFL
+advisory (CTSResult explicit-fluid fields; Δt_diff = h_min²/(2·ndm·c_v,max)
+min-folded into damped+undamped, CDL/Bathe reports print the slack — measured
+1.55e4×–1.55e8× over kh 1e-3…1e-7 m/s, the E7.4 7.2e3× class); SMS sizing
+prices the UNDRAINED pencil through the `elementCriticalDt` Kadd seam in BOTH
+builders (blanket UNSUPPORTED warning RETIRED → one-time INFO line; residual
+drained-priced configs are exactly getUndrainedAugmentation's loud refusals).
+Battery `tests/test_ladruno_overlay_explicit_fluid.py` 11/11; P1–P4 batteries
+green (framework gate 4's fatal-NYI case retired → 4b explicit-accepted).
+**Measured adjudications (this entry governs; three gate transpositions and
+one pin refutation):**
+
+1. **The 3b.A "advance at the commit hook" pin is REFUTED — the shipped
+   sequencing is advance-at-LOAD-APPLICATION on the trial window Δu.**
+   CentralDifferenceLadruno::newStep moves u with `Aprev` (the PREVIOUS
+   step's solve acceleration), so a hook-time fluid advance pairs the solid
+   with a TWO-commit-stale p — one force lag beyond the toy/ZPC contract.
+   Under implicit fluid the lag is dissipation-absorbed (P1–P3 shipped and
+   gated with it, untouched); under explicit fluid it is UNCONDITIONALLY
+   unstable (vertical p-checkerboard, growth ∝ dt, no stable Δt: measured
+   die-at-step 506/96 at 0.4×/1.0× pencil where the toy survives 6000+).
+   Diagnosis chain: single-element hand twin proved the update per-step
+   EXACT; a numpy toy replica of the battery column is bounded; adding
+   exactly one lag step reproduces the C++ trajectory to 7 significant
+   digits (step-10 max|p| 2.797604e+05 both) and the divergence step
+   (520 vs 506). Fix: FU_EXPLICIT + SM_MARCH advances inside applyLoad
+   (after newStep's trial set, before the residual forms) from COMMITTED
+   state on the trial window Δu — idempotent, so revert re-applies and
+   Noh-Bathe sub-step double-applyLoads recompute the same window (last
+   advance before commit wins); the hook is sync-only. Restore anchors
+   tLastSync = time − Domain::getDT() (restore path only) → DB round-trip
+   bit-identical. **Post-fix the toy-twin gate lands at relL2 = 6.68e-14
+   over 500 commits — the C++ lane IS the frozen E7.4 scheme.**
+2. **Zero-drainage secular pumping largely DISSOLVES under the explicit
+   fluid** (quirks row amended): the P3 pathology legs (k̄ = 1e-11,
+   undamped) are BOUNDED to their caps at 60k/45k/15k steps for
+   0.4×/0.5×/1.0× pencil — where the implicit `-fsL zero` lane died at
+   48344/30018/7761. Direction matches the toy (explicit boundary 1.32× >
+   implicit 1.000×); the horizon-relative caveat stays for the implicit
+   lane only.
+3. **Gate (b) TRANSPOSED to advisory-conservative** (the §7 wording "measured
+   undrained-CFL envelope vs the prediction" is closed in the SAFE
+   direction): with the e74-verbatim noise-IC protocol the battery column's
+   boundary is in (2.5×, 3.0×] the discrete undrained pencil (D@27 at
+   3.0×) — far ABOVE the frozen toy 1.32×. Not a scheme difference (the
+   twin is 7e-14-exact): the per-element pencil is BC-BLIND while the
+   battery column fixes every x-DOF, so the pencil's governing mode is
+   inexpressible in the assembled system. The load-bearing production claim
+   — a march at the advisory (1.0× pencil) is stable — is the HARD gate;
+   the boundary is recorded, never banded to the config-specific toy
+   constant. E7.4's 1.32× stays frozen as the toy-config constant.
+4. **Gate (c) TRANSPOSED — matched-Δt inter-lane equivalence REFUTED as a
+   gate**: the explicit (lumped-storage) and implicit (consistent-storage)
+   lanes converge to DIFFERENT spatial semi-discretizations, so the
+   matched-Δt inter-lane diff tends to an O(1) mesh constant (~2e-2 here),
+   not O(Δt). Replaced by (c1) the numpy toy-twin (6.68e-14) and (c2)
+   per-lane Richardson self-convergence (orders 1.26/1.60 explicit,
+   1.28/1.61 implicit-L0).
+5. **Consistent/Olovsson SMS UNDER-DELIVERS on the overlay coupling mode
+   (measured)**: with correct undrained pricing, the
+   CentralDifferenceSMSConsistent-certified dtTarget march diverges with a
+   uniform ~×1.83/step from step 1 (a from-the-start CFL violation), while
+   the LUMPED builder's certified march is stable (4000-step hard gate,
+   8/8 elements scaled, no-overlay control scales 0/8). Adjudicated
+   mechanism (panel-checked): the centroid-preserving M̄ blocks scale only
+   non-rigid element modes, and the undrained volumetric coupling mode
+   carries a large rigid-translation component that stays unscaled — the
+   coupled frequency scales by less than √s. Disposition: lumped SMS =
+   the composability deliverable (warning retired, INFO line); consistent
+   SMS = priced-but-WARNED (loud one-time under-delivery warning when it
+   scales overlay-owned elements; use lumped SMS or size from the
+   advisory).
+6. **MP gate (e) TRANSPOSED at 3b.A (no overclaim)**: the overlay is
+   per-process serial v1 — there is no halo exchange in-tree to smoke. The
+   gate became (i) partition-locality of the update (an axpy on
+   overlay-owned CSR state, no Domain-global reduction — panel-audited,
+   not MPI-run) and (ii) the halo design documented in §8 (QᵀΔu summed at
+   shared region nodes + a p halo — the explicit solid's own
+   nearest-neighbor pattern). The §8 "dissolution" claim remains
+   DESIGN-demonstrated only.
+7. Deferred/unchanged: pipelined-fluid note (§3.4 item 2) stays a
+   documented note (re-affirmed); apeGmsh emitter/contract row =
+   companion-repo follow-up (PR-body note).
+8. **Opus ×3 adversarial panel: PASS ×3 — zero CRITICAL, zero MAJOR from
+   the stability and reachability critics** (the battery critic's three
+   MAJORs were gate-strength items, all landed: gate (g) gained the
+   positive dissolution anchor — every explicit leg must outlive the
+   implicit-lane reference blowup step; new s5 gate covers the
+   FU_EXPLICIT + `-subcycle` window path; the consistent-SMS integrator
+   report now QUALIFIES its "stable after scaling" line via
+   `MassScalingReport::nOverlayAugScaled` instead of contradicting the
+   under-delivery warning). Both load-bearing adjudication theories were
+   quantitatively CONFIRMED by the stability critic: (a) the Olovsson M̄
+   zero-row-sum nullspace reproduces the measured ×1.83/step (implied
+   s_eff ≈ 8.24 vs target 9 — ~8 % modal-mass leakage into rigid
+   translation); (b) the gate-(b) margin is the per-element bound theorem
+   (Irons–Treharne: the BC-blind element pencil is a rigorous lower bound
+   on the assembled critical step) — safe direction, generalizes.
+   Reachability: 14 constructed attacks all refuted (starter double-apply,
+   Bathe sub-steps, removal-sync loss, dtW<0 retry, restore edges, hostile
+   latch, ADR-41 Uzawa same-time re-commits, moduli-failure aborts,
+   getCopy/serialize, recorder/ULW cadence, UAF class); minor hardening
+   landed (Print shows the lane; catchUpPendingWindow refuses
+   FU_EXPLICIT). Known non-coded caveats (documented, not gated): an
+   implicit-integrator plain-analyze march pairs the advance with the
+   predictor Δu (a LoadPattern cannot see the integrator — the ⟨A-3⟩
+   class; guide states CD-family-only); ExplicitBathe is stable-but-not-
+   toy-anchored (guide hedge); `-subcycle auto` N is resolved once and not
+   re-resolved on an adaptive-dt change (advisory-only); the diffusion CFL
+   has no hard abort (advisory-only by design, 7e3× realistic slack).
+9. **`-subcycle` on the explicit lane: the UNDRAINED CFL binds the SYNC
+   interval N·Δt (MEASURED — found by the panel-mandated s5 gate; the
+   3b.A "`-subcycle` unchanged" pin is REFUTED for this lane).** N=4 at
+   0.4× pencil (sync 1.6×) diverges at C++ step 395 / toy step 408 on the
+   exact battery column — where N=1 at the same Δt is bounded 60k; N=4 at
+   0.1× (sync 0.4×) is bounded. E7.3a's "all N ≤ 50 stable" was measured
+   on the IMPLICIT lane (the implicit fluid absorbs the sync-interval
+   stiffening) and does not transfer. Disposition: `-subcycle auto` under
+   FU_EXPLICIT resolves N=1 with a notice (the θ formula is
+   diffusion-accuracy math, and the explicit fluid step is an axpy —
+   there is no solve to amortize, so subcycling buys nothing on this
+   lane); manual N>1 stays legal with a loud one-time sync-CFL warning;
+   battery s5 pins all three behaviors (expected-diverge demo at the
+   toy-matched step class, bounded sync-0.4× leg with sync-cadence record
+   rows, auto→1 notice). Quirks row added.
 
 ### P4 — ecosystem: recorder channels + user guide, family close-out (PR #582, 2026-07-18)
 

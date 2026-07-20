@@ -448,6 +448,17 @@ int CentralDifferenceLadruno::domainChanged()
                       "only (~2x conservative, E7.4); ADR-73 default advisory: "
                       "dt <= 0.5x the undrained pencil]\n";
         }
+        // Ladruno (ADR-73 P3b): explicit-fluid dual-CFL advisory line.
+        if (r.explicitFluid) {
+            opserr << "  explicit-fluid diffusion limit (h_min^2/(2*ndm*c_v,max)): "
+                   << r.fluid_diffusion_dt;
+            if (r.fluid_diffusion_dt != inf && r.undamped_dt > 0.0 &&
+                r.undamped_dt != inf)
+                opserr << " (slack factor " << (r.fluid_diffusion_dt / r.undamped_dt)
+                       << "x vs the reported pencil)";
+            opserr << "\n  [-subcycle N must keep N*dt <= the diffusion limit; "
+                      "already min-folded into the limits above if it governs]\n";
+        }
         if (dt_cr <= 0.0)
             opserr << "  note: dt_cr not applicable (no element produced a finite, "
                       "positive estimate -- e.g. a pure nodal-mass model).\n";
@@ -584,6 +595,21 @@ int CentralDifferenceLadruno::newStep(double _deltaT)
                 opserr << "\n  [material formula sqrt(1+Kf/(n*M_oed)) is "
                           "documentation-only (~2x conservative, E7.4); ADR-73 "
                           "default advisory: dt <= 0.5x the undrained pencil]\n";
+            }
+            // Ladruno (ADR-73 P3b): explicit-fluid dual-CFL advisory line.
+            if (r.explicitFluid) {
+                opserr << "  explicit-fluid diffusion limit "
+                          "(h_min^2/(2*ndm*c_v,max)): " << r.fluid_diffusion_dt;
+                if (r.fluid_diffusion_dt !=
+                        std::numeric_limits<double>::infinity() &&
+                    r.undamped_dt > 0.0 &&
+                    r.undamped_dt != std::numeric_limits<double>::infinity())
+                    opserr << " (slack factor "
+                           << (r.fluid_diffusion_dt / r.undamped_dt)
+                           << "x vs the reported pencil)";
+                opserr << "\n  [-subcycle N must keep N*dt <= the diffusion "
+                          "limit; already min-folded into the limits above if "
+                          "it governs]\n";
             }
             if (smsEffectiveLimit > 0.0) {
                 // Mass scaling raised every scaled element's stable step to dtTarget;

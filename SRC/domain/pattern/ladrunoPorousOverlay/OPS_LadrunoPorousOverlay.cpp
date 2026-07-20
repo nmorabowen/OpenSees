@@ -41,10 +41,13 @@
 //       <-alpha $biotAlpha> <-Ks $Ks> <-thick $t> \
 //       <-layer $e1 ... -perm $k1 $k2 <$k3> <-poro $n> <-moduli $E $nu>> ...
 //       <-stab auto <$a0> | off | $alpha> \
-//       <-fsL classic | oedometric | zero | $scale> \  ;# zero = explicit lane (P3)
+//       <-fsL classic | oedometric | zero | $scale> \  ;# zero = explicit-integrator
+//                                                      ;#   lane (P3); inert under
+//                                                      ;#   -fluidUpdate explicit
 //       <-staticMode hold | steady> \
 //       <-onRemoval keep | drain $kF> \
-//       <-fluidUpdate implicit | explicit> \  ;# explicit = fatal-NYI (P3b)
+//       <-fluidUpdate implicit | explicit> \  ;# explicit = lumped-S* forward
+//                                             ;#   p-step, matrix-free march (P3b)
 //       <-subcycle auto | $N> \
 //       <-pInit steady | hydrostatic $gw <$zw> | $nd $val ...> \
 //       <-fluidBody $b1 $b2 <$b3>> <-dynSeepage on|off> \
@@ -129,6 +132,7 @@ void* OPS_LadrunoPorousOverlay()
   double stabValue = 0.25;
   int    fsLMode = LadrunoPorousOverlay::FSL_CLASSIC;
   double fsLScale = 1.0;
+  bool   fsLFlagSeen = false;          // for the P3b explicit-lane inert notice
   int    staticMode = LadrunoPorousOverlay::SM_MARCH;
   int    onRemoval = LadrunoPorousOverlay::RM_KEEP;
   double onRemovalKf = 1.0;
@@ -354,6 +358,7 @@ void* OPS_LadrunoPorousOverlay()
       }
 
     } else if (strcmp(opt, "-fsL") == 0) {
+      fsLFlagSeen = true;
       char s[64];
       ovGetTok(s, sizeof(s));
       if (strcmp(s, "classic") == 0) {
@@ -423,12 +428,12 @@ void* OPS_LadrunoPorousOverlay()
       if (strcmp(s, "implicit") == 0) {
         fluidUpdate = LadrunoPorousOverlay::FU_IMPLICIT;
       } else if (strcmp(s, "explicit") == 0) {
-        opserr << "ERROR LadrunoPorousOverlay " << tag
-               << " -- -fluidUpdate explicit is NYI until P3b (ADR §3.4 item 1)\n";
-        return 0;
+        // Ladruno (ADR-73 P3b §3b.1): the EXPLICIT fluid lane — lumped-S*
+        // forward p-step, matrix-free transient march.
+        fluidUpdate = LadrunoPorousOverlay::FU_EXPLICIT;
       } else {
         opserr << "ERROR LadrunoPorousOverlay " << tag
-               << " -- bad -fluidUpdate '" << s << "' (want implicit)\n";
+               << " -- bad -fluidUpdate '" << s << "' (want implicit|explicit)\n";
         return 0;
       }
 
@@ -578,6 +583,24 @@ void* OPS_LadrunoPorousOverlay()
            << " exceeds Biot alpha=" << biotAlpha
            << " (storage 1/Qbar needs 0 < n <= alpha <= 1)\n";
     return 0;
+  }
+
+  // Ladruno (ADR-73 P3b §3b.1): -fsL is INERT under -fluidUpdate explicit (no
+  // L anywhere in the lumped forward step; no iteration). A NON-DEFAULT -fsL
+  // alongside the explicit lane gets a one-time notice, NOT a fatal — model
+  // migration must not require flag surgery. Construction-time: both flags are
+  // resolved here regardless of their order on the command line. An explicit
+  // "-fsL classic" (the default value) stays silent.
+  if (fsLFlagSeen && fsLMode != LadrunoPorousOverlay::FSL_CLASSIC &&
+      fluidUpdate == LadrunoPorousOverlay::FU_EXPLICIT) {
+    static bool fsLExplicitNoticeShown = false;    // one-time, process-wide
+    if (!fsLExplicitNoticeShown) {
+      fsLExplicitNoticeShown = true;
+      opserr << "LadrunoPorousOverlay: -fsL is INERT under -fluidUpdate "
+                "explicit (the lumped forward p-step has no L and no "
+                "iteration; ADR-73 P3b). The flag is accepted and ignored "
+                "for the transient march. (printed once)\n";
+    }
   }
 
   LadrunoPorousOverlay* thePattern = new LadrunoPorousOverlay(
