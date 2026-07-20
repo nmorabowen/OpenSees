@@ -129,7 +129,7 @@ ADR §6 P3 row = gates.
 | 3.3 | Guide finalize: the "explicit permitted-but-discouraged" wording (ADR §3.6), HRZ accuracy caveat (Cook p. 373), pointer to Bézier/H8-uri for real explicit work. `/code-review` (low). | **[OPUS]** impl, **[FABLE]** review |
 | 3.4 | PR-4 assembly + CI watch; move ADR §9 log entries; consider the ADR → `Ladruno_internal/implemented_*` move once P4 items are formally parked. | **[FABLE]** |
 
-- [x] P3 landed (PR #___ — fill at merge; implemented 2026-07-14, deviations 1–4 adjudicated ACCEPTED, see iteration-15 log)
+- [x] P3 landed ([PR #584](https://github.com/nmorabowen/OpenSees/pull/584), squash 3dfd1eb04, merged 2026-07-19; deviations 1–4 adjudicated ACCEPTED — iteration-15 log; CI round 1 = the ADR-69 registry cross-model poisoning find, fixed in-PR — iteration-16 log; independent adversarial panel CLEAN — iteration-17 log)
 
 ---
 
@@ -159,7 +159,32 @@ due at P1). U2 — PR merges are auto once CI is green; no other user gate.
 
 ## Orchestration log (loop state — newest first)
 
-- **2026-07-19, iteration 16: PR #584 CI round 1 — Linux-only NaN in the
+- **2026-07-19, iteration 17: PANEL CLEAN → #584 MERGED (3dfd1eb04) —
+  ADR-72 PLANNED SCOPE COMPLETE, loop CLOSED.** User requested the owed
+  independent adversarial panel before merging; one focused Opus agent
+  (resumed once after an API stall — SendMessage resume works) attacked
+  three targets: **T1** registry model-lifetime semantics — CLEAN
+  (enumerated all 5 producers + 1 consumer; reset point provably downstream
+  of producer destruction on every interpreter path incl. PartitionedDomain;
+  wipeAnalysis-only correctly does NOT reset; -v2 layouts fix per-recorder
+  at initialize); **T2** mass-path composition — CLEAN (all rho/recvSelf/
+  formulation-flip/damping/static-workspace sequences converge; uri
+  point-0-only signature proven exactly sufficient — all four uri rho
+  readers are rho0); **T3** P2 solo-gate spot-check — CLEAN (BᵀDB index
+  algebra re-derived independently; GL2 ≡ GP8 point-by-point at the recorder
+  table; mixed-mesh per-rule bucketing incl. distinct HDF5 group names;
+  wire both directions + stale-slot cleanup verified). ONE finding
+  [LOW/PLAUSIBLE]: static `warnedLumped` is process-once, so
+  second-and-later HRZ guard trips fall back SILENTLY, and the
+  diagonal-of-consistent fallback can carry a non-positive entry under a
+  pathological per-GP rho field (parameter route only) — parked as a
+  by-demand hardening note, not blocking. 2 cosmetic notes (warnedNonFinite
+  not reset by resetOnWipe; declare-on-discarded-publication). P2
+  solo-gate debt PAID. Merged with user pre-authorization. Close-out: ADR
+  status → implemented, §9 log backfilled P0–P3, this checkbox row filled.
+  REMAINING (all demand-gated, each its own mini-ADR/PR): P4 items (§6 —
+  H27 33019, `-geom finite`, embedded-host APIs, i14, quadratic tie/mortar
+  faces) + the LOW warnedLumped hardening if per-GP rho fields ever ship.
   energy test → REAL cross-cutting find, fixed.**
   `test_energy_balance_closure_no_hourglass_channel` failed ONLY on Linux
   with RES=nan while KE/IE stayed finite (peak>0 passed). Diagnosis: the
