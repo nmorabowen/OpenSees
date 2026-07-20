@@ -867,8 +867,10 @@ def test_S8_advisory_probe_alive_under_uri(capfd):
 def test_S9_assembly_cost_ratio():
     """Tangent-formation time uri/std on a 4x4x4 block. The pure-assembly
     expectation is ~0.3-0.4x (8 vs 27 material points); the eleResponse
-    round-trip adds equal absolute overhead per call to both sides, so the
-    gate is a LOOSE < 0.8 (CI-safe) and the measured number is the report."""
+    round-trip adds equal absolute overhead per call to both sides, and the
+    ~20 ms samples are noise-dominated under box contention (spec amendment
+    6: a loaded-box full-suite replay measured 0.834), so the gate only pins
+    "uri is cheaper" (< 0.95) and the measured number is the report."""
     times = {}
     for name, extra in (("std", _STD), ("uri", _URI)):
         ops.wipe()
@@ -886,4 +888,4 @@ def test_S9_assembly_cost_ratio():
     ratio = times["uri"] / times["std"]
     print(f"[S9] tangent-assembly time: uri {times['uri']:.3f}s "
           f"std {times['std']:.3f}s ratio {ratio:.3f} (expect ~0.3-0.4 pure)")
-    assert ratio < 0.8, f"uri/std assembly ratio {ratio:.3f} >= 0.8"
+    assert ratio < 0.95, f"uri/std assembly ratio {ratio:.3f} >= 0.95"

@@ -625,3 +625,57 @@ def test_masstype_survives_database_roundtrip():
     # the round-trip itself: probe_fn compares eigenvalues before/after restore
     database_roundtrip(build(["-lumped"]), probe_nodes=[5, 6, 7, 8], ndf=3,
                        dbname="lb20_dyn_rt", probe_fn=eig_probe)
+
+
+# ==========================================================================
+# 8. Energy-channel registry poisoning regression (PR #584 CI round 1)
+# ==========================================================================
+def test_energy_registry_survives_prior_diverged_lnvd_run(tmp_path, capfd):
+    """The EnergyChannelRegistry keeps PROCESS-lifetime totals (no reset on
+    wipe, by design — consumers baseline-delta). A deliberately diverged
+    explicit run with LNVD active used to publish non-finite work increments
+    and poison the LNVD channel for EVERY later model in the process:
+    Dl = NaN - NaN survived the baseline subtraction and landed in RES of a
+    model that never produced the channel at all (Linux Zone-A, PR #584 r1;
+    platform-dependent because divergence magnitude is). The registry now
+    DISCARDS non-finite publications with a process-once warning, so the
+    fresh Brick20 -v2 balance below must stay finite column-for-column."""
+    # 1. poison attempt: tiny LNVD truss bar driven far past dt_cr -> NaN.
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    for i in range(6):
+        ops.node(i + 1, i * 1.0, 0.0)
+    ops.fix(1, 1, 1)
+    for i in range(1, 6):
+        ops.fix(i + 1, 0, 1)
+    ops.uniaxialMaterial("Elastic", 1, 100.0)
+    for i in range(5):
+        ops.element("Truss", i + 1, i + 1, i + 2, 1.0, 1, "-rho", 1.0)
+    ops.timeSeries("Constant", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(6, 1.0, 0.0)
+    ops.constraints("Transformation")
+    ops.numberer("Plain")
+    ops.system("Diagonal")
+    ops.test("NormDispIncr", 1e-12, 1)
+    ops.algorithm("Linear")
+    ops.integrator("ExplicitBatheLNVD", 0.54, 0.8)
+    ops.analysis("Transient")
+    diverged = False
+    for _ in range(60):                       # dt = 100x the ~0.1 pencil
+        if ops.analyze(1, 10.0) != 0:         # NaN-breaker aborts the update
+            diverged = True                   # BEFORE nodal state goes non-
+            break                             # finite — rc is the divergence
+    assert diverged, "poison rig failed to diverge — vacuous regression"
+    # NB the pre-abort steps have already published huge (possibly non-finite)
+    # LNVD work — exactly the CI poisoning window. The wipe below must clear it.
+
+    # 2. fresh Brick20 wave bar, -v2: every column must be finite.
+    efile = str(tmp_path / "post_poison_energy.txt")
+    _run_wave_bar(efile, nsteps=300, v2=True)
+    ops.wipe()
+    d = np.atleast_2d(np.loadtxt(efile))
+    assert np.isfinite(d).all(), (
+        "non-finite energy columns after an earlier diverged LNVD run — "
+        "the registry finiteness guard regressed"
+    )

@@ -81,6 +81,7 @@
 #include <MeshRegion.h>
 #include <LadrunoContactDomain.h>   // Ladruno: ADR-39
 #include <LadrunoPorousOverlay.h>   // Ladruno: ADR-73
+#include <LadrunoEnergyChannels.h>  // Ladruno: ADR-69/72 — energy-channel reset on wipe
 #include <Analysis.h>
 #include <FE_Datastore.h>
 #include <FEM_ObjectBroker.h>
@@ -1070,6 +1071,14 @@ Domain::clearAll(void) {
   theLoadPatterns->clearAll();
   theParameters->clearAll();
   numParameters = 0;
+
+  // Ladruno (ADR-69/ADR-72 P3): restart the energy-channel totals with the
+  // model. Process-lifetime totals poisoned every later model in the process
+  // after a diverged run (non-finite publications) and silently ABSORBED a
+  // later model's small increments after a huge-but-finite one (total + dE ==
+  // total in double precision). wipe() destroys every producer and consumer,
+  // so this is the semantic zero point. See LadrunoEnergyChannels.h.
+  Ladruno::EnergyChannelRegistry::instance().resetOnWipe();
 
   // remove the recorders
   int i;
