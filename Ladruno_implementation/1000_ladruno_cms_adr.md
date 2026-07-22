@@ -1,7 +1,7 @@
 ---
 title: "ADR 1000 — Biblioteca independiente LadrunoCMS para análisis modal jerárquico paralelo"
-status: accepted-p2c-passed-p3-physical-distribution-required
-implementation_status: "P0, P1 y P2 completados; P2c PASS en referencia replicada; P3 exige Domain físicamente distribuido; P4 pendiente"
+status: accepted-p3-first-physical-building-gate-passed
+implementation_status: "P0, P1 y P2 completados; primer gate P3 físico con Building 1A y cuatro ranks PASS; repetición, segundo particionado, oráculo Kx/Mx y P4 pendientes"
 date: 2026-07-21
 last_amended: 2026-07-22
 decision_owners: [OpenSees Ladruno]
@@ -1589,7 +1589,125 @@ producción. El beneficio completo sólo existe cuando coinciden tres distribuci
 2. distribución algebraica de contribuciones y trabajo CMS;
 3. comunicación acotada para interfaces, refinamiento y reconstrucción.
 
-P3 cerrará las dos primeras y medirá explícitamente la tercera. Hasta entonces, la frase
-correcta es: **CMS de dos niveles matemáticamente verificado sobre referencia replicada,
-con integración física diseñada pero todavía no implementada**. Ninguna campaña de
-escalabilidad podrá omitir esa condición.
+La primera ruta `physical` ya cierra las dos primeras distribuciones en un caso real de
+cuatro ranks; la sección 18 registra la evidencia y sus límites. Aún debe medirse y reducirse
+la tercera distribución. Por tanto, la frase correcta es: **CMS de dos niveles verificado
+sobre referencia replicada y ejecutado sobre cuatro `Domain` físicos del Building 1A, con
+P3 todavía abierto por repetibilidad, oráculos de ensamblaje, memoria local densa e
+instrumentación de comunicación**. Ninguna campaña de escalabilidad podrá omitir esas
+condiciones.
+
+## 18. Evidencia de la primera implementación física P3 — 2026-07-22
+
+### 18.1 Alcance implementado
+
+La rama `feature/ladruno-cms-physical-domain` añade la modalidad explícita
+`-domainMode physical` sin modificar eigensolvers preexistentes. En esta modalidad:
+
+1. cada intérprete OpenSeesMP construye sólo el fragmento asignado a su rank;
+2. `ParallelNumberer` establece las identidades globales de ecuación;
+3. `LadrunoCMSEigenSOE::setSize` obtiene el tamaño global mediante los máximos de ID y
+   comprueba cobertura global contigua, IDs no negativos y grafos locales no vacíos;
+4. el SOE conserva todas las contribuciones locales `addA/addM` y no aplica la regla de
+   desduplicación propia de `replicatedReference`;
+5. el rank físico constituye el subdominio fino y la jerarquía lógica `p=2,m=2` forma los
+   dos grupos gruesos;
+6. la reconstrucción publica vectores globales compatibles con el contrato ordinario de
+   OpenSees.
+
+El modo físico rechaza `-verifyAssembly` porque las secuencias locales son distintas por
+diseño. También rechaza colectivamente un modelo completo idéntico en todos los ranks
+cuando se solicitaron varios subdominios físicos. `replicatedReference` se conserva como
+oráculo integrado y mantiene su conducta previa.
+
+### 18.2 Corrección numérica surgida del edificio
+
+El primer intento exigía a cada solve interior una tolerancia
+`min(1e-8, 0.1*tol_global)`. En el Building 1A, aumentar las iteraciones de Lanczos de 500 a
+1200 no cambió la convergencia: sólo 19 de 24 pares cumplían y el residual local se
+estancaba alrededor de `3.7e-9`. Esto demostró que era una meseta de precisión y no falta
+de iteraciones.
+
+La ruta física usa ahora
+`localTolerance = min(1e-8, tol_global)`. El refinamiento sobre el pencil original sigue
+siendo la autoridad de aceptación global. La ruta de referencia replicada no fue alterada.
+El cambio permitió conservar `maxIter=500` y superar el residual original estricto.
+
+### 18.3 Pruebas ejecutadas
+
+- oráculo y núcleo C++: `31 passed`;
+- compilación de `OpenSeesMP` con CMS habilitado: PASS;
+- compilación opt-out con `LADRUNO_CMS=OFF`: PASS y sin símbolos `LadrunoCMS`;
+- smoke de referencia replicada, dos solves consecutivos en cuatro ranks: PASS;
+- smoke físico de cuatro ranks, 16 ecuaciones, cuatro particiones y jerarquía
+  `p=2,m=2`: PASS, residual máximo `5.80175e-9`;
+- Building 1A físicamente distribuido en cuatro ranks: PASS en el primer particionado.
+
+El smoke permanente es `tests/ladruno_cms_physical_smoke.tcl`. El caso real ejecutable y
+su evidencia están en `notebooks/building_1A_cms_physical_run.ipynb`,
+`notebooks/building_1A_cms_physical_run/` y
+`notebooks/building_1A_cms_physical_acceptance.md`.
+
+### 18.4 Evidencia de propiedad física del Building 1A
+
+| Rank | nodos construidos | elementos OpenSees construidos |
+|---:|---:|---:|
+| 0 | 3,190 | 2,959 |
+| 1 | 3,260 | 3,004 |
+| 2 | 3,009 | 2,864 |
+| 3 | 2,823 | 2,769 |
+| universo global | 11,841 | 11,596 |
+
+Ningún rank contiene el modelo completo. La suma de membresías nodales es 12,282; las 441
+membresías adicionales corresponden a nodos de interfaz. La malla `FEMData` contiene
+27,360 entidades crudas, mientras que el deck estructural realmente emitido contiene
+11,596 elementos OpenSees. El manifest registra ambos universos por separado; no deben
+compararse como si fueran la misma colección.
+
+### 18.5 Resultado modal aceptado
+
+El comando usó ocho modos, `-modesL2 24`, `-modesL1 48`, `-tol 1e-8`, `-maxIter 500`,
+refinamiento de subespacio y solve final denso acotado por `-denseMax 4000`. Se obtuvo:
+
+| Magnitud | Resultado |
+|---|---:|
+| ecuaciones globales `n` | 63,048 |
+| rango de tamaños de grafos locales | 10,740–19,560 |
+| dimensión reducida nivel 2 `r2` | 2,940 |
+| dimensión final cruda y compatible `r_raw=r_D` | 564 |
+| iteraciones de refinamiento | 145 |
+| residual original máximo | `9.84323e-9` |
+| error relativo máximo de autovalores frente a referencia | `4.474074e-12` |
+| MAC mínimo frente a referencia | `0.9999999999997988` |
+| salto máximo en interfaces duplicadas | `0` |
+| tiempo de pared observado | `319.410324 s` |
+
+Estos resultados prueban corrección e integración para este particionado; no prueban aún
+aceleración ni escalabilidad.
+
+### 18.6 Memoria observada y deuda explícita
+
+Los picos RSS observados por rank fueron aproximadamente 4095, 4142, 2689 y 1272 MiB. El
+`Domain` está físicamente distribuido, pero el kernel Craig–Bampton actual convierte cada
+pencil local disperso a almacenamiento denso durante el solve interior. Éste es ahora el
+principal riesgo de memoria y debe distinguirse de replicar el modelo completo. Además,
+los vectores modales globales continúan reunidos por compatibilidad de salida.
+
+No se autoriza una afirmación de escalabilidad hasta sustituir o acotar el workspace local
+denso y medir por fase construcción, numeración, ensamblaje, reducción, refinamiento,
+colectivas y publicación.
+
+### 18.7 Estado de las puertas P3
+
+| Puerta | Estado después del primer caso físico |
+|---|---|
+| P3a, deck por rank y manifest positivo | PASS para Building 1A; fixtures negativos pendientes |
+| P3b, numeración y ensamblaje local | PASS de integración; oráculo explícito `Kx/Mx` pendiente |
+| P3c, CMS físico pequeño | PASS en cuatro ranks |
+| P3d, jerarquía no degenerada `p=2,m=2` | PASS |
+| P3e, Building 1A | primer particionado PASS; repetición y segundo particionado pendientes |
+| P3f, memoria e instrumentación | RSS total observado; desglose por fase y comunicación pendientes |
+| P4, rendimiento 2/4/6 a igual precisión | PENDIENTE |
+
+La implementación puede continuar hacia las puertas restantes, pero todavía no se marca
+`shipped` ni cambia el default transitorio de `replicatedReference`.

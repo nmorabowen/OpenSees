@@ -100,6 +100,7 @@ int parseCommandOptions(
     }
     std::set<std::string> seen;
     bool hierarchySpecified = false;
+    bool verifyAssemblySpecified = false;
     bool modesLevel2Specified = false;
     bool modesLevel1Specified = false;
     bool level1Specified = false;
@@ -131,7 +132,16 @@ int parseCommandOptions(
         std::string value;
         if (!takeValue(flag, value))
             return -4;
-        if (flag == "-hierarchy") {
+        if (flag == "-domainMode") {
+            if (value == "replicatedReference")
+                options.domainMode = DomainMode::ReplicatedReference;
+            else if (value == "physical")
+                options.domainMode = DomainMode::Physical;
+            else {
+                message = "-domainMode accepts only physical or replicatedReference";
+                return -5;
+            }
+        } else if (flag == "-hierarchy") {
             hierarchySpecified = true;
             if (value == "logical")
                 options.hierarchy = HierarchyMode::Logical;
@@ -232,6 +242,7 @@ int parseCommandOptions(
                 return -18;
             }
         } else if (flag == "-verifyAssembly") {
+            verifyAssemblySpecified = true;
             if (value == "off")
                 options.verifyAssembly = AssemblyVerification::Off;
             else if (value == "signature")
@@ -275,6 +286,14 @@ int parseCommandOptions(
         (level1Specified || level2Specified)) {
         message = "auto hierarchy derives level1/level2 and rejects explicit values";
         return -26;
+    }
+    if (options.domainMode == DomainMode::Physical) {
+        if (!verifyAssemblySpecified)
+            options.verifyAssembly = AssemblyVerification::Off;
+        else if (options.verifyAssembly != AssemblyVerification::Off) {
+            message = "physical domain mode requires -verifyAssembly off";
+            return -27;
+        }
     }
     return 0;
 }
@@ -325,6 +344,11 @@ int Options::validate(int worldSize, int numModes, std::string &message) const
     if (verifyAssembly == AssemblyVerification::Full && verifyFullMaxBytes == 0) {
         message = "full assembly verification requires a positive byte limit";
         return -9;
+    }
+    if (domainMode == DomainMode::Physical &&
+        verifyAssembly != AssemblyVerification::Off) {
+        message = "physical domain mode cannot verify replicated assembly";
+        return -10;
     }
     return 0;
 }

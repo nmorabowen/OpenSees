@@ -31,6 +31,7 @@
 #include <MetisWrapper.h>
 #include <OPS_Globals.h>
 #include <Vertex.h>
+#include <VertexIter.h>
 
 #include <mpi.h>
 
@@ -120,7 +121,9 @@ int LadrunoCMSEigenSOE::getNumEqn() const
 
 int LadrunoCMSEigenSOE::setSize(Graph &graph)
 {
-    size_ = graph.getNumVertex();
+    size_ = options_.domainMode == ladruno_cms::DomainMode::Physical
+        ? 0
+        : graph.getNumVertex();
     stiffness_.clear();
     mass_.clear();
     stiffnessSignatures_.clear();
@@ -236,7 +239,65 @@ int LadrunoCMSEigenSOE::buildTopology(Graph &graph, std::string &message)
     }
     MPI_Comm_rank(MPI_COMM_WORLD, &worldRank_);
     MPI_Comm_size(MPI_COMM_WORLD, &worldSize_);
-    if (size_ < 1 || worldSize_ < 1) {
+    if (worldSize_ < 1) {
+        message = "the equation graph and MPI world must be nonempty";
+        return -2;
+    }
+
+    const int localGraphSize = graph.getNumVertex();
+    if (options_.domainMode == ladruno_cms::DomainMode::Physical) {
+        int localMaximum = -1;
+        int localInvalid = localGraphSize < 1 ? 1 : 0;
+        VertexIter &vertices = graph.getVertices();
+        Vertex *vertex = nullptr;
+        while ((vertex = vertices()) != nullptr) {
+            if (vertex->getTag() < 0) {
+                localInvalid = 1;
+                break;
+            }
+            localMaximum = std::max(localMaximum, vertex->getTag());
+        }
+        int globalMaximum = -1;
+        MPI_Allreduce(&localMaximum, &globalMaximum, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        if (globalMaximum == std::numeric_limits<int>::max())
+            localInvalid = 1;
+        size_ = globalMaximum >= 0 &&
+                globalMaximum < std::numeric_limits<int>::max()
+            ? globalMaximum + 1
+            : 0;
+        if (collectiveFailure(localInvalid, MPI_COMM_WORLD) || size_ < 1) {
+            message = "physical mode requires a nonempty local graph with nonnegative global equation IDs";
+            return -2;
+        }
+
+        std::vector<int> localSeen(static_cast<std::size_t>(size_), 0);
+        VertexIter &coverageVertices = graph.getVertices();
+        while ((vertex = coverageVertices()) != nullptr) {
+            if (vertex->getTag() >= size_) {
+                localInvalid = 1;
+                break;
+            }
+            localSeen[static_cast<std::size_t>(vertex->getTag())] = 1;
+        }
+        std::vector<int> globalSeen(static_cast<std::size_t>(size_), 0);
+        MPI_Allreduce(localSeen.data(), globalSeen.data(), size_, MPI_INT,
+                      MPI_MAX, MPI_COMM_WORLD);
+        if (std::find(globalSeen.begin(), globalSeen.end(), 0) != globalSeen.end())
+            localInvalid = 1;
+        int completeLocalGraph = worldSize_ > 1 && localGraphSize == size_ ? 1 : 0;
+        int anyCompleteLocalGraph = 0;
+        MPI_Allreduce(&completeLocalGraph, &anyCompleteLocalGraph, 1, MPI_INT,
+                      MPI_MAX, MPI_COMM_WORLD);
+        if (anyCompleteLocalGraph)
+            localInvalid = 1;
+        if (collectiveFailure(localInvalid, MPI_COMM_WORLD)) {
+            message = anyCompleteLocalGraph
+                ? "physical mode rejects a rank that contains the complete equation graph"
+                : "physical local graphs do not cover a contiguous global equation space";
+            return -2;
+        }
+    }
+    if (size_ < 1) {
         message = "the equation graph and MPI world must be nonempty";
         return -2;
     }
@@ -293,6 +354,23 @@ int LadrunoCMSEigenSOE::buildTopology(Graph &graph, std::string &message)
     std::vector<int> groupWorldRanks(static_cast<std::size_t>(groupSize), -1);
     MPI_Allgather(&worldRank_, 1, MPI_INT,
                   groupWorldRanks.data(), 1, MPI_INT, groupComm);
+
+    if (options_.domainMode == ladruno_cms::DomainMode::Physical) {
+        fineLabels_.clear();
+        int minimumLocalGraphSize = 0;
+        int maximumLocalGraphSize = 0;
+        MPI_Allreduce(&localGraphSize, &minimumLocalGraphSize, 1, MPI_INT,
+                      MPI_MIN, MPI_COMM_WORLD);
+        MPI_Allreduce(&localGraphSize, &maximumLocalGraphSize, 1, MPI_INT,
+                      MPI_MAX, MPI_COMM_WORLD);
+        if (options_.verbose && worldRank_ == 0)
+            opserr << "LadrunoCMS physical domain: n=" << size_
+                   << " localGraphRange=[" << minimumLocalGraphSize
+                   << "," << maximumLocalGraphSize << "] ranks="
+                   << worldSize_ << endln;
+        MPI_Comm_free(&groupComm);
+        return 0;
+    }
 
     std::vector<int> coarseLabels(static_cast<std::size_t>(size_), -1);
     int localFailure = 0;
@@ -412,6 +490,8 @@ int LadrunoCMSEigenSOE::buildTopology(Graph &graph, std::string &message)
 int LadrunoCMSEigenSOE::verifyReplicatedAssembly(std::string &message) const
 {
     message.clear();
+    if (options_.domainMode == ladruno_cms::DomainMode::Physical)
+        return 0;
     if (options_.verifyAssembly == ladruno_cms::AssemblyVerification::Off)
         return 0;
     std::vector<long long> localStructure;
@@ -580,14 +660,18 @@ int LadrunoCMSEigenSOE::addContribution(
     if (contribution.activeIDs.empty())
         return 0;
 
-    const int owner = ladruno_cms::assignContributionOwner(
-        contribution.activeIDs, fineLabels_, message);
-    if (owner < 0) {
-        opserr << "LadrunoCMSEigenSOE::addContribution - " << message.c_str() << '\n';
-        return -3;
+    int owner = worldRank_;
+    if (options_.domainMode == ladruno_cms::DomainMode::ReplicatedReference) {
+        owner = ladruno_cms::assignContributionOwner(
+            contribution.activeIDs, fineLabels_, message);
+        if (owner < 0) {
+            opserr << "LadrunoCMSEigenSOE::addContribution - " << message.c_str() << '\n';
+            return -3;
+        }
     }
 
-    if (options_.verifyAssembly != ladruno_cms::AssemblyVerification::Off) {
+    if (options_.domainMode == ladruno_cms::DomainMode::ReplicatedReference &&
+        options_.verifyAssembly != ladruno_cms::AssemblyVerification::Off) {
         ladruno_cms::AssemblyRecord signature = contribution;
         std::size_t &verificationBytes =
             kind == ladruno_cms::ContributionKind::Stiffness

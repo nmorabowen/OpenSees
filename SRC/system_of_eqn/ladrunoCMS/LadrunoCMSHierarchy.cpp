@@ -1323,7 +1323,13 @@ int solveDistributedHierarchy(
     };
 
     TwoLevelHierarchyInput controls;
-    controls.localTolerance = std::min(1.0e-8, 0.1 * input.tolerance);
+    // The physical hierarchy is followed by original-pencil refinement, so
+    // forcing every fixed-interface mode to be ten times tighter than the
+    // requested final tolerance can reject an otherwise adequate CMS basis
+    // at a Lanczos roundoff plateau.  Keep the local solve at least as strict
+    // as the public tolerance (and never looser than 1e-8); the final
+    // residual gate remains authoritative.
+    controls.localTolerance = std::min(1.0e-8, input.tolerance);
     controls.maximumOperatorApplications = input.maximumOperatorApplications;
     controls.maximumRestarts = 20;
     controls.massRtol = input.massRtol;

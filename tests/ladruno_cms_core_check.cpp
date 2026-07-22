@@ -45,6 +45,12 @@ void testOptions()
     std::string message;
     require(options.validate(4, 1, message) == 0, "valid logical hierarchy rejected");
     require(options.validate(2, 1, message) < 0, "world-size mismatch accepted");
+    options.domainMode = ladruno_cms::DomainMode::Physical;
+    options.verifyAssembly = ladruno_cms::AssemblyVerification::Off;
+    require(options.validate(4, 1, message) == 0, "valid physical mode rejected");
+    options.verifyAssembly = ladruno_cms::AssemblyVerification::Signature;
+    require(options.validate(4, 1, message) < 0,
+            "physical mode accepted replicated assembly verification");
 }
 
 void testAssemblySignatures()
@@ -257,6 +263,22 @@ void testCommandParserAndLocalPencil()
     require(options.resolvedIterationVectors(modes, message) == 13 &&
             options.maxRefineIterations == 12,
             "subspace-refinement options were parsed incorrectly");
+    require(options.domainMode == ladruno_cms::DomainMode::ReplicatedReference,
+            "default command mode no longer preserves the P2 reference");
+    require(ladruno_cms::parseCommandOptions(
+                {"-domainMode", "physical", "-hierarchy", "logical",
+                 "-level1", "2", "-level2", "2", "-modesL2", "4",
+                 "-modesL1", "4", "2"},
+                options, modes, message) == 0 &&
+            options.domainMode == ladruno_cms::DomainMode::Physical &&
+            options.verifyAssembly == ladruno_cms::AssemblyVerification::Off,
+            "physical command mode was not parsed with local assembly semantics");
+    require(ladruno_cms::parseCommandOptions(
+                {"-domainMode", "physical", "-hierarchy", "logical",
+                 "-level1", "2", "-level2", "2", "-modesL2", "4",
+                 "-modesL1", "4", "-verifyAssembly", "signature", "2"},
+                options, modes, message) < 0,
+            "physical mode accepted replicated signature verification");
     require(ladruno_cms::parseCommandOptions(
                 {"-hierarchy", "logical", "-level1", "2", "-level1", "2",
                  "-level2", "2", "-modesL2", "4", "-modesL1", "4", "2"},

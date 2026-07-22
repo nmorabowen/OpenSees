@@ -29,6 +29,7 @@
 namespace ladruno_cms {
 
 enum class HierarchyMode { Auto, Logical };
+enum class DomainMode { ReplicatedReference, Physical };
 enum class AssemblyVerification { Off, Signature, Full };
 enum class RefinementMode { Subspace, None };
 enum class ContributionKind { Stiffness, Mass };
@@ -78,6 +79,7 @@ struct CoordinateMassClassification {
 };
 
 struct Options {
+    DomainMode domainMode = DomainMode::ReplicatedReference;
     HierarchyMode hierarchy = HierarchyMode::Logical;
     int level1 = 0;
     int level2 = 0;

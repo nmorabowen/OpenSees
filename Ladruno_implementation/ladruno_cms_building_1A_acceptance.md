@@ -285,3 +285,48 @@ Los logs normativos son `modal_cms_subspace_refinement_run1.log`,
 de las dos corridas base están separadas en `accepted_run1/` y `accepted_run2/`. Durante
 el ensamblaje replicado se observó por muestreo un máximo aproximado de 10.6 GB RSS
 agregado; no es una medición instrumentada de pico y se conserva como riesgo para P3/P4.
+
+## Extensión P3 — primer Building 1A físicamente distribuido
+
+La rama `feature/ladruno-cms-physical-domain` ejecutó el mismo edificio mediante cuatro
+fragmentos de input. Cada intérprete OpenSeesMP construyó únicamente su `Domain` local:
+
+| Rank | nodos | elementos OpenSees |
+|---:|---:|---:|
+| 0 | 3,190 | 2,959 |
+| 1 | 3,260 | 3,004 |
+| 2 | 3,009 | 2,864 |
+| 3 | 2,823 | 2,769 |
+
+El universo emitido contiene 11,841 nodos y 11,596 elementos OpenSees. Ningún rank cargó
+ese universo completo. Los 12,282 memberships nodales incluyen 441 copias de interfaz.
+Las 27,360 entidades crudas de `FEMData` son un universo de generación distinto y se
+registran separadamente en el manifest.
+
+La corrida usó `-domainMode physical`, `p=2`, `m=2`, `k2=24`, `k1=48`, ocho modos,
+`tol=1e-8` y `maxIter=500`. El problema tuvo `n=63048`, `r2=2940` y `r_D=564`.
+
+| Criterio físico P3 | Resultado |
+|---|---:|
+| residual original máximo | `9.84323e-9` |
+| error relativo máximo de autovalores | `4.474074e-12` |
+| MAC mínimo | `0.9999999999997988` |
+| salto máximo de interfaz | `0` |
+| tiempo de pared | `319.410324 s` |
+| primer particionado físico de cuatro ranks | **PASS** |
+
+El caso reveló una meseta del solve local cuando se exigía `0.1*tol`: aumentar Lanczos de
+500 a 1200 iteraciones no redujo un residual local de aproximadamente `3.7e-9`. La ruta
+física usa ahora `min(1e-8,tol)` localmente y mantiene el refinamiento del pencil original
+como criterio global estricto. El camino `replicatedReference` no cambió.
+
+Los picos RSS observados fueron aproximadamente 4095, 4142, 2689 y 1272 MiB por rank. El
+modelo no está replicado, pero la reducción Craig--Bampton actual crea matrices locales
+densas y los vectores finales siguen siendo globales. Por ello este PASS demuestra
+integración y corrección, no speedup ni escalabilidad de memoria.
+
+La evidencia completa está fuera del repositorio fuente, en
+`notebooks/building_1A_cms_physical_acceptance.md` y
+`notebooks/building_1A_cms_physical_run/`. Permanecen abiertos la repetición, un segundo
+particionado, el oráculo explícito `Kx/Mx`, fixtures negativos de manifest y la
+instrumentación por fase.
