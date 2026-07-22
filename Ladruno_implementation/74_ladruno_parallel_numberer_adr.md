@@ -30,8 +30,8 @@ tags:
 > ADR-68 (element/state-determination lane — the *other* per-step axis; this ADR is the
 > one-time-setup axis) · ADR-06 (profiler — the instrument that both missed and then caught
 > this, see §Instrumentation) · ADR-51/55/73 (domain-change multipliers, see §Sequencing).
-> *Family-link note:* ADR-60–73 live on the cluster tree (`ladruno-p5-build`), not on this
-> branch — the 59→74 numbering jump is deliberate (74 = next free on the newest tree).
+> *Family-link note:* ADR-60–73 landed on `ladruno` with the post-#588 sync (this ADR was
+> numbered against that tree, so 74 = next free); all family links now resolve locally.
 > External record: Obsidian `Cluster Scalability/Max Model — 18.6M P6 Cluster-Emit
 > (20x20km).md` §8 (the incident), `Max Model — 14M-Hex Hero Run.md` §7 (retro-explained
 > below). Adversarial reviews: Fable cross-review 2026-07-21 (pre-ADR) + 3-lens gate
@@ -301,8 +301,8 @@ behavior-identical on the RCM verb — the cleanest possible upstream PR shape).
 
 | Gate | Delivers | Pass criterion | Status |
 |---|---|---|---|
-| **G0** — scaling sweep (pre-fix) | measured `dc.numberDOF` exponent vs N at fixed np | super-linear growth across 0.25/1.0/2.0 M-hex rungs, np8 | **2 of 3 rungs in: `dc.numberDOF` 39.90 s → 578.87 s for ×3.87 nodes ⇒ N^1.98**; comparison model reproduces both rungs ≤3% (47.6/711 s predicted vs 48.95/693.71 s step-1 walls); rung 3 in flight |
-| **G1** — numbering byte-identity (RCM verb) | the new class changes no numbers | per-rank sorted `(nodeTag → eqn IDs)` dump, `LadrunoParallelRCM` vs stock `ParallelRCM`, same partition, 0.25 M rung, np2 + np8: **bit-identical**; plus a **global bijection assertion** (every eqn 0..neqn−1 exactly once); vehicle `tests/test_adr74_numberer_*.py` + the apeGmsh plane-wave MP gates (≤1.5e-15) named as the battery | pending T0 |
+| **G0** — scaling sweep (pre-fix) | measured `dc.numberDOF` exponent vs N at fixed np | super-linear growth across 0.25/1.0/2.0 M-hex rungs, np8 | **PASSED — 3 points: `dc.numberDOF` 39.90 / 578.87 / 2477.50 s ⇒ N^2.01**; comparison model reproduces rungs 1-2 ≤3%; step-1 isolation via the per-step wall column (48.95 s vs 0.36 s median); the merge additionally verified *live* (ADR74DBG trace: dedup + scatter correct) |
+| **G1** — numbering byte-identity (RCM verb) | the new class changes no numbers | **two-deck oracle** (§Discovered en route): Deck A (`system Mumps`, global ids) — `LadrunoParallelRCM` vs stock `ParallelRCM` dumps **bit-identical**, np2 + np8, + shared-node consistency + global bijection (the strict gate); Deck B (`system MPIDiagonal`) — end-state dumps bit-identical + per-rank dense local bijection; vehicle `tests/test_adr74_numberer_1.py` (N0-proven, incl. mutation tests) + the apeGmsh plane-wave MP gates (≤1.5e-15) as the battery | oracle **SHIPPED & PROVEN** (N0); Ladruno-vs-stock compare pending T0 |
 | **G1b** — plain verb | valid numbering, tag-0 fix documented | bijection assertion (stock plain *fails or double-orders* the constructed tag-0 micro-case — documented); same-physics vs stock on the 0.25 M rung | pending T0 |
 | **G1c** — fallback path | the κ-guard hash path is gated, not just written | tag-offset clone of the 0.25 M deck (node tags × large stride) provably crossing κ: fallback engages **and** numbering still bit-identical to stock | pending T0 |
 | **G2** — the fix, measured | T0(+T1) timing on the G0 rungs | `dc.n.merge` exponent ≈ 1; per-bracket attribution via the sub-scopes below. *Validity note:* pass 1 is P-independent (Σ ≈ V²/2) and pass 2 ∝ V²/P, so np8 exponents transfer to np240 conservatively; the genuinely P-dependent hazards (snapshot rebuilds, rank-0 memory) are addressed by the owned-structure T1 design | pending T0 |
@@ -340,6 +340,37 @@ np2 runs at np2 *and* np8 (two channel topologies); the `dc.setSize` anomaly is 
 **blocking pre-G3 task** so G3's budget table attributes honestly; and no phase may
 widen its scope — a discovered defect goes to the Risks list, not into the running PR
 (this ADR was under-scoped twice during review; the antidote is scope discipline).
+
+## Discovered en route (N0, 2026-07-22): MPIDiagonalSOE localizes the numbering
+
+The N0 oracle's first real run caught a semantic this ADR (and both prior reviews) did
+not know: **under `system MPIDiagonal`, the globally-consistent numbering the
+ParallelNumberer computes exists only transiently.** `MPIDiagonalSOE::setSize` first
+builds its shared-DOF exchange map by intersecting the *global* equation numbers
+(`:216-276`), then deliberately **rewrites every DOF group's ids to rank-local
+0..n_local−1** (`MPIDiagonalSOE.cpp:408-429`, "renumber DOFs 0 through size",
+`newDOF = myDOFs.getLocationOrdered(dof); dofPtr->setID(i, newDOF)`) and has the FE
+elements re-cache. Established by runtime trace (temporary `ADR74DBG` prints):
+`numberDOF` demonstrably assigns correct, consistent globals (merge + dedup + scatter
+all verified live at np2 — `mergedVertex=11` from 6+6, scatter pairs correct), and the
+post-analysis ids are those globals compacted per rank (exact −offset match). MUMPS
+SOEs do **not** renumber (no `setID` in `Mumps*SOE`). Consequences:
+
+- **No physics defect** — shared-DOF exchange is built from consistent globals before
+  localization; past MP runs (cluster and local) are untouched.
+- **G1's oracle is two-deck** (implemented in `tests/test_adr74_numberer_1.py`):
+  Deck A (`system Mumps`, global ids survive) carries the *strict* numberer-identity
+  oracle — shared-node cross-rank equality + global bijection + byte-identity; Deck B
+  (`system MPIDiagonal`, the production stack) carries the *end-state* oracle —
+  per-rank dense local bijection + byte-identity. Post-localization identity is
+  necessary but not sufficient for numberer identity (order-preserving compaction can
+  alias distinct global numberings), hence Deck A is the load-bearing G1 gate.
+- **The irony sharpens again**: on the explicit lane the merge's RCM output is not only
+  never factorized — it is *discarded within the same domainChanged call* by the
+  localization. T2 is further strengthened: any consistent global bijection suffices,
+  because MPIDiagonal re-localizes regardless.
+- The stall analysis is untouched: the merge provably runs (live trace + measured
+  N^1.98-2.01 + model reproduction ≤3%) before the localization discards its ordering.
 
 ## Instrumentation (shipped with this investigation, branch `perf/step-stall-instrumentation`)
 
@@ -489,6 +520,16 @@ residual ⇒ T1 added; pass 2 + plain branch added to T0's scope; per-rank Plain
   cause stands; this revision folds all findings (supersedes-ADR-30 section, T1
   redesign, corrected escape claim, honest closure framing, expanded gates G1/G1b/G1c,
   `dc.n.*` sub-scopes, K× sequencing, ref<0 / ctor / -4 / ID-variant guards).
+- **2026-07-22** — **N0 shipped**: `ladrunoNumbering` verb (classic Tcl, mirrors the
+  `profiler` verb pattern) + `tests/test_adr74_numberer_1.py` (two-deck oracle +
+  mutation tests). G0 completed: third rung landed — `dc.numberDOF` 39.90 / 578.87 /
+  2477.50 s over 0.25/1.0/2.0 M hex ⇒ **N^2.01 over three points**. N0's first real
+  run caught the MPIDiagonal id-localization semantic (§Discovered en route),
+  established by live `ADR74DBG` trace of `numberDOF` (merge/dedup/scatter verified
+  correct at np2; prints reverted after use). Harness lessons banked: mpiexec exits 0
+  on Tcl-init failure and on script error — dump-count/content assertions are the real
+  failure signal, rc is not; build-tree exes need TCL_LIBRARY (the openseesmp.sh gap,
+  now handled in-harness).
 - **Cluster note**: the Esmeralda tree (`ladruno-p5-build` @ #580) carries the same
   unfixed code — all three instrumentation-touched files byte-identical to the patch
   base — so the instrumentation + T0/T1 rebase cleanly there. The live cluster binary is
