@@ -255,6 +255,14 @@ ideal numberer does no gather, no merge, no ordering at all. Ranked, with projec
 "T0 only" row above was conservative; at 19.18 M the numberer term extrapolates to
 ~2-4 min pre-T1. The table's remaining binder is `dc.setSize` (§Risks).*
 
+*Measured update (N3): T1 lands `dc.numberDOF` 0.61 / 2.52 / 6.36 s on the rungs
+(vs T0's 1.61 / 7.24 / 15.48); P0 compute at 2.0 M is merge 2.15 + order 0.45 —
+the bracket is now **communication-dominated** (gather wire + non-root scatter
+wait). merge+order alone scale ~N^1.14 ⇒ ~33 s at 19.18 M + the ~10-30 s np240
+gather ≈ **~1 min total** — beating the "~1-3 min" projection above. With the
+setSize quicksort dead too (§Resolved), the whole measured first-step setup at
+2.0 M np8 is 9.2 s vs ~2,978 s pre-ADR (~320×).*
+
 T0-before-T2 is deliberate, on three grounds:
 1. **Risk asymmetry.** T0+T1's oracle is a bit-diff (G1). T2's oracle is "same physics to
    solver tolerance" — weaker, laborious, on a path (parallel numbering consistency)
@@ -619,6 +627,25 @@ residual ⇒ T1 added; pass 2 + plain branch added to T0's scope; per-rank Plain
   (fixed vs stock vs the N2 `numbering_t0` artifacts) + `test_adr74_numberer_1.py`
   **18/18** on the fixed binary. In-place ledgered vanilla edit (one call site);
   `q_sort` retained; sole copy in tree (SP's `DistributedDiagonalSOE` does not sort).
+  Shipped as PR #593 (with the missing 33000 manifest row, a pre-existing N1 gap the
+  G9 gate surfaced).
+- **2026-07-22** — **N3/T1 shipped**: the merged graph now lives on an OWNED
+  dense `ArrayOfTaggedObjects`-backed Graph with a `tag → Vertex*` vector
+  maintained through the merge — P0's vertices are copied in (tag/ref/weight/
+  color + adjacency; contiguity live-checked), `getFreeTag` sequence preserved
+  (nextFreeTag == numVertexP0 after the copy), pass-2 edges go in via direct
+  `Vertex::addEdge` on both endpoints (sorted `ID::insert` ⇒ order-canonical),
+  and RCM runs on the dense graph so every BFS `getVertexPtr` (including the
+  GPS trial passes — a full BFS per candidate start vertex) is an array index.
+  The model's map-backed group graph is left unmerged. **Gates: G1 SURVIVES T1**
+  — 18/18 np2+np8 both decks + the 0.25 M rung end-state dumps byte-identical
+  to the N2 `numbering_t0` artifacts on all 8 ranks. **G2 full**: `dc.numberDOF`
+  1.61/7.24/15.48 → **0.61/2.52/6.36 s**; P0 merge 7.91→2.15, order 5.18→0.45
+  at 2.0 M — the bracket is now gather/scatter (communication) dominated;
+  merge+order ~N^1.14 ⇒ ~33 s at 19.18 M ⇒ numbering ≈ ~1 min at cluster scale.
+  First-step setup at 2.0 M np8: ~2,978 s pre-ADR → **9.2 s** (~320×).
+  Fork-file-only change (`LadrunoParallelNumberer.cpp`) — no ledger row needed.
+  Next: N4/G3, the Esmeralda kill-run.
 - **2026-07-22** — **N2 adversarial gate (3 lenses) folded**: transcription-fidelity
   verdict "bit-identity HOLDS for every in-tree path" (mutation-for-mutation verified;
   κ paths answer-identical; -4 order preserved; two stock defects incidentally fixed —
