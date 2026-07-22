@@ -403,6 +403,11 @@ extern void OPS_SetReliabilityDomain(ReliabilityDomain *);
 #include <SymBandEigenSolver.h>
 #include <FullGenEigenSOE.h>
 #include <FullGenEigenSolver.h>
+#if defined(_PARALLEL_INTERPRETERS) && defined(_LADRUNO_CMS)
+#include <LadrunoCMSOptions.h>
+#include <LadrunoCMSEigenSOE.h>
+#include <LadrunoCMSEigenSolver.h>
+#endif
 // Ladruno ADR-43 (apeGmsh ADR 0077): classic-Tcl parity for band-targeted
 // FEAST — reachable from OpenSees.exe / OpenSeesMP.exe (the interpreter
 // parser OPS_eigenFeast was openseespy/PyMP-only). Under _PARALLEL_INTERPRETERS
@@ -6171,6 +6176,32 @@ eigenAnalysis(ClientData clientData, Tcl_Interp *interp, int argc,
   double shift = 0.0;
   bool findSmallest = true;
 
+#if defined(_PARALLEL_INTERPRETERS) && defined(_LADRUNO_CMS)
+  bool cms = strcmp(argv[1], "-ladrunoCMS") == 0 ||
+             strcmp(argv[1], "ladrunoCMS") == 0;
+  ladruno_cms::Options cmsOptions;
+  if (cms) {
+    std::vector<std::string> arguments;
+    for (int argument = 2; argument < argc; ++argument)
+      arguments.emplace_back(argv[argument]);
+    std::string message;
+    if (ladruno_cms::parseCommandOptions(
+            arguments, cmsOptions, numEigen, message) < 0) {
+      opserr << "WARNING eigen -ladrunoCMS: " << message.c_str() << endln;
+      return TCL_ERROR;
+    }
+    int worldSize = 0;
+    MPI_Comm_size(MPI_COMM_WORLD, &worldSize);
+    if (cmsOptions.validate(worldSize, numEigen, message) < 0) {
+      opserr << "WARNING eigen -ladrunoCMS: " << message.c_str() << endln;
+      return TCL_ERROR;
+    }
+    typeSolver = EigenSOE_TAGS_LadrunoCMS;
+  }
+#else
+  const bool cms = false;
+#endif
+
   // Ladruno ADR-43 (apeGmsh ADR 0077): band-targeted FEAST classic-Tcl parity.
   //   eigen -feast fmin fmax [-m0 n][-nq n][-tol exp][-maxiter n]
   //         [-verbose][-certify][-blockZGate][-rci]
@@ -6254,6 +6285,8 @@ eigenAnalysis(ClientData clientData, Tcl_Interp *interp, int argc,
     // saturation, so a small user m0 must not cap the report).
     numEigen = (feastM0 > 128) ? feastM0 : 128;
 
+  } else if (cms) {
+    // Parsed in one pass above; numEigen and options are already validated.
   } else {
   // Check type of eigenvalue analysis
   while (loc < (argc-1)) {
@@ -6352,7 +6385,7 @@ eigenAnalysis(ClientData clientData, Tcl_Interp *interp, int argc,
 
     bool setEigen = false;
     if (theEigenSOE != 0) {
-      if (theEigenSOE->getClassTag() != typeSolver) {
+      if (cms || theEigenSOE->getClassTag() != typeSolver) {
 	//	delete theEigenSOE;
 	theEigenSOE = 0;
 	setEigen = true;
@@ -6394,6 +6427,13 @@ eigenAnalysis(ClientData clientData, Tcl_Interp *interp, int argc,
 	
 	FullGenEigenSolver *theEigenSolver = new FullGenEigenSolver();
 	theEigenSOE = new FullGenEigenSOE(*theEigenSolver, *theAnalysisModel);
+
+#if defined(_PARALLEL_INTERPRETERS) && defined(_LADRUNO_CMS)
+      } else if (typeSolver == EigenSOE_TAGS_LadrunoCMS) {
+
+	LadrunoCMSEigenSolver *cmsSolver = new LadrunoCMSEigenSolver();
+	theEigenSOE = new LadrunoCMSEigenSOE(*cmsSolver, cmsOptions);
+#endif
 
       } else if (typeSolver == EigenSOE_TAGS_FeastEigenSOE) {
 
@@ -6515,6 +6555,10 @@ eigenAnalysis(ClientData clientData, Tcl_Interp *interp, int argc,
     // failed" error. Upstream classic swallows ARPACK failures (falls
     // through to TCL_OK); that behavior is kept byte-identical for the
     // non-FEAST solvers.
+    if (result != 0 && typeSolver == EigenSOE_TAGS_LadrunoCMS) {
+      opserr << "WARNING eigen -ladrunoCMS: analysis failed\n";
+      return TCL_ERROR;
+    }
     if (result != 0 && typeSolver == EigenSOE_TAGS_FeastEigenSOE) {
       opserr << "WARNING eigen -feast: analysis failed\n";
       return TCL_ERROR;

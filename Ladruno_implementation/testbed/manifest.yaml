@@ -1714,3 +1714,68 @@ features:
       on already-sorted input (O((N/P)^2)/rank, 161x at 2 M) — in-place
       ledgered vanilla edit, not part of this class. Manifest row added in
       #593 (the N1/N2 PRs predated gate enforcement on this tag).
+
+  - feature: LadrunoCMSEigenSOE                 # ADR 1000 independent hierarchical CMS
+    classtag: 33025
+    tag_symbol: EigenSOE_TAGS_LadrunoCMS
+    pr: 596
+    feature_class: derivative
+    required_tiers: [T0, T1, T2]
+    pytest: tests/test_ladrunoCMS_oracle.py
+    tcl: eigen -ladrunoCMS (OpenSeesMP only; gated by LADRUNO_CMS=ON)
+    zone_b:
+      - Ladruno_implementation/ladruno_cms_building_1A_acceptance.md
+    core_files:
+      - CMakeLists.txt
+      - SRC/classTags.h
+      - SRC/system_of_eqn/CMakeLists.txt
+      - SRC/tcl/commands.cpp
+      - SRC/interpreter/OpenSeesCommands.cpp
+      - SRC/analysis/analysis/StaticAnalysis.cpp
+      - SRC/analysis/analysis/DirectIntegrationAnalysis.cpp
+    dispatch: {tcl: true, functionMap: true}
+    status: remediation
+    notes: >
+      ADR 1000. New opt-in OPS_LadrunoCMS library; owns contribution capture,
+      equation ownership, two-level reduction and OpenSees-compatible output.
+      P1, P2a and P2b are implemented: assembly/CSR, distributed MUMPS,
+      coordinate-aligned mass-nullspace condensation, private thick-restart
+      Lanczos, mandatory T2-S2-T1-S1, hierarchical reconstruction, original-pencil
+      subspace refinement and Tcl/Python MP lifecycle. Unit, MPI np=1/2/4 and
+      repeated OpenSees solves pass. Building 1A P2c now passes twice at the
+      strict original-pencil gate (k2=24,k1=48,q=16,rD=486:
+      rho_max=9.09852e-9 and 9.81460e-9); a k2=48,k1=96 retention ablation also
+      passes. Feature remains remediation until P3/P4 scaling and shipment review,
+      and is absent from the banner. Merge-time note (#596 review): the
+      classTag-vs-object-identity setEigenSOE vanilla edit is exercised by
+      Zone-A; the manifest conflict with the ADR-74 numberer row was a
+      tail-append collision, both rows kept.
+
+  - feature: LadrunoCMSEigenSolver              # twin of EigenSOE tag 33025
+    classtag: 33026
+    tag_symbol: EigenSOLVER_TAGS_LadrunoCMS
+    pr: 596
+    feature_class: derivative
+    required_tiers: [T0, T1, T2]
+    pytest: tests/test_ladrunoCMS_oracle.py
+    tcl: eigen -ladrunoCMS (constructed together with LadrunoCMSEigenSOE)
+    zone_b:
+      - Ladruno_implementation/ladruno_cms_building_1A_acceptance.md
+    core_files:
+      - CMakeLists.txt
+      - SRC/classTags.h
+      - SRC/system_of_eqn/CMakeLists.txt
+      - SRC/tcl/commands.cpp
+      - SRC/interpreter/OpenSeesCommands.cpp
+      - SRC/analysis/analysis/StaticAnalysis.cpp
+      - SRC/analysis/analysis/DirectIntegrationAnalysis.cpp
+    dispatch: {tcl: true, functionMap: true}
+    status: remediation
+    notes: >
+      ADR 1000 twin solver. The public solve is wired and verified on analytical
+      MP fixtures, including repeated calls. The Building 1A validation reaches
+      the complete two-level path and uses the reconstructed CMS vectors to seed
+      original-pencil subspace iteration. Two Building 1A base runs and one
+      retention-enriched run publish modes below the strict 1e-8 residual gate.
+      P2c PASS; status remains remediation pending P3/P4 and shipment review.
+>>>>>>> pr-596

@@ -563,12 +563,12 @@ StaticAnalysis::setLinearSOE(LinearSOE &theNewSOE)
 int 
 StaticAnalysis::setEigenSOE(EigenSOE &theNewSOE)
 {
-  // invoke the destructor on the old one if not the same!
-  if (theEigenSOE != 0) {
-    if (theEigenSOE->getClassTag() != theNewSOE.getClassTag()) {
-      delete theEigenSOE;
-      theEigenSOE = 0;
-    }
+  // LADRUNO: object identity, not classTag, defines ownership. Two separately
+  // configured SOEs of the same family are distinct objects and the new one
+  // must replace the analysis-owned instance.
+  if (theEigenSOE != 0 && theEigenSOE != &theNewSOE) {
+    delete theEigenSOE;
+    theEigenSOE = 0;
   }
 
   if (theEigenSOE == 0) {
@@ -620,7 +620,6 @@ StaticAnalysis::getConvergenceTest(void)
 {
   return theTest;
 }
-
 
 
 
