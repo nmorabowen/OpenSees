@@ -330,3 +330,24 @@ La evidencia completa está fuera del repositorio fuente, en
 `notebooks/building_1A_cms_physical_run/`. Permanecen abiertos la repetición, un segundo
 particionado, el oráculo explícito `Kx/Mx`, fixtures negativos de manifest y la
 instrumentación por fase.
+
+## Baseline físico 2/4/6 y comparación de solver
+
+La instrumentación posterior repitió el caso físico con ocho modos y snapshots frescos
+para cada número de particiones. CMS-4 repitió el PASS con solve `311.606312 s`, residual
+`9.84319e-9` y error relativo máximo `2.5883e-12`. CMS-6 pasó con solve `208.730637 s`,
+residual `9.65914e-9` y error `2.80898e-12`. CMS-2 verificó dominios físicos pero abortó
+en el ordenamiento MUMPS (`orderMinPriority`).
+
+El desglose interno fue:
+
+| Ranks | ensamblaje [s] | jerarquía [s] | refinamiento [s] | total [s] |
+|---:|---:|---:|---:|---:|
+| 4 | 0.21356 | 214.667 | 96.5068 | 311.389 |
+| 6 | 0.146962 | 125.641 | 82.7916 | 208.581 |
+
+En el mismo build, ARPACK secuencial resolvió en `30.126791 s`; FEAST certificado empleó
+`376.666740`, `391.979597` y `448.826460 s` a 2, 4 y 6 ranks. CMS supera a FEAST en los
+dos puntos no degenerados, pero no a ARPACK. Los picos agregados CMS de 10.29 GiB (4) y
+6.72 GiB (6) impiden declarar escalabilidad de memoria, pese a la propiedad física
+correcta.

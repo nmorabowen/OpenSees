@@ -31,6 +31,7 @@
 #include <mpi.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <limits>
 #include <new>
@@ -48,6 +49,11 @@ LadrunoCMSEigenSolver::~LadrunoCMSEigenSolver()
 
 int LadrunoCMSEigenSolver::solve(int numModes, bool generalized, bool findSmallest)
 {
+    using Clock = std::chrono::steady_clock;
+    const auto solveStarted = Clock::now();
+    double assemblySeconds = 0.0;
+    double hierarchySeconds = 0.0;
+    double refinementSeconds = 0.0;
     eigenvalues_.clear();
     eigenvectors_.clear();
     normalizedResiduals_.clear();
@@ -79,12 +85,15 @@ int LadrunoCMSEigenSolver::solve(int numModes, bool generalized, bool findSmalle
     std::vector<int> localEquations;
     ladruno_cms::SymmetricCSR localStiffness;
     ladruno_cms::SymmetricCSR localMass;
+    const auto assemblyStarted = Clock::now();
     if (ladruno_cms::buildOwnedLocalPencil(
             soe_->getStiffnessContributions(), soe_->getMassContributions(),
             localEquations, localStiffness, localMass, message) < 0) {
         opserr << "LadrunoCMSEigenSolver::solve - " << message.c_str() << endln;
         return -6;
     }
+    assemblySeconds = std::chrono::duration<double>(
+        Clock::now() - assemblyStarted).count();
 
     const int rank = soe_->getWorldRank();
     const int startingVectors = options.resolvedIterationVectors(numModes, message);
@@ -123,7 +132,10 @@ int LadrunoCMSEigenSolver::solve(int numModes, bool generalized, bool findSmalle
         input.massRtol = options.massRtol;
         input.massAtol = options.massAtol;
         ladruno_cms::DistributedHierarchyResult candidate;
+        const auto hierarchyStarted = Clock::now();
         if (ladruno_cms::solveDistributedHierarchy(input, candidate, message) < 0) {
+            hierarchySeconds += std::chrono::duration<double>(
+                Clock::now() - hierarchyStarted).count();
             const bool insufficientStartingSpace =
                 message.find("is smaller than numberOfModes") != std::string::npos;
             if (insufficientStartingSpace && enrichment < options.maxEnrich) {
@@ -139,6 +151,8 @@ int LadrunoCMSEigenSolver::solve(int numModes, bool generalized, bool findSmalle
             opserr << "LadrunoCMSEigenSolver::solve - " << message.c_str() << endln;
             return -8;
         }
+        hierarchySeconds += std::chrono::duration<double>(
+            Clock::now() - hierarchyStarted).count();
         const double maximumResidual = *std::max_element(
             candidate.normalizedResiduals.begin(),
             candidate.normalizedResiduals.end());
@@ -175,6 +189,7 @@ int LadrunoCMSEigenSolver::solve(int numModes, bool generalized, bool findSmalle
     }
 
     if (options.refinement == ladruno_cms::RefinementMode::Subspace) {
+        const auto refinementStarted = Clock::now();
         ladruno_cms::SymmetricCSR globalStiffness;
         ladruno_cms::SymmetricCSR globalMass;
         if (ladruno_cms::buildSymmetricCSR(
@@ -219,6 +234,8 @@ int LadrunoCMSEigenSolver::solve(int numModes, bool generalized, bool findSmalle
             opserr << "LadrunoCMSEigenSolver::solve - " << message.c_str() << endln;
             return -11;
         }
+        refinementSeconds = std::chrono::duration<double>(
+            Clock::now() - refinementStarted).count();
         accepted.eigenvalues = std::move(refined.eigenvalues);
         accepted.eigenvectors = std::move(refined.eigenvectors);
         accepted.normalizedResiduals = std::move(refined.normalizedResiduals);
@@ -275,6 +292,11 @@ int LadrunoCMSEigenSolver::solve(int numModes, bool generalized, bool findSmalle
                << " maxResidual="
                << *std::max_element(normalizedResiduals_.begin(),
                                     normalizedResiduals_.end()) << endln;
+        opserr << "LadrunoCMS timing: assembly=" << assemblySeconds
+               << " hierarchy=" << hierarchySeconds
+               << " refinement=" << refinementSeconds
+               << " total=" << std::chrono::duration<double>(
+                      Clock::now() - solveStarted).count() << endln;
     }
     return 0;
 }

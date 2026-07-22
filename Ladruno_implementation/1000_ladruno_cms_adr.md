@@ -1711,3 +1711,28 @@ colectivas y publicación.
 
 La implementación puede continuar hacia las puertas restantes, pero todavía no se marca
 `shipped` ni cambia el default transitorio de `replicatedReference`.
+
+## 19. Instrumentación y baseline Building 1A 2/4/6
+
+`LadrunoCMSEigenSolver` emite, bajo `-verbose`, una línea estable con tiempos de
+ensamblaje del pencil local, jerarquía, refinamiento y solve total. Esta observabilidad no
+cambia la matemática ni el contrato de salida.
+
+La campaña del 2026-07-22 produjo los siguientes resultados de un solo run:
+
+| Método | Ranks | solve [s] | RSS agregado pico [MiB] | Estado |
+|---|---:|---:|---:|---|
+| ARPACK estándar | 1 | 30.127 | 2,010.7 | PASS |
+| FEAST RCI certificado | 2 / 4 / 6 | 376.667 / 391.980 / 448.826 | 2,331.0 / 4,475.0 / 6,635.7 | PASS |
+| CMS físico | 2 | — | 15,653.4 | FAIL MUMPS ordering |
+| CMS físico | 4 / 6 | 311.606 / 208.731 | 10,289.4 / 6,718.5 | PASS |
+
+CMS-4 y CMS-6 obtuvieron residuales originales menores que `1e-8` y errores relativos de
+autovalores menores que `2.81e-12`. La propiedad física fue verificada por manifests y
+conteos runtime. CMS es más rápido que FEAST en 4 y 6 ranks para este caso, pero ARPACK
+secuencial es el método más rápido. La memoria CMS continúa dominada por workspaces
+locales densos.
+
+P4 queda parcialmente ejecutado. No se declara `shipped`: faltan repeticiones
+estadísticas, segundo particionado, oráculo explícito `Kx/Mx`, diagnóstico de MUMPS a dos
+ranks y reducción de memoria local.
