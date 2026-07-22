@@ -942,6 +942,58 @@ TclCommand_profiler(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Cha
   return TCL_ERROR;
 }
 
+// Ladruno (ADR-74 N0): dump the assigned equation numbering of this process.
+//   ladrunoNumbering <filename>
+// One line per domain node, sorted by node tag:
+//   <nodeTag> <ndf> <id0> <id1> ...
+// The ids are the DOF_Group equation numbers as assigned by the numberer —
+// call AFTER analysis setup (>=1 analyze so domainChanged has run); an
+// unnumbered model dumps the -2/-3/-4 placeholders, which the harness rejects
+// via its bijection assertion. MP-SPMD-safe: each rank writes only its own
+// view (pass a rank-suffixed name, e.g. numbering_[getPID].txt); shared
+// boundary nodes appear in every owning rank's file and must carry IDENTICAL
+// ids — asserted by the harness. This verb is the G1 byte-identity oracle for
+// LadrunoParallelNumberer (ADR-74): dumps are bit-compared across numberers.
+int
+TclCommand_ladrunoNumbering(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
+{
+  if (argc < 2) {
+    opserr << "WARNING ladrunoNumbering <filename>\n";
+    return TCL_ERROR;
+  }
+
+  // collect (tag, dof ids) then sort explicitly — NodeIter order is storage
+  // order, which is NOT guaranteed to be tag order.
+  std::vector<std::pair<int, std::vector<int> > > rows;
+  NodeIter &theNodes = theDomain.getNodes();
+  Node *nodePtr;
+  while ((nodePtr = theNodes()) != 0) {
+    DOF_Group *dofPtr = nodePtr->getDOF_GroupPtr();
+    if (dofPtr == 0)
+      continue;                       // no DOF group yet (pre-analysis node)
+    const ID &ids = dofPtr->getID();
+    std::vector<int> row(ids.Size());
+    for (int i = 0; i < ids.Size(); i++)
+      row[i] = ids(i);
+    rows.push_back(std::make_pair(nodePtr->getTag(), row));
+  }
+  std::sort(rows.begin(), rows.end());
+
+  FILE *fp = fopen(argv[1], "w");
+  if (fp == 0) {
+    opserr << "WARNING ladrunoNumbering - could not open '" << argv[1] << "'\n";
+    return TCL_ERROR;
+  }
+  for (std::size_t r = 0; r < rows.size(); r++) {
+    fprintf(fp, "%d %d", rows[r].first, (int)rows[r].second.size());
+    for (std::size_t i = 0; i < rows[r].second.size(); i++)
+      fprintf(fp, " %d", rows[r].second[i]);
+    fprintf(fp, "\n");
+  }
+  fclose(fp);
+  return TCL_OK;
+}
+
 // Ladruno (ADR-73 P2): classic-Tcl bridge for the iterated fixed-stress overlay
 // driver. Forms:
 //   LadrunoStaggeredAnalyze $n $dt <-tol $t> <-maxIter $k> <-pScale $s> <-verbose>
@@ -1068,6 +1120,9 @@ int OpenSeesAppInit(Tcl_Interp *interp) {
 
     Tcl_CreateCommand(interp, "profiler", &TclCommand_profiler,
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL); // Ladruno
+
+    Tcl_CreateCommand(interp, "ladrunoNumbering", &TclCommand_ladrunoNumbering,
+		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL); // Ladruno (ADR-74 N0)
 
     Tcl_CreateCommand(interp, "LadrunoStaggeredAnalyze", &TclCommand_ladrunoStaggeredAnalyze,
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL); // Ladruno (ADR-73 P2)
