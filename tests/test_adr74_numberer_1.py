@@ -76,11 +76,14 @@ needs_mp = pytest.mark.skipif(
     reason="OpenSeesMP / mpiexec not found (set LADRUNO_MP_EXE / LADRUNO_MPIEXEC)",
 )
 
-# %(analysis)s is the solver-stack block; the model block is shared.
+# %(analysis)s is the solver-stack block; %(stride)d spreads node tags for the
+# G1c sparse-tag-space case (stride 1 = the dense default). A gravity-style
+# lateral load makes the 1-step solution a physics probe for G1b same-physics.
 DECK = r"""
 set pid [getPID]
 set np  [getNP]
 set EPR %(epr)d
+set STR %(stride)d
 
 model BasicBuilder -ndm 2 -ndf 2
 uniaxialMaterial Elastic 1 1000.0
@@ -88,12 +91,15 @@ uniaxialMaterial Elastic 1 1000.0
 set n0 [expr $pid*$EPR]
 set n1 [expr ($pid+1)*$EPR]
 for {set i $n0} {$i <= $n1} {incr i} {
-    node [expr $i+1] [expr double($i)] 0.0
-    mass [expr $i+1] 1.0 1.0
+    node [expr $i*$STR+1] [expr double($i)] 0.0
+    mass [expr $i*$STR+1] 1.0 1.0
 }
 if {$pid == 0} { fix 1 1 1 }
 for {set e [expr $n0+1]} {$e <= $n1} {incr e} {
-    element truss $e $e [expr $e+1] 1.0 1
+    element truss $e [expr ($e-1)*$STR+1] [expr $e*$STR+1] 1.0 1
+}
+pattern Plain 1 Linear {
+    load [expr $n1*$STR+1] 1.0 0.0
 }
 
 constraints Transformation
@@ -105,6 +111,9 @@ if {[info exists ::env(ADR74_NUMBERER)]} {
 %(analysis)s
 
 ladrunoNumbering numbering_[getPID].txt
+set fd [open disp_[getPID].txt w]
+puts $fd [format "%%.17g" [nodeDisp [expr $n1*$STR+1] 1]]
+close $fd
 """
 
 # Deck A: MUMPS keeps the numberer's GLOBAL ids (no setID in Mumps*SOE) —
@@ -130,11 +139,13 @@ analyze 1 1.0e-6
 """
 
 
-def _run_mp(workdir: Path, np: int, analysis: str, numberer: str = "ParallelRCM") -> dict:
+def _run_mp(workdir: Path, np: int, analysis: str, numberer: str = "ParallelRCM",
+            stride: int = 1) -> dict:
     """Run the chain deck at np ranks; return {rank: {nodeTag: (ids...)}}."""
     workdir.mkdir(parents=True, exist_ok=True)
     deck = workdir / "chain.tcl"
-    deck.write_text(DECK % {"epr": EPR, "analysis": analysis}, encoding="ascii")
+    deck.write_text(DECK % {"epr": EPR, "analysis": analysis, "stride": stride},
+                    encoding="ascii")
 
     env = dict(os.environ)
     env["ADR74_NUMBERER"] = numberer
@@ -308,12 +319,52 @@ def test_localized_oracle_determinism(tmp_path):
 @pytest.mark.parametrize("deck,stock,ladruno", [
     (ANALYSIS_MUMPS, "ParallelRCM", "LadrunoParallelRCM"),      # strict oracle
     (ANALYSIS_MPIDIAG, "ParallelRCM", "LadrunoParallelRCM"),    # production end-state
-    (ANALYSIS_MPIDIAG, "ParallelPlain", "LadrunoParallelPlain"),  # plain delegate
-], ids=["mumps-rcm", "mpidiag-rcm", "mpidiag-plain"])
-def test_n1_delegate_identity(tmp_path, np, deck, stock, ladruno):
+], ids=["mumps-rcm", "mpidiag-rcm"])
+def test_g1_rcm_identity(tmp_path, np, deck, stock, ladruno):
+    """G1: the RCM verb is bit-identical to stock — the load-bearing gate.
+    (Delegate-proven at N1, must SURVIVE the T0 engine swap.)"""
     a = _run_mp(tmp_path / "stock", np, deck, numberer=stock)
     b = _run_mp(tmp_path / "ladruno", np, deck, numberer=ladruno)
     assert_dumps_identical(a, b)
+
+
+def _read_disp(workdir: Path, np: int) -> dict:
+    return {r: float((workdir / f"disp_{r}.txt").read_text().strip())
+            for r in range(np)}
+
+
+@needs_mp
+@pytest.mark.parametrize("np", [2, 8])
+def test_g1b_plain_bijection_and_physics(tmp_path, np):
+    """G1b: LadrunoParallelPlain fixes the upstream tag-0 quirk, so it is NOT
+    bit-identical to stock ParallelPlain — the gate is a valid numbering
+    (strict global oracle on the Mumps deck) + same physics as stock."""
+    a = _run_mp(tmp_path / "stock", np, ANALYSIS_MUMPS, numberer="ParallelPlain")
+    b = _run_mp(tmp_path / "ladruno", np, ANALYSIS_MUMPS, numberer="LadrunoParallelPlain")
+    # both are valid global numberings...
+    for dumps in (a, b):
+        merged = assert_shared_consistent(dumps)
+        assert assert_bijection(merged) == _expected_neqn(np)
+    # ...and the physics agrees to solver precision
+    da, db = _read_disp(tmp_path / "stock", np), _read_disp(tmp_path / "ladruno", np)
+    for r in range(np):
+        assert da[r] == pytest.approx(db[r], rel=1e-10, abs=1e-14), (
+            f"rank {r}: plain-verb physics diverged: {da[r]} vs {db[r]}"
+        )
+
+
+@needs_mp
+def test_g1c_sparse_tag_fallback(tmp_path):
+    """G1c: a strided tag space (maxTag >> numVertex) crosses the kappa guard
+    into the hash fallback — numbering must STILL be bit-identical to stock."""
+    stride = 1_000_000  # 11 nodes, maxTag ~ 1e7 => dense budget blown
+    a = _run_mp(tmp_path / "stock", 2, ANALYSIS_MUMPS,
+                numberer="ParallelRCM", stride=stride)
+    b = _run_mp(tmp_path / "ladruno", 2, ANALYSIS_MUMPS,
+                numberer="LadrunoParallelRCM", stride=stride)
+    assert_dumps_identical(a, b)
+    merged = assert_shared_consistent(b)
+    assert assert_bijection(merged) == _expected_neqn(2)
 
 
 # ---------------------------------------------------------------------------
