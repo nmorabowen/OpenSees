@@ -32,16 +32,17 @@
 //                                      G1b bijection + same-physics)
 //
 //   Phase status (ADR-74 §Implementation plan):
-//     N1 (this): DELEGATE mode — numberDOF(int) forwards to the base verbatim,
-//        so the class is gate-provable bit-identical before any algorithm
-//        changes. numberDOF(ID&) hard-errors: the upstream variant is broken
-//        (numbering call commented out, mismatched recv layout,
-//        ParallelNumberer.cpp:507+) and is reachable only from the SP lane,
-//        which ADR-74 scopes out.
-//     N2 (T0): own numberDOF(int) — dense direct-address dedup in both merge
-//        passes, per-subgraph tag map, ref<0 guard, -4 index, dc.n.* scopes.
+//     N1 ✓: delegate mode, proven bit-identical to stock (13/13, PR #591).
+//     N2 (this, T0): own numberDOF(int) — O(1) dedup in both merge passes
+//        (RefIndex dense/hash), per-subgraph tag map, seen-flag plain branch
+//        (fixes the upstream tag-0 quirk => G1b not bit-identity), ref<0
+//        Lagrange guard, constrainedNode->MP index for the -4 fixup,
+//        dc.n.gather/merge/order/scatter profiler sub-scopes. RCM verb stays
+//        bit-identical to stock (G1). numberDOF(ID&) hard-errors: the
+//        upstream variant is broken (ParallelNumberer.cpp:507+, numbering
+//        call commented out) and is SP-lane-only, which ADR-74 scopes out.
 //     N3 (T1): owned dense tag->Vertex* + Vertex::addEdge direct + dense-
-//        storage merged graph.
+//        storage merged graph (kills the std::map residual).
 //
 // Theory + gates: Ladruno_implementation/74_ladruno_parallel_numberer_adr.md
 
@@ -64,7 +65,7 @@ class LadrunoParallelNumberer : public ParallelNumberer
 
     ~LadrunoParallelNumberer();
 
-    // N1: delegates to ParallelNumberer::numberDOF(int) verbatim.
+    // T0: the O(V) gather/merge/order/scatter (see the .cpp header).
     int numberDOF(int lastDOF = -1);
 
     // Upstream numberDOF(ID&) is broken (see header comment) — hard error

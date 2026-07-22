@@ -250,6 +250,10 @@ ideal numberer does no gather, no merge, no ordering at all. Ranked, with projec
 | T0+T1, plain verb | **~1 min** | **~2-5 min** | valid, no RCM | G1b (bijection + physics) |
 | T2 | ~ms-s | ~ms-s | different (valid) | own correctness campaign |
 
+*Measured update (N2): T0 alone already lands ~16 s at 2.1 M np8 (N^1.10) — the
+"T0 only" row above was conservative; at 19.18 M the numberer term extrapolates to
+~2-4 min pre-T1. The table's remaining binder is `dc.setSize` (§Risks).*
+
 T0-before-T2 is deliberate, on three grounds:
 1. **Risk asymmetry.** T0+T1's oracle is a bit-diff (G1). T2's oracle is "same physics to
    solver tolerance" — weaker, laborious, on a path (parallel numbering consistency)
@@ -302,10 +306,10 @@ behavior-identical on the RCM verb — the cleanest possible upstream PR shape).
 | Gate | Delivers | Pass criterion | Status |
 |---|---|---|---|
 | **G0** — scaling sweep (pre-fix) | measured `dc.numberDOF` exponent vs N at fixed np | super-linear growth across 0.25/1.0/2.0 M-hex rungs, np8 | **PASSED — 3 points: `dc.numberDOF` 39.90 / 578.87 / 2477.50 s ⇒ N^2.01**; comparison model reproduces rungs 1-2 ≤3%; step-1 isolation via the per-step wall column (48.95 s vs 0.36 s median); the merge additionally verified *live* (ADR74DBG trace: dedup + scatter correct) |
-| **G1** — numbering byte-identity (RCM verb) | the new class changes no numbers | **two-deck oracle** (§Discovered en route): Deck A (`system Mumps`, global ids) — `LadrunoParallelRCM` vs stock `ParallelRCM` dumps **bit-identical**, np2 + np8, + shared-node consistency + global bijection (the strict gate); Deck B (`system MPIDiagonal`) — end-state dumps bit-identical + per-rank dense local bijection; vehicle `tests/test_adr74_numberer_1.py` (N0-proven, incl. mutation tests) + the apeGmsh plane-wave MP gates (≤1.5e-15) as the battery | oracle **SHIPPED & PROVEN** (N0); Ladruno-vs-stock compare pending T0 |
-| **G1b** — plain verb | valid numbering, tag-0 fix documented | bijection assertion (stock plain *fails or double-orders* the constructed tag-0 micro-case — documented); same-physics vs stock on the 0.25 M rung | pending T0 |
-| **G1c** — fallback path | the κ-guard hash path is gated, not just written | tag-offset clone of the 0.25 M deck (node tags × large stride) provably crossing κ: fallback engages **and** numbering still bit-identical to stock | pending T0 |
-| **G2** — the fix, measured | T0(+T1) timing on the G0 rungs | `dc.n.merge` exponent ≈ 1; per-bracket attribution via the sub-scopes below. *Validity note:* pass 1 is P-independent (Σ ≈ V²/2) and pass 2 ∝ V²/P, so np8 exponents transfer to np240 conservatively; the genuinely P-dependent hazards (snapshot rebuilds, rank-0 memory) are addressed by the owned-structure T1 design | pending T0 |
+| **G1** — numbering byte-identity (RCM verb) | the new class changes no numbers | two-deck oracle (§Discovered en route): Deck A (`system Mumps`, global ids) + Deck B (`system MPIDiagonal`, end-state), np2+np8 | **PASSED at N2**: chain decks bit-identical with the O(V) engine; **production-scale artifact**: the real 0.25 M-hex 3D rung (269,314 nodes, np8, MPIDiagonal end-state) — stock `numbering_new_*` vs T0 `numbering_t0_*` in `~/ladruno_nsweep/rung-0.25M`, **all 8 ranks bit-identical**; plus the MP/`-4` fixup gate (Plain handler + double-equalDOF-on-one-node, np2+np8, bit-identical) |
+| **G1b** — plain verb | valid numbering, tag-0 fix documented | bijection + same-physics + the tag-0 micro-case | **PASSED at N2**: bijection + same-physics (rel 1e-10; ordering-noise floor ~1e-15, so 5 orders of margin) on the chain; the tag-0 divergence test asserts stock-plain and Ladruno-plain dumps DIFFER while both remain valid bijections (the fix is real and visible); *scope note:* rung-scale same-physics vs stock-plain is infeasible — stock `ParallelPlain` at 0.25 M is the ~3.7×10¹⁴-comparison path (days) |
+| **G1c** — fallback path | the κ-guard hash path is gated, not just written | tag-offset clone crossing κ, np2 **and** np8, with an **engagement observable** | **PASSED at N2**: strided deck (maxTag ~10⁷) bit-identical to stock at np2+np8, and the harness asserts the `RefIndex -> hash fallback` observable actually fired (an oracle that cannot fail is not an oracle) |
+| **G2** — the fix, measured | T0(+T1) timing on the G0 rungs | `dc.n.merge` exponent ≈ 1; per-bracket attribution | **PASSED — three points**: `dc.numberDOF` 39.90→**1.73 s** (23×), 578.87→**7.60 s** (76×), 2477.50→**16.48 s** (**150×**); exponent **N^1.10 over 3 points** (1→2: 1.09, 2→3: 1.10); residual attributed by sub-scopes to the T1-scoped map ops (2.0 M: merge 7.91 s, order 5.18 s, gather 1.01 s, scatter 0.19 s). `dc.setSize` 3-point confirm: 10.1/101.4/501.1 s ≈ N^1.9 — the pre-G3 blocker, now with its own clean curve |
 | **G3** — cluster confirmation | the production-scale kill | 18.6 M deck re-run on Esmeralda with the patched binary, **per-bracket budgets**: `dc.numberDOF` ≤ ~3 min, `dc.setSize` reported separately (np-sequential bcast rounds at np240 — and see the open question below), first step ≤ minutes, total ≈ 25 min; per-step wall column confirms step 1 carried setup. Flagged K=1 best case | pending G1/G2 + cluster rebuild |
 | **G4** (T2 only) | distributed numbering correctness | same-physics vs T0 numbering (solver-tolerance, NOT bit-identical); np-sweep shows O(V/P); **ADR-30's staged gate imported**: renumbers correctly every stage | deferred until T2 is scheduled |
 
@@ -332,7 +336,7 @@ later phase regresses against an instrument already proven able to fail.
 | **N2 — T0 (kill the quadratics)** | Own-body `numberDOF(int)`: dense `refToLoc` (64-bit size math, κ-guard hash fallback, `ref < 0` hard error) in pass 1; per-subgraph `subTagToMerged` in pass 2; seen-bitmap plain branch (tag-0 fixed); `constrainedNode → MPs` index for the `-4` fixup; `dc.n.gather/merge/order/scatter` sub-scopes | **G1** (RCM verb bit-identical, np2+np8) + **G1b** (plain: bijection + same-physics + the tag-0 micro-case) + **G1c** (tag-offset clone crosses κ, fallback engages, still bit-identical) + G0 rungs re-run: `dc.n.merge` exponent ≈ 1 |
 | **N3 — T1 (kill the map residual)** | Owned `tag → Vertex*` vector maintained through the merge; `Vertex::addEdge` called directly on both endpoints; merged graph on dense array-backed storage; RCM runs against it | **G1 again** (the critical regression — bit-identity must survive T1) + **G2 full**: 3-rung sweep on the fixed binary, per-bracket table, projections vs the §Sequencing table |
 | **N4 — G3, the production kill** | Cherry-pick/rebase instrumentation + N1-N3 onto the cluster tree (`ladruno-p5-build` — the three touched files are hash-verified identical); rebuild Esmeralda binary; re-run the 18.6 M deck with `numberer LadrunoParallelRCM` (and once with `LadrunoParallelPlain`) under per-bracket budgets | **G3**: `dc.numberDOF` ≤ ~3 min; `dc.setSize` reported separately (its ~N² anomaly investigated **before** this run, see Risks); first step ≤ minutes; total ≈ 25 min; per-step column shows step 1 |
-| **N5 — ship hygiene** | LEDGER_vanilla_files row (the promotion); LEDGER_quirks entries (Lagrange `ref=−1` fusion, tag-0, broken `numberDOF(ID&)`); banner regen; CHANGELOG; the §Risks external-record corrections applied to the two Obsidian notes + ADR-30 header; apeGmsh plane-wave family decks switched to the Ladruno verb; upstream-PR extraction decision recorded | docs land in the same PR as the switch (the build-control rule); vault corrections verifiable |
+| **N5 — ship hygiene** | LEDGER_vanilla_files row (the promotion); LEDGER_quirks entries (Lagrange `ref=−1` fusion, tag-0, broken `numberDOF(ID&)`); banner regen; CHANGELOG; the §Risks external-record corrections applied to the two Obsidian notes + ADR-30 header; apeGmsh plane-wave family decks switched to the Ladruno verb; upstream-PR extraction decision recorded **+ the apeGmsh typed primitives `ops.numberer.LadrunoParallelRCM/Plain` (slipped from N1 — tracked here so it cannot be lost)** | docs land in the same PR as the switch (the build-control rule); vault corrections verifiable |
 
 **Validation principles pinned:** "same-physics" (G1b/G4) means the apeGmsh plane-wave
 gate metric (response match ≤1.5e-15 on the 0.25 M rung); every gate that can be run at
@@ -448,11 +452,13 @@ readers of profiler output must anchor paths at `runs/<id>/rollup/root/step/...`
 
 ## Risks / open questions
 
-- **`dc.setSize` shows its own ~N² at np8** (G0 data: 6.23 s → 100.23 s, ×16.1 for ×3.87
-  nodes ⇒ ~N^2.06) — mechanism unidentified (`MPIDiagonalSOE::setSize`'s per-pair
-  intersection is linear; suspicion falls on the shared-eq list construction or
-  `ID::insert` behavior at scale). **Separate defect, needs its own look before G3** —
+- **`dc.setSize` is now THE first-step wall** — with T0 in, the 1.0 M rung reads
+  numberDOF 7.60 s vs **setSize 101.39 s** (~N^2.06 across rungs, mechanism
+  unidentified; the per-pair intersection reads linear, so suspicion falls on the
+  shared-eq list construction, `ID::insert`, or the localization pass at scale).
+  Naive N² extrapolation to 19.18 M is ~9 h — **the blocking pre-G3 investigation**,
   budgeted separately in G3 precisely so it cannot masquerade as numberer residue.
+  Likely its own sub-ADR or an ADR-74 amendment.
 - **maxTag density assumption** (T0 primary path): κ-guard + hash fallback, G1c-gated;
   negative-ref micro-case included in the same test file.
 - **Rank-0 memory after T0**: the merged graph (~5 GB at 19 M vertices) lives on rank 0
@@ -537,6 +543,29 @@ residual ⇒ T1 added; pass 2 + plain branch added to T0's scope; per-rank Plain
   interpreter; ledger rows appended. **N1 gate PASSED 13/13**: delegate-vs-stock
   bit-identical at np2+np8 on Mumps-RCM (strict), MPIDiag-RCM (production end-state),
   and MPIDiag-Plain — simultaneously the null-test of the N0 oracle. Next: N2 (T0).
+- **2026-07-22** — **N2/T0 shipped**: own-body `numberDOF(int)` — RefIndex dense/hash
+  dedup (64-bit sizing, κ-guard), per-subgraph pass-2 map, seen-flag plain branch
+  (tag-0 fixed), `ref<0` Lagrange hard-guard, `constrainedNode→MPs` index for the -4
+  fixup, `dc.n.gather/merge/order/scatter` sub-scopes. **Gates 14/14**: G1 RCM verb
+  bit-identical to stock at np2+np8 on both decks *with the O(V) engine underneath*;
+  G1b plain bijection + same-physics; G1c strided-tag hash fallback bit-identical.
+  **G2 measured**: 23× / 76× on the rungs, exponent N^2.01 → **N^1.09**; residual =
+  the T1-scoped map ops, attributed by the new sub-scopes. `dc.setSize` (~N^2.06) is
+  now the dominant first-step term — the pre-G3 blocker.
+- **2026-07-22** — **N2 adversarial gate (3 lenses) folded**: transcription-fidelity
+  verdict "bit-identity HOLDS for every in-tree path" (mutation-for-mutation verified;
+  κ paths answer-identical; -4 order preserved; two stock defects incidentally fixed —
+  a leaked V-sized ID per domainChanged on the RCM path and a null-deref on the
+  non-root error path). Converged MAJORs applied: fail-STOP (exit −1) at both
+  mid-collective error sites (return = distributed deadlock + ignored result on the
+  production caller), pass-2 `find()` guard (operator[] would silently wire spurious
+  edges to vertex 0), `nOrdered` completeness assertion (the tag-contiguity theorem is
+  now live-checked), int64 sizing-hint math. Gates added per review: the MP/`-4` fixup
+  identity gate (previously ZERO coverage of the rewritten second quadratic), the
+  tag-0 divergence micro-case, the Lagrange `ref<0` loud-failure test, G1c np8 + the
+  hash-engagement observable. *Provenance*: all rung artifacts stamp the N1-merge
+  banner hash (`d04077d3c`) + the T0 working tree = branch `feat/adr74-n2-t0`; the
+  review-fix binary re-ran the full suite green.
 - **Cluster note**: the Esmeralda tree (`ladruno-p5-build` @ #580) carries the same
   unfixed code — all three instrumentation-touched files byte-identical to the patch
   base — so the instrumentation + T0/T1 rebase cleanly there. The live cluster binary is
