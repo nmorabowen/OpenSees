@@ -297,6 +297,26 @@ def test_localized_oracle_determinism(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# N1 gate — LadrunoParallelNumberer delegate mode vs stock, bit-identical.
+# Simultaneously a null-test of the oracle and of the subclass wiring
+# (promotion, tag-forwarding ctors, verb registration). ADR-74 §plan N1.
+# ---------------------------------------------------------------------------
+
+
+@needs_mp
+@pytest.mark.parametrize("np", [2, 8])
+@pytest.mark.parametrize("deck,stock,ladruno", [
+    (ANALYSIS_MUMPS, "ParallelRCM", "LadrunoParallelRCM"),      # strict oracle
+    (ANALYSIS_MPIDIAG, "ParallelRCM", "LadrunoParallelRCM"),    # production end-state
+    (ANALYSIS_MPIDIAG, "ParallelPlain", "LadrunoParallelPlain"),  # plain delegate
+], ids=["mumps-rcm", "mpidiag-rcm", "mpidiag-plain"])
+def test_n1_delegate_identity(tmp_path, np, deck, stock, ladruno):
+    a = _run_mp(tmp_path / "stock", np, deck, numberer=stock)
+    b = _run_mp(tmp_path / "ladruno", np, deck, numberer=ladruno)
+    assert_dumps_identical(a, b)
+
+
+# ---------------------------------------------------------------------------
 # MUT — the comparators must be able to fail (no binary needed)
 # ---------------------------------------------------------------------------
 

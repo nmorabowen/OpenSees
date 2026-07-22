@@ -136,6 +136,7 @@ bool setMPIDSOEFlag = false;
 #include <mpi.h>
 #include <MPI_MachineBroker.h>
 #include <ParallelNumberer.h>
+#include <LadrunoParallelNumberer.h>   // Ladruno (ADR-74)
 #include <DistributedDisplacementControl.h>
 #include <DistributedBandSPDLinSOE.h>
 #include <DistributedSparseGenColLinSOE.h>
@@ -1605,6 +1606,15 @@ int OPS_Numberer()
     } else if (strcmp(type, "ParallelRCM") == 0) {
 
         theNumberer = (DOF_Numberer*)OPS_ParallelRCM();
+
+    // Ladruno (ADR-74): the O(V) numberer verbs (N1 = delegate, G1-gated)
+    } else if (strcmp(type, "LadrunoParallelRCM") == 0) {
+
+        theNumberer = (DOF_Numberer*)OPS_LadrunoParallelRCM();
+
+    } else if (strcmp(type, "LadrunoParallelPlain") == 0) {
+
+        theNumberer = (DOF_Numberer*)OPS_LadrunoParallelPlain();
 
     } else {
     	opserr<<"WARNING unknown numberer type "<<type<<"\n";
@@ -4596,6 +4606,54 @@ void* OPS_ParallelRCM() {
     theParallelNumberer->setChannels(numChannels, channels);
 
     return theParallelNumberer;
+#else
+    return 0;
+#endif
+
+}
+
+// Ladruno (ADR-74): factory twins of OPS_ParallelRCM for the O(V) numberer.
+void* OPS_LadrunoParallelRCM() {
+
+#ifdef _PARALLEL_INTERPRETERS
+    LadrunoParallelNumberer *theLadrunoNumberer = 0;
+    if (cmds == 0) return theLadrunoNumberer;
+
+    MachineBroker* machine = cmds->getMachineBroker();
+    Channel** channels = cmds->getChannels();
+    int numChannels = cmds->getNumChannels();
+
+    int rank = machine->getPID();
+
+    RCM *theRCM = new RCM(false);
+    theLadrunoNumberer = new LadrunoParallelNumberer(*theRCM);
+    theLadrunoNumberer->setProcessID(rank);
+    theLadrunoNumberer->setChannels(numChannels, channels);
+
+    return theLadrunoNumberer;
+#else
+    return 0;
+#endif
+
+}
+
+void* OPS_LadrunoParallelPlain() {
+
+#ifdef _PARALLEL_INTERPRETERS
+    LadrunoParallelNumberer *theLadrunoNumberer = 0;
+    if (cmds == 0) return theLadrunoNumberer;
+
+    MachineBroker* machine = cmds->getMachineBroker();
+    Channel** channels = cmds->getChannels();
+    int numChannels = cmds->getNumChannels();
+
+    int rank = machine->getPID();
+
+    theLadrunoNumberer = new LadrunoParallelNumberer();
+    theLadrunoNumberer->setProcessID(rank);
+    theLadrunoNumberer->setChannels(numChannels, channels);
+
+    return theLadrunoNumberer;
 #else
     return 0;
 #endif

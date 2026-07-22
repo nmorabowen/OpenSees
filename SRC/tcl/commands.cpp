@@ -485,6 +485,7 @@ ModelBuilder *theBuilder =0;
 #include <StaticDomainDecompositionAnalysis.h>
 #include <TransientDomainDecompositionAnalysis.h>
 #include <ParallelNumberer.h>
+#include <LadrunoParallelNumberer.h>   // Ladruno (ADR-74)
 
 //  parallel soe & solvers
 #include <DistributedBandSPDLinSOE.h>
@@ -521,6 +522,7 @@ bool setMPIDSOEFlag = false;
 
 // parallel analysis
 #include <ParallelNumberer.h>
+#include <LadrunoParallelNumberer.h>   // Ladruno (ADR-74)
 #include <DistributedDisplacementControl.h>
 
 //  parallel soe & solvers
@@ -4088,12 +4090,27 @@ specifyNumberer(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **
     theParallelNumberer->setProcessID(OPS_rank);
     theParallelNumberer->setChannels(numChannels, theChannels);
   } else if (strcmp(argv[1],"ParallelRCM") == 0) {
-    RCM *theRCM = new RCM(false);	
-    ParallelNumberer *theParallelNumberer = new ParallelNumberer(*theRCM);    	
-    theNumberer = theParallelNumberer;       
+    RCM *theRCM = new RCM(false);
+    ParallelNumberer *theParallelNumberer = new ParallelNumberer(*theRCM);
+    theNumberer = theParallelNumberer;
     theParallelNumberer->setProcessID(OPS_rank);
     theParallelNumberer->setChannels(numChannels, theChannels);
-  }   
+  }
+
+  // Ladruno (ADR-74): the O(V) numberer verbs. N1 = delegate (bit-identical
+  // to the stock verbs above, G1-gated); T0/T1 swap the engine underneath.
+  else if (strcmp(argv[1],"LadrunoParallelRCM") == 0) {
+    RCM *theRCM = new RCM(false);
+    LadrunoParallelNumberer *theLadrunoNumberer = new LadrunoParallelNumberer(*theRCM);
+    theNumberer = theLadrunoNumberer;
+    theLadrunoNumberer->setProcessID(OPS_rank);
+    theLadrunoNumberer->setChannels(numChannels, theChannels);
+  } else if (strcmp(argv[1],"LadrunoParallelPlain") == 0) {
+    LadrunoParallelNumberer *theLadrunoNumberer = new LadrunoParallelNumberer();
+    theNumberer = theLadrunoNumberer;
+    theLadrunoNumberer->setProcessID(OPS_rank);
+    theLadrunoNumberer->setChannels(numChannels, theChannels);
+  }
 
 #endif
 

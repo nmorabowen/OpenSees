@@ -495,6 +495,8 @@ void* OPS_ExpressNewton();
 
 void* OPS_ParallelNumberer();
 void* OPS_ParallelRCM();
+void* OPS_LadrunoParallelRCM();     // Ladruno (ADR-74)
+void* OPS_LadrunoParallelPlain();   // Ladruno (ADR-74)
 
 void* OPS_ParallelDisplacementControl();
 
