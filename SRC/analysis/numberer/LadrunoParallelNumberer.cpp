@@ -56,6 +56,7 @@
 #include <profiler/ProfilerMacros.h>
 
 #include <cstdint>
+#include <cstdlib>
 #include <unordered_map>
 #include <vector>
 
@@ -97,6 +98,10 @@ class RefIndex {
                        ? static_cast<std::int64_t>(expected_)
                        : count_);
       if (need > budget && need > 1024) {
+        // one-line observable so G1c can assert the fallback actually engaged
+        // (an oracle that cannot fail is not an oracle — N0 discipline)
+        opserr << "LadrunoParallelNumberer: RefIndex -> hash fallback "
+               << "(sparse tag space, ref=" << ref << ")\n";
         useHash_ = true;
         hash_.reserve(static_cast<std::size_t>(expected_) * 2u);
         for (std::size_t t = 0; t < dense_.size(); ++t)
@@ -212,8 +217,19 @@ ladrunoMergeSubGraph(Graph &theGraph, Graph &theSubGraph,
     const ID &adjacency = subVertexPtr->getAdjacency();
     for (int i = 0; i < adjacency.Size(); i++) {
       int vertexTagSubAdjacent = adjacency(i);
-      int vertexTagMergedAdjacent = subToMerged[vertexTagSubAdjacent];
-      theGraph.addEdge(vertexTagMerged, vertexTagMergedAdjacent);
+      // find(), NOT operator[]: a dangling adjacency tag (malformed subgraph)
+      // must fail loudly — operator[] would default-insert 0 and silently
+      // wire a spurious edge to a real vertex (review MAJOR). Stock corrupts
+      // differently-but-silently here; neither is acceptable.
+      std::unordered_map<int, int>::const_iterator it =
+          subToMerged.find(vertexTagSubAdjacent);
+      if (it == subToMerged.end()) {
+        opserr << "FATAL LadrunoParallelNumberer - subgraph adjacency "
+               << "references unknown vertex " << vertexTagSubAdjacent
+               << " (malformed graph) — aborting.\n";
+        exit(-1);
+      }
+      theGraph.addEdge(vertexTagMerged, it->second);
     }
   }
 
@@ -287,17 +303,29 @@ LadrunoParallelNumberer::numberDOF(int lastDOF)
     ID vertexRefs(numVertex);
     Vertex *vertexPtr;
     int loc = 0;
-    RefIndex refIndex(numVertex * (numChannels + 1));
+    // 64-bit sizing hint, clamped (review MAJOR-3: int*int overflows on
+    // unbalanced decks; the hint only tunes the kappa budget, never correctness)
+    const std::int64_t expect64 =
+        static_cast<std::int64_t>(numVertex) * (numChannels + 1);
+    RefIndex refIndex(expect64 > 0x7fffffff ? 0x7fffffff
+                                            : static_cast<int>(expect64));
     VertexIter &theVertices = theGraph.getVertices();
     while ((vertexPtr = theVertices()) != 0) {
       int ref = vertexPtr->getRef();
       if (ref < 0) {
-        opserr << "ERROR LadrunoParallelNumberer - P0 DOF group with no node "
-               << "(ref=" << ref << ") — see the Lagrange note in ADR-74.\n";
-        return -2;
+        // fail-STOP (AnalysisModel::getDOFGroupGraph convention): a return
+        // here would leave every non-root rank blocked in recvID forever
+        // while the production caller ignores the result (review MAJOR-1).
+        opserr << "FATAL LadrunoParallelNumberer - P0 DOF group with no node "
+               << "(ref=" << ref << ", e.g. a Lagrange multiplier group) — "
+               << "see the Lagrange note in ADR-74.\n";
+        exit(-1);
       }
       vertexTags[loc] = vertexPtr->getTag();
       vertexRefs[loc] = ref;
+      // NB duplicate refs on P0 would be last-wins here vs stock's first-wins
+      // getLocation — unreachable in-tree (one DOF group per node; the only
+      // duplicate ref is -1, rejected above). Comment per review.
       refIndex.insert(ref, loc);
       loc++;
     }
@@ -318,8 +346,11 @@ LadrunoParallelNumberer::numberDOF(int lastDOF)
       { OPS_PROFILE_SCOPE("dc.n.merge");
       if (ladrunoMergeSubGraph(theGraph, *theSubGraph, vertexTags, vertexRefs,
                                *theSubdomainIDs[j], refIndex, numVertex) < 0) {
-        delete theSubGraph;
-        return -2;
+        // fail-STOP: mid-collective return = distributed deadlock + a
+        // partially-merged cached graph (review MAJOR-1).
+        opserr << "FATAL LadrunoParallelNumberer - subgraph merge failed "
+               << "(channel " << j << ") — aborting all ranks.\n";
+        exit(-1);
       }
       }
 
@@ -359,6 +390,15 @@ LadrunoParallelNumberer::numberDOF(int lastDOF)
           seen[refTagP0] = 1;
           (*theOrderedRefs)[nOrdered++] = refTagP0;
         }
+      }
+      // Live assertion of the tag-contiguity theorem the seen[] flags rest on
+      // (review MAJOR-2): a silently-skipped vertex would leave trailing zeros
+      // in theOrderedRefs and corrupt vertex 0 downstream.
+      if (nOrdered != theGraph.getNumVertex()) {
+        opserr << "FATAL LadrunoParallelNumberer - ordered " << nOrdered
+               << " of " << theGraph.getNumVertex() << " vertices (DOF-group "
+               << "tags not contiguous from 0?) — aborting.\n";
+        exit(-1);
       }
     }
 

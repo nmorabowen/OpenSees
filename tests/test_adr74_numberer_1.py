@@ -164,6 +164,8 @@ def _run_mp(workdir: Path, np: int, analysis: str, numberer: str = "ParallelRCM"
         [MPIEXEC, "-n", str(np), MP_EXE, deck.name],
         cwd=workdir, env=env, capture_output=True, text=True, timeout=300,
     )
+    (workdir / "run_output.txt").write_text(proc.stdout + proc.stderr,
+                                            encoding="utf-8", errors="replace")
     dumps = sorted(workdir.glob("numbering_*.txt"))
     assert proc.returncode == 0, (
         f"OpenSeesMP np{np} failed rc={proc.returncode}\n"
@@ -354,17 +356,152 @@ def test_g1b_plain_bijection_and_physics(tmp_path, np):
 
 
 @needs_mp
-def test_g1c_sparse_tag_fallback(tmp_path):
+@pytest.mark.parametrize("np", [2, 8])
+def test_g1c_sparse_tag_fallback(tmp_path, np):
     """G1c: a strided tag space (maxTag >> numVertex) crosses the kappa guard
-    into the hash fallback — numbering must STILL be bit-identical to stock."""
-    stride = 1_000_000  # 11 nodes, maxTag ~ 1e7 => dense budget blown
-    a = _run_mp(tmp_path / "stock", 2, ANALYSIS_MUMPS,
+    into the hash fallback — numbering must STILL be bit-identical to stock,
+    and the fallback must OBSERVABLY engage (review: a silently-dense run
+    would pass without testing the hash path — an oracle that cannot fail)."""
+    stride = 1_000_000  # maxTag ~ 1e7 for tens of nodes => dense budget blown
+    a = _run_mp(tmp_path / "stock", np, ANALYSIS_MUMPS,
                 numberer="ParallelRCM", stride=stride)
-    b = _run_mp(tmp_path / "ladruno", 2, ANALYSIS_MUMPS,
+    b = _run_mp(tmp_path / "ladruno", np, ANALYSIS_MUMPS,
                 numberer="LadrunoParallelRCM", stride=stride)
     assert_dumps_identical(a, b)
     merged = assert_shared_consistent(b)
-    assert assert_bijection(merged) == _expected_neqn(2)
+    assert assert_bijection(merged) == _expected_neqn(np)
+    out = (tmp_path / "ladruno" / "run_output.txt").read_text(errors="replace")
+    assert "RefIndex -> hash fallback" in out, (
+        "kappa guard never engaged — the hash path went untested"
+    )
+
+
+# Plain-handler stack: equalDOF MPs survive to the numberer as -4 markers,
+# which the -4 fixup (the rewritten "second quadratic") must resolve.
+MP_TIES = r"""
+# two MPs on ONE constrained node (different retained nodes, different dofs):
+# exercises the -4 fixup multi-MP application-order preservation
+equalDOF 2 4 1
+equalDOF 3 4 2
+"""
+
+
+@needs_mp
+def test_g1_mp_fixup_identity(tmp_path):
+    """Review MAJOR: the rewritten -4 fixup had zero gate coverage. Under
+    `constraints Plain`, equalDOF leaves -4 markers the numberer resolves
+    itself. Stock-vs-Ladruno must stay bit-identical. (Bijection does NOT
+    hold here: constrained dofs share eqn ids with their retained dofs.)
+
+    np1 ON PURPOSE: at np>=2 this deck HANGS under the STOCK numberer too —
+    the `constraints Plain` + equalDOF + parallel-MUMPS stack deadlocks in
+    the solve (observed: both ranks spin in MPI busy-poll; reproduced with
+    `numberer ParallelRCM`, i.e. upstream, not ADR-74 code). The -4 fixup
+    itself is rank-local logic (build the constrainedNode->MPs index, resolve
+    this rank's -4 markers), which np1 exercises completely. The upstream
+    MP+Plain+Mumps hang is ledger material, not an ADR-74 gate."""
+    analysis = "constraints Plain" + MP_TIES + ANALYSIS_MUMPS
+    a = _run_mp(tmp_path / "stock", 1, analysis, numberer="ParallelRCM")
+    b = _run_mp(tmp_path / "ladruno", 1, analysis, numberer="LadrunoParallelRCM")
+    assert_dumps_identical(a, b)
+    assert_shared_consistent(b)
+    # the ties must actually be present and resolved: constrained node 4's
+    # dof-1 id == node 2's dof-1 id, dof-2 id == node 3's dof-2 id
+    view = b[0]
+    assert view[4][0] == view[2][0] and view[4][1] == view[3][1], (
+        f"equalDOF ties unresolved: n2={view[2]} n3={view[3]} n4={view[4]}"
+    )
+
+
+def _run_mp_nofix(workdir, np, analysis, numberer):
+    """The tag-0 micro-case needs DOF-group tag 0 to be a FREE node — with the
+    standard deck the fixed node 1 IS vertex 0 (zero dofs), so its ordering
+    position is invisible and stock/Ladruno coincide. Strip the fix; use the
+    explicit stack (no factorization => a floating chain is fine for 1 step)."""
+    workdir.mkdir(parents=True, exist_ok=True)
+    deck = workdir / "chain.tcl"
+    body = DECK % {"epr": EPR, "analysis": analysis, "stride": 1}
+    body = body.replace("if {$pid == 0} { fix 1 1 1 }", "")
+    deck.write_text(body, encoding="ascii")
+    env = dict(os.environ)
+    env["ADR74_NUMBERER"] = numberer
+    env["LADRUNO_OPENSEES_QUIET"] = "1"
+    env["PATH"] = str(Path(MPIEXEC).parent) + os.pathsep + env.get("PATH", "")
+    tcl_lib = REPO / "dist" / "lib" / "tcl8.6"
+    if tcl_lib.exists():
+        env.setdefault("TCL_LIBRARY", str(tcl_lib))
+    proc = subprocess.run([MPIEXEC, "-n", str(np), MP_EXE, deck.name],
+                          cwd=workdir, env=env, capture_output=True, text=True,
+                          timeout=300)
+    dumps = sorted(workdir.glob("numbering_*.txt"))
+    assert len(dumps) == np, f"expected {np} dumps\n{proc.stdout[-1500:]}"
+    return {int(d.stem.split("_")[1]): parse_dump(d) for d in dumps}
+
+
+@needs_mp
+def test_g1b_tag0_divergence_documented(tmp_path):
+    """The tag-0 micro-case (review): stock ParallelPlain's zero-filled
+    theOrderedRefs treats vertex tag 0 as already-ordered and numbers it
+    LAST; LadrunoParallelPlain orders it naturally. With vertex 0 FREE the
+    dumps must DIFFER (the fix is real and visible) while both remain valid
+    per-rank numberings (MPIDiagonal end-state: rank-local dense)."""
+    a = _run_mp_nofix(tmp_path / "stock", 2, ANALYSIS_MPIDIAG, "ParallelPlain")
+    b = _run_mp_nofix(tmp_path / "ladruno", 2, ANALYSIS_MPIDIAG,
+                      "LadrunoParallelPlain")
+    for dumps in (a, b):
+        assert_rank_local_bijection(dumps, fixed_nodes=())
+    with pytest.raises(AssertionError):
+        assert_dumps_identical(a, b)   # identical would mean the fix vanished
+
+
+@needs_mp
+def test_lagrange_negative_ref_fails_loudly(tmp_path):
+    """Review MAJOR-1 companion: a Lagrange handler under MP produces
+    node-less DOF groups (ref=-1) that stock silently FUSES across ranks.
+    The Ladruno verb must fail LOUDLY (FATAL + abort), never silently
+    misnumber, and never hang past the harness timeout."""
+    analysis = "constraints Lagrange" + ANALYSIS_MUMPS
+    workdir = tmp_path
+    workdir.mkdir(parents=True, exist_ok=True)
+    deck = workdir / "chain.tcl"
+    body = DECK % {"epr": EPR, "analysis": analysis, "stride": 1}
+    body = body.replace("constraints Transformation", "")
+    deck.write_text(body, encoding="ascii")
+
+    env = dict(os.environ)
+    env["ADR74_NUMBERER"] = "LadrunoParallelRCM"
+    env["LADRUNO_OPENSEES_QUIET"] = "1"
+    env["PATH"] = str(Path(MPIEXEC).parent) + os.pathsep + env.get("PATH", "")
+    tcl_lib = REPO / "dist" / "lib" / "tcl8.6"
+    if tcl_lib.exists():
+        env.setdefault("TCL_LIBRARY", str(tcl_lib))
+
+    # NB: on Windows Intel MPI, P0's exit(-1) does NOT tear down fellow ranks —
+    # the non-root spins in MPI_Recv (empirically: orphaned OpenSeesMP at 100%
+    # CPU). This is exactly the review-MAJOR failure mode the FATAL exists to
+    # surface; the harness must reap the process TREE itself.
+    proc = subprocess.Popen([MPIEXEC, "-n", "2", MP_EXE, deck.name],
+                            cwd=workdir, env=env,
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True)
+    try:
+        out, _ = proc.communicate(timeout=90)
+    except subprocess.TimeoutExpired:
+        out = ""
+    finally:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                           capture_output=True)
+        else:
+            proc.kill()
+        try:
+            rest, _ = proc.communicate(timeout=15)
+            out = (out or "") + (rest or "")
+        except Exception:
+            pass
+    assert "FATAL LadrunoParallelNumberer" in (out or ""), (
+        f"expected the loud ref<0 abort; got tail:\n{(out or '')[-1500:]}"
+    )
 
 
 # ---------------------------------------------------------------------------
