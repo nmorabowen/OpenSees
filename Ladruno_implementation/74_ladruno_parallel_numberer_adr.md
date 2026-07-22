@@ -575,8 +575,13 @@ readers of profiler output must anchor paths at `runs/<id>/rollup/root/step/...`
   quadratic `LadrunoParallelNumberer` already indexes away on the parallel path.
   Penalty/Lagrange/Auto handlers audited clean. Fix for all four sites = the
   shipped `constrainedNode → MPs` one-pass index pattern + a tie-heavy identity
-  gate; scheduled as its own unit. `DomainPartitioner` deprioritized (unused by
-  the apeGmsh SPMD lane); recorder init + apeGmsh emit fan-out remain unmeasured.
+  gate; **RESOLVED same-day (MP-index PR)**: all four sites (plus PlainHandler's twin
+  `getEQs()` sweep, found during the fix) now use the one-pass index; tie-gate
+  deck (`~/ladruno_nsweep/tiegate`, 2000 nodes / ~1000 equalDOFs / a
+  multi-MP node, np1, Plain handler) byte-identical for both `numberer Plain`
+  and `numberer RCM` + suite 18/18. `DomainPartitioner` deprioritized (unused
+  by the apeGmsh SPMD lane); recorder init + apeGmsh emit fan-out remain
+  unmeasured.
 - **maxTag density assumption** (T0 primary path): κ-guard + hash fallback, G1c-gated;
   negative-ref micro-case included in the same test file.
 - **Rank-0 memory after T0**: the merged graph (~5 GB at 19 M vertices) lives on rank 0
