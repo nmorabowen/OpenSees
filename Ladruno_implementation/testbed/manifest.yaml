@@ -1749,7 +1749,28 @@ features:
       and is absent from the banner. Merge-time note (#596 review): the
       classTag-vs-object-identity setEigenSOE vanilla edit is exercised by
       Zone-A; the manifest conflict with the ADR-74 numberer row was a
-      tail-append collision, both rows kept.
+      tail-append collision, both rows kept. Fixed at merge: (1) enrichment
+      retry deadlock — the "is smaller than numberOfModes" reason string is
+      rank-0-only, so the rank-local retry match desynced ranks and hung the
+      next collective; verdict now MPI_Bcast from rank 0; (2) the -refine
+      none uncertified-result warning was verbose-gated, now unconditional;
+      (3) scipy added to Zone-A CI installs (oracle import broke collection).
+      KNOWN remediation debts from the 3-lane merge review (all fail-loud or
+      opt-in-only, none silent-wrong): rank-local error returns before the
+      first hierarchy/refiner collective (buildOwnedLocalPencil -6,
+      refinement-path buildSymmetricCSR -10) can strand other ranks in a
+      collective — funnel through collectiveFailure; repeated eigen
+      -ladrunoCMS with NO analysis object leaks the (heavy) SOE per call
+      (inherited FEAST 5-arg eigen seam); a subdomain interior with zero
+      dynamic coordinates aborts (-9) instead of degrading to a Guyan-only
+      subdomain; local Lanczos plateau/cluster caps hard-abort (-10/-11/-14)
+      instead of passing best-so-far to the authoritative refiner gate;
+      no cross-rank option-consistency Allreduce; refiner/solver core has
+      zero CI compile signal in default (LADRUNO_CMS=OFF) builds — only
+      LadrunoCMSOptions.cpp is g++-compiled by the zone_a core test.
+      Doc nits: residual metric is the ADR's combined backward error
+      ||Kx-lMx||/(||Kx||+|l|||Mx||), not ||Kx||-only; q=max(p+8,2p) is
+      MORE conservative than Bathe's min(2p,p+8), misattributed.
 
   - feature: LadrunoCMSEigenSolver              # twin of EigenSOE tag 33025
     classtag: 33026
@@ -1778,4 +1799,3 @@ features:
       original-pencil subspace iteration. Two Building 1A base runs and one
       retention-enriched run publish modes below the strict 1e-8 residual gate.
       P2c PASS; status remains remediation pending P3/P4 and shipment review.
->>>>>>> pr-596

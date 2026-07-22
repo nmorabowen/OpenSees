@@ -136,9 +136,16 @@ int LadrunoCMSEigenSolver::solve(int numModes, bool generalized, bool findSmalle
         if (ladruno_cms::solveDistributedHierarchy(input, candidate, message) < 0) {
             hierarchySeconds += std::chrono::duration<double>(
                 Clock::now() - hierarchyStarted).count();
-            const bool insufficientStartingSpace =
-                message.find("is smaller than numberOfModes") != std::string::npos;
-            if (insufficientStartingSpace && enrichment < options.maxEnrich) {
+            // The "is smaller than numberOfModes" reason is produced on rank 0
+            // only; every other rank receives the substitute "failed on rank 0"
+            // text, so a rank-local string match desynchronizes the retry
+            // decision and the next collective hangs. Broadcast rank 0's
+            // verdict so all ranks retry or exit together.
+            int insufficientStartingSpace =
+                message.find("is smaller than numberOfModes") != std::string::npos
+                    ? 1 : 0;
+            MPI_Bcast(&insufficientStartingSpace, 1, MPI_INT, 0, MPI_COMM_WORLD);
+            if (insufficientStartingSpace == 1 && enrichment < options.maxEnrich) {
                 if (options.verbose && rank == 0)
                     opserr << "LadrunoCMS: CMS space cannot yet supply q="
                            << startingVectors << "; retrying with k2="
@@ -264,7 +271,10 @@ int LadrunoCMSEigenSolver::solve(int numModes, bool generalized, bool findSmalle
         accepted.diagnostics.stiffnessActionNorm.resize(
             static_cast<std::size_t>(numModes));
         accepted.diagnostics.massActionNorm.resize(static_cast<std::size_t>(numModes));
-        if (options.verbose && rank == 0)
+        // Uncertified output must warn unconditionally, not only under
+        // -verbose: a silent -refine none run is indistinguishable from a
+        // certified one at the script level.
+        if (rank == 0)
             opserr << "LadrunoCMS: refinement=none publishes an approximate "
                    << "CMS research result without a convergence guarantee\n";
     }
