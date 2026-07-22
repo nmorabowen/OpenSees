@@ -203,6 +203,17 @@ TransformationDOF_Group::TransformationDOF_Group(int tag,
     for (int i=0; i<modNumDOF; i++) 
 	theSPs[i] = 0;
 
+    /* Ladruno (ADR-74 handle fix): domain-wide SP sweep REMOVED — it made every
+    // SP-only TransformationDOF_Group ctor O(#SP-in-domain), i.e. the handler's
+    // node loop O(#constrainedNodes x #SP) ~ N^2 per rank (measured: dc.h.nodes
+    // 1.27 s of the 2.0 M np8 rung's dc.handle). Redundant on every in-tree
+    // path: both TransformationConstraintHandler and AutoConstraintHandler
+    // follow this ctor with addSP_Constraint for EVERY SP of the node from
+    // getDomainAndLoadPatternSPs (a superset of the getSPs this sweep walked),
+    // and addSP_Constraint sets the same theSPs[dof] pointer — so the final
+    // state is identical (gated by the byte-identity numbering dumps + suite).
+    // Upstream itself already removed the equivalent sweep from the MP ctor
+    // above (the commented block). Original code:
     // set the SP_Constraint corresponding to the dof in myID
     Domain *theDomain=node->getDomain();
     int nodeTag = node->getTag();
@@ -213,8 +224,10 @@ TransformationDOF_Group::TransformationDOF_Group(int tag,
 	    int dof = sp->getDOF_Number();
 	    theSPs[dof] = sp;
 	}
-    }    
-    
+    }
+    */
+
+
     // if this is the first TransformationDOF_Group we now
     // create the arrays used to store pointers to class wide
     // matrix and vector objects used to return modTangent and residual
