@@ -86,6 +86,12 @@ UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 #include <SymmGeneralizedEigenSolver.h>
 #include <SymmGeneralizedEigenSOE.h>
 #include <ArpackSOE.h>
+#if defined(_PARALLEL_INTERPRETERS) && defined(_LADRUNO_CMS)
+#include <LadrunoCMSOptions.h>
+#include <LadrunoCMSEigenSOE.h>
+#include <LadrunoCMSEigenSolver.h>
+#include <mpi.h>
+#endif
 // Ladruno ADR43: FEAST band-targeted eigensolver
 #include <FeastEigenSOE.h>
 #include <FeastEigenSolver.h>
@@ -2308,6 +2314,47 @@ static int OPS_eigenFeast()
     return 0;
 }
 
+#if defined(_PARALLEL_INTERPRETERS) && defined(_LADRUNO_CMS)
+// LADRUNO ADR 1000: the independent two-level CMS command consumes every
+// remaining token, including the final numModes, through its tested parser.
+static int OPS_eigenLadrunoCMS()
+{
+    std::vector<std::string> arguments;
+    while (OPS_GetNumRemainingInputArgs() > 0) {
+        char argumentBuffer[128];
+        const char *argument = OPS_GetStringFromAll(
+            argumentBuffer, static_cast<int>(sizeof(argumentBuffer)));
+        if (argument == nullptr) {
+            opserr << "WARNING eigen -ladrunoCMS: invalid argument type" << endln;
+            return -1;
+        }
+        arguments.emplace_back(argument);
+    }
+    ladruno_cms::Options options;
+    int numberOfModes = 0;
+    std::string message;
+    if (ladruno_cms::parseCommandOptions(
+            arguments, options, numberOfModes, message) < 0) {
+        opserr << "WARNING eigen -ladrunoCMS: " << message.c_str() << endln;
+        return -1;
+    }
+    int worldSize = 0;
+    MPI_Comm_size(MPI_COMM_WORLD, &worldSize);
+    if (options.validate(worldSize, numberOfModes, message) < 0) {
+        opserr << "WARNING eigen -ladrunoCMS: " << message.c_str() << endln;
+        return -1;
+    }
+    LadrunoCMSEigenSolver *solver = new LadrunoCMSEigenSolver();
+    LadrunoCMSEigenSOE *soe = new LadrunoCMSEigenSOE(*solver, options);
+    cmds->setNumEigen(numberOfModes);
+    if (cmds->eigen(EigenSOE_TAGS_LadrunoCMS, 0.0, true, true, soe) < 0) {
+        opserr << "WARNING eigen -ladrunoCMS: analysis failed" << endln;
+        return -1;
+    }
+    return 0;
+}
+#endif
+
 int OPS_eigenAnalysis()
 {
     static bool warning_displayed = false;
@@ -2381,6 +2428,13 @@ int OPS_eigenAnalysis()
         // (a frequency band instead of a mode count)
         return OPS_eigenFeast();
     }
+
+#if defined(_PARALLEL_INTERPRETERS) && defined(_LADRUNO_CMS)
+    else if ((strcmp(type, "-ladrunoCMS") == 0) ||
+             (strcmp(type, "ladrunoCMS") == 0)) {
+        return OPS_eigenLadrunoCMS();
+    }
+#endif
 
     else if (strcmp(type,"PythonSparse") == 0) {
         pythonSparseEigen = true;

@@ -1,0 +1,421 @@
+#include "LadrunoCMSHierarchy.h"
+#include "LadrunoCMSMumps.h"
+
+#include <mpi.h>
+
+#include <algorithm>
+#include <cmath>
+#include <iostream>
+#include <string>
+#include <vector>
+
+#ifdef _WIN32
+extern "C" int DSYGVX(
+    int *, char *, char *, char *, int *, double *, int *, double *, int *,
+    double *, double *, int *, int *, double *, int *, double *, double *, int *,
+    double *, int *, int *, int *, int *);
+#define LADRUNO_TEST_DSYGVX DSYGVX
+#else
+extern "C" int dsygvx_(
+    int *, char *, char *, char *, int *, double *, int *, double *, int *,
+    double *, double *, int *, int *, double *, int *, double *, double *, int *,
+    double *, int *, int *, int *, int *);
+#define LADRUNO_TEST_DSYGVX dsygvx_
+#endif
+
+namespace {
+
+int failures = 0;
+
+void require(bool condition, const std::string &message)
+{
+    if (!condition) {
+        std::cerr << "FAIL: " << message << '\n';
+        ++failures;
+    }
+}
+
+bool close(double left, double right, double tolerance = 1.0e-8)
+{
+    return std::fabs(left - right) <= tolerance *
+        std::max(1.0, std::max(std::fabs(left), std::fabs(right)));
+}
+
+ladruno_cms::SymmetricCSR csrFromDense(const std::vector<double> &dense, int order)
+{
+    ladruno_cms::SymmetricCSR result;
+    result.dimension = order;
+    result.rowOffsets.push_back(0);
+    for (int row = 0; row < order; ++row) {
+        for (int column = row; column < order; ++column) {
+            const double value = dense[static_cast<std::size_t>(row) * order + column];
+            if (value != 0.0) {
+                result.columnIndices.push_back(column);
+                result.upperValues.push_back(value);
+            }
+        }
+        result.rowOffsets.push_back(static_cast<int>(result.columnIndices.size()));
+    }
+    return result;
+}
+
+struct Fixture {
+    ladruno_cms::TwoLevelHierarchyInput input;
+    std::vector<double> stiffness;
+    std::vector<double> mass;
+};
+
+Fixture makeFixture(bool completeBasis)
+{
+    Fixture fixture;
+    constexpr int order = 9;
+    fixture.stiffness.assign(order * order, 0.0);
+    fixture.mass.assign(order * order, 0.0);
+    const int equations[4][3] = {{0, 1, 2}, {2, 3, 4}, {4, 5, 6}, {6, 7, 8}};
+    for (int fine = 0; fine < 4; ++fine) {
+        const double shift = 0.15 * fine;
+        const std::vector<double> localStiffness = {
+            2.2 + shift, -1.0, 0.0,
+            -1.0, 2.6 + shift, -0.8,
+            0.0, -0.8, 1.9 + shift};
+        const std::vector<double> localMass = {
+            0.8 + 0.05 * fine, 0.04, 0.0,
+            0.04, 1.0 + 0.05 * fine, 0.03,
+            0.0, 0.03, 1.2 + 0.05 * fine};
+        ladruno_cms::FineSubdomainInput local;
+        local.fine = fine;
+        local.coarse = fine < 2 ? 0 : 1;
+        local.equations.assign(equations[fine], equations[fine] + 3);
+        local.stiffness = csrFromDense(localStiffness, 3);
+        local.mass = csrFromDense(localMass, 3);
+        local.modesToKeep = completeBasis ? -1 : 1;
+        fixture.input.fineSubdomains.push_back(local);
+        for (int row = 0; row < 3; ++row) {
+            for (int column = 0; column < 3; ++column) {
+                const std::size_t global =
+                    static_cast<std::size_t>(equations[fine][row]) * order +
+                    equations[fine][column];
+                fixture.stiffness[global] += localStiffness[static_cast<std::size_t>(row) * 3 + column];
+                fixture.mass[global] += localMass[static_cast<std::size_t>(row) * 3 + column];
+            }
+        }
+    }
+    fixture.input.globalStiffness = csrFromDense(fixture.stiffness, order);
+    fixture.input.globalMass = csrFromDense(fixture.mass, order);
+    fixture.input.numberOfCoarseSubdomains = 2;
+    fixture.input.modesLevel1 = completeBasis ? -1 : 2;
+    fixture.input.numberOfModes = completeBasis ? 5 : 3;
+    fixture.input.denseMax = 20;
+    fixture.input.localTolerance = 1.0e-10;
+    fixture.input.maximumOperatorApplications = 300;
+    fixture.input.maximumRestarts = 20;
+    fixture.input.storeTotalTransformation = completeBasis;
+    return fixture;
+}
+
+std::vector<double> directEigenvalues(
+    const ladruno_cms::SymmetricCSR &stiffnessCSR,
+    const ladruno_cms::SymmetricCSR &massCSR,
+    int requested)
+{
+    const int order = stiffnessCSR.dimension;
+    const std::vector<double> stiffnessRows = stiffnessCSR.toDense();
+    const std::vector<double> massRows = massCSR.toDense();
+    std::vector<double> stiffness(static_cast<std::size_t>(order) * order);
+    std::vector<double> mass(static_cast<std::size_t>(order) * order);
+    for (int row = 0; row < order; ++row) {
+        for (int column = 0; column < order; ++column) {
+            stiffness[static_cast<std::size_t>(column) * order + row] =
+                stiffnessRows[static_cast<std::size_t>(row) * order + column];
+            mass[static_cast<std::size_t>(column) * order + row] =
+                massRows[static_cast<std::size_t>(row) * order + column];
+        }
+    }
+    int itype = 1;
+    char jobz = 'V';
+    char range = 'I';
+    char uplo = 'U';
+    int n = order;
+    int leading = order;
+    double lower = 0.0;
+    double upper = 0.0;
+    int first = 1;
+    int last = requested;
+    double absoluteTolerance = 0.0;
+    int found = 0;
+    std::vector<double> eigenvalues(static_cast<std::size_t>(order));
+    std::vector<double> eigenvectors(static_cast<std::size_t>(order) * requested);
+    int leadingVectors = order;
+    int workspaceSize = 8 * order;
+    std::vector<double> workspace(static_cast<std::size_t>(workspaceSize));
+    std::vector<int> integerWorkspace(static_cast<std::size_t>(5 * order));
+    std::vector<int> failed(static_cast<std::size_t>(order));
+    int info = 0;
+    LADRUNO_TEST_DSYGVX(
+        &itype, &jobz, &range, &uplo, &n, stiffness.data(), &leading,
+        mass.data(), &leading, &lower, &upper, &first, &last,
+        &absoluteTolerance, &found, eigenvalues.data(), eigenvectors.data(),
+        &leadingVectors, workspace.data(), &workspaceSize,
+        integerWorkspace.data(), failed.data(), &info);
+    require(info == 0 && found == requested, "direct LAPACK reference failed");
+    eigenvalues.resize(static_cast<std::size_t>(std::max(0, found)));
+    return eigenvalues;
+}
+
+void checkCompleteTwoLevelFlow()
+{
+    Fixture fixture = makeFixture(true);
+    const std::vector<double> reference = directEigenvalues(
+        fixture.input.globalStiffness, fixture.input.globalMass, 5);
+    ladruno_cms::TwoLevelHierarchyResult result;
+    std::string message;
+    require(ladruno_cms::solveTwoLevelHierarchy(fixture.input, result, message) == 0,
+            "complete two-level hierarchy failed: " + message);
+    require(result.diagnostics.appliedT2 && result.diagnostics.appliedS2 &&
+            result.diagnostics.appliedT1 && result.diagnostics.appliedS1,
+            "one of T2/S2/T1/S1 was not applied");
+    require(result.diagnostics.afterLevel2BeforeCompatibility == 12,
+            "unexpected pre-S2 dimension");
+    require(result.diagnostics.afterLevel2Compatibility == 10,
+            "S2 did not merge both within-group interfaces");
+    require(result.diagnostics.afterLevel1BeforeCompatibility == 10,
+            "complete T1 changed the assembled coarse dimension");
+    require(result.diagnostics.finalRawDimension == 9,
+            "S1 did not merge the cross-group interface");
+    require(*std::max_element(result.diagnostics.level2CompatibilityCounts.begin(),
+                              result.diagnostics.level2CompatibilityCounts.end()) == 2,
+            "S2 compatibility multiplicity was not observed");
+    require(*std::max_element(result.diagnostics.level1CompatibilityCounts.begin(),
+                              result.diagnostics.level1CompatibilityCounts.end()) == 2,
+            "S1 compatibility multiplicity was not observed");
+    require(result.totalTransformation.size() == 81u,
+            "bounded diagnostic transformation was not reconstructed");
+    require(result.diagnostics.maximumDuplicateJump < 2.0e-10,
+            "shared equations are discontinuous after back-substitution");
+    for (std::size_t mode = 0; mode < reference.size(); ++mode) {
+        require(close(result.eigenvalues[mode], reference[mode], 2.0e-8),
+                "complete CMS eigenvalue differs from direct LAPACK");
+        require(result.normalizedResiduals[mode] < 2.0e-8,
+                "complete CMS mode has an excessive global residual");
+    }
+}
+
+void checkTruncatedTwoLevelFlow()
+{
+    Fixture fixture = makeFixture(false);
+    const std::vector<double> reference = directEigenvalues(
+        fixture.input.globalStiffness, fixture.input.globalMass, 3);
+    ladruno_cms::TwoLevelHierarchyResult result;
+    std::string message;
+    require(ladruno_cms::solveTwoLevelHierarchy(fixture.input, result, message) == 0,
+            "truncated two-level hierarchy failed: " + message);
+    require(result.diagnostics.finalRawDimension == 5,
+            "truncated hierarchy has an unexpected final dimension");
+    require(result.totalTransformation.empty(),
+            "production path materialized the global transformation");
+    require(result.diagnostics.maximumDuplicateJump < 2.0e-10,
+            "truncated back-substitution violates compatibility");
+    for (std::size_t mode = 0; mode < reference.size(); ++mode) {
+        require(result.eigenvalues[mode] + 1.0e-9 >= reference[mode],
+                "truncated Ritz eigenvalue violates the upper-bound property");
+        require(std::isfinite(result.normalizedResiduals[mode]),
+                "truncated hierarchy returned a non-finite residual");
+    }
+}
+
+void checkCoordinateMassCondensationAcrossHierarchy()
+{
+    Fixture fixture = makeFixture(true);
+    const std::vector<double> localMass = {
+        0.0, 0.0, 0.0,
+        0.0, 1.0, 0.03,
+        0.0, 0.03, 1.2};
+    fixture.input.fineSubdomains[0].mass = csrFromDense(localMass, 3);
+    fixture.mass[0] = 0.0;
+    fixture.mass[1] = 0.0;
+    fixture.mass[9] = 0.0;
+    fixture.input.globalMass = csrFromDense(fixture.mass, 9);
+
+    ladruno_cms::StaticCondensation directCondensation;
+    std::string message;
+    require(ladruno_cms::condenseCoordinateMass(
+                fixture.input.globalStiffness, fixture.input.globalMass,
+                fixture.input.massRtol, fixture.input.massAtol,
+                directCondensation, message) == 0,
+            "direct coordinate-mass condensation failed: " + message);
+    const std::vector<double> reference = directEigenvalues(
+        directCondensation.reducedStiffness,
+        directCondensation.reducedMass, 5);
+
+    ladruno_cms::TwoLevelHierarchyResult result;
+    message.clear();
+    require(ladruno_cms::solveTwoLevelHierarchy(fixture.input, result, message) == 0,
+            "hierarchical coordinate-mass condensation failed: " + message);
+    require(result.diagnostics.finalRawDimension == 8,
+            "hierarchy did not eliminate the finite-inertia coordinate at T2");
+    for (std::size_t mode = 0; mode < reference.size(); ++mode) {
+        require(close(result.eigenvalues[mode], reference[mode], 3.0e-8),
+                "hierarchical finite eigenvalue differs after mass condensation");
+        require(result.normalizedResiduals[mode] < 3.0e-8,
+                "reconstructed finite mode has an excessive residual");
+    }
+}
+
+void checkExplicitMemoryGuards()
+{
+    Fixture denseFixture = makeFixture(true);
+    denseFixture.input.numberOfModes = 3;
+    denseFixture.input.denseMax = 4;
+    denseFixture.input.storeTotalTransformation = false;
+    ladruno_cms::TwoLevelHierarchyResult result;
+    std::string message;
+    require(ladruno_cms::solveTwoLevelHierarchy(
+                denseFixture.input, result, message) < 0,
+            "denseMax guard accepted an oversized final pencil");
+    require(message.find("denseMax") != std::string::npos,
+            "denseMax rejection did not name its controlling option");
+
+    Fixture transformationFixture = makeFixture(true);
+    transformationFixture.input.maximumTransformationEntries = 80u;
+    message.clear();
+    require(ladruno_cms::solveTwoLevelHierarchy(
+                transformationFixture.input, result, message) < 0,
+            "diagnostic transformation entry guard was bypassed");
+    require(message.find("entry limit") != std::string::npos,
+            "diagnostic transformation guard was not actionable");
+}
+
+void checkDistributedFourRankFlow(int rank, int size)
+{
+    if (size != 4)
+        return;
+    Fixture fixture = makeFixture(true);
+    const std::vector<double> reference = directEigenvalues(
+        fixture.input.globalStiffness, fixture.input.globalMass, 5);
+    const ladruno_cms::FineSubdomainInput &local =
+        fixture.input.fineSubdomains[static_cast<std::size_t>(rank)];
+    const std::vector<double> stiffnessDense = local.stiffness.toDense();
+    const std::vector<double> massDense = local.mass.toDense();
+    ladruno_cms::AssemblyRecord stiffnessRecord;
+    ladruno_cms::AssemblyRecord massRecord;
+    std::string message;
+    require(ladruno_cms::makeAssemblyRecord(
+                ladruno_cms::ContributionKind::Stiffness, 0,
+                stiffnessDense.data(), 3, 3, local.equations, 9, 1.0,
+                1.0e-12, 1.0e-14, stiffnessRecord, message) == 0,
+            "distributed stiffness record construction failed: " + message);
+    require(ladruno_cms::makeAssemblyRecord(
+                ladruno_cms::ContributionKind::Mass, 0,
+                massDense.data(), 3, 3, local.equations, 9, 1.0,
+                1.0e-12, 1.0e-14, massRecord, message) == 0,
+            "distributed mass record construction failed: " + message);
+
+    ladruno_cms::DistributedHierarchyInput input;
+    input.globalDimension = 9;
+    input.fine = rank;
+    input.coarse = rank / 2;
+    input.numberOfCoarseSubdomains = 2;
+    input.localEquations = local.equations;
+    input.localStiffness = local.stiffness;
+    input.localMass = local.mass;
+    std::vector<ladruno_cms::AssemblyRecord> ownedStiffness{stiffnessRecord};
+    std::vector<ladruno_cms::AssemblyRecord> ownedMass{massRecord};
+    input.ownedStiffnessContributions = &ownedStiffness;
+    input.ownedMassContributions = &ownedMass;
+    input.modesLevel2 = 3;
+    input.modesLevel1 = 10;
+    input.numberOfModes = 5;
+    input.denseMax = 20;
+    input.tolerance = 1.0e-8;
+    input.maximumOperatorApplications = 300;
+    ladruno_cms::DistributedHierarchyResult result;
+    message.clear();
+    require(ladruno_cms::solveDistributedHierarchy(input, result, message) == 0,
+            "distributed T2/S2/T1/S1 flow failed: " + message);
+    require(result.diagnostics.appliedT2 && result.diagnostics.appliedS2 &&
+            result.diagnostics.appliedT1 && result.diagnostics.appliedS1,
+            "distributed flow skipped a mandatory transformation");
+    require(result.diagnostics.afterLevel2BeforeCompatibility == 12 &&
+            result.diagnostics.afterLevel2Compatibility == 10 &&
+            result.diagnostics.afterLevel1BeforeCompatibility == 10 &&
+            result.diagnostics.finalRawDimension == 9,
+            "distributed hierarchy dimensions differ from the serial oracle");
+    require(result.eigenvectors.size() == 45u,
+            "distributed reconstruction did not publish complete vectors");
+    require(result.diagnostics.maximumDuplicateJump < 2.0e-10,
+            "distributed reconstruction has incompatible interface copies");
+    for (std::size_t mode = 0; mode < reference.size(); ++mode) {
+        require(close(result.eigenvalues[mode], reference[mode], 3.0e-8),
+                "distributed eigenvalue differs from direct LAPACK");
+        require(result.normalizedResiduals[mode] < 3.0e-8,
+                "distributed complete-basis residual is excessive");
+    }
+
+    // Regression: recomputed local CMS bases are not inherently nested.  The
+    // production enrichment must therefore preserve the preceding Ritz space
+    // explicitly before checking Rayleigh--Ritz monotonicity.
+    ladruno_cms::DistributedHierarchyResult enriched = result;
+    for (int mode = 0; mode < input.numberOfModes; ++mode) {
+        const int perturbationRow = (mode + 5) % input.globalDimension;
+        enriched.eigenvectors[
+            static_cast<std::size_t>(mode) * input.globalDimension +
+            perturbationRow] += 2.0e-2;
+    }
+    message.clear();
+    require(ladruno_cms::solveNestedRitzUnion(
+                input.globalDimension, input.numberOfModes,
+                ownedStiffness, ownedMass, result, enriched, message) == 0,
+            "nested distributed enrichment failed: " + message);
+    require(enriched.diagnostics.nestedEnrichmentDimension > input.numberOfModes,
+            "nested enrichment discarded every independent new direction");
+    for (int mode = 0; mode < input.numberOfModes; ++mode) {
+        const double allowance = 1.0e-10 *
+            std::max(1.0, std::fabs(result.eigenvalues[static_cast<std::size_t>(mode)]));
+        require(enriched.eigenvalues[static_cast<std::size_t>(mode)] <=
+                    result.eigenvalues[static_cast<std::size_t>(mode)] + allowance,
+                "nested enrichment increased a Ritz eigenvalue");
+        require(enriched.normalizedResiduals[static_cast<std::size_t>(mode)] < 5.0e-8,
+                "nested enrichment damaged an exact distributed mode");
+    }
+    std::vector<double> rootVectors = result.eigenvectors;
+    MPI_Bcast(rootVectors.data(), static_cast<int>(rootVectors.size()),
+              MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    for (std::size_t entry = 0; entry < rootVectors.size(); ++entry)
+        require(close(result.eigenvectors[entry], rootVectors[entry], 1.0e-12),
+                "published eigenvectors differ between ranks");
+}
+
+
+void checkAssemblyMismatchIsRejected()
+{
+    Fixture fixture = makeFixture(true);
+    fixture.input.fineSubdomains[0].stiffness.upperValues[0] += 0.1;
+    ladruno_cms::TwoLevelHierarchyResult result;
+    std::string message;
+    require(ladruno_cms::solveTwoLevelHierarchy(fixture.input, result, message) < 0,
+            "inconsistent local/global assembly was accepted");
+    require(message.find("do not reproduce") != std::string::npos,
+            "assembly mismatch did not produce an actionable diagnostic");
+}
+
+} // namespace
+
+int main(int argc, char **argv)
+{
+    MPI_Init(&argc, &argv);
+    int rank = 0;
+    int size = 0;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+    checkCompleteTwoLevelFlow();
+    checkTruncatedTwoLevelFlow();
+    checkCoordinateMassCondensationAcrossHierarchy();
+    checkExplicitMemoryGuards();
+    checkAssemblyMismatchIsRejected();
+    checkDistributedFourRankFlow(rank, size);
+    MPI_Finalize();
+    if (failures != 0)
+        return 1;
+    std::cout << "two-level hierarchy checks passed\n";
+    return 0;
+}

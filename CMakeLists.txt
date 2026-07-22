@@ -225,6 +225,11 @@ add_compile_definitions($<$<COMPILE_LANGUAGE:C,CXX>:OPENSEES_VERSION="${GIT_VERS
 set_property(CACHE OPS_FINAL_TARGET PROPERTY STRINGS
     G3 OpenSees OpenSeesMP OpenSeesSP OpenSeesPy OpenSeesPyMP)
 
+# Ladruno ADR 1000: the hierarchical CMS eigensolver is an opt-in library.
+# OFF must leave every stock/serial target byte-identical at the source-list level.
+option(LADRUNO_CMS "Build the independent two-level LadrunoCMS eigensolver" OFF)
+option(LADRUNO_CMS_BUILD_TESTS "Build standalone LadrunoCMS C++ numerical checks" OFF)
+
 #
 # OS Configuration:
 #  defines: compile flags & user supplied paths and includes if not using conan
@@ -631,6 +636,19 @@ add_library(OPS_Domain             OBJECT)
 add_library(OPS_SysOfEqn           OBJECT)
 add_library(OPS_SysOfEqnPython     OBJECT)
 
+# Ladruno ADR 1000: declare the target before final MP targets are linked;
+# SRC/system_of_eqn/ladrunoCMS supplies its sources later in the configure pass.
+if(LADRUNO_CMS)
+  if(NOT MPI_FOUND)
+    message(FATAL_ERROR "LADRUNO_CMS=ON requires MPI")
+  endif()
+  if(NOT DEFINED MUMPS_DIR)
+    message(FATAL_ERROR "LADRUNO_CMS=ON requires MUMPS_DIR")
+  endif()
+  add_library(OPS_LadrunoCMS STATIC)
+  target_compile_definitions(OPS_LadrunoCMS PUBLIC _LADRUNO_CMS)
+endif()
+
 # Ladruno ADR43 L2: attach the MKL FEAST macro + libs to the ONE object library
 # that compiles the FEAST/PARDISO sources (FeastEigenSolver.cpp,
 # LadrunoBlockZKernel.cpp live only in OPS_SysOfEqn). PRIVATE macro => only these
@@ -755,6 +773,9 @@ if(MPI_FOUND)
         target_compile_definitions(OPS_InterpPyCmds_MP PRIVATE _PARALLEL_INTERPRETERS ${MUMPS_FLAG} _OPENMPI)
     else()
         target_compile_definitions(OPS_InterpPyCmds_MP PRIVATE _PARALLEL_INTERPRETERS ${MUMPS_FLAG})
+    endif()
+    if(LADRUNO_CMS)
+        target_compile_definitions(OPS_InterpPyCmds_MP PRIVATE _LADRUNO_CMS)
     endif()
 endif()
 
@@ -1026,6 +1047,7 @@ if(MPI_FOUND)
     target_link_libraries(OpenSeesMP
        OPS_InterpTcl
        OPS_InterpPyCmds
+       $<$<BOOL:${LADRUNO_CMS}>:OPS_LadrunoCMS>
        OpenSeesLIB
        OPS_Reliability
        OPS_ReliabilityTcl
@@ -1044,6 +1066,10 @@ if(MPI_FOUND)
        ${MPI_Fortran_LIBRARIES}
        ${MPI_CXX_LINK_FLAGS}
     )
+
+    if(LADRUNO_CMS)
+      target_compile_definitions(OpenSeesMP PRIVATE _LADRUNO_CMS)
+    endif()
 
 endif()
 
@@ -1133,6 +1159,7 @@ endif()
 
 target_link_libraries(OpenSeesPyMP
    OPS_InterpPyCmds_MP
+   $<$<BOOL:${LADRUNO_CMS}>:OPS_LadrunoCMS>
    OpenSeesLIB
    OPS_SysOfEqnPython
    OPS_Reliability
@@ -1151,6 +1178,10 @@ target_link_libraries(OpenSeesPyMP
    ${MPI_Fortran_LIBRARIES}
    ${MPI_CXX_LINK_FLAGS}
 )
+
+if(LADRUNO_CMS)
+  target_compile_definitions(OpenSeesPyMP PRIVATE _LADRUNO_CMS)
+endif()
 
 endif()
 
