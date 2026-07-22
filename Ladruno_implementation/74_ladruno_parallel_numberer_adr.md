@@ -567,6 +567,16 @@ readers of profiler output must anchor paths at `runs/<id>/rollup/root/step/...`
   suite green. The "~9 h at 19.18 M" naive extrapolation was wrong in the reassuring
   direction: the term is per-rank quadratic, so np240 pays only ~30-60 s — but it
   would have poisoned every np8-class local sweep and the G3 attribution.
+- **Setup-path scan audit (2026-07-22, post-#595)** — tree-wide inventory of the
+  remaining getLocation/scan-in-loop family, all **MP-count-driven** (zero cost on
+  the MP-free rungs, quadratic on equalDOF/tie-heavy decks): `PlainHandler.cpp`
+  per-node full-MP sweep (O(#nodes × #MP)); the `-4` fixup full-MP sweep in stock
+  `DOF_Numberer.cpp` (×2 variants) and `PlainNumberer.cpp` (×2) — the same second
+  quadratic `LadrunoParallelNumberer` already indexes away on the parallel path.
+  Penalty/Lagrange/Auto handlers audited clean. Fix for all four sites = the
+  shipped `constrainedNode → MPs` one-pass index pattern + a tie-heavy identity
+  gate; scheduled as its own unit. `DomainPartitioner` deprioritized (unused by
+  the apeGmsh SPMD lane); recorder init + apeGmsh emit fan-out remain unmeasured.
 - **maxTag density assumption** (T0 primary path): κ-guard + hash fallback, G1c-gated;
   negative-ref micro-case included in the same test file.
 - **Rank-0 memory after T0**: the merged graph (~5 GB at 19 M vertices) lives on rank 0
