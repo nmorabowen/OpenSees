@@ -15,6 +15,7 @@
 
 #include <MPIDiagonalSOE.h>
 #include <MPIDiagonalSolver.h>
+#include <algorithm>   // Ladruno (ADR-74 setSize fix): std::sort
 #include <Matrix.h>
 #include <Graph.h>
 #include <Vertex.h>
@@ -30,6 +31,10 @@
 #include <FE_Element.h>
 #include <FE_EleIter.h>
 #include <DOF_GrpIter.h>
+
+// Ladruno (ADR-74 setSize investigation): dc.s.* sub-brackets so the profiler can
+// attribute the ~N^1.9 first-step setSize cost to its internal phases.
+#include <profiler/ProfilerMacros.h>
 
 
 
@@ -214,20 +219,31 @@ MPIDiagonalSOE::setSize(Graph &theGraph)
 
   // get the actual dof;s of the system
   int count = 0;
+  { OPS_PROFILE_SCOPE("dc.s.fill");   // Ladruno (ADR-74): graph-vertex walk
   Vertex *theVertex;
   VertexIter &theVertices = theGraph.getVertices();
   while ((theVertex = theVertices()) != 0) {
     int vertexTag = theVertex->getTag();
     myDOFsArray[count++] = vertexTag;
   }
+  }
   static ID otherSize(1);
 //  delete &theGraph;
-  
+
 
   myDOFs.setData(myDOFsArray, size);
 
   // sort the dof ID
-  quickSort(myDOFs, size);
+  { OPS_PROFILE_SCOPE("dc.s.sort");
+  // Ladruno (ADR-74 setSize fix): std::sort replaces the hand-rolled leftmost-pivot
+  // quicksort (q_sort below, kept for provenance). The DOF graph hands us its
+  // std::map-backed vertices in ASCENDING tag order, so this array arrives already
+  // sorted — the old q_sort's deterministic O(n^2/2) worst case (measured ~N^1.9:
+  // 10.1 / 101.4 / 501.1 s at the 0.25/1/2 M-hex np8 rungs). std::sort produces the
+  // identical ascending array (tags unique) at O(n log n) worst case, and also
+  // removes q_sort's O(n) recursion depth on sorted input.
+  std::sort(myDOFsArray, myDOFsArray + size);
+  }
 
   int* sendSize = new int[1];
   sendSize[0] = size;
@@ -238,12 +254,15 @@ MPIDiagonalSOE::setSize(Graph &theGraph)
 
   // Broadcast to all other processes size and DOF ID
 
+  OPS_PROFILE_SCOPE("dc.s.rest");   // Ladruno (ADR-74): everything after the sort, refined by the nested scopes below
+
   int* allSizes = new int[numProcesses];
   for (int i=0; i<numProcesses; i++)
     allSizes[i] = 0;
-  MPI_Allgather(tmpsendSize,1,MPI_INT,allSizes,1,MPI_INT,MPI_COMM_WORLD);
-  int* max = new int[1];
+  int* max = new int[1];             // Ladruno (ADR-74): hoisted above the dc.s.bcast scope (deleted at function end)
   max[0] =0;
+  { OPS_PROFILE_SCOPE("dc.s.bcast"); // Ladruno (ADR-74): np-round bcast + two-pointer intersections
+  MPI_Allgather(tmpsendSize,1,MPI_INT,allSizes,1,MPI_INT,MPI_COMM_WORLD);
   for (int i=0; i<numProcesses; i++)
     if ( max[0] < allSizes[i] )
       max[0] = allSizes[i];
@@ -279,6 +298,7 @@ MPIDiagonalSOE::setSize(Graph &theGraph)
   delete piDOFs;
   delete [] piShared;
   delete[] allSizes;
+  }                                  // Ladruno (ADR-74): end dc.s.bcast
 
   // Receive from all other processes their size and their ID's
   // perform intersection operation and figure out
@@ -288,6 +308,7 @@ MPIDiagonalSOE::setSize(Graph &theGraph)
   
   //figure out total # of shared dofs
   // and allocate appropriate memory
+  { OPS_PROFILE_SCOPE("dc.s.shared"); // Ladruno (ADR-74): shared list + allgather + allocations + zero-init
   numShared =0;
   for (int i=0; i<size; i++) 
     if (sharedDOFs[i] == 1)
@@ -403,10 +424,11 @@ MPIDiagonalSOE::setSize(Graph &theGraph)
     maxSharedA[l] = 0;
     maxSharedB[l] = 0;
   }
+  }                                   // Ladruno (ADR-74): end dc.s.shared
 
   //
   // renumber DOFs 0 through size
-  // 
+  //
   if (theModel == 0) {
     opserr << "WARNING MPIDiagonalSOE::setSize - no AnalysisModel\n";
     exit(-1);
@@ -415,6 +437,7 @@ MPIDiagonalSOE::setSize(Graph &theGraph)
     int local_dof =0;
     int nonlocal_dof = size-numShared;
 
+    { OPS_PROFILE_SCOPE("dc.s.localize"); // Ladruno (ADR-74): global->local renumber, binary search per dof
     DOF_GrpIter &theDOFs = theModel->getDOFs();
     DOF_Group *dofPtr;
     while ((dofPtr = theDOFs()) != 0) {
@@ -425,14 +448,17 @@ MPIDiagonalSOE::setSize(Graph &theGraph)
 	  int newDOF = myDOFs.getLocationOrdered(dof);
 	  dofPtr->setID(i, newDOF);
 	}
-      }   
+      }
+    }
     }
     // iterate through the FE_Element getting them to set their IDs
+    { OPS_PROFILE_SCOPE("dc.s.eleid");   // Ladruno (ADR-74): FE_Element ID re-cache
     FE_EleIter &theEle = theModel->getFEs();
     FE_Element *elePtr;
     while ((elePtr = theEle()) != 0)
-      elePtr->setID(); 
-  }  
+      elePtr->setID();
+    }
+  }
   delete [] sharedDOFs;
   // invoke setSize() on the Solver
   // this is a hack still for unknown reasons here

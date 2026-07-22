@@ -449,7 +449,13 @@ DirectIntegrationAnalysis::domainChanged(void)
     // we invoke setGraph() on the LinearSOE which
     // causes that object to determine its size
     { OPS_PROFILE_SCOPE("dc.setSize");
-    Graph &theGraph = theAnalysisModel->getDOFGraph();
+    // Ladruno (ADR-74 setSize investigation): attribute DOF-graph construction
+    // separately from the SOE's own setSize — both live inside this bracket.
+    Graph *theGraphPtr;
+    { OPS_PROFILE_SCOPE("dc.s.graph");
+    theGraphPtr = &theAnalysisModel->getDOFGraph();
+    }
+    Graph &theGraph = *theGraphPtr;
 
     int result = theSOE->setSize(theGraph);
     if (result < 0) {
