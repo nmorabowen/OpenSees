@@ -1048,6 +1048,7 @@
 #define NUMBERER_TAG_DOF_Numberer      	1
 #define NUMBERER_TAG_PlainNumberer 	2
 #define NUMBERER_TAG_ParallelNumberer 	3
+#define NUMBERER_TAG_LadrunoParallelNumberer 33000 // N. Mora-Bowen (Ladruno) — ADR-74: O(V) gather/merge numberer (subclass of ParallelNumberer via ledgered promotion; verbs LadrunoParallelRCM/LadrunoParallelPlain). N1 = delegate mode (bit-identical, G1-gated); T0/T1 replace the O(V^2) mergeSubGraph scans + map-backed graph build. ladruno numberer band >=33000. See Ladruno_implementation/74_ladruno_parallel_numberer_adr.md.
 
 #define GraphNUMBERER_TAG_RCM   		1
 

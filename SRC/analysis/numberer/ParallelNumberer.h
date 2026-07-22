@@ -64,12 +64,21 @@ class ParallelNumberer: public DOF_Numberer
   protected:
     int mergeSubGraph(Graph &theGraph, Graph &theSubGraph, ID &vertexTags, ID &vertexRefs, ID &theSubdomainMap);
 
-  private:
-    GraphNumberer *theNumberer;
+    // Ladruno (ADR-74 N1, ledgered): tag-forwarding ctor + private->protected
+    // promotion of the channel plumbing so LadrunoParallelNumberer (classTag
+    // 33000) can subclass with its own tag and reuse the MP wiring. Visibility/
+    // ctor-surface change ONLY — zero behavior change; same pattern as the
+    // HHT.h / GeneralizedAlpha.h promotions (classTags.h 33013/33014). NB the
+    // 3-arg upstream ctor leaves theNumberer uninitialized while the dtor
+    // deletes it — subclasses must NOT mirror it (ADR-74 Decision log).
+    ParallelNumberer(int classTag, GraphNumberer &theGraphNumberer);
+    ParallelNumberer(int classTag);   // no-numberer form (the plain verb)
 
+    GraphNumberer *theNumberer;   // owned (dtor deletes) despite pass-by-ref ctor
     int processID;
     int numChannels;
-    Channel **theChannels;
+    Channel **theChannels;        // array owned/reallocated by setChannels and
+                                  // P0-side sendSelf — subclasses never touch it
 };
 
 #endif

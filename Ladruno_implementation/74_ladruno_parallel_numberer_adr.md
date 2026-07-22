@@ -530,6 +530,13 @@ residual ⇒ T1 added; pass 2 + plain branch added to T0's scope; per-rank Plain
   on Tcl-init failure and on script error — dump-count/content assertions are the real
   failure signal, rc is not; build-tree exes need TCL_LIBRARY (the openseesmp.sh gap,
   now handled in-harness).
+- **2026-07-22** — **N1 shipped**: `LadrunoParallelNumberer` (classTag 33000) in
+  delegate mode; ledgered promotion in `ParallelNumberer.{h,cpp}` (private→protected +
+  two tag-forwarding ctors, incl. the no-numberer form the plain verb needs); verbs
+  `LadrunoParallelRCM`/`LadrunoParallelPlain` registered in classic Tcl + the
+  interpreter; ledger rows appended. **N1 gate PASSED 13/13**: delegate-vs-stock
+  bit-identical at np2+np8 on Mumps-RCM (strict), MPIDiag-RCM (production end-state),
+  and MPIDiag-Plain — simultaneously the null-test of the N0 oracle. Next: N2 (T0).
 - **Cluster note**: the Esmeralda tree (`ladruno-p5-build` @ #580) carries the same
   unfixed code — all three instrumentation-touched files byte-identical to the patch
   base — so the instrumentation + T0/T1 rebase cleanly there. The live cluster binary is
