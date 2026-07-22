@@ -241,7 +241,7 @@ session (human or agent) that ports, opens, merges, or re-scopes a package
 
 | Package | Content (short) | Branch | Upstream PR | Status |
 |---|---|---|---|---|
-| 0.0 | TenNodeTet 6× stiffness fix | — | — | not started |
+| 0.0 | TenNodeTet 6× stiffness fix | `up/00-tennodetet-shp3d` | [jaabell#29](https://github.com/jaabell/OpenSees/pull/29) | **PR open** (2026-07-22) |
 | 0.1 | Crash/UB fixes (H5DRM init, FE_Element, PythonStream, Gmsh hex20, SuperLU MSVC) | — | — | not started |
 | 0.2 | quad/tri rho serialization | — | — | not started |
 | 0.3 | Error-contract fixes | — | — | not started |
@@ -268,6 +268,17 @@ session (human or agent) that ports, opens, merges, or re-scopes a package
 | W4 | contact+tie / FEAST / porous / rigid body / OpenSeesPyMP / profiler / numberer | — | — | deferred (decide w/ José) |
 
 ## 7. Decision & session log (append-only, newest first)
+
+- **2026-07-22 — package 0.0 shipped as [jaabell#29](https://github.com/jaabell/OpenSees/pull/29).**
+  First upstream PR of the campaign. Port mechanics validated end-to-end:
+  worktree `up-00-tennodetet` off `jaabell/ladruño`, single clean commit,
+  author Nicolas Mora Bowen `<nmorabowen@gmail.com>`, trailers
+  `Co-authored-by: Patricio Palacios <ppalacios92@gmail.com>` +
+  `Co-authored-by: Jose A. Abell <jaabell@uandes.cl>` (emails harvested from
+  git history — reuse these for all packages), zero AI traces. Physics note
+  for the PR narrative: K and M scaled down TOGETHER, so eigenfrequencies were
+  ~unchanged by the bug — it only shows in absolute response (displacements 6×
+  too large, mass/weight 6× under-counted); don't claim frequency shifts.
 
 - **2026-07-22 — mass-scaling placement confirmed.** The whole mass-scaling
   stack upstreams as package 2.2 (lumped ADR-36 + consistent-Olovsson ADR-38 +
