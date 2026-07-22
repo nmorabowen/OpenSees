@@ -33,10 +33,10 @@ authored by the Ladruno team (Nicolas Mora Bowen, Patricio Palacios, José Abell
 ## 1. Hard rules for every upstream PR
 
 1. **Authorship — team only, no AI traces.**
-   - Commit author: Nicolas Mora Bowen. Squash commit / PR-branch commits carry
-     `Co-authored-by: Patricio Palacios <…>` and
-     `Co-authored-by: Jose A. Abell <…>` trailers. *(Fill real emails once —
-     they must match GitHub accounts to get avatar credit.)*
+   - Commit author: Nicolas Mora Bowen `<nmorabowen@gmail.com>`. Squash commit /
+     PR-branch commits carry — **canonical emails, confirmed by Nicolas 2026-07-22**:
+     `Co-authored-by: Patricio Palacios <pxpalacios@uandes.cl>`
+     `Co-authored-by: Jose A. Abell <jaabell@uandes.cl>`
    - **No** `Co-Authored-By: Claude` trailers, **no** "Generated with Claude
      Code" lines, anywhere in the port branches — the squash commit inherits
      trailers from branch commits, so the branch must be clean from the first
@@ -268,6 +268,11 @@ session (human or agent) that ports, opens, merges, or re-scopes a package
 | W4 | contact+tie / FEAST / porous / rigid body / OpenSeesPyMP / profiler / numberer | — | — | deferred (decide w/ José) |
 
 ## 7. Decision & session log (append-only, newest first)
+
+- **2026-07-22 — canonical co-author emails set by Nicolas** (supersedes the
+  git-history-harvested ones): Patricio `pxpalacios@uandes.cl` (NOT
+  ppalacios92@gmail.com), José `jaabell@uandes.cl`, Nicolas
+  `nmorabowen@gmail.com`. jaabell#29's commit amended + force-pushed accordingly.
 
 - **2026-07-22 — package 0.0 shipped as [jaabell#29](https://github.com/jaabell/OpenSees/pull/29).**
   First upstream PR of the campaign. Port mechanics validated end-to-end:
