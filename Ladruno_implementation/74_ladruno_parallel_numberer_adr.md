@@ -439,6 +439,50 @@ scale is now projected ≤ ~5 min pre-T1. The `dc.s.*` brackets ship, so G3 attr
 setSize honestly per its gate row. `DistributedDiagonalSOE` (the SP sibling) does not
 sort — grep confirms `MPIDiagonalSOE` held the only copy of `q_sort` in the tree.
 
+## Resolved (2026-07-22): `dc.handle` ~N^2 — the getLocation-in-loop family, twice over
+
+The third setup quadratic, flagged by the owner from the collector table
+(0.26 / 3.53 / 14.40 s over the rungs ⇒ N^1.93-2.00) and confirmed per-rank by a
+fixed-V np-sweep (falls ~1/P²: 3.25/0.85/0.29/0.14 s at np2/4/8/16 —
+`~/ladruno_nsweep/psweep-np*`). Two mechanisms, attributed by new `dc.h.*`
+sub-brackets (`splists/nodes/eleclass/fecreate`), fixed in two vanilla files:
+
+1. **`TransformationConstraintHandler::handle()`** — `ID::getLocation` linear
+   scans inside the node and element loops: the element-classification loop
+   (O(#ele × nodes/ele × #SP) — measured dominant, `dc.h.eleclass` 2.79 s of
+   3.62 at 1.0 M, N^1.94), the per-node `constrainedNodesSP/MP` scans + O(#SP)
+   forward re-scans, the SP/MP list-build membership scans, and the FE-creation
+   `transformedEle.getLocation` (O(#ele × #transformed)). On slab decks
+   (fixed-depth: the production 20×20 km meshes and every rung) the constrained
+   base area ∝ N, so #SP ∝ N and all of them go quadratic. Fix: one
+   `unordered_set` of constrained nodes + first-index maps + per-node SP index
+   lists (ascending = the stock loc+rescan visit order) + a `transformedEle`
+   set twin — **searches only**; every mutation, creation order, and branch
+   quirk (incl. the stock `numSPConstraints != 0` MP-path oddity) preserved.
+2. **`TransformationDOF_Group` SP-only ctor** — exposed only after fix 1: the
+   ctor swept **every SP in the domain** per constrained node
+   (`dc.h.nodes` residual 1.27 s at 2.0 M, ~N^2.3). The sweep is provably
+   redundant: both in-tree callers (TransformationConstraintHandler and
+   AutoConstraintHandler) follow the ctor with `addSP_Constraint` for every SP
+   of the node from `getDomainAndLoadPatternSPs` ⊇ `getSPs`, and
+   `addSP_Constraint` sets the same `theSPs[dof]` pointer — identical end
+   state. Upstream itself had already commented out the equivalent sweep in
+   the MP ctor. Removed (original kept in a comment).
+
+**Measured (np8, max over ranks):** `dc.handle` 0.28 / 3.62 / 14.40 →
+**0.04 / 0.17 / 0.34 s** (7× / 21× / **42×**), post-fix exponent N^1.0-1.07;
+all sub-brackets ≤ 0.22 s at 2.0 M. **Gates:** end-state numbering dumps
+byte-identical to the N2 `numbering_t0` artifacts on all 8 ranks (the fix is
+upstream of numbering — DOF_Group creation order feeds it — so this gate is
+load-bearing, and it was run twice: after fix 1 and after fix 1+2);
+`test_adr74_numberer_1.py` 18/18 (twice, same points). With all three
+quadratics dead, the measured first-step `domainChanged` at 2.0 M np8 totals
+**9.6 s vs ~2,993 s pre-ADR (~313×)**, every remaining term ~linear.
+Cluster note: per-rank quadratic ⇒ the np240 impact was small (~1-2 s inside
+the incident); the scenarios this fix rescues are the 43 M P=8 retry (~1.6 h
+avoided) and every np8-class local sweep. The K× domainChanged multiplier
+(§Sequencing) applied to this term too and is now retired with it.
+
 ## Instrumentation (shipped with this investigation, branch `perf/step-stall-instrumentation`)
 
 Commit `e0113e53a` — two profiler gaps closed, prerequisites for G0-G3:
@@ -646,6 +690,19 @@ residual ⇒ T1 added; pass 2 + plain branch added to T0's scope; per-rank Plain
   First-step setup at 2.0 M np8: ~2,978 s pre-ADR → **9.2 s** (~320×).
   Fork-file-only change (`LadrunoParallelNumberer.cpp`) — no ledger row needed.
   Next: N4/G3, the Esmeralda kill-run.
+- **2026-07-22** — **`dc.handle` quadratics killed** (§Resolved above; owner-flagged
+  from the collector table + fixed-V np-sweep): `dc.h.*` sub-brackets attributed
+  the N^1.94 element-classification scans and, once those died, the hidden
+  `TransformationDOF_Group` ctor domain-SP sweep (N^2.3 residual). Both fixed
+  (searches-only handler rewrite + provably-redundant sweep removal);
+  0.28/3.62/14.40 → **0.04/0.17/0.34 s** (42× at 2.0 M), byte-identity ×2 +
+  18/18 ×2. First-step `domainChanged` at 2.0 M np8: ~2,993 → **9.6 s (~313×)**,
+  all terms now ~linear. Also this session: the fixed-V np-sweep
+  (`psweep-np{2,4,16}`) established `dc.setSize` post-fix FALLS ~1/P (bcast term
+  0.04→0.07 s np2→16 — no structural np-wall) and the interconnect-study
+  caution (the pre-T0 merge is np-invariant global-V² ⇒ mimics an Amdahl
+  fraction in strong scaling; the np128 verdict needs the dc.*-bracketed re-run,
+  folded into G3).
 - **2026-07-22** — **N2 adversarial gate (3 lenses) folded**: transcription-fidelity
   verdict "bit-identity HOLDS for every in-tree path" (mutation-for-mutation verified;
   κ paths answer-identical; -4 order preserved; two stock defects incidentally fixed —

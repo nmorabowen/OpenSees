@@ -50,6 +50,16 @@
 #include <ID.h>
 #include <Subdomain.h>
 #include <Channel.h>
+
+// Ladruno (ADR-74 handle investigation): dc.h.* profiler sub-brackets
+#include <profiler/ProfilerMacros.h>
+// Ladruno (ADR-74 handle fix): O(1) membership/index structures replacing the
+// ID::getLocation linear scans inside the node/element loops (measured ~N^2
+// per rank on slab decks where #SP ~ N). Searches only — every mutation,
+// creation order, and branch quirk is stock.
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 #include <FEM_ObjectBroker.h>
 #include <TransformationDOF_Group.h>
 #include <TransformationFE.h>
@@ -89,7 +99,11 @@ TransformationConstraintHandler::handle(const ID *nodesLast)
 	return -1;
     }
     
-    // get number ofelements and nodes in the domain 
+    // Ladruno (ADR-74 handle investigation): dc.h.* sub-brackets attribute the
+    // measured ~N^2 growth of this method (per-rank quadratic — ID::getLocation
+    // scans inside node/element loops) to its internal phases.
+
+    // get number ofelements and nodes in the domain
     // and init the theFEs and theDOFs arrays
     int numMPConstraints = theDomain->getNumMPs();
 
@@ -102,6 +116,14 @@ TransformationConstraintHandler::handle(const ID *nodesLast)
     
     numDOF = 0;
     ID transformedNode(0, 64);
+
+    // Ladruno (ADR-74 handle fix): the O(1) indexes. Same first-match
+    // semantics as ID::getLocation (emplace keeps the FIRST index for a tag;
+    // spIndexByNode lists a node's SP indexes in ascending/insertion order —
+    // exactly the order the stock loc + forward-rescan visits them).
+    std::unordered_set<int> constrainedNodeSet;
+    std::unordered_map<int, int> firstMP;
+    std::unordered_map<int, std::vector<int> > spIndexByNode;
 
     int i;
     
@@ -117,16 +139,21 @@ TransformationConstraintHandler::handle(const ID *nodesLast)
 	    return -3;	    
 	}
 	MP_ConstraintIter &theMPs = theDomain->getMPs();
-	MP_Constraint *theMP; 
+	MP_Constraint *theMP;
 	int index = 0;
+	{ OPS_PROFILE_SCOPE("dc.h.splists");   // Ladruno (ADR-74): MP list build
 	while ((theMP = theMPs()) != 0) {
 	  int nodeConstrained = theMP->getNodeConstrained();
-	  if (transformedNode.getLocation(nodeConstrained) < 0)
+	  // Ladruno (ADR-74 handle fix): set-insert uniqueness replaces the
+	  // transformedNode.getLocation linear scan (same membership test)
+	  if (constrainedNodeSet.insert(nodeConstrained).second)
 	    transformedNode[numDOF++] = nodeConstrained;
+	  firstMP.emplace(nodeConstrained, index);   // keeps FIRST index, like getLocation
 	  constrainedNodesMP[index] = nodeConstrained;
 	  mps[index] = theMP;
 	  index++;
-	}	
+	}
+	}
     }
 
     // create an ID of constrained node tags in SP_Constraints
@@ -143,16 +170,21 @@ TransformationConstraintHandler::handle(const ID *nodesLast)
 	    return -3;	    
 	}
 	SP_ConstraintIter &theSPs = theDomain->getDomainAndLoadPatternSPs();
-	SP_Constraint *theSP; 
+	SP_Constraint *theSP;
 	int index = 0;
+	{ OPS_PROFILE_SCOPE("dc.h.splists");   // Ladruno (ADR-74): SP list build
 	while ((theSP = theSPs()) != 0) {
 	  int constrainedNode = theSP->getNodeTag();
-	  if (transformedNode.getLocation(constrainedNode) < 0)
-	    transformedNode[numDOF++] = constrainedNode;	    
+	  // Ladruno (ADR-74 handle fix): set-insert uniqueness + per-node SP
+	  // index list (ascending = the stock loc + forward-rescan visit order)
+	  if (constrainedNodeSet.insert(constrainedNode).second)
+	    transformedNode[numDOF++] = constrainedNode;
+	  spIndexByNode[constrainedNode].push_back(index);
 	  constrainedNodesSP[index] = constrainedNode;
 	  sps[index] = theSP;
 	  index++;
-	}	
+	}
+	}
     }
 
     // create an array for the DOF_Groups and zero it
@@ -175,6 +207,7 @@ TransformationConstraintHandler::handle(const ID *nodesLast)
     
     numConstrainedNodes = 0;
     numDOF = 0;
+    { OPS_PROFILE_SCOPE("dc.h.nodes");   // Ladruno (ADR-74): per-node loop — O(#nodes x #SP) getLocation scans
     while ((nodPtr = theNod()) != 0) {
 
         DOF_Group *dofPtr = 0;
@@ -184,53 +217,58 @@ TransformationConstraintHandler::handle(const ID *nodesLast)
 	int loc = -1;
 	int createdDOF = 0;
 
-	loc = constrainedNodesMP.getLocation(nodeTag);
+	// Ladruno (ADR-74 handle fix): firstMP/spIndexByNode O(1) lookups replace
+	// the constrainedNodesMP/SP.getLocation linear scans AND the O(#SP)
+	// forward re-scans; the per-node SP index list is visited in the same
+	// ascending order the stock loc + rescan produced. Branch structure
+	// (including the stock numSPConstraints!=0 quirk on the MP path) is
+	// untouched.
+	std::unordered_map<int, int>::const_iterator mpIt = firstMP.find(nodeTag);
+	loc = (mpIt == firstMP.end()) ? -1 : mpIt->second;
 	if (loc >= 0) {
 
-	  TransformationDOF_Group *tDofPtr = 
-	    new TransformationDOF_Group(numDofGrp++, nodPtr, mps[loc], this); 
+	  TransformationDOF_Group *tDofPtr =
+	    new TransformationDOF_Group(numDofGrp++, nodPtr, mps[loc], this);
 
 	  createdDOF = 1;
 	  dofPtr = tDofPtr;
-	  
+
 	  // add any SPs
 	  if (numSPConstraints != 0) {
-	    loc = constrainedNodesSP.getLocation(nodeTag);
-	    if (loc >= 0) {
-	      tDofPtr->addSP_Constraint(*(sps[loc]));
-	      for (int i = loc+1; i<numSPConstraints; i++) {
-		if (constrainedNodesSP(i) == nodeTag)
-		  tDofPtr->addSP_Constraint(*(sps[i]));
-	      }
+	    std::unordered_map<int, std::vector<int> >::const_iterator spIt =
+	        spIndexByNode.find(nodeTag);
+	    if (spIt != spIndexByNode.end()) {
+	      const std::vector<int> &spIdx = spIt->second;
+	      for (std::size_t k = 0; k < spIdx.size(); ++k)
+		tDofPtr->addSP_Constraint(*(sps[spIdx[k]]));
 	    }
-	    // add the DOF to the array	    
-	    theDOFs[numDOF++] = dofPtr;	    	    
+	    // add the DOF to the array
+	    theDOFs[numDOF++] = dofPtr;
 	    numConstrainedNodes++;
 	  }
 	}
-	
+
 	if (createdDOF == 0) {
-	  loc = constrainedNodesSP.getLocation(nodeTag);
-	  if (loc >= 0) {
-	    TransformationDOF_Group *tDofPtr = 
+	  std::unordered_map<int, std::vector<int> >::const_iterator spIt =
+	      spIndexByNode.find(nodeTag);
+	  if (spIt != spIndexByNode.end()) {
+	    const std::vector<int> &spIdx = spIt->second;
+	    TransformationDOF_Group *tDofPtr =
 	      new TransformationDOF_Group(numDofGrp++, nodPtr, this);
 
-	    int numSPs = 1;
+	    int numSPs = 0;
 	    createdDOF = 1;
 	    dofPtr = tDofPtr;
-	    tDofPtr->addSP_Constraint(*(sps[loc]));
-	
-	    // check for more SP_constraints acting on node and add them
-	    for (int i = loc+1; i<numSPConstraints; i++) {
-	      if (constrainedNodesSP(i) == nodeTag) {
-		tDofPtr->addSP_Constraint(*(sps[i]));
-		numSPs++;
-	      }
+
+	    // all SPs on this node, ascending index order (== stock visit order)
+	    for (std::size_t k = 0; k < spIdx.size(); ++k) {
+	      tDofPtr->addSP_Constraint(*(sps[spIdx[k]]));
+	      numSPs++;
 	    }
 	    // add the DOF to the array
-	    theDOFs[numDOF++] = dofPtr;	    	    
-	    numConstrainedNodes++;	    
-	    countDOF+= numNodalDOF - numSPs;		
+	    theDOFs[numDOF++] = dofPtr;
+	    numConstrainedNodes++;
+	    countDOF+= numNodalDOF - numSPs;
 	  }
 	}
 
@@ -254,6 +292,7 @@ TransformationConstraintHandler::handle(const ID *nodesLast)
 	nodPtr->setDOF_GroupPtr(dofPtr);
 	theModel->addDOF_Group(dofPtr);
     }
+    }                                    // Ladruno (ADR-74): end dc.h.nodes
 
     // create the FE_Elements for the Elements and add to the AnalysisModel
     ElementIter &theEle = theDomain->getElements();
@@ -262,7 +301,11 @@ TransformationConstraintHandler::handle(const ID *nodesLast)
 
     numFE = 0;
     ID transformedEle(0, 64);
+    // Ladruno (ADR-74 handle fix): O(1) membership twin of transformedEle for
+    // the FE-creation loop below (getLocation there was O(#ele x #transformed))
+    std::unordered_set<int> transformedEleSet;
 
+    { OPS_PROFILE_SCOPE("dc.h.eleclass"); // Ladruno (ADR-74): element classification — O(#ele x 8 x #SP) scans, the measured dominant term (N^1.94)
     while ((elePtr = theEle()) != 0) {
       int flag = 0;
       if (elePtr->isSubdomain() == true) {
@@ -278,28 +321,24 @@ TransformationConstraintHandler::handle(const ID *nodesLast)
 	int isConstrainedNode = 0;
 	for (int i=0; i<nodesSize; i++) {
 	  int nodeTag = nodes(i);
-	  if (numMPConstraints != 0) {
-	    int loc = constrainedNodesMP.getLocation(nodeTag);
-	    if (loc >= 0) {
-	      isConstrainedNode = 1;
-	      i = nodesSize;
-	    }
-	  } 
-	  if (numSPConstraints != 0 && isConstrainedNode == 0) {
-	    int loc = constrainedNodesSP.getLocation(nodeTag);
-	    if (loc >= 0) {
-	      isConstrainedNode = 1;		    
-	      i = nodesSize;
-	    }
+	  // Ladruno (ADR-74 handle fix): one O(1) set lookup replaces the
+	  // MP-list + SP-list getLocation scans (constrainedNodeSet is the
+	  // union of both lists — same membership answer). This loop was the
+	  // measured dominant term: O(#ele x nodes/ele x #SP), N^1.94.
+	  if (constrainedNodeSet.find(nodeTag) != constrainedNodeSet.end()) {
+	    isConstrainedNode = 1;
+	    i = nodesSize;
 	  }
 	}
 	
 	if (isConstrainedNode == 1) {
+	  transformedEleSet.insert(elePtr->getTag());   // Ladruno (ADR-74 handle fix)
 	  transformedEle[numFE++] = elePtr->getTag();
 	}
       }
     }
-    
+    }                                    // Ladruno (ADR-74): end dc.h.eleclass
+
     // create an array for the FE_elements and zero it
     if ((numFE != 0) && ((theFEs  = new FE_Element *[numFE]) == 0)) {
       opserr << "WARNING TransformationConstraintHandler::handle() - ";
@@ -316,13 +355,15 @@ TransformationConstraintHandler::handle(const ID *nodesLast)
     int numFeEle = 0;
     int numFE = 0;
 
+    { OPS_PROFILE_SCOPE("dc.h.fecreate"); // Ladruno (ADR-74): FE creation — O(#ele x #transformedEle) getLocation scans
     while ((elePtr = theEle1()) != 0) {
       int tag = elePtr->getTag();
       if (elePtr->isSubdomain() == true) {
 	Subdomain *theSub = (Subdomain *)elePtr;
 	if (theSub->doesIndependentAnalysis() == false) {
-	  
-	  if (transformedEle.getLocation(tag) < 0) {
+
+	  // Ladruno (ADR-74 handle fix): set membership, was getLocation scan
+	  if (transformedEleSet.find(tag) == transformedEleSet.end()) {
 	    if ((fePtr = new FE_Element(numFeEle, elePtr)) == 0) {
 	      opserr << "WARNING TransformationConstraintHandler::handle()";
 	      opserr << " - ran out of memory";
@@ -348,7 +389,8 @@ TransformationConstraintHandler::handle(const ID *nodesLast)
 	  theSub->setFE_ElementPtr(fePtr);
 	}
       } else {
-	if (transformedEle.getLocation(tag) < 0) {
+	// Ladruno (ADR-74 handle fix): set membership, was getLocation scan
+	if (transformedEleSet.find(tag) == transformedEleSet.end()) {
 	  if ((fePtr = new FE_Element(numFeEle, elePtr)) == 0) {
 	    opserr << "WARNING TransformationConstraintHandler::handle()";
 	    opserr << " - ran out of memory";
@@ -373,6 +415,7 @@ TransformationConstraintHandler::handle(const ID *nodesLast)
 	theModel->addFE_Element(fePtr);
       }
     }
+    }                                    // Ladruno (ADR-74): end dc.h.fecreate
 
     theModel->setNumEqn(countDOF);
     
