@@ -319,6 +319,28 @@ the fabric hypothesis rather than retiring it by elimination.
 production lane is OpenSeesMP. The broker case ships only if/when an SP smoke test joins
 the battery — until then the ADR does not claim SP support.
 
+## Implementation plan — phases N0-N5 (oracle-first, the fork discipline)
+
+Each phase is one PR-sized unit with its gate named up front; no phase starts before the
+previous phase's gate is green. The harness comes **before** the class (N0) so every
+later phase regresses against an instrument already proven able to fail.
+
+| Phase | Delivers | Gate |
+|---|---|---|
+| **N0 — the oracle** | The G1 instrument, *before any numberer code*: a fork-only debug verb `ladrunoNumbering <file>` (additive registration) dumping per-rank sorted `(nodeTag, ndf, eqn IDs)`; `tests/test_adr74_numberer_1.py` with (a) the **bijection assertion** (every eqn 0..neqn−1 exactly once across ranks), (b) a stock-vs-stock identity run (`ParallelRCM` vs itself, np2+np8, 0.25 M rung) proving the harness reads true, and (c) a **mutation test** — perturb one equation ID in a dump copy and assert the harness FAILS (an oracle that cannot fail is not an oracle) | harness detects identity AND detects the planted mutation |
+| **N1 — the class, delegate mode** | `LadrunoParallelNumberer.{h,cpp}` skeleton: ledgered promotion in `ParallelNumberer.h` (incl. `numChannels`); classTag (≥33000 numberer band); registration in both interpreters per the PR #233 flat-factory lesson; `numberDOF(ID&)` → hard error; `numberDOF(int)` **delegates to the base** (zero new behavior); apeGmsh primitive `ops.numberer.LadrunoParallelRCM()` (+ plain) with the emit-time fork gate | G1 harness: delegate vs stock **bit-identical** np2+np8; full MP battery + apeGmsh plane-wave gates green; build byte-identical for decks not using the new verbs |
+| **N2 — T0 (kill the quadratics)** | Own-body `numberDOF(int)`: dense `refToLoc` (64-bit size math, κ-guard hash fallback, `ref < 0` hard error) in pass 1; per-subgraph `subTagToMerged` in pass 2; seen-bitmap plain branch (tag-0 fixed); `constrainedNode → MPs` index for the `-4` fixup; `dc.n.gather/merge/order/scatter` sub-scopes | **G1** (RCM verb bit-identical, np2+np8) + **G1b** (plain: bijection + same-physics + the tag-0 micro-case) + **G1c** (tag-offset clone crosses κ, fallback engages, still bit-identical) + G0 rungs re-run: `dc.n.merge` exponent ≈ 1 |
+| **N3 — T1 (kill the map residual)** | Owned `tag → Vertex*` vector maintained through the merge; `Vertex::addEdge` called directly on both endpoints; merged graph on dense array-backed storage; RCM runs against it | **G1 again** (the critical regression — bit-identity must survive T1) + **G2 full**: 3-rung sweep on the fixed binary, per-bracket table, projections vs the §Sequencing table |
+| **N4 — G3, the production kill** | Cherry-pick/rebase instrumentation + N1-N3 onto the cluster tree (`ladruno-p5-build` — the three touched files are hash-verified identical); rebuild Esmeralda binary; re-run the 18.6 M deck with `numberer LadrunoParallelRCM` (and once with `LadrunoParallelPlain`) under per-bracket budgets | **G3**: `dc.numberDOF` ≤ ~3 min; `dc.setSize` reported separately (its ~N² anomaly investigated **before** this run, see Risks); first step ≤ minutes; total ≈ 25 min; per-step column shows step 1 |
+| **N5 — ship hygiene** | LEDGER_vanilla_files row (the promotion); LEDGER_quirks entries (Lagrange `ref=−1` fusion, tag-0, broken `numberDOF(ID&)`); banner regen; CHANGELOG; the §Risks external-record corrections applied to the two Obsidian notes + ADR-30 header; apeGmsh plane-wave family decks switched to the Ladruno verb; upstream-PR extraction decision recorded | docs land in the same PR as the switch (the build-control rule); vault corrections verifiable |
+
+**Validation principles pinned:** "same-physics" (G1b/G4) means the apeGmsh plane-wave
+gate metric (response match ≤1.5e-15 on the 0.25 M rung); every gate that can be run at
+np2 runs at np2 *and* np8 (two channel topologies); the `dc.setSize` anomaly is a
+**blocking pre-G3 task** so G3's budget table attributes honestly; and no phase may
+widen its scope — a discovered defect goes to the Risks list, not into the running PR
+(this ADR was under-scoped twice during review; the antidote is scope discipline).
+
 ## Instrumentation (shipped with this investigation, branch `perf/step-stall-instrumentation`)
 
 Commit `e0113e53a` — two profiler gaps closed, prerequisites for G0-G3:
