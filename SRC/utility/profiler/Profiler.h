@@ -383,6 +383,17 @@ private:
     Series                       series_;          // optional per-step buffer (perStep)
     RunClock                     runClock_;
     int64_t                      warmupRemaining_ = 0;
+
+    // Anchor for the per-step wall column (see recordStep). Holds the wall_ns of
+    // the previous recordStep call, so each row's wall_ms is the FULL step —
+    // including the untimed region of the analysis step loop (domainChanged,
+    // first touch, first MPI collective). The "step" ScopedTimer bracket reports
+    // that region only as a max-over-calls and cannot say WHICH step it was.
+    int64_t                      lastStepWallNs_ = 0;
+
+    // Seed series_.phases with the wall_ms column set. Called from start() and
+    // reset(), because reset() clears series_ wholesale.
+    void seedSeriesPhases();
 };
 
 // Process-global accessor.

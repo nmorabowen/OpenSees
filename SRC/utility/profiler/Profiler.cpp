@@ -271,6 +271,15 @@ Profiler::registerThread()
 // ---------------------------------------------------------------------------
 
 void
+Profiler::seedSeriesPhases()
+{
+    // One wall_ms column: the full wall of each committed step. Established here
+    // (not lazily in recordStep) so nPhase() is fixed before the first row is
+    // pushed and wall_ms stays exactly nSteps()*nPhase() as the writer asserts.
+    series_.phases.assign(1, std::string("step"));
+}
+
+void
 Profiler::start()
 {
     runClock_.startWallNs = PerfClock::wall_ns();
@@ -293,6 +302,8 @@ Profiler::start()
     }
 
     warmupRemaining_ = config_.warmupSteps;
+    lastStepWallNs_  = runClock_.startWallNs;   // row 0 spans start() -> end of step 1
+    seedSeriesPhases();
     setEnabled(true);
 }
 
@@ -330,6 +341,8 @@ Profiler::reset()
     series_ = Series{};
     runClock_ = RunClock{};
     warmupRemaining_ = config_.warmupSteps;
+    lastStepWallNs_  = PerfClock::wall_ns();
+    seedSeriesPhases();          // series_ was cleared wholesale above
 }
 
 // ---------------------------------------------------------------------------
@@ -496,6 +509,14 @@ Profiler::recordStep(int64_t step, double t, double dt, int32_t iters)
     if (!config_.perStep)
         return;
 
+    // Close the per-step wall interval FIRST, and re-anchor on every path
+    // (including the warmup drop) so a dropped step never inflates the next
+    // row's delta.
+    const int64_t nowWallNs = PerfClock::wall_ns();
+    const int64_t stepWallNs =
+        (nowWallNs > lastStepWallNs_) ? (nowWallNs - lastStepWallNs_) : 0;
+    lastStepWallNs_ = nowWallNs;
+
     // Honor warmup: silently drop the first K recorded steps (P1#8) so the
     // first-touch outlier + turbo ramp don't pollute the series/rollup window.
     if (warmupRemaining_ > 0) {
@@ -521,14 +542,14 @@ Profiler::recordStep(int64_t step, double t, double dt, int32_t iters)
     series_.mem_live_bytes.push_back(live);
     series_.mem_peak_bytes.push_back(peak);
 
-    // Per-phase wall_ms row: the phase column set is fixed (series_.phases) and
-    // is established by the P2 driver wiring. In P1 phases is empty (nPhase()==0)
-    // so we append a zero-width row — wall_ms stays consistent at
-    // nSteps()*nPhase(). Once phases is populated, append one float per phase in
-    // the fixed column order.
+    // Per-phase wall_ms row, in the fixed series_.phases column order. Column 0
+    // ("step", seeded by seedSeriesPhases) is the full wall of this step — the
+    // whole point of -perStep for stall hunting: a single pathological step is
+    // invisible in the max-over-calls rollup but is one obvious row here.
     const std::size_t nPhase = series_.phases.size();
     for (std::size_t p = 0; p < nPhase; ++p)
-        series_.wall_ms.push_back(0.0f);
+        series_.wall_ms.push_back(p == 0 ? static_cast<float>(stepWallNs * 1e-6)
+                                         : 0.0f);
 }
 
 } // namespace ops_profiler
