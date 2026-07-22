@@ -178,6 +178,7 @@ because the O(V²) merge scan was not visible to a linear model. Concretely:
 | T1 building blocks | `Vertex::addEdge` (sorted `ID::insert` ⇒ canonical adjacency order); `getFreeTag` contiguity (`Graph.cpp:310`); dense array-backed graph storage for O(1) BFS reads. (`Graph::startAddEdge`/`addEdgeFast` exist at `Graph.cpp:223-276` but are NOT used — snapshot-staleness, see Decision log) |
 | wire volume (verified-negative for the fabric hypothesis) | `Graph::sendSelf` ships (5V+2E) ints + V doubles ⇒ ~2.6-2.8 GB gathered at 19.18 M ≈ **10-30 s** into P0 over 2.5 GbE; ~6 GB / <1 min at 43 M. Bulk-bounded — hours are impossible here |
 | T2 compatibility | `SRC/system_of_eqn/linearSOE/diagonal/MPIDiagonalSOE.cpp:271` (neighbor discovery by global-eq-number intersection — numbering-scheme-agnostic) |
+| the setSize quadratic (RESOLVED, §Resolved) | `MPIDiagonalSOE.cpp` `quickSort`/`q_sort` (leftmost-pivot) fed ascending input by `AnalysisModel::getDOFGraph`'s `MapOfTaggedObjects` iteration ⇒ O((N/P)²/2) per rank; fixed by `std::sort` on the raw array |
 | registration — the verbs (MP) | `SRC/tcl/commands.cpp:3919-3929` (`_PARALLEL_INTERPRETERS`: construct + `setProcessID(OPS_rank)` + `setChannels` at parse — a new verb slots in cleanly); `SRC/interpreter/OpenSeesCommands.cpp:1575-1581`, `:4146-4168` (needs a new `OPS_LadrunoParallelRCM` factory + `OpenSeesCommands.h` declaration) |
 | registration — full surface (per the HHT ledger precedent, LEDGER_vanilla_files.md) | classTags.h · commands.cpp · OpenSeesCommands.{h,cpp} · `FEM_ObjectBrokerAllClasses.cpp` (the real numberer factory — `FEM_ObjectBroker::getNewNumberer` is a stub returning 0) · TclPackageClassBroker.cpp · CMakeLists + Makefile · banner regen (`patch_banner.py`) |
 
@@ -310,7 +311,7 @@ behavior-identical on the RCM verb — the cleanest possible upstream PR shape).
 | **G1b** — plain verb | valid numbering, tag-0 fix documented | bijection + same-physics + the tag-0 micro-case | **PASSED at N2**: bijection + same-physics (rel 1e-10; ordering-noise floor ~1e-15, so 5 orders of margin) on the chain; the tag-0 divergence test asserts stock-plain and Ladruno-plain dumps DIFFER while both remain valid bijections (the fix is real and visible); *scope note:* rung-scale same-physics vs stock-plain is infeasible — stock `ParallelPlain` at 0.25 M is the ~3.7×10¹⁴-comparison path (days) |
 | **G1c** — fallback path | the κ-guard hash path is gated, not just written | tag-offset clone crossing κ, np2 **and** np8, with an **engagement observable** | **PASSED at N2**: strided deck (maxTag ~10⁷) bit-identical to stock at np2+np8, and the harness asserts the `RefIndex -> hash fallback` observable actually fired (an oracle that cannot fail is not an oracle) |
 | **G2** — the fix, measured | T0(+T1) timing on the G0 rungs | `dc.n.merge` exponent ≈ 1; per-bracket attribution | **PASSED — three points**: `dc.numberDOF` 39.90→**1.73 s** (23×), 578.87→**7.60 s** (76×), 2477.50→**16.48 s** (**150×**); exponent **N^1.10 over 3 points** (1→2: 1.09, 2→3: 1.10); residual attributed by sub-scopes to the T1-scoped map ops (2.0 M: merge 7.91 s, order 5.18 s, gather 1.01 s, scatter 0.19 s). `dc.setSize` 3-point confirm: 10.1/101.4/501.1 s ≈ N^1.9 — the pre-G3 blocker, now with its own clean curve |
-| **G3** — cluster confirmation | the production-scale kill | 18.6 M deck re-run on Esmeralda with the patched binary, **per-bracket budgets**: `dc.numberDOF` ≤ ~3 min, `dc.setSize` reported separately (np-sequential bcast rounds at np240 — and see the open question below), first step ≤ minutes, total ≈ 25 min; per-step wall column confirms step 1 carried setup. Flagged K=1 best case | pending G1/G2 + cluster rebuild |
+| **G3** — cluster confirmation | the production-scale kill | 18.6 M deck re-run on Esmeralda with the patched binary, **per-bracket budgets**: `dc.numberDOF` ≤ ~3 min, `dc.setSize` reported separately with its `dc.s.*` sub-brackets (quadratic sort fixed 2026-07-22, §Resolved — expect seconds: graph build + np-sequential bcast rounds), first step ≤ minutes, total ≈ 25 min; per-step wall column confirms step 1 carried setup. Flagged K=1 best case | pending cluster rebuild (G1/G2 + the setSize fix all green) |
 | **G4** (T2 only) | distributed numbering correctness | same-physics vs T0 numbering (solver-tolerance, NOT bit-identical); np-sweep shows O(V/P); **ADR-30's staged gate imported**: renumbers correctly every stage | deferred until T2 is scheduled |
 
 **Instrumentation for G2/G3:** the single `dc.numberDOF` bracket cannot prove *which*
@@ -375,6 +376,60 @@ SOEs do **not** renumber (no `setID` in `Mumps*SOE`). Consequences:
   because MPIDiagonal re-localizes regardless.
 - The stall analysis is untouched: the merge provably runs (live trace + measured
   N^1.98-2.01 + model reproduction ≤3%) before the localization discards its ordering.
+
+## Resolved (2026-07-22): the `dc.setSize` ~N^1.9 anomaly — quicksort on sorted input
+
+The pre-G3 blocker (§Risks) is root-caused, fixed, and measured. **None of the ADR's
+original suspects were it** — the np-round bcast+intersections loop is O(P·N/P) with a
+linear two-pointer merge, `ID::insert` is not on the path, and the localization pass is
+O(N log N) binary searches. The quadratic is one line earlier:
+`MPIDiagonalSOE::setSize` copies its local DOF list out of the DOF graph and sorts it
+with a **hand-rolled leftmost-pivot quicksort** (`quickSort`/`q_sort`,
+`MPIDiagonalSOE.cpp`). The DOF graph is `MapOfTaggedObjects`-backed (`std::map`,
+`AnalysisModel::getDOFGraph`), so its vertex iterator hands the equation numbers over in
+**ascending order — the array arrives already sorted**, and leftmost-pivot quicksort on
+sorted input is the textbook deterministic O(n²/2)-comparison worst case, per rank,
+every domain change. (Bonus defect: O(n) recursion depth on the same input.)
+
+**Why it eluded the np240 incident analysis:** the cost is O((N/P)²) — *per-rank*
+quadratic. At np240/19.18 M it is ~30-60 s, invisible inside the 16.35 h numberer stall;
+at np8 rungs it is the dominant post-T0 term. Same reason it never hurt small-np decks
+for 20 years. Like the numberer term it multiplies by K (per domainChanged).
+
+**Attribution (dc.s.\* sub-brackets, np8, max over ranks; pre-fix = instrumented stock
+sort, this session — the G2-era 10.1/101.4/501.1 s bracket totals reproduced as
+6.54/93.54/(not rerun) under warmer machine state):**
+
+| bracket | 0.25 M pre → post | 1.0 M pre → post | 2.0 M pre* → post |
+|---|---|---|---|
+| `dc.setSize` | 6.54 → **0.37 s** (17.7×) | 93.54 → **1.61 s** (58×) | 501.1* → **3.11 s** (**161×**) |
+| `dc.s.sort` (the kill) | 6.23 → 0.00 | **91.93 → 0.00** | — → 0.01 |
+| `dc.s.graph` (residual #1) | 0.31 | 1.39 | 2.50 |
+| `dc.s.bcast` | 0.37 → 0.07 | 1.86 → 0.35 | — → 0.58 |
+| everything else | ≤0.01 | ≤0.03 | ≤0.08 |
+
+\*2.0 M pre-fix from the N2 T0 profiles (bracket total; predates the sub-brackets).
+Pre-fix `dc.s.sort` measured exponent **N^1.99** (6.23→91.93 for ×3.87 nodes) with
+95-98% of the bracket; the n²/2-comparison model closes all three rungs (5.7×10⁹ /
+8.6×10¹⁰ / 3.4×10¹¹ compares ≈ 6-10 / 86-143 / 341-568 s predicted). Post-fix the
+bracket is **linear** (N^1.08 / N^0.97) and dominated by `dc.s.graph` — the
+`getDOFGraph` build, ~1.2 s/M-node/rank-share, fine until measured otherwise.
+
+**The fix** (in-place ledgered vanilla edit, NOT a subclass — one call site, output
+provably identical): `std::sort(myDOFsArray, myDOFsArray+size)` replaces
+`quickSort(myDOFs, size)`; `q_sort` is kept for provenance. Tags are unique, so any
+correct sort yields the identical ascending array ⇒ identical `myDOFs`, identical
+shared-DOF intersections, identical localization. **Gates:** (a) end-state numbering
+dumps (`ladrunoNumbering`) byte-identical across all 8 ranks on the real 0.25 M rung,
+fixed vs stock-sort binary — and the stock-sort instrumented dumps byte-match the N2
+`numbering_t0_*` artifacts (oracle-chain null check); (b) `tests/test_adr74_numberer_1.py`
+full suite green on the fixed binary; (c) the 3-rung post-fix curve above.
+
+**G3 implication:** at 19.18 M/np240 the setSize budget drops from ~30-60 s of sort to
+seconds (graph build + bcast rounds); with T0 the whole first-step setup at cluster
+scale is now projected ≤ ~5 min pre-T1. The `dc.s.*` brackets ship, so G3 attributes
+setSize honestly per its gate row. `DistributedDiagonalSOE` (the SP sibling) does not
+sort — grep confirms `MPIDiagonalSOE` held the only copy of `q_sort` in the tree.
 
 ## Instrumentation (shipped with this investigation, branch `perf/step-stall-instrumentation`)
 
@@ -452,13 +507,14 @@ readers of profiler output must anchor paths at `runs/<id>/rollup/root/step/...`
 
 ## Risks / open questions
 
-- **`dc.setSize` is now THE first-step wall** — with T0 in, the 1.0 M rung reads
-  numberDOF 7.60 s vs **setSize 101.39 s** (~N^2.06 across rungs, mechanism
-  unidentified; the per-pair intersection reads linear, so suspicion falls on the
-  shared-eq list construction, `ID::insert`, or the localization pass at scale).
-  Naive N² extrapolation to 19.18 M is ~9 h — **the blocking pre-G3 investigation**,
-  budgeted separately in G3 precisely so it cannot masquerade as numberer residue.
-  Likely its own sub-ADR or an ADR-74 amendment.
+- **`dc.setSize` ~N^1.9 — RESOLVED 2026-07-22** (see §Resolved above): the mechanism
+  was none of the suspects listed here (intersections / `ID::insert` / localization)
+  but a leftmost-pivot quicksort fed already-sorted input by the map-backed DOF graph
+  — O((N/P)²/2) per rank. Fixed with `std::sort` (output-identical, ledgered);
+  501.1 → 3.11 s at the 2.0 M rung, post-fix curve linear, byte-identity + 18/18
+  suite green. The "~9 h at 19.18 M" naive extrapolation was wrong in the reassuring
+  direction: the term is per-rank quadratic, so np240 pays only ~30-60 s — but it
+  would have poisoned every np8-class local sweep and the G3 attribution.
 - **maxTag density assumption** (T0 primary path): κ-guard + hash fallback, G1c-gated;
   negative-ref micro-case included in the same test file.
 - **Rank-0 memory after T0**: the merged graph (~5 GB at 19 M vertices) lives on rank 0
@@ -551,7 +607,18 @@ residual ⇒ T1 added; pass 2 + plain branch added to T0's scope; per-rank Plain
   G1b plain bijection + same-physics; G1c strided-tag hash fallback bit-identical.
   **G2 measured**: 23× / 76× on the rungs, exponent N^2.01 → **N^1.09**; residual =
   the T1-scoped map ops, attributed by the new sub-scopes. `dc.setSize` (~N^2.06) is
-  now the dominant first-step term — the pre-G3 blocker.
+  now the dominant first-step term — the pre-G3 blocker (resolved below, 2026-07-22).
+- **2026-07-22** — **setSize quadratic killed** (§Resolved; the pre-G3 blocker):
+  read-the-source found the leftmost-pivot `q_sort` on the already-sorted DOF list
+  (map-iteration order) — O((N/P)²/2)/rank, closing all three rung measurements to
+  ~20% via the n²/2-compare model; `dc.s.*` sub-brackets
+  (`graph/fill/sort/bcast/shared/localize/eleid`) added inside `dc.setSize` attributed
+  95-98% to `dc.s.sort` at measured **N^1.99** pre-fix; `std::sort` fix ⇒
+  `dc.setSize` 6.54/93.54/501.1 → **0.37/1.61/3.11 s** (17.7×/58×/**161×**),
+  post-fix linear, residual = the `getDOFGraph` build. Gates: 8-rank byte-identity
+  (fixed vs stock vs the N2 `numbering_t0` artifacts) + `test_adr74_numberer_1.py`
+  **18/18** on the fixed binary. In-place ledgered vanilla edit (one call site);
+  `q_sort` retained; sole copy in tree (SP's `DistributedDiagonalSOE` does not sort).
 - **2026-07-22** — **N2 adversarial gate (3 lenses) folded**: transcription-fidelity
   verdict "bit-identity HOLDS for every in-tree path" (mutation-for-mutation verified;
   κ paths answer-identical; -4 order preserved; two stock defects incidentally fixed —
