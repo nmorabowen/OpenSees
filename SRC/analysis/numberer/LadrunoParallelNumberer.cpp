@@ -14,6 +14,7 @@
 ** ****************************************************************** */
 
 // Ladruno — LadrunoParallelNumberer (ADR-74). N2/T0: the O(V) engine.
+// N3/T1: the merge + ordering run on owned dense structures.
 //
 // The algorithm is a faithful transcription of ParallelNumberer::numberDOF(int)
 // — same gather, same vertex-creation order, same getFreeTag sequence, same
@@ -23,13 +24,30 @@
 //   pass 2 remap:  theSubdomainMap.getLocation(tag)   -> per-subgraph hash map
 //   plain branch:  theOrderedRefs->getLocation(tag)   -> seen[] flags
 //   -4 fixup:      full MP scan per constrained group -> constrainedNode index
+// and (T1) every std::map pointer-chase on the merged graph replaced by dense
+// array access:
+//   the merged graph lives on ArrayOfTaggedObjects storage owned HERE (dense
+//   tags sit at position == tag => Graph::getVertexPtr is O(1), so RCM's BFS
+//   reads — 1-2 per directed adjacency entry — stop being map finds), and a
+//   tag -> Vertex* vector is maintained through the merge so edge insertion
+//   calls Vertex::addEdge on both endpoints directly (no Graph::addEdge
+//   lookups at all). The model's own map-backed DOF-group graph is left
+//   UNMERGED — it only sources P0's vertices, and clearDOFGroupGraph() frees
+//   it at the end exactly as before.
 // Bit-identity for the RCM verb is a THEOREM of "lookups only" (identical
 // merged graph => identical RCM => identical numbers) and is ENFORCED by gate
-// G1 (tests/test_adr74_numberer_1.py). The plain branch intentionally fixes
-// the upstream tag-0 quirk (vertex 0 falsely "already ordered" against a
-// zero-filled ID, numbered last) => G1b gates it by bijection + same-physics,
-// NOT bit-identity. Measured baseline this replaces: dc.numberDOF ~ N^2.01
-// (39.9 / 578.9 / 2477.5 s over 0.25/1/2 M hex, np8; 16.35 h at 19.18 M np240).
+// G1 (tests/test_adr74_numberer_1.py). For T1 the theorem needs three more
+// legs, each verified in source: adjacency is a sorted ID::insert set
+// (insertion-order canonical), getFreeTag sequence is preserved (nextFreeTag
+// == numVertexP0 after the P0 copy, exactly stock's state at merge start),
+// and vertex iteration order is ascending-tag in BOTH storages for dense
+// tags (RCM's start vertex + disconnected-component restarts depend on it).
+// The plain branch intentionally fixes the upstream tag-0 quirk (vertex 0
+// falsely "already ordered" against a zero-filled ID, numbered last) => G1b
+// gates it by bijection + same-physics, NOT bit-identity. Measured baseline
+// T0 replaced: dc.numberDOF ~ N^2.01 (39.9 / 578.9 / 2477.5 s over
+// 0.25/1/2 M hex, np8; 16.35 h at 19.18 M np240); T1 targets the ~N^1.1 map
+// residual left after T0 (16.5 s at 2 M np8: merge 7.9 + order 5.2).
 //
 // Theory + gates: Ladruno_implementation/74_ladruno_parallel_numberer_adr.md
 
@@ -53,6 +71,7 @@
 #include <GraphNumberer.h>
 #include <MP_Constraint.h>
 #include <MP_ConstraintIter.h>
+#include <ArrayOfTaggedObjects.h>   // T1: dense storage for the merged graph
 #include <profiler/ProfilerMacros.h>
 
 #include <cstdint>
@@ -149,13 +168,40 @@ LadrunoParallelNumberer::~LadrunoParallelNumberer()
   // base dtor owns theNumberer + the channel array
 }
 
+// T1 edge insertion: what Graph::addEdge does, minus its two getVertexPtr
+// lookups — both endpoints come from the owned tag -> Vertex* vector.
+// Vertex::addEdge is a sorted ID::insert (returns 0 added / 1 already there),
+// with the self-edge no-op preserved because we call the SAME member function
+// stock calls. Asymmetric adjacency (one side present, the other not) is the
+// same corruption stock exits on — kept as a fatal check.
+static inline void
+ladrunoAddEdgeDirect(std::vector<Vertex*> &tagToVertex, int tag1, int tag2)
+{
+  int r = tagToVertex[static_cast<std::size_t>(tag1)]->addEdge(tag2);
+  if (r == 0) {
+    if (tagToVertex[static_cast<std::size_t>(tag2)]->addEdge(tag1) != 0) {
+      opserr << "FATAL LadrunoParallelNumberer - asymmetric adjacency "
+             << tag1 << " <-> " << tag2 << " (corrupt graph) — aborting.\n";
+      exit(-1);
+    }
+  } else if (r < 0) {
+    opserr << "FATAL LadrunoParallelNumberer - Vertex::addEdge(" << tag1
+           << ", " << tag2 << ") failed — aborting.\n";
+    exit(-1);
+  }
+}
+
 // The T0 merge: faithful to ParallelNumberer::mergeSubGraph in every mutation
 // (vertex creation order, getFreeTag sequence, vertexTags/vertexRefs appends,
 // theSubdomainMap layout [subTags | mergedTags], addEdge call sequence) —
-// only the SEARCHES are replaced. Returns <0 on a negative ref (Lagrange
-// node-less group) instead of silently fusing them like stock.
+// only the SEARCHES are replaced. T1: the target graph is the owned
+// dense-storage merged graph, new vertices are registered in tagToVertex,
+// and pass-2 edges go in via ladrunoAddEdgeDirect (no Graph::addEdge
+// lookups). Returns <0 on a negative ref (Lagrange node-less group) instead
+// of silently fusing them like stock.
 static int
-ladrunoMergeSubGraph(Graph &theGraph, Graph &theSubGraph,
+ladrunoMergeSubGraph(Graph &mergedGraph, std::vector<Vertex*> &tagToVertex,
+                     Graph &theSubGraph,
                      ID &vertexTags, ID &vertexRefs, ID &theSubdomainMap,
                      RefIndex &refIndex, int &numVertexInOut)
 {
@@ -189,13 +235,24 @@ ladrunoMergeSubGraph(Graph &theGraph, Graph &theSubGraph,
     int vertexTagMerged;
     if (loc < 0) {
       // not present: create the merged vertex exactly as stock does
-      vertexTagMerged = theGraph.getFreeTag();
+      vertexTagMerged = mergedGraph.getFreeTag();
       vertexTags[numVertex] = vertexTagMerged;
       vertexRefs[numVertex] = vertexTagRef;
       Vertex *newVertex = new Vertex(vertexTagMerged, vertexTagRef,
                                      subVertexPtr->getWeight(),
                                      subVertexPtr->getColor());
-      theGraph.addVertex(newVertex);
+      mergedGraph.addVertex(newVertex);
+      // tag contiguity is the theorem tagToVertex indexing rests on —
+      // live-checked (N2 discipline: an assumption without an assertion
+      // is a latent silent-wrong-answer).
+      if (static_cast<std::size_t>(vertexTagMerged) != tagToVertex.size()) {
+        opserr << "FATAL LadrunoParallelNumberer - merged tag "
+               << vertexTagMerged << " != expected "
+               << static_cast<int>(tagToVertex.size())
+               << " (getFreeTag not contiguous?) — aborting.\n";
+        exit(-1);
+      }
+      tagToVertex.push_back(newVertex);
       refIndex.insert(vertexTagRef, numVertex);
       numVertex++;
     } else
@@ -207,8 +264,9 @@ ladrunoMergeSubGraph(Graph &theGraph, Graph &theSubGraph,
     count++;
   }
 
-  // pass 2: adjacency into the merged graph — same addEdge sequence as stock,
-  // O(1) remaps instead of getLocation scans.
+  // pass 2: adjacency into the merged graph — same edge-insertion sequence as
+  // stock, O(1) remaps instead of getLocation scans, direct Vertex::addEdge
+  // instead of Graph::addEdge's per-call vertex lookups (T1).
   VertexIter &theSubGraphIter2 = theSubGraph.getVertices();
   while ((subVertexPtr = theSubGraphIter2()) != 0) {
     int vertexTagSub = subVertexPtr->getTag();
@@ -229,7 +287,7 @@ ladrunoMergeSubGraph(Graph &theGraph, Graph &theSubGraph,
                << " (malformed graph) — aborting.\n";
         exit(-1);
       }
-      theGraph.addEdge(vertexTagMerged, it->second);
+      ladrunoAddEdgeDirect(tagToVertex, vertexTagMerged, it->second);
     }
   }
 
@@ -309,6 +367,18 @@ LadrunoParallelNumberer::numberDOF(int lastDOF)
         static_cast<std::int64_t>(numVertex) * (numChannels + 1);
     RefIndex refIndex(expect64 > 0x7fffffff ? 0x7fffffff
                                             : static_cast<int>(expect64));
+
+    // ---- T1: the merged graph lives HERE, on dense array-backed storage,
+    // with a tag -> Vertex* mirror. The Graph ctor takes ownership of the
+    // storage; the Graph dtor deletes the copied vertices with it. The model's
+    // map-backed group graph is only read (P0 vertex source) — it is never
+    // mutated, and clearDOFGroupGraph() disposes of it at the end as before.
+    const int denseHint = expect64 > 0x7fffffff ? 0x7fffffff
+                          : (expect64 > 0 ? static_cast<int>(expect64) : 1024);
+    Graph *mergedGraph = new Graph(*(new ArrayOfTaggedObjects(denseHint)));
+    std::vector<Vertex*> tagToVertex;
+    tagToVertex.reserve(static_cast<std::size_t>(denseHint));
+
     VertexIter &theVertices = theGraph.getVertices();
     while ((vertexPtr = theVertices()) != 0) {
       int ref = vertexPtr->getRef();
@@ -321,13 +391,43 @@ LadrunoParallelNumberer::numberDOF(int lastDOF)
                << "see the Lagrange note in ADR-74.\n";
         exit(-1);
       }
-      vertexTags[loc] = vertexPtr->getTag();
+      int p0Tag = vertexPtr->getTag();
+      // T1 copy of the P0 vertex (tag/ref/weight/color; adjacency below once
+      // all copies exist). The group graph's tags are 0..numVertexP0-1 in
+      // ascending iteration order — the theorem tagToVertex indexing (and the
+      // stock getFreeTag sequence, nextFreeTag == numVertexP0 after this
+      // loop) rests on; live-checked.
+      if (p0Tag != loc) {
+        opserr << "FATAL LadrunoParallelNumberer - P0 group-graph tag "
+               << p0Tag << " != iteration position " << loc
+               << " (tags not contiguous-ascending?) — aborting.\n";
+        exit(-1);
+      }
+      Vertex *copyVertex = new Vertex(p0Tag, ref, vertexPtr->getWeight(),
+                                      vertexPtr->getColor());
+      mergedGraph->addVertex(copyVertex);
+      tagToVertex.push_back(copyVertex);
+      vertexTags[loc] = p0Tag;
       vertexRefs[loc] = ref;
       // NB duplicate refs on P0 would be last-wins here vs stock's first-wins
       // getLocation — unreachable in-tree (one DOF group per node; the only
       // duplicate ref is -1, rejected above). Comment per review.
       refIndex.insert(ref, loc);
       loc++;
+    }
+
+    // T1: replicate P0's own adjacency onto the copies (sorted ID::insert is
+    // insertion-order canonical, so per-edge direct insertion reproduces the
+    // exact adjacency sets stock starts the merge with).
+    { OPS_PROFILE_SCOPE("dc.n.merge");
+    VertexIter &theVerticesAdj = theGraph.getVertices();
+    while ((vertexPtr = theVerticesAdj()) != 0) {
+      int p0Tag = vertexPtr->getTag();
+      Vertex *copyVertex = tagToVertex[static_cast<std::size_t>(p0Tag)];
+      const ID &adjacency = vertexPtr->getAdjacency();
+      for (int i = 0; i < adjacency.Size(); i++)
+        copyVertex->addEdge(adjacency(i));   // symmetric source => symmetric copy
+    }
     }
 
     ID **theSubdomainIDs = new ID *[numChannels];
@@ -344,7 +444,8 @@ LadrunoParallelNumberer::numberDOF(int lastDOF)
       theSubdomainIDs[j] = new ID(theSubGraph->getNumVertex()*2);
 
       { OPS_PROFILE_SCOPE("dc.n.merge");
-      if (ladrunoMergeSubGraph(theGraph, *theSubGraph, vertexTags, vertexRefs,
+      if (ladrunoMergeSubGraph(*mergedGraph, tagToVertex, *theSubGraph,
+                               vertexTags, vertexRefs,
                                *theSubdomainIDs[j], refIndex, numVertex) < 0) {
         // fail-STOP: mid-collective return = distributed deadlock + a
         // partially-merged cached graph (review MAJOR-1).
@@ -357,19 +458,21 @@ LadrunoParallelNumberer::numberDOF(int lastDOF)
       delete theSubGraph;
     }
 
-    // ---- ordering: RCM (or any GraphNumberer) exactly as stock; the plain
-    // branch replaces the theOrderedRefs->getLocation scans with seen flags
-    // (this FIXES the upstream tag-0 quirk — G1b, not bit-identity) ----------
-    ID *theOrderedRefs = new ID(theGraph.getNumVertex());
+    // ---- ordering: RCM (or any GraphNumberer) exactly as stock, but running
+    // on the OWNED dense-storage merged graph (T1) so every BFS getVertexPtr
+    // is an array index, not a map find; the plain branch replaces the
+    // theOrderedRefs->getLocation scans with seen flags (this FIXES the
+    // upstream tag-0 quirk — G1b, not bit-identity) --------------------------
+    ID *theOrderedRefs = new ID(mergedGraph->getNumVertex());
 
     { OPS_PROFILE_SCOPE("dc.n.order");
     if (theNumberer != 0) {
-      *theOrderedRefs = theNumberer->number(theGraph, lastDOF);
+      *theOrderedRefs = theNumberer->number(*mergedGraph, lastDOF);
     } else {
       // order by subdomain: subdomain 1's vertices first, then those of 2 not
       // already ordered, ...; finally P0's own not yet ordered. Merged tags
       // are getFreeTag-contiguous [0, numVertex) => dense seen flags.
-      std::vector<char> seen(static_cast<std::size_t>(theGraph.getNumVertex()) + 1u, 0);
+      std::vector<char> seen(static_cast<std::size_t>(mergedGraph->getNumVertex()) + 1u, 0);
       int nOrdered = 0;
       for (int l = 0; l < numChannels; l++) {
         const ID &theSubdomain = *theSubdomainIDs[l];
@@ -394,19 +497,22 @@ LadrunoParallelNumberer::numberDOF(int lastDOF)
       // Live assertion of the tag-contiguity theorem the seen[] flags rest on
       // (review MAJOR-2): a silently-skipped vertex would leave trailing zeros
       // in theOrderedRefs and corrupt vertex 0 downstream.
-      if (nOrdered != theGraph.getNumVertex()) {
+      if (nOrdered != mergedGraph->getNumVertex()) {
         opserr << "FATAL LadrunoParallelNumberer - ordered " << nOrdered
-               << " of " << theGraph.getNumVertex() << " vertices (DOF-group "
+               << " of " << mergedGraph->getNumVertex() << " vertices (DOF-group "
                << "tags not contiguous from 0?) — aborting.\n";
         exit(-1);
       }
     }
 
-    // cumulative equation numbers onto vertex Tmp — verbatim from stock
+    // cumulative equation numbers onto vertex Tmp — same assignments as stock,
+    // O(1) tagToVertex reads on the owned copies (T1; the Tmp values written
+    // here live on the merged-graph copies, so the loops below must read the
+    // SAME copies — they do, via tagToVertex).
     int count = 0;
     for (int i = 0; i < theOrderedRefs->Size(); i++) {
       int vertexTag = (*theOrderedRefs)(i);
-      Vertex *vPtr = theGraph.getVertexPtr(vertexTag);
+      Vertex *vPtr = tagToVertex[static_cast<std::size_t>(vertexTag)];
       int numDOF = vPtr->getColor();
       vPtr->setTmp(count);
       count += numDOF;
@@ -415,10 +521,10 @@ LadrunoParallelNumberer::numberDOF(int lastDOF)
 
     delete theOrderedRefs;
 
-    // number own dof's — verbatim from stock
+    // number own dof's — same assignments as stock, tagToVertex reads (T1)
     for (int i = 0; i < numVertexP0; i++) {
       int vertexTag = vertexTags(i);
-      Vertex *vPtr = theGraph.getVertexPtr(vertexTag);
+      Vertex *vPtr = tagToVertex[static_cast<std::size_t>(vertexTag)];
 
       int startID = vPtr->getTmp();
       int dofTag = vertexTag;
@@ -446,7 +552,7 @@ LadrunoParallelNumberer::numberDOF(int lastDOF)
 
       for (int i = 0; i < numVertexSubdomain; i++) {
         int vertexTagMerged = theSubdomain[numVertexSubdomain + i];
-        Vertex *vPtr = theGraph.getVertexPtr(vertexTagMerged);
+        Vertex *vPtr = tagToVertex[static_cast<std::size_t>(vertexTagMerged)];
         int startDOF = vPtr->getTmp();
         theSubdomain[i + numVertexSubdomain] = startDOF;
       }
@@ -457,6 +563,11 @@ LadrunoParallelNumberer::numberDOF(int lastDOF)
     }
     delete [] theSubdomainIDs;
     }
+
+    // T1: the owned merged graph (and every copied vertex with it) dies here;
+    // tagToVertex pointers dangle past this line by construction — nothing
+    // below touches them.
+    delete mergedGraph;
   }
 
   // ---- the -4 (MP-constrained) fixup: same assignments as stock, but via a
