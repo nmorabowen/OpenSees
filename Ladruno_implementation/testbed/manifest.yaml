@@ -1682,3 +1682,35 @@ features:
       cache drives getMass + inertia unbalance + inertia residual) + explicit
       proof-of-life battery tests/test_ladrunoBrick20_dynamics.py.
       U1 RESOLVED BOTH: one-time opserr damage-channel advisory at setDomain.
+
+  - feature: LadrunoParallelNumberer          # ADR-74 T0 — the O(V) gather-merge numberer
+    classtag: 33000          # NUMBERER family (its own registry band; first ladruno numberer)
+    tag_symbol: NUMBERER_TAG_LadrunoParallelNumberer
+    pr: 591                  # N1 skeleton; own-body T0 engine #592; setSize companion fix #593
+    feature_class: numberer
+    required_tiers: []
+    pytest: tests/test_adr74_numberer_1.py    # two-deck G1 oracle (Mumps strict + MPIDiagonal end-state) + G1b bijection/same-physics + G1c hash-fallback + mutation tests; 18/18
+    tcl: WAIVED(numberer; verbs LadrunoParallelRCM/LadrunoParallelPlain wired in commands.cpp _PARALLEL_INTERPRETERS + OpenSeesCommands, validated by the Zone-A pytest through mpiexec decks)
+    core_files:
+      - SRC/classTags.h
+      - SRC/analysis/numberer/LadrunoParallelNumberer.h
+      - SRC/analysis/numberer/LadrunoParallelNumberer.cpp
+      - SRC/analysis/numberer/ParallelNumberer.h   # vanilla: ledgered private->protected promotion + tag-forwarding ctors
+      - SRC/interpreter/OpenSeesCommands.cpp
+      - SRC/interpreter/OpenSeesCommands.h
+      - SRC/tcl/commands.cpp
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      ADR-74 (supersedes ADR-30): subclass of ParallelNumberer that replaces the
+      O(V^2_global) rank-0 gather-merge linear scans with a dense refToLoc
+      direct-address table (kappa-guarded hash fallback), per-subgraph pass-2
+      maps, a seen-flag plain branch (tag-0 quirk fixed, G1b), a
+      constrainedNode->MPs index for the -4 fixup, and dc.n.* profiler
+      sub-scopes. RCM verb bit-identical to stock ParallelRCM (G1, np2+np8,
+      both decks); measured dc.numberDOF N^2.01 -> N^1.10 (23x/76x/150x on the
+      0.25/1/2 M-hex np8 rungs). Companion PR #593 killed the next wall in the
+      same first-step path: MPIDiagonalSOE::setSize's leftmost-pivot quicksort
+      on already-sorted input (O((N/P)^2)/rank, 161x at 2 M) — in-place
+      ledgered vanilla edit, not part of this class. Manifest row added in
+      #593 (the N1/N2 PRs predated gate enforcement on this tag).
