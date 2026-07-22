@@ -390,7 +390,7 @@ void lowerNode(const ProfileNodeLive& live, ProfileNode& out)
 } // namespace
 
 const ProfileNode&
-Profiler::mergedRollup()
+Profiler::mergedRollup(bool quietLive)
 {
     // PRECONDITION (correctness review H1): the caller must guarantee no worker
     // thread is currently inside a profiled scope. The per-thread live trees are
@@ -400,11 +400,13 @@ Profiler::mergedRollup()
     // thread registration, NOT tree mutation. In practice report is called from the
     // single-threaded command layer after profiler('stop'); P5 must enforce that the
     // active analysis is idle before reporting (assert/guard added when seams land).
-    if (enabled_) {
+    if (enabled_ && !quietLive) {
         // Reporting while still accumulating is a usage error under any parallel
         // solver; warn rather than risk a silent race. (Coarse single-thread runs
         // are safe, so this is a warning, not a hard stop.) fprintf keeps the core
         // dependency-free (no OPS_Globals/opserr) so it stays standalone-compilable.
+        // quietLive: the checkpoint verb snapshots deliberately while enabled —
+        // between analyze calls, single-threaded — and suppresses this.
         std::fprintf(stderr, "[profiler] mergedRollup() called while still enabled; "
                      "call profiler('stop') first to avoid racing live worker threads.\n");
     }

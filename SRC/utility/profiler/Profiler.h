@@ -349,7 +349,11 @@ public:
     // ---- report assembly (cold path, single-threaded) ----
     // Fold all per-thread live trees into one merged live root, lower it into the
     // POD wire ProfileNode, and return it (cached, owned by Profiler).
-    const ProfileNode& mergedRollup();
+    // quietLive=true suppresses the still-enabled warning — used by the
+    // `profiler checkpoint` verb, which deliberately snapshots mid-run from the
+    // single-threaded command layer between analyze calls (all scopes closed,
+    // no worker threads => the H1 precondition holds; see the verb's comment).
+    const ProfileNode& mergedRollup(bool quietLive = false);
     RunMeta            buildMeta() const;
     const Series&      series() const noexcept { return series_; }
     MemorySnapshot     buildMemorySnapshot() const;

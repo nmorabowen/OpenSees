@@ -45,6 +45,8 @@ UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 #include <elementAPI.h>
 #include <profiler/Profiler.h>           // Ladruno stack profiler (P5 command)
 #include <profiler/ProfilerHDF5Writer.h>
+#include <cstdio>                        // Ladruno (ADR-74): checkpoint tmp-file remove/rename
+#include <string>
 #include <UniaxialMaterial.h>
 #include <NDMaterial.h>
 #include <SectionForceDeformation.h>
@@ -3677,7 +3679,7 @@ int OPS_profiler()
 {
     if (cmds == 0) return 0;
     if (OPS_GetNumRemainingInputArgs() < 1) {
-        opserr << "WARNING profiler - expected subcommand: start|stop|reset|report|memory\n";
+        opserr << "WARNING profiler - expected subcommand: start|stop|reset|report|checkpoint|memory\n";
         return -1;
     }
     const char* sub = OPS_GetString();
@@ -3755,6 +3757,65 @@ int OPS_profiler()
             opserr << "WARNING profiler report - writeRun failed (run id '" << runid
                    << "' may already exist in '" << fname << "')\n";
             return -1;
+        }
+        return 0;
+    }
+
+    // Ladruno (ADR-74 pre-G3 hardening): mid-run snapshot; see the classic-Tcl
+    // twin in tcl/commands.cpp for the full rationale. Overwrites via tmp+rename.
+    if (strcmp(sub, "checkpoint") == 0) {
+        if (OPS_GetNumRemainingInputArgs() < 1) {
+            opserr << "WARNING profiler checkpoint <filename> [-run <id>]\n";
+            return -1;
+        }
+        const char* fname = OPS_GetString();
+        const char* runid = "run0";
+        while (OPS_GetNumRemainingInputArgs() > 0) {
+            const char* opt = OPS_GetString();
+            if (strcmp(opt, "-run") == 0 && OPS_GetNumRemainingInputArgs() > 0)
+                runid = OPS_GetString();
+        }
+        const ops_profiler::ProfileNode& rollup = P.mergedRollup(true);
+        ops_profiler::RunMeta meta = P.buildMeta();
+        LinearSOE* theSOE = cmds->getSOE();
+        if (theSOE != 0) meta.nDOF = theSOE->getNumEqn();
+        meta.algorithm  = cmds->getAlgorithmName();
+        meta.solver     = cmds->getSolverName();
+        meta.integrator = cmds->getIntegratorName();
+        TransientIntegrator* theTI = cmds->getTransientIntegrator();
+        if (theTI != 0) {
+            const double dtcr = theTI->getCriticalTimeStep();
+            if (dtcr > 0.0) {
+                meta.dt_cr = dtcr;
+                if (meta.dt_max > 0.0)
+                    meta.oversample_ratio = dtcr / meta.dt_max;
+            }
+        }
+        ops_profiler::MemorySnapshot snap = P.buildMemorySnapshot();
+        const ops_profiler::Series& ser = P.series();
+
+        std::string tmpname = std::string(fname) + ".tmp";
+        remove(tmpname.c_str());               // stale tmp from a prior kill
+        ops_profiler::ProfilerHDF5Writer w;
+        if (!w.open(tmpname.c_str())) {
+            opserr << "WARNING profiler checkpoint - could not open '" << tmpname.c_str() << "'\n";
+            return -1;
+        }
+        bool ok = w.writeRun(runid, rollup, meta,
+                             (ser.nSteps() > 0 ? &ser : (const ops_profiler::Series*)0),
+                             snap);
+        w.close();
+        if (!ok) {
+            opserr << "WARNING profiler checkpoint - writeRun failed for '" << tmpname.c_str() << "'\n";
+            return -1;
+        }
+        if (rename(tmpname.c_str(), fname) != 0) {        // Windows: no replace-existing
+            remove(fname);
+            if (rename(tmpname.c_str(), fname) != 0) {
+                opserr << "WARNING profiler checkpoint - could not move '" << tmpname.c_str()
+                       << "' over '" << fname << "' (snapshot left at the .tmp name)\n";
+                return -1;
+            }
         }
         return 0;
     }
