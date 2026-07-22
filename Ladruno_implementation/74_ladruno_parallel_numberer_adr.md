@@ -156,6 +156,37 @@ pure lookup accelerators — iteration order over subgraph vertices, `getFreeTag
 assignment, and append order are untouched ⇒ identical merged graph ⇒ identical RCM input
 ⇒ **bit-identical equation numbering**. G1 enforces this, not the argument.
 
+## Performance ceiling & sequencing — why T0+T1 first, T2 deferred
+
+T0+T1 is the right *first* fix, **not** the performance optimum. The optimum for the lane
+that hit the wall is T2: under `MPIDiagonal` + explicit there is no factorization, so the
+ideal numberer does no gather, no merge, no ordering at all. Ranked, with projections:
+
+| design | 19.2 M nodes | 43 M (the P=8 retry) | numbering | correctness risk |
+|---|---|---|---|---|
+| today | 16.35 h | ~3.4 **days** (quadratic) | RCM | — |
+| T0 only | ~20-45 min | ~1-2 h | bit-identical | ~none (G1 diff) |
+| **T0+T1** | **~1-3 min** | **~5-10 min** | bit-identical | ~none (G1 diff) |
+| T2 | ~ms-s | ~ms-s | different (valid) | own correctness campaign |
+
+T0-before-T2 is deliberate, on three grounds:
+1. **Risk asymmetry.** T0+T1's oracle is a bit-diff (G1). T2's oracle is "same physics to
+   solver tolerance" — weaker, laborious, on a path (parallel numbering consistency)
+   where a subtle bug is *silently wrong physics*, the worst failure class in this code.
+2. **Coverage.** In MP builds every numberer verb crosses the merge, so T0+T1 fixes every
+   lane — implicit, MUMPS, future distributed factorizing solvers. T2 serves only
+   diagonal/explicit.
+3. **Sufficiency.** Post-T0+T1 the 43 M numbering costs ~5-10 min against a multi-hour
+   solve — below the noise floor — and the rank-0 merged graph (~11-12 GB at 43 M) still
+   fits the 60 GB nodes.
+
+**Decision rule (ADR-40's measurement-first principle applied to our own fix):** T0+T1
+now; **T2 is scheduled when a measured model makes the T0+T1 residual non-negligible** —
+expected beyond ~100 M nodes, or when rank-0 memory binds on thinner head nodes.
+**Flip conditions, recorded:** were the explicit lane the only lane and >43 M imminent,
+skip T0 and build T2 directly (never merge at all); were upstream acceptance the
+near-term goal, write the in-place edit first.
+
 ## No deck-level escape (all routes verified in source)
 
 - **Every numberer verb hits the merge in MP builds.** Under `_PARALLEL_PROCESSING`,
@@ -238,6 +269,16 @@ Commit `e0113e53a` — two profiler gaps closed, prerequisites for G0-G3:
   visibility promotion + additive registration), gives the deck an explicit opt-in verb,
   and keeps stock `ParallelRCM` alive as the G1 byte-identity reference *inside the same
   binary*. The upstream PR is later extracted as the in-place form of T0/T1.
+  **Alternatives weighed, and the named smell:** the subclass is *inheritance for
+  plumbing reuse, not substitution* — we override `numberDOF` wholesale and keep only the
+  channel/processID wiring + `sendSelf`/`recvSelf`. Accepted eyes-open because (a) the
+  in-place edit — technically cleanest and upstream-shaped — is rejected on governance
+  (the additive contract), not technical, grounds; (b) a standalone `DOF_Numberer`
+  sibling avoids the header promotion but duplicates the subtle machine-broker/channel
+  wiring — exactly the code two copies of which would drift; (c) extracting the merge
+  into a strategy object is the "proper" OO answer and over-engineering for one
+  algorithm with two implementations in a research fork. Precedent: LadrunoHHT /
+  LadrunoGeneralizedAlpha (identical promotion pattern, classTags.h 33013/33014).
 
 ## Risks / open questions
 
@@ -271,8 +312,12 @@ Commit `e0113e53a` — two profiler gaps closed, prerequisites for G0-G3:
   distributed SOEs ⇒ "no deck-level escape" is a hard claim, verified at
   `MPIDiagonalSOE.cpp:271`.
 - **2026-07-21** — G0 sweep launched locally (np8; 0.25/1.0/2.0 M-hex rungs; instrumented
-  binary; harness `Dropbox/UANDES EC/Cluster Max Models/numberer_sweep/`). Result: *fill
-  in on completion.*
+  binary; harness `Dropbox/UANDES EC/Cluster Max Models/numberer_sweep/`). **Interim
+  (rungs 1-2):** 269 k nodes → 56.4 s wall; 1.04 M nodes → 724.8 s wall. Node ratio
+  ×3.87 → wall ×12.85 ⇒ **exponent ≈ 1.9 on raw wall** (steady-state solve dilutes
+  toward 2.0; the collector's `dc.numberDOF` split is the clean number). Rung 3 in
+  flight — its ~50 min projected numberer term is itself the quadratic on schedule.
+  Final table + exponent: *fill in on completion.*
 - **Cluster note**: the Esmeralda tree (`ladruno-p5-build` @ #580) carries the same
   unfixed code — all three touched files byte-identical to the patch base — so the
   instrumentation + T0 rebase cleanly there. The live cluster binary is Jul-18 (not the
