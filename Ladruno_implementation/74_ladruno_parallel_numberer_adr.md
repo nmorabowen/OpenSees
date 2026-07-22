@@ -41,15 +41,26 @@ setup **O(V²_global) serial on one core** while every other rank busy-polls in 
 At 19.18 M nodes that is ~1.8×10¹⁴ integer comparisons ≈ 16-17 h — the observed stall, to
 within 5%. This ADR ships a three-tier fix, each independently landable and gated:
 
-- **T0 — kill the quadratic (the stall fix):** dense direct-address lookup (node tags are
-  1..N from gmsh/apeGmsh) with a hash-map fallback, applied to **both** passes of
-  `mergeSubGraph` *and* the `ParallelPlain` ordering branch. O(V²)→O(V). Ordering-stable
-  by construction ⇒ **bit-identical equation numbering**, enforced by gate G1.
+**Delivery vehicle (owner decision 2026-07-21): a fork-native class, not an in-place
+edit.** `LadrunoParallelNumberer : public ParallelNumberer` (new files, ladruno numberer
+classTag in the ≥33000 band), following the fork's additive discipline: upstream
+`ParallelNumberer` stays behavior-untouched; the only upstream-file diffs are (a) a
+**ledgered private→protected promotion** in `ParallelNumberer.h` (`processID` /
+`theChannels` / `theNumberer` — same pattern as the HHT.h and GeneralizedAlpha.h
+promotions for LadrunoHHT/LadrunoGeneralizedAlpha, classTags.h 33013/33014), and (b)
+additive registration verbs. `mergeSubGraph` is already `protected`. The tiers:
+
+- **T0 — kill the quadratic (the stall fix):** override `numberDOF` with a dense
+  direct-address lookup (node tags are 1..N from gmsh/apeGmsh) + hash-map fallback,
+  applied to **both** merge passes *and* the plain-ordering branch. O(V²)→O(V).
+  Ordering-stable by construction ⇒ **bit-identical equation numbering vs stock
+  `ParallelRCM`**, enforced by gate G1.
 - **T1 — kill the tree lookups (the residual):** after T0 the wall is 20-45 min of
   `std::map` finds (2 per directed adjacency entry in `Graph::addEdge`, 1 per entry in
-  RCM's BFS). The in-tree dense path `Graph::startAddEdge`/`addEdgeFast`
-  (`Graph.cpp:223-276`) applies directly — merged tags are contiguous from `getFreeTag`.
-  Numbering drops to low minutes.
+  RCM's BFS). Build the merged graph through the in-tree dense path
+  `Graph::startAddEdge`/`addEdgeFast` (`Graph.cpp:223-276`, virtual on Graph — no Graph
+  edits needed) — merged tags are contiguous from `getFreeTag`. Numbering drops to low
+  minutes.
 - **T2 — stop centralizing (the architecture):** owner-computes distributed numbering
   (owner rule on shared nodes, per-rank owned-DOF counts, `MPI_Exscan` start offsets, one
   halo exchange). O(V/P) time and memory, no rank-0 merged graph (~5 GB at this scale),
@@ -112,7 +123,16 @@ endgame is to not compute it at all where it is provably unused.
 | T2 compatibility | `SRC/system_of_eqn/linearSOE/diagonal/MPIDiagonalSOE.cpp:271` (neighbor discovery by global-eq-number intersection — numbering-scheme-agnostic) |
 | registration (both verbs → same engine) | `SRC/tcl/commands.cpp:3919-3929`, `SRC/interpreter/OpenSeesCommands.cpp:1575-1581` |
 
-## How — T0 design (the stall fix)
+## How — the class, and the T0 design (the stall fix)
+
+**`LadrunoParallelNumberer`** (`SRC/analysis/numberer/LadrunoParallelNumberer.{h,cpp}`):
+subclass of `ParallelNumberer`; overrides both `numberDOF` variants; inherits the
+channel/processID plumbing via the ledgered promotion; keeps RCM (or none) as the
+graph numberer on top — same algorithm, sane data structures. Registration: additive
+`numberer LadrunoParallelRCM` (+ plain variant) branches in `commands.cpp` /
+`OpenSeesCommands.cpp`; additive FEM_ObjectBroker case for the new classTag. apeGmsh
+side: one typed primitive (`ops.numberer.LadrunoParallelRCM()`), fork-gated at run like
+every Ladruno surface; the plane-wave family decks switch to it once G1 passes.
 
 One lookup structure, hoisted to `numberDOF` and threaded through all merge calls (NOT
 rebuilt per subgraph):
@@ -136,8 +156,12 @@ pure lookup accelerators — iteration order over subgraph vertices, `getFreeTag
 assignment, and append order are untouched ⇒ identical merged graph ⇒ identical RCM input
 ⇒ **bit-identical equation numbering**. G1 enforces this, not the argument.
 
-## No deck-level escape (both routes verified in source)
+## No deck-level escape (all routes verified in source)
 
+- **Every numberer verb hits the merge in MP builds.** Under `_PARALLEL_PROCESSING`,
+  even `numberer Plain` and `numberer RCM` construct `ParallelNumberer`
+  (`commands.cpp:3894-3898`). There is no verb in OpenSeesMP that avoids
+  `mergeSubGraph`.
 - **`ParallelPlain`** runs the *same* merge, then adds the `:222`/`:241` full-width scans:
   ≈ 3.7×10¹⁴ extra comparisons ⇒ ~2-3 **days** at this scale. Strictly worse.
 - **Per-rank `Plain`/`RCM`** is a **wrong-answer generator** with any distributed SOE:
@@ -153,7 +177,7 @@ behavior-identical, the cleanest possible upstream PR shape).
 | Gate | Delivers | Pass criterion | Status |
 |---|---|---|---|
 | **G0** — scaling sweep (pre-fix) | measured `dc.numberDOF` exponent vs N at fixed np | super-linear (~N²) growth across 0.25/1.0/2.0 M-hex rungs, np8, `numberer_sweep/` harness | **in flight** (local, instrumented binary e0113e53a) |
-| **G1** — numbering byte-identity | T0 changes no numbers | DOF-ID dump diff pre/post-T0 on the 0.25 M rung, np2 + np8: **bit-identical**; full existing MP battery green | pending T0 |
+| **G1** — numbering byte-identity | the new class changes no numbers | DOF-ID dump diff, `LadrunoParallelRCM` vs stock `ParallelRCM`, same partition, 0.25 M rung, np2 + np8: **bit-identical**; full existing MP battery green | pending T0 |
 | **G2** — the fix, measured | T0(+T1) timing on the same rungs | `dc.numberDOF` drops from the G0 curve to O(V) (T0) / low-minutes-at-19M-extrapolation (T1); exponent ≈ 1 | pending T0 |
 | **G3** — cluster confirmation | the production-scale kill | 18.6 M deck re-run on Esmeralda with the patched binary: first step ≤ minutes, total ≈ 25 min; per-step wall column confirms *which* step carried setup | pending G1/G2 + cluster rebuild |
 | **G4** (T2 only) | distributed numbering correctness | same-physics gate vs T0 numbering (response identical to solver tolerance, NOT bit-identical — ordering differs); np-sweep shows O(V/P) | deferred until T2 is scheduled |
@@ -208,6 +232,12 @@ Commit `e0113e53a` — two profiler gaps closed, prerequisites for G0-G3:
 - **T2 is opt-in, not a default swap** — it abandons global RCM, so numbering (and any
   ordering-sensitive downstream) changes. Diagonal/explicit lanes lose nothing; every
   other lane keeps today's path until measured.
+- **Fork-native class over in-place edit** (owner, 2026-07-21) — `LadrunoParallelNumberer`
+  in the ≥33000 band rather than editing `ParallelNumberer::numberDOF` in place. Honors
+  the fork's additive contract (upstream classes behavior-untouched; only a ledgered
+  visibility promotion + additive registration), gives the deck an explicit opt-in verb,
+  and keeps stock `ParallelRCM` alive as the G1 byte-identity reference *inside the same
+  binary*. The upstream PR is later extracted as the in-place form of T0/T1.
 
 ## Risks / open questions
 
