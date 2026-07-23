@@ -3795,7 +3795,19 @@ int OPS_profiler()
         const ops_profiler::Series& ser = P.series();
 
         std::string tmpname = std::string(fname) + ".tmp";
+        // Ladruno (ADR-74 review A2): writer appends to an existing file, so a
+        // stale .tmp we fail to clear wedges every future checkpoint behind a
+        // misleading "writeRun failed". Detect the failed clear, report the cause.
         remove(tmpname.c_str());               // stale tmp from a prior kill
+        { FILE* stale = fopen(tmpname.c_str(), "rb");
+          if (stale != 0) {
+              fclose(stale);
+              opserr << "WARNING profiler checkpoint - could not clear stale '"
+                     << tmpname.c_str() << "' (locked or permission-denied); skipping "
+                     << "this checkpoint so the last good '" << fname << "' is preserved\n";
+              return -1;
+          }
+        }
         ops_profiler::ProfilerHDF5Writer w;
         if (!w.open(tmpname.c_str())) {
             opserr << "WARNING profiler checkpoint - could not open '" << tmpname.c_str() << "'\n";
