@@ -483,6 +483,65 @@ the incident); the scenarios this fix rescues are the 43 M P=8 retry (~1.6 h
 avoided) and every np8-class local sweep. The K× domainChanged multiplier
 (§Sequencing) applied to this term too and is now retired with it.
 
+## The implicit lane (2026-07-22): measured clean, verbs ready
+
+Every ADR-74 fix is lane-agnostic (`domainChanged` runs regardless of integrator
+or solver — including `DirectIntegrationAnalysis::eigen()`, so modal runs paid
+and now benefit too), and the strict G1 oracle (Deck A) was always Newmark+MUMPS
+— **`LadrunoParallelRCM` has been implicit-validated since N2**. What was NOT
+measured was the implicit stack's own `dc.setSize` half:
+`MumpsParallelSolver::setSize` only flags `needsSetSize` (the MUMPS symbolic
+analysis runs at the first *solve*), so the bracket = the shared `getDOFGraph`
+build + `MumpsParallelSOE`'s triplet-structure fill. Source read flagged two
+costs (the rowfill loop probes ALL global equation numbers against the local map
+— O(neq_global x log V_local) per rank, np-invariant like the old numberer term;
+and an O(deg^2)-per-row insertion sort); `dc.s.*` sub-brackets added
+(`nnz/alloc/rowfill/colfill`) and measured on Newmark+Mumps np8 rungs
+(0.25 M / 0.5 M nodes, x1.91):
+
+| bracket | 0.25 M | 0.5 M | exponent |
+|---|---|---|---|
+| `dc.setSize` | 0.56 s | 1.11 s | N^1.05 |
+| — `dc.s.graph` (shared) | 0.32 | 0.64 | N^1.07 |
+| — `dc.s.rowfill` | 0.19 | 0.35 | N^0.94 |
+| `dc.numberDOF` (T1) | 0.65 | 1.23 | N^0.98 |
+| `dc.handle` (#595) | 0.04 | 0.09 | ~N^1.2 |
+
+**Verdict: no hidden implicit quadratic — carried by the SOURCE BOUND, not the
+2-point fit** (adversarial review, 2026-07-23). The measured table is only two
+rungs (1.0 M OOM'd, note (e)), and two points define exactly one power law —
+they cannot distinguish N^1.05 from a low-coefficient N² that has not yet
+dominated. The verdict rests instead on a source argument verified in
+`MumpsParallelSOE::setSize`: the rowfill outer loop is O(neq_global) per rank,
+`getVertexPtr` is O(log V_local), and the inner insertion sort is O(deg²) per
+row — but for a fixed-topology mesh refinement the element connectivity **degree
+is bounded** (~const for hexes), so O(deg²)=O(1)/row and the whole setSize is
+**O(N log N) at fixed np with no N² term**. A hidden quadratic would require
+degree to grow with N, which mesh refinement does not do. The 2-point exponent
+is *consistent with* that bound, not *proof of* it. Total setup 2.4 s of a
+1,869 s implicit run (0.13%). The pre-fix world was a different story: implicit MP at
+1 M nodes paid the same 578 s numberDOF the sweep measured, and staged implicit
+decks (apeGmsh emits `domainChange` per stage) re-paid it K times — T0/T1
+retroactively de-mined the implicit lane. Notes carried forward: (a) the
+rowfill global-probe term is np-invariant — at 57.5 M global it is ~5-15 s/rank
+and mimics an Amdahl fraction in strong scaling; measure it in any implicit
+cluster profiling before citing scaling numbers (same caution as the
+interconnect study). **Its memory twin (adversarial review):** the same
+`size = neq_global` reassignment sizes `B/X/myB/workArea/colStartA` per rank, so
+each rank allocates full-length GLOBAL vectors — ~2+ GB/rank of setSize scratch
+at 57.5 M (O(P·neq_global) aggregate), *before* MUMPS's own factor memory. Stock
+`MumpsParallelSOE`, out of ADR-74 fix scope, but a real implicit-at-scale ceiling
+that the time-only flag omitted — budget it in any G3-implicit sizing. (b) MUMPS reorders internally (AMD/METIS via ICNTL(7)),
+so the numberer's RCM buys nothing on implicit+MUMPS either —
+**`LadrunoParallelPlain` is the fast verb for both production lanes**; RCM
+earns its keep only on bandwidth/profile solvers (ProfileSPD/band, SP/serial).
+(c) T2's "any consistent bijection works" was verified against MPIDiagonalSOE
+only; the same check is owed against `MumpsParallelSOE`'s assembly before T2
+serves implicit. (d) Past implicit MP timings at >=0.5 M nodes carry the
+pre-fix setup terms in their totals — re-derive with the dc.* brackets before
+citing. (e) 1.0 M-node MUMPS LU does not fit the 64 GB local box (error -13)
+— the 0.5 M rung is the local implicit ceiling; larger points are cluster work.
+
 ## Instrumentation (shipped with this investigation, branch `perf/step-stall-instrumentation`)
 
 Commit `e0113e53a` — two profiler gaps closed, prerequisites for G0-G3:
@@ -567,6 +626,21 @@ readers of profiler output must anchor paths at `runs/<id>/rollup/root/step/...`
   suite green. The "~9 h at 19.18 M" naive extrapolation was wrong in the reassuring
   direction: the term is per-rank quadratic, so np240 pays only ~30-60 s — but it
   would have poisoned every np8-class local sweep and the G3 attribution.
+- **Setup-path scan audit (2026-07-22, post-#595)** — tree-wide inventory of the
+  remaining getLocation/scan-in-loop family, all **MP-count-driven** (zero cost on
+  the MP-free rungs, quadratic on equalDOF/tie-heavy decks): `PlainHandler.cpp`
+  per-node full-MP sweep (O(#nodes × #MP)); the `-4` fixup full-MP sweep in stock
+  `DOF_Numberer.cpp` (×2 variants) and `PlainNumberer.cpp` (×2) — the same second
+  quadratic `LadrunoParallelNumberer` already indexes away on the parallel path.
+  Penalty/Lagrange/Auto handlers audited clean. Fix for all four sites = the
+  shipped `constrainedNode → MPs` one-pass index pattern + a tie-heavy identity
+  gate; **RESOLVED same-day (MP-index PR)**: all four sites (plus PlainHandler's twin
+  `getEQs()` sweep, found during the fix) now use the one-pass index; tie-gate
+  deck (`~/ladruno_nsweep/tiegate`, 2000 nodes / ~1000 equalDOFs / a
+  multi-MP node, np1, Plain handler) byte-identical for both `numberer Plain`
+  and `numberer RCM` + suite 18/18. `DomainPartitioner` deprioritized (unused
+  by the apeGmsh SPMD lane); recorder init + apeGmsh emit fan-out remain
+  unmeasured.
 - **maxTag density assumption** (T0 primary path): κ-guard + hash fallback, G1c-gated;
   negative-ref micro-case included in the same test file.
 - **Rank-0 memory after T0**: the merged graph (~5 GB at 19 M vertices) lives on rank 0
@@ -613,6 +687,42 @@ residual ⇒ T1 added; pass 2 + plain branch added to T0's scope; per-rank Plain
   verified-negative; tag-0 quirk accidentally benign; ctor-grenade + ownership notes;
   `numChannels` added to the promotion list; prose fixes (239 subgraphs; exponent-
   dilution direction).
+
+**2026-07-23 — full-campaign adversarial gate (4 parallel skeptics on the merged
+tree #589–#607), all findings folded.** Four independent reviewers attacked the
+byte-identity claims (setSize sort #593, T1 dense graph #594, handle #595,
+MP-index #598), the checkpoint verb #597, and the measurement claims.
+- **Correctness HELD everywhere** — no silent-wrong-answer defect. Traced to
+  proving lines: the T1 graph's ownership (`~Graph` runs
+  `clearAll(invokeDestructors=true)` + `delete myVertices`; copied vertices are
+  separate from the model's — no leak, no double-free), `getFreeTag`/
+  `START_VERTEX_NUM==0` sequence, RCM byte-identity on array-vs-map storage, the
+  `std::sort` aliasing identity, the handle scan→index equivalences (`firstMP`
+  first-match, SP set/order, the preserved `numSPConstraints!=0` quirk, all three
+  ctor call-sites re-setting `theSPs`, `getDomainAndLoadPatternSPs ⊇ getSPs`), and
+  multimap/vector order-preservation. Every divergence from stock is a loud
+  `exit(-1)` on inputs impossible in-tree or already out of scope — never a wrong
+  number. (The T1 code is *stricter* than stock about DOF-tag contiguity: fail-loud,
+  the safer trade.)
+- **Findings folded (all fixed this pass):** (F1) the PlainHandler EQ-sweep
+  rewrite had ZERO test coverage — `equalDOF`→MP, EQ_Constraint only from
+  LadrunoTie, no gate deck used it ⇒ the rewritten `equal_range` loop never
+  executed. Closed with `tests/test_adr74_plainhandler_eq.py` (3/3): the
+  non-identity warning now witnesses the loop reaching each constrained node under
+  `numberer Plain` + `RCM`, plus a bijection check and the trivial-`-4` branch.
+  (F2) `profiler checkpoint` wedged on an unremovable stale `.tmp` (writer appends
+  + `writeRun` immutability guard ⇒ misleading "writeRun failed" forever); now
+  detects the failed clear and reports the real cause. (F3) the implicit "no hidden
+  quadratic" is a 2-point fit — reframed to lead with the O(N log N) source bound
+  (bounded FEM degree), which is what actually carries the verdict. (F4) added the
+  per-rank O(neq_global) vector-**memory** twin of the rowfill term (~2 GB/rank at
+  57.5 M). (A1) softened the checkpoint "single-threaded" comment to
+  convention-not-enforced + re-audit-before-OpenMP.
+- **Accepted, recorded (not fixed):** the `numberDOF(ID&)` -4 variants and the tie
+  deck's non-discriminating multi-MP node are coverage gaps on paths that are
+  themselves mechanical mirrors of tested code; the ~320× first-step is an honest
+  cross-session reconstructed sum (disclosed with `~`/asterisks); reported exponents
+  carry a sig-fig finer than the ~35% cross-session drift — read as "N≈1.1".
 
 ## Implementation log
 

@@ -871,7 +871,7 @@ int
 TclCommand_profiler(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
 {
   if (argc < 2) {
-    opserr << "WARNING profiler - expected subcommand: start|stop|reset|report|memory\n";
+    opserr << "WARNING profiler - expected subcommand: start|stop|reset|report|checkpoint|memory\n";
     return TCL_ERROR;
   }
   ops_profiler::Profiler& P = ops_profiler::theProfiler();
@@ -933,6 +933,90 @@ TclCommand_profiler(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Cha
       opserr << "WARNING profiler report - writeRun failed (run id '" << runid
              << "' may already exist in '" << fname << "')\n";
       return TCL_ERROR;
+    }
+    return TCL_OK;
+  }
+
+  // Ladruno (ADR-74 pre-G3 hardening): `profiler checkpoint <file> [-run <id>]`
+  // — a mid-run snapshot so a walltime-killed/crashed run yields data instead of
+  // nothing (the profiler otherwise writes only at `profiler report`, run end).
+  // Call it from the deck's analyze loop every N steps: between analyze calls
+  // every profiled scope is closed. The mergedRollup H1 precondition (no worker
+  // thread inside a profiled scope) is thus satisfied BY CONVENTION for the
+  // current decks — each MPI rank runs a single Tcl thread, so threads_.size()
+  // ==1 and the lockless tree read cannot race. It is NOT enforced by a barrier;
+  // re-audit this call site before the OpenMP element-loop lane (ADR-68) lands,
+  // where a live worker could race mergedRollup. quietLive only mutes the
+  // still-enabled warning. Unlike report, checkpoint OVERWRITES: it writes
+  // <file>.tmp fresh and renames it over <file> (atomic replace on POSIX; on
+  // Windows a failed rename falls back to remove+rename — if killed inside that
+  // window the freshest data is at <file>.tmp while <file> holds a staler
+  // snapshot, so RECOVERY MUST READ BOTH and take the newer). The final
+  // `profiler report` is unchanged and remains the canonical artifact.
+  if (strcmp(sub, "checkpoint") == 0) {
+    if (argc < 3) {
+      opserr << "WARNING profiler checkpoint <filename> [-run <id>]\n";
+      return TCL_ERROR;
+    }
+    const char* fname = argv[2];
+    const char* runid = "run0";
+    for (int i = 3; i < argc; i++) {
+      if (strcmp(argv[i], "-run") == 0 && i + 1 < argc)
+        runid = argv[++i];
+    }
+    const ops_profiler::ProfileNode& rollup = P.mergedRollup(true);
+    ops_profiler::RunMeta meta = P.buildMeta();
+    meta.algorithm  = ops_profilerAlgorithmName;
+    meta.integrator = ops_profilerIntegratorName;
+    meta.solver     = ops_profilerSolverName;
+    if (theSOE != 0)
+      meta.nDOF = theSOE->getNumEqn();
+    if (theTransientIntegrator != 0) {
+      const double dtcr = theTransientIntegrator->getCriticalTimeStep();
+      if (dtcr > 0.0) {
+        meta.dt_cr = dtcr;
+        if (meta.dt_max > 0.0)
+          meta.oversample_ratio = dtcr / meta.dt_max;
+      }
+    }
+    ops_profiler::MemorySnapshot snap = P.buildMemorySnapshot();
+    const ops_profiler::Series& ser = P.series();
+
+    std::string tmpname = std::string(fname) + ".tmp";
+    // Ladruno (ADR-74 review A2): the HDF5 writer APPENDS to an existing file, so
+    // a stale .tmp we fail to clear would make writeRun hit its immutability guard
+    // and every future checkpoint fail with a MISLEADING "writeRun failed". Detect
+    // a failed clear (locked / permission-denied tmp) and report the real cause.
+    remove(tmpname.c_str());               // stale tmp from a prior kill
+    { FILE* stale = fopen(tmpname.c_str(), "rb");
+      if (stale != 0) {
+        fclose(stale);
+        opserr << "WARNING profiler checkpoint - could not clear stale '"
+               << tmpname.c_str() << "' (locked or permission-denied); skipping "
+               << "this checkpoint so the last good '" << fname << "' is preserved\n";
+        return TCL_ERROR;
+      }
+    }
+    ops_profiler::ProfilerHDF5Writer w;
+    if (!w.open(tmpname.c_str())) {
+      opserr << "WARNING profiler checkpoint - could not open '" << tmpname.c_str() << "'\n";
+      return TCL_ERROR;
+    }
+    bool ok = w.writeRun(runid, rollup, meta,
+                         (ser.nSteps() > 0 ? &ser : (const ops_profiler::Series*)0),
+                         snap);
+    w.close();
+    if (!ok) {
+      opserr << "WARNING profiler checkpoint - writeRun failed for '" << tmpname.c_str() << "'\n";
+      return TCL_ERROR;
+    }
+    if (rename(tmpname.c_str(), fname) != 0) {        // Windows: no replace-existing
+      remove(fname);
+      if (rename(tmpname.c_str(), fname) != 0) {
+        opserr << "WARNING profiler checkpoint - could not move '" << tmpname.c_str()
+               << "' over '" << fname << "' (snapshot left at the .tmp name)\n";
+        return TCL_ERROR;
+      }
     }
     return TCL_OK;
   }

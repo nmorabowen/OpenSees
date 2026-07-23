@@ -30,6 +30,8 @@
 #include <MumpsParallelSOE.h>
 #include <MumpsParallelSolver.h>
 #include <Matrix.h>
+// Ladruno (ADR-74 implicit lane): dc.s.* setSize sub-brackets
+#include <profiler/ProfilerMacros.h>
 #include <Graph.h>
 #include <Vertex.h>
 #include <VertexIter.h>
@@ -77,10 +79,18 @@ MumpsParallelSOE::~MumpsParallelSOE()
 int 
 MumpsParallelSOE::setSize(Graph &theGraph)
 {
+  // Ladruno (ADR-74 implicit lane): dc.s.* sub-brackets mirror the
+  // MPIDiagonalSOE instrumentation so the implicit (MUMPS) stack's setSize is
+  // attributable on the same rung sweeps. Suspects from the source read:
+  // dc.s.rowfill iterates ALL GLOBAL equation numbers probing the local map
+  // (O(neq_global x log V_local) per rank, np-invariant) and does an O(deg^2)
+  // per-row insertion sort; neither is quadratic in N but both are unmeasured.
+  // (MumpsParallelSolver::setSize only flags needsSetSize - the MUMPS symbolic
+  // analysis runs at the first solve, NOT in this bracket.)
   int result = 0;
   int oldSize = size;
   int maxNumSubVertex = 0;
-  
+
   // fist itearte through the vertices of the graph to get nnzLoc and n
   int maxVertexTag = -1;
   Vertex *theVertex;
@@ -89,6 +99,7 @@ MumpsParallelSOE::setSize(Graph &theGraph)
   int mySize = size;
   //opserr << "MumpsParallelSOE: size : " << size << endln;
 
+  { OPS_PROFILE_SCOPE("dc.s.nnz");   // Ladruno (ADR-74): nnz/max-tag vertex sweep
   VertexIter &theVertices = theGraph.getVertices();
   while ((theVertex = theVertices()) != 0) {
     int vertexTag = theVertex->getTag();
@@ -96,6 +107,7 @@ MumpsParallelSOE::setSize(Graph &theGraph)
       maxVertexTag = vertexTag;
     const ID &theAdjacency = theVertex->getAdjacency();
     newNNZ += theAdjacency.Size() +1; // the +1 is for the diag entry
+  }
   }
 
   if (matType !=  0) {
@@ -107,6 +119,8 @@ MumpsParallelSOE::setSize(Graph &theGraph)
   }
 
   nnz = newNNZ;
+
+  OPS_PROFILE_SCOPE("dc.s.rest");    // Ladruno (ADR-74): everything after the nnz sweep
 
   if (processID != 0) {
 
@@ -149,6 +163,7 @@ MumpsParallelSOE::setSize(Graph &theGraph)
 
   size+=1; // vertices numbered 0 through n-1
 
+  { OPS_PROFILE_SCOPE("dc.s.alloc"); // Ladruno (ADR-74): A/rowA/colA/vector (re)allocation + zeroing
   if (nnz > Asize) { // we have to get more space for A and rowA and colA
 
     if (A != 0) delete [] A;
@@ -214,13 +229,15 @@ MumpsParallelSOE::setSize(Graph &theGraph)
     if (vectX != 0) delete vectX;
     if (vectB != 0) delete vectB;
     if (myVectB != 0) delete myVectB;
-    
+
     vectX = new Vector(X,size);
-    vectB = new Vector(B,size);	
+    vectB = new Vector(B,size);
     myVectB = new Vector(myB, size);
   }
+  }                                  // Ladruno (ADR-74): end dc.s.alloc
 
   // fill in colStartA and rowA
+  { OPS_PROFILE_SCOPE("dc.s.rowfill"); // Ladruno (ADR-74): global-eq probe loop + per-row insertion sort — the two read-flagged suspects
   if (size != 0) {
     colStartA[0] = 0;
     int startLoc = 0;
@@ -290,12 +307,15 @@ MumpsParallelSOE::setSize(Graph &theGraph)
       startLoc = lastLoc;
     }
   }
+  }                                  // Ladruno (ADR-74): end dc.s.rowfill
 
   // fill in colA
+  { OPS_PROFILE_SCOPE("dc.s.colfill"); // Ladruno (ADR-74)
   int count = 0;
   for (int i=0; i<size; i++) {
     for (int k=colStartA[i]; k<colStartA[i+1]; k++)
       colA[count++] = i;
+  }
   }
 
   LinearSOESolver *theSolvr = this->getSolver();

@@ -36,6 +36,9 @@
 #include <DOF_Numberer.h>
 #include <AnalysisModel.h>
 #include <GraphNumberer.h>
+// Ladruno (ADR-74 MP-index): -4 fixup index structures
+#include <unordered_map>
+#include <vector>
 #include <ID.h>
 #include <DOF_Group.h>
 #include <FE_Element.h>
@@ -170,6 +173,20 @@ DOF_Numberer::numberDOF(int lastDOF_Group)
 
     // iterate through the DOFs one last time setting any -4 values
     // iterate through  the DOFs second time setting -3 values
+    // Ladruno (ADR-74 MP-index): one-pass constrainedNode -> MPs index replaces
+    // the full MP_Constraint sweep per constrained DOF group — O(#groups x #MP),
+    // quadratic on equalDOF/tie-heavy decks -> O(#MP + #groups). push_back
+    // preserves getMPs() iteration order per node, so multi-constraint
+    // application order matches stock ("keep looping over all in case multiple
+    // constraints are used to constrain a node"). Same pattern and gate as
+    // LadrunoParallelNumberer's -4 fixup (byte-identical numbering, tie deck).
+    std::unordered_map<int, std::vector<MP_Constraint*> > mpIndex;
+    {
+	MP_ConstraintIter &theMPsAll = theDomain->getMPs();
+	MP_Constraint *mpAll;
+	while ((mpAll = theMPsAll()) != 0)
+	    mpIndex[mpAll->getNodeConstrained()].push_back(mpAll);
+    }
     DOF_GrpIter &tDOFs = theAnalysisModel->getDOFs();
     DOF_Group *dofPtr;
     while ((dofPtr = tDOFs()) != 0) {
@@ -180,15 +197,12 @@ DOF_Numberer::numberDOF(int lastDOF_Group)
 
 	if (have4s == 1) {
 		int nodeID = dofPtr->getNodeTag();
-		// loop through the MP_Constraints to see if any of the
-		// DOFs are constrained, note constraint matrix must be diagonal
-		// with 1's on the diagonal
-		MP_ConstraintIter &theMPs = theDomain->getMPs();
-		MP_Constraint *mpPtr;
-		while ((mpPtr = theMPs()) != 0 ) {
-			// note keep looping over all in case multiple constraints
-			// are used to constrain a node -- can't assume intelli user
-	    		if (mpPtr->getNodeConstrained() == nodeID) {
+		std::unordered_map<int, std::vector<MP_Constraint*> >::iterator
+		    mpIt = mpIndex.find(nodeID);
+		if (mpIt != mpIndex.end())
+		for (std::size_t mpk = 0; mpk < mpIt->second.size(); ++mpk) {
+			MP_Constraint *mpPtr = mpIt->second[mpk];
+	    		{
 	    			int nodeRetained = mpPtr->getNodeRetained();
 	    			Node *nodeRetainedPtr = theDomain->getNode(nodeRetained);
 	    			DOF_Group *retainedDOF = nodeRetainedPtr->getDOF_GroupPtr();
@@ -202,8 +216,8 @@ DOF_Numberer::numberDOF(int lastDOF_Group)
 	    				dofPtr->setID(dofC, dofID);
 	    			}
 	    		}
-		}		
-	}	
+		}
+	}
     }
 
 
@@ -301,6 +315,20 @@ DOF_Numberer::numberDOF(ID &lastDOFs)
 
     // iterate through the DOFs one last time setting any -4 values
     // iterate through  the DOFs second time setting -3 values
+    // Ladruno (ADR-74 MP-index): one-pass constrainedNode -> MPs index replaces
+    // the full MP_Constraint sweep per constrained DOF group — O(#groups x #MP),
+    // quadratic on equalDOF/tie-heavy decks -> O(#MP + #groups). push_back
+    // preserves getMPs() iteration order per node, so multi-constraint
+    // application order matches stock ("keep looping over all in case multiple
+    // constraints are used to constrain a node"). Same pattern and gate as
+    // LadrunoParallelNumberer's -4 fixup (byte-identical numbering, tie deck).
+    std::unordered_map<int, std::vector<MP_Constraint*> > mpIndex;
+    {
+	MP_ConstraintIter &theMPsAll = theDomain->getMPs();
+	MP_Constraint *mpAll;
+	while ((mpAll = theMPsAll()) != 0)
+	    mpIndex[mpAll->getNodeConstrained()].push_back(mpAll);
+    }
     DOF_GrpIter &tDOFs = theAnalysisModel->getDOFs();
     DOF_Group *dofPtr;
     while ((dofPtr = tDOFs()) != 0) {
@@ -311,15 +339,12 @@ DOF_Numberer::numberDOF(ID &lastDOFs)
 
 	if (have4s == 1) {
 		int nodeID = dofPtr->getNodeTag();
-		// loop through the MP_Constraints to see if any of the
-		// DOFs are constrained, note constraint matrix must be diagonal
-		// with 1's on the diagonal
-		MP_ConstraintIter &theMPs = theDomain->getMPs();
-		MP_Constraint *mpPtr;
-		while ((mpPtr = theMPs()) != 0 ) {
-			// note keep looping over all in case multiple constraints
-			// are used to constrain a node -- can't assume intelli user
-	    		if (mpPtr->getNodeConstrained() == nodeID) {
+		std::unordered_map<int, std::vector<MP_Constraint*> >::iterator
+		    mpIt = mpIndex.find(nodeID);
+		if (mpIt != mpIndex.end())
+		for (std::size_t mpk = 0; mpk < mpIt->second.size(); ++mpk) {
+			MP_Constraint *mpPtr = mpIt->second[mpk];
+	    		{
 	    			int nodeRetained = mpPtr->getNodeRetained();
 	    			Node *nodeRetainedPtr = theDomain->getNode(nodeRetained);
 	    			DOF_Group *retainedDOF = nodeRetainedPtr->getDOF_GroupPtr();
@@ -333,8 +358,8 @@ DOF_Numberer::numberDOF(ID &lastDOFs)
 	    				dofPtr->setID(dofC, dofID);
 	    			}
 	    		}
-		}		
-	}	
+		}
+	}
     }
 
     int numEqn = eqnNumber;

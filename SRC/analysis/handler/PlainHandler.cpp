@@ -98,6 +98,26 @@ PlainHandler::handle(const ID *nodesLast)
 	allSPs.insert(std::make_pair(theSP->getNodeTag(),theSP));
     }
 
+    // Ladruno (ADR-74 MP-index): index the MP and EQ constraints by constrained
+    // node exactly as allSPs above already does for SPs — the per-NODE full
+    // sweeps of getMPs()/getEQs() below were O(#nodes x #MP) / O(#nodes x #EQ),
+    // quadratic on equalDOF/tie-heavy decks. std::multimap preserves insertion
+    // order for equal keys, so the per-node visit order matches the stock sweep.
+    std::multimap<int,MP_Constraint*> allMPs;
+    {
+	MP_ConstraintIter &theMPsAll = theDomain->getMPs();
+	MP_Constraint *mpAll;
+	while ((mpAll = theMPsAll()) != 0)
+	    allMPs.insert(std::make_pair(mpAll->getNodeConstrained(), mpAll));
+    }
+    std::multimap<int,EQ_Constraint*> allEQs;
+    {
+	EQ_ConstraintIter &theEQsAll = theDomain->getEQs();
+	EQ_Constraint *eqAll;
+	while ((eqAll = theEQsAll()) != 0)
+	    allEQs.insert(std::make_pair(eqAll->getNodeConstrained(), eqAll));
+    }
+
     // initialise the DOF_Groups and add them to the AnalysisModel.
     //    : must of course set the initial IDs
     NodeIter &theNod = theDomain->getNodes();
@@ -142,10 +162,14 @@ PlainHandler::handle(const ID *nodesLast)
 	// loop through the MP_Constraints to see if any of the
 	// DOFs are constrained, note constraint matrix must be diagonal
 	// with 1's on the diagonal
-	MP_ConstraintIter &theMPs = theDomain->getMPs();
+	// Ladruno (ADR-74 MP-index): this node's MPs via the allMPs index —
+	// was a full getMPs() sweep per node (see the index build above).
 	MP_Constraint *mpPtr;
-	while ((mpPtr = theMPs()) != 0)
-	    if (mpPtr->getNodeConstrained() == nodeID) {
+	std::multimap<int,MP_Constraint*>::iterator mpFirst = allMPs.lower_bound(nodeID);
+	std::multimap<int,MP_Constraint*>::iterator mpLast  = allMPs.upper_bound(nodeID);
+	for (std::multimap<int,MP_Constraint*>::iterator mpIt = mpFirst; mpIt != mpLast; mpIt++) {
+	    mpPtr = mpIt->second;
+	    {
 		if (mpPtr->isTimeVarying() == true) {
 		    opserr << "WARNING PlainHandler::handle() - ";
 		    opserr << " time-varying constraint";
@@ -187,19 +211,24 @@ PlainHandler::handle(const ID *nodesLast)
 			opserr << " constraint at dof " << dof << " already specified for constrained node";
 			opserr << " in MP_Constraint at node " << nodeID << endln;
 		      }
-		      
+
 		    }
 		  }
 		}
+	}
 	}
 
 	// loop through the EQ_Constraints to see if any of the
 	// DOFs are constrained, note constraint matrix must be diagonal
 	// with 1's on the diagonal
-	EQ_ConstraintIter &theEQs = theDomain->getEQs();
+	// Ladruno (ADR-74 MP-index): this node's EQs via the allEQs index —
+	// was a full getEQs() sweep per node (see the index build above).
 	EQ_Constraint *eqPtr;
-	while ((eqPtr = theEQs()) != 0)
-	    if (eqPtr->getNodeConstrained() == nodeID) {
+	std::multimap<int,EQ_Constraint*>::iterator eqFirst = allEQs.lower_bound(nodeID);
+	std::multimap<int,EQ_Constraint*>::iterator eqLast  = allEQs.upper_bound(nodeID);
+	for (std::multimap<int,EQ_Constraint*>::iterator eqIt = eqFirst; eqIt != eqLast; eqIt++) {
+	    eqPtr = eqIt->second;
+	    {
 		if (eqPtr->isTimeVarying() == true) {
 		    opserr << "WARNING PlainHandler::handle() - ";
 		    opserr << " time-varying constraint";
@@ -226,6 +255,7 @@ PlainHandler::handle(const ID *nodesLast)
 		    } 
 		}
 	}
+	}                              // Ladruno (ADR-74 MP-index): end EQ for
 
 	nodPtr->setDOF_GroupPtr(dofPtr);
 	theModel->addDOF_Group(dofPtr);
