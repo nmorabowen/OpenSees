@@ -243,11 +243,14 @@ session (human or agent) that ports, opens, merges, or re-scopes a package
 |---|---|---|---|---|
 | 0.0 | TenNodeTet 6× stiffness fix | `up/00-tennodetet-shp3d` | [jaabell#29](https://github.com/jaabell/OpenSees/pull/29) | **PR open** (2026-07-22) |
 | 0.1 | Portability & crash (FE_Element, PythonStream, SuperLU MSVC) | `up/01-portability-crash-fixes` | [jaabell#30](https://github.com/jaabell/OpenSees/pull/30) | **PR open** (2026-07-22) |
-| 0.2 | quad/tri rho serialization + GmshRecorder hex20 | — | — | not started |
-| 0.3 | Error-contract fixes | — | — | not started |
-| 0.4 | Registration gaps | — | — | not started |
-| 0.5 | H5DRM behavior (z-flip, hold-final) | — | — | not started |
-| 0.6 | Byte-identical perf fixes (ADR-74 harvest) | — | — | not started |
+| 0.2 | quad/tri rho serialization | `up/02-quad-tri-rho-serialization` | [jaabell#31](https://github.com/jaabell/OpenSees/pull/31) | **PR open** (2026-07-22) |
+| 0.2b | GmshRecorder hex20 (MSH type 17 + permutation) | `up/03-gmsh-hex20` | [jaabell#32](https://github.com/jaabell/OpenSees/pull/32) | **PR open** (2026-07-22) |
+| 0.3a | Domain::clearAll EQ_Constraint leak | `up/04-domain-clearall-eq-leak` | [jaabell#33](https://github.com/jaabell/OpenSees/pull/33) | **PR open** (2026-07-22) |
+| 0.3b | Error-return honoring (DirectIntegration/TransientDD) | — | — | **HELD for José** — behavioral policy change (aborts where stock ran on); discuss before porting |
+| 0.3c | Mumps `-opt` parse guard | — | — | **HELD** — risky surgical extract from heavily-forked OpenSeesCommands.cpp; low value |
+| 0.4 | Registration gaps (Lysmer, InitStrain dim-general, ASDP setResponse) | — | — | **HELD for José** — additive feature-registration, not crash fixes; some (InitStrain dim-general) are enhancements |
+| 0.5 | H5DRM (stuff[12] init + z-flip + hold-final) | — | — | **HELD for José** — `_H5DRM` build-gated (can't verify here) + the z-flip/hold-final are HIS own patches; he should drive |
+| 0.6 | Byte-identical perf fixes (ADR-74 harvest) | — | — | **HELD** — needs profiler-strip on parallel code + a build/suite pass before we trust the port |
 | 1.1 | Plane-strain σ_zz | — | — | not started |
 | 1.2 | Beam localAxes responses | — | — | not started |
 | 1.3 | DDM HHT/GeneralizedAlpha | — | — | not started |
@@ -269,6 +272,21 @@ session (human or agent) that ports, opens, merges, or re-scopes a package
 
 ## 7. Decision & session log (append-only, newest first)
 
+- **2026-07-22 — Wave 0 clean bug-fixes shipped, remainder HELD for José.**
+  Six upstream PRs now open: jaabell#29 (TenNodeTet 6×), #30 (portability trio),
+  #31 (quad/tri rho), #32 (GmshRecorder hex20), #33 (Domain::clearAll EQ leak).
+  These are the unambiguous, verifiable, mostly-byte-identical bug fixes.
+  **Deliberately HELD** (per the user's "we'll wait for José" — and on merit):
+  0.3b error-return honoring (a *behavioral policy change* — aborts setups that
+  stock ran on; motivated by fork handlers that don't exist upstream);
+  0.3c Mumps `-opt` (extraction risk from the FEAST/numberer-forked
+  OpenSeesCommands.cpp, low value); 0.4 registration gaps (additive features,
+  InitStrain dim-general is really an enhancement); 0.5 H5DRM (`_H5DRM`
+  build-gated so unverifiable here, and the z-flip/hold-final are José's own
+  patches); 0.6 perf harvest (needs profiler-strip on parallel code + a build
+  pass first). Port mechanics note: repo has **mixed CRLF/LF** — the rho port
+  script had to be newline-aware per file; github.com DNS kept dropping, so all
+  push/PR calls run in a retry loop.
 - **2026-07-22 — package 0.1 shipped as [jaabell#30](https://github.com/jaabell/OpenSees/pull/30)**,
   and re-scoped. Kept as 3 pure, non-behavioral, always-relevant fixes
   (FE_Element dead guard, PythonStream `%s`, DistributedSuperLU MSVC `stat`
