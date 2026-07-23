@@ -202,3 +202,25 @@ Different change budgets by surface, all in service of long-term upstreamability
 **Litmus test before editing a vanilla `SRC/` file:** "is this the smallest
 additive hook that makes our feature work?" If a change belongs in our own code,
 put it there, not in the vanilla file.
+
+## `gh pr merge --auto` on this repo merges IMMEDIATELY (auto-merge is disabled), and ledger-placeholder fills race the squash
+
+Repo settings have GitHub auto-merge DISABLED (`enablePullRequestAutoMerge`
+errors). When you run `gh pr merge --auto --squash` on a PR whose base checks
+are already satisfiable, gh falls back to a DIRECT merge — the PR lands
+instantly, **without waiting for Zone-A**. Two consequences (both bit us on
+2026-07-22, PRs #595/#598):
+
+1. **Do not rely on `--auto` as a CI gate.** If Zone-A must pass first, watch
+   the checks yourself and merge after.
+2. **The ledger-placeholder race:** the "open PR → get number → fill the
+   `| ADR-xx PR |` placeholder → push" flow loses when the PR merges on step 1.
+   The fill commit lands on a branch whose base predates the squash ⇒ its own
+   PR conflicts. Recovery: fresh branch off updated `ladruno`, redo the
+   one-line fill (sed), separate docs PR (#600 pattern). Better: write the row
+   with the placeholder, merge, then fill in the NEXT unit's PR.
+
+Also: GNU `sed -i` on a CRLF `SRC/` file rewrites EVERY line ending — a
+one-word edit became a 9,900-line diff (OpenSeesCommands.cpp). Use the
+byte-preserving Edit path for CRLF sources; check `git diff --stat` before
+committing after any sed.

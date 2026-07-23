@@ -483,6 +483,49 @@ the incident); the scenarios this fix rescues are the 43 M P=8 retry (~1.6 h
 avoided) and every np8-class local sweep. The K× domainChanged multiplier
 (§Sequencing) applied to this term too and is now retired with it.
 
+## The implicit lane (2026-07-22): measured clean, verbs ready
+
+Every ADR-74 fix is lane-agnostic (`domainChanged` runs regardless of integrator
+or solver — including `DirectIntegrationAnalysis::eigen()`, so modal runs paid
+and now benefit too), and the strict G1 oracle (Deck A) was always Newmark+MUMPS
+— **`LadrunoParallelRCM` has been implicit-validated since N2**. What was NOT
+measured was the implicit stack's own `dc.setSize` half:
+`MumpsParallelSolver::setSize` only flags `needsSetSize` (the MUMPS symbolic
+analysis runs at the first *solve*), so the bracket = the shared `getDOFGraph`
+build + `MumpsParallelSOE`'s triplet-structure fill. Source read flagged two
+costs (the rowfill loop probes ALL global equation numbers against the local map
+— O(neq_global x log V_local) per rank, np-invariant like the old numberer term;
+and an O(deg^2)-per-row insertion sort); `dc.s.*` sub-brackets added
+(`nnz/alloc/rowfill/colfill`) and measured on Newmark+Mumps np8 rungs
+(0.25 M / 0.5 M nodes, x1.91):
+
+| bracket | 0.25 M | 0.5 M | exponent |
+|---|---|---|---|
+| `dc.setSize` | 0.56 s | 1.11 s | N^1.05 |
+| — `dc.s.graph` (shared) | 0.32 | 0.64 | N^1.07 |
+| — `dc.s.rowfill` | 0.19 | 0.35 | N^0.94 |
+| `dc.numberDOF` (T1) | 0.65 | 1.23 | N^0.98 |
+| `dc.handle` (#595) | 0.04 | 0.09 | ~N^1.2 |
+
+**Verdict: no hidden implicit quadratic** — total setup 2.4 s of a 1,869 s
+implicit run (0.13%). The pre-fix world was a different story: implicit MP at
+1 M nodes paid the same 578 s numberDOF the sweep measured, and staged implicit
+decks (apeGmsh emits `domainChange` per stage) re-paid it K times — T0/T1
+retroactively de-mined the implicit lane. Notes carried forward: (a) the
+rowfill global-probe term is np-invariant — at 57.5 M global it is ~5-15 s/rank
+and mimics an Amdahl fraction in strong scaling; measure it in any implicit
+cluster profiling before citing scaling numbers (same caution as the
+interconnect study). (b) MUMPS reorders internally (AMD/METIS via ICNTL(7)),
+so the numberer's RCM buys nothing on implicit+MUMPS either —
+**`LadrunoParallelPlain` is the fast verb for both production lanes**; RCM
+earns its keep only on bandwidth/profile solvers (ProfileSPD/band, SP/serial).
+(c) T2's "any consistent bijection works" was verified against MPIDiagonalSOE
+only; the same check is owed against `MumpsParallelSOE`'s assembly before T2
+serves implicit. (d) Past implicit MP timings at >=0.5 M nodes carry the
+pre-fix setup terms in their totals — re-derive with the dc.* brackets before
+citing. (e) 1.0 M-node MUMPS LU does not fit the 64 GB local box (error -13)
+— the 0.5 M rung is the local implicit ceiling; larger points are cluster work.
+
 ## Instrumentation (shipped with this investigation, branch `perf/step-stall-instrumentation`)
 
 Commit `e0113e53a` — two profiler gaps closed, prerequisites for G0-G3:
