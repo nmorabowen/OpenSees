@@ -55,6 +55,7 @@
 #define EigenSOE_TAGS_SparsePythonCompressedEigenSOE 	8
 #define EigenSOE_TAGS_SparsePythonCOOEigenSOE 	9
 #define EigenSOE_TAGS_FeastEigenSOE 33022 // N. Mora-Bowen (Ladruno) — FEAST band-targeted eigensolver SOE (CSR K,M; MKL Extended Eigensolver); ADR 43
+#define EigenSOE_TAGS_LadrunoCMS 33025 // Ladruno ADR 1000 — independent two-level hierarchical CMS EigenSOE
 #define EigenSOLVER_TAGS_BandArpackSolver 	1
 #define EigenSOLVER_TAGS_SymArpackSolver 	2
 #define EigenSOLVER_TAGS_SymBandEigenSolver     3
@@ -65,6 +66,7 @@
 #define EigenSOLVER_TAGS_SparsePythonCompressedEigenSolver  8
 #define EigenSOLVER_TAGS_SparsePythonCOOEigenSolver  9
 #define EigenSOLVER_TAGS_FeastEigenSolver 33023 // N. Mora-Bowen (Ladruno) — FEAST band-targeted eigensolver twin (MKL dfeast_scsrgv); ADR 43
+#define EigenSOLVER_TAGS_LadrunoCMS 33026 // Ladruno ADR 1000 — independent two-level hierarchical CMS EigenSolver
 
 #define EigenALGORITHM_TAGS_Frequency 1
 #define EigenALGORITHM_TAGS_Standard  2
