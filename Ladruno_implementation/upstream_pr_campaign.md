@@ -35,8 +35,8 @@ authored by the Ladruno team (Nicolas Mora Bowen, Patricio Palacios, José Abell
 1. **Authorship — team only, no AI traces.**
    - Commit author: Nicolas Mora Bowen `<nmorabowen@gmail.com>`. Squash commit /
      PR-branch commits carry — **canonical emails, confirmed by Nicolas 2026-07-22**:
-     `Co-authored-by: Patricio Palacios <pxpalacios@uandes.cl>`
-     `Co-authored-by: Jose A. Abell <jaabell@uandes.cl>`
+     `Co-authored-by: Patricio Palacios <pxpalacios@miuandes.cl>`
+     `Co-authored-by: Jose A. Abell <jaabell@miuandes.cl>`
    - **No** `Co-Authored-By: Claude` trailers, **no** "Generated with Claude
      Code" lines, anywhere in the port branches — the squash commit inherits
      trailers from branch commits, so the branch must be clean from the first
@@ -98,11 +98,11 @@ GmshRecorder hex20 output format.
 | # | Package | Content |
 |---|---|---|
 | 0.0 | **TenNodeTetrahedron 6× stiffness fix** | `shp3d` double-applied 1/6 Jacobian factor → all stiffness/reactions 6× too soft (jaabell's own element; found unledgered by the 2026-07-22 audit). Single-hunk, patch-test-verified — the ideal first PR |
-| 0.1 | Crash/UB fixes | H5DRM `stuff[12]` identity init (3 parsers); FE_Element subtype-ctor scratch guard; PythonStream `"%s"` format; GmshRecorder hex20 type-17 + permutation; DistributedSuperLU `stat`→`superlu_stat` MSVC collision |
-| 0.2 | Serialization fixes | quad/Tri31 element-rho send/recv (wire-format change — flag); missing broker entries audit |
+| 0.1 | Portability & latent-crash fixes | **SCOPED DOWN to 3 pure non-behavioral fixes** (shipped): FE_Element subtype-ctor scratch guard; PythonStream `"%s"` format; DistributedSuperLU `stat`→`superlu_stat` MSVC collision. *H5DRM `stuff[12]` init moved to 0.5 (H5DRM is build-gated + its work is behavioral); GmshRecorder hex20 moved to a recorder-fixes PR (needs the type-17 permutation table)* |
+| 0.2 | Serialization fixes | quad/Tri31 element-rho send/recv (wire-format change — flag); missing broker entries audit; **+ GmshRecorder hex20 type-17 + mid-edge permutation (moved here from 0.1)** |
 | 0.3 | Error-contract fixes | DirectIntegrationAnalysis + TransientDomainDecomposition return honoring; `Domain::clearAll()` EQ leak; Mumps `-opt` parse guard |
 | 0.4 | Registration gaps | Lysmer loader/triangle interpreter registration; H5DRM openseespy dispatch; InitStrainNDMaterial dimension-general; ASDPlasticMaterial3D setResponse labels |
-| 0.5 | H5DRM behavior | z-flip removal + hold-final-displacement + tend overrun (jaabell's own patches, validated in the DRM study) |
+| 0.5 | H5DRM (all changes together) | `stuff[12]` identity init (3 parsers, pure fix) **+** z-flip removal + hold-final-displacement + tend overrun (jaabell's own patches, validated in the DRM study). All H5DRM edits ship as one PR since they touch the same build-gated subsystem |
 | 0.6 | Byte-identical perf fixes | ADR-74 harvest, output-identical + suite-gated: MPIDiagonalSOE `setSize` O(N²)-quicksort → `std::sort` (161×); TransformationConstraintHandler hash-membership `handle()` (42×); TransformationDOF_Group redundant SP sweep removal (strip the fork profiler brackets when porting) |
 
 ### Wave 1 — small additive features, zero/near-zero vanilla footprint
@@ -242,8 +242,8 @@ session (human or agent) that ports, opens, merges, or re-scopes a package
 | Package | Content (short) | Branch | Upstream PR | Status |
 |---|---|---|---|---|
 | 0.0 | TenNodeTet 6× stiffness fix | `up/00-tennodetet-shp3d` | [jaabell#29](https://github.com/jaabell/OpenSees/pull/29) | **PR open** (2026-07-22) |
-| 0.1 | Crash/UB fixes (H5DRM init, FE_Element, PythonStream, Gmsh hex20, SuperLU MSVC) | — | — | not started |
-| 0.2 | quad/tri rho serialization | — | — | not started |
+| 0.1 | Portability & crash (FE_Element, PythonStream, SuperLU MSVC) | `up/01-portability-crash-fixes` | [jaabell#30](https://github.com/jaabell/OpenSees/pull/30) | **PR open** (2026-07-22) |
+| 0.2 | quad/tri rho serialization + GmshRecorder hex20 | — | — | not started |
 | 0.3 | Error-contract fixes | — | — | not started |
 | 0.4 | Registration gaps | — | — | not started |
 | 0.5 | H5DRM behavior (z-flip, hold-final) | — | — | not started |
@@ -269,6 +269,18 @@ session (human or agent) that ports, opens, merges, or re-scopes a package
 
 ## 7. Decision & session log (append-only, newest first)
 
+- **2026-07-22 — package 0.1 shipped as [jaabell#30](https://github.com/jaabell/OpenSees/pull/30)**,
+  and re-scoped. Kept as 3 pure, non-behavioral, always-relevant fixes
+  (FE_Element dead guard, PythonStream `%s`, DistributedSuperLU MSVC `stat`
+  rename), one commit each so José can drop any individually. **Pulled OUT of
+  0.1:** H5DRM `stuff[12]` init → folded into 0.5 (H5DRM is `_H5DRM` build-gated
+  and its other changes are behavioral — one subsystem, one PR); GmshRecorder
+  hex20 → 0.2 (needs the type-17 mid-edge permutation table, not a one-liner).
+  Rationale: keep the first "bundle" PR trivially reviewable and free of
+  build-gated code the reviewer may not compile.
+- **2026-07-22 — miuandes.cl correction.** Co-author emails are
+  `pxpalacios@miuandes.cl` + `jaabell@miuandes.cl` (NOT `@uandes.cl`).
+  jaabell#29 amended again. Supersedes the prior `@uandes.cl` entry.
 - **2026-07-22 — canonical co-author emails set by Nicolas** (supersedes the
   git-history-harvested ones): Patricio `pxpalacios@uandes.cl` (NOT
   ppalacios92@gmail.com), José `jaabell@uandes.cl`, Nicolas
