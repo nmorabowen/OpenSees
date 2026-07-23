@@ -371,7 +371,15 @@ OpenSeesCommands::eigen(int typeSolver, double shift,
     //
     // set the eigen soe in the system if reassigned/created
     //
-    if (eigenSOEUpdated && theEigenSOE != 0) {
+    // Ladruno: also (re)attach when the analysis is the ephemeral one built
+    // above. The ephemeral DirectIntegrationAnalysis is deleted after every
+    // eigen call (its destructor frees nothing, so the cached theEigenSOE
+    // survives), and the NEXT no-analysis call builds a fresh analysis whose
+    // internal EigenSOE is null. With a same-type cached SOE eigenSOEUpdated
+    // stays false and upstream never re-attaches -> "no EigenSOE has been
+    // set" on every second consecutive eigen. Classic Tcl re-attaches, so it
+    // never had the bug; upstream openseespy does (upstream candidate).
+    if ((eigenSOEUpdated || newanalysis) && theEigenSOE != 0) {
         if (theStaticAnalysis != 0) {
             theStaticAnalysis->setEigenSOE(*theEigenSOE);
         } else if (theTransientAnalysis != 0) {
