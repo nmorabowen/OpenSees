@@ -128,3 +128,17 @@ jobs:
       - name: Perf micro-bench (state-determination ns/call)
         shell: pwsh
         run: python Ladruno_files/testbed/perf/runner.py --check
+      # ADR-1000: the isolated OPS_LadrunoCMS library is OFF in the default
+      # (Zone-A) build, so its ~6k-line core gets NO compile signal there. This
+      # nightly step (self-hosted box has the oneAPI MPI+MUMPS toolchain the
+      # Ubuntu Zone-A runner lacks) configures LADRUNO_CMS=ON, compiles the whole
+      # library, and runs its standalone numerical checks under mpiexec -n 4.
+      # Pattern-B opt-in-library coverage requirement — see BUILD_GOTCHAS.md #7.
+      # build.bat with LADRUNO_CMS_BUILD=1 builds+runs ONLY the CMS checks and
+      # exits (it does NOT build the full MP target — slow, and can hit an
+      # unrelated MSVC ICE on ASDPlasticMaterial3D).
+      - name: CMS opt-in library build + numerical checks (ADR-1000)
+        shell: cmd
+        env:
+          LADRUNO_CMS_BUILD: "1"
+        run: call Ladruno_scripts\build.bat OpenSeesMP

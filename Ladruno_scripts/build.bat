@@ -206,6 +206,19 @@ if defined CONAN_CMAKE if exist "%BUILD_DIR%\CMakeCache.txt" (
 REM ----- 3. CMake configure ------------------------------------------------
 echo.
 echo === Step 3: CMake configure ===
+REM Ladruno ADR-1000: the isolated OPS_LadrunoCMS library is OFF by default (a
+REM Pattern-B opt-in subsystem, see Ladruno_internal/BUILD_GOTCHAS.md #7). Set
+REM LADRUNO_CMS_BUILD=1 before invoking to configure it + its standalone C++
+REM numerical checks (MP targets only; needs the oneAPI MPI+MUMPS toolchain this
+REM script already sets up). Used by the nightly CMS CI lane. Default => zero
+REM footprint on installer/dev builds.
+REM Pass the flag EXPLICITLY both ways so a prior CMS-on configure never sticks
+REM in the shared CMakeCache and silently poisons the next default build.
+if defined LADRUNO_CMS_BUILD (
+    set "CMS_FLAGS=-DLADRUNO_CMS=ON -DLADRUNO_CMS_BUILD_TESTS=ON"
+) else (
+    set "CMS_FLAGS=-DLADRUNO_CMS=OFF -DLADRUNO_CMS_BUILD_TESTS=OFF"
+)
 REM CMAKE_NINJA_FORCE_RESPONSE_FILE=ON: push include/object/library lists into .rsp files so a
 REM DEEP source path (e.g. a .claude\worktrees\<name> build tree) can't blow a cl.exe command line
 REM past the Windows ~32 KB CreateProcess limit ("CreateProcess failed. The parameter is incorrect"
@@ -217,10 +230,37 @@ cmake --preset conan-release ^
     -DPython_EXECUTABLE="%PYEXE%" ^
     -DMUMPS_DIR="%MUMPS_INSTALL%/lib" ^
     -DMUMPS_INCLUDE_DIR="%MUMPS_INSTALL%/include" ^
+    %CMS_FLAGS% ^
     -DCMAKE_NINJA_FORCE_RESPONSE_FILE=ON
 set "RC=%errorlevel%"
 popd
 if not "%RC%"=="0" (echo CMake configure failed & exit /b 1)
+
+REM ----- 3b. CMS CI lane: build+run ONLY the isolated library's checks --------
+REM When LADRUNO_CMS_BUILD=1 this is a self-contained CMS coverage run: build the
+REM standalone numerical checks (which compile the whole OPS_LadrunoCMS library
+REM as a dependency), run them under mpiexec -n 4 (the checks skip their 4-rank
+REM distributed leg at other sizes), and exit. We deliberately do NOT build the
+REM full MP target here -- it is slow and can hit an unrelated MSVC ICE on
+REM ASDPlasticMaterial3D. See Ladruno_internal/BUILD_GOTCHAS.md #7.
+REM Flattened with a goto guard (not an if(...) wrapper) so the for-loops sit at
+REM the SAME nesting depth as the proven Step-4 build loop — batch is fragile
+REM about `|| (... & exit /b 1)` nested one level deeper inside an if-paren.
+if not defined LADRUNO_CMS_BUILD goto :after_cms_ci
+echo.
+echo === CMS: building isolated OPS_LadrunoCMS library + numerical checks ===
+for %%C in (mumps lanczos hierarchy subspace) do (
+    cmake --build "%BUILD_DIR%" --target ladruno_cms_%%C_check -j 8 || (echo CMS check build %%C failed & exit /b 1)
+)
+for %%C in (mumps lanczos hierarchy subspace) do (
+    echo.
+    echo --- running ladruno_cms_%%C_check (mpiexec -n 4) ---
+    "%IMPI_BIN%\mpiexec.exe" -n 4 "%BUILD_DIR%\SRC\system_of_eqn\ladrunoCMS\ladruno_cms_%%C_check.exe" || (echo CMS check %%C FAILED & exit /b 1)
+)
+echo.
+echo === CMS library compiled and all numerical checks passed ===
+exit /b 0
+:after_cms_ci
 
 REM ----- 4. Build each target ----------------------------------------------
 echo.

@@ -212,3 +212,53 @@ worktree with a **short path** (e.g.
 MUMPS seeded from an existing build to skip the ~20 min step. **`build.bat` builds
 all 5 targets only when invoked with NO args** — passing target names restricts
 to just those.
+
+---
+
+## 7. Where a new subsystem's sources live — two sanctioned patterns
+
+Two build-organization patterns exist in the fork; **pick by dependency weight
+and maturity, and know the CI consequence of each.** This is a real fork
+convention question that came up during the ADR-1000 (LadrunoCMS) review.
+
+**Pattern A — integrate-and-always-build (the default; use this unless B's
+triggers apply).** Drop the new `.cpp`/`.h` into the nearest existing `SRC/`
+subdir and add them to that subdir's `target_sources(OPS_<Existing> ...)`. The
+classes compile unconditionally into a stock `OPS_*` object library; only
+platform/accelerator *linkage* is guarded (a CMake option flips a macro, the
+heavy path degrades to a stub). Precedents:
+- **FEAST** (ADR-43) → `SRC/system_of_eqn/eigenSOE/`, always compiled into
+  `OPS_SysOfEqn`; only the MKL FEAST kernel is behind `LADRUNO_MKL_FEAST_LINUX`
+  (OFF) and stubs out where MKL is absent. `eigen -feast` always exists.
+- **Contact engine** → `SRC/domain/contact/` + `SRC/analysis/handler/`, always
+  compiled into `OPS_Domain` / `OPS_Analysis`, no CMake option.
+
+**Pattern B — isolated opt-in library (`OFF` by default).** A new top-level
+`add_library(OPS_<Name> STATIC)` created only `if(<OPTION>)`, its own
+`CMakeLists.txt` pulled in by a gated `add_subdirectory`, linked into only the
+targets that can use it. **Sole precedent: `OPS_LadrunoCMS`** (ADR-1000):
+`option(LADRUNO_CMS ... OFF)`, its own `SRC/system_of_eqn/ladrunoCMS/CMakeLists`,
+linked into MP/PyMP only, with `_LADRUNO_CMS` gating both the sources and the
+`eigen -ladrunoCMS` interpreter wiring.
+
+**Use Pattern B only when ALL of these hold** (CMS is the model): the subsystem
+(i) hard-requires heavy deps that the default build does NOT already carry (CMS:
+MPI + MUMPS + ScaLAPACK + METIS as `PUBLIC` link reqs, `FATAL_ERROR` if absent —
+so it cannot degrade to a stub the way FEAST's MKL path does); (ii) is usable in
+only a subset of targets (CMS is MP-only); and (iii) is large and pre-shipment
+("remediation" maturity). Otherwise use Pattern A — a stubbable accelerator or a
+small always-usable feature does **not** justify a separate library.
+
+**The cost you take on with Pattern B — and must pay down:** an `OFF`-by-default
+library is **never compiled by the default CI build**, so its entire core rots
+without a compile signal. When ADR-1000 shipped, only `LadrunoCMSOptions.cpp`
+(g++-compiled by the `zone_a` core test) had any CI coverage; the other ~6k
+lines (Hierarchy, Lanczos, MUMPS wrapper, SubspaceRefiner, EigenSOE/Solver) had
+none. **Any Pattern-B subsystem MUST ship with a dedicated CI lane that
+configures `-D<OPTION>=ON` (+ its `_BUILD_TESTS`) and at least compiles the
+library + runs its standalone checks.** For CMS this is the nightly self-hosted
+Zone-B job (it has the oneAPI MPI+MUMPS toolchain; the Ubuntu Zone-A runner does
+not). Build it locally the same way: `build.bat` configures with
+`-DMUMPS_DIR`/`-DMUMPS_INCLUDE_DIR` already; add `-DLADRUNO_CMS=ON
+-DLADRUNO_CMS_BUILD_TESTS=ON` to the configure and the ~7 CMS TUs compile
+incrementally (the rest of the tree is cached).

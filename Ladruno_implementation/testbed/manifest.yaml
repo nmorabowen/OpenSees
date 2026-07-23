@@ -1765,9 +1765,14 @@ features:
       dynamic coordinates aborts (-9) instead of degrading to a Guyan-only
       subdomain; local Lanczos plateau/cluster caps hard-abort (-10/-11/-14)
       instead of passing best-so-far to the authoritative refiner gate;
-      no cross-rank option-consistency Allreduce; refiner/solver core has
-      zero CI compile signal in default (LADRUNO_CMS=OFF) builds — only
-      LadrunoCMSOptions.cpp is g++-compiled by the zone_a core test.
+      no cross-rank option-consistency Allreduce. CI-COVERAGE debt ADDRESSED:
+      the nightly self-hosted Zone-B lane now configures LADRUNO_CMS=ON,
+      compiles the full library, and runs the mumps/lanczos/hierarchy/subspace
+      numerical checks under mpiexec -n 4 (build.bat LADRUNO_CMS_BUILD=1; see
+      BUILD_GOTCHAS.md #7). Default Zone-A still builds LADRUNO_CMS=OFF (only
+      LadrunoCMSOptions.cpp g++-compiled by the zone_a core test), so a
+      regression still lands green on a PR and is caught next nightly, not
+      pre-merge.
       Doc nits: residual metric is the ADR's combined backward error
       ||Kx-lMx||/(||Kx||+|l|||Mx||), not ||Kx||-only; q=max(p+8,2p) is
       MORE conservative than Bathe's min(2p,p+8), misattributed.
