@@ -1,7 +1,7 @@
 ---
 title: Sparse-direct solver strategy — desktop (PARDISO) + cluster (MUMPS) + threaded assembly
 project: Ladruno
-status: proposed — scoping (code-verified inventory; measure-gates defined; cross-framework precedent folded)
+status: proposed — scoping (code-verified inventory; measure-gates defined; cross-framework precedent folded; revised post-adversarial-review §12)
 priority: medium
 owner: nmora
 amends: 40_ladruno_performance_adr
@@ -70,7 +70,7 @@ Registered `system` verbs (from `OpenSeesCommands.cpp`): `UmfPack`, `SuperLU`, `
 |---|---|---|---|---|
 | **UmfPack** | `linearSOE/umfGEN/` | wired; Lane-B baseline | BLAS only | no |
 | **MUMPS** | `linearSOE/mumps/` | wired **MP/SP only** (`_MUMPS` gated by `if(MPI_FOUND)`) | BLAS + `ICNTL16` | **yes** |
-| **MKL PARDISO** | `linearSOE/pardiso/PARDISOGenLin{SOE,Solver}` | **in-tree, UNWIRED** (no `system Pardiso`, not in build) | **native OpenMP** | no |
+| **MKL PARDISO** | `linearSOE/pardiso/PARDISOGenLin{SOE,Solver}` | **2019 prototype, UNWIRED & never compiled here**; re-factors every solve | native OpenMP (prototype hints `iparm[2]=1`) | no |
 | **PETSc** | `linearSOE/petsc/` | wired but unbuilt on this toolchain | yes | optional |
 
 Key facts established during scoping:
@@ -78,9 +78,16 @@ Key facts established during scoping:
   `OPS_MumpsSolver()` has a serial branch (`:4997`) — a **serial MUMPS path exists in source** but
   is never built (and `libseq`/`libmpiseq` is **not bundled**; the Windows build via
   `scivision/mumps` v5.5.1.5 is always **Intel-MPI, LP64** — nnz capped at 2³¹).
-- `PARDISOGenLinSolver.cpp:23` uses `<mkl_pardiso.h>` (`mtype=11`, METIS ordering `iparm[1]=2`) —
-  it is **MKL PARDISO**. `FeastEigenSolver.cpp:132` already calls MKL `pardiso()` and factors with
-  it, **proving the symbols link and run on the exact oneAPI/Windows toolchain.**
+- `PARDISOGenLinSolver.cpp:23` uses `<mkl_pardiso.h>` — it is **MKL PARDISO**. But it is a **2019
+  contributed prototype (M. Salehi), not in any build target**, so its compile status against the
+  current MKL headers / `LinearSOE` interface is **unverified**. What is actually proven is that
+  FEAST's *own* `pardiso()` wrapper links (`FeastEigenSolver.cpp:132`) — **not** this class. The
+  prototype (revised by adversarial review, §12): `solve()` runs phase 11→22→**33→−1 every call**
+  (`PARDISOGenLinSolver.cpp:156-203`) — it re-does the **METIS symbolic reorder + numeric factor and
+  then frees all memory on every solve**; `pt[64]` is a stack local so it *cannot* persist; `mtype`
+  is **hardcoded 11 (unsymmetric)** and the SOE stores **full unsymmetric CSR** (no upper-triangle
+  half-storage); and it leaks `iparm` each solve (`:208` delete commented out). So it is a *starting
+  point* (CSR conversion + phase skeleton), **not** "90% done."
 - Factorization reuse is already correct in MUMPS (`job=3` solve-only gated on the SOE `factored`
   flag; `job=5` factor+solve otherwise) — unlike UmfPack, which re-factors every solve.
 - `system Mumps` already parses `-matrixType 0|1|2` (unsym / SPD / general symmetric) and
@@ -91,12 +98,18 @@ Key facts established during scoping:
 
 ### Lane 1 — PARDISO owns the desktop (shared-memory direct)
 Native-OpenMP MKL PARDISO in the plain serial `opensees.pyd`: all cores on the factor/solve, **no
-MPI**, **zero new dependency** (MKL already linked), ~90% of the code already in-tree and proven to
-link.
-- Finish/verify `PARDISOGenLinSOE`/`Solver`; register `system Pardiso`; lift a `_PARDISO`/link into
-  the **serial** `OpenSees`/`OpenSeesPy` targets (mirror the `_MUMPS` wiring, minus the MPI gate).
-- Symmetric `mtype` (`2`/`-2`) for symmetric tangents; phase-33 solve-only reuse gated on the SOE
-  `factored` flag (match MUMPS); expose thread count (`MKL_NUM_THREADS`/`mkl_set_num_threads`).
+MPI**, **zero new dependency** (MKL already linked). The in-tree prototype is a head-start, **not**
+finished (§2, §12) — realistic P1 work, in order:
+- **Prove it compiles** against current MKL headers / `LinearSOE`; register `system Pardiso`; lift a
+  `_PARDISO` flag + link into the **serial** `OpenSees`/`OpenSeesPy` targets (mirror `_MUMPS`, minus
+  the MPI gate). Fix the per-solve `iparm` leak.
+- **Re-architect for factorization reuse** — persist `pt[]` as a member, split symbolic (11) /
+  numeric (22) / solve (33), stop the per-solve phase −1 release, and gate solve-only on the SOE
+  `factored` flag (match MUMPS). This is a *restructure*, not a flag.
+- **Symmetric path is a SOE change, not just `mtype`** — PARDISO `mtype ±2` needs upper-triangle
+  input, so `PARDISOGenLinSOE` must gain half-storage (the path `MumpsSOE` already has). Verify the
+  time win by measurement — sparse-symmetric savings are often **<2×** (see §12), not the naive 2×.
+- Confirm threading actually engages (`MKL_NUM_THREADS`; the prototype's `iparm[2]=1` is a red flag).
 - **Only the solve is threaded** — Amdahl: real win on Lane B, ~nil on frame lanes (that's Lane 3).
 
 ### Lane 2 — MUMPS owns the cluster (distributed MPI direct)
@@ -181,8 +194,11 @@ the assembly race toward a simpler, better-proven remedy.
 
 1. **Portfolio, not one solver.** Desktop → **MKL PARDISO** (shared-memory, no MPI). Cluster →
    **MUMPS** (MPI, + BLR + hybrid). Each regime uses its strongest tool; both are ~done.
-2. **Single portable verb.** A `system` alias / `-auto` policy resolves to PARDISO in a serial
-   build and MUMPS in an MPI build, so the same model script runs on laptop and cluster unchanged.
+2. **Explicit solver verbs, not `-auto` magic.** (Revised — §12.) The author writes `system Pardiso`
+   or `system Mumps` explicitly; portability comes from *documentation + a thin build-time guard*
+   that errors clearly if you ask for a solver this build lacks — **not** from silent build-dependent
+   resolution. In a research code where solver choice changes convergence and last-bit results,
+   implicit resolution is a footgun (and contradicts the Kratos explicit-factory precedent in §4).
 3. **Threaded assembly is the real prize** but a separate, staged, measurement-gated effort — it is
    the only thing that helps the primary frame lanes and the threads-per-node cluster half.
 4. **Do NOT** build serial/`libseq` MUMPS, a GPU solver offload, a hand-rolled Krylov/precond, or
@@ -195,16 +211,21 @@ the assembly race toward a simpler, better-proven remedy.
   associated tangents are genuinely unsymmetric and must be able to select `pardiso_lu`/unsym MUMPS.
 - **Factorization reuse** driven off the SOE `factored` flag (present in MUMPS; add PARDISO phase-33)
   — pays under ModifiedNewton/Initial/IMPL-EX, not full Newton.
-- **BLR** (MUMPS `ICNTL35`) as the first memory/scaling relief on large 3D, and the cheap
-  direct→preconditioner bridge (LS-DYNA precedent) if an iterative path is ever needed.
+- **BLR** (MUMPS `ICNTL35`) as memory/scaling relief on large 3D — **but it is an *approximate*
+  factorization** (low-rank truncation with an accuracy tolerance), i.e. a direct→preconditioner
+  bridge, **not** an exact drop-in. It is off-limits for the byte-identical/1e-12 oracle paths and
+  must be opt-in with a documented accuracy knob (§12).
 
 ## 6. Sequencing & gates
 
-- **P1 — PARDISO desktop (small, mostly done).** Wire `system Pardiso` + serial-build link;
-  symmetric + reuse. **Gate:** beats UmfPack on Lane B at 4 threads; byte/1e-12 oracle vs UmfPack.
+- **P1 — PARDISO desktop (MEDIUM, not "small" — §12).** Compile-verify the prototype; wire
+  `system Pardiso` + serial-build link; **re-architect factorization reuse** (persist `pt`, drop the
+  per-solve release); add symmetric SOE half-storage; fix the `iparm` leak. **Gate:** beats UmfPack
+  on Lane B at 4 threads *and* threading verified engaged; byte/1e-12 oracle vs UmfPack.
 - **P2 — MUMPS cluster tuning.** `-matrixType 2`, `-BLR`, hybrid ranks×threads. **Gate:** the
   ADR-74 rung harness shows a symmetric/BLR win at fixed np; no accuracy regression.
-- **P3 — single verb / `-auto`.** Portability polish once P1/P2 land.
+- **P3 — explicit-verb portability polish.** Clear build-time errors + docs (no `-auto`; §12) once
+  P1/P2 land. **Preceded by the P0 trade study below** if unify-on-MKL is chosen.
 - **P4 — threaded assembly (own effort, staged).** (a) scope `elem.update`; (b) de-static kernels;
   (c) explicit private-buffer reduction (ordered variant from day one); (d) **atomic-scatter on the
   frozen `formTangent` sparsity** (Kratos pattern; coloring/element-ordering only if it contends);
@@ -233,13 +254,63 @@ algorithmic work-removal · OpenMP-by-default or implicit colored-scatter before
 element fraction · ParMETIS/`cluster_sparse_solver` before a measured deck justifies it.
 
 ## 9. Open questions
-- `cluster_sparse_solver` (MKL distributed PARDISO) as a *future* unification of both regimes on one
-  dependency — attractive, but would replace a proven MUMPS-parallel path; deferred, not chosen.
+- **P0 DECISION (elevated by §12) — portfolio vs. unify-on-MKL.** `cluster_sparse_solver` (MKL
+  distributed PARDISO, near-identical `iparm`) could cover **both** regimes with **one** dependency
+  and one test surface. The original "would replace a proven MUMPS path" objection is **weakened**
+  now that PARDISO is *not* nearly-free new-solver work anyway (§2/§12). This needs a real trade
+  study **before P1 commits**, not a footnote: (unify) one MKL family, retire the MUMPS serial gap,
+  smaller matrix — vs (portfolio) keep the ADR-74-hardened MUMPS-parallel, avoid a second unproven
+  distributed path. Currently *leaning portfolio*, but no longer decided.
 - Does METIS ordering link into the bundled MUMPS build (fill quality on large 3D)? Confirm.
+- **Non-MKL desktop gap:** with serial-MUMPS descoped and PARDISO MKL-only, a non-MKL build
+  (Zone-A Ubuntu / OpenBLAS) has **no threaded desktop solver** — UmfPack is the only fallback.
+  Accept, or keep a non-MKL threaded option on the table.
 - Iterative (PETSc AMG-CG) for large *well-conditioned* 3D — data-justified only; softening tangents
   fight preconditioners. Out of scope here.
 
 ## 10. Ledger / banner
 No source touched yet (scoping ADR). When P1 lands: `LEDGER_implementations.md` row for the PARDISO
-SOE/solver + `system Pardiso`; a `banner_features.txt` line; class tag reuse of
-`LinSOE_TAGS_PARDISOGenLinSOE 99990` (already in `classTags.h`).
+SOE/solver + `system Pardiso`; a `banner_features.txt` line; class tag
+`LinSOE_TAGS_PARDISOGenLinSOE 99990` (already in `classTags.h`) — **but 99990 is off the fork's
+33xxx Ladruno convention (upstream-prototype value); re-tag into range and LEDGER-check for collision
+before shipping.**
+
+## 11. Architectural risks (register)
+The risk profile is **bimodal**: Lanes 1–2 are low-risk (self-contained `LinearSOE` back-ends);
+essentially all architectural risk sits in Lane 3.
+1. **Threaded assembly is a whole-codebase re-entrancy invariant** — every element/material kernel
+   (many vanilla-upstream) must lose its `static`/shared scratch; one miss = silent, thread-only,
+   nondeterministic wrong answers. *Highest.* Mitigate: explicit-diagonal path first, ThreadSanitizer,
+   per-classTag gating.
+2. **Threading vs the byte-identical QA discipline** — threaded FP reduction breaks byte-identical by
+   construction; needs the ordered-reduction CI policy decided *before* any threaded code lands.
+3. **Assembly loop is a central chokepoint** — the FE_Element scatter is shared by static/transient/
+   eigen/sensitivity; keep the threaded path behind a default-off flag so serial stays byte-identical.
+4. **Nested threading / oversubscription** — MKL solver threads × OpenMP assembly threads × MPI ranks;
+   needs one coordinated thread-count policy or benches mislead.
+5. **The unify seam isn't clean** — PARDISO CSR vs serial-MUMPS COO vs distributed `a_loc`; no
+   templated sparse-space, so numberer/graph coupling leaks. "One verb" is a build-aware SOE factory.
+6. **PARDISO ties desktop-perf to MKL** — non-MKL builds get no threaded desktop solver (see §9).
+7. **Reward back-loaded onto the riskiest lane** — Lanes 1–2 only help 3D-solid; the frame-lane payoff
+   lives entirely in Lane 3 (highest risk). Real failure mode: ship the easy lanes, stall before the
+   one the primary models need.
+8. **Stale-LU reuse trap (both solvers)** — reuse gated on `factored` assumes `A` untouched; any path
+   that refills `A` without clearing `factored` silently solves a stale factor.
+
+## 12. Revision log — adversarial review (post-merge, evidence-backed)
+Corrections folded after reading `PARDISOGenLinSolver.cpp` (the review caught claims I'd made from a
+header + grep, not the implementation):
+- **PARDISO maturity overclaim → corrected.** It is a 2019 prototype never compiled in this build; it
+  re-factors + frees memory **every solve** (`:156-203`), hardcodes `mtype=11`, has no symmetric SOE
+  storage, and leaks `iparm`. "~90% done/proven to link" was false ("proven" was FEAST's own wrapper,
+  not this class). P1 re-scoped small→**medium**; §2/§3-Lane1/§6-P1 rewritten.
+- **`-auto` magic → dropped** for explicit `system Pardiso`/`Mumps` (contradicted the Kratos precedent
+  it cited; hurts research-code reproducibility). §5.2, §6-P3.
+- **Portfolio-vs-unify → elevated** from footnote to a **P0 decision** (the "proven MUMPS" objection
+  weakened once PARDISO isn't nearly-free). §9.
+- **BLR → caveated** as an *approximate* factorization, off-limits for oracle paths. §5, §9.
+- **"~2× symmetric" → hedged** (sparse-symmetric time savings often <2×; measure). §3-Lane1, §5.
+- **Added:** the §11 risk register, the non-MKL-desktop gap (§9), and the classTag-convention fix (§10).
+- **Strategy direction survives** — desktop-threads / cluster-MPI / assembly-threading is sound and
+  cross-framework-validated; the corrections are to effort estimates, one contradiction, and one
+  under-argued decision, not to the architecture.
