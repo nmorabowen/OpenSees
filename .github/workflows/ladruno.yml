@@ -113,9 +113,16 @@ jobs:
           python ci/check_tcl_results.py
 
   # ---- Zone-B + perf: nightly, self-hosted oneAPI box -------------------
+  # Also runs on manual workflow_dispatch so the self-hosted tier (Zone-B
+  # cross-checks, perf, and the ADR-1000 CMS LADRUNO_CMS=ON build+checks) can be
+  # validated ON DEMAND once the ladruno-perf runner is (re)registered — instead
+  # of waiting for the 06:00 UTC cron. Needs the self-hosted runner online; when
+  # it is offline the job queues and is cancelled (harmless, but no coverage).
   zone-b-nightly:
     name: Zone-B + perf (self-hosted)
-    if: github.repository == 'nmorabowen/OpenSees' && github.event_name == 'schedule'
+    if: >-
+      github.repository == 'nmorabowen/OpenSees' &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     runs-on: [self-hosted, windows, ladruno-perf]
     steps:
       - uses: actions/checkout@v4
