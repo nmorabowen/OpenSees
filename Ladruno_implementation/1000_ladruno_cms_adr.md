@@ -1467,6 +1467,12 @@ reportar el modo. Esa compatibilidad de transición no autoriza promover la feat
 
 ### 17.8 Verificación obligatoria de la nueva frontera
 
+> **Plan de ejecución P3:** [[ladruno_cms_p3_execution_plan]] traduce esta
+> sección (P3a–P3e) + las puertas restantes de
+> [[ladruno_cms_building_1A_acceptance]] en artefactos de prueba concretos, e
+> incluye el diagnóstico y el arreglo candidato para el fallo de ordenamiento
+> MUMPS a 2 ranks. Requiere un build `LADRUNO_CMS=ON` en ejecución.
+
 La corrección física y la corrección modal se probarán por separado.
 
 #### P3a — emisor y manifest de partición
