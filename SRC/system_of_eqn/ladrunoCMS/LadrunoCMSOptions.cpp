@@ -378,6 +378,8 @@ int Options::resolvedIterationVectors(int numModes, std::string &message) const
         message = "automatic iteration-vector count exceeds the integer range";
         return -4;
     }
+    // max(p+8, 2p) — a conservative (wider) variant of Bathe's q=min(2p,p+8);
+    // see the LadrunoCMSOptions.h note on iterationVectors.
     return std::max(numModes + 8, 2 * numModes);
 }
 
