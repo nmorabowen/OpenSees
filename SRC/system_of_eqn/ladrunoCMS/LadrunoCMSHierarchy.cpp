@@ -1306,6 +1306,38 @@ int solveDistributedHierarchy(
         return -1;
     }
 
+    // Cross-rank option-consistency gate. numberOfModes, denseMax, modesLevel2
+    // and modesLevel1 size the numberOfModes-wide collectives below (the
+    // MPI_Bcast of the eigenvalues, the per-mode reductions). If ranks disagree
+    // — a heterogeneous launch with divergent option files — those collectives
+    // are undefined behavior (count mismatch => silent corruption or hang). The
+    // per-rank validation above only checks each rank locally, so verify
+    // agreement collectively (symmetric on every rank) before any such
+    // collective runs. This is additive and cannot itself deadlock.
+    {
+        const int consistencyValues[4] = {
+            input.numberOfModes, input.denseMax,
+            input.modesLevel2, input.modesLevel1};
+        int consistencyMin[4];
+        int consistencyMax[4];
+        MPI_Allreduce(consistencyValues, consistencyMin, 4, MPI_INT, MPI_MIN,
+                      MPI_COMM_WORLD);
+        MPI_Allreduce(consistencyValues, consistencyMax, 4, MPI_INT, MPI_MAX,
+                      MPI_COMM_WORLD);
+        for (int i = 0; i < 4; ++i) {
+            if (consistencyMin[i] != consistencyMax[i]) {
+                static const char *const names[4] = {
+                    "numberOfModes", "denseMax", "modesLevel2", "modesLevel1"};
+                message = std::string("distributed hierarchy option '") +
+                    names[i] + "' disagrees across ranks (min=" +
+                    std::to_string(consistencyMin[i]) + ", max=" +
+                    std::to_string(consistencyMax[i]) +
+                    "); every rank must request the same value";
+                return -1;
+            }
+        }
+    }
+
     MPI_Comm groupComm = MPI_COMM_NULL;
     MPI_Comm leaderComm = MPI_COMM_NULL;
     MPI_Comm_split(MPI_COMM_WORLD, input.coarse, rank, &groupComm);

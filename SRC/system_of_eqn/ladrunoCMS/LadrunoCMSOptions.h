@@ -89,7 +89,10 @@ struct Options {
     int maxEnrich = 4;
     int maxIterations = 500;
     RefinementMode refinement = RefinementMode::Subspace;
-    // Zero selects Bathe's q=max(p+8,2p) rule.
+    // Zero selects the automatic q=max(p+8,2p) subspace width. NOTE: Bathe's
+    // actual recommendation (Finite Element Procedures) is q=min(2p,p+8); the
+    // max variant here is strictly >= that, i.e. deliberately more conservative
+    // (a wider iteration subspace), not Bathe's rule verbatim.
     int iterationVectors = 0;
     // Building 1A needs roughly O(10^2) inverse actions with the automatic
     // q=max(p+8,2p) block; the acceptance gate remains the original residual.

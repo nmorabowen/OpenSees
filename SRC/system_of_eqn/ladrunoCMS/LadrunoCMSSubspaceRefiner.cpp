@@ -404,6 +404,10 @@ void evaluateResiduals(
         result.massActionNorms[static_cast<std::size_t>(mode)] = massNorm;
         result.maximumResidualEquation[static_cast<std::size_t>(mode)] =
             maximumEquation;
+        // Combined backward error ||Kx - lambda*Mx|| / (||Kx|| + |lambda|*||Mx||)
+        // — NOT ||Kx||-only. Matches the ADR (section 3.6) and the numpy oracle;
+        // at convergence (||Kx|| ~ |lambda|*||Mx||) it is ~2x tighter than the
+        // ||Kx||-only form would report.
         result.normalizedResiduals[static_cast<std::size_t>(mode)] =
             residualNorm / std::max(
                 std::numeric_limits<double>::min(),
