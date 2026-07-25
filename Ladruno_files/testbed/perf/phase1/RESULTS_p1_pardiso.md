@@ -30,10 +30,27 @@ Three findings worth keeping:
    threading — so the desktop win does not depend entirely on core count.
 
 2. **Correctness is exact at every thread count — rel err `0.0`, bit-identical to UmfPack.**
-   Threading introduced **no** floating-point drift here: MKL PARDISO's threaded factorization is
+   ~~Threading introduced **no** floating-point drift here: MKL PARDISO's threaded factorization is
    deterministic for this problem. That matters for the fork's byte-identical/1e-12 discipline —
    the ADR-75 §7 determinism concern is a *Lane-3* (assembly-reduction) problem, and does **not**
-   apply to this solver. No ordered-reduction flag is needed for PARDISO.
+   apply to this solver. No ordered-reduction flag is needed for PARDISO.~~
+
+   > **⚠ CORRECTED 2026-07-25 (ADR-75 P1f).** The accuracy statement stands — every configuration
+   > agrees with UmfPack to `0.0`. **The determinism conclusion does not.** It rested on ONE run per
+   > thread count, which cannot distinguish "deterministic" from "the same value came up twice".
+   > Re-measured with **10 runs of the same binary at a fixed thread count**: at 4 threads a 14³
+   > Lane-B model returns **two distinct tip displacements in a 5/5 split** (`…834687` vs `…834732`,
+   > ~1 ULP); at 1 thread it is 10/10 identical. Verified on the *pre-P1f* binary too, so it is a
+   > property of threaded MKL PARDISO, not of any fork change. It is size-dependent — an 8³ model is
+   > reproducible even at 4 threads — which is why a single-sample check at 15³ passed.
+   >
+   > **Consequence:** threaded `system Pardiso` is **not** byte-reproducible run-to-run, so the
+   > ADR-75 §7 determinism concern is *not* Lane-3-only. Any byte-identical CI gate or oracle
+   > comparison must pin `MKL_NUM_THREADS=1` (reproducible, and P1e/P1f measurements confirm the
+   > 1-thread path is stable) — or use PARDISO's own CNR control, `iparm[33]`, which is available to
+   > this fork because we set `iparm[1]=2` (serial METIS); Intel only forbids CNR when `iparm[1]=3`.
+   > `iparm[33]` is **not** currently exposed as an option. Drift is last-bit, so this is a
+   > *reproducibility* problem, not an accuracy one.
 
 3. **Scaling flattens past 4 threads (1.50× → 1.58×), exactly as predicted.** Sparse factorization
    is memory-bandwidth-bound, not compute-bound; 4 threads captures ~95% of the available win.
