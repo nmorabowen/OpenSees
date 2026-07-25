@@ -1,0 +1,35 @@
+{
+  "model": "laneB 15^3 LadrunoBrick+LadrunoJ2 ~11.5k DOF",
+  "repeats": 5,
+  "nsteps": 15,
+  "mkl_threads": "1",
+  "pyd": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\mumps-opensees-study-f833bf\\dist\\bin\\opensees.pyd",
+  "results": {
+    "UmfPack": {
+      "median_s": 18.545823699969333,
+      "ratio_vs_umfpack": 1.0,
+      "tip_ux": 2.2717603821225074,
+      "tip_rel_err": 0.0,
+      "samples": [
+        18.404618700034916,
+        18.490020699973684,
+        18.545823699969333,
+        18.824911599978805,
+        19.63951419998193
+      ]
+    },
+    "Pardiso": {
+      "median_s": 15.6113866000087,
+      "ratio_vs_umfpack": 0.841773698087862,
+      "tip_ux": 2.2717603821225074,
+      "tip_rel_err": 0.0,
+      "samples": [
+        15.42033639998408,
+        15.496346800005995,
+        15.6113866000087,
+        15.833623600017745,
+        16.187191700038966
+      ]
+    }
+  }
+}
