@@ -218,6 +218,8 @@ the assembly race toward a simpler, better-proven remedy.
 
 ## 6. Sequencing & gates
 
+- **P0 — portfolio vs unify trade study. ✅ DONE** → portfolio confirmed
+  ([[75a_p0_portfolio_vs_unify_trade_study]]); P1 unblocked, scope fixed to serial/shared-memory.
 - **P1 — PARDISO desktop (MEDIUM, not "small" — §12).** Compile-verify the prototype; wire
   `system Pardiso` + serial-build link; **re-architect factorization reuse** (persist `pt`, drop the
   per-solve release); add symmetric SOE half-storage; fix the `iparm` leak. **Gate:** beats UmfPack
@@ -234,7 +236,11 @@ the assembly race toward a simpler, better-proven remedy.
 
 ### Bench matrix (the decider)
 - **Desktop:** Lane B + one larger 3D solid × {UmfPack baseline, PARDISO @ 1/2/4/8 threads,
-  ±symmetric} — median-of-7, threads pinned, via `Ladruno_files/testbed/perf/runner.py`.
+  ±symmetric} — median-of-7, threads pinned. **Harness written and ready:**
+  `Ladruno_files/testbed/perf/phase1/laneB_solver_bench.py` (same Lane-B model as ADR-40b;
+  interleaved rounds; probes each solver and records `unavailable` for the unwired ones; asserts a
+  1e-9 tip-displacement cross-check so a timing is never reported for a wrong answer). **Not yet
+  executed** — run it to lock the UmfPack baseline before P1 code lands.
 - **Cluster:** same models × {MUMPS np-sweep, ±BLR, ranks×threads} — reuse the ADR-74 two-sweep
   method (fixed-np rung + fixed-V np-sweep).
 
@@ -251,16 +257,18 @@ the assembly race toward a simpler, better-proven remedy.
 ## 8. Anti-goals (inherited + lane-specific)
 Serial/`libseq` MUMPS · GPU *solver* offload · hand-rolled Krylov/preconditioner · SIMD before
 algorithmic work-removal · OpenMP-by-default or implicit colored-scatter before a measured >40%
-element fraction · ParMETIS/`cluster_sparse_solver` before a measured deck justifies it.
+element fraction · ParMETIS before a measured deck justifies it · **`cluster_sparse_solver` /
+distributed PARDISO** (P0-decided: MUMPS is mandatory for CMS/FEAST/PFEM regardless, so this only
+*adds* a third solver family — [[75a_p0_portfolio_vs_unify_trade_study]]).
 
 ## 9. Open questions
-- **P0 DECISION (elevated by §12) — portfolio vs. unify-on-MKL.** `cluster_sparse_solver` (MKL
-  distributed PARDISO, near-identical `iparm`) could cover **both** regimes with **one** dependency
-  and one test surface. The original "would replace a proven MUMPS path" objection is **weakened**
-  now that PARDISO is *not* nearly-free new-solver work anyway (§2/§12). This needs a real trade
-  study **before P1 commits**, not a footnote: (unify) one MKL family, retire the MUMPS serial gap,
-  smaller matrix — vs (portfolio) keep the ADR-74-hardened MUMPS-parallel, avoid a second unproven
-  distributed path. Currently *leaning portfolio*, but no longer decided.
+- ~~**P0 DECISION — portfolio vs. unify-on-MKL.**~~ **CLOSED → portfolio confirmed**
+  ([[75a_p0_portfolio_vs_unify_trade_study]]). Decisive finding: **MUMPS cannot be removed** — it is
+  load-bearing for **CMS** (`LadrunoCMSMumps`, a `FATAL_ERROR` build gate at `CMakeLists.txt:645`),
+  **distributed FEAST/modal** (`LadrunoDistBlockZKernel`), and **PFEM** (3 solvers). So unify-on-MKL
+  would *still* link MUMPS and merely **add a third** solver family — its "one dependency, one test
+  surface" premise is false. `cluster_sparse_solver` moved to §8 anti-goals; P1 is unblocked with
+  scope fixed to serial/shared-memory only.
 - Does METIS ordering link into the bundled MUMPS build (fill quality on large 3D)? Confirm.
 - **Non-MKL desktop gap:** with serial-MUMPS descoped and PARDISO MKL-only, a non-MKL build
   (Zone-A Ubuntu / OpenBLAS) has **no threaded desktop solver** — UmfPack is the only fallback.
