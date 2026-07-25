@@ -146,3 +146,4 @@ _build_ladrunobrick.log
 # Ladruno transient build logs / banner backups (not source)
 Ladruno_scripts/_*.log
 Ladruno_scripts/patch_banner_backups/
+build_p1b*.log

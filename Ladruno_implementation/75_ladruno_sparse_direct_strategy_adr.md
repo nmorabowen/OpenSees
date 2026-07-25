@@ -223,7 +223,14 @@ the assembly race toward a simpler, better-proven remedy.
 
 - **P0 — portfolio vs unify trade study. ✅ DONE** → portfolio confirmed
   ([[75a_p0_portfolio_vs_unify_trade_study]]); P1 unblocked, scope fixed to serial/shared-memory.
-- **P1 — PARDISO desktop (MEDIUM, not "small" — §12).** Compile-verify the prototype; wire
+- **P1 — PARDISO desktop. ✅ DONE, GATE PASSED** (`phase1/RESULTS_p1_pardiso.md`). `system Pardiso`
+  is built and working in the serial module (477 pardiso symbols, was 0). Lane B, same binary:
+  **1.71× faster than UmfPack at 4 threads** (10.396 s vs 17.775 s), 1.76× at 8, and **1.19× even
+  single-threaded**. Tip displacement **bit-identical to UmfPack at every thread count (rel err
+  0.0)** — so threading introduced no FP drift and the §7 determinism concern is Lane-3-only.
+  Scaling flattens past 4 threads (1.50×→1.58×, memory-bandwidth-bound) ⇒ **4 threads is the
+  recommended desktop default**. The measured 1.76× sits just under the predicted ~2.2× Amdahl
+  ceiling, confirming the residual ~34% is Lane-3 territory. *(Original scoping, for the record:)* Compile-verify the prototype; wire
   `system Pardiso` + serial-build link; **re-architect factorization reuse** (persist `pt`, drop the
   per-solve release); add symmetric SOE half-storage; fix the `iparm` leak.
   **Gate (now a measured number): beat UmfPack's 22.711 s on Lane B** at 4 threads *and* threading

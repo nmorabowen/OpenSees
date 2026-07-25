@@ -502,6 +502,7 @@ void* OPS_ParallelDisplacementControl();
 
 void* OPS_ItpackLinSolver();
 void* OPS_MumpsSolver();
+void* OPS_PARDISOGenLinSolver();   // Ladruno ADR-75 P1b (desktop MKL PARDISO)
 
 // Sensitivity:BEGIN /////////////////////////////////////////////
 int OPS_computeGradients();

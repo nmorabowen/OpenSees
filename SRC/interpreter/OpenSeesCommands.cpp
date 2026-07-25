@@ -131,6 +131,13 @@ UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 #include <MumpsSolver.h>
 #include <MumpsSOE.h>
 #endif
+// Ladruno ADR-75 P1b: MKL PARDISO — the DESKTOP (shared-memory) sparse-direct
+// solver. Complements, does not replace, MUMPS (which owns the MPI/cluster
+// lane). Only compiled when the build found MKL.
+#ifdef _PARDISO
+#include <PARDISOGenLinSOE.h>
+#include <PARDISOGenLinSolver.h>
+#endif
 #include <BackgroundMesh.h>
 
 #ifdef _ITPACK
@@ -1573,6 +1580,11 @@ int OPS_System()
 #ifdef _MUMPS
     } else if (strcmp(type,"Mumps") == 0) {
         theSOE = (LinearSOE*)OPS_MumpsSolver();
+#endif
+#ifdef _PARDISO
+    // Ladruno ADR-75 P1b: `system Pardiso` — threaded MKL PARDISO for desktop.
+    } else if (strcmp(type,"Pardiso") == 0 || strcmp(type,"PARDISO") == 0) {
+        theSOE = (LinearSOE*)OPS_PARDISOGenLinSolver();
 #endif
 #ifdef _ITPACK
     } else if (strcmp(type,"Itpack") == 0) {
@@ -4874,6 +4886,33 @@ void* OPS_ParallelDisplacementControl() {
     return 0;
 #endif
 
+}
+
+// Ladruno ADR-75 P1b: `system Pardiso`.
+//
+// Threading is deliberately NOT an option here: MKL takes its thread count from
+// MKL_NUM_THREADS / OMP_NUM_THREADS (set before the process starts), which is
+// the documented mechanism and keeps this free of <mkl_service.h>. Note the
+// solver itself threads only the FACTOR/SOLVE — assembly and element state
+// determination stay single-threaded (ADR-75 Lane 3 is the axis for those), so
+// expect a win only on solve-bound models (the 3D-solid lane).
+void* OPS_PARDISOGenLinSolver() {
+#ifdef _PARDISO
+    // NB: `theSOE` is a MEMBER of OpenSeesCommands (OpenSeesCommands.h:178), not
+    // a file-scope global, so a free factory like this one cannot assign it —
+    // the caller stores what we return. (The serial `#else` branch of
+    // OPS_MumpsSolver() below still does `theSOE = new MumpsSOE(...)`, which is
+    // the same undeclared-identifier bug; it survives only because _MUMPS is
+    // never defined without _PARALLEL_INTERPRETERS — i.e. more evidence the
+    // serial MUMPS path has never been compiled. Ladruno ADR-75.)
+    PARDISOGenLinSolver *theSolver = new PARDISOGenLinSolver();
+    PARDISOGenLinSOE *thePardisoSOE = new PARDISOGenLinSOE(*theSolver);
+    return thePardisoSOE;
+#else
+    opserr << "WARNING system Pardiso - this build has no MKL; "
+              "use UmfPack (or rebuild with MKL)\n";
+    return 0;
+#endif
 }
 
 void* OPS_MumpsSolver() {

@@ -45,8 +45,11 @@ assert ops.__file__.lower().startswith(DIST.lower()), f"WRONG PYD: {ops.__file__
 print("pyd OK:", ops.__file__)
 
 HERE = Path(__file__).resolve().parent
-REPEATS = 7
+# Overridable so a THREAD sweep (which only needs the baseline + PARDISO) does
+# not re-pay for SuperLU/SparseSYM at every thread count.
+REPEATS = int(os.environ.get("OPS_BENCH_REPEATS", "7"))
 NSTEPS = 15
+_ONLY = [s.strip() for s in os.environ.get("OPS_BENCH_SOLVERS", "").split(",") if s.strip()]
 
 # Serial sparse-direct comparators available today + the P1/P2 targets (expected
 # unavailable in the serial build until wired). "args" are extra system() tokens.
@@ -55,8 +58,10 @@ SOLVERS = [
     ("SuperLU",  ["SuperLU"]),
     ("SparseSYM", ["SparseSYM"]),
     ("Mumps",    ["Mumps", "-ICNTL14", "200"]),  # P2 — unwired in serial today
-    ("Pardiso",  ["Pardiso"]),                   # P1 — unwired today
+    ("Pardiso",  ["Pardiso"]),                   # P1 — desktop threaded MKL
 ]
+if _ONLY:
+    SOLVERS = [(n, a) for (n, a) in SOLVERS if n in _ONLY]
 
 # --- Lane-B model (verbatim geometry from phase0/laneB_model.py) ------------
 E, nu = 200000.0, 0.3

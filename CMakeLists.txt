@@ -544,6 +544,42 @@ endif()
 message(STATUS "SCALAPACK_LIBRARIES=${SCALAPACK_LIBRARIES}")
 
 # ---------------------------------------------------------------------------
+# Ladruno ADR-75 P1b: MKL PARDISO for the DESKTOP (serial) targets.
+#
+# ADR-75 measured the gap: the serial build has no threaded sparse-direct
+# solver at all (Lane-B baseline -- UmfPack 22.711 s, single-threaded; `system
+# Pardiso` and `system Mumps` both report "unknown system type"). MUMPS stays
+# the CLUSTER solver and is untouched here.
+#
+# THREADING LAYER (the reason this is a separate variable from
+# SCALAPACK_LIBRARIES): SCALAPACK_LIBRARIES deliberately uses mkl_sequential,
+# because the parallel targets get their parallelism from MPI. Desktop PARDISO
+# is the opposite case -- its entire value is shared-memory threading -- so the
+# serial targets link mkl_intel_thread + libiomp5md instead. Mixing the two
+# layers inside ONE target/process is unsupported by MKL, so they are kept on
+# disjoint targets: threaded here (serial only), sequential there (parallel).
+# ---------------------------------------------------------------------------
+set(PARDISO_FLAG "")
+set(PARDISO_MKL_LIBRARIES "")
+if(MKL_FOUND AND DEFINED MKL_LPATH)
+  set(PARDISO_FLAG -D_PARDISO)
+  set(PARDISO_MKL_LIBRARIES
+      "${MKL_LPATH}/mkl_intel_lp64.lib;${MKL_LPATH}/mkl_intel_thread.lib;${MKL_LPATH}/mkl_core.lib")
+  # OpenMP runtime for mkl_intel_thread (oneAPI ships libiomp5md next to the
+  # compiler); harmless if the linker already resolves it.
+  find_library(IOMP5_LIB NAMES libiomp5md iomp5md iomp5
+               HINTS "${MKL_ROOT}/../compiler/latest/lib"
+                     "${MKL_ROOT}/../compiler/latest/windows/compiler/lib/intel64_win"
+                     ENV LIB)
+  if(IOMP5_LIB)
+    list(APPEND PARDISO_MKL_LIBRARIES ${IOMP5_LIB})
+  endif()
+  message(STATUS "PARDISO (desktop, threaded MKL) ENABLED: ${PARDISO_MKL_LIBRARIES}")
+else()
+  message(STATUS "PARDISO DISABLED (no MKL) - serial builds fall back to UmfPack")
+endif()
+
+# ---------------------------------------------------------------------------
 # Ladruno ADR43 L2-profile: opt-in MKL FEAST on a non-Windows host (esmeralda).
 # The FEAST/PARDISO paths in FeastEigenSolver.cpp + LadrunoBlockZKernel.cpp are
 # historically gated on _WIN32 (MKL was Windows/oneAPI-only on this fork). With
@@ -751,6 +787,18 @@ set(OPS_INTERP_PY_PARALLEL_SOURCES
 
 add_library(OPS_InterpPyCmds STATIC ${OPS_INTERP_PY_PARALLEL_SOURCES})
 
+# Ladruno ADR-75 P1b: `system Pardiso` registration lives in OpenSeesCommands.cpp
+# under #ifdef _PARDISO. This lib is shared by the Tcl OpenSees/SP/MP exes AND
+# sequential OpenSeesPy, so the flag is applied to every consumer -- the
+# PARDISOGenLin* objects are in OpenSeesLIB (all of them link it) and the MKL
+# PARDISO() implementation resolves from each target's own MKL layer (threaded
+# for serial, the existing sequential ScaLAPACK layer for parallel).
+if(PARDISO_FLAG)
+    target_compile_definitions(OPS_InterpPyCmds PRIVATE ${PARDISO_FLAG})
+    target_include_directories(OPS_InterpPyCmds PRIVATE
+        ${OPS_SRC_DIR}/system_of_eqn/linearSOE/pardiso)
+endif()
+
 if(MPI_FOUND)
     add_library(OPS_InterpPyCmds_MP STATIC ${OPS_INTERP_PY_PARALLEL_SOURCES})
 
@@ -921,6 +969,7 @@ target_link_libraries(OpenSees
   tcl::tcl
   ZLIB::ZLIB
   Eigen3::Eigen
+  ${PARDISO_MKL_LIBRARIES}   # Ladruno ADR-75 P1b (threaded MKL; empty w/o MKL)
 )
 
 
@@ -1094,10 +1143,11 @@ target_link_libraries(OpenSeesPy
    OPS_Reliability
    OPS_Recorder
    OPS_Numerics
-   HDF5::HDF5	
-   ZLIB::ZLIB	
-   Eigen3::Eigen	
+   HDF5::HDF5
+   ZLIB::ZLIB
+   Eigen3::Eigen
    ${Python_LIBRARIES}
+   ${PARDISO_MKL_LIBRARIES}  # Ladruno ADR-75 P1b (threaded MKL; empty w/o MKL)
 )
 
 
