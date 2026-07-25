@@ -134,16 +134,31 @@ the one with zero determinism cost.** That inverts the natural assumption and it
 *(Added by the adversarial review, which found the first draft's "writes ONLY this element's own
 state" too strong — `RESULTS_l3a_update_scope.md` §7 finding 2.)*
 
-Absence of an SOE reduction is **not** the same as absence of shared writes. At least **13** element
-files write **node trial state** (`setTrialDisp` / `setTrialVel` / `setTrialAccel` / `incrTrialDisp`),
-and at least one does it squarely on the loop-A path:
+> **Scoped down by a second review pass.** The first version of this section said "at least **13**
+> element files write node trial state" and treated all 13 as loop-A exclusions. That was a grep-level
+> claim presented as an allowlist: it counted files under `SRC/element/` regardless of whether the
+> class is an `Element` at all, and regardless of *which method* does the writing. Resolving both
+> shrinks the loop-A hazard from 13 to **2** — which is materially good news for L3-1, and would have
+> mis-scoped the allowlist if left as written.
 
-- **`LadrunoRigidBody::update()`** (`:490`) calls `imposeSlaveKinematics()` (`:500`), which writes
-  `setTrialDisp` (`:518`, `:536`) and `setTrialVel` (`:540`) on **slave nodes shared with other
-  elements** — the ADR-58 C3 slaving mechanism.
-- Others: `MP_Joint2D`, `MP_Joint3D`, `Adapter`, `ZeroLengthVG_HG`, and the PFEM family
-  (`PFEMElement2DCompressible`, `PFEMElement2DQuasi`, `TaylorHood2D`, `BackgroundMesh`, `BCell`,
-  `BackgroundFixData`, `PFEMMesher2D/3D`).
+Absence of an SOE reduction is **not** the same as absence of shared writes. Grepping
+`setTrialDisp`/`setTrialVel`/`setTrialAccel`/`incrTrialDisp` under `SRC/element/` hits 13 files;
+resolving each to its class and its enclosing method gives:
+
+| write site | class | reachable from | loop-A hazard? |
+|---|---|---|---|
+| `LadrunoRigidBody::update()` `:490` → `imposeSlaveKinematics()` `:500` (writes `:518`, `:536`, `:540`) | `Element` | **`update()`** | **YES** |
+| `ZeroLengthVG_HG` `:631` | `Element` | **`update()`** | **YES** |
+| `Adapter` `:588`, `:601` | `Element` | `getResistingForce()` | no — **loop C** |
+| `PFEMElement2DCompressible` `:222`, `PFEMElement2DQuasi` `:200` | `Element` | `commitState()` | no — commit phase |
+| `TaylorHood2D` `:599-601` | `Element` | `setDomain()` | no — setup |
+| `MP_Joint2D`, `MP_Joint3D` | **`MP_Constraint`, not `Element`** | constraint handler | no — never in the element loop |
+| `BackgroundMesh`, `BCell`, `BackgroundFixData`, `PFEMMesher2D/3D` | **utility/mesher classes, not `Element`** | — | no |
+
+**So the loop-A exclusion list is exactly two elements: `LadrunoRigidBody` and `ZeroLengthVG_HG`**
+(plus `Adapter` for loop C, and the two PFEM elements if `commitState` is ever threaded).
+`LadrunoRigidBody` is the important one — it writes to **slave nodes shared with other elements** (the
+ADR-58 C3 slaving mechanism), so a concurrent reader sees a torn value.
 
 This is a **correctness/ordering race, not an FP-order one**: another element reading that node may
 see the pre- or post-write value depending on scheduling, so results become nondeterministic in a way
@@ -151,7 +166,10 @@ no reduction policy can fix. Consequences:
 
 1. Loop A's bit-identicality is a property of the **allowlisted element set**, not of the loop. The
    per-classTag allowlist (§7) is therefore **load-bearing, not defence-in-depth**.
-2. The above classTags are **hard exclusions** for loop-A threading until specifically designed for.
+2. `LadrunoRigidBody` and `ZeroLengthVG_HG` are **hard exclusions** for loop-A threading until
+   specifically designed for. The list is short — but note it was found by grep, and a
+   *transitively* reached node write (an element calling a helper that writes) would not show up.
+   ThreadSanitizer over the allowlisted set is what actually closes this, not the table above.
 3. Contact is *not* a loop-A exclusion: it is an analysis handler
    (`SRC/analysis/handler/LadrunoContactFE.cpp`, `LadrunoContactHandler.cpp`) over a shared
    `SRC/domain/contact/LadrunoContactDomain.cpp`, so it enters through the **FE_Element** path — an
@@ -315,7 +333,7 @@ over thread-local ones**, even though thread-local is the smaller diff.
 Order-of-magnitude for the gather storage, so the gate is concrete: Σ(idSize²) doubles. For Lane B
 (3375 `LadrunoBrick`, idSize 24) that is 3375 × 576 × 8 B ≈ **15.5 MB** — trivial. The scaling is
 linear in element count at fixed element type, so a ~1M-DOF hex mesh (~300k elements) lands near
-**1.4 GB**, which is the same order as the factorization itself and therefore **not** obviously
+**~1.5 GB**, which is the same order as the factorization itself and therefore **not** obviously
 affordable. Hence the L3-4 memory gate and §11's open question. (These are arithmetic projections from
 the element geometry, not measurements.)
 
@@ -331,7 +349,7 @@ in the family. This section puts numbers on it. All counts are `grep` over the c
 ### 5.1 The magnitude
 
 - **~5,600** function-/file-scope `static Matrix|Vector|ID` declarations across **587 distinct files**
-  in `SRC/element/` + `SRC/material/` (≈1,650 `static Matrix`, ≈3,530 `static Vector`, ≈370
+  in `SRC/element/` + `SRC/material/` (≈1,690 `static Matrix`, ≈3,530 `static Vector`, ≈370
   `static ID`).
 - **711** class-level `static Matrix|Vector|ID` members declared in `SRC/element/*.h`.
 - `Element` itself owns **static pools shared by every element instance** —
@@ -539,9 +557,10 @@ Lane-3-specific additions:
   existing phase-0 lane scripts. That follows the standing precedent: the phase-0 and phase-1
   harnesses have no implementation rows either — the ledger tracks engine features, and the profiler
   itself already has its row.
-- `LEDGER_quirks.md` — **five rows added in this PR**: the `static`-return-buffer non-re-entrancy
+- `LEDGER_quirks.md` — **six rows added in this PR**: the `static`-return-buffer non-re-entrancy
   idiom; `ops_TheActiveElement`; the named-deep-scope-includes-the-scatter trap; the already-frozen CSR
-  sparsity; and ADR-40b's stale lane-D `formTangent` number.
+  sparsity; ADR-40b's stale lane-D `formTangent` number; and `linearSolve` not being the solver cost
+  under `DisplacementControl` (plus PARDISO having no `soe.factor` scope to reveal it).
 - `banner_features.txt` — **not now.** Only once a threading feature is user-visible and `shipped`.
 
 When stages land:
@@ -556,7 +575,7 @@ When stages land:
 
 ## 11. Open questions
 1. **Does the §4.2 gather memory (Σ idSize² doubles) fit at production solid scale?** ~15.5 MB at Lane
-   B, ~1.4 GB projected at ~1M DOF. **This single number decides whether the byte-identical class-B CI
+   B, **~1.5 GB** projected at ~1M DOF. **This single number decides whether the byte-identical class-B CI
    gate of §3 survives** — the highest-leverage unknown in this ADR. Gate at L3-4; measure on a real
    deck.
 2. **Does atomic `A[k] +=` actually contend?** If yes, §4's fallback ladder (LS-DYNA element ordering,
@@ -566,13 +585,15 @@ When stages land:
 4. **How much of the ~34% Amdahl residual is loop A vs loops B/C vs neither?** L3-0 answers this; if
    the residual is mostly *neither*, Lane 3's whole ceiling is lower than assumed and the staging
    should shrink.
-5. **Replace the `addA` O(idSize² × rowlen) inner search — PROMOTED, now with a number.** L3-0
-   measured `PARDISOGenLinSOE::addA` at **1 699.2 ms of an ~11.9 s step (~14% of wall) on the
-   default `-matrixType 0` path**, and it is **1.28× slower than UmfPack's** scatter (1 322.8 ms) —
-   the *slowest* of the three configurations measured. That is 14% of wall spent locating entries in
-   a structure unchanged since `setSize`. A serial, zero-determinism-cost, zero-threading fix on the
-   shipped desktop path. **On present evidence this is a better next move than threading loops B/C at
-   all** — and it is Lane-1 work, not Lane-3.
+5. **Replace the `addA` O(idSize² × rowlen) inner search — PROMOTED, now with a number, and it is a
+   BOTH-solvers fix.** L3-0 measured `PARDISOGenLinSOE::addA` at **1 699.2 ms of an ~11.9 s step
+   (~14% of wall) on the default `-matrixType 0` path**, **1.28× slower than UmfPack's** 1 322.8 ms.
+   `UmfpackGenLinSOE::addA` has the *identical* shape on frozen CSC (`for k in Ap[col]..Ap[col+1]: if
+   (Ai[k]==row) { Ax[k] += …; break; }`), so **both desktop solvers pay it** — this is not a PARDISO
+   patch. (`DiagonalSOE::addA` is `A[pos] += m(i,i)` into a dense diagonal: no search, nothing to
+   fix.) That is ~14% of wall spent locating entries in a structure unchanged since `setSize`. Serial,
+   zero determinism cost, no threading. **On present evidence a better next move than threading loops
+   B/C at all** — and it is Lane-1 work, not Lane-3.
 6. **Cluster composition:** loop-A threading is the "threads-per-node half" of hybrid MPI+threads
    (ADR-75 §3). Untested interaction with `PartitionedDomain`; defer until L3-1 lands serially.
 7. **Does any element alias (rather than `getCopy()`) a material or section across elements?** Not

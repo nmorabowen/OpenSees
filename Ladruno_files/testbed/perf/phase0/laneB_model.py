@@ -93,9 +93,25 @@ ops.numberer("RCM")
 # the element/loop FRACTIONS can be re-measured after the Lane-1 solver win. Values are
 # passed as ints where numeric -- a STRING option value fails OPS_GetIntInput, the factory
 # returns 0, and OpenSees silently falls back to ProfileSPDLinSOE (banked P1d trap).
+#
+# Adversarial review (finding 7): an int-only converter RE-INTRODUCES that exact trap for
+# FLOAT-valued options -- `Mumps -BLR 1e-8` would leave "1e-8" a string, fail
+# OPS_GetDoubleInput, and fall back silently. Convert ints AND floats; leave real
+# option tokens ("-matrixType") alone.
+def _opt(a):
+    try:
+        return int(a)                      # "2", "-2"  (NOT "-matrixType")
+    except ValueError:
+        pass
+    try:
+        return float(a)                    # "1e-8", "0.25"
+    except ValueError:
+        return a                           # "-matrixType", "Pardiso"
+
 _sys = (os.environ.get("OPS_SYSTEM") or "UmfPack").split()
-ops.system(*[int(a) if a.lstrip("-").isdigit() else a for a in _sys])
-print("system:", _sys)
+_argv = [_opt(a) for a in _sys]
+ops.system(*_argv)
+print("system:", _argv)
 ops.test("NormDispIncr", 1e-7, 25)
 ops.algorithm("Newton")
 ops.integrator("LoadControl", 1.0 / 15.0)

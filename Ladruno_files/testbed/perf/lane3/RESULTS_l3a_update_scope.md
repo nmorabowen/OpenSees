@@ -49,7 +49,9 @@ recovered as `kernel = Σ(elem_by_type wall under the loop scope)` and
 - Threads: `MKL_NUM_THREADS` = 1 except the `pard4` row (4). Lane 3 does not exist yet, so no
   assembly threads anywhere.
 - Full logs kept, never grepped down (banked P1d trap: a silent `ProfileSPDLinSOE` fallback hides in
-  exactly the lines you would have dropped). `OPS_SYSTEM` values are passed as **ints**.
+  exactly the lines you would have dropped). `OPS_SYSTEM` numeric values are converted to **ints or
+  floats**, never left as strings — a string fails `OPS_GetIntInput`/`OPS_GetDoubleInput` and the
+  factory falls back silently.
 
 ---
 
@@ -57,7 +59,7 @@ recovered as `kernel = Σ(elem_by_type wall under the loop scope)` and
 
 | lane / config | step ms | solve % | **kernel %** | loop % | loop A % | loop B % | loop C % | `addA` % of loop B | Amdahl 4T (kernel) |
 |---|---|---|---|---|---|---|---|---|---|
-| **A** fiber frame, UmfPack | 7 919 | 5.65 | **81.94** | 83.32 | **80.79** | 0.45 | 0.79 | 56.05 | 2.59× |
+| **A** fiber frame, UmfPack | 7 919 | 5.65 ⚠ **(true 7.86 — see F8)** | **81.94** | 83.32 | **80.79** | 0.45 | 0.79 | 56.05 | 2.59× |
 | **B** 3D solid, UmfPack 1T | 19 191 | 55.89 | **35.84** | 43.04 | 2.55 | 29.42 | 3.90 | 19.09 | 1.37× |
 | **B** 3D solid, Pardiso `-matrixType 2` 1T | 11 879 | 36.39 | **57.22** | 62.53 | 4.04 | 46.81 | 6.20 | 9.47 | 1.75× |
 | **B** 3D solid, Pardiso `-matrixType 2` 4T | 9 200 | 16.87 | **74.85** | 81.73 | 5.24 | **61.56** | 8.04 | 9.45 | 2.28× |
@@ -96,11 +98,19 @@ ADR-75b §1 argued this would happen; it is now measured. Two consequences:
    ADR-40b UmfPack-era 30.1% element fraction would have wrongly killed the lane.
 
 ### F2 — Kernel time is solver-invariant, which validates the whole measurement
-`LadrunoBrick::getTangent` measures **38.02 / 37.28 / 38.14 µs/ele** under UmfPack / Pardiso-1T /
-Pardiso-4T (within 2.3%), and absolute loop-B kernel wall is **5 646.6 / 5 536.5 / 5 663.4 ms**
-(within 2.3%). The element kernel cannot depend on which solver factorizes afterwards, so this is a
-strong internal consistency check: the fraction shift in F1 is entirely the *denominator* moving, as
-claimed, not an artifact of the instrumentation.
+> **Weakened by the adversarial review (§7 finding 2).** The first draft quoted "within 2.3%" over the
+> three configs it had run. Adding the `-matrixType 0` config the review introduced widens the spread
+> to **5.8%**. The check still passes — but 2.3% was a selective figure, so quote 5.8%.
+
+Absolute loop-B kernel wall across **all four** configurations: **5 646.6 (UmfPack) / 5 536.5
+(Pardiso-1T) / 5 663.4 (Pardiso-4T) / 5 857.9 (Pardiso unsym-4T) ms — a 5.8% spread**
+(`LadrunoBrick::getTangent` = 38.02 / 37.28 / 38.14 / ~39.5 µs/ele).
+
+The element kernel *cannot* depend on which solver factorizes afterwards, so the residual spread is
+this box's measurement noise, not signal — and 5.8% is therefore a **useful noise floor for every
+other number here**. The check does its job: the F1 fraction shift (35.8% → 74.9%, a factor of 2.1)
+is an order of magnitude outside that floor, so it is the *denominator* moving, exactly as claimed,
+and not an instrumentation artifact.
 
 ### F3 — `-matrixType 2` cuts the `addA` scatter by 65%: a third, previously unmeasured benefit of symmetric storage
 > **This finding was corrected by the adversarial review (§7, finding 1).** The first draft
@@ -131,6 +141,18 @@ Two conclusions, both different from the draft:
 So ADR-75b §11's open question 5 — replace that search — is no longer a stylistic note: it is a
 **~14%-of-wall serial optimization on the default path**, with no determinism cost and no threading
 required. On the present evidence it is a better next move than threading loops B/C at all.
+
+**And it is bigger than "a PARDISO fix" — the review checked the other SOEs.** `UmfpackGenLinSOE::addA`
+has the *identical* shape on frozen CSC (`for k in Ap[col]..Ap[col+1]: if (Ai[k]==row) { Ax[k] += …;
+break; }`), so **both** desktop solvers pay the same O(idSize² × rowlen) search — UmfPack's costs
+1 322.8 ms on the same model. Replacing it is a shared win, not a PARDISO patch.
+(`DiagonalSOE::addA` is `A[pos] += m(i,i)` into a dense diagonal — no search, nothing to fix, which
+is one more reason Lane D is the clean L3-1 target.)
+
+*De-confounding note:* the UmfPack row ran at 1 thread and the unsym-PARDISO row at 4, so the 1.28×
+could in principle be a thread-count artifact. It is not: `-matrixType 2` scatter is 579.3 ms @1T vs
+591.0 ms @4T — a 2% difference — so thread count does not materially move `addA`, as expected for a
+serial routine.
 
 ### F4 — Loop A has essentially no non-kernel overhead, confirming the §2.1 determinism claim structurally
 Non-kernel share of loop A: **0.63%** (lane A), **4.5–4.8%** (lane B), and there is **no scatter term
@@ -168,6 +190,39 @@ Lane A's `elem.update` appears at **three** sites — `newStep/elem.update` 941.
 (`newStep` 8 064.1 ms + `solveCurrentStep/update` 8 534.2 ms — the double constitutive pass ADR-40b
 found, confirmed here by `n = 5 000 000 = 2 × 2500 steps × 1000 elements`). `parse_lane3.py` sums all
 sites; this is the same trap ADR-40b hit with the hidden second `soe.factor`.
+
+### F8 — Lane A's `solve %` in §1 is UNDERSTATED: it has a hidden factorization, exactly like ADR-40b's lane E
+*(Found by the adversarial review, §7 finding 3 — a wrong published number.)*
+
+The §1 `solve %` column reports the `linearSolve` **phase**. On Lane A that is not the solver cost:
+
+| lane A phase | ms | % step |
+|---|---|---|
+| `linearSolve` (the algorithm's visible solve) | 449.4 | **5.65** |
+| `soe.factor` (**all sites**) | 505.7 | 6.39 |
+| `soe.trisolve` (all sites) | 120.4 | 1.52 |
+| **true solver work = factor + trisolve** | **626.1** | **7.86** |
+
+`soe.factor` (505.7 ms) **exceeds** `linearSolve` (449.4 ms), so factorization is running outside the
+visible solve — Lane A uses **`DisplacementControl`**, whose `update()`/`newStep()` solve for the
+reference displacement `dUhat` against the same `K`. This is precisely the pathology ADR-40b found on
+lane E ("59% of the step is UmfPack numeric factorization, two-thirds of it booked outside
+`linearSolve`"), and the first draft walked into it despite that finding being in the cross-validation
+table two sections below.
+
+**Nothing in the verdicts changes** — lane A is 81.94% element-kernel either way, and 7.86% is still
+negligible against it. But the column was wrong and is now marked.
+
+**Checked for every other lane, and Lane A is the only one affected:** Lane B/UmfPack has
+factor+trisolve = 55.32% against `linearSolve` 55.89% (i.e. essentially all factorization is inside
+the visible solve — LoadControl + Newton, no hidden `dUhat` solve), and Lane D is ~0 both ways.
+
+**Related instrumentation gap, worth recording:** the `soe.factor` / `soe.trisolve` scopes exist
+**only in `UmfpackGenLinSolver.cpp`** (`:195`, `:211`, `:234`, `:249`). **PARDISO has none.** So the
+`0.00%` in the factor+trisolve column for every `Pardiso` row above means *"not instrumented"*, not
+*"no cost"* — and, more importantly, **ADR-40b's rank-8/10 factor-vs-triangular-solve split does not
+exist for the fork's shipped desktop solver.** Adding it is cheap and would make the same
+hidden-solve check possible on PARDISO decks.
 
 ---
 
@@ -219,10 +274,23 @@ changes.** ("corrected" attributes the entire deep-vs-coarse delta to the elemen
 worst case for these fractions, since that is where the per-element scopes live.)
 
 Two honest qualifications:
-- **The noise floor exceeds the effect.** Max/min spread across the 6 rounds was 1.22×/1.28× (lane A
-  deep/coarse), 1.32×/1.20× (lane B), 1.62×/1.34× (lane D). So the tax is *bounded* by these
-  medians, not precisely determined; individual rounds even show coarse slower than deep
-  (lane A r3: 8.18 coarse vs 7.31 deep). Treat "3–8%" as an upper bound of the right order.
+- **Only Lane D's tax is statistically established.** Paired sign test over the 6 rounds
+  (one-sided, H₀ = deep is no slower than coarse):
+
+  | lane | deep > coarse | p | verdict |
+  |---|---|---|---|
+  | A fiber frame | 4/6 | 0.344 | **not established** |
+  | B 3D solid | 5/6 | 0.109 | **not established** |
+  | D explicit | **6/6** | **0.016** | **established** |
+
+  So the honest reading is: **the tax is demonstrated only on Lane D (+8.0%), the lane with by far the
+  most scope instances (15.25 M) — which is exactly where it should be largest.** The lane-A and
+  lane-B medians (+4.5%, +3.0%) are the right order of magnitude but are **not** separable from noise
+  at n=6; individual rounds even show coarse slower than deep (lane A r3: 8.18 coarse vs 7.31 deep).
+  The noise floor is large: max/min spread was 1.22×/1.28× (lane A deep/coarse), 1.32×/1.20×
+  (lane B), 1.62×/1.34× (lane D) — and F2 independently puts this box's floor near 5.8%.
+  **This does not affect any verdict**: the correction is ≤1.1 pp against gate margins of tens of
+  points, and Lane D — the one lane where the tax *is* established — still reads 85.8% corrected.
 - **Implied cost is 0.14–0.39 µs per scope instance, i.e. at or somewhat below ADR-40b's banked
   ~0.5 µs.** Lane D's 0.141 µs is the figure with the most instances behind it. ADR-40b's caveat
   stands in substance — per-**GP** scopes (8–16 per call) would still be ruinous, and its
@@ -261,7 +329,7 @@ Two honest qualifications:
    absent from the fork's CMake and there is no `/openmp` flag, so the 7 `#pragma omp` lines in
    `SRC/` (all PFEM) are compiler-ignored no-ops. First measurement available at L3-1.
 2. **The §4.2 gather memory (Σ idSize² doubles) at production scale.** ~15.5 MB at Lane B,
-   ~1.4 GB projected at ~1M DOF. This single number decides whether the byte-identical class-B CI
+   ~1.5 GB projected at ~1M DOF. This single number decides whether the byte-identical class-B CI
    gate of ADR-75b §3 survives. Highest-leverage unknown in the lane.
 3. **Whether atomic `A[k] +=` contends.** Only measurable once L3-4 exists.
 4. **How much of P1's ~34% Amdahl residual is loop A vs B/C vs neither.** Partially answered — on
@@ -273,8 +341,37 @@ Two honest qualifications:
 
 ## 7. What the adversarial review changed
 
-A scoped review ran against the first draft, targeting the claims that would be **wrong without
-being obviously wrong**. It found two real defects and cleared the one most likely to be an artifact.
+Two scoped passes ran against this document, both targeting the claims that would be **wrong without
+being obviously wrong**. Between them: **five real defects**, one of them a wrong published number.
+
+### Pass 2 (post-PR, deeper — verification by execution rather than re-reading)
+
+| # | Finding | Status |
+|---|---|---|
+| 1 | **A published number was wrong.** §1's `solve %` for Lane A reported the `linearSolve` *phase* (5.65%). But `soe.factor` **exceeds** `linearSolve` there (505.7 vs 449.4 ms) — `DisplacementControl` solves for `dUhat` outside the visible solve, so true solver work is **7.86%**. This is precisely ADR-40b's lane-E pathology, cited in this document's own cross-validation table two sections below | **F8 added**, §1 marked; verified Lane A is the *only* affected lane |
+| 2 | **F2's "solver-invariant to 2.3%" was a selective figure.** Including the `-matrixType 0` config that pass 1 itself introduced widens the spread to **5.8%** | F2 rewritten; 5.8% is now used as this box's stated noise floor |
+| 3 | **The instrumentation tax was over-claimed as a 3-lane result.** A paired sign test over the 6 rounds establishes it **only for Lane D** (6/6, p=0.016); Lanes A and B are 4/6 (p=0.344) and 5/6 (p=0.109) — not separable from noise | §5 now reports the sign test and scopes the claim to Lane D |
+| 4 | **The `addA` search fix was under-sold as PARDISO-specific.** `UmfpackGenLinSOE::addA` has the identical frozen-CSC search, so **both** desktop solvers pay it | F3 + ADR §11 q5 corrected to a both-solvers fix |
+| 5 | **A latent trap was re-introduced in the harness.** The `OPS_SYSTEM` int-only converter left float option values as strings (`Mumps -BLR 1e-8` → `'1e-8'`), which would fail `OPS_GetDoubleInput` and trigger the *exact* silent `ProfileSPDLinSOE` fallback the harness comment warns about | fixed (ints **and** floats) and re-run end-to-end |
+| — | **Arithmetic:** gather projection at 1M DOF is **~1.5 GB**, not 1.4 GB; `static Matrix` count is **1,686**, not ≈1,650 | corrected here, in the ADR, and in `LEDGER_quirks` |
+
+**Cleared in pass 2, by execution rather than argument:**
+- **The parser** — `parse_lane3.py` was run against **200 randomized synthetic h5 files** with known
+  ground truth (1–3 sites per loop, 1–2 classTags per site): `loop_ms`, `kernel_ms`, `scatter_ms` and
+  `step_ms` matched exactly, **0 mismatches**. Multi-site summing and the kernel/scatter split are
+  correct by construction, not by inspection.
+- **Every published median** re-derived from the raw JSON through an independent code path — all
+  five configs' kernel %, loop-A %, and Amdahl 4T reproduce to the last quoted digit.
+- **No negative scatter** (`kernel > loop`) in any of the 21 real runs, i.e. the `elem_by_type` bucket
+  never over-counts its enclosing scope.
+- **§4.1's frozen-sparsity generalization holds beyond PARDISO** — `UmfpackGenLinSOE` (frozen CSC +
+  one `Ax[k] +=`) and `DiagonalSOE` (`A[pos] += m(i,i)`, dense, no search) both fit.
+- **The 1.28× UmfPack-vs-unsym-PARDISO scatter gap is not a thread-count artifact** — `-matrixType 2`
+  scatter is 579.3 ms @1T vs 591.0 ms @4T (2%), so thread count does not move `addA`.
+
+### Pass 1 (pre-PR)
+
+It found two real defects and cleared the one most likely to be an artifact.
 
 | # | Finding | Status |
 |---|---|---|
