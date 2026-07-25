@@ -226,7 +226,9 @@ Two things follow, both material:
    That is a pre-existing serial inefficiency independent of threading (and exactly the shape the
    fork's own banked lesson warns about: an O(nnz × rowlen) loop where O(nnz) would do).
    **L3-0 measured it: 1 699.2 ms of an ~11.9 s step — ~14% of wall — on the default `-matrixType 0`
-   path, and 1.28× SLOWER than UmfPack's scatter.** `-matrixType 2` cuts it 65% (to 591.0 ms) simply
+   path, and 1.28× SLOWER than UmfPack's scatter. ✅ FIXED by ADR-75 P1f
+   ([#636](https://github.com/nmorabowen/OpenSees/pull/636)): binary search, 1.09-1.10× end-to-end.
+   The search is gone; the `A[k] +=` accumulate — and therefore the race — is unchanged.** `-matrixType 2` cuts it 65% (to 591.0 ms) simply
    by scattering half the entries over half-length rows, which is a third measured benefit of
    symmetric storage that P1d never counted. So this is a **separate, serial, zero-determinism-cost
    optimization candidate that on present evidence outranks threading loops B/C** (§11 q5) — not
@@ -293,6 +295,31 @@ actually is, because "we'll add ordering later" is how this decision gets silent
 **P-5 — One coordinated thread-count policy.** MKL solver threads × OpenMP assembly threads × MPI
 ranks will oversubscribe and make every bench lie (ADR-75 §11.4). Assembly threading must not ship
 without a single documented knob and a nested-threading rule.
+
+**P-6 — ⚠ THE BASELINE IS NOT BYTE-REPRODUCIBLE WHEN THE SOLVER IS THREADED (P1f, [#636](https://github.com/nmorabowen/OpenSees/pull/636)).**
+*Added 2026-07-25 after P1f corrected a claim this policy was resting on.* ADR-75 P1 concluded
+"PARDISO is bit-identical at every thread count ⇒ threading introduces no FP drift ⇒ the determinism
+concern is **Lane-3-only**". That conclusion came from **one run per thread count**, and it is wrong:
+at `MKL_NUM_THREADS=4` a 14³ Lane-B model returns **two distinct tip displacements over 10 runs of
+the same binary** (~1 ULP, a 5/5 split); at 1 thread it is 10/10 identical. It is size-dependent —
+an 8³ model is reproducible even at 4 threads.
+
+This does **not** weaken §3's policy, but it changes two things about how the policy is *enforced*:
+
+1. **"The existing byte-identical oracles gate it unchanged" is true only with
+   `MKL_NUM_THREADS=1`.** Otherwise the *baseline itself* moves ~1 ULP run-to-run, and a threaded-
+   assembly bit-identical gate cannot distinguish assembly drift from solver drift — the gate becomes
+   unfalsifiable rather than strict. **Every Lane-3 acceptance run pins `MKL_NUM_THREADS=1`.** (The
+   real fix, if a threaded reproducible mode is ever wanted, is PARDISO's CNR control `iparm[33]`,
+   which *is* available to this fork because we set `iparm[1]=2`, not parallel METIS. Not exposed.)
+2. **The determinism problem was never Lane-3-only.** It is a property of every threaded FP
+   reduction in the process, and MKL's is already there. Lane 3 adds a *second* source, which is
+   exactly why the ordered/fast split of P-3 is worth having — but the ADR should stop implying the
+   solver lane is clean.
+
+**And the methodological lesson applies directly to §7's acceptance protocol:** "deterministic" is a
+claim about a **distribution**, never about one sample. See §7's protocol item 4, which was written
+with the same n=1 flaw and is now fixed.
 
 ### The one thing that could force a revision — stated up front
 
@@ -552,8 +579,10 @@ fork-join overhead) applies throughout and is refined per stage.
   Two shipped, zero-code, zero-risk items that the L3-0 measurement surfaced:
   (i) **`-commitSolveState` on explicit decks** — ADR-67 P-NEW-2, bit-identical on rate-independent
   materials, measured here at **−29.6% wall on Lane D** (24 555 → 17 278 ms, `disp_z` identical to
-  all digits in 6 runs); (ii) **replace the `addA` O(idSize²×rowlen) search** — ~14% of wall, on
-  **both** desktop solvers (§11 q5). ADR-40's standing order is work-removal before parallelism, and
+  all digits in 6 runs); (ii) ~~replace the `addA` O(idSize²×rowlen) search~~ ✅ **SHIPPED as P1f
+  ([#636](https://github.com/nmorabowen/OpenSees/pull/636)) — 1.09-1.10× end-to-end**, one day after
+  L3-0 named it, and it needed none of Lane 3's machinery. The remaining half of this item is the
+  same fix in `UmfpackGenLinSOE::addA`, which has the identical frozen-CSC linear scan (§11 q5). ADR-40's standing order is work-removal before parallelism, and
   both of these are strictly cheaper than any threading stage. Neither is Lane-3 work.
 
 - **L3-1 — thread loop A (`Domain::update`) for an allowlisted set of fork-owned classTags.**
@@ -618,6 +647,19 @@ fork-join overhead) applies throughout and is refined per stage.
 3. **Threaded path behind a default-off flag** so the serial path stays byte-identical (§75 §11.3).
 4. **Bit-identical at 1/2/4/8 threads** for class A and for class-B ordered mode. 1e-12 for class-B
    fast mode, never on an oracle path.
+   > **⚠ Corrected 2026-07-25 (P1f).** As first written this was **one run per thread count** — the
+   > exact experimental design that produced ADR-75 P1's wrong "PARDISO is bit-identical at every
+   > thread count" claim. With a 50/50 split, a single-sample check **passes half the time**. So:
+   > - run **N ≥ 10 repeats per thread count** and require *all* identical — a nondeterminism check
+   >   is a claim about a distribution, not a sample;
+   > - **also require each configuration to reproduce ITSELF** (10 runs, one binary, one thread
+   >   count), not merely to match the serial baseline. P1f found the bug precisely by asking that
+   >   question after an A/B reported "ux DIFFERS": the *old* binary showed the identical 5/5 split,
+   >   which proved the variation was MKL's and the change was exact;
+   > - **pin `MKL_NUM_THREADS=1`** for the whole gate (§3 P-6), or the solver's own ~1 ULP jitter
+   >   masquerades as an assembly race;
+   > - treat a *failure* as "which layer?" before "what did I break?" — the answer is a two-line
+   >   experiment, and getting it backwards costs a day of debugging a correct change.
 
 ---
 
@@ -703,8 +745,16 @@ When stages land:
 4. **How much of the ~34% Amdahl residual is loop A vs loops B/C vs neither?** L3-0 answers this; if
    the residual is mostly *neither*, Lane 3's whole ceiling is lower than assumed and the staging
    should shrink.
-5. **Replace the `addA` O(idSize² × rowlen) inner search — PROMOTED, now with a number, and it is a
-   BOTH-solvers fix.** L3-0 measured `PARDISOGenLinSOE::addA` at **1 699.2 ms of an ~11.9 s step
+5. ~~**Replace the `addA` O(idSize² × rowlen) inner search.**~~ ✅ **CLOSED — SHIPPED as ADR-75 P1f
+   ([#636](https://github.com/nmorabowen/OpenSees/pull/636), `580cfb5`), one day after L3-0 named it.**
+   Linear scan → **binary search** (`ops_pardiso_findCol`), legal because `setSize` *enforces* the
+   ascending-CSR invariant rather than assuming it. Measured interleaved A/B at 4 threads:
+   **1.098× at 26.5k DOF, 1.091× at 50.7k** (`-matrixType 1`: 1.03×, less because half-storage already
+   scatters fewer entries into shorter rows). **This validates L3-0's central argument** — the
+   `addA` search was worth taking *before* any threading, and it needed no re-entrancy audit, no
+   determinism policy and no OpenMP build. **The `A[k] += m(i,j)` race statement in §2.2/§4.1 is
+   unaffected**: P1f changed only how `k` is *found*, not the accumulate. *(Original entry:)* L3-0
+   measured it at 1 699.2 ms of an ~11.9 s step (~14% of wall), 1.28× slower than UmfPack's. L3-0 measured `PARDISOGenLinSOE::addA` at **1 699.2 ms of an ~11.9 s step
    (~14% of wall) on the default `-matrixType 0` path**, **1.28× slower than UmfPack's** 1 322.8 ms.
    `UmfpackGenLinSOE::addA` has the *identical* shape on frozen CSC (`for k in Ap[col]..Ap[col+1]: if
    (Ai[k]==row) { Ax[k] += …; break; }`), so **both desktop solvers pay it** — this is not a PARDISO

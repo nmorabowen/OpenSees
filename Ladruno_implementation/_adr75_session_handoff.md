@@ -120,9 +120,17 @@ Everything below is **merged to `ladruno`**. Pick up from "What to do next".
      correctly-configured, fork-owned deck.**
    - **NEXT = L3-0b, work removal, before any threading** (ADR-40's standing order, which the ADR had
      inverted): (i) **`-commitSolveState` on explicit decks** — shipped, bit-identical, −29.6%;
-     (ii) **replace `addA`'s O(idSize² × rowlen) search** — ~14% of wall and it is a **BOTH-solvers**
-     fix (`UmfpackGenLinSOE::addA` has the identical frozen-CSC search). Neither needs a re-entrancy
-     audit, a determinism policy, or an OpenMP build.
+     (ii) ~~replace `addA`'s O(idSize² × rowlen) search~~ ✅ **SHIPPED as P1f
+     ([#636](https://github.com/nmorabowen/OpenSees/pull/636)), 1.09-1.10× — one day after L3-0 named
+     it, and it needed no re-entrancy audit, no determinism policy and no OpenMP build. The same fix
+     is still open in `UmfpackGenLinSOE::addA` (identical frozen-CSC scan).**
+   - **⚠ P1f also corrected a claim ADR-75b's determinism policy rested on:** threaded PARDISO is
+     **not byte-reproducible run-to-run** (4T: 2 distinct answers over 10 runs of one binary, ~1 ULP;
+     1T: 10/10 identical). So the "existing byte-identical oracles gate it unchanged" story holds
+     **only with `MKL_NUM_THREADS=1`**, and ADR-75b §7's acceptance protocol — which said
+     "bit-identical at 1/2/4/8 threads", i.e. **n=1 per thread count** — had the same flaw that
+     produced the original wrong claim. Both fixed (§3 P-6, §7 item 4): N≥10 repeats, each config must
+     reproduce **itself**, and pin MKL to 1 thread.
    - **Then, before ANY threading code:** the review found the re-entrancy inventory was
      directory-scoped and missed the hazards that actually race — **`FE_Element::theMatrices` is a
      class-wide pool** (one Matrix shared by every same-numDOF FE_Element, handed straight to `addA`

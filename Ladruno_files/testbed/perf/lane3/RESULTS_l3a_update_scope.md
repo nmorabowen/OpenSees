@@ -169,6 +169,15 @@ So ADR-75b §11's open question 5 — replace that search — is no longer a sty
 **~14%-of-wall serial optimization on the default path**, with no determinism cost and no threading
 required. On the present evidence it is a better next move than threading loops B/C at all.
 
+> ✅ **SHIPPED ONE DAY LATER as ADR-75 P1f ([#636](https://github.com/nmorabowen/OpenSees/pull/636)).**
+> Linear scan → binary search, legal because `setSize` *enforces* the ascending-CSR invariant rather
+> than assuming it. Measured interleaved A/B @4T: **1.098× at 26.5k DOF, 1.091× at 50.7k**
+> (`-matrixType 1`: 1.03×, less because half-storage already scatters fewer entries into shorter
+> rows). **This is the strongest vindication of L3-0's central argument** — the biggest lever this
+> measurement found was not threading, and it needed no re-entrancy audit, no determinism policy and
+> no OpenMP build. The `A[k] += m(i,j)` race statement is unaffected: only how `k` is *found* changed.
+> The same fix is still open in `UmfpackGenLinSOE::addA`, which has the identical frozen-CSC scan.
+
 **And it is bigger than "a PARDISO fix" — the review checked the other SOEs.** `UmfpackGenLinSOE::addA`
 has the *identical* shape on frozen CSC (`for k in Ap[col]..Ap[col+1]: if (Ai[k]==row) { Ax[k] += …;
 break; }`), so **both** desktop solvers pay the same O(idSize² × rowlen) search — UmfPack's costs
