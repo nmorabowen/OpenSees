@@ -277,11 +277,17 @@ the assembly race toward a simpler, better-proven remedy.
   slower at `1e-4`** — compression overhead exceeds flop savings on small fronts, AND in a
   *nonlinear* loop a looser tolerance returns a less accurate correction so Newton needs more
   iterations (more solves). **So BLR is a MEMORY lever, not a speed lever**, its justification is the
-  P1c capability wall, and it stays opt-in/off-by-default. **Still open:** peak factor memory per
-  rank on a production deck, and the crossover size — neither reachable on this desktop. Also, the
-  fork does not surface MUMPS `INFOG`/`RINFOG` compression stats, so users cannot directly see
-  whether BLR did anything; exposing them is the next P2 step. `-matrixType 2` (symmetric) and
-  hybrid ranks×threads remain untouched.
+  P1c capability wall, and it stays opt-in/off-by-default. **P2b `-stats` SHIPPED** (`system Mumps ... -stats` dumps
+  `INFOG(9)/(21)/(22)`, `RINFOG(3)`, BLR `RINFOG(14)/(15)`), which finally makes compression
+  observable — and it produced a **non-obvious measured result: BLR shrinks the FACTORS but barely
+  moves PEAK MEMORY.** At `eps=1e-4`: factor entries **−21.8%**, BLR flops **−45%**, but peak
+  **MB/proc only −4.6%**; at `eps=1e-9` it is strictly worse (**+8.4% MB/proc**, no flop saving).
+  Peak factorization memory is dominated by the **active frontal/working space**, not the stored
+  factors — so "BLR saves memory" is true of factor storage and largely false of the allocation that
+  actually decides whether a model fits. **At ~32k DOF/np2 BLR is a win on no axis.** This bounds the
+  small end only and does *not* refute BLR on production-size fronts. **Still open:** the crossover —
+  run a production deck with `-stats`, BLR on/off, comparing `INFOG(21)` and wall time.
+  `-matrixType 2` (symmetric) and hybrid ranks×threads remain untouched.
 - **P3 — explicit-verb portability polish.** Clear build-time errors + docs (no `-auto`; §12) once
   P1/P2 land. **Preceded by the P0 trade study below** if unify-on-MKL is chosen.
 - **P4 — threaded assembly (own effort, staged).** (a) scope `elem.update`; (b) de-static kernels;

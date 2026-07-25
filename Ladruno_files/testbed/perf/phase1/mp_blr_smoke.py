@@ -102,7 +102,7 @@ def run(system_args, label):
     return ok, ux, wall
 
 
-base = ["Mumps", "-ICNTL14", 200]
+base = ["Mumps", "-ICNTL14", 200, "-stats"]
 r_full = run(base, "Mumps (full-rank)")
 r_blr = run(base + ["-BLR", 1.0e-9], "Mumps -BLR 1e-9")
 r_blr_loose = run(base + ["-BLR", 1.0e-4], "Mumps -BLR 1e-4 (loose)")
