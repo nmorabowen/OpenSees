@@ -310,3 +310,70 @@ fallback is doing its job.
 **Note for these scripts:** `setup_env.bat` must **not** `setlocal` (it exports the environment to
 its caller), so **delayed expansion `!VAR!` is unavailable** — write these blocks flat with labels,
 never as a parenthesized read-after-write.
+
+---
+
+## 9. MKL bumps its DLL SONAME → a hardcoded copy list ships nothing (ADR-75)
+
+Companion to §8. That one is about the oneAPI **compiler** package moving under
+you; this one is about the **MKL runtime** doing the same thing, and it is worse
+because it produces a *successful-looking build* that fails on the user's machine
+rather than an error on yours.
+
+Intel version-stamps the MKL runtime DLLs and **bumps the stamp across
+releases**. Going 2025.1 → 2026.1:
+
+| base | oneMKL 2025.1 | oneMKL 2026.1 |
+|---|---|---|
+| `mkl_core`, `mkl_intel_thread`, `mkl_def`, `mkl_avx2`, `mkl_avx512`, `mkl_mc3` | `.2.dll` | **`.3.dll`** |
+| `mkl_scalapack_lp64`, `mkl_blacs_intelmpi_lp64` | `.2.dll` | `.2.dll` (unchanged) |
+
+Note the two groups move **independently** — you cannot assume one suffix for
+all of MKL, which is exactly why globbing per base name is the only safe form.
+
+`build.bat` used to mirror these into `dist\bin\` and `dist\openseesmp\` by
+**full filename**, each behind an `if exist` guard. After the upgrade every
+guard missed, so the copy loop **silently copied nothing** and left the
+*previous* version's `.2.dll` files sitting in `dist\`. The shipped package then
+either:
+
+- **fails to load** — `mkl_core.3.dll not found`, because the freshly linked
+  import libraries reference the `.3` SONAME; or
+- **loads the wrong MKL** — the stale `.2` DLLs satisfy an older binary, so you
+  ship something you never tested.
+
+No error, no warning: the `if exist` guard swallowed the whole failure.
+
+**Mitigation** (`build.bat`): mirror by **base name**, globbing `<base>.*.dll`
+via `MKL_RUNTIME_DLLS`, with `del /q dist\...\mkl_*.dll` before copying so a
+bump cannot leave two generations behind. `libiomp5md.dll` gets the same
+treatment — prefer `compiler\latest\bin`, else the newest compiler dir that
+actually has it.
+
+**Rules of thumb:**
+1. Never name an Intel runtime DLL by its stamped filename in a script.
+2. Never guard a **required** copy with a bare `if exist` — that converts a
+   missing dependency into a silent packaging bug. Guard optional things only.
+3. After any MKL upgrade, verify the shipped artifact, not just the build:
+   `dist\bin` and the installer must contain the CPU-dispatch kernels
+   (`mkl_def` / `mkl_avx2` / `mkl_avx512` / `mkl_mc3`). Missing those does not
+   fail the build — MKL just silently falls back to a generic kernel.
+
+### Rollback
+
+Both MKL generations stay on disk. To revert, repoint the symlink at
+`...\Intel\oneAPI\mkl\latest` back to `...\mkl\2025.1` (admin shell) and
+rebuild — the scripts pick up whatever `latest` resolves to.
+
+### A note on measured performance
+
+The 2025.1 → 2026.1 upgrade is **not** justified by a measured speedup. Observed
+cross-session variance on the dev box (~33% at identical settings — UmfPack
+n=20 @ 4 threads measured 8.29 s in one session and 11.00 s in another) exceeds
+every 2025.1-vs-2026.1 delta recorded, so the two versions are indistinguishable
+on the evidence gathered. Treat any single-session A-vs-B MKL comparison here as
+uninformative unless both are benched back-to-back in one session.
+
+One mechanism *was* settled while chasing this: UmfPack speeds up 1.35x from
+1→4 MKL threads, confirming it runs inside threaded MKL BLAS, whereas MKL
+PARDISO uses its own supernodal kernels and is untouched by BLAS-layer work.
