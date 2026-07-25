@@ -1,7 +1,7 @@
 ---
 title: ADR-75 session handoff — sparse-direct solver lane (PARDISO desktop / MUMPS cluster)
 project: Ladruno
-status: handoff — P0/P1/P1c/P1d/P1e/P1f/P2/P2b ALL MERGED to ladruno; Lane 3 OPENED as ADR-75b (policy settled, L3-0 measured + 3 adversarial passes, no threading code); cluster/BLR validation still OPEN
+status: CLOSED for this session — P0/P1/P1c/P1d/P1e/P1f/P1g/P2/P2b + ADR-75b ALL MERGED to ladruno (tip `103d35e`). Desktop solver lane is DONE. Remaining work is cluster-gated or Lane-3; see "What to do next". Pick up from here in a new session.
 owner: nmora
 relates: 75_ladruno_sparse_direct_strategy_adr
 ---
@@ -28,6 +28,9 @@ Everything below is **merged to `ladruno`**. Pick up from "What to do next".
 | [#633](https://github.com/nmorabowen/OpenSees/pull/633) | `b5b7dc1` | **P1e** `-krylov` factorization-preconditioned CGS (`iparm[3]`) — the full-Newton reuse lever (+ adversarial review) |
 | [#635](https://github.com/nmorabowen/OpenSees/pull/635) | `1f5cde8` | **P1e follow-up** softening/limit-point sweep — CGS never falls back; post-peak branch caveat |
 | [#636](https://github.com/nmorabowen/OpenSees/pull/636) | `580cfb5` | **P1f** `addA` binary search (1.09-1.10x) + **threaded PARDISO is NOT byte-reproducible** (corrects P1) + apeGmsh recipe |
+| [#637](https://github.com/nmorabowen/OpenSees/pull/637) | `24a0535` | docs — record P1e-followup + P1f merge commits |
+| [#632](https://github.com/nmorabowen/OpenSees/pull/632) | `8f3d1a4` | **ADR-75b — Lane 3 OPENED**: determinism CI policy + scatter remedy SETTLED, stage L3-0 measured, **3 adversarial passes** (the 3rd a 64-agent workflow that reversed the staging recommendation) |
+| [#638](https://github.com/nmorabowen/OpenSees/pull/638) | `103d35e` | **P1g** UmfPack `addA` binary search — the other half of P1f's finding |
 
 ## Headline results (all measured, not estimated)
 
@@ -77,6 +80,52 @@ Everything below is **merged to `ladruno`**. Pick up from "What to do next".
   `Ladruno_scripts/setup_env.bat` + `build.bat`; written up as **`BUILD_GOTCHAS.md §8`**. Serial builds
   are unaffected, which is why it hides until an MP build.
 
+## ⇢ START HERE (new session, 2026-07-25 close-out)
+
+**Everything below the line is merged.** `ladruno` tip = `103d35e`. The **desktop solver lane is
+DONE** — `system Pardiso` with factorization reuse, symmetric half-storage (`-matrixType 0|1|2`),
+`-krylov` CGS reuse, `-stats`, and now a binary-search `addA` in both desktop SOEs. Nothing in
+ADR-75's P-series is outstanding.
+
+**The four things left, and what gates each:**
+
+| # | Item | Gated on | Effort |
+|---|---|---|---|
+| **1** | **Cluster BLR validation** — production deck, `-stats`, BLR on/off, compare `INFOG(21)` | **the cluster being up** (it was down all session) | ~10 min, no code |
+| **2** | **MUMPS `-matrixType 2`** on the cluster — same symmetric lever P1d measured at −41.8% peak memory on the desktop; untouched on MUMPS, strong prior | the cluster | small |
+| **3** | **Rebuild the SHARED checkout** so `system Pardiso` works outside a worktree | **owner decision** — an agent must not switch the shared checkout's branch under the other ~7 worktrees ([[ladruno-build-in-worktree-not-shared-checkout]]) | one build |
+| **4** | **Lane 3 (ADR-75b)** — threaded element assembly | see below; **genuinely open, not merely unstarted** | large |
+
+**On item 4, read `75b_ladruno_threaded_assembly_adr.md` §7 before planning anything.** Its own
+measurement now argues *against* starting where the first draft said to:
+- **Work removal outranks threading.** L3-0b(i) `-commitSolveState` on explicit decks is **−29.6%
+  wall, bit-identical, shipped, zero code** — and enabling it drops Lane D's loop-A fraction from
+  55.7% to **38.95%, i.e. FAILING the >40% gate**, while loop C rises to 46.3%. L3-0b(ii), the `addA`
+  search, is now **shipped on both solvers** (P1f + P1g) and bought 1.03–1.10×.
+- **So no lane currently passes the gate for loop A on a correctly-configured, fork-owned deck.**
+  L3-1 is **de-authorized as the first threading stage**.
+- **The prerequisites are heavier than first assumed** (§5.4, from the 64-agent review): the
+  re-entrancy inventory was directory-scoped and missed `FE_Element::theMatrices` (a class-wide pool
+  handed straight to `addA` — a **100% collision** no element allowlist can fix), `LadrunoBrick`'s 16
+  `update()` statics, the **shared mutable loop iterator** (the loop is not even index-addressable),
+  `Node`'s lazily-allocating trial *getters*, `SRC/coordTransformation/`, and the **profiler
+  instrument itself**.
+- **Honest question to answer first (§11 q8):** is Lane 3 still worth it after the cheap work-removal
+  landed? Re-measure the gate *after* L3-0b, not before.
+
+**Method rules this session paid for — apply them:**
+1. **"Deterministic" is a claim about a DISTRIBUTION.** Threaded PARDISO gives 2 distinct answers over
+   10 runs at 4 threads (1 thread: 10/10 identical). The original "bit-identical at every thread
+   count" came from n=1 per thread count. **Pin `MKL_NUM_THREADS=1` for any byte-identical gate.**
+2. **Check an invariant where you DEPEND on it**, not where it happens to be established today.
+3. **Prefer running the omitted configuration to re-reading your argument.** Every real defect found
+   across three adversarial passes was a *confounded comparison* or a *selectively scoped statistic* —
+   never a logic error.
+4. **A phase baseline in a dated report may have been optimized away by a later ADR.** This bit twice
+   (ADR-67 P-NEW-1, then P-NEW-2 two bullets away in the same file).
+
+---
+
 ## What to do next (ranked)
 
 1. **Cluster validation of BLR — the open question, ~10 min, NO code needed.** Run a production deck
@@ -120,10 +169,13 @@ Everything below is **merged to `ladruno`**. Pick up from "What to do next".
      correctly-configured, fork-owned deck.**
    - **NEXT = L3-0b, work removal, before any threading** (ADR-40's standing order, which the ADR had
      inverted): (i) **`-commitSolveState` on explicit decks** — shipped, bit-identical, −29.6%;
-     (ii) ~~replace `addA`'s O(idSize² × rowlen) search~~ ✅ **SHIPPED as P1f
-     ([#636](https://github.com/nmorabowen/OpenSees/pull/636)), 1.09-1.10× — one day after L3-0 named
-     it, and it needed no re-entrancy audit, no determinism policy and no OpenMP build. The same fix
-     is still open in `UmfpackGenLinSOE::addA` (identical frozen-CSC scan).**
+     (ii) ~~replace `addA`'s O(idSize² × rowlen) search~~ ✅ **FULLY SHIPPED, both solvers:** PARDISO
+     as P1f ([#636](https://github.com/nmorabowen/OpenSees/pull/636), 1.09-1.10×) and UmfPack as P1g
+     ([#638](https://github.com/nmorabowen/OpenSees/pull/638), 1.03-1.06×). L3-0 named it and it
+     shipped within a day, needing no re-entrancy audit, no determinism policy and no OpenMP build.
+     **Note the asymmetry, it is the useful part:** the UmfPack win is *smaller and shrinks with
+     size* where PARDISO's grows — `addA` pays in **inverse proportion to how expensive the solve
+     already is**, and UmfPack scales ~O(N²). Nothing left on this item.
    - **⚠ P1f also corrected a claim ADR-75b's determinism policy rested on:** threaded PARDISO is
      **not byte-reproducible run-to-run** (4T: 2 distinct answers over 10 runs of one binary, ~1 ULP;
      1T: 10/10 identical). So the "existing byte-identical oracles gate it unchanged" story holds
@@ -141,7 +193,8 @@ Everything below is **merged to `ladruno`**. Pick up from "What to do next".
    - **Also corrected:** the taxonomy had 3 loops; there are **five** — the transient path assembles
      in `TransientIntegrator.cpp`, and both paths carry **DOF_Group `addA`/`addB` loops** carrying the
      nodal mass and nodal loads, so a gather keyed on element matrices would silently drop them.
-4. **Rebuild the shared checkout** so `system Pardiso` is available outside this worktree.
+4. **Rebuild the shared checkout** so `system Pardiso` (+ `-krylov`, `-matrixType`, P1f/P1g `addA`)
+   is available outside a worktree. **Now fully unblocked — every ADR-75 PR is merged.**
    **Owner: nmora, once P1d merges** — decided 2026-07-25 rather than have an agent switch the shared
    checkout's branch under the other 6 worktrees. One build from a clean `ladruno` gets P1b + P1d.
 5. ~~**Version-control the perf skill.**~~ ✅ **DONE 2026-07-25 — but NOT in the fork.** The fork's
