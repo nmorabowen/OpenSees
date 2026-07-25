@@ -38,9 +38,11 @@ Everything below is **merged to `ladruno`**. Pick up from "What to do next".
 - **4 threads is the practical default** (1→8 only buys 1.58×; memory-bandwidth-bound).
 
 **Symmetric PARDISO (`-matrixType 2`) — the memory lever BLR was supposed to be.** (P1d, new)
-- **1.35× faster than unsymmetric PARDISO** @4 threads (1.96× vs UmfPack), 1.26× @1 thread.
-- **Peak memory −41.8%** (105.4 → 61.3 MB), stored nnz −49.3%, factor nnz −47.3%. `-matrixType 1`
-  (SPD) is −46.5% peak but **fails on any indefinite tangent** — prefer 2.
+- **1.94-1.96x UmfPack** @4 threads (1.62-1.63x @1 thread), reproducible to +-1% over two sweeps.
+  Versus *unsymmetric PARDISO* it is **~1.25x** (1.24-1.35x): that ratio is noisier because the
+  unsym PARDISO row is the least reproducible measurement in the set, not the symmetric one.
+- **Peak memory -41.8%** (105.60 -> 61.48 MB), stored nnz -49.3%, factor nnz -47.3%. `-matrixType 1`
+  (SPD) is -46.4% peak but **fails on any indefinite tangent** - prefer 2.
 - **Exact**, not approximate: bit-identical answers, so unlike BLR it is legal on oracle paths.
 - **Refutes the `SparseSYM`-based worry** that symmetric ≠ better — that was SparseSYM's
   implementation, not symmetric storage.
@@ -78,8 +80,8 @@ Everything below is **merged to `ladruno`**. Pick up from "What to do next".
    accuracy — not yet exposed by the fork; small addition next to `-BLR`).
 2. ~~**P1b — symmetric PARDISO (`mtype ±2`)** (briefed in [[_adr75_p1b_brief]]).~~
    ✅ **DONE 2026-07-25, shipped as P1d ([#630](https://github.com/nmorabowen/OpenSees/pull/630))** —
-   `phase1/RESULTS_p1d_symmetric.md`. Won on **both** axes: 1.35× vs unsymmetric PARDISO @4T and
-   **−41.8% peak memory**, bit-identical answers. The brief's "must be measured, not assumed" caution
+   `phase1/RESULTS_p1d_symmetric.md`. Won on **both** axes: 1.94-1.96x vs UmfPack @4T (~1.25x vs
+   unsymmetric PARDISO) and **-41.8% peak memory**, bit-identical answers. The brief's "must be measured, not assumed" caution
    was right to insist on the measurement and wrong about the direction — `SparseSYM`'s 2.10×
    slowdown was *its* implementation quality, not a property of symmetric storage.
    **Follow-on, now carrying a strong prior: exercise MUMPS `-matrixType 2` on the cluster** — same

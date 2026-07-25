@@ -33,6 +33,7 @@
 #include <VertexIter.h>
 #include <math.h>
 #include <stdlib.h>
+#include <new>            // Ladruno ADR-75 P1d: std::nothrow (see setSize)
 
 #include <Channel.h>
 #include <FEM_ObjectBroker.h>
@@ -42,7 +43,7 @@ PARDISOGenLinSOE::PARDISOGenLinSOE(PARDISOGenLinSolver &the_Solver)
 	size(0), nnz(0), A(0), B(0), X(0), colA(0), rowStartA(0),
 	vectX(0), vectB(0),
 	Asize(0), Bsize(0),
-	factored(false), matType(0)
+	factored(false), matType(0), asymWarned(0), asymBudget(0)
 {
 	the_Solver.setLinearSOE(*this);
 }
@@ -57,7 +58,7 @@ PARDISOGenLinSOE::PARDISOGenLinSOE(PARDISOGenLinSolver &the_Solver, int _matType
 	size(0), nnz(0), A(0), B(0), X(0), colA(0), rowStartA(0),
 	vectX(0), vectB(0),
 	Asize(0), Bsize(0),
-	factored(false), matType(_matType)
+	factored(false), matType(_matType), asymWarned(0), asymBudget(0)
 {
 	if (matType < 0 || matType > 2) {
 		opserr << "WARNING PARDISOGenLinSOE - unknown matrixType (" << matType
@@ -122,21 +123,46 @@ PARDISOGenLinSOE::setSize(Graph &theGraph)
 
 	nnz = newNNZ;
 
+	// Ladruno ADR-75 P1d: arm the addA symmetry check for the first few TANGENT
+	// ASSEMBLIES of this pattern (counted down in zeroA, which runs once per
+	// formTangent). Budgeting in passes rather than in addA calls is what makes
+	// the cost independent of model size and of how many Newton iterations the
+	// run takes — 3 assemblies, not 3 assemblies' worth of a 45-assembly run.
+	if (matType != 0 && asymWarned == 0)
+		asymBudget = 3;
+
+	// Ladruno ADR-75 P1d (adversarial review): this OOM path was DEAD CODE.
+	// Plain `new` THROWS; it never returns 0, so `if (A == 0 ...)` could not
+	// fire, and nothing in PythonModule.cpp / tclMain.cpp catches std::bad_alloc
+	// — an out-of-memory setSize terminated the process with no OpenSees
+	// diagnostic at all. Worse, `Asize = newNNZ` sat OUTSIDE the failure branch
+	// and overwrote the `Asize = 0` recovery, so the zeroing loop below would
+	// have walked a null pointer had the branch ever been reachable. And the
+	// `delete[]` ran BEFORE the allocation, leaving dangling pointers on throw.
+	//
+	// This matters here specifically: P1c's headline is "UmfPack OOM at 86,490
+	// DOF" and this whole lane exists to go past that wall — so the first model
+	// that does not fit is exactly the case that must REPORT rather than vanish.
 	if (newNNZ > Asize) { // we have to get more space for A and colA
 		if (A != 0)
 			delete[] A;
 		if (colA != 0)
 			delete[] colA;
+		A = 0; colA = 0;              // never leave these dangling
 
-		A = new double[newNNZ];
-		colA = new int[newNNZ];
+		A = new (std::nothrow) double[newNNZ];
+		colA = new (std::nothrow) int[newNNZ];
 
 		if (A == 0 || colA == 0) {
-			opserr << "WARNING PARDISOGenLinSOE::PARDISOGenLinSOE :";
+			opserr << "WARNING PARDISOGenLinSOE::setSize :";
 			opserr << " ran out of memory for A and colA with nnz = ";
-			opserr << newNNZ << " \n";
+			opserr << newNNZ << " ("
+			       << (newNNZ * (sizeof(double) + sizeof(int))) / (1024.0 * 1024.0)
+			       << " MB requested)\n";
+			if (A != 0) { delete[] A; A = 0; }
+			if (colA != 0) { delete[] colA; colA = 0; }
 			size = 0; Asize = 0; nnz = 0;
-			result = -1;
+			return -1;            // do NOT fall through into the zeroing loop
 		}
 
 		Asize = newNNZ;
@@ -154,18 +180,19 @@ PARDISOGenLinSOE::setSize(Graph &theGraph)
 		if (B != 0) delete[] B;
 		if (X != 0) delete[] X;
 		if (rowStartA != 0) delete[] rowStartA;
+		B = 0; X = 0; rowStartA = 0;   // same dangling-on-throw fix as above
 
 		// create the new
-		B = new double[size];
-		X = new double[size];
-		rowStartA = new int[size + 1];
+		B = new (std::nothrow) double[size];
+		X = new (std::nothrow) double[size];
+		rowStartA = new (std::nothrow) int[size + 1];
 
 		if (B == 0 || X == 0 || rowStartA == 0) {
-			opserr << "WARNING PARDISOGenLinSOE::PARDISOGenLinSOE :";
+			opserr << "WARNING PARDISOGenLinSOE::setSize :";
 			opserr << " ran out of memory for vectors (size) (";
 			opserr << size << ") \n";
 			size = 0; Bsize = 0;
-			result = -1;
+			return -1;             // was: fall through into a null deref
 		}
 		else
 			Bsize = size;
@@ -361,6 +388,53 @@ PARDISOGenLinSOE::addA(const Matrix &m, const ID &id, double fact)
 	// a duplicated loop nest (MumpsSOE duplicates; there is no reason to).
 	const bool halfStore = (matType != 0);
 
+	// Ladruno ADR-75 P1d (adversarial review): DETECT the asymmetry we are about
+	// to discard. Half-storage on a genuinely unsymmetric tangent produces a
+	// converged, plausible, WRONG answer with the upper triangle reflected —
+	// the single worst failure mode in this feature, and previously only
+	// documented, not caught. The check is nearly free: the lower-triangle
+	// entries are visited anyway (to be skipped), and m(j,i) is the mirror
+	// already in cache. Reported ONCE per SOE, not per element.
+	// BUDGETED (in assembly passes — see setSize/zeroA), and fused into a single
+	// lower-triangle pass. This is a diagnostic, not physics: on a correctly
+	// symmetric model `asymWarned` never latches, so without a budget the check
+	// would tax the assembly loop of a PERFORMANCE feature for the entire
+	// analysis.
+	//
+	// LIMITATION, stated rather than papered over: it samples the first few
+	// tangent assemblies. An element whose tangent only turns unsymmetric LATER
+	// — contact closing at step 50, a non-associated flow rule after first
+	// yield — will NOT be caught. It is a first-pass misconfiguration detector,
+	// not a guarantee, and `-matrixType 2` still requires the author to know
+	// their tangent is symmetric.
+	if (halfStore && asymWarned == 0 && asymBudget > 0 &&
+	    idSize == m.noRows() && idSize == m.noCols()) {
+		double worstDev = 0.0, scale = 0.0;
+		for (int i = 0; i < idSize; i++)
+			for (int j = 0; j < i; j++) {
+				double u = m(i, j), v = m(j, i);
+				double au = u < 0.0 ? -u : u;
+				double av = v < 0.0 ? -v : v;
+				if (au > scale) scale = au;
+				if (av > scale) scale = av;
+				double d = u - v;
+				if (d < 0.0) d = -d;
+				if (d > worstDev) worstDev = d;
+			}
+		if (scale > 0.0 && worstDev > 1.0e-8 * scale) {
+			asymWarned = 1;
+			opserr << "WARNING PARDISOGenLinSOE: an assembled element matrix is "
+			          "UNSYMMETRIC (max deviation " << worstDev << " vs scale "
+			       << scale << ") but `system Pardiso -matrixType " << matType
+			       << "` stores only the upper triangle.\n"
+			          "     The lower half is being DISCARDED, so this run solves "
+			          "the REFLECTED system and may converge to a WRONG answer.\n"
+			          "     Use the default `system Pardiso` (-matrixType 0) for "
+			          "contact, non-associated flow, follower loads, corotational "
+			          "transforms or LadrunoUP. Reported once.\n";
+		}
+	}
+
 	if (fact == 1.0) { // do not need to multiply
 		for (int i = 0; i < idSize; i++) {
 			int row = id(i);
@@ -484,6 +558,13 @@ PARDISOGenLinSOE::zeroA(void)
 		*Aptr++ = 0;
 
 	factored = false;
+
+	// Ladruno ADR-75 P1d: zeroA runs once per tangent assembly, which makes it
+	// the only place this SOE can see a pass boundary. Spend one unit of the
+	// addA symmetry-check budget here so the check costs a FIXED number of
+	// assemblies regardless of model size or Newton-iteration count.
+	if (asymBudget > 0)
+		asymBudget--;
 }
 
 void

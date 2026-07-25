@@ -6,10 +6,10 @@ Lane-B solver bench | REPEATS=5 NSTEPS=15 MKL_NUM_THREADS=1
   probe PardisoSPD: available
 
 solver       median_s  vs UmfPack  tip_ux (rel err)
-UmfPack       18.6426       1.00x  2.271760382e+00 (0.0e+00)
-Pardiso       14.4015       0.77x  2.271760382e+00 (0.0e+00)
-PardisoSym    11.4641       0.61x  2.271760382e+00 (0.0e+00)
-PardisoSPD    10.3004       0.55x  2.271760382e+00 (0.0e+00)
+UmfPack       17.7098       1.00x  2.271760382e+00 (0.0e+00)
+Pardiso       13.5920       0.77x  2.271760382e+00 (0.0e+00)
+PardisoSym    10.9578       0.62x  2.271760382e+00 (0.0e+00)
+PardisoSPD     9.8248       0.55x  2.271760382e+00 (0.0e+00)
 
 wrote C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\adr-75-session-handoff-29effa\Ladruno_files\testbed\perf\phase1\laneB_solver_baseline.json
 NOTE: Pardiso/Mumps unavailable = expected (unwired in serial build; ADR-75). Re-run after P1/P2 to fill those rows + add the thread sweep.

@@ -49,9 +49,15 @@ class PARDISOGenLinSolver;
 //
 // WARNING (documented, deliberate): with matType != 0 only the col >= row half
 // of each element matrix is read. If the assembled tangent is genuinely
-// unsymmetric (contact, non-associated flow, follower loads) this SILENTLY
-// solves with the upper triangle reflected — it does not average and it does
-// not detect the asymmetry. That is why the default stays 0.
+// unsymmetric (contact, non-associated flow, follower loads, corotational
+// transforms, LadrunoUP) this solves with the upper triangle reflected — it
+// does not average. That is why the default stays 0.
+//
+// It DOES now detect it, though (ADR-75 P1d, adversarial review): addA already
+// visits the col < row entries in order to discard them, so comparing each
+// against its mirror costs one subtraction on data already in cache and turns
+// the worst failure mode this feature has — a converged, plausible, WRONG
+// answer — into a loud warning. See addA().
 
 class PARDISOGenLinSOE : public LinearSOE
 {
@@ -94,6 +100,8 @@ class PARDISOGenLinSOE : public LinearSOE
     int Asize, Bsize;    // size of the 1d array holding A
     bool factored;
     int matType;         // Ladruno ADR-75 P1d: 0 unsym / 1 SPD / 2 sym-general
+    int asymWarned;      // Ladruno ADR-75 P1d: half-store asymmetry reported once
+    int asymBudget;      // ...and how many more element matrices to check
 };
 
 

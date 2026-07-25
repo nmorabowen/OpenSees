@@ -1,7 +1,16 @@
 # ADR-75 P1d — symmetric PARDISO (`-matrixType`): MEASURED
 
 **Verdict: symmetric wins on both axes, and it is the memory lever BLR was supposed to be.**
-1.35× faster than unsymmetric PARDISO and **−42% peak memory**, exactly — not approximately.
+**1.94–1.96× UmfPack** at 4 threads and **−42% peak memory**, exactly — not approximately.
+
+> **Correction (2026-07-25, second run).** The first draft of this file headlined
+> **1.35× vs unsymmetric PARDISO**. A second full sweep puts that at **1.24×**. The
+> symmetric rows are reproducible; the *unsymmetric PARDISO* row is the volatile one (it alone
+> improved 14.6% between runs while every other row moved ~7%). Use **~1.25× vs unsymmetric
+> PARDISO** — reproduced 3 of 4 thread-count/run combinations — and treat 1.35× as the top of the
+> range, not the figure. **Versus UmfPack the symmetric result is stable to ±1%** (1.94–1.96× @4T,
+> 1.62–1.63× @1T), so that is the number to quote. The memory result is a deterministic counter,
+> not a timing, and is unaffected.
 
 Date: 2026-07-25 · worktree `adr-75-session-handoff-29effa` · same binary for every row.
 
@@ -17,22 +26,37 @@ memory by `p1d_memory.py`; Tcl path by `p1d_tcl_smoke.tcl`.
 
 ## 1. Time
 
-| MKL threads | solver | median s | vs UmfPack | **vs unsym PARDISO** | tip u_x rel err |
-|---|---|---|---|---|---|
-| 1 | UmfPack | 18.6426 | 1.00× | — | 0.0 |
-| 1 | Pardiso (unsym) | 14.4015 | 1.29× | 1.00× | 0.0 |
-| 1 | Pardiso `-matrixType 2` | 11.4641 | 1.63× | **1.26×** | 0.0 |
-| 1 | Pardiso `-matrixType 1` | 10.3004 | 1.81× | **1.40×** | 0.0 |
-| 4 | UmfPack | 17.6229 | 1.00× | — | 0.0 |
-| 4 | Pardiso (unsym) | 12.1545 | 1.45× | 1.00× | 2.0e-16 |
-| 4 | Pardiso `-matrixType 2` | **8.9878** | **1.96×** | **1.35×** | 0.0 |
-| 4 | Pardiso `-matrixType 1` | 9.0499 | 1.95× | 1.34× | 0.0 |
+Two independent full sweeps. **Run A** = the P1d code as first written. **Run B** = after the
+adversarial-review fixes (which added an `addA` symmetry check and a perturbed-pivot read), so B also
+answers "did the new diagnostics cost anything" — they did not.
 
-**Read the "vs unsym PARDISO" column, not "vs UmfPack".** The UmfPack anchor here (17.6 s @4T) is
-*not* the locked P1 baseline (22.711 s) — that number came from a different session on a differently
-loaded machine, and P1's own PARDISO-vs-UmfPack ratio was 1.71× where this run shows 1.45×. Only the
-**interleaved within-run** comparison (same process, same session, A/B/A/B rounds) is trustworthy at
-this precision. The cross-session UmfPack numbers should be treated as ±20%.
+| MKL threads | solver | median s (A) | median s (B) | vs UmfPack (A / B) | vs unsym PARDISO (A / B) |
+|---|---|---|---|---|---|
+| 1 | UmfPack | 18.6426 | 17.7098 | 1.00× | — |
+| 1 | Pardiso (unsym) | 14.4015 | 13.5920 | 1.29× / 1.30× | 1.00× |
+| 1 | Pardiso `-matrixType 2` | 11.4641 | 10.9578 | **1.63× / 1.62×** | 1.26× / 1.24× |
+| 1 | Pardiso `-matrixType 1` | 10.3004 | 9.8248 | 1.81× / 1.80× | 1.40× / 1.38× |
+| 4 | UmfPack | 17.6229 | 16.2942 | 1.00× | — |
+| 4 | Pardiso (unsym) | 12.1545 | 10.3833 | 1.45× / 1.57× | 1.00× |
+| 4 | Pardiso `-matrixType 2` | 8.9878 | 8.3946 | **1.96× / 1.94×** | 1.35× / 1.24× |
+| 4 | Pardiso `-matrixType 1` | 9.0499 | 8.3632 | 1.95× / 1.95× | 1.34× / 1.24× |
+
+Tip displacement rel err vs UmfPack is **0.0 in every row of both runs**, except a single 2.0e-16
+(one ULP) on run A's unsymmetric 4-thread row.
+
+**Which column to quote — this reversed on the second run.** Run A's draft said to read
+"vs unsym PARDISO" because it is an interleaved within-run comparison. Two runs show that reasoning
+was incomplete: the **unsymmetric PARDISO row is itself the least reproducible measurement in the
+set** (10.38 vs 12.15 s @4T, a 14.6% swing, while every other row moved ~7%), so a ratio built on it
+inherits that noise. The `-matrixType 2`-vs-UmfPack ratio is stable to **±1%** across both runs at
+both thread counts. So:
+
+- **Quote 1.94–1.96× vs UmfPack @4T** (and 1.62–1.63× @1T). Reproducible.
+- **Quote ~1.25× vs unsymmetric PARDISO** — the value reproduced in 3 of 4 run/thread combinations.
+  1.35× is the top of the range, not the figure.
+
+Neither UmfPack anchor here is the locked P1 baseline (22.711 s); that came from a different session
+on a differently loaded machine. Cross-session absolute times are ±20%.
 
 ## 2. Memory — the point of the exercise
 
@@ -41,11 +65,20 @@ this precision. The cross-session UmfPack numbers should be treated as ±20%.
 
 | | nnz(A) stored | nnz in factors | **TOTAL PEAK** |
 |---|---|---|---|
-| unsymmetric (mtype 11) | 818,892 | 8,464,734 | **105.43 MB** |
-| symmetric (mtype −2) | 415,206 (**−49.3%**) | 4,459,964 (**−47.3%**) | **61.31 MB (−41.8%)** |
-| SPD (mtype 2) | 415,206 | 4,459,964 | **56.42 MB (−46.5%)** |
+| unsymmetric (mtype 11) | 818,892 | 8,464,734 | **105.60 MB** |
+| symmetric (mtype −2) | 415,206 (**−49.3%**) | 4,459,964 (**−47.3%**) | **61.48 MB (−41.8%)** |
+| SPD (mtype 2) | 415,206 | 4,459,964 | **56.60 MB (−46.4%)** |
 
 The stored-nnz figure is exact by construction: `(818892 − 11520)/2 + 11520 = 415206`.
+
+> **Correction (adversarial review).** The first draft read these counters immediately after phase 22
+> and reported 105.43 / 61.31 / 56.42 MB. Intel documents `iparm[16]` as the peak over numerical
+> factorization **and solution**, so reading it before the first phase-33 solve gives a LOWER BOUND —
+> wrong for a figure billed as "the number that decides whether a model fits". Now read after the
+> first solve. The correction is ~0.17 MB and the **−41.8% ratio is unchanged**, because both
+> configurations were mis-measured identically; the absolute numbers are what needed fixing.
+
+Unlike the timings, these are deterministic counters — they reproduce exactly, so no range applies.
 
 **Contrast with P2b's BLR result — this is the important part.** BLR shrank the *stored factors*
 21.8% but moved *peak* memory only 4.6%, because peak is dominated by the active frontal/working
@@ -80,10 +113,41 @@ Despite winning on both axes here, `-matrixType 0` remains the default:
 3. The win is one explicit token away, and `-stats` now makes it self-evidently worth taking.
 
 **Recommendation to model authors:** if your tangent is symmetric (elastic, J2/associated plasticity,
-no contact), use `-matrixType 2`. Prefer **2 over 1**: at 4 threads they are within 0.7% on time,
-`2` is only 8% worse on peak memory, and `1` (SPD, Cholesky, no pivoting) **fails outright on an
+no contact), use `-matrixType 2`. Prefer **2 over 1**: at 4 threads they are within 0.4% on time,
+`2` is only ~8% worse on peak memory, and `1` (SPD, Cholesky, no pivoting) **fails outright on an
 indefinite tangent** — which any softening or buckling model eventually is. The `-4` zero-pivot error
-now says so explicitly. `1`'s single-thread edge (1.40× vs 1.26×) is real but not worth the fragility.
+now says so explicitly. `1`'s single-thread edge (1.38–1.40× vs 1.24–1.26×) is real but not worth the
+fragility.
+
+**It now warns if you get this wrong.** `addA` compares each discarded lower-triangle entry against
+its mirror during the first few tangent assemblies and reports once if they differ. That converts the
+worst failure mode here — a converged, plausible, wrong answer — into a loud message. It is a
+first-pass detector, not a guarantee: a tangent that only becomes unsymmetric later (contact closing
+at step 50, non-associated flow after first yield) is outside its window.
+
+## 4b. What the adversarial review changed
+
+A scoped adversarial review ran against the first implementation. It **cleared the two areas I was
+least sure of** — it re-derived the graph semantics (`AnalysisModel::getDOFGraph` → `addEdgeFast`;
+`Vertex::addEdge` drops self-edges; `ID::insert` keeps adjacency sorted and deduplicated, so the
+off-diagonal count is always even) and then brute-forced the fill loop over 400 random graphs × 3
+matTypes, finding `lastLoc == nnz` exactly every time. It also killed the `getTag() != a` worry:
+`Graph::getVertexPtr` is a lookup **by tag**, so `vertexTag == a` inside that loop is a tautology.
+
+What it found instead was concentrated in *undetected wrongness*, and all of it is now fixed:
+
+| # | Finding | Status |
+|---|---|---|
+| 1 | Perturbed pivots (`iparm[13]`) never read — mtype ±2 runs eps 1e-8, five orders looser than the unsymmetric 1e-13, so a near-singular tangent returns `error == 0` and a solve to a *perturbed* matrix | warns per factorization + in `-stats` |
+| 2 | The asymmetry hazard was documented but not detected, though the data is already in hand | detected in `addA` (§4) |
+| 3 | The in-flight "row starts at the diagonal" check is false for `matType 0` | already presence-based, not position-based |
+| 4 | A bounds *clamp* would turn overflow into silently dropped entries; `lastLoc != nnz` is exact and stronger | already `return -1` + the exact equality |
+| 5 | The OOM path was dead code (throwing `new`), `Asize` clobbered the recovery, `delete[]` before allocation left danglers | `std::nothrow` + `return -1` |
+| 6 | The Tcl parse loop silently swallowed unknown options and a valueless `-matrixType` — the same class of failure this feature exists to kill | both warn |
+| 7 | The CMake comment's "mixing MKL layers" rationale was a non-sequitur; SP/MP already link the PARDISO objects. And `system Pardiso` there fell through to a **stale global `theSOE`** | rationale corrected; explicit refusal added |
+| 8 | `-stats` read one phase too early | fixed (§2) |
+| 9 | The `iparm[10]/[12]` comment misstated Intel's position — Intel *supports* scaling+matching for mtype −2 and recommends it for saddle-point systems | comment corrected; no code change |
+| 10 | `n <= 0` guard, uninitialized `idum`/`ddum`, `setLinearSOE` not resetting per-SOE state, and a dead second symmetric implementation in the same directory | all fixed; the dead pair is now a `LEDGER_quirks` entry |
 
 ## 5. Reproduce
 

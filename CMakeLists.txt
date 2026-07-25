@@ -974,10 +974,20 @@ target_link_libraries(OpenSees
 
 # Ladruno ADR-75 P1d: `system Pardiso` in the TCL chain (SRC/tcl/commands.cpp,
 # which is compiled straight into this exe -- it is NOT part of a shared lib).
-# Deliberately applied to the SERIAL exe only: OpenSeesSP/MP compile the same
-# commands.cpp but link the SEQUENTIAL MKL layer (see the PARDISO_MKL_LIBRARIES
-# note above), and mixing the threaded and sequential layers in one process is
-# unsupported by MKL. Cluster runs use `system Mumps`.
+#
+# SERIAL exe only. CORRECTED RATIONALE (adversarial review): an earlier version
+# of this comment said SP/MP are excluded because "mixing the threaded and
+# sequential MKL layers in one process is unsupported". That is a non-sequitur
+# -- OPS_InterpPyCmds is already compiled WITH ${PARDISO_FLAG} and linked into
+# OpenSeesSP/MP, so those binaries already contain the PARDISO SOE/solver
+# objects, each resolving against exactly one MKL layer. Nothing is mixed.
+#
+# The real reasons are: (1) SP/MP link the SEQUENTIAL MKL layer, so PARDISO's
+# entire value -- shared-memory threading -- is absent there; and (2) a serial
+# CSR SOE has no defined meaning against a PartitionedDomain, where the solve
+# must be distributed. Cluster runs use `system Mumps`. commands.cpp carries an
+# explicit #else that REFUSES `system Pardiso` in those builds rather than
+# letting it fall through to a stale global SOE.
 if(PARDISO_FLAG)
     target_compile_definitions(OpenSees PRIVATE ${PARDISO_FLAG})
     target_include_directories(OpenSees PRIVATE

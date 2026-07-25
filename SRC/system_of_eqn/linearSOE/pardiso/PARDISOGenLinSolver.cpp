@@ -124,8 +124,19 @@ PARDISOGenLinSolver::solve(void)
 	double *Xptr = theSOE->X;
 	double *Bptr = theSOE->B;
 
+	// Ladruno ADR-75 P1d (adversarial review): a size-0 SOE (a fully constrained
+	// model, or solve() reached before a successful setSize) would otherwise
+	// drive phase 11 with n=0 and NULL ia/ja/a.
+	if (n <= 0 || ia == 0 || ja == 0 || a == 0) {
+		opserr << "WARNING PARDISOGenLinSolver::solve() - the SOE has no "
+		          "equations (n=" << n << "); nothing to factor\n";
+		return -1;
+	}
+
 	int maxfct = 1, mnum = 1, msglvl = 0, nrhs = 1, error = 0;
-	double ddum; int idum;
+	// Initialized, not just declared: they are passed to PARDISO as the unused
+	// perm/rhs dummies, and MSVC /RTCu traps on reading an uninitialized local.
+	double ddum = 0.0; int idum = 0;
 
 	// ---- symbolic: ONCE per sparsity pattern (Ladruno ADR-75 P1) ----------
 	// `init == false` is part of the guard deliberately (adversarial review):
@@ -162,16 +173,24 @@ PARDISOGenLinSolver::solve(void)
 		iparm[5]  =  0;  /* write the solution into x, leave b intact */
 		iparm[7]  =  2;  /* max steps of iterative refinement */
 		/* Pivoting/scaling differ by mtype — these are Intel's documented
-		   per-mtype recommendations, not a shared default:
+		   per-mtype DEFAULTS, not a shared default:
 		     unsymmetric (11): eps 1e-13 + MPS scaling + weighted matching,
 		                       which is what keeps badly conditioned unsymmetric
 		                       tangents factorizable;
-		     symmetric (±2):   eps 1e-8 with Bunch-Kaufman 1x1/2x2 pivoting.
-		                       Scaling and matching are OFF because MKL's
-		                       symmetric path applies them as an UNSYMMETRIC
-		                       permutation — turning them on for ±2 is what
-		                       produces the classic "symmetric PARDISO returns
-		                       garbage" reports. */
+		     symmetric (±2):   eps 1e-8 with Bunch-Kaufman 1x1/2x2 pivoting,
+		                       scaling and matching OFF.
+		   CORRECTION (adversarial review): an earlier version of this comment
+		   claimed MKL applies scaling/matching as an UNSYMMETRIC permutation for
+		   ±2 and that enabling them is the classic "symmetric PARDISO returns
+		   garbage" cause. That is NOT Intel's position — Intel explicitly
+		   supports iparm[10]=1 + iparm[12]=1 for mtype -2 and RECOMMENDS it for
+		   highly indefinite symmetric systems, saddle-point structures in
+		   particular (`constraints Lagrange` produces exactly that). The values
+		   below are still the right conservative default, but the reason is
+		   "Intel's documented default", not "the alternative is broken". Since
+		   iparm is hardcoded and mtype is deliberately un-settable, there is
+		   currently no way to opt into Intel's own mitigation for the model
+		   class that most needs it — a known gap, not a defect. */
 		iparm[9]  = symmetric ?  8 : 13;
 		iparm[10] = symmetric ?  0 :  1;
 		iparm[12] = symmetric ?  0 :  1;
@@ -216,34 +235,29 @@ PARDISOGenLinSolver::solve(void)
 		}
 		theSOE->factored = true;
 
-		// ---- Ladruno ADR-75 P1d: `-stats`, ONCE per sparsity pattern -------
-		// The counters are pattern-determined, so reprinting them for every
-		// Newton iteration would be pure noise. Intel's contract:
-		//   iparm[14] peak KB during the symbolic phase
-		//   iparm[15] permanent KB kept after the symbolic phase
-		//   iparm[16] peak KB during numeric factorization + solve
-		//   total peak = max(iparm[14], iparm[15] + iparm[16])
-		// That TOTAL is the number that decides whether a model fits — the
-		// MUMPS BLR study (P2b) found the analogous INFOG(21) barely moved even
-		// when the stored factors shrank 21.8%, so report both, never just nnz.
-		if (reportStats && statsDone == false) {
-			statsDone = true;
-			const double peakSym  = iparm[14] / 1024.0;
-			const double permSym  = iparm[15] / 1024.0;
-			const double peakFact = iparm[16] / 1024.0;
-			const double totalMB  = (iparm[14] > iparm[15] + iparm[16])
-			                        ? peakSym : (permSym + peakFact);
-			opserr << "PARDISO stats: n=" << n << " nnz(A)=" << theSOE->nnz
-			       << " mtype=" << mtype
-			       << (mtype == 11 ? " (unsymmetric, full CSR)"
-			                       : " (symmetric, upper-triangle CSR)") << "\n";
-			opserr << "  peak symbolic  = " << peakSym  << " MB\n";
-			opserr << "  permanent      = " << permSym  << " MB\n";
-			opserr << "  peak numeric   = " << peakFact << " MB\n";
-			opserr << "  TOTAL PEAK     = " << totalMB  << " MB   <- the fit/no-fit number\n";
-			if (iparm[17] > 0)
-				opserr << "  nnz in factors = " << iparm[17] << "\n";
-		}
+		// ---- Ladruno ADR-75 P1d: PERTURBED PIVOTS ARE NOT AN ERROR ---------
+		// iparm[9] tells PARDISO to REPLACE any pivot below eps*||A|| rather
+		// than fail, so a near-singular tangent comes back with error == 0 and
+		// a solution to a matrix that is NOT the one we assembled. The
+		// symmetric path runs eps = 1e-8 (Intel's documented recommendation for
+		// mtype +-2) — five orders looser than the unsymmetric 1e-13 — so
+		// choosing -matrixType 2 materially widens this window, and iparm[7]=2
+		// iterative refinement then hides small perturbations.
+		//
+		// Silent-wrong-answer class: without this the only symptom is Newton
+		// convergence quietly degrading, which gets blamed on the model. This
+		// fork already treats perturbed pivots as report-worthy in the FEAST
+		// `-certify` Sturm counts (ADR-43 P2) — same hazard, same answer.
+		// Warned once per factorization rather than refused: at a limit point a
+		// perturbed pivot may be exactly what lets a run continue, and that is
+		// the author's call to make, not ours. (Found by adversarial review.)
+		if (iparm[13] > 0)
+			opserr << "WARNING PARDISOGenLinSolver: PARDISO perturbed "
+			       << iparm[13] << " pivot(s) during factorization (mtype "
+			       << mtype << ", threshold 1e-" << iparm[9]
+			       << "). The solve is to a PERTURBED matrix — treat a slow or "
+			          "stalling Newton here as a near-singular tangent, not a "
+			          "solver hiccup.\n";
 	}
 
 	// ---- triangular solve + iterative refinement: every call ---------------
@@ -255,6 +269,42 @@ PARDISOGenLinSolver::solve(void)
 			ops_pardiso_report("solution", error, mtype);
 			return -3;
 		}
+	}
+
+	// ---- Ladruno ADR-75 P1d: `-stats`, ONCE per sparsity pattern -----------
+	// Deliberately AFTER phase 33, not after phase 22 (adversarial review):
+	// Intel documents iparm[16] as the peak over the numerical factorization
+	// *and solution* phases, so reading it before the first solve reports a
+	// LOWER BOUND. The ratio between two configurations measured the same way
+	// survives that error, but the absolute figure is billed as "the number
+	// that decides whether a model fits" and so has to be the real one.
+	//   iparm[14] peak KB during the symbolic phase
+	//   iparm[15] permanent KB kept after the symbolic phase
+	//   iparm[16] peak KB during numeric factorization + solve
+	//   total peak = max(iparm[14], iparm[15] + iparm[16])
+	// Counters are pattern-determined, so reprinting per Newton iteration would
+	// be noise. Report peak AND factor nnz, never just nnz — the MUMPS BLR study
+	// (P2b) found the analogous INFOG(21) barely moved while stored factors
+	// shrank 21.8%.
+	if (reportStats && statsDone == false) {
+		statsDone = true;
+		const double peakSym  = iparm[14] / 1024.0;
+		const double permSym  = iparm[15] / 1024.0;
+		const double peakFact = iparm[16] / 1024.0;
+		const double totalMB  = (iparm[14] > iparm[15] + iparm[16])
+		                        ? peakSym : (permSym + peakFact);
+		opserr << "PARDISO stats: n=" << n << " nnz(A)=" << theSOE->nnz
+		       << " mtype=" << mtype
+		       << (mtype == 11 ? " (unsymmetric, full CSR)"
+		                       : " (symmetric, upper-triangle CSR)") << "\n";
+		opserr << "  peak symbolic  = " << peakSym  << " MB\n";
+		opserr << "  permanent      = " << permSym  << " MB\n";
+		opserr << "  peak numeric   = " << peakFact << " MB   (factor + solve)\n";
+		opserr << "  TOTAL PEAK     = " << totalMB  << " MB   <- the fit/no-fit number\n";
+		if (iparm[17] > 0)
+			opserr << "  nnz in factors = " << iparm[17] << "\n";
+		opserr << "  perturbed pivots = " << iparm[13]
+		       << "   refinement steps = " << iparm[6] << "\n";
 	}
 
 	return 0;
@@ -276,6 +326,14 @@ int
 PARDISOGenLinSolver::setLinearSOE(PARDISOGenLinSOE &theLinearSOE)
 {
     theSOE = &theLinearSOE;
+    // Ladruno ADR-75 P1d (adversarial review): the solver now carries per-SOE
+    // state (mtype is derived from the SOE, statsDone latches per pattern), so
+    // re-pointing it at a DIFFERENT SOE has to invalidate that state. Not
+    // reachable through today's command paths — each factory pairs one solver
+    // with one SOE for life — but the class no longer tolerates the assumption
+    // being broken silently.
+    needsSymbolic = true;
+    statsDone = false;
     return 0;
 }
 

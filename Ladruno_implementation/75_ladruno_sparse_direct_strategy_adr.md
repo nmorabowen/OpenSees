@@ -140,8 +140,8 @@ finished (§2, §12) — realistic P1 work, in order:
   `factored` flag (match MUMPS). This is a *restructure*, not a flag.
 - **Symmetric path is a SOE change, not just `mtype`** — PARDISO `mtype ±2` needs upper-triangle
   input, so `PARDISOGenLinSOE` must gain half-storage (the path `MumpsSOE` already has).
-  **✅ DONE in P1d, and the hedge is resolved IN FAVOUR of symmetric:** 1.35× faster than unsymmetric
-  PARDISO and **−41.8% peak memory**, bit-identical answers (`phase1/RESULTS_p1d_symmetric.md`). The
+  **DONE in P1d, and the hedge is resolved IN FAVOUR of symmetric:** 1.94-1.96x faster than UmfPack
+  (~1.25x vs unsymmetric PARDISO) and **-41.8% peak memory**, bit-identical answers (`phase1/RESULTS_p1d_symmetric.md`). The
   caution was well-placed but pointed at the wrong culprit — `SparseSYM` being **2.10× SLOWER** than
   unsymmetric UmfPack (`phase1/RESULTS_laneB_baseline.md`) was *its* implementation quality, not a
   property of symmetric storage. Kept as the standing lesson: the measurement was cheap and the prior
@@ -260,8 +260,8 @@ zero-pivot message now says exactly that.
 
 ### Cross-cutting levers (pay in both regimes)
 - **Symmetric factorization — SHIPPED for PARDISO (P1d), opt-in** (PARDISO `-matrixType 1|2` →
-  `mtype ±2` / MUMPS `-matrixType 2`). **No longer a hypothesis: 1.35× time and −41.8% peak memory,
-  measured.** The old "~2× time+memory, but `SparseSYM` was 2.10× slower so measure it" hedge is
+  `mtype ±2` / MUMPS `-matrixType 2`). **No longer a hypothesis: ~1.25x vs unsymmetric PARDISO (1.94-1.96x vs
+  UmfPack) and -41.8% peak memory, measured over two sweeps.** The old "~2× time+memory, but `SparseSYM` was 2.10× slower so measure it" hedge is
   resolved — that was `SparseSYM`'s implementation, not symmetric storage. MUMPS `-matrixType 2`
   remains **unexercised** on the cluster and inherits a strong prior from this result.
 - **Factorization reuse** driven off the SOE `factored` flag (present in MUMPS; add PARDISO phase-33)
@@ -294,13 +294,14 @@ zero-pivot message now says exactly that.
   disagree. `system Pardiso -matrixType 0|1|2` (+ `-symmetric`/`-spd`), in **both** interpreters —
   P1b had registered the verb only in `OpenSeesCommands.cpp`, so `OpenSees.exe` never had it; the Tcl
   chain is a separate if-ladder and is wired here.
-  **Measured, on Lane B, same binary, interleaved:** `-matrixType 2` is **1.35× faster than
-  unsymmetric PARDISO** at 4 threads (1.96× vs UmfPack) and **1.26×** single-threaded, with tip
-  displacement **bit-identical** at every configuration. **The `SparseSYM`-based worry (§3, "symmetric
+  **Measured, on Lane B, same binary, interleaved, TWO independent sweeps:** `-matrixType 2` is
+  **1.94-1.96x faster than UmfPack** at 4 threads (1.62-1.63x single-threaded), reproducible to
+  +-1%; versus *unsymmetric PARDISO* it is **~1.25x** (range 1.24-1.35x, the unsym anchor being the
+  noisy term). Tip displacement is **bit-identical** in every configuration of both runs. **The `SparseSYM`-based worry (§3, "symmetric
   ≠ automatically better", 2.10× SLOWER) is refuted for PARDISO** — it was an implementation-quality
   artifact of `SparseSYM`, not a property of symmetric storage.
-  **And the memory result is the bigger one — `-stats` (new, `iparm[14]/[15]/[16]`, mirroring the
-  MUMPS `-stats`) shows peak memory −41.8%** (105.43 → 61.31 MB; SPD −46.5%), stored nnz −49.3%
+  **And the memory result is the bigger one - `-stats` (new, `iparm[14]/[15]/[16]`, mirroring the
+  MUMPS `-stats`) shows peak memory -41.8%** (105.60 -> 61.48 MB; SPD -46.4%), stored nnz −49.3%
   (exact by construction), factor nnz −47.3%. **Directly contrast P2b: BLR cut the stored factors
   21.8% but peak only 4.6%.** Symmetric shrinks the *fronts themselves*, so the fit/no-fit number
   actually moves — and it is **exact**, so unlike BLR it is legal on byte-identical/oracle paths.
