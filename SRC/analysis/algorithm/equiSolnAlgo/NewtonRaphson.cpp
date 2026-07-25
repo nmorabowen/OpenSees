@@ -169,8 +169,19 @@ NewtonRaphson::solveCurrentStep(void)
     // falls through to the generic branch and is re-formed unconditionally.
     //
     // Under `StaticIntegrator` that re-formation is `zeroTangent(); addKiToTang();`
-    // (StaticIntegrator.cpp:75-76) — for MANY models an invariant matrix, rebuilt
-    // and re-factorized once per iteration for the whole analysis.
+    // (StaticIntegrator.cpp:75-76). Whether the result is actually invariant is a
+    // per-element question and the default answer is NO:
+    //   * `NDMaterial::getInitialTangent()` is DEFINED as `{return getTangent();}`
+    //     (SRC/material/nD/NDMaterial.h:64), so any nD material that does not
+    //     override it hands every solid element a fully current tangent. By
+    //     contrast `UniaxialMaterial::getInitialTangent` is pure virtual
+    //     (UniaxialMaterial.h:68) — which is why fiber/frame models are better
+    //     behaved here than solids.
+    //   * ~41 elements implement `getInitialStiff()` as a straight
+    //     `return getTangentStiff();` — including the whole
+    //     SSPquad/SSPbrick/SSPquadUP/SSPbrickUP family.
+    // ==> On many solid models `algorithm Newton -initial` is not initial-stiffness
+    //     iteration at all. It is full Newton, at full cost, silently.
     //
     // READ THE CAVEAT BEFORE THE RECOMMENDATION. "Initial tangent" is a naming
     // convention here, not a contract, so the matrix is NOT always invariant:
@@ -204,9 +215,14 @@ NewtonRaphson::solveCurrentStep(void)
     // was redundant; it simply bought nothing there.
     //
     // Not fixed here on purpose: the skip is only sound when invariance is known,
-    // and that is an ELEMENT property, not an integrator-family one. See ADR-76
-    // for the tangent-version design that makes the skip safe, and for the
-    // audit of which transformations are and are not configuration-dependent.
+    // and that is an ELEMENT property, not an integrator-family one. A
+    // tangent-version counter was designed for this and then WITHDRAWN after
+    // adversarial review — do NOT implement from ADR-76 §4, which is kept only as
+    // a record; read §8 for why it is not safely implementable (the invalidator
+    // set misses staged construction, modal damping and six more; the predicate
+    // cannot express FE_Element/DOF_Group/domain-time dependencies). §2 of the
+    // same ADR carries the audit of which transformations are and are not
+    // configuration-dependent, which is the part worth reading.
     do {
 
       { OPS_PROFILE_SCOPE("formTangent");

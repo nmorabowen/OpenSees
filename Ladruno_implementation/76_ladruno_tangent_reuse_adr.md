@@ -15,7 +15,14 @@ tags:
   - sub-adr
 ---
 
-# ADR-76 — Tangent reuse: `algorithm Newton -initial` re-assembles and re-factorizes an invariant matrix every iteration
+# ADR-76 — `algorithm Newton -initial` re-forms and re-factorizes a tangent nobody asked to change
+
+> [!important] READ §8 FIRST if you are here to implement something.
+> §1–§7 predate the adversarial review and are preserved as a record. §8 supersedes
+> them: **R2 is withdrawn**, R3 is rejected, and the "invariant matrix" premise in the
+> original framing is FALSE for the default configuration of most solid
+> element/material pairs (§2). What shipped is R1 (documentation) and R4 (the option
+> parser). This ADR's own earlier title asserted that invariance; it was wrong.
 
 > ADR-76. An **assembly/solve-lane** perf sub-ADR under [[40_ladruno_performance_adr]].
 > Complements [[75_ladruno_sparse_direct_strategy_adr]]: ADR-75 made the *factorization*
@@ -31,8 +38,9 @@ tags:
 ## 1. Context — the reported defect
 
 `algorithm Newton -initial` performs a full tangent assembly **and** a full numeric
-factorization on **every iteration** of every step, of a matrix that in most configurations
-cannot have changed since the previous iteration.
+factorization on **every iteration** of every step. The original report framed this as a matrix
+that "cannot have changed"; §2 shows that framing is false in general — but the work is still
+unconditioned: nothing anywhere asks whether the re-assembly was necessary.
 
 `formTangent` sits inside the iteration `do`-loop in `NewtonRaphson::solveCurrentStep`. The
 only tangent flag given special treatment is `INITIAL_THEN_CURRENT_TANGENT`, which correctly
@@ -230,8 +238,8 @@ Ranked by value over risk, mirroring the reporter's own ranking.
 |---|---|---|
 | R1 | Document the trap | **shipped** (this PR) |
 | R4 | `OPS_ModifiedNewton` parser: loop over all options | **shipped** (this PR) |
-| R2 | Tangent-version counter | **designed here, not implemented** |
-| R3 | `initialTangentIsInvariant()` shortcut | **rejected as specified**, folded into R2 |
+| R2 | Tangent-version counter | **WITHDRAWN** — see §8; §4 is a superseded record |
+| R3 | `initialTangentIsInvariant()` shortcut | **rejected as specified**; not folded into anything (R2 withdrawn too) |
 
 R3 is rejected *as specified* — not as an idea. Its predicate (`true` for `StaticIntegrator`,
 `true` for transient iff no `betaK != 0`) is unsound for the reasons in §2, and it would be a
@@ -252,9 +260,13 @@ Documentation only, no behaviour change:
 
 The user-facing rule, stated plainly:
 
-> **Want initial-stiffness iteration? Use `algorithm ModifiedNewton -initial`.**
-> It is the same iteration `Newton -initial` performs — an initial-stiffness fixed-point — at
-> one assembly and one factorization per step instead of one per iteration. Add `-factoronce`
+> **Want initial-stiffness iteration? First check you are getting one at all** — §2: on a solid
+> element whose nD material does not override `getInitialTangent()`, `-initial` silently IS full
+> Newton. **If you are, `algorithm ModifiedNewton -initial` is the cheap spelling**: the same
+> iteration at one assembly and one factorization per step instead of one per iteration. They
+> are NOT the same algorithm when the assembled initial tangent is state-dependent (corot3d,
+> contact, `-damping`, or any transient with `betaK`/`betaK0` != 0) — there `Newton`
+> re-linearizes every iteration and `ModifiedNewton` freezes at step start. Add `-factoronce`
 > for one per *analysis*. `algorithm Newton -initial` is the expensive spelling of the same
 > algorithm, and users reach for it as *the* robust fallback without knowing that.
 
@@ -321,7 +333,18 @@ parses `algorithm` too and drops `factorOnce` entirely, but that tree appears in
 > `ModifiedNewton` is a candidate follow-up, deliberately out of scope here because it changes
 > existing `-factoronce` behaviour.
 
-## 4. R2 design — the tangent version counter
+## 4. R2 design — the tangent version counter  ⚠️ SUPERSEDED
+
+> [!warning] R2 WAS WITHDRAWN — this section is a record, not a plan.
+> Everything in §4 was written before the adversarial review in **§8**, which
+> withdrew R2 outright: the invalidator set is incomplete (staged construction,
+> modal damping, `region -rayleigh` and six more never reach it), the predicate
+> cannot express `FE_Element`/`DOF_Group`/domain-time dependencies, `-krylov` is
+> antagonistic rather than complementary, and the economics invert. **Do not
+> implement from this section.** It is kept because the invalidator analysis in
+> §4.2-§4.3 is reusable and because the reasons it failed are worth preserving.
+> The P0/P1/P2/P3 rollout below is void; §8.3 carries the replacement.
+
 
 ### 4.1 The question to answer
 
@@ -510,7 +533,7 @@ the pre-ADR build.
 4. **`algorithm ModifiedNewton -initial -factoronce`** — both options take effect. ✅ **shipped
    and covered by R4.**
 
-### Test 4 — RUN, 8/8 checks passed (2026-07-25; re-run after the parser hardening)
+### Test 4 — RUN, 11/11 checks passed (2026-07-25; re-run after the parser hardening)
 
 `Ladruno_implementation/adr76_smoke/` — deck `adr76_factoronce_model.tcl` (classic
 `OpenSees.exe`, `profiler` is registered in `SRC/tcl/commands.cpp:1219`) + checker
@@ -540,17 +563,23 @@ them.
 - **E and F ≡ B** — the camelCase and capitalised spellings, added after the adversarial review
   found `-factorOnce` was still being dropped. Cases E/F would have FAILED the first cut of the
   R4 fix, which is exactly why they are in the battery.
-- All converge to the same tip displacement (max deviation 9.4e-10 on 7.0, i.e. the
-  convergence tolerance) — `K_f` sets the path, not the answer, exactly as §2 argues.
+- All converge to within 9.4e-10 on 7.0 — but note what that spread IS: caseD (exact tangent)
+  lands on 7.0 exactly, A/B/C/E/F on 6.999999999059916. A different `K_f` accepted at a
+  *different point*, which is the mechanism §2 warns about, not a refutation of it. It is also
+  not "the convergence tolerance": the deck's tolerance is `NormUnbalance 1e-8` on FORCE.
 
 **Pre-fix expectations need no rebuild to confirm.** Before R4, `-initial -factoronce` *was*
 `-initial` alone (= case A) and `-factoronce -initial` *was* `-factoronce` alone (= case D).
 Both are measured in the table, and both differ from the post-fix B/C — so the smoke is
 discriminating, and it fails loudly on a regression to the old parser.
 
-**Incidental confirmation of the ADR's central claim.** Case A and case B ran the *identical*
-910 iterations to the *identical* displacement, on 5 assemblies versus 1. That is the §1
-argument reproduced in-repo at toy scale: the extra assemblies buy nothing.
+**Scope limit — this validates the OPTION PARSER and nothing else.** An earlier draft called
+case A vs case B "incidental confirmation of the ADR's central claim". It is not: every case
+runs `ModifiedNewton`, never `Newton`, so A-vs-B compares per-step assembly against a
+per-analysis latch, not §1's per-*iteration* assembly. And the profiled window is linear
+(`Steel01`, one hardening branch, monotonic load), so A's 5 assemblies are provably of the same
+constant matrix and 910 == 910 is a tautology. This deck cannot detect tangent staleness of any
+kind. The checker's docstring said so; the ADR did not, until this correction.
 
 Added by the §2 correction — these are the tests the reporter could not know to ask for:
 
