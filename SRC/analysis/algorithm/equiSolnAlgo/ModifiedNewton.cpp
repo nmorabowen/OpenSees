@@ -57,14 +57,57 @@ void* OPS_ModifiedNewton()
   double iFactor = 0;
   double cFactor = 1;
 
-  if (OPS_GetNumRemainingInputArgs() > 0) {
+  // Ladruno ADR-76 (R4): loop over EVERY remaining option instead of reading
+  // exactly one. Upstream's `if (OPS_GetNumRemainingInputArgs() > 0)` consumed a
+  // single option string, so `algorithm ModifiedNewton -initial -factoronce`
+  // silently honoured `-initial` and dropped the rest — yet that pair is the
+  // natural spelling of "initial stiffness, assembled and factorized once",
+  // which for a static analysis is the cheapest robust algorithm the framework
+  // offers. `OPS_NewtonRaphsonAlgorithm()` already uses this `while` form.
+  //
+  // NOT behaviour-preserving in general, and deliberately so: any deck passing
+  // two or more recognised options now gets the LAST one to set a given field
+  // rather than the first, which changes the iteration matrix. That is the whole
+  // point of the fix, but it is a silent results change for such decks — no
+  // in-tree deck passes more than one option, so the blast radius here is zero.
+  // Single-option decks are byte-identical.
+  //
+  // Three things the adversarial review of this change forced (see the ADR):
+  //   * `-factorOnce` is now accepted alongside `-factoronce`/`-FactorOnce`.
+  //     Linear, ExpressNewton and both commands.cpp sites all spell it
+  //     `-factorOnce`, and it is what the quirks ledger writes — so the camelCase
+  //     carry-over spelling was still being silently dropped by the very fix
+  //     meant to stop options being silently dropped. Same for `-Initial`/`-Secant`.
+  //   * `-secant`/`-initial` now reset iFactor/cFactor the way
+  //     OPS_NewtonRaphsonAlgorithm() does. With an `if` only one branch could ever
+  //     run, so the reset was unnecessary; a loop is exactly the context where a
+  //     later option must be able to override an earlier one's factors.
+  //   * a failed `-hall` factor read no longer returns null (see below).
+  //
+  // Left alone: `-hall`'s trailing-factor read still gates on
+  // `OPS_GetNumRemainingInputArgs() == 2`, so the factors are only picked up when
+  // `-hall a b` ends the command. NewtonRaphson carries the identical gate, and
+  // fixing it here alone would make two parsers for the same flag disagree —
+  // which is the failure mode this fork's ledger keeps recording. The unknown-token
+  // warning below makes it self-diagnosing in the meantime.
+  //
+  // Trap that this newly makes reachable, see [[LEDGER_quirks]]: `factorOnce`
+  // has NO domainChanged reset, so `-initial -factoronce` must not be combined
+  // with anything that resizes the SOE mid-analysis (element removal, contact
+  // re-emission, staged construction).
+  while (OPS_GetNumRemainingInputArgs() > 0) {
     const char* type = OPS_GetString();
-    if (strcmp(type,"-secant") == 0) {
+    if (strcmp(type,"-secant") == 0 || strcmp(type,"-Secant") == 0) {
       formTangent = CURRENT_SECANT;
-    } else if (strcmp(type,"-factoronce")==0 || strcmp(type,"-FactorOnce")==0)  {
+      iFactor = 0;
+      cFactor = 1.0;
+    } else if (strcmp(type,"-factoronce")==0 || strcmp(type,"-factorOnce")==0 ||
+               strcmp(type,"-FactorOnce")==0)  {
       factoronce = 1;
-    } else if (strcmp(type,"-initial") == 0) {
+    } else if (strcmp(type,"-initial") == 0 || strcmp(type,"-Initial") == 0) {
       formTangent = INITIAL_TANGENT;
+      iFactor = 1.;
+      cFactor = 0;
     } else if(strcmp(type,"-hall")==0 || strcmp(type,"-Hall")==0) {
       formTangent = HALL_TANGENT;
       iFactor = 0.1;
@@ -73,12 +116,28 @@ void* OPS_ModifiedNewton()
         double data[2];
         int numData = 2;
         if(OPS_GetDoubleInput(&numData,&data[0]) < 0) {
-          opserr << "WARNING invalid data reading 2 hall factors\n";
-          return 0;
+          // Ladruno ADR-76 (R4, adversarial review): warn and keep the defaults
+          // instead of `return 0`. A null here is a silent-wrong-answer on the
+          // openseespy path -- OPS_Algorithm does `if (theAlgo != 0) setAlgorithm`
+          // and then reports success, so the PREVIOUS algorithm stays in force
+          // with no Python exception. This is the same rule ADR-75 P1d already
+          // records for `-krylov`: a parse failure degrades to the default, it
+          // does not return null. Widening the option scan made this reachable
+          // from `-hall` positions other than first, so it has to be closed here.
+          opserr << "WARNING ModifiedNewton - invalid data reading 2 hall factors;"
+                 << " keeping the defaults " << iFactor << "/" << cFactor << "\n";
+        } else {
+          iFactor = data[0];
+          cFactor = data[1];
         }
-        iFactor = data[0];
-        cFactor = data[1];
       }
+    } else {
+      // Ladruno ADR-76 (R4, adversarial review): the point of the option loop is
+      // that nothing gets silently dropped, so an unrecognised token must say so.
+      // This also makes the `-hall` arity quirk below self-diagnosing: in
+      // `-hall 0.2 0.8 -factoronce` the `== 2` gate above does not fire, and the
+      // two orphaned numerics land here and are reported instead of vanishing.
+      opserr << "WARNING ModifiedNewton - ignoring unrecognised option " << type << "\n";
     }
   }
   
