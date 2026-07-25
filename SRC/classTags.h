@@ -1240,6 +1240,13 @@
 #define SOLVER_TAGS_PFEMDiaSolver                       33
 #define SOLVER_TAGS_SparsePythonCompressedLinSolver     100201
 #define SOLVER_TAGS_SparsePythonCOOLinSolver            100202
+// Ladruno ADR-75 P1: PARDISOGenLinSolver's tag is USED at
+// PARDISOGenLinSolver.cpp:27 but was never defined upstream (which is why that
+// contributed 2019 prototype has never compiled). Defined here in the fork's
+// private band (>=33000) rather than beside the upstream SOE tag 99990, so a
+// future upstream definition cannot collide. The upstream
+// LinSOE_TAGS_PARDISOGenLinSOE 99990 is deliberately left untouched.
+#define SOLVER_TAGS_PARDISOGenLinSolver                 33000
 
 #define RECORDER_TAGS_ElementRecorder		1
 #define RECORDER_TAGS_NodeRecorder		2

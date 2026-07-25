@@ -31,15 +31,32 @@ class PARDISOGenLinSolver : public LinearSOESolver
     int setSize(void);
 
     int setLinearSOE(PARDISOGenLinSOE &theSOE);
-	
+
     int sendSelf(int cTag, Channel &theChannel);
-    int recvSelf(int cTag, 
-		 Channel &theChannel, 
+    int recvSelf(int cTag,
+		 Channel &theChannel,
 		 FEM_ObjectBroker &theBroker);
   protected:
 
   private:
 	  PARDISOGenLinSOE *theSOE;
+
+	  // Ladruno ADR-75 P1: factorization reuse. The stock prototype declared
+	  // pt[64]/iparm as LOCALS of solve() and ran phases 11->22->33->-1 on EVERY
+	  // call, so it re-did the METIS symbolic reorder + numeric factorization and
+	  // then freed everything, every solve. The handle must persist across calls
+	  // for reuse to be possible at all, so it lives here now.
+	  void *pt[64];        // PARDISO internal handle — OPAQUE, never touch/copy
+	  int   iparm[64];     // control array (was leaked via `new` each solve)
+	  int   mtype;         // 11 = real unsymmetric (matches the SOE's full CSR)
+	  bool  init;          // true once phase 11 has run (=> phase -1 owed)
+	  bool  needsSymbolic; // sparsity changed => redo the reorder
+	  // Ladruno ADR-75 P1: the destructor MUST NOT dereference theSOE.
+	  // ~LinearSOE() deletes theSolver, so by the time ~PARDISOGenLinSolver runs
+	  // the SOE's derived destructor has ALREADY freed A/B/X/rowStartA/colA and
+	  // the object is partially destroyed — reading it is use-after-free. Cache
+	  // the order here and hand PARDISO dummy arrays for the release phase.
+	  int   cachedN;       // matrix order, captured at the symbolic phase
 };
 
 #endif
