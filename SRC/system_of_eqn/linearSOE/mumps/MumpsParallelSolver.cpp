@@ -41,7 +41,8 @@
 #include <mpi.h>
 
 MumpsParallelSolver::MumpsParallelSolver(int ICNTL7, int ICNTL14,
-					 int ICNTL35, double CNTL7)
+					 int ICNTL35, double CNTL7,
+					 int PrintStats)
   :LinearSOESolver(SOLVER_TAGS_MumpsParallelSolver),
    theMumpsSOE(0), rank(0), np(0), theComm(MPI_COMM_WORLD)  // Ladruno ADR43 P3a
 {
@@ -51,12 +52,14 @@ MumpsParallelSolver::MumpsParallelSolver(int ICNTL7, int ICNTL14,
   icntl14 = ICNTL14;
   icntl35 = ICNTL35;   // Ladruno ADR-75 P2 (BLR; 0 = off = stock behavior)
   cntl7 = CNTL7;
+  printStats = PrintStats;   // Ladruno ADR-75 P2b
   init = false;
   needsSetSize = false;
 }
 
 MumpsParallelSolver::MumpsParallelSolver(int mpi_comm, int ICNTL7, int ICNTL14,
-					 int ICNTL35, double CNTL7)
+					 int ICNTL35, double CNTL7,
+					 int PrintStats)
   :LinearSOESolver(SOLVER_TAGS_MumpsParallelSolver),
    theMumpsSOE(0), rank(0), np(0), theComm(MPI_COMM_WORLD)  // Ladruno ADR43 P3a
 {
@@ -66,6 +69,7 @@ MumpsParallelSolver::MumpsParallelSolver(int mpi_comm, int ICNTL7, int ICNTL14,
   icntl7 = ICNTL7;
   icntl35 = ICNTL35;   // Ladruno ADR-75 P2
   cntl7 = CNTL7;
+  printStats = PrintStats;   // Ladruno ADR-75 P2b
   init = false;
   needsSetSize = false;
 }
@@ -287,6 +291,32 @@ MumpsParallelSolver::solveAfterInitialization(void)
     id.job = 5;
     dmumps_c(&id);
     theMumpsSOE->factored = true;
+
+    // Ladruno ADR-75 P2b: `-stats`. BLR's entire justification is FACTOR
+    // MEMORY, which is otherwise completely invisible from OpenSees -- with no
+    // way to tell whether compression did anything on a given model. MUMPS
+    // convention: a NEGATIVE INFOG entry means -value * 10^6.
+    if (printStats != 0 && rank == 0) {
+      double fEntries = (double)id.infog[8];              // INFOG(9)
+      if (fEntries < 0) fEntries = -fEntries * 1.0e6;
+      opserr << "MUMPS stats: n=" << id.n
+	     << " BLR(ICNTL35)=" << icntl35;
+      if (icntl35 != 0)
+	opserr << " eps(CNTL7)=" << cntl7;
+      opserr << "\n";
+      opserr << "  factor entries INFOG(9)   = " << fEntries << "\n";
+      opserr << "  factor MB/proc INFOG(21)  = " << id.infog[20] << "  (max over procs)\n";
+      opserr << "  factor MB tot  INFOG(22)  = " << id.infog[21] << "  (sum over procs)\n";
+      opserr << "  elim flops     RINFOG(3)  = " << id.rinfog[2] << "\n";
+      // MUMPS reports the BLR-compressed vs full-rank factor/flop comparison in
+      // RINFOG(14)/RINFOG(15) when ICNTL(35) is active; printed raw and clearly
+      // labelled so the numbers are checkable against the MUMPS guide rather
+      // than silently reinterpreted here.
+      if (icntl35 != 0) {
+	opserr << "  BLR RINFOG(14)            = " << id.rinfog[13] << "\n";
+	opserr << "  BLR RINFOG(15)            = " << id.rinfog[14] << "\n";
+      }
+    }
 
   } else {
 

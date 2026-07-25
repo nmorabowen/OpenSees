@@ -59,13 +59,15 @@ class MumpsParallelSolver : public LinearSOESolver
   // Ladruno ADR-75 P2: ICNTL35/CNTL7 are the Block Low-Rank controls (default
   // OFF => byte-identical to the pre-BLR solver).
   MumpsParallelSolver(int ICNTL7 = 7, int ICNTL14 = 20,
-		      int ICNTL35 = 0, double CNTL7 = 0.0);
+		      int ICNTL35 = 0, double CNTL7 = 0.0,
+		      int printStats = 0);
 
   MumpsParallelSolver(int MPI_COMM,
 		      int ICNTL7,
 		      int ICNTL14,
 		      int ICNTL35 = 0,
-		      double CNTL7 = 0.0);
+		      double CNTL7 = 0.0,
+		      int printStats = 0);
 
   virtual ~MumpsParallelSolver();
   
@@ -103,6 +105,10 @@ class MumpsParallelSolver : public LinearSOESolver
   // it is opt-in and must never be enabled on a byte-identical/oracle lane.
   int icntl35;
   double cntl7;
+  // Ladruno ADR-75 P2b: `-stats` -- dump MUMPS INFOG/RINFOG after each
+  // factorization. Without this, BLR's whole purpose (factor MEMORY) is
+  // invisible: a user cannot tell whether compression did anything.
+  int printStats;
 
   MPI_Comm theComm;  // Ladruno ADR43 P3a: defaults to MPI_COMM_WORLD
 

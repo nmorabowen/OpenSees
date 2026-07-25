@@ -46,6 +46,37 @@ Two compounding causes:
 capability wall), *not* time. Do not enable it expecting a speedup, and expect to re-tune the Newton
 test if you do. It stays opt-in and off by default.
 
+## P2b — MEASURED memory, via the new `-stats` (INFOG/RINFOG dump)
+
+`system Mumps ... -stats` now prints MUMPS's own factorization telemetry, so BLR's effect is
+finally observable. Same 20×20×24 model (n = 31,752), `mpiexec -n 2`:
+
+| config | factor entries `INFOG(9)` | **MB/proc `INFOG(21)`** | MB total `INFOG(22)` | elim flops `RINFOG(3)` | BLR `RINFOG(14)` |
+|---|---|---|---|---|---|
+| full-rank | 4.2369e7 | **263** | 498 | 5.0251e10 | — |
+| `-BLR 1e-9` | 4.2273e7 (**−0.2%**) | **285 (+8.4%)** | 553 (+11%) | 5.0251e10 | 5.2778e10 |
+| `-BLR 1e-4` | 3.3129e7 (**−21.8%**) | **251 (−4.6%)** | 478 (−4.0%) | 5.0251e10 | 2.7786e10 (**−45%**) |
+
+### The non-obvious result: BLR shrinks the FACTORS but barely moves PEAK MEMORY
+
+- **At `eps=1e-9` BLR is strictly worse on every axis**: factor entries essentially unchanged
+  (−0.2% — the tolerance is too tight to drop meaningful rank), peak memory **+8.4% per proc** from
+  BLR's own bookkeeping, no flop saving, and 1.70× slower.
+- **At `eps=1e-4` BLR really compresses**: factor entries **−21.8%** and BLR flops `RINFOG(14)`
+  **45% below** the full-rank elimination flops. **Yet peak memory per proc falls only 4.6%** — and
+  the run was 3.17× *slower*.
+
+**Why:** peak memory during factorization is dominated by the **active frontal/working space**, not
+by the stored factors. BLR compresses what it *stores*; it does not shrink the working set by the
+same proportion. So "BLR saves memory" is true of factor storage and largely false of the peak
+allocation that actually decides whether a model fits.
+
+**Consequence:** at ~32k DOF / np2 BLR is **not a win on any axis** except factor-entry count. It did
+not move the constraint that matters (peak memory) and it cost 1.7–3.2× wall time. The regime where
+BLR is designed to pay — fronts large enough that compression dominates its overhead — is **above
+what this desktop can reach**, so this does *not* refute BLR at cluster scale; it does refute
+enabling it by default or expecting relief at these sizes.
+
 ## Status: what is and is not verified
 
 ✅ **Verified here:** the `-BLR <eps>` / `-ICNTL35` / `-CNTL7` options parse; `ICNTL(35)`/`CNTL(7)`
@@ -54,12 +85,14 @@ ranks via `sendSelf`/`recvSelf` (without that, rank 0 would factor BLR while the
 full-rank — an inconsistent distributed factorization); results are correct; BLR demonstrably
 engages above a size threshold; default-off is byte-identical to the pre-BLR solver.
 
-❌ **NOT verified — needs the cluster:** the actual point of BLR, i.e. **peak factor memory per rank**
-on a production-size deck, and the model size at which BLR crosses over from costing time to saving
-it. This desktop cannot reach that regime. **No memory numbers were measured at all** — MUMPS's
-`INFOG`/`RINFOG` compression statistics are not currently surfaced by the fork, so BLR engagement is
-only observable indirectly (as the deviation above). *Exposing those stats is the obvious next
-step*, otherwise a user cannot tell whether BLR did anything on their model.
+✅ **Now also verified (P2b):** `-stats` surfaces `INFOG(9)/(21)/(22)`, `RINFOG(3)` and the BLR
+`RINFOG(14)/(15)`, so compression is directly observable; and the memory question is *answered at
+this scale* — BLR shrinks factor entries by up to 21.8% but peak memory per proc by only 4.6%.
+
+❌ **NOT verified — needs the cluster:** whether BLR crosses over into a genuine win on
+**production-size fronts**. Everything here is ~32k DOF on 2 ranks, far below BLR's design regime;
+the measured losses bound the *small* end only. A production deck should be run with `-stats` and
+BLR on/off, comparing `INFOG(21)` (the number that decides whether a model fits) and wall time.
 
 ## Reproduce
 ```bash

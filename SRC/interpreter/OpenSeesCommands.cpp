@@ -4922,11 +4922,17 @@ void* OPS_MumpsSolver() {
     int commColor = -1;        // Ladruno ADR43 P3a: -commSplit color (>=0 enables)
     int icntl35 = 0;           // Ladruno ADR-75 P2: BLR off by default
     double cntl7 = 0.0;        // Ladruno ADR-75 P2: BLR dropping tolerance
+    int mumpsStats = 0;        // Ladruno ADR-75 P2b: -stats dumps INFOG/RINFOG
     // Ladruno ADR43 P3a: loop guard was "> 2", which silently skipped parsing
     // when exactly one "-opt value" pair remained (the common openseespy
-    // system('Mumps','-ICNTL14',n) spelling) — every option needs opt+value,
-    // so "> 1" is the correct bound.
-    while (OPS_GetNumRemainingInputArgs() > 1) {
+    // system('Mumps','-ICNTL14',n) spelling) — every option needed opt+value,
+    // so "> 1" was the correct bound at the time.
+    // Ladruno ADR-75 P2b: that "every option takes a value" premise no longer
+    // holds — `-stats` is a bare FLAG, and with "> 1" a trailing `-stats` (the
+    // natural place to put it) would never be parsed. "> 0" is now correct: a
+    // value-taking option still reads its value inside the body, and the loop
+    // simply re-checks afterwards.
+    while (OPS_GetNumRemainingInputArgs() > 0) {
         const char* opt = OPS_GetString();
         int num = 1;
         if (strcmp(opt, "-ICNTL14") == 0) {
@@ -4965,6 +4971,10 @@ void* OPS_MumpsSolver() {
                 return 0;
             }
             icntl35 = 1;   // BLR factorization + solve
+        } else if (strcmp(opt, "-stats") == 0 || strcmp(opt, "-mumpsStats") == 0) {
+            // Ladruno ADR-75 P2b: no value token -- consume nothing further.
+            mumpsStats = 1;
+            continue;
         } else if (strcmp(opt, "-ICNTL35") == 0) {
             if (OPS_GetIntInput(&num, &icntl35) < 0) {
                 opserr << "WARNING: failed to get icntl35\n";
@@ -4998,7 +5008,8 @@ void* OPS_MumpsSolver() {
     MumpsParallelSOE* soe = 0;
 
     MumpsParallelSolver *solver= new MumpsParallelSolver(icntl7, icntl14,
-							 icntl35, cntl7);
+							 icntl35, cntl7,
+							 mumpsStats);
     soe = new MumpsParallelSOE(*solver, matType);
 
     if (commColor >= 0) {
