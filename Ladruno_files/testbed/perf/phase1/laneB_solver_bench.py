@@ -27,6 +27,9 @@ import sys
 import time
 from pathlib import Path
 
+# stream progress even when piped (Python block-buffers a non-TTY stdout)
+sys.stdout.reconfigure(line_buffering=True)
+
 # --- threads pinned BEFORE importing the solver (baseline policy) ----------
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
