@@ -131,7 +131,11 @@ FullGenLinLapackSolver::solve(void)
       if (info > 0) {
 	opserr << "WARNING FullGenLinLapackSolver::solve() -";
 	opserr << "factorization failed, matrix singular U(i,i) = 0, i= " << info-1 << endln;
-	return -info+1;
+	// Ladruno: was `return -info+1;` == (-info)+1, so info==1 (all-zero A)
+	// returned 0 == SUCCESS and the caller consumed the un-solved RHS as the
+	// answer. See the long note in BandGenLinLapackSolver.cpp for the full
+	// analysis; the three LAPACK solvers shared this defect verbatim.
+	return -info;
       } else {
 	opserr << "WARNING FullGenLinLapackSolver::solve() - OpenSees code error\n";
 	return info;
