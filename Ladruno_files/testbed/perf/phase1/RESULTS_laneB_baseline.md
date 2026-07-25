@@ -1,4 +1,12 @@
-# ADR-75 P1 gate — Lane-B desktop solver baseline (MEASURED)
+# ADR-75 P1 gate — Lane-B **desktop/serial** solver baseline (MEASURED)
+
+> **SCOPE — read this before quoting the MUMPS row.** This bench measures the **serial**
+> `dist/bin/opensees.pyd` only. **MUMPS works fine in OpenSeesMP** and is the fork's production
+> cluster solver (ADR-74-proven at 18.6 M hex / np240; see `phase0/mumps_scaling.py`). The
+> `UNAVAILABLE` rows below mean **"not compiled into the *serial* build"** — they do **NOT** mean
+> MUMPS is broken. Verified directly: the MP module `dist/openseesmp/openseesmp.pyd` contains
+> **388** `dmumps`/`MumpsParallel` symbols; the serial `dist/bin/opensees.pyd` contains **0**. Two
+> different binaries. That gap in the *serial* build is precisely what ADR-75 Lane 1 exists to close.
 
 Run 2026-07-24 on `nmb` desktop, `dist/bin/opensees.pyd` (2026-06-25), python3.12 `-S`,
 **MKL/OMP threads pinned to 1**, median of 7 interleaved rounds, machine verified free of
@@ -13,8 +21,12 @@ the same model as the ADR-40b dominance report.
 | **UmfPack** | **22.711** | **1.00×** | 22.543 – 28.192 | 24.9% | 2.271760382e+00 | — |
 | SparseSYM | 47.648 | 2.10× | 46.525 – 94.646 | 101.0% | 2.271760382e+00 | **0.0** |
 | SuperLU | 78.521 | 3.46× | 77.260 – 80.264 | 3.8% | 2.271760382e+00 | **0.0** |
-| Mumps | — | — | — | — | **UNAVAILABLE** | `WARNING unknown system type Mumps` |
+| Mumps | — | — | — | — | **n/a in SERIAL** ¹ | `WARNING unknown system type Mumps` |
 | Pardiso | — | — | — | — | **UNAVAILABLE** | `WARNING unknown system type Pardiso` |
+
+¹ **MUMPS is available and in production use under OpenSeesMP** — see the scope note above. Its
+absence here is a property of the *serial* build (`_MUMPS` is gated by `if(MPI_FOUND)` and attached
+only to the MP/SP targets), not of MUMPS.
 
 ## Findings
 
@@ -22,9 +34,10 @@ the same model as the ADR-40b dominance report.
    It is 2.1× faster than SparseSYM and 3.5× faster than SuperLU on this model.
 
 2. **ADR-75's central claim is now empirically confirmed, not just statically inferred.** Both
-   `Mumps` and `Pardiso` fail at *runtime* with `WARNING unknown system type` in the serial build —
-   exactly as the CMake/`#ifdef _MUMPS` analysis predicted. The desktop regime genuinely has **no
-   threaded sparse-direct solver today**.
+   `Mumps` and `Pardiso` fail at *runtime* with `WARNING unknown system type` **in the serial
+   build** — exactly as the CMake/`#ifdef _MUMPS` analysis predicted. The **desktop/serial** regime
+   genuinely has **no threaded sparse-direct solver today**. (Again: this says nothing about the MP
+   build, where MUMPS is linked and in production use — the two binaries differ, 388 vs 0 symbols.)
 
 3. **Correctness cross-check passed exactly.** All three available solvers returned a
    **bit-identical** tip displacement (`rel err = 0.0`), so the timings compare like for like and no
