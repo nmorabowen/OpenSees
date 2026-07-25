@@ -205,6 +205,24 @@ PARDISOGenLinSOE::setSize(Graph &theGraph)
 			}
 
 			int vertexTag = theVertex->getTag();
+
+			// Ladruno ADR-75 P1d: HARD BOUND on the fill.
+			// `nnz` is a computed prediction — for matType != 0 it is
+			// (nnz_full - n)/2 + n, which is exact ONLY while the Graph's
+			// adjacency is strictly symmetric and self-loop-free. That holds
+			// today (Graph::addEdge is two-sided and exit(0)s otherwise), but
+			// the failure mode if it ever stops holding is a SILENT HEAP
+			// OVERFLOW of colA/A, not a crash — memory corruption that would
+			// surface arbitrarily far away. Cheap guard, unbounded payoff.
+			// (nnz <= Asize always, so bounding at nnz is the stricter test.)
+			if (lastLoc >= nnz) {
+				opserr << "WARNING:PARDISOGenLinSOE::setSize : CSR fill would "
+				          "overrun nnz=" << nnz << " at row " << a
+				       << " (matType " << matType << ") - the graph is not the "
+				          "symmetric, self-loop-free shape the nnz count assumes\n";
+				size = 0;
+				return -1;
+			}
 			colA[lastLoc++] = vertexTag + 1; // place diag in first fortran index start at 1
 			const ID &theAdjacency = theVertex->getAdjacency();
 			int idSize = theAdjacency.Size();
@@ -222,6 +240,14 @@ PARDISOGenLinSOE::setSize(Graph &theGraph)
 				// displace it and the row stays ascending.
 				if (matType != 0 && row <= vertexTag)
 					continue;
+
+				if (lastLoc >= nnz) {          // see the bound note above
+					opserr << "WARNING:PARDISOGenLinSOE::setSize : CSR fill "
+					          "would overrun nnz=" << nnz << " in row " << a
+					       << "'s adjacency (matType " << matType << ")\n";
+					size = 0;
+					return -1;
+				}
 
 				bool foundPlace = false;
 				// find a place in colA for current col
@@ -244,9 +270,65 @@ PARDISOGenLinSOE::setSize(Graph &theGraph)
 			rowStartA[a + 1] = lastLoc + 1;
 			startLoc = lastLoc;
 		}
+
+		// ---- Ladruno ADR-75 P1d: verify the CSR contract, don't assume it ---
+		// MKL PARDISO requires, per row: column indices STRICTLY ASCENDING, and
+		// (for the symmetric mtypes especially) the diagonal PRESENT. Violate
+		// either and PARDISO does not necessarily complain — it can return a
+		// plausible wrong answer, which is the worst failure mode this fork has.
+		//
+		// The half-storage path relies on an ARGUMENT that the order survives:
+		// the diagonal is written first, and only `row > vertexTag` entries are
+		// kept, so nothing can sort ahead of it. That argument also silently
+		// assumes `theVertex->getTag() == a` (the CSR row index), which the
+		// pre-existing code has always assumed but never checked. This loop
+		// checks all of it directly instead — O(nnz), negligible next to the
+		// O(nnz x rowlen) insertion above, and it validates the unsymmetric
+		// path for free.
+		if (lastLoc != nnz) {
+			opserr << "WARNING:PARDISOGenLinSOE::setSize : filled " << lastLoc
+			       << " entries but nnz=" << nnz << " (matType " << matType
+			       << ") - the graph is not the shape the nnz count assumes\n";
+			size = 0;
+			return -1;
+		}
+		// NB the diagonal is only FIRST in the half-stored case. In the
+		// unsymmetric path it is sorted into place like any other column, so
+		// the test is "present", not "at rs" — checking position there would
+		// reject every correct matrix.
+		for (int a = 0; a < size; a++) {
+			int rs = rowStartA[a] - 1, re = rowStartA[a + 1] - 1;
+			bool sawDiag = false;
+			if (rs >= re) {
+				opserr << "WARNING:PARDISOGenLinSOE::setSize : row " << a
+				       << " is empty (matType " << matType
+				       << ") - PARDISO requires a diagonal entry in every row\n";
+				size = 0;
+				return -1;
+			}
+			for (int k = rs; k < re; k++) {
+				if (k > rs && colA[k] <= colA[k - 1]) {
+					opserr << "WARNING:PARDISOGenLinSOE::setSize : row " << a
+					       << " column indices are not strictly ascending at "
+					       << k << " (matType " << matType
+					       << ") - PARDISO requires ascending CSR\n";
+					size = 0;
+					return -1;
+				}
+				if (colA[k] == a + 1)
+					sawDiag = true;
+			}
+			if (sawDiag == false) {
+				opserr << "WARNING:PARDISOGenLinSOE::setSize : row " << a
+				       << " has no diagonal entry (matType " << matType
+				       << ") - PARDISO requires one, even if zero\n";
+				size = 0;
+				return -1;
+			}
+		}
 	}
 
-	// invoke setSize() on the Solver   
+	// invoke setSize() on the Solver
 	LinearSOESolver *the_Solver = this->getSolver();
 	int solverOK = the_Solver->setSize();
 	if (solverOK < 0) {
