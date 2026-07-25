@@ -1,0 +1,56 @@
+{
+  "threads": "1",
+  "repeats": 5,
+  "old": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\patricio-palacios-prs-17c1e2\\ab\\base",
+  "new": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\patricio-palacios-prs-17c1e2\\dist\\bin",
+  "sizes": {
+    "15": {
+      "umfpack": {
+        "old_median_s": 16.50794,
+        "new_median_s": 15.812954,
+        "speedup": 1.043950421913578,
+        "ux_old": "2.27176038212250742e+00",
+        "ux_new": "2.27176038212250742e+00",
+        "bit_identical": true,
+        "old_samples": [
+          16.483334,
+          16.491296,
+          16.50794,
+          16.532544,
+          16.621014
+        ],
+        "new_samples": [
+          15.780417,
+          15.80523,
+          15.812954,
+          15.828346,
+          15.834613
+        ]
+      }
+    },
+    "20": {
+      "umfpack": {
+        "old_median_s": 66.743635,
+        "new_median_s": 64.735544,
+        "speedup": 1.0310199138822405,
+        "ux_old": "2.95211775382176533e+00",
+        "ux_new": "2.95211775382176533e+00",
+        "bit_identical": true,
+        "old_samples": [
+          66.417315,
+          66.569525,
+          66.743635,
+          66.930655,
+          67.027957
+        ],
+        "new_samples": [
+          64.329606,
+          64.722308,
+          64.735544,
+          64.743275,
+          64.934286
+        ]
+      }
+    }
+  }
+}

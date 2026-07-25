@@ -46,6 +46,11 @@ SYS_ARGS = {
     "direct": ["Pardiso"],                       # -matrixType 0, the default path
     "spd":    ["Pardiso", "-matrixType", 1],     # half-storage uses the same scan
     "krylov": ["Pardiso", "-krylov", 6],
+    # Ladruno ADR-75 P1g: the SAME A/B, one solver over. UmfpackGenLinSOE::addA had
+    # the identical O(idSize^2 * collen) scan (frozen CSC instead of CSR), which
+    # ADR-75b L3-0 measured at 1322.8 ms of a ~19.2 s step. Driving it through this
+    # harness rather than a new one keeps the two results methodologically identical.
+    "umfpack": ["UmfPack"],
 }
 
 DRIVER = r'''
@@ -132,7 +137,13 @@ def main():
                 "old_median_s": mo, "new_median_s": mn, "speedup": mo / mn,
                 "ux_old": uo, "ux_new": un, "bit_identical": exact,
                 "old_samples": sorted(so), "new_samples": sorted(sn)}
-    dest = HERE / f"p1f_adda_ab_t{THREADS}.json"
+    # Ladruno ADR-75 P1g: the name used to be keyed on THREADS alone, so a run with a
+    # different CONFIG set silently overwrote a previous run's artifact at the same
+    # thread count — which is how the P1g umfpack run clobbered P1f's local
+    # p1f_adda_ab_t1.json. Same family as the banked sweep_p1.sh trap (it `mv`'d the
+    # locked baseline JSON and destroyed it, twice). Key the name on both.
+    tag = "-".join(CONFIGS)
+    dest = HERE / f"p1f_adda_ab_t{THREADS}_{tag}.json"
     dest.write_text(json.dumps(out, indent=2))
     print(f"\nwrote {dest}")
 

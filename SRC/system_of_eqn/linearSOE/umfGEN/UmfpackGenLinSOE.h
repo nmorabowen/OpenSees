@@ -87,6 +87,9 @@ private:
     // tangent reassembly) and setSize(); set true by the solver after a
     // successful factorization. See BandGenLinSOE::factored for the idiom.
     bool factored;
+
+    int missWarned;      // Ladruno ADR-75 P1g: an addA entry with no CSC slot
+                         // (stiffness silently discarded) reported once
 };
 
 
