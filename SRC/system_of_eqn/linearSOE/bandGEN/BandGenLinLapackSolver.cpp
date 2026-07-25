@@ -154,8 +154,11 @@ BandGenLinLapackSolver::solve(void)
 	// `analyze` == 0 with nodeDisp == the applied load. `-info` is always
 	// negative here (this branch is info>0) and keeps the failing pivot index in
 	// the magnitude; it is the idiom already used by SymBandEigenSolver.cpp:228
-	// and FullGenEigenSolver.cpp:188. No caller reads the magnitude — every
-	// call site gates on `< 0`.
+	// and FullGenEigenSolver.cpp:188. No caller reads the magnitude — no
+	// comparison against a specific value exists in SRC/. (NB: it is NOT true
+	// that every call site gates on `< 0` — many ignore the return entirely,
+	// e.g. ArcLength/DisplacementControl — which made the original bug worse
+	// than it first appeared, not the fix less safe.)
 	return -info;
       } else {
 	opserr << "WARNING BandGenLinLapackSolver::solve() - OpenSees code error\n";

@@ -116,27 +116,48 @@ void* OPS_ModifiedNewton()
         double data[2];
         int numData = 2;
         if(OPS_GetDoubleInput(&numData,&data[0]) < 0) {
-          // Ladruno ADR-76 (R4, adversarial review): warn and keep the defaults
-          // instead of `return 0`. A null here is a silent-wrong-answer on the
-          // openseespy path -- OPS_Algorithm does `if (theAlgo != 0) setAlgorithm`
-          // and then reports success, so the PREVIOUS algorithm stays in force
-          // with no Python exception. This is the same rule ADR-75 P1d already
-          // records for `-krylov`: a parse failure degrades to the default, it
-          // does not return null. Widening the option scan made this reachable
-          // from `-hall` positions other than first, so it has to be closed here.
-          opserr << "WARNING ModifiedNewton - invalid data reading 2 hall factors;"
-                 << " keeping the defaults " << iFactor << "/" << cFactor << "\n";
-        } else {
-          iFactor = data[0];
-          cFactor = data[1];
+          // Ladruno ADR-76: KEEP `return 0` — do not degrade to the defaults.
+          //
+          // An earlier cut of this fix warned-and-continued here, reasoning that
+          // a null is silently swallowed on the openseespy path. The premise was
+          // right; the cure was worse. The classic Tcl caller has ALWAYS handled
+          // null correctly (`commands.cpp:4469`, `if (theNewtonAlgo == 0) return
+          // TCL_ERROR`), so degrading turned a typo'd Tcl deck that used to abort
+          // loudly into one that runs to completion with the WRONG Hall factors.
+          // It also made this parser disagree with OPS_NewtonRaphsonAlgorithm on
+          // the same flag's error handling — the exact objection used two hunks
+          // above to leave the `== 2` arity gate alone.
+          //
+          // The openseespy hole is now closed at its actual source: OPS_Algorithm
+          // returns -1 on a null instead of reporting success
+          // (`OpenSeesCommands.cpp`), which fixes EVERY algorithm factory at once
+          // rather than loosening this one.
+          opserr << "WARNING ModifiedNewton - invalid data reading 2 hall factors\n";
+          return 0;
         }
+        iFactor = data[0];
+        cFactor = data[1];
       }
     } else {
       // Ladruno ADR-76 (R4, adversarial review): the point of the option loop is
       // that nothing gets silently dropped, so an unrecognised token must say so.
-      // This also makes the `-hall` arity quirk below self-diagnosing: in
-      // `-hall 0.2 0.8 -factoronce` the `== 2` gate above does not fire, and the
-      // two orphaned numerics land here and are reported instead of vanishing.
+      // This also makes the `-hall` arity quirk above self-diagnosing: in
+      // `-hall 0.2 0.8 -factoronce` the `== 2` gate does not fire, and the two
+      // orphaned numerics land here and are reported instead of vanishing.
+      //
+      // KNOWN LIMIT under openseespy: `type` here is the literal string
+      // "Invalid String Input!" whenever the token was NOT a Python string —
+      // OPS_GetString() maps a non-`PyUnicode` argument to that sentinel
+      // (PythonModule.cpp:246-258 -> OpenSeesCommands.cpp:1199). So for the case
+      // this warning most exists for — the orphaned numerics of
+      // `-hall 0.2 0.8 -factoronce` — Python users get two warnings that name
+      // nothing. The warning still FIRES, which is the point; it just cannot
+      // identify the token. Reading through OPS_GetStringFromAll would fix that,
+      // but it must replace the OPS_GetString() at the TOP of the loop — calling
+      // it here would advance the cursor and silently eat the next option. Left
+      // as-is deliberately: changing the loop's read path is a wider change than
+      // this warning justifies, and Tcl (where `type` is always the real token)
+      // is unaffected.
       opserr << "WARNING ModifiedNewton - ignoring unrecognised option " << type << "\n";
     }
   }
