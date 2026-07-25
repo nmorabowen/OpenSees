@@ -24,7 +24,7 @@ Everything below is **merged to `ladruno`**. Pick up from "What to do next".
 | [#624](https://github.com/nmorabowen/OpenSees/pull/624) | `6921f93` | **P1c** scaling study + capability wall |
 | [#625](https://github.com/nmorabowen/OpenSees/pull/625) | `2bb348c` | **P2** MUMPS `-BLR` + oneAPI-2026 toolchain fixes |
 | [#626](https://github.com/nmorabowen/OpenSees/pull/626) | `434b1a6` | **P2b** `-stats` (INFOG/RINFOG) + BLR memory verdict |
-| *(this session)* | — | **P1d** symmetric PARDISO `-matrixType` + `-stats` + Tcl verb |
+| [#630](https://github.com/nmorabowen/OpenSees/pull/630) | — | **P1d** symmetric PARDISO `-matrixType` + `-stats` + Tcl verb |
 
 ## Headline results (all measured, not estimated)
 
