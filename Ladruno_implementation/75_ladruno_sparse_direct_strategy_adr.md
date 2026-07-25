@@ -268,8 +268,20 @@ the assembly race toward a simpler, better-proven remedy.
   **Gate (now a measured number): beat UmfPack's 22.711 s on Lane B** at 4 threads *and* threading
   verified engaged; bit-identical/1e-12 tip displacement vs the locked baseline
   (`phase1/RESULTS_laneB_baseline.md`).
-- **P2 — MUMPS cluster tuning.** `-matrixType 2`, `-BLR`, hybrid ranks×threads. **Gate:** the
-  ADR-74 rung harness shows a symmetric/BLR win at fixed np; no accuracy regression.
+- **P2 — MUMPS cluster tuning. 🟡 `-BLR` SHIPPED, effect NOT yet validated at scale**
+  (`phase1/RESULTS_p2_blr.md`). `system Mumps -BLR <eps>` (+ raw `-ICNTL35`/`-CNTL7`) is wired,
+  propagates to subordinate ranks via `sendSelf`/`recvSelf` (without which rank 0 would factor BLR
+  while the others factored full-rank), and **demonstrably engages** above a size threshold
+  (rel diff 1.86e-12 at `eps=1e-4`; a *smaller* model showed BLR silently not engaging at all).
+  **⚠ Measured counterintuitive result: at ~30k DOF / np2 BLR is 1.70× SLOWER at `1e-9` and 3.17×
+  slower at `1e-4`** — compression overhead exceeds flop savings on small fronts, AND in a
+  *nonlinear* loop a looser tolerance returns a less accurate correction so Newton needs more
+  iterations (more solves). **So BLR is a MEMORY lever, not a speed lever**, its justification is the
+  P1c capability wall, and it stays opt-in/off-by-default. **Still open:** peak factor memory per
+  rank on a production deck, and the crossover size — neither reachable on this desktop. Also, the
+  fork does not surface MUMPS `INFOG`/`RINFOG` compression stats, so users cannot directly see
+  whether BLR did anything; exposing them is the next P2 step. `-matrixType 2` (symmetric) and
+  hybrid ranks×threads remain untouched.
 - **P3 — explicit-verb portability polish.** Clear build-time errors + docs (no `-auto`; §12) once
   P1/P2 land. **Preceded by the P0 trade study below** if unify-on-MKL is chosen.
 - **P4 — threaded assembly (own effort, staged).** (a) scope `elem.update`; (b) de-static kernels;

@@ -56,11 +56,16 @@ class MumpsParallelSOE;
 class MumpsParallelSolver : public LinearSOESolver
 {
   public:
-  MumpsParallelSolver(int ICNTL7 = 7, int ICNTL14 = 20);
+  // Ladruno ADR-75 P2: ICNTL35/CNTL7 are the Block Low-Rank controls (default
+  // OFF => byte-identical to the pre-BLR solver).
+  MumpsParallelSolver(int ICNTL7 = 7, int ICNTL14 = 20,
+		      int ICNTL35 = 0, double CNTL7 = 0.0);
 
-  MumpsParallelSolver(int MPI_COMM, 		      
+  MumpsParallelSolver(int MPI_COMM,
 		      int ICNTL7,
-		      int ICNTL14);
+		      int ICNTL14,
+		      int ICNTL35 = 0,
+		      double CNTL7 = 0.0);
 
   virtual ~MumpsParallelSolver();
   
@@ -91,6 +96,13 @@ class MumpsParallelSolver : public LinearSOESolver
   int np;
   int icntl14;
   int icntl7;
+  // Ladruno ADR-75 P2: Block Low-Rank. ICNTL(35)=0 off / 1 BLR facto+solve /
+  // 2 BLR facto, full solve / 3 BLR facto, no compression of the solve.
+  // CNTL(7) is the dropping tolerance eps (0.0 => MUMPS default). BLR is an
+  // APPROXIMATE factorization: it trades accuracy for factor memory/flops, so
+  // it is opt-in and must never be enabled on a byte-identical/oracle lane.
+  int icntl35;
+  double cntl7;
 
   MPI_Comm theComm;  // Ladruno ADR43 P3a: defaults to MPI_COMM_WORLD
 
