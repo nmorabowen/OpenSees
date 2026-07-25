@@ -1,0 +1,70 @@
+{
+  "model": "laneB 15^3 LadrunoBrick+LadrunoJ2 ~11.5k DOF",
+  "repeats": 7,
+  "nsteps": 15,
+  "mkl_threads": "1",
+  "pyd": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\dist\\bin\\opensees.pyd",
+  "results": {
+    "UmfPack": {
+      "median_s": 22.710587700014003,
+      "ratio_vs_umfpack": 1.0,
+      "tip_ux": 2.2717603821225074,
+      "tip_rel_err": 0.0,
+      "samples": [
+        22.54314590001013,
+        22.551150100014638,
+        22.61841449997155,
+        22.710587700014003,
+        23.315089099982288,
+        23.694229599961545,
+        28.19155689998297
+      ]
+    },
+    "SuperLU": {
+      "median_s": 78.52088349999394,
+      "ratio_vs_umfpack": 3.457457135728175,
+      "tip_ux": 2.2717603821225074,
+      "tip_rel_err": 0.0,
+      "samples": [
+        77.25976909999736,
+        77.31538830004865,
+        77.33235219999915,
+        78.52088349999394,
+        79.26824559998931,
+        79.28519109997433,
+        80.26375459996052
+      ]
+    },
+    "SparseSYM": {
+      "median_s": 47.64806249999674,
+      "ratio_vs_umfpack": 2.0980550186276052,
+      "tip_ux": 2.2717603821225074,
+      "tip_rel_err": 0.0,
+      "samples": [
+        46.525496700021904,
+        46.81230960000539,
+        47.150192100030836,
+        47.64806249999674,
+        48.26835689996369,
+        48.45735420001438,
+        94.64628739998443
+      ]
+    },
+    "Mumps": {
+      "unavailable": true,
+      "reason": "See stderr output",
+      "args": [
+        "Mumps",
+        "-ICNTL14",
+        "200"
+      ]
+    },
+    "Pardiso": {
+      "unavailable": true,
+      "reason": "See stderr output",
+      "args": [
+        "Pardiso"
+      ]
+    }
+  }
+}
