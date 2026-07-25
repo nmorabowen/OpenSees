@@ -65,7 +65,8 @@ Everything below is **merged to `ladruno`**. Pick up from "What to do next".
    full-rank. Start near `1e-8`. If `INFOG(21)` doesn't move, BLR is not the memory lever at your scale
    either and the next candidate is **MUMPS out-of-core `ICNTL(22)`** (trades memory for I/O, not
    accuracy — not yet exposed by the fork; small addition next to `-BLR`).
-2. **P1b — symmetric PARDISO (`mtype ±2`).** Needs **upper-triangle SOE storage** in
+2. **P1b — symmetric PARDISO (`mtype ±2`). ← CHOSEN AS THE NEXT SESSION'S TASK.**
+   **Self-contained brief: [[_adr75_p1b_brief]] — start there, it needs no re-derivation.** Needs **upper-triangle SOE storage** in
    `PARDISOGenLinSOE` (a real change; `MumpsSOE`'s `matType != 0` branch is the template). Targets
    memory *and* time — attractive now that memory is the measured constraint. **Must be measured, not
    assumed**: `SparseSYM` (a symmetric solver) is **2.10× SLOWER** than unsymmetric UmfPack, so
