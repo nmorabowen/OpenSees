@@ -307,6 +307,42 @@ zero-pivot message now says exactly that.
   actually moves — and it is **exact**, so unlike BLR it is legal on byte-identical/oracle paths.
   Against the P1c capability wall this is the largest memory lever ADR-75 has produced.
   **Default stays `0` (unsymmetric)** — see §5.2-bis.
+- **P1e — factorization-preconditioned CGS (`-krylov <L>`). ✅ DONE, AND IT COVERS THE CASE P1a CANNOT**
+  (`phase1/RESULTS_p1e_krylov.md`). P1a's reuse gate keys on the SOE `factored` flag, which answers
+  "is A unchanged" — so it pays under ModifiedNewton/Initial/Krylov/IMPL-EX and **nothing under full
+  Newton**. `iparm[3]` is the complementary axis: it reuses the retained L/U as a *preconditioner*
+  for a tangent that HAS changed. `system Pardiso -krylov <digits>` in **both** interpreters.
+  **Measured on Lane B under full Newton:** **1.51× vs direct PARDISO at 50.7k DOF / 4 threads**
+  (1.22× @11.5k, 1.30× @26.5k — *rising with N*), 1.51-1.94× single-threaded, and **1.57× stacked
+  with P1d `-matrixType 1`** (vs 1.34× for half-storage alone; the levers compose sublinearly since
+  both attack the same factorization cost). Tip displacement bit-identical in every row.
+  **⚠ Two size/thread traps recorded:** threading *erodes* the win (factorization parallelizes, the
+  triangular solves in each CGS iteration do not) so 11.5k/4T reads a misleading 1.22×, and the
+  trend only reasserts itself with N — quoting the small-model number would repeat the ADR-40b
+  mistake. **⚠ Scope limit: Intel documents `K=2` for symmetric POSITIVE DEFINITE only, so
+  `-matrixType 2` (`mtype -2`) — the right choice for a softening/buckling tangent — cannot use this
+  lever at all** (warns, falls back to direct). The nonlinear-softening class that most needs solver
+  speed is therefore the least served; the 1.57× composition figure is SPD-only.
+  Three implementation subtleties, all banked in `LEDGER_quirks.md`: phase **23** is mandatory (the
+  automatic direct fallback is documented for 23 only; under 33 the same failure is just `error=-4`);
+  a CGS *win* leaves the stored factors **stale**, so the phase-33 shortcut must be forbidden
+  afterwards (new `factorsCurrent`, distinct from `haveFactors`) or a later same-A solve silently
+  answers the previous tangent; and `iparm[3]` must stay 0 for a pattern's first numeric pass.
+  The stale-factor guard was verified by **deliberately removing it and re-measuring** — it is
+  load-bearing, but Lane B's tip displacement (1.2e-11) and iteration count (1.01×, and only 1.03×
+  even swept to perfect plasticity) do **not** detect it, because Newton's residual test launders a
+  stale-factor solve into a slower quasi-Newton. The check that does discriminate (`-krylov` vs
+  *direct* under the same ModifiedNewton: 0.0 vs 1.2e-11) is what `p1e_smoke.py` now asserts.
+  **Adversarial review also refuted a second hypothesis of mine — preconditioner aging.** CGS never
+  refactors while it wins, so the preconditioner stays the step-1 factorization and the `-stats`
+  iteration drift (1→3→4→5) looked like a short-benchmark bias. Measured: 60 steps gives **1.34×**
+  vs 15 steps' 1.30×, and over 150 steps / 340 solves the iteration count **plateaus at 4–5**. No
+  refresh policy needed. **⚠ Top residual risk: the FALLBACK branch has never executed** — 340
+  solves, `L` up to 9, perfect plasticity at double load (tip 55.5, 18 CGS iterations): zero
+  fallbacks. Its decode is unverified; mitigation is that the branch's only correctness-relevant
+  action (`factorsCurrent = true`) is unconditional and right for both `iparm[19] < 0` and `== 0`,
+  so a bad decode corrupts a diagnostic string, not an answer.
+  **Opt-in, off by default** — byte-identical to P1d when absent.
 - **P2 — MUMPS cluster tuning. 🟡 `-BLR` SHIPPED, effect NOT yet validated at scale**
   (`phase1/RESULTS_p2_blr.md`). `system Mumps -BLR <eps>` (+ raw `-ICNTL35`/`-CNTL7`) is wired,
   propagates to subordinate ranks via `sendSelf`/`recvSelf` (without which rank 0 would factor BLR

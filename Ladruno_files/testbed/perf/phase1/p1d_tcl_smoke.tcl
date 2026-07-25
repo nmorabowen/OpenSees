@@ -71,6 +71,14 @@ runcase "Pardiso -matrixType 2"   Pardiso -matrixType 2
 runcase "Pardiso -matrixType 1"   Pardiso -matrixType 1
 runcase "Pardiso -symmetric"      Pardiso -symmetric
 runcase "Pardiso -spd"            Pardiso -spd
+# ADR-75 P1e — `-krylov` must parse and solve from Tcl too. Same reason this
+# file exists at all: the Tcl `system` chain is a separate if-ladder and drifts.
+# Row 3 is the refusal path (mtype -2 has no documented CGS mode): it must WARN
+# and still produce the same answer, not fail.
+runcase "Pardiso -krylov 6"       Pardiso -krylov 6
+runcase "Pardiso -spd -krylov 6"  Pardiso -spd -krylov 6
+runcase "Pardiso -sym -krylov 6"  Pardiso -symmetric -krylov 6
+runcase "Pardiso -krylov (noval)" Pardiso -krylov
 puts "TCL-SMOKE-DONE"
 wipe
 exit

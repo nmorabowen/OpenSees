@@ -3917,6 +3917,7 @@ specifySOE(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
 
     int matType = 0;   // 0 unsym (default) / 1 SPD / 2 symmetric general
     int statsFlag = 0; // -stats: dump PARDISO's peak-memory counters once
+    int krylovDigits = 0; // Ladruno ADR-75 P1e: -krylov <L>, 0 = direct only
     int count = 2;
 
     // Ladruno ADR-75 P1d (adversarial review): this loop originally diverged
@@ -3950,6 +3951,18 @@ specifySOE(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
 	matType = 1;
       } else if (strcmp(argv[count],"-stats") == 0) {
 	statsFlag = 1;
+      } else if (strcmp(argv[count],"-krylov") == 0) {
+	// Ladruno ADR-75 P1e: factorization-preconditioned CGS. Takes Intel's L
+	// (eps_CGS = 10^-L). Same missing-value handling as -matrixType above.
+	if (count+1 >= argc) {
+	  opserr << "Pardiso Warning: -krylov given with no value. "
+		 << "CGS preconditioning disabled\n";
+	  count++;
+	  continue;
+	}
+	if (Tcl_GetInt(interp, argv[count+1], &krylovDigits) != TCL_OK)
+	  return TCL_ERROR;
+	count++;
       } else {
 	opserr << "Pardiso Warning: unknown option " << argv[count]
 	       << ", ignored\n";
@@ -3959,6 +3972,7 @@ specifySOE(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
 
     PARDISOGenLinSolver *theSolver = new PARDISOGenLinSolver();
     theSolver->setStats(statsFlag);
+    theSolver->setKrylov(krylovDigits);   // Ladruno ADR-75 P1e
     theSOE = new PARDISOGenLinSOE(*theSolver, matType);
   }
 #else

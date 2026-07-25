@@ -1,0 +1,35 @@
+{
+  "threads": "4",
+  "repeats": 3,
+  "nsteps": 15,
+  "pyd": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\opensees-pr-strategy-9c17b8\\dist\\bin\\opensees.pyd",
+  "sizes": {
+    "25": {
+      "ndof": 50700,
+      "results": {
+        "direct": {
+          "median_s": 60.41551870002877,
+          "ratio_vs_direct": 1.0,
+          "tip_ux": 3.6264019486816994,
+          "tip_rel_err": 0.0,
+          "samples": [
+            60.25669880001806,
+            60.41551870002877,
+            60.43735749996267
+          ]
+        },
+        "krylov6": {
+          "median_s": 39.871588699985296,
+          "ratio_vs_direct": 0.6599560768145206,
+          "tip_ux": 3.6264019486816994,
+          "tip_rel_err": 0.0,
+          "samples": [
+            39.838895299995784,
+            39.871588699985296,
+            40.01842019998003
+          ]
+        }
+      }
+    }
+  }
+}

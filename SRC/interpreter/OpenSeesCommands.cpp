@@ -4919,6 +4919,7 @@ void* OPS_PARDISOGenLinSolver() {
 #ifdef _PARDISO
     int matType = 0;      // Ladruno ADR-75 P1d: unsymmetric unless asked
     int statsFlag = 0;    // Ladruno ADR-75 P1d: -stats dumps PARDISO memory
+    int krylovDigits = 0; // Ladruno ADR-75 P1e: -krylov <L>, 0 = direct only
 
     // Ladruno ADR-75 P2b lesson, applied pre-emptively: "> 0", not "> 1" — the
     // bare flags (-symmetric/-spd/-stats) take no value, so a "> 1" bound would
@@ -4955,6 +4956,18 @@ void* OPS_PARDISOGenLinSolver() {
             matType = 1;
         } else if (strcmp(opt, "-stats") == 0) {
             statsFlag = 1;      // bare flag — consumes no value
+        } else if (strcmp(opt, "-krylov") == 0) {
+            // Ladruno ADR-75 P1e: takes an INT (Intel's L, eps_CGS = 10^-L).
+            // Deliberately value-taking rather than a bare flag with a default:
+            // the useful L is model-dependent, and the same "degrade, never
+            // return 0" rule as -matrixType applies to a parse failure.
+            if (OPS_GetIntInput(&num, &krylovDigits) < 0) {
+                opserr << "WARNING system Pardiso - failed to get -krylov "
+                          "digits (pass an INT, e.g. -krylov 6). CGS "
+                          "preconditioning disabled\n";
+                krylovDigits = 0;
+                continue;
+            }
         } else {
             opserr << "WARNING system Pardiso - unknown option " << opt
                    << ", ignored\n";
@@ -4970,6 +4983,7 @@ void* OPS_PARDISOGenLinSolver() {
     // serial MUMPS path has never been compiled. Ladruno ADR-75.)
     PARDISOGenLinSolver *theSolver = new PARDISOGenLinSolver();
     theSolver->setStats(statsFlag);
+    theSolver->setKrylov(krylovDigits);   // Ladruno ADR-75 P1e
     PARDISOGenLinSOE *thePardisoSOE = new PARDISOGenLinSOE(*theSolver, matType);
     return thePardisoSOE;
 #else
