@@ -57,9 +57,41 @@ threaded BLAS** does *inside* a solver — invisible to OpenSees.
 | D explicit CDL | element 49% | ❌ (diagonal, no factor) | ✅ |
 | E IMK frame | `update` 35% + solve 31% | partial | ✅ |
 
-A direct solver wins **one** lane. Threaded element assembly is the dominant cost in **four of
-five** — and is the *only* lever for the primary frame lanes. This is the measure-first spine of
-the whole ADR.
+A direct solver wins **one** lane *of this table*. Threaded element assembly is the dominant cost in
+four of five. This is the measure-first spine of the whole ADR — **but read the production-regime
+correction immediately below before using it to prioritize.**
+
+### ⚠ Production-regime correction (2026-07-24, from the fork owner)
+
+ADR-40b's lane table is a *breadth* survey, and earlier drafts of this ADR wrongly inferred from it
+that the fork's **primary** workload is fiber frames. It is not. The production regime is
+**huge solid nonlinear models** — i.e. **Lane B is the primary lane**, not a side lane. Consequences,
+all of which *raise* the value of the solver lanes:
+
+1. **The solver lanes matter more, not less.** Lane B is 66% `linearSolve` at a mere 11.5k DOF. A 3D
+   sparse-direct factorization scales ~O(N^1.5–2) in flops (worse than the ~O(N) assembly), so at
+   10⁵–10⁶⁺ DOF the solve fraction **grows** — the 66% is a *floor* for production sizes, and
+   PARDISO/MUMPS work compounds with model size.
+2. **The measurement basis is under-powered.** Every gate in this ADR was set on an 11.5k-DOF model
+   (and ADR-40b spans 0.7–11.5k). That is small by two-plus orders of magnitude versus production.
+   **✅ NOW MEASURED — P1c (`phase1/RESULTS_p1c_scaling.md`) confirms the concern was right:** the
+   PARDISO win **compounds** with size — **1.61× (11.5k) → 2.15× (26k) → 3.40× (51k) DOF** — because
+   UmfPack scales ~O(N²) while PARDISO scales ~O(N^1.45). The P1 headline understated the win for
+   this fork's real regime by ~2×. **And a capability wall appeared: UmfPack ran OUT OF MEMORY at
+   86,490 DOF while PARDISO solved it in 30.4 s and 136,080 DOF in 68.6 s** — so PARDISO raised the
+   largest solvable single-machine model by ≥1.6× in DOF, ceiling untested. That is worth more than
+   any speed ratio here: models that previously forced the cluster may now fit on a workstation.
+3. **Memory becomes the binding constraint, so BLR is promoted.** At huge 3D scale the direct
+   factor's memory — not its time — is what stops a run. MUMPS **BLR** (`ICNTL35`) and out-of-core
+   move from "nice tuning" to a primary P2 item, with the accuracy caveat in §5 handled explicitly.
+4. **The LP64 ceiling stops being theoretical.** `-Dintsize64=OFF` caps nnz at 2³¹. A large 3D
+   factor can genuinely exceed that, so the ILP64 question (§7, currently deferred as "non-trivial")
+   needs a *measured* nnz headroom check on a real production deck.
+5. **Nonlinear ⇒ factorization reuse pays.** Many Newton iterations per step is exactly the regime
+   where the P1 reuse work (and ModifiedNewton/IMPL-EX) converts into wall-clock.
+6. **Lane 3 is still the other half.** Even in Lane B, element state determination was 30% — and the
+   fork's expensive solid materials (`LadrunoConcrete3D` CDPM2, `LadrunoJ2`) make that fraction
+   heavier on real decks than on this elastic-ish benchmark.
 
 ## 2. Code-verified inventory (what exists today)
 
