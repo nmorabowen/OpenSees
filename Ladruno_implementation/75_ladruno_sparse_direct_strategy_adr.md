@@ -107,8 +107,11 @@ finished (§2, §12) — realistic P1 work, in order:
   numeric (22) / solve (33), stop the per-solve phase −1 release, and gate solve-only on the SOE
   `factored` flag (match MUMPS). This is a *restructure*, not a flag.
 - **Symmetric path is a SOE change, not just `mtype`** — PARDISO `mtype ±2` needs upper-triangle
-  input, so `PARDISOGenLinSOE` must gain half-storage (the path `MumpsSOE` already has). Verify the
-  time win by measurement — sparse-symmetric savings are often **<2×** (see §12), not the naive 2×.
+  input, so `PARDISOGenLinSOE` must gain half-storage (the path `MumpsSOE` already has). **Measure,
+  never assume, the symmetric win:** the one symmetric solver we *can* measure (`SparseSYM`) is
+  **2.10× SLOWER** than unsymmetric UmfPack on Lane B (`phase1/RESULTS_laneB_baseline.md`) —
+  implementation quality dominates the storage-format advantage. Treat "~2× from symmetric" as an
+  unproven hypothesis, not a lever (§12).
 - Confirm threading actually engages (`MKL_NUM_THREADS`; the prototype's `iparm[2]=1` is a red flag).
 - **Only the solve is threaded** — Amdahl: real win on Lane B, ~nil on frame lanes (that's Lane 3).
 
@@ -222,8 +225,10 @@ the assembly race toward a simpler, better-proven remedy.
   ([[75a_p0_portfolio_vs_unify_trade_study]]); P1 unblocked, scope fixed to serial/shared-memory.
 - **P1 — PARDISO desktop (MEDIUM, not "small" — §12).** Compile-verify the prototype; wire
   `system Pardiso` + serial-build link; **re-architect factorization reuse** (persist `pt`, drop the
-  per-solve release); add symmetric SOE half-storage; fix the `iparm` leak. **Gate:** beats UmfPack
-  on Lane B at 4 threads *and* threading verified engaged; byte/1e-12 oracle vs UmfPack.
+  per-solve release); add symmetric SOE half-storage; fix the `iparm` leak.
+  **Gate (now a measured number): beat UmfPack's 22.711 s on Lane B** at 4 threads *and* threading
+  verified engaged; bit-identical/1e-12 tip displacement vs the locked baseline
+  (`phase1/RESULTS_laneB_baseline.md`).
 - **P2 — MUMPS cluster tuning.** `-matrixType 2`, `-BLR`, hybrid ranks×threads. **Gate:** the
   ADR-74 rung harness shows a symmetric/BLR win at fixed np; no accuracy regression.
 - **P3 — explicit-verb portability polish.** Clear build-time errors + docs (no `-auto`; §12) once
@@ -239,8 +244,12 @@ the assembly race toward a simpler, better-proven remedy.
   ±symmetric} — median-of-7, threads pinned. **Harness written and ready:**
   `Ladruno_files/testbed/perf/phase1/laneB_solver_bench.py` (same Lane-B model as ADR-40b;
   interleaved rounds; probes each solver and records `unavailable` for the unwired ones; asserts a
-  1e-9 tip-displacement cross-check so a timing is never reported for a wrong answer). **Not yet
-  executed** — run it to lock the UmfPack baseline before P1 code lands.
+  1e-9 tip-displacement cross-check so a timing is never reported for a wrong answer).
+  **✅ EXECUTED 2026-07-24 — baseline locked** (`phase1/RESULTS_laneB_baseline.md`):
+  **UmfPack 22.711 s = the P1 gate**; SparseSYM 2.10× slower; SuperLU 3.46× slower; all three
+  **bit-identical** tip displacement (rel err 0.0). `Mumps` and `Pardiso` both fail at *runtime*
+  with `WARNING unknown system type` — **empirical confirmation** of the §2 static finding that the
+  desktop regime has no threaded sparse-direct solver today.
 - **Cluster:** same models × {MUMPS np-sweep, ±BLR, ranks×threads} — reuse the ADR-74 two-sweep
   method (fixed-np rung + fixed-V np-sweep).
 
