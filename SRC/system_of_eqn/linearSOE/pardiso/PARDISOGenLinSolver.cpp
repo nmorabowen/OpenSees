@@ -30,6 +30,21 @@
 // 11; it is now DERIVED from the SOE's matType (see PARDISOGenLinSOE.h) so the
 // upper-triangle storage and the factorization mode can never disagree, and the
 // pivoting/scaling iparm entries branch on it.
+//
+// Ladruno ADR-75 P1e (2026-07): `-krylov <digits>` — the OTHER reuse axis.
+// The `factored` gate above can only skip work when A is UNCHANGED, so it pays
+// nothing under full Newton, which is what most decks actually run. iparm[3]
+// turns the retained L/U into a PRECONDITIONER for a tangent that has changed:
+// phase 23 runs CGS (Intel's K=1, mtype 11) or CG (K=2, mtype 2 SPD only) and
+// falls back to a real refactorization by itself if the iteration stalls.
+// Two things make this more than a one-line iparm change:
+//   * phase 23 is mandatory — the automatic direct fallback is documented for
+//     phase 23 only, and the same failure under phase 33 is error = -4;
+//   * a CGS WIN leaves the stored factors one tangent behind, so the phase-33
+//     shortcut has to be forbidden afterwards (see `factorsCurrent`). Getting
+//     that wrong is a silent wrong answer, not a crash.
+// Off by default. Intel: "other values are only recommended for an advanced
+// user."
 
 
 #include <PARDISOGenLinSolver.h>
@@ -44,7 +59,9 @@
 PARDISOGenLinSolver::PARDISOGenLinSolver()
 :LinearSOESolver(SOLVER_TAGS_PARDISOGenLinSolver),
  theSOE(0), mtype(11), init(false), needsSymbolic(false), cachedN(0),
- reportStats(0), statsDone(false)
+ reportStats(0), statsDone(false),
+ krylovL(0), krylovK(0), haveFactors(false), factorsCurrent(false),
+ cgsCalls(0), cgsWins(0), cgsAdviceDone(false)
 {
 	// Ladruno ADR-75 P1: the handle and control array are members now (see the
 	// header note). PARDISO REQUIRES pt[] to be zeroed before the first call.
@@ -105,6 +122,37 @@ ops_pardiso_report(const char *whatPhase, int error, int mtype)
 	case -10: opserr << "could not open the OOC file\n"; break;
 	default:  opserr << "see the MKL PARDISO error table\n"; break;
 	}
+}
+
+
+// ---- Ladruno ADR-75 P1d: PERTURBED PIVOTS ARE NOT AN ERROR -----------------
+// iparm[9] tells PARDISO to REPLACE any pivot below eps*||A|| rather than fail,
+// so a near-singular tangent comes back with error == 0 and a solution to a
+// matrix that is NOT the one we assembled. The symmetric path runs eps = 1e-8
+// (Intel's documented recommendation for mtype +-2) — five orders looser than
+// the unsymmetric 1e-13 — so choosing -matrixType 2 materially widens this
+// window, and iparm[7]=2 iterative refinement then hides small perturbations.
+//
+// Silent-wrong-answer class: without this the only symptom is Newton
+// convergence quietly degrading, which gets blamed on the model. This fork
+// already treats perturbed pivots as report-worthy in the FEAST `-certify`
+// Sturm counts (ADR-43 P2) — same hazard, same answer. Warned once per
+// factorization rather than refused: at a limit point a perturbed pivot may be
+// exactly what lets a run continue, and that is the author's call to make, not
+// ours. (Found by adversarial review.)
+//
+// Ladruno ADR-75 P1e: hoisted out of solve() — the CGS path (phase 23) can also
+// end in a factorization, and that one needs the same check.
+static void
+ops_pardiso_perturbed(const int *iparm, int mtype)
+{
+	if (iparm[13] > 0)
+		opserr << "WARNING PARDISOGenLinSolver: PARDISO perturbed "
+		       << iparm[13] << " pivot(s) during factorization (mtype "
+		       << mtype << ", threshold 1e-" << iparm[9]
+		       << "). The solve is to a PERTURBED matrix — treat a slow or "
+		          "stalling Newton here as a near-singular tangent, not a "
+		          "solver hiccup.\n";
 }
 
 
@@ -222,10 +270,112 @@ PARDISOGenLinSolver::solve(void)
 		statsDone = false;          // new pattern => report its memory once
 		cachedN = n;                // for the destructor; see the header note
 		theSOE->factored = false;   // a new pattern always owes a numeric pass
+
+		// Ladruno ADR-75 P1e: a new pattern discards the factors, so there is no
+		// preconditioner to hand CGS until the next phase 22 has run.
+		haveFactors = false;
+		factorsCurrent = false;
+		// The CGS mode follows mtype, which is only known here. Intel documents
+		// K=1 for nonsymmetric/structurally symmetric and K=2 for symmetric
+		// POSITIVE DEFINITE — there is NO documented K for mtype -2, so the
+		// symmetric-indefinite path (which is the right one for a softening or
+		// buckling tangent) simply cannot use this lever.
+		if (krylovL > 0) {
+			krylovK = (mtype == 11) ? 1 : (mtype == 2 ? 2 : 0);
+			if (krylovK == 0)
+				opserr << "WARNING PARDISOGenLinSolver: -krylov is not available "
+				          "for -matrixType 2 (mtype -2). Intel documents the CGS "
+				          "preconditioner for\n     unsymmetric (mtype 11) and "
+				          "symmetric POSITIVE DEFINITE (mtype 2) only; a "
+				          "symmetric-indefinite LDL^T has no\n     documented CGS "
+				          "mode. Continuing with direct factorization.\n";
+		}
+	}
+
+	// ---- Ladruno ADR-75 P1e: CGS preconditioned by the RETAINED factors ----
+	// The `factored` flag can only skip work when A is UNCHANGED. iparm[3] is
+	// the complementary lever: it reuses the previous L/U as a preconditioner
+	// for a tangent that HAS changed, which is the full-Newton case the flag
+	// cannot touch. Phase 23 is mandatory here — Intel documents the automatic
+	// direct fallback ("the factorization for a given A is automatically
+	// recomputed in cases where the Krylov Subspace iteration failed") for
+	// phase 23 ONLY; the same failure under phase 33 is just error = -4.
+	//
+	// Entered when the retained factors are unusable as a *direct* answer,
+	// which is either of:
+	//   theSOE->factored == false  - A was re-assembled since the last solve
+	//   factorsCurrent   == false  - the last solve was a CGS win, so the
+	//                                stored L/U belong to an OLDER A
+	// The second is the subtle one: without it, a second solve() against the
+	// same A (a second RHS, a recorder-driven re-solve) would take the phase-33
+	// shortcut and silently answer with the previous tangent.
+	bool solvedByKrylov = false;
+
+	if (krylovK != 0 && haveFactors == true &&
+	    (theSOE->factored == false || factorsCurrent == false)) {
+
+		iparm[3] = 10 * krylovL + krylovK;
+		int phase = 23;
+		PARDISO(pt, &maxfct, &mnum, &mtype, &phase, &n, a, ia, ja,
+			&idum, &nrhs, iparm, &msglvl, Bptr, Xptr, &error);
+		iparm[3] = 0;   // leave the control array in its direct-solve state
+
+		if (error != 0) {
+			// The handle's factors are in an indeterminate state after a failed
+			// phase 23 (PARDISO may have been part-way through the fallback
+			// refactorization). Forbid the phase-33 shortcut on any subsequent
+			// call rather than trusting them. (Adversarial review.)
+			factorsCurrent = false;
+			ops_pardiso_report("CGS solve (phase 23)", error, mtype);
+			return -2;
+		}
+
+		cgsCalls++;
+		solvedByKrylov = true;
+		theSOE->factored = true;
+
+		if (iparm[19] > 0) {
+			// CGS answered it. The factors were NOT recomputed and are now one
+			// tangent behind — see the header note on factorsCurrent.
+			cgsWins++;
+			factorsCurrent = false;
+			if (reportStats)
+				opserr << "PARDISO -krylov: CGS converged in " << iparm[19]
+				       << " iteration(s); factorization reused\n";
+		} else {
+			// PARDISO gave up and refactored, so the handle now holds L/U of
+			// THIS A. iparm[19] = -it_cgs*10 - cgs_error.
+			factorsCurrent = true;
+			const int cgsErr = -iparm[19] % 10;
+			const int cgsIts = -iparm[19] / 10;
+			// The running tally rides the FALLBACK line specifically: a fallback
+			// is the moment the win rate matters, and it is the number that
+			// decides whether -krylov is earning its place on this model.
+			if (reportStats)
+				opserr << "PARDISO -krylov: CGS gave up after " << cgsIts
+				       << " iteration(s) (cgs_error " << cgsErr
+				       << "); PARDISO refactored  [" << cgsWins << "/"
+				       << cgsCalls << " CGS wins so far]\n";
+			// cgs_error 5 is PARDISO telling us this flag is counterproductive
+			// on this matrix — surface it even without -stats, once, because
+			// the only other symptom is a run that is quietly SLOWER than the
+			// default. Diagnostic, not a refusal: on a nonlinear path the
+			// verdict can differ step to step.
+			if (cgsErr == 5 && cgsAdviceDone == false) {
+				cgsAdviceDone = true;
+				opserr << "WARNING PARDISOGenLinSolver: PARDISO reports "
+				          "cgs_error 5 — factorization on this matrix is fast "
+				          "enough that\n     CGS preconditioning is not worth "
+				          "it. Consider dropping -krylov (this is Intel's own "
+				          "advice for\n     iparm[19] = -...5). Reported once; "
+				          "later occurrences are silent.\n";
+			}
+			ops_pardiso_perturbed(iparm, mtype);
+		}
 	}
 
 	// ---- numeric: ONLY when A changed — this is the reuse win --------------
-	if (theSOE->factored == false) {
+	else if (theSOE->factored == false) {
 		int phase = 22;
 		PARDISO(pt, &maxfct, &mnum, &mtype, &phase, &n, a, ia, ja,
 			&idum, &nrhs, iparm, &msglvl, &ddum, &ddum, &error);
@@ -234,34 +384,14 @@ PARDISOGenLinSolver::solve(void)
 			return -2;
 		}
 		theSOE->factored = true;
-
-		// ---- Ladruno ADR-75 P1d: PERTURBED PIVOTS ARE NOT AN ERROR ---------
-		// iparm[9] tells PARDISO to REPLACE any pivot below eps*||A|| rather
-		// than fail, so a near-singular tangent comes back with error == 0 and
-		// a solution to a matrix that is NOT the one we assembled. The
-		// symmetric path runs eps = 1e-8 (Intel's documented recommendation for
-		// mtype +-2) — five orders looser than the unsymmetric 1e-13 — so
-		// choosing -matrixType 2 materially widens this window, and iparm[7]=2
-		// iterative refinement then hides small perturbations.
-		//
-		// Silent-wrong-answer class: without this the only symptom is Newton
-		// convergence quietly degrading, which gets blamed on the model. This
-		// fork already treats perturbed pivots as report-worthy in the FEAST
-		// `-certify` Sturm counts (ADR-43 P2) — same hazard, same answer.
-		// Warned once per factorization rather than refused: at a limit point a
-		// perturbed pivot may be exactly what lets a run continue, and that is
-		// the author's call to make, not ours. (Found by adversarial review.)
-		if (iparm[13] > 0)
-			opserr << "WARNING PARDISOGenLinSolver: PARDISO perturbed "
-			       << iparm[13] << " pivot(s) during factorization (mtype "
-			       << mtype << ", threshold 1e-" << iparm[9]
-			       << "). The solve is to a PERTURBED matrix — treat a slow or "
-			          "stalling Newton here as a near-singular tangent, not a "
-			          "solver hiccup.\n";
+		haveFactors = true;      // Ladruno ADR-75 P1e: CGS now has a
+		factorsCurrent = true;   // preconditioner, and it matches A
+		ops_pardiso_perturbed(iparm, mtype);
 	}
 
 	// ---- triangular solve + iterative refinement: every call ---------------
-	{
+	// Skipped after a phase-23 call, which already produced X.
+	if (solvedByKrylov == false) {
 		int phase = 33;
 		PARDISO(pt, &maxfct, &mnum, &mtype, &phase, &n, a, ia, ja,
 			&idum, &nrhs, iparm, &msglvl, Bptr, Xptr, &error);
@@ -334,6 +464,9 @@ PARDISOGenLinSolver::setLinearSOE(PARDISOGenLinSOE &theLinearSOE)
     // being broken silently.
     needsSymbolic = true;
     statsDone = false;
+    // Ladruno ADR-75 P1e: the retained factors belong to the OLD SOE's matrix.
+    haveFactors = false;
+    factorsCurrent = false;
     return 0;
 }
 
@@ -343,6 +476,45 @@ void
 PARDISOGenLinSolver::setStats(int on)
 {
     reportStats = on;
+}
+
+
+// Ladruno ADR-75 P1e
+void
+PARDISOGenLinSolver::setKrylov(int digits)
+{
+    // Intel's L. eps_CGS = 10^-L, and iparm[3] = 10*L + K must stay >= 0, so a
+    // negative L is not merely useless — it would encode a different K.
+    if (digits < 0) {
+        opserr << "WARNING PARDISOGenLinSolver::setKrylov() - negative digits ("
+               << digits << ") is meaningless; -krylov disabled\n";
+        digits = 0;
+    }
+    // Bound L at 9. NOT an encoding limit — 10*L+K decodes unambiguously for
+    // any L (K is the units digit, K <= 2), so iparm[3] = 101 would be a
+    // perfectly legal L=10 (an earlier version of this comment claimed
+    // otherwise; adversarial review). The real reason is behavioural: PARDISO
+    // fixes a 150-iteration ceiling, so a criterion tighter than the
+    // preconditioned iteration can actually reach does not buy accuracy — it
+    // buys a guaranteed trip down the failure path, i.e. wasted iterations
+    // followed by the factorization we were trying to avoid.
+    if (digits > 9) {
+        opserr << "WARNING PARDISOGenLinSolver::setKrylov() - digits (" << digits
+               << ") is tighter than the CGS iteration can deliver and would "
+                  "just force fallbacks; clamped to 9\n";
+        digits = 9;
+    }
+    krylovL = digits;
+    // Disabling must also clear K. K is otherwise only assigned in the symbolic
+    // phase under `krylovL > 0`, so a stale K=1 left behind by an earlier
+    // enable would keep the CGS branch live with iparm[3] = 10*0 + 1 = 1, i.e.
+    // eps_CGS = 10^0 = 1 — an "accept almost anything" tolerance. Not reachable
+    // through today's construct-once factories, but the class no longer relies
+    // on that. (Adversarial review.)
+    if (krylovL == 0)
+        krylovK = 0;
+    // Otherwise krylovK stays 0 until the symbolic phase derives mtype — that
+    // is where the "no CGS mode for mtype -2" refusal lives.
 }
 
 
