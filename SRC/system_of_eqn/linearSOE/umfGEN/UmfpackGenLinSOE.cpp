@@ -49,7 +49,8 @@
 
 UmfpackGenLinSOE::UmfpackGenLinSOE(UmfpackGenLinSolver &the_Solver)
     :LinearSOE(the_Solver, LinSOE_TAGS_UmfpackGenLinSOE), X(), B(), Ap(), Ai(), Ax(),
-     factored(false)   // Ladruno (ADR-40 rank 8/10)
+     factored(false),  // Ladruno (ADR-40 rank 8/10)
+     missWarned(0)     // Ladruno (ADR-75 P1g)
 {
     the_Solver.setLinearSOE(*this);
 }
@@ -57,7 +58,8 @@ UmfpackGenLinSOE::UmfpackGenLinSOE(UmfpackGenLinSolver &the_Solver)
 
 UmfpackGenLinSOE::UmfpackGenLinSOE()
     :LinearSOE(LinSOE_TAGS_UmfpackGenLinSOE), X(), B(), Ap(), Ai(), Ax(),
-     factored(false)   // Ladruno (ADR-40 rank 8/10)
+     factored(false),  // Ladruno (ADR-40 rank 8/10)
+     missWarned(0)     // Ladruno (ADR-75 P1g)
 {
 }
 
@@ -140,6 +142,28 @@ UmfpackGenLinSOE::setSize(Graph &theGraph)
 	Ap.push_back(Ap[a]+col.Size());
     }
 
+    // Ladruno (ADR-75 P1g): ENFORCE the invariant addA's binary search depends on.
+    // Each CSC column of Ai must be strictly ascending. It is, by construction —
+    // every column is built through ID::insert, a binary-search insertion into a
+    // sorted array with dedup. But addA's ops_umfpack_findRow would return a WRONG
+    // (or absent) slot on an unsorted column, and the failure mode is a silently
+    // wrong tangent, not a crash. So check rather than assume: this is O(nnz) once
+    // per setSize, against an assembly loop that runs O(idSize^2 * log collen) per
+    // element for the whole analysis — free, and it converts a future silent
+    // breakage into a loud one. (Same reasoning, and the same guard, as ADR-75 P1f
+    // added to PARDISOGenLinSOE::setSize.)
+    for (int a = 0; a < size; a++) {
+	for (int k = Ap[a] + 1; k < Ap[a+1]; k++) {
+	    if (Ai[k] <= Ai[k-1]) {
+		opserr << "WARNING:UmfpackGenLinSOE::setSize : column " << a
+		       << " row indices are not strictly ascending at Ai[" << k
+		       << "] (" << Ai[k] << " after " << Ai[k-1]
+		       << ") - addA's binary search requires ascending CSC\n";
+		return -1;
+	    }
+	}
+    }
+
     // Ladruno (ADR-40 rank 8/10): structure rebuilt (new Symbolic) -> any
     // persisted Numeric is stale; mark unfactored. The solver's setSize() frees
     // the persisted Numeric before rebuilding Symbolic.
@@ -154,6 +178,34 @@ UmfpackGenLinSOE::setSize(Graph &theGraph)
 	return solverOK;
     }
     return 0;
+}
+
+// Ladruno (ADR-75 P1g): binary search for a row index inside one CSC column of Ai.
+// Mirrors ops_pardiso_findCol (ADR-75 P1f) — same contract, same shape, so the two
+// SOEs stay comparable. Returns the index into Ai/Ax, or -1 if `row` is not in the
+// column (a structurally absent entry, which addA skips exactly as the old linear
+// scan did by falling out of its loop).
+//
+// LEGAL because each CSC column of Ai is STRICTLY ASCENDING. That is not an
+// assumption: setSize builds every column through ID::insert, which is a
+// binary-search insertion into a sorted array with dedup (`if (x == dataMiddle)
+// return 1; // already there`) — so the column is a sorted set by construction. It
+// is additionally CHECKED at the end of setSize (see there), because "guaranteed by
+// construction" silently becomes "wrong answer" the day the construction changes.
+static inline int
+ops_umfpack_findRow(const int *Ai, int lo, int hi, int row)
+{
+    while (lo < hi) {
+	const int mid = lo + ((hi - lo) >> 1);
+	const int r = Ai[mid];
+	if (r < row)
+	    lo = mid + 1;
+	else if (r > row)
+	    hi = mid;
+	else
+	    return mid;
+    }
+    return -1;
 }
 
 int
@@ -171,6 +223,13 @@ UmfpackGenLinSOE::addA(const Matrix &m, const ID &id, double fact)
 	return -1;
     }
 
+    // Ladruno (ADR-75 P1g): a FREE miss detector. The `k >= 0` test already exists,
+    // so `else missing = 1` costs a never-taken branch. It turns "an element entry
+    // has no CSC slot => its stiffness is silently discarded" from undetectable into
+    // a once-per-SOE warning; the old linear scan just fell off the end of the
+    // column. (Mirrors ADR-75 P1f in PARDISOGenLinSOE.)
+    int missing = 0;
+
     int size = X.Size();
     if (fact == 1.0) { // do not need to multiply
 	for (int j=0; j<idSize; j++) {
@@ -184,12 +243,13 @@ UmfpackGenLinSOE::addA(const Matrix &m, const ID &id, double fact)
 		    continue;
 		}
 
-		// find place in A
-		for (int k=Ap[col]; k<Ap[col+1]; k++) {
-		    if (Ai[k] == row) {
-			Ax[k] += m(i,j);
-			break;
-		    }
+		// find place in A (Ladruno ADR-75 P1g: was a linear scan of the
+		// whole column for each of idSize^2 entries -> O(idSize^2 * collen))
+		const int k = ops_umfpack_findRow(&Ai[0], Ap[col], Ap[col+1], row);
+		if (k >= 0) {
+		    Ax[k] += m(i,j);
+		} else {
+		    missing = 1;
 		}
 	    }
 	}
@@ -205,15 +265,24 @@ UmfpackGenLinSOE::addA(const Matrix &m, const ID &id, double fact)
 		    continue;
 		}
 
-		// find place in A
-		for (int k=Ap[col]; k<Ap[col+1]; k++) {
-		    if (Ai[k] == row) {
-			Ax[k] += fact*m(i,j);
-			break;
-		    }
+		// find place in A (Ladruno ADR-75 P1g: binary search, see above)
+		const int k = ops_umfpack_findRow(&Ai[0], Ap[col], Ap[col+1], row);
+		if (k >= 0) {
+		    Ax[k] += fact*m(i,j);
+		} else {
+		    missing = 1;
 		}
 	    }
 	}
+    }
+
+    // Ladruno (ADR-75 P1g): reported ONCE per SOE, not per element.
+    if (missing == 1 && missWarned == 0) {
+	missWarned = 1;
+	opserr << "WARNING UmfpackGenLinSOE::addA() - an element entry has no slot in "
+	       << "the sparsity pattern; its contribution was DISCARDED. The tangent is "
+	       << "wrong. This usually means the DOF connectivity graph setSize() was "
+	       << "built from does not cover the element's ID. Reported once.\n";
     }
 
     return 0;
