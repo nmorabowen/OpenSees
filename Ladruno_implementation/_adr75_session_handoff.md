@@ -76,11 +76,14 @@ Everything below is **merged to `ladruno`**. Pick up from "What to do next".
    full-rank. Start near `1e-8`. If `INFOG(21)` doesn't move, BLR is not the memory lever at your scale
    either and the next candidate is **MUMPS out-of-core `ICNTL(22)`** (trades memory for I/O, not
    accuracy — not yet exposed by the fork; small addition next to `-BLR`).
-2. ~~**P1b — symmetric PARDISO (`mtype ±2`).**~~ ✅ **DONE this session as P1d** —
-   `phase1/RESULTS_p1d_symmetric.md`. Won on both axes (1.35× time, −41.8% peak memory, exact).
-   The "must be measured, not assumed" caution was right to insist on the measurement and wrong
-   about the direction. **Follow-on now carrying a strong prior: exercise MUMPS `-matrixType 2` on
-   the cluster** — same lever, still untouched there, and it composes with item 1.
+2. ~~**P1b — symmetric PARDISO (`mtype ±2`)** (briefed in [[_adr75_p1b_brief]]).~~
+   ✅ **DONE 2026-07-25, shipped as P1d ([#630](https://github.com/nmorabowen/OpenSees/pull/630))** —
+   `phase1/RESULTS_p1d_symmetric.md`. Won on **both** axes: 1.35× vs unsymmetric PARDISO @4T and
+   **−41.8% peak memory**, bit-identical answers. The brief's "must be measured, not assumed" caution
+   was right to insist on the measurement and wrong about the direction — `SparseSYM`'s 2.10×
+   slowdown was *its* implementation quality, not a property of symmetric storage.
+   **Follow-on, now carrying a strong prior: exercise MUMPS `-matrixType 2` on the cluster** — same
+   lever, still untouched there, and it composes with item 1.
 3. **Lane 3 — threaded element assembly.** The only lever for the ~34% PARDISO cannot touch (Amdahl:
    measured 1.76× vs a predicted ~2.2× ceiling). Deserves **its own sub-ADR**. Order: (a) scope
    `elem.update` (ADR-40b's #1 instrumentation gap); (b) de-`static` element/material scratch; (c)
@@ -126,7 +129,7 @@ Everything below is **merged to `ladruno`**. Pick up from "What to do next".
 - **MKL 2026.1 renamed its compute DLLs `.2.dll` → `.3.dll`** (scalapack/blacs stayed `.2`), so
   `build.bat`'s hardcoded `if exist`-guarded staging list copied *nothing* and the build still
   reported success — failing later as `ImportError: DLL load failed while importing opensees`.
-  Now wildcarded on the SO version. **`BUILD_GOTCHAS.md §8b`**; same family as §8.
+  Fixed concurrently and more thoroughly by #627 (base-name globbing + stale-DLL purge); P1d only adds `mkl_avx10`. **`BUILD_GOTCHAS.md §9`**; same family as §8.
 - **PARDISO symmetric needs its own `iparm`, not just `mtype`.** Scaling/matching
   (`iparm[10]`/`iparm[12]`) must be **0** for `mtype ±2` — MKL applies them as an *unsymmetric*
   permutation, which is the classic "symmetric PARDISO returns garbage" report. Use `iparm[9]=8`

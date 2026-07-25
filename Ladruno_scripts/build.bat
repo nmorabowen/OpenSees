@@ -65,6 +65,38 @@ set "MUMPS_ARCHIVE=%ROOT%\mumps-archive"
 
 set "MKL_BIN=C:\Program Files (x86)\Intel\oneAPI\mkl\latest\bin"
 set "ICOMP_BIN=C:\Program Files (x86)\Intel\oneAPI\compiler\latest\bin"
+
+REM Ladruno ADR-75: mirror MKL runtime DLLs by BASE NAME, never by full
+REM filename. Intel version-stamps the SONAME and BUMPS it across releases --
+REM oneMKL 2025.x shipped mkl_core.2.dll / mkl_intel_thread.2.dll, oneMKL
+REM 2026.1 ships mkl_core.3.dll / mkl_intel_thread.3.dll (scalapack + blacs
+REM stayed at .2). The previous hardcoded ".2.dll" list was guarded by
+REM `if exist`, so after an MKL upgrade it silently copied NOTHING and left the
+REM old version's DLLs in dist\ -- a shipped package that either fails to load
+REM (mkl_core.3.dll not found, since the newly linked import libs reference the
+REM .3 SONAME) or runs a different MKL than it was built against. The copy
+REM loops glob "<base>.*.dll" and purge dist\mkl_*.dll first, so a version bump
+REM can neither be missed nor leave two generations behind.
+REM See BUILD_GOTCHAS.md 9 (companion to 8, the oneAPI-2026 Fortran split).
+REM Ladruno ADR-75 P1d: `mkl_avx10` added — oneMKL 2026.1 ships mkl_avx10.3.dll as
+REM a NEW CPU-dispatch kernel alongside mkl_avx512/mkl_mc3. Absent on 2025, where
+REM the glob simply matches nothing; missing on AVX10 hardware it would either
+REM fail to dispatch or silently fall back to a slower kernel.
+set "MKL_RUNTIME_DLLS=mkl_intel_thread mkl_core mkl_def mkl_avx2 mkl_avx512 mkl_avx10 mkl_mc3 mkl_scalapack_lp64 mkl_blacs_intelmpi_lp64"
+
+REM Same hazard for the OpenMP runtime: `compiler\latest` can point at a
+REM runtime-only Intel package (see setup_env.bat 2a) -- that one DOES carry
+REM libiomp5md.dll, but if a future one doesn't, fall back to the newest
+REM compiler dir that has it rather than silently shipping no OpenMP runtime.
+set "ONEAPI_COMPILER=C:\Program Files (x86)\Intel\oneAPI\compiler"
+if exist "%ICOMP_BIN%\libiomp5md.dll" goto :iomp_ok
+for /f "delims=" %%D in ('dir /b /ad /o-n "%ONEAPI_COMPILER%" 2^>nul') do (
+    if not defined ICOMP_HIT if exist "%ONEAPI_COMPILER%\%%D\bin\libiomp5md.dll" (
+        set "ICOMP_HIT=1"
+        set "ICOMP_BIN=%ONEAPI_COMPILER%\%%D\bin"
+    )
+)
+:iomp_ok
 set "IMPI_BIN=C:\Program Files (x86)\Intel\oneAPI\mpi\latest\bin"
 set "IMPI_LIBFABRIC=C:\Program Files (x86)\Intel\oneAPI\mpi\latest\opt\mpi\libfabric\bin"
 
@@ -336,14 +368,9 @@ for %%M in (impi.dll mpiexec.exe hydra_bstrap_proxy.exe hydra_pmi_proxy.exe hydr
 )
 if exist "%IMPI_LIBFABRIC%\libfabric.dll" copy /y "%IMPI_LIBFABRIC%\libfabric.dll" "%DIST%\openseesmp\" >nul
 echo   mirroring MKL runtime into openseesmp\ (self-contained off oneAPI shell)
-REM Ladruno BUILD_GOTCHAS §8 (2026-07): SO-version wildcard, see the dist\bin
-REM block below for why the old hardcoded ".2.dll" names copy NOTHING on MKL 2026.
-for %%D in (
-    mkl_intel_thread mkl_core mkl_def
-    mkl_avx2 mkl_avx512 mkl_avx10 mkl_mc3
-    mkl_scalapack_lp64 mkl_blacs_intelmpi_lp64
-) do (
-    copy /y "%MKL_BIN%\%%D.*.dll" "%DIST%\openseesmp\" >nul 2>&1
+del /q "%DIST%\openseesmp\mkl_*.dll" 2>nul
+for %%B in (%MKL_RUNTIME_DLLS%) do (
+    for %%F in ("%MKL_BIN%\%%B.*.dll") do copy /y "%%F" "%DIST%\openseesmp\" >nul
 )
 if exist "%ICOMP_BIN%\libiomp5md.dll" copy /y "%ICOMP_BIN%\libiomp5md.dll" "%DIST%\openseesmp\" >nul
 :no_openseesmp
@@ -353,26 +380,12 @@ REM  Tcl-only via OpenSeesSP.exe. See Ladruno Patch 9 docs.)
 
 REM Intel MKL runtime DLLs. mkl_intel_thread + mkl_core are link-time
 REM dependencies; mkl_def / mkl_avx* / mkl_mc3 are CPU kernel DLLs that MKL
-REM dlopens at runtime (FATAL "mkl_def.2.dll not found" otherwise).
+REM dlopens at runtime (FATAL "mkl_def.<N>.dll not found" otherwise).
 REM mkl_scalapack_lp64 + mkl_blacs_intelmpi_lp64 are needed by OpenSeesSP/MP.
-REM
-REM Ladruno BUILD_GOTCHAS §8 (2026-07, ADR-75 P1d): the SO version is a WILDCARD,
-REM never hardcoded. MKL 2026.1 bumped the compute DLLs from ".2.dll" to ".3.dll"
-REM (mkl_core.3.dll, mkl_intel_thread.3.dll, mkl_def.3.dll, mkl_avx*.3.dll) while
-REM leaving scalapack/blacs at ".2.dll". The old hardcoded ".2.dll" list therefore
-REM copied only the two ScaLAPACK DLLs and SILENTLY skipped every compute DLL --
-REM `if exist` made a total miss look like a clean build. The failure surfaces far
-REM away as `import opensees` -> "DLL load failed while importing opensees: The
-REM specified module could not be found". Same family as the ifx/ifconsol breakage:
-REM an oneAPI update re-points `latest` and the hardcoded names rot.
-REM mkl_avx10 is new in 2026 (AVX10 dispatch); absent on 2025, harmless there.
 echo   copying Intel MKL runtime DLLs
-for %%D in (
-    mkl_intel_thread mkl_core mkl_def
-    mkl_avx2 mkl_avx512 mkl_avx10 mkl_mc3
-    mkl_scalapack_lp64 mkl_blacs_intelmpi_lp64
-) do (
-    copy /y "%MKL_BIN%\%%D.*.dll" "%DIST%\bin\" >nul 2>&1
+del /q "%DIST%\bin\mkl_*.dll" 2>nul
+for %%B in (%MKL_RUNTIME_DLLS%) do (
+    for %%F in ("%MKL_BIN%\%%B.*.dll") do copy /y "%%F" "%DIST%\bin\" >nul
 )
 if exist "%ICOMP_BIN%\libiomp5md.dll" copy /y "%ICOMP_BIN%\libiomp5md.dll" "%DIST%\bin\" >nul
 

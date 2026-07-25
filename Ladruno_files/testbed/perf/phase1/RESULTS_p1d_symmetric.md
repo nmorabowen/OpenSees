@@ -105,4 +105,4 @@ OPS_PYD=<worktree>/dist/bin python3.12 -S p1d_memory.py   # peak memory, -stats
   keeps the full log instead of grepping four lines out of it.
 - **MKL 2026.1 renamed its runtime DLLs `.2.dll` → `.3.dll`**, so `build.bat`'s hardcoded staging list
   copied nothing and `import opensees` died with "DLL load failed". Written up as
-  `BUILD_GOTCHAS.md §8b`; staging is now wildcarded on the SO version.
+  `BUILD_GOTCHAS.md §9` (fixed concurrently by #627 — base-name globbing + a stale-DLL purge; P1d only adds the new `mkl_avx10` kernel).
