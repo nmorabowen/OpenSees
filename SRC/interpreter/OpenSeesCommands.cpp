@@ -4896,8 +4896,71 @@ void* OPS_ParallelDisplacementControl() {
 // solver itself threads only the FACTOR/SOLVE — assembly and element state
 // determination stay single-threaded (ADR-75 Lane 3 is the axis for those), so
 // expect a win only on solve-bound models (the 3D-solid lane).
+//
+// Ladruno ADR-75 P1d: `-matrixType 0|1|2` selects the factorization mode, using
+// the SAME numbering as `system Mumps -matrixType`:
+//
+//   0  unsymmetric        (default)  full CSR,             PARDISO mtype  11
+//   1  symmetric pos.def.            upper-triangle CSR,   PARDISO mtype   2
+//   2  symmetric general              upper-triangle CSR,   PARDISO mtype  -2
+//
+// `-symmetric` is an alias for 2 and `-spd` for 1. Type 2 (indefinite, LDL^T
+// with Bunch-Kaufman pivoting) is the right symmetric choice for structural
+// tangents — a softening or buckling model IS indefinite and type 1 will fail
+// on it with a zero pivot.
+//
+// The default stays UNSYMMETRIC on purpose. ADR-75 §3 requires the symmetric
+// win to be measured rather than assumed: the one symmetric solver already
+// measurable in this fork (`SparseSYM`) is 2.10x SLOWER than unsymmetric
+// UmfPack on Lane B. And the fork's contact / non-associated-flow / follower-
+// load tangents are genuinely unsymmetric, where half-storage silently solves
+// the WRONG system (only the col >= row half is read — see PARDISOGenLinSOE.h).
 void* OPS_PARDISOGenLinSolver() {
 #ifdef _PARDISO
+    int matType = 0;      // Ladruno ADR-75 P1d: unsymmetric unless asked
+    int statsFlag = 0;    // Ladruno ADR-75 P1d: -stats dumps PARDISO memory
+
+    // Ladruno ADR-75 P2b lesson, applied pre-emptively: "> 0", not "> 1" — the
+    // bare flags (-symmetric/-spd/-stats) take no value, so a "> 1" bound would
+    // silently drop a trailing one.
+    while (OPS_GetNumRemainingInputArgs() > 0) {
+        const char* opt = OPS_GetString();
+        int num = 1;
+        if (strcmp(opt, "-matrixType") == 0) {
+            // Ladruno ADR-75 P1d: a parse failure must NOT return 0 here.
+            // Returning 0 leaves `theSOE` null, and OpenSees then falls back to
+            // the DEFAULT ProfileSPDLinSOE with only a warning — on a 3D solid
+            // mesh that is catastrophically slow (skyline storage), so the run
+            // appears to work and silently reports a different solver's cost.
+            // Found the hard way: openseespy `system('Pardiso','-matrixType','2')`
+            // with a STRING value fails OPS_GetIntInput and sent a Lane-B bench
+            // into ProfileSPD for 25 minutes. Degrade to unsymmetric instead —
+            // which is what the warning has always claimed. (`system Mumps` has
+            // the same self-contradictory return-0-after-"assumed" path.)
+            if (OPS_GetIntInput(&num, &matType) < 0) {
+                opserr << "WARNING system Pardiso - failed to get -matrixType "
+                          "(pass it as an INT, not a string). Unsymmetric "
+                          "matrix assumed\n";
+                matType = 0;
+                continue;
+            }
+            if (matType < 0 || matType > 2) {
+                opserr << "WARNING system Pardiso - wrong -matrixType value ("
+                       << matType << "). Unsymmetric matrix assumed\n";
+                matType = 0;
+            }
+        } else if (strcmp(opt, "-symmetric") == 0) {
+            matType = 2;
+        } else if (strcmp(opt, "-spd") == 0) {
+            matType = 1;
+        } else if (strcmp(opt, "-stats") == 0) {
+            statsFlag = 1;      // bare flag — consumes no value
+        } else {
+            opserr << "WARNING system Pardiso - unknown option " << opt
+                   << ", ignored\n";
+        }
+    }
+
     // NB: `theSOE` is a MEMBER of OpenSeesCommands (OpenSeesCommands.h:178), not
     // a file-scope global, so a free factory like this one cannot assign it —
     // the caller stores what we return. (The serial `#else` branch of
@@ -4906,7 +4969,8 @@ void* OPS_PARDISOGenLinSolver() {
     // never defined without _PARALLEL_INTERPRETERS — i.e. more evidence the
     // serial MUMPS path has never been compiled. Ladruno ADR-75.)
     PARDISOGenLinSolver *theSolver = new PARDISOGenLinSolver();
-    PARDISOGenLinSOE *thePardisoSOE = new PARDISOGenLinSOE(*theSolver);
+    theSolver->setStats(statsFlag);
+    PARDISOGenLinSOE *thePardisoSOE = new PARDISOGenLinSOE(*theSolver, matType);
     return thePardisoSOE;
 #else
     opserr << "WARNING system Pardiso - this build has no MKL; "

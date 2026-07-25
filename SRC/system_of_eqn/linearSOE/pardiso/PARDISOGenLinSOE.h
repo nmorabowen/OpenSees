@@ -32,14 +32,43 @@
 
 class PARDISOGenLinSolver;
 
+// Ladruno ADR-75 P1d (2026-07): symmetric half-storage.
+//
+// `matType` selects what this SOE actually stores, and (through the solver,
+// which reads it) the PARDISO `mtype`:
+//
+//   0  unsymmetric        full CSR                     -> mtype  11
+//   1  symmetric pos.def. UPPER-triangle CSR           -> mtype   2
+//   2  symmetric general  UPPER-triangle CSR           -> mtype  -2
+//
+// The numbering deliberately matches `system Mumps -matrixType 0|1|2` so the
+// two solvers take the same verb. MKL PARDISO's symmetric modes require the
+// upper triangle only, in row-major CSR, with ascending column indices and the
+// diagonal ALWAYS present (even when zero) — all three invariants are
+// established in setSize() below.
+//
+// WARNING (documented, deliberate): with matType != 0 only the col >= row half
+// of each element matrix is read. If the assembled tangent is genuinely
+// unsymmetric (contact, non-associated flow, follower loads, corotational
+// transforms, LadrunoUP) this solves with the upper triangle reflected — it
+// does not average. That is why the default stays 0.
+//
+// It DOES now detect it, though (ADR-75 P1d, adversarial review): addA already
+// visits the col < row entries in order to discard them, so comparing each
+// against its mirror costs one subtraction on data already in cache and turns
+// the worst failure mode this feature has — a converged, plausible, WRONG
+// answer — into a loud warning. See addA().
+
 class PARDISOGenLinSOE : public LinearSOE
 {
   public:
     PARDISOGenLinSOE(PARDISOGenLinSolver &theSolver);
+    PARDISOGenLinSOE(PARDISOGenLinSolver &theSolver, int matType);
 
     ~PARDISOGenLinSOE();
 
     int getNumEqn(void) const;
+    int getMatType(void) const;   // Ladruno ADR-75 P1d
     int setSize(Graph &theGraph);
     int addA(const Matrix &, const ID &, double fact = 1.0);
     int addB(const Vector &, const ID &, double fact = 1.0);    
@@ -70,6 +99,9 @@ class PARDISOGenLinSOE : public LinearSOE
     Vector *vectB;    
     int Asize, Bsize;    // size of the 1d array holding A
     bool factored;
+    int matType;         // Ladruno ADR-75 P1d: 0 unsym / 1 SPD / 2 sym-general
+    int asymWarned;      // Ladruno ADR-75 P1d: half-store asymmetry reported once
+    int asymBudget;      // ...and how many more element matrices to check
 };
 
 

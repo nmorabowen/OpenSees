@@ -78,7 +78,11 @@ REM .3 SONAME) or runs a different MKL than it was built against. The copy
 REM loops glob "<base>.*.dll" and purge dist\mkl_*.dll first, so a version bump
 REM can neither be missed nor leave two generations behind.
 REM See BUILD_GOTCHAS.md 9 (companion to 8, the oneAPI-2026 Fortran split).
-set "MKL_RUNTIME_DLLS=mkl_intel_thread mkl_core mkl_def mkl_avx2 mkl_avx512 mkl_mc3 mkl_scalapack_lp64 mkl_blacs_intelmpi_lp64"
+REM Ladruno ADR-75 P1d: `mkl_avx10` added — oneMKL 2026.1 ships mkl_avx10.3.dll as
+REM a NEW CPU-dispatch kernel alongside mkl_avx512/mkl_mc3. Absent on 2025, where
+REM the glob simply matches nothing; missing on AVX10 hardware it would either
+REM fail to dispatch or silently fall back to a slower kernel.
+set "MKL_RUNTIME_DLLS=mkl_intel_thread mkl_core mkl_def mkl_avx2 mkl_avx512 mkl_avx10 mkl_mc3 mkl_scalapack_lp64 mkl_blacs_intelmpi_lp64"
 
 REM Same hazard for the OpenMP runtime: `compiler\latest` can point at a
 REM runtime-only Intel package (see setup_env.bat 2a) -- that one DOES carry

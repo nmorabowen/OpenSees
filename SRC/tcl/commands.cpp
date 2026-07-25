@@ -379,6 +379,13 @@ extern void OPS_SetReliabilityDomain(ReliabilityDomain *);
 #endif
 #endif
 
+// Ladruno ADR-75 P1d: MKL PARDISO — the desktop (shared-memory) sparse-direct
+// back-end, reachable from Tcl as `system Pardiso`.
+#ifdef _PARDISO
+#include <PARDISOGenLinSOE.h>
+#include <PARDISOGenLinSolver.h>
+#endif
+
 #ifdef _PETSC
 #include <PetscSOE.h>
 #include <PetscSolver.h>
@@ -3894,9 +3901,89 @@ specifySOE(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
     }
     
     UmfpackGenLinSolver *theSolver = new UmfpackGenLinSolver();
-    // theSOE = new UmfpackGenLinSOE(*theSolver, factLVALUE, factorOnce, printTime);      
-    theSOE = new UmfpackGenLinSOE(*theSolver);      
+    // theSOE = new UmfpackGenLinSOE(*theSolver, factLVALUE, factorOnce, printTime);
+    theSOE = new UmfpackGenLinSOE(*theSolver);
   }
+
+#ifdef _PARDISO
+  // Ladruno ADR-75 P1d: `system Pardiso` in the TCL interpreter.
+  //
+  // P1b wired the verb into SRC/interpreter/OpenSeesCommands.cpp only, so the
+  // threaded desktop solver was reachable from OpenSeesPy but NOT from
+  // OpenSees.exe — this Tcl `system` chain is a separate if-ladder. Options and
+  // defaults are identical to OPS_PARDISOGenLinSolver(); see the long note
+  // there for why the default stays unsymmetric.
+  else if ((strcmp(argv[1],"Pardiso") == 0) || (strcmp(argv[1],"PARDISO") == 0)) {
+
+    int matType = 0;   // 0 unsym (default) / 1 SPD / 2 symmetric general
+    int statsFlag = 0; // -stats: dump PARDISO's peak-memory counters once
+    int count = 2;
+
+    // Ladruno ADR-75 P1d (adversarial review): this loop originally diverged
+    // from the openseespy one in two ways that BOTH recreate the exact failure
+    // this feature was written to kill — an option that looks applied but is
+    // not. `-symetric` (typo) fell through silently, and a trailing
+    // `-matrixType` with no value failed `count+1 < argc` and vanished. Both
+    // now warn. Parse failure still returns TCL_ERROR here rather than
+    // degrading like the Python path: in Tcl a bad `system` argument is a
+    // script bug and stopping is the honest response, whereas the Python path
+    // degrades because returning 0 there silently selects ProfileSPDLinSOE.
+    while (count < argc) {
+      if (strcmp(argv[count],"-matrixType") == 0) {
+	if (count+1 >= argc) {
+	  opserr << "Pardiso Warning: -matrixType given with no value. "
+		 << "Unsymmetric matrix assumed\n";
+	  count++;
+	  continue;
+	}
+	if (Tcl_GetInt(interp, argv[count+1], &matType) != TCL_OK)
+	  return TCL_ERROR;
+	if (matType < 0 || matType > 2) {
+	  opserr << "Pardiso Warning: wrong -matrixType value (" << matType
+		 << "). Unsymmetric matrix assumed\n";
+	  matType = 0;
+	}
+	count++;
+      } else if (strcmp(argv[count],"-symmetric") == 0) {
+	matType = 2;
+      } else if (strcmp(argv[count],"-spd") == 0) {
+	matType = 1;
+      } else if (strcmp(argv[count],"-stats") == 0) {
+	statsFlag = 1;
+      } else {
+	opserr << "Pardiso Warning: unknown option " << argv[count]
+	       << ", ignored\n";
+      }
+      count++;
+    }
+
+    PARDISOGenLinSolver *theSolver = new PARDISOGenLinSolver();
+    theSolver->setStats(statsFlag);
+    theSOE = new PARDISOGenLinSOE(*theSolver, matType);
+  }
+#else
+  // Ladruno ADR-75 P1d (adversarial review): REFUSE explicitly in builds without
+  // PARDISO, rather than letting `Pardiso` fall off the end of this if-ladder.
+  //
+  // `theSOE` is a file-scope global here. With the branch above compiled out
+  // nothing assigns it, so a script that already ran e.g. `system UmfPack` keeps
+  // a NON-NULL theSOE, the tail's `if (theSOE != 0)` is satisfied, and
+  // specifySOE returns TCL_OK — silently continuing with the PREVIOUS solver.
+  // The `is unknown or not installed` warning only fires when no system was ever
+  // set. So `system UmfPack; ...; system Pardiso; analyze` under OpenSeesMP.exe
+  // would run entirely on UmfPack without a word. (Structural to this ladder —
+  // Mumps/Petsc/Itpack share it — but P1d is what makes it reachable in a
+  // realistic way: the SAME script under OpenSees.exe vs OpenSeesSP/MP.exe.)
+  else if ((strcmp(argv[1],"Pardiso") == 0) || (strcmp(argv[1],"PARDISO") == 0)) {
+    opserr << "WARNING system Pardiso is not available in this build.\n"
+              "  PARDISO is wired into the SERIAL OpenSees/OpenSeesPy targets "
+              "only; the parallel\n"
+              "  targets link the SEQUENTIAL MKL layer, so there is no "
+              "shared-memory win to be had.\n"
+              "  Use `system Mumps` for OpenSeesSP/OpenSeesMP.\n";
+    return TCL_ERROR;
+  }
+#endif
 
 #ifdef _ITPACK
   else if (strcmp(argv[1],"Itpack") == 0) {
