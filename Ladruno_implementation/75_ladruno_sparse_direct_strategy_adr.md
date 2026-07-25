@@ -342,6 +342,18 @@ zero-pivot message now says exactly that.
   fallbacks. Its decode is unverified; mitigation is that the branch's only correctness-relevant
   action (`factorsCurrent = true`) is unconditional and right for both `iparm[19] < 0` and `== 0`,
   so a bad decode corrupts a diagnostic string, not an answer.
+  **FOLLOW-UP (softening / limit-point sweep, `p1e_softening_probe.py` + `p1e_prepost_probe.py`):**
+  the "cost when CGS fails" risk is **CLOSED — the failure never happens.** On softening tangents
+  (`Hiso` −2000…−20000) driven to a limit point under `-matrixType 0`, CGS works ~4× harder (15–19
+  iterations vs 4–5) and `-krylov` is **still 1.08–1.16× faster**; zero fallbacks again. So the
+  fallback branch is **effectively unreachable**, not merely untested — leave it as documented dead
+  code rather than engineer a synthetic trigger. **⚠ What replaces that risk is narrower and real:
+  `-krylov` can change the POST-PEAK branch.** Stopping at increasing step counts shows the two are
+  **bit-identical through the whole physically meaningful range** (ux 0.394→4.725, steps 5–32) and
+  separate only *after* the limit point, where `LoadControl` on a softening structure is ill-posed
+  and both answers are non-physical (direct 6435 vs krylov −5502 at step 35). Post-limit-point path
+  chaos amplifying a 1-ULP difference, not a defect — but it is a **reproducibility** hazard: keep
+  `-krylov` off when the deliverable is a post-peak path (progressive-collapse / AEM lane).
   **Opt-in, off by default** — byte-identical to P1d when absent.
 - **P2 — MUMPS cluster tuning. 🟡 `-BLR` SHIPPED, effect NOT yet validated at scale**
   (`phase1/RESULTS_p2_blr.md`). `system Mumps -BLR <eps>` (+ raw `-ICNTL35`/`-CNTL7`) is wired,

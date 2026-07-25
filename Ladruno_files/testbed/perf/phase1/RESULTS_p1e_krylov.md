@@ -157,6 +157,62 @@ transition, not unbounded aging: once Lane B reaches a steady plastic state the 
 moving away from the step-1 factorization. No refresh policy is needed, and the 15-step figures
 are not short-run artefacts.
 
+## 5-quater. The softening / limit-point regime — measured (follow-up)
+
+§5-ter left the fallback path unexercised and §6.2 left its cost unmeasured. Both were chased on a
+**softening** J2 tangent (`Hiso < 0`, so the yield surface shrinks and the tangent marches toward
+singular) under `-matrixType 0` — the only legal configuration, since `-matrixType 2` refuses
+`-krylov` outright and softening is exactly what makes a tangent indefinite.
+Harness: `p1e_softening_probe.py`, `p1e_prepost_probe.py`.
+
+**A first attempt failed to provoke anything** — every row finished 40/40 steps with an identical
+101 iterations and `ux` barely moving from `Hiso` 0 to −6000. The plastic zone was too small for
+softening to bite. The load had to be driven well past first yield before a limit point appeared.
+
+10³ (~3.6k DOF), 4 threads, `LoadControl` marched to divergence:
+
+| load | Hiso | steps survived | CGS wins | max CGS its | **fallbacks** | speedup |
+|---|---|---|---|---|---|---|
+| 8.0e5 | −2000 | 35 / 35 | 192 | 18 | **0** | 1.16× |
+| 8.0e5 | −6000 | 33 / 33 | 178 | 17 | **0** | 1.08× |
+| 1.2e6 | −2000 | 24 vs 23 | 143 | 19 | **0** | — |
+| 1.2e6 | −6000 | 22 / 22 | 142 | 16 | **0** | 1.13× |
+| 1.6e6 | −6000 | 17 / 17 | 120 | 15 | **0** | 1.11× |
+| 1.6e6 | −20000 | 14 / 14 | 108 | 15 | **0** | 1.09× |
+
+**Result 1 — the feared net loss does not exist.** CGS works ~4× harder near the limit point
+(15–19 iterations vs 4–5 while hardening) and `-krylov` is *still* 1.08–1.16× faster. No regime has
+been found in which it loses.
+
+**Result 2 — the fallback branch is effectively UNREACHABLE**, not merely untested. Zero fallbacks
+across the entire softening sweep on top of the 340 hardening solves. Combined with §5-ter's
+mitigation (the branch's only correctness-relevant action is unconditional and right for both
+`iparm[19] < 0` and `== 0`), the conclusion is to **leave it as documented dead code** rather than
+engineer a synthetic trigger to make a coverage metric look better.
+
+**Result 3 — and this one is a real user-facing caveat: `-krylov` can change the post-peak branch.**
+Raw `ux` diffs of up to 20.8 appeared, plus one case where `-krylov` gave up a step *earlier* than
+direct. Stopping at increasing step counts locates exactly where that starts (load 8e5, `Hiso`
+−2000; direct survives 35 steps):
+
+| stop step | direct ux | `-krylov 6` ux | rel diff |
+|---|---|---|---|
+| 5 … 32 | 0.394 … 4.725 | identical | **0.0** (one 1.4e-15 ULP at step 10) |
+| 34 | 5.202e0 | 8.893e2 | 1.7e2 |
+| 35 | 6.435e3 | −5.502e3 | 1.9e0 |
+
+**The two are bit-identical through the entire physically meaningful range and separate only after
+the limit point**, where `LoadControl` on a softening structure is ill-posed, equilibrium is
+non-unique, and *both* answers are non-physical (±10³–10⁴ displacement on a 10³-sized structure —
+direct's step-34 value of 5.2 looks plausible only until step 35 sends it to 6435). So this is
+post-limit-point path chaos amplifying a 1-ULP difference, **not** a solver defect.
+
+Practical guidance: post-peak collapse work should not be on `LoadControl` anyway (it wants
+arc-length or displacement control). But the reproducibility warning is real — **with `-krylov` on,
+a post-peak run can land on a different branch and give up at a different step than the same deck
+without it.** For the fork's progressive-collapse / AEM lane, keep `-krylov` off when the published
+artefact is a post-peak path.
+
 ## 5-ter. The fallback branch is UNTESTED — the top residual risk
 
 Across every run above — 150 steps, 340 solves, `-krylov` 6/8/9, hardening swept to perfect
@@ -183,11 +239,15 @@ The residual exposure is a misleading message and an unproven `cgs_error 5` warn
    exactly the one where `-krylov` is either unavailable (`-matrixType 2`) or facing a much harder
    preconditioning problem (`-matrixType 0`). The 1.57× composition result is an **SPD-only**
    number.
-2. **Untested near a limit point, and the fallback path has never fired** (§5-ter). Lane B hardens
-   monotonically. A tangent approaching singularity is where CGS should start failing, and the
-   fallback cost (per Intel, up to about half a factorization wasted, then the factorization
-   anyway) has **not been measured** — attempts to provoke it by tightening `L` to 9 and going to
-   perfect plasticity under double load all failed to produce a single fallback.
+2. ~~**Untested near a limit point**~~ — **CLOSED by §5-quater.** Measured on softening tangents
+   driven to a limit point: still zero fallbacks, and `-krylov` remains 1.08–1.16× faster even with
+   CGS working 4× harder. No regime has been found where it is a net loss. What replaced this risk
+   is narrower and real: **post-peak path divergence** — see risk 5.
+5. **`-krylov` can change the post-peak branch** (§5-quater). Bit-identical to direct throughout the
+   physically meaningful range, but once a softening structure passes its limit point under
+   `LoadControl` the runs separate and can give up at different steps. Both answers are non-physical
+   there, so this is not a correctness defect — but it *is* a reproducibility hazard. Keep `-krylov`
+   **off** when the deliverable is a post-peak path (progressive-collapse / AEM work).
 3. **Inexact solves inside a nonlinear loop can cost outer iterations.** Not observed here — the
    answers are bit-identical and iteration counts match — but it is the mechanism that made MUMPS
    BLR *slower* in P2b. Judge any new model on total wall time, never on solve time alone.
@@ -200,4 +260,5 @@ Ship **opt-in, off by default**, as `-matrixType` and `-BLR` are; Intel's own po
 absent is byte-identical to P1d.
 
 Worth enabling when: full Newton (or any tangent-refreshing algorithm), unsymmetric or SPD,
-≳25k DOF, smooth material path. Worth *disabling* the moment `cgs_error 5` appears.
+≳25k DOF. Worth *disabling* when the deliverable is a **post-peak equilibrium path** (§5-quater
+risk 5) — or if `cgs_error 5` ever appears, which on the evidence so far it does not.
