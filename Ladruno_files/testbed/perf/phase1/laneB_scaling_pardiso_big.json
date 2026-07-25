@@ -1,0 +1,33 @@
+{
+  "threads": "4",
+  "steps": 3,
+  "repeats": 1,
+  "rows": [
+    {
+      "n": 30,
+      "nele": 27000,
+      "ndof": 86490,
+      "umfpack_s": null,
+      "pardiso_s": 30.36517659999663,
+      "speedup": null,
+      "rel_err": null,
+      "umfpack_samples": null,
+      "pardiso_samples": [
+        30.36517659999663
+      ]
+    },
+    {
+      "n": 35,
+      "nele": 42875,
+      "ndof": 136080,
+      "umfpack_s": null,
+      "pardiso_s": 68.58639709994895,
+      "speedup": null,
+      "rel_err": null,
+      "umfpack_samples": null,
+      "pardiso_samples": [
+        68.58639709994895
+      ]
+    }
+  ]
+}
