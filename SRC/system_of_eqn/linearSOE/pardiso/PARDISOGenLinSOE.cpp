@@ -42,8 +42,28 @@ PARDISOGenLinSOE::PARDISOGenLinSOE(PARDISOGenLinSolver &the_Solver)
 	size(0), nnz(0), A(0), B(0), X(0), colA(0), rowStartA(0),
 	vectX(0), vectB(0),
 	Asize(0), Bsize(0),
-	factored(false)
+	factored(false), matType(0)
 {
+	the_Solver.setLinearSOE(*this);
+}
+
+
+// Ladruno ADR-75 P1d: symmetric variant. matType 1 (SPD) / 2 (symmetric
+// indefinite) store only the upper triangle; anything else falls back to the
+// full unsymmetric CSR rather than half-storing something PARDISO would then
+// read with the wrong mtype.
+PARDISOGenLinSOE::PARDISOGenLinSOE(PARDISOGenLinSolver &the_Solver, int _matType)
+	:LinearSOE(the_Solver, LinSOE_TAGS_PARDISOGenLinSOE),
+	size(0), nnz(0), A(0), B(0), X(0), colA(0), rowStartA(0),
+	vectX(0), vectB(0),
+	Asize(0), Bsize(0),
+	factored(false), matType(_matType)
+{
+	if (matType < 0 || matType > 2) {
+		opserr << "WARNING PARDISOGenLinSOE - unknown matrixType (" << matType
+		       << "); unsymmetric storage assumed\n";
+		matType = 0;
+	}
 	the_Solver.setLinearSOE(*this);
 }
 
@@ -66,6 +86,13 @@ PARDISOGenLinSOE::getNumEqn(void) const
 	return size;
 }
 
+// Ladruno ADR-75 P1d: the solver reads this to pick `mtype` (see the header).
+int
+PARDISOGenLinSOE::getMatType(void) const
+{
+	return matType;
+}
+
 int
 PARDISOGenLinSOE::setSize(Graph &theGraph)
 {
@@ -82,6 +109,17 @@ PARDISOGenLinSOE::setSize(Graph &theGraph)
 		const ID &theAdjacency = theVertex->getAdjacency();
 		newNNZ += theAdjacency.Size() + 1; // the +1 is for the diag entry
 	}
+
+	// Ladruno ADR-75 P1d: half-storage. The connectivity Graph is structurally
+	// symmetric (every adjacency appears in both directions), so the strictly
+	// off-diagonal count is exactly halved and the diagonal is kept whole. Same
+	// arithmetic as MumpsSOE::setSize()'s matType != 0 branch.
+	if (matType != 0) {
+		newNNZ -= size;
+		newNNZ /= 2;
+		newNNZ += size;
+	}
+
 	nnz = newNNZ;
 
 	if (newNNZ > Asize) { // we have to get more space for A and colA
@@ -166,14 +204,25 @@ PARDISOGenLinSOE::setSize(Graph &theGraph)
 				return -1;
 			}
 
-			colA[lastLoc++] = theVertex->getTag() + 1; // place diag in first fortran index start at 1
+			int vertexTag = theVertex->getTag();
+			colA[lastLoc++] = vertexTag + 1; // place diag in first fortran index start at 1
 			const ID &theAdjacency = theVertex->getAdjacency();
 			int idSize = theAdjacency.Size();
 
 			// now we have to place the entries in the ID into order in colA
+			// (PARDISO requires ASCENDING column indices within each row —
+			//  Vertex adjacency is not guaranteed sorted, hence the insertion).
 			for (int i = 0; i < idSize; i++) {
 
 				int row = theAdjacency(i);
+
+				// Ladruno ADR-75 P1d: upper triangle only when half-storing.
+				// The diagonal already sits at startLoc and is smaller than
+				// every entry kept here, so the insertion below can never
+				// displace it and the row stays ascending.
+				if (matType != 0 && row <= vertexTag)
+					continue;
+
 				bool foundPlace = false;
 				// find a place in colA for current col
 				for (int j = startLoc; j < lastLoc; j++)
@@ -224,7 +273,13 @@ PARDISOGenLinSOE::addA(const Matrix &m, const ID &id, double fact)
 		return -1;
 	}
 
-	if (fact == 1.0) { // do not need to multiply 
+	// Ladruno ADR-75 P1d: when half-storing, only the col >= row entries of the
+	// element matrix have a home in A. Everything else is identical to the
+	// unsymmetric path, so the filter is a single extra comparison rather than
+	// a duplicated loop nest (MumpsSOE duplicates; there is no reason to).
+	const bool halfStore = (matType != 0);
+
+	if (fact == 1.0) { // do not need to multiply
 		for (int i = 0; i < idSize; i++) {
 			int row = id(i);
 			if (row < size && row >= 0) {
@@ -232,7 +287,7 @@ PARDISOGenLinSOE::addA(const Matrix &m, const ID &id, double fact)
 				int endRowLoc = rowStartA[row + 1] - 1;
 				for (int j = 0; j < idSize; j++) {
 					int col = id(j);
-					if (col < size && col >= 0) {
+					if (col < size && col >= 0 && (!halfStore || col >= row)) {
 						// find place in A using colA
 						for (int k = startRowLoc; k < endRowLoc; k++)
 							if (colA[k] == col + 1) {
@@ -240,7 +295,7 @@ PARDISOGenLinSOE::addA(const Matrix &m, const ID &id, double fact)
 								k = endRowLoc;
 							}
 					}
-				}  // for j		
+				}  // for j
 			}
 		}  // for i
 	}
@@ -252,7 +307,7 @@ PARDISOGenLinSOE::addA(const Matrix &m, const ID &id, double fact)
 				int endRowLoc = rowStartA[row + 1] - 1;
 				for (int j = 0; j < idSize; j++) {
 					int col = id(j);
-					if (col < size && col >= 0) {
+					if (col < size && col >= 0 && (!halfStore || col >= row)) {
 						// find place in A using colA
 						for (int k = startRowLoc; k < endRowLoc; k++)
 							if (colA[k] == col + 1) {
@@ -260,7 +315,7 @@ PARDISOGenLinSOE::addA(const Matrix &m, const ID &id, double fact)
 								k = endRowLoc;
 							}
 					}
-				}  // for j		
+				}  // for j
 			}
 		}  // for i
 	}

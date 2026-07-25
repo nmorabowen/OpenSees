@@ -379,6 +379,13 @@ extern void OPS_SetReliabilityDomain(ReliabilityDomain *);
 #endif
 #endif
 
+// Ladruno ADR-75 P1d: MKL PARDISO — the desktop (shared-memory) sparse-direct
+// back-end, reachable from Tcl as `system Pardiso`.
+#ifdef _PARDISO
+#include <PARDISOGenLinSOE.h>
+#include <PARDISOGenLinSolver.h>
+#endif
+
 #ifdef _PETSC
 #include <PetscSOE.h>
 #include <PetscSolver.h>
@@ -3894,9 +3901,49 @@ specifySOE(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
     }
     
     UmfpackGenLinSolver *theSolver = new UmfpackGenLinSolver();
-    // theSOE = new UmfpackGenLinSOE(*theSolver, factLVALUE, factorOnce, printTime);      
-    theSOE = new UmfpackGenLinSOE(*theSolver);      
+    // theSOE = new UmfpackGenLinSOE(*theSolver, factLVALUE, factorOnce, printTime);
+    theSOE = new UmfpackGenLinSOE(*theSolver);
   }
+
+#ifdef _PARDISO
+  // Ladruno ADR-75 P1d: `system Pardiso` in the TCL interpreter.
+  //
+  // P1b wired the verb into SRC/interpreter/OpenSeesCommands.cpp only, so the
+  // threaded desktop solver was reachable from OpenSeesPy but NOT from
+  // OpenSees.exe — this Tcl `system` chain is a separate if-ladder. Options and
+  // defaults are identical to OPS_PARDISOGenLinSolver(); see the long note
+  // there for why the default stays unsymmetric.
+  else if ((strcmp(argv[1],"Pardiso") == 0) || (strcmp(argv[1],"PARDISO") == 0)) {
+
+    int matType = 0;   // 0 unsym (default) / 1 SPD / 2 symmetric general
+    int statsFlag = 0; // -stats: dump PARDISO's peak-memory counters once
+    int count = 2;
+
+    while (count < argc) {
+      if (strcmp(argv[count],"-matrixType") == 0 && count+1 < argc) {
+	if (Tcl_GetInt(interp, argv[count+1], &matType) != TCL_OK)
+	  return TCL_ERROR;
+	if (matType < 0 || matType > 2) {
+	  opserr << "Pardiso Warning: wrong -matrixType value (" << matType
+		 << "). Unsymmetric matrix assumed\n";
+	  matType = 0;
+	}
+	count++;
+      } else if (strcmp(argv[count],"-symmetric") == 0) {
+	matType = 2;
+      } else if (strcmp(argv[count],"-spd") == 0) {
+	matType = 1;
+      } else if (strcmp(argv[count],"-stats") == 0) {
+	statsFlag = 1;
+      }
+      count++;
+    }
+
+    PARDISOGenLinSolver *theSolver = new PARDISOGenLinSolver();
+    theSolver->setStats(statsFlag);
+    theSOE = new PARDISOGenLinSOE(*theSolver, matType);
+  }
+#endif
 
 #ifdef _ITPACK
   else if (strcmp(argv[1],"Itpack") == 0) {

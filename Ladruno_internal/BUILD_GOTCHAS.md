@@ -310,3 +310,35 @@ fallback is doing its job.
 **Note for these scripts:** `setup_env.bat` must **not** `setlocal` (it exports the environment to
 its caller), so **delayed expansion `!VAR!` is unavailable** — write these blocks flat with labels,
 never as a parenthesized read-after-write.
+
+### 8b. …and a fourth face: MKL 2026 renamed its runtime DLLs `.2.dll` → `.3.dll` (ADR-75 P1d)
+
+**Symptom.** The build reports **success**, `dist\bin\opensees.pyd` exists — and then:
+
+```
+ImportError: DLL load failed while importing opensees: The specified module could not be found.
+```
+
+**Root cause.** MKL **2026.1 bumped the SO version of every compute DLL**:
+`mkl_core.2.dll` → `mkl_core.3.dll`, likewise `mkl_intel_thread`, `mkl_def`, `mkl_avx2`,
+`mkl_avx512`, `mkl_mc3` (plus a new `mkl_avx10.3.dll`). **`mkl_scalapack_lp64.2.dll` and
+`mkl_blacs_intelmpi_lp64.2.dll` stayed at `.2`** — which is what makes this so confusing.
+
+`build.bat`'s staging loop listed the **hardcoded `.2.dll` filenames** guarded by `if exist`, so on
+2026 it copied *only the two ScaLAPACK DLLs* and skipped every compute DLL — **silently**, because a
+total miss and a clean build look identical through `if exist`. Diagnostic tell: `dist\bin\` holds
+`libiomp5md.dll` + the two `*_lp64.2.dll` files and **nothing else**.
+
+**Fix (shipped, `Ladruno_scripts/build.bat`, both the `dist\bin` and the `openseesmp\` mirror):**
+stage by **base name with a wildcard SO version** — `copy /y "%MKL_BIN%\mkl_core.*.dll"` — so the
+list survives the next bump. `if exist` is dropped with it (a wildcard `copy` that matches nothing
+is harmless once its output is redirected). `mkl_avx10` added; absent on 2025, harmless there.
+
+**Rule of thumb:** never hardcode an Intel SO version in a staging list, and never let `if exist`
+be the only thing standing between a rename and a "successful" build. Same family as §8 — an oneAPI
+update re-points `latest` and hardcoded names rot.
+
+**Diagnosis one-liner:**
+```
+dir /b "C:\Program Files (x86)\Intel\oneAPI\mkl\latest\bin\mkl_core.*.dll"
+```

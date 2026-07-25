@@ -1,0 +1,21 @@
+########## MKL_NUM_THREADS=1 ##########
+  probe UmfPack  : available
+  probe Pardiso  : available
+  probe PardisoSym: available
+  probe PardisoSPD: available
+solver       median_s  vs UmfPack  tip_ux (rel err)
+UmfPack       18.6426       1.00x  2.271760382e+00 (0.0e+00)
+Pardiso       14.4015       0.77x  2.271760382e+00 (0.0e+00)
+PardisoSym    11.4641       0.61x  2.271760382e+00 (0.0e+00)
+PardisoSPD    10.3004       0.55x  2.271760382e+00 (0.0e+00)
+########## MKL_NUM_THREADS=4 ##########
+  probe UmfPack  : available
+  probe Pardiso  : available
+  probe PardisoSym: available
+  probe PardisoSPD: available
+solver       median_s  vs UmfPack  tip_ux (rel err)
+UmfPack       17.6229       1.00x  2.271760382e+00 (0.0e+00)
+Pardiso       12.1545       0.69x  2.271760382e+00 (2.0e-16)
+PardisoSym     8.9878       0.51x  2.271760382e+00 (0.0e+00)
+PardisoSPD     9.0499       0.51x  2.271760382e+00 (0.0e+00)
+SWEEP-DONE

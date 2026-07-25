@@ -1,7 +1,7 @@
 ---
 title: ADR-75 session handoff — sparse-direct solver lane (PARDISO desktop / MUMPS cluster)
 project: Ladruno
-status: handoff — P0/P1/P1c/P2/P2b SHIPPED; P1b + Lane 3 + cluster validation OPEN
+status: handoff — P0/P1/P1c/P1d/P2/P2b SHIPPED; Lane 3 + cluster validation OPEN
 owner: nmora
 relates: 75_ladruno_sparse_direct_strategy_adr
 ---
@@ -24,6 +24,7 @@ Everything below is **merged to `ladruno`**. Pick up from "What to do next".
 | [#624](https://github.com/nmorabowen/OpenSees/pull/624) | `6921f93` | **P1c** scaling study + capability wall |
 | [#625](https://github.com/nmorabowen/OpenSees/pull/625) | `2bb348c` | **P2** MUMPS `-BLR` + oneAPI-2026 toolchain fixes |
 | [#626](https://github.com/nmorabowen/OpenSees/pull/626) | `434b1a6` | **P2b** `-stats` (INFOG/RINFOG) + BLR memory verdict |
+| *(this session)* | — | **P1d** symmetric PARDISO `-matrixType` + `-stats` + Tcl verb |
 
 ## Headline results (all measured, not estimated)
 
@@ -35,6 +36,16 @@ Everything below is **merged to `ladruno`**. Pick up from "What to do next".
   136,080 DOF in 68.6 s.** Largest single-machine model raised ≥1.6× in DOF; true ceiling untested.
 - **Bit-identical to UmfPack at every thread count** ⇒ no FP-determinism problem in the solver lane.
 - **4 threads is the practical default** (1→8 only buys 1.58×; memory-bandwidth-bound).
+
+**Symmetric PARDISO (`-matrixType 2`) — the memory lever BLR was supposed to be.** (P1d, new)
+- **1.35× faster than unsymmetric PARDISO** @4 threads (1.96× vs UmfPack), 1.26× @1 thread.
+- **Peak memory −41.8%** (105.4 → 61.3 MB), stored nnz −49.3%, factor nnz −47.3%. `-matrixType 1`
+  (SPD) is −46.5% peak but **fails on any indefinite tangent** — prefer 2.
+- **Exact**, not approximate: bit-identical answers, so unlike BLR it is legal on oracle paths.
+- **Refutes the `SparseSYM`-based worry** that symmetric ≠ better — that was SparseSYM's
+  implementation, not symmetric storage.
+- **Default stays unsymmetric on purpose** (half-storage silently solves the wrong system on a
+  genuinely unsymmetric tangent — contact / non-associated / follower loads / `LadrunoUP`).
 
 **MUMPS BLR (`-BLR <eps>`) — shipped, but did NOT pay at any size reachable here.**
 - At ~32k DOF/np2: `eps=1e-4` → factor entries −21.8%, BLR flops −45%, **but peak MB/proc only −4.6%**,
@@ -65,11 +76,11 @@ Everything below is **merged to `ladruno`**. Pick up from "What to do next".
    full-rank. Start near `1e-8`. If `INFOG(21)` doesn't move, BLR is not the memory lever at your scale
    either and the next candidate is **MUMPS out-of-core `ICNTL(22)`** (trades memory for I/O, not
    accuracy — not yet exposed by the fork; small addition next to `-BLR`).
-2. **P1b — symmetric PARDISO (`mtype ±2`).** Needs **upper-triangle SOE storage** in
-   `PARDISOGenLinSOE` (a real change; `MumpsSOE`'s `matType != 0` branch is the template). Targets
-   memory *and* time — attractive now that memory is the measured constraint. **Must be measured, not
-   assumed**: `SparseSYM` (a symmetric solver) is **2.10× SLOWER** than unsymmetric UmfPack, so
-   symmetric ≠ automatically better.
+2. ~~**P1b — symmetric PARDISO (`mtype ±2`).**~~ ✅ **DONE this session as P1d** —
+   `phase1/RESULTS_p1d_symmetric.md`. Won on both axes (1.35× time, −41.8% peak memory, exact).
+   The "must be measured, not assumed" caution was right to insist on the measurement and wrong
+   about the direction. **Follow-on now carrying a strong prior: exercise MUMPS `-matrixType 2` on
+   the cluster** — same lever, still untouched there, and it composes with item 1.
 3. **Lane 3 — threaded element assembly.** The only lever for the ~34% PARDISO cannot touch (Amdahl:
    measured 1.76× vs a predicted ~2.2× ceiling). Deserves **its own sub-ADR**. Order: (a) scope
    `elem.update` (ADR-40b's #1 instrumentation gap); (b) de-`static` element/material scratch; (c)
@@ -77,9 +88,15 @@ Everything below is **merged to `ladruno`**. Pick up from "What to do next".
    (d) implicit — **freeze-sparsity + atomic-scatter (Kratos), NOT graph coloring** (see ADR-75 §4);
    (e) thread the `update` loop. Gate each stage on a measured >40% element fraction.
 4. **Rebuild the shared checkout** so `system Pardiso` is available outside this worktree.
-5. **Version-control the perf skill.** `~/.claude/skills/opensees-performance/SKILL.md` was updated with
-   all of the above but **is not a git repo**. Memory says its home should be
-   `.claude/skills/opensees-performance/` in the fork — copy + commit it.
+   **Owner: nmora, once P1d merges** — decided 2026-07-25 rather than have an agent switch the shared
+   checkout's branch under the other 6 worktrees. One build from a clean `ladruno` gets P1b + P1d.
+5. ~~**Version-control the perf skill.**~~ ✅ **DONE 2026-07-25 — but NOT in the fork.** The fork's
+   `.gitignore` has a blanket `.claude/` rule ("session scratch — never commit"), so committing there
+   needed a negation exception on an upstream file. Owner chose the pattern every other skill uses:
+   its own private repo — `C:\Users\nmb\Documents\Github\Performance Skill\` →
+   **`github.com/nmorabowen/opensees-performance-skills`** (manuals stay in Seafile). The install at
+   `~/.claude/skills/opensees-performance/` remains; the repo is now the source of truth.
+   ⚠ The global `~/.claude/CLAUDE.md` still says it lives in the fork — that line is stale.
 
 ## Gotchas banked this session (don't rediscover)
 
@@ -98,16 +115,43 @@ Everything below is **merged to `ladruno`**. Pick up from "What to do next".
   as a passing test.
 - `sweep_p1.sh` originally `mv`'d the locked baseline JSON and destroyed it (twice). Now `cp`.
 
+### Banked in the P1d session
+
+- **A mistyped `system` option costs you the SOLVER, silently.** A factory that `return 0`s leaves
+  `theSOE` null and OpenSees falls back to the default **`ProfileSPDLinSOE`** with only a warning —
+  on a 3D solid mesh that is catastrophically slow, so the run looks *slow*, not *wrong*. Trigger
+  here: openseespy `system('Pardiso','-matrixType','2')` — a **STRING** value fails
+  `OPS_GetIntInput`. Cost 25 minutes of a dark bench. Two lessons: pass ints, and never let a
+  bench script `grep` away the log that would have shown the warning.
+- **MKL 2026.1 renamed its compute DLLs `.2.dll` → `.3.dll`** (scalapack/blacs stayed `.2`), so
+  `build.bat`'s hardcoded `if exist`-guarded staging list copied *nothing* and the build still
+  reported success — failing later as `ImportError: DLL load failed while importing opensees`.
+  Now wildcarded on the SO version. **`BUILD_GOTCHAS.md §8b`**; same family as §8.
+- **PARDISO symmetric needs its own `iparm`, not just `mtype`.** Scaling/matching
+  (`iparm[10]`/`iparm[12]`) must be **0** for `mtype ±2` — MKL applies them as an *unsymmetric*
+  permutation, which is the classic "symmetric PARDISO returns garbage" report. Use `iparm[9]=8`
+  and `iparm[20]=1` (Bunch-Kaufman).
+- **Derive, don't set.** `mtype` is read from the SOE's `matType` at the symbolic phase with no
+  setter, so storage format and factorization mode cannot drift apart.
+- `system Pardiso` was Python-only until P1d: `SRC/tcl/commands.cpp` has a **completely separate
+  `system` if-ladder** from `SRC/interpreter/OpenSeesCommands.cpp`. Wiring one does not wire the
+  other — check both when adding a `system` verb.
+
 ## Reproduce the benches
 ```bash
 cd Ladruno_files/testbed/perf/phase1
 ./sweep_p1.sh                                    # UmfPack vs PARDISO, 1/2/4/8 threads
+./sweep_p1d.sh                                   # + symmetric (-matrixType 1/2), 1/4 threads
+OPS_PYD=<worktree>/dist/bin python3.12 -S p1d_memory.py    # -stats peak memory, sym vs unsym
+<worktree>/dist/bin/OpenSees.exe p1d_tcl_smoke.tcl         # Tcl `system Pardiso` parity
 OPS_SCALE_SIZES=15,20,25,30 MKL_NUM_THREADS=4 python3.12 -S laneB_scaling.py
 BLR_NX=20 BLR_NY=20 BLR_NZ=24 ../../../../dist/openseesmp/mpiexec.exe -n 2 \
   python3.12 -S mp_blr_smoke.py ../../../../dist/openseesmp
 ```
 Results: `RESULTS_laneB_baseline.md`, `RESULTS_p1_pardiso.md`, `RESULTS_p1c_scaling.md`,
-`RESULTS_p2_blr.md`.
+`RESULTS_p2_blr.md`, `RESULTS_p1d_symmetric.md`.
+
+⚠ Pass numeric option values as **ints**, not strings (`'-matrixType', 2`) — see the P1d gotchas.
 
 ## Standing context
 The production regime is **huge solid nonlinear models** (not fiber frames). ADR-75 §1 carries the

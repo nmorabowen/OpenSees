@@ -139,11 +139,13 @@ finished (§2, §12) — realistic P1 work, in order:
   numeric (22) / solve (33), stop the per-solve phase −1 release, and gate solve-only on the SOE
   `factored` flag (match MUMPS). This is a *restructure*, not a flag.
 - **Symmetric path is a SOE change, not just `mtype`** — PARDISO `mtype ±2` needs upper-triangle
-  input, so `PARDISOGenLinSOE` must gain half-storage (the path `MumpsSOE` already has). **Measure,
-  never assume, the symmetric win:** the one symmetric solver we *can* measure (`SparseSYM`) is
-  **2.10× SLOWER** than unsymmetric UmfPack on Lane B (`phase1/RESULTS_laneB_baseline.md`) —
-  implementation quality dominates the storage-format advantage. Treat "~2× from symmetric" as an
-  unproven hypothesis, not a lever (§12).
+  input, so `PARDISOGenLinSOE` must gain half-storage (the path `MumpsSOE` already has).
+  **✅ DONE in P1d, and the hedge is resolved IN FAVOUR of symmetric:** 1.35× faster than unsymmetric
+  PARDISO and **−41.8% peak memory**, bit-identical answers (`phase1/RESULTS_p1d_symmetric.md`). The
+  caution was well-placed but pointed at the wrong culprit — `SparseSYM` being **2.10× SLOWER** than
+  unsymmetric UmfPack (`phase1/RESULTS_laneB_baseline.md`) was *its* implementation quality, not a
+  property of symmetric storage. Kept as the standing lesson: the measurement was cheap and the prior
+  was wrong in both directions at once.
 - Confirm threading actually engages (`MKL_NUM_THREADS`; the prototype's `iparm[2]=1` is a red flag).
 - **Only the solve is threaded** — Amdahl: real win on Lane B, ~nil on frame lanes (that's Lane 3).
 
@@ -239,11 +241,29 @@ the assembly race toward a simpler, better-proven remedy.
 4. **Do NOT** build serial/`libseq` MUMPS, a GPU solver offload, a hand-rolled Krylov/precond, or
    OpenMP-by-default (ADR-40 anti-goals stand).
 
+### 5.2-bis — Symmetric is opt-in, NOT default (revised by P1d measurement)
+
+§5's original wording followed the Kratos precedent to *"default symmetric, expose the override"*.
+**P1d reverses the default while confirming the lever.** `-matrixType 2` is now measured at 1.35×
+faster and −41.8% peak memory (`RESULTS_p1d_symmetric.md`), yet the default remains `0`:
+
+- half-storage reads only the `col >= row` half of each element matrix — **no averaging, no
+  detection** — so on a genuinely unsymmetric tangent it silently solves a *different system*;
+- this fork has such tangents in production: `LadrunoContact`, non-associated flow, follower loads,
+  `LadrunoUP` (whose ledger row already says "needs a general solver");
+- the Kratos precedent assumes an element library that is symmetric by construction. This one isn't.
+
+So: **explicit token, loudly documented, with `-stats` to make the payoff self-evident.** Authors of
+symmetric models should pass `-matrixType 2`; prefer `2` over `1` (SPD/Cholesky) because `1` fails
+outright on the indefinite tangent any softening or buckling model eventually has — the `-4`
+zero-pivot message now says exactly that.
+
 ### Cross-cutting levers (pay in both regimes)
-- **Symmetric factorization, default-on + explicit override** (PARDISO `mtype ±2` / MUMPS
-  `-matrixType 2` — ~2× time+memory everywhere the tangent is symmetric). Per §4: default symmetric,
-  but *expose* the unsymmetric path rather than over-auto-sniffing — the fork's contact/non-
-  associated tangents are genuinely unsymmetric and must be able to select `pardiso_lu`/unsym MUMPS.
+- **Symmetric factorization — SHIPPED for PARDISO (P1d), opt-in** (PARDISO `-matrixType 1|2` →
+  `mtype ±2` / MUMPS `-matrixType 2`). **No longer a hypothesis: 1.35× time and −41.8% peak memory,
+  measured.** The old "~2× time+memory, but `SparseSYM` was 2.10× slower so measure it" hedge is
+  resolved — that was `SparseSYM`'s implementation, not symmetric storage. MUMPS `-matrixType 2`
+  remains **unexercised** on the cluster and inherits a strong prior from this result.
 - **Factorization reuse** driven off the SOE `factored` flag (present in MUMPS; add PARDISO phase-33)
   — pays under ModifiedNewton/Initial/IMPL-EX, not full Newton.
 - **BLR** (MUMPS `ICNTL35`) as memory/scaling relief on large 3D — **but it is an *approximate*
@@ -268,6 +288,24 @@ the assembly race toward a simpler, better-proven remedy.
   **Gate (now a measured number): beat UmfPack's 22.711 s on Lane B** at 4 threads *and* threading
   verified engaged; bit-identical/1e-12 tip displacement vs the locked baseline
   (`phase1/RESULTS_laneB_baseline.md`).
+- **P1d — symmetric PARDISO (`-matrixType`). ✅ DONE, WINS ON BOTH AXES**
+  (`phase1/RESULTS_p1d_symmetric.md`). `PARDISOGenLinSOE` gained upper-triangle half-storage and the
+  solver now *derives* `mtype` from it (11 / 2 / −2), so storage and factorization mode cannot
+  disagree. `system Pardiso -matrixType 0|1|2` (+ `-symmetric`/`-spd`), in **both** interpreters —
+  P1b had registered the verb only in `OpenSeesCommands.cpp`, so `OpenSees.exe` never had it; the Tcl
+  chain is a separate if-ladder and is wired here.
+  **Measured, on Lane B, same binary, interleaved:** `-matrixType 2` is **1.35× faster than
+  unsymmetric PARDISO** at 4 threads (1.96× vs UmfPack) and **1.26×** single-threaded, with tip
+  displacement **bit-identical** at every configuration. **The `SparseSYM`-based worry (§3, "symmetric
+  ≠ automatically better", 2.10× SLOWER) is refuted for PARDISO** — it was an implementation-quality
+  artifact of `SparseSYM`, not a property of symmetric storage.
+  **And the memory result is the bigger one — `-stats` (new, `iparm[14]/[15]/[16]`, mirroring the
+  MUMPS `-stats`) shows peak memory −41.8%** (105.43 → 61.31 MB; SPD −46.5%), stored nnz −49.3%
+  (exact by construction), factor nnz −47.3%. **Directly contrast P2b: BLR cut the stored factors
+  21.8% but peak only 4.6%.** Symmetric shrinks the *fronts themselves*, so the fit/no-fit number
+  actually moves — and it is **exact**, so unlike BLR it is legal on byte-identical/oracle paths.
+  Against the P1c capability wall this is the largest memory lever ADR-75 has produced.
+  **Default stays `0` (unsymmetric)** — see §5.2-bis.
 - **P2 — MUMPS cluster tuning. 🟡 `-BLR` SHIPPED, effect NOT yet validated at scale**
   (`phase1/RESULTS_p2_blr.md`). `system Mumps -BLR <eps>` (+ raw `-ICNTL35`/`-CNTL7`) is wired,
   propagates to subordinate ranks via `sendSelf`/`recvSelf` (without which rank 0 would factor BLR

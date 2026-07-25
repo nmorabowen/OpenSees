@@ -972,6 +972,18 @@ target_link_libraries(OpenSees
   ${PARDISO_MKL_LIBRARIES}   # Ladruno ADR-75 P1b (threaded MKL; empty w/o MKL)
 )
 
+# Ladruno ADR-75 P1d: `system Pardiso` in the TCL chain (SRC/tcl/commands.cpp,
+# which is compiled straight into this exe -- it is NOT part of a shared lib).
+# Deliberately applied to the SERIAL exe only: OpenSeesSP/MP compile the same
+# commands.cpp but link the SEQUENTIAL MKL layer (see the PARDISO_MKL_LIBRARIES
+# note above), and mixing the threaded and sequential layers in one process is
+# unsupported by MKL. Cluster runs use `system Mumps`.
+if(PARDISO_FLAG)
+    target_compile_definitions(OpenSees PRIVATE ${PARDISO_FLAG})
+    target_include_directories(OpenSees PRIVATE
+        ${OPS_SRC_DIR}/system_of_eqn/linearSOE/pardiso)
+endif()
+
 
 #
 # OpenSeesSP Tcl Parallel Interpreter

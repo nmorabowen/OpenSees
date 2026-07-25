@@ -59,6 +59,13 @@ SOLVERS = [
     ("SparseSYM", ["SparseSYM"]),
     ("Mumps",    ["Mumps", "-ICNTL14", "200"]),  # P2 — unwired in serial today
     ("Pardiso",  ["Pardiso"]),                   # P1 — desktop threaded MKL
+    # P1d — symmetric half-storage. Lane B is LadrunoJ2 with ASSOCIATED flow, so
+    # its consistent tangent is genuinely symmetric and these must reproduce the
+    # UmfPack tip displacement; if they do not, half-storage is wrong, not slow.
+    # Type 1 (SPD) is expected to survive here only while the tangent stays
+    # positive definite — a zero-pivot failure IS the informative result.
+    ("PardisoSym", ["Pardiso", "-matrixType", 2]),   # mtype -2, LDL^T
+    ("PardisoSPD", ["Pardiso", "-matrixType", 1]),   # mtype  2, LL^T
 ]
 if _ONLY:
     SOLVERS = [(n, a) for (n, a) in SOLVERS if n in _ONLY]

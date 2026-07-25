@@ -1,0 +1,31 @@
+pyd OK: C:\Users\nmb\Documents\Github\OpenSees\.claude\worktrees\adr-75-session-handoff-29effa\dist\bin\opensees.pyd
+model 15^3 LadrunoBrick+LadrunoJ2, ONE load step, MKL_NUM_THREADS=4
+
+===== unsymmetric  (mtype 11) =====
+PARDISO stats: n=11520 nnz(A)=818892 mtype=11 (unsymmetric, full CSR)
+  peak symbolic  = 42.9092 MB
+  permanent      = 28.832 MB
+  peak numeric   = 76.5938 MB
+  TOTAL PEAK     = 105.426 MB   <- the fit/no-fit number
+  nnz in factors = 8464734
+  analyze -> 0
+
+===== symmetric    (mtype -2) =====
+PARDISO stats: n=11520 nnz(A)=415206 mtype=-2 (symmetric, upper-triangle CSR)
+  peak symbolic  = 15.5752 MB
+  permanent      = 14.3457 MB
+  peak numeric   = 46.96 MB
+  TOTAL PEAK     = 61.3057 MB   <- the fit/no-fit number
+  nnz in factors = 4459964
+  analyze -> 0
+
+===== SPD          (mtype  2) =====
+PARDISO stats: n=11520 nnz(A)=415206 mtype=2 (symmetric, upper-triangle CSR)
+  peak symbolic  = 15.5752 MB
+  permanent      = 14.3457 MB
+  peak numeric   = 42.0771 MB
+  TOTAL PEAK     = 56.4229 MB   <- the fit/no-fit number
+  nnz in factors = 4459964
+  analyze -> 0
+
+MEMORY-DONE

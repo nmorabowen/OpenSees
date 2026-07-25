@@ -32,14 +32,37 @@
 
 class PARDISOGenLinSolver;
 
+// Ladruno ADR-75 P1d (2026-07): symmetric half-storage.
+//
+// `matType` selects what this SOE actually stores, and (through the solver,
+// which reads it) the PARDISO `mtype`:
+//
+//   0  unsymmetric        full CSR                     -> mtype  11
+//   1  symmetric pos.def. UPPER-triangle CSR           -> mtype   2
+//   2  symmetric general  UPPER-triangle CSR           -> mtype  -2
+//
+// The numbering deliberately matches `system Mumps -matrixType 0|1|2` so the
+// two solvers take the same verb. MKL PARDISO's symmetric modes require the
+// upper triangle only, in row-major CSR, with ascending column indices and the
+// diagonal ALWAYS present (even when zero) — all three invariants are
+// established in setSize() below.
+//
+// WARNING (documented, deliberate): with matType != 0 only the col >= row half
+// of each element matrix is read. If the assembled tangent is genuinely
+// unsymmetric (contact, non-associated flow, follower loads) this SILENTLY
+// solves with the upper triangle reflected — it does not average and it does
+// not detect the asymmetry. That is why the default stays 0.
+
 class PARDISOGenLinSOE : public LinearSOE
 {
   public:
     PARDISOGenLinSOE(PARDISOGenLinSolver &theSolver);
+    PARDISOGenLinSOE(PARDISOGenLinSolver &theSolver, int matType);
 
     ~PARDISOGenLinSOE();
 
     int getNumEqn(void) const;
+    int getMatType(void) const;   // Ladruno ADR-75 P1d
     int setSize(Graph &theGraph);
     int addA(const Matrix &, const ID &, double fact = 1.0);
     int addB(const Vector &, const ID &, double fact = 1.0);    
@@ -70,6 +93,7 @@ class PARDISOGenLinSOE : public LinearSOE
     Vector *vectB;    
     int Asize, Bsize;    // size of the 1d array holding A
     bool factored;
+    int matType;         // Ladruno ADR-75 P1d: 0 unsym / 1 SPD / 2 sym-general
 };
 
 
