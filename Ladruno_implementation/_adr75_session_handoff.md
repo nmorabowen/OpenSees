@@ -1,7 +1,7 @@
 ---
 title: ADR-75 session handoff — sparse-direct solver lane (PARDISO desktop / MUMPS cluster)
 project: Ladruno
-status: handoff — P0/P1/P1c/P1d/P2/P2b SHIPPED; Lane 3 + cluster validation OPEN
+status: handoff — P0/P1/P1c/P1d/P2/P2b ALL MERGED to ladruno; Lane 3 + cluster validation OPEN
 owner: nmora
 relates: 75_ladruno_sparse_direct_strategy_adr
 ---
@@ -24,7 +24,7 @@ Everything below is **merged to `ladruno`**. Pick up from "What to do next".
 | [#624](https://github.com/nmorabowen/OpenSees/pull/624) | `6921f93` | **P1c** scaling study + capability wall |
 | [#625](https://github.com/nmorabowen/OpenSees/pull/625) | `2bb348c` | **P2** MUMPS `-BLR` + oneAPI-2026 toolchain fixes |
 | [#626](https://github.com/nmorabowen/OpenSees/pull/626) | `434b1a6` | **P2b** `-stats` (INFOG/RINFOG) + BLR memory verdict |
-| [#630](https://github.com/nmorabowen/OpenSees/pull/630) | — | **P1d** symmetric PARDISO `-matrixType` + `-stats` + Tcl verb |
+| [#630](https://github.com/nmorabowen/OpenSees/pull/630) | `222dca8` | **P1d** symmetric PARDISO `-matrixType` + `-stats` + Tcl verb (+ adversarial review) |
 
 ## Headline results (all measured, not estimated)
 
