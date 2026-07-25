@@ -10,6 +10,6 @@ for T in 1 2 4 8; do
   OPS_PYD="$PYD" MKL_NUM_THREADS=$T OMP_NUM_THREADS=$T LADRUNO_OPENSEES_QUIET=1 \
     OPS_BENCH_SOLVERS="UmfPack,Pardiso" OPS_BENCH_REPEATS=5 \
     "$PY" -S laneB_solver_bench.py 2>&1 | grep -E "probe |^UmfPack|^Pardiso|^solver"
-  mv -f laneB_solver_baseline.json "laneB_p1_threads${T}.json" 2>/dev/null
+  cp -f laneB_solver_baseline.json "laneB_p1_threads${T}.json" 2>/dev/null
 done
 echo "SWEEP-DONE"
