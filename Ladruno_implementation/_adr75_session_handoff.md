@@ -1,7 +1,7 @@
 ---
 title: ADR-75 session handoff — sparse-direct solver lane (PARDISO desktop / MUMPS cluster)
 project: Ladruno
-status: handoff — P0/P1/P1c/P1d/P1e/P1f/P2/P2b ALL MERGED to ladruno; Lane 3 + cluster validation OPEN
+status: handoff — P0/P1/P1c/P1d/P1e/P1f/P2/P2b ALL MERGED to ladruno; Lane 3 OPENED as ADR-75b (policy settled, L3-0 measured, no threading code); cluster/BLR validation still OPEN
 owner: nmora
 relates: 75_ladruno_sparse_direct_strategy_adr
 ---
@@ -93,12 +93,31 @@ Everything below is **merged to `ladruno`**. Pick up from "What to do next".
    slowdown was *its* implementation quality, not a property of symmetric storage.
    **Follow-on, now carrying a strong prior: exercise MUMPS `-matrixType 2` on the cluster** — same
    lever, still untouched there, and it composes with item 1.
-3. **Lane 3 — threaded element assembly.** The only lever for the ~34% PARDISO cannot touch (Amdahl:
-   measured 1.76× vs a predicted ~2.2× ceiling). Deserves **its own sub-ADR**. Order: (a) scope
-   `elem.update` (ADR-40b's #1 instrumentation gap); (b) de-`static` element/material scratch; (c)
-   explicit diagonal-SOE private-buffer reduction **with an ordered variant from day one**;
-   (d) implicit — **freeze-sparsity + atomic-scatter (Kratos), NOT graph coloring** (see ADR-75 §4);
-   (e) thread the `update` loop. Gate each stage on a measured >40% element fraction.
+3. ~~**Lane 3 — threaded element assembly.**~~ ✅ **OPENED 2026-07-25 as
+   [[75b_ladruno_threaded_assembly_adr]]; policy SETTLED and stage L3-0 MEASURED.**
+   - **Determinism policy settled (§3):** *per loop class.* `Domain::update` has **no FP reduction at
+     all**, so threading it is bit-identical and the existing oracles gate it unchanged. For the
+     reducing loops (`addA`/`addB`), **ordered mode is the CI gate AND the default when threading is
+     on; fast/atomic mode is opt-in, 1e-12-gated, and forbidden on oracle paths** — LS-DYNA's
+     `ncpu=-N` *shape* with the default **inverted**, because this fork's QA is exact, not
+     tolerance-based (and BLR already set that precedent).
+   - **Scatter remedy settled (§4), not relitigated:** freeze-sparsity + atomic scatter. New checked
+     fact — **OpenSees already freezes the sparsity** (`zeroA` never touches `colA`/`rowStartA`), so
+     the whole race is one `A[k] += m(i,j)`. Ordered mode = **gather** over that same frozen CSR
+     (race-free without atomics, exact), which is why de-statication must produce **per-element**
+     buffers, not `thread_local` ones.
+   - **L3-0 measured** (`Ladruno_files/testbed/perf/lane3/RESULTS_l3a_update_scope.md`): **the Lane-1
+     solver win is what makes Lane 3 worth doing** — same Lane-B model, element-kernel fraction
+     **35.8% (UmfPack) → 74.9% (`Pardiso -matrixType 2` @4T)**, solve 55.9% → 16.9%; the >40% gate
+     fails under UmfPack and passes hugely under PARDISO. Lanes A/D element-bound regardless
+     (81.9%/86.8%). `ForceBeamColumn2d::getTangent` = **0.12 µs/ele** (confirms the regression hazard).
+   - **Next: L3-1 = thread `Domain::update` on Lane D** (54.4% of step, fork-owned `LadrunoBrick`,
+     `system Diagonal` so no SOE in the picture). Blockers first: `ops_TheActiveElement` →
+     `thread_local`, the §2.1b node-writing exclusion list, `find_package(OpenMP)`.
+   - **Side finding worth taking before any threading:** `PARDISOGenLinSOE::addA`'s O(idSize² × rowlen)
+     search costs **~14% of wall** on the default `-matrixType 0` path and is **1.28× slower than
+     UmfPack's**. Serial, zero-determinism-cost, and on present evidence a better return than
+     threading loops B/C at all.
 4. **Rebuild the shared checkout** so `system Pardiso` is available outside this worktree.
    **Owner: nmora, once P1d merges** — decided 2026-07-25 rather than have an agent switch the shared
    checkout's branch under the other 6 worktrees. One build from a clean `ladruno` gets P1b + P1d.

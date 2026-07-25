@@ -6,7 +6,10 @@ Profiles ONLY the analyze() block.
 """
 import sys, os, time
 
-DIST = r"C:\Users\nmora\Github\OpenSees_Compile\OpenSees\dist\bin"
+# Ladruno ADR-75b (L3-0): DIST/OUT/system are env-overridable so this exact model
+# can be re-run against a different build or solver without editing (or forking) it.
+# Defaults reproduce the original ADR-40b run verbatim.
+DIST = os.environ.get("OPS_PYD") or r"C:\Users\nmora\Github\OpenSees_Compile\OpenSees\dist\bin"
 sys.path.insert(0, DIST)
 os.add_dll_directory(DIST)
 os.environ["PMI_RANK"] = "0"
@@ -17,7 +20,7 @@ assert ops.__file__.lower().startswith(DIST.lower()), f"WRONG PYD: {ops.__file__
 print("pyd OK:", ops.__file__)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUT = os.path.join(HERE, "laneB_prof.h5")
+OUT = os.environ.get("OPS_PROF_OUT") or os.path.join(HERE, "laneB_prof.h5")
 if os.path.exists(OUT):
     os.remove(OUT)
 
@@ -86,14 +89,25 @@ for nd in top_nodes:
 # ---- ADR-40 rank-2/8 target path ----
 ops.constraints("Plain")
 ops.numberer("RCM")
-ops.system("UmfPack")
+# Ladruno ADR-75b (L3-0): OPS_SYSTEM lets the same model run on a different solver so
+# the element/loop FRACTIONS can be re-measured after the Lane-1 solver win. Values are
+# passed as ints where numeric -- a STRING option value fails OPS_GetIntInput, the factory
+# returns 0, and OpenSees silently falls back to ProfileSPDLinSOE (banked P1d trap).
+_sys = (os.environ.get("OPS_SYSTEM") or "UmfPack").split()
+ops.system(*[int(a) if a.lstrip("-").isdigit() else a for a in _sys])
+print("system:", _sys)
 ops.test("NormDispIncr", 1e-7, 25)
 ops.algorithm("Newton")
 ops.integrator("LoadControl", 1.0 / 15.0)
 ops.analysis("Static")
 
 # ---- timed block: profile ONLY analyze ----
-ops.profiler("start", "-deep", "-perStep")
+# Ladruno ADR-75b (L3-0): OPS_PROF_FLAGS lets the SAME run be repeated without -deep so the
+# deep-scope instrumentation tax can be MEASURED rather than argued about (ADR-40b banked
+# ~0.5 us per scope instance). Default is the original "-deep -perStep".
+_pf = (os.environ.get("OPS_PROF_FLAGS", "-deep -perStep")).split()
+ops.profiler("start", *_pf)
+print("prof flags:", _pf)
 t0 = time.perf_counter()
 nsteps = 15
 done = 0
